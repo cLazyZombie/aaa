@@ -1385,6 +1385,8 @@ impl Host {
                 | FrontRequest::MachineSetupTrust { .. }
                 | FrontRequest::MachineSetupChoose { .. }
                 | FrontRequest::MachineSetupCancel { .. }
+                | FrontRequest::MachineSetupPlan { .. }
+                | FrontRequest::MachineSetupApply { .. }
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
@@ -2243,6 +2245,12 @@ impl Host {
                 self.setup_choose(&job, &os, &arch, actor).map(|setup| FrontResponse::MachineSetup { setup })
             }
             FrontRequest::MachineSetupCancel { job } => self.setup_cancel(&job, actor).map(|_| FrontResponse::Done),
+            FrontRequest::MachineSetupPlan { job, settings } => {
+                self.setup_plan(&job, settings, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupApply { job, plan_sha256 } => {
+                self.setup_apply(role, &job, &plan_sha256, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
             FrontRequest::MachineSetupList => self.setup_list().map(|setups| FrontResponse::MachineSetups { setups }),
             FrontRequest::EnrollPending => {
                 let e = self.enroll.lock().unwrap();

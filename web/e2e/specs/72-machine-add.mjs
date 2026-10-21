@@ -1,12 +1,14 @@
 // 웹 머신 추가 M2(plan §8.384): 설정 「머신」 → 「SSH로 추가」. 실험실 sshd(비특권·loopback·비밀번호 끔)를 이 시험이 띄우고, host는
 // host.toml `[host] ssh_config`의 실험실 ssh 설정(별칭 lab·lab-down, 실험실 키만)으로 접속한다. 접속 → host key 지문(ssh-keygen -lf와
 // 같음) → 「믿음」 확인 창 → OS 감지 → 준비됨, 비밀번호 꼴 대상은 보내기 전에 막음, 닫힌 포트는 까닭, 보기 기기는 목록만, 휴대폰 390 폭,
-// 지우기. 원격에는 쓰지 않는다. sshd가 없는 머신에서는 이 파일을 건너뛴다.
+// 지우기. M3(plan §8.385): 준비된 작업의 설치 설정 폼 → 「계획 보기」가 실제 host 실행 파일을 원격 임시 폴더에 보내 확인하고 원격
+// install에 계획을 묻는다. 실험실 sshd는 비특권이라 install의 검증 SSH 입구가 거부해야 하고(시스템 sshd만 믿는다) 그 까닭이
+// 보인다. 실제 설치·등록 끝까지는 host 시험(대본 원격)과 CI의 root sshd가 본다. sshd가 없는 머신에서는 이 파일을 건너뛴다.
 import fs from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import net from "node:net";
 import readline from "node:readline";
-import { root, procs, aaa, step, browser, pairPage, openSettings, shot, inTime } from "../lib/harness.mjs";
+import { root, procs, aaa, AA, step, browser, pairPage, openSettings, shot, inTime } from "../lib/harness.mjs";
 
 const lab = `${root}/sshlab`;
 const sshd = ["/usr/sbin/sshd", "/usr/bin/sshd"].find((p) => fs.existsSync(p));
@@ -100,7 +102,11 @@ export default async function ({ page }) {
     const d = await openSettings(rd, "머신");
     const p = d.getByTestId("machine-setup");
     await p.locator('li[data-target="lab"][data-phase="ready"]').waitFor();
-    if ((await p.getByTestId("machine-setup-target").count()) || (await p.getByRole("button", { name: /지우기|믿음/ }).count())) {
+    if (
+      (await p.getByTestId("machine-setup-target").count()) ||
+      (await p.getByTestId("machine-setup-settings").count()) ||
+      (await p.getByRole("button", { name: /지우기|믿음/ }).count())
+    ) {
       throw new Error("보기 기기에 SSH 추가 조작");
     }
     await rd.context().close();
@@ -122,5 +128,33 @@ export default async function ({ page }) {
     await p.getByRole("button", { name: "lab-down 작업 지우기" }).click();
     await p.locator('li[data-target="lab-down"]').waitFor({ state: "detached" });
     await ph.context().close();
+  });
+
+  await step("설치 설정 → 계획 보기: 실제 install은 비특권 sshd를 믿지 않는다(까닭, 원격 임시 폴더 없음)", async () => {
+    const job = mp.locator('li[data-target="lab"]');
+    const form = job.getByTestId("machine-setup-settings");
+    await form.waitFor();
+    if ((await form.getByTestId("machine-setup-name").inputValue()) !== "lab") throw new Error("기본 이름은 대상 별칭");
+    const home = (await job.getByTestId("machine-setup-detected").innerText()).split(" · ")[2];
+    if ((await form.getByTestId("machine-setup-work-root").inputValue()) !== `${home}/aaa-work`) throw new Error("기본 작업 root");
+    await form.getByTestId("machine-setup-name").fill("lab b");
+    await form.getByText("머신 이름은 영문").waitFor();
+    await form.getByTestId("machine-setup-name").fill("lab-b");
+    await form.getByTestId("machine-setup-host").fill("127.0.0.1:7430");
+    await form.getByTestId("machine-setup-plan-start").scrollIntoViewIfNeeded();
+    await shot(page, "72-settings-desktop");
+    await form.getByTestId("machine-setup-plan-start").click();
+    await job.and(page.locator('[data-phase="failed"]')).waitFor();
+    const why = job.getByText("시스템 SSH 서버로 확인하지 못했다", { exact: false });
+    await why.waitFor();
+    await why.scrollIntoViewIfNeeded();
+    await shot(page, "72-install-refused-desktop");
+    // 실험실 원격은 같은 머신이다: 보낸 파일(host 실행 파일과 같은 크기)이 든 임시 폴더가 남지 않았다
+    const size = fs.statSync(AA).size;
+    const left = [process.env.TMPDIR, "/tmp"]
+      .filter(Boolean)
+      .flatMap((d) => fs.readdirSync(d).map((n) => `${d}/${n}`))
+      .filter((p) => p.includes("/aaa-setup.") && fs.existsSync(`${p}/aaa`) && fs.statSync(`${p}/aaa`).size === size);
+    if (left.length) throw new Error(`원격 임시 폴더가 남았다: ${left}`);
   });
 }

@@ -2,7 +2,7 @@
 //! host 요청으로 접속 → 지문 믿음 → 감지 → 아는 키·바뀐 키까지 도는 시험. sshd가 없는 머신(Windows runner 등)에서는 실험실 시험을
 //! 건너뛰고 그렇게 적는다.
 use super::*;
-use aaa_proto::{DeviceRole, FrontRequest, FrontResponse};
+use aaa_proto::{DeviceRole, FrontRequest, FrontResponse, MachineSetupSettings};
 
 #[test]
 fn targets_are_aliases_or_user_host_port_without_passwords_or_options() {
@@ -338,8 +338,12 @@ fn choosing_os_needs_the_choose_phase_and_a_release_target() {
                 error: Some("OS·CPU를 알아내지 못했다".into()),
                 created_ms: 1,
                 updated_ms: 1,
+                settings: None,
+                review: None,
+                install: None,
             },
             key_lines: vec![],
+            remote_dir: None,
         };
         h.setup_save(&mut job);
         let choose = |os: &str, arch: &str| FrontRequest::MachineSetupChoose {
@@ -387,4 +391,485 @@ fn windows_runner_reports_whether_an_openssh_server_exists() {
         .and_then(|p| std::env::split_paths(&p).map(|d| d.join("sshd.exe")).find(|f| f.is_file()));
     let found = if fixed.is_file() { Some(fixed) } else { in_path };
     eprintln!("M2 Windows sshd 판정: {}", found.map_or("sshd.exe 없음".into(), |f| format!("있음 {}", f.display())));
+}
+
+// ───────────── binary 전송(M3) ─────────────
+
+#[test]
+fn the_binary_is_the_running_file_for_the_same_kind_and_a_release_otherwise() {
+    use binary::{Source, pick};
+    let exe = Path::new("/opt/aaa/bin/aaa");
+    assert_eq!(
+        pick(("macos", "aarch64"), "aaa 0.1.2", ("macos", "aarch64"), exe),
+        Source::Running { path: exe.into() }
+    );
+    assert_eq!(
+        pick(("macos", "aarch64"), "aaa 0.1.2", ("linux", "x86_64"), exe),
+        Source::Release { version: "0.1.2".into(), key: "linux-x86_64".into() }
+    );
+    // 개발 판 host는 다른 종류에 넣을 같은 판 파일이 없다(같은 종류는 자기 파일로 된다)
+    assert_eq!(
+        pick(("macos", "aarch64"), "aaa 0.1.2+abc", ("macos", "aarch64"), exe),
+        Source::Running { path: exe.into() }
+    );
+    let Source::Refuse(why) = pick(("macos", "aarch64"), "aaa 0.1.2+abc", ("macos", "x86_64"), exe) else { panic!() };
+    assert!(why.contains("개발 판") && why.contains("macos·x86_64"), "{why}");
+}
+
+#[test]
+fn upload_output_is_read_between_marks_and_only_safe_temp_dirs_are_removed() {
+    use binary::{Placed, cleanup_script, mismatch, parse_upload, safe_dir, upload_script};
+    let sha = "a".repeat(64);
+    let out = format!(
+        "motd\nAAA-UP-1\n/var/folders/x_/T//aaa-setup.Ab12Cd34\n{}\naaa 0.1.2\nAAA-UP-END\n",
+        sha.to_uppercase()
+    );
+    let placed = parse_upload(&out).unwrap();
+    assert_eq!(
+        placed,
+        Placed {
+            dir: "/var/folders/x_/T//aaa-setup.Ab12Cd34".into(),
+            sha256: sha.clone(),
+            version: "aaa 0.1.2".into()
+        }
+    );
+    assert_eq!(mismatch(&placed, &sha, "aaa 0.1.2"), None);
+    assert!(mismatch(&placed, &"b".repeat(64), "aaa 0.1.2").unwrap().contains("SHA-256"));
+    assert!(mismatch(&placed, &sha, "aaa 0.1.3").unwrap().contains("판이 다르다"));
+    let silent = Placed { version: String::new(), ..placed.clone() };
+    assert!(mismatch(&silent, &sha, "aaa 0.1.2").unwrap().contains("실행되지 않음"));
+    for bad in [
+        "/tmp/aaa-setup.",
+        "tmp/aaa-setup.x1",
+        "/tmp/../aaa-setup.x1",
+        "/tmp/other.x1",
+        "/tmp/aaa-setup.x1/..",
+        "/tmp/a b/aaa-setup.x1",
+        "/tmp/aaa-setup.x1\"; rm -rf ~; \"",
+        "/tmp/aaa-setup.x$1",
+    ] {
+        assert!(!safe_dir(bad), "{bad}");
+        assert_eq!(cleanup_script(bad), None, "{bad}");
+    }
+    assert_eq!(parse_upload(&out.replace(&sha.to_uppercase(), "zz")), None);
+    assert_eq!(parse_upload("AAA-UP-1\n/tmp/x\nAAA-UP-END\n"), None);
+    assert_eq!(cleanup_script("/tmp/aaa-setup.x1").unwrap(), "sh -c 'rm -rf -- \"/tmp/aaa-setup.x1\"'");
+    // 원격 명령은 고정 글이다(사람이 넣은 값이 들어가지 않는다)
+    assert!(upload_script().starts_with("sh -c 'umask 077; d=$(mktemp -d"));
+    assert_eq!(upload_script().matches('\'').count(), 2);
+}
+
+/// 실험실 sshd로: host가 보낸 파일이 원격 전용 임시 폴더(0700)에 같은 SHA로 놓이고 `--version`이 돈다. 기대와 다르면 그 폴더를
+/// 지우고 까닭을 돌려준다. 실험실은 같은 머신이라 원격 폴더를 직접 본다
+#[cfg(unix)]
+#[test]
+fn the_binary_reaches_a_private_remote_temp_dir_and_a_mismatch_removes_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(lab) = lab() else { return };
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let h = host_for(&lab);
+        let job = start(&h, "lab").await;
+        let job = leave(&h, &job.job, MachineSetupPhase::Connecting).await;
+        let sha = job.host_keys[0].sha256.clone();
+        h.call(
+            DeviceRole::Controller,
+            WEB,
+            FrontRequest::MachineSetupTrust { job: job.job.clone(), host_key_sha256: sha },
+        )
+        .await
+        .unwrap();
+        assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
+        // 보낼 파일: `--version`에 판을 답하는 작은 실행 파일
+        let file = lab.root.join("fake-aaa");
+        std::fs::write(&file, "#!/bin/sh\necho 'aaa 9.9.9'\n").unwrap();
+        let sha = hex::encode(Sha256::digest(std::fs::read(&file).unwrap()));
+        let ssh = h.ssh();
+        let t = parse_target("lab").unwrap();
+        let placed = ssh.upload(&t, &file, &sha, "aaa 9.9.9").await.unwrap();
+        assert_eq!(placed.sha256, sha);
+        let dir = Path::new(&placed.dir);
+        assert_eq!(std::fs::read(dir.join("aaa")).unwrap(), std::fs::read(&file).unwrap());
+        assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert!(ssh.cleanup(&t, &placed.dir).await.unwrap().ok);
+        assert!(!dir.exists());
+        // SHA·판이 기대와 다르면 놓은 폴더를 지우고 까닭을 준다
+        let before = remote_setup_dirs(&file);
+        let e = ssh.upload(&t, &file, &"0".repeat(64), "aaa 9.9.9").await.unwrap_err();
+        assert!(e.contains("SHA-256"), "{e}");
+        let e = ssh.upload(&t, &file, &sha, "aaa 0.1.2").await.unwrap_err();
+        assert!(e.contains("판이 다르다"), "{e}");
+        assert_eq!(remote_setup_dirs(&file), before, "어긋난 전송은 원격 임시 폴더를 남기지 않는다");
+        // 닫힌 포트는 ssh 까닭
+        let e = ssh.upload(&parse_target("lab-down").unwrap(), &file, &sha, "aaa 9.9.9").await.unwrap_err();
+        assert!(e.contains("거부"), "{e}");
+    });
+}
+
+/// 실험실 원격(같은 머신)의 `aaa-setup.*` 임시 폴더 중 `file`과 같은 `aaa`를 가진 것(나란히 도는 다른 시험의 폴더는 내용이 다르다)
+#[cfg(unix)]
+fn remote_setup_dirs(file: &Path) -> Vec<PathBuf> {
+    let want = std::fs::read(file).unwrap();
+    let mut found = vec![];
+    for base in [std::env::var_os("TMPDIR").map(PathBuf::from), Some(PathBuf::from("/tmp"))].into_iter().flatten() {
+        for e in std::fs::read_dir(&base).into_iter().flatten().flatten() {
+            if e.file_name().to_string_lossy().starts_with("aaa-setup.")
+                && std::fs::read(e.path().join("aaa")).is_ok_and(|b| b == want)
+            {
+                found.push(e.path());
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+// ───────────── SSH 설치·등록(M3) ─────────────
+
+#[test]
+fn settings_become_agent_choices_under_the_detected_home() {
+    use aaa_proto::install::*;
+    let settings = MachineSetupSettings {
+        name: "mac-b".into(),
+        host: "mac-a.example.ts.net:7430".into(),
+        work_root: "/Volumes/<disk>/aaa-work".into(),
+        work_mount: Some("/Volumes/<disk>".into()),
+        harness: vec![InstallHarness::Codex, InstallHarness::Claude, InstallHarness::Codex],
+        login: InstallLogin::Defer,
+    };
+    let mac = MachineDetected {
+        os: "macos".into(),
+        arch: "aarch64".into(),
+        raw: "Darwin arm64".into(),
+        chosen: false,
+        home: Some("/Users/<me>/".into()),
+        shell: Some("/bin/zsh".into()),
+        aaa: None,
+    };
+    let c = install::choices(&settings, &mac).unwrap();
+    assert_eq!(c.role, Some(InstallRole::Agent));
+    assert_eq!(c.state_dir.as_deref(), Some("/Users/<me>/Library/Application Support/aaa"));
+    assert_eq!(c.bin_path.as_deref(), Some("/Users/<me>/.local/bin/aaa"));
+    assert_eq!(c.harness, vec![InstallHarness::Claude, InstallHarness::Codex]);
+    assert_eq!((c.work_mount.as_deref(), c.work_storage), (Some("/Volumes/<disk>"), None));
+    assert_eq!(
+        (c.enroll, c.expected_os, c.expected_arch),
+        (Some(InstallEnroll::Grant), Some(InstallOs::Macos), Some(InstallArch::Aarch64))
+    );
+    let inside =
+        install::choices(&MachineSetupSettings { work_mount: None, harness: vec![], ..settings.clone() }, &mac)
+            .unwrap();
+    assert_eq!((inside.work_storage, inside.harness), (Some(InstallStorage::Internal), vec![InstallHarness::None]));
+    let linux = MachineDetected { os: "linux".into(), home: Some("/home/<me>".into()), ..mac.clone() };
+    assert_eq!(install::choices(&settings, &linux).unwrap().state_dir.as_deref(), Some("/home/<me>/.local/state/aaa"));
+    // Windows는 M4, HOME 없음은 다시 감지
+    assert!(
+        install::choices(&settings, &MachineDetected { os: "windows".into(), ..mac.clone() })
+            .err()
+            .unwrap()
+            .contains("macOS부터")
+    );
+    assert!(
+        install::choices(&settings, &MachineDetected { home: None, ..mac.clone() }).err().unwrap().contains("HOME")
+    );
+    for bad in [
+        MachineSetupSettings { name: "mac b".into(), ..settings.clone() },
+        MachineSetupSettings { host: "a b:1".into(), ..settings.clone() },
+        MachineSetupSettings { work_root: "aaa-work".into(), ..settings.clone() },
+        MachineSetupSettings { work_root: "/a/../b".into(), ..settings.clone() },
+        MachineSetupSettings { harness: vec![InstallHarness::None, InstallHarness::Claude], ..settings.clone() },
+    ] {
+        assert!(install::check_settings(&bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn remote_install_commands_are_fixed_text_with_checked_values() {
+    let dir = "/tmp/aaa-setup.Ab12";
+    let sha = "a".repeat(64);
+    assert_eq!(
+        install::probe_script(dir, "macos", &sha).unwrap(),
+        format!(
+            "sh -c '\"{dir}/aaa\" --state-dir \"$HOME/Library/Application Support/aaa\" install-probe --executor-sha256 {sha}'"
+        )
+    );
+    assert!(
+        install::bootstrap_script(dir, "linux", &sha, &"b".repeat(64))
+            .unwrap()
+            .contains("\"$HOME/.local/state/aaa\" install-bootstrap")
+    );
+    assert!(
+        install::apply_script(dir, "macos", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+            .unwrap()
+            .ends_with("install --resume 01ARZ3NDEKTSV4RRFFQ69G5FAV --non-interactive --yes --json-stream'")
+    );
+    assert_eq!(install::probe_script("/tmp/x", "macos", &sha), None);
+    assert_eq!(install::probe_script(dir, "macos", "zz"), None);
+    assert_eq!(install::probe_script(dir, "windows", &sha), None);
+    assert_eq!(install::apply_script(dir, "macos", "1;rm"), None);
+    assert_eq!(install::bootstrap_script(dir, "macos", &sha, "x"), None);
+    let line = r#"{"type":"event","schema":"aaa.install.event.v1","installation_id":null,"seq":1,"phase":"configure","state":"running","code":"c","message":"설정 쓰는 중"}"#;
+    assert!(matches!(install::stream_line(line), install::Line::Event(m) if m == "설정 쓰는 중"));
+    assert!(matches!(install::stream_line("not json"), install::Line::Other));
+}
+
+/// 원격 aaa 대본: 실제 ssh(실험실 sshd)로 보낸 파일이지만 install은 미리 만든 답을 낸다. 받은 인자·stdin을 남긴다.
+/// 적용(`install --resume`)은 FIFO `go`가 열릴 때까지 기다린다(시험이 그사이 등록을 한다)
+#[cfg(unix)]
+fn fake_remote(root: &Path) -> PathBuf {
+    let remote = root.join("remote");
+    std::fs::create_dir_all(&remote).unwrap();
+    let r = remote.display();
+    let script = format!(
+        r#"#!/bin/sh
+L="{r}"
+case "$*" in
+  --version) echo 'aaa 9.9.9'; exit 0;;
+  *install-probe*)
+    printf '%s\n' "$@" > "$L/probe.args"; cat > "$L/probe.in"
+    if [ -f "$L/probe.exit" ]; then exit "$(cat "$L/probe.exit")"; fi
+    cat "$L/probe.out"; exit 0;;
+  *install-bootstrap*)
+    n=$(ls "$L" | grep -c '^boot.*\.in$'); cat > "$L/boot$n.in"
+    id=$(grep -o '"installation_id":"[A-Z0-9]*"' "$L/boot$n.in" | head -n 1 | cut -d'"' -f4)
+    plan=$(grep -o '"plan_sha256":"[0-9a-f]*"' "$L/boot$n.in" | head -n 1 | cut -d'"' -f4)
+    printf '{{"installation_id":"%s","plan_sha256":"%s","agent_identity":"%s"}}\n' "$id" "$plan" "$(cat "$L/agent")"
+    exit 0;;
+  *"install --resume"*)
+    printf '%s\n' "$@" > "$L/apply.args"; cat "$L/go" > /dev/null
+    id=$(grep -A1 -- '--resume' "$L/apply.args" | tail -n 1)
+    sed "s/@ID@/$id/g" "$L/apply.out"; exit 0;;
+esac
+exit 9
+"#
+    );
+    let file = root.join("fake-aaa");
+    std::fs::write(&file, script).unwrap();
+    assert!(std::process::Command::new("mkfifo").arg(remote.join("go")).status().unwrap().success());
+    file
+}
+
+/// 대본이 낼 install 계획: host가 보낼 choices로 실제 install planner를 돌린 것
+#[cfg(unix)]
+fn fake_proposal(c: aaa_proto::install::InstallChoices, sha: &str, os: &str) -> aaa_proto::install::InstallProposal {
+    use aaa_proto::install::*;
+    let context = InstallPlanContext {
+        platform: InstallPlatform {
+            os: if os == "macos" { InstallOs::Macos } else { InstallOs::Linux },
+            arch: if cfg!(target_arch = "aarch64") { InstallArch::Aarch64 } else { InstallArch::X86_64 },
+        },
+        version: "9.9.9".into(),
+        binary_sha256: sha.into(),
+        bin_path: c.bin_path.clone().unwrap(),
+        config_dir: "/Users/<me>/.config/aaa".into(),
+        state_dir: c.state_dir.clone().unwrap(),
+        projects_root: "/Users/<me>/.aaa/projects".into(),
+        default_shell: "/bin/zsh".into(),
+        effective_config_sha256: "c".repeat(64),
+        target_account: "501".into(),
+    };
+    let plan = aaa_config::install::plan(c, context).unwrap();
+    let hash = aaa_config::install::plan_sha256(&plan);
+    let mut result = InstallResult::invalid();
+    result.status = InstallStatus::Planned;
+    result.exit_code = 0;
+    result.error = None;
+    result.plan_sha256 = Some(hash);
+    result.changes = vec![InstallChange {
+        kind: "agent_config".into(),
+        action: "create".into(),
+        state: InstallChangeState::Planned,
+    }];
+    InstallProposal { permissions: vec![aaa_config::install::enrollment_permission(&plan).unwrap()], plan, result }
+}
+
+/// 실험실 sshd + 원격 install 대본으로: 설정 → aaa 전송·확인 → 원격 계획(화면엔 공개 요약만) → 다른 hash·보기 기기·세션 안은 거부 →
+/// 사람 적용 → host 서명 → bootstrap(신원 없음) → 신원에 묶은 grant로 다시 → 적용 중 grant 등록 → 설치됨. 원격 임시 폴더·계획 파일 정리
+#[cfg(unix)]
+#[test]
+fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() {
+    use aaa_proto::install::*;
+    use std::os::unix::fs::PermissionsExt;
+    let Some(lab) = lab() else { return };
+    let fake = fake_remote(&lab.root);
+    let remote = lab.root.join("remote");
+    let sha = hex::encode(Sha256::digest(std::fs::read(&fake).unwrap()));
+    install::tests_binary::set(Some((fake.clone(), "aaa 9.9.9".into())));
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let weak = rt.block_on(async {
+        let h = host_for(&lab);
+        let job = start(&h, "lab").await;
+        let job = leave(&h, &job.job, MachineSetupPhase::Connecting).await;
+        let key = job.host_keys[0].sha256.clone();
+        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupTrust { job: job.job.clone(), host_key_sha256: key })
+            .await
+            .unwrap();
+        let ready = leave(&h, &job.job, MachineSetupPhase::Detecting).await;
+        assert_eq!(ready.phase, MachineSetupPhase::Ready);
+        let detected = ready.detected.clone().unwrap();
+        let settings = MachineSetupSettings {
+            name: "lab-b".into(),
+            host: "127.0.0.1:7430".into(),
+            work_root: lab.root.join("work").to_string_lossy().into(),
+            work_mount: None,
+            harness: vec![],
+            login: InstallLogin::Defer,
+        };
+        let choices = install::choices(&settings, &detected).unwrap();
+        let proposal = fake_proposal(choices.clone(), &sha, &detected.os);
+        let plan_sha = aaa_config::install::plan_sha256(&proposal.plan);
+        std::fs::write(remote.join("probe.out"), serde_json::to_vec(&proposal).unwrap()).unwrap();
+        let agent = tls_like_identity();
+        std::fs::write(remote.join("agent"), &agent).unwrap();
+        let result = {
+            let mut r = proposal.result.clone();
+            r.status = InstallStatus::Configured;
+            r.installation_id = Some("@ID@".into());
+            r.changes[0].state = InstallChangeState::Applied;
+            r
+        };
+        let lines = [
+            serde_json::json!({"type":"event","schema":"aaa.install.event.v1","installation_id":"@ID@","seq":1,"phase":"configure","state":"running","code":"agent_config","message":"agent 설정을 쓴다"}),
+            serde_json::to_value(InstallStreamItem::Result {
+                schema: InstallEventSchema::V1,
+                installation_id: Some("@ID@".into()),
+                seq: 2,
+                result: Box::new(result),
+            })
+            .unwrap(),
+        ];
+        let ndjson: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(remote.join("apply.out"), ndjson).unwrap();
+
+        // 계획: 보낸 파일 확인 → 원격 install 계획. 화면에는 hash·공개 결과만
+        let plan = |s: MachineSetupSettings| FrontRequest::MachineSetupPlan { job: job.job.clone(), settings: s };
+        assert_eq!(
+            h.call(DeviceRole::Controller, WEB, plan(MachineSetupSettings { name: "labA x".into(), ..settings.clone() }))
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::BadRequest
+        );
+        h.call(DeviceRole::Controller, WEB, plan(settings.clone())).await.unwrap();
+        let review = leave(&h, &job.job, MachineSetupPhase::Planning).await;
+        assert_eq!(review.phase, MachineSetupPhase::Review, "{:?}", review.error);
+        let summary = review.review.clone().unwrap();
+        assert_eq!((summary.plan_sha256.as_str(), summary.binary_sha256.as_str()), (plan_sha.as_str(), sha.as_str()));
+        assert_eq!(summary.binary_version, "aaa 9.9.9");
+        assert_eq!(summary.operations, vec!["enroll_agent".to_string()]);
+        let sent: InstallChoices = serde_json::from_slice(&std::fs::read(remote.join("probe.in")).unwrap()).unwrap();
+        assert!(sent == choices, "host가 보낸 choices");
+        let args = std::fs::read_to_string(remote.join("probe.args")).unwrap();
+        assert!(args.lines().any(|l| Some(l) == choices.state_dir.as_deref()), "원격 --state-dir = choices state_dir: {args}");
+        let view = serde_json::to_string(&h.setup_list().unwrap()).unwrap();
+        assert!(!view.contains("Application Support") && !view.contains(".local/state"), "계획 원문(경로)은 화면에 없다");
+        let private = install::plan_file(&h.state, &job.job);
+        assert_eq!(std::fs::metadata(&private).unwrap().permissions().mode() & 0o777, 0o600);
+        let placed = h.setup_load(&job.job).unwrap().remote_dir.unwrap();
+        assert!(Path::new(&placed).join("aaa").is_file());
+
+        // 적용: hash가 다르면·보기 기기·세션 안은 거부
+        let apply = |p: &str| FrontRequest::MachineSetupApply { job: job.job.clone(), plan_sha256: p.into() };
+        assert_eq!(h.call(DeviceRole::Controller, WEB, apply(&"0".repeat(64))).await.unwrap_err().code, ErrorCode::Conflict);
+        assert!(h.call(DeviceRole::Reader, "device:tv", apply(&plan_sha)).await.is_err());
+        assert!(h.call(DeviceRole::Local, "local:demo@01ARZ3NDEKTSV4RRFFQ69G5FAV", apply(&plan_sha)).await.is_err());
+        assert_eq!(h.setup_load(&job.job).unwrap().view.phase, MachineSetupPhase::Review);
+        h.call(DeviceRole::Controller, WEB, apply(&plan_sha)).await.unwrap();
+        // 적용이 시작되면(bootstrap 둘 뒤) 원격 worker 대신 grant로 등록한다
+        let mut rx = h.enroll_changed.subscribe();
+        let id = tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                let v = h.setup_load(&job.job).unwrap().view;
+                assert_eq!(v.phase, MachineSetupPhase::Installing, "{:?}", v.error);
+                if let Some(i) = v.install.as_ref()
+                    && i.last_event.as_deref() == Some("원격 install 적용 중")
+                {
+                    return i.installation_id.clone().unwrap();
+                }
+                rx.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("적용 단계");
+        let first: InstallBootstrapPackage = serde_json::from_slice(&std::fs::read(remote.join("boot0.in")).unwrap()).unwrap();
+        let second: InstallBootstrapPackage = serde_json::from_slice(&std::fs::read(remote.join("boot1.in")).unwrap()).unwrap();
+        assert!(first.authorization.enrollment.is_none(), "첫 package에는 등록 grant가 없다");
+        let grant = second.authorization.enrollment.clone().expect("둘째 package의 grant");
+        assert_eq!((grant.agent_identity.as_str(), grant.installation_id.as_str()), (agent.as_str(), id.as_str()));
+        assert_eq!(second.authorization.claims.plan_sha256, plan_sha);
+        let request = InstallEnrollRequest {
+            proto: aaa_proto::AGENT_LINK,
+            machine_id: aaa_common::util::new_id(),
+            machine_name: "lab-b".into(),
+            grant: grant.clone(),
+        };
+        h.install_enroll(&agent, &request, aaa_common::util::now_ms()).unwrap();
+        std::fs::write(remote.join("go"), b"go\n").unwrap();
+        let done = leave(&h, &job.job, MachineSetupPhase::Installing).await;
+        assert_eq!(done.phase, MachineSetupPhase::Installed, "{:?}", done.error);
+        let i = done.install.unwrap();
+        assert_eq!(i.machine.as_deref(), Some("lab-b"));
+        assert_eq!(i.result.unwrap().status, InstallStatus::Configured);
+        let args = std::fs::read_to_string(remote.join("apply.args")).unwrap();
+        assert!(args.contains(&format!("--resume\n{id}\n")), "{args}");
+        assert!(!Path::new(&placed).exists(), "원격 임시 폴더를 지웠다");
+        assert!(!private.exists(), "계획 파일을 지웠다");
+        Arc::downgrade(&h)
+    });
+    drop(rt);
+    install::tests_binary::set(None);
+    assert!(weak.upgrade().is_none());
+}
+
+/// 대본 원격이 알리는 agent TLS 신원(64자 hex)
+#[cfg(unix)]
+fn tls_like_identity() -> String {
+    hex::encode(Sha256::digest(aaa_common::util::new_id().as_bytes()))
+}
+
+/// 원격 install이 이 SSH를 믿지 않으면(exit 3, 비특권 sshd) 까닭을 보이고 원격 임시 폴더·계획을 남기지 않는다
+#[cfg(unix)]
+#[test]
+fn a_remote_install_that_refuses_this_ssh_fails_with_the_reason_and_leaves_nothing() {
+    use aaa_proto::install::InstallLogin;
+    let Some(lab) = lab() else { return };
+    let fake = fake_remote(&lab.root);
+    std::fs::write(lab.root.join("remote/probe.exit"), "3").unwrap();
+    install::tests_binary::set(Some((fake.clone(), "aaa 9.9.9".into())));
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let weak = rt.block_on(async {
+        let h = host_for(&lab);
+        let job = start(&h, "lab").await;
+        let job = leave(&h, &job.job, MachineSetupPhase::Connecting).await;
+        let key = job.host_keys[0].sha256.clone();
+        h.call(
+            DeviceRole::Controller,
+            WEB,
+            FrontRequest::MachineSetupTrust { job: job.job.clone(), host_key_sha256: key },
+        )
+        .await
+        .unwrap();
+        assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
+        let settings = MachineSetupSettings {
+            name: "lab-c".into(),
+            host: "127.0.0.1:7430".into(),
+            work_root: lab.root.join("work").to_string_lossy().into(),
+            work_mount: None,
+            harness: vec![],
+            login: InstallLogin::Defer,
+        };
+        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupPlan { job: job.job.clone(), settings })
+            .await
+            .unwrap();
+        let failed = leave(&h, &job.job, MachineSetupPhase::Planning).await;
+        assert_eq!(failed.phase, MachineSetupPhase::Failed);
+        assert!(failed.error.as_deref().unwrap().contains("시스템 SSH 서버"), "{:?}", failed.error);
+        assert_eq!(h.setup_load(&job.job).unwrap().remote_dir, None);
+        assert_eq!(remote_setup_dirs(&fake), Vec::<PathBuf>::new(), "원격 임시 폴더를 지웠다");
+        assert!(!install::plan_file(&h.state, &job.job).exists());
+        Arc::downgrade(&h)
+    });
+    drop(rt);
+    install::tests_binary::set(None);
+    assert!(weak.upgrade().is_none());
 }

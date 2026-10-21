@@ -187,7 +187,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
           </div>
         </SettingsGroup>
       )}
-      {admin === true && <MachineSetupPanel role={role} />}
+      {admin === true && <MachineSetupPanel role={role} machines={machines.map((m) => m.name)} />}
       <SettingsGroup title="등록된 머신">
         <div className="settings-item">
           <ul className="admin-list" data-testid="machine-list">

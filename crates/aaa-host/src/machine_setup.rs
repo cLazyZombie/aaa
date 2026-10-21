@@ -45,6 +45,9 @@ pub(crate) struct Job {
     pub view: MachineSetupView,
     #[serde(default)]
     pub key_lines: Vec<String>,
+    /// 원격에 aaa를 놓은 임시 폴더(M3). 끝나거나 지우면 정리한다
+    #[serde(default)]
+    pub remote_dir: Option<String>,
 }
 
 /// 사람이 넣은 대상을 ssh 인자로: 별칭·`host`·`user@host`·`host:port`·`user@[v6]:port`. 비밀번호(`user:pw@`)·옵션 꼴·공백은 거부한다
@@ -322,13 +325,17 @@ impl Ssh {
         if lines.is_empty() { Err(why(&r.stderr)) } else { Ok(lines) }
     }
 
-    /// 믿는 키로만 접속해 명령 하나
-    async fn exec(&self, target: &Target, command: &str) -> Ran {
+    /// 믿는 키로만 접속하는 명령(고정 스크립트 하나)
+    fn trusted(&self, target: &Target, command: &str) -> tokio::process::Command {
         let mut c = self.base(target);
         c.arg("-o").arg(format!("UserKnownHostsFile={} ~/.ssh/known_hosts ~/.ssh/known_hosts2", quote(&self.known)));
         c.args(["-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no"]);
         c.arg("--").arg(&target.dest).arg(command);
-        Self::run(c, RUN_TIMEOUT).await
+        c
+    }
+
+    async fn exec(&self, target: &Target, command: &str) -> Ran {
+        Self::run(self.trusted(target, command), RUN_TIMEOUT).await
     }
 }
 
@@ -407,7 +414,13 @@ impl Host {
         let Ok(rows) = self.db.machine_setups() else { return };
         for raw in rows {
             let Ok(mut job) = serde_json::from_str::<Job>(&raw) else { continue };
-            if matches!(job.view.phase, MachineSetupPhase::Connecting | MachineSetupPhase::Detecting) {
+            if matches!(
+                job.view.phase,
+                MachineSetupPhase::Connecting
+                    | MachineSetupPhase::Detecting
+                    | MachineSetupPhase::Planning
+                    | MachineSetupPhase::Installing
+            ) {
                 job.view.phase = MachineSetupPhase::Failed;
                 job.view.error = Some("host가 다시 시작해 작업이 멈췄다: 새로 시작한다".into());
                 self.setup_save(&mut job);
@@ -430,8 +443,12 @@ impl Host {
                 error: None,
                 created_ms: now,
                 updated_ms: now,
+                settings: None,
+                review: None,
+                install: None,
             },
             key_lines: vec![],
+            remote_dir: None,
         };
         self.setup_save(&mut job);
         self.db.audit(actor, "machine_setup_start", &job.view.target);
@@ -619,12 +636,21 @@ impl Host {
         Ok(job.view)
     }
 
-    pub(crate) fn setup_cancel(&self, id: &str, actor: &str) -> Result<(), ErrorBody> {
+    pub(crate) fn setup_cancel(self: &Arc<Self>, id: &str, actor: &str) -> Result<(), ErrorBody> {
         let _g = self.setup_gate.lock().unwrap();
         let job = self.setup_load(id)?;
+        if job.view.phase == MachineSetupPhase::Installing {
+            return Err(ErrorBody::new(ErrorCode::Conflict, "설치 중인 작업은 끝날 때까지 지우지 않는다"));
+        }
         self.db.machine_setup_delete(id).map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        let _ = std::fs::remove_dir_all(self.state.join("ssh").join("jobs").join(id));
         self.db.audit(actor, "machine_setup_cancel", &job.view.target);
         self.enroll_bump();
+        // 원격에 놓았던 aaa 임시 폴더를 지운다(실패해도 목록에서는 뺀다)
+        if let (Some(dir), Ok(t)) = (job.remote_dir, parse_target(&job.view.target)) {
+            let ssh = self.ssh();
+            tokio::spawn(async move { ssh.cleanup(&t, &dir).await });
+        }
         Ok(())
     }
 }
@@ -650,6 +676,11 @@ fn append_known(path: &Path, line: &str) -> std::io::Result<()> {
     }
     f.write_all(format!("{line}\n").as_bytes())
 }
+
+#[path = "machine_setup/binary.rs"]
+mod binary;
+#[path = "machine_setup/install.rs"]
+mod install;
 
 #[cfg(test)]
 #[path = "machine_setup/tests.rs"]
