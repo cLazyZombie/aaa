@@ -81,7 +81,7 @@ export function MachineSetupPanel({ role }: { role: DeviceRole }) {
               <input
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                placeholder="mac-b 또는 me@mac-b.example.ts.net:22"
+                placeholder="mac-b 또는 me@mac-b:22"
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}

@@ -10,7 +10,7 @@ fn targets_are_aliases_or_user_host_port_without_passwords_or_options() {
         assert_eq!(parse_target(raw).unwrap(), Target { dest: dest.into(), port }, "{raw}")
     };
     ok("mac-b", "mac-b", None);
-    ok(" me@mac-b.example.ts.net ", "me@mac-b.example.ts.net", None);
+    ok(" me@mac-b.example.com ", "me@mac-b.example.com", None);
     ok("me@mac-b:2222", "me@mac-b", Some(2222));
     ok("[::1]:2200", "::1", Some(2200));
     ok("me@[fe80::1%en0]", "me@fe80::1%en0", None);
@@ -46,14 +46,14 @@ fn host_key_fingerprints_match_ssh_keygen() {
 
 #[test]
 fn detection_output_maps_os_and_cpu() {
-    let posix = format!("motd\n{MARK}\nDarwin\narm64\n/Users/me\n/bin/zsh\naaa 0.1.2\n{END}\n");
+    let posix = format!("motd\n{MARK}\nDarwin\narm64\n/Users/<me>\n/bin/zsh\naaa 0.1.2\n{END}\n");
     let d = parse_detect(&posix).unwrap();
     assert_eq!((d.os.as_str(), d.arch.as_str(), d.raw.as_str()), ("macos", "aarch64", "Darwin arm64"));
     assert_eq!(
         (d.home.as_deref(), d.shell.as_deref(), d.aaa.as_deref()),
-        (Some("/Users/me"), Some("/bin/zsh"), Some("aaa 0.1.2"))
+        (Some("/Users/<me>"), Some("/bin/zsh"), Some("aaa 0.1.2"))
     );
-    let linux = format!("{MARK}\nLinux\nx86_64\n/home/me\n-\n-\n{END}");
+    let linux = format!("{MARK}\nLinux\nx86_64\n/home/<me>\n-\n-\n{END}");
     let d = parse_detect(&linux).unwrap();
     assert_eq!((d.os.as_str(), d.arch.as_str(), d.shell, d.aaa), ("linux", "x86_64", None, None));
     let ps = format!("{MARK}\r\nWindows\r\nAMD64\r\nC:\\Users\\me\r\n-\r\n-\r\n{END}\r\n");
