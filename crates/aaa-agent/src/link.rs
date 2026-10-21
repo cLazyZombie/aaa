@@ -64,7 +64,7 @@ pub async fn run_with_state(
     loop {
         let started = Instant::now();
         match connect(&target).await {
-            Ok(stream) => match session_state(&agent, stream, state.as_ref()).await {
+            Ok(stream) => match session_state(&agent, stream, state.as_ref(), &mut backoff).await {
                 Ok(()) => tracing::info!("host 연결이 닫혔다({target})"),
                 Err(e) => tracing::warn!("host 연결 끝: {e:#}"),
             },
@@ -163,6 +163,7 @@ async fn session_state(
     agent: &Arc<Agent>,
     stream: LocalStream,
     state: Option<&tokio::sync::watch::Sender<bool>>,
+    backoff: &mut Duration,
 ) -> Result<()> {
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);
@@ -243,6 +244,9 @@ async fn session_state(
                 initialized_result = &mut initialize, if !initialized => {
                     initialized_result?;
                     initialized = true;
+                    // 인증·초기 replay를 마친 연결은 짧아도 성공이다. 연속 host 재시작 때
+                    // 예전 실패의 30~45초 대기를 다시 물려주지 않는다.
+                    *backoff = Duration::from_millis(250);
                     if let Some(state) = state { state.send_replace(true); }
                     continue;
                 }
@@ -553,6 +557,56 @@ mod post_tests {
     use super::*;
     use aaa_common::util;
     use aaa_proto::{HostWelcome, PostInput, PostType};
+
+    /// 실제 Welcome/replay 완료 사건으로 성공을 구분한다. 10초를 자거나 시계를 늘리지 않는다.
+    #[tokio::test]
+    async fn authenticated_short_connections_reset_backoff_but_rejections_preserve_it() {
+        for accepted in [false, true] {
+            let path = std::env::temp_dir().join(format!("aap-reconnect-{}", util::new_id()));
+            let agent = Agent::new(path.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+            let (stream, peer) = tokio::io::duplex(65536);
+            let (state, mut ready) = tokio::sync::watch::channel(false);
+            let running = tokio::spawn({
+                let agent = agent.clone();
+                async move {
+                    let mut backoff = Duration::from_secs(30);
+                    let result = session_state(&agent, Box::new(stream), Some(&state), &mut backoff).await;
+                    (result, backoff)
+                }
+            });
+            let (r, w) = tokio::io::split(peer);
+            let tx = spawn_writer(w, MAX_FRAME);
+            let mut rx = FrameRx::new(r, MAX_FRAME);
+            assert!(matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Hello(_)));
+            if accepted {
+                tx.json(&LinkMsg::Welcome(HostWelcome {
+                    identity: None,
+                    proto: AGENT_LINK,
+                    host_id: "host".into(),
+                    features: vec![],
+                }))
+                .await
+                .unwrap();
+                drop(
+                    tokio::time::timeout(Duration::from_secs(3), ready.wait_for(|ready| *ready))
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                );
+            }
+            tx.json(&LinkMsg::Reject(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::Forbidden, "fixture closed")))
+                .await
+                .unwrap();
+            let (result, backoff) = tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap();
+            assert!(result.is_err());
+            assert!(!*ready.borrow());
+            assert_eq!(backoff, if accepted { Duration::from_millis(250) } else { Duration::from_secs(30) });
+            drop(tx);
+            drop(rx);
+            drop(agent);
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
     /// Hello를 읽은 뒤 Welcome을 보류한다. 그 사이 화면 감지가 기억한 idle은 연결 뒤 반드시 전달되고,
     /// Hello를 읽는 host에는 이미 받은 진행 사건을 중복해서 보내지 않는다. Ping/Pong이 전달 완료 울타리다.
     #[tokio::test]
@@ -584,7 +638,7 @@ mod post_tests {
             let (stream, peer) = tokio::io::duplex(1 << 20);
             let running = tokio::spawn({
                 let agent = agent.clone();
-                async move { session_state(&agent, Box::new(stream), None).await }
+                async move { session_state(&agent, Box::new(stream), None, &mut Duration::from_millis(250)).await }
             });
             let (r, w) = tokio::io::split(peer);
             let tx = spawn_writer(w, MAX_FRAME);
@@ -635,7 +689,7 @@ mod post_tests {
             let (stream, peer) = tokio::io::duplex(64);
             let running = tokio::spawn({
                 let agent = agent.clone();
-                async move { session_state(&agent, Box::new(stream), None).await }
+                async move { session_state(&agent, Box::new(stream), None, &mut Duration::from_millis(250)).await }
             });
             let (r, w) = tokio::io::split(peer);
             let tx = spawn_writer(w, MAX_FRAME);
@@ -746,7 +800,7 @@ mod post_tests {
         let (state, mut observed_ready) = tokio::sync::watch::channel(false);
         let running = tokio::spawn({
             let a = agent.clone();
-            async move { session_state(&a, Box::new(stream), Some(&state)).await }
+            async move { session_state(&a, Box::new(stream), Some(&state), &mut Duration::from_millis(250)).await }
         });
         let (r, w) = tokio::io::split(peer);
         let tx = spawn_writer(w, MAX_FRAME);
