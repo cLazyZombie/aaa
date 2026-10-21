@@ -1407,6 +1407,10 @@ pending: number, };
 
 export type ThreadQuestions = {
 /**
+ * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+ */
+format_warning?: string,
+/**
  * FRONT_API 1.96. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
  */
 review: boolean,
@@ -1429,6 +1433,10 @@ files_base?: string,
 draft?: QuestionAnswerView, };
 
 export type ThreadQuestion = {
+/**
+ * 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
+ */
+after?: string,
 /**
  * 프로젝트별 영속 순번(q-1000부터). 옛 보고 파서·host는 생략한다.
  */

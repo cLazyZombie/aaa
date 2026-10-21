@@ -161,6 +161,8 @@ pub(crate) fn thread_rec(
         next,
         questions: Vec::new(),
         question_answer: None,
+        question_warning: None,
+        question_warning_sent: None,
         copy_failures: 0,
         copy_retry_at_ms: 0,
         copy: report.map(|_| "complete".to_string()),

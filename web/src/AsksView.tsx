@@ -322,7 +322,7 @@ function QuestionCard({
     };
   }, []);
   const customId = useId();
-  const off = pending || !canControl;
+  const off = pending || !canControl || !!q.format_warning;
   const text = custom.trim();
   const got = picks.filter((p) => p !== null).length;
   const all = got === q.items.length;
@@ -339,7 +339,7 @@ function QuestionCard({
     if (shown.current) setPending(false);
   };
   // 다 골랐거나 직접 쓴 답이 있으면 그대로, 아니면 남은 질문을 추천으로 채워 보낸다
-  const submit = () => void (all || text ? send(picks) : filled && send(filled));
+  const submit = () => { if (!off) void (all || text ? send(picks) : filled && send(filled)); };
   const label = all ? `답 보내기 (${q.items.length})` : text ? "답 보내기" : filled ? "추천대로 보내기" : "답 보내기";
   const base = q.files_base;
   return (
@@ -349,6 +349,7 @@ function QuestionCard({
         {t ? <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
           : <span className="prompt-card-where">coordinator · {when(request!.created_ms)}</span>}
       </header>
+      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">{q.format_warning} 보고를 고친 뒤 답할 수 있다.</p>}
       <QuestionReports items={q.items} body={request?.body} reportId={t?.report_id} project={t?.project} base={base} />
       {request && <h2 className="ask-card-title">{request.title}</h2>}
       {q.items.map((item, n) => {
@@ -380,6 +381,7 @@ function QuestionCard({
                 );
               })}
             </div>
+            {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
           </div>
         );
       })}
@@ -504,6 +506,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
                 );
               })}
             </div>
+            {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
             {pick === null && <p className="ask-done-text">직접 쓴 답으로 대신함</p>}
           </div>
         );
