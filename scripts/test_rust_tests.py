@@ -8,11 +8,78 @@ import tempfile
 import threading
 import unittest
 import subprocess
+from unittest.mock import patch
 
-from scripts.rust_tests import Job, execute, partitions
+from scripts.rust_tests import Job, execute, partitions, plan
 
 
 class RustTests(unittest.TestCase):
+    def test_long_binaries_follow_m13_without_losing_unknown_or_short_jobs(self):
+        artifacts = [dict(executable=name, manifest_path=f"/workspace/{name}/Cargo.toml",
+                          target=dict(name=name, kind=["test"]))
+                     for name in ("short", "e2e", "install", "new", "m13")]
+        names = ["rollout::one", "rollout::two", "rollout::three", "a", "b", "c"]
+        with patch("scripts.rust_tests.subprocess.check_output",
+                   return_value="\n".join(name + ": test" for name in names)):
+            jobs = plan(artifacts, 6, {"short": 1, "e2e": 17, "install": 40})
+        self.assertEqual([job.name for job in jobs],
+                         [f"m13-{n}" for n in range(1, 7)] + ["new", "install", "e2e", "short"])
+        self.assertCountEqual([name for job in jobs for name in job.tests or []], names)
+        for job in jobs:
+            self.assertEqual(job.cwd.name, "m13" if job.tests else job.name)
+
+    def test_waiting_large_job_does_not_block_a_fitting_job(self):
+        with tempfile.TemporaryDirectory(prefix="aaa-rust-admission-") as tmp, socket.socket() as listener:
+            root = Path(tmp)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            listener.settimeout(10)
+            port = listener.getsockname()[1]
+            fixture = root / "child.py"
+            fixture.write_text("""import socket, sys
+with socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=10) as link:
+    link.sendall(sys.argv[2].encode())
+    assert link.recv(1) == b'!'
+print(f'running {sys.argv[3]} tests')
+""")
+            errors = []
+            seen = []
+
+            def release():
+                links = []
+                try:
+                    # A가 CPU 2자리를 쓰는 동안 B·C(각2)는 기다리고 D(1)는 바로 들어와야 한다.
+                    for _ in range(2):
+                        child, _ = listener.accept()
+                        child.settimeout(10)
+                        links.append(child)
+                        seen.append(child.recv(1))
+                    self.assertCountEqual(seen, [b"A", b"D"])
+                    for child in links:
+                        child.sendall(b"!")
+                    for _ in range(2):
+                        child, _ = listener.accept()
+                        links.append(child)
+                        child.settimeout(10)
+                        seen.append(child.recv(1))
+                        child.sendall(b"!")
+                except Exception as error:
+                    errors.append(error)
+                finally:
+                    for child in links:
+                        child.close()
+
+            gate = threading.Thread(target=release)
+            gate.start()
+            jobs = [Job(name, [sys.executable, str(fixture), str(port), name, str(size)],
+                        root, [f"case-{n}" for n in range(size)])
+                    for name, size in (("A", 2), ("B", 2), ("C", 2), ("D", 1))]
+            results = execute(jobs, root, 3, 2, cpu_budget=3)
+            gate.join()
+            self.assertEqual(errors, [])
+            self.assertCountEqual(seen, [b"A", b"B", b"C", b"D"])
+            self.assertTrue(all(result["exit"] == 0 for result in results))
+
     def test_every_test_is_selected_exactly_once_including_rollout(self):
         names = [f"module::case_{n}" for n in range(99)] + ["rollout::restart"]
         for count in (1, 2, 3, 8):
