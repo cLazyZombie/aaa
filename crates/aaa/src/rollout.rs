@@ -85,7 +85,7 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                     json,
                     c.call(FrontRequest::RolloutStart {
                         id,
-                        spec: RolloutSpec { from, source_machine, sha256, commit, machines },
+                        spec: RolloutSpec { from, source_machine, sha256, commit, machines, restart: None },
                     })
                     .await?,
                 )

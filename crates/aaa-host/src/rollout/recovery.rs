@@ -25,7 +25,11 @@ impl Host {
             self.live_conn(machine)?.request(AgentRequest::DeployGuardControl { id: spec.id.clone(), control }).await?;
         self.guard_receipt(spec, response)
     }
-    fn guard_receipt(&self, spec: &DeployGuardSpec, response: AgentResponse) -> Result<DeployGuardView, ErrorBody> {
+    pub(super) fn guard_receipt(
+        &self,
+        spec: &DeployGuardSpec,
+        response: AgentResponse,
+    ) -> Result<DeployGuardView, ErrorBody> {
         let AgentResponse::DeployGuard { guard } = response else {
             return Err(internal("감시 영수증이 아니다"));
         };
@@ -38,12 +42,37 @@ impl Host {
         if !r.recovery_enabled {
             return Ok(());
         }
+        let had = r.steps.iter().filter(|s| s.guard.is_some()).count();
+        let Some(restart) = self.set_guard_spec(r, cursor)? else {
+            return Ok(());
+        };
+        if r.steps.iter().filter(|s| s.guard.is_some()).count() != had {
+            self.save_rollout(r)?;
+        }
+        let machine = r.steps[restart].machine.clone();
+        let spec = r.steps[restart].guard.as_ref().unwrap();
+        let response = self.live_conn(&machine)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await?;
+        let view = self.guard_receipt(spec, response)?;
+        if matches!(view.phase, Phase::Failed | Phase::Cancelled) {
+            return Err(err(ErrorCode::BadRequest, "독립 복구 감시가 준비되지 않았다"));
+        }
+        if !r.steps[restart].guard_ready {
+            r.steps[restart].guard_ready = true;
+            self.save_rollout(r)?;
+        }
+        Ok(())
+    }
+    /// 이 단계가 세울 감시의 재시작 단계 번호. 아직 감시 정본이 없으면 만든다(저장은 부르는 쪽이 한다)
+    pub(super) fn set_guard_spec(&self, r: &mut RolloutView, cursor: usize) -> Result<Option<usize>, ErrorBody> {
         let step = &r.steps[cursor];
-        let service = match step.phase {
-            RolloutPhase::HostUpdate => DeployService::Host,
-            RolloutPhase::AgentUpdate => DeployService::Agent,
-            RolloutPhase::AgentRestart if step.machine == r.spec.machines[0] => DeployService::Agent,
-            _ => return Ok(()),
+        let service = match (r.spec.restart, step.phase) {
+            // 재시작만 하는 rollout: 그 단계 자체를 감시한다(교체가 없어 설치 작업·공유 실행 파일 복구가 없다)
+            (Some(service), RolloutPhase::HostRestart | RolloutPhase::AgentRestart) => service,
+            (Some(_), _) => return Ok(None),
+            (None, RolloutPhase::HostUpdate) => DeployService::Host,
+            (None, RolloutPhase::AgentUpdate) => DeployService::Agent,
+            (None, RolloutPhase::AgentRestart) if step.machine == r.spec.machines[0] => DeployService::Agent,
+            _ => return Ok(None),
         };
         let machine = step.machine.clone();
         let phase = if service == DeployService::Host { RolloutPhase::HostRestart } else { RolloutPhase::AgentRestart };
@@ -53,13 +82,15 @@ impl Host {
             .position(|s| s.machine == machine && s.phase == phase)
             .ok_or_else(|| internal("감시할 재시작 단계가 없다"))?;
         if r.steps[restart].guard.is_none() {
+            let before = if r.spec.restart.is_some() { phase } else { RolloutPhase::Preflight };
             let mut baseline = r
                 .steps
                 .iter()
-                .find(|s| s.machine == machine && s.phase == RolloutPhase::Preflight)
+                .find(|s| s.machine == machine && s.phase == before)
                 .and_then(|s| s.baseline.clone())
                 .ok_or_else(|| internal("배포 전 실행 신원이 없다"))?;
-            let host_machine = machine == r.spec.machines[0];
+            // 공유 실행 파일을 바꾼 host 머신만 복구 때 host·agent를 함께 다시 띄운다. 재시작만 하면 바꾼 파일이 없다
+            let host_machine = r.spec.restart.is_none() && machine == r.spec.machines[0];
             let old_host_instance = if service == DeployService::Host {
                 self.rollout_instance.clone()
             } else {
@@ -107,19 +138,8 @@ impl Host {
                 restart_job: aaa_common::util::new_id(),
                 host_restart_job: aaa_common::util::new_id(),
             });
-            self.save_rollout(r)?;
         }
-        let spec = r.steps[restart].guard.as_ref().unwrap();
-        let response = self.live_conn(&machine)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await?;
-        let view = self.guard_receipt(spec, response)?;
-        if matches!(view.phase, Phase::Failed | Phase::Cancelled) {
-            return Err(err(ErrorCode::BadRequest, "독립 복구 감시가 준비되지 않았다"));
-        }
-        if !r.steps[restart].guard_ready {
-            r.steps[restart].guard_ready = true;
-            self.save_rollout(r)?;
-        }
-        Ok(())
+        Ok(Some(restart))
     }
     fn begin_recovery(&self, r: &mut RolloutView, view: DeployGuardView, reason: String) -> Result<(), ErrorBody> {
         let state_changed = r.state != RolloutState::Recovering;
@@ -148,9 +168,15 @@ impl Host {
             return self.save_rollout(r);
         };
         let machine = r.steps[cursor].machine.clone();
-        if matches!(r.steps[cursor].phase, RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate)
+        // 감시를 세우기 전(교체 전, 재시작 rollout은 재시작 전)이면 아무것도 바꾸지 않았다
+        if (matches!(r.steps[cursor].phase, RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate)
+            || r.spec.restart.is_some())
             && !r.steps.iter().any(|s| s.job_id == spec.id && s.guard_ready)
         {
+            // 세우기의 답만 잃었으면 agent에 감시가 서 있다: 그 머신의 다음 감시 세우기를 시한까지 막지 않게 취소해 둔다
+            if r.spec.restart.is_some() {
+                let _ = self.guard_control(&machine, &spec, Control::Cancel).await;
+            }
             r.state = RolloutState::Stopped;
             r.error = Some(reason);
             return self.save_rollout(r);
@@ -172,6 +198,7 @@ impl Host {
                 observed: vec![],
                 installed_sha256: String::new(),
                 error: None,
+                pending_web: None,
             },
             Err(e) => {
                 r.state = RolloutState::RecoveryFailed;
@@ -352,6 +379,7 @@ mod tests {
                 software: "aaa 0.1.2".into(),
                 instance: "old".into(),
                 started_ms: 1,
+                web: None,
             },
             expected_sha256: r.spec.sha256.clone(),
             expected_software: "aaa 0.1.2".into(),
@@ -377,6 +405,7 @@ mod tests {
             observed: vec![],
             installed_sha256: r.spec.sha256.clone(),
             error: Some("failed".into()),
+            pending_web: None,
         };
         (r, view)
     }
@@ -450,6 +479,7 @@ mod tests {
                         sha256: None,
                         selfcheck: None,
                         sessions: vec![],
+                        identity: None,
                         harness: vec![],
                     },
                     false,

@@ -684,6 +684,7 @@ mod tests {
                 sha256: None,
                 selfcheck: None,
                 sessions: vec![],
+                identity: None,
                 harness: vec![],
             },
             true,

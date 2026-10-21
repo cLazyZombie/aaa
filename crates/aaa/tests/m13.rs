@@ -5752,6 +5752,7 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
         sha256: None,
         selfcheck: None,
         sessions: vec![],
+        identity: None,
         harness: vec![],
     }))
     .await
@@ -6259,35 +6260,72 @@ esac
     assert_eq!(std::fs::read(&exe).unwrap(), original);
 
     if cfg!(target_os = "macos") {
-        for (role, target) in [("host", "labA"), ("agent", "labB")] {
-            let (rc, out, err) =
-                probe(&w, &pane, &mut probe_number, &format!("service restart --role {role} --machine {target}"));
+        // 재시작은 재시작만 하는 rollout이다(W6c, 답 1A): 독립 감시가 새 agent를 확인해야 끝난다. 가짜 launchctl은 기록만
+        // 하므로 감독자 대신 같은 실행 파일로 다시 띄운다. host 재시작은 m13 `rollout`이 웹 응답까지 본다
+        let restart = |w: &World, n: &mut usize| {
+            let (rc, out, err) = probe(w, &pane, n, "service restart --role agent --machine labB");
             assert_eq!(rc, "0", "{out}\n{err}");
             let receipt: Value = serde_json::from_str(&out).unwrap();
-            let id = receipt["job"]["id"].as_str().unwrap();
-            // machine 생략도 host의 영구 대상 기록을 따른다.
-            let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --wait"));
-            assert_eq!(rc, "0", "{out}\n{err}");
-            let receipt: Value = serde_json::from_str(&out).unwrap();
-            assert_eq!(receipt["machine"], target);
-            assert_eq!(receipt["job"]["state"], "completed");
-            assert!(receipt["job"]["result"].as_str().unwrap().contains(&format!("dev.aaa.{role}")));
-        }
+            assert_eq!(receipt["rollout"]["spec"]["restart"], "agent", "{out}");
+            receipt["rollout"]["id"].as_str().unwrap().to_string()
+        };
+        let id = restart(&w, &mut probe_number);
+        wait_for("원격 agent 감독자 재시작 기록", T, || {
+            std::fs::read_to_string(&service_log).ok().filter(|c| c.contains("/dev.aaa.agent"))
+        });
+        w.lab.kill("agentB-copy");
+        w.lab.spawn_command("agentB-restarted", {
+            let mut cmd = b.cmd_bin(&exe, &["agent", "--host", &w.addr, "--name", "labB"]);
+            cmd.envs(service_env);
+            cmd
+        });
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("deploy status {id} --wait"));
+        assert_eq!(rc, "0", "{out}\n{err}");
+        let done: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(done["rollout"]["state"], "done", "{out}");
         let calls = std::fs::read_to_string(&service_log).unwrap();
-        assert_eq!(calls.lines().count(), 2, "{calls}");
-        assert!(calls.lines().all(|l| l.starts_with("kickstart -k gui/")), "{calls}");
-        assert!(calls.contains("/dev.aaa.host") && calls.contains("/dev.aaa.agent"), "{calls}");
+        assert_eq!(calls.lines().count(), 1, "{calls}");
+        assert!(calls.lines().all(|l| l.starts_with("kickstart -k gui/") && l.ends_with("/dev.aaa.agent")), "{calls}");
+        // 감독자 재시작이 실패하면 작업을 다시 보내지 않는다. 감시가 한 번 더 다시 띄워 보고, 그래도 확인하지 못하면 복구 확인 필요다
         std::fs::write(&service_fail, "fail").unwrap();
+        let id = restart(&w, &mut probe_number);
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("deploy status {id} --wait"));
+        assert_eq!(rc, "1", "{out}\n{err}");
+        let failed: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(failed["rollout"]["state"], "recovery_failed", "{out}");
+        assert!(failed["rollout"]["error"].as_str().unwrap().contains("injected restart failure"), "{out}");
+        assert_eq!(
+            std::fs::read_to_string(&service_log).unwrap().lines().count(),
+            3,
+            "작업 한 번과 감시의 복구 한 번만"
+        );
+        std::fs::remove_file(&service_fail).unwrap();
+        // 개별 update가 설치 파일을 바꾼 뒤의 재시작은 같은 판 확인이 아니라 그 파일 띄우기다: 감시를 세우지 않고 재시작 rollout은
+        // 중단으로 남기며, 같은 ID의 감시 밖 개별 재시작 작업으로 간다(답 1A의 「개별 update·rollback은 guard 밖」)
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &update);
+        assert_eq!(rc, "0", "{out}\n{err}");
+        let id = serde_json::from_str::<Value>(&out).unwrap()["job"]["id"].as_str().unwrap().to_string();
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --machine labB --wait"));
+        assert_eq!(rc, "0", "{out}\n{err}");
+        assert_eq!(std::fs::read(&exe).unwrap(), changed);
         let (rc, out, err) = probe(&w, &pane, &mut probe_number, "service restart --role agent --machine labB");
         assert_eq!(rc, "0", "{out}\n{err}");
-        let receipt: Value = serde_json::from_str(&out).unwrap();
-        let id = receipt["job"]["id"].as_str().unwrap();
-        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --wait"));
-        assert_eq!(rc, "1", "{out}\n{err}");
-        let receipt: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(receipt["job"]["state"], "failed");
-        assert!(receipt["job"]["result"].as_str().unwrap().contains("injected restart failure"));
-        assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 3, "실패를 다시 실행했다");
+        assert!(err.contains("감시 밖 개별 재시작"), "{err}");
+        let job: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            (&job["job"]["action"]["action"], &job["job"]["action"]["service"]),
+            (&"restart".into(), &"agent".into()),
+            "{out}"
+        );
+        let id = job["job"]["id"].as_str().unwrap();
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --machine labB --wait"));
+        assert_eq!(rc, "0", "{out}\n{err}");
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed", "{out}");
+        assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 4, "개별 재시작 한 번");
+        let (_, out, err) = probe(&w, &pane, &mut probe_number, &format!("deploy status {id}"));
+        let stopped: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}\n{err}"));
+        assert_eq!(stopped["rollout"]["state"], "stopped", "{out}");
+        assert!(stopped["rollout"]["error"].as_str().unwrap().contains(&format!("aaa update status {id}")), "{out}");
     }
 
     // 사람이 설정을 철회하면 다음 요청부터 즉시 막는다. 이전 작업 조회는 계속 된다.

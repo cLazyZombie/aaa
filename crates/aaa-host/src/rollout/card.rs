@@ -14,6 +14,7 @@ impl Host {
             version: r.version,
             sha256: r.spec.sha256,
             commit: r.spec.commit,
+            restart: r.spec.restart,
             cursor: r.cursor,
             steps: r
                 .steps
@@ -62,11 +63,12 @@ pub(super) fn completion_item(r: &RolloutView) -> Option<InboxItem> {
     if recovery::active(r.state) {
         return None;
     }
+    let what = if r.spec.restart.is_some() { "재시작" } else { "배포" };
     let state = match r.state {
-        RolloutState::Done => "배포 완료",
-        RolloutState::StoppedRolledBack => "배포 실패 · 복구 완료",
-        RolloutState::RecoveryFailed => "배포 실패 · 복구 확인 필요",
-        _ => "배포 중단",
+        RolloutState::Done => format!("{what} 완료"),
+        RolloutState::StoppedRolledBack => format!("{what} 실패 · 복구 완료"),
+        RolloutState::RecoveryFailed => format!("{what} 실패 · 복구 확인 필요"),
+        _ => format!("{what} 중단"),
     };
     Some(InboxItem {
         id: format!("rollout-{}", r.id),

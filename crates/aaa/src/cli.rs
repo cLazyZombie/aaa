@@ -829,6 +829,12 @@ struct PostArgs {
 enum ThreadCmd {
     /// thread를 시작한다: 그 머신 agent가 worktree(또는 작업 폴더)를 만들고 profile로 agent를 띄운 뒤 brief를 안내한다
     Start {
+        /// 사용자가 직접 실행 한도를 무시하고 시작한다(자동 시작·예약에는 쓰지 않는다)
+        #[arg(long)]
+        over_limit: bool,
+        /// coordinator가 해당 task를 강제 시작하라는 사용자 지시 근거를 남긴다
+        #[arg(long, requires = "over_limit")]
+        user_request: Option<String>,
         /// (옛 꼴의 프로젝트, 생략한다)
         #[arg(hide = true)]
         project: Option<String>,
@@ -2055,6 +2061,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 ThreadCmd::Start {
+                    over_limit,
+                    user_request,
                     holds,
                     project,
                     title,
@@ -2084,6 +2092,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     let project = project_or_here(project)?;
                     let req = FrontRequest::ThreadStart {
+                        over_limit,
+                        user_request,
                         holds,
                         background,
                         project: project.clone(),
@@ -3618,6 +3628,15 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     );
     if let Some(id) = &t.report_id {
         let _ = writeln!(s, "보고: {id}");
+    }
+    if let Some(o) = &t.over_limit {
+        let _ = writeln!(
+            s,
+            "한도 초과로 시작: {} · {}{}",
+            o.actor,
+            o.at_ms,
+            o.user_request.as_ref().map(|r| format!(" · 사용자 지시: {r}")).unwrap_or_default()
+        );
     }
     render_automation_origin(s, t);
     let _ = writeln!(s, "인증: {}", t.account.as_deref().unwrap_or("로컬 로그인"));

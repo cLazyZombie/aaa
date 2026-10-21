@@ -60,6 +60,7 @@ pub(crate) const THREAD_GUIDE: &str = "\
 
 - 질문마다 `### N. 질문` 머리를 쓰고, 그 아래에 판단에 필요한 것을 Markdown으로 다 싣는다: 지금 모양·시안 그림, 표, 짧은 code, 근거 링크. 카드 본문이 웹페이지처럼 보이므로 시안·근거를 따로 보고서에 모아 두고 가리키지 않는다(보고서는 남겨도 되지만 질문에 필요한 것은 질문에 다 있어야 한다).
 - 그림·파일은 library 폴더에 두고 `library/…` 상대 경로로 쓴다(그 밖의 경로·인터넷 주소의 그림은 카드에 뜨지 않는다). library 파일을 먼저 두고 보고를 마지막에 쓴다.
+- 선택지 글자에는 굵게·기울임을 쓰지 않는다. `- **A(추천)** 진행` 대신 `- A 진행 (추천)`으로 쓴다. 질문은 `### 1. 질문` 꼴로 쓴다.
 - 선택지는 질문 끝에 줄 머리에서 `- A 선택지 (추천) — 까닭` 꼴로 2~4개 쓴다. 추천은 맨 앞에 `(추천)`을 붙이고 ` — ` 뒤에 까닭 한 줄을 쓴다. 선택지마다 시안 그림을 붙이려면 그 줄 아래 두 칸 들여 `![A안](library/a.png)`을 쓴다(카드가 선택지마다 큰 그림으로 보인다).
 
 ```
@@ -267,6 +268,7 @@ mod tests {
         );
         assert!(brief.contains("thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만"));
         assert!(brief.contains("[q-NNNN 질문](<웹 주소>/#question=q-NNNN)"));
+        assert!(brief.contains("`- **A(추천)** 진행` 대신 `- A 진행 (추천)`"));
         // 안내의 꼴 그대로 쓴 보고를 host가 카드로 읽는다(plan §8.329)
         let fence = brief.split("```\n").nth(1).unwrap();
         let qs = aaa_proto::report_questions(fence);
