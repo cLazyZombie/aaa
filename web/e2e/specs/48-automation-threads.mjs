@@ -2,7 +2,7 @@
 // thread와 같은 자리에 섞어 왼쪽 호박색 막대와 「자동화 thread」 표지로 보인다. 표지는 자동화 패널의 그 규칙 상세를, 자동화 패널의
 // 「열림」 칩과 기록의 thread 번호는 그 thread를 연다. 「모든 thread」는 「자동화만」으로 거른다. 시간은 기다리지 않는다: thread 기록을 기다린다.
 import fs from "node:fs";
-import { root, aaa, step, until, domIs, drawerSettled, inList, openSettings, shot } from "../lib/harness.mjs";
+import { root, claudeIdle, claudeWorking, aaa, step, until, domIs, drawerSettled, inList, openSettings, shot } from "../lib/harness.mjs";
 export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1" };
 
 const project = "auto-bar";
@@ -89,6 +89,11 @@ export default async function ({ page }) {
   let auto;
   let human;
   await step("자동화 thread 만들기와 화면(데스크톱·패드·휴대폰, 밝음·어두움): 실제 host가 규칙으로 띄운 thread가 사람이 띄운 thread와 같은 목록에 선다", async () => {
+    // 가짜 harness도 실제 Claude 작업 화면을 내보내 상태 칸에 파란 점이 그려지게 한다.
+    const config = `${root}/c/host.toml`;
+    fs.writeFileSync(config, fs.readFileSync(config, "utf8").replace('agent = "custom"', 'agent = "claude"'));
+    const fake = `${root}/fake.sh`;
+    fs.writeFileSync(fake, fs.readFileSync(fake, "utf8").replace("printf 'fake> '", claudeIdle).replaceAll("printf 'fake> '", claudeWorking));
     aaa("project", "create", project);
     // 이 실험실의 host.toml에는 [safety]가 없어 프로젝트의 옛 자리 값을 쓴다(사람만 고치는 safety는 건드리지 않는다)
     fs.appendFileSync(`${dir()}/project.toml`, '\nstart_threads = "auto"\n');
@@ -159,6 +164,40 @@ export default async function ({ page }) {
       // 휴대폰 폭에서도 「자동화 thread」 이름을 유지한다
       const shown = await tag.evaluate((el) => el.innerText.replace(/\s+/g, " ").trim());
       if (shown !== "자동화 thread") throw new Error(`${device} 표지 ${shown}`);
+      await closeList(page);
+    }
+    await page.setViewportSize(SIZES.desktop);
+  });
+
+  await step("상태 점 열: coordinator·자동화·일반 thread가 선택·머신 이름 길이와 관계없이 데스크톱·휴대폰에서 정렬된다", async () => {
+    const ids = ["pane-auto-bar coordinator", `thread-${project}-${auto.id}`, `thread-${project}-${human}`];
+    aaa("pane", "run", `${project} coordinator`, "상태 점 검사");
+    await domIs(page, "세 줄의 실제 작업 점", (ids) => ids.every((id) => document.querySelector(`[data-panel="work"] [data-testid="${id}"] .sidebar-status-dot`)), ids);
+    for (const [device, viewport] of Object.entries(SIZES)) {
+      await page.setViewportSize(viewport);
+      await openList(page);
+      for (const selected of ids) {
+        // 실제 줄 선택 뒤 휴대폰에서는 다시 서랍을 연다.
+        await page.locator(`[data-panel="work"] [data-testid="${selected}"]`).click();
+        await openList(page);
+        const positions = await page.evaluate((ids) => ids.map((id, index) => {
+          const row = document.querySelector(`[data-panel="work"] [data-testid="${id}"]`);
+          // 실제 머신 연결은 유지하고, 표시 글의 짧음·길음만 늘려 줄 축소를 검사한다.
+          const machine = row.querySelector(".thread-machine");
+          const original = machine?.textContent;
+          if (machine) machine.textContent = index === 1 ? "mac-a" : "mac-with-a-long-machine-name";
+          const header = row.closest(".workspace-header").getBoundingClientRect();
+          const status = row.querySelector(".sidebar-pane-meta").getBoundingClientRect();
+          const copy = row.querySelector(".workspace-copy").getBoundingClientRect();
+          if (machine) machine.textContent = original;
+          return { id, x: status.x + status.width / 2, right: header.right, overlap: copy.right - status.left };
+        }), ids);
+        if (positions.some((p) => Math.abs(p.x - positions[0].x) > 0.5 || p.overlap > 0.5)) {
+          throw new Error(`${device}/${selected} 상태 점 정렬 ${JSON.stringify(positions)}`);
+        }
+      }
+      await dropletsGone(page);
+      await shot(page, `status-column-${device}`);
       await closeList(page);
     }
     await page.setViewportSize(SIZES.desktop);
