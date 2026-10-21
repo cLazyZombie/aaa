@@ -36,7 +36,6 @@ import { ListChecks, Menu, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
-import { useInboxBadge } from "./InboxPanel";
 import type { RolloutSnapshot } from "./RolloutCard";
 import { needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
@@ -414,7 +413,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
   const [automationBadge, setAutomationBadge] = useState(0);
-  const inboxBadge = useInboxBadge();
   const automationLoading = useRef(false);
   const automationReload = useRef(false);
   const automationActive = useRef(true);
@@ -1228,7 +1226,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
-    inbox: { count: inboxBadge, label: "끝내지 않은 알림" },
   };
   // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
   useEffect(() => watchBadgeFocus(), []);

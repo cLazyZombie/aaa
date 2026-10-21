@@ -6766,3 +6766,11 @@ Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 
 - **작성·경고.** 그림·음원·JSON·script는 library 안에 두고 상대 URL을 쓴다. iOS 음원 혼합은 사용자 누름에서 AudioContext를 연 뒤 fetch·decodeAudioData·GainNode로 처리한다. AGENTS·thread brief·[보고서 작성 안내](library.md)에 제약과 예시를 적고 회수·publish·웹 업로드·실시간 등록·import에서 제한 API나 확인할 fetch를 찾으면 coordinator inbox에 경고한다. 정적 문자열 휴리스틱의 오탐·누락은 복사 성공이나 보안 경계를 대신하지 않는다.
 - **검증.** E2E71은 실제 host·agent와 Chromium/WebKit 390×844에서 사본·실시간 원본·인증 없는 공유 탭의 WAV 두 개 읽기·decode·혼합·ended와 격리를 확인한다. 출력 끝은 gain 0으로 두고 그 앞 analyser로 신호를 확인한다. HEAD·Range·XHR·하위 HTML 상대 읽기·경로 탈출·credentials·링크 폐기도 검사한다. connect-src를 host 전체로 넓히거나 CORS를 없앤 제품 변형에서 각각 격리·fetch 실패를 잡고 bytes 복구 뒤 정본에서 통과했다. 실제 iPhone 청취는 별도다. 기존 E2E21·59와 Rust library·보고 회수 keeper도 유지한다.
 - **착지 번호·호환.** 기준 origin/main `34bc1a04`의 마지막 §8.380·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 기능은 §8.381·E2E71을 이어 쓴다. Front/Agent wire 요청·타입 변경이 없어 FRONT_API 1.91·AGENT_LINK 1.11은 유지한다.
+
+
+### 8.382 사용자 화면의 알림함 숨기기(10-21, t-0590)
+
+- **사용자 화면.** coordinator 내부 알림을 그대로 보이던 활동 막대 알림함 아이콘·배지와 알림함/흐름 사건/post 패널 진입점을 숨긴다. 배지용 inbox 조회도 실행하지 않는다. 예전에 `inbox` 패널을 기억한 기기는 새로 열 때 「작업」을 고른다. 「답할 것」·작업 보고·내 보고서·확인 필요 알림은 유지한다.
+- **유지 범위.** ListFoot·UsageMeters의 바닥 사용량 칸과 coordinator CLI·host inbox 동작은 그대로다. 설정에 별도 진입점을 만들지 않고 내부 진단은 기존 CLI로 한다.
+- **검증.** 기존 E2E26·53·56·57·62를 새 패널 순서와 알림함 숨김에 맞춘다. 옛 선택 기억, 데스크톱·휴대폰·보기 기기, 사용량 배치, 확인 필요 post의 답함·inbox 기록과 CLI 조회·끝내기를 확인한다. main에서 추가된 E2E23의 종료 문서 API keeper는 더 이상 쓰지 않는 inbox 대신 asks 조회로 같은 경계를 확인한다. 정상/복귀 실제 응답과 종료 뒤 전송 없음 단언을 유지한다.
+- **착지 번호·호환.** 재개 착지 기준 origin/main `35ecad05`에서 마지막 §8.381·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인했다. 이번 변경은 §8.382를 이어 쓰며 wire 변경·새 E2E 파일이 없어 기존 API 판과 E2E 번호를 유지한다.
