@@ -240,7 +240,7 @@ struct MachineRt {
     agent_pid: Option<u32>,
     /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
     colors: Option<tokio::sync::mpsc::UnboundedSender<colors::ColorPush>>,
-    /// 마지막 hello의 CPU 종류·판·SHA·자가 점검(웹 머신 상세, plan §8.369)
+    /// 마지막 hello의 CPU 종류·판·SHA·자가 점검(웹 머신 상세, plan §8.370)
     build: MachineBuild,
 }
 

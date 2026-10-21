@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use aaa_proto::{ErrorBody, FollowUpLine, SummaryEntry, SummaryMark, ThreadSummaryView};
+use aaa_proto::{ErrorBody, FollowUpLine, SummaryEntry, SummaryMark, SummaryStep, SummaryStepState, ThreadSummaryView};
 
 use crate::Host;
 use crate::orch::{internal, write_atomic};
@@ -18,6 +18,8 @@ use crate::orch::{internal, write_atomic};
 pub(crate) const MAX_BYTES: usize = 1024;
 /// 목록 절마다 줄 수 상한
 pub(crate) const MAX_ITEMS: usize = 3;
+/// 전체 큰 작업은 완료한 것도 남긴다. hover에 모두 보일 수 있게 최대 5개다.
+pub(crate) const MAX_STEPS: usize = 5;
 /// 한 줄 상한(글자, 앞의 「누가 시각」은 빼고 센다). 문장이 아니라 짧은 구
 pub(crate) const MAX_LINE: usize = 30;
 /// 지시 첫 줄·보고 Decisions 줄을 보일 때 자르는 길이(남이 쓴 글이라 거부하지 않고 자른다)
@@ -31,20 +33,21 @@ pub(crate) const FORMAT: &str = "\
 # 목표
 <지금 목표, 짧은 구>
 처음: <목표가 바뀌었으면 처음 일(선택)>
-## 지금
-- <지금 할 것, 3줄 이하>
+## 진행
+- [x] <끝낸 큰 작업>
+- [~] <진행 중인 큰 작업>
+- [ ] <남은 큰 작업, 전체 5개 이하>
 ## 정함
 - 사용자 15:0x <정한 것>
 ## 바뀜
 - ~~사용자 14:0x <무효가 된 것>~~
-- 사용자 14:1x <최근 바뀐 것은 맨 아래>
-## 끝남
-- <끝난 하위 일>";
+- 사용자 14:1x <최근 바뀐 것은 맨 아래>";
 
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Parsed {
     pub goal: Option<String>,
     pub origin: Option<String>,
+    pub progress: Vec<SummaryStep>,
     pub now: Vec<String>,
     pub decided: Vec<SummaryEntry>,
     pub changed: Vec<SummaryEntry>,
@@ -54,6 +57,7 @@ pub(crate) struct Parsed {
 #[derive(Clone, Copy, PartialEq)]
 enum Part {
     Goal,
+    Progress,
     Now,
     Decided,
     Changed,
@@ -76,13 +80,14 @@ pub(crate) fn parse(text: &str) -> Result<Parsed, String> {
         if line.starts_with('#') {
             part = Some(match line {
                 "# 목표" => Part::Goal,
+                "## 진행" => Part::Progress,
                 "## 지금" => Part::Now,
                 "## 정함" => Part::Decided,
                 "## 바뀜" => Part::Changed,
                 "## 끝남" => Part::Done,
                 _ => {
                     return Err(format!(
-                        "{at}번 줄: 모르는 머리 `{line}`. 머리는 `# 목표`·`## 지금`·`## 정함`·`## 바뀜`·`## 끝남`이다"
+                        "{at}번 줄: 모르는 머리 `{line}`. 머리는 `# 목표`·`## 진행`·`## 지금`·`## 정함`·`## 바뀜`·`## 끝남`이다"
                     ));
                 }
             });
@@ -109,6 +114,25 @@ pub(crate) fn parse(text: &str) -> Result<Parsed, String> {
                     continue;
                 }
                 let len = match list {
+                    Part::Progress => {
+                        let (state, text) =
+                            if let Some(t) = item.strip_prefix("[x] ").or_else(|| item.strip_prefix("[X] ")) {
+                                (SummaryStepState::Done, t)
+                            } else if let Some(t) = item.strip_prefix("[~] ") {
+                                (SummaryStepState::Working, t)
+                            } else if let Some(t) = item.strip_prefix("[ ] ") {
+                                (SummaryStepState::Pending, t)
+                            } else {
+                                return Err(format!("{at}번 줄: 진행은 `[x] 완료`·`[~] 진행 중`·`[ ] 대기`로 쓴다"));
+                            };
+                        let text = text.trim();
+                        if text.is_empty() {
+                            return Err(format!("{at}번 줄: 진행 항목에 큰 작업 이름이 없다"));
+                        }
+                        short(at, text)?;
+                        p.progress.push(SummaryStep { text: text.to_string(), state });
+                        p.progress.len()
+                    }
                     Part::Now => {
                         short(at, item)?;
                         p.now.push(item.to_string());
@@ -132,10 +156,9 @@ pub(crate) fn parse(text: &str) -> Result<Parsed, String> {
                         p.done.len()
                     }
                 };
-                if len > MAX_ITEMS {
-                    return Err(format!(
-                        "{at}번 줄: 한 절은 {MAX_ITEMS}줄까지다. 지난 것은 빼고 지금 유효한 것만 둔다"
-                    ));
+                let limit = if list == Part::Progress { MAX_STEPS } else { MAX_ITEMS };
+                if len > limit {
+                    return Err(format!("{at}번 줄: 한 절은 {limit}줄까지다. 큰 작업으로 묶어 짧게 쓴다"));
                 }
             }
         }
@@ -364,6 +387,7 @@ impl Host {
             thread: id.to_string(),
             goal: parsed.goal,
             origin: parsed.origin,
+            progress: parsed.progress,
             now: parsed.now,
             decided: parsed.decided,
             changed: parsed.changed,
@@ -509,6 +533,30 @@ mod tests {
         let big = format!("# 목표\n{}\n{}", "가".repeat(30), "\n".repeat(MAX_BYTES));
         assert!(parse(&big).unwrap_err().contains("바이트"));
         assert!(parse(FORMAT).is_ok());
+    }
+
+    #[test]
+    fn progress_preserves_the_whole_order_and_validates_states_and_limits() {
+        let text = "# 목표\n휴대폰 표시 다듬기\n## 진행\n- [x] 표시 조건 확인\n- [~] 휴대폰에서만 숨김\n- [ ] PC·휴대폰 확인\n- [X] 기존 설정 보존\n- [ ] 변경 적용·정리";
+        let p = parse(text).unwrap();
+        assert_eq!(
+            p.progress.iter().map(|s| (s.text.as_str(), s.state)).collect::<Vec<_>>(),
+            vec![
+                ("표시 조건 확인", SummaryStepState::Done),
+                ("휴대폰에서만 숨김", SummaryStepState::Working),
+                ("PC·휴대폰 확인", SummaryStepState::Pending),
+                ("기존 설정 보존", SummaryStepState::Done),
+                ("변경 적용·정리", SummaryStepState::Pending),
+            ]
+        );
+        assert!(parse(&format!("{text}\n- [ ] 여섯째")).unwrap_err().contains("5줄"));
+        for item in ["[?] 모름", "진행 중", "[x]", "[ ]", "[~]", "[x]이름", "[ ]   "] {
+            assert!(parse(&format!("# 목표\n표시 확인\n## 진행\n- {item}")).is_err(), "{item}");
+        }
+        let boundary = format!("# 목표\n표시 확인\n## 진행\n- [ ] {}", "가".repeat(MAX_LINE));
+        assert!(parse(&boundary).is_ok());
+        assert!(parse(&format!("{boundary}가")).unwrap_err().contains("짧은 구"));
+        assert!(parse(T0393).unwrap().progress.is_empty(), "옛 요약에 상태를 추측해 넣지 않는다");
     }
 
     #[test]

@@ -25,7 +25,7 @@
 .admin-block { margin-top: 12px; }
 .settings-notes { margin: 8px 0 0; padding-left: 18px; font-size: var(--fs-sm); }
 @media (max-width: 640px) { .admin-plan { grid-template-columns: 1fr; } .admin-plan dd { margin-bottom: 6px; } }
-/* 머신 줄 요약·상세(웹 머신 추가 M0, plan §8.369). dl은 줄마다 div로 묶어 휴대폰에서 이름 아래 값이 온다 */
+/* 머신 줄 요약·상세(웹 머신 추가 M0, plan §8.370). dl은 줄마다 div로 묶어 휴대폰에서 이름 아래 값이 온다 */
 .machine-line { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .machine-detail { flex-basis: 100%; padding: 4px 0 2px; }
 .machine-detail .admin-plan { margin: 0; }

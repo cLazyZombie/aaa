@@ -1,4 +1,4 @@
-// 설정 「머신」의 머신 줄 요약과 상세(웹 머신 추가 M0, plan §8.369). 값은 host `state` 사건의 MachineView다: OS·CPU 종류·판·SHA는
+// 설정 「머신」의 머신 줄 요약과 상세(웹 머신 추가 M0, plan §8.370). 값은 host `state` 사건의 MachineView다: OS·CPU 종류·판·SHA는
 // 마지막 hello(host DB에도 남아 끊긴 뒤에도 보인다), 기능·자가 점검은 이 host 실행 중 마지막 연결의 것, 건강은 연결 중일 때의 보고.
 import type { MachineView } from "./gen/proto";
 

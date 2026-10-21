@@ -1,4 +1,4 @@
-// 설정 「머신」의 줄 요약·상세(src/machineDetail.ts, 웹 머신 추가 M0, plan §8.369). 값의 정본은 host MachineView다
+// 설정 「머신」의 줄 요약·상세(src/machineDetail.ts, 웹 머신 추가 M0, plan §8.370). 값의 정본은 host MachineView다
 // (lib.rs `machine_view_tests`: hello의 판·SHA가 host 재시작 뒤에도 남고, 판이 다르면 `software_differs`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

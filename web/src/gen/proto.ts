@@ -188,7 +188,7 @@ clock_skew_ms: number | null,
  */
 problems: Array<HealthProblem>,
 /**
- * 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.86부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.369)
+ * 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.87부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.370)
  */
 arch?: string,
 /**
@@ -1386,6 +1386,10 @@ at: string | null, text: string, dropped: boolean, };
 
 export type FollowUpLine = { at_ms: number | null, text: string, };
 
+export type SummaryStepState = "pending" | "working" | "done";
+
+export type SummaryStep = { text: string, state: SummaryStepState, };
+
 export type ThreadSummaryView = { project: string, thread: string,
 /**
  * 요약 파일 글(없으면 None)
@@ -1394,7 +1398,11 @@ text: string | null, goal: string | null,
 /**
  * 목표가 바뀌었을 때 처음 시킨 것
  */
-origin: string | null, now: Array<string>, decided: Array<SummaryEntry>, changed: Array<SummaryEntry>, done: Array<string>,
+origin: string | null,
+/**
+ * 전체 큰 작업(최대 5개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
+ */
+progress?: Array<SummaryStep>, now: Array<string>, decided: Array<SummaryEntry>, changed: Array<SummaryEntry>, done: Array<string>,
 /**
  * thread 보고 `## Decisions` 줄(agent가 정한 것)
  */

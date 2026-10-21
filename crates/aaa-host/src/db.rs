@@ -77,7 +77,7 @@ pub struct MachineRow {
     pub os: Option<String>,
     pub boot_id: Option<String>,
     pub last_seen_ms: Option<u64>,
-    /// 마지막 hello의 CPU 종류·판·실행 파일 SHA-256(웹 머신 상세, plan §8.369)
+    /// 마지막 hello의 CPU 종류·판·실행 파일 SHA-256(웹 머신 상세, plan §8.370)
     pub arch: Option<String>,
     pub software: Option<String>,
     pub sha256: Option<String>,
@@ -373,7 +373,7 @@ impl Db {
                  ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
             )?;
         }
-        // 머신의 CPU 종류·판·실행 파일 SHA-256(plan §8.369). 위와 같이 열만 더한다
+        // 머신의 CPU 종류·판·실행 파일 SHA-256(plan §8.370). 위와 같이 열만 더한다
         let has_arch = conn.prepare("SELECT 1 FROM pragma_table_info('machines') WHERE name='arch'")?.exists([])?;
         if !has_arch {
             conn.execute_batch(
