@@ -1,4 +1,4 @@
-// 할 일 상세와 편집 폼(할 일 보기 T1 §8.306의 상세를 편집 T2 §8.311에서 폼으로 넓혔다). 칸은 t-0469 §3.4: 제목·목록(새 목록)·owner
+// 할 일 상세와 편집 폼(할 일 보기 T1 §8.306의 상세를 편집 T2 §8.311에서 폼으로 넓혔다). 칸은 t-0469 §3.4: 제목·owner
 // (미할당·나·agent·사람)·메모(Markdown 미리보기)·상위 task·연결 thread. 폼 모양과 저장 흐름은 t3code ScheduledTasksSettings.tsx
 // `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안에, 닫지 않음)을 따른다. 보기 권한 기기는 T1의 읽기
 // 전용 상세 그대로다. thread 연결(T3, §8.316): 「coordinator에게 맡기기」(기본, herdr-projects popup.rs `task_key` `d`와 같은 뜻이나
@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
 import { Bot, ChevronLeft, Circle, CircleDot, Monitor, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
-import { QueueControls } from "./TaskQueue";
+import { QueueControls, type ReserveRequest } from "./TaskQueue";
 import { Markdown } from "./Markdown";
 import { uploadTaskFile } from "./api";
 import { TaskAttachments, dragHasFiles, filesOf, resolveReportLink, type PendingUpload } from "./TaskAttachments";
@@ -50,6 +50,7 @@ import {
   taskState,
   type TaskAttachment,
   type DraftWho,
+  type MoveDir,
   type TaskDraft,
   type TaskState,
   type ThreadGroups,
@@ -143,6 +144,12 @@ export function agentNames(owners: readonly OwnerChoice[] | null): string[] {
 
 export interface DetailProps {
   queueApi?: boolean;
+  /** 목록이 연 예약(끌어 놓기·⋯): 내용 확인을 바로 연다 */
+  reserveRequest?: ReserveRequest | null;
+  /** 예약 위로·아래로·맨 앞으로(목록이 거르기에 맞춰 순번을 정한다) */
+  onQueueStep?: (t: TaskView, dir: MoveDir) => void;
+  /** 예약을 풀었다 */
+  onUnreserved?: (t: TaskView) => void;
   /** 고른 task(새 task를 만드는 중이면 없음) */
   t: TaskView | null;
   board: TaskBoard;
@@ -214,9 +221,9 @@ export function TaskDetail(props: DetailProps) {
           <ChevronLeft className="task-close-back" aria-hidden="true" />
           <span className="task-close-back">할 일</span>
         </button>
-        <span className="task-detail-list">{t ? `${t.list || "(목록 없음)"} · ${t.line}줄` : props.gone ? "파일에서 빠짐" : "새 할 일"}</span>
+        <span className="task-detail-list">{t ? `${t.short_id ? `${t.short_id} · ` : ""}${t.line}줄` : props.gone ? "파일에서 빠짐" : "새 할 일"}</span>
       </header>
-      {t && props.queueApi && <QueueControls task={t} board={props.board} canEdit={props.canEdit} />}
+      {t && props.queueApi && <QueueControls task={t} board={props.board} canEdit={props.canEdit} request={props.reserveRequest} onStep={props.onQueueStep && ((dir) => props.onQueueStep!(t, dir))} onUnreserved={props.onUnreserved} />}
       {props.canEdit ? <TaskForm {...props} onCover={setCovered} /> : t && <ReadOnly {...props} onCover={setCovered} t={t} />}
     </aside>
   );
@@ -323,8 +330,6 @@ function Attention({ t, actions }: { t: TaskView; actions?: ReactNode }) {
   );
 }
 
-const NEW_LIST = "\u0000new";
-
 function TaskForm(props: DetailProps) {
   const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete, linkApi, onHandOff, onStart, attachApi, repoApi, onOpenAttachment, onChangeNotes } = props;
   const agents = useMemo(() => agentNames(owners), [owners]);
@@ -332,7 +337,6 @@ function TaskForm(props: DetailProps) {
   const [base, setBase] = useState<TaskView | null>(t);
   const [baseParent, setBaseParent] = useState<TaskAnchor | null>(() => (t ? parentAnchor(board, t) : null));
   const [draft, setDraft] = useState<TaskDraft>(() => (t ? draftOf(t, agents, baseParent) : (props.start ?? emptyDraft(board.lists.find((l) => l.name === "Backlog")?.name ?? board.lists[0]?.name ?? "Backlog"))));
-  const [newList, setNewList] = useState(false);
   // 메모가 있는 task는 그린 메모부터 보인다(보기 기기와 같다). 「고치기」가 입력 칸으로 바꾼다
   const [preview, setPreview] = useState(() => (t?.notes.length ?? 0) > 0);
   const notesInput = useRef<HTMLTextAreaElement>(null);
@@ -360,7 +364,12 @@ function TaskForm(props: DetailProps) {
   }, [t, base, dirty, agents]); // eslint-disable-line react-hooks/exhaustive-deps
   // owner 목록을 늦게 받으면 agent·사람 구분을 다시 한다(손대기 전만)
   useEffect(() => {
-    if (base && !dirty) setDraft(draftOf(base, agents, baseParent));
+    if (base) setDraft((current) => {
+      // 목록을 그린 직후 선택한 값도 지킨다. effect를 예약한 render의 dirty는 옛 값일 수 있다.
+      const editingPerson = current.who === "person" && current.person.trim() === "";
+      if (editingPerson || draftOps(base, current, baseParent).length > 0) return current;
+      return draftOf(base, agents, baseParent);
+    });
   }, [agents]); // eslint-disable-line react-hooks/exhaustive-deps
   const changedOnDisk = base !== null && (t === null ? !!props.gone : t.block_sha256 !== base.block_sha256);
   const { onDirty } = props;
@@ -373,7 +382,7 @@ function TaskForm(props: DetailProps) {
     setError(null);
   };
   const children = base ? descendants(board, base) : new Set<number>();
-  const parentChoices = board.tasks.filter((x) => x.list === draft.list && (!base || (x.line !== base.line && !children.has(x.line))));
+  const parentChoices = board.tasks.filter((x) => !base || (x.line !== base.line && !children.has(x.line)));
   const models = modelOptions(owners ?? [], draft.machine, draft.profile);
   const machines = machineOptions(owners ?? [], draft.machine);
   const mineOf = (d: TaskDraft): MyEdit => {
@@ -637,38 +646,6 @@ function TaskForm(props: DetailProps) {
         <input className="input" value={draft.title} disabled={busy} required maxLength={400} onChange={(e) => set({ title: e.target.value })} data-testid="task-field-title" autoFocus={!t} />
       </label>
       <div className="task-field-row">
-        <label className="task-field">
-          <span>목록</span>
-          <select
-            className="input"
-            value={newList ? NEW_LIST : draft.list}
-            disabled={busy || draft.parent !== null}
-            onChange={(e) => {
-              if (e.target.value === NEW_LIST) {
-                setNewList(true);
-                set({ list: "", parent: null });
-              } else {
-                setNewList(false);
-                set({ list: e.target.value, parent: null });
-              }
-            }}
-            data-testid="task-field-list"
-          >
-            {board.lists.map((l) => (
-              <option key={l.name} value={l.name}>
-                {l.name || "(목록 없음)"}
-              </option>
-            ))}
-            {!board.lists.some((l) => l.name === draft.list) && !newList && <option value={draft.list}>{draft.list}</option>}
-            <option value={NEW_LIST}>+ 새 목록…</option>
-          </select>
-        </label>
-        {newList && (
-          <label className="task-field">
-            <span>새 목록 이름</span>
-            <input className="input" value={draft.list} disabled={busy} onChange={(e) => set({ list: e.target.value })} data-testid="task-field-new-list" />
-          </label>
-        )}
         {repoApi && (
           <label className="task-field">
             <span>저장소</span>

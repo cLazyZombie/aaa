@@ -32,13 +32,14 @@ pub fn fingerprint(der: &[u8]) -> String {
 pub fn load_or_create(dir: &Path, common_name: &str) -> Result<Identity> {
     let tls = dir.join("tls");
     let (cert_p, key_p) = (tls.join("cert.der"), tls.join("key.der"));
+    util::ensure_private_dir(dir)?;
+    util::ensure_private_dir(&tls)?;
     if cert_p.exists() && key_p.exists() {
-        let cert_der = std::fs::read(&cert_p)?;
-        let key_der = std::fs::read(&key_p)?;
+        let cert_der = util::read_private(&cert_p)?;
+        let key_der = util::read_private(&key_p)?;
         let fingerprint = fingerprint(&cert_der);
         return Ok(Identity { cert_der, key_der, fingerprint });
     }
-    util::ensure_private_dir(&tls)?;
     let identity = generate(common_name)?;
     util::write_private(&key_p, &identity.key_der)?;
     util::write_private(&cert_p, &identity.cert_der)?;

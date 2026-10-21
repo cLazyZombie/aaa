@@ -45,13 +45,48 @@ export default async function ({ page }) {
     aaa("project", "set", "demo", "repos.add", repo);
     const md = write(START);
     aaa("ticker", "tick");
-    await page.getByTestId("activity-tasks").click();
-    await shaIs(page, md);
-    await pick(page, "저장소 일");
+    let releaseOwners;
+    const gate = new Promise((resolve) => { releaseOwners = resolve; });
+    const holdOwners = async (route) => {
+      if (route.request().postDataJSON()?.op !== "assignable") return route.fallback();
+      await gate;
+      await route.continue();
+    };
     const form = page.getByTestId("task-form");
-    const options = await form.getByTestId("task-field-repo").locator("option").allTextContents();
-    if (JSON.stringify(options) !== JSON.stringify(["정하지 않음", "app", "작업 폴더(저장소 없음)"])) throw new Error(`저장소 고르기 목록: ${options}`);
-    await form.getByTestId("task-field-repo").selectOption("app");
+    await page.route("**/api/v1/call", holdOwners);
+    try {
+      await page.getByTestId("activity-tasks").click();
+      await shaIs(page, md);
+      const requested = page.waitForRequest((r) => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "assignable");
+      await pick(page, "저장소 일");
+      const request = await requested;
+      const options = await form.getByTestId("task-field-repo").locator("option").allTextContents();
+      if (JSON.stringify(options) !== JSON.stringify(["정하지 않음", "app", "작업 폴더(저장소 없음)"])) throw new Error(`저장소 고르기 목록: ${options}`);
+      // owner 목록의 DOM 반영 직후 change를 보낸다. 고정 sleep 없이 passive effect와 겹치는 선택을 재현한다.
+      await page.evaluate(() => {
+        const observer = new MutationObserver(() => {
+          const machine = document.querySelector('[data-testid="task-field-machine"] option[value="labA"]');
+          if (machine?.textContent !== "labA") return;
+          observer.disconnect();
+          const select = document.querySelector('[data-testid="task-field-repo"]');
+          select.value = "app";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+          select.dataset.ownerBoundary = "selected";
+        });
+        observer.observe(document, { subtree: true, childList: true, characterData: true });
+      });
+      releaseOwners();
+      const response = await request.response();
+      if (!response?.ok()) throw new Error("owner 조회 실패");
+      await response.finished();
+      await domIs(page, "owner 목록을 그린 직후 저장소 선택", () => document.querySelector('[data-testid="task-field-repo"]')?.dataset.ownerBoundary === "selected");
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      if (await form.getByTestId("task-field-repo").inputValue() !== "app") throw new Error("owner 응답이 고른 저장소를 초기화했다");
+      if (await form.getByTestId("task-save").isDisabled()) throw new Error("owner 응답 뒤 저장 단추가 비활성이다");
+    } finally {
+      releaseOwners();
+      await page.unroute("**/api/v1/call", holdOwners);
+    }
     await shot(page, "repo-desktop-form");
     await form.getByTestId("task-save").click();
     await until("저장소 칸", () => taskContent(read()).includes("- [ ] 저장소 일 (fake@labA) [app]\n"));

@@ -74,12 +74,28 @@ pub(super) fn terminal_controlled(
     command.args(args);
     drive_terminal(command, steps, observe)
 }
+enum TerminalEvent {
+    Output(Vec<u8>),
+    ReaderDone,
+    ChildExited(std::io::Result<()>),
+}
+#[path = "terminal_exit.rs"]
+mod terminal_exit;
+
 fn drive_terminal(
+    command: CommandBuilder,
+    steps: &[(&str, &str)],
+    observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+) -> (u32, String) {
+    let pair = native_pty_system().openpty(PtySize { rows: 36, cols: 120, pixel_width: 0, pixel_height: 0 }).unwrap();
+    drive_terminal_on(pair, command, steps, observe)
+}
+fn drive_terminal_on(
+    pair: portable_pty::PtyPair,
     command: CommandBuilder,
     steps: &[(&str, &str)],
     mut observe: impl FnMut(&mut dyn portable_pty::Child, &str),
 ) -> (u32, String) {
-    let pair = native_pty_system().openpty(PtySize { rows: 36, cols: 120, pixel_width: 0, pixel_height: 0 }).unwrap();
     struct OwnedChild {
         child: Box<dyn portable_pty::Child + Send + Sync>,
         finished: bool,
@@ -95,16 +111,18 @@ fn drive_terminal(
     let mut child = OwnedChild { child: pair.slave.spawn_command(command).unwrap(), finished: false };
     let pid = child.child.process_id().expect("소유한 PTY 자식 PID");
     drop(pair.slave);
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
+    let mut master = Some(pair.master);
+    let mut reader = master.as_ref().unwrap().try_clone_reader().unwrap();
+    let mut writer = master.as_ref().unwrap().take_writer().unwrap();
     let (tx, rx) = mpsc::channel();
+    let exited = terminal_exit::watch(child.child.as_ref(), tx.clone());
     let reader = std::thread::spawn(move || {
         let mut buf = [0; 4096];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    if tx.send(buf[..n].to_vec()).is_err() {
+                    if tx.send(TerminalEvent::Output(buf[..n].to_vec())).is_err() {
                         break;
                     }
                 }
@@ -112,6 +130,7 @@ fn drive_terminal(
                 Err(_) => break,
             }
         }
+        let _ = tx.send(TerminalEvent::ReaderDone);
     });
     let started = Instant::now();
     let deadline = started + Duration::from_secs(60);
@@ -119,12 +138,21 @@ fn drive_terminal(
     let mut seen = Vec::new();
     let mut answered = 0;
     let mut cursor = 0;
-    loop {
+    let mut status = None;
+    let mut reader_done = false;
+    while status.is_none() || !reader_done {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-            Ok(bytes) => {
-                seen.extend(terminal.feed(&bytes, &mut writer).unwrap());
+            Ok(TerminalEvent::Output(bytes)) => {
+                let visible = if status.is_none() {
+                    terminal.feed(&bytes, &mut writer).unwrap()
+                } else {
+                    terminal.feed(&bytes, &mut std::io::sink()).unwrap()
+                };
+                seen.extend(visible);
                 observe(child.child.as_mut(), &String::from_utf8_lossy(&seen));
-                if let Some((needle, keys)) = steps.get(answered) {
+                if status.is_none()
+                    && let Some((needle, keys)) = steps.get(answered)
+                {
                     let text = String::from_utf8_lossy(&seen[cursor..]);
                     if let Some(at) = text.find(needle) {
                         cursor += at + needle.len();
@@ -134,11 +162,27 @@ fn drive_terminal(
                     }
                 }
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Ok(TerminalEvent::ReaderDone) => reader_done = true,
+            Ok(TerminalEvent::ChildExited(result)) => {
+                result.expect("소유한 PTY 자식 종료 사건");
+                status = Some(child.child.wait().unwrap());
+                child.finished = true;
+                // ConPTY의 출력 pipe는 자식 종료만으로 EOF가 되지 않는다.
+                // 실제 자식 종료 뒤 소유자를 닫고 reader가 끝 출력까지 수집하게 한다.
+                drop(master.take());
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("PTY 사건 채널이 종료/출력 완료 전에 닫혔다"),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // 직접 띄운 실제 child handle만 종료한다. 다른 PID/이름으로 찾지 않는다.
-                child.child.kill().unwrap();
-                child.child.wait().unwrap();
+                let child_exit = status
+                    .as_ref()
+                    .map(portable_pty::ExitStatus::exit_code)
+                    .or_else(|| child.child.try_wait().unwrap().map(|status| status.exit_code()));
+                if child_exit.is_none() {
+                    child.child.kill().unwrap();
+                    child.child.wait().unwrap();
+                }
+                child.finished = true;
                 let output = redact_private(&String::from_utf8_lossy(&seen));
                 let needle = steps.get(answered).map_or("<PTY EOF>", |(needle, _)| *needle);
                 // 비밀값을 먼저 가린 뒤 마지막 네 줄을 줄마다 200자로 제한한다.
@@ -154,18 +198,17 @@ fn drive_terminal(
                     .collect::<Vec<_>>()
                     .join(" | ");
                 panic!(
-                    "install 승인 PTY({pid}) 사건 상한(elapsed={:?}): {output}\nPTY stalled: answered={answered}/{}, needle={needle:?}, tail={tail:?}",
+                    "install 승인 PTY({pid}) 사건 상한(elapsed={:?}): {output}\nPTY stalled: answered={answered}/{}, needle={needle:?}, child_exit={child_exit:?}, reader_done={reader_done}, tail={tail:?}",
                     started.elapsed(),
                     steps.len()
                 );
             }
         }
     }
-    let status = child.child.wait().unwrap();
-    child.finished = true;
+    let status = status.unwrap();
     drop(writer);
-    drop(pair.master);
     reader.join().unwrap();
+    exited.join().unwrap();
     let text = String::from_utf8_lossy(&seen).to_string();
     assert!(!text.contains(CANARY), "승인 비밀 원문 출력");
     assert!(
@@ -664,3 +707,7 @@ fn terminal_answers_cursor_query_before_application_prompt() {
     let (code, text) = drive_terminal(command, &[("정확히 yes", "yes\r")], |_, _| {});
     assert_eq!(code, 0, "{}", redact_private(&text));
 }
+
+#[cfg(unix)]
+#[path = "terminal_lifecycle.rs"]
+mod terminal_lifecycle;
