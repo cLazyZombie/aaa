@@ -22,6 +22,16 @@ impl Lab {
     }
 
     fn with_file(failures: usize, file_bytes: &'static [u8], name: &'static str, manifest: &'static [u8]) -> Self {
+        Self::with_report(failures, file_bytes, name, manifest, "[진행 중] 시험 중\n")
+    }
+
+    fn with_report(
+        failures: usize,
+        file_bytes: &'static [u8],
+        name: &'static str,
+        manifest: &'static [u8],
+        report: &'static str,
+    ) -> Self {
         let root = std::env::temp_dir().join(format!("aaa-copy-{}", aaa_common::util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
         cfg.projects.root = root.join("projects").display().to_string();
@@ -66,7 +76,7 @@ impl Lab {
                         if max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures {
                             Outcome::Err(internal("시험 agent 복사 실패"))
                         } else {
-                            let report = "[진행 중] 시험 중\n".as_bytes().to_vec();
+                            let report = report.as_bytes().to_vec();
                             Outcome::Ok(AgentResponse::Report(ReportSnapshot {
                                 hash: hex::encode(sha2::Sha256::digest(&report)),
                                 report: B64(report),
@@ -93,6 +103,13 @@ impl Lab {
                             eof: end == file.len(),
                         })
                     }
+                    AgentRequest::WorkFileWrite { path, data, .. } => {
+                        assert!(path.starts_with("inbox/question-format-"));
+                        assert!(path.strip_prefix("inbox/").unwrap().strip_suffix(".json").unwrap().len() <= 64);
+                        let notice: serde_json::Value = serde_json::from_slice(&data.0).unwrap();
+                        assert_eq!(notice["kind"], "question-format-warning");
+                        Outcome::Ok(AgentResponse::Done)
+                    }
                     other => panic!("예상 밖 요청: {other:?}"),
                 };
                 if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
@@ -101,6 +118,35 @@ impl Lab {
             }
         });
         Self { h, root, requests, fake }
+    }
+}
+
+#[tokio::test]
+async fn question_format_warning_keeps_even_empty_cards_blocks_all_answers_and_notifies_once() {
+    for report in [
+        "[결정 필요] 질문 1개: 진행\n## Questions\n### 1. 진행\n- **A 진행\n- B 보류\n- C 멈춤\n",
+        "[검수 대기] 질문 1개: 진행\n## Questions\n### 1. 진행\n- A 진행\n",
+    ] {
+        let lab = Lab::with_report(0, b"", "unused", b"", report);
+        lab.h.collect_if_changed("p", "t-0001").await;
+        let view = lab.h.thread_show("p", "t-0001").unwrap();
+        let q = view.questions.unwrap();
+        assert!(q.format_warning.as_deref().unwrap().contains("형식 확인 필요"));
+        assert!(!q.review, "명시한 질문이 깨지면 기본 검수 카드로 대신하지 않는다");
+        assert_eq!(view.copy.as_deref(), Some("complete"));
+        let err = lab.h.thread_answer("p", "t-0001", &q.report_hash, vec![Some(0)], None, "test").await.unwrap_err();
+        assert!(err.message.contains("형식 확인 필요"));
+        if let Some(id) = q.items.first().and_then(|q| q.id.as_deref()) {
+            let err = lab.h.reply_by_id("p", id, Some("A"), None, "test").await.unwrap_err();
+            assert!(err.message.contains("형식 확인 필요"));
+            assert!(lab.h.db.question_target(Some("p"), id).unwrap().unwrap().draft.is_none());
+        }
+        lab.h.collect("p", "t-0001", true).await.unwrap();
+        let items = lab.h.inbox("p", true, true).unwrap().items;
+        let warnings: Vec<_> = items.iter().filter(|i| i.item_kind == "question-format-warning").collect();
+        assert_eq!(warnings.len(), 1, "{items:?}");
+        assert!(!warnings[0].body.contains("전달 실패"));
+        assert!(lab.h.load("p", "t-0001").unwrap().question_answer.is_none());
     }
 }
 

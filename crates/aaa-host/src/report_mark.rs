@@ -33,7 +33,7 @@ pub(crate) fn needs_user(report: &str) -> bool {
 
 /// 검수 결과를 보고도 채팅으로 따로 답하지 않게 한다. 명시한 Questions는 그대로 정본이다.
 pub(crate) fn default_review(report: &str) -> bool {
-    marker(report) == Some("[검수 대기]") && aaa_proto::report_questions(report).is_empty()
+    marker(report) == Some("[검수 대기]") && !report.lines().any(|l| l.trim() == "## Questions")
 }
 pub(crate) fn questions(report: &str) -> Vec<aaa_proto::ThreadQuestion> {
     if !needs_user(report) {
@@ -48,14 +48,64 @@ pub(crate) fn questions(report: &str) -> Vec<aaa_proto::ThreadQuestion> {
     )
 }
 
+pub(crate) fn question_warning(report: &str) -> Option<String> {
+    needs_user(report).then(|| aaa_proto::parse_report_questions(report).warning).flatten()
+}
+
 impl Host {
+    /// 보고 hash별 한 번: coordinator 알림과 thread 작업 폴더 inbox에 같은 자료를 남긴다.
+    pub(crate) async fn warn_question_format(&self, rec: &ThreadRec, warning: &str) {
+        if rec.question_warning_sent == rec.report_hash {
+            return;
+        }
+        let mut body = format!("{warning}\n보고: threads/{}.md\n보고를 고쳐 다시 제출하면 답할 수 있다.", rec.id);
+        if let Some(work) = &rec.work_dir {
+            let result = async {
+                let conn = self.live_conn(&rec.machine_id)?;
+                let data = serde_json::json!({
+                    "kind": "question-format-warning", "thread": rec.id,
+                    "report_hash": rec.report_hash, "warning": warning,
+                    "note": "host가 남긴 형식 진단 자료이며 사용자 답이 아니다"
+                });
+                crate::automation_thread::write_inputs(
+                    &conn,
+                    work,
+                    [(
+                        format!(
+                            "question-format-{}",
+                            rec.report_hash.as_deref().unwrap_or_default().chars().take(40).collect::<String>()
+                        ),
+                        data.to_string(),
+                    )],
+                )
+                .await
+            }
+            .await;
+            if let Err(e) = result {
+                body.push_str(&format!("\nthread inbox 전달 실패: {}", e.message));
+            }
+        }
+        // 연결 실패도 coordinator 경고에 남긴다. 보고 복사 성공을 실패로 바꾸지 않는다.
+        if let Err(e) = self.update_rec(&rec.project, &rec.id, |r| r.question_warning_sent = rec.report_hash.clone()) {
+            tracing::warn!("질문 형식 경고 전달 기록 실패: {}", e.message);
+        }
+        self.inbox_add_body(
+            &rec.project,
+            "question-format-warning",
+            &rec.id,
+            "질문 형식 확인 필요",
+            &format!("{}: {warning}", rec.id),
+            &body,
+        );
+    }
+
     pub(crate) fn backfill_review_questions(&self) -> Result<(), aaa_proto::ErrorBody> {
         for data in self.db.threads(None).map_err(crate::orch::internal)? {
             let rec: ThreadRec = serde_json::from_str(&data).map_err(crate::orch::internal)?;
-            if rec.status != aaa_proto::ThreadStatus::Open || !rec.questions.is_empty() {
+            if rec.status != aaa_proto::ThreadStatus::Open || rec.question_answer.is_some() {
                 continue;
             }
-            let Some(report) = self.verified_report(&rec).filter(|r| default_review(r)) else {
+            let Some(report) = self.verified_report(&rec).filter(|r| needs_user(r)) else {
                 continue;
             };
             let items = self.identify_questions(
@@ -65,7 +115,32 @@ impl Host {
                 rec.report_hash.as_deref().unwrap_or_default(),
                 &questions(&report),
             )?;
-            self.update_rec(&rec.project, &rec.id, |r| r.questions = items)?;
+            let mut old_items = rec.questions.clone();
+            let mut new_items = items.clone();
+            for q in old_items.iter_mut().chain(new_items.iter_mut()) {
+                q.id = None;
+            }
+            let changed = old_items != new_items && !default_review(&report);
+            let warning = question_warning(&report)
+                .or_else(|| {
+                    changed
+                        .then(|| "형식 확인 필요: 이전 host와 질문 해석이 달라졌다. 보고를 고쳐 다시 제출한다.".into())
+                })
+                .or_else(|| rec.question_warning.clone());
+            if changed {
+                self.db
+                    .question_clear_drafts(
+                        &rec.project,
+                        "thread",
+                        &rec.id,
+                        rec.report_hash.as_deref().unwrap_or_default(),
+                    )
+                    .map_err(crate::orch::internal)?;
+            }
+            self.update_rec(&rec.project, &rec.id, |r| {
+                r.questions = items;
+                r.question_warning = warning;
+            })?;
         }
         Ok(())
     }
@@ -128,6 +203,32 @@ mod tests {
         assert_eq!(questions(explicit), aaa_proto::report_questions(explicit));
         assert!(questions("[완료] 결과").is_empty());
         assert!(questions("[결정 필요] 문법 없는 보고").is_empty());
+    }
+
+    #[test]
+    fn old_unanswered_cards_are_reparsed_and_changed_letters_require_a_new_report() {
+        let root = std::env::temp_dir().join(format!("aaa-question-upgrade-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.project_create("p", Default::default(), "test").unwrap();
+        let report = "[결정 필요] 질문 1개: 진행\n## Questions\n1. 진행\n- **A(추천)** 진행\n- B 보류\n- C 멈춤\n";
+        let mut rec =
+            ThreadRec::starting("p", "진행", "m", "codex", aaa_proto::Role::Worker, aaa_proto::ThreadKind::Dir, 0);
+        rec.id = "t-0001".into();
+        rec.status = aaa_proto::ThreadStatus::Open;
+        rec.report_hash = Some(hex::encode(Sha256::digest(report.as_bytes())));
+        rec.questions = aaa_proto::report_questions("## Questions\n1. 진행\n- B 보류\n- C 멈춤\n");
+        h.db.thread_import("p", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+        std::fs::write(h.project_dir("p").unwrap().join("threads/t-0001.md"), report).unwrap();
+        h.backfill_review_questions().unwrap();
+        let view = h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+        assert_eq!(view.items[0].choices.len(), 3);
+        assert!(view.format_warning.unwrap().contains("이전 host"));
+        h.backfill_review_questions().unwrap();
+        assert!(h.thread_show("p", "t-0001").unwrap().questions.unwrap().format_warning.is_some());
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     use aaa_proto::ThreadStage::{Landing, MergeReady};

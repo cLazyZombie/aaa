@@ -207,7 +207,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// 1.95: 보고서 판마다 영속 r-ID·판 목록·보존 용량을 더한다. 기존 이름·thread 참조는 최신 판이다.
 /// 1.96: 질문 안 보고 판 보기와 기본 검수 카드·답한 기록의 r 참조를 더한다.
 // 1.97: task_edit.user_request(선택): 사용자 지시 근거를 남긴 모델·머신 변경과 미기동 예약 유지, plan §8.389.
-pub const FRONT_API: Version = Version { major: 1, minor: 97 };
+// 1.98: 질문 문법 누락·글자 불일치 경고(ThreadQuestions.format_warning)·선택지 뒤 설명(ThreadQuestion.after). host는 해당 카드 답을 거부한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 98 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

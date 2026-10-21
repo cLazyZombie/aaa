@@ -84,6 +84,9 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let rec = self.load(project, id)?;
+        if let Some(warning) = &rec.question_warning {
+            return Err(err(ErrorCode::BadRequest, warning.clone()));
+        }
         if rec.questions.is_empty() {
             return Err(err(ErrorCode::BadRequest, format!("{id}에는 답할 질문이 없다")));
         }
@@ -163,6 +166,15 @@ mod tests {
         report_questions(
             "## Questions\n1. 로그인 단추 자리\n- A 오른쪽 아래 (추천)\n- B 가운데\n2. 눈 아이콘\n- A 넣는다 (추천)\n- B 넣지 않는다\n",
         )
+    }
+
+    #[test]
+    fn emphasized_m3_choices_keep_the_original_answer_letters() {
+        let items = report_questions(include_str!("../../aaa-proto/tests/fixtures/m3-questions.md"));
+        let (message, short) = compose(&items, &[Some(2), Some(1)], None).unwrap();
+        assert_eq!(short, "1C 2B");
+        assert!(message.contains("install 순서를 바꿔"));
+        assert!(message.contains("이 Mac의 「원격 로그인」을 사용자가 직접 켜고"));
     }
 
     /// 고른 것은 「1A 2B」와 질문·선택지 글로, 직접 쓴 답은 고르지 않은 질문을 대신한다. 빠진 답·없는 선택지·수가 다른 답은 거절한다
