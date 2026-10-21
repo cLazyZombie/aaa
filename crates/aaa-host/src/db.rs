@@ -1229,6 +1229,14 @@ impl Db {
         );
     }
 
+    /// 감사 기록의 (actor, action)을 쓴 순서대로(시험용)
+    #[cfg(test)]
+    pub(crate) fn audit_actions(&self) -> Vec<(String, String)> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT actor, action FROM audit ORDER BY rowid").unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+    }
+
     /// 프로젝트 하나의 기록(아래 [`PROJECT_TABLES`]의 행과 `<종류>:<프로젝트>…` meta)을 JSON으로. `project delete`가 휴지통 폴더에 둔다.
     /// thread 기록의 launch env는 이름만 남긴다(plan §8.307).
     pub fn project_export(&self, project: &str) -> Result<serde_json::Value> {

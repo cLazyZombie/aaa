@@ -70,6 +70,7 @@ mod restore;
 mod rollout;
 mod routine;
 mod routine_runs;
+pub mod safe_mode;
 mod seen;
 mod settings_admin;
 mod summary;
@@ -3203,25 +3204,11 @@ impl Host {
     /// (`https://<이름>[:포트]`, 443은 포트 없이) 둘뿐이고 포트까지 같아야 한다(§6.3, herdr-web-ui `sameOrigin`이
     /// 요청 주소의 origin 전체를 비교하는 것과 같다). 아니면 None
     pub fn web_origin(&self, host_header: &str) -> Option<String> {
-        let loopback = format!("127.0.0.1:{}", self.web_port());
-        if host_header == loopback {
-            return Some(format!("http://{loopback}"));
-        }
-        let public = self.public_origin()?;
-        let asked = host_header.to_ascii_lowercase();
-        let asked = asked.strip_suffix(":443").unwrap_or(&asked);
-        (format!("https://{asked}") == public).then_some(public)
+        web_origin_in(self.web_port(), &self.db, host_header)
     }
 
-    /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
-    /// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
     pub(crate) fn public_origin(&self) -> Option<String> {
-        if let Some(o) = self.db.meta("publish_origin").ok().flatten() {
-            return Some(o);
-        }
-        let dns = self.db.meta("publish_dns").ok().flatten()?;
-        let port = self.db.meta("publish_port").ok().flatten()?.parse().ok()?;
-        Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
+        public_origin_in(&self.db)
     }
 
     pub fn host_allowed(&self, host_header: &str) -> bool {
@@ -3243,20 +3230,69 @@ impl Host {
     }
 }
 
-/// `aaa host` 실행
-pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
-    run_with_shutdown(cfg, state_root, None, shutdown_signal()).await
+/// Host 헤더가 가리키는 이 host의 origin(`Host::web_origin`). 안전 모드도 같은 판정을 쓴다(설정 없이 DB만 연다)
+pub(crate) fn web_origin_in(web_port: u16, db: &db::Db, host_header: &str) -> Option<String> {
+    let loopback = format!("127.0.0.1:{web_port}");
+    if host_header == loopback {
+        return Some(format!("http://{loopback}"));
+    }
+    let public = public_origin_in(db)?;
+    let asked = host_header.to_ascii_lowercase();
+    let asked = asked.strip_suffix(":443").unwrap_or(&asked);
+    (format!("https://{asked}") == public).then_some(public)
 }
 
-/// OS 감독자에는 실제 listener 준비 뒤에만 알린다. 서비스 등록 자체는 ready가 아니다.
-pub async fn run_with_shutdown(
+/// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
+/// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
+pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
+    if let Some(o) = db.meta("publish_origin").ok().flatten() {
+        return Some(o);
+    }
+    let dns = db.meta("publish_dns").ok().flatten()?;
+    let port = db.meta("publish_port").ok().flatten()?.parse().ok()?;
+    Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
+}
+
+/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.370)로 웹만 열며, 되돌리거나
+/// 다시 읽어 설정이 맞으면 정상 host로 이어 간다. OS 감독자에는 실제 listener 준비 뒤에만(안전 모드 웹이든 정상 host든 한 번) 알린다.
+/// 서비스 등록 자체는 ready가 아니다.
+pub async fn run(
+    config_dir: PathBuf,
+    state_root: PathBuf,
+    mut ready: Option<tokio::sync::oneshot::Sender<()>>,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> Result<()> {
+    tokio::pin!(shutdown);
+    loop {
+        match aaa_config::load_host(&config_dir) {
+            Ok(loaded) => {
+                for w in &loaded.warnings {
+                    eprintln!("{w}");
+                }
+                return run_host(loaded.config, config_dir, &loaded.files, state_root, ready.take(), shutdown).await;
+            }
+            Err(errors) => {
+                match safe_mode::run(errors, config_dir.clone(), state_root.clone(), ready.take(), shutdown.as_mut())
+                    .await?
+                {
+                    safe_mode::SafeExit::Reload => continue,
+                    safe_mode::SafeExit::Shutdown => return Ok(()),
+                }
+            }
+        }
+    }
+}
+
+async fn run_host(
     cfg: HostConfig,
+    config_dir: PathBuf,
+    files: &[PathBuf],
     state_root: PathBuf,
     ready: Option<tokio::sync::oneshot::Sender<()>>,
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
-    let _ = host.config_dir.set(aaa_config::paths::config_dir());
+    let _ = host.config_dir.set(config_dir.clone());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
     // 한 host는 프로젝트 하나(plan §8.283): 입구를 열기 전에 본다. 보관 상태가 DB에 있어 open 뒤에야 셀 수 있다
     match host.sole_project() {
@@ -3269,6 +3305,10 @@ pub async fn run_with_shutdown(
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    // 입구가 다 열렸다: 이 설정을 안전 모드의 「마지막 정상 설정」으로 보관한다
+    if let Err(e) = safe_mode::keep_last_good(&config_dir, files) {
+        tracing::warn!("마지막 정상 설정을 보관하지 못했다: {e:#}");
+    }
     host.resume_rollout();
     host.start_ticker();
     host.start_notifier();

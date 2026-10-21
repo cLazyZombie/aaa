@@ -1346,7 +1346,7 @@ id: string, title: string,
  */
 body: string, created_ms: number,
 /**
- * post 본문의 `## Questions`(FRONT_API 1.86). 없으면 기존 평문 카드다. report_hash는 본문 hash다.
+ * post 본문의 `## Questions`(FRONT_API 1.87). 없으면 기존 평문 카드다. report_hash는 본문 hash다.
  */
 questions?: ThreadQuestions, };
 
@@ -1376,6 +1376,10 @@ at: string | null, text: string, dropped: boolean, };
 
 export type FollowUpLine = { at_ms: number | null, text: string, };
 
+export type SummaryStepState = "pending" | "working" | "done";
+
+export type SummaryStep = { text: string, state: SummaryStepState, };
+
 export type ThreadSummaryView = { project: string, thread: string,
 /**
  * 요약 파일 글(없으면 None)
@@ -1384,7 +1388,11 @@ text: string | null, goal: string | null,
 /**
  * 목표가 바뀌었을 때 처음 시킨 것
  */
-origin: string | null, now: Array<string>, decided: Array<SummaryEntry>, changed: Array<SummaryEntry>, done: Array<string>,
+origin: string | null,
+/**
+ * 전체 큰 작업(최대 5개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
+ */
+progress?: Array<SummaryStep>, now: Array<string>, decided: Array<SummaryEntry>, changed: Array<SummaryEntry>, done: Array<string>,
 /**
  * thread 보고 `## Decisions` 줄(agent가 정한 것)
  */

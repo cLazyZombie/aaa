@@ -889,12 +889,13 @@ enum ThreadCmd {
         #[arg(hide = true)]
         legacy: Option<String>,
     },
-    /// 작업 요약(웹 hover 카드·「요약」 단추). --file이면 통째로 다시 쓴다(coordinator가 방향이 바뀔 때마다).
+    /// 작업 요약(웹 hover 카드·「요약」 단추). --file이면 통째로 다시 쓴다(큰 작업의 상태·방향이 바뀔 때).
     /// 쉬운 말의 짧은 구로 몇 줄만 쓴다. 형식:
     ///
-    /// # 목표 / 목표 한 줄 / 처음: 처음 일(선택) / ## 지금 / - 할 것(3줄 이하) / ## 정함 / - 사용자 15:0x 정한 것 /
-    /// ## 바뀜 / - ~~사용자 14:0x 무효가 된 것~~ / - 사용자 14:1x 최근 바뀐 것(맨 아래) / ## 끝남 / - 끝난 일.
-    /// 한 줄 30자, 한 절 3줄, 전체 1KB까지
+    /// # 목표 / 목표 한 줄 / 처음: 처음 일(선택) / ## 진행 / - [x] 완료 / - [~] 진행 중 / - [ ] 대기 /
+    /// ## 정함 / - 사용자 15:0x 정한 것 / ## 바뀜 / - ~~사용자 14:0x 무효가 된 것~~ / - 사용자 14:1x 최근 바뀐 것(맨 아래).
+    /// 큰 작업 3~5개(최대 5개)를 순서대로 두고 완료해도 남긴다. 한 줄 30자, 진행 외 한 절 3줄, 전체 1KB까지.
+    /// 옛 ## 지금 / ## 끝남도 읽는다. 상태 없는 항목은 완료 여부를 추측하지 않는다.
     Summary {
         thread: String,
         /// (옛 꼴 `<프로젝트> <대상>`의 대상)
@@ -1667,8 +1668,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             aaa_common::resource::raise_nofile_limit("host");
             aaa_common::resource::disable_core_dump("host");
             legacy_guard()?;
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run(cfg, aaa_config::paths::state_dir()))?;
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
+                aaa_config::paths::state_dir(),
+                None,
+                aaa_host::shutdown_signal(),
+            ))?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Agent(a) => {
@@ -2865,9 +2870,8 @@ pub(crate) fn supervised_role(
     legacy_guard()?;
     match role {
         aaa_proto::install::InstallRole::Host => {
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run_with_shutdown(
-                cfg,
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
                 aaa_config::paths::state_dir(),
                 Some(ready),
                 supervised_stop(Some(stop)),

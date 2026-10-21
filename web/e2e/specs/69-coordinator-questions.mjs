@@ -59,12 +59,12 @@ export default async function ({ page }) {
         await open(p, q.items[0].id, threadCard);
         if (await images(p, threadCard) !== 3) throw new Error("thread 그림이 없다");
         const a = await shape(p, threadCard);
-        await shot(p, `68-thread-${label}-${theme}`);
+        await shot(p, `69-thread-${label}-${theme}`);
         await open(p, req.question_id, requestCard);
         if (await images(p, requestCard) !== 3) throw new Error("post 그림이 없다");
         const b = await shape(p, requestCard);
         if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`두 질문 렌더링이 다르다: ${JSON.stringify({a,b})}`);
-        await shot(p, `68-coordinator-${label}-${theme}`);
+        await shot(p, `69-coordinator-${label}-${theme}`);
       }
     }
     if (!(await reader.page.getByTestId("thread-ask-send").isDisabled())) throw new Error("보기 권한이 답할 수 있다");
@@ -89,7 +89,7 @@ export default async function ({ page }) {
     if (!again.err) throw new Error("두 번째 답을 받았다");
     fs.rmSync(`${previewPath()}/card.svg`); // publish 사본도 바꿔 원본과 보존본을 구별한다
     await images(page, '[data-testid="ask-done-card"]');
-    await shot(page, "68-coordinator-answered");
+    await shot(page, "69-coordinator-answered");
   });
   await step("채팅 ID 답: thread answer q-ID A와 question answer q-ID B, post handled q-ID는 평문·구조화 post를 닫는다", async () => {
     aaa("thread", "answer", q.items[0].id, "A");

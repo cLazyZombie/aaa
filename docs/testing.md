@@ -923,6 +923,11 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `node --test web/test/deployModel.test.mjs`: 1.82 판정, ID가 host `valid_id`(영숫자 26자), 후보 경로 형식, 대상은 host 맨 앞(다른 머신을 모두 풀면 host만), 확정 거절일 때만 보인 ID를 지움, 시작은 점검한 그 후보·대상이 모두 준비되고 진행 중 rollout이 없을 때만, 보낼 rollout의 SHA·커밋은 점검 결과 그대로.
 - `node web/e2e/web.e2e.mjs --spec 63-deploy`: 실험실 집(`HOME`)과 PATH 앞 가짜 `launchctl`(재시작이 이 Mac의 실제 aaa 서비스에 닿지 않는다, 감독자 plist도 실험실 집). 후보는 허용 표지가 있을 때만 self-check를 통과하는 셸 파일과 provenance.json이다. provenance SHA가 다르면 점검 오류·시작 꺼짐 → 맞으면 SHA 전체·판·대상 「labA (host 먼저) · 준비됨」·시작 열림, 점검 뒤 경로를 바꾸면 시작 꺼짐. 표지를 지운 뒤 확인 창(SHA) → rollout ID 표시 → 기록에 `stopped`(대상 전송의 dry-run에서 멈춤), 실험실 실행 파일 SHA 그대로·launchctl 호출 없음. 화면을 다시 열면 같은 ID의 카드(「배포 중단」, 끝난 단계는 전송뿐, 후보 경로 없음). agent 재시작 확인 창 → 작업 「완료」·가짜 launchctl의 `kickstart -k gui/<uid>/dev.aaa.agent`. Reader는 기록·작업만 보고 시작·재시작 단추 없음, 휴대폰 390 가로 넘침 없음. 화면 표지·파일·host 사건으로 끝내며 sleep은 없다.
 
+## 안전 모드(t-0538 관리 GUI W6b, plan §8.370)
+
+- `cargo test -p aaa-host --lib safe_mode::`: 원문 가림(env 표·인라인 env·비밀처럼 보이는 key·표 머리의 비밀 낱말·webhook·그런 낱말이 든 값·주석으로 꺼 둔 줄, 줄 수 그대로, 다른 한 줄 값과 표 머리는 남음, 가린 값은 오류 글에서 뺄 목록에). 여러 줄 값의 이어지는 줄은 모두 가림: 닫히지 않은 문자열은 끝까지, 줄마다 하나씩 쓴 인자·배열 안 `["…"]`, 배열이 닫힌 뒤는 다시 보임, `]`를 빠뜨린 배열은 뒤의 표 머리(공백 없이 주석이 붙어도)에서 끝나 그 env 값을 가림, 주석으로 꺼 둔 비밀 배열·여러 줄 문자열은 이어지는 주석 줄을 가리고(사이 빈 줄은 건넘) 주석이 끝난 바로 뒤 값·표는 보임, 비밀이 아닌 배열의 원소는 화면에서만 가리고 오류 글에서 지울 목록에 넣지 않음(닫히지 않은 문자열 안에 표 머리가 나온 뒤의 값은 넣음). 마지막 정상 설정은 설정 폴더 `last-good/`에 둔다(상태 폴더에 env·인증 값이 남지 않는 것은 m13 `secret_k0`·`accounts`가 본다). 오류 글은 TOML 원문 조각(`|` 줄)과 큰따옴표 값·가린 값을 뺌. 정상 설정 보관(폴더 0700·파일 0600, 시작 뒤 깨진 파일은 보관하지 않고 지난 보관본 유지)과 되돌리기(지금 파일을 `.broken-<UTC>`로 남김, 보관 때 없던 local은 남긴 뒤 치움, 같은 이름의 남긴 파일을 덮지 않고 그때는 먼저 만든 남기기도 치우고 아무것도 바꾸지 않음, 바뀐 게 없으면 남기지 않음, 보관이 없으면 거부). 뜰 주소는 마지막으로 연 주소(실제 `web::start`가 적음) → 보관 설정의 listen, 둘 다 없으면(업그레이드 직후) 짐작하지 않음, 웹을 끈 설정으로 시작하면 없음. 조작 기기만 오류 줄 표시·가린 원문·되돌리기(Reader·짝 없음·모르는 token은 안내만), API는 503 `unavailable`, 다른 Host 거부. 되돌리기·다시 읽기는 조작 기기와 이 origin만(다른 Origin·Origin 없음·Reader·짝 없음은 파일을 건드리지 않음), 아직 깨져 있으면 안전 모드에 남고, 되돌리면 남긴 파일·감사 기록과 함께 끝을 알린다. 실험실 DB와 router를 바로 부르며 시간을 기다리지 않는다.
+- `node web/e2e/web.e2e.mjs --spec 68-safe-mode`: Reader·휴대폰 기기를 먼저 짝짓고 host를 한 번 다시 띄워 고정 port 설정이 보관되는 것을 본다. host.toml 끝에 env 값과 닫히지 않은 표를 붙이고 다시 띄우면 같은 주소의 `/api/v1/me`가 503 `unavailable`(「안전 모드」) → 조작 기기 화면에 `host.toml:<줄>:` 오류·그 줄 표시·`E2E_LABEL = «가림»`, 페이지에 env 값 없음. Reader는 안내만(원문·되돌리기 없음), 휴대폰 390 가로 넘침 없음. 「마지막 정상 설정으로 되돌리기」 → 안내 화면, host.toml이 보관 설정 그대로·깨진 파일이 `host.toml.broken-*` 하나로 남음 → 안내 화면이 스스로 다시 열어 정상 앱(t1 pane)이 뜨고 labA가 다시 붙으며, 안전 모드를 연 host 프로세스가 그대로 정상 host가 된다. 파일·HTTP 답·화면 표지로 끝내며 sleep은 없다.
+
 ## 대화의 도구 호출 묶음(t-0477, plan §8.304)
 
 - `node --test web/test/toolGroups.test.mjs`: Claude·Codex 도구 이름 분류, 요약 문구(두 가지까지·우선순위·서로 다른 수정 파일·생각), 이어진 도구·생각 줄 묶기, 앞 쪽이 묶음 앞에 붙은 뒤에도 옛 첫 줄 id로 같은 묶음과 펼침을 찾는지 본다.
@@ -957,6 +962,18 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `cargo test -p aaa --test m13 task_thread_link_and_auto_clean`: `--link-task` 줄 끝 번호, 열린 동안 판정 없음, `[완료]` 지움과 「host 자동 정리」 기록, 보고 없음·`[결정 필요]` 확인 필요(`task list`·`context`·inbox), 상위 올림, 되살린 task를 다음 tick이 다시 지우지 않음(한 번 판정 거르기를 없애면 실패). 판정은 `ticker tick` 울타리 뒤에 본다.
 - `cargo test -p aaa --test m13 merged_thread_cleans_its_task`: 가짜 gh로 병합한 thread는 보고가 `[착지]`여도 그 task를 지운다(병합 판정을 끄면 실패). 병합 끝내기와 판정은 같은 tick에서 돌아 `thread_resolved` 사건 뒤 `ticker tick` 하나가 울타리다.
 - `node web/e2e/web.e2e.mjs --spec 47-task-thread`: 바로 시작 확인창(`data-start-state`)과 줄 끝 연결, 확인창을 연 뒤 블록이 바뀌면 시작 거부, 자동 정리 줄·되살리기, 확인 필요 단추, 상위 올림, task 없는 thread 잇기·만들기, coordinator 맡기기(입력칸 초안을 localStorage로 확인), 휴대폰·패드 한도 확인.
+
+`task_clean::tests::parent_attention_is_published_after_the_verdict_is_saved`는 실제 thread 기록 잠금으로 마지막
+판정 저장만 보류한다. 하위 삭제·상위 연결의 파일 사건을 받고 같은 hash의 board를 읽으면 아직 확인 필요가 없다.
+잠금을 풀어 판정을 저장한 뒤에는 같은 파일 hash의 `tasks` 사건이 다시 와야 하고, 그 board의 상위는 확인 필요다.
+판정 저장 뒤 사건을 빼면 사건 누락 단언에서 실패한다. 시간 지연 주입·sleep·화면 재시도는 쓰지 않는다.
+
+## 파일 한도 시험 실패 진단(t-0573)
+
+`cargo test -p aaa --test resource_limits --locked`는 자식 host의 한도만 낮춘다. hard64 시험의 Front EMFILE
+관측이 실패하면 그 실행의 host 로그, 단발 Front 요청의 stdout·stderr, 실제 host fd 목록과 두 PID의 상태를 남긴다.
+Front 요청이 이미 성공했는지, 연결 전에 실패했는지, 여전히 기다리는지 구분할 근거이며 원인을 미리 단정하지 않는다.
+원래 15초 상한과 EMFILE·복구·경고 한 건 단언을 유지한다. 실패한 실험실 폴더는 기존 Lab 정책대로 보존한다.
 
 ## 키 관리자 K0 카나리 찾기(§8.307)
 
@@ -1371,6 +1388,25 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
   Failed로 남긴다. 이미 가진 Open 자리를 재시작할 때는 기동 전 중단에도 그 원래 자리를 유지하며 중복 선점하지 않는다.
 - 완료 보관을 복원한 뒤 제목을 바꾸고 다시 완료하는 경우도 검사한다. 일반 이력이 정리된 뒤에도 이전 완료의 본문·thread와 그 결과물 참조는 보관 이력으로 이어진다.
 
+## 요약 전체 작업 진행상황(t-0574, 사용자 1A)
+
+- `cargo test -p aaa-host --lib summary:: --locked`: 완료·진행·대기가 섞인 다섯 작업의 순서, 대문자 체크, 잘못된 표지·빈 이름·여섯 항목·30자 경계와 옛 요약의 빈 진행 목록을 확인한다.
+- `cargo test -p aaa-proto --locked`: 옛 host 응답의 누락된 `progress`는 빈 배열이고, 기존 now·done은 보존됨을 확인한다. Rust 정본과 생성 TypeScript도 검사한다.
+- 기존 m13의 대화·확인창 흐름은 실제 CLI의 요약 쓰기/읽기로 순서·세 상태의 JSON을 확인하고, 새 지시를 보내도 저장된 목록이 바뀌지 않음을 확인한다.
+- `node web/e2e/web.e2e.mjs --spec 28-thread-summary`: 기존 옛 요약·hover 위치·닫힘·고정 줄·휴대폰 표시를 그대로 실행한다. 새 단계는 실제 host·agent·CLI가 쓴 다섯 작업을 hover에서 모두 읽고, 열린 카드 중 요약 갱신→새 완료 개수와 상태→새 지시 경고의 DOM 사건을 기다린다. 전체 완료와 목록 없는 요약으로 바꾸어 열린 상세의 캐시가 바뀌는지도 본다.
+- 같은 E2E의 실제 Reader 기기로 Chromium 320px·WebKit 390px 상세를 확인한다. 긴 이름은 hover에서 한 줄 생략, 휴대폰에서는 줄바꿈한다. 시트 움직임은 `getAnimations().finished`로 끝을 기다리고 가로 넘침을 잰다. Reader의 직접 쓰기 요청도 거부하고 원본을 보존해야 한다. 고정 sleep·시한 연장·상태 추측은 없다.
+
+### 착지 검증의 파일 링크 좌표(t-0574)
+
+E2E 16은 첫 snapshot의 글이 보인 직후 링크 좌표를 재면 뒤늦은 초기 resize와 경주할 수 있다.
+xterm은 buffer resize에서 현재 링크를 지우고 다음 mousemove에서 다시 찾는다. 실제 pane resize 요청을
+소켓 gate로 보류한 진단에서 `xterm-cursor-pointer`가 resize 뒤 사라지고 새 마우스 이동 뒤 돌아옴을 확인했다.
+기존 실패는 출력이 모두 있는 상태에서 `src/long.ts`의 링크 커서만 20초 안에 오지 않았다.
+
+`clickLink`는 이 화면의 `data-fit="same"`·pending 없음과 실제 그린 행 수까지 맞춘 뒤 좌표를 잰다.
+원래의 커서·클릭·문법 강조·매체·폴더·설정·가상화 단언과 20초 시한은 유지한다. 실패 재실행이나
+시한 연장으로 넘기지 않으며, 진단과 좁은 E2E 16 뒤 수정한 통합 후보의 전체 ci-local을 실행한다.
+
 ## coordinator 질문 카드·짧은 질문 ID(t-0576, 1단계)
 
 - `cargo test -p aaa-host --lib question_ids::`: 프로젝트별 q-1000 시작, 같은 대상의 동시 발급,
@@ -1381,7 +1417,7 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
 - `cargo test -p aaa-host --lib short_question_ids_reach_push_titles`: push 제목의 q-ID,
   기존 thread 링크와 새 q-ID 링크, 앱 참조가 알림 문구에 남지 않는 것을 검사한다.
   기존 post privacy keeper는 새로 추가된 ID까지 정확히 비교하며 제목의 경로·token 가림과 평문 기본 링크를 유지한다.
-- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 68-coordinator-questions`: 실제 host·agent·CLI를 쓴다.
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 69-coordinator-questions`: 실제 host·agent·CLI를 쓴다.
   두 종류의 카드는 같은 QuestionCard에서 렌더링하며 질문 DOM 구조를 비교한다. 데스크톱·WebKit 휴대폰 각각
   밝음·어두움 캡처, Markdown 표·그림, 추천·선택·직접 답, 다른 기기의 답 보존, Reader의 두 답 경로 거부,
   `thread answer q-ID A`·`question answer q-ID B`·`post handled q-ID`, 평문 호환을 본다.

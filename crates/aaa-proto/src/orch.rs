@@ -1020,7 +1020,7 @@ pub struct UserRequestView {
     pub body: String,
     #[ts(type = "number")]
     pub created_ms: u64,
-    /// post 본문의 `## Questions`(FRONT_API 1.86). 없으면 기존 평문 카드다. report_hash는 본문 hash다.
+    /// post 본문의 `## Questions`(FRONT_API 1.87). 없으면 기존 평문 카드다. report_hash는 본문 hash다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub questions: Option<ThreadQuestions>,
@@ -1231,6 +1231,22 @@ pub struct FollowUpLine {
     pub text: String,
 }
 
+/// 큰 작업 하나의 진행 상태. 완료 개수는 소요 시간 비율이 아니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryStepState {
+    Pending,
+    Working,
+    Done,
+}
+
+/// 요약의 큰 작업. 작성한 순서를 유지하며 완료한 항목도 남긴다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SummaryStep {
+    pub text: String,
+    pub state: SummaryStepState,
+}
+
 /// thread 작업 요약(`threads/<id>.summary.md`, plan §8.259). coordinator가 쓴 요약과 aaa가 붙인 것(agent 보고의
 /// `## Decisions`, 요약 뒤 지시, 요약이 없을 때 할 일 첫 줄)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1242,6 +1258,10 @@ pub struct ThreadSummaryView {
     pub goal: Option<String>,
     /// 목표가 바뀌었을 때 처음 시킨 것
     pub origin: Option<String>,
+    /// 전체 큰 작업(최대 5개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
+    #[serde(default)]
+    #[ts(as = "Option<Vec<SummaryStep>>", optional)]
+    pub progress: Vec<SummaryStep>,
     pub now: Vec<String>,
     pub decided: Vec<SummaryEntry>,
     pub changed: Vec<SummaryEntry>,

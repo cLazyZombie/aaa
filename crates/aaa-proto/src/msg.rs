@@ -1705,7 +1705,7 @@ pub enum FrontRequest {
         project: String,
         item: String,
     },
-    /// coordinator post의 구조화 질문에 답하고 요청을 닫는다(FRONT_API 1.86).
+    /// coordinator post의 구조화 질문에 답하고 요청을 닫는다(FRONT_API 1.87).
     AskAnswer {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
