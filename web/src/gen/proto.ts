@@ -645,6 +645,88 @@ export type PendingEnroll = { name: string, machine_id: string,
  */
 fingerprint_prefix: string, since_ms: number, };
 
+export type EnrollGuide = {
+/**
+ * host가 실제로 연 agent 연결 주소(`agent_listen`). 닫혀 있으면 None이고 새 머신은 붙지 못한다
+ */
+listen: string | null,
+/**
+ * 새 머신에서 칠 `<주소>:<포트>` 후보. 앞이 추천이다. 빈 목록이면 host 밖에서 닿을 주소가 없다(닫힘·loopback)
+ */
+addresses: Array<EnrollAddress>,
+/**
+ * host 인증서 SHA-256 전체(소문자 hex). 새 머신 `aaa agent enroll` 화면은 앞 16자를 보인다
+ */
+host_fingerprint: string,
+/**
+ * host 판(`aaa --version`). 새 머신에 같은 판을 넣는다
+ */
+software: string, };
+
+export type EnrollAddress = { address: string,
+/**
+ * 어디서 온 후보인가: `tailnet`(tailscale 이름)·`listen`(연 주소 그대로)·`hostname`(이 머신 이름)
+ */
+source: string, };
+
+export type MachineSetupView = { job: string,
+/**
+ * 사람이 넣은 SSH 대상(별칭 또는 `user@host:port`)
+ */
+target: string, phase: MachineSetupPhase,
+/**
+ * `ssh -G`로 푼 접속(사용자·주소·포트, ProxyJump를 거치는가)
+ */
+ssh: SshResolved | null,
+/**
+ * 접속 때 받은 host key(인증 전). 사람이 지문을 보고 믿는다
+ */
+host_keys: Array<HostKeyView>,
+/**
+ * 받은 키가 이미 믿는 키인가: `known` | `new` | `changed`(fail-closed)
+ */
+host_key_state: string | null, detected: MachineDetected | null,
+/**
+ * 실패·멈춤의 까닭(사람이 읽는 글)
+ */
+error: string | null, created_ms: number, updated_ms: number, };
+
+export type MachineSetupPhase = "connecting" | "trust" | "detecting" | "choose" | "ready" | "unsupported" | "failed";
+
+export type SshResolved = { user: string, host: string, port: number, proxy_jump: boolean, };
+
+export type HostKeyView = {
+/**
+ * `ssh-ed25519` 등
+ */
+kind: string,
+/**
+ * `SHA256:<base64>`(ssh-keygen -l와 같은 꼴)
+ */
+sha256: string, };
+
+export type MachineDetected = {
+/**
+ * `macos` | `linux` | `windows`(MachineView.os와 같은 말)
+ */
+os: string,
+/**
+ * `aarch64` | `x86_64`
+ */
+arch: string,
+/**
+ * 원격이 말한 그대로(`Darwin arm64`, `Windows AMD64`). 사람이 고른 것이면 빈 글
+ */
+raw: string,
+/**
+ * 사람이 골랐다(감지 실패)
+ */
+chosen: boolean, home: string | null, shell: string | null,
+/**
+ * 원격에 이미 있는 aaa 판(`aaa --version` 첫 줄)
+ */
+aaa: string | null, };
+
 export type PublishState = {
 /**
  * missing | stopped | running | error
@@ -794,7 +876,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "machine_setup_start", target: string, } | { "op": "machine_setup_trust", job: string, host_key_sha256: string, } | { "op": "machine_setup_choose", job: string, os: string, arch: string, } | { "op": "machine_setup_cancel", job: string, } | { "op": "machine_setup_list" } | { "op": "enroll_guide" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -1015,7 +1097,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
 /**
  * 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
  */

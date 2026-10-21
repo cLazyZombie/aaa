@@ -234,15 +234,15 @@ export default async function () {
         const box = (id) => document.querySelector(`[data-testid="${id}"]`).getBoundingClientRect();
         const asks = box("activity-asks");
         const reports = box("activity-reports");
-        const inbox = box("activity-inbox");
+        const automations = box("activity-automations");
         return {
           ids: items.map((e) => e.dataset.testid).join(","),
-          // 이웃한 두 단추 사이 틈: 알림함↔답할 것과 답할 것↔보고서
-          gapAbove: Math.round(asks.top - inbox.bottom),
+          // 이웃한 두 단추 사이 틈: 자동화↔답할 것과 답할 것↔보고서
+          gapAbove: Math.round(asks.top - automations.bottom),
           gapBelow: Math.round(reports.top - asks.bottom),
         };
       });
-    const want = "activity-work,activity-machines,activity-automations,activity-inbox,activity-asks,activity-reports,activity-tasks";
+    const want = "activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-bar").waitFor();

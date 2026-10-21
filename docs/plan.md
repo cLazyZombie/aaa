@@ -6767,11 +6767,43 @@ Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 
 - **검증.** E2E71은 실제 host·agent와 Chromium/WebKit 390×844에서 사본·실시간 원본·인증 없는 공유 탭의 WAV 두 개 읽기·decode·혼합·ended와 격리를 확인한다. 출력 끝은 gain 0으로 두고 그 앞 analyser로 신호를 확인한다. HEAD·Range·XHR·하위 HTML 상대 읽기·경로 탈출·credentials·링크 폐기도 검사한다. connect-src를 host 전체로 넓히거나 CORS를 없앤 제품 변형에서 각각 격리·fetch 실패를 잡고 bytes 복구 뒤 정본에서 통과했다. 실제 iPhone 청취는 별도다. 기존 E2E21·59와 Rust library·보고 회수 keeper도 유지한다.
 - **착지 번호·호환.** 기준 origin/main `34bc1a04`의 마지막 §8.380·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 기능은 §8.381·E2E71을 이어 쓴다. Front/Agent wire 요청·타입 변경이 없어 FRONT_API 1.91·AGENT_LINK 1.11은 유지한다.
 
-### 8.382 병합 대기·착지 중 thread의 실행 자리(t-0594, d-0028)
+
+### 8.382 사용자 화면의 알림함 숨기기(10-21, t-0590)
+
+- **사용자 화면.** coordinator 내부 알림을 그대로 보이던 활동 막대 알림함 아이콘·배지와 알림함/흐름 사건/post 패널 진입점을 숨긴다. 배지용 inbox 조회도 실행하지 않는다. 예전에 `inbox` 패널을 기억한 기기는 새로 열 때 「작업」을 고른다. 「답할 것」·작업 보고·내 보고서·확인 필요 알림은 유지한다.
+- **유지 범위.** ListFoot·UsageMeters의 바닥 사용량 칸과 coordinator CLI·host inbox 동작은 그대로다. 설정에 별도 진입점을 만들지 않고 내부 진단은 기존 CLI로 한다.
+- **검증.** 기존 E2E26·53·56·57·62를 새 패널 순서와 알림함 숨김에 맞춘다. 옛 선택 기억, 데스크톱·휴대폰·보기 기기, 사용량 배치, 확인 필요 post의 답함·inbox 기록과 CLI 조회·끝내기를 확인한다. main에서 추가된 E2E23의 종료 문서 API keeper는 더 이상 쓰지 않는 inbox 대신 asks 조회로 같은 경계를 확인한다. 정상/복귀 실제 응답과 종료 뒤 전송 없음 단언을 유지한다.
+- **착지 번호·호환.** 재개 착지 기준 origin/main `35ecad05`에서 마지막 §8.381·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인했다. 이번 변경은 §8.382를 이어 쓰며 wire 변경·새 E2E 파일이 없어 기존 API 판과 E2E 번호를 유지한다.
+
+### 8.383 「직접 설치」 안내: host 주소 후보·지문을 넣은 새 머신 명령(10-21, t-0578 웹 머신 추가 M1)
+
+- **요청.** t-0471 확정 기획의 M1(웹 등록 승인·폐기). 등록 창·대기·6자리 코드 승인·폐기·host 머신과 마지막 조작 기기 폐기 거부는 W5b(§8.355)가 이미 같은 요청으로 했다. M1에 남은 것은 SSH가 없는 머신을 위한 「직접 설치」 안내다: 새 머신에서 칠 명령을 웹이 실제 host 주소·이름으로 채운다(기획 §1.11. install 비대화 모드가 착지하면 그 한 줄로 바꾼다).
+- **proto(FRONT_API 1.92, 더하기만).** 조작 기기의 `enroll_guide` → `EnrollGuide{listen?, addresses[{address, source}], host_fingerprint, software}`. Reader는 거부한다(host 주소·지문). 읽기만이라 사람 판정 목록에는 넣지 않는다. 옛 host는 모르는 요청으로 거절하고 웹은 1.92 미만이면 묻지 않고 주소 칸을 직접 받는다. Agent link 변경 없음.
+- **주소 후보.** host가 실제로 연 `agent_listen`에서만 만든다: 모든 주소(0.0.0.0·[::])면 tailnet 이름(`tailscale status`)과 이 머신 이름, tailnet 주소(IPv4 100.64/10·IPv6 fd7a:115c:a1e0::/48)면 tailnet 이름과 그 주소, 다른 IP면 그 주소만(tailnet 이름은 그 IP가 아니다), loopback은 「이 host 머신 안에서만」으로 표시, 이름으로 연 설정은 그대로. 닫혀 있으면 빈 목록과 「agent_listen을 정한다」 안내.
+- **웹.** 설정 「머신」 → 「새 머신 등록」 아래 「직접 설치 안내」(펼칠 때 읽음): host 주소 고르기(옛 host는 입력), 새 머신 이름(host 규칙, 이미 있는 이름은 알림), 차례 ① 같은 판 설치 ② `aaa agent enroll <주소> --name <이름>` ③ 새 머신 화면의 host fingerprint 앞 16자 맞추기와 「승인…」 ④ `agent.toml`의 host ⑤ macOS 서비스 설치(다른 OS는 `aaa agent` 직접). 명령마다 「복사」. 쓸 수 없는 이름·주소 글자는 `<이름>`·`<host 주소>` 자리표시로 둬 틀린 명령이 복사되지 않는다.
+- **검증.** host 유닛 `enroll_guide::tests`(연 주소별 후보), proto `control_classification`(조작 기기만), 웹 유닛 `enrollGuide.test.mjs`, 웹 E2E `60-admin`(안내 명령을 화면에서 읽어 그대로 실행해 등록, 안내의 host 지문 = 새 머신 화면의 지문, 이미 있는 이름 알림, Reader에 안내 없음, 휴대폰 390 폭).
+- **번호·호환.** 착지 기준 origin/main `5211dd13`에서 마지막 §8.382·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인해 §8.383·FRONT_API 1.92를 이어 쓴다. 새 E2E 파일은 없다(`60-admin`에 더함). AGENT_LINK 그대로.
+
+### 8.384 SSH로 머신 추가: 접속·host key 신뢰·OS 감지(10-21, t-0578 웹 머신 추가 M2)
+
+- **요청.** t-0471 확정 기획의 M2: host SSH 실행기, 대상 검증, host key 신뢰, OS·arch 감지(uname과 PowerShell), 설치 작업 기록과 사건. 원격에는 쓰지 않는다(설치·등록은 M3, install 비대화 모드 뒤). 사용자 결정 Q1(host에 이미 있는 SSH 키·설정만, 비밀번호 안 받음)·Q2(대상과 믿은 지문만 저장)·Q10(아무 대상, 처음 지문 확인).
+- **proto(FRONT_API 1.93, 더하기만).** `machine_setup_start{target}`·`machine_setup_trust{job, host_key_sha256}`·`machine_setup_choose{job, os, arch}`·`machine_setup_cancel{job}`은 조작 기기·aaa 세션 밖 사람만(§8.333 사람 판정 목록), `machine_setup_list`는 Reader도. 답 `MachineSetup{setup}`·`MachineSetups{setups}`, `MachineSetupView{job, target, phase, ssh{user,host,port,proxy_jump}, host_keys[{kind, sha256}], host_key_state(known|new|changed), detected{os, arch, raw, chosen, home, shell, aaa}, error, created_ms, updated_ms}`. 진행은 웹 `enroll` 사건(같은 「머신」 쪽이 듣는다). 옛 host는 모르는 요청으로 거절하고 웹은 1.91 미만이면 「SSH로 추가」를 그리지 않는다. Agent link 변경 없음.
+- **SSH.** host가 PATH의 `ssh`를 부른다(`[host] ssh_config`가 있으면 `-F`, 비우면 그 사용자의 ~/.ssh/config). 공통 `BatchMode=yes`·`ConnectTimeout=10`·`ClearAllForwardings`·`ForwardAgent=no`·`RequestTTY=no`. 대상은 별칭·`user@host:port`·`[v6]:port`만 받고 비밀번호(`user:pw@`)·`-`로 시작·공백·따옴표는 거부한다. 원격에서는 고정 감지 스크립트만 돈다. ControlMaster는 M2에서 쓰지 않는다(접속이 셋뿐이고 소켓 경로 길이 한도가 있다. M3에서 다시 본다).
+- **host key.** ① 빈 임시 known_hosts에 `StrictHostKeyChecking=accept-new`·`PreferredAuthentications=none`으로 접속해 상대가 내민 키만 받는다(인증하지 않아 원격에서 아무것도 돌지 않는다. ProxyJump도 같다). ② aaa 전용 `<state>/ssh/known_hosts`와 사용자 `~/.ssh/known_hosts`로 `StrictHostKeyChecking=yes` 접속: 아는 키면 바로 감지, 모르는 키면 「지문 확인」, 바뀐 키(`IDENTIFICATION HAS CHANGED`)면 멈춤(fail-closed). ③ 사람이 지문을 믿으면 받은 줄이 그 지문과 같을 때만 aaa 전용 known_hosts(0600)에 그 줄을 더한다. 사용자 known_hosts는 읽기만 한다. 지문은 `SHA256:<base64>`(ssh-keygen -l과 같다).
+- **감지.** `sh -c '…'`로 `uname -s`·`uname -m`·HOME·SHELL·aaa 판(PATH 또는 ~/.local/bin)을 표지 사이에 읽는다(원격 기본 셸이 csh·fish여도 된다). 표지가 없거나 MINGW·MSYS·CYGWIN·Windows면 `powershell -NoProfile -NonInteractive -EncodedCommand`(UTF-16LE)로 PROCESSOR_ARCHITECTURE·USERPROFILE·%LOCALAPPDATA%\aaa\bin\aaa.exe 판을 읽는다. 그래도 모르면 「OS 고르기」(release 대상 다섯). 대상에 없는 조합은 「지원 안 함」.
+- **작업.** host DB `machine_setups`(JSON, 최근 20개)와 감사 `machine_setup_start|trust|choose|cancel`. 단계: 접속 중 → 지문 확인 → OS 감지 중 → 준비됨(또는 OS 고르기·지원 안 함·실패). 단계를 바꿀 때는 그 단계일 때만 쓴다(그사이 지운 작업은 되살리지 않는다). host가 진행 중에 다시 시작하면 그 작업은 「멈췄다」로 끝나고 새로 시작한다.
+- **웹.** 설정 「머신」 → 「SSH로 추가」: 대상 칸(비밀번호 꼴·공백은 보내기 전에 막음)과 「접속 시험」, 작업마다 대상·단계·`user@host:port`(ProxyJump)·까닭, 지문 확인 단계는 키 종류·지문과 「이 지문을 믿음…」(확인 창에 지문과 「그 머신에서 ssh-keygen -lf로 맞춘다」), OS 고르기, 준비됨이면 OS·CPU·HOME·셸·aaa 판과 「설치는 다음 단계」, 「지우기」. 보기 기기는 목록·단계만.
+- **Windows runner.** 실험실 시험은 Unix만 돈다. `windows_runner_reports_whether_an_openssh_server_exists`가 windows-2025 CI 로그에 sshd.exe 유무를 적는다(계획 M2 확인 항목, M4 시험 방식을 정한다). 착지 뒤 CI 로그로 판정한다.
+- **검증.** host 유닛 `machine_setup::tests`(대상·`ssh -G`·지문·감지 출력·스크립트·까닭, 고름·멈춤 복구, 그리고 실험실 sshd로 처음 키 → 세션 안·Reader·다른 지문 거부 → 믿음 → 감지 → 아는 키 바로 감지 → 닫힌 포트 → 바뀐 키 멈춤 → 목록·지우기), 웹 유닛 `machineSetupModel.test.mjs`, 웹 E2E `72-machine-add`.
+- **번호·호환.** 착지 기준 origin/main `6f7b4bd2`(M1 병합)에서 마지막 §8.383·FRONT_API 1.92·AGENT_LINK 1.11·E2E71을 직접 확인해 §8.384·FRONT_API 1.93·E2E72를 이어 쓴다. AGENT_LINK 그대로. `[host] ssh_config`는 비우면 예전과 같다.
+
+### 8.385 병합 대기·착지 중 thread의 실행 자리(t-0594, d-0028)
 
 - **목적·판정.** 일을 마치고 착지 창만 기다리는 Worker는 새 구현 자리를 막지 않는다. host가 해시 검증해 회수한 보고 **첫 줄**의 `[병합 준비됨]`은 `merge_ready`/「병합 대기」, `[착지]`는 `landing`/「착지 중」이다. 보고 해시와 같은 DB 갱신에서 단계를 저장한다. harness 묶음·진행률·알림 의도·질문 판정과 분리하며 ack는 단계를 바꾸지 않는다. 보고 사본 회수 실패는 마지막으로 확인한 단계를 유지한다.
 - **경계.** 첫 줄 맨 앞의 표지와 공백 경계를 요구한다(BOM·CRLF 허용). 표지 없는 옛 보고·본문의 표지·`[완료]`·`[진행 중]`·붙여 쓴 제목은 일반 작업이다. `[완료][병합 준비됨]`, `[완료] [병합 준비됨]`, 반대 순서 등 중복은 제외 근거로 쓰지 않는다. 단계 표지 직후 첫 제목이 `[`로 시작해도 모호하므로 일반 작업으로 센다. 표지는 하나만 쓴다. 배포 전 회수한 보고는 host 시작 때 해당 프로젝트의 해시가 맞는 사본으로 단계를 보충한다. 사본이 없거나 해시가 다르면 보수적으로 센다.
 - **한도·원자성.** 기존 자동화 제외를 유지하고 병합 대기 전부와 착지 **최대 한 자리**를 사용자 Worker 한도·예약 자리에서 뺀다. 중복 착지 표지가 있어도 두 번째부터는 작업으로 세므로 한도를 더 넓히지 않는다. 실제 착지 시작 직렬화는 coordinator의 착지 창 운영이 맡으며 보고 표지로 명령 실행을 제어하지 않는다. Starting은 센다. resolve 정리 중에는 직전 단계를 유지하고 정리 확정 뒤 표지를 지운다. DB 선점·예약 dispatch·미리보기·재시작·다시 열기·context가 같은 DB 계산을 쓴다.
 - **작업 복귀.** 착지 검증 실패를 고칠 때는 `[착지]`를 유지한다. 착지를 그만두거나 다단계 작업의 다음 구현을 시작하면 `[진행 중]`으로 바꿔 다시 센다. 한도 초과가 되어도 기존 프로세스는 멈추지 않으며 다음 기동만 막는다. 자동화의 규칙별 동시 상한·측정 표지는 이 단계와 무관하게 원래 자리를 유지한다.
-- **표시·호환.** 웹 할 일(연결·미연결)·예약·사이드바의 두 줄/한 줄 모드·모든 thread·상세 제목 앞에 「병합 대기」 초록, 「착지 중」 주황 글 표지를 붙인다. 작업 파랑·예약 보라·자동화 출처 막대와 구별한다. 단계 사건은 열린 할 일 board도 다시 읽게 하여 예약과 미연결 줄을 갱신한다. CLI `thread list/show`·`task queue`·`context`도 같은 말을 쓴다. FRONT_API 1.92의 선택 `ThreadView.stage`·`TaskThread.stage`·`TaskReservation.stage`를 더하며 옛 host의 생략은 기존 표시다. AGENT_LINK 1.11 유지, 새 요청·E2E 파일 번호는 없다.
+- **표시·호환.** 웹 할 일(연결·미연결)·예약·사이드바의 두 줄/한 줄 모드·모든 thread·상세 제목 앞에 「병합 대기」 초록, 「착지 중」 주황 글 표지를 붙인다. 작업 파랑·예약 보라·자동화 출처 막대와 구별한다. 단계 사건은 열린 할 일 board도 다시 읽게 하여 예약과 미연결 줄을 갱신한다. CLI `thread list/show`·`task queue`·`context`도 같은 말을 쓴다. FRONT_API 1.94의 선택 `ThreadView.stage`·`TaskThread.stage`·`TaskReservation.stage`를 더하며 옛 host의 생략은 기존 표시다. AGENT_LINK 1.11 유지, 새 요청·E2E 파일 번호는 없다.
 - **기준·검증.** 사용자 재개 지시의 origin/main `35ecad05`에서 시작했다. 기존 §8.381·FRONT_API 1.91·E2E71을 확인하고 이 절/API만 이어 쓴다. host 유닛은 표지 경계·옛 JSON/사본 이행·중복 착지 상한·동시 DB 선점·작업 복귀를 검사한다. m13은 실제 보고 회수 사건에 따른 연속 예약 기동과 CLI·ack·host 재시작을 검사한다. 기존 E2E67은 데스크톱/휴대폰 할 일·사이드바·모든 thread·예약 표지를 검사한다. 절차는 [시험](testing.md)의 t-0594 절을 따른다.
+
+- **착지 번호 대조.** 착지 창 기준 origin/main `0b5d4800`에서 마지막 §8.384·FRONT_API 1.93·AGENT_LINK 1.11·E2E72를 직접 확인했다. 기존 절과 머신 추가 API를 보존하며 이 기능은 §8.385·FRONT_API 1.94로 맞춘다. 기존 E2E67 확장을 유지하고 E2E72는 머신 추가에 그대로 둔다.

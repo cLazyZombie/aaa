@@ -209,7 +209,7 @@ while True:
     }
   });
 
-  await step("종료 문서 API: WebKit pagehide 뒤 tasks·inbox 조회를 시작하지 않고 pageshow 뒤 다시 읽는다", async () => {
+  await step("종료 문서 API: WebKit pagehide 뒤 tasks·asks 조회를 시작하지 않고 pageshow 뒤 다시 읽는다", async () => {
     const wk = await webkit.launch();
     try {
       const client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
@@ -230,13 +230,14 @@ while True:
       const notify = () => p.evaluate(() => {
         const socket = window.__apiEventSockets.find(s => s.readyState === WebSocket.OPEN);
         if (!socket) throw new Error("실제 앱 events 연결이 없다");
-        for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "inbox" }]) {
+        for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "asks", requests: 0 }]) {
           socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
         }
       });
       await p.waitForFunction(() => window.__apiEventSockets.some(s => s.readyState === WebSocket.OPEN));
+      // t-0590: 숨긴 알림함 대신 계속 쓰는 「답할 것」 조회로 종료 경계를 검사한다.
       // 먼저 실제 두 조회가 가능한 연결·구독인지 확인한다. listener 부재로 숨김 검사가 통과하면 안 된다.
-      await Promise.all([receive("tasks"), receive("inbox"), notify()]);
+      await Promise.all([receive("tasks"), receive("asks"), notify()]);
       const hiddenCalls = await p.evaluate(() => {
         const original = window.fetch;
         const calls = [];
@@ -249,7 +250,7 @@ while True:
         try {
           window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
           const socket = window.__apiEventSockets.find(s => s.readyState === WebSocket.OPEN);
-          for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "inbox" }, { ev: "inbox" }]) {
+          for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "asks", requests: 0 }, { ev: "asks", requests: 0 }]) {
             socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
           }
           return calls;
@@ -257,7 +258,7 @@ while True:
       });
       assert.deepEqual(hiddenCalls, [], "끝나는 문서에서 일반 앱 API를 시작했다");
       await p.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
-      await Promise.all([receive("tasks"), receive("inbox"), notify()]);
+      await Promise.all([receive("tasks"), receive("asks"), notify()]);
       assert.deepEqual(client.errors, [], "문서 복귀 뒤 처리되지 않은 오류");
       await p.context().close();
     } finally { await wk.close(); }

@@ -371,6 +371,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS asks(
                project TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL,
                done_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS machine_setups(id TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS push_subs(
                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
                created_at INTEGER NOT NULL);",
@@ -699,6 +700,38 @@ impl Db {
             c.execute("UPDATE machines SET revoked=1, fingerprint=NULL WHERE id=?1", [id])?;
         }
         Ok(id)
+    }
+
+    /// SSH 머신 추가 작업(plan §8.384): JSON 한 행. 최근 것부터
+    pub(crate) fn machine_setups(&self) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT data FROM machine_setups ORDER BY updated DESC, id DESC")?;
+        let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
+    pub(crate) fn machine_setup(&self, id: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT data FROM machine_setups WHERE id=?1", [id], |r| r.get(0)).optional()?)
+    }
+
+    /// 쓰고, 최근 `keep`개 밖의 오래된 작업은 지운다
+    pub(crate) fn machine_setup_put(&self, id: &str, data: &str, updated_ms: u64, keep: usize) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO machine_setups(id,data,updated) VALUES(?1,?2,?3)
+             ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated=excluded.updated",
+            params![id, data, updated_ms as i64],
+        )?;
+        c.execute(
+            "DELETE FROM machine_setups WHERE id NOT IN (SELECT id FROM machine_setups ORDER BY updated DESC, id DESC LIMIT ?1)",
+            [keep as i64],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn machine_setup_delete(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.lock().unwrap().execute("DELETE FROM machine_setups WHERE id=?1", [id])? != 0)
     }
 
     pub fn add_device(&self, id: &str, role: &str, token_hash: &str, label: &str) -> Result<()> {

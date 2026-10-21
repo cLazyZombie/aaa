@@ -198,8 +198,13 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.89: task 표시 ID(d-0001)·ID 선택자·TaskLog.task(plan §8.373). ULID와 기존 제목 입력은 유지한다.
 /// 1.90: install_approve의 계획/실제 범위 hash 결속. raw 승인서는 private executor가 전달한다.
 // 1.91: 자동화 thread 출처 상세 ThreadView.automation_trigger(선택), plan §8.377.
-// 1.92: 보고 기반 병합 대기·착지 중 표지(ThreadView·TaskThread·TaskReservation.stage). Agent link 변화 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 92 };
+// 1.92: 「직접 설치」 안내(웹 머신 추가 M1, plan §8.383): 조작 기기의 `enroll_guide` → `EnrollGuide`(host agent 연결 주소 후보·host
+// 지문·판). 옛 host는 모르는 요청으로 거절해 웹이 주소 자리에 `<host 주소>`를 둔다. Agent link 변경 없음.
+// 1.93: SSH 머신 추가 M2(plan §8.384): `machine_setup_start`·`machine_setup_trust`·`machine_setup_choose`·`machine_setup_cancel`
+// (조작 기기·세션 밖 사람)·`machine_setup_list`(Reader도) → `MachineSetup`·`MachineSetups`, 진행은 웹 `enroll` 사건. 옛 host는 모르는
+// 요청으로 거절해 웹이 「SSH로 추가」를 그리지 않는다. Agent link 변경 없음.
+// 1.94: 보고 기반 병합 대기·착지 중 표지(ThreadView·TaskThread·TaskReservation.stage, plan §8.385). Agent link 변화 없음.
+pub const FRONT_API: Version = Version { major: 1, minor: 94 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

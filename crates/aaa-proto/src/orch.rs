@@ -806,7 +806,7 @@ impl ThreadGroup {
     }
 }
 
-/// 회수한 보고 첫 줄의 작업 단계. thread 묶음·알림 의도와 별개다(FRONT_API 1.92).
+/// 회수한 보고 첫 줄의 작업 단계. thread 묶음·알림 의도와 별개다(FRONT_API 1.94).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadStage {
