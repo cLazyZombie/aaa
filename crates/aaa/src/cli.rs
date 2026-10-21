@@ -1663,8 +1663,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             aaa_common::resource::raise_nofile_limit("host");
             aaa_common::resource::disable_core_dump("host");
             legacy_guard()?;
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run(cfg, aaa_config::paths::state_dir()))?;
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
+                aaa_config::paths::state_dir(),
+                None,
+                aaa_host::shutdown_signal(),
+            ))?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Agent(a) => {
@@ -2840,9 +2844,8 @@ pub(crate) fn supervised_role(
     legacy_guard()?;
     match role {
         aaa_proto::install::InstallRole::Host => {
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run_with_shutdown(
-                cfg,
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
                 aaa_config::paths::state_dir(),
                 Some(ready),
                 supervised_stop(Some(stop)),

@@ -45,11 +45,19 @@ const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 pub async fn start(host: &Arc<Host>) -> Result<()> {
     let addr = host.cfg.web.listen.clone();
     if addr.is_empty() {
+        // 웹을 끈 설정: 다음 시작의 안전 모드도 웹을 열지 않는다(지난 주소를 남기지 않는다)
+        if let Err(e) = host.db.set_meta(crate::safe_mode::LISTEN_KEY, "") {
+            tracing::warn!("웹 주소 기록 실패: {e:#}");
+        }
         return Ok(());
     }
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("웹 listen {addr}"))?;
     host.web_port.store(listener.local_addr()?.port(), std::sync::atomic::Ordering::Relaxed);
     *host.web_listen.lock().unwrap() = Some(listener.local_addr()?.to_string());
+    // 설정을 읽지 못한 다음 시작의 안전 모드가 같은 주소(tailscale serve가 가리키는 포트)에 뜨도록 실제로 연 주소를 남긴다
+    if let Err(e) = host.db.set_meta(crate::safe_mode::LISTEN_KEY, &listener.local_addr()?.to_string()) {
+        tracing::warn!("웹 주소 기록 실패: {e:#}");
+    }
     tracing::info!(%addr, "웹 listen(loopback)");
     // 공개 주소(Host·Origin 허용)를 지금 serve 상태로 맞춘다. tailscale을 기다리지 않고 연다(그동안은 지난 값)
     let h = host.clone();
@@ -135,7 +143,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .with_state(host)
 }
 
-fn host_header(h: &HeaderMap) -> String {
+pub(crate) fn host_header(h: &HeaderMap) -> String {
     h.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
 }
 
@@ -144,7 +152,7 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 /// 요청이 HTTPS(serve) 경유인가: 브라우저가 보는 주소가 loopback이 아니거나 proxy가 https라고 알린다.
-fn via_https(h: &HeaderMap) -> bool {
+pub(crate) fn via_https(h: &HeaderMap) -> bool {
     let proto = h.get("x-forwarded-proto").and_then(|v| v.to_str().ok());
     proto == Some("https") || !is_loopback_host(&host_header(h))
 }
@@ -432,7 +440,7 @@ async fn serve_view(
 
 /// 장치 cookie 이름. cookie는 포트를 가리지 않아 같은 hostname의 두 인스턴스가 한 이름을 쓰면 서로의 로그인을 덮는다.
 /// 그래서 인스턴스는 이름에 꼬리를 단다(`__Host-aaa-work`, plan §8.294). 기본 인스턴스는 지금 이름 그대로다
-fn cookie_name(https: bool) -> String {
+pub(crate) fn cookie_name(https: bool) -> String {
     cookie_name_in(aaa_config::paths::instance().as_deref(), https)
 }
 
@@ -444,7 +452,7 @@ fn cookie_name_in(instance: Option<&str>, https: bool) -> String {
 /// 장치 cookie. HTTPS에서는 `__Host-aaa`만 본다: prefix 없는 `aaa`는 같은 이름의 다른 서비스(다른 포트)나
 /// 하위 경로가 심을 수 있다. `=`이 없는 등 깨진 항목은 건너뛴다(herdr-web-ui `parseCookies`: 남의 cookie 하나가
 /// 주인을 막지 않는다)
-fn cookie_token(h: &HeaderMap) -> Option<String> {
+pub(crate) fn cookie_token(h: &HeaderMap) -> Option<String> {
     let name = cookie_name(via_https(h));
     for v in h.get_all(header::COOKIE) {
         let Ok(s) = v.to_str() else { continue };
