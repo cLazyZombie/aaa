@@ -155,6 +155,25 @@ impl Db {
 
 #[cfg(test)]
 impl Db {
+    /// 앞 예약의 자리 대기 기록 직후 resolve가 완료되는 경합을 같은 DB 쓰기 경계에 고정한다.
+    pub(crate) fn test_queue_release_on_wait(&self, project: &str, task: &str, thread: &str) {
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let (project, task, thread) = (quote(project), quote(task), quote(thread));
+        self.conn
+            .lock()
+            .unwrap()
+            .execute_batch(&format!(
+                "CREATE TEMP TRIGGER release_queue_slot AFTER UPDATE ON task_queue
+                 WHEN NEW.project={project} AND NEW.task_id={task}
+                   AND json_extract(NEW.data,'$.reason')='자리 대기'
+                 BEGIN
+                   UPDATE threads SET status='resolved',data=json_set(data,'$.status','resolved')
+                   WHERE project={project} AND id={thread};
+                 END;",
+            ))
+            .unwrap();
+    }
+
     pub(crate) fn test_archive_finalize_fault(&self, fail: bool) {
         self.conn.lock().unwrap().execute_batch(if fail {"CREATE TRIGGER deny_archive_update BEFORE UPDATE ON task_archive BEGIN SELECT RAISE(FAIL,'archive finalize fault'); END;"} else {"DROP TRIGGER deny_archive_update;"}).unwrap();
     }

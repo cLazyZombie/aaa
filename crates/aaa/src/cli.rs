@@ -109,6 +109,30 @@ enum Cmd {
         #[arg(long)]
         context_sha256: String,
     },
+    /// (내부) 신뢰를 만들지 않는 검증 SSH의 private 설치 제안.
+    #[command(hide = true)]
+    InstallProbe {
+        #[arg(long)]
+        executor_sha256: String,
+    },
+    /// (내부) 검증된 SSH 계보와 고정 helper SHA에서만 최초 설치 pin을 받는다.
+    #[command(hide = true)]
+    InstallBootstrap {
+        #[arg(long)]
+        executor_sha256: String,
+        #[arg(long)]
+        issuer_sha256: String,
+    },
+    /// (내부) private 승인 입력과 EOF 뒤에만 진행하는 고정 installer worker.
+    #[command(hide = true)]
+    InstallWorker {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        executor_sha256: String,
+        #[arg(long)]
+        resume: bool,
+    },
     /// agent backend 실행, 또는 host에 등록(enroll)
     Agent(AgentArgs),
     /// (내부) agent가 승인한 독립 복구 감시. 직접 실행 경로/명령은 받지 않는다.
@@ -1619,6 +1643,24 @@ pub fn main() -> ExitCode {
     if let Cmd::ServiceRun { context, context_sha256 } = &cli.cmd {
         return crate::install::service_dispatch(context, context_sha256);
     }
+    if let Cmd::InstallProbe { executor_sha256 } = &cli.cmd {
+        let Some(state) = cli.state_dir.as_deref() else {
+            return ExitCode::from(2);
+        };
+        return crate::install::probe_dispatch(state, executor_sha256);
+    }
+    if let Cmd::InstallBootstrap { executor_sha256, issuer_sha256 } = &cli.cmd {
+        let Some(state) = cli.state_dir.as_deref() else {
+            return ExitCode::from(2);
+        };
+        return crate::install::bootstrap_dispatch(state, executor_sha256, issuer_sha256);
+    }
+    if let Cmd::InstallWorker { id, executor_sha256, resume } = &cli.cmd {
+        let Some(state) = cli.state_dir.as_deref() else {
+            return ExitCode::from(2);
+        };
+        return crate::install::worker_dispatch(state, id, executor_sha256, *resume);
+    }
     if let Some(name) = &cli.instance {
         // 하위 프로세스(session host·pane 안 CLI·launchd가 띄운 aaa)도 같은 인스턴스를 본다
         unsafe { std::env::set_var("AAA_INSTANCE", name) };
@@ -1666,6 +1708,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
         Cmd::Install(_) => unreachable!("install은 환경 변경 전에 처리한다"),
         Cmd::ServiceRun { .. } => unreachable!("SCM은 환경 변경 전에 연결한다"),
+        Cmd::InstallProbe { .. } | Cmd::InstallBootstrap { .. } | Cmd::InstallWorker { .. } => {
+            unreachable!("installer worker는 환경 변경 전에 연결한다")
+        }
         Cmd::Host => {
             init_log("info");
             aaa_common::resource::raise_nofile_limit("host");
@@ -3880,6 +3925,16 @@ fn render_front(r: &FrontResponse) -> String {
         }
     };
     match r {
+        FrontResponse::InstallPublished { publication } => {
+            let _ = writeln!(
+                s,
+                "설치 공개 포트: {} → {} · mapping {:?} · HTTPS {:?}",
+                publication.serve_port, publication.target_port, publication.mapping, publication.public_https
+            );
+        }
+        FrontResponse::InstallApproval { approval } => {
+            let _ = writeln!(s, "설치 승인 ID: {}\nplan_sha256: {}", approval.installation_id, approval.plan_sha256);
+        }
         FrontResponse::Rollout { rollout } => {
             let _ = writeln!(
                 s,

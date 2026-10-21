@@ -617,6 +617,9 @@ pub struct EnrollRequest {
     pub proto: Version,
     pub machine_id: String,
     pub machine_name: String,
+    /// install_enroll.v1 협상 뒤만 사용한다. host의 사람이 SAS를 승인할 때 결과를 이 ID에 결속한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation: Option<crate::install::InstallEnrollmentBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -625,6 +628,34 @@ pub enum LinkMsg {
     Hello(AgentHello),
     Welcome(HostWelcome),
     Enroll(EnrollRequest),
+    /// 등록 전 기능 협상. 구판에는 grant를 보내지 않는다.
+    InstallEnrollCapabilities {
+        proto: Version,
+        features: Vec<String>,
+    },
+    InstallEnrollProbe {
+        proto: Version,
+    },
+    InstallEnroll(Box<crate::install::InstallEnrollRequest>),
+    InstallEnrollLookup {
+        proto: Version,
+        installation_id: String,
+        plan_sha256: String,
+    },
+    /// 기존 agent 자기 신원만 읽는다. 설치 grant/등록창 권한을 쓰지 않는다.
+    InstallAgentQuery {
+        proto: Version,
+        machine_id: String,
+        machine_name: String,
+    },
+    InstallAgentKnown {
+        machine_id: String,
+    },
+    InstallEnrollUnknown,
+    InstallEnrolled {
+        installation_id: String,
+        machine_id: String,
+    },
     /// host가 등록 요청을 받아 사용자의 확인을 기다린다.
     EnrollPending,
     EnrollAccepted {
@@ -1632,6 +1663,10 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 설치 전용 서명 승인. Controller 또는 세션 밖 Local만, raw 승인서는 응답하지 않는다.
+    InstallApprove {
+        request: Box<crate::install::InstallApprovalRequest>,
+    },
     /// 등록은 host의 세션 밖 Local만. 비밀값은 반환하거나 감사 기록에 넣지 않는다.
     AccountImport {
         name: String,
@@ -2069,6 +2104,13 @@ pub enum FrontRequest {
     /// 기기를 취소한다. 그 기기의 열린 연결은 바로 닫히고 push 구독도 지워진다
     DeviceRevoke {
         id: String,
+    },
+    /// W0와 별개로, 실제 승인된 같은 머신 worker의 한 포트 범위만 검증한다.
+    InstallPublish {
+        installation_id: String,
+    },
+    InstallPublishStatus {
+        installation_id: String,
     },
     WebPublish,
     WebPublishOff,
@@ -3002,6 +3044,8 @@ impl FrontRequest {
                 | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::Workspace { .. }
+                | FrontRequest::InstallPublish { .. }
+                | FrontRequest::InstallPublishStatus { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
                 | FrontRequest::EvaluatorStatus { .. }
@@ -3029,6 +3073,12 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    InstallPublished {
+        publication: crate::install::InstallPublication,
+    },
+    InstallApproval {
+        approval: crate::install::InstallApprovalView,
+    },
     Accounts {
         accounts: Vec<crate::AccountView>,
     },

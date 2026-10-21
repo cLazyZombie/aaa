@@ -52,6 +52,12 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
         return Ok(());
     }
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("웹 listen {addr}"))?;
+    start_bound(host, listener)
+}
+
+/// 소유한 실제 listener를 serving에 넘긴다. cfg 값만으로 web 준비를 선언하지 않는다.
+pub(crate) fn start_bound(host: &Arc<Host>, listener: tokio::net::TcpListener) -> Result<()> {
+    let addr = listener.local_addr()?;
     host.web_port.store(listener.local_addr()?.port(), std::sync::atomic::Ordering::Relaxed);
     *host.web_listen.lock().unwrap() = Some(listener.local_addr()?.to_string());
     // 설정을 읽지 못한 다음 시작의 안전 모드가 같은 주소(tailscale serve가 가리키는 포트)에 뜨도록 실제로 연 주소를 남긴다
@@ -114,6 +120,7 @@ impl axum::serve::Listener for ResourceListener {
 pub fn router(host: Arc<Host>) -> Router {
     Router::new()
         .route("/api/v1/pair", post(pair))
+        .route("/api/v1/install-probe/{challenge}", get(install_probe))
         .route("/api/v1/me", get(me).delete(sign_out))
         .route("/api/v1/call", post(call))
         .route("/api/v1/events", get(events_ws))
@@ -146,6 +153,13 @@ pub fn router(host: Arc<Host>) -> Router {
 
 pub(crate) fn host_header(h: &HeaderMap) -> String {
     h.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
+}
+
+async fn install_probe(State(host): State<Arc<Host>>, Path(challenge): Path<String>) -> Response {
+    match host.install_probe(&challenge) {
+        Some(proof) => (StatusCode::OK, proof).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 fn is_loopback_host(host: &str) -> bool {

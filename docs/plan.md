@@ -6701,11 +6701,41 @@ FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더
 - **호환.** FRONT_API 1.89에서 선택 칸 `TaskView.short_id`와 `TaskLog.task` 필터를 더한다. 새 CLI의 기록 필터는 1.89 이상 host에만 보낸다. ULID 기반 연결과 제목 입력은 유지하고 AGENT_LINK 1.10은 그대로다. TASKS.md만 다른 host로 옮기면 번호는 새로 발급되므로 번호까지 보존하려면 host DB를 함께 보존한다.
 - **검증.** DB·host 동시 이주와 비재사용·복원 owner, 실제 host·agent·CLI의 변경·이동·삭제·예약·재시작·완료 보관 통합 시험, 웹 E2E `70-task-ids`의 CLI 교차 편집과 320/390/768px 표시·검색·가로 넘침을 검사한다. main의 E2E 68·69와 §8.372까지 유지한다. 절차는 [시험](testing.md), 사용법은 [할 일 ID](task-ids.md)에 둔다.
 
+### 8.374 aaa install I6 대화형 검토·계획 결속 승인(10-21, t-0485)
 
-### 8.374 자동화 thread 표지와 별도 실행 자리(10-21, t-0586)
+I5 위에 외부 TTY의 inquire/plain 마법사와 명시 인자·private 초안을 연결한다. 두 UI는 동일 choices/계획을 제출한다. dry-run은 저장·발급·nonce·실제 적용을 하지 않으며 Ctrl+C/EOF는 cancelled/130이다. `--yes`·임의 JSON·세션/SSH 환경 변수는 권한이 아니다. 검토한 계획/실행 SHA/계정/instance/변경 전후의 정확 scope를 Ed25519 서명과 사용자 전용 issuer pin·짧은 만료·한 번의 nonce로 결속한다. 발급/비밀 입력은 공개 결과·NDJSON에 넣지 않는다.
+
+고정 worker는 실제 IPC peer PID/image와 EOF가 끝난 보호 입력을 확인하고 승인 lease를 소비한 뒤 I2 파일 transaction, I5 Windows SCM, 등록/공개 작업을 실행한다. CLI가 사라져도 worker는 독립 수명으로 같은 설치 ID에 재개 상태를 기록한다. status는 발급만 된 planned와 실제 journal/SCM/등록 상태를 읽고 보정 쓰기를 하지 않는다. 보호 암호는 Windows console에서 한 번 받아 UTF-16 buffer를 지우며 암호 보관은 SCM에 맡긴다. 기존 같은 소유 서비스는 자격 증명을 바꾸지 않는다. 미구현 broker/OS 권한은 needs_user다.
+
+host 등록은 TLS peer와 결속한 일회 grant 또는 기존 W0 SAS를 쓰고, 응답 유실은 같은 ID 조회로 회복한다. 현재 peer key를 대기 중 DB의 새 key로 바꾸거나 폐기한 grant로 기기를 되살리지 않는다. 첫 Controller는 실제 W0 pairing의 redeem 뒤에만 확인한다. 코드 표시 ACK는 등록/기기 완료가 아니다. identity/key/cert/pin의 승인 전 내용과 자신의 준비 기록을 대조해 외부 편집을 보존한다.
+
+Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값의 type/순서/빈 항목/UTF-16 원문을 유지하며 transaction 안에서 before를 다시 확인한다. Serve는 정확 선택 포트와 예상 mapping hash를 서명하고 Windows 보호 LocalAPI의 ETag/If-Match로만 적용한다. 다른 앱/포트/Funnel을 덮거나 조건 없는 CLI 쓰기로 대체하지 않는다. mapping과 현재 host instance의 공개 HTTPS 응답, 첫 Controller를 각각 확인한다. Front의 좁은 InstallPublish 요청은 실제 파일 적용 중인 동일 worker 증명만 수락하며 기존 W0 변경 권한은 그대로다.
+
+공개 결과의 optional service/web 요약은 등록·running·application_ready와 외부/내부 포트·재사용/소유·pairing을 나눠 표시한다. SID/home/인증 파일 존재로 실제 서비스 harness 인증을 추정하지 않는다. require가 미확인이면 unknown/needs_user, 사용자가 새 계획에서 명시한 login=defer는 configured 범위다. URL·암호·키·코드는 결과에 없다. FRONT_API 1.90, AGENT_LINK 1.11/install_enroll.v1과 TS/schema를 함께 갱신하며 기능 없는 구판을 성공으로 처리하지 않는다.
+
+검증은 macOS 전체 gate와 Windows strict cross다. Windows·Linux 실제 실행은 main push 뒤 CI이며 실제 SCM logon/Session0/로그인 전 부팅/LSA/UAC/인증·사용자 Windows PC 인수와 혼동하지 않는다. 이 단계 뒤 Windows 최소 bootstrap/사용자 Windows PC 사용자 시험→macOS→Linux→최종 I7 순서로 간다. 별도 runner/VM·branch/PR CI push는 두지 않는다. 절/API 번호는 착지 창에서 최신 main과 다시 대조한다.
+
+
+### 8.375 화면 이동 뒤 대화 첨부 미리보기 복원(10-21, t-0583)
+
+- **원인·수정.** 초안에는 이미지 `@경로`가 남지만 입력창 컴포넌트의 첨부 목록·blob URL은 화면 전환 때 사라졌다. 입력창을 다시 열 때 초안의 이미지 경로에서 목록을 복원하고 기존 `pane_file` API의 권한 검사·이미지 크기 제한을 거친 URL로 썸네일을 읽는다. 원본 이미지 바이트나 blob URL을 브라우저 저장소에 추가하지 않는다. 새로 올린 그림은 기존 로컬 미리보기를 쓰고 해제 때 blob URL을 놓는다.
+- **동작·검증.** 복원한 첨부도 전송·개별 삭제 대상이며, 뒤에 새 그림을 붙여도 ID가 겹치지 않는다. 기존 E2E23을 확장해 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 대화·터미널·보고서 이동, 새로고침, 실제 이미지 decode, 원본 SHA-256 전송, 추가 첨부·개별 삭제·재진입을 검사한다. 원래 코드의 미리보기 누락 재현과 시험 절차는 [testing](testing.md)의 t-0583 절에 둔다.
+- **번호·호환.** 착지 기준 main `c877d394`의 §8.374·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 확인했다. 이 수리는 §8.375이며 프로토콜 변경이나 새 E2E 파일은 없다. 기존 API 판과 E2E 번호를 유지한다.
+
+### 8.376 예약 순회 중 자리 반환의 차례 추월 방지(10-21, t-0584)
+
+- **원인.** 예약 조회와 기동 순회는 저장된 `(position, created_ms, task_id)` 차례를 지킨다. 다만 앞 예약의 자리 부족 판정 뒤 순회를 계속하므로, 다른 thread의 resolve가 그사이 자리를 반환하면 뒤 예약만 빈자리를 발견해 먼저 기동할 수 있었다.
+- **수정.** 같은 순회에서 한 번 자리 부족을 확인하면 이후 예약의 기동도 대기시킨다. 다음 순회에서 앞 차례부터 다시 판정하며, 사전 확인 뒤 직접 기동과 마지막 자리를 경쟁해 `start_wait:`를 받는 경우도 같다. 기동 중 예약의 상태 대조와 내용 검사는 계속하고, 끊긴 머신 등 시작 조건이 막힌 앞 예약을 건너뛰는 계약도 유지한다.
+- **검증.** 앞 예약의 자리 대기 DB 기록 직후 다른 thread를 resolved로 바꾸는 임시 SQLite trigger로 경합을 고정한다. 원래 제품은 뒤 예약만 머신 선택으로 넘어가 실패한다. 기존 m13을 확장해 늦게 만든 예약을 CLI `queue-move`로 1번에 옮기고 재시작 뒤 차례 보존, 자리 반환 뒤 그 예약의 실제 pane 기동, 이후 끊긴 앞 예약을 건너뛰는 기동을 검사한다. 고정 sleep·시험 시한 변경은 없으며 세부 절차는 [testing](testing.md)의 task 예약 절에 둔다.
+- **번호·호환.** 착지 기준 main `e895c07b`에서 §8.375·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.376을 이어 쓰며 새 요청·DTO·E2E 파일이 없어 프로토콜 판과 기존 E2E 번호를 유지한다.
+- **착지 중 추가 수리(사용자 1A).** 통합 후보 E2E23에서 WebKit 페이지 오류가 나 원인을 고쳤다. 페이지 종료로 자동화 목록 조회가 취소된 뒤 `finally`가 밀린 갱신을 다시 실행해 끝나는 문서에서 `fetch`를 시작했다. 취소가 `pagehide`보다 먼저 올 수 있으므로 실패한 읽기의 `catch`에서도 예약을 비운다. `pagehide`와 컴포넌트 해제는 새 조회를 막으며, `pageshow`에서 갱신을 재개한다. E2E23의 응답 gate로 첫 `projects` 조회를 붙잡은 채 reload하여 원래 제품의 같은 오류를 재현하고, 수정 뒤 오류 부재·종료한 문서의 갱신 차단·복귀 뒤 실제 조회를 확인한다. 시한 연장이나 오류 무시는 없다.
+
+### 8.377 자동화 thread 표지와 별도 실행 자리(10-21, t-0586)
 
 - `automations/*.toml`의 `do.start`가 만든 Worker는 저장한 `automation` 출처로 「자동화 thread」로 구분한다. 사람이 같은 제목·actor로 시작해도 출처가 없으면 일반 Worker다.
 - 사용자·coordinator Worker의 `max_parallel_threads`와 사용자 예약 자리에서 자동화 thread를 뺀다. DB 선점·시작 미리보기·예약 dispatch·재시작·다시 열기가 같은 계산을 따른다. 기존 자동화 thread도 저장한 출처로 곧바로 빠진다.
 - 이번 요구의 무제한 증가 방지에 맞춰 §8.313 이전 기본 무제한 중 **do.start 규칙의 동시성만** 기본 1개로 바꾼다. `limits.max_running`의 양수는 그 수, 생략·0은 1개다. Starting/Open·resolve 정리 중은 계속 점유한다. `reuse=open`은 열린 thread에 이어 보낸다. 판정과 INSERT·실패 재시작·다시 열기의 같은 DB 트랜잭션에서 상한을 검사한다. 횟수·간격·프로젝트 전체 자동화 상한의 생략·0 의미는 그대로다.
 - 웹 작업 줄·모든 thread·CLI `thread list/show`·`context` 표지를 「자동화 thread」로 통일한다. 사건·일정은 표지에서 구분하지 않고 상세에서 규칙 제목/이름·최초 source/조건/사건 ID/원인 thread를 보인다. 선택 `ThreadView.automation_trigger`는 최초 기동 당시 설명이며 규칙 변경·삭제·host 재시작 뒤에도 남는다. 옛 thread는 원래 없던 사건을 만들지 않고 기록 없음으로 표시한다.
 - coordinator 안내·설정 설명·사용 문서도 같은 수와 이름을 쓴다. 운영 자동화 파일·시스템 설정은 바꾸지 않는다.
+
+- **착지 번호·통합.** 기준 main `1a26f03f`의 §8.376·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이 기능은 §8.377·FRONT_API 1.91로 이어 쓰며 AGENT_LINK는 1.11을 유지한다. 기존 E2E48을 확장하고 새 번호는 만들지 않는다. t-0584의 같은 순회 자리 부족 latch와 저장 차례를 유지한 채 자동화 자리만 제외한다.

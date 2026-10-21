@@ -373,6 +373,78 @@ async fn one_reservation(lab: &Lab) -> TaskReservation {
 }
 
 #[tokio::test]
+async fn slot_released_during_queue_scan_does_not_bypass_the_moved_front() {
+    // t-0584의 순회 울타리는 자동화 thread가 열린 상태에서도 사용자 자리만 세며 유지한다.
+    for automatic in [false, true] {
+        let lab = Lab::new();
+        if automatic {
+            lab.h
+                .db
+                .thread_insert_next("demo", |id| {
+                    let mut r = Lab::rec();
+                    r.id = id.into();
+                    r.status = ThreadStatus::Open;
+                    r.automation = Some("check".into());
+                    serde_json::to_string(&r).unwrap()
+                })
+                .unwrap();
+        }
+        lab.write("## Backlog\n- [ ] 먼저 만든 예약 (claude@mac-offline) [작업 폴더]\n  독립 설명과 완료 범위\n- [ ] 맨 앞으로 옮길 예약 (claude@mac-offline) [작업 폴더]\n  독립 설명과 완료 범위\n");
+        for title in ["먼저 만든 예약", "맨 앞으로 옮길 예약"] {
+            let t = lab.h.task_board("demo").unwrap().tasks.into_iter().find(|t| t.title == title).unwrap();
+            lab.h
+                .task_queue(
+                    "demo",
+                    QueueOp::Reserve {
+                        task: t.title,
+                        block: t.block_sha256,
+                        profile: "claude".into(),
+                        profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                    },
+                    "device:user",
+                )
+                .await
+                .unwrap();
+        }
+        let moved = lab.h.db.queue_list("demo").unwrap()[1].task_id.clone();
+        lab.h.task_queue("demo", QueueOp::Move { task_id: moved.clone(), position: 1 }, "device:user").await.unwrap();
+        let mut releasing = String::new();
+        for _ in 0..lab.h.settings("demo").max_parallel_threads {
+            releasing = lab
+                .h
+                .db
+                .thread_insert_next("demo", |id| {
+                    let mut r = Lab::rec();
+                    r.id = id.into();
+                    r.status = ThreadStatus::Open;
+                    serde_json::to_string(&r).unwrap()
+                })
+                .unwrap();
+        }
+        lab.h
+            .db
+            .queue_change("demo", "host", |rows| {
+                for r in rows {
+                    r.reason = "자리 판정 전".into();
+                }
+                Ok(())
+            })
+            .unwrap();
+        lab.h.db.test_queue_release_on_wait("demo", &moved, &releasing);
+        // 앞 예약은 자리가 없다고 판단했다. 바로 그 기록 경계에서 resolve가 자리를 돌려준다.
+        // 같은 순회의 뒤 예약만 머신 선택/기동으로 넘어가면 앞 차례를 추월한 것이다.
+        lab.h.queue_pass("demo").await.unwrap();
+        assert_eq!(lab.h.load("demo", &releasing).unwrap().status, ThreadStatus::Resolved);
+        let rows = lab.h.db.queue_list("demo").unwrap();
+        assert_eq!(rows[0].task_id, moved);
+        assert!(rows.iter().all(|r| r.state == S::Queued && r.reason == "자리 대기"), "{rows:#?}");
+        // 다음 순회는 새 자리를 앞에서부터 다시 판정한다. 끊긴 머신의 예약은 계속 건너뛸 수 있다.
+        lab.h.queue_pass("demo").await.unwrap();
+        assert!(lab.h.db.queue_list("demo").unwrap().iter().all(|r| r.reason.contains("머신 연결")));
+    }
+}
+
+#[tokio::test]
 async fn claim_and_cancel_race_has_one_persistent_result() {
     let lab = Lab::new();
     let row = one_reservation(&lab).await;

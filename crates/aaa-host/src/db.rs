@@ -436,6 +436,11 @@ impl Db {
             Some(Ok(SCHEMA_VERSION)) => {}
             Some(other) => anyhow::bail!("host DB schema {other:?}을 이 aaa(schema {SCHEMA_VERSION})가 모른다"),
         }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS install_grants (
+            installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
+            fingerprint TEXT NOT NULL, machine TEXT NOT NULL UNIQUE, name TEXT NOT NULL)",
+        )?;
         Ok(Db { conn: Mutex::new(conn) })
     }
 
@@ -600,6 +605,59 @@ impl Db {
             Self::machine_from,
         )
         .optional()?)
+    }
+
+    /// 서명 검증을 마친 grant만 호출한다. nonce 소비와 새 머신 등록은 같은 commit이다.
+    pub(crate) fn install_enroll(
+        &self,
+        installation: &str,
+        plan: &str,
+        nonce: &str,
+        fingerprint: &str,
+        id: &str,
+        name: &str,
+    ) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let previous: Option<(String, String, String, String)> = tx
+            .query_row(
+                "SELECT plan,fingerprint,machine,name FROM install_grants WHERE installation=?1",
+                [installation],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        if let Some(previous) = previous {
+            anyhow::ensure!(
+                previous == (plan.into(), fingerprint.into(), id.into(), name.into()),
+                "install grant target conflict"
+            );
+            let trusted: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 AND name=?2 AND fingerprint=?3 AND revoked=0 AND local=0)",
+                params![id,name,fingerprint], |r|r.get(0))?;
+            anyhow::ensure!(trusted, "install grant revoked");
+        } else {
+            let conflict: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 OR name=?2 OR fingerprint=?3)",
+                params![id, name, fingerprint],
+                |r| r.get(0),
+            )?;
+            // 기존/폐기된 신원을 되살리거나 다른 이름에 덮어쓰지 않는다.
+            anyhow::ensure!(!conflict, "install grant target conflict");
+            tx.execute("INSERT INTO install_grants(installation,plan,nonce,fingerprint,machine,name) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![installation,plan,nonce,fingerprint,id,name])?;
+            tx.execute(
+                "INSERT INTO machines(id,name,fingerprint,local,enrolled_at) VALUES(?1,?2,?3,0,?4)",
+                params![id, name, fingerprint, aaa_common::util::now_ms() as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// 응답 유실 뒤 조회에는 유효 기간을 연장하지 않고 실제 TLS peer와 아직 신뢰하는 머신을 대조한다.
+    pub(crate) fn install_enrolled(&self, installation: &str, plan: &str, fingerprint: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT g.machine FROM install_grants g JOIN machines m ON m.id=g.machine
+            WHERE g.installation=?1 AND g.plan=?2 AND g.fingerprint=?3 AND m.fingerprint=g.fingerprint AND m.name=g.name AND m.revoked=0 AND m.local=0",
+            params![installation,plan,fingerprint], |r|r.get(0)).optional()?)
     }
 
     /// 등록(원격) 또는 로컬 agent 자동 등록. 같은 id면 이름·fingerprint를 갱신한다.

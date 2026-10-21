@@ -839,7 +839,7 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub automation_title: Option<String>,
-    /// 최초 기동 당시 사건·일정의 설명. 옛 thread·옛 host는 생략한다.
+    /// 최초 기동 당시 사건·일정의 설명(FRONT_API 1.91). 옛 thread·옛 host는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub automation_trigger: Option<String>,

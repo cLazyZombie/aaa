@@ -38,7 +38,8 @@ impl std::fmt::Display for Version {
 // 싣지 않는다)를 더한다.
 // 1.10: work_files.v1의 일반 작업 파일 전송. 1.9 agent에는 옛 파일 태그로 보낸다.
 // 같은 1.10에 hello 선택 칸 `sha256`(실행 파일 SHA-256, plan §8.372)을 더한다. 옛 agent는 보내지 않고 옛 host는 버린다.
-pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
+// 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
+pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
 /// 1.8: `thread read`·`thread keys`(plan §8.86), 1.9: `ticker_tick`(docs/testing.md),
@@ -195,8 +196,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.88: 머신 상세(웹 머신 추가 M0, plan §8.372): `MachineView`의 `arch`·`software`·`sha256`·`software_differs`·`features`·
 // `selfcheck`. 옛 host는 생략해 웹이 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(옛 agent는 보내지 않고 옛 host는 버린다).
 // 1.89: task 표시 ID(d-0001)·ID 선택자·TaskLog.task(plan §8.373). ULID와 기존 제목 입력은 유지한다.
-// 같은 1.89에 ThreadView.automation_trigger(최초 사건·일정, 선택)를 더한다. 자동화 thread 표지는 같은 이름으로 보인다.
-pub const FRONT_API: Version = Version { major: 1, minor: 89 };
+/// 1.90: install_approve의 계획/실제 범위 hash 결속. raw 승인서는 private executor가 전달한다.
+// 1.91: 자동화 thread 출처 상세 ThreadView.automation_trigger(선택), plan §8.377.
+pub const FRONT_API: Version = Version { major: 1, minor: 91 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
