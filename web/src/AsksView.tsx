@@ -182,12 +182,12 @@ export function AsksView({
           {selection.kind === "missing" && <p className="asks-empty" data-testid="asks-missing"><code>{selection.id}</code> 질문을 찾을 수 없다. 왼쪽 「답할 것」 목록에서 다른 질문을 열 수 있다.</p>}
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
-            <QuestionCard key={`${selection.ask.thread.id} ${selection.ask.thread.questions.report_hash} ${selection.ask.thread.questions.draft?.at_ms ?? ""}`} t={selection.ask.thread} q={selection.ask.thread.questions}
+            <QuestionCard key={`${selection.ask.thread.id} ${selection.ask.thread.questions.report_hash} ${JSON.stringify(selection.ask.thread.questions.draft ?? null)}`} t={selection.ask.thread} q={selection.ask.thread.questions}
               canControl={canControl} onAnswer={(p, text) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text)} onZoom={setZoom} onThread={onThread} />
           )}
           {selection.kind === "open" && selection.ask.kind === "request" && (
             selection.ask.request.questions ? (
-              <QuestionCard key={`${selection.ask.key} ${selection.ask.request.questions.draft?.at_ms ?? ""}`} request={selection.ask.request} q={selection.ask.request.questions}
+              <QuestionCard key={`${selection.ask.key} ${JSON.stringify(selection.ask.request.questions.draft ?? null)}`} request={selection.ask.request} q={selection.ask.request.questions}
                 canControl={canControl} onAnswer={(p, text) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text)} onZoom={setZoom} onThread={onThread} />
             ) : <RequestCard key={selection.ask.key} questionId={selection.ask.request.question_id} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
