@@ -2192,8 +2192,13 @@ impl Host {
             if self.trust_screens(&rec.project) == crate::trust_screen::COORDINATOR {
                 credential.trust_cwd = rec.cwd.clone();
             }
+            let expected_pane = if rec.pane.is_none() && rec.park.as_ref().is_some_and(|p| p.parked_at_ms.is_some()) {
+                Some(self.parked_account_pane(&credential.run, name, &launch.harness)?)
+            } else {
+                rec.pane.clone()
+            };
             *rec = self.update_rec(&rec.project, &rec.id, |r| r.launch_sent = true)?;
-            self.spawn_account_on(&rec.machine_id, spec, credential, actor, rec.pane.as_deref()).await?
+            self.spawn_account_on(&rec.machine_id, spec, credential, actor, expected_pane.as_deref()).await?
         } else {
             *rec = self.update_rec(&rec.project, &rec.id, |r| r.launch_sent = true)?;
             self.spawn_on(&rec.machine_id, spec, actor).await?
