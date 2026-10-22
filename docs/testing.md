@@ -11,8 +11,9 @@
 ### E2E88 실패 진단(t-0786)
 
 - HTML 링크의 popup 대기와 실제 click은 `clickForPopup`에서 함께 관측한다. click이 먼저 실패한 뒤 정리 과정이 context를 닫아도 popup의 늦은 거부를 처리하므로 원래 오류가 남는다. `node --test web/test/popup.test.mjs`는 클릭 전 대기 등록·클릭 완료, 클릭 실패 뒤 context 종료, popup 실패 뒤 늦은 클릭 실패를 확인한다. 옛 순서의 구현을 별도 사본에 심으면 뒤 두 시험이 unhandled rejection으로 실패한다.
+- 실제 WebKit desktop의 HTML 링크 클릭만 의도적으로 거부한 별도 사본에서도 대조했다. 옛 순서는 CI와 같은 popup 종료 unhandled rejection으로 죽고, 새 순서는 최초 클릭 오류·단계·본문/iframe 영상 상태를 `FAIL`에 남긴다. 두 사본 모두 실패로 끝나며 영상 재생과 sandbox 검사는 실제 제품을 쓴다. 오류 은폐의 재현이며 최초 CI 클릭 오류의 원인을 재현한 것은 아니다.
 - 네 조합 각각의 실패에는 단계, 선택값, 주소, 영상 readyState·currentTime·paused·오류와 최근 click·hashchange·media 사건을 붙인다. 선택 보존과 주소 보존은 독립 단언이며 재생·탐색 실패에도 실제 상태를 남긴다. 영상 재생·시한·sandbox·제품 기대값은 그대로다.
-- `212d8425`의 macOS CI는 WebKit desktop의 iframe 확인 뒤 popup 대기 거부로 종료돼 최초 오류를 남기지 못했다. 이 로그만으로 재생·선택·주소·브라우저 중 원인을 확정할 수 없다. 로컬 macOS 27·Playwright 1.59.1에서 캡처 유무를 나누어 측정하며, 재현되지 않으면 제품 수리 완료로 해석하지 않는다. CI와 같은 캡처 없는 실행도 반드시 포함한다. 진단 반복은 실패를 통과로 바꾸는 재시도가 아니며 실패한 회차를 모두 보존한다.
+- `212d8425`의 macOS CI는 WebKit desktop의 iframe 확인 뒤 popup 대기 거부로 종료돼 최초 오류를 남기지 못했다. t-0783 첫 gate의 선택/주소 복합 단언도 두 값을 기록하지 않았다. 로컬 macOS 27·Playwright 1.59.1의 캡처 포함 10회·캡처 없는 10회는 모두 통과했다. 최초 원인과 두 실패의 관련성은 미확정이며 제품 수리 완료로 해석하지 않는다. CI와 같은 캡처 없는 실행도 반드시 포함한다. 진단 반복은 실패를 통과로 바꾸는 재시도가 아니며 실패한 회차를 모두 보존한다.
 
 
 ## 본문 끝단 스크롤 격리(t-0766, plan §8.447)
