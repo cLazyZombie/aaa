@@ -1996,7 +1996,11 @@ body: string, done: boolean,
  */
 seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
-export type RoutineView = { title: string, name: string, trigger: string, action: string,
+export type RoutineView = {
+/**
+ * 웹에서 읽기만 하는 시스템 자동화의 이유. 없으면 일반 자동화(옛 host도 생략).
+ */
+web_read_only_reason: string | null, title: string, name: string, trigger: string, action: string,
 /**
  * automation·routine·legacy. legacy는 변환 안내용 옛 파일이다.
  */
@@ -2098,7 +2102,11 @@ truncated: boolean,
  */
 body_truncated: boolean, };
 
-export type AutomationDoc = { name: string,
+export type AutomationDoc = {
+/**
+ * 웹에서 읽기만 하는 시스템 자동화의 이유. 없으면 일반 자동화(옛 host도 생략).
+ */
+web_read_only_reason: string | null, name: string,
 /**
  * `automations/<이름>.toml`, 옛 형식이면 `routines/<이름>.md`
  */
@@ -2145,6 +2153,10 @@ command: string, machine: string | null, command_sha256: string, command_approve
 commands_allowed: boolean, };
 
 export type AutomationTrashEntry = {
+/**
+ * 웹에서 읽기만 하는 시스템 자동화의 이유. 없으면 일반 자동화(옛 host도 생략).
+ */
+web_read_only_reason: string | null,
 /**
  * `.trash/` 안 파일 이름(되살리기 요청에 쓴다)
  */

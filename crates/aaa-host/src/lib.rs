@@ -1518,6 +1518,10 @@ impl Host {
                 Err(_) => {}
             }
         }
+        // 보호 판정도 생략한 프로젝트를 채운 뒤에 한다(일괄 변환은 프로젝트 파일을 읽는다).
+        if role != DeviceRole::Local {
+            automation::check_web_mutation(self, &req)?;
+        }
         match req {
             FrontRequest::InstallApprove { request } => self.install_approve(role, actor, *request),
             FrontRequest::InstallPublish { installation_id } => {

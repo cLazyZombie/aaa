@@ -279,7 +279,7 @@ pub(crate) fn merge_form(file: &str, text: &str, form: Value) -> Result<String, 
 }
 
 /// 이름 `<규칙>-<지운 시각 ms>.toml`
-fn trash_id(id: &str) -> Option<(&str, u64)> {
+pub(super) fn trash_id(id: &str) -> Option<(&str, u64)> {
     let stem = id.strip_suffix(".toml")?;
     let (name, at) = stem.rsplit_once('-')?;
     (aaa_proto::valid_project(name) && !at.is_empty() && at.bytes().all(|b| b.is_ascii_digit()))
@@ -375,6 +375,7 @@ impl Host {
             None => None,
         };
         Ok(AutomationDoc {
+            web_read_only_reason: super::web_read_only_reason(name).map(str::to_owned),
             check: self.automation_check(p, &root, name, &file, &text, None),
             name: name.into(),
             sha256: sha256(&text),
@@ -574,7 +575,13 @@ impl Host {
                     .and_then(|d| d.get("title").and_then(|t| t.as_str()).map(str::to_owned))
                     .filter(|t| !t.is_empty())
                     .unwrap_or_else(|| name.to_string());
-                Some(AutomationTrashEntry { name: name.into(), title, deleted_at_ms: at, id })
+                Some(AutomationTrashEntry {
+                    web_read_only_reason: super::web_read_only_reason(name).map(str::to_owned),
+                    name: name.into(),
+                    title,
+                    deleted_at_ms: at,
+                    id,
+                })
             })
             .collect();
         out.sort_by(|a, b| b.deleted_at_ms.cmp(&a.deleted_at_ms).then_with(|| a.id.cmp(&b.id)));
