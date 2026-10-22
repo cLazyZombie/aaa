@@ -25,7 +25,8 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, ClipboardList, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardList, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { AutomationIcon } from "./activityIcons";
 import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -1030,7 +1031,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           : [pinned
             ? { id: "unpin", label: "고정 해제", icon: PinOff, run: () => rows.togglePin(pinKey, menuFrom.current) }
             : { id: "pin", label: "고정", icon: Pin, run: () => rows.togglePin(pinKey, menuFrom.current) }]),
-        ...(t.automation ? [{ id: "automation", label: "자동화 규칙", icon: Workflow, run: () => props.onAutomation(t.project, t.automation!) }] : []),
+        ...(t.automation ? [{ id: "automation", label: "자동화 규칙", icon: AutomationIcon, run: () => props.onAutomation(t.project, t.automation!) }] : []),
         { id: "threads", label: "모든 thread", icon: ListChecks, run: props.onThreads },
       ],
     });
