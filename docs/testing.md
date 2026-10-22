@@ -1649,9 +1649,10 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 ## 휴대폰 뒤로 기록(t-0466, plan §8.301)
 
 - `node web/e2e/web.e2e.mjs --spec 39-phone-back`: WebKit iPhone 390·430 × Safari 탭·홈 화면 앱 흉내에서 pane 셋과 대화의 보고서를 연 뒤 앱 문서 칸(init script가 적은 `history.length`)까지 `history.back()`을 popstate 사건마다 하고 화면 차례를 단언한다. 왼쪽 가장자리 쓸기는 `document.createTouch`로 touchstart·touchmove(frame마다)·touchend/touchcancel을 내고, 겹친 뒤로는 손가락을 뗀 뒤 popstate를 기다린다. 닫힌 pane 칸·「모든 thread」 닫기의 기록 칸 수와 휴대폰·데스크톱 빈 화면 문구도 본다. 고정 sleep은 없고 popstate·DOM·animation frame·drawer transition 사건으로 끝낸다.
-- t-0466 수정 전 코드로는 첫 단계가 「(주소 없음)+빈 화면」으로 실패했다. 당시 쓸기 겹침의 「목록 닫힘」 규칙은 t-0541 사용자 답변 1A·2A로 아래 유지 규칙으로 바뀌었다. 뒤로 화면 순서·빈 화면 방지·기록 칸 수 단언은 유지한다.
-- t-0541(plan §8.340) 메뉴 상태는 창마다 기억하지 않는다. 1→2→3에서 메뉴를 열고 쓸기로 2로 돌아간 뒤 1→2→3을 뒤로·앞으로 순회해도 열린 채이고, 메뉴를 닫은 뒤 같은 창들을 순회하면 닫힌 채다. WebKit 390·430 × Safari 탭·홈 화면 앱 흉내에서 popstate·선택 줄의 aria-current·drawer transition 완료로 기다린다. 메뉴 토글이 기록 칸을 추가하지 않는지도 본다. 수정 전 네 조합 모두 메뉴 유지 단언에서 실패하며 휴대폰 전후 화면을 남긴다. WebKit 데스크톱 1280·패드 820에서는 사이드바 펼침·접힘이 양방향 이동 중 유지되는지도 확인한다.
-- t-0636(plan §8.408) 쓸기 자리: 왼쪽 끝(x 4)에서 시작한 쓸기는 목록을 열지 않고 주소·기록 그대로, 안쪽(x 60)에서 시작한 쓸기는 목록을 연다. 가장자리 쓸기 + touchcancel + 뒤로와 쓸기 끝난 뒤 뒤로는 앞 pane에 목록 닫힘이다(사용자가 본 결함). 먼저 열어 둔 목록 유지는 위 t-0541 단언 그대로다.
+- t-0466 수정 전 코드로는 첫 단계가 「(주소 없음)+빈 화면」으로 실패했다. 당시 쓸기 겹침의 「목록 닫힘」 규칙은 t-0541에서 상태 유지로 바뀌었고, 사용자 10-22 결정(t-0780)으로 다시 항상 닫기로 바뀌었다. 뒤로 화면 순서·빈 화면 방지·기록 칸 수 단언은 유지한다.
+- t-0780(plan §8.340): 휴대폰 뒤로·앞으로는 메뉴를 항상 닫는다. t-0541의 상태 유지 단언을 대체한다. 1→2→3에서 메뉴를 열고 가장자리 쓸기 + touchcancel + 뒤로는 2에 메뉴 닫힘이며, 매번 다시 열어도 1→2→3의 양방향 이동에서 닫힌다. 닫힌 메뉴가 이동으로 열리지 않는지도 확인한다. WebKit 390·430 × Safari 탭·홈 화면 앱 흉내에서 popstate·선택 줄 aria-current·drawer transition을 기다리고 기록 칸 수를 확인한다. WebKit 1280·820에서는 기존 사이드바 펼침·접힘 유지 검사를 보존한다.
+- E2E39의 `history-destinations.mjs`는 실제 host·agent의 thread 질문·게시 보고서·할 일을 준비하고 Chromium·WebKit 390px에서 thread·보고서 상세/목록·할 일 목록·질문 카드/미선택 목록·설정 목록/쪽을 메뉴 열림·닫힘 각각에서 뒤로·앞으로 순회한다. `history.back/forward`의 popstate 뒤 주소·본문 DOM·React frame·drawer transition으로 끝낸다. hash가 그대로인 설정 목록↔쪽·본문 복귀도 포함하며 hashchange만 처리하는 수리가 빠지는 경로를 검사한다. 빈 주소를 보던 pane으로 정규화하는 조기 반환과 목록 줄 직접 선택·빈 화면의 메뉴 단추도 확인한다. 할 일 상세는 같은 주소의 시트 기록이므로 별도 순회한다. 실제 앱 단축키로 메뉴를 연 뒤 Back의 상세 닫기·Forward의 닫힌 시트 건너뛰기와 메뉴 닫힘을 확인한다. 고정 sleep·시한 연장·실패 재시도는 없다.
+- t-0636(plan §8.408) 쓸기 자리: 왼쪽 끝(x 4)에서 시작한 쓸기는 목록을 열지 않고 주소·기록 그대로, 안쪽(x 60) 오른쪽 쓸기는 목록을 연다. 가장자리 쓸기 + touchcancel + 뒤로와 쓸기 끝난 뒤 뒤로는 앞 pane에 목록 닫힘이다. 왼쪽 끝 24px 경계와 메뉴 단추·안쪽 쓸기는 바꾸지 않는다.
 - 헤드리스는 Safari 시스템 몸짓 자체를 실행하지 못한다. 오른쪽 쓸기는 합성 touchstart·touchmove·touchcancel 뒤 history.back으로, 일반 뒤로·앞으로는 history.go로 같은 문서의 기록 순회를 흉내 낸다. 실제 iPhone Safari·홈 화면 앱의 운영체제 몸짓까지 대신 보증하지 않는다.
 
 ## 자동화 상세·변환·막힌 큐(t-0468, plan §8.303)

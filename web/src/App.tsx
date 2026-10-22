@@ -358,6 +358,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => {
     if (wideScreen) setDrawerOpen(false);
   }, [wideScreen]);
+  // 휴대폰 뒤로·앞으로는 목적지와 관계없이 메뉴를 닫는다(plan §8.340). 설정 목록·쪽은 hash가 같고,
+  // 빈 주소·닫힌 pane은 hashchange에서 일찍 반환하므로 popstate에서 먼저 처리한다.
+  useEffect(() => {
+    const onPop = () => {
+      if (window.matchMedia("(max-width: 768px)").matches) setDrawerOpen(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   // 화면 안쪽에서 오른쪽으로 쓸면 열고 왼쪽으로 쓸면 닫는다. 왼쪽 끝은 브라우저 뒤로 몫이다(herdr/edgeSwipe.ts)
   useEffect(() => watchDrawerSwipe(() => drawerOpenRef.current, setDrawerOpen), []);
   // Esc는 열린 drawer를 닫고 더 가지 않는다: capture 단계라 focus를 쥔 터미널은 받지 않는다. 위에 뜬 창(설정·확인창·
@@ -785,8 +794,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       const next = selectedFromHash();
       if (!settingsEntry(history.state)) setSettingsOpen(false);
       if (!own) {
-        // 브라우저 뒤로·앞으로는 이동 직전 drawer 상태를 유지한다(창마다 기억하지 않는다, plan §8.340). 목록 줄을 직접 고를 때는
-        // choose·chooseThread 등이 닫는다. Safari 가장자리 뒤로 쓸기는 drawer를 열지 않는다(왼쪽 끝은 브라우저 몫, plan §8.408).
+        // 브라우저 뒤로·앞으로는 popstate에서 drawer를 닫는다(plan §8.340). 목록 줄을 직접 고를 때는 choose·chooseThread 등이 닫는다.
+        // Safari 가장자리 뒤로 쓸기는 drawer를 열지 않는다(왼쪽 끝은 브라우저 몫, plan §8.408).
         // 고른 것이 없는 칸(옛 첫 칸·「고른 것 없음」)이나 닫힌 pane의 칸에 닿으면 지금 화면에 머물고 그 칸에 지금 주소를 쓴다(참고
         // onPop: pane이 없으면 그대로, 닿은 칸에는 보이는 곳을 쓴다). 빈 「하나를 고른다」로 떨어지지 않는다
         const { sel: shown, panes, loaded } = now.current;
