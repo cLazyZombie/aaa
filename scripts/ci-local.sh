@@ -12,7 +12,7 @@
 # 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee(CI)거나 그 셋 중 하나만 돌면 차례로 돈다(출력이 섞이지 않게).
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
-#   build      cargo build --workspace --all-targets --locked
+#   build      Windows는 dev 없는 배포 release build를 먼저 확인하고 workspace/all-targets build
 #   clippy     cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
 #   test       전체 Cargo 시험을 준비한 뒤 binary·m13 분할을 병렬 실행하고 doctest도 모두 실행한다
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
@@ -74,7 +74,13 @@ wanted() {
 # ── 단계 명령(여기가 유일한 정의다) ──
 step_web() { (cd web && npm ci --no-audit --no-fund && npm run build && npm test); }
 step_fmt() { cargo fmt --all --check; }
-step_build() { cargo build --workspace --all-targets --locked; }
+# Windows 배포와 같은 호출로 dev feature 합치기가 production 누락을 가리지 못하게 한다.
+step_build() {
+  if [ "$OS" = windows ]; then
+    cargo build --release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc || return $?
+  fi
+  cargo build --workspace --all-targets --locked
+}
 # 한 crate가 실패해도 나머지를 모두 본다: 아니면 cargo가 새 unit을 띄우지 않아 뒤 crate의 오류가 로그에 없다(10-18 windows: process.rs
 # unused import가 9eeced3 뒤 main CI에서 clip.rs dead code를 가렸다)
 step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
