@@ -1,6 +1,6 @@
 // thread 작업 요약(사용자 10-19 「thread에 mouse over를 하면 작업 내용이 정리된 게 뜨면 좋겠어」, plan §8.259): 프로젝트 패널
 // thread 줄의 hover 카드(마우스 기기만, 6줄 안팎)와 thread 화면 머리 「요약」 단추(데스크톱 팝오버·휴대폰 아래 시트, 접힌 절).
-// 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 휴대폰에는 hover 대안이 없다(사용자 결정).
+// 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 작업 목록 ⋯의 「요약」도 같은 상세를 연다(plan §8.434).
 import fs from "node:fs";
 import { root, AA, aaa, step, browser, webkit, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
 
@@ -79,6 +79,58 @@ export default async function ({ page }) {
     await shot(page, "summary-popover");
     await page.keyboard.press("Escape");
     await pop.waitFor({ state: "detached" });
+  });
+
+  await step("작업 목록 ⋯ → 요약: 데스크톱·휴대폰·Reader에서 같은 상세, 요약 없음과 화면 보존·뒤로 닫기", async () => {
+    fs.writeFileSync(`${root}/summary-missing-task.md`, "# 요약 없는 작업\n");
+    const missing = aaa("thread", "start", "demo", "--title", "요약 없는 작업", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/summary-missing-task.md`).id;
+    const hash = await page.evaluate(() => location.hash);
+    const wk = await webkit.launch({ headless: true });
+    const devices = [];
+    try {
+      for (const [engine, width] of [[browser, 320], [wk, 390]]) {
+        devices.push(await pairPage(engine, aaa("web", "pair", "--reader").code, { width, height: 844 }, { touch: true, hash }));
+      }
+      for (const p of [page, ...devices.map((d) => d.page)]) {
+        const phone = (await p.evaluate(() => innerWidth)) <= 768;
+        const tag = phone ? `phone-${await p.evaluate(() => innerWidth)}` : "desktop";
+        for (const [thread, goal] of [[missing, "요약 없는 작업"], [id, "웹 왼쪽 패널 다듬기"]]) {
+          const row = p.locator(`[data-thread="demo/${thread}"]`);
+          // 데스크톱은 ⋯ 단추를 숨기고 오른쪽 누름으로 같은 메뉴를 연다.
+          // 휴대폰 drawer를 열기 전에도 찾을 수 있도록 CSS locator로 단추를 잡는다.
+          if (phone) await inList(p, row.locator(".row-menu-toggle"));
+          else await p.getByTestId(`thread-demo-${thread}`).click({ button: "right" });
+          const menu = phone ? p.locator('.row-sheet:not(.summary-sheet)') : p.getByRole("menu");
+          const item = phone ? menu.getByRole("button", { name: "요약", exact: true }) : menu.getByRole("menuitem", { name: "요약", exact: true });
+          await item.waitFor();
+          if (await menu.locator(".summary-detail").count()) throw new Error("메뉴 안에 요약을 펼쳤다");
+          await shot(p, `summary-menu-${tag}-${thread === missing ? "missing" : "saved"}`);
+          if (!phone && thread === missing) {
+            await item.focus();
+            await p.keyboard.press("Enter");
+          } else await item.click();
+          await menu.waitFor({ state: "detached" });
+          const detail = p.getByTestId(phone ? "summary-sheet" : "summary-pop");
+          await until("메뉴에서 연 같은 작업 요약", async () => (await detail.locator(".summary-goal").innerText()).includes(goal));
+          if (await detail.getAttribute("aria-label") !== `${thread} 작업 요약`) throw new Error("다른 thread 요약을 열었다");
+          if (thread === missing && !(await detail.innerText()).includes("아직 요약이 없어")) throw new Error("요약 없는 작업의 안내 누락");
+          if (await p.getByTestId("summary-hover").count()) throw new Error("상세 위에 hover 카드가 겹쳤다");
+          if ((await p.evaluate(() => location.hash)) !== hash) throw new Error("요약을 열며 본문 화면을 바꿨다");
+          await detail.evaluate((el) => Promise.all(el.closest(".modal-scrim")?.getAnimations({ subtree: true }).map((a) => a.finished) ?? el.getAnimations().map((a) => a.finished)));
+          const box = await detail.evaluate((el) => ({ left: el.getBoundingClientRect().left, right: el.getBoundingClientRect().right, width: innerWidth, overflow: el.scrollWidth > el.clientWidth + 1 }));
+          if (box.left < 0 || box.right > box.width + 1 || box.overflow) throw new Error(`요약 창 가로 넘침 ${JSON.stringify(box)}`);
+          await shot(p, `summary-menu-detail-${tag}-${thread === missing ? "missing" : "saved"}`);
+          if (phone) await p.evaluate(() => history.back());
+          else await p.keyboard.press("Escape");
+          await detail.waitFor({ state: "detached" });
+          if ((await p.evaluate(() => location.hash)) !== hash) throw new Error("요약을 닫으며 본문 화면을 바꿨다");
+        }
+      }
+    } finally {
+      for (const d of devices) await d.page.context().close();
+      await wk.close();
+      aaa("thread", "resolve", "demo", missing);
+    }
   });
 
   await step("thread 줄 hover 카드(데스크톱): 150ms 뒤 목표·지금·최근 변경·활동·시간·상태, 한 줄씩 보이고 떠나면·⋯ 메뉴면 닫힌다", async () => {

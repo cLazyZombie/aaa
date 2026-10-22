@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## 작업 목록 메뉴의 요약(t-0721, plan §8.434)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 28-thread-summary --workers 1`: 실제 host·agent에 요약 있는 thread와 없는 thread를 만든다. 작업 목록 점 세 개 메뉴의 「요약」으로 thread 머리 단추와 같은 상세가 열리는지 확인한다.
+- Chromium 데스크톱·320px Reader와 WebKit 390px Reader에서 메뉴 본문 미표시·다른 thread의 정확한 목표·요약 없음 안내·hover 겹침 없음·주소 보존·가로 넘침을 검사한다. 데스크톱 키보드 Enter·Escape, 휴대폰 메뉴 시트→요약 시트 교체 뒤 한 번 뒤로 가기를 확인하고 각 화면을 캡처한다.
+- 기존 E2E28의 머리 단추·hover·고정·지시 전문·실시간 진행·Reader 쓰기 거부 검사는 유지한다. 메뉴 해제·DOM·애니메이션·history 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+- E2E12의 thread 메뉴 전체 항목 검사도 「보고·요약·고정·모든 thread」 순서를 검증한다. 기존 고정·닫기·다시 열기·모든 thread 이동 검사는 유지한다.
+
 ## host Codex 계정 이미지 생성(t-0707, plan §8.433)
 
 - `nice -n 15 cargo test -p aaa-host --lib image --locked`: 이미지/일반 thread의 공유 예약,

@@ -313,7 +313,6 @@ function HoverCard({ anchor, t, v, instant }: { anchor: HTMLElement; t: ThreadVi
 
 /** thread 화면 머리의 「요약」 단추와 그 창(데스크톱 팝오버, 휴대폰 아래 시트) */
 export function SummaryButton({ t }: { t: ThreadView }) {
-  const sheet = useMediaQuery(SHEET_QUERY);
   const btn = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const stale = summaryStale(t.summary);
@@ -335,9 +334,15 @@ export function SummaryButton({ t }: { t: ThreadView }) {
         <span className="summary-btn-label">요약</span>
         {stale && <span className="summary-dot" aria-hidden="true" />}
       </button>
-      {open && (sheet ? <SummarySheet t={t} onClose={() => setOpen(false)} /> : <SummaryPopover t={t} anchor={btn.current!} onClose={() => setOpen(false)} />)}
+      {open && <SummaryOverlay t={t} anchor={btn.current!} onClose={() => setOpen(false)} />}
     </>
   );
+}
+
+/** thread 머리 단추와 작업 목록 메뉴가 같은 상세 보기를 연다. */
+export function SummaryOverlay({ t, anchor, onClose }: { t: ThreadView; anchor: HTMLElement; onClose: () => void }) {
+  const sheet = useMediaQuery(SHEET_QUERY);
+  return sheet ? <SummarySheet t={t} onClose={onClose} /> : <SummaryPopover t={t} anchor={anchor} onClose={onClose} />;
 }
 
 function Body({ t }: { t: ThreadView }) {
