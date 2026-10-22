@@ -7461,3 +7461,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **게시 후보.** 기존 v0.1.4 tag/자산을 유지하고 workspace/Cargo.lock의 자체 아홉 package만 0.1.5로 올린 후보를 준비한다. 외부 의존성은 바꾸지 않는다. 새 tag/release는 아직 승인되지 않았으므로 만들거나 push하지 않으며, 착지한 정확 main CI 전체 성공과 별도 게시 승인 뒤 새 입구·manifest·SHA256SUMS의 실제 다운로드를 대조한다.
 
 - **착지 통합.** 승인 기준 origin/main `e2e2d5cf`의 마지막 §8.445·FRONT_API1.109·AGENT_LINK1.11·웹 E2E최대86(88파일)을 직접 확인했다. main의 설정 본문/공개 포트 변경/실행 모델 요약과 기존 시험 수리를 보존한다. 이 후보는 빈 §8.446을 쓰며 API/link/E2E 번호를 올리지 않는다. 최신 main 통합본의 전체 ci-local·공개 검사·Linux/Windows strict cross clippy·Windows release 조건 빌드 뒤 no-ff로 착지한다. 게시 tag/release는 별도 사용자 답 전에는 만들지 않는다.
+
+
+### 8.447 질문·본문 끝단의 문서 스크롤 격리(t-0766)
+
+- **목적·원인.** t-0748의 목록 높이 제한 뒤에도 긴 질문이 쓰는 공통 `.thread-body`에는 끝단 스크롤 전달 차단이 없고 앱 문서는 overflow가 열려 있다. Mac Safari에서 끝까지 내린 뒤 문서가 함께 밀리면 왼쪽 목록도 올라가고 아래 빈 영역이 생긴다. 질문 본문 안에서만 굴리고 바깥 문서는 유지한다.
+- **경계.** 앱이 있는 html·body만 overflow를 잠그고 앱 grid도 화면 높이 안의 넘침을 가둔다. 로그인·pairing 화면은 입력 초점을 따라 문서가 움직이는 기존 동작을 유지한다. 질문·보고서·thread의 공통 본문, 할 일 목록·상세, 설정 목록에는 overscroll contain을 적용한다. 이미 격리된 설정 본문·대화·왼쪽 목록은 유지한다. 휠·touch 이벤트의 전역 취소나 강제 scrollTo는 추가하지 않는다.
+- **검증.** E2E87에서 실제 host·agent와 그림·표가 긴 질문을 준비해 Chromium·WebKit × 데스크톱·휴대폰 × 밝음·어두움의 8조합으로 질문·Markdown 보고서·thread·할 일·설정의 양 끝을 검사하고 캡처한다. 본문 높이·문서 잠금·끝단 wheel 뒤 바깥 위치와 왼쪽 목록 scrollTop을 확인한다. Safari OS 고무줄의 headless 재현 한계와 그림 lazy 로드 대기는 [testing](testing.md)에 기록한다. FRONT_API 1.109·AGENT_LINK 1.11은 유지한다. 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.
+
+- **착지 통합.** 승인 기준 origin/main `4fe5937c`의 마지막 §8.446·FRONT_API 1.109·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 직접 확인했다. main의 공개 포트 변경·실행 모델 요약·Windows 한 줄 설치와 부분 적용 재개를 보존한다. 이번 기획은 빈 §8.447, 새 E2E87(89파일)을 쓰고 API·link는 유지한다. 자기 worktree 전용 target으로 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI 감시는 별도로 맡으며 여기서는 기다리지 않는다.

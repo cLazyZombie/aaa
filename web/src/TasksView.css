@@ -96,6 +96,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-3) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom));
 }
 .tasks-empty { margin: var(--space-3) var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); }
@@ -193,7 +194,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-detail-close .task-close-back { display: none; }
 @media (hover: hover) { .task-detail-close:hover { background: var(--bg-hover); } }
 .task-detail-list { min-width: 0; overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
-.task-detail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-3) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom)); overflow-wrap: anywhere; }
+.task-detail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-3) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom)); overflow-wrap: anywhere; }
 .task-detail-title { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-strong); }
 .task-detail-title .task-state { margin-top: 3px; }
 .task-detail-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-3); }
