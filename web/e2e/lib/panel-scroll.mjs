@@ -1,4 +1,5 @@
 // E2E26: 실제 격리 host의 긴 목록. DOM 복제나 높이 강제 없이 마지막 행의 접근·선택을 검증한다.
+import { panelRows } from "./panel-rows.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -8,6 +9,7 @@ import { root, aaa, step, browser, webkit, pairPage, stop, start, until, domIs, 
 async function reachEnd(p, selector, rowSelector, wheel) {
   const list = p.locator(selector), last = list.locator(rowSelector).last();
   await last.waitFor();
+  await panelRows(p, `${selector} ${rowSelector}`);
   const geometry = await list.evaluate((el) => {
     const r = el.getBoundingClientRect();
     return { h: el.clientHeight, sh: el.scrollHeight, sw: el.scrollWidth, w: el.clientWidth, top: r.top, bottom: r.bottom, viewport: innerHeight, overflow: getComputedStyle(el).overflowY };
@@ -54,6 +56,7 @@ async function reachEnd(p, selector, rowSelector, wheel) {
     }));
     assert.ok(fixed, "스크롤 뒤에도 패널 머리와 바닥은 화면 안");
   }
+  await panelRows(p, `${selector} ${rowSelector}`);
   assert.equal(await p.evaluate(() => window.scrollY), 0, "앱 문서는 스크롤하지 않는다");
   return last;
 }
@@ -105,6 +108,13 @@ export async function longPanelLists() {
             const automation = await reachEnd(p, '[data-testid="automations"]', '.automation-card', !touch);
             await automation.click();
             await p.getByTestId("automation-detail").waitFor();
+            // 선택·hover 배경이 앞 행의 둘째 줄을 덮지 않는지 실제 선택 후 다시 본다.
+            if (touch) {
+              await p.locator(".view [data-testid='drawer-toggle']:visible").click();
+              await drawerSettled(p, true);
+            } else await automation.hover();
+            await panelRows(p, ".automation-card");
+            await shot(p, `panel-scroll-${engine}-${name}-automation-selected`);
             await inList(p, "activity-reports");
             await domIs(p, "보고서 준비", () => document.querySelector('[data-testid="reports-panel"]')?.dataset.status === "ready");
             const report = await reachEnd(p, '[data-testid="reports-scroll"]', '.report-card', !touch);

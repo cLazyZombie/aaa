@@ -26,7 +26,7 @@ export async function listIds(page, selector, ids, name) {
           const box = id.getBoundingClientRect(), parent = row.getBoundingClientRect();
           if (!box.width || id.scrollWidth > id.clientWidth + 1 || box.left < parent.left - 1 || box.right > parent.right + 1) errors.push(`${id.textContent}: 번호 잘림`);
           if (row.scrollWidth > row.clientWidth + 1) errors.push(`${id.textContent}: 행 넘침`);
-          if (row.matches(".ask-row") && row.scrollHeight > row.clientHeight + 1) errors.push(`${id.textContent}: 질문 행 세로 넘침`);
+          if (row.matches(".ask-row, .automation-card") && row.scrollHeight > row.clientHeight + 1) errors.push(`${id.textContent}: 목록 행 세로 넘침`);
         }
         probe.remove();
         // 긴 제목에서도 번호는 남고 제목만 줄여야 한다. DOM을 복원해 기존 이동·답·편집 시험을 그대로 잇는다.

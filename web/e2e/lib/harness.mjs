@@ -439,7 +439,7 @@ async function inList(p, target) {
   const panel = await item.evaluate((el) => {
     const owner = el.closest("[data-panel]");
     const collapsed = innerWidth >= 769 && document.querySelector(".app.sidebar-collapsed") !== null;
-    return owner && (owner.hidden || collapsed) ? owner.dataset.panel : null;
+    return owner && (owner.hidden || owner.closest(".sidebar-existing")?.hidden || collapsed) ? owner.dataset.panel : null;
   });
   if (panel !== null) {
     await p.getByTestId(`activity-${panel}`).click();
@@ -487,7 +487,7 @@ async function openSettings(p, pageName) {
   await inList(p, "settings-open");
   const dialog = p.getByRole("region", { name: "설정" });
   await dialog.waitFor();
-  await dialog.getByRole("tab", { name: pageName }).click();
+  await p.getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: pageName }).click();
   await dialog.getByRole("tabpanel", { name: pageName }).waitFor();
   return dialog;
 }

@@ -8,6 +8,7 @@ import "./github-themes.css";
 // herdr-web-ui lib/viewport.ts: 화면 키보드 위로 화면을 맞춘다(--app-height, data-keyboard)
 import "./herdr/viewport.ts";
 import { App } from "./App";
+import "./PanelRows.css";
 import { registerServiceWorker } from "./push";
 import { initTheme } from "./theme";
 import { initDeviceFonts } from "./settings";
