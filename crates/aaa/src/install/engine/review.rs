@@ -80,3 +80,48 @@ pub(in crate::install) fn issue(
     };
     perform().map_err(public)
 }
+
+pub(in crate::install) fn resume_requires_consent(state: &Path, id: &str, now: u64) -> PublicResult<bool> {
+    let issuer = Authority::open(state).map_err(public)?;
+    let issued = issuer.issued(id).map_err(public)?;
+    Ok(issuer.validate(&issued.authorization, &issued.plan, &issued.authorization.claims.permissions, now).is_err())
+}
+pub(in crate::install) fn executor_matches(plan: &InstallPlan) -> PublicResult<bool> {
+    let image = std::env::current_exe().map_err(|_| public(Fault::conflict()))?;
+    let sha = crate::update::sha256(&image).map_err(|_| public(Fault::conflict()))?;
+    Ok(sha == plan.context.binary_sha256)
+}
+/// 선택한 instance 안의 최신 서명 기록만 읽는다. 다른 instance를 재개하거나 기록을 고치지 않는다.
+pub(in crate::install) fn previous_installation(
+    state: &Path,
+    instance: Option<&str>,
+) -> PublicResult<Option<(String, InstallPlan, InstallResult)>> {
+    let root = state.join("install/authorization");
+    match root.symlink_metadata() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(public(Fault::conflict())),
+        Ok(_) => {}
+    }
+    let issuer = Authority::open(state).map_err(public)?;
+    let mut latest = None;
+    for entry in std::fs::read_dir(root).map_err(|_| public(Fault::conflict()))? {
+        let entry = entry.map_err(|_| public(Fault::conflict()))?;
+        let name = entry.file_name();
+        let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".input.json")) else { continue };
+        if id_ok(id) && latest.as_deref().is_none_or(|prior: &str| prior < id) {
+            latest = Some(id.to_owned());
+        }
+    }
+    let Some(id) = latest else { return Ok(None) };
+    let issued = issuer.issued(&id).map_err(public)?;
+    if issued.plan.choices.instance.as_deref() != instance
+        || issued.plan.context.target_account
+            != crate::install::platform::account().ok_or_else(|| public(Fault::conflict()))?
+        || transaction::real_directory(Path::new(&issued.plan.context.state_dir)).map_err(public)?
+            != transaction::real_directory(state).map_err(public)?
+    {
+        return Err(public(Fault::conflict()));
+    }
+    let result = super::status(state, instance, &id).unwrap_or_else(|result| *result);
+    Ok(Some((id, issued.plan, result)))
+}

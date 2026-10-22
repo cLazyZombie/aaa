@@ -191,7 +191,16 @@ pub(super) async fn apply(
             .await
             {
                 Ok(Ok(pin)) => files::commit(plan, lease, &pin).map(|_| true),
-                Ok(Err(_)) => Err(required("installation_private_enrollment_not_verified")),
+                Ok(Err(error)) => {
+                    let closed = error
+                        .downcast_ref::<aaa_agent::link::InstallEnrollmentRejected>()
+                        .is_some_and(|rejection| rejection.code == aaa_proto::ErrorCode::EnrollClosed);
+                    Err(required(if closed {
+                        "installation_enrollment_window_closed"
+                    } else {
+                        "installation_private_enrollment_not_verified"
+                    }))
+                }
                 Err(_) => Err(required("installation_enrollment_wait_expired")),
             }
         }

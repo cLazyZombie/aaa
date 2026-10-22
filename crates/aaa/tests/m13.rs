@@ -35,6 +35,8 @@ mod task_main_merge;
 mod thread_park;
 #[path = "m13/thread_stages.rs"]
 mod thread_stages;
+#[path = "m13/web_publication.rs"]
+mod web_publication;
 #[path = "m13/work_root.rs"]
 mod work_root;
 

@@ -30,3 +30,48 @@ pub(super) fn files(scope: &[InstallPermission]) -> Vec<InstallPermission> {
         .cloned()
         .collect()
 }
+
+/// 옛 installer는 hook의 별칭 target을 서명하고 journal에는 정규 경로를 저장했다.
+/// 서명된 문서를 고치지 않고 같은 operation·전후 SHA와 현재 파일 경로 동등성만 입증한다.
+pub(super) fn same_permission(actual: &InstallPermission, signed: &InstallPermission) -> Result<bool> {
+    if actual.operation != signed.operation
+        || actual.before_sha256 != signed.before_sha256
+        || actual.after_sha256 != signed.after_sha256
+    {
+        return Ok(false);
+    }
+    if actual.target == signed.target {
+        return Ok(true);
+    }
+    let normalize = |target: &str| -> Result<PathBuf> {
+        match actual.operation {
+            InstallOperation::WriteFile
+            | InstallOperation::StageBinary
+            | InstallOperation::StageLauncher
+            | InstallOperation::ConfigureHook => transaction::target(Path::new(target)),
+            InstallOperation::PrepareWorkRoot | InstallOperation::CreateProject => {
+                if Path::new(target).is_dir() {
+                    transaction::real_directory(Path::new(target))
+                } else {
+                    transaction::target(Path::new(target))
+                }
+            }
+            _ => Err(Fault::conflict()),
+        }
+    };
+    if files(std::slice::from_ref(actual)).is_empty() {
+        return Ok(false);
+    }
+    Ok(normalize(&actual.target)? == normalize(&signed.target)?)
+}
+pub(super) fn same_permissions(actual: &[InstallPermission], signed: &[InstallPermission]) -> Result<bool> {
+    if actual.len() != signed.len() {
+        return Ok(false);
+    }
+    for (actual, signed) in actual.iter().zip(signed) {
+        if !same_permission(actual, signed)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
