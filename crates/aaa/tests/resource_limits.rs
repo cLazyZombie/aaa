@@ -77,14 +77,25 @@ struct Burst {
 }
 impl Burst {
     fn new(addr: &str, count: usize, http: bool) -> Self {
+        Self::spawn(addr, count, if http { "http" } else { "raw" })
+    }
+    fn front(node: &Node) -> Self {
+        Self::spawn(&node.state.join("host/front.sock").to_string_lossy(), 80, "front")
+    }
+    fn spawn(addr: &str, count: usize, kind: &str) -> Self {
         let script = r#"
 import sys, socket, resource, http.client
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (min(8192, hard), hard))
-host, port = sys.argv[1].split(':')
+front = sys.argv[3] == 'front'
+if not front: host, port = sys.argv[1].split(':')
 sockets = []
 for _ in range(int(sys.argv[2])):
-    if sys.argv[3] == 'http':
+    if front:
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.settimeout(10)
+        c.connect(sys.argv[1])
+    elif sys.argv[3] == 'http':
         c = http.client.HTTPConnection(host, int(port), timeout=10)
         c.request('GET', '/')
         r = c.getresponse()
@@ -99,7 +110,7 @@ for c in sockets: c.close()
 print('CLOSED', flush=True)
 "#;
         let mut child = Command::new("python3")
-            .args(["-u", "-c", script, addr, &count.to_string(), if http { "http" } else { "raw" }])
+            .args(["-u", "-c", script, addr, &count.to_string(), kind])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -226,10 +237,15 @@ fn exhausted_hard_limit_warns_once_and_acceptors_recover() {
     let mut burst = Burst::new(&addr, 80, false);
     burst.ready();
     wait_for("실제 EMFILE", T, || lab.log("host").contains("host 파일 한도 소진").then_some(()));
+    // 웹의 EMFILE 직후에도 ticker가 잠깐 쓰던 fd를 반환하면 단발 Front 요청은 성공할 수 있다.
+    // Front 연결도 유지해 그 틈을 채운다. 실제 accept EMFILE과 이후 복구 단언은 그대로다.
+    let mut front_burst = Burst::front(&node);
+    front_burst.ready();
     // EMFILE 중 Front 접속도 시도한다. 예전 while-let accept는 이 오류에 listener를 영구히 끝냈다.
     let pending_front = lab.spawn_command("pending-front", node.cmd(&["--json", "status"]));
     wait_emfile(&lab, pid, "front accept", Some(pending_front));
     burst.close();
+    front_burst.close();
     // macOS accept의 EMFILE은 그때 대기하던 socket을 닫을 수 있다. 그 요청의 성공을 약속하지 않고,
     // 종료를 울타리로 삼아 이후 새 Front 요청이 처리되는지를 아래에서 확인한다.
     let _ = lab.wait_exit("pending-front", T);

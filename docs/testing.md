@@ -1,5 +1,10 @@
 # 시험 쓰는 법
 
+## FD 고갈 시험의 Front 연결 준비(t-0791)
+
+- 두 번째 묶음 gate에서 기존 hard64 시험은 웹 EMFILE을 기록했지만 단발 Front status 요청이 이미 성공해 Front EMFILE 대기가 실패했다. 원본 host 로그·요청 stdout·OS fd 목록을 보존했다. 이 owner와 host accept 구현은 후보 3개에서 바뀌지 않았다.
+- 웹 부하에 이어 실제 Unix Front socket 80개도 EOF 전까지 유지한다. 시작·ticker 등 임시 fd 반환 때 단발 요청 하나가 통과하는 틈을 지속 연결로 채우며, Front accept의 실제 EMFILE을 계속 필수로 요구한다. 두 부하를 닫은 뒤 fd 회수·새 Front 요청 성공·시스템 경고 한 건·웹 HTTP 복구의 기존 단언과 15초 상한을 유지한다. 운영 한도·제품 accept·재시도·기대값은 바꾸지 않는다.
+
 ## 작업 목록 요약의 키보드 준비 경합(t-0791)
 
 - 묶음 착지 첫 전체 gate의 E2E28은 메뉴의 「요약」에 focus한 뒤 Enter를 보냈지만 상세가 열리지 않았다. 기존 RowMenu는 첫 항목 「보고」의 focus를 다음 animation frame에 예약한다. 기준 main 36f3e935의 격리 사본에서 그 콜백을 「요약」 focus 직후 전달하면 focus가 「보고」로 돌아가고 실제 click도 「보고」로 발생하며 같은 상세 대기가 실패한다.
