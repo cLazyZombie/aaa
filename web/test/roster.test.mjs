@@ -39,6 +39,22 @@ describe("단축키 줄 차례", () => {
     assert.deepEqual(keys, ["pane:coord", "thread:p/t-1", "pane:only", "pane:shell"]);
   });
 
+  it("종료된 coordinator는 트리·기타·탐색에서 빠지고 끊김·복원 대기·thread·기록은 남는다", () => {
+    const coord = (id, state, project = "p") => ({ ...pane(id, "m1", state, "coordinator"), coordinator_project: project });
+    const panes = [coord("ended", "exited", "empty"), coord("running", "running"), coord("interrupted", "interrupted"), coord("lost", "lost"), coord("linked", "exited"), pane("shell", "m1", "exited")];
+    const threads = [thread("p", "t-1", "idle", "linked")];
+    const before = structuredClone(panes);
+    for (const machines of [[ma], [{ ...ma, connection: "disconnected" }]]) {
+      const r = roster(machines, panes, threads, ["m1:ended"]);
+      assert.deepEqual(r.coordinators.map(p => p.id), ["running", "interrupted", "lost"]);
+      assert.deepEqual(r.projects, ["p"]);
+      assert.deepEqual(r.panes.map(p => p.id), ["shell"]);
+      assert.deepEqual(r.threads.map(t => t.id), ["t-1"]);
+    }
+    assert.deepEqual(rosterRows([ma], panes, threads).map(r => r.keys[0]), ["pane:running", "pane:interrupted", "pane:lost", "thread:p/t-1", "pane:shell"]);
+    assert.deepEqual(panes, before);
+  });
+
   it("프로젝트 안은 coordinator → 작업 공간 폴더(저장소 이름순, 「작업 폴더」 끝) → 폴더 안 rank 차례(plan §8.280)", () => {
     const repo = (t, r) => ({ ...t, repo: r });
     const panes = [{ ...pane("coord"), coordinator_project: "p" }];

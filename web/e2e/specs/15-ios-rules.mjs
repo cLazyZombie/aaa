@@ -16,6 +16,11 @@ export default async function () {
     return label;
   };
   const sounds = (device, from) => device.since(from).filter((e) => /^(tone|muted|silent) /.test(e));
+  // 안내줄이 없는 머리줄 회귀의 전제: coordinator를 실제로 띄운다. 없는 상태의 상단 안내는 E2E91에서 검사한다.
+  const prepareHeader = () => {
+    if (!aaa("project", "list").projects.length) aaa("project", "create", "demo");
+    aaa("coordinator", "open", "--profile", "fake");
+  };
   // 앱 안 알림이 떴다: 이 화면이 그 질문을 처리했다(같은 처리에서 소리를 정한다). 제목은 남기기만 한다
   const titles = [];
   const alerted = async (ph) => {
@@ -114,6 +119,7 @@ export default async function () {
   });
 
   await step("iPhone 대화 보기 머리줄(사용자 실기 10-18 「위쪽 흐려지는건 어쩔수없는건가?」): 홈 화면 앱 맨 위의 머리줄은 배경 있는 sticky라 iOS 26 Liquid Glass 가장자리 흐림 대신 그 색을 쓰고(참고 herdr-web-ui CHANGELOG, 헤드리스는 그 띠를 그리지 못해 조건만 본다), 제목·위치 줄이 길어도 상태 표시와 겹치지 않고 말줄임된다 — 심은 결함(줄 폭을 풀기)은 이 검사가 잡는다", async () => {
+    prepareHeader();
     // 사진과 같은 모양: 긴 제목, 긴 위치 줄(머신 › harness · 폴더 · 칸 수), 「입력 대기」
     const cwd = `${root}/hdr/aaa-work/shadow/t-0001-이름-뜻-메모-폴더`;
     fs.mkdirSync(cwd, { recursive: true });
@@ -157,6 +163,7 @@ export default async function () {
   });
 
   await step("iPhone 다시 올라온 웹의 머리줄(coordinator 실기 10-18 13:57 「백그라운드에서 올라오며 새 웹이 실린 뒤 머리줄이 통째로 사라지고 내용이 상태 막대 밑까지」): 홈 화면 앱이 상태 막대 밑부터 그리면(위 안전 영역 59px, CDP로 흉내) 머리줄은 참고 .app-header처럼 그만큼 길어져 ≡·제목·상태가 상태 막대 아래에 남고, visibilitychange·pageshow(persisted)·새로 읽기 뒤에도 그렇다. drawer는 머리줄 바로 아래에 서고 그 안 목록 머리는 안전 영역을 더하지 않는다", async () => {
+    prepareHeader();
     aaa("tab", "create", "--machine", "labA", "--label", "resume-head", "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; exec cat > /dev/null`);
     const app = await pairDevice(browser, aaa("web", "pair").code, "iphone", { standalone: true });
     const ph = app.page;

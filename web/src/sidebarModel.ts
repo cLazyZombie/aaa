@@ -179,7 +179,7 @@ export interface WorkFolder {
  * 작업 공간 폴더(저장소 이름순, 「작업 폴더」 끝, plan §8.260) → 폴더 안 thread(묶음 rank·최근 바뀐 순, 또는 활동순)로 늘어놓는다.
  * 머신은 줄에 글자로만 적는다(plan §8.195). 프로젝트 차례는 가장 앞 rank의 thread가 있는 프로젝트가 먼저다. 그다음 thread에 딸리지 않은
  * pane의 「기타」 묶음: 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.196)를 먼저, 옮긴 적 없는 pane은 머신 차례·host 차례로 그 뒤에.
- * 종료된 옛 평가자·임무 pane은 「기타」에서 뺀다. 기록은 host에 남겨 직접 열 수 있고, 살아 있거나 복원할 pane과 thread 줄은 유지한다.
+ * 종료된 coordinator와 옛 평가자·임무 pane은 뺀다. 기록은 host에 남겨 직접 열 수 있고, 살아 있거나 복원할 pane과 thread 줄은 유지한다.
  * 목록(Sidebar)·「이전·다음 패널」 단축키·명령 팔레트가 같이 쓴다.
  */
 export function roster(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = [], byActivity = false) {
@@ -187,8 +187,9 @@ export function roster(machines: readonly MachineView[], panes: readonly PaneVie
   const machineOf = (t: ThreadView) => machineOfThread(t, machines, paneOf);
   const known = sortThreads(threads.filter((t) => machineOf(t) !== undefined));
   const threadPanes = new Set(known.flatMap((t) => (t.pane ? [t.pane] : [])));
-  const coordinators = panes.filter((p) => p.coordinator_project && !threadPanes.has(p.id) && machines.some((m) => m.id === p.machine_id));
-  const coordinatorPanes = new Set(coordinators.map((p) => p.id));
+  // 종료된 coordinator를 「기타」로 되돌리지 않는다. 실제 종료만 숨기고 끊김·복원 대기 기록은 유지한다.
+  const coordinatorPanes = new Set(panes.filter((p) => p.coordinator_project && !threadPanes.has(p.id)).map((p) => p.id));
+  const coordinators = panes.filter((p) => coordinatorPanes.has(p.id) && p.state !== "exited" && machines.some((m) => m.id === p.machine_id));
   const rank = new Map(paneOrder.map((key, index) => [key, index]));
   const last = Number.MAX_SAFE_INTEGER;
   const loose = machines

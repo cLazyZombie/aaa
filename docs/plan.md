@@ -7560,3 +7560,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 전체 ci-local·공개 검사와 Windows/Linux strict cross·Windows release 조건 build를 확인한다. 실제 Windows 근거는 위 동일 runner 대조이며 교차 빌드로 대체하지 않는다. v0.1.5 게시에는 별도로 착지한 exact main 네 job과 Windows 실제 owner 모두 GREEN이 필요하다. E2E88은 별도 소관이며 E2E82 최초 실패는 보존한다. 시한/기대값 완화나 CI rerun은 하지 않는다.
 
 - **착지 통합.** 기준 origin/main `e22229ce`의 마지막 plan §8.456·FRONT_API 1.111·AGENT_LINK 1.11·웹 E2E90을 확인했다. 겹친 절 번호만 §8.457로 옮기고 API/link/E2E 번호와 기존 post 종료 경합 수리를 보존한다. 일회성 workflow는 포함하지 않는다. 묶음 착지 6회차에서 전체 ci-local·공개 검사·양 OS strict cross·Windows release 조건 빌드를 확인하며 배포·tag·release는 수행하지 않는다.
+
+### 8.458 종료된 coordinator 숨김과 상단 시작 안내(t-0816)
+
+- **결정.** 사용자 답 1B: 실행 중인 coordinator가 없으면 본문 상단에 「coordinator가 실행 중이 아닙니다.」와 「coordinator 띄우기」 단추를 둔다. passkey 안내와 같은 영역에 각각 표시하며 기존 왼쪽 맨 위 단추도 유지한다.
+- **종료.** 공통 `roster`에서 `exited` coordinator를 트리·기타·이전/다음 탐색·명령 팔레트에서 뺀다. pane 기록은 지우지 않고 연결 끊김·중단·복원 대기를 종료로 추정하지 않는다. thread에 연결된 pane은 기존 thread 규칙을 따른다.
+- **시작.** 초기 목록을 받고 host와 연결된 조작 기기에만 안내한다. 기존 `project_open`으로 기본 profile을 띄워 그 pane을 연다. 실행 중인 coordinator가 생기면 안내를 걷고, 시작 중에는 단추를 잠그며 실패 이유는 안내줄에서도 읽을 수 있다. 설정 화면에서는 안내를 숨겨 설정의 Tab 순서를 유지한다. 보기 기기는 시작 안내를 받지 않는다. API·프로토콜은 바꾸지 않는다.
+- **검증.** 목록 회귀 유닛과 E2E91에서 실제 host·agent·PTY의 Ctrl+C·정상 종료, 재기동·기록 보존·새로 열기·보기 권한, 시작 중 중복 방지·host 거부 오류, passkey 공존과 휴대폰 줄바꿈을 확인한다. Chromium·WebKit 넓은 창·390px을 쓰며 종료·DOM·응답 사건으로 기다린다. 절·E2E 번호는 착지 때 main과 대조한다.
