@@ -34,6 +34,7 @@ mod settings_jobs;
 mod slash;
 pub mod threads;
 pub mod work_root;
+mod workspace_metrics;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -1761,6 +1762,21 @@ impl Agent {
                     .map(AgentResponse::Cleanup)
                     .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}"))),
                 }
+            }
+            AgentRequest::WorkspaceMetrics { cwd, workspace_key, known_code_commits } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                let state = self.state.clone();
+                tokio::task::spawn_blocking(move || {
+                    let path = std::path::Path::new(&cwd);
+                    cfg.check_path(path)?;
+                    workspace_metrics::collect(&state, path, &workspace_key, &known_code_commits)
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| {
+                    r.map(AgentResponse::WorkspaceMetrics)
+                        .map_err(|_| ErrorBody::new(ErrorCode::Unavailable, "지표 수집 자료를 읽지 못했다"))
+                })
             }
             AgentRequest::GitQuery { cwd, query } => git_watch::query(&cwd, &query)
                 .await

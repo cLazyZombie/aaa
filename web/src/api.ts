@@ -53,6 +53,11 @@ export function reportSignedOut(): void {
 }
 
 /** host `tasks` 사건(TASKS.md가 바뀜, FRONT_API 1.60): 할 일 화면과 배지가 다시 읽는다 */
+const workspaceMetricsListeners = new Set<() => void>();
+export function onWorkspaceMetricsChanged(listener: () => void): () => void {
+  workspaceMetricsListeners.add(listener);
+  return () => workspaceMetricsListeners.delete(listener);
+}
 const tasksListeners = new Set<(sha256: string) => void>();
 export function onTasksChanged(listener: (sha256: string) => void): () => void {
   tasksListeners.add(listener);
@@ -488,6 +493,7 @@ export function watchEvents(
         onNotice(n);
       }
       else if (ev.ev === "reports") onReports(ev.unseen);
+      else if (ev.ev === "workspace_metrics") for (const listener of workspaceMetricsListeners) listener();
       else if (ev.ev === "tasks") for (const listener of tasksListeners) listener(ev.sha256);
       else if (ev.ev === "asks") for (const listener of asksListeners) listener();
       else if (ev.ev === "inbox") for (const listener of inboxListeners) listener();

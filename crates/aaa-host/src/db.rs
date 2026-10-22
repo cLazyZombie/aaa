@@ -13,6 +13,7 @@ mod report_ids;
 mod task_ids;
 mod task_queue;
 mod web_publication;
+mod workspace_metrics;
 
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -324,6 +325,9 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS repo_workspaces(project TEXT NOT NULL, registration TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(project,registration));
+             CREATE TABLE IF NOT EXISTS repo_metrics(project TEXT NOT NULL, workspace TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, at_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,workspace,kind,id));
+             CREATE INDEX IF NOT EXISTS repo_metrics_time ON repo_metrics(project,workspace,at_ms);
              CREATE TABLE IF NOT EXISTS machines(
                id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, fingerprint TEXT UNIQUE,
                local INTEGER NOT NULL DEFAULT 0, enrolled_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
@@ -1667,8 +1671,10 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 17] = [
+const PROJECT_TABLES: [&str; 19] = [
     "threads",
+    "repo_workspaces",
+    "repo_metrics",
     "flow_events",
     "messages",
     "inbox",

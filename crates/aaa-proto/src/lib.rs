@@ -1,5 +1,7 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod workspace_metrics;
+pub use workspace_metrics::*;
 pub mod task_queue;
 pub use task_queue::*;
 pub mod account;
@@ -60,6 +62,17 @@ pub fn typescript_bindings() -> String {
     use ts_rs::TS;
     let cfg = ts_rs::Config::default();
     let decls = [
+        MetricCounts::decl(&cfg),
+        MetricTiming::decl(&cfg),
+        MetricRanking::decl(&cfg),
+        MetricRun::decl(&cfg),
+        CodeLines::decl(&cfg),
+        WorkspaceCollected::decl(&cfg),
+        WorkspaceMachine::decl(&cfg),
+        RepoWorkspace::decl(&cfg),
+        WorkspaceQuery::decl(&cfg),
+        MetricPoint::decl(&cfg),
+        WorkspaceDashboard::decl(&cfg),
         SecretText::decl(&cfg),
         AccountView::decl(&cfg),
         QuotaSource::decl(&cfg),

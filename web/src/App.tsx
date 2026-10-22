@@ -11,6 +11,8 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
+import { WorkspaceList, WorkspaceView } from "./WorkspaceView";
+import { useWorkspaceData, workspaceRoute } from "./workspaceData";
 import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
@@ -290,10 +292,11 @@ function selectedFromHash(): string | null {
   if (location.hash === "#threads") return "threads:";
   if (location.hash === "#reports") return "reports:";
   if (location.hash === "#tasks") return "tasks:";
+  if (location.hash === "#workspace" || location.hash === "#workspace=") return "workspace:";
   if (location.hash === "#asks") return "asks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|task|question|ask|automation)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|task|question|ask|automation|workspace)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -871,6 +874,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [sel, threads]);
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
+  const workspaceShown = sel?.startsWith("workspace:") === true;
   const reportsShown = sel?.startsWith("reports:") === true;
   // 안 본 사용자 보고서 수와 목록이 다시 읽을 때(host `reports` 사건: 올림·열어 봄·지움, plan §8.256)
   const [unseenReports, setUnseenReports] = useState(0);
@@ -1159,6 +1163,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const automations = useAutomations(panel === "automations" || automationShown, shownThreads);
   const automationOpen = automationTarget(automationAt);
   // 넓은 창에서 막대 「답할 것」으로 그 패널을 펼치면 본문도 「답할 것」(마지막으로 본 카드)
+  const workspaceData = useWorkspaceData(panel === "workspace" || workspaceShown, up, workspaceShown ? sel : "workspace:", threadsSync);
+  useEffect(() => { if (workspaceShown) setPanel("workspace"); }, [workspaceShown]);
   const showPanel = (next: SidebarPanel) => {
     const opening = settingsOpen || collapsed || next !== panelRef.current;
     if (settingsOpen) {
@@ -1166,6 +1172,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       setPanel(next);
       setCollapsed(false);
     } else pickPanel(next);
+    if (next === "workspace" && !workspaceShown) goSel("workspace:");
     if (next === "asks" && wideScreen && opening && !asksShown) goSel(asksAt.current);
   };
   const [taskFocus, setTaskFocus] = useState<TaskFocusRequest>({ seq: 0, title: null });
@@ -1410,6 +1417,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           automations={automations}
           automationSelected={automationShown && automationOpen?.name ? `${automationOpen.project}/${automationOpen.name}` : null}
           onAsks={() => showPanel("asks")}
+          workspaces={<WorkspaceList state={workspaceData} selected={workspaceData.data?.workspace_id ?? null} onSelect={(id) => { goSel(workspaceRoute(workspaceShown ? sel : null, { ws: id, run: null })); setDrawerOpen(false); }} />}
           asks={
             <AsksPanel
               open={askList}
@@ -1447,7 +1455,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
-        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown, automationShown]}>
+        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown, automationShown, workspaceShown]}>
+        {workspaceShown && <WorkspaceView state={workspaceData} route={sel} onRoute={goSel} up={up} />}
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
           <ReportsView
@@ -1524,7 +1533,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onThread={openThreadId}
           />
         )}
-        {reportsShown || tasksShown || asksShown || automationShown ? null : currentThread ? (
+        {reportsShown || tasksShown || asksShown || automationShown || workspaceShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}

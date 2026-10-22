@@ -13,3 +13,9 @@ export const TasksIcon = createLucideIcon("aaa-tasks", [
   ["path", { d: "M21 11v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11", key: "box" }],
   ["path", { d: "m8 11 4 4 9-9.5", key: "check" }],
 ]);
+
+/** workspace A: 패널과 지표. 승인 시안의 24 격자 path를 그대로 쓴다. */
+export const WorkspaceIcon = createLucideIcon("aaa-workspace", [
+  ["rect", { x:"3", y:"3", width:"18", height:"18", rx:"2", key:"panel" }],
+  ["path", { d:"M3 9h18M9 9v12m4-4v-3m4 3v-5", key:"metrics" }],
+]);

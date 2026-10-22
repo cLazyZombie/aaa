@@ -7,13 +7,13 @@
 // 단추다(tablist 밖): 도는 coordinator pane을 연다. pane이 하나라 배지는 수 대신 점이다(새 답은 강조색, 질문·확인창은 빨강, 사용자 결정 10-21).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { Bot, LoaderCircle, Eye, FileText, FolderKanban, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
-import { AutomationIcon, TasksIcon } from "./activityIcons";
+import { AutomationIcon, TasksIcon, WorkspaceIcon } from "./activityIcons";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
 // 작업은 FolderKanban: 작업 공간 폴더 안에서 도는 thread(시안 6개 중 사용자 결정 10-19, plan §8.280·§8.287).
 // 자동화·할 일은 직접 그린 아이콘(시안 4개씩 중 사용자 결정 10-22, t-0727)
-const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { asks: MessageCircleQuestionMark, work: FolderKanban, machines: Monitor, automations: AutomationIcon };
+const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { workspace: WorkspaceIcon, asks: MessageCircleQuestionMark, work: FolderKanban, machines: Monitor, automations: AutomationIcon };
 
 /** 맨 위 「coordinator」 단추. `badge`: reply는 안 본 끝난 턴, ask는 확인창·질문 */
 export type CoordinatorButton = { active: boolean; badge: "reply" | "ask" | null; busy: boolean; onOpen: () => void };

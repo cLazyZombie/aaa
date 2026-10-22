@@ -7521,3 +7521,17 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 검색줄은 활성 목록과 같은 검색칸·필터 칩을 쓴다. 저장소·모델·머신·최근 7/30/90일·완료 근거를 조합하고 host에서 페이지를 자르기 전에 적용한다. 선택지는 검색 결과 첫 페이지가 아니라 전체 보관에서 얻어 옛 모델·머신도 선택할 수 있다. 빈 값은 미지정, null은 전체다.
 - 사용자 추가 결정 「기록탭은 아예 빼」에 따라 웹 기록 탭·상세 최근 기록·변경 기록 보기·웹 기록 전용 코드와 시험을 제거한다. CLI `aaa task log`·내구 이력과 삭제 직후 되살리기는 유지한다.
 - FRONT_API 1.110: `TaskArchiveQuery.profile/machine/since_ms/until_ms`, 응답 `profiles/machines`. 새 필터는 1.110 이상에서만 보이며 기존 검색·저장소는 1.106부터다. Agent link·E2E 번호는 유지한다. 착지 때 plan/API 번호를 최신 main과 대조한다.
+
+
+### 8.455 저장소 workspace와 기존 결과 지표(t-0784)
+
+- **확정 모양.** t-0781의 승인된 A 패널·지표 아이콘을 작업 다음에 둔다. 저장소 목록과 개요·실행 기록·수집 상태를 열고 같은 활동 단추를 다시 누르면 목록을 접는다. 휴대폰은 기존 drawer를 쓴다. 검증 전체 경과·Rust 테스트 수·E2E 수·보조 빌드 경과, 테스트/E2E TOP 5, 코드 줄 수, 시간·바이너리 MiB 추이를 순서대로 표시한다. 선택 실행·기간·머신·profile·시간대·탭·코드 branch/축은 URL로 복원한다. 수치는 host 원장에서 읽고 화면은 표시와 선택만 한다.
+- **신원.** `[[repos]]` 또는 `[[workspaces]]` 등록마다 host가 영속 ID를 발급한다. 같은 논리 저장소의 여러 머신 등록에는 같은 `workspace = "app"`을 명시한다. 이름이나 remote만으로 fork·미러를 합치지 않는다. 명시적으로 합칠 때 앞의 원장을 함께 옮긴다. 기존 설정은 서로 독립된 workspace로 시작하고 머신을 함께 표시한다. 운영 설정을 자동 변경하지 않는다. 프로젝트 이름 변경·삭제·내보내기에 원장이 포함된다.
+- **수집.** `workspace_metrics.v1`을 알린 agent에만 기존 보고 회수 끝에서 작은 요약을 요청한다. 검증 성공 조건에 전송을 넣지 않는다. 새 전용 주기 작업은 없다. aaa ci-local은 이미 메모리에 있는 RESULTS와 종료 경과만 `workspace-summary.tsv`에 쓴다. agent는 그 입력 판별로 Rust summary/각 binary의 기존 test result, E2E 기존 종료 요약을 한 번 읽고 agent 보관함과 host SQLite에 보존한다. 원본 로그·경로는 API로 보내지 않는다. 조회는 agent 호출·로그·소스 읽기를 하지 않는다. 원장 저장 뒤 웹 전용 `workspace_metrics` 사건으로 다시 읽는다.
+- **수집 한계.** 최근 32개 종료 입력·회수당 로그 8 MiB·전송당 최근 64개 요약으로 제한하고 누락·비용 상한을 상태에 남긴다. 기존 입력 판은 다시 파싱하지 않는다. Rust 묶음 경과를 개별 시간으로 쓰지 않는다. 실패·결과 일부 누락·미수집은 성공한 0과 구별한다. aaa E2E 파일 수와 독립 작업 수를 더하지 않으며 순위 단위는 spec 작업 시간 합계다. 반복 실행의 중간값을 개별 실행 합계로 바꾸지 않는다.
+- **다른 저장소.** rc의 기존 `verification/summary.json`, 같은 실행의 `default-tests`·`workspace-tests` report.json에는 개별 `exec_time`이 있어 테스트 TOP 5를 읽는다. `rc-e2e/report.json`의 기존 `duration_ms`는 시나리오 단계 시간 합계로 명시한다. 시작 marker보다 오래된 부속 결과를 붙이지 않는다. no2-engine은 기존 verify-timing.txt의 전체·단계 시간, 구성별 test_binaries 결과와 all-headless.json의 시나리오 단계 합계를 읽는다. 엔진 시간 요약이 없는 실패 실행의 전체 경과는 미수집이다. 검증 모드와 Cargo profile은 구분하며 출력에 profile이 없으면 추정하지 않는다. 지원하는 기존 요약이 없는 저장소는 미수집이다. 수집만을 위한 verify·test --list·benchmark·coverage·metadata·프로파일링을 실행하지 않는다.
+- **코드 줄 수.** Git 커밋 객체의 빈 줄 제외·주석 포함 물리 줄, 규칙 v1을 저장한다. 최초에는 추적 소스를 읽고 이후 diff-tree의 변경 파일만 batch로 읽는다. 동일 workspace·commit·규칙은 host 원장으로 재사용하며 dirty 파일은 섞지 않는다. Rust inline cfg(test)의 경계를 추정하지 않고 혼합 파일이 있으면 합계만 보인다. 경로 규칙은 제품/시험/E2E·언어와 제외 경로를 명시한다. 최초 2,048파일·32 MiB, 변경 512경로, 750ms 경과 상한을 넘으면 수집 대기다. 상한·자료 오류로 실패한 동일 커밋도 시도 기록을 남겨 다시 전체 스캔하지 않는다. 조회 때 재집계하지 않는다. 날짜별은 같은 branch의 마지막 관측 커밋이고 규칙별로 분리한다.
+- **비교.** 전체 경과와 병렬 단계 합계를 구분한다. 시각별은 실패도 보존하고 날짜별 p50은 같은 머신·profile의 성공 표본만 쓴다. KST(UTC+9)와 UTC를 고를 수 있다. 빈 날을 0으로 채우거나 다른 조건의 점을 잇지 않는다. 원장 조회는 최근 400개 요약으로 제한하고 잘림을 표시한다. 바이너리는 ci-local이 기존 사본·cmp를 확인한 실행 파일 경로에만 가벼운 stat을 하고, 추가 빌드·strip·해시는 하지 않는다. 다른 산출물의 크기는 미수집이다.
+- **계약·검증.** FRONT_API 1.111 `workspace_dashboard`와 웹 전용 `workspace_metrics` 사건, Agent link 1.11의 선택 기능 `workspace_metrics.v1`이다. Rust 타입이 정본이며 웹은 생성한 proto만 쓴다. agent fixture·host 내구 원장 시험, 실제 보고→agent→host→웹 E2E90과 기존 활동 막대 E2E26을 확인한다. 번호는 착지 때 main과 대조한다.
+
+- **추가 문구 결정(21:1x).** pane의 detached 경고 이름은 「느린 빌드」, unknown은 「느린 빌드?」로 통일한다. 배너·목록·터미널·CLI·runbook·E2E89에 반영하고 판정·상태 값은 바꾸지 않는다. macOS 검사·정리 후 새 pane 안내는 설명 줄과 title에 둔다.

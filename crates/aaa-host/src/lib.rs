@@ -103,6 +103,7 @@ mod watch;
 mod watch_event;
 pub mod web;
 mod web_publication;
+mod workspace_metrics;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -505,6 +506,7 @@ pub struct Host {
     pub changed: tokio_watch::Sender<u64>,
     /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
     pub reports_changed: tokio_watch::Sender<u64>,
+    pub workspace_metrics_changed: tokio_watch::Sender<u64>,
     /// 「답할 것」의 확인 필요 post·답한 것 기록이 바뀌었다(plan §8.345). 웹 events가 `asks` 사건을 보낸다
     pub asks_changed: tokio_watch::Sender<u64>,
     /// 알림함이 바뀐 횟수(웹 알림함 배지가 다시 읽는다)
@@ -515,6 +517,7 @@ pub struct Host {
     pub enroll_changed: tokio_watch::Sender<u64>,
     /// SSH 머신 추가 작업을 읽고 바꾸는 한 차례(machine_setup.rs)
     setup_gate: Mutex<()>,
+    metrics_gate: tokio::sync::Mutex<()>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
@@ -764,11 +767,13 @@ impl Host {
             inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0, colors: Default::default() }),
             changed: tokio_watch::channel(0).0,
             reports_changed: tokio_watch::channel(0).0,
+            workspace_metrics_changed: tokio_watch::channel(0).0,
             asks_changed: tokio_watch::channel(0).0,
             inbox_changed: tokio_watch::channel(0).0,
             accounts_changed: tokio_watch::channel(0).0,
             enroll_changed: tokio_watch::channel(0).0,
             setup_gate: Mutex::new(()),
+            metrics_gate: tokio::sync::Mutex::new(()),
             account_meta_gate: Mutex::new(()),
             device_gate: Mutex::new(()),
             publish_gate: tokio::sync::Mutex::new(()),
@@ -1789,6 +1794,9 @@ impl Host {
                 }
                 FrontResponse::Context(c)
             }),
+            FrontRequest::WorkspaceDashboard { query } => {
+                self.workspace_dashboard(query).map(FrontResponse::WorkspaceDashboard)
+            }
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
             FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,
             FrontRequest::TaskArchive { project, restore, view } => {

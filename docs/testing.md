@@ -2533,3 +2533,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - macOS·논리 CPU 10개에서 대상 20/20과 전체 Rust 28/28묶음이 통과해 원본은 재현되지 않았다. 별도 19회의 시작/끝 시각 모두 전체 Rust 실행 구간 안에 있었다. 전체 Rust는 219.15초, 별도 대상 실행은 각 33.03~39.75초였고 시작/끝의 1분 부하는 15.58~43.19였다. PID·시각·종료 코드·로그를 각각 보존했다. 이 결과로 원인을 고쳤다고 판단하지 않는다.
 - 이후 CI 수집 대상에 맞게 trace 확장자만 `.jsonl`에서 `.log`로 정리했다. 기록 형식·송신 순서·기존 단언·시한은 그대로다. 제품 코드는 바꾸지 않고 진단 변경만 준비하며 다음 CI·ci-local의 재발 자료로 송신자를 확인한다.
 - 실제 `POLICY_HARNESS`를 TCP gate와 시험용 hook/거부 CLI에 연결해 두 phase의 연결/전송 기록 4개, PID·peer 일치, 인증 값 없음과 기존 CI `find` 수집 조건에 포함됨을 확인했다. 대상 owner의 추가 실행은 하지 않았다.
+
+
+## 저장소 workspace·기존 결과 지표(t-0784, plan §8.455)
+
+- `nice -n 15 cargo test --locked -p aaa-agent --lib workspace_metrics`: 기존 형식의 fixture만 읽는다. 전체/단계 경과·개수·E2E 파일/작업 분리, 묶음을 개별 테스트 시간으로 쓰지 않음, 반복 E2E의 중간값 제외, 손상·누락 자료의 미수집을 확인한다. rc·엔진은 기존 개별 exec_time·시나리오 단계 합계와 이전 실행 제외를 검사한다. rc 시간표를 엔진 입력으로 오인하지 않고, 읽기 예산을 넘겨도 이미 확인한 전체 경과를 보존하는지 확인한다. 수집 뒤 원본 로그를 지워도 같은 입력 판은 저장한 요약을 재사용한다. 실제 Git 커밋 객체로 최초/증분·rename·삭제·dirty 파일 제외·혼합 cfg(test) 합계와 host가 가진 커밋의 재집계 생략을 검사한다. 실패한 동일 커밋을 다시 스캔하지 않고 다음 커밋에서 회복하는지도 검사한다. Unix에서는 fork가 물려받는 것과 같은 열린 파일 참조를 남겨도 소유자 종료 때 수집 잠금이 풀리는지 검사한다.
+- `nice -n 15 cargo test --locked -p aaa-host --lib workspace_metrics`: SQLite 재시작·중복·명시적 workspace 묶음의 이력 이전, 프로젝트 이름 변경·삭제, API Reader 조회·기간/머신/profile·빈 결과·미수집을 확인한다. 날짜별 p50은 머신·profile 경계를 지키고 실패·빈 날짜를 넣지 않는다. 자료가 없는 등록 경로로도 조회할 수 있어야 한다. 조회가 원본을 읽거나 agent에 요청하면 실패하는 경계를 유지한다.
+- `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 90-workspace-metrics,26-activity-bar --workers 1`: 실제 격리 host·agent·보고 감시·전송·원장·웹을 사용한다. fixture는 기존 runner 종료 산출물만 준비한다. 수집 완료 사건으로 열린 화면이 갱신되는지, 전체·개수·TOP 5·dirty 코드 제외, URL 복원·필터·키보드 상세·목록 접기·로그 삭제 뒤 조회를 확인한다. Chromium과 WebKit, Reader, 390/320px, 밝음/어두움에서 drawer·가로 넘침·오류 때 마지막 성공 값을 검사하고 캡처한다. 데스크톱은 1280px이다. 실제 iPhone 검증은 아니다.
+- 완료 사건은 보고 hash·원장 저장 뒤 WebSocket 사건·DOM·응답이다. 통계를 얻으려고 추가 검증을 실행하거나 검증의 옵션·병렬 수·시한·성공 조건을 바꾸지 않는다. 필수 전체 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사·의존 경계 시험이다.

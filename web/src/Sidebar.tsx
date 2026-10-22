@@ -277,6 +277,7 @@ export interface SidebarProps {
   panel: SidebarPanel;
   /** 「답할 것」 패널 목록(App이 그린다, plan §8.345) */
   asks?: ReactNode;
+  workspaces?: ReactNode;
   /** 「답할 것」을 연다(알림함이 사용자가 답할 요청을 그리로 보낸다) */
   onAsks?: () => void;
   /** 특수 패널: 임무·사후 평가자(App이 읽는다) */
@@ -324,6 +325,7 @@ export function Sidebar(props: SidebarProps) {
       <div {...panelProps("asks", props.panel)} className="sidebar-panel asks-sidebar">
         {props.panel === "asks" && props.asks}
       </div>
+      <div {...panelProps("workspace", props.panel)} className="sidebar-panel">{props.workspaces}</div>
       <div {...panelProps("work", props.panel)} className="list-body machine-list sidebar-panel">
         <Roster {...props} />
       </div>

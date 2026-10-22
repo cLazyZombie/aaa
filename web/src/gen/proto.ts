@@ -1,6 +1,32 @@
 // 생성 파일: crates/aaa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.
 // 갱신: AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript
 
+export type MetricCounts = { passed: number, failed: number, skipped: number, filtered: number, unit: string, };
+
+export type MetricTiming = { name: string, duration_ms: number, start_ms: number | null, outcome: string, };
+
+export type MetricRanking = { items: Array<MetricTiming>, unit: string, complete: boolean, missing_reason: string | null, };
+
+export type MetricRun = { run_id: string, observed_at_ms: number, machine: string, profile: string | null, source: string, outcome: string, verification_ms: number | null, build_ms: number | null, tests: MetricCounts | null, e2e_files: number | null, e2e_unit: string | null, e2e_jobs: number | null, slow_tests: MetricRanking, slow_e2e: MetricRanking, stages: Array<MetricTiming>, artifact_bytes: number | null, artifact_name: string | null, notes: Array<string>, };
+
+export type CodeLines = { commit: string, tree: string, committed_at_ms: number, observed_at_ms: number, branch: string, rules_version: number, counting_unit: string, total_lines: number, by_language: { [key in string]: number }, breakdown: { [key in string]: number } | null, split_status: string, scanned_files: number, changed_files: number, source: string, };
+
+export type WorkspaceCollected = { runs: Array<MetricRun>, code_lines: CodeLines | null, notes: Array<string>, };
+
+export type WorkspaceMachine = { name: string, connected: boolean, supported: boolean, };
+
+export type RepoWorkspace = { id: string, project: string, name: string, machines: Array<WorkspaceMachine>, last_collected_ms: number | null, collection_notes: Array<string>, };
+
+export type WorkspaceQuery = { workspace_id: string | null, machine: string | null, profile: string | null, days: number | null,
+/**
+ * run 또는 day. 날짜는 UTC offset 기준이며 일광절약 변경은 별도 조건이다.
+ */
+granularity: string | null, utc_offset_minutes: number | null, code_axis: string | null, code_branch: string | null, };
+
+export type MetricPoint = { at_ms: number, machine: string, profile: string | null, run_id: string, value: number, samples: number, outcome: string, };
+
+export type WorkspaceDashboard = { workspaces: Array<RepoWorkspace>, workspace_id: string | null, runs: Array<MetricRun>, code_lines: Array<CodeLines>, code_branches: Array<string>, code_branch: string | null, verification_trend: Array<MetricPoint>, build_trend: Array<MetricPoint>, artifact_trend: Array<MetricPoint>, profiles: Array<string>, queried_at_ms: number, truncated: boolean, };
+
 export type SecretText = string;
 
 export type AccountView = { name: string, harness: string, version: number,
@@ -1003,7 +1029,7 @@ truncated: boolean,
  */
 untracked_omitted: boolean, };
 
-export type FrontRequest = { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
+export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery, } | { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
 /**
  * 비었으면 등록된 모든 머신
  */
@@ -1270,7 +1296,7 @@ error: string | null,
  */
 web: boolean, created_ms: number, updated_ms: number, };
 
-export type FrontResponse = { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_pool", pool: AccountPoolView, } | { "kind": "account_starts", starts: Array<AccountStartView>, } | { "kind": "account_start", start: AccountStartView, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
+export type FrontResponse = { "kind": "workspace_dashboard" } & WorkspaceDashboard | { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_pool", pool: AccountPoolView, } | { "kind": "account_starts", starts: Array<AccountStartView>, } | { "kind": "account_start", start: AccountStartView, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
 /**
  * status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
  */
@@ -1320,7 +1346,7 @@ plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
  */
 source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_resolved", project: string, name: string, } | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "accounts" } | { "ev": "enroll" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "accounts" } | { "ev": "workspace_metrics" } | { "ev": "enroll" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
