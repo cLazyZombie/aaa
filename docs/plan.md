@@ -7273,6 +7273,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **착지 통합.** origin/main `fb5a6518`의 마지막 plan §8.427·FRONT_API 1.105·AGENT_LINK 1.11·E2E85를 직접 확인해 빈 §8.428을 쓴다. proto와 새 spec이 없어 API 판과 E2E 번호는 main 그대로 유지한다. 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 --no-ff 병합·push·원격 SHA를 대조하며 배포와 GitHub CI 감시는 coordinator가 맡는다.
 
 
+### 8.429 Windows 사용자 인수용 검증 release 0.1.3 준비(t-0485)
+
+- 사용자 승인에 따라 workspace 판을 0.1.2에서 0.1.3으로 올리고 offline workspace update로 Cargo.lock의 workspace 판을 맞춘다. 의존성 판·설치 동작·API/AGENT_LINK/E2E 번호는 바꾸지 않는다. 앞선 Linux File import 후보는 main의 동등 수리와 중복돼 착지하지 않는다.
+- 변경을 검증·착지한 정확 main commit의 GitHub CI가 모두 성공한 뒤 판·대상 commit을 보고하고, 저장소 release 절차로 v0.1.3 tag를 한 번 push한다. 게시된 Windows bootstrap을 실제 내려받아 같은 tag source·manifest·SHA256SUMS와 SHA-256을 대조한 뒤 사용자 시험 안내에 고정 판과 해시를 넣는다.
+- release 게시가 운영 배포나 실제 사용자 PC 인수를 뜻하지 않는다. SCM logon·Session0·부팅·LSA/GPO·UAC는 사용자 시험으로 판정하고 공개 uninstall의 남은 연결과 I4 Linux·I7 최종 인수는 기존 순서대로 이어 간다.
+
 ### 8.430 일반 작업의 할 일 선행과 자동 연결(t-0705)
 
 - 사용자 10-22 「항상 할일을 만들고, 그걸로 작업으로 전환해. aaa의 기본 룰로 만들어」. coordinator 안내 원본의 메시지 분류·thread 시작·TASKS.md 추가 규칙을 함께 바꾼다. 기존 task를 먼저 찾아 재사용하고, 없으면 지금 시작할 일도 `aaa task add` 후 `aaa thread start --from-task <ID> --link-task`로 시작한다. 「할 일에 넣어」는 기록 요청이며 시작 승인이 아니다. 모델·머신 변경 보호, 시작 승인·한도·예약 규칙은 유지한다. `doctor files --fix`가 이 원본을 운영 안내에 반영한다.
@@ -7282,3 +7288,5 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 계정 배정 대기의 직접 시작도 첫 pass에서 할 일을 한 번 기록하고 내부 StartArgs에 원본을 저장한다. Queued의 다음 pass·같은 시작 ID의 재전송·host 재시작은 그 할 일을 재사용한다. 이미 해석한 profile·머신을 쓸 때 편집 UI의 assignable RPC를 다시 하지 않는다. 이 칸이 없던 판의 대기 기록은 기존 picked 할 일을 우선한다.
 - 완료: 직접 시작도 같은 task ID·본문·보고·작업 이력으로 기존 완료 보관에 들어간다. 옛 버전 thread와 사용자가 할 일을 지운 thread의 「task에 잇기/만들기」 복구 UI는 남긴다. 웹의 할 일 「바로 시작」은 기존 from_task 요청을 유지하고 host에서 같은 규칙을 적용한다.
 - 검증: m13의 직접 시작·배경 시작 연결·Markdown 원문 보존·준비 실패·기존 ID 연결·완료 보관, 유사 task 경고·안내 생성/doctor 갱신·자동화 예외를 확인한다. 웹 E2E47은 자동 연결을 먼저 확인한 뒤 명시 삭제로 옛 thread 복구 UI를 검증하며, E2E48은 일반 작업 연결과 자동화 무생성을 함께 확인한다. 문서·시험의 옛 선택 연결 설명은 이 절이 대체한다. wire 필드와 E2E 파일 번호는 늘리지 않는다(FRONT_API 1.105·AGENT_LINK 1.11·E2E85 유지).
+
+- 착지 기준 origin/main `c1bacb14`의 마지막 plan §8.429·FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E85를 확인했다. 비어 있는 §8.430을 쓰며 wire 판과 E2E 번호를 유지한다. 통합본 전체 ci-local·공개 검사·Linux 대상 clippy 후 병합·push하고 CI 감시·배포·운영 안내 갱신은 coordinator가 맡는다.
