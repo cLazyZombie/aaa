@@ -1,12 +1,13 @@
 #Requires -Version 5.1
 <#
-Saved, reviewed bootstrap for a pinned official release. No remote evaluation,
-PATH/service changes or installation approval. See docs/windows-bootstrap.md.
+Bootstrap for a pinned official release. The published irm | iex entry pins version/SHA internally.
+Service changes and installation approval belong to the native installer. See docs/windows-bootstrap.md.
 InstallArgs is a string array (use & from PowerShell, not powershell -File).
 #>
 [CmdletBinding()]
 param(
     [string]$Version,
+    [string]$ExpectedBinarySha256,
     [AllowEmptyString()][string[]]$InstallArgs = @()
 )
 Set-StrictMode -Version Latest
@@ -107,7 +108,7 @@ function Assert-AaaExecutable {
 }
 
 function Invoke-AaaBootstrap {
-    param([string]$ReleaseVersion, [AllowEmptyString()][string[]]$Arguments = @())
+    param([string]$ReleaseVersion, [AllowEmptyString()][string[]]$Arguments = @(), [string]$ExpectedHash)
     $temporary = $null
     $stage = $null
     try {
@@ -116,6 +117,7 @@ function Invoke-AaaBootstrap {
         if ($env:PROCESSOR_ARCHITEW6432) { $architecture = $env:PROCESSOR_ARCHITEW6432 }
         if ($architecture -ine 'AMD64') { throw 'bootstrap_unsupported_arch' }
         if ($ReleaseVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'bootstrap_invalid_version' }
+        if ($ExpectedHash -and $ExpectedHash -cnotmatch '^[a-fA-F0-9]{64}$') { throw 'bootstrap_invalid_checksum' }
         # Validate argv before placing anything, including embedded NULs.
         [void](ConvertTo-AaaCommandLine $Arguments)
         $profile = $env:USERPROFILE
@@ -136,6 +138,17 @@ function Invoke-AaaBootstrap {
         if ($manifest.version -cne $ReleaseVersion) { throw 'bootstrap_manifest_mismatch' }
         $asset = $manifest.assets.'windows-x86_64'
         if ($asset.url -cne $assetUrl -or $asset.sha256 -cnotmatch '^[a-fA-F0-9]{64}$') { throw 'bootstrap_manifest_mismatch' }
+        if ($ExpectedHash -and $asset.sha256 -ine $ExpectedHash) { throw 'bootstrap_checksum_mismatch' }
+        $separateExecutor = $false
+        # The one-line entry may coexist with an older aaa. Stage the verified new executor
+        # separately; the Rust plan/approval owns all decisions about existing installations.
+        if ($ExpectedHash -and [IO.File]::Exists($destination) -and
+            (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ine $ExpectedHash) {
+            $destination = [IO.Path]::Combine($profile, '.local', 'share', 'aaa', 'installers', $ExpectedHash.Substring(0, 16).ToLowerInvariant(), 'aaa.exe')
+            Assert-AaaPath $destination $false
+            $separateExecutor = $true
+            [Console]::WriteLine('Existing aaa is preserved. Reviewing the installation with a separately verified executor.')
+        }
         # Existing, different binaries are never overwritten (including running ones).
         if ([IO.File]::Exists($destination)) {
             Assert-AaaExecutable $destination $asset.sha256 $ReleaseVersion
@@ -154,7 +167,12 @@ function Invoke-AaaBootstrap {
             [IO.File]::Move($stage, $destination)
             $stage = $null
         }
-        return (Invoke-AaaNative $destination (@('install') + $Arguments))
+        $installArguments = @('install') + $Arguments
+        if ($separateExecutor -and -not @($Arguments | Where-Object { $_ -ceq '--bin-path' -or $_.StartsWith('--bin-path=') }).Count) {
+            # The reviewed plan must use this executor, not overwrite/reject the older default binary.
+            $installArguments += @('--bin-path', $destination)
+        }
+        return (Invoke-AaaNative $destination $installArguments)
     } catch {
         $code = $_.Exception.Message
         if ($code -cnotmatch '^bootstrap_[a-z_]+$') { $code = 'bootstrap_failed' }
@@ -174,5 +192,8 @@ function Invoke-AaaBootstrap {
 
 # Dot-sourcing provides the same entry for a deployment script without exiting its shell.
 if ($MyInvocation.InvocationName -ne '.') {
-    exit (Invoke-AaaBootstrap -ReleaseVersion $Version -Arguments $InstallArgs)
+    $code = Invoke-AaaBootstrap -ReleaseVersion $Version -Arguments $InstallArgs -ExpectedHash $ExpectedBinarySha256
+    # Invoke-Expression must return to the user's console; a saved script preserves its process exit code.
+    if ($MyInvocation.MyCommand -is [Management.Automation.ExternalScriptInfo]) { exit $code }
+    $global:LASTEXITCODE = $code
 }

@@ -355,6 +355,18 @@ pub struct PrivateEnrollment<'a> {
     pub binding: &'a aaa_proto::install::InstallEnrollmentBinding,
     pub pending_host: Option<&'a str>,
 }
+/// 설치 UI에는 wire의 기계용 code만 넘긴다. 원격 message/SAS/지문은 공개 오류에 복사하지 않는다.
+#[derive(Debug)]
+pub struct InstallEnrollmentRejected {
+    pub code: aaa_proto::ErrorCode,
+}
+impl std::fmt::Display for InstallEnrollmentRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("installation enrollment rejected")
+    }
+}
+impl std::error::Error for InstallEnrollmentRejected {}
+
 /// 기존 수동 등록 wire를 UI 출력 없이 사용한다. code는 현재 TLS 연결 한 번에만 유효하다.
 pub async fn enroll_private<F, Fut, C>(target: PrivateEnrollment<'_>, display: F, closed: C) -> Result<HostPin>
 where
@@ -393,6 +405,7 @@ where
             aaa_proto::negotiate(AGENT_LINK, proto)?;
             aaa_proto::require_features(&["install_enroll.v1"], &features)?;
         }
+        LinkMsg::Reject(error) => return Err(InstallEnrollmentRejected { code: error.code }.into()),
         _ => bail!("host가 install_enroll.v1을 지원하지 않습니다"),
     }
     tx.json(&LinkMsg::Enroll(EnrollRequest {
@@ -421,6 +434,7 @@ where
                     HostPin { address: addr.into(), fingerprint: host_fp, enrolled_at_ms: aaa_common::util::now_ms() };
                 return Ok(pin);
             }
+            LinkMsg::Reject(error) => return Err(InstallEnrollmentRejected { code: error.code }.into()),
             _ => bail!("설치 수동 등록을 확인하지 못했습니다"),
         }
     }

@@ -24,6 +24,7 @@ ASSETS = {
     "windows-x86_64": "aaa-windows-x86_64.exe",
 }
 BOOTSTRAP = "aaa-install-windows.ps1"
+WINDOWS_ENTRY = "install.ps1"
 LAUNCHERS = {"macos-aarch64": "aaa-launcher-macos-aarch64.json", "macos-x86_64": "aaa-launcher-macos-x86_64.json"}
 
 
@@ -34,6 +35,27 @@ def version_for_tag(tag: str) -> str:
     if tag != f"v{version}":
         raise ValueError(f"tag {tag}와 Cargo 버전 {version}이 다르다")
     return version
+
+
+def render_windows_entry(version: str, binary_sha256: str) -> bytes:
+    """검토한 bootstrap owner에 해당 release의 기본 판·독립 payload SHA만 결속한다."""
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+        raise ValueError("bootstrap 판이 올바르지 않다")
+    if not re.fullmatch(r"[a-f0-9]{64}", binary_sha256):
+        raise ValueError("bootstrap payload SHA가 올바르지 않다")
+    source = (ROOT / "scripts/bootstrap/install-windows.ps1").read_text()
+    defaults = {
+        "    [string]$Version,": f"    [string]$Version = '{version}',",
+        "    [string]$ExpectedBinarySha256,": f"    [string]$ExpectedBinarySha256 = '{binary_sha256}',",
+    }
+    for original, rendered in defaults.items():
+        if source.count(original) != 1:
+            raise ValueError("bootstrap의 release 기본값 결속 위치가 바뀌었다")
+        source = source.replace(original, rendered, 1)
+    # irm | iex runs in the caller's scope. Keep functions/strict mode/preferences local,
+    # without exiting a saved caller that itself used iex. The legacy -File bootstrap keeps its exit code.
+    entry = "#Requires -Version 5.1\n& {\n" + source + "\n}\n"
+    return entry.encode("utf-8")
 
 
 def build_manifest(tag: str, artifacts: Path, output: Path) -> None:
@@ -71,7 +93,12 @@ def build_manifest(tag: str, artifacts: Path, output: Path) -> None:
     digest = hashlib.sha256(bootstrap.read_bytes()).hexdigest()
     checksums.append(f"{digest}  {BOOTSTRAP}\n")
     bootstraps = {"windows-x86_64": {"url": f"{RELEASES}/{tag}/{BOOTSTRAP}", "sha256": digest}}
+    entry = render_windows_entry(version, assets["windows-x86_64"]["sha256"])
+    entry_sha256 = hashlib.sha256(entry).hexdigest()
+    checksums.append(f"{entry_sha256}  {WINDOWS_ENTRY}\n")
+    bootstraps["windows-one-line"] = {"url": f"{RELEASES}/{tag}/{WINDOWS_ENTRY}", "sha256": entry_sha256}
     output.mkdir(parents=True, exist_ok=True)
+    (output / WINDOWS_ENTRY).write_bytes(entry)
     (output / "manifest.json").write_text(
         json.dumps({"version": version, "notes": f"aaa {tag}", "assets": assets, "launchers": launchers, "bootstraps": bootstraps}, indent=2) + "\n",
         encoding="utf-8",

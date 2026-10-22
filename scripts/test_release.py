@@ -98,6 +98,19 @@ class ReleaseContract(unittest.TestCase):
                 self.assertIn("bootstrap", result.stderr)
                 self.assertFalse(rejected.exists())
 
+    def test_one_line_entry_is_a_published_checksummed_asset(self):
+        output = self.root / "one-line"
+        result = self.run_tool(f"v{self.version}", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((output / "manifest.json").read_text())
+        entry = manifest["bootstraps"]["windows-one-line"]
+        self.assertEqual(entry["url"], f"https://github.com/cLazyZombie/aaa/releases/download/v{self.version}/install.ps1")
+        data = (output / "install.ps1").read_bytes()
+        self.assertTrue(data)
+        digest = hashlib.sha256(data).hexdigest()
+        self.assertEqual(entry["sha256"], digest)
+        self.assertIn(f"{digest}  install.ps1\n", (output / "SHA256SUMS").read_text())
+
     def test_wrong_tag_and_missing_binary_do_not_emit_manifest(self):
         output = self.root / "rejected"
         major, minor, patch = map(int, self.version.split("."))

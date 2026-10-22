@@ -78,7 +78,7 @@ pub fn error(code: &str, exit: u8) -> Box<InstallResult> {
             r.needs_user.push(InstallNeedsUser {
                 code: code.into(),
                 target: "installation".into(),
-                message: "보호된 승인·입력과 실제 상태를 확인하세요".into(),
+                message: need_action(code).unwrap_or("보호된 승인·입력과 실제 상태를 확인하세요").into(),
             });
         }
         130 => {
@@ -96,6 +96,19 @@ pub fn error(code: &str, exit: u8) -> Box<InstallResult> {
     Box::new(r)
 }
 
+/// 즉시 결과와 내구 status가 같은 사용자 조작을 안내한다. 원격 오류 원문은 받지 않는다.
+pub(super) fn need_action(code: &str) -> Option<&'static str> {
+    match code {
+        "installation_enrollment_window_closed" => Some(
+            "host 웹 또는 aaa machine enroll --open 10m으로 등록 창을 열고 agent SAS를 확인한 뒤 한 줄 설치에서 같은 ID로 계속하세요",
+        ),
+        "installation_resume_executor_changed" => Some(
+            "이전 승인은 다른 실행 파일에 결속돼 있습니다. 원래 기록을 보존하고 한 줄 설치에서 새 repair 계획을 검토하세요",
+        ),
+        _ => None,
+    }
+}
+
 fn needs(code: &str, target: &str) -> Box<InstallResult> {
     let mut result = error(code, 3);
     result.error = None;
@@ -104,7 +117,7 @@ fn needs(code: &str, target: &str) -> Box<InstallResult> {
     result.needs_user.push(InstallNeedsUser {
         code: code.into(),
         target: target.into(),
-        message: "보호된 승인·입력과 실제 상태를 확인하세요".into(),
+        message: need_action(code).unwrap_or("보호된 승인·입력과 실제 상태를 확인하세요").into(),
     });
     result
 }
@@ -155,6 +168,14 @@ pub fn run(args: &Args, json: bool, instance: Option<&str>, config: Option<&Path
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| aaa_config::paths::default_state_dir_for(instance.as_deref()));
             let state = engine::normalize_state(&state)?;
+            if !args.automated(json)
+                && invocation.authorization_file.is_none()
+                && !invocation.authorization_stdin
+                && !invocation.secrets_stdin
+                && engine::resume_requires_consent(&state, id, aaa_common::util::now_ms())?
+            {
+                return review::resume(args, &invocation, &mut reporter);
+            }
             return engine::apply(&invocation, None, &state, instance.as_deref(), &mut reporter);
         }
         if invocation.dry_run && invocation.events_file.is_some() {
@@ -212,6 +233,11 @@ fn emit_at_seq(result: InstallResult, json: bool, stream: bool, seq: u64) -> Exi
             InstallStatus::Completed => "설치를 완료했습니다.",
             InstallStatus::Configured => "설정을 적용했습니다.",
             InstallStatus::Unchanged => "요청한 내용이 이미 적용돼 있습니다.",
+            InstallStatus::NeedsUser
+                if result.needs_user.iter().any(|need| need.code == "installation_resume_executor_changed") =>
+            {
+                "원래 기록을 보존하고 새 repair 계획을 검토하세요."
+            }
             InstallStatus::NeedsUser => "다음 작업을 마친 뒤 같은 ID로 재개하세요.",
             _ => result.error.as_ref().map_or("설치 계획을 확인하세요", |e| &e.message),
         };

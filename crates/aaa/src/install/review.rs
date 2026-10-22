@@ -2,6 +2,7 @@
 use super::*;
 use aaa_proto::{DeviceRole, FrontRequest, FrontResponse};
 use args::Action;
+use std::path::PathBuf;
 
 type Result<T> = std::result::Result<T, Box<InstallResult>>;
 pub(super) fn require_outside(state: &Path) -> Result<()> {
@@ -133,4 +134,41 @@ pub(super) fn confirm(args: &Args, plan: &InstallPlan, resume: Option<&str>) -> 
         }
     }
     Ok(Consent { plan: plan.clone(), resume: resume.map(str::to_owned), scope: preview })
+}
+
+/// 만료 또는 마법사의 명시적 재개 선택은 같은 원래 계획을 다시 검토한다.
+/// 사용자에게 승인 파일 명령을 요구하지 않으며 서명·범위·5분 상한은 그대로다.
+pub(super) fn resume(
+    args: &Args,
+    invocation: &InstallInvocation,
+    reporter: &mut output::Reporter,
+) -> Result<InstallResult> {
+    let id = invocation.resume.as_deref().ok_or_else(|| error("invalid_installation_id", 2))?;
+    let state = invocation
+        .choices
+        .state_dir
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| aaa_config::paths::default_state_dir_for(invocation.choices.instance.as_deref()));
+    require_outside(&state)?;
+    let mut observed = engine::status(&state, invocation.choices.instance.as_deref(), id)?;
+    if observed.exit_code == 0
+        && matches!(observed.status, InstallStatus::Completed | InstallStatus::Configured | InstallStatus::Unchanged)
+    {
+        return Ok(observed);
+    }
+    let plan = engine::original_plan(&state, id)?;
+    if !engine::executor_matches(&plan)? {
+        let mut result = needs("installation_resume_executor_changed", "installation");
+        result.installation_id = Some(id.into());
+        context(&plan, &mut result);
+        return Ok(*result);
+    }
+    let consent = confirm(args, &plan, Some(id))?;
+    // 과거 pending 원인은 새 동의 뒤 worker에서 다시 관찰한다. 파일/권한 검증을 생략하지 않는다.
+    observed.status = InstallStatus::Planned;
+    observed.exit_code = 0;
+    observed.error = None;
+    observed.needs_user.clear();
+    engine::apply_inline(invocation, (observed, plan), &consent, reporter)
 }

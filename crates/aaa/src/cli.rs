@@ -126,7 +126,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: AccountCmd,
     },
-    /// 설치를 읽기 탐지하고 계획한다. I1은 --dry-run만 지원한다
+    /// 역할·작업 경로·서비스를 계획하고 명시적 승인 뒤 설치·재개한다
     Install(Box<crate::install::Args>),
     /// harness 전역 연동을 설치하거나 제거한다(기존 사용자 hook은 보존)
     Integration {
