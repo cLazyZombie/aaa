@@ -64,22 +64,53 @@ fn record(n: &Node) -> Value {
 fn pane(n: &Node, id: &str) -> Value {
     n.pane(id)
 }
-fn probe(n: &Node, pane: &str, repo: &Path, root: &Path, owner: u32, stage: &str) {
-    let output = root.join(stage);
+struct Probes {
+    root: PathBuf,
+    archive: PathBuf,
+}
+impl Probes {
+    fn new(repo: &Path) -> Self {
+        let id = util::new_id();
+        // 새 책임자는 저장소가 있는 보호 볼륨을 읽을 권한이 없다. 등록·권한을 바꾸지 않고
+        // 자료와 cwd를 비공유 캐시에 둔다. Cargo target도 OS 임시 폴더에는 만들지 않는다.
+        let cache = aaa_config::paths::home().join("Library/Caches");
+        std::fs::create_dir_all(&cache).unwrap();
+        let root = cache.join(format!("aaa-restart-{id}"));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("probe.py"), include_str!("../../../scripts/pane-responsibility-probe.py")).unwrap();
+        let archive = repo.join("target/restart-probes").join(id);
+        std::fs::create_dir_all(&archive).unwrap();
+        Self { root, archive }
+    }
+}
+impl Drop for Probes {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("책임 진단 자료를 남겼다: {}", self.root.display());
+        } else {
+            std::fs::remove_dir_all(&self.root).unwrap();
+        }
+    }
+}
+fn probe(n: &Node, pane: &str, probes: &Probes, owner: u32, stage: &str) {
+    let output = probes.root.join(stage);
     let command = format!(
-        "python3 {} --output-dir {} --expected-responsible {} && printf 'probe-%s\\n' {}",
-        lab::shell_word(&repo.join("scripts/pane-responsibility-probe.py").to_string_lossy()),
+        "python3 {} --output-dir {} --expected-responsible {}; code=$?; printf 'probe-%s-exit:%d\\n' {} \"$code\"",
+        lab::shell_word(&probes.root.join("probe.py").to_string_lossy()),
         lab::shell_word(&output.to_string_lossy()),
         owner,
         stage
     );
     n.ok(&["pane", "run", pane, &command]);
-    n.wait_output(pane, &format!("probe-{stage}"), T);
+    let done = n.wait_output(pane, &format!("probe-{stage}-exit:"), T);
+    assert_eq!(done["matched_line"], format!("probe-{stage}-exit:0"), "{done}");
     let result: Value = util::read_json(&output.join("result.json")).unwrap();
     assert_eq!(result["records"].as_array().unwrap().len(), 6);
     for record in result["records"].as_array().unwrap() {
         assert_eq!(record["responsible"], owner);
     }
+    // 보존 사본은 원래 시험 책임자가 읽고 쓴다. 새 launcher는 저장소를 열지 않는다.
+    assert!(Command::new("cp").arg("-R").arg(&output).arg(probes.archive.join(stage)).status().unwrap().success());
 }
 
 #[test]
@@ -87,6 +118,7 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     let mut lab = Lab::new();
     let node = lab.node("n", Some("schema = 1\n[host]\nagent_listen = '127.0.0.1:0'\n[web]\nlisten = '127.0.0.1:0'\n[local_agent]\nmode = 'none'\n"));
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let probes = Probes::new(&repo);
     let existing = std::env::var_os("AAA_RESTART_TEST_LAUNCHER").map(PathBuf::from);
     let image = existing.clone().unwrap_or_else(|| lab.root.join("aaa-launcher.app/Contents/MacOS/aaa-launcher"));
     if existing.is_none() {
@@ -98,6 +130,24 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
             .output()
             .unwrap();
         assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        // 실행 파일만 든 가짜 .app은 번들 검사에 실패한다. 설치와 같은 정상 번들을 만들되
+        // 별도 시험 신원을 쓰며 LaunchServices·TCC에는 등록하지 않는다.
+        let bundle = image.parent().unwrap().parent().unwrap().parent().unwrap();
+        std::fs::write(
+            bundle.join("Contents/Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>dev.aaa.restart-fixture</string>
+<key>CFBundleExecutable</key><string>aaa-launcher</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        for args in [vec!["--force", "--sign", "-", "--timestamp=none"], vec!["--verify", "--strict"]] {
+            let out = Command::new("codesign").args(args).arg(bundle).output().unwrap();
+            assert!(out.status.success(), "시험 launcher 번들 서명: {}", String::from_utf8_lossy(&out.stderr));
+        }
     }
     let launcher_before = std::fs::read(&image).unwrap();
     let source = lab.root.join("spawn.c");
@@ -113,6 +163,9 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     // Node가 가리는 실험실 환경을 그대로 helper로 넘긴다.
     let envs: Vec<_> = cmd.get_envs().map(|(k, v)| (k.to_owned(), v.map(ToOwned::to_owned))).collect();
     let mut command = Command::new(&spawn);
+    command.current_dir(&probes.root);
+    // kache도 보호 볼륨의 사용자 store를 열 수 있다. wrapper는 유지하고 이 fixture의 store만 격리한다.
+    command.env("KACHE_CACHE_DIR", probes.root.join("kache"));
     for (k, v) in envs {
         if let Some(v) = v {
             command.env(k, v);
@@ -124,20 +177,22 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     lab.spawn_command("spawn", command);
     let launcher_pid = wait_for("launcher PID", T, || std::fs::read_to_string(&pidfile).ok()?.parse::<u32>().ok());
     let launcher = Launcher { pid: launcher_pid, image: image.clone() };
-    wait_for("agent 재시작 준비", T, || node.state.join("service-restart/agent.json").exists().then_some(()));
+    wait_for("agent 재시작 준비", T, || {
+        assert!(process::image(launcher.pid).is_some(), "준비 전에 시험 launcher가 종료됐다");
+        node.state.join("service-restart/agent.json").exists().then_some(())
+    });
     let first = record(&node);
     let worker = first["pid"].as_u64().unwrap() as u32;
     assert_eq!(first["launcher"], launcher_pid);
     assert_eq!(process::responsible(worker), Some(launcher_pid));
     let mut watch = lab::watch::HostWatch::new(&node, T);
     watch.wait("agent 연결", |w| w.connected("labA").then_some(()));
-    let old = node.new_pane(None, "labA", Some("existing"), &[], None);
+    let old = node.new_pane(None, "labA", Some("existing"), &[], probes.root.to_str());
     node.ok(&["pane", "run", &old, "printf 'old-%s\\n' ready"]);
     node.wait_output(&old, "old-ready", T);
     let old_host = node.session_host_pid(&old).unwrap();
     assert_eq!(pane(&node, &old)["responsibility"]["state"], "launcher");
-    let probes = repo.join("target/restart-probes").join(util::new_id());
-    probe(&node, &old, &repo, &probes, launcher.pid, "before");
+    probe(&node, &old, &probes, launcher.pid, "before");
     let replacement = lab.root.join("next");
     lab::variant_binary(Path::new(lab::BIN), &replacement, "aaa-restart-second");
     assert_ne!(util::sha256_file(&binary).ok(), util::sha256_file(&replacement).ok());
@@ -195,10 +250,29 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     assert!(out.contains("다시 띄웠다"), "{out}");
     assert_eq!(std::fs::read_to_string(calls).unwrap().lines().count(), 1);
 
-    wait_for("새 worker 준비 기록", T, || {
-        let next = record(&node);
-        (next["nonce"] != first["nonce"]).then_some(next)
+    let ready = std::panic::catch_unwind(|| {
+        wait_for("새 worker 준비 기록", T, || {
+            let next = record(&node);
+            (next["nonce"] != first["nonce"]).then_some(next)
+        });
     });
+    if let Err(panic) = ready {
+        // 시한·판정은 그대로 실패시킨다. 정리 전에 아직 멈춘 자기 worker의 스택을 보존한다.
+        let paths = [("worker", worker, &binary), ("launcher", launcher.pid, &image)];
+        for (label, pid, expected) in paths {
+            let observed = process::image(pid);
+            eprintln!("restart {label} pid={pid} image={observed:?} parent={:?}", process::parent(pid));
+            if observed.and_then(|p| p.canonicalize().ok()) == expected.canonicalize().ok() {
+                let out = Command::new("sample")
+                    .arg(pid.to_string())
+                    .args(["1", "1", "-file"])
+                    .arg(probes.archive.join(format!("{label}.sample.txt")))
+                    .output();
+                eprintln!("restart {label} sample: {out:?}");
+            }
+        }
+        std::panic::resume_unwind(panic);
+    }
     let next = record(&node);
     assert_eq!(next["pid"], worker);
     assert_eq!(next["launcher"], launcher.pid);
@@ -210,15 +284,15 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     assert_eq!(process::responsible(old_host), Some(launcher.pid));
     node.ok(&["pane", "run", &old, "printf 'old-pane-alive\\n'"]);
     node.wait_output(&old, "old-pane-alive", T);
-    let new = node.new_pane(None, "labA", Some("new"), &[], None);
+    let new = node.new_pane(None, "labA", Some("new"), &[], probes.root.to_str());
     node.ok(&["pane", "run", &new, "printf 'new-%s\\n' ready"]);
     node.wait_output(&new, "new-ready", T);
     assert_eq!(pane(&node, &old)["responsibility"]["state"], "launcher");
     assert_eq!(pane(&node, &new)["responsibility"]["state"], "launcher");
     assert_eq!(process::responsible(node.session_host_pid(&new).unwrap()), Some(launcher.pid));
     assert_eq!(std::fs::read(&image).unwrap(), launcher_before);
-    probe(&node, &old, &repo, &probes, launcher.pid, "after-existing");
-    probe(&node, &new, &repo, &probes, launcher.pid, "after-new");
+    probe(&node, &old, &probes, launcher.pid, "after-existing");
+    probe(&node, &new, &probes, launcher.pid, "after-new");
     // watcher를 먼저 놓고 실험실이 아는 launcher 하나만 종료한다.
     drop(watch);
     drop(launcher);

@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 새 launcher 아래 restart fixture 격리(t-0798)
+
+- `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`는 등록되지 않은 새 launcher를 기본으로 쓴다. `AAA_RESTART_TEST_LAUNCHER`로 기존 launcher를 지정하는 읽기 전용 경로도 유지한다. 두 경로 모두 기존 launcher/worker PID·기존 pane 보존·새 pane·책임 PID·승인 거부·detached 재관측 단언을 그대로 검사한다.
+- 원본은 보호 볼륨의 Python 스크립트를 open하다가 `probe-before`의 30초 시한으로 실패했다. 같은 새 책임자 아래 Apple·Homebrew Python 모두 일반 임시 폴더의 같은 스크립트는 즉시 성공하고 보호 볼륨에서는 정지했으며, 해당 PID의 TCC `SystemPolicyAllFiles` 거부를 확인했다. 자료만 옮긴 대조는 다음으로 `kache rustc -vV`에서 보호 볼륨의 사용자 store를 열다가 멈췄다. 시험 전용 `KACHE_CACHE_DIR`를 준 대조는 실제 cargo/build.rs까지 통과했다. Python 판이나 CPU 부하로 단정하지 않는다.
+- fixture 자료·cwd·생성 실행 파일·Cargo target·kache store는 사용자 캐시 아래 실행마다 새로 만든 전용 폴더에 둔다. kache wrapper는 유지하고 전역 설정·기존 store·TCC·launchd 등록을 변경하지 않는다. Cargo target을 OS 임시 폴더나 다른 worktree에 공유하지 않는다. 완료된 각 단계의 원본 결과는 시험 책임자가 자기 worktree의 `target/restart-probes`로 복사하고, 성공하면 전용 캐시를 지우며 실패하면 경로를 남긴다.
+- 새 launcher는 기존 C 소스를 그대로 쓰고 별도 시험 신원의 Info.plist·adhoc 서명으로 정상 번들을 만든다. 준비 전에 launcher가 종료되면 바로 실패한다. 진단 하위 명령은 실제 stdout/stderr와 종료 코드를 남기고 완료 출력 사건으로 끝낸다. 정상 출력·시한·기대값을 완화하거나 실패한 명령을 재실행하지 않는다.
+- 조사 중 별도 실행에서는 syspolicyd의 EMFILE·YARA 검사 오류와 launcher 종료를 기록했다. 또 다른 cargo 실패의 같은 시각에도 해당 시스템 오류가 있었지만 당시 숨겨진 cargo stderr가 없어 그 실패의 직접 원인은 확정하지 않는다. 정상 번들·격리는 시스템 검사 오류 전체의 수리라는 뜻이 아니다. 이후 실패는 추가된 종료·compiler 오류와 원본 시스템 로그를 함께 확인한다.
+- 첫 전체 검증은 재시작 전 진단 뒤 새 worker 준비 기록의 30초 대기에서 한 번 실패했다. 그 실행에는 정리 전 스택이 없어 원인을 확정하지 않는다. 해당 대기에 실패하면 아직 자기 실행 파일을 가리키는 worker·launcher만 sample하고 원래 실패를 다시 전파하도록 진단을 추가했다. 진단본의 단독·병렬 Rust·Rust/웹 동시 전체 검증은 통과했지만 앞 실패가 수리됐다는 증거로 쓰지 않는다. 다음 재발의 스택을 확보한다.
+- 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. 제품 코드·API·E2E 번호·시스템 권한은 바꾸지 않는다.
+
 ## FD 고갈 시험의 Front 연결 준비(t-0791)
 
 - 두 번째 묶음 gate에서 기존 hard64 시험은 웹 EMFILE을 기록했지만 단발 Front status 요청이 이미 성공해 Front EMFILE 대기가 실패했다. 원본 host 로그·요청 stdout·OS fd 목록을 보존했다. 이 owner와 host accept 구현은 후보 3개에서 바뀌지 않았다.
