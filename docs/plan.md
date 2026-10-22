@@ -7461,3 +7461,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **게시 후보.** 기존 v0.1.4 tag/자산을 유지하고 workspace/Cargo.lock의 자체 아홉 package만 0.1.5로 올린 후보를 준비한다. 외부 의존성은 바꾸지 않는다. 새 tag/release는 아직 승인되지 않았으므로 만들거나 push하지 않으며, 착지한 정확 main CI 전체 성공과 별도 게시 승인 뒤 새 입구·manifest·SHA256SUMS의 실제 다운로드를 대조한다.
 
 - **착지 통합.** 승인 기준 origin/main `e2e2d5cf`의 마지막 §8.445·FRONT_API1.109·AGENT_LINK1.11·웹 E2E최대86(88파일)을 직접 확인했다. main의 설정 본문/공개 포트 변경/실행 모델 요약과 기존 시험 수리를 보존한다. 이 후보는 빈 §8.446을 쓰며 API/link/E2E 번호를 올리지 않는다. 최신 main 통합본의 전체 ci-local·공개 검사·Linux/Windows strict cross clippy·Windows release 조건 빌드 뒤 no-ff로 착지한다. 게시 tag/release는 별도 사용자 답 전에는 만들지 않는다.
+
+### 8.448 Windows 한 줄 설치 owner 환경·수명 수리와 argv 진단(t-0485)
+
+- main의 첫 Windows 실행에서 새 owner 4개가 실패했다. install Lab은 실제 부모의 PROCESSOR_ARCHITECTURE/PROCESSOR_ARCHITEW6432를 보존한다. AMD64를 시험이 만들어 주거나 production의 architecture 거부를 우회하지 않는다. Windows PS5.1/7 IRM→IEX→실제 검토/승인/파일 적용 owner와 원래 질문/단언/시한을 그대로 둔다.
+- legacy hook fixture는 canonical Windows verbatim prefix 아래에서 PathBuf 결합이 dot을 지워 버리므로 먼저 일반 Win32 표기로 바꿔 옛 lexical scope를 구성한다. lexical/canonical 차이의 선행 단언과 서명/ID/범위/nonce 보존·다른 target/SHA 거부·status 무쓰기·같은 transaction 단언을 유지한다. Unix도 같은 owner를 실행한다.
+- 닫힌 등록 창 owner는 등록 창 안내·같은 ID 재동의와 job 하나의 단언 뒤 runtime listener tasks와 Host/DB를 해제하고 lab을 지운다. Windows cleanup OS32를 무시하거나 삭제를 재시도하지 않는다.
+- staged executor argv의 실제/기대 값이 첫 CI 로그에 없으므로 기존 exact 비교 실패에 한 줄 actual_hex/expected_hex를 붙인다. 로컬 PowerShell 구문 대조는 Windows 실행 증거가 아니며 이 항목의 근본 원인은 다음 main Windows CI에서 확정한다. production argv·원래 기대값·PS 조합·시한은 바꾸지 않는다.
+- 전체 ci-local·check-public·Linux/Windows cross clippy·Windows release 조건 build를 통과한 후보를 보고하고 착지 창을 기다린다. FRONT_API/AGENT_LINK/E2E 번호는 유지한다. q-1165 1A의 v0.1.5 게시 승인은 유효하지만 새 exact main 네 CI job과 새 Windows 실제 owner 전부 GREEN 전에는 tag/publish하지 않는다. v0.1.3/v0.1.4 tag/자산은 불변이다.

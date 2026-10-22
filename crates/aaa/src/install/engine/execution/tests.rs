@@ -107,13 +107,31 @@ fn legacy_hook_alias_approval_keeps_its_signature_id_and_scope_through_status_an
     let mut legacy_scope = canonical_scope.clone();
     // v0.1.4 emitted the lexical integration home in signed hook targets and
     // canonicalized it only when saving the file journal. The issuer still signs the original bytes.
+    // Windows canonicalize() adds a verbatim prefix. PathBuf::push normalizes dots
+    // under that prefix, so construct the old ordinary Win32 spelling first.
+    #[cfg(windows)]
+    let lexical_codex = {
+        let path = codex.to_str().unwrap();
+        if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+            PathBuf::from(format!(r"\\{unc}"))
+        } else {
+            PathBuf::from(path.strip_prefix(r"\\?\").expect("canonical Windows path"))
+        }
+    };
+    #[cfg(not(windows))]
+    let lexical_codex = codex;
     for permission in &mut legacy_scope {
         if permission.operation == InstallOperation::ConfigureHook {
             let leaf = Path::new(&permission.target).file_name().unwrap();
-            permission.target = codex.join(".").join(leaf).to_string_lossy().into_owned();
+            permission.target = lexical_codex.join(".").join(leaf).to_string_lossy().into_owned();
         }
     }
-    assert!(legacy_scope.iter().zip(&canonical_scope).any(|(old, new)| old.target != new.target));
+    assert!(
+        legacy_scope.iter().zip(&canonical_scope).any(|(old, new)| old.target != new.target),
+        "alias fixture: legacy={:?}, canonical={:?}",
+        legacy_scope.iter().map(|p| &p.target).collect::<Vec<_>>(),
+        canonical_scope.iter().map(|p| &p.target).collect::<Vec<_>>()
+    );
     let issuer = Authority::initialize(&state).unwrap();
     let approval = issuer.issue(&plan, legacy_scope.clone(), 1000, 100).unwrap();
     let id = approval.claims.installation_id.clone();
