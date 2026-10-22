@@ -19,6 +19,48 @@ impl Drop for Project {
     }
 }
 
+#[tokio::test]
+async fn automation_ids_survive_edits_restore_conversion_restart_and_project_rename() {
+    let p = Project::new();
+    p.write("projects/demo/PROJECT.md", "# demo\n");
+    p.write("projects/demo/routines/check.md", "+++\nschedule='every 10m'\n+++\n자료\n");
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.projects.root = p.0.join("projects").to_string_lossy().into();
+    cfg.notify.web_push = false;
+    let h = crate::Host::open(cfg.clone(), p.0.join("host")).unwrap();
+    let id = h.routines("demo").unwrap()[0].short_id.clone().unwrap();
+    assert_eq!(id, "a-0001");
+    // 같은 이름의 TOML 변환은 같은 규칙이다.
+    h.automation_convert("demo", false, None, "local:cli").await.unwrap();
+    let doc = h.automation_read("demo", "check").unwrap();
+    assert_eq!(h.routines("demo").unwrap()[0].short_id.as_deref(), Some(id.as_str()));
+    p.write(
+        "projects/demo/automations/check.toml",
+        &doc.text.replace("title = \"check\"", "title = \"긴 제목으로 수정\""),
+    );
+    assert_eq!(h.routines("demo").unwrap()[0].short_id.as_deref(), Some(id.as_str()));
+    let doc = h.automation_read("demo", "check").unwrap();
+    h.automation_delete("demo", "check", &doc.sha256, "local:cli").await.unwrap();
+    assert!(h.routines("demo").unwrap().is_empty());
+    p.write("projects/demo/automations/other.toml", "[on.schedule]\nevery='10m'\n[do.inbox]\n");
+    assert_eq!(h.routines("demo").unwrap()[0].short_id.as_deref(), Some("a-0002"));
+    let trash = h.automation_trash("demo").unwrap();
+    h.automation_restore("demo", &trash[0].id, "local:cli").await.unwrap();
+    assert_eq!(
+        h.routines("demo").unwrap().iter().find(|r| r.name == "check").unwrap().short_id.as_deref(),
+        Some(id.as_str())
+    );
+    drop(h);
+    let h = crate::Host::open(cfg, p.0.join("host")).unwrap();
+    assert_eq!(
+        h.routines("demo").unwrap().iter().find(|r| r.name == "check").unwrap().short_id.as_deref(),
+        Some(id.as_str())
+    );
+    h.db.project_rename("demo", "renamed", str::to_owned).unwrap();
+    assert_eq!(h.db.automation_short_id("renamed", "check").unwrap(), id);
+    assert_eq!(h.db.project_export("renamed").unwrap()["automation_ids"].as_array().unwrap().len(), 2);
+}
+
 #[test]
 fn public_toml_contract_loads_real_files_and_preserves_legacy_command_approval() {
     let p = Project::new();

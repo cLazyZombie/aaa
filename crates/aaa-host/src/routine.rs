@@ -571,8 +571,16 @@ impl Host {
             error: Some(crate::legacy_mission::REMOVED.into()),
             ..Default::default()
         }));
-        for view in &mut out {
-            view.web_read_only_reason = crate::automation::web_read_only_reason(&view.name).map(str::to_owned);
+        // 파일 열거 순서와 무관하게 기존 규칙을 채운다. 같은 이름은 형식·제목이 바뀌어도 같은 논리적 규칙이다.
+        let names: std::collections::BTreeSet<_> = out.iter().map(|r| r.name.clone()).collect();
+        let ids = names
+            .into_iter()
+            .map(|name| self.db.automation_short_id(project, &name).map(|id| (name, id)))
+            .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()
+            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+        for r in &mut out {
+            r.short_id = ids.get(&r.name).cloned();
+            r.web_read_only_reason = crate::automation::web_read_only_reason(&r.name).map(str::to_owned);
         }
         Ok(out)
     }

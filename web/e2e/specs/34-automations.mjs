@@ -1,9 +1,10 @@
+import { listIds } from "../lib/list-ids.mjs";
 // 자동화 보기의 주 경계: 실제 일정 판정 → DB 기록 → CLI/웹, 파일 enabled 편집, Reader, 휴대폰.
 // 목록은 사이드바 카드(이름·표지·조건 한 줄)이고, 카드를 누르면 본문에 그 규칙 설정(켜기·기록·승인)이 열린다(t-0628).
 import fs from "node:fs";
 import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot, usageRoutes } from "../lib/harness.mjs";
 export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1", AAA_TEST_USAGE_REFRESH_MS: "0" };
-let original;
+let original, ruleId;
 const file = () => `${root}/projects/auto-demo/routines/check.md`;
 export default async function ({ page }) {
   await step("자동화: 활동 막대에 규칙과 임무 조건을 함께 보고 host가 기록한 건너뜀 까닭·최근 기록을 읽는다", async () => {
@@ -19,6 +20,9 @@ export default async function ({ page }) {
     await page.getByTestId("activity-automations").click();
     const row = page.getByTestId("automation-auto-demo-check");
     await row.waitFor();
+    ruleId = aaa("routine", "list", "auto-demo").routines.find((r) => r.name === "check").short_id;
+    if (!/^a-\d{4,}$/.test(ruleId)) throw new Error(`자동화 번호 ${ruleId}`);
+    await listIds(page, '[data-testid="automation-auto-demo-check"]', [ruleId], "ids-automation-desktop");
     // 카드는 두 줄(이름·표지 / 조건 한 줄)이다: 지난 결과·파일·건너뜀 까닭은 본문 설정에 있다
     if ((await row.locator(".automation-card-meta").textContent()) !== "1초마다") throw new Error(`카드 조건 ${await row.textContent()}`);
     if ((await row.textContent()).includes("coordinator 없음")) throw new Error("카드에 지난 결과가 남았다");
@@ -54,6 +58,9 @@ export default async function ({ page }) {
       await row.waitFor();
       const panelFits = await p.evaluate(() => { const panel = document.querySelector(".automations"); return panel.scrollWidth <= panel.clientWidth + 1; });
       if (!panelFits) throw new Error("휴대폰 카드 목록이 옆으로 넘친다");
+      await listIds(p, '[data-testid="automation-auto-demo-check"]', [ruleId], "ids-automation-phone");
+      await p.setViewportSize({ width: 320, height: 844 });
+      await listIds(p, '[data-testid="automation-auto-demo-check"]', [ruleId], "ids-automation-320");
       await shot(p, "automations-phone-list");
       // 카드를 누르면 drawer가 닫히고 본문이 그 설정 화면이다
       await row.click();
@@ -86,6 +93,8 @@ export default async function ({ page }) {
     const row=page.getByTestId("automation-auto-demo-check");
     await page.getByTestId("automation-auto-demo-watch").waitFor();
     if (await page.getByTestId("automation-auto-demo-mission:watch").count()) throw new Error("임무 조건이 새 규칙과 중복으로 남았다");
+    if (aaa("routine", "list", "auto-demo").routines.find((r) => r.name === "check").short_id !== ruleId) throw new Error("변환 뒤 번호 변경");
+    await listIds(page, '[data-testid="automation-auto-demo-check"]', [ruleId], "ids-automation-converted");
     await row.click();
     await domIs(page,"새 파일 출처",()=>document.querySelector('[data-testid="automation-detail"]')?.textContent.includes("automations/check.toml"));
     const path=`${root}/projects/auto-demo/automations/check.toml`;

@@ -1,6 +1,7 @@
+import { listIds } from "../lib/list-ids.mjs";
 // coordinator·thread 질문은 같은 카드다. 실제 host/agent·CLI로 질문 ID, 두 기기, 보기 권한, 답 보존과 평문 호환을 본다.
 import fs from "node:fs";
-import { root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost, AA } from "../lib/harness.mjs";
+import { root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost, AA, drawerSettled } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const call = (page, data) => page.evaluate(async (data) => {
@@ -9,7 +10,7 @@ const call = (page, data) => page.evaluate(async (data) => {
 }, data);
 const open = async (page, id, selector) => {
   await page.evaluate((id) => { location.hash = `question=${id}`; }, id);
-  await domIs(page, "질문 ID의 카드", (selector) => document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true" && !!document.querySelector(selector), selector);
+  await domIs(page, "질문 ID의 카드", (selector) => document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true" && !!document.querySelector(selector) && document.querySelector('[data-testid="activity-asks"]')?.getAttribute("aria-selected") === "true", selector);
 };
 const images = async (page, selector) => {
   const imgs = page.locator(`${selector} img`);
@@ -79,6 +80,7 @@ async function chipState(page, ids, tone) {
 
 export default async function ({ page }) {
   let t, q, req, post, phone, reader, wk;
+  try {
   await step("준비: thread 질문·coordinator 구조화 post는 같은 문법, 질문마다 영속 q ID", async () => {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-cards.md`, "로그인 화면 다듬기\n질문 카드 시험");
@@ -121,6 +123,22 @@ export default async function ({ page }) {
     wk = await webkit.launch();
     phone = await pairDevice(wk, aaa("web", "pair").code, "iphone", { hash: `#question=${req.question_id}` });
     reader = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1100, height: 800 }, { hash: `#question=${req.question_id}` });
+  });
+  await step("왼쪽 질문 목록: 모든 q-ID와 답한 기록의 번호를 밝음·어두움·좁은 화면에서 보인다", async () => {
+    await open(page, req.question_id, `[data-testid="request-ask-${req.id}"]`);
+    const ids = [...q.items, ...req.questions.items].map((q) => q.id);
+    await listIds(page, '[data-testid="asks-panel"]', ids, "ids-question-desktop");
+    const p = phone.page;
+    await p.locator(".view [data-testid='drawer-toggle']").click();
+    await p.locator("#workspace-drawer.is-open").waitFor();
+    await drawerSettled(p);
+    await listIds(p, '[data-testid="asks-panel"]', ids, "ids-question-webkit");
+    const viewport = p.viewportSize();
+    await p.setViewportSize({ width: 320, height: 844 });
+    await listIds(p, '[data-testid="asks-panel"]', ids, "ids-question-webkit-320");
+    await p.setViewportSize(viewport);
+    await p.locator(".view [data-testid='drawer-toggle']").click();
+    await p.locator("#workspace-drawer.is-open").waitFor({ state: "detached" });
   });
   await step("같은 카드·본문·표·그림·선택지·추천: 데스크톱과 WebKit 휴대폰, 밝음·어두움 캡처", async () => {
     await open(page, "q-999999", '[data-testid="asks-missing"]');
@@ -168,6 +186,7 @@ export default async function ({ page }) {
     if (!again.err) throw new Error("두 번째 답을 받았다");
     fs.rmSync(`${previewPath()}/card.svg`); // publish 사본도 바꿔 원본과 보존본을 구별한다
     await images(page, '[data-testid="ask-done-card"]');
+    await listIds(page, '[data-testid="asks-panel"] .ask-row.is-done', req.questions.items.map((q) => q.id), "ids-question-answered");
     await shot(page, "69-coordinator-answered");
   });
   await step("채팅 ID 답: thread answer q-ID A와 question answer q-ID B, post handled q-ID는 평문·구조화 post를 닫는다", async () => {
@@ -196,6 +215,7 @@ export default async function ({ page }) {
     await wk.close(); wk = null;
     aaa("thread", "resolve", "demo", t.id);
   });
+  } finally { if (wk) { await wk.close(); wk = null; } }
 }
 // 실험실 프로젝트의 publish된 사본. 운영 경로에는 닿지 않는다.
 const previewPath = () => `${root}/projects/demo/library/preview`;

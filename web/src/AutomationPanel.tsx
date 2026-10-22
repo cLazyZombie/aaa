@@ -1,3 +1,4 @@
+import { ListId } from "./ListId";
 // 사이드바 자동화 카드 목록(t-0628 시안 1A·2A, 관리 GUI W1 plan §8.303의 목록을 바꿈). 카드는 「답할 것」·작업 목록 줄과 같은 밀도의
 // 두 줄이다: 점 · 이름 · 표지(켜짐이면 없음) · 열린 thread가 있으면 「실행 중」 / 조건 한 줄. 누르면 본문(AutomationView)에 그 규칙
 // 설정이 열린다. 켜기·승인·기록·원문·대상은 본문에 있다. 프로젝트 머리의 「새 자동화」, 옛 형식 변환 띠, 「지운 자동화」는 목록에 남는다.
@@ -56,7 +57,8 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
             onClick={() => onOpen(project, r.name)}>
             <span className="automation-indicator" role="img" aria-label={cardWord[tone]} />
             <span className="automation-card-text">
-              <span className="automation-card-line">
+              <span className="automation-card-line list-id-line">
+                {r.short_id && <ListId id={r.short_id} testId="automation-short-id" />}
                 <span className="automation-card-title">{title}</span>
                 {tone !== "on" && <span className={`automation-badge is-${tone}`}>{cardWord[tone]}</span>}
                 {r.web_read_only_reason && <span className="automation-badge is-legacy" title={r.web_read_only_reason}>시스템 · 읽기 전용</span>}
