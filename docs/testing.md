@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## E2E88 WebKit 새 창 종료 원인과 시험 도구 갱신(t-0800)
+
+- macOS 15 arm64 진단 run `39793997341`은 같은 E2E88을 새 실험실에서 고정 3회 실행해 모두 WebKit desktop의 HTML 링크 클릭에서 실패했다. 클릭은 성공했지만 popup 사건 전에 브라우저가 exit 139로 끝났다. `page.close`·`context.close`·`browser.disconnected`가 시험의 명시적 정리보다 앞선다. 두 OS crash 기록은 새 창 생성의 `WebPageProxy::useGPUProcessForDOMRenderingEnabled()+344`, EXC_BAD_ACCESS/주소 0x40을 가리킨다. 동일 설치 binary의 해당 명령도 주소 0x40 읽기다. `page.crash` 사건이 없다는 이유로 브라우저 전체 crash를 배제하지 않는다.
+- 공식 [WebKit bug 317666](https://bugs.webkit.org/show_bug.cgi?id=317666)과 [수정 68455aeaffed](https://github.com/WebKit/WebKit/commit/68455aeaffed)은 관련 페이지 순회에서 포인터를 비운 뒤 다음 증가식이 읽던 결함을 고친다. 수정된 순회를 포함한 Playwright 1.64.1/WebKit 27.2로 같은 macOS 15의 run `39795685013`에서 E2E88 전체 조합이 고정 3회 모두 통과했다. 이 두 run은 실패 재실행으로 녹색을 고른 것이 아니라, 구판 0/3과 수정판 3/3의 대조다. 진단 workflow는 최종 후보에 넣지 않는다.
+- `clickForPopup`은 기다림과 클릭의 개별 결과를 기록한다. E2E88 실패의 `diagnostics/video-popup.json`에는 시각·단계·양쪽 결과와 page crash/close·context close·browser disconnected, 명시적 정리 시작을 남긴다. 실제 브라우저의 의도한 클릭 오류/브라우저 선종료 대조와 `node --test web/test/popup.test.mjs`는 늦은 결과도 보존하고 두 종료 순서를 구분함을 확인한다. 주입 대조를 본래 결함의 재현으로 쓰지는 않는다.
+- 로컬 macOS 27에서는 Chromium 156.0.8078.4가 첫 포인터 입력 전 rAF를 주지 않아 locator의 안정성 대기와 첫 입력이 서로 막혔다. 최소 HTML의 버튼 하나에서 재현했고, 새 구동기+구 Chromium 147은 정상, 구 구동기+새 Chromium 156은 같은 실패였다. headless·창 모드 모두 실패하며 첫 실제 `mouse.move(0, 0)` 뒤 연속 rAF와 일반 클릭이 정상이다. 이 OS·브라우저 조합에만 pairing 화면의 첫 포인터 위치를 준비한다. 실제 rAF·locator actionability·클릭·영상 decode는 그대로이며 force click·시한 증가·브라우저 제외를 쓰지 않는다. 이 준비 뒤 수정판 로컬 E2E88 고정 5회가 모두 통과했다.
+- WebKit 27의 `font-family` 직렬화는 공백 있는 가족 이름의 따옴표를 생략한다. E2E06은 고정한 기대 CSS를 독립 요소의 CSSOM으로 직렬화한다. 기존 가족 이름·순서·generic·기본 fallback·저장 원문·실제 글자 폭 단언은 보존하며 실제 속성에서 기대값을 만들지 않는다. 수정 전 같은 설정 owner가 따옴표 차이로 실패했고 수정 뒤 전체 owner가 통과했다.
+- CI와 설치 안내의 Playwright는 1.64.1이다. ci-local도 이 판을 검사하고, 격리 설치는 명시한 `NODE_PATH`와 `PLAYWRIGHT_BROWSERS_PATH`를 쓴다. 전역 설치·시스템 설정·브라우저 캐시는 바꾸지 않는다. 정본 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사이며, 원래 E2E88의 네 조합·sandbox 경계·직접 MP4/Range·답한 bytes 보존을 유지한다. headless 결과를 실제 Safari/iPhone의 출력 장치 검증으로 해석하지 않는다.
+
 ## 새 launcher 아래 restart fixture 격리(t-0798)
 
 - `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`는 등록되지 않은 새 launcher를 기본으로 쓴다. `AAA_RESTART_TEST_LAUNCHER`로 기존 launcher를 지정하는 읽기 전용 경로도 유지한다. 두 경로 모두 기존 launcher/worker PID·기존 pane 보존·새 pane·책임 PID·승인 거부·detached 재관측 단언을 그대로 검사한다.

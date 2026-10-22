@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.mjs";
@@ -615,6 +616,11 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   page.on("pageerror", (e) => errors.push([String(e), ...String(e.stack ?? "").split("\n").slice(1, 3).map((l) => l.trim())].join(" ")));
   if (onPage) onPage(page);
   await page.goto(`${at ?? base}${hash ?? ""}`);
+  // macOS 27 + Chromium 156은 첫 포인터 입력 전 rAF가 오지 않아 click의 안정성 대기가 입력보다 먼저 막힌다.
+  // 실제 포인터를 화면 가장자리에서 시작시킨다. rAF·locator actionability·제품 입력 처리는 그대로 쓴다(t-0800).
+  if (process.platform === "darwin" && Number(os.release().split(".")[0]) === 26
+      && browser.browserType().name() === "chromium" && browser.version().startsWith("156."))
+    await page.mouse.move(0, 0);
   // 넣은 글꼴을 터미널을 열기 전에 받아 둔다(늘 쓰는 기기처럼 cache에 있는 상태). 늦게 받아지면 칸 높이·줄 수가 바뀌어
   // 그 단계가 재는 것(끌기 줄 수·크기)과 겹친다: CI 러너에는 깔린 글꼴이 없어 매번 늦게 받았다(41e81eb 휴대폰 끌기).
   // 늦게 받는 경우는 「글꼴이 늦게 와도 맨 아래」 단계가 따로 본다(route로 글꼴을 붙잡으므로 그때는 기다리지 않는다).
