@@ -7542,9 +7542,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **추가 문구 결정(21:1x).** pane의 detached 경고 이름은 「느린 빌드」, unknown은 「느린 빌드?」로 통일한다. 배너·목록·터미널·CLI·runbook·E2E89에 반영하고 판정·상태 값은 바꾸지 않는다. macOS 검사·정리 후 새 pane 안내는 설명 줄과 title에 둔다.
 
-### 8.456 Windows 한 줄 입구의 첫 질문 전 정지 진단(t-0485)
+### 8.456 Windows 한 줄 입구의 버전 probe 콘솔 분리(t-0485)
 
-- main f285f12f의 Windows CI에서 alias·닫힌 등록 창·staged argv owner는 통과했다. 실제 IRM/IEX→승인/파일 owner는 첫 질문 전에 60초 상한에 걸렸다(answered=0/16, child_exit=None). 현재 로그는 PowerShell 제목뿐이므로 startup·HTTP·bootstrap·native probe 중 어느 경계인지 확정하지 않는다.
-- 기존 PS5.1/7 owner에 shell 이름, PowerShell의 고정 단계 token, loopback HTTP accept/header/body 완료 단계와 executor/config/active 파일 존재 여부만 남긴다. PTY panic을 잡아 마지막 진단을 출력한 뒤 원래 panic payload로 즉시 다시 unwind한다. 비밀/경로/승인 내용은 기록하지 않는다.
-- 실제 `irm ... | iex` pipeline·기존 16개 응답·서명/상태/파일 보존 단언·조합·60초 상한은 그대로다. production 변경·새 owner·허용 flag/export는 없다. 이 후보는 수리 완료가 아닌 다음 Windows 실제 원인 판정을 위한 진단이다.
-- 기존 전체 ci-local·공개 검사와 Windows/Linux strict cross·Windows release 조건 build를 확인한다. 교차 빌드는 Windows 실행 증거가 아니며 실제 판정은 다음 승인된 main CI로 한다. CI 재실행이나 기대값/시한 완화로 게시 조건을 우회하지 않는다. v0.1.5는 exact main 네 job과 Windows 실제 owner가 모두 GREEN일 때만 게시한다.
+- main f285f12f의 Windows CI에서 alias·닫힌 등록 창·staged argv owner는 통과했고 실제 IRM/IEX owner만 첫 질문 전60초 정지했다. 승인 뒤 정지와 부하를 추정하지 않고 기존 owner에 고정 단계/HTTP 상태를 넣어 Windows 진단 CI 세 번으로 대조했다.
+- 캡처하는 `--version` probe도 실제 설치의 console에 붙던 경계가 결함이었다. run39798896583의 같은 windows-2025 이미지20261007.264.1에서 원본은16/16 답변·부분 파일 적용 뒤 PowerShell과 두 aaa 자식이 살아 있는 채 정지했다. 같은 source/runner/시험 조건에서 ProcessStartInfo.CreateNoWindow를 Capture에만 결속한 조건은 PS5.1/7·기존 install25개가 모두 통과했다. 원본 RED/실제 Cargo exit127과 GREEN50.67초를 각각 보존했다. 구체적인 OS 내부 잠금 기전까지 확정한 것은 아니다.
+- `Capture=true`인 버전 검증만 콘솔 없이 실행한다. 실제 설치의 Capture=false는 외부 console/stdio를 그대로 받아16개 질문·서명 승인·실제 파일/status를 수행한다. argv quoting/hash/PE/판 검사·구판 exe/config 보존·승인 범위·조합·60초 상한은 유지한다. 새 owner·production 허용 flag/export는 없다.
+- 기존 owner의 실패 뒤 shell·마지막 HTTP token·파일 존재 여부를 남기고 원래 panic을 재개하는 진단은 유지한다. 성공도 실제 entry_returned/HTTP 완료를 남긴다. payload_written은 마지막 transport 상태이며 이후 native 진전이 없다는 뜻이 아니다. 비밀/경로/승인 내용은 기록하지 않는다. 일회성 workflow·실행 줄 trace·process 관측 코드는 진단 branch에만 두고 수리 후보에서 뺀다.
+- 전체 ci-local·공개 검사와 Windows/Linux strict cross·Windows release 조건 build를 확인한다. 실제 Windows 근거는 위 동일 runner 대조이며 교차 빌드로 대체하지 않는다. v0.1.5 게시에는 별도로 착지한 exact main 네 job과 Windows 실제 owner 모두 GREEN이 필요하다. E2E88은 별도 소관이며 E2E82 최초 실패는 보존한다. 시한/기대값 완화나 CI rerun은 하지 않는다.
