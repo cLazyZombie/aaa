@@ -67,17 +67,7 @@ struct Request {
     directories: Vec<PathBuf>,
 }
 
-pub(super) struct Locks(Vec<File>);
-impl Drop for Locks {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        for file in &self.0 {
-            let _ = file.unlock();
-        }
-        // Windows는 handle의 share reservation을 닫아 해제한다.
-        self.0.clear();
-    }
-}
+pub(super) struct Locks(Vec<private::Lock>);
 struct Transaction {
     state: PathBuf,
     dir: PathBuf,

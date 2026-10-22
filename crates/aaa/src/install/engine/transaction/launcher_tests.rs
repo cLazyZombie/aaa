@@ -117,8 +117,17 @@ fn preserving_a_launcher_binds_its_bytes_to_the_approval_before_any_transaction_
     );
     let issuer =
         crate::install::engine::authorization::Authority::initialize(Path::new(&plan.context.state_dir)).unwrap();
+    // initialize/issue의 짧은 잠금 scope가 끝난 뒤 fork/dup 사본만 남은 경계다.
+    #[cfg(unix)]
+    let inherited_issuer = {
+        let scope =
+            private::lock(&Path::new(&plan.context.state_dir).join("install/authorization/issuer.lock")).unwrap();
+        scope.try_clone().unwrap()
+    };
     let approval = issuer.issue(&plan, allowed.clone(), 1000, 100).unwrap();
     let lease = issuer.begin(&approval, &plan, &allowed, 1000, None).unwrap();
+    #[cfg(unix)]
+    drop(inherited_issuer);
     std::fs::OpenOptions::new().append(true).open(&launcher).unwrap().write_all(b"changed after review").unwrap();
     let before = tree(&lab.0);
     assert!(super::super::AuthorizedTransaction::create(plan, &lease).is_err());

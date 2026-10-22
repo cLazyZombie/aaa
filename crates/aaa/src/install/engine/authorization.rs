@@ -46,7 +46,7 @@ pub(super) struct Lease {
     plan_sha256: String,
     permissions: Vec<InstallPermission>,
     expires_at_ms: u64,
-    _lock: File,
+    _lock: private::Lock,
 }
 impl Lease {
     pub(super) fn id(&self) -> &str {

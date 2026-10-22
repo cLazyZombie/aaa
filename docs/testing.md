@@ -2228,3 +2228,18 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 84-connection-banner --workers 1`: 실제 host·agent와 2,400행 Claude JSONL을 Chromium 1280px·WebKit 390px에서 연다.
 - 시험 안 WebSocket의 open/message 전달을 gate로 보류한다. 실제 연결·기록 조회는 유지하고 Playwright 시계를 499/500ms로 전진시켜 지연 경계와 빠른 연결에서 순간 표시도 없음을 MutationObserver로 확인한다.
 - pane 왕복의 지연 초기화, 실제 socket 닫힘 뒤 499ms 미표시·500ms 표시, 재시도 시 표시 유지, 회복 즉시 제거·옛 타이머 취소를 확인한다. 고정 sleep·재시도·시한 연장은 없다. 정본 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+
+
+## Windows 최소 다운로드 bootstrap(t-0485)
+
+- `cargo test -p aaa --test windows_bootstrap --locked`: Windows에서 PowerShell 5.1과 7을 모두 실제로 실행한다. 네트워크 요청만 외부 경계에서 대체하고 실제 PE/파일/hash/--version/native argv/종료 코드와 표준입력 상속을 검사한다. 빈 문자열·공백·따옴표·끝 역슬래시·한글·셸 메타문자를 보존하고, 같은 bytes의 mtime·다른 instance·충돌 파일을 보존한다. manifest 판/URL/hash·PE/CPU/실행 판·파일 부모·junction·NUL 거부 뒤 실행/배치가 없어야 한다. 실제 aaa dry-run은 state를 만들지 않고 --yes는 쓰기 권한이 아니다.
+- 이 owner만 `cfg(windows)`다. PE/CreateProcess·PowerShell 5.1·NTFS junction이 대상 OS 계약이기 때문이다. macOS/Linux에서 통과를 주장하지 않는다. 공통 Rust install owner는 각 OS의 기존 Cargo 시험에 남는다. 실제 Windows 판정은 승인된 hp branch의 기존 windows-2025 CI에서 한 번 확인하고 branch를 지운다.
+- `nice -n 15 python3 -m unittest scripts.test_release`: 같은 source의 bootstrap만 게시하며 manifest/체크섬이 실제 script bytes를 포함해야 한다. ci-local의 test 및 distribution workflow에도 묶었다. 검토하지 않은 script/누락 파일을 허용하는 변형이 이 owner를 실패시켜야 한다.
+- CI는 임시 사용자 폴더만 쓴다. bootstrap 자체는 SCM/registry/PATH를 변경하지 않는다. 실제 SCM logon·Session 0·부팅·LSA/UAC·harness 인수는 [Windows 사용자 절차](windows-bootstrap.md)로 분리한다.
+
+
+## install supervisor 잠금의 owner 종료(t-0485)
+
+기존 `service_phase_keeps_file_resource_locks_and_removal_and_credentials_resume_preserve_context` owner는 Unix에서 supervisor File의 실제 복제 descriptor를 owner 종료 뒤까지 남긴다. fork와 같은 open file description이 남아도 원래 Job 종료 뒤 같은 ID의 credentials/removal 재개가 즉시 가능해야 하며, 옛 사본을 닫아도 새 Job 배타성은 유지해야 한다. Windows는 실제 share reservation 방식과 원래 전체 owner를 유지하며 Unix flock 복제 대조만 제외한다. 원래 File close만 쓰는 코드에서 installation_busy RED, install private::Lock guard drop의 명시 unlock 뒤 GREEN을 확인한다. 잠금 생존 중 거부·계정/설정/준비 검증·제거/보존/조회 단언과 기존 시한은 그대로다.
+
+같은 Unix guard는 `preserving_a_launcher_binds_its_bytes_to_the_approval_before_any_transaction_write`의 짧은 발급 scope 뒤 실제 복제 descriptor를 남겨 issuer.issue 재획득 RED→GREEN을 확인한다. `consumption_survives_reopen_and_only_explicit_same_id_resume_is_allowed`는 Lease 복제 descriptor가 남아도 같은 ID만 재개되고 소비/서명/만료/읽기 보존 단언이 유지됨을 본다. 세 owner의 기존 단언·시한은 바꾸지 않는다. Windows는 복제 대조만 cfg 제외하고 원래 실제 share reservation·owner 전체를 유지한다.

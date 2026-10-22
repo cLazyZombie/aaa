@@ -67,6 +67,8 @@ fn consumption_survives_reopen_and_only_explicit_same_id_resume_is_allowed() {
         4,
         "실행 중 lease는 새 승인 요구가 아니라 busy/conflict다"
     );
+    #[cfg(unix)]
+    let inherited_lease = lease._lock.try_clone().unwrap();
     drop(lease);
     let reopened = Authority::open(state).unwrap();
     let before = tree(&lab.0);
@@ -75,6 +77,8 @@ fn consumption_survives_reopen_and_only_explicit_same_id_resume_is_allowed() {
     assert_eq!(tree(&lab.0), before);
     let resumed =
         reopened.begin(&authorization, &plan, &allowed, 1000, Some(&authorization.claims.installation_id)).unwrap();
+    #[cfg(unix)]
+    drop(inherited_lease);
     assert_eq!(resumed.id(), authorization.claims.installation_id);
     assert_eq!(tree(&lab.0), before, "읽기 재개 검증은 소비 기록을 다시 쓰지 않는다");
     drop(resumed);

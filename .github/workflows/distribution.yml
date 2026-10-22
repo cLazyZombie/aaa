@@ -2,10 +2,10 @@ name: release 계약
 
 on:
   pull_request:
-    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", "scripts/release.py", "scripts/test_release.py", "Cargo.toml"]
+    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", "scripts/bootstrap/**", "scripts/release.py", "scripts/test_release.py", "Cargo.toml"]
   push:
     branches: [main]
-    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", "scripts/release.py", "scripts/test_release.py", "Cargo.toml"]
+    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", "scripts/bootstrap/**", "scripts/release.py", "scripts/test_release.py", "Cargo.toml"]
 
 permissions:
   contents: read

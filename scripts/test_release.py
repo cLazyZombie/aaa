@@ -9,7 +9,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from scripts.release import ASSETS, LAUNCHERS, ROOT
+from scripts.release import ASSETS, BOOTSTRAP, LAUNCHERS, ROOT
 
 
 class ReleaseContract(unittest.TestCase):
@@ -20,6 +20,7 @@ class ReleaseContract(unittest.TestCase):
         self.artifacts = self.root / "artifacts"
         self.artifacts.mkdir()
         self.version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+        (self.artifacts / BOOTSTRAP).write_bytes((ROOT / "scripts/bootstrap/install-windows.ps1").read_bytes())
         self.payloads = {}
         for platform, name in ASSETS.items():
             body = f"독립된 빌드 표본: {platform}\n".encode()
@@ -75,6 +76,27 @@ class ReleaseContract(unittest.TestCase):
         result = self.run_tool(f"v{self.version}", output)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(output.exists())
+
+    def test_bootstrap_is_the_reviewed_source_and_checksums_cover_its_bytes(self):
+        output = self.root / "output"
+        result = self.run_tool(f"v{self.version}", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        entry = json.loads((output / "manifest.json").read_text())["bootstraps"]["windows-x86_64"]
+        self.assertEqual(entry["url"], f"https://github.com/cLazyZombie/aaa/releases/download/v{self.version}/{BOOTSTRAP}")
+        digest = hashlib.sha256((self.artifacts / BOOTSTRAP).read_bytes()).hexdigest()
+        self.assertEqual(entry["sha256"], digest)
+        self.assertIn(f"{digest}  {BOOTSTRAP}\n", (output / "SHA256SUMS").read_text())
+        for body in (b"unreviewed script", None):
+            with self.subTest(body=body):
+                if body is None:
+                    (self.artifacts / BOOTSTRAP).unlink()
+                else:
+                    (self.artifacts / BOOTSTRAP).write_bytes(body)
+                rejected = self.root / "rejected-bootstrap"
+                result = self.run_tool(f"v{self.version}", rejected)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("bootstrap", result.stderr)
+                self.assertFalse(rejected.exists())
 
     def test_wrong_tag_and_missing_binary_do_not_emit_manifest(self):
         output = self.root / "rejected"

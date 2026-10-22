@@ -148,8 +148,15 @@ fn service_phase_keeps_file_resource_locks_and_removal_and_credentials_resume_pr
     os.credentials_fail = true;
     assert!(job.credentials(&mut os, &password()).is_err());
     assert!(job.record.credentials_pending);
+    // Unix fork도 같은 open file description을 복제한다. 다른 thread의
+    // fork/exec 사이에 남은 사본이 owner drop 뒤 supervisor 잠금을 연장하면 안 된다.
+    #[cfg(unix)]
+    let inherited_supervisor = job._lock.try_clone().unwrap();
     drop(job);
     let mut job = reopen(&lab, &plan, &id).unwrap();
+    #[cfg(unix)]
+    drop(inherited_supervisor);
+    assert!(reopen(&lab, &plan, &id).is_err(), "옛 사본 종료가 새 owner의 잠금을 풀면 안 된다");
     os.credentials_fail = false;
     job.credentials(&mut os, &password()).unwrap();
     assert_eq!(os.updates, 1);

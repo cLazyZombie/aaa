@@ -548,7 +548,7 @@ fn credentials_verified(record: &Record, process: Process) -> bool {
 struct Job {
     spec: Spec,
     record: Record,
-    _lock: File,
+    _lock: private::Lock,
     _files: Option<transaction::Locks>,
 }
 impl Job {
