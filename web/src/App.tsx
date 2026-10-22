@@ -1315,16 +1315,20 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 없으면 기본 profile로 띄워 연다(할 일 「coordinator에게 맡기기」의 `project_open`). 보기 권한은 띄울 수 없어 그때 단추가 없다
   const coordinatorPane = panes.find((p) => p.coordinator_project && p.state === "running" && !threadOfPane.has(p.id)) ?? null;
   const [coordinatorBusy, setCoordinatorBusy] = useState(false);
+  const [coordinatorError, setCoordinatorError] = useState<string | null>(null);
   const openCoordinator = async () => {
     if (coordinatorPane) return choose(coordinatorPane.id);
     if (coordinatorBusy) return;
     setCoordinatorBusy(true);
+    setCoordinatorError(null);
     setMsg(null);
     try {
       const r = await call({ op: "project_open" });
       if (r.kind === "project_opened") choose(r.pane.id);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      const error = e instanceof Error ? e.message : String(e);
+      setMsg(error);
+      setCoordinatorError(error);
     } finally {
       setCoordinatorBusy(false);
     }
@@ -1453,6 +1457,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       <main className="view">
         <UpdateNotice hostBuild={hostWeb} />
         {role !== "reader" && <PasskeyNotice state={passkey} onChanged={reloadPasskey} />}
+        {loaded && up && canControl && !settingsOpen && !coordinatorPane && (
+          <div className="update-notice is-line is-warning" role="status" data-testid="coordinator-notice">
+            <span>
+              coordinator가 실행 중이 아닙니다.
+              {coordinatorError && <span role="alert"> {coordinatorError}</span>}
+            </span>
+            <button type="button" className="btn btn-primary" disabled={coordinatorBusy} aria-busy={coordinatorBusy} onClick={() => void openCoordinator()}>
+              {coordinatorBusy ? "띄우는 중" : "coordinator 띄우기"}
+            </button>
+          </div>
+        )}
         <PasskeyGesture />
         {settingsOpen && (
           <ErrorBoundary area="설정" onDismiss={closeSettings}>

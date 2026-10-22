@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## 종료된 coordinator와 상단 시작 안내(t-0816)
+
+- `node --test web/test/roster.test.mjs`: 종료된 coordinator가 트리·기타·프로젝트 머리·이전/다음 탐색에서 빠지고, 중단·복원 대기·끊긴 머신의 기록과 thread에 연결된 pane은 유지하는지 확인한다. 입력 pane 목록은 바꾸지 않는다. 명령 팔레트도 같은 `roster`를 쓴다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 91-coordinator-exit --workers 1`: 실제 host·agent·PTY에서 Ctrl+C·정상 종료, 종료 기록 보존·새로 열기·기본 profile 재시작을 확인한다. Chromium·WebKit 각각 1280×844·390×844에서 상단 안내 위치·passkey 공존·메뉴를 열지 않은 시작·가로 넘침·보기 권한을 검사한다.
+- 시작 요청은 실제 host로 전달한다. 첫 요청의 profile만 허용 밖 값으로 보내 host의 실제 거부를 안내줄에 보이는지 확인하며, 다음 요청의 전달을 사건으로 보류해 시작 중 단추 잠금과 중복 요청 차단을 검사한다. 제품 상태·종료 결과를 가짜로 만들지 않는다. 새 sleep·시한 연장·재시도는 없다. 이 headless 휴대폰 폭 검사는 실제 iPhone 조작을 대신하지 않는다.
+- 관련 기존 E2E26·12와 전체 `nice -n 15 bash scripts/ci-local.sh --tee`, 공개 검사를 수행한다. API·link 번호는 유지하며 E2E91·plan §8.459은 착지 때 main과 대조한다.
+- E2E15의 안내 없는 머리줄 검사는 실제 coordinator를 띄워 전제를 준비한다. 기존 0px·안전 영역·겹침 결함 심기 단언을 유지한다. 설정을 열면 시작 안내는 숨겨 설정에서 앱 목록으로 나가는 Tab 순서(E2E06)를 유지하며 E2E91에서도 숨김·닫은 뒤 복귀를 확인한다.
+
+
 ## CI 사건의 전달·실행 기록 경합(t-0814)
 
 - `nice -n 15 cargo test --locked -p aaa-host --lib ci::tests::`: 기존 내구 outbox 시험에서 자동화 완료를 먼저 확정하고 같은 source 사건을 다시 전달한다. 실행 결과·시각·last_result·오늘 횟수 전체가 그대로여야 한다. 수정 전에는 `coordinator 안내`가 `CI failed · 자동화 입력`으로 덮여 결정적으로 실패했다. 큐 인계만으로 완료를 기록하지 않는지도 확인한다.
