@@ -43,6 +43,10 @@ struct Track {
     at: u64,
     signatures: BTreeMap<String, String>,
     failures: BTreeSet<(String, Vec<String>)>,
+    /// job별 실패 시험. 옛 저장 문서에는 없어 비어 있고, 다음 실패에서 한 번 새 집합으로 본다.
+    /// 비었으면 쓰지 않아 옛 문서 모양을 그대로 둔다.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    failed_tests: BTreeSet<(String, Vec<String>)>,
     open: Option<String>,
 }
 fn internal(e: impl std::fmt::Display) -> ErrorBody {
@@ -260,12 +264,14 @@ impl Host {
                 if red && !historical && kind == "failed" {
                     for run in runs.iter().filter(|run| ci::failed(&run.conclusion)) {
                         for page in 1..=ci::MAX_PAGES {
-                            let a = self
+                            let mut a = self
                                 .ci_ask(conn, cwd, CiQuery::Jobs { run: run.id, attempt: run.attempt, page })
                                 .await?;
-                            for j in &a.jobs {
+                            // 로그 합계 상한을 넘어도 실패 시험은 job마다 받는다. 같은 job·단계의 다른 실패를 가른다.
+                            for j in &mut a.jobs {
+                                let a = self.ci_ask(conn, cwd, CiQuery::Log { run: run.id, job: j.id }).await?;
+                                j.failures = a.failures.into_iter().take(ci::FAILURES_CAP).collect();
                                 if logs.len() < ci::LOG_TOTAL_CAP {
-                                    let a = self.ci_ask(conn, cwd, CiQuery::Log { run: run.id, job: j.id }).await?;
                                     let remaining = ci::LOG_TOTAL_CAP - logs.len();
                                     let part: String = a
                                         .log
@@ -318,8 +324,12 @@ impl Host {
                     .retain(|id| id.len() == 6 && id.starts_with("t-") && id[2..].bytes().all(|b| b.is_ascii_digit()));
                 let owners: Vec<_> = owners.into_iter().collect();
                 let failures = ci::failure_set(&jobs);
-                let same =
-                    kind == "failed" && !failures.is_empty() && failures == track.failures && track.open.is_some();
+                let failed_tests = ci::failed_tests(&jobs);
+                let same = kind == "failed"
+                    && !failures.is_empty()
+                    && failures == track.failures
+                    && failed_tests == track.failed_tests
+                    && track.open.is_some();
                 let id = format!("ci-{}", &hash(&format!("{p}:{}:{branch}:{sha}:{sig}", r.name))[..32]);
                 let mut reports = BTreeMap::new();
                 for owner in owners.iter().take(8) {
@@ -386,11 +396,13 @@ impl Host {
                     track.sha = sha;
                     if red {
                         track.failures = failures;
+                        track.failed_tests = failed_tests;
                         if track.open.is_none() {
                             track.open = Some(id);
                         }
                     } else {
                         track.failures.clear();
+                        track.failed_tests.clear();
                         track.open = None;
                     }
                 }

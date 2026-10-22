@@ -13,7 +13,9 @@ endpoint=args[-1]; result='200'; code=0
 query=urllib.parse.parse_qs(urllib.parse.urlsplit(endpoint).query)
 page=query.get('page',['1'])[0]
 if args[:2]==['run','view']:
-    print('x'*40000+'\ntest failure tail')
+    # 실패 시험 줄은 agent가 남기는 32KiB 꼬리 밖(앞쪽)에 둔다. run 4만 같은 job·단계의 다른 시험이 실패한다.
+    test='a::second' if args[2]=='4' else 'a::first'
+    print('linux\ttest\t2026-10-19T00:00:00.0000000Z test '+test+' ... FAILED\n'+'x'*40000+'\ntest failure tail')
 elif 'actions/runs?' in endpoint:
     etag='If-None-Match: "'+phase+'"'
     if phase=='auth':
@@ -132,6 +134,7 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     assert_eq!(items.len(), 1);
     let body = items[0]["body"].as_str().unwrap();
     assert!(body.contains("t-0042") && body.contains("t-0043") && body.contains("test failure tail"));
+    assert!(body.contains("\"failures\":[\"a::first\"]"), "꼬리 밖의 실패 시험도 job에 남는다");
     assert!(body.contains("\"truncated\":true"));
     let delivery_runs = |w: &World| -> Vec<Value> {
         w.h.ok(&["routine", "runs", "demo", "ci-main"])["runs"]
@@ -164,9 +167,17 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     assert_eq!(ci_items(&w, true).len(), 1);
     assert!(ci_items(&w, true)[0]["body"].as_str().unwrap().contains(&"c".repeat(40)));
     assert_eq!(w.h.ok(&["routine", "runs", "demo", "ci-main"])["runs"][0]["detail"], "같은 실패 집합");
+    // 같은 job·단계라도 실패 시험이 바뀌면 같은 항목에 덧붙이고 다시 깨운다(0a8c294f windows).
+    write_runs(&stub, "other", vec![run(4, 'd', "failure"), run(3, 'c', "failure")]);
+    phase(&stub, "other");
+    quiet_barrier(&w, &stub, "other");
+    assert_eq!(ci_items(&w, true).len(), 1);
+    assert!(ci_items(&w, true)[0]["body"].as_str().unwrap().contains("a::second"));
+    let latest = &delivery_runs(&w)[0];
+    assert_eq!((&latest["status"], &latest["detail"]), (&"done".into(), &history[0]["detail"]), "첫 빨강처럼 깨운다");
     // 꺼진 사이 실패→회복을 함께 받으면 새 깨움 없이 앞 CI 항목을 닫는다.
     w.lab.kill("host2");
-    write_runs(&stub, "fixed", vec![run(5, 'e', "success"), run(4, 'd', "failure"), run(3, 'c', "failure")]);
+    write_runs(&stub, "fixed", vec![run(6, '0', "success"), run(5, 'e', "failure"), run(4, 'd', "failure")]);
     phase(&stub, "fixed");
     w.spawn_host("host3");
     wait_for("재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
