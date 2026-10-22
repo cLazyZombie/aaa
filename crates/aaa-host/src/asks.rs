@@ -151,22 +151,10 @@ impl Host {
         by: &str,
         why: &str,
     ) -> Result<(), ErrorBody> {
-        // 그 사이 coordinator가 inbox done한 항목은 다시 기록하거나 알리지 않는다.
-        let open = self.db.inbox_list(Some(project), false).map_err(internal)?;
-        let items: Vec<_> = items.into_iter().filter(|i| open.iter().any(|o| o.id == i.id)).collect();
-        if items.is_empty() {
-            return Ok(());
-        }
-        self.inbox_finish(project, items.clone(), by, false).map_err(internal)?;
-        for i in items {
-            self.inbox_add(
-                project,
-                "thread-state",
-                "coordinator",
-                "request handled",
-                &format!("{why} 확인 필요 post도 처리했다({by}): {}", i.summary),
-            );
-        }
+        self.inbox_finish_with_notice(project, items, by, false, |i| {
+            Some(format!("{why} 확인 필요 post도 처리했다({by}): {}", i.summary))
+        })
+        .map_err(internal)?;
         Ok(())
     }
 
@@ -293,15 +281,11 @@ impl Host {
         }
         let title =
             self.db.post_of_item(project, item).ok().flatten().map(|p| p.input.title).unwrap_or(i.summary.clone());
-        self.inbox_done(project, &[item.to_string()], false, actor)?;
         let by = self.answered_by(actor);
-        self.inbox_add(
-            project,
-            "thread-state",
-            "coordinator",
-            "request handled",
-            &format!("사용자가 확인 필요 post를 답함으로 표시했다({by}): 「{title}」. 답이 채팅에 없으면 다시 묻지 말고 처리된 것으로 본다"),
-        );
+        let n = self.inbox_finish_with_notice(project, vec![i.clone()], &by, true, |_| {
+            Some(format!("사용자가 확인 필요 post를 답함으로 표시했다({by}): 「{title}」. 답이 채팅에 없으면 다시 묻지 말고 처리된 것으로 본다"))
+        }).map_err(internal)?;
+        self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
         self.asks_view(project)
     }
 
@@ -407,7 +391,10 @@ impl Host {
             return saved.and_then(|_| Err(err(ErrorCode::BadRequest, "이미 답함")));
         }
         // DB 종료 뒤 파일 이동과 상태 사건도 기존 inbox 경로를 따른다. 답 기록은 위에서 이미 남겼다.
-        self.inbox_finish(project, vec![i.clone()], &by, false).map_err(internal)?;
+        let mut done = i.clone();
+        done.done = true;
+        done.done_at_ms = Some(now);
+        self.inbox_finish_publish(&done, &by, false);
         self.inbox_publish(&notice);
         self.db.audit(actor, "ask_answer", &format!("{project}/{item}"));
         self.asks_view(project)
@@ -714,6 +701,59 @@ mod tests {
         let h = Host::open(cfg, path.clone()).unwrap();
         h.project_create("demo", Default::default(), "test").unwrap();
         (h, Lab(path))
+    }
+
+    /// 두 경로 모두 같은 열린 post를 읽은 뒤 종료하도록 고정해 E2E53의 경합을 재현한다.
+    #[test]
+    fn question_answer_and_reconcile_handle_each_post_once() {
+        let (h, _lab) = host();
+        let mut rec = ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.report_hash = Some("hash".into());
+        rec.questions = aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 아래 (추천)\n- B 위\n");
+        let answer =
+            QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "웹".into(), at_ms: 5 };
+        rec.question_answer = Some(answer.clone());
+        h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
+        for n in 1..=2 {
+            let input = PostInput {
+                post_id: format!("{n:032x}"),
+                to: "user".into(),
+                post_type: PostType::Request,
+                topic: "user-action".into(),
+                title: format!("알림 {n} aaa:question/t-0001"),
+                body: "카드에서 답한다".into(),
+                needs_user: true,
+                refs: vec![],
+            };
+            assert!(matches!(h.front_post("demo", input, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+        }
+        let requests = h.question_requests("demo", &rec.id).unwrap();
+        assert_eq!(requests.len(), 2);
+        h.record_answer(&rec, &answer);
+        *h.inbox_finish_barrier.lock().unwrap() = Some(Arc::new(std::sync::Barrier::new(2)));
+        std::thread::scope(|scope| {
+            let answering =
+                scope.spawn(|| h.handle_question_requests("demo", requests.clone(), "웹", "질문 카드로 답해"));
+            let reconciling = scope.spawn(|| h.reconcile_question_requests("demo"));
+            answering.join().unwrap().unwrap();
+            reconciling.join().unwrap().unwrap();
+        });
+        *h.inbox_finish_barrier.lock().unwrap() = None;
+        let inbox = h.db.inbox_list(Some("demo"), true).unwrap();
+        assert!(requests.iter().all(|r| inbox.iter().any(|i| i.id == r.id && i.done)));
+        let handled: Vec<_> = inbox.iter().filter(|i| i.event == "request handled").collect();
+        assert_eq!(handled.len(), 2, "각 post의 처리 기록은 한 번만 남는다: {handled:?}");
+        for request in &requests {
+            assert_eq!(handled.iter().filter(|i| i.summary.contains(&request.summary)).count(), 1);
+        }
+        assert_eq!(h.db.ask_list("demo").unwrap().len(), 1, "답한 질문은 하나다");
+        h.handle_question_requests("demo", requests, "웹", "질문 카드로 답해").unwrap();
+        h.reconcile_question_requests("demo").unwrap();
+        assert_eq!(
+            h.db.inbox_list(Some("demo"), true).unwrap().iter().filter(|i| i.event == "request handled").count(),
+            2
+        );
     }
 
     #[test]

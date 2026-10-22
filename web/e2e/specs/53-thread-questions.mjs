@@ -234,6 +234,11 @@ export default async function ({ page }) {
     const linkedInbox = aaa("inbox", "list", "demo", "--all", "--peek").items;
     for (const r of linked) if (!linkedInbox.some((i) => i.id === r.id && i.done)) throw new Error(`끝나지 않은 연결 post: ${r.id}`);
     if (linkedInbox.filter((i) => i.event === "request handled").length !== 2) throw new Error("연결 post마다 request handled가 남지 않았다");
+    for (const r of linked) {
+      const original = linkedInbox.find((i) => i.id === r.id);
+      const handled = linkedInbox.filter((i) => i.event === "request handled" && i.summary.includes(original.summary));
+      if (handled.length !== 1) throw new Error(`연결 post의 처리 기록이 한 건이 아니다: ${r.id}: ${JSON.stringify(handled)}`);
+    }
     for (const p of [pp, phoneApp.page]) {
       await until("답한 것 한 줄", async () => (await p.getByTestId("asks-done-count").textContent()) === "1" && (await p.getByTestId("asks-open-count").textContent()) === "0");
     }

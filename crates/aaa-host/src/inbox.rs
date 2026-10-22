@@ -264,7 +264,7 @@ impl Host {
         if !peek {
             for i in page.items.iter_mut().filter(|i| !i.done && !i.seen) {
                 i.seen = true;
-                self.db.inbox_put(i).map_err(internal)?;
+                self.db.inbox_mark_seen(project, &i.id).map_err(internal)?;
             }
         }
         Ok(page)
@@ -288,10 +288,9 @@ impl Host {
             return Err(err(ErrorCode::NotFound, format!("끝내지 않은 항목이 없다: {miss}")));
         }
         let pick: Vec<InboxItem> = open.into_iter().filter(|i| all || ids.contains(&i.id)).collect();
-        let n = pick.len();
-        self.inbox_finish(project, pick, &self.answered_by(actor), true).map_err(internal)?;
+        let n = self.inbox_finish(project, pick, &self.answered_by(actor), true).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
-        Ok((n as u32, fit_inbox(self.db.inbox_list(Some(project), false).map_err(internal)?, INBOX_REPLY_BYTES)))
+        Ok((n, fit_inbox(self.db.inbox_list(Some(project), false).map_err(internal)?, INBOX_REPLY_BYTES)))
     }
 
     /// 조건에 맞는 끝내지 않은 항목을 끝낸다
@@ -305,32 +304,72 @@ impl Host {
         }
     }
 
-    /// `by`는 끝낸 곳(확인 필요 post의 「답한 것」 기록에 남는다)
+    /// `by`는 끝낸 곳(확인 필요 post의 「답한 것」 기록에 남는다). 실제 끝낸 수를 돌려준다.
     pub(crate) fn inbox_finish(
         &self,
         project: &str,
         items: Vec<InboxItem>,
         by: &str,
         record_requests: bool,
-    ) -> anyhow::Result<()> {
-        let dir = self.inbox_dir(project);
-        let now = aaa_common::util::now_ms();
-        for mut i in items {
-            i.done = true;
-            i.done_at_ms = Some(now);
-            self.db.inbox_put(&i)?;
-            if crate::asks::is_user_request(&i) {
-                if record_requests {
-                    self.record_request(&i, by, now);
-                }
-                self.asks_bump();
+    ) -> anyhow::Result<u32> {
+        self.inbox_finish_with_notice(project, items, by, record_requests, |_| None)
+    }
+
+    /// 종료를 차지한 경로만 처리 알림을 저장하고 투영·상태 사건을 낸다.
+    pub(crate) fn inbox_finish_with_notice(
+        &self,
+        project: &str,
+        items: Vec<InboxItem>,
+        by: &str,
+        record_requests: bool,
+        summary: impl Fn(&InboxItem) -> Option<String>,
+    ) -> anyhow::Result<u32> {
+        #[cfg(test)]
+        {
+            let barrier = self.inbox_finish_barrier.lock().unwrap().clone();
+            if let Some(barrier) = barrier {
+                barrier.wait();
             }
-            self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
-            let _ = std::fs::create_dir_all(dir.join("done"));
-            let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
         }
+        let now = aaa_common::util::now_ms();
+        let mut finished = 0;
+        for i in items {
+            let notice = summary(&i).map(|summary| InboxItem {
+                id: format!("{}-handled", i.id),
+                project: project.into(),
+                item_kind: "thread-state".into(),
+                subject: "coordinator".into(),
+                event: "request handled".into(),
+                summary: summary.chars().take(300).collect(),
+                body: String::new(),
+                done: false,
+                seen: false,
+                created_at_ms: now,
+                done_at_ms: None,
+            });
+            let Some(done) = self.db.inbox_finish(project, &i.id, now, notice.as_ref())? else { continue };
+            finished += 1;
+            self.inbox_finish_publish(&done, by, record_requests);
+            if let Some(notice) = notice {
+                self.inbox_publish(&notice);
+            }
+        }
+        Ok(finished)
+    }
+
+    /// DB에서 끝낸 항목의 파일 투영과 상태 사건. 구조화 질문의 답 저장도 이 경로를 쓴다.
+    pub(crate) fn inbox_finish_publish(&self, i: &InboxItem, by: &str, record_requests: bool) {
+        if crate::asks::is_user_request(i) {
+            if record_requests {
+                self.record_request(i, by, i.done_at_ms.unwrap_or_else(aaa_common::util::now_ms));
+            }
+            self.asks_bump();
+        }
+        self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
+        let dir = self.inbox_dir(&i.project);
+        let _ = std::fs::create_dir_all(dir.join("done"));
+        let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
         self.inbox_bump();
-        Ok(())
     }
 
     // ───────────── ticker ─────────────
