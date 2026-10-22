@@ -7278,3 +7278,35 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 사용자 승인에 따라 workspace 판을 0.1.2에서 0.1.3으로 올리고 offline workspace update로 Cargo.lock의 workspace 판을 맞춘다. 의존성 판·설치 동작·API/AGENT_LINK/E2E 번호는 바꾸지 않는다. 앞선 Linux File import 후보는 main의 동등 수리와 중복돼 착지하지 않는다.
 - 변경을 검증·착지한 정확 main commit의 GitHub CI가 모두 성공한 뒤 판·대상 commit을 보고하고, 저장소 release 절차로 v0.1.3 tag를 한 번 push한다. 게시된 Windows bootstrap을 실제 내려받아 같은 tag source·manifest·SHA256SUMS와 SHA-256을 대조한 뒤 사용자 시험 안내에 고정 판과 해시를 넣는다.
 - release 게시가 운영 배포나 실제 사용자 PC 인수를 뜻하지 않는다. SCM logon·Session0·부팅·LSA/GPO·UAC는 사용자 시험으로 판정하고 공개 uninstall의 남은 연결과 I4 Linux·I7 최종 인수는 기존 순서대로 이어 간다.
+
+### 8.430 thread 이미지 생성을 host Codex 계정으로(t-0707)
+
+- **목적.** 어느 harness에서든 `aaa image generate --profile <Codex profile> --prompt-file <파일> --output-dir <폴더>`로
+  host가 등록한 Codex 구독 계정의 내장 이미지 생성을 요청한다. 참고 PNG/JPEG/WebP는 `--image` 반복,
+  투명 요청은 `--transparent`다. CLI를 통하지 않은 harness 자체의 도구 호출을 가로채지는 않는다.
+- **경계.** session hook의 기존 token과 실제 peer PID를 확인한 뒤 imagegen.v1으로 host에 전달한다.
+  host는 연결한 머신·실행 중 pane·열린 Worker 또는 프로젝트 coordinator를 정하고, worker는 자기 thread의 원장만 연다.
+  coordinator는 소속 프로젝트의 목록·결과 조회와 끝난 파일 정리만 더 허용한다. 다른 thread의 생성은 시작하지 못한다.
+  일반 Front 쓰기·다른 pane 조작·계정 관리 권한은 열지 않는다. thread 소유권은 pane 재시작에도 유지한다.
+  host는 agent/session crate에 의존하지 않고 인증을 원격 agent에 보내지 않는다.
+- **실행·인증.** host의 Codex 0.163.0을 인증 전에 검사한다. 허용한 Codex profile의 명시 모델·effort를 고정하고
+  shell·plugin·hook·하위 agent·웹 도구를 끈 빈 private 홈/read-only 실행에 해당 계정만 넣는다.
+  기본 provider 덮어쓰기는 CLI가 거부하므로 같은 공식 OpenAI 인증·기본 주소를 사용하는 `aaa-image` 설정으로
+  request/stream 재시도를 0으로 정한다. API key·종량 과금·머신 로컬 로그인·다른 모델로 전환하지 않는다.
+  refresh는 capability가 있는 loopback에서 기존 계정별 중앙 회전 owner에만 보낸다.
+  중앙 잠금을 기다리는 사이 다시 로그인할 수 있으므로 갱신 전후에 로그인 세대를 검사해 옛 작업에 새 인증을 주지 않는다.
+  helper 종료·회수 뒤 임시 인증/홈을 지우며 host 강제 종료 뒤에는 원장 소유 잔여 인증 파일만 회수한다.
+- **선택·사용량.** 풀 참여 프로젝트는 현재 허용한 Codex 계정·profile 모델·인증 세대·공유 그룹·최신 창을 쓴다.
+  명시 계정은 후보만 좁히고 공유 별칭의 관측은 지우지 않는다. 미참여 프로젝트는 host Codex 기본 계정만 쓴다.
+  이미지 예상량 75%p(기존 medium의 5배)와 일반 thread 예약을 같은 SQLite transaction에서 계산한다.
+  미관측 첫 실행도 두 종류가 공유한다. 종료 뒤 새 관측만 예약을 해제하며 송신 뒤 결과 불명은 보존한다.
+  실제 구독 사용량은 기존 계정별 RPC, 작업 토큰은 Codex가 알린 total만 기록한다. 예상량은 소비 상한이 아니다.
+- **내구·전송.** 작업 ID와 설명/profile/입력 SHA를 고정한다. 입력은 64KiB 조각, 5개/합계 50MiB이며 출력도
+  크기·파일 형식·자기 generated_images 경로·최종 SHA를 확인한다. 같은 ID는 재생성하지 않고 다른 내용은 거부한다.
+  host 재시작의 미송신은 배정 대기, 송신 뒤는 불명이다. RPC 응답보다 먼저 온 결과 사건도 잃지 않는다.
+  생성 상한 10분·동시 4건·소유자별 미완료 4건·파일 보관 256건, list/status/start/fetch/forget을 제공한다.
+  start는 배정 대기만 재판정하며 실패/불명은 자동·명시 start로도 반복하지 않는다. forget 뒤 영수증·필요 예약은 남는다.
+- **검증·판.** 실제 로컬/TLS 원격 m13·독립 가짜 CLI/OAuth·공유 예약 동시 transaction·재시작/인증 회수·비밀 비노출,
+  설치된 CLI의 무인증 설정/기능 조회와 예약 누락 결함 심기를 검사한다. 실계정 생성·운영 설정·서비스는 변경하지 않는다.
+  기준 `c1bacb14`의 마지막 §8.429·FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E 최대 번호 85(87파일)를 확인했다.
+  새 Front 요청과 웹 화면이 없어 판을 유지하며 Agent link의 선택 기능 imagegen.v1을 양쪽에서 협상한다.

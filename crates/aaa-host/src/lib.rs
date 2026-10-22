@@ -41,6 +41,8 @@ mod git_watch;
 mod harness;
 mod health;
 mod http;
+mod image;
+mod image_rpc;
 mod inbox;
 mod input_log;
 pub mod installation;
@@ -829,6 +831,7 @@ impl Host {
         host.backfill_report_stages()?;
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
         host.setup_recover();
+        host.image_recover()?;
         Ok(host)
     }
 

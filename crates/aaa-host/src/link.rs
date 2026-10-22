@@ -309,6 +309,7 @@ async fn serve_connection(
             "health.v1".into(),
             "harness_hello.v1".into(),
             "post.v1".into(),
+            "imagegen.v1".into(),
             "mission.v1".into(), // N-1 agent의 파일 전송
             "work_files.v1".into(),
             "rollout_recovery.v1".into(),
@@ -355,9 +356,22 @@ async fn serve_connection(
                 Ok(Ok(Some(Incoming::Control(b)))) => match match serde_json::from_slice::<LinkMsg>(&b)? {
                     // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
+                    msg @ LinkMsg::Event(AgentEvent::Image { .. }) => msg,
                     msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. } | AgentResponse::ReportTransfer(_) | AgentResponse::ReportFileChunk { .. }), .. } => msg,
                     msg => aaa_common::redact::json(msg).map_err(|_| anyhow::anyhow!("agent 메시지 가림 거부"))?,
                 } {
+                    LinkMsg::Event(AgentEvent::Image { request_id, session, request }) => {
+                        if hello.features.iter().any(|f| f == "imagegen.v1") {
+                            let h = host.clone(); let m = mid.clone(); let tx = tx.clone();
+                            tokio::spawn(async move {
+                                let result = h.image_request(&m, &session, request).await.map_err(|mut e| {
+                                    e.message = aaa_common::redact::text(&e.message); e
+                                });
+                                let _ = tx.json(&LinkMsg::Req { id: format!("image-{request_id}"), deadline_ms: None,
+                                    body: aaa_proto::AgentRequest::ImageReply { request_id, result: result.into() } }).await;
+                            });
+                        }
+                    }
                     LinkMsg::Event(AgentEvent::AccountRefresh(request)) => {
                         let h=host.clone();let m=mid.clone();tokio::spawn(async move {h.account_refresh(m,request).await;});
                     }

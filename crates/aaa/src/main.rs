@@ -2,6 +2,7 @@
 
 mod cli;
 mod deployment;
+mod image;
 mod init;
 mod install;
 use aaa_agent::integration;

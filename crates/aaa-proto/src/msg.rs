@@ -753,6 +753,11 @@ pub enum AgentRequest {
         post_id: String,
         result: crate::PostResult,
     },
+    /// imagegen.v1: 이미지 요청의 비밀 없는 응답.
+    ImageReply {
+        request_id: String,
+        result: Outcome<crate::ImageResponse>,
+    },
     Spawn(SpawnSpec),
     List,
     /// 출력 구독. `from`이 보존 범위 안이면 그 위치부터 bytes만, 아니면 snapshot을 먼저 보낸다.
@@ -1217,6 +1222,12 @@ pub struct CommandRan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// imagegen.v1: agent가 peer PID·hook token을 확인한 자기 thread 요청.
+    Image {
+        request_id: String,
+        session: String,
+        request: crate::ImageRequest,
+    },
     AccountRefresh(crate::AccountRefresh),
     DeploymentChanged {
         job: crate::DeployJob,

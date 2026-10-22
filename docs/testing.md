@@ -1,5 +1,32 @@
 # 시험 쓰는 법
 
+## host Codex 계정 이미지 생성(t-0707, plan §8.430)
+
+- `nice -n 15 cargo test -p aaa-host --lib image --locked`: 이미지/일반 thread의 공유 예약,
+  두 동시 이미지 claim의 한 번 배정, 명시 별칭에서도 다른 공유 별칭의 관측 유지,
+  미관측 첫 실행 중복 거부, 종료 뒤 새 관측에서만 해제, 재시작 불명 예약 보존·잔여 인증 회수,
+  출력 파일의 범위·symlink·형식·중복 item을 검사한다.
+- `nice -n 15 cargo test -p aaa-host --lib image_rpc::tests::installed_codex_accepts_isolated_image_config_without_authentication --locked -- --ignored --exact`:
+  설치된 Codex 0.163.0을 빈 격리 홈에서 initialize·config/read·modelProvider/capabilities/read로만 확인한다.
+  로그인·인증 파일·thread/start·turn/start·이미지 생성은 없다. 설치판이 없는 CI에서는 ignored로 남긴다.
+- `nice -n 15 cargo test -p aaa --test m13 image:: --locked`:
+  실제 CLI·worker PID·hook token·로컬 IPC·TLS 원격 agent·host 원장·가짜 Codex·가짜 OAuth 제공자를 쓴다.
+  두 계정의 선택·중앙 갱신 한 번·64KiB를 넘는 결과 전송·동일 SHA·인증/임시 홈 정리·토큰 합계,
+  같은 ID 재전송·기본 변경·host/pane 재시작·파일 정리 뒤에도 재생성 없음,
+  다른 thread·위조 token·세션 없음·허용하지 않은 계정/profile·지원하지 않는 CLI와 임의 도구 요청 거부를 검사한다.
+  오류에 잘못 넣은 가짜 인증의 가림, worker 자기 목록·coordinator 소속 프로젝트 목록/정리도 확인한다.
+  turn/start 응답보다 먼저 온 이미지 사건도 유지한다. 원문·토큰 조각·인코딩은 로그·DB·원격 파일에 없어야 한다.
+- `scripts/fixtures/image-codex.py`는 제품의 격리 홈·환경·argv를 확인하고 이미지 사건만 만든다.
+  인증 선택·원장·입력 검증·공유 예약·권한 검사는 대체하지 않는다. 외부 실계정·API 과금은 쓰지 않는다.
+- `image_rpc::tests::refresh_waiting_on_the_central_gate_cannot_deliver_a_new_login_to_an_old_job`은
+  실제 중앙 갱신 잠금·loopback proxy·금고를 쓴다. owner가 gate를 복제해 기다리는 사건 뒤 같은 별칭으로
+  다시 로그인해, 이전 판에 새 인증을 주는 Served 응답이 옛 이미지 작업으로 나가지 않는지 확인한다.
+  응답 뒤 세대 검사 전에는 200(새 인증), 수정 뒤에는 401/빈 JSON이다. 제공자·실인증·고정 sleep은 쓰지 않는다.
+- 결함 심기: 실제 선택 owner에서 이미지 예약 목록만 비우면 공유 예산 시험이 두 번째 배정 단언으로 실패한다.
+  원본 바이트를 복원한 뒤 같은 시험이 통과해야 한다. 시험은 응답·파일·pane 종료 사건으로 끝나며 고정 sleep·재시도·시한 연장은 없다.
+- 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. 웹 UI·Front 요청 변화가 없어
+  FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E 최대 번호 85(87파일·98작업)를 유지한다. Agent link의 imagegen.v1은 양쪽이 알렸을 때만 쓴다.
+
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
 ## thread 보류·이어 하기(t-0689, plan §8.426)
