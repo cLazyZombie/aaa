@@ -7271,3 +7271,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증.** 실제 사용량 조회를 보류한 host 시험에서 이전 취소 방식의 실패와 수정본의 대기·Queued 저장·Cancelled·다음 pass·같은 ID·DB 재열기 뒤 thread 0건을 확인한다. 시작 영수증 생성·Reader 거부·없는 ID·중복 취소도 검사한다. E2E81의 기존 단언·30초 시한은 유지하고 실패 때 창 오류·대기 문구·host 배정 목록을 남긴다.
 - **Linux 검사 수리.** main에서 물려받은 install 엔진의 `File` import는 Windows·macOS 제품과 시험에서만 쓰인다. Linux 제품 clippy가 미사용 import로 실패하므로 같은 사용 범위의 cfg를 붙인다. 경고 허용이나 시험 제외 없이 Linux workspace·all-targets clippy와 통합본 전체 검증으로 확인한다.
 - **착지 통합.** origin/main `fb5a6518`의 마지막 plan §8.427·FRONT_API 1.105·AGENT_LINK 1.11·E2E85를 직접 확인해 빈 §8.428을 쓴다. proto와 새 spec이 없어 API 판과 E2E 번호는 main 그대로 유지한다. 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 --no-ff 병합·push·원격 SHA를 대조하며 배포와 GitHub CI 감시는 coordinator가 맡는다.
+
+
+### 8.429 Windows 사용자 인수용 검증 release 0.1.3 준비(t-0485)
+
+- 사용자 승인에 따라 workspace 판을 0.1.2에서 0.1.3으로 올리고 offline workspace update로 Cargo.lock의 workspace 판을 맞춘다. 의존성 판·설치 동작·API/AGENT_LINK/E2E 번호는 바꾸지 않는다. 앞선 Linux File import 후보는 main의 동등 수리와 중복돼 착지하지 않는다.
+- 변경을 검증·착지한 정확 main commit의 GitHub CI가 모두 성공한 뒤 판·대상 commit을 보고하고, 저장소 release 절차로 v0.1.3 tag를 한 번 push한다. 게시된 Windows bootstrap을 실제 내려받아 같은 tag source·manifest·SHA256SUMS와 SHA-256을 대조한 뒤 사용자 시험 안내에 고정 판과 해시를 넣는다.
+- release 게시가 운영 배포나 실제 사용자 PC 인수를 뜻하지 않는다. SCM logon·Session0·부팅·LSA/GPO·UAC는 사용자 시험으로 판정하고 공개 uninstall의 남은 연결과 I4 Linux·I7 최종 인수는 기존 순서대로 이어 간다.
