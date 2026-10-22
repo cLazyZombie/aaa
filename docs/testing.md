@@ -1,11 +1,16 @@
 # 시험 쓰는 법
 
-## 맨 q-ID도 질문 상태 칩으로 표시(t-0730, plan §8.437)
+## 맨 q-ID도 질문 상태 칩으로 표시(t-0730, plan §8.438)
 
 - `node --test web/test/appIds.test.mjs`: 문장·괄호·붙은 `·`/쉼표·줄바꿈에서 두 q-ID를 각각 인식하고 주변 글자를 보존한다. 주소·경로·없는 ID 제외 검사는 유지한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 69-coordinator-questions,77-app-ids --workers 1`: 실제 host·agent·Claude 대화에서 Markdown 링크·옛 참조·맨 ID를 비교한다. E2E69는 thread·coordinator의 네 질문을 문장·붙은 괄호·쉼표 안에 넣고 모든 칩의 아이콘·본문·상태와 밝음/어두움 배경·아이콘 색 일치를 확인한다. 각 맨 ID를 눌러 정확한 q-ID와 카드로 이동하는지도 검사한다.
 - 열림→답함→새 보고 뒤 답 보존은 새로고침 없이 확인한다. 답 기록까지 삭제해 host 목록에서 사라진 맨 ID는 평문, 명시 참조는 중립 칩이라는 기존 규칙을 유지한다. E2E77은 coordinator·thread 대화와 보고서의 질문 칩, 코드 블록·외부 링크 안의 칩 제외, 질문 이동·답 기록과 나머지 ID의 기존 링크/가운데 누름을 확인한다.
 - 고정 sleep·실패 재시도·시한 변경 없이 DOM·주소·host 사건으로 끝낸다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사이며 착지 창 전 병합·push는 하지 않는다. API와 E2E 파일 번호는 바꾸지 않는다.
+
+## 활동 막대 자동화·할 일 아이콘(t-0727, plan §8.437)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 26-activity-bar --workers 1`: 막대의 자동화·할 일 단추가 새 아이콘(`lucide-aaa-automation`·`lucide-aaa-tasks`)이고 옛 Workflow·ListTodo가 막대에 없는지 본다. 명령 팔레트 「할 일 열기」도 같은 아이콘인지 확인하고 막대를 캡처한다.
+- `--spec 48-automation-threads`: thread ⋯ 메뉴 「자동화 규칙」이 막대와 같은 자동화 아이콘인지 확인한다. 둘 다 DOM 상태로 끝나며 고정 sleep·재시도는 없다. 그림 자체는 데스크톱·휴대폰 × 어두움·밝음 화면으로 눈으로 확인한다.
 
 ## 작업 목록 메뉴의 요약(t-0721, plan §8.434)
 
