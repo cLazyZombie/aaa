@@ -7416,3 +7416,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - FRONT_API 1.107에 선택 `RoutineView.short_id`를 추가한다. 옛 host 생략·옛 front의 모르는 칸 무시가 가능하고 Agent link 1.11은 유지한다. 기존 E2E21·34·43·69를 확장하며 E2E 최대 번호는 유지한다. 검증은 [testing](testing.md)의 「왼쪽 목록 고정 번호 칩」을 따른다. 착지 창 전 병합·push는 하지 않는다.
 
 - **착지 통합.** 승인 기준 origin/main `8313fb4a`의 마지막 §8.441·FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 직접 확인했다. agent 연결 종료 수리·시스템 자동화 읽기 전용·할 일 분류와 완료 체크 보관을 보존한다. 이번 변경은 빈 §8.442와 FRONT_API 1.107을 사용하며 Agent link/E2E 번호는 유지한다. 전체 ci-local·공개 검사·Linux Clippy 뒤 검증 tree와 같은 tree를 --no-ff 병합·push하고 원격 SHA를 확인한다. 배포와 GitHub CI 감시는 coordinator가 맡는다.
+
+### 8.443 작업 요약 카드의 실행 모델(t-0751)
+
+- 작업 트리 hover 카드와 thread 「요약」 상세에 같은 모델 줄을 보인다. 머신은 되풀이하지 않는다. `gpt-6-astra`·`gpt-6.1-sol` 같은 알려진 계열만 `astra`·`sol`로 줄이고 모르는 이름은 보존한다.
+- 시작 profile을 실행 중 모델로 추측하지 않는다. Codex 본 대화의 `turn_context.model`·`effort`, Claude 본 대화 응답의 `requestedModel`을 읽어 「최근 확인 모델: astra high」처럼 보인다. Claude의 생각 수준은 기록으로 알 수 없어 「생각 수준 미확인」으로 보인다. /model 선택 뒤 다음 대화 기록 전에는 마지막 확인 값이며, 확인 시각과 원래 모델 이름은 title에 둔다.
+- 현재 프로세스 시작 전의 기록은 모델 근거에서 뺀다. 아직 관측하지 못한 실행·옛 agent는 「현재 모델 미확인 · 시작 profile: …」로 구분한다. 새 harness 세션과 thread 재시작에서 옛 관측을 지우고, restart로 바뀐 profile을 fallback에 쓴다.
+- FRONT_API 1.108의 선택 `AgentStatus.model_observation`(모델·생각 수준·시각)을 추가한다. Agent link 1.11의 기존 plan 사건에 같은 선택 필드를 싣는다. 옛 agent의 생략과 옛 host의 모르는 필드 무시를 유지한다. E2E28을 확장하며 번호는 늘리지 않는다. 전체 ci-local·공개 검사를 마친 뒤 착지 창을 기다린다.
+- 좁은 화면 검증에서 대화 화면 머리의 보고·요약·찾기·전환 단추가 함께 있을 때 320px 화면의 layout viewport가 379px로 커져 요약 시트 닫기가 화면 밖으로 나가는 기존 문제를 재현했다. 휴대폰 머리의 보고·대화 전환은 아이콘으로 보이고 접근성 이름은 유지해 모든 단추·시트 닫기가 화면 안에 남는다. E2E28은 실제 viewport·시트·닫기 단추 경계도 검사한다.

@@ -1528,9 +1528,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 <AgentChip p={current} />
                 {/* thread pane이면 그 보고서로(목록의 thread 줄은 pane을 연다, 차이 목록 L4) */}
                 {threadOfPane.get(current.id) && (
-                  <button className="ghost small" data-testid="open-report" onClick={() => chooseThread(threadOfPane.get(current.id)!)}>
+                  <button className="ghost small" data-testid="open-report" aria-label="보고" onClick={() => chooseThread(threadOfPane.get(current.id)!)}>
                     <Icon name="file" />
-                    보고
+                    <span className="head-button-label">보고</span>
                   </button>
                 )}
                 {/* 작업 요약(plan §8.259): 데스크톱 팝오버, 휴대폰 아래 시트 */}

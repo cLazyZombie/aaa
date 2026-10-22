@@ -2,7 +2,13 @@
 // thread 줄의 hover 카드(마우스 기기만, 6줄 안팎)와 thread 화면 머리 「요약」 단추(데스크톱 팝오버·휴대폰 아래 시트, 접힌 절).
 // 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 작업 목록 ⋯의 「요약」도 같은 상세를 연다(plan §8.434).
 import fs from "node:fs";
+import assert from "node:assert/strict";
 import { root, AA, aaa, step, browser, webkit, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
+
+export const labEnv = { CODEX_HOME: `${root}/summary-codex` };
+const hostConfig = `${root}/c/host.toml`;
+fs.writeFileSync(hostConfig, fs.readFileSync(hostConfig, "utf8").replace('allow_profiles = ["fake"]', 'allow_profiles = ["fake", "astra-high"]')
+  + `\n[profiles.astra-high]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`);
 
 const SUMMARY = `# 목표
 웹 왼쪽 패널 다듬기
@@ -140,8 +146,9 @@ export default async function ({ page }) {
     await page.getByTestId("summary-hover").waitFor();
     await domIs(page, "카드 자리", () => document.querySelector('[data-testid="summary-hover"]')?.style.visibility !== "hidden");
     const card = await cardOf(page);
-    // 기존 여섯 줄에 현재 활동·경과 시간 두 줄을 더한다. 정한 것·끝남·처음은 상세에서 읽는다.
-    if (card.lines !== 8 || card.wrapped.length > 0 || card.height > 280) throw new Error(`카드 ${JSON.stringify(card)}`);
+    // 기존 여덟 줄에 모델 한 줄을 더한다. 정한 것·끝남·처음은 상세에서 읽는다.
+    if (card.lines !== 9 || card.wrapped.length > 0 || card.height > 280) throw new Error(`카드 ${JSON.stringify(card)}`);
+    assert.match(card.text, /현재 모델 미확인 · 시작 profile: fake/);
     if (!card.text.includes("지금 활동:") || !card.text.includes("시작 후") || !card.text.includes("활동")) throw new Error(`활동·시간 ${card.text}`);
     for (const word of ["웹 왼쪽 패널 다듬기", "특수 단추 자리 옮기기", "쉬는 중엔 안 보냄"]) {
       if (!card.text.includes(word)) throw new Error(`카드에 ${word}가 없다: ${card.text}`);
@@ -335,5 +342,99 @@ export default async function ({ page }) {
     if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 5) throw new Error("목표 편집이 보고한 완료 목록을 덮었다");
     await page.keyboard.press("Escape");
     await pop.waitFor({ state: "detached" });
+  });
+
+  await step("모델: 기록의 sol high → astra medium을 열린 카드·상세에 갱신하고 재시작 profile과 미확인을 구별한다", async () => {
+    const sid = "2f4b7c8d-1a2e-4f6a-8b9c-0d1e2f3a4b5c";
+    const dir = `${root}/summary-codex/sessions/2026/10/22`;
+    fs.mkdirSync(dir, { recursive: true });
+    const transcript = `${dir}/rollout-summary-${sid}.jsonl`;
+    fs.writeFileSync(transcript, `${JSON.stringify({ type: "session_meta", payload: { id: sid } })}\n`);
+    const turn = (model, effort) => fs.appendFileSync(transcript, `${JSON.stringify({ type: "turn_context", timestamp: new Date().toISOString(), payload: { model, effort } })}\n`);
+    turn("gpt-6-sol", "high");
+    const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+    const probe = `${root}/summary-model.sh`;
+    // 실제 pane 안에서 hook을 보내고 실제 agent reader·link·host 상태·웹 사건을 거친다.
+    // harness만 기록을 대신 쓰며 제품의 모델 판정·상태 전달·표시는 대체하지 않는다.
+    fs.writeFileSync(probe, `${quote(AA)} hook --agent codex ${quote(JSON.stringify({ type: "agent-turn-complete", "thread-id": sid }))}\n`);
+    aaa("thread", "message", "demo", id, "--text", `post-probe ${probe}`);
+    await page.getByTestId(`thread-demo-${id}`).hover();
+    const hover = page.getByTestId("summary-hover");
+    const shows = (p, text) => domIs(p, text, (s) => document.querySelector('[data-testid="summary-model"]')?.textContent === s, text);
+    await shows(page, "최근 확인 모델: sol high");
+    // /model 선택만으로 새 값이 기록되었다고 추측하지 않는다. 다음 turn_context부터 갱신한다.
+    aaa("thread", "message", "demo", id, "--text", "/model gpt-6-astra");
+    turn("gpt-6-astra", "medium");
+    await shows(page, "최근 확인 모델: astra medium");
+    assert.match(await hover.getByTestId("summary-model").getAttribute("title"), /gpt-6-astra.*medium/);
+
+    const theme = async (p, value) => {
+      if (await p.evaluate(() => document.documentElement.dataset.theme) !== value) {
+        await p.keyboard.press("ControlOrMeta+Shift+K");
+        const palette = p.getByTestId("command-palette");
+        await palette.locator('input[type="search"]').fill(">테마");
+        await palette.getByRole("option", { name: "테마 전환" }).click();
+        await palette.waitFor({ state: "detached" });
+      }
+      await domIs(p, `${value} 테마`, (t) => document.documentElement.dataset.theme === t, value);
+    };
+    for (const value of ["light", "dark"]) {
+      await theme(page, value);
+      await page.getByTestId(`thread-demo-${id}`).hover();
+      await hover.waitFor();
+      await shows(page, "최근 확인 모델: astra medium");
+      await shot(page, `summary-model-hover-${value}`);
+      await page.mouse.move(1000, 600);
+      await hover.waitFor({ state: "detached" });
+      await page.getByTestId("summary-open").click();
+      await shows(page, "최근 확인 모델: astra medium");
+      await shot(page, `summary-model-detail-${value}`);
+      await page.keyboard.press("Escape");
+      await page.getByTestId("summary-pop").waitFor({ state: "detached" });
+    }
+    const wk = await webkit.launch({ headless: true });
+    try {
+      for (const [engine, width] of [[browser, 320], [wk, 390]]) {
+        const pane = aaa("thread", "show", "demo", id).pane;
+        const dev = await pairPage(engine, aaa("web", "pair", "--reader").code, { width, height: 844 }, { touch: true, hash: `#pane=${encodeURIComponent(pane)}` });
+        try {
+          const p = dev.page;
+          for (const value of ["light", "dark"]) {
+            await theme(p, value);
+            await p.getByTestId("summary-open").click();
+            const sheet = p.getByTestId("summary-sheet");
+            await shows(p, "최근 확인 모델: astra medium");
+            await sheet.evaluate((el) => Promise.all(el.closest(".modal-scrim").getAnimations({ subtree: true }).map((a) => a.finished)));
+            const bounds = await sheet.evaluate((el) => ({
+              viewport: innerWidth,
+              left: el.getBoundingClientRect().left,
+              right: el.getBoundingClientRect().right,
+              closeRight: el.querySelector('[aria-label="닫기"]').getBoundingClientRect().right,
+            }));
+            assert.equal(bounds.viewport, width, JSON.stringify(bounds));
+            assert.ok(bounds.left >= 0 && bounds.right <= width + 1 && bounds.closeRight <= width, JSON.stringify(bounds));
+            assert.equal(await sheet.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false);
+            assert.equal(await sheet.getByTestId("summary-model").evaluate((el) => el.scrollWidth > el.clientWidth + 1), false);
+            await shot(p, `summary-model-reader-${width}-${value}`);
+            await sheet.getByRole("button", { name: "닫기" }).click();
+            await sheet.waitFor({ state: "detached" });
+          }
+        } finally { await dev.page.context().close(); }
+      }
+    } finally { await wk.close(); }
+
+    // restart는 실행 중 pane의 종료를 먼저 요구한다. 실제 종료 요청을 마친 뒤 새 profile로 띄운다.
+    const oldPane = aaa("thread", "show", "demo", id).pane;
+    aaa("pane", "kill", oldPane);
+    await until("재시작 전 실제 pane 종료", () => aaa("pane", "get", oldPane).state !== "running");
+    aaa("thread", "restart", "demo", id, "--profile", "astra-high");
+    await inList(page, `thread-demo-${id}`);
+    await page.getByTestId(`thread-demo-${id}`).click();
+    await page.getByTestId("summary-open").click();
+    await shows(page, "현재 모델 미확인 · 시작 profile: astra-high");
+    assert.equal(aaa("thread", "show", "demo", id).agent?.model_observation ?? null, null);
+    await shot(page, "summary-model-restarted");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("summary-pop").waitFor({ state: "detached" });
   });
 }

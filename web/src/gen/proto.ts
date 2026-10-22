@@ -1851,6 +1851,8 @@ percent: number | null,
  */
 compaction: ContextCompaction | null, };
 
+export type ModelObservation = { model: string, effort: string | null, at_ms: number, };
+
 export type ContextCompaction = { before: number, after: number, };
 
 export type AgentStatus = { activity: AgentActivity, since_ms: number, harness: string, message: string | null,
@@ -1896,7 +1898,11 @@ compacting: boolean,
 /**
  * 컨텍스트 사용량(plan §8.321, 1.67). 옛 host·첫 응답 전에는 null
  */
-context: ContextUsage | null, };
+context: ContextUsage | null,
+/**
+ * 마지막으로 확인한 실행 모델(FRONT_API 1.108). 시작 profile과 별개이며 옛 agent는 보내지 않는다.
+ */
+model_observation?: ModelObservation, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

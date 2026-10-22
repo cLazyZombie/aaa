@@ -1,5 +1,19 @@
 # 시험 쓰는 법
 
+## 작업 요약 카드의 실행 모델(t-0751, plan §8.443)
+
+- `node --test web/test/summaryCard.test.mjs`: 관측 모델·생각 수준의 표시, profile과 실제 모델의 불일치, 미확인 값과 옛 host, 알려진 계열의 짧은 이름·알 수 없는 이름 보존을 검사한다.
+- `nice -n 15 cargo test -p aaa-agent --lib model_observation --locked`: 실제 증분 JSONL reader로 Codex sol→astra·effort 변경·누락, 프로세스 시작 전 관측 제외, Claude 본 대화만 선택·생각 수준 추측 없음·하위 agent 제외를 검사한다.
+- `nice -n 15 cargo test -p aaa-host --lib plan_events_set_counts_without_changing_the_activity --locked`: 실제 host 상태에 모델을 적용하고 idle 보존·미확인 사건·새 세션의 초기화를 확인한다. 기존 계획·컨텍스트·배경 수·상태 단언을 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 28-thread-summary --workers 1`: 실제 pane 안 hook→agent JSONL reader→Agent link→host→열린 카드의 sol high→astra medium 변경과 같은 상세를 확인한다. /model 선택 결과는 harness 기록만 대신 쓰며 모델 판정·상태 전달·표시는 제품을 쓴다. 재시작의 새 profile·관측 없음, Chromium 데스크톱·320px Reader와 WebKit 390px Reader에서 밝음/어두움·가로 넘침을 검사하고 캡처한다.
+- DOM·host·기록 사건으로 끝내며 고정 sleep·실패 재시도·시한 변경은 없다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.108·Agent link 1.11·기존 E2E 번호를 쓰고 착지 때 main의 번호를 다시 확인한다.
+
+### t-0751 검증 환경 진단
+
+첫 전체 실행은 load 97.60~103.38에서 계정 버전 확인·이미지 버전 확인 등 5초 상한의 준비 세 건이 실패했다. 같은 binary·기대값·시한으로 해당 세 건을 차례로 분리 실행해 3/3 통과했다(load 8.05). 첫 실행의 실패 원문은 보존한다.
+설치된 Playwright 1.59.1/WebKit 26.4는 macOS 27에서 브라우저 초기화 중 `InspectorPlaywrightAgent`의 SIGBUS가 발생했다. thread 전용 폴더의 Playwright 1.64.1과 Chromium 156/WebKit 27.2로 비교 검사했다. 새 WebKit의 CSS font-family 따옴표 정규화가 기존 E2E06 문자열 검사를 실패시켰고, 지정된 1.59.1에서는 같은 E2E06이 그대로 통과했다. 기대값은 바꾸지 않고 최종 웹 회귀 검증은 지정된 1.59.1·worker 2개로 수행한다. 전역 설치·시스템 설정은 바꾸지 않는다.
+
+
 ## 왼쪽 목록 고정 번호 칩(t-0739, plan §8.442)
 
 - `nice -n 15 cargo test -p aaa-host --lib automation_ids --locked`: 실제 host·DB·파일로 기존 규칙 조회→제목 수정→형식 변환→삭제→다른 이름 번호 발급→복원→재시작·프로젝트 이름 변경·내보내기를 확인한다. DB의 동시 읽기와 서로 다른 이름 발급은 Barrier 사건으로 끝내며 프로젝트별 독립 순번·재열기·프로젝트 삭제를 검사한다.
