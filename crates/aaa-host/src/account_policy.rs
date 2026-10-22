@@ -64,6 +64,20 @@ impl Host {
             .transpose()
     }
 
+    /// 보류는 닫힌 pane 참조를 thread에서 지우지만 실행 인증 기록은 남긴다. 이미 보류한 thread를
+    /// 이어 할 때만 이 참조를 기대값으로 회수한다. 살아 있는/준비 중인 실행을 덮어쓰지 않는다.
+    pub(crate) fn parked_account_pane(&self, run: &str, account: &str, harness: &str) -> Result<String, ErrorBody> {
+        let binding = self.account_run(run)?.ok_or_else(fail)?;
+        if binding.run != run || binding.account != account || binding.harness != harness {
+            return Err(fail());
+        }
+        let pane = binding.pane.ok_or_else(fail)?;
+        if self.pane_view_of(&pane, aaa_proto::DeviceRole::Local).is_some() {
+            return Err(fail());
+        }
+        Ok(pane)
+    }
+
     pub(crate) fn pane_account(&self, pane: &str) -> Result<Option<PaneAccount>, ErrorBody> {
         let Some(run) = self.db.meta(&format!("account-pane:{pane}")).map_err(|_| fail())? else {
             return Ok(None);
@@ -204,6 +218,11 @@ mod tests {
             profile: None,
         };
         h.save_account_run(&binding).unwrap();
+        // thread가 닫힌 pane을 지운 보류 기록만 회수한다. 잘못된 신원·빠진 기록은 local로 우회하지 않는다.
+        assert_eq!(h.parked_account_pane(&binding.run, "work", "codex").unwrap(), "old");
+        assert!(h.parked_account_pane(&binding.run, "other", "codex").is_err());
+        assert!(h.parked_account_pane(&binding.run, "work", "claude").is_err());
+        assert!(h.parked_account_pane("demo/t-9999", "work", "codex").is_err());
         let credential = AccountCredential {
             run: binding.run.clone(),
             account: binding.account.clone(),
@@ -237,6 +256,7 @@ mod tests {
             panic!("계정 pane 기동 요청이어야 한다");
         };
         assert!(h.account_run(&binding.run).unwrap().unwrap().pane.is_none());
+        assert!(h.parked_account_pane(&binding.run, "work", "codex").is_err(), "준비 중 실행은 회수하지 않는다");
         // 잠금이 없으면 두 번째 요청을 읽는 분기로 바로 실패한다. 거부가 timeout에 기대지 않는다.
         let duplicate = tokio::select! {
             result = h.spawn_account_on("m", spec.clone(), credential.clone(), "test", Some("old")) => result,
@@ -262,6 +282,7 @@ mod tests {
         conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(AgentResponse::Session(info))).unwrap();
         assert_eq!(first.await.unwrap(), "new");
         assert_eq!(h.account_run(&binding.run).unwrap().unwrap().pane.as_deref(), Some("new"));
+        assert!(h.parked_account_pane(&binding.run, "work", "codex").is_err(), "남은 pane은 회수하지 않는다");
         assert!(
             h.spawn_account_on("m", spec, credential, "test", Some("old")).await.is_err(),
             "완료 뒤 옛 pane의 재개도 거부한다"
