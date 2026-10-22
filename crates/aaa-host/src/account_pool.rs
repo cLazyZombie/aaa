@@ -298,7 +298,8 @@ impl Host {
                     self.inner.lock().unwrap().panes.get(p).is_some_and(|p| {
                         matches!(p.info.state, SessionState::Exited { .. } | SessionState::Interrupted)
                     })
-                }) || (r.status == ThreadStatus::Resolved && r.resolve_pending.is_none());
+                }) || (r.status == ThreadStatus::Resolved && r.resolve_pending.is_none())
+                    || r.status == ThreadStatus::Parked;
                 if ended && allocation.ended_at_ms.is_none() {
                     allocation.ended_at_ms = Some(util::now_ms());
                 }

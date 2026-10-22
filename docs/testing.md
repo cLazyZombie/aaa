@@ -2,6 +2,11 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## thread 보류·이어 하기(t-0689, plan §8.426)
+
+- `nice -n 15 cargo test -p aaa-host --lib park:: restart_plan --locked`: 보류 대상(일반 Worker만)·닫기 판정(맡긴 뒤의 새 `[보류 준비됨]`이고 agent가 일·확인창을 기다리지 않음)·같은 대화 판정(대화 ID 자리와 UUID)·git 글, 보류는 `unpark`만 다시 띄운다.
+- `nice -n 15 cargo test -p aaa --test m13 thread_park --locked`: 실제 host·agent·가짜 Claude(`resumable`)·TLS labB·로컬 origin. 고정 sleep은 auto-resolve 하루(시험 1초)를 넘기는 한 번뿐이고 그 밖은 host 기록·화면 출력·`ticker tick`으로 끝낸다. 결함 심기: brief 전달에서 `brief_line` 대신 brief.md 표지를 쓰면 「보류를 풀었다」 출력 기다림으로 실패한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 85-thread-park --workers 1`: Chromium 1280px에서 「정리 맡기고 보류」·보류 띠·sidebar 제외·할 일 「보류」 칩과 거르기·「모든 thread」 보류 묶음·이어 하기 창, WebKit 390px에서 보류 창·바로 보류·이어 하기 창이 폭 안에 드는지 본다. 웹 유닛은 `operateModel`·`tasksModel`.
 ## 일반 post 기본 한도 확대(t-0688, plan §8.425)
 
 - `nice -n 15 cargo test -p aaa-config --lib post_defaults_and_explicit_overrides --locked`: 파일 없음·빈 `[post]`·일부 생략에서 30/60초·200/시간·2000/일·pair 100·mute 20을 읽고, 명시한 옛 값과 local 덮어쓰기를 유지한다.

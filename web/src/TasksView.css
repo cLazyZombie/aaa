@@ -84,6 +84,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-thread.is-waiting_on_you { border-color: var(--status-blocked); color: var(--status-blocked); }
 .task-thread.is-ready_for_review { border-color: var(--notice); color: var(--notice); }
 .task-thread.is-landing { border-color: var(--status-done); color: var(--status-done); }
+.task-thread.is-parked { border-style: dashed; color: var(--text-dim); }
 @media (hover: hover) { button.task-chip:not(:disabled):hover { background: var(--bg-hover); } }
 
 .tasks-count { color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-regular); font-variant-numeric: tabular-nums; }
@@ -151,6 +152,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-state.is-run { color: var(--status-working); }
 .task-state.is-problem { color: var(--status-blocked); }
 .task-state.is-check { color: var(--notice); }
+.task-state.is-parked { color: var(--text-dim); }
 .task-check { border-color: var(--notice); color: var(--notice); }
 .task-notes-mark { flex: 0 0 auto; color: var(--text-dim); font-size: var(--fs-sm); }
 .task-unlinked .task-pick .task-title { color: var(--text); }

@@ -29,6 +29,8 @@ mod secret_k0;
 mod ssh_install;
 #[path = "m13/task_main_merge.rs"]
 mod task_main_merge;
+#[path = "m13/thread_park.rs"]
+mod thread_park;
 #[path = "m13/thread_stages.rs"]
 mod thread_stages;
 #[path = "m13/work_root.rs"]
@@ -107,6 +109,13 @@ while IFS= read -r line; do
       printf '## Report\n평가 %s\n\n## Next\n- 다음 묶음\n' "$name" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       echo "evaluated $name"
+      ;;
+    *"[aaa 보류 준비]"*)
+      # 보류 정리 부탁(park.rs): 커밋·push는 시험이 한다. 맡긴 대로 Handoff 보고만 다시 쓴다
+      path=$(printf '%s' "$line" | grep -o '[.]aaa/[^)]*/report[.]md' | head -n 1)
+      printf '[보류 준비됨] 정리 끝\n\n## Handoff\n- 다음: 검수 뒤 이어 간다 HANDOFF-7\n\n## Next\n- 이어 하기\n' > "$path.tmp"
+      mv "$path.tmp" "$path"
+      echo "park-ready"
       ;;
     *) echo "got: $line" ;;
   esac

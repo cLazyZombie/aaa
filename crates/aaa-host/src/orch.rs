@@ -55,6 +55,15 @@ pub(crate) struct ThreadRec {
     pub started_by: Option<String>,
     #[serde(default)]
     pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
+    /// 보류 요청·기록(park.rs). 정리를 맡겼으면 `parked_at_ms`가 없다. 이어 하면 지운다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park: Option<aaa_proto::ThreadPark>,
+    /// brief.md 안내 대신 칠 한 줄(보류를 풀고 같은 대화를 이을 때). 화면에서 받았는지도 이 줄로 본다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief_line: Option<String>,
+    /// 다른 머신으로 옮기며 남긴 앞 자리(park.rs). 지우지 않았고, 그 머신으로 돌아가면 다시 쓴다
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_places: Vec<crate::park::LeftPlace>,
     #[serde(default)]
     pub automation: Option<String>,
     #[serde(default)]
@@ -213,6 +222,9 @@ impl ThreadRec {
             holds: vec![],
             started_by: None,
             over_limit: None,
+            park: None,
+            brief_line: None,
+            left_places: Vec::new(),
             automation: None,
             automation_run: None,
             repo: None,
@@ -503,6 +515,12 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
   project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
   작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project`가 보인다.
 - 보고 확인: `aaa thread show <id>`, `aaa thread library <id>`, 다 봤으면 `aaa thread ack <id>`, 끝나면 `aaa thread resolve <id>`.
+- 보류: 사람 검토만 남아 당장 일하지 않지만 이어 할 thread는 사용자가 보류하라고 했을 때만
+  `aaa thread park <id> --user-request '<사용자 지시 근거>'`로 보류한다. thread가 커밋·push·`## Handoff`를 마치고
+  `[보류 준비됨]`을 쓰면 host가 pane을 닫고 자리를 돌려준다(응답이 없으면 `--now`, 거두기는 `--cancel`). 보류 thread는 실행
+  한도·auto-resolve·병합 뒤 끝내기·task 자동 정리에서 빠지고 worktree·대화가 남는다. 사용자가 끝내라고 할 때만 resolve한다.
+  이어 하기는 `aaa thread unpark <id> [--machine <머신>]`이다: 같은 머신은 같은 대화를 잇고, 다른 머신은 push된 branch로 새
+  worktree를 만들고 할 일·마지막 보고로 새 대화를 띄운다. `--dry-run`이 머신별 길과 막힌 까닭을 보인다.
 - 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart <id>`로 다시 띄운다. `--profile <이름>`이면 다른(허용된) profile로
   띄운다. 도는 세션은 먼저 `aaa pane kill <pane>`으로 끝내고 종료를 확인한다. 새 pane이 뜨면 옛 pane 기록은 정리된다.
   고정 계정과 harness가 다른 profile은 새 thread로 시작한다(새 harness의 기본 계정 또는 `--account`).
@@ -774,6 +792,9 @@ pub(crate) fn thread_group_with(
     if r.status == ThreadStatus::Resolved {
         return ThreadGroup::Resolved;
     }
+    if r.status == ThreadStatus::Parked {
+        return ThreadGroup::Parked;
+    }
     // 2
     if r.status == ThreadStatus::Starting {
         return if now_ms.saturating_sub(r.prepare_started_ms.unwrap_or(r.created_at_ms)) < starting_ms {
@@ -837,10 +858,14 @@ enum RestartPlan {
 
 /// herdr-projects threads.rs `restart_plan`. 시작 중(aaa는 시작에 시한이 없다, §8.40)·끝낸 thread와 (d) 실행 중인 세션은
 /// 거부한다. (b) 기록된 worktree 없이 branch만 있는 것은 그 머신 agent가 자리를 만들 때 거부한다(host는 repo를 보지 않는다).
-fn restart_plan(rec: &ThreadRec, resume: bool, running: bool) -> Result<RestartPlan, ErrorBody> {
+fn restart_plan(rec: &ThreadRec, resume: bool, running: bool, unpark: bool) -> Result<RestartPlan, ErrorBody> {
     let id = &rec.id;
     match rec.status {
         ThreadStatus::Open | ThreadStatus::Failed => {}
+        ThreadStatus::Parked if unpark => {}
+        ThreadStatus::Parked => {
+            return Err(bad(format!("{id}는 보류 중이다. `aaa thread unpark {} {id}`로 이어 한다", rec.project)));
+        }
         ThreadStatus::Starting => return Err(bad(format!("{id}는 아직 시작 중이다"))),
         ThreadStatus::Resolved => {
             return Err(bad(format!("{id}는 끝냈다. 먼저 `aaa thread resolve {} {id} --reopen`", rec.project)));
@@ -1279,6 +1304,7 @@ impl Host {
         ThreadView {
             account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
             over_limit: r.over_limit.clone(),
+            park: r.park.clone().map(Box::new),
             project: r.project.clone(),
             id: r.id.clone(),
             title: r.title.clone(),
@@ -2184,6 +2210,20 @@ impl Host {
         profile: Option<String>,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
+        self.thread_restart_with(project, id, resume, profile, actor, None).await
+    }
+
+    /// `thread_restart`. `unpark`면 보류한 thread도 받고(park.rs 이어 하기), 그 글(이어 하기 안내·마지막 보고)을 새 대화의
+    /// 할 일 뒤에 붙인다. `Some("")`은 붙일 글 없이 보류만 받는다(같은 대화를 잇는다)
+    pub(crate) async fn thread_restart_with(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        resume: bool,
+        profile: Option<String>,
+        actor: &str,
+        unpark: Option<&str>,
+    ) -> Result<ThreadView, ErrorBody> {
         let _guard = self.claim_thread(project, id)?;
         let mut rec = self.load(project, id)?;
         // 참고 threads.rs `restart`: 데려온 pane은 사람이 띄운 것이라 같은 것을 다시 띄울 방법을 모른다
@@ -2240,7 +2280,11 @@ impl Host {
             }
             Some(p)
         };
-        let plan = restart_plan(&rec, resume, running)?;
+        let plan = restart_plan(&rec, resume, running, unpark.is_some())?;
+        let with_handoff = |task: String| match unpark.filter(|t| !t.is_empty()) {
+            Some(extra) => format!("{}\n\n{extra}", task.trim_end()),
+            None => task,
+        };
         let conn = self.live_conn(&rec.machine_id)?;
         self.check_health(&rec.machine_id)?;
         let already_held = rec.status == ThreadStatus::Open;
@@ -2269,14 +2313,16 @@ impl Host {
             let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
             if plan == RestartPlan::Create {
                 let dir = self.project_dir(project)?;
-                let task =
-                    std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
+                let task = with_handoff(
+                    std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?,
+                );
                 rec = self.update_rec(project, id, |r| {
                     if let Some(p) = &profile {
                         r.profile = p.clone();
                     }
                     r.brief = BriefState::Pending;
                     r.brief_attempts = 0;
+                    r.brief_line = None;
                 })?;
                 rec = self.update_rec(project, id, |r| {
                     r.status = ThreadStatus::Starting;
@@ -2311,8 +2357,9 @@ impl Host {
                 }
             } else {
                 let dir = self.project_dir(project)?;
-                let task =
-                    std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?;
+                let task = with_handoff(
+                    std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).map_err(internal)?,
+                );
                 let brief = self.brief(&dir, &rec, &task, true);
                 let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
                 // 새 대화는 host 정본과 지금 safety를 다시 읽는다. --resume은 위의 저장된 launch를 쓴다.
@@ -2348,6 +2395,7 @@ impl Host {
                     }
                     r.brief = BriefState::Pending;
                     r.brief_attempts = 0;
+                    r.brief_line = None;
                     r.launch = Some(launch);
                 })?;
                 relaunched.argv
@@ -2394,7 +2442,7 @@ impl Host {
         Ok(rec)
     }
 
-    fn report_collect_lock(&self, project: &str, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    pub(crate) fn report_collect_lock(&self, project: &str, id: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.collect_locks.lock().unwrap().entry(format!("{project}/{id}")).or_default().clone()
     }
 
@@ -2489,7 +2537,7 @@ impl Host {
     /// report.md와 library를 받아 host 프로젝트 폴더에 둔다. 실패하면 hash·마지막 사본을 보존하고 자동 재수집한다.
     /// `last`(resolve의 마지막 사본)는 보고가 그대로여도 library를 다시 받는다. 보고 뒤에 바뀐 결과물이 옛 사본으로
     /// 남지 않게 한다(herdr-projects threads.rs `final_copy`가 늘 `copy_home_*`로 library까지 다시 복사하는 것과 같다).
-    async fn collect(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
+    pub(crate) async fn collect(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
         // FileRead뿐 아니라 manifest·보고 사본을 host에 저장하다 실패해도 같은 재수집 경로를 쓴다.
         match self.collect_snapshot(project, id, last).await {
             Ok(()) => Ok(()),
@@ -2918,6 +2966,14 @@ impl Host {
         if adopted {
             notes.push("폴더·branch는 그대로 둔다(데려온 폴더는 사람 것)".to_string());
         }
+        // 보류 뒤 다른 머신에서 이으며 남긴 자리는 지금 머신 정리가 닿지 않는다(park.rs)
+        for left in &rec.left_places {
+            notes.push(format!(
+                "앞 자리 {} `{}`는 남아 있다(그 머신에서 지운다)",
+                self.machine_name(&left.machine_id),
+                left.cwd.as_deref().unwrap_or("-")
+            ));
+        }
         // 집에 다 오지 않았으면 worktree를 남긴다(herdr-projects `clean` `copy_complete`): 사본에서 빠진 것(symlink·한도를
         // 넘은 파일)과 사본 없이 끝낸 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다
         let uncopied = rec.kind == ThreadKind::Worktree
@@ -3187,6 +3243,9 @@ mod tests {
             holds: vec![],
             started_by: None,
             over_limit: None,
+            park: None,
+            brief_line: None,
+            left_places: Vec::new(),
             automation: None,
             automation_run: None,
             project: "p".into(),
@@ -3299,18 +3358,22 @@ mod tests {
             session_key: None,
         };
         let failed = ThreadRec { status: ThreadStatus::Failed, pane: None, ..open_thread() };
-        assert_eq!(restart_plan(&failed, false, false), Ok(RestartPlan::Create));
-        let e = restart_plan(&failed, true, false).unwrap_err();
+        assert_eq!(restart_plan(&failed, false, false, false), Ok(RestartPlan::Create));
+        let e = restart_plan(&failed, true, false, false).unwrap_err();
         assert!(e.message.contains("이을 대화가 없다"), "{e:?}");
         let launched = ThreadRec { launch: Some(launch), ..failed.clone() };
-        assert_eq!(restart_plan(&launched, false, false), Ok(RestartPlan::Reopen));
+        assert_eq!(restart_plan(&launched, false, false, false), Ok(RestartPlan::Reopen));
         let ended = ThreadRec { status: ThreadStatus::Open, ..launched.clone() };
-        assert_eq!(restart_plan(&ended, true, false), Ok(RestartPlan::Reopen));
-        assert!(restart_plan(&ended, false, true).unwrap_err().message.contains("aaa pane kill"));
+        assert_eq!(restart_plan(&ended, true, false, false), Ok(RestartPlan::Reopen));
+        assert!(restart_plan(&ended, false, true, false).unwrap_err().message.contains("aaa pane kill"));
         let starting = ThreadRec { status: ThreadStatus::Starting, ..failed.clone() };
-        assert!(restart_plan(&starting, false, false).unwrap_err().message.contains("시작 중"));
+        assert!(restart_plan(&starting, false, false, false).unwrap_err().message.contains("시작 중"));
         let resolved = ThreadRec { status: ThreadStatus::Resolved, ..launched };
-        assert!(restart_plan(&resolved, false, false).unwrap_err().message.contains("--reopen"));
+        assert!(restart_plan(&resolved, false, false, false).unwrap_err().message.contains("--reopen"));
+        // 보류는 이어 하기(`thread unpark`)만 다시 띄운다
+        let parked = ThreadRec { status: ThreadStatus::Parked, ..ended };
+        assert!(restart_plan(&parked, true, false, false).unwrap_err().message.contains("thread unpark"));
+        assert_eq!(restart_plan(&parked, true, false, true), Ok(RestartPlan::Reopen));
     }
 
     #[test]
