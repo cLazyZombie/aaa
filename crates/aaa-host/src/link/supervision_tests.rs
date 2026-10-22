@@ -161,3 +161,88 @@ async fn real_agent_request_timeout_burst_reaches_the_independent_monitor() {
     monitor.abort();
     let _ = monitor.await;
 }
+
+/// reader가 끝나도 writer와 복제된 연결은 살아 있을 수 있다. 보고의 다음 파일·입력이
+/// 그 연결에 들어가면 응답할 reader가 없어 120초/15초를 기다리던 운영 경합이다.
+#[tokio::test(start_paused = true)]
+async fn disconnected_link_rejects_later_requests_from_old_clones() {
+    let (_lab, h) = host();
+    let (running, tx, mut rx, _fault) = connect(h.clone()).await;
+    let old = h.live_conn("fake-agent").unwrap();
+    let pending = tokio::spawn({
+        let old = old.clone();
+        async move { old.request(AgentRequest::Profiles).await }
+    });
+    assert!(matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Req { .. }));
+    // peer의 쓰기/읽기는 닫지 않는다. parse 오류로 실제 host reader만 끝낸다.
+    tx.control(b"{".to_vec()).await.unwrap();
+    assert!(running.await.unwrap().is_err());
+    assert_eq!(pending.await.unwrap().unwrap_err().code, ErrorCode::AgentDisconnected);
+    let ended = tokio::time::Instant::now();
+    for body in [
+        AgentRequest::FileRead { work_dir: "/work".into(), path: "a.log".into(), offset: 0, len: 1 },
+        AgentRequest::ReportFileRead { work_dir: "/work".into(), path: "b.log".into(), offset: 0, len: 1 },
+        AgentRequest::Input { session: "pane".into(), data: aaa_proto::B64(b"x".to_vec()) },
+    ] {
+        assert_eq!(old.request(body).await.unwrap_err().code, ErrorCode::AgentDisconnected);
+        assert!(old.pending.lock().unwrap().is_empty());
+    }
+    assert_eq!(tokio::time::Instant::now(), ended, "끊긴 연결은 시한을 기다리지 않는다");
+
+    let (new_running, new_tx, mut new_rx, _) = connect(h.clone()).await;
+    let new = h.live_conn("fake-agent").unwrap();
+    assert_ne!(old.generation, new.generation);
+    h.agent_disconnected("fake-agent", old.generation);
+    let (reply, ()) = tokio::join!(new.request(AgentRequest::Profiles), async {
+        let LinkMsg::Req { id, .. } = new_rx.control::<LinkMsg>().await.unwrap() else { panic!("요청") };
+        new_tx
+            .json(&LinkMsg::Res { id, result: Outcome::Ok(AgentResponse::Profiles { profiles: vec![] }) })
+            .await
+            .unwrap();
+    });
+    assert!(matches!(reply.unwrap(), AgentResponse::Profiles { .. }));
+    drop(new_tx);
+    drop(new_rx);
+    new_running.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn closing_a_link_interrupts_a_full_send_queue_and_the_deadline_includes_enqueueing() {
+    use aaa_common::conn::frame_channel;
+    let (tx, _out) = frame_channel();
+    for _ in 0..512 {
+        tx.control(vec![]).await.unwrap();
+    }
+    let conn = AgentConn::new(tx, 1);
+    let request = conn.request(AgentRequest::Profiles);
+    tokio::pin!(request);
+    tokio::select! {
+        biased;
+        result = &mut request => panic!("대기열이 찼는데 끝났다: {result:?}"),
+        () = std::future::ready(()) => {}
+    }
+    assert_eq!(conn.pending.lock().unwrap().len(), 1);
+    let ended = tokio::time::Instant::now();
+    conn.fail_all();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), request).await.unwrap().unwrap_err().code,
+        ErrorCode::AgentDisconnected
+    );
+    assert_eq!(tokio::time::Instant::now(), ended);
+    assert!(conn.pending.lock().unwrap().is_empty());
+
+    let (tx, _out) = frame_channel();
+    for _ in 0..512 {
+        tx.control(vec![]).await.unwrap();
+    }
+    let conn = AgentConn::new(tx, 2);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(20), conn.request(AgentRequest::Profiles))
+            .await
+            .unwrap()
+            .unwrap_err()
+            .code,
+        ErrorCode::Timeout
+    );
+    assert!(conn.pending.lock().unwrap().is_empty());
+}

@@ -571,6 +571,9 @@ impl Host {
             error: Some(crate::legacy_mission::REMOVED.into()),
             ..Default::default()
         }));
+        for view in &mut out {
+            view.web_read_only_reason = crate::automation::web_read_only_reason(&view.name).map(str::to_owned);
+        }
         Ok(out)
     }
 
