@@ -3237,13 +3237,18 @@ fn task_archive_cli(json: bool, project: String, mut restore: Option<String>) ->
             restore: restore.take(),
             view: Some(aaa_proto::TaskArchiveQuery { after: after.clone(), ..Default::default() }),
         })?;
-        let (entries, next, repos) = match response {
-            Ok(FrontResponse::TaskArchive { entries, next, repos }) => (entries, next, repos),
+        let (entries, next, repos, profiles, machines) = match response {
+            Ok(FrontResponse::TaskArchive { entries, next, repos, profiles, machines }) => {
+                (entries, next, repos, profiles, machines)
+            }
             other => return front_print(json, other),
         };
         all.extend(entries);
         if next.is_none() {
-            return front_print(json, Ok(FrontResponse::TaskArchive { entries: all, next: None, repos }));
+            return front_print(
+                json,
+                Ok(FrontResponse::TaskArchive { entries: all, next: None, repos, profiles, machines }),
+            );
         }
         anyhow::ensure!(next != after, "완료 보관 페이지 커서가 나아가지 않았다");
         after = next;

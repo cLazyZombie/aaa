@@ -8,6 +8,14 @@ const request = (page, value) => page.evaluate(async (value) => (await fetch("/a
 const archive = (page, view) => request(page, { op: "task_archive", restore: null, view });
 const rows = (page) => page.locator('[data-testid^="archive-"]');
 
+
+async function choose(page, field, text) {
+  await page.getByTestId(`task-completed-${field}`).click();
+  const desktop = page.getByRole("menuitemcheckbox").filter({ has: page.locator(".menu-item-main").filter({ hasText: new RegExp(`^${text}$`) }) });
+  if (await desktop.count()) await desktop.click();
+  else await page.getByRole("dialog").getByRole("button").filter({ has: page.locator(".row-sheet-label").filter({ hasText: new RegExp(`^${text}$`) }) }).click();
+}
+
 // 탭과 검색이 같은 flex 부모를 쓰고, 탭 전환에도 검색의 시작 위치·높이가 같다.
 async function toolbarLayout(page, searchId, expected = null) {
   await domIs(page, "검색줄 배치 완료", ({ searchId }) => {
@@ -43,7 +51,7 @@ async function toolbarLayout(page, searchId, expected = null) {
 
 export default async function ({ page }) {
   let restoredId;
-  await step("기록 규모: 4MiB 초과 보관도 CLI 전체 출력과 host 페이지의 크기·검색 조합을 지킨다", async () => {
+  await step("보관 규모: 4MiB 초과 보관도 CLI 전체 출력과 host 페이지의 크기·검색 조합을 지킨다", async () => {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/projects/demo/TASKS.md`, "## Backlog\n- [ ] 활성 할 일 (me) [작업 폴더]\n  메모\n");
     aaa("task", "list");
@@ -58,7 +66,7 @@ export default async function ({ page }) {
       const title = `보관 ${String(i).padStart(3, "0")}`;
       const body = `- [x] ${title} (me)${repo ? ` [${repo}]` : ""} <!-- aaa-task:${id} -->\n  needle-${i} 결과 메모\n`;
       const history = [{ id: i, at_ms: i, actor: "file", by: "파일 직접", action: "raw", list: "Backlog", from_list: null, title, before: "자료".repeat(6000), after: null, thread: null, restored_by: null }];
-      const row = { task_id: id, task: { id, list: "Backlog", title, owner: "me", thread: null, notes: [`needle-${i} 결과 메모`], done: true, repo }, body, reason: ["PR 병합", "origin/main 병합", "보고 [완료]"][(i - 1) % 3], report: null, completed_ms: i, restored: i > 128, committed: true, removed_sha256: "", history };
+      const row = { task_id: id, task: { id, list: "Backlog", title, owner: i === 100 ? "fake@mac-a" : "me", thread: null, notes: [`needle-${i} 결과 메모`], done: true, repo }, body, reason: ["PR 병합", "origin/main 병합", "보고 [완료]"][(i - 1) % 3], report: null, completed_ms: i === 100 ? Date.now() - 86400000 : i, restored: i > 128, committed: true, removed_sha256: "", history };
       const data = JSON.stringify(row); storedBytes += Buffer.byteLength(data); put.run(id, data);
     }
     db.exec("COMMIT"); db.close();
@@ -86,46 +94,82 @@ export default async function ({ page }) {
     console.log(`기록 규모 ${JSON.stringify({ storedBytes, pageBytes, cli: cli.entries.length })}`);
   });
 
-  await step("기록 화면: 활성 UI와 같은 검색·저장소·완료 상태 조합과 다음 페이지·복원을 유지한다", async () => {
+  await step("완료 화면: 활성 UI와 같은 검색·저장소·완료 상태 조합과 다음 페이지·복원을 유지한다", async () => {
     aaa("ticker", "tick");
     await page.getByTestId("activity-tasks").click();
     await page.getByTestId("tasks-search").waitFor();
     await page.setViewportSize({ width: 1920, height: 1000 });
     const activeLayout = await toolbarLayout(page, "tasks-search");
-    await page.getByTestId("tasks-tab-log").click();
-    await toolbarLayout(page, "task-log-search", activeLayout);
+    await page.getByTestId("tasks-tab-completed").click();
+    await toolbarLayout(page, "task-completed-search", activeLayout);
     await page.getByTestId("tasks-tab-tasks").click();
     await toolbarLayout(page, "tasks-search", activeLayout);
     await shot(page, "history-desktop-active");
-    await page.getByTestId("task-archive-open").click();
+    await page.getByTestId("tasks-tab-completed").click();
     await domIs(page, "보관 첫 50개", () => document.querySelectorAll('[data-testid^="archive-"]').length === 50);
-    await toolbarLayout(page, "task-log-search", activeLayout);
+    await toolbarLayout(page, "task-completed-search", activeLayout);
     await shot(page, "history-desktop-records");
     await page.getByTestId("task-archive-more").click();
     await domIs(page, "보관 다음 50개", () => document.querySelectorAll('[data-testid^="archive-"]').length === 100);
-    await page.getByTestId("task-log-search").fill("needle-100");
-    await page.getByTestId("task-log-filter-pr_merged").click();
-    await page.getByTestId("task-log-repo").click();
+    await page.getByTestId("task-completed-search").fill("needle-100");
+    await choose(page, "reason", "PR 병합");
+    await page.getByTestId("task-completed-repo").click();
     await page.getByRole("menuitemcheckbox").filter({ has: page.locator(".menu-item-main").filter({ hasText: /^rc$/ }) }).click();
     await domIs(page, "세 조건 한 건", () => document.querySelectorAll('[data-testid^="archive-"]').length === 1 && document.querySelector('[data-testid^="archive-"]')?.textContent.includes("보관 100"));
-    await shot(page, "history-desktop-filtered");
+    await choose(page, "profile", "fake");
+    await choose(page, "machine", "mac-a");
+    await choose(page, "period", "최근 7일");
+    await domIs(page, "완료 여섯 조건", () => {
+      const list = document.querySelector('[data-testid="task-archive-list"]');
+      return list?.getAttribute("aria-busy") === "false" && list.querySelectorAll('[data-testid^="archive-"]').length === 1 && list.textContent.includes("모델: fake") && list.textContent.includes("머신: mac-a");
+    });
+    assert.equal(await page.getByRole("tab", { name: "기록", exact: true }).count(), 0);
+    await shot(page, "completed-desktop-dark");
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+    await shot(page, "completed-desktop-light");
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+    await choose(page, "profile", "전체");
+    await choose(page, "machine", "전체");
+    await choose(page, "period", "전체");
     const r = await archive(page, { search: { query: "needle-100", repo: "rc" }, filter: null, after: null, limit: 50 });
     restoredId = r.ok.entries[0].task_id;
-    await rows(page).getByRole("button", { name: "활성 목록으로 복원", exact: true }).click();
-    await domIs(page, "복원 뒤 현재 조건 빈 목록", () => document.querySelector('[data-testid="task-archive-list"]')?.textContent.includes("조건에 맞는 완료 보관이 없다"));
+    // 쓰기 응답만 보류한다. 실제 host 복원·사건·다른 검색은 그대로 진행한다.
+    let releaseRestore, restoreReached;
+    const release = new Promise((resolve) => { releaseRestore = resolve; });
+    const reached = new Promise((resolve) => { restoreReached = resolve; });
+    await page.route("**/api/v1/call", async (route) => {
+      const payload = route.request().postDataJSON();
+      if (payload?.op !== "task_archive" || payload.restore !== restoredId) return route.continue();
+      const response = await route.fetch();
+      restoreReached();
+      await release;
+      await route.fulfill({ response });
+    });
+    await rows(page).locator("summary").click();
+    await rows(page).getByRole("button", { name: "되살리기", exact: true }).click();
+    await reached;
+    await page.getByTestId("task-completed-search").fill("needle-102");
+    await choose(page, "reason", "전체");
+    await rows(page).filter({ hasText: "보관 102" }).waitFor();
+    const restoredResponse = page.waitForResponse((r) => r.request().postDataJSON()?.restore === restoredId);
+    releaseRestore();
+    await restoredResponse;
+    await domIs(page, "복원 응답 뒤 새 검색 보존", () => {
+      const list = document.querySelector('[data-testid="task-archive-list"]');
+      return list?.getAttribute("aria-busy") === "false";
+    });
+    assert.equal(await rows(page).count(), 1);
+    assert.match(await rows(page).textContent(), /보관 102/);
+    await page.unroute("**/api/v1/call");
+    await page.getByTestId("task-completed-search").fill("needle-100");
+    await domIs(page, "복원 뒤 현재 조건 빈 목록", () => document.querySelector('[data-testid="task-archive-list"]')?.textContent.includes("조건에 맞는 완료한 할 일이 없다"));
     const restored = aaa("task", "list").tasks.find((t) => t.id === restoredId);
     assert.ok(restored && !restored.done && restored.thread === null);
     assert.equal(aaa("task", "queue").entries.length, 0);
-    await page.getByTestId("task-log-filter-archive_restored").click();
+    await choose(page, "reason", "되살린 항목");
     await rows(page).filter({ hasText: "보관 100" }).waitFor();
-    assert.equal(await rows(page).getByRole("button", { name: "활성 목록으로 복원" }).count(), 0);
-    // 실제 삭제 기록에도 같은 세 조건이 걸리고 이전 페이지 커서는 남지 않는다.
-    aaa("task", "rm", restored.short_id);
-    await page.getByTestId("task-log-filter-deleted").click();
-    await domIs(page, "삭제 기록 검색", () => document.querySelectorAll('.task-log-row[data-action="delete"]').length === 1);
-    await page.getByTestId("task-log").getByRole("button", { name: "되살리기", exact: true }).click();
-    await page.getByTestId("task-log-filter-restored").click();
-    await domIs(page, "복원 기록 검색", () => document.querySelectorAll('.task-log-row[data-action="restore"]').length === 1);
+    assert.equal(await rows(page).getByRole("button", { name: "되살리기" }).count(), 0);
+
   });
 
   await step("휴대폰과 Reader: 320·390px의 같은 메뉴·상태·검색과 읽기 권한을 지킨다", async () => {
@@ -138,24 +182,28 @@ export default async function ({ page }) {
           await p.getByTestId("tasks-search").waitFor();
           const activeLayout = await toolbarLayout(p, "tasks-search");
           await shot(p, `history-${width}-active`);
-          await p.getByTestId("task-archive-open").click();
+          await p.getByTestId("tasks-tab-completed").click();
           await rows(p).first().waitFor();
-          await toolbarLayout(p, "task-log-search", activeLayout);
+          await toolbarLayout(p, "task-completed-search", activeLayout);
           await shot(p, `history-${width}-records`);
-          await p.getByTestId("task-log-search").fill("needle-100");
-          await p.getByTestId("task-log-filter-archive_restored").click();
+          await p.getByTestId("task-completed-search").fill("needle-100");
+          await choose(p, "reason", "되살린 항목");
           await rows(p).filter({ hasText: "보관 100" }).waitFor();
-          await p.getByTestId("task-log-repo").click();
+          await p.getByTestId("task-completed-repo").click();
           await p.getByRole("dialog", { name: "저장소로 거르기" }).getByRole("button").filter({ has: p.locator(".row-sheet-label").filter({ hasText: /^rc$/ }) }).click();
           await p.getByRole("dialog", { name: "저장소로 거르기" }).waitFor({ state: "detached" });
           // 공통 sheet의 퇴장 화면은 닫힌 shadow root에 있다. 바깥 host의 제거 사건 뒤 촬영한다.
           await domIs(p, "저장소 시트 퇴장 완료", () => !document.querySelector('body > [inert][aria-hidden="true"]'));
           await rows(p).filter({ hasText: "보관 100" }).waitFor();
           assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-          assert.equal(await p.getByRole("button", { name: "활성 목록으로 복원" }).count(), 0);
+          assert.equal(await p.getByRole("button", { name: "되살리기" }).count(), 0);
           const denied = await request(p, { op: "task_archive", restore: restoredId });
           assert.equal(denied.err?.code, "forbidden");
-          await shot(p, `history-${width}-filtered`);
+          await rows(p).locator("summary").click();
+          assert.equal(await p.getByText("기록 보기", { exact: true }).count(), 0);
+          await shot(p, `completed-${width}-dark`);
+          await p.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+          await shot(p, `completed-${width}-light`);
         } finally { await paired.page.context().close(); }
       }
     } finally { await safari.close(); }
@@ -178,9 +226,9 @@ export default async function ({ page }) {
     assert.ok(!tasks.some((t) => ["모델 대기", "완료 상위", "완료 하위"].includes(t.title)));
     const completed = aaa("task", "archive").entries.filter((a) => a.reason === "완료 체크 [x]");
     assert.equal(completed.length, 3);
-    await page.getByTestId("tasks-tab-log").click();
-    await page.getByTestId("task-log-filter-completed").click();
-    await page.getByTestId("task-log-search").fill("완료 상위");
+    await page.getByTestId("tasks-tab-completed").click();
+    await choose(page, "reason", "전체");
+    await page.getByTestId("task-completed-search").fill("완료 상위");
     await rows(page).filter({ hasText: "완료 상위" }).waitFor();
     await shot(page, "history-desktop-checked");
     const item = completed.find((a) => a.task.title === "완료 상위");
@@ -190,12 +238,13 @@ export default async function ({ page }) {
       const request = response.request().postDataJSON();
       return request?.op === "task_archive" && request.restore === item.task_id;
     });
-    await rows(page).filter({ hasText: "완료 상위" }).getByRole("button", { name: "활성 목록으로 복원", exact: true }).click();
+    await rows(page).filter({ hasText: "완료 상위" }).locator("summary").click();
+    await rows(page).filter({ hasText: "완료 상위" }).getByRole("button", { name: "되살리기", exact: true }).click();
     const response = await (await restoreResponse).json();
     assert.equal(response.ok?.kind, "task_archive", JSON.stringify(response.err));
     await domIs(page, "완료 체크 복원 뒤 빈 보관 검색", () => {
       const list = document.querySelector('[data-testid="task-archive-list"]');
-      return list?.getAttribute("aria-busy") === "false" && list.textContent.includes("조건에 맞는 완료 보관이 없다");
+      return list?.getAttribute("aria-busy") === "false" && list.textContent.includes("조건에 맞는 완료한 할 일이 없다");
     });
     const restored = aaa("task", "list").tasks.find((t) => t.id === item.task_id);
     assert.ok(restored && !restored.done && restored.thread === null);

@@ -3529,6 +3529,12 @@ pub enum FrontResponse {
         #[serde(default)]
         #[ts(optional, as = "Option<Vec<crate::TaskHistoryRepo>>")]
         repos: Vec<crate::TaskHistoryRepo>,
+        #[serde(default)]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        profiles: Vec<String>,
+        #[serde(default)]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        machines: Vec<String>,
     },
     /// `task_edit`의 답(FRONT_API 1.62): 쓴 뒤(또는 충돌이면 지금) board. `log_ids`는 이 편집이 남긴 기록
     TaskEdited {

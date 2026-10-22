@@ -119,6 +119,14 @@ pub struct TaskHistoryRepo {
 pub struct TaskArchiveQuery {
     pub search: Option<TaskHistorySearch>,
     pub filter: Option<TaskArchiveFilter>,
+    /// 완료 목록의 정확한 모델·머신 값. 빈 글은 미지정이다.
+    pub profile: Option<String>,
+    pub machine: Option<String>,
+    /// 완료 시각 범위: 시작 포함, 끝 제외(밀리초).
+    #[ts(type = "number | null")]
+    pub since_ms: Option<u64>,
+    #[ts(type = "number | null")]
+    pub until_ms: Option<u64>,
     pub after: Option<String>,
     pub limit: Option<u32>,
 }

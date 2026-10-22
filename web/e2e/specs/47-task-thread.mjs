@@ -115,13 +115,16 @@ export default async function ({ page }) {
     if(!completed||!stored||stored.task.thread!==done||!stored.body.includes("테스트 먼저 쓴다")||!stored.report)throw new Error(`완료 보관 계약: ${JSON.stringify({completed,stored})}`);
     await gone(page,"로그인 고치기");
     await page.getByTestId("task-detail-close").click();
-    await page.getByTestId("task-archive-open").click();
+    await page.getByTestId("tasks-tab-completed").click();
     const archived=page.getByTestId(`archive-${stored.task_id}`);
     await archived.waitFor();
     await shot(page,"thread-desktop-archive");
-    await archived.getByRole("button",{name:"활성 목록으로 복원"}).click();
+    await archived.locator("summary").click();
+    await archived.getByText("테스트 먼저 쓴다", { exact: true }).waitFor();
+    await archived.locator(".task-completed-report .list-id").filter({ hasText: /^r-\d+$/ }).waitFor();
+    await archived.getByRole("button",{name:"되살리기"}).click();
     await archived.waitFor({state:"detached"});
-    // 완료 보관은 기록 탭에서 연다. 복원한 활성 행은 할 일 탭에서 확인한다.
+    // 완료 보관은 완료 탭에서 연다. 복원한 활성 행은 할 일 탭에서 확인한다.
     await page.getByTestId("tasks-tab-tasks").click();
     await stateIs(page,"로그인 고치기","wait");
     const t=aaa("task","list").tasks.find(t=>t.title==="로그인 고치기");

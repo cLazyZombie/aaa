@@ -59,7 +59,7 @@ async function reachEnd(p, selector, rowSelector, wheel) {
 }
 
 export async function longPanelLists() {
-  await step("긴 목록 준비: 답한 것 79개·할 일 79개·기록 79개·자동화 40개(실제 격리 파일과 DB)", async () => {
+  await step("긴 목록 준비: 답한 것 79개·할 일 79개·완료 79개·자동화 40개(실제 격리 파일과 DB)", async () => {
     const dir = `${root}/projects/rv`;
     fs.writeFileSync(`${dir}/TASKS.md`, `## Backlog\n${Array.from({ length: 79 }, (_, i) => `- [ ] 스크롤 할 일 ${String(i + 1).padStart(2, "0")} (me)`).join("\n")}\n`);
     aaa("task", "list");
@@ -69,14 +69,16 @@ export async function longPanelLists() {
     const db = new DatabaseSync(`${root}/s/host/host.db`);
     try {
       const ask = db.prepare("INSERT INTO asks(project,id,kind,subject,done_ms,data) VALUES('rv',?,'request',?,?,?)");
-      const log = db.prepare("INSERT INTO task_log(project,at_ms,actor,action,list,title,before,after) VALUES('rv',?,'file','raw','Backlog',?,NULL,?)");
+      const archive = db.prepare("INSERT INTO task_archive(project,task_id,data) VALUES('rv',?,?)");
       db.exec("BEGIN");
       const now = Date.now();
       for (let i = 1; i <= 79; i++) {
         const id = `scroll-${String(i).padStart(2, "0")}`;
         const record = { id, question_id: `q-${1130 + i}`, kind: "request", subject: id, title: `스크롤 질문 ${String(i).padStart(2, "0")}`, asked_ms: now - i, done_ms: now - i, by: "CLI", summary: "답함으로 표시", items: [], body: "마지막 질문 원문도 열 수 있다." };
         ask.run(id, id, record.done_ms, JSON.stringify(record));
-        log.run(now - i, `스크롤 기록 ${String(i).padStart(2, "0")}`, `기록 본문 ${i}`);
+        const taskId = String(i).padStart(26, "0");
+        const title = `스크롤 완료 ${String(i).padStart(2, "0")}`;
+        archive.run(taskId, JSON.stringify({ task_id: taskId, task: { id: taskId, list: "Backlog", title, owner: "me", thread: null, notes: [`완료 메모 ${i}`], done: true, repo: null }, body: `- [x] ${title} (me)`, reason: "완료 체크 [x]", report: null, completed_ms: now - i, restored: false, committed: true, removed_sha256: "", history: [] }));
       }
       db.exec("COMMIT");
     } finally { db.close(); }
@@ -87,7 +89,7 @@ export async function longPanelLists() {
   try {
     for (const [engine, instance] of [["chromium", browser], ["webkit", wk]]) {
       for (const [name, viewport, touch] of [["desktop", { width: 1280, height: 800 }, false], ["phone", { width: 390, height: 844 }, true]]) {
-        await step(`긴 목록 ${engine} ${name}: 답한 것·보고서·할 일·자동화·기록의 끝까지 스크롤하고 선택`, async () => {
+        await step(`긴 목록 ${engine} ${name}: 답한 것·보고서·할 일·자동화·완료의 끝까지 스크롤하고 선택`, async () => {
           const { page: p, errors } = await pairPage(instance, aaa("web", "pair").code, viewport, { touch });
           try {
             await inList(p, "activity-asks");
@@ -115,25 +117,22 @@ export async function longPanelLists() {
             const task = await reachEnd(p, '[data-testid="tasks-list"]', '.task-row', !touch);
             await task.locator(".task-title").click();
             await p.getByTestId("task-detail").waitFor();
-            // 휴대폰 상세 시트는 닫은 뒤 기록 탭을 누른다.
+            // 휴대폰 상세 시트는 닫은 뒤 완료 탭을 누른다.
             if (touch) await p.getByTestId("task-detail-close").click();
-            await p.getByTestId("tasks-tab-log").click();
-            await p.locator('[data-testid="task-log"] .task-log-row').first().waitFor();
-            const log = await reachEnd(p, '[data-testid="task-log"]', '.task-log-row', !touch);
-            await log.locator(".task-log-toggle").click();
-            await log.getByLabel("전후 차이").waitFor();
-            // fixture 79개 앞에는 TASKS.md를 읽어 만든 실제 기록도 있다. 더 보기가 없어질 때까지 간다.
-            const more = p.getByTestId("task-log").getByRole("button", { name: "더 보기", exact: true });
+            await p.getByTestId("tasks-tab-completed").click();
+            await p.locator(".task-completed-row").first().waitFor();
+            await reachEnd(p, '[data-testid="task-archive-list"]', '.task-completed-row', !touch);
+            const more = p.getByTestId("task-archive-more");
             while (await more.count()) {
-              const count = await p.locator('[data-testid="task-log"] .task-log-row').count();
+              const count = await p.locator(".task-completed-row").count();
               await more.click();
-              await domIs(p, "기록 다음 페이지", (before) => document.querySelectorAll('[data-testid="task-log"] .task-log-row').length > before, count);
-              await reachEnd(p, '[data-testid="task-log"]', '.task-log-row', !touch);
+              await domIs(p, "완료 다음 페이지", (before) => document.querySelectorAll('.task-completed-row').length > before, count);
+              await reachEnd(p, '[data-testid="task-archive-list"]', '.task-completed-row', !touch);
             }
-            const lastLog = p.locator('[data-testid="task-log"] .task-log-row').last();
-            await lastLog.locator(".task-log-toggle").click();
-            await lastLog.getByLabel("전후 차이").waitFor();
-            await shot(p, `panel-scroll-${engine}-${name}-history`);
+            const last = p.locator(".task-completed-row").last();
+            await last.locator("summary").click();
+            await last.getByText("완료 메모 79", { exact: true }).waitFor();
+            await shot(p, `panel-scroll-${engine}-${name}-completed`);
             assert.deepEqual(errors, []);
           } finally { await p.context().close(); }
         });

@@ -2413,3 +2413,11 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 ### 배포 binary의 production 의존성 검사
 
 ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc`를 독립 호출한 뒤 기존 workspace/all-targets build를 이어 간다. 기존 windows-2025 CI도 이 단계를 실행한다. 배포와 같은 release profile·Windows target·production binary만 컴파일·링크하며 dev feature 합치기로 Win32 API 누락이 가려지는 것을 막는다. v0.1.3 release의 JobObjects dev-only 누락이 실제 실패 사례다. 필요 feature를 dev-only로 돌린 변형은 같은 production release 빌드에서 실패해야 한다. macOS의 `cargo xwin build`는 교차 컴파일·링크 증거이며 실제 Windows 실행 판정은 기존 CI가 맡는다. source 목록 검사·새 runner·시험 전용 export·시한 변경은 없다. 다른 OS의 기존 전체 build와 시험은 유지한다.
+
+## 완료 탭과 웹 기록 제거(t-0775, plan §8.446)
+
+- host의 기존 `archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_queue` owner를 확장한다. 4MiB 초과 원장을 실제 DB에 저장하고 전체 페이지·검색·저장소·완료 근거·복원 불변식을 유지하면서 모델·머신과 완료 기간의 시작 포함/끝 제외, 미지정과 전체, 필터 전 전체 선택지를 검사한다.
+- E2E86은 웹 기록 대신 완료 탭을 검사한다. 실제 host 원장 130건의 페이지 분할·검색·저장소·모델·머신·기간·완료 근거 조합, 상세 메모·되살리기·Reader 쓰기 거부, 직접 체크 보관을 본다. Chromium 데스크톱/320px·WebKit 390px와 밝음/어두움을 캡처한다. E2E26 긴 목록의 기록 부분도 완료 79건의 끝 행·상세·다음 페이지로 바꾼다. E2E46은 삭제 직후 되살리기 인수를 유지하고 없어진 웹 기록 동선만 제거한다.
+- 완료 사건은 API 성공 응답·aria-busy·DOM·파일 상태다. 고정 sleep·재시도·시한 변경은 쓰지 않는다. 전체 ci-local·공개 검사를 수행하고 착지 창 전에는 병합·push하지 않는다.
+
+- E2E86은 실제 복원 쓰기의 응답만 gate로 보류한 뒤 다른 완료 검색을 열고 응답을 푼다. 이전 검색을 다시 읽던 코드에서는 결과 0건으로 실패했고 최신 load를 참조하도록 고친 뒤 새 검색 1건을 유지한다. 최초 시험 자료의 저장소 불일치를 바로잡은 뒤 RED→GREEN을 확인했으며 시한·제품 기대값은 완화하지 않았다. E2E47은 상세의 메모와 실제 r-ID 보고서 연결도 검사한다.
