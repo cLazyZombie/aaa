@@ -116,6 +116,11 @@ enum AccountPoolCmd {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// 어느 harness든 host Codex 계정으로 이미지를 생성·편집한다.
+    Image {
+        #[command(subcommand)]
+        cmd: crate::image::Cmd,
+    },
     /// host에서 로그인하고 새 작업의 기본 인증을 정한다(aaa 세션 밖 CLI)
     Account {
         #[command(subcommand)]
@@ -2332,6 +2337,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             },
         ),
+        Cmd::Image { cmd } => crate::image::run(json, cmd),
         Cmd::Post(args) => post_cmd(json, args),
         Cmd::Events { project, after, follow } => events_cmd(json, project, after, follow),
         Cmd::Migrate { cmd } => crate::migrate::run(json, cmd),

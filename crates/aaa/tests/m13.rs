@@ -14,6 +14,8 @@ mod automation_start;
 mod ci;
 #[path = "m13/git_watch.rs"]
 mod git_watch;
+#[path = "m13/image.rs"]
+mod image;
 #[path = "m13/instance.rs"]
 mod instance;
 mod lab;

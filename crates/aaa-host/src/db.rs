@@ -573,6 +573,15 @@ impl Db {
         Ok(true)
     }
 
+    /// 이미지 예약도 thread 배정과 같은 DB 잠금·transaction에서 원장을 갱신한다.
+    pub(crate) fn image_transaction<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let out = f(&tx)?;
+        tx.commit()?;
+        Ok(out)
+    }
+
     pub fn del_meta(&self, key: &str) -> Result<()> {
         self.conn.lock().unwrap().execute("DELETE FROM meta WHERE key=?1", [key])?;
         Ok(())

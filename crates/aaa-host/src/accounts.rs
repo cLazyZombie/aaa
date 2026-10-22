@@ -313,6 +313,10 @@ impl Accounts {
             Err(_) => (AccountRefreshed { id: String::new(), version, response: None }, outcome),
         }
     }
+    #[cfg(test)]
+    pub(crate) fn refresh_gate_for_test(&self, name: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.gates.lock().unwrap().entry(name.into()).or_default().clone()
+    }
     async fn refresh_inner(
         &self,
         name: &str,

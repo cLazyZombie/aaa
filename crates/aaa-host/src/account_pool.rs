@@ -25,9 +25,17 @@ pub(crate) struct PoolRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Allocation {
     pub selection: AccountSelection,
+    /// 이미지 생성은 medium(15)의 다섯 배인 75%p를 보수적으로 예약한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_percent: Option<u8>,
     pub generation: String,
     pub ended_at_ms: Option<u64>,
     pub released: bool,
+}
+impl Allocation {
+    pub(crate) fn percent(&self) -> u8 {
+        self.reserve_percent.unwrap_or(self.selection.size.percent())
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -53,6 +61,7 @@ pub(crate) struct SelectionInput {
     size: AccountTaskSize,
     candidates: Vec<Candidate>,
     excluded: Vec<String>,
+    required_account: Option<String>,
 }
 
 fn bad(s: impl Into<String>) -> ErrorBody {
@@ -223,6 +232,7 @@ impl Host {
             size,
             candidates: vec![],
             excluded: vec![],
+            required_account: None,
         };
         for member in pool.members {
             if !auto && Some(member.account.as_str()) != account {
@@ -263,6 +273,7 @@ impl Host {
 
     /// 종료 사건을 확인한 예약만 종료로 기록한다. 단절·결과 불명은 유지한다.
     fn pool_reconcile(&self, report: &AccountQuotaReport) -> Result<(), ErrorBody> {
+        self.image_reconcile(report)?;
         let pool = self.account_pool()?;
         for text in self.db.threads(None).map_err(internal)? {
             let r: ThreadRec = serde_json::from_str(&text).map_err(internal)?;
@@ -278,6 +289,7 @@ impl Host {
                     }
                     let generation = self.accounts.generation(&member.account)?;
                     Allocation {
+                        reserve_percent: None,
                         generation,
                         ended_at_ms: None,
                         released: false,
@@ -537,7 +549,7 @@ impl Host {
     }
 }
 
-fn fresh_windows<'a>(
+pub(crate) fn fresh_windows<'a>(
     q: &'a AccountQuota,
     model: Option<&str>,
     now: u64,
@@ -563,7 +575,19 @@ fn fresh_windows<'a>(
 }
 
 impl SelectionInput {
+    pub(crate) fn only(&mut self, account: &str) {
+        self.required_account = Some(account.into());
+    }
     pub(crate) fn select(&self, tx: &Connection, now: u64) -> anyhow::Result<(String, Allocation)> {
+        self.select_with_percent(tx, now, self.size.percent())
+    }
+
+    pub(crate) fn select_with_percent(
+        &self,
+        tx: &Connection,
+        now: u64,
+        percent: u8,
+    ) -> anyhow::Result<(String, Allocation)> {
         let current =
             decode_pool(tx.query_row("SELECT value FROM meta WHERE key=?1", [CONFIG], |r| r.get(0)).optional()?)?;
         anyhow::ensure!(current.revision == self.pool.revision, "start_wait: 계정 풀 설정 변경 · 다시 판정 대기");
@@ -578,9 +602,13 @@ impl SelectionInput {
             .map(|s| serde_json::from_str::<ThreadRec>(&s))
             .collect::<serde_json::Result<Vec<_>>>()?;
         let mut rejected = self.excluded.clone();
+        let images = crate::image::pool_reservations(tx)?;
         let mut known = Vec::new();
         let mut unknown = Vec::new();
         for c in &self.candidates {
+            if self.required_account.as_ref().is_some_and(|a| a != &c.member.account) {
+                continue;
+            }
             let mine: Vec<_> = records
                 .iter()
                 .filter(|r| {
@@ -597,18 +625,33 @@ impl SelectionInput {
                     }
                 })
                 .collect();
+            let image_mine: Vec<_> = images
+                .iter()
+                .filter(|r| {
+                    !r.allocation.released
+                        && (r.allocation.selection.group == c.member.group
+                            || self.pool.members.iter().any(|m| m.account == r.account && m.group == c.member.group))
+                })
+                .collect();
             let reserved: f64 = mine
                 .iter()
-                .map(|r| f64::from(r.account_allocation.as_ref().map_or(15, |a| a.selection.size.percent())))
-                .sum();
+                .map(|r| f64::from(r.account_allocation.as_ref().map_or(15, Allocation::percent)))
+                .sum::<f64>()
+                + image_mine.iter().map(|r| f64::from(r.allocation.percent())).sum::<f64>();
             let last = records
                 .iter()
                 .filter(|r| r.account.as_deref() == Some(&c.member.account))
                 .filter_map(|r| r.account_allocation.as_ref().map(|a| a.selection.selected_at_ms))
+                .chain(
+                    images
+                        .iter()
+                        .filter(|r| r.account == c.member.account)
+                        .map(|r| r.allocation.selection.selected_at_ms),
+                )
                 .max()
                 .unwrap_or(0);
             if !self.auto {
-                return Ok(self.allocate(c, false, now, "명시한 계정 · 공유 한도 예약"));
+                return Ok(self.allocate(c, false, now, percent, "명시한 계정 · 공유 한도 예약"));
             }
             let quota = c.quota.as_ref();
             if let Some(q) = quota {
@@ -626,11 +669,11 @@ impl SelectionInput {
                         }
                         let headroom = windows
                             .iter()
-                            .map(|w| 100.0 - w.window.used_percent - reserved - 10.0 - f64::from(self.size.percent()))
+                            .map(|w| 100.0 - w.window.used_percent - reserved - 10.0 - f64::from(percent))
                             .fold(f64::INFINITY, f64::min);
                         if headroom >= 0.0 {
                             let reset = windows.iter().filter_map(|w| w.window.resets_at_ms).min().unwrap_or(u64::MAX);
-                            known.push((c, headroom, reset, mine.len(), last));
+                            known.push((c, headroom, reset, mine.len() + image_mine.len(), last));
                         } else {
                             rejected.push(format!("{}: 예약·안전 여유를 빼면 잔량 부족", c.member.account));
                         }
@@ -651,6 +694,13 @@ impl SelectionInput {
                         .is_some_and(|a| a.generation == c.generation && a.selection.unobserved)
                     && (r.launch_sent || r.status != ThreadStatus::Failed)
             });
+            let bootstrapped = bootstrapped
+                || images.iter().any(|r| {
+                    r.account == c.member.account
+                        && r.allocation.generation == c.generation
+                        && r.allocation.selection.unobserved
+                        && r.launched
+                });
             let observed_group = self.candidates.iter().any(|other| {
                 other.member.group == c.member.group
                     && other
@@ -658,7 +708,7 @@ impl SelectionInput {
                         .as_ref()
                         .is_some_and(|q| !q.windows.is_empty() || q.problem != Some(QuotaProblem::Unknown))
             });
-            if bootstrapped || !mine.is_empty() || observed_group {
+            if bootstrapped || !mine.is_empty() || !image_mine.is_empty() || observed_group {
                 rejected.push(format!("{}: 첫 실행 관측 대기·공유 한도 미확인", c.member.account));
             } else {
                 unknown.push((c, last));
@@ -673,12 +723,13 @@ impl SelectionInput {
                 candidate,
                 false,
                 now,
+                percent,
                 &format!("최신 잔량 · 예약·안전 여유 뒤 최소 {headroom:.1}%p"),
             ));
         }
         unknown.sort_by(|a, b| (a.1, &a.0.member.account).cmp(&(b.1, &b.0.member.account)));
         if let Some((c, _)) = unknown.first() {
-            return Ok(self.allocate(c, true, now, "사용량 미관측 · 자동 첫 실행"));
+            return Ok(self.allocate(c, true, now, percent, "사용량 미관측 · 자동 첫 실행"));
         }
         if rejected.is_empty() {
             rejected.push("이 harness·모델에 허용한 계정이 없음".into());
@@ -686,10 +737,11 @@ impl SelectionInput {
         anyhow::bail!("start_wait: 계정 배정 대기 · {}", rejected.join("; "))
     }
 
-    fn allocate(&self, c: &Candidate, unobserved: bool, now: u64, reason: &str) -> (String, Allocation) {
+    fn allocate(&self, c: &Candidate, unobserved: bool, now: u64, percent: u8, reason: &str) -> (String, Allocation) {
         (
             c.member.account.clone(),
             Allocation {
+                reserve_percent: (percent != self.size.percent()).then_some(percent),
                 generation: c.generation.clone(),
                 ended_at_ms: None,
                 released: false,

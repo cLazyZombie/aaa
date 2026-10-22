@@ -20,6 +20,7 @@ mod git_watch;
 mod health;
 pub mod hooks;
 pub mod identity;
+pub mod image;
 pub mod integration;
 mod journal;
 pub mod link;
@@ -205,6 +206,8 @@ pub struct Agent {
     /// 지금 host가 정리 사건(`compacting.v1`, plan §8.309)을 아는가. 모르는 host에는 정리 중을 `working`으로 보낸다
     host_compacting: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
+    host_image: std::sync::atomic::AtomicBool,
+    image_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::ImageResponse>>>>,
     host_mission: Mutex<bool>,
     host_work_files: Mutex<bool>,
     post_gate: Mutex<()>,
@@ -261,6 +264,8 @@ impl Agent {
             host_compacting: std::sync::atomic::AtomicBool::new(false),
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
+            host_image: std::sync::atomic::AtomicBool::new(false),
+            image_waiters: Mutex::new(HashMap::new()),
             host_mission: Mutex::new(false),
             host_work_files: Mutex::new(false),
             post_gate: Mutex::new(()),
@@ -330,6 +335,9 @@ impl Agent {
                 self.reject_post(&msg, "hook token이 맞지 않는다").await;
             }
             bail!("hook token이 맞지 않는다");
+        }
+        if msg.harness == "imagegen" {
+            return self.on_image(msg, pid).await.map(Some);
         }
         if msg.harness == "post" {
             let result = self.on_post(msg.clone(), pid).await;
@@ -1411,6 +1419,12 @@ impl Agent {
                 return self.deploy_start(id, job, project, action).await;
             }
             AgentRequest::DeployStatus { id } => self.deployments.status(&id).map(|job| self.deployments.response(job)),
+            AgentRequest::ImageReply { request_id, result } => {
+                if let Some(tx) = self.image_waiters.lock().unwrap().remove(&request_id) {
+                    let _ = tx.send(result);
+                }
+                return;
+            }
             AgentRequest::PostAck { post_id, result } => {
                 self.post_ack(&post_id, result);
                 return;

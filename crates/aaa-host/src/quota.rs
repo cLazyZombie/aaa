@@ -269,7 +269,7 @@ impl crate::Host {
                 )
                 .map_err(crate::orch::internal)?;
         }
-        Ok(AccountQuotaReport {
+        let report = AccountQuotaReport {
             accounts: accounts
                 .iter()
                 .filter_map(|a| {
@@ -277,7 +277,9 @@ impl crate::Host {
                     Some(merge(e, &a.name, &a.harness, now))
                 })
                 .collect(),
-        })
+        };
+        self.image_reconcile(&report)?;
+        Ok(report)
     }
 }
 fn empty(generation: &str, source: QuotaSource, problem: QuotaProblem, now: u64) -> QuotaSnapshot {

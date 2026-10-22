@@ -1,5 +1,7 @@
 # 작업별 계정 인증
 
+thread에서 host Codex 계정으로 이미지 생성·편집을 요청하는 방법은 [이미지 CLI](images.md)에 있다.
+
 profile은 실행할 harness·model·effort를 고르고, account는 인증 신원을 고른다.
 host의 **aaa 세션 밖 터미널**이나 **웹 설정 「계정」(조작 기기)**에서 공식 harness 로그인을 시작하고 기본 계정을 정한다.
 브라우저 인증은 사용자가 host에서 한다. 기본 계정을 지정하기 전에는 기존 머신 로컬 로그인을 사용한다.

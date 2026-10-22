@@ -99,7 +99,229 @@ fn input(lab: &Lab, candidates: Vec<Candidate>) -> SelectionInput {
         size: AccountTaskSize::Medium,
         candidates,
         excluded: vec![],
+        required_account: None,
     }
+}
+
+fn image_job(account: String, allocation: Allocation, id: &str) -> crate::image::Job {
+    crate::image::Job {
+        begin: ImageBegin {
+            id: id.into(),
+            prompt: "fixture".into(),
+            profile: "image".into(),
+            account: None,
+            transparent: false,
+            inputs: vec![],
+        },
+        machine: "m".into(),
+        session: "s".into(),
+        project: "demo".into(),
+        owner: "thread:t-0001".into(),
+        model: "model-a".into(),
+        effort: "high".into(),
+        view: ImageView {
+            id: id.into(),
+            state: ImageState::Running,
+            account: Some(account),
+            reason: "fixture".into(),
+            outputs: vec![],
+            total_tokens: None,
+        },
+        allocation: Some(allocation),
+        launched: true,
+    }
+}
+
+// 잔량 51%에서 새 관측 없이 4~8장을 연속 요청하는 실제 사용 경계다.
+#[test]
+fn image_burst_at_fifty_one_percent_preserves_the_shared_budget() {
+    for count in [4, 8] {
+        let l = Lab::new();
+        let selected = input(&l, vec![candidate("work", 0.0, 49.0)]);
+        for _ in 0..count {
+            claim_image(&l, &selected).unwrap();
+        }
+        assert_eq!(
+            choose(&l, &selected).is_ok(),
+            count == 4,
+            "4장 뒤 medium 배정 가능, 8장 예약이 모두 남으면 medium은 대기"
+        );
+        assert!(
+            l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_ok()
+                == (count == 4),
+            "관측 전 8장 40 + 안전 여유 10 뒤 9번째는 대기"
+        );
+    }
+    let l = Lab::new();
+    let selected = input(&l, vec![candidate("work", 0.0, 49.0)]);
+    let (account, allocation) = choose(&l, &selected).unwrap();
+    l.seed(&account, allocation, ThreadStatus::Open, true);
+    for _ in 0..5 {
+        claim_image(&l, &selected).unwrap();
+    }
+    assert!(claim_image(&l, &selected).is_err(), "medium 15 + 이미지 5건 25 + 여유 10, 6번째 대기");
+
+    let l = Lab::new();
+    let selected = input(&l, vec![candidate("work", 86.0, 49.0)]);
+    assert!(claim_image(&l, &selected).is_err(), "주간 51이어도 5시간 잔량 14면 대기");
+}
+
+fn claim_image(l: &Lab, selected: &SelectionInput) -> anyhow::Result<()> {
+    l.h.db.image_transaction(|tx| {
+        let (account, allocation) = selected.select_with_percent(tx, NOW, crate::image::RESERVE)?;
+        assert_eq!(allocation.percent(), 5);
+        let id = util::new_id();
+        let mut job = image_job(account, allocation, &id);
+        job.view.state = ImageState::Succeeded;
+        job.allocation.as_mut().unwrap().ended_at_ms = Some(NOW);
+        tx.execute(
+            "INSERT INTO meta(key,value) VALUES(?1,?2)",
+            [format!("image-job:{id}"), serde_json::to_string(&job)?],
+        )?;
+        Ok(())
+    })
+}
+
+#[test]
+fn image_and_thread_reservations_share_the_same_budget_and_unknown_first_run() {
+    let l = Lab::new();
+    let selected = input(&l, vec![candidate("work", 70.0, 70.0)]);
+    let id = util::new_id();
+    l.h.db
+        .image_transaction(|tx| {
+            let (account, allocation) = selected.select_with_percent(tx, NOW, crate::image::RESERVE)?;
+            assert_eq!(allocation.percent(), AccountTaskSize::Small.percent());
+            tx.execute(
+                "INSERT INTO meta(key,value) VALUES(?1,?2)",
+                [format!("image-job:{id}"), serde_json::to_string(&image_job(account, allocation, &id))?],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let (account, allocation) = choose(&l, &selected).unwrap();
+    l.seed(&account, allocation, ThreadStatus::Open, true);
+    assert!(choose(&l, &selected).is_err(), "사용 70 + 이미지 5 + thread 15 + 여유 10 뒤 추가 배정 금지");
+    assert!(l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err());
+    let mut shared = candidate("alias", 70.0, 70.0);
+    shared.member.group = "work".into();
+    let mut selected = input(&l, vec![candidate("work", 70.0, 70.0), shared]);
+    selected.only("alias");
+    assert!(choose(&l, &selected).is_err(), "다른 별칭도 같은 이미지 예약을 센다");
+
+    let u = Lab::new();
+    let selected = input(&u, vec![unknown("work")]);
+    let (account, allocation) =
+        u.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).unwrap();
+    assert!(allocation.selection.unobserved);
+    let mut j = image_job(account, allocation, &util::new_id());
+    j.view.state = ImageState::Unknown;
+    u.h.image_save(&j).unwrap();
+    assert!(choose(&u, &selected).is_err(), "불명 이미지 뒤 미관측 첫 실행 중복 금지");
+}
+
+#[tokio::test]
+async fn pinned_image_account_still_obeys_shared_alias_observations() {
+    let l = Lab::new();
+    let work = candidate("work", 0.0, 0.0);
+    let mut alias = candidate("alias", 90.0, 90.0);
+    alias.member.group = "work".into();
+    let mut selected = input(&l, vec![work, alias]);
+    selected.only("work");
+    assert!(
+        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err(),
+        "명시 계정도 공유 별칭의 90% 사용을 무시하지 않는다"
+    );
+}
+
+#[test]
+fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_budget() {
+    let l = Lab::new();
+    let selected = input(&l, vec![candidate("work", 85.0, 85.0)]);
+    let (account, allocation) =
+        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).unwrap();
+    let id = util::new_id();
+    let job = image_job(account.clone(), allocation.clone(), &id);
+    l.h.image_save(&job).unwrap();
+    let dir = l.h.image_dir(&id).unwrap();
+    let home = dir.join("rpc-home");
+    util::ensure_private_dir(&home).unwrap();
+    util::write_private(&home.join("auth.json"), b"fixture-auth-to-recover").unwrap();
+    util::write_private(&home.join("output.png"), b"preserved-result").unwrap();
+    let queued = util::new_id();
+    let mut q = image_job(account, allocation, &queued);
+    q.launched = false;
+    q.view.state = ImageState::Queued;
+    l.h.image_save(&q).unwrap();
+    l.h.image_recover().unwrap();
+    let read = |id: &str| {
+        serde_json::from_str::<crate::image::Job>(&l.h.db.meta(&format!("image-job:{id}")).unwrap().unwrap()).unwrap()
+    };
+    let unknown = read(&id);
+    assert_eq!(unknown.view.state, ImageState::Unknown);
+    assert!(!unknown.allocation.unwrap().released);
+    assert_eq!(read(&queued).view.state, ImageState::Waiting);
+    assert!(read(&queued).allocation.unwrap().released);
+    assert!(!home.join("auth.json").exists());
+    assert_eq!(std::fs::read(home.join("output.png")).unwrap(), b"preserved-result");
+    l.h.image_recover().unwrap();
+    assert_eq!(read(&id).view.state, ImageState::Unknown);
+    // 잔량 15%p에서 불명 이미지 5%p와 안전 여유 10%p를 유지한다.
+    assert!(
+        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err(),
+        "불명 실행의 예약이 재시작 뒤에도 남는다"
+    );
+}
+
+#[test]
+fn concurrent_image_claims_reserve_once_and_end_only_after_new_observations() {
+    let l = Lab::new();
+    let selected = input(&l, vec![candidate("work", 85.0, 85.0)]);
+    let barrier = Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    l.h.db.image_transaction(|tx| {
+                        let (account, allocation) = selected.select_with_percent(tx, NOW, crate::image::RESERVE)?;
+                        let id = util::new_id();
+                        let job = image_job(account, allocation, &id);
+                        tx.execute(
+                            "INSERT INTO meta(key,value) VALUES(?1,?2)",
+                            [format!("image-job:{id}"), serde_json::to_string(&job)?],
+                        )?;
+                        Ok(id)
+                    })
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+    });
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    let id = results.into_iter().find_map(Result::ok).unwrap();
+    let mut job: crate::image::Job =
+        serde_json::from_str(&l.h.db.meta(&format!("image-job:{id}")).unwrap().unwrap()).unwrap();
+    let now = util::now_ms();
+    let ended = now - 100;
+    job.view.state = ImageState::Succeeded;
+    job.allocation.as_mut().unwrap().ended_at_ms = Some(ended);
+    l.h.image_save(&job).unwrap();
+    let mut q = candidate("work", 0.0, 0.0).quota.unwrap();
+    for w in &mut q.windows {
+        w.window.observed_at_ms = ended - 1;
+        w.window.resets_at_ms = Some(now + 60_000);
+    }
+    let mut report = AccountQuotaReport { accounts: vec![q] };
+    l.h.image_reconcile(&report).unwrap();
+    let read = || {
+        serde_json::from_str::<crate::image::Job>(&l.h.db.meta(&format!("image-job:{id}")).unwrap().unwrap()).unwrap()
+    };
+    assert!(!read().allocation.unwrap().released);
+    for w in &mut report.accounts[0].windows {
+        w.window.observed_at_ms = now;
+    }
+    l.h.image_reconcile(&report).unwrap();
+    assert!(read().allocation.unwrap().released);
 }
 fn choose(lab: &Lab, input: &SelectionInput) -> anyhow::Result<(String, Allocation)> {
     input.select(&lab.h.db.conn_for_pool_test(), NOW)

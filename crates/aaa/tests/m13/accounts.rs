@@ -85,14 +85,14 @@ for phase in [1,2]:
     s.close()
 "#;
 
-struct Upstream {
-    addr: String,
+pub(super) struct Upstream {
+    pub(super) addr: String,
     stop: Arc<AtomicBool>,
-    calls: Arc<AtomicUsize>,
+    pub(super) calls: Arc<AtomicUsize>,
     join: Option<std::thread::JoinHandle<()>>,
 }
 impl Upstream {
-    fn new(tokens: Vec<(String, String)>) -> Self {
+    pub(super) fn new(tokens: Vec<(String, String)>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
         let stop = Arc::new(AtomicBool::new(false));
