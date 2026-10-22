@@ -21,16 +21,26 @@ export default async function ({ page }) {
         const dev = await pairPage(engine, aaa("web", "pair", ...(reader ? ["--reader"] : [])).code,
           { width, height: 844 }, { touch: width < 768, serviceWorkers: "block", hash: `#thread=demo%2F${id}`,
             setup: async (context) => {
+              const visit = (v) => {
+                if (!v || typeof v !== "object") return;
+                if ((v.project === "demo" && v.id === id) || v.id === original.pane) v.responsibility = value;
+                for (const child of Object.values(v)) if (child && typeof child === "object") visit(child);
+              };
               await context.route("**/api/v1/call", async (route) => {
                 const response = await route.fetch();
                 const body = await response.json();
-                const visit = (v) => {
-                  if (!v || typeof v !== "object") return;
-                  if ((v.project === "demo" && v.id === id) || v.id === original.pane) v.responsibility = value;
-                  for (const child of Object.values(v)) if (child && typeof child === "object") visit(child);
-                };
                 visit(body);
                 await route.fulfill({ response, json: body });
+              });
+              // pane 목록은 REST가 아니라 events의 state로 온다. 실제 연결을 유지하고 관측값만 바꾼다.
+              await context.routeWebSocket("**/api/v1/events", (socket) => {
+                const server = socket.connectToServer();
+                server.onMessage((raw) => {
+                  if (typeof raw !== "string") return socket.send(raw);
+                  const event = JSON.parse(raw);
+                  visit(event);
+                  socket.send(JSON.stringify(event));
+                });
               });
             },
           });
