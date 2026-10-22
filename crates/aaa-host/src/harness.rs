@@ -278,6 +278,7 @@ impl Host {
                 percent: None,
                 progress: None,
                 progress_at_ms: None,
+                progress_since_ms: None,
                 harness_session: None,
                 seen: true,
                 plan: None,
@@ -304,7 +305,10 @@ impl Host {
                     "harness 상태: host 적용 판정"
                 );
             }
-            if ev.kind == "progress" {
+            if ev.kind == "progress" && st.progress_at_ms.is_none_or(|at| ev.at_ms >= at) {
+                if st.progress != ev.message || st.progress_since_ms.is_none() {
+                    st.progress_since_ms = ev.message.as_ref().map(|_| ev.at_ms);
+                }
                 st.percent = ev.percent;
                 st.progress = ev.message.clone();
                 st.progress_at_ms = Some(ev.at_ms);
@@ -325,6 +329,7 @@ impl Host {
                 st.percent = None;
                 st.progress = None;
                 st.progress_at_ms = None;
+                st.progress_since_ms = None;
             }
             // 사용자가 답했다: 옛 「Waiting for you」는 더 맞지 않다(herdr-projects `respond` UserPromptSubmit)
             if matches!(ev.kind.as_str(), "prompt_submit" | "turn_start")
@@ -332,6 +337,7 @@ impl Host {
             {
                 st.progress = None;
                 st.progress_at_ms = None;
+                st.progress_since_ms = None;
             }
             // 이 막힘(상태가 질문에서 넘어가지 않았다)에서 이미 답했다: 늦게 온 질문 사건은 답한 그 질문이다
             let answered_block = !anew
@@ -899,6 +905,7 @@ impl Host {
             {
                 st.progress = None;
                 st.progress_at_ms = None;
+                st.progress_since_ms = None;
                 true
             } else {
                 false
@@ -1272,6 +1279,7 @@ mod tests {
             percent: None,
             progress: None,
             progress_at_ms: None,
+            progress_since_ms: None,
             harness_session: None,
             seen: true,
             plan: None,
@@ -1336,6 +1344,34 @@ mod tests {
             background: None,
             context: None,
         }
+    }
+
+    #[tokio::test]
+    async fn progress_activity_clock_survives_heartbeats_and_resets_with_activity_and_session() {
+        let (h, _tmp) = host_with_pane();
+        let report = |at_ms, percent, text: &str| {
+            let mut ev = codex_event("progress", at_ms);
+            ev.percent = percent;
+            ev.message = Some(text.into());
+            h.on_harness("m", ev);
+            h.inner.lock().unwrap().panes["s"].agent.clone().unwrap()
+        };
+        assert_eq!(report(1000, Some(20), "구현 중").progress_since_ms, Some(1000));
+        let a = report(2000, Some(30), "구현 중");
+        assert_eq!((a.progress_since_ms, a.progress_at_ms, a.percent), (Some(1000), Some(2000), Some(30)));
+        let a = report(1500, Some(25), "늦은 옛 활동");
+        assert_eq!(
+            (a.progress.as_deref(), a.progress_since_ms, a.progress_at_ms),
+            (Some("구현 중"), Some(1000), Some(2000))
+        );
+        assert_eq!(report(3000, None, "검증 중").progress_since_ms, Some(3000));
+        report(4000, Some(50), crate::orch::WAITING);
+        h.on_harness("m", codex_event("prompt_submit", 5000));
+        assert_eq!(h.inner.lock().unwrap().panes["s"].agent.as_ref().unwrap().progress_since_ms, None);
+        report(6000, Some(60), "수리 중");
+        h.on_harness("m", codex_event("session_start", 7000));
+        let a = h.inner.lock().unwrap().panes["s"].agent.clone().unwrap();
+        assert_eq!((a.progress, a.progress_since_ms, a.progress_at_ms), (None, None, None));
     }
 
     /// thread keys의 글+Enter는 Codex의 paste 판정 창을 넘긴 뒤 제출한다.

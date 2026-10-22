@@ -3,7 +3,7 @@
 // 이 파일은 그 값의 이 기기 사본도 localStorage에 둔다. 나머지는 이 기기 것이다(plan §8.45).
 import { useCallback, useSyncExternalStore } from "react";
 import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarItem } from "./herdr/keyBar.ts";
-import { sanitizeFontFamily } from "./herdr/fontFamily.ts";
+import { SYMBOLS_FONT, sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { CUSTOM_SHORTCUT_IDS, sanitizeShortcutOverrides, type ShortcutOverrides } from "./herdr/shortcutBindings.ts";
 import type { ShortcutId } from "./herdr/shortcuts.ts";
 import { sanitizeChatShared, sanitizeSidebarShared, sanitizeUsage, type ChatShared, type SidebarShared, type UsageSettings } from "./preferences.ts";
@@ -32,12 +32,15 @@ function subscribe(f: () => void): () => void {
 
 // 같은 기기의 다른 탭이 바꾼 값도 따른다
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY && e.key !== FONT_FAMILY_KEY && e.key !== KEEP_SCREEN_KEY) return;
+  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY && e.key !== UI_FONT_FAMILY_KEY && e.key !== MONO_FONT_FAMILY_KEY && e.key !== FONT_FAMILY_KEY && e.key !== KEEP_SCREEN_KEY) return;
   mode = read();
   fontSize = readFontSize();
   wheelSpeed = readWheelSpeed();
   keyBarItems = readKeyBarItems();
   fontFamily = readFontFamily();
+  uiFontFamily = readFontFamily(UI_FONT_FAMILY_KEY);
+  monoFontFamily = readFontFamily(MONO_FONT_FAMILY_KEY);
+  initDeviceFonts();
   keepScreenOn = readKeepScreenOn();
   listeners.forEach((f) => f());
 });
@@ -155,10 +158,12 @@ export function useKeyBarItems(): readonly KeyBarItem[] {
  * 기본 글꼴 목록 앞에 붙는다(Term.tsx). 읽을 때도 거른다.
  */
 const FONT_FAMILY_KEY = "aaa:terminal-font-family";
+const UI_FONT_FAMILY_KEY = "aaa:ui-font-family";
+const MONO_FONT_FAMILY_KEY = "aaa:mono-font-family";
 
-function readFontFamily(): string {
+function readFontFamily(key = FONT_FAMILY_KEY): string {
   try {
-    return sanitizeFontFamily(localStorage.getItem(FONT_FAMILY_KEY));
+    return sanitizeFontFamily(localStorage.getItem(key));
   } catch {
     return "";
   }
@@ -179,6 +184,48 @@ export function setTerminalFontFamily(family: string) {
 
 export function useTerminalFontFamily(): string {
   return useSyncExternalStore(subscribe, () => fontFamily);
+}
+
+// 화면·고정폭도 터미널과 같은 기기별 저장이다. 기본 목록은 CSS 정본을 참조한다.
+let uiFontFamily = readFontFamily(UI_FONT_FAMILY_KEY);
+let monoFontFamily = readFontFamily(MONO_FONT_FAMILY_KEY);
+
+/** 첫 React 렌더 전에 복원하고, 편집·다른 탭 변경 때도 즉시 적용한다. */
+export function initDeviceFonts() {
+  const style = document.documentElement.style;
+  if (uiFontFamily) style.setProperty("--font-ui", `${uiFontFamily}, var(--font-ui-default)`);
+  else style.removeProperty("--font-ui");
+  if (monoFontFamily) style.setProperty("--font-mono", `${SYMBOLS_FONT}, ${monoFontFamily}, var(--font-mono-default)`);
+  else style.removeProperty("--font-mono");
+}
+
+function saveDeviceFont(key: string, family: string) {
+  try {
+    if (family === "") localStorage.removeItem(key);
+    else localStorage.setItem(key, family);
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
+  }
+  initDeviceFonts();
+  listeners.forEach((f) => f());
+}
+
+export function setUiFontFamily(family: string) {
+  uiFontFamily = sanitizeFontFamily(family);
+  saveDeviceFont(UI_FONT_FAMILY_KEY, uiFontFamily);
+}
+
+export function setMonoFontFamily(family: string) {
+  monoFontFamily = sanitizeFontFamily(family);
+  saveDeviceFont(MONO_FONT_FAMILY_KEY, monoFontFamily);
+}
+
+export function useUiFontFamily(): string {
+  return useSyncExternalStore(subscribe, () => uiFontFamily);
+}
+
+export function useMonoFontFamily(): string {
+  return useSyncExternalStore(subscribe, () => monoFontFamily);
 }
 
 /** 화면 켜짐 유지(herdr-web-ui settings.ts `keepScreenOn`: 기기마다, 기본 꺼짐). pane을 보는 동안 wake lock을 건다 */

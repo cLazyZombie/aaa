@@ -2,12 +2,42 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
-## 일반 post 기본 한도 확대(t-0688)
+## 일반 post 기본 한도 확대(t-0688, plan §8.425)
 
 - `nice -n 15 cargo test -p aaa-config --lib post_defaults_and_explicit_overrides --locked`: 파일 없음·빈 `[post]`·일부 생략에서 30/60초·200/시간·2000/일·pair 100·mute 20을 읽고, 명시한 옛 값과 local 덮어쓰기를 유지한다.
 - `nice -n 15 cargo test -p aaa-host --lib post::tests:: --locked`: 실제 host DB와 전달 owner에 `now`를 주어 기본 30건 핑퐁 수락, 31번째 거부·19회까지 음소거 없음·20회 음소거, 분·시간·하루 경계와 24시간 내용 중복을 검사한다. 기존 ID 재전송·재시작 내구성과 작은 한도 설정도 유지한다. coordinator 사용자 알림은 별도 30/분·60/시간 한도와 자동 음소거 없음, 일반 한도 초과 뒤에도 수락을 확인한다.
 - 기존 m13 `post_from_thread_reaches_coordinator_inbox`와 웹 E2E19 `post 음소거`는 전송·표시를 검사하도록 작은 한도(3/분·6/시간·30/일·거부 3회)를 명시한다. 제품 기본값에 기대지 않고 기존 단언·시한을 유지한다. 새 E2E 번호는 추가하지 않는다.
 - 고정 sleep·실패 재시도·시한 연장 없이 원장 결과와 CLI 완료·DOM 사건으로 끝낸다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+## 화면·고정폭·터미널 글꼴(t-0683, plan §8.423)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 06-settings --workers 1`:
+  실제 host의 Chromium 1280px·WebKit 390px에서 세 글꼴을 바꾸고 새로고침 뒤 입력값·실제 CSS 목록을 대조한다.
+  없는 글꼴만 고르면 기본 목록과 canvas 너비가 같아야 하며, 고정폭 목록은 아이콘 글꼴을 맨 앞에 둔다.
+  화면·코드·터미널의 즉시 적용, 같은 기기 다른 탭의 storage 사건, 다른 기기 분리,
+  세 「기본값으로」의 저장값 삭제·기본 목록 복원·새로고침 유지와 가로 넘침을 검사한다.
+  설정의 모양·터미널 화면을 두 기기에서 캡처한다. 기존 face gate·설치 글꼴 거부·PTY 크기 검사는 유지한다.
+  DOM·글꼴·storage 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
+
+
+
+## 보고로 자동 갱신하는 작업 요약(t-0682, plan §8.422)
+
+- `nice -n 15 cargo test -p aaa-host --lib progress --locked`: 실제 보고 수집 owner가 진행 목록·완료 수를 고치면서 목표·사용자 결정을 보존하는지 검사한다. 같은 보고 재수집·host 재시작 뒤에도 나중 지시 경고가 남아야 한다. 수집 시작과 수신 사이에 지시를 넣어 그 지시를 반영했다고 세지 않는 차례를 고정한다. 잘못된 목록·코드 예제·중복 절·항목/길이 상한은 마지막 정상 목록을 보존한다.
+- 같은 host 시험은 실제 harness 사건으로 같은 활동의 진행률 갱신·정기 보고에서 활동 시작을 유지하고, 활동 변경·새 세션·대기 답변에서 초기화하는지 검사한다. 오래된 진행 사건도 새 활동 시계를 덮지 못한다.
+- `node --test web/test/summaryCard.test.mjs`: 시작 후/활동 시간의 분리·진행률 미정·옛 host의 활동 시작 누락·끝난 thread 시간과 음수 경계를 확인한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 28-thread-summary --workers 1`: 실제 agent의 보고 감시→host 수집→열린 hover/상세 카드의 목록·완료 수·경고 갱신을 확인한다. pane 안 실제 CLI의 활동·진행률 갱신, 가상 시계의 경과 시간, coordinator 목표만 편집할 때 진행 보존, Chromium 320px·WebKit 390px Reader 표시·쓰기 거부를 함께 검사한다. 고정 sleep·실패 재시도·시한 연장은 쓰지 않는다.
+- 결함 심기: 보고 수집 owner의 진행 전달 호출을 제거하면 실제 수집 시험이 진행 항목 `1 != 2`로 실패한다. 제품 원본 바이트를 복원한 뒤 전체 gate를 수행한다.
+- 첫 전체 gate는 319초로 web·fmt·build·clippy·Rust 전체·public을 통과했고 E2E는 84/85 파일 통과다. 82 자동화 만들기의 저장 단추가 비활성 상태로 30초를 넘겼다(같은 실행 중 1분 부하 77.89). 저장 실패 때 주소·이름·입력값·비활성 상태를 남기는 진단만 더한 동일 제품의 단독 82 전체는 29초에 통과했다. 재시도·시한/기대값 변경으로 첫 실패를 지우지 않으며 원인은 미확정이다. 착지 통합 검증에서 원본과 진단을 함께 확인한다.
+- 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 저장소 검사다. FRONT_API는 1.104, Agent link는 1.11을 유지한다.
+- 착지 기준 `8ddca9dc` 통합본은 전체 ci-local 217초에 일곱 단계 모두 통과했다. 웹 유닛 471개·Rust 전체·의존성 경계·웹 E2E 85개 파일(96개 작업)·공개 검사를 확인했다. E2E 28 전체와 82 전체(20.5초)가 통과했고 저장 단추 실패는 재발하지 않았다. 이 실행의 기록한 1분 부하는 10.69~86.22이며 시한 초과나 단독 재실행은 없었다. 최초 82 실패의 원인은 여전히 미확정으로 보존한다.
+
+
+## PR routine 재변환과 보존 사본(t-0684, plan §8.421)
+
+- `nice -n 15 cargo test -p aaa-host --lib automation::tests:: --locked`: 영문 보존 사본+한글 routine+TOML 없음의 격리 파일로 기존 사본 충돌을 재현한다. 같은 사본 재사용·다른 판의 첫 빈 번호·실행 실패 복구에서 기존 사본 보존·symlink 거부·보존 위치 변경의 hash 및 무쓰기 거부·기존 TOML 충돌을 검사한다. 변환된 PR의 events·enabled·owner 메시지·본문도 원본과 비교한다.
+- `archived_followup_without_toml_is_not_revived_by_doctor_or_create`는 변환 뒤 TOML이 없는 경우 `files_problems`가 옛 규칙을 만들 대상으로 판정하던 RED를 보존한다. 실제 host의 doctor와 create가 보존 사본과 원래 프로젝트 파일을 지키는지 검사한다. 기존 TOML이 있는 keeper도 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 40-automation-detail --workers 1`: 실제 host의 미리보기 문법 오류·계획 변경 실행 오류를 화면 제목과 alert에서 확인하고, 원인을 고친 뒤 새 미리보기를 읽어 변환한다. 동일 사본 재사용·PR 두 판 보존·doctor 후 옛 규칙 부재와 Reader 미리보기 전용을 함께 확인한다. 고정 sleep·실패 재시도·시한 연장 없이 응답과 DOM 사건으로 끝낸다.
+- 운영 프로젝트는 수정하지 않는다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
 
 ## install macOS launchd owner(t-0485, plan §8.419)
 
@@ -1224,10 +1254,10 @@ E2E03 「크기 되찾기」의 보낸 순서(resize가 키보다 먼저)는 화
 
 ## CI 감시(§8.274)
 
-- `cargo test -p aaa-common ci::`: gh 304 exit 1·200/403 HTTP 해석, GET·머리 주입 거부, 응답 필드 축약, SHA의 일부 workflow 대기·취소·재실행·stuck, 실패 집합·병합 번호 계약을 본다.
-- `cargo test -p aaa --test m13 ci_conditional -- --nocapture`: 실제 host·agent와 가짜 gh, 승인된 임무를 띄운다. 기준 초록 → 304 무음 → 빨강의 CI 항목·임무 inbox와 깨움 한 번 → host 재시작 중복 방지·created pagination → 같은 실패 집합 무깨움 → 꺼진 동안 실패 후 회복·CI fixed 무깨움 → 403 outage 한 건을 본다. 로그 잘림과 한 push의 여러 주인 번호도 이 경계에서 본다.
+- `cargo test -p aaa-common ci::`: gh 304 exit 1·200/403 HTTP 해석, GET·머리 주입 거부, 응답 필드 축약, SHA의 일부 workflow 대기·취소·재실행·stuck, 실패 집합·병합 번호 계약을 본다. 실패 로그 표지는 실제 windows-2025 줄 모양(job·단계·시각 앞머리, `\` 경로)을 7바이트 조각으로 먹여 꼬리 밖 실패·panic 열 번호 제외·끝나지 않은 시험을 보고, 같은 job·단계의 다른 시험이 다른 실패로 갈리는지 본다(0a8c294f).
+- `cargo test -p aaa --test m13 ci_conditional -- --nocapture`: 실제 host·agent와 가짜 gh, 승인된 임무를 띄운다. 기준 초록 → 304 무음 → 빨강의 CI 항목·임무 inbox와 깨움 한 번 → host 재시작 중복 방지·created pagination → 같은 실패 집합 무깨움 → 같은 job·단계의 다른 실패 시험은 같은 항목에 덧붙이고 다시 깨움(가짜 gh가 실패 줄을 32KiB 꼬리 밖에 둔다) → 꺼진 동안 실패 후 회복·CI fixed 무깨움 → 403 outage 한 건을 본다. 로그 잘림과 한 push의 여러 주인 번호도 이 경계에서 본다.
 - 실험실의 기존 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 `ci_poll_secs` 하한을 1초로 낮춘다(운영은 30초). 고정 sleep을 넣지 않는다. 새 판정은 flow, 아무 일 없음은 다음 304 두 번(앞 CI pass 완료)과 ticker tick 뒤 확인한다.
-- 결함 심기는 HTTP 상태보다 exit를 먼저 거부하기, 같은 실패 집합의 깨움 억제를 제거하기, 회복 자체가 임무를 깨우게 만들기 세 가지를 독립적으로 심는다. 해당 keeper가 의도한 이유로 실패한 로그를 보존하고 바이트 단위 복구 후 정상 통과를 확인한다.
+- 결함 심기는 HTTP 상태보다 exit를 먼저 거부하기, 같은 실패 집합의 깨움 억제를 제거하기, 회복 자체가 임무를 깨우게 만들기 세 가지를 독립적으로 심는다. t-0685는 실패 시험 비교 빼기(「같은 실패 집합」으로 건너뜀)와 agent가 남긴 꼬리만 읽기(꼬리 밖 실패 시험 없음) 두 가지를 더 심었다. 해당 keeper가 의도한 이유로 실패한 로그를 보존하고 바이트 단위 복구 후 정상 통과를 확인한다.
 - 운영 host·로그인·설정·실제 GitHub 쓰기는 건드리지 않는다. 배포 뒤 사용량·깨움 수 관찰은 coordinator의 별도 운영 단계다.
 
 ## 공용 watch 추출(t-0420 L1)
@@ -2165,6 +2195,11 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 - `node web/e2e/web.e2e.mjs --spec 83-cli-zero-gaps`: 인벤토리의 작은 빈칸 다섯(답 1A). t1 줄 메뉴 「세션 끝내기」 → 확인 창 → 세션만 끝나고 「다시 열기」로 다시 뜸, coordinator 메뉴 「하나 더 띄우기」(맨 위 profile 이름을 단다) → coordinator pane 둘, 보고가 오면 host가 낸 30일 링크를 thread 화면을 연 채 설정 「이 aaa」 「낸 링크」에서 보고(앱 안 보기가 마지막 열람으로 남는다) 폐기하면 열려 있던 링크 줄도 「폐기됨」이 되고, 7일을 골라 새 링크(만료 − 발급 = 7일), 「나중」 파일은 폴더 밖 경로를 host가 거부한 말을 보이고 `memory/later.md`를 더하면 host `project show`의 `task_notes`에 들어가며 빼면 비운다.
 - 결함 심기: 「CLI 0회」 검문 끄기는 첫 단계가, `do.message`가 받는 thread를 잃으면 자동화 ② 단계(전달 기록 없음)가, thread 관리 메뉴의 「끝내기」 빼기는 정리 단계가 잡았다. `do.message` 본문에서 규칙 글만 빼는 결함은 잡지 못한다: 실행 자료(`memo`)에도 같은 글이 들어가 화면에 남는다. 81은 「세션 끝내기」가 `pane_close`를 보내는 결함(「다시 열기」 없음), 「하나 더 띄우기」가 `new`를 뒤집는 결함(coordinator 하나), 링크 수명을 보내지 않는 결함(30일), 폐기 뒤 host가 reports 사건을 내지 않는 결함(열린 화면이 active로 남음)을 잡았다.
 
+## 질문 dock 칩 정렬·답한 뒤 숨김(t-0687, plan §8.329)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 53-thread-questions --workers 1`: 실제 host의 질문 보고와 휴대폰 답변을 사용한다. Chromium 2800px·1280px와 WebKit 휴대폰에서 미응답 칩의 왼쪽 끝·열 오른쪽 끝이 입력칸과 1px 이내이고 입력칸 위에 있는지, 가로 넘침이 없는지 단언한다.
+- 같은 세 크기의 답변 뒤 dock 칩·빈 dock 부재를 검사하고 두 상태의 스크린샷을 남긴다. 기존 대화 칩의 답함·보관된 질문 원문·다른 기기 카드·새 질문 회귀 검사는 유지한다. DOM·host 답 사건으로 끝내며 고정 sleep이나 시한 연장을 쓰지 않는다.
+
 ## SSH로 설치·등록(t-0578 웹 머신 추가 M3, plan §8.420)
 
 - host 유닛 `cargo test -p aaa-host machine_setup`:
@@ -2182,3 +2217,9 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
   - HOME 분리: 원격 셸·install·LaunchAgent(plist의 HOME)가 모두 실험실 HOME을 쓴다. 시험이 실험실 HOME 아래 plist·`.local/bin/aaa`를 보고, runner 실제 HOME의 같은 자리(plist·실행 파일·launcher·상태 폴더)가 전후 같은지 본다. gui domain label `dev.aaa.agent`는 계정 전역이라 적용 전 없어야 하고 시험이 끝에 bootout한다.
   - 스크립트는 시험 전에 그 sshd로 연 원격 명령의 조상(pid·ppid·사용자·image)을 적는다. install 검증 SSH 입구가 root `/usr/sbin/sshd`를 찾지 못하면 그 사슬로 원인을 본다.
   - 이 Mac에서는 같은 시험을 비특권 실험실 sshd(`SetEnv HOME` 포함)로 `env -u AAA_SESSION_ID`로 돌려 계획 단계의 검증 SSH 입구 거절까지(launcher 만들기·host·지문·감지 HOME·전송) 확인한다.
+
+## 연결 안내의 0.5초 지연(t-0686, plan §8.424)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 84-connection-banner --workers 1`: 실제 host·agent와 2,400행 Claude JSONL을 Chromium 1280px·WebKit 390px에서 연다.
+- 시험 안 WebSocket의 open/message 전달을 gate로 보류한다. 실제 연결·기록 조회는 유지하고 Playwright 시계를 499/500ms로 전진시켜 지연 경계와 빠른 연결에서 순간 표시도 없음을 MutationObserver로 확인한다.
+- pane 왕복의 지연 초기화, 실제 socket 닫힘 뒤 499ms 미표시·500ms 표시, 재시도 시 표시 유지, 회복 즉시 제거·옛 타이머 취소를 확인한다. 고정 sleep·재시도·시한 연장은 없다. 정본 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.

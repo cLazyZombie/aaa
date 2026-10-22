@@ -1,5 +1,20 @@
 // thread 작업 요약 카드의 규칙(plan §8.259). 화면(ThreadSummary.tsx)과 나눠 node --test로 본다.
-import type { SummaryEntry, SummaryMark, ThreadSummaryView } from "./gen/proto";
+import type { SummaryEntry, SummaryMark, ThreadSummaryView, ThreadView } from "./gen/proto";
+import { formatWorkingDuration } from "./sidebarModel.ts";
+
+/** host가 기억한 활동 시작을 쓴다. 마지막 보고 시각을 활동 시작으로 추측하지 않는다. */
+export function summaryActivity(t: ThreadView, now: number): { activity: string; time: string } {
+  const a = t.agent;
+  const finished = t.status === "resolved" || a?.activity === "exited" || a?.percent === 100;
+  const label = finished ? "마지막 활동" : "지금 활동";
+  const percent = a?.progress_at_ms != null ? (a.percent != null ? `~${a.percent}%` : "진행률 미정") : null;
+  const activity = `${label}: ${a?.progress ?? "아직 보고 없음"}${percent ? ` · ${percent}` : ""}`;
+  const end = t.status === "resolved" ? t.updated_at_ms : now;
+  const since = a?.progress_since_ms;
+  const activityEnd = finished ? a?.progress_at_ms ?? end : end;
+  const activityTime = since != null ? `활동 ${formatWorkingDuration(activityEnd - since)}` : "활동 시간 없음";
+  return { activity, time: `시작 후 ${formatWorkingDuration(end - t.created_at_ms)} · ${activityTime}` };
+}
 
 /** hover 카드가 보이는 「지금 할 것」 줄 수. 카드는 훑어보는 것이라 6줄 안팎이다(10-19 사용자) */
 export const CARD_NOW = 3;
