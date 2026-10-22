@@ -71,6 +71,8 @@ export function markdownFileTarget(href: string): string | null {
   const value = href.trim();
   if (/^file:\/\/\//i.test(value)) return fileUriPath(value);
   if (value === "" || value.startsWith("#")) return null;
+  // 보고·질문 첨부 HTML의 장면 앵커와 영상 시간 조각은 파일 이름과 함께 보존한다.
+  if (/^(?:\.\/)?library\//.test(value)) return value;
   const target = value.replace(/#(?!L\d+(?:-L?\d+)?$).*$/, "");
   const path = target.replace(/(?::\d+){1,2}$|#L\d+(?:-L?\d+)?$/, "");
   if (path === "" || /^[a-z][a-z0-9+.-]*:/i.test(path) || (path !== target && !/[./]/.test(path))) return null;

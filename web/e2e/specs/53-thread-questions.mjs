@@ -237,7 +237,13 @@ export default async function ({ page }) {
     for (const p of [pp, phoneApp.page]) {
       await until("답한 것 한 줄", async () => (await p.getByTestId("asks-done-count").textContent()) === "1" && (await p.getByTestId("asks-open-count").textContent()) === "0");
     }
-    if (rec.summary !== "1B 2A" || rec.items.length !== 2 || rec.items[0].body !== q1.body || !rec.files_base?.includes("/asks/")) throw new Error(`답한 것 기록: ${JSON.stringify(rec)}`);
+    if (rec.summary !== "1B 2A" || rec.items.length !== 2 || rec.items[0].body !== q1.body || !/^\/v\/[a-f0-9]{48}\/$/.test(rec.files_base ?? "")) throw new Error(`답한 것 기록: ${JSON.stringify(rec)}`);
+    // 웹은 사본에 묶인 cap을 받는다(t-0767). opaque 문서·새 탭과 같이 cookie 없이도 실제 사본만 읽는다.
+    const snapshot = await pp.evaluate(async (base) => {
+      const response = await fetch(`${base}library/pic.png`, { credentials: "omit" });
+      return { status: response.status, type: response.headers.get("content-type"), bytes: Array.from(new Uint8Array(await response.arrayBuffer())) };
+    }, rec.files_base);
+    if (snapshot.status !== 200 || snapshot.type !== "image/png" || !Buffer.from(snapshot.bytes).equals(fs.readFileSync(`${root}/pic.png`))) throw new Error("답한 사본의 쿠키 없는 읽기가 달라졌다");
     for (const width of [2800, 1280]) {
       await page.setViewportSize({ width, height: 1000 });
       await dockLayout(page, "done", t.pane);

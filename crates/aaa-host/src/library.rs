@@ -30,6 +30,15 @@ pub(crate) struct ViewCap {
     pub until: Instant,
     /// 이 경로를 받은 웹 기기. 그 기기를 폐기하면 경로도 끝난다(CLI·TUI가 받은 것은 None)
     pub device: Option<String>,
+    /// 질문 첨부는 원래 질문/hash 또는 답한 사본의 경계를 매 요청마다 검사한다.
+    pub attachment: Option<Attachment>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum Attachment {
+    Question { hash: String },
+    Request { hash: String },
+    Answer,
 }
 
 pub(crate) fn manifest_path(dir: &Path, id: &str) -> PathBuf {
@@ -259,6 +268,7 @@ impl Host {
                     thread: storage.clone(),
                     until,
                     device: device.map(str::to_string),
+                    attachment: None,
                 },
             );
         }
@@ -306,6 +316,9 @@ impl Host {
 
     /// task 첨부에 붙인 보고서 보기 주소를 그 보고서로 바꾼다. 다른 프로젝트 보고서는 이 프로젝트 할 일에 링크하지 않는다
     pub(crate) fn library_resolve(&self, project: &str, cap: &str) -> Result<FrontResponse, ErrorBody> {
+        if self.view_caps.lock().unwrap().get(cap).is_some_and(|c| c.attachment.is_some()) {
+            return Err(err(ErrorCode::BadRequest, "질문 첨부 주소는 보고서 주소가 아니다"));
+        }
         let (at, name) = self.view_target(cap)?;
         if at != project {
             return Err(err(ErrorCode::BadRequest, format!("다른 프로젝트({at})의 보고서 주소다")));
@@ -341,6 +354,17 @@ impl Host {
         let signed = !self.view_caps.lock().unwrap().contains_key(cap);
         let (project, id) = self.view_target(cap)?;
         let view = |source| ViewFile { source, project: project.clone(), name: id.clone() };
+        let attachment = self.view_caps.lock().unwrap().get(cap).and_then(|c| c.attachment.clone());
+        if let Some(attachment) = attachment {
+            let local = match attachment {
+                Attachment::Question { hash } => self.question_file(&project, &id, &hash, path),
+                Attachment::Request { hash } => self.request_file(&project, &id, &hash, path),
+                Attachment::Answer => self.ask_file(&project, &id, path),
+            }?;
+            let file = std::fs::File::open(local).map_err(|_| err(ErrorCode::NotFound, "첨부 파일이 없다"))?;
+            let size = file.metadata().map_err(|_| err(ErrorCode::NotFound, "첨부 파일이 없다"))?.len();
+            return Ok(view(ViewSource::Local(file, size)));
+        }
         if path.split('/').any(|c| c.starts_with('.') && c != "." && c != "..") {
             return Err(err(ErrorCode::NotFound, "숨은 결과물은 열지 않는다"));
         }

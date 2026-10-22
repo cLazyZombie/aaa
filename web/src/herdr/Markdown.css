@@ -301,6 +301,10 @@
   height: auto;
 }
 
+.markdown-video-wrap { display: block; position: relative; max-width: 960px; }
+.markdown-video { display: block; width: 100%; max-width: 960px; max-height: 65vh; background: #111; }
+.markdown-video-play { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); }
+
 /* an image holds its box until it decodes (Markdown.tsx ReservedImage, lib/imageBox.ts): the wrapper
    is the box while the bytes arrive and after a failure, and gives it up once the picture is in, so
    the image renders bare and nothing around it is laid out anew */

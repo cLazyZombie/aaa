@@ -7470,3 +7470,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증.** E2E87에서 실제 host·agent와 그림·표가 긴 질문을 준비해 Chromium·WebKit × 데스크톱·휴대폰 × 밝음·어두움의 8조합으로 질문·Markdown 보고서·thread·할 일·설정의 양 끝을 검사하고 캡처한다. 본문 높이·문서 잠금·끝단 wheel 뒤 바깥 위치와 왼쪽 목록 scrollTop을 확인한다. Safari OS 고무줄의 headless 재현 한계와 그림 lazy 로드 대기는 [testing](testing.md)에 기록한다. FRONT_API 1.109·AGENT_LINK 1.11은 유지한다. 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.
 
 - **착지 통합.** 승인 기준 origin/main `4fe5937c`의 마지막 §8.446·FRONT_API 1.109·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 직접 확인했다. main의 공개 포트 변경·실행 모델 요약·Windows 한 줄 설치와 부분 적용 재개를 보존한다. 이번 기획은 빈 §8.447, 새 E2E87(89파일)을 쓰고 API·link는 유지한다. 자기 worktree 전용 target으로 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI 감시는 별도로 맡으며 여기서는 기다리지 않는다.
+
+### 8.448 질문·보고 본문 영상과 WebKit 첨부 인증(t-0767)
+
+- 사용자 10-22: 질문 카드의 영상 링크에서 `unauthorized`와 깨진 한글 오류를 확인했다. 영상은 카드에서 바로 재생하고 agent 안내에도 문법을 넣는다.
+- `![시안](library/preview/a.png)`와 나란히 `![시안 영상](library/preview/a.mp4)`를 쓴다. mp4·webm의 그림 문법과 기존 링크 문법 모두 본문에 controls·muted·playsinline 플레이어를 표시한다. metadata를 미리 읽고 재생 단추 한 번으로 그 자리에서 시작한다. 자동 재생·반복은 기본으로 켜지 않는다. 선택지 안 영상 조작은 답을 선택하지 않는다. coordinator 안내 원문·thread brief·library 문서에 형식·5~10초/10 MiB 권장과 예시를 둔다.
+- 웹 응답의 질문 `files_base`는 인증한 기기·질문/hash 또는 답한 사본에 묶인 2시간 `/v/<권한>/` 경로다. 목록 갱신은 같은 기기의 유효 경로를 재사용하고, HTTP 응답과 WebSocket thread 사건에 같은 변환을 적용한다. 기존 CLI·DB의 인증 API 경로는 유지한다. 읽을 때마다 원래 질문 hash·사본·안전한 상대 경로를 검사한다. 기기 폐기·만료 후 읽기 거부와 Range·HEAD를 유지한다. 질문 첨부 경로를 보고서 task 링크로 풀지 않는다.
+- origin 없는 sandbox·앱 API 차단·쿠키 없는 GET/HEAD를 유지한다. WebKit의 opaque origin `'self'` 판정 문제를 피하도록 보고서 리소스 CSP는 정확한 origin과 자기 `/v/<권한>/` 폴더를 명시하고 frame-ancestors는 self를 유지한다. JSON 오류는 `application/json; charset=utf-8`이다. 질문 HTML의 `#A` 같은 조각을 보존한다.
+- 새 E2E88은 실제 H.264 영상으로 Chromium·WebKit × 데스크톱·휴대폰의 카드·선택지·HTML iframe·새 탭·직접 MP4·보고 본문을 검사한다. ready/play/timeupdate/seeked로 끝내며 고정 sleep·실패 재시도는 없다. 별도 실기 Mac Safari·iPhone에서의 재생은 headless WebKit 결과와 구별한다. FRONT_API 1.109·AGENT_LINK 1.11의 타입은 그대로이며 웹 `files_base`의 읽기 경로 구현만 바뀐다. 번호는 착지 때 main과 다시 대조한다.
+
+- **착지 통합.** 승인 기준 origin/main `8e2581a6`의 마지막 §8.447·FRONT_API 1.109·AGENT_LINK 1.11·E2E87(89파일)을 확인했다. 공개 포트·저장 링크 이전, 실행 모델 요약, Windows 한 줄 설치·부분 적용 재개, 본문 스크롤 격리를 보존한다. 이번 변경은 §8.448과 E2E88(90파일)을 사용하고 API·link는 유지한다. 자기 worktree의 실제 target으로 전체 ci-local·공개 검사·Linux Clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI는 기다리지 않고 보고한다.

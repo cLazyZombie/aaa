@@ -3,13 +3,44 @@
 보고서는 host가 `/v/`에서 같은 sandbox·서명 링크 규칙으로 보여 준다. 공유 링크는 기본 30일이며 폐기할 수 있다.
 만료·폐기돼도 pairing한 앱에서는 「앱에서 열기」로 본다.
 
+## 질문 카드·보고 본문에 영상 넣기
+
+[질문 작성 문서](questions.md)와 같이 그림과 같은 문법으로 library의 영상을 본문에 넣는다. 질문에서는 반드시 `## Questions` 안에 넣는다.
+
+```markdown
+## Questions
+### 1. 시안 동작
+![시안](library/preview/a.png)
+![시안 영상](library/preview/a.mp4)
+
+- A 적용한다 (추천) — 영상의 동작을 적용한다
+- B 고친다 — 고칠 점을 글로 적는다
+```
+
+카드·보고 본문에서 영상의 재생 단추를 한 번 누르면 새 탭 없이 바로 재생한다. `mp4`·`webm`의
+`![]()`와 기존 `[시안 영상](library/preview/a.mp4)` 모두 controls·muted·playsinline 재생기로 표시한다.
+멈춤·탐색·음소거 해제는 재생기에서 한다. 기본 자동 재생·반복은 없으며 답을 골라도 영상 재생으로 선택이 바뀌지 않는다.
+H.264 MP4(yuv420p, faststart)를 권장한다. 시안은 5~10초·10 MiB 이하를 목표로 하고, 긴 자료는 장면별로 나누어
+길이·용량·비교할 점을 적는다. WebM은 보조 형식으로 쓸 수 있지만 Safari용 MP4를 우선한다.
+이는 작성 권장 기준이며 업로드·회수의 실제 상한은 별도다. 답한 질문 사본의 합계 상한은 64 MiB다.
+
+HTML 보고서는 `<video controls muted playsinline preload="metadata" src="preview/a.mp4"></video>`로 넣는다.
+소리 없는 짧은 시안의 자동 반복은 움직임 비교용 HTML에서만 명시적으로 선택하는 것을 권한다. 이때
+`autoplay loop muted playsinline`과 멈춤 controls를 주고 `prefers-reduced-motion`이면 자동 재생하지 않는다.
+일반 질문 카드는 정지 화면 비교·여러 영상의 다운로드·접근성을 위해 누르면 재생을 기본으로 한다.
+[WebKit 재생 정책](https://webkit.org/blog/6784/new-video-policies-for-ios/)에 따라 muted와 playsinline을 함께 쓴다.
+
+질문 첨부도 인증한 웹 기기에 발급한 2시간 `/v/<권한>/` 경로로 읽는다. 새 탭·sandbox 하위 미디어·Range는
+기기 cookie 없이 그 질문/hash 또는 답한 사본만 읽으며, 기기 폐기·권한 만료·질문 교체 후에는 열리지 않는다.
+앱 API 주소를 영상 주소로 직접 쓰거나 sandbox에 `allow-same-origin`을 더하지 않는다.
+
 ## 웹 보고서 작성과 sandbox
 
 정책과 착지 기록은 [plan §8.381](plan.md#8381-보고서-자기-폴더-fetch음원-혼합10-21-t-0589)에 둔다.
 
 보고서 HTML은 **origin 없는 sandbox**에서 script를 실행한다. 앱과 같은 주소라도 cookie·localStorage·sessionStorage·
 부모 화면·앱 API에 접근할 수 없다. `allow-same-origin`을 주지 않는다. 외부 CDN·외부 fetch·WebSocket·EventSource·
-service worker·폼 전송도 사용할 수 없다. script·CSS·글꼴·그림·음원·JSON·CSV는 보고서 폴더에 함께 두고 상대 URL로 쓴다.
+service worker·폼 전송도 사용할 수 없다. script·CSS·글꼴·그림·영상·음원·JSON·CSV는 보고서 폴더에 함께 두고 상대 URL로 쓴다.
 thread는 library 파일을 먼저 쓰고 report.md를 마지막에 쓴다. symlink·숨은 파일·폴더 밖 파일은 가져오지 않는다.
 
 `<img src="images/chart.png">`, `<audio controls src="audio/tone.wav">`, `<script src="play.js">`와
@@ -20,7 +51,7 @@ thread는 library 파일을 먼저 쓰고 report.md를 마지막에 쓴다. syml
 fetch 기본 credentials(`same-origin`)는 opaque origin에서 쿠키를 보내지 않는다. 명시하려면 `credentials: 'omit'`을 쓴다.
 `credentials: 'include'`·XHR `withCredentials`는 쓰지 않는다. 서버는 `Origin: null`의 유효한 파일 읽기에만 CORS를 주고
 credential 허용 헤더·preflight·redirect를 주지 않는다. 쿠키를 동반한 opaque 요청과 opaque 앱 API 요청은 서버에서도 거부한다.
-기기 쿠키의 SameSite=Strict·HttpOnly(HTTPS는 Secure)도 유지한다. `/f/` 페이지 보기와 질문 첨부 HTML은 별도 정책으로 fetch가 막혀 있다.
+기기 쿠키의 SameSite=Strict·HttpOnly(HTTPS는 Secure)도 유지한다. `/f/` 페이지 보기는 별도 정책으로 fetch가 막혀 있다. 질문 첨부 HTML은 그 질문의 `/v/<권한>/` 폴더 안에서만 읽는다.
 `Origin: null` 자체를 신뢰하는 것은 아니다. 파일을 읽을 권한은 매번 검증하는 `/v/<권한>/` 링크에 있고, 그 링크를 아는
 다른 opaque 문서도 같은 파일을 읽을 수 있다. 링크는 원래부터 쿠키 없이 공유할 수 있는 읽기 권한이므로 비밀로 다룬다.
 

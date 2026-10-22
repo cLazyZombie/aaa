@@ -22,3 +22,9 @@ test("선택지 뒤 설명의 자료 링크도 카드 안에서 연다",()=>{
  const got=questionMaterials({origin,base:"/api/question/hash/",items:[{text:"아이콘",choices:[],after:"[E안 자료](library/icon-e.html)"}]});
  assert.deepEqual(got.map((r)=>r.url),["/api/question/hash/library/icon-e.html"]);
 });
+
+// HTML 장면 조각은 파서→질문 자료→실제 링크까지 남긴다.
+test("library HTML의 장면 조각을 보존한다", () => {
+  const got = material('[비교](library/preview/index.html#A)', { base: '/v/cap/' });
+  assert.equal(got[0].url, '/v/cap/library/preview/index.html#A');
+});

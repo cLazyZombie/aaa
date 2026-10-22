@@ -415,14 +415,18 @@ coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 
 ```markdown
 ## Questions
 ### 1. 진행할 안
-지금 상태와 선택에 필요한 근거를 Markdown·표·그림으로 이 질문 안에 쓴다.
+지금 상태와 선택에 필요한 근거를 Markdown·표·그림·영상으로 이 질문 안에 쓴다.
+
+![시안](library/preview/a.png)
+![시안 영상](library/preview/a.mp4)
 
 - A 진행한다 (추천) — 검증한 안을 적용한다
 - B 보류한다 — 지금 상태를 유지한다
 ```
 
 그림·파일은 먼저 `aaa library publish <폴더> --name <이름>`으로 올리고 본문에서 `library/<이름>/<파일>`로 가리킨다.
-예: `![시안](library/preview/a.png)`, `r-0001`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 r-NNNN과 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
+예: `![시안](library/preview/a.png)`, `![시안 영상](library/preview/a.mp4)`, `r-0001`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 r-NNNN과 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
+영상은 링크만 두지 말고 위 `![]()` 문법으로 질문 안에 넣는다. 카드·보고 본문의 재생 단추를 한 번 누르면 그 자리에서 재생한다(controls·muted·playsinline, 자동 재생 없음). 기존 `[영상](library/preview/a.mp4)`도 재생기로 표시한다. H.264 MP4(yuv420p·faststart)를 권장하며 짧은 시안은 5~10초·10 MiB 이하를 목표로 한다. 긴 영상은 나누고 길이·용량·설명을 함께 쓴다. WebM도 표시하지만 Safari용 MP4를 우선한다.
 카드 답은 coordinator inbox의 `question answered`에 선택 요약과 답 원문으로 오며 post도 자동으로 답함이 된다.
 다시 전달하거나 같은 질문을 또 묻지 않는다. 선택지가 없는 기존 평문 post도 그대로 쓸 수 있다.
 질문마다 프로젝트별 `q-1000`부터 짧은 ID를 받는다(t=thread, q=질문, d=할 일, r=보고서).
