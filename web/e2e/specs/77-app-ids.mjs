@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { root, AA, aaa, step, until, domIs, waitOutput, coordinatorPost, browser, webkit, pairPage, shot } from "../lib/harness.mjs";
+import { root, AA, aaa, step, until, domIs, inTime, waitOutput, coordinatorPost, browser, webkit, pairPage, shot } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const go = (p, hash) => p.evaluate((hash) => { location.hash = hash; }, hash);
@@ -26,6 +26,7 @@ const chat = async (p, pane = coordinatorPane) => {
 
 export default async function ({ page }) {
   let t, d, other, q, threadQ, r, text, reportHash;
+  let releaseTasks;
   await step("준비: 실제 thread·할 일·coordinator 질문·보고서 번호와 대화 원문", async () => {
     aaa("project", "create", "demo");
     aaa("project", "set", "demo", "repos.add", "/srv/rc@labA");
@@ -63,13 +64,33 @@ export default async function ({ page }) {
       aaa("pane", "run", pane, `post-probe ${dir}/hook.sh`);
       await waitOutput(pane, `id-hooked-${tag}`);
     }
+    // 실제 host 응답을 보류해 목록보다 저장소 메뉴를 먼저 연다. 고정 지연 없이 CI의 응답 순서를 재현한다.
+    let tasksArrived;
+    const tasksHeld = new Promise((resolve) => { tasksArrived = resolve; });
+    const tasksGate = new Promise((resolve) => { releaseTasks = resolve; });
+    await page.route("**/api/v1/call", async (route) => {
+      if (route.request().postDataJSON()?.op !== "tasks") return route.continue();
+      const response = await route.fetch();
+      tasksArrived();
+      await tasksGate;
+      await route.fulfill({ response });
+    });
     await page.reload();
+    await inTime(tasksHeld, 20_000, "실제 할 일 응답 보류");
   });
 
   await step("할 일 깊은 주소: 거르기를 풀고 행·상세 표시, 새로고침·프로젝트 주소·다른 프로젝트·없는 번호", async () => {
     await go(page, "tasks");
-    await page.getByTestId("tasks-repo").click();
+    try {
+      await page.getByTestId("tasks-repo").click();
+      await page.getByRole("menuitemcheckbox", { name: /^전체/ }).waitFor();
+      assert.equal(await page.getByTestId("tasks-view").getAttribute("data-tasks-sha"), "", "목록 도착 전 메뉴 열기");
+      assert.equal(await page.getByRole("menuitemcheckbox", { name: /^작업 폴더/ }).count(), 0);
+    } finally { releaseTasks(); }
+    await domIs(page, "보류한 목록의 행 표시", (id) => !!document.querySelector(`.task-row[data-short-id="${id}"]`), d);
     await page.getByRole("menuitemcheckbox", { name: /^작업 폴더/ }).click();
+    assert.equal(await page.getByTestId("tasks-repo").getAttribute("data-repo"), "작업 폴더");
+    assert.equal(await page.evaluate(() => localStorage.getItem("aaa:tasks:repo:demo")), "작업 폴더", "도착한 프로젝트에 거르기 기억");
     await page.getByTestId("tasks-filter-mine").click();
     await page.getByTestId("tasks-search").fill("일치하지 않는 검색");
     await go(page, `task=${d}`); await picked(page, d);

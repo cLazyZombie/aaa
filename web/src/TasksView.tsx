@@ -1014,7 +1014,8 @@ export function TasksView({
           </button>
         </div>
       )}
-      {menu && <RowMenu anchor={menu.anchor} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
+      {/* 저장소 메뉴는 목록 응답 전에도 열 수 있다. 열린 동안에도 최신 항목·개수·프로젝트의 선택 함수를 쓴다. */}
+      {menu && <RowMenu anchor={menu.anchor} title={menu.title} items={menu.key === "repo" ? repoItems() : menu.items} onClose={() => setMenu(null)} />}
       {dialog?.kind === "conflict" && (
         <ConflictDialog
           conflict={dialog.conflict}
