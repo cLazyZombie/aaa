@@ -1,6 +1,7 @@
 // 웹 E2E 설정: 터미널 글꼴·구독 사용량·글자 크기·설정 쪽(넓은 창·휴대폰·iPad)·밀도와 인터페이스 글자 크기.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 06-settings(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
+import { panelRows } from "../lib/panel-rows.mjs";
 import path from "node:path";
 import {
   shots, root, aaa, domIs, webkit, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
@@ -13,6 +14,7 @@ export default async function ({ ctl, page }) {
       for (const [engine, width, theme, name] of [
         [browser, 1280, "light", "desktop-light"], [browser, 1280, "dark", "desktop-dark"],
         [browser, 980, "light", "narrow-desktop"], [browser, 320, "dark", "phone-small"],
+        [wk, 1280, "light", "webkit-desktop-light"], [wk, 1280, "dark", "webkit-desktop-dark"],
         [wk, 390, "light", "phone-light"], [wk, 390, "dark", "phone-dark"],
       ]) {
         const pg = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { colorScheme: theme, serviceWorkers: "block" })).page;
@@ -31,6 +33,31 @@ export default async function ({ ctl, page }) {
           const appearance = await openSettings(pg, "모양");
           await appearance.getByRole("group", { name: "테마", exact: true }).getByRole("button", { name: theme === "light" ? "밝게" : "어둡게", exact: true }).click();
           await until("테마 적용", () => pg.evaluate((want) => document.documentElement.dataset.theme === want, theme));
+          // 메뉴는 앱 왼쪽 패널에, 내용만 main 전체 폭에 놓인다. 조작의 실제 hit target도 검사한다.
+          const layout = await pg.evaluate(() => {
+            const nav = document.querySelector('nav[aria-label="설정"]');
+            const body = document.querySelector(".settings-body");
+            const main = document.querySelector("main").getBoundingClientRect();
+            const bounds = body.getBoundingClientRect();
+            const shell = document.querySelector(".sidebar-shell");
+            const controls = [...body.querySelectorAll('[aria-label="테마"] button, #settings-palette, [aria-label="밀도"] button')];
+            return {
+              sidebar: !!nav?.closest("#sidebar-column"),
+              title: shell.querySelector(".list-title").textContent,
+              color: nav && getComputedStyle(nav).backgroundColor === getComputedStyle(shell).backgroundColor,
+              full: Math.abs(bounds.left - main.left) < 1 && Math.abs(bounds.right - main.right) < 1,
+              controls: controls.length,
+              clipped: controls.some((el) => {
+                const r = el.getBoundingClientRect();
+                const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+                return r.width <= 0 || r.left < main.left || r.right > main.right || !el.contains(hit);
+              }),
+            };
+          });
+          if (!layout.full || layout.controls < 6 || layout.clipped || (width > 768 && (!layout.sidebar || layout.title !== "설정" || !layout.color)))
+            throw new Error(`${name}: 설정 메뉴·조작 배치 ${JSON.stringify(layout)}`);
+          if (width > 768) await panelRows(pg, ".settings-tab");
+          await shot(pg, `settings-appearance-${name}`);
           await appearance.getByRole("button", { name: "설정 닫기" }).click();
           await until("테마 설정 닫힘", () => !new URL(pg.url()).searchParams.has("settings"));
           let screen = await openSettings(pg, "폰 및 기기");
@@ -89,7 +116,7 @@ export default async function ({ ctl, page }) {
           await pg.goForward();
           await screen.waitFor();
           // 앞으로는 휴대폰에서 목록부터 복원될 수 있다.
-          if (await screen.getByRole("tab", { name: "폰 및 기기" }).isVisible()) await screen.getByRole("tab", { name: "폰 및 기기" }).click();
+          if (await screen.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "폰 및 기기" }).isVisible()) await screen.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "폰 및 기기" }).click();
           await screen.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
           await screen.getByRole("button", { name: "설정 닫기" }).click();
           await until("다시 닫기 주소 복귀", () => pg.url() === home);
@@ -408,7 +435,7 @@ export default async function ({ ctl, page }) {
     await until("순서", async () => JSON.stringify(await chips()) === JSON.stringify(["codex 90%", "claude 80%"]));
     if (shots) await dp.screenshot({ path: path.join(shots, "settings-dialog.png") });
     // 데스크톱에서 입력줄 고르기(D1에서 남은 빈 곳): 입력 방식은 「터미널」 쪽
-    await dlg.getByRole("tab", { name: "터미널" }).click();
+    await dlg.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "터미널" }).click();
     await dlg.getByLabel("입력 방식").selectOption("line");
     await dp.keyboard.press("Escape");
     await until("설정 닫힘", async () => (await dp.getByRole("region", { name: "설정" }).count()) === 0);
@@ -529,13 +556,13 @@ export default async function ({ ctl, page }) {
     await until("고른 줄에 focus", async () => (await focused(dp)) === "tab:모양").catch(async (e) => bad.push(`${e.message}: ${await focused(dp)}`));
     await dp.keyboard.press("ArrowDown");
     await dlg.getByRole("tabpanel", { name: "채팅" }).waitFor();
-    if ((await dlg.getByRole("tab", { name: "채팅" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
+    if ((await dlg.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "채팅" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
     // 마지막 쪽은 「저장소」(관리 GUI W4, plan §8.343: 「폰 및 기기」 뒤에 「이 aaa」·「저장소」)
     await dp.keyboard.press("End");
     await dlg.getByRole("tabpanel", { name: "저장소" }).waitFor();
     await dp.keyboard.press("Home");
     await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
-    await dlg.getByRole("tab", { name: "알림" }).click();
+    await dlg.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "알림" }).click();
     await dlg.getByRole("tabpanel", { name: "알림" }).waitFor();
     await shot(dp, "settings-pages-desktop");
     await dp.keyboard.press("Escape");
@@ -672,7 +699,8 @@ export default async function ({ ctl, page }) {
     const bad = [];
     const closed = (p) => until("설정 닫힘", async () => (await p.getByRole("region", { name: "설정" }).count()) === 0);
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true })).page;
-    await pp.getByTestId("machine-labA").waitFor({ state: "attached" });
+    await pp.getByTestId("terminal").waitFor();
+    await domIs(pp, "처음 pane 주소 선택", () => location.hash.startsWith("#pane="));
     const home = pp.url();
     // 뒤로 두 번: 쪽 → 목록 → 닫힘. 앱은 그 자리(주소·목록)에 남고, focus는 톱니로
     await openSettings(pp, "터미널");
@@ -687,10 +715,10 @@ export default async function ({ ctl, page }) {
       p.locator(".settings-dialog").evaluate((d, sel) => [...d.querySelectorAll(sel)].filter((e) => e.getClientRects().length).map((e) => [Math.round(e.getBoundingClientRect().width), Math.round(e.getBoundingClientRect().height)]), sel);
     await inList(pp, "settings-open");
     const dlg = pp.getByRole("region", { name: "설정" });
-    await dlg.getByRole("tab", { name: "터미널" }).waitFor();
+    await dlg.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "터미널" }).waitFor();
     const tabs = await sizes(pp, ".settings-tab");
     if (!tabs.length || tabs.some(([, h]) => h < 48)) bad.push(`쪽 줄 ${JSON.stringify(tabs)}`);
-    await dlg.getByRole("tab", { name: "터미널" }).click();
+    await dlg.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "터미널" }).click();
     await dlg.getByRole("tabpanel", { name: "터미널" }).waitFor();
     const icons = await sizes(pp, ".icon-button");
     const btns = await sizes(pp, ".btn");
@@ -699,7 +727,7 @@ export default async function ({ ctl, page }) {
     if (!btns.length || btns.some(([, h]) => h < 40)) bad.push(`글 단추 ${JSON.stringify(btns)}`);
     if (!toggles.length || toggles.some(([w, h]) => w < 48 || h < 40)) bad.push(`스위치 ${JSON.stringify(toggles)}`);
     await dlg.getByRole("button", { name: "설정으로 돌아가기" }).click();
-    await dlg.getByRole("tab", { name: "모양" }).click();
+    await dlg.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "모양" }).click();
     const segs = await sizes(pp, ".segmented > button");
     console.log(`     휴대폰 설정 조작: 쪽 줄 ${tabs[0]}, 아이콘 ${icons[0]}, 글 단추 ${btns[0]}, 스위치 ${toggles[0]}, 여럿 중 하나 ${segs[0]}(참고 --control-h − 6px)`);
     // 설정은 본문이다. 머리를 아래로 밀어도 닫히거나 주소가 바뀌지 않는다.

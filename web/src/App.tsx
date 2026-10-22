@@ -960,8 +960,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 앱 단축키(herdr-web-ui App.tsx 1185~1279줄 `actions`·`useShortcuts`): 목록 단추와 같은 일을 부른다. 고른 pane의 일은 그
   // TermView가 단 paneControls로. aaa에 그 화면이 없는 동작은 단축키가 꺼져 있어(settings.ts AAA_SHORTCUTS) 불리지 않는다.
   const [settingsOpen, setSettingsOpen] = useState(() => settingsFromUrl() !== null);
+  const [settingsNavigation, setSettingsNavigation] = useState<HTMLDivElement | null>(null);
+  useEffect(() => { if (settingsOpen) setCollapsed(false); }, [settingsOpen]);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
-  const openSettings = useCallback(() => { setDrawerOpen(false); setSettingsOpen(true); }, []);
+  const openSettings = useCallback(() => { setDrawerOpen(false); setCollapsed(false); setSettingsOpen(true); }, []);
   const paneControls = useRef<PaneControls | null>(null);
   const actions = useMemo<AppActions>(() => {
     const none = () => {};
@@ -1148,8 +1150,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const automationOpen = automationTarget(automationAt);
   // 넓은 창에서 막대 「답할 것」으로 그 패널을 펼치면 본문도 「답할 것」(마지막으로 본 카드)
   const showPanel = (next: SidebarPanel) => {
-    const opening = collapsed || next !== panelRef.current;
-    pickPanel(next);
+    const opening = settingsOpen || collapsed || next !== panelRef.current;
+    if (settingsOpen) {
+      closeSettings();
+      setPanel(next);
+      setCollapsed(false);
+    } else pickPanel(next);
     if (next === "asks" && wideScreen && opening && !asksShown) goSel(asksAt.current);
   };
   const [taskFocus, setTaskFocus] = useState<TaskFocusRequest>({ seq: 0, title: null });
@@ -1341,7 +1347,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <ActivityBar
           coordinator={coordinatorButton}
           panel={panel}
-          shown={sidebarShown}
+          shown={sidebarShown && !settingsOpen}
           onPanel={showPanel}
           badges={badges}
           reports={reportsShown && !settingsOpen}
@@ -1359,7 +1365,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         />
         <div id="sidebar-column" className="sidebar-shell">
         <header className="list-head">
-          <h2 className="list-title" data-testid="sidebar-title">{PANEL_LABEL[panel]}</h2>
+          <h2 className="list-title" data-testid="sidebar-title">{settingsOpen && wideScreen ? "설정" : PANEL_LABEL[panel]}</h2>
           {role === "reader" && <span className="list-role">보기 권한</span>}
           <span className="spacer" />
           <button
@@ -1373,6 +1379,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </button>
         </header>
         {/* 패널(목록)만 굴러가고 머리와 바닥 줄(사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
+        <div ref={setSettingsNavigation} className="settings-navigation-slot" hidden={!settingsOpen || !wideScreen} />
+        <div className="sidebar-existing" hidden={settingsOpen && wideScreen}>
         <ErrorBoundary area="목록" resetKeys={[panel]}>
         <Sidebar
           panel={panel}
@@ -1411,6 +1419,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           }
         />
         </ErrorBoundary>
+        </div>
         <ListFoot />
         </div>
         <SidebarResizer width={sidebarWidth} onResize={resizeSidebar} />
@@ -1423,7 +1432,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <PasskeyGesture />
         {settingsOpen && (
           <ErrorBoundary area="설정" onDismiss={closeSettings}>
-            <SettingsScreen role={role} device={device} machines={machines} onSignedOut={signedOut} onClose={closeSettings} onOpenPane={(id) => goSel(`pane:${id}`)} />
+            <SettingsScreen navigationTarget={settingsNavigation} role={role} device={device} machines={machines} onSignedOut={signedOut} onClose={closeSettings} onOpenPane={(id) => goSel(`pane:${id}`)} />
           </ErrorBoundary>
         )}
         <div className="view-content" hidden={settingsOpen}>
@@ -1852,7 +1861,8 @@ function SettingsGear({ open: settingsOpen, onOpen: setSettingsOpen, onClick }: 
   );
 }
 
-function SettingsScreen({ role, device, machines, onSignedOut: signedOut, onClose, onOpenPane }: {
+function SettingsScreen({ navigationTarget, role, device, machines, onSignedOut: signedOut, onClose, onOpenPane }: {
+  navigationTarget: HTMLElement | null;
   role: DeviceRole;
   device: string;
   machines: MachineView[];
@@ -1871,7 +1881,7 @@ function SettingsScreen({ role, device, machines, onSignedOut: signedOut, onClos
       signedOut();
     }
   }, [signedOut]);
-  return <SettingsDialog role={role} device={device} machines={machines} onSignOut={signOutHere} onClose={onClose} onOpenPane={onOpenPane} />;
+  return <SettingsDialog navigationTarget={navigationTarget} role={role} device={device} machines={machines} onSignOut={signOutHere} onClose={onClose} onOpenPane={onOpenPane} />;
 }
 
 /** 사이드바 바닥 줄(모든 패널 공통): 구독 사용량, 오른쪽 끝에 붙는다(사용자 요청 10-19 「사용량은 오른쪽으로 붙여」).

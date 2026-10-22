@@ -15,7 +15,7 @@ export const labEnv = { CODEX_HOME: codex };
 const hostToml = `${root}/c/host.toml`;
 const read = (f) => fs.readFileSync(f, "utf8");
 const tab = async (dialog, name) => {
-  await dialog.getByRole("tab", { name }).click();
+  await dialog.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name }).click();
   await dialog.getByRole("tabpanel", { name }).waitFor();
 };
 const row = (scope, key) => scope.getByTestId("safety-rows").locator(`[data-key="${key}"]`);
@@ -218,7 +218,7 @@ export default async function ({ page }) {
     if (wide) throw new Error("profile 쪽이 가로로 넘친다");
     await shot(ph, "61-profiles-phone");
     await ph.getByRole("button", { name: "설정으로 돌아가기" }).click();
-    await d.getByRole("tab", { name: "안전" }).click();
+    await d.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "안전" }).click();
     d = ph.getByRole("region", { name: "설정" });
     await d.getByTestId("settings-safety").getByTestId("safety-rows").waitFor();
     await shot(ph, "61-safety-phone");

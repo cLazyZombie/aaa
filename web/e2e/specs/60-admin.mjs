@@ -52,7 +52,7 @@ fs.writeFileSync(`${root}/up/a.md`, "# a\n");
 fs.writeFileSync(`${root}/up/b.md`, "# b\n");
 
 const tab = async (dialog, name) => {
-  await dialog.getByRole("tab", { name }).click();
+  await dialog.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name }).click();
   await dialog.getByRole("tabpanel", { name }).waitFor();
 };
 const status = (url) => fetch(new URL(url, base)).then((r) => r.status);
