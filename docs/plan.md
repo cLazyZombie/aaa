@@ -7365,3 +7365,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 사용자 결정에 따라 workspace와 그 아홉 package의 lockfile 판을 0.1.4로 맞춘다. 외부 의존성 판·실행 코드·설치 계약은 바꾸지 않는다. main 42dc637d의 Windows JobObjects 일반 의존성과 dev 없는 production release 빌드 검사를 포함한다.
 - 기존 v0.1.3 tag는 지우거나 옮기지 않는다. 버전 후보 검증·착지 창·main 병합 뒤 정확한 대상 main의 CI 네 job 전체 성공을 확인하고, 승인된 이번 한 번 v0.1.4 tag push·release 게시를 진행한다. release workflow 전체 성공과 publish, 실제 Windows bootstrap 다운로드의 SHA를 source·manifest·SHA256SUMS와 대조한 뒤에만 사용자 인수를 요청한다. 빌드가 실패하면 tag를 유지하고 원인을 보고한다.
 - pc-main 안내는 준비물·고정 판 다운로드·명령·확인·되돌리기·문제 로그를 유지하며 실제 내려받은 판/SHA로 채워 [검수 대기]로 보고한다. CI와 교차 검증은 실제 사용자 PC의 SCM logon·Session 0·부팅·LSA/UAC·조직 정책 인수를 대신하지 않는다. main의 마지막 §8.435·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인해 빈 §8.436을 쓰고 API/E2E 번호는 유지한다.
+
+### 8.437 맨 q-ID도 질문 상태 칩으로 표시(t-0730)
+
+- **목적·원인.** 대화의 `(q-1148·q-1149)`도 Markdown 질문 링크와 같은 아이콘·답변 상태·색으로 보인다. `splitAppIds`는 `·`가 붙은 각 ID를 이미 인식하지만, 맨 ID 경로의 `AppIdLink`가 질문까지 일반 링크로 그려 상태 칩 렌더러를 거치지 않았다.
+- **변경.** 맨 ID의 공통 렌더러에서 question 종류를 `AppRefChip`으로 보낸다. 기존 Markdown 질문 링크와 같은 `look`·`open`을 사용하므로 thread·coordinator·보존한 답의 상태와 카드 이동을 함께 따른다. thread·task·report ID는 원문 링크와 보조 키/가운데 누름을 유지한다. host가 알려 준 대상만 변환하며 없는 ID·주소·코드 블록은 기존 규칙대로 둔다.
+- **검증.** 기존 E2E69에 맨 ID의 문장·괄호·붙은 `·`/쉼표를 추가한다. 명시 링크와 모든 칩의 아이콘·본문·밝음/어두움 CSS 색, 열림→답함→새 보고 뒤 답 보존과 기록 삭제를 비교하고 각 맨 ID의 정확한 카드 이동을 확인한다. E2E77의 coordinator·thread 대화/보고서·코드/주소 제외·질문 이동·일반 ID 링크 검사는 유지한다. 구분자 유닛 시험과 전체 ci-local·공개 검사 후 착지 창을 기다린다. 새 API·backend 변화가 없어 FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 유지한다.

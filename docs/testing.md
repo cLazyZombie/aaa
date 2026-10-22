@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## 맨 q-ID도 질문 상태 칩으로 표시(t-0730, plan §8.437)
+
+- `node --test web/test/appIds.test.mjs`: 문장·괄호·붙은 `·`/쉼표·줄바꿈에서 두 q-ID를 각각 인식하고 주변 글자를 보존한다. 주소·경로·없는 ID 제외 검사는 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 69-coordinator-questions,77-app-ids --workers 1`: 실제 host·agent·Claude 대화에서 Markdown 링크·옛 참조·맨 ID를 비교한다. E2E69는 thread·coordinator의 네 질문을 문장·붙은 괄호·쉼표 안에 넣고 모든 칩의 아이콘·본문·상태와 밝음/어두움 배경·아이콘 색 일치를 확인한다. 각 맨 ID를 눌러 정확한 q-ID와 카드로 이동하는지도 검사한다.
+- 열림→답함→새 보고 뒤 답 보존은 새로고침 없이 확인한다. 답 기록까지 삭제해 host 목록에서 사라진 맨 ID는 평문, 명시 참조는 중립 칩이라는 기존 규칙을 유지한다. E2E77은 coordinator·thread 대화와 보고서의 질문 칩, 코드 블록·외부 링크 안의 칩 제외, 질문 이동·답 기록과 나머지 ID의 기존 링크/가운데 누름을 확인한다.
+- 고정 sleep·실패 재시도·시한 변경 없이 DOM·주소·host 사건으로 끝낸다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사이며 착지 창 전 병합·push는 하지 않는다. API와 E2E 파일 번호는 바꾸지 않는다.
+
 ## 작업 목록 메뉴의 요약(t-0721, plan §8.434)
 
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 28-thread-summary --workers 1`: 실제 host·agent에 요약 있는 thread와 없는 thread를 만든다. 작업 목록 점 세 개 메뉴의 「요약」으로 thread 머리 단추와 같은 상세가 열리는지 확인한다.
