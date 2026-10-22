@@ -2,7 +2,7 @@
 // project.rs `repo_edit_replaces_in_place_and_settings_view_reads_it`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canOperate, checkSetting, inboxOpen, needsAnswer, parseRepoArg, repoArg, repoGroups, resolveDefaults, resolveRequest, threadActions } from "../src/operateModel.ts";
+import { canOperate, canPark, checkSetting, inboxOpen, needsAnswer, parkPending, parseRepoArg, repoArg, repoGroups, resolveDefaults, resolveRequest, threadActions, unparkDefault, unparkWay } from "../src/operateModel.ts";
 
 describe("운영 화면", () => {
   it("설정 읽기·끝내기 미리보기·정리 실행은 1.77 이상 host만", () => {
@@ -10,16 +10,40 @@ describe("운영 화면", () => {
     for (const v of ["1.77", "1.90"]) assert.equal(canOperate(v), true, v);
   });
   it("thread 동작: 도는 세션은 다시 시작하지 않고, brief는 받기 전에만 다시 보내며, 데려온 thread는 다시 띄우지 않으며, 끝낸 thread는 다시 열기만", () => {
-    const open = { status: "open", thread_kind: "worktree", cleanup_pending: undefined, brief: "pending" };
-    assert.deepEqual(threadActions(open, true), { resolve: true, reopen: false, restart: false, brief: true });
+    const open = { status: "open", thread_kind: "worktree", cleanup_pending: undefined, brief: "pending", role: "worker", automation: undefined };
+    assert.deepEqual(threadActions(open, true), { resolve: true, reopen: false, restart: false, brief: true, park: true, unpark: false });
     // 받은 brief는 다시 보내지 않는다
     assert.equal(threadActions({ ...open, brief: "delivered" }, true).brief, false);
-    assert.deepEqual(threadActions(open, false), { resolve: true, reopen: false, restart: true, brief: false });
+    assert.deepEqual(threadActions(open, false), { resolve: true, reopen: false, restart: true, brief: false, park: true, unpark: false });
     assert.equal(threadActions({ ...open, thread_kind: "adopted" }, false).restart, false);
-    assert.deepEqual(threadActions({ ...open, status: "starting" }, false), { resolve: false, reopen: false, restart: false, brief: false });
-    assert.deepEqual(threadActions({ ...open, status: "resolved" }, false), { resolve: false, reopen: true, restart: false, brief: false });
+    assert.deepEqual(threadActions({ ...open, status: "starting" }, false), { resolve: false, reopen: false, restart: false, brief: false, park: false, unpark: false });
+    assert.deepEqual(threadActions({ ...open, status: "resolved" }, false), { resolve: false, reopen: true, restart: false, brief: false, park: false, unpark: false });
     // 정리가 끊긴 thread는 끝내기로 이어 간다
     assert.equal(threadActions({ ...open, status: "resolved", cleanup_pending: true }, false).resolve, true);
+  });
+  it("보류(plan §8.421): 사람이 띄운 열린 일반 thread만 보류하고, 보류한 thread는 다시 시작 대신 이어 하기·끝내기", () => {
+    for (const v of [undefined, null, "1.103"]) assert.equal(canPark(v), false, String(v));
+    assert.equal(canPark("1.104"), true);
+    const open = { status: "open", thread_kind: "worktree", cleanup_pending: undefined, brief: "delivered", role: "worker", automation: undefined };
+    for (const t of [{ ...open, role: "evaluator" }, { ...open, automation: "nightly" }, { ...open, thread_kind: "adopted" }, { ...open, status: "failed" }]) {
+      assert.equal(threadActions(t, true).park, false, JSON.stringify(t));
+    }
+    const parked = { ...open, status: "parked", park: { parked_at_ms: 5 } };
+    assert.deepEqual(threadActions(parked, false), { resolve: true, reopen: false, restart: false, brief: false, park: false, unpark: true });
+    assert.equal(parkPending({ status: "open", park: { parked_at_ms: null } }), true);
+    assert.equal(parkPending({ status: "open", park: undefined }), false);
+    assert.equal(parkPending(parked), false);
+  });
+  it("이어 하기 창: 같은 머신은 같은 대화(잇지 못하면 새 대화), 다른 머신은 새 worktree와 요약 brief. 막히지 않은 보류 머신이 기본", () => {
+    assert.equal(unparkWay({ same: true, conversation: "resume" }, true), "같은 대화를 그대로 잇는다");
+    assert.match(unparkWay({ same: true, conversation: "new" }, true), /같은 자리에서 새 대화/);
+    assert.match(unparkWay({ same: false, conversation: "new", repo: "/r" }, true), /push된 branch로 새 worktree/);
+    assert.match(unparkWay({ same: false, conversation: "new" }, false), /새 작업 폴더/);
+    const a = { machine: "mac-a", same: true, blocked: undefined };
+    const b = { machine: "mac-b", same: false, blocked: undefined };
+    assert.equal(unparkDefault([b, a]), "mac-a");
+    assert.equal(unparkDefault([b, { ...a, blocked: "끊김" }]), "mac-b");
+    assert.equal(unparkDefault([{ ...b, blocked: "push" }, { ...a, blocked: "끊김" }]), null);
   });
   it("끝내기: 위험하거나 미리보기를 모르면 남기기가 기본이고, 남기면 버리기는 보내지 않는다", () => {
     assert.deepEqual(resolveDefaults(null), { keep: true });

@@ -72,6 +72,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa thread adopt --pane <ID> --title "…"` | 이미 띄운 Claude·Codex pane(셸에서 친 것은 감지된 뒤)을 thread로 데려오기(pane은 그대로, 다시 시작·resolve가 pane을 끝내지 않음) |
 | `aaa thread list` · `aaa thread show <id>` | thread 목록 · 보고·Next 보기 |
 | `aaa thread ack <id>` · `aaa thread resolve <id>` | 보고 확인 · 끝내기(worktree 정리) |
+| `aaa thread park <id> [--now] [--note "…"]` · `aaa thread unpark <id> [--machine M] [--dry-run]` | 보류: 자리·pane을 돌려주고 worktree·대화·보고는 남긴다(기본은 thread가 커밋·push·`## Handoff`를 쓴 `[보류 준비됨]` 뒤 닫는다, `--now`는 바로, `--cancel`은 거두기). 이어 하기: 같은 머신은 같은 대화, 다른 머신은 push된 branch로 새 worktree와 요약 brief의 새 대화(§8.421). 웹은 thread 화면 「관리 → 보류·이어 하기」 |
 | `aaa inbox list` · `aaa inbox done <id>` | 보고·질문·끊김 같은 놓치면 안 되는 항목 |
 | `aaa routine list` · `aaa routine runs <이름>` · `aaa routine toggle <이름> --off` | 일정 작업과 PR 사건 routine(`on = "pr"`: thread PR의 check 실패·리뷰에 thread로 글을 보낸다) |
 

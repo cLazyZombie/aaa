@@ -1109,7 +1109,11 @@ skip_copy: boolean,
 /**
  * 집에 다 오지 않았어도 worktree를 지운다(herdr-projects `--discard-uncopied`)
  */
-discard_uncopied: boolean, } | { "op": "thread_stop", project?: string, thread: string, } | { "op": "thread_restart", project?: string, thread: string, resume: boolean,
+discard_uncopied: boolean, } | { "op": "thread_park", project?: string, thread: string, now?: boolean, note?: string, user_request?: string, cancel?: boolean, } | { "op": "thread_unpark", project?: string, thread: string, machine?: string,
+/**
+ * 다른 머신의 저장소 경로(같은 이름의 저장소가 하나뿐이면 생략)
+ */
+repo?: string, dry_run?: boolean, } | { "op": "thread_stop", project?: string, thread: string, } | { "op": "thread_restart", project?: string, thread: string, resume: boolean,
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
@@ -1274,7 +1278,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "unpark_preview" } & UnparkPreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -1423,7 +1427,7 @@ profile: string,
  */
 workspace: string, notes: Array<string>, };
 
-export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
+export type ThreadStatus = "starting" | "open" | "failed" | "resolved" | "parked";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
@@ -1456,7 +1460,7 @@ export type DeployState = "queued" | "running" | "completed" | "failed" | "inter
 
 export type DeployJob = { id: string, project: string, action: DeployAction, state: DeployState, instance: string, executor_pid: number, expected_sha256: string, result: string | null, created_ms: number, updated_ms: number, };
 
-export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "working" | "idle" | "resolved";
+export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "working" | "idle" | "parked" | "resolved";
 
 export type ReportAttention = "completed" | "needs_user";
 
@@ -1467,6 +1471,10 @@ export type ThreadView = { account_selection?: AccountSelection,
  * 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
  */
 over_limit?: ThreadLimitOverride,
+/**
+ * 보류 요청·보류 기록(FRONT_API 1.104). 보류하지 않은 thread와 옛 host는 생략한다.
+ */
+park?: ThreadPark,
 /**
  * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
  */
@@ -1546,6 +1554,56 @@ limited_until_ms?: number,
 questions?: ThreadQuestions, };
 
 export type ThreadLimitOverride = { actor: string, at_ms: number, user_request: string | null, };
+
+export type ThreadPark = { actor: string, requested_at_ms: number,
+/**
+ * 사람이 남긴 까닭(이어 할 때 brief에 들어간다)
+ */
+note?: string,
+/**
+ * coordinator가 인용한 사용자 지시
+ */
+user_request?: string,
+/**
+ * 정리를 맡기지 않고 바로 보류했다
+ */
+immediate: boolean,
+/**
+ * 정리를 맡긴 때의 보고 hash. 그 뒤 새 `[보류 준비됨]` 보고만 정리 끝으로 읽는다
+ */
+report_before?: string, parked_at_ms?: number,
+/**
+ * 보류한 머신 이름(보일 때 쓴다)
+ */
+machine: string,
+/**
+ * 보류할 때 본 git: HEAD commit, origin의 같은 branch, 커밋 안 한 파일 수. 모르면 `git_unknown`
+ */
+head?: string, pushed?: boolean, uncommitted?: number, git_unknown?: string,
+/**
+ * 같은 머신에서 같은 대화를 이을 수 있다(대화 ID와 resume 방법을 안다)
+ */
+resumable: boolean, };
+
+export type UnparkOption = { machine: string, same: boolean, connected: boolean,
+/**
+ * `resume`(같은 대화)·`new`(새 대화와 요약 brief)
+ */
+conversation: string,
+/**
+ * 다른 머신의 저장소 경로(작업 폴더 thread는 없다)
+ */
+repo?: string,
+/**
+ * 고를 수 없으면 까닭
+ */
+blocked?: string, };
+
+export type UnparkPreview = { project: string, thread: string, options: Array<UnparkOption>,
+/**
+ * 지금 자리를 차지한 사용자 thread 수와 한도. 다 찼으면 이어 하기가 거부된다
+ */
+open: number, limit: number, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 

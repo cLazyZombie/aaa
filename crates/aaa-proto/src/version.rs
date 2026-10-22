@@ -221,7 +221,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.103: SSH 머신 추가 M3(plan §8.420): `machine_setup_plan{job, settings}`(aaa 전송·확인과 원격 install 계획)·`machine_setup_apply{job,
 // plan_sha256}`(host 서명 승인 → 원격 적용·grant 등록), `MachineSetupView`의 `settings`·`review`·`install`과 새 단계. 옛 host는 모르는
 // 요청으로 거절해 웹이 설치 설정을 그리지 않는다. Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 103 };
+// 1.104: thread 보류(plan §8.421): `thread_park{now, note, user_request, cancel}`·`thread_unpark{machine, repo, dry_run}` →
+// `Thread`·`UnparkPreview`, 상태 `parked`·묶음 `parked`(「보류」), `ThreadView.park`. 옛 host는 모르는 요청으로 거절해 웹이 보류
+// 단추를 그리지 않는다. Agent link 변경 없음(기존 diff.v1·git watch 조회·ThreadPrepare base를 쓴다).
+pub const FRONT_API: Version = Version { major: 1, minor: 104 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -133,6 +133,7 @@ pub fn token(g: ThreadGroup) -> &'static str {
         ThreadGroup::Landing => "landing",
         ThreadGroup::Working => "working",
         ThreadGroup::Idle => "idle",
+        ThreadGroup::Parked => "parked",
         ThreadGroup::Resolved => "resolved",
     }
 }
@@ -143,6 +144,9 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
     let rec = ThreadRec {
         account_allocation: None,
         over_limit: None,
+        park: None,
+        brief_line: None,
+        left_places: Vec::new(),
         launch_sent: true,
         launch_existing_slot: false,
         legacy: Default::default(),

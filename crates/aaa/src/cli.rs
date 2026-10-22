@@ -1051,6 +1051,42 @@ enum ThreadCmd {
         #[arg(hide = true)]
         legacy: Option<String>,
     },
+    /// 보류한다: 자리·pane을 돌려주고 worktree·대화·보고를 남긴다(plan §8.421). 기본은 thread에게 커밋·push·`## Handoff`를 맡기고
+    /// `[보류 준비됨]` 보고가 오면 host가 pane을 닫는다. coordinator는 사용자 지시가 있을 때만 `--user-request`와 함께 쓴다
+    Park {
+        thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+        /// 정리를 맡기지 않고 바로 닫는다(응답이 없거나 세션이 끝난 thread)
+        #[arg(long, conflicts_with = "cancel")]
+        now: bool,
+        /// 보류 까닭(이어 할 때 brief에 들어간다)
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+        /// coordinator: 보류를 말한 사용자 지시 근거(한 줄)
+        #[arg(long, value_name = "TEXT")]
+        user_request: Option<String>,
+        /// 맡긴 정리를 거둔다(아직 닫지 않았을 때)
+        #[arg(long)]
+        cancel: bool,
+    },
+    /// 보류를 풀고 이어 한다. 같은 머신(기본)은 같은 대화를 잇고, 다른 머신은 push된 branch로 새 worktree와 요약 brief의 새 대화다
+    Unpark {
+        thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+        /// 이어 할 머신(기본: 보류한 머신)
+        #[arg(long)]
+        machine: Option<String>,
+        /// 다른 머신의 저장소 경로(같은 이름의 저장소가 하나면 생략)
+        #[arg(long)]
+        repo: Option<String>,
+        /// 머신별 길과 막힌 까닭만 보인다
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// 끝난 thread 세션을 다시 띄운다. 기본은 task를 다시 읽어 새 brief로 새 대화
     Restart {
         thread: String,
@@ -2246,6 +2282,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Restart { thread, legacy, resume, profile } => {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadRestart { project, thread, resume, profile }
+                }
+                ThreadCmd::Park { thread, legacy, now, note, user_request, cancel } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadPark { project, thread, now, note, user_request, cancel }
+                }
+                ThreadCmd::Unpark { thread, legacy, machine, repo, dry_run } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadUnpark { project, thread, machine, repo, dry_run }
                 }
                 ThreadCmd::Answer { thread, mut answers, text } => {
                     let (project, thread) = shift_project(thread, &mut answers)?;
@@ -3739,6 +3783,9 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         );
     }
     render_automation_origin(s, t);
+    if let Some(p) = &t.park {
+        render_park(s, t, p);
+    }
     let _ = writeln!(s, "인증: {}", t.account.as_deref().unwrap_or("로컬 로그인"));
     if let Some(selection) = &t.account_selection {
         let _ = writeln!(
@@ -3762,6 +3809,43 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     for n in &t.next {
         let _ = writeln!(s, "  - {n}");
     }
+}
+
+/// 보류 요청·기록(plan §8.421)
+fn render_park(s: &mut String, t: &aaa_proto::ThreadView, p: &aaa_proto::ThreadPark) {
+    use std::fmt::Write as _;
+    let (project, id) = (&t.project, &t.id);
+    let note = p.note.as_ref().map(|n| format!(" · 까닭: {n}")).unwrap_or_default();
+    if t.status == aaa_proto::ThreadStatus::Parked && p.parked_at_ms.is_none() {
+        let _ = writeln!(s, "보류: pane을 닫는 중{note}");
+        return;
+    }
+    let Some(at) = p.parked_at_ms else {
+        let _ = writeln!(
+            s,
+            "보류 요청: {} · {}{note} · thread의 `[보류 준비됨]` 보고를 기다린다(바로: `aaa thread park {project} {id} --now`)",
+            p.actor,
+            aaa_common::util::utc_text(p.requested_at_ms)
+        );
+        return;
+    };
+    let git = match (&p.head, p.pushed, p.uncommitted, &p.git_unknown) {
+        (_, _, _, Some(why)) => format!("git 모름({why})"),
+        (Some(h), pushed, n, None) => format!(
+            "HEAD {} {} · 미커밋 {}",
+            &h[..h.len().min(8)],
+            if pushed == Some(true) { "push됨" } else { "push 안 됨" },
+            n.map(|n| n.to_string()).unwrap_or_else(|| "모름".into())
+        ),
+        (None, ..) => "작업 폴더(git 없음)".into(),
+    };
+    let way = if p.resumable { "같은 머신은 같은 대화" } else { "같은 머신도 새 대화" };
+    let _ = writeln!(
+        s,
+        "보류: {} · {}에서 · {git} · {way}{note} · 이어 하기 `aaa thread unpark {project} {id}`",
+        aaa_common::util::utc_text(at),
+        p.machine
+    );
 }
 
 /// thread 줄의 작업 요약 표지 한 마디
@@ -4599,6 +4683,31 @@ fn render_front(r: &FrontResponse) -> String {
             }
             for n in &v.task_notes {
                 let _ = writeln!(s, "task_notes: {n}");
+            }
+        }
+        FrontResponse::UnparkPreview(p) => {
+            let _ = writeln!(s, "{}/{} 이어 하기 · 열린 thread {}/{}", p.project, p.thread, p.open, p.limit);
+            for o in &p.options {
+                let way = match (o.same, o.conversation.as_str()) {
+                    (true, "resume") => "같은 대화".to_string(),
+                    (true, _) => "새 대화(같은 자리, 요약 brief)".to_string(),
+                    (false, _) => format!(
+                        "새 대화(요약 brief){}",
+                        o.repo.as_deref().map(|r| format!(" · 저장소 {r}")).unwrap_or_default()
+                    ),
+                };
+                let mark = if o.same { " (보류한 머신)" } else { "" };
+                match &o.blocked {
+                    Some(why) => {
+                        let _ = writeln!(s, "  {}{mark}	불가: {why}", o.machine);
+                    }
+                    None => {
+                        let _ = writeln!(s, "  {}{mark}	{way}", o.machine);
+                    }
+                }
+            }
+            if p.open >= p.limit {
+                s.push_str("실행 한도가 찼다: 자리가 나야 이어 한다\n");
             }
         }
         FrontResponse::ResolvePreview(p) => {

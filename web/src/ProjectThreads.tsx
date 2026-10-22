@@ -15,15 +15,18 @@ import { DrawerToggle, HeadMore } from "./drawer";
 import { CoordinatorOpen } from "./CoordinatorOpen";
 
 /** popup `Group::DISPLAY_ORDER` */
-const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
+const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "parked", "resolved"];
 
 /** popup `thread_line`: 상태 줄, 머신, agent(profile), 남은 Next 수. 자동화가 띄운 thread는 앞에 「자동화 thread」(plan t-0475 A1) */
 function threadFacts(t: ThreadView, now: number): string {
-  const parts = [t.group === "resolved" ? GROUP_WORD.resolved : stateLine(t, true, now)];
+  const ended = t.group === "resolved" || t.group === "parked";
+  const parts = [ended ? GROUP_WORD[t.group] : stateLine(t, true, now)];
   if (t.automation) parts.unshift("자동화 thread");
   if (t.machine) parts.push(t.machine);
   if (t.profile) parts.push(t.profile);
-  if (t.group !== "resolved" && t.next.length > 0) parts.push(`next ${t.next.length}`);
+  // 보류(plan §8.421): 보류한 까닭
+  if (t.group === "parked" && t.park?.note) parts.push(t.park.note);
+  if (!ended && t.next.length > 0) parts.push(`next ${t.next.length}`);
   return parts.join(" · ");
 }
 
@@ -88,7 +91,7 @@ export function ProjectThreads({
   return (
     <ProjectBody
       line={projectLine(
-        threads.filter((t) => t.group !== "resolved").map((t) => t.group),
+        threads.filter((t) => t.group !== "resolved" && t.group !== "parked").map((t) => t.group),
         threads.some((t) => t.project_status === "paused") || instance?.status === "paused",
       )}
       groups={other.length > 0 ? [...groups, { g: "other", rows: other }] : groups}

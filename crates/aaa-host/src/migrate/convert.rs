@@ -121,6 +121,9 @@ pub(crate) fn thread_rec(
     ThreadRec {
         account_allocation: None,
         over_limit: None,
+        park: None,
+        brief_line: None,
+        left_places: Vec::new(),
         launch_sent: true,
         launch_existing_slot: false,
         legacy: Default::default(),

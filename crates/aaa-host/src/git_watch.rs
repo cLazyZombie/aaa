@@ -120,7 +120,7 @@ impl Host {
         }
         Ok((mid, cwd))
     }
-    async fn git_ask(&self, conn: &AgentConn, cwd: &str, query: GitQuery) -> Result<GitAnswer, ErrorBody> {
+    pub(crate) async fn git_ask(&self, conn: &AgentConn, cwd: &str, query: GitQuery) -> Result<GitAnswer, ErrorBody> {
         match conn
             .request_timeout(
                 AgentRequest::GitQuery { cwd: cwd.into(), query },

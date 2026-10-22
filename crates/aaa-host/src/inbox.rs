@@ -400,6 +400,7 @@ impl Host {
             self.usage_limit_pass(&p.name).await;
             self.resolve_merged_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
+            self.park_pass(&p.name).await;
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
             self.automation_tick(&p.name);

@@ -5,11 +5,11 @@
 import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReservation, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
- * 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
-export type TaskState = "problem" | "check" | "run" | "wait";
+ * 진행 중 ◉(열린 thread와 이어짐) > 보류 ⏸(이어진 thread를 보류했다, plan §8.421) > 대기 ○ */
+export type TaskState = "problem" | "check" | "run" | "parked" | "wait";
 
-/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·예약(자리 나면 시작, 한 목록 §8.393)·확인 필요 */
-export type TaskFilter = "all" | "mine" | "unassigned" | "running" | "reserved" | "check";
+/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·예약(자리 나면 시작, 한 목록 §8.393)·보류·확인 필요 */
+export type TaskFilter = "all" | "mine" | "unassigned" | "running" | "reserved" | "parked" | "check";
 
 export const TASK_FILTERS: readonly { id: TaskFilter; label: string }[] = [
   { id: "all", label: "전체" },
@@ -17,10 +17,11 @@ export const TASK_FILTERS: readonly { id: TaskFilter; label: string }[] = [
   { id: "unassigned", label: "미할당" },
   { id: "running", label: "진행 중" },
   { id: "reserved", label: "예약" },
+  { id: "parked", label: "보류" },
   { id: "check", label: "확인 필요" },
 ];
 
-export const TASK_STATE_LABEL: Record<TaskState, string> = { problem: "형식 어긋남", check: "확인 필요", run: "진행 중", wait: "대기" };
+export const TASK_STATE_LABEL: Record<TaskState, string> = { problem: "형식 어긋남", check: "확인 필요", run: "진행 중", parked: "보류", wait: "대기" };
 
 /** thread id → 묶음(App이 가진 thread 목록). 없으면 모르는 thread다 */
 export type ThreadGroups = ReadonlyMap<string, ThreadGroup>;
@@ -29,6 +30,7 @@ export function taskState(t: TaskView, groups: ThreadGroups): TaskState {
   if (t.problems.length > 0) return "problem";
   if (t.attention) return "check";
   const g = t.thread ? groups.get(t.thread) : undefined;
+  if (g === "parked") return "parked";
   return g !== undefined && g !== "resolved" ? "run" : "wait";
 }
 
@@ -80,6 +82,7 @@ export function taskMatches(t: TaskView, filter: TaskFilter, query: string, grou
   if (filter === "mine" && t.owner !== "me") return false;
   if (filter === "unassigned" && !unassigned(t)) return false;
   if (filter === "running" && taskState(t, groups) !== "run") return false;
+  if (filter === "parked" && taskState(t, groups) !== "parked") return false;
   if (filter === "check" && taskState(t, groups) !== "check") return false;
   const needle = query.trim().toLowerCase();
   if (needle === "") return true;
@@ -232,6 +235,7 @@ export function taskList(board: TaskBoard, filter: TaskFilter, query: string, re
     mine: scoped.filter((t) => t.owner === "me").length,
     unassigned: scoped.filter(unassigned).length,
     running: scoped.filter((t) => taskState(t, groups) === "run").length,
+    parked: scoped.filter((t) => taskState(t, groups) === "parked").length,
     reserved: pending.filter((q) => inRepo(byId.get(q.task_id) ?? q.task)).length,
     check: scoped.filter((t) => taskState(t, groups) === "check").length,
   };
@@ -591,7 +595,8 @@ export function handOffText(t: TaskView, again = false): string {
  * 이어지지 않았다. agent·사람 구분은 맡길 수 있는 profile 목록으로 한다(`ownerKindOf`)
  */
 export function startable(t: TaskView, groups: ThreadGroups, agents: readonly string[]): boolean {
-  if (t.problems.length > 0 || taskState(t, groups) === "run") return false;
+  // 보류한 thread와 이어진 task는 새로 맡기지 않고 그 thread를 이어 한다
+  if (t.problems.length > 0 || taskState(t, groups) === "run" || taskState(t, groups) === "parked") return false;
   return unassigned(t) || agentParts(t, agents) !== null;
 }
 

@@ -6,9 +6,19 @@ use sha2::{Digest, Sha256};
 pub(crate) fn marker(report: &str) -> Option<&'static str> {
     let first = report.trim_start_matches('\u{feff}').lines().next()?;
     // 새 안내는 [확인 필요]를 쓴다. 이미 회수한 보고의 옛 표지는 입력 호환용으로만 받는다.
-    ["[완료]", "[결정 필요]", "[검수 대기]", "[확인 필요]", "[사람 필요]", "[병합 준비됨]", "[착지]", "[진행 중]"]
-        .into_iter()
-        .find(|m| first == *m || first.strip_prefix(m).is_some_and(|rest| rest.starts_with(char::is_whitespace)))
+    [
+        "[완료]",
+        "[결정 필요]",
+        "[검수 대기]",
+        "[확인 필요]",
+        "[사람 필요]",
+        "[병합 준비됨]",
+        "[착지]",
+        "[진행 중]",
+        crate::park::READY,
+    ]
+    .into_iter()
+    .find(|m| first == *m || first.strip_prefix(m).is_some_and(|rest| rest.starts_with(char::is_whitespace)))
 }
 
 /// 단계는 첫 줄의 단독 표지만 인정한다. 완료 등 여러 표지를 겹쳐 쓰면 보수적으로 작업으로 센다.

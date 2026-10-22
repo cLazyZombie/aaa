@@ -866,6 +866,12 @@ printf 'fake> '
 while IFS= read -r line; do
   case "$line" in
     post-probe\\ *) sh "\${line#post-probe }" ;;
+    *"[aaa 보류 준비]"*)
+      # 보류 정리 부탁(84, plan §8.421): 맡긴 대로 Handoff 보고를 쓴다(커밋·push할 것이 없는 작업 폴더 thread)
+      path=$(printf '%s' "$line" | grep -o '[.]aaa/[^)]*/report[.]md' | head -n 1)
+      printf '[보류 준비됨] 정리 끝\n\n## Handoff\n- 다음: 사람 검수 뒤 이어 간다\n\n## Next\n- 이어 하기\n' > "$path.tmp"
+      mv "$path.tmp" "$path"
+      echo park-ready ;;
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       # 할 일에 「사람을 기다림」이 있으면 보고 없이 사람을 기다린다고만 알린다(host 묶음 확인 필요, 12 「프로젝트 머리 셈」)

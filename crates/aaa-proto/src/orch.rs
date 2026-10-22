@@ -736,6 +736,8 @@ pub enum ThreadStatus {
     Open,
     Failed,
     Resolved,
+    /// 보류(FRONT_API 1.104): 자리·pane을 돌려주고 worktree·대화 ID·보고를 남긴다. `thread unpark`로 이어 한다
+    Parked,
 }
 
 impl ThreadStatus {
@@ -745,6 +747,7 @@ impl ThreadStatus {
             ThreadStatus::Open => "open",
             ThreadStatus::Failed => "failed",
             ThreadStatus::Resolved => "resolved",
+            ThreadStatus::Parked => "parked",
         }
     }
 
@@ -754,6 +757,7 @@ impl ThreadStatus {
             "open" => Some(ThreadStatus::Open),
             "failed" => Some(ThreadStatus::Failed),
             "resolved" => Some(ThreadStatus::Resolved),
+            "parked" => Some(ThreadStatus::Parked),
             _ => None,
         }
     }
@@ -801,6 +805,8 @@ pub enum ThreadGroup {
     Working,
     /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
     Idle,
+    /// 보류(FRONT_API 1.104): 자리·pane 없이 이어 하기를 기다린다
+    Parked,
     Resolved,
 }
 
@@ -813,11 +819,12 @@ impl ThreadGroup {
             ThreadGroup::Landing => "병합 중",
             ThreadGroup::Working => "작업 중",
             ThreadGroup::Idle => "쉼",
+            ThreadGroup::Parked => "보류",
             ThreadGroup::Resolved => "끝남",
         }
     }
 
-    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6.
+    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 보류 6 → 끝남 7.
     /// 목록(웹)·popup·overview가 같은 차례다. 묶음을 정하는 우선순위(host `group`)와는 따로다.
     pub fn rank(self) -> u8 {
         match self {
@@ -826,7 +833,8 @@ impl ThreadGroup {
             ThreadGroup::Landing => 3,
             ThreadGroup::Working => 4,
             ThreadGroup::Idle => 5,
-            ThreadGroup::Resolved => 6,
+            ThreadGroup::Parked => 6,
+            ThreadGroup::Resolved => 7,
         }
     }
 }
@@ -846,6 +854,80 @@ impl ThreadStage {
             Self::Landing => "병합 중",
         }
     }
+}
+
+/// 보류 기록(FRONT_API 1.104, plan §8.421). `parked_at_ms`가 없으면 thread에게 정리를 맡기고 `[보류 준비됨]` 보고를 기다린다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadPark {
+    pub actor: String,
+    #[ts(type = "number")]
+    pub requested_at_ms: u64,
+    /// 사람이 남긴 까닭(이어 할 때 brief에 들어간다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub note: Option<String>,
+    /// coordinator가 인용한 사용자 지시
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub user_request: Option<String>,
+    /// 정리를 맡기지 않고 바로 보류했다
+    #[serde(default)]
+    pub immediate: bool,
+    /// 정리를 맡긴 때의 보고 hash. 그 뒤 새 `[보류 준비됨]` 보고만 정리 끝으로 읽는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub report_before: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub parked_at_ms: Option<u64>,
+    /// 보류한 머신 이름(보일 때 쓴다)
+    #[serde(default)]
+    pub machine: String,
+    /// 보류할 때 본 git: HEAD commit, origin의 같은 branch, 커밋 안 한 파일 수. 모르면 `git_unknown`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pushed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub uncommitted: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub git_unknown: Option<String>,
+    /// 같은 머신에서 같은 대화를 이을 수 있다(대화 ID와 resume 방법을 안다)
+    #[serde(default)]
+    pub resumable: bool,
+}
+
+/// `thread unpark --dry-run`의 머신별 길(FRONT_API 1.104). 같은 머신은 같은 대화, 다른 머신은 push된 branch로 새 worktree와
+/// 요약 brief의 새 대화다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct UnparkOption {
+    pub machine: String,
+    pub same: bool,
+    pub connected: bool,
+    /// `resume`(같은 대화)·`new`(새 대화와 요약 brief)
+    pub conversation: String,
+    /// 다른 머신의 저장소 경로(작업 폴더 thread는 없다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo: Option<String>,
+    /// 고를 수 없으면 까닭
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub blocked: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct UnparkPreview {
+    pub project: String,
+    pub thread: String,
+    pub options: Vec<UnparkOption>,
+    /// 지금 자리를 차지한 사용자 thread 수와 한도. 다 찼으면 이어 하기가 거부된다
+    pub open: u32,
+    pub limit: u32,
 }
 
 /// 사용자가 직접 허용한 한도 초과 시작. 시작 시각·요청자·coordinator가 인용한 지시를 보존한다.
@@ -874,6 +956,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub over_limit: Option<ThreadLimitOverride>,
+    /// 보류 요청·보류 기록(FRONT_API 1.104). 보류하지 않은 thread와 옛 host는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub park: Option<Box<ThreadPark>>,
     /// FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

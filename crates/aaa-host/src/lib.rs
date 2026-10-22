@@ -60,6 +60,7 @@ mod notify;
 mod open;
 mod orch;
 mod output;
+mod park;
 mod passkey;
 mod post;
 mod pr;
@@ -1860,6 +1861,14 @@ impl Host {
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
                 self.thread_stop(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadPark { project, thread, now, note, user_request, cancel } => self
+                .thread_park(&project, &thread, now, note, user_request, cancel, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
+            FrontRequest::ThreadUnpark { project, thread, machine, repo, dry_run } => {
+                self.thread_unpark(&project, &thread, machine, repo, dry_run, actor).await
             }
             FrontRequest::ThreadRestart { project, thread, resume, profile } => self
                 .thread_restart(&project, &thread, resume, profile, actor)

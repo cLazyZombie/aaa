@@ -434,6 +434,8 @@ export function TasksView({
   const shownCount = (model?.top.length ?? 0) + (model?.rest.length ?? 0);
   const total = board?.tasks.length ?? 0;
   const queueApi = apiAtLeast(frontApi, [1, 85]);
+  // 보류(plan §8.421)를 아는 host만 「보류」 칩을 둔다
+  const parkApi = apiAtLeast(frontApi, [1, 104]);
   const pick = (t: TaskView) => {
     if (target !== null) onTarget?.(t.short_id);
     setCreating(null);
@@ -758,7 +760,7 @@ export function TasksView({
                 <ChevronDown aria-hidden="true" />
               </button>
               <div className="tasks-filters" role="group" aria-label="거르기">
-                {TASK_FILTERS.filter((f) => f.id !== "reserved" || queueApi).map((f) => (
+                {TASK_FILTERS.filter((f) => (f.id !== "reserved" || queueApi) && (f.id !== "parked" || parkApi)).map((f) => (
                   <button key={f.id} type="button" className={`task-chip tasks-filter tasks-filter-${f.id}${filter === f.id ? " is-on" : ""}`} aria-pressed={filter === f.id} data-testid={`tasks-filter-${f.id}`} onClick={() => setFilter(f.id)}>
                     {f.id === "reserved" && <span className="task-reserved-dot is-small" aria-hidden="true" />}
                     {f.label}

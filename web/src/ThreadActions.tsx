@@ -1,19 +1,21 @@
 // thread 화면 머리의 「thread 관리」(관리 GUI W4, plan §8.343): 끝내기·다시 열기·다시 시작·brief 다시 보내기·Next·요약 고치기.
 // 끝내기 창은 host가 미리 읽은 잃을 수 있는 것(커밋하지 않은 파일·병합되지 않은 변경·사본 상태)을 보이고, 위험하거나 모르면
 // 「worktree 남기기」를 켠 채로 연다. 거부·검사는 host가 한다: 화면은 그 글을 창 안에 보인다. 조작 기기만 그린다.
+// 보류·이어 하기(plan §8.421): 보류는 thread에게 정리(커밋·push·Handoff)를 맡기거나 바로 닫고, 이어 하기 창은 host가 푼 머신별 길
+// (같은 머신은 같은 대화, 다른 머신은 새 worktree와 요약 brief)과 막힌 까닭을 보인다.
 import "./AutomationPanel.css";
 import "./ThreadActions.css";
 
 import { useEffect, useRef, useState } from "react";
-import { BookOpenText, FilePen, ListChecks, MoreHorizontal, RotateCcw, Send, SquareCheckBig, Undo2 } from "lucide-react";
-import type { ProfileView, ResolvePreview, ThreadView } from "./gen/proto";
+import { BookOpenText, CirclePause, CirclePlay, FilePen, ListChecks, MoreHorizontal, RotateCcw, Send, SquareCheckBig, Undo2 } from "lucide-react";
+import type { ProfileView, ResolvePreview, ThreadView, UnparkPreview } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { AutomationSheet } from "./AutomationSheet";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
-import { canOperate, resolveDefaults, resolveRequest, threadActions } from "./operateModel.ts";
+import { canOperate, canPark, parkPending, resolveDefaults, resolveRequest, threadActions, unparkDefault, unparkWay } from "./operateModel.ts";
 
-type Open = "resolve" | "reopen" | "restart" | "brief" | "next" | "summary";
+type Open = "resolve" | "reopen" | "restart" | "brief" | "next" | "summary" | "park" | "unpark";
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
 export function ThreadActions({ t, running }: { t: ThreadView; running: boolean }) {
@@ -31,12 +33,15 @@ export function ThreadActions({ t, running }: { t: ThreadView; running: boolean 
   const [menu, setMenu] = useState(false);
   const [open, setOpen] = useState<Open | null>(null);
   const can = threadActions(t, running);
+  const park = canPark(frontApi);
   const items: RowMenuItem[] = [
+    ...(park && can.park ? [{ id: "park", label: parkPending(t) ? "보류(정리 기다림)" : "보류", icon: CirclePause, run: () => setOpen("park") }] : []),
+    ...(park && can.unpark ? [{ id: "unpark", label: "이어 하기", icon: CirclePlay, run: () => setOpen("unpark") }] : []),
     ...(can.resolve ? [{ id: "resolve", label: "끝내기", icon: SquareCheckBig, run: () => setOpen("resolve") }] : []),
     ...(can.reopen ? [{ id: "reopen", label: "다시 열기", icon: Undo2, run: () => setOpen("reopen") }] : []),
     ...(can.restart ? [{ id: "restart", label: "다시 시작", icon: RotateCcw, run: () => setOpen("restart") }] : []),
     ...(can.brief ? [{ id: "brief", label: "brief 다시 보내기", icon: BookOpenText, run: () => setOpen("brief") }] : []),
-    { id: "next", label: "Next", hint: t.next.length > 0 ? `${t.next.length}줄` : undefined, icon: ListChecks, divider: can.resolve || can.reopen || can.restart || can.brief, run: () => setOpen("next") },
+    { id: "next", label: "Next", hint: t.next.length > 0 ? `${t.next.length}줄` : undefined, icon: ListChecks, divider: can.resolve || can.reopen || can.restart || can.brief || (park && (can.park || can.unpark)), run: () => setOpen("next") },
     { id: "summary", label: "작업 요약 고치기", icon: FilePen, run: () => setOpen("summary") },
   ];
   const close = () => setOpen(null);
@@ -75,7 +80,205 @@ export function ThreadActions({ t, running }: { t: ThreadView; running: boolean 
       )}
       {open === "next" && <NextDialog t={t} running={running} onClose={close} />}
       {open === "summary" && <SummaryDialog t={t} onClose={close} />}
+      {open === "park" && <ParkDialog t={t} running={running} onClose={close} />}
+      {open === "unpark" && <UnparkDialog t={t} onClose={close} />}
     </>
+  );
+}
+
+const when = (ms: number) => new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+/** 보류 기록 한 줄: 언제·어디서·git(다른 머신으로 옮길 수 있나)·까닭 */
+function parkFacts(t: ThreadView): string {
+  const p = t.park;
+  if (!p) return "";
+  const parts = [p.parked_at_ms != null ? `${when(p.parked_at_ms)} ${p.machine}에서 보류` : t.status === "parked" ? "pane을 닫는 중" : `${when(p.requested_at_ms)} 정리를 맡김`];
+  if (p.parked_at_ms != null && t.thread_kind === "worktree") {
+    if (p.git_unknown) parts.push(`git 모름(${p.git_unknown})`);
+    else if (p.head) parts.push(`HEAD ${p.head.slice(0, 8)} ${p.pushed ? "push됨" : "push 안 됨"}${p.uncommitted ? ` · 미커밋 ${p.uncommitted}` : ""}`);
+  }
+  if (p.note) parts.push(p.note);
+  return parts.join(" · ");
+}
+
+/** thread 화면 머리 아래 보류 띠(plan §8.421): 보류했거나 정리를 맡긴 동안. 조작 기기는 띠에서 이어 하기·보류 창을 연다 */
+export function ParkBanner({ t, canAct, running }: { t: ThreadView; canAct: boolean; running: boolean }) {
+  const [open, setOpen] = useState<"park" | "unpark" | null>(null);
+  const parked = t.status === "parked";
+  if (!parked && !parkPending(t)) return null;
+  return (
+    <div className="banner park-banner" data-testid="park-banner">
+      <span>
+        <strong>{parked ? "보류" : "보류 준비 중"}</strong> · {parkFacts(t)}
+        {!parked && " · thread가 커밋·push·이어 하기 요약을 쓰면 pane을 닫는다"}
+      </span>
+      {canAct && (
+        <button type="button" className="btn small" data-testid={parked ? "park-banner-unpark" : "park-banner-park"} onClick={() => setOpen(parked ? "unpark" : "park")}>
+          {parked ? <CirclePlay aria-hidden="true" /> : <CirclePause aria-hidden="true" />}
+          {parked ? "이어 하기" : "보류 창"}
+        </button>
+      )}
+      {open === "park" && <ParkDialog t={t} running={running} onClose={() => setOpen(null)} />}
+      {open === "unpark" && <UnparkDialog t={t} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+function ParkDialog({ t, running, onClose }: { t: ThreadView; running: boolean; onClose: () => void }) {
+  const pending = parkPending(t);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState<"ask" | "now" | "cancel" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (how: "ask" | "now" | "cancel") => {
+    setBusy(how);
+    setError(null);
+    try {
+      await call({ op: "thread_park", project: t.project, thread: t.id, now: how === "now", cancel: how === "cancel", note: note.trim() || undefined });
+      onClose();
+    } catch (e) {
+      setError(say(e));
+      setBusy(null);
+    }
+  };
+  return (
+    <AutomationSheet
+      title="thread 보류"
+      subtitle={`${t.project}/${t.id} · ${t.title}`}
+      onClose={onClose}
+      busy={busy !== null}
+      testid="park-dialog"
+      footer={
+        <>
+          <button type="button" className="btn" disabled={busy !== null} onClick={onClose}>
+            취소
+          </button>
+          {pending && (
+            <button type="button" className="btn" data-testid="park-cancel" disabled={busy !== null} onClick={() => void run("cancel")}>
+              {busy === "cancel" ? "거두는 중…" : "요청 거두기"}
+            </button>
+          )}
+          <button type="button" className={pending ? "btn btn-primary" : "btn"} data-testid="park-now" disabled={busy !== null} onClick={() => void run("now")}>
+            {busy === "now" ? "닫는 중…" : "바로 보류"}
+          </button>
+          {!pending && (
+            <button type="button" className="btn btn-primary" data-testid="park-ask" disabled={busy !== null || !running} title={running ? undefined : "agent pane이 돌지 않는다: 바로 보류한다"} onClick={() => void run("ask")}>
+              {busy === "ask" ? "맡기는 중…" : "정리 맡기고 보류"}
+            </button>
+          )}
+        </>
+      }
+    >
+      <p className="op-lead">실행 자리와 pane을 돌려주고 worktree·대화·보고는 남긴다. 나중에 「이어 하기」로 같은 머신(같은 대화)이나 다른 머신(push된 branch로 새 worktree)에서 잇는다. 보류한 thread는 저절로 끝나지 않는다.</p>
+      {pending ? (
+        <p className="op-warn" data-testid="park-pending">
+          {when(t.park!.requested_at_ms)}에 정리를 맡겼다. thread가 커밋·push·이어 하기 요약을 쓰고 보고 첫 줄을 「[보류 준비됨]」으로 쓰면 pane을 닫는다. 응답이 없으면 「바로 보류」.
+        </p>
+      ) : (
+        <>
+          <ul className="op-risks park-ways">
+            <li>정리 맡기고 보류: thread가 커밋·push하고 이어 하기 요약(Handoff)을 쓴 뒤 닫는다. 다른 머신에서도 이어 할 수 있다.</li>
+            <li>바로 보류: 지금 닫는다. 커밋하지 않은 변경과 push하지 않은 커밋은 이 머신 worktree에만 남는다.</li>
+          </ul>
+          <label className="op-field">
+            <span>까닭(이어 할 때 brief에 들어간다)</span>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="예: 사람 검수 대기" disabled={busy !== null} data-testid="park-note" />
+          </label>
+        </>
+      )}
+      {error && (
+        <p className="confirm-error" role="alert">
+          {error}
+        </p>
+      )}
+    </AutomationSheet>
+  );
+}
+
+function UnparkDialog({ t, onClose }: { t: ThreadView; onClose: () => void }) {
+  const [p, setP] = useState<UnparkPreview | null>(null);
+  const [pick, setPick] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    call({ op: "thread_unpark", project: t.project, thread: t.id, dry_run: true })
+      .then((r) => {
+        if (!live || r.kind !== "unpark_preview") return;
+        setP(r);
+        setPick(unparkDefault(r.options));
+      })
+      .catch((e: unknown) => live && setError(say(e)));
+    return () => {
+      live = false;
+    };
+  }, [t.project, t.id]);
+  const chosen = p?.options.find((o) => o.machine === pick) ?? null;
+  const full = p !== null && p.open >= p.limit;
+  const run = async () => {
+    if (!chosen) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await call({ op: "thread_unpark", project: t.project, thread: t.id, machine: chosen.same ? undefined : chosen.machine, repo: chosen.same ? undefined : (chosen.repo ?? undefined) });
+      onClose();
+    } catch (e) {
+      setError(say(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <AutomationSheet
+      title="이어 하기"
+      subtitle={`${t.project}/${t.id} · ${t.title}`}
+      onClose={onClose}
+      busy={busy}
+      testid="unpark-dialog"
+      footer={
+        <>
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>
+            취소
+          </button>
+          <button type="button" className="btn btn-primary" data-testid="unpark-confirm" disabled={busy || !chosen || full} onClick={() => void run()}>
+            {busy ? "띄우는 중…" : "이어 하기"}
+          </button>
+        </>
+      }
+    >
+      <p className="op-lead">{parkFacts(t)}</p>
+      {p === null && !error && (
+        <p className="op-muted" role="status">
+          머신별 길을 읽는 중…
+        </p>
+      )}
+      {p && (
+        <fieldset className="op-options unpark-options" disabled={busy} data-testid="unpark-options">
+          {p.options.map((o) => (
+            <label key={o.machine} className={`op-check unpark-option${o.blocked ? " is-blocked" : ""}`} data-testid={`unpark-option-${o.machine}`}>
+              <input type="radio" name="unpark-machine" checked={pick === o.machine} disabled={!!o.blocked} onChange={() => setPick(o.machine)} />
+              <span>
+                <span>
+                  <strong>{o.machine}</strong>
+                  {o.same && " (보류한 머신)"}
+                </span>
+                <span className="unpark-way">{o.blocked ? `불가: ${o.blocked}` : unparkWay(o, t.thread_kind === "worktree")}</span>
+                {!o.blocked && !o.same && o.repo && <span className="unpark-way mono">{o.repo}</span>}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {p && (
+        <p className={full ? "op-warn" : "op-muted"} data-testid="unpark-slots">
+          열린 thread {p.open}/{p.limit}
+          {full && " · 실행 한도가 찼다: 자리가 나야 이어 한다"}
+        </p>
+      )}
+      {error && (
+        <p className="confirm-error" role="alert">
+          {error}
+        </p>
+      )}
+    </AutomationSheet>
   );
 }
 
