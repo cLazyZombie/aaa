@@ -5,6 +5,7 @@ import {
   busy,
   canCancel,
   canInstall,
+  canInstallWindows,
   canSsh,
   defaultSettings,
   loginHarnesses,
@@ -94,4 +95,17 @@ describe("SSH 설치 M3", () => {
     assert.equal(operationLabel("new_op"), "new_op");
     assert.equal(shortHash("0123456789abcdef"), "0123456789ab");
   });
+});
+
+
+it("Windows 설치는 1.112부터, Windows 절대 경로와 기본 작업 폴더", () => {
+  assert.equal(canInstallWindows("1.111"), false);
+  assert.equal(canInstallWindows("1.112"), true);
+  assert.equal(notInstallable({ os: "windows" }, true), null);
+  assert.match(notInstallable({ os: "linux" }, true), /macOS부터/);
+  const detected = { os: "windows", home: "C:\\Users\\me" };
+  const settings = defaultSettings("pc-b", detected, "mac-a:7430");
+  assert.equal(settings.work_root, "C:/Users/me/aaa-work");
+  assert.equal(settingsProblem(settings), null);
+  assert.equal(settingsProblem({ ...settings, work_root: "D:\\작업 폴더\\aaa-work", work_mount: "D:/" }), null);
 });

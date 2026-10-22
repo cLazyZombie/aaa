@@ -230,6 +230,7 @@ pub(super) async fn launch(
 
 pub(super) fn dispatch(state: &Path, id: &str, sha: &str, resume: bool) -> std::process::ExitCode {
     let result = (|| {
+        input::outside_session()?;
         if !id_ok(id) || !digest_ok(sha) || executor_sha()? != sha {
             return Err(failed("installation_executor_unverified", 4));
         }

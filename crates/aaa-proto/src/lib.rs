@@ -171,6 +171,7 @@ pub fn typescript_bindings() -> String {
         MachineDetected::decl(&cfg),
         MachineSetupSettings::decl(&cfg),
         MachineSetupReview::decl(&cfg),
+        MachineSetupPassword::decl(&cfg),
         MachineSetupInstall::decl(&cfg),
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),

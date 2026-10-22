@@ -1432,7 +1432,14 @@ impl Host {
             ));
         }
         let shows_email = account_meta::shows_email(role, actor);
-        let req = if matches!(&req, FrontRequest::AccountImport { .. }) {
+        // 서비스 암호는 웹 조작 기기의 전용 입력만 받는다. Local CLI·coordinator/thread·worker는 만들 수도 읽을 수도 없다.
+        // 일반 JSON 가림은 암호 자체를 바꾸거나 복제하므로 이 요청은 고정 job/hash 검사 뒤 직접 소비한다.
+        if matches!(&req, FrontRequest::MachineSetupApply { service_password: Some(_), .. })
+            && (role != DeviceRole::Controller || !actor.starts_with("device:"))
+        {
+            return Err(err(ErrorCode::Forbidden, "서비스 암호는 사람이 웹 확인 창의 전용 입력칸에 직접 넣는다"));
+        }
+        let req = if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::MachineSetupApply { .. }) {
             req
         } else {
             aaa_common::redact::json(req).map_err(|_| err(ErrorCode::BadRequest, "요청 가림 실패로 처리를 거부했다"))?
@@ -2368,9 +2375,9 @@ impl Host {
             FrontRequest::MachineSetupPlan { job, settings } => {
                 self.setup_plan(&job, settings, actor).map(|setup| FrontResponse::MachineSetup { setup })
             }
-            FrontRequest::MachineSetupApply { job, plan_sha256 } => {
-                self.setup_apply(role, &job, &plan_sha256, actor).map(|setup| FrontResponse::MachineSetup { setup })
-            }
+            FrontRequest::MachineSetupApply { job, plan_sha256, service_password } => self
+                .setup_apply(role, &job, &plan_sha256, service_password, actor)
+                .map(|setup| FrontResponse::MachineSetup { setup }),
             FrontRequest::MachineSetupCheck { job } => {
                 self.setup_check(&job, actor).await.map(|setup| FrontResponse::MachineSetup { setup })
             }

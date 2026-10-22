@@ -568,3 +568,69 @@ mod pairing;
 #[cfg(target_os = "macos")]
 #[path = "install/launchd.rs"]
 mod launchd;
+
+#[test]
+fn session_secret_input_is_refused_before_stdin_or_any_persistent_write() {
+    use std::io::Write;
+    let lab = Lab::new();
+    let worker_sha = "a".repeat(64);
+    let worker_state = lab.0.join("state");
+    let worker = [
+        "--state-dir",
+        worker_state.to_str().unwrap(),
+        "install-worker",
+        "--id",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "--executor-sha256",
+        worker_sha.as_str(),
+    ];
+    let cli = ["install", "--resume", "01ARZ3NDEKTSV4RRFFQ69G5FAV", "--secrets-stdin", "--json"];
+    for key in ["AAA_SESSION_ID", "AAA_HOOK_SOCK"] {
+        for (args, json) in [(cli.as_slice(), true), (worker.as_slice(), false)] {
+            let mut child = lab
+                .command(args)
+                .env(key, "session-example")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            // stdin은 끝내지 않아도 거부가 끝나야 한다. EOF/승인 입력을 기다리면 사건 상한에서 실패한다.
+            let mut stdin = child.stdin.take().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let pid = child.id();
+            let waiter = std::thread::spawn(move || {
+                tx.send(child.wait_with_output().unwrap()).ok();
+            });
+            let output = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(output) => output,
+                Err(_) => {
+                    // 직접 띄운 이 PID만 정리한다. 원래 실패를 유지한다.
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::kill(pid as i32, libc::SIGKILL);
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).output();
+                    }
+                    drop(stdin);
+                    waiter.join().unwrap();
+                    panic!("세션 보호 입력 거부가 stdin을 기다렸다");
+                }
+            };
+            let _ = stdin.write_all(b"unread-fixture");
+            drop(stdin);
+            waiter.join().unwrap();
+            assert_eq!(output.status.code(), Some(3));
+            if json {
+                let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(result["status"], "needs_user");
+                assert_eq!(result["needs_user"][0]["code"], "installation_secret_input_outside_required");
+            } else {
+                assert!(output.stdout.is_empty() && output.stderr.is_empty(), "worker가 보호 입력/진단을 출력했다");
+            }
+            assert!(!lab.0.join("state").exists(), "비밀 입력 거부 전에 상태를 썼다");
+        }
+    }
+}

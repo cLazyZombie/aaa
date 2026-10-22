@@ -32,6 +32,27 @@ pub(crate) fn check_argv() -> Vec<String> {
     vec!["sh".into(), "-c".into(), body]
 }
 
+pub(crate) fn windows_check_argv() -> Vec<String> {
+    let body = format!(
+        r#"
+Write-Output '{CHECK}'
+Write-Output ('작업 폴더 ' + (Get-Location).Path)
+if (Get-Command git -ErrorAction SilentlyContinue) {{ git --version }} else {{ Write-Output 'git 없음' }}
+foreach ($h in @('claude','codex')) {{ $c=Get-Command $h -ErrorAction SilentlyContinue; if ($c) {{ Write-Output ($h + ' ' + $c.Source) }} else {{ Write-Output ($h + ' 없음') }} }}
+Write-Output ('PATH ' + $env:PATH)
+Write-Output '{CHECK_END}'
+"#
+    );
+    use base64::Engine as _;
+    vec![
+        "powershell.exe".into(),
+        "-NoProfile".into(),
+        "-EncodedCommand".into(),
+        base64::engine::general_purpose::STANDARD
+            .encode(body.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>()),
+    ]
+}
+
 /// 끝 확인 출력에서 표지 사이 줄
 pub(crate) fn check_lines(text: &str) -> Option<Vec<String>> {
     let mut lines = text.lines().map(str::trim_end);
@@ -78,10 +99,14 @@ impl Host {
     }
 
     pub(crate) async fn setup_check(self: &Arc<Self>, id: &str, actor: &str) -> Result<MachineSetupView, ErrorBody> {
-        let (_, mid, root) = self.setup_installed(id)?;
+        let (view, mid, root) = self.setup_installed(id)?;
         let spec = SpawnSpec {
             name: "aaa 끝 확인".into(),
-            argv: check_argv(),
+            argv: if view.detected.as_ref().is_some_and(|d| d.os == "windows") {
+                windows_check_argv()
+            } else {
+                check_argv()
+            },
             cwd: root,
             env: vec![],
             cols: 160,

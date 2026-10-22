@@ -235,7 +235,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.109: AgentStatus.model_observation의 마지막 실행 모델·effort·관측 시각(선택).
 // 1.110: 완료 보관의 모델·머신·완료 기간 거르기와 전체 선택지. 옛 host에서는 새 필터를 숨긴다.
 // 1.111: 저장소 workspace 지표 조회. agent는 workspace_metrics.v1 선택 기능으로 협상한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 111 };
+// 1.112: SSH 머신 추가 M4: Windows SCM·보호 stdin. 서비스 암호는 웹 확인 창의 일회 입력만 받으며 작업·응답에 싣지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 112 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

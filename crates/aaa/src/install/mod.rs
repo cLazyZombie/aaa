@@ -99,6 +99,9 @@ pub fn error(code: &str, exit: u8) -> Box<InstallResult> {
 /// 즉시 결과와 내구 status가 같은 사용자 조작을 안내한다. 원격 오류 원문은 받지 않는다.
 pub(super) fn need_action(code: &str) -> Option<&'static str> {
     match code {
+        "installation_secret_input_outside_required" => Some(
+            "서비스 암호는 사람이 웹의 전용 가림 입력칸 또는 그 PC의 aaa 밖 콘솔에 직접 넣으세요. 대화·질문 답·메모·agent 도구로 전달하지 마세요",
+        ),
         "installation_enrollment_window_closed" => Some(
             "host 웹 또는 aaa machine enroll --open 10m으로 등록 창을 열고 agent SAS를 확인한 뒤 한 줄 설치에서 같은 ID로 계속하세요",
         ),
@@ -131,6 +134,12 @@ pub fn run(args: &Args, json: bool, instance: Option<&str>, config: Option<&Path
         let invocation = args
             .invocation(json, instance.as_deref(), config.or(config_env.as_deref()), state.or(state_env.as_deref()))
             .map_err(|_| Box::new(InstallResult::invalid()))?;
+        // 비밀 stdin을 읽기 전에 거부한다. thread/coordinator 도구는 보호 입력의 중계자가 될 수 없다.
+        if invocation.secrets_stdin
+            && (std::env::var_os("AAA_SESSION_ID").is_some() || std::env::var_os("AAA_HOOK_SOCK").is_some())
+        {
+            return Err(error("installation_secret_input_outside_required", 3));
+        }
         if let Some(action) = args.action() {
             return review::run(args, action, &invocation, json);
         }

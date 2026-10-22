@@ -119,7 +119,10 @@ pub(crate) fn parse_upload(out: &str) -> Option<Placed> {
         .collect();
     let dir = body.first()?.trim().to_string();
     let sha256 = body.get(1)?.trim().to_ascii_lowercase();
-    if !safe_dir(&dir) || sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !(safe_dir(&dir) || super::windows::safe_dir(&dir))
+        || sha256.len() != 64
+        || !sha256.bytes().all(|b| b.is_ascii_hexdigit())
+    {
         return None;
     }
     Some(Placed { dir, sha256, version: body.get(2).map(|v| v.trim().to_string()).unwrap_or_default() })
@@ -153,9 +156,11 @@ impl Ssh {
         file: &Path,
         sha256: &str,
         software: &str,
+        os: &str,
     ) -> Result<Placed, String> {
         let input = std::fs::File::open(file).map_err(|e| format!("보낼 파일을 열지 못했다: {e}"))?;
-        let mut c = self.trusted(target, &upload_script());
+        let script = if os == "windows" { super::windows::upload() } else { upload_script() };
+        let mut c = self.trusted(target, &script);
         c.stdin(std::process::Stdio::from(input));
         let r = Ssh::run(c, UPLOAD_TIMEOUT).await;
         let Some(placed) = parse_upload(&r.stdout) else {
@@ -196,7 +201,7 @@ impl Ssh {
 
     /// 놓았던 임시 폴더를 지운다(실패해도 작업 결과는 바꾸지 않는다)
     pub(crate) async fn cleanup(&self, target: &Target, dir: &str) -> Option<Ran> {
-        let script = cleanup_script(dir)?;
+        let script = cleanup_script(dir).or_else(|| super::windows::cleanup(dir))?;
         Some(Ssh::run(self.trusted(target, &script), super::RUN_TIMEOUT).await)
     }
 }

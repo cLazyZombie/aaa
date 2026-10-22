@@ -5,6 +5,7 @@
 // install에 계획을 묻는다. 실험실 sshd는 비특권이라 install의 검증 SSH 입구가 거부해야 하고(시스템 sshd만 믿는다) 그 까닭이
 // 보인다. 실제 설치·등록 끝까지는 host 시험(대본 원격)과 CI의 root sshd가 본다. sshd가 없는 머신에서는 이 파일을 건너뛴다.
 import fs from "node:fs";
+import { machinePassword } from "../lib/machine-password.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import net from "node:net";
 import readline from "node:readline";
@@ -158,4 +159,5 @@ export default async function ({ page }) {
       .filter((p) => p.includes("/aaa-setup.") && fs.existsSync(`${p}/aaa`) && fs.statSync(`${p}/aaa`).size === size);
     if (left.length) throw new Error(`원격 임시 폴더가 남았다: ${left}`);
   });
+  await step("Windows 전용 가림 입력: 취소·일회 전달·거부·페이지 종료·기록 누출", machinePassword);
 }

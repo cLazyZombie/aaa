@@ -23,6 +23,9 @@ use sha2::{Digest, Sha256};
 
 use crate::Host;
 
+mod secret;
+mod windows;
+
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const RUN_TIMEOUT: Duration = Duration::from_secs(45);
 const CONNECT_TIMEOUT_S: u32 = 10;
@@ -689,3 +692,6 @@ mod release;
 #[cfg(test)]
 #[path = "machine_setup/tests.rs"]
 mod tests;
+
+#[cfg(all(test, windows))]
+mod tests_windows;
