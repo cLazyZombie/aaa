@@ -8,8 +8,10 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 39-phone-back(새 실험실).
 
 import fs from "node:fs";
-import { aaa, step, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
+import { historyDestinations } from "../lib/history-destinations.mjs";
+import { settingsDrawerHistory } from "../lib/settings-drawer-history.mjs";
 
 /** 보고서 링크가 든 Claude 대화 pane(38-chat-report-close와 같은 길: hook으로 기록 자리를 알린다) */
 function chatPane(label, text) {
@@ -145,8 +147,8 @@ export default async function () {
     }
   });
 
-  // t-0541, plan §8.340: 메뉴 상태는 창별 기록이 아니라 이동 직전의 상태다.
-  await step("메뉴를 연 채 뒤로·앞으로: 이동 직전의 열림·닫힘 유지(WebKit 390·430, Safari·홈 화면 앱)", async () => {
+  // t-0780, plan §8.340: 휴대폰 뒤로·앞으로는 메뉴를 항상 닫는다.
+  await step("메뉴를 연 채 뒤로·앞으로: 항상 닫힘(WebKit 390·430, Safari·홈 화면 앱)", async () => {
     const wk = await webkit.launch();
     const bad = [];
     try {
@@ -166,7 +168,12 @@ export default async function () {
           await drawerSettled(p, true);
           await shot(p, `phone-menu-${tag}-3-open`);
           // 시스템 쓸기의 실제 이동은 history 순회다. popstate 뒤 선택된 줄(hashchange 처리 완료)과 drawer 움직임을 기다린다.
-          const move = async (direction, label, open) => {
+          const move = async (direction, label, wasOpen) => {
+            if (wasOpen && !(await screen(p)).drawer) {
+              await p.locator(".view [data-testid='drawer-toggle']:visible").click();
+              await p.locator("#workspace-drawer.is-open").waitFor();
+              await drawerSettled(p, true);
+            }
             await inTime(p.evaluate((direction) => new Promise((r) => {
               addEventListener("popstate", () => r(), { once: true });
               history.go(direction);
@@ -174,22 +181,22 @@ export default async function () {
             await domIs(p, `${label} 선택`, (label) => document.querySelector(`[data-testid="pane-${label}"]`)?.getAttribute("aria-current") === "true", label);
             await drawerSettled(p, true);
             const s = await screen(p);
-            if (s.hash !== hashes[label] || s.drawer !== open || s.empty)
-              bad.push(`${tag} ${direction < 0 ? "뒤로" : "앞으로"}: ${fmt(s)} (원함 ${hashes[label]}, 메뉴 ${open ? "열림" : "닫힘"})`);
+            if (s.hash !== hashes[label] || s.drawer || s.empty)
+              bad.push(`${tag} ${direction < 0 ? "뒤로" : "앞으로"}: ${fmt(s)} (원함 ${hashes[label]}, 메뉴 닫힘)`);
           };
           const len = (await screen(p)).len;
           // 메뉴가 이미 열린 상태에서 왼쪽 가장자리 쓸기 + Safari 뒤로(touchcancel)도 같은 규칙이다.
           const swiped = await edgeStroke(p, { end: "touchcancel", back: true });
           await domIs(p, "bk2 선택", () => document.querySelector('[data-testid="pane-bk2"]')?.getAttribute("aria-current") === "true");
-          if (swiped.hash !== hashes.bk2 || !swiped.drawer || swiped.empty)
-            bad.push(`${tag} 메뉴 열고 쓸기 뒤로: ${fmt(swiped)} (원함 ${hashes.bk2}, 메뉴 열림)`);
+          if (swiped.hash !== hashes.bk2 || swiped.drawer || swiped.empty)
+            bad.push(`${tag} 메뉴 열고 쓸기 뒤로: ${fmt(swiped)} (원함 ${hashes.bk2}, 메뉴 닫힘)`);
           await shot(p, `phone-menu-${tag}-2-back`);
-          // 창마다 기억하지 않는다: 메뉴가 닫혔던 1·2·3으로 돌아가도 지금 열어 둔 상태를 쓴다.
+          // 이동 전에 매번 메뉴를 열어도 뒤로·앞으로는 닫는다.
           await move(-1, "bk1", true);
           await move(1, "bk2", true);
           await move(1, "bk3", true);
           await shot(p, `phone-menu-${tag}-3-forward`);
-          // 메뉴를 닫은 뒤에는 열려 있던 창으로 뒤로·앞으로 가도 닫힌 채다.
+          // 닫힌 채 이동해도 메뉴가 다시 열리지 않는다.
           if ((await screen(p)).drawer) await p.locator(".scrim.is-open").click({ position: { x: width - 10, y: 600 } });
           await drawerSettled(p, true);
           await move(-1, "bk2", false);
@@ -343,4 +350,24 @@ export default async function () {
       await wk.close();
     }
   });
+  await step("휴대폰 모든 목적지 뒤로·앞으로: thread·보고서·할 일·질문·빈 목록·설정에서 항상 메뉴 닫힘(Chromium·WebKit)", async () => {
+    await historyDestinations(browser);
+    const wk = await webkit.launch();
+    try {
+      await historyDestinations(wk);
+    } finally {
+      await wk.close();
+    }
+  });
+
+  await step("설정 닫기의 내부 복귀는 사용자가 연 메뉴를 유지하고 실제 뒤로·앞으로는 닫는다(Chromium·WebKit)", async () => {
+    await settingsDrawerHistory(browser);
+    const wk = await webkit.launch();
+    try {
+      await settingsDrawerHistory(wk);
+    } finally {
+      await wk.close();
+    }
+  });
+
 }
