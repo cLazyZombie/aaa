@@ -217,6 +217,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         percent: f.self_percent,
         progress: f.self_activity.clone(),
         progress_at_ms: f.self_age_secs.map(|a| now_ms.saturating_sub((a.max(0) as u64) * 1000)),
+        progress_since_ms: None,
         harness_session: None,
         // herdr `done`은 「끝남(안 봄)」이다. 묶음 규칙은 이 값을 보지 않는다
         seen: f.agent_state.as_deref() != Some("done"),

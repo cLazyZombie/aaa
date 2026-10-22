@@ -70,6 +70,11 @@ export default async function ({ page }) {
 
   await step("새 형식으로 바꾸기: 미리보기는 쓰지 않고 생기는 규칙·보존 위치를 보이며, 실행은 본 계획만 바꾼다. Reader는 미리보기만", async () => {
     const before = { check: fs.readFileSync(`${dir()}/routines/check.md`, "utf8"), watch: fs.readFileSync(`${dir()}/missions/watch.md`, "utf8") };
+    const followup = fs.readFileSync(`${dir()}/routines/pr-followup.md`, "utf8");
+    const oldFollowup = followup.replace(/PR의[\s\S]*/, "Old English copy\n");
+    fs.mkdirSync(`${dir()}/routines/.converted`, { recursive: true });
+    fs.writeFileSync(`${dir()}/routines/.converted/check.md`, before.check);
+    fs.writeFileSync(`${dir()}/routines/.converted/pr-followup.md`, oldFollowup);
     const dev = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-automations").click();
@@ -84,21 +89,43 @@ export default async function ({ page }) {
 
     const legacy = page.getByTestId("automation-legacy-auto-detail");
     if (!(await legacy.textContent()).includes("3개")) throw new Error(`이전 형식 수 ${await legacy.textContent()}`);
+    // 미리보기 자체의 실제 host 오류도 창 안에서 알리고, 사용자가 원인을 고친 뒤 새 계획을 읽는다.
+    fs.writeFileSync(`${dir()}/missions/watch.md`, WATCH.replace('profile="fake"', 'profile=['));
     await legacy.getByRole("button", { name: "새 형식으로 바꾸기", exact: true }).click();
     const sheet = page.getByTestId("automation-convert");
+    await sheet.getByRole("heading", { name: "새 형식으로 바꾸지 못했습니다", exact: true }).waitFor();
+    await sheet.getByRole("alert").waitFor();
+    if (!(await sheet.getByRole("alert").textContent()).includes("watch")) throw new Error("미리보기 오류의 파일 이름이 없다");
+    if (await sheet.getByRole("button", { name: "변환", exact: true }).count()) throw new Error("실패한 계획을 실행할 수 있다");
+    await shot(page, "automation-convert-preview-error");
+    fs.writeFileSync(`${dir()}/missions/watch.md`, before.watch);
+    await sheet.getByRole("button", { name: "미리보기 다시 읽기", exact: true }).click();
     await sheet.locator('[data-group="rules"]').waitFor();
     const group = async (key) => (await sheet.locator(`[data-group="${key}"] li`).allTextContents());
     if (!(await group("rules")).includes("automations/watch.toml")) throw new Error(`생기는 규칙 ${await group("rules")}`);
-    for (const f of ["routines/.converted/check.md", "routines/.converted/pr-followup.md", "missions/.converted/watch.md"]) if (!(await group("archived")).includes(f)) throw new Error(`보존 ${f}: ${await group("archived")}`);
+    for (const f of ["routines/.converted/check.md", "routines/.converted/pr-followup.1.md", "missions/.converted/watch.md"]) if (!(await group("archived")).includes(f)) throw new Error(`보존 ${f}: ${await group("archived")}`);
     if (!(await group("rules")).includes("automations/check.toml")) throw new Error("새 규칙 파일");
     // 미리보기는 쓰지 않는다
     if (fs.readFileSync(`${dir()}/routines/check.md`, "utf8") !== before.check || fs.existsSync(`${dir()}/automations/check.toml`)) throw new Error("미리보기가 파일을 바꿨다");
     await shot(page, "automation-convert-preview");
+    // 미리보기 뒤 원본이 바뀐 실패를 실제 host가 만들며, 화면에 이유가 남고 파일은 그대로다.
+    fs.appendFileSync(`${dir()}/routines/check.md`, "계획 뒤 바뀐 글\n");
+    await sheet.getByRole("button", { name: "변환", exact: true }).click();
+    await sheet.getByRole("heading", { name: "새 형식으로 바꾸지 못했습니다", exact: true }).waitFor();
+    await domIs(page, "변환 실패 이유", () => document.querySelector('[data-testid="automation-convert"] [role="alert"]')?.textContent.includes("미리보기 뒤"));
+    if (fs.existsSync(`${dir()}/automations/check.toml`) || !fs.existsSync(`${dir()}/routines/check.md`)) throw new Error("실패한 변환이 썼다");
+    await shot(page, "automation-convert-run-error");
+    fs.writeFileSync(`${dir()}/routines/check.md`, before.check);
+    await sheet.getByRole("button", { name: "미리보기 다시 읽기", exact: true }).click();
+    await sheet.locator('[data-group="rules"]').waitFor();
     await sheet.getByRole("button", { name: "변환", exact: true }).click();
     await sheet.getByTestId("convert-archived").waitFor();
     if (!(await sheet.getByTestId("convert-archived").textContent()).includes("routines/.converted/")) throw new Error("보존 위치");
     await shot(page, "automation-convert-done");
     if (fs.readFileSync(`${dir()}/routines/.converted/check.md`, "utf8") !== before.check || fs.readFileSync(`${dir()}/missions/.converted/watch.md`, "utf8") !== before.watch) throw new Error("보존 사본이 원본과 다르다");
+    if (fs.readFileSync(`${dir()}/routines/.converted/pr-followup.md`, "utf8") !== oldFollowup || fs.readFileSync(`${dir()}/routines/.converted/pr-followup.1.md`, "utf8") !== followup) throw new Error("PR 규칙의 두 판 보존");
+    aaa("doctor", "files", "--fix");
+    if (fs.existsSync(`${dir()}/routines/pr-followup.md`)) throw new Error("doctor가 변환한 PR 규칙을 되살렸다");
     if (!fs.existsSync(`${dir()}/automations/check.toml`) || fs.existsSync(`${dir()}/routines/check.md`)) throw new Error("변환 결과 파일");
     await sheet.getByRole("button", { name: "닫기", exact: true }).first().click();
     await sheet.waitFor({ state: "detached" });

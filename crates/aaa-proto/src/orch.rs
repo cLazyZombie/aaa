@@ -471,6 +471,10 @@ pub struct AgentStatus {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub progress_at_ms: Option<u64>,
+    /// 지금 활동 글이 처음 보고된 때(FRONT_API 1.104). 같은 활동의 진행률·정기 보고는 시작을 바꾸지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub progress_since_ms: Option<u64>,
     pub harness_session: Option<String>,
     /// 마지막으로 쉼(`Idle`)이 된 뒤 사람이 이 pane을 봤다. false면 「끝남(안 봄)」이다(herdr `PaneState::seen`:
     /// 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
@@ -736,7 +740,7 @@ pub enum ThreadStatus {
     Open,
     Failed,
     Resolved,
-    /// 보류(FRONT_API 1.104): 자리·pane을 돌려주고 worktree·대화 ID·보고를 남긴다. `thread unpark`로 이어 한다
+    /// 보류(FRONT_API 1.105): 자리·pane을 돌려주고 worktree·대화 ID·보고를 남긴다. `thread unpark`로 이어 한다
     Parked,
 }
 
@@ -805,7 +809,7 @@ pub enum ThreadGroup {
     Working,
     /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
     Idle,
-    /// 보류(FRONT_API 1.104): 자리·pane 없이 이어 하기를 기다린다
+    /// 보류(FRONT_API 1.105): 자리·pane 없이 이어 하기를 기다린다
     Parked,
     Resolved,
 }
@@ -856,7 +860,7 @@ impl ThreadStage {
     }
 }
 
-/// 보류 기록(FRONT_API 1.104, plan §8.421). `parked_at_ms`가 없으면 thread에게 정리를 맡기고 `[보류 준비됨]` 보고를 기다린다.
+/// 보류 기록(FRONT_API 1.105, plan §8.426). `parked_at_ms`가 없으면 thread에게 정리를 맡기고 `[보류 준비됨]` 보고를 기다린다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadPark {
     pub actor: String,
@@ -901,7 +905,7 @@ pub struct ThreadPark {
     pub resumable: bool,
 }
 
-/// `thread unpark --dry-run`의 머신별 길(FRONT_API 1.104). 같은 머신은 같은 대화, 다른 머신은 push된 branch로 새 worktree와
+/// `thread unpark --dry-run`의 머신별 길(FRONT_API 1.105). 같은 머신은 같은 대화, 다른 머신은 push된 branch로 새 worktree와
 /// 요약 brief의 새 대화다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct UnparkOption {
@@ -956,7 +960,7 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub over_limit: Option<ThreadLimitOverride>,
-    /// 보류 요청·보류 기록(FRONT_API 1.104). 보류하지 않은 thread와 옛 host는 생략한다.
+    /// 보류 요청·보류 기록(FRONT_API 1.105). 보류하지 않은 thread와 옛 host는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub park: Option<Box<ThreadPark>>,
@@ -1469,10 +1473,10 @@ pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
 /// thread 작업 요약 표지(plan §8.259). 줄·머리 단추가 요약을 읽지 않고 「낡았다」를 안다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SummaryMark {
-    /// 요약을 마지막으로 쓴 때. 요약 파일이 없으면 None
+    /// 요약을 썼거나 정상 진행 보고를 받은 마지막 때. 둘 다 없으면 None
     #[ts(type = "number | null")]
     pub at_ms: Option<u64>,
-    /// 요약을 쓴 뒤 task.md Follow-ups에 쌓인 지시 수(요약이 없으면 Follow-ups 전부)
+    /// 요약·정상 진행 보고에 아직 반영 안 된 task.md Follow-ups 지시 수
     pub pending: u32,
 }
 
@@ -1534,7 +1538,7 @@ pub struct ThreadSummaryView {
     pub decisions: Vec<String>,
     #[ts(type = "number | null")]
     pub at_ms: Option<u64>,
-    /// 요약을 쓴 쪽(coordinator·사람)
+    /// 마지막 갱신 쪽(coordinator·사람·agent). 진행은 정상 thread 보고를 우선한다.
     pub by: Option<String>,
     /// Follow-ups 전체 수
     pub follow_ups: u32,

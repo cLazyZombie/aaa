@@ -28,6 +28,9 @@ pub struct CiJob {
     pub id: u64,
     pub name: String,
     pub steps: Vec<String>,
+    /// 실패 로그 전체에서 뽑은 실패 시험 이름(없으면 panic 위치·끝나지 않은 시험). 옛 agent는 비운다.
+    #[serde(default)]
+    pub failures: Vec<String>,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CiCommit {
@@ -45,4 +48,7 @@ pub struct CiAnswer {
     pub commits: Vec<CiCommit>,
     pub log: String,
     pub truncated: bool,
+    /// Log 응답만: 꼬리로 자르기 전 전체 로그에서 뽑은 실패 표지
+    #[serde(default)]
+    pub failures: Vec<String>,
 }

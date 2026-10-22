@@ -21,9 +21,9 @@ describe("운영 화면", () => {
     // 정리가 끊긴 thread는 끝내기로 이어 간다
     assert.equal(threadActions({ ...open, status: "resolved", cleanup_pending: true }, false).resolve, true);
   });
-  it("보류(plan §8.421): 사람이 띄운 열린 일반 thread만 보류하고, 보류한 thread는 다시 시작 대신 이어 하기·끝내기", () => {
-    for (const v of [undefined, null, "1.103"]) assert.equal(canPark(v), false, String(v));
-    assert.equal(canPark("1.104"), true);
+  it("보류(plan §8.426): 사람이 띄운 열린 일반 thread만 보류하고, 보류한 thread는 다시 시작 대신 이어 하기·끝내기", () => {
+    for (const v of [undefined, null, "1.104"]) assert.equal(canPark(v), false, String(v));
+    assert.equal(canPark("1.105"), true);
     const open = { status: "open", thread_kind: "worktree", cleanup_pending: undefined, brief: "delivered", role: "worker", automation: undefined };
     for (const t of [{ ...open, role: "evaluator" }, { ...open, automation: "nightly" }, { ...open, thread_kind: "adopted" }, { ...open, status: "failed" }]) {
       assert.equal(threadActions(t, true).park, false, JSON.stringify(t));

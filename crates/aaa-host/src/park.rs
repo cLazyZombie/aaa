@@ -1,4 +1,4 @@
-//! thread 보류(plan §8.421, t-0689): 자리·pane을 돌려주고 worktree·대화 ID·보고를 남겨 나중에 이어 한다.
+//! thread 보류(plan §8.426, t-0689): 자리·pane을 돌려주고 worktree·대화 ID·보고를 남겨 나중에 이어 한다.
 //! - 보류: 기본은 thread에게 정리(커밋·push·`## Handoff`, 첫 줄 `[보류 준비됨]`)를 맡기고, 그 보고가 오고 agent가 쉬면 ticker가
 //!   닫는다(`park_pass`). `now`는 바로 닫는다. 닫을 때 마지막 사본·git 상태(HEAD·origin의 같은 branch·미커밋)·대화 ID를 적고
 //!   pane을 지운다. 상태가 Open이 아니므로 실행 자리·auto_resolve·병합 뒤 끝내기·task 자동 정리에서 빠진다.

@@ -1051,7 +1051,7 @@ enum ThreadCmd {
         #[arg(hide = true)]
         legacy: Option<String>,
     },
-    /// 보류한다: 자리·pane을 돌려주고 worktree·대화·보고를 남긴다(plan §8.421). 기본은 thread에게 커밋·push·`## Handoff`를 맡기고
+    /// 보류한다: 자리·pane을 돌려주고 worktree·대화·보고를 남긴다(plan §8.426). 기본은 thread에게 커밋·push·`## Handoff`를 맡기고
     /// `[보류 준비됨]` 보고가 오면 host가 pane을 닫는다. coordinator는 사용자 지시가 있을 때만 `--user-request`와 함께 쓴다
     Park {
         thread: String,
@@ -3811,7 +3811,7 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     }
 }
 
-/// 보류 요청·기록(plan §8.421)
+/// 보류 요청·기록(plan §8.426)
 fn render_park(s: &mut String, t: &aaa_proto::ThreadView, p: &aaa_proto::ThreadPark) {
     use std::fmt::Write as _;
     let (project, id) = (&t.project, &t.id);
@@ -4101,15 +4101,9 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
             t.machine
         );
         render_automation_origin(s, t);
-        // 요약이 낡았으면(요약 뒤 지시가 있거나 지시가 있는데 요약이 없다) 이 턴에 고친다
+        // 새 지시는 다음 thread 진행 보고로 자동 반영된다. 목표·사용자 결정이 바뀔 때만 coordinator가 쓴다.
         if let Some(m) = t.summary.as_ref().filter(|m| m.pending > 0) {
-            let _ = writeln!(
-                s,
-                "    요약 고칠 것: {} (aaa thread summary {} {} --file …)",
-                summary_note(m),
-                c.project,
-                t.id
-            );
+            let _ = writeln!(s, "    요약 반영 대기: {} (다음 thread 진행 보고로 자동 갱신)", summary_note(m));
         }
         for l in &t.next {
             let _ = writeln!(s, "    next: {l}");

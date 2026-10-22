@@ -5,7 +5,7 @@
 import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReservation, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
- * 진행 중 ◉(열린 thread와 이어짐) > 보류 ⏸(이어진 thread를 보류했다, plan §8.421) > 대기 ○ */
+ * 진행 중 ◉(열린 thread와 이어짐) > 보류 ⏸(이어진 thread를 보류했다, plan §8.426) > 대기 ○ */
 export type TaskState = "problem" | "check" | "run" | "parked" | "wait";
 
 /** 거르기 칩: 전체·내 일(me)·미할당·진행 중·예약(자리 나면 시작, 한 목록 §8.393)·보류·확인 필요 */

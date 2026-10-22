@@ -22,7 +22,7 @@ describe("할 일 화면", () => {
     assert.equal(taskState(task({ thread: "t-0002" }), groups), "wait");
     assert.equal(taskState(task({ thread: "t-0099" }), groups), "wait");
     assert.equal(taskState(task({}), groups), "wait");
-    // 보류한 thread(plan §8.421)와 이어진 task는 진행 중이 아니라 보류다. 새로 맡기지 않는다(그 thread를 이어 한다)
+    // 보류한 thread(plan §8.426)와 이어진 task는 진행 중이 아니라 보류다. 새로 맡기지 않는다(그 thread를 이어 한다)
     assert.equal(taskState(task({ thread: "t-0004" }), groups), "parked");
     assert.equal(startable(task({ thread: "t-0004" }), groups, []), false);
     assert.equal(startable(task({ thread: "t-0002" }), groups, []), true);

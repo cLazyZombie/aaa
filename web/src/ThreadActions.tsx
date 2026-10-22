@@ -1,7 +1,7 @@
 // thread 화면 머리의 「thread 관리」(관리 GUI W4, plan §8.343): 끝내기·다시 열기·다시 시작·brief 다시 보내기·Next·요약 고치기.
 // 끝내기 창은 host가 미리 읽은 잃을 수 있는 것(커밋하지 않은 파일·병합되지 않은 변경·사본 상태)을 보이고, 위험하거나 모르면
 // 「worktree 남기기」를 켠 채로 연다. 거부·검사는 host가 한다: 화면은 그 글을 창 안에 보인다. 조작 기기만 그린다.
-// 보류·이어 하기(plan §8.421): 보류는 thread에게 정리(커밋·push·Handoff)를 맡기거나 바로 닫고, 이어 하기 창은 host가 푼 머신별 길
+// 보류·이어 하기(plan §8.426): 보류는 thread에게 정리(커밋·push·Handoff)를 맡기거나 바로 닫고, 이어 하기 창은 host가 푼 머신별 길
 // (같은 머신은 같은 대화, 다른 머신은 새 worktree와 요약 brief)과 막힌 까닭을 보인다.
 import "./AutomationPanel.css";
 import "./ThreadActions.css";
@@ -101,7 +101,7 @@ function parkFacts(t: ThreadView): string {
   return parts.join(" · ");
 }
 
-/** thread 화면 머리 아래 보류 띠(plan §8.421): 보류했거나 정리를 맡긴 동안. 조작 기기는 띠에서 이어 하기·보류 창을 연다 */
+/** thread 화면 머리 아래 보류 띠(plan §8.426): 보류했거나 정리를 맡긴 동안. 조작 기기는 띠에서 이어 하기·보류 창을 연다 */
 export function ParkBanner({ t, canAct, running }: { t: ThreadView; canAct: boolean; running: boolean }) {
   const [open, setOpen] = useState<"park" | "unpark" | null>(null);
   const parked = t.status === "parked";

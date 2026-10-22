@@ -2765,7 +2765,7 @@ pub enum FrontRequest {
         #[serde(default)]
         discard_uncopied: bool,
     },
-    /// FRONT_API 1.104(plan §8.421). 보류: 기본은 thread에게 정리(커밋·push·`## Handoff` 보고 `[보류 준비됨]`)를 맡기고 그 보고가
+    /// FRONT_API 1.105(plan §8.426). 보류: 기본은 thread에게 정리(커밋·push·`## Handoff` 보고 `[보류 준비됨]`)를 맡기고 그 보고가
     /// 오면 pane을 닫는다. `now`면 바로 닫는다. 자리를 돌려주고 worktree·대화 ID·보고는 남긴다. `cancel`은 맡긴 정리를 거둔다.
     /// 사용자(조작 기기·세션 밖 CLI)와, `user_request`를 인용한 그 프로젝트 coordinator만
     ThreadPark {
@@ -2786,7 +2786,7 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<bool>")]
         cancel: bool,
     },
-    /// FRONT_API 1.104. 보류를 풀고 이어 한다. 같은 머신(기본)은 같은 대화를 잇고, 다른 머신은 push된 branch로 새 worktree를 만들고
+    /// FRONT_API 1.105. 보류를 풀고 이어 한다. 같은 머신(기본)은 같은 대화를 잇고, 다른 머신은 push된 branch로 새 worktree를 만들고
     /// 할 일·마지막 보고(Handoff)를 담은 brief로 새 대화를 띄운다. `dry_run`은 머신별 길만 답한다(`UnparkPreview`)
     ThreadUnpark {
         #[serde(default)]
@@ -3662,7 +3662,7 @@ pub enum FrontResponse {
     Hook(crate::HookView),
     /// `thread_resolve_preview`의 답
     ResolvePreview(crate::ResolvePreview),
-    /// FRONT_API 1.104. `thread_unpark { dry_run: true }`
+    /// FRONT_API 1.105. `thread_unpark { dry_run: true }`
     UnparkPreview(crate::UnparkPreview),
     AutomationConverted {
         files: Vec<String>,

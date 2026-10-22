@@ -12,7 +12,8 @@ import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "./herdr/sheets.ts";
 import { useSheetHistory } from "./herdr/sheetHistory.ts";
 import { GROUP_WORD } from "./sidebarModel";
-import { cardLines, decidedLines, hoverPlace, popoverPlace, summaryStale, whoWord } from "./summaryCard";
+import { cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryStale, whoWord } from "./summaryCard";
+import { useNowSecond } from "./nowClock";
 import "./ThreadSummary.css";
 
 /** 요약이 바뀌었는지 가르는 열쇠: 요약 시각·요약 뒤 지시 수·보고(Decisions) */
@@ -66,12 +67,23 @@ function Status({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
       {v.pending > 0 ? (
         <span className="summary-warn">
           <TriangleAlert aria-hidden="true" />
-          {v.text === null ? `요약 없음 · 지시 ${v.pending}개` : `요약 뒤 지시 ${v.pending}개`}
+          {v.at_ms === null ? `요약 없음 · 지시 ${v.pending}개` : `요약 뒤 지시 ${v.pending}개`}
         </span>
       ) : (
         <span className="summary-dim">{v.at_ms !== null ? `요약 ${clock(v.at_ms)}` : "요약 없음"}</span>
       )}
     </p>
+  );
+}
+
+function Activity({ t }: { t: ThreadView }) {
+  const now = useNowSecond();
+  const { activity, time } = summaryActivity(t, now);
+  return (
+    <div className="summary-activity" data-testid="summary-activity">
+      <p title={activity}>{activity}</p>
+      <p className="summary-dim" data-testid="summary-time">{time}</p>
+    </div>
   );
 }
 
@@ -132,6 +144,7 @@ export function SummaryCard({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
           )}
         </>
       )}
+      <Activity t={t} />
       <Status t={t} v={v} />
     </div>
   );
@@ -192,6 +205,7 @@ export function SummaryDetail({ t, v }: { t: ThreadView; v: ThreadSummaryView })
           </ul>
         </section>
       )}
+      <Activity t={t} />
       <Status t={t} v={v} />
       <div className="summary-folds">
         <Fold icon={<CircleCheck aria-hidden="true" />} title="정한 것" count={decided.length}>
@@ -207,7 +221,7 @@ export function SummaryDetail({ t, v }: { t: ThreadView; v: ThreadSummaryView })
             ))}
           </ul>
         </Fold>
-        <Fold icon={<TriangleAlert aria-hidden="true" />} title={v.text === null ? "받은 지시" : "요약 뒤 지시"} count={v.pending} tone="warn">
+        <Fold icon={<TriangleAlert aria-hidden="true" />} title={v.at_ms === null ? "받은 지시" : "요약 뒤 지시"} count={v.pending} tone="warn">
           <ul>
             {v.pending_lines.map((l, i) => (
               <li key={i}>

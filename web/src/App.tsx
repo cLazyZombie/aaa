@@ -1223,8 +1223,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const canControl = role !== "reader";
   const open = [...questions.values()].sort((a, b) => a.created_at_ms - b.created_at_ms);
   const currentQ = current ? open.filter((q) => q.pane === current.id) : [];
-  // 그 thread 보고의 질문 칩(입력칸 위): 지금 보고에 질문이 있을 때만(답한 기록은 대화 칩이 보인다)
-  const dockAsk = current ? threadOfPane.get(current.id)?.questions != null : false;
+  // 그 thread 보고의 질문 칩(입력칸 위): 지금 보고에 답하지 않은 질문이 있을 때만(답한 기록은 대화 칩이 보인다)
+  const currentThreadQuestions = current ? threadOfPane.get(current.id)?.questions : null;
+  const dockAsk = currentThreadQuestions != null && currentThreadQuestions.answer == null;
   const whereOf = (q: QuestionView) => {
     if (q.project && q.thread) return threads.get(`${q.project}/${q.thread}`)?.title ?? `${q.project}/${q.thread}`;
     const p = panes.find((x) => x.id === q.pane);

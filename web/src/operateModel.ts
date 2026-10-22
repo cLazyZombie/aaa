@@ -7,8 +7,8 @@ import type { InboxItem, PostEnvelope, RepoChoice, ResolvePreview, ThreadView, U
 /** 설정 읽기·저장소 고치기·끝내기 미리보기·보고서 정리 실행은 1.77 이상 host만 안다 */
 export const canOperate = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 77);
 
-/** 보류·이어 하기(plan §8.421)는 1.104 이상 host만 안다 */
-export const canPark = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 104);
+/** 보류·이어 하기(plan §8.426)는 1.105 이상 host만 안다 */
+export const canPark = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 105);
 
 /** thread 화면 머리의 동작 중 지금 할 수 있는 것. `running`은 그 thread의 agent pane이 도는가 */
 export function threadActions(

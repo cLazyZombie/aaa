@@ -24,7 +24,7 @@ function threadFacts(t: ThreadView, now: number): string {
   if (t.automation) parts.unshift("자동화 thread");
   if (t.machine) parts.push(t.machine);
   if (t.profile) parts.push(t.profile);
-  // 보류(plan §8.421): 보류한 까닭
+  // 보류(plan §8.426): 보류한 까닭
   if (t.group === "parked" && t.park?.note) parts.push(t.park.note);
   if (!ended && t.next.length > 0) parts.push(`next ${t.next.length}`);
   return parts.join(" · ");

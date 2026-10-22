@@ -57,7 +57,7 @@
   .op-row { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* 보류·이어 하기(plan §8.421) */
+/* 보류·이어 하기(plan §8.426) */
 .park-ways { background: var(--bg-hover); }
 .park-banner { flex-wrap: wrap; gap: 8px; }
 .park-banner .btn { display: inline-flex; align-items: center; gap: 4px; }

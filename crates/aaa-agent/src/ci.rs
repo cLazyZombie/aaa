@@ -48,6 +48,7 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
         .context("CI gh 실행 실패(PATH와 host 머신 로그인을 확인한다)")?;
     let mut stdout = child.stdout.take().unwrap();
     let cap = if log { ci::LOG_JOB_CAP } else { 4 * 1024 * 1024 };
+    let mut scan = ci::FailureScan::default();
     let (bytes, truncated, status) = tokio::time::timeout(pr::GH_TIMEOUT, async {
         let mut bytes = Vec::new();
         let mut truncated = false;
@@ -58,6 +59,10 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
                 break;
             }
             bytes.extend_from_slice(&buf[..n]);
+            if log {
+                // 꼬리만 남기기 전에 실패 시험을 모은다(앞쪽 실패가 잘려도 실패 집합에 남는다).
+                scan.feed(&buf[..n]);
+            }
             if bytes.len() > cap {
                 if !log {
                     bail!("CI API 응답 크기 상한이다");
@@ -88,7 +93,7 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
             }
             clean.truncate(end);
         }
-        CiAnswer { log: clean, truncated, ..Default::default() }
+        CiAnswer { log: clean, truncated, failures: scan.finish(), ..Default::default() }
     } else {
         ci::response(&out, status.success(), q)?
     };

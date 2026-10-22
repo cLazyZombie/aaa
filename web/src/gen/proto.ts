@@ -1472,7 +1472,7 @@ export type ThreadView = { account_selection?: AccountSelection,
  */
 over_limit?: ThreadLimitOverride,
 /**
- * 보류 요청·보류 기록(FRONT_API 1.104). 보류하지 않은 thread와 옛 host는 생략한다.
+ * 보류 요청·보류 기록(FRONT_API 1.105). 보류하지 않은 thread와 옛 host는 생략한다.
  */
 park?: ThreadPark,
 /**
@@ -1609,11 +1609,11 @@ export type ThreadPr = { url: string, state: string | null, review: string | nul
 
 export type SummaryMark = {
 /**
- * 요약을 마지막으로 쓴 때. 요약 파일이 없으면 None
+ * 요약을 썼거나 정상 진행 보고를 받은 마지막 때. 둘 다 없으면 None
  */
 at_ms: number | null,
 /**
- * 요약을 쓴 뒤 task.md Follow-ups에 쌓인 지시 수(요약이 없으면 Follow-ups 전부)
+ * 요약·정상 진행 보고에 아직 반영 안 된 task.md Follow-ups 지시 수
  */
 pending: number, };
 
@@ -1778,7 +1778,7 @@ progress?: Array<SummaryStep>, now: Array<string>, decided: Array<SummaryEntry>,
  */
 decisions: Array<string>, at_ms: number | null,
 /**
- * 요약을 쓴 쪽(coordinator·사람)
+ * 마지막 갱신 쪽(coordinator·사람·agent). 진행은 정상 thread 보고를 우선한다.
  */
 by: string | null,
 /**
@@ -1849,7 +1849,11 @@ progress: string | null,
 /**
  * 마지막 `aaa report` 시각. 5분이 지나면 진행 보고로 「작업 중」을 정하지 않는다(herdr-projects `ACTIVITY_TTL_MS`).
  */
-progress_at_ms: number | null, harness_session: string | null,
+progress_at_ms: number | null,
+/**
+ * 지금 활동 글이 처음 보고된 때(FRONT_API 1.104). 같은 활동의 진행률·정기 보고는 시작을 바꾸지 않는다.
+ */
+progress_since_ms?: number, harness_session: string | null,
 /**
  * 마지막으로 쉼(`Idle`)이 된 뒤 사람이 이 pane을 봤다. false면 「끝남(안 봄)」이다(herdr `PaneState::seen`:
  * 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).

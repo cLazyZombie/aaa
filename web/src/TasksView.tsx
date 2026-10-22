@@ -434,8 +434,8 @@ export function TasksView({
   const shownCount = (model?.top.length ?? 0) + (model?.rest.length ?? 0);
   const total = board?.tasks.length ?? 0;
   const queueApi = apiAtLeast(frontApi, [1, 85]);
-  // 보류(plan §8.421)를 아는 host만 「보류」 칩을 둔다
-  const parkApi = apiAtLeast(frontApi, [1, 104]);
+  // 보류(plan §8.426)를 아는 host만 「보류」 칩을 둔다
+  const parkApi = apiAtLeast(frontApi, [1, 105]);
   const pick = (t: TaskView) => {
     if (target !== null) onTarget?.(t.short_id);
     setCreating(null);

@@ -10,7 +10,7 @@ import type { AgentStatus } from "./herdr/status.ts";
 const RANK: Record<string, number> = { waiting_on_you: 1, ready_for_review: 2, landing: 3, working: 4, idle: 5, parked: 6, resolved: 7 };
 export const groupRank = (g: ThreadGroup | string): number => RANK[g] ?? 4.5;
 
-/** 목록(sidebar)에 보이는 thread: 끝낸 것과 보류한 것(plan §8.421, pane이 없고 자리를 돌려줬다)은 「모든 thread」·할 일에만 있다 */
+/** 목록(sidebar)에 보이는 thread: 끝낸 것과 보류한 것(plan §8.426, pane이 없고 자리를 돌려줬다)은 「모든 thread」·할 일에만 있다 */
 export const inSidebar = (t: Pick<ThreadView, "group">): boolean => t.group !== "resolved" && t.group !== "parked";
 
 /** herdr-projects `sidebar::word`(목록·탭 줄의 짧은 말) */

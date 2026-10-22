@@ -5931,7 +5931,10 @@ fn flow_events_go_out_in_seq_order() {
 /// 같은 CLI가 로컬 UDS와 원격 TLS agent 양쪽에서 host inbox로 간다. 보낸 프로젝트 자기 신고는 쓰지 않는다.
 #[test]
 fn post_from_thread_reaches_coordinator_inbox() {
-    let mut w = world_with("nudge_idle_secs = 1\nnudge_quiet_secs = 1\n");
+    // 전송·음소거 경고는 명시한 작은 한도로 검사한다. 제품 기본값 경계는 post owner 시험이 맡는다.
+    let mut w = world_with(
+        "nudge_idle_secs = 1\nnudge_quiet_secs = 1\n[post]\nburst = 3\nhourly = 6\ndaily = 30\nmute_after = 3\n",
+    );
     w.add_remote();
     let coord = w.h.new_pane(
         None,

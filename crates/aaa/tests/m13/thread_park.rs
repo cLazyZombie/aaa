@@ -1,4 +1,4 @@
-//! thread 보류(plan §8.421): 정리 맡기기 → `[보류 준비됨]` 보고 → pane 닫기·자리 반환 → 예약 기동. 보류는 restart·말 보내기·
+//! thread 보류(plan §8.426): 정리 맡기기 → `[보류 준비됨]` 보고 → pane 닫기·자리 반환 → 예약 기동. 보류는 restart·말 보내기·
 //! auto-resolve에서 빠지고, 같은 머신 이어 하기는 저장한 대화(`--resume`)에 고유한 한 줄을 친다. 다른 머신 이어 하기는 push된
 //! branch로 새 worktree와 요약 brief의 새 대화이고, 앞 머신으로 돌아가면 앞 자리에서 origin을 받으라는 brief다.
 use super::*;

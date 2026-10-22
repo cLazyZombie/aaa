@@ -1,4 +1,4 @@
-// thread 보류(plan §8.421, 사용자 10-22 1A 2A 3A 4A): thread 화면 「관리 → 보류」는 thread에게 정리(커밋·push·Handoff)를 맡기고,
+// thread 보류(plan §8.426, 사용자 10-22 1A 2A 3A 4A): thread 화면 「관리 → 보류」는 thread에게 정리(커밋·push·Handoff)를 맡기고,
 // thread가 첫 줄 `[보류 준비됨]` 보고를 쓰면 host가 pane을 닫고 자리를 돌려준다. 보류한 thread는 목록(sidebar)에서 빠지고 「모든 thread」의
 // 「보류」 묶음·할 일 줄의 「보류」 표지와 거르기 칩·thread 화면의 보류 띠에 보인다. 「이어 하기」 창은 host가 푼 머신별 길(같은 머신은
 // 같은 대화 또는 같은 자리의 새 대화, 다른 머신은 새 worktree)을 보이고, 고르면 다시 띄운다. 휴대폰 폭에서도 창이 넘치지 않는다.

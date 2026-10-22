@@ -79,6 +79,10 @@
 .summary-goal.is-auto { font-weight: 600; color: var(--text); }
 .summary-origin { margin: -4px 0 0 22px; color: var(--text-dim); font-size: var(--fs-xs); }
 .summary-note { margin: -4px 0 0 22px; }
+.summary-activity { min-width: 0; margin-left: 22px; font-size: var(--fs-xs); }
+.summary-activity p { margin: 0; }
+.summary-card .summary-activity p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-detail .summary-activity p { overflow-wrap: anywhere; }
 .summary-progress-head {
   display: flex;
   align-items: center;
