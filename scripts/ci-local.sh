@@ -9,7 +9,7 @@
 #   bash scripts/ci-local.sh --tee                 단계 출력을 로그와 함께 화면에도 낸다(CI가 쓴다)
 #
 # 단계: web fmt build clippy test e2e public. web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 test·e2e·clippy를
-# 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee(CI)거나 그 셋 중 하나만 돌면 차례로 돈다(출력이 섞이지 않게).
+# 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee도 같은 병렬 경로에서 단계별 로그를 읽어 출력한다.
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
 #   build      Windows는 dev 없는 배포 release build를 먼저 확인하고 workspace/all-targets build
@@ -87,7 +87,7 @@ step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- 
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
   if [ "$OS" = windows ]; then cargo test --workspace --locked --no-fail-fast; return $?; fi
-  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release || return 1
+  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_ci_local || return 1
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || return 1
 }
 E2E_BIN_DIR=""
@@ -221,14 +221,33 @@ for s in $TOGETHER; do skipped "$s" || go="$go $s"; done
 case " $go " in
   *" e2e "*) prepare_e2e_bin >"$LOGS/e2e-binary.log" 2>&1 || E2E_PREP_FAILED=1 ;;
 esac
-if [ -n "$TEE" ] || [ "$(echo $go | wc -w)" -lt 2 ]; then
+if [ "$(echo $go | wc -w)" -lt 2 ]; then
   for s in $ALL; do
     case " $go " in *" $s "*) run_step "$s"; collect "$s" ;; esac
   done
 else
   echo "── 함께:$go"
-  for s in $go; do run_step "$s" & done
-  wait
+  # 이전 실행의 로그·완료 표지를 reader가 읽지 않게 먼저 초기화한다.
+  stream_done="$LOGS/.stream-done"
+  rm -f "$stream_done"
+  for s in $go; do : >"$LOGS/$s.log"; done
+  stream_pid=""
+  if [ -n "$TEE" ]; then
+    python3 scripts/ci_stream.py "$LOGS" "$stream_done" $go &
+    stream_pid=$!
+  fi
+  # 명령의 stdout/stderr는 로컬 로그에만 쓴다. 화면의 속도·종료가 검증 프로세스에 영향을 주지 않는다.
+  step_pids=""
+  for s in $go; do
+    TEE="" run_step "$s" &
+    step_pids="$step_pids $!"
+  done
+  for step_pid in $step_pids; do wait "$step_pid"; done
+  : >"$stream_done"
+  if [ -n "$stream_pid" ]; then
+    wait "$stream_pid" || failed="$failed 출력"
+  fi
+  rm -f "$stream_done"
   for s in $go; do collect "$s"; done
 fi
 for s in public; do

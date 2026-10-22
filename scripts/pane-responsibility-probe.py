@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import time
 import uuid
 
@@ -61,7 +62,13 @@ fn main() {
 
 
 def run(args, **kwargs):
-    return subprocess.run([os.fspath(a) for a in args], check=True, capture_output=True, text=True, **kwargs)
+    try:
+        return subprocess.run([os.fspath(a) for a in args], check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        # pane·CI에도 실제 compiler/build.rs 오류를 남긴다. 종료 코드만 남기면 원인을 잃는다.
+        print(error.stdout, file=sys.stderr)
+        print(error.stderr, file=sys.stderr)
+        raise
 
 
 def main():

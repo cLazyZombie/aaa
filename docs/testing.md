@@ -1,5 +1,30 @@
 # 시험 쓰는 법
 
+## 새 launcher 아래 restart fixture 격리(t-0798)
+
+- `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`는 등록되지 않은 새 launcher를 기본으로 쓴다. `AAA_RESTART_TEST_LAUNCHER`로 기존 launcher를 지정하는 읽기 전용 경로도 유지한다. 두 경로 모두 기존 launcher/worker PID·기존 pane 보존·새 pane·책임 PID·승인 거부·detached 재관측 단언을 그대로 검사한다.
+- 원본은 보호 볼륨의 Python 스크립트를 open하다가 `probe-before`의 30초 시한으로 실패했다. 같은 새 책임자 아래 Apple·Homebrew Python 모두 일반 임시 폴더의 같은 스크립트는 즉시 성공하고 보호 볼륨에서는 정지했으며, 해당 PID의 TCC `SystemPolicyAllFiles` 거부를 확인했다. 자료만 옮긴 대조는 다음으로 `kache rustc -vV`에서 보호 볼륨의 사용자 store를 열다가 멈췄다. 시험 전용 `KACHE_CACHE_DIR`를 준 대조는 실제 cargo/build.rs까지 통과했다. Python 판이나 CPU 부하로 단정하지 않는다.
+- fixture 자료·cwd·생성 실행 파일·Cargo target·kache store는 사용자 캐시 아래 실행마다 새로 만든 전용 폴더에 둔다. kache wrapper는 유지하고 전역 설정·기존 store·TCC·launchd 등록을 변경하지 않는다. Cargo target을 OS 임시 폴더나 다른 worktree에 공유하지 않는다. 완료된 각 단계의 원본 결과는 시험 책임자가 자기 worktree의 `target/restart-probes`로 복사하고, 성공하면 전용 캐시를 지우며 실패하면 경로를 남긴다.
+- 새 launcher는 기존 C 소스를 그대로 쓰고 별도 시험 신원의 Info.plist·adhoc 서명으로 정상 번들을 만든다. 준비 전에 launcher가 종료되면 바로 실패한다. 진단 하위 명령은 실제 stdout/stderr와 종료 코드를 남기고 완료 출력 사건으로 끝낸다. 정상 출력·시한·기대값을 완화하거나 실패한 명령을 재실행하지 않는다.
+- 조사 중 별도 실행에서는 syspolicyd의 EMFILE·YARA 검사 오류와 launcher 종료를 기록했다. 또 다른 cargo 실패의 같은 시각에도 해당 시스템 오류가 있었지만 당시 숨겨진 cargo stderr가 없어 그 실패의 직접 원인은 확정하지 않는다. 정상 번들·격리는 시스템 검사 오류 전체의 수리라는 뜻이 아니다. 이후 실패는 추가된 종료·compiler 오류와 원본 시스템 로그를 함께 확인한다.
+- 첫 전체 검증은 재시작 전 진단 뒤 새 worker 준비 기록의 30초 대기에서 한 번 실패했다. 그 실행에는 정리 전 스택이 없어 원인을 확정하지 않는다. 해당 대기에 실패하면 아직 자기 실행 파일을 가리키는 worker·launcher만 sample하고 원래 실패를 다시 전파하도록 진단을 추가했다. 진단본의 단독·병렬 Rust·Rust/웹 동시 전체 검증은 통과했지만 앞 실패가 수리됐다는 증거로 쓰지 않는다. 다음 재발의 스택을 확보한다.
+- 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. 제품 코드·API·E2E 번호·시스템 권한은 바꾸지 않는다.
+
+## ci-local --tee 병렬 출력(t-0797)
+
+- `--tee`도 기본 실행과 같은 `test e2e clippy` 병렬 경로를 쓴다. 세 명령은 각각의 로컬 로그에 stdout/stderr를 쓰고,
+  별도 reader가 `[단계]`를 붙여 화면에 출력한다. 로그 원문·단계 결과·실패 요약·GitHub annotation은 유지한다.
+  web→fmt→build와 E2E 실행 사본 준비를 먼저 끝내고, 병렬 단계와 reader가 끝난 뒤 public을 실행한다.
+  고른 병렬 단계가 하나면 기존 tee 경로를 쓴다. reader 실패도 전체 실패지만 검증 명령은 모두 끝까지 실행한다.
+- `python3 -m unittest scripts.test_ci_local -v`는 실제 셸과 격리 도구 자식 세 개를 socket으로 만난다.
+  세 자식이 동시에 진입하고 종료를 허락받기 전에 각 로그가 화면에 도착해야 한다. 고정 sleep 없이 socket과 출력 사건으로 끝낸다.
+  한 단계 실패 뒤 나머지 완료·public 후행·원문 로그·개행 없는 마지막 바이트·이전 완료 표지 제거·단일 단계·tee 없는 경로·
+  빌드 실패의 의존 단계 건너뜀과 reader 실패를 검사한다. UTF-8이 읽기 경계에서 나뉘어도 깨지지 않고 완료 뒤 큰 로그를 모두 읽어야 한다.
+  직렬 분기를 되심으면 동시 진입 대기에서 실패한다. 이 keeper는 Unix의 정본 test 단계에 포함한다.
+- 전후 비교는 같은 worktree와 머신에서 준비 빌드를 끝낸 뒤 같은 선택 단계·환경·nice 값으로 차례로 실행한다.
+  stage 시간 합과 실제 병렬 구간의 벽시계를 구분하고, 준비 빌드·캐시·주변 부하 차이를 절감액으로 단정하지 않는다.
+  최종 정본 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사를 수행한다. 검증 범위·worker·시한을 바꾸지 않는다.
+
 ## FD 고갈 시험의 Front 연결 준비(t-0791)
 
 - 두 번째 묶음 gate에서 기존 hard64 시험은 웹 EMFILE을 기록했지만 단발 Front status 요청이 이미 성공해 Front EMFILE 대기가 실패했다. 원본 host 로그·요청 stdout·OS fd 목록을 보존했다. 이 owner와 host accept 구현은 후보 3개에서 바뀌지 않았다.
@@ -467,7 +492,8 @@
 - 병렬 전체 gate의 E2E68은 부하(load average 87 관찰) 중 안전 모드의 고정 3초 Refresh와 정상 listen이 경합했다.
   보관한 기록은 되돌리기 11:19:58Z·정상 listen 11:20:01.459Z·pane 20초 대기 실패다.
   다른 gate가 끝난 뒤 같은 시한으로 단독 실행해 8.5초에 통과했다. 관련 제품·시험 코드는 바꾸지 않았으며,
-  최종 전체 검증은 ci-local의 `--tee` 순차 단계를 써 Rust 시험과 웹 E2E의 부하를 나눈다.
+  당시 최종 전체 검증은 ci-local의 `--tee` 순차 단계를 써 Rust 시험과 웹 E2E의 부하를 나눴다.
+  t-0797 이후 `--tee`는 기본 실행과 같은 병렬 경로를 쓴다.
 
 ## 입력 중 숨긴 게이지 자리 회수(t-0622, plan §8.398)
 
