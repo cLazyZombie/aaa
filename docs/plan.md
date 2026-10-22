@@ -7380,3 +7380,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증.** 기존 E2E69에 맨 ID의 문장·괄호·붙은 `·`/쉼표를 추가한다. 명시 링크와 모든 칩의 아이콘·본문·밝음/어두움 CSS 색, 열림→답함→새 보고 뒤 답 보존과 기록 삭제를 비교하고 각 맨 ID의 정확한 카드 이동을 확인한다. E2E77의 coordinator·thread 대화/보고서·코드/주소 제외·질문 이동·일반 ID 링크 검사는 유지한다. 구분자 유닛 시험과 전체 ci-local·공개 검사 후 착지 창을 기다린다. 새 API·backend 변화가 없어 FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 유지한다.
 
 - **착지 통합.** 승인된 origin/main `ab1f7403`의 마지막 plan §8.437·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인했다. 활동 막대 아이콘 변경을 보존하고 빈 §8.438로 옮긴 통합 후보를 전체 ci-local·공개 검사·Linux 대상 clippy로 검증한다. 검증 tree와 같은 tree를 `--no-ff`로 병합·push하고 원격 SHA를 확인하며 배포와 GitHub CI 감시는 coordinator가 맡는다.
+
+### 8.439 시스템 idle-audit의 웹 읽기 전용(t-0735)
+
+- **목적·범위.** coordinator 점검 안내를 실수로 고치거나 끄지 않도록 `idle-audit`만 시스템 자동화로 분류한다. host의 이름 목록을 정본으로 삼으며 TOML 스키마·운영 파일·다른 운영 자동화는 바꾸지 않는다.
+- **웹.** 목록·상세·휴지통에 시스템 읽기 전용 표지와 이유를 보인다. 원문·본문·상태·기록은 읽고 편집·토글·수동 실행·삭제·복원·승인·큐 변경은 제공하지 않는다. host도 같은 웹 요청을 Forbidden으로 거부한다. 파일 없음/오류에서도 이름 보호를 유지하며 옛 형식 일괄 변환은 CLI로 한다(미리보기 허용).
+- **계약·권한.** RoutineView·AutomationDoc·AutomationTrashEntry.web_read_only_reason은 선택 필드다. 새 host가 웹 경계를 보호하고 Local CLI와 파일 직접 편집은 유지한다. FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)를 유지한다.
+- **검증.** 실제 host 파일/요청 경계와 기존 E2E55의 Chromium·WebKit 화면·직접 API 거부·CLI 조작을 확인한다. 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.

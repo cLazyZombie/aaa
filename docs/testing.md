@@ -1,5 +1,11 @@
 # 시험 쓰는 법
 
+## 시스템 idle-audit의 웹 읽기 전용(t-0735)
+
+- `nice -n 15 cargo test -p aaa-host --lib automation:: --locked`: 실제 파일과 host 경계에서 Reader/Controller 원문·기록 조회, 웹 저장·토글·삭제·실행·승인·큐 변경·복원·옛 형식 변환의 거부와 파일 무변경을 확인한다. 파일 없음·오류에서도 이름 보호가 유지되고, 다른 운영 규칙은 웹 편집을 허용해야 한다. Local CLI 경계의 저장·토글·실행·삭제·꺼진 복원을 확인한다. 프로젝트를 생략한 일반 변환의 허용과 시스템 변환의 거부도 같은 경계에서 확인한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 55-automation-edit --workers 1`: 기존 일반 규칙의 만들기·편집·삭제·복원·실행·승인·Reader 검사를 유지한다. 시스템 규칙은 Chromium 1280px·WebKit 390px에서 목록/상세 표지·이유·꺼진 스위치·쓰기 단추 없음·원문·기록·가로 넘침을 확인하고 캡처한다. 실제 웹 API의 각 변경 거부와 CLI 토글·삭제·복원도 확인한다.
+- 완료 신호는 host 응답·파일·DOM이며 고정 sleep·실패 재시도·시한 변경은 없다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.106·AGENT_LINK 1.11·기존 E2E 번호를 유지한다.
+
 ## 맨 q-ID도 질문 상태 칩으로 표시(t-0730, plan §8.438)
 
 - `node --test web/test/appIds.test.mjs`: 문장·괄호·붙은 `·`/쉼표·줄바꿈에서 두 q-ID를 각각 인식하고 주변 글자를 보존한다. 주소·경로·없는 ID 제외 검사는 유지한다.

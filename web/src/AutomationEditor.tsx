@@ -178,6 +178,7 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
   const [check, setCheck] = useState<AutomationCheck | null>(null);
   const [preview, setPreview] = useState(false);
   const [loading, setLoading] = useState(!creating);
+  const [readOnlyReason, setReadOnlyReason] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
@@ -218,7 +219,8 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
       setText(d.text); setCheck(d.check); setBody(d.body_file ? d.body ?? "" : null);
       if (d.check.form) setForm(d.check.form as Form);
       setBase({ sha: d.sha256, bodySha: d.body_sha256 ?? null, bodyFile: d.body_file ?? null });
-      if (d.legacy) setError("이전 형식(.md)은 웹에서 고치지 않는다. 목록 머리의 「새 형식으로 바꾸기」를 먼저 한다");
+      if (d.web_read_only_reason) setReadOnlyReason(d.web_read_only_reason);
+      else if (d.legacy) setError("이전 형식(.md)은 웹에서 고치지 않는다. 목록 머리의 「새 형식으로 바꾸기」를 먼저 한다");
       else if (!d.check.form) setMode("toml");
       setConflict(null);
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
@@ -290,7 +292,7 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
   const legacy = !!error && error.startsWith("이전 형식");
   const body_ = bodyOf(form);
   const bodyText = body_.file ? body ?? "" : body_.inline ?? "";
-  const ready = !loading && !legacy && (!creating || validName(name));
+  const ready = !loading && !legacy && !readOnlyReason && (!creating || validName(name));
   const title = creating ? "새 자동화" : `${(form.title as string) || openName} 고치기`;
   return <AutomationPage title={title} subtitle={`${project} · automations/${creating ? name || "…" : openName}.toml`} onClose={onClose} busy={busy} testid="automation-editor"
     footer={<>
@@ -298,7 +300,8 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
       <button type="button" className="btn btn-primary" data-testid="automation-save" disabled={!ready || busy || !!conflict} onClick={() => void save()}>{busy ? "저장 중…" : "저장"}</button>
     </>}>
     {error && <p role="alert">{error}</p>}
-    {conflict && <ConflictPanel conflict={conflict} onReopen={() => void load()} onOverwrite={conflict.latest && !conflict.latest.legacy ? () => {
+    {readOnlyReason && <p role="status">{readOnlyReason}</p>}
+    {conflict && <ConflictPanel conflict={conflict} onReopen={() => void load()} onOverwrite={conflict.latest && !conflict.latest.legacy && !conflict.latest.web_read_only_reason ? () => {
       // 본 지금 판(규칙과, 같은 본문 파일이면 그 본문)을 기대 판으로 삼아 내 초안을 쓴다
       const latest = conflict.latest!;
       const over = { sha: latest.sha256, bodySha: latest.body_file && latest.body_file === bodyOf(form).file ? latest.body_sha256 ?? null : null };
@@ -306,7 +309,7 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
       setBase((b) => ({ ...b, sha: over.sha, bodySha: over.bodySha, bodyFile: latest.body_file ?? b.bodyFile }));
       void save(over);
     } : null} />}
-    {loading ? <p role="status">읽는 중…</p> : !legacy && <>
+    {loading ? <p role="status">읽는 중…</p> : !legacy && !readOnlyReason && <>
       {creating && <Field label="이름(파일 이름)" hint="영문 소문자·숫자·-·_. 만든 뒤에는 바꾸지 않는다"><input className="input" value={name} onChange={(e) => setName(e.target.value.trim())} data-testid="automation-form-name" spellCheck={false} aria-invalid={name !== "" && !validName(name)} /></Field>}
       <div className="automation-tabs" role="tablist">
         {(["form", "toml", "review"] as Mode[]).map((m) => <button key={m} type="button" role="tab" aria-selected={mode === m} data-testid={`automation-tab-${m}`} disabled={flushing || (m === "form" && !check?.form && !creating && mode === "toml" && errors.length > 0)} onClick={() => void switchMode(m)}>{m === "form" ? "폼" : m === "toml" ? "TOML" : "검토"}</button>)}

@@ -3,7 +3,7 @@
 // 「저장만으로는 돌지 않음」은 저절로 돌지 않는 thread 사건 규칙을 저장한 뒤 ticker 울타리(`ticker tick`) 뒤에 기록 0건으로 본다.
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot } from "../lib/harness.mjs";
+import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot, webkit } from "../lib/harness.mjs";
 
 const dir = () => `${root}/projects/demo`;
 const file = (name) => `${dir()}/automations/${name}.toml`;
@@ -274,4 +274,64 @@ export default async function ({ page }) {
       if (phone.errors.length) throw new Error(phone.errors.join("\n"));
     } finally { await phone.page.context().close(); }
   });
+
+  await step("시스템 idle-audit: 웹은 상태·원문·기록만 읽고 직접 변경 API도 거부하며 CLI는 유지한다", async () => {
+    const text = 'title = "운영 점검"\n[on.schedule]\nevery = "10m"\n[do.inbox]\ntext = "운영 상태를 점검한다"\n';
+    fs.writeFileSync(file("idle-audit"), text);
+    const check = async (p, label) => {
+      await p.getByTestId("automations").getByRole("button", { name: "다시 읽기", exact: true }).click();
+      const card = p.getByTestId("automation-demo-idle-audit");
+      await card.getByText("시스템 · 읽기 전용", { exact: true }).waitFor();
+      const d = await openDetail(p, "idle-audit");
+      await d.getByTestId("automation-read-only").waitFor();
+      if (!(await d.getByTestId("automation-read-only").textContent()).includes("CLI나 파일 편집")) throw new Error("읽기 전용 이유 없음");
+      if (await d.getByTestId("automation-detail-actions").count()) throw new Error("시스템 자동화 쓰기 단추");
+      if (!(await d.getByRole("switch").isDisabled())) throw new Error("시스템 켜기 스위치 활성");
+      await until("시스템 원문 표시", async () => (await d.getByTestId("automation-source").textContent()).includes("운영 상태를 점검한다"));
+      await d.getByTestId("automation-runs").waitFor();
+      const fit = await fits(p, '[data-testid="automation-detail"]');
+      if (fit !== true) throw new Error(`시스템 상세 폭 ${fit}`);
+      await shot(p, `automation-system-${label}`);
+      for (const req of [
+        { op: "automation_save", text: text.replace("운영 점검", "웹 변경"), expected_sha256: sha(text) },
+        { op: "routine_toggle", on: false },
+        { op: "automation_delete", expected_sha256: sha(text) },
+        { op: "automation_run", key: `web-${label}` },
+        { op: "routine_approve", command_sha256: "unseen" },
+        { op: "automation_approve", approval_sha256: "unseen" },
+        { op: "automation_unblock", batch: "unseen", discard: true },
+      ]) {
+        const reply = await call(p, { project: "demo", name: "idle-audit", ...req });
+        if (reply.err?.code !== "forbidden" || !reply.err.message.includes("시스템 자동화")) throw new Error(`시스템 ${req.op}: ${JSON.stringify(reply)}`);
+        if (fs.readFileSync(file("idle-audit"), "utf8") !== text) throw new Error("거부한 요청이 원문 변경");
+      }
+      await closeDetail(p);
+    };
+    await check(page, "desktop");
+    const wk = await webkit.launch({ headless: true });
+    try {
+      const phone = await pairPage(wk, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true });
+      try {
+        const p = phone.page;
+        await p.locator(".view [data-testid='drawer-toggle']").click();
+        await drawerSettled(p);
+        await openPanel(p);
+        await check(p, "phone");
+        if (phone.errors.length) throw new Error(phone.errors.join("\n"));
+      } finally { await phone.page.context().close(); }
+    } finally { await wk.close(); }
+    if (runs("idle-audit").length) throw new Error("웹 수동 실행이 기록 생성");
+    // Local CLI 경로는 꺼짐·켜짐·삭제·복원까지 실제로 동작한다.
+    aaa("routine", "toggle", "idle-audit", "--off");
+    if (rule("idle-audit").enabled) throw new Error("CLI 끄기 거부");
+    aaa("routine", "toggle", "idle-audit", "--on");
+    aaa("automation", "delete", "idle-audit");
+    const trash = aaa("routine", "list").trash.find((t) => t.name === "idle-audit");
+    if (!trash?.web_read_only_reason) throw new Error("시스템 휴지통 표지 없음");
+    const rejected = await call(page, { op: "automation_restore", project: "demo", id: trash.id });
+    if (rejected.err?.code !== "forbidden") throw new Error(`시스템 웹 복원: ${JSON.stringify(rejected)}`);
+    aaa("automation", "restore", trash.id);
+    if (rule("idle-audit").enabled) throw new Error("CLI 꺼진 채 복원 실패");
+  });
+
 }

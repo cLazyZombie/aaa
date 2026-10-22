@@ -1721,6 +1721,9 @@ pub struct RoutineRun {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct RoutineView {
+    /// 웹에서 읽기만 하는 시스템 자동화의 이유. 없으면 일반 자동화(옛 host도 생략).
+    #[serde(default)]
+    pub web_read_only_reason: Option<String>,
     pub title: String,
     pub name: String,
     pub trigger: String,
@@ -1834,6 +1837,9 @@ pub struct RoutineSource {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct AutomationDoc {
+    /// 웹에서 읽기만 하는 시스템 자동화의 이유. 없으면 일반 자동화(옛 host도 생략).
+    #[serde(default)]
+    pub web_read_only_reason: Option<String>,
     pub name: String,
     /// `automations/<이름>.toml`, 옛 형식이면 `routines/<이름>.md`
     pub file: String,
@@ -1888,6 +1894,9 @@ pub struct AutomationReview {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct AutomationTrashEntry {
+    /// 웹에서 읽기만 하는 시스템 자동화의 이유. 없으면 일반 자동화(옛 host도 생략).
+    #[serde(default)]
+    pub web_read_only_reason: Option<String>,
     /// `.trash/` 안 파일 이름(되살리기 요청에 쓴다)
     pub id: String,
     pub name: String,

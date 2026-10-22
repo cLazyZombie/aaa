@@ -3,6 +3,47 @@ mod convert;
 mod deploy;
 pub(crate) mod edit;
 pub(crate) mod runtime;
+/// coordinator 운영 규칙의 웹 보호 표지. 파일 내용·제목과 무관하게 이름으로 판정한다.
+/// 다른 운영 자동화는 사용자 결정 없이 여기에 더하지 않는다. CLI·파일 편집은 그대로 허용한다.
+pub(crate) fn web_read_only_reason(name: &str) -> Option<&'static str> {
+    (name == "idle-audit").then_some("coordinator 운영에 필요한 시스템 자동화입니다. 웹에서는 읽기만 할 수 있습니다. 변경은 CLI나 파일 편집으로 합니다.")
+}
+
+/// 웹 요청에서만 호출한다. 원문 검사·조회는 허용하고 모든 규칙 변경 입구를 막는다.
+pub(crate) fn check_web_mutation(
+    host: &crate::Host,
+    req: &aaa_proto::FrontRequest,
+) -> Result<(), aaa_proto::ErrorBody> {
+    use aaa_proto::FrontRequest as R;
+    let name = match req {
+        R::AutomationSave { name, .. }
+        | R::AutomationDelete { name, .. }
+        | R::AutomationRun { name, .. }
+        | R::RoutineToggle { name, .. }
+        | R::RoutineApprove { name, .. }
+        | R::AutomationApprove { name, .. }
+        | R::AutomationUnblock { name, .. } => Some(name.as_str()),
+        R::AutomationRestore { id, .. } => edit::trash_id(id).map(|(name, _)| name),
+        R::AutomationConvert { project, dry_run: false, .. } => {
+            // 옛 시스템 규칙을 웹의 일괄 변환으로 바꾸는 것도 금지한다. 미리보기는 읽기다.
+            if host
+                .routines(project)?
+                .iter()
+                .any(|r| r.web_read_only_reason.is_some() && r.file.starts_with("routines/"))
+            {
+                Some("idle-audit")
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    if let Some(reason) = name.and_then(web_read_only_reason) {
+        return Err(crate::err(aaa_proto::ErrorCode::Forbidden, reason));
+    }
+    Ok(())
+}
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
