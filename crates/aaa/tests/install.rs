@@ -545,6 +545,8 @@ fn internal_service_entry_requires_the_os_supervisor_and_never_falls_back_to_con
 
 #[path = "install/authorization.rs"]
 mod authorization;
+#[path = "install/recovery.rs"]
+mod recovery;
 
 #[path = "install/grant.rs"]
 mod grant;

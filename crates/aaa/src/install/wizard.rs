@@ -164,6 +164,8 @@ fn questions(choices: &InstallChoices, prior: &InstallChoices, existing: bool) -
         };
         result.push(Question { key, label, kind, default, source });
     };
+    // instance가 먼저 정해져야 기존 config의 repair 기본값을 고를 수 있다.
+    add("instance", "aaa 이름(기본 aaa는 빈 값)", Kind::Optional, Value::Null);
     add(
         "mode",
         "설치 방식",
@@ -171,7 +173,6 @@ fn questions(choices: &InstallChoices, prior: &InstallChoices, existing: bool) -
         json!(if existing { "repair" } else { "fresh" }),
     );
     add("role", "이 머신의 역할", Kind::Choice(&["host", "agent"]), Value::Null);
-    add("instance", "aaa 이름(기본 aaa는 빈 값)", Kind::Optional, Value::Null);
     add(
         "name",
         "머신 표시 이름",
@@ -409,6 +410,64 @@ pub(super) fn run(args: &Args, original: &InstallInvocation, reporter: &mut outp
     println!("설치 선택: :back 이전 · :cancel 중단 · :save <절대경로> 비밀 없는 초안 저장");
     loop {
         let (prior, existing) = defaults(&state.choices)?;
+        let instance_chosen = provided(&explicit["instance"]) || state.answered.contains("instance");
+        if !state.answered.contains("recovery")
+            && instance_chosen
+            && existing
+            && !original.dry_run
+            && !provided(&explicit["mode"])
+        {
+            state.answered.insert("recovery");
+            let location = state
+                .choices
+                .state_dir
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| aaa_config::paths::default_state_dir_for(state.choices.instance.as_deref()));
+            if let Some((id, plan, result)) =
+                engine::previous_installation(&location, state.choices.instance.as_deref())?
+                && !matches!(
+                    result.status,
+                    InstallStatus::Completed | InstallStatus::Configured | InstallStatus::Unchanged
+                )
+            {
+                let same_executor = result.exit_code != 4 && engine::executor_matches(&plan)?;
+                println!("이전 설치 ID: {id}. 설정·작업·hook·journal은 보존합니다.");
+                if !same_executor {
+                    println!("다른 판 또는 기록 검증 실패이므로 새 repair 계획으로 실제 파일을 다시 검토합니다.");
+                }
+                let q = Question {
+                    key: "recovery",
+                    label: "남은 설치 처리",
+                    kind: if same_executor {
+                        Kind::Choice(&["resume", "repair", "cancel"])
+                    } else {
+                        Kind::Choice(&["repair", "cancel"])
+                    },
+                    default: json!(if same_executor { "resume" } else { "repair" }),
+                    source: "기존 서명 기록/실제 상태",
+                };
+                match ask(args, &q)? {
+                    Answer::Value(value) if value == "resume" => {
+                        let mut resume = original.clone();
+                        resume.resume = Some(id);
+                        resume.choices = InstallChoices {
+                            instance: state.choices.instance.clone(),
+                            config_dir: state.choices.config_dir.clone(),
+                            state_dir: state.choices.state_dir.clone(),
+                            ..Default::default()
+                        };
+                        return review::resume(args, &resume, reporter);
+                    }
+                    Answer::Value(value) if value == "repair" => {
+                        state.choices.mode = Some(InstallMode::Repair);
+                        state.answered.insert("mode");
+                        println!("원래 ID {id}는 보존하고 새 계획·승인으로 변경분만 적용합니다.");
+                    }
+                    _ => return Ok(cancelled()),
+                }
+            }
+        }
         let question = questions(&state.choices, &prior, existing).into_iter().find(|q| {
             !state.answered.contains(q.key)
                 && !provided(&explicit[q.key])
@@ -444,6 +503,9 @@ pub(super) fn run(args: &Args, original: &InstallInvocation, reporter: &mut outp
                         Ok(()) => {
                             history.push(previous);
                             state.answered.insert(q.key);
+                            if q.key == "instance" {
+                                state.answered.remove("recovery");
+                            }
                         }
                         Err(e) => {
                             println!("선택을 확인하세요: {}", e.error.as_ref().map_or("invalid_choice", |v| &v.code));

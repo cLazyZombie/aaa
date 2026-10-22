@@ -74,6 +74,20 @@ pub(super) fn terminal_controlled(
     command.args(args);
     drive_terminal(command, steps, observe)
 }
+/// PowerShell 입구가 실제 설치 CLI의 외부 콘솔을 물려주는 Windows 경계다.
+#[cfg(windows)]
+pub(super) fn terminal_program(command: &Command, steps: &[(&str, &str)]) -> (u32, String) {
+    let mut builder = CommandBuilder::new(command.get_program());
+    builder.env_clear();
+    for (name, value) in command.get_envs() {
+        if let Some(value) = value {
+            builder.env(name, value);
+        }
+    }
+    builder.env("TERM", "xterm-256color");
+    builder.args(command.get_args());
+    drive_terminal(builder, steps, |_, _| {})
+}
 enum TerminalEvent {
     Output(Vec<u8>),
     ReaderDone,

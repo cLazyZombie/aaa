@@ -79,10 +79,20 @@ impl Lease {
         Ok(permission)
     }
     pub(super) fn permits(&self, plan: &InstallPlan, permissions: &[InstallPermission]) -> Result<()> {
-        if self.plan_sha256 != aaa_config::install::plan_sha256(plan)
-            || permissions.iter().any(|requested| !self.permissions.contains(requested))
-        {
+        if self.plan_sha256 != aaa_config::install::plan_sha256(plan) {
             return Err(denied());
+        }
+        for requested in permissions {
+            let mut allowed = false;
+            for signed in &self.permissions {
+                if scope::same_permission(requested, signed)? {
+                    allowed = true;
+                    break;
+                }
+            }
+            if !allowed {
+                return Err(denied());
+            }
         }
         Ok(())
     }

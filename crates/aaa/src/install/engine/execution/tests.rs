@@ -89,3 +89,64 @@ fn status_rejects_an_execution_intent_repointed_to_a_different_real_completed_jo
     assert!(Execution::begin(plan, &first, 1003, true).is_err());
     assert_eq!(tree(&lab.0), before);
 }
+
+#[test]
+fn legacy_hook_alias_approval_keeps_its_signature_id_and_scope_through_status_and_resume() {
+    let lab = Lab::new();
+    let mut plan = lab.plan("legacy-state");
+    let codex = lab.0.join("codex");
+    private::directory(&codex).unwrap();
+    plan.choices.harness = vec![InstallHarness::Codex];
+    plan.choices.hooks = Some(InstallHooks::Install);
+    plan.choices.login = Some(InstallLogin::Defer);
+    plan.choices.codex_home = Some(codex.to_string_lossy().into_owned());
+    plan.choices.codex_path = plan.choices.from.clone();
+    let plan = aaa_config::install::plan(plan.choices, plan.context).unwrap();
+    let state = PathBuf::from(&plan.context.state_dir);
+    let canonical_scope = scope::all(&plan).unwrap();
+    let mut legacy_scope = canonical_scope.clone();
+    // v0.1.4 emitted the lexical integration home in signed hook targets and
+    // canonicalized it only when saving the file journal. The issuer still signs the original bytes.
+    for permission in &mut legacy_scope {
+        if permission.operation == InstallOperation::ConfigureHook {
+            let leaf = Path::new(&permission.target).file_name().unwrap();
+            permission.target = codex.join(".").join(leaf).to_string_lossy().into_owned();
+        }
+    }
+    assert!(legacy_scope.iter().zip(&canonical_scope).any(|(old, new)| old.target != new.target));
+    let issuer = Authority::initialize(&state).unwrap();
+    let approval = issuer.issue(&plan, legacy_scope.clone(), 1000, 100).unwrap();
+    let id = approval.claims.installation_id.clone();
+    let signature = approval.signature.clone();
+    let mut run = Execution::begin(plan.clone(), &approval, 1001, false).unwrap();
+    assert_eq!(run.files().unwrap().exit_code, 0);
+    assert!(run.lease.permits(&plan, &canonical_scope).is_ok());
+    let different = lab.0.join("same-bytes-other-target");
+    private::write(&different, b"verified executable bytes").unwrap();
+    let mut elsewhere = canonical_scope.clone();
+    elsewhere[0].target = different.to_string_lossy().into_owned();
+    assert!(run.lease.permits(&plan, &elsewhere).is_err(), "같은 bytes도 다른 파일의 쓰기 권한은 아니다");
+
+    let mut altered = canonical_scope;
+    altered[0].after_sha256 = Some(hash(b"another executable"));
+    assert!(run.lease.permits(&plan, &altered).is_err(), "경로 동등성이 SHA 변경을 허용하면 안 된다");
+    drop(run);
+    let before = tree(&lab.0);
+    let status = observe(&state, Some("lab"), &id).unwrap().unwrap();
+    assert_eq!(status.installation_id.as_deref(), Some(id.as_str()));
+    assert_eq!(tree(&lab.0), before, "구판 기록의 status가 서명/기록을 다시 쓰면 안 된다");
+    let original = issuer.issued(&id).unwrap();
+    assert_eq!(original.authorization.signature, signature);
+    assert!(original.authorization.claims.permissions == legacy_scope);
+    assert!(!crate::install::engine::resume_requires_consent(&state, &id, 1002).unwrap());
+    assert!(crate::install::engine::resume_requires_consent(&state, &id, 3000).unwrap());
+    let renewed = issuer.refresh(&id, 3000, 100).unwrap();
+    assert_eq!(renewed.claims.installation_id, id);
+    assert!(renewed.claims.permissions == legacy_scope);
+    assert_ne!(renewed.claims.nonce, approval.claims.nonce);
+    let mut resumed = Execution::begin(plan, &renewed, 3001, true).unwrap();
+    let result = resumed.files().unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.installation_id.as_deref(), Some(id.as_str()));
+    assert_eq!(std::fs::read_dir(state.join("install/jobs")).unwrap().count(), 1);
+}
