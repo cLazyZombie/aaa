@@ -96,6 +96,15 @@
 
 - 착지 때 Linux 대상 `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu --locked --keep-going -- -D warnings`도 확인한다. main install 엔진의 `File` import는 실제 사용 범위인 Windows·macOS·시험 cfg에만 둔다. Linux 제품의 미사용 import 실패를 경고 억제 없이 수리하며 Linux 실행 검증과 교차 lint는 구분한다.
 
+- Windows CI 정리 실패 수리(t-0709): 가짜 머신의 `agent_connected`가 예약한 `rewatch`는 `Arc<Host>`와
+  SQLite 연결을 보유한다. 두 연결 시험은 전용 current-thread runtime을 Lab보다 먼저 종료해 예약 작업을
+  해제하고, Lab 정리는 `Weak<Host>`로 실제 Host 종료를 확인한 뒤 `remove_dir_all`을 한 번만 수행한다.
+  기존 `tokio::test` 수명에 종료 단언만 더하면 macOS에서도 취소 경합 시험이 RED다. 취소 순서·Queued와
+  Cancelled·다음 pass·재전송·DB 재열기·thread 0건과 할 일 한 건의 단언은 유지한다.
+  원본 시험의 추가 진단에서도 재열기 Host의 명시 drop과 Weak 소멸 뒤 최초 Host의 strong count는 2로
+  남아 정리 단언이 실패한다. 재열기 연결이 남았다는 가설과 예약 작업의 수명 문제를 구분한다.
+  고정 sleep·정리 재시도·오류 무시는 없으며, Windows 교차 build/clippy와 실제 Windows CI 결과를 구분한다.
+
 ## host 공통 계정 풀 자동 배정(t-0653, plan §8.416)
 
 - `nice -n 15 cargo test -p aaa-host --lib account_pool --locked`: 창별 최소 여유·모델 창·동점·공유 한도,
