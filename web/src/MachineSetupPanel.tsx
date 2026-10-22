@@ -11,6 +11,7 @@ import {
   busy,
   canCancel,
   canInstall,
+  canInstallWindows,
   canSsh,
   defaultSettings,
   detectedLine,
@@ -104,7 +105,7 @@ export function MachineSetupPanel({
       title="SSH로 추가"
       note={
         install
-          ? "host Mac에서 이미 ssh로 로그인되는 머신을 넣는다. host의 SSH 키·ssh-agent·~/.ssh/config만 쓰고 비밀번호는 받지 않는다. 접속·지문·감지 뒤 설치 설정과 계획을 확인하고 설치·등록한다."
+          ? "host에서 이미 ssh로 로그인되는 머신을 넣는다. SSH 접속은 host의 키·ssh-agent·설정을 쓴다. Windows 서비스 암호는 설치 확인 창의 전용 칸에서만 한 번 받는다."
           : "host Mac에서 이미 ssh로 로그인되는 머신을 넣는다. host의 SSH 키·ssh-agent·~/.ssh/config만 쓰고 비밀번호는 받지 않는다. 지금은 접속·host key 확인·OS 감지까지이고 원격에는 쓰지 않는다."
       }
     >
@@ -167,6 +168,7 @@ export function MachineSetupPanel({
                   s={s}
                   canEdit={canEdit}
                   install={install}
+                  windows={canInstallWindows(api)}
                   sending={sending}
                   addresses={addresses ?? []}
                   machines={machines}
@@ -202,12 +204,9 @@ export function MachineSetupPanel({
         />
       )}
       {applying?.review && (
-        <ConfirmDialog
-          title={`${applying.target}에 aaa를 설치하고 ${applying.settings?.name ?? ""}로 등록할까요?`}
-          body={`계획 ${shortHash(applying.review.plan_sha256)} — host가 이 계획에만 서명하고, 그 머신의 install이 적용한 뒤 이 host에 등록한다. 승인 범위: ${applying.review.operations.map(operationLabel).join(", ") || "없음"}.`}
-          confirmLabel="설치하고 등록"
-          onConfirm={async () => {
-            await call({ op: "machine_setup_apply", job: applying.job, plan_sha256: applying.review!.plan_sha256 });
+        <InstallDialog
+          s={applying}
+          onApplied={() => {
             setApplying(null);
             load();
           }}
@@ -218,10 +217,45 @@ export function MachineSetupPanel({
   );
 }
 
+/** 암호는 uncontrolled 전용 입력에만 둔다. 대화·설정 state·저장소·URL에 옮기지 않고 보내기 직전에 비운다. */
+function InstallDialog({ s, onApplied, onClose }: { s: MachineSetupView; onApplied: () => void; onClose: () => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const element = input.current;
+    const clear = () => { if (element) element.value = ""; };
+    window.addEventListener("pagehide", clear);
+    return () => { clear(); window.removeEventListener("pagehide", clear); };
+  }, []);
+  return <ConfirmDialog
+    title={`${s.target}에 aaa를 설치하고 ${s.settings?.name ?? ""}로 등록할까요?`}
+    body={`계획 ${shortHash(s.review!.plan_sha256)} — host가 이 계획에만 서명하고, 그 머신의 install이 적용한 뒤 이 host에 등록한다. 승인 범위: ${s.review!.operations.map(operationLabel).join(", ") || "없음"}.`}
+    confirmLabel="설치하고 등록"
+    onClose={onClose}
+    onConfirm={async () => {
+      const req = { op: "machine_setup_apply" as const, job: s.job, plan_sha256: s.review!.plan_sha256,
+        service_password: input.current?.value || undefined };
+      if (input.current) input.current.value = "";
+      try { await call(req); onApplied(); }
+      finally { req.service_password = undefined; }
+    }}
+  >
+    {(pending) => s.review?.service_password && <>
+      <label className="op-field">
+        <span>Windows 서비스 암호(Hello PIN 아님)</span>
+        <input ref={input} type="password" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+          data-lpignore="true" data-1p-ignore="true" disabled={pending} maxLength={1024} data-testid="machine-setup-password" />
+      </label>
+      <p className="op-muted">암호는 위 전용 칸에만 직접 입력하세요. coordinator 대화창·질문 답·할 일 메모·터미널·agent에게 붙여 넣지 마세요. aaa는 저장하거나 대화에 보내지 않고 신뢰를 확인한 SSH로 Windows 서비스에 한 번 전달합니다.</p>
+      <p className="op-muted">비우면 필요한 경우 설치가 멈춥니다. 그 PC의 aaa 밖 콘솔에서 같은 설치 ID로 재개해 암호를 입력한 뒤 여기서 다시 확인할 수도 있습니다.</p>
+    </>}
+  </ConfirmDialog>;
+}
+
 function SetupBody({
   s,
   canEdit,
   install,
+  windows,
   sending,
   addresses,
   machines,
@@ -236,6 +270,7 @@ function SetupBody({
   s: MachineSetupView;
   canEdit: boolean;
   install: boolean;
+  windows: boolean;
   sending: boolean;
   addresses: EnrollAddress[];
   machines: string[];
@@ -300,12 +335,12 @@ function SetupBody({
           {s.phase === "ready" && !install && <span className="op-muted"> — 설치는 다음 단계에서 이어진다</span>}
         </p>
       )}
-      {s.phase === "ready" && install && canEdit && s.detected && notInstallable(s.detected) && (
+      {s.phase === "ready" && install && canEdit && s.detected && notInstallable(s.detected, windows) && (
         <p className="op-muted" data-testid="machine-setup-not-installable">
-          {notInstallable(s.detected)}
+          {notInstallable(s.detected, windows)}
         </p>
       )}
-      {s.phase === "ready" && install && canEdit && s.detected && !notInstallable(s.detected) && (
+      {s.phase === "ready" && install && canEdit && s.detected && !notInstallable(s.detected, windows) && (
         <SettingsForm s={s} sending={sending} addresses={addresses} machines={machines} onPlan={onPlan} />
       )}
       {r && (s.phase === "review" || s.phase === "needs_user" || s.phase === "installing" || s.phase === "installed") && (
@@ -334,10 +369,10 @@ function SetupBody({
               ))}
             </ul>
           )}
-          {s.phase === "review" && canEdit && (
+          {(s.phase === "review" || (s.phase === "needs_user" && r.service_password)) && canEdit && (
             <div className="admin-line">
               <button type="button" className="btn btn-primary" disabled={sending} onClick={onApply} data-testid="machine-setup-apply">
-                설치하고 등록…
+                {s.phase === "needs_user" ? "암호 입력·다시 확인…" : "설치하고 등록…"}
               </button>
             </div>
           )}
@@ -354,6 +389,9 @@ function SetupBody({
           ))}
         </p>
       )}
+      {s.phase === "needs_user" && r?.service_password && i?.installation_id && <p className="op-muted">
+        그 PC의 aaa 밖 콘솔에서 암호를 넣으려면 <code>aaa install --resume {i.installation_id}</code>로 재개한 뒤 「다시 확인」을 누른다.
+      </p>}
       {s.phase === "installed" && i && (
         <div className="setup-review" data-testid="machine-setup-after">
           {i.checks && i.checks.length > 0 && (

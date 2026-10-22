@@ -28,6 +28,7 @@ fn required() -> Fault {
     Fault { code: "installation_private_password_input_required", exit: 3 }
 }
 pub(in crate::install::engine) fn prompt() -> Result<supervisor::Password> {
+    outside_session()?;
     let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
         return Err(required());

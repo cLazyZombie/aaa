@@ -162,6 +162,12 @@ jobs:
         if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
         timeout-minutes: 20
         run: bash scripts/ci-root-sshd.sh 2>&1 | tee ssh-install.log
+      # 암호는 일회성 시험 계정의 가짜 값이며 anonymous stdin만 쓴다. 기존 runner 계정/sshd 설정은 보존한다.
+      - name: Windows SYSTEM SSH로 설치·사용자 SCM·등록
+        if: ${{ !cancelled() && matrix.os == 'windows-2025' && steps.build.outcome == 'success' }}
+        timeout-minutes: 20
+        shell: pwsh
+        run: ./scripts/ci-windows-sshd.ps1
       # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
       # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
       # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).

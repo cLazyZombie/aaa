@@ -486,7 +486,7 @@ fn the_binary_reaches_a_private_remote_temp_dir_and_a_mismatch_removes_it() {
         let sha = hex::encode(Sha256::digest(std::fs::read(&file).unwrap()));
         let ssh = h.ssh();
         let t = parse_target("lab").unwrap();
-        let placed = ssh.upload(&t, &file, &sha, "aaa 9.9.9").await.unwrap();
+        let placed = ssh.upload(&t, &file, &sha, "aaa 9.9.9", "macos").await.unwrap();
         assert_eq!(placed.sha256, sha);
         let dir = Path::new(&placed.dir);
         assert_eq!(std::fs::read(dir.join("aaa")).unwrap(), std::fs::read(&file).unwrap());
@@ -495,13 +495,13 @@ fn the_binary_reaches_a_private_remote_temp_dir_and_a_mismatch_removes_it() {
         assert!(!dir.exists());
         // SHA·판이 기대와 다르면 놓은 폴더를 지우고 까닭을 준다
         let before = remote_setup_dirs(&file);
-        let e = ssh.upload(&t, &file, &"0".repeat(64), "aaa 9.9.9").await.unwrap_err();
+        let e = ssh.upload(&t, &file, &"0".repeat(64), "aaa 9.9.9", "macos").await.unwrap_err();
         assert!(e.contains("SHA-256"), "{e}");
-        let e = ssh.upload(&t, &file, &sha, "aaa 0.1.2").await.unwrap_err();
+        let e = ssh.upload(&t, &file, &sha, "aaa 0.1.2", "macos").await.unwrap_err();
         assert!(e.contains("판이 다르다"), "{e}");
         assert_eq!(remote_setup_dirs(&file), before, "어긋난 전송은 원격 임시 폴더를 남기지 않는다");
         // 닫힌 포트는 ssh 까닭
-        let e = ssh.upload(&parse_target("lab-down").unwrap(), &file, &sha, "aaa 9.9.9").await.unwrap_err();
+        let e = ssh.upload(&parse_target("lab-down").unwrap(), &file, &sha, "aaa 9.9.9", "macos").await.unwrap_err();
         assert!(e.contains("거부"), "{e}");
     });
 }
@@ -566,10 +566,8 @@ fn settings_become_agent_choices_under_the_detected_home() {
             .unwrap();
     assert_eq!((inside.work_storage, inside.harness), (Some(InstallStorage::Internal), vec![InstallHarness::None]));
     // 감독자가 아직 없는 OS(Linux I4·Windows)는 설치하지 않는다, HOME 없음은 다시 감지
-    for os in ["linux", "windows"] {
-        let other = MachineDetected { os: os.into(), home: Some("/home/<me>".into()), ..mac.clone() };
-        assert!(install::choices(&settings, &other).err().unwrap().contains("macOS부터"), "{os}");
-    }
+    let other = MachineDetected { os: "linux".into(), home: Some("/home/<me>".into()), ..mac.clone() };
+    assert!(install::choices(&settings, &other).err().unwrap().contains("macOS부터"));
     assert!(
         install::choices(&settings, &MachineDetected { home: None, ..mac.clone() }).err().unwrap().contains("HOME")
     );
@@ -821,7 +819,7 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
         assert!(Path::new(&placed).join("aaa").is_file());
 
         // 적용: hash가 다르면·보기 기기·세션 안은 거부
-        let apply = |p: &str| FrontRequest::MachineSetupApply { job: job.job.clone(), plan_sha256: p.into() };
+        let apply = |p: &str| FrontRequest::MachineSetupApply { job: job.job.clone(), plan_sha256: p.into(), service_password: None };
         assert_eq!(h.call(DeviceRole::Controller, WEB, apply(&"0".repeat(64))).await.unwrap_err().code, ErrorCode::Conflict);
         assert!(h.call(DeviceRole::Reader, "device:tv", apply(&plan_sha)).await.is_err());
         assert!(h.call(DeviceRole::Local, "local:demo@01ARZ3NDEKTSV4RRFFQ69G5FAV", apply(&plan_sha)).await.is_err());
@@ -1519,4 +1517,172 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
     drop(rt);
     assert!(weak.upgrade().is_none());
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
+    use aaa_proto::install::*;
+    let settings = MachineSetupSettings {
+        name: "pc-b".into(),
+        host: "mac-a.example.ts.net:7430".into(),
+        work_root: r"D:\작업 폴더\aaa-work".into(),
+        work_mount: Some("D:/".into()),
+        harness: vec![],
+        login: InstallLogin::Defer,
+    };
+    let detected = MachineDetected {
+        os: "windows".into(),
+        arch: "x86_64".into(),
+        raw: "Windows AMD64".into(),
+        chosen: false,
+        home: Some(r"C:\Users\시험 사용자".into()),
+        shell: None,
+        aaa: None,
+    };
+    install::check_settings(&settings).unwrap();
+    let choices = install::choices(&settings, &detected).unwrap();
+    assert_eq!(choices.service, Some(InstallService::WindowsScm));
+    assert_eq!(choices.service_account, Some(InstallAccount::CurrentUser));
+    assert_eq!(choices.service_password_source, Some(InstallPasswordSource::Prompt));
+    assert!(choices.state_dir.is_none() && choices.bin_path.is_none() && choices.launcher_policy.is_none());
+    for root in ["C:relative", r"C:\a\..\b", r"\\server\share", "/a/b", "C:/a\n"] {
+        assert!(
+            install::choices(&MachineSetupSettings { work_root: root.into(), ..settings.clone() }, &detected).is_err()
+        );
+    }
+    let dir = format!("aaa-setup.{}", "a".repeat(32));
+    assert!(windows::safe_dir(&dir));
+    for bad in ["aaa-setup.", "aaa-setup.abc/..", "aaa-setup.';exit", "C:/temp/aaa-setup.abc"] {
+        assert!(!windows::safe_dir(bad));
+    }
+    use base64::Engine as _;
+    let decode = |s: String| {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(s.split_whitespace().last().unwrap()).unwrap();
+        String::from_utf16(&bytes.as_chunks::<2>().0.iter().copied().map(u16::from_le_bytes).collect::<Vec<_>>())
+            .unwrap()
+    };
+    let apply = decode(install::apply_script(&dir, "windows", "01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
+    assert!(
+        apply.contains("--secrets-stdin") && apply.contains("OpenStandardInput().CopyTo($p.StandardInput.BaseStream)")
+    );
+    assert!(decode(windows::upload()).contains("Get-FileHash -LiteralPath"));
+    assert!(windows::cleanup("aaa-setup.bad").is_none());
+    assert_eq!(check::windows_check_argv()[0], "powershell.exe");
+}
+
+/// 가짜 암호는 실행 중에만 만들고 원문을 assertion/로그/파일에 넣지 않는다.
+#[cfg(unix)]
+#[test]
+fn service_password_is_web_only_and_never_in_views_or_persistent_records() {
+    let Some(lab) = lab() else { return };
+    let secret =
+        aaa_proto::MachineSetupPassword(format!("{}{}", aaa_common::util::new_id(), aaa_common::util::new_id()));
+    let request = || FrontRequest::MachineSetupApply {
+        job: aaa_common::util::new_id(),
+        plan_sha256: "a".repeat(64),
+        service_password: Some(secret.clone()),
+    };
+    assert!(!format!("{:?}", request()).contains(&secret.0), "요청 Debug에 보호 입력이 있다");
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let h = host_for(&lab);
+        for (role, actor) in [
+            (DeviceRole::Local, "local:cli"),
+            (DeviceRole::Local, "local:thread@session"),
+            (DeviceRole::Local, "local:coordinator@session"),
+            (DeviceRole::Reader, "device:tv"),
+            (DeviceRole::Reader, "worker:session"),
+            (DeviceRole::Reader, "evaluator:session"),
+            (DeviceRole::Reader, "detached:session"),
+        ] {
+            assert_eq!(h.call(role, actor, request()).await.unwrap_err().code, ErrorCode::Forbidden);
+        }
+        let view = serde_json::to_string(&h.setup_list().unwrap()).unwrap();
+        assert!(!view.contains(&secret.0), "조회에 보호 입력이 있다");
+        // 일회 입력은 잘못된 job에도 응답에 되돌아오지 않는다.
+        let error = h.call(DeviceRole::Controller, WEB, request()).await.unwrap_err();
+        assert!(!serde_json::to_string(&error).unwrap().contains(&secret.0), "오류에 보호 입력이 있다");
+    });
+    fn scan(root: &Path, needle: &[u8]) {
+        for entry in std::fs::read_dir(root).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan(&path, needle);
+            } else {
+                assert!(
+                    !std::fs::read(path).unwrap().windows(needle.len()).any(|w| w == needle),
+                    "영속 기록에 보호 입력이 있다"
+                );
+            }
+        }
+    }
+    // host DB/WAL·감사·프로젝트 작업/보고 등 이 시험이 만든 전체 자료를 검사한다.
+    scan(&lab.root, secret.0.as_bytes());
+}
+
+#[cfg(unix)]
+#[test]
+fn service_password_frames_cross_real_ssh_stdin_and_remote_echo_is_scrubbed() {
+    use aaa_proto::{MachineSetupPassword, install::*};
+    let Some(lab) = lab() else { return };
+    let password =
+        MachineSetupPassword(format!("{}{} 한글 ' \\", aaa_common::util::new_id(), aaa_common::util::new_id()));
+    let authorization = InstallAuthorization {
+        claims: InstallAuthorizationClaims {
+            schema: InstallAuthorizationSchema::V1,
+            installation_id: aaa_common::util::new_id(),
+            plan_sha256: "a".repeat(64),
+            platform: InstallPlatform { os: InstallOs::Windows, arch: InstallArch::X86_64 },
+            target_account: "test-account".into(),
+            instance: None,
+            binary_sha256: "b".repeat(64),
+            permissions: vec![],
+            issued_at_ms: 0,
+            expires_at_ms: 1,
+            nonce: "invalid-fixture".into(),
+            issuer: "invalid-fixture".into(),
+        },
+        signature: "invalid-fixture".into(),
+        enrollment: None,
+    };
+    let input = secret::framed(&authorization, Some(&password)).unwrap();
+    let digest = hex::encode(Sha256::digest(password.0.as_bytes()));
+    // 원격은 frame과 실제 EOF를 검사한다. 암호는 파일·argv가 아닌 stdin에서만 받고, 잘못된 원격의 echo도 시험한다.
+    let body = format!(r#"import sys,json,hashlib
+b=sys.stdin.buffer.read()
+assert b.startswith(b"aaa.install.input.v1\x00")
+b=b[21:]
+frames={{}}
+while b:
+ k=b[0]; n=int.from_bytes(b[1:5],"little"); frames[k]=b[5:5+n]; b=b[5+n:]
+assert set(frames)=={{1,2}}
+assert json.loads(frames[1])["claims"]["platform"]["os"]=="windows"
+assert hashlib.sha256(frames[2]).hexdigest()=="{digest}"
+print(json.dumps({{"type":"event","schema":"aaa.install.event.v1","installation_id":None,"seq":1,"phase":"configure","state":"running","code":"fixture","message":frames[2].decode()}}))
+"#).replace("\n+", "\n");
+    // 작은따옴표 shell 인용은 피하고 공개한 시험 코드만 base64로 싣는다.
+    use base64::Engine as _;
+    let code = base64::engine::general_purpose::STANDARD.encode(body.as_bytes());
+    let command = format!("python3 -c 'import base64;exec(base64.b64decode(\"{code}\"))'");
+    let known = lab.root.join("known");
+    std::fs::write(&known, format!("[127.0.0.1]:{} {}\n", lab.port, lab.host_pub)).unwrap();
+    let ssh = Ssh { config: Some(lab.root.join("ssh_config")), known };
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let mut events = vec![];
+        let (ran, code) = ssh
+            .stream(&parse_target("lab").unwrap(), &command, input, RUN_TIMEOUT, |line| {
+                if let install::Line::Event(event) = install::stream_line(line) {
+                    events.push(secret::scrub(&event, Some(&password)));
+                }
+            })
+            .await;
+        assert!(ran.ok && code == Some(0), "보호 stdin fixture 실패");
+        assert_eq!(events, ["[비밀]"]);
+        assert!(!ran.stderr.contains(&password.0), "전송 진단에 보호 입력이 있다");
+    });
+    let mut result = InstallResult::invalid();
+    result.error.as_mut().unwrap().message = password.0.clone();
+    let clean = secret::result(&result, Some(&password)).unwrap();
+    assert!(!serde_json::to_string(&clean).unwrap().contains(&password.0), "설치 오류에 보호 입력이 있다");
 }

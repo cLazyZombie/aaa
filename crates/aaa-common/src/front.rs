@@ -118,6 +118,9 @@ impl FrontClient {
 
     /// 응답을 기다리지 않고 보낸다(응답은 `next`로 받는다). 요청 ID를 돌려준다.
     pub async fn send(&mut self, body: FrontRequest) -> Result<String> {
+        if matches!(&body, FrontRequest::MachineSetupApply { service_password: Some(_), .. }) {
+            bail!("서비스 암호는 CLI로 보내지 않는다. 사람이 웹 확인 창의 전용 입력칸에 직접 넣는다");
+        }
         self.seq += 1;
         let id = format!("q{}", self.seq);
         self.tx.json(&FrontMsg::Req { id: id.clone(), body }).await?;

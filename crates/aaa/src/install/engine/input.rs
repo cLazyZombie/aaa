@@ -10,6 +10,12 @@ const LIMIT: usize = 1024 * 1024;
 fn invalid() -> Fault {
     Fault { code: "installation_private_input_invalid", exit: 2 }
 }
+pub(super) fn outside_session() -> Result<()> {
+    if std::env::var_os("AAA_SESSION_ID").is_some() || std::env::var_os("AAA_HOOK_SOCK").is_some() {
+        return Err(Fault { code: "installation_secret_input_outside_required", exit: 3 });
+    }
+    Ok(())
+}
 
 struct Bytes(Vec<u8>);
 impl Drop for Bytes {
@@ -39,6 +45,7 @@ impl Input {
     /// secrets 입력은 magic 뒤 kind(u8)·length(u32 LE)·payload frame, 끝은 실제 EOF다.
     /// kind 1은 authorization JSON, 2는 암호 UTF-8이다. 중복/모르는 frame은 거부한다.
     pub(super) fn framed(mut reader: impl Read, provided: Option<InstallAuthorization>) -> Result<Self> {
+        outside_session()?;
         let mut bytes = Bytes(Vec::new());
         reader.by_ref().take((LIMIT + 4096 + 64) as u64 + 1).read_to_end(&mut bytes.0).map_err(|_| invalid())?;
         if bytes.0.len() > LIMIT + 4096 + 64 || !bytes.0.starts_with(MAGIC) {

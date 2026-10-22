@@ -195,8 +195,15 @@ fn ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_c
         let taken = Command::new("/bin/launchctl").args(["print", &target]).output().unwrap().status.success();
         assert!(!taken, "{target}가 이미 있다: 이 계정에서 돌리지 않는다");
         let _booted = Booted(target);
-        call(&mut c, FrontRequest::MachineSetupApply { job: job.clone(), plan_sha256: review.plan_sha256.clone() })
-            .await;
+        call(
+            &mut c,
+            FrontRequest::MachineSetupApply {
+                job: job.clone(),
+                plan_sha256: review.plan_sha256.clone(),
+                service_password: None,
+            },
+        )
+        .await;
         let v = wait(&mut c, &job, "적용", APPLY, |v| v.phase != MachineSetupPhase::Installing).await;
         assert_eq!(
             v.phase,

@@ -1750,6 +1750,31 @@ pub struct MachineSetupReview {
     pub needs_user: Vec<crate::install::InstallNeedsUser>,
     /// 승인 범위(operation 이름만, 원격 경로는 싣지 않는다)
     pub operations: Vec<String>,
+    /// Windows 서비스 암호의 전용 가림 입력을 보인다. 값은 이 요약·작업에 절대 싣지 않는다.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub service_password: bool,
+}
+
+/// 웹 확인 창 → host 메모리 → SSH stdin 전용. Debug는 가리고 사용한 소유 버퍼는 지운다.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(type = "string")]
+pub struct MachineSetupPassword(pub String);
+
+impl std::fmt::Debug for MachineSetupPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[비밀]")
+    }
+}
+
+impl Drop for MachineSetupPassword {
+    fn drop(&mut self) {
+        // SAFETY: 소유한 UTF-8 저장소를 지운 뒤 문자열을 더 읽지 않는다.
+        for byte in unsafe { self.0.as_bytes_mut() } {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2377,6 +2402,10 @@ pub enum FrontRequest {
     MachineSetupApply {
         job: String,
         plan_sha256: String,
+        /// FRONT_API 1.112. 사람의 웹 확인 창에서만 일회 전달한다. CLI·세션·저장·응답 금지.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        service_password: Option<MachineSetupPassword>,
     },
     /// FRONT_API 1.103. 설치·등록된 머신에 끝 확인 shell pane을 연다(작업 폴더·git·harness·PATH를 적는다, 모델 비용 없음). 사람만
     MachineSetupCheck {
@@ -4277,7 +4306,8 @@ mod tests {
             FrontRequest::MachineSetupTrust { job: "j".into(), host_key_sha256: "SHA256:x".into() }.needs_control()
         );
         assert!(!FrontRequest::MachineSetupStart { target: "mac-b".into() }.local_only());
-        let apply = FrontRequest::MachineSetupApply { job: "j".into(), plan_sha256: "0".repeat(64) };
+        let apply =
+            FrontRequest::MachineSetupApply { job: "j".into(), plan_sha256: "0".repeat(64), service_password: None };
         assert!(apply.needs_control() && !apply.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)

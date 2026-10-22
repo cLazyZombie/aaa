@@ -3,7 +3,7 @@
 // 시스템 「뒤로」도 닫는다. 일은 여기서 하므로 실패는 창 안에 보인다. 다른 곳: 참고의 escalation(「그래도 지우기」)은 쓰는 곳이 없어 뺐다.
 import "./herdr/ConfirmDialog.css";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
@@ -15,6 +15,7 @@ export function ConfirmDialog({
   confirmLabel,
   onConfirm,
   onClose,
+  children,
 }: {
   title: string;
   body: string;
@@ -22,6 +23,7 @@ export function ConfirmDialog({
   /** 일이 끝나면 resolve한다. 그 뒤 창을 내리는 것은 부른 쪽이다 */
   onConfirm: () => Promise<void>;
   onClose: () => void;
+  children?: ReactNode | ((pending: boolean) => ReactNode);
 }) {
   const id = useId();
   const cancel = useRef<HTMLButtonElement>(null);
@@ -80,6 +82,7 @@ export function ConfirmDialog({
           <p className="confirm-body" id={`${id}-body`}>
             {body}
           </p>
+          {typeof children === "function" ? children(pending) : children}
           {error && (
             <p className="confirm-error" role="alert">
               {error}

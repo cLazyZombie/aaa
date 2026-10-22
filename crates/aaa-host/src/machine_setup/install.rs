@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use aaa_proto::install::*;
 use aaa_proto::{
-    DeviceRole, ErrorBody, ErrorCode, FrontResponse, MachineDetected, MachineSetupInstall, MachineSetupPhase,
-    MachineSetupReview, MachineSetupSettings,
+    DeviceRole, ErrorBody, ErrorCode, FrontResponse, MachineDetected, MachineSetupInstall, MachineSetupPassword,
+    MachineSetupPhase, MachineSetupReview, MachineSetupSettings,
 };
 use base64::Engine as _;
 use serde::Deserialize;
@@ -92,11 +92,11 @@ pub(crate) fn check_settings(s: &MachineSetupSettings) -> Result<(), String> {
     {
         return Err("host 주소는 이름·IP·포트 글자만 쓴다(직접 설치 안내의 후보를 고른다)".into());
     }
-    if !remote_path_ok(&s.work_root) {
-        return Err("작업 root는 그 머신의 절대 경로다(/로 시작)".into());
+    if !(remote_path_ok(&s.work_root) || super::windows::path(&s.work_root)) {
+        return Err("작업 root는 그 머신의 절대 경로다".into());
     }
     if let Some(m) = &s.work_mount
-        && !remote_path_ok(m)
+        && !(remote_path_ok(m) || super::windows::path(m))
     {
         return Err("외장 디스크 mount는 그 머신의 절대 경로다".into());
     }
@@ -108,16 +108,25 @@ pub(crate) fn check_settings(s: &MachineSetupSettings) -> Result<(), String> {
 
 /// 웹 설정 + 감지 → install choices(role agent, 등록 grant). 원격 상태·실행 파일 자리는 감지한 HOME 아래 install 기본 자리다
 pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<InstallChoices, String> {
-    // 감독자까지 끝나는 OS만 설치한다: macOS launchd(install I3). Linux(I4)·Windows는 그 단계가 오면 연다
-    if d.os != "macos" {
+    // 감독자까지 끝나는 OS만 설치한다: macOS launchd(I3)·Windows SCM. Linux는 install I4 뒤에 연다.
+    if !matches!(d.os.as_str(), "macos" | "windows") {
         return Err(format!("{}는 아직 SSH로 설치하지 않는다(macOS부터, 그 OS의 install 감독자가 오면 연다)", d.os));
     }
-    let suffix = state_suffix(&d.os).ok_or_else(|| format!("{}는 아직 SSH로 설치하지 않는다(macOS부터)", d.os))?;
-    let home = d.home.as_deref().map(|h| h.trim_end_matches('/')).filter(|h| remote_path_ok(h) && !h.is_empty());
+    let windows = d.os == "windows";
+    let valid_path = |p: &str| if windows { super::windows::path(p) } else { remote_path_ok(p) };
+    if !valid_path(&s.work_root) || s.work_mount.as_ref().is_some_and(|m| !valid_path(m)) {
+        return Err("작업 root·mount는 감지한 OS의 절대 경로여야 한다".into());
+    }
+    let home = d
+        .home
+        .as_deref()
+        .map(|h| h.trim_end_matches(['/', '\\']))
+        .filter(|h| if windows { super::windows::path(h) } else { remote_path_ok(h) });
     let home = home.ok_or("그 머신의 HOME을 읽지 못했다(감지를 다시 한다)")?;
     // agent의 가장 긴 unix socket(`<상태>/agent/run/b<ID>.sock`, `aaa init`과 같은 잣대)이 macOS 한도 안이어야 pane을 연다
+    let suffix = state_suffix(&d.os).unwrap_or("");
     let longest = format!("{home}/{suffix}/agent/run/b{}.sock", "0".repeat(26)).len();
-    if longest >= SUN_LEN {
+    if !windows && longest >= SUN_LEN {
         return Err(format!(
             "그 머신의 HOME 경로가 길어 agent socket({longest}자, 한도 {})을 열 수 없다: {home}",
             SUN_LEN - 1
@@ -136,8 +145,9 @@ pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<I
     Ok(InstallChoices {
         role: Some(InstallRole::Agent),
         name: Some(s.name.clone()),
-        state_dir: Some(format!("{home}/{suffix}")),
-        bin_path: Some(format!("{home}/.local/bin/aaa")),
+        // Windows 기본 자리(LOCALAPPDATA·설치 bin)는 원격 install이 현지 환경에서 채운다.
+        state_dir: (!windows).then(|| format!("{home}/{suffix}")),
+        bin_path: (!windows).then(|| format!("{home}/.local/bin/aaa")),
         expected_os: install_os(&d.os),
         expected_arch: install_arch(&d.arch),
         work_root: Some(s.work_root.clone()),
@@ -151,8 +161,11 @@ pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<I
         enroll: Some(InstallEnroll::Grant),
         // 현재 사용자 LaunchAgent(install I3)로 바로 띄운다. launcher는 실행 파일 옆 package로 새로 놓거나(기본 자리
         // `~/Applications/aaa-launcher.app`) 이미 있는 것을 보존한다(install이 정한다)
-        service: Some(InstallService::Launchd),
-        launcher_policy: Some(InstallLauncherPolicy::Install),
+        service: Some(if windows { InstallService::WindowsScm } else { InstallService::Launchd }),
+        service_account: windows.then_some(InstallAccount::CurrentUser),
+        // stdin으로 암호를 받으면 prompt를 건너뛴다. 없으면 현지 외부 콘솔의 같은 ID 재개도 허용한다.
+        service_password_source: windows.then_some(InstallPasswordSource::Prompt),
+        launcher_policy: (!windows).then_some(InstallLauncherPolicy::Install),
         start: Some(InstallStart::Now),
         ..Default::default()
     })
@@ -160,6 +173,9 @@ pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<I
 
 /// `sh -c '…'` 안의 원격 aaa 호출(전역 `--state-dir`은 원격 셸의 HOME으로)
 fn remote_aaa(dir: &str, os: &str, rest: &str) -> Option<String> {
+    if os == "windows" {
+        return super::windows::install(dir, rest);
+    }
     let suffix = state_suffix(os)?;
     binary::safe_dir(dir).then(|| format!("sh -c '\"{dir}/aaa\" --state-dir \"$HOME/{suffix}\" {rest}'"))
 }
@@ -173,7 +189,16 @@ pub(crate) fn bootstrap_script(dir: &str, os: &str, sha: &str, issuer: &str) -> 
 }
 pub(crate) fn apply_script(dir: &str, os: &str, id: &str) -> Option<String> {
     id_ok(id)
-        .then(|| remote_aaa(dir, os, &format!("install --resume {id} --non-interactive --yes --json-stream")))
+        .then(|| {
+            remote_aaa(
+                dir,
+                os,
+                &format!(
+                    "install --resume {id} --non-interactive --yes --json-stream{}",
+                    if os == "windows" { " --secrets-stdin" } else { "" }
+                ),
+            )
+        })
         .flatten()
 }
 
@@ -181,7 +206,7 @@ pub(crate) fn apply_script(dir: &str, os: &str, id: &str) -> Option<String> {
 pub(crate) fn remote_why(step: &str, r: &Ran, code: Option<i32>) -> String {
     match code {
         Some(3) => format!(
-            "{step}: 그 머신의 install이 이 접속을 시스템 SSH 서버로 확인하지 못했다(macOS 「원격 로그인」·시스템 sshd만 믿는다)"
+            "{step}: 그 머신의 install이 이 접속을 시스템 SSH 서버로 확인하지 못했다(macOS 「원격 로그인」·Windows 시스템 OpenSSH 서버만 믿는다)"
         ),
         Some(4) => {
             format!("{step}: 그 머신의 install이 계획·파일 충돌로 멈췄다(이미 설치됐거나 다른 계획이 진행 중이다)")
@@ -227,6 +252,7 @@ pub(crate) fn review(
         checks: p.result.checks.clone(),
         needs_user: p.result.needs_user.clone(),
         operations,
+        service_password: p.plan.choices.service == Some(InstallService::WindowsScm),
     })
 }
 
@@ -349,16 +375,17 @@ impl Ssh {
     }
 
     /// 출력 줄마다 `each`를 부르며 끝까지 읽는다(원격 install NDJSON)
-    async fn stream(
+    pub(super) async fn stream(
         &self,
         target: &Target,
         command: &str,
+        input: super::secret::Input,
         timeout: Duration,
         mut each: impl FnMut(&str),
     ) -> (Ran, Option<i32>) {
-        use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
         let mut c = self.trusted(target, command);
-        c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        c.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         let fail = |e: String| (Ran { ok: false, stdout: String::new(), stderr: e }, None);
         let mut child = match c.spawn() {
             Ok(c) => c,
@@ -367,7 +394,16 @@ impl Ssh {
         let (Some(out), Some(mut err)) = (child.stdout.take(), child.stderr.take()) else {
             return fail("ssh 출력을 받지 못했다".into());
         };
+        let mut stdin = child.stdin.take();
         let run = async {
+            let feed = async move {
+                if let Some(s) = stdin.as_mut() {
+                    let _ = s.write_all(&input.0).await;
+                    let _ = s.shutdown().await;
+                }
+                drop(stdin);
+                drop(input);
+            };
             let mut stderr = String::new();
             let errs = async {
                 let mut buf = Vec::new();
@@ -380,7 +416,7 @@ impl Ssh {
                     each(&line);
                 }
             };
-            tokio::join!(errs, lines);
+            tokio::join!(feed, errs, lines);
             let status = child.wait().await;
             (status, stderr)
         };
@@ -470,7 +506,7 @@ impl Host {
             Ok(b) => sha256_hex(&b),
             Err(e) => return fail(format!("host 실행 파일을 읽지 못했다: {e}")),
         };
-        let placed = match ssh.upload(&t, &file, &sha, &software).await {
+        let placed = match ssh.upload(&t, &file, &sha, &software, &d.os).await {
             Ok(p) => p,
             Err(e) => return fail(e),
         };
@@ -552,12 +588,22 @@ impl Host {
         role: DeviceRole,
         id: &str,
         plan_sha256: &str,
+        password: Option<MachineSetupPassword>,
         actor: &str,
     ) -> Result<aaa_proto::MachineSetupView, ErrorBody> {
-        let (job, proposal) = {
+        if !id_ok(id) || !hex_ok(plan_sha256) {
+            return Err(bad("작업 ID·계획 hash 꼴이 옳지 않다"));
+        }
+        if password.as_ref().is_some_and(|p| p.0.is_empty() || p.0.encode_utf16().count() > 1024 || p.0.contains('\0'))
+        {
+            return Err(bad("서비스 암호는 1~1024자이며 NUL을 넣을 수 없다"));
+        }
+        let (job, proposal, previous) = {
             let _g = self.setup_gate.lock().unwrap();
             let mut job = self.setup_load(id)?;
-            if job.view.phase != MachineSetupPhase::Review {
+            let retry = job.view.phase == MachineSetupPhase::NeedsUser
+                && job.view.review.as_ref().is_some_and(|r| r.service_password);
+            if job.view.phase != MachineSetupPhase::Review && !retry {
                 return Err(conflict("이 작업은 설치를 확인하는 단계가 아니다(화면을 다시 읽는다)"));
             }
             if job.view.review.as_ref().map(|r| r.plan_sha256.as_str()) != Some(plan_sha256) {
@@ -570,6 +616,27 @@ impl Host {
             if aaa_config::install::plan_sha256(&proposal.plan) != plan_sha256 {
                 return Err(conflict("계획 파일이 화면의 계획과 다르다"));
             }
+            if password.is_some() && proposal.plan.choices.service != Some(InstallService::WindowsScm) {
+                return Err(bad("이 설치는 서비스 암호를 받지 않는다"));
+            }
+            let previous = if retry {
+                let installation = job
+                    .view
+                    .install
+                    .as_ref()
+                    .and_then(|i| i.installation_id.as_deref())
+                    .ok_or_else(|| conflict("재개할 설치 ID가 없다"))?;
+                let package = crate::installation::export(&self.state, installation)?;
+                let agent = package
+                    .authorization
+                    .enrollment
+                    .as_ref()
+                    .map(|g| g.agent_identity.clone())
+                    .ok_or_else(|| conflict("재개할 agent 신원이 없다"))?;
+                Some((installation.to_string(), agent))
+            } else {
+                None
+            };
             job.view.phase = MachineSetupPhase::Installing;
             job.view.error = None;
             job.view.install = Some(Box::new(MachineSetupInstall {
@@ -581,10 +648,15 @@ impl Host {
                 check_pane: None,
             }));
             self.setup_save(&mut job);
-            (job, proposal)
+            (job, proposal, previous)
         };
         // 서명 승인은 사람이 누른 이 요청의 기기·actor로 한다(세션 안·Reader는 install_approve가 거부한다)
-        let first = match self.setup_approve(role, actor, &proposal, None) {
+        let first = match self.setup_approve(
+            role,
+            actor,
+            &proposal,
+            previous.as_ref().map(|(id, agent)| (id.as_str(), agent.as_str())),
+        ) {
             Ok(v) => v,
             Err(e) => {
                 self.setup_fail(id, MachineSetupPhase::Installing, format!("서명 승인: {}", e.message));
@@ -597,7 +669,9 @@ impl Host {
         let (id, actor) = (id.to_string(), actor.to_string());
         let os = job.view.detected.as_ref().map(|d| d.os.clone()).unwrap_or_default();
         let dir = job.remote_dir.clone().unwrap_or_default();
-        tokio::spawn(async move { host.setup_installing(&id, role, &actor, t, &os, &dir, proposal, first).await });
+        tokio::spawn(
+            async move { host.setup_installing(&id, role, &actor, t, &os, &dir, proposal, first, password).await },
+        );
         Ok(self.setup_load(&job.view.job)?.view)
     }
 
@@ -661,6 +735,7 @@ impl Host {
         dir: &str,
         proposal: InstallProposal,
         installation: String,
+        password: Option<MachineSetupPassword>,
     ) {
         let ssh = self.ssh();
         let step = |event: &str| {
@@ -692,29 +767,45 @@ impl Host {
             }
             step("원격 install 적용 중");
             let script = apply_script(dir, os, &installation).ok_or("원격 적용 명령을 만들지 못했다")?;
+            let input = if os == "windows" {
+                let package =
+                    crate::installation::export(&self.state, &installation).map_err(|_| "보호 승인을 읽지 못했다")?;
+                super::secret::framed(&package.authorization, password.as_ref())?
+            } else {
+                super::secret::Input(vec![])
+            };
             let mut result = None;
             let (r, code) = ssh
-                .stream(&t, &script, APPLY_TIMEOUT, |line| match stream_line(line) {
+                .stream(&t, &script, input, APPLY_TIMEOUT, |line| match stream_line(line) {
                     Line::Event(m) => {
-                        step(&m);
+                        step(&super::secret::scrub(&m, password.as_ref()));
                     }
-                    Line::Result(res) => result = Some(res),
+                    Line::Result(res) => result = super::secret::result(&res, password.as_ref()).ok().map(Box::new),
                     Line::Other => {}
                 })
                 .await;
-            let result = result.ok_or_else(|| remote_why("원격 install 적용(결과 없음)", &r, code))?;
+            let result = result.ok_or_else(|| {
+                super::secret::scrub(&remote_why("원격 install 적용(결과 없음)", &r, code), password.as_ref())
+            })?;
             if code.is_some_and(|c| u8::try_from(c).ok() != Some(result.exit_code)) {
                 return Err(format!("원격 install의 종료 코드({code:?})가 결과({})와 다르다", result.exit_code));
             }
             Ok::<_, String>(result)
         }
         .await;
-        ssh.cleanup(&t, dir).await;
-        let _ = std::fs::remove_file(self.setup_plan_path(id));
+        let keep = os == "windows" && matches!(&outcome, Ok(r) if r.status == InstallStatus::NeedsUser);
+        // 암호는 적용/실패 뒤 바로 지운다. 현지 콘솔 입력과 웹 재입력에는 같은 ID·계획만 남긴다.
+        drop(password);
+        if !keep {
+            ssh.cleanup(&t, dir).await;
+            let _ = std::fs::remove_file(self.setup_plan_path(id));
+        }
         let name = proposal.plan.choices.name.clone().unwrap_or_default();
         let registered = self.db.machines().ok().is_some_and(|m| m.iter().any(|m| m.name == name));
         self.setup_update(id, MachineSetupPhase::Installing, |j| {
-            j.remote_dir = None;
+            if !keep {
+                j.remote_dir = None;
+            }
             let i = j.view.install.get_or_insert_with(|| {
                 Box::new(MachineSetupInstall {
                     installation_id: Some(installation.clone()),

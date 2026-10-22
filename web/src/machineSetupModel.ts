@@ -8,6 +8,7 @@ import { archLabel, osLabel } from "./machineDetail.ts";
 export const canSsh = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 93);
 /** 1.103 이상 host만 SSH 설치(계획·적용)를 안다 */
 export const canInstall = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 103);
+export const canInstallWindows = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 112);
 
 export const PHASE: Record<MachineSetupPhase, string> = {
   connecting: "접속 중",
@@ -81,14 +82,17 @@ export const LOGIN: Record<InstallLogin, string> = { require: "로그인돼 있�
 /** host `machine_name_ok`와 같다 */
 const NAME = /^[A-Za-z0-9._-]{1,64}$/;
 const HOST = /^[A-Za-z0-9._:[\]%-]{1,255}$/;
-const remotePath = (p: string): boolean => p.startsWith("/") && p.length <= 4096 && !p.split("/").includes("..") && !/[\u0000-\u001f]/.test(p);
+const remotePath = (p: string): boolean => {
+  const value = p.replaceAll("\\", "/");
+  return (value.startsWith("/") || /^[A-Za-z]:\//.test(value)) && value.length <= 4096 && !value.split("/").includes("..") && !/[\u0000-\u001f]/.test(value);
+};
 
 /** host `check_settings`의 앞 검사(실물 경로·mount는 원격 install이 본다) */
 export function settingsProblem(s: MachineSetupSettings, taken: string[] = []): string | null {
   if (!NAME.test(s.name)) return "머신 이름은 영문·숫자·.-_ 64자까지다";
   if (taken.includes(s.name)) return `${s.name}은 이미 있는 머신 이름이다`;
   if (!HOST.test(s.host.trim())) return "host 주소는 이름·IP·포트 글자만 쓴다";
-  if (!remotePath(s.work_root)) return "작업 root는 그 머신의 절대 경로다(/로 시작)";
+  if (!remotePath(s.work_root)) return "작업 root는 그 머신의 절대 경로다";
   if (s.work_mount && !remotePath(s.work_mount)) return "외장 디스크 mount는 그 머신의 절대 경로다";
   return null;
 }
@@ -99,13 +103,13 @@ export function defaultSettings(target: string, d: MachineDetected | null, host:
   const bracket = /^\[([^\]]*)\]/.exec(at);
   const bare = bracket ? bracket[1]! : (at.replace(/:\d+$/, "").split(".")[0] ?? "");
   const name = bare.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
-  const home = d?.home?.replace(/\/+$/, "") ?? "";
+  const home = d?.home?.replaceAll("\\", "/").replace(/\/+$/, "") ?? "";
   return { name, host, work_root: home ? `${home}/aaa-work` : "", work_mount: null, harness: [], login: "defer" };
 }
 
 /** 이 OS를 SSH로 설치하지 않는 까닭(감독자까지 끝나는 macOS만, host의 같은 규칙). 설치하면 null */
-export const notInstallable = (d: Pick<MachineDetected, "os">): string | null =>
-  d.os === "macos" ? null : `${d.os}는 아직 SSH로 설치하지 않는다(macOS부터, 그 OS의 install 감독자가 오면 연다)`;
+export const notInstallable = (d: Pick<MachineDetected, "os">, windows = false): string | null =>
+  d.os === "macos" || (d.os === "windows" && windows) ? null : `${d.os}는 아직 SSH로 설치하지 않는다(macOS부터, 그 OS의 install 감독자가 오면 연다)`;
 
 /** 승인 범위 이름(install operation) */
 export const OPERATION: Record<string, string> = {
