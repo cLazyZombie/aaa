@@ -1,6 +1,6 @@
 // coordinator·thread 질문은 같은 카드다. 실제 host/agent·CLI로 질문 ID, 두 기기, 보기 권한, 답 보존과 평문 호환을 본다.
 import fs from "node:fs";
-import { root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost } from "../lib/harness.mjs";
+import { root, aaa, until, step, webkit, pairPage, browser, inList, domIs, shot, coordinatorPost, AA } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const call = (page, data) => page.evaluate(async (data) => {
@@ -18,6 +18,55 @@ const images = async (page, selector) => {
   return imgs.count();
 };
 const shape = (page, selector) => page.locator(`${selector} .thread-ask-q`).evaluateAll((qs) => qs.map((q) => ({ text: q.textContent.replace(/q-\d+/g, "q-ID").replace(/\s+/g, " "), classes: [...q.querySelectorAll("*")].map((el) => [el.tagName, el.className]) })));
+
+// 실제 Claude 기록의 q-ID 링크를 연 채 host 사건으로 상태·CSS가 바뀌는지 본다.
+function chipChat(ids) {
+  const dir = `${root}/claude/projects/-lab-q-colors`;
+  fs.mkdirSync(dir, { recursive: true });
+  const transcript = `${dir}/colors.jsonl`;
+  const lines = ids.map((id) => `[${id} 질문](#question=${id}) aaa:question/${id}`).join("\n\n");
+  fs.writeFileSync(transcript, [
+    { type: "user", message: { role: "user", content: "질문 상태" } },
+    { type: "assistant", message: { content: [{ type: "text", text: lines }] } },
+  ].map((x) => JSON.stringify(x) + "\n").join(""));
+  aaa("tab", "create", "--machine", "labA", "--label", "q-colors", "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
+    JSON.stringify({ hook_event_name: "SessionStart", session_id: "6a1f0c2e-3b4d-4e5f-8a9b-0c1d2e3f4a52", source: "startup", transcript_path: transcript }));
+}
+async function chipState(page, ids, tone) {
+  await inList(page, "pane-q-colors");
+  await page.getByTestId("chat-toggle").waitFor();
+  if (!(await page.getByTestId("chat").count())) await page.getByTestId("chat-toggle").click();
+  await domIs(page, `q-ID 칩 ${tone}`, ({ ids, tone }) => ids.every((id) => {
+    const chips = [...document.querySelectorAll(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`)];
+    return chips.length === 2 && chips.every((el) => el.classList.contains(`is-${tone}`) && el.dataset.tone === tone
+      && (tone === "plain" ? !el.querySelector(".app-ref-state") : el.textContent.includes(tone === "ask" ? "답할 것" : "답함")));
+  }), { ids, tone });
+  // 상태 class만 맞고 색이 회색인 회귀도 잡는다. 밝음·어두움의 실제 토큰과 비교한다.
+  const css = await page.evaluate(async ({ ids, tone }) => {
+    const theme = document.documentElement.dataset.theme;
+    const errors = [];
+    const probe = document.createElement("span"); document.body.append(probe);
+    for (const mode of ["light", "dark"]) {
+      document.documentElement.dataset.theme = mode;
+      for (const id of ids) {
+        const chip = document.querySelector(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`);
+        const token = tone === "ask" ? "blocked" : "done";
+        probe.style.backgroundColor = tone === "plain" ? "var(--bg-elevated)" : `var(--status-${token}-tint)`;
+        probe.style.color = `var(--status-${token})`;
+        // button의 실제 색 전환 완료 사건을 기다린다. 테마를 바꾼 직후의 중간색을 비교하지 않는다.
+        getComputedStyle(chip).backgroundColor;
+        await Promise.all(chip.getAnimations({ subtree: true }).map((a) => a.finished));
+        const actual = { bg: getComputedStyle(chip).backgroundColor, icon: getComputedStyle(chip.querySelector("svg")).color };
+        const expected = { bg: getComputedStyle(probe).backgroundColor, icon: getComputedStyle(probe).color };
+        if (actual.bg !== expected.bg || (tone !== "plain" && actual.icon !== expected.icon)) errors.push(JSON.stringify({ mode, id, tone, actual, expected }));
+      }
+    }
+    probe.remove(); document.documentElement.dataset.theme = theme;
+    return errors;
+  }, { ids, tone });
+  if (css.length) throw new Error(`질문 칩 CSS: ${css.join(", ")}`);
+  await shot(page, `69-q-chips-${tone}-${ids[0]}`);
+}
 
 export default async function ({ page }) {
   let t, q, req, post, phone, reader, wk;
@@ -40,6 +89,8 @@ export default async function ({ page }) {
     if (!req?.questions || req.questions.items.length !== 2) throw new Error(`구조화 post: ${JSON.stringify(req)}`);
     const ids = [...q.items, ...req.questions.items].map((q) => q.id);
     if (!ids.every((id) => /^q-\d{4,}$/.test(id)) || new Set(ids).size !== 4) throw new Error(`질문 ID: ${ids}`);
+    chipChat(ids);
+    await chipState(page, ids, "ask");
     const listed = aaa("question", "list").questions;
     for (const id of ids) if (!listed.some((q) => q.id === id)) throw new Error(`목록에 ${id}가 없다`);
     wk = await webkit.launch();
@@ -74,17 +125,20 @@ export default async function ({ page }) {
     ]) if ((await call(reader.page, data)).err?.code !== "forbidden") throw new Error("보기 권한 요청이 거부되지 않았다");
   });
   await step("카드 답은 coordinator inbox에 선택·원문과 한 번 남고 post는 답함, 다른 기기도 보존한 같은 카드를 본다", async () => {
-    await page.getByTestId("thread-ask-pick-1B").click();
-    await page.getByTestId("thread-ask-text").fill("2 눈 아이콘은 항상 보이게");
-    await page.getByTestId("thread-ask-send").click();
-    await domIs(page, "답한 post 카드", () => document.querySelector('[data-testid="ask-done-card"]')?.dataset.kind === "request");
-    await domIs(phone.page, "다른 기기의 같은 답", () => !!document.querySelector('[data-testid="ask-done-text"]'));
+    await chipState(page, req.questions.items.map((q) => q.id), "ask");
+    await phone.page.getByTestId("thread-ask-pick-1B").click();
+    await phone.page.getByTestId("thread-ask-text").fill("2 눈 아이콘은 항상 보이게");
+    await phone.page.getByTestId("thread-ask-send").click();
+    await domIs(phone.page, "답한 post 카드", () => document.querySelector('[data-testid="ask-done-card"]')?.dataset.kind === "request");
     const data = (await call(page, { op: "asks" })).ok;
     const done = data.done.find((r) => r.subject === req.id);
     if (done?.summary !== "1B 직접" || done.answer.text !== "2 눈 아이콘은 항상 보이게" || done.items[0].id !== req.question_id) throw new Error(`답 사본: ${JSON.stringify(done)}`);
     const inbox = aaa("inbox", "list", "demo", "--peek").items.filter((i) => i.event === "question answered" && i.summary.includes(req.question_id));
     if (inbox.length !== 1 || !inbox[0].body.includes("가운데 큰 단추") || !inbox[0].body.includes(done.answer.text)) throw new Error(`inbox 답: ${JSON.stringify(inbox)}`);
     if (!aaa("post", "status", "demo", post.id).handled) throw new Error("post가 답함이 아니다");
+    await chipState(page, req.questions.items.map((q) => q.id), "done");
+    await open(page, req.question_id, '[data-testid="ask-done-card"]');
+    await domIs(page, "다른 기기의 같은 답", () => !!document.querySelector('[data-testid="ask-done-text"]'));
     const again = await call(page, { op: "ask_answer", item: req.id, body_hash: req.questions.report_hash, picks: [0,0], text: null });
     if (!again.err) throw new Error("두 번째 답을 받았다");
     fs.rmSync(`${previewPath()}/card.svg`); // publish 사본도 바꿔 원본과 보존본을 구별한다
@@ -92,11 +146,13 @@ export default async function ({ page }) {
     await shot(page, "69-coordinator-answered");
   });
   await step("채팅 ID 답: thread answer q-ID A와 question answer q-ID B, post handled q-ID는 평문·구조화 post를 닫는다", async () => {
+    await chipState(page, q.items.map((q) => q.id), "ask");
     aaa("thread", "answer", q.items[0].id, "A");
     const partial = aaa("thread", "show", "demo", t.id).questions;
     if (partial.answer !== null || partial.draft?.picks[0] !== 0) throw new Error(`일부 답: ${JSON.stringify(partial)}`);
     aaa("question", "answer", q.items[1].id, "B");
     await until("thread에 답 전달", () => aaa("thread", "show", "demo", t.id).questions?.answer?.summary === "1A 2B");
+    await chipState(page, q.items.map((q) => q.id), "done");
     for (const [n, body] of [[1,"평문 요청"], [2,"## Questions\n### 1. 다음 진행\n- A 진행 (추천)\n- B 보류\n"]]) {
       const file = `${root}/handled-${n}.md`; fs.writeFileSync(file, body);
       const p = aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", `채팅 답 ${n}`, "--body-file", file);
@@ -104,6 +160,13 @@ export default async function ({ page }) {
       aaa("post", "handled", r.question_id);
       if (!aaa("post", "status", "demo", p.id).handled) throw new Error("ID로 post를 닫지 못했다");
     }
+    // 새 보고로 현재 질문을 비워도 보존한 답은 초록, 답 기록을 지우면 중립으로 돌아온다.
+    fs.writeFileSync(`${t.work_dir}/report.md`, "[완료] 질문 답 반영\n\n## Report\n선택 반영 완료\n");
+    await until("현재 보고의 질문 비움", () => !aaa("thread", "show", "demo", t.id).questions);
+    await chipState(page, [...q.items, ...req.questions.items].map((q) => q.id), "done");
+    const forgotten = await call(page, { op: "ask_forget", ids: [], all: true });
+    if (forgotten.err) throw new Error(`답 기록 지우기: ${JSON.stringify(forgotten)}`);
+    await chipState(page, [...q.items, ...req.questions.items].map((q) => q.id), "plain");
     for (const x of [phone, reader]) { if (x.errors.length) throw new Error(x.errors.join("; ")); await x.page.context().close(); }
     await wk.close(); wk = null;
     aaa("thread", "resolve", "demo", t.id);

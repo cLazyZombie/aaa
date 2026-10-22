@@ -62,7 +62,7 @@ import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppR
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
 import { useAutomations } from "./automationData";
-import { lastAnswer, openAsks, questionKey } from "./asksModel";
+import { openAsks, questionKey, questionRefLook } from "./asksModel";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
@@ -1175,11 +1175,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
     ...asksDone.flatMap((r) => [r.question_id, ...r.items.map((q) => q.id)]),
   ]), [threads, taskBoard.board, reportNames, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 실제 대상·칩의 표시가 바뀔 때만 대화 Markdown을 다시 그린다.
+  const questionLooks = useMemo(() => new Map([...new Set([
+    ...shownThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
+    ...(asksData?.requests ?? []).flatMap((r) => [...(r.question_id ? [r.question_id] : []), ...(r.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
+    ...asksDone.flatMap((r) => [r.subject, ...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
+  ])].map((id) => [id, questionRefLook(id, shownThreads, asksDone, asksData?.requests)])), [threads, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 실제 대상·칩의 표시가 바뀔 때만 대화 Markdown을 다시 그린다. coordinator 답·기록 삭제도 포함한다.
   const refKey = [
     ...knownIds,
-    ...shownThreads.filter((t) => t.questions).map((t) => `${t.id}:${t.questions!.answer ? `done ${t.questions!.answer.summary}` : `ask ${t.questions!.items.length}`}`),
-    ...asksDone.filter((r) => r.kind === "question").map((r) => `${r.subject}:record ${r.id} ${r.summary}`),
+    ...[...questionLooks].map(([id, look]) => `${id}:${JSON.stringify(look)}`),
     ...[...reportNames.values()].map((r) => `${r.project}/${r.name}:${r.title ?? ""}`),
   ].join("\n");
   const openRefRef = useRef<(ref: AppRef | AppId) => void>(() => {});
@@ -1197,7 +1201,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (!r) setHeadNote(`보고서 ${ref.target}을(를) 찾지 못했다`);
   };
   const appRefs = useMemo<AppRefs>(() => {
-    const byId = new Map(shownThreads.map((t) => [t.id, t]));
     return {
       exists: (id) => knownIds.has(id.target),
       openId: (id) => openRefRef.current(id),
@@ -1206,13 +1209,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           const r = reportNames.get(ref.target);
           return { label: r?.title ?? ref.target, tone: "report", state: r?.from_thread && r.from_thread !== ref.target ? r.from_thread : null };
         }
-        const q = byId.get(ref.target)?.questions;
-        if (q && !q.answer) return { label: `${ref.target} 질문 ${q.items.length}개`, tone: "ask", state: "답할 것" };
-        if (q?.answer) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${q.answer.summary}` };
-        // 새 보고로 질문·답이 비어도 host가 남긴 답한 기록이 「답함」이다(누르면 그때 원문)
-        const rec = lastAnswer(asksDone, ref.target);
-        if (rec) return { label: `${ref.target} 질문`, tone: "done", state: rec.answer ? `답함 · ${rec.answer.summary}` : rec.summary };
-        return { label: `${ref.target} 질문`, tone: "plain", state: null };
+        return questionLooks.get(ref.target) ?? { label: `${ref.target} 질문`, tone: "plain", state: null };
       },
       open: (ref) => openRefRef.current(ref),
     };

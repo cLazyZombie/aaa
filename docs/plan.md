@@ -7299,3 +7299,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **복원·호환.** 완료 보관은 같은 ID·메모·첨부를 원래 목록으로 복원하고 실행 연결·예약은 복원하지 않는다. 삭제는 기존 기록 되살리기를 유지한다. Reader는 조회만 한다. 옛 요청 필드는 생략 가능하고 새 응답 필드는 serde 기본값을 두며, 웹 새 검색/상태는 1.106 이상 host에서 연다. Agent link는 바꾸지 않는다.
 - **검증.** host task_queue 시험은 4MiB 초과 본문 묶음의 바이트 페이지·빠짐/중복 없음·검색/저장소/상태 조합·표시 ID·복원·예약 없음, 한 건의 2MiB 중복 이력 비전송/DB 보존, 일치하지 않는 100건 앞 페이지 뒤의 검색과 실제 삭제 복원을 검사한다. 웹 E2E86은 4MiB 초과 격리 DB의 CLI 전체 출력과 실제 API 페이지, UI 조합·더 보기·복원·Reader 쓰기 거부·Chromium 1280/320px·WebKit 390px를 확인하고 활성/기록 화면을 각각 캡처한다. 고정 sleep·재시도·시한 연장은 없다.
 - **착지 통합.** origin/main `ae06a0c2`의 마지막 plan §8.430·FRONT_API 1.105·AGENT_LINK 1.11·E2E85를 확인해 빈 §8.431·FRONT_API 1.106·E2E86을 쓴다. 일반 작업 자동 연결과 검증 release 0.1.3을 함께 검증하며 Linux 대상 clippy·전체 ci-local·공개 검사 뒤 병합·push한다. 배포와 GitHub CI 감시는 coordinator가 맡는다.
+
+
+### 8.432 대화 질문 칩의 q-ID 상태 색 복구(t-0712)
+
+- **원인.** 대화 링크는 q-ID를 질문 칩으로 읽지만 칩 상태는 thread ID로만 조회했다. coordinator 질문·답 기록은 표시 변경 키에서도 빠져 답할 것과 답함이 중립으로 남았다. 카드로 이동하는 `questionKey`는 이미 q-ID·thread·coordinator·보존본을 해석하므로 같은 판정을 칩에도 쓴다.
+- **수정.** 열린 질문은 `is-ask`, 답 기록은 `is-done`, 현재 질문과 보존본이 모두 없는 명시 링크는 `is-plain`이다. q-ID는 해당 질문의 기록을 보므로 같은 thread의 새 질문과 지난 답을 구별한다. 답 내용·삭제·coordinator 요청을 표시 변경 키에 넣어 열린 대화에도 host 사건으로 반영한다. 기존 thread ID 칩과 옛 host의 현재 답 표시는 유지한다.
+- **검증.** 질문 모델 시험은 새 질문과 지난 답의 구분, coordinator 평문·구조화 요청, 삭제 뒤 중립을 검사한다. E2E69는 실제 host·agent·Claude 대화 기록의 Markdown q-ID 링크와 aaa 참조에서 thread·coordinator 각각의 열림·답함·새 보고 뒤 보존·답 기록 삭제 후 중립을 검사한다. 밝음·어두움의 배경과 아이콘을 실제 CSS 토큰에 대조한다. 기존 E2E53의 thread ID·dock·보존본 검사도 유지한다. wire 계약·API 판·E2E 파일 번호를 늘리지 않는다.

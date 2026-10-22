@@ -2,6 +2,13 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 대화 질문 칩의 q-ID 상태 색(t-0712, plan §8.432)
+
+- `node --test web/test/asksModel.test.mjs`: 같은 thread의 새 q-ID는 답할 것, 지난 q-ID는 보존한 답으로 구별한다. coordinator 평문·구조화 질문의 열림·답함·기록 삭제 후 중립도 확인한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 69-coordinator-questions --workers 1`: 실제 host·agent·Claude 대화 기록에 Markdown q-ID 링크와 `aaa:question/q-ID`를 넣는다. thread·coordinator의 두 질문씩 열림→답함→새 보고에서 질문 비움 뒤 답 보존→기록 삭제 뒤 중립을 새로고침 없이 확인한다. class와 문구, 밝음·어두움의 실제 배경·아이콘 색을 CSS 토큰과 비교하고 화면을 남긴다.
+- 기존 E2E53의 thread ID 링크·dock·보존본·지우기 단언을 유지한다. 고정 sleep·재시도·시한 연장 없이 host 응답·보고 수집·DOM 사건으로 끝낸다. 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사를 수행하고 착지 창을 기다린다.
+
+
 ## 할 일 기록 검색·저장소·완료 상태(t-0703, plan §8.431)
 
 - `nice -n 15 cargo test -p aaa-host --lib task_queue::tests:: --locked`: 실제 DB/파일로 4MiB 초과 보관의 개수·바이트 페이지와 모든 ID의 빠짐/중복 없음, trim/대소문자·메모/표시 ID·저장소·실제 완료 근거 조합, 같은 ID 복원·연결/예약 없음, 2MiB 이력의 목록 비전송/내구 보존, 일치하지 않는 100건 뒤의 기록 검색·삭제 복원을 검사한다.

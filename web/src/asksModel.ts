@@ -3,6 +3,7 @@
 // 대상이다: `q:<thread>` 열린 질문, `r:<inbox 항목>` 확인 필요 post, `t:<task 제목>` 할 일, `d:<기록>` 답한 것.
 import type { AskRecord, TaskView, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { appRefOf } from "./appRef.ts";
+import type { AppRefLook } from "./AppRefChip";
 
 export type AsksData = { requests: UserRequestView[]; done: AskRecord[]; keepDays: number };
 
@@ -63,6 +64,25 @@ export function questionKey(thread: string, threads: ThreadView[], done: AskReco
   if (threads.some((t) => t.id === thread && asks(t))) return `q:${thread}`;
   const r = lastAnswer(done, thread);
   return r ? `d:${r.id}` : null;
+}
+
+/** 카드와 같은 대상으로 상태를 찾는다. q ID는 thread·coordinator·보존한 답 모두에 속할 수 있다. */
+export function questionRefLook(target: string, threads: ThreadView[], done: AskRecord[], requests: UserRequestView[] = []): AppRefLook {
+  const label = `${target} 질문`;
+  const key = questionKey(target, threads, done, requests);
+  if (key?.startsWith("q:")) {
+    const q = threads.find((t) => t.id === key.slice(2))!.questions!;
+    return { label: `${label} ${q.items.length}개`, tone: "ask", state: "답할 것" };
+  }
+  if (key?.startsWith("r:")) return { label, tone: "ask", state: "답할 것" };
+  if (key?.startsWith("d:")) {
+    const rec = done.find((r) => r.id === key.slice(2))!;
+    return { label, tone: "done", state: rec.answer ? `답함 · ${rec.answer.summary}` : rec.summary };
+  }
+  // 옛 host가 답 기록을 주지 않아도 현재 thread에 남은 답은 표시한다.
+  const q = threads.find((t) => t.id === target || t.questions?.items.some((q) => q.id === target))?.questions;
+  if (q?.answer) return { label, tone: "done", state: `답함 · ${q.answer.summary}` };
+  return { label, tone: "plain", state: null };
 }
 
 /** 본문 Markdown의 `library/…`·`report.md`를 host 주소로(그 밖은 null: 그림은 대체 글, 링크는 보통 글) */
