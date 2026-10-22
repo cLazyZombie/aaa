@@ -4,9 +4,49 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { repo, aaa, until, shot, pairPage, base, step, webPort, browser, webkit } from "../lib/harness.mjs";
+import assert from "node:assert/strict";
+import { repo, aaa, until, shot, pairPage, base, step, webPort, browser, chromium, webkit } from "../lib/harness.mjs";
+import { chromiumLaunchOptions } from "../lib/chromium-launch.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("Chromium 첫 프레임·일반 클릭·기본 실행 옵션 보존", async () => {
+    const actual = await chromium.launchServer(chromiumLaunchOptions());
+    try {
+      // 실제 도구의 기본 목록과 비교해 추가 flag가 기존 비활성 feature를 덮어 지우지 않게 한다.
+      if (process.platform === "darwin") {
+        const raw = await chromium.launchServer();
+        try {
+          const features = (args) => new Set(args.filter((v) => v.startsWith("--disable-features="))
+            .at(-1)?.slice("--disable-features=".length).split(",") ?? []);
+          const expected = features(raw.process().spawnargs);
+          expected.add("MacDisclaimGpuTccResponsibility");
+          assert.deepEqual(features(actual.process().spawnargs), expected);
+        } finally { await raw.close(); }
+      }
+      const fresh = await chromium.connect(actual.wsEndpoint());
+      try {
+        const ctx = await fresh.newContext({ viewport: { width: 1280, height: 800 } });
+        const first = await ctx.newPage();
+        await first.setContent(`<!doctype html><input aria-label="첫 입력"><button>확인</button><output></output>
+          <script>
+            window.__firstFrames = [];
+            function frame(t) { __firstFrames.push(t); if (__firstFrames.length < 3) requestAnimationFrame(frame); }
+            requestAnimationFrame(frame);
+            document.querySelector('button').onclick = e => {
+              window.__firstClickTrusted = e.isTrusted;
+              document.querySelector('output').textContent = document.querySelector('input').value;
+            };
+          </script>`);
+        await first.getByLabel("첫 입력").fill("1234");
+        await first.getByRole("button", { name: "확인", exact: true }).click();
+        await first.waitForFunction(() => window.__firstFrames.length === 3);
+        const state = await first.evaluate(() => ({ frames: __firstFrames, trusted: __firstClickTrusted, text: document.querySelector("output").textContent }));
+        assert.equal(state.trusted, true);
+        assert.equal(state.text, "1234");
+        assert.ok(state.frames.every((t, i) => i === 0 || t > state.frames[i - 1]), "서로 다른 세 실제 rAF");
+      } finally { await fresh.close(); }
+    } finally { await actual.close(); }
+  });
   await step("옛 TUI WebSocket 거절·웹 API 유지", async () => {
     await page.evaluate(async () => {
       for (const [client, minor] of [["tui", 42], ["tui@mac-a", 43], ["tui@mac-a", 0]]) {
