@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## 왼쪽 목록 고정 번호 칩(t-0739, plan §8.439)
+
+- `nice -n 15 cargo test -p aaa-host --lib automation_ids --locked`: 실제 host·DB·파일로 기존 규칙 조회→제목 수정→형식 변환→삭제→다른 이름 번호 발급→복원→재시작·프로젝트 이름 변경·내보내기를 확인한다. DB의 동시 읽기와 서로 다른 이름 발급은 Barrier 사건으로 끝내며 프로젝트별 독립 순번·재열기·프로젝트 삭제를 검사한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 21-library-reports,34-automations,43-tasks,69-coordinator-questions --workers 1`: 실제 host의 r/d/q/a 번호를 공유 칩으로 보이는지 검사한다. 보고서 inline code 기준의 글꼴·크기·배경·색·여백·모서리를 밝음/어두움에서 비교한다. Chromium 데스크톱·휴대폰·320px과 WebKit 질문 목록 390/320px에서 번호 전체·행 넘침을 확인하고 캡처한다. 긴 제목을 DOM에 잠깐 적용해 제목만 줄고 번호가 남는지도 검사한 뒤 원래 DOM을 복원한다.
+- 질문 행은 공통 button의 고정 높이를 덮어 내용만큼 커지고 flex로 줄어들지 않아야 한다. 추가한 세로 넘침 검사는 수리 전 실행 파일에서 네 q-ID의 행 넘침으로 실패하고 수리 뒤 통과했다. E2E69는 질문 본문과 sidebar의 선택 완료를 모두 기다린 뒤 다음 pane으로 이동하며, 단계 실패 때도 별도 WebKit을 finally에서 닫는다.
+- 여러 질문의 모든 ID·coordinator 첫 질문 중복 없음·답한 기록 ID 보존, 자동화 변환 뒤 같은 ID와 기존 이동·편집·답·Reader 거부도 유지한다. 고정 sleep·실패 재시도·시한 연장은 없다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.107, Agent link 1.11이며 착지 때 main의 문서/API 번호와 다시 대조한다.
+
 ## 맨 q-ID도 질문 상태 칩으로 표시(t-0730, plan §8.438)
 
 - `node --test web/test/appIds.test.mjs`: 문장·괄호·붙은 `·`/쉼표·줄바꿈에서 두 q-ID를 각각 인식하고 주변 글자를 보존한다. 주소·경로·없는 ID 제외 검사는 유지한다.

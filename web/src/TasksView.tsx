@@ -1,3 +1,4 @@
+import { ListId } from "./ListId";
 import { taskTarget } from "./appIds";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import type { ThreadLimitOverride } from "./gen/proto";
@@ -1185,9 +1186,9 @@ function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, can
             {row.crumb.short_id ?? ""} {row.crumb.title} ›
           </span>
         )}
+        {t.short_id && <ListId id={t.short_id} testId="task-short-id" />}
         <span className="task-title">
           <span className="sr-only">{reserved ? (check ? "예약 · 확인 필요" : "예약") : TASK_STATE_LABEL[state]}: </span>
-          {t.short_id && <span className="task-short-id" data-testid="task-short-id">{t.short_id}</span>}
           {t.title}
         </span>
         {reserved && row.missing && <span className="task-chip task-problem">task 없음</span>}

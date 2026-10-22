@@ -1721,6 +1721,10 @@ pub struct RoutineRun {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct RoutineView {
+    /// 프로젝트별 영속 번호(a-0001부터). 같은 규칙 이름의 수정·복원·형식 변환에도 유지한다. 옛 host는 생략한다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub short_id: Option<String>,
     pub title: String,
     pub name: String,
     pub trigger: String,

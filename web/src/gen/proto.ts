@@ -1996,7 +1996,11 @@ body: string, done: boolean,
  */
 seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
-export type RoutineView = { title: string, name: string, trigger: string, action: string,
+export type RoutineView = {
+/**
+ * 프로젝트별 영속 번호(a-0001부터). 같은 규칙 이름의 수정·복원·형식 변환에도 유지한다. 옛 host는 생략한다.
+ */
+short_id?: string, title: string, name: string, trigger: string, action: string,
 /**
  * automation·routine·legacy. legacy는 변환 안내용 옛 파일이다.
  */
