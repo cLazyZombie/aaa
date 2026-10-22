@@ -2573,3 +2573,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `nice -n 15 cargo test --locked -p aaa-host --lib workspace_metrics`: SQLite 재시작·중복·명시적 workspace 묶음의 이력 이전, 프로젝트 이름 변경·삭제, API Reader 조회·기간/머신/profile·빈 결과·미수집을 확인한다. 날짜별 p50은 머신·profile 경계를 지키고 실패·빈 날짜를 넣지 않는다. 자료가 없는 등록 경로로도 조회할 수 있어야 한다. 조회가 원본을 읽거나 agent에 요청하면 실패하는 경계를 유지한다.
 - `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 90-workspace-metrics,26-activity-bar --workers 1`: 실제 격리 host·agent·보고 감시·전송·원장·웹을 사용한다. fixture는 기존 runner 종료 산출물만 준비한다. 수집 완료 사건으로 열린 화면이 갱신되는지, 전체·개수·TOP 5·dirty 코드 제외, URL 복원·필터·키보드 상세·목록 접기·로그 삭제 뒤 조회를 확인한다. Chromium과 WebKit, Reader, 390/320px, 밝음/어두움에서 drawer·가로 넘침·오류 때 마지막 성공 값을 검사하고 캡처한다. 데스크톱은 1280px이다. 실제 iPhone 검증은 아니다.
 - 완료 사건은 보고 hash·원장 저장 뒤 WebSocket 사건·DOM·응답이다. 통계를 얻으려고 추가 검증을 실행하거나 검증의 옵션·병렬 수·시한·성공 조건을 바꾸지 않는다. 필수 전체 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사·의존 경계 시험이다.
+
+
+## 질문 답과 닫힌 질문 정리의 post 종료 경합(t-0801)
+
+- `nice -n 15 cargo test --locked -p aaa-host --lib question_answer_and_reconcile_handle_each_post_once`: 실제 Host·SQLite·질문 답 보존을 사용한다. 질문에 연결된 post 두 건을 만들고 답 전송 뒤의 연결 post 처리와 닫힌 질문 정리가 모두 열린 목록을 읽은 뒤 종료하도록 시험 전용 barrier로 고정한다. 두 경로가 끝나는 join 사건으로 완료하며 post별 처리 알림 한 건·합계 두 건·답한 질문 하나와 반복 호출의 멱등성을 검사한다.
+- 종료 알림 저장 실패 시 post 종료까지 롤백되는지, 읽음 표시가 완료 상태를 되살리지 않는지, 다른 프로젝트·이미 끝난 항목을 바꾸지 않는지 DB 경계 시험으로 확인한다. coordinator 구조화 질문의 답 트랜잭션 뒤 파일 이동·웹 갱신도 기존 질문 시험으로 확인한다.
+- 기존 E2E53의 `request handled` 기대값 두 건을 유지한다. 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Linux 대상 clippy를 수행한다. 고정 sleep·재시도·시한 연장·단언 완화 없이 확인하고 착지 창을 기다린다.

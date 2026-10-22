@@ -7,6 +7,8 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
 mod automation_ids;
+#[cfg(test)]
+mod inbox_tests;
 mod library_catalog;
 mod question_ids;
 mod report_ids;
@@ -1283,6 +1285,55 @@ impl Db {
                 i.created_at_ms as i64,
                 serde_json::to_string(i)?
             ],
+        )?;
+        Ok(())
+    }
+
+    /// 열린 항목의 종료와 처리 알림을 함께 저장한다. 다른 경로가 이미 끝냈으면 아무것도 쓰지 않는다.
+    pub(crate) fn inbox_finish(
+        &self,
+        project: &str,
+        id: &str,
+        now: u64,
+        notice: Option<&aaa_proto::InboxItem>,
+    ) -> Result<Option<aaa_proto::InboxItem>> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        // JSON도 현재 DB 값의 done 필드만 바꾼다. 오래된 목록의 seen·본문을 덮어쓰지 않는다.
+        let data: Option<String> = tx
+            .query_row(
+                "UPDATE inbox SET done=1, done_at=?3,
+             data=json_set(data,'$.done',json('true'),'$.done_at_ms',?3)
+             WHERE project=?1 AND id=?2 AND done=0 RETURNING data",
+                params![project, id, now as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(data) = data else { return Ok(None) };
+        let item = serde_json::from_str(&data)?;
+        if let Some(n) = notice {
+            tx.execute(
+                "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",
+                params![
+                    n.id,
+                    n.project,
+                    n.item_kind,
+                    n.subject,
+                    n.event,
+                    n.created_at_ms as i64,
+                    serde_json::to_string(n)?
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(Some(item))
+    }
+
+    /// 오래된 목록으로 읽음을 표시해도 끝낸 항목을 다시 열지 않는다.
+    pub(crate) fn inbox_mark_seen(&self, project: &str, id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE inbox SET data=json_set(data,'$.seen',json('true')) WHERE project=?1 AND id=?2",
+            params![project, id],
         )?;
         Ok(())
     }
