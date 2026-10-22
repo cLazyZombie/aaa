@@ -42,7 +42,7 @@ import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
-import { onSettingsHistory, outsideSettings, recordSettings, settingsEntry, settingsFromUrl } from "./herdr/settingsHistory.ts";
+import { isSettingsRewind, onSettingsHistory, outsideSettings, recordSettings, settingsEntry, settingsFromUrl } from "./herdr/settingsHistory.ts";
 import { currentSidebarShared, updateSidebarShared, useKeepScreenOn, useSidebarShared } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
@@ -360,9 +360,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [wideScreen]);
   // 휴대폰 뒤로·앞으로는 목적지와 관계없이 메뉴를 닫는다(plan §8.340). 설정 목록·쪽은 hash가 같고,
   // 빈 주소·닫힌 pane은 hashchange에서 일찍 반환하므로 popstate에서 먼저 처리한다.
+  // 설정 닫기·패널 전환의 내부 되감기는 사용자의 이동이 아니다. 그 사이 연 메뉴를 닫지 않는다.
   useEffect(() => {
-    const onPop = () => {
-      if (window.matchMedia("(max-width: 768px)").matches) setDrawerOpen(false);
+    const onPop = (event: PopStateEvent) => {
+      if (!isSettingsRewind(event) && window.matchMedia("(max-width: 768px)").matches) setDrawerOpen(false);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);

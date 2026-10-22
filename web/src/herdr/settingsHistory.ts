@@ -72,6 +72,9 @@ export function outsideSettings(state: unknown): Record<string, unknown> {
 
 type Listener = (entry: SettingsEntry | null, own: boolean) => void;
 const listeners = new Set<Listener>();
+// 이 모듈의 popstate 처리가 App의 듣기보다 먼저 돈다. 같은 주소의 다른 사용자 이동까지
+// 내부 복귀로 넘기지 않도록 상태·시한 대신 해당 사건만 표시한다.
+const internalRewinds = new WeakSet<PopStateEvent>();
 let wanted: readonly SettingsLevel[] = [];
 /** the steps this module knows the history holds for Settings, by depth; null for one it did not push and cannot see */
 let held: Array<SettingsLevel | null> = [];
@@ -187,6 +190,11 @@ export function onSettingsHistory(listener: Listener): () => void {
   return () => { listeners.delete(listener); };
 }
 
+/** 설정 닫기·쪽 변경이 요청한 되감기의 도착인가. 사용자의 Back/Forward와 구분한다. */
+export function isSettingsRewind(event: PopStateEvent): boolean {
+  return internalRewinds.has(event);
+}
+
 if (typeof window !== "undefined") {
   for (const method of ["pushState", "replaceState"] as const) {
     const history = window.history;
@@ -211,6 +219,7 @@ if (typeof window !== "undefined") {
     const matches = pending !== null && (entry?.depth ?? 0) === pending.depth
       && (pending.level === null || (entry !== null && same(pending.level, entry)));
     const own = matches && pending?.claim === true;
+    if (own) internalRewinds.add(event);
     if (pending !== null && (matches || event.state !== pending.from)) releasePending();
     for (const listener of [...listeners]) listener(entry, own);
     // what was asked for while the traversal was under way is done now

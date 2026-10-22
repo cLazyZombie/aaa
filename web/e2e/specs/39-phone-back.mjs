@@ -11,6 +11,7 @@ import fs from "node:fs";
 import { aaa, step, browser, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 import { historyDestinations } from "../lib/history-destinations.mjs";
+import { settingsDrawerHistory } from "../lib/settings-drawer-history.mjs";
 
 /** 보고서 링크가 든 Claude 대화 pane(38-chat-report-close와 같은 길: hook으로 기록 자리를 알린다) */
 function chatPane(label, text) {
@@ -354,6 +355,16 @@ export default async function () {
     const wk = await webkit.launch();
     try {
       await historyDestinations(wk);
+    } finally {
+      await wk.close();
+    }
+  });
+
+  await step("설정 닫기의 내부 복귀는 사용자가 연 메뉴를 유지하고 실제 뒤로·앞으로는 닫는다(Chromium·WebKit)", async () => {
+    await settingsDrawerHistory(browser);
+    const wk = await webkit.launch();
+    try {
+      await settingsDrawerHistory(wk);
     } finally {
       await wk.close();
     }
