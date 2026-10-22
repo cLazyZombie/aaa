@@ -239,8 +239,17 @@ impl Host {
         let pane = rec
             .pane
             .clone()
-            .filter(|_| rec.status != aaa_proto::ThreadStatus::Resolved)
-            .ok_or_else(|| err(ErrorCode::BadRequest, format!("{id}에 pane이 없다")))?;
+            .filter(|_| !matches!(rec.status, aaa_proto::ThreadStatus::Resolved | aaa_proto::ThreadStatus::Parked))
+            .ok_or_else(|| {
+                if rec.status == aaa_proto::ThreadStatus::Parked {
+                    err(
+                        ErrorCode::BadRequest,
+                        format!("{id}는 보류 중이다. `aaa thread unpark {project} {id}`로 이어 한다"),
+                    )
+                } else {
+                    err(ErrorCode::BadRequest, format!("{id}에 pane이 없다"))
+                }
+            })?;
         let (pid, mid) = self.resolve_pane(&pane)?;
         if !self.pane_view_of(&pid, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running()) {
             return Err(err(

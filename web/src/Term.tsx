@@ -179,6 +179,15 @@ export function TermView({
   const reattachRef = useRef<() => void>(() => {});
   const readonlyRef = useRef(true);
   const [link, setLink] = useState<Link>("connecting");
+  // 짧은 연결 안내는 깜빡이지 않게 한다. 재시도 중 closed ↔ connecting은 같은 기다림이다.
+  const linking = link === "connecting" || link === "closed";
+  const [showLink, setShowLink] = useState(false);
+  useEffect(() => {
+    setShowLink(false);
+    if (!linking) return;
+    const timer = window.setTimeout(() => setShowLink(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [linking, pane.id]);
   const [readonly, setReadonly] = useState(true);
   const [reason, setReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1963,7 +1972,7 @@ export function TermView({
   // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다. 중단된 pane(재부팅 뒤 다시 뜨지 않음)은 터미널 칸의 자리 표시가 까닭과
   // 「다시 열기」를 말한다(아래 `restore-error`, 참고는 그 pane에 붙지 않아 연결 띠도 없다)
   if (link === "stopped" || stopped) banner = null;
-  else if (link !== "open") banner = link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중" : "연결하는 중";
+  else if (link !== "open") banner = showLink ? (link === "closed" ? "host와 연결이 끊겼다. 다시 연결하는 중" : "연결하는 중") : null;
   else if (readonly) banner = reason ?? (pane.connection === "disconnected" ? "agent와 연결이 끊겼다(읽기 전용)" : "읽기 전용");
   // 끊긴 동안 붙잡은 글은 끊김 띠에 보이고, 다시 붙으면 따로 띠가 되어 보내기·버리기를 고른다(PaneTerminal 2777~2800줄)
   const held = canControl && !draftIsEmpty(draft);

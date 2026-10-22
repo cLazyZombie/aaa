@@ -4408,10 +4408,13 @@ primary 근거:
   저장한 뒤 outbox를 지운다. host는 post ID·출처·내용을 다시 확인하여 같은 결과를 돌려주고 inbox를 두 번 만들지 않는다.
   접수 원장·inbox·감사는 SQLite transaction 하나다. 투영 파일은 DB 다음에 쓴다. SCHEMA_VERSION은 올리지 않는다.
   inbox done 보존 기간이 지나 정리할 때 posts 본문도 지우고 ID·결과·내용 hash는 남긴다.
-- **한도.** host.toml `[post]`: burst=3, burst_secs=60, hourly=6, daily=30, pair_hourly=10, mute_after=3.
+- **한도.** host.toml `[post]`: burst=30, burst_secs=60, hourly=200, daily=2000, pair_hourly=100, mute_after=20.
+  짧은 측정 핑퐁을 위해 분당 한도는 10배, 장시간 작업을 위해 시간·하루 한도는 각각 약 33배·67배로 높인다(t-0688).
+  일시 초과가 세 번만 나도 음소거되던 기준을 20회로 늘리되 지속 남용은 제한한다.
+  생략한 설정에 적용하며 명시한 값·기존 음소거는 유지한다. pair_hourly는 현재 thread→coordinator에서 쓰지 않는 예약값이다.
   시간 창은 최근 60초·1시간·24시간이다. now를 인자로 받는 owner가 판정한다. 같은 출처의
   (목적지·종류·topic·정리한 제목·본문 sha)가 24시간 안 같으면 기존 ID와 함께 거부한다.
-  일반 한도에서 한 시간에 rate 거부 3번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
+  일반 한도에서 한 시간에 rate 거부 20번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
   `library publish --to-user`가 내부에서 만드는 보고서 알림은 이 한도를 쓰지 않는다(topic 자기 신고로 면제되지 않는다).
   해당 프로젝트 coordinator pane으로 검증된 `user-action` request·needs_user와 `task-complete` notice는 둘을 합쳐
   최근 60초 30·1시간 60·24시간 300건의 별도 한도를 쓰며, 초과해도 자동 mute하지 않고 기존 mute에도 막히지 않는다.
@@ -5467,7 +5470,7 @@ primary 근거:
 - 사용자 결정: 착지 thread는 main push 뒤 GitHub CI를 기다리지 않는다. host가 60초(운영 최소 30초)마다 예약하고 **host 머신 agent**가 기존 gh 로그인으로 읽는다. 조회 머신은 routine `machine`·`[projects] ci_machine`으로 바꿀 수 있다. 실패 분류 임무의 상주 머신은 조회 머신과 독립이다. 운영 등록·승인은 coordinator·사람 단계다.
 - 참고 herdr-projects `steps.rs`의 프로젝트별 폴링·Outage와 t3code `gitHubConditionalChecks.ts`의 ETag validator·쪽 넘김을 따른다. `ci.v1`을 알린 agent에만 `CiQuery`를 보내며 AGENT_LINK 1.5의 선택 기능으로 둔다. host는 gh·agent/session 내부에 의존하지 않는다.
 - `aaa-common::ci`가 GET 인자·HTTP 머리·응답 축약·SHA 판정을 소유한다. `gh api -i`의 304는 종료 코드 1이어도 정상이다. 목록은 event=push·per_page=30·exclude_pull_requests, 따라잡기는 created 창·100개씩 쪽 넘김이다. 빨강 때만 실패 jobs·로그·compare를 받는다. 인증 머리·GitHub 제목/본문은 전송하지 않으며 로그는 job당 32KiB·합계 128KiB 꼬리다.
-- routine `on="ci"`는 repo·branches·workflows·events·선택 mission을 받는다. command·schedule과 섞지 않는다. SHA의 알려진 push workflow가 모두 끝나면 한 번, 취소는 제외하고 재실행 통과는 따로 표시한다. 같은 실패 job·단계 집합은 앞 항목에 추가하고 새 깨움을 만들지 않는다. 끝나지 않은 SHA는 기본 60분에 ci_stuck이다.
+- routine `on="ci"`는 repo·branches·workflows·events·선택 mission을 받는다. command·schedule과 섞지 않는다. SHA의 알려진 push workflow가 모두 끝나면 한 번, 취소는 제외하고 재실행 통과는 따로 표시한다. 같은 실패 job·단계 집합이고 job별 실패 시험(없으면 panic 위치)도 같으면 앞 항목에 추가하고 새 깨움을 만들지 않는다(t-0685). 끝나지 않은 SHA는 기본 60분에 ci_stuck이다.
 - DB meta에 ETag·workflow 마지막 번호·마지막 판정·SHA별 서명·내구 outbox를 저장한다. inbox는 고정 ID, flow는 meta key와 한 transaction, 임무 pending은 전달 key와 한 transaction으로 중복을 막는다. 재시작/단절 뒤 마지막 판정−10분 창을 쪽 넘겨 따라잡고, 이미 회복된 실패는 깨우지 않는다. 먼저 고친 착지는 CI 항목을 닫고 미전달 입력에 회복을 표시한다. 조회 실패는 기존 Outage 규칙을 재사용한다.
 - CI 실패는 inbox `ci`와 `ci_failed`, 초록은 기록 `ci_passed`, 회복은 `ci_fixed`다. owner의 thread flow에도 남기며 끝난 thread를 되살리지 않는다. 병합 첫 줄 끝 `병합: … (t-NNNN)`에서 번호만 뽑고 compare 범위를 함께 읽는다. 못 찾으면 주인 불명이다. 임무는 GitHub·rerun·수정·push·revert 없이 coordinator용 수리 brief 초안만 만든다. 하루 깨움 권장 상한은 20이다.
 - source 수집·판정은 `ci.rs`, 사건 발행은 `watch_event.rs::publish_watch_event`, 임무 전달은 `mission_data_input`으로 나눈다. 발행은 깨움 정책을 갖지 않는다. 추가 조건·동작의 문법은 별도 통합 설계에서 정하며 `on="git"`은 아직 구현하지 않는다.
@@ -6180,11 +6183,12 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 주소 `#question=<thread>`(알림 url, 칩)는 보고서 목록에서 그 카드만 펼친다(2A). 다른 카드는 한 줄이고 누르면 펼친다. 같은 칩을 다시 누르면 접은 카드를 다시 펼친다.
   - 활동 막대 보고서 단추: 답할 질문이 있으면 빨강 수(답할 thread 수), 없으면 안 본 보고서 수(3A).
   - 대화 글(Markdown)의 `aaa:question/<thread>`·`aaa:report/<이름>`(글 속·backtick·링크 주소)은 칩이다: 질문은 「t-0001 질문 2개 · 답할 것」(빨강)·「답함 · 1B 2A」(초록), 보고서는 보고서 제목. 누르면 넓은 창도 새 탭이 아니라 앱 안(질문 카드·보고서 화면)이다. 모르는 보고서는 보고서 목록으로 가고 머리에 말한다. 칩 상태가 바뀔 때만 대화가 다시 그린다. 같은 host의 http 주소(`/v/…`·`/#report=…`)는 §8.300 그대로 둔다.
-  - thread pane(터미널·대화 보기) 입력칸 위에 그 thread 질문의 칩 한 줄(4A).
+  - thread pane(터미널·대화 보기) 입력칸 위에 그 thread 질문의 칩 한 줄(4A). t-0687: 입력칸과 같은 대화 열 너비·왼쪽 끝을 따르며, 답한 뒤 dock 칩은 숨긴다. 답한 기록은 대화 칩·질문 카드에 남는다.
+- **t-0687 착지 통합.** 기준 origin/main `7857be5f`의 마지막 §8.420·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 확인했다. 기존 §8.329·E2E 53을 보강하며 API 판·E2E 번호는 유지한다.
 - **coordinator 안내.** 질문 post 제목 끝에 `aaa:question/<thread>`(알림을 누르면 그 카드, 글에서는 빠진다: host `notify::app_ref`·`request_question`, push url `/#question=<thread>`). 채팅에도 같은 참조를 적고, 카드로 답하면 host가 전하니 다시 묻거나 전하지 않는다. 채팅 답은 `aaa thread answer`. 「앱 안 참조」 절: 보고서·질문은 공유 주소 대신 이 꼴로 가리키고 공유 주소는 사용자가 밖으로 보내 달라고 할 때만.
 - **검증.**
   - proto 유닛 `report_questions_read_numbered_questions_and_lettered_choices`, host 유닛 `answer::tests::compose_checks_every_question_and_writes_the_short_form`·`post::tests`(제목의 참조는 글에서 빠지고 url `/#question=t-0512`)·`brief_text::tests::brief_order_and_memory_cap`(안내 fence를 `report_questions`가 읽음), CLI `answer_picks_read_question_numbers_and_letters`, m13 안내 문구, 웹 유닛 `appRef.test.mjs`·`reportLinks.test.mjs`(`/#question=`).
-  - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드와 입력칸 위 칩이 답함, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
+  - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드는 답함, 입력칸 위 칩은 숨김, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
   - 결함 심기: 자리 잡기를 끄면(두 번째 답이 덮음) 「두 번째 답」에서, 칩으로 연 카드 펼침을 끄면 「질문 카드 펼침」에서 실패했고 되돌린 뒤 통과했다.
 
 
@@ -7182,11 +7186,80 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **남은 것.** GUI 로그인 세션 없음 등 적용 중 사람 일 뒤 같은 설치 ID로 재개하는 단추는 아직 없다(계획을 다시 만든다). Linux·Windows는 M5·M4.
 - **번호.** 착지 기준 origin/main `1b8fa9fb`(install I3 실제 등록 시험 수리)에서 마지막 §8.419·FRONT_API 1.102·AGENT_LINK 1.11·E2E 83을 직접 확인해 §8.420·FRONT_API 1.103을 이어 쓴다. E2E는 M2의 `72-machine-add`에 더한다. AGENT_LINK 그대로.
 
+### 8.421 기본 PR routine 재변환과 보존 사본(t-0684)
 
-### 8.421 Windows 최소 다운로드 bootstrap과 사용자 PC 절차(t-0485)
+- **문제.** 기본 PR routine을 변환한 뒤 보존 사본만 있고 TOML이 없는 프로젝트는 doctor가 옛 파일을 다시 만든다. 기존 `.converted/pr-followup.md`와 새 routine이 함께 있으면 변환 실행이 사본 충돌로 막혔다. 기존 TOML 보존 보호는 유지한다.
+- **정본과 보존.** `on = "pr"`은 새 `automations/pr-followup.toml`의 `on.pr`와 owner 대상 `do.message`로 옮기며 조건·켜짐·본문을 유지한다. doctor/create는 TOML 또는 기본 보존 사본이 있으면 옛 routine을 만들지 않는다. 변환은 동일 바이트 사본을 재사용하고 다른 판은 첫 빈 `.1.md`·`.2.md` 이름에 보존한다. 경로·재사용 여부도 계획 hash에 묶고, 사본 변경·symlink·기존 TOML 충돌은 무쓰기 거부한다. 실패 복구는 재사용한 사본을 지우지 않는다.
+- **웹.** 미리보기와 실행 실패는 창 제목·alert로 명확히 보이고 「미리보기 다시 읽기」로 현재 계획을 확인한다. Reader는 계속 미리보기만 본다. 기존 E2E40을 확장하며 FRONT_API·AGENT_LINK·schema는 변경하지 않는다.
+- **검증·운영.** 격리 파일/host keeper와 실제 host 웹 E2E40으로 원인·보존·복구·실패 표시를 확인한다. 전체 ci-local과 공개 검사를 통과한 뒤 착지 창을 기다린다. 운영 projects의 규칙은 수정하지 않으며 수리 배포 뒤 변환 방법은 automations.md에 남긴다.
+
+- **착지 통합.** 기준 origin/main `a30dbf65`의 마지막 plan §8.420·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 확인했다. 이 변경은 빈 §8.421에 두며 기존 E2E40을 확장한다. API 판과 E2E 번호는 main 그대로 유지한다.
+
+### 8.422 thread 보고의 작업 요약 자동 갱신(10-22, t-0682, 사용자 A안)
+
+- **작성 책임.** coordinator는 처음 목표·작업 뼈대와 사용자 결정(정함·바뀜)을 쓴다. thread brief는 매 보고에 `## 진행`을 요구한다. 완료하면 맡긴 일이 끝났다고 볼 작업 3~5개(최대 5개), 항목 30자 이하와 `[x]`·`[~]`·`[ ]`를 쓴다. 새 지시는 다음 보고에서 목록에 반영한다.
+- **host.** 정상 보고의 독립된 진행 절만 읽어 기존 `ThreadSummaryView.progress`에 우선 반영한다. 목표·처음·정함·바뀜은 coordinator 원문을 보존하고, 목표·결정 편집이 보고한 진행을 덮지 않는다. 목록이 없는 옛 보고·잘못된 목록·코드 예제는 마지막 정상 목록을 보존한다. 보고 hash·수신 시각·반영 지시 수·목록을 thread별 진행 영수증에 원자적으로 보존한다. 같은 hash 재수집과 host 재시작은 나중 지시를 지우지 않는다. 수집 시작의 지시 수를 고정해 전송 도중 새 지시는 경고에 남긴다. 목록·상세는 같은 표지/경고를 쓰며 CLI context도 자동 반영 대기를 안내한다.
+- **활동과 시간.** hover·팝오버·휴대폰 시트에 실제 `aaa report` 활동 글·진행률(없으면 미정), thread 생성부터 시작 후 시간, 현재 활동 시작부터 활동 시간을 보인다. 공유 초 시계로 열린 카드만 갱신하며 요약을 다시 요청하지 않는다. 목록 줄 시간의 tooltip은 현재 작업 상태 진입부터의 경과 시간임을 밝힌다. 같은 활동의 재보고는 활동 시작을 유지하고 활동 변경·새 세션·대기 답변에서 고친다. 옛 host가 시작을 주지 않으면 활동 시간을 추측하지 않는다.
+- **계약·검증.** FRONT_API 1.104은 선택 `AgentStatus.progress_since_ms`만 추가한다. Agent link 1.11·기존 진행 상태 타입과 E2E 28을 유지한다. 실제 host 수집·수신 중 새 지시·재시작·harness 사건·웹 규칙 유닛과 Chromium/WebKit Reader E2E로 확인한다. 절차는 testing.md에 둔다. 병합·push는 착지 창을 받은 뒤에 한다.
+
+- **착지 통합.** 기준 origin/main `8ddca9dc`의 마지막 plan §8.421·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 직접 확인했다. 이 변경은 빈 §8.422·FRONT_API 1.104를 쓰고 Agent link와 기존 E2E 28·82 번호는 유지한다.
+- **착지 검증.** 통합본 전체 ci-local이 217초에 모든 단계를 통과했다(웹 유닛 471개·Rust 전체·deps·웹 E2E 85개 파일·공개 검사). E2E 82 저장 단추 비활성 실패는 재발하지 않았고 전체 20.5초에 통과했다. 예전 실패 원문·추가 진단은 보존하며 원인이 밝혀졌다고 해석하지 않는다. 배포는 coordinator가 맡는다.
+
+### 8.423 화면·고정폭·터미널 글꼴 설정(t-0683)
+
+- 「모양 → 타이포그래피」에 화면·고정폭 글꼴을 터미널과 같은 입력으로 둔다. 세 칸마다 「기본값으로」를 둔다.
+- 세 값은 localStorage의 기기별 설정이며 host 공유 설정/API에는 넣지 않는다. 최초 렌더 전에 복원하고,
+  입력 확정·다른 탭의 storage 사건에 바로 적용한다. Enter·blur·닫기에서 확정하는 기존 동작을 유지한다.
+- 화면·고정폭 기본 목록은 tokens.css 정본을 참조하고, 고른 목록 뒤에 붙인다.
+  고정폭은 Symbols Nerd Font Mono를 맨 앞에 둔다. 화면의 설치 글꼴 선택에는 비례폭도 허용한다.
+- E2E 06에서 Chromium 1280px·WebKit 390px의 즉시 적용·없는 글꼴 대체·아이콘 우선·기기 분리·탭 동기화·
+  새로고침·기본값 복원과 설정 폭을 확인하고 두 기기의 모양·터미널 화면을 남긴다. 통신 계약은 그대로다.
+
+- **착지 통합.** 기준 origin/main `4a8a3a1f`의 마지막 §8.422·FRONT_API 1.104·AGENT_LINK 1.11·E2E 83을 직접 확인했다. 빈 §8.423을 사용하고 통신 계약은 main 그대로 유지한다. 기존 E2E 06에 검사를 더하므로 새 파일 번호는 사용하지 않는다. main의 SSH 설치·PR routine 변환·작업 요약 자동 갱신을 보존하고 전체 ci-local과 공개 검사를 수행한다.
+
+### 8.424 연결 안내의 0.5초 지연(t-0686)
+
+- 대화·터미널 공통 연결 안내는 연결 대기가 500ms 이어졌을 때만 보인다. 연결 성공·중단·pane 전환은 표시 타이머를 정리한다. 끊김 뒤 재시도의 closed → connecting 전환은 같은 대기로 세어 표시를 다시 숨기지 않는다.
+- WebSocket 상태 판정·재시도·입력 허용·읽기 전용 사유와 오류 표시는 기존 동작을 유지한다. proto·FRONT_API·AGENT_LINK 변경은 없다.
+- E2E84는 실제 2,400행 Claude 기록과 pane 연결을 Chromium 1280px·WebKit 390px에서 연다. open/message 사건을 보류하고 브라우저 시계를 제어해 499ms 미표시·500ms 표시, 빠른 연결의 순간 표시 없음, 끊김·재시도·복구를 확인한다.
+
+- **착지 통합.** origin/main `efe5b1ab`의 마지막 plan §8.423·FRONT_API 1.104·AGENT_LINK 1.11·E2E83을 확인했다. 이 변경은 빈 §8.424·E2E84를 사용하며 API 판은 main 그대로 유지한다.
+
+
+### 8.425 일반 post 기본 한도 확대(t-0688)
+
+- 측정 차례 핑퐁과 장시간 작업이 분당 3·시간당 6·하루 30건 및 세 번 거부로 막히던 기본값을 30/60초·200/시간·2000/일·거부 20회로 높인다. `pair_hourly` 예약값은 100이며 현재 thread→coordinator 경로에는 적용하지 않는다.
+- 짧은 핑퐁을 위해 분당 10배, 장시간 작업을 위해 시간당 약 33배·일일 약 67배로 늘린다. 지속 초과는 계속 제한하며 명시한 설정·기존 음소거·24시간 같은 글 중복 거부를 유지한다. coordinator→user와 외부 푸시의 별도 한도는 유지한다.
+- 설정 로더는 생략값·명시한 옛 값·local 덮어쓰기를 검사한다. 실제 host 원장은 분·시간·하루/내용 중복 경계, 20회 음소거, 재전송·재시작 내구성과 사용자 알림 한도 분리를 검사한다. 기존 m13 전송·E2E19 음소거 표시는 작은 한도를 명시한다. 고정 sleep·시한 연장·단언 완화 없이 검증한다.
+- 착지 기준 origin/main `bda6a017`의 마지막 plan §8.424·FRONT_API 1.104·AGENT_LINK 1.11·웹 E2E84를 확인했다. 이 절은 빈 §8.425를 쓰고 API 판과 기존 E2E 번호는 유지한다. 통합본 전체 ci-local과 공개 검사를 마친 뒤 병합·push하며 배포는 coordinator가 맡는다.
+
+### 8.426 thread 보류(park)와 이어 하기(10-22, t-0689, 사용자 1A 2A 3A 4A)
+
+- **왜.** 사람 검토만 남은 thread(예: t-0614)가 실행 자리·pane·세션을 붙든다. resolve하면 worktree·대화가 사라져 이을 수 없다. 사용자 10-22: 「세션은 없애면 안 되는(계속 하기 위해) 스레드를 처리하는 방법」.
+- **결정.** 1A thread의 새 상태 `parked`(「보류」). 2A 기본은 thread에게 정리를 맡긴 뒤 닫고, 응답이 없으면 「바로 보류」. 3A 다른 머신은 새 대화 + 요약 brief. 4A 사용자(조작 기기·세션 밖 CLI)와 사용자 지시를 인용한 그 프로젝트 coordinator(§8.397과 같은 규칙).
+- **보류(`crates/aaa-host/src/park.rs`).** `aaa thread park <id> [--now] [--note] [--user-request] [--cancel]`·웹 thread 화면 「관리 → 보류」. 사람·coordinator가 띄운 열린 일반 Worker만(평가자·자동화·데려온 thread·정리 중은 거부).
+  - 기본: `ThreadRec.park`(요청자·시각·까닭·맡긴 때 보고 hash)를 적고 thread에 「[aaa 보류 준비]」 메시지를 보낸다(커밋·push·보고 첫 줄 `[보류 준비됨]`·`## Handoff`). ticker(`park_pass`)가 맡긴 뒤의 새 `[보류 준비됨]` 보고이고 agent가 일하거나 확인창을 기다리지 않을 때, 또는 세션이 끝났을 때 닫는다. 그 동안은 자리를 가진다.
+  - 닫기: 마지막 사본(실패해도 worktree가 남으므로 보류는 한다, 까닭을 남긴다) → git(diff.v1 미커밋 수·HEAD, git.v1 `Heads`로 origin의 같은 branch, 모르면 까닭) → hook이 알린 대화 ID를 `Launch.session_key`로 옮김(pane을 지우면 잃는다) → 상태 `parked`·묶음 「보류」 → pane 끝내기·layout과 기록에서 지움·보고 감시 해제 → inbox `thread-state/parked`·흐름 사건 `thread_parked` → 마지막으로 `park.parked_at_ms`(닫기를 다 마친 때) → ticker를 깨워 예약이 자리를 본다. 상태를 먼저 바꾸는 것은 pane이 끝날 때 「세션이 끝났다」 항목을 내지 않으려는 것이고, 그 사이(「닫는 중」, CLI·웹이 그렇게 보인다)는 thread 잠금이 이어 하기를 막는다. 처음에는 끝난 때를 먼저 적어, m13이 보류를 본 직후의 이어 하기가 「준비·정리 작업 중」으로 가끔 거부됐다(2회 중 1회 재현, 고친 뒤 8회 통과).
+  - 상태가 Open이 아니므로 실행 자리(§8.385 `holds_slot`)·auto-resolve·병합 뒤 끝내기·task 자동 정리·`project sweep`에서 빠진다. 계정 할당은 끝난 것으로 본다. 예약 줄은 「보류 · 자리를 돌려주고 이어 하기를 기다린다」. `restart`·`message`·키 보내기는 「`aaa thread unpark`」를 안내하며 거부한다. 보류 thread도 resolve할 수 있다.
+- **이어 하기.** `aaa thread unpark <id> [--machine M] [--repo P] [--dry-run]`·웹 「이어 하기」 창(`--dry-run`의 머신별 길·막힌 까닭·자리 수).
+  - 같은 머신: 대화 ID 자리가 있는 resume argv와 UUID 대화 ID가 있으면(재부팅 복원과 같은 판정) 같은 대화를 잇고, brief.md 대신 고유한 한 줄 「보류를 풀었다(<id> 이어 하기)…」(`ThreadRec.brief_line`)을 brief 전달 장치로 친다. 이은 대화 화면에는 앞 brief 줄이 남아 brief.md 표지로는 받은 것으로 잘못 읽기 때문이다. 잇지 못하는 harness(custom)는 같은 자리에서 새 대화와 이어 하기 brief다.
+  - 다른 머신: worktree thread는 보류 때 origin과 HEAD가 같았어야 한다(아니면 거부). 그 머신 project.toml repos에서 같은 이름의 저장소(여럿이면 `--repo`)에 기준 `origin/<branch>`로 같은 이름의 새 worktree를 만들고(Agent link 변경 없음, 기존 `ThreadPrepare.base`), 할 일 뒤에 「# 보류에서 이어 하기」(언제·어디서·까닭, push 방법, 앞 자리는 남김, 앞 library는 host 보고서 판에 있음, 마지막 보고 20,000자까지)를 붙인 brief로 새 대화를 띄운다. 작업 폴더 thread는 새 폴더다(파일은 옮기지 않는다).
+  - 앞 자리는 지우지 않고 `ThreadRec.left_places`에 둔다(launch 포함). 그 머신으로 돌아가면 앞 자리에서 `git fetch origin && git merge --ff-only origin/<branch>`를 먼저 하라는 brief로 새 대화를 띄운다(그 머신의 준비 journal이 앞 자리를 가리키므로 새로 만들지 않는다). resolve는 남은 앞 자리를 알린다.
+  - 자리 검사는 다시 시작과 같은 DB 선점이다(한도가 찼으면 `start_wait`). 기동이 실패하면 보류 기록(옮긴 자리 포함)으로 되돌리고 까닭을 `error`에 둔다.
+- **머신 간 대화 조사(보고 t-0689).** Claude 기록은 `<설정 폴더>/projects/<작업 폴더 경로의 /를 ->/<ID>.jsonl`이고 `--resume <ID>`는 지금 작업 폴더 이름의 폴더에서만 찾는다(다른 폴더로 복사하니 찾았다). 계정에 묶이지 않는다. 옛 경로가 대화에 남아 3A로 새 대화를 쓴다. Codex는 sqlite 색인이 있어 실험하지 않았다. Claude Code는 시작할 때 `cleanupPeriodDays`(기본 30일)보다 오래된 기록을 지운다: 30일 넘은 보류의 같은 대화 잇기는 깨질 수 있다(남은 일).
+- **proto(FRONT_API 1.105).** `thread_park{now, note, user_request, cancel}`·`thread_unpark{machine, repo, dry_run}`(dry_run은 보기 권한도) → `Thread`·`UnparkPreview{options[machine, same, connected, conversation, repo, blocked], open, limit}`, `ThreadStatus::Parked`·`ThreadGroup::Parked`(rank 6, 끝남 7), `ThreadView.park`(`ThreadPark`). 보고 표지 `[보류 준비됨]`. Agent link 변경 없음.
+- **웹.** 보류 thread는 목록(sidebar)에서 빠진다. 「모든 thread」의 「보류」 묶음(까닭), 할 일 줄 ⏸ 상태·「t-NNNN · 보류」 칩·거르기 칩 「보류」(1.105 이상), 보류한 thread는 「바로 시작」 후보에서 빠진다. thread 화면의 보류 띠(언제·어디서·git·까닭, 「이어 하기」)와 관리 메뉴 「보류」(정리 맡기고 보류·바로 보류·요청 거두기)·「이어 하기」. coordinator 안내와 thread brief 보고 형식에 보류를 더했다.
+- **검증.** host 유닛 `park::tests`(보류 대상·닫기 판정·resume 판정·git 글), `restart_plan_follows_herdr_projects`(보류는 unpark만). m13 `thread_park`: 실제 가짜 Claude로 coordinator 거부·인용, 맡긴 정리 → 보고 → 닫기·pane 지움·예약 기동, restart·message 거부, auto-resolve 제외, 한도 거부 뒤 보류 유지, 같은 대화 `--resume`과 이어 하기 한 줄. 두 머신(TLS labB): 미커밋 바로 보류 → 다른 머신 거부·같은 자리 새 대화 brief → 커밋·push 뒤 정리 → labB 새 worktree(같은 HEAD·파일·Handoff brief) → labA 앞 자리로 돌아오기(ff-only 안내) → resolve가 앞 자리를 알림. 결함 심기: 이어 하기에서 한 줄 대신 brief.md 표지를 쓰면 m13이 실패한다. 웹 유닛 `operateModel`·`tasksModel`, 웹 E2E `85-thread-park`(Chromium 1280·WebKit 390, 정리 맡기기·보류 띠·sidebar 제외·할 일 칩·모든 thread 묶음·이어 하기 창·바로 보류·보류 끝내기).
+- **남은 것.** 첫 적용은 t-0614(배포 뒤 웹에서 보류). 30일 넘은 Claude 기록 지움 보호, Codex 머신 간 기록 옮기기 실험, 다른 머신에 남은 앞 자리 정리 명령은 하지 않았다.
+- **번호.** 작업 기준 origin/main `7857be5f`에서 §8.421·FRONT_API 1.104·E2E 84로 썼다. 착지 창 기준 origin/main `193f7370`에서 마지막 §8.425·FRONT_API 1.104·AGENT_LINK 1.11·E2E 84(`84-connection-banner`)를 직접 확인해 §8.426·FRONT_API 1.105·E2E 85(`85-thread-park`)로 옮겼다. AGENT_LINK는 그대로다.
+
+
+### 8.427 Windows 최소 다운로드 bootstrap과 사용자 PC 절차(t-0485)
 
 - 저장해 검토한 PowerShell 입구가 정확 release 판·공식 URL·SHA·PE x86_64·실제 --version을 확인한 뒤 사용자 .local/bin/aaa.exe에 비덮어쓰기 배치하고 인자를 그대로 install에 전달한다. 같은 bytes는 mtime을 보존한다. 다른 기존 파일·reparse/파일 부모·미지원 CPU는 거부하며 PATH/registry/SCM/UAC/LSA/계정·권한을 bootstrap이 바꾸지 않는다. PS5.1/7 native argv와 exit/외부 stdio를 실제 Windows owner가 검증한다.
 - 기존 release producer에 같은 source의 PowerShell asset과 manifest/SHA256SUMS를 결속한다. tag/게시/배포는 별도 승인 절차다. 공개 검사 뒤 승인된 hp branch의 기존 windows-2025 CI로 실제 Windows 경계를 한 번 확인하고 branch를 삭제한다. main 착지는 별도 창을 기다린다. FRONT_API/AGENT_LINK/웹 E2E 번호는 바뀌지 않는다.
 - docs/windows-bootstrap.md에 준비물·받기/해시·dry-run/외부 승인/상태/재개·실제 SCM/Session0/부팅/LSA/UAC 점검·되돌리기·비밀 없는 로그를 둔다. 사용자 PC 인수는 새 검증 release를 받은 뒤 한다. 공개 aaa uninstall은 최종 I7의 승인/공유 참조 제거 연결이 남아 있으며, 최소 사용자 시험은 PATH/hook/Serve를 끄고 exact 새 SCM 서비스만 사람이 소유 대조 후 중지/제거하고 데이터/공유 exe/journal은 남기는 범위다. bootstrap을 전체 인수 완료로 부르지 않는다. 다음은 사용자 PC 시험→I4 Linux→I7 최종 인수다.
 
 - **I3 supervisor 잠금 수명 수리(같은 후보).** main CI의 credentials 재개가 `installation_busy`로 실패했다. Lab 경로와 resource key는 이미 고유하고 실제 오류는 supervisor.lock이다. Unix fork/dup의 descriptor가 남으면 File close만으로 flock이 풀리지 않는 경계를 실제 복제 descriptor로 같은 owner에서 RED로 재현했다. transaction::Locks와 같이 서비스 Job 종료 때도 Unix unlock을 명시한다. 실제 fork 실험에서도 close 뒤 EWOULDBLOCK, unlock 뒤 자식이 살아 있는 채로 재획득을 확인했다. Windows share reservation·승인/단언/시한은 유지한다. CI 당시 descriptor를 물려받은 특정 자식은 로그에 없어 미확인으로 남긴다.
+
+- **착지 통합.** 승인 기준 origin/main `fabffdbd`의 마지막 plan §8.426·FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E85(`85-thread-park`)를 직접 확인했다. 이 후보는 빈 §8.427로 옮기고 API·E2E 번호는 main 그대로 보존한다. Windows 최소 bootstrap과 I3 Unix supervisor 잠금 수명 수리를 같은 통합본에서 전체 gate·공개 검사·Windows cross로 다시 검증한다. 배포는 별도 담당이 진행한다.

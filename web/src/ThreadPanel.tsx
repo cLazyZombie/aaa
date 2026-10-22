@@ -11,7 +11,7 @@ import { LibraryLink } from "./LibraryLink";
 import { ReportMarkdown, TaskAddButton, isDoc } from "./ReportsView";
 import { useFrameImages, useLightbox } from "./Lightbox";
 import { SummaryButton } from "./ThreadSummary";
-import { ThreadActions } from "./ThreadActions";
+import { ParkBanner, ThreadActions } from "./ThreadActions";
 import { ChangedFilesCard } from "./ChangedFiles";
 import { useDiffPanel } from "./useDiffPanel";
 import { useMediaQuery } from "./herdr/useMediaQuery";
@@ -25,6 +25,7 @@ export const GROUP_LABEL: Record<string, string> = {
   landing: "병합 중",
   working: "작업 중",
   idle: "쉼",
+  parked: "보류",
   resolved: "끝남",
 };
 
@@ -150,6 +151,7 @@ export function ThreadPanel({
         <HeadMore />
       </header>
       {msg && <div className="banner err">{msg}</div>}
+      <ParkBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       {t.copy === "failed" && <div className="banner" data-testid="report-copy-failed">보고·결과물 사본을 다시 받는 중이다. 마지막으로 받은 내용과 작업 상태를 유지한다.</div>}
       <div className={`thread-split${diffPanel.target && !sheet ? " with-diff" : ""}`}>
       <div className="thread-body">

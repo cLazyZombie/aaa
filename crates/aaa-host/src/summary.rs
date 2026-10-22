@@ -1,5 +1,5 @@
 //! thread 작업 요약(plan §8.259). coordinator가 thread마다 `threads/<id>.summary.md`를 통째로 다시 쓰고(보고와 같은 규칙),
-//! host는 그 위에 thread 보고의 `## Decisions`(agent가 정한 것), 요약 뒤에 쌓인 지시(task.md `## Follow-ups`), 요약이 없을
+//! host는 그 위에 thread 보고의 `## 진행`·`## Decisions`(agent가 정한 것), 요약 뒤에 쌓인 지시(task.md `## Follow-ups`), 요약이 없을
 //! 때의 할 일 첫 줄을 붙여 웹 hover 카드·「요약」 단추에 보인다. 참고 넷에는 지시마다 갱신하는 요약이 없어 형식은 새로 정했다.
 //!
 //! 파일 첫 줄은 host가 쓰는 표지(`<!-- aaa summary at=<ms> by=<누가> seen=<n> -->`)다. `seen`은 요약을 쓸 때의 Follow-ups
@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aaa_proto::{ErrorBody, FollowUpLine, SummaryEntry, SummaryMark, SummaryStep, SummaryStepState, ThreadSummaryView};
+use serde::{Deserialize, Serialize};
 
 use crate::Host;
 use crate::orch::{internal, write_atomic};
@@ -308,6 +309,86 @@ pub(crate) fn decisions(report: &str) -> Vec<String> {
     aaa_proto::section_lines(report, "Decisions").into_iter().take(MAX_ITEMS).map(|l| clip(&l)).collect()
 }
 
+/// 보고 전체의 다른 절·코드 예제를 요약 형식으로 읽지 않는다. 잘못된 목록은 마지막 정상 목록을 보존한다.
+fn report_progress(report: &str) -> Option<Vec<SummaryStep>> {
+    let mut section = String::from("# 목표\n진행\n## 진행\n");
+    let mut inside = false;
+    let mut found = false;
+    let mut fence: Option<(char, usize)> = None;
+    for raw in report.lines() {
+        let line = raw.trim();
+        if let Some((ch, len)) = fence {
+            let count = line.chars().take_while(|c| *c == ch).count();
+            if count >= len && line[count..].trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+        if raw.starts_with("    ") || raw.starts_with('\t') {
+            if inside {
+                return None;
+            }
+            continue;
+        }
+        if line.starts_with("```") || line.starts_with("~~~") {
+            let ch = line.chars().next().unwrap();
+            fence = Some((ch, line.chars().take_while(|c| *c == ch).count()));
+            if inside {
+                return None;
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            inside = line == "## 진행";
+            if inside && found {
+                return None;
+            }
+            found |= inside;
+            continue;
+        }
+        if inside {
+            section.push_str(line);
+            section.push('\n');
+            if section.len() > MAX_BYTES {
+                return None;
+            }
+        }
+    }
+    let steps = parse(&section).ok()?.progress;
+    (!steps.is_empty()).then_some(steps)
+}
+
+/// host의 수신 영수증. 같은 보고 재수집·재시작이 나중 지시를 반영한 것으로 바꾸지 못한다.
+#[derive(Serialize, Deserialize)]
+struct ReportProgress {
+    hash: String,
+    at_ms: u64,
+    seen: u32,
+    progress: Vec<SummaryStep>,
+}
+
+fn progress_path(dir: &Path, id: &str) -> std::path::PathBuf {
+    dir.join("threads").join(format!("{id}.progress.json"))
+}
+
+fn read_progress(dir: &Path, id: &str) -> Option<ReportProgress> {
+    serde_json::from_slice(&std::fs::read(progress_path(dir, id)).ok()?).ok()
+}
+
+fn effective_meta(meta: Option<Meta>, progress: Option<&ReportProgress>) -> Option<Meta> {
+    let seen = meta.as_ref().map_or(0, |m| m.seen).max(progress.map_or(0, |p| p.seen));
+    let mut result = match progress {
+        Some(p) if meta.as_ref().is_none_or(|m| p.at_ms > m.at_ms) => {
+            Some(Meta { at_ms: p.at_ms, by: "agent".into(), seen: p.seen })
+        }
+        _ => meta,
+    };
+    if let Some(m) = &mut result {
+        m.seen = seen;
+    }
+    result
+}
+
 /// thread 목록이 매번 파일을 읽지 않게 host가 기억하는 표지 재료
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct MarkCache {
@@ -331,6 +412,38 @@ fn summary_path(dir: &Path, id: &str) -> std::path::PathBuf {
 }
 
 impl Host {
+    /// 수집 시작 때 지시 수를 잡아 전송 중 도착한 지시는 경고에 남긴다.
+    pub(crate) fn summary_report_seen(&self, dir: &Path, id: &str) -> u32 {
+        let _guard = self.follow_up_lock.lock().unwrap();
+        read_cache(dir, id).total
+    }
+
+    pub(crate) fn summary_report_received(
+        &self,
+        project: &str,
+        id: &str,
+        report: &str,
+        hash: &str,
+        seen: u32,
+    ) -> Result<(), ErrorBody> {
+        let Some(progress) = report_progress(report) else { return Ok(()) };
+        let dir = self.project_dir(project)?;
+        let _guard = self.follow_up_lock.lock().unwrap();
+        if read_progress(&dir, id).is_some_and(|p| p.hash == hash) {
+            return Ok(());
+        }
+        let previous = read_cache(&dir, id);
+        let receipt = ReportProgress {
+            hash: hash.into(),
+            at_ms: aaa_common::util::now_ms().max(previous.at_ms.unwrap_or(0).saturating_add(1)),
+            seen,
+            progress,
+        };
+        write_atomic(&progress_path(&dir, id), &serde_json::to_vec(&receipt).map_err(internal)?).map_err(internal)?;
+        self.summary_marks.lock().unwrap().insert((project.into(), id.into()), read_cache(&dir, id));
+        Ok(())
+    }
+
     /// thread 줄의 요약 표지. 처음 한 번 파일을 읽고, 뒤로는 요약 쓰기·지시 덧붙이기가 고친다
     pub(crate) fn summary_mark(&self, project: &str, id: &str) -> Option<SummaryMark> {
         let key = (project.to_string(), id.to_string());
@@ -339,8 +452,7 @@ impl Host {
         }
         let dir = self.project_dir(project).ok()?;
         let c = read_cache(&dir, id);
-        self.summary_marks.lock().unwrap().insert(key, c);
-        Some(c.mark())
+        Some(self.summary_marks.lock().unwrap().entry(key).or_insert(c).mark())
     }
 
     /// task.md에 지시를 덧붙인 뒤(같은 잠금 안): 그 글로 Follow-ups 수를 고친다
@@ -363,6 +475,7 @@ impl Host {
     pub(crate) fn thread_summary(&self, project: &str, id: &str) -> Result<ThreadSummaryView, ErrorBody> {
         self.load(project, id)?;
         let dir = self.project_dir(project)?;
+        let _guard = self.follow_up_lock.lock().unwrap();
         let read = |name: String| std::fs::read_to_string(dir.join("threads").join(name)).ok();
         let file = read(format!("{id}.summary.md"));
         let task = read(format!("{id}.task.md")).unwrap_or_default();
@@ -375,7 +488,12 @@ impl Host {
             }
             None => (None, None),
         };
-        let parsed = text.as_deref().and_then(|t| parse(t).ok()).unwrap_or_default();
+        let mut parsed = text.as_deref().and_then(|t| parse(t).ok()).unwrap_or_default();
+        let progress = read_progress(&dir, id);
+        let meta = effective_meta(meta, progress.as_ref());
+        if let Some(p) = progress {
+            parsed.progress = p.progress;
+        }
         let total = all.len() as u32;
         let pending = match &meta {
             Some(m) => total.saturating_sub(m.seen),
@@ -421,7 +539,8 @@ impl Host {
             let _guard = self.follow_up_lock.lock().unwrap();
             let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).unwrap_or_default();
             let total = follow_ups(&task).len() as u32;
-            let meta = Meta { at_ms: aaa_common::util::now_ms(), by, seen: total };
+            let at_ms = aaa_common::util::now_ms().max(read_cache(&dir, id).at_ms.unwrap_or(0).saturating_add(1));
+            let meta = Meta { at_ms, by, seen: total };
             write_atomic(&summary_path(&dir, id), file_text(&meta, text).as_bytes()).map_err(internal)?;
             self.summary_marks.lock().unwrap().insert(
                 (project.to_string(), id.to_string()),
@@ -447,7 +566,8 @@ fn read_cache(dir: &Path, id: &str) -> MarkCache {
     let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).unwrap_or_default();
     let total = follow_ups(&task).len() as u32;
     let meta = std::fs::read_to_string(summary_path(dir, id)).ok().and_then(|f| split_meta(&f).0);
-    match meta {
+    let progress = read_progress(dir, id);
+    match effective_meta(meta, progress.as_ref()) {
         Some(m) => MarkCache { at_ms: Some(m.at_ms), seen: m.seen, total },
         None => MarkCache { at_ms: None, seen: 0, total },
     }
@@ -456,6 +576,28 @@ fn read_cache(dir: &Path, id: &str) -> MarkCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_progress_requires_a_real_bounded_section_and_preserves_order() {
+        let report = "[진행 중] 확인\n## Report\n```md\n## 진행\n- [x] 예제\n```\n## 진행\n- [X] 완료\n- [~] 작업\n- [ ] 남음\n## Next\n- 다음\n";
+        let steps = report_progress(report).unwrap();
+        assert_eq!(steps.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["완료", "작업", "남음"]);
+        assert_eq!(
+            steps.iter().map(|s| s.state).collect::<Vec<_>>(),
+            [SummaryStepState::Done, SummaryStepState::Working, SummaryStepState::Pending]
+        );
+        for invalid in [
+            "## Report\n```md\n## 진행\n- [x] 예제\n```",
+            "## 진행\n- 상태 없음",
+            "## 진행\n- [x] ",
+            "## 진행\n",
+            "## 진행\n- [x] 하나\n## 진행\n- [ ] 둘",
+        ] {
+            assert!(report_progress(invalid).is_none(), "{invalid}");
+        }
+        assert!(report_progress(&format!("## 진행\n- [ ] {}", "가".repeat(MAX_LINE + 1))).is_none());
+        assert!(report_progress(&format!("## 진행\n{}", "- [ ] 항목\n".repeat(MAX_STEPS + 1))).is_none());
+    }
 
     const T0393: &str = "# 목표
 웹 패널 다듬기·Ctrl+Enter steering

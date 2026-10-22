@@ -37,7 +37,7 @@ import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
 import type { RolloutSnapshot } from "./RolloutCard";
-import { needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
+import { inSidebar, needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
@@ -759,7 +759,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const reveal = (target: string | null) => {
     if (target === null || !(target.startsWith("pane:") || target.startsWith("thread:"))) return;
     const { panes, threads, machines } = now.current;
-    const listed = [...threads.values()].filter((t) => t.group !== "resolved" && t.project_status !== "archived");
+    const listed = [...threads.values()].filter((t) => inSidebar(t) && t.project_status !== "archived");
     // 「작업」 트리의 줄(Sidebar Roster): 예전 에이전트 패널의 줄(도는 agent pane)도 모두 이 트리에 있다
     const inWork = rosterRows(machines, panes, listed, currentSidebarShared().paneOrder).some((r) => r.keys.includes(target));
     setPanel((current) => revealPanel(current, inWork));
@@ -957,7 +957,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         // 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 목록이 프로젝트 먼저라(plan §8.195) 머신을 넘어
         // 목록 전체를 돈다. 끊긴 머신의 줄은 열 수 없다
         const { sel, panes, threads, machines } = now.current;
-        const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.project_status !== "archived");
+        const shown = [...threads.values()].filter((t) => inSidebar(t) && t.project_status !== "archived");
         const rows = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity");
         if (rows.length === 0) return;
         const index = rows.findIndex((r) => sel !== null && r.keys.includes(sel));
@@ -1022,7 +1022,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (asked !== null && !asked.startsWith("pane:")) return;
     // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
     const pickFirst = (auto: boolean) => {
-      const shown = [...threads.values()].filter((t) => t.group !== "resolved");
+      const shown = [...threads.values()].filter(inSidebar);
       const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity")[0];
       if (!first) return;
       if ("pane" in first.open) choose(first.open.pane, auto, true);
@@ -1039,7 +1039,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const stored = storedSelection();
     if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5), false, true);
     const storedThread = stored?.startsWith("thread:") ? threads.get(stored.slice(7)) : undefined;
-    if (storedThread && storedThread.group !== "resolved") return chooseThread(storedThread, null, true);
+    if (storedThread && inSidebar(storedThread)) return chooseThread(storedThread, null, true);
     pickFirst(false);
     // choose·chooseThread는 주소와 setSel만 쓴다
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1109,10 +1109,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
-  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}`).sort().join(" ");
+  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}${t.group === "parked" ? ":parked" : ""}`).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
-  const shownThreads = allThreads.filter((t) => t.group !== "resolved");
+  const shownThreads = allThreads.filter(inSidebar);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
   // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
   const { data: asksData, put: putAsks } = useAsksData(up);
@@ -1223,8 +1223,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const canControl = role !== "reader";
   const open = [...questions.values()].sort((a, b) => a.created_at_ms - b.created_at_ms);
   const currentQ = current ? open.filter((q) => q.pane === current.id) : [];
-  // 그 thread 보고의 질문 칩(입력칸 위): 지금 보고에 질문이 있을 때만(답한 기록은 대화 칩이 보인다)
-  const dockAsk = current ? threadOfPane.get(current.id)?.questions != null : false;
+  // 그 thread 보고의 질문 칩(입력칸 위): 지금 보고에 답하지 않은 질문이 있을 때만(답한 기록은 대화 칩이 보인다)
+  const currentThreadQuestions = current ? threadOfPane.get(current.id)?.questions : null;
+  const dockAsk = currentThreadQuestions != null && currentThreadQuestions.answer == null;
   const whereOf = (q: QuestionView) => {
     if (q.project && q.thread) return threads.get(`${q.project}/${q.thread}`)?.title ?? `${q.project}/${q.thread}`;
     const p = panes.find((x) => x.id === q.pane);

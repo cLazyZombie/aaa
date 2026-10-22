@@ -5,7 +5,7 @@ import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descen
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
-const groups = new Map([["t-0001", "working"], ["t-0002", "resolved"], ["t-0003", "waiting_on_you"]]);
+const groups = new Map([["t-0001", "working"], ["t-0002", "resolved"], ["t-0003", "waiting_on_you"], ["t-0004", "parked"]]);
 
 describe("할 일 화면", () => {
   it("고정 ID로 검색하고 coordinator에게 전달한다", () => {
@@ -22,6 +22,10 @@ describe("할 일 화면", () => {
     assert.equal(taskState(task({ thread: "t-0002" }), groups), "wait");
     assert.equal(taskState(task({ thread: "t-0099" }), groups), "wait");
     assert.equal(taskState(task({}), groups), "wait");
+    // 보류한 thread(plan §8.426)와 이어진 task는 진행 중이 아니라 보류다. 새로 맡기지 않는다(그 thread를 이어 한다)
+    assert.equal(taskState(task({ thread: "t-0004" }), groups), "parked");
+    assert.equal(startable(task({ thread: "t-0004" }), groups, []), false);
+    assert.equal(startable(task({ thread: "t-0002" }), groups, []), true);
   });
 
   it("owner: 비움·agent는 미할당, me는 나. owner를 읽지 못한 형식 어긋남은 미할당으로 세지 않는다", () => {
@@ -44,6 +48,9 @@ describe("할 일 화면", () => {
     assert.deepEqual(pick("mine"), ["a"]);
     assert.deepEqual(pick("unassigned"), ["b"]);
     assert.deepEqual(pick("running"), ["c"]);
+    const parked = task({ title: "e", thread: "t-0004" });
+    assert.deepEqual([...ts, parked].filter((t) => taskMatches(t, "parked", "", groups)).map((t) => t.title), ["e"]);
+    assert.equal(taskMatches(parked, "running", "", groups), false);
   });
 
   it("검색은 제목·메모·owner에서 대소문자를 가리지 않는다", () => {
@@ -69,7 +76,7 @@ describe("할 일 화면", () => {
     assert.deepEqual(all.rest.map((r) => [r.t.title, r.depth]), [["상위", 0], ["하위", 1], ["손자", 2], ["끊긴 상위", 0], ["나중", 0]]);
     const mine = taskList(board, "mine", "", null, groups);
     assert.deepEqual(mine.rest.map((r) => r.t.title), ["나중"]);
-    assert.deepEqual(mine.counts, { all: 5, mine: 1, unassigned: 4, running: 0, reserved: 0, check: 0 });
+    assert.deepEqual(mine.counts, { all: 5, mine: 1, unassigned: 4, running: 0, parked: 0, reserved: 0, check: 0 });
   });
 
   it("상세가 가리키는 task: 제목으로 찾고, 같은 제목이면 줄이 같은 것", () => {

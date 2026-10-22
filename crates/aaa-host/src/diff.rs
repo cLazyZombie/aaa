@@ -40,7 +40,7 @@ impl Host {
 
 /// 끝내기 미리보기의 파일 수. 다 세지 못한 수(새 파일이 상한을 넘어 뺐다, 목록을 잘랐다)나 기준을 찾지 못한 branch 범위(agent가
 /// HEAD로 떨어져 미커밋과 같아진다)는 0으로 보이면 안 된다: 모름(까닭)이다
-fn diff_count(diff: &aaa_proto::DiffView) -> Result<u32, String> {
+pub(crate) fn diff_count(diff: &aaa_proto::DiffView) -> Result<u32, String> {
     match &diff.files {
         _ if diff.untracked_omitted || diff.truncated => Err("바뀐 파일이 너무 많아 다 세지 못했다".into()),
         _ if diff.scope == DiffScope::Branch && diff.base == "HEAD" => {

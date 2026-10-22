@@ -279,10 +279,12 @@ impl Host {
         let agent = self.pane_agent(&pane);
         let activity = agent.as_ref().map(|a| a.activity);
         let kind = rec.launch.as_ref().map(|l| l.harness.clone()).unwrap_or_default();
-        let marker = format!(".aaa/{project}-{id}/brief.md");
+        // 보류를 풀고 같은 대화를 이을 때는 brief.md 대신 그 한 줄을 치고, 받았는지도 그 줄로 본다(park.rs). 이은 대화의 화면에는
+        // 앞 brief 줄이 남아 있어 brief.md 표지로는 받은 것으로 잘못 읽는다
+        let marker = rec.brief_line.clone().unwrap_or_else(|| format!(".aaa/{project}-{id}/brief.md"));
         let look =
             Look { activity, kind: &kind, screen: &screen.ansi, marker: &marker, attempts: rec.brief_attempts, sender };
-        let line = format!("{marker}를 읽고 그대로 하라.");
+        let line = rec.brief_line.clone().unwrap_or_else(|| format!("{marker}를 읽고 그대로 하라."));
         match step(&look) {
             Step::Wait { why, fresh } => {
                 if fresh {

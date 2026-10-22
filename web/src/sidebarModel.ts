@@ -6,9 +6,12 @@ import { sidebarPinKey } from "./herdr/sidebarPins.ts";
 import { threadRepo, workFolders } from "./workFolders.ts";
 import type { AgentStatus } from "./herdr/status.ts";
 
-/** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6. 모르는 묶음은 작업과 쉼 사이 */
-const RANK: Record<string, number> = { waiting_on_you: 1, ready_for_review: 2, landing: 3, working: 4, idle: 5, resolved: 6 };
+/** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 보류 6 → 끝남 7. 모르는 묶음은 작업과 쉼 사이 */
+const RANK: Record<string, number> = { waiting_on_you: 1, ready_for_review: 2, landing: 3, working: 4, idle: 5, parked: 6, resolved: 7 };
 export const groupRank = (g: ThreadGroup | string): number => RANK[g] ?? 4.5;
+
+/** 목록(sidebar)에 보이는 thread: 끝낸 것과 보류한 것(plan §8.426, pane이 없고 자리를 돌려줬다)은 「모든 thread」·할 일에만 있다 */
+export const inSidebar = (t: Pick<ThreadView, "group">): boolean => t.group !== "resolved" && t.group !== "parked";
 
 /** herdr-projects `sidebar::word`(목록·탭 줄의 짧은 말) */
 export const GROUP_WORD: Record<string, string> = {
@@ -17,6 +20,7 @@ export const GROUP_WORD: Record<string, string> = {
   landing: "병합 중",
   working: "작업 중",
   idle: "쉼",
+  parked: "보류",
   resolved: "끝남",
 };
 

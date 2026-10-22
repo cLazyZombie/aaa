@@ -2,7 +2,7 @@
 // 모자라면 왼쪽·위로, 단추 점은 요약 뒤 지시가 있을 때.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CARD_NOW, cardLines, decidedLines, hoverPlace, popoverPlace, summaryStale } from "../src/summaryCard.ts";
+import { CARD_NOW, cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryStale } from "../src/summaryCard.ts";
 
 const entry = (text, extra = {}) => ({ who: null, at: null, text, dropped: false, ...extra });
 const view = (over = {}) => ({
@@ -12,6 +12,14 @@ const view = (over = {}) => ({
 });
 
 describe("작업 요약 카드", () => {
+  it("활동 글·진행률·시작 후 시간·활동 시간을 각각 표시하고 옛 host의 시작을 추측하지 않는다", () => {
+    const t = { status: "open", created_at_ms: 1000, updated_at_ms: 2000, agent: { activity: "working", progress: "코드 확인", percent: 25, progress_at_ms: 65000, progress_since_ms: 61000 } };
+    assert.deepEqual(summaryActivity(t, 126000), { activity: "지금 활동: 코드 확인 · ~25%", time: "시작 후 2분 · 활동 1분" });
+    assert.equal(summaryActivity({ ...t, agent: { ...t.agent, percent: null } }, 126000).activity, "지금 활동: 코드 확인 · 진행률 미정");
+    assert.equal(summaryActivity({ ...t, agent: { ...t.agent, progress_since_ms: undefined } }, 126000).time, "시작 후 2분 · 활동 시간 없음");
+    assert.deepEqual(summaryActivity({ ...t, agent: null }, 0), { activity: "지금 활동: 아직 보고 없음", time: "시작 후 0초 · 활동 시간 없음" });
+    assert.equal(summaryActivity({ ...t, status: "resolved", updated_at_ms: 126000 }, 999000).time, "시작 후 2분 · 활동 4초");
+  });
   it("지금은 3줄까지, 남은 수를 센다", () => {
     const c = cardLines(view(), "제목");
     assert.equal(CARD_NOW, 3);

@@ -598,6 +598,7 @@ impl Host {
                     ThreadStatus::Open => (S::Running, "시작한 thread"),
                     ThreadStatus::Resolved if r.resolve_pending.is_some() => (S::Running, "resolve 정리 중"),
                     ThreadStatus::Resolved => (S::Finished, "resolve 완료"),
+                    ThreadStatus::Parked => (S::Running, "보류 · 자리를 돌려주고 이어 하기를 기다린다"),
                     ThreadStatus::Failed => (S::Check, r.error.as_deref().unwrap_or("시작 실패 · 명시 재예약 필요")),
                 };
                 self.queue_status(project, &row.task_id, state, why)?;
