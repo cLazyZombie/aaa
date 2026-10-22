@@ -7,6 +7,14 @@
 - 복귀 분류는 해당 사건에만 적용한다. 이어서 메뉴를 열고 사용자가 `history.back/forward`하면 두 방향 모두 닫혀야 하며, 기존 목적지 순회의 설정 목록·쪽 단언도 유지한다. 수정 전 Chromium의 작업 패널 선택 경로에서 「브라우저 이동 없이 설정 내부 복귀가 사용자가 연 메뉴를 닫았다」로 실패했다. 시한·단언 완화·고정 sleep·실패 재시도는 없다. 실제 OS 가장자리 몸짓은 headless 합성 터치·history 이동과 구분한다.
 - 정본 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 후보 commit 뒤 공개 검사다. API·E2E 번호는 유지한다.
 
+## m13 자동화 CI 준비 대기와 실패 요약(t-0787)
+
+- main `212d8425`의 macOS 실패 원문(run `39768260021`, job `119789031781`)은 `30s 안에 labA 연결이 되지 않았다`다. `ci.rs`의 FIFO·batch·ack 단계에 들어가기 전 `world_build`에서 실패했다. 같은 실험실의 host/agent 로그는 약 1초 안에 연결 성공을 기록했다. 당시 `machine list` 응답·오류와 CLI 실행 시간은 남아 있지 않아 과거 실패의 직접 원인은 확정하지 않는다. 변경 전 해당 시험의 로컬 단독 실행은 통과했다.
+- 공통 준비 단계는 agent를 띄우기 전에 Front 상태 사건을 구독하고 `labA`의 실제 `Connected`를 기다린다. CLI 반복 기동·조회 오류를 `None`으로 버리는 경로에 준비 판정을 맡기지 않는다. 30초 상한과 자동화의 기존 단언·FIFO·ack 순서는 유지한다.
+- `cargo test -p aaa --test m13 agent_readiness_uses_initial_state_and_reconnection_events -- --exact`는 실제 host/agent에서 구독 전의 현재 연결, 종료 사건, 구독 뒤 재연결 사건을 확인한다. 연결 대기 실패에는 마지막 머신 목록·host/agent 로그를 붙이고, Front 수신 오류는 원문 이유를 남긴다. 진단용 추가 CLI 조회는 하지 않는다.
+- 공통 준비를 쓰는 async N-1 호환 시험은 동기 `world()`를 `spawn_blocking`에서 준비한다. 첫 전체 검증에서 감시용 runtime 중첩이 드러났고 이를 수리한 뒤 같은 호환 시험이 통과했다. 해당 시험의 연결·profile 거부 단언은 유지한다.
+- `python3 -m unittest scripts.test_rust_tests`는 실제 자식 runner가 실패 코드·모든 시험·doctest를 보존하면서 긴 진단 뒤에도 `FAIL <묶음> <시험>: <panic 첫 줄>`을 로그 끝과 `summary.json`에 남기는지 검사한다. 원본 runner에서 새 keeper는 `failures` 누락으로 실패했다. 시한·기대값 변경이나 실패 재실행으로 넘기지 않는다.
+- 관련 회귀는 `cargo test -p aaa --test m13 ci::`, 정본 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. 새 macOS CI에서 같은 실패가 나면 추가된 상태·수신 오류·로그로 원인을 좁힌다. 로컬 통과만으로 과거 러너의 원인까지 입증했다고 하지 않는다.
 
 ## 질문·보고 영상 재생(t-0767, plan §8.448)
 

@@ -220,6 +220,10 @@ selected = [name for name in names if '--exact' not in sys.argv or name in sys.a
 with Path('../calls').open('a') as output:
     for name in selected: output.write(name + '\\n')
 print(f'running {len(selected)} tests')
+if 'failed_owner' in selected:
+    print("thread 'failed_owner' (123) panicked at tests/lab.rs:1:1:")
+    print('30s 안에 labA 연결이 되지 않았다')
+    print('진단 꼬리' * 4000)
 raise SystemExit(7 if 'failed_owner' in selected else 0)
 """)
                 executable.chmod(0o755)
@@ -244,6 +248,9 @@ else: raise SystemExit('알 수 없는 Cargo 호출')
                                   ["rollout::owner", "module::one", "module::two", "failed_owner", "doctests"])
             summary = json.loads((root / "logs/summary.json").read_text())
             self.assertEqual(sum(job["exit"] != 0 for job in summary["jobs"]), 1)
+            failed = next(job for job in summary["jobs"] if job["exit"])
+            self.assertEqual(failed["failures"], [dict(test="failed_owner", message="30s 안에 labA 연결이 되지 않았다")])
+            self.assertIn("FAIL other failed_owner: 30s 안에 labA 연결이 되지 않았다", result.stdout[-2000:])
 
 
 if __name__ == "__main__":

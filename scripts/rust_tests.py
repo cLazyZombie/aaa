@@ -19,6 +19,17 @@ class Job:
     tests: list[str] | None = None
 
 
+def panic_summaries(output):
+    """긴 진단/역추적 뒤에도 panic의 첫 줄(대기 단계)을 CI 요약에서 찾게 한다."""
+    lines = output.splitlines()
+    summaries = []
+    for index, line in enumerate(lines[:-1]):
+        match = re.match(r"^thread '(.+)'(?: \(\d+\))? panicked at .+:$", line)
+        if match and lines[index + 1].strip():
+            summaries.append(dict(test=match[1], message=lines[index + 1].strip()[:500]))
+    return summaries
+
+
 def partitions(names, count):
     """긴 rollout은 먼저 시작하고 나머지는 정확한 이름으로 균등 분할한다."""
     if len(set(names)) != len(names):
@@ -114,7 +125,7 @@ def execute(jobs, logs, workers, threads, cpu_budget=None):
                 log.write_text(text)
         return dict(name=job.name, exit=code, seconds=finished - started,
                     start_seconds=started - epoch, queue_seconds=started - epoch,
-                    cpu_slots=slots, log=log.name, output=text)
+                    cpu_slots=slots, log=log.name, failures=panic_summaries(text), output=text)
 
     results = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -167,6 +178,13 @@ def main():
     summary = dict(seconds=time.monotonic() - started, workers=args.workers, threads=threads,
                    cpu_budget=max(1, os.cpu_count() or 1), jobs=results)
     (args.logs / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
+    # ci-local annotation은 로그 꼬리를 고른다. 전체 출력 뒤 실패 원문 첫 줄을 다시 남겨
+    # panic 위치만 보이고 what/diag가 잘리는 일을 막는다. 성공/종료 코드 판정은 그대로다.
+    for job in results:
+        if job["exit"]:
+            print(f"FAIL {job['name']}: exit={job['exit']}, 로그 {job['log']}")
+            for failure in job["failures"]:
+                print(f"FAIL {job['name']} {failure['test']}: {failure['message']}")
     return int(any(result["exit"] for result in results))
 
 
