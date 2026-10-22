@@ -397,6 +397,88 @@ async fn broken_library_does_not_freeze_the_report_or_its_ack() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn disconnected_copy_finishes_without_per_file_timeouts_and_the_next_tick_repairs_it() {
+    use aaa_common::conn::frame_channel;
+    let lab = Lab::new(0, b"old");
+    let h = &lab.h;
+    let dir = h.project_dir("p").unwrap();
+    let library = dir.join("library/t-0001");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(library.join("test.log"), b"previous verified file").unwrap();
+    let (tx, mut out) = frame_channel();
+    let broken = crate::AgentConn::new(tx, 2);
+    let good = h.inner.lock().unwrap().machines.get_mut("m").unwrap().conn.replace(broken.clone()).unwrap();
+    let agent = tokio::spawn({
+        let h = h.clone();
+        async move {
+            let (_, bytes) = out.recv().await.unwrap();
+            let LinkMsg::Req { id, body: AgentRequest::ReportCollect { .. }, .. } =
+                serde_json::from_slice(&bytes).unwrap()
+            else {
+                panic!("manifest 요청")
+            };
+            let report = "[진행 중] 시험 중\n".as_bytes();
+            let snapshot = ReportSnapshot {
+                hash: hex::encode(sha2::Sha256::digest(report)),
+                report: B64(report.to_vec()),
+                files: ["test.log", "second.log"]
+                    .into_iter()
+                    .map(|path| LibFile {
+                        path: path.into(),
+                        size: 3,
+                        sha256: hex::encode(sha2::Sha256::digest(b"old")),
+                    })
+                    .collect(),
+                skipped: vec![],
+            };
+            broken
+                .pending
+                .lock()
+                .unwrap()
+                .remove(&id)
+                .unwrap()
+                .send(Outcome::Ok(AgentResponse::Report(snapshot)))
+                .unwrap();
+            let (_, bytes) = out.recv().await.unwrap();
+            assert!(matches!(
+                serde_json::from_slice::<LinkMsg>(&bytes).unwrap(),
+                LinkMsg::Req { body: AgentRequest::FileRead { .. }, .. }
+            ));
+            // 연결 종료 뒤에도 writer 대기열은 살아 있다. 두 번째 파일이 이 연결을 재사용한다.
+            h.agent_disconnected("m", broken.generation);
+            out
+        }
+    });
+    let started = tokio::time::Instant::now();
+    assert!(h.collect("p", "t-0001", false).await.is_err());
+    let _out = agent.await.unwrap();
+    assert_eq!(tokio::time::Instant::now(), started, "파일마다 120초 기다리면 안 된다");
+    let failed = h.load("p", "t-0001").unwrap();
+    assert_eq!(failed.copy.as_deref(), Some("failed"));
+    assert_eq!(h.verified_report(&failed).as_deref(), Some("[진행 중] 시험 중\n"));
+    assert_eq!(std::fs::read(library.join("test.log")).unwrap(), b"previous verified file");
+    assert!(h.manifest(&dir, "t-0001").iter().all(|f| f.on_agent));
+    h.thread_ack("p", "t-0001", "test").unwrap();
+    let ack = h.load("p", "t-0001").unwrap().acked_hash;
+
+    h.inner.lock().unwrap().machines.get_mut("m").unwrap().conn = Some(good);
+    h.retry_report_copies("p", u64::MAX);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while h.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let recovered = h.load("p", "t-0001").unwrap();
+    assert_eq!(recovered.copy.as_deref(), Some("complete"));
+    assert_eq!(recovered.report_hash, failed.report_hash, "보고 변경 없이 회복해야 한다");
+    assert_eq!(recovered.acked_hash, ack);
+    assert_eq!(std::fs::read(library.join("test.log")).unwrap(), b"old");
+    assert!(h.manifest(&dir, "t-0001").iter().all(|f| !f.on_agent));
+}
+
 #[tokio::test]
 async fn another_thread_collects_while_a_report_transfer_is_held() {
     let lab = Lab::new(0, b"");

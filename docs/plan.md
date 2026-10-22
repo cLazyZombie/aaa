@@ -7381,9 +7381,18 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **착지 통합.** 승인된 origin/main `ab1f7403`의 마지막 plan §8.437·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인했다. 활동 막대 아이콘 변경을 보존하고 빈 §8.438로 옮긴 통합 후보를 전체 ci-local·공개 검사·Linux 대상 clippy로 검증한다. 검증 tree와 같은 tree를 `--no-ff`로 병합·push하고 원격 SHA를 확인하며 배포와 GitHub CI 감시는 coordinator가 맡는다.
 
-### 8.439 시스템 idle-audit의 웹 읽기 전용(t-0735)
+### 8.439 agent 연결 종료 뒤 이전 연결의 요청 차단(t-0734)
+
+- **목적·원인.** agent 재시작 직후 보고 첨부가 이전 연결을 재사용하면 120초 시한을 기다리며 보고 갱신을 늦췄다. 연결 종료는 당시 pending만 비우고, 살아 있는 writer와 연결 사본의 새 요청은 막지 않았다. 단순 agent 요청 직렬 처리가 아니라 host의 연결 수명 경합이다.
+- **변경.** 연결마다 모든 사본이 공유하는 종료 표지를 pending 잠금 아래에서 세운다. 종료·교체·폐기 뒤 새 요청은 즉시 AgentDisconnected를 받고, link reader 정리도 같은 종료 처리를 사용한다. 전송 대기열 enqueue와 응답 대기를 기존 한 시한에 넣고, enqueue 중에도 종료 응답을 받는다. 요청을 자동 재전송하지 않는다. 시한 초과 기록에는 머신 ID와 generation을, 연결/종료 기록에는 generation을 더해 상대와 연결 판을 대조할 수 있게 한다. 입력·파일 내용은 기록하지 않는다.
+- **보고 회복.** 기존 보고 owner는 첨부 실패 때 새 본문과 실패 상태를 반영하고 이전 검증 첨부를 보존한다. 다음 ticker는 hash 변화 없이 실패 사본을 재수집한다. 이 정책은 유지하고, 종료된 연결에서 다음 파일마다 시한을 기다리던 경합을 제거한다.
+- **검증.** 실제 link reader만 끝내고 writer를 살린 이전 연결 재사용 시험의 Timeout RED→즉시 AgentDisconnected GREEN, 포화 전송 대기열의 종료/기존 시한, 두 파일 보고의 부분 실패와 재연결 뒤 다음 ticker 복구·ack 보존을 확인한다. 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 착지 창을 기다린다. FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 유지한다. 운영 재시작·설정 변경과 시한 연장은 하지 않는다.
+
+### 8.440 시스템 idle-audit의 웹 읽기 전용(t-0735)
 
 - **목적·범위.** coordinator 점검 안내를 실수로 고치거나 끄지 않도록 `idle-audit`만 시스템 자동화로 분류한다. host의 이름 목록을 정본으로 삼으며 TOML 스키마·운영 파일·다른 운영 자동화는 바꾸지 않는다.
 - **웹.** 목록·상세·휴지통에 시스템 읽기 전용 표지와 이유를 보인다. 원문·본문·상태·기록은 읽고 편집·토글·수동 실행·삭제·복원·승인·큐 변경은 제공하지 않는다. host도 같은 웹 요청을 Forbidden으로 거부한다. 파일 없음/오류에서도 이름 보호를 유지하며 옛 형식 일괄 변환은 CLI로 한다(미리보기 허용).
 - **계약·권한.** RoutineView·AutomationDoc·AutomationTrashEntry.web_read_only_reason은 선택 필드다. 새 host가 웹 경계를 보호하고 Local CLI와 파일 직접 편집은 유지한다. FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)를 유지한다.
 - **검증.** 실제 host 파일/요청 경계와 기존 E2E55의 Chromium·WebKit 화면·직접 API 거부·CLI 조작을 확인한다. 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.
+
+- **착지 통합.** 승인 기준 origin/main `005e54c1`의 마지막 §8.439·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인했다. agent 연결 종료 수리와 E2E69의 DOM 완료 단언을 보존하고 빈 §8.440을 사용한다. 통합 후보의 전체 ci-local·공개 검사·Linux clippy 뒤 같은 tree를 --no-ff로 병합·push하고 원격 SHA를 확인한다. 배포·GitHub CI 감시는 coordinator가 맡는다.
