@@ -57,19 +57,37 @@ fn entry(context: &Path, sha: &str) -> Result<()> {
     let (finished, mut done) = tokio::sync::oneshot::channel::<()>();
     let signal_stop = stop.clone();
     // backend 시작 전에 signal 구독을 고정한다. 고정 sleep이나 signal 무시는 없다.
-    let (mut term, mut interrupt) = {
+    let (mut term, mut interrupt, mut restart) = {
         let _entered = rt.enter();
         (
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(Fault::io)?,
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).map_err(Fault::io)?,
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined2()).map_err(Fault::io)?,
         )
     };
+    let registration =
+        crate::restart::register(spec.role(), Some((spec.executable.clone(), spec.binary_sha256.clone())))
+            .map_err(|_| failure("service_restart_not_ready", 3))?;
+    crate::restart::signals_ready().map_err(Fault::io)?;
+    let restart_context = context.to_path_buf();
+    let restart_sha = sha.to_string();
     let signals = std::thread::spawn(move || {
         rt.block_on(async {
-            tokio::select! {
-                _ = term.recv() => { let _ = signal_stop.send(true); },
-                _ = interrupt.recv() => { let _ = signal_stop.send(true); },
-                _ = &mut done => {}
+            loop {
+                tokio::select! {
+                    _ = term.recv() => { let _ = signal_stop.send(true); break; },
+                    _ = interrupt.recv() => { let _ = signal_stop.send(true); break; },
+                    _ = restart.recv(), if registration.is_some() => {
+                        // 설치 서비스의 승인 SHA가 달라졌으면 새 승인이 먼저다. 원래 backend를 살려 둔다.
+                        if read_spec(&restart_context, &restart_sha).is_ok() {
+                            crate::restart::request();
+                            let _ = signal_stop.send(true);
+                            break;
+                        }
+                        eprintln!("승인된 설치 파일과 달라 worker 재시작을 거부했다. 새 install 승인이 필요하다");
+                    },
+                    _ = &mut done => break
+                }
             }
         })
     });

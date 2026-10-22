@@ -235,6 +235,7 @@ impl Drop for Fake {
 }
 fn info(id: &str) -> SessionInfo {
     SessionInfo {
+        responsibility: None,
         id: id.into(),
         name: "감시".into(),
         argv: vec!["fake".into()],

@@ -146,6 +146,10 @@ export type Outcome<T> = { "ok": T } | { "err": ErrorBody };
 
 export type SessionState = { "state": "running" } | { "state": "exited", code: number | null, } | { "state": "interrupted" } | { "state": "lost" };
 
+export type Responsibility = { state: ResponsibilityState, pid: number | null, path: string | null, };
+
+export type ResponsibilityState = "launcher" | "detached" | "unknown";
+
 export type ScreenText = { session: string, cols: number, rows: number,
 /**
  * 보이는 화면의 글자(줄 끝 공백 제거)
@@ -658,7 +662,7 @@ front: string,
  */
 label: string, };
 
-export type PaneView = {
+export type PaneView = { responsibility?: Responsibility,
 /**
  * host에 고정한 인증 별칭. 이전 판 thread의 인증은 ThreadView.account로 확인한다.
  */
@@ -1482,7 +1486,11 @@ export type ReportAttention = "completed" | "needs_user";
 
 export type ThreadStage = "merge_ready" | "landing";
 
-export type ThreadView = { account_selection?: AccountSelection,
+export type ThreadView = {
+/**
+ * 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.
+ */
+responsibility?: Responsibility, account_selection?: AccountSelection,
 /**
  * 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
  */

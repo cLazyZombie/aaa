@@ -770,6 +770,7 @@ mod tests {
         h.on_session(
             "m",
             aaa_proto::SessionInfo {
+                responsibility: None,
                 id: "coord".into(),
                 name: "coordinator".into(),
                 argv: vec!["codex".into()],

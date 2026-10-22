@@ -117,6 +117,7 @@ impl State {
     fn info(&self) -> SessionInfo {
         let (rows, cols) = self.vt.size();
         SessionInfo {
+            responsibility: None,
             id: self.id.clone(),
             name: self.spec.name().to_string(),
             argv: self.spec.spec.argv.clone(),

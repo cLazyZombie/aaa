@@ -1216,6 +1216,7 @@ impl Host {
             None
         };
         PaneView {
+            responsibility: p.info.responsibility.clone(),
             account: None,
             id: id.to_string(),
             machine_id: p.machine_id.clone(),
@@ -3953,6 +3954,7 @@ mod exit_tests {
 
     fn info(argv: &[&str], state: SessionState, role: Option<aaa_proto::Role>) -> SessionInfo {
         SessionInfo {
+            responsibility: None,
             id: "s".into(),
             name: "s".into(),
             argv: argv.iter().map(|a| a.to_string()).collect(),

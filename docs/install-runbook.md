@@ -418,3 +418,20 @@ private 자료로 남긴다. 공개 issue에는 경로/주소/비밀을 가린�
 되돌릴 때는 외부 터미널의 `aaa --instance review service stop --role host`로 멈추고
 `service uninstall --role host`로 자기 plist를 제거한다. 이는 installer journal 삭제나 데이터 purge가 아니며 launcher·다른 instance·설정·DB는 보존한다.
 로그인 전 부팅·로그아웃/재로그인·잠긴 키체인·FDA/개발자 도구의 실제 허용/거부는 CI의 ready 결과와 별개인 사용자 Mac 점검 항목이다.
+
+## launcher를 살려 두는 재시작
+
+새 macOS worker는 `aaa service restart --role agent`(host도 같은 방식) 때 불변 launcher를 종료하지 않고 backend를 정리한 뒤 자기 image만 `exec`로 바꾼다. PID가 같아도 실행 인스턴스와 연결 generation은 바뀐다. 배포 감시는 새 인스턴스·SHA·host 웹 응답으로 완료를 확인한다. launcher 재빌드·TCC 재등록·plist 수정은 필요하지 않다.
+
+기존 worker에서 처음 전환할 때는 다음 순서를 따른다. 운영 서비스 작업은 배포 담당 coordinator가 승인된 배포 경로로 한다.
+
+1. 작업 진행을 저장하고 새 `aaa` 실행 파일을 배포한다. 기존 등록 launcher의 바이트·서명·plist는 보존한다. 파일 교체만으로 이미 실행 중인 옛 worker에 새 handler가 생기지 않는다.
+2. 해당 머신·instance의 실행 중인 host와 agent 각각에 기존 방식의 재시작을 **한 번씩** 한다. 준비 기록이 없는 옛 서비스에 새 `aaa service restart --role host`·`--role agent`를 쓰면 경고 후 `kickstart -k`로 전환한다. 아직 옛 배포 executor가 실행 중이면 그 기존 재시작도 같은 전환이다. 옛 worker에 SIGUSR2를 직접 보내지 않는다. 이 한 번은 launcher 인스턴스도 교체하므로 살아남은 기존 pane의 책임 연결이 끊길 수 있다.
+3. 새 build·실행 인스턴스와 host/agent 연결을 확인하고, 해당 instance state의 `service-restart/host.json`·`agent.json`이 실제 worker·launcher 부모 관계에 맞게 생성됐는지 확인한다. 동작하는 역할의 기록만 필요하다. 기록을 손으로 만들거나 지워 우회하지 않는다. 그 뒤 정상 재시작은 launcher·worker PID를 유지하면서 실행 인스턴스만 바꾼다.
+4. 작업 목록·터미널의 「책임 연결 끊김」을 확인한다. 일반 thread는 「정리 후 새 pane으로」에서 정리·커밋·push·Handoff 후 보류하고, 같은 머신에서 이어 한다. 자동 보류하지 않는다. 보류할 수 없는 coordinator와 일반 셸 pane은 작업·대화·환경을 명시적으로 저장한 뒤 승인된 새 pane/재개 경로로 옮긴다.
+
+외부에서 직접 `kickstart -k`·bootout하거나 launcher를 종료하면 이후에도 기존 pane의 책임 연결이 끊길 수 있다. 설치 `service-run`처럼 실행 파일 SHA가 승인에 고정된 서비스는 새 파일에 대한 install 승인을 먼저 마친다. 승인 기록을 지우거나 강제로 신호를 보내 우회하지 않는다.
+
+「책임 확인 못함」은 조회 실패이고, launcher 경로가 확인돼도 개발자 도구 권한 승인을 보증하지 않는다. 설치 서비스의 파일이 승인 SHA와 다르면 새 install 승인이 먼저다. 시스템 설정을 바꿔 우회하지 않는다.
+
+진단은 해당 pane에서 `python3 scripts/pane-responsibility-probe.py --output-dir target/pane-probe-<새 이름> --expected-responsible <launcher PID>`로 실행한다. 새 출력 폴더만 만들며 C·Rust 실행 파일의 고유 nonce·SHA·첫 실행/재실행 시간, cargo 실행 파일·build.rs의 실제 책임 경로를 `result.json`에 남긴다. launcher와 시스템 설정은 읽기만 한다. 출력 폴더에는 실제 경로가 있으므로 공개 저장소에 추가하지 않는다.
