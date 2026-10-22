@@ -141,6 +141,22 @@ fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_inst
         let old_binary = lab.0.join(".local/bin/aaa.exe");
         std::fs::create_dir_all(old_binary.parent().unwrap()).unwrap();
         std::fs::write(&old_binary, b"old aaa executor preserved").unwrap();
+        // HTTP fixture는 직렬화한 release 바이트를 제공한다. 중첩 PowerShell
+        // pipeline으로 JSON을 만드는 일은 이 설치 owner의 계약이 아니다.
+        let manifest = lab.0.join("manifest.json");
+        let base = format!("https://github.com/cLazyZombie/aaa/releases/download/v{}", env!("CARGO_PKG_VERSION"));
+        std::fs::write(
+            &manifest,
+            serde_json::to_vec(&serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "assets": { "windows-x86_64": {
+                    "url": format!("{base}/aaa-windows-x86_64.exe"),
+                    "sha256": digest,
+                } },
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let entry = lab.0.join("install.ps1");
         let rendered = Command::new("python").current_dir(repository)
             .args(["-c", "from pathlib import Path; import sys; from scripts.release import render_windows_entry; Path(sys.argv[3]).write_bytes(render_windows_entry(sys.argv[1], sys.argv[2]))"])
@@ -170,13 +186,15 @@ fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_inst
         });
         let trace = lab.0.join("entry-stage.txt");
         let runner = lab.0.join("entry-owner.ps1");
-        std::fs::write(&runner, r#"[IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'powershell_started')
+        std::fs::write(
+            &runner,
+            r#"[IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'powershell_started')
 function Invoke-WebRequest {
     param($Uri, $OutFile, [switch]$UseBasicParsing)
     $base = 'https://github.com/cLazyZombie/aaa/releases/download/v' + $env:AAA_TEST_VERSION
     if ($Uri -ceq ($base + '/manifest.json')) {
         [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'manifest_request')
-        @{ version=$env:AAA_TEST_VERSION; assets=@{ 'windows-x86_64'=@{url=($base+'/aaa-windows-x86_64.exe');sha256=$env:AAA_TEST_SHA} } } | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $OutFile
+        [IO.File]::Copy($env:AAA_TEST_MANIFEST, $OutFile, $false)
         [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'manifest_written')
     } elseif ($Uri -ceq ($base + '/aaa-windows-x86_64.exe')) {
         [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'payload_request')
@@ -188,7 +206,9 @@ function Invoke-WebRequest {
 irm $env:AAA_TEST_ENTRY_URL | iex
 [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'entry_returned')
 exit $global:LASTEXITCODE
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let work = format!("{}\r", lab.0.join("work").display());
         let steps = [
             ("설치 방식", "fresh\r"),
@@ -218,7 +238,7 @@ exit $global:LASTEXITCODE
         }
         command
             .env("AAA_TEST_VERSION", env!("CARGO_PKG_VERSION"))
-            .env("AAA_TEST_SHA", &digest)
+            .env("AAA_TEST_MANIFEST", &manifest)
             .env("AAA_TEST_PAYLOAD", BIN)
             .env("AAA_TEST_ENTRY_URL", &url)
             .env("AAA_TEST_TRACE", &trace)

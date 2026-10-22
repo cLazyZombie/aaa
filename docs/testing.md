@@ -2595,3 +2595,9 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `powershell_started`/`irm_entry`/`manifest_request`/`manifest_written`/`payload_request`/`payload_written`/`entry_returned`는 시험 transport의 고정 token이다. 마지막 transport token과 native 진행 단계를 혼동하지 않는다. 생산 승인/실행을 대신하지 않으며 trace 파일은 격리 lab에만 둔다. 별도 관찰용 시험·가짜 승인·시한 증가·단언 완화는 없다. macOS에서는 Windows owner가 cfg로 제외되므로 cross와 실제 Windows 결과를 구분한다.
 - 진단 CI39794689113은 payload_written 뒤0/16 정지,39796210580은 다른 이미지와 실행 줄 trace 조건에서25/25 통과였다. 그 성공만으로 결론내리지 않고39798896583에서 같은 실패 이미지/runner로 원본 대조 RED와 Capture에만 CreateNoWindow를 주는 GREEN을 확인했다. 원본은 yes 이후 두 aaa 자식이 살아 있었고 lab cleanup OS32까지 이어졌다. 수리는 원래25개·PS5.1/7·모든 승인/상태/보존 단언을 통과했다. 이 대조가 console 분리 수리를 제거했을 때의 회귀 증거다.
 - 일회성 workflow·임시 OS process 관측·Set-PSDebug는 최종 수리 후보에서 제외한다. 실제 install의 외부 console은 그대로이고 stdout/stderr를 캡처하는 버전 probe만 console 없이 실행한다. 전체 ci-local·공개 검사·Windows/Linux strict cross와 dev 없는 Windows release 조건 build를 확인한다. 이 진단 CI는 게시 전 main 네 job 판정을 대신하지 않는다.
+
+## Windows 한 줄 owner의 manifest fixture pipeline 제거(t-0485, plan §8.458)
+
+- Windows 실패 원문(run39808392236/job119927674887)은60.005초에 질문0/16, child 생존, reader 미완료, `manifest_request`/HTTP4, executor/config/active=false다. 시험용 `ConvertTo-Json | Set-Content`가 끝나지 않은 범위까지 확인했으며 cmdlet 내부 원인은 단정하지 않는다. 앞선 다른 main의 owner 성공이나 native probe 수리를 이번 재발의 성공 근거로 쓰지 않는다.
+- owner는 격리 lab에 manifest를 미리 쓰고 mock `Invoke-WebRequest`에서 그대로 복사한다. 실제 IRM/IEX 입구와 제품 manifest decoder·버전/URL/SHA·PE·native 검토/서명/파일/status 경계는 유지한다. 기존 PS5.1/7 루프·16질문·60초 상한과 모든 사후 단언을 유지하고 HTTP fixture 안의 JSON serializer pipeline만 제거한다.
+- `nice -n 15 cargo test --locked -p aaa --test install`과 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Windows strict cross clippy/build로 검증한다. 이 owner는 cfg(windows)이므로 macOS 통과나 cross만으로 Windows GREEN이라고 하지 않는다. 새 main의 Windows 실제 owner 결과가 남아 있다. 실제 CI 재실행·시한 증가·기대값 변경은 없다.
