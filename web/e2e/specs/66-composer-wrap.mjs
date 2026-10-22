@@ -1,6 +1,7 @@
 // t-0563: 실제 host·agent의 입력칸. OS 입력기 대신 조합 사건을 재생하고, native textarea로 줄 경계를 대조한다.
 import fs from "node:fs";
 import { aaa, AA, root, step, browser, webkit, pairPage, paneHash, shots, sentFrames, domIs } from "../lib/harness.mjs";
+import { composerStability } from "../lib/composer-stability.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const selector = '[data-testid="chat-composer"] .composer-text';
@@ -180,4 +181,5 @@ export default async function () {
     aaa("pane", "kill", "wrap");
     if (failures.length) throw new Error(`${failures.length}건: ${failures.slice(0, 24).join("; ")}`);
   });
+  await step("첨부 뒤 여러 줄 한글 조합의 높이·스크롤 안정: Chromium·WebKit 데스크톱·휴대폰", composerStability);
 }
