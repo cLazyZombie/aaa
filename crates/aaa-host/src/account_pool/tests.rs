@@ -130,15 +130,65 @@ fn image_job(account: String, allocation: Allocation, id: &str) -> crate::image:
     }
 }
 
+// 잔량 51%에서 새 관측 없이 4~8장을 연속 요청하는 실제 사용 경계다.
+#[test]
+fn image_burst_at_fifty_one_percent_preserves_the_shared_budget() {
+    for count in [4, 8] {
+        let l = Lab::new();
+        let selected = input(&l, vec![candidate("work", 0.0, 49.0)]);
+        for _ in 0..count {
+            claim_image(&l, &selected).unwrap();
+        }
+        assert_eq!(
+            choose(&l, &selected).is_ok(),
+            count == 4,
+            "4장 뒤 medium 배정 가능, 8장 예약이 모두 남으면 medium은 대기"
+        );
+        assert!(
+            l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_ok()
+                == (count == 4),
+            "관측 전 8장 40 + 안전 여유 10 뒤 9번째는 대기"
+        );
+    }
+    let l = Lab::new();
+    let selected = input(&l, vec![candidate("work", 0.0, 49.0)]);
+    let (account, allocation) = choose(&l, &selected).unwrap();
+    l.seed(&account, allocation, ThreadStatus::Open, true);
+    for _ in 0..5 {
+        claim_image(&l, &selected).unwrap();
+    }
+    assert!(claim_image(&l, &selected).is_err(), "medium 15 + 이미지 5건 25 + 여유 10, 6번째 대기");
+
+    let l = Lab::new();
+    let selected = input(&l, vec![candidate("work", 86.0, 49.0)]);
+    assert!(claim_image(&l, &selected).is_err(), "주간 51이어도 5시간 잔량 14면 대기");
+}
+
+fn claim_image(l: &Lab, selected: &SelectionInput) -> anyhow::Result<()> {
+    l.h.db.image_transaction(|tx| {
+        let (account, allocation) = selected.select_with_percent(tx, NOW, crate::image::RESERVE)?;
+        assert_eq!(allocation.percent(), 5);
+        let id = util::new_id();
+        let mut job = image_job(account, allocation, &id);
+        job.view.state = ImageState::Succeeded;
+        job.allocation.as_mut().unwrap().ended_at_ms = Some(NOW);
+        tx.execute(
+            "INSERT INTO meta(key,value) VALUES(?1,?2)",
+            [format!("image-job:{id}"), serde_json::to_string(&job)?],
+        )?;
+        Ok(())
+    })
+}
+
 #[test]
 fn image_and_thread_reservations_share_the_same_budget_and_unknown_first_run() {
     let l = Lab::new();
-    let selected = input(&l, vec![candidate("work", 0.0, 0.0)]);
+    let selected = input(&l, vec![candidate("work", 70.0, 70.0)]);
     let id = util::new_id();
     l.h.db
         .image_transaction(|tx| {
             let (account, allocation) = selected.select_with_percent(tx, NOW, crate::image::RESERVE)?;
-            assert_eq!(allocation.percent(), 75);
+            assert_eq!(allocation.percent(), AccountTaskSize::Small.percent());
             tx.execute(
                 "INSERT INTO meta(key,value) VALUES(?1,?2)",
                 [format!("image-job:{id}"), serde_json::to_string(&image_job(account, allocation, &id))?],
@@ -148,17 +198,18 @@ fn image_and_thread_reservations_share_the_same_budget_and_unknown_first_run() {
         .unwrap();
     let (account, allocation) = choose(&l, &selected).unwrap();
     l.seed(&account, allocation, ThreadStatus::Open, true);
-    assert!(choose(&l, &selected).is_err(), "이미지 75 + thread 15 + 안전 여유 10 뒤 추가 배정 금지");
-    assert!(l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, 75)).is_err());
-    let mut shared = candidate("alias", 0.0, 0.0);
+    assert!(choose(&l, &selected).is_err(), "사용 70 + 이미지 5 + thread 15 + 여유 10 뒤 추가 배정 금지");
+    assert!(l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err());
+    let mut shared = candidate("alias", 70.0, 70.0);
     shared.member.group = "work".into();
-    let mut selected = input(&l, vec![candidate("work", 0.0, 0.0), shared]);
+    let mut selected = input(&l, vec![candidate("work", 70.0, 70.0), shared]);
     selected.only("alias");
     assert!(choose(&l, &selected).is_err(), "다른 별칭도 같은 이미지 예약을 센다");
 
     let u = Lab::new();
     let selected = input(&u, vec![unknown("work")]);
-    let (account, allocation) = u.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, 75)).unwrap();
+    let (account, allocation) =
+        u.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).unwrap();
     assert!(allocation.selection.unobserved);
     let mut j = image_job(account, allocation, &util::new_id());
     j.view.state = ImageState::Unknown;
@@ -170,20 +221,20 @@ fn image_and_thread_reservations_share_the_same_budget_and_unknown_first_run() {
 async fn pinned_image_account_still_obeys_shared_alias_observations() {
     let l = Lab::new();
     let work = candidate("work", 0.0, 0.0);
-    let mut alias = candidate("alias", 30.0, 30.0);
+    let mut alias = candidate("alias", 90.0, 90.0);
     alias.member.group = "work".into();
     let mut selected = input(&l, vec![work, alias]);
     selected.only("work");
     assert!(
-        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, 75)).is_err(),
-        "명시 계정도 공유 별칭의 30% 사용을 무시하지 않는다"
+        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err(),
+        "명시 계정도 공유 별칭의 90% 사용을 무시하지 않는다"
     );
 }
 
 #[test]
 fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_budget() {
     let l = Lab::new();
-    let selected = input(&l, vec![candidate("work", 0.0, 0.0)]);
+    let selected = input(&l, vec![candidate("work", 85.0, 85.0)]);
     let (account, allocation) =
         l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).unwrap();
     let id = util::new_id();
@@ -212,7 +263,7 @@ fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_budget() {
     assert_eq!(std::fs::read(home.join("output.png")).unwrap(), b"preserved-result");
     l.h.image_recover().unwrap();
     assert_eq!(read(&id).view.state, ImageState::Unknown);
-    // 15%p thread 하나는 경계에 들어가지만 75%p 이미지 한 건은 더 예약할 수 없다.
+    // 잔량 15%p에서 불명 이미지 5%p와 안전 여유 10%p를 유지한다.
     assert!(
         l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err(),
         "불명 실행의 예약이 재시작 뒤에도 남는다"
@@ -222,7 +273,7 @@ fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_budget() {
 #[test]
 fn concurrent_image_claims_reserve_once_and_end_only_after_new_observations() {
     let l = Lab::new();
-    let selected = input(&l, vec![candidate("work", 0.0, 0.0)]);
+    let selected = input(&l, vec![candidate("work", 85.0, 85.0)]);
     let barrier = Barrier::new(2);
     let results = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..2)

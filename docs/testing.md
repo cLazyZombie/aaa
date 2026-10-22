@@ -3,7 +3,8 @@
 ## host Codex 계정 이미지 생성(t-0707, plan §8.430)
 
 - `nice -n 15 cargo test -p aaa-host --lib image --locked`: 이미지/일반 thread의 공유 예약,
-  두 동시 이미지 claim의 한 번 배정, 명시 별칭에서도 다른 공유 별칭의 관측 유지,
+  주간 잔량 51%의 4·8회 연속 요청·medium 공존·짧은 창 부족,
+  남은 15%에서 두 동시 이미지 claim의 한 번 배정, 명시 별칭에서도 다른 공유 별칭의 관측 유지,
   미관측 첫 실행 중복 거부, 종료 뒤 새 관측에서만 해제, 재시작 불명 예약 보존·잔여 인증 회수,
   출력 파일의 범위·symlink·형식·중복 item을 검사한다.
 - `nice -n 15 cargo test -p aaa-host --lib image_rpc::tests::installed_codex_accepts_isolated_image_config_without_authentication --locked -- --ignored --exact`:

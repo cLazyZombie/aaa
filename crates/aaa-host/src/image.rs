@@ -13,7 +13,9 @@ use std::{
 };
 
 const PREFIX: &str = "image-job:";
-pub(crate) const RESERVE: u8 = 75;
+// 구독 소비율의 환산값이 아닌, 기존 small 작업과 같은 초기 배정 정책이다.
+// 51% 잔량 - 안전 여유 10%p에서 새 관측 없이도 시안 8건(40%p)을 배정한다.
+pub(crate) const RESERVE: u8 = 5;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Job {
@@ -456,7 +458,7 @@ impl Host {
                 env: Default::default(),
             };
             let mut input = self
-                .account_selection_input(&job.project, &profile, None, AccountTaskSize::Medium)
+                .account_selection_input(&job.project, &profile, None, AccountTaskSize::Small)
                 .await?
                 .ok_or_else(|| bad("계정 풀 입력이 없다"))?;
             if let Some(account) = &job.begin.account {
@@ -486,10 +488,10 @@ impl Host {
                             released: false,
                             reserve_percent: Some(RESERVE),
                             selection: AccountSelection {
-                                size: AccountTaskSize::Medium,
+                                size: AccountTaskSize::Small,
                                 group,
                                 unobserved: false,
-                                reason: "host Codex 기본 계정 · 이미지 75%p 예약".into(),
+                                reason: "host Codex 기본 계정 · 이미지 small 5%p 예약".into(),
                                 selected_at_ms: util::now_ms(),
                             },
                         },
