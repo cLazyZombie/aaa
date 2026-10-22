@@ -28,6 +28,9 @@ fn run(id: &str, at: u64, machine: &str, profile: &str, ms: u64, outcome: &str) 
 #[test]
 fn daily_median_keeps_machine_profile_boundaries_excludes_failure_and_never_fills_gaps() {
     let day = 86_400_000;
+    let now = day + 16 * 3_600_000; // UTC 16시 = KST 다음 날 1시
+    assert_eq!(period_start(now, 1, 0), day);
+    assert_eq!(period_start(now, 1, 540), day + 15 * 3_600_000);
     let rows = [
         run("a", day, "a", "dev", 100, "succeeded"),
         run("b", day + 10, "a", "dev", 300, "succeeded"),

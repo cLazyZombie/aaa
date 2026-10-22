@@ -21,16 +21,27 @@ export default async function ({ page }) {
         const dev = await pairPage(engine, aaa("web", "pair", ...(reader ? ["--reader"] : [])).code,
           { width, height: 844 }, { touch: width < 768, serviceWorkers: "block", hash: `#thread=demo%2F${id}`,
             setup: async (context) => {
+              const visit = (v) => {
+                if (!v || typeof v !== "object") return;
+                if ((v.project === "demo" && v.id === id) || v.id === original.pane) v.responsibility = value;
+                for (const child of Object.values(v)) if (child && typeof child === "object") visit(child);
+              };
               await context.route("**/api/v1/call", async (route) => {
                 const response = await route.fetch();
                 const body = await response.json();
-                const visit = (v) => {
-                  if (!v || typeof v !== "object") return;
-                  if ((v.project === "demo" && v.id === id) || v.id === original.pane) v.responsibility = value;
-                  for (const child of Object.values(v)) if (child && typeof child === "object") visit(child);
-                };
                 visit(body);
                 await route.fulfill({ response, json: body });
+              });
+              // App의 pane 목록은 events, 터미널 상태는 pane WS로 갱신한다. 같은 관측 fixture를 두 경계에도 적용한다.
+              await context.routeWebSocket(/\/api\/v1\/(?:panes\/[^/]+\/ws|events)(?:\?|$)/, (socket) => {
+                const server = socket.connectToServer();
+                server.onMessage((raw) => {
+                  if (typeof raw !== "string") { socket.send(raw); return; }
+                  const body = JSON.parse(raw);
+                  visit(body);
+                  socket.send(JSON.stringify(body));
+                });
+                socket.onMessage((raw) => server.send(raw));
               });
             },
           });

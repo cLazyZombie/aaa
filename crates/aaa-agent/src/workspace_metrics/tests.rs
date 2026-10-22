@@ -171,3 +171,86 @@ fn malformed_or_oversized_inputs_remain_pending_without_a_successful_zero() {
     assert_eq!(millis(-1.0), None);
     assert_eq!(millis(0.125), Some(125));
 }
+
+#[test]
+fn engine_uses_existing_timings_and_runtime_reports_without_treating_rc_timing_as_engine() {
+    let l = Lab::new();
+    let state = Lab::new();
+    l.put("target/verify-timing.txt", "verify.sh timing (all gates passed)\ntotal 12s\n");
+    let rc = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert!(rc.runs.is_empty());
+    assert!(!rc.notes.iter().any(|n| n.contains("형식")), "rc 시간표를 엔진으로 오인하지 않는다");
+    l.put("scripts/verify_engine.sh", "# 엔진 검증 입구\n");
+    l.put("target/verification/gates/cargo_fmt.status", "cargo_fmt\tcargo fmt\t0\t1\n");
+    for name in ["workspace-tests", "automation-tests", "2d-tests", "3d-tests"] {
+        l.put(&format!("target/verification/{name}/report.json"),r#"[{"target":"engine","exit":0,"tests":[{"name":"unit","event":"ok","exec_time":0.25}],"suites":[{"passed":1,"failed":0,"ignored":0,"filtered_out":0}]}]"#);
+    }
+    l.put(
+        "target/no2-e2e/all-headless.json",
+        r#"{"status":"passed","reports":[{"scenario":"headless","status":"passed","duration_ms":2500}]}"#,
+    );
+    l.put("target/verify-timing.txt", "verify_engine.sh timing (mode default, coverage not run, all gates passed)\ncargo fmt 1s\nworkspace tests 8s\ntotal 12s\n");
+    let output = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(output.runs.len(), 1);
+    let run = &output.runs[0];
+    assert_eq!(run.verification_ms, Some(12000));
+    assert_eq!(run.stages.len(), 2);
+    assert_eq!(run.tests.as_ref().unwrap().passed, 4);
+    assert!(run.profile.is_none());
+    assert_eq!(run.slow_tests.items.len(), 4);
+    assert_eq!(run.slow_e2e.items[0].duration_ms, 2500);
+    assert_eq!(run.slow_e2e.unit, "scenario-step-sum");
+}
+
+#[test]
+fn bounded_log_read_keeps_known_total_instead_of_discarding_the_entire_run() {
+    let l = Lab::new();
+    let state = Lab::new();
+    fixture(&l);
+    // 각각은 한도 안이지만 두 파일 합계는 회수 예산을 넘긴다.
+    let log = "x".repeat((MAX_INPUT / 2 + 100) as usize);
+    l.put("target/ci-local/run/rust/a.log", &log);
+    l.put("target/ci-local/run/rust/b.log", &log);
+    let result = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(result.runs.len(), 1);
+    assert_eq!(result.runs[0].verification_ms, Some(164000));
+    assert!(result.runs[0].tests.is_none());
+    assert!(result.notes.iter().any(|n| n.contains("비용 상한")));
+    fs::remove_file(l.0.join("target/ci-local/run/rust/a.log")).unwrap();
+    let again = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(again.runs, result.runs, "부분 기록도 입력 판별로 재사용한다");
+}
+
+#[test]
+fn failed_code_scan_is_not_repeated_for_the_same_commit_and_next_commit_can_recover() {
+    let l = Lab::new();
+    let state = Lab::new();
+    git(&l, &["init", "-q", "-b", "main"]);
+    fs::write(l.0.join("broken.ts"), [0xff, 0xfe]).unwrap();
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "broken source"]);
+    let first = lines::collect(&l.0, &state.0, &[]).unwrap_err();
+    assert!(first.to_string().contains("UTF-8"));
+    // 같은 객체를 다시 해독하면 UTF-8 오류다. 두 번째 회수는 객체 읽기 전에 멈춘다.
+    let second = lines::collect(&l.0, &state.0, &[]).unwrap_err();
+    assert!(second.to_string().contains("이미 시도"));
+    l.put("broken.ts", "export const repaired = true;\n");
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "fixed source"]);
+    assert_eq!(lines::collect(&l.0, &state.0, &[]).unwrap().unwrap().total_lines, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn collection_lock_releases_when_the_owner_finishes_even_with_an_inherited_descriptor() {
+    let l = Lab::new();
+    let path = l.0.join("collect.lock");
+    let owner = CollectionLock(aaa_common::private_file::lock(&path).unwrap());
+    // fork가 물려받는 것과 같은 열린 파일 참조. 실제 다른 소유자가 있는 동안은 거부한다.
+    let inherited = owner.0.try_clone().unwrap();
+    assert!(aaa_common::private_file::lock(&path).is_err());
+    drop(owner);
+    let next = CollectionLock(aaa_common::private_file::lock(&path).unwrap());
+    drop(inherited);
+    drop(next);
+}

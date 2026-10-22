@@ -5,9 +5,10 @@ import { DrawerToggle, HeadMore } from "./drawer";
 import { workspaceParams, workspaceRoute, type WorkspaceData } from "./workspaceData";
 import "./WorkspaceView.css";
 
-const time = (ms: number | null | undefined) => ms == null ? "미수집" : ms < 60000 ? `${(ms / 1000).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}초` : `${Math.floor(ms / 60000)}분 ${Math.round(ms % 60000 / 1000)}초`;
+const time = (ms: number | null | undefined) => ms == null ? "미수집" : ms < 60000 ? `${(ms / 1000).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}초` : `${Math.floor(Math.round(ms / 1000) / 60)}분 ${Math.round(ms / 1000) % 60}초`;
 const num = (n: number | null | undefined) => n == null ? "미수집" : n.toLocaleString("ko-KR");
 const date = (ms: number, utc: boolean, short = false) => new Intl.DateTimeFormat("ko-KR", { timeZone: utc ? "UTC" : "Asia/Seoul", month: "2-digit", day: "2-digit", ...(short ? {} : { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) }).format(ms);
+const SERIES_COLORS = ["var(--status-working)", "var(--status-done)", "var(--notice)", "var(--syntax-meta)"];
 const outcome = (s: string) => ({ succeeded: "성공", failed: "실패", partial: "부분 기록" }[s] ?? s);
 
 export function WorkspaceList({ state, selected, onSelect }: { state: WorkspaceData; selected: string | null; onSelect: (id: string) => void }) {
@@ -37,22 +38,25 @@ function Ranking({ title, ranking }: { title: string; ranking: MetricRanking | u
 }
 function Chart({ points, unit, utc, onRun }: { points: MetricPoint[]; unit: "time" | "size"; utc: boolean; onRun: (id: string) => void }) {
   if (!points.length) return <Empty>이 조건에서 수집한 기록이 없습니다.</Empty>;
+  const series = [...new Set(points.map((p) => `${p.machine} / ${p.profile ?? "profile 미기록"}`))].sort();
+  const color = (p: MetricPoint) => SERIES_COLORS[series.indexOf(`${p.machine} / ${p.profile ?? "profile 미기록"}`) % SERIES_COLORS.length];
   const values = points.map((p) => unit === "size" ? p.value / 1048576 : p.value / 1000);
   const top = Math.max(1, ...values) * 1.15;
   const first = Math.min(...points.map((p) => p.at_ms)), last = Math.max(...points.map((p) => p.at_ms));
   const x = (at: number) => 56 + (first === last ? 0.5 : (at - first) / (last - first)) * 580;
   const y = (v: number) => 180 - v / top * 156;
-  return <svg className="ws-chart" viewBox="0 0 680 220" role="group" aria-label={`${unit === "size" ? "바이너리 MiB" : "경과 초"} 추이. 점을 선택하면 원본 실행을 봅니다.`}>
+  return <><div className="ws-legend" aria-label="머신·profile 범례">{series.map((s, i) => <span key={s}><i style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }} />{s}</span>)}</div><svg className="ws-chart" viewBox="0 0 680 220" role="group" aria-label={`${unit === "size" ? "바이너리 MiB" : "경과 초"} 추이. 점을 선택하면 원본 실행을 봅니다.`}>
     {[0, 0.5, 1].map((v) => <g key={v}><line x1={56} y1={y(v * top)} x2={646} y2={y(v * top)} /><text x={47} y={y(v * top) + 4} textAnchor="end">{(v * top).toFixed(1)}</text></g>)}
     <text x={56} y={12}>{unit === "size" ? "MiB" : "초"} · 0 기준</text>
-    {points.map((p, i) => <circle key={`${p.at_ms}:${p.machine}:${p.profile}:${p.run_id}`} cx={x(p.at_ms)} cy={y(values[i])} r={4.5} className={p.outcome === "failed" ? "ws-failed" : ""} role="button" tabIndex={0} aria-label={`${date(p.at_ms, utc)} · ${p.machine} / ${p.profile ?? "profile 미기록"} · ${unit === "size" ? `${values[i].toFixed(2)} MiB` : time(p.value)} · ${p.samples > 1 ? `p50 n=${p.samples}` : outcome(p.outcome)}`} onClick={() => onRun(p.run_id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onRun(p.run_id); } }}><title>{p.machine} · {values[i].toFixed(2)} · n={p.samples}</title></circle>)}
+    {points.map((p, i) => <circle key={`${p.at_ms}:${p.machine}:${p.profile}:${p.run_id}`} cx={x(p.at_ms)} cy={y(values[i])} r={4.5} style={{ fill: color(p) }} className={p.outcome === "failed" ? "ws-failed" : ""} role="button" tabIndex={0} aria-label={`${date(p.at_ms, utc)} · ${p.machine} / ${p.profile ?? "profile 미기록"} · ${unit === "size" ? `${values[i].toFixed(2)} MiB` : time(p.value)} · ${p.samples > 1 ? `p50 n=${p.samples}` : outcome(p.outcome)}`} onClick={() => onRun(p.run_id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onRun(p.run_id); } }}><title>{p.machine} · {values[i].toFixed(2)} · n={p.samples}</title></circle>)}
     <text x={56} y={210}>{date(first, utc, true)}</text>{last !== first && <text x={636} y={210} textAnchor="end">{date(last, utc, true)}</text>}
-  </svg>;
+  </svg></>;
 }
 function Lines({ rows, branches, branch, axis, total, change, utc }: { rows: CodeLines[]; branches: string[]; branch: string | null; axis: string; total: boolean; change: (c: Record<string, string | null>) => void; utc: boolean }) {
   const latest = rows.at(-1);
+  const firstAt = rows[0]?.observed_at_ms ?? 0, lastAt = latest?.observed_at_ms ?? 0;
   const split = !total && latest?.breakdown;
-  // 일별 점 선택·중복 제거는 host가 담당한다. 날짜/커밋은 동일 관측점의 라벨만 바꾼다.
+  // 일별 점 선택·중복 제거는 host가 담당한다. 날짜별은 관측 시각 간격, 커밋별은 관측 순서다.
   const keys = split ? ["product", "test", "e2e"] : ["total"];
   const max = Math.max(1, ...rows.flatMap((r) => keys.map((k) => k === "total" ? r.total_lines : r.breakdown?.[k] ?? 0)));
   return <section className="ws-card ws-lines"><h2>코드 줄 수 <Code2 size={16} aria-hidden /></h2><div className="ws-inline">
@@ -62,7 +66,7 @@ function Lines({ rows, branches, branch, axis, total, change, utc }: { rows: Cod
     {latest ? <><strong className="ws-lines-total">{num(latest.total_lines)}<small>줄 · 빈 줄 제외, 주석 포함</small></strong><p>{split ? `제품 ${num(split.product ?? 0)} / 시험 ${num(split.test ?? 0)} / E2E ${num(split.e2e ?? 0)}` : "혼합 시험 코드의 경계가 불명확하면 합계만 표시합니다."}</p>
       <svg className="ws-chart" viewBox="0 0 680 170" role="img" aria-label={`코드 줄 수 추이 ${rows.length}개 관측`}>
         {[0, 0.5, 1].map((v) => <g key={v}><line x1={65} y1={135 - v * 110} x2={645} y2={135 - v * 110} /><text x={57} y={139 - v * 110} textAnchor="end">{Math.round(v * max).toLocaleString("ko-KR")}</text></g>)}
-        {rows.map((r, i) => { const x = 65 + (rows.length === 1 ? 0.5 : i / (rows.length - 1)) * 570; return <g key={`${r.commit}:${r.rules_version}`}>{keys.map((key) => { const value = key === "total" ? r.total_lines : r.breakdown?.[key]; return value == null ? null : <circle key={key} data-series={key} cx={x} cy={135 - value / max * 110} r={4}><title>{key} · {r.commit.slice(0, 8)} · {num(value)}줄 · 규칙 {r.rules_version}</title></circle>; })}{(i === 0 || i === rows.length - 1) && <text x={x} y={162} textAnchor={rows.length === 1 ? "middle" : i === 0 ? "start" : "end"}>{axis === "commit" ? r.commit.slice(0, 8) : date(r.observed_at_ms, utc, true)}</text>}</g>; })}
+        {rows.map((r, i) => { const x = 65 + (rows.length === 1 || (axis !== "commit" && firstAt === lastAt) ? 0.5 : axis === "commit" ? i / (rows.length - 1) : (r.observed_at_ms - firstAt) / (lastAt - firstAt)) * 570; return <g key={`${r.commit}:${r.rules_version}`}>{keys.map((key) => { const value = key === "total" ? r.total_lines : r.breakdown?.[key]; return value == null ? null : <circle key={key} data-series={key} cx={x} cy={135 - value / max * 110} r={4}><title>{key} · {r.commit.slice(0, 8)} · {num(value)}줄 · 규칙 {r.rules_version}</title></circle>; })}{(i === 0 || i === rows.length - 1) && <text x={x} y={162} textAnchor={rows.length === 1 ? "middle" : i === 0 ? "start" : "end"}>{axis === "commit" ? r.commit.slice(0, 8) : date(r.observed_at_ms, utc, true)}</text>}</g>; })}
       </svg><small>규칙 {latest.rules_version} · {latest.scanned_files}파일 · 이번에 {latest.changed_files}파일 읽음 · {latest.source}</small></> : <Empty>코드 줄 수 수집 전입니다. 커밋별로 한 번 집계하고 변경 파일만 갱신합니다.</Empty>}
   </section>;
 }
@@ -119,5 +123,5 @@ export function WorkspaceView({ state, route, onRoute, up }: { state: WorkspaceD
 }
 function RunTable({ runs, utc, onRun }: { runs: MetricRun[]; utc: boolean; onRun: (id: string) => void }) {
   if (!runs.length) return <Empty>선택한 조건의 실행 기록이 없습니다. 기존 결과 수집 후 표시합니다.</Empty>;
-  return <div className="ws-table-scroll" tabIndex={0} role="region" aria-label="실행 기록 표"><table><thead><tr><th>실행 시각 · {utc ? "UTC" : "KST"}</th><th>머신 / profile</th><th>빌드</th><th>검증</th><th>용량</th><th>결과</th></tr></thead><tbody>{[...runs].reverse().map((r) => <tr key={r.run_id}><td><button type="button" onClick={() => onRun(r.run_id)}>{date(r.observed_at_ms, utc)} ↗</button></td><td>{r.machine} / {r.profile ?? "미기록"}</td><td>{time(r.build_ms)}</td><td>{time(r.verification_ms)}</td><td>{r.artifact_bytes == null ? "미수집" : `${(r.artifact_bytes / 1048576).toFixed(2)} MiB`}</td><td data-outcome={r.outcome}>{outcome(r.outcome)}</td></tr>)}</tbody></table></div>;
+  return <div className="ws-table-scroll" tabIndex={0} role="region" aria-label="실행 기록 표"><table><thead><tr><th>기록 시각 · {utc ? "UTC" : "KST"}</th><th>머신 / profile</th><th>빌드</th><th>검증</th><th>용량</th><th>결과</th></tr></thead><tbody>{[...runs].reverse().map((r) => <tr key={r.run_id}><td><button type="button" onClick={() => onRun(r.run_id)}>{date(r.observed_at_ms, utc)} ↗</button></td><td>{r.machine} / {r.profile ?? "미기록"}</td><td>{time(r.build_ms)}</td><td>{time(r.verification_ms)}</td><td>{r.artifact_bytes == null ? "미수집" : `${(r.artifact_bytes / 1048576).toFixed(2)} MiB`}</td><td data-outcome={r.outcome}>{outcome(r.outcome)}</td></tr>)}</tbody></table></div>;
 }

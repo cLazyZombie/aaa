@@ -241,7 +241,7 @@ export default async function () {
         };
       });
     // 맨 위는 「coordinator」(t-0621)
-    const want = "activity-coordinator,activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
+    const want = "activity-coordinator,activity-work,activity-workspace,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-bar").waitFor();

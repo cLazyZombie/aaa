@@ -8,7 +8,10 @@ use std::{collections::BTreeMap, fs, path::Path, time::UNIX_EPOCH};
 
 mod lines;
 const MAX_INPUT: u64 = 8 * 1024 * 1024;
-thread_local! { static READ_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+thread_local! {
+    static READ_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static BUDGET_EXHAUSTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 #[derive(Default, Serialize, Deserialize)]
 struct Cache {
@@ -17,6 +20,19 @@ struct Cache {
     #[serde(default)]
     errors: BTreeMap<String, String>,
 }
+struct CollectionLock(fs::File);
+impl Drop for CollectionLock {
+    fn drop(&mut self) {
+        // close만 하면 다른 스레드의 fork~exec 사이 자식이 공유 잠금을 붙잡을 수 있다.
+        // Windows는 private_file::lock의 비상속 handle 예약이 close로 풀린다.
+        #[cfg(unix)]
+        if let Err(e) = self.0.unlock() {
+            tracing::error!(%e, "workspace 수집 잠금 해제 실패");
+        }
+        #[cfg(windows)]
+        let _ = &self.0;
+    }
+}
 fn read(path: &Path) -> Result<String> {
     let m = fs::symlink_metadata(path)?;
     if !m.is_file() || m.len() > MAX_INPUT {
@@ -24,10 +40,11 @@ fn read(path: &Path) -> Result<String> {
     }
     READ_BYTES.with(|read| {
         let total = read.get().saturating_add(m.len());
-        read.set(total);
         if total > MAX_INPUT {
+            BUDGET_EXHAUSTED.with(|flag| flag.set(true));
             bail!("이번 회수 읽기 비용 상한");
         }
+        read.set(total);
         Ok(())
     })?;
     fs::read_to_string(path).context("기존 지표 자료 읽기")
@@ -65,7 +82,7 @@ fn top(source: Vec<MetricTiming>, unit: &str, complete: bool) -> MetricRanking {
     }
 }
 fn millis(n: f64) -> Option<u64> {
-    (n.is_finite() && n >= 0.0 && n <= 86400.0 * 30.0).then(|| (n * 1000.0).round() as u64)
+    (n.is_finite() && (0.0..=86400.0 * 30.0).contains(&n)).then(|| (n * 1000.0).round() as u64)
 }
 fn number(v: &serde_json::Value) -> Option<u64> {
     v.as_f64().and_then(millis)
@@ -191,15 +208,15 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
         run.slow_e2e = top(items, "spec-work-sum", complete);
     }
     // ci-local이 실제 사본·cmp를 확인한 원본 실행 파일 경로만 stat한다. bytes를 읽거나 해시하지 않는다.
-    if read(&dir.join("e2e-binary.log")).is_ok_and(|s| s.contains("이번 빌드의 웹 E2E 실행 사본:")) {
-        if let Some(root) = dir.parent().and_then(Path::parent).and_then(Path::parent) {
-            let binary = root.join("target/debug/aaa");
-            if version(&binary).is_some_and(|(_, modified)| modified <= at) {
-                if let Ok(meta) = fs::symlink_metadata(binary) {
-                    run.artifact_bytes = Some(meta.len());
-                    run.artifact_name = Some("aaa".into());
-                }
-            }
+    if read(&dir.join("e2e-binary.log")).is_ok_and(|s| s.contains("이번 빌드의 웹 E2E 실행 사본:"))
+        && let Some(root) = dir.parent().and_then(Path::parent).and_then(Path::parent)
+    {
+        let binary = root.join("target/debug/aaa");
+        if version(&binary).is_some_and(|(_, modified)| modified <= at)
+            && let Ok(meta) = fs::symlink_metadata(binary)
+        {
+            run.artifact_bytes = Some(meta.len());
+            run.artifact_name = Some("aaa".into());
         }
     }
 
@@ -338,24 +355,24 @@ fn runtime_reports(run: &mut MetricRun, dir: &Path, start: u64, at: u64, names: 
     }
     run.tests = count_complete.then_some(counts);
     run.slow_tests = top(items, "individual-test", timing_complete && count_complete);
-    if let Some(report) = fresh_json(e2e, start, at) {
-        if let Some(scenarios) = report["reports"].as_array() {
-            run.e2e_files = u32::try_from(scenarios.len()).ok();
-            run.e2e_unit = Some("scenario".into());
-            let items: Vec<_> = scenarios
-                .iter()
-                .filter_map(|s| {
-                    Some(MetricTiming {
-                        name: s["scenario"].as_str()?.into(),
-                        duration_ms: s["duration_ms"].as_u64()?,
-                        start_ms: None,
-                        outcome: s["status"].as_str().unwrap_or("unknown").into(),
-                    })
+    if let Some(report) = fresh_json(e2e, start, at)
+        && let Some(scenarios) = report["reports"].as_array()
+    {
+        run.e2e_files = u32::try_from(scenarios.len()).ok();
+        run.e2e_unit = Some("scenario".into());
+        let items: Vec<_> = scenarios
+            .iter()
+            .filter_map(|s| {
+                Some(MetricTiming {
+                    name: s["scenario"].as_str()?.into(),
+                    duration_ms: s["duration_ms"].as_u64()?,
+                    start_ms: None,
+                    outcome: s["status"].as_str().unwrap_or("unknown").into(),
                 })
-                .collect();
-            let complete = items.len() == scenarios.len() && report["status"] == "passed";
-            run.slow_e2e = top(items, "scenario-step-sum", complete);
-        }
+            })
+            .collect();
+        let complete = items.len() == scenarios.len() && report["status"] == "passed";
+        run.slow_e2e = top(items, "scenario-step-sum", complete);
     }
     if run.tests.is_none() {
         run.notes.push("테스트 수는 기존 결과 일부 누락으로 미수집".into());
@@ -426,10 +443,11 @@ pub fn collect(
     known_code_commits: &[String],
 ) -> Result<WorkspaceCollected> {
     READ_BYTES.with(|read| read.set(0));
+    BUDGET_EXHAUSTED.with(|flag| flag.set(false));
     let key = hex::encode(Sha256::digest(cwd.to_string_lossy().as_bytes()));
     let store = state.join("workspace-metrics").join(key);
     fs::create_dir_all(&store)?;
-    let _lock = aaa_common::private_file::lock(&store.join("collect.lock"))?;
+    let _lock = CollectionLock(aaa_common::private_file::lock(&store.join("collect.lock"))?);
     let cache_path = store.join("runs.json");
     let mut cache: Cache = match fs::read(&cache_path) {
         Ok(b) => serde_json::from_slice(&b)?,
@@ -453,7 +471,9 @@ pub fn collect(
         inputs.push((rc, v, at, "rc"));
     }
     let engine = cwd.join("target/verify-timing.txt");
-    if let Some((v, at)) = version(&engine) {
+    if cwd.join("scripts/verify_engine.sh").is_file()
+        && let Some((v, at)) = version(&engine)
+    {
         inputs.push((engine, v, at, "engine"));
     }
     inputs.sort_by_key(|x| std::cmp::Reverse(x.2));
@@ -472,12 +492,15 @@ pub fn collect(
             "engine" => engine_run(&path, at, id.clone()),
             _ => rc_run(&path, at, id.clone()),
         };
-        if READ_BYTES.with(|read| read.get() > MAX_INPUT) {
-            result.notes.push("이번 회수 읽기 비용 상한으로 나머지는 수집 대기".into());
-            break;
+        let exhausted = BUDGET_EXHAUSTED.with(|flag| flag.get());
+        if exhausted {
+            result.notes.push("읽기 비용 상한으로 일부 지표 미수집".into());
         }
         match parsed {
-            Ok(run) => {
+            Ok(mut run) => {
+                if exhausted {
+                    run.notes.push("읽기 비용 상한으로 부속 결과 일부 미수집".into());
+                }
                 cache.runs.insert(id, run);
                 cache.errors.remove(&rel);
                 cache.versions.insert(rel, v);
@@ -486,6 +509,9 @@ pub fn collect(
                 cache.errors.insert(rel.clone(), "기존 결과 형식·크기 문제로 해당 실행 미수집".into());
                 cache.versions.insert(rel, v);
             }
+        }
+        if exhausted {
+            break;
         }
     }
     while cache.runs.len() > 256 {
@@ -512,7 +538,7 @@ pub fn collect(
     {
         let lines_store = state.join("workspace-metrics").join(hex::encode(Sha256::digest(workspace_key.as_bytes())));
         fs::create_dir_all(&lines_store)?;
-        let _lines_lock = aaa_common::private_file::lock(&lines_store.join("lines.lock"))?;
+        let _lines_lock = CollectionLock(aaa_common::private_file::lock(&lines_store.join("lines.lock"))?);
         match lines::collect(cwd, &lines_store, known_code_commits) {
             Ok(l) => result.code_lines = l,
             Err(_) => result.notes.push("코드 줄 수 수집 대기(비용 상한 또는 Git 자료 없음)".into()),

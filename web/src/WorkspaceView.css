@@ -55,7 +55,7 @@ button.ws-repo[aria-pressed=true] { border-color:var(--border); background:var(-
 .ws-chart circle { fill:var(--status-working); stroke:var(--bg-panel); stroke-width:1; }
 .ws-chart circle[role=button] { cursor:pointer; }
 .ws-chart circle[role=button]:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
-.ws-chart circle.ws-failed { fill:var(--status-blocked); }
+.ws-chart circle.ws-failed { stroke:var(--status-blocked); stroke-width:3; }
 .ws-lines-total { display:block; margin:14px 0 8px; font-size:28px; letter-spacing:-.04em; color:var(--text-strong); }
 .ws-lines-total small { margin-left:10px; letter-spacing:normal; font-weight:400; }
 .ws-table-scroll { max-width:100%; overflow:auto; overscroll-behavior:contain; }
@@ -83,3 +83,7 @@ button.ws-repo[aria-pressed=true] { border-color:var(--border); background:var(-
 
 .ws-chart [data-series=test] { fill:var(--status-done); }
 .ws-chart [data-series=e2e] { fill:var(--notice); }
+
+.ws-legend { display:flex; flex-wrap:wrap; gap:8px 16px; margin-bottom:8px; color:var(--text-dim); font-size:var(--fs-2xs); }
+.ws-legend span { display:flex; align-items:center; gap:6px; min-width:0; overflow-wrap:anywhere; }
+.ws-legend i { display:block; width:7px; height:7px; border-radius:50%; flex-shrink:0; }

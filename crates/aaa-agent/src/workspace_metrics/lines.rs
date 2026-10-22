@@ -110,6 +110,12 @@ pub(super) fn collect(cwd: &Path, store: &Path, known: &[String]) -> Result<Opti
     if cache.commit == commit {
         return Ok(Some(cache.snapshot));
     }
+    // 비용 상한·손상 자료로 실패한 동일 커밋을 보고마다 다시 전체 스캔하지 않는다.
+    // 다음 커밋은 마지막 성공 스냅샷에서 증분 집계를 다시 시작할 수 있다.
+    let attempt_path = store.join("lines-attempt.json");
+    let attempted: Option<(u32, String)> = fs::read(&attempt_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+    ensure!(attempted.as_ref() != Some(&(RULES, commit.to_string())), "같은 커밋의 줄 수 집계는 이미 시도함");
+    aaa_common::util::write_json(&attempt_path, &(RULES, commit))?;
     let branch = text(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "detached".into());
     let changed = if cache.commit.is_empty() {
         None
@@ -121,11 +127,11 @@ pub(super) fn collect(cwd: &Path, store: &Path, known: &[String]) -> Result<Opti
         .transpose()?;
     ensure!(changed.as_ref().is_none_or(|c| c.len() <= 512), "변경 파일 비용 상한");
     let mut args = vec!["ls-tree", "-r", "-z", "--long", commit];
-    if let Some(changed) = &changed {
-        if !changed.is_empty() {
-            args.push("--");
-            args.extend(changed.iter().map(String::as_str));
-        }
+    if let Some(changed) = &changed
+        && !changed.is_empty()
+    {
+        args.push("--");
+        args.extend(changed.iter().map(String::as_str));
     }
     let listing = if changed.as_ref().is_some_and(|c| c.is_empty()) { vec![] } else { git(cwd, &args)? };
     let mut objects = Vec::new();

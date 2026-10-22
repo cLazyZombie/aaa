@@ -16,6 +16,13 @@ struct Registration {
 fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
+fn period_start(now: u64, days: u32, offset_minutes: i32) -> u64 {
+    if days != 1 {
+        return now.saturating_sub(days as u64 * 86_400_000);
+    }
+    let offset = offset_minutes.clamp(-720, 840) as i64 * 60_000;
+    (((now as i64 + offset).div_euclid(86_400_000) * 86_400_000 - offset).max(0)) as u64
+}
 impl Host {
     fn metric_registrations(&self) -> Result<Vec<Registration>, ErrorBody> {
         let mut out = Vec::new();
@@ -104,7 +111,7 @@ impl Host {
             WorkspaceDashboard { workspaces: workspaces.clone(), queried_at_ms: now, ..Default::default() };
         let Some(workspace) = selected else { return Ok(dashboard) };
         let days = query.days.unwrap_or(7).clamp(1, 30);
-        let since = now.saturating_sub(days as u64 * 86_400_000);
+        let since = period_start(now, days, query.utc_offset_minutes.unwrap_or(0));
         let (_, id) = workspace.id.split_once('/').ok_or_else(|| internal("workspace ID 오류"))?;
         let (mut runs, mut lines, truncated) =
             self.db.workspace_records(&workspace.project, id, since).map_err(internal)?;
@@ -220,7 +227,7 @@ fn points(runs: &[MetricRun], query: &WorkspaceQuery, value: impl Fn(&MetricRun)
     groups
         .into_iter()
         .map(|((day, _, _), mut g)| {
-            g.sort_by(|a, b| a.value.cmp(&b.value));
+            g.sort_by_key(|a| a.value);
             let mid = g.len() / 2;
             let n = if g.len().is_multiple_of(2) {
                 g[mid - 1].value + (g[mid].value - g[mid - 1].value) / 2
