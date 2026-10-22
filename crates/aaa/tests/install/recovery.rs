@@ -185,7 +185,9 @@ function Invoke-WebRequest {
     } else { throw 'unexpected fixture transport' }
 }
 [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'irm_entry')
+Set-PSDebug -Trace 1
 irm $env:AAA_TEST_ENTRY_URL | iex
+Set-PSDebug -Off
 [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'entry_returned')
 exit $global:LASTEXITCODE
 "#).unwrap();
