@@ -600,3 +600,13 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   margin-inline-end: 0.6em;
   white-space: nowrap;
 }
+
+/* 기록도 활성 목록의 도구줄·행 token을 그대로 쓴다. */
+.task-log > .tasks-toolbar { padding-inline: 0; margin-bottom: var(--space-2); }
+.task-archive-detail { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.task-archive-detail summary { cursor: pointer; min-height: var(--control-h); padding-block: var(--space-1); }
+.task-archive-detail .md { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .task-log-line { flex-wrap: wrap; }
+  .task-archive-detail { flex-basis: 100%; }
+}

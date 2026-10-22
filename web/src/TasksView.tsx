@@ -37,7 +37,6 @@ import {
   Pencil,
   Plus,
   Layers,
-  Search,
   Trash2,
   Undo2,
   X,
@@ -56,6 +55,7 @@ import { ConflictDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
 import { TaskQueuePanel, type ReserveRequest } from "./TaskQueue";
 import { TaskLogView } from "./TaskLogView";
+import { TaskSearchInput } from "./TaskHistoryTools";
 import {
   TASK_FILTERS,
   TASK_STATE_LABEL,
@@ -283,6 +283,7 @@ export function TasksView({
   fileOpen?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Key | null>(null);
@@ -722,7 +723,7 @@ export function TasksView({
         </div>
         <HeadMore />
       </header>
-      {board && queueApi && <TaskQueuePanel board={board} canEdit={canEdit} onThread={onThread} />}
+      {board && queueApi && <TaskQueuePanel onArchive={() => { setArchiveOpen(true); setTab("log"); }} />}
       <div className="tasks-toolbar">
         <div className="tasks-tabs" role="tablist" aria-label="할 일 탭">
           <button type="button" role="tab" aria-selected={tab === "tasks"} className={`tasks-tab${tab === "tasks" ? " is-on" : ""}`} data-testid="tasks-tab-tasks" onClick={() => setTab("tasks")}>
@@ -734,7 +735,7 @@ export function TasksView({
             </button>
           )}
           {editApi && (
-            <button type="button" role="tab" aria-selected={tab === "log"} className={`tasks-tab${tab === "log" ? " is-on" : ""}`} data-testid="tasks-tab-log" onClick={() => setTab("log")}>
+            <button type="button" role="tab" aria-selected={tab === "log"} className={`tasks-tab${tab === "log" ? " is-on" : ""}`} data-testid="tasks-tab-log" onClick={() => { setArchiveOpen(false); setTab("log"); }}>
               <History aria-hidden="true" className="tasks-tab-icon" />
               기록
             </button>
@@ -742,10 +743,7 @@ export function TasksView({
         </div>
         {tab === "tasks" && (
           <>
-            <label className="tasks-search">
-              <Search aria-hidden="true" />
-              <input className="input" type="search" value={query} placeholder="ID·제목·메모·담당 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
-            </label>
+            <TaskSearchInput value={query} onChange={setQuery} label="할 일 검색" testId="tasks-search" />
             <div className="tasks-chips">
               <button
                 type="button"
@@ -823,7 +821,7 @@ export function TasksView({
         </div>
       )}
       {tab === "log" ? (
-        <TaskLogView canEdit={canEdit} rev={sha} onRestore={(e) => restore(e.id, e.title)} />
+        <TaskLogView key={archiveOpen ? "archive" : "log"} initialArchive={archiveOpen && apiAtLeast(frontApi, [1, 106])} searchApi={apiAtLeast(frontApi, [1, 106])} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} onRestore={(e) => restore(e.id, e.title)} />
       ) : tab === "later" ? (
         <div className="tasks-scroll" data-testid="tasks-later">
           {notesFiles.map((f) => (

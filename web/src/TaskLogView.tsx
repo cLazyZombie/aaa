@@ -3,47 +3,62 @@
 // SettingsPanels.tsx `ArchivedThreadsPanel`(3294–3560: 묶음 목록, 줄마다 되살리기 단추, 누른 뒤 다시 읽기)을 따른다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
-import type { TaskLogEntry, TaskLogFilter } from "./gen/proto";
+import type { TaskArchiveFilter, TaskHistoryRepo, TaskLogEntry, TaskLogFilter } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { TASK_ACTION_LABEL, ago, lineDiff, restorable } from "./tasksModel";
 
-const FILTERS: readonly { id: TaskLogFilter | null; label: string }[] = [
-  { id: null, label: "전체" },
+import { TaskHistoryTools, historyChoices } from "./TaskHistoryTools";
+import { ARCHIVE_FILTERS, TaskArchiveView } from "./TaskArchiveView";
+
+const FILTERS = [
+  { id: "all", label: "전체" },
   { id: "deleted", label: "삭제만" },
   { id: "auto", label: "자동 정리만" },
+  { id: "restored", label: "복원됨" },
+  ...ARCHIVE_FILTERS,
 ];
 
 /** 오래된 기록 지우기의 기준(일) */
 const PRUNE_DAYS = 30;
 
-export function TaskLogView({ canEdit, rev, onRestore }: { canEdit: boolean; rev: string; onRestore: (e: TaskLogEntry) => Promise<void> }) {
-  const [filter, setFilter] = useState<TaskLogFilter | null>(null);
+export function TaskLogView({ canEdit, rev, onRestore, project, repos, onThread, initialArchive = false, searchApi = true }: { canEdit: boolean; rev: string; onRestore: (e: TaskLogEntry) => Promise<void>; project: string; repos: string[]; onThread: (id: string) => void; initialArchive?: boolean; searchApi?: boolean }) {
+  const [filter, setFilter] = useState(initialArchive ? "completed" : "all");
+  const [query, setQuery] = useState("");
+  const [repo, setRepo] = useState<string | null>(null);
+  const [pastRepos, setPastRepos] = useState<TaskHistoryRepo[]>([]);
+  const archived = ARCHIVE_FILTERS.some((f) => f.id === filter);
+  const archiveFilter: TaskArchiveFilter | null = filter === "archive_restored" ? "restored" : filter === "pr_merged" || filter === "main_merged" || filter === "report_done" ? filter : null;
   const [entries, setEntries] = useState<TaskLogEntry[] | null>(null);
   const [next, setNext] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<ReadonlySet<number>>(new Set());
   const [busy, setBusy] = useState<number | null>(null);
   const [prune, setPrune] = useState(false);
+  const [loading, setLoading] = useState(false);
   const seq = useRef(0);
   const load = useCallback(
     (before: number | null) => {
+      if (archived) return;
       const n = ++seq.current;
-      call({ op: "task_log", before, limit: 50, filter })
+      setLoading(true);
+      if (before === null) { setEntries(null); setNext(null); }
+      call({ op: "task_log", project, before, limit: 50, filter: filter === "all" ? null : filter as TaskLogFilter, search: { query, repo } })
         .then((r) => {
           if (n !== seq.current || r.kind !== "task_log") return;
           setEntries((old) => (before === null ? r.entries : [...(old ?? []), ...r.entries]));
           setNext(r.next);
+          setPastRepos(r.repos ?? []);
           setError(null);
         })
         .catch((e: unknown) => {
           if (n === seq.current) setError(e instanceof ApiError ? e.message : String(e));
-        });
+        }).finally(() => { if (n === seq.current) setLoading(false); });
     },
-    [filter],
+    [filter, query, repo, project, archived],
   );
   // 파일 판(`rev`)이 바뀌면 처음부터 다시 읽는다
-  useEffect(() => load(null), [load, rev]);
+  useEffect(() => { load(null); return () => { ++seq.current; }; }, [load, rev]);
   const toggle = (id: number) =>
     setOpen((o) => {
       const n = new Set(o);
@@ -54,21 +69,13 @@ export function TaskLogView({ canEdit, rev, onRestore }: { canEdit: boolean; rev
   const now = Date.now();
   return (
     <div className="tasks-scroll task-log" data-testid="task-log">
-      <div className="task-log-tools">
-        <div className="tasks-filters" role="group" aria-label="기록 거르기">
-          {FILTERS.map((f) => (
-            <button key={f.label} type="button" className={`task-chip tasks-filter${filter === f.id ? " is-on" : ""}`} aria-pressed={filter === f.id} data-testid={`task-log-filter-${f.id ?? "all"}`} onClick={() => setFilter(f.id)}>
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <span className="spacer" />
-        {canEdit && (
-          <button type="button" className="btn btn-ghost" onClick={() => setPrune(true)}>
-            {PRUNE_DAYS}일 지난 기록 지우기
-          </button>
-        )}
-      </div>
+      {searchApi ? <div className="tasks-toolbar">
+        <TaskHistoryTools query={query} onQuery={setQuery} repo={repo} onRepo={setRepo} choices={historyChoices(repos, pastRepos)} filters={FILTERS} filter={filter} onFilter={setFilter} />
+      </div> : <p className="tasks-empty">기록 검색·저장소·완료 상태 거르기는 host 갱신 뒤 쓸 수 있다.</p>}
+      {!archived && <div className="task-log-tools">
+        {canEdit && <button type="button" className="btn btn-ghost" onClick={() => setPrune(true)}>{PRUNE_DAYS}일 지난 기록 지우기</button>}
+      </div>}
+      {archived ? <TaskArchiveView project={project} canEdit={canEdit} rev={rev} query={query} repo={repo} filter={archiveFilter} onRepos={setPastRepos} onThread={onThread} /> : <>
       {error && (
         <div className="banner err" role="alert">
           {error}
@@ -131,10 +138,11 @@ export function TaskLogView({ canEdit, rev, onRestore }: { canEdit: boolean; rev
         })}
       </ul>
       {next !== null && (
-        <button type="button" className="btn task-log-more" onClick={() => load(next)}>
+        <button type="button" className="btn task-log-more" disabled={loading} onClick={() => load(next)}>
           더 보기
         </button>
       )}
+      </>}
       {prune && (
         <ConfirmDialog
           title="오래된 기록 지우기"

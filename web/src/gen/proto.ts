@@ -332,7 +332,19 @@ body: string, reason: string, report: string | null, completed_ms: number, resto
 /**
  * 본문 제거 뒤의 파일 판과 대조하는 복구 영수증.
  */
-committed: boolean, removed_sha256: string, history: Array<TaskLogEntry>, };
+committed: boolean, removed_sha256: string,
+/**
+ * 내구 보관의 전체 이력. 목록 응답에서는 비워 중복 스냅샷이 frame을 채우지 않게 한다.
+ */
+history: Array<TaskLogEntry>, };
+
+export type TaskHistorySearch = { query: string, repo: string | null, };
+
+export type TaskArchiveFilter = "pr_merged" | "main_merged" | "report_done" | "restored";
+
+export type TaskHistoryRepo = { key: string, label: string, n: number, };
+
+export type TaskArchiveQuery = { search: TaskHistorySearch | null, filter: TaskArchiveFilter | null, after: string | null, limit: number | null, };
 
 export type TaskView = {
 /**
@@ -541,7 +553,7 @@ before: string | null, after: string | null, thread: string | null,
  */
 restored_by: number | null, };
 
-export type TaskLogFilter = "deleted" | "auto";
+export type TaskLogFilter = "deleted" | "auto" | "restored";
 
 export type ThreadStartPreview = { profile_revision: string, model: string, effort: string,
 /**
@@ -1073,7 +1085,11 @@ task: string, } | { "op": "thread_next", project?: string, thread: string, line:
 /**
  * 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
  */
-restore: string | null, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null,
+restore: string | null,
+/**
+ * FRONT_API 1.106: 검색·저장소·상태를 host에서 거른 뒤 바이트 상한 안의 페이지로 준다.
+ */
+view?: TaskArchiveQuery, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null,
 /**
  * 사용자 지시로 모델·머신만 변경하는 근거 한 줄(FRONT_API 1.97). 예약 순서와 시작 승인을 유지한다.
  */
@@ -1081,7 +1097,7 @@ user_request?: string, } | { "op": "task_log", project?: string, before: number 
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
-task?: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
+task?: string, search?: TaskHistorySearch, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */
@@ -1258,7 +1274,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, repos?: Array<TaskHistoryRepo>, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
 /**
  * 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
  */
