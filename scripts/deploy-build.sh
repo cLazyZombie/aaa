@@ -30,10 +30,25 @@ git worktree add --detach "$build_root/source" "$commit"
 )
 (
   cd "$build_root/source"
+  # kache의 dSYM 수집 전에 rustc가 object를 지우지 않도록 unpacked를 유지한다.
+  if [ "$(uname -s)" = Darwin ]; then export CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=unpacked; fi
   AAA_BUILD_SALT="$short" CARGO_TARGET_DIR="$build_root/target" cargo build --release --locked -p aaa --bin aaa
 )
+# 캐시 도구가 없는 환경에서는 남은 object로 dSYM을 직접 만든다. 실행 파일은 수정하지 않는다.
+if [ "$(uname -s)" = Darwin ] && [ ! -d "$build_root/target/release/aaa.dSYM" ]; then
+  (cd "$build_root/target/release" && dsymutil aaa) || { echo 'macOS 배포 후보 dSYM 생성 실패' >&2; exit 1; }
+fi
 mkdir -p "$out"
 cp "$build_root/target/release/aaa" "$out/aaa"
+# macOS 줄 정보도 임시 worktree를 지우기 전에 보존한다.
+# 실행 파일을 수정하거나 운영 머신에 설치하지 않는다. Cargo의 dSYM symlink는 실제 폴더로 복사한다.
+if [ "$(uname -s)" = Darwin ] && [ ! -d "$build_root/target/release/aaa.dSYM" ]; then
+  echo 'macOS 배포 후보의 dSYM이 없다' >&2
+  exit 1
+fi
+if [ -d "$build_root/target/release/aaa.dSYM" ]; then
+  cp -RL "$build_root/target/release/aaa.dSYM" "$out/aaa.dSYM"
+fi
 # provenance는 기계 이름·절대 빌드 경로를 담지 않는다.
 python3 - "$out" "$commit" "$short" "$origin_main" <<'PY'
 import datetime, hashlib, json, pathlib, subprocess, sys

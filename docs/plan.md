@@ -7541,3 +7541,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **계약·검증.** FRONT_API 1.111 `workspace_dashboard`와 웹 전용 `workspace_metrics` 사건, Agent link 1.11의 선택 기능 `workspace_metrics.v1`이다. Rust 타입이 정본이며 웹은 생성한 proto만 쓴다. agent fixture·host 내구 원장 시험, 실제 보고→agent→host→웹 E2E90과 기존 활동 막대 E2E26을 확인한다. 번호는 착지 때 main과 대조한다.
 
 - **추가 문구 결정(21:1x).** pane의 detached 경고 이름은 「느린 빌드」, unknown은 「느린 빌드?」로 통일한다. 배너·목록·터미널·CLI·runbook·E2E89에 반영하고 판정·상태 값은 바꾸지 않는다. macOS 검사·정리 후 새 pane 안내는 설명 줄과 title에 둔다.
+
+
+### 8.458 실행 파일 축소와 panic 콜스택(t-0804)
+
+- **목적.** 단일 실행 파일의 배포 비용을 줄이면서 웹 기능과 장애 진단을 유지한다. 원인·실측·제외한 선택은 [크기 분석](binary-size.md)에 남긴다. macOS 기준 94,566,984바이트에서 자산 압축과 release `opt-level="s"`·Thin LTO·codegen unit 1로 줄인다. 함수 심볼·줄 정보 생성·panic unwind를 보존하며 실행 파일 후처리는 하지 않는다.
+- **웹 자산.** host 빌드가 더 작은 gzip 또는 원문 하나만 내장한다. gzip 수락 여부에 따라 압축 bytes 또는 복원한 원문을 보내며 `Vary`·MIME·cache·404·웹 빌드 식별을 보존한다. 구문 강조 언어·글꼴을 빼지 않는다. 보고서 sandbox·영상 Range 경로는 바꾸지 않는다.
+- **진단.** §8.332의 비밀 비노출을 유지하면서 이번 요청에 따라 함수 이름을 포함한 콜스택을 추가한다. 원본 payload·환경·동적 thread 이름은 읽지 않는다. 프레임 파일은 허용된 상대 경로만 출력하고 모르는 경로는 숨긴다. 최대 64프레임·이름 512글자로 제한한다. 심볼 없는 프레임도 남기며 가능한 module 상대 주소로 같은 판 심볼의 사후 해석을 돕는다. 기존 panic 위치·반복 횟수·역할·build SHA와 latest 감시를 유지한다.
+- **별도 심볼.** MSVC PDB와 macOS dSYM을 압축해 동일 release의 별도 asset으로 보관한다. macOS producer는 unpacked와 필요 시 dsymutil을 쓰고 deploy-build도 dSYM 폴더를 실제 파일로 복사해 임시 worktree 정리 뒤 남긴다. manifest의 선택적 `symbols` 정보와 SHA256SUMS가 별도 심볼 및 대응 실행 파일 SHA를 기록한다. Linux musl은 링크 때 DWARF를 zlib으로 압축하고 실행 파일 안에 보존한다. 기존 설치·업데이트 소비자는 실행 파일 계약을 계속 쓴다. 현장에서 함수 이름을 해석하려면 같은 판 PDB를 실행 파일 옆 `aaa.pdb`로 둔다. PDB 없는 설치의 unknown 프레임과 native CI 미실행을 숨기지 않는다.
+- **검증.** 실제 release panic의 축소 전/후 출력, 비밀 비노출·unwind 생존, 모든 자산 원문 대조와 gzip 협상, CLI·HTTP 성능을 확인한다. 전체 ci-local·deps·공개 검사와 Windows release/cross·Linux cross를 실행한다. release workflow의 각 native target도 release panic 시험을 실행한다. FRONT_API 1.111·AGENT_LINK 1.11·E2E90은 그대로다. origin/main의 마지막 §8.457을 읽고 §8.458을 배정했으며 묶음 착지 때 다시 대조한다.

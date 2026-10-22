@@ -9,7 +9,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from scripts.release import ASSETS, BOOTSTRAP, LAUNCHERS, ROOT
+from scripts.release import ASSETS, BOOTSTRAP, LAUNCHERS, ROOT, SYMBOLS
 
 
 class ReleaseContract(unittest.TestCase):
@@ -22,6 +22,8 @@ class ReleaseContract(unittest.TestCase):
         self.version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
         (self.artifacts / BOOTSTRAP).write_bytes((ROOT / "scripts/bootstrap/install-windows.ps1").read_bytes())
         self.payloads = {}
+        for name in SYMBOLS.values():
+            (self.artifacts / name).write_bytes(b"same-build-symbol-fixture")
         for platform, name in ASSETS.items():
             body = f"독립된 빌드 표본: {platform}\n".encode()
             self.payloads[platform] = body
@@ -76,6 +78,25 @@ class ReleaseContract(unittest.TestCase):
         result = self.run_tool(f"v{self.version}", output)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(output.exists())
+
+    def test_symbols_have_their_own_checksum_and_matching_binary_hash(self):
+        output = self.root / "symbols-output"
+        result = self.run_tool(f"v{self.version}", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((output / "manifest.json").read_text())
+        for platform, asset in manifest["symbols"].items():
+            path = self.artifacts / SYMBOLS[platform]
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.assertEqual(asset["url"], f"https://github.com/cLazyZombie/aaa/releases/download/v{self.version}/{path.name}")
+            self.assertEqual(asset["sha256"], digest)
+            self.assertEqual(asset["binary_sha256"], manifest["assets"][platform]["sha256"])
+            self.assertIn(f"{digest}  {path.name}\n", (output / "SHA256SUMS").read_text())
+            path.unlink()
+        rejected = self.root / "missing-symbols"
+        result = self.run_tool(f"v{self.version}", rejected)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("심볼 파일", result.stderr)
+        self.assertFalse(rejected.exists())
 
     def test_bootstrap_is_the_reviewed_source_and_checksums_cover_its_bytes(self):
         output = self.root / "output"

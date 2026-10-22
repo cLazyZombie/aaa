@@ -30,9 +30,7 @@ use super::{FrontRef, Host, PaneEvent};
 use crate::chatwatch::ChatNote;
 use crate::output::{OUTPUT_HARD_BYTES, OUTPUT_STALLED_CLOSE_CODE, OutputWindow, Verdict, check_unacked};
 
-mod assets {
-    include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
-}
+mod assets;
 
 const OUTPUT_STALLED_REASON: &str = "terminal output consumer stalled";
 /// 기기를 취소해 닫은 WebSocket. 웹은 다시 붙지 않고 pairing 화면으로 간다(web/src/api.ts `REVOKED_CLOSE_CODE`)
@@ -1558,8 +1556,8 @@ fn web_build() -> Option<String> {
     if let Ok(v) = std::env::var("AAA_TEST_WEB_BUILD") {
         return Some(v);
     }
-    let (_, html) = assets::WEB_ASSETS.iter().find(|(n, _)| *n == "index.html")?;
-    main_bundle(&String::from_utf8_lossy(html))
+    let html = assets::WEB_ASSETS.iter().find(|asset| asset.name == "index.html")?.identity().ok()?;
+    main_bundle(&String::from_utf8_lossy(&html))
 }
 
 /// index.html의 `<script … src="/assets/NAME.js">`에서 NAME
@@ -2284,24 +2282,39 @@ async fn static_file(req: Request) -> Response {
             .into_response();
     }
     let want = if path.is_empty() { "index.html" } else { touch_icon_alias(path) };
-    let found = assets::WEB_ASSETS.iter().find(|(n, _)| *n == want).copied();
+    let found = assets::WEB_ASSETS.iter().find(|asset| asset.name == want);
     // 없는 파일 주소에는 화면(HTML)이 아니라 404를 준다. 그림 주소에 HTML을 200으로 주면 그것을 아이콘으로 받는
     // 쪽(iOS 홈 화면·앱 전환)이 깨진 그림을 갖는다. 확장자 없는 주소만 화면 경로다(참고 static.ts는 /assets·/icons만 404).
     if found.is_none() && path.rsplit('/').next().is_some_and(|f| f.contains('.')) {
         return (StatusCode::NOT_FOUND, [(header::CACHE_CONTROL, "no-cache")], "없는 파일").into_response();
     }
-    let (name, bytes) = found.or_else(|| assets::WEB_ASSETS.iter().find(|(n, _)| *n == "index.html").copied()).unwrap();
+    let asset = found.or_else(|| assets::WEB_ASSETS.iter().find(|asset| asset.name == "index.html")).unwrap();
+    let name = asset.name;
     // assets/는 이름에 hash가, fonts/는 폴더에 버전이 있다(글꼴을 바꾸면 폴더도 바꾼다)
     let cache = if name.starts_with("assets/") || name.starts_with("fonts/") {
         "public, max-age=31536000, immutable"
     } else {
         "no-cache"
     };
-    Response::builder()
-        .header(header::CONTENT_TYPE, content_type(name))
-        .header(header::CACHE_CONTROL, cache)
-        .body(Body::from(bytes))
-        .unwrap()
+    let compressed = asset.gzip && assets::accepts_gzip(req.headers());
+    let body = if compressed {
+        Body::from(asset.data)
+    } else {
+        match asset.identity() {
+            Ok(std::borrow::Cow::Borrowed(bytes)) => Body::from(bytes),
+            Ok(std::borrow::Cow::Owned(bytes)) => Body::from(bytes),
+            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "웹 자산을 복원하지 못했다").into_response(),
+        }
+    };
+    let mut response =
+        Response::builder().header(header::CONTENT_TYPE, content_type(name)).header(header::CACHE_CONTROL, cache);
+    if asset.gzip {
+        response = response.header(header::VARY, "Accept-Encoding");
+    }
+    if compressed {
+        response = response.header(header::CONTENT_ENCODING, "gzip");
+    }
+    response.body(body).unwrap()
 }
 
 #[cfg(test)]
@@ -2343,7 +2356,11 @@ mod content_type_tests {
     fn web_assets_do_not_bake_build_paths() {
         let src = include_str!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
         for line in src.lines().filter(|l| l.contains("include_bytes!")) {
-            assert!(line.contains("include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../web/dist/"), "{line}");
+            assert!(
+                line.contains("include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../web/dist/")
+                    || line.contains("include_bytes!(concat!(env!(\"OUT_DIR\"), \"/web-asset-"),
+                "{line}"
+            );
         }
     }
 

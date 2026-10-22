@@ -24,6 +24,7 @@ tokio-rustls.workspace = true
 webpki-roots.workspace = true
 futures-util.workspace = true
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
+backtrace = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

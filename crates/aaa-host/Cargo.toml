@@ -37,6 +37,10 @@ httpdate = "1"
 # `pane wait-output --regex`(Cargo.lock에 이미 있는 판)
 regex = "1"
 axum = { version = "0.8", features = ["ws"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[build-dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

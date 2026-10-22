@@ -1,5 +1,25 @@
 # 시험 쓰는 법
 
+## 실행 파일 축소와 panic 콜스택(t-0804)
+
+- `cargo test --release --locked -p aaa-common --lib panic_log::`는 네 역할에서 실제 panic을 일으킨다.
+  함수 이름이 있는 콜스택·원래 위치/횟수/task ID·unwind 후 생존·stderr 잠금 중 `latest()` 관측을 확인한다.
+  payload·동적 이름·환경·절대 빌드 경로 비노출 단언은 유지한다. 프레임 파일은 저장소 상대 경로 허용 목록 또는 `external`뿐이다.
+  release workflow도 다섯 native target에서 이 owner를 실행한다. Windows PDB가 필요한 해석을 교차 컴파일 성공으로 대체하지 않는다.
+- `cargo test --locked -p aaa-host --lib web::assets::`는 내장된 모든 자산을 실제 `web/dist` 원문과 바이트 대조한다.
+  실제 static handler로 gzip/identity·명시적 `q=0` 거부·여러 헤더·wildcard·MIME·cache·404·SPA fallback을 확인한다.
+  gzip 응답을 강제로 없애거나 거부를 무시하는 구현은 같은 기대값에서 실패한다. 웹을 빌드하지 않은 기존 안내도 유지한다.
+- `python3 -m unittest scripts.test_release scripts.test_deploy_build`는 PDB/dSYM의 독립 SHA와 대응 실행 파일 SHA,
+  심볼 누락 거부, macOS unpacked 지정·dSYM 생성/복사, 기존 bootstrap·launcher 결속·provenance를 검사한다. 최종 파일을 후처리하지 않아 서명/SHA 순서가 바뀌지 않는다.
+- 크기는 같은 소스의 release 후보별로 기록한다. 프로세스 이름을 `aaa`로 맞추고 빌드가 끝난 뒤 기준/후보를
+  번갈아 실행하며 stdout 원문 일치와 CLI 벽시계·CPU 시간을 측정한다. 첫 실행은 따로 두고 나머지 30개 중앙값을 사용한다.
+  HTTP는 새 config/state·빈 port·가짜 tailscale·격리 usage home의 실제 host를 쓰며 listen 로그 사건으로 준비를 판정한다.
+  원문과 gzip을 풀어 원래 자산 bytes와 비교하고 자기가 띄운 PID 하나의 종료를 기다린다. 고정 sleep이나 실패 재시도는 없다.
+- macOS 결과·Windows/MSVC 및 Linux/musl 교차 링크·native CI를 구분해 기록한다. 로컬 정본은 전체 ci-local·deps·공개 검사다.
+  Linux 압축 DWARF의 실제 함수·줄 해석과 macOS의 dSYM 동반/단독 panic 출력을 각각 확인한다.
+  dSYM 존재·UUID 일치만으로 충분하지 않다. kache와 packed의 object 누락을 확인해 unpacked로 보존했다.
+  실측과 심볼 보관 조건은 [크기 분석](binary-size.md)을 따른다. FRONT_API·AGENT_LINK·E2E 번호는 바꾸지 않는다.
+
 ## 새 launcher 아래 restart fixture 격리(t-0798)
 
 - `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`는 등록되지 않은 새 launcher를 기본으로 쓴다. `AAA_RESTART_TEST_LAUNCHER`로 기존 launcher를 지정하는 읽기 전용 경로도 유지한다. 두 경로 모두 기존 launcher/worker PID·기존 pane 보존·새 pane·책임 PID·승인 거부·detached 재관측 단언을 그대로 검사한다.

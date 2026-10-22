@@ -26,6 +26,11 @@ ASSETS = {
 BOOTSTRAP = "aaa-install-windows.ps1"
 WINDOWS_ENTRY = "install.ps1"
 LAUNCHERS = {"macos-aarch64": "aaa-launcher-macos-aarch64.json", "macos-x86_64": "aaa-launcher-macos-x86_64.json"}
+SYMBOLS = {
+    "windows-x86_64": "aaa-windows-x86_64.pdb.gz",
+    "macos-aarch64": "aaa-macos-aarch64.dSYM.tar.gz",
+    "macos-x86_64": "aaa-macos-x86_64.dSYM.tar.gz",
+}
 
 
 def version_for_tag(tag: str) -> str:
@@ -70,6 +75,16 @@ def build_manifest(tag: str, artifacts: Path, output: Path) -> None:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         assets[platform] = {"url": f"{RELEASES}/{tag}/{name}", "sha256": digest}
         checksums.append(f"{digest}  {name}\n")
+    symbols = {}
+    for platform, name in SYMBOLS.items():
+        path = artifacts / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"release 심볼 파일이 없거나 비었다: {name}")
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        symbols[platform] = {"url": f"{RELEASES}/{tag}/{name}", "sha256": digest,
+                             "binary_sha256": assets[platform]["sha256"]}
+        checksums.append(f"{digest}  {name}\n")
     launchers = {}
     for platform, name in LAUNCHERS.items():
         path = artifacts / name
@@ -100,7 +115,7 @@ def build_manifest(tag: str, artifacts: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     (output / WINDOWS_ENTRY).write_bytes(entry)
     (output / "manifest.json").write_text(
-        json.dumps({"version": version, "notes": f"aaa {tag}", "assets": assets, "launchers": launchers, "bootstraps": bootstraps}, indent=2) + "\n",
+        json.dumps({"version": version, "notes": f"aaa {tag}", "assets": assets, "launchers": launchers, "bootstraps": bootstraps, "symbols": symbols}, indent=2) + "\n",
         encoding="utf-8",
     )
     (output / "SHA256SUMS").write_text("".join(checksums), encoding="utf-8")

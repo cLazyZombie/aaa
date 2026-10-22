@@ -82,6 +82,12 @@ opt-level = 3
 
 [profile.release]
 debug = "line-tables-only"
+# 웹 자산 압축과 함께 실측한다(docs/binary-size.md). 심볼·unwind는 장애 진단/복구에 필요하다.
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "none"
+panic = "unwind"
 
 # session host 화면이 웹과 같은 칸을 쓰도록 글자 폭을 고친 vt100(plan §8.167)
 [patch.crates-io]
