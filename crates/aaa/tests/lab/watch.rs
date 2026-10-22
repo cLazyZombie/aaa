@@ -9,7 +9,7 @@ use super::Node;
 
 pub struct HostWatch {
     rt: tokio::runtime::Runtime,
-    rx: tokio::sync::mpsc::UnboundedReceiver<FrontMsg>,
+    rx: tokio::sync::mpsc::UnboundedReceiver<Result<FrontMsg, String>>,
     timeout: Duration,
     pub ws: Option<Workspace>,
     pub panes: Vec<PaneView>,
@@ -25,8 +25,14 @@ impl HostWatch {
             c.send(FrontRequest::Workspace { name: None }).await.unwrap();
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(async move {
-                while let Ok(Some(message)) = c.next().await {
-                    if tx.send(message).is_err() {
+                loop {
+                    let message = match c.next().await {
+                        Ok(Some(message)) => Ok(message),
+                        Ok(None) => break,
+                        Err(error) => Err(format!("{error:#}")),
+                    };
+                    let failed = message.is_err();
+                    if tx.send(message).is_err() || failed {
                         break;
                     }
                 }
@@ -54,6 +60,16 @@ impl HostWatch {
 
     /// 조건이 될 때까지 host 사건을 받는다
     pub fn wait<R>(&mut self, what: &str, mut f: impl FnMut(&HostWatch) -> Option<R>) -> R {
+        self.wait_diag(what, &mut f, String::new)
+    }
+
+    /// 실패한 상태 사건과 호출자가 가진 로그를 남긴다. 진단 때문에 CLI를 다시 실행하지 않는다.
+    pub fn wait_diag<R>(
+        &mut self,
+        what: &str,
+        mut f: impl FnMut(&HostWatch) -> Option<R>,
+        diag: impl FnOnce() -> String,
+    ) -> R {
         let deadline = Instant::now() + self.timeout;
         loop {
             if let Some(v) = f(self) {
@@ -63,13 +79,16 @@ impl HostWatch {
             let rx = &mut self.rx;
             let m = self.rt.block_on(async move { tokio::time::timeout(left, rx.recv()).await });
             match m {
-                Ok(Some(m)) => self.apply(m),
-                Ok(None) => panic!("host 연결이 끊겼다({what})"),
+                Ok(Some(Ok(m))) => self.apply(m),
+                Ok(Some(Err(error))) => panic!("{what}: Front 상태 수신 실패: {error}\n{}", diag()),
+                Ok(None) => panic!("host 연결이 끊겼다({what})\n{}", diag()),
                 Err(_) => panic!(
-                    "{:?} 안에 {what}이 되지 않았다\nworkspace: {:?}\npanes: {:?}",
+                    "{:?} 안에 {what}이 되지 않았다\nmachines: {:?}\nworkspace: {:?}\npanes: {:?}\n{}",
                     self.timeout,
+                    self.machines.iter().map(|m| (&m.id, &m.name, &m.connection)).collect::<Vec<_>>(),
                     self.ws,
-                    self.panes.iter().map(|p| (&p.id, &p.name, &p.state, &p.restore_error)).collect::<Vec<_>>()
+                    self.panes.iter().map(|p| (&p.id, &p.name, &p.state, &p.restore_error)).collect::<Vec<_>>(),
+                    diag(),
                 ),
             }
         }

@@ -539,8 +539,15 @@ fn world_build(
     // agent를 Claude Code 세션 안에서 띄운 경우: 그 세션 표지는 aaa 세션에 넘기지 않는다
     let mut envs = vec![("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1")];
     envs.extend(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    // 연결 전부터 같은 Front 연결로 상태 사건을 받는다. CLI 프로세스의 종료와 다음 조회에
+    // 준비 판정을 맡기면, agent가 붙었어도 이전 빈 목록/조회 오류만 보고 시한을 넘길 수 있다.
+    let mut watch = HostWatch::new(&w.h, T);
     w.lab.spawn_env("agentA", &w.h, &["agent", "--host", "local", "--name", "labA"], &envs);
-    wait_for("labA 연결", T, || w.h.connected("labA").then_some(()));
+    watch.wait_diag(
+        "labA 연결",
+        |s| s.connected("labA").then_some(()),
+        || format!("host.log:\n{}\nagentA.log:\n{}", w.lab.log("host"), w.lab.log("agentA")),
+    );
     w.h.ok(&["project", "create", "demo"]);
     w
 }
@@ -654,6 +661,18 @@ impl World {
         self.lab.spawn("agentB", &b, &["agent", "--host", &self.addr, "--name", "labB"]);
         wait_for("labB 연결", T, || self.h.connected("labB").then_some(()));
     }
+}
+
+/// 준비 대기는 구독 전의 현재 목록과 구독 뒤의 연결 변화를 모두 받아야 한다.
+#[test]
+fn agent_readiness_uses_initial_state_and_reconnection_events() {
+    let mut w = world();
+    let mut watch = HostWatch::new(&w.h, T);
+    watch.wait("구독 전 연결의 현재 상태", |s| s.connected("labA").then_some(()));
+    w.lab.kill("agentA");
+    watch.wait("연결 종료 사건", |s| (!s.connected("labA")).then_some(()));
+    w.lab.spawn("agentA-reconnected", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+    watch.wait("구독 뒤 재연결 사건", |s| s.connected("labA").then_some(()));
 }
 
 /// 생성 폴더의 파일 계약: 안내 별칭 등 예정하지 않은 파일도 잡는다.
@@ -5855,7 +5874,8 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
     use aaa_common::conn::{FrameRx, spawn_writer};
     use aaa_proto::{AgentHello, LinkMsg, MAX_FRAME, Version};
     let legacy_link = Version { major: aaa_proto::AGENT_LINK.major, minor: aaa_proto::AGENT_LINK.minor - 1 };
-    let w = world();
+    // 동기 실험실은 Front 상태 감시용 runtime도 돌린다. async 시험의 runtime과 중첩하지 않는다.
+    let w = tokio::task::spawn_blocking(world).await.unwrap();
     let stream = aaa_common::ipc::connect(&w.h.state.join("host/agent.sock")).await.unwrap();
     let (r, writer) = tokio::io::split(stream);
     let tx = spawn_writer(writer, MAX_FRAME);
