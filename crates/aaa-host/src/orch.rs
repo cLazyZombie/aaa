@@ -1753,15 +1753,19 @@ impl Host {
         })
     }
 
-    pub(crate) fn claim_thread(&self, project: &str, id: &str) -> Result<tokio::sync::OwnedMutexGuard<()>, ErrorBody> {
-        let lock = self
-            .thread_ops
+    pub(crate) fn thread_op_lock(&self, project: &str, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.thread_ops
             .lock()
             .unwrap()
             .entry(format!("{project}/{id}"))
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone();
-        lock.try_lock_owned().map_err(|_| bad(format!("{id}는 준비·정리 작업 중이다. thread show로 상태를 본다")))
+            .clone()
+    }
+
+    pub(crate) fn claim_thread(&self, project: &str, id: &str) -> Result<tokio::sync::OwnedMutexGuard<()>, ErrorBody> {
+        self.thread_op_lock(project, id)
+            .try_lock_owned()
+            .map_err(|_| bad(format!("{id}는 준비·정리 작업 중이다. thread show로 상태를 본다")))
     }
 
     /// front가 판정한 요청자만 쓴다. env·요청 본문의 역할 자기 신고는 믿지 않는다.

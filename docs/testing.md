@@ -64,6 +64,22 @@
   파일별 journal·공유 소유권을 보존하며 서명 GREEN을 확인한다. 전체 ci-local·deps·공개 검사·Windows cross 뒤 후보를 보고하고 착지 창을 기다린다.
 
 
+## 계정 배정 대기 취소의 경합(t-0700, plan §8.428)
+
+- `nice -n 15 cargo test -p aaa-host --lib account_pool --locked`:
+  `cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted`는 실제 `pool_run`을 사용량 cache 잠금의
+  await에서 보류하고, 배정 잠금을 잡은 사건 뒤 실제 Front 요청으로 취소한다. 수정 전의 즉시 BadRequest를
+  재현하며, 수정 뒤에는 취소가 기다려야 한다. 조회를 풀어 실제 Queued 저장이 끝나면 Cancelled를 기록하고,
+  다음 pass·같은 ID 재처리·DB 재열기 뒤에도 취소와 thread 0건을 유지한다. 운영 코드에 지연 고리는 넣지 않는다.
+- `cancel_rechecks_a_receipt_committed_by_the_inflight_allocation`은 기다리는 사이 배정 영수증이 생기면
+  기존 「이미 시작한 thread는 thread에서 끝낸다」 conflict를 보존하는지 검사한다. Reader의 잠금 대기 전 쓰기 거부,
+  없는 요청의 NotFound·중복 취소의 같은 결과도 확인한다. 고정 sleep·재시도·시한 변경은 없다.
+- 기존 웹 E2E81의 취소 click·창 닫힘·Cancelled·다음 tick에서 추가 기동 없음 단언과 30초 시한을 유지한다.
+  실패하면 창의 오류·대기 문구·시작 상태와 host의 배정 요청 목록을 로그에 남긴다.
+  전체 `nice -n 15 bash scripts/ci-local.sh`에서 다른 spec과 병렬로 검사한다.
+
+- 착지 때 Linux 대상 `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu --locked --keep-going -- -D warnings`도 확인한다. main install 엔진의 `File` import는 실제 사용 범위인 Windows·macOS·시험 cfg에만 둔다. Linux 제품의 미사용 import 실패를 경고 억제 없이 수리하며 Linux 실행 검증과 교차 lint는 구분한다.
+
 ## host 공통 계정 풀 자동 배정(t-0653, plan §8.416)
 
 - `nice -n 15 cargo test -p aaa-host --lib account_pool --locked`: 창별 최소 여유·모델 창·동점·공유 한도,
