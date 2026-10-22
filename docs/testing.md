@@ -153,6 +153,7 @@
 
 ## 할 일 깊은 주소와 ID 자동 링크(t-0624, plan §8.404)
 
+- t-0697: main CI run `39693201281`·`39699498898`의 원문과 artifact `e2e.log` 모두 깊은 주소 이동 전 `getByRole('menuitemcheckbox', { name: /^작업 폴더/ })`에서 30초를 넘겼다. 목록 도착 전 연 저장소 메뉴가 빈 항목을 복사해 둔 제품 경합이다. E2E77은 새로고침 전 실제 host의 `tasks` 응답을 gate로 보류하고, 「전체」만 있는 메뉴를 연 뒤 응답을 풀어 행이 나타나는 사건을 기다린다. 메뉴를 다시 열지 않고 「작업 폴더」를 선택하고 거르기 적용을 확인한다. 수정 전 같은 locator의 30초 실패를 재현했으며, 제품은 열린 저장소 메뉴의 항목·개수·선택 함수를 최신 board에서 만든다. 기존 깊은 주소·새로고침·다른 프로젝트·없는 번호·WebKit·Reader 단언과 시한은 유지한다. 고정 sleep·재시도·시한 연장은 없다.
 - `node --test web/test/appIds.test.mjs`: 네 종류 ID·조사·문장 끝·5자리 번호·없는 번호, 주소·경로·낱말 경계와 프로젝트 있는/없는 할 일 주소를 확인한다.
 - `node web/e2e/web.e2e.mjs --spec 77-app-ids --workers 1`: 실제 host에서 thread·할 일·coordinator 질문·보고서를 만들고 대화·보고서 본문의 네 ID를 누른다. 직접 주소·프로젝트 주소·새로고침·보조 키 새 탭·뒤로, 코드 블록/주소/없는 번호 제외, 답한 질문·삭제/복원·완료 보관을 확인한다. WebKit 390px·Reader도 첫 주소·상세 닫기·보고서에서 할 일 이동·가로 넘침을 검사한다.
 - `cargo test -p aaa --test m13 doctor_files_brings_the_coordinator_guide_to_existing_projects --locked -- --exact`는 새 프로젝트와 `doctor files --fix`로 고친 기존 프로젝트의 ID만 쓰기·답할 질문 링크 규칙을 함께 검사한다. host의 `brief_text::tests::brief_order_and_memory_cap`도 새 brief의 규칙을 확인한다.
