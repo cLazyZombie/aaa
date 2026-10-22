@@ -9,7 +9,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEve
 import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X } from "lucide-react";
 import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
-import { Markdown, MarkdownImageContext } from "./Markdown";
+import { Markdown, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -233,6 +233,7 @@ function KindChip({ kind, done }: { kind: keyof typeof KIND_ICON; done?: string 
 
 /** 질문 본문 Markdown: 그림은 `files_base` 아래 `library/…`만, 링크한 library 파일은 새 탭(결과물처럼 sandbox) */
 function AskMarkdown({ base, children, className }: { base: string | null | undefined; children: string; className?: string }) {
+  const attachment = useCallback((src: string) => askFileUrl(base, src), [base]);
   const resolve = useCallback(async (src: string) => {
     const url = askFileUrl(base, src);
     return url === null ? null : ({ kind: "inline", url } as const);
@@ -242,13 +243,13 @@ function AskMarkdown({ base, children, className }: { base: string | null | unde
     if (url !== null) window.open(url, "_blank", "noopener,noreferrer");
   }, [base]);
   return (
-    <OpenFileContext.Provider value={open}>
+    <MarkdownAttachmentContext.Provider value={attachment}><OpenFileContext.Provider value={open}>
       <MarkdownImageContext.Provider value={resolve}>
         <div className={`ask-markdown${className ? ` ${className}` : ""}`} data-testid="ask-markdown">
           <Markdown>{children}</Markdown>
         </div>
       </MarkdownImageContext.Provider>
-    </OpenFileContext.Provider>
+    </OpenFileContext.Provider></MarkdownAttachmentContext.Provider>
   );
 }
 
@@ -362,8 +363,9 @@ function QuestionCard({
             <div className={`prompt-card-options${pictures ? " ask-choices has-pictures" : " ask-choices"}`}>
               {item.choices.map((c, i) => {
                 const checked = picks[n] === i;
-                const rest = choiceRest(c.body);
-                return (
+                const rest = choiceRest(c.body) ?? "";
+                const video = /\.(mp4|webm)(?:[?#\s)]|$)/i.test(rest);
+                const option = (
                   <button key={i} type="button" role="radio" aria-checked={checked} data-testid={`thread-ask-pick-${n + 1}${letter(i)}`}
                     className={`prompt-card-option ask-choice${c.description || rest ? " has-description" : ""}${checked ? " is-checked" : ""}`} disabled={off}
                     onClick={() => setPicks((ps) => ps.map((p, k) => (k === n ? (p === i ? null : i) : p)))}>
@@ -378,9 +380,10 @@ function QuestionCard({
                         {c.description && <span className="prompt-card-option-description">{c.description}</span>}
                       </span>
                     </span>
-                    {rest && <span className="ask-choice-rest"><AskMarkdown base={base}>{rest}</AskMarkdown></span>}
+                    {rest && !video && <span className="ask-choice-rest"><AskMarkdown base={base}>{rest}</AskMarkdown></span>}
                   </button>
                 );
+                return video ? <div key={i} className="ask-choice-video">{option}<AskMarkdown base={base}>{rest}</AskMarkdown></div> : option;
               })}
             </div>
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}

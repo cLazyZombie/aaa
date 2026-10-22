@@ -1745,7 +1745,7 @@ pub fn main() -> ExitCode {
         );
     }
     if let Cmd::ServiceRun { context, context_sha256 } = &cli.cmd {
-        return crate::install::service_dispatch(context, context_sha256);
+        return crate::restart::finish(crate::install::service_dispatch(context, context_sha256));
     }
     if let Cmd::InstallProbe { executor_sha256 } = &cli.cmd {
         let Some(state) = cli.state_dir.as_deref() else {
@@ -1783,7 +1783,7 @@ pub fn main() -> ExitCode {
         unsafe { std::env::set_var("AAA_STATE_DIR", d) };
     }
     match run(cli) {
-        Ok(code) => code,
+        Ok(code) => crate::restart::finish(code),
         Err(e) => {
             eprintln!("aaa: {}", aaa_common::redact::text(&format!("{e:#}")));
             ExitCode::from(1)
@@ -1824,7 +1824,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 aaa_config::paths::config_dir(),
                 aaa_config::paths::state_dir(),
                 None,
-                aaa_host::shutdown_signal(),
+                crate::restart::shutdown("host"),
             ))?;
             Ok(ExitCode::SUCCESS)
         }
@@ -3061,7 +3061,7 @@ fn agent_controlled(
         let supervised = stop.is_some();
         tokio::select! {
             _ = aaa_agent::link::run_with_state(agent.clone(), target, max, connection) => {}
-            _ = aaa_host::shutdown_signal(), if !supervised => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
+            _ = crate::restart::shutdown("agent"), if !supervised => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
             _ = supervised_stop(stop) => tracing::info!("서비스 agent 종료(세션은 session host가 유지한다)"),
         }
         anyhow::Ok(())
@@ -3789,6 +3789,20 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     use std::fmt::Write as _;
     for w in &t.warnings {
         let _ = writeln!(s, "경고: {w}");
+    }
+    if let Some(r) = &t.responsibility {
+        match r.state {
+            aaa_proto::ResponsibilityState::Detached => {
+                let _ = writeln!(
+                    s,
+                    "개발자 도구: launcher 책임 연결 끊김. 커밋·push·Handoff 뒤 보류하고 같은 머신에서 이어 한다"
+                );
+            }
+            aaa_proto::ResponsibilityState::Unknown => {
+                let _ = writeln!(s, "개발자 도구: macOS 책임 경로 확인 못함");
+            }
+            aaa_proto::ResponsibilityState::Launcher => {}
+        }
     }
     let group = t.stage.map_or_else(|| t.group.label(), |stage| stage.label());
     let adopted = if t.thread_kind == ThreadKind::Adopted { "(데려옴)" } else { "" };

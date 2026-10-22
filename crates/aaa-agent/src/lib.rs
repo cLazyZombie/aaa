@@ -29,6 +29,7 @@ mod plan;
 pub mod post;
 mod pr;
 mod quota;
+mod responsibility;
 mod settings_jobs;
 mod slash;
 pub mod threads;
@@ -804,6 +805,9 @@ impl Agent {
 
     pub fn sessions(&self) -> Vec<SessionInfo> {
         let mut v: Vec<_> = self.sessions.lock().unwrap().values().map(|e| e.info.clone()).collect();
+        for info in &mut v {
+            *info = self.labeled(info.clone());
+        }
         v.sort_by(|a, b| a.started_at_ms.cmp(&b.started_at_ms).then(a.id.cmp(&b.id)));
         v
     }
@@ -922,6 +926,7 @@ impl Agent {
             None => SessionState::Lost,
         };
         self.labeled(SessionInfo {
+            responsibility: None,
             id: spec.id.clone(),
             name: spec.spec.name.clone(),
             argv: spec.spec.argv.clone(),
@@ -944,6 +949,7 @@ impl Agent {
             info.name = label.clone();
             info.label = Some(label.clone());
         }
+        info.responsibility = responsibility::observe(&SessionPaths::new(&self.state, &info.id), &info);
         info
     }
 
@@ -2260,6 +2266,7 @@ mod tests {
             resolved_profile: None,
         };
         let info = SessionInfo {
+            responsibility: None,
             id: "s".into(),
             name: "s".into(),
             argv: spec.argv.clone(),

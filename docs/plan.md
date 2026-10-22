@@ -7463,6 +7463,37 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **착지 통합.** 승인 기준 origin/main `e2e2d5cf`의 마지막 §8.445·FRONT_API1.109·AGENT_LINK1.11·웹 E2E최대86(88파일)을 직접 확인했다. main의 설정 본문/공개 포트 변경/실행 모델 요약과 기존 시험 수리를 보존한다. 이 후보는 빈 §8.446을 쓰며 API/link/E2E 번호를 올리지 않는다. 최신 main 통합본의 전체 ci-local·공개 검사·Linux/Windows strict cross clippy·Windows release 조건 빌드 뒤 no-ff로 착지한다. 게시 tag/release는 별도 사용자 답 전에는 만들지 않는다.
 
+
+### 8.447 질문·본문 끝단의 문서 스크롤 격리(t-0766)
+
+- **목적·원인.** t-0748의 목록 높이 제한 뒤에도 긴 질문이 쓰는 공통 `.thread-body`에는 끝단 스크롤 전달 차단이 없고 앱 문서는 overflow가 열려 있다. Mac Safari에서 끝까지 내린 뒤 문서가 함께 밀리면 왼쪽 목록도 올라가고 아래 빈 영역이 생긴다. 질문 본문 안에서만 굴리고 바깥 문서는 유지한다.
+- **경계.** 앱이 있는 html·body만 overflow를 잠그고 앱 grid도 화면 높이 안의 넘침을 가둔다. 로그인·pairing 화면은 입력 초점을 따라 문서가 움직이는 기존 동작을 유지한다. 질문·보고서·thread의 공통 본문, 할 일 목록·상세, 설정 목록에는 overscroll contain을 적용한다. 이미 격리된 설정 본문·대화·왼쪽 목록은 유지한다. 휠·touch 이벤트의 전역 취소나 강제 scrollTo는 추가하지 않는다.
+- **검증.** E2E87에서 실제 host·agent와 그림·표가 긴 질문을 준비해 Chromium·WebKit × 데스크톱·휴대폰 × 밝음·어두움의 8조합으로 질문·Markdown 보고서·thread·할 일·설정의 양 끝을 검사하고 캡처한다. 본문 높이·문서 잠금·끝단 wheel 뒤 바깥 위치와 왼쪽 목록 scrollTop을 확인한다. Safari OS 고무줄의 headless 재현 한계와 그림 lazy 로드 대기는 [testing](testing.md)에 기록한다. FRONT_API 1.109·AGENT_LINK 1.11은 유지한다. 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.
+
+- **착지 통합.** 승인 기준 origin/main `4fe5937c`의 마지막 §8.446·FRONT_API 1.109·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 직접 확인했다. main의 공개 포트 변경·실행 모델 요약·Windows 한 줄 설치와 부분 적용 재개를 보존한다. 이번 기획은 빈 §8.447, 새 E2E87(89파일)을 쓰고 API·link는 유지한다. 자기 worktree 전용 target으로 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI 감시는 별도로 맡으며 여기서는 기다리지 않는다.
+
+### 8.448 질문·보고 본문 영상과 WebKit 첨부 인증(t-0767)
+
+- 사용자 10-22: 질문 카드의 영상 링크에서 `unauthorized`와 깨진 한글 오류를 확인했다. 영상은 카드에서 바로 재생하고 agent 안내에도 문법을 넣는다.
+- `![시안](library/preview/a.png)`와 나란히 `![시안 영상](library/preview/a.mp4)`를 쓴다. mp4·webm의 그림 문법과 기존 링크 문법 모두 본문에 controls·muted·playsinline 플레이어를 표시한다. metadata를 미리 읽고 재생 단추 한 번으로 그 자리에서 시작한다. 자동 재생·반복은 기본으로 켜지 않는다. 선택지 안 영상 조작은 답을 선택하지 않는다. coordinator 안내 원문·thread brief·library 문서에 형식·5~10초/10 MiB 권장과 예시를 둔다.
+- 웹 응답의 질문 `files_base`는 인증한 기기·질문/hash 또는 답한 사본에 묶인 2시간 `/v/<권한>/` 경로다. 목록 갱신은 같은 기기의 유효 경로를 재사용하고, HTTP 응답과 WebSocket thread 사건에 같은 변환을 적용한다. 기존 CLI·DB의 인증 API 경로는 유지한다. 읽을 때마다 원래 질문 hash·사본·안전한 상대 경로를 검사한다. 기기 폐기·만료 후 읽기 거부와 Range·HEAD를 유지한다. 질문 첨부 경로를 보고서 task 링크로 풀지 않는다.
+- origin 없는 sandbox·앱 API 차단·쿠키 없는 GET/HEAD를 유지한다. WebKit의 opaque origin `'self'` 판정 문제를 피하도록 보고서 리소스 CSP는 정확한 origin과 자기 `/v/<권한>/` 폴더를 명시하고 frame-ancestors는 self를 유지한다. JSON 오류는 `application/json; charset=utf-8`이다. 질문 HTML의 `#A` 같은 조각을 보존한다.
+- 새 E2E88은 실제 H.264 영상으로 Chromium·WebKit × 데스크톱·휴대폰의 카드·선택지·HTML iframe·새 탭·직접 MP4·보고 본문을 검사한다. ready/play/timeupdate/seeked로 끝내며 고정 sleep·실패 재시도는 없다. 별도 실기 Mac Safari·iPhone에서의 재생은 headless WebKit 결과와 구별한다. FRONT_API 1.109·AGENT_LINK 1.11의 타입은 그대로이며 웹 `files_base`의 읽기 경로 구현만 바뀐다. 번호는 착지 때 main과 다시 대조한다.
+
+- **착지 통합.** 승인 기준 origin/main `8e2581a6`의 마지막 §8.447·FRONT_API 1.109·AGENT_LINK 1.11·E2E87(89파일)을 확인했다. 공개 포트·저장 링크 이전, 실행 모델 요약, Windows 한 줄 설치·부분 적용 재개, 본문 스크롤 격리를 보존한다. 이번 변경은 §8.448과 E2E88(90파일)을 사용하고 API·link는 유지한다. 자기 worktree의 실제 target으로 전체 ci-local·공개 검사·Linux Clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI는 기다리지 않고 보고한다.
+
+### 8.449 재시작 뒤 pane 책임 경로와 launcher 수명(t-0763)
+
+- **목적.** macOS 서비스 재시작이 불변 `aaa-launcher`까지 종료하면 기존 session-host가 살아 있어도 개발자 도구 책임 연결이 끊긴다. 첫 실행 지연만으로 권한을 추측하지 않고 실제 책임 PID·경로를 관측한다. 자동 보류·기존 pane 강제 종료는 하지 않는다.
+- **관측과 복구 안내.** agent가 시작·session-host 재연결·host 재연결·세션 상태 갱신 때 `responsibility_get_pid_responsible_for_pid`와 `proc_pidpath`를 읽는다. session meta의 시작 시각·child PID가 현재 정보와 같은지 확인한다. `SessionInfo`·`PaneView`·`ThreadView.responsibility`는 선택 필드이며 `launcher`·`detached`·`unknown`을 구별한다. 비 macOS·종료 pane·옛 agent는 생략한다. `launcher`는 번들의 실제 실행 경로가 관측됐다는 뜻이며 TCC 승인 판정은 아니다.
+- **화면과 CLI.** 작업 목록·터미널 머리에 책임 경고를 표시하고 thread 보고에는 정리·커밋·push·Handoff 뒤 보류→같은 머신 이어 하기 안내를 둔다. 조작 기기의 「정리 후 새 pane으로」는 기존 보류 창을 열며 보기 기기는 안내만 본다. PID·경로는 접힌 상세로 둔다. 기존 보류·재개 권한과 저장·대화 보존 계약을 그대로 쓴다. `thread show` 글 출력에는 안내를 싣고 `pane list`는 기존 JSON 한 줄 계약으로 책임 관측값을 싣는다.
+- **launcher 보존 재시작.** launcher 자체와 plist를 바꾸지 않는다. launcher의 실제 자식 worker만 신호 구독 뒤 인스턴스 state의 0700 폴더에 0600 준비 기록을 쓴다. `service restart`는 launchctl이 관측한 launcher PID와 worker의 부모·UID·boot·커널 생성 시각을 대조한 뒤 `launchctl kill SIGUSR2`를 보낸다. launcher가 전달한 신호로 backend·runtime을 정상 정리하고 worker가 원래 argv로 현재 실행 파일을 `exec`한다. launcher·worker PID는 그대로이며 backend 실행 인스턴스·연결 generation은 새것이다. 독립 배포 감시는 기존 실행 인스턴스와 SHA 검사를 유지한다.
+- **경계.** exec 사이에는 준비 기록을 보존하고 SIGUSR2를 mask해 다음 image의 handler가 준비된 뒤 푼다. 옛 worker는 준비 기록이 없어 최초 한 번 기존 `kickstart -k`로 전환하며 기존 pane의 책임 경고를 안내한다. 잘못된 준비 기록은 거부한다. 설치 `service-run`은 승인 SHA를 준비 기록·재시작 시점·새 진입점에서 확인하며, 바뀐 파일은 새 install 승인 전 재시작하지 않는다. 외부의 직접 `kickstart -k`·bootout·launcher 강제 종료는 기존 pane 연결을 보존할 수 없으며 재연결 관측으로 경고한다.
+- **회귀.** Rust restart 시험은 launcher 소스 그대로인 격리 fixture(또는 명시한 기존 launcher를 읽기 전용 사용) 아래 실제 agent 파일을 다른 SHA로 바꾸고 CLI 재시작 입구를 탄다. launchctl만 자기 launcher PID 하나로 대체한다. 기존 pane 생존·새 pane·launcher 바이트 불변·낡은 PID 신원과 다른 승인 SHA 거부·launcher 종료 뒤 단절 재감지를 확인한다. 새 C·Rust 소스에 nonce를 넣고 SHA와 첫/재실행 시간, cargo/run·build.rs의 실제 책임자를 남긴다. 시간은 관측값이며 CI의 권한 승인 합격 조건으로 쓰지 않는다.
+- **웹 회귀.** E2E89은 실제 host·agent·thread 위에 책임 관측값만 대체해 Chromium 1280/320px·WebKit 390px Reader에서 정상/끊김/조회 실패·접힌 경로·정리 창·가로 넘침·상태 무변경을 확인한다. 선택 필드만 추가해 FRONT_API 1.109·AGENT_LINK 1.11·SESSION_IPC를 유지한다. 승인 기준 main과 대조해 기획·E2E 번호를 정리했다.
+
+- **착지 통합.** 승인 기준 origin/main `212d8425`의 마지막 §8.448·FRONT_API 1.109·AGENT_LINK 1.11·E2E88(90파일)을 확인했다. 공개 포트·실행 모델 요약·Windows 설치·본문 스크롤·보고서 동영상을 보존한다. 이번 변경은 §8.449·E2E89(91파일)을 쓰고 API·link·SESSION_IPC 번호는 유지한다. 자기 worktree target으로 전체 ci-local·공개 검사·Linux clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. 운영 host·agent는 배포 때 coordinator가 전환하며 여기서 재시작하지 않는다.
+
 ### 8.450 설정 메뉴의 왼쪽 패널 배치와 목록 행 높이(t-0771)
 
 - 설정을 열면 데스크톱의 왼쪽 패널이 설정 메뉴로 바뀐다. 공통 머리·바닥·폭 조절을 사용하고, 행의 아이콘 칸·높이·여백·색·선택 표시를 다른 목록과 맞춘다. 앞 패널의 상태는 숨겨 보존하고 다른 활동 막대를 누르면 해당 패널로 돌아간다. 접혀 있던 사이드바도 설정을 열 때 펼친다.

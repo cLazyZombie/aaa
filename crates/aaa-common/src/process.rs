@@ -9,6 +9,36 @@
 /// 조상을 이만큼까지만 거슬러 오른다(고리·깊은 사슬)
 const MAX_DEPTH: usize = 64;
 
+/// macOS 책임 PID. 비공개 진단 API가 없거나 조회에 실패하면 모름이다.
+/// PPID·TCC preflight·실행 속도로 책임자를 추측하지 않는다.
+pub fn responsible(pid: u32) -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        if pid == 0 || pid > i32::MAX as u32 {
+            return None;
+        }
+        // SAFETY: 조회만 하는 libSystem ABI. 지원하지 않는 OS는 symbol 없음으로 끝낸다.
+        unsafe {
+            let symbol = libc::dlsym(libc::RTLD_DEFAULT, c"responsibility_get_pid_responsible_for_pid".as_ptr());
+            if symbol.is_null() {
+                return None;
+            }
+            let lookup: unsafe extern "C" fn(i32) -> i32 = std::mem::transmute(symbol);
+            u32::try_from(lookup(pid as i32)).ok().filter(|p| *p > 0)
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// 등록 대상 launcher 번들의 실제 image 경로 모양. 권한 승인 여부와는 별개다.
+pub fn is_launcher(path: &std::path::Path) -> bool {
+    path.ends_with("aaa-launcher.app/Contents/MacOS/aaa-launcher")
+}
+
 /// `pid`의 조상(부모부터, 1·0에서 멈춘다. 1은 넣는다)
 pub fn ancestors(pid: u32) -> Vec<u32> {
     #[cfg(windows)]

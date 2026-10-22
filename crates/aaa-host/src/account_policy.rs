@@ -265,6 +265,7 @@ mod tests {
         assert_eq!(duplicate.unwrap_err().code, ErrorCode::BadRequest);
         assert_eq!(conn.pending.lock().unwrap().len(), 1);
         let info = SessionInfo {
+            responsibility: None,
             id: "new".into(),
             name: spec.name.clone(),
             argv: spec.argv.clone(),

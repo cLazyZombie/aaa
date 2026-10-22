@@ -107,7 +107,7 @@ impl Manager {
             job.state = if restarted { DeployState::Completed } else { DeployState::Interrupted };
             job.result = Some(
                 if restarted {
-                    "새 agent 프로세스와 실행 파일 SHA-256을 확인했다"
+                    "새 agent 실행 인스턴스와 실행 파일 SHA-256을 확인했다"
                 } else {
                     "이전 agent가 실행 중에 끝났다. 다시 실행하지 않았다. 실행 파일과 서비스를 확인한다"
                 }

@@ -66,3 +66,7 @@
 .unpark-way { color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
 .unpark-way.mono { font-family: var(--font-mono); }
 .unpark-option.is-blocked { color: var(--text-dim); }
+
+.responsibility-banner > div { min-width: 0; }
+.responsibility-banner p { margin: 4px 0; }
+.responsibility-path { overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--fs-xs); }

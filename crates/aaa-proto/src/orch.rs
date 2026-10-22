@@ -969,6 +969,10 @@ pub enum ReportAttention {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
+    /// 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub responsibility: Option<crate::Responsibility>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub account_selection: Option<crate::AccountSelection>,

@@ -17,6 +17,22 @@
 - 전체 웹 회귀의 E2E03은 iPad 820px에서 본문 안의 단축키 tab을 찾던 locator 한 곳이 남아 실패했다. 앱 drawer 기준에 따라 왼쪽 navigation에서 찾도록 갱신한 뒤 E2E03 전체가 통과했다. 키 전달·설정 저장·터미널 누출·크기 단언은 그대로다.
 
 
+## 질문·보고 영상 재생(t-0767, plan §8.448)
+
+- `nice -n 15 cargo test --locked -p aaa-host --lib web::`: 기존 인증 경로를 cookie 없이 열었을 때 세 종류 모두 401·UTF-8 JSON·한글 원문인지 확인한다. 새 첨부 cap의 재사용·만료·기기 폐기·보고서 주소 변환 거부와 리소스 CSP의 정확한 폴더 제한을 검사한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 88-report-video --workers 1`: 실제 host·agent·publish·coordinator post·thread 보고를 쓴다. 외부 자료 없는 2초 H.264 High/yuv420p/faststart 영상은 `web/e2e/fixtures/report-video.mp4`다. Chromium·WebKit 각각 1280×800·390×844에서 본문과 선택지의 첫 재생 단추·metadata 수신·재생 뒤 실제 decode·시간 전진·seeked·소리 없음·인라인·자동 재생 없음·답 선택 보존·가로 넘침을 검사한다.
+- 같은 질문의 HTML 링크는 `/v/…/library/…/index.html#A`다. iframe과 새 탭의 실제 영상 decode, cookie 없는 직접 MP4·206 Range·MIME·Accept-Ranges, HTML의 자기 파일 GET·cookie/API/다른 cap 차단, 보고 Markdown의 재생, 새 보고 뒤 답한 영상 원본 bytes를 확인한다. coordinator AGENTS.md와 thread brief에 영상 문법도 확인한다. 앱 API 인증·sandbox를 풀거나 영상 객체·play를 가짜로 만들지 않는다.
+- E2E53의 웹 `files_base`는 `/v/<48자리 hex>/`여야 한다. 답 내용·원문·사본 보존 검사를 유지하고, cookie 없는 읽기의 MIME·전체 바이트가 원본 그림과 같은지도 확인한다.
+- 완료 사건은 host 보고 hash·DOM·loadedmetadata/timeupdate/seeked다. 실패 뒤 시한 연장·재시도 없이 원인을 조사한다. 관련 E2E21·59·69·74와 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사로 회귀를 확인한다. headless WebKit은 실제 macOS Safari·iPhone의 출력 장치·UI를 보증하지 않는다.
+
+
+## 본문 끝단 스크롤 격리(t-0766, plan §8.447)
+
+- E2E87은 실제 격리 host·agent의 긴 질문(그림 16개·표), Markdown 보고서·thread 보고, 긴 할 일 상세와 단축키 설정을 연다. Chromium·WebKit 각각 1280×720·390×844, 밝음·어두움의 8조합을 검사한다. 질문의 lazy 그림은 각각 화면에 보인 뒤 decode 완료를 기다린다.
+- 본문의 높이 제한·가로 넘침, 데스크톱에서 위·아래 끝의 실제 wheel 수신과 렌더링 사건 뒤 문서 좌표·visualViewport·앱·왼쪽 목록·본문 틀의 위치 및 목록 scrollTop 보존을 확인한다. 끝단에서도 본문 scrollTop은 끝에 남아야 한다. 휴대폰은 실제 overflow의 scrollTop과 scroll 사건으로 이동·양 끝을 확인한다. Playwright mobile WebKit은 wheel/swipe를 지원하지 않으므로 손가락 관성 스크롤을 재현했다고 주장하지 않는다.
+- headless WebKit은 macOS Safari의 OS 고무줄 효과를 온전히 재현하지 못한다. 따라서 스크롤 전달 차단과 앱이 있는 html·body의 overflow 잠금도 함께 단언한다. ccc4a985 원본 번들에서 질문의 전달 차단 누락으로 RED를 확인한다. 로그인 화면에는 문서 잠금을 적용하지 않으며 기존 E2E01·06과 입력·키보드·viewport 회귀를 유지한다.
+- 고정 sleep·시한 연장·실패 재시도 없이 DOM·그림 decode·wheel·렌더링 사건으로 끝낸다. `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 87 --workers 1`과 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행한다.
+
 ## 작업 요약 카드의 실행 모델(t-0751, plan §8.445)
 
 - `node --test web/test/summaryCard.test.mjs`: 관측 모델·생각 수준의 표시, profile과 실제 모델의 불일치, 미확인 값과 옛 host, 알려진 계열의 짧은 이름·알 수 없는 이름 보존을 검사한다.
@@ -2438,3 +2454,15 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `nice -n 15 cargo test --locked -p aaa --test install recovery::`는 닫힌 실제 host 등록 창과 실제 PTY/서명/파일/journal에서 status ID/안내·명시적 재동의·같은 transaction을 확인한다. Windows 전용 같은 묶음은 실제 powershell.exe/pwsh.exe의 한 줄 입구가 외부 콘솔을 native 검토/승인/파일 적용까지 유지하는지 검사하며 서비스는 none이다. 새 production flag/export나 실제 운영 서비스 등록은 없다.
 - `nice -n 15 cargo test --locked -p aaa --bin aaa install::engine::execution::tests::legacy_hook_alias_approval_keeps_its_signature_id_and_scope_through_status_and_resume -- --exact`는 서명 원문/ID/범위를 유지하는 옛 lexical hook 호환과 다른 target/SHA 거부를 검사한다. `install::engine::transaction::references::tests::`는 명시 단독 repair의 최초 원본 복원과 다른/공유 owner의 무쓰기 거부를 검사한다. 암호/issuer key가 포함된 실험실 전체를 로그에 출력하거나 library로 복사하지 않는다.
 - 최초 RED와 수리 GREEN을 보존하고 canonical 비교/owner 제한을 각각 망가뜨린 변형 실패를 확인한다. 전체 ci-local·공개 검사와 Windows/Linux strict cross, dev 없는 Windows release build 뒤 착지 창을 기다린다. Windows 실제 판정은 CI이며 교차 빌드나 로컬 PowerShell로 대신하지 않는다.
+
+## pane 책임 경로와 launcher 보존 재시작(t-0763, plan §8.449)
+
+- `cargo test -p aaa --test restart --locked`: macOS에서 실제 launcher·host·agent·session-host·CLI를 쓴다. launchctl 호출만 격리된 자기 launcher에 신호를 보내는 script로 대체하며 운영 launchd 등록은 하지 않는다. fixture launcher는 기존 C 소스를 그대로 빌드하고, `AAA_RESTART_TEST_LAUNCHER`를 주면 그 기존 파일을 읽기 전용으로 사용한다. 등록된 launcher 바이너리를 바꾸지 않는다.
+- 서로 다른 SHA인 agent 사본으로 바꾼 뒤 CLI 재시작으로 launcher·worker PID와 기존 pane이 유지되는지 확인한다. 기존 pane·새 pane에서 고유 코드를 넣은 C·Rust 실행 파일과 cargo run·build.rs의 실제 책임 PID를 확인하고 첫/재실행 시간을 보존한다. 시험 도구 `scripts/pane-responsibility-probe.py`의 출력은 작업 저장소 `target/restart-probes` 아래에 둔다(임시 OS 폴더의 Cargo target은 쓰지 않는다). 권한 미등록 CI에서는 속도 상한을 합격 조건으로 삼지 않는다.
+- 잘못된 worker 생성 시각·승인과 다른 실행 파일은 launchctl 변경 호출 전에 거부한다. launcher를 직접 종료하는 별도 단계는 pane을 남기고 새 agent의 재연결에서 `detached`가 갱신되는지 확인한다. 시험은 준비 기록·host 사건·명령 완료 출력으로 끝낸다. 셸 화면은 끝 공백을 잘라 내므로 `$ ` 문자열을 준비 사건으로 기다리지 않는다.
+- `cargo test -p aaa-agent --lib responsibility --locked`는 실제 경로 분류·조회 실패를 확인한다. 기존 직렬화/TypeScript 계약 검사는 선택 필드의 이전 판 호환을 유지한다.
+- E2E89은 실제 host·agent·thread를 사용하고 관측값만 응답 경계에서 바꾼다. Chromium 1280/320px, WebKit 390px Reader의 경고·접힌 경로 상세·정리 창·가로 넘침·보기 권한·보류 무변경을 확인하고 캡처한다. 보고서 iframe이 필요 없는 이 시험은 「사람을 기다림」 fixture로 sandbox/ServiceWorker 주입을 분리한다. 실제 보류·저장·이어 하기는 기존 E2E85와 함께 검증한다. 목록과 터미널 표지도 직접 확인하며, 응답 경계의 route handler는 context를 닫기 전 `unrouteAll({behavior: "wait"})`로 완료를 기다린다.
+- 최초 회귀에서 준비 기록 상위 폴더 누락을 재현해 수정했다. 새 fixture launcher가 시작하지 않은 실행은 해당 PID의 syspolicyd YARA 오류·종료와 직전 DetachedSignatures EMFILE을 기록했다. 시스템 설정·시한·기대값을 바꾸지 않고 기존 등록 launcher를 사용하는 별도 경로에서 책임·첫 실행을 검증한다. 준비 기록 신원은 파일 경로 문자열 대신 커널 생성 시각·부모·UID·boot로 대조한다(원자 교체된 옛 실행 파일의 경로 조회를 신원으로 쓰지 않는다).
+- 전체 검사에서 기존 task 경고 유일성 시험이 새 책임 안내의 `경고:` 접두어 때문에 실패했다. 책임 안내를 별도 `개발자 도구:` 줄로 표시해 기존 task 경고 계약·단언은 유지하며, 새 restart 회귀가 `pane list`의 기존 무인자 JSON 출력에 책임 관측값이 포함되는지 확인한다.
+- 추가 CLI 시험의 최초 문구 단언은 pane 명령의 기존 JSON 전용 계약을 잘못 가정했다. 불필요한 pane 글 출력 분기를 없애고, `--json` 없는 실제 CLI 출력도 JSON 한 줄이며 책임 관측값을 포함하는지 검사한다. thread 글 출력의 별도 진단과 웹 표지는 유지한다.
+- 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Linux 대상 clippy다. 착지 검증은 자기 worktree target만 쓰며 운영 host·agent 재시작은 배포 때 coordinator가 한다.

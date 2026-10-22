@@ -70,6 +70,7 @@ async fn codex_trust_detection_question_and_answer_share_the_front_path() {
             identity: None,
             harness: vec![event],
             sessions: vec![SessionInfo {
+                responsibility: None,
                 id: "s".into(),
                 name: "codex".into(),
                 argv: vec!["codex".into()],
@@ -428,6 +429,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         };
         util::write_json(&paths.spec(), &spec).unwrap();
         let info = SessionInfo {
+            responsibility: None,
             id: sid.into(),
             name: "codex".into(),
             argv: vec!["codex".into()],

@@ -1216,6 +1216,7 @@ impl Host {
             None
         };
         PaneView {
+            responsibility: p.info.responsibility.clone(),
             account: None,
             id: id.to_string(),
             machine_id: p.machine_id.clone(),
@@ -3833,6 +3834,7 @@ mod pairing_tests {
             thread: "t-0001".into(),
             until,
             device: device.map(str::to_string),
+            attachment: None,
         };
         h.view_caps.lock().unwrap().insert("dev".into(), cap(Some(&id)));
         h.view_caps.lock().unwrap().insert("cli".into(), cap(None));
@@ -3952,6 +3954,7 @@ mod exit_tests {
 
     fn info(argv: &[&str], state: SessionState, role: Option<aaa_proto::Role>) -> SessionInfo {
         SessionInfo {
+            responsibility: None,
             id: "s".into(),
             name: "s".into(),
             argv: argv.iter().map(|a| a.to_string()).collect(),

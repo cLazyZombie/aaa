@@ -583,6 +583,7 @@ async fn lost_launch_reply_reconciles_only_exact_machine_name_and_cwd() {
     assert_eq!(recovered.load("demo", &tid).unwrap().status, ThreadStatus::Starting);
     assert_eq!(recovered.open_worker_threads("demo"), 1);
     let info = aaa_proto::SessionInfo {
+        responsibility: None,
         id: "wrong".into(),
         name: format!("demo/{tid}"),
         argv: vec!["fake".into()],

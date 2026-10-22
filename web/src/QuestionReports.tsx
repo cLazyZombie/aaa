@@ -7,6 +7,7 @@ import { ReportMarkdown } from "./ReportsView";
 import { useFrameImages, useLightbox } from "./Lightbox";
 import { questionMaterials, type QuestionMaterial } from "./questionMaterials";
 import "./QuestionReports.css";
+import { ReportVideo } from "./ReportVideo";
 
 type Open = { key: string; state: "loading" } | { key: string; state: "error"; message: string } | { key: string; state: "ready"; view: LibraryView | null; url: string | null };
 export function QuestionReports(props: { items: ThreadQuestion[]; body?: string | null; reportId?: string | null; project?: string; base?: string | null }) {
@@ -38,7 +39,7 @@ export function QuestionReports(props: { items: ThreadQuestion[]; body?: string 
       </div>
       {open.state === "loading" ? <p role="status">보고서를 읽고 있다…</p> : open.state === "error" ? <p role="alert">{open.message}</p>
         : /\.(wav|mp3|ogg|m4a|flac)$/.test(media) ? <audio controls preload="none" src={url!} data-testid="question-audio" />
-        : /\.(mp4|webm|mov)$/.test(media) ? <video controls preload="none" src={url!} />
+        : /\.(mp4|webm|mov)$/.test(media) ? <ReportVideo src={url!} label={chosen?.label ?? "시안 영상"} />
         : /\.(png|jpe?g|svg|webp|gif)$/.test(media) ? <img src={url!} alt={chosen?.label ?? "시안"} />
         : url ? <iframe ref={frame} src={url} title={chosen?.label ?? "보고서"} sandbox={LIBRARY_SANDBOX} referrerPolicy="no-referrer" data-testid="question-report-frame" />
         : open.view?.report ? <ReportMarkdown text={open.view.report} base={open.view.base} onImages={lightbox.open} />

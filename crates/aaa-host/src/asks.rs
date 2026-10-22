@@ -665,11 +665,21 @@ impl Host {
     /// 열린 coordinator 질문의 프로젝트 library 파일
     pub(crate) fn request_file(&self, project: &str, item: &str, hash: &str, path: &str) -> Result<PathBuf, ErrorBody> {
         let open = self.user_requests(project)?;
-        if !open.iter().any(|r| r.id == item && r.questions.as_ref().is_some_and(|q| q.report_hash == hash)) {
+        let Some(request) =
+            open.iter().find(|r| r.id == item && r.questions.as_ref().is_some_and(|q| q.report_hash == hash))
+        else {
             return Err(err(ErrorCode::NotFound, "열린 post 질문이 아니다"));
-        }
+        };
         if !path.starts_with("library/") {
             return Err(err(ErrorCode::BadRequest, "library/ 아래 경로만 연다"));
+        }
+        // 질문에 넣은 보고서 폴더만 읽는다. 같은 프로젝트의 다른 보고서를 cap으로 열지 않는다.
+        let rel = &path["library/".len()..];
+        if !library_refs(&request.body).iter().any(|r| match r.split_once('/') {
+            Some((folder, _)) => rel.starts_with(&format!("{folder}/")),
+            None => rel == r,
+        }) {
+            return Err(err(ErrorCode::NotFound, "질문에 첨부한 자료가 아니다"));
         }
         file_under(&self.project_dir(project)?, path)
     }
