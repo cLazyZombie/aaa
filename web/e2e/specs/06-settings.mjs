@@ -3,10 +3,128 @@
 
 import path from "node:path";
 import {
-  shots, root, aaa, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
+  shots, root, aaa, domIs, webkit, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("화면·고정폭·터미널 글꼴: 즉시 적용·없는 글꼴 대체·아이콘 우선·기기별 저장·새로고침·기본값 복원(Chromium 1280·WebKit 390)", async () => {
+    const mobileBrowser = await webkit.launch({ headless: true });
+    try {
+      for (const [engine, width, name] of [[browser, 1280, "desktop"], [mobileBrowser, 390, "phone"]]) {
+        const pg = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 })).page;
+        try {
+          const fields = [
+            { label: "화면 글꼴", page: "모양", key: "aaa:ui-font-family", variable: "--font-ui", family: '"E2E Missing UI", serif' },
+            { label: "고정폭 글꼴", page: "모양", key: "aaa:mono-font-family", variable: "--font-mono", family: '"E2E Missing Mono", monospace' },
+            { label: "터미널 글꼴", page: "터미널", key: "aaa:terminal-font-family", family: '"E2E Missing Term", monospace' },
+          ];
+          const read = () => pg.evaluate(() => {
+            const style = getComputedStyle(document.documentElement);
+            const code = document.createElement("code");
+            code.textContent = "M0 경로";
+            document.body.append(code);
+            const mono = getComputedStyle(code).fontFamily;
+            code.remove();
+            return {
+              ui: getComputedStyle(document.body).fontFamily,
+              mono,
+              term: getComputedStyle(document.querySelector(".xterm-rows")).fontFamily,
+              uiDefault: style.getPropertyValue("--font-ui-default").trim(),
+              monoDefault: style.getPropertyValue("--font-mono-default").trim(),
+            };
+          });
+          await pg.locator(".xterm-rows").waitFor();
+          await pg.evaluate(async () => { await document.fonts.ready; await new Promise(requestAnimationFrame); });
+          const baseline = await read();
+          const close = async () => {
+            await pg.keyboard.press("Escape");
+            await pg.getByRole("dialog", { name: "설정" }).waitFor({ state: "detached" });
+          };
+          for (const f of fields) {
+            const dialog = await openSettings(pg, f.page);
+            const input = dialog.getByRole("textbox", { name: f.label, exact: true });
+            if (await input.inputValue() !== "") throw new Error(`${name}: 다른 기기의 ${f.label}이 넘어왔다`);
+            // 없는 이름만 적으면 기존 목록과 같은 폭으로 그린다.
+            await input.fill('"E2E Missing Font"');
+            await input.press("Enter");
+            if (f.variable) {
+              const metrics = await pg.evaluate((variable) => {
+                const style = getComputedStyle(document.documentElement);
+                const canvas = document.createElement("canvas").getContext("2d");
+                const size = (family) => { canvas.font = `16px ${family}`; return canvas.measureText("MWii 012 한글").width; };
+                const base = style.getPropertyValue(`${variable}-default`);
+                return [size(style.getPropertyValue(variable)), size(base)];
+              }, f.variable);
+              if (Math.abs(metrics[0] - metrics[1]) > 0.01) throw new Error(`${name}: ${f.label} 기본 목록 대체 실패 ${metrics}`);
+            }
+            await input.fill(f.family);
+            await input.press("Enter");
+            if (await pg.evaluate((key) => localStorage.getItem(key), f.key) !== f.family) throw new Error(`${name}: ${f.label} 저장 실패`);
+            await close();
+          }
+          await domIs(pg, "터미널 글꼴 적용", () => getComputedStyle(document.querySelector(".xterm-rows")).fontFamily.includes("E2E Missing Term"));
+          const chosen = await read();
+          const check = (value) => {
+            if (!value.ui.startsWith('"E2E Missing UI", serif,') || !value.ui.endsWith(baseline.ui)) throw new Error(`${name}: 화면 목록 ${value.ui}`);
+            if (!value.mono.startsWith('"Symbols Nerd Font Mono", "E2E Missing Mono", monospace,') || !value.mono.endsWith(baseline.mono)) throw new Error(`${name}: 아이콘·기본 목록 ${value.mono}`);
+            if (!value.term.includes('"E2E Missing Term", monospace') || !value.term.includes("Meslotendard")) throw new Error(`${name}: 터미널 목록 ${value.term}`);
+          };
+          check(chosen);
+          // 같은 브라우저의 다른 탭은 storage 사건을 따르고, 새 기기는 값을 물려받지 않는다.
+          const tab = await pg.context().newPage();
+          await tab.goto(pg.url());
+          await tab.getByTestId("machine-labA").waitFor({ state: "attached" });
+          const dialog = await openSettings(pg, "모양");
+          await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).fill('"E2E Other Tab", serif');
+          await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).press("Enter");
+          await domIs(tab, "다른 탭 화면 글꼴 적용", () => getComputedStyle(document.body).fontFamily.startsWith('"E2E Other Tab", serif,'));
+          await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).fill(fields[0].family);
+          await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).press("Enter");
+          await close();
+          await tab.close();
+          const other = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 })).page;
+          try {
+            const values = await other.evaluate((keys) => keys.map((key) => localStorage.getItem(key)), fields.map((f) => f.key));
+            if (values.some((v) => v !== null)) throw new Error(`${name}: 다른 기기에 글꼴이 공유됐다`);
+          } finally { await other.context().close(); }
+          await pg.reload();
+          await pg.getByTestId("machine-labA").waitFor({ state: "attached" });
+          await domIs(pg, "재접속 터미널 글꼴", () => getComputedStyle(document.querySelector(".xterm-rows")).fontFamily.includes("E2E Missing Term"));
+          check(await read());
+          for (const section of ["모양", "터미널"]) {
+            const dialog = await openSettings(pg, section);
+            const last = fields.filter((f) => f.page === section).at(-1);
+            await dialog.getByRole("textbox", { name: last.label, exact: true }).scrollIntoViewIfNeeded();
+            await dialog.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))));
+            const overflow = await dialog.evaluate((el) => [...el.querySelectorAll("input, button")].filter((e) => {
+              const r = e.getBoundingClientRect(); return r.width && (r.right > innerWidth + 0.5 || r.left < -0.5);
+            }).map((e) => e.getAttribute("aria-label") ?? e.textContent));
+            if (overflow.length) throw new Error(`${name}: 설정 가로 넘침 ${overflow}`);
+            await shot(pg, `${name}-font-families-${section === "모양" ? "appearance" : "terminal"}`);
+            for (const f of fields.filter((f) => f.page === section)) {
+              const input = dialog.getByRole("textbox", { name: f.label, exact: true });
+              if (await input.inputValue() !== f.family) throw new Error(`${name}: ${f.label} 새로고침 복원 실패`);
+              await dialog.getByRole("button", { name: `${f.label} 기본값으로`, exact: true }).click();
+              if (await input.inputValue() !== "" || await pg.evaluate((key) => localStorage.getItem(key), f.key) !== null) throw new Error(`${name}: ${f.label} 기본값 복원 실패`);
+            }
+            await close();
+          }
+          await domIs(pg, "기본 터미널 복원", (family) => getComputedStyle(document.querySelector(".xterm-rows")).fontFamily === family, baseline.term);
+          const restored = await read();
+          if (restored.ui !== baseline.ui || restored.mono !== baseline.mono) throw new Error(`${name}: 기본 화면·고정폭 복원 실패`);
+          await pg.reload();
+          await pg.getByTestId("machine-labA").waitFor({ state: "attached" });
+          await domIs(pg, "새로고침 뒤 기본 터미널", (family) => getComputedStyle(document.querySelector(".xterm-rows")).fontFamily === family, baseline.term);
+          if ((await read()).ui !== baseline.ui || (await read()).mono !== baseline.mono) throw new Error(`${name}: 기본값 새로고침 복원 실패`);
+        } finally {
+          await pg.context().close();
+        }
+      }
+    } finally {
+      await mobileBrowser.close();
+    }
+  });
+
   await step("터미널 글꼴(herdr-web-ui 설정 「터미널 글꼴」, 차이 목록 「글꼴 종류」): 적은 목록을 거르고 기본 글꼴 앞에, face를 받은 뒤 cell을 재고, 찾아보기는 고정폭만, 비우면 기본", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "fontset", "--", process.execPath, `${root}/scroll.js`, "plain");
     await waitOutput("fontset", "s-200");

@@ -3,11 +3,11 @@
 // 쪽마다 history 한 칸(herdr/settingsHistory.ts): 시스템 「뒤로」가 한 칸씩 나온다. Tab은 창 안에 머물고(useFocusTrap) 닫으면 연 곳으로
 // focus가 돌아간다. 휴대폰은 아래로 밀어 닫는다(useSheetSwipe). 묶음·줄·스위치·여럿 중 하나·한 칸씩은 참고 SettingsControls 그대로다.
 // 쪽은 aaa가 뒷받침하는 것만 둔다: 모양·터미널·알림·구독 사용량·단축키·폰 및 기기. 참고의 채팅·음성 입력·원격 PC·에이전트 연동·정보는
-// 그 기능이 aaa에 없어 뺐다. 「터미널 글꼴」(FontFamilyInput 72~205줄)은 적은 목록을 기본 글꼴 앞에 붙인다(plan §8.64).
+// 그 기능이 aaa에 없어 뺐다. 글꼴 설정(FontFamilyInput.tsx)은 적은 목록을 기본 글꼴 앞에 붙인다(plan §8.64).
 // 「키 바」 줄의 「키 바 편집」은 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Rocket, Search, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Rocket, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, MachineView, ProviderUsage, PublishState } from "./gen/proto";
 import { call } from "./api";
@@ -23,8 +23,7 @@ import { isLoopbackHost } from "./herdr/phone";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
 import { AppearanceSettings } from "./AppearanceSettings";
-import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "./herdr/fontFamily.ts";
-import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "./herdr/installedFonts.ts";
+import { FontFamilyInput } from "./FontFamilyInput";
 import { useInstallPrompt } from "./herdr/install.ts";
 import { previewAlertSound, unlockAlertSound } from "./herdr/alertSound.ts";
 import { useFocusTrap } from "./herdr/useFocusTrap.ts";
@@ -181,135 +180,6 @@ function UsageGroups() {
       </SettingsGroup>
       {settings.showUsage && usage.report && usage.report.providers.length > 0 && <UsageAccounts providers={usage.report.providers} />}
     </>
-  );
-}
-
-const FONT_LIST_LIMIT = 150;
-const FONT_FAMILY_PLACEHOLDER = 'D2Coding, "Cascadia Mono"';
-
-/**
- * 글꼴 목록 칸(참고 SettingsDialog FontFamilyInput). 칸을 떠날 때·Enter·창을 닫을 때 저장한다. 누를 때마다 저장하면
- * 치는 중인 쉼표·빈칸이 걸러지고, 글꼴이 바뀔 때마다 터미널이 다시 맞춰 pane 크기가 바뀐다.
- * 「찾아보기」는 깔린 글꼴을 물을 수 있는 브라우저(Chromium)에만 있고, 고정폭이 아닌 글꼴은 고르지 않는다.
- */
-function FontFamilyInput({ value, label, onCommit }: { value: string; label: string; onCommit: (family: string) => void }) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  const commit = (): void => {
-    const next = sanitizeFontFamily(draft);
-    setDraft(next);
-    if (next !== value) onCommit(next);
-  };
-  // Esc로 창을 닫으면 blur 없이 칸이 사라진다
-  const commitRef = useRef(commit);
-  commitRef.current = commit;
-  useEffect(() => () => commitRef.current(), []);
-  const [families, setFamilies] = useState<string[] | null>(null);
-  const [browsing, setBrowsing] = useState(false);
-  const [query, setQuery] = useState("");
-  const [refused, setRefused] = useState("");
-  const [unavailable, setUnavailable] = useState(false);
-  // 허락 창은 누름(gesture)에서만 뜬다. API가 없는 브라우저에는 단추가 없다
-  const browse = async (): Promise<void> => {
-    if (browsing) {
-      setBrowsing(false);
-      return;
-    }
-    setRefused("");
-    setQuery("");
-    if (families === null) {
-      const result = await queryInstalledFonts();
-      if (result.status !== "granted") {
-        setUnavailable(true);
-        return;
-      }
-      setUnavailable(false);
-      setFamilies(result.families);
-    }
-    setBrowsing(true);
-  };
-  const matches = useMemo(() => filterFamilies(families ?? [], query), [families, query]);
-  const pick = (family: string): void => {
-    if (!isMonospaceFamily(family)) {
-      setRefused(family);
-      return;
-    }
-    const next = sanitizeFontFamily(family);
-    setDraft(next);
-    setBrowsing(false);
-    if (next !== value) onCommit(next);
-  };
-  return (
-    <div className="settings-font-field">
-      <div className="settings-font-line">
-        <input
-          className="input settings-font-input"
-          value={draft}
-          placeholder={FONT_FAMILY_PLACEHOLDER}
-          maxLength={FONT_FAMILY_MAX_CHARS}
-          aria-label={label}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            // IME의 Enter는 둔다(WebKit이 compositionend 뒤에 보내는 key code 229 포함)
-            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-            event.preventDefault();
-            commit();
-          }}
-        />
-        {canListInstalledFonts() && (
-          <button type="button" className="btn settings-font-browse" aria-expanded={browsing} aria-label={`${label}에 설치된 글꼴 찾아보기`} onClick={() => void browse()}>
-            <Search aria-hidden="true" />
-            찾아보기
-          </button>
-        )}
-      </div>
-      {unavailable && (
-        <p className="settings-font-note" role="status">
-          설치된 글꼴을 불러오지 못했습니다. 이름을 직접 입력하세요.
-        </p>
-      )}
-      {browsing && families !== null && (
-        <div className="settings-font-picker">
-          <input
-            className="input settings-font-search"
-            type="search"
-            value={query}
-            placeholder="글꼴 검색"
-            aria-label="글꼴 검색"
-            spellCheck={false}
-            autoFocus
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-                // 창이 아니라 목록을 닫는다
-                event.stopPropagation();
-                setBrowsing(false);
-              }
-            }}
-          />
-          {refused !== "" && (
-            <p className="settings-font-note" role="status">
-              {refused}은(는) 고정폭 글꼴이 아닙니다. 터미널에는 고정폭 글꼴이 필요하여 현재 글꼴을 유지했습니다.
-            </p>
-          )}
-          <ul className="settings-font-list" aria-label="설치된 글꼴">
-            {matches.slice(0, FONT_LIST_LIMIT).map((family) => (
-              <li key={family}>
-                <button type="button" className="settings-font-option" style={{ fontFamily: `"${family}", var(--font-ui)` }} onClick={() => pick(family)}>
-                  {family}
-                </button>
-              </li>
-            ))}
-            {matches.length === 0 && <li className="settings-font-empty">글꼴을 찾을 수 없습니다</li>}
-          </ul>
-          {matches.length > FONT_LIST_LIMIT && <p className="settings-font-note">처음 {FONT_LIST_LIMIT}개의 글꼴을 표시합니다. 검색해서 목록을 좁히세요.</p>}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -943,6 +813,7 @@ export function SettingsDialog({
   device,
   machines,
   onSignOut,
+  onOpenPane,
 }: {
   onClose: () => void;
   role: DeviceRole;
@@ -950,6 +821,8 @@ export function SettingsDialog({
   /** host `state` 사건의 머신(연결·폐기가 바로 보인다) */
   machines: MachineView[];
   onSignOut: () => Promise<void>;
+  /** 설정에서 연 pane으로 간다(머신 쪽의 끝 확인·로그인) */
+  onOpenPane?: (id: string) => void;
 }) {
   const narrow = useNarrow();
   // 앞으로 가기로 열렸으면 그 칸이 보이던 것을 보인다
@@ -1063,7 +936,7 @@ export function SettingsDialog({
       case "devices":
         return <DevicesPage role={role} device={device} onSignOut={onSignOut} />;
       case "machines":
-        return <MachinesPage role={role} machines={machines} />;
+        return <MachinesPage role={role} machines={machines} onOpenPane={onOpenPane} />;
       case "deploy":
         return <DeployPage role={role} machines={machines} />;
       case "project":

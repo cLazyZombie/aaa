@@ -747,9 +747,21 @@ host_key_state: string | null, detected: MachineDetected | null,
 /**
  * 실패·멈춤의 까닭(사람이 읽는 글)
  */
-error: string | null, created_ms: number, updated_ms: number, };
+error: string | null, created_ms: number, updated_ms: number,
+/**
+ * 사람이 넣은 설치 설정(M3, plan §8.420). 옛 host는 생략한다
+ */
+settings?: MachineSetupSettings,
+/**
+ * 원격 install이 낸 계획 요약(사람이 확인한다). 경로·계정이 든 계획 원문은 host 작업 폴더에만 둔다
+ */
+review?: MachineSetupReview,
+/**
+ * 원격 install 적용의 진행과 결과
+ */
+install?: MachineSetupInstall, };
 
-export type MachineSetupPhase = "connecting" | "trust" | "detecting" | "choose" | "ready" | "unsupported" | "failed";
+export type MachineSetupPhase = "connecting" | "trust" | "detecting" | "choose" | "ready" | "unsupported" | "failed" | "planning" | "review" | "installing" | "needs_user" | "installed";
 
 export type SshResolved = { user: string, host: string, port: number, proxy_jump: boolean, };
 
@@ -784,6 +796,68 @@ chosen: boolean, home: string | null, shell: string | null,
  * 원격에 이미 있는 aaa 판(`aaa --version` 첫 줄)
  */
 aaa: string | null, };
+
+export type MachineSetupSettings = {
+/**
+ * 새 머신 이름(host 규칙, 이미 있는 이름은 거부)
+ */
+name: string,
+/**
+ * 새 머신이 닿을 host agent 연결 주소(`enroll_guide` 후보 중 하나)
+ */
+host: string,
+/**
+ * 작업 root(worktree 위치, 원격 절대 경로)
+ */
+work_root: string,
+/**
+ * 작업 root가 있는 외장 디스크 mount(비우면 내장 디스크)
+ */
+work_mount: string | null,
+/**
+ * 그 머신에서 쓸 harness(비우면 none)
+ */
+harness: Array<InstallHarness>, login: InstallLogin, };
+
+export type MachineSetupReview = {
+/**
+ * 사람이 확인하는 계획 hash(적용 요청에 그대로 실어 보낸다)
+ */
+plan_sha256: string,
+/**
+ * 보낸 aaa 실행 파일(원격에서 같은 SHA·판을 확인했다)
+ */
+binary_sha256: string, binary_version: string,
+/**
+ * 바꿀 것·검사·사람이 할 일(install 공개 결과 그대로)
+ */
+changes: Array<InstallChange>, checks: Array<InstallCheck>, needs_user: Array<InstallNeedsUser>,
+/**
+ * 승인 범위(operation 이름만, 원격 경로는 싣지 않는다)
+ */
+operations: Array<string>, };
+
+export type MachineSetupInstall = { installation_id: string | null,
+/**
+ * 마지막 진행 사건(사람이 읽는 글)
+ */
+last_event: string | null,
+/**
+ * 끝난 install 결과(공개 envelope)
+ */
+result: InstallResult | null,
+/**
+ * 등록된 머신 이름(grant 등록 뒤)
+ */
+machine: string | null,
+/**
+ * 끝 확인 shell pane이 적은 줄(작업 폴더·git·harness·PATH)
+ */
+checks?: Array<string>,
+/**
+ * 끝 확인 pane(사람이 열어 본다)
+ */
+check_pane?: string, };
 
 export type PublishState = {
 /**
@@ -938,7 +1012,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "machine_setup_start", target: string, } | { "op": "machine_setup_trust", job: string, host_key_sha256: string, } | { "op": "machine_setup_choose", job: string, os: string, arch: string, } | { "op": "machine_setup_cancel", job: string, } | { "op": "machine_setup_list" } | { "op": "enroll_guide" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "machine_setup_start", target: string, } | { "op": "machine_setup_trust", job: string, host_key_sha256: string, } | { "op": "machine_setup_choose", job: string, os: string, arch: string, } | { "op": "machine_setup_cancel", job: string, } | { "op": "machine_setup_plan", job: string, settings: MachineSetupSettings, } | { "op": "machine_setup_apply", job: string, plan_sha256: string, } | { "op": "machine_setup_check", job: string, } | { "op": "machine_setup_login", job: string, harness: InstallHarness, } | { "op": "machine_setup_list" } | { "op": "enroll_guide" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -1477,11 +1551,11 @@ export type ThreadPr = { url: string, state: string | null, review: string | nul
 
 export type SummaryMark = {
 /**
- * 요약을 마지막으로 쓴 때. 요약 파일이 없으면 None
+ * 요약을 썼거나 정상 진행 보고를 받은 마지막 때. 둘 다 없으면 None
  */
 at_ms: number | null,
 /**
- * 요약을 쓴 뒤 task.md Follow-ups에 쌓인 지시 수(요약이 없으면 Follow-ups 전부)
+ * 요약·정상 진행 보고에 아직 반영 안 된 task.md Follow-ups 지시 수
  */
 pending: number, };
 
@@ -1646,7 +1720,7 @@ progress?: Array<SummaryStep>, now: Array<string>, decided: Array<SummaryEntry>,
  */
 decisions: Array<string>, at_ms: number | null,
 /**
- * 요약을 쓴 쪽(coordinator·사람)
+ * 마지막 갱신 쪽(coordinator·사람·agent). 진행은 정상 thread 보고를 우선한다.
  */
 by: string | null,
 /**
@@ -1717,7 +1791,11 @@ progress: string | null,
 /**
  * 마지막 `aaa report` 시각. 5분이 지나면 진행 보고로 「작업 중」을 정하지 않는다(herdr-projects `ACTIVITY_TTL_MS`).
  */
-progress_at_ms: number | null, harness_session: string | null,
+progress_at_ms: number | null,
+/**
+ * 지금 활동 글이 처음 보고된 때(FRONT_API 1.104). 같은 활동의 진행률·정기 보고는 시작을 바꾸지 않는다.
+ */
+progress_since_ms?: number, harness_session: string | null,
 /**
  * 마지막으로 쉼(`Idle`)이 된 뒤 사람이 이 pane을 봤다. false면 「끝남(안 봄)」이다(herdr `PaneState::seen`:
  * 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
