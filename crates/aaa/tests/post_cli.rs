@@ -1,8 +1,29 @@
 //! CLI의 hook 응답·종료 코드 계약. 자식은 스스로 끝나고 신호를 보내지 않는다.
 #![cfg(unix)]
 use std::io::{Read, Write};
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Command;
+
+fn reply_to_post(mut stream: UnixStream, reply: &str) {
+    // 실제 hooks::read_msg는 JSON 완성으로 응답한다. ACK/종료 코드 시험을 EOF 전달에 묶지 않는다.
+    let request =
+        serde_json::Deserializer::from_reader(&mut stream).into_iter::<serde_json::Value>().next().unwrap().unwrap();
+    assert_eq!(request["harness"], "post");
+    stream.write_all(reply.as_bytes()).unwrap();
+}
+
+#[test]
+fn post_fixture_replies_to_complete_json_before_write_eof() {
+    let (mut client, server) = UnixStream::pair().unwrap();
+    client.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+    let server = std::thread::spawn(move || reply_to_post(server, "ok\n"));
+    client.write_all(br#"{"harness":"post"}"#).unwrap();
+    // 실제 agent의 read_msg처럼 완성된 JSON에 답한다. 요청 쓰기 쪽은 아직 열려 있다.
+    let mut reply = String::new();
+    client.read_to_string(&mut reply).unwrap();
+    assert_eq!(reply, "ok\n");
+    server.join().unwrap();
+}
 
 #[test]
 fn post_cli_rejects_old_agent_and_preserves_ack_exit_codes() {
@@ -23,12 +44,8 @@ fn post_cli_rejects_old_agent_and_preserves_ack_exit_codes() {
     let replies = fixtures.iter().map(|f| f.0.clone()).collect::<Vec<_>>();
     let server = std::thread::spawn(move || {
         for reply in replies {
-            let (mut s, _) = listener.accept().unwrap();
-            let mut bytes = Vec::new();
-            s.read_to_end(&mut bytes).unwrap();
-            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(v["harness"], "post");
-            s.write_all(reply.as_bytes()).unwrap();
+            let (s, _) = listener.accept().unwrap();
+            reply_to_post(s, &reply);
         }
     });
     for (_, code, expected) in fixtures {
