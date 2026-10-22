@@ -7428,7 +7428,60 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **착지 통합.** 승인 기준 origin/main `5e695868`의 마지막 §8.442·FRONT_API 1.107·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 확인했다. 이번 기획은 §8.443을 사용하고 API·link·E2E 번호는 유지한다. 고정 ID 칩과 완료 보관 경합 수리를 보존한다. 통합본의 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push한다.
 
-### 8.444 재시작 뒤 pane 책임 경로와 launcher 수명(t-0763)
+### 8.444 공개 포트 변경과 저장한 링크 이전(t-0749)
+
+- **사용자 결정.** q-1158 1B: 옛 포트는 해제하고 host에 저장한 주소를 이전한다. 이미 외부에 보낸 링크·북마크는 끊기며 새 주소를 다시 안내한다. 전환 중 잠시 끊겨도 되므로 무중단·별도 redirect 서비스를 만들지 않는다. 실제 운영 전환·재시작·Serve 변경은 coordinator·사용자 확인 뒤에 한다.
+- **명령·권한.** 사람이 host의 aaa 세션 밖에서 `aaa web publish --port <새 포트>`를 실행한다. 0·범위 밖 포트와 `off` 동시 지정은 CLI에서 거부한다. 새 Front 요청 `WebPublishPort`는 Local만 받고 세션·worker·evaluator·detached도 거부한다. 기존 자동 공개·끄기 명령과 웹 화면은 유지한다. FRONT_API 1.108·AGENT_LINK 1.11·기존 웹 E2E 번호를 쓴다.
+- **전환.** 현재 소유한 옛 포트와 새 포트를 실제 Serve 상태로 확인한다. 다른 서비스·Funnel·추가 경로·상태 읽기 오류는 바꾸지 않는다. 전환 ID·양쪽 origin/port·내부 listen을 DB에 기록하고 옛 매핑 해제 → 새 매핑 등록 → 실제 상태 재확인 → 저장 주소·구독·선택 포트 확정을 수행한다. 각 CLI 변경 앞뒤로 다른 매핑 보존을 대조한다. 실패해도 전환 기록은 남고, 원인을 고친 뒤 같은 대상의 같은 명령으로 이어 한다. 다른 대상·자동 공개·끄기·설치 공개가 미완료 전환을 덮지 못한다. 앱의 공개 변경·상태 조회·구독 등록은 같은 gate로 직렬화한다. 외부의 동시 Serve 설정 편집을 잠그는 기능은 아니므로 전환 동안 수동 설정 변경은 피한다.
+- **저장 주소.** 모든 프로젝트의 post 본문·제목·refs, inbox 알림, 답한 것의 보존 본문/파일 주소에서 일치하는 HTTPS origin만 바꾼다. 경로·query·fragment·공유 서명 cap·기기 pairing/passkey·읽음/완료·답 상태는 유지한다. 다른 도메인·다른 포트·userinfo·경로 속 문자열은 바꾸지 않는다. 변경한 원본 JSON은 전환 ID별 `web_link_originals`에 보존하며 감사 로그를 남긴다. 표시 봉투의 본문 SHA는 새 bytes와 맞추고 원장의 원본 `content_sha`는 유지하여 재전송을 같은 post로 판정한다. 원본 채팅·보고서 파일·외부 메시지는 수정하지 않는다. inbox Markdown 투영도 다시 쓴다.
+- **구독·주소 결함.** 구독 origin을 서버가 검증한 Host에서 기록한다. 옛 origin과 origin 미기록 구판 구독만 지우고 알려진 loopback·다른 origin 구독은 보존한다. 새 주소에서 알림을 다시 켠다. 주소 이전·구독 정리·완료 기록은 한 DB transaction이며 실패하면 모두 롤백한다. Serve 매핑 없음도 관측 상태로 기록해 옛 `publish_port` fallback이 공유 링크를 되살리지 못하게 한다. 최초 미관측 구판 DB의 fallback은 유지하며 읽기 오류를 빈 매핑으로 간주하지 않는다.
+- **운영 절차.** 새 코드 배포 뒤 세션 밖 host 터미널에서 `aaa web status`로 현재 주소·소유 포트를 확인하고 전환 승인을 받는다. `aaa web publish --port <새 포트>` 뒤 새 주소의 앱·기존 서명 cap의 보고서·질문 링크·저장한 post/refs·새 알림 구독을 확인하고 Serve에서 옛 포트 제거·다른 서비스 보존을 확인한다. 실패면 상태와 전환 대상부터 확인하고 원인을 고친 뒤 같은 명령으로 이어 한다. 공개 포트 변경 자체에 host 재시작은 필요 없다. 새 주소의 PWA 설치·알림 권한은 브라우저 origin마다 따로다.
+- **검증.** 실제 DB·router·원장과 Serve 외부 경계 fixture로 성공·충돌·읽기 오류·DB 롤백·종료 뒤 재개를 확인한다. 실제 CLI/host/HTTP의 m13은 자동 공개 → 명시 포트 변경 → 기존 공유 cap 열기 → host 재시작까지 확인한다. 실제 Tailscale daemon의 TLS·OS별 네이티브 실행·운영 포트 전환을 이 fixture의 성공으로 주장하지 않는다. 정본 ci-local·공개 검사와 Linux 교차 clippy 뒤 착지 창을 기다린다.
+
+- **착지 통합.** 승인 기준 origin/main `ccc4a985`의 마지막 §8.443·FRONT_API 1.107·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 직접 확인했다. 고정 번호 칩·완료 보관 경합 수리·설정 본문과 긴 목록 스크롤 변경을 보존한다. 이번 기능은 빈 §8.444와 FRONT_API 1.108을 사용하고 Agent link·E2E 번호는 유지한다. 통합본의 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 검증 tree와 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. 실제 포트·Serve·host는 변경하지 않는다.
+
+### 8.445 작업 요약 카드의 실행 모델(t-0751)
+
+- 작업 트리 hover 카드와 thread 「요약」 상세에 같은 모델 줄을 보인다. 머신은 되풀이하지 않는다. `gpt-6-astra`·`gpt-6.1-sol` 같은 알려진 계열만 `astra`·`sol`로 줄이고 모르는 이름은 보존한다.
+- 시작 profile을 실행 중 모델로 추측하지 않는다. Codex 본 대화의 `turn_context.model`·`effort`, Claude 본 대화 응답의 `requestedModel`을 읽어 「최근 확인 모델: astra high」처럼 보인다. Claude의 생각 수준은 기록으로 알 수 없어 「생각 수준 미확인」으로 보인다. /model 선택 뒤 다음 대화 기록 전에는 마지막 확인 값이며, 확인 시각과 원래 모델 이름은 title에 둔다.
+- 현재 프로세스 시작 전의 기록은 모델 근거에서 뺀다. 아직 관측하지 못한 실행·옛 agent는 「현재 모델 미확인 · 시작 profile: …」로 구분한다. 새 harness 세션과 thread 재시작에서 옛 관측을 지우고, restart로 바뀐 profile을 fallback에 쓴다.
+- FRONT_API 1.109의 선택 `AgentStatus.model_observation`(모델·생각 수준·시각)을 추가한다. Agent link 1.11의 기존 plan 사건에 같은 선택 필드를 싣는다. 옛 agent의 생략과 옛 host의 모르는 필드 무시를 유지한다. E2E28을 확장하며 번호는 늘리지 않는다. 전체 ci-local·공개 검사를 마친 뒤 착지 창을 기다린다.
+- 좁은 화면 검증에서 대화 화면 머리의 보고·요약·찾기·전환 단추가 함께 있을 때 320px 화면의 layout viewport가 379px로 커져 요약 시트 닫기가 화면 밖으로 나가는 기존 문제를 재현했다. 휴대폰 머리의 보고·대화 전환은 아이콘으로 보이고 접근성 이름은 유지해 모든 단추·시트 닫기가 화면 안에 남는다. E2E28은 실제 viewport·시트·닫기 단추 경계도 검사한다.
+
+- **착지 통합.** 승인 기준 origin/main `c2d451ff`의 마지막 plan §8.444·FRONT_API 1.108·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 확인했다. t-0748의 설정 본문·passkey·긴 목록과 t-0749의 공개 포트·주소 이전을 보존한다. 이번 변경은 빈 §8.445와 FRONT_API 1.109를 쓰며 Agent link·E2E 번호는 유지한다. 통합본의 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 같은 tree를 지정한 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI는 기다리지 않고 보고한다.
+
+### 8.446 Windows 한 줄 설치와 부분 적용 재개(t-0485, 사용자 10-22 결정)
+
+- **입구.** 사용자 결정에 따라 Windows는 `irm https://github.com/cLazyZombie/aaa/releases/latest/download/install.ps1 | iex`로 시작한다. 이전 원격 평가 금지 설계보다 이 결정이 우선한다. release producer가 검토한 bootstrap source에 정확한 판·독립 exe SHA를 내장하고 install.ps1의 hash를 manifest/SHA256SUMS에 싣는다. 이후 payload는 고정 tag URL·SHA·PE·판을 확인한다. IEX의 함수/strict mode/설정은 자식 scope에 두고 콘솔/stdio는 native 설치기에 물려준다. 기존 exe가 다르면 별도 SHA별 executor/bin target을 쓰며 구판·다른 instance·PATH/실행 정책은 보존한다. 기존 tag/자산은 바꾸지 않으며 새 판 게시에는 별도 승인이 필요하다.
+- **부분 설치.** hook lexical target을 서명한 뒤 manifest만 canonical target으로 바꿔 status가 content_conflict가 되던 결함을 실제 파일·PTY·닫힌 host에서 RED로 재현했다. 새 계획은 서명 전에 정규화하며 옛 문서는 서명 bytes/원래 scope를 유지하고 operation·전후 SHA·현재 target 동등성을 검증한다. 다른 target/bytes는 거부한다. status 실패에도 요청 ID와 고정 phase를 남긴다. 등록 창 닫힘은 typed EnrollClosed만 전달하여 창 열기·agent SAS·같은 ID 계속을 안내하고 raw 원격 오류/주소/비밀을 기록하지 않는다.
+- **재승인·repair.** 외부 TTY의 만료 resume는 원래 계획/계정/범위를 다시 검토해 같은 ID의 새 nonce를 발급한다. 이름을 먼저 선택하는 마법사에서 중단 ID의 resume/repair를 고른다. 다른 exe SHA의 승인은 재사용하지 않는다. 명시 repair는 같은 계정/상태의 단독 공유 hook만 승인된 현재 bytes/mode에서 갱신하고 최초 원본 복원 origin을 유지한다. 다른/복수 instance 소유는 lock 생성 전 거부하고 잠근 뒤 다시 확인한다. 파일·작업·journal/소유 목록을 지워 충돌을 숨기지 않는다.
+- **검증·후속.** 실제 producer manifest/해시 owner, legacy 서명/같은 ID/status/다른 target 거부, 외부 PTY의 등록 창 닫힘→재동의→같은 transaction, 단독 repair/원본 복원과 다른 owner 무쓰기 거부가 주 owner다. Windows PS5.1/7은 실제 loopback HTTP의 IRM→IEX·native argv/exit·구판/부분 config 보존·내장 SHA 거부와 실제 CLI/PTY 검토·승인·파일 적용을 기존 CI에서 실행한다(Windows 전용 shell 경계만 cfg Windows). 로컬 macOS·Windows cross는 실제 Windows 실행 증거와 구분한다. 전체 ci-local·check-public·양 OS cross와 배포 조건 Windows 빌드 뒤 착지 창을 기다린다. FRONT_API/AGENT_LINK/웹 E2E 번호는 유지한다.
+- **순서.** Windows 한 줄 입구와 남은 부분 설치 처리→사용자 Windows 시험→macOS/Linux `curl -fsSL …/install.sh | bash` 입구로 잇는다. macOS는 I3 launchd를 재사용하고 Linux I4 실제 서비스 구현과 OS owner가 남았다. I7은 세 OS 인수·공개 제거 연결·원래 데이터/다른 instance 보존·되돌리기/가린 로그까지 닫는다. 준비물/한 줄/기대 질문/SCM·Session0·부팅·LSA/UAC/되돌리기 절차는 docs/windows-bootstrap.md와 private 사용자 안내로 제공하며 현장 실행은 자동 CI로 대체하지 않는다.
+
+- **게시 후보.** 기존 v0.1.4 tag/자산을 유지하고 workspace/Cargo.lock의 자체 아홉 package만 0.1.5로 올린 후보를 준비한다. 외부 의존성은 바꾸지 않는다. 새 tag/release는 아직 승인되지 않았으므로 만들거나 push하지 않으며, 착지한 정확 main CI 전체 성공과 별도 게시 승인 뒤 새 입구·manifest·SHA256SUMS의 실제 다운로드를 대조한다.
+
+- **착지 통합.** 승인 기준 origin/main `e2e2d5cf`의 마지막 §8.445·FRONT_API1.109·AGENT_LINK1.11·웹 E2E최대86(88파일)을 직접 확인했다. main의 설정 본문/공개 포트 변경/실행 모델 요약과 기존 시험 수리를 보존한다. 이 후보는 빈 §8.446을 쓰며 API/link/E2E 번호를 올리지 않는다. 최신 main 통합본의 전체 ci-local·공개 검사·Linux/Windows strict cross clippy·Windows release 조건 빌드 뒤 no-ff로 착지한다. 게시 tag/release는 별도 사용자 답 전에는 만들지 않는다.
+
+
+### 8.447 질문·본문 끝단의 문서 스크롤 격리(t-0766)
+
+- **목적·원인.** t-0748의 목록 높이 제한 뒤에도 긴 질문이 쓰는 공통 `.thread-body`에는 끝단 스크롤 전달 차단이 없고 앱 문서는 overflow가 열려 있다. Mac Safari에서 끝까지 내린 뒤 문서가 함께 밀리면 왼쪽 목록도 올라가고 아래 빈 영역이 생긴다. 질문 본문 안에서만 굴리고 바깥 문서는 유지한다.
+- **경계.** 앱이 있는 html·body만 overflow를 잠그고 앱 grid도 화면 높이 안의 넘침을 가둔다. 로그인·pairing 화면은 입력 초점을 따라 문서가 움직이는 기존 동작을 유지한다. 질문·보고서·thread의 공통 본문, 할 일 목록·상세, 설정 목록에는 overscroll contain을 적용한다. 이미 격리된 설정 본문·대화·왼쪽 목록은 유지한다. 휠·touch 이벤트의 전역 취소나 강제 scrollTo는 추가하지 않는다.
+- **검증.** E2E87에서 실제 host·agent와 그림·표가 긴 질문을 준비해 Chromium·WebKit × 데스크톱·휴대폰 × 밝음·어두움의 8조합으로 질문·Markdown 보고서·thread·할 일·설정의 양 끝을 검사하고 캡처한다. 본문 높이·문서 잠금·끝단 wheel 뒤 바깥 위치와 왼쪽 목록 scrollTop을 확인한다. Safari OS 고무줄의 headless 재현 한계와 그림 lazy 로드 대기는 [testing](testing.md)에 기록한다. FRONT_API 1.109·AGENT_LINK 1.11은 유지한다. 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.
+
+- **착지 통합.** 승인 기준 origin/main `4fe5937c`의 마지막 §8.446·FRONT_API 1.109·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 직접 확인했다. main의 공개 포트 변경·실행 모델 요약·Windows 한 줄 설치와 부분 적용 재개를 보존한다. 이번 기획은 빈 §8.447, 새 E2E87(89파일)을 쓰고 API·link는 유지한다. 자기 worktree 전용 target으로 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI 감시는 별도로 맡으며 여기서는 기다리지 않는다.
+
+### 8.448 질문·보고 본문 영상과 WebKit 첨부 인증(t-0767)
+
+- 사용자 10-22: 질문 카드의 영상 링크에서 `unauthorized`와 깨진 한글 오류를 확인했다. 영상은 카드에서 바로 재생하고 agent 안내에도 문법을 넣는다.
+- `![시안](library/preview/a.png)`와 나란히 `![시안 영상](library/preview/a.mp4)`를 쓴다. mp4·webm의 그림 문법과 기존 링크 문법 모두 본문에 controls·muted·playsinline 플레이어를 표시한다. metadata를 미리 읽고 재생 단추 한 번으로 그 자리에서 시작한다. 자동 재생·반복은 기본으로 켜지 않는다. 선택지 안 영상 조작은 답을 선택하지 않는다. coordinator 안내 원문·thread brief·library 문서에 형식·5~10초/10 MiB 권장과 예시를 둔다.
+- 웹 응답의 질문 `files_base`는 인증한 기기·질문/hash 또는 답한 사본에 묶인 2시간 `/v/<권한>/` 경로다. 목록 갱신은 같은 기기의 유효 경로를 재사용하고, HTTP 응답과 WebSocket thread 사건에 같은 변환을 적용한다. 기존 CLI·DB의 인증 API 경로는 유지한다. 읽을 때마다 원래 질문 hash·사본·안전한 상대 경로를 검사한다. 기기 폐기·만료 후 읽기 거부와 Range·HEAD를 유지한다. 질문 첨부 경로를 보고서 task 링크로 풀지 않는다.
+- origin 없는 sandbox·앱 API 차단·쿠키 없는 GET/HEAD를 유지한다. WebKit의 opaque origin `'self'` 판정 문제를 피하도록 보고서 리소스 CSP는 정확한 origin과 자기 `/v/<권한>/` 폴더를 명시하고 frame-ancestors는 self를 유지한다. JSON 오류는 `application/json; charset=utf-8`이다. 질문 HTML의 `#A` 같은 조각을 보존한다.
+- 새 E2E88은 실제 H.264 영상으로 Chromium·WebKit × 데스크톱·휴대폰의 카드·선택지·HTML iframe·새 탭·직접 MP4·보고 본문을 검사한다. ready/play/timeupdate/seeked로 끝내며 고정 sleep·실패 재시도는 없다. 별도 실기 Mac Safari·iPhone에서의 재생은 headless WebKit 결과와 구별한다. FRONT_API 1.109·AGENT_LINK 1.11의 타입은 그대로이며 웹 `files_base`의 읽기 경로 구현만 바뀐다. 번호는 착지 때 main과 다시 대조한다.
+
+- **착지 통합.** 승인 기준 origin/main `8e2581a6`의 마지막 §8.447·FRONT_API 1.109·AGENT_LINK 1.11·E2E87(89파일)을 확인했다. 공개 포트·저장 링크 이전, 실행 모델 요약, Windows 한 줄 설치·부분 적용 재개, 본문 스크롤 격리를 보존한다. 이번 변경은 §8.448과 E2E88(90파일)을 사용하고 API·link는 유지한다. 자기 worktree의 실제 target으로 전체 ci-local·공개 검사·Linux Clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI는 기다리지 않고 보고한다.
+
+### 8.449 재시작 뒤 pane 책임 경로와 launcher 수명(t-0763)
 
 - **목적.** macOS 서비스 재시작이 불변 `aaa-launcher`까지 종료하면 기존 session-host가 살아 있어도 개발자 도구 책임 연결이 끊긴다. 첫 실행 지연만으로 권한을 추측하지 않고 실제 책임 PID·경로를 관측한다. 자동 보류·기존 pane 강제 종료는 하지 않는다.
 - **관측과 복구 안내.** agent가 시작·session-host 재연결·host 재연결·세션 상태 갱신 때 `responsibility_get_pid_responsible_for_pid`와 `proc_pidpath`를 읽는다. session meta의 시작 시각·child PID가 현재 정보와 같은지 확인한다. `SessionInfo`·`PaneView`·`ThreadView.responsibility`는 선택 필드이며 `launcher`·`detached`·`unknown`을 구별한다. 비 macOS·종료 pane·옛 agent는 생략한다. `launcher`는 번들의 실제 실행 경로가 관측됐다는 뜻이며 TCC 승인 판정은 아니다.
@@ -7436,4 +7489,6 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **launcher 보존 재시작.** launcher 자체와 plist를 바꾸지 않는다. launcher의 실제 자식 worker만 신호 구독 뒤 인스턴스 state의 0700 폴더에 0600 준비 기록을 쓴다. `service restart`는 launchctl이 관측한 launcher PID와 worker의 부모·UID·boot·커널 생성 시각을 대조한 뒤 `launchctl kill SIGUSR2`를 보낸다. launcher가 전달한 신호로 backend·runtime을 정상 정리하고 worker가 원래 argv로 현재 실행 파일을 `exec`한다. launcher·worker PID는 그대로이며 backend 실행 인스턴스·연결 generation은 새것이다. 독립 배포 감시는 기존 실행 인스턴스와 SHA 검사를 유지한다.
 - **경계.** exec 사이에는 준비 기록을 보존하고 SIGUSR2를 mask해 다음 image의 handler가 준비된 뒤 푼다. 옛 worker는 준비 기록이 없어 최초 한 번 기존 `kickstart -k`로 전환하며 기존 pane의 책임 경고를 안내한다. 잘못된 준비 기록은 거부한다. 설치 `service-run`은 승인 SHA를 준비 기록·재시작 시점·새 진입점에서 확인하며, 바뀐 파일은 새 install 승인 전 재시작하지 않는다. 외부의 직접 `kickstart -k`·bootout·launcher 강제 종료는 기존 pane 연결을 보존할 수 없으며 재연결 관측으로 경고한다.
 - **회귀.** Rust restart 시험은 launcher 소스 그대로인 격리 fixture(또는 명시한 기존 launcher를 읽기 전용 사용) 아래 실제 agent 파일을 다른 SHA로 바꾸고 CLI 재시작 입구를 탄다. launchctl만 자기 launcher PID 하나로 대체한다. 기존 pane 생존·새 pane·launcher 바이트 불변·낡은 PID 신원과 다른 승인 SHA 거부·launcher 종료 뒤 단절 재감지를 확인한다. 새 C·Rust 소스에 nonce를 넣고 SHA와 첫/재실행 시간, cargo/run·build.rs의 실제 책임자를 남긴다. 시간은 관측값이며 CI의 권한 승인 합격 조건으로 쓰지 않는다.
-- **웹 회귀.** E2E87은 실제 host·agent·thread 위에 책임 관측값만 대체해 Chromium 1280/320px·WebKit 390px Reader에서 정상/끊김/조회 실패·접힌 경로·정리 창·가로 넘침·상태 무변경을 확인한다. 선택 필드만 추가해 FRONT_API 1.107·AGENT_LINK 1.11·SESSION_IPC를 유지한다. 착지 때 기획·E2E 번호를 main과 다시 대조한다.
+- **웹 회귀.** E2E89은 실제 host·agent·thread 위에 책임 관측값만 대체해 Chromium 1280/320px·WebKit 390px Reader에서 정상/끊김/조회 실패·접힌 경로·정리 창·가로 넘침·상태 무변경을 확인한다. 선택 필드만 추가해 FRONT_API 1.109·AGENT_LINK 1.11·SESSION_IPC를 유지한다. 승인 기준 main과 대조해 기획·E2E 번호를 정리했다.
+
+- **착지 통합.** 승인 기준 origin/main `212d8425`의 마지막 §8.448·FRONT_API 1.109·AGENT_LINK 1.11·E2E88(90파일)을 확인했다. 공개 포트·실행 모델 요약·Windows 설치·본문 스크롤·보고서 동영상을 보존한다. 이번 변경은 §8.449·E2E89(91파일)을 쓰고 API·link·SESSION_IPC 번호는 유지한다. 자기 worktree target으로 전체 ci-local·공개 검사·Linux clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. 운영 host·agent는 배포 때 coordinator가 전환하며 여기서 재시작하지 않는다.

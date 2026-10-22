@@ -79,6 +79,7 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         plan: None,
         background: None,
         context: None,
+        model_observation: None,
     };
     if harness == "report" {
         ev.kind = "progress".into();

@@ -4,7 +4,7 @@
 //! - 설치·해제는 launchd 설정을 바꾸므로 사람이 터미널에서 직접 한다(aaa 세션 안이거나 터미널이 아니면 거부).
 //! - 멈추기·띄우기·다시 띄우기(herdr `server stop`, 차이 목록 4장 A #497)도 같은 문을 지난다. launchd가 KeepAlive로
 //!   감독하므로 프로세스를 끝내면 다시 뜬다: 멈추기는 `bootout`(plist는 남아 다음 로그인에 뜬다), 띄우기는 `bootstrap`,
-//!   다시 띄우기는 `kickstart -k`다. 세션은 session host가 가져 이어진다.
+//!   다시 띄우기는 worker의 정상 정리·exec를 쓴다. 옛 worker 최초 전환만 `kickstart -k`다. 세션은 session host가 가져 이어진다.
 //! - launchd가 주는 PATH는 짧다(`/usr/bin:/bin:…`). 설치하는 셸의 PATH를 plist에 적어 `claude`·`codex`를 찾게 한다.
 //! - 인스턴스(plan §8.294)는 label `dev.aaa.<이름>.<role>`, 로그 `~/Library/Logs/aaa-<이름>/`이고 plist가 `AAA_INSTANCE`를 넘긴다.
 //!   기본 인스턴스는 지금 label·로그 그대로다(바꾸면 지금 서비스를 다시 설치해야 한다).
@@ -227,7 +227,7 @@ fn installed(role: &str, what: &str) -> Result<PathBuf> {
     Ok(p)
 }
 
-/// 감독자가 aaa를 끝내고 다시 띄운다(`launchctl kickstart -k`). 업그레이드(새 binary로 교체) 뒤에 쓴다
+/// launcher 아래 worker를 정상 정리·exec한다. 준비 기록이 없는 옛 worker만 `kickstart -k`로 전환한다.
 pub fn restart(role: &str) -> Result<String> {
     restart_with(role, false)
 }

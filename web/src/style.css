@@ -149,6 +149,9 @@ html, body, #root { height: 100%; margin: 0; }
    터미널 연결을 버린다. Chrome 144 전은 굴러갈 것 없는 칸의 끌기를 문서로 넘기고, html만으로는 여전히 새로 읽는다). aaa는 none이다:
    contain은 문서 자신의 고무줄을 남겨 iPad에서 대화 입력창 둘레를 끌면 화면이 통째로 올라갔다(사용자 10-18, ChatComposer pageHold.ts도 막는다) */
 html, body { overscroll-behavior-y: none; }
+/* 앱은 본문 칸만 굴린다. Safari 끝단에서 문서가 움직여 왼쪽 목록까지 밀리지 않게 잠근다.
+   인증 화면은 입력 초점을 따라 문서가 움직일 수 있어야 하므로 앱이 있을 때만 적용한다. */
+html:has(.app), body:has(.app) { overflow: hidden; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -300,7 +303,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 @media (max-width: 700px) {
   :root { --inset-l: env(safe-area-inset-left, 0px); }
 }
-.app { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; height: var(--app-height, 100dvh); }
+.app { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; height: var(--app-height, 100dvh); overflow: hidden; }
 /* 왼쪽 칸 = 활동 막대(ActivityBar.css) + 사이드바(plan §8.240). 사이드바는 머리·패널·바닥 줄을 세로로(herdr-web-ui Sidebar.css
    .sidebar-shell): 패널(.list-body)만 굴러가고 바닥 줄은 늘 맨 아래 */
 .list { background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; min-height: 0; overflow: hidden; }
@@ -457,6 +460,10 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   z-index: calc(var(--z-drawer) + 1);
 }
 .term-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1; }
+/* 보고·요약·찾기·대화 전환이 함께 있는 320px 머리도 화면 안에 둔다. 이름은 aria-label에 남는다. */
+@media (max-width: 640px) {
+  .term-head .head-button-label { display: none; }
+}
 /* 제목 앞 agent 표시(herdr-web-ui App.tsx context-title: 표시와 제목이 한 줄) */
 .term-title-line { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .term-title strong { color: var(--text-strong); font-weight: 600; font-size: var(--fs-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -826,7 +833,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .empty-view p { margin: 0; font-size: var(--fs-sm); line-height: 1.7; }
 
 /* ── thread 보고서·결과물 ──────────────────────────── */
-.thread-body { flex: 1; min-height: 0; overflow: auto; padding: var(--space-6) var(--space-6) var(--space-8); }
+.thread-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-6) var(--space-6) var(--space-8); }
 .thread-col { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-4); }
 .t-hero h1 { margin: 0 0 var(--space-2); font-size: var(--fs-display); line-height: 1.3; color: var(--text-strong); letter-spacing: -0.02em; }
 .t-meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; font-size: calc(var(--fs-xs) * 12.5 / 12); color: var(--text-dim); }

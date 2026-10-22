@@ -286,6 +286,7 @@ impl Host {
                 background_wait: false,
                 compacting: false,
                 context: None,
+                model_observation: None,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -318,6 +319,7 @@ impl Host {
                 st.plan = ev.plan.clone();
                 st.background = ev.background;
                 st.context = ev.context.clone();
+                st.model_observation = ev.model_observation.clone();
             }
             // harness가 끝나면 그 안에서 돌던 배경 작업도 끝났고, 그 세션의 컨텍스트도 더 쓰이지 않는다
             if next == Some(AgentActivity::Exited) {
@@ -330,6 +332,10 @@ impl Host {
                 st.progress = None;
                 st.progress_at_ms = None;
                 st.progress_since_ms = None;
+                st.model_observation = None;
+            }
+            if ev.kind == "session" && ev.harness_session != prev.as_ref().and_then(|a| a.harness_session.clone()) {
+                st.model_observation = None;
             }
             // 사용자가 답했다: 옛 「Waiting for you」는 더 맞지 않다(herdr-projects `respond` UserPromptSubmit)
             if matches!(ev.kind.as_str(), "prompt_submit" | "turn_start")
@@ -1270,6 +1276,7 @@ mod tests {
             plan: None,
             background: None,
             context: None,
+            model_observation: None,
         };
         let idle = AgentStatus {
             activity: AgentActivity::Idle,
@@ -1287,6 +1294,7 @@ mod tests {
             background_wait: false,
             compacting: false,
             context: None,
+            model_observation: None,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
@@ -1344,6 +1352,7 @@ mod tests {
             plan: None,
             background: None,
             context: None,
+            model_observation: None,
         }
     }
 
@@ -1611,15 +1620,22 @@ mod tests {
             plan,
             background,
             context: None,
+            model_observation: None,
         };
         h.on_harness("m", ev("working", 1_000, None, None));
         let plan = aaa_proto::PlanSummary { done: 1, total: 3, current: Some("고치는 중".into()) };
         // 컨텍스트 사용량도 같은 사건으로 온다(plan §8.321)
         let context =
             aaa_proto::ContextUsage { used: 43_922, window: Some(200_000), percent: Some(22), compaction: None };
+        let model =
+            aaa_proto::ModelObservation { model: "gpt-6-astra".into(), effort: Some("high".into()), at_ms: 2_000 };
         h.on_harness(
             "m",
-            HarnessEvent { context: Some(context.clone()), ..ev("plan", 2_000, Some(plan.clone()), Some(2)) },
+            HarnessEvent {
+                context: Some(context.clone()),
+                model_observation: Some(model.clone()),
+                ..ev("plan", 2_000, Some(plan.clone()), Some(2))
+            },
         );
         let a = h.pane_agent("s").unwrap();
         assert_eq!(
@@ -1629,6 +1645,7 @@ mod tests {
         // 다른 상태 사건은 계획·컨텍스트를 지우지 않는다
         h.on_harness("m", ev("idle", 3_000, None, None));
         let a = h.pane_agent("s").unwrap();
+        assert_eq!(a.model_observation, Some(model.clone()));
         assert_eq!(
             (a.activity, a.plan.as_ref(), a.background, a.context.as_ref()),
             (AgentActivity::Idle, Some(&plan), Some(2), Some(&context))
@@ -1640,6 +1657,10 @@ mod tests {
         // 계획이 없어졌다는 사건
         h.on_harness("m", ev("plan", 5_000, None, None));
         assert_eq!(h.pane_agent("s").unwrap().plan, None);
+        assert_eq!(h.pane_agent("s").unwrap().model_observation, None);
+        h.on_harness("m", HarnessEvent { model_observation: Some(model), ..ev("plan", 6_000, None, None) });
+        h.on_harness("m", ev("session_start", 7_000, None, None));
+        assert_eq!(h.pane_agent("s").unwrap().model_observation, None);
     }
 
     /// 답한 확인창 뒤 늦게 온 질문 사건은 그 질문을 다시 열지 않는다(t-0333 m13 사건 16·plan §8.99: 부하에서
@@ -1661,6 +1682,7 @@ mod tests {
             plan: None,
             background: None,
             context: None,
+            model_observation: None,
         };
         h.on_harness("m", ev("question", 1_000));
         let mut q = h.open_question_of("s").expect("질문");

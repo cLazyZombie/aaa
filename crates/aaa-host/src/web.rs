@@ -199,6 +199,10 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     }
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
+    // JSON 자체는 UTF-8이지만 Safari의 직접 열기에서도 한글 오류를 올바르게 표시한다.
+    if hs.get(header::CONTENT_TYPE).is_some_and(|v| v == "application/json") {
+        hs.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
+    }
     // 기기·pane 상태를 담은 API 답은 브라우저·proxy가 두지 않는다(herdr-web-ui `index.ts` API no-store)
     if api {
         hs.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-store"));
@@ -347,8 +351,12 @@ const VIEW_CSP: &str = "sandbox allow-scripts allow-popups allow-popups-to-escap
 /// capability가 가리키는 보고서 폴더만 읽는다. 끝의 /는 형제 cap·API와의 접두사 충돌을 막는다.
 /// /v/는 redirect하지 않는다(CSP는 redirect 뒤 경로를 비교하지 않으므로 그 계약이 필요하다).
 fn view_csp(origin: &str, cap: &str) -> HeaderValue {
+    let folder = format!("{origin}/v/{}/", crate::files::pct(cap));
     HeaderValue::from_str(
-        &VIEW_CSP.replace("connect-src 'none'", &format!("connect-src {origin}/v/{}/", crate::files::pct(cap))),
+        &VIEW_CSP
+            .replace("'self'", &folder)
+            .replace(&format!("frame-ancestors {folder}"), "frame-ancestors 'self'")
+            .replace("connect-src 'none'", &format!("connect-src {folder}")),
     )
     .expect("검증한 웹 origin과 percent encoding은 안전한 헤더다")
 }
@@ -784,8 +792,81 @@ async fn call(State(host): State<Arc<Host>>, headers: HeaderMap, Json(req): Json
     if let Err(e) = host.passkey_gate(&id, role, &origin(&host, &headers), &req) {
         return Json(Outcome::<()>::Err(e)).into_response();
     }
-    let result = host.call(role, &format!("device:{id}"), req).await;
+    let result = host.call(role, &format!("device:{id}"), req).await.map(|mut response| {
+        attachment_views(&host, &id, &mut response);
+        response
+    });
     Json(Outcome::from(result)).into_response()
+}
+
+/// 인증한 웹 기기에만 질문/hash·답한 사본에 묶인 짧은 읽기 경로를 발급한다.
+/// opaque iframe의 하위 요청·새 탭·Range가 기기 cookie에 의존하지 않는다.
+fn attachment_base(host: &Host, device: &str, base: &mut Option<String>) {
+    use crate::library::{Attachment, VIEW_TTL, ViewCap};
+    use std::time::Instant;
+    let Some(raw) = base.as_deref().and_then(|b| b.strip_prefix("/api/v1/projects/")) else { return };
+    let parts: Vec<_> = raw.trim_end_matches('/').split('/').collect();
+    let (project, id, attachment) = match parts.as_slice() {
+        [p, "questions", id, hash] => (*p, *id, Attachment::Question { hash: (*hash).into() }),
+        [p, "requests", id, hash] => (*p, *id, Attachment::Request { hash: (*hash).into() }),
+        [p, "asks", id] => (*p, *id, Attachment::Answer),
+        _ => return,
+    };
+    let mut caps = host.view_caps.lock().unwrap();
+    caps.retain(|_, c| c.until > Instant::now());
+    let cap = caps
+        .iter()
+        .find(|(_, c)| {
+            c.project == project
+                && c.thread == id
+                && c.device.as_deref() == Some(device)
+                && c.attachment.as_ref() == Some(&attachment)
+        })
+        .map(|(key, _)| key.clone())
+        .unwrap_or_else(|| {
+            let cap = hex::encode(rand::random::<[u8; 24]>());
+            caps.insert(
+                cap.clone(),
+                ViewCap {
+                    project: project.into(),
+                    thread: id.into(),
+                    until: Instant::now() + VIEW_TTL,
+                    device: Some(device.into()),
+                    attachment: Some(attachment),
+                },
+            );
+            cap
+        });
+    *base = Some(format!("/v/{cap}/"));
+}
+
+fn attachment_thread(host: &Host, device: &str, thread: &mut aaa_proto::ThreadView) {
+    if let Some(q) = &mut thread.questions {
+        attachment_base(host, device, &mut q.files_base);
+    }
+}
+
+fn attachment_views(host: &Host, device: &str, response: &mut aaa_proto::FrontResponse) {
+    use aaa_proto::FrontResponse;
+    match response {
+        FrontResponse::Thread(t) => attachment_thread(host, device, t),
+        FrontResponse::Threads { threads } => {
+            for t in threads {
+                attachment_thread(host, device, t);
+            }
+        }
+        FrontResponse::Asks { requests, done, .. } => {
+            for request in requests {
+                if let Some(q) = &mut request.questions {
+                    attachment_base(host, device, &mut q.files_base);
+                }
+            }
+            for record in done {
+                attachment_base(host, device, &mut record.files_base);
+            }
+        }
+        _ => {}
+    }
 }
 
 async fn passkey_register_begin(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
@@ -881,6 +962,11 @@ struct PushSubBody {
 }
 
 async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PushSubBody>) -> Response {
+    let _gate = host.publish_gate.lock().await;
+    // 입구 검사를 통과한 직후 포트가 바뀐 요청도 옛 origin의 구독을 다시 넣지 못한다.
+    let Some(origin) = host.web_origin(&host_header(&headers)) else {
+        return StatusCode::MISDIRECTED_REQUEST.into_response();
+    };
     let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
     if host.vapid.is_none() {
         return bad_request("host 설정에서 Web Push가 꺼져 있다(notify.web_push)");
@@ -897,7 +983,7 @@ async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(
         device: id.clone(),
         alerts: b.alerts,
     };
-    match host.db.push_put(&sub) {
+    match host.db.push_put_at(&sub, Some(&origin)) {
         Ok(true) => {}
         Ok(false) => {
             host.db.audit(&format!("device:{id}"), "push_subscribe", "다른 기기의 구독이라 거절");
@@ -1252,7 +1338,8 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 send_state = false;
                 send_badge = true;
                 match t {
-                    Ok(t) => {
+                    Ok(mut t) => {
+                        attachment_thread(&host, &dev, &mut t);
                         let text = serde_json::to_string(&FrontEvent::Thread(Box::new(t))).unwrap();
                         if socket.send(Message::Text(text.into())).await.is_err() {
                             break;
@@ -2220,6 +2307,11 @@ mod content_type_tests {
             let connect = csp.split(';').find(|d| d.trim().starts_with("connect-src ")).unwrap().trim();
             assert_eq!(connect, format!("connect-src {origin}/v/abc.def/"));
             assert!(!csp.contains("allow-same-origin"));
+            for directive in ["media-src", "img-src", "script-src", "style-src", "font-src"] {
+                let value = csp.split(';').find(|d| d.trim().starts_with(directive)).unwrap().trim();
+                assert!(value.starts_with(&format!("{directive} {origin}/v/abc.def/")), "{value}");
+            }
+            assert!(csp.contains("frame-ancestors 'self'"));
         }
         let csp = super::view_csp("https://example.ts.net", "x/; connect-src *");
         assert!(!csp.to_str().unwrap().contains("connect-src *"));
@@ -2378,6 +2470,43 @@ mod guard_tests {
 
     async fn code(h: &Arc<Host>, method: &str, path: &str, host: &str, more: &[(&str, &str)]) -> StatusCode {
         ask(h, method, path, host, more).await.status()
+    }
+
+    #[tokio::test]
+    async fn attachment_api_errors_are_utf8_and_caps_expire_with_the_device() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        let t = token(&l.0);
+        let (id, _) = l.0.device_role(&t).unwrap();
+        for path in [
+            "/api/v1/projects/demo/questions/t-0001/hash/library/a.mp4",
+            "/api/v1/projects/demo/requests/item/hash/library/a.mp4",
+            "/api/v1/projects/demo/asks/item/library/a.mp4",
+        ] {
+            let response = ask(&l.0, "GET", path, LOOP, &[]).await;
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json; charset=utf-8");
+            let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["err"]["message"], "pairing이 필요하다");
+        }
+        let original = Some("/api/v1/projects/demo/asks/item/".to_string());
+        let mut base = original.clone();
+        attachment_base(&l.0, &id, &mut base);
+        assert!(base.as_deref().unwrap().starts_with("/v/"));
+        let mut same = original;
+        attachment_base(&l.0, &id, &mut same);
+        assert_eq!(base, same, "목록을 갱신해도 같은 기기·사본은 같은 경로다");
+        let cap = base.unwrap().trim_start_matches("/v/").trim_end_matches('/').to_string();
+        assert_eq!(l.0.library_resolve("demo", &cap).unwrap_err().code, ErrorCode::BadRequest);
+        // 유효 cap은 대상 파일 확인까지 가고, 만료되면 대상보다 먼저 권한 오류다.
+        assert_ne!(l.0.view_source(&cap, "library/a.mp4").await.err().unwrap().code, ErrorCode::Unauthorized);
+        l.0.view_caps.lock().unwrap().get_mut(&cap).unwrap().until = Instant::now();
+        assert_eq!(l.0.view_source(&cap, "library/a.mp4").await.err().unwrap().code, ErrorCode::Unauthorized);
+        let mut base = Some("/api/v1/projects/demo/asks/item/".to_string());
+        attachment_base(&l.0, &id, &mut base);
+        let cap = base.unwrap().trim_start_matches("/v/").trim_end_matches('/').to_string();
+        l.0.revoke_device(&id).unwrap();
+        assert_eq!(l.0.view_source(&cap, "library/a.mp4").await.err().unwrap().code, ErrorCode::Unauthorized);
     }
 
     #[tokio::test]

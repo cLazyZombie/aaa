@@ -246,6 +246,7 @@ pub fn typescript_bindings() -> String {
         AgentActivity::decl(&cfg),
         PlanSummary::decl(&cfg),
         ContextUsage::decl(&cfg),
+        ModelObservation::decl(&cfg),
         ContextCompaction::decl(&cfg),
         AgentStatus::decl(&cfg),
         QuestionState::decl(&cfg),

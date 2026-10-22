@@ -15,6 +15,7 @@ enum Stage {
 enum Pending {
     PrivateDisplay,
     PrivateEnrollment,
+    EnrollmentWindow,
     Grant,
     Password,
     Service,
@@ -25,6 +26,7 @@ impl Pending {
         match self {
             Self::PrivateDisplay => "installation_private_display_required",
             Self::PrivateEnrollment => "installation_private_enrollment_not_verified",
+            Self::EnrollmentWindow => "installation_enrollment_window_closed",
             Self::Grant => "installation_enrollment_grant_required",
             Self::Password => "service_account_auth_unavailable",
             Self::Service => "service_setup_incomplete",
@@ -83,7 +85,9 @@ fn read(state: &Path, id: &str) -> Result<Option<Record>> {
             if let Some(file_id) = &record.files {
                 let (original, scope) = transaction::resume_scope(state, file_id, record.instance.as_deref())?;
                 if file_id == id {
-                    if original != issued.plan || scope != scope::files(&issued.authorization.claims.permissions) {
+                    if original != issued.plan
+                        || !scope::same_permissions(&scope, &scope::files(&issued.authorization.claims.permissions))?
+                    {
                         return Err(Fault::conflict());
                     }
                 } else {
@@ -181,6 +185,11 @@ impl Execution {
             }
             None => scope::all(&plan)?,
         };
+        if !scope::same_permissions(&scope, &authorization.claims.permissions)? {
+            return Err(Fault::conflict());
+        }
+        // 옛 target도 원래 서명 그대로 검증한다. 기존 실행의 scope digest도 바꾸지 않는다.
+        let scope = authorization.claims.permissions.clone();
         let expected_scope = scope_sha(&scope)?;
         if previous.as_ref().is_some_and(|r| {
             r.instance != plan.choices.instance
@@ -232,6 +241,7 @@ impl Execution {
                 Some("installation_private_enrollment_not_verified" | "installation_enrollment_wait_expired") => {
                     Pending::PrivateEnrollment
                 }
+                Some("installation_enrollment_window_closed") => Pending::EnrollmentWindow,
                 Some("installation_enrollment_grant_required") => Pending::Grant,
                 Some("service_account_auth_unavailable") => Pending::Password,
                 Some(code) if code.starts_with("service_") => Pending::Service,
@@ -434,7 +444,9 @@ pub(super) fn observe(state: &Path, instance: Option<&str>, id: &str) -> Result<
         result.needs_user.push(InstallNeedsUser {
             code: pending.code().into(),
             target: "installation".into(),
-            message: "보호된 승인·표시·입력과 실제 상태를 확인한 뒤 같은 ID로 재개하세요".into(),
+            message: crate::install::need_action(pending.code())
+                .unwrap_or("보호된 승인·표시·입력과 실제 상태를 확인한 뒤 같은 ID로 재개하세요")
+                .into(),
         });
     }
     crate::install::context(&issued.plan, &mut result);

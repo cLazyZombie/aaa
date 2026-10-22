@@ -26,6 +26,9 @@ pub(super) fn proposal(
     preserve: bool,
     shared: bool,
 ) -> Result<Proposed> {
+    // 서명 범위와 실제 transaction이 처음부터 같은 경로를 사용한다.
+    // hook home의 /var 별칭·Windows 일반 경로를 적용 뒤에만 정규화하면 재개 scope가 달라진다.
+    let path = target(&path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;

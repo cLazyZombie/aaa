@@ -33,7 +33,7 @@ it("coordinator 평문·구조화 q 칩은 열림·답함·사라짐을 구별�
 describe("「답할 것」 파일 주소", () => {
   it("그 질문의 library와 보고 사본만 연다", () => {
     assert.equal(askFileUrl(BASE, "library/a b.png"), `${BASE}library/a%20b.png`);
-    assert.equal(askFileUrl(BASE, "./library/시안/a.png?x=1#y"), `${BASE}library/%EC%8B%9C%EC%95%88/a.png`);
+    assert.equal(askFileUrl(BASE, "./library/시안/a.png?x=1#y"), `${BASE}library/%EC%8B%9C%EC%95%88/a.png#y`);
     assert.equal(askFileUrl(BASE, "report.md"), `${BASE}report.md`);
     for (const bad of ["../secret.png", "library/../brief.md", "library/.env", "library/%2e%2e/x", "src/app.ts", "https://example.ts.net/a.png", "/etc/passwd", "library/"])
       assert.equal(askFileUrl(BASE, bad), null, bad);
@@ -42,6 +42,8 @@ describe("「답할 것」 파일 주소", () => {
 
   it("선택지 본문 맨 앞 그림만 큰 그림이다", () => {
     assert.deepEqual(choicePicture("![B안](library/b.png)\n더 쓴 글"), { alt: "B안", src: "library/b.png", rest: "더 쓴 글" });
+    assert.equal(choicePicture("![영상](library/a.mp4)"), null);
+    assert.equal(choicePicture("![영상](library/a.webm)"), null);
     assert.equal(choicePicture("글 다음 ![B안](library/b.png)"), null);
   });
 });

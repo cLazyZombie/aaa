@@ -4,6 +4,7 @@
 import type { AskRecord, TaskView, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { appRefOf } from "./appRef.ts";
 import type { AppRefLook } from "./AppRefChip";
+import { isVideoPath } from "./reportMedia.ts";
 
 export type AsksData = { requests: UserRequestView[]; done: AskRecord[]; keepDays: number };
 
@@ -98,7 +99,8 @@ export function askFileUrl(base: string | null | undefined, src: string): string
     return null;
   }
   if (parts.some((p) => p === "" || p === "." || p === ".." || p.startsWith("."))) return null;
-  return base + parts.map(encodeURIComponent).join("/");
+  const fragment = path.includes("#") ? path.slice(path.indexOf("#")) : "";
+  return base + parts.map(encodeURIComponent).join("/") + fragment;
 }
 
 /** 선택지 그림만 든 본문인가(카드 위 큰 그림으로 그린다) */
@@ -106,6 +108,7 @@ export function choicePicture(body: string | null | undefined): { src: string; a
   if (!body) return null;
   const m = /^!\[([^\]]*)\]\(([^)\s]+)\)\s*/.exec(body);
   if (!m) return null;
+  if (isVideoPath(m[2]!)) return null;
   return { alt: m[1]!, src: m[2]!, rest: body.slice(m[0].length).trim() };
 }
 

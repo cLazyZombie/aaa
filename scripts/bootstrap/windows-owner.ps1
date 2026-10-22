@@ -1,5 +1,5 @@
 # Invoked by cargo test --test windows_bootstrap on Windows; no real network/SCM.
-param([string]$Bootstrap, [string]$Fixture, [string]$Aaa, [string]$AaaVersion, [string]$Lab)
+param([string]$Bootstrap, [string]$Entry, [string]$EntryUrl, [string]$Fixture, [string]$Aaa, [string]$AaaVersion, [string]$Lab)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . $Bootstrap
@@ -138,4 +138,48 @@ Assert (-not [IO.Directory]::Exists($env:AAA_STATE_DIR)) 'dry-run wrote state'
 $result = Invoke-AaaBootstrap $AaaVersion ($common + @('--yes'))
 Assert ($result -eq 3) '--yes granted authority'
 Assert (-not [IO.Directory]::Exists($env:AAA_STATE_DIR)) 'unauthorized install wrote state'
+# Exactly the published irm | iex entry: no user version/hash/InstallArgs and no shell exit.
+$target = New-Profile 'one-line'
+$env:AAA_BOOTSTRAP_VERSION = $AaaVersion
+$script:payload = $Fixture
+$script:digest = (Get-FileHash -LiteralPath $Fixture -Algorithm SHA256).Hash
+[IO.File]::Delete($env:AAA_BOOTSTRAP_ARGV)
+$entryText = [IO.File]::ReadAllText($Entry)
+$global:LASTEXITCODE = 0
+$priorPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    Invoke-RestMethod -Uri $EntryUrl | Invoke-Expression
+    Assert ($ErrorActionPreference -ceq 'Continue') 'entry leaked ErrorActionPreference into user shell'
+} finally { $ErrorActionPreference = $priorPreference }
+Assert ($global:LASTEXITCODE -eq 23) 'one-line lost child exit or returned before installer'
+Assert ([IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV) -ceq "696e7374616c6c`n") 'one-line did not enter interactive install'
+Assert ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ceq $script:digest) 'one-line bytes differ'
+# An old executable and partial config must survive startup of the new verified executor.
+$target = New-Profile 'one-line-old-installation'
+[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+[IO.File]::WriteAllText($target, 'old aaa: preserve other instances')
+[void][IO.Directory]::CreateDirectory($env:AAA_CONFIG_DIR)
+$oldConfig = Join-Path $env:AAA_CONFIG_DIR 'agent.toml'
+[IO.File]::WriteAllText($oldConfig, 'partial configuration: do not delete')
+$entryText | Invoke-Expression
+Assert ($global:LASTEXITCODE -eq 23) 'staged executor did not reach installer'
+Assert ([IO.File]::ReadAllText($target) -ceq 'old aaa: preserve other instances') 'one-line overwrote old executor'
+Assert ([IO.File]::ReadAllText($oldConfig) -ceq 'partial configuration: do not delete') 'bootstrap changed partial config'
+$staged = Join-Path $env:USERPROFILE ('.local\share\aaa\installers\' + $script:digest.Substring(0, 16).ToLowerInvariant() + '\aaa.exe')
+Assert ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash -ceq $script:digest) 'staged executor hash mismatch'
+$expected = (@('install', '--bin-path', $staged) | ForEach-Object {
+    ([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($_))).Replace('-', '').ToLowerInvariant() + "`n"
+}) -join ''
+Assert ([IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV) -ceq $expected) 'staged executor did not bind the native plan target'
+# A changed remote manifest must not replace the independently embedded payload digest.
+$target = New-Profile 'one-line-manifest-tamper'
+[IO.File]::Delete($env:AAA_BOOTSTRAP_ARGV)
+$count = $script:downloads
+$script:digest = '0' * 64
+$entryText | Invoke-Expression
+Assert ($global:LASTEXITCODE -eq 2) 'one-line accepted changed manifest digest'
+Assert (-not [IO.File]::Exists($env:AAA_BOOTSTRAP_ARGV)) 'untrusted payload ran'
+Assert ($script:downloads -eq $count) 'digest mismatch must fail before payload download'
+Assert (-not [IO.File]::Exists($target)) 'one-line placed untrusted binary'
 Write-Output 'bootstrap-owner-ok'

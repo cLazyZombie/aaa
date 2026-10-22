@@ -19,11 +19,15 @@ import { browserClick } from "./reportLinks.ts";
 import { appLinkOf, appRefOf, splitAppRefs } from "./appRef.ts";
 import { AppIdLink, AppRefChip, AppRefContext } from "./AppRefChip.tsx";
 import { splitAppIds } from "./appIds";
+import { isVideoPath } from "./reportMedia";
+import { ReportVideo } from "./ReportVideo";
 import "./herdr/Markdown.css";
 
 /** Stats an image before it can load; null context keeps chat images as links. */
 type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
+/** library 첨부를 읽는 본문만 제공한다. */
+export const MarkdownAttachmentContext = createContext<((src: string) => string | null) | null>(null);
 
 /**
  * 링크를 새 창 대신 앱 안에서 연다(대화 보기, plan §8.300): 열었으면 true. 없거나 false면 링크 그대로(새 창)다. 보조 키·가운데
@@ -98,6 +102,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   const open = interactive ? context : null;
   const imageResolver = useContext(MarkdownImageContext);
   const openLink = useContext(OpenLinkContext);
+  const attachment = useContext(MarkdownAttachmentContext);
   // 앱 안 참조(`aaa:question/…`·`aaa:report/…`, plan §8.329)는 칩이다. 링크 안(interactive=false)에서는 누를 것을 겹치지 않는다
   const refContext = useContext(AppRefContext);
   const refs = interactive ? refContext : null;
@@ -140,7 +145,9 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
           }
           case "math":
             return <span key={key}>{`\\(${node.value}\\)`}</span>;
-          case "image":
+          case "image": {
+            const video = interactive && isVideoPath(node.src) ? attachment?.(node.src) : null;
+            if (video) return <ReportVideo key={key} src={video} label={node.alt} />;
             return (
               <span key={key} data-markdown-copy={`![${node.alt}](${node.src})`}>
                 {imageResolver === null ? (
@@ -151,6 +158,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
                 )}
               </span>
             );
+          }
           case "strong":
             return (
               <strong key={key}>
@@ -170,6 +178,8 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
               </del>
             );
           case "link": {
+            const video = interactive && isVideoPath(node.href) ? attachment?.(node.href) : null;
+            if (video) return <ReportVideo key={key} src={video} label={node.children.map((n) => "value" in n ? n.value : "").join("")} />;
             const ref = refs === null ? null : (appRefOf(node.href) ?? appLinkOf(node.href, location.origin));
             if (ref !== null) return <AppRefChip key={key} at={ref} refs={refs!} />;
             return (
@@ -178,7 +188,10 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
               </a>
             );
           }
-          case "file":
+          case "file": {
+            const url = attachment?.(node.path);
+            if (url && interactive && isVideoPath(node.path)) return <ReportVideo key={key} src={url} label={node.children.map((n) => "value" in n ? n.value : "").join("")} />;
+            if (url && interactive) return <a key={key} href={url} target="_blank" rel="noopener noreferrer"><Inline nodes={node.children} interactive={false} /></a>;
             // 이름을 누르면 파일을 연다. 열 곳이 없으면 이름 뒤에 경로를 보인다(참고: Codex 터미널처럼)
             return open !== null ? (
               <button key={key} type="button" className="markdown-file" title={`${node.path} 열기`} onClick={() => open(node.path)}>
@@ -189,6 +202,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
                 <Inline nodes={node.children} interactive={false} /> (<code>{node.path}</code>)
               </span>
             );
+          }
         }
       })}
     </>

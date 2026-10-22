@@ -76,6 +76,7 @@ async fn report_copy_recovers(fail_library: bool, fail_history: bool) {
             plan: None,
             background: None,
             context: None,
+            model_observation: None,
         }],
         sessions: vec![SessionInfo {
             responsibility: None,

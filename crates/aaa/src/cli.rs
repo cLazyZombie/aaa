@@ -126,7 +126,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: AccountCmd,
     },
-    /// 설치를 읽기 탐지하고 계획한다. I1은 --dry-run만 지원한다
+    /// 역할·작업 경로·서비스를 계획하고 명시적 승인 뒤 설치·재개한다
     Install(Box<crate::install::Args>),
     /// harness 전역 연동을 설치하거나 제거한다(기존 사용자 hook은 보존)
     Integration {
@@ -1505,8 +1505,11 @@ enum WebCmd {
     },
     /// tailscale serve로 HTTPS 공개(off: aaa가 만든 공개만 끈다)
     Publish {
-        #[arg(value_parser = ["off"])]
+        #[arg(value_parser = ["off"], conflicts_with = "port")]
         off: Option<String>,
+        /// 공개 포트를 변경하고 저장한 링크를 이전한다. 옛 외부 링크는 끊기며 알림은 새 주소에서 다시 켠다
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
     },
     Status,
 }
@@ -2462,8 +2465,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 WebCmd::Pair { reader } => {
                     FrontRequest::WebPair { role: if reader { DeviceRole::Reader } else { DeviceRole::Controller } }
                 }
-                WebCmd::Publish { off: Some(_) } => FrontRequest::WebPublishOff,
-                WebCmd::Publish { off: None } => FrontRequest::WebPublish,
+                WebCmd::Publish { off: Some(_), .. } => FrontRequest::WebPublishOff,
+                WebCmd::Publish { port: Some(port), .. } => FrontRequest::WebPublishPort { port },
+                WebCmd::Publish { .. } => FrontRequest::WebPublish,
                 WebCmd::Status => FrontRequest::WebStatus,
                 WebCmd::Devices => FrontRequest::Devices,
                 WebCmd::Revoke { id } => FrontRequest::DeviceRevoke { id },
@@ -5292,6 +5296,20 @@ mod launchd_test_args;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn public_port_change_parses_and_rejects_off_and_invalid_ports() {
+        use super::{Cli, Cmd, WebCmd};
+        use clap::Parser as _;
+        let cli = Cli::try_parse_from(["aaa", "web", "publish", "--port", "7443"]).unwrap();
+        assert!(matches!(cli.cmd, Cmd::Web { cmd: WebCmd::Publish { off: None, port: Some(7443) } }));
+        for args in [
+            vec!["aaa", "web", "publish", "off", "--port", "7443"],
+            vec!["aaa", "web", "publish", "--port", "0"],
+            vec!["aaa", "web", "publish", "--port", "65536"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
     #[test]
     fn launchd_registration_authorization_arguments_parse_before_any_service_changes() {
         use clap::Parser as _;

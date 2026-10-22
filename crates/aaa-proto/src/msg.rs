@@ -2410,6 +2410,10 @@ pub enum FrontRequest {
         installation_id: String,
     },
     WebPublish,
+    /// 공개 포트를 바꾸고 저장한 링크와 푸시 구독을 이전한다(사람의 host CLI).
+    WebPublishPort {
+        port: u16,
+    },
     WebPublishOff,
     WebStatus,
     /// 프로젝트 폴더를 만든다(herdr-projects `new`). 준 값만 project.toml에 적는다(FRONT_API 1.33)
@@ -3424,6 +3428,7 @@ impl FrontRequest {
         matches!(
             self,
             FrontRequest::AccountImport { .. }
+                | FrontRequest::WebPublishPort { .. }
                 | FrontRequest::AccountRemove { .. }
                 | FrontRequest::DebugInput { .. }
                 | FrontRequest::TickerTick

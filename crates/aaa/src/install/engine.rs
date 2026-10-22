@@ -30,7 +30,10 @@ pub(super) fn launcher_asset_source(plan: &InstallPlan) -> std::result::Result<P
 }
 
 pub(super) use apply::{inline as apply_inline, run as apply};
-pub(super) use review::{issue as issue_authorization, normalize_state, original_plan, preview, read_plan};
+pub(super) use review::{
+    executor_matches, issue as issue_authorization, normalize_state, original_plan, preview, previous_installation,
+    read_plan, resume_requires_consent,
+};
 
 pub(super) fn probe_dispatch(state: &Path, executor_sha256: &str) -> std::process::ExitCode {
     bootstrap::probe(state, executor_sha256)
@@ -205,14 +208,23 @@ pub(super) fn status(
     id: &str,
 ) -> std::result::Result<InstallResult, Box<InstallResult>> {
     validate_id(id)?;
-    let state = transaction::real_directory(state).map_err(|e| super::error(e.code, e.exit))?;
+    // 요청 ID는 신뢰할 수 있는 기록의 존재/성공과 별개다. 고정 단계만 덧붙이고 경로/문서는 노출하지 않는다.
+    let failed = |fault: Fault, phase: &str| {
+        let mut result = super::error(fault.code, fault.exit);
+        result.installation_id = Some(id.into());
+        if let Some(error) = &mut result.error {
+            error.details.push(format!("phase={phase}"));
+        }
+        result
+    };
+    let state = transaction::real_directory(state).map_err(|e| failed(e, "state_path"))?;
     let state = state.as_path();
-    if let Some(result) = execution::observe(state, instance, id).map_err(|e| super::error(e.code, e.exit))? {
+    if let Some(result) = execution::observe(state, instance, id).map_err(|e| failed(e, "execution_observation"))? {
         return Ok(result);
     }
-    let j = read_journal(state, id, instance).map_err(|e| super::error(e.code, e.exit))?;
-    let result = transaction::observe(state, j).map_err(|e| super::error(e.code, e.exit))?;
-    supervisor::observe(state, instance, id, result).map_err(|e| super::error(e.code, e.exit))
+    let j = read_journal(state, id, instance).map_err(|e| failed(e, "file_journal"))?;
+    let result = transaction::observe(state, j).map_err(|e| failed(e, "file_observation"))?;
+    supervisor::observe(state, instance, id, result).map_err(|e| failed(e, "service_observation"))
 }
 impl Journal {
     fn result(&self) -> InstallResult {

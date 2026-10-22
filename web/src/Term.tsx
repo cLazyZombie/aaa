@@ -2081,13 +2081,14 @@ export function TermView({
         {chatable && (
           <button
             className="ghost chat-btn"
+            aria-label={chatView ? "터미널" : "대화"}
             aria-pressed={chatView}
             data-testid="chat-toggle"
             onClick={() => setChatView(!chatView)}
             title={chatView ? "터미널로 본다" : "대화 기록으로 본다(읽기 전용)"}
           >
             <Icon name={chatView ? "shell" : "chat"} />
-            {chatView ? "터미널" : "대화"}
+            <span className="head-button-label">{chatView ? "터미널" : "대화"}</span>
           </button>
         )}
         <HeadMore />
