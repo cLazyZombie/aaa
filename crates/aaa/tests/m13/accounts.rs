@@ -171,8 +171,17 @@ impl Gate {
                 stream.set_nonblocking(false).unwrap();
                 stream.set_read_timeout(Some(T)).unwrap();
                 let mut line = String::new();
-                BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
-                let v: Value = serde_json::from_str(&line).unwrap();
+                let bytes = BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+                assert_ne!(bytes, 0, "가짜 harness 사건 전 EOF: phase={phase}, peer={:?}", stream.peer_addr());
+                let v: Value = serde_json::from_str(&line).unwrap_or_else(|e| {
+                    // 잘못된 첫 바이트와 EOF를 구별한다. fixture 밖 입력일 수 있으므로 본문 전체는 남기지 않는다.
+                    panic!(
+                        "가짜 harness JSON 오류: phase={phase}, listener={}, peer={:?}, bytes={bytes}, prefix={:02x?}: {e}",
+                        self.address(),
+                        stream.peer_addr(),
+                        &line.as_bytes()[..line.len().min(8)],
+                    )
+                });
                 assert_eq!(v["phase"], phase);
                 (stream, v)
             })
@@ -396,10 +405,15 @@ if home:
     history=pathlib.Path(home)/'policy-history'
     if 'resume' in sys.argv: assert history.exists(), 'lost history'
     history.write_text('history')
+def note(phase,step,s):
+    with (pathlib.Path(os.environ['ACCOUNT_PROOF'])/'gate-trace.jsonl').open('a') as f:
+        f.write(json.dumps(dict(pid=os.getpid(),tid=tid,phase=phase,step=step,local=s.getsockname()))+'\n')
 def gate(phase):
     h,p=os.environ['ACCOUNT_GATE'].split(':')
     s=socket.create_connection((h,int(p)),timeout=30)
+    note(phase,'connected',s)
     s.sendall((json.dumps(dict(tid=tid,phase=phase,token=digest(token),home=home,resume='resume' in sys.argv or '--resume' in sys.argv))+'\n').encode())
+    note(phase,'sent',s)
     return s
 s=gate(0)
 command=s.recv(1);s.close()

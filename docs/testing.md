@@ -2420,3 +2420,14 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `nice -n 15 cargo test --locked -p aaa --test install recovery::`는 닫힌 실제 host 등록 창과 실제 PTY/서명/파일/journal에서 status ID/안내·명시적 재동의·같은 transaction을 확인한다. Windows 전용 같은 묶음은 실제 powershell.exe/pwsh.exe의 한 줄 입구가 외부 콘솔을 native 검토/승인/파일 적용까지 유지하는지 검사하며 서비스는 none이다. 새 production flag/export나 실제 운영 서비스 등록은 없다.
 - `nice -n 15 cargo test --locked -p aaa --bin aaa install::engine::execution::tests::legacy_hook_alias_approval_keeps_its_signature_id_and_scope_through_status_and_resume -- --exact`는 서명 원문/ID/범위를 유지하는 옛 lexical hook 호환과 다른 target/SHA 거부를 검사한다. `install::engine::transaction::references::tests::`는 명시 단독 repair의 최초 원본 복원과 다른/공유 owner의 무쓰기 거부를 검사한다. 암호/issuer key가 포함된 실험실 전체를 로그에 출력하거나 library로 복사하지 않는다.
 - 최초 RED와 수리 GREEN을 보존하고 canonical 비교/owner 제한을 각각 망가뜨린 변형 실패를 확인한다. 전체 ci-local·공개 검사와 Windows/Linux strict cross, dev 없는 Windows release build 뒤 착지 창을 기다린다. Windows 실제 판정은 CI이며 교차 빌드나 로컬 PowerShell로 대신하지 않는다.
+
+## 계정 gate 수신 진단(t-0777, 원인 조사 중)
+
+`t-0775`의 기존 `accounts::host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials` 실패는
+`expected value`, line 1, column 1이다. 같은 잠금 파일의 serde_json에서 빈 입력은
+`EOF while parsing a value`, line 1, column 0이고, HTTP 요청 등 JSON이 아닌 첫 바이트는 원본 오류와 같다.
+원본 로그에는 받은 문자열·peer가 없어 빈 연결이나 송신 프로세스 종료로 확정할 수 없다.
+
+- Gate는 EOF를 별도로 단언하고 JSON 오류에는 예상 phase, listener·peer, 받은 바이트 수와 첫 8바이트의 hex를 남긴다. 입력 본문 전체는 로그에 쓰지 않는다.
+- `POLICY_HARNESS`는 실험실 `proof/gate-trace.jsonl`에 PID·thread·phase·클라이언트 주소와 연결/전송 완료를 기록한다. 토큰과 인증 홈은 이 진단에 넣지 않는다. 실패하면 기존 Lab 정리가 실험실을 보존하므로 peer를 이 기록과 대조한다.
+- 기존 phase·계정·토큰·pane 수·종료 단언과 30초 상한을 유지한다. EOF나 잘못된 JSON을 건너뛰거나 연결을 다시 시도하지 않는다. 진단 추가를 원인 수리 완료로 보지 않는다.
