@@ -7,15 +7,6 @@
 - 복귀 분류는 해당 사건에만 적용한다. 이어서 메뉴를 열고 사용자가 `history.back/forward`하면 두 방향 모두 닫혀야 하며, 기존 목적지 순회의 설정 목록·쪽 단언도 유지한다. 수정 전 Chromium의 작업 패널 선택 경로에서 「브라우저 이동 없이 설정 내부 복귀가 사용자가 연 메뉴를 닫았다」로 실패했다. 시한·단언 완화·고정 sleep·실패 재시도는 없다. 실제 OS 가장자리 몸짓은 headless 합성 터치·history 이동과 구분한다.
 - 정본 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 후보 commit 뒤 공개 검사다. API·E2E 번호는 유지한다.
 
-## 설정 왼쪽 메뉴·목록 행 겹침(t-0771)
-
-- E2E06은 설정 메뉴가 데스크톱의 공통 사이드바에 있고 오른쪽 본문 전체를 내용만 쓰는지 검사한다. Chromium 1280/980/320px·WebKit 1280/390px의 밝음/어두움에서 테마·색상·밀도 조작의 실제 경계와 hit target을 확인하고 캡처한다. 기존 주소·새 탭·새로고침·뒤로/앞으로·Esc·키 바·폰트·휴대폰 메뉴 → 내용 검사를 유지한다.
-- 설정 메뉴가 본문 밖으로 이동했으므로 메뉴 locator는 설정 navigation을 사용한다. inList는 앞 패널을 숨긴 상태를 감지하고 실제 활동 막대로 전환한다. 제품 동작을 대신하지 않는다.
-- E2E26의 긴 목록과 E2E34의 상태가 다른 자동화 행에서 자식 글·번호가 행 안에 있는지, 다음 행과 겹치지 않는지, 선택/hover 배경이 앞 행을 덮지 않는지 검사한다. 자동화 번호의 상대 시작 위치도 같아야 한다. 답할 것·보고서·할 일·기록·설정 메뉴도 같은 경계 검사를 사용한다.
-- 고정 sleep·재시도·시한 연장 없이 DOM·host·scroll 사건으로 끝낸다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다.
-- 기존 빌드에서 E2E34의 자동화 행 세로 넘침을 재현했고 공통 행 높이 수리 뒤 E2E06·26·34가 통과했다. E2E06 마지막 단계는 초기 pane 선택 전 주소를 저장하는 경합이 있어 실제 terminal과 pane hash가 준비된 뒤 기준 주소를 기록한다. 복귀 주소 기대값·시한은 유지한다.
-- 전체 웹 회귀의 E2E03은 iPad 820px에서 본문 안의 단축키 tab을 찾던 locator 한 곳이 남아 실패했다. 앱 drawer 기준에 따라 왼쪽 navigation에서 찾도록 갱신한 뒤 E2E03 전체가 통과했다. 키 전달·설정 저장·터미널 누출·크기 단언은 그대로다.
-
 
 ## 질문·보고 영상 재생(t-0767, plan §8.448)
 
@@ -32,6 +23,25 @@
 - 본문의 높이 제한·가로 넘침, 데스크톱에서 위·아래 끝의 실제 wheel 수신과 렌더링 사건 뒤 문서 좌표·visualViewport·앱·왼쪽 목록·본문 틀의 위치 및 목록 scrollTop 보존을 확인한다. 끝단에서도 본문 scrollTop은 끝에 남아야 한다. 휴대폰은 실제 overflow의 scrollTop과 scroll 사건으로 이동·양 끝을 확인한다. Playwright mobile WebKit은 wheel/swipe를 지원하지 않으므로 손가락 관성 스크롤을 재현했다고 주장하지 않는다.
 - headless WebKit은 macOS Safari의 OS 고무줄 효과를 온전히 재현하지 못한다. 따라서 스크롤 전달 차단과 앱이 있는 html·body의 overflow 잠금도 함께 단언한다. ccc4a985 원본 번들에서 질문의 전달 차단 누락으로 RED를 확인한다. 로그인 화면에는 문서 잠금을 적용하지 않으며 기존 E2E01·06과 입력·키보드·viewport 회귀를 유지한다.
 - 고정 sleep·시한 연장·실패 재시도 없이 DOM·그림 decode·wheel·렌더링 사건으로 끝낸다. `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 87 --workers 1`과 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행한다.
+
+## 설정 왼쪽 메뉴·목록 행 겹침(t-0771)
+
+- E2E06은 설정 메뉴가 데스크톱의 공통 사이드바에 있고 오른쪽 본문 전체를 내용만 쓰는지 검사한다. Chromium 1280/980/320px·WebKit 1280/390px의 밝음/어두움에서 테마·색상·밀도 조작의 실제 경계와 hit target을 확인하고 캡처한다. 기존 주소·새 탭·새로고침·뒤로/앞으로·Esc·키 바·폰트·휴대폰 메뉴 → 내용 검사를 유지한다.
+- 설정 메뉴가 본문 밖으로 이동했으므로 메뉴 locator는 설정 navigation을 사용한다. inList는 앞 패널을 숨긴 상태를 감지하고 실제 활동 막대로 전환한다. 제품 동작을 대신하지 않는다.
+- E2E26의 긴 목록과 E2E34의 상태가 다른 자동화 행에서 자식 글·번호가 행 안에 있는지, 다음 행과 겹치지 않는지, 선택/hover 배경이 앞 행을 덮지 않는지 검사한다. 자동화 번호의 상대 시작 위치도 같아야 한다. 답할 것·보고서·할 일·기록·설정 메뉴도 같은 경계 검사를 사용한다.
+- 고정 sleep·재시도·시한 연장 없이 DOM·host·scroll 사건으로 끝낸다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다.
+- 기존 빌드에서 E2E34의 자동화 행 세로 넘침을 재현했고 공통 행 높이 수리 뒤 E2E06·26·34가 통과했다. E2E06 마지막 단계는 초기 pane 선택 전 주소를 저장하는 경합이 있어 실제 terminal과 pane hash가 준비된 뒤 기준 주소를 기록한다. 복귀 주소 기대값·시한은 유지한다.
+- 전체 웹 회귀의 E2E03은 iPad 820px에서 본문 안의 단축키 tab을 찾던 locator 한 곳이 남아 실패했다. 앱 drawer 기준에 따라 왼쪽 navigation에서 찾도록 갱신한 뒤 E2E03 전체가 통과했다. 키 전달·설정 저장·터미널 누출·크기 단언은 그대로다.
+
+## 첨부 뒤 여러 줄 입력의 높이 안정(t-0772, plan §8.452)
+
+- 전체 검증에서 기존 m13 `routines`가 DB 항목을 본 직후 아직 쓰는 중인 inbox Markdown을 빈 내용으로 읽어 실패했다. DB insert→파일 write→안내 action 완료 기록 순서를 확인했고, 파일 단언 전에 `routine runs`의 `done`/`coordinator 안내` 완료를 기다리도록 시험만 고쳤다. 명령 source 종료는 안내 action 종료보다 앞이므로 완료 신호로 대신 쓰지 않는다. 원래 파일 본문·승인·중복 출력 단언과 30초 상한은 유지한다.
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 66-composer-wrap --workers 1`: 기존 줄 경계·게이지 폭 회수·창 폭 변경 검사를 유지하고, 실제 coordinator의 그림 업로드·경로 삽입·빈 줄·여러 줄 한글 입력을 추가한다. Chromium·WebKit 각각 1280px·390px에서 「맨 아래로」가 떠 있는 대화와 짧은 글/높이 상한을 넘는 긴 글을 검사한다.
+- OS 입력기를 직접 조작하는 대신 두벌식 자모→음절→확정 사건을 재생하고 trusted 영문 키 입력도 실행한다. 입력 중 높이·화면 위치·내부 scrollTop·상자 높이·문서 스크롤을 기록한다. 원래 scrollHeight getter가 이미 강제하는 layout 직후를 관측하므로 화면 frame 사이의 일시적 축소도 검출한다. ResizeObserver·scroll 사건과 두 requestAnimationFrame 뒤 표본을 함께 보며 고정 sleep·실패 재시도·시한 연장은 없다.
+- 수정 전에는 네 조합의 짧은 글과 긴 글 모두 측정 순간 높이가 40px로 줄어 실패한다. WebKit의 긴 글 진단은 240→40→240px와 화면 위치 왕복을 보였다. headless에서 최종으로 그려진 frame의 시각적 떨림까지 재현했다고 주장하지 않는다. 수정 후 같은 시험에서 높이·스크롤·focus·조합 글 보존·편집 중 전송 없음과 삭제 뒤 한 줄 복원을 검사한다.
+- 화면과 JSON 표본을 캡처 폴더에 저장한다. E2E23의 첨부 전송·E2E35의 보내기 높이·기존 E2E66을 포함한 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. API와 E2E 번호는 유지한다.
+
 
 ## 작업 요약 카드의 실행 모델(t-0751, plan §8.445)
 
@@ -2466,3 +2476,35 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 전체 검사에서 기존 task 경고 유일성 시험이 새 책임 안내의 `경고:` 접두어 때문에 실패했다. 책임 안내를 별도 `개발자 도구:` 줄로 표시해 기존 task 경고 계약·단언은 유지하며, 새 restart 회귀가 `pane list`의 기존 무인자 JSON 출력에 책임 관측값이 포함되는지 확인한다.
 - 추가 CLI 시험의 최초 문구 단언은 pane 명령의 기존 JSON 전용 계약을 잘못 가정했다. 불필요한 pane 글 출력 분기를 없애고, `--json` 없는 실제 CLI 출력도 JSON 한 줄이며 책임 관측값을 포함하는지 검사한다. thread 글 출력의 별도 진단과 웹 표지는 유지한다.
 - 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Linux 대상 clippy다. 착지 검증은 자기 worktree target만 쓰며 운영 host·agent 재시작은 배포 때 coordinator가 한다.
+## Windows 한 줄 입구 첫 CI 수리(t-0485, plan §8.450)
+
+- 기존 `--test install recovery::`는 실제 OS architecture 환경을 보존한 PS5.1/7 입구를 실행한다. 값을 AMD64로 꾸미지 않는다. 닫힌 실제 등록 창→파일/status ID/안내→같은 ID 새 nonce/job 하나를 모두 검사한 뒤 runtime·Host를 종료하고 lab을 제거한다. Windows OS32를 무시하거나 재시도하지 않는다.
+- 기존 `legacy_hook_alias_approval_keeps_its_signature_id_and_scope_through_status_and_resume`는 Windows canonical verbatim 경로에서 일반 Win32 lexical 경로를 구성한다. 기존 lexical/canonical 차이·서명 원문/ID/scope/nonce·다른 target/hash 거부·status 무쓰기·재개 job 하나 단언을 유지한다. Windows/Unix 모두 실행하며 Windows만 scope 구성을 달리한다.
+- `--test windows_bootstrap`의 staged executor exact argv 비교는 그대로 두고 실패 시 시험 argv의 actual_hex/expected_hex를 한 줄로 남긴다. 이 진단은 비밀 입력을 받지 않는 native fixture에만 적용한다. PS5.1에서 실패했다고 PS7까지 통과한 것으로 쓰지 않는다. 로컬 PowerShell의 조립 구문 대조나 Windows cross build를 실제 Windows 성공으로 보지 않는다.
+- 최초 Windows RED는 main 4fe5937c의 run 39761138515/job 119765308652다. 새 exact main CI로 Windows GREEN 또는 staged argv의 실제 차이를 판정한다. 공식 전체 ci-local·공개 검사·양 OS cross clippy와 Windows release build 뒤 별도 착지 창을 기다린다. 시한/기대값/조합 수는 바꾸지 않는다.
+
+## 완료 탭과 웹 기록 제거(t-0775, plan §8.453)
+
+- host의 기존 `archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_queue` owner를 확장한다. 4MiB 초과 원장을 실제 DB에 저장하고 전체 페이지·검색·저장소·완료 근거·복원 불변식을 유지하면서 모델·머신과 완료 기간의 시작 포함/끝 제외, 미지정과 전체, 필터 전 전체 선택지를 검사한다.
+- E2E86은 웹 기록 대신 완료 탭을 검사한다. 실제 host 원장 130건의 페이지 분할·검색·저장소·모델·머신·기간·완료 근거 조합, 상세 메모·되살리기·Reader 쓰기 거부, 직접 체크 보관을 본다. Chromium 데스크톱/320px·WebKit 390px와 밝음/어두움을 캡처한다. E2E26 긴 목록의 기록 부분도 완료 79건의 끝 행·상세·다음 페이지로 바꾼다. E2E46은 삭제 직후 되살리기 인수를 유지하고 없어진 웹 기록 동선만 제거한다.
+- 완료 사건은 API 성공 응답·aria-busy·DOM·파일 상태다. 고정 sleep·재시도·시한 변경은 쓰지 않는다. 전체 ci-local·공개 검사를 수행하고 착지 창 전에는 병합·push하지 않는다.
+
+- E2E86은 실제 복원 쓰기의 응답만 gate로 보류한 뒤 다른 완료 검색을 열고 응답을 푼다. 이전 검색을 다시 읽던 코드에서는 결과 0건으로 실패했고 최신 load를 참조하도록 고친 뒤 새 검색 1건을 유지한다. 최초 시험 자료의 저장소 불일치를 바로잡은 뒤 RED→GREEN을 확인했으며 시한·제품 기대값은 완화하지 않았다. E2E47은 상세의 메모와 실제 r-ID 보고서 연결도 검사한다.
+
+## 계정 gate 수신 진단(t-0777)
+
+`t-0775`의 기존 `accounts::host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials` 실패는
+`expected value`, line 1, column 1이다. 같은 잠금 파일의 serde_json에서 빈 입력은
+`EOF while parsing a value`, line 1, column 0이고, HTTP 요청 등 JSON이 아닌 첫 바이트는 원본 오류와 같다.
+원본 로그에는 받은 문자열·peer가 없어 빈 연결이나 송신 프로세스 종료로 확정할 수 없다.
+
+- Gate는 EOF를 별도로 단언하고 JSON 오류에는 예상 phase, listener·peer, 받은 바이트 수와 첫 8바이트의 hex를 남긴다. 입력 본문 전체는 로그에 쓰지 않는다.
+- `POLICY_HARNESS`는 실험실 `proof/gate-trace.log`에 JSONL로 PID·thread·phase·클라이언트 주소와 연결/전송 완료를 기록한다. 토큰과 인증 홈은 이 진단에 넣지 않는다. 실패하면 기존 Lab 정리가 실험실을 보존하므로 peer를 이 기록과 대조한다. CI 실패 요약은 `*.log`·`*.json`만 모으므로 확장자를 `.log`로 둔다.
+- 기존 phase·계정·토큰·pane 수·종료 단언과 30초 상한을 유지한다. EOF나 잘못된 JSON을 건너뛰거나 연결을 다시 시도하지 않는다. 진단 추가를 원인 수리 완료로 보지 않는다.
+
+### 정해진 20회의 동시 부하 재현 조사
+
+- 전체 Rust에 포함된 대상 owner 1회와 별도 프로세스 19회를 합쳐 총 20회로 고정했다. 별도 실행은 최대 4개를 동시에 돌리고, 정본 `scripts/rust_tests.py`의 전체 workspace·doctest 28묶음(worker 6·libtest thread 2)과 겹친다. 먼저 binary를 모두 준비하고 실행 중 같은 aaa 실행 파일을 재빌드하지 않는다. 실패를 재실행하거나 횟수를 늘리지 않는다.
+- macOS·논리 CPU 10개에서 대상 20/20과 전체 Rust 28/28묶음이 통과해 원본은 재현되지 않았다. 별도 19회의 시작/끝 시각 모두 전체 Rust 실행 구간 안에 있었다. 전체 Rust는 219.15초, 별도 대상 실행은 각 33.03~39.75초였고 시작/끝의 1분 부하는 15.58~43.19였다. PID·시각·종료 코드·로그를 각각 보존했다. 이 결과로 원인을 고쳤다고 판단하지 않는다.
+- 이후 CI 수집 대상에 맞게 trace 확장자만 `.jsonl`에서 `.log`로 정리했다. 기록 형식·송신 순서·기존 단언·시한은 그대로다. 제품 코드는 바꾸지 않고 진단 변경만 준비하며 다음 CI·ci-local의 재발 자료로 송신자를 확인한다.
+- 실제 `POLICY_HARNESS`를 TCP gate와 시험용 hook/거부 CLI에 연결해 두 phase의 연결/전송 기록 4개, PID·peer 일치, 인증 값 없음과 기존 CI `find` 수집 조건에 포함됨을 확인했다. 대상 owner의 추가 실행은 하지 않았다.

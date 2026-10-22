@@ -171,7 +171,9 @@ Assert ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash -ceq $script:
 $expected = (@('install', '--bin-path', $staged) | ForEach-Object {
     ([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($_))).Replace('-', '').ToLowerInvariant() + "`n"
 }) -join ''
-Assert ([IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV) -ceq $expected) 'staged executor did not bind the native plan target'
+$actual = [IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV)
+Assert ($actual -ceq $expected) ("staged executor did not bind the native plan target: actual_hex=[" +
+    $actual.Replace("`n", ',') + "] expected_hex=[" + $expected.Replace("`n", ',') + "]")
 # A changed remote manifest must not replace the independently embedded payload digest.
 $target = New-Profile 'one-line-manifest-tamper'
 [IO.File]::Delete($env:AAA_BOOTSTRAP_ARGV)

@@ -90,10 +90,3 @@ export function QueueControls({ task, board, canEdit, request, onStep, onUnreser
     {error && <p role="alert">{error}</p>}
   </section>;
 }
-
-/** 완료 보관 입구는 기록 탭의 같은 검색·복원 화면을 연다. */
-export function TaskQueuePanel({ onArchive }: { onArchive: () => void }) {
-  return <div className="task-queue-panel" data-testid="task-queue-panel">
-    <button className="btn" type="button" onClick={onArchive} data-testid="task-archive-open">완료 보관</button>
-  </div>;
-}

@@ -796,7 +796,25 @@ impl Host {
         let active =
             tasks::parse(&file_rev::read(&self.project_dir(project)?.join("TASKS.md")).map_err(internal)?.text);
         let view = view.unwrap_or_default();
-        let rows = self.db.archive_list(project).map_err(internal)?;
+        let mut rows = self.db.archive_list(project).map_err(internal)?;
+        let known = self.known_profiles(project);
+        for row in &mut rows {
+            if row.task.profile.is_none() && row.task.machine.is_none() {
+                tasks::fill_agent(std::slice::from_mut(&mut row.task), &known);
+            }
+        }
+        let profiles = rows
+            .iter()
+            .map(|r| r.task.profile.clone().unwrap_or_default())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let machines = rows
+            .iter()
+            .map(|r| r.task.machine.clone().unwrap_or_default())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let repos = history_repos(rows.iter().map(|r| &r.task));
         let limit = view.limit.unwrap_or(50).clamp(1, 100) as usize;
         let mut entries = Vec::new();
@@ -814,7 +832,13 @@ impl Host {
                 Some(aaa_proto::TaskArchiveFilter::ReportDone) => !restored && row.reason == "보고 [완료]",
                 None => !restored,
             };
-            if !matches || !history_matches(&row.task, view.search.as_ref()) {
+            if !matches
+                || !history_matches(&row.task, view.search.as_ref())
+                || view.profile.as_deref().is_some_and(|v| row.task.profile.as_deref().unwrap_or("") != v)
+                || view.machine.as_deref().is_some_and(|v| row.task.machine.as_deref().unwrap_or("") != v)
+                || view.since_ms.is_some_and(|v| row.completed_ms < v)
+                || view.until_ms.is_some_and(|v| row.completed_ms >= v)
+            {
                 continue;
             }
             row.restored = restored;
@@ -837,7 +861,7 @@ impl Host {
             bytes += size;
             entries.push(row);
         }
-        Ok(FrontResponse::TaskArchive { entries, next, repos })
+        Ok(FrontResponse::TaskArchive { entries, next, repos, profiles, machines })
     }
 }
 

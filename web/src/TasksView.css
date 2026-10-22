@@ -345,7 +345,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-form-error { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--danger-tint); color: var(--danger-text); font-size: var(--fs-sm); }
 .task-form-stale { margin: 0; font-size: var(--fs-sm); }
 .task-form-preview { margin: var(--space-1) 0 0; font-size: var(--fs-xs); }
-.task-history-line { margin: 0; font-size: var(--fs-xs); }
 .task-suggestion { margin-top: 0; padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--accent); border-radius: var(--radius-md); background: var(--accent-tint); }
 .task-suggestion h3 { color: var(--text-strong); }
 .task-suggestion ul { margin: 0 0 var(--space-2); font-size: var(--fs-sm); }
@@ -378,28 +377,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-undo-close svg { width: 16px; height: 16px; }
 
 /* 기록 화면 */
-.task-log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
-.task-log-tools .spacer { flex: 1 1 auto; }
-.task-log-rows { list-style: none; margin: 0; padding: 0; }
-.task-log-row { padding: var(--space-1) 0; border-bottom: var(--hairline) solid var(--border); }
-.task-log-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.task-log-toggle { display: flex; flex: 1 1 auto; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--control-h); padding: 0 var(--space-1); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.task-log-toggle { justify-content: flex-start; height: auto; }
-.task-log-toggle:disabled { opacity: 1; cursor: default; }
-.task-log-toggle:hover:not(:disabled) { background: var(--bg-hover); border-color: transparent; }
-.task-log-toggle svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--text-dim); }
-.task-log-dot { width: 14px; flex: 0 0 auto; }
-.task-log-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
-.task-log-row.is-delete .task-log-action, .task-log-row.is-auto_clean .task-log-action { border-color: var(--status-blocked); color: var(--status-blocked); }
-.task-log-row.is-restore .task-log-action, .task-log-row.is-add .task-log-action { border-color: var(--status-done); color: var(--status-done); }
-.task-log-restore { gap: var(--space-1); }
-.task-log-restore svg { width: 14px; height: 14px; }
-.task-log-meta { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 0 var(--space-1); padding-left: calc(var(--space-1) + 14px + var(--space-2)); color: var(--text-dim); font-size: var(--fs-xs); }
-.task-log-diff { margin: 0 0 var(--space-2) calc(var(--space-1) + 14px + var(--space-2)); padding: var(--space-2) var(--space-3); overflow-x: auto; border-radius: var(--radius-md); background: var(--bg-input); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
-.task-log-diff .is-add { color: var(--status-done); }
-.task-log-diff .is-del { color: var(--status-blocked); text-decoration: line-through; }
-.task-log-diff .is-same { color: var(--text-dim); }
-.task-log-more { margin-top: var(--space-3); }
 
 /* 창: 충돌(나란히, 휴대폰은 위아래)·원문 편집 */
 .task-modal.is-wide { width: min(100%, 880px); }
@@ -533,7 +510,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   }
 }
 
-.task-queue-panel { flex: 0 0 auto; max-height: 30vh; overflow: auto; padding: var(--space-2) var(--space-4); border-bottom: var(--hairline) solid var(--border); }
 .task-queue-controls { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-start; gap: var(--space-2); max-height: 40vh; overflow: auto; padding: var(--space-3); border-bottom: var(--hairline) solid var(--border); font-size: var(--fs-sm); }
 .task-queue-controls > p { margin: 0; }
 .task-queue-status { display: flex; align-items: center; gap: var(--space-2); }
@@ -603,11 +579,17 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   white-space: nowrap;
 }
 
-/* 기록도 활성 목록의 도구줄·행 token을 그대로 쓴다. */
-.task-archive-detail { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.task-archive-detail summary { cursor: pointer; min-height: var(--control-h); padding-block: var(--space-1); }
-.task-archive-detail .md { overflow-wrap: anywhere; }
-@media (max-width: 640px) {
-  .task-log-line { flex-wrap: wrap; }
-  .task-archive-detail { flex-basis: 100%; }
-}
+/* 완료 목록: 제목 아래 완료 근거와 실행 배정을 함께 보인다. */
+.task-completed-rows { list-style: none; padding: 0; margin: 0; }
+.task-completed-row { padding: var(--space-2) 0; border-bottom: var(--hairline) solid var(--border); }
+.task-archive-detail { min-width: 0; overflow-wrap: anywhere; }
+.task-archive-detail summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; min-height: var(--control-h); padding: var(--space-1); border-radius: var(--radius-md); }
+.task-archive-detail summary::before { content: "›"; color: var(--text-dim); }
+.task-archive-detail[open] summary::before { transform: rotate(90deg); }
+.task-archive-detail summary:hover { background: var(--bg-hover); }
+.task-completed-title { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.task-completed-detail { padding: var(--space-2) var(--space-3); background: var(--bg-input); border-radius: var(--radius-md); }
+.task-completed-detail .md { overflow-wrap: anywhere; }
+.task-completed-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
+.task-completed-report { display: inline-flex; align-items: center; gap: var(--space-2); margin: var(--space-2); }
+.task-completed-more { margin-top: var(--space-3); }

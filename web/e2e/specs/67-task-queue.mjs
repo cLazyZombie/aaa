@@ -99,11 +99,12 @@ export default async function ({ page }) {
     await row(page,"웹 예약").waitFor({state:"detached"});
     // 활성 task가 사라지면 손대지 않은 상세도 닫힌다. 닫힌 상세의 단추를 누르지 않는다.
     await page.getByTestId("task-detail").waitFor({state:"detached"});
-    await phone.getByTestId("task-detail-close").click();await phone.getByTestId("task-archive-open").click();
+    await phone.getByTestId("task-detail-close").click();await phone.getByTestId("tasks-tab-completed").click();
     const stored=phone.getByTestId(`archive-${one}`);await stored.waitFor();await shot(phone,"queue-phone-archive");
-    await stored.getByRole("button",{name:"활성 목록으로 복원"}).click();
+    await stored.locator("summary").click();
+    await stored.getByRole("button",{name:"되살리기"}).click();
     await stored.waitFor({state:"detached"});
-    // 완료 보관은 기록 탭에서 연다. 복원한 활성 행은 할 일 탭에서 확인한다.
+    // 완료 보관은 완료 탭에서 연다. 복원한 활성 행은 할 일 탭에서 확인한다.
     await phone.getByTestId("tasks-tab-tasks").click();await row(phone,"웹 예약").waitFor();
     await page.reload();await row(page,"웹 예약").waitFor();
     const restored=aaa("task","list").tasks.find(t=>t.id===one);

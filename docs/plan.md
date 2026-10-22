@@ -7493,10 +7493,31 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **웹 회귀.** E2E89은 실제 host·agent·thread 위에 책임 관측값만 대체해 Chromium 1280/320px·WebKit 390px Reader에서 정상/끊김/조회 실패·접힌 경로·정리 창·가로 넘침·상태 무변경을 확인한다. 선택 필드만 추가해 FRONT_API 1.109·AGENT_LINK 1.11·SESSION_IPC를 유지한다. 승인 기준 main과 대조해 기획·E2E 번호를 정리했다.
 
 - **착지 통합.** 승인 기준 origin/main `212d8425`의 마지막 §8.448·FRONT_API 1.109·AGENT_LINK 1.11·E2E88(90파일)을 확인했다. 공개 포트·실행 모델 요약·Windows 설치·본문 스크롤·보고서 동영상을 보존한다. 이번 변경은 §8.449·E2E89(91파일)을 쓰고 API·link·SESSION_IPC 번호는 유지한다. 자기 worktree target으로 전체 ci-local·공개 검사·Linux clippy 뒤 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. 운영 host·agent는 배포 때 coordinator가 전환하며 여기서 재시작하지 않는다.
+### 8.450 Windows 한 줄 설치 owner 환경·수명 수리와 argv 진단(t-0485)
 
-### 8.450 설정 메뉴의 왼쪽 패널 배치와 목록 행 높이(t-0771)
+- main의 첫 Windows 실행에서 새 owner 4개가 실패했다. install Lab은 실제 부모의 PROCESSOR_ARCHITECTURE/PROCESSOR_ARCHITEW6432를 보존한다. AMD64를 시험이 만들어 주거나 production의 architecture 거부를 우회하지 않는다. Windows PS5.1/7 IRM→IEX→실제 검토/승인/파일 적용 owner와 원래 질문/단언/시한을 그대로 둔다.
+- legacy hook fixture는 canonical Windows verbatim prefix 아래에서 PathBuf 결합이 dot을 지워 버리므로 먼저 일반 Win32 표기로 바꿔 옛 lexical scope를 구성한다. lexical/canonical 차이의 선행 단언과 서명/ID/범위/nonce 보존·다른 target/SHA 거부·status 무쓰기·같은 transaction 단언을 유지한다. Unix도 같은 owner를 실행한다.
+- 닫힌 등록 창 owner는 등록 창 안내·같은 ID 재동의와 job 하나의 단언 뒤 runtime listener tasks와 Host/DB를 해제하고 lab을 지운다. Windows cleanup OS32를 무시하거나 삭제를 재시도하지 않는다.
+- staged executor argv의 실제/기대 값이 첫 CI 로그에 없으므로 기존 exact 비교 실패에 한 줄 actual_hex/expected_hex를 붙인다. 로컬 PowerShell 구문 대조는 Windows 실행 증거가 아니며 이 항목의 근본 원인은 다음 main Windows CI에서 확정한다. production argv·원래 기대값·PS 조합·시한은 바꾸지 않는다.
+- 전체 ci-local·check-public·Linux/Windows cross clippy·Windows release 조건 build를 통과한 후보를 보고하고 착지 창을 기다린다. FRONT_API/AGENT_LINK/E2E 번호는 유지한다. q-1165 1A의 v0.1.5 게시 승인은 유효하지만 새 exact main 네 CI job과 새 Windows 실제 owner 전부 GREEN 전에는 tag/publish하지 않는다. v0.1.3/v0.1.4 tag/자산은 불변이다.
+
+### 8.451 설정 메뉴의 왼쪽 패널 배치와 목록 행 높이(t-0771)
 
 - 설정을 열면 데스크톱의 왼쪽 패널이 설정 메뉴로 바뀐다. 공통 머리·바닥·폭 조절을 사용하고, 행의 아이콘 칸·높이·여백·색·선택 표시를 다른 목록과 맞춘다. 앞 패널의 상태는 숨겨 보존하고 다른 활동 막대를 누르면 해당 패널로 돌아간다. 접혀 있던 사이드바도 설정을 열 때 펼친다.
 - 오른쪽 본문은 고른 내용만 전체 폭으로 쓴다. 앱의 drawer 기준인 768px 이하에서는 기존 메뉴 → 내용 이동을 유지한다. 주소·새로고침·뒤로/앞으로·Esc·확인 창과 키 바 편집의 단계는 그대로다. 데스크톱 본문 폭이 좁아져도 메뉴를 본문에 다시 넣지 않으며 설정 조작은 줄을 바꿔 화면 안에 둔다.
 - 자동화의 두 줄 항목이 공통 button 고정 높이를 물려받아 다음 행의 선택 배경에 가리는 문제를 고친다. 답할 것·자동화·보고서·할 일·기록·설정 메뉴에 내용 높이·축소 금지 규칙을 공유한다. 자동화의 텍스트 칸은 남은 폭을 사용하고 상태 배지 유무와 무관하게 번호 시작 위치를 맞춘다.
 - E2E06은 Chromium·WebKit의 밝음/어두움, 데스크톱·휴대폰에서 설정 메뉴 위치·공통 배경·본문 전체 폭·테마/색상/밀도의 hit target을 확인한다. E2E26·34의 실제 긴 목록과 선택/hover 상태에서 행의 자식 경계·이웃 행 겹침·번호 시작 위치를 확인한다. API와 E2E 번호는 유지하며 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.
+
+
+### 8.452 첨부 뒤 여러 줄 입력의 높이 측정 안정(t-0772)
+
+- 그림 첨부·경로·빈 줄·여러 줄 한글을 편집할 때 글 전체가 위아래로 움직인다는 제보다. 실제 coordinator를 띄운 WebKit에서 매 입력의 높이 측정이 실제 textarea를 `auto`로 줄여 높이 240→40→240px와 글 칸 화면 위치의 왕복을 일으키는 것을 확인했다. 최종으로 그려진 headless frame에서는 시각적 떨림을 확인하지 못했으며 이 한계는 보고에 남긴다.
+- 같은 폭·padding·글꼴·줄바꿈·scrollbar gutter의 숨은 textarea에서 자연 높이와 줄 수를 한 번 측정한다. 편집 중인 textarea는 최종 높이만 바꾸고, 높이가 같으면 쓰지 않는다. 기존 CSS 높이 상한과 native 커서 스크롤을 유지하고 한 줄/여러 줄 표지를 다시 재기 위한 추가 effect 실행을 없앤다.
+- E2E66을 확장해 실제 그림 업로드와 경로 삽입 뒤 짧은 글/스크롤이 필요한 긴 글, 「맨 아래로」가 떠 있는 coordinator에서 두벌식 조합·확정·실제 키 입력을 검사한다. Chromium·WebKit × 데스크톱·휴대폰의 강제 layout·ResizeObserver·scroll·frame 표본에서 높이·위치·스크롤이 왕복하지 않아야 한다. 삭제 뒤 높이 복원·focus·글 보존·전송 없음과 기존 줄 경계 검사를 유지한다. API/E2E 번호는 유지하며 전체 ci-local·공개 검사 뒤 착지 창을 기다린다.
+
+### 8.453 완료한 할 일 목록(t-0775)
+
+- 할 일 바로 옆에 「완료」 탭을 둔다. host가 완료 보관한 항목을 d-ID·제목·연결 thread·완료 근거·시각·저장소·모델·머신과 함께 보인다. 상세에는 메모·첨부·연결 보고서 r-ID와 되살리기를 둔다. 되살리기는 기존 archive 복원 경계로 같은 ID·메모·첨부를 보존하고 체크·thread 연결을 푼다.
+- 검색줄은 활성 목록과 같은 검색칸·필터 칩을 쓴다. 저장소·모델·머신·최근 7/30/90일·완료 근거를 조합하고 host에서 페이지를 자르기 전에 적용한다. 선택지는 검색 결과 첫 페이지가 아니라 전체 보관에서 얻어 옛 모델·머신도 선택할 수 있다. 빈 값은 미지정, null은 전체다.
+- 사용자 추가 결정 「기록탭은 아예 빼」에 따라 웹 기록 탭·상세 최근 기록·변경 기록 보기·웹 기록 전용 코드와 시험을 제거한다. CLI `aaa task log`·내구 이력과 삭제 직후 되살리기는 유지한다.
+- FRONT_API 1.110: `TaskArchiveQuery.profile/machine/since_ms/until_ms`, 응답 `profiles/machines`. 새 필터는 1.110 이상에서만 보이며 기존 검색·저장소는 1.106부터다. Agent link·E2E 번호는 유지한다. 착지 때 plan/API 번호를 최신 main과 대조한다.

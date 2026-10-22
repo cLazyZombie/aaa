@@ -654,14 +654,15 @@ impl Host {
                             )?;
                         }
                     }
-                    // 끝난 thread의 자동 정리는 기록 화면에서 「자동 정리」로 거른다(되살리기는 삭제와 같다)
+                    // 완료 보관은 CLI 기록과 별도로 완료 근거·모델·머신을 보존한다.
                     if auto {
                         for r in a.records.iter_mut().filter(|r| r.action == TaskAction::Delete) {
-                            let task = tasks::parse(&rev.text)
+                            let mut task = tasks::parse(&rev.text)
                                 .into_iter()
                                 .find(|t| t.title == r.title)
                                 .ok_or_else(|| internal("완료 task가 없다"))?;
                             let id = task.id.clone().ok_or_else(|| internal("완료 보관에는 task ID가 필요하다"))?;
+                            tasks::fill_agent(std::slice::from_mut(&mut task), &self.known_profiles(project));
                             let report = task.thread.as_ref().map(|t| format!("threads/{t}.md"));
                             let reason = if task.done {
                                 "완료 체크 [x]".to_string()

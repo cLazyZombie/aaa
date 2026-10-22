@@ -29,9 +29,7 @@ import {
   pickAttachable,
   removeAttachment,
   withoutAttachments,
-  TASK_ACTION_LABEL,
   TASK_STATE_LABEL,
-  ago,
   anchorOf,
   canonicalLine,
   descendants,
@@ -814,11 +812,6 @@ function TaskForm(props: DetailProps) {
               </p>
             )}
           </section>
-          {history[0] && (
-            <p className="muted task-history-line" data-testid="task-history-line">
-              최근 기록: {history[0].by} · {ago(history[0].at_ms, Date.now())} · {TASK_ACTION_LABEL[history[0].action]}
-            </p>
-          )}
           <Related t={t} byLine={byLine} groups={groups} onPick={onPick} />
         </>
       )}

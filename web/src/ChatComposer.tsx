@@ -130,11 +130,31 @@ function AttachmentImage({ pane, attachment: a }: { pane: string; attachment: At
     : <span role="status">{error ? "그림을 표시할 수 없음" : "그림 여는 중…"}</span>;
 }
 
-/** 글 칸이 지금 폭에서 몇 줄인가(높이를 auto로 둔 뒤 잰다) */
-function wrappedRows(element: HTMLTextAreaElement): number {
+/** 편집 중인 칸을 줄이지 않고 같은 폭·글꼴의 숨은 textarea에서 자연 높이를 잰다. */
+function measureText(element: HTMLTextAreaElement): { height: number; rows: number } {
   const style = getComputedStyle(element);
   const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-  return Math.round((element.scrollHeight - padding) / parseFloat(style.lineHeight));
+  const mirror = document.createElement("textarea");
+  for (const key of [
+    "fontFamily", "fontSize", "fontWeight", "fontStyle", "fontStretch", "fontVariant", "letterSpacing", "lineHeight",
+    "textTransform", "wordSpacing", "tabSize", "textIndent", "wordBreak", "overflowWrap", "whiteSpace",
+    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "scrollbarGutter",
+  ] as const) mirror.style[key] = style[key];
+  Object.assign(mirror.style, {
+    position: "fixed", top: "0", left: "-10000px", visibility: "hidden", pointerEvents: "none",
+    boxSizing: "border-box", width: `${element.getBoundingClientRect().width}px`,
+    height: "0", minHeight: "0", maxHeight: "none", border: "0", overflow: "hidden",
+  });
+  mirror.tabIndex = -1;
+  mirror.setAttribute("aria-hidden", "true");
+  mirror.value = element.value;
+  document.body.append(mirror);
+  try {
+    const height = mirror.scrollHeight;
+    return { height, rows: Math.round((height - padding) / parseFloat(style.lineHeight)) };
+  } finally {
+    mirror.remove();
+  }
 }
 
 /** 보낸 harness 명령이 터미널에서만 이어질 때의 알림(plan §8.323). 선택창이 열린 동안 보낸 글은 그 선택창에 들어간다(실측 Claude 2.1.304) */
@@ -412,17 +432,17 @@ export function ChatComposer({
     return () => observer.disconnect();
   }, []);
 
-  // 참고 `sizeTextarea`(Composer.tsx): 높이를 auto로 두고 scrollHeight만큼 준다. 그리기 전에 돌아 깜박이지 않는다.
-  // 줄 수와 높이를 모두 실제 글 칸에서 잰다. 폭·padding은 한 줄/여러 줄에 따라 바꾸지 않는다(t-0563 사용자 1A).
-  // 글꼴은 시스템 글꼴이라 참고의 `facesLoaded`는 없고, 대화 글자 크기·밀도가 바뀌면 다시 잰다(참고 settings.chatFontSize 효과).
+  // 실제 칸을 auto로 줄여 scrollHeight를 읽으면 매 입력마다 강제 layout에서 입력창과 커서 자리도 왕복한다.
+  // 자연 높이는 별도 칸에서 한 번만 재고 최종 높이만 적용한다. CSS의 높이 상한과 native 커서 스크롤은 유지한다.
+  // 폭·padding은 줄 수에 따라 바꾸지 않는다(t-0563 사용자 1A). 글꼴·크기·밀도 변경에도 다시 잰다.
   useLayoutEffect(() => {
     const element = textareaRef.current;
     if (!element) return;
-    element.style.height = "auto";
-    const next = shown === "" || wrappedRows(element) <= 1 ? "one" : "more";
-    if (next !== lines) setLines(next);
-    element.style.height = `${element.scrollHeight}px`;
-  }, [shown, lines, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
+    const { height, rows } = measureText(element);
+    setLines(shown === "" || rows <= 1 ? "one" : "more");
+    const size = `${height}px`;
+    if (element.style.height !== size) element.style.height = size;
+  }, [shown, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
 
   // 끝난 보내기를 지운다: 이 보내기가 아직 지금 것일 때만(늦은 답이 다음 보내기를 지우지 않는다)
   const finish = (f: Flight): boolean => {

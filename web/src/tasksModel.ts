@@ -1,8 +1,8 @@
 // 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.311)은
-// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
+// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
 // 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
-import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReservation, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
+import type { TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReservation, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
  * 완료 ✓(보관 전 명시 체크) > 진행 중 ◉(열린 thread와 이어짐) > 보류 ⏸(이어진 thread를 보류했다, plan §8.426) > 대기 ○ */
@@ -531,58 +531,6 @@ export function itemToTask(item: readonly string[]): { title: string; notes: str
   if ([...first].length <= 120) return { title: first, notes: rest };
   const cut = [...first].slice(0, 120).join("");
   return { title: cut, notes: [first, ...rest] };
-}
-
-export const TASK_ACTION_LABEL: Record<TaskAction, string> = {
-  add: "더함",
-  update: "고침",
-  delete: "지움",
-  move: "옮김",
-  list_add: "목록 더함",
-  list_rename: "목록 이름 바꿈",
-  list_merge: "목록 합침",
-  list_delete: "목록 지움",
-  list_move: "목록 옮김",
-  restore: "되살림",
-  raw: "원문 편집",
-  auto_clean: "자동 정리",
-  completed: "완료 보관",
-};
-
-/** 되살릴 수 있는 기록(삭제·자동 정리, 아직 되살리지 않음) */
-export function restorable(e: TaskLogEntry): boolean {
-  return (e.action === "delete" || e.action === "auto_clean") && e.restored_by === null;
-}
-
-/** 전후 원문의 줄 차이(가장 긴 공통 줄 차례). 작은 블록용이다 */
-export function lineDiff(before: string | null, after: string | null): { kind: "same" | "del" | "add"; text: string }[] {
-  const a = before === null ? [] : before.split("\n");
-  const b = after === null ? [] : after.split("\n");
-  const n = a.length;
-  const m = b.length;
-  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-  const out: { kind: "same" | "del" | "add"; text: string }[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < n || j < m) {
-    if (i < n && j < m && a[i] === b[j]) {
-      out.push({ kind: "same", text: a[i] });
-      i++;
-      j++;
-    } else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) out.push({ kind: "add", text: b[j++] });
-    else out.push({ kind: "del", text: a[i++] });
-  }
-  return out;
-}
-
-/** 기록의 때(지금부터): 방금·N분 전·N시간 전·N일 전 */
-export function ago(atMs: number, now: number): string {
-  const s = Math.max(0, Math.floor((now - atMs) / 1000));
-  if (s < 60) return "방금";
-  if (s < 3600) return `${Math.floor(s / 60)}분 전`;
-  if (s < 86_400) return `${Math.floor(s / 3600)}시간 전`;
-  return `${Math.floor(s / 86_400)}일 전`;
 }
 
 // ───────────── thread 연결(할 일 T3, plan §8.316) ─────────────
