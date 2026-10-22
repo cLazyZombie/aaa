@@ -45,17 +45,39 @@ jobs:
         with:
           node-version: 24
       - name: Web front for the native installer
+        id: web
         run: bash scripts/ci-local.sh --only web --logs . --tee
-      - name: Original install owners with stage diagnostics
+      - name: Control with captured probe attached to the console
+        continue-on-error: true
         timeout-minutes: 15
         env:
           RUST_TEST_THREADS: "8"
-        run: cargo test -p aaa --test install --locked -- --nocapture 2>&1 | tee windows-install-entry.log
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/bootstrap/install-windows.ps1')
+          source = path.read_text()
+          line = '    $info.CreateNoWindow = [bool]$Capture\n'
+          assert source.count(line) == 1
+          path.write_text(source.replace(line, '', 1), encoding='utf-8')
+          PY
+          cargo test -p aaa --test install --locked -- --nocapture 2>&1 | tee windows-install-control.log
+      - name: Same owners with only the captured probe console detached
+        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        timeout-minutes: 15
+        env:
+          RUST_TEST_THREADS: "8"
+        run: |
+          git restore --source=HEAD -- scripts/bootstrap/install-windows.ps1
+          git diff --exit-code -- scripts/bootstrap/install-windows.ps1
+          cargo test -p aaa --test install --locked -- --nocapture 2>&1 | tee windows-install-fixed.log
       - name: Preserve diagnostic log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-install-entry-${{ github.run_id }}-${{ github.run_attempt }}
-          path: windows-install-entry.log
+          path: |
+            windows-install-control.log
+            windows-install-fixed.log
           if-no-files-found: ignore
           retention-days: 14

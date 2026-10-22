@@ -185,9 +185,7 @@ function Invoke-WebRequest {
     } else { throw 'unexpected fixture transport' }
 }
 [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'irm_entry')
-Set-PSDebug -Trace 1
 irm $env:AAA_TEST_ENTRY_URL | iex
-Set-PSDebug -Off
 [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'entry_returned')
 exit $global:LASTEXITCODE
 "#).unwrap();
@@ -243,6 +241,11 @@ exit $global:LASTEXITCODE
             );
             std::panic::resume_unwind(panic)
         });
+        eprintln!(
+            "one-line owner returned: shell={shell}, stage={}, http_phase={}",
+            std::fs::read_to_string(&trace).unwrap(),
+            http_phase.load(Ordering::Relaxed),
+        );
         assert_eq!(code, 0, "{}: {}", shell, redact_private(&text));
         server.join().unwrap();
         assert_eq!(std::fs::read(&old_binary).unwrap(), b"old aaa executor preserved");

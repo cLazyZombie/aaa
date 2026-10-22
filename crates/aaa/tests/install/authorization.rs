@@ -95,6 +95,9 @@ enum TerminalEvent {
 }
 #[path = "terminal_exit.rs"]
 mod terminal_exit;
+#[cfg(windows)]
+#[path = "authorization/terminal_processes.rs"]
+mod terminal_processes;
 
 fn drive_terminal(
     command: CommandBuilder,
@@ -192,6 +195,8 @@ fn drive_terminal_on(
                     .as_ref()
                     .map(portable_pty::ExitStatus::exit_code)
                     .or_else(|| child.child.try_wait().unwrap().map(|status| status.exit_code()));
+                #[cfg(windows)]
+                terminal_processes::log_owned_tree(pid);
                 if child_exit.is_none() {
                     child.child.kill().unwrap();
                     child.child.wait().unwrap();

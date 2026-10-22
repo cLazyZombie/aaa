@@ -65,6 +65,7 @@ function Invoke-AaaNative {
     $info.FileName = $Binary
     $info.Arguments = ConvertTo-AaaCommandLine $Arguments
     $info.UseShellExecute = $false
+    $info.CreateNoWindow = [bool]$Capture
     # Actual install inherits the external console and all three standard handles.
     # Only the version probe is captured; it cannot consume approval input.
     $info.RedirectStandardOutput = [bool]$Capture
