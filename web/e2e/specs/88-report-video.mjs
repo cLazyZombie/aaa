@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { root, aaa, until, step, domIs, shot, coordinatorPost, webkit, base } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
-import { clickForPopup } from "../lib/popup.mjs";
+import { clickForPopup, observePopupLifecycle } from "../lib/popup.mjs";
 const fixture = new URL("../fixtures/report-video.mp4", import.meta.url);
 const call = (p, req) => p.evaluate(async (req) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req) })).json(), req);
 const ready = (video) => video.evaluate((v) => new Promise((resolve, reject) => {
@@ -34,6 +34,9 @@ function observeVideo() {
 export default async function ({ page }) {
   let request, report, wk, thread, current;
   const contexts = [];
+  const timeline = [], observers = [];
+  const record = (event, detail = {}) => timeline.push({ at: new Date().toISOString(), ms: Math.round(performance.now()), event, ...detail });
+  let failed = false;
   try {
   await step("영상 자료·agent 안내와 기존 인증 오류 주소·UTF-8 원문", async () => {
     aaa("project", "create", "demo");
@@ -64,6 +67,8 @@ export default async function ({ page }) {
       const p = paired.page; contexts.push(p.context());
       console.log(`영상 조합 ${engine}/${profile}`);
       let phase = "카드 선택";
+      const note = (event, detail) => record(event, { engine, profile, phase, ...detail });
+      observers.push(observePopupLifecycle(p, note));
       try {
         const card = p.getByTestId(`request-ask-${request.id}`); await card.waitFor();
         await p.getByTestId("thread-ask-pick-1B").click();
@@ -104,9 +109,11 @@ export default async function ({ page }) {
         phase = "카드 캡처";
         await shot(p, `88-video-${engine}-${profile}`);
         phase = "HTML 링크 클릭·popup";
-        const tab = await clickForPopup(p, link);
+        note("popup.begin");
+        const tab = await clickForPopup(p, link, note);
         phase = "새 탭 재생";
-        console.log("새 탭 영상 확인"); await ready(tab.locator("video")); await tab.getByRole("button", { name: "영상 재생" }).click(); await moved(tab.locator("video")); await tab.close();
+        console.log("새 탭 영상 확인"); await ready(tab.locator("video")); await tab.getByRole("button", { name: "영상 재생" }).click(); await moved(tab.locator("video"));
+        note("cleanup.tab.begin"); await tab.close();
         phase = "직접 mp4·Range·재생";
         const anonymous = await browser.newContext({ viewport: profile === "iphone" ? { width: 390, height: 844 } : { width: 1280, height: 800 } }); contexts.push(anonymous);
         const src = await video.getAttribute("src");
@@ -122,8 +129,11 @@ export default async function ({ page }) {
         await p.getByTestId("report-detail").getByRole("button", { name: "보고 영상 재생", exact: true }).click(); await moved(reportVideo); await seek(reportVideo);
         await domIs(p, "영상 가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
         await shot(p, `88-report-${engine}-${profile}`);
+        note("cleanup.profile.begin");
         await p.context().close(); await anonymous.close();
       } catch (error) {
+        failed = true;
+        note("profile.failure", { error: error.message });
         const state = await Promise.all(p.frames().map((f) => f.evaluate(() => ({
           hash: location.hash, events: window.__aaaVideoEvents,
           picks: [...document.querySelectorAll('[role="radio"]')].map((b) => [b.getAttribute("data-testid"), b.getAttribute("aria-checked")]),
@@ -146,5 +156,15 @@ export default async function ({ page }) {
     if (!Buffer.from(bytes).equals(fs.readFileSync(fixture))) throw new Error("답한 영상이 최신 파일로 바뀌었다");
     aaa("thread", "resolve", thread.id);
   });
-  } finally { for (const c of contexts) await c.close(); if (wk) await wk.close(); }
+  } finally {
+    record("cleanup.spec.begin");
+    for (const c of contexts) await c.close();
+    if (wk) await wk.close();
+    for (const stop of observers) stop();
+    if (failed) {
+      fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+      fs.writeFileSync(`${root}/diagnostics/video-popup.json`, JSON.stringify(timeline, null, 2));
+      console.log(`영상 popup 사건: ${JSON.stringify(timeline)}`);
+    }
+  }
 }
