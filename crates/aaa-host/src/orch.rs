@@ -3355,6 +3355,7 @@ mod tests {
             background_wait: false,
             compacting: false,
             context: None,
+            model_observation: None,
         }
     }
 

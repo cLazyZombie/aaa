@@ -412,6 +412,7 @@ mod tests {
                     plan: None,
                     background: None,
                     context: None,
+                    model_observation: None,
                 };
                 let sessions = ["first", "s"].map(|id| SessionInfo {
                     id: id.into(),
@@ -651,6 +652,7 @@ mod tests {
             background_wait: false,
             compacting: false,
             context: None,
+            model_observation: None,
         }
     }
 

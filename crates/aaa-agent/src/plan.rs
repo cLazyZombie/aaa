@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aaa_proto::{ContextCompaction, ContextUsage, HarnessEvent, PlanSummary};
+use aaa_proto::{ContextCompaction, ContextUsage, HarnessEvent, ModelObservation, PlanSummary};
 use serde_json::Value;
 
 /// 파일 하나를 한 번에 읽는 상한. 이보다 긴 한 줄(요청 원문 등)은 건너뛴다
@@ -79,6 +79,7 @@ pub struct Snapshot {
     pub plan: Option<PlanSummary>,
     pub background: Option<u32>,
     pub context: Option<ContextUsage>,
+    pub model_observation: Option<ModelObservation>,
 }
 
 /// 기록 하나를 따라 읽는 상태
@@ -111,6 +112,7 @@ pub struct Reader {
     claude_settings: PathBuf,
     /// 모델 → 창(설정을 모델마다 한 번 읽는다)
     windows: HashMap<String, Option<u64>>,
+    model_observation: Option<ModelObservation>,
 }
 
 /// Claude 기록 줄의 `requestedModel`이 말하는 창. Claude 모델이 아니거나 칸이 없으면 모른다.
@@ -291,6 +293,7 @@ impl Reader {
             compacted_from: None,
             claude_settings: crate::chat::claude_home().join("settings.json"),
             windows: HashMap::new(),
+            model_observation: None,
         }
     }
 
@@ -335,7 +338,8 @@ impl Reader {
             percent: percent(self.source, used, self.window),
             compaction: self.compaction,
         });
-        Snapshot { plan, background: (n > 0).then_some(n), context }
+        let model_observation = self.model_observation.as_ref().filter(|m| m.at_ms as i64 >= since_ms).cloned();
+        Snapshot { plan, background: (n > 0).then_some(n), context, model_observation }
     }
 
     /// 한 조각을 읽어 끝난 줄만 처리한다. 처리한(넘긴) 바이트 수
@@ -503,6 +507,7 @@ impl Reader {
                 }
                 self.used = Some(used);
                 let model = e.get("requestedModel").and_then(Value::as_str);
+                self.observe_model(&e, model, None);
                 self.window = match self.windows.get(model.unwrap_or("")) {
                     Some(w) => *w,
                     None => {
@@ -597,6 +602,18 @@ impl Reader {
     }
 
     fn codex_line(&mut self, line: &str) {
+        if line.contains(r#""type":"turn_context""#) {
+            if let Ok(e) = serde_json::from_str::<Value>(line)
+                && e.get("type").and_then(Value::as_str) == Some("turn_context")
+            {
+                self.observe_model(
+                    &e,
+                    e.pointer("/payload/model").and_then(Value::as_str),
+                    e.pointer("/payload/effort").and_then(Value::as_str),
+                );
+            }
+            return;
+        }
         if line.contains(r#""type":"token_count""#) {
             self.codex_context(line);
             return;
@@ -629,6 +646,20 @@ impl Reader {
             let id = (self.steps.len() + 1).to_string();
             self.steps.push(Step { id, label, active: None, status });
         }
+    }
+
+    fn observe_model(&mut self, e: &Value, model: Option<&str>, effort: Option<&str>) {
+        let Some(at_ms) =
+            e.get("timestamp").and_then(Value::as_str).and_then(stamp_ms).and_then(|n| u64::try_from(n).ok())
+        else {
+            return;
+        };
+        self.model_observation =
+            model.filter(|m| !m.trim().is_empty() && !m.starts_with('<')).map(|model| ModelObservation {
+                model: model.chars().take(WORDS).collect(),
+                effort: effort.filter(|e| !e.trim().is_empty()).map(|e| e.chars().take(WORDS).collect()),
+                at_ms,
+            });
     }
 }
 
@@ -705,6 +736,7 @@ impl crate::Agent {
                 plan: e.plan.clone(),
                 background: e.background,
                 context: e.context.clone(),
+                model_observation: e.model_observation.clone(),
             });
             wanted.push((session.clone(), ev.harness.clone(), ev.transcript.clone(), ev.harness_session.clone(), kept));
         }
@@ -761,6 +793,7 @@ impl crate::Agent {
                 plan: snap.plan,
                 background: snap.background,
                 context: snap.context,
+                model_observation: snap.model_observation,
             });
         }
         out
@@ -806,6 +839,38 @@ mod tests {
 
     fn plan(done: u32, total: u32, current: Option<&str>) -> Option<PlanSummary> {
         Some(PlanSummary { done, total, current: current.map(str::to_string) })
+    }
+
+    #[test]
+    fn model_observation_follows_turn_changes_and_excludes_previous_processes() {
+        let turn = |model: &str, effort: Option<&str>| json!({"type":"turn_context","timestamp":T,"payload":{"model":model,"effort":effort}});
+        let p = file("model-codex", &[turn("gpt-6-sol", Some("high"))]);
+        let mut r = Reader::new(Source::Codex, p.clone());
+        assert_eq!(poll(&mut r).model_observation.unwrap().model, "gpt-6-sol");
+        append(&p, &[turn("gpt-6-astra", Some("medium"))]);
+        let m = poll(&mut r).model_observation.unwrap();
+        assert_eq!((&*m.model, m.effort.as_deref()), ("gpt-6-astra", Some("medium")));
+        // resume로 같은 기록을 읽어도 옛 프로세스의 선택을 현재 모델이라고 하지 않는다.
+        assert_eq!(r.poll(&mut POLL_BUDGET.clone(), m.at_ms as i64 + 1).unwrap().model_observation, None);
+        append(&p, &[turn("gpt-6-astra", None)]);
+        assert_eq!(poll(&mut r).model_observation.unwrap().effort, None);
+        append(&p, &[turn("", None)]);
+        assert_eq!(poll(&mut r).model_observation, None);
+    }
+
+    #[test]
+    fn model_observation_uses_only_main_claude_answers_without_guessing_effort() {
+        let answer = |model| json!({"type":"assistant","timestamp":T,"requestedModel":model,"message":{"usage":{"input_tokens":1}}});
+        let p = file("model-claude", &[answer("claude-opus-5-5")]);
+        let mut r = Reader::new(Source::Claude, p.clone());
+        let original = poll(&mut r).model_observation.unwrap();
+        assert_eq!((&*original.model, original.effort), ("claude-opus-5-5", None));
+        let mut side = answer("claude-haiku-5-5");
+        side["isSidechain"] = json!(true);
+        append(&p, &[side]);
+        assert_eq!(poll(&mut r).model_observation.unwrap().model, "claude-opus-5-5");
+        append(&p, &[answer("claude-sonnet-5-5")]);
+        assert_eq!(poll(&mut r).model_observation.unwrap().model, "claude-sonnet-5-5");
     }
 
     #[test]

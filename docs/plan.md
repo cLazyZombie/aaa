@@ -7439,3 +7439,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증.** 실제 DB·router·원장과 Serve 외부 경계 fixture로 성공·충돌·읽기 오류·DB 롤백·종료 뒤 재개를 확인한다. 실제 CLI/host/HTTP의 m13은 자동 공개 → 명시 포트 변경 → 기존 공유 cap 열기 → host 재시작까지 확인한다. 실제 Tailscale daemon의 TLS·OS별 네이티브 실행·운영 포트 전환을 이 fixture의 성공으로 주장하지 않는다. 정본 ci-local·공개 검사와 Linux 교차 clippy 뒤 착지 창을 기다린다.
 
 - **착지 통합.** 승인 기준 origin/main `ccc4a985`의 마지막 §8.443·FRONT_API 1.107·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 직접 확인했다. 고정 번호 칩·완료 보관 경합 수리·설정 본문과 긴 목록 스크롤 변경을 보존한다. 이번 기능은 빈 §8.444와 FRONT_API 1.108을 사용하고 Agent link·E2E 번호는 유지한다. 통합본의 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 검증 tree와 같은 tree를 지정 제목의 --no-ff 병합으로 push하고 원격 SHA를 확인한다. 실제 포트·Serve·host는 변경하지 않는다.
+
+### 8.445 작업 요약 카드의 실행 모델(t-0751)
+
+- 작업 트리 hover 카드와 thread 「요약」 상세에 같은 모델 줄을 보인다. 머신은 되풀이하지 않는다. `gpt-6-astra`·`gpt-6.1-sol` 같은 알려진 계열만 `astra`·`sol`로 줄이고 모르는 이름은 보존한다.
+- 시작 profile을 실행 중 모델로 추측하지 않는다. Codex 본 대화의 `turn_context.model`·`effort`, Claude 본 대화 응답의 `requestedModel`을 읽어 「최근 확인 모델: astra high」처럼 보인다. Claude의 생각 수준은 기록으로 알 수 없어 「생각 수준 미확인」으로 보인다. /model 선택 뒤 다음 대화 기록 전에는 마지막 확인 값이며, 확인 시각과 원래 모델 이름은 title에 둔다.
+- 현재 프로세스 시작 전의 기록은 모델 근거에서 뺀다. 아직 관측하지 못한 실행·옛 agent는 「현재 모델 미확인 · 시작 profile: …」로 구분한다. 새 harness 세션과 thread 재시작에서 옛 관측을 지우고, restart로 바뀐 profile을 fallback에 쓴다.
+- FRONT_API 1.109의 선택 `AgentStatus.model_observation`(모델·생각 수준·시각)을 추가한다. Agent link 1.11의 기존 plan 사건에 같은 선택 필드를 싣는다. 옛 agent의 생략과 옛 host의 모르는 필드 무시를 유지한다. E2E28을 확장하며 번호는 늘리지 않는다. 전체 ci-local·공개 검사를 마친 뒤 착지 창을 기다린다.
+- 좁은 화면 검증에서 대화 화면 머리의 보고·요약·찾기·전환 단추가 함께 있을 때 320px 화면의 layout viewport가 379px로 커져 요약 시트 닫기가 화면 밖으로 나가는 기존 문제를 재현했다. 휴대폰 머리의 보고·대화 전환은 아이콘으로 보이고 접근성 이름은 유지해 모든 단추·시트 닫기가 화면 안에 남는다. E2E28은 실제 viewport·시트·닫기 단추 경계도 검사한다.
+
+- **착지 통합.** 승인 기준 origin/main `c2d451ff`의 마지막 plan §8.444·FRONT_API 1.108·AGENT_LINK 1.11·웹 E2E 최대 번호86(88파일)을 확인했다. t-0748의 설정 본문·passkey·긴 목록과 t-0749의 공개 포트·주소 이전을 보존한다. 이번 변경은 빈 §8.445와 FRONT_API 1.109를 쓰며 Agent link·E2E 번호는 유지한다. 통합본의 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 같은 tree를 지정한 --no-ff 병합으로 push하고 원격 SHA를 확인한다. GitHub CI는 기다리지 않고 보고한다.

@@ -2,6 +2,28 @@
 import type { SummaryEntry, SummaryMark, ThreadSummaryView, ThreadView } from "./gen/proto";
 import { formatWorkingDuration } from "./sidebarModel.ts";
 
+/** 익숙한 모델 계열만 줄인다. 알 수 없는 이름은 원문을 유지한다. */
+export function modelName(model: string): string {
+  const codex = /^gpt-6(?:\.\d+)?-(astra|sol|luna)$/.exec(model);
+  if (codex) return codex[1]!;
+  const claude = /^claude-(opus|sonnet|haiku|fable)-(\d+)-(\d+)(?:-\d{8})?(?:\[1m\])?$/.exec(model);
+  if (claude) return `${claude[1]} ${claude[2]}.${claude[3]}`;
+  return model;
+}
+
+/** /model 선택 직후 기록이 없을 수 있으므로 「최근 확인」과 시작 profile을 분명히 나눈다. */
+export function summaryModel(t: ThreadView): { text: string; title: string } {
+  const observed = t.agent?.model_observation;
+  if (observed) {
+    const effort = observed.effort ?? "생각 수준 미확인";
+    return {
+      text: `최근 확인 모델: ${modelName(observed.model)} ${effort}`,
+      title: `${observed.model} · ${effort} · ${new Date(observed.at_ms).toLocaleString()} 확인`,
+    };
+  }
+  return { text: `현재 모델 미확인 · 시작 profile: ${t.profile}`, title: "이 실행에서 아직 모델을 확인하지 못했습니다." };
+}
+
 /** host가 기억한 활동 시작을 쓴다. 마지막 보고 시각을 활동 시작으로 추측하지 않는다. */
 export function summaryActivity(t: ThreadView, now: number): { activity: string; time: string } {
   const a = t.agent;
