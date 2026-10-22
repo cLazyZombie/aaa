@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## agent 연결 종료 뒤 보고 복사 대기 해제(t-0734, plan §8.439)
+
+- `nice -n 15 cargo test -p aaa-host --lib link::supervision_tests --locked`: 실제 Agent link reader에 잘못된 frame을 보내 끝내되 peer와 writer는 살려 둔다. 종료 전 요청과 이전 연결 사본의 FileRead·ReportFileRead·Input은 즉시 AgentDisconnected가 되어야 한다. 재연결 뒤 옛 generation의 종료가 새 요청을 끊으면 안 된다. 수정 전에는 후속 FileRead가 Timeout으로 실패하고 수정 뒤에는 가상 시계가 전진하지 않는다.
+- 같은 묶음에서 실제 512칸 전송 대기열을 채운다. enqueue에서 기다리는 요청도 연결 종료로 즉시 풀리고, 연결이 살아 있는 포화 대기열은 기존 15초 시한 안에 Timeout·pending 해제로 끝나야 한다. reader panic 정리·감독자의 실제 시한 초과 경고와 이후 성공 응답 시험도 유지한다.
+- `nice -n 15 cargo test -p aaa-host --lib orch::report_tests --locked`: 실제 보고 수집 owner가 manifest 뒤 첫 파일에서 연결을 잃는다. 두 번째 파일이 이전 연결을 재사용해도 파일마다 120초 기다리지 않고, 새 본문·실패 상태와 이전 검증 첨부를 보존해야 한다. 새 연결을 넣은 뒤 hash 변화 없는 다음 ticker에서 complete·첨부 복구·ack 보존을 확인한다.
+- 고정 sleep·실패 재시도·시한 연장은 없다. link의 상대 I/O와 보고 전송 응답만 대체하며 연결 수명·보고 수집·원장·파일 저장은 제품 owner를 쓴다. 전체 ci-local·공개 검사와 Linux 대상 clippy를 수행한다. 외부 API·웹 동작을 바꾸지 않아 기존 API/E2E 번호를 유지한다.
+- 전체 검증 중 E2E69의 질문 링크 연속 누름에서 본문 render 직후의 사이드바 전환 effect와 다음 목록 누름이 경합했다. 정확한 q-ID·카드·본문 단언에 「답할 것」 활동 단추 선택과 패널 표시 완료 단언을 더했다. 다음 목록 누름은 이 DOM 사건 뒤에 시작하며 기존 시한과 나머지 단언을 유지한다.
+
 ## 맨 q-ID도 질문 상태 칩으로 표시(t-0730, plan §8.438)
 
 - `node --test web/test/appIds.test.mjs`: 문장·괄호·붙은 `·`/쉼표·줄바꿈에서 두 q-ID를 각각 인식하고 주변 글자를 보존한다. 주소·경로·없는 ID 제외 검사는 유지한다.
