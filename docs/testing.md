@@ -2481,3 +2481,21 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 완료 사건은 API 성공 응답·aria-busy·DOM·파일 상태다. 고정 sleep·재시도·시한 변경은 쓰지 않는다. 전체 ci-local·공개 검사를 수행하고 착지 창 전에는 병합·push하지 않는다.
 
 - E2E86은 실제 복원 쓰기의 응답만 gate로 보류한 뒤 다른 완료 검색을 열고 응답을 푼다. 이전 검색을 다시 읽던 코드에서는 결과 0건으로 실패했고 최신 load를 참조하도록 고친 뒤 새 검색 1건을 유지한다. 최초 시험 자료의 저장소 불일치를 바로잡은 뒤 RED→GREEN을 확인했으며 시한·제품 기대값은 완화하지 않았다. E2E47은 상세의 메모와 실제 r-ID 보고서 연결도 검사한다.
+
+## 계정 gate 수신 진단(t-0777)
+
+`t-0775`의 기존 `accounts::host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials` 실패는
+`expected value`, line 1, column 1이다. 같은 잠금 파일의 serde_json에서 빈 입력은
+`EOF while parsing a value`, line 1, column 0이고, HTTP 요청 등 JSON이 아닌 첫 바이트는 원본 오류와 같다.
+원본 로그에는 받은 문자열·peer가 없어 빈 연결이나 송신 프로세스 종료로 확정할 수 없다.
+
+- Gate는 EOF를 별도로 단언하고 JSON 오류에는 예상 phase, listener·peer, 받은 바이트 수와 첫 8바이트의 hex를 남긴다. 입력 본문 전체는 로그에 쓰지 않는다.
+- `POLICY_HARNESS`는 실험실 `proof/gate-trace.log`에 JSONL로 PID·thread·phase·클라이언트 주소와 연결/전송 완료를 기록한다. 토큰과 인증 홈은 이 진단에 넣지 않는다. 실패하면 기존 Lab 정리가 실험실을 보존하므로 peer를 이 기록과 대조한다. CI 실패 요약은 `*.log`·`*.json`만 모으므로 확장자를 `.log`로 둔다.
+- 기존 phase·계정·토큰·pane 수·종료 단언과 30초 상한을 유지한다. EOF나 잘못된 JSON을 건너뛰거나 연결을 다시 시도하지 않는다. 진단 추가를 원인 수리 완료로 보지 않는다.
+
+### 정해진 20회의 동시 부하 재현 조사
+
+- 전체 Rust에 포함된 대상 owner 1회와 별도 프로세스 19회를 합쳐 총 20회로 고정했다. 별도 실행은 최대 4개를 동시에 돌리고, 정본 `scripts/rust_tests.py`의 전체 workspace·doctest 28묶음(worker 6·libtest thread 2)과 겹친다. 먼저 binary를 모두 준비하고 실행 중 같은 aaa 실행 파일을 재빌드하지 않는다. 실패를 재실행하거나 횟수를 늘리지 않는다.
+- macOS·논리 CPU 10개에서 대상 20/20과 전체 Rust 28/28묶음이 통과해 원본은 재현되지 않았다. 별도 19회의 시작/끝 시각 모두 전체 Rust 실행 구간 안에 있었다. 전체 Rust는 219.15초, 별도 대상 실행은 각 33.03~39.75초였고 시작/끝의 1분 부하는 15.58~43.19였다. PID·시각·종료 코드·로그를 각각 보존했다. 이 결과로 원인을 고쳤다고 판단하지 않는다.
+- 이후 CI 수집 대상에 맞게 trace 확장자만 `.jsonl`에서 `.log`로 정리했다. 기록 형식·송신 순서·기존 단언·시한은 그대로다. 제품 코드는 바꾸지 않고 진단 변경만 준비하며 다음 CI·ci-local의 재발 자료로 송신자를 확인한다.
+- 실제 `POLICY_HARNESS`를 TCP gate와 시험용 hook/거부 CLI에 연결해 두 phase의 연결/전송 기록 4개, PID·peer 일치, 인증 값 없음과 기존 CI `find` 수집 조건에 포함됨을 확인했다. 대상 owner의 추가 실행은 하지 않았다.
