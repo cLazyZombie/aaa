@@ -7371,4 +7371,4 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 사용자 「자동화 아이콘 다시 만들어줘. 할일도. 4개정도 시안을 가져와」. 지금 세트(lucide 24 격자·둥근 끝과 모서리·막대 선 1.5)로 자동화·할 일 시안 4개씩을 직접 그렸다. 실제 막대에 끼워 데스크톱·휴대폰 × 어두움·밝음 × 고름·배지로 찍었고, 사용자가 자동화 A2·할 일 B1을 골랐다(1B 2A).
 - 자동화는 「도는 시계」다. 시계 방향 화살표 안에 시계 바늘이 있어 정한 때·사건마다 다시 돈다는 뜻이다. 할 일은 「큰 체크 상자」다. 체크가 상자 밖으로 나간다. 옛 ListTodo는 「모든 thread」의 ListChecks와 꼴이 거의 같았다.
 - `web/src/activityIcons.ts`에서 `createLucideIcon`으로 만든다(class `lucide-aaa-automation`·`lucide-aaa-tasks`). 활동 막대, thread ⋯ 메뉴 「자동화 규칙」, 명령 팔레트 「할 일 열기」에 쓴다. thread 요약의 「지금 할 것」 머리는 TASKS.md 할 일이 아니라서 ListTodo 그대로 둔다.
-- wire 변화는 없다(FRONT_API 그대로). 검증은 [testing](testing.md)의 「활동 막대 자동화·할 일 아이콘」을 따른다.
+- wire 변화는 없다. 착지 기준 main 16a910b3의 마지막 §8.436·FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호 86(88파일)을 직접 확인해 빈 §8.437을 쓰고 API/E2E 번호는 유지한다. 검증은 [testing](testing.md)의 「활동 막대 자동화·할 일 아이콘」을 따른다.
