@@ -2547,3 +2547,8 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `nice -n 15 cargo test --locked -p aaa-host --lib workspace_metrics`: SQLite 재시작·중복·명시적 workspace 묶음의 이력 이전, 프로젝트 이름 변경·삭제, API Reader 조회·기간/머신/profile·빈 결과·미수집을 확인한다. 날짜별 p50은 머신·profile 경계를 지키고 실패·빈 날짜를 넣지 않는다. 자료가 없는 등록 경로로도 조회할 수 있어야 한다. 조회가 원본을 읽거나 agent에 요청하면 실패하는 경계를 유지한다.
 - `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 90-workspace-metrics,26-activity-bar --workers 1`: 실제 격리 host·agent·보고 감시·전송·원장·웹을 사용한다. fixture는 기존 runner 종료 산출물만 준비한다. 수집 완료 사건으로 열린 화면이 갱신되는지, 전체·개수·TOP 5·dirty 코드 제외, URL 복원·필터·키보드 상세·목록 접기·로그 삭제 뒤 조회를 확인한다. Chromium과 WebKit, Reader, 390/320px, 밝음/어두움에서 drawer·가로 넘침·오류 때 마지막 성공 값을 검사하고 캡처한다. 데스크톱은 1280px이다. 실제 iPhone 검증은 아니다.
 - 완료 사건은 보고 hash·원장 저장 뒤 WebSocket 사건·DOM·응답이다. 통계를 얻으려고 추가 검증을 실행하거나 검증의 옵션·병렬 수·시한·성공 조건을 바꾸지 않는다. 필수 전체 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사·의존 경계 시험이다.
+
+## Windows 한 줄 입구의 단계 진단(t-0485, plan §8.456)
+
+- 기존 `recovery::one_line_entry_keeps_the_external_console_through_review_and_signed_file_installation`은 PS5.1/7의 실제 IRM/IEX와 native 질문·승인·파일/status를 유지한다. 실패할 때만 원래 PTY panic 뒤 `one-line owner stalled` 한 줄에 shell·고정 stage·HTTP 단계·파일 존재 여부를 남기고 같은 panic을 재개한다. HTTP 단계는 0=시작 전, 1=accept 대기, 2=접속, 3=header 완료, 4=본문 전송 완료다.
+- `powershell_started`/`irm_entry`/`manifest_request`/`manifest_written`/`payload_request`/`payload_written`/`entry_returned`는 시험 transport의 고정 token이다. production 승인 경로나 실행을 대신하지 않으며 trace 파일은 격리 lab에만 둔다. 별도 관찰용 시험·가짜 승인·시한 증가·단언 완화는 없다. macOS에서는 해당 Windows owner가 cfg로 제외되므로 Windows cross 후 main CI의 실제 출력으로 판정한다.

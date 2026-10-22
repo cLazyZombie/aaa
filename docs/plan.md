@@ -7541,3 +7541,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **계약·검증.** FRONT_API 1.111 `workspace_dashboard`와 웹 전용 `workspace_metrics` 사건, Agent link 1.11의 선택 기능 `workspace_metrics.v1`이다. Rust 타입이 정본이며 웹은 생성한 proto만 쓴다. agent fixture·host 내구 원장 시험, 실제 보고→agent→host→웹 E2E90과 기존 활동 막대 E2E26을 확인한다. 번호는 착지 때 main과 대조한다.
 
 - **추가 문구 결정(21:1x).** pane의 detached 경고 이름은 「느린 빌드」, unknown은 「느린 빌드?」로 통일한다. 배너·목록·터미널·CLI·runbook·E2E89에 반영하고 판정·상태 값은 바꾸지 않는다. macOS 검사·정리 후 새 pane 안내는 설명 줄과 title에 둔다.
+
+### 8.456 Windows 한 줄 입구의 첫 질문 전 정지 진단(t-0485)
+
+- main f285f12f의 Windows CI에서 alias·닫힌 등록 창·staged argv owner는 통과했다. 실제 IRM/IEX→승인/파일 owner는 첫 질문 전에 60초 상한에 걸렸다(answered=0/16, child_exit=None). 현재 로그는 PowerShell 제목뿐이므로 startup·HTTP·bootstrap·native probe 중 어느 경계인지 확정하지 않는다.
+- 기존 PS5.1/7 owner에 shell 이름, PowerShell의 고정 단계 token, loopback HTTP accept/header/body 완료 단계와 executor/config/active 파일 존재 여부만 남긴다. PTY panic을 잡아 마지막 진단을 출력한 뒤 원래 panic payload로 즉시 다시 unwind한다. 비밀/경로/승인 내용은 기록하지 않는다.
+- 실제 `irm ... | iex` pipeline·기존 16개 응답·서명/상태/파일 보존 단언·조합·60초 상한은 그대로다. production 변경·새 owner·허용 flag/export는 없다. 이 후보는 수리 완료가 아닌 다음 Windows 실제 원인 판정을 위한 진단이다.
+- 기존 전체 ci-local·공개 검사와 Windows/Linux strict cross·Windows release 조건 build를 확인한다. 교차 빌드는 Windows 실행 증거가 아니며 실제 판정은 다음 승인된 main CI로 한다. CI 재실행이나 기대값/시한 완화로 게시 조건을 우회하지 않는다. v0.1.5는 exact main 네 job과 Windows 실제 owner가 모두 GREEN일 때만 게시한다.
