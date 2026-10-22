@@ -230,8 +230,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 같은 1.106에 RoutineView·AutomationDoc·AutomationTrashEntry.web_read_only_reason(선택)을 더한다(t-0735).
 // 옛 host는 생략, 옛 front는 무시한다. 웹 변경 거부는 host가 시행하며 Local CLI는 유지한다.
 // 1.107: RoutineView.short_id의 프로젝트별 영속 자동화 번호(선택).
-// 1.108: AgentStatus.model_observation의 마지막 실행 모델·effort·관측 시각(선택).
-pub const FRONT_API: Version = Version { major: 1, minor: 108 };
+// 1.108: WebPublishPort(사람의 host CLI): 명시 포트 변경·저장 주소 이전·옛 푸시 구독 정리.
+// 옛 host는 모르는 요청으로 거부한다. Agent link 변경 없음.
+// 1.109: AgentStatus.model_observation의 마지막 실행 모델·effort·관측 시각(선택).
+pub const FRONT_API: Version = Version { major: 1, minor: 109 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

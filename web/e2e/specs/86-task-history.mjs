@@ -184,8 +184,19 @@ export default async function ({ page }) {
     await rows(page).filter({ hasText: "완료 상위" }).waitFor();
     await shot(page, "history-desktop-checked");
     const item = completed.find((a) => a.task.title === "완료 상위");
+    // 복원 요청 때도 목록을 비우므로 행 없음만으로는 완료가 아니다. 같은 ID의 쓰기 응답을 먼저 확인한다.
+    const restoreResponse = page.waitForResponse((response) => {
+      if (!response.url().endsWith("/api/v1/call") || response.request().method() !== "POST") return false;
+      const request = response.request().postDataJSON();
+      return request?.op === "task_archive" && request.restore === item.task_id;
+    });
     await rows(page).filter({ hasText: "완료 상위" }).getByRole("button", { name: "활성 목록으로 복원", exact: true }).click();
-    await domIs(page, "완료 체크 복원 뒤 빈 보관 검색", () => !document.querySelector('[data-testid^="archive-"]'));
+    const response = await (await restoreResponse).json();
+    assert.equal(response.ok?.kind, "task_archive", JSON.stringify(response.err));
+    await domIs(page, "완료 체크 복원 뒤 빈 보관 검색", () => {
+      const list = document.querySelector('[data-testid="task-archive-list"]');
+      return list?.getAttribute("aria-busy") === "false" && list.textContent.includes("조건에 맞는 완료 보관이 없다");
+    });
     const restored = aaa("task", "list").tasks.find((t) => t.id === item.task_id);
     assert.ok(restored && !restored.done && restored.thread === null);
     assert.equal(restored.owner, "fake");

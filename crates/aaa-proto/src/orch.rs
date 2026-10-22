@@ -509,7 +509,7 @@ pub struct AgentStatus {
     /// 컨텍스트 사용량(plan §8.321, 1.67). 옛 host·첫 응답 전에는 null
     #[serde(default)]
     pub context: Option<ContextUsage>,
-    /// 마지막으로 확인한 실행 모델(FRONT_API 1.108). 시작 profile과 별개이며 옛 agent는 보내지 않는다.
+    /// 마지막으로 확인한 실행 모델(FRONT_API 1.109). 시작 profile과 별개이며 옛 agent는 보내지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub model_observation: Option<ModelObservation>,

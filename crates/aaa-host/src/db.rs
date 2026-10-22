@@ -12,6 +12,7 @@ mod question_ids;
 mod report_ids;
 mod task_ids;
 mod task_queue;
+mod web_publication;
 
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -387,7 +388,18 @@ impl Db {
              CREATE TABLE IF NOT EXISTS machine_setups(id TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS push_subs(
                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
-               created_at INTEGER NOT NULL);",
+               created_at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS web_link_originals(
+               change_id TEXT NOT NULL, origin TEXT NOT NULL, kind TEXT NOT NULL, row_id INTEGER NOT NULL, data TEXT NOT NULL,
+               PRIMARY KEY(change_id,kind,row_id));
+             CREATE TRIGGER IF NOT EXISTS web_originals_posts_delete AFTER DELETE ON posts BEGIN
+               DELETE FROM web_link_originals WHERE kind='posts' AND row_id=OLD.rowid; END;
+             CREATE TRIGGER IF NOT EXISTS web_originals_posts_prune AFTER UPDATE OF data ON posts WHEN NEW.data IS NULL BEGIN
+               DELETE FROM web_link_originals WHERE kind='posts' AND row_id=OLD.rowid; END;
+             CREATE TRIGGER IF NOT EXISTS web_originals_inbox_delete AFTER DELETE ON inbox BEGIN
+               DELETE FROM web_link_originals WHERE kind='inbox' AND row_id=OLD.rowid; END;
+             CREATE TRIGGER IF NOT EXISTS web_originals_asks_delete AFTER DELETE ON asks BEGIN
+               DELETE FROM web_link_originals WHERE kind='asks' AND row_id=OLD.rowid; END;",
         )?;
         // 감시 사건은 thread 없이 repo를 가진다. 옛 DB와 함께 읽는 추가 열이다.
         if !conn.prepare("SELECT 1 FROM pragma_table_info('flow_events') WHERE name='repo'")?.exists([])? {
@@ -413,6 +425,9 @@ impl Db {
                 "ALTER TABLE push_subs ADD COLUMN alert_input INTEGER NOT NULL DEFAULT 1;
                  ALTER TABLE push_subs ADD COLUMN alert_done INTEGER NOT NULL DEFAULT 1;",
             )?;
+        }
+        if !conn.prepare("SELECT 1 FROM pragma_table_info('push_subs') WHERE name='origin'")?.exists([])? {
+            conn.execute("ALTER TABLE push_subs ADD COLUMN origin TEXT", [])?;
         }
         // 사용자 보고서(plan §8.256). 위와 같이 열만 더한다
         let has_to_user =
@@ -907,15 +922,20 @@ impl Db {
     /// 남의 구독을 가져가지 못한다(보안 감사 t-0340 B10. 참고 herdr-web-ui server/push.ts는 늘 옮긴다). 옮기지 않았으면 false.
     /// 알림 종류(`alerts`)를 주면 바꾸고, None이면 전에 고른 것을 둔다(참고 `subscribe`: 「alerts absent keeps what the device chose before」).
     pub fn push_put(&self, s: &PushSub) -> Result<bool> {
+        self.push_put_at(s, None)
+    }
+
+    pub(crate) fn push_put_at(&self, s: &PushSub, origin: Option<&str>) -> Result<bool> {
         let given = s.alerts.is_some();
         let a = s.alerts.unwrap_or_default();
         let n = self.conn.lock().unwrap().execute(
-            "INSERT INTO push_subs(endpoint,p256dh,auth,device,created_at,alert_input,alert_done) VALUES(?1,?2,?3,?4,?5,?6,?7)
+            "INSERT INTO push_subs(endpoint,p256dh,auth,device,created_at,alert_input,alert_done,origin) VALUES(?1,?2,?3,?4,?5,?6,?7,?9)
              ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, device=excluded.device,
                alert_input=CASE WHEN ?8 THEN excluded.alert_input ELSE push_subs.alert_input END,
-               alert_done=CASE WHEN ?8 THEN excluded.alert_done ELSE push_subs.alert_done END
+               alert_done=CASE WHEN ?8 THEN excluded.alert_done ELSE push_subs.alert_done END,
+               origin=COALESCE(excluded.origin,push_subs.origin)
              WHERE push_subs.device=excluded.device OR (push_subs.p256dh=excluded.p256dh AND push_subs.auth=excluded.auth)",
-            params![s.endpoint, s.p256dh, s.auth, s.device, aaa_common::util::now_ms() as i64, a.input, a.done, given],
+            params![s.endpoint, s.p256dh, s.auth, s.device, aaa_common::util::now_ms() as i64, a.input, a.done, given, origin],
         )?;
         Ok(n > 0)
     }

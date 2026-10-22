@@ -219,7 +219,7 @@ export default async function ({ page }) {
     await shot(ph, "61-profiles-phone");
     await ph.getByRole("button", { name: "설정으로 돌아가기" }).click();
     await d.getByRole("tab", { name: "안전" }).click();
-    d = ph.getByRole("dialog", { name: "설정" });
+    d = ph.getByRole("region", { name: "설정" });
     await d.getByTestId("settings-safety").getByTestId("safety-rows").waitFor();
     await shot(ph, "61-safety-phone");
     await ph.close();
