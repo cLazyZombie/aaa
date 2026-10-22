@@ -156,6 +156,10 @@ export default async function ({ page }) {
     if (!Buffer.from(bytes).equals(fs.readFileSync(fixture))) throw new Error("답한 영상이 최신 파일로 바뀌었다");
     aaa("thread", "resolve", thread.id);
   });
+  } catch (error) {
+    failed = true;
+    record("spec.failure", { error: error.message });
+    throw error;
   } finally {
     record("cleanup.spec.begin");
     for (const c of contexts) await c.close();
