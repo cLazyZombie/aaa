@@ -2473,3 +2473,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 기존 `legacy_hook_alias_approval_keeps_its_signature_id_and_scope_through_status_and_resume`는 Windows canonical verbatim 경로에서 일반 Win32 lexical 경로를 구성한다. 기존 lexical/canonical 차이·서명 원문/ID/scope/nonce·다른 target/hash 거부·status 무쓰기·재개 job 하나 단언을 유지한다. Windows/Unix 모두 실행하며 Windows만 scope 구성을 달리한다.
 - `--test windows_bootstrap`의 staged executor exact argv 비교는 그대로 두고 실패 시 시험 argv의 actual_hex/expected_hex를 한 줄로 남긴다. 이 진단은 비밀 입력을 받지 않는 native fixture에만 적용한다. PS5.1에서 실패했다고 PS7까지 통과한 것으로 쓰지 않는다. 로컬 PowerShell의 조립 구문 대조나 Windows cross build를 실제 Windows 성공으로 보지 않는다.
 - 최초 Windows RED는 main 4fe5937c의 run 39761138515/job 119765308652다. 새 exact main CI로 Windows GREEN 또는 staged argv의 실제 차이를 판정한다. 공식 전체 ci-local·공개 검사·양 OS cross clippy와 Windows release build 뒤 별도 착지 창을 기다린다. 시한/기대값/조합 수는 바꾸지 않는다.
+
+## 완료 탭과 웹 기록 제거(t-0775, plan §8.453)
+
+- host의 기존 `archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_queue` owner를 확장한다. 4MiB 초과 원장을 실제 DB에 저장하고 전체 페이지·검색·저장소·완료 근거·복원 불변식을 유지하면서 모델·머신과 완료 기간의 시작 포함/끝 제외, 미지정과 전체, 필터 전 전체 선택지를 검사한다.
+- E2E86은 웹 기록 대신 완료 탭을 검사한다. 실제 host 원장 130건의 페이지 분할·검색·저장소·모델·머신·기간·완료 근거 조합, 상세 메모·되살리기·Reader 쓰기 거부, 직접 체크 보관을 본다. Chromium 데스크톱/320px·WebKit 390px와 밝음/어두움을 캡처한다. E2E26 긴 목록의 기록 부분도 완료 79건의 끝 행·상세·다음 페이지로 바꾼다. E2E46은 삭제 직후 되살리기 인수를 유지하고 없어진 웹 기록 동선만 제거한다.
+- 완료 사건은 API 성공 응답·aria-busy·DOM·파일 상태다. 고정 sleep·재시도·시한 변경은 쓰지 않는다. 전체 ci-local·공개 검사를 수행하고 착지 창 전에는 병합·push하지 않는다.
+
+- E2E86은 실제 복원 쓰기의 응답만 gate로 보류한 뒤 다른 완료 검색을 열고 응답을 푼다. 이전 검색을 다시 읽던 코드에서는 결과 0건으로 실패했고 최신 load를 참조하도록 고친 뒤 새 검색 1건을 유지한다. 최초 시험 자료의 저장소 불일치를 바로잡은 뒤 RED→GREEN을 확인했으며 시한·제품 기대값은 완화하지 않았다. E2E47은 상세의 메모와 실제 r-ID 보고서 연결도 검사한다.

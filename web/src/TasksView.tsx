@@ -12,7 +12,7 @@ import { ThreadStageBadge } from "./ThreadStageBadge";
 // 예약 끌기는 놓은 영역이 곧 값이다(Jira·GitHub Projects): 예약 영역에 놓으면 예약(내용 확인 뒤), 아래에 놓으면 예약 풀기.
 // 행·목록 머리의 ⋯ 메뉴는 herdr-web-ui RowMenu(휴대폰은 아래 시트), 끌기는 herdr-web-ui Sidebar.tsx 483–491의 HTML 끌어 놓기와
 // Alt+↑↓(580–584), 휴대폰은 끌기 대신 메뉴의 위로·아래로·맨 위로(t-0469 §3.3). 지운 뒤 「되살리기」 줄은 t3code
-// showThreadUndoNotice.ts(되살리기 한 번만)를 따르되 시간으로 사라지지 않는다(기록 화면에도 남는다).
+// showThreadUndoNotice.ts(되살리기 한 번만)를 따르되 시간으로 사라지지 않는다.
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   ArrowDown,
@@ -31,7 +31,6 @@ import {
   Folder,
   FolderGit2,
   GripVertical,
-  History,
   Link2,
   ListPlus,
   Paperclip,
@@ -54,8 +53,8 @@ import { useMediaQuery } from "./herdr/useMediaQuery";
 import { StateIcon, TaskDetail, ThreadChip, WhoChips, type SaveResult } from "./TaskDetail";
 import { ConflictDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
-import { TaskQueuePanel, type ReserveRequest } from "./TaskQueue";
-import { TaskLogView } from "./TaskLogView";
+import { type ReserveRequest } from "./TaskQueue";
+import { TaskArchiveView } from "./TaskArchiveView";
 import { TaskFilterChips, TaskSearchInput } from "./TaskHistoryTools";
 import {
   TASK_FILTERS,
@@ -95,7 +94,7 @@ import {
 } from "./tasksModel";
 import "./TasksView.css";
 
-type Tab = "tasks" | "later" | "log";
+type Tab = "tasks" | "later" | "completed";
 
 /** host가 편집(`task_edit`)을 아는 FRONT_API */
 const EDIT_API: readonly [number, number] = [1, 62];
@@ -285,7 +284,6 @@ export function TasksView({
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
   const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null);
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Key | null>(null);
@@ -725,21 +723,19 @@ export function TasksView({
         </div>
         <HeadMore />
       </header>
-      {board && queueApi && <TaskQueuePanel onArchive={() => { setArchiveOpen(true); setTab("log"); }} />}
       <div className="tasks-toolbar" ref={setToolbar}>
         <div className="tasks-tabs" role="tablist" aria-label="할 일 탭">
           <button type="button" role="tab" aria-selected={tab === "tasks"} className={`tasks-tab${tab === "tasks" ? " is-on" : ""}`} data-testid="tasks-tab-tasks" onClick={() => setTab("tasks")}>
             할 일 <span className="tasks-count">{total}</span>
           </button>
+          {apiAtLeast(frontApi, [1, 106]) && (
+            <button type="button" role="tab" aria-selected={tab === "completed"} className={`tasks-tab${tab === "completed" ? " is-on" : ""}`} data-testid="tasks-tab-completed" onClick={() => setTab("completed")}>
+              완료
+            </button>
+          )}
           {later && (
             <button type="button" role="tab" aria-selected={tab === "later"} className={`tasks-tab${tab === "later" ? " is-on" : ""}`} data-testid="tasks-tab-later" onClick={() => setTab("later")}>
               나중
-            </button>
-          )}
-          {editApi && (
-            <button type="button" role="tab" aria-selected={tab === "log"} className={`tasks-tab${tab === "log" ? " is-on" : ""}`} data-testid="tasks-tab-log" onClick={() => { setArchiveOpen(false); setTab("log"); }}>
-              <History aria-hidden="true" className="tasks-tab-icon" />
-              기록
             </button>
           )}
         </div>
@@ -821,8 +817,8 @@ export function TasksView({
           </button>
         </div>
       )}
-      {tab === "log" ? (
-        <TaskLogView key={archiveOpen ? "archive" : "log"} toolbar={toolbar} initialArchive={archiveOpen && apiAtLeast(frontApi, [1, 106])} searchApi={apiAtLeast(frontApi, [1, 106])} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} onRestore={(e) => restore(e.id, e.title)} />
+      {tab === "completed" ? (
+        <TaskArchiveView key={project} toolbar={toolbar} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} extendedFilters={apiAtLeast(frontApi, [1, 110])} onOpenAttachment={onOpenAttachment} />
       ) : tab === "later" ? (
         <div className="tasks-scroll" data-testid="tasks-later">
           {notesFiles.map((f) => (

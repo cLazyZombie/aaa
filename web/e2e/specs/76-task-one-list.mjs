@@ -67,7 +67,7 @@ export default async function ({ page }) {
     await topIs(page, "맨 위 예약", "reserved:첫 예약|reserved:둘째 예약|reserved:상위 일|under:하위 일|reserved:rc 일");
     if ((await restOf(page)).join("|") !== "끌어 예약|나중 일") throw new Error(`아래 일반 할 일 ${await restOf(page)}`);
     // 목록 머리·「▼ 예약 N」 칸이 없다. 행에는 순번·까닭 글이 없다
-    if ((await page.locator(".task-list-toggle, .task-queue-panel details").count()) !== 0) throw new Error("목록 머리나 예약 칸이 남았다");
+    if ((await page.locator(".task-list-toggle").count()) !== 0) throw new Error("목록 머리나 예약 칸이 남았다");
     const words = await page.getByTestId("tasks-reserved").textContent();
     if (/예약 \d|자리 대기|project\.toml/.test(words)) throw new Error(`예약 행에 순번·까닭 글 ${words}`);
     if ((await row(page, "rc 일").locator(".task-reserved-dot.is-check").count()) !== 1) throw new Error("확인 필요 예약은 노란 표지");

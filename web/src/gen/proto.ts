@@ -348,7 +348,15 @@ export type TaskArchiveFilter = "pr_merged" | "main_merged" | "report_done" | "r
 
 export type TaskHistoryRepo = { key: string, label: string, n: number, };
 
-export type TaskArchiveQuery = { search: TaskHistorySearch | null, filter: TaskArchiveFilter | null, after: string | null, limit: number | null, };
+export type TaskArchiveQuery = { search: TaskHistorySearch | null, filter: TaskArchiveFilter | null,
+/**
+ * 완료 목록의 정확한 모델·머신 값. 빈 글은 미지정이다.
+ */
+profile: string | null, machine: string | null,
+/**
+ * 완료 시각 범위: 시작 포함, 끝 제외(밀리초).
+ */
+since_ms: number | null, until_ms: number | null, after: string | null, limit: number | null, };
 
 export type TaskView = {
 /**
@@ -1278,7 +1286,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, repos?: Array<TaskHistoryRepo>, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, repos?: Array<TaskHistoryRepo>, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
 /**
  * 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
  */

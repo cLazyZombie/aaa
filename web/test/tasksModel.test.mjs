@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskList, taskState, unassigned, pendingQueue, queueDropPosition, queueStep, queueWhy, repoChoices, unreserveHome } from "../src/tasksModel.ts";
+import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskList, taskState, unassigned, pendingQueue, queueDropPosition, queueStep, queueWhy, repoChoices, unreserveHome } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -228,19 +228,6 @@ describe("할 일 편집", () => {
     const long = itemToTask([`- ${"가".repeat(130)}`]);
     assert.equal([...long.title].length, 120);
     assert.equal(long.notes[0], "가".repeat(130));
-  });
-
-  it("기록: 줄 차이와 되살릴 수 있는 항목", () => {
-    assert.deepEqual(lineDiff("- [ ] a\n  메모", "- [ ] a (me)\n  메모"), [
-      { kind: "add", text: "- [ ] a (me)" },
-      { kind: "del", text: "- [ ] a" },
-      { kind: "same", text: "  메모" },
-    ]);
-    assert.deepEqual(lineDiff(null, "x"), [{ kind: "add", text: "x" }]);
-    const e = { action: "delete", restored_by: null };
-    assert.equal(restorable(e), true);
-    assert.equal(restorable({ ...e, restored_by: 3 }), false);
-    assert.equal(restorable({ ...e, action: "update" }), false);
   });
 });
 

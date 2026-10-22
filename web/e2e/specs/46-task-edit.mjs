@@ -250,7 +250,7 @@ export default async function ({ page }) {
     md = sha(text);
   });
 
-  await step("지우기·되살리기: 끝남으로 지우면 줄이 빠지고 「되살리기」 줄, 기록 화면의 삭제만 거르기와 되살리기", async () => {
+  await step("지우기·되살리기: 끝남으로 지우면 줄이 빠지고 「되살리기」 줄에서 되살리기", async () => {
     let before = await shaOf(page);
     await pickRow(page, "원격 일");
     await page.getByTestId("task-delete").click();
@@ -263,27 +263,6 @@ export default async function ({ page }) {
     text = await saved(page, before);
     if (!taskContent(text).includes("- [ ] 새 일 (me)\n  첫 줄\n  둘째 줄\n- [ ] 원격 일\n")) throw new Error(`원래 목록 끝으로: ${text}`);
     await page.getByTestId("task-undo").waitFor({ state: "detached" });
-    // 다시 지우고 기록 화면에서 되살린다
-    before = await shaOf(page);
-    await pickRow(page, "원격 일");
-    await page.getByTestId("task-delete").click();
-    await saved(page, before);
-    await page.getByTestId("tasks-tab-log").click();
-    const log = page.getByTestId("task-log");
-    await page.getByTestId("task-log-filter-deleted").click();
-    await domIs(page, "삭제만", () => {
-      const rows = [...document.querySelectorAll('[data-testid="task-log"] [data-action]')];
-      return rows.length === 2 && rows.every((r) => r.dataset.action === "delete");
-    });
-    await page.getByTestId("task-log-filter-all").click();
-    await domIs(page, "모든 기록", () => document.querySelectorAll('[data-testid="task-log"] [data-action]').length > 2);
-    await log.locator(".task-log-row").first().locator(".task-log-toggle").click();
-    await shot(page, "edit-desktop-log");
-    before = await shaOf(page);
-    await log.locator("[data-testid^='task-log-restore-']").first().click();
-    text = await saved(page, before);
-    if (!taskContent(text).includes("- [ ] 원격 일\n")) throw new Error(text);
-    await page.getByTestId("tasks-tab-tasks").click();
     md = sha(text);
   });
 

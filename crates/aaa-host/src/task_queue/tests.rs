@@ -1385,7 +1385,9 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
         let id = format!("{:026}", i + 1);
         let repo = if i % 2 == 0 { "old-repo" } else { "작업 폴더" };
         let body = format!("- [x] 보관 {i} (me) [{repo}] <!-- aaa-task:{id} -->\n  NeedLe {}\n", "자료".repeat(3000));
-        let task = tasks::parse(&body).remove(0);
+        let mut task = tasks::parse(&body).remove(0);
+        task.profile = Some(format!("model-{}", i % 3));
+        task.machine = Some(format!("mac-{}", i % 2));
         lab.h
             .db
             .archive_save(
@@ -1422,7 +1424,7 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
             .await
             .unwrap();
         assert!(serde_json::to_vec(&r).unwrap().len() < aaa_proto::MAX_FRAME);
-        let FrontResponse::TaskArchive { entries, next, repos } = r else { panic!("보관 응답") };
+        let FrontResponse::TaskArchive { entries, next, repos, .. } = r else { panic!("보관 응답") };
         assert!(repos.iter().any(|r| r.key == "old-repo"));
         assert!(entries.len() < 100);
         ids.extend(entries.into_iter().map(|a| a.task_id));
@@ -1434,6 +1436,44 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
     }
     assert_eq!(ids.len(), 120);
     assert!(ids.windows(2).all(|w| w[0] < w[1]));
+    // 첫 페이지 밖까지 모든 조건을 적용하고 기간의 양 끝을 정확하게 구분한다.
+    let FrontResponse::TaskArchive { entries, profiles, machines, next, .. } = lab
+        .h
+        .task_archive(
+            "demo",
+            None,
+            Some(TaskArchiveQuery {
+                profile: Some("model-1".into()),
+                machine: Some("mac-0".into()),
+                since_ms: Some(100),
+                until_ms: Some(112),
+                ..Default::default()
+            }),
+            "device:user",
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("보관 응답")
+    };
+    assert_eq!(entries.iter().map(|r| r.completed_ms).collect::<Vec<_>>(), vec![100, 106]);
+    assert_eq!(profiles, vec!["model-0", "model-1", "model-2"]);
+    assert_eq!(machines, vec!["mac-0", "mac-1"]);
+    assert!(next.is_none());
+    let FrontResponse::TaskArchive { entries, .. } = lab
+        .h
+        .task_archive(
+            "demo",
+            None,
+            Some(TaskArchiveQuery { profile: Some(String::new()), ..Default::default() }),
+            "device:user",
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("보관 응답")
+    };
+    assert!(entries.is_empty());
     let search = TaskHistorySearch { query: "  NEEDLE  ".into(), repo: Some("old-repo".into()) };
     let view = TaskArchiveQuery { search: Some(search), filter: Some(F::MainMerged), ..Default::default() };
     let FrontResponse::TaskArchive { entries, next, .. } =
