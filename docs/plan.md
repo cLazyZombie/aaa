@@ -7306,3 +7306,5 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **원인.** 대화 링크는 q-ID를 질문 칩으로 읽지만 칩 상태는 thread ID로만 조회했다. coordinator 질문·답 기록은 표시 변경 키에서도 빠져 답할 것과 답함이 중립으로 남았다. 카드로 이동하는 `questionKey`는 이미 q-ID·thread·coordinator·보존본을 해석하므로 같은 판정을 칩에도 쓴다.
 - **수정.** 열린 질문은 `is-ask`, 답 기록은 `is-done`, 현재 질문과 보존본이 모두 없는 명시 링크는 `is-plain`이다. q-ID는 해당 질문의 기록을 보므로 같은 thread의 새 질문과 지난 답을 구별한다. 답 내용·삭제·coordinator 요청을 표시 변경 키에 넣어 열린 대화에도 host 사건으로 반영한다. 기존 thread ID 칩과 옛 host의 현재 답 표시는 유지한다.
 - **검증.** 질문 모델 시험은 새 질문과 지난 답의 구분, coordinator 평문·구조화 요청, 삭제 뒤 중립을 검사한다. E2E69는 실제 host·agent·Claude 대화 기록의 Markdown q-ID 링크와 aaa 참조에서 thread·coordinator 각각의 열림·답함·새 보고 뒤 보존·답 기록 삭제 후 중립을 검사한다. 밝음·어두움의 배경과 아이콘을 실제 CSS 토큰에 대조한다. 기존 E2E53의 thread ID·dock·보존본 검사도 유지한다. wire 계약·API 판·E2E 파일 번호를 늘리지 않는다.
+
+- **착지 통합.** 기준 origin/main `0f0f54ec`의 마지막 plan §8.431·FRONT_API 1.106·AGENT_LINK 1.11·E2E86을 직접 확인했다. 빈 §8.432를 사용하고 기존 E2E53·69만 확장하므로 API 판과 E2E 파일 번호를 유지한다. main의 계정 풀 시험 DB 정리 순서 수리를 통합한 뒤 전체 ci-local·공개 검사·Linux 대상 clippy로 검증한다. 병합·push 뒤 원격 SHA를 대조하며 배포와 GitHub CI 감시는 coordinator가 맡는다.
