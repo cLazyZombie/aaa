@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 03-keys(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  root, sleep, aaa, waitOutput, until, domIs, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentCount, sentText, inList,
+  root, sleep, aaa, waitOutput, until, domIs, screenText, shot, pairPage, steps, step, browser, webkit, openSettings, sentFrames, sentCount, sentText, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -29,12 +29,12 @@ export default async function ({ ctl, page }) {
     await tp.locator(".xterm-screen").click();
     // 한 동작이 pane에 보낸 조각들. pane이 첫 조각을 받은 때에는 화면이 그 동작으로 보낼 글을 다 보냈다(키·마우스 사건 안에서,
     // 되풀이는 뗄 때까지). 그 글을 pane이 다 받을 때까지 기다린다: 더 오면 같아지지 않아 실패한다(「더 오지 않음」을 sleep으로 어림하지 않는다)
-    const sent = async (act, what = "") => {
+    const sent = async (act, what = "", inputPage = tp) => {
       const n = last();
-      const k = await sentCount(tp);
+      const k = await sentCount(inputPage);
       await act();
       await until(`pane 받음 ${what}`, () => last() > n);
-      const data = sentText(await sentFrames(tp, k));
+      const data = sentText(await sentFrames(inputPage, k));
       const got = () =>
         lines()
           .filter(([i]) => i > n)
@@ -131,6 +131,23 @@ export default async function ({ ctl, page }) {
     await key("Control").click();
     if (bad.length) throw new Error(bad.join("; "));
     await tp.context().close();
+    // WebKit의 진짜 touch 경로도 확인한다. pointerdown 취소는 WebKit 27에서 click까지 없앴다(t-0800).
+    const wk = await webkit.launch();
+    try {
+      const wp = (await pairPage(wk, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true })).page;
+      try {
+        await inList(wp, "pane-barapp");
+        await until("WebKit 키 막대 화면", async () => (await screenText(wp)).includes("bar>"));
+        await wp.locator(".xterm-screen").tap();
+        const touchKey = (name) => wp.locator(`.key-bar .key[data-key="${name}"]`);
+        for (const [name, expected] of [["Escape", "\x1b"], ["ArrowLeft", "\x1b[D"]]) {
+          const actual = await sent(() => touchKey(name).tap(), `WebKit touch ${name}`, wp);
+          if (actual !== expected) throw new Error(`WebKit touch ${name}: ${JSON.stringify(actual)}`);
+          if (!(await wp.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))))
+            throw new Error(`WebKit touch ${name}이 터미널 focus를 가져갔다`);
+        }
+      } finally { await wp.context().close(); }
+    } finally { await wk.close(); }
     aaa("pane", "kill", "barapp");
     await inList(page, "pane-t1");
   });

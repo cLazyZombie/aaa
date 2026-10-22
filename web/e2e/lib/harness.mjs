@@ -8,9 +8,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.mjs";
+import { launchChromium } from "./chromium-launch.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -1048,7 +1050,7 @@ process.stdin.on("data", (d) => {
 });
 `,
 );
-const browser = await chromium.launch();
+const browser = await launchChromium(chromium);
 
 /** push 서명 키(「Web Push: 구독 검사」 단계·pushLab이 /api/v1/push에서 받는다). spec은 import한 이름에 쓸 수 없어 이걸로 둔다 */
 const setPushKey = (key) => {

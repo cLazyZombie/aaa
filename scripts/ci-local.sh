@@ -119,9 +119,9 @@ step_e2e() {
       web/tsconfig.json web/xterm-source.mjs -newer web/dist/index.html -print 2>/dev/null | head -1)
     [ -z "$newer" ] || { echo "web/dist가 ${newer}보다 오래됐다: web 단계를 함께 돈다(--only web,e2e)"; return 1; }
   fi
-  root=$(npm root -g) || return 1
-  if ! NODE_PATH="$root" node -e 'require("playwright")' 2>/dev/null; then
-    echo "playwright가 전역 npm 모듈에 없다: npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit"
+  root=${NODE_PATH:-$(npm root -g)} || return 1
+  if ! NODE_PATH="$root" node -e 'const v = require("playwright/package.json").version; console.log(`Playwright ${v}`); process.exit(v === "1.64.1" ? 0 : 1)' 2>/dev/null; then
+    echo "Playwright 1.64.1이 필요하다: npm install -g playwright@1.64.1 && npx playwright@1.64.1 install chromium webkit"
     return 1
   fi
   AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs

@@ -46,8 +46,8 @@ export interface KeyBarProps {
 }
 
 /**
- * Cancelling pointerdown AND mousedown keeps focus, and with it the soft
- * keyboard, on xterm's textarea; the click still fires.
+ * mousedown을 취소해 xterm의 focus와 화면 키보드를 지킨다.
+ * pointerdown 취소는 WebKit 27에서 터치의 click도 없애므로 누름·반복 추적에는 그대로 둔다.
  */
 function keepFocus(event: PointerEvent<HTMLButtonElement> | MouseEvent<HTMLButtonElement>): void {
   event.preventDefault();
@@ -114,7 +114,6 @@ function Key({ dataKey, label, pressed, onPress, children, disabled, repeatable,
       aria-pressed={pressed}
       tabIndex={-1}
       onPointerDown={(event) => {
-        keepFocus(event);
         if (!repeatable || disabled || event.button !== 0 || !event.isPrimary || pointerRef.current.id !== null) return;
         const pointer = pointerRef.current;
         pointer.id = event.pointerId;
