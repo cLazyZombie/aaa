@@ -1447,7 +1447,8 @@ impl Db {
         let only = match filter {
             None => "",
             Some(aaa_proto::TaskLogFilter::Deleted) => " AND action IN ('delete','auto_clean')",
-            Some(aaa_proto::TaskLogFilter::Auto) => " AND action='auto_clean'",
+            Some(aaa_proto::TaskLogFilter::Auto) => " AND action IN ('auto_clean','completed')",
+            Some(aaa_proto::TaskLogFilter::Restored) => " AND (action='restore' OR restored_by IS NOT NULL)",
         };
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare(&format!(

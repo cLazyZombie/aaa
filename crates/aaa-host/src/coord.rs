@@ -239,12 +239,81 @@ impl Host {
             (Some(w), Some(m)) => Some(format!("{w}. {m}")),
             (w, m) => w.or(m),
         };
+        a.start_task = Some(t.clone());
         Ok((warning, t))
     }
 
-    /// 시작한 thread를 그 task 줄 끝에 잇는다(`ThreadStart.link_task`, 할 일 T3). 시작할 때 읽은 블록 hash로 찾고, 그사이 바뀌었거나
-    /// 고칠 권한이 없으면 시작은 그대로 두고 경고 한 줄을 돌려준다
+    /// 옛 CLI·웹의 제목/할 일 직접 시작도 먼저 TASKS.md에 기록한다. 비슷한 task를 임의로 재사용하지 않는다.
+    /// 본문은 인용으로 보존하여 Markdown 머리·체크 목록이 TASKS.md의 목록/하위 task로 읽히지 않게 한다.
+    pub(crate) async fn create_start_task(&self, a: &StartArgs, actor: &str) -> Result<TaskView, ErrorBody> {
+        if a.title.trim().is_empty() || a.task.trim().is_empty() {
+            return Err(bad("제목·할 일이 비었다"));
+        }
+        let _queue_guard = self.queue_gate.lock().await;
+        let board = self.task_board(&a.project)?;
+        let mut title = a.title.trim().to_string();
+        if tasks::check_title(&title).is_err() || title.ends_with(']') {
+            title.push_str(" · 새 작업");
+        }
+        let original = title.clone();
+        let mut n = 2;
+        while board.tasks.iter().any(|t| t.title.to_lowercase() == title.to_lowercase()) {
+            title = format!("{original} · 별도 {n}");
+            n += 1;
+        }
+        let repo = match a.repo.as_deref() {
+            None => Some(tasks::REPO_DIR.to_string()),
+            Some(r) => self.task_repo_ok(&a.project, r).ok(),
+        };
+        let mut notes: Vec<String> = a.task.lines().map(|l| format!("> {l}")).collect();
+        if repo.is_none()
+            && let Some(r) = &a.repo
+        {
+            notes.push(format!("시작 저장소(프로젝트 미등록): `{r}`"));
+        }
+        let op = TaskOp::Add {
+            list: "Backlog".into(),
+            title: title.clone(),
+            owner: None,
+            person: false,
+            profile: Some(a.profile.clone()),
+            machine: a
+                .machine
+                .as_deref()
+                .map(|m| self.resolve_machine(Some(m)).map(|id| self.machine_name(&id)))
+                .transpose()?,
+            repo,
+            notes,
+            parent: None,
+            before: None,
+            thread: None,
+        };
+        // 기동 경로가 이미 profile·머신을 해석했다. 편집 UI의 assignable RPC를 다시 보내지 않는다.
+        let actor = self.task_writer(&a.project, actor)?;
+        let owner_ok = |_: &str, _: bool| Ok(());
+        let repo_ok = |r: &str| self.task_repo_ok(&a.project, r);
+        let removed = |_: i64| Err("새 할 일 생성에는 복원을 쓰지 않는다".into());
+        let profiles = self.known_profiles(&a.project);
+        let ctx = task_edit::Ctx { owner_ok: &owner_ok, profiles: &profiles, repo_ok: &repo_ok, removed: &removed };
+        let dir = self.project_dir(&a.project)?;
+        let (conflict, _) = self.task_write(&a.project, &dir, &[op], None, &actor, &ctx, false)?;
+        if let Some((_, reason, _)) = conflict {
+            return Err(err(ErrorCode::Conflict, reason));
+        }
+        tasks::find(&self.task_board(&a.project)?.tasks, &title)
+            .cloned()
+            .ok_or_else(|| internal("새 할 일을 읽지 못했다"))
+    }
+
+    /// 시작할 thread를 그 task 줄 끝에 잇는다. 같은 ID 연결은 그대로 두며 읽은 블록이 바뀌었거나 권한이 없으면 까닭을 돌려준다.
+    /// 공통 기동은 실패 때 pane을 띄우지 않는다. 옛 풀 영수증의 사후 연결 복구는 경고로 알린다.
     pub(crate) async fn link_started(&self, project: &str, t: &TaskView, thread: &str, actor: &str) -> Option<String> {
+        if self
+            .task_board(project)
+            .is_ok_and(|b| b.tasks.iter().any(|now| now.id == t.id && now.thread.as_deref() == Some(thread)))
+        {
+            return None;
+        }
         let at = aaa_proto::TaskAnchor {
             list: t.list.clone(),
             title: t.title.clone(),
@@ -280,6 +349,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            start_task: None,
             pool: None,
             over_limit: None,
             reservation: None,
@@ -756,29 +826,88 @@ impl Host {
         filter: Option<TaskLogFilter>,
         task: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.task_log_search(project, before, limit, filter, task, None)
+    }
+
+    pub(crate) fn task_log_search(
+        &self,
+        project: &str,
+        before: Option<i64>,
+        limit: Option<u32>,
+        filter: Option<TaskLogFilter>,
+        task: Option<&str>,
+        search: Option<&aaa_proto::TaskHistorySearch>,
+    ) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
         let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
         let selector = task.map(|s| self.task_selector(project, s)).transpose()?;
-        let mut entries = self
-            .db
-            .task_log_list(project, before, if selector.is_some() { u32::MAX } else { limit as u32 + 1 }, filter)
-            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
-        if let Some(want) = selector {
-            let marker = format!("<!-- aaa-task:{want} -->");
-            entries.retain(|e| {
-                e.title.eq_ignore_ascii_case(&want)
-                    || e.before.iter().chain(e.after.iter()).any(|b| b.contains(&marker))
-            });
+        let marker = selector.as_ref().map(|want| format!("<!-- aaa-task:{want} -->"));
+        let mut cursor = before;
+        let mut entries = Vec::new();
+        let mut bytes = 0;
+        let mut next = None;
+        // 검색 결과를 자른 뒤 다음 커서를 정한다. 일치하지 않는 앞 페이지가 뒤 결과를 숨기지 않는다.
+        'scan: loop {
+            let batch = self.db.task_log_list(project, cursor, 100, filter).map_err(internal)?;
+            if batch.is_empty() {
+                break;
+            }
+            cursor = batch.last().map(|e| e.id);
+            for e in batch {
+                if let Some(want) = &selector
+                    && !e.title.eq_ignore_ascii_case(want)
+                    && !e.before.iter().chain(e.after.iter()).any(|body| body.contains(marker.as_ref().unwrap()))
+                {
+                    continue;
+                }
+                let matches = if let Some(search) = search {
+                    let mut tasks: Vec<_> =
+                        e.before.iter().chain(e.after.iter()).flat_map(|body| tasks::parse(body)).collect();
+                    for task in &mut tasks {
+                        if let Some(id) = &task.id {
+                            task.short_id = Some(self.db.task_short_id(project, id).map_err(internal)?);
+                        }
+                    }
+                    tasks.iter().any(|task| crate::task_queue::history_matches(task, Some(search)))
+                        || (tasks.is_empty()
+                            && search.repo.is_none()
+                            && e.title.to_lowercase().contains(&search.query.trim().to_lowercase()))
+                } else {
+                    true
+                };
+                if !matches {
+                    continue;
+                }
+                let size = serde_json::to_vec(&e).map_err(internal)?.len();
+                if entries.len() >= limit
+                    || (!entries.is_empty() && bytes + size > crate::task_queue::HISTORY_PAGE_BYTES)
+                {
+                    next = entries.last().map(|r: &aaa_proto::TaskLogEntry| r.id);
+                    break 'scan;
+                }
+                if size > crate::task_queue::HISTORY_PAGE_BYTES {
+                    return Err(err(ErrorCode::TooLarge, format!("기록 {} 한 건이 페이지 상한을 넘는다", e.id)));
+                }
+                bytes += size;
+                entries.push(e);
+            }
         }
-        let next = (entries.len() > limit).then(|| {
-            entries.truncate(limit);
-            entries.last().map(|e| e.id)
-        });
         let devices = self.db.devices().unwrap_or_default();
         for e in &mut entries {
             e.by = task_actor_label(&e.actor, &devices);
         }
-        Ok(FrontResponse::TaskLog { entries, next: next.flatten() })
+        let repos = if search.is_some() {
+            let past = self.db.task_log_list(project, None, u32::MAX, None).map_err(internal)?;
+            let tasks: Vec<_> = past
+                .iter()
+                .flat_map(|e| e.before.iter().chain(e.after.iter()))
+                .flat_map(|body| tasks::parse(body))
+                .collect();
+            crate::task_queue::history_repos(tasks.iter())
+        } else {
+            Vec::new()
+        };
+        Ok(FrontResponse::TaskLog { entries, next, repos })
     }
 
     pub(crate) fn task_log_prune(

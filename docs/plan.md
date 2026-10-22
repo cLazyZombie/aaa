@@ -5982,7 +5982,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 ### 8.316 웹 할 일 thread 연결과 자동 정리(10-20, t-0493 할 일 관리 T3)
 
 - **요청.** 사용자 10-20 「작업이 시작되면 (끝나면? 지금 정책에 따라) 삭제도 되고」, 기획 t-0469의 T3(§6.2: `ThreadStart{link_task}`·「coordinator에게 맡기기」·「task에 잇기」·「task로 만들기」·§4 P2 자동 정리·되살리기 줄·coordinator 안내 「thread가 끝나면」, §3.4 단추, §5 권한). 운영 TASKS.md·later.md·project.toml 정리는 T4다.
-- **시작과 연결.** `ThreadStart`에 `link_task`·`task_block`을 더했다. `--from-task`로 시작한 thread가 서면 host가 같은 요청 안에서 그 task 줄 끝에 ` · t-NNNN`을 붙인다(`task_edit` update, thread 칸만). 대상은 화면이 본 블록 hash로 찾는다. 그사이 블록이 바뀌었으면 웹 「바로 시작」은 시작하지 않고 「다시 열라」고 알린다(`task_block`이 다르면 거부). 시작한 뒤 연결만 실패하면(그 블록을 그사이 고쳤다) 시작은 그대로 두고 경고를 돌려준다. 새 요청 `thread_start_preview`는 `thread start --from-task`와 같은 규칙으로 owner → profile·머신, 저장소 후보, 메모를 붙인 할 일 글, 열린 thread 수와 `max_parallel_threads`를 준다(조작 권한). 이미 열린 thread와 이어진 task는 참고처럼 막지 않고 경고만 한다.
+- **시작과 연결.** `ThreadStart`에 `link_task`·`task_block`을 더했다. `--from-task`로 시작한 thread가 서면 host가 같은 요청 안에서 그 task 줄 끝에 ` · t-NNNN`을 붙인다(`task_edit` update, thread 칸만). 대상은 화면이 본 블록 hash로 찾는다. 그사이 블록이 바뀌었으면 웹 「바로 시작」은 시작하지 않고 「다시 열라」고 알린다(`task_block`이 다르면 거부). §8.430부터는 `link_task` 생략 여부와 무관하게 pane 준비 전에 연결하며, 블록 변경·연결 실패면 pane을 띄우지 않는다. 새 요청 `thread_start_preview`는 `thread start --from-task`와 같은 규칙으로 owner → profile·머신, 저장소 후보, 메모를 붙인 할 일 글, 열린 thread 수와 `max_parallel_threads`를 준다(조작 권한). 이미 열린 thread와 이어진 task는 참고처럼 막지 않고 경고만 한다.
 - **자동 정리(P2, `task_clean.rs`).** `thread_resolve`가 처음 끝낼 때의 까닭(`manual`·`auto`·`merged`)과 사본 없이 끝냈는지를 `ThreadRec.task_clean`에 적는다(정리가 끊겨 `aaa thread resolve`로 이어 끝내도 병합은 병합이다). 정리가 끝나면 ticker를 깨운다. 다음 tick이 thread마다 한 번 판정한다. 하위 task가 남았으면 확인 필요, PR 병합이면 완료(보고 표지와 무관), 사본 없이 끝냈으면 확인 필요, 마지막 보고 표지 `[완료]`면 완료, 그 밖 표지·보고 없음은 확인 필요다. 완료면 그 줄(하위째)을 지우고 기록에 「host 자동 정리」(`auto_clean`)로 남기며 coordinator inbox에 `task auto-cleaned`(되살리기 명령 포함)를 넣는다. 확인 필요면 줄을 두고 inbox `task needs check`를 넣는다(지우기를 쓴 뒤에 넣어 알림이 겹치지 않는다). 판정은 한 번이라 되살린 task를 다시 지우지 않는다. 지우기 쓰기가 충돌하면 판정하지 않은 채 다음 tick에 다시 본다. 다시 연 thread는 판정을 지운다.
 - **확인 필요(`TaskView.attention`).** 이어진 thread가 끝났는데 남은 task에 까닭을 단다(「t-NNNN 끝남: 보고가 없다」, 「…자동 정리했다가 되살렸다」 등). `aaa task list`는 ⚠ 표지와 「확인 필요:」 줄을, `context`는 「확인 필요:」 줄을, 웹은 상태 「확인 필요」(형식 어긋남 다음, 진행 중보다 앞)·거르기 칩·배지를 보인다. 상세의 단추는 「끝남으로 지우기」·「다시 맡기기」(coordinator 입력칸에 앞 thread와 까닭을 붙인 글)·「연결만 풀기」·「바로 다시 시작」이다.
 - **상위 task.** 상위는 저절로 지우지 않는다. 하위가 모두 지워져 하위도 thread도 없는 상위는 그 thread를 줄 끝에 이어 확인 필요로 올린다(「하위 task가 모두 끝났다(마지막 t-NNNN)」, inbox `task needs check`). 그사이 상위가 바뀌어 잇지 못하면 다시 하지 않고 inbox로만 묻는다.
@@ -6292,7 +6292,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 
 ### 8.336 일을 맡기기 전 기존 task 검색과 동시 갱신(10-21, t-0539)
 
-- **안내.** coordinator는 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task를 `--from-task … --link-task`로 시작하거나 이미 이어진 열린 thread에 넘기고, 사용자 말에 맞게 메모·모델·머신·저장소도 함께 고친다. 없으면 기존 시작 흐름을 따른다. §8.335의 모델·머신 분리 안내와 CLI는 유지한다. 안내 원본은 `aaa doctor files --fix`가 운영 AGENTS.md에 반영한다.
+- **안내.** coordinator는 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task를 `--from-task … --link-task`로 시작하거나 이미 이어진 열린 thread에 넘기고, 사용자 말에 맞게 메모·모델·머신·저장소도 함께 고친다. 없으면 §8.430에 따라 지금 시작할 일도 먼저 만들고 `--from-task … --link-task`로 시작한다. §8.335의 모델·머신 분리 안내와 CLI는 유지한다. 안내 원본은 `aaa doctor files --fix`가 운영 AGENTS.md에 반영한다.
 - **보조 경고.** task 없이 제목으로 시작할 때 비슷한 열린 task와 연결 명령을 한 줄 알린다. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고 합집합의 2/3 이상이 같을 때만 알리며 파일 순서상 첫 후보를 고른다. 완료 task는 제외한다. 형태소·동의어를 추측하지 않으며, 시작을 거부하거나 TASKS.md를 고치지 않는다. 기존 ThreadView 경고를 사용하므로 Front API 변경은 없다.
 - **검증.** 경고 유닛은 정규화·겹침 경계·완료 제외·명령의 셸 인용을, m13은 실제 CLI의 경고와 시작 성공·경고 없는 경로·원문 보존을 검사한다. 기존 안내 생성·갱신 keeper가 새 문구도 검사한다. 완료 제외를 제거하면 음성 시험이 실패해야 한다. 상세는 [시험](testing.md)의 t-0539 절을 따른다.
 
@@ -7279,7 +7279,37 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 변경을 검증·착지한 정확 main commit의 GitHub CI가 모두 성공한 뒤 판·대상 commit을 보고하고, 저장소 release 절차로 v0.1.3 tag를 한 번 push한다. 게시된 Windows bootstrap을 실제 내려받아 같은 tag source·manifest·SHA256SUMS와 SHA-256을 대조한 뒤 사용자 시험 안내에 고정 판과 해시를 넣는다.
 - release 게시가 운영 배포나 실제 사용자 PC 인수를 뜻하지 않는다. SCM logon·Session0·부팅·LSA/GPO·UAC는 사용자 시험으로 판정하고 공개 uninstall의 남은 연결과 I4 Linux·I7 최종 인수는 기존 순서대로 이어 간다.
 
-### 8.430 thread 이미지 생성을 host Codex 계정으로(t-0707)
+### 8.430 일반 작업의 할 일 선행과 자동 연결(t-0705)
+
+- 사용자 10-22 「항상 할일을 만들고, 그걸로 작업으로 전환해. aaa의 기본 룰로 만들어」. coordinator 안내 원본의 메시지 분류·thread 시작·TASKS.md 추가 규칙을 함께 바꾼다. 기존 task를 먼저 찾아 재사용하고, 없으면 지금 시작할 일도 `aaa task add` 후 `aaa thread start --from-task <ID> --link-task`로 시작한다. 「할 일에 넣어」는 기록 요청이며 시작 승인이 아니다. 모델·머신 변경 보호, 시작 승인·한도·예약 규칙은 유지한다. `doctor files --fix`가 이 원본을 운영 안내에 반영한다.
+- 사용자 추가 결정(10-22 11:1x): automations의 do.start(ci-watch 분류·검증 감시 등)는 예외다. 할 일을 만들거나 연결하지 않고 현재 자동화 실행 기록·출처·reuse·limits로 관리한다. 예외는 시작의 실제 `StartOrigin`으로 판정하며 사용자가 제목·holds·profile로 흉내 낼 수 없다. 기존 pane을 데려오는 adopt와 restart·unpark는 새 일 생성이 아니다.
+- 설계: 기존 CLI·프로토콜의 제목 직접 시작을 host가 할 일 생성으로 보완한다. 거부는 기존 입력 경로를 깨뜨리고 경고만 하면 완료 보관에서 빠지므로 자동 생성을 택한다. host의 공통 기동 경로에서 입력·머신·profile 검사를 거친 뒤 `TASKS.md`에 먼저 쓰며 생성 실패는 기동을 막는다. 직접 시작의 원문은 thread task 파일에 그대로 두고, 할 일 메모에는 인용으로 보존하여 Markdown 머리·체크 목록이 다른 task로 읽히지 않게 한다. 실제 모델·머신과 등록 저장소(없으면 작업 폴더)를 기록한다. 미등록 저장소 직접 기동은 기존처럼 허용하되 경로를 메모에 남기고 저장소 칸은 비운다.
+- 기존 할 일은 `--link-task` 생략 여부와 관계없이 연결한다. 시작 전에 읽은 블록을 DB 선점 직전에도 확인하고 pane·worktree 준비 전에 연결한다. 연결 실패는 Failed로 남기고 pane을 띄우지 않는다. 기동 실패·한도 부족은 할 일을 대기로 남겨 원래 일이 사라지지 않게 한다. 비슷한 열린 task 경고는 유지하며, 직접 제목이 기존 task와 같아도 기존 모델·머신·메모를 임의로 덮지 않고 `· 별도 N` 제목의 별도 task를 만든다. coordinator의 기존 모델·머신 보호 거부는 유지한다.
+- 계정 배정 대기의 직접 시작도 첫 pass에서 할 일을 한 번 기록하고 내부 StartArgs에 원본을 저장한다. Queued의 다음 pass·같은 시작 ID의 재전송·host 재시작은 그 할 일을 재사용한다. 이미 해석한 profile·머신을 쓸 때 편집 UI의 assignable RPC를 다시 하지 않는다. 이 칸이 없던 판의 대기 기록은 기존 picked 할 일을 우선한다.
+- 완료: 직접 시작도 같은 task ID·본문·보고·작업 이력으로 기존 완료 보관에 들어간다. 옛 버전 thread와 사용자가 할 일을 지운 thread의 「task에 잇기/만들기」 복구 UI는 남긴다. 웹의 할 일 「바로 시작」은 기존 from_task 요청을 유지하고 host에서 같은 규칙을 적용한다.
+- 검증: m13의 직접 시작·배경 시작 연결·Markdown 원문 보존·준비 실패·기존 ID 연결·완료 보관, 유사 task 경고·안내 생성/doctor 갱신·자동화 예외를 확인한다. 웹 E2E47은 자동 연결을 먼저 확인한 뒤 명시 삭제로 옛 thread 복구 UI를 검증하며, E2E48은 일반 작업 연결과 자동화 무생성을 함께 확인한다. 문서·시험의 옛 선택 연결 설명은 이 절이 대체한다. wire 필드와 E2E 파일 번호는 늘리지 않는다(FRONT_API 1.105·AGENT_LINK 1.11·E2E85 유지).
+
+- 착지 기준 origin/main `c1bacb14`의 마지막 plan §8.429·FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E85를 확인했다. 비어 있는 §8.430을 쓰며 wire 판과 E2E 번호를 유지한다. 통합본 전체 ci-local·공개 검사·Linux 대상 clippy 후 병합·push하고 CI 감시·배포·운영 안내 갱신은 coordinator가 맡는다.
+
+### 8.431 할 일 기록 검색·저장소·완료 상태와 보관 페이지(t-0703)
+
+- **목적·모양.** 활성 할 일과 같은 검색 컴포넌트·저장소 RowMenu(휴대폰은 아래 시트)·상태 칩을 기록 탭에 쓴다. 완료 보관 입구도 기록 탭의 완료 보관 필터를 연다. 활성 목록과 기록의 검색·선택은 각각 유지한다. 설정에서 빠진 저장소·작업 폴더·정하지 않음도 실제 기록에 있으면 선택지에 남긴다.
+- **실제 상태.** 변경 기록의 전체·삭제(`delete`·옛 `auto_clean`)·자동 정리(`auto_clean`·`completed`)·복원됨(`restore` 또는 `restored_by`)과, 내구 보관의 완료 보관·PR 병합(`PR 병합`)·main 병합(`origin/main 병합`)·보고 완료(`보고 [완료]`)·보관 복원됨(`restored` 영수증 또는 같은 ID의 활성 항목)을 구분한다. 완료 판정처럼 옛/다른 근거는 완료 보관 전체에 남는다. 그만둠을 삭제와 구별할 저장값은 없으므로 상태를 만들지 않는다. 복원됨은 과거 동작/보관 영수증이며 현재 실행 상태라는 뜻이 아니다.
+- **host·계약(FRONT_API 1.106).** `task_archive.view`의 검색·저장소·상태·`after`·`limit`으로 host가 거른 뒤 기본 50개/최대 100개, 직렬화 바이트 768KiB 안에서 페이지를 만든다. 내부 ID 오름차순의 마지막 반환 ID를 `next`로 준다. 전체 이력의 중복 TASKS.md 스냅샷은 DB에 남기고 목록의 `history`는 빈 배열이다. 본문·결과·표시 ID는 유지한다. CLI는 작은 페이지를 합쳐 기존 전체 출력을 유지한다. `task_log.search`도 ID·제목·메모·담당을 활성 검색과 같은 trim/대소문자 규칙으로 찾고 저장소·상태와 함께 거른 뒤 개수/바이트로 나눈다. 검색 결과가 없는 앞 페이지 뒤도 순회한다. 중복 이력을 뺀 한 건의 직렬화 크기가 768KiB를 넘으면 해당 ID/기록 번호를 명시해 거부한다. frame 상한은 올리지 않는다.
+- **복원·호환.** 완료 보관은 같은 ID·메모·첨부를 원래 목록으로 복원하고 실행 연결·예약은 복원하지 않는다. 삭제는 기존 기록 되살리기를 유지한다. Reader는 조회만 한다. 옛 요청 필드는 생략 가능하고 새 응답 필드는 serde 기본값을 두며, 웹 새 검색/상태는 1.106 이상 host에서 연다. Agent link는 바꾸지 않는다.
+- **검증.** host task_queue 시험은 4MiB 초과 본문 묶음의 바이트 페이지·빠짐/중복 없음·검색/저장소/상태 조합·표시 ID·복원·예약 없음, 한 건의 2MiB 중복 이력 비전송/DB 보존, 일치하지 않는 100건 앞 페이지 뒤의 검색과 실제 삭제 복원을 검사한다. 웹 E2E86은 4MiB 초과 격리 DB의 CLI 전체 출력과 실제 API 페이지, UI 조합·더 보기·복원·Reader 쓰기 거부·Chromium 1280/320px·WebKit 390px를 확인하고 활성/기록 화면을 각각 캡처한다. 고정 sleep·재시도·시한 연장은 없다.
+- **착지 통합.** origin/main `ae06a0c2`의 마지막 plan §8.430·FRONT_API 1.105·AGENT_LINK 1.11·E2E85를 확인해 빈 §8.431·FRONT_API 1.106·E2E86을 쓴다. 일반 작업 자동 연결과 검증 release 0.1.3을 함께 검증하며 Linux 대상 clippy·전체 ci-local·공개 검사 뒤 병합·push한다. 배포와 GitHub CI 감시는 coordinator가 맡는다.
+
+
+### 8.432 대화 질문 칩의 q-ID 상태 색 복구(t-0712)
+
+- **원인.** 대화 링크는 q-ID를 질문 칩으로 읽지만 칩 상태는 thread ID로만 조회했다. coordinator 질문·답 기록은 표시 변경 키에서도 빠져 답할 것과 답함이 중립으로 남았다. 카드로 이동하는 `questionKey`는 이미 q-ID·thread·coordinator·보존본을 해석하므로 같은 판정을 칩에도 쓴다.
+- **수정.** 열린 질문은 `is-ask`, 답 기록은 `is-done`, 현재 질문과 보존본이 모두 없는 명시 링크는 `is-plain`이다. q-ID는 해당 질문의 기록을 보므로 같은 thread의 새 질문과 지난 답을 구별한다. 답 내용·삭제·coordinator 요청을 표시 변경 키에 넣어 열린 대화에도 host 사건으로 반영한다. 기존 thread ID 칩과 옛 host의 현재 답 표시는 유지한다.
+- **검증.** 질문 모델 시험은 새 질문과 지난 답의 구분, coordinator 평문·구조화 요청, 삭제 뒤 중립을 검사한다. E2E69는 실제 host·agent·Claude 대화 기록의 Markdown q-ID 링크와 aaa 참조에서 thread·coordinator 각각의 열림·답함·새 보고 뒤 보존·답 기록 삭제 후 중립을 검사한다. 밝음·어두움의 배경과 아이콘을 실제 CSS 토큰에 대조한다. 기존 E2E53의 thread ID·dock·보존본 검사도 유지한다. wire 계약·API 판·E2E 파일 번호를 늘리지 않는다.
+
+- **착지 통합.** 기준 origin/main `0f0f54ec`의 마지막 plan §8.431·FRONT_API 1.106·AGENT_LINK 1.11·E2E86을 직접 확인했다. 빈 §8.432를 사용하고 기존 E2E53·69만 확장하므로 API 판과 E2E 파일 번호를 유지한다. main의 계정 풀 시험 DB 정리 순서 수리를 통합한 뒤 전체 ci-local·공개 검사·Linux 대상 clippy로 검증한다. 병합·push 뒤 원격 SHA를 대조하며 배포와 GitHub CI 감시는 coordinator가 맡는다.
+
+### 8.433 thread 이미지 생성을 host Codex 계정으로(t-0707)
 
 - **목적.** 어느 harness에서든 `aaa image generate --profile <Codex profile> --prompt-file <파일> --output-dir <폴더>`로
   host가 등록한 Codex 구독 계정의 내장 이미지 생성을 요청한다. 참고 PNG/JPEG/WebP는 `--image` 반복,
@@ -7311,5 +7341,8 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
   start는 배정 대기만 재판정하며 실패/불명은 자동·명시 start로도 반복하지 않는다. forget 뒤 영수증·필요 예약은 남는다.
 - **검증·판.** 실제 로컬/TLS 원격 m13·독립 가짜 CLI/OAuth·공유 예약 동시 transaction·재시작/인증 회수·비밀 비노출,
   설치된 CLI의 무인증 설정/기능 조회와 예약 누락 결함 심기를 검사한다. 실계정 생성·운영 설정·서비스는 변경하지 않는다.
-  기준 `c1bacb14`의 마지막 §8.429·FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E 최대 번호 85(87파일)를 확인했다.
+  착지 기준 origin/main `484c57de`의 마지막 §8.432·FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호 86(88파일)를 확인했다.
+  빈 §8.433을 사용하며 main의 일반 작업 task 선행·기록 페이지·질문 칩·계정 풀 DB 정리 순서 수리를 보존한다.
   새 Front 요청과 웹 화면이 없어 판을 유지하며 Agent link의 선택 기능 imagegen.v1을 양쪽에서 협상한다.
+||||||| c1bacb14
+

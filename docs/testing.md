@@ -1,6 +1,6 @@
 # 시험 쓰는 법
 
-## host Codex 계정 이미지 생성(t-0707, plan §8.430)
+## host Codex 계정 이미지 생성(t-0707, plan §8.433)
 
 - `nice -n 15 cargo test -p aaa-host --lib image --locked`: 이미지/일반 thread의 공유 예약,
   주간 잔량 51%의 4·8회 연속 요청·medium 공존·짧은 창 부족,
@@ -26,9 +26,32 @@
 - 결함 심기: 실제 선택 owner에서 이미지 예약 목록만 비우면 공유 예산 시험이 두 번째 배정 단언으로 실패한다.
   원본 바이트를 복원한 뒤 같은 시험이 통과해야 한다. 시험은 응답·파일·pane 종료 사건으로 끝나며 고정 sleep·재시도·시한 연장은 없다.
 - 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. 웹 UI·Front 요청 변화가 없어
-  FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E 최대 번호 85(87파일·98작업)를 유지한다. Agent link의 imagegen.v1은 양쪽이 알렸을 때만 쓴다.
+  FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호 86(88파일)를 유지한다. Agent link의 imagegen.v1은 양쪽이 알렸을 때만 쓴다.
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
+
+## 대화 질문 칩의 q-ID 상태 색(t-0712, plan §8.432)
+
+- `node --test web/test/asksModel.test.mjs`: 같은 thread의 새 q-ID는 답할 것, 지난 q-ID는 보존한 답으로 구별한다. coordinator 평문·구조화 질문의 열림·답함·기록 삭제 후 중립도 확인한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 69-coordinator-questions --workers 1`: 실제 host·agent·Claude 대화 기록에 Markdown q-ID 링크와 `aaa:question/q-ID`를 넣는다. thread·coordinator의 두 질문씩 열림→답함→새 보고에서 질문 비움 뒤 답 보존→기록 삭제 뒤 중립을 새로고침 없이 확인한다. class와 문구, 밝음·어두움의 실제 배경·아이콘 색을 CSS 토큰과 비교하고 화면을 남긴다.
+- 기존 E2E53의 thread ID 링크·dock·보존본·지우기 단언을 유지한다. 고정 sleep·재시도·시한 연장 없이 host 응답·보고 수집·DOM 사건으로 끝낸다. 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사를 수행하고 착지 창을 기다린다.
+
+
+## 할 일 기록 검색·저장소·완료 상태(t-0703, plan §8.431)
+
+- `nice -n 15 cargo test -p aaa-host --lib task_queue::tests:: --locked`: 실제 DB/파일로 4MiB 초과 보관의 개수·바이트 페이지와 모든 ID의 빠짐/중복 없음, trim/대소문자·메모/표시 ID·저장소·실제 완료 근거 조합, 같은 ID 복원·연결/예약 없음, 2MiB 이력의 목록 비전송/내구 보존, 일치하지 않는 100건 뒤의 기록 검색·삭제 복원을 검사한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 86-task-history --workers 1`: 격리 DB 130건/4MiB 초과에서 CLI의 전체 128건 출력, API 페이지의 frame 크기와 모든 ID, UI의 검색·저장소·완료 상태 조합/더 보기·완료/삭제 복원과 Reader 거부를 확인한다. Chromium 1280/320px·WebKit 390px의 활성/기록 화면과 필터 결과를 캡처하고 가로 넘침을 검사한다.
+- 기존 E2E46의 삭제·차이·되살리기, E2E47의 완료 본문·결과·ID와 E2E67의 예약 실행·복원 이후 재실행 없음 검사를 유지한다. 완료 보관 입구가 기록 탭을 여므로 복원 뒤 활성 행은 할 일 탭에서 확인한다.
+- 고정 sleep·실패 재시도·시한 연장 없이 실제 응답과 파일·DOM 사건으로 끝낸다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.106·Agent link 1.11.
+
+
+
+## 일반 작업의 할 일 선행(t-0705, plan §8.430)
+
+- `cargo test -p aaa --test m13 manual_threads_always_have_tasks_and_archive_the_result --locked`: 실제 host·agent와 가짜 harness를 사용한다. 배경 기동 응답 전에 할 일 연결·선택 모델/머신/저장소를 확인하고, Markdown 머리/체크 목록이 별도 task가 되지 않는지·원문 파일 바이트·완료 보관의 ID/보고를 검사한다. 없는 Git ref의 준비 실패에도 연결된 할 일이 남고 `--link-task` 없는 기존 할 일 시작이 같은 ID를 쓰는지 확인한다. 보고 회수·명령 응답이 끝 신호이며 고정 sleep은 없다.
+- host `account_pool::tests::waiting_direct_start_keeps_one_task_across_passes_and_request_replays`는 계정이 없는 실제 배정 대기 두 pass·같은 시작 ID 재전송·DB 재열기에서 task 하나/같은 ID·thread 0건을 검사한다. RPC 응답을 주지 않는 가짜 연결로 불필요한 재조회를 드러낸다. 기존 배정/취소 경합 시험의 대기·Cancelled·내구성 단언은 유지한다.
+- 기존 m13 유사 task 경고 시험은 별도 task 생성과 기존 완료 task 보존, `coordinator_flow`는 연결 옵션 없는 자동 연결, `doctor_files_brings_the_coordinator_guide_to_existing_projects`는 새 프로젝트와 낡은 안내 갱신의 동일 문구를 검사한다. `automation_start_holds_approval_two_agents_and_restart_receipt`의 기존 실제 do.start 실행에서 할 일을 만들지 않는 예외를 검사한다.
+- E2E47은 실제 일반 기동의 자동 연결을 확인한 뒤 그 할 일을 명시 삭제하여 옛 thread의 잇기/만들기 복구 단언을 유지한다. E2E48은 실제 승인된 do.start의 무생성·일반 작업 연결을 함께 확인한다. 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사 뒤 착지 창을 기다린다.
 
 ## thread 보류·이어 하기(t-0689, plan §8.426)
 
@@ -107,6 +130,15 @@
   전체 `nice -n 15 bash scripts/ci-local.sh`에서 다른 spec과 병렬로 검사한다.
 
 - 착지 때 Linux 대상 `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu --locked --keep-going -- -D warnings`도 확인한다. main install 엔진의 `File` import는 실제 사용 범위인 Windows·macOS·시험 cfg에만 둔다. Linux 제품의 미사용 import 실패를 경고 억제 없이 수리하며 Linux 실행 검증과 교차 lint는 구분한다.
+
+- Windows CI 정리 실패 수리(t-0709): 가짜 머신의 `agent_connected`가 예약한 `rewatch`는 `Arc<Host>`와
+  SQLite 연결을 보유한다. 두 연결 시험은 전용 current-thread runtime을 Lab보다 먼저 종료해 예약 작업을
+  해제하고, Lab 정리는 `Weak<Host>`로 실제 Host 종료를 확인한 뒤 `remove_dir_all`을 한 번만 수행한다.
+  기존 `tokio::test` 수명에 종료 단언만 더하면 macOS에서도 취소 경합 시험이 RED다. 취소 순서·Queued와
+  Cancelled·다음 pass·재전송·DB 재열기·thread 0건과 할 일 한 건의 단언은 유지한다.
+  원본 시험의 추가 진단에서도 재열기 Host의 명시 drop과 Weak 소멸 뒤 최초 Host의 strong count는 2로
+  남아 정리 단언이 실패한다. 재열기 연결이 남았다는 가설과 예약 작업의 수명 문제를 구분한다.
+  고정 sleep·정리 재시도·오류 무시는 없으며, Windows 교차 build/clippy와 실제 Windows CI 결과를 구분한다.
 
 ## host 공통 계정 풀 자동 배정(t-0653, plan §8.416)
 
@@ -1630,7 +1662,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 ## 일을 맡기기 전 task 찾기(t-0539, plan §8.336)
 
 - `cargo test -p aaa-host --lib tasks::tests::start_warning`: 제목의 대소문자·구두점 정규화, 낱말 겹침 경계, 첫 열린 후보 선택, 완료·빈 제목·약한 겹침 제외와 제안 명령의 셸 인용을 확인한다. 형태소·동의어는 추측하지 않는다. 완료 task 제외를 제거하면 음성 시험이 실패한다.
-- m13 `thread_start_warns_about_similar_tasks_without_blocking`: 실제 CLI 응답에서 경고 한 줄과 시작 성공, `--from-task` 시작·완료 task에 경고 없음, TASKS.md 원문 보존을 확인한다. 명령 응답이 끝이라는 신호이며 고정 sleep은 없다.
+- m13 `thread_start_warns_about_similar_tasks_without_blocking`: 실제 CLI 응답에서 경고 한 줄과 시작 성공, `--from-task` 시작·완료 task에 경고 없음, 기존 task 보존과 직접 시작의 별도 할 일 생성·자동 연결을 확인한다. 명령 응답이 끝이라는 신호이며 고정 sleep은 없다.
 - 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`의 안내 문구 목록이 새 프로젝트 생성과 낡은 안내 갱신 모두에서 사전 검색·기존 thread 재사용·메모/모델/머신/저장소 갱신·`--link-task` 안내를 검사한다.
 
 ## 웹 할 일 thread 연결과 자동 정리(t-0493, plan §8.316)

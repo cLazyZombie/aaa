@@ -2,12 +2,33 @@
 // 질문·답할 것 열쇠는 답한 뒤에도 그때 남긴 기록으로 이어진다(새 보고 뒤의 칩·「답함으로 표시」 뒤의 카드).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { askFileUrl, choicePicture, doneOf, openAsks, questionKey } from "../src/asksModel.ts";
+import { askFileUrl, choicePicture, doneOf, openAsks, questionKey, questionRefLook } from "../src/asksModel.ts";
 
 const BASE = "/api/v1/projects/demo/questions/t-1/abc/";
 const thread = (id, questions) => ({ id, title: id, updated_at_ms: 1, questions });
 const open = { report_hash: "abc", items: [{ text: "자리", choices: [] }], answer: null };
 const rec = (id, kind, subject, done_ms) => ({ id, kind, subject, title: subject, asked_ms: 0, done_ms, by: "Mac · Chrome", summary: "1A", items: [] });
+
+it("q 칩은 현재 질문과 지난 답을 ID로 구별하고 기록 삭제 뒤 중립으로 돌아온다", () => {
+  const current = thread("t-1", { ...open, items: [{ id: "q-1001" }] });
+  const history = { ...rec("old", "question", "t-1", 1), question_id: "q-1000", items: [{ id: "q-1000" }], answer: { summary: "1B" } };
+  assert.equal(questionRefLook("q-1001", [current], [history]).tone, "ask");
+  assert.deepEqual(questionRefLook("q-1000", [current], [history]), { label: "q-1000 질문", tone: "done", state: "답함 · 1B" });
+  assert.equal(questionRefLook("t-1", [current], [history]).tone, "ask");
+  assert.equal(questionRefLook("q-1000", [current], []).tone, "plain");
+});
+
+it("coordinator 평문·구조화 q 칩은 열림·답함·사라짐을 구별한다", () => {
+  for (const request of [
+    { id: "i1", question_id: "q-1000" },
+    { id: "i1", question_id: "q-1001", questions: { ...open, items: [{ id: "q-1001" }, { id: "q-1000" }] } },
+  ]) {
+    assert.equal(questionRefLook("q-1000", [], [], [request]).tone, "ask");
+    const record = { ...rec("done", "request", "i1", 1), question_id: request.question_id, items: request.questions?.items ?? [] };
+    assert.equal(questionRefLook("q-1000", [], [record]).tone, "done");
+    assert.equal(questionRefLook("q-1000", [], []).tone, "plain");
+  }
+});
 
 describe("「답할 것」 파일 주소", () => {
   it("그 질문의 library와 보고 사본만 연다", () => {

@@ -101,7 +101,10 @@ export default async function ({ page }) {
     await page.getByTestId("task-detail").waitFor({state:"detached"});
     await phone.getByTestId("task-detail-close").click();await phone.getByTestId("task-archive-open").click();
     const stored=phone.getByTestId(`archive-${one}`);await stored.waitFor();await shot(phone,"queue-phone-archive");
-    await stored.getByRole("button",{name:"활성 목록으로 복원"}).click();await row(phone,"웹 예약").waitFor();
+    await stored.getByRole("button",{name:"활성 목록으로 복원"}).click();
+    await stored.waitFor({state:"detached"});
+    // 완료 보관은 기록 탭에서 연다. 복원한 활성 행은 할 일 탭에서 확인한다.
+    await phone.getByTestId("tasks-tab-tasks").click();await row(phone,"웹 예약").waitFor();
     await page.reload();await row(page,"웹 예약").waitFor();
     const restored=aaa("task","list").tasks.find(t=>t.id===one);
     if(!restored||restored.thread!==null||queued().some(q=>q.task_id===one&&["queued","starting"].includes(q.state)))throw new Error("복원이 새 실행을 승인했다");

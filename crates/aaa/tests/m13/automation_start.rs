@@ -91,6 +91,12 @@ fn automation_start_holds_approval_two_agents_and_restart_receipt() {
     assert_eq!(shown["repo"], path_str(&w.repo));
     assert_eq!(shown["thread_kind"], "worktree");
     assert_eq!(shown["profile"], "fake");
+    let board = w.h.ok(&["task", "list"]);
+    assert!(
+        board["tasks"].as_array().unwrap().iter().all(|t| t["thread"] != id && t["title"] != "자동 점검"),
+        "자동화는 할 일을 만들지 않는다: {board}"
+    );
+
     w.lab.kill("host");
     w.spawn_host("host2");
     wait_for("두 agent 재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
@@ -166,7 +172,10 @@ fn automation_thread_reports_do_not_wake_their_own_rule() {
     let board = w.h.ok(&["task", "list"]);
     let unlinked: Vec<_> =
         board["unlinked_threads"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
-    assert!(unlinked.contains(&first.as_str()) && !unlinked.contains(&auto.as_str()), "{unlinked:?}");
+    assert!(!unlinked.contains(&first.as_str()) && !unlinked.contains(&auto.as_str()), "{unlinked:?}");
+    let tasks = board["tasks"].as_array().unwrap();
+    assert!(tasks.iter().any(|t| t["thread"] == first), "일반 기동의 자동 연결: {board}");
+    assert!(tasks.iter().all(|t| t["thread"] != auto && t["title"] != "자동 점검"), "자동화 예외: {board}");
     let second = human("둘째 원인");
     let next = wait_for("둘째 원인 보고로 자동 시작", T, || {
         w.h.ticks(1);

@@ -1640,7 +1640,7 @@ impl Host {
                 task,
                 from_task,
                 background,
-                link_task,
+                link_task: _,
                 task_block,
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
@@ -1659,6 +1659,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    start_task: None,
                     pool: pool_request,
                     over_limit,
                     reservation: None,
@@ -1732,7 +1733,7 @@ impl Host {
                         id: aaa_common::util::new_id(),
                         size: aaa_proto::AccountTaskSize::Medium,
                     });
-                    return self.pool_submit(a, actor, picked.filter(|_| link_task), background).await;
+                    return self.pool_submit(a, actor, picked, background).await;
                 }
                 let mut v = if background {
                     self.thread_start_mode(a, actor, true).await?
@@ -1740,10 +1741,6 @@ impl Host {
                     self.thread_start(a, actor).await?
                 };
                 v.warnings.append(&mut warnings);
-                // 시작에 성공했으면 그 task 줄 끝에 thread를 잇는다(할 일 T3, 시작할 때 읽은 블록으로)
-                if link_task && let Some(t) = &picked {
-                    v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
-                }
                 Ok(FrontResponse::Thread(Box::new(v)))
             }
             FrontRequest::ThreadStartPreview { project, from_task, task_block } => {
@@ -1763,14 +1760,14 @@ impl Host {
             }),
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
             FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,
-            FrontRequest::TaskArchive { project, restore } => {
-                self.task_archive(&project, restore.as_deref(), actor).await
+            FrontRequest::TaskArchive { project, restore, view } => {
+                self.task_archive(&project, restore.as_deref(), view, actor).await
             }
             FrontRequest::TaskEdit { project, ops, base_sha256, user_request } => {
                 self.task_edit(&project, ops, base_sha256, user_request, actor).await
             }
-            FrontRequest::TaskLog { project, before, limit, filter, task } => {
-                self.task_log(&project, before, limit, filter, task.as_deref())
+            FrontRequest::TaskLog { project, before, limit, filter, task, search } => {
+                self.task_log_search(&project, before, limit, filter, task.as_deref(), search.as_ref())
             }
             FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
             FrontRequest::Assignable { project, check } => {
