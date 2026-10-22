@@ -663,21 +663,24 @@ impl Host {
                                 .ok_or_else(|| internal("완료 task가 없다"))?;
                             let id = task.id.clone().ok_or_else(|| internal("완료 보관에는 task ID가 필요하다"))?;
                             let report = task.thread.as_ref().map(|t| format!("threads/{t}.md"));
-                            let reason = task
-                                .thread
-                                .as_ref()
-                                .and_then(|tid| self.load(project, tid).ok())
-                                .map(|rec| {
-                                    if rec.task_clean.why.as_deref() == Some("merged") {
-                                        "PR 병합"
-                                    } else if rec.task_clean.merged_main.is_some() {
-                                        "origin/main 병합"
-                                    } else {
-                                        "보고 [완료]"
-                                    }
-                                })
-                                .unwrap_or("완료 판정")
-                                .to_string();
+                            let reason = if task.done {
+                                "완료 체크 [x]".to_string()
+                            } else {
+                                task.thread
+                                    .as_ref()
+                                    .and_then(|tid| self.load(project, tid).ok())
+                                    .map(|rec| {
+                                        if rec.task_clean.why.as_deref() == Some("merged") {
+                                            "PR 병합"
+                                        } else if rec.task_clean.merged_main.is_some() {
+                                            "origin/main 병합"
+                                        } else {
+                                            "보고 [완료]"
+                                        }
+                                    })
+                                    .unwrap_or("완료 판정")
+                                    .to_string()
+                            };
                             let marker = format!("<!-- aaa-task:{id} -->");
                             let mut history = self
                                 .db

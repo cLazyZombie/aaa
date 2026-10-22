@@ -1,11 +1,34 @@
 # 시험 쓰는 법
 
-## 왼쪽 목록 고정 번호 칩(t-0739, plan §8.439)
+## 왼쪽 목록 고정 번호 칩(t-0739, plan §8.442)
 
 - `nice -n 15 cargo test -p aaa-host --lib automation_ids --locked`: 실제 host·DB·파일로 기존 규칙 조회→제목 수정→형식 변환→삭제→다른 이름 번호 발급→복원→재시작·프로젝트 이름 변경·내보내기를 확인한다. DB의 동시 읽기와 서로 다른 이름 발급은 Barrier 사건으로 끝내며 프로젝트별 독립 순번·재열기·프로젝트 삭제를 검사한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 21-library-reports,34-automations,43-tasks,69-coordinator-questions --workers 1`: 실제 host의 r/d/q/a 번호를 공유 칩으로 보이는지 검사한다. 보고서 inline code 기준의 글꼴·크기·배경·색·여백·모서리를 밝음/어두움에서 비교한다. Chromium 데스크톱·휴대폰·320px과 WebKit 질문 목록 390/320px에서 번호 전체·행 넘침을 확인하고 캡처한다. 긴 제목을 DOM에 잠깐 적용해 제목만 줄고 번호가 남는지도 검사한 뒤 원래 DOM을 복원한다.
 - 질문 행은 공통 button의 고정 높이를 덮어 내용만큼 커지고 flex로 줄어들지 않아야 한다. 추가한 세로 넘침 검사는 수리 전 실행 파일에서 네 q-ID의 행 넘침으로 실패하고 수리 뒤 통과했다. E2E69는 질문 본문과 sidebar의 선택 완료를 모두 기다린 뒤 다음 pane으로 이동하며, 단계 실패 때도 별도 WebKit을 finally에서 닫는다.
 - 여러 질문의 모든 ID·coordinator 첫 질문 중복 없음·답한 기록 ID 보존, 자동화 변환 뒤 같은 ID와 기존 이동·편집·답·Reader 거부도 유지한다. 고정 sleep·실패 재시도·시한 연장은 없다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.107, Agent link 1.11이며 착지 때 main의 문서/API 번호와 다시 대조한다.
+## 할 일 공통 검색줄·칩 분류·완료 체크(t-0737, plan §8.441)
+
+- `node --test web/test/tasksModel.test.mjs`: 모델만 정한 대기와 담당·실행·예약·오류·완료 조합을 저장소별로 확인한다. 전체 외 칩의 합=전체, 각 칩의 실제 행 수=표시 수, 모든 ID의 중복/누락 없음을 검사한다. 예약 상위가 다른 칩에 있어도 하위는 자기 칩에 남는다.
+- `nice -n 15 cargo test -p aaa-host --lib task_queue::tests:: --locked`: thread 없는 `[x]`/`[X]`를 하위부터 보관하고 미완료 하위가 남은 상위는 보존한다. 담당·메모·고정 ID·별도 완료 근거, 재시작 뒤 중복 없음, 복원 뒤 체크 해제·thread 없음·재예약 없음, 보관 저장 실패의 원본 보존과 파일 제거 뒤 확정 실패의 재시작 회수를 검사한다.
+- `nice -n 15 cargo test -p aaa --test m13 thread_start_warns_about_similar_tasks_without_blocking --locked`: 완료 체크의 보관 tick을 확정한 뒤 활성 유사 task 경고·명시 연결·기동 비차단을 검사한다. 같은 제목의 완료 항목은 원래 ID로 보관되고 새 기동은 별도 ID와 열린 thread를 가져야 한다. 옛 시험의 완료 항목 활성 잔류 가정을 새 보관 계약으로 대체하며 경고·원본 머리·고정 ID 보존 검사는 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 86-task-history --workers 1`: 실제 host·agent에서 Chromium 1920px와 Chromium 320px·WebKit 390px Reader의 탭/검색 공통 부모, 검색 위치·높이·스타일·간격과 좁은 화면의 동일 줄바꿈을 비교한다. 기록·보관 두 입구, 기존 검색·저장소·상태·더 보기·복원/Reader 권한을 유지한다. 실험실 파일의 모델 지정 대기·칩 합·직접 완료 체크·보관/복원도 확인한다. 운영 TASKS.md는 수정하지 않는다.
+- DOM·응답·`ticker tick`을 완료 사건으로 쓰며 고정 sleep·실패 재시도·시한 변경은 없다. 배치는 board의 실제 hash와 Front 기능/권한 응답 수신 뒤 잰다. 수신 전에는 「기록」 탭이 없어 검색 시작 위치가 달라지므로 첫 응답 전 폭을 기준값으로 삼지 않는다. 기존 E2E43·46·47·67·76·85와 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행하고 착지 창을 기다린다. API/E2E 번호는 유지한다.
+
+
+
+## 시스템 idle-audit의 웹 읽기 전용(t-0735, plan §8.440)
+
+- `nice -n 15 cargo test -p aaa-host --lib automation:: --locked`: 실제 파일과 host 경계에서 Reader/Controller 원문·기록 조회, 웹 저장·토글·삭제·실행·승인·큐 변경·복원·옛 형식 변환의 거부와 파일 무변경을 확인한다. 파일 없음·오류에서도 이름 보호가 유지되고, 다른 운영 규칙은 웹 편집을 허용해야 한다. Local CLI 경계의 저장·토글·실행·삭제·꺼진 복원을 확인한다. 프로젝트를 생략한 일반 변환의 허용과 시스템 변환의 거부도 같은 경계에서 확인한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 55-automation-edit --workers 1`: 기존 일반 규칙의 만들기·편집·삭제·복원·실행·승인·Reader 검사를 유지한다. 시스템 규칙은 Chromium 1280px·WebKit 390px에서 목록/상세 표지·이유·꺼진 스위치·쓰기 단추 없음·원문·기록·가로 넘침을 확인하고 캡처한다. 실제 웹 API의 각 변경 거부와 CLI 토글·삭제·복원도 확인한다.
+- 완료 신호는 host 응답·파일·DOM이며 고정 sleep·실패 재시도·시한 변경은 없다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.106·AGENT_LINK 1.11·기존 E2E 번호를 유지한다.
+
+## agent 연결 종료 뒤 보고 복사 대기 해제(t-0734, plan §8.439)
+
+- `nice -n 15 cargo test -p aaa-host --lib link::supervision_tests --locked`: 실제 Agent link reader에 잘못된 frame을 보내 끝내되 peer와 writer는 살려 둔다. 종료 전 요청과 이전 연결 사본의 FileRead·ReportFileRead·Input은 즉시 AgentDisconnected가 되어야 한다. 재연결 뒤 옛 generation의 종료가 새 요청을 끊으면 안 된다. 수정 전에는 후속 FileRead가 Timeout으로 실패하고 수정 뒤에는 가상 시계가 전진하지 않는다.
+- 같은 묶음에서 실제 512칸 전송 대기열을 채운다. enqueue에서 기다리는 요청도 연결 종료로 즉시 풀리고, 연결이 살아 있는 포화 대기열은 기존 15초 시한 안에 Timeout·pending 해제로 끝나야 한다. reader panic 정리·감독자의 실제 시한 초과 경고와 이후 성공 응답 시험도 유지한다.
+- `nice -n 15 cargo test -p aaa-host --lib orch::report_tests --locked`: 실제 보고 수집 owner가 manifest 뒤 첫 파일에서 연결을 잃는다. 두 번째 파일이 이전 연결을 재사용해도 파일마다 120초 기다리지 않고, 새 본문·실패 상태와 이전 검증 첨부를 보존해야 한다. 새 연결을 넣은 뒤 hash 변화 없는 다음 ticker에서 complete·첨부 복구·ack 보존을 확인한다.
+- 고정 sleep·실패 재시도·시한 연장은 없다. link의 상대 I/O와 보고 전송 응답만 대체하며 연결 수명·보고 수집·원장·파일 저장은 제품 owner를 쓴다. 전체 ci-local·공개 검사와 Linux 대상 clippy를 수행한다. 외부 API·웹 동작을 바꾸지 않아 기존 API/E2E 번호를 유지한다.
+- 전체 검증 중 E2E69의 질문 링크 연속 누름에서 본문 render 직후의 사이드바 전환 effect와 다음 목록 누름이 경합했다. 정확한 q-ID·카드·본문 단언에 「답할 것」 활동 단추 선택과 패널 표시 완료 단언을 더했다. 다음 목록 누름은 이 DOM 사건 뒤에 시작하며 기존 시한과 나머지 단언을 유지한다.
 
 ## 맨 q-ID도 질문 상태 칩으로 표시(t-0730, plan §8.438)
 

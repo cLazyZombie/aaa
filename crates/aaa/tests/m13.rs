@@ -4439,6 +4439,15 @@ fn thread_start_warns_about_similar_tasks_without_blocking() {
     let tasks = "# Tasks\n\n## Backlog\n- [ ] 웹 로그인 고치기 (fake@labA) [작업 폴더]\n- [x] 배포 자동화\n";
     let tasks = identified_tasks(tasks);
     std::fs::write(&path, &tasks).unwrap();
+    // 명시 [x]는 ticker가 보관한다. 그 사건을 확정해 기동과 보관의 순서에 기대지 않는다.
+    w.h.ticks(1);
+    let archive = w.h.ok(&["task", "archive"]);
+    let completed = &archive["entries"][0];
+    assert_eq!(archive["entries"].as_array().unwrap().len(), 1, "{archive}");
+    assert_eq!(completed["task"]["title"], "배포 자동화");
+    assert_eq!(completed["reason"], "완료 체크 [x]");
+    assert_eq!(completed["task"]["done"], true);
+    assert!(completed["task"]["thread"].is_null());
     let task = w.task("plain.txt", "noreport");
     let o = w.h.run(&["thread", "start", "--title", "로그인 고치기", "--profile", "fake", "--task-file", &task]);
     assert!(o.status.success(), "{o:?}");
@@ -4460,11 +4469,12 @@ fn thread_start_warns_about_similar_tasks_without_blocking() {
     assert!(after.starts_with(&tasks[..tasks.find("- [ ]").unwrap()]), "{after}");
     let board = w.h.ok(&["task", "list"]);
     let rows = board["tasks"].as_array().unwrap();
-    assert_eq!(rows.len(), 4, "{board}");
-    for title in ["로그인 고치기", "웹 로그인 고치기", "배포 자동화 · 별도 2"] {
+    assert_eq!(rows.len(), 3, "완료 1건은 보관, 새 기동 3건은 활성: {board}");
+    for title in ["로그인 고치기", "웹 로그인 고치기", "배포 자동화"] {
         assert!(rows.iter().any(|t| t["title"] == title && t["thread"].is_string()), "{board}");
     }
-    assert!(rows.iter().any(|t| t["title"] == "배포 자동화" && t["done"] == true && t["thread"].is_null()));
+    assert!(rows.iter().all(|t| t["id"] != completed["task_id"] && t["done"] == false));
+    assert_eq!(w.h.ok(&["task", "archive"])["entries"][0]["task_id"], completed["task_id"]);
 }
 
 /// 일반 기동은 할 일을 먼저 남기고 pane 준비 전에 연결한다. 실패한 준비도 재기동할 할 일로 남으며,

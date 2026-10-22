@@ -62,6 +62,18 @@ FRONT_API 1.76. 자동화 패널의 프로젝트 머리 「새 자동화」, 설
 - **명령 승인.** 상세 「명령 승인 검토」가 명령·머신·hash·`routine_commands`를 보이고 승인하면 그 hash를 승인한다. 승인은 웹 조작 기기와 aaa 밖 터미널에서만 된다(aaa 세션 안·worker·evaluator·detached 연결은 거부).
 - **CLI.** `aaa automation run <이름>`·`delete <이름>`(지금 판을 읽고 그 판을 지운다)·`restore <id>`. `aaa routine list`는 지운 자동화 줄과 되살리기 명령을 보인다.
 
+## 시스템 자동화의 웹 읽기 전용
+
+`idle-audit`는 coordinator 운영에 필요한 시스템 자동화다. host는 파일 내용·제목·켜짐 상태와 관계없이
+규칙 이름으로 판정한다. TOML 스키마에 새 표지를 넣지 않으며 다른 운영 자동화는 일반 규칙으로 유지한다.
+목록·상세·지운 자동화에 「시스템 · 읽기 전용」을 표시하고 원문·본문·상태·기록은 그대로 읽는다.
+웹에서는 고치기·켜기/끄기·지금 실행·지우기·복원·승인·막힌 입력 변경을 할 수 없다.
+이전 형식의 시스템 규칙을 포함한 일괄 변환도 CLI로 한다(웹 미리보기는 허용).
+웹 API는 같은 변경 요청을 `forbidden`과 이유로 거부하므로 옛 웹 화면에서도 보호된다.
+Local CLI의 기존 조작과 coordinator의 파일 직접 편집은 그대로다. 시스템 설정을 바꾸는 권한 체계는 늘리지 않는다.
+`RoutineView`·`AutomationDoc`·`AutomationTrashEntry`의 선택 칸 `web_read_only_reason`이 host 판정을 전한다.
+옛 host가 이 칸을 생략하면 기존 화면을 유지한다. FRONT_API 1.106·AGENT_LINK 1.11을 유지한다.
+
 ## 순수 TOML 규칙
 
 `automations/<이름>.toml` 한 파일이 조건 하나와 동작 하나다. 옛 `routines/*.md`도 계속 읽는다. 같은 이름이 두 폴더에 있으면 둘 다 config-error가 되어 실행하지 않는다. 앞머리 없는 본문 md는 규칙으로 읽지 않는다. 오류는 `automations/check.toml:4:12 on.git.branches: …`처럼 파일·줄·열·칸을 포함한다.

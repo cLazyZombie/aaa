@@ -227,6 +227,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // `Thread`·`UnparkPreview`, 상태 `parked`·묶음 `parked`(「보류」), `ThreadView.park`. 옛 host는 모르는 요청으로 거절해 웹이 보류
 // 단추를 그리지 않는다. Agent link 변경 없음(기존 diff.v1·git watch 조회·ThreadPrepare base를 쓴다).
 // 1.106: task_archive의 검색·저장소·상태·페이지, task_log의 검색·저장소·복원됨 거르기.
+// 같은 1.106에 RoutineView·AutomationDoc·AutomationTrashEntry.web_read_only_reason(선택)을 더한다(t-0735).
+// 옛 host는 생략, 옛 front는 무시한다. 웹 변경 거부는 host가 시행하며 Local CLI는 유지한다.
 // 1.107: RoutineView.short_id의 프로젝트별 영속 자동화 번호(선택).
 pub const FRONT_API: Version = Version { major: 1, minor: 107 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.

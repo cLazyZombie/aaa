@@ -8,6 +8,39 @@ const request = (page, value) => page.evaluate(async (value) => (await fetch("/a
 const archive = (page, view) => request(page, { op: "task_archive", restore: null, view });
 const rows = (page) => page.locator('[data-testid^="archive-"]');
 
+// 탭과 검색이 같은 flex 부모를 쓰고, 탭 전환에도 검색의 시작 위치·높이가 같다.
+async function toolbarLayout(page, searchId, expected = null) {
+  await domIs(page, "검색줄 배치 완료", ({ searchId }) => {
+    const view = document.querySelector('[data-testid="tasks-view"]');
+    const boardReady = view?.getAttribute("data-tasks-sha") && view?.getAttribute("data-can-edit") !== "pending";
+    const input = document.querySelector(`[data-testid="${searchId}"]`);
+    const search = input?.closest(".tasks-search"), tabs = document.querySelector(".tasks-tabs");
+    return boardReady && search?.parentElement === tabs?.parentElement && search?.getBoundingClientRect().width > 0;
+  }, { searchId });
+  const layout = await page.evaluate((searchId) => {
+    const search = document.querySelector(`[data-testid="${searchId}"]`).closest(".tasks-search");
+    const toolbar = search.parentElement;
+    const tabs = toolbar.querySelector(".tasks-tabs");
+    const chips = toolbar.querySelector(".tasks-chips");
+    const a = search.getBoundingClientRect(), b = tabs.getBoundingClientRect(), c = chips.getBoundingClientRect();
+    return { x: a.x, y: a.y, h: a.height, tabsY: b.y, tabsH: b.height, chipsY: c.y, gap: getComputedStyle(toolbar).gap,
+      searchStyle: ["padding", "borderRadius", "backgroundColor"].map((k) => getComputedStyle(search)[k]),
+      overflow: document.documentElement.scrollWidth > innerWidth + 1 };
+  }, searchId);
+  assert.equal(layout.overflow, false);
+  if (expected) {
+    for (const k of ["x", "y", "h", "tabsY", "tabsH", "gap", "searchStyle"]) assert.deepEqual(layout[k], expected[k], `탭 전환 뒤 ${k}`);
+  }
+  if (page.viewportSize().width >= 1920) {
+    assert.ok(Math.abs(layout.y + layout.h / 2 - layout.tabsY - layout.tabsH / 2) <= 1);
+    assert.ok(layout.chipsY < layout.y + layout.h, "넓은 화면의 칩도 탭·검색과 같은 줄");
+  } else if (page.viewportSize().width <= 640) {
+    assert.ok(layout.y >= layout.tabsY + layout.tabsH, "좁은 화면 검색은 탭 다음 줄");
+    assert.ok(layout.chipsY >= layout.y + layout.h, "좁은 화면 칩은 검색 다음 줄");
+  }
+  return layout;
+}
+
 export default async function ({ page }) {
   let restoredId;
   await step("기록 규모: 4MiB 초과 보관도 CLI 전체 출력과 host 페이지의 크기·검색 조합을 지킨다", async () => {
@@ -57,9 +90,16 @@ export default async function ({ page }) {
     aaa("ticker", "tick");
     await page.getByTestId("activity-tasks").click();
     await page.getByTestId("tasks-search").waitFor();
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    const activeLayout = await toolbarLayout(page, "tasks-search");
+    await page.getByTestId("tasks-tab-log").click();
+    await toolbarLayout(page, "task-log-search", activeLayout);
+    await page.getByTestId("tasks-tab-tasks").click();
+    await toolbarLayout(page, "tasks-search", activeLayout);
     await shot(page, "history-desktop-active");
     await page.getByTestId("task-archive-open").click();
     await domIs(page, "보관 첫 50개", () => document.querySelectorAll('[data-testid^="archive-"]').length === 50);
+    await toolbarLayout(page, "task-log-search", activeLayout);
     await shot(page, "history-desktop-records");
     await page.getByTestId("task-archive-more").click();
     await domIs(page, "보관 다음 50개", () => document.querySelectorAll('[data-testid^="archive-"]').length === 100);
@@ -96,9 +136,11 @@ export default async function ({ page }) {
         try {
           const p = paired.page;
           await p.getByTestId("tasks-search").waitFor();
+          const activeLayout = await toolbarLayout(p, "tasks-search");
           await shot(p, `history-${width}-active`);
           await p.getByTestId("task-archive-open").click();
           await rows(p).first().waitFor();
+          await toolbarLayout(p, "task-log-search", activeLayout);
           await shot(p, `history-${width}-records`);
           await p.getByTestId("task-log-search").fill("needle-100");
           await p.getByTestId("task-log-filter-archive_restored").click();
@@ -118,4 +160,36 @@ export default async function ({ page }) {
       }
     } finally { await safari.close(); }
   });
+
+  await step("칩과 완료 체크: 모델만 정한 대기·칩 합·직접 체크 보관과 복원을 유지한다", async () => {
+    // 운영 파일 대신 이 실험실의 파일에서 모델 지정·thread 없음과 완료 상하위를 만든다.
+    fs.appendFileSync(`${root}/projects/demo/TASKS.md`, "- [ ] 모델 대기 (fake) [작업 폴더]\n");
+    aaa("ticker", "tick");
+    await page.getByTestId("tasks-tab-tasks").click();
+    await page.getByTestId("tasks-filter-waiting").click();
+    await page.locator(".task-row").filter({ hasText: "모델 대기" }).waitFor();
+    const counts = await page.locator(".tasks-filter .tasks-count").allTextContents();
+    assert.equal(counts.slice(1).reduce((n, c) => n + Number(c), 0), Number(counts[0]));
+    await shot(page, "history-desktop-waiting");
+    const source = fs.readFileSync(`${root}/projects/demo/TASKS.md`, "utf8");
+    fs.writeFileSync(`${root}/projects/demo/TASKS.md`, source.replace("- [ ] 모델 대기", "- [x] 모델 대기") + "- [x] 완료 상위 (fake) [작업 폴더]\n  보관 메모\n  - [X] 완료 하위\n");
+    aaa("ticker", "tick");
+    const tasks = aaa("task", "list").tasks;
+    assert.ok(!tasks.some((t) => ["모델 대기", "완료 상위", "완료 하위"].includes(t.title)));
+    const completed = aaa("task", "archive").entries.filter((a) => a.reason === "완료 체크 [x]");
+    assert.equal(completed.length, 3);
+    await page.getByTestId("tasks-tab-log").click();
+    await page.getByTestId("task-log-filter-completed").click();
+    await page.getByTestId("task-log-search").fill("완료 상위");
+    await rows(page).filter({ hasText: "완료 상위" }).waitFor();
+    await shot(page, "history-desktop-checked");
+    const item = completed.find((a) => a.task.title === "완료 상위");
+    await rows(page).filter({ hasText: "완료 상위" }).getByRole("button", { name: "활성 목록으로 복원", exact: true }).click();
+    await domIs(page, "완료 체크 복원 뒤 빈 보관 검색", () => !document.querySelector('[data-testid^="archive-"]'));
+    const restored = aaa("task", "list").tasks.find((t) => t.id === item.task_id);
+    assert.ok(restored && !restored.done && restored.thread === null);
+    assert.equal(restored.owner, "fake");
+    assert.equal(aaa("task", "queue").entries.length, 0);
+  });
+
 }

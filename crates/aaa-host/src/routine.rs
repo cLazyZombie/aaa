@@ -580,6 +580,7 @@ impl Host {
             .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
         for r in &mut out {
             r.short_id = ids.get(&r.name).cloned();
+            r.web_read_only_reason = crate::automation::web_read_only_reason(&r.name).map(str::to_owned);
         }
         Ok(out)
     }

@@ -105,7 +105,7 @@ pub mod web;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -134,6 +134,9 @@ pub struct AgentConn {
     pub pending: Pending,
     pub generation: u64,
     seq: Arc<AtomicU64>,
+    /// pending 잠금 아래에서 검사·변경한다. 종료 뒤에도 남는 clone은 새 요청을 받지 않는다.
+    closed: Arc<AtomicBool>,
+    machine_id: String,
     timeouts: aaa_config::HostSection,
     health_host: std::sync::Weak<Host>,
 }
@@ -145,6 +148,8 @@ impl AgentConn {
             pending: Arc::new(Mutex::new(HashMap::new())),
             generation,
             seq: Arc::new(AtomicU64::new(0)),
+            closed: Default::default(),
+            machine_id: String::new(),
             timeouts: Default::default(),
             health_host: Default::default(),
         }
@@ -179,24 +184,34 @@ impl AgentConn {
         } else if let Some((session, bytes, _)) = &input {
             tracing::info!(request = %id, %session, bytes, "pane 입력: host 전달");
         }
-        let (otx, orx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id.clone(), otx);
-        let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
-        if self.tx.json(&msg).await.is_err() {
-            self.pending.lock().unwrap().remove(&id);
-            if let Some((session, _, _)) = &input {
-                tracing::warn!(request = %id, %session, "pane 입력: agent 연결 끊김");
+        let disconnected = || ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다");
+        let (otx, mut orx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if self.closed.load(Ordering::Relaxed) {
+                return Err(disconnected());
             }
-            return Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다"));
+            pending.insert(id.clone(), otx);
         }
+        let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
         let mut timed_out = false;
         let mut responded = false;
-        let result = match tokio::time::timeout(wait, orx).await {
+        let receive = async {
+            // 전송 대기열이 찬 동안에도 연결 종료가 pending을 풀면 즉시 끝낸다.
+            // 시한은 대기열에 넣는 시간까지 포함한다.
+            tokio::select! {
+                biased;
+                result = &mut orx => return result.map_err(|_| disconnected()),
+                sent = self.tx.json(&msg) => sent.map_err(|_| disconnected())?,
+            }
+            orx.await.map_err(|_| disconnected())
+        };
+        let result = match tokio::time::timeout(wait, receive).await {
             Ok(Ok(o)) => {
                 responded = true;
                 o.into_result()
             }
-            Ok(Err(_)) => Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")),
+            Ok(Err(e)) => Err(e),
             Err(_) => {
                 timed_out = true;
                 self.pending.lock().unwrap().remove(&id);
@@ -209,6 +224,8 @@ impl AgentConn {
                     |k: &str| what.as_ref().and_then(|v| v.get(k)?.as_str().map(str::to_string)).unwrap_or_default();
                 tracing::warn!(
                     id,
+                    machine = %self.machine_id,
+                    generation = self.generation,
                     op = field("op"),
                     session = field("session"),
                     wait_ms = wait.as_millis() as u64,
@@ -217,6 +234,7 @@ impl AgentConn {
                 Err(ErrorBody::new(ErrorCode::Timeout, "agent 응답 시간 초과"))
             }
         };
+        self.pending.lock().unwrap().remove(&id);
         if let Some(host) = self.health_host.upgrade() {
             host.agent_request_finished(timed_out, responded);
         }
@@ -230,7 +248,11 @@ impl AgentConn {
 
     /// 연결이 끝났을 때 대기 중인 요청을 모두 실패로 끝낸다(다시 보내지 않는다: §8.5 a).
     pub fn fail_all(&self) {
-        let drained: Vec<_> = self.pending.lock().unwrap().drain().collect();
+        let drained: Vec<_> = {
+            let mut pending = self.pending.lock().unwrap();
+            self.closed.store(true, Ordering::Relaxed);
+            pending.drain().collect()
+        };
         for (_, tx) in drained {
             let _ = tx.send(Outcome::Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")));
         }
@@ -1495,6 +1517,10 @@ impl Host {
                 Err(e) if needs_project => return Err(e),
                 Err(_) => {}
             }
+        }
+        // 보호 판정도 생략한 프로젝트를 채운 뒤에 한다(일괄 변환은 프로젝트 파일을 읽는다).
+        if role != DeviceRole::Local {
+            automation::check_web_mutation(self, &req)?;
         }
         match req {
             FrontRequest::InstallApprove { request } => self.install_approve(role, actor, *request),

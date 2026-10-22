@@ -129,6 +129,7 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
   /** 지운 뒤(본문을 닫는다) */
   onDeleted: () => void;
 }) {
+  canControl = canControl && !rule.web_read_only_reason;
   const { runs, source, error, loading, load } = useRuns(project, rule.name, rule.last_result?.at_ms);
   const [unblock, setUnblock] = useState<{ batch: string; discard: boolean } | null>(null);
   // 지금 실행·지우기·명령 승인·자동 시작 승인 확인창. 지금 실행 key는 창을 열 때 한 번 정한다(같은 누름은 host가 한 번만 받는다)
@@ -158,9 +159,10 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
   };
   const title = rule.title || rule.name;
   return <AutomationPage title={title} subtitle={`${project} · ${rule.name}`} testid="automation-detail" onClose={onClose}
-    badge={<>{tone !== "on" && <span className={`automation-badge is-${tone}`} data-testid="automation-detail-tone">{cardWord[tone]}</span>}{legacy && <span className="automation-badge is-legacy">이전 형식</span>}</>}
+    badge={<>{tone !== "on" && <span className={`automation-badge is-${tone}`} data-testid="automation-detail-tone">{cardWord[tone]}</span>}{legacy && <span className="automation-badge is-legacy">이전 형식</span>}{rule.web_read_only_reason && <span className="automation-badge is-legacy">시스템 · 읽기 전용</span>}</>}
     tools={<label className="automation-switch"><span>{rule.enabled ? "켜짐" : "꺼짐"}</span>
       <Toggle checked={rule.enabled} label={`${project}/${rule.name} 켜기`} disabled={!canControl || toggling || rule.error != null} onChange={() => void toggle()} /></label>}>
+    {rule.web_read_only_reason && <Callout tone="notice" title="시스템 자동화 · 읽기 전용" testid="automation-read-only"><p>{rule.web_read_only_reason}</p></Callout>}
     {error && <p role="alert">{error}</p>}
     {toggleError && <p role="alert">{toggleError}</p>}
     {editable && <div className="automation-actions" data-testid="automation-detail-actions">

@@ -80,6 +80,10 @@ const HOST_ACTOR: &str = "host";
 impl Host {
     /// ticker: 끝났고 아직 판정하지 않은 thread마다 이어진 task를 한 번 정리한다. 쓰기가 충돌하면(그사이 그 task가 바뀜) 다음 tick에 다시 본다
     pub(crate) fn task_clean_pass(&self, project: &str, dir: &Path) {
+        if let Err(e) = self.task_done_clean(project, dir) {
+            tracing::warn!(project, "완료 체크 보관을 다음 셈으로 미룬다: {}", e.message);
+            return;
+        }
         let due: Vec<ThreadRec> = self
             .db
             .threads(Some(project))
@@ -92,6 +96,32 @@ impl Host {
         for rec in due {
             if let Err(e) = self.task_clean_one(project, dir, &rec) {
                 tracing::warn!(project, thread = %rec.id, "할 일 자동 정리를 다음 셈으로 미룬다: {}", e.message);
+            }
+        }
+    }
+
+    /// 파일의 완료 체크도 완료 근거다. 하위를 먼저 보관하고 미완료 하위가 있는 상위는 남긴다.
+    fn task_done_clean(&self, project: &str, dir: &Path) -> Result<(), ErrorBody> {
+        // 파일 제거 뒤 DB 확정 전에 멈춘 영수증부터 회수한다.
+        self.archive_recover(project)?;
+        self.task_identify(project)?;
+        loop {
+            let text = std::fs::read_to_string(dir.join("TASKS.md"))
+                .map_err(|e| err(ErrorCode::Internal, format!("TASKS.md: {e}")))?;
+            let all = tasks::parse(&text);
+            let ops: Vec<TaskOp> = all
+                .iter()
+                .filter(|t| t.done && !all.iter().any(|c| c.parent == Some(t.line)))
+                .map(|t| TaskOp::Delete { at: anchor(t) })
+                .collect();
+            if ops.is_empty() {
+                return Ok(());
+            }
+            // 판정 뒤 직접 편집이 끼어들면 완료 체크와 하위 유무부터 다시 판단한다.
+            let (conflict, _) =
+                self.task_write(project, dir, &ops, Some(&tasks::sha256(&text)), HOST_ACTOR, &no_input(), true)?;
+            if let Some((_, reason, _)) = conflict {
+                return Err(err(ErrorCode::Unavailable, reason));
             }
         }
     }
@@ -256,6 +286,10 @@ impl Host {
     pub(crate) fn fill_attention(&self, project: &str, list: &mut [TaskView]) {
         let parents: std::collections::HashSet<u32> = list.iter().filter_map(|t| t.parent).collect();
         for t in list.iter_mut() {
+            if t.done && parents.contains(&t.line) {
+                t.attention = Some("완료 체크했지만 하위 task가 남아 있다".into());
+                continue;
+            }
             let Some(id) = t.thread.clone() else { continue };
             let Ok(rec) = self.load(project, &id) else { continue };
             let marker = self.report_marker(&rec);

@@ -5,23 +5,24 @@
 import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReservation, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
- * 진행 중 ◉(열린 thread와 이어짐) > 보류 ⏸(이어진 thread를 보류했다, plan §8.426) > 대기 ○ */
-export type TaskState = "problem" | "check" | "run" | "parked" | "wait";
+ * 완료 ✓(보관 전 명시 체크) > 진행 중 ◉(열린 thread와 이어짐) > 보류 ⏸(이어진 thread를 보류했다, plan §8.426) > 대기 ○ */
+export type TaskState = "problem" | "check" | "run" | "parked" | "wait" | "done";
 
-/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·예약(자리 나면 시작, 한 목록 §8.393)·보류·확인 필요 */
-export type TaskFilter = "all" | "mine" | "unassigned" | "running" | "reserved" | "parked" | "check";
+/** 거르기 칩: 전체·내 일(me)·미할당·대기·진행 중·예약(자리 나면 시작, 한 목록 §8.393)·보류·확인 필요 */
+export type TaskFilter = "all" | "mine" | "unassigned" | "waiting" | "running" | "reserved" | "parked" | "check";
 
 export const TASK_FILTERS: readonly { id: TaskFilter; label: string }[] = [
   { id: "all", label: "전체" },
   { id: "mine", label: "내 일" },
   { id: "unassigned", label: "미할당" },
+  { id: "waiting", label: "대기" },
   { id: "running", label: "진행 중" },
   { id: "reserved", label: "예약" },
   { id: "parked", label: "보류" },
   { id: "check", label: "확인 필요" },
 ];
 
-export const TASK_STATE_LABEL: Record<TaskState, string> = { problem: "형식 어긋남", check: "확인 필요", run: "진행 중", parked: "보류", wait: "대기" };
+export const TASK_STATE_LABEL: Record<TaskState, string> = { problem: "형식 어긋남", check: "확인 필요", run: "진행 중", parked: "보류", wait: "대기", done: "완료" };
 
 /** thread id → 묶음(App이 가진 thread 목록). 없으면 모르는 thread다 */
 export type ThreadGroups = ReadonlyMap<string, ThreadGroup>;
@@ -29,6 +30,7 @@ export type ThreadGroups = ReadonlyMap<string, ThreadGroup>;
 export function taskState(t: TaskView, groups: ThreadGroups): TaskState {
   if (t.problems.length > 0) return "problem";
   if (t.attention) return "check";
+  if (t.done) return "done";
   const g = t.thread ? groups.get(t.thread) : undefined;
   if (g === "parked") return "parked";
   return g !== undefined && g !== "resolved" ? "run" : "wait";
@@ -77,13 +79,21 @@ export function agentOwner(profile: string, machine: string): string {
 
 const has = (needle: string, text: string | null | undefined) => (text ?? "").toLowerCase().includes(needle);
 
+/** 전체 외 칩은 서로 겹치지 않는다. 실행 상태·예약을 먼저 보고, 시작 전 일만 담당에 따라 나눈다. */
+export function taskCategory(t: TaskView, groups: ThreadGroups, reserved = false): Exclude<TaskFilter, "all"> {
+  // 예약 확인 필요도 예약 칩에서 내용·차례를 함께 다룬다(기존 예약 UX).
+  if (reserved) return "reserved";
+  const state = taskState(t, groups);
+  if (state === "problem" || state === "check" || state === "done") return "check";
+  if (state === "run") return "running";
+  if (state === "parked") return "parked";
+  if (t.owner === "me") return "mine";
+  return unassigned(t) ? "unassigned" : "waiting";
+}
+
 /** 검색(제목·메모·owner)과 거르기 칩에 맞나 */
-export function taskMatches(t: TaskView, filter: TaskFilter, query: string, groups: ThreadGroups): boolean {
-  if (filter === "mine" && t.owner !== "me") return false;
-  if (filter === "unassigned" && !unassigned(t)) return false;
-  if (filter === "running" && taskState(t, groups) !== "run") return false;
-  if (filter === "parked" && taskState(t, groups) !== "parked") return false;
-  if (filter === "check" && taskState(t, groups) !== "check") return false;
+export function taskMatches(t: TaskView, filter: TaskFilter, query: string, groups: ThreadGroups, reserved = false): boolean {
+  if (filter !== "all" && taskCategory(t, groups, reserved) !== filter) return false;
   const needle = query.trim().toLowerCase();
   if (needle === "") return true;
   return has(needle, t.short_id) || has(needle, t.title) || has(needle, t.owner) || t.notes.some((n) => has(needle, n));
@@ -183,7 +193,7 @@ export function taskList(board: TaskBoard, filter: TaskFilter, query: string, re
   const pending = pendingQueue(board);
   const reservedLines = new Set(pending.flatMap((q) => { const t = byId.get(q.task_id); return t ? [t.line] : []; }));
   const inRepo = (t: TaskView) => repo === null || repoKey(t) === repo;
-  const matches = (t: TaskView) => taskMatches(t, filter === "reserved" ? "all" : filter, query, groups);
+  const matches = (t: TaskView) => taskMatches(t, filter, query, groups, reservedLines.has(t.line));
   // 예약한 조상이 있나(있으면 그 예약 밑에 따라 올라간다)
   const underReserved = (t: TaskView) => {
     const seen = new Set<number>();
@@ -206,10 +216,9 @@ export function taskList(board: TaskBoard, filter: TaskFilter, query: string, re
       hidden.push(t);
       continue;
     }
-    if (!matches(t)) continue;
-    flush();
+    if (matches(t)) flush();
     const parent = live && t.parent !== null ? (byLine.get(t.parent) ?? null) : null;
-    top.push({ kind: "reserved", key: `q:${q.task_id}`, t, q, crumb: parent, missing: !live });
+    if (matches(t)) top.push({ kind: "reserved", key: `q:${q.task_id}`, t, q, crumb: parent, missing: !live });
     if (!live || filter === "reserved") continue;
     // 하위는 따로 예약한 것이 아니면 상위 밑에 함께(2A). 따로 예약한 하위는 제 차례에 보인다
     const kids = descendants(board, t);
@@ -218,7 +227,7 @@ export function taskList(board: TaskBoard, filter: TaskFilter, query: string, re
       if (kids.has(k.line) && !reservedLines.has(k.line) && inRepo(k) && matches(k)) top.push({ kind: "under", key: `u:${k.line}`, t: k, depth: taskDepth(k, byLine) - depth });
     }
   }
-  if (top.some((r) => r.kind === "reserved")) flush();
+  if (top.some((r) => r.kind !== "gap")) flush();
   else top.length = 0;
   const rest: TaskListRow[] = [];
   if (filter !== "reserved") {
@@ -232,13 +241,9 @@ export function taskList(board: TaskBoard, filter: TaskFilter, query: string, re
   const scoped = board.tasks.filter(inRepo);
   const counts: Record<TaskFilter, number> = {
     all: scoped.length,
-    mine: scoped.filter((t) => t.owner === "me").length,
-    unassigned: scoped.filter(unassigned).length,
-    running: scoped.filter((t) => taskState(t, groups) === "run").length,
-    parked: scoped.filter((t) => taskState(t, groups) === "parked").length,
-    reserved: pending.filter((q) => inRepo(byId.get(q.task_id) ?? q.task)).length,
-    check: scoped.filter((t) => taskState(t, groups) === "check").length,
+    mine: 0, unassigned: 0, waiting: 0, running: 0, parked: 0, reserved: 0, check: 0,
   };
+  for (const t of scoped) counts[taskCategory(t, groups, reservedLines.has(t.line))] += 1;
   return { top, rest, counts, inRepo: scoped.length };
 }
 
@@ -595,6 +600,7 @@ export function handOffText(t: TaskView, again = false): string {
  * 이어지지 않았다. agent·사람 구분은 맡길 수 있는 profile 목록으로 한다(`ownerKindOf`)
  */
 export function startable(t: TaskView, groups: ThreadGroups, agents: readonly string[]): boolean {
+  if (t.done) return false;
   // 보류한 thread와 이어진 task는 새로 맡기지 않고 그 thread를 이어 한다
   if (t.problems.length > 0 || taskState(t, groups) === "run" || taskState(t, groups) === "parked") return false;
   return unassigned(t) || agentParts(t, agents) !== null;

@@ -111,7 +111,11 @@ export default async function ({ page }) {
         await inList(page, "pane-q-colors");
         await page.locator(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`).nth(at).click();
         await domIs(page, "맨 q-ID의 정확한 카드", ({ id, selector }) => location.hash === `#question=${id}`
-          && document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true" && !!document.querySelector(selector) && document.querySelector('[data-testid="activity-asks"]')?.getAttribute("aria-selected") === "true", { id, selector });
+          && document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true" && !!document.querySelector(selector)
+          // 질문 본문 render 뒤 effect가 사이드바도 「답할 것」으로 옮긴다. 이 이동이 끝나기 전에
+          // 다음 inList가 「작업」을 열면 늦은 effect가 다시 숨겨 목록 누름과 경합한다.
+          && document.querySelector('[data-testid="activity-asks"]')?.getAttribute("aria-selected") === "true"
+          && !!document.querySelector('#sidebar-column [data-panel="asks"]:not([hidden])'), { id, selector });
       }
     }
     const listed = aaa("question", "list").questions;

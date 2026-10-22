@@ -43,6 +43,7 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
     {!loading && rows.every((p) => p.rules.length === 0) && <p className="automation-dim">자동화가 없습니다.</p>}
     {rows.filter((p) => p.rules.length > 0 || p.trash.length > 0 || editable).map(({ project, rules, trash }) => {
       const legacy = legacyFiles(rules).length;
+      const convertBlocked = rules.find((r) => r.web_read_only_reason && legacyRule(r))?.web_read_only_reason;
       return <section key={project} className="automation-group" aria-label={`${project} 자동화`}>
         <h3 className="automation-group-head">{project} <span>{rules.length}</span>
           {editable && <button type="button" className="ghost small automation-new" data-testid={`automation-new-${project}`} onClick={() => onOpen(project, null)}><Plus aria-hidden="true" />새 자동화</button>}
@@ -60,6 +61,7 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
                 {r.short_id && <ListId id={r.short_id} testId="automation-short-id" />}
                 <span className="automation-card-title">{title}</span>
                 {tone !== "on" && <span className={`automation-badge is-${tone}`}>{cardWord[tone]}</span>}
+                {r.web_read_only_reason && <span className="automation-badge is-legacy" title={r.web_read_only_reason}>시스템 · 읽기 전용</span>}
                 {legacyRule(r) && <span className="automation-badge is-legacy">이전 형식</span>}
                 {running.length > 0 && <span className="automation-running" data-testid={`automation-running-${project}-${r.name}`} title={running.map((t) => t.id).join(", ")}>실행 중</span>}
               </span>
@@ -70,13 +72,14 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
         {legacy > 0 && <div className="automation-legacy" data-testid={`automation-legacy-${project}`}>
           <span><span className="automation-badge is-legacy">이전 형식</span> {legacy}개 · 웹은 새 형식(TOML)만 고친다</span>
           {canPreviewConvert(frontApi)
-            ? <button type="button" className="ghost small" onClick={() => setConvert(project)}>새 형식으로 바꾸기</button>
+            ? <button type="button" className="ghost small" disabled={!!convertBlocked} title={convertBlocked ?? undefined} onClick={() => setConvert(project)}>새 형식으로 바꾸기</button>
             : frontApi !== undefined && <span className="automation-dim">host를 1.58 이상으로 올리면 여기서 바꿀 수 있다</span>}
         </div>}
         {trash.length > 0 && <details className="automation-trash" data-testid={`automation-trash-${project}`}>
           <summary>지운 자동화 {trash.length}개</summary>
           <ul className="automation-list">{trash.map((t) => <li key={t.id}><span>{t.title} · {t.name} · {time(t.deleted_at_ms)}</span>
-            {canControl && <button type="button" className="btn btn-ghost" disabled={busy !== null} onClick={() => void restore(project, t)}>꺼진 채로 되살리기</button>}</li>)}</ul>
+            {t.web_read_only_reason && <span className="automation-dim" title={t.web_read_only_reason}>시스템 · 읽기 전용</span>}
+            {canControl && !t.web_read_only_reason && <button type="button" className="btn btn-ghost" disabled={busy !== null} onClick={() => void restore(project, t)}>꺼진 채로 되살리기</button>}</li>)}</ul>
         </details>}
       </section>;
     })}

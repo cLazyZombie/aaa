@@ -197,7 +197,7 @@ fn already_enrolled(name: &str) -> String {
 
 /// 인증된 agent: hello → welcome → 요청·사건·출력 처리. `known`은 TLS로 확인한 머신 ID(로컬은 None), `pid`는 로컬 agent
 /// 프로세스(socket peer credential).
-type Cleanup = (String, u64, super::Pending, tokio::task::JoinHandle<()>);
+type Cleanup = (String, AgentConn, tokio::task::JoinHandle<()>);
 
 async fn serve(
     host: Arc<Host>,
@@ -221,10 +221,10 @@ async fn serve(
     }
     // 정리 중 poison 등으로 또 panic해도 감시 기록은 남는다. 새 generation을 끊지 않는다.
     let cleaned = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        if let Some((mid, generation, pending, pinger)) = cleanup {
+        if let Some((mid, conn, pinger)) = cleanup {
             pinger.abort();
-            pending.lock().unwrap().clear();
-            host.agent_disconnected(&mid, generation);
+            conn.fail_all();
+            host.agent_disconnected(&mid, conn.generation);
         }
     }));
     if cleaned.is_err() && !panicked {
@@ -320,6 +320,7 @@ async fn serve_connection(
     .await?;
     let generation = host.next_gen();
     let mut conn = AgentConn::new(tx.clone(), generation);
+    conn.machine_id = hello.machine_id.clone();
     conn.timeouts = host.cfg.host.clone();
     conn.health_host = Arc::downgrade(&host);
     let pending = conn.pending.clone();
@@ -337,12 +338,12 @@ async fn serve_connection(
         })
     };
     let mid = hello.machine_id.clone();
-    *cleanup = Some((mid.clone(), generation, pending.clone(), pinger));
+    *cleanup = Some((mid.clone(), conn.clone(), pinger));
     host.agent_connected(&hello, local, conn);
     if local {
         host.note_agent_pid(&hello.machine_id, pid);
     }
-    tracing::info!(machine = %hello.machine_name, sessions = hello.sessions.len(), local, pid = ?pid, "agent 연결");
+    tracing::info!(machine = %hello.machine_name, generation, sessions = hello.sessions.len(), local, pid = ?pid, "agent 연결");
 
     host.task_progress(Task::AgentLink);
     let result: Result<()> = async {
@@ -424,7 +425,7 @@ async fn serve_connection(
     }
     .await;
 
-    tracing::info!(machine = %hello.machine_name, "agent 연결 끊김");
+    tracing::info!(machine = %hello.machine_name, generation, "agent 연결 끊김");
     result
 }
 
