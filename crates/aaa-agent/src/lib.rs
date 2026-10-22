@@ -30,7 +30,9 @@ pub mod post;
 mod pr;
 mod quota;
 mod responsibility;
+mod selfcheck;
 mod settings_jobs;
+pub use selfcheck::start_selfcheck;
 mod slash;
 pub mod threads;
 pub mod work_root;
@@ -2047,43 +2049,6 @@ async fn sleep_until(at: Option<std::time::Instant>) {
         Some(t) => tokio::time::sleep_until(tokio::time::Instant::from_std(t)).await,
         None => std::future::pending().await,
     }
-}
-
-/// 시작 때 자가 점검(§10.4 6): 계보·키체인·FDA·첫 실행 지연. 결과는 상태 폴더 selfcheck.json과 다음 hello에 담는다.
-/// macOS에서는 App Nap·자동 종료를 막는 활동도 이때 잡는다.
-pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aaa_config::SelfcheckSection) {
-    #[cfg(target_os = "macos")]
-    let held = aaa_doctor::macos::hold_activity("aaa agent backend: agent 세션 실행");
-    #[cfg(not(target_os = "macos"))]
-    let held = false;
-    let opts = aaa_doctor::ProbeOptions {
-        samples: cfg.first_exec_samples,
-        keychain_service: Some(cfg.keychain_service.clone()).filter(|s| !s.is_empty()),
-        volume_dir: Some(cfg.volume_dir.clone()).filter(|s| !s.is_empty()),
-        label: Some("agent-selfcheck".into()),
-        throughput: false,
-        activity_held: held,
-        fda_check: cfg!(target_os = "macos"),
-    };
-    let agent = agent.clone();
-    tokio::task::spawn_blocking(move || {
-        let r = aaa_doctor::probe(&opts);
-        let _ = util::write_json(&agent.state.join("selfcheck.json"), &r);
-        let summary = serde_json::json!({
-            "pass": r.pass,
-            "reasons": r.reasons,
-            "responsible_path": r.lineage.responsible_path,
-            "first_exec": r.first_exec,
-            "keychain_unlocked": r.keychain.default_unlocked,
-            "fda": r.fda,
-            "activity_held": r.activity_held,
-            "dev_mode": agent.dev_mode,
-        });
-        if !r.pass {
-            tracing::warn!("자가 점검 실패: {:?}", r.reasons);
-        }
-        *agent.selfcheck.lock().unwrap() = Some(summary);
-    });
 }
 
 /// 정리 사건(`compacting`, plan §8.309)을 모르는 host(`compacting.v1`을 알리지 않음)에는 작업 중으로 보낸다: 옛 host는 모르는 kind를

@@ -69,6 +69,29 @@ export default async function ({ page }) {
   let shotPng;
   let uploadedMd;
   let started;
+  await step("썸네일: DOM 변경 뒤에 온 이미지 load만으로 그림 표시 대기가 끝난다", async () => {
+    const p = await browser.newPage();
+    let imageRequest;
+    const requested = new Promise((done) => { imageRequest = done; });
+    const imageUrl = new URL("/__drawn-image.png", base).href;
+    const pageUrl = new URL("/__drawn-fixture", base).href;
+    try {
+      await p.route(imageUrl, (route) => imageRequest(route));
+      await p.route(pageUrl, (route) => route.fulfill({
+        contentType: "text/html",
+        body: '<div data-testid="task-attach-item"><img src="/__drawn-image.png"></div>',
+      }));
+      await p.goto(pageUrl, { waitUntil: "domcontentloaded" });
+      const request = await requested;
+      const drawn = thumbsDrawn(p, 1);
+      // 같은 문서의 다음 실행 사건까지 와야 대기 함수가 먼저 등록됐다.
+      if (await p.evaluate(() => document.querySelector("img").complete)) throw new Error("그림 응답을 풀기 전에 이미 로드됐다");
+      await request.fulfill({ contentType: "image/png", body: fs.readFileSync(`${root}/pic.png`) });
+      await drawn;
+    } finally {
+      await p.close();
+    }
+  });
   await step("붙여 넣기: task를 고른 채 ⌘V(스크린샷)면 사진 고르기 없이 그 task 메모에 첨부 줄이 저장되고 썸네일이 보인다", async () => {
     // 가짜 thread가 곧 턴을 끝내 앱 안 알림이 화면 위를 덮는다: 이 기기는 앱 안 알림을 끈다(43·47과 같다)
     const dialog = await openSettings(page, "알림");

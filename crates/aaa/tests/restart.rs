@@ -113,12 +113,51 @@ fn probe(n: &Node, pane: &str, probes: &Probes, owner: u32, stage: &str) {
     assert!(Command::new("cp").arg("-R").arg(&output).arg(probes.archive.join(stage)).status().unwrap().success());
 }
 
+/// 보호 파일 open이 끝나지 않는 FDA 경로를 실제 worker 안에서 재현한다.
+struct FdaGate {
+    root: PathBuf,
+    library: PathBuf,
+}
+impl FdaGate {
+    fn new(root: &Path) -> Self {
+        let root = root.join("fda-gate");
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("block.c");
+        std::fs::write(&source, include_str!("fixtures/fda-block.c")).unwrap();
+        let library = root.join("block.dylib");
+        let out = Command::new("cc")
+            .args(["-dynamiclib", "-Wall", "-Wextra", "-Werror", "-o"])
+            .arg(&library)
+            .arg(source)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "FDA open fixture: {}", String::from_utf8_lossy(&out.stderr));
+        let fifo = std::ffi::CString::new(root.join("open").as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        Self { root, library }
+    }
+    fn wait_entered(&self, worker: u32, count: usize) {
+        wait_for("FDA 파일 열기 진입", T, || {
+            let markers = std::fs::read_to_string(self.root.join("entered")).ok()?;
+            (markers.lines().filter(|p| *p == worker.to_string()).count() == count).then_some(())
+        });
+    }
+    fn complete(&self) {
+        use std::{io::Write, os::unix::fs::OpenOptionsExt};
+        let mut writer = wait_for("FDA FIFO reader", T, || {
+            std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(self.root.join("open")).ok()
+        });
+        writer.write_all(b"SQLite format 3\0").unwrap();
+    }
+}
+
 #[test]
 fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     let mut lab = Lab::new();
     let node = lab.node("n", Some("schema = 1\n[host]\nagent_listen = '127.0.0.1:0'\n[web]\nlisten = '127.0.0.1:0'\n[local_agent]\nmode = 'none'\n"));
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let probes = Probes::new(&repo);
+    let fda = FdaGate::new(&probes.root);
     let existing = std::env::var_os("AAA_RESTART_TEST_LAUNCHER").map(PathBuf::from);
     let image = existing.clone().unwrap_or_else(|| lab.root.join("aaa-launcher.app/Contents/MacOS/aaa-launcher"));
     if existing.is_none() {
@@ -173,6 +212,7 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
             command.env_remove(k);
         }
     }
+    command.env("DYLD_INSERT_LIBRARIES", &fda.library).env("AAA_TEST_FDA_GATE", &fda.root);
     command.arg(&pidfile).arg(&image).arg(&binary).args(["agent", "--name", "labA"]);
     lab.spawn_command("spawn", command);
     let launcher_pid = wait_for("launcher PID", T, || std::fs::read_to_string(&pidfile).ok()?.parse::<u32>().ok());
@@ -183,6 +223,8 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     });
     let first = record(&node);
     let worker = first["pid"].as_u64().unwrap() as u32;
+    fda.wait_entered(worker, 1);
+    assert!(!node.state.join("agent/selfcheck.json").exists(), "막힌 검사를 완료로 기록했다");
     assert_eq!(first["launcher"], launcher_pid);
     assert_eq!(process::responsible(worker), Some(launcher_pid));
     let mut watch = lab::watch::HostWatch::new(&node, T);
@@ -276,6 +318,12 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     let next = record(&node);
     assert_eq!(next["pid"], worker);
     assert_eq!(next["launcher"], launcher.pid);
+    fda.wait_entered(worker, 2);
+    fda.complete();
+    wait_for("재시작 뒤 자가 검사 결과 저장", T, || {
+        let report: Value = util::read_json(&node.state.join("agent/selfcheck.json")).ok()?;
+        (report["fda"] == "ok").then_some(())
+    });
     wait_for("기존 pane 재연결", T, || {
         let p = node.json(&["pane", "list"]).ok()?;
         p["panes"].as_array()?.iter().any(|p| p["id"] == old && p["connection"] == "connected").then_some(())

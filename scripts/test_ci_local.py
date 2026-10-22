@@ -21,10 +21,13 @@ tool = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 if tool == "python3":
     if args[:2] == ["-m", "unittest"]:
-        sys.exit(0)
-    if args[0] != "scripts/rust_tests.py":
+        if not os.environ.get("PYTHON_STAGE"):
+            sys.exit(0)
+        stage = "python"
+    elif args[0] != "scripts/rust_tests.py":
         os.execv(sys.executable, [sys.executable, *args])
-    stage = "test"
+    else:
+        stage = "test"
 elif tool == "cargo":
     stage = args[0]
     if stage == "build":
@@ -84,7 +87,7 @@ class CiLocal(unittest.TestCase):
         path.write_text(f"#!{sys.executable}\n" + TOOL)
         path.chmod(0o755)
 
-    def run_ci(self, *args, gate=False):
+    def run_ci(self, *args, gate=False, stages=("test", "e2e", "clippy"), live_output=True):
         command = ["bash", "scripts/ci-local.sh", "--logs", "logs", *args]
         if not gate:
             return subprocess.run(command, cwd=self.root, env=self.env,
@@ -109,15 +112,15 @@ class CiLocal(unittest.TestCase):
             peers = []
             try:
                 names = []
-                for _ in range(3):
+                for _ in stages:
                     peer, _ = listener.accept()
                     peers.append(peer)
                     peer.settimeout(10)
                     names.append(peer.recv(100).decode())
-                self.assertCountEqual(names, ["test", "e2e", "clippy"])
+                self.assertCountEqual(names, stages)
                 # 자식이 종료를 허락받기 전에 화면에 출력이 도착해야 한다.
                 live = set()
-                while len(live) < 3:
+                while live_output and len(live) < len(stages):
                     line = events.get(timeout=10)
                     for stage in names:
                         if f"[{stage}] LIVE-{stage}-한글" in line:
@@ -132,6 +135,33 @@ class CiLocal(unittest.TestCase):
                 reader.join(timeout=10)
                 process.stdout.close()
             return subprocess.CompletedProcess(command, process.returncode, "".join(lines), "")
+
+    def assert_python_and_rust(self, failure=None):
+        self.env.update(PYTHON_STAGE="1", EXPECT_STAGES="python test")
+        if failure:
+            self.env["FAIL_STAGE"] = failure
+        result = self.run_ci("--only", "test,public", "--tee", gate=True,
+                             stages=("python", "test"), live_output=False)
+        self.assertEqual(result.returncode, 1 if failure else 0, result.stdout)
+        summary = (self.root / "logs/workspace-summary.tsv").read_text()
+        self.assertIn("test|FAIL|" if failure else "test|ok|", summary)
+        self.assertIn("public|ok|", summary)
+        log = (self.root / "logs/test.log").read_text()
+        for stage in ("python", "test"):
+            self.assertEqual(log.count(f"LIVE-{stage}-한글"), 1)
+            self.assertEqual(log.count(f"TAIL-{stage}"), 1)
+        self.assertIn("TAIL-python", (self.root / "logs/python.log").read_text())
+        if failure:
+            self.assertIn(f"FAIL {failure}", log)
+
+    def test_python_and_rust_start_together(self):
+        self.assert_python_and_rust()
+
+    def test_python_failure_waits_for_rust_and_fails_the_stage(self):
+        self.assert_python_and_rust("python")
+
+    def test_rust_failure_waits_for_python_and_fails_the_stage(self):
+        self.assert_python_and_rust("test")
 
     def test_tee_runs_all_three_together_and_keeps_failure_and_final_bytes(self):
         self.env.update(FAIL_STAGE="clippy", EXPECT_STAGES="test e2e clippy")

@@ -15,6 +15,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChromium } from "./lib/chromium-launch.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium } = require("playwright");
@@ -196,7 +197,7 @@ done
 fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.coordinator]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/coord.sh"]\ndescription = "견본 coordinator"\n[profiles.coordinator.env]\nAA = "${AA}"\n`);
 
 const base = `http://127.0.0.1:${webPort}/`;
-const browser = await chromium.launch();
+const browser = await launchChromium(chromium);
 
 /** 새 화면. 테마는 설정이 정한다(기본 어두움, herdr-web-ui settings.ts): 밝음 견본은 설정 값을 넣고 연다. line이면 입력줄(composer)을 쓴다 */
 async function openPage({ width, height, kind, scheme = "dark", line = false }) {

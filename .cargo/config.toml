@@ -2,3 +2,11 @@
 # VC++ 재배포 패키지(VCRUNTIME140.dll)가 없어도 `aaa.exe` 하나로 돈다(단일 실행 파일 배포)
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# 공식 Linux release는 musl이다. DWARF를 버리지 않고 링크할 때 zlib로 압축한다.
+# backtrace의 gimli/miniz reader와 debugger가 그대로 읽으며 실행 코드·unwind·함수 심볼은 유지한다.
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "link-arg=-Wl,--compress-debug-sections=zlib"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "link-arg=-Wl,--compress-debug-sections=zlib"]

@@ -4,9 +4,49 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { repo, aaa, until, shot, pairPage, base, step, webPort, browser, webkit } from "../lib/harness.mjs";
+import assert from "node:assert/strict";
+import { repo, aaa, until, shot, pairPage, base, step, webPort, browser, chromium, webkit } from "../lib/harness.mjs";
+import { chromiumLaunchOptions } from "../lib/chromium-launch.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("Chromium 첫 프레임·일반 클릭·기본 실행 옵션 보존", async () => {
+    const actual = await chromium.launchServer(chromiumLaunchOptions());
+    try {
+      // 실제 도구의 기본 목록과 비교해 추가 flag가 기존 비활성 feature를 덮어 지우지 않게 한다.
+      if (process.platform === "darwin") {
+        const raw = await chromium.launchServer();
+        try {
+          const features = (args) => new Set(args.filter((v) => v.startsWith("--disable-features="))
+            .at(-1)?.slice("--disable-features=".length).split(",") ?? []);
+          const expected = features(raw.process().spawnargs);
+          expected.add("MacDisclaimGpuTccResponsibility");
+          assert.deepEqual(features(actual.process().spawnargs), expected);
+        } finally { await raw.close(); }
+      }
+      const fresh = await chromium.connect(actual.wsEndpoint());
+      try {
+        const ctx = await fresh.newContext({ viewport: { width: 1280, height: 800 } });
+        const first = await ctx.newPage();
+        await first.setContent(`<!doctype html><input aria-label="첫 입력"><button>확인</button><output></output>
+          <script>
+            window.__firstFrames = [];
+            function frame(t) { __firstFrames.push(t); if (__firstFrames.length < 3) requestAnimationFrame(frame); }
+            requestAnimationFrame(frame);
+            document.querySelector('button').onclick = e => {
+              window.__firstClickTrusted = e.isTrusted;
+              document.querySelector('output').textContent = document.querySelector('input').value;
+            };
+          </script>`);
+        await first.getByLabel("첫 입력").fill("1234");
+        await first.getByRole("button", { name: "확인", exact: true }).click();
+        await first.waitForFunction(() => window.__firstFrames.length === 3);
+        const state = await first.evaluate(() => ({ frames: __firstFrames, trusted: __firstClickTrusted, text: document.querySelector("output").textContent }));
+        assert.equal(state.trusted, true);
+        assert.equal(state.text, "1234");
+        assert.ok(state.frames.every((t, i) => i === 0 || t > state.frames[i - 1]), "서로 다른 세 실제 rAF");
+      } finally { await fresh.close(); }
+    } finally { await actual.close(); }
+  });
   await step("옛 TUI WebSocket 거절·웹 API 유지", async () => {
     await page.evaluate(async () => {
       for (const [client, minor] of [["tui", 42], ["tui@mac-a", 43], ["tui@mac-a", 0]]) {
@@ -128,12 +168,26 @@ export default async function ({ ctl, page }) {
     // 끊긴 채 새로 고치면 「연결 없음」 화면이 아니라 캐시한 셸로 앱이 뜬다(연결 화면·오류는 앱이 그린다)
     await ctx.setOffline(true);
     await page.reload();
+    // Chromium 156은 SW가 준 새 문서의 navigator 상태를 구 emulateNetworkConditions에서 잃는다.
+    // 요청 차단은 ctx에 두고 공식 CDP로 이 문서의 실제 망 상태·브라우저 사건도 맞춘다.
+    const documentNetwork = (offline) => cdp.send("Network.overrideNetworkState", {
+      offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+    });
+    await documentNetwork(true);
+    if (await page.evaluate(() => navigator.onLine)) throw new Error("offline 새 문서가 online으로 에뮬레이션됐다");
     // 앱은 host에 닿지 못했다고 말하고(offline.html의 「다시 열기」 링크가 아니라 앱의 카드), 네트워크가 돌아오면 스스로 다시 묻는다
     await page.getByTestId("unreachable").waitFor();
     if (await page.getByRole("link", { name: "다시 열기" }).count()) throw new Error("셸 대신 offline.html이 떴다");
     await shot(page, "pwa-offline-shell");
+    await page.evaluate(() => {
+      window.__e2eOnline = null;
+      addEventListener("online", (event) => { window.__e2eOnline = { trusted: event.isTrusted, online: navigator.onLine }; }, { once: true });
+    });
     await ctx.setOffline(false);
+    await documentNetwork(false);
     await page.getByTestId("token-gate").waitFor();
+    const online = await page.evaluate(() => window.__e2eOnline);
+    if (!online?.trusted || !online.online) throw new Error(`브라우저의 실제 online 사건이 없다: ${JSON.stringify(online)}`);
     // 셸을 갖기 전의 처음 실행이 끊겼다면: 미리 둔 offline.html(aaa 것)
     if (!(await page.evaluate(() => caches.open("aaa-files-v2").then((c) => c.match("/offline.html")).then(Boolean)))) throw new Error("offline.html이 미리 놓이지 않았다");
     await ctx.close();

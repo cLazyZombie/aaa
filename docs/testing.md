@@ -5,8 +5,22 @@
 - `node --test web/test/roster.test.mjs`: 종료된 coordinator가 트리·기타·프로젝트 머리·이전/다음 탐색에서 빠지고, 중단·복원 대기·끊긴 머신의 기록과 thread에 연결된 pane은 유지하는지 확인한다. 입력 pane 목록은 바꾸지 않는다. 명령 팔레트도 같은 `roster`를 쓴다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 91-coordinator-exit --workers 1`: 실제 host·agent·PTY에서 Ctrl+C·정상 종료, 종료 기록 보존·새로 열기·기본 profile 재시작을 확인한다. Chromium·WebKit 각각 1280×844·390×844에서 상단 안내 위치·passkey 공존·메뉴를 열지 않은 시작·가로 넘침·보기 권한을 검사한다.
 - 시작 요청은 실제 host로 전달한다. 첫 요청의 profile만 허용 밖 값으로 보내 host의 실제 거부를 안내줄에 보이는지 확인하며, 다음 요청의 전달을 사건으로 보류해 시작 중 단추 잠금과 중복 요청 차단을 검사한다. 제품 상태·종료 결과를 가짜로 만들지 않는다. 새 sleep·시한 연장·재시도는 없다. 이 headless 휴대폰 폭 검사는 실제 iPhone 조작을 대신하지 않는다.
-- 관련 기존 E2E26·12와 전체 `nice -n 15 bash scripts/ci-local.sh --tee`, 공개 검사를 수행한다. API·link 번호는 유지하며 E2E91·plan §8.458은 착지 때 main과 대조한다.
+- 관련 기존 E2E26·12와 전체 `nice -n 15 bash scripts/ci-local.sh --tee`, 공개 검사를 수행한다. API·link 번호는 유지하며 E2E91·plan §8.459은 착지 때 main과 대조한다.
 - E2E15의 안내 없는 머리줄 검사는 실제 coordinator를 띄워 전제를 준비한다. 기존 0px·안전 영역·겹침 결함 심기 단언을 유지한다. 설정을 열면 시작 안내는 숨겨 설정에서 앱 목록으로 나가는 Tab 순서(E2E06)를 유지하며 E2E91에서도 숨김·닫은 뒤 복귀를 확인한다.
+
+## E2E88 WebKit 새 창 종료 원인과 시험 도구 갱신(t-0800)
+
+- macOS 15 arm64 진단 run `39793997341`은 같은 E2E88을 새 실험실에서 고정 3회 실행해 모두 WebKit desktop의 HTML 링크 클릭에서 실패했다. 클릭은 성공했지만 popup 사건 전에 브라우저가 exit 139로 끝났다. `page.close`·`context.close`·`browser.disconnected`가 시험의 명시적 정리보다 앞선다. 두 OS crash 기록은 새 창 생성의 `WebPageProxy::useGPUProcessForDOMRenderingEnabled()+344`, EXC_BAD_ACCESS/주소 0x40을 가리킨다. 동일 설치 binary의 해당 명령도 주소 0x40 읽기다. `page.crash` 사건이 없다는 이유로 브라우저 전체 crash를 배제하지 않는다.
+- 공식 [WebKit bug 317666](https://bugs.webkit.org/show_bug.cgi?id=317666)과 [수정 68455aeaffed](https://github.com/WebKit/WebKit/commit/68455aeaffed)은 관련 페이지 순회에서 포인터를 비운 뒤 다음 증가식이 읽던 결함을 고친다. 수정된 순회를 포함한 Playwright 1.64.1/WebKit 27.2로 같은 macOS 15의 run `39795685013`에서 E2E88 전체 조합이 고정 3회 모두 통과했다. 이 두 run은 실패 재실행으로 녹색을 고른 것이 아니라, 구판 0/3과 수정판 3/3의 대조다. 진단 workflow는 최종 후보에 넣지 않는다.
+- `clickForPopup`은 기다림과 클릭의 개별 결과를 기록한다. E2E88 실패의 `diagnostics/video-popup.json`에는 시각·단계·양쪽 결과와 page crash/close·context close·browser disconnected, 명시적 정리 시작을 남긴다. 실제 브라우저의 의도한 클릭 오류/브라우저 선종료 대조와 `node --test web/test/popup.test.mjs`는 늦은 결과도 보존하고 두 종료 순서를 구분함을 확인한다. 주입 대조를 본래 결함의 재현으로 쓰지는 않는다.
+- 초기 포인터 준비가 충분하다는 판정은 7회차 통합 gate에서 반증되어 제거했다. 세 Mac의 실측 커널은 모두 `uname -r=27.0.0`이며 OS는 host 27.0, 원격 데스크톱·노트북 27.0.1이다. 기존 커널 major 26 조건은 어느 곳에도 맞지 않았다. 동일한 앱 없는 input+button 탐침에서 두 데스크톱은 rAF 0·일반 click 실패, 노트북은 통과했다. 실제 `mouse.move(0,0)` 사건이 전달돼도 두 데스크톱의 정지는 풀리지 않았다. 창 모드·full headless·viewport·focus·VSync 타이머 변경도 해결하지 못했다. 조사 때 두 데스크톱의 물리 화면은 asleep/inactive, 노트북은 awake/active였으나 화면 전원만을 직접 원인으로 단정하지 않는다.
+- 실패한 Chromium 156 GPU 자식은 CPU time 0이며 dyld의 `prepare → makeLaunchLoader → mapFileReadOnly → __open`에서 멈췄다. renderer trace는 frame sink 생성을 요청했지만 BeginFrame이 없었다. 실제 책임자 조회에서 GPU는 자기 책임자이고 browser와 달랐다. [Chromium의 `MacDisclaimGpuTccResponsibility`](https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.4/content/browser/gpu/gpu_process_host.cc#154)는 이 GPU 자식만 `posix_spawn` 때 책임 계보를 끊는다. 그 feature를 끄면 GPU는 browser와 같은 책임자를 유지하고 초기화·실제 rAF·일반 click이 정상이다. GPU를 in-process로 바꾸는 대조도 통과했지만 최종 수리는 별도 GPU 프로세스를 유지한다. OS 내부의 open 정지 기전까지 입증했다고 주장하지 않는다.
+- `chromium-launch.mjs`는 macOS 시험 브라우저와 showcase에만 위 책임 분리를 끄는 옵션을 준다. OS 판 조건·포인터 준비·화면 깨우기·권한/launchd 설정 변경은 없다. `--disable-features`를 추가하면 기존 목록이 덮이므로 Playwright 1.64.1의 목록을 함께 보존한다. E2E01은 실제 `launchServer().process().spawnargs`의 기본 목록과 비교해 갱신 때 누락을 막고, 새 브라우저의 앱 없는 input+button에서 서로 다른 세 native rAF·일반 locator click의 isTrusted·정확한 입력값을 검사한다. 최초 keeper의 CDP 인자 조회가 enable-automation 없이 거부된 fixture 오류는 공개 launchServer의 실제 argv 조회로 고쳤다. automation flag를 켜거나 제품 단언을 바꾸지 않는다.
+- 최종 실행 옵션의 최소 탐침은 세 Mac에서 미리 정한 3회씩 모두 통과했다. 비교한 Playwright 1.64.0-alpha-2026-10-01(Chromium155, WebKit2369의 upstream은 1.64.1과 동일)와 1.65.0-alpha-2026-10-22(Chromium156.0.8078.12)도 host의 기본 실행에서는 실패했다. 구 Chromium147은 동일 host에서 정상이고, 설치된 Chrome156.0.8078.47은 정상이나 같은 판의 CfT full/headless는 실패했다. 따라서 다른 Playwright 판이나 다른 실행 파일로 교체하지 않고 1.64.1의 원래 번들 Chromium·WebKit을 유지한다. force click·rAF 대체·시한 증가·브라우저 제외·실패 재시도는 없다.
+- WebKit 27의 `font-family` 직렬화는 공백 있는 가족 이름의 따옴표를 생략한다. E2E06은 고정한 기대 CSS를 독립 요소의 CSSOM으로 직렬화한다. 기존 가족 이름·순서·generic·기본 fallback·저장 원문·실제 글자 폭 단언은 보존하며 실제 속성에서 기대값을 만들지 않는다. 수정 전 같은 설정 owner가 따옴표 차이로 실패했고 수정 뒤 전체 owner가 통과했다.
+- 수정판 첫 전체 gate는 Rust 전체를 통과했지만 웹 92파일 중 E2E01·10이 실패했다. E2E10은 정확한 키에 pointer/touch 사건만 오고 click이 없었다. 최소 input+button 대조에서도 pointerdown 취소 시 click이 사라지며, mousedown만 취소하면 click과 입력 focus가 보존된다. KeyBar의 pointerdown 취소만 없애고 원래 mousedown focus 보호·반복·이동/취소 추적을 유지한다. E2E03의 WebKit 실제 tap keeper는 Escape와 기본 왼쪽 방향키의 정확한 bytes·터미널 focus를 검사한다. 원래 binary에서는 새 Escape keeper가 실패했다. 첫 keeper에서 기본 막대에 없는 Backspace를 고른 fixture 실수는 기본 방향키로 바로잡았다. 원래 Chromium hold/cancel·modifier·IME와 E2E10의 iPad/iPhone tap·키보드/PTY 단언도 모두 유지한다.
+- PWA는 첫 frame과 별개다. Chromium 156에서 offline 상태로 SW가 준 문서를 다시 열면 요청은 막혀도 `navigator.onLine`이 이미 true여서 복구 시 native online 사건이 없었다. 앱 listener는 이미 등록돼 있었다. 요청 차단/복구는 기존 `ctx.setOffline`을 쓰고, [공식 CDP `Network.overrideNetworkState`](https://chromedevtools.github.io/devtools-protocol/tot/Network/#method-overrideNetworkState)로 새 문서의 실제 navigator 상태도 맞춘다. offline의 false와 복구 native online의 `isTrusted`·true, 원래 token gate 복구를 단언한다. 앱 handler·API 응답·브라우저 사건을 JS로 가짜 호출하지 않는다. E2E01·03·10 전체 owner는 수리 뒤 3/3 통과했다.
+- CI와 설치 안내의 Playwright는 1.64.1이다. ci-local도 이 판을 검사하고, 격리 설치는 명시한 `NODE_PATH`와 `PLAYWRIGHT_BROWSERS_PATH`를 쓴다. 전역 설치·시스템 설정·브라우저 캐시는 바꾸지 않는다. 정본 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사이며, 원래 E2E88의 네 조합·sandbox 경계·직접 MP4/Range·답한 bytes 보존을 유지한다. headless 결과를 실제 Safari/iPhone의 출력 장치 검증으로 해석하지 않는다.
 
 ## 메뉴 선택 뒤 휴대폰 쓸기의 진단과 정리(t-0805)
 
@@ -15,6 +29,31 @@
 - 유닛 `node --test web/test/edgeSwipe.test.mjs`의 빠른 취소·popstate·pagehide·pageshow 네 회귀는 원래 구현에서 모두 메뉴 재개방으로 실패했다. 설정 내부 되감기와 정상 안쪽 flick·기존 손가락 추적은 유지한다. 시한 연장·실패 재시도·단언 완화·고정 sleep은 없다.
 - 실기는 배포 뒤 새 탭의 앱 주소 query에 `drawer-debug=1`을 넣고 진단 창을 접은 채 한다. A → 메뉴로 B → 가장자리 뒤로를 보통 속도 3회·천천히 3회, 같은 몸짓을 중간에 취소하기 3회 진행한다. 매번 정상/미리보기만/계속 열림 중 하나를 표시하고 마지막에 기록을 저장한다. 시작 위치·속도·사건 순서와 총 빈도는 JSON에 남는다. 처음부터 보이던 오래된 미리보기와 새 이동 뒤의 결과를 구분하려고 배포 뒤 새 탭에서 시작한다.
 - `?drawer-debug=1` 없는 탭에는 진단 UI·사건 수집이 없다. 진단은 최근 800개 사건과 전체 개수만 탭 메모리에 두며 URL·history.state·본문·인증 값을 기록하지 않는다. DOM 경계가 닫혔는데 사용자에게 미리보기만 보이면 OS 스냅숏 후보로 분류한다. 화면 합성 결과는 DOM 로그만으로 단정하지 않는다. 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다.
+
+## 시작 자가 검사와 agent 종료 분리(t-0808)
+
+- `nice -n 15 cargo test --locked -p aaa-agent --lib selfcheck:: -- --nocapture`: 실제 FIFO open은 writer를 열기 전까지 완료될 수 없다. 검사 진입 사건 뒤 runtime drop 완료를 먼저 요구한다. 실패 때도 writer를 열어 자기 thread를 회수하고 원래 실패를 보고한다. 기존 spawn_blocking에서는 종료 관측이 실패했고 전용 thread로 분리한 뒤 통과했다. runtime이 사라진 뒤 검사를 풀어도 디스크 결과·실패 이유·다음 hello 요약이 보존되는지 확인하며, 진행 중에는 이전 완료 결과를 유지한다.
+- 기존 `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture` owner에서 시험 전용 DYLD interpose로 FDA의 시스템 TCC DB open만 실험실 FIFO로 바꾼다. 실제 TCC DB·시스템 설정·제품 환경 분기는 바꾸지 않는다. worker PID가 기록한 open 진입 뒤 writer를 닫아 둔 채 실제 service restart로 launcher·worker PID·기존 pane·새 pane·책임 PID·승인 거부·detached 검사를 유지한다. exec 뒤 같은 worker의 두 번째 open 진입을 확인하고 writer를 열어 정상 FDA 결과 저장까지 확인한다. 같은 최종 owner에 옛 spawn_blocking 경로를 다시 심으면 기존 30초의 새 worker 준비 기록 대기가 실패하고, sample에서 runtime drop → blocking pool 종료 대기와 FDA probe → FIFO open을 함께 확인했다.
+- 새 launcher 기본 경로와 `AAA_RESTART_TEST_LAUNCHER`로 지정한 기존 등록 launcher의 읽기 전용 경로를 모두 실행한다. launcher는 운영 서비스를 재시작하지 않는 별도 실험실 자식으로 쓴다. 시한 연장·실패 재시도·기대값 완화·고정 sleep은 없다. 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+## 실행 파일 축소와 panic 콜스택(t-0804)
+
+- `cargo test --release --locked -p aaa-common --lib panic_log::`는 네 역할에서 실제 panic을 일으킨다.
+  함수 이름이 있는 콜스택·원래 위치/횟수/task ID·unwind 후 생존·stderr 잠금 중 `latest()` 관측을 확인한다.
+  payload·동적 이름·환경·절대 빌드 경로 비노출 단언은 유지한다. 프레임 파일은 저장소 상대 경로 허용 목록 또는 `external`뿐이다.
+  release workflow도 다섯 native target에서 이 owner를 실행한다. Windows PDB가 필요한 해석을 교차 컴파일 성공으로 대체하지 않는다.
+- `cargo test --locked -p aaa-host --lib web::assets::`는 내장된 모든 자산을 실제 `web/dist` 원문과 바이트 대조한다.
+  실제 static handler로 gzip/identity·명시적 `q=0` 거부·여러 헤더·wildcard·MIME·cache·404·SPA fallback을 확인한다.
+  gzip 응답을 강제로 없애거나 거부를 무시하는 구현은 같은 기대값에서 실패한다. 웹을 빌드하지 않은 기존 안내도 유지한다.
+- `python3 -m unittest scripts.test_release scripts.test_deploy_build`는 PDB/dSYM의 독립 SHA와 대응 실행 파일 SHA,
+  심볼 누락 거부, macOS unpacked 지정·dSYM 생성/복사, 기존 bootstrap·launcher 결속·provenance를 검사한다. 최종 파일을 후처리하지 않아 서명/SHA 순서가 바뀌지 않는다.
+- 크기는 같은 소스의 release 후보별로 기록한다. 프로세스 이름을 `aaa`로 맞추고 빌드가 끝난 뒤 기준/후보를
+  번갈아 실행하며 stdout 원문 일치와 CLI 벽시계·CPU 시간을 측정한다. 첫 실행은 따로 두고 나머지 30개 중앙값을 사용한다.
+  HTTP는 새 config/state·빈 port·가짜 tailscale·격리 usage home의 실제 host를 쓰며 listen 로그 사건으로 준비를 판정한다.
+  원문과 gzip을 풀어 원래 자산 bytes와 비교하고 자기가 띄운 PID 하나의 종료를 기다린다. 고정 sleep이나 실패 재시도는 없다.
+- macOS 결과·Windows/MSVC 및 Linux/musl 교차 링크·native CI를 구분해 기록한다. 로컬 정본은 전체 ci-local·deps·공개 검사다.
+  Linux 압축 DWARF의 실제 함수·줄 해석과 macOS의 dSYM 동반/단독 panic 출력을 각각 확인한다.
+  dSYM 존재·UUID 일치만으로 충분하지 않다. kache와 packed의 object 누락을 확인해 unpacked로 보존했다.
+  실측과 심볼 보관 조건은 [크기 분석](binary-size.md)을 따른다. FRONT_API·AGENT_LINK·E2E 번호는 바꾸지 않는다.
 
 ## 새 launcher 아래 restart fixture 격리(t-0798)
 
@@ -698,7 +737,8 @@ resource_limits 변경은 하지 않는다.
 
 ## 전체 검증 시간 기록
 
-같은 머신·캐시 조건끼리 비교한다. 머신은 공개용 별칭이며 `mac-a`는 같은 16 CPU macOS 머신이다.
+같은 머신·캐시 조건끼리 비교한다. 머신은 공개용 별칭이며 `mac-a`는 같은 16 CPU macOS 머신,
+`mac-b`는 10 CPU·32GiB macOS 머신이다. 두 머신의 수치를 직접 비교하지 않는다.
 부하는 시작 직전 `uptime`의 1분 평균이다. 단계는 서로 겹치므로 합산하지 않는다.
 `캐시 준비`는 같은 main의 전체 빌드·시험 산출물이 있는 상태다. 첫 실행의 준비 비용을 코드 개선 효과로 세지 않는다.
 
@@ -710,6 +750,10 @@ resource_limits 변경은 하지 않는다.
 | 2026-10-22 | `94d2081e` + t-0670 첫 후보 | mac-a | 21.06 | 캐시 준비·E2E47 정리 경합 실패 | 179 | 4 | 1 | 2 | 2 | 127 | 170 | 1 |
 | 2026-10-22 | `94d2081e` + t-0670 정리 수리·worker8 | mac-a | 12.81 | staging 뒤 재빌드·diff 임시 폴더 충돌 실패 | 203 | 4 | 1 | 25 | 13 | 127 | 171 | 1 |
 | 2026-10-22 | `94d2081e` + t-0670 충돌 수리·worker10 | mac-a | 7.06 | 빌드 산출물 재사용·전체 통과 | 164 | 4 | 1 | 7 | 5 | 130 | 150 | 1 |
+| 2026-10-23 | `eaebe576` | mac-b | 4.74 | 새 작업 폴더·전체 통과 | 438 | 9 | 2 | 51 | 31 | 319 | 374 | 1 |
+| 2026-10-23 | `eaebe576` | mac-b | 11.28 | 캐시 준비·변경 전·전체 통과 | 385 | 8 | 1 | 5 | 1 | 304 | 368 | 2 |
+| 2026-10-23 | `eaebe576` + t-0810 첫 후보 | mac-b | 3.79 | worker7·E2E52 이미지 대기 실패 | 375 | 8 | 1 | 4 | 8 | 359 | 323 | 2 |
+| 2026-10-23 | `eaebe576` + t-0810 최종 후보 | mac-b | 2.46 | worker6·이미지 load 대기 수리·전체 통과 | 355 | 8 | 1 | 4 | 10 | 324 | 339 | 2 |
 
 단위는 초다. 이전 기록 이후 웹 시험은 73→85파일로 늘었지만 첫 E2E 시간은 165→169초이고,
 Rust 단계는 166→137초였다. 코드·캐시·부하가 다르므로 이를 특정 병합의 증감으로 단정하지 않는다.
@@ -734,6 +778,58 @@ E2E47 실패는 한도 초과로 웹에서 시작한 thread의 task 연결을 �
 `stale_pid_temp_index_never_blocks_a_new_process`는 격리 TMP 환경의 새 자식에 옛 PID·첫 순번 폴더와
 보존 파일을 먼저 둔다. 원래 코드는 같은 오류로 실패하고, 수정 뒤 실제 diff와 보존 파일 바이트를 검사한다.
 큰 patch·외부 callback·index 바이트/시각·ref/작업 파일 비변경 단언도 유지한다.
+
+### 독립 Python 검사와 웹 작업 배치(t-0810)
+
+Unix의 test 단계는 Python 검사와 Rust runner를 함께 시작하고 둘 다 끝날 때까지 기다린다.
+Python 원문은 `python.log`에 보존하고 test 로그에도 넣는다. 어느 쪽이 실패하든 단계는 실패하며
+실패한 검사 이름·종료 코드를 마지막에 남긴다. Windows의 기존 전체 Cargo 시험 경로는 유지한다.
+`python3 -m unittest scripts.test_ci_local scripts.test_rust_tests`는 실제 셸의 Python·Rust 도구 자식을
+같은 socket에서 만나게 한다. 기존 직렬 실행은 두 번째 자식의 진입 사건에서 실패한다.
+동시 진입·양쪽 완료·각각의 실패 전파·로그 원문·public 후행과 기존 CPU 예산·선택 완전성을 검사한다.
+고정 sleep·시험 재시도·시한 변경은 없다.
+
+웹 기본 worker는 10 CPU 이상에서 CPU 수의 5/8을 내림하되 최대10개다(10 CPU는5→6개,
+16 CPU 이상은 기존10개). 10 CPU 미만은 기존 core 둘마다 하나이며 명시한 worker 값도 유지한다.
+모든 spec·기존 독립 단계 분할·실험실 격리와 성공 조건을 유지한다. 같은 머신의 변경 전 전체 실행이
+모두 통과한 기록으로 Rust binary·웹 spec 배치 시간을 갱신한다. m13 우선·분할·CPU 예산은 유지한다.
+
+새 머신의 첫 실행438초와 캐시 준비385초의 차이는 개선 효과로 세지 않는다. 첫 Python30개는29.86초,
+캐시 준비 실행에서는20.12초 동안 Rust에 선행했다. 기록이 없던 restart가 install보다 먼저 배치됐고
+캐시 준비 install은 대기79.22초+실행204.24초였다. 웹92파일·103작업은368초였다.
+이 머신에서는 다른 무거운 빌드를 관측하지 않았으나 시스템 인덱싱 부하가 있었고,
+host 연결 오류로 thread 목록은 확인하지 못했다. GitHub job 시간은 인증된 머신에서만 조회하므로 생략했다.
+
+이전 표 이후 설정·휴대폰 경로의 검사 범위가 늘었다. `ccc4a985`의 설정 본문·화면 조합,
+`987b7079`·`eaebe576`의 뒤로/앞으로·설정 복귀·메뉴 선택 경계가 실제 spec에 추가돼 있다.
+다른 머신의 옛 시간만으로 병합별 증가 초를 확정하지 않는다. 제품 동작 검사를 삭제하지 않는다.
+
+첫 후보의 worker7에서는 웹368→323초였지만 Rust304→359초·Python20.12→66.00초로 느려졌다.
+시작 부하3.79에서 실행 중32.44까지 올랐고, 관측한 상위 CPU 사용자는 이번 Rust·브라우저 자식이었다.
+메모리 압력 조회는 여유87%였다. 전체375초는 E2E52 실패 실행이므로 성공한 개선 수치로 세지 않는다.
+최종 후보는 10 CPU에서 worker6으로 줄여 두 단계의 경합을 확인했다.
+
+E2E52는 첨부 줄이 저장된 뒤 실제 그림의 `complete && naturalWidth > 0`을 기다리다 실패했다.
+기존 `domIs`는 MutationObserver만 구독해, DOM이 만들어진 뒤 도착하는 이미지 load를 놓칠 수 있었다.
+새 E2E52 대조는 별도 페이지의 실제 PNG 응답을 대기 함수 등록 뒤 전달하고 다른 DOM 변경을 만들지 않는다.
+기존 helper는 같은20초 오류로 실패한다. `domIs`에 load/error capture 구독을 더하고 완료·실패 때 해제한다.
+기존 그림 표시 단언·20초 상한·모바일/패드 밝음/어두움 조합은 유지한다. 최초 대조 fixture는 URL의
+중복 슬래시로 이미지 요청 gate에 오지 못해120초 준비 실패였으며 재현 증거에서 제외했다.
+URL을 `new URL`로 고친 대조의20초 실패와 helper 수정 뒤 결과를 구분한다.
+수정 뒤 대조는52ms·E2E52 전체는16.5초로 통과했다.
+
+캐시 준비 기준선385초와 최종355초를 비교하면 전체30초(7.8%)·웹368→339초이며,
+Rust 단계는304→324초로 늘었다. Rust runner 자체는283.78→323.52초,
+install은 대기79.22→80.70초·실행204.24→242.63초여서 병렬 부하의 비용이 남아 있다.
+같은 명령·nice·캐시 준비 조건의 한 쌍이며 시작 부하11.28/2.46은 다르다. 평균 절감량으로 일반화하지 않는다.
+3분 목표는 미달이며 현재355초에서175초를 더 줄여야 한다. worker 증가만으로 해결됐다고 보지 않는다.
+
+네 전체 실행 모두 Rust29묶음·doctest의1162통과·기존 ignored6개를 유지했다.
+최종 Python33개 중32통과·기존 Linux 전용1skip, front 유닛489통과,
+웹92파일·103작업 전체 통과이며 의존 경계와 공개 검사도 포함한다. 시험 삭제·단언 완화는 없다.
+최종 긴 Rust 작업은 install242.63초·m13-4 235.66초·m13-6 229.98초다.
+웹 단일 파일은39-phone-back 103.4초·66-composer-wrap 90.2초·23-composer-attachments 90.1초가 길다.
+37-chat-pages 144.9초는12개 독립 작업의 합계이며 단일 파일의 wall time이 아니다.
 
 ## Rust 전체 시험 병렬 실행(t-0591)
 
@@ -1163,7 +1259,7 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 
 - **파일마다 새 실험실.** host·agent·Chromium을 파일마다 새로 띄운다(`/tmp/aaw-<pid>`, 준비 약 1.5초, 웹 port는 host가 고른다). 앞 파일이 만든 pane·질문·구독·설정에 기대지 않으므로 파일 하나를 혼자, 여러 번, 다른 파일과 함께 돌릴 수 있다. 한 파일 안 단계는 차례로 돌고 앞 단계가 만든 상태를 쓸 수 있다(그래서 `--grep`으로 뒤 단계만 고르면 앞 단계가 만든 것이 없을 수 있다: 그때는 `--spec`으로 파일을 돈다).
 - **준비(`runSpec`).** host·agent(`labA`)·셸 탭 `t1`을 띄우고, 첫 화면 `ctl`·`page`(1280×800, 입력줄)를 t1에 연다. t1에는 `t1-42`가 찍혀 있다: 단계가 t1로 돌아왔는지는 이 글로 본다. 단계가 실패하면 그 파일의 나머지 단계는 돌지 않고 다음 파일로 간다. 파일 안 여러 단계가 같은 준비에 기대면 harness의 준비 도우미를 부른다(`pushLab`: push 서명 키·구독 하나·demo, 17·18). 준비는 `step(…, { always: true })`라 `--grep`으로 단계 하나만 골라도 돈다. 그 파일만 실험실 환경을 바꾸려면 `export const labEnv = { … }`(11: `AAA_TEST_DETECT_GRACE_MS`, 17·18: `AAA_TEST_NOTIFY_DEBOUNCE_MS`, 18: `AAA_TEST_PRESENCE_LEASE_MS`). 제품 시간을 줄이는 값은 그 기다림을 기본값으로 도는 파일을 하나 남긴다(위 표).
-- **함께 돌기.** 파일은 worker 여러 개가 함께 돈다. 기본은 16 CPU 이상이면10개, 그 밖은 core 둘마다 하나다(`MAX_WORKERS`, t-0670의 같은 머신 전체 검증으로 비교), `--workers 1`·`AAA_E2E_WORKERS=1`이면 예전처럼 차례로 돌고 출력을 바로 보인다. 2 이상이면 파일이 끝날 때 그 파일의 `## specs/…`와 단계 줄을 한 덩어리로 찍는다. 함께 돌 때는 `durations.json`의 긴 파일부터 넣는다(LPT): 가장 긴 파일이 늦게 시작해 혼자 남지 않게. 적지 않은 새 spec은 가장 긴 것으로 보고 맨 앞에 넣는다. 파일 시간이 크게 바뀌면 `--write-durations`(모두 통과한 실행의 시간을 적는다)로 다시 적는다. 시간이 늘어도 재시도·timeout 연장으로 넘기지 않는다: 한 파일이 혼자 오래 걸리면 그 파일을 기능별로 나눈다(앞 단계 상태에 기대는 단계는 그 준비를 도우미로).
+- **함께 돌기.** 파일은 worker 여러 개가 함께 돈다. 기본은 10 CPU 이상이면 CPU 수의 5/8 내림·최대10개, 그 밖은 core 둘마다 하나다(`MAX_WORKERS`, t-0670·t-0810의 같은 머신 전체 검증으로 비교), `--workers 1`·`AAA_E2E_WORKERS=1`이면 예전처럼 차례로 돌고 출력을 바로 보인다. 2 이상이면 파일이 끝날 때 그 파일의 `## specs/…`와 단계 줄을 한 덩어리로 찍는다. 함께 돌 때는 `durations.json`의 긴 파일부터 넣는다(LPT): 가장 긴 파일이 늦게 시작해 혼자 남지 않게. 적지 않은 새 spec은 가장 긴 것으로 보고 맨 앞에 넣는다. 파일 시간이 크게 바뀌면 `--write-durations`(모두 통과한 실행의 시간을 적는다)로 다시 적는다. 시간이 늘어도 재시도·timeout 연장으로 넘기지 않는다: 한 파일이 혼자 오래 걸리면 그 파일을 기능별로 나눈다(앞 단계 상태에 기대는 단계는 그 준비를 도우미로).
 - **고르기.** `--spec 07`·`--spec 07-scroll-history,09`(파일), `--grep '앞 기록'`(단계 이름 정규식, `AAA_E2E_ONLY`와 같다), `--repeat 25`(고른 파일을 새 실험실로 25번, 끝에 통과 수와 중간·가장 긴 시간. 기본 worker 수로 함께 돈다: 혼자 돌 때 간헐 실패는 `--workers 1`), `--list`(돌지 않고 이름만). 스크린샷 폴더는 첫 인자.
 - **새 기능.** 그 기능의 spec 끝에 단계를 더한다. 새 화면·새 기능 묶음이면 다음 번호로 새 spec을 만든다. 도우미는 두 spec 이상이 쓰면 harness에 두고 끝의 `export { … }`에 더하며, 하나만 쓰면 그 spec 안에 둔다. 단계 이름은 모든 spec에서 하나다. harness 이름을 쓰면 spec 머리 `import { … } from "../lib/harness.mjs"`에 더한다(빠지면 그 단계가 ReferenceError로 실패한다). 틀은 `web/test/e2e-layout.test.mjs`가 본다.
 - **기다리기.** pane 출력은 `waitOutput`(host 사건), DOM은 `domIs`(MutationObserver), 주소는 `hashIs`, 그 밖은 `until`(시한 있는 반복). 새 시험은 앞 셋을 먼저 쓴다. 「이 화면이 보내지 않았다」는 `sentFrames`로 바로 보고, 「pane이 다 받았다」는 보낸 글(`sentText`)과 받은 글이 같아질 때까지 기다린다(03 키 막대 `sent`).

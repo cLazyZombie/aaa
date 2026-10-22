@@ -4008,6 +4008,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
      - 첫 실행 지연 probe
      - warm 지표
    - 비공개 API(`responsibility_get_pid_responsible_for_pid`, `TCCAccessPreflight`)는 진단 보조로만 쓰고, 실패하면 timing probe로 판정한다.
+   - 시작 자가 검사는 Tokio blocking pool과 분리한 전용 thread에서 실행한다. FDA의 보호 파일 open은 TCC 판정에 무기한 묶일 수 있으므로 agent 종료·launcher 보존 exec·서비스 종료에서 join하지 않는다. 프로세스가 살아 있으면 완료 결과를 기존처럼 selfcheck.json에 원자 저장하고 다음 hello 요약에 담는다. 종료·exec 때 미완료 검사는 OS가 정리하며 직전 완료 결과를 덮지 않는다(t-0808).
 
 ### 10.5 서명 identity
 
@@ -7560,8 +7561,16 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 전체 ci-local·공개 검사와 Windows/Linux strict cross·Windows release 조건 build를 확인한다. 실제 Windows 근거는 위 동일 runner 대조이며 교차 빌드로 대체하지 않는다. v0.1.5 게시에는 별도로 착지한 exact main 네 job과 Windows 실제 owner 모두 GREEN이 필요하다. E2E88은 별도 소관이며 E2E82 최초 실패는 보존한다. 시한/기대값 완화나 CI rerun은 하지 않는다.
 
 - **착지 통합.** 기준 origin/main `e22229ce`의 마지막 plan §8.456·FRONT_API 1.111·AGENT_LINK 1.11·웹 E2E90을 확인했다. 겹친 절 번호만 §8.457로 옮기고 API/link/E2E 번호와 기존 post 종료 경합 수리를 보존한다. 일회성 workflow는 포함하지 않는다. 묶음 착지 6회차에서 전체 ci-local·공개 검사·양 OS strict cross·Windows release 조건 빌드를 확인하며 배포·tag·release는 수행하지 않는다.
+### 8.458 실행 파일 축소와 panic 콜스택(t-0804)
 
-### 8.458 종료된 coordinator 숨김과 상단 시작 안내(t-0816)
+- **목적.** 단일 실행 파일의 배포 비용을 줄이면서 웹 기능과 장애 진단을 유지한다. 원인·실측·제외한 선택은 [크기 분석](binary-size.md)에 남긴다. macOS 기준 94,566,984바이트에서 자산 압축과 release `opt-level="s"`·Thin LTO·codegen unit 1로 줄인다. 함수 심볼·줄 정보 생성·panic unwind를 보존하며 실행 파일 후처리는 하지 않는다.
+- **웹 자산.** host 빌드가 더 작은 gzip 또는 원문 하나만 내장한다. gzip 수락 여부에 따라 압축 bytes 또는 복원한 원문을 보내며 `Vary`·MIME·cache·404·웹 빌드 식별을 보존한다. 구문 강조 언어·글꼴을 빼지 않는다. 보고서 sandbox·영상 Range 경로는 바꾸지 않는다.
+- **진단.** §8.332의 비밀 비노출을 유지하면서 이번 요청에 따라 함수 이름을 포함한 콜스택을 추가한다. 원본 payload·환경·동적 thread 이름은 읽지 않는다. 프레임 파일은 허용된 상대 경로만 출력하고 모르는 경로는 숨긴다. 최대 64프레임·이름 512글자로 제한한다. 심볼 없는 프레임도 남기며 가능한 module 상대 주소로 같은 판 심볼의 사후 해석을 돕는다. 기존 panic 위치·반복 횟수·역할·build SHA와 latest 감시를 유지한다.
+- **별도 심볼.** MSVC PDB와 macOS dSYM을 압축해 동일 release의 별도 asset으로 보관한다. macOS producer는 unpacked와 필요 시 dsymutil을 쓰고 deploy-build도 dSYM 폴더를 실제 파일로 복사해 임시 worktree 정리 뒤 남긴다. manifest의 선택적 `symbols` 정보와 SHA256SUMS가 별도 심볼 및 대응 실행 파일 SHA를 기록한다. Linux musl은 링크 때 DWARF를 zlib으로 압축하고 실행 파일 안에 보존한다. 기존 설치·업데이트 소비자는 실행 파일 계약을 계속 쓴다. 현장에서 함수 이름을 해석하려면 같은 판 PDB를 실행 파일 옆 `aaa.pdb`로 둔다. PDB 없는 설치의 unknown 프레임과 native CI 미실행을 숨기지 않는다.
+- **검증.** 실제 release panic의 축소 전/후 출력, 비밀 비노출·unwind 생존, 모든 자산 원문 대조와 gzip 협상, CLI·HTTP 성능을 확인한다. 전체 ci-local·deps·공개 검사와 Windows release/cross·Linux cross를 실행한다. release workflow의 각 native target도 release panic 시험을 실행한다. FRONT_API 1.111·AGENT_LINK 1.11·E2E90은 그대로다. origin/main의 마지막 §8.457을 읽고 §8.458을 배정했으며 묶음 착지 때 다시 대조한다.
+
+
+### 8.459 종료된 coordinator 숨김과 상단 시작 안내(t-0816)
 
 - **결정.** 사용자 답 1B: 실행 중인 coordinator가 없으면 본문 상단에 「coordinator가 실행 중이 아닙니다.」와 「coordinator 띄우기」 단추를 둔다. passkey 안내와 같은 영역에 각각 표시하며 기존 왼쪽 맨 위 단추도 유지한다.
 - **종료.** 공통 `roster`에서 `exited` coordinator를 트리·기타·이전/다음 탐색·명령 팔레트에서 뺀다. pane 기록은 지우지 않고 연결 끊김·중단·복원 대기를 종료로 추정하지 않는다. thread에 연결된 pane은 기존 thread 규칙을 따른다.

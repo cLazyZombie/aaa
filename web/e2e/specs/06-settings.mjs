@@ -188,8 +188,17 @@ export default async function ({ ctl, page }) {
             code.textContent = "M0 경로";
             document.body.append(code);
             const mono = getComputedStyle(code).fontFamily;
+            // 기대하는 가족·순서·generic을 그대로 CSSOM에 직렬화한다. WebKit 27은 공백 있는 이름의 따옴표를 생략한다.
+            const serialize = (family) => { code.style.fontFamily = family; return getComputedStyle(code).fontFamily; };
+            const expected = {
+              ui: serialize('"E2E Missing UI", serif'),
+              mono: serialize('"Symbols Nerd Font Mono", "E2E Missing Mono", monospace'),
+              term: serialize('"E2E Missing Term", monospace'),
+              otherTab: serialize('"E2E Other Tab", serif'),
+            };
             code.remove();
             return {
+              expected,
               ui: getComputedStyle(document.body).fontFamily,
               mono,
               term: getComputedStyle(document.querySelector(".xterm-rows")).fontFamily,
@@ -229,9 +238,9 @@ export default async function ({ ctl, page }) {
           await domIs(pg, "터미널 글꼴 적용", () => getComputedStyle(document.querySelector(".xterm-rows")).fontFamily.includes("E2E Missing Term"));
           const chosen = await read();
           const check = (value) => {
-            if (!value.ui.startsWith('"E2E Missing UI", serif,') || !value.ui.endsWith(baseline.ui)) throw new Error(`${name}: 화면 목록 ${value.ui}`);
-            if (!value.mono.startsWith('"Symbols Nerd Font Mono", "E2E Missing Mono", monospace,') || !value.mono.endsWith(baseline.mono)) throw new Error(`${name}: 아이콘·기본 목록 ${value.mono}`);
-            if (!value.term.includes('"E2E Missing Term", monospace') || !value.term.includes("Meslotendard")) throw new Error(`${name}: 터미널 목록 ${value.term}`);
+            if (!value.ui.startsWith(`${baseline.expected.ui},`) || !value.ui.endsWith(baseline.ui)) throw new Error(`${name}: 화면 목록 ${value.ui}`);
+            if (!value.mono.startsWith(`${baseline.expected.mono},`) || !value.mono.endsWith(baseline.mono)) throw new Error(`${name}: 아이콘·기본 목록 ${value.mono}`);
+            if (!value.term.includes(baseline.expected.term) || !value.term.includes("Meslotendard")) throw new Error(`${name}: 터미널 목록 ${value.term}`);
           };
           check(chosen);
           // 같은 브라우저의 다른 탭은 storage 사건을 따르고, 새 기기는 값을 물려받지 않는다.
@@ -241,7 +250,7 @@ export default async function ({ ctl, page }) {
           const dialog = await openSettings(pg, "모양");
           await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).fill('"E2E Other Tab", serif');
           await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).press("Enter");
-          await domIs(tab, "다른 탭 화면 글꼴 적용", () => getComputedStyle(document.body).fontFamily.startsWith('"E2E Other Tab", serif,'));
+          await domIs(tab, "다른 탭 화면 글꼴 적용", (family) => getComputedStyle(document.body).fontFamily.startsWith(`${family},`), baseline.expected.otherTab);
           await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).fill(fields[0].family);
           await dialog.getByRole("textbox", { name: "화면 글꼴", exact: true }).press("Enter");
           await close();
