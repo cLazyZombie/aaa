@@ -1938,9 +1938,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 action: aaa_proto::QueueOp::Move { task_id, position },
             },
         ),
-        Cmd::Task { cmd: TaskCmd::Archive { restore } } => {
-            front(json, FrontRequest::TaskArchive { project: project_or_here(None)?, restore })
-        }
+        Cmd::Task { cmd: TaskCmd::Archive { restore } } => task_archive_cli(json, project_or_here(None)?, restore),
         Cmd::Task { cmd: TaskCmd::List } => front(json, FrontRequest::Tasks { project: project_or_here(None)? }),
         Cmd::Task { cmd: TaskCmd::Log { task, limit, before, deleted } } => front(
             json,
@@ -1950,6 +1948,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 limit: Some(limit),
                 filter: deleted.then_some(aaa_proto::TaskLogFilter::Deleted),
                 task,
+                search: None,
             },
         ),
         Cmd::Task { cmd } => {
@@ -2032,6 +2031,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                             limit: Some(500),
                             filter: Some(aaa_proto::TaskLogFilter::Deleted),
                             task: Some(task.clone()),
+                            search: None,
                         })?
                         .map_err(|e| anyhow::anyhow!(e.message))?;
                         let FrontResponse::TaskLog { entries, .. } = response else {
@@ -2046,7 +2046,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                                     "완료 보관은 원래 목록에 복원한다. --list 없이 복원한 뒤 task move로 옮긴다"
                                 );
                             }
-                            return front(json, FrontRequest::TaskArchive { project, restore: Some(task) });
+                            return task_archive_cli(json, project, Some(task));
                         }
                     };
                     TaskOp::Restore { log_id, list }
@@ -3215,6 +3215,29 @@ fn local_repo_path(arg: &str) -> String {
         return arg.to_string();
     }
     std::path::absolute(arg).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| arg.to_string())
+}
+
+/// 각 frame은 작은 페이지다. CLI의 기존 전체 목록 출력은 로컬에서 합친다.
+fn task_archive_cli(json: bool, project: String, mut restore: Option<String>) -> Result<ExitCode> {
+    let mut all = Vec::new();
+    let mut after = None;
+    loop {
+        let response = front_call(FrontRequest::TaskArchive {
+            project: project.clone(),
+            restore: restore.take(),
+            view: Some(aaa_proto::TaskArchiveQuery { after: after.clone(), ..Default::default() }),
+        })?;
+        let (entries, next, repos) = match response {
+            Ok(FrontResponse::TaskArchive { entries, next, repos }) => (entries, next, repos),
+            other => return front_print(json, other),
+        };
+        all.extend(entries);
+        if next.is_none() {
+            return front_print(json, Ok(FrontResponse::TaskArchive { entries: all, next: None, repos }));
+        }
+        anyhow::ensure!(next != after, "완료 보관 페이지 커서가 나아가지 않았다");
+        after = next;
+    }
 }
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
@@ -4908,7 +4931,7 @@ fn render_front(r: &FrontResponse) -> String {
                 ));
             }
         }
-        FrontResponse::TaskArchive { entries } => {
+        FrontResponse::TaskArchive { entries, .. } => {
             for a in entries {
                 s.push_str(&format!(
                     "{} · {} · {}\n{}\n",
@@ -5026,7 +5049,7 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "저장했다: 기록 {} · TASKS.md sha256 {}", ids.join(" "), board.sha256);
             }
         }
-        FrontResponse::TaskLog { entries, next } => render_task_log(&mut s, entries, *next),
+        FrontResponse::TaskLog { entries, next, .. } => render_task_log(&mut s, entries, *next),
         FrontResponse::Evaluators { .. } | FrontResponse::Evaluations { .. } | FrontResponse::Evaluation(_) => {
             s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)")
         }

@@ -87,5 +87,38 @@ pub struct ArchivedTask {
     /// 본문 제거 뒤의 파일 판과 대조하는 복구 영수증.
     pub committed: bool,
     pub removed_sha256: String,
+    /// 내구 보관의 전체 이력. 목록 응답에서는 비워 중복 스냅샷이 frame을 채우지 않게 한다.
     pub history: Vec<crate::TaskLogEntry>,
+}
+
+/// 기록 검색은 활성 할 일과 같은 ID·제목·메모·담당 범위다. repo의 빈 글은 정하지 않음이다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TaskHistorySearch {
+    pub query: String,
+    pub repo: Option<String>,
+}
+
+/// 실제 보관 근거와 복원 영수증으로 구분한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskArchiveFilter {
+    PrMerged,
+    MainMerged,
+    ReportDone,
+    Restored,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TaskHistoryRepo {
+    pub key: String,
+    pub label: String,
+    pub n: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TaskArchiveQuery {
+    pub search: Option<TaskHistorySearch>,
+    pub filter: Option<TaskArchiveFilter>,
+    pub after: Option<String>,
+    pub limit: Option<u32>,
 }

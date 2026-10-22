@@ -2570,6 +2570,10 @@ pub enum FrontRequest {
         project: String,
         /// 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
         restore: Option<String>,
+        /// FRONT_API 1.106: 검색·저장소·상태를 host에서 거른 뒤 바이트 상한 안의 페이지로 준다.
+        #[serde(default)]
+        #[ts(optional)]
+        view: Option<crate::TaskArchiveQuery>,
     },
     /// 할 일 편집(FRONT_API 1.62, 조작 권한). 동작을 차례로 적용해 한 번에 쓴다. 세션 안에서는 그 프로젝트 coordinator만 된다.
     /// `base_sha256`을 주면 파일 전체가 그 판일 때만 쓴다. 답은 `task_edited`(충돌이면 `conflict`, 쓰지 않음)
@@ -2601,6 +2605,9 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional)]
         task: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        search: Option<crate::TaskHistorySearch>,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
@@ -3500,6 +3507,12 @@ pub enum FrontResponse {
     },
     TaskArchive {
         entries: Vec<crate::ArchivedTask>,
+        #[serde(default)]
+        #[ts(optional)]
+        next: Option<String>,
+        #[serde(default)]
+        #[ts(optional, as = "Option<Vec<crate::TaskHistoryRepo>>")]
+        repos: Vec<crate::TaskHistoryRepo>,
     },
     /// `task_edit`의 답(FRONT_API 1.62): 쓴 뒤(또는 충돌이면 지금) board. `log_ids`는 이 편집이 남긴 기록
     TaskEdited {
@@ -3515,6 +3528,9 @@ pub enum FrontResponse {
         entries: Vec<TaskLogEntry>,
         #[ts(type = "number | null")]
         next: Option<i64>,
+        #[serde(default)]
+        #[ts(optional, as = "Option<Vec<crate::TaskHistoryRepo>>")]
+        repos: Vec<crate::TaskHistoryRepo>,
     },
     Screen(ScreenText),
     Read(ReadView),

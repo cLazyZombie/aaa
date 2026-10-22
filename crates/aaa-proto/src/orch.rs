@@ -2630,6 +2630,8 @@ pub enum TaskLogFilter {
     Deleted,
     /// 자동 정리만
     Auto,
+    /// 복원 동작 또는 되살린 삭제 기록
+    Restored,
 }
 
 /// TASKS.md의 `##` 목록 하나(FRONT_API 1.60). task가 없는 목록도 있다.
