@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## 공개 포트 변경·저장 링크 이전(t-0749, plan §8.444)
+
+- `nice -n 15 cargo test -p aaa-host --lib web_publication --locked`: 실제 DB·원장·router를 사용한다. 옛 포트 해제/다른 서비스 보존, post 본문·refs/본문 SHA/원본 봉투 보존/원래 입력 재전송, inbox 파일 투영, 구판·옛 origin 구독 정리와 loopback 구독·기기 신원 보존을 확인한다. Serve 등록 실패 뒤 host 재개방·같은 대상만 재개, 다른 서비스 충돌·읽기 오류·권한 거부를 검사한다. DB의 구독 삭제에 실패를 주입해 저장 주소·원본 보존·답 상태·공개 주소·구독이 함께 롤백되는지 확인한다.
+- `nice -n 15 cargo test -p aaa-host --lib tailscale:: --locked`: 기존 exact/LocalAPI/서비스 보존 owner와 함께 깨진 Serve JSON·없음과 `null`의 구별을 확인한다. 상태 읽기 실패로 후보 포트를 고르거나 기존 공개 주소를 지우면 안 된다.
+- `nice -n 15 cargo test -p aaa --test m13 public_port_change --locked`: 실제 CLI→host→Serve 외부 명령→DB→HTTP로 자동 공개·명시 포트 변경·post/refs 이전·기존 cap의 새 주소에서 200·옛 Host 421·다른 매핑 보존·host 재시작 내구성을 검사한다. Python fixture는 Tailscale 실행 파일만 대신하고 제품의 전환·원장·공유 서명·HTTP 입구는 대체하지 않는다. 이 owner는 Unix m13이며 실제 daemon/TLS·Windows 실행의 증거는 아니다.
+- CLI 인자 owner는 `public_port_change_parses_and_rejects_off_and_invalid_ports`다. 고정 sleep·실패 재시도·시한 연장 없이 명령 완료·실제 상태·HTTP/DB를 완료 사건으로 쓴다. 정본 전체 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`·공개 검사이며 Linux 교차 clippy도 확인한다. 실제 운영 host/Serve는 변경하지 않는다.
+- 결함 심기: `public_origin_in`의 관측 표지 검사를 제거하면 `failed_transition_survives_restart_and_resumes_only_the_same_target`가 「매핑 없음 확인 뒤 옛 포트 fallback 금지」로 실패한다. 원본 bytes를 복원한 뒤 정본 전체를 검증한다. 이전 전 원본 보존은 해당 post 본문 정리·inbox/답 기록 삭제 수명을 함께 따른다.
+- 질문 본문 URL 변경은 해시도 바뀐다. `moving_a_question_body_preserves_its_ids_and_partial_answers`는 원래 q-ID 두 개·한 질문의 부분 답을 유지하고 새 본문 해시에 연결해야 한다. revision 이전 전에는 `q-1002/q-1003 != q-1000/q-1001`로 실패했다. 첫 전체 검증에서 `[]`를 struct의 빈 sequence로 읽은 Serve 판정과 새 DB 시험의 불필요한 clone lint도 잡혔다. JSON root를 object/null로 제한하고 같은 기대값·시한을 유지한다.
+
 ## 설정 본문·passkey 줄·긴 목록 스크롤(t-0748, plan §8.443)
 
 - E2E06의 새 「설정 본문·passkey 긴 값」 단계는 실제 host·agent에서 설정이 main을 채우고 모달 배경·aria-modal 없이 표시되는지 검사한다. Chromium 1280px 밝음/어두움·980px 좁은 본문·320px, WebKit 390px 밝음/어두움에서 상태·설명 폭과 가로 넘침을 확인하고 캡처한다. 10분이 지난 상태와 긴 도메인의 등록 상태는 실제 `/me` 응답의 passkey 필드만 대체해 기다림 없이 재현한다. 인증·등록 동작은 기존 E2E79가 맡는다.

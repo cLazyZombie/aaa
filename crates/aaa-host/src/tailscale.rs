@@ -97,6 +97,11 @@ pub fn https_url(host: &str, port: u16) -> String {
     if port == 443 { format!("https://{host}") } else { format!("https://{host}:{port}") }
 }
 
+// serde의 struct는 빈 sequence도 읽을 수 있다. Serve의 객체 자리를 배열로 받은 것은 미설정이 아니다.
+fn object_values(value: &serde_json::Value, key: &str) -> bool {
+    value.get(key).is_none_or(|v| v.as_object().is_some_and(|map| map.values().all(serde_json::Value::is_object)))
+}
+
 /// 순수 판정: 두 명령의 출력(또는 없음)으로 공개 계획을 만든다.
 pub fn plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16]) -> Plan {
     let none = Plan { state: "missing", dns_name: None, serving: None, free_port: None, taken: vec![] };
@@ -106,7 +111,24 @@ pub fn plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16]) -> Plan {
         return Plan { state: "stopped", ..none };
     };
     let dns = status.me.and_then(|m| m.dns_name).map(|d| d.trim_end_matches('.').to_string()).filter(|d| !d.is_empty());
-    let serve: ServeJson = out.serve.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
+    let serve = out
+        .serve
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .filter(|v| {
+            v.is_null()
+                || (v.is_object()
+                    && object_values(v, "TCP")
+                    && object_values(v, "Web")
+                    && v.get("Web")
+                        .and_then(serde_json::Value::as_object)
+                        .is_none_or(|sites| sites.values().all(|site| object_values(site, "Handlers"))))
+        })
+        .and_then(|v| serde_json::from_value::<Option<ServeJson>>(v).ok());
+    let serve = match serve {
+        Some(serve) => serve.unwrap_or_default(),
+        _ => return Plan { state: "error", dns_name: dns, ..none },
+    };
     let taken: Vec<u16> = serve.tcp.keys().filter_map(|k| k.parse().ok()).collect();
     let mut serving = None;
     for (hostport, site) in &serve.web {
@@ -129,8 +151,16 @@ pub fn plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16]) -> Plan {
 pub fn installation_plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16], selected: Option<u16>) -> Plan {
     let mut result = plan(out, web_port, candidates);
     if let Some(selected) = selected {
-        result.serving =
-            exact(out, web_port, selected).ok().filter(|exact| exact.reused).map(|exact| (exact.url(), exact.port));
+        match exact(out, web_port, selected) {
+            Ok(exact) => result.serving = exact.reused.then(|| (exact.url(), exact.port)),
+            Err(error) => {
+                result.serving = None;
+                if !error.conflict && result.state == "running" {
+                    result.state = "error";
+                    result.free_port = None;
+                }
+            }
+        }
     }
     result
 }
@@ -225,6 +255,27 @@ mod tests {
             (p.state, p.dns_name.as_deref(), p.free_port, p.serving),
             ("running", Some("host1.example.ts.net"), Some(443), None)
         );
+    }
+
+    #[test]
+    fn unreadable_serve_is_unknown_instead_of_an_empty_configuration() {
+        for serve in [
+            "",
+            "{",
+            "[]",
+            r#"{"TCP":"broken"}"#,
+            r#"{"Web":null}"#,
+            r#"{"TCP":{"443":[]}}"#,
+            r#"{"Web":{"mac-a.example.ts.net:443":[]}}"#,
+            r#"{"Web":{"mac-a.example.ts.net:443":{"Handlers":{"/":[]}}}}"#,
+        ] {
+            let p = plan(Some(&out(serve)), 7431, CANDS);
+            assert_eq!(p.state, "error");
+            assert!(p.serving.is_none() && p.free_port.is_none());
+        }
+        assert_eq!(plan(Some(&out("null")), 7431, CANDS).free_port, Some(443));
+        let selected = installation_plan(Some(&out(r#"{"FutureFormat":{}}"#)), 7431, CANDS, Some(443));
+        assert_eq!(selected.state, "error");
     }
 
     #[test]
