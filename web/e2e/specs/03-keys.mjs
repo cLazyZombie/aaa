@@ -239,7 +239,7 @@ export default async function ({ ctl, page }) {
     if (JSON.stringify(await order()) !== JSON.stringify(defaults)) throw new Error(`처음 키 막대 ${await order()}`);
     const openKeyBar = async () => {
       (await openSettings(tp, "터미널")).getByRole("button", { name: "키 바 편집" }).click();
-      return tp.getByRole("dialog", { name: "키 바" });
+      return tp.getByRole("region", { name: "키 바" });
     };
     const kb = await openKeyBar();
     await kb.getByRole("button", { name: "Esc 제거" }).click();
@@ -254,7 +254,7 @@ export default async function ({ ctl, page }) {
     const want = ["direct", "ctrl-c", "Tab", "Control", "Alt", "Shift", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", combo];
     // ← 는 설정으로, Esc는 닫기
     await kb.getByRole("button", { name: "설정으로 돌아가기" }).click();
-    await tp.getByRole("dialog", { name: "설정" }).waitFor();
+    await tp.getByRole("region", { name: "설정" }).waitFor();
     await tp.keyboard.press("Escape");
     await until("설정 닫힘", async () => (await tp.locator(".settings-dialog").count()) === 0);
     // 키 막대는 다시 열지 않아도 바로 바뀐다
@@ -522,7 +522,7 @@ export default async function ({ ctl, page }) {
     // 설정: Mod+Shift+,로 열고, 「다음 패널」을 끄면 그 키는 터미널로 간다. 기록한 Mod+Shift+L이 다음 패널이 된다. 초기화로 되돌린다
     await open("shortkeys", "keys>");
     await sp.keyboard.press("Control+Shift+Comma");
-    const dialog = sp.getByRole("dialog", { name: "설정" });
+    const dialog = sp.getByRole("region", { name: "설정" });
     await dialog.waitFor();
     // 설정은 쪽으로 나뉜다(plan §8.97): 단축키 쪽으로
     const shortcutsPage = () => dialog.getByRole("tab", { name: "단축키" }).click();
@@ -571,7 +571,7 @@ export default async function ({ ctl, page }) {
       const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { platform: "MacIntel", touch: true })).page;
       await p.getByTestId("settings-open").waitFor({ state: "attached" });
       await p.keyboard.press("Meta+Shift+Comma");
-      const pd = p.getByRole("dialog", { name: "설정" });
+      const pd = p.getByRole("region", { name: "설정" });
       await pd.waitFor();
       await pd.getByRole("tab", { name: "단축키" }).click();
       await pd.locator(".settings-shortcuts").scrollIntoViewIfNeeded();

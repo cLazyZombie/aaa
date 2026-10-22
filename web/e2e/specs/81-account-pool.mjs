@@ -106,7 +106,7 @@ export default async function ({ page }) {
     await sample(pinnedB.pane, "b", 3); await sample(chosen.pane, "b", 1); await sample(resumed.pane, "b", 1); await refresh(page);
     fs.writeFileSync(`${root}/projects/demo/TASKS.md`, "## Backlog\n- [ ] 풀 대기 task (fake@labA) [작업 폴더]\n  독립 작업을 끝내고 결과를 쓴다\n"); aaa("ticker", "tick");
     await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
-    await page.getByRole("dialog", { name: "설정", exact: true }).waitFor({ state: "hidden" });
+    await page.getByRole("region", { name: "설정", exact: true }).waitFor({ state: "hidden" });
     await page.getByTestId("activity-tasks").click();
     await page.locator('.task-row[data-title="풀 대기 task"] .task-pick').click();
     await page.getByTestId("task-handoff-start").click();

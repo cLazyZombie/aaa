@@ -35,6 +35,8 @@ mod task_main_merge;
 mod thread_park;
 #[path = "m13/thread_stages.rs"]
 mod thread_stages;
+#[path = "m13/web_publication.rs"]
+mod web_publication;
 #[path = "m13/work_root.rs"]
 mod work_root;
 
@@ -4505,10 +4507,23 @@ fn manual_threads_always_have_tasks_and_archive_the_result() {
     assert!(row["notes"].as_array().unwrap().iter().any(|n| n == "> - [ ] 중첩 검사"), "{row}");
     w.wait_show("완료 보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     w.h.ok(&["thread", "resolve", "demo", id]);
+    // resolve는 thread 종료까지다. 연결된 task의 완료 보관은 다음 ticker 판정 뒤에 읽는다.
+    w.h.ticks(1);
     let archive = w.h.ok(&["task", "archive"]);
-    let entry = archive["entries"].as_array().unwrap().iter().find(|e| e["task"]["short_id"] == short_id).unwrap();
+    let entry = archive["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["task"]["short_id"] == short_id)
+        .unwrap_or_else(|| panic!("완료한 task가 보관되지 않았다: {archive}"));
+    assert_eq!(entry["task_id"], row["id"]);
     assert_eq!(entry["task"]["thread"], id);
-    assert!(entry["report"].is_string(), "{entry}");
+    assert_eq!(entry["reason"], "보고 [완료]");
+    assert_eq!(entry["report"], format!("threads/{id}.md"));
+    assert!(!w.h.ok(&["task", "list"])["tasks"].as_array().unwrap().iter().any(|t| t["short_id"] == short_id));
+    // 뒤 tick에도 같은 완료 결과를 중복 보관하지 않는다.
+    w.h.ticks(1);
+    assert_eq!(w.h.ok(&["task", "archive"]), archive);
     // 기동의 입력 검사를 통과한 뒤 agent 준비가 실패하면 할 일을 잃지 않는다.
     let failed = w.h.json(&[
         "thread",

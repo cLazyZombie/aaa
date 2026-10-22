@@ -1,3 +1,4 @@
+import { listIds } from "../lib/list-ids.mjs";
 // 보고서 전체 목록은 CLI로 올린 host 사본·등록 폴더와 같은 정본을 본다. 기존 실험실의 자식 정리만 쓴다.
 import fs from "node:fs";
 import { root, aaa, base, browser, webkit, step, pairPage, inList, domIs, until, shot } from "../lib/harness.mjs";
@@ -127,6 +128,7 @@ export default async function ({ page }) {
     if (label !== `보고서, 안 본 보고서 ${before + 1}`) throw new Error(`막대 단추 이름: ${label}`);
     const posts = aaa("post", "list", "demo").posts.filter((p) => p.topic === "report");
     if (!posts.some((p) => p.title === `${weeklySent.report_id} 새 보고서: 주간 보고` && p.to === "user" && p.refs.includes(`library/demo/${weeklySent.report_id}`))) throw new Error(`알림 post: ${JSON.stringify(posts)}`);
+    await listIds(page, '[data-testid="report-demo-weekly"]', [weeklySent.report_id], "ids-report-desktop");
     await shot(page, "reports-mine-unseen");
     await card.getByRole("button", { name: "열기", exact: true }).click();
     await page.frameLocator('[data-testid="report-frame"]').getByRole("heading", { name: "주간 보고" }).waitFor();

@@ -421,6 +421,18 @@ pub struct HarnessEvent {
     /// `kind = "plan"`일 때만: 대화 기록에서 읽은 컨텍스트 사용량(plan §8.321). 아직 응답이 없으면 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextUsage>,
+    /// `kind = "plan"`: 지금 프로세스의 대화 기록에서 마지막으로 확인한 모델. 없으면 아직 모른다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_observation: Option<ModelObservation>,
+}
+
+/// 대화 기록의 모델 선택. 시작 profile의 effort를 관측한 모델에 섞지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ModelObservation {
+    pub model: String,
+    pub effort: Option<String>,
+    #[ts(type = "number")]
+    pub at_ms: u64,
 }
 
 /// harness 세션이 지금 쓴 컨텍스트(plan §8.321). agent가 대화 기록의 마지막 응답에서 읽는다(Claude `usage`, Codex `token_count`).
@@ -497,6 +509,10 @@ pub struct AgentStatus {
     /// 컨텍스트 사용량(plan §8.321, 1.67). 옛 host·첫 응답 전에는 null
     #[serde(default)]
     pub context: Option<ContextUsage>,
+    /// 마지막으로 확인한 실행 모델(FRONT_API 1.109). 시작 profile과 별개이며 옛 agent는 보내지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model_observation: Option<ModelObservation>,
 }
 
 fn seen_default() -> bool {
@@ -1721,6 +1737,10 @@ pub struct RoutineRun {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct RoutineView {
+    /// 프로젝트별 영속 번호(a-0001부터). 같은 규칙 이름의 수정·복원·형식 변환에도 유지한다. 옛 host는 생략한다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub short_id: Option<String>,
     /// 웹에서 읽기만 하는 시스템 자동화의 이유. 없으면 일반 자동화(옛 host도 생략).
     #[serde(default)]
     pub web_read_only_reason: Option<String>,

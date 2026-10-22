@@ -1,12 +1,5 @@
-// 설정 창. 목록 아래 톱니 「설정」이 연다(herdr-web-ui aa624cb MachineSidebar 바닥 줄 → SettingsDialog, plan §8.97).
-// 참고 OpenSettingsDialog(954~1110줄)대로 쪽 목록과 쪽이다: 641px부터는 왼쪽 목록 옆에 쪽, 휴대폰은 목록 → 쪽(← 로 돌아감).
-// 쪽마다 history 한 칸(herdr/settingsHistory.ts): 시스템 「뒤로」가 한 칸씩 나온다. Tab은 창 안에 머물고(useFocusTrap) 닫으면 연 곳으로
-// focus가 돌아간다. 휴대폰은 아래로 밀어 닫는다(useSheetSwipe). 묶음·줄·스위치·여럿 중 하나·한 칸씩은 참고 SettingsControls 그대로다.
-// 쪽은 aaa가 뒷받침하는 것만 둔다: 모양·터미널·알림·구독 사용량·단축키·폰 및 기기. 참고의 채팅·음성 입력·원격 PC·에이전트 연동·정보는
-// 그 기능이 aaa에 없어 뺐다. 글꼴 설정(FontFamilyInput.tsx)은 적은 목록을 기본 글꼴 앞에 붙인다(plan §8.64).
-// 「키 바」 줄의 「키 바 편집」은 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
+// 설정은 오른쪽 본문을 채운다. 좁은 본문에서는 목록 → 쪽, 뒤로는 한 단계씩 돌아간다.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { createPortal } from "react-dom";
 import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Rocket, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, MachineView, ProviderUsage, PublishState } from "./gen/proto";
@@ -26,9 +19,9 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { FontFamilyInput } from "./FontFamilyInput";
 import { useInstallPrompt } from "./herdr/install.ts";
 import { previewAlertSound, unlockAlertSound } from "./herdr/alertSound.ts";
-import { useFocusTrap } from "./herdr/useFocusTrap.ts";
-import { useSheetSwipe } from "./herdr/sheets.ts";
-import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "./herdr/settingsHistory.ts";
+import { nativeModalOver } from "./herdr/useFocusTrap.ts";
+import { DrawerToggle } from "./drawer";
+import { onSettingsHistory, recordSettings, settingsEntry, settingsFromUrl, settingsLevels, type SettingsLevel } from "./herdr/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from "./herdr/SettingsControls.tsx";
 import { PasskeyStatus, usePasskeyState } from "./PasskeyPanel";
 import { enableAlerts } from "./alerts";
@@ -224,7 +217,7 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
         <div className="settings-item">
           <DevicesPanel pairUrl={pairUrl} role={role} device={device} />
         </div>
-        <SettingsRow label="이 기기 passkey" description="공개 주소(HTTPS)로 연 조작 기기는 승인할 때마다 passkey로 사용자 확인을 합니다. 짝지은 뒤 10분 안에만 등록합니다.">
+        <SettingsRow stacked label="이 기기 passkey" description="공개 주소(HTTPS)로 연 조작 기기는 승인할 때마다 passkey로 사용자 확인을 합니다. 짝지은 뒤 10분 안에만 등록합니다.">
           <PasskeyStatus state={passkey} role={role} onChanged={reloadPasskey} />
         </SettingsRow>
         <SettingsRow label="로그아웃" description="이 브라우저의 로그인을 지웁니다. 다시 들어오려면 페어링 코드가 필요합니다.">
@@ -784,22 +777,6 @@ export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string
 ];
 const label = (id: SettingsPage): string => PAGES.find((p) => p.id === id)!.label;
 
-/** 창 자신의 경계(참고 `.modal` 641px): 그 아래는 목록과 쪽이 번갈아 보인다 */
-const NARROW_QUERY = "(max-width: 640px)";
-
-function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(() => window.matchMedia?.(NARROW_QUERY).matches === true);
-  useEffect(() => {
-    const media = window.matchMedia?.(NARROW_QUERY);
-    if (!media) return;
-    const refresh = () => setNarrow(media.matches);
-    refresh();
-    media.addEventListener("change", refresh);
-    return () => media.removeEventListener("change", refresh);
-  }, []);
-  return narrow;
-}
-
 /** history의 설정 칸이 보이는 것(이 판에 있는 쪽일 때만) */
 function shownBy(entry: SettingsLevel | null): { page: SettingsPage | null; keyBar: boolean } | null {
   if (entry === null) return null;
@@ -824,9 +801,20 @@ export function SettingsDialog({
   /** 설정에서 연 pane으로 간다(머신 쪽의 끝 확인·로그인) */
   onOpenPane?: (id: string) => void;
 }) {
-  const narrow = useNarrow();
+  const surface = useRef<HTMLElement>(null);
+  const [narrow, setNarrow] = useState(() => (document.querySelector(".view")?.clientWidth ?? window.innerWidth) <= 640);
+  // 창 전체가 아니라 실제 본문 폭을 본다(사이드바 펼침·폭 조절·글자 크기).
+  useLayoutEffect(() => {
+    const node = surface.current;
+    if (!node) return;
+    const refresh = () => setNarrow(node.clientWidth <= 640);
+    const observer = new ResizeObserver(refresh);
+    refresh();
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   // 앞으로 가기로 열렸으면 그 칸이 보이던 것을 보인다
-  const [restored] = useState(() => shownBy(settingsEntry(window.history.state)));
+  const [restored] = useState(() => shownBy(settingsEntry(window.history.state) ?? settingsFromUrl()));
   // 휴대폰은 쪽 목록으로 열고, 넓은 창은 목록 옆에 첫 쪽을 보인다
   // 명령 팔레트가 고른 쪽(참고 paletteSettings `requestedSettingsPage`: 열릴 때 한 번 읽고 지운다)
   const [chosen, setChosen] = useState<SettingsPage | null>(() => {
@@ -850,14 +838,41 @@ export function SettingsDialog({
       }),
     [],
   );
+  // 본문이 이미 열려 있어도 팔레트가 고른 쪽으로 이동한다.
+  useEffect(() => {
+    const requested = () => {
+      const next = requestedSettingsPage();
+      if (next === null) return;
+      requestSettingsPage(null);
+      setChosen(next);
+      setKeyBarOpen(false);
+    };
+    window.addEventListener("aaa:settings-page", requested);
+    return () => window.removeEventListener("aaa:settings-page", requested);
+  }, []);
   const keyBarButtonRef = useRef<HTMLButtonElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
   const settingsBodyRef = useRef<HTMLDivElement>(null);
   const settingsScrollRef = useRef(0);
-  // Tab은 창 안에 머물고, 닫으면 연 것으로 focus가 돌아간다
-  const surface = useFocusTrap<HTMLElement>(true, { initialFocus: backRef });
-  useSheetSwipe(surface, onClose);
+  // 본문이므로 Tab을 가두지 않는다. 바깥 탐색으로 떠났으면 그 focus를 유지한다.
+  useLayoutEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const node = surface.current;
+    return () => {
+      const restore = node?.contains(document.activeElement) || document.activeElement === document.body;
+      if (!restore || !opener?.isConnected || nativeModalOver(node)) return;
+      // 활동 막대는 이미 보인다. 숨겨 둔 본문·휴대폰 목록 단추는 commit 뒤에 focus를 받는다.
+      if (getComputedStyle(opener).visibility !== "hidden" && opener.getClientRects().length) {
+        opener.focus({ preventScroll: true });
+      } else requestAnimationFrame(() => {
+        if (!opener.isConnected || nativeModalOver(null) || document.getElementById("settings-screen")) return;
+        const target = opener.getClientRects().length && getComputedStyle(opener).visibility !== "hidden"
+          ? opener : document.querySelector<HTMLElement>('.view [data-testid="drawer-toggle"]');
+        target?.focus({ preventScroll: true });
+      });
+    };
+  }, []);
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
   const openPage = (id: SettingsPage): void => {
     setKeyBarOpen(false);
@@ -881,7 +896,7 @@ export function SettingsDialog({
       // 키 바 편집에서 돌아오면 보던 자리와 「키 바 편집」 단추로(참고 1017~1023줄)
       if (settingsBodyRef.current) settingsBodyRef.current.scrollTop = settingsScrollRef.current;
       keyBarButtonRef.current?.focus({ preventScroll: true });
-    } else if (before === null) tab(page)?.focus();
+    } else if (before === null) (tab(page) ?? backRef.current)?.focus();
     else if (before.page !== page && narrow) {
       // 휴대폰은 둘 중 하나만 보인다: focus가 쪽으로 따라 들어가고, 나오면 그 줄로
       if (page !== null) backRef.current?.focus();
@@ -892,7 +907,9 @@ export function SettingsDialog({
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
       // IME 조합을 끄는 Esc(키 바 편집의 글자 칸)는 IME의 것이다
-      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+      // 본문 위의 확인 창·파일 보기·팔레트·열린 drawer가 먼저 Esc를 받는다.
+      if (nativeModalOver(surface.current) || document.querySelector('[aria-modal="true"], #workspace-drawer.is-open')) return;
       event.preventDefault();
       // 키 바 편집이면 먼저 거기서 나오고, 어느 쪽에서든(휴대폰 포함) 창을 닫는다(참고 1052~1061줄)
       if (keyBarOpen) setKeyBarOpen(false);
@@ -950,12 +967,10 @@ export function SettingsDialog({
   const listShown = !narrow || (page === null && !keyBarOpen);
   const focusable = page ?? PAGES[0]!.id;
 
-  // 목록 바닥 줄의 단추 모양을 물려받지 않게 body에 둔다
-  return createPortal(
-    <div className="modal-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      {/* 어느 쪽에서든 이름은 「설정」: 쪽 이름은 보이는 제목이다 */}
-      <section ref={surface} className="modal settings-dialog" role="dialog" aria-modal="true" aria-label={keyBarOpen ? "키 바" : "설정"} tabIndex={-1}>
+  return (
+      <section ref={surface} id="settings-screen" className={`settings-dialog${narrow ? " is-narrow" : ""}`} role="region" aria-label={keyBarOpen ? "키 바" : "설정"} tabIndex={-1}>
         <header className="modal-header settings-header">
+          <DrawerToggle />
           {(keyBarOpen || (narrow && page !== null)) && (
             <button type="button" ref={backRef} className="icon-button" aria-label="설정으로 돌아가기" onClick={goBack}>
               <ArrowLeft aria-hidden="true" />
@@ -1004,7 +1019,5 @@ export function SettingsDialog({
           </div>
         )}
       </section>
-    </div>,
-    document.body,
   );
 }

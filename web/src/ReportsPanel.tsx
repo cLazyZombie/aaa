@@ -1,3 +1,4 @@
+import { ListId } from "./ListId";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 import type { DeviceRole, FrontResponse, LibraryReport } from "./gen/proto";
@@ -88,13 +89,13 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     catch (e) { setProblem(e instanceof Error ? e.message : String(e)); }
     finally { setOpening(null); }
   };
-  const titleLink = (r: LibraryReport, className?: string) => <>{r.report_id && <><code>{r.report_id}</code>{" "}</>}<a className={className} href={`#report=${encodeURIComponent(keyOf(r))}`} onClick={(e) => {
+  const titleLink = (r: LibraryReport, className?: string) => <span className="list-id-line report-id-title">{r.report_id && <ListId id={r.report_id} />}<a className={className} href={`#report=${encodeURIComponent(keyOf(r))}`} onClick={(e) => {
     // 보조 키·가운데 단추는 브라우저의 새 탭 동작을 지킨다. 보통 클릭은 목록의 굴린 자리도 보존한다.
     if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       onView(r);
     }
-  }}>{r.title ?? keyOf(r)}</a></>;
+  }}>{r.title ?? keyOf(r)}</a></span>;
   const remove = async (rows: LibraryReport[]) => {
     const r = await call({ op: "library_delete", reports: rows.map((x) => ({ project: x.project, name: x.name })) });
     if (r.kind !== "library_pruned") throw new Error("host가 지우기에 다른 답을 했다");

@@ -592,7 +592,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   .task-crumb { max-width: 30%; }
 }
 
-/* 할 일의 고정 번호는 제목 옆에 작게 표시한다. 좁은 화면에서도 번호 안에서는 줄을 나누지 않는다. */
+/* 상세·시작 창의 기존 번호 표지. 목록 행은 ListId를 쓴다. */
 .task-short-id {
   color: var(--text-dim);
   font-family: ui-monospace, monospace;

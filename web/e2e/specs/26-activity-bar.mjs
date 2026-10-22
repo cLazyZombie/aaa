@@ -3,6 +3,7 @@
 // 사이드바 폭 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize」, plan §8.257).
 import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, claudeWorking, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot, openSettings } from "../lib/harness.mjs";
 import fs from "node:fs";
+import { longPanelLists } from "../lib/panel-scroll.mjs";
 
 /** 패널·접힘·고른 단추를 한 번에 읽는다 */
 const sidebar = (p) =>
@@ -236,12 +237,27 @@ export default async function () {
       await domIs(p, "목록 굴린 자리", (top) => document.querySelector('[data-testid="reports-scroll"]')?.scrollTop === top, listTop);
       // 설정 톱니: 설정 창, 보고서 쪽은 없다
       await p.getByTestId("settings-open").click();
-      const dialog = p.getByRole("dialog", { name: "설정" });
+      const dialog = p.getByRole("region", { name: "설정" });
       await dialog.waitFor();
       if (await dialog.getByRole("tab", { name: "보고서" }).count()) throw new Error("설정에 보고서 쪽이 남았다");
       await p.keyboard.press("Escape");
       await dialog.waitFor({ state: "detached" });
       await focusIs(p, "닫은 뒤 톱니", '[data-testid="settings-open"]');
+      // 설정 아래에 이미 열려 있던 본문을 다시 골라도 그 본문으로 돌아온다.
+      await p.getByTestId("settings-open").click();
+      await dialog.waitFor();
+      await p.getByTestId("activity-reports").click();
+      await dialog.waitFor({ state: "detached" });
+      await hashIs(p, "#reports");
+      await domIs(p, "설정에서 돌아온 목록 자리", (top) => document.querySelector('[data-testid="reports-scroll"]')?.scrollTop === top, listTop);
+      await p.getByTestId("activity-tasks").click();
+      await p.getByTestId("tasks-view").waitFor();
+      await p.getByTestId("settings-open").click();
+      await dialog.waitFor();
+      await p.getByTestId("activity-tasks").click();
+      await dialog.waitFor({ state: "detached" });
+      await hashIs(p, "#tasks");
+      await p.getByTestId("tasks-view").waitFor();
     } finally {
       await p.context().close();
     }
@@ -522,4 +538,5 @@ export default async function () {
     }
     if (bad.length) throw new Error(bad.join("; "));
   });
+  await longPanelLists();
 }

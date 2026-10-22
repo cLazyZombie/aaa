@@ -646,6 +646,7 @@ mod post_tests {
                 plan: None,
                 background: None,
                 context: None,
+                model_observation: None,
             };
             let working = event("turn_start", 1);
             let mut report = event("progress", 2);
@@ -726,6 +727,7 @@ mod post_tests {
                 plan: None,
                 background: None,
                 context: None,
+                model_observation: None,
             };
             // 전송 큐보다 많은 기억을 입력 fixture로 둔다. 디스크 저장은 위 회귀·실제 E2E가 맡고,
             // 이 owner는 전송 backpressure와 live hook의 순서만 본다.

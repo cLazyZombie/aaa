@@ -42,7 +42,7 @@ import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
-import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
+import { onSettingsHistory, outsideSettings, recordSettings, settingsEntry, settingsFromUrl } from "./herdr/settingsHistory.ts";
 import { currentSidebarShared, updateSidebarShared, useKeepScreenOn, useSidebarShared } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
@@ -741,6 +741,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // replaceState, deepLink.ts `isNavigation`은 pane 없는 곳을 이동으로 치지 않는다, plan §8.301)
   const goHash = (hash: string, replace = false) => {
     const next = hash ? `#${hash}` : "";
+    if (settingsEntry(history.state)) {
+      // 설정에서 다른 본문을 고르면 그 주소에 새 칸을 만든다. 늦은 설정 뒤로가기를 일으키지 않는다.
+      const url = new URL(location.href);
+      url.searchParams.delete("settings");
+      url.searchParams.delete("settings-keybar");
+      url.hash = next;
+      history.pushState(outsideSettings(history.state), "", url);
+      setSettingsOpen(false);
+      return;
+    }
     if (location.hash === next) return;
     if (replace) {
       // replaceState는 hashchange를 내지 않는다
@@ -773,6 +783,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       const own = location.hash === ownHash.current;
       ownHash.current = null;
       const next = selectedFromHash();
+      if (!settingsEntry(history.state)) setSettingsOpen(false);
       if (!own) {
         // 브라우저 뒤로·앞으로는 이동 직전 drawer 상태를 유지한다(창마다 기억하지 않는다, plan §8.340). 목록 줄을 직접 고를 때는
         // choose·chooseThread 등이 닫는다. Safari 가장자리 뒤로 쓸기는 drawer를 열지 않는다(왼쪽 끝은 브라우저 몫, plan §8.408).
@@ -882,8 +893,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     setSel(next);
   };
   const toggleReports = () => {
-    if (reportsShown) goSel(beforeReports.current);
-    else goSel(reportsAt ?? "reports:");
+    if (reportsShown && !settingsOpen) goSel(beforeReports.current);
+    else goSel(reportsShown ? sel : reportsAt ?? "reports:");
   };
   // 할 일 화면(plan §8.306): 보고서와 같은 꼴. 다시 누르면 그 앞 화면으로, 한 번 연 화면은 숨긴 채 그려 둔다(거르기·접은 목록이 그대로)
   const tasksShown = sel === "tasks:" || sel?.startsWith("task:") === true;
@@ -894,7 +905,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (tasksShown) setTasksOpened(true);
     else beforeTasks.current = sel;
   }, [sel, tasksShown]);
-  const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
+  const toggleTasks = () => goSel(tasksShown && !settingsOpen ? beforeTasks.current : tasksShown ? sel : "tasks:");
   // 자동화 설정 화면(t-0628): 사이드바 「자동화」 카드가 목록이고 본문은 고른 규칙 하나다. 「답할 것」처럼 앞 화면을 기억하고 한 번 연 뒤
   // 숨긴 채 그려 둔다(쓰던 편집 초안이 그대로)
   const automationShown = sel?.startsWith("automation:") === true;
@@ -948,7 +959,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   // 앱 단축키(herdr-web-ui App.tsx 1185~1279줄 `actions`·`useShortcuts`): 목록 단추와 같은 일을 부른다. 고른 pane의 일은 그
   // TermView가 단 paneControls로. aaa에 그 화면이 없는 동작은 단축키가 꺼져 있어(settings.ts AAA_SHORTCUTS) 불리지 않는다.
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => settingsFromUrl() !== null);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const openSettings = useCallback(() => { setDrawerOpen(false); setSettingsOpen(true); }, []);
   const paneControls = useRef<PaneControls | null>(null);
   const actions = useMemo<AppActions>(() => {
     const none = () => {};
@@ -970,10 +983,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       toggleView: () => paneControls.current?.toggleView(),
       focusInput: () => paneControls.current?.focusInput(),
       scrollPage: (direction) => paneControls.current?.scrollPage(direction),
-      openSettings: () => {
-        setDrawerOpen(false);
-        setSettingsOpen(true);
-      },
+      openSettings,
       openPalette: () => setPaletteOpen(true),
       openFind: () => paneControls.current?.openFind(),
       // 좁은 창에서는 drawer를 여닫고 넓은 창에서는 사이드바를 접는다·편다(참고 App.tsx 1246~1249줄)
@@ -1014,7 +1024,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // `fallback`). 주소가 무엇을 가리키면 그것이다. 목록(pane·thread)을 다 받은 뒤 한 번만 고른다
   const firstPick = useRef(sel?.startsWith("pane:") ? false : sel !== null || location.hash !== "");
   useEffect(() => {
-    if (firstPick.current || !loaded || !linkedOnce.current.threads) return;
+    if (settingsOpen || firstPick.current || !loaded || !linkedOnce.current.threads) return;
     firstPick.current = true;
     // 주소는 지금 것을 읽는다: 연 뒤에 주소가 thread·프로젝트를 가리키게 됐는데(알림·링크·주소 바꿈) 그 hashchange를 앱이 아직
     // 처리하지 않았을 수 있다(짐 아래, t-0335 찾음). 그때 첫 고르기가 그 주소를 덮지 않는다(주소가 이긴다)
@@ -1043,7 +1053,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     pickFirst(false);
     // choose·chooseThread는 주소와 setSel만 쓴다
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, panes, threads, machines]);
+  }, [loaded, panes, threads, machines, settingsOpen]);
   useEffect(() => {
     if (sel?.startsWith("pane:") || sel?.startsWith("thread:")) storeSelection(sel);
   }, [sel]);
@@ -1244,7 +1254,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     view: paneView,
     openFind: paneView === "chat" ? actions.openFind : null,
     toggleTheme: () => updateAppearance({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
-    openSettings: () => setSettingsOpen(true),
+    openSettings,
     openThreads: chooseThreads,
     openReports: () => {
       if (!reportsShown) toggleReports();
@@ -1334,17 +1344,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           shown={sidebarShown}
           onPanel={showPanel}
           badges={badges}
-          reports={reportsShown}
+          reports={reportsShown && !settingsOpen}
           onReports={toggleReports}
           unseenReports={unseenReports}
-          tasks={tasksShown}
+          tasks={tasksShown && !settingsOpen}
           onTasks={toggleTasks}
           // 할 일 화면이 보이는 동안 me task는 이미 본 것이다(본 기록은 effect가 그린 뒤에 남겨 그 사이 배지가 튄다)
           taskBadge={taskBadge(taskBoard.board, tasksShown ? null : seenMine.seen)}
           up={up}
           reader={role === "reader"}
           settings={
-            <SettingsGear role={role} device={device} machines={machines} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} onOpenPane={(id) => goSel(`pane:${id}`)} />
+            <SettingsGear open={settingsOpen} onOpen={setSettingsOpen} onClick={openSettings} />
           }
         />
         <div id="sidebar-column" className="sidebar-shell">
@@ -1411,6 +1421,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <UpdateNotice hostBuild={hostWeb} />
         {role !== "reader" && <PasskeyNotice state={passkey} onChanged={reloadPasskey} />}
         <PasskeyGesture />
+        {settingsOpen && (
+          <ErrorBoundary area="설정" onDismiss={closeSettings}>
+            <SettingsScreen role={role} device={device} machines={machines} onSignedOut={signedOut} onClose={closeSettings} onOpenPane={(id) => goSel(`pane:${id}`)} />
+          </ErrorBoundary>
+        )}
+        <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
         <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown, automationShown]}>
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
@@ -1528,9 +1544,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 <AgentChip p={current} />
                 {/* thread pane이면 그 보고서로(목록의 thread 줄은 pane을 연다, 차이 목록 L4) */}
                 {threadOfPane.get(current.id) && (
-                  <button className="ghost small" data-testid="open-report" onClick={() => chooseThread(threadOfPane.get(current.id)!)}>
+                  <button className="ghost small" data-testid="open-report" aria-label="보고" onClick={() => chooseThread(threadOfPane.get(current.id)!)}>
                     <Icon name="file" />
-                    보고
+                    <span className="head-button-label">보고</span>
                   </button>
                 )}
                 {/* 작업 요약(plan §8.259): 데스크톱 팝오버, 휴대폰 아래 시트 */}
@@ -1590,6 +1606,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </>
         )}
         </ErrorBoundary>
+        </div>
       </main>
       <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
@@ -1805,29 +1822,16 @@ function MoreMenu({ onThreads }: { onThreads: () => void }) {
 
 /**
  * 활동 막대 맨 아래 설정 톱니(사용자 요청 10-19 「설정도 거기에 넣어줘. 왼쪽 밑에.」, VS Code Manage 자리, plan §8.240)와 설정 창.
- * 예전에는 목록 바닥 줄의 「설정」 단추였다. 단축키·팔레트도 같은 창을 연다(Main이 열림을 갖는다)
+ * 단축키·팔레트도 같은 본문을 연다(Main이 열림을 갖는다). 닫기·브라우저 기록은 톱니와 독립적으로 유지한다.
  */
-function SettingsGear({
-  role,
-  device,
-  machines,
-  onSignedOut: signedOut,
-  open: settingsOpen,
-  onOpen: setSettingsOpen,
-  onOpenPane,
-}: {
-  role: DeviceRole;
-  device: string;
-  machines: MachineView[];
-  onSignedOut: () => void;
+function SettingsGear({ open: settingsOpen, onOpen: setSettingsOpen, onClick }: {
   open: boolean;
   onOpen: (open: boolean) => void;
-  /** 설정에서 연 pane(새 머신의 끝 확인·로그인)으로 간다: 설정을 닫고 그 pane을 고른다 */
-  onOpenPane?: (id: string) => void;
+  onClick: () => void;
 }) {
   const closeSettings = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
   // 설정은 history 안에 있다(herdr/settingsHistory.ts, 참고 App.tsx 398~405줄): 마지막 칸에서 「뒤로」면 닫히고,
-  // 「앞으로」면 다시 열리며, 다른 길(X·Esc·바깥)로 닫으면 그 칸들을 지운다
+  // 「앞으로」면 다시 열리며, 다른 길(X·Esc)로 닫으면 그 칸들을 지운다
   useEffect(
     () =>
       onSettingsHistory((entry, own) => {
@@ -1840,6 +1844,22 @@ function SettingsGear({
   useEffect(() => {
     if (!settingsOpen) recordSettings([]);
   }, [settingsOpen]);
+  return (
+    <button type="button" className={`activity-item${settingsOpen ? " is-active" : ""}`} data-testid="settings-open"
+      aria-label="설정" aria-controls="settings-screen" aria-expanded={settingsOpen} title="설정" onClick={onClick}>
+      <Settings aria-hidden="true" />
+    </button>
+  );
+}
+
+function SettingsScreen({ role, device, machines, onSignedOut: signedOut, onClose, onOpenPane }: {
+  role: DeviceRole;
+  device: string;
+  machines: MachineView[];
+  onSignedOut: () => void;
+  onClose: () => void;
+  onOpenPane: (id: string) => void;
+}) {
   // 설정 → 기기 「로그아웃」(참고 App.tsx `lock`): 구독을 먼저 지운다(cookie가 있어야 지워지고, 잠긴 기기에 알림이 가지 않게). 답이 오다 끊겨도 host에 다시 묻는다
   const signOutHere = useCallback(async () => {
     await removePushSubscription().catch(() => undefined);
@@ -1851,40 +1871,7 @@ function SettingsGear({
       signedOut();
     }
   }, [signedOut]);
-  return (
-    <>
-      <button
-        type="button"
-        className="activity-item"
-        data-testid="settings-open"
-        aria-label="설정"
-        aria-haspopup="dialog"
-        aria-expanded={settingsOpen}
-        title="설정"
-        onClick={() => setSettingsOpen(true)}
-      >
-        <Settings aria-hidden="true" />
-      </button>
-      {settingsOpen && (
-        <ErrorBoundary area="설정" onDismiss={closeSettings}>
-          <SettingsDialog
-            onClose={closeSettings}
-            role={role}
-            device={device}
-            machines={machines}
-            onSignOut={signOutHere}
-            onOpenPane={
-              onOpenPane &&
-              ((id) => {
-                closeSettings();
-                onOpenPane(id);
-              })
-            }
-          />
-        </ErrorBoundary>
-      )}
-    </>
-  );
+  return <SettingsDialog role={role} device={device} machines={machines} onSignOut={signOutHere} onClose={onClose} onOpenPane={onOpenPane} />;
 }
 
 /** 사이드바 바닥 줄(모든 패널 공통): 구독 사용량, 오른쪽 끝에 붙는다(사용자 요청 10-19 「사용량은 오른쪽으로 붙여」).

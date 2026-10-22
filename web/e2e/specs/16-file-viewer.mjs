@@ -569,7 +569,7 @@ export default async function ({ ctl, page }) {
     const settled = (box) => box.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
     const closeSettings = async (p) => {
       await p.keyboard.press("Escape");
-      await p.getByRole("dialog", { name: "설정" }).waitFor({ state: "detached" });
+      await p.getByRole("region", { name: "설정" }).waitFor({ state: "detached" });
     };
 
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
@@ -589,7 +589,7 @@ export default async function ({ ctl, page }) {
     const group = await settingsShown(dp, "처음", false, "기본값");
     await group.getByRole("switch", { name: "긴 줄 바꿈" }).click();
     await group.getByRole("group", { name: "Markdown 너비" }).getByRole("button", { name: "전체 너비" }).click();
-    await settled(dp.getByRole("dialog", { name: "설정" }));
+    await settled(dp.getByRole("region", { name: "설정" }));
     await shot(dp, "desktop-settings-file-viewer");
     await closeSettings(dp);
     await openSource(dp, "접은 소스");
@@ -617,7 +617,7 @@ export default async function ({ ctl, page }) {
     const pp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, deviceScaleFactor: 3 })).page;
     const phoneGroup = await settingsShown(pp, "휴대폰", false, "기본값");
     await phoneGroup.getByRole("switch", { name: "긴 줄 바꿈" }).tap();
-    await settled(pp.getByRole("dialog", { name: "설정" }));
+    await settled(pp.getByRole("region", { name: "설정" }));
     await shot(pp, "phone-settings-file-viewer");
     await closeSettings(pp);
     await inList(pp, "pane-viewer");
@@ -766,7 +766,7 @@ export default async function ({ ctl, page }) {
     const group = (await openSettings(dp, "채팅")).locator(".settings-section", { has: dp.getByRole("heading", { name: "파일 뷰어" }) });
     await group.getByRole("switch", { name: "긴 줄 바꿈" }).click();
     await dp.keyboard.press("Escape");
-    await dp.getByRole("dialog", { name: "설정" }).waitFor({ state: "detached" });
+    await dp.getByRole("region", { name: "설정" }).waitFor({ state: "detached" });
     await openAt(dp, "src/big.ts:2500", "접은 big.ts 2500번째 줄 가운데", 2500);
     const wrapped = await shape(dp, 2501);
     if (wrapped.height < 3 * colored.height || wrapped.sideways > 0) throw new Error(`긴 줄 바꿈을 켠 가상화 소스 ${JSON.stringify(wrapped)}`);
