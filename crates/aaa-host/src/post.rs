@@ -69,7 +69,7 @@ fn kind(k: &PostType) -> &'static str {
         PostType::Request => "request",
     }
 }
-fn body(e: &PostEnvelope) -> String {
+pub(crate) fn body(e: &PostEnvelope) -> String {
     // 제목·참조도 자료 블록에 넣는다(본문 밖에 지시를 끼워 넣을 수 없다).
     let text = format!("제목: {}\n{}\n참고: {}", e.input.title, e.input.body, e.input.refs.join("\n"));
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);

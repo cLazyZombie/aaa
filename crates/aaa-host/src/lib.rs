@@ -102,6 +102,7 @@ mod usage_limit;
 mod watch;
 mod watch_event;
 pub mod web;
+mod web_publication;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -113,7 +114,7 @@ use aaa_config::{HostConfig, LocalAgentMode};
 use aaa_proto::{
     AgentRequest, AgentResponse, Connection, DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontRequest, FrontResponse,
     HostStatus, LayoutChange, LayoutNode, LeaseView, LinkMsg, MachineView, Outcome, PaneView, PendingEnroll,
-    PublishState, ScreenText, SessionInfo, SessionState, SpawnSpec, Tab, TerminalChunk, WorkRootOp, Workspace,
+    ScreenText, SessionInfo, SessionState, SpawnSpec, Tab, TerminalChunk, WorkRootOp, Workspace,
 };
 use anyhow::{Context, Result};
 use sha2::Digest;
@@ -518,6 +519,7 @@ pub struct Host {
     account_meta_gate: Mutex<()>,
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
     device_gate: Mutex<()>,
+    publish_gate: tokio::sync::Mutex<()>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -769,6 +771,7 @@ impl Host {
             setup_gate: Mutex::new(()),
             account_meta_gate: Mutex::new(()),
             device_gate: Mutex::new(()),
+            publish_gate: tokio::sync::Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             install_probes: Mutex::new(HashMap::new()),
@@ -1442,6 +1445,7 @@ impl Host {
                 | FrontRequest::MachineSetupLogin { .. }
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
+                | FrontRequest::WebPublishPort { .. }
                 | FrontRequest::WebPublishOff
                 | FrontRequest::LibraryRotate
                 | FrontRequest::LibraryUploadPublish { .. }
@@ -2464,6 +2468,9 @@ impl Host {
                 self.db.audit(actor, "web_publish", "");
                 self.publish().await.map(FrontResponse::Publish)
             }
+            FrontRequest::WebPublishPort { port } => {
+                self.publish_port_change(port, actor).await.map(FrontResponse::Publish)
+            }
             FrontRequest::WebPublishOff => {
                 self.db.audit(actor, "web_publish_off", "");
                 self.publish_off().await.map(FrontResponse::Publish)
@@ -3367,73 +3374,6 @@ impl Host {
 
     // ───────────── 웹 공개 ─────────────
 
-    async fn publish_status(&self) -> PublishState {
-        let out = tailscale::read().await;
-        let selected = self.db.meta("publish_selected_port").ok().flatten().and_then(|s| s.parse::<u16>().ok());
-        let plan = tailscale::installation_plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports, selected);
-        let owned = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
-        if let Some(dns) = &plan.dns_name {
-            let _ = self.db.set_meta("publish_dns", dns);
-        }
-        // 웹이 받는 Host·Origin은 이 주소(포트까지)뿐이다. tailscale이 돌 때만 고친다: 꺼졌거나 못 읽으면 지난 값을 둔다
-        match &plan.serving {
-            Some((url, _)) => {
-                let _ = self.db.set_meta("publish_origin", &url.to_ascii_lowercase());
-            }
-            None if plan.state == "running" => {
-                let _ = self.db.del_meta("publish_origin");
-            }
-            None => {}
-        }
-        PublishState {
-            tailscale: plan.state.into(),
-            dns_name: plan.dns_name.clone(),
-            url: plan.serving.as_ref().map(|(u, _)| u.clone()),
-            owned_port: owned,
-            web_port: self.web_port(),
-            message: match plan.state {
-                "missing" => Some("tailscale CLI가 없다. 웹은 127.0.0.1에서만 열린다".into()),
-                "stopped" => Some("Tailscale이 꺼졌거나 로그인 전이다".into()),
-                _ if plan.serving.is_none() => Some("아직 공개하지 않았다: aaa web publish".into()),
-                _ => None,
-            },
-        }
-    }
-
-    async fn publish(&self) -> Result<PublishState, ErrorBody> {
-        if self.web_port() == 0 {
-            return Err(err(ErrorCode::BadRequest, "host.toml의 web.listen이 꺼져 있다"));
-        }
-        // 사람이 W0로 자동 공개를 새로 요청하면 설치의 명시 포트 선호를 해제한다.
-        self.db.del_meta("publish_selected_port").map_err(|_| err(ErrorCode::Unavailable, "공개 선택을 확인하세요"))?;
-        let out = tailscale::read().await;
-        let plan = tailscale::plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports);
-        if plan.state != "running" {
-            return Ok(self.publish_status().await);
-        }
-        if plan.serving.is_none() {
-            let Some(port) = plan.free_port else {
-                return Err(err(ErrorCode::Unavailable, format!("후보 포트가 모두 쓰이고 있다: {:?}", plan.taken)));
-            };
-            let text = tailscale::serve(port, self.web_port())
-                .await
-                .map_err(|e| err(ErrorCode::Unavailable, format!("{e:#}")))?;
-            tracing::info!("tailscale serve: {}", text.trim());
-            let _ = self.db.set_meta("publish_port", &port.to_string());
-        }
-        Ok(self.publish_status().await)
-    }
-
-    async fn publish_off(&self) -> Result<PublishState, ErrorBody> {
-        let owned: Option<u16> = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
-        let Some(port) = owned else {
-            return Err(err(ErrorCode::NotFound, "aaa가 만든 공개가 없다(다른 서비스의 매핑은 건드리지 않는다)"));
-        };
-        tailscale::serve_off(port).await.map_err(|e| err(ErrorCode::Unavailable, format!("{e:#}")))?;
-        let _ = self.db.del_meta("publish_port");
-        Ok(self.publish_status().await)
-    }
-
     /// 웹 요청의 Host 헤더가 이 host를 가리키는가(DNS rebinding 방어)
     pub fn web_port(&self) -> u16 {
         self.web_port.load(std::sync::atomic::Ordering::Relaxed)
@@ -3490,11 +3430,14 @@ pub(crate) fn test_localhost_public() -> bool {
     cfg!(debug_assertions) && std::env::var_os("AAA_TEST_WEB_LOCALHOST").is_some()
 }
 
-/// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
-/// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
+/// 공개 origin. 아직 serve 상태를 한 번도 읽지 못한 옛 DB만 publish_port·이름으로 대신한다.
+/// 매핑 없음도 관측한 상태이므로 publish_observed 뒤에는 옛 포트를 되살리지 않는다.
 pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
     if let Some(o) = db.meta("publish_origin").ok().flatten() {
         return Some(o);
+    }
+    if db.meta("publish_observed").ok().flatten().is_some() {
+        return None;
     }
     let dns = db.meta("publish_dns").ok().flatten()?;
     let port = db.meta("publish_port").ok().flatten()?.parse().ok()?;
@@ -3685,6 +3628,7 @@ mod pairing_tests {
             FrontRequest::MachineRevoke { name: "missing".into() },
             FrontRequest::DeviceRevoke { id: "missing".into() },
             FrontRequest::WebPublish,
+            FrontRequest::WebPublishPort { port: 7443 },
             FrontRequest::WebPublishOff,
         ];
         for actor in
