@@ -8,6 +8,12 @@
 - E2E53의 웹 `files_base`는 `/v/<48자리 hex>/`여야 한다. 답 내용·원문·사본 보존 검사를 유지하고, cookie 없는 읽기의 MIME·전체 바이트가 원본 그림과 같은지도 확인한다.
 - 완료 사건은 host 보고 hash·DOM·loadedmetadata/timeupdate/seeked다. 실패 뒤 시한 연장·재시도 없이 원인을 조사한다. 관련 E2E21·59·69·74와 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사로 회귀를 확인한다. headless WebKit은 실제 macOS Safari·iPhone의 출력 장치·UI를 보증하지 않는다.
 
+### E2E88 실패 진단(t-0786)
+
+- HTML 링크의 popup 대기와 실제 click은 `clickForPopup`에서 함께 관측한다. click이 먼저 실패한 뒤 정리 과정이 context를 닫아도 popup의 늦은 거부를 처리하므로 원래 오류가 남는다. `node --test web/test/popup.test.mjs`는 클릭 전 대기 등록·클릭 완료, 클릭 실패 뒤 context 종료, popup 실패 뒤 늦은 클릭 실패를 확인한다. 옛 순서의 구현을 별도 사본에 심으면 뒤 두 시험이 unhandled rejection으로 실패한다.
+- 네 조합 각각의 실패에는 단계, 선택값, 주소, 영상 readyState·currentTime·paused·오류와 최근 click·hashchange·media 사건을 붙인다. 선택 보존과 주소 보존은 독립 단언이며 재생·탐색 실패에도 실제 상태를 남긴다. 영상 재생·시한·sandbox·제품 기대값은 그대로다.
+- `212d8425`의 macOS CI는 WebKit desktop의 iframe 확인 뒤 popup 대기 거부로 종료돼 최초 오류를 남기지 못했다. 이 로그만으로 재생·선택·주소·브라우저 중 원인을 확정할 수 없다. 로컬 macOS 27·Playwright 1.59.1에서 캡처 유무를 나누어 측정하며, 재현되지 않으면 제품 수리 완료로 해석하지 않는다. CI와 같은 캡처 없는 실행도 반드시 포함한다. 진단 반복은 실패를 통과로 바꾸는 재시도가 아니며 실패한 회차를 모두 보존한다.
+
 
 ## 본문 끝단 스크롤 격리(t-0766, plan §8.447)
 
