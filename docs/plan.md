@@ -7129,7 +7129,6 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **설정·경계.** 사람의 세션 밖 CLI·웹 조작 기기만 풀 별칭·공유 한도 그룹·허용 모델과 프로젝트 참여를 고친다. 설정판 충돌은 conflict다. 웹은 aaa-proto만 사용한다. 참여한 프로젝트의 공통 thread 시작 경로에서 선택하므로 CLI·웹 할 일·예약·자동화가 같은 규칙이다. 명시 별칭·미참여 기본 계정·coordinator 기본·동일 계정 resume은 유지한다.
 - **선택·수명.** 최신 필수 5시간·주간/모델 창마다 잔량에서 미소진 예약·안전 여유10·이번 예상량(small/medium/large 5/15/30%p)을 뺀다. 최소 여유·5%p 동점 범위의 빠른 리셋·예약 수·마지막 배정·별칭 차례다. 공유 그룹의 관측 제약·예약을 함께 적용한다. 미관측은 한 세대의 첫 실행만 허용하고 오래됨·실패·잘못된 값·리셋 경계는 우회하지 않는다. 알려진 모델·머신·인증 세대가 맞지 않으면 자동 변경하지 않는다.
 - **내구성.** 선택·예약·thread와 영수증을 한 DB transaction으로 저장한다. 직접 요청은 후보가 없으면 내구 대기 하나이며 같은 ID는 같은 시작이다. task·자동화의 대기는 기존 큐다. 확정 준비 실패만 즉시 해제하고, 결과 불명은 보존하며, 종료 뒤 신선한 관측으로 미소진 예약을 교체한다. 사용량의 관측·실패/backoff도 재시작 뒤 유지한다. 실제 기동 실패는 자동 반복하지 않는다.
-- **배정 중 취소(t-0700).** 사용자 취소는 진행 중인 배정 판정과 같은 잠금의 해제를 비동기로 기다린다. 잠금 안에서 최신 영수증을 다시 확인하고 취소를 저장하므로, 배정의 마지막 저장이 Cancelled를 Queued로 되돌리지 못한다. 이미 시작한 영수증이 있으면 기존 conflict를 유지한다. 실제 사용량 조회를 보류한 host 시험과 E2E81의 취소·오류 진단으로 검증한다. API·E2E 번호는 바꾸지 않는다.
 - **호환·검증.** FRONT_API 1.102의 별도 풀 요청·대기 응답과 선택 사유를 더한다. 별칭 `auto`를 예약하지 않고 `--account-pool`을 쓴다. AGENT_LINK 1.11·SESSION_IPC 1.3은 유지한다. E2E81과 host 유닛이 가짜 인증·상태줄·RPC, 동시 예약·영수증·재시작·웹 대기/취소·Reader·모바일·비노출을 소유한다. 계약은 [계정](accounts.md), 절차는 [시험](testing.md)에 둔다.
 - **통합 수리.** CLI 시작 인자는 `Box<Args>`로 나누어 enum 크기 lint를 해결한다. 반복 host 재시작 때 원격 agent의 이전 backoff가 짧은 정상 연결 뒤에도 남던 기존 결함은 인증·초기 replay 완료 사건에서 초기화한다. 거부된 연결의 backoff·기존 m13의 30초 준비 상한은 유지하며 실제 protocol keeper와 초기화 제거 변형으로 구분한다.
 - **착지 통합.** 기준 origin/main `3933e4cb`의 마지막 §8.415·FRONT_API 1.101·AGENT_LINK 1.11·E2E80을 확인했다. 이 기능은 §8.416·FRONT_API 1.102·E2E81로 맞추고 agent/session 판은 유지한다. main의 원격 보고·보고서 목록·Windows pairing/IPC 수리와 rollout fixture의 재연결 상한 1초를 보존한다. fixture의 반복 재시작 결정성과 제품의 정상 연결 뒤 backoff 초기화는 별개이며 둘 다 유지하고 전체 ci-local·공개 검사 뒤 병합한다.
@@ -7264,3 +7263,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **I3 supervisor 잠금 수명 수리(같은 후보).** main CI의 credentials 재개가 `installation_busy`로 실패했다. Lab 경로와 resource key는 이미 고유하고 실제 오류는 supervisor.lock이다. Unix fork/dup의 descriptor가 남으면 File close만으로 flock이 풀리지 않는 경계를 실제 복제 descriptor로 기존 owner에서 RED로 재현했다. 이어 main CI의 launcher 보존 시험은 issuer.issue의 짧은 issuer.lock scope에서 같은 installation_busy였다. install 엔진 private::Lock guard의 Drop에 Unix unlock을 모아 짧은 initialize/issue/import scope·Lease·Job·파일 transaction 자원이 모두 owner 종료 때 같은 규칙으로 해제되게 한다. 기존 Job/Locks의 개별 unlock Drop은 중복하지 않는다. 실제 fork 실험에서도 close 뒤 EWOULDBLOCK, unlock 뒤 자식이 살아 있는 채로 재획득을 확인했다. Windows share reservation·승인/단언/시한은 유지한다. CI 당시 descriptor를 물려받은 특정 자식은 로그에 없어 미확인으로 남긴다.
 
 - **착지 통합.** 승인 기준 origin/main `fabffdbd`의 마지막 plan §8.426·FRONT_API 1.105·AGENT_LINK 1.11·웹 E2E85(`85-thread-park`)를 직접 확인했다. 이 후보는 빈 §8.427로 옮기고 API·E2E 번호는 main 그대로 보존한다. Windows 최소 bootstrap과 I3 Unix supervisor 잠금 수명 수리를 같은 통합본에서 전체 gate·공개 검사·Windows cross로 다시 검증한다. 배포는 별도 담당이 진행한다.
+
+
+### 8.428 계정 배정 중 대기 취소 경합 수리(t-0700)
+
+- **원인·수정.** §8.416의 `pool_run`이 사용량 조회를 기다리는 동안 같은 배정 잠금을 잡고 있어 취소의 즉시 선점이 BadRequest로 끝났다. 사용자 취소는 같은 잠금 해제를 비동기로 기다리고 최신 시작 영수증을 다시 확인한 뒤 Cancelled를 저장한다. 배정의 마지막 Queued 저장 뒤에 취소하므로 덮어쓰지 못하며, 이미 시작한 thread는 기존 conflict와 종료 안내를 유지한다.
+- **검증.** 실제 사용량 조회를 보류한 host 시험에서 이전 취소 방식의 실패와 수정본의 대기·Queued 저장·Cancelled·다음 pass·같은 ID·DB 재열기 뒤 thread 0건을 확인한다. 시작 영수증 생성·Reader 거부·없는 ID·중복 취소도 검사한다. E2E81의 기존 단언·30초 시한은 유지하고 실패 때 창 오류·대기 문구·host 배정 목록을 남긴다.
+- **착지 통합.** origin/main `fb5a6518`의 마지막 plan §8.427·FRONT_API 1.105·AGENT_LINK 1.11·E2E85를 직접 확인해 빈 §8.428을 쓴다. proto와 새 spec이 없어 API 판과 E2E 번호는 main 그대로 유지한다. 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 --no-ff 병합·push·원격 SHA를 대조하며 배포와 GitHub CI 감시는 coordinator가 맡는다.

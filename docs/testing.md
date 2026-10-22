@@ -64,7 +64,7 @@
   파일별 journal·공유 소유권을 보존하며 서명 GREEN을 확인한다. 전체 ci-local·deps·공개 검사·Windows cross 뒤 후보를 보고하고 착지 창을 기다린다.
 
 
-## 계정 배정 대기 취소의 경합(t-0700, plan §8.416)
+## 계정 배정 대기 취소의 경합(t-0700, plan §8.428)
 
 - `nice -n 15 cargo test -p aaa-host --lib account_pool --locked`:
   `cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted`는 실제 `pool_run`을 사용량 cache 잠금의
