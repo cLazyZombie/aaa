@@ -2,6 +2,12 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 일반 post 기본 한도 확대(t-0688, plan §8.425)
+
+- `nice -n 15 cargo test -p aaa-config --lib post_defaults_and_explicit_overrides --locked`: 파일 없음·빈 `[post]`·일부 생략에서 30/60초·200/시간·2000/일·pair 100·mute 20을 읽고, 명시한 옛 값과 local 덮어쓰기를 유지한다.
+- `nice -n 15 cargo test -p aaa-host --lib post::tests:: --locked`: 실제 host DB와 전달 owner에 `now`를 주어 기본 30건 핑퐁 수락, 31번째 거부·19회까지 음소거 없음·20회 음소거, 분·시간·하루 경계와 24시간 내용 중복을 검사한다. 기존 ID 재전송·재시작 내구성과 작은 한도 설정도 유지한다. coordinator 사용자 알림은 별도 30/분·60/시간 한도와 자동 음소거 없음, 일반 한도 초과 뒤에도 수락을 확인한다.
+- 기존 m13 `post_from_thread_reaches_coordinator_inbox`와 웹 E2E19 `post 음소거`는 전송·표시를 검사하도록 작은 한도(3/분·6/시간·30/일·거부 3회)를 명시한다. 제품 기본값에 기대지 않고 기존 단언·시한을 유지한다. 새 E2E 번호는 추가하지 않는다.
+- 고정 sleep·실패 재시도·시한 연장 없이 원장 결과와 CLI 완료·DOM 사건으로 끝낸다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
 ## 화면·고정폭·터미널 글꼴(t-0683, plan §8.423)
 
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 06-settings --workers 1`:

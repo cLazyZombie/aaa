@@ -28,6 +28,18 @@ mode = "child"
 # 새 탭·나누기 pane의 폴더: "follow"(원래 pane이 지금 있는 폴더, 같은 머신일 때), "home", 또는 절대 경로
 new_cwd = "follow"
 
+[post]
+# 일반 post의 출처별 기본 한도. 짧은 측정 핑퐁과 장시간 작업을 허용한다.
+burst = 30
+burst_secs = 60
+hourly = 200
+daily = 2000
+# 목적지 쌍별 한도 예약값(현재 thread→coordinator 경로에는 적용하지 않는다)
+pair_hourly = 100
+# 한 시간 안 rate 거부가 이 횟수에 닿으면 자동 음소거한다. 같은 글은 24시간 중복 거부한다.
+mute_after = 20
+# 검증된 coordinator→user 알림은 별도 고정 한도(분당 30·시간당 60·하루 300), 자동 음소거 없음.
+
 [projects]
 # 프로젝트 폴더 root(비우면 ~/.aaa/projects)
 root = ""

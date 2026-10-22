@@ -24,6 +24,8 @@
 - **작업 폴더·hook**: 설정 → 머신 아래 「작업 폴더·hook」에서 머신을 고르고, 절대 경로를 「점검…」(검사 파일을 쓰고 읽고 지움) 한 뒤 「전환…」합니다. 다음 agent 시작부터 쓰고 지금 도는 thread는 그대로입니다. Codex 전역 hook은 같은 곳에서 설치·제거합니다(Claude는 실행마다 넣어 설치할 것이 없습니다).
 - **알림 켜기**: 설정 → 알림에서 켜고 「테스트 알림」으로 확인합니다. 기기 알림(Web Push)은 coordinator가 보낸 「확인 필요」·「전체 완료」 post만 받습니다. thread 질문·보고는 앱 안 알림으로 확인합니다. iPhone은 홈 화면 앱(Safari 공유 → 홈 화면에 추가)에서만 켤 수 있습니다.
 
+일반 thread→coordinator post는 출처마다 최근 60초 30건·1시간 200건·24시간 2,000건이 기본입니다. 짧은 측정 핑퐁과 장시간 작업을 허용하고, 한 시간 안 한도 초과 거부 20회에 자동 음소거합니다. `host.toml`의 `[post]`에서 `burst = 30`, `burst_secs = 60`, `hourly = 200`, `daily = 2000`, `mute_after = 20`을 바꿀 수 있습니다([설정 예시](../crates/aaa-config/examples/host.toml)). `pair_hourly = 100`은 목적지 쌍별 한도의 예약값이며 현재 thread→coordinator 경로에는 적용하지 않습니다. 설정에서 생략한 값에 새 기본값을 쓰며, 이미 명시한 값과 기존 음소거는 그대로 유지합니다. 같은 글은 24시간 동안 중복 거부하며, 이 거부는 한도 초과·자동 음소거 횟수에 넣지 않습니다.
+
 보고서 발행(`library publish --to-user`)의 「새 보고서」 알림은 post 한도를 쓰지 않습니다. host가 확인한 프로젝트 coordinator의 「확인 필요」(`user-action`)·「전체 완료」(`task-complete`)는 합쳐서 분당 30·시간당 60·하루 300건이며 자동 음소거되지 않습니다(24시간 같은 글 중복은 거부). 일반 post 음소거는 다음 coordinator CLI 출력·`aaa context` 맨 위와 웹 앱 안 알림에 표시됩니다. 원인을 확인한 뒤 조작 권한으로 `aaa post unmute <출처>`를 실행합니다.
 
 ## 삭제된 기능: TUI

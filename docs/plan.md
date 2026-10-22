@@ -4408,10 +4408,13 @@ primary 근거:
   저장한 뒤 outbox를 지운다. host는 post ID·출처·내용을 다시 확인하여 같은 결과를 돌려주고 inbox를 두 번 만들지 않는다.
   접수 원장·inbox·감사는 SQLite transaction 하나다. 투영 파일은 DB 다음에 쓴다. SCHEMA_VERSION은 올리지 않는다.
   inbox done 보존 기간이 지나 정리할 때 posts 본문도 지우고 ID·결과·내용 hash는 남긴다.
-- **한도.** host.toml `[post]`: burst=3, burst_secs=60, hourly=6, daily=30, pair_hourly=10, mute_after=3.
+- **한도.** host.toml `[post]`: burst=30, burst_secs=60, hourly=200, daily=2000, pair_hourly=100, mute_after=20.
+  짧은 측정 핑퐁을 위해 분당 한도는 10배, 장시간 작업을 위해 시간·하루 한도는 각각 약 33배·67배로 높인다(t-0688).
+  일시 초과가 세 번만 나도 음소거되던 기준을 20회로 늘리되 지속 남용은 제한한다.
+  생략한 설정에 적용하며 명시한 값·기존 음소거는 유지한다. pair_hourly는 현재 thread→coordinator에서 쓰지 않는 예약값이다.
   시간 창은 최근 60초·1시간·24시간이다. now를 인자로 받는 owner가 판정한다. 같은 출처의
   (목적지·종류·topic·정리한 제목·본문 sha)가 24시간 안 같으면 기존 ID와 함께 거부한다.
-  일반 한도에서 한 시간에 rate 거부 3번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
+  일반 한도에서 한 시간에 rate 거부 20번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
   `library publish --to-user`가 내부에서 만드는 보고서 알림은 이 한도를 쓰지 않는다(topic 자기 신고로 면제되지 않는다).
   해당 프로젝트 coordinator pane으로 검증된 `user-action` request·needs_user와 `task-complete` notice는 둘을 합쳐
   최근 60초 30·1시간 60·24시간 300건의 별도 한도를 쓰며, 초과해도 자동 mute하지 않고 기존 mute에도 막히지 않는다.
@@ -7221,3 +7224,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - E2E84는 실제 2,400행 Claude 기록과 pane 연결을 Chromium 1280px·WebKit 390px에서 연다. open/message 사건을 보류하고 브라우저 시계를 제어해 499ms 미표시·500ms 표시, 빠른 연결의 순간 표시 없음, 끊김·재시도·복구를 확인한다.
 
 - **착지 통합.** origin/main `efe5b1ab`의 마지막 plan §8.423·FRONT_API 1.104·AGENT_LINK 1.11·E2E83을 확인했다. 이 변경은 빈 §8.424·E2E84를 사용하며 API 판은 main 그대로 유지한다.
+
+
+### 8.425 일반 post 기본 한도 확대(t-0688)
+
+- 측정 차례 핑퐁과 장시간 작업이 분당 3·시간당 6·하루 30건 및 세 번 거부로 막히던 기본값을 30/60초·200/시간·2000/일·거부 20회로 높인다. `pair_hourly` 예약값은 100이며 현재 thread→coordinator 경로에는 적용하지 않는다.
+- 짧은 핑퐁을 위해 분당 10배, 장시간 작업을 위해 시간당 약 33배·일일 약 67배로 늘린다. 지속 초과는 계속 제한하며 명시한 설정·기존 음소거·24시간 같은 글 중복 거부를 유지한다. coordinator→user와 외부 푸시의 별도 한도는 유지한다.
+- 설정 로더는 생략값·명시한 옛 값·local 덮어쓰기를 검사한다. 실제 host 원장은 분·시간·하루/내용 중복 경계, 20회 음소거, 재전송·재시작 내구성과 사용자 알림 한도 분리를 검사한다. 기존 m13 전송·E2E19 음소거 표시는 작은 한도를 명시한다. 고정 sleep·시한 연장·단언 완화 없이 검증한다.
+- 착지 기준 origin/main `bda6a017`의 마지막 plan §8.424·FRONT_API 1.104·AGENT_LINK 1.11·웹 E2E84를 확인했다. 이 절은 빈 §8.425를 쓰고 API 판과 기존 E2E 번호는 유지한다. 통합본 전체 ci-local과 공개 검사를 마친 뒤 병합·push하며 배포는 coordinator가 맡는다.
