@@ -145,7 +145,10 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
             .cloned()
             .collect()
     };
-    let history = delivery_runs(&w);
+    let history = wait_for("첫 CI 실패의 자동화 실행 완료", T, || {
+        let runs = delivery_runs(&w);
+        (runs.first().is_some_and(|r| r["status"] == "done" && r["detail"] == "coordinator 안내")).then_some(runs)
+    });
     // host 재시작: 같은 SHA는 항목·깨움을 늘리지 않고 created 창을 쪽 넘겨 따라잡는다.
     w.lab.kill("host");
     w.spawn_host("host2");
@@ -173,7 +176,9 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     quiet_barrier(&w, &stub, "other");
     assert_eq!(ci_items(&w, true).len(), 1);
     assert!(ci_items(&w, true)[0]["body"].as_str().unwrap().contains("a::second"));
-    let latest = &delivery_runs(&w)[0];
+    let latest = wait_for("바뀐 실패 시험의 새 자동화 실행 완료", T, || {
+        delivery_runs(&w).into_iter().find(|r| !history.iter().any(|old| old["id"] == r["id"]) && r["status"] == "done")
+    });
     assert_eq!((&latest["status"], &latest["detail"]), (&"done".into(), &history[0]["detail"]), "첫 빨강처럼 깨운다");
     // 꺼진 사이 실패→회복을 함께 받으면 새 깨움 없이 앞 CI 항목을 닫는다.
     w.lab.kill("host2");

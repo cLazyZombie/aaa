@@ -7560,3 +7560,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 전체 ci-local·공개 검사와 Windows/Linux strict cross·Windows release 조건 build를 확인한다. 실제 Windows 근거는 위 동일 runner 대조이며 교차 빌드로 대체하지 않는다. v0.1.5 게시에는 별도로 착지한 exact main 네 job과 Windows 실제 owner 모두 GREEN이 필요하다. E2E88은 별도 소관이며 E2E82 최초 실패는 보존한다. 시한/기대값 완화나 CI rerun은 하지 않는다.
 
 - **착지 통합.** 기준 origin/main `e22229ce`의 마지막 plan §8.456·FRONT_API 1.111·AGENT_LINK 1.11·웹 E2E90을 확인했다. 겹친 절 번호만 §8.457로 옮기고 API/link/E2E 번호와 기존 post 종료 경합 수리를 보존한다. 일회성 workflow는 포함하지 않는다. 묶음 착지 6회차에서 전체 ci-local·공개 검사·양 OS strict cross·Windows release 조건 빌드를 확인하며 배포·tag·release는 수행하지 않는다.
+
+### 8.458 감시 사건의 최종 실행 기록 소유(t-0814)
+
+- CI source의 `automation_submit` 뒤와 공통 batch 완료 뒤가 같은 event ID에 각각 `done`을 기록했다. 실행 순서에 따라 웹 실행 기록의 결과·시각이 바뀌고 m13의 첫 실패/변경된 실패 결과 비교가 흔들렸다. source 완료 기록은 실행 전에도 오늘 횟수를 올렸다.
+- 자동화로 인계한 사건의 대기·실패·완료는 실행부만 기록한다. 최종 detail은 실제 동작 결과이며 inbox 동작은 `coordinator 안내`다. 큐 인계 자체를 완료로 세지 않고 source 재전달도 완료 결과를 덮지 않는다. 감시만 한 결과·건너뜀·옛 목적지 변환 대기는 source 기록을 유지한다. 공용 watch를 쓰는 CI·Git에 같은 원칙을 적용한다.
+- 기존 outbox 재전달 시험이 실행 완료 뒤 source 재전달 순서를 고정하고 전체 이력을 대조한다. m13은 첫 실패와 새 실패 사건의 실제 실행 완료를 기다리며, 실패 시험 집합이 바뀌면 다시 깨운다는 기존 단언을 유지한다. 웹은 host 기록을 그대로 표시하므로 API·웹 코드·E2E 번호는 유지한다. 전체 ci-local·공개 검사 후 `[병합 준비됨]`으로 묶음 착지를 기다린다.

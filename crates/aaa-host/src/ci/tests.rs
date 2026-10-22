@@ -102,9 +102,19 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
     .unwrap();
     h.ci_drain("demo", "ci:demo:test", &mut s).unwrap();
     assert!(s.outbox.is_empty(), "공통 내구 큐에 인계한 뒤 source를 비운다");
+    assert!(h.routine_history("demo", "ci-main").unwrap().runs.is_empty(), "큐 인계만으로 실행 완료를 기록하지 않는다");
     h.automation_pass("demo").await;
+    let completed = h.routine_history("demo", "ci-main").unwrap();
+    assert_eq!(completed.runs[0].status, "done");
+    assert_eq!(completed.runs[0].detail, "coordinator 안내");
+    let completed = serde_json::to_value(completed).unwrap();
     s.outbox.push(n);
     h.ci_drain("demo", "ci:demo:test", &mut s).unwrap();
+    assert_eq!(
+        serde_json::to_value(h.routine_history("demo", "ci-main").unwrap()).unwrap(),
+        completed,
+        "완료 뒤 source 재전달도 실행 결과·시각·마지막 결과·오늘 횟수를 덮지 않는다"
+    );
     h.automation_pass("demo").await;
     assert!(s.outbox.is_empty());
     assert_eq!(h.db.inbox_list(Some("demo"), true).unwrap().iter().filter(|i| i.item_kind == "ci").count(), 1);
@@ -118,6 +128,7 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
     assert_eq!(delivered.len(), 1, "실패한 전달 기록과 별개로 사건은 한 번 완료한다");
     assert_eq!(history.today, 1);
     assert_eq!(delivered[0].status, "done");
+    assert_eq!(serde_json::to_value(history).unwrap(), completed, "중복 batch 처리 뒤에도 완료 기록은 그대로다");
 }
 #[test]
 fn ci_registration_rejects_mixed_commands_and_invalid_events() {

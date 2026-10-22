@@ -127,7 +127,10 @@ fn git_push_restart_force_delete_and_outage() {
             .cloned()
             .collect()
     };
-    let history = delivery_runs(&w);
+    let history = wait_for("Git 사건의 자동화 실행 완료", T, || {
+        let runs = delivery_runs(&w);
+        (runs.first().is_some_and(|r| r["status"] == "done" && r["detail"] == "coordinator 안내")).then_some(runs)
+    });
     assert_eq!(history.len(), 1);
     w.lab.kill("host");
     w.spawn_host("host2");
