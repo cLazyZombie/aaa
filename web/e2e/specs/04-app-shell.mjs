@@ -86,7 +86,8 @@ export default async function ({ ctl, page }) {
     if ((await wp.evaluate(() => localStorage.getItem("aaa:keep-screen-on"))) !== "1") throw new Error("켠 설정이 저장되지 않았다");
     await decided(`on hold ${t1}`);
     await until("wake lock 요청", async () => (await log()) === "request screen");
-    // 목록 drawer가 열려 있어도(설정은 drawer 바닥 톱니에서 열었고 닫으면 그 drawer로 돌아온다) pane은 골라진 채다: 놓지 않는다
+    // 설정은 본문으로 돌아온다. 목록 drawer를 직접 열어도 고른 pane의 wake lock을 놓지 않는다.
+    await wp.locator(".view [data-testid='drawer-toggle']").click();
     await wp.locator("#workspace-drawer.is-open").waitFor();
     await decided(`on hold ${t1}`);
     if ((await log()) !== "request screen") throw new Error(`drawer를 열었는데 ${await log()}`);
@@ -374,7 +375,7 @@ export default async function ({ ctl, page }) {
     await search.fill("터미널");
     const termPage = palette.locator('[data-section="settings-pages"]').getByRole("option", { name: "터미널" });
     await termPage.click();
-    const dialog = dp.getByRole("dialog", { name: "설정" });
+    const dialog = dp.getByRole("region", { name: "설정" });
     await dialog.getByRole("tabpanel", { name: "터미널" }).waitFor();
     await dp.keyboard.press("Escape");
     await dialog.waitFor({ state: "detached" });

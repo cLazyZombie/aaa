@@ -458,7 +458,7 @@ export default async function ({ ctl, page }) {
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
     // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 → 터미널 쪽 맨 끝 「진단」에 있다(사용자 화면 10-18, plan §8.82·§8.97)
     if ((await tp.getByText("입력 기록", { exact: false }).count()) !== 0) throw new Error("목록에 입력 기록 단추가 있다");
-    const dialog = tp.getByRole("dialog", { name: "설정" });
+    const dialog = tp.getByRole("region", { name: "설정" });
     const traceSwitch = dialog.getByRole("switch", { name: "입력 기록" });
     await openSettings(tp, "터미널");
     await traceSwitch.click();

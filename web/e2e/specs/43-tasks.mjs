@@ -1,3 +1,4 @@
+import { listIds } from "../lib/list-ids.mjs";
 // 할 일 보기(T1, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이 있어서 거기서 들어가게)」, plan §8.306). host가
 // TASKS.md를 읽어 한 목록·형식 어긋남·task 없는 열린 thread를 주고, 웹은 활동 막대 「할 일」에서 그것을 보인다. 파일을 직접 고치면 ticker가
 // 바뀐 hash를 `tasks` 사건으로 알리고 화면이 다시 읽는다. 시간은 기다리지 않는다: 화면 표지 `data-tasks-sha`·`data-task-state`를 기다린다.
@@ -62,6 +63,8 @@ export default async function ({ page }) {
     const view = page.getByTestId("tasks-view");
     if ((await view.getAttribute("data-shown")) !== "true") throw new Error("할 일 화면이 보이지 않는다");
     if (!(await page.evaluate(() => location.hash === "#tasks"))) throw new Error("주소가 #tasks가 아니다");
+    const taskId = aaa("task", "list").tasks.find((t) => t.line === LINE.login).short_id;
+    await listIds(page, `[data-testid="task-${LINE.login}"]`, [taskId], "ids-task-desktop");
     // 행 상태: 열린 thread와 이은 task는 진행 중, 오독 꼴 셋은 형식 어긋남, 나머지는 대기
     const want = { [LINE.login]: "run", [LINE.sub]: "wait", [LINE.tidy]: "problem", [LINE.probe]: "problem", [LINE.web]: "problem", [LINE.deploy]: "wait", [LINE.remote]: "wait" };
     for (const [line, state] of Object.entries(want)) if ((await stateOf(page, line)) !== state) throw new Error(`${line}줄 상태 ${await stateOf(page, line)} ≠ ${state}`);
@@ -140,6 +143,12 @@ export default async function ({ page }) {
     const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone", { hash: "#tasks" });
     try {
       await shaIs(p, md);
+      const taskId = aaa("task", "list").tasks.find((t) => t.line === LINE.login).short_id;
+      await listIds(p, `[data-testid="task-${LINE.login}"]`, [taskId], "ids-task-phone");
+      const viewport = p.viewportSize();
+      await p.setViewportSize({ width: 320, height: 844 });
+      await listIds(p, `[data-testid="task-${LINE.login}"]`, [taskId], "ids-task-320");
+      await p.setViewportSize(viewport);
       await shot(p, "tasks-phone");
       await p.getByTestId(`task-${LINE.web}`).locator(".task-pick").click();
       await p.getByTestId("task-detail").waitFor();

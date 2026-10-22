@@ -1,0 +1,18 @@
+/* 보고서의 inline code 모양을 공유한다. 제목의 굵기·줄임과 무관하게 번호 전체를 남긴다. */
+code.list-id {
+  display: inline-block;
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-sm) * 0.9);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-base);
+  white-space: nowrap;
+}
+
+.list-id-line { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; }
+.report-id-title { flex: 1 1 10em; vertical-align: middle; }
+.report-id-title > a { min-width: 0; }

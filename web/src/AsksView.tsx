@@ -1,3 +1,4 @@
+import { ListId } from "./ListId";
 // 「답할 것」(plan §8.345, 사용자 결정 10-21 1B·1A 2B): 사이드바 패널(AsksPanel)에 답할 것·답한 것 목록, 본문(AsksView)에 고른 것
 // 하나의 카드. 카드 본문은 thread가 질문에 실은 Markdown(그림·표·code·링크)이라 웹페이지처럼 보인다: HTML은 해석하지 않고
 // (Markdown html=false), 그림·링크는 host가 준 그 질문의 파일 주소(`files_base`) 아래 `library/…`만 연다. 그림을 누르면 크게 본다.
@@ -57,13 +58,14 @@ export function AsksPanel({
   const [confirm, setConfirm] = useState(false);
   const now = Date.now();
   const done = data?.done ?? [];
-  const Row = ({ k, kind, title, meta, isDone }: { k: string; kind: keyof typeof KIND_ICON; title: string; meta: string; isDone?: boolean }) => {
+  const Row = ({ k, kind, title, meta, ids = [], isDone }: { k: string; kind: keyof typeof KIND_ICON; title: string; meta: string; ids?: string[]; isDone?: boolean }) => {
     const Icon = isDone ? Check : KIND_ICON[kind];
     return (
       <button type="button" className={`ask-row is-${kind}${isDone ? " is-done" : ""}${selected === k ? " is-selected" : ""}`} data-testid="ask-row" data-key={k}
         aria-current={selected === k ? "true" : undefined} onClick={() => onPick(k)}>
         <span className="ask-row-mark" aria-hidden="true"><Icon /></span>
         <span className="ask-row-text">
+          {ids.length > 0 && <span className="ask-row-ids list-id-line">{[...new Set(ids)].map((id) => <ListId key={id} id={id} testId="ask-short-id" />)}</span>}
           <span className="ask-row-title">{title}</span>
           <span className="ask-row-meta">{meta}</span>
         </span>
@@ -76,11 +78,11 @@ export function AsksPanel({
       {open.length === 0 && <p className="asks-panel-empty">답할 것이 없다</p>}
       {open.map((a) =>
         a.kind === "question" ? (
-          <Row key={a.key} k={a.key} kind="question" title={`${a.thread.id} · ${a.thread.title || a.thread.id}`} meta={openMeta(a, now)} />
+          <Row key={a.key} k={a.key} kind="question" ids={a.thread.questions.items.flatMap((q) => q.id ? [q.id] : [])} title={`${a.thread.id} · ${a.thread.title || a.thread.id}`} meta={openMeta(a, now)} />
         ) : a.kind === "request" ? (
-          <Row key={a.key} k={a.key} kind="request" title={a.request.title} meta={openMeta(a, now)} />
+          <Row key={a.key} k={a.key} kind="request" ids={[...(a.request.question_id ? [a.request.question_id] : []), ...(a.request.questions?.items ?? []).flatMap((q) => q.id ? [q.id] : [])]} title={a.request.title} meta={openMeta(a, now)} />
         ) : (
-          <Row key={a.key} k={a.key} kind="task" title={a.task.title} meta={openMeta(a, now)} />
+          <Row key={a.key} k={a.key} kind="task" ids={a.task.short_id ? [a.task.short_id] : []} title={a.task.title} meta={openMeta(a, now)} />
         ),
       )}
       <h3 className="asks-panel-head">
@@ -92,7 +94,7 @@ export function AsksPanel({
         )}
       </h3>
       {done.map((r) => (
-        <Row key={r.id} k={`d:${r.id}`} kind={r.kind} title={doneTitle(r)} meta={doneMeta(r, now)} isDone />
+        <Row key={r.id} k={`d:${r.id}`} kind={r.kind} ids={[...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]} title={doneTitle(r)} meta={doneMeta(r, now)} isDone />
       ))}
       {data && <p className="asks-panel-note">답한 것은 {data.keepDays}일 지나면 자동으로 지운다. 지우면 모든 기기에서 사라진다</p>}
       {confirm && (

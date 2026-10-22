@@ -55,7 +55,7 @@ function cli(...args) {
 const connected = (...names) => () => names.every((n) => cli("machine", "list").machines.some((m) => m.name === n && m.connection === "connected"));
 
 async function closeSettings(page) {
-  const dialog = page.getByRole("dialog", { name: "설정" });
+  const dialog = page.getByRole("region", { name: "설정" });
   await dialog.getByRole("button", { name: "설정 닫기" }).click();
   await dialog.waitFor({ state: "detached" });
 }
@@ -158,7 +158,7 @@ export default async function ({ page }) {
   });
 
   await step("승인: 설정 「안전」에서 자동화가 thread를 바로 띄우게(start_threads = auto) 바꾼다", async () => {
-    const dialog = page.getByRole("dialog", { name: "설정" });
+    const dialog = page.getByRole("region", { name: "설정" });
     await dialog.getByRole("tab", { name: "안전" }).click();
     const row = dialog.getByTestId("settings-safety").getByTestId("safety-rows").locator('[data-key="start_threads"]');
     await row.locator("select").selectOption("auto");

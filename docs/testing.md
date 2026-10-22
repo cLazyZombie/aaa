@@ -1,6 +1,6 @@
 # 시험 쓰는 법
 
-## 공개 포트 변경·저장 링크 이전(t-0749, plan §8.442)
+## 공개 포트 변경·저장 링크 이전(t-0749, plan §8.444)
 
 - `nice -n 15 cargo test -p aaa-host --lib web_publication --locked`: 실제 DB·원장·router를 사용한다. 옛 포트 해제/다른 서비스 보존, post 본문·refs/본문 SHA/원본 봉투 보존/원래 입력 재전송, inbox 파일 투영, 구판·옛 origin 구독 정리와 loopback 구독·기기 신원 보존을 확인한다. Serve 등록 실패 뒤 host 재개방·같은 대상만 재개, 다른 서비스 충돌·읽기 오류·권한 거부를 검사한다. DB의 구독 삭제에 실패를 주입해 저장 주소·원본 보존·답 상태·공개 주소·구독이 함께 롤백되는지 확인한다.
 - `nice -n 15 cargo test -p aaa-host --lib tailscale:: --locked`: 기존 exact/LocalAPI/서비스 보존 owner와 함께 깨진 Serve JSON·없음과 `null`의 구별을 확인한다. 상태 읽기 실패로 후보 포트를 고르거나 기존 공개 주소를 지우면 안 된다.
@@ -9,6 +9,24 @@
 - 결함 심기: `public_origin_in`의 관측 표지 검사를 제거하면 `failed_transition_survives_restart_and_resumes_only_the_same_target`가 「매핑 없음 확인 뒤 옛 포트 fallback 금지」로 실패한다. 원본 bytes를 복원한 뒤 정본 전체를 검증한다. 이전 전 원본 보존은 해당 post 본문 정리·inbox/답 기록 삭제 수명을 함께 따른다.
 - 질문 본문 URL 변경은 해시도 바뀐다. `moving_a_question_body_preserves_its_ids_and_partial_answers`는 원래 q-ID 두 개·한 질문의 부분 답을 유지하고 새 본문 해시에 연결해야 한다. revision 이전 전에는 `q-1002/q-1003 != q-1000/q-1001`로 실패했다. 첫 전체 검증에서 `[]`를 struct의 빈 sequence로 읽은 Serve 판정과 새 DB 시험의 불필요한 clone lint도 잡혔다. JSON root를 object/null로 제한하고 같은 기대값·시한을 유지한다.
 
+## 설정 본문·passkey 줄·긴 목록 스크롤(t-0748, plan §8.443)
+
+- E2E06의 새 「설정 본문·passkey 긴 값」 단계는 실제 host·agent에서 설정이 main을 채우고 모달 배경·aria-modal 없이 표시되는지 검사한다. Chromium 1280px 밝음/어두움·980px 좁은 본문·320px, WebKit 390px 밝음/어두움에서 상태·설명 폭과 가로 넘침을 확인하고 캡처한다. 10분이 지난 상태와 긴 도메인의 등록 상태는 실제 `/me` 응답의 passkey 필드만 대체해 기다림 없이 재현한다. 인증·등록 동작은 기존 E2E79가 맡는다.
+- 주소 복사·새 탭·새로고침·닫기·앞으로, 확인 창의 Esc, 같은 pane을 사이드바에서 다시 선택하는 경로, 모양/터미널/단축키/알림의 긴 값도 확인한다. 테마는 실제 설정 조작으로 바꾸고 적용 사건을 기다린다.
+- 기존 설정 region·키 바 region 접근성 locator를 갱신한다. 휴대폰에서 아래로 밀면 본문에 남고 X로 나오는 새 계약을 검사한다. 닫은 뒤 focus는 데스크톱 톱니·터미널 또는 휴대폰 본문 목록 단추여야 한다. 폰트 다운로드·격자/PTY 크기·키보드 입력과 브라우저 뒤로의 기존 단언은 유지한다.
+- 초기 회귀는 닫기 focus의 한 프레임 지연을 찾았다. 보이는 활동 막대에는 즉시 돌리고 가려진 본문은 commit 뒤에 돌린다. WebKit은 서비스 워커를 거친 `/me` 요청이 시험 route를 우회해 실제 loopback 응답을 받았다. 응답을 대체하는 새 단계만 기존 시험과 같이 serviceWorkers=block으로 격리하고 받은 passkey 필드도 확인한다. 제품 인증·서비스 워커 동작은 바꾸지 않는다.
+- 전체 E2E04의 wake lock과 E2E14의 공유 목록 모양 검사는 설정을 닫으면 목록 drawer가 그대로 열려 있다는 옛 모달 가정을 사용했다. 본문 복귀 뒤 drawer를 직접 열도록 동작을 갱신하고 기존 요청/해제 횟수·저장·새로고침·Reader 단언을 유지한다. 새 Tab 검사는 특정 톱니가 아니라 실제 DOM 차례의 앱 목록에 focus가 나왔는지 확인한다.
+- 첫 전체 병렬 gate에서 load average 76.31을 관찰했고 Rust m13 6개 준비 사건과 E2E78 계정 기동·E2E82 후보 점검이 실패했다. 원본 로그를 보존했다. 제품/시한/단언을 바꾸지 않은 Rust 6개 순차 실행과 E2E78·82 단독 파일이 모두 통과했다. 후속 전체 gate는 `--tee`로 단계를 순차 실행하고 Rust worker 3·E2E worker 3으로 모든 검사를 유지했다. 웹 E2E 88파일/99작업이 통과했다. 이 실행의 `RUST_TEST_THREADS=1`은 기존 aaa-common panic_log 자식 출력에 libtest 접두어를 붙여 파서 시험 하나를 실패시켰다. 자식의 성공·출력 형식을 직접 확인하고 저장소 기본값 2로 aaa-common 36개를 따로 검증했다. 기본 test thread 설정은 유지한다. 새 UI 변경 뒤에는 web/build와 해당 E2E를 검증한다.
+- E2E26의 긴 목록 단계(`web/e2e/lib/panel-scroll.mjs`)는 실제 격리 host에 답한 것 79개·할 일 79개·기록 79개·자동화 40개와 앞 단계의 보고서 14개를 준비한다. DB fixture는 host를 멈춘 동안만 쓴다. Chromium·WebKit 각각 1280×800·390×844에서 제한된 높이·가로 넘침·스크롤 끝·hit test·항목 선택을 확인한다. 데스크톱은 실제 휠의 scroll 사건을 기다린다(scrollTop 변화는 MutationObserver가 알리지 않는다). 휴대폰은 native overflow의 scrollTop으로 끝을 확인한다(합성 touchmove를 실제 손가락 관성 스크롤로 주장하지 않는다). 기록은 더 보기가 없어질 때까지 페이지를 읽고 마지막 기록의 전후 차이도 연다. 머리·바닥과 문서는 움직이지 않는다. 기존 코드에서는 질문 목록 높이 3,484px가 800px 화면 밖으로 늘어나 첫 단언이 실패했다.
+- 착지 전체 Rust의 `post_cli`에서 3초 응답 시한·가짜 서버 BrokenPipe가 관측됐다. ACK/종료 코드 fixture가 실제 `hooks::read_msg`와 달리 완성된 JSON 뒤에도 EOF를 기다렸다. 요청 쓰기 쪽을 열어 둔 socket pair로 이 추가 의존성을 RED 재현하고, 첫 JSON 완성에 답하도록 고쳐 GREEN을 확인한다. 기존 옛 agent/accepted/refused/queued의 종료 코드·응답 단언과 제품 3초 시한은 유지한다. 제품 코드는 바꾸지 않으며 고정 sleep 없이 읽기 사건으로 끝낸다.
+- 고정 sleep·시한 연장·실패 재시도 없이 DOM·응답·history 사건으로 끝낸다. `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 06-settings --workers 1`과 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행한다.
+
+## 왼쪽 목록 고정 번호 칩(t-0739, plan §8.442)
+
+- `nice -n 15 cargo test -p aaa-host --lib automation_ids --locked`: 실제 host·DB·파일로 기존 규칙 조회→제목 수정→형식 변환→삭제→다른 이름 번호 발급→복원→재시작·프로젝트 이름 변경·내보내기를 확인한다. DB의 동시 읽기와 서로 다른 이름 발급은 Barrier 사건으로 끝내며 프로젝트별 독립 순번·재열기·프로젝트 삭제를 검사한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 21-library-reports,34-automations,43-tasks,69-coordinator-questions --workers 1`: 실제 host의 r/d/q/a 번호를 공유 칩으로 보이는지 검사한다. 보고서 inline code 기준의 글꼴·크기·배경·색·여백·모서리를 밝음/어두움에서 비교한다. Chromium 데스크톱·휴대폰·320px과 WebKit 질문 목록 390/320px에서 번호 전체·행 넘침을 확인하고 캡처한다. 긴 제목을 DOM에 잠깐 적용해 제목만 줄고 번호가 남는지도 검사한 뒤 원래 DOM을 복원한다.
+- 질문 행은 공통 button의 고정 높이를 덮어 내용만큼 커지고 flex로 줄어들지 않아야 한다. 추가한 세로 넘침 검사는 수리 전 실행 파일에서 네 q-ID의 행 넘침으로 실패하고 수리 뒤 통과했다. E2E69는 질문 본문과 sidebar의 선택 완료를 모두 기다린 뒤 다음 pane으로 이동하며, 단계 실패 때도 별도 WebKit을 finally에서 닫는다.
+- 여러 질문의 모든 ID·coordinator 첫 질문 중복 없음·답한 기록 ID 보존, 자동화 변환 뒤 같은 ID와 기존 이동·편집·답·Reader 거부도 유지한다. 고정 sleep·실패 재시도·시한 연장은 없다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.107, Agent link 1.11이며 착지 때 main의 문서/API 번호와 다시 대조한다.
 ## 할 일 공통 검색줄·칩 분류·완료 체크(t-0737, plan §8.441)
 
 - `node --test web/test/tasksModel.test.mjs`: 모델만 정한 대기와 담당·실행·예약·오류·완료 조합을 저장소별로 확인한다. 전체 외 칩의 합=전체, 각 칩의 실제 행 수=표시 수, 모든 ID의 중복/누락 없음을 검사한다. 예약 상위가 다른 칩에 있어도 하위는 자기 칩에 남는다.
@@ -16,6 +34,7 @@
 - `nice -n 15 cargo test -p aaa --test m13 thread_start_warns_about_similar_tasks_without_blocking --locked`: 완료 체크의 보관 tick을 확정한 뒤 활성 유사 task 경고·명시 연결·기동 비차단을 검사한다. 같은 제목의 완료 항목은 원래 ID로 보관되고 새 기동은 별도 ID와 열린 thread를 가져야 한다. 옛 시험의 완료 항목 활성 잔류 가정을 새 보관 계약으로 대체하며 경고·원본 머리·고정 ID 보존 검사는 유지한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 86-task-history --workers 1`: 실제 host·agent에서 Chromium 1920px와 Chromium 320px·WebKit 390px Reader의 탭/검색 공통 부모, 검색 위치·높이·스타일·간격과 좁은 화면의 동일 줄바꿈을 비교한다. 기록·보관 두 입구, 기존 검색·저장소·상태·더 보기·복원/Reader 권한을 유지한다. 실험실 파일의 모델 지정 대기·칩 합·직접 완료 체크·보관/복원도 확인한다. 운영 TASKS.md는 수정하지 않는다.
 - DOM·응답·`ticker tick`을 완료 사건으로 쓰며 고정 sleep·실패 재시도·시한 변경은 없다. 배치는 board의 실제 hash와 Front 기능/권한 응답 수신 뒤 잰다. 수신 전에는 「기록」 탭이 없어 검색 시작 위치가 달라지므로 첫 응답 전 폭을 기준값으로 삼지 않는다. 기존 E2E43·46·47·67·76·85와 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행하고 착지 창을 기다린다. API/E2E 번호는 유지한다.
+- t-0753 착지 검증에서 E2E86의 완료 체크 복원 뒤 즉시 CLI 조회가 실패했다. 보관 목록은 복원 요청을 시작할 때도 비워지므로 행 없음은 완료 신호가 아니다. 해당 task ID의 실제 `task_archive` 복원 성공 응답과 `aria-busy=false`·빈 결과 문구를 확인한 뒤 기존 ID·체크 해제·연결 없음·owner·예약 없음 단언을 수행한다. 남겨진 실패 실험실에는 복원된 항목이 있었으며 제품 코드·시한·기대값은 바꾸지 않는다.
 
 
 
@@ -100,7 +119,7 @@
 
 ## 일반 작업의 할 일 선행(t-0705, plan §8.430)
 
-- `cargo test -p aaa --test m13 manual_threads_always_have_tasks_and_archive_the_result --locked`: 실제 host·agent와 가짜 harness를 사용한다. 배경 기동 응답 전에 할 일 연결·선택 모델/머신/저장소를 확인하고, Markdown 머리/체크 목록이 별도 task가 되지 않는지·원문 파일 바이트·완료 보관의 ID/보고를 검사한다. 없는 Git ref의 준비 실패에도 연결된 할 일이 남고 `--link-task` 없는 기존 할 일 시작이 같은 ID를 쓰는지 확인한다. 보고 회수·명령 응답이 끝 신호이며 고정 sleep은 없다.
+- `cargo test -p aaa --test m13 manual_threads_always_have_tasks_and_archive_the_result --locked`: 실제 host·agent와 가짜 harness를 사용한다. 배경 기동 응답 전에 할 일 연결·선택 모델/머신/저장소를 확인하고, Markdown 머리/체크 목록이 별도 task가 되지 않는지·원문 파일 바이트·완료 보관의 ID/보고를 검사한다. resolve 응답은 thread 종료만 보장하므로 `w.h.ticks(1)`로 그 뒤 시작한 ticker의 보관 판정을 확정한 뒤 조회한다. 원래 task ID·완료 근거·보고 경로·활성 목록에서 제거됨과 뒤 tick의 중복 보관 없음을 검사한다(t-0753, macOS CI의 resolve 직후 보관 조회 경합). 없는 Git ref의 준비 실패에도 연결된 할 일이 남고 `--link-task` 없는 기존 할 일 시작이 같은 ID를 쓰는지 확인한다. 보고 회수·명령 응답·ticker 완료가 끝 신호이며 고정 sleep·시한 변경·실패 재시도는 없다.
 - host `account_pool::tests::waiting_direct_start_keeps_one_task_across_passes_and_request_replays`는 계정이 없는 실제 배정 대기 두 pass·같은 시작 ID 재전송·DB 재열기에서 task 하나/같은 ID·thread 0건을 검사한다. RPC 응답을 주지 않는 가짜 연결로 불필요한 재조회를 드러낸다. 기존 배정/취소 경합 시험의 대기·Cancelled·내구성 단언은 유지한다.
 - 기존 m13 유사 task 경고 시험은 별도 task 생성과 기존 완료 task 보존, `coordinator_flow`는 연결 옵션 없는 자동 연결, `doctor_files_brings_the_coordinator_guide_to_existing_projects`는 새 프로젝트와 낡은 안내 갱신의 동일 문구를 검사한다. `automation_start_holds_approval_two_agents_and_restart_receipt`의 기존 실제 do.start 실행에서 할 일을 만들지 않는 예외를 검사한다.
 - E2E47은 실제 일반 기동의 자동 연결을 확인한 뒤 그 할 일을 명시 삭제하여 옛 thread의 잇기/만들기 복구 단언을 유지한다. E2E48은 실제 승인된 do.start의 무생성·일반 작업 연결을 함께 확인한다. 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사 뒤 착지 창을 기다린다.

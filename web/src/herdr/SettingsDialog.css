@@ -1,18 +1,14 @@
-/* The Settings shortcut can open it while a file preview still holds its history entry: only
-   then is it raised, over the preview. On its own it stays on the layer every dialog shares, so
-   the file browser, later in the document, still opens above it; the palette has a layer of its own. */
-.settings-over-preview {
-  z-index: calc(var(--z-modal) + 2);
-}
-
-/* Two columns from 641px: the list of pages, and the page it opened. A phone shows one of the
-   two at a time, as a sheet of a fixed height so that turning a page never moves its edge. */
 .settings-dialog {
   display: grid;
   grid-template-columns: 13rem minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(100%, var(--content-w));
-  height: min(100%, 40rem);
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  container-type: inline-size;
 }
 
 .settings-dialog .icon-button svg {
@@ -109,6 +105,8 @@
 .settings-key-bar-body {
   grid-column: 2;
   grid-row: 2;
+  min-width: 0;
+  overscroll-behavior: contain;
 }
 
 .settings-body {
@@ -287,77 +285,77 @@
   }
 }
 
-@media (max-width: 640px) {
-  .settings-dialog {
-    grid-template-columns: minmax(0, 1fr);
-    height: 92%;
-  }
-
-  .settings-header,
-  .settings-body,
-  .settings-key-bar-body {
-    grid-column: 1;
-  }
-
-  /* the list is the sheet's whole body here, drawn as one card of rows */
-  .settings-nav {
-    grid-column: 1;
-    grid-row: 2;
-    padding: var(--space-4);
-    background: transparent;
-    border-right: 0;
-  }
-
-  .settings-nav-title {
-    display: none;
-  }
-
-  .settings-tabs {
-    gap: 0;
-    background: var(--bg-elevated);
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--radius-lg);
-  }
-
-  .settings-tab {
-    min-height: var(--keybar-h);
-    padding: 0 var(--space-3) 0 var(--space-4);
-    border-radius: 0;
-    font-size: var(--fs-md);
-  }
-
-  .settings-tab + .settings-tab {
-    border-top: var(--hairline) solid var(--border);
-  }
-
-  .settings-tab svg {
-    width: var(--icon-size);
-    height: var(--icon-size);
-  }
-
-  .settings-tab-chevron {
-    display: block;
-  }
-
-  .settings-shortcut-select {
-    width: 100%;
-  }
-
-  .settings-shortcut-control {
-    width: 100%;
-  }
-
-  .settings-shortcut-control .settings-shortcut-select {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  /* the key takes the line; Save and Remove share the next one */
-  .voice-key-input {
-    flex-basis: 100%;
-  }
+.settings-dialog.is-narrow {
+  grid-template-columns: minmax(0, 1fr);
 
 }
+
+.settings-dialog.is-narrow .settings-header,
+.settings-dialog.is-narrow .settings-body,
+.settings-dialog.is-narrow .settings-key-bar-body {
+  grid-column: 1;
+}
+
+/* 좁은 본문은 목록과 내용을 번갈아 보인다. */
+.settings-dialog.is-narrow .settings-nav {
+  grid-column: 1;
+  grid-row: 2;
+  padding: var(--space-4);
+  background: transparent;
+  border-right: 0;
+}
+
+.settings-dialog.is-narrow .settings-nav-title {
+  display: none;
+}
+
+.settings-dialog.is-narrow .settings-tabs {
+  gap: 0;
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.settings-dialog.is-narrow .settings-tab {
+  min-height: var(--keybar-h);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  border-radius: 0;
+  font-size: var(--fs-md);
+}
+
+.settings-dialog.is-narrow .settings-tab + .settings-tab {
+  border-top: var(--hairline) solid var(--border);
+}
+
+.settings-dialog.is-narrow .settings-tab svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.settings-dialog.is-narrow .settings-tab-chevron {
+  display: block;
+}
+
+.settings-dialog.is-narrow .settings-shortcut-select {
+  width: 100%;
+}
+
+.settings-dialog.is-narrow .settings-shortcut-control {
+  width: 100%;
+}
+
+.settings-dialog.is-narrow .settings-shortcut-control .settings-shortcut-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* the key takes the line; Save and Remove share the next one */
+.settings-dialog.is-narrow .voice-key-input {
+  flex-basis: 100%;
+}
+
+
+
 
 @media (prefers-reduced-motion: reduce) {
   .settings-tab {

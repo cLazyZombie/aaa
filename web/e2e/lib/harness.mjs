@@ -485,7 +485,7 @@ function paneHash(name) {
 /** 설정 창을 열고 그 쪽으로 간다(herdr-web-ui SettingsDialog: 넓은 창은 왼쪽 목록 옆에 쪽, 휴대폰은 목록에서 쪽으로) */
 async function openSettings(p, pageName) {
   await inList(p, "settings-open");
-  const dialog = p.getByRole("dialog", { name: "설정" });
+  const dialog = p.getByRole("region", { name: "설정" });
   await dialog.waitFor();
   await dialog.getByRole("tab", { name: pageName }).click();
   await dialog.getByRole("tabpanel", { name: pageName }).waitFor();
