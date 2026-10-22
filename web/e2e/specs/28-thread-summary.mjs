@@ -3,7 +3,7 @@
 // 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 작업 목록 ⋯의 「요약」도 같은 상세를 연다(plan §8.434).
 import fs from "node:fs";
 import assert from "node:assert/strict";
-import { root, AA, aaa, step, browser, webkit, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
+import { root, AA, aaa, step, browser, webkit, pairPage, inList, domIs, until, inTime, focusIs, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
 
 export const labEnv = { CODEX_HOME: `${root}/summary-codex` };
 const hostConfig = `${root}/c/host.toml`;
@@ -112,6 +112,10 @@ export default async function ({ page }) {
           if (await menu.locator(".summary-detail").count()) throw new Error("메뉴 안에 요약을 펼쳤다");
           await shot(p, `summary-menu-${tag}-${thread === missing ? "missing" : "saved"}`);
           if (!phone && thread === missing) {
+            // RowMenu는 첫 항목 focus를 다음 frame에 준다. 초기 focus가 끝난 뒤
+            // 요약으로 옮겨 Enter를 누른다(그 전에 옮기면 보고로 되돌아갈 수 있다).
+            await inTime(menu.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))), 20_000, "메뉴 초기 focus frame");
+            await focusIs(p, "메뉴 첫 항목", '[role="menu"] > button:first-of-type');
             await item.focus();
             await p.keyboard.press("Enter");
           } else await item.click();
