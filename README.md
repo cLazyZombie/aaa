@@ -128,6 +128,7 @@ mkdir -p ~/.config/aaa
 
 ## 더 읽기
 
+- [구조 지도](docs/architecture.md): 기능을 추가·수정할 개발자를 위한 구성 요소와 코드 길잡이
 - [사용법](docs/usage.md): 웹 화면, 자주 쓰는 CLI
 - [운영 설치 점검표](docs/install-runbook.md): 설치·업그레이드·되돌리기·coordinator 배포
 - [보고서 운영](docs/library.md): 보고서 올리기·실시간 폴더·정리
