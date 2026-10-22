@@ -90,6 +90,8 @@ pub fn typescript_bindings() -> String {
         PasskeyAssertion::decl(&cfg),
         <Outcome<()>>::decl(&cfg),
         SessionState::decl(&cfg),
+        Responsibility::decl(&cfg),
+        ResponsibilityState::decl(&cfg),
         ScreenText::decl(&cfg),
         ReadSource::decl(&cfg),
         ReadFormat::decl(&cfg),

@@ -1,3 +1,4 @@
+import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -11,7 +12,7 @@ import { LibraryLink } from "./LibraryLink";
 import { ReportMarkdown, TaskAddButton, isDoc } from "./ReportsView";
 import { useFrameImages, useLightbox } from "./Lightbox";
 import { SummaryButton } from "./ThreadSummary";
-import { ParkBanner, ThreadActions } from "./ThreadActions";
+import { ResponsibilityBanner, ParkBanner, ThreadActions } from "./ThreadActions";
 import { ChangedFilesCard } from "./ChangedFiles";
 import { useDiffPanel } from "./useDiffPanel";
 import { useMediaQuery } from "./herdr/useMediaQuery";
@@ -151,13 +152,14 @@ export function ThreadPanel({
         <HeadMore />
       </header>
       {msg && <div className="banner err">{msg}</div>}
+      <ResponsibilityBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       <ParkBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       {t.copy === "failed" && <div className="banner" data-testid="report-copy-failed">보고·결과물 사본을 다시 받는 중이다. 마지막으로 받은 내용과 작업 상태를 유지한다.</div>}
       <div className={`thread-split${diffPanel.target && !sheet ? " with-diff" : ""}`}>
       <div className="thread-body">
         <div className="thread-col">
           <div className="t-hero">
-            <h1><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
+            <h1><ResponsibilityBadge value={t.responsibility} /><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
             {t.over_limit && <p className="muted" data-testid="thread-over-limit-origin">{t.over_limit.actor} · {new Date(t.over_limit.at_ms).toLocaleString()}{t.over_limit.user_request && ` · 사용자 지시: ${t.over_limit.user_request}`}</p>}
             <div className="t-meta">
               {t.account && <span data-testid="thread-account">계정 {t.account}</span>}

@@ -1,3 +1,4 @@
+import { ResponsibilityBadge } from "./ResponsibilityBadge";
 // pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
 // PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
 // - 이 화면이 지금 쓰는 화면이거나 아무도 쓰지 않으면 칸 크기에 맞춘다(열 때·창 크기가 바뀔 때).
@@ -2067,7 +2068,7 @@ export function TermView({
             <strong>{title ?? (pane.name || pane.id)}</strong>
           </span>
           <span className="muted">
-            {crumb ?? pane.machine} · {size[0]}×{size[1]}
+            {crumb ?? pane.machine} · {size[0]}×{size[1]} <ResponsibilityBadge value={pane.responsibility} />
           </span>
         </div>
         {status}

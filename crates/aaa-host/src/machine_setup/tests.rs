@@ -1428,6 +1428,7 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
                     AgentRequest::Spawn(spec) => {
                         n += 1;
                         let info = SessionInfo {
+                            responsibility: None,
                             id: format!("s{n}"),
                             name: spec.name.clone(),
                             argv: spec.argv.clone(),

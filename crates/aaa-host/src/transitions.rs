@@ -414,6 +414,7 @@ mod tests {
                     context: None,
                 };
                 let sessions = ["first", "s"].map(|id| SessionInfo {
+                    responsibility: None,
                     id: id.into(),
                     name: "codex".into(),
                     argv: vec!["codex".into()],

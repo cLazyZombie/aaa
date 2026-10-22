@@ -152,6 +152,10 @@ impl SessionState {
 /// 세션(=pane 하나) 실행 사실. 정본은 agent(session host)다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SessionInfo {
+    /// macOS의 실제 session-host 책임 경로. agent가 재연결 때 조회하며 권한 등록 여부는 뜻하지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub responsibility: Option<Responsibility>,
     pub id: String,
     pub name: String,
     pub argv: Vec<String>,
@@ -174,6 +178,22 @@ pub struct SessionInfo {
     /// 띄울 때 알려 준 harness(`SpawnSpec.harness`). 다시 띄울 때(resume) 그대로 넘긴다.
     #[serde(default)]
     pub harness: Option<String>,
+}
+
+/// PID의 부모 관계와 별개인 macOS 책임 프로세스 관측. 조회 실패를 정상으로 취급하지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Responsibility {
+    pub state: ResponsibilityState,
+    pub pid: Option<u32>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponsibilityState {
+    Launcher,
+    Detached,
+    Unknown,
 }
 
 /// 사람이 붙이는 pane 이름의 최대 글자 수(참고 herdr-web-ui `PaneRename` 입력 `maxLength={80}`)
@@ -1501,6 +1521,9 @@ pub struct LeaseView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PaneView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub responsibility: Option<Responsibility>,
     /// host에 고정한 인증 별칭. 이전 판 thread의 인증은 ThreadView.account로 확인한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -4140,6 +4163,7 @@ mod tests {
     #[test]
     fn session_state_flattens_into_info() {
         let info = SessionInfo {
+            responsibility: None,
             id: "s".into(),
             name: "n".into(),
             argv: vec![],

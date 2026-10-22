@@ -295,6 +295,7 @@ mod tests {
             let h = Host::open(cfg, root.join("host")).unwrap();
             h.project_create("demo", Default::default(), "test").unwrap();
             let pane = SessionInfo {
+                responsibility: None,
                 id: "coordinator".into(),
                 name: "coordinator".into(),
                 argv: vec!["codex".into()],

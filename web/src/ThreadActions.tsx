@@ -124,6 +124,27 @@ export function ParkBanner({ t, canAct, running }: { t: ThreadView; canAct: bool
   );
 }
 
+/** 책임 연결이 끊긴 pane은 사용자가 정리·보류·이어 하기 차례를 선택한다. */
+export function ResponsibilityBanner({ t, canAct, running }: { t: ThreadView; canAct: boolean; running: boolean }) {
+  const [open, setOpen] = useState(false);
+  const value = t.responsibility;
+  if (!value || value.state === "launcher") return null;
+  const detached = value.state === "detached";
+  return <div className="banner park-banner responsibility-banner" data-testid="responsibility-banner">
+    <div>
+      <strong>{detached ? "개발자 도구 책임 연결 끊김" : "개발자 도구 책임 확인 못함"}</strong>
+      <p>{detached ? "이 pane은 새 실행 파일의 첫 실행이 느릴 수 있다. 작업을 커밋·push하고 Handoff를 남긴 뒤 보류하고, 같은 머신에서 이어 하면 새 pane으로 열린다." : "실제 책임 프로세스를 조회하지 못했다. 머신 연결을 확인한 뒤 다시 조회한다."}</p>
+      {value.path && <details>
+        <summary>책임 경로 보기</summary>
+        <p className="responsibility-path">관측 경로: {value.path} · PID {value.pid}</p>
+        <p>실제 책임 경로만 조회한 값이며, 개발자 도구 권한 등록 여부는 별도로 확인한다.</p>
+      </details>}
+    </div>
+    {detached && canAct && threadActions(t, running).park && <button type="button" className="btn small" data-testid="responsibility-prepare" onClick={() => setOpen(true)}>정리 후 새 pane으로</button>}
+    {open && <ParkDialog t={t} running={running} onClose={() => setOpen(false)} />}
+  </div>;
+}
+
 function ParkDialog({ t, running, onClose }: { t: ThreadView; running: boolean; onClose: () => void }) {
   const pending = parkPending(t);
   const [note, setNote] = useState("");

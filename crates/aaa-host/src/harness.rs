@@ -1311,6 +1311,7 @@ mod tests {
         cfg.projects.root = dir.join("projects").display().to_string();
         let h = Host::open(cfg, dir.clone()).unwrap();
         let info = aaa_proto::SessionInfo {
+            responsibility: None,
             id: "s".into(),
             name: "claude".into(),
             argv: vec!["claude".into()],

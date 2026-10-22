@@ -243,12 +243,37 @@ fn restart_with(role: &str, authorized: bool) -> Result<String> {
     if !authorized {
         human_only(&format!("{} 다시 띄우기(세션은 이어진다)", label(role)))?;
     }
-    let (ok, text) = launchctl(&["kickstart", "-k", &service_target(role)])?;
+    let command = restart_command(role)?;
+    let args: Vec<_> = command.iter().map(String::as_str).collect();
+    let (ok, text) = launchctl(&args)?;
     if !ok {
-        bail!("launchctl kickstart 실패: {}", text.trim());
+        bail!("launchctl 재시작 요청 실패: {}", text.trim());
     }
     let state = launchd_state(role)?.unwrap_or_else(|| "올라가 있지 않다".into());
     Ok(format!("다시 띄웠다: {} · {state}\n", label(role)))
+}
+
+fn restart_command(role: &str) -> Result<Vec<String>> {
+    #[cfg(target_os = "macos")]
+    {
+        let (ok, text) = launchctl(&["print", &service_target(role)])?;
+        if !ok {
+            bail!("재시작할 서비스의 PID를 확인하지 못했다");
+        }
+        let pid: u32 = text
+            .lines()
+            .map(str::trim)
+            .find_map(|l| l.strip_prefix("pid = "))
+            .and_then(|s| s.parse().ok())
+            .filter(|p| *p > 0)
+            .ok_or_else(|| anyhow::anyhow!("서비스 launcher PID가 없다"))?;
+        if crate::restart::supported(role, pid)? {
+            return Ok(vec!["kill".into(), "SIGUSR2".into(), service_target(role)]);
+        }
+        // 옛 worker는 SIGUSR2를 처리하지 못한다. 최초 전환은 기존 재시작을 쓰고 결과를 명시한다.
+        eprintln!("옛 서비스의 최초 전환: launcher도 교체된다. 기존 pane은 책임 경고를 확인하고 정리 후 이어 한다");
+    }
+    Ok(vec!["kickstart".into(), "-k".into(), service_target(role)])
 }
 
 /// 감독자에서 내린다(`launchctl bootout`): 다시 뜨지 않는다. plist는 남아 다음 로그인 때 다시 뜬다

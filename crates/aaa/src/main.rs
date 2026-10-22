@@ -9,6 +9,7 @@ use aaa_agent::integration;
 mod launchd;
 mod migrate;
 mod person;
+mod restart;
 mod rollout;
 mod service;
 mod settings;

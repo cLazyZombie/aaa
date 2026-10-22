@@ -1309,6 +1309,10 @@ impl Host {
             group
         };
         ThreadView {
+            responsibility: r
+                .pane
+                .as_ref()
+                .and_then(|id| self.inner.lock().unwrap().panes.get(id).and_then(|p| p.info.responsibility.clone())),
             account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
             over_limit: r.over_limit.clone(),
             park: r.park.clone().map(Box::new),

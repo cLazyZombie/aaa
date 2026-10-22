@@ -78,6 +78,7 @@ async fn report_copy_recovers(fail_library: bool, fail_history: bool) {
             context: None,
         }],
         sessions: vec![SessionInfo {
+            responsibility: None,
             id: "s".into(),
             name: "codex".into(),
             argv: vec!["codex".into()],

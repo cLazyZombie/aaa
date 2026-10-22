@@ -231,6 +231,7 @@ mod tests {
             util::ensure_private_dir(paths.spec().parent().unwrap()).unwrap();
             util::write_json(&paths.spec(), &spec).unwrap();
             let info = SessionInfo {
+                responsibility: None,
                 id: sid.into(),
                 name: "test".into(),
                 argv: vec![],

@@ -2389,3 +2389,15 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 ### 배포 binary의 production 의존성 검사
 
 ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc`를 독립 호출한 뒤 기존 workspace/all-targets build를 이어 간다. 기존 windows-2025 CI도 이 단계를 실행한다. 배포와 같은 release profile·Windows target·production binary만 컴파일·링크하며 dev feature 합치기로 Win32 API 누락이 가려지는 것을 막는다. v0.1.3 release의 JobObjects dev-only 누락이 실제 실패 사례다. 필요 feature를 dev-only로 돌린 변형은 같은 production release 빌드에서 실패해야 한다. macOS의 `cargo xwin build`는 교차 컴파일·링크 증거이며 실제 Windows 실행 판정은 기존 CI가 맡는다. source 목록 검사·새 runner·시험 전용 export·시한 변경은 없다. 다른 OS의 기존 전체 build와 시험은 유지한다.
+
+## pane 책임 경로와 launcher 보존 재시작(t-0763, plan §8.444)
+
+- `cargo test -p aaa --test restart --locked`: macOS에서 실제 launcher·host·agent·session-host·CLI를 쓴다. launchctl 호출만 격리된 자기 launcher에 신호를 보내는 script로 대체하며 운영 launchd 등록은 하지 않는다. fixture launcher는 기존 C 소스를 그대로 빌드하고, `AAA_RESTART_TEST_LAUNCHER`를 주면 그 기존 파일을 읽기 전용으로 사용한다. 등록된 launcher 바이너리를 바꾸지 않는다.
+- 서로 다른 SHA인 agent 사본으로 바꾼 뒤 CLI 재시작으로 launcher·worker PID와 기존 pane이 유지되는지 확인한다. 기존 pane·새 pane에서 고유 코드를 넣은 C·Rust 실행 파일과 cargo run·build.rs의 실제 책임 PID를 확인하고 첫/재실행 시간을 보존한다. 시험 도구 `scripts/pane-responsibility-probe.py`의 출력은 작업 저장소 `target/restart-probes` 아래에 둔다(임시 OS 폴더의 Cargo target은 쓰지 않는다). 권한 미등록 CI에서는 속도 상한을 합격 조건으로 삼지 않는다.
+- 잘못된 worker 생성 시각·승인과 다른 실행 파일은 launchctl 변경 호출 전에 거부한다. launcher를 직접 종료하는 별도 단계는 pane을 남기고 새 agent의 재연결에서 `detached`가 갱신되는지 확인한다. 시험은 준비 기록·host 사건·명령 완료 출력으로 끝낸다. 셸 화면은 끝 공백을 잘라 내므로 `$ ` 문자열을 준비 사건으로 기다리지 않는다.
+- `cargo test -p aaa-agent --lib responsibility --locked`는 실제 경로 분류·조회 실패를 확인한다. 기존 직렬화/TypeScript 계약 검사는 선택 필드의 이전 판 호환을 유지한다.
+- E2E87은 실제 host·agent·thread를 사용하고 관측값만 응답 경계에서 바꾼다. Chromium 1280/320px, WebKit 390px Reader의 경고·접힌 경로 상세·정리 창·가로 넘침·보기 권한·보류 무변경을 확인하고 캡처한다. 보고서 iframe이 필요 없는 이 시험은 「사람을 기다림」 fixture로 sandbox/ServiceWorker 주입을 분리한다. 실제 보류·저장·이어 하기는 기존 E2E85와 함께 검증한다. 목록과 터미널 표지도 직접 확인하며, 응답 경계의 route handler는 context를 닫기 전 `unrouteAll({behavior: "wait"})`로 완료를 기다린다.
+- 최초 회귀에서 준비 기록 상위 폴더 누락을 재현해 수정했다. 새 fixture launcher가 시작하지 않은 실행은 해당 PID의 syspolicyd YARA 오류·종료와 직전 DetachedSignatures EMFILE을 기록했다. 시스템 설정·시한·기대값을 바꾸지 않고 기존 등록 launcher를 사용하는 별도 경로에서 책임·첫 실행을 검증한다. 준비 기록 신원은 파일 경로 문자열 대신 커널 생성 시각·부모·UID·boot로 대조한다(원자 교체된 옛 실행 파일의 경로 조회를 신원으로 쓰지 않는다).
+- 전체 검사에서 기존 task 경고 유일성 시험이 새 책임 안내의 `경고:` 접두어 때문에 실패했다. 책임 안내를 별도 `개발자 도구:` 줄로 표시해 기존 task 경고 계약·단언은 유지하며, 새 restart 회귀가 `pane list`의 기존 무인자 JSON 출력에 책임 관측값이 포함되는지 확인한다.
+- 추가 CLI 시험의 최초 문구 단언은 pane 명령의 기존 JSON 전용 계약을 잘못 가정했다. 불필요한 pane 글 출력 분기를 없애고, `--json` 없는 실제 CLI 출력도 JSON 한 줄이며 책임 관측값을 포함하는지 검사한다. thread 글 출력의 별도 진단과 웹 표지는 유지한다.
+- 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Linux 대상 clippy다. 착지 전 운영 host 재시작은 하지 않고 착지 창을 기다린다.
