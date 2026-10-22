@@ -1760,14 +1760,14 @@ impl Host {
             }),
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
             FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,
-            FrontRequest::TaskArchive { project, restore } => {
-                self.task_archive(&project, restore.as_deref(), actor).await
+            FrontRequest::TaskArchive { project, restore, view } => {
+                self.task_archive(&project, restore.as_deref(), view, actor).await
             }
             FrontRequest::TaskEdit { project, ops, base_sha256, user_request } => {
                 self.task_edit(&project, ops, base_sha256, user_request, actor).await
             }
-            FrontRequest::TaskLog { project, before, limit, filter, task } => {
-                self.task_log(&project, before, limit, filter, task.as_deref())
+            FrontRequest::TaskLog { project, before, limit, filter, task, search } => {
+                self.task_log_search(&project, before, limit, filter, task.as_deref(), search.as_ref())
             }
             FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
             FrontRequest::Assignable { project, check } => {

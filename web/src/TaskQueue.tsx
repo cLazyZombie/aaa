@@ -2,8 +2,8 @@ import { ThreadStageBadge } from "./ThreadStageBadge";
 // 예약의 정본은 host다. 이 컴포넌트에는 scheduler나 별도 저장을 두지 않는다. 할 일 한 목록(plan §8.393): 예약 행은 숫자·까닭 글 없이
 // 보라 표지만 보이고, 기다리는 특별한 까닭(머신 연결 대기·확인 필요)과 풀면 돌아갈 자리는 여기 상세에만 보인다.
 import { useEffect, useRef, useState } from "react";
-import { call, onTasksChanged } from "./api";
-import type { ArchivedTask, QueueOp, QueueState, TaskBoard, TaskView, ThreadStartPreview } from "./gen/proto";
+import { call } from "./api";
+import type { QueueOp, QueueState, TaskBoard, TaskView, ThreadStartPreview } from "./gen/proto";
 import { Markdown } from "./Markdown";
 import { queueWhy, unreserveHome, type MoveDir } from "./tasksModel";
 const words: Record<QueueState, string> = { queued: "예약됨 · 자리 나면 시작", check: "예약 · 확인 필요", starting: "시작 중", running: "진행", finished: "resolve 완료", cancelled: "예약 풀림" };
@@ -91,29 +91,9 @@ export function QueueControls({ task, board, canEdit, request, onStep, onUnreser
   </section>;
 }
 
-/** 완료 보관 단추와 목록. 예약은 따로 칸을 두지 않고 할 일 한 목록 맨 위에 있다(§8.393) */
-export function TaskQueuePanel({ board, canEdit, onThread }: { board: TaskBoard; canEdit: boolean; onThread: (id:string)=>void }) {
-  const [show, setShow] = useState(false);
-  const [entries, setEntries] = useState<ArchivedTask[]>([]);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!show) return;
-    let live=true;
-    const load=()=> { void call({op:"task_archive",project:board.project,restore:null}).then(r=> {if(live&&r.kind==="task_archive")setEntries(r.entries);},e=> {if(live)setError(String(e));}); };
-    load(); const off=onTasksChanged(load); return ()=> {live=false;off();};
-  },[show,board.project]);
-  async function restore(id:string) {
-    setBusy(true);setError("");
-    try {const r=await call({op:"task_archive",project:board.project,restore:id});if(r.kind==="task_archive")setEntries(r.entries);}
-    catch(e){setError(String(e));}finally{setBusy(false);}
-  }
+/** 완료 보관 입구는 기록 탭의 같은 검색·복원 화면을 연다. */
+export function TaskQueuePanel({ onArchive }: { onArchive: () => void }) {
   return <div className="task-queue-panel" data-testid="task-queue-panel">
-    <button className="btn" type="button" aria-expanded={show} onClick={()=>setShow(!show)} data-testid="task-archive-open">완료 보관</button>
-    {show&&<section aria-label="완료 보관" data-testid="task-archive-list">
-      {entries.length===0&&<p>완료 보관이 비어 있다</p>}
-      {entries.map(a=><article key={a.task_id} data-testid={`archive-${a.task_id}`}><h3><span className="task-short-id">{a.task.short_id}</span>{a.task.title}</h3><p>{a.committed ? a.reason : `보관 확정 확인 필요 · ${a.reason}`} · {new Date(a.completed_ms).toLocaleString()}</p><Markdown>{a.body}</Markdown>{a.task.thread&&<button className="btn" type="button" onClick={()=>onThread(a.task.thread!)}>{a.task.thread} 결과</button>}{canEdit&&<button className="btn" type="button" disabled={busy} onClick={()=>void restore(a.task_id)}>활성 목록으로 복원</button>}</article>)}
-    </section>}
-    {error&&<p role="alert">{error}</p>}
+    <button className="btn" type="button" onClick={onArchive} data-testid="task-archive-open">완료 보관</button>
   </div>;
 }

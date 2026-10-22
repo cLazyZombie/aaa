@@ -2,6 +2,14 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 할 일 기록 검색·저장소·완료 상태(t-0703, plan §8.429)
+
+- `nice -n 15 cargo test -p aaa-host --lib task_queue::tests:: --locked`: 실제 DB/파일로 4MiB 초과 보관의 개수·바이트 페이지와 모든 ID의 빠짐/중복 없음, trim/대소문자·메모/표시 ID·저장소·실제 완료 근거 조합, 같은 ID 복원·연결/예약 없음, 2MiB 이력의 목록 비전송/내구 보존, 일치하지 않는 100건 뒤의 기록 검색·삭제 복원을 검사한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 86-task-history --workers 1`: 격리 DB 130건/4MiB 초과에서 CLI의 전체 128건 출력, API 페이지의 frame 크기와 모든 ID, UI의 검색·저장소·완료 상태 조합/더 보기·완료/삭제 복원과 Reader 거부를 확인한다. Chromium 1280/320px·WebKit 390px의 활성/기록 화면과 필터 결과를 캡처하고 가로 넘침을 검사한다.
+- 기존 E2E46의 삭제·차이·되살리기, E2E47의 완료 본문·결과·ID와 E2E67의 예약 실행·복원 이후 재실행 없음 검사를 유지한다. 완료 보관 입구가 기록 탭을 여므로 복원 뒤 활성 행은 할 일 탭에서 확인한다.
+- 고정 sleep·실패 재시도·시한 연장 없이 실제 응답과 파일·DOM 사건으로 끝낸다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.106·Agent link 1.11.
+
+
 ## thread 보류·이어 하기(t-0689, plan §8.426)
 
 - `nice -n 15 cargo test -p aaa-host --lib park:: restart_plan --locked`: 보류 대상(일반 Worker만)·닫기 판정(맡긴 뒤의 새 `[보류 준비됨]`이고 agent가 일·확인창을 기다리지 않음)·같은 대화 판정(대화 ID 자리와 UUID)·git 글, 보류는 `unpark`만 다시 띄운다.

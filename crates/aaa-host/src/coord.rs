@@ -756,29 +756,88 @@ impl Host {
         filter: Option<TaskLogFilter>,
         task: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.task_log_search(project, before, limit, filter, task, None)
+    }
+
+    pub(crate) fn task_log_search(
+        &self,
+        project: &str,
+        before: Option<i64>,
+        limit: Option<u32>,
+        filter: Option<TaskLogFilter>,
+        task: Option<&str>,
+        search: Option<&aaa_proto::TaskHistorySearch>,
+    ) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
         let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
         let selector = task.map(|s| self.task_selector(project, s)).transpose()?;
-        let mut entries = self
-            .db
-            .task_log_list(project, before, if selector.is_some() { u32::MAX } else { limit as u32 + 1 }, filter)
-            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
-        if let Some(want) = selector {
-            let marker = format!("<!-- aaa-task:{want} -->");
-            entries.retain(|e| {
-                e.title.eq_ignore_ascii_case(&want)
-                    || e.before.iter().chain(e.after.iter()).any(|b| b.contains(&marker))
-            });
+        let marker = selector.as_ref().map(|want| format!("<!-- aaa-task:{want} -->"));
+        let mut cursor = before;
+        let mut entries = Vec::new();
+        let mut bytes = 0;
+        let mut next = None;
+        // 검색 결과를 자른 뒤 다음 커서를 정한다. 일치하지 않는 앞 페이지가 뒤 결과를 숨기지 않는다.
+        'scan: loop {
+            let batch = self.db.task_log_list(project, cursor, 100, filter).map_err(internal)?;
+            if batch.is_empty() {
+                break;
+            }
+            cursor = batch.last().map(|e| e.id);
+            for e in batch {
+                if let Some(want) = &selector
+                    && !e.title.eq_ignore_ascii_case(want)
+                    && !e.before.iter().chain(e.after.iter()).any(|body| body.contains(marker.as_ref().unwrap()))
+                {
+                    continue;
+                }
+                let matches = if let Some(search) = search {
+                    let mut tasks: Vec<_> =
+                        e.before.iter().chain(e.after.iter()).flat_map(|body| tasks::parse(body)).collect();
+                    for task in &mut tasks {
+                        if let Some(id) = &task.id {
+                            task.short_id = Some(self.db.task_short_id(project, id).map_err(internal)?);
+                        }
+                    }
+                    tasks.iter().any(|task| crate::task_queue::history_matches(task, Some(search)))
+                        || (tasks.is_empty()
+                            && search.repo.is_none()
+                            && e.title.to_lowercase().contains(&search.query.trim().to_lowercase()))
+                } else {
+                    true
+                };
+                if !matches {
+                    continue;
+                }
+                let size = serde_json::to_vec(&e).map_err(internal)?.len();
+                if entries.len() >= limit
+                    || (!entries.is_empty() && bytes + size > crate::task_queue::HISTORY_PAGE_BYTES)
+                {
+                    next = entries.last().map(|r: &aaa_proto::TaskLogEntry| r.id);
+                    break 'scan;
+                }
+                if size > crate::task_queue::HISTORY_PAGE_BYTES {
+                    return Err(err(ErrorCode::TooLarge, format!("기록 {} 한 건이 페이지 상한을 넘는다", e.id)));
+                }
+                bytes += size;
+                entries.push(e);
+            }
         }
-        let next = (entries.len() > limit).then(|| {
-            entries.truncate(limit);
-            entries.last().map(|e| e.id)
-        });
         let devices = self.db.devices().unwrap_or_default();
         for e in &mut entries {
             e.by = task_actor_label(&e.actor, &devices);
         }
-        Ok(FrontResponse::TaskLog { entries, next: next.flatten() })
+        let repos = if search.is_some() {
+            let past = self.db.task_log_list(project, None, u32::MAX, None).map_err(internal)?;
+            let tasks: Vec<_> = past
+                .iter()
+                .flat_map(|e| e.before.iter().chain(e.after.iter()))
+                .flat_map(|body| tasks::parse(body))
+                .collect();
+            crate::task_queue::history_repos(tasks.iter())
+        } else {
+            Vec::new()
+        };
+        Ok(FrontResponse::TaskLog { entries, next, repos })
     }
 
     pub(crate) fn task_log_prune(

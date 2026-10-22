@@ -728,6 +728,7 @@ impl Host {
         &self,
         project: &str,
         restore: Option<&str>,
+        view: Option<aaa_proto::TaskArchiveQuery>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
@@ -793,15 +794,88 @@ impl Host {
         }
         let active =
             tasks::parse(&file_rev::read(&self.project_dir(project)?.join("TASKS.md")).map_err(internal)?.text);
-        let entries = self
-            .db
-            .archive_list(project)
-            .map_err(internal)?
-            .into_iter()
-            .filter(|r| !r.restored && !active.iter().any(|t| t.id.as_deref() == Some(&r.task_id)))
-            .collect();
-        Ok(FrontResponse::TaskArchive { entries })
+        let view = view.unwrap_or_default();
+        let rows = self.db.archive_list(project).map_err(internal)?;
+        let repos = history_repos(rows.iter().map(|r| &r.task));
+        let limit = view.limit.unwrap_or(50).clamp(1, 100) as usize;
+        let mut entries = Vec::new();
+        let mut bytes = 0;
+        let mut next = None;
+        for mut row in rows {
+            if view.after.as_ref().is_some_and(|id| &row.task_id <= id) {
+                continue;
+            }
+            let restored = row.restored || active.iter().any(|t| t.id.as_deref() == Some(&row.task_id));
+            let matches = match view.filter {
+                Some(aaa_proto::TaskArchiveFilter::Restored) => restored,
+                Some(aaa_proto::TaskArchiveFilter::PrMerged) => !restored && row.reason == "PR 병합",
+                Some(aaa_proto::TaskArchiveFilter::MainMerged) => !restored && row.reason == "origin/main 병합",
+                Some(aaa_proto::TaskArchiveFilter::ReportDone) => !restored && row.reason == "보고 [완료]",
+                None => !restored,
+            };
+            if !matches || !history_matches(&row.task, view.search.as_ref()) {
+                continue;
+            }
+            row.restored = restored;
+            // 기록의 원문은 DB에 보존한다. 목록에는 중복된 전체 TASKS.md 스냅샷을 실어 보내지 않는다.
+            row.history.clear();
+            let size = serde_json::to_vec(&row).map_err(internal)?.len();
+            if !entries.is_empty() && (entries.len() >= limit || bytes + size > HISTORY_PAGE_BYTES) {
+                next = entries.last().map(|r: &aaa_proto::ArchivedTask| r.task_id.clone());
+                break;
+            }
+            if size > HISTORY_PAGE_BYTES {
+                return Err(err(
+                    ErrorCode::TooLarge,
+                    format!(
+                        "{} 보관 한 건이 페이지 상한을 넘는다",
+                        row.task.short_id.as_deref().unwrap_or(&row.task_id)
+                    ),
+                ));
+            }
+            bytes += size;
+            entries.push(row);
+        }
+        Ok(FrontResponse::TaskArchive { entries, next, repos })
     }
+}
+
+/// frame 봉투와 저장소 선택지를 위한 여백을 둔다. 개수뿐 아니라 직렬화 바이트로 자른다.
+pub(crate) const HISTORY_PAGE_BYTES: usize = aaa_proto::MAX_FRAME * 3 / 4;
+
+pub(crate) fn history_matches(task: &TaskView, search: Option<&aaa_proto::TaskHistorySearch>) -> bool {
+    let Some(search) = search else { return true };
+    if search.repo.as_deref().is_some_and(|repo| task.repo.as_deref().unwrap_or("") != repo) {
+        return false;
+    }
+    let needle = search.query.trim().to_lowercase();
+    needle.is_empty()
+        || task
+            .short_id
+            .iter()
+            .chain(std::iter::once(&task.title))
+            .chain(task.owner.iter())
+            .chain(task.notes.iter())
+            .any(|text| text.to_lowercase().contains(&needle))
+}
+
+pub(crate) fn history_repos<'a>(tasks: impl Iterator<Item = &'a TaskView>) -> Vec<aaa_proto::TaskHistoryRepo> {
+    let mut counts = std::collections::BTreeMap::<String, u32>::new();
+    let mut seen = std::collections::HashSet::new();
+    for task in tasks {
+        let repo = task.repo.clone().unwrap_or_default();
+        if seen.insert((task.id.as_deref().unwrap_or(&task.title).to_owned(), repo.clone())) {
+            *counts.entry(repo).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .map(|(key, n)| aaa_proto::TaskHistoryRepo {
+            label: if key.is_empty() { "정하지 않음".into() } else { key.clone() },
+            key,
+            n,
+        })
+        .collect()
 }
 
 #[cfg(test)]

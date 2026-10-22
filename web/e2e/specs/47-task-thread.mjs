@@ -120,8 +120,10 @@ export default async function ({ page }) {
     await archived.waitFor();
     await shot(page,"thread-desktop-archive");
     await archived.getByRole("button",{name:"활성 목록으로 복원"}).click();
-    await stateIs(page,"로그인 고치기","wait");
     await archived.waitFor({state:"detached"});
+    // 완료 보관은 기록 탭에서 연다. 복원한 활성 행은 할 일 탭에서 확인한다.
+    await page.getByTestId("tasks-tab-tasks").click();
+    await stateIs(page,"로그인 고치기","wait");
     const t=aaa("task","list").tasks.find(t=>t.title==="로그인 고치기");
     if(t.id!==stored.task_id||t.thread!==null||aaa("task","queue").entries.length)throw new Error(`복원 계약: ${JSON.stringify(t)}`);
     aaa("ticker","tick");
