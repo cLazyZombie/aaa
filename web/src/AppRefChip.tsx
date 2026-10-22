@@ -47,8 +47,9 @@ export function AppRefChip({ at, refs }: { at: AppRef; refs?: AppRefs }) {
   );
 }
 
-/** ID 글자를 그대로 보존하는 실제 링크: 보조 키·가운데 누름은 브라우저가 처리한다. */
+/** 질문 ID는 명시 참조와 같은 상태 칩, 나머지는 보조 키·가운데 누름도 되는 실제 링크다. */
 export function AppIdLink({ at, refs }: { at: AppId; refs: AppRefs }) {
+  if (at.kind === "question") return <AppRefChip at={{ kind: "question", target: at.target }} refs={refs} />;
   return <a className="app-id" data-testid="app-id" data-kind={at.kind} data-target={at.target} href={appIdHash(at)}
     onClick={(e) => { if (!browserClick(e)) { e.preventDefault(); e.stopPropagation(); refs.openId(at); } }}>{at.target}</a>;
 }

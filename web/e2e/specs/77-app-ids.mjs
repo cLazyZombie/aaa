@@ -6,7 +6,7 @@ import { root, AA, aaa, step, until, domIs, inTime, waitOutput, coordinatorPost,
 import { pairDevice } from "../lib/devices.mjs";
 
 const go = (p, hash) => p.evaluate((hash) => { location.hash = hash; }, hash);
-const link = (p, id) => p.locator(`[data-testid="app-id"][data-target="${id}"]`);
+const link = (p, id) => p.locator(`[data-testid="${id.startsWith("q-") ? "app-ref" : "app-id"}"][data-target="${id}"]`);
 const picked = async (p, id) => {
   try {
     await domIs(p, "주소의 할 일 상세와 강조", (id) => document.querySelector('[data-testid="tasks-view"]')?.dataset.shown === "true"
@@ -109,11 +109,12 @@ export default async function ({ page }) {
     await shot(page, "77-task-deep-link");
   });
 
-  await step("대화의 네 ID는 짧은 글 그대로 앱 안 이동, 코드·주소·없는 번호 제외, 뒤로와 가운데 누름 새 탭", async () => {
+  await step("대화의 질문은 상태 칩·다른 ID는 링크, 코드·주소·없는 번호 제외, 뒤로와 가운데 누름 새 탭", async () => {
     await chat(page);
     const c = page.getByTestId("chat");
-    await domIs(page, "네 ID·thread 질문·인라인 코드만 링크", () => document.querySelectorAll('[data-testid="chat"] [data-testid="app-id"]').length === 6);
-    assert.equal(await c.locator('pre [data-testid="app-id"], a a, [data-testid="app-id"][data-target$="9999"]').count(), 0);
+    await domIs(page, "질문 칩 둘·일반 ID 링크 넷", () => document.querySelectorAll('[data-testid="chat"] [data-testid="app-id"]').length === 4
+      && document.querySelectorAll('[data-testid="chat"] [data-testid="app-ref"]').length === 2);
+    assert.equal(await c.locator('pre [data-testid="app-id"], pre [data-testid="app-ref"], a a, a button, [data-target$="9999"]:is([data-testid="app-id"], [data-testid="app-ref"])').count(), 0);
     assert.equal(await c.locator(`a[href="https://example.ts.net/${d}"]`).count(), 1);
     const origin = await page.evaluate(() => location.origin);
     assert.equal(await link(c, d).first().getAttribute("href"), `#task=${d}`);
@@ -140,7 +141,8 @@ export default async function ({ page }) {
     await page.goBack(); await c.waitFor();
     await shot(page, "77-chat-ids");
     await chat(page, t.pane);
-    await domIs(page, "thread 대화도 같은 ID 링크", () => document.querySelectorAll('[data-testid="chat"] [data-testid="app-id"]').length === 6);
+    await domIs(page, "thread 대화도 같은 칩·링크", () => document.querySelectorAll('[data-testid="chat"] [data-testid="app-id"]').length === 4
+      && document.querySelectorAll('[data-testid="chat"] [data-testid="app-ref"]').length === 2);
     await link(page.getByTestId("chat"), d).first().click(); await picked(page, d);
   });
 
@@ -148,7 +150,8 @@ export default async function ({ page }) {
     await go(page, `thread=${t.id}`);
     const body = page.locator(".report-markdown");
     await link(body, d).first().waitFor();
-    assert.equal(await body.locator('[data-testid="app-id"]').count(), 5);
+    assert.equal(await body.locator('[data-testid="app-id"]').count(), 4);
+    assert.equal(await body.locator('[data-testid="app-ref"]').count(), 1);
     await link(body, d).first().click(); await picked(page, d);
     aaa("task", "rm", d);
     await page.getByTestId("task-missing").waitFor();
@@ -161,7 +164,7 @@ export default async function ({ page }) {
     aaa("thread", "resolve", t.id);
     await chat(page);
     await domIs(page, "끝난 thread의 보존하지 않은 질문은 글 그대로", (id) => document.querySelector('[data-testid="chat"]')?.textContent.includes(id)
-      && !document.querySelector(`[data-testid="chat"] [data-testid="app-id"][data-target="${id}"]`), threadQ);
+      && !document.querySelector(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`), threadQ);
     assert.ok((await page.getByTestId("chat").textContent()).includes(threadQ));
     fs.writeFileSync(`${root}/archive-task.md`, "완료 보관 시험");
     const completed = aaa("thread", "start", "demo", "--title", "보관할 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/archive-task.md`);

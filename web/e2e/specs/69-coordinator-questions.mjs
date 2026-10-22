@@ -19,12 +19,17 @@ const images = async (page, selector) => {
 };
 const shape = (page, selector) => page.locator(`${selector} .thread-ask-q`).evaluateAll((qs) => qs.map((q) => ({ text: q.textContent.replace(/q-\d+/g, "q-ID").replace(/\s+/g, " "), classes: [...q.querySelectorAll("*")].map((el) => [el.tagName, el.className]) })));
 
-// 실제 Claude 기록의 q-ID 링크를 연 채 host 사건으로 상태·CSS가 바뀌는지 본다.
+// 실제 Claude 기록의 맨 q-ID·링크를 연 채 host 사건으로 상태·CSS가 바뀌는지 본다.
 function chipChat(ids) {
   const dir = `${root}/claude/projects/-lab-q-colors`;
   fs.mkdirSync(dir, { recursive: true });
   const transcript = `${dir}/colors.jsonl`;
-  const lines = ids.map((id) => `[${id} 질문](#question=${id}) aaa:question/${id}`).join("\n\n");
+  const lines = [
+    ...ids.map((id) => `[${id} 질문](#question=${id}) aaa:question/${id}`),
+    `문장 속 ${ids.map((id) => `${id}에 답한다.`).join(" ")}`,
+    `붙은 괄호(${ids.join("·")})도 질문이다.`,
+    `쉼표 ${ids.join(",")}도 질문이다.`,
+  ].join("\n\n");
   fs.writeFileSync(transcript, [
     { type: "user", message: { role: "user", content: "질문 상태" } },
     { type: "assistant", message: { content: [{ type: "text", text: lines }] } },
@@ -38,7 +43,9 @@ async function chipState(page, ids, tone) {
   if (!(await page.getByTestId("chat").count())) await page.getByTestId("chat-toggle").click();
   await domIs(page, `q-ID 칩 ${tone}`, ({ ids, tone }) => ids.every((id) => {
     const chips = [...document.querySelectorAll(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`)];
-    return chips.length === 2 && chips.every((el) => el.classList.contains(`is-${tone}`) && el.dataset.tone === tone
+    // 기록 삭제 뒤 맨 ID는 기존 존재 검사대로 평문, 명시 참조 두 개는 중립 칩이다.
+    return chips.length === (tone === "plain" ? 2 : 5) && chips.every((el) => el.classList.contains(`is-${tone}`) && el.dataset.tone === tone
+      && el.querySelector("svg") && el.innerHTML === chips[0].innerHTML
       && (tone === "plain" ? !el.querySelector(".app-ref-state") : el.textContent.includes(tone === "ask" ? "답할 것" : "답함")));
   }), { ids, tone });
   // 상태 class만 맞고 색이 회색인 회귀도 잡는다. 밝음·어두움의 실제 토큰과 비교한다.
@@ -49,16 +56,18 @@ async function chipState(page, ids, tone) {
     for (const mode of ["light", "dark"]) {
       document.documentElement.dataset.theme = mode;
       for (const id of ids) {
-        const chip = document.querySelector(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`);
+        const chips = document.querySelectorAll(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`);
         const token = tone === "ask" ? "blocked" : "done";
         probe.style.backgroundColor = tone === "plain" ? "var(--bg-elevated)" : `var(--status-${token}-tint)`;
         probe.style.color = `var(--status-${token})`;
-        // button의 실제 색 전환 완료 사건을 기다린다. 테마를 바꾼 직후의 중간색을 비교하지 않는다.
-        getComputedStyle(chip).backgroundColor;
-        await Promise.all(chip.getAnimations({ subtree: true }).map((a) => a.finished));
-        const actual = { bg: getComputedStyle(chip).backgroundColor, icon: getComputedStyle(chip.querySelector("svg")).color };
-        const expected = { bg: getComputedStyle(probe).backgroundColor, icon: getComputedStyle(probe).color };
-        if (actual.bg !== expected.bg || (tone !== "plain" && actual.icon !== expected.icon)) errors.push(JSON.stringify({ mode, id, tone, actual, expected }));
+        for (const chip of chips) {
+          // button의 실제 색 전환 완료 사건을 기다린다. 테마를 바꾼 직후의 중간색을 비교하지 않는다.
+          getComputedStyle(chip).backgroundColor;
+          await Promise.all(chip.getAnimations({ subtree: true }).map((a) => a.finished));
+          const actual = { bg: getComputedStyle(chip).backgroundColor, icon: getComputedStyle(chip.querySelector("svg")).color };
+          const expected = { bg: getComputedStyle(probe).backgroundColor, icon: getComputedStyle(probe).color };
+          if (actual.bg !== expected.bg || (tone !== "plain" && actual.icon !== expected.icon)) errors.push(JSON.stringify({ mode, id, tone, actual, expected }));
+        }
       }
     }
     probe.remove(); document.documentElement.dataset.theme = theme;
@@ -91,6 +100,18 @@ export default async function ({ page }) {
     if (!ids.every((id) => /^q-\d{4,}$/.test(id)) || new Set(ids).size !== 4) throw new Error(`질문 ID: ${ids}`);
     chipChat(ids);
     await chipState(page, ids, "ask");
+    // 문장·붙은 괄호·쉼표 안의 각 칩도 정확히 그 q-ID와 카드로 이동한다.
+    for (const [id, selector] of [
+      ...q.items.map((q) => [q.id, `[data-testid="thread-ask-${t.id}"]`]),
+      ...req.questions.items.map((q) => [q.id, `[data-testid="request-ask-${req.id}"]`]),
+    ]) {
+      for (const at of [2, 3, 4]) {
+        await inList(page, "pane-q-colors");
+        await page.locator(`[data-testid="chat"] [data-testid="app-ref"][data-target="${id}"]`).nth(at).click();
+        await domIs(page, "맨 q-ID의 정확한 카드", ({ id, selector }) => location.hash === `#question=${id}`
+          && document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true" && !!document.querySelector(selector), { id, selector });
+      }
+    }
     const listed = aaa("question", "list").questions;
     for (const id of ids) if (!listed.some((q) => q.id === id)) throw new Error(`목록에 ${id}가 없다`);
     wk = await webkit.launch();

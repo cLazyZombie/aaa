@@ -7372,3 +7372,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 자동화는 「도는 시계」다. 시계 방향 화살표 안에 시계 바늘이 있어 정한 때·사건마다 다시 돈다는 뜻이다. 할 일은 「큰 체크 상자」다. 체크가 상자 밖으로 나간다. 옛 ListTodo는 「모든 thread」의 ListChecks와 꼴이 거의 같았다.
 - `web/src/activityIcons.ts`에서 `createLucideIcon`으로 만든다(class `lucide-aaa-automation`·`lucide-aaa-tasks`). 활동 막대, thread ⋯ 메뉴 「자동화 규칙」, 명령 팔레트 「할 일 열기」에 쓴다. thread 요약의 「지금 할 것」 머리는 TASKS.md 할 일이 아니라서 ListTodo 그대로 둔다.
 - wire 변화는 없다. 착지 기준 main 16a910b3의 마지막 §8.436·FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호 86(88파일)을 직접 확인해 빈 §8.437을 쓰고 API/E2E 번호는 유지한다. 검증은 [testing](testing.md)의 「활동 막대 자동화·할 일 아이콘」을 따른다.
+
+### 8.438 맨 q-ID도 질문 상태 칩으로 표시(t-0730)
+
+- **목적·원인.** 대화의 `(q-1148·q-1149)`도 Markdown 질문 링크와 같은 아이콘·답변 상태·색으로 보인다. `splitAppIds`는 `·`가 붙은 각 ID를 이미 인식하지만, 맨 ID 경로의 `AppIdLink`가 질문까지 일반 링크로 그려 상태 칩 렌더러를 거치지 않았다.
+- **변경.** 맨 ID의 공통 렌더러에서 question 종류를 `AppRefChip`으로 보낸다. 기존 Markdown 질문 링크와 같은 `look`·`open`을 사용하므로 thread·coordinator·보존한 답의 상태와 카드 이동을 함께 따른다. thread·task·report ID는 원문 링크와 보조 키/가운데 누름을 유지한다. host가 알려 준 대상만 변환하며 없는 ID·주소·코드 블록은 기존 규칙대로 둔다.
+- **검증.** 기존 E2E69에 맨 ID의 문장·괄호·붙은 `·`/쉼표를 추가한다. 명시 링크와 모든 칩의 아이콘·본문·밝음/어두움 CSS 색, 열림→답함→새 보고 뒤 답 보존과 기록 삭제를 비교하고 각 맨 ID의 정확한 카드 이동을 확인한다. E2E77의 coordinator·thread 대화/보고서·코드/주소 제외·질문 이동·일반 ID 링크 검사는 유지한다. 구분자 유닛 시험과 전체 ci-local·공개 검사 후 착지 창을 기다린다. 새 API·backend 변화가 없어 FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 유지한다.
+
+- **착지 통합.** 승인된 origin/main `ab1f7403`의 마지막 plan §8.437·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인했다. 활동 막대 아이콘 변경을 보존하고 빈 §8.438로 옮긴 통합 후보를 전체 ci-local·공개 검사·Linux 대상 clippy로 검증한다. 검증 tree와 같은 tree를 `--no-ff`로 병합·push하고 원격 SHA를 확인하며 배포와 GitHub CI 감시는 coordinator가 맡는다.

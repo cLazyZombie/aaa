@@ -10,6 +10,12 @@ describe("대화·보고서의 짧은 ID", () => {
     assert.deepEqual(splitAppIds("d-10000", exists), [ref("task", "d-10000")]);
     assert.deepEqual(splitAppIds("d-0002", () => false), ["d-0002"]);
   });
+  it("맨 q-ID가 문장·괄호·붙은 구분자 안에서도 각각 인식된다", () => {
+    for (const separator of ["·", ",", ", ", " 및 ", "\n"]) {
+      assert.deepEqual(splitAppIds(`질문(q-1000${separator}q-1001)에 답한다.`, () => true),
+        ["질문(", ref("question", "q-1000"), separator, ref("question", "q-1001"), ")에 답한다."]);
+    }
+  });
   it("다른 낱말·주소·경로·파일 이름에 든 ID를 링크하지 않는다", () => {
     for (const text of ["", "d-002", "xd-0002", "d-0002x", "d-00020", "foo_d-0002", "https://example.ts.net/d-0002", "#task=d-0002", "#thread=t-0001", "demo/d-0002", "./d-0002", "d-0002/file", "d-0002.md", "mail@t-0001", "%2Fd-0002"])
       assert.deepEqual(splitAppIds(text, exists), [text], text);
