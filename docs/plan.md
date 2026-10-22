@@ -7520,3 +7520,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 검색줄은 활성 목록과 같은 검색칸·필터 칩을 쓴다. 저장소·모델·머신·최근 7/30/90일·완료 근거를 조합하고 host에서 페이지를 자르기 전에 적용한다. 선택지는 검색 결과 첫 페이지가 아니라 전체 보관에서 얻어 옛 모델·머신도 선택할 수 있다. 빈 값은 미지정, null은 전체다.
 - 사용자 추가 결정 「기록탭은 아예 빼」에 따라 웹 기록 탭·상세 최근 기록·변경 기록 보기·웹 기록 전용 코드와 시험을 제거한다. CLI `aaa task log`·내구 이력과 삭제 직후 되살리기는 유지한다.
 - FRONT_API 1.110: `TaskArchiveQuery.profile/machine/since_ms/until_ms`, 응답 `profiles/machines`. 새 필터는 1.110 이상에서만 보이며 기존 검색·저장소는 1.106부터다. Agent link·E2E 번호는 유지한다. 착지 때 plan/API 번호를 최신 main과 대조한다.
+
+### 8.454 Windows bootstrap owner의 profile 경로 표기 정합성(t-0485)
+
+- main 첫 후속 Windows CI에서 환경/alias/host 수명3건은 통과했고 staged argv owner1건만 남았다. actual/expected hex 원문에서 인자3개·stage SHA 폴더·파일은 같고 profile ancestor만 긴 이름/8.3별칭으로 다른 것을 확인했다. bootstrap은 OS GetFullPath를 적용했지만 시험의 입력 profile은 별칭 표기를 유지했다.
+- 기존 New-Profile fixture가 자기 directory 생성 뒤 OS GetFullPath로 입력을 정규화하고 USERPROFILE/config/state/expected target에 제공하도록 수리한다. production bootstrap과 expected argv 조립·exact byte 비교는 그대로다. actual을 expected로 바꾸거나 경로 동등 비교로 단언을 완화하지 않는다. 원래 PS5.1/7·IRM/IEX·native argv/exit/hash·기존 exe/config 보존·거부 조합·시한은 유지한다.
+- 기존 owner의 Windows RED를 보존한다. 전체 ci-local·공개 검사·Windows/Linux strict cross·Windows release 조건 빌드 뒤 후보를 보고한다. Windows 실제 GREEN은 다음 착지 exact main CI로만 판정한다. API/link/E2E 번호는 올리지 않으며 v0.1.5 게시 조건(q-1165 1A)은 유지한다.

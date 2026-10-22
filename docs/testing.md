@@ -2499,3 +2499,9 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - macOS·논리 CPU 10개에서 대상 20/20과 전체 Rust 28/28묶음이 통과해 원본은 재현되지 않았다. 별도 19회의 시작/끝 시각 모두 전체 Rust 실행 구간 안에 있었다. 전체 Rust는 219.15초, 별도 대상 실행은 각 33.03~39.75초였고 시작/끝의 1분 부하는 15.58~43.19였다. PID·시각·종료 코드·로그를 각각 보존했다. 이 결과로 원인을 고쳤다고 판단하지 않는다.
 - 이후 CI 수집 대상에 맞게 trace 확장자만 `.jsonl`에서 `.log`로 정리했다. 기록 형식·송신 순서·기존 단언·시한은 그대로다. 제품 코드는 바꾸지 않고 진단 변경만 준비하며 다음 CI·ci-local의 재발 자료로 송신자를 확인한다.
 - 실제 `POLICY_HARNESS`를 TCP gate와 시험용 hook/거부 CLI에 연결해 두 phase의 연결/전송 기록 4개, PID·peer 일치, 인증 값 없음과 기존 CI `find` 수집 조건에 포함됨을 확인했다. 대상 owner의 추가 실행은 하지 않았다.
+
+## Windows bootstrap profile 표기 수리(t-0485, plan §8.454)
+
+- 기존 `cargo test --locked -p aaa --test windows_bootstrap` owner의 staged argv exact 비교를 유지한다. profile directory 생성 뒤 입력을 OS GetFullPath로 정규화해 PS5.1의8.3별칭 확장과 fixture 기대target 표기를 맞춘다. actual을 바탕으로 expected를 만들지 않는다.
+- RED는 main36f3e935의 Windows job119808659146에 남긴 actual_hex/expected_hex다. 세 인자가 동일하고 profile ancestor만 긴 이름/별칭인 것을 전체 로그에서 확인했다. 원래 argv/exit/hash/구판·부분 config 보존·거부 조건·PS5.1/7·실제 IRM/IEX 범위와 시한은 유지한다. production 변경은 없다.
+- macOS parser/release producer·전체 ci-local·공개 검사·양 OS strict cross와 Windows release 조건 build는 호환 검증이다. 같은 owner의 실제 Windows GREEN은 후보 착지 뒤 main CI에서만 판정한다. CI rerun/단언 완화로 넘기지 않는다.

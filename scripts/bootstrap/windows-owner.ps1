@@ -25,6 +25,9 @@ function Invoke-WebRequest {
 function New-Profile([string]$Name) {
     $profilePath = Join-Path $Lab $Name
     [void][IO.Directory]::CreateDirectory($profilePath)
+    # PS 5.1 expands an existing 8.3 ancestor in GetFullPath. Normalize the fixture
+    # input before deriving expectations; the native argv comparison stays exact.
+    $profilePath = [IO.Path]::GetFullPath($profilePath)
     $env:USERPROFILE = $profilePath
     $env:AAA_CONFIG_DIR = Join-Path $profilePath 'config'
     $env:AAA_STATE_DIR = Join-Path $profilePath 'state'
