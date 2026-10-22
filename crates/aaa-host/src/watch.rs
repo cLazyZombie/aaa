@@ -273,9 +273,10 @@ impl Host {
                 publish(&passed)?;
             }
             if let Some(rule) = common_rule {
+                // 인계 뒤의 대기·완료·실패 기록은 실행부가 소유한다. 여기서 같은 ID를
+                // 기록하면 ticker 완료나 source 재전달과 경합해 실제 결과를 덮는다.
                 self.automation_submit(p, &rule, &n.id, n.text.clone(), n.owners.first().cloned())?;
-            }
-            if !n.routine.is_empty() {
+            } else if !n.routine.is_empty() {
                 let (status, detail) = if waiting.iter().any(|w| w.id == n.id) {
                     ("waiting", "옛 목적지 변환 대기".to_string())
                 } else if let Some(reason) = &n.skip_reason {

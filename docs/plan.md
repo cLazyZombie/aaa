@@ -7568,3 +7568,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **진단.** §8.332의 비밀 비노출을 유지하면서 이번 요청에 따라 함수 이름을 포함한 콜스택을 추가한다. 원본 payload·환경·동적 thread 이름은 읽지 않는다. 프레임 파일은 허용된 상대 경로만 출력하고 모르는 경로는 숨긴다. 최대 64프레임·이름 512글자로 제한한다. 심볼 없는 프레임도 남기며 가능한 module 상대 주소로 같은 판 심볼의 사후 해석을 돕는다. 기존 panic 위치·반복 횟수·역할·build SHA와 latest 감시를 유지한다.
 - **별도 심볼.** MSVC PDB와 macOS dSYM을 압축해 동일 release의 별도 asset으로 보관한다. macOS producer는 unpacked와 필요 시 dsymutil을 쓰고 deploy-build도 dSYM 폴더를 실제 파일로 복사해 임시 worktree 정리 뒤 남긴다. manifest의 선택적 `symbols` 정보와 SHA256SUMS가 별도 심볼 및 대응 실행 파일 SHA를 기록한다. Linux musl은 링크 때 DWARF를 zlib으로 압축하고 실행 파일 안에 보존한다. 기존 설치·업데이트 소비자는 실행 파일 계약을 계속 쓴다. 현장에서 함수 이름을 해석하려면 같은 판 PDB를 실행 파일 옆 `aaa.pdb`로 둔다. PDB 없는 설치의 unknown 프레임과 native CI 미실행을 숨기지 않는다.
 - **검증.** 실제 release panic의 축소 전/후 출력, 비밀 비노출·unwind 생존, 모든 자산 원문 대조와 gzip 협상, CLI·HTTP 성능을 확인한다. 전체 ci-local·deps·공개 검사와 Windows release/cross·Linux cross를 실행한다. release workflow의 각 native target도 release panic 시험을 실행한다. FRONT_API 1.111·AGENT_LINK 1.11·E2E90은 그대로다. origin/main의 마지막 §8.457을 읽고 §8.458을 배정했으며 묶음 착지 때 다시 대조한다.
+
+### 8.459 감시 사건의 최종 실행 기록 소유(t-0814)
+
+- CI source의 `automation_submit` 뒤와 공통 batch 완료 뒤가 같은 event ID에 각각 `done`을 기록했다. 실행 순서에 따라 웹 실행 기록의 결과·시각이 바뀌고 m13의 첫 실패/변경된 실패 결과 비교가 흔들렸다. source 완료 기록은 실행 전에도 오늘 횟수를 올렸다.
+- 자동화로 인계한 사건의 대기·실패·완료는 실행부만 기록한다. 최종 detail은 실제 동작 결과이며 inbox 동작은 `coordinator 안내`다. 큐 인계 자체를 완료로 세지 않고 source 재전달도 완료 결과를 덮지 않는다. 감시만 한 결과·건너뜀·옛 목적지 변환 대기는 source 기록을 유지한다. 공용 watch를 쓰는 CI·Git에 같은 원칙을 적용한다.
+- 기존 outbox 재전달 시험이 실행 완료 뒤 source 재전달 순서를 고정하고 전체 이력을 대조한다. m13은 첫 실패와 새 실패 사건의 실제 실행 완료를 기다리며, 실패 시험 집합이 바뀌면 다시 깨운다는 기존 단언을 유지한다. 웹은 host 기록을 그대로 표시하므로 API·웹 코드·E2E 번호는 유지한다. 전체 ci-local·공개 검사 후 `[병합 준비됨]`으로 묶음 착지를 기다린다.

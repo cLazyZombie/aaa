@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## CI 사건의 전달·실행 기록 경합(t-0814)
+
+- `nice -n 15 cargo test --locked -p aaa-host --lib ci::tests::`: 기존 내구 outbox 시험에서 자동화 완료를 먼저 확정하고 같은 source 사건을 다시 전달한다. 실행 결과·시각·last_result·오늘 횟수 전체가 그대로여야 한다. 수정 전에는 `coordinator 안내`가 `CI failed · 자동화 입력`으로 덮여 결정적으로 실패했다. 큐 인계만으로 완료를 기록하지 않는지도 확인한다.
+- `nice -n 15 env -u AAA_SESSION_ID cargo test --locked -p aaa --test m13 ci::`: 첫 실패와 바뀐 실패 시험 각각의 자동화 실행 완료를 기록으로 기다린다. 뒤의 304 두 번과 tick은 CI 판정의 무변화 확인에만 쓴다. 첫 실패와 새 사건의 최종 결과 일치, 재시작 중복 방지, 같은 실패 집합 무깨움, 실패 시험 변경 시 다시 깨움, 회복·조회 장애의 기존 단언을 유지한다.
+- 자동화로 넘긴 사건의 대기·실패·완료는 실행부가 기록한다. 감시만 한 결과·같은 실패 집합·옛 목적지 변환 대기는 source가 계속 기록한다. 웹 실행 기록은 같은 ID의 결과·시각을 그대로 그리므로 source 재전달로 실행 결과를 덮지 않아야 한다. API·웹 코드·E2E 번호는 바꾸지 않는다.
+- 공용 watch의 Git owner도 큐에 있는 입력의 완료 기록·오늘 횟수가 없고 자기 착지의 건너뜀은 남는지 확인한다. 같은 head 재조회는 기록 전체가 같아야 한다. 기존 Git m13도 실제 동작 완료 뒤 재시작하므로 재시작 전후 기록 비교에 실행 중 상태가 섞이지 않는다.
+- 고정 sleep·재시도·시한 연장·기대값 완화 없이 기존 owner를 강화한다. 정본 검증은 전체 `nice -n 15 env -u AAA_SESSION_ID bash scripts/ci-local.sh --tee`와 공개 검사다.
+
 ## E2E88 WebKit 새 창 종료 원인과 시험 도구 갱신(t-0800)
 
 - macOS 15 arm64 진단 run `39793997341`은 같은 E2E88을 새 실험실에서 고정 3회 실행해 모두 WebKit desktop의 HTML 링크 클릭에서 실패했다. 클릭은 성공했지만 popup 사건 전에 브라우저가 exit 139로 끝났다. `page.close`·`context.close`·`browser.disconnected`가 시험의 명시적 정리보다 앞선다. 두 OS crash 기록은 새 창 생성의 `WebPageProxy::useGPUProcessForDOMRenderingEnabled()+344`, EXC_BAD_ACCESS/주소 0x40을 가리킨다. 동일 설치 binary의 해당 명령도 주소 0x40 읽기다. `page.crash` 사건이 없다는 이유로 브라우저 전체 crash를 배제하지 않는다.

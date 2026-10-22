@@ -142,18 +142,22 @@ async fn own_landings_skip_but_mixed_and_other_rules_enter_the_durable_queue() {
         l.poll().await;
         assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, u32::from(!skipped), "{subjects:?}");
         let runs = l.h.routine_runs("demo", "check").unwrap();
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].status, if skipped { "skipped" } else { "done" });
         let view = l.h.routines("demo").unwrap().into_iter().find(|r| r.name == "check").unwrap();
         if skipped {
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].status, "skipped");
             assert_eq!(runs[0].detail, "자기 착지");
             assert_eq!(view.last_skip.unwrap().detail, "자기 착지");
+        } else {
+            assert!(runs.is_empty(), "아직 큐에 있는 입력을 실행 완료로 기록하지 않는다");
+            assert!(view.last_result.is_none());
         }
+        assert_eq!(view.today, 0, "건너뜀과 큐 인계는 실행 완료 횟수가 아니다");
         assert_eq!(view.start_approval_sha256, Some(sha.clone()));
         assert_eq!(view.start_approved, Some(true));
         assert_eq!(l.h.automation_start_approval("demo", &r).unwrap(), Some((sha, true)));
         l.poll().await;
-        assert_eq!(l.h.routine_runs("demo", "check").unwrap().len(), 1, "건너뛴 사건도 head가 전진한다");
+        assert_eq!(l.h.routine_runs("demo", "check").unwrap(), runs, "같은 head 재조회는 실행 기록을 바꾸지 않는다");
         assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, u32::from(!skipped));
         assert_eq!(
             l.h.db
