@@ -25,7 +25,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardList, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
 import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -40,7 +40,7 @@ import { updateSidebarShared, useMedia, useSidebarShared } from "./settings";
 import { watchTouchReorder } from "./herdr/touchReorder.ts";
 import { placeBlock } from "./herdr/workspaceOrder.ts";
 import { GROUP_WORD, needsYou, paneAgentStatus, paneEnded, paneProblem, projectLine, roster, shortPath, stateLine, stateTone, threadKey, workingStartedAt, type WorkFolder } from "./sidebarModel";
-import { useSummaryHover } from "./ThreadSummary";
+import { SummaryOverlay, useSummaryHover } from "./ThreadSummary";
 import { formatResetIn } from "./usage";
 import { WorkingDuration } from "./WorkingDuration";
 import "./herdr/primitives.css";
@@ -1009,9 +1009,10 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   const pinKey = pane ? sidebarPinKey(pane.machine_id, pane.id) : null;
   const pinned = pinKey !== null && rows.pins.includes(pinKey);
   const menuFrom = useRef<HTMLElement | null>(null);
+  const [summaryAnchor, setSummaryAnchor] = useState<HTMLElement | null>(null);
   // 작업 요약 hover 카드(마우스 기기만, plan §8.259): 줄의 title tooltip을 대신하고 ⋯ 메뉴가 열리면 숨는다
-  const hover = useSummaryHover(t, rows.menuKey === menuKey);
-  // thread 줄은 그 agent pane을 연다: 보고·고정·모든 thread는 메뉴에서
+  const hover = useSummaryHover(t, rows.menuKey === menuKey || summaryAnchor !== null);
+  // thread 줄은 그 agent pane을 연다: 보고·요약·고정·모든 thread는 메뉴에서
   const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) => {
     menuFrom.current = previousFocus === undefined ? anchor : previousFocus;
     rows.toggleMenu({
@@ -1023,6 +1024,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
       place: line,
       items: () => [
         { id: "report", label: "보고", icon: FileText, run: () => props.onThread(t) },
+        { id: "summary", label: "요약", icon: ClipboardList, run: () => setSummaryAnchor(anchor) },
         ...(pinKey === null
           ? []
           : [pinned
@@ -1102,6 +1104,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
         <RowMenuButton title={title} open={rows.menuKey === menuKey} onToggle={(anchor) => toggleMenu(anchor)} />
       </div>
       {hover.card}
+      {summaryAnchor && <SummaryOverlay t={t} anchor={summaryAnchor} onClose={() => setSummaryAnchor(null)} />}
     </li>
   );
 }

@@ -7246,6 +7246,7 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
   - 다른 머신: worktree thread는 보류 때 origin과 HEAD가 같았어야 한다(아니면 거부). 그 머신 project.toml repos에서 같은 이름의 저장소(여럿이면 `--repo`)에 기준 `origin/<branch>`로 같은 이름의 새 worktree를 만들고(Agent link 변경 없음, 기존 `ThreadPrepare.base`), 할 일 뒤에 「# 보류에서 이어 하기」(언제·어디서·까닭, push 방법, 앞 자리는 남김, 앞 library는 host 보고서 판에 있음, 마지막 보고 20,000자까지)를 붙인 brief로 새 대화를 띄운다. 작업 폴더 thread는 새 폴더다(파일은 옮기지 않는다).
   - 앞 자리는 지우지 않고 `ThreadRec.left_places`에 둔다(launch 포함). 그 머신으로 돌아가면 앞 자리에서 `git fetch origin && git merge --ff-only origin/<branch>`를 먼저 하라는 brief로 새 대화를 띄운다(그 머신의 준비 journal이 앞 자리를 가리키므로 새로 만들지 않는다). resolve는 남은 앞 자리를 알린다.
   - 자리 검사는 다시 시작과 같은 DB 선점이다(한도가 찼으면 `start_wait`). 기동이 실패하면 보류 기록(옮긴 자리 포함)으로 되돌리고 까닭을 `error`에 둔다.
+- **인증 참조 수리(t-0720).** 보류는 thread의 pane을 지우지만 `account-run`은 닫힌 pane을 남겨 이어 하기의 인증 선점 기대값과 어긋났다. 이미 닫은 보류 기록에만 같은 실행·계정·harness의 사라진 pane을 기대값으로 회수하고, 기존 transaction 선점으로 중복 기동을 막는다. 남은 pane·준비 중·빠진 기록은 거부하며 새 작업의 기본 계정을 다시 고르지 않는다. 기존 보류 기록도 변환 없이 잇는다. m13은 기본 계정 둘·실행 인증 원장·격리 홈으로 같은 머신 재개와 TLS 머신 이동·복귀를 검증한다. API·저장 형식·번호는 바꾸지 않는다.
 - **머신 간 대화 조사(보고 t-0689).** Claude 기록은 `<설정 폴더>/projects/<작업 폴더 경로의 /를 ->/<ID>.jsonl`이고 `--resume <ID>`는 지금 작업 폴더 이름의 폴더에서만 찾는다(다른 폴더로 복사하니 찾았다). 계정에 묶이지 않는다. 옛 경로가 대화에 남아 3A로 새 대화를 쓴다. Codex는 sqlite 색인이 있어 실험하지 않았다. Claude Code는 시작할 때 `cleanupPeriodDays`(기본 30일)보다 오래된 기록을 지운다: 30일 넘은 보류의 같은 대화 잇기는 깨질 수 있다(남은 일).
 - **proto(FRONT_API 1.105).** `thread_park{now, note, user_request, cancel}`·`thread_unpark{machine, repo, dry_run}`(dry_run은 보기 권한도) → `Thread`·`UnparkPreview{options[machine, same, connected, conversation, repo, blocked], open, limit}`, `ThreadStatus::Parked`·`ThreadGroup::Parked`(rank 6, 끝남 7), `ThreadView.park`(`ThreadPark`). 보고 표지 `[보류 준비됨]`. Agent link 변경 없음.
 - **웹.** 보류 thread는 목록(sidebar)에서 빠진다. 「모든 thread」의 「보류」 묶음(까닭), 할 일 줄 ⏸ 상태·「t-NNNN · 보류」 칩·거르기 칩 「보류」(1.105 이상), 보류한 thread는 「바로 시작」 후보에서 빠진다. thread 화면의 보류 띠(언제·어디서·git·까닭, 「이어 하기」)와 관리 메뉴 「보류」(정리 맡기고 보류·바로 보류·요청 거두기)·「이어 하기」. coordinator 안내와 thread brief 보고 형식에 보류를 더했다.
@@ -7345,9 +7346,16 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
   빈 §8.433을 사용하며 main의 일반 작업 task 선행·기록 페이지·질문 칩·계정 풀 DB 정리 순서 수리를 보존한다.
   새 Front 요청과 웹 화면이 없어 판을 유지하며 Agent link의 선택 기능 imagegen.v1을 양쪽에서 협상한다.
 
+### 8.434 작업 목록 메뉴에서 요약 열기(10-22, t-0721)
 
-### 8.434 Windows 배포 binary의 정규 feature와 release 검사(t-0485)
+- **목적.** 작업 목록 thread 줄의 점 세 개 메뉴에 「요약」을 더해, thread 화면으로 이동하지 않고 작업 요약을 읽는다. 보고·고정·모든 thread와 자동화 규칙 항목은 유지한다.
+- **보기.** 「보고」 다음 「요약」을 누르면 메뉴를 닫고 thread 화면 머리 단추와 같은 상세를 연다. 데스크톱은 누른 줄에 붙은 팝오버, 휴대폰은 아래 시트다. 메뉴 안에는 요약 본문을 펼치지 않는다. 상세를 보는 동안 hover 카드는 숨긴다.
+- **요약 없음.** 항목을 그대로 제공하고 기존 상세처럼 할 일 첫 줄·요약 없음·받은 지시를 보인다. Reader도 읽을 수 있다. 본문 선택과 주소를 유지하며 Escape·휴대폰 뒤로 가기로 창을 닫는다.
+- **검증·경계.** 기존 E2E28에 Chromium 데스크톱·320px 및 WebKit 390px Reader의 메뉴·요약 유무·키보드 열기·뒤로 닫기·가로 넘침 검사를 더한다. 새 API·backend 변경은 없으며 FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호 86(88파일)을 유지한다.
+- **착지 통합.** 기준 origin/main `d98e4413`의 마지막 plan §8.433·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호 86(88파일)을 직접 확인했다. 빈 §8.434를 사용하고 main의 보류 thread 이어 하기 인증 참조 수리를 함께 검증한다. 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 `--no-ff` 병합·push와 원격 SHA 일치를 확인한다. 배포와 GitHub CI 감시는 coordinator가 맡는다.
+
+### 8.435 Windows 배포 binary의 정규 feature와 release 검사(t-0485)
 
 - v0.1.3 main CI는 통과했지만 release run39718713406의 Windows production binary에서 worker의 JobObjects import가 실패했다. `Win32_System_JobObjects`가 dev-dependency에만 있어 workspace/all-targets의 feature 합치기가 누락을 가렸다. 실제 worker가 쓰는 feature를 일반 Windows dependency로 옮기고 빈 dev 항목을 없앤다. 런타임 권한·Job 진단·승인 단언·시한은 그대로다.
 - 공식 build 단계는 Windows에서 배포와 같은 `cargo build --release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc`를 독립 호출하고 기존 workspace/all-targets build를 이어 간다. 기존 windows-2025 CI에 dev 없는 release 컴파일·링크 owner를 둔다. macOS Windows release 교차 빌드로 원본 RED→수리 GREEN·누락 변형 RED를 남기며 실제 Windows 실행은 기존 CI와 사용자 인수로 구분한다. 다른 OS의 gate는 유지한다.
-- 이미 push된 v0.1.3 tag는 지우거나 옮기지 않는다. 이번 후보는 판 번호를 유지하고 다음 게시 판은 사용자 결정 뒤 별도로 준비한다. main 4cc9be45의 마지막 §8.433·FRONT_API1.106·AGENT_LINK1.11·웹E2E86을 확인해 빈 §8.434를 쓰며 API/E2E 번호는 유지한다. source 착지는 별도 창을 따른다.
+- 이미 push된 v0.1.3 tag는 지우거나 옮기지 않는다. 이번 후보는 판 번호를 유지하고 다음 게시 판은 사용자 결정 뒤 별도로 준비한다. 착지 기준 main f68daf9d의 마지막 §8.434·FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호 86(88파일)을 직접 확인해 빈 §8.435를 쓰며 API/E2E 번호는 유지한다. 작업 목록 요약 메뉴와 보류 thread 인증 참조 수리를 보존한 통합본으로 전체 gate·Linux/Windows clippy·Windows release 교차 빌드를 다시 검증한다.

@@ -833,12 +833,12 @@ export default async function ({ page }) {
     await forget.getByRole("button", { name: "지우기" }).click();
     await forgot;
     await domIs(page, "기록 지운 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowend"]'));
-    // 5. thread 줄: 보고·고정·모든 thread(끝난 것까지, plan §8.89·§8.291). 프로젝트 머리는 없다
+    // 5. thread 줄: 보고·요약·고정·모든 thread(끝난 것까지, plan §8.89·§8.291·§8.434). 프로젝트 머리는 없다
     // t-0001은 앞 단계에서 끝냈으니 아직 열린 demo thread(「알림 시험」, agent pane이 돈다)의 줄에서. 고정 열쇠는 그 pane
     const other = aaa("thread", "list", "demo").threads.find((t) => t.id !== "t-0001" && t.role !== "evaluator").id;
     if ((await page.locator(`li[data-thread="demo/${other}"]`).getAttribute("data-pin-key")) === null) throw new Error(`${other} 줄에 고정 열쇠(agent pane)가 없다`);
     await page.getByTestId(`thread-demo-${other}`).click({ button: "right" });
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["보고", "고정", "모든 thread"])) throw new Error(`thread 메뉴 ${await menuItems(page)}`);
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["보고", "요약", "고정", "모든 thread"])) throw new Error(`thread 메뉴 ${await menuItems(page)}`);
     const toThreads = hashIs(page, "#threads");
     await page.getByRole("menuitem", { name: "모든 thread" }).click();
     await toThreads;
