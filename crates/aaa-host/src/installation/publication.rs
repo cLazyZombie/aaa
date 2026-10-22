@@ -158,6 +158,8 @@ impl Host {
         Ok((authority.join(format!("{id}.serve.json")), plan, permission))
     }
     pub(crate) async fn install_publish(&self, peer: Option<u32>, id: &str) -> Result<FrontResponse, ErrorBody> {
+        let _gate = self.publish_gate.lock().await;
+        self.no_pending_publication()?;
         let (path, plan, permission) = self.install_execution(id, peer, true)?;
         let (port, web) = ports(&plan)?;
         let native = tailscale::conditional_snapshot(web, port).await.map_err(exact_error)?;

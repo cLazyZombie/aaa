@@ -80,7 +80,7 @@ export default async function ({ page }) {
         return { cookie, api, sibling, own: own.status, bytes: (await own.arrayBuffer()).byteLength };
       });
       if (boundary.cookie || boundary.api || boundary.sibling || boundary.own !== 206 || boundary.bytes !== 2) throw new Error(JSON.stringify(boundary));
-      await shot(p, `87-video-${engine}-${profile}`);
+      await shot(p, `88-video-${engine}-${profile}`);
       const popup = p.waitForEvent("popup"); await link.click(); const tab = await popup;
       console.log("새 탭 영상 확인"); await ready(tab.locator("video")); await tab.getByRole("button", { name: "영상 재생" }).click(); await moved(tab.locator("video")); await tab.close();
       const anonymous = await browser.newContext({ viewport: profile === "iphone" ? { width: 390, height: 844 } : { width: 1280, height: 800 } }); contexts.push(anonymous);
@@ -95,7 +95,7 @@ export default async function ({ page }) {
       const reportVideo = p.getByTestId("report-detail").getByLabel("보고 영상", { exact: true }); await ready(reportVideo);
       await p.getByTestId("report-detail").getByRole("button", { name: "보고 영상 재생", exact: true }).click(); await moved(reportVideo); await seek(reportVideo);
       await domIs(p, "영상 가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
-      await shot(p, `87-report-${engine}-${profile}`);
+      await shot(p, `88-report-${engine}-${profile}`);
       await p.context().close(); await anonymous.close();
     }
   });

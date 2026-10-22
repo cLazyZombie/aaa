@@ -456,6 +456,8 @@ impl Transaction {
                 _locks: Locks(Vec::new()),
             });
         }
+        // 다른 instance 소유권 거부는 lock 파일도 만들기 전에 끝낸다. 잠근 뒤 다시 대조한다.
+        references::preflight(&manifest)?;
         let held = locks(&state, &manifest)?;
         if let Some(id) = pointer(&state.join("install/active.json"))? {
             let previous = read_journal(&state, &id, manifest.plan.choices.instance.as_deref())?;

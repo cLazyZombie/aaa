@@ -1,9 +1,29 @@
-# Windows 최초 실행 파일과 사용자 설치 시험
+# Windows 한 줄 설치와 사용자 설치 시험
 
-Windows x86_64, Windows PowerShell 5.1 또는 PowerShell 7에서 쓴다. bootstrap은 검증한 공식 release의
-`aaa.exe`를 `%USERPROFILE%\.local\bin\aaa.exe`에 놓고 `install`에 인자를 그대로 전달한다.
-PATH·레지스트리·SCM·계정·UAC/LSA 정책을 바꾸지 않는다. 설치 변경은 Rust 설치기의 별도 계획·승인에 따른다.
-ARM64/32비트 Windows, 소스 빌드 대체, 다른 기존 실행 파일 교체는 지원하지 않는다.
+Windows x86_64, Windows PowerShell 5.1 또는 PowerShell 7의 자기 계정 외부 콘솔에서 시작한다.
+이 입구가 포함된 새 release 게시 후에는 다음 한 줄을 쓴다. 0.1.4에는 `install.ps1`이 없다.
+
+```powershell
+irm https://github.com/cLazyZombie/aaa/releases/latest/download/install.ps1 | iex
+```
+
+script에는 게시 당시 정확한 판과 Windows exe SHA-256이 들어 있다. 이후 manifest/exe는 같은 고정 tag URL에서
+받아 내장 SHA·PE x86_64·실제 `--version`을 대조한다. 설정·암호·승인은 같은 콘솔의 Rust 설치기가 묻는다.
+script는 shell로 돌아오고 `$LASTEXITCODE`에 결과를 남기며 실행 정책·PATH를 영구 변경하지 않는다.
+SCM·계정·UAC/LSA 변경은 검토한 설치 계획과 별도 명시 승인에 따른다. ARM64/32비트는 지원하지 않는다.
+
+기존 `aaa.exe`와 같은 SHA면 재사용한다. 다른 판이면 구판을 덮지 않고
+`%USERPROFILE%\.local\share\aaa\installers\<SHA 앞 16자리>\aaa.exe`에 새 executor를 검증해 놓는다.
+이 경우 설치 계획의 bin target도 그 위치를 명시하여 구판을 쓰는 다른 instance를 보존한다.
+설정·작업·hook·journal·identity를 삭제하고 시작하지 않는다. 처음 `aaa 이름`에는 이어갈 기존 이름을 고른다.
+중단 기록이 있으면 같은 실행 파일은 원래 ID/계획의 재검토·새 승인을 통해 resume할 수 있다.
+다른 실행 파일에 결속된 승인 또는 충돌 기록은 새 repair 계획을 검토하며, 다른 instance의 공유 hook은 바꾸지 않는다.
+
+host 등록 창이 닫혔다면 host 웹 또는 host의 `aaa machine enroll --open 10m`으로 먼저 연다.
+agent SAS를 확인한 뒤 같은 한 줄 입구에서 같은 이름/중단 ID를 선택한다. Controller passkey 등록과 agent 승인은 별개다.
+새 repair는 원래 기록을 지우지 않는다. 외부 편집·공유 소유권·정책 문제는 설명과 함께 멈추며 권한으로 우회하지 않는다.
+
+아래 저장 파일 방식은 판을 직접 고정하는 관리용 대안이다. 일반 사용자에게 여러 명령 입력을 요구하지 않는다.
 
 ## 준비물
 
@@ -21,7 +41,7 @@ ARM64/32비트 Windows, 소스 빌드 대체, 다른 기존 실행 파일 교체
 ## 받기와 검증
 
 관리자가 아래 두 값을 채워 준 뒤 실행한다. 판은 `x.y.z`, SHA는 해당 release script의 64자리 hex다.
-`latest`를 따라가지 않으며 받은 본문을 원격 평가하지 않는다. 실행 정책을 전역으로 낮추지 않는다.
+이 관리용 방식은 받은 파일의 본문과 SHA를 직접 검토한다. 실행 정책을 전역으로 낮추지 않는다.
 
 ```powershell
 $Release = '<새 검증 release의 x.y.z>'
@@ -44,7 +64,7 @@ Get-FileHash -LiteralPath $Aaa -Algorithm SHA256
 ```
 
 bootstrap은 같은 판 manifest의 고정 Windows URL·SHA·PE x86_64·실제 `--version`을 모두 확인한다.
-동일 bytes가 있으면 mtime을 유지하고, 다른 파일이 있으면 덮지 않고 실패한다. 기존 설치의 업그레이드는
+저장 파일의 `-Version`만 사용한 관리용 호출은 동일 bytes의 mtime을 유지하고 다른 파일을 덮지 않고 실패한다. 기존 설치의 업그레이드는
 기존 업그레이드 절차를 쓴다. 다운로드/hash/경로 오류는 `bootstrap_*`, exit 2이며 설치기를 시작하지 않는다.
 배치 후 CLI가 실패/취소해도 최초 실행 파일은 남는다. 서비스나 설치 완료를 뜻하지 않는다.
 

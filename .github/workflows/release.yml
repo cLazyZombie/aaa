@@ -151,5 +151,6 @@ jobs:
             release-artifacts/aaa-launcher-macos-aarch64.json
             release-artifacts/aaa-launcher-macos-x86_64.json
             release-artifacts/aaa-install-windows.ps1
+            release-artifacts/install.ps1
             release-artifacts/SHA256SUMS
             release-artifacts/manifest.json

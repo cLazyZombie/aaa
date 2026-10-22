@@ -411,7 +411,9 @@ fn stage_failure(fault: Fault, target: &str) -> InstallResult {
         result.needs_user.push(InstallNeedsUser {
             code: fault.code.into(),
             target: target.into(),
-            message: "보호된 승인·입력과 실제 상태를 확인한 뒤 같은 ID로 재개하세요".into(),
+            message: crate::install::need_action(fault.code)
+                .unwrap_or("보호된 승인·입력과 실제 상태를 확인한 뒤 같은 ID로 재개하세요")
+                .into(),
         });
     }
     result

@@ -2,7 +2,7 @@
 // 모자라면 왼쪽·위로, 단추 점은 요약 뒤 지시가 있을 때.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CARD_NOW, cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryStale } from "../src/summaryCard.ts";
+import { CARD_NOW, cardLines, decidedLines, hoverPlace, modelName, popoverPlace, summaryActivity, summaryModel, summaryStale } from "../src/summaryCard.ts";
 
 const entry = (text, extra = {}) => ({ who: null, at: null, text, dropped: false, ...extra });
 const view = (over = {}) => ({
@@ -12,6 +12,18 @@ const view = (over = {}) => ({
 });
 
 describe("작업 요약 카드", () => {
+  it("시작 profile을 현재 모델로 추측하지 않고 관측한 모델과 effort만 함께 보인다", () => {
+    const t = { profile: "sol-high", agent: null };
+    assert.equal(summaryModel(t).text, "현재 모델 미확인 · 시작 profile: sol-high");
+    const observed = { model: "gpt-6-astra", effort: "high", at_ms: 1000 };
+    assert.equal(summaryModel({ ...t, agent: { model_observation: observed } }).text, "최근 확인 모델: astra high");
+    assert.equal(summaryModel({ ...t, agent: { model_observation: { ...observed, effort: null } } }).text, "최근 확인 모델: astra 생각 수준 미확인");
+    assert.equal(summaryModel({ profile: "astra-high", agent: {} }).text, "현재 모델 미확인 · 시작 profile: astra-high");
+    assert.equal(modelName("gpt-6.1-sol"), "sol");
+    assert.equal(modelName("gpt-6-sol"), "sol");
+    assert.equal(modelName("claude-opus-5-5"), "opus 5.5");
+    assert.equal(modelName("custom-model"), "custom-model");
+  });
   it("활동 글·진행률·시작 후 시간·활동 시간을 각각 표시하고 옛 host의 시작을 추측하지 않는다", () => {
     const t = { status: "open", created_at_ms: 1000, updated_at_ms: 2000, agent: { activity: "working", progress: "코드 확인", percent: 25, progress_at_ms: 65000, progress_since_ms: 61000 } };
     assert.deepEqual(summaryActivity(t, 126000), { activity: "지금 활동: 코드 확인 · ~25%", time: "시작 후 2분 · 활동 1분" });

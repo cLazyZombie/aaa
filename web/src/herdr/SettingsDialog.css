@@ -30,6 +30,7 @@
   min-height: 0;
   padding: var(--space-4) var(--space-3);
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg);
   border-right: var(--hairline) solid var(--border);
 }

@@ -1,0 +1,222 @@
+use super::authorization::{redact_private, terminal_steps};
+use super::*;
+
+#[test]
+fn closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied() {
+    use aaa_proto::DeviceRole;
+    let lab = std::mem::ManuallyDrop::new(Lab::new());
+    eprintln!("closed-window owner lab: {}", lab.0.display());
+    let codex = lab.0.join(".codex");
+    std::fs::create_dir(&codex).unwrap();
+    std::fs::write(codex.join("config.toml"), "[features]\nhooks = true\n").unwrap();
+    std::fs::write(
+        codex.join("hooks.json"),
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"another-tool --event"}]}]}}"#,
+    )
+    .unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let host = rt.block_on(async {
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.host.agent_listen = "127.0.0.1:0".into();
+        let host = aaa_host::Host::open(cfg, lab.0.join("closed-host")).unwrap();
+        aaa_host::link::start(&host).await.unwrap();
+        host
+    });
+    let mut base = lab.args();
+    base.retain(|arg| arg != "--dry-run");
+    let harness = base.iter().position(|arg| arg == "--harness").unwrap();
+    base[harness + 1] = "codex".into();
+    base.extend([
+        "--codex-path".into(),
+        BIN.into(),
+        "--codex-home".into(),
+        codex.to_string_lossy().into_owned(),
+        "--hooks".into(),
+        "install".into(),
+        "--login".into(),
+        "defer".into(),
+    ]);
+
+    let at = base.iter().position(|arg| arg == "--host").unwrap();
+    base[at + 1] = host.agent_listen.lock().unwrap().clone().unwrap();
+    let at = base.iter().position(|arg| arg == "--enroll").unwrap();
+    base[at + 1] = "wait".into();
+    let approval = lab.0.join("closed-approval.json");
+    let mut issue = base.clone();
+    issue.extend([
+        "--prompt".into(),
+        "plain".into(),
+        "authorize".into(),
+        "--out".into(),
+        approval.to_string_lossy().into_owned(),
+    ]);
+    assert_eq!(terminal_steps(&lab, &issue, &[("정확히 yes", "yes\r")], false).0, 0);
+    let issued: Value = serde_json::from_slice(&std::fs::read(&approval).unwrap()).unwrap();
+    let id = issued["claims"]["installation_id"].as_str().unwrap();
+    let mut interactive = base.clone();
+    interactive.extend(["--prompt".into(), "plain".into()]);
+    base.extend([
+        "--authorization-file".into(),
+        approval.to_string_lossy().into_owned(),
+        "--prompt".into(),
+        "plain".into(),
+    ]);
+    let (code, text) = terminal_steps(&lab, &base, &[], false);
+    assert_eq!(code, 3, "{}", redact_private(&text));
+    assert!(lab.0.join("config/agent.toml").is_file(), "부분 파일 적용을 삭제하면 안 된다");
+    let before = snapshot(&lab.0);
+    let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
+    assert_eq!(observed["installation_id"], id, "{observed}");
+    assert!(
+        observed["needs_user"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|need| need["code"] == "installation_enrollment_window_closed"),
+        "{observed}"
+    );
+    assert!(snapshot(&lab.0) == before, "status는 기록을 변경하지 않는다");
+    let aaa_proto::FrontResponse::Pending { pending, .. } =
+        rt.block_on(host.call(DeviceRole::Local, "local:cli", aaa_proto::FrontRequest::EnrollPending)).unwrap()
+    else {
+        panic!("pending")
+    };
+    assert!(pending.is_empty());
+    assert!(
+        text.contains("installation_enrollment_window_closed") && text.contains("등록 창"),
+        "{}",
+        redact_private(&text)
+    );
+
+    let nonce = issued["claims"]["nonce"].clone();
+    let (code, text) =
+        terminal_steps(&lab, &interactive, &[("남은 설치 처리", "resume\r"), ("정확히 yes", "yes\r")], false);
+    assert_eq!(code, 3, "{}", redact_private(&text));
+    assert!(text.contains(id) && text.contains("등록 창"), "{}", redact_private(&text));
+    let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
+    assert_eq!(observed["installation_id"], id, "{observed}");
+    let input: Value = serde_json::from_slice(
+        &aaa_common::private_file::read(
+            &lab.0.join("state/install/authorization").join(format!("{id}.input.json")),
+            1024 * 1024,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_ne!(input["authorization"]["claims"]["nonce"], nonce, "새 동의는 같은 ID의 새 nonce여야 한다");
+    let jobs = std::fs::read_dir(lab.0.join("state/install/jobs")).unwrap().count();
+    assert_eq!(jobs, 1, "재개는 파일 transaction을 하나 더 만들지 않는다");
+
+    drop(std::mem::ManuallyDrop::into_inner(lab));
+}
+
+#[test]
+fn status_failure_retains_the_requested_id_and_safe_phase_without_writes() {
+    let lab = Lab::new();
+    let id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    let before = snapshot(&lab.0);
+    let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
+    assert_eq!(observed["error"]["code"], "installation_not_found", "{observed}");
+    assert_eq!(observed["installation_id"], id, "{observed}");
+    assert_eq!(observed["error"]["details"], serde_json::json!(["phase=file_journal"]), "{observed}");
+    assert!(snapshot(&lab.0) == before, "오류 진단을 위해 state/nonce/lock을 만들면 안 된다");
+}
+
+/// PS 5.1/7의 실제 irm | iex → PE → 마법사/서명 승인/파일 적용 경계다.
+/// HTTP transport만 격리하며 실제 SCM/계정/LSA는 변경하지 않는다.
+#[cfg(windows)]
+#[test]
+fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_installation() {
+    use sha2::Digest;
+    use std::io::{BufRead, Write};
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
+    let digest = hex::encode(sha2::Sha256::digest(std::fs::read(BIN).unwrap()));
+    for shell in ["powershell.exe", "pwsh.exe"] {
+        let lab = Lab::new();
+        let old_binary = lab.0.join(".local/bin/aaa.exe");
+        std::fs::create_dir_all(old_binary.parent().unwrap()).unwrap();
+        std::fs::write(&old_binary, b"old aaa executor preserved").unwrap();
+        let entry = lab.0.join("install.ps1");
+        let rendered = Command::new("python").current_dir(repository)
+            .args(["-c", "from pathlib import Path; import sys; from scripts.release import render_windows_entry; Path(sys.argv[3]).write_bytes(render_windows_entry(sys.argv[1], sys.argv[2]))"])
+            .arg(env!("CARGO_PKG_VERSION")).arg(&digest).arg(&entry).output().unwrap();
+        assert!(rendered.status.success(), "published entry: {rendered:?}");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/install.ps1", listener.local_addr().unwrap());
+        let body = std::fs::read(&entry).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            stream.write_all(&body).unwrap();
+        });
+        let runner = lab.0.join("entry-owner.ps1");
+        std::fs::write(&runner, r#"function Invoke-WebRequest {
+    param($Uri, $OutFile, [switch]$UseBasicParsing)
+    $base = 'https://github.com/cLazyZombie/aaa/releases/download/v' + $env:AAA_TEST_VERSION
+    if ($Uri -ceq ($base + '/manifest.json')) {
+        @{ version=$env:AAA_TEST_VERSION; assets=@{ 'windows-x86_64'=@{url=($base+'/aaa-windows-x86_64.exe');sha256=$env:AAA_TEST_SHA} } } | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $OutFile
+    } elseif ($Uri -ceq ($base + '/aaa-windows-x86_64.exe')) {
+        [IO.File]::Copy($env:AAA_TEST_PAYLOAD, $OutFile, $false)
+    } else { throw 'unexpected fixture transport' }
+}
+irm $env:AAA_TEST_ENTRY_URL | iex
+exit $global:LASTEXITCODE
+"#).unwrap();
+        let work = format!("{}\r", lab.0.join("work").display());
+        let steps = [
+            ("설치 방식", "fresh\r"),
+            ("이 머신의 역할", "agent\r"),
+            ("머신 표시 이름", "windows-a\r"),
+            ("작업 root 절대 경로", work.as_str()),
+            ("저장소(internal", "internal\r"),
+            ("남겨 둘 여유 GB", "0\r"),
+            ("사용할 harness", "none\r"),
+            ("harness 로그인 검사", "defer\r"),
+            ("서비스 관리자", "none\r"),
+            ("지금 시작할까요", "deferred\r"),
+            ("사용자 PATH", "preserve\r"),
+            ("연결할 host:port", "example.ts.net:7430\r"),
+            ("네트워크", "direct\r"),
+            ("host 등록 방식", "skip\r"),
+            ("검토 후 승인할까요", "review\r"),
+            ("정확히 yes", "yes\r"),
+        ];
+        let inherited = lab.command(&[]);
+        let mut command = Command::new(shell);
+        command.env_clear();
+        for (key, value) in inherited.get_envs() {
+            if let Some(value) = value {
+                command.env(key, value);
+            }
+        }
+        command
+            .env("AAA_TEST_VERSION", env!("CARGO_PKG_VERSION"))
+            .env("AAA_TEST_SHA", &digest)
+            .env("AAA_TEST_PAYLOAD", BIN)
+            .env("AAA_TEST_ENTRY_URL", &url)
+            .args(["-NoLogo", "-NoProfile", "-File"])
+            .arg(&runner);
+        let (code, text) = super::authorization::terminal_program(&command, &steps);
+        assert_eq!(code, 0, "{}: {}", shell, redact_private(&text));
+        server.join().unwrap();
+        assert_eq!(std::fs::read(&old_binary).unwrap(), b"old aaa executor preserved");
+        assert!(lab.0.join("config/agent.toml").is_file());
+        let id: String = serde_json::from_slice(
+            &aaa_common::private_file::read(&lab.0.join("state/install/active.json"), 1024).unwrap(),
+        )
+        .unwrap();
+        let status = json(&lab.cmd(&["install", "--status", &id, "--json"]));
+        assert_eq!(status["installation_id"], id, "{status}");
+        assert_eq!(status["exit_code"], 0, "{status}");
+        assert_eq!(std::fs::read_dir(lab.0.join("state/install/jobs")).unwrap().count(), 1);
+    }
+}

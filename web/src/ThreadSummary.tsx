@@ -12,7 +12,7 @@ import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "./herdr/sheets.ts";
 import { useSheetHistory } from "./herdr/sheetHistory.ts";
 import { GROUP_WORD } from "./sidebarModel";
-import { cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryStale, whoWord } from "./summaryCard";
+import { cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryModel, summaryStale, whoWord } from "./summaryCard";
 import { useNowSecond } from "./nowClock";
 import "./ThreadSummary.css";
 
@@ -79,8 +79,10 @@ function Status({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
 function Activity({ t }: { t: ThreadView }) {
   const now = useNowSecond();
   const { activity, time } = summaryActivity(t, now);
+  const model = summaryModel(t);
   return (
     <div className="summary-activity" data-testid="summary-activity">
+      <p className="summary-model" data-testid="summary-model" title={model.title}>{model.text}</p>
       <p title={activity}>{activity}</p>
       <p className="summary-dim" data-testid="summary-time">{time}</p>
     </div>

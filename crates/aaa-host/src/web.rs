@@ -962,6 +962,11 @@ struct PushSubBody {
 }
 
 async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PushSubBody>) -> Response {
+    let _gate = host.publish_gate.lock().await;
+    // 입구 검사를 통과한 직후 포트가 바뀐 요청도 옛 origin의 구독을 다시 넣지 못한다.
+    let Some(origin) = host.web_origin(&host_header(&headers)) else {
+        return StatusCode::MISDIRECTED_REQUEST.into_response();
+    };
     let Some((id, _)) = device(&host, &headers) else { return unauthorized() };
     if host.vapid.is_none() {
         return bad_request("host 설정에서 Web Push가 꺼져 있다(notify.web_push)");
@@ -978,7 +983,7 @@ async fn push_subscribe(State(host): State<Arc<Host>>, headers: HeaderMap, Json(
         device: id.clone(),
         alerts: b.alerts,
     };
-    match host.db.push_put(&sub) {
+    match host.db.push_put_at(&sub, Some(&origin)) {
         Ok(true) => {}
         Ok(false) => {
             host.db.audit(&format!("device:{id}"), "push_subscribe", "다른 기기의 구독이라 거절");
