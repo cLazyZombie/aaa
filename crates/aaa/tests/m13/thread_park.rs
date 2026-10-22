@@ -12,6 +12,105 @@ fn brief(w: &World, id: &str) -> String {
 }
 
 #[test]
+fn account_unpark_keeps_auth_and_history_on_the_same_machine() {
+    account_unpark(false);
+}
+
+#[test]
+fn account_unpark_keeps_auth_when_moving_and_returning() {
+    account_unpark(true);
+}
+
+fn account_unpark(moving: bool) {
+    let mut w = world();
+    // 계정 선택·금고·실행 인증 원장·격리 홈은 제품 경로를 쓰고 harness만 대체한다.
+    let script = RESUMABLE_AGENT.replace(
+        "log=''",
+        r#"[ "$CLAUDE_CODE_OAUTH_TOKEN" = 'm8F1xQ7zN2vR9cL4' ] || exit 42
+[ -n "$CLAUDE_CONFIG_DIR" ] || exit 43
+if [ -f "$CLAUDE_CONFIG_DIR/park-history" ]; then history=kept; else history=new; fi
+touch "$CLAUDE_CONFIG_DIR/park-history"
+log="account-original history-$history
+""#,
+    );
+    let script = script.replace("log=\"$1 $2", "log=\"$log$1 $2");
+    std::fs::write(w.scripts.join("resumable.sh"), script).unwrap();
+    for (name, token) in [("park-original", "m8F1xQ7zN2vR9cL4"), ("park-other", "b3J6wP8yK1sT5dH9")] {
+        let file = w.task(&format!("{name}.token"), token);
+        w.h.ok(&["account", "import", name, "--harness", "claude", "--file", &file]);
+    }
+    w.h.ok(&["account", "default", "claude", "park-original"]);
+    if moving {
+        w.add_remote();
+        let other = w.lab.root.join("b-src");
+        std::fs::create_dir_all(&other).unwrap();
+        git(&other, &["clone", "-q", path_str(&w.lab.root.join("origin.git")), "repo"]);
+        std::fs::write(
+            w.projects.join("demo/project.toml"),
+            format!(
+                "schema = 1\n[[repos]]\npath = {:?}\nmachine = \"labA\"\n[[repos]]\npath = {:?}\nmachine = \"labB\"\n",
+                path_str(&w.repo),
+                path_str(&other.join("repo"))
+            ),
+        )
+        .unwrap();
+    }
+    let v = w.start(&[
+        "--title",
+        "인증 보류",
+        "--machine",
+        "labA",
+        "--profile",
+        "resumable",
+        "--repo",
+        path_str(&w.repo),
+        "--task-file",
+        &w.task("account-park.md", "인증 보류 시험"),
+    ]);
+    let id = v["id"].as_str().unwrap();
+    let pane = v["pane"].as_str().unwrap();
+    assert_eq!(v["account"], "park-original");
+    w.wait_show("인증 brief 전달", id, |v| v["brief"] == "delivered");
+    w.h.wait_output(pane, "account-original history-new", T);
+    let line = w.h.wait_output(pane, "--session-id", T)["matched_line"].as_str().unwrap().to_string();
+    let key = line.rsplit(' ').next().unwrap();
+    let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
+    git(&cwd, &["push", "-q", "origin", "HEAD"]);
+    let parked = w.h.ok(&["thread", "park", "demo", id, "--now"]);
+    assert_eq!(parked["status"], "parked");
+    assert!(parked["pane"].is_null());
+    assert!(w.h.json(&["pane", "get", pane]).is_err());
+    // 이어 하기는 새 작업의 기본 계정이 바뀌어도 처음 선택을 유지한다.
+    w.h.ok(&["account", "default", "claude", "park-other"]);
+    let target = if moving { "labB" } else { "labA" };
+    let back = w.h.ok(&["thread", "unpark", "demo", id, "--machine", target]);
+    assert_eq!(back["account"], "park-original");
+    assert_eq!(back["machine"], target);
+    assert!(back["park"].is_null());
+    let new = back["pane"].as_str().unwrap();
+    assert_ne!(new, pane);
+    w.h.wait_output(new, if moving { "--session-id" } else { "--resume" }, T);
+    w.h.wait_output(new, if moving { "account-original history-new" } else { "account-original history-kept" }, T);
+    if moving {
+        assert_ne!(back["cwd"], v["cwd"]);
+        assert_eq!(back["branch"], v["branch"]);
+        assert!(brief(&w, id).contains("# 보류에서 이어 하기"));
+    } else {
+        w.h.wait_output(new, &format!("--resume {key}"), T);
+        assert_eq!(back["cwd"], v["cwd"]);
+    }
+    w.wait_show("이어 하기 전달", id, |v| v["brief"] == "delivered");
+    if moving {
+        w.h.ok(&["thread", "park", "demo", id, "--now"]);
+        let home = w.h.ok(&["thread", "unpark", "demo", id, "--machine", "labA"]);
+        assert_eq!(home["account"], "park-original");
+        assert_eq!(home["cwd"], v["cwd"]);
+        w.h.wait_output(home["pane"].as_str().unwrap(), "account-original history-kept", T);
+        w.wait_show("돌아온 brief 전달", id, |v| v["brief"] == "delivered");
+    }
+}
+
+#[test]
 fn park_returns_the_slot_and_unpark_resumes_the_same_conversation() {
     let w = world_with("auto_resolve_day_secs = 1\n");
     w.h.ok(&["project", "set", "demo", "max_parallel_threads", "1"]);

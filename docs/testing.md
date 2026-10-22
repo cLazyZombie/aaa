@@ -64,6 +64,8 @@
 
 - `nice -n 15 cargo test -p aaa-host --lib park:: restart_plan --locked`: 보류 대상(일반 Worker만)·닫기 판정(맡긴 뒤의 새 `[보류 준비됨]`이고 agent가 일·확인창을 기다리지 않음)·같은 대화 판정(대화 ID 자리와 UUID)·git 글, 보류는 `unpark`만 다시 띄운다.
 - `nice -n 15 cargo test -p aaa --test m13 thread_park --locked`: 실제 host·agent·가짜 Claude(`resumable`)·TLS labB·로컬 origin. 고정 sleep은 auto-resolve 하루(시험 1초)를 넘기는 한 번뿐이고 그 밖은 host 기록·화면 출력·`ticker tick`으로 끝낸다. 결함 심기: brief 전달에서 `brief_line` 대신 brief.md 표지를 쓰면 「보류를 풀었다」 출력 기다림으로 실패한다.
+- t-0720 인증 회귀: 같은 `thread_park` 묶음의 `account_unpark` 두 시험은 host 금고에 가짜 Claude 계정 둘을 등록하고 기본 계정으로 worktree를 시작한다. 보류 뒤 기본 계정을 바꿔도 같은 머신의 `--resume`·대화 ID·격리 홈 기록, TLS 다른 머신의 새 대화·같은 branch, 앞 머신 복귀의 원래 홈을 유지해야 한다. 계정 선택·실행 인증 원장·격리 홈은 제품 코드이고 harness만 대체한다. 기존 코드에서 두 시험이 모두 운영과 같은 `bad_request`로 실패하고 수리 뒤 통과하는지 확인한다. 운영 보류 thread·실제 로그인은 쓰지 않는다.
+- `nice -n 15 cargo test -p aaa-host --lib account_policy --locked`: 보류 인증 참조 회수는 같은 실행·계정·harness이고 pane이 사라졌을 때만 허용한다. 기록 없음·다른 신원·준비 중·남은 pane 거부와 agent 응답 전 중복 기동 거부를 함께 검사한다. 고정 sleep·재시도·시한 연장은 없다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 85-thread-park --workers 1`: Chromium 1280px에서 「정리 맡기고 보류」·보류 띠·sidebar 제외·할 일 「보류」 칩과 거르기·「모든 thread」 보류 묶음·이어 하기 창, WebKit 390px에서 보류 창·바로 보류·이어 하기 창이 폭 안에 드는지 본다. 웹 유닛은 `operateModel`·`tasksModel`.
 ## 일반 post 기본 한도 확대(t-0688, plan §8.425)
 
