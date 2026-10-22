@@ -13,6 +13,7 @@
 - `nice -n 15 cargo test -p aaa --test m13 thread_start_warns_about_similar_tasks_without_blocking --locked`: 완료 체크의 보관 tick을 확정한 뒤 활성 유사 task 경고·명시 연결·기동 비차단을 검사한다. 같은 제목의 완료 항목은 원래 ID로 보관되고 새 기동은 별도 ID와 열린 thread를 가져야 한다. 옛 시험의 완료 항목 활성 잔류 가정을 새 보관 계약으로 대체하며 경고·원본 머리·고정 ID 보존 검사는 유지한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 86-task-history --workers 1`: 실제 host·agent에서 Chromium 1920px와 Chromium 320px·WebKit 390px Reader의 탭/검색 공통 부모, 검색 위치·높이·스타일·간격과 좁은 화면의 동일 줄바꿈을 비교한다. 기록·보관 두 입구, 기존 검색·저장소·상태·더 보기·복원/Reader 권한을 유지한다. 실험실 파일의 모델 지정 대기·칩 합·직접 완료 체크·보관/복원도 확인한다. 운영 TASKS.md는 수정하지 않는다.
 - DOM·응답·`ticker tick`을 완료 사건으로 쓰며 고정 sleep·실패 재시도·시한 변경은 없다. 배치는 board의 실제 hash와 Front 기능/권한 응답 수신 뒤 잰다. 수신 전에는 「기록」 탭이 없어 검색 시작 위치가 달라지므로 첫 응답 전 폭을 기준값으로 삼지 않는다. 기존 E2E43·46·47·67·76·85와 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행하고 착지 창을 기다린다. API/E2E 번호는 유지한다.
+- t-0753 착지 검증에서 E2E86의 완료 체크 복원 뒤 즉시 CLI 조회가 실패했다. 보관 목록은 복원 요청을 시작할 때도 비워지므로 행 없음은 완료 신호가 아니다. 해당 task ID의 실제 `task_archive` 복원 성공 응답과 `aria-busy=false`·빈 결과 문구를 확인한 뒤 기존 ID·체크 해제·연결 없음·owner·예약 없음 단언을 수행한다. 남겨진 실패 실험실에는 복원된 항목이 있었으며 제품 코드·시한·기대값은 바꾸지 않는다.
 
 
 
@@ -97,7 +98,7 @@
 
 ## 일반 작업의 할 일 선행(t-0705, plan §8.430)
 
-- `cargo test -p aaa --test m13 manual_threads_always_have_tasks_and_archive_the_result --locked`: 실제 host·agent와 가짜 harness를 사용한다. 배경 기동 응답 전에 할 일 연결·선택 모델/머신/저장소를 확인하고, Markdown 머리/체크 목록이 별도 task가 되지 않는지·원문 파일 바이트·완료 보관의 ID/보고를 검사한다. 없는 Git ref의 준비 실패에도 연결된 할 일이 남고 `--link-task` 없는 기존 할 일 시작이 같은 ID를 쓰는지 확인한다. 보고 회수·명령 응답이 끝 신호이며 고정 sleep은 없다.
+- `cargo test -p aaa --test m13 manual_threads_always_have_tasks_and_archive_the_result --locked`: 실제 host·agent와 가짜 harness를 사용한다. 배경 기동 응답 전에 할 일 연결·선택 모델/머신/저장소를 확인하고, Markdown 머리/체크 목록이 별도 task가 되지 않는지·원문 파일 바이트·완료 보관의 ID/보고를 검사한다. resolve 응답은 thread 종료만 보장하므로 `w.h.ticks(1)`로 그 뒤 시작한 ticker의 보관 판정을 확정한 뒤 조회한다. 원래 task ID·완료 근거·보고 경로·활성 목록에서 제거됨과 뒤 tick의 중복 보관 없음을 검사한다(t-0753, macOS CI의 resolve 직후 보관 조회 경합). 없는 Git ref의 준비 실패에도 연결된 할 일이 남고 `--link-task` 없는 기존 할 일 시작이 같은 ID를 쓰는지 확인한다. 보고 회수·명령 응답·ticker 완료가 끝 신호이며 고정 sleep·시한 변경·실패 재시도는 없다.
 - host `account_pool::tests::waiting_direct_start_keeps_one_task_across_passes_and_request_replays`는 계정이 없는 실제 배정 대기 두 pass·같은 시작 ID 재전송·DB 재열기에서 task 하나/같은 ID·thread 0건을 검사한다. RPC 응답을 주지 않는 가짜 연결로 불필요한 재조회를 드러낸다. 기존 배정/취소 경합 시험의 대기·Cancelled·내구성 단언은 유지한다.
 - 기존 m13 유사 task 경고 시험은 별도 task 생성과 기존 완료 task 보존, `coordinator_flow`는 연결 옵션 없는 자동 연결, `doctor_files_brings_the_coordinator_guide_to_existing_projects`는 새 프로젝트와 낡은 안내 갱신의 동일 문구를 검사한다. `automation_start_holds_approval_two_agents_and_restart_receipt`의 기존 실제 do.start 실행에서 할 일을 만들지 않는 예외를 검사한다.
 - E2E47은 실제 일반 기동의 자동 연결을 확인한 뒤 그 할 일을 명시 삭제하여 옛 thread의 잇기/만들기 복구 단언을 유지한다. E2E48은 실제 승인된 do.start의 무생성·일반 작업 연결을 함께 확인한다. 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사 뒤 착지 창을 기다린다.
