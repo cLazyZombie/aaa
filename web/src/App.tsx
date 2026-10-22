@@ -67,6 +67,8 @@ import { useAutomations } from "./automationData";
 import { openAsks, questionKey, questionRefLook } from "./asksModel";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
+import { DrawerDiagnostics } from "./DrawerDiagnostics";
+import { drawerTrace } from "./herdr/drawerTrace";
 import { highMachines, HIGH_STAT } from "./machineStats";
 import { automationAttention } from "./automationModel";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -355,24 +357,24 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 768px 이하에서 목록은 pane 위의 drawer다(herdr-web-ui App.tsx 290~316줄, drawer.tsx). 769px부터는 늘 옆 칸이라
   // 좁은 창이 열어 둔 drawer가 다음에 좁아질 때 다시 나오지 않게 닫는다
   const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => drawerTrace("drawer-render", { value: drawerOpen }), [drawerOpen]);
   const drawerOpenRef = useRef(drawerOpen);
   drawerOpenRef.current = drawerOpen;
   const wideScreen = useMediaQuery("(min-width: 769px)");
   useEffect(() => {
     if (wideScreen) setDrawerOpen(false);
   }, [wideScreen]);
-  // 휴대폰 뒤로·앞으로는 목적지와 관계없이 메뉴를 닫는다(plan §8.340). 설정 목록·쪽은 hash가 같고,
-  // 빈 주소·닫힌 pane은 hashchange에서 일찍 반환하므로 popstate에서 먼저 처리한다.
-  // 설정 닫기·패널 전환의 내부 되감기는 사용자의 이동이 아니다. 그 사이 연 메뉴를 닫지 않는다.
-  useEffect(() => {
-    const onPop = (event: PopStateEvent) => {
-      if (!isSettingsRewind(event) && window.matchMedia("(max-width: 768px)").matches) setDrawerOpen(false);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
   // 화면 안쪽에서 오른쪽으로 쓸면 열고 왼쪽으로 쓸면 닫는다. 왼쪽 끝은 브라우저 뒤로 몫이다(herdr/edgeSwipe.ts)
-  useEffect(() => watchDrawerSwipe(() => drawerOpenRef.current, setDrawerOpen), []);
+  // 이동은 진행 중인 손가락도 정리한다. 설정 닫기의 내부 복귀만 사용자 이동에서 뺀다.
+  const drawerSwipe = useRef<ReturnType<typeof watchDrawerSwipe> | null>(null);
+  useEffect(() => {
+    const stop = watchDrawerSwipe(() => drawerOpenRef.current, (open) => {
+      drawerOpenRef.current = open;
+      setDrawerOpen(open);
+    }, isSettingsRewind);
+    drawerSwipe.current = stop;
+    return () => { drawerSwipe.current = null; stop(); };
+  }, []);
   // Esc는 열린 drawer를 닫고 더 가지 않는다: capture 단계라 focus를 쥔 터미널은 받지 않는다. 위에 뜬 창(설정·확인창·
   // sheet)과 IME 조합은 제 Esc를 쓴다. 참고는 `[role="dialog"]`만 보지만 aaa 확인창은 alertdialog라 aria-modal로 본다.
   // aaa는 「더 보기」 메뉴가 drawer 안(목록 머리)에 있어 열린 메뉴도 제 Esc를 쓴다: 한 번은 메뉴, 다음은 drawer
@@ -754,6 +756,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // replaceState, deepLink.ts `isNavigation`은 pane 없는 곳을 이동으로 치지 않는다, plan §8.301)
   const goHash = (hash: string, replace = false) => {
     const next = hash ? `#${hash}` : "";
+    drawerSwipe.current?.beforeNavigation();
+    drawerTrace("history-write", { replace });
     if (settingsEntry(history.state)) {
       // 설정에서 다른 본문을 고르면 그 주소에 새 칸을 만든다. 늦은 설정 뒤로가기를 일으키지 않는다.
       const url = new URL(location.href);
@@ -822,6 +826,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [autoSelected, setAutoSelected] = useState(false);
   // replace: 지금 칸을 바꾼다(앱이 고른 첫 화면, 고른 것 없음. goHash)
   const choose = (id: string | null, auto = false, replace = auto || id === null) => {
+    drawerTrace("pane-select");
     goHash(id ? `pane=${encodeURIComponent(id)}` : "", replace);
     setSel(id ? `pane:${id}` : null);
     setAutoSelected(auto);
@@ -1353,6 +1358,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onThreads={chooseThreads} />, note: headNote }}>
     <AppRefContext.Provider value={appRefs}>
+    <DrawerDiagnostics />
     <div
       className={`app${collapsed ? " sidebar-collapsed" : ""}`}
       style={sidebarWidth === null ? undefined : ({ "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties)}

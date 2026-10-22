@@ -14,7 +14,9 @@ import { initTheme } from "./theme";
 import { initDeviceFonts } from "./settings";
 // herdr-web-ui main.tsx: 휴대폰 sheet(설정·확인 창)가 닫힐 때 내려가는 움직임
 import { watchSheetExits } from "./herdr/sheets.ts";
+import { startDrawerTrace } from "./herdr/drawerTrace";
 
+startDrawerTrace();
 initTheme();
 initDeviceFonts();
 watchSheetExits();
