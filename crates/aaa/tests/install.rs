@@ -30,7 +30,9 @@ impl Lab {
     fn command(&self, args: &[&str]) -> Command {
         let mut c = Command::new(BIN);
         c.env_clear().args(args).stdin(Stdio::null());
-        for key in ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"] {
+        for key in
+            ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432"]
+        {
             if let Some(value) = std::env::var_os(key) {
                 c.env(key, value);
             }

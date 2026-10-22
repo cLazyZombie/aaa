@@ -108,6 +108,10 @@ fn closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied() {
     let jobs = std::fs::read_dir(lab.0.join("state/install/jobs")).unwrap().count();
     assert_eq!(jobs, 1, "재개는 파일 transaction을 하나 더 만들지 않는다");
 
+    // Listener tasks retain Host/SQLite handles. Runtime drop joins their shutdown;
+    // release the last Host before removing its lab on Windows too.
+    drop(rt);
+    drop(host);
     drop(std::mem::ManuallyDrop::into_inner(lab));
 }
 

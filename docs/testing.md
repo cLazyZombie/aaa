@@ -2448,3 +2448,9 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 전체 검사에서 기존 task 경고 유일성 시험이 새 책임 안내의 `경고:` 접두어 때문에 실패했다. 책임 안내를 별도 `개발자 도구:` 줄로 표시해 기존 task 경고 계약·단언은 유지하며, 새 restart 회귀가 `pane list`의 기존 무인자 JSON 출력에 책임 관측값이 포함되는지 확인한다.
 - 추가 CLI 시험의 최초 문구 단언은 pane 명령의 기존 JSON 전용 계약을 잘못 가정했다. 불필요한 pane 글 출력 분기를 없애고, `--json` 없는 실제 CLI 출력도 JSON 한 줄이며 책임 관측값을 포함하는지 검사한다. thread 글 출력의 별도 진단과 웹 표지는 유지한다.
 - 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Linux 대상 clippy다. 착지 검증은 자기 worktree target만 쓰며 운영 host·agent 재시작은 배포 때 coordinator가 한다.
+## Windows 한 줄 입구 첫 CI 수리(t-0485, plan §8.450)
+
+- 기존 `--test install recovery::`는 실제 OS architecture 환경을 보존한 PS5.1/7 입구를 실행한다. 값을 AMD64로 꾸미지 않는다. 닫힌 실제 등록 창→파일/status ID/안내→같은 ID 새 nonce/job 하나를 모두 검사한 뒤 runtime·Host를 종료하고 lab을 제거한다. Windows OS32를 무시하거나 재시도하지 않는다.
+- 기존 `legacy_hook_alias_approval_keeps_its_signature_id_and_scope_through_status_and_resume`는 Windows canonical verbatim 경로에서 일반 Win32 lexical 경로를 구성한다. 기존 lexical/canonical 차이·서명 원문/ID/scope/nonce·다른 target/hash 거부·status 무쓰기·재개 job 하나 단언을 유지한다. Windows/Unix 모두 실행하며 Windows만 scope 구성을 달리한다.
+- `--test windows_bootstrap`의 staged executor exact argv 비교는 그대로 두고 실패 시 시험 argv의 actual_hex/expected_hex를 한 줄로 남긴다. 이 진단은 비밀 입력을 받지 않는 native fixture에만 적용한다. PS5.1에서 실패했다고 PS7까지 통과한 것으로 쓰지 않는다. 로컬 PowerShell의 조립 구문 대조나 Windows cross build를 실제 Windows 성공으로 보지 않는다.
+- 최초 Windows RED는 main 4fe5937c의 run 39761138515/job 119765308652다. 새 exact main CI로 Windows GREEN 또는 staged argv의 실제 차이를 판정한다. 공식 전체 ci-local·공개 검사·양 OS cross clippy와 Windows release build 뒤 별도 착지 창을 기다린다. 시한/기대값/조합 수는 바꾸지 않는다.
