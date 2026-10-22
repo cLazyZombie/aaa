@@ -12,7 +12,7 @@
 // 그사이 바로 저장하면 편집을 시작한 판의 블록 hash가 낡아 폼 저장이 충돌로 돌아온다. 메모 입력칸은 첨부 줄을 빼고 보이며(첨부 칸이
 // 보인다) 첨부 줄은 메모 끝에 둔다.
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
-import { Bot, ChevronLeft, Circle, CircleDot, CirclePause, Monitor, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
+import { Bot, Check, ChevronLeft, Circle, CircleDot, CirclePause, Monitor, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
 import { QueueControls, type ReserveRequest } from "./TaskQueue";
 import { Markdown } from "./Markdown";
@@ -60,7 +60,7 @@ import {
 export type SaveResult = { kind: "saved"; title: string } | { kind: "conflict" } | { kind: "none" };
 
 export function StateIcon({ state }: { state: TaskState }) {
-  const Icon = state === "problem" ? Triangle : state === "check" ? TriangleAlert : state === "run" ? CircleDot : state === "parked" ? CirclePause : Circle;
+  const Icon = state === "problem" ? Triangle : state === "check" ? TriangleAlert : state === "run" ? CircleDot : state === "parked" ? CirclePause : state === "done" ? Check : Circle;
   return <Icon className={`task-state is-${state}`} aria-hidden="true" />;
 }
 

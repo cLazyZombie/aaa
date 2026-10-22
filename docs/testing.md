@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 할 일 공통 검색줄·칩 분류·완료 체크(t-0737, plan §8.441)
+
+- `node --test web/test/tasksModel.test.mjs`: 모델만 정한 대기와 담당·실행·예약·오류·완료 조합을 저장소별로 확인한다. 전체 외 칩의 합=전체, 각 칩의 실제 행 수=표시 수, 모든 ID의 중복/누락 없음을 검사한다. 예약 상위가 다른 칩에 있어도 하위는 자기 칩에 남는다.
+- `nice -n 15 cargo test -p aaa-host --lib task_queue::tests:: --locked`: thread 없는 `[x]`/`[X]`를 하위부터 보관하고 미완료 하위가 남은 상위는 보존한다. 담당·메모·고정 ID·별도 완료 근거, 재시작 뒤 중복 없음, 복원 뒤 체크 해제·thread 없음·재예약 없음, 보관 저장 실패의 원본 보존과 파일 제거 뒤 확정 실패의 재시작 회수를 검사한다.
+- `nice -n 15 cargo test -p aaa --test m13 thread_start_warns_about_similar_tasks_without_blocking --locked`: 완료 체크의 보관 tick을 확정한 뒤 활성 유사 task 경고·명시 연결·기동 비차단을 검사한다. 같은 제목의 완료 항목은 원래 ID로 보관되고 새 기동은 별도 ID와 열린 thread를 가져야 한다. 옛 시험의 완료 항목 활성 잔류 가정을 새 보관 계약으로 대체하며 경고·원본 머리·고정 ID 보존 검사는 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 86-task-history --workers 1`: 실제 host·agent에서 Chromium 1920px와 Chromium 320px·WebKit 390px Reader의 탭/검색 공통 부모, 검색 위치·높이·스타일·간격과 좁은 화면의 동일 줄바꿈을 비교한다. 기록·보관 두 입구, 기존 검색·저장소·상태·더 보기·복원/Reader 권한을 유지한다. 실험실 파일의 모델 지정 대기·칩 합·직접 완료 체크·보관/복원도 확인한다. 운영 TASKS.md는 수정하지 않는다.
+- DOM·응답·`ticker tick`을 완료 사건으로 쓰며 고정 sleep·실패 재시도·시한 변경은 없다. 배치는 board의 실제 hash와 Front 기능/권한 응답 수신 뒤 잰다. 수신 전에는 「기록」 탭이 없어 검색 시작 위치가 달라지므로 첫 응답 전 폭을 기준값으로 삼지 않는다. 기존 E2E43·46·47·67·76·85와 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행하고 착지 창을 기다린다. API/E2E 번호는 유지한다.
+
+
+
 ## 시스템 idle-audit의 웹 읽기 전용(t-0735, plan §8.440)
 
 - `nice -n 15 cargo test -p aaa-host --lib automation:: --locked`: 실제 파일과 host 경계에서 Reader/Controller 원문·기록 조회, 웹 저장·토글·삭제·실행·승인·큐 변경·복원·옛 형식 변환의 거부와 파일 무변경을 확인한다. 파일 없음·오류에서도 이름 보호가 유지되고, 다른 운영 규칙은 웹 편집을 허용해야 한다. Local CLI 경계의 저장·토글·실행·삭제·꺼진 복원을 확인한다. 프로젝트를 생략한 일반 변환의 허용과 시스템 변환의 거부도 같은 경계에서 확인한다.

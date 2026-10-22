@@ -55,7 +55,7 @@ import { ConflictDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
 import { TaskQueuePanel, type ReserveRequest } from "./TaskQueue";
 import { TaskLogView } from "./TaskLogView";
-import { TaskSearchInput } from "./TaskHistoryTools";
+import { TaskFilterChips, TaskSearchInput } from "./TaskHistoryTools";
 import {
   TASK_FILTERS,
   TASK_STATE_LABEL,
@@ -283,6 +283,7 @@ export function TasksView({
   fileOpen?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
+  const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [query, setQuery] = useState("");
@@ -724,7 +725,7 @@ export function TasksView({
         <HeadMore />
       </header>
       {board && queueApi && <TaskQueuePanel onArchive={() => { setArchiveOpen(true); setTab("log"); }} />}
-      <div className="tasks-toolbar">
+      <div className="tasks-toolbar" ref={setToolbar}>
         <div className="tasks-tabs" role="tablist" aria-label="할 일 탭">
           <button type="button" role="tab" aria-selected={tab === "tasks"} className={`tasks-tab${tab === "tasks" ? " is-on" : ""}`} data-testid="tasks-tab-tasks" onClick={() => setTab("tasks")}>
             할 일 <span className="tasks-count">{total}</span>
@@ -744,7 +745,7 @@ export function TasksView({
         {tab === "tasks" && (
           <>
             <TaskSearchInput value={query} onChange={setQuery} label="할 일 검색" testId="tasks-search" />
-            <div className="tasks-chips">
+            <TaskFilterChips label="거르기" repo={
               <button
                 type="button"
                 className={`task-chip tasks-repo${repoOn !== null ? " is-on" : ""}`}
@@ -757,7 +758,7 @@ export function TasksView({
                 {coarse ? (repoOn === null ? "저장소" : repoLabel) : `저장소: ${repoLabel}`}
                 <ChevronDown aria-hidden="true" />
               </button>
-              <div className="tasks-filters" role="group" aria-label="거르기">
+            }>
                 {TASK_FILTERS.filter((f) => (f.id !== "reserved" || queueApi) && (f.id !== "parked" || parkApi)).map((f) => (
                   <button key={f.id} type="button" className={`task-chip tasks-filter tasks-filter-${f.id}${filter === f.id ? " is-on" : ""}`} aria-pressed={filter === f.id} data-testid={`tasks-filter-${f.id}`} onClick={() => setFilter(f.id)}>
                     {f.id === "reserved" && <span className="task-reserved-dot is-small" aria-hidden="true" />}
@@ -765,8 +766,7 @@ export function TasksView({
                     {model && <span className="tasks-count">{model.counts[f.id]}</span>}
                   </button>
                 ))}
-              </div>
-            </div>
+            </TaskFilterChips>
           </>
         )}
         {canEdit && tab === "tasks" && (
@@ -821,7 +821,7 @@ export function TasksView({
         </div>
       )}
       {tab === "log" ? (
-        <TaskLogView key={archiveOpen ? "archive" : "log"} initialArchive={archiveOpen && apiAtLeast(frontApi, [1, 106])} searchApi={apiAtLeast(frontApi, [1, 106])} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} onRestore={(e) => restore(e.id, e.title)} />
+        <TaskLogView key={archiveOpen ? "archive" : "log"} toolbar={toolbar} initialArchive={archiveOpen && apiAtLeast(frontApi, [1, 106])} searchApi={apiAtLeast(frontApi, [1, 106])} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} onRestore={(e) => restore(e.id, e.title)} />
       ) : tab === "later" ? (
         <div className="tasks-scroll" data-testid="tasks-later">
           {notesFiles.map((f) => (

@@ -149,6 +149,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-row.is-done .task-title { color: var(--text-dim); text-decoration: line-through; }
 .task-state { width: 16px; height: 16px; flex: 0 0 auto; }
 .task-state.is-wait { color: var(--text-dim); }
+.task-state.is-done { color: var(--status-done); }
 .task-state.is-run { color: var(--status-working); }
 .task-state.is-problem { color: var(--status-blocked); }
 .task-state.is-check { color: var(--notice); }
@@ -602,7 +603,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 }
 
 /* 기록도 활성 목록의 도구줄·행 token을 그대로 쓴다. */
-.task-log > .tasks-toolbar { padding-inline: 0; margin-bottom: var(--space-2); }
 .task-archive-detail { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .task-archive-detail summary { cursor: pointer; min-height: var(--control-h); padding-block: var(--space-1); }
 .task-archive-detail .md { overflow-wrap: anywhere; }

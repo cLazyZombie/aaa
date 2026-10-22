@@ -1,5 +1,5 @@
 // 활성 할 일과 기록이 같은 검색칸·저장소 메뉴·상태 칩을 쓴다.
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronDown, CircleDashed, Folder, FolderGit2, Layers, Search } from "lucide-react";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { useMediaQuery } from "./herdr/useMediaQuery";
@@ -19,16 +19,20 @@ export function TaskHistoryTools({ query, onQuery, repo, onRepo, choices, filter
   ];
   return <>
     <TaskSearchInput value={query} onChange={onQuery} label="기록 검색" testId={`${prefix}-search`} />
-    <div className="tasks-chips">
+    <TaskFilterChips label="기록 거르기" repo={
       <button type="button" className={`task-chip tasks-repo${repo !== null ? " is-on" : ""}`} aria-haspopup="menu" aria-expanded={anchor !== null} data-testid={`${prefix}-repo`} onClick={(e) => setAnchor(e.currentTarget)}>
         {coarse ? (repo === null ? "저장소" : label) : `저장소: ${label}`}<ChevronDown aria-hidden="true" />
       </button>
-      <div className="tasks-filters" role="group" aria-label="기록 거르기">
+    }>
         {filters.map((f) => <button key={f.id} type="button" className={`task-chip tasks-filter${filter === f.id ? " is-on" : ""}`} aria-pressed={filter === f.id} data-testid={`${prefix}-filter-${f.id}`} onClick={() => onFilter(f.id)}>{f.label}</button>)}
-      </div>
-    </div>
+    </TaskFilterChips>
     {anchor && <RowMenu anchor={anchor} title="저장소로 거르기" items={items} onClose={() => setAnchor(null)} />}
   </>;
+}
+
+/** 두 탭의 칩 간격·저장소 순서·좁은 화면 줄바꿈을 같은 틀로 그린다. */
+export function TaskFilterChips({ repo, label, children }: { repo: ReactNode; label: string; children: ReactNode }) {
+  return <div className="tasks-chips">{repo}<div className="tasks-filters" role="group" aria-label={label}>{children}</div></div>;
 }
 
 /** 설정에서 빠진 옛 저장소도 기록에 있으면 고를 수 있다. */
