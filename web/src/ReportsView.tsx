@@ -7,7 +7,7 @@ import { ExternalLink, ListPlus } from "lucide-react";
 import type { DeviceRole, LibraryFile, LibraryView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
-import { Markdown, MarkdownImageContext } from "./Markdown";
+import { Markdown, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { useFrameImages, useLightbox, type LightboxState } from "./Lightbox";
@@ -25,12 +25,13 @@ export const isDoc = (name: string, f: LibraryFile) => !f.on_agent && reportDocL
 
 /** 보고 글(report.md): `library/…` 그림을 그 보고서 보기 경로(`base`)로 그리고, 누르면 크게 본다(같은 글의 다른 그림으로 넘긴다) */
 export function ReportMarkdown({ base, text, onImages }: { base: string | null; text: string; onImages: (s: LightboxState) => void }) {
+  const attachment = useCallback((src: string) => base === null ? null : reportMarkdownImage(base, src), [base]);
   const resolve = useCallback(async (src: string) => {
     const url = base === null ? null : reportMarkdownImage(base, src);
     return url === null ? null : ({ kind: "inline", url } as const);
   }, [base]);
   return (
-    <MarkdownImageContext.Provider value={resolve}>
+    <MarkdownAttachmentContext.Provider value={attachment}><MarkdownImageContext.Provider value={resolve}>
       <div
         onClick={(e) => {
           const got = markdownImages(e.currentTarget, e.target);
@@ -41,7 +42,7 @@ export function ReportMarkdown({ base, text, onImages }: { base: string | null; 
       >
         <Markdown className="report-markdown">{text}</Markdown>
       </div>
-    </MarkdownImageContext.Provider>
+    </MarkdownImageContext.Provider></MarkdownAttachmentContext.Provider>
   );
 }
 

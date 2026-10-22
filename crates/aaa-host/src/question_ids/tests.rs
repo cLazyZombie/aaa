@@ -95,6 +95,9 @@ async fn structured_post_answers_by_id_keep_each_question_and_close_once_with_fu
     assert!(h.ask_answer("demo", &r.id, "stale", vec![Some(0), Some(1)], None, "device:phone").is_err());
     assert!(h.ask_answer("demo", &r.id, &q.report_hash, vec![Some(99), Some(1)], None, "device:phone").is_err());
     assert!(h.request_file("demo", &r.id, &q.report_hash, "library/preview/a.png").is_ok());
+    std::fs::create_dir_all(dir.join("library/unrelated")).unwrap();
+    std::fs::write(dir.join("library/unrelated/a.mp4"), b"private report").unwrap();
+    assert!(h.request_file("demo", &r.id, &q.report_hash, "library/unrelated/a.mp4").is_err());
     for path in ["report.md", "library/../brief.md", "library/.env"] {
         assert!(h.request_file("demo", &r.id, &q.report_hash, path).is_err());
     }

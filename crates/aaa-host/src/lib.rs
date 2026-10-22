@@ -3889,6 +3889,7 @@ mod pairing_tests {
             thread: "t-0001".into(),
             until,
             device: device.map(str::to_string),
+            attachment: None,
         };
         h.view_caps.lock().unwrap().insert("dev".into(), cap(Some(&id)));
         h.view_caps.lock().unwrap().insert("cli".into(), cap(None));
