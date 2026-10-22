@@ -78,6 +78,8 @@
   실패하면 창의 오류·대기 문구·시작 상태와 host의 배정 요청 목록을 로그에 남긴다.
   전체 `nice -n 15 bash scripts/ci-local.sh`에서 다른 spec과 병렬로 검사한다.
 
+- 착지 때 Linux 대상 `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu --locked --keep-going -- -D warnings`도 확인한다. main install 엔진의 `File` import는 실제 사용 범위인 Windows·macOS·시험 cfg에만 둔다. Linux 제품의 미사용 import 실패를 경고 억제 없이 수리하며 Linux 실행 검증과 교차 lint는 구분한다.
+
 ## host 공통 계정 풀 자동 배정(t-0653, plan §8.416)
 
 - `nice -n 15 cargo test -p aaa-host --lib account_pool --locked`: 창별 최소 여유·모델 창·동점·공유 한도,

@@ -7269,4 +7269,5 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **원인·수정.** §8.416의 `pool_run`이 사용량 조회를 기다리는 동안 같은 배정 잠금을 잡고 있어 취소의 즉시 선점이 BadRequest로 끝났다. 사용자 취소는 같은 잠금 해제를 비동기로 기다리고 최신 시작 영수증을 다시 확인한 뒤 Cancelled를 저장한다. 배정의 마지막 Queued 저장 뒤에 취소하므로 덮어쓰지 못하며, 이미 시작한 thread는 기존 conflict와 종료 안내를 유지한다.
 - **검증.** 실제 사용량 조회를 보류한 host 시험에서 이전 취소 방식의 실패와 수정본의 대기·Queued 저장·Cancelled·다음 pass·같은 ID·DB 재열기 뒤 thread 0건을 확인한다. 시작 영수증 생성·Reader 거부·없는 ID·중복 취소도 검사한다. E2E81의 기존 단언·30초 시한은 유지하고 실패 때 창 오류·대기 문구·host 배정 목록을 남긴다.
+- **Linux 검사 수리.** main에서 물려받은 install 엔진의 `File` import는 Windows·macOS 제품과 시험에서만 쓰인다. Linux 제품 clippy가 미사용 import로 실패하므로 같은 사용 범위의 cfg를 붙인다. 경고 허용이나 시험 제외 없이 Linux workspace·all-targets clippy와 통합본 전체 검증으로 확인한다.
 - **착지 통합.** origin/main `fb5a6518`의 마지막 plan §8.427·FRONT_API 1.105·AGENT_LINK 1.11·E2E85를 직접 확인해 빈 §8.428을 쓴다. proto와 새 spec이 없어 API 판과 E2E 번호는 main 그대로 유지한다. 전체 ci-local·공개 검사·Linux 대상 clippy 뒤 --no-ff 병합·push·원격 SHA를 대조하며 배포와 GitHub CI 감시는 coordinator가 맡는다.

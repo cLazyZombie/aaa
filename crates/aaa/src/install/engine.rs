@@ -1,5 +1,6 @@
 //! I2 파일 엔진. CLI 쓰기는 닫혀 있고 I6의 검증된 executor가 이 경계에 연결된다.
 //! status는 private journal을 읽기만 한다. 원문 payload/경로/계정은 공개 결과에 넣지 않는다.
+#[cfg(any(windows, target_os = "macos", test))]
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
