@@ -548,16 +548,8 @@ fn credentials_verified(record: &Record, process: Process) -> bool {
 struct Job {
     spec: Spec,
     record: Record,
-    _lock: File,
+    _lock: private::Lock,
     _files: Option<transaction::Locks>,
-}
-// Unix fork/dup 사본이 남아도 서비스 owner가 끝나면 잠금을 반환한다.
-// Windows의 share reservation은 원래대로 handle close가 소유한다.
-#[cfg(unix)]
-impl Drop for Job {
-    fn drop(&mut self) {
-        let _ = self._lock.unlock();
-    }
 }
 impl Job {
     /// I2 실제 파일 receipt와 같은 계획/계정/ID만 받아 서비스 단계로 이어 간다.

@@ -2240,4 +2240,6 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 
 ## install supervisor 잠금의 owner 종료(t-0485)
 
-기존 `service_phase_keeps_file_resource_locks_and_removal_and_credentials_resume_preserve_context` owner는 Unix에서 supervisor File의 실제 복제 descriptor를 owner 종료 뒤까지 남긴다. fork와 같은 open file description이 남아도 원래 Job 종료 뒤 같은 ID의 credentials/removal 재개가 즉시 가능해야 하며, 옛 사본을 닫아도 새 Job 배타성은 유지해야 한다. Windows는 실제 share reservation 방식과 원래 전체 owner를 유지하며 Unix flock 복제 대조만 제외한다. 원래 File close만 쓰는 코드에서 installation_busy RED, Job drop의 명시 unlock 뒤 GREEN을 확인한다. 잠금 생존 중 거부·계정/설정/준비 검증·제거/보존/조회 단언과 기존 시한은 그대로다.
+기존 `service_phase_keeps_file_resource_locks_and_removal_and_credentials_resume_preserve_context` owner는 Unix에서 supervisor File의 실제 복제 descriptor를 owner 종료 뒤까지 남긴다. fork와 같은 open file description이 남아도 원래 Job 종료 뒤 같은 ID의 credentials/removal 재개가 즉시 가능해야 하며, 옛 사본을 닫아도 새 Job 배타성은 유지해야 한다. Windows는 실제 share reservation 방식과 원래 전체 owner를 유지하며 Unix flock 복제 대조만 제외한다. 원래 File close만 쓰는 코드에서 installation_busy RED, install private::Lock guard drop의 명시 unlock 뒤 GREEN을 확인한다. 잠금 생존 중 거부·계정/설정/준비 검증·제거/보존/조회 단언과 기존 시한은 그대로다.
+
+같은 Unix guard는 `preserving_a_launcher_binds_its_bytes_to_the_approval_before_any_transaction_write`의 짧은 발급 scope 뒤 실제 복제 descriptor를 남겨 issuer.issue 재획득 RED→GREEN을 확인한다. `consumption_survives_reopen_and_only_explicit_same_id_resume_is_allowed`는 Lease 복제 descriptor가 남아도 같은 ID만 재개되고 소비/서명/만료/읽기 보존 단언이 유지됨을 본다. 세 owner의 기존 단언·시한은 바꾸지 않는다. Windows는 복제 대조만 cfg 제외하고 원래 실제 share reservation·owner 전체를 유지한다.
