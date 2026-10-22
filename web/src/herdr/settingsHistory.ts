@@ -1,13 +1,8 @@
 /**
- * Settings in the browser's history. The system Back button (Android's, a swipe from the screen's
- * edge) traverses history, and a dialog that is no entry of it is skipped: Back left the app
- * instead of the page. So each step into Settings is an entry above the app: the dialog, the
- * page a phone opens from its list, the key bar editor. Back takes them off one at a time.
- *
- * The dialog says what is shown as a list of levels (`recordSettings`); this module makes the
- * history hold exactly those entries, pushing the missing ones and stepping back over the ones
- * no longer shown (a Back control in the dialog, its X, Escape). It tells its listeners when a
- * traversal lands, and whether it was one of its own.
+ * 설정 본문의 브라우저 기록. 휴대폰 목록 → 쪽 → 키 바 편집은 각각 한 칸이며,
+ * 넓은 본문의 쪽 전환은 현재 칸을 바꾼다. X·Esc·←가 거두는 칸과 브라우저의
+ * 뒤로/앞으로를 구분한다. query는 공유할 설정 쪽, hash는 돌아갈 본문을 가리킨다.
+ * 주소가 있는 설정은 새로고침에도 유지하고 옛 모달의 기록은 벗어난다.
  */
 
 const KEY = "aaa:settings";
@@ -22,6 +17,17 @@ const LANDING_MS = 1000;
 export interface SettingsLevel {
   page: string | null;
   keyBar: boolean;
+}
+
+/** 공유할 설정 주소. hash에는 돌아갈 pane·보고서 주소를 그대로 둔다. */
+export function settingsFromUrl(): SettingsLevel | null {
+  if (typeof window === "undefined") return null;
+  const query = new URLSearchParams(window.location.search);
+  const page = query.get("settings");
+  if (page === null) return null;
+  const valid = ["appearance", "chat", "terminal", "alerts", "usage", "accounts", "safety", "profiles", "shortcuts", "devices", "machines", "deploy", "project", "repos"];
+  if (page !== "" && !valid.includes(page)) return null;
+  return { page: page || null, keyBar: page === "terminal" && query.get("settings-keybar") === "1" };
 }
 
 export interface SettingsEntry extends SettingsLevel {
@@ -86,7 +92,15 @@ function releasePending(): void { pending = null; rewinding = 0; clearTimeout(la
 
 function writeState(method: "pushState" | "replaceState", state: unknown): void {
   writing = true;
-  try { window.history[method](state, ""); }
+  try {
+    const url = new URL(window.location.href);
+    const entry = settingsEntry(state);
+    if (entry) url.searchParams.set("settings", entry.page ?? "");
+    else url.searchParams.delete("settings");
+    if (entry?.keyBar) url.searchParams.set("settings-keybar", "1");
+    else url.searchParams.delete("settings-keybar");
+    window.history[method](state, "", url);
+  }
   finally { writing = false; observed = window.history.state; }
 }
 
@@ -202,9 +216,15 @@ if (typeof window !== "undefined") {
     // what was asked for while the traversal was under way is done now
     if (own) reconcile();
   });
-  // a reload keeps the history and not the dialog: step out of the entries it left
+  // 새 주소의 설정은 복원하고, 주소 없이 남은 옛 모달 기록만 벗어난다.
   const left = settingsEntry(window.history.state);
-  if (left !== null) { loadedOnSettings = true; rewind(left.depth); }
+  if (left !== null && settingsFromUrl() !== null) {
+    // 주소가 있는 설정은 새로고침 뒤에도 유지한다. 목록까지의 기존 칸을 다시 만들지 않는다.
+    held = left.depth === 3 ? [{ page: null, keyBar: false }, { page: left.page, keyBar: false }, left]
+      : left.depth === 2 ? [left.keyBar ? { page: left.page, keyBar: false } : { page: null, keyBar: false }, left] : [left];
+    opening = fieldOf(window.history.state, BASE_KEY);
+  }
+  else if (left !== null) { loadedOnSettings = true; rewind(left.depth); }
   else if (typeof fieldOf(window.history.state, ABOVE_KEY) === "string") {
     // an entry above Settings (a preview opened over it) stays, and Settings stays closed: Back
     // from it steps over the entries beneath

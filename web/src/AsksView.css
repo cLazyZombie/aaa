@@ -1,7 +1,10 @@
 /* 「답할 것」(plan §8.345): 사이드바 목록과 본문 카드. 카드는 화면 선택 창 카드(PromptCard.css)를 바탕으로 쓰고 본문 Markdown·
    선택지 그림 카드(2B)를 더한다. 크게 보기는 공용 Lightbox.css다 */
 
-.asks-panel { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2); overflow-y: auto; min-height: 0; flex: 1 1 0; }
+/* Sidebar의 바깥 칸도 남은 높이를 넘지 않아야 내부 목록이 굴러간다(답한 것 79개, t-0748). */
+.asks-sidebar { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; }
+.asks-panel { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2); overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1 1 0; }
+.asks-panel > * { flex-shrink: 0; }
 .asks-panel-head {
   display: flex; align-items: center; gap: var(--space-2);
   margin: var(--space-3) var(--space-2) var(--space-1);

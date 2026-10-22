@@ -286,6 +286,7 @@ let requested: SettingsPageId | null = null;
 
 export function requestSettingsPage(page: SettingsPageId | null): void {
   requested = page;
+  if (page !== null && typeof window !== "undefined") window.dispatchEvent(new Event("aaa:settings-page"));
 }
 
 export function requestedSettingsPage(): SettingsPageId | null {

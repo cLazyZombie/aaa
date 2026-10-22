@@ -1,5 +1,17 @@
 # 시험 쓰는 법
 
+## 설정 본문·passkey 줄·긴 목록 스크롤(t-0748, plan §8.443)
+
+- E2E06의 새 「설정 본문·passkey 긴 값」 단계는 실제 host·agent에서 설정이 main을 채우고 모달 배경·aria-modal 없이 표시되는지 검사한다. Chromium 1280px 밝음/어두움·980px 좁은 본문·320px, WebKit 390px 밝음/어두움에서 상태·설명 폭과 가로 넘침을 확인하고 캡처한다. 10분이 지난 상태와 긴 도메인의 등록 상태는 실제 `/me` 응답의 passkey 필드만 대체해 기다림 없이 재현한다. 인증·등록 동작은 기존 E2E79가 맡는다.
+- 주소 복사·새 탭·새로고침·닫기·앞으로, 확인 창의 Esc, 같은 pane을 사이드바에서 다시 선택하는 경로, 모양/터미널/단축키/알림의 긴 값도 확인한다. 테마는 실제 설정 조작으로 바꾸고 적용 사건을 기다린다.
+- 기존 설정 region·키 바 region 접근성 locator를 갱신한다. 휴대폰에서 아래로 밀면 본문에 남고 X로 나오는 새 계약을 검사한다. 닫은 뒤 focus는 데스크톱 톱니·터미널 또는 휴대폰 본문 목록 단추여야 한다. 폰트 다운로드·격자/PTY 크기·키보드 입력과 브라우저 뒤로의 기존 단언은 유지한다.
+- 초기 회귀는 닫기 focus의 한 프레임 지연을 찾았다. 보이는 활동 막대에는 즉시 돌리고 가려진 본문은 commit 뒤에 돌린다. WebKit은 서비스 워커를 거친 `/me` 요청이 시험 route를 우회해 실제 loopback 응답을 받았다. 응답을 대체하는 새 단계만 기존 시험과 같이 serviceWorkers=block으로 격리하고 받은 passkey 필드도 확인한다. 제품 인증·서비스 워커 동작은 바꾸지 않는다.
+- 전체 E2E04의 wake lock과 E2E14의 공유 목록 모양 검사는 설정을 닫으면 목록 drawer가 그대로 열려 있다는 옛 모달 가정을 사용했다. 본문 복귀 뒤 drawer를 직접 열도록 동작을 갱신하고 기존 요청/해제 횟수·저장·새로고침·Reader 단언을 유지한다. 새 Tab 검사는 특정 톱니가 아니라 실제 DOM 차례의 앱 목록에 focus가 나왔는지 확인한다.
+- 첫 전체 병렬 gate에서 load average 76.31을 관찰했고 Rust m13 6개 준비 사건과 E2E78 계정 기동·E2E82 후보 점검이 실패했다. 원본 로그를 보존했다. 제품/시한/단언을 바꾸지 않은 Rust 6개 순차 실행과 E2E78·82 단독 파일이 모두 통과했다. 후속 전체 gate는 `--tee`로 단계를 순차 실행하고 Rust worker 3·E2E worker 3으로 모든 검사를 유지했다. 웹 E2E 88파일/99작업이 통과했다. 이 실행의 `RUST_TEST_THREADS=1`은 기존 aaa-common panic_log 자식 출력에 libtest 접두어를 붙여 파서 시험 하나를 실패시켰다. 자식의 성공·출력 형식을 직접 확인하고 저장소 기본값 2로 aaa-common 36개를 따로 검증했다. 기본 test thread 설정은 유지한다. 새 UI 변경 뒤에는 web/build와 해당 E2E를 검증한다.
+- E2E26의 긴 목록 단계(`web/e2e/lib/panel-scroll.mjs`)는 실제 격리 host에 답한 것 79개·할 일 79개·기록 79개·자동화 40개와 앞 단계의 보고서 14개를 준비한다. DB fixture는 host를 멈춘 동안만 쓴다. Chromium·WebKit 각각 1280×800·390×844에서 제한된 높이·가로 넘침·스크롤 끝·hit test·항목 선택을 확인한다. 데스크톱은 실제 휠의 scroll 사건을 기다린다(scrollTop 변화는 MutationObserver가 알리지 않는다). 휴대폰은 native overflow의 scrollTop으로 끝을 확인한다(합성 touchmove를 실제 손가락 관성 스크롤로 주장하지 않는다). 기록은 더 보기가 없어질 때까지 페이지를 읽고 마지막 기록의 전후 차이도 연다. 머리·바닥과 문서는 움직이지 않는다. 기존 코드에서는 질문 목록 높이 3,484px가 800px 화면 밖으로 늘어나 첫 단언이 실패했다.
+- 착지 전체 Rust의 `post_cli`에서 3초 응답 시한·가짜 서버 BrokenPipe가 관측됐다. ACK/종료 코드 fixture가 실제 `hooks::read_msg`와 달리 완성된 JSON 뒤에도 EOF를 기다렸다. 요청 쓰기 쪽을 열어 둔 socket pair로 이 추가 의존성을 RED 재현하고, 첫 JSON 완성에 답하도록 고쳐 GREEN을 확인한다. 기존 옛 agent/accepted/refused/queued의 종료 코드·응답 단언과 제품 3초 시한은 유지한다. 제품 코드는 바꾸지 않으며 고정 sleep 없이 읽기 사건으로 끝낸다.
+- 고정 sleep·시한 연장·실패 재시도 없이 DOM·응답·history 사건으로 끝낸다. `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 06-settings --workers 1`과 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사를 수행한다.
+
 ## 왼쪽 목록 고정 번호 칩(t-0739, plan §8.442)
 
 - `nice -n 15 cargo test -p aaa-host --lib automation_ids --locked`: 실제 host·DB·파일로 기존 규칙 조회→제목 수정→형식 변환→삭제→다른 이름 번호 발급→복원→재시작·프로젝트 이름 변경·내보내기를 확인한다. DB의 동시 읽기와 서로 다른 이름 발급은 Barrier 사건으로 끝내며 프로젝트별 독립 순번·재열기·프로젝트 삭제를 검사한다.
