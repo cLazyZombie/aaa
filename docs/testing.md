@@ -11,6 +11,14 @@
 - PWA는 첫 frame과 별개다. Chromium 156에서 offline 상태로 SW가 준 문서를 다시 열면 요청은 막혀도 `navigator.onLine`이 이미 true여서 복구 시 native online 사건이 없었다. 앱 listener는 이미 등록돼 있었다. 요청 차단/복구는 기존 `ctx.setOffline`을 쓰고, [공식 CDP `Network.overrideNetworkState`](https://chromedevtools.github.io/devtools-protocol/tot/Network/#method-overrideNetworkState)로 새 문서의 실제 navigator 상태도 맞춘다. offline의 false와 복구 native online의 `isTrusted`·true, 원래 token gate 복구를 단언한다. 앱 handler·API 응답·브라우저 사건을 JS로 가짜 호출하지 않는다. E2E01·03·10 전체 owner는 수리 뒤 3/3 통과했다.
 - CI와 설치 안내의 Playwright는 1.64.1이다. ci-local도 이 판을 검사하고, 격리 설치는 명시한 `NODE_PATH`와 `PLAYWRIGHT_BROWSERS_PATH`를 쓴다. 전역 설치·시스템 설정·브라우저 캐시는 바꾸지 않는다. 정본 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사이며, 원래 E2E88의 네 조합·sandbox 경계·직접 MP4/Range·답한 bytes 보존을 유지한다. headless 결과를 실제 Safari/iPhone의 출력 장치 검증으로 해석하지 않는다.
 
+## 메뉴 선택 뒤 휴대폰 쓸기의 진단과 정리(t-0805)
+
+- 사용자 순서는 대화 A → 메뉴에서 B 선택 → 왼쪽 가장자리 뒤로다. 수정 전 E2E39의 진단본은 두 메뉴 선택 모두 `history-write`에서 `open=true`, 메뉴 오른쪽 경계 343px로 실패했다. 뒤로가 끝난 상태만 검사하던 시험과 달리 기록을 쓰기 직전의 DOM을 확인한다. 이것은 열린 DOM 경계의 재현이며 Safari OS 미리보기 이미지 자체의 재현은 아니다.
+- `drawer-navigation.mjs`는 Chromium·WebKit 390px에서 위 순서, x25의 빠른 쓸기 후 touchcancel만 도착한 경우, native popstate 뒤 늦은 move/end와 move/cancel, pagehide/pageshow 사건 경계를 검사한다. 메뉴 class·inline transform·실제 경계가 닫혀야 한다. Touch 생성은 WebKit의 `document.createTouch/List`와 Chromium의 생성자를 각각 쓴다. 설정 내부 되감기·모든 목적지·390/430px·홈 화면 앱 흉내·넓은 화면의 기존 E2E39 단언은 유지한다. 실제 bfcache 복원이나 iPhone OS 몸짓을 합성 사건으로 입증했다고 쓰지 않는다.
+- 유닛 `node --test web/test/edgeSwipe.test.mjs`의 빠른 취소·popstate·pagehide·pageshow 네 회귀는 원래 구현에서 모두 메뉴 재개방으로 실패했다. 설정 내부 되감기와 정상 안쪽 flick·기존 손가락 추적은 유지한다. 시한 연장·실패 재시도·단언 완화·고정 sleep은 없다.
+- 실기는 배포 뒤 새 탭의 앱 주소 query에 `drawer-debug=1`을 넣고 진단 창을 접은 채 한다. A → 메뉴로 B → 가장자리 뒤로를 보통 속도 3회·천천히 3회, 같은 몸짓을 중간에 취소하기 3회 진행한다. 매번 정상/미리보기만/계속 열림 중 하나를 표시하고 마지막에 기록을 저장한다. 시작 위치·속도·사건 순서와 총 빈도는 JSON에 남는다. 처음부터 보이던 오래된 미리보기와 새 이동 뒤의 결과를 구분하려고 배포 뒤 새 탭에서 시작한다.
+- `?drawer-debug=1` 없는 탭에는 진단 UI·사건 수집이 없다. 진단은 최근 800개 사건과 전체 개수만 탭 메모리에 두며 URL·history.state·본문·인증 값을 기록하지 않는다. DOM 경계가 닫혔는데 사용자에게 미리보기만 보이면 OS 스냅숏 후보로 분류한다. 화면 합성 결과는 DOM 로그만으로 단정하지 않는다. 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다.
+
 ## 새 launcher 아래 restart fixture 격리(t-0798)
 
 - `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`는 등록되지 않은 새 launcher를 기본으로 쓴다. `AAA_RESTART_TEST_LAUNCHER`로 기존 launcher를 지정하는 읽기 전용 경로도 유지한다. 두 경로 모두 기존 launcher/worker PID·기존 pane 보존·새 pane·책임 PID·승인 거부·detached 재관측 단언을 그대로 검사한다.
@@ -2584,3 +2592,17 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `nice -n 15 cargo test --locked -p aaa-host --lib workspace_metrics`: SQLite 재시작·중복·명시적 workspace 묶음의 이력 이전, 프로젝트 이름 변경·삭제, API Reader 조회·기간/머신/profile·빈 결과·미수집을 확인한다. 날짜별 p50은 머신·profile 경계를 지키고 실패·빈 날짜를 넣지 않는다. 자료가 없는 등록 경로로도 조회할 수 있어야 한다. 조회가 원본을 읽거나 agent에 요청하면 실패하는 경계를 유지한다.
 - `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 90-workspace-metrics,26-activity-bar --workers 1`: 실제 격리 host·agent·보고 감시·전송·원장·웹을 사용한다. fixture는 기존 runner 종료 산출물만 준비한다. 수집 완료 사건으로 열린 화면이 갱신되는지, 전체·개수·TOP 5·dirty 코드 제외, URL 복원·필터·키보드 상세·목록 접기·로그 삭제 뒤 조회를 확인한다. Chromium과 WebKit, Reader, 390/320px, 밝음/어두움에서 drawer·가로 넘침·오류 때 마지막 성공 값을 검사하고 캡처한다. 데스크톱은 1280px이다. 실제 iPhone 검증은 아니다.
 - 완료 사건은 보고 hash·원장 저장 뒤 WebSocket 사건·DOM·응답이다. 통계를 얻으려고 추가 검증을 실행하거나 검증의 옵션·병렬 수·시한·성공 조건을 바꾸지 않는다. 필수 전체 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사·의존 경계 시험이다.
+
+
+## 질문 답과 닫힌 질문 정리의 post 종료 경합(t-0801)
+
+- `nice -n 15 cargo test --locked -p aaa-host --lib question_answer_and_reconcile_handle_each_post_once`: 실제 Host·SQLite·질문 답 보존을 사용한다. 질문에 연결된 post 두 건을 만들고 답 전송 뒤의 연결 post 처리와 닫힌 질문 정리가 모두 열린 목록을 읽은 뒤 종료하도록 시험 전용 barrier로 고정한다. 두 경로가 끝나는 join 사건으로 완료하며 post별 처리 알림 한 건·합계 두 건·답한 질문 하나와 반복 호출의 멱등성을 검사한다.
+- 종료 알림 저장 실패 시 post 종료까지 롤백되는지, 읽음 표시가 완료 상태를 되살리지 않는지, 다른 프로젝트·이미 끝난 항목을 바꾸지 않는지 DB 경계 시험으로 확인한다. coordinator 구조화 질문의 답 트랜잭션 뒤 파일 이동·웹 갱신도 기존 질문 시험으로 확인한다.
+- 기존 E2E53의 `request handled` 기대값 두 건을 유지한다. 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Linux 대상 clippy를 수행한다. 고정 sleep·재시도·시한 연장·단언 완화 없이 확인하고 착지 창을 기다린다.
+
+## Windows 한 줄 입구의 probe 콘솔과 단계 진단(t-0485, plan §8.457)
+
+- 기존 `recovery::one_line_entry_keeps_the_external_console_through_review_and_signed_file_installation`은 PS5.1/7의 실제 IRM/IEX와 native 질문·승인·파일/status를 유지한다. 실패할 때 원래 PTY panic 뒤 `one-line owner stalled` 한 줄에 shell·고정 stage·HTTP 단계·파일 존재 여부를 남기고 같은 panic을 재개한다. 성공은 실제 entry_returned를 기록한다. HTTP 단계는0=시작 전,1=accept 대기,2=접속,3=header 완료,4=본문 전송 완료다.
+- `powershell_started`/`irm_entry`/`manifest_request`/`manifest_written`/`payload_request`/`payload_written`/`entry_returned`는 시험 transport의 고정 token이다. 마지막 transport token과 native 진행 단계를 혼동하지 않는다. 생산 승인/실행을 대신하지 않으며 trace 파일은 격리 lab에만 둔다. 별도 관찰용 시험·가짜 승인·시한 증가·단언 완화는 없다. macOS에서는 Windows owner가 cfg로 제외되므로 cross와 실제 Windows 결과를 구분한다.
+- 진단 CI39794689113은 payload_written 뒤0/16 정지,39796210580은 다른 이미지와 실행 줄 trace 조건에서25/25 통과였다. 그 성공만으로 결론내리지 않고39798896583에서 같은 실패 이미지/runner로 원본 대조 RED와 Capture에만 CreateNoWindow를 주는 GREEN을 확인했다. 원본은 yes 이후 두 aaa 자식이 살아 있었고 lab cleanup OS32까지 이어졌다. 수리는 원래25개·PS5.1/7·모든 승인/상태/보존 단언을 통과했다. 이 대조가 console 분리 수리를 제거했을 때의 회귀 증거다.
+- 일회성 workflow·임시 OS process 관측·Set-PSDebug는 최종 수리 후보에서 제외한다. 실제 install의 외부 console은 그대로이고 stdout/stderr를 캡처하는 버전 probe만 console 없이 실행한다. 전체 ci-local·공개 검사·Windows/Linux strict cross와 dev 없는 Windows release 조건 build를 확인한다. 이 진단 CI는 게시 전 main 네 job 판정을 대신하지 않는다.

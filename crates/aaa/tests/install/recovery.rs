@@ -149,8 +149,12 @@ fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_inst
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/install.ps1", listener.local_addr().unwrap());
         let body = std::fs::read(&entry).unwrap();
+        let http_phase = std::sync::Arc::new(AtomicU32::new(0));
+        let server_phase = http_phase.clone();
         let server = std::thread::spawn(move || {
+            server_phase.store(1, Ordering::Relaxed);
             let (mut stream, _) = listener.accept().unwrap();
+            server_phase.store(2, Ordering::Relaxed);
             let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
             loop {
                 let mut line = String::new();
@@ -159,20 +163,30 @@ fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_inst
                     break;
                 }
             }
+            server_phase.store(3, Ordering::Relaxed);
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
             stream.write_all(&body).unwrap();
+            server_phase.store(4, Ordering::Relaxed);
         });
+        let trace = lab.0.join("entry-stage.txt");
         let runner = lab.0.join("entry-owner.ps1");
-        std::fs::write(&runner, r#"function Invoke-WebRequest {
+        std::fs::write(&runner, r#"[IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'powershell_started')
+function Invoke-WebRequest {
     param($Uri, $OutFile, [switch]$UseBasicParsing)
     $base = 'https://github.com/cLazyZombie/aaa/releases/download/v' + $env:AAA_TEST_VERSION
     if ($Uri -ceq ($base + '/manifest.json')) {
+        [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'manifest_request')
         @{ version=$env:AAA_TEST_VERSION; assets=@{ 'windows-x86_64'=@{url=($base+'/aaa-windows-x86_64.exe');sha256=$env:AAA_TEST_SHA} } } | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath $OutFile
+        [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'manifest_written')
     } elseif ($Uri -ceq ($base + '/aaa-windows-x86_64.exe')) {
+        [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'payload_request')
         [IO.File]::Copy($env:AAA_TEST_PAYLOAD, $OutFile, $false)
+        [IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'payload_written')
     } else { throw 'unexpected fixture transport' }
 }
+[IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'irm_entry')
 irm $env:AAA_TEST_ENTRY_URL | iex
+[IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'entry_returned')
 exit $global:LASTEXITCODE
 "#).unwrap();
         let work = format!("{}\r", lab.0.join("work").display());
@@ -207,9 +221,31 @@ exit $global:LASTEXITCODE
             .env("AAA_TEST_SHA", &digest)
             .env("AAA_TEST_PAYLOAD", BIN)
             .env("AAA_TEST_ENTRY_URL", &url)
+            .env("AAA_TEST_TRACE", &trace)
             .args(["-NoLogo", "-NoProfile", "-File"])
             .arg(&runner);
-        let (code, text) = super::authorization::terminal_program(&command, &steps);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::authorization::terminal_program(&command, &steps)
+        }));
+        let (code, text) = result.unwrap_or_else(|panic| {
+            let stage = std::fs::read_to_string(&trace).unwrap_or_else(|error| {
+                format!("trace_unreadable:{:?}:{:?}", error.kind(), error.raw_os_error())
+            });
+            let executor = lab.0.join(".local/share/aaa/installers").join(&digest[..16]).join("aaa.exe");
+            eprintln!(
+                "one-line owner stalled: shell={shell}, stage={stage}, http_phase={}, executor={}, config={}, active={}",
+                http_phase.load(Ordering::Relaxed),
+                executor.is_file(),
+                lab.0.join("config/agent.toml").is_file(),
+                lab.0.join("state/install/active.json").is_file(),
+            );
+            std::panic::resume_unwind(panic)
+        });
+        eprintln!(
+            "one-line owner returned: shell={shell}, stage={}, http_phase={}",
+            std::fs::read_to_string(&trace).unwrap(),
+            http_phase.load(Ordering::Relaxed),
+        );
         assert_eq!(code, 0, "{}: {}", shell, redact_private(&text));
         server.join().unwrap();
         assert_eq!(std::fs::read(&old_binary).unwrap(), b"old aaa executor preserved");

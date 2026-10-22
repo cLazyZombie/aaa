@@ -489,18 +489,14 @@ impl Host {
             .map_err(|e| bad(e.to_string()))?
             .filter(crate::asks::is_user_request)
             .ok_or_else(|| bad("사용자 확인 필요 post가 아니다"))?;
-        if !item.done {
-            self.inbox_done(project, &[item.id], false, actor)?;
-            self.inbox_add(
-                project,
-                "thread-state",
-                "coordinator",
-                "request handled",
-                &format!(
-                    "{id}: 사용자 답을 받았다고 표시했다({}). 질문 선택·승인·실행은 하지 않았다",
-                    self.answered_by(actor)
-                ),
-            );
+        let by = self.answered_by(actor);
+        let n = self
+            .inbox_finish_with_notice(project, vec![item], &by, true, |_| {
+                Some(format!("{id}: 사용자 답을 받았다고 표시했다({by}). 질문 선택·승인·실행은 하지 않았다"))
+            })
+            .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        if n > 0 {
+            self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
             self.db.audit(actor, "post_handled", &format!("{project}/{id}"));
         }
         Ok(FrontResponse::Done)

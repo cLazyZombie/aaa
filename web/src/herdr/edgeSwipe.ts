@@ -1,6 +1,7 @@
 // herdr-web-ui(aa624cb) src/lib/edgeSwipe.ts를 옮겼다. 고지는 README.md. 여는 쓸기의 자리만 바꿨다: 참고는 왼쪽 끝 24px에서
 // 시작한 쓸기로 열지만, 그 자리는 iPhone Safari의 뒤로 쓸기 자리라 두 몸짓이 함께 돌았다. aaa는 왼쪽 끝을 브라우저에 두고
 // 화면 안쪽에서 오른쪽으로 쓸면 연다(plan §8.408, 사용자 1A).
+import { drawerTrace } from "./drawerTrace.ts";
 /*
  * The workspace drawer follows a phone's finger: a swipe to the right from inside the screen
  * opens it, as the menu button does, and a swipe to the left closes it again. The left edge
@@ -77,7 +78,7 @@ function selecting(): boolean {
 }
 
 /** Listens on the whole document; returns the cleanup. */
-export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean) => void): () => void {
+export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean) => void, internalNavigation: (event: PopStateEvent) => boolean = () => false): (() => void) & { beforeNavigation: () => void } {
   const narrow = window.matchMedia("(max-width: 768px)");
   let start: { x: number; y: number; open: boolean; at: number } | null = null;
   // a recognised swipe owns the stroke until the finger lifts, after the drawer moved too
@@ -88,6 +89,12 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
   let follow: { drawer: HTMLElement; scrim: HTMLElement | null; width: number; shown: number; x: number; at: number; speed: number } | null = null;
   const onStart = (event: TouchEvent): void => {
     const touch = event.touches[0];
+    // 가장자리 몸짓은 미리보기를 취소해도 메뉴를 열지 않는다. 기존 메뉴도 즉시 거둔다.
+    if (touch && narrow.matches && touch.clientX <= EDGE_PX) {
+      if (isOpen() || follow !== null) closeImmediately("edge-start");
+      start = null;
+      return;
+    }
     // the last stroke still holds the drawer: a second finger, or its end never came (the element
     // it began on left the page and took its touches with it). It lets go where it was first
     const open = follow !== null ? onEnd() : isOpen();
@@ -98,15 +105,19 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     done = false;
     state = open;
     follow = null;
+    drawerTrace("swipe-start", { eligible: start !== null, x: touch?.clientX ?? null, y: touch?.clientY ?? null, wasOpen: open });
   };
   const onMove = (event: TouchEvent): void => {
     const touch = event.touches[0];
     if (start === null || !touch) return;
+    // 시스템이 소유한 touchmove로 메뉴를 끌거나 preventDefault를 시도하지 않는다.
+    if (event.cancelable === false) { cancel("noncancelable-move"); return; }
     // the screen turned wide mid-stroke: there is no drawer to swipe any more
     if (!narrow.matches) { onEnd(); return; }
     // a selection begun mid-stroke is the finger's: until the drawer moved, the stroke goes back
     if (!done && selecting()) { onEnd(); return; }
     const verdict = done ? "claim" : swipeVerdict(start.open, start.x, touch.clientX - start.x, touch.clientY - start.y);
+    drawerTrace("swipe-move", { verdict, dx: touch.clientX - start.x, dy: touch.clientY - start.y });
     // a stroke that was already the drawer's stays so when it comes back near where it started;
     // one that never was waits for a direction. Until the drawer moves, a stroke that turns to
     // scrolling goes back to the page, so the terminal's one-finger scroll is not held up
@@ -118,6 +129,7 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     event.stopPropagation();
     if (!done && (verdict === "open" || verdict === "close")) {
       state = verdict === "open";
+      drawerTrace("swipe-set", { value: state, reason: "distance" });
       setOpen(state);
       done = true;
     }
@@ -157,6 +169,7 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     // a finger that rested before it lifted, or a stroke handed back mid-way, flicks nothing
     const rested = event === undefined || event.timeStamp - held.at > REST_MS;
     const open = drawerSettles(held.shown, held.width, rested ? 0 : held.speed);
+    drawerTrace("swipe-settle", { value: open, shown: held.shown, speed: held.speed, rested });
     if (open !== state) setOpen(open);
     state = open;
     // the stylesheet's slide takes it from where the finger left it to where it settles
@@ -166,14 +179,56 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     if (held.scrim !== null) { held.scrim.style.transition = ""; held.scrim.style.opacity = ""; }
     return open;
   };
+  /** 취소·이동은 손을 뗀 것이 아니다. 속도로 열림을 확정하지 않고 늦은 사건도 버린다. */
+  const cancel = (reason: string): void => {
+    const held = follow;
+    start = null; follow = null; claimed = false; done = false; state = false;
+    if (held !== null) {
+      held.drawer.style.transition = ""; held.drawer.style.visibility = ""; held.drawer.style.transform = "";
+      if (held.scrim !== null) { held.scrim.style.transition = ""; held.scrim.style.opacity = ""; }
+    }
+    drawerTrace("swipe-cancel", { reason, speed: held?.speed ?? 0, shown: held?.shown ?? 0 });
+    setOpen(false);
+  };
+  // React의 다음 commit과 닫기 애니메이션보다 먼저 기록을 쓰면 열린 메뉴가 Safari
+  // 뒤로 미리보기의 후보로 남는다. 기록 경계·페이지 보관은 DOM도 즉시 숨긴다.
+  const closeImmediately = (reason: string): void => {
+    if (!narrow.matches) return;
+    cancel(reason);
+    const drawer = document.getElementById?.("workspace-drawer");
+    const scrim = document.querySelector<HTMLElement>(".scrim");
+    for (const node of [drawer, scrim]) {
+      if (!node) continue;
+      node.style.transition = "none";
+      node.classList.remove("is-open");
+      node.getBoundingClientRect(); // 닫힌 끝점을 기록 전에 확정한다.
+      node.style.transition = "";
+    }
+  };
+  const onCancel = (): void => { if (start !== null || follow !== null) cancel("touchcancel"); };
+  const onPop = (event: PopStateEvent): void => {
+    const internal = internalNavigation(event);
+    drawerTrace("swipe-popstate", { internal });
+    if (!internal) closeImmediately("popstate");
+  };
+  const onHide = (): void => closeImmediately("pagehide");
+  const onShow = (event: PageTransitionEvent): void => { if (event.persisted) closeImmediately("pageshow"); };
   document.addEventListener("touchstart", onStart, { capture: true, passive: true });
   document.addEventListener("touchmove", onMove, { capture: true, passive: false });
   document.addEventListener("touchend", onEnd, { capture: true, passive: true });
-  document.addEventListener("touchcancel", onEnd, { capture: true, passive: true });
-  return () => {
+  document.addEventListener("touchcancel", onCancel, { capture: true, passive: true });
+  window.addEventListener("popstate", onPop);
+  window.addEventListener("pagehide", onHide);
+  window.addEventListener("pageshow", onShow);
+  const cleanup = () => {
     document.removeEventListener("touchstart", onStart, { capture: true });
     document.removeEventListener("touchmove", onMove, { capture: true });
     document.removeEventListener("touchend", onEnd, { capture: true });
-    document.removeEventListener("touchcancel", onEnd, { capture: true });
+    document.removeEventListener("touchcancel", onCancel, { capture: true });
+    window.removeEventListener("popstate", onPop);
+    window.removeEventListener("pagehide", onHide);
+    window.removeEventListener("pageshow", onShow);
+    if (follow !== null) cancel("cleanup");
   };
+  return Object.assign(cleanup, { beforeNavigation: () => closeImmediately("history-write") });
 }

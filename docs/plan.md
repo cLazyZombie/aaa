@@ -6329,6 +6329,8 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **요청과 결정.** 사용자 10-22 「아니면 뒤로 가면 항상 메뉴가 닫혀있게는?」. 휴대폰 폭(768px 이하)에서는 브라우저 뒤로·앞으로와 가장자리 쓸기로 이동할 때 왼쪽 메뉴를 항상 닫는다. 이동 전에 메뉴가 열려 있었는지와 목적지(thread·보고서·할 일·질문·빈 목록·설정)는 관계없다. 10-21 t-0541의 이동 직전 상태 유지 결정을 대체한다.
 - **처리 경계.** `App.tsx`가 `popstate`에서 메뉴를 닫는다. 해시를 바꾸지 않는 설정 목록·쪽 이동과 빈 주소·닫힌 pane을 정규화하는 조기 반환도 포함한다. 메뉴 단추·안쪽 쓸기·목록 줄 직접 선택과 §8.301의 기록 칸·빈 화면 방지·파일 보기 복귀는 유지한다. 왼쪽 끝 24px는 계속 브라우저 몫(§8.408)이며, 넓은 화면의 사이드바 펼침·접힘은 바꾸지 않는다.
 - **설정 패널 통합 경합 수리(t-0780, q-1171 1A).** 설정에서 작업 패널로 옮기거나 X로 닫을 때 `recordSettings([])`가 내는 비동기 되감기는 사용자의 브라우저 이동과 구분한다. 설정 기록 모듈이 이미 판정한 내부 복귀를 해당 popstate 사건에만 표시하고, App은 그 사건으로 사용자가 연 메뉴를 닫지 않는다. 뒤따르는 사용자 Back/Forward와 설정 목록·쪽의 실제 브라우저 이동은 계속 항상 닫는다. E2E39는 실제 설정 닫기에서 history.go의 전달만 보류해 늦은 내부 복귀를 재현한다. 작업 패널 선택과 X 뒤 메뉴 재개방, 직접 pane 줄 선택, 그 뒤 사용자 양방향 이동을 Chromium·WebKit에서 검사한다.
+- **메뉴 선택 뒤 가장자리 몸짓(t-0805).** 대화 A → 메뉴로 B 선택 → 가장자리 뒤로 순서에서 기록을 쓰는 순간 메뉴 DOM이 열려 있던 경계를 확인했다. `goHash`는 휴대폰 메뉴와 배경을 애니메이션 없이 숨기고 닫힌 경계를 계산한 뒤 기록을 쓴다. `popstate`·`pagehide`·저장된 페이지의 `pageshow`는 진행 중인 쓸기와 inline 모양도 정리해 늦은 move/end가 메뉴를 되살리지 못하게 한다. `touchcancel`·취소 불가능한 move는 속도로 열림을 확정하지 않는다. 가장자리 몸짓은 먼저 열려 있던 메뉴도 거두며 설정 내부 되감기와 넓은 화면 사이드바의 규칙은 유지한다.
+- **실기 진단(t-0805).** 앱 주소에 `?drawer-debug=1`을 붙인 탭에만 「쓸기 진단」이 나타난다. 최근 800개 사건의 시작 좌표·취소 가능 여부·이동/복원 순서·메뉴 실제 경계·속도와 전체 사건별 개수를 메모리에 기록한다. 정상/미리보기만/계속 열림을 사용자가 표시하고 JSON으로 저장할 수 있다. 주소·history.state·본문·인증 값·저장소·진단 전송 API는 쓰지 않는다. headless의 DOM 경계·합성 터치·native history 성공으로 Safari OS 미리보기 이미지나 실제 bfcache 성공을 주장하지 않으며, 배포 뒤 iPhone에서 사용자 순서와 미리보기 취소를 확인한다. API 판·E2E 번호는 유지한다.
 - **검증.** 기존 E2E `39-phone-back`에서 WebKit 390·430 × Safari 탭·홈 화면 앱 흉내의 열린 메뉴 + 가장자리 쓸기 뒤로와 양방향 이동의 닫힘을 검사한다. Chromium·WebKit 390px에서는 thread·보고서 상세/목록·할 일 목록·질문 카드/미선택 목록·설정 목록/쪽을 메뉴 열림·닫힘 각각에서 뒤로·앞으로 순회한다. 해시가 같은 설정 기록·할 일 상세 시트의 뒤로/앞으로, 빈 주소 정규화, 목록 줄 직접 선택, 메뉴 토글·기록 칸 수, WebKit 1280·820의 사이드바 상태도 확인한다. E2E 04·38·62와 전체 ci-local·공개 검사를 함께 수행한다. 헤드리스의 합성 터치·history 순회와 실제 iOS 시스템 몸짓은 구분한다.
 
 ### 8.341 aaa install I2 Windows 파일 조상 거부(10-21, t-0485)
@@ -7541,3 +7543,20 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **계약·검증.** FRONT_API 1.111 `workspace_dashboard`와 웹 전용 `workspace_metrics` 사건, Agent link 1.11의 선택 기능 `workspace_metrics.v1`이다. Rust 타입이 정본이며 웹은 생성한 proto만 쓴다. agent fixture·host 내구 원장 시험, 실제 보고→agent→host→웹 E2E90과 기존 활동 막대 E2E26을 확인한다. 번호는 착지 때 main과 대조한다.
 
 - **추가 문구 결정(21:1x).** pane의 detached 경고 이름은 「느린 빌드」, unknown은 「느린 빌드?」로 통일한다. 배너·목록·터미널·CLI·runbook·E2E89에 반영하고 판정·상태 값은 바꾸지 않는다. macOS 검사·정리 후 새 pane 안내는 설명 줄과 title에 둔다.
+
+
+### 8.456 질문 연결 post 종료의 멱등 처리(t-0801)
+
+- **원인.** 질문 답을 남긴 뒤 연결 post를 끝내는 경로와 닫힌 질문 정리 경로가 각각 열린 inbox 목록을 읽는다. 두 경로가 같은 post를 읽은 뒤 종료하면 기존 무조건 덮어쓰기와 별도 알림 추가가 모두 성공해 같은 post에 `request handled`가 두 번 남는다.
+- **처리.** DB에서 아직 열린 항목만 종료하며 종료와 처리 알림을 같은 트랜잭션에 저장한다. 이미 끝난 항목에는 기록·알림·파일 이동을 반복하지 않는다. 웹 「답함으로 표시」와 CLI 처리도 같은 종료 경계를 쓴다. 읽음 표시는 종료 상태를 덮어쓰지 않는다. coordinator 구조화 질문의 기존 답 저장 트랜잭션은 유지하고 파일 투영만 따로 수행한다.
+- **검증.** 두 종료 경로가 모두 같은 열린 post를 읽은 시점에서 barrier로 만나도록 한 회귀 시험과 기존 E2E53의 연결 post 두 건·처리 알림 두 건·답한 질문 하나 검사를 유지한다. 시한·기대값·재시도는 바꾸지 않는다. API·link·E2E 번호는 유지하고 묶음 착지 전 `[병합 준비됨]`으로 보고한다.
+
+### 8.457 Windows 한 줄 입구의 버전 probe 콘솔 분리(t-0485)
+
+- main f285f12f의 Windows CI에서 alias·닫힌 등록 창·staged argv owner는 통과했고 실제 IRM/IEX owner만 첫 질문 전60초 정지했다. 승인 뒤 정지와 부하를 추정하지 않고 기존 owner에 고정 단계/HTTP 상태를 넣어 Windows 진단 CI 세 번으로 대조했다.
+- 캡처하는 `--version` probe도 실제 설치의 console에 붙던 경계가 결함이었다. run39798896583의 같은 windows-2025 이미지20261007.264.1에서 원본은16/16 답변·부분 파일 적용 뒤 PowerShell과 두 aaa 자식이 살아 있는 채 정지했다. 같은 source/runner/시험 조건에서 ProcessStartInfo.CreateNoWindow를 Capture에만 결속한 조건은 PS5.1/7·기존 install25개가 모두 통과했다. 원본 RED/실제 Cargo exit127과 GREEN50.67초를 각각 보존했다. 구체적인 OS 내부 잠금 기전까지 확정한 것은 아니다.
+- `Capture=true`인 버전 검증만 콘솔 없이 실행한다. 실제 설치의 Capture=false는 외부 console/stdio를 그대로 받아16개 질문·서명 승인·실제 파일/status를 수행한다. argv quoting/hash/PE/판 검사·구판 exe/config 보존·승인 범위·조합·60초 상한은 유지한다. 새 owner·production 허용 flag/export는 없다.
+- 기존 owner의 실패 뒤 shell·마지막 HTTP token·파일 존재 여부를 남기고 원래 panic을 재개하는 진단은 유지한다. 성공도 실제 entry_returned/HTTP 완료를 남긴다. payload_written은 마지막 transport 상태이며 이후 native 진전이 없다는 뜻이 아니다. 비밀/경로/승인 내용은 기록하지 않는다. 일회성 workflow·실행 줄 trace·process 관측 코드는 진단 branch에만 두고 수리 후보에서 뺀다.
+- 전체 ci-local·공개 검사와 Windows/Linux strict cross·Windows release 조건 build를 확인한다. 실제 Windows 근거는 위 동일 runner 대조이며 교차 빌드로 대체하지 않는다. v0.1.5 게시에는 별도로 착지한 exact main 네 job과 Windows 실제 owner 모두 GREEN이 필요하다. E2E88은 별도 소관이며 E2E82 최초 실패는 보존한다. 시한/기대값 완화나 CI rerun은 하지 않는다.
+
+- **착지 통합.** 기준 origin/main `e22229ce`의 마지막 plan §8.456·FRONT_API 1.111·AGENT_LINK 1.11·웹 E2E90을 확인했다. 겹친 절 번호만 §8.457로 옮기고 API/link/E2E 번호와 기존 post 종료 경합 수리를 보존한다. 일회성 workflow는 포함하지 않는다. 묶음 착지 6회차에서 전체 ci-local·공개 검사·양 OS strict cross·Windows release 조건 빌드를 확인하며 배포·tag·release는 수행하지 않는다.

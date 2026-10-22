@@ -12,6 +12,7 @@ import { aaa, step, browser, webkit, inList, showPanel, drawerSettled, domIs, in
 import { pairDevice } from "../lib/devices.mjs";
 import { historyDestinations } from "../lib/history-destinations.mjs";
 import { settingsDrawerHistory } from "../lib/settings-drawer-history.mjs";
+import { drawerNavigation } from "../lib/drawer-navigation.mjs";
 
 /** 보고서 링크가 든 Claude 대화 pane(38-chat-report-close와 같은 길: hook으로 기록 자리를 알린다) */
 function chatPane(label, text) {
@@ -21,7 +22,7 @@ function chatPane(label, text) {
   const L = (o) => JSON.stringify(o) + "\n";
   fs.writeFileSync(tr, L({ type: "user", message: { role: "user", content: "보고서는?" } }) + L({ type: "assistant", message: { content: [{ type: "text", text }] } }));
   aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
-    JSON.stringify({ hook_event_name: "SessionStart", session_id: "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c39", source: "startup", transcript_path: tr }));
+    JSON.stringify({ hook_event_name: "SessionStart", session_id: label === "bk2" ? "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c40" : "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c39", source: "startup", transcript_path: tr }));
 }
 
 /** 지금 화면: 주소, 빈 화면인지, 파일 보기, 목록 drawer, 기록 칸 수 */
@@ -99,7 +100,14 @@ export default async function () {
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>뒤로 보고서</h1></html>");
     url = new URL(aaa("library", "publish", input, "--project", "demo", "--name", "backrep", "--to-user").base, base).href;
     chatPane("bk1", `보기: ${url}`);
-    for (const label of ["bk2", "bk3", "bk4"]) aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", "exec cat");
+    chatPane("bk2", "두 번째 대화");
+    for (const label of ["bk3", "bk4"]) aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", "exec cat");
+  });
+
+  await step("메뉴로 A→B 선택 뒤 쓸기: 기록 전 메뉴 숨김·취소·늦은 터치·복원·진단(Chromium·WebKit)", async () => {
+    await drawerNavigation(browser);
+    const wk = await webkit.launch();
+    try { await drawerNavigation(wk); } finally { await wk.close(); }
   });
 
   await step("휴대폰 뒤로 끝까지: pane → 다른 pane → 보고서 → 뒤로를 거꾸로 지나 첫 pane에서 멈추고 빈 화면이 없다(WebKit 390·430, Safari·홈 화면 앱)", async () => {
