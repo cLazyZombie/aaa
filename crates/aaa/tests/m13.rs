@@ -2713,8 +2713,13 @@ fn thread_state_items_follow_groups() {
     // 울타리: host가 D의 pane을 지운 뒤 묶음 셈을 두 번 더 돌았다(「pane closed」·「sessions ended」가 나올 차례가 지났다)
     w.h.ticks(2);
 
-    let got: Vec<(String, String, String)> = items(&w)
+    // 새 일반 기동의 할 일 완료/확인 항목은 별도 kind다. 묶음 전이의 기존 사건 수와 내용은 그대로 검사한다.
+    let all = items(&w);
+    assert!(all.iter().any(|i| i["item_kind"] == "task" && i["subject"] == a && i["event"] == "task auto-cleaned"));
+    assert!(all.iter().any(|i| i["item_kind"] == "task" && i["subject"] == d && i["event"] == "task needs check"));
+    let got: Vec<(String, String, String)> = all
         .iter()
+        .filter(|i| i["item_kind"] != "task")
         .map(|i| {
             let s = |k: &str| i[k].as_str().unwrap().to_string();
             (s("subject"), s("event"), s("summary"))
@@ -4424,7 +4429,7 @@ fn machine_health() {
     assert!(line.contains("\tCPU ") && line.contains("% · MEM ") && line.contains("% · 디스크 여유"), "{list}");
 }
 
-/// 제목으로 시작할 때만 비슷한 task를 한 줄 알린다. 경고가 있어도 시작하고 TASKS.md는 바꾸지 않는다.
+/// 제목 직접 시작은 비슷한 task를 알리고 별도 할 일을 만든다. 기존 task를 임의로 재사용하지 않는다.
 #[test]
 fn thread_start_warns_about_similar_tasks_without_blocking() {
     let w = world();
@@ -4449,7 +4454,79 @@ fn thread_start_warns_about_similar_tasks_without_blocking() {
         assert!(v["id"].is_string(), "{v}");
         assert!(v["warnings"].is_null() || v["warnings"] == serde_json::json!([]), "{v}");
     }
-    assert_eq!(std::fs::read_to_string(path).unwrap(), tasks);
+    let after = std::fs::read_to_string(path).unwrap();
+    assert!(after.starts_with(&tasks[..tasks.find("- [ ]").unwrap()]), "{after}");
+    let board = w.h.ok(&["task", "list"]);
+    let rows = board["tasks"].as_array().unwrap();
+    assert_eq!(rows.len(), 4, "{board}");
+    for title in ["로그인 고치기", "웹 로그인 고치기", "배포 자동화 · 별도 2"] {
+        assert!(rows.iter().any(|t| t["title"] == title && t["thread"].is_string()), "{board}");
+    }
+    assert!(rows.iter().any(|t| t["title"] == "배포 자동화" && t["done"] == true && t["thread"].is_null()));
+}
+
+/// 일반 기동은 할 일을 먼저 남기고 pane 준비 전에 연결한다. 실패한 준비도 재기동할 할 일로 남으며,
+/// 끝난 일은 기존 완료 보관으로 간다. 본문의 머리·체크 목록은 별도 task로 해석하지 않는다.
+#[test]
+fn manual_threads_always_have_tasks_and_archive_the_result() {
+    let w = world();
+    let body = "# 작업 범위\n- [ ] 중첩 검사\n원문을 보존한다\n";
+    let task = w.task("manual.md", body);
+    let start = |title: &str, extra: &[&str]| {
+        let mut args = vec!["--title", title, "--profile", "fake", "--task-file", &task];
+        args.extend_from_slice(extra);
+        w.start(&args)
+    };
+    let first = start("즉시 맡긴 일", &["--kind", "dir", "--background"]);
+    let id = first["id"].as_str().unwrap();
+    let board = w.h.ok(&["task", "list"]);
+    assert_eq!(board["tasks"].as_array().unwrap().len(), 1, "{board}");
+    let row = &board["tasks"][0];
+    assert_eq!(row["thread"], id, "pane 준비 응답 전 자동 연결");
+    assert_eq!(row["profile"], "fake");
+    assert_eq!(row["machine"], "labA");
+    assert_eq!(row["repo"], "작업 폴더");
+    let short_id = row["short_id"].as_str().unwrap().to_string();
+    let stored = std::fs::read_to_string(w.projects.join(format!("demo/threads/{id}.task.md"))).unwrap();
+    assert_eq!(stored, body);
+    assert!(row["notes"].as_array().unwrap().iter().any(|n| n == "> # 작업 범위"), "{row}");
+    assert!(row["notes"].as_array().unwrap().iter().any(|n| n == "> - [ ] 중첩 검사"), "{row}");
+    w.wait_show("완료 보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+    w.h.ok(&["thread", "resolve", "demo", id]);
+    let archive = w.h.ok(&["task", "archive"]);
+    let entry = archive["entries"].as_array().unwrap().iter().find(|e| e["task"]["short_id"] == short_id).unwrap();
+    assert_eq!(entry["task"]["thread"], id);
+    assert!(entry["report"].is_string(), "{entry}");
+    // 기동의 입력 검사를 통과한 뒤 agent 준비가 실패하면 할 일을 잃지 않는다.
+    let failed = w.h.json(&[
+        "thread",
+        "start",
+        "demo",
+        "--title",
+        "준비 실패",
+        "--profile",
+        "fake",
+        "--repo",
+        path_str(&w.repo),
+        "--base",
+        "missing-ref",
+        "--task-file",
+        &task,
+    ]);
+    assert!(failed.is_err(), "없는 기준 ref로 성공했다");
+    let board = w.h.ok(&["task", "list"]);
+    let row = board["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "준비 실패").unwrap();
+    let failed_id = row["thread"].as_str().unwrap();
+    assert_eq!(w.show(failed_id)["status"], "failed");
+    // 이미 등록된 할 일도 --link-task 없이 같은 ID에 연결한다.
+    w.h.ok(&["task", "add", "기존 할 일", "--profile", "fake", "--machine", "labA", "--repo", "작업 폴더"]);
+    let before = w.h.ok(&["task", "list"]);
+    let original = before["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "기존 할 일").unwrap();
+    let started = w.start(&["--from-task", original["short_id"].as_str().unwrap()]);
+    let after = w.h.ok(&["task", "list"]);
+    let now = after["tasks"].as_array().unwrap().iter().find(|t| t["id"] == original["id"]).unwrap();
+    assert_eq!(now["thread"], started["id"]);
+    assert_eq!(after["tasks"].as_array().unwrap().len(), before["tasks"].as_array().unwrap().len());
 }
 
 /// coordinator 일 흐름(부록 A): TASKS.md owner로 thread 시작, assignable 확인, Next 목록·보내기, context 요약.
@@ -4491,10 +4568,8 @@ fn coordinator_flow() {
     );
     let task = std::fs::read_to_string(pdir.join("threads").join(format!("{id}.task.md"))).unwrap();
     assert!(task.contains("## Notes from the task list") && task.contains("메모: 테스트 먼저"), "{task}");
-    // coordinator가 ` · t-…`를 붙인다(같은 task를 다시 맡기면 막지 않고 경고한다: `start_defaults_profile_kind_and_task`)
-    let md =
-        std::fs::read_to_string(pdir.join("TASKS.md")).unwrap().replace("(fake@labA)", &format!("(fake@labA) · {id}"));
-    std::fs::write(pdir.join("TASKS.md"), md).unwrap();
+    // --link-task를 생략해도 host가 연결한다.
+    assert!(std::fs::read_to_string(pdir.join("TASKS.md")).unwrap().contains(&format!("(fake@labA) · {id}")));
 
     // Next: 보고서 `## Next` + 더한 줄, N번째 줄을 thread에 보낸다
     // `--line`은 메시지라 brief를 받은 뒤에만 간다: host는 brief를 친 뒤 다음 화면 보기(250ms)에서야 delivered로 적는데,
@@ -5033,9 +5108,13 @@ const GUIDE_SECTIONS: &[&str] = &[
     "resolve 정리가 실제로 끝나야 반환한다",
     "`aaa task archive --restore <task ID>`",
     "아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다",
+    "바로 진행하는 일도 같다",
+    "「할 일에 넣어」는 기록 요청이며 시작 승인이 아니다",
+    "자동화(`automations/*.toml`의 do.start, ci-watch·검증 감시 등)는 예외다",
+    "coordinator는 이 호환 경로 대신 할 일부터 만든다",
     "## 이어지는 말",
     "**thread 결과 요약은 언제나 이 모양이다**",
-    "- 더하기: 사용자가 지금 시작하지 않는 일을 말하면 더한다",
+    "- 더하기: 사용자가 맡긴 새 일은 지금 시작할 일도 먼저 더한다",
     "- 목록(`##` 머리): 사용자가 요청하면",
     "- 끝남:",
     "- 보이기: 사용자가 task를 보자고 하면",
