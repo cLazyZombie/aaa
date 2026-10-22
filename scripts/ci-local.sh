@@ -14,10 +14,11 @@
 #   fmt        cargo fmt --all --check
 #   build      Windows는 dev 없는 배포 release build를 먼저 확인하고 workspace/all-targets build
 #   clippy     cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
-#   test       전체 Cargo 시험을 준비한 뒤 binary·m13 분할을 병렬 실행하고 doctest도 모두 실행한다
+#   test       Python 검사와 전체 Rust 시험을 함께 실행한다. binary·m13 분할과 doctest도 모두 유지한다
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
-#              spec 파일은 worker 여러 개가 함께 돈다(16 CPU 이상은 10개, 그 밖은 core 둘마다 하나). AAA_E2E_WORKERS=1이면 차례로.
+#              spec 파일은 worker 여러 개가 함께 돈다(10 CPU 이상은 5/8 내림·최대10개, 그 밖은 core 둘마다 하나).
+#              AAA_E2E_WORKERS=1이면 차례로.
 #              병렬 단계 전에 이번 build의 실행 파일을 별도 사본으로 고정한다(test의 Cargo 링크 갱신과 겹치지 않는다).
 #              아니면 스스로 빌드하고(바뀐 것이 없으면 그대로), web 없이 돌면 web/dist가 웹 소스보다 새것인지 본다.
 #   public     scripts/check-public.sh(공개 저장소 검사). AAA_PUBLIC_BASE가 있으면 그 ref 이후 커밋의 메시지·author를 본다
@@ -87,8 +88,17 @@ step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- 
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
   if [ "$OS" = windows ]; then cargo test --workspace --locked --no-fail-fast; return $?; fi
-  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_ci_local || return 1
-  python3 scripts/rust_tests.py --logs "$LOGS/rust" || return 1
+  local python_pid python_code=0 rust_code=0
+  # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
+  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_ci_local >"$LOGS/python.log" 2>&1 &
+  python_pid=$!
+  python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
+  wait "$python_pid" || python_code=$?
+  cat "$LOGS/python.log"
+  # 긴 다른 쪽의 출력 뒤에도 실패한 검사를 CI annotation에서 찾을 수 있게 남긴다.
+  if [ "$python_code" -ne 0 ]; then echo "FAIL python: exit=$python_code, 로그 $LOGS/python.log"; fi
+  if [ "$rust_code" -ne 0 ]; then echo "FAIL test: exit=$rust_code, 로그 $LOGS/rust"; fi
+  [ "$python_code" -eq 0 ] && [ "$rust_code" -eq 0 ]
 }
 E2E_BIN_DIR=""
 E2E_BIN=""

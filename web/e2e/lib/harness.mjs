@@ -101,7 +101,8 @@ async function until(what, fn, ms = 20_000) {
   }
 }
 
-// 사건으로 끝내는 기다림(새 시험): DOM은 MutationObserver, 주소는 hashchange. ms는 실패 한도다(통과용 기다림이 아니다).
+// 사건으로 끝내는 기다림(새 시험): DOM은 MutationObserver·리소스 load/error, 주소는 hashchange.
+// ms는 실패 한도다(통과용 기다림이 아니다).
 // `fn(arg)`은 page에서 돈다(Playwright가 함수를 글로 옮기듯 글로 넘긴다).
 /**
  * 페이지 안 대기에 Node 쪽 시한을 건다. 페이지 시계(setTimeout·requestAnimationFrame)는 멈추거나(Playwright `clock`) 얼 수 있고
@@ -120,8 +121,17 @@ const domIs = (p, what, fn, arg, ms = 20_000) =>
   inTime(p.evaluate(`new Promise((done, fail) => {
     const ok = () => { try { return Boolean((${fn})(${JSON.stringify(arg)})); } catch { return false; } };
     if (ok()) return done();
-    const mo = new MutationObserver(() => { if (ok()) { clearTimeout(stuck); mo.disconnect(); done(); } });
-    const stuck = setTimeout(() => { mo.disconnect(); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}이 되지 않았다`)})); }, ${ms});
+    const cleanup = () => {
+      clearTimeout(stuck);
+      mo.disconnect();
+      document.removeEventListener('load', check, true);
+      document.removeEventListener('error', check, true);
+    };
+    const check = () => { if (ok()) { cleanup(); done(); } };
+    const mo = new MutationObserver(check);
+    const stuck = setTimeout(() => { cleanup(); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}이 되지 않았다`)})); }, ${ms});
+    document.addEventListener('load', check, true);
+    document.addEventListener('error', check, true);
     mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   })`), ms, what);
 const hashIs = (p, hash, ms = 20_000) =>
