@@ -1,5 +1,11 @@
 # 시험 쓰는 법
 
+## 시작 자가 검사와 agent 종료 분리(t-0808)
+
+- `nice -n 15 cargo test --locked -p aaa-agent --lib selfcheck:: -- --nocapture`: 실제 FIFO open은 writer를 열기 전까지 완료될 수 없다. 검사 진입 사건 뒤 runtime drop 완료를 먼저 요구한다. 실패 때도 writer를 열어 자기 thread를 회수하고 원래 실패를 보고한다. 기존 spawn_blocking에서는 종료 관측이 실패했고 전용 thread로 분리한 뒤 통과했다. runtime이 사라진 뒤 검사를 풀어도 디스크 결과·실패 이유·다음 hello 요약이 보존되는지 확인하며, 진행 중에는 이전 완료 결과를 유지한다.
+- 기존 `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture` owner에서 시험 전용 DYLD interpose로 FDA의 시스템 TCC DB open만 실험실 FIFO로 바꾼다. 실제 TCC DB·시스템 설정·제품 환경 분기는 바꾸지 않는다. worker PID가 기록한 open 진입 뒤 writer를 닫아 둔 채 실제 service restart로 launcher·worker PID·기존 pane·새 pane·책임 PID·승인 거부·detached 검사를 유지한다. exec 뒤 같은 worker의 두 번째 open 진입을 확인하고 writer를 열어 정상 FDA 결과 저장까지 확인한다. 같은 최종 owner에 옛 spawn_blocking 경로를 다시 심으면 기존 30초의 새 worker 준비 기록 대기가 실패하고, sample에서 runtime drop → blocking pool 종료 대기와 FDA probe → FIFO open을 함께 확인했다.
+- 새 launcher 기본 경로와 `AAA_RESTART_TEST_LAUNCHER`로 지정한 기존 등록 launcher의 읽기 전용 경로를 모두 실행한다. launcher는 운영 서비스를 재시작하지 않는 별도 실험실 자식으로 쓴다. 시한 연장·실패 재시도·기대값 완화·고정 sleep은 없다. 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+
 ## 새 launcher 아래 restart fixture 격리(t-0798)
 
 - `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`는 등록되지 않은 새 launcher를 기본으로 쓴다. `AAA_RESTART_TEST_LAUNCHER`로 기존 launcher를 지정하는 읽기 전용 경로도 유지한다. 두 경로 모두 기존 launcher/worker PID·기존 pane 보존·새 pane·책임 PID·승인 거부·detached 재관측 단언을 그대로 검사한다.

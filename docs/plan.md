@@ -4008,6 +4008,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
      - 첫 실행 지연 probe
      - warm 지표
    - 비공개 API(`responsibility_get_pid_responsible_for_pid`, `TCCAccessPreflight`)는 진단 보조로만 쓰고, 실패하면 timing probe로 판정한다.
+   - 시작 자가 검사는 Tokio blocking pool과 분리한 전용 thread에서 실행한다. FDA의 보호 파일 open은 TCC 판정에 무기한 묶일 수 있으므로 agent 종료·launcher 보존 exec·서비스 종료에서 join하지 않는다. 프로세스가 살아 있으면 완료 결과를 기존처럼 selfcheck.json에 원자 저장하고 다음 hello 요약에 담는다. 종료·exec 때 미완료 검사는 OS가 정리하며 직전 완료 결과를 덮지 않는다(t-0808).
 
 ### 10.5 서명 identity
 
