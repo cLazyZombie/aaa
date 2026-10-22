@@ -15,6 +15,7 @@ fn hook_child() {
         "session-host" => ProcessKind::SessionHost,
         _ => ProcessKind::Cli,
     });
+    #[inline(never)]
     fn secret_panic() {
         let _ = std::panic::catch_unwind(|| std::panic::panic_any(SECRET.to_owned()));
     }
@@ -80,6 +81,7 @@ fn hook_reports_safe_locations_for_every_role_without_payload_or_names() {
             for forbidden in [SECRET, NAME_SECRET, "stack backtrace", "panicked at", "/Users/me/", "\\Users\\me\\"] {
                 assert!(!log.contains(forbidden), "{role}: 금지된 정보가 출력됐다");
             }
+            assert!(!log.contains(env!("CARGO_MANIFEST_DIR")), "{role}: 빌드 절대 경로가 출력됐다");
         }
         let events: Vec<serde_json::Value> = stderr
             .lines()
@@ -93,6 +95,17 @@ fn hook_reports_safe_locations_for_every_role_without_payload_or_names() {
             assert!(event["column"].as_u64().unwrap() > 0);
             assert!(event["thread_id"].as_str().unwrap().starts_with("ThreadId("));
             assert_eq!(event["build_sha"], BUILD_SHA);
+            let stack = event["stack"].as_array().expect("콜스택이 없다");
+            assert!(!stack.is_empty());
+            assert!(stack.len() <= 64);
+            assert!(
+                stack.iter().any(|f| f["function"].as_str().unwrap().contains("panic_log::tests::hook_child")),
+                "{stack:?}"
+            );
+            for frame in stack {
+                let file = frame["file"].as_str().unwrap();
+                assert!(file == "external" || SOURCE_FILES.contains(&file), "원본 경로: {file}");
+            }
         }
         // git checkout 빌드는 SHA가 있어야 한다. 소스 배포의 unknown은 별도의 보수적 경로다.
         assert!(matches!(BUILD_SHA.len(), 40 | 64) && BUILD_SHA.bytes().all(|b| b.is_ascii_hexdigit()));

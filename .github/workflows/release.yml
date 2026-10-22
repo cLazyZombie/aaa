@@ -47,18 +47,23 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-15
             asset: aaa-macos-aarch64
+            debuginfo: unpacked
           - target: x86_64-apple-darwin
             os: macos-15-intel
             asset: aaa-macos-x86_64
+            debuginfo: unpacked
           - target: x86_64-pc-windows-msvc
             os: windows-2025
             asset: aaa-windows-x86_64.exe
+            debuginfo: packed
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
             asset: aaa-linux-x86_64
+            debuginfo: 'off'
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
             asset: aaa-linux-aarch64
+            debuginfo: 'off'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6, herdr와 같음
@@ -91,6 +96,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_TARGET: ${{ matrix.target }}
           RELEASE_ASSET: ${{ matrix.asset }}
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ matrix.debuginfo }}
         run: |
           cargo build --release --locked -p aaa --bin aaa --target "$RELEASE_TARGET"
           suffix=""
@@ -99,6 +105,20 @@ jobs:
           test "$("$binary" --version)" = "aaa ${RELEASE_TAG#v}"
           mkdir -p release-artifact
           cp "$binary" "release-artifact/$RELEASE_ASSET"
+          # MSVC의 함수/줄 정보는 별도 PDB에 있다. 같은 빌드의 파일을 판·SHA와 함께 보관한다.
+          if [ "$RUNNER_OS" = Windows ]; then
+            python3 -c 'import gzip,pathlib,sys; pathlib.Path(sys.argv[2]).write_bytes(gzip.compress(pathlib.Path(sys.argv[1]).read_bytes(),mtime=0))' "target/$RELEASE_TARGET/release/aaa.pdb" release-artifact/aaa-windows-x86_64.pdb.gz
+          fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            # unpacked는 object 줄 정보를 보존한다. kache가 dSYM을 만들었으면 그 결과를 쓴다.
+            if [ ! -d "$binary.dSYM" ]; then (cd "target/$RELEASE_TARGET/release" && dsymutil aaa); fi
+            tar -czhf "release-artifact/$RELEASE_ASSET.dSYM.tar.gz" -C "target/$RELEASE_TARGET/release" aaa.dSYM
+          fi
+      - name: release panic 진단 확인
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ matrix.debuginfo }}
+        run: cargo test --release --locked -p aaa-common --lib --target "$RELEASE_TARGET" panic_log::
       - name: macOS 고정 launcher asset
         if: runner.os == 'macOS'
         env:
@@ -146,6 +166,9 @@ jobs:
             release-artifacts/aaa-macos-aarch64
             release-artifacts/aaa-macos-x86_64
             release-artifacts/aaa-windows-x86_64.exe
+            release-artifacts/aaa-windows-x86_64.pdb.gz
+            release-artifacts/aaa-macos-aarch64.dSYM.tar.gz
+            release-artifacts/aaa-macos-x86_64.dSYM.tar.gz
             release-artifacts/aaa-linux-x86_64
             release-artifacts/aaa-linux-aarch64
             release-artifacts/aaa-launcher-macos-aarch64.json

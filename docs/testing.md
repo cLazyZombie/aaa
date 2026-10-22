@@ -27,6 +27,25 @@
 - `nice -n 15 cargo test --locked -p aaa-agent --lib selfcheck:: -- --nocapture`: 실제 FIFO open은 writer를 열기 전까지 완료될 수 없다. 검사 진입 사건 뒤 runtime drop 완료를 먼저 요구한다. 실패 때도 writer를 열어 자기 thread를 회수하고 원래 실패를 보고한다. 기존 spawn_blocking에서는 종료 관측이 실패했고 전용 thread로 분리한 뒤 통과했다. runtime이 사라진 뒤 검사를 풀어도 디스크 결과·실패 이유·다음 hello 요약이 보존되는지 확인하며, 진행 중에는 이전 완료 결과를 유지한다.
 - 기존 `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture` owner에서 시험 전용 DYLD interpose로 FDA의 시스템 TCC DB open만 실험실 FIFO로 바꾼다. 실제 TCC DB·시스템 설정·제품 환경 분기는 바꾸지 않는다. worker PID가 기록한 open 진입 뒤 writer를 닫아 둔 채 실제 service restart로 launcher·worker PID·기존 pane·새 pane·책임 PID·승인 거부·detached 검사를 유지한다. exec 뒤 같은 worker의 두 번째 open 진입을 확인하고 writer를 열어 정상 FDA 결과 저장까지 확인한다. 같은 최종 owner에 옛 spawn_blocking 경로를 다시 심으면 기존 30초의 새 worker 준비 기록 대기가 실패하고, sample에서 runtime drop → blocking pool 종료 대기와 FDA probe → FIFO open을 함께 확인했다.
 - 새 launcher 기본 경로와 `AAA_RESTART_TEST_LAUNCHER`로 지정한 기존 등록 launcher의 읽기 전용 경로를 모두 실행한다. launcher는 운영 서비스를 재시작하지 않는 별도 실험실 자식으로 쓴다. 시한 연장·실패 재시도·기대값 완화·고정 sleep은 없다. 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+## 실행 파일 축소와 panic 콜스택(t-0804)
+
+- `cargo test --release --locked -p aaa-common --lib panic_log::`는 네 역할에서 실제 panic을 일으킨다.
+  함수 이름이 있는 콜스택·원래 위치/횟수/task ID·unwind 후 생존·stderr 잠금 중 `latest()` 관측을 확인한다.
+  payload·동적 이름·환경·절대 빌드 경로 비노출 단언은 유지한다. 프레임 파일은 저장소 상대 경로 허용 목록 또는 `external`뿐이다.
+  release workflow도 다섯 native target에서 이 owner를 실행한다. Windows PDB가 필요한 해석을 교차 컴파일 성공으로 대체하지 않는다.
+- `cargo test --locked -p aaa-host --lib web::assets::`는 내장된 모든 자산을 실제 `web/dist` 원문과 바이트 대조한다.
+  실제 static handler로 gzip/identity·명시적 `q=0` 거부·여러 헤더·wildcard·MIME·cache·404·SPA fallback을 확인한다.
+  gzip 응답을 강제로 없애거나 거부를 무시하는 구현은 같은 기대값에서 실패한다. 웹을 빌드하지 않은 기존 안내도 유지한다.
+- `python3 -m unittest scripts.test_release scripts.test_deploy_build`는 PDB/dSYM의 독립 SHA와 대응 실행 파일 SHA,
+  심볼 누락 거부, macOS unpacked 지정·dSYM 생성/복사, 기존 bootstrap·launcher 결속·provenance를 검사한다. 최종 파일을 후처리하지 않아 서명/SHA 순서가 바뀌지 않는다.
+- 크기는 같은 소스의 release 후보별로 기록한다. 프로세스 이름을 `aaa`로 맞추고 빌드가 끝난 뒤 기준/후보를
+  번갈아 실행하며 stdout 원문 일치와 CLI 벽시계·CPU 시간을 측정한다. 첫 실행은 따로 두고 나머지 30개 중앙값을 사용한다.
+  HTTP는 새 config/state·빈 port·가짜 tailscale·격리 usage home의 실제 host를 쓰며 listen 로그 사건으로 준비를 판정한다.
+  원문과 gzip을 풀어 원래 자산 bytes와 비교하고 자기가 띄운 PID 하나의 종료를 기다린다. 고정 sleep이나 실패 재시도는 없다.
+- macOS 결과·Windows/MSVC 및 Linux/musl 교차 링크·native CI를 구분해 기록한다. 로컬 정본은 전체 ci-local·deps·공개 검사다.
+  Linux 압축 DWARF의 실제 함수·줄 해석과 macOS의 dSYM 동반/단독 panic 출력을 각각 확인한다.
+  dSYM 존재·UUID 일치만으로 충분하지 않다. kache와 packed의 object 누락을 확인해 unpacked로 보존했다.
+  실측과 심볼 보관 조건은 [크기 분석](binary-size.md)을 따른다. FRONT_API·AGENT_LINK·E2E 번호는 바꾸지 않는다.
 
 ## 새 launcher 아래 restart fixture 격리(t-0798)
 

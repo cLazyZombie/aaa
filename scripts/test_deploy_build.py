@@ -45,13 +45,25 @@ else:
 import json, os, pathlib, sys
 if sys.argv[1:] == ['--version']: print('cargo 1.95.0')
 else:
- with open(os.environ['BUILD_LOG'], 'a') as f: f.write(json.dumps(dict(tool='cargo', args=sys.argv[1:], salt=os.environ['AAA_BUILD_SALT'], cwd=os.getcwd(), target=os.environ['CARGO_TARGET_DIR']))+'\\n')
+ with open(os.environ['BUILD_LOG'], 'a') as f: f.write(json.dumps(dict(tool='cargo', args=sys.argv[1:], salt=os.environ['AAA_BUILD_SALT'], cwd=os.getcwd(), target=os.environ['CARGO_TARGET_DIR'], split=os.environ.get('CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO')))+'\\n')
  if os.environ.get('FAIL_STAGE') == 'cargo': sys.exit(42)
  binary = pathlib.Path(os.environ['CARGO_TARGET_DIR'])/'release/aaa'
  binary.parent.mkdir(parents=True)
  salt = 'wrong' if os.environ.get('FAIL_STAGE') == 'version' else os.environ['AAA_BUILD_SALT']
  binary.write_text('#!/bin/sh\\nprintf "aaa 0.1.2+'+salt+'\\\\n"\\n')
  binary.chmod(0o755)
+ if os.environ.get('FAIL_STAGE') != 'symbols' and not os.environ.get('NO_CACHE_SYMBOLS'):
+  symbols = binary.with_name('aaa.dSYM')/'Contents/Resources/DWARF'
+  symbols.mkdir(parents=True)
+  (symbols/'aaa').write_bytes(b'matching-symbol-fixture')
+''',
+            "dsymutil": '''#!/usr/bin/env python3
+import json, os, pathlib, sys
+with open(os.environ['BUILD_LOG'], 'a') as f: f.write(json.dumps(dict(tool='dsymutil', args=sys.argv[1:]))+'\\n')
+if os.environ.get('FAIL_STAGE') == 'symbols': sys.exit(43)
+symbols = pathlib.Path(sys.argv[1]+'.dSYM')/'Contents/Resources/DWARF'
+symbols.mkdir(parents=True)
+(symbols/'aaa').write_bytes(b'matching-symbol-fixture')
 ''',
         }.items():
             file = tools / tool
@@ -84,11 +96,15 @@ else:
         self.assertEqual(manifest["origin_main"], self.commit)
         self.assertEqual(manifest["sha256"], hashlib.sha256((output / "aaa").read_bytes()).hexdigest())
         self.assertEqual(manifest["software"], "aaa 0.1.2+" + self.commit[:12])
+        self.assertEqual((output / "aaa.dSYM/Contents/Resources/DWARF/aaa").read_bytes(), b"matching-symbol-fixture")
+        self.assertFalse((output / "aaa.dSYM").is_symlink())
         self.assertEqual(set(manifest), {"commit", "origin_main", "sha256", "software", "built_at", "tools"})
         self.assertNotIn(str(self.root), (output / "provenance.json").read_text())
         calls = self.calls()
         self.assertEqual([(c['tool'], c['args']) for c in calls], [("npm", ["ci", "--no-audit", "--no-fund"]), ("npm", ["run", "build"]), ("cargo", ["build", "--release", "--locked", "-p", "aaa", "--bin", "aaa"])])
         self.assertEqual(calls[-1]["salt"], self.commit[:12])
+        if os.uname().sysname == "Darwin":
+            self.assertEqual(calls[-1]["split"], "unpacked")
         self.assertNotEqual(calls[-1]["cwd"], str(self.repo))
         self.assertEqual((self.repo / "dirty").read_text(), "caller changes")
         self.assertEqual(self.git("rev-parse", "HEAD"), self.commit)
@@ -126,6 +142,23 @@ else:
         self.assertEqual(list(system_temp.iterdir()), [])
         self.assertEqual((shared_target / "keep").read_text(), "other build")
         self.assertEqual(len(list(shared_target.iterdir())), 1)
+
+    @unittest.skipUnless(os.name == "posix" and os.uname().sysname == "Darwin", "macOS는 dSYM이 필수다")
+    def test_macos_missing_symbols_does_not_emit_provenance(self):
+        result = self.build(env={"FAIL_STAGE": "symbols"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("dSYM", result.stderr)
+        self.assertFalse((self.root / "candidate/provenance.json").exists())
+        self.assert_cleaned(self.repo / "target/deploy-build")
+
+    @unittest.skipUnless(os.name == "posix" and os.uname().sysname == "Darwin", "macOS는 dSYM을 수집한다")
+    def test_macos_collects_symbols_when_compiler_cache_did_not(self):
+        result = self.build(env={"NO_CACHE_SYMBOLS": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls()[-1]["tool"], "dsymutil")
+        self.assertEqual((self.root / "candidate/aaa.dSYM/Contents/Resources/DWARF/aaa").read_bytes(), b"matching-symbol-fixture")
+        self.assertTrue((self.root / "candidate/provenance.json").is_file())
+        self.assert_cleaned(self.repo / "target/deploy-build")
 
     def test_custom_parent_handles_absolute_and_caller_relative_paths(self):
         for index, configured in enumerate((str(self.root / "absolute build root"), "relative build root")):
