@@ -1,0 +1,173 @@
+use super::*;
+use std::path::PathBuf;
+struct Lab(PathBuf);
+impl Lab {
+    fn new() -> Self {
+        let p = std::env::temp_dir().join(format!("aaa-metrics-{}", aaa_common::util::new_id()));
+        fs::create_dir_all(&p).unwrap();
+        Self(p)
+    }
+    fn put(&self, p: &str, s: &str) {
+        let p = self.0.join(p);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, s).unwrap();
+    }
+}
+impl Drop for Lab {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn fixture(l: &Lab) {
+    l.put("target/ci-local/run/workspace-summary.tsv","v1|100|164|succeeded\nweb|ok|10:00|10:01|2|ignored\nbuild|ok|10:01|10:02|12|ignored\ntest|ok|10:02|10:03|100|ignored\ne2e|ok|10:02|10:04|140|ignored\n");
+    l.put(
+        "target/ci-local/run/rust/summary.json",
+        r#"{"jobs":[{"name":"unit","seconds":100,"log":"a.log"},{"name":"m13-1","seconds":600,"log":"b.log"}]}"#,
+    );
+    l.put(
+        "target/ci-local/run/rust/a.log",
+        "test result: ok. 10 passed; 0 failed; 2 ignored; 0 measured; 4 filtered out; finished in 99s\n",
+    );
+    l.put(
+        "target/ci-local/run/rust/b.log",
+        "test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 600s\n",
+    );
+    l.put("target/ci-local/run/e2e.log","## 요약: 파일 2개 × 1번, worker 2개, 모두 140.0초\n## 작업: 3개(독립 단계 분할 포함, 실패한 작업은 다시 실행하지 않음)\n##   01-first      통과 2/2  150.5초 (독립 작업 합계)\n##   02-second     실패 0/1  11.2초\n");
+}
+#[test]
+fn ci_reads_existing_counts_and_spec_work_without_inventing_individual_test_times() {
+    let l = Lab::new();
+    fixture(&l);
+    let r = ci_run(&l.0.join("target/ci-local/run"), 1000, "run".into()).unwrap();
+    assert_eq!(r.verification_ms, Some(164000));
+    assert_eq!(r.build_ms, Some(12000));
+    let c = r.tests.unwrap();
+    assert_eq!((c.passed, c.failed, c.skipped, c.filtered), (13, 1, 2, 9));
+    assert!(r.slow_tests.items.is_empty());
+    assert!(r.slow_tests.missing_reason.is_some());
+    assert_eq!((r.e2e_files, r.e2e_jobs), (Some(2), Some(3)));
+    assert_eq!(r.slow_e2e.items.iter().map(|t| t.duration_ms).collect::<Vec<_>>(), [150500, 11200]);
+    assert_eq!(r.slow_e2e.unit, "spec-work-sum");
+    assert!(r.profile.is_none());
+    assert!(r.artifact_bytes.is_none());
+}
+#[test]
+fn same_input_version_reuses_small_summary_after_source_logs_disappear() {
+    let l = Lab::new();
+    fixture(&l);
+    let state = Lab::new();
+    let a = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(a.runs.len(), 1);
+    fs::remove_file(l.0.join("target/ci-local/run/rust/a.log")).unwrap();
+    fs::remove_file(l.0.join("target/ci-local/run/e2e.log")).unwrap();
+    let b = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(a.runs, b.runs, "한 번 읽은 입력은 로그를 다시 읽지 않는다");
+}
+#[test]
+fn missing_and_repeated_e2e_timings_are_missing_instead_of_zero_or_fake_rankings() {
+    let l = Lab::new();
+    fixture(&l);
+    l.put("target/ci-local/run/rust/a.log", "crashed\n");
+    l.put("target/ci-local/run/e2e.log","## 요약: 파일 1개 × 2번, worker 1개, 모두 4.0초\n## 작업: 2개(독립 단계 분할 포함)\n##   01-repeat 통과 2/2 중간 2.0초, 가장 긴 3.0초\n");
+    let r = ci_run(&l.0.join("target/ci-local/run"), 1000, "r".into()).unwrap();
+    assert!(r.tests.is_none());
+    assert!(r.slow_e2e.items.is_empty());
+    assert!(!r.slow_e2e.complete);
+}
+#[test]
+fn rc_reads_existing_individual_test_and_scenario_step_durations_and_rejects_old_results() {
+    let l = Lab::new();
+    l.put("target/verification/gates/.started", "");
+    for name in ["default-tests", "workspace-tests"] {
+        l.put(&format!("target/verification/{name}/report.json"),r#"[{"target":"game","exit":0,"tests":[{"name":"fast","event":"ok","exec_time":0.12},{"name":"slow","event":"failed","exec_time":1.5},{"name":"skip","event":"ignored"}],"suites":[{"passed":1,"failed":1,"ignored":1,"filtered_out":0}]}]"#);
+    }
+    l.put(
+        "target/rc-e2e/report.json",
+        r#"{"status":"passed","reports":[{"scenario":"a","duration_ms":312,"status":"passed"}]}"#,
+    );
+    l.put("target/verification/summary.json",r#"{"format":1,"status":"failed","mode":"default","totalSeconds":12,"gates":[{"name":"runtime","seconds":9,"status":"failed"}]}"#);
+    let p = l.0.join("target/verification/summary.json");
+    let (_, at) = version(&p).unwrap();
+    let r = rc_run(&p, at, "r".into()).unwrap();
+    assert_eq!(r.verification_ms, Some(12000));
+    assert_eq!(r.outcome, "failed");
+    let c = r.tests.unwrap();
+    assert_eq!((c.passed, c.failed, c.skipped), (2, 2, 2));
+    assert_eq!(r.slow_tests.items.len(), 4);
+    assert_eq!(r.slow_tests.items[0].duration_ms, 1500);
+    assert_eq!(r.e2e_files, Some(1));
+    assert_eq!(r.e2e_unit.as_deref(), Some("scenario"));
+    assert_eq!(r.slow_e2e.unit, "scenario-step-sum");
+    assert_eq!(r.slow_e2e.items[0].duration_ms, 312);
+    assert!(
+        fresh_json(&l.0.join("target/rc-e2e/report.json"), at + 1, at + 2).is_none(),
+        "다른 실행의 보고를 현재 기록에 붙이지 않는다"
+    );
+}
+fn git(l: &Lab, args: &[&str]) -> String {
+    let o = std::process::Command::new("git")
+        .args(["-C", l.0.to_str().unwrap(), "-c", "user.name=Test", "-c", "user.email=test@example.com"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap().trim().into()
+}
+#[test]
+fn code_lines_use_commit_objects_incrementally_handle_rename_delete_and_keep_mixed_code_as_total() {
+    let l = Lab::new();
+    let state = Lab::new();
+    git(&l, &["init", "-q", "-b", "main"]);
+    l.put("src/a.rs", "fn main() {}\n\n// 주석\n");
+    l.put("web/e2e/a.mjs", "a\nb\n");
+    l.put("vendor/x.rs", "exclude\n");
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "first"]);
+    let a = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    assert_eq!(a.total_lines, 4);
+    assert_eq!(a.scanned_files, 2);
+    assert_eq!(a.breakdown.as_ref().unwrap().get("e2e"), Some(&2));
+    l.put("src/a.rs", "dirty\nnew\nlines\n");
+    let cached = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    assert_eq!(cached, a, "dirty 파일은 커밋의 줄 수를 바꾸지 않는다");
+    git(&l, &["mv", "web/e2e/a.mjs", "src/b.mjs"]);
+    l.put("src/a.rs", "fn main() {}\n#[cfg(test)]\nmod tests {}\n");
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "second"]);
+    let b = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    assert_eq!(b.total_lines, 5);
+    assert!(b.breakdown.is_none());
+    assert_eq!(b.split_status, "mixed_inline_tests");
+    assert_eq!(b.changed_files, 2);
+    assert!(
+        lines::collect(&l.0, &state.0, &[format!("{}:1", b.commit)]).unwrap().is_none(),
+        "host가 이미 가진 커밋·규칙은 다른 머신에서도 재집계하지 않는다"
+    );
+    git(&l, &["rm", "src/b.mjs"]);
+    git(&l, &["commit", "-qm", "third"]);
+    let c = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    assert_eq!(c.total_lines, 3);
+    assert_eq!(c.changed_files, 0);
+}
+#[test]
+fn malformed_or_oversized_inputs_remain_pending_without_a_successful_zero() {
+    let l = Lab::new();
+    let state = Lab::new();
+    l.put("target/verification/summary.json", "{");
+    let r = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert!(r.runs.is_empty());
+    assert!(!r.notes.is_empty());
+    l.put("target/ci-local/large/workspace-summary.tsv", "");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(l.0.join("target/ci-local/large/workspace-summary.tsv"))
+        .unwrap()
+        .set_len(MAX_INPUT + 1)
+        .unwrap();
+    let large = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert!(large.runs.is_empty());
+    assert!(!large.notes.is_empty());
+    assert_eq!(millis(f64::NAN), None);
+    assert_eq!(millis(-1.0), None);
+    assert_eq!(millis(0.125), Some(125));
+}

@@ -44,16 +44,16 @@ export default async function ({ page }) {
           else {
             await rowBadge.waitFor({ state: "attached" });
             const label = await rowBadge.textContent();
-            if (label !== (state === "detached" ? "책임 연결 끊김" : "책임 확인 못함")) throw new Error(`목록 경고: ${label}`);
+            if (label !== (state === "detached" ? "느린 빌드" : "느린 빌드?")) throw new Error(`목록 경고: ${label}`);
           }
           if (state === "launcher") {
             await banner.waitFor({ state: "detached" });
           } else {
             await banner.waitFor();
             if (state === "detached") {
-              await banner.getByText("개발자 도구 책임 연결 끊김", { exact: true }).waitFor();
+              await banner.getByText("느린 빌드", { exact: true }).waitFor();
               const text = await banner.innerText();
-              if (!text.includes("Handoff") || !text.includes("같은 머신") || !text.includes("커밋·push")) throw new Error("저장·재개 안내 없음");
+              if (!text.includes("매번 검사") || !text.includes("강제 종료") || !text.includes("Handoff") || !text.includes("같은 머신") || !text.includes("커밋·push")) throw new Error("저장·재개 안내 없음");
               if (reader) {
                 if (await banner.getByTestId("responsibility-prepare").count()) throw new Error("Reader에게 보류 조작이 보인다");
               } else {
@@ -65,7 +65,7 @@ export default async function ({ page }) {
                 await dialog.waitFor({ state: "detached" });
               }
             } else {
-              await banner.getByText("개발자 도구 책임 확인 못함", { exact: true }).waitFor();
+              await banner.getByText("느린 빌드?", { exact: true }).waitFor();
               if (await banner.getByTestId("responsibility-prepare").count()) throw new Error("조회 실패를 끊김으로 다룬다");
             }
             if (state === "detached") {

@@ -132,8 +132,8 @@ export function ResponsibilityBanner({ t, canAct, running }: { t: ThreadView; ca
   const detached = value.state === "detached";
   return <div className="banner park-banner responsibility-banner" data-testid="responsibility-banner">
     <div>
-      <strong>{detached ? "개발자 도구 책임 연결 끊김" : "개발자 도구 책임 확인 못함"}</strong>
-      <p>{detached ? "이 pane은 새 실행 파일의 첫 실행이 느릴 수 있다. 작업을 커밋·push하고 Handoff를 남긴 뒤 보류하고, 같은 머신에서 이어 하면 새 pane으로 열린다." : "실제 책임 프로세스를 조회하지 못했다. 머신 연결을 확인한 뒤 다시 조회한다."}</p>
+      <strong>{detached ? "느린 빌드" : "느린 빌드?"}</strong>
+      <p>{detached ? "macOS가 이 pane의 빌드·실행을 매번 검사해 느려지거나 강제 종료될 수 있다. 작업을 커밋·push하고 Handoff를 남긴 뒤 보류하고 같은 머신에서 이어 하면 새 pane으로 옮겨져 풀린다." : "이 pane의 빌드 검사 예외 여부를 확인하지 못했다."}</p>
       {value.path && <details>
         <summary>책임 경로 보기</summary>
         <p className="responsibility-path">관측 경로: {value.path} · PID {value.pid}</p>

@@ -2585,7 +2585,10 @@ impl Host {
     pub(crate) async fn collect(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
         // FileRead뿐 아니라 manifest·보고 사본을 host에 저장하다 실패해도 같은 재수집 경로를 쓴다.
         match self.collect_snapshot(project, id, last).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.collect_workspace_metrics(project, id).await;
+                Ok(())
+            }
             Err(e) => {
                 // 전송 프로토콜은 io 오류를 문자열로 보존한다. host 저장·agent 응답의 EMFILE도 경고한다.
                 #[cfg(unix)]

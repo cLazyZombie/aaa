@@ -1046,6 +1046,12 @@ pub enum AgentRequest {
         uncopied: bool,
     },
     /// git.v1을 알린 repo 머신 agent만 origin head·변화 객체를 읽는다.
+    /// workspace_metrics.v1: 기존 종료 산출물과 커밋별 코드 줄 수만 회수한다.
+    WorkspaceMetrics {
+        cwd: String,
+        workspace_key: String,
+        known_code_commits: Vec<String>,
+    },
     GitQuery {
         cwd: String,
         query: crate::GitQuery,
@@ -1111,6 +1117,7 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    WorkspaceMetrics(crate::WorkspaceCollected),
     AccountQuota {
         snapshot: Option<crate::QuotaSnapshot>,
     },
@@ -1888,6 +1895,10 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 저장한 지표만 읽는다. agent 호출·로그 읽기 없음.
+    WorkspaceDashboard {
+        query: crate::WorkspaceQuery,
+    },
     /// 설치 전용 서명 승인. Controller 또는 세션 밖 Local만, raw 승인서는 응답하지 않는다.
     InstallApprove {
         request: Box<crate::install::InstallApprovalRequest>,
@@ -3367,6 +3378,7 @@ impl FrontRequest {
                 | FrontRequest::DeployJobs
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
+                | FrontRequest::WorkspaceDashboard { .. }
                 | FrontRequest::Machines
                 | FrontRequest::MachineSetupList
                 | FrontRequest::Panes { .. }
@@ -3442,6 +3454,7 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    WorkspaceDashboard(crate::WorkspaceDashboard),
     InstallPublished {
         publication: crate::install::InstallPublication,
     },
@@ -3837,6 +3850,8 @@ pub enum FrontEvent {
     /// FRONT_API 1.79. host 계정이 바뀌었다(로그인 진행·끝, 기본, 메일·상태). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// 웹은 `account_list`·`account_defaults`와 보던 로그인의 `account_login_status`를 다시 읽는다
     Accounts,
+    /// FRONT_API 1.110. 원장 저장 뒤 웹 지표를 다시 읽는다. 웹 events 연결에만 보낸다.
+    WorkspaceMetrics,
     /// FRONT_API 1.80. 머신 등록 창·대기 목록이 바뀌었다(열기·닫기·새 요청·승인·거부). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// 웹은 `enroll_pending`을 다시 읽는다
     Enroll,

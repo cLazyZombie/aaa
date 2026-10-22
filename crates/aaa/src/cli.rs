@@ -3795,11 +3795,11 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
             aaa_proto::ResponsibilityState::Detached => {
                 let _ = writeln!(
                     s,
-                    "개발자 도구: launcher 책임 연결 끊김. 커밋·push·Handoff 뒤 보류하고 같은 머신에서 이어 한다"
+                    "느린 빌드: macOS가 이 pane의 빌드·실행을 매번 검사해 느려지거나 강제 종료될 수 있다. 커밋·push·Handoff 뒤 보류하고 같은 머신의 새 pane으로 옮기면 풀린다."
                 );
             }
             aaa_proto::ResponsibilityState::Unknown => {
-                let _ = writeln!(s, "개발자 도구: macOS 책임 경로 확인 못함");
+                let _ = writeln!(s, "느린 빌드?: 이 pane의 빌드 검사 예외 여부를 확인하지 못했다.");
             }
             aaa_proto::ResponsibilityState::Launcher => {}
         }
@@ -5096,6 +5096,9 @@ fn render_front(r: &FrontResponse) -> String {
             let _ = writeln!(s, "(답한 것은 {keep_days}일 뒤 지운다)");
         }
         // 웹 화면들의 공유 설정: CLI는 문서를 그대로 보인다
+        FrontResponse::WorkspaceDashboard(p) => {
+            let _ = writeln!(s, "{}", serde_json::to_string_pretty(p).unwrap_or_default());
+        }
         FrontResponse::Preferences(p) => {
             let _ = writeln!(s, "{}", serde_json::to_string_pretty(p).unwrap_or_default());
         }

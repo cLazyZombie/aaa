@@ -236,7 +236,12 @@ for s in public; do
 done
 
 echo
-echo "ci-local 요약($OS, 모두 $(( $(date +%s) - started ))초, 로그 $LOGS)"
+finished=$(date +%s)
+echo "ci-local 요약($OS, 모두 $(( finished - started ))초, 로그 $LOGS)"
+# 이미 메모리에 있는 종료 결과만 보존한다. 수집·전송·추가 명령은 검증 완료 조건이 아니다.
+metric_outcome=succeeded
+[ -z "$failed" ] || metric_outcome=failed
+{ printf 'v1|%s|%s|%s\n' "$started" "$((finished - started))" "$metric_outcome"; printf '%s' "$RESULTS"; } > "$LOGS/workspace-summary.tsv" || true
 for s in $ALL; do
   printf '%s' "$RESULTS" | awk -F'|' -v s="$s" '$1==s { printf "  %-9s %-8s %s~%s %5s초  %s\n", $1, ($2=="ok"||$2=="FAIL")?$2:"-", $3, $4, $5, ($2=="ok")?"":($2=="FAIL")?$6:$2 }'
 done

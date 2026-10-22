@@ -1170,6 +1170,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut tasks = host.task_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut reports = host.reports_changed.subscribe();
+    let mut workspace_metrics = host.workspace_metrics_changed.subscribe();
     let mut asks = host.asks_changed.subscribe();
     let mut inbox = host.inbox_changed.subscribe();
     let mut accounts = host.accounts_changed.subscribe();
@@ -1383,6 +1384,12 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             r = rollouts.changed() => {
                 if r.is_err() { break; }
                 send_rollout = true;
+            }
+            r = workspace_metrics.changed() => {
+                if r.is_err() { break; }
+                send_state = false;
+                let text = serde_json::to_string(&FrontEvent::WorkspaceMetrics).unwrap();
+                if socket.send(Message::Text(text.into())).await.is_err() { break; }
             }
             r = reports.changed() => {
                 if r.is_err() { break }
