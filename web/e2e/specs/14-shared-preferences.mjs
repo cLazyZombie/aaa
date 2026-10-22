@@ -71,10 +71,12 @@ export default async function ({ ctl, page }) {
     await close(r);
     // 데스크톱에서 사이드바 한 줄 → 휴대폰은 한 줄, 보기 권한 기기는 밝음까지 모두 받는다
     sent = wrote(a);
-    d = a.getByRole("dialog", { name: "설정" });
+    d = a.getByRole("region", { name: "설정" });
     await d.getByRole("group", { name: "사이드바 행" }).getByRole("button", { name: "한 줄" }).click();
     if ((await sent).ok?.revision !== 3) throw new Error("셋째 쓰기");
     await htmlIs(r, "data-theme", "light");
+    // 설정을 닫으면 본문으로 돌아온다. 공유된 목록 모양은 drawer를 열어 실제로 본다.
+    await b.locator(".view [data-testid='drawer-toggle']").click();
     await b.locator(".machine-workspaces:not(.is-two-line)").first().waitFor();
     await shot(r, "phone-reader-shared");
 

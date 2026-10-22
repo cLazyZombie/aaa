@@ -52,18 +52,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-4);
   min-width: 0;
   min-height: var(--control-h);
 }
 
 .settings-row > * {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .settings-row-text {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 12rem;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
@@ -197,3 +201,17 @@
     transition: none;
   }
 }
+
+/* 설명과 긴 상태 값은 각자 한 줄 폭을 쓴다(passkey·긴 도메인·오류). */
+.settings-row.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+.settings-row.is-stacked > .settings-row-text,
+.settings-row.is-wide > .settings-row-text {
+  flex-basis: auto;
+}
+.settings-row.is-stacked .settings-description { max-width: none; }
+.settings-row .settings-toggle,
+.settings-row .settings-stepper { flex-shrink: 0; }
