@@ -7360,7 +7360,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 공식 build 단계는 Windows에서 배포와 같은 `cargo build --release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc`를 독립 호출하고 기존 workspace/all-targets build를 이어 간다. 기존 windows-2025 CI에 dev 없는 release 컴파일·링크 owner를 둔다. macOS Windows release 교차 빌드로 원본 RED→수리 GREEN·누락 변형 RED를 남기며 실제 Windows 실행은 기존 CI와 사용자 인수로 구분한다. 다른 OS의 gate는 유지한다.
 - 이미 push된 v0.1.3 tag는 지우거나 옮기지 않는다. 이번 후보는 판 번호를 유지하고 다음 게시 판은 사용자 결정 뒤 별도로 준비한다. 착지 기준 main f68daf9d의 마지막 §8.434·FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호 86(88파일)을 직접 확인해 빈 §8.435를 쓰며 API/E2E 번호는 유지한다. 작업 목록 요약 메뉴와 보류 thread 인증 참조 수리를 보존한 통합본으로 전체 gate·Linux/Windows clippy·Windows release 교차 빌드를 다시 검증한다.
 
-### 8.436 활동 막대 자동화·할 일 아이콘(10-22, t-0727)
+### 8.436 Windows 사용자 검증 release 0.1.4 준비(t-0485)
+
+- 사용자 결정에 따라 workspace와 그 아홉 package의 lockfile 판을 0.1.4로 맞춘다. 외부 의존성 판·실행 코드·설치 계약은 바꾸지 않는다. main 42dc637d의 Windows JobObjects 일반 의존성과 dev 없는 production release 빌드 검사를 포함한다.
+- 기존 v0.1.3 tag는 지우거나 옮기지 않는다. 버전 후보 검증·착지 창·main 병합 뒤 정확한 대상 main의 CI 네 job 전체 성공을 확인하고, 승인된 이번 한 번 v0.1.4 tag push·release 게시를 진행한다. release workflow 전체 성공과 publish, 실제 Windows bootstrap 다운로드의 SHA를 source·manifest·SHA256SUMS와 대조한 뒤에만 사용자 인수를 요청한다. 빌드가 실패하면 tag를 유지하고 원인을 보고한다.
+- pc-main 안내는 준비물·고정 판 다운로드·명령·확인·되돌리기·문제 로그를 유지하며 실제 내려받은 판/SHA로 채워 [검수 대기]로 보고한다. CI와 교차 검증은 실제 사용자 PC의 SCM logon·Session 0·부팅·LSA/UAC·조직 정책 인수를 대신하지 않는다. main의 마지막 §8.435·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인해 빈 §8.436을 쓰고 API/E2E 번호는 유지한다.
+
+### 8.437 활동 막대 자동화·할 일 아이콘(10-22, t-0727)
 
 - 사용자 「자동화 아이콘 다시 만들어줘. 할일도. 4개정도 시안을 가져와」. 지금 세트(lucide 24 격자·둥근 끝과 모서리·막대 선 1.5)로 자동화·할 일 시안 4개씩을 직접 그렸다. 실제 막대에 끼워 데스크톱·휴대폰 × 어두움·밝음 × 고름·배지로 찍었고, 사용자가 자동화 A2·할 일 B1을 골랐다(1B 2A).
 - 자동화는 「도는 시계」다. 시계 방향 화살표 안에 시계 바늘이 있어 정한 때·사건마다 다시 돈다는 뜻이다. 할 일은 「큰 체크 상자」다. 체크가 상자 밖으로 나간다. 옛 ListTodo는 「모든 thread」의 ListChecks와 꼴이 거의 같았다.

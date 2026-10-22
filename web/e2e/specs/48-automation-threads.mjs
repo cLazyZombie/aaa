@@ -238,7 +238,7 @@ export default async function ({ page }) {
     await page.locator(`[data-panel="work"] li[data-thread="${project}/${auto.id}"] > .workspace-header`).click({ button: "right" });
     const menu = page.locator(".row-menu, .row-sheet");
     await menu.waitFor();
-    // 막대 「자동화」와 같은 아이콘(t-0727 plan §8.436)
+    // 막대 「자동화」와 같은 아이콘(t-0727 plan §8.437)
     if ((await menu.getByRole("menuitem", { name: "자동화 규칙" }).locator("svg.lucide-aaa-automation").count()) !== 1) throw new Error("⋯ 메뉴 자동화 아이콘");
     await menu.getByRole("menuitem", { name: "자동화 규칙" }).click();
     await page.getByTestId("automation-detail").waitFor();

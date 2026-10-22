@@ -1,6 +1,6 @@
 # 시험 쓰는 법
 
-## 활동 막대 자동화·할 일 아이콘(t-0727, plan §8.436)
+## 활동 막대 자동화·할 일 아이콘(t-0727, plan §8.437)
 
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 26-activity-bar --workers 1`: 막대의 자동화·할 일 단추가 새 아이콘(`lucide-aaa-automation`·`lucide-aaa-tasks`)이고 옛 Workflow·ListTodo가 막대에 없는지 본다. 명령 팔레트 「할 일 열기」도 같은 아이콘인지 확인하고 막대를 캡처한다.
 - `--spec 48-automation-threads`: thread ⋯ 메뉴 「자동화 규칙」이 막대와 같은 자동화 아이콘인지 확인한다. 둘 다 DOM 상태로 끝나며 고정 sleep·재시도는 없다. 그림 자체는 데스크톱·휴대폰 × 어두움·밝음 화면으로 눈으로 확인한다.
