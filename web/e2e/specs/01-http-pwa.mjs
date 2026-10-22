@@ -128,12 +128,26 @@ export default async function ({ ctl, page }) {
     // 끊긴 채 새로 고치면 「연결 없음」 화면이 아니라 캐시한 셸로 앱이 뜬다(연결 화면·오류는 앱이 그린다)
     await ctx.setOffline(true);
     await page.reload();
+    // Chromium 156은 SW가 준 새 문서의 navigator 상태를 구 emulateNetworkConditions에서 잃는다.
+    // 요청 차단은 ctx에 두고 공식 CDP로 이 문서의 실제 망 상태·브라우저 사건도 맞춘다.
+    const documentNetwork = (offline) => cdp.send("Network.overrideNetworkState", {
+      offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+    });
+    await documentNetwork(true);
+    if (await page.evaluate(() => navigator.onLine)) throw new Error("offline 새 문서가 online으로 에뮬레이션됐다");
     // 앱은 host에 닿지 못했다고 말하고(offline.html의 「다시 열기」 링크가 아니라 앱의 카드), 네트워크가 돌아오면 스스로 다시 묻는다
     await page.getByTestId("unreachable").waitFor();
     if (await page.getByRole("link", { name: "다시 열기" }).count()) throw new Error("셸 대신 offline.html이 떴다");
     await shot(page, "pwa-offline-shell");
+    await page.evaluate(() => {
+      window.__e2eOnline = null;
+      addEventListener("online", (event) => { window.__e2eOnline = { trusted: event.isTrusted, online: navigator.onLine }; }, { once: true });
+    });
     await ctx.setOffline(false);
+    await documentNetwork(false);
     await page.getByTestId("token-gate").waitFor();
+    const online = await page.evaluate(() => window.__e2eOnline);
+    if (!online?.trusted || !online.online) throw new Error(`브라우저의 실제 online 사건이 없다: ${JSON.stringify(online)}`);
     // 셸을 갖기 전의 처음 실행이 끊겼다면: 미리 둔 offline.html(aaa 것)
     if (!(await page.evaluate(() => caches.open("aaa-files-v2").then((c) => c.match("/offline.html")).then(Boolean)))) throw new Error("offline.html이 미리 놓이지 않았다");
     await ctx.close();
