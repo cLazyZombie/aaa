@@ -270,12 +270,12 @@ export default async function ({ page }) {
     await saved(page, before);
     await page.getByTestId("tasks-tab-log").click();
     const log = page.getByTestId("task-log");
-    await log.getByTestId("task-log-filter-deleted").click();
+    await page.getByTestId("task-log-filter-deleted").click();
     await domIs(page, "삭제만", () => {
       const rows = [...document.querySelectorAll('[data-testid="task-log"] [data-action]')];
       return rows.length === 2 && rows.every((r) => r.dataset.action === "delete");
     });
-    await log.getByTestId("task-log-filter-all").click();
+    await page.getByTestId("task-log-filter-all").click();
     await domIs(page, "모든 기록", () => document.querySelectorAll('[data-testid="task-log"] [data-action]').length > 2);
     await log.locator(".task-log-row").first().locator(".task-log-toggle").click();
     await shot(page, "edit-desktop-log");

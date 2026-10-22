@@ -2,6 +2,7 @@
 // 자동 정리)·언제·무엇·전후 차이로 보인다. 삭제 항목에는 「되살리기」, 거르기는 삭제만·자동 정리만. 목록 모양은 t3code
 // SettingsPanels.tsx `ArchivedThreadsPanel`(3294–3560: 묶음 목록, 줄마다 되살리기 단추, 누른 뒤 다시 읽기)을 따른다.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import type { TaskArchiveFilter, TaskHistoryRepo, TaskLogEntry, TaskLogFilter } from "./gen/proto";
 import { ApiError, call } from "./api";
@@ -22,7 +23,7 @@ const FILTERS = [
 /** 오래된 기록 지우기의 기준(일) */
 const PRUNE_DAYS = 30;
 
-export function TaskLogView({ canEdit, rev, onRestore, project, repos, onThread, initialArchive = false, searchApi = true }: { canEdit: boolean; rev: string; onRestore: (e: TaskLogEntry) => Promise<void>; project: string; repos: string[]; onThread: (id: string) => void; initialArchive?: boolean; searchApi?: boolean }) {
+export function TaskLogView({ toolbar, canEdit, rev, onRestore, project, repos, onThread, initialArchive = false, searchApi = true }: { toolbar: HTMLElement | null; canEdit: boolean; rev: string; onRestore: (e: TaskLogEntry) => Promise<void>; project: string; repos: string[]; onThread: (id: string) => void; initialArchive?: boolean; searchApi?: boolean }) {
   const [filter, setFilter] = useState(initialArchive ? "completed" : "all");
   const [query, setQuery] = useState("");
   const [repo, setRepo] = useState<string | null>(null);
@@ -69,9 +70,11 @@ export function TaskLogView({ canEdit, rev, onRestore, project, repos, onThread,
   const now = Date.now();
   return (
     <div className="tasks-scroll task-log" data-testid="task-log">
-      {searchApi ? <div className="tasks-toolbar">
-        <TaskHistoryTools query={query} onQuery={setQuery} repo={repo} onRepo={setRepo} choices={historyChoices(repos, pastRepos)} filters={FILTERS} filter={filter} onFilter={setFilter} />
-      </div> : <p className="tasks-empty">기록 검색·저장소·완료 상태 거르기는 host 갱신 뒤 쓸 수 있다.</p>}
+      {/* 기록의 상태를 유지하며 탭과 같은 flex 줄에 검색 도구를 놓는다. */}
+      {searchApi ? toolbar && createPortal(
+        <TaskHistoryTools query={query} onQuery={setQuery} repo={repo} onRepo={setRepo} choices={historyChoices(repos, pastRepos)} filters={FILTERS} filter={filter} onFilter={setFilter} />,
+        toolbar,
+      ) : <p className="tasks-empty">기록 검색·저장소·완료 상태 거르기는 host 갱신 뒤 쓸 수 있다.</p>}
       {!archived && <div className="task-log-tools">
         {canEdit && <button type="button" className="btn btn-ghost" onClick={() => setPrune(true)}>{PRUNE_DAYS}일 지난 기록 지우기</button>}
       </div>}

@@ -245,6 +245,72 @@ async fn reservation_edits_require_new_approval_and_cancel_survives_reopen() {
     assert!(lab.h.db.threads(Some("demo")).unwrap().is_empty());
 }
 
+/// thread 없는 완료 체크도 기존 완료 보관·고정 ID·복원 경계를 거친다.
+#[tokio::test]
+async fn checked_tasks_archive_children_first_and_restore_without_queue() {
+    let lab = Lab::new();
+    lab.write("## Backlog\n- [x] 모델만 정한 완료 (sol-xhigh) [작업 폴더]\n  보존할 메모\n  - [X] 완료 하위\n- [x] 미완료 하위가 있는 상위\n  - [ ] 남은 하위\n");
+    let before = lab.h.task_board("demo").unwrap();
+    let parent = &before.tasks[0];
+    let child = &before.tasks[1];
+    let blocked = &before.tasks[2];
+    assert!(blocked.attention.as_deref().unwrap().contains("하위 task가 남아 있다"));
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    let active = lab.h.task_board("demo").unwrap();
+    assert_eq!(
+        active.tasks.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(),
+        ["미완료 하위가 있는 상위", "남은 하위"]
+    );
+    let archived = lab.h.db.archive_list("demo").unwrap();
+    assert_eq!(archived.len(), 2);
+    for t in [parent, child] {
+        let a = archived.iter().find(|a| Some(&a.task_id) == t.id.as_ref()).unwrap();
+        assert!(a.committed && a.task.done && !a.restored);
+        assert_eq!(a.reason, "완료 체크 [x]");
+        assert_eq!(a.task.owner, t.owner);
+        assert_eq!(a.report, None);
+    }
+    let saved = archived.iter().find(|a| Some(&a.task_id) == parent.id.as_ref()).unwrap();
+    assert!(saved.body.contains("보존할 메모"));
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    reopened.task_clean_pass("demo", &reopened.project_dir("demo").unwrap());
+    assert_eq!(reopened.db.archive_list("demo").unwrap().len(), 2);
+    reopened.task_archive("demo", parent.id.as_deref(), None, "device:user").await.unwrap();
+    let restored = reopened.task_board("demo").unwrap().tasks.into_iter().find(|t| t.id == parent.id).unwrap();
+    assert_eq!(restored.short_id, parent.short_id);
+    assert!(!restored.done && restored.thread.is_none());
+    assert_eq!(restored.owner, parent.owner);
+    assert!(restored.notes.iter().any(|n| n.contains("보존할 메모")));
+    assert!(reopened.db.queue_list("demo").unwrap().is_empty());
+    reopened.task_clean_pass("demo", &reopened.project_dir("demo").unwrap());
+    assert!(reopened.task_board("demo").unwrap().tasks.iter().any(|t| t.id == parent.id));
+}
+
+#[test]
+fn checked_tasks_keep_the_file_on_archive_failure_and_recover_the_receipt_after_restart() {
+    let lab = Lab::new();
+    lab.write("## Backlog\n- [x] 체크한 완료 [작업 폴더]\n  완료 내용\n");
+    lab.h.task_identify("demo").unwrap();
+    let original = lab.text();
+    lab.h.db.test_archive_fault(true);
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    assert_eq!(lab.text(), original);
+    assert!(lab.h.db.archive_list("demo").unwrap().is_empty());
+    lab.h.db.test_archive_fault(false);
+    lab.h.db.test_archive_finalize_fault(true);
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    assert!(tasks::parse(&lab.text()).is_empty());
+    let pending = lab.h.db.archive_list("demo").unwrap().remove(0);
+    assert!(!pending.committed);
+    lab.h.db.test_archive_finalize_fault(false);
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    reopened.task_clean_pass("demo", &reopened.project_dir("demo").unwrap());
+    let recovered = reopened.db.archive_list("demo").unwrap().remove(0);
+    assert!(recovered.committed);
+    assert_eq!(recovered.task_id, pending.task_id);
+    assert!(recovered.body.contains("완료 내용"));
+}
+
 #[tokio::test]
 async fn archive_write_failure_preserves_active_then_restore_keeps_id_without_queue() {
     let lab = Lab::new();

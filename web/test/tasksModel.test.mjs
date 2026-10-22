@@ -48,6 +48,7 @@ describe("할 일 화면", () => {
     assert.deepEqual(pick("mine"), ["a"]);
     assert.deepEqual(pick("unassigned"), ["b"]);
     assert.deepEqual(pick("running"), ["c"]);
+    assert.deepEqual(pick("check"), ["d"]);
     const parked = task({ title: "e", thread: "t-0004" });
     assert.deepEqual([...ts, parked].filter((t) => taskMatches(t, "parked", "", groups)).map((t) => t.title), ["e"]);
     assert.equal(taskMatches(parked, "running", "", groups), false);
@@ -76,7 +77,35 @@ describe("할 일 화면", () => {
     assert.deepEqual(all.rest.map((r) => [r.t.title, r.depth]), [["상위", 0], ["하위", 1], ["손자", 2], ["끊긴 상위", 0], ["나중", 0]]);
     const mine = taskList(board, "mine", "", null, groups);
     assert.deepEqual(mine.rest.map((r) => r.t.title), ["나중"]);
-    assert.deepEqual(mine.counts, { all: 5, mine: 1, unassigned: 4, running: 0, parked: 0, reserved: 0, check: 0 });
+    assert.deepEqual(mine.counts, { all: 5, mine: 1, unassigned: 4, waiting: 0, running: 0, parked: 0, reserved: 0, check: 0 });
+  });
+
+  it("모델만 고른 일은 대기이며 모든 칩의 합과 실제 거른 행이 전체와 같다", () => {
+    const owners = [null, "agent", "me", "sol-xhigh", "opus-high", "Priya Rao"];
+    const variants = [{}, { thread: "t-0001" }, { thread: "t-0004" }, { attention: "끝난 일 확인" }, { problems: [MISREAD] }, { done: true }];
+    const ts = owners.flatMap((owner) => variants.map((v) => task({ owner, ...v })));
+    ts.forEach((t, i) => Object.assign(t, { id: `ID${i}`, line: i + 1, title: `일 ${i}`, repo: i % 2 ? "aaa" : "rc" }));
+    // 담당·실행·오류와 예약이 겹쳐도 정확히 한 칩에만 들어간다.
+    const queue = ts.filter((_, i) => i % 3 === 0).map((t, i) => ({ task_id: t.id, task: t, state: "queued", position: i + 1, reason: "자리 대기" }));
+    const board = { tasks: ts, queue };
+    for (const repo of [null, "aaa", "rc"]) {
+      const model = taskList(board, "all", "", repo, groups);
+      const filters = Object.keys(model.counts).filter((f) => f !== "all");
+      assert.equal(filters.reduce((sum, f) => sum + model.counts[f], 0), model.counts.all);
+      const seen = [];
+      for (const f of filters) {
+        const m = taskList(board, f, "", repo, groups);
+        const rows = [...m.top, ...m.rest].filter((r) => r.kind !== "gap");
+        assert.equal(rows.length, model.counts[f], `${repo} ${f}`);
+        seen.push(...rows.map((r) => r.t.id));
+      }
+      assert.equal(new Set(seen).size, model.counts.all);
+    }
+    for (const owner of ["sol-xhigh", "opus-high"]) {
+      assert.ok(taskMatches(task({ owner }), "waiting", "", groups));
+    }
+    assert.equal(taskState(task({ done: true }), groups), "done");
+    assert.equal(startable(task({ done: true }), groups, []), false);
   });
 
   it("상세가 가리키는 task: 제목으로 찾고, 같은 제목이면 줄이 같은 것", () => {
@@ -339,6 +368,13 @@ describe("할 일 한 목록과 예약", () => {
     assert.deepEqual(rows(none.top), ["gap:2:aaa·rc", "reserved:정하지 않음", "gap:1:aaa"]);
     assert.deepEqual(taskList(board([q(1, 1)]), "all", "", "rc", groups).top, [], "보이는 예약이 없으면 숨은 줄도 없다");
     assert.deepEqual(repoChoices(b).map((c) => [c.key, c.n]), [["aaa", 5], ["rc", 1], ["", 1]]);
+  });
+
+  it("예약한 상위 밑의 하위도 자기 칩에 남고 칩 합은 전체다", () => {
+    const b = board([q(1, 1)]);
+    const m = taskList(b, "unassigned", "", null, groups);
+    assert.deepEqual(rows(m.top), ["under:하위 하나@1", "under:하위 둘@1"]);
+    assert.equal(Object.entries(m.counts).filter(([f]) => f !== "all").reduce((n, [, c]) => n + c, 0), m.counts.all);
   });
 
   it("예약 차례 순번: 놓은 자리 앞·뒤, 같은 자리는 없음, 일반 → 예약은 그 자리에", () => {
