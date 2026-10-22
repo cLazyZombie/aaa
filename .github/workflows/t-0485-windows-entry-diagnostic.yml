@@ -1,0 +1,61 @@
+name: t-0485 Windows install entry diagnosis
+
+on:
+  push:
+    branches: ["aaa/projects/t-0485-windows-entry-stall"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+# Temporary diagnostic branch only. Exclude this file from the landing candidate.
+jobs:
+  rust:
+    name: windows-2025 install diagnosis
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - name: Rust stable
+        id: rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version
+          echo "rustc=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Web front for the native installer
+        run: bash scripts/ci-local.sh --only web --logs . --tee
+      - name: Original install owners with stage diagnostics
+        timeout-minutes: 15
+        env:
+          RUST_TEST_THREADS: "8"
+        run: cargo test -p aaa --test install --locked -- --nocapture 2>&1 | tee windows-install-entry.log
+      - name: Preserve diagnostic log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-install-entry-${{ github.run_id }}-${{ github.run_attempt }}
+          path: windows-install-entry.log
+          if-no-files-found: ignore
+          retention-days: 14
