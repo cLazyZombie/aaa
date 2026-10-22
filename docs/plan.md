@@ -7359,3 +7359,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - v0.1.3 main CI는 통과했지만 release run39718713406의 Windows production binary에서 worker의 JobObjects import가 실패했다. `Win32_System_JobObjects`가 dev-dependency에만 있어 workspace/all-targets의 feature 합치기가 누락을 가렸다. 실제 worker가 쓰는 feature를 일반 Windows dependency로 옮기고 빈 dev 항목을 없앤다. 런타임 권한·Job 진단·승인 단언·시한은 그대로다.
 - 공식 build 단계는 Windows에서 배포와 같은 `cargo build --release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc`를 독립 호출하고 기존 workspace/all-targets build를 이어 간다. 기존 windows-2025 CI에 dev 없는 release 컴파일·링크 owner를 둔다. macOS Windows release 교차 빌드로 원본 RED→수리 GREEN·누락 변형 RED를 남기며 실제 Windows 실행은 기존 CI와 사용자 인수로 구분한다. 다른 OS의 gate는 유지한다.
 - 이미 push된 v0.1.3 tag는 지우거나 옮기지 않는다. 이번 후보는 판 번호를 유지하고 다음 게시 판은 사용자 결정 뒤 별도로 준비한다. 착지 기준 main f68daf9d의 마지막 §8.434·FRONT_API 1.106·AGENT_LINK 1.11·웹 E2E 최대 번호 86(88파일)을 직접 확인해 빈 §8.435를 쓰며 API/E2E 번호는 유지한다. 작업 목록 요약 메뉴와 보류 thread 인증 참조 수리를 보존한 통합본으로 전체 gate·Linux/Windows clippy·Windows release 교차 빌드를 다시 검증한다.
+
+### 8.436 활동 막대 자동화·할 일 아이콘(10-22, t-0727)
+
+- 사용자 「자동화 아이콘 다시 만들어줘. 할일도. 4개정도 시안을 가져와」. 지금 세트(lucide 24 격자·둥근 끝과 모서리·막대 선 1.5)로 자동화·할 일 시안 4개씩을 직접 그렸다. 실제 막대에 끼워 데스크톱·휴대폰 × 어두움·밝음 × 고름·배지로 찍었고, 사용자가 자동화 A2·할 일 B1을 골랐다(1B 2A).
+- 자동화는 「도는 시계」다. 시계 방향 화살표 안에 시계 바늘이 있어 정한 때·사건마다 다시 돈다는 뜻이다. 할 일은 「큰 체크 상자」다. 체크가 상자 밖으로 나간다. 옛 ListTodo는 「모든 thread」의 ListChecks와 꼴이 거의 같았다.
+- `web/src/activityIcons.ts`에서 `createLucideIcon`으로 만든다(class `lucide-aaa-automation`·`lucide-aaa-tasks`). 활동 막대, thread ⋯ 메뉴 「자동화 규칙」, 명령 팔레트 「할 일 열기」에 쓴다. thread 요약의 「지금 할 것」 머리는 TASKS.md 할 일이 아니라서 ListTodo 그대로 둔다.
+- wire 변화는 없다(FRONT_API 그대로). 검증은 [testing](testing.md)의 「활동 막대 자동화·할 일 아이콘」을 따른다.

@@ -47,6 +47,14 @@ export default async function () {
       // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280). 「답할 것」은 패널 끝, 보고서 바로 위다(§8.359).
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
       if (tabs !== "activity-work,activity-machines,activity-automations,activity-asks") throw new Error(`패널 단추: ${tabs}`);
+      // 자동화·할 일은 직접 그린 아이콘(사용자 결정 10-22, t-0727 plan §8.436): 옛 Workflow·ListTodo가 막대에 없다
+      const icons = await p.evaluate(() => ({
+        automation: document.querySelector('[data-testid="activity-automations"] > svg')?.getAttribute("class"),
+        tasks: document.querySelector('[data-testid="activity-tasks"] > svg')?.getAttribute("class"),
+        old: document.querySelectorAll(".activity-bar .lucide-workflow, .activity-bar .lucide-list-todo").length,
+      }));
+      if (!icons.automation?.includes("lucide-aaa-automation") || !icons.tasks?.includes("lucide-aaa-tasks") || icons.old !== 0) throw new Error(`막대 아이콘 ${JSON.stringify(icons)}`);
+      await shot(p, "activity-icons");
       await p.getByTestId("pane-t1").waitFor();
       const viewWidth = () => p.evaluate(() => Math.round(document.querySelector(".view").getBoundingClientRect().width));
       const wide = await viewWidth();
@@ -133,6 +141,15 @@ export default async function () {
         await p.keyboard.press("Enter");
         await box.waitFor({ state: "detached" });
       };
+      // 팔레트 「할 일 열기」도 막대와 같은 할 일 아이콘
+      await p.keyboard.press("ControlOrMeta+Shift+K");
+      const box = p.getByTestId("command-palette");
+      await box.getByRole("searchbox", { name: "패널과 동작 검색" }).fill("할 일 열기");
+      const openTasks = box.getByRole("option", { name: "할 일 열기" });
+      await openTasks.waitFor();
+      if ((await openTasks.locator("svg.lucide-aaa-tasks").count()) !== 1) throw new Error(`팔레트 할 일 아이콘: ${await openTasks.innerHTML()}`);
+      await p.keyboard.press("Escape");
+      await box.waitFor({ state: "detached" });
       await palette("calm");
       await hashIs(p, `#pane=${encodeURIComponent(idle)}`);
       await sidebarIs(p, { panel: "work", collapsed: false }, "팔레트가 연 agent");
