@@ -875,7 +875,7 @@ struct ThreadStartArgs {
     /// timing 같은 측정 표지(쉼표 구분). 그 머신의 자동화가 명시한 wait를 지킨다.
     #[arg(long, value_delimiter = ',')]
     holds: Vec<String>,
-    /// 제목(--from-task면 비워도 된다)
+    /// 제목(--from-task면 비워도 된다). 직접 시작해도 host가 할 일을 먼저 만들고 연결한다
     #[arg(long)]
     title: Option<String>,
     #[arg(long)]
@@ -910,7 +910,7 @@ struct ThreadStartArgs {
     /// 머신을 정하지 않았으면 그 저장소가 있는 머신 가운데 덜 붐비는 곳이다. 칸이 비면 작업 폴더로 띄우고 경고한다.
     #[arg(long)]
     from_task: Option<String>,
-    /// 시작하면 그 task 줄 끝에 ` · <thread id>`를 붙인다(--from-task와 함께)
+    /// 호환 옵션. --from-task로 시작하면 생략해도 그 할 일에 자동 연결한다
     #[arg(long)]
     link_task: bool,
     /// 준비는 host 배경 작업으로 계속하고 바로 thread ID·준비 중 상태를 돌려준다

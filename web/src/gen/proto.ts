@@ -1070,8 +1070,8 @@ task: string,
  */
 from_task: string | null,
 /**
- * 시작하면 그 task 줄 끝에 ` · t-NNNN`을 붙인다(FRONT_API 1.63, 할 일 T3). 연결은 시작할 때 읽은 블록 hash로 하고,
- * 그사이 블록이 바뀌었으면 시작은 그대로 두고 경고만 한다. 옛 host는 버린다(연결하지 않는다)
+ * 호환 옵션(FRONT_API 1.63). 일반 기동은 생략해도 할 일을 먼저 기록하고 연결한다(plan §8.430).
+ * from_task는 읽은 블록 hash로 연결하며, 달라졌으면 pane을 띄우지 않는다. 자동화 do.start는 제외한다.
  */
 link_task?: boolean,
 /**

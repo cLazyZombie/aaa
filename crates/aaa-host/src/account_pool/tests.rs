@@ -382,11 +382,8 @@ fn regrouping_an_alias_does_not_erase_its_existing_reservation() {
     assert!(choose(&l, &p).is_err(), "기존 그룹에서 새 그룹으로 옮겨도 두 예약이 함께 남는다");
 }
 
-// 사용량 조회의 실제 await를 보류해 pool_run·웹 요청 owner의 겹침을 고정한다.
-#[tokio::test]
-async fn cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted() {
-    let l = Lab::new();
-    l.configure(&[]);
+// 통신 조회가 없는 가짜 연결이다. 기동 전에 이미 해석한 profile·머신을 다시 RPC로 묻지 않아야 한다.
+fn connect_pool_machine(l: &Lab) {
     l.h.agent_connected(
         &AgentHello {
             proto: AGENT_LINK,
@@ -407,6 +404,39 @@ async fn cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted() {
         true,
         crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), MAX_FRAME), 1),
     );
+}
+
+#[tokio::test]
+async fn waiting_direct_start_keeps_one_task_across_passes_and_request_replays() {
+    let l = Lab::new();
+    l.configure(&[]);
+    connect_pool_machine(&l);
+    let mut job = queued_job(&l, "one-task");
+    job.profile_revision = l.h.profile_revision(&job.args).unwrap();
+    l.h.db.set_meta(&job_key("demo", &job.view.id), &serde_json::to_string(&job).unwrap()).unwrap();
+    for _ in 0..2 {
+        let response = l.h.pool_run("demo", &job.view.id, true).await.unwrap();
+        assert!(matches!(response, FrontResponse::AccountStart { start } if start.state == AccountStartState::Queued));
+    }
+    let response = l.h.pool_submit(job.args, &job.actor, None, true).await.unwrap();
+    assert!(matches!(response, FrontResponse::AccountStart { start } if start.state == AccountStartState::Queued));
+    let board = l.h.task_board("demo").unwrap();
+    assert_eq!(board.tasks.len(), 1, "대기 pass마다 새 할 일을 만들지 않는다");
+    assert_eq!(board.tasks[0].machine.as_deref(), Some("mac-a"));
+    assert!(board.tasks[0].thread.is_none());
+    let id = board.tasks[0].id.clone();
+    assert_eq!(l.h.pool_job("demo", &job.view.id).unwrap().args.start_task.unwrap().id, id);
+    let reopened = Host::open(l.h.cfg.clone(), l._root.0.join("host")).unwrap();
+    assert_eq!(reopened.pool_job("demo", &job.view.id).unwrap().args.start_task.unwrap().id, id);
+    assert!(reopened.db.threads(None).unwrap().is_empty());
+}
+
+// 사용량 조회의 실제 await를 보류해 pool_run·웹 요청 owner의 겹침을 고정한다.
+#[tokio::test]
+async fn cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted() {
+    let l = Lab::new();
+    l.configure(&[]);
+    connect_pool_machine(&l);
     let mut job = queued_job(&l, "cancel-during-pass");
     job.profile_revision = l.h.profile_revision(&job.args).unwrap();
     l.h.db.set_meta(&job_key("demo", &job.view.id), &serde_json::to_string(&job).unwrap()).unwrap();
@@ -441,6 +471,7 @@ async fn cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted() {
 fn queued_job(l: &Lab, id: &str) -> Job {
     let job = Job {
         args: StartArgs {
+            start_task: None,
             pool: Some(PoolRequest { id: id.into(), size: AccountTaskSize::Medium }),
             over_limit: None,
             reservation: None,

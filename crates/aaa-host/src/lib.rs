@@ -1637,7 +1637,7 @@ impl Host {
                 task,
                 from_task,
                 background,
-                link_task,
+                link_task: _,
                 task_block,
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
@@ -1656,6 +1656,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    start_task: None,
                     pool: pool_request,
                     over_limit,
                     reservation: None,
@@ -1729,7 +1730,7 @@ impl Host {
                         id: aaa_common::util::new_id(),
                         size: aaa_proto::AccountTaskSize::Medium,
                     });
-                    return self.pool_submit(a, actor, picked.filter(|_| link_task), background).await;
+                    return self.pool_submit(a, actor, picked, background).await;
                 }
                 let mut v = if background {
                     self.thread_start_mode(a, actor, true).await?
@@ -1737,10 +1738,6 @@ impl Host {
                     self.thread_start(a, actor).await?
                 };
                 v.warnings.append(&mut warnings);
-                // 시작에 성공했으면 그 task 줄 끝에 thread를 잇는다(할 일 T3, 시작할 때 읽은 블록으로)
-                if link_task && let Some(t) = &picked {
-                    v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
-                }
                 Ok(FrontResponse::Thread(Box::new(v)))
             }
             FrontRequest::ThreadStartPreview { project, from_task, task_block } => {

@@ -165,6 +165,11 @@ export default async function ({ page }) {
     fs.writeFileSync(`${root}/task-47.md`, "사람을 기다림");
     const a = aaa("thread", "start", "demo", "--title", "따로 도는 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-47.md`).id;
     const b = aaa("thread", "start", "demo", "--title", "새로 생긴 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-47.md`).id;
+    // 새 일반 기동은 자동 연결된다. 지운 할 일/옛 버전에서 온 thread의 복구 UI도 계속 검증한다.
+    for (const [id, title] of [[a, "따로 도는 일"], [b, "새로 생긴 일"]]) {
+      if (linked(title) !== id) throw new Error(`일반 기동의 할 일 자동 연결 누락: ${title}`);
+      aaa("task", "rm", title);
+    }
     await page.getByTestId(`task-unlinked-row-${a}`).waitFor();
     await page.getByTestId(`task-unlinked-row-${b}`).waitFor();
     await shot(page, "thread-desktop-unlinked");
@@ -292,7 +297,7 @@ export default async function ({ page }) {
         git(repo, "push", "-q", "origin", "main");
       }
       fs.writeFileSync(`${rec.work_dir}/report.md`, "[착지] 직접 병합 확인\n\n## Report\n결과\n\n## Next\n");
-      aaa("task", "add", title, "--thread", t.id);
+      if (linked(title) !== t.id) throw new Error(`직접 시작의 할 일 연결 누락: ${title}`);
       aaa("thread", "resolve", "demo", t.id, "--keep-worktree");
       threads.push(t.id);
     }

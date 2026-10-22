@@ -383,9 +383,12 @@ impl Host {
             .update_meta(&key, |old| {
                 if let Some(old) = old {
                     let prior: Job = serde_json::from_str(&old)?;
+                    let mut requested = job.args.clone();
+                    // 이 내부 칸은 첫 배정 pass가 채운다. 같은 직접 시작 ID의 재전송은 원래 할 일을 재사용한다.
+                    requested.start_task = prior.args.start_task.clone();
                     anyhow::ensure!(
                         prior.actor == actor
-                            && serde_json::to_value(&prior.args)? == serde_json::to_value(&job.args)?
+                            && serde_json::to_value(&prior.args)? == serde_json::to_value(&requested)?
                             && serde_json::to_value(&prior.picked)? == serde_json::to_value(&job.picked)?,
                         "같은 시작 ID에 다른 내용이 있다"
                     );
@@ -427,7 +430,18 @@ impl Host {
             }
             return Ok(FrontResponse::Thread(Box::new(thread)));
         }
-        let checked = (|| {
+        let checked = async {
+            if job.args.start_task.is_none() {
+                // 옛 대기의 원본 할 일과 직접 시작의 새 할 일을 한 번만 기록한다.
+                // 계정이 없어 Queued로 남아도 다음 pass·재시작이 같은 할 일을 이어 쓴다.
+                job.args.start_task = Some(match &job.picked {
+                    Some(t) => t.clone(),
+                    None => self.create_start_task(&job.args, &job.actor).await?,
+                });
+                self.db
+                    .set_meta(&job_key(project, id), &serde_json::to_string(&job).map_err(internal)?)
+                    .map_err(internal)?;
+            }
             if self.profile_revision(&job.args)? != job.profile_revision {
                 return Err(err(ErrorCode::Conflict, "대기 중 모델·effort 설정이 바뀌었다. 취소 뒤 새로 시작한다"));
             }
@@ -438,7 +452,8 @@ impl Host {
                 }
             }
             Ok(())
-        })();
+        }
+        .await;
         let result = match checked {
             Err(e) => Err(e),
             Ok(()) => self.thread_start_mode(job.args.clone(), &job.actor, background).await,

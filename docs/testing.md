@@ -2,13 +2,21 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
-## 할 일 기록 검색·저장소·완료 상태(t-0703, plan §8.429)
+## 할 일 기록 검색·저장소·완료 상태(t-0703, plan §8.431)
 
 - `nice -n 15 cargo test -p aaa-host --lib task_queue::tests:: --locked`: 실제 DB/파일로 4MiB 초과 보관의 개수·바이트 페이지와 모든 ID의 빠짐/중복 없음, trim/대소문자·메모/표시 ID·저장소·실제 완료 근거 조합, 같은 ID 복원·연결/예약 없음, 2MiB 이력의 목록 비전송/내구 보존, 일치하지 않는 100건 뒤의 기록 검색·삭제 복원을 검사한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 86-task-history --workers 1`: 격리 DB 130건/4MiB 초과에서 CLI의 전체 128건 출력, API 페이지의 frame 크기와 모든 ID, UI의 검색·저장소·완료 상태 조합/더 보기·완료/삭제 복원과 Reader 거부를 확인한다. Chromium 1280/320px·WebKit 390px의 활성/기록 화면과 필터 결과를 캡처하고 가로 넘침을 검사한다.
 - 기존 E2E46의 삭제·차이·되살리기, E2E47의 완료 본문·결과·ID와 E2E67의 예약 실행·복원 이후 재실행 없음 검사를 유지한다. 완료 보관 입구가 기록 탭을 여므로 복원 뒤 활성 행은 할 일 탭에서 확인한다.
 - 고정 sleep·실패 재시도·시한 연장 없이 실제 응답과 파일·DOM 사건으로 끝낸다. 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. FRONT_API 1.106·Agent link 1.11.
 
+
+
+## 일반 작업의 할 일 선행(t-0705, plan §8.430)
+
+- `cargo test -p aaa --test m13 manual_threads_always_have_tasks_and_archive_the_result --locked`: 실제 host·agent와 가짜 harness를 사용한다. 배경 기동 응답 전에 할 일 연결·선택 모델/머신/저장소를 확인하고, Markdown 머리/체크 목록이 별도 task가 되지 않는지·원문 파일 바이트·완료 보관의 ID/보고를 검사한다. 없는 Git ref의 준비 실패에도 연결된 할 일이 남고 `--link-task` 없는 기존 할 일 시작이 같은 ID를 쓰는지 확인한다. 보고 회수·명령 응답이 끝 신호이며 고정 sleep은 없다.
+- host `account_pool::tests::waiting_direct_start_keeps_one_task_across_passes_and_request_replays`는 계정이 없는 실제 배정 대기 두 pass·같은 시작 ID 재전송·DB 재열기에서 task 하나/같은 ID·thread 0건을 검사한다. RPC 응답을 주지 않는 가짜 연결로 불필요한 재조회를 드러낸다. 기존 배정/취소 경합 시험의 대기·Cancelled·내구성 단언은 유지한다.
+- 기존 m13 유사 task 경고 시험은 별도 task 생성과 기존 완료 task 보존, `coordinator_flow`는 연결 옵션 없는 자동 연결, `doctor_files_brings_the_coordinator_guide_to_existing_projects`는 새 프로젝트와 낡은 안내 갱신의 동일 문구를 검사한다. `automation_start_holds_approval_two_agents_and_restart_receipt`의 기존 실제 do.start 실행에서 할 일을 만들지 않는 예외를 검사한다.
+- E2E47은 실제 일반 기동의 자동 연결을 확인한 뒤 그 할 일을 명시 삭제하여 옛 thread의 잇기/만들기 복구 단언을 유지한다. E2E48은 실제 승인된 do.start의 무생성·일반 작업 연결을 함께 확인한다. 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사 뒤 착지 창을 기다린다.
 
 ## thread 보류·이어 하기(t-0689, plan §8.426)
 
@@ -1610,7 +1618,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 ## 일을 맡기기 전 task 찾기(t-0539, plan §8.336)
 
 - `cargo test -p aaa-host --lib tasks::tests::start_warning`: 제목의 대소문자·구두점 정규화, 낱말 겹침 경계, 첫 열린 후보 선택, 완료·빈 제목·약한 겹침 제외와 제안 명령의 셸 인용을 확인한다. 형태소·동의어는 추측하지 않는다. 완료 task 제외를 제거하면 음성 시험이 실패한다.
-- m13 `thread_start_warns_about_similar_tasks_without_blocking`: 실제 CLI 응답에서 경고 한 줄과 시작 성공, `--from-task` 시작·완료 task에 경고 없음, TASKS.md 원문 보존을 확인한다. 명령 응답이 끝이라는 신호이며 고정 sleep은 없다.
+- m13 `thread_start_warns_about_similar_tasks_without_blocking`: 실제 CLI 응답에서 경고 한 줄과 시작 성공, `--from-task` 시작·완료 task에 경고 없음, 기존 task 보존과 직접 시작의 별도 할 일 생성·자동 연결을 확인한다. 명령 응답이 끝이라는 신호이며 고정 sleep은 없다.
 - 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`의 안내 문구 목록이 새 프로젝트 생성과 낡은 안내 갱신 모두에서 사전 검색·기존 thread 재사용·메모/모델/머신/저장소 갱신·`--link-task` 안내를 검사한다.
 
 ## 웹 할 일 thread 연결과 자동 정리(t-0493, plan §8.316)

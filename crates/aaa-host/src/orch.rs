@@ -337,6 +337,9 @@ pub(crate) struct StartOrigin {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StartArgs {
+    /// 일반 기동의 원본 할 일. 자동화는 비우며, 옛 풀 대기 기록도 읽는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) start_task: Option<aaa_proto::TaskView>,
     pub(crate) pool: Option<crate::account_pool::PoolRequest>,
     pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     pub(crate) reservation: Option<(String, String)>,
@@ -485,12 +488,16 @@ post는 읽고 처리한 뒤 inbox done, 맡은 thread에 자기 말로 넘기�
 post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 
 ## 메시지마다 세 가지 중 하나
-- **그 자리에서 답한다**: context로 답할 수 있는 질문, 선호, TASKS.md 변경, 설정 변경.
+- **그 자리에서 답한다**: context로 답할 수 있는 질문, 선호, TASKS.md 변경. 새 작업은 직접 처리하지 않는다.
 - **그 영역을 맡은 열린 thread에 넘긴다**: 아래 「이어지는 말」.
-- **새 thread를 시작한다**: 새 일. 한 메시지에 서로 관계없는 일이 여럿이면 하나에 thread 하나씩이다.
+- **할 일을 만들고 새 thread를 시작한다**: 새 일은 먼저 `aaa task add`로 기록하고, 그 ID로
+  `aaa thread start --from-task <task ID> --link-task …`를 쓴다. 바로 진행하는 일도 같다.
+  한 메시지에 서로 관계없는 일이 여럿이면 일마다 task 하나·thread 하나다.
 
 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task로
-시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 사용자가 모델·머신 변경을 지시하면 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 고친다. 없으면 위처럼 한다.
+시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 사용자가 모델·머신 변경을 지시하면 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 고친다. 없으면 먼저 할 일을 만든다.
+「할 일에 넣어」는 기록 요청이며 시작 승인이 아니다. 시작 승인은 아래 `start_threads` 규칙을 따른다.
+자동화(`automations/*.toml`의 do.start, ci-watch·검증 감시 등)는 예외다: 할 일을 만들지 않고 기존 실행 기록으로 관리한다.
 
 ## 이어지는 말
 사용자가 열린 thread가 맡은 영역에 대해 말하면 골라서 한다(여럿을 해도 된다).
@@ -510,10 +517,10 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
   한도를 올리거나 별도 thread start로 예약을 우회하지 않는다. 사용자가 채팅에서 그 task를 한도 무시하고 강제로
   시작하라고 명시했을 때만 `aaa thread start --from-task <ID> --link-task --over-limit --user-request '<사용자 지시 근거>'`를
   쓴다. 일반 시작 승인·자리 대기·inbox 요청은 강제 시작 승인이 아니다. 강제 시작도 열린 수에 넣고 예약은 계속 한도를 지킨다.
-- TASKS.md task로 시작: 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. 모델·머신 칸이 profile·machine을 정한다.
-- 그 밖: `aaa thread start --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
-  project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
-  작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project`가 보인다.
+- 일반 작업은 반드시 할 일을 먼저 만들고 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. 모델·머신 칸이
+  profile·machine을 정한다. 쓸 수 있는 profile은 `aaa profile list --project`가 보인다.
+- 옛 CLI·웹의 제목 직접 시작은 host가 할 일을 먼저 만들고 연결한다. `--from-task`도 `--link-task` 생략 여부와 관계없이
+  자동 연결한다. coordinator는 이 호환 경로 대신 할 일부터 만든다. 자동화 do.start는 할 일 생성·연결 대상이 아니다.
 - 보고 확인: `aaa thread show <id>`, `aaa thread library <id>`, 다 봤으면 `aaa thread ack <id>`, 끝나면 `aaa thread resolve <id>`.
 - 보류: 사람 검토만 남아 당장 일하지 않지만 이어 할 thread는 사용자가 보류하라고 했을 때만
   `aaa thread park <id> --user-request '<사용자 지시 근거>'`로 보류한다. thread가 커밋·push·`## Handoff`를 마치고
@@ -668,9 +675,9 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 형식 어긋남(괄호 칸의 상태 메모 등)은 `aaa task list`가 ▲로 보인다. 고칠지는 사용자에게 묻는다.
 - task를 thread에 맡길 때는 `aaa thread start --from-task <task ID> --link-task …`로 시작한다. host가 줄 끝에 ` · <thread id>`를
   붙인다(따로 시작했으면 `aaa task edit <task ID> --thread <id>`). 사용자가 그만둔다고 하면 줄을 지운다(메모도 함께).
-- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 끝난 thread의 task 정리는 host가 한다(아래 「thread가 끝나면」).
-- 더하기: 사용자가 지금 시작하지 않는 일을 말하면 더한다. 나중에 할 일, 사용자 자신의 할 일, 사용자가 미룬 제안(「나중에」·
-  「지금 말고」), `max_parallel_threads` 때문에 못 시작한 일이다. 채팅에서 아직 승인을 기다리는 제안은 넣지 않는다. 사용자가
+- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 새 작업을 맡긴 요청에는 할 일 기록도 포함된다. 끝난 thread의 task 정리는 host가 한다(아래 「thread가 끝나면」).
+- 더하기: 사용자가 맡긴 새 일은 지금 시작할 일도 먼저 더한다. 나중에 할 일, 사용자 자신의 할 일, 사용자가 미룬 제안(「나중에」·
+  「지금 말고」), `max_parallel_threads` 때문에 못 시작한 일도 기록한다. 채팅에서 아직 승인을 기다리는 제안은 넣지 않는다. 사용자가
   이름을 든 목록에, 없으면 `## Backlog`에 넣는다. 모델·머신은 사용자가 준 것(맞을 때)을 쓰고, 안 주면 agent 일은 비우고
   사용자 자신의 할 일은 `me`로 둔다.
 - 목록(`##` 머리): 사용자가 요청하면 만들고, 이름을 바꾸고, 합치고, 지우고, task를 목록 사이로 옮긴다.
@@ -1922,6 +1929,11 @@ impl Host {
         } else {
             None
         };
+        // 자동화 do.start는 자체 실행 기록으로 관리한다. 사용자·coordinator 기동은 할 일을 먼저 남긴다.
+        if origin.is_none() && a.start_task.is_none() {
+            a.machine = Some(self.machine_name(&mid));
+            a.start_task = Some(self.create_start_task(&a, actor).await?);
+        }
         let resolved_profile = Some(profile);
         let warnings = Vec::new();
         let now = aaa_common::util::now_ms();
@@ -1944,6 +1956,12 @@ impl Host {
             let rev = crate::file_rev::read(&dir.join("TASKS.md")).map_err(internal)?;
             if !crate::tasks::parse(&rev.text).iter().any(|t| t.id.as_ref() == Some(task) && &t.block_sha256 == block) {
                 return Err(err(ErrorCode::Conflict, "예약 내용이 선점 전에 바뀌었다"));
+            }
+        }
+        if let Some(t) = &a.start_task {
+            let rev = crate::file_rev::read(&dir.join("TASKS.md")).map_err(internal)?;
+            if !crate::tasks::parse(&rev.text).iter().any(|now| now.id == t.id && now.block_sha256 == t.block_sha256) {
+                return Err(err(ErrorCode::Conflict, "시작할 할 일이 그사이 바뀌었다. 최신 할 일에서 다시 시작한다"));
             }
         }
         // Starting이 복구기에 보이기 전에 기동 task의 잠금을 확보한다.
@@ -1993,6 +2011,16 @@ impl Host {
             return self.thread_show(&a.project, &id);
         }
         rec.id = id.clone();
+        // pane·worktree를 만들기 전에 연결한다. 연결에 실패한 기동은 실패 상태로 남기고 띄우지 않는다.
+        if let Some(t) = &a.start_task
+            && let Some(why) = self.link_started(&a.project, t, &id, actor).await
+        {
+            self.update_rec(&a.project, &id, |r| {
+                r.status = ThreadStatus::Failed;
+                r.error = Some(why.clone());
+            })?;
+            return Err(err(ErrorCode::Conflict, why));
+        }
         #[cfg(test)]
         {
             let hook = self.start_admitted_hook.lock().unwrap().clone();

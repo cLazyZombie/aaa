@@ -581,6 +581,7 @@ impl Host {
             },
         };
         let args = crate::orch::StartArgs {
+            start_task: None,
             pool: None,
             over_limit: None,
             reservation: None,

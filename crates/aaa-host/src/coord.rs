@@ -239,12 +239,81 @@ impl Host {
             (Some(w), Some(m)) => Some(format!("{w}. {m}")),
             (w, m) => w.or(m),
         };
+        a.start_task = Some(t.clone());
         Ok((warning, t))
     }
 
-    /// 시작한 thread를 그 task 줄 끝에 잇는다(`ThreadStart.link_task`, 할 일 T3). 시작할 때 읽은 블록 hash로 찾고, 그사이 바뀌었거나
-    /// 고칠 권한이 없으면 시작은 그대로 두고 경고 한 줄을 돌려준다
+    /// 옛 CLI·웹의 제목/할 일 직접 시작도 먼저 TASKS.md에 기록한다. 비슷한 task를 임의로 재사용하지 않는다.
+    /// 본문은 인용으로 보존하여 Markdown 머리·체크 목록이 TASKS.md의 목록/하위 task로 읽히지 않게 한다.
+    pub(crate) async fn create_start_task(&self, a: &StartArgs, actor: &str) -> Result<TaskView, ErrorBody> {
+        if a.title.trim().is_empty() || a.task.trim().is_empty() {
+            return Err(bad("제목·할 일이 비었다"));
+        }
+        let _queue_guard = self.queue_gate.lock().await;
+        let board = self.task_board(&a.project)?;
+        let mut title = a.title.trim().to_string();
+        if tasks::check_title(&title).is_err() || title.ends_with(']') {
+            title.push_str(" · 새 작업");
+        }
+        let original = title.clone();
+        let mut n = 2;
+        while board.tasks.iter().any(|t| t.title.to_lowercase() == title.to_lowercase()) {
+            title = format!("{original} · 별도 {n}");
+            n += 1;
+        }
+        let repo = match a.repo.as_deref() {
+            None => Some(tasks::REPO_DIR.to_string()),
+            Some(r) => self.task_repo_ok(&a.project, r).ok(),
+        };
+        let mut notes: Vec<String> = a.task.lines().map(|l| format!("> {l}")).collect();
+        if repo.is_none()
+            && let Some(r) = &a.repo
+        {
+            notes.push(format!("시작 저장소(프로젝트 미등록): `{r}`"));
+        }
+        let op = TaskOp::Add {
+            list: "Backlog".into(),
+            title: title.clone(),
+            owner: None,
+            person: false,
+            profile: Some(a.profile.clone()),
+            machine: a
+                .machine
+                .as_deref()
+                .map(|m| self.resolve_machine(Some(m)).map(|id| self.machine_name(&id)))
+                .transpose()?,
+            repo,
+            notes,
+            parent: None,
+            before: None,
+            thread: None,
+        };
+        // 기동 경로가 이미 profile·머신을 해석했다. 편집 UI의 assignable RPC를 다시 보내지 않는다.
+        let actor = self.task_writer(&a.project, actor)?;
+        let owner_ok = |_: &str, _: bool| Ok(());
+        let repo_ok = |r: &str| self.task_repo_ok(&a.project, r);
+        let removed = |_: i64| Err("새 할 일 생성에는 복원을 쓰지 않는다".into());
+        let profiles = self.known_profiles(&a.project);
+        let ctx = task_edit::Ctx { owner_ok: &owner_ok, profiles: &profiles, repo_ok: &repo_ok, removed: &removed };
+        let dir = self.project_dir(&a.project)?;
+        let (conflict, _) = self.task_write(&a.project, &dir, &[op], None, &actor, &ctx, false)?;
+        if let Some((_, reason, _)) = conflict {
+            return Err(err(ErrorCode::Conflict, reason));
+        }
+        tasks::find(&self.task_board(&a.project)?.tasks, &title)
+            .cloned()
+            .ok_or_else(|| internal("새 할 일을 읽지 못했다"))
+    }
+
+    /// 시작할 thread를 그 task 줄 끝에 잇는다. 같은 ID 연결은 그대로 두며 읽은 블록이 바뀌었거나 권한이 없으면 까닭을 돌려준다.
+    /// 공통 기동은 실패 때 pane을 띄우지 않는다. 옛 풀 영수증의 사후 연결 복구는 경고로 알린다.
     pub(crate) async fn link_started(&self, project: &str, t: &TaskView, thread: &str, actor: &str) -> Option<String> {
+        if self
+            .task_board(project)
+            .is_ok_and(|b| b.tasks.iter().any(|now| now.id == t.id && now.thread.as_deref() == Some(thread)))
+        {
+            return None;
+        }
         let at = aaa_proto::TaskAnchor {
             list: t.list.clone(),
             title: t.title.clone(),
@@ -280,6 +349,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            start_task: None,
             pool: None,
             over_limit: None,
             reservation: None,

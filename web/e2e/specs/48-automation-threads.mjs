@@ -118,7 +118,8 @@ export default async function ({ page }) {
     if (threads().find((t) => t.id === human).automation !== undefined) throw new Error("사람 thread에 자동화 표지");
     // 할 일 화면의 「task 없는 열린 thread」에는 자동화 thread가 없다(출처가 있어 task가 필요 없다, plan t-0475 §5.3)
     const board = aaa("task", "list");
-    if (board.unlinked_threads.some((t) => t.id === auto.id) || !board.unlinked_threads.some((t) => t.id === human)) throw new Error(`task 없는 열린 thread ${JSON.stringify(board.unlinked_threads)}`);
+    if (board.unlinked_threads.some((t) => t.id === auto.id || t.id === human)) throw new Error(`task 없는 열린 thread ${JSON.stringify(board.unlinked_threads)}`);
+    if (board.tasks.some(t => t.thread === auto.id || t.title === auto.title) || !board.tasks.some(t => t.thread === human)) throw new Error(`자동화 예외·일반 작업 연결 ${JSON.stringify(board.tasks)}`);
 
     await inList(page, `thread-${project}-${auto.id}`);
     await inList(page, `thread-${project}-${human}`);
