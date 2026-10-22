@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 메뉴 선택 뒤 휴대폰 쓸기의 진단과 정리(t-0805)
+
+- 사용자 순서는 대화 A → 메뉴에서 B 선택 → 왼쪽 가장자리 뒤로다. 수정 전 E2E39의 진단본은 두 메뉴 선택 모두 `history-write`에서 `open=true`, 메뉴 오른쪽 경계 343px로 실패했다. 뒤로가 끝난 상태만 검사하던 시험과 달리 기록을 쓰기 직전의 DOM을 확인한다. 이것은 열린 DOM 경계의 재현이며 Safari OS 미리보기 이미지 자체의 재현은 아니다.
+- `drawer-navigation.mjs`는 Chromium·WebKit 390px에서 위 순서, x25의 빠른 쓸기 후 touchcancel만 도착한 경우, native popstate 뒤 늦은 move/end와 move/cancel, pagehide/pageshow 사건 경계를 검사한다. 메뉴 class·inline transform·실제 경계가 닫혀야 한다. Touch 생성은 WebKit의 `document.createTouch/List`와 Chromium의 생성자를 각각 쓴다. 설정 내부 되감기·모든 목적지·390/430px·홈 화면 앱 흉내·넓은 화면의 기존 E2E39 단언은 유지한다. 실제 bfcache 복원이나 iPhone OS 몸짓을 합성 사건으로 입증했다고 쓰지 않는다.
+- 유닛 `node --test web/test/edgeSwipe.test.mjs`의 빠른 취소·popstate·pagehide·pageshow 네 회귀는 원래 구현에서 모두 메뉴 재개방으로 실패했다. 설정 내부 되감기와 정상 안쪽 flick·기존 손가락 추적은 유지한다. 시한 연장·실패 재시도·단언 완화·고정 sleep은 없다.
+- 실기는 배포 뒤 새 탭의 앱 주소 query에 `drawer-debug=1`을 넣고 진단 창을 접은 채 한다. A → 메뉴로 B → 가장자리 뒤로를 보통 속도 3회·천천히 3회, 같은 몸짓을 중간에 취소하기 3회 진행한다. 매번 정상/미리보기만/계속 열림 중 하나를 표시하고 마지막에 기록을 저장한다. 시작 위치·속도·사건 순서와 총 빈도는 JSON에 남는다. 처음부터 보이던 오래된 미리보기와 새 이동 뒤의 결과를 구분하려고 배포 뒤 새 탭에서 시작한다.
+- `?drawer-debug=1` 없는 탭에는 진단 UI·사건 수집이 없다. 진단은 최근 800개 사건과 전체 개수만 탭 메모리에 두며 URL·history.state·본문·인증 값을 기록하지 않는다. DOM 경계가 닫혔는데 사용자에게 미리보기만 보이면 OS 스냅숏 후보로 분류한다. 화면 합성 결과는 DOM 로그만으로 단정하지 않는다. 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다.
+
 ## 새 launcher 아래 restart fixture 격리(t-0798)
 
 - `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`는 등록되지 않은 새 launcher를 기본으로 쓴다. `AAA_RESTART_TEST_LAUNCHER`로 기존 launcher를 지정하는 읽기 전용 경로도 유지한다. 두 경로 모두 기존 launcher/worker PID·기존 pane 보존·새 pane·책임 PID·승인 거부·detached 재관측 단언을 그대로 검사한다.

@@ -60,6 +60,7 @@ describe("drawerSettles", () => {
  */
 describe("watchDrawerSwipe", () => {
   let listeners;
+  let windowListeners;
   let saved;
   let narrow;
   let modal;
@@ -67,11 +68,15 @@ describe("watchDrawerSwipe", () => {
 
   beforeEach(() => {
     listeners = new Map();
+    windowListeners = new Map();
     narrow = { matches: true };
     modal = null;
     selection = { isCollapsed: true };
     saved = { window: globalThis["window"], document: globalThis["document"] };
-    globalThis["window"] = { matchMedia: () => narrow };
+    globalThis["window"] = { matchMedia: () => narrow,
+      addEventListener: (type, handler) => windowListeners.set(type, handler),
+      removeEventListener: (type) => windowListeners.delete(type),
+    };
     globalThis["document"] = {
       addEventListener: (type, handler) => listeners.set(type, handler),
       removeEventListener: (type) => listeners.delete(type),
@@ -116,6 +121,10 @@ describe("watchDrawerSwipe", () => {
 
   test("a stroke from the left edge leaves every move to the page and the browser", () => {
     expect(stroke([[4, 400], [24, 400], [90, 400], [200, 400]])).toEqual({ reached: 3, calls: [] });
+  });
+
+  test("열린 메뉴의 가장자리 쓸기는 취소되어도 메뉴를 거두고 움직임을 가로채지 않는다", () => {
+    expect(stroke([[4, 400], [24, 400], [90, 400], [200, 400]], true)).toEqual({ reached: 3, calls: [false] });
   });
 
   test("a vertical stroke from mid-screen belongs to the page", () => {
@@ -223,6 +232,49 @@ describe("watchDrawerSwipe", () => {
     expect(calls).toEqual([true]);
     stop();
     delete doc["getElementById"];
+  });
+
+  const interrupted = (interrupt, internal = false) => {
+    const drawer = { style: {}, classList: { remove() {} }, getBoundingClientRect: () => ({ width: 300 }) };
+    const scrim = { style: {}, classList: { remove() {} }, getBoundingClientRect: () => ({ width: 390 }) };
+    document.getElementById = () => drawer;
+    document.querySelector = (selector) => selector === ".scrim" ? scrim : null;
+    let open = false;
+    const calls = [];
+    const stop = watchDrawerSwipe(() => open, (next) => { open = next; calls.push(next); }, () => internal);
+    const event = (x, timeStamp) => ({ touches: [{ clientX: x, clientY: 400 }], timeStamp, target: null, preventDefault() {}, stopPropagation() {} });
+    listeners.get("touchstart")(event(25, 0));
+    listeners.get("touchmove")(event(61, 20));
+    interrupt({ event, windowListeners, listeners });
+    // 취소·이동 뒤 늦은 move/end도 메뉴를 다시 열면 안 된다.
+    listeners.get("touchmove")(event(270, 40));
+    listeners.get("touchend")({ touches: [], timeStamp: 50 });
+    stop();
+    return { open, calls, drawer: drawer.style, scrim: scrim.style, remaining: windowListeners.size };
+  };
+
+  test("취소된 빠른 쓸기는 열림으로 확정하지 않고 늦은 터치도 버린다", () => {
+    const got = interrupted(({ listeners }) => listeners.get("touchcancel")({ touches: [], timeStamp: 30 }));
+    assert.equal(got.open, false);
+    assert.equal(got.drawer.transform, "");
+    assert.equal(got.scrim.opacity, "");
+    assert.equal(got.remaining, 0);
+  });
+
+  for (const lifecycle of ["popstate", "pagehide", "pageshow"]) {
+    test(`${lifecycle}는 손가락의 inline 모양을 지우고 늦은 터치의 재개방을 막는다`, () => {
+      const got = interrupted(({ windowListeners }) => windowListeners.get(lifecycle)?.({ persisted: true }));
+      assert.equal(got.open, false);
+      assert.equal(got.drawer.transform, "");
+      assert.equal(got.drawer.visibility, "");
+      assert.equal(got.scrim.opacity, "");
+      assert.equal(got.remaining, 0);
+    });
+  }
+
+  test("설정 내부 되감기는 사용자 쓸기를 취소하지 않는다", () => {
+    const got = interrupted(({ windowListeners }) => windowListeners.get("popstate")?.({}), true);
+    assert.equal(got.open, true);
   });
 
   test("a selection after the drawer moved leaves the stroke with it", () => {
