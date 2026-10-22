@@ -1526,7 +1526,7 @@ impl Host {
             FrontRequest::AccountStarts { project } => {
                 Ok(FrontResponse::AccountStarts { starts: self.pool_starts(&project)? })
             }
-            FrontRequest::AccountStartCancel { project, id } => self.pool_cancel(&project, &id, actor),
+            FrontRequest::AccountStartCancel { project, id } => self.pool_cancel(&project, &id, actor).await,
             FrontRequest::AccountDefault { harness, account } => {
                 self.set_default_account(&harness, account.as_deref())?;
                 self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));

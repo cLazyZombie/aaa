@@ -113,8 +113,18 @@ export default async function ({ page }) {
     await page.getByTestId("task-account-size").selectOption("small");
     await page.getByTestId("task-start-go").click();
     await page.getByTestId("task-account-wait").waitFor();
-    await page.getByTestId("task-account-wait").getByRole("button", { name: "배정 대기 취소" }).click();
-    await page.getByTestId("task-start").waitFor({ state: "hidden" });
+    try {
+      await page.getByTestId("task-account-wait").getByRole("button", { name: "배정 대기 취소" }).click();
+      await page.getByTestId("task-start").waitFor({ state: "hidden" });
+    } catch (error) {
+      const dialog = await page.evaluate(() => ({
+        error: document.querySelector('[data-testid="task-start-error"]')?.textContent ?? null,
+        waiting: document.querySelector('[data-testid="task-account-wait"]')?.textContent ?? null,
+        state: document.querySelector('.task-start-form')?.getAttribute("data-start-state") ?? null,
+      }));
+      console.error("배정 대기 취소 실패:", JSON.stringify({ ...dialog, starts: jobs() }));
+      throw error;
+    }
     assert.equal(jobs().find(s=>s.title === "풀 대기 task").state, "cancelled");
     aaa("ticker", "tick"); assert.equal(threads().length, count+1);
   });

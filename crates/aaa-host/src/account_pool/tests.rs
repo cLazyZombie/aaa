@@ -349,40 +349,7 @@ async fn host_filters_permitted_models_before_allowing_an_unobserved_first_run()
 fn project_rename_and_delete_move_jobs_without_touching_global_pool_or_observations() {
     let l = Lab::new();
     l.configure(&[unknown("demo")]);
-    let args = StartArgs {
-        pool: Some(PoolRequest { id: "pending".into(), size: AccountTaskSize::Medium }),
-        over_limit: None,
-        reservation: None,
-        account: None,
-        holds: vec![],
-        project: "demo".into(),
-        title: "대기".into(),
-        machine: Some("m".into()),
-        profile: "claude".into(),
-        kind: ThreadKind::Dir,
-        repo: None,
-        base: None,
-        task: "task".into(),
-        role: Role::Worker,
-        attachments: vec![],
-    };
-    let job = Job {
-        args,
-        actor: "local:cli".into(),
-        picked: None,
-        profile_revision: "fixture".into(),
-        view: AccountStartView {
-            id: "pending".into(),
-            project: "demo".into(),
-            title: "대기".into(),
-            size: AccountTaskSize::Medium,
-            state: AccountStartState::Queued,
-            thread: None,
-            reason: "대기".into(),
-            created_at_ms: NOW,
-        },
-    };
-    l.h.db.set_meta(&job_key("demo", "pending"), &serde_json::to_string(&job).unwrap()).unwrap();
+    queued_job(&l, "pending");
     l.h.db.set_meta(&receipt("demo", "pending"), "t-0001").unwrap();
     l.h.db.set_meta("account-quota-v1/demo", "observation").unwrap();
     l.h.db.project_rename("demo", "v1", str::to_string).unwrap();
@@ -413,4 +380,133 @@ fn regrouping_an_alias_does_not_erase_its_existing_reservation() {
     let (name, allocation) = choose(&l, &p).unwrap();
     l.seed(&name, allocation, ThreadStatus::Open, true);
     assert!(choose(&l, &p).is_err(), "기존 그룹에서 새 그룹으로 옮겨도 두 예약이 함께 남는다");
+}
+
+// 사용량 조회의 실제 await를 보류해 pool_run·웹 요청 owner의 겹침을 고정한다.
+#[tokio::test]
+async fn cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted() {
+    let l = Lab::new();
+    l.configure(&[]);
+    l.h.agent_connected(
+        &AgentHello {
+            proto: AGENT_LINK,
+            machine_id: "m".into(),
+            machine_name: "mac-a".into(),
+            boot_id: "boot".into(),
+            os: "test".into(),
+            arch: "test".into(),
+            software: "test".into(),
+            features: vec!["host_profiles.v1".into(), "account_auth.v1".into()],
+            dev_mode: true,
+            sha256: None,
+            selfcheck: None,
+            sessions: vec![],
+            identity: None,
+            harness: vec![],
+        },
+        true,
+        crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), MAX_FRAME), 1),
+    );
+    let mut job = queued_job(&l, "cancel-during-pass");
+    job.profile_revision = l.h.profile_revision(&job.args).unwrap();
+    l.h.db.set_meta(&job_key("demo", &job.view.id), &serde_json::to_string(&job).unwrap()).unwrap();
+    let quota = l.h.account_quota.lock().await;
+    let pass = l.h.pool_run("demo", &job.view.id, true);
+    tokio::pin!(pass);
+    assert!(futures_util::poll!(&mut pass).is_pending());
+    assert!(l.h.claim_thread("demo", "account-cancel-during-pass").is_err(), "실제 배정 경로가 잠금을 잡았다");
+    let cancel = l.h.call(
+        DeviceRole::Controller,
+        "device:control",
+        FrontRequest::AccountStartCancel { project: "demo".into(), id: job.view.id.clone() },
+    );
+    tokio::pin!(cancel);
+    let first = futures_util::poll!(&mut cancel);
+    assert!(first.is_pending(), "배정 중 취소는 잠금을 기다려야 한다: {first:?}");
+    drop(quota);
+    // 실제 pool_run이 취소보다 먼저 읽은 사본으로 Queued를 저장한다.
+    let result = pass.await.unwrap();
+    assert!(matches!(result, FrontResponse::AccountStart { start } if start.state == AccountStartState::Queued));
+    let result = cancel.await.unwrap();
+    assert!(matches!(result, FrontResponse::AccountStart { start } if start.state == AccountStartState::Cancelled));
+    l.h.pool_pass("demo").await.unwrap();
+    let replay = l.h.pool_run("demo", &job.view.id, true).await.unwrap();
+    assert!(matches!(replay, FrontResponse::AccountStart { start } if start.state == AccountStartState::Cancelled));
+    assert!(l.h.db.threads(None).unwrap().is_empty());
+    // cache가 아닌 DB를 다시 열어 취소의 내구성도 확인한다.
+    let reopened = Host::open(l.h.cfg.clone(), l._root.0.join("host")).unwrap();
+    assert_eq!(reopened.pool_job("demo", &job.view.id).unwrap().view.state, AccountStartState::Cancelled);
+}
+
+fn queued_job(l: &Lab, id: &str) -> Job {
+    let job = Job {
+        args: StartArgs {
+            pool: Some(PoolRequest { id: id.into(), size: AccountTaskSize::Medium }),
+            over_limit: None,
+            reservation: None,
+            account: None,
+            holds: vec![],
+            project: "demo".into(),
+            title: "대기".into(),
+            machine: Some("m".into()),
+            profile: "claude".into(),
+            kind: ThreadKind::Dir,
+            repo: None,
+            base: None,
+            task: "task".into(),
+            role: Role::Worker,
+            attachments: vec![],
+        },
+        actor: "local:cli".into(),
+        picked: None,
+        profile_revision: "fixture".into(),
+        view: AccountStartView {
+            id: id.into(),
+            project: "demo".into(),
+            title: "대기".into(),
+            size: AccountTaskSize::Medium,
+            state: AccountStartState::Queued,
+            thread: None,
+            reason: "대기".into(),
+            created_at_ms: NOW,
+        },
+    };
+    l.h.db.set_meta(&job_key("demo", id), &serde_json::to_string(&job).unwrap()).unwrap();
+    job
+}
+
+#[tokio::test]
+async fn cancel_rechecks_a_receipt_committed_by_the_inflight_allocation() {
+    let l = Lab::new();
+    let job = queued_job(&l, "allocated-during-cancel");
+    let guard = l.h.claim_thread("demo", "account-allocated-during-cancel").unwrap();
+    let cancel = l.h.pool_cancel("demo", &job.view.id, "local:cli");
+    tokio::pin!(cancel);
+    assert!(futures_util::poll!(&mut cancel).is_pending());
+    l.h.db.set_meta(&receipt("demo", &job.view.id), "t-0001").unwrap();
+    drop(guard);
+    let error = cancel.await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::Conflict);
+    assert_eq!(error.message, "이미 시작한 thread는 thread에서 끝낸다");
+    assert_eq!(l.h.pool_job("demo", &job.view.id).unwrap().view.state, AccountStartState::Queued);
+    assert_eq!(l.h.db.meta(&receipt("demo", &job.view.id)).unwrap().as_deref(), Some("t-0001"));
+}
+
+#[tokio::test]
+async fn cancel_preserves_reader_denial_missing_jobs_and_repeated_cancellation() {
+    let l = Lab::new();
+    let job = queued_job(&l, "human-cancel");
+    let request = FrontRequest::AccountStartCancel { project: "demo".into(), id: job.view.id.clone() };
+    // Reader의 쓰기 거부는 배정 잠금이 잡혀 있어도 기다리지 않고 끝나야 한다.
+    let guard = l.h.claim_thread("demo", "account-human-cancel").unwrap();
+    assert_eq!(
+        l.h.call(DeviceRole::Reader, "device:reader", request.clone()).await.unwrap_err().code,
+        ErrorCode::Forbidden
+    );
+    drop(guard);
+    assert_eq!(l.h.pool_cancel("demo", "missing", "local:cli").await.unwrap_err().code, ErrorCode::NotFound);
+    for _ in 0..2 {
+        let result = l.h.call(DeviceRole::Controller, "device:control", request.clone()).await.unwrap();
+        assert!(matches!(result, FrontResponse::AccountStart { start } if start.state == AccountStartState::Cancelled));
+    }
 }

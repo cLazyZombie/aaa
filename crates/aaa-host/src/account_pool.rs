@@ -496,8 +496,10 @@ impl Host {
             .collect()
     }
 
-    pub(crate) fn pool_cancel(&self, project: &str, id: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
-        let _guard = self.claim_thread(project, &format!("account-{id}"))?;
+    pub(crate) async fn pool_cancel(&self, project: &str, id: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
+        // 배정 판정이 진행 중이어도 사용자 취소를 거부하지 않는다. 같은 잠금 아래에서
+        // 최신 영수증을 확인하고, pool_run의 마지막 저장 뒤에 취소를 기록한다.
+        let _guard = self.thread_op_lock(project, &format!("account-{id}")).lock_owned().await;
         if self.db.meta(&receipt(project, id)).map_err(internal)?.is_some() {
             return Err(err(ErrorCode::Conflict, "이미 시작한 thread는 thread에서 끝낸다"));
         }
