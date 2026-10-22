@@ -406,7 +406,8 @@ if home:
     if 'resume' in sys.argv: assert history.exists(), 'lost history'
     history.write_text('history')
 def note(phase,step,s):
-    with (pathlib.Path(os.environ['ACCOUNT_PROOF'])/'gate-trace.jsonl').open('a') as f:
+    # CI 실패 수집기의 *.log 대상에 넣는다. 내용은 JSONL이며 인증 값은 기록하지 않는다.
+    with (pathlib.Path(os.environ['ACCOUNT_PROOF'])/'gate-trace.log').open('a') as f:
         f.write(json.dumps(dict(pid=os.getpid(),tid=tid,phase=phase,step=step,local=s.getsockname()))+'\n')
 def gate(phase):
     h,p=os.environ['ACCOUNT_GATE'].split(':')
