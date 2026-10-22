@@ -4009,6 +4009,16 @@ fn routines() {
     assert_eq!(first["event"], "output changed");
     assert!(first["body"].as_str().unwrap().contains("값을 본다\n\n신뢰할 수 없는 명령 출력(종료 코드 0)"), "{first}");
     assert!(first["body"].as_str().unwrap().contains("```text\nv1\n```"), "{first}");
+    // DB 항목은 inbox 파일을 쓰기 전에 보인다. command source의 종료와 별개로,
+    // 안내 action이 투영 파일을 쓴 뒤 남기는 완료 기록까지 확인하고 파일을 읽는다.
+    wait_for("cmd 안내 투영 완료", T, || {
+        w.h.ok(&["routine", "runs", "demo", "cmd"])["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["status"] == "done" && r["detail"] == "coordinator 안내")
+            .then_some(())
+    });
     let md = std::fs::read_to_string(dir.join("inbox").join(format!("{}.md", first["id"].as_str().unwrap()))).unwrap();
     assert!(md.contains("```text\nv1\n```"), "{md}");
     // 같은 출력으로 한 번 더 돈 뒤에도 항목은 하나다. 돈 것은 흐름 사건 routine_ran으로 본다(항목은 그 사건보다 먼저

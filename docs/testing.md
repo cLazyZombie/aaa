@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 첨부 뒤 여러 줄 입력의 높이 안정(t-0772, plan §8.446)
+
+- 전체 검증에서 기존 m13 `routines`가 DB 항목을 본 직후 아직 쓰는 중인 inbox Markdown을 빈 내용으로 읽어 실패했다. DB insert→파일 write→안내 action 완료 기록 순서를 확인했고, 파일 단언 전에 `routine runs`의 `done`/`coordinator 안내` 완료를 기다리도록 시험만 고쳤다. 명령 source 종료는 안내 action 종료보다 앞이므로 완료 신호로 대신 쓰지 않는다. 원래 파일 본문·승인·중복 출력 단언과 30초 상한은 유지한다.
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 66-composer-wrap --workers 1`: 기존 줄 경계·게이지 폭 회수·창 폭 변경 검사를 유지하고, 실제 coordinator의 그림 업로드·경로 삽입·빈 줄·여러 줄 한글 입력을 추가한다. Chromium·WebKit 각각 1280px·390px에서 「맨 아래로」가 떠 있는 대화와 짧은 글/높이 상한을 넘는 긴 글을 검사한다.
+- OS 입력기를 직접 조작하는 대신 두벌식 자모→음절→확정 사건을 재생하고 trusted 영문 키 입력도 실행한다. 입력 중 높이·화면 위치·내부 scrollTop·상자 높이·문서 스크롤을 기록한다. 원래 scrollHeight getter가 이미 강제하는 layout 직후를 관측하므로 화면 frame 사이의 일시적 축소도 검출한다. ResizeObserver·scroll 사건과 두 requestAnimationFrame 뒤 표본을 함께 보며 고정 sleep·실패 재시도·시한 연장은 없다.
+- 수정 전에는 네 조합의 짧은 글과 긴 글 모두 측정 순간 높이가 40px로 줄어 실패한다. WebKit의 긴 글 진단은 240→40→240px와 화면 위치 왕복을 보였다. headless에서 최종으로 그려진 frame의 시각적 떨림까지 재현했다고 주장하지 않는다. 수정 후 같은 시험에서 높이·스크롤·focus·조합 글 보존·편집 중 전송 없음과 삭제 뒤 한 줄 복원을 검사한다.
+- 화면과 JSON 표본을 캡처 폴더에 저장한다. E2E23의 첨부 전송·E2E35의 보내기 높이·기존 E2E66을 포함한 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. API와 E2E 번호는 유지한다.
+
+
 ## 작업 요약 카드의 실행 모델(t-0751, plan §8.445)
 
 - `node --test web/test/summaryCard.test.mjs`: 관측 모델·생각 수준의 표시, profile과 실제 모델의 불일치, 미확인 값과 옛 host, 알려진 계열의 짧은 이름·알 수 없는 이름 보존을 검사한다.
