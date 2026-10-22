@@ -1,6 +1,6 @@
 .settings-dialog {
   display: grid;
-  grid-template-columns: 13rem minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   flex: 1 1 0;
   width: 100%;
@@ -17,49 +17,46 @@
 }
 
 .settings-header {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 1;
 }
 
+.settings-navigation-slot {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.settings-navigation-slot[hidden], .sidebar-existing[hidden] { display: none; }
+.sidebar-existing { display: contents; }
+
 .settings-nav {
   display: flex;
-  grid-column: 1;
-  grid-row: 1 / 3;
   flex-direction: column;
-  gap: var(--space-3);
+  min-width: 0;
   min-height: 0;
-  padding: var(--space-4) var(--space-3);
   overflow-y: auto;
-  background: var(--bg);
-  border-right: var(--hairline) solid var(--border);
-}
-
-.settings-nav-title {
-  margin: 0;
-  padding: var(--space-1) var(--space-3) 0;
-  color: var(--text-strong);
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-semibold);
+  background: var(--bg-panel);
 }
 
 .settings-tabs {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 
 .settings-tab {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  min-height: var(--control-h);
-  padding: 0 var(--space-3);
+  gap: 0;
+  flex: 0 0 auto;
+  min-height: var(--side-row, var(--control-h));
+  padding: 0 var(--space-2) 0 0;
   background: transparent;
   border: 0;
   border-radius: var(--radius-md);
   color: var(--text);
   font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
+  font-weight: var(--fw-regular);
   text-align: left;
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
@@ -67,12 +64,12 @@
 
 .settings-tab svg {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size);
+  height: var(--icon-size);
   color: var(--text-dim);
 }
 
-.settings-tab > span {
+.settings-tab > .settings-tab-label {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -87,23 +84,23 @@
 
 @media (hover: hover) {
   .settings-tab:hover {
-    background: var(--bg-elevated);
+    background: var(--side-hover, var(--bg-hover));
   }
 }
 
 .settings-tab[aria-selected="true"] {
-  background: var(--bg-hover);
+  background: var(--side-selected, var(--bg-hover));
   color: var(--text-strong);
 }
 
 /* the open page carries the selection color on its glyph, as a chosen segment does */
 .settings-tab[aria-selected="true"] svg {
-  color: var(--accent);
+  color: var(--text-strong);
 }
 
 .settings-body,
 .settings-key-bar-body {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 2;
   min-width: 0;
   overscroll-behavior: contain;
@@ -305,9 +302,6 @@
   border-right: 0;
 }
 
-.settings-dialog.is-narrow .settings-nav-title {
-  display: none;
-}
 
 .settings-dialog.is-narrow .settings-tabs {
   gap: 0;
@@ -325,6 +319,10 @@
 
 .settings-dialog.is-narrow .settings-tab + .settings-tab {
   border-top: var(--hairline) solid var(--border);
+}
+
+.settings-dialog.is-narrow .settings-tab .sidebar-mark {
+  flex-basis: var(--control-h);
 }
 
 .settings-dialog.is-narrow .settings-tab svg {

@@ -1,0 +1,17 @@
+/* 목록 행은 내용 높이를 가진다. 공통 button의 고정 높이와 flex 축소로
+   둘째 줄이 다음 행의 선택 배경 아래로 빠지지 않게 한다. */
+:is(.ask-row, .automation-card, .report-card, .task-row, .task-log-row, .settings-tab) {
+  box-sizing: border-box;
+  height: auto;
+  min-width: 0;
+  flex-shrink: 0;
+  margin-inline: 0;
+}
+:is(.ask-row, .automation-card, .settings-tab) {
+  justify-content: flex-start;
+}
+:is(.ask-row, .automation-card, .task-row).is-selected,
+.settings-tab[aria-selected="true"] {
+  background: var(--bg-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}

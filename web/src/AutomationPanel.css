@@ -25,7 +25,7 @@
 .automation-card.is-selected { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--accent); }
 .automation-card:focus-visible { outline: var(--ring); outline-offset: -2px; }
 .automation-card .automation-indicator { margin-top: 6px; }
-.automation-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.automation-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 0; width: 0; }
 .automation-card-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .automation-card-title { color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .automation-card[data-status="off"] .automation-card-title { color: var(--text-dim); }

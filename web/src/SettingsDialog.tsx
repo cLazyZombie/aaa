@@ -1,5 +1,6 @@
 // 설정은 오른쪽 본문을 채운다. 좁은 본문에서는 목록 → 쪽, 뒤로는 한 단계씩 돌아간다.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Rocket, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, MachineView, ProviderUsage, PublishState } from "./gen/proto";
@@ -791,7 +792,9 @@ export function SettingsDialog({
   machines,
   onSignOut,
   onOpenPane,
+  navigationTarget,
 }: {
+  navigationTarget: HTMLElement | null;
   onClose: () => void;
   role: DeviceRole;
   device: string;
@@ -802,17 +805,7 @@ export function SettingsDialog({
   onOpenPane?: (id: string) => void;
 }) {
   const surface = useRef<HTMLElement>(null);
-  const [narrow, setNarrow] = useState(() => (document.querySelector(".view")?.clientWidth ?? window.innerWidth) <= 640);
-  // 창 전체가 아니라 실제 본문 폭을 본다(사이드바 펼침·폭 조절·글자 크기).
-  useLayoutEffect(() => {
-    const node = surface.current;
-    if (!node) return;
-    const refresh = () => setNarrow(node.clientWidth <= 640);
-    const observer = new ResizeObserver(refresh);
-    refresh();
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+  const narrow = useMedia("(max-width: 768px)");
   // 앞으로 가기로 열렸으면 그 칸이 보이던 것을 보인다
   const [restored] = useState(() => shownBy(settingsEntry(window.history.state) ?? settingsFromUrl()));
   // 휴대폰은 쪽 목록으로 열고, 넓은 창은 목록 옆에 첫 쪽을 보인다
@@ -860,7 +853,7 @@ export function SettingsDialog({
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const node = surface.current;
     return () => {
-      const restore = node?.contains(document.activeElement) || document.activeElement === document.body;
+      const restore = node?.contains(document.activeElement) || navigationTarget?.contains(document.activeElement) || document.activeElement === document.body;
       if (!restore || !opener?.isConnected || nativeModalOver(node)) return;
       // 활동 막대는 이미 보인다. 숨겨 둔 본문·휴대폰 목록 단추는 commit 뒤에 focus를 받는다.
       if (getComputedStyle(opener).visibility !== "hidden" && opener.getClientRects().length) {
@@ -889,6 +882,7 @@ export function SettingsDialog({
   const tab = (id: SettingsPage | null): HTMLElement | null =>
     tabsRef.current?.querySelector<HTMLElement>(id === null ? '[role="tab"]' : `[data-settings-page="${id}"]`) ?? null;
   useLayoutEffect(() => {
+    if (!narrow && !navigationTarget) return;
     const before = shown.current;
     shown.current = { page, keyBar: keyBarOpen };
     if (keyBarOpen) backRef.current?.focus();
@@ -902,7 +896,7 @@ export function SettingsDialog({
       if (page !== null) backRef.current?.focus();
       else tab(before.page)?.focus();
     }
-  }, [page, keyBarOpen, narrow]);
+  }, [page, keyBarOpen, narrow, navigationTarget]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
@@ -967,25 +961,8 @@ export function SettingsDialog({
   const listShown = !narrow || (page === null && !keyBarOpen);
   const focusable = page ?? PAGES[0]!.id;
 
-  return (
-      <section ref={surface} id="settings-screen" className={`settings-dialog${narrow ? " is-narrow" : ""}`} role="region" aria-label={keyBarOpen ? "키 바" : "설정"} tabIndex={-1}>
-        <header className="modal-header settings-header">
-          <DrawerToggle />
-          {(keyBarOpen || (narrow && page !== null)) && (
-            <button type="button" ref={backRef} className="icon-button" aria-label="설정으로 돌아가기" onClick={goBack}>
-              <ArrowLeft aria-hidden="true" />
-            </button>
-          )}
-          <h2 className="modal-title">{keyBarOpen ? "키 바" : page === null ? "설정" : label(page)}</h2>
-          <button type="button" className="icon-button" aria-label="설정 닫기" onClick={onClose}>
-            <X aria-hidden="true" />
-          </button>
-        </header>
-        {listShown && (
-          <nav className="settings-nav" aria-label="설정">
-            <p className="settings-nav-title" aria-hidden="true">
-              설정
-            </p>
+  const navigation = listShown ? (
+          <nav className={`settings-nav${narrow ? "" : " list-body sidebar-list"}`} aria-label="설정">
             <div ref={tabsRef} className="settings-tabs" role="tablist" aria-orientation="vertical">
               {PAGES.map(({ id, icon: PageIcon, label: name }, index) => (
                 <button
@@ -1000,14 +977,30 @@ export function SettingsDialog({
                   onClick={() => openPage(id)}
                   onKeyDown={(event) => onTabKey(event, index)}
                 >
-                  <PageIcon aria-hidden="true" />
-                  <span>{name}</span>
+                  <span className="sidebar-mark"><PageIcon aria-hidden="true" /></span>
+                  <span className="settings-tab-label">{name}</span>
                   <ChevronRight className="settings-tab-chevron" aria-hidden="true" />
                 </button>
               ))}
             </div>
           </nav>
-        )}
+  ) : null;
+
+  return (
+      <section ref={surface} id="settings-screen" className={`settings-dialog${narrow ? " is-narrow" : ""}`} role="region" aria-label={keyBarOpen ? "키 바" : "설정"} tabIndex={-1}>
+        <header className="modal-header settings-header">
+          <DrawerToggle />
+          {(keyBarOpen || (narrow && page !== null)) && (
+            <button type="button" ref={backRef} className="icon-button" aria-label="설정으로 돌아가기" onClick={goBack}>
+              <ArrowLeft aria-hidden="true" />
+            </button>
+          )}
+          <h2 className="modal-title">{keyBarOpen ? "키 바" : page === null ? "설정" : label(page)}</h2>
+          <button type="button" className="icon-button" aria-label="설정 닫기" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        {narrow ? navigation : navigationTarget && createPortal(navigation, navigationTarget)}
         {page !== null && (
           <div key={page} ref={settingsBodyRef} id="settings-panel" className="modal-body settings-body" role="tabpanel" aria-label={label(page)} hidden={keyBarOpen}>
             {body()}

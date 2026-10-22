@@ -525,7 +525,7 @@ export default async function ({ ctl, page }) {
     const dialog = sp.getByRole("region", { name: "설정" });
     await dialog.waitFor();
     // 설정은 쪽으로 나뉜다(plan §8.97): 단축키 쪽으로
-    const shortcutsPage = () => dialog.getByRole("tab", { name: "단축키" }).click();
+    const shortcutsPage = () => dialog.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "단축키" }).click();
     await shortcutsPage();
     const stored = () => sp.evaluate(() => localStorage.getItem("aaa:shortcut-overrides"));
     await dialog.getByRole("combobox", { name: "다음 패널" }).selectOption("off");
@@ -573,7 +573,7 @@ export default async function ({ ctl, page }) {
       await p.keyboard.press("Meta+Shift+Comma");
       const pd = p.getByRole("region", { name: "설정" });
       await pd.waitFor();
-      await pd.getByRole("tab", { name: "단축키" }).click();
+      await p.getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "단축키" }).click();
       await pd.locator(".settings-shortcuts").scrollIntoViewIfNeeded();
       const fit = await pd.locator(".settings-shortcuts").evaluate((el) => {
         const box = el.getBoundingClientRect();

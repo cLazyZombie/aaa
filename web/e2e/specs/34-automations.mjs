@@ -1,3 +1,4 @@
+import { panelRows } from "../lib/panel-rows.mjs";
 import { listIds } from "../lib/list-ids.mjs";
 // 자동화 보기의 주 경계: 실제 일정 판정 → DB 기록 → CLI/웹, 파일 enabled 편집, Reader, 휴대폰.
 // 목록은 사이드바 카드(이름·표지·조건 한 줄)이고, 카드를 누르면 본문에 그 규칙 설정(켜기·기록·승인)이 열린다(t-0628).
@@ -28,6 +29,8 @@ export default async function ({ page }) {
     if ((await row.textContent()).includes("coordinator 없음")) throw new Error("카드에 지난 결과가 남았다");
     const legacy=page.getByTestId("automation-auto-demo-missions/watch.md");
     await legacy.waitFor();
+    await legacy.hover();
+    await panelRows(page, ".automation-card");
     await legacy.click();
     const detail = page.getByTestId("automation-detail");
     await domIs(page, "옛 파일 변환 안내", () => document.querySelector('[data-testid="automation-file-error"]')?.textContent.includes("없어짐"));
@@ -36,6 +39,7 @@ export default async function ({ page }) {
     await detail.locator(".automation-runs li").first().waitFor();
     if (!(await detail.locator(".automation-runs").textContent()).includes("coordinator 없음")) throw new Error("최근 기록이 없다");
     if (await page.locator(".modal-scrim").count()) throw new Error("설정이 떠 있는 창으로 열렸다");
+    await panelRows(page, ".automation-card");
     await shot(page, "automations-desktop");
   });
   await step("자동화: 토글은 enabled만 바꾸고 주석·일정·본문을 지킨다. 임무 파일 토글도 다른 칸을 바꾸지 않는다", async () => {
