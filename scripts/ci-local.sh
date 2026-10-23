@@ -7,6 +7,7 @@
 #   bash scripts/ci-local.sh --skip e2e            빼고 전부
 #   bash scripts/ci-local.sh --logs DIR            로그 폴더(기본 target/ci-local/<시각>)
 #   bash scripts/ci-local.sh --tee                 단계 출력을 로그와 함께 화면에도 낸다(CI가 쓴다)
+#   bash scripts/ci-local.sh --only linux-clippy   Zig로 Linux strict cross 검사(선택 단계)
 #
 # 단계: web fmt build clippy test e2e public. web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 test·e2e·clippy를
 # 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee도 같은 병렬 경로에서 단계별 로그를 읽어 출력한다.
@@ -30,6 +31,7 @@
 set -uo pipefail
 
 ALL="web fmt build clippy test e2e public"
+KNOWN="$ALL linux-clippy"
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
 
@@ -52,8 +54,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 for s in $ONLY $SKIP; do
-  case " $ALL " in *" $s "*) ;; *) echo "모르는 단계: $s (단계: $ALL)" >&2; exit 2 ;; esac
+  case " $KNOWN " in *" $s "*) ;; *) echo "모르는 단계: $s (단계: $KNOWN)" >&2; exit 2 ;; esac
 done
+# cross 도구·target이 없는 기본 CI에는 추가하지 않는다. 명시한 실행만 기존 집계에 넣는다.
+case " $ONLY " in *" linux-clippy "*) ALL="$ALL linux-clippy" ;; esac
 [ -n "$LOGS" ] || LOGS="target/ci-local/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$LOGS" || exit 2
 LOGS=$(cd "$LOGS" && pwd)
@@ -67,6 +71,7 @@ esac
 
 wanted() {
   local s=$1
+  case " $ALL " in *" $s "*) ;; *) return 1 ;; esac
   if [ -n "$ONLY" ]; then case " $ONLY " in *" $s "*) ;; *) return 1 ;; esac; fi
   case " $SKIP " in *" $s "*) return 1 ;; esac
   return 0
@@ -85,12 +90,13 @@ step_build() {
 # 한 crate가 실패해도 나머지를 모두 본다: 아니면 cargo가 새 unit을 띄우지 않아 뒤 crate의 오류가 로그에 없다(10-18 windows: process.rs
 # unused import가 9eeced3 뒤 main CI에서 clip.rs dead code를 가렸다)
 step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
+step_linux_clippy() { bash scripts/ci-linux-clippy.sh; }
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
   if [ "$OS" = windows ]; then cargo test --workspace --locked --no-fail-fast; return $?; fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
-  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_ci_local >"$LOGS/python.log" 2>&1 &
+  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_ci_local scripts.test_linux_cross >"$LOGS/python.log" 2>&1 &
   python_pid=$!
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
   wait "$python_pid" || python_code=$?
@@ -165,10 +171,10 @@ run_step() {
   echo "── $s 시작 $now(로그 $log)"
   t0=$(date +%s)
   if [ -n "$TEE" ]; then
-    "step_$s" 2>&1 | tee "$log"
+    "step_${s//-/_}" 2>&1 | tee "$log"
     code=$?
   else
-    "step_$s" >"$log" 2>&1
+    "step_${s//-/_}" >"$log" 2>&1
     code=$?
   fi
   t1=$(date +%s)
@@ -260,7 +266,7 @@ else
   rm -f "$stream_done"
   for s in $go; do collect "$s"; done
 fi
-for s in public; do
+for s in linux-clippy public; do
   skipped "$s" || { run_step "$s"; collect "$s"; }
 done
 
