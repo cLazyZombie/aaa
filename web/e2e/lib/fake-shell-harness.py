@@ -38,7 +38,7 @@ def append(text, n):
             out.write(json.dumps(line(text, n)) + "\n")
 
 
-def open_record(resume=False):
+def open_record(resume=False, messages=360):
     global record, path
     if record:
         record.close()
@@ -58,7 +58,7 @@ def open_record(resume=False):
         registry.parent.mkdir(parents=True, exist_ok=True)
         registry.write_text(json.dumps({"pid": os.getpid(), "sessionId": session, "kind": "interactive", "cwd": str(root), "startedAt": started}))
     if not resume:
-        for n in range(360):
+        for n in range(messages):
             append(f"{session} 기록 {n} · " + "긴 대화 줄 " * 8, n)
     last.write_text(session)
 
@@ -122,6 +122,14 @@ try:
         elif command.startswith("switch "):
             session = command.split()[1]
             open_record()
+        elif command.startswith("switch-paused "):
+            session = command.split()[1]
+            open_record(messages=300)
+            print("foreground-history-paused", flush=True)
+        elif command == "finish-history":
+            for n in range(300, 360):
+                append(f"{session} 기록 {n} · " + "긴 대화 줄 " * 8, n)
+            print("foreground-history-complete", flush=True)
         elif command == "quit":
             break
         elif command == "wheel":

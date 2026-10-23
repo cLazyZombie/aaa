@@ -1,4 +1,4 @@
-// E2E37 전용. 통과 경로에는 파일 쓰기·출력·추가 대기가 없다.
+// E2E37·93의 대화 요청/실패 상태. 통과 경로에는 파일 쓰기·출력·추가 대기가 없다.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -82,6 +82,6 @@ export class ChatDiagnostics {
     }
     this.stop();
     summary();
-    console.log(`E2E37 실패 진단: ${dir}`);
+    console.log(`대화 실패 진단: ${dir}`);
   }
 }
