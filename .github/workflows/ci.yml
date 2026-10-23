@@ -25,9 +25,9 @@ jobs:
     timeout-minutes: 40
     env:
       PLAYWRIGHT_VERSION: "1.64.1"
-      # 공개 macos-15 arm64는 3 CPU다. 로컬 기본(core/2 내림)은 1이 되어 전체가 직렬로 40분을 넘었다.
-      # host·agent·브라우저 실험실은 작업마다 격리하며 기존 모든 spec·조합을 한 번씩 실행한다.
-      AAA_E2E_WORKERS: "3"
+      # 공개 macos-15 arm64는 3 CPU다. 로컬 기본(core/2 내림)은 1이라 40분을 넘었다.
+      # 3 worker 진단은 24분에 끝났지만 E2E66이 120초를 넘었다. 2개로 CPU 여유를 두며 모든 조합·시한을 유지한다.
+      AAA_E2E_WORKERS: "2"
     steps:
       - uses: actions/checkout@v5
       - name: Rust stable

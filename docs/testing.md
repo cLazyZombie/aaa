@@ -2,12 +2,14 @@
 
 ## GitHub 웹 E2E 직렬 실행과 파일 보기 Escape(t-0830)
 
-- 공개 `macos-15` arm64 러너는 [GitHub 사양](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에 따라 3 CPU다. 10 CPU 미만인 기존 로컬 기본값 `floor(cores / 2)`는 worker 1이 된다. CI만 `AAA_E2E_WORKERS=3`으로 명시하고 로컬 기본과 `--workers` 우선순위는 유지한다. 모든 spec·브라우저·viewport·독립 단계는 그대로 한 번씩 실행한다.
+- 공개 `macos-15` arm64 러너는 [GitHub 사양](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에 따라 3 CPU다. 10 CPU 미만인 기존 로컬 기본값 `floor(cores / 2)`는 worker 1이 된다. CI만 `AAA_E2E_WORKERS=2`로 명시하고 로컬 기본과 `--workers` 우선순위는 유지한다. 모든 spec·브라우저·viewport·독립 단계는 그대로 한 번씩 실행한다.
 - 원본 run `39805550736`의 SHA `4fe3e4ad`와 run `39879814485`의 SHA `ef5de571`은 spec 머리가 번호순이며, 다음 머리까지의 시간은 spec 실행·정리를 포함한다. 전자는 88번까지 2,161.8초, 후자는 83번까지 2,219.1초를 썼다. 마지막 시작 파일을 정지한 파일이라고 해석하지 않는다.
 - `ef5de571`의 Playwright 설치는 25초, 웹 빌드는 15초, aaa 준비 빌드는 약 138초였다. E2E 자체가 약 37분 동안 직렬로 누적돼 job의 40분 상한에 도달했다. 37-chat-pages 142.9초·39-phone-back 121.5초·23-composer-attachments 103.4초 등이 이어졌으며, 첫 브라우저 실행이나 83번 하나의 정지를 가리키는 자료는 없다. job 상한은 40분을 유지한다.
 - 입구는 CPU 수·worker 수·OS/arch·spec/job 수와 각 작업의 시작/끝·슬롯·경과 시간·종료 결과를 실시간으로 출력하고 `AAA_E2E_ARTIFACTS/run-timings.jsonl`에 남긴다. 병렬 출력의 `## specs/…`는 작업 완료 때 묶어 출력되므로 시작 순서로 읽지 않는다. CI는 통과·실패 모두 실행 로그·빌드 로그·단계 요약·시간 기록과 실패 진단을 산출물로 보존한다.
 - 원본 E2E16의 「기본 Markdown Escape」 실패에는 xterm의 `input` 메시지 `\u001b`와 PTY의 `^[` 출력이 함께 남았다. 파일 내용은 focus rAF보다 먼저 표시될 수 있고 터미널 부착도 focus를 옮긴다. FileViewer의 window bubble listener는 xterm textarea가 전파를 멈춘 키를 받지 못했다. document capture의 layout effect로 등록해 실제 키를 먼저 처리하고 기본 동작·전파를 막는다. 이미 처리한 키·IME·상위 native modal·그림 크게 보기는 먼저 둔다.
 - `NODE_PATH=<Playwright 1.64.1 모듈 폴더> PLAYWRIGHT_BROWSERS_PATH=<격리 브라우저 폴더> node web/e2e/web.e2e.mjs --spec 16 --workers 1`: 기존 전체 owner에 실제 textarea focus 경계·Chromium·WebKit 소스와 Markdown의 Escape 닫힘·터미널 무입력·상위 native 창과 그림 크게 보기 우선순위를 더한다. 구판은 textarea를 focus한 대조에서 원본과 같은 20초 닫힘 실패와 ESC 전송으로 실패한다. 원본의 모든 부착·focus 사건 순서까지 재현했다고 주장하지 않는다.
+- 단일 진단 [run 39885298949](https://github.com/cLazyZombie/aaa/actions/runs/39885298949)은 CPU 3개·worker 3개를 확인했다. 93파일·104작업을 모두 한 번 실행해 E2E 1,203.645초·job 23분 59초에 끝났으며 E2E16은 62.171초에 통과했다. 유일한 실패는 E2E66의 네 기기 줄바꿈 단계가 120초를 넘긴 것이다. 최종 설정은 worker 2개로 여유를 두며, 이 설정의 원격 판정은 착지 뒤 main CI에 남긴다. 이 실패를 통과로 바꾸거나 진단 job을 재실행하지 않는다.
+- E2E66의 `geometry`는 CSS 전체·실폭·글꼴 로딩 세대가 같은 독립 native textarea와 첫 줄 경계를 재사용한다. 현재 입력값의 native 줄 수·실제 폭·행 수·focus·PTY 무전송은 매 상태 검사한다. 높이/CSS/폭이 바뀌거나 글꼴이 로딩 중이면 기준을 다시 만들며, 기준 요소는 측정 뒤 DOM에서 뺀다. 빈 입력·게이지 숨김·두 viewport 변경마다 캐시 없는 새 native 기준과 경계·줄 수를 대조한다. 모든 음절·자모·기기·단언·120초 상한을 유지한다. 실패 때 `diagnostics/wrap-geometry.json`은 현재 기기·진행 상태·직전 측정과 완료 기기별 비용을 남긴다.
 - 실패하면 `diagnostics/file-viewer-escape.json`에 실제 키의 target 종류·터미널 여부·isTrusted·defaultPrevented·viewer/history 유무와 ESC 누출 여부를 남긴다. 본문·주소·임의 history state는 기록하지 않는다. 기존 닫힘 단언·20초 대기·120초 단계 상한·실패 판정을 유지한다. 정본은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사이며, GitHub 확인은 진단 branch의 단일 job 또는 착지 뒤 main CI로 한다. 실패 재실행·시한 증가·기대값 완화는 없다.
 
 ## E2E39 기록 수 실패 진단(t-0825)
@@ -754,7 +756,7 @@ resource_limits 변경은 하지 않는다.
 - 상태를 이어 쓰는23-composer-attachments 등의 spec은 분할하지 않는다. 공통 준비의 `always`도 유지한다.
   `node --test web/test/e2e-jobs.test.mjs`는 원 source의12개 조합이 반복마다 정확히 한 번 선택되는지,
   의존 단계 보존·grep·문장 부호·시간 합계를 확인한다. 실패 재시도는 없다.
-- 기본 작업 수는 10 CPU 이상이면 5/8 내림·최대 10개, 그 밖은 CPU 둘마다 하나다. GitHub macOS job은 3개를 명시한다(t-0830). 명시한 `AAA_E2E_WORKERS`와 `--workers`는 그대로 적용한다.
+- 기본 작업 수는 10 CPU 이상이면 5/8 내림·최대 10개, 그 밖은 CPU 둘마다 하나다. GitHub macOS job은 2개를 명시한다(t-0830). 명시한 `AAA_E2E_WORKERS`와 `--workers`는 그대로 적용한다.
   요약의 전체 시간은 wall time이며 분할 spec의 행은 독립 작업 점유 시간의 합계라고 표시한다.
   단계·전체 시한이나 실패 판정은 바꾸지 않는다. 같은 실행 파일을 고정한 전후 측정과 전체 정본으로 검증한다.
 
