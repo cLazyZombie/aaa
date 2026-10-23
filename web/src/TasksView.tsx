@@ -919,6 +919,7 @@ export function TasksView({
               t={current}
               gone={gone}
               fileOpen={fileOpen}
+              linked={target !== null}
               onDirty={setFormDirty}
               board={board}
               byLine={byLine}

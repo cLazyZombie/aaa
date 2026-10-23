@@ -192,6 +192,8 @@ export interface DetailProps {
   onCover?: (covered: boolean) => void;
   /** 앱 파일 보기가 떠 있다(첨부 문서를 열었다): 그동안 휴대폰 뒤로 기록은 파일 보기 것이다 */
   fileOpen?: boolean;
+  /** 깊은 주소로 연 상세: 주소 이동 자체가 기록 한 칸이므로 휴대폰 시트 칸을 더하지 않는다 */
+  linked?: boolean;
 }
 
 export function TaskDetail(props: DetailProps) {
@@ -199,7 +201,7 @@ export function TaskDetail(props: DetailProps) {
   // 휴대폰은 전체 화면 시트: 시스템 Back이 닫는다(herdr-web-ui, sheetHistory.ts). 위에 크게 보기·파일 보기가 뜬 동안은 그 창이
   // 기록을 갖는다(시트 칸을 파일 보기가 차지한 채 두면 파일 보기를 닫은 뒤의 뒤로·화면 이동이 시트 칸과 어긋난다)
   const [covered, setCovered] = useState(false);
-  usePhoneSheetBack(() => onClose(), !covered && !props.fileOpen);
+  usePhoneSheetBack(() => onClose(), !props.linked && !covered && !props.fileOpen);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // 위에 뜬 창(팔레트·설정·확인창)의 Esc는 그 창 것이다

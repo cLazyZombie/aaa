@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 휴대폰 대화의 할 일 링크 뒤로·앞으로(t-0924)
+
+- `node web/e2e/web.e2e.mjs --spec 77 --workers 1`: 실제 host·agent의 coordinator 대화에서 d-ID 링크를 누른다. Chromium·WebKit 390px에서 native `history.back()`의 popstate와 React 반영 frame을 기다려 원래 대화 주소·대화 본문·상세 제거를 검사한다. 앞으로는 같은 할 일 상세·강조가 돌아오고 시트 표지가 없어야 한다. 두 번 왕복 뒤 Chromium의 실제 기록 목록/CDP 위치와 WebKit 기록 길이가 처음 상세를 연 직후와 같아야 한다.
+- 수정 전 두 엔진에서 뒤로 한 번에 대화 대신 `#tasks`가 되는 실패를 재현했다. 깊은 주소의 기록 위에 휴대폰 시트 기록이 하나 더 생기고, 뒤로 시트의 닫기 콜백이 새 목록 주소를 쌓는 원인이다. 깊은 주소로 연 상세의 추가 시트 기록만 끈다. 기존 E2E77의 첫 주소·새로고침·프로젝트 한정 주소·삭제/보관·닫기·Reader·보고서 링크 검사를 유지한다.
+- 완료 사건은 popstate·DOM·animation frame이다. 고정 sleep·재시도·시한 변경은 없으며 headless WebKit의 기록 이동을 실제 iOS 몸짓 애니메이션 검증과 동일시하지 않는다. 공통 `sheetHistory.ts`·설정 drawer·E2E39는 수정하지 않는다. t-0923의 E2E39 간헐 실패 수리와 파일이 겹치지 않는다.
+- 참고 후보는 [herdr-web-ui 시트 기록](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/lib/sheetHistory.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))와 [remix-run/history](https://github.com/remix-run/history/blob/main/packages/history/index.ts)([MIT](https://github.com/remix-run/history/blob/main/LICENSE))다. 전자의 시트 기록과 후자의 PUSH/POP 구분을 참고했고 외부 코드·의존성을 추가하지 않는다. [History API의 기록 추가](https://developer.mozilla.org/en-US/docs/Web/API/History/pushState)와 [WebKit의 뒤로·앞으로 몸짓](https://developer.apple.com/documentation/webkit/wkwebview/allowsbackforwardnavigationgestures)도 확인한다.
+- 정본은 기준 main `5085e64f` 위 전체 `nice -n 15 bash scripts/ci-local.sh`·Linux strict cross clippy·공개 검사다. GitHub CI는 기다리지 않고 착지 창 전에는 main 병합·push하지 않는다. API와 E2E 번호는 유지한다.
+
 ## 하위 오류 진단과 비밀값 경계(t-0912)
 
 - `cargo test --locked -p aaa-common --lib diagnostic::`: 중첩 anyhow의 OS 오류가 응답 왕복과 실제 tracing 사건에 남는지 검사한다. serde 오류 자체에 가짜 토큰이 들어가는 data 오류를 주입해 분류·행·열만 남는지, 닫힌 oneshot의 payload가 로그로 나오지 않는지도 검사한다. subscriber는 시험 thread 안에서만 설치한다.

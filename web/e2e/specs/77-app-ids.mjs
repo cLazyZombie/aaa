@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { root, AA, aaa, step, until, domIs, inTime, waitOutput, coordinatorPost, browser, webkit, pairPage, shot } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
+import { observeHistory, assertHistoryUnchanged } from "../lib/history-observer.mjs";
 
 const go = (p, hash) => p.evaluate((hash) => { location.hash = hash; }, hash);
 const link = (p, id) => p.locator(`[data-testid="${id.startsWith("q-") ? "app-ref" : "app-id"}"][data-target="${id}"]`);
@@ -144,6 +145,45 @@ export default async function ({ page }) {
     await domIs(page, "thread 대화도 같은 칩·링크", () => document.querySelectorAll('[data-testid="chat"] [data-testid="app-id"]').length === 4
       && document.querySelectorAll('[data-testid="chat"] [data-testid="app-ref"]').length === 2);
     await link(page.getByTestId("chat"), d).first().click(); await picked(page, d);
+  });
+
+  await step("휴대폰 대화의 할 일 링크: 한 번 뒤로는 대화, 앞으로는 상세, 반복해도 기록 유지", async () => {
+    const wk = await webkit.launch();
+    try {
+      for (const engine of [wk, browser]) {
+        const phone = await pairDevice(engine, aaa("web", "pair").code, "iphone", { hash: `#pane=${coordinatorPane}` });
+        const p = phone.page;
+        const history = await observeHistory(p);
+        try {
+          await chat(p);
+          const origin = await p.evaluate(() => location.hash);
+          await link(p.getByTestId("chat"), d).first().click();
+          await picked(p, d);
+          const entries = await history.snapshot();
+          const traverse = async (direction) => {
+            await inTime(p.evaluate((direction) => new Promise((resolve) => {
+              addEventListener("popstate", () => requestAnimationFrame(() => requestAnimationFrame(resolve)), { once: true });
+              history[direction]();
+            }), direction), 20_000, `${engine.browserType().name()} ${direction} popstate`);
+          };
+          for (let round = 0; round < 2; round++) {
+            await traverse("back");
+            const actual = await p.evaluate(() => ({ hash: location.hash,
+              chat: !!document.querySelector('[data-testid="chat"]'),
+              detail: !!document.querySelector('[data-testid="task-detail"]'),
+              sheet: history.state?.["aaa:sheet"] ?? null }));
+            assert.deepEqual(actual, { hash: origin, chat: true, detail: false, sheet: null },
+              `${engine.browserType().name()} 한 번 뒤로는 원래 대화`);
+            await traverse("forward");
+            await picked(p, d);
+            assert.equal(await p.evaluate(() => history.state?.["aaa:sheet"] ?? null), null,
+              "주소가 연 상세는 시트 기록을 덧붙이지 않는다");
+            assertHistoryUnchanged(entries, await history.snapshot());
+          }
+          assert.deepEqual(phone.errors, []);
+        } finally { await history.close(); await p.context().close(); }
+      }
+    } finally { await wk.close(); }
   });
 
   await step("보고서 본문의 ID도 링크, 삭제·자동 보관된 할 일은 없음과 일반 글", async () => {
