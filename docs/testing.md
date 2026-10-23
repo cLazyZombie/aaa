@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## m13 재시작 뒤 보고 수집 완료 사건(t-0880)
+
+- main `b6d7bda8`의 [CI 원문](https://github.com/cLazyZombie/aaa/actions/runs/39915021368)은 Ubuntu·macOS 모두 실제 사건 `[]`, 기대 `["report_ready"]`다. 추가 사건이나 harness 재전송 중복이 아니다. `orch.rs`의 수집은 `next`·`report_hash`를 먼저 저장하고 질문 정리 뒤 `report_ready`를 기록하므로, 상태 조회만으로 사건 발행 완료를 판정할 수 없다.
+- `remote_dir_thread_survives_host_restart`는 새 host의 `lab.follow`로 해당 thread·기준 seq 뒤 `report_ready`를 받은 뒤 상태와 정확한 사건 목록을 검사한다. 기존 follow의 원장 재생을 써 구독 전에 발행된 사건도 놓치지 않는다. 새 보고 본문·검토 묶음·정확히 사건 하나·outage 내구성 단언과 기존 30초 상한은 유지한다. 고정 대기·시한 증가·재시도·ignore·제품 변경은 없다.
+- `report_events::report_state_precedes_completion_event`는 기존 `AAA_TEST_FLOW_HOLD`로 발행 순서 잠금을 잡고 실제 수집의 새 `next` 저장과 `report_ready`의 잠금 대기 표지를 확인한다. 그때 사건 목록은 비어 있다. 구판 owner의 단언을 같은 지점에 놓은 대조는 CI와 같은 `[] != ["report_ready"]`로 실패했다. 해제 뒤 live 사건과 정확히 한 건, 새 구독의 원장 재생을 모두 검사한다. 제어 소켓 외 제품 경로를 대체하지 않는다.
+- 참고 후보는 [NATS JetStream 중복 판정과 ACK](https://github.com/nats-io/nats.docs/blob/master/using-nats/jetstream/model_deep_dive.md)([server Apache-2.0](https://github.com/nats-io/nats-server/blob/main/LICENSE))와 [Temporal의 사건 이력 재생](https://github.com/temporalio/sdk-rust/blob/main/arch_docs/sdks_intro.md)([MIT](https://github.com/temporalio/sdk-rust/blob/main/LICENSE.txt))다. 원장에 기록된 완료와 상태 관측을 구분하고 기존 순번으로 재생하는 방식을 따른다. 중복 원인이 아니므로 새 멱등 키·의존성·외부 코드는 추가하지 않는다.
+- 검증은 두 owner의 정확한 이름 실행, `nice -n 15 bash scripts/ci-local.sh` 전체와 공개 검사다. 새 회귀는 Unix m13 전용이며 t-0864의 Claude fixture·t-0874의 interrupt 실패 영역을 바꾸지 않는다.
+
 ## 보고서 교체 시험의 Windows 파일 닫힘(t-0862)
 
 - `node --test web/test/reportFile.test.mjs`는 Windows에서 원래 writer의 남은 출력을 쓰고 FD를 닫은 뒤 보고서를 교체한다. POSIX에서는 기존처럼 교체 뒤 옛 FD에 늦게 쓰는 대조를 유지한다. 두 경로 모두 최종 본문 전체가 정확히 일치해야 하며 Windows 시험도 건너뛰지 않는다.
