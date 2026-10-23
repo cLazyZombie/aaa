@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 입력 기록 초기화와 파일 보기 재열기 대기(t-0836)
+
+- 원본 [run 39889977347](https://github.com/cLazyZombie/aaa/actions/runs/39889977347)은 CPU 3개·worker 2개·94파일/105작업 중 E2E09의 「보낸 뒤 비움」과 E2E16의 「다시 읽은 뒤 소스」가 각각 20초에 실패했다. 앞 대기는 textarea가 아니라 진단 수집 건수다. 원본 산출물에는 해당 화면의 DOM·요청·사건 기록이 없어 세부 원인을 확정하지 않는다.
+- 로컬 worker 2·`AAA_E2E_THROTTLE=4`의 두 owner 전체는 원본 조건과 같은 실패를 재현하지 못했다. 별도 대조에서는 보내기 성공 뒤 `selectionchange`를 넣자 실제 0개 초기화 → 새 1개 수집 → 옛 마지막 0개 대기의 20초 실패를 확인했다. 설정의 실제 `history.go`를 파일 링크 mouseup까지 보류한 대조에서는 viewer 열림 → 늦은 popstate → viewer 제거 → 「다시 읽은 뒤 소스」 20초 실패를 확인했다. 이 대조는 가능한 사건 순서의 증거이며 원본 CI 사건 순서가 같았다는 증거는 아니다.
+- E2E09는 보내기 전에 DOM observer를 걸어 실제 0개 표시와 보내기 단추 비활성화를 확인한다. 성공 메시지·파일의 모든 사건과 보낸 글·권한·인증 거부 단언은 유지한다. 그 뒤 새 selection 사건 수집도 검사하므로 초기화를 확인하려고 수집기를 끄지 않는다. 고정 300ms 대신 마지막 음절의 실제 PTY 출력을 기다린다.
+- E2E16은 설정 DOM 제거뿐 아니라 설정 history state와 query를 벗어나는 popstate도 기다린 뒤 링크 좌표를 잰다. `node --test web/test/settingsClosed.test.mjs`는 DOM/기록 도착 양쪽 순서·query 잔류·이미 도착한 상태·20초 실패와 정리를 검사한다. 소스 원문 일치·줄 바꿈·기기별 설정·Escape·PTY 무전송 등 기존 단언을 유지한다.
+- 단일 [GitHub 진단](https://github.com/cLazyZombie/aaa/actions/runs/39893701999)은 수정 전 두 전체 owner를 각 고정 3회·CPU 3개/worker 2/감속 4로 실행했다. E2E09 3/3, E2E16 2/3 통과이며 원래 두 실패는 재현하지 못했다. 나머지 1회는 HTML의 임의 CSP 사건(`img-src`)을 fetch 차단(`connect-src`)의 완료로 오해한 별개 실패다. fixture는 실제 connect-src 사건만 표지에 남기고 뒤의 img-src 사건에도 보존하는지 검사한다. 기존 기대값과 sandbox 단언은 유지한다. 진단을 재실행하지 않으며 최종 후보의 원격 통과로 해석하지 않는다.
+- 실패 시 `diagnostics/input-trace.json`은 건수·성공 표시와 selection/focus 순서를, `diagnostics/file-open.json`은 클릭·기록 이동·viewer/소스 존재·맞춤·파일 요청 단계를 남긴다. 본문·전체 URL·임의 history state는 기록하지 않으며 기존 CI 산출물 경로로 복사한다.
+- 참고 후보는 [Playwright의 response owner](https://github.com/microsoft/playwright/blob/main/tests/page/page-network-response.spec.ts)와 [playwright-vscode의 fixture/latch](https://github.com/microsoft/playwright-vscode/blob/main/tests/utils.ts)다. 양쪽 Apache-2.0 라이선스를 확인했고 코드는 복사하지 않았다. 동작 전에 관측을 걸고 실제 상태·사건으로 끝내는 방식과 실험실 격리를 따른다. CI worker 2·20초 대기·120초 단계·40분 job 한도는 바꾸지 않는다.
+
 ## GitHub 웹 E2E 직렬 실행과 파일 보기 Escape(t-0830)
 
 - 공개 `macos-15` arm64 러너는 [GitHub 사양](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에 따라 3 CPU다. 10 CPU 미만인 기존 로컬 기본값 `floor(cores / 2)`는 worker 1이 된다. CI만 `AAA_E2E_WORKERS=2`로 명시하고 로컬 기본과 `--workers` 우선순위는 유지한다. 모든 spec·브라우저·viewport·독립 단계는 그대로 한 번씩 실행한다.
