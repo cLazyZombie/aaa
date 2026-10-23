@@ -67,7 +67,13 @@ pub fn codex(v: &Value, now: u64) -> Vec<QuotaWindow> {
                 duration_mins: w
                     .get("windowDurationMins")
                     .and_then(Value::as_u64)
-                    .and_then(|n| u32::try_from(n).ok())
+                    .and_then(|n| {
+                        u32::try_from(n)
+                            .inspect_err(|error| {
+                                crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
                     .filter(|n| *n > 0),
                 used_percent: p,
                 observed_at_ms: now,

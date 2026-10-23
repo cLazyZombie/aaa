@@ -127,12 +127,24 @@ pub fn builtin_views(cfg: &ThreadsConfig) -> Vec<ProfileView> {
     // 시험은 이 머신의 설치·로그인과 상관없이 정한다(`AAA_TEST_BUILTINS`: 빈 값은 없음, 쉼표 목록은 그것만)
     let detected: Vec<String> = match std::env::var("AAA_TEST_BUILTINS") {
         Ok(v) => v.split(',').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect(),
-        Err(_) => {
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
             let home = aaa_config::paths::home();
             aaa_config::profile_edit::detect(
-                std::env::var("PATH").ok().as_deref(),
+                std::env::var("PATH")
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_deref(),
                 &home,
-                |n| std::env::var(n).ok(),
+                |n| {
+                    std::env::var(n)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                },
                 &cfg.harnesses,
             )
         }
@@ -248,7 +260,9 @@ async fn exclude_work_dirs(repo: &Path) -> Result<()> {
     let common = git(repo, &["rev-parse", "--git-common-dir"], GIT_T).await?;
     let common = if Path::new(&common).is_absolute() { PathBuf::from(common) } else { repo.join(common) };
     let path = common.join("info").join("exclude");
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = std::fs::read_to_string(&path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default();
     if !text.lines().any(|l| l.trim() == ".aaa/") {
         std::fs::create_dir_all(path.parent().unwrap())?;
         let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
@@ -305,11 +319,17 @@ pub async fn adopt(exe: &Path, p: ThreadAdopt, cwd: &Path) -> Result<ThreadAdopt
     if work_dir.exists() {
         bail!("작업 폴더가 이미 있다: {}", work_dir.display());
     }
-    let repo = git(cwd, &["rev-parse", "--show-toplevel"], GIT_T).await.ok().filter(|s| !s.is_empty());
+    let repo = git(cwd, &["rev-parse", "--show-toplevel"], GIT_T)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .filter(|s| !s.is_empty());
     let branch = match &repo {
-        Some(_) => {
-            git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_T).await.ok().filter(|b| !b.is_empty() && b != "HEAD")
-        }
+        Some(_) => git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_T)
+            .await
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|b| !b.is_empty() && b != "HEAD"),
         None => None,
     };
     if let Some(top) = &repo {
@@ -450,11 +470,15 @@ fn sha256_file(path: &Path) -> Result<String> {
 /// report.md hash. 없거나 regular file이 아니면 None
 pub fn report_hash(work_dir: &Path) -> Option<String> {
     let path = work_dir.join("report.md");
-    let meta = std::fs::symlink_metadata(&path).ok()?;
+    let meta = std::fs::symlink_metadata(&path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     if !meta.file_type().is_file() || meta.len() > MAX_REPORT_BYTES {
         return None;
     }
-    sha256_file(&path).ok()
+    sha256_file(&path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
 }
 
 /// work_dir가 thread 작업 폴더 형식인가(host가 준 경로를 그대로 믿지 않는다)
@@ -489,7 +513,10 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
     let mut skipped = Vec::new();
     let mut total = 0u64;
     let lib = dir.join("library");
-    if std::fs::symlink_metadata(&lib).is_ok_and(|m| m.is_dir()) {
+    if std::fs::symlink_metadata(&lib)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|m| m.is_dir())
+    {
         walk(&lib, &lib, &mut |rel, meta, abs| {
             if meta.file_type().is_symlink() {
                 skipped
@@ -530,7 +557,12 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
 }
 
 fn walk(root: &Path, dir: &Path, f: &mut impl FnMut(String, std::fs::Metadata, &Path)) -> Result<()> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| {
+            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
+        .collect();
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
         let path = e.path();
@@ -586,7 +618,8 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
     match std::fs::symlink_metadata(&inbox) {
         Ok(m) if !m.is_dir() => bail!("inbox가 폴더가 아니다(symlink 등)"),
         Ok(_) => {}
-        Err(_) => {
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
             std::fs::create_dir(&inbox)?;
             #[cfg(unix)]
             {

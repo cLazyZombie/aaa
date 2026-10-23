@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 자동화 만들기·고치기(관리 GUI W2, plan §8.342). 폼과 TOML 고급 편집이 한 초안을 함께 쓴다: 폼을 고치면 host가 바뀐 칸만
 // 원문에 합쳐 돌려주고(`automation_validate`), TOML을 고치면 host가 읽은 값으로 폼을 다시 그린다. 저장은 본 판(sha256)일 때만
 // 쓰고, 다르면 host가 `conflict`로 거부한다: 그때 지금 파일과 내 초안의 차이를 보이고 사람이 고른다(자동 병합 없음).
@@ -284,7 +285,7 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
       await onSaved(r.doc.name);
     } catch (e) {
       if (e instanceof ApiError && (e.body.code === "conflict" || e.body.code === "not_found") && !creating) {
-        const latest = await call({ op: "automation_read", project, name: openName! }).then((r) => (r.kind === "automation_doc" ? r.doc : null)).catch(() => null);
+        const latest = await call({ op: "automation_read", project, name: openName! }).then((r) => (r.kind === "automation_doc" ? r.doc : null)).catch(ignoredFailure("AutomationEditor.tsx:288", () => null));
         setConflict({ reason: e.body.message, latest, mine: draft.current.text, mineBody: draft.current.body });
       } else setError(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }

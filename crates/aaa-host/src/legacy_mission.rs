@@ -21,18 +21,23 @@ pub(crate) fn files(root: &Path) -> Vec<String> {
 }
 impl Host {
     pub(crate) fn legacy_mission_notice(&self, project: &str) {
-        let Ok(root) = self.project_dir(project) else { return };
+        let Ok(root) = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let notices = self.db.inbox_list(Some(project), true).unwrap_or_default();
         if !files(&root).is_empty() && !notices.iter().any(|i| i.subject == "missions" && i.event == "removed") {
             self.inbox_once(project, "config-error", "missions", "removed", REMOVED);
         }
-        for rec in self
-            .db
-            .threads(Some(project))
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|s| serde_json::from_str::<crate::orch::ThreadRec>(s).ok())
-        {
+        for rec in self.db.threads(Some(project)).unwrap_or_default().iter().filter_map(|s| {
+            serde_json::from_str::<crate::orch::ThreadRec>(s)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        }) {
             if rec.role == Role::Evaluator
                 && rec.status != ThreadStatus::Resolved
                 && !notices.iter().any(|i| i.subject == rec.id && i.event == "removed role")
@@ -166,7 +171,13 @@ pub(crate) fn definition(root: &Path, name: &str) -> Result<Definition, String> 
         return Err("임무 이름 형식이 아니다".into());
     }
     let path = format!("missions/{name}.toml");
-    let (value, body, originals) = if root.join(&path).symlink_metadata().is_ok() {
+    let (value, body, originals) = if root
+        .join(&path)
+        .symlink_metadata()
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
+    {
         let text = crate::automation::project_text(root, &path)?;
         let value: toml::Value = toml::from_str(&text).map_err(|e| e.to_string())?;
         let brief = value.get("brief_file").and_then(|v| v.as_str()).ok_or("brief_file이 없다")?;
@@ -255,7 +266,13 @@ impl Definition {
             min_gap: get("min_gap").and_then(|v| v.as_str()).map(str::to_string),
             max_per_day: get("max_wakes")
                 .and_then(|v| v.as_integer())
-                .and_then(|n| u32::try_from(n).ok())
+                .and_then(|n| {
+                    u32::try_from(n)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .filter(|n| *n > 0 && *n < u32::MAX),
             usage_session_below: get("usage_session_below")
                 .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|n| n as f64))),

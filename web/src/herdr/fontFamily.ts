@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /**
  * The terminal and chat font families the user types in Settings: a comma-separated list in
  * fallback order, like VS Code's `editor.fontFamily`. The list goes in front of the built-in
@@ -92,7 +93,7 @@ export async function loadFontStack(stack: string, sizePx: number, timeoutMs = F
       fonts.load(`${sizePx}px ${stack}`, FONT_LOAD_SAMPLE),
       new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
     ]);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "fontFamily.ts:96");
     /* the grid is measured with the fallback, as for a font that is not installed */
   } finally {
     if (timer !== undefined) clearTimeout(timer);

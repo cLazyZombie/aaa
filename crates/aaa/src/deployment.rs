@@ -12,7 +12,10 @@ pub(crate) fn route(json: bool, machine: Option<String>, action: DeployAction) -
         Err(e) if declared || machine.is_some() => {
             bail!("aaa 세션 안 배포는 host의 coordinator safety 확인이 필요하다: {e:#}")
         }
-        Err(_) => return Ok(None),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            return Ok(None);
+        }
     };
     if !c.role.can_control() {
         bail!("aaa 세션 안에서는 허용된 coordinator만 배포한다. thread는 계속 막는다");

@@ -50,11 +50,19 @@ fn read(path: &Path) -> Result<String> {
     fs::read_to_string(path).context("기존 지표 자료 읽기")
 }
 fn version(path: &Path) -> Option<(String, u64)> {
-    let m = fs::symlink_metadata(path).ok()?;
+    let m = fs::symlink_metadata(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     if !m.is_file() {
         return None;
     }
-    let at = m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    let at = m
+        .modified()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     Some((format!("{}:{}", m.len(), at.as_nanos()), at.as_millis() as u64))
 }
 fn missing_tests() -> MetricRanking {
@@ -93,10 +101,34 @@ fn counts(text: &str) -> Option<MetricCounts> {
     let mut found = false;
     for c in re.captures_iter(text) {
         found = true;
-        all.passed = all.passed.saturating_add(c[1].parse().ok()?);
-        all.failed = all.failed.saturating_add(c[2].parse().ok()?);
-        all.skipped = all.skipped.saturating_add(c[3].parse().ok()?);
-        all.filtered = all.filtered.saturating_add(c[5].parse().ok()?);
+        all.passed = all.passed.saturating_add(
+            c[1].parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?,
+        );
+        all.failed = all.failed.saturating_add(
+            c[2].parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?,
+        );
+        all.skipped = all.skipped.saturating_add(
+            c[3].parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?,
+        );
+        all.filtered = all.filtered.saturating_add(
+            c[5].parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?,
+        );
     }
     found.then_some(all)
 }
@@ -131,7 +163,10 @@ fn rust_counts(dir: &Path) -> Result<Option<MetricCounts>> {
                     complete = false;
                 }
             }
-            Err(_) => complete = false,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                complete = false
+            }
         }
     }
     if !complete || jobs.len() > 128 {
@@ -150,7 +185,11 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
         run_id,
         observed_at_ms: at,
         source: "ci-local 기존 종료 요약".into(),
-        verification_ms: head[2].parse::<f64>().ok().and_then(millis),
+        verification_ms: head[2]
+            .parse::<f64>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .and_then(millis),
         outcome: head[3].to_string(),
         slow_tests: missing_tests(),
         slow_e2e: top(vec![], "spec-work-sum", false),
@@ -164,7 +203,12 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
         if !matches!(fields[1], "ok" | "FAIL") {
             continue;
         }
-        let Some(duration_ms) = fields[4].parse::<f64>().ok().and_then(millis) else {
+        let Some(duration_ms) = fields[4]
+            .parse::<f64>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .and_then(millis)
+        else {
             continue;
         };
         if fields[0] == "build" {
@@ -187,8 +231,20 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
         let files = Regex::new(r"(?m)^## 요약: 파일 (\d+)개 × (\d+)번").unwrap();
         let jobs = Regex::new(r"(?m)^## 작업: (\d+)개").unwrap();
         run.e2e_unit = Some("spec-file".into());
-        run.e2e_files = files.captures(&e2e).and_then(|c| c[1].parse().ok());
-        run.e2e_jobs = jobs.captures(&e2e).and_then(|c| c[1].parse().ok());
+        run.e2e_files = files.captures(&e2e).and_then(|c| {
+            c[1].parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        });
+        run.e2e_jobs = jobs.captures(&e2e).and_then(|c| {
+            c[1].parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        });
         // 반복 실행의 중간값·최장값은 이번 개별 작업 합계와 다르므로 순위에서 제외한다.
         let re =
             Regex::new(r"(?m)^##   (\S+)\s+(통과|실패)\s+\d+/\d+\s+([\d.]+)초(?: \(독립 작업 합계\))?\s*$").unwrap();
@@ -197,7 +253,13 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
             .filter_map(|c| {
                 Some(MetricTiming {
                     name: c[1].to_string(),
-                    duration_ms: millis(c[3].parse().ok()?)?,
+                    duration_ms: millis(
+                        c[3].parse()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()?,
+                    )?,
                     outcome: c[2].to_string(),
                     start_ms: None,
                 })
@@ -208,7 +270,9 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
         run.slow_e2e = top(items, "spec-work-sum", complete);
     }
     // ci-local이 실제 사본·cmp를 확인한 원본 실행 파일 경로만 stat한다. bytes를 읽거나 해시하지 않는다.
-    if read(&dir.join("e2e-binary.log")).is_ok_and(|s| s.contains("이번 빌드의 웹 E2E 실행 사본:"))
+    if read(&dir.join("e2e-binary.log"))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|s| s.contains("이번 빌드의 웹 E2E 실행 사본:"))
         && let Some(root) = dir.parent().and_then(Path::parent).and_then(Path::parent)
     {
         let binary = root.join("target/debug/aaa");
@@ -227,7 +291,13 @@ fn fresh_json(path: &Path, start: u64, end: u64) -> Option<serde_json::Value> {
     if at < start || at > end {
         return None;
     }
-    serde_json::from_str(&read(path).ok()?).ok()
+    serde_json::from_str(
+        &read(path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?,
+    )
+    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+    .ok()
 }
 fn rc_run(path: &Path, at: u64, run_id: String) -> Result<MetricRun> {
     let v: serde_json::Value = serde_json::from_str(&read(path)?)?;
@@ -358,7 +428,9 @@ fn runtime_reports(run: &mut MetricRun, dir: &Path, start: u64, at: u64, names: 
     if let Some(report) = fresh_json(e2e, start, at)
         && let Some(scenarios) = report["reports"].as_array()
     {
-        run.e2e_files = u32::try_from(scenarios.len()).ok();
+        run.e2e_files = u32::try_from(scenarios.len())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         run.e2e_unit = Some("scenario".into());
         let items: Vec<_> = scenarios
             .iter()
@@ -394,7 +466,12 @@ fn engine_run(path: &Path, at: u64, run_id: String) -> Result<MetricRun> {
         ..Default::default()
     };
     for row in re.captures_iter(&source) {
-        let duration_ms = row[2].parse::<f64>().ok().and_then(millis).context("엔진 시간 범위 오류")?;
+        let duration_ms = row[2]
+            .parse::<f64>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .and_then(millis)
+            .context("엔진 시간 범위 오류")?;
         if &row[1] == "total" {
             run.verification_ms = Some(duration_ms);
         } else {
@@ -408,6 +485,7 @@ fn engine_run(path: &Path, at: u64, run_id: String) -> Result<MetricRun> {
     }
     let dir = path.parent().context("target 없음")?.join("verification");
     let start = fs::read_dir(dir.join("gates"))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
         .into_iter()
         .flatten()
@@ -457,7 +535,11 @@ pub fn collect(
     let mut inputs = Vec::new();
     if let Ok(dirs) = fs::read_dir(cwd.join("target/ci-local")) {
         for dir in dirs.take(512).flatten() {
-            if !dir.file_type().is_ok_and(|t| t.is_dir()) {
+            if !dir
+                .file_type()
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|t| t.is_dir())
+            {
                 continue;
             }
             let path = dir.path().join("workspace-summary.tsv");
@@ -505,7 +587,8 @@ pub fn collect(
                 cache.errors.remove(&rel);
                 cache.versions.insert(rel, v);
             }
-            Err(_) => {
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                 cache.errors.insert(rel.clone(), "기존 결과 형식·크기 문제로 해당 실행 미수집".into());
                 cache.versions.insert(rel, v);
             }
@@ -541,7 +624,10 @@ pub fn collect(
         let _lines_lock = CollectionLock(aaa_common::private_file::lock(&lines_store.join("lines.lock"))?);
         match lines::collect(cwd, &lines_store, known_code_commits) {
             Ok(l) => result.code_lines = l,
-            Err(_) => result.notes.push("코드 줄 수 수집 대기(비용 상한 또는 Git 자료 없음)".into()),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                result.notes.push("코드 줄 수 수집 대기(비용 상한 또는 Git 자료 없음)".into())
+            }
         }
     }
     Ok(result)

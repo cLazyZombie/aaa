@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 보고서 그림 크게 보기(plan §8.353). 보고서 HTML은 opaque origin sandbox iframe이라 앱이 그 안을 보지 못한다. host가 HTML 탐색
 // 응답 끝에 붙인 알림(aaa-host `report_images.js`)이 누른 그림과 그 문서의 그림 주소를 보낸다. 보고서 제 script도 같은 꼴을
 // 보낼 수 있으므로 믿지 않고 거른다: 그 보고서의 보기 경로(`/v/<cap>/`) 아래 같은 origin 주소만 받는다(data:·blob:·다른
@@ -16,7 +17,7 @@ export function viewRoot(src: string, origin: string): string | null {
   let url: URL;
   try {
     url = new URL(src, origin);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "reportImages.ts:20");
     return null;
   }
   const m = /^\/v\/([^/]+)\//.exec(url.pathname);
@@ -31,7 +32,7 @@ export function reportImageUrl(src: unknown, base: string, origin: string): stri
   try {
     root = new URL(base, origin);
     url = new URL(src, root);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "reportImages.ts:35");
     return null;
   }
   if (url.origin !== origin || root.origin !== origin) return null;

@@ -45,11 +45,22 @@ impl Signer {
     }
 }
 fn verify(public: &[u8], data: &[u8], signature: &str) -> bool {
-    let Ok(signature) = URL_SAFE_NO_PAD.decode(signature) else { return false };
-    UnparsedPublicKey::new(&ED25519, public).verify(data, &signature).is_ok()
+    let Ok(signature) = URL_SAFE_NO_PAD
+        .decode(signature)
+        .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return false;
+    };
+    UnparsedPublicKey::new(&ED25519, public)
+        .verify(data, &signature)
+        .as_ref()
+        .inspect_err(|error| crate::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
 }
 pub fn verify_authorization(public: &[u8], claims: &InstallAuthorizationClaims, signature: &str) -> bool {
-    canonical(claims).is_ok_and(|data| verify(public, &data, signature))
+    canonical(claims)
+        .inspect_err(|error| crate::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|data| verify(public, &data, signature))
 }
 fn grant_bytes(grant: &InstallEnrollmentGrant) -> Result<Vec<u8>, Invalid> {
     let mut value = serde_json::to_value(grant).map_err(|_| Invalid)?;
@@ -57,5 +68,7 @@ fn grant_bytes(grant: &InstallEnrollmentGrant) -> Result<Vec<u8>, Invalid> {
     canonical(&value)
 }
 pub fn verify_enrollment(public: &[u8], grant: &InstallEnrollmentGrant) -> bool {
-    grant_bytes(grant).is_ok_and(|data| verify(public, &data, &grant.signature))
+    grant_bytes(grant)
+        .inspect_err(|error| crate::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|data| verify(public, &data, &grant.signature))
 }

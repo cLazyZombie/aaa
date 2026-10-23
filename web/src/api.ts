@@ -1,8 +1,10 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 import { apiFetch } from "./apiRequest";
+import { ApiError, readApiResponse } from "./apiOutcome";
+export { ApiError } from "./apiOutcome";
 // host 웹 API(crates/aaa-host/src/web.rs). 상태는 host가 갖고, 여기서는 받은 것을 보여 주기만 한다.
 import type {
   DeviceRole,
-  ErrorBody,
   EventsClientMsg,
   FrontEvent,
   FrontRequest,
@@ -20,12 +22,6 @@ import type {
 import type { PreferencesChange } from "./herdr/preferences.ts";
 import { pageInUse } from "./herdr/presence";
 import { createPasskey, signPasskey, withGesture } from "./passkey";
-
-export class ApiError extends Error {
-  constructor(public body: ErrorBody) {
-    super(body.message);
-  }
-}
 
 async function post<T>(path: string, body: unknown, keepalive = false): Promise<T> {
   const res = await apiFetch(path, {
@@ -102,14 +98,7 @@ export function onInboxChanged(listener: () => void): () => void {
 async function unwrap<T>(res: Response): Promise<T> {
   // pairing 자체(/api/v1/pair)의 401은 코드가 틀린 것이다. 그 밖의 401은 이 기기를 host가 모른다는 뜻이다
   if (res.status === 401 && !res.url.endsWith("/api/v1/pair")) reportSignedOut();
-  let out: Outcome<T>;
-  try {
-    out = (await res.json()) as Outcome<T>;
-  } catch {
-    throw new ApiError({ code: "internal", message: `HTTP ${res.status}` });
-  }
-  if ("err" in out) throw new ApiError(out.err);
-  return out.ok;
+  return readApiResponse<T>(res);
 }
 
 /** `front_api`: host의 FRONT_API(1.58부터, 옛 host는 없다). `passkey`: 공개 주소로 연 화면의 passkey 상태(관리 GUI W7),
@@ -128,7 +117,7 @@ export const pair = (code: string, label: string) => post<{ role: DeviceRole }>(
 /** 이 브라우저의 로그인을 잊는다(herdr-web-ui `signOut`, DELETE /api/auth). 기기 기록은 host에 남는다 */
 export async function signOut(): Promise<void> {
   const res = await apiFetch("/api/v1/me", { method: "DELETE", credentials: "same-origin" });
-  if (!res.ok) throw new ApiError({ code: "internal", message: `HTTP ${res.status}` });
+  if (!res.ok) await readApiResponse<unknown>(res);
 }
 /** 공개 주소로 연 조작 기기의 승인 필요 동작(관리 GUI W7): host가 `passkey_required`로 답하면 이 기기 passkey의 사용자
  * 확인(UV)으로 다시 보낸다. host는 begin 때 받은 요청만 실행한다. passkey가 없으면 begin이 등록 안내로 거부한다 */
@@ -270,7 +259,7 @@ const PRESENCE_EVERY_MS = 10_000;
 export const BUILD = (() => {
   try {
     return new URL(import.meta.url).pathname.split("/").pop()?.replace(/\.[jt]sx?$/, "") || "?";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "api.ts:262");
     return "?";
   }
 })();
@@ -283,7 +272,7 @@ export function tellAlert(m: Omit<Extract<EventsClientMsg, { t: "alert" }>, "t">
   if (eventsSocket?.readyState !== WebSocket.OPEN) return;
   try {
     eventsSocket.send(JSON.stringify({ t: "alert", ...m } satisfies EventsClientMsg));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "api.ts:275");
     /* 기록일 뿐이다 */
   }
 }
@@ -297,7 +286,7 @@ function sendChatWatch(socket: WebSocket | null, pane: string, enabled: boolean)
   if (socket?.readyState !== WebSocket.OPEN) return;
   try {
     socket.send(JSON.stringify({ t: "chat_watch", pane, enabled } satisfies EventsClientMsg));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "api.ts:289");
     /* 연결이 끊기면 다시 붙으며 청한다 */
   }
 }
@@ -417,7 +406,7 @@ export function watchEvents(
     // 보내기가 던지면 기한이 끊는다
     try {
       socket.send(JSON.stringify({ t: "ping", id } satisfies EventsClientMsg));
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "api.ts:409");
       /* 위와 같다 */
     }
   };

@@ -82,7 +82,10 @@ fn writable_body(root: &Path, relative: &str) -> Result<(), ErrorBody> {
             Ok(m) if last && !m.is_file() => return Err(bad("본문 파일 자리가 일반 파일이 아니다")),
             Ok(_) => {}
             // 여기부터 없다: 아래는 쓸 때 새로 만든다
-            Err(_) => break,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                break;
+            }
         }
     }
     Ok(())
@@ -217,7 +220,13 @@ fn prune(doc: &mut DocumentMut, file: &str, target: &File, mut inserted: Vec<Vec
     for p in inserted {
         let mut trial = doc.clone();
         if remove_path(trial.as_table_mut(), &p)
-            && decode::<File>(file, &trial.to_string()).ok().as_ref() == Some(target)
+            && decode::<File>(file, &trial.to_string())
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .as_ref()
+                == Some(target)
         {
             *doc = trial;
         }
@@ -283,7 +292,16 @@ pub(super) fn trash_id(id: &str) -> Option<(&str, u64)> {
     let stem = id.strip_suffix(".toml")?;
     let (name, at) = stem.rsplit_once('-')?;
     (aaa_proto::valid_project(name) && !at.is_empty() && at.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| Some((name, at.parse().ok()?)))
+        .then(|| {
+            Some((
+                name,
+                at.parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()?,
+            ))
+        })
         .flatten()
 }
 
@@ -303,13 +321,24 @@ impl Host {
             crate::routine::parse(name, text)
         } else {
             match decode::<File>(file, text) {
-                Ok(f) => check.form = serde_json::to_value(&f).ok(),
+                Ok(f) => {
+                    check.form = serde_json::to_value(&f)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                }
                 Err(e) => {
                     check.errors.push(e);
                     return check;
                 }
             }
-            let body_file = decode::<File>(file, text).ok().and_then(|f| f.action.texts().1.map(str::to_owned));
+            let body_file = decode::<File>(file, text)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .and_then(|f| f.action.texts().1.map(str::to_owned));
             if body.is_some_and(|b| b.len() > BODY_MAX) {
                 check.errors.push(format!("{file}:1:1 본문: 본문은 1MiB 이하여야 한다"));
                 return check;
@@ -342,7 +371,13 @@ impl Host {
             Ok(Some((sha, approved))) => {
                 review.start_approval_sha256 = Some(sha);
                 review.start_approved = Some(approved);
-                review.start_scope = self.automation_start_scope_text(p, &r).ok().flatten();
+                review.start_scope = self
+                    .automation_start_scope_text(p, &r)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten();
             }
             Ok(None) => {}
             Err(e) => check.warnings.push(format!("자동 시작 대상을 지금 풀지 못한다: {}", e.message)),
@@ -367,7 +402,13 @@ impl Host {
         };
         let legacy = file.ends_with(".md");
         let body_file = (!legacy)
-            .then(|| decode::<File>(&file, &text).ok())
+            .then(|| {
+                decode::<File>(&file, &text)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .flatten()
             .and_then(|f| f.action.texts().1.map(str::to_owned));
         let body = match &body_file {
@@ -460,7 +501,13 @@ impl Host {
                         bad(field_error(&file, &text, "do", "본문 파일 칸(text_file·brief_file)이 없다"))
                     })?;
                 // 웹이 새로 쓰는 본문은 automations/ 안에만 둔다. 이 규칙이 이미 가리키던 파일은 그 자리에 고친다
-                let before = now.as_deref().and_then(|t| decode::<File>(&file, t).ok());
+                let before = now.as_deref().and_then(|t| {
+                    decode::<File>(&file, t)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                });
                 let known = before.as_ref().and_then(|f| f.action.texts().1) == Some(path.as_str());
                 if !known && !(path.starts_with("automations/") && path.ends_with(".md")) {
                     return Err(bad(format!("새 본문 파일은 automations/ 안의 .md로 둔다: {path}")));
@@ -565,13 +612,26 @@ impl Host {
             .into_iter()
             .flatten()
             .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .filter(|e| {
+                e.file_type()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|t| t.is_file())
+            })
             .filter_map(|e| {
                 let id = e.file_name().to_string_lossy().into_owned();
                 let (name, at) = trash_id(&id)?;
                 let title = project_text(&root, &format!("{TRASH}/{id}"))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
                     .ok()
-                    .and_then(|t| t.parse::<DocumentMut>().ok())
+                    .and_then(|t| {
+                        t.parse::<DocumentMut>()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
                     .and_then(|d| d.get("title").and_then(|t| t.as_str()).map(str::to_owned))
                     .filter(|t| !t.is_empty())
                     .unwrap_or_else(|| name.to_string());

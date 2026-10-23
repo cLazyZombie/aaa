@@ -128,12 +128,14 @@ fn sha256(b: &[u8]) -> [u8; 32] {
 }
 
 fn unb64(s: &str, what: &str) -> Result<Vec<u8>, ErrorBody> {
-    B64.decode(s.trim_end_matches('=')).map_err(|_| bad(&format!("{what}가 base64url이 아니다")))
+    B64.decode(s.trim_end_matches('='))
+        .map_err(|e| aaa_common::diagnostic::context(e, bad(&format!("{what}가 base64url이 아니다"))))
 }
 
 /// clientDataJSON: 종류·challenge·origin이 맞아야 한다(다른 origin에 끼운 화면은 거부)
 fn client_data(raw: &[u8], kind: &str, challenge: &[u8; 32], origin: &str) -> Result<(), ErrorBody> {
-    let v: serde_json::Value = serde_json::from_slice(raw).map_err(|_| bad("clientDataJSON을 읽지 못했다"))?;
+    let v: serde_json::Value = serde_json::from_slice(raw)
+        .map_err(|e| aaa_common::diagnostic::context(e, bad("clientDataJSON을 읽지 못했다")))?;
     if v["type"] != kind {
         return Err(bad("확인 종류가 다르다"));
     }
@@ -217,7 +219,9 @@ fn verify(cose: &[u8], data: &[u8], client: &[u8], sig: &[u8]) -> Result<(), Err
     let msg = [data, &sha256(client)].concat();
     let algorithm: &dyn signature::VerificationAlgorithm =
         if alg == ALG_ES256 { &signature::ECDSA_P256_SHA256_ASN1 } else { &signature::ED25519 };
-    UnparsedPublicKey::new(algorithm, key).verify(&msg, sig).map_err(|_| bad("서명이 맞지 않는다"))
+    UnparsedPublicKey::new(algorithm, key)
+        .verify(&msg, sig)
+        .map_err(|e| aaa_common::diagnostic::context(e, bad("서명이 맞지 않는다")))
 }
 
 impl Host {

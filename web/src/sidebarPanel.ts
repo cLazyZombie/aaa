@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼」, plan §8.240): 사이드바가 보이는 패널 하나와 넓은 창의 접힘을 기기마다 기억한다.
 // VS Code는 workspace마다 기억하고 herdr-web-ui(aa624cb App.tsx 318~319줄 `sidebarCollapsed`)는 접힘을 주소(`sidebar=hidden`)에
 // 싣는다. aaa는 기기마다(brief: 마지막 패널·접힘은 기기별) localStorage에 둔다.
@@ -20,7 +21,7 @@ export function storedPanel(): SidebarPanel {
   try {
     const v = localStorage.getItem(PANEL_KEY) ?? "";
     return PANELS.find((p) => p === v) ?? OLD_PANELS[v] ?? "work";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "sidebarPanel.ts:24");
     return "work";
   }
 }
@@ -28,7 +29,7 @@ export function storedPanel(): SidebarPanel {
 export function storedCollapsed(): boolean {
   try {
     return localStorage.getItem(COLLAPSED_KEY) === "1";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "sidebarPanel.ts:32");
     return false;
   }
 }
@@ -38,7 +39,7 @@ export function storeSidebar(panel: SidebarPanel, collapsed: boolean): void {
     localStorage.setItem(PANEL_KEY, panel);
     if (collapsed) localStorage.setItem(COLLAPSED_KEY, "1");
     else localStorage.removeItem(COLLAPSED_KEY);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "sidebarPanel.ts:42");
     // 저장이 막히면 이 화면 동안만
   }
 }

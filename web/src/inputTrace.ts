@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 import { apiFetch } from "./apiRequest";
 // 실기 입력 사건 기록. iPad 화면 키보드 같은 OS 입력기의 사건 순서는 headless 브라우저로 만들 수 없다.
 // herdr-web-ui scripts/terminal-ime-diagnostic.ts처럼 실기에서 실제 사건을 모으고, 그 순서를 웹 E2E 재생으로 옮긴다.
@@ -19,7 +20,7 @@ const t0 = performance.now();
 function stored(): boolean {
   try {
     return localStorage.getItem(KEY) === "1";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "inputTrace.ts:23");
     return false;
   }
 }
@@ -40,7 +41,7 @@ export function setTrace(next: boolean) {
   try {
     if (next) localStorage.setItem(KEY, "1");
     else localStorage.removeItem(KEY);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "inputTrace.ts:44");
     // 저장이 막혀도 이 화면 동안은 켠 대로 둔다
   }
   if (!next) events.length = 0;

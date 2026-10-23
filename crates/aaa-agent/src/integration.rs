@@ -276,8 +276,12 @@ fn replace(path: &Path, before: &Option<String>, after: &str) -> Result<Option<P
         fs::rename(&tmp, path)?;
         Ok(())
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
+    if result
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+    {
+        aaa_common::diagnostic::ignored(fs::remove_file(&tmp), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     }
     result?;
     Ok(backup)

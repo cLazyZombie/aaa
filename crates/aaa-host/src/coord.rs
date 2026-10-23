@@ -168,8 +168,13 @@ impl Host {
 
     /// task 없이 시작할 때 TASKS.md의 비슷한 열린 task를 알린다. 파일이 없으면 평소처럼 시작한다.
     pub(crate) fn task_start_warning(&self, project: &str, title: &str) -> Option<String> {
-        let dir = self.project_dir(project).ok()?;
-        let text = std::fs::read_to_string(dir.join("TASKS.md")).ok()?;
+        let dir = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
+        let text = std::fs::read_to_string(dir.join("TASKS.md"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         tasks::start_warning(&tasks::parse(&text), title)
     }
 
@@ -196,7 +201,10 @@ impl Host {
         }
         let mut warning = None;
         if let Some(tid) = &t.thread
-            && self.thread_show(&a.project, tid).is_ok_and(|r| r.status == ThreadStatus::Open)
+            && self
+                .thread_show(&a.project, tid)
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|r| r.status == ThreadStatus::Open)
         {
             warning = Some(format!("열린 {tid}가 이미 이 task를 맡고 있다. 그래도 시작했다"));
         }
@@ -252,7 +260,12 @@ impl Host {
         let _queue_guard = self.queue_gate.lock().await;
         let board = self.task_board(&a.project)?;
         let mut title = a.title.trim().to_string();
-        if tasks::check_title(&title).is_err() || title.ends_with(']') {
+        if tasks::check_title(&title)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+            || title.ends_with(']')
+        {
             title.push_str(" · 새 작업");
         }
         let original = title.clone();
@@ -263,7 +276,12 @@ impl Host {
         }
         let repo = match a.repo.as_deref() {
             None => Some(tasks::REPO_DIR.to_string()),
-            Some(r) => self.task_repo_ok(&a.project, r).ok(),
+            Some(r) => self
+                .task_repo_ok(&a.project, r)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok(),
         };
         let mut notes: Vec<String> = a.task.lines().map(|l| format!("> {l}")).collect();
         if repo.is_none()
@@ -310,6 +328,7 @@ impl Host {
     pub(crate) async fn link_started(&self, project: &str, t: &TaskView, thread: &str, actor: &str) -> Option<String> {
         if self
             .task_board(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
             .is_ok_and(|b| b.tasks.iter().any(|now| now.id == t.id && now.thread.as_deref() == Some(thread)))
         {
             return None;
@@ -669,7 +688,16 @@ impl Host {
                             } else {
                                 task.thread
                                     .as_ref()
-                                    .and_then(|tid| self.load(project, tid).ok())
+                                    .and_then(|tid| {
+                                        self.load(project, tid)
+                                            .inspect_err(|error| {
+                                                aaa_common::diagnostic::observe(
+                                                    error,
+                                                    "선택 자료를 읽지 못해 기존 fallback을 쓴다",
+                                                )
+                                            })
+                                            .ok()
+                                    })
                                     .map(|rec| {
                                         if rec.task_clean.why.as_deref() == Some("merged") {
                                             "PR 병합"
@@ -796,7 +824,10 @@ impl Host {
             });
             (seen.len, seen.mtime, seen.sha256, seen.text) = (u64::MAX, None, after.sha256.clone(), after.text.clone());
             drop(guard);
-            let _ = self.task_events.send((project.to_string(), after.sha256.clone()));
+            aaa_common::diagnostic::ignored(
+                self.task_events.send((project.to_string(), after.sha256.clone())),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
             self.tick_wake.notify_one();
             self.db.audit(
                 actor,
@@ -963,7 +994,10 @@ impl Host {
             }
         }
         if changed {
-            let _ = self.task_events.send((project.to_string(), sha256));
+            aaa_common::diagnostic::ignored(
+                self.task_events.send((project.to_string(), sha256)),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
@@ -1049,8 +1083,18 @@ fn notes_stamps(dir: &Path, files: &[String]) -> Vec<(String, u64, Option<std::t
 
 fn file_stamp(path: &Path) -> (u64, Option<std::time::SystemTime>) {
     match std::fs::metadata(path) {
-        Ok(m) => (m.len(), m.modified().ok()),
-        Err(_) => (0, None),
+        Ok(m) => (
+            m.len(),
+            m.modified()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok(),
+        ),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            (0, None)
+        }
     }
 }
 
@@ -1058,7 +1102,9 @@ fn file_stamp(path: &Path) -> (u64, Option<std::time::SystemTime>) {
 fn tasks_file(dir: &Path) -> (String, TasksSeen) {
     let path = dir.join("TASKS.md");
     let (len, mtime) = file_stamp(&path);
-    let bytes = std::fs::read(&path).unwrap_or_default();
+    let bytes = std::fs::read(&path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default();
     let sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
     let text = String::from_utf8_lossy(&bytes).into_owned();
     (text.clone(), TasksSeen { len, mtime, sha256, text, notes: Vec::new() })

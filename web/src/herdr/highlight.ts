@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 import { createHighlighter, type HighlightTokenClass } from "@tanstack/highlight/core";
 import { apache } from "@tanstack/highlight/languages/apache";
 import { cmake } from "@tanstack/highlight/languages/cmake";
@@ -250,7 +251,7 @@ export function highlightNow(source: string, language: string): Lines {
   let lines: Lines;
   try {
     lines = linesFromRuns(source, highlightRuns(source, language));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "highlight.ts:254");
     lines = plainLines(source);
   }
   lastHighlight = { source, language, lines };

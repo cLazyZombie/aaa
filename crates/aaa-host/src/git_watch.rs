@@ -53,9 +53,14 @@ impl Host {
             // agent가 원문 첫 줄에서 뽑은 번호를 쓴다. 표시용 subject는 80자로 잘려 끝 번호가 없을 수 있다.
             let owners = &commit.owners;
             if owners.is_empty()
-                || owners
-                    .iter()
-                    .any(|id| !self.load(p, id).is_ok_and(|t| t.automation.as_deref() == Some(rule.name.as_str())))
+                || owners.iter().any(|id| {
+                    !self
+                        .load(p, id)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok_and(|t| t.automation.as_deref() == Some(rule.name.as_str()))
+                })
             {
                 return false;
             }
@@ -69,9 +74,12 @@ impl Host {
         Duration::from_secs(self.cfg.projects.git_poll_secs.max(min))
     }
     fn git_enabled(&self, project: &str) -> bool {
-        self.project_dir(project).ok().is_some_and(|dir| {
-            crate::routine::load_all(&dir).0.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Git(_)))
-        })
+        self.project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .is_some_and(|dir| {
+                crate::routine::load_all(&dir).0.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Git(_)))
+            })
     }
     pub(crate) fn git_next_due(&self) -> Option<Instant> {
         self.watch_next_due("git", self.git_every(), |p| self.git_enabled(p))
@@ -88,7 +96,12 @@ impl Host {
         tokio::spawn(async move {
             let inner = h.clone();
             let project = p.clone();
-            if tokio::spawn(async move { inner.git_pass(&project).await }).await.is_err() {
+            if tokio::spawn(async move { inner.git_pass(&project).await })
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 tracing::error!(project=%p, "Git 조회 task panic. 다음 주기에 다시 본다");
             }
             h.watch_finished("git", &p);
@@ -101,7 +114,14 @@ impl Host {
             .filter(|repo| {
                 repo.path == c.repo || Path::new(&repo.path).file_name().is_some_and(|s| s == c.repo.as_str())
             })
-            .filter_map(|repo| self.resolve_machine(repo.machine.as_deref()).ok().map(|mid| (mid, repo.path)))
+            .filter_map(|repo| {
+                self.resolve_machine(repo.machine.as_deref())
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .map(|mid| (mid, repo.path))
+            })
             .collect();
         if let Some(machine) = &r.machine {
             let mid = self.resolve_machine(Some(machine))?;
@@ -133,7 +153,12 @@ impl Host {
         }
     }
     async fn git_pass(self: &Arc<Self>, p: &str) {
-        let Ok(dir) = self.project_dir(p) else { return };
+        let Ok(dir) = self
+            .project_dir(p)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let mut groups: BTreeMap<(String, String), Vec<Routine>> = BTreeMap::new();
         for r in crate::routine::load_all(&dir).0.into_iter().filter(|r| r.enabled) {
             let Trigger::Git(c) = &r.trigger else { continue };

@@ -65,6 +65,9 @@ impl Host {
             Some(id) => self
                 .db
                 .devices()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
                 .and_then(|ds| ds.into_iter().find(|d| d.id == id))
                 .map(|d| d.label)
@@ -126,11 +129,14 @@ impl Host {
         }
         if let Err(e) = self.thread_message(project, id, message, MessageMode::Queue, actor).await {
             // 보내지 못했다: 다시 답할 수 있게 자리를 푼다(그사이 새 보고면 이미 비었다)
-            let _ = self.update_rec(project, id, |r| {
-                if r.question_answer.as_ref().is_some_and(|a| a.at_ms == answer.at_ms && a.by == answer.by) {
-                    r.question_answer = None;
-                }
-            });
+            aaa_common::diagnostic::ignored(
+                self.update_rec(project, id, |r| {
+                    if r.question_answer.as_ref().is_some_and(|a| a.at_ms == answer.at_ms && a.by == answer.by) {
+                        r.question_answer = None;
+                    }
+                }),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
             return Err(e);
         }
         self.db.audit(actor, "thread_answer", &format!("{project}/{id} {summary}"));

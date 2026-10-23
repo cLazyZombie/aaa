@@ -7,9 +7,12 @@ const PIN: &str = "host.json";
 pub(super) fn snapshot(agent: &Path) -> Result<Snapshot> {
     for directory in [agent.to_path_buf(), agent.join("tls")] {
         match directory.symlink_metadata() {
-            Ok(_) => private::verify_directory(&directory).map_err(|_| Fault::conflict())?,
+            Ok(_) => private::verify_directory(&directory)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(Fault::conflict()),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, Fault::conflict()));
+            }
         }
     }
     IDENTITY
@@ -18,26 +21,40 @@ pub(super) fn snapshot(agent: &Path) -> Result<Snapshot> {
         .map(|name| {
             let path = agent.join(name);
             let digest = match path.symlink_metadata() {
-                Ok(_) => Some(hash(&private::read(&path, 1024 * 1024).map_err(|_| Fault::conflict())?)),
+                Ok(_) => Some(hash(
+                    &private::read(&path, 1024 * 1024)
+                        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+                )),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(_) => return Err(Fault::conflict()),
+                Err(source_error) => {
+                    return Err(aaa_common::diagnostic::context(source_error, Fault::conflict()));
+                }
             };
             Ok((name.into(), digest))
         })
         .collect()
 }
 pub(super) fn digest(snapshot: &Snapshot) -> Result<String> {
-    Ok(hash(&aaa_common::install_crypto::canonical(snapshot).map_err(|_| Fault::conflict())?))
+    Ok(hash(
+        &aaa_common::install_crypto::canonical(snapshot)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    ))
 }
 fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     private::parents(path.parent().ok_or_else(Fault::conflict)?).map_err(Fault::io)?;
-    let mut file = private::new_file(path).map_err(|_| Fault::conflict())?;
+    let mut file = private::new_file(path)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     file.write_all(bytes).and_then(|_| file.sync_all()).map_err(Fault::io)?;
     drop(file);
     private::sync_parent(path).map_err(Fault::io)
 }
 fn save(path: &Path, record: &Prepared) -> Result<()> {
-    private::write(path, &serde_json::to_vec(record).map_err(|_| Fault::conflict())?).map_err(Fault::io)
+    private::write(
+        path,
+        &serde_json::to_vec(record)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    )
+    .map_err(Fault::io)
 }
 /// 생성된 새 identity도 실제 위치 쓰기 전에 private staging과 원하는 해시를 내구 기록한다.
 pub(super) fn prepare(
@@ -59,7 +76,7 @@ pub(super) fn prepare(
             serde_json::from_slice::<aaa_agent::identity::HostPin>(
                 &private::read(&agent.join(PIN), 65536).map_err(Fault::io)?,
             )
-            .map_err(|_| Fault::conflict())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         }
         private::directory(&stage).map_err(Fault::io)?;
         for name in IDENTITY {
@@ -70,16 +87,23 @@ pub(super) fn prepare(
                 }
                 let target = stage.join(name);
                 match target.symlink_metadata() {
-                    Ok(_) if private::read(&target, 1024 * 1024).is_ok_and(|old| old == bytes) => {}
+                    Ok(_)
+                        if private::read(&target, 1024 * 1024)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_ok_and(|old| old == bytes) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => write_new(&target, &bytes)?,
                     _ => return Err(Fault::conflict()),
                 }
             }
         }
-        aaa_agent::identity::load_or_create_private(&stage)
-            .map_err(|_| required("installation_agent_identity_untrusted"))?;
-        aaa_common::tls::load_or_create_private(&stage, "aaa-agent")
-            .map_err(|_| required("installation_agent_identity_untrusted"))?;
+        aaa_agent::identity::load_or_create_private(&stage).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, required("installation_agent_identity_untrusted"))
+        })?;
+        aaa_common::tls::load_or_create_private(&stage, "aaa-agent").map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, required("installation_agent_identity_untrusted"))
+        })?;
         let mut desired = snapshot(&stage)?;
         desired.insert(PIN.into(), record.before[PIN].clone());
         record.prepared = Some(desired);
@@ -108,8 +132,10 @@ pub(super) fn prepare(
     if IDENTITY.iter().any(|name| final_snapshot[*name] != desired[*name]) {
         return Err(Fault::conflict());
     }
-    let id = aaa_agent::identity::load_or_create_private(&agent).map_err(|_| Fault::conflict())?;
-    let tls = aaa_common::tls::load_or_create_private(&agent, "aaa-agent").map_err(|_| Fault::conflict())?;
+    let id = aaa_agent::identity::load_or_create_private(&agent)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
+    let tls = aaa_common::tls::load_or_create_private(&agent, "aaa-agent")
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if Some(tls.fingerprint.clone()) != desired["tls/cert.der"] {
         return Err(Fault::conflict());
     }
@@ -137,12 +163,13 @@ pub(super) fn commit(plan: &InstallPlan, lease: &Lease, pin: &aaa_agent::identit
     if current[PIN].is_some() {
         let old: aaa_agent::identity::HostPin =
             serde_json::from_slice(&private::read(&pin_path, 65536).map_err(Fault::io)?)
-                .map_err(|_| Fault::conflict())?;
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if old.address == pin.address && old.fingerprint == pin.fingerprint {
             return record_enrolled(plan, lease, &pin.fingerprint);
         }
     }
-    let bytes = serde_json::to_vec(pin).map_err(|_| Fault::conflict())?;
+    let bytes = serde_json::to_vec(pin)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     record.pin_intent = Some(hash(&bytes));
     save(&path, &record)?;
     if snapshot(&agent)? != current {

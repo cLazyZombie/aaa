@@ -112,13 +112,17 @@ impl Transaction {
             if self.manifest.root.as_ref().is_some_and(|root| root.path.exists()) {
                 self.journal.rollback_remaining.push("work_root_preserved".into());
             }
-            if self
-                .journal
-                .entries
-                .iter()
-                .enumerate()
-                .any(|(i, entry)| entry.inode.is_none() && self.stage_path(i).symlink_metadata().is_ok())
-            {
+            if self.journal.entries.iter().enumerate().any(|(i, entry)| {
+                entry.inode.is_none()
+                    && self
+                        .stage_path(i)
+                        .symlink_metadata()
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+            }) {
                 self.journal.rollback_remaining.push("staging_unverified".into());
             }
         }
@@ -139,7 +143,8 @@ impl Transaction {
         if Some(hash(&bytes)) != self.journal.reverse_sha256 {
             return Err(Fault::conflict());
         }
-        let reverse: Reverse = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+        let reverse: Reverse = serde_json::from_slice(&bytes)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if reverse.schema != 1
             || reverse.actions.len() != self.journal.reverse.len()
             || reverse
@@ -159,7 +164,15 @@ impl Transaction {
     fn reverse_stage(&mut self, slot: usize, action: &Action) -> Result<()> {
         let f = &self.manifest.files[action.index];
         if snapshot(&f.path)? != (action.before.clone(), action.before_mode)
-            || action.before_inode.as_ref().is_some_and(|ino| identity(&f.path).ok().as_ref() != Some(ino))
+            || action.before_inode.as_ref().is_some_and(|ino| {
+                identity(&f.path)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_ref()
+                    != Some(ino)
+            })
         {
             return Err(Fault::conflict());
         }
@@ -199,10 +212,22 @@ impl Transaction {
             let current = snapshot(&f.path)?;
             let already = current == (action.after.clone(), action.after_mode)
                 && (action.after.is_none()
-                    || self.journal.reverse[slot].inode.as_ref() == identity(&f.path).ok().as_ref());
+                    || self.journal.reverse[slot].inode.as_ref()
+                        == identity(&f.path)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                            .as_ref());
             if !already {
                 if current != (action.before.clone(), action.before_mode)
-                    || action.before_inode.as_ref() != identity(&f.path).ok().as_ref()
+                    || action.before_inode.as_ref()
+                        != identity(&f.path)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                            .as_ref()
                 {
                     return Err(Fault::conflict());
                 }

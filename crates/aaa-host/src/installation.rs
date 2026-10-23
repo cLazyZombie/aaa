@@ -44,28 +44,41 @@ struct Issuer {
 }
 impl Issuer {
     fn initialize(state: &Path) -> Result<Self, ErrorBody> {
-        private_file::directory(&state.join("install")).map_err(|_| unavailable())?;
+        private_file::directory(&state.join("install"))
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         let root = root(state);
-        private_file::directory(&root).map_err(|_| unavailable())?;
-        let lock = private_file::lock(&root.join("issuer.lock")).map_err(|_| unavailable())?;
+        private_file::directory(&root)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+        let lock = private_file::lock(&root.join("issuer.lock"))
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         let key = root.join("issuer.pk8");
         let pin = root.join("issuer.pin");
         match (key.symlink_metadata(), pin.symlink_metadata()) {
             (Err(a), Err(b))
                 if a.kind() == std::io::ErrorKind::NotFound && b.kind() == std::io::ErrorKind::NotFound =>
             {
-                let document = install_crypto::Signer::generate().map_err(|_| unavailable())?;
-                let signer = install_crypto::Signer::open(&document).map_err(|_| unavailable())?;
-                private_file::write(&key, &document).map_err(|_| unavailable())?;
-                private_file::write(&pin, signer.public_key()).map_err(|_| unavailable())?;
+                let document = install_crypto::Signer::generate()
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+                let signer = install_crypto::Signer::open(&document)
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+                private_file::write(&key, &document)
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+                private_file::write(&pin, signer.public_key())
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
             }
             (Ok(_), Ok(_)) => {}
             _ => return Err(unavailable()),
         }
-        private_file::verify_directory(&root).map_err(|_| unavailable())?;
-        let document = private_file::read(&key, 4096).map_err(|_| unavailable())?;
-        let signer = install_crypto::Signer::open(&document).map_err(|_| unavailable())?;
-        if private_file::read(&pin, 32).map_err(|_| unavailable())? != signer.public_key() {
+        private_file::verify_directory(&root)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+        let document = private_file::read(&key, 4096)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+        let signer = install_crypto::Signer::open(&document)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+        if private_file::read(&pin, 32)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?
+            != signer.public_key()
+        {
             return Err(unavailable());
         }
         Ok(Self { root, signer, _lock: lock })
@@ -86,14 +99,20 @@ pub fn export(state: &Path, id: &str) -> Result<InstallBootstrapPackage, ErrorBo
         return Err(invalid());
     }
     let root = root(state);
-    private_file::verify_directory(&root).map_err(|_| unavailable())?;
+    private_file::verify_directory(&root)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
     let package: InstallBootstrapPackage = serde_json::from_slice(
-        &private_file::read(&root.join(format!("{id}.json")), 2 * 1024 * 1024).map_err(|_| unavailable())?,
+        &private_file::read(&root.join(format!("{id}.json")), 2 * 1024 * 1024)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?,
     )
-    .map_err(|_| unavailable())?;
-    let public = private_file::read(&root.join("issuer.pin"), 32).map_err(|_| unavailable())?;
+    .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+    let public = private_file::read(&root.join("issuer.pin"), 32)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
     if package.authorization.claims.installation_id != id
-        || URL_SAFE_NO_PAD.decode(&package.issuer_public_key).map_err(|_| unavailable())? != public
+        || URL_SAFE_NO_PAD
+            .decode(&package.issuer_public_key)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?
+            != public
         || !install_crypto::verify_authorization(
             &public,
             &package.authorization.claims,
@@ -116,9 +135,10 @@ impl Host {
             return Err(denied());
         }
         let checked = aaa_config::install::plan(request.plan.choices.clone(), request.plan.context.clone())
-            .map_err(|_| invalid())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, invalid()))?;
         let plan_sha = aaa_config::install::plan_sha256(&checked);
-        let scope = install_crypto::canonical(&request.permissions).map_err(|_| invalid())?;
+        let scope = install_crypto::canonical(&request.permissions)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, invalid()))?;
         if !util::machine_name_ok(checked.choices.name.as_deref().unwrap_or_default())
             || checked != request.plan
             || plan_sha != request.expected_plan_sha256
@@ -154,7 +174,12 @@ impl Host {
             {
                 return Err(invalid());
             }
-        } else if path.symlink_metadata().is_ok() {
+        } else if path
+            .symlink_metadata()
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+        {
             return Err(invalid());
         }
         let now = util::now_ms();
@@ -185,19 +210,29 @@ impl Host {
                 nonce: util::new_id(),
                 signature: String::new(),
             };
-            grant.signature = issuer.signer.sign_enrollment(&grant).map_err(|_| unavailable())?;
+            grant.signature = issuer
+                .signer
+                .sign_enrollment(&grant)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
             Some(grant)
         } else {
             None
         };
-        let signature = issuer.signer.sign_authorization(&claims).map_err(|_| unavailable())?;
+        let signature = issuer
+            .signer
+            .sign_authorization(&claims)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         let package = InstallBootstrapPackage {
             issuer_public_key: URL_SAFE_NO_PAD.encode(issuer.signer.public_key()),
             plan: checked,
             authorization: InstallAuthorization { claims, signature, enrollment },
         };
-        private_file::write(&path, &serde_json::to_vec(&package).map_err(|_| unavailable())?)
-            .map_err(|_| unavailable())?;
+        private_file::write(
+            &path,
+            &serde_json::to_vec(&package)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?,
+        )
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         self.db.audit(actor, "install_approve", &id);
         Ok(FrontResponse::InstallApproval {
             approval: InstallApprovalView { installation_id: id, plan_sha256: plan_sha, expires_at_ms: expires },
@@ -215,11 +250,14 @@ impl Host {
         if !id_ok(&request.machine_id) || !digest_ok(peer) || !util::machine_name_ok(&request.machine_name) {
             return Err(invalid());
         }
-        aaa_proto::negotiate(aaa_proto::AGENT_LINK, request.proto).map_err(|_| invalid())?;
+        aaa_proto::negotiate(aaa_proto::AGENT_LINK, request.proto)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, invalid()))?;
         let grant = &request.grant;
         let package = export(&self.state, &grant.installation_id)?;
         let auth = &package.authorization;
-        let public = URL_SAFE_NO_PAD.decode(&package.issuer_public_key).map_err(|_| unavailable())?;
+        let public = URL_SAFE_NO_PAD
+            .decode(&package.issuer_public_key)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         if auth.enrollment.as_ref() != Some(grant)
             || !install_crypto::verify_enrollment(&public, grant)
             || grant.agent_identity != peer
@@ -251,7 +289,7 @@ impl Host {
                 &request.machine_id,
                 &request.machine_name,
             )
-            .map_err(|_| denied())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         self.machine_registered(&request.machine_id, &request.machine_name);
         self.bump();
         self.db.audit("install-grant", "install_enroll", &grant.installation_id);
@@ -261,7 +299,9 @@ impl Host {
         if !digest_ok(peer) || !id_ok(id) || !digest_ok(plan) {
             return Err(invalid());
         }
-        self.db.install_enrolled(id, plan, peer).map_err(|_| unavailable())
+        self.db
+            .install_enrolled(id, plan, peer)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))
     }
 }
 
@@ -278,7 +318,11 @@ pub(crate) async fn link_control<R: tokio::io::AsyncRead + Unpin>(
     loop {
         match first {
             LinkMsg::InstallEnrollProbe { proto } => {
-                if aaa_proto::negotiate(AGENT_LINK, proto).is_err() {
+                if aaa_proto::negotiate(AGENT_LINK, proto)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     tx.json(&LinkMsg::Reject(err(ErrorCode::UnsupportedVersion, "설치 등록 protocol이 맞지 않습니다")))
                         .await?;
                     return Ok(None);
@@ -306,7 +350,11 @@ pub(crate) async fn link_control<R: tokio::io::AsyncRead + Unpin>(
                 return Ok(None);
             }
             LinkMsg::InstallEnrollLookup { proto, installation_id, plan_sha256 } if negotiated => {
-                let reply = if aaa_proto::negotiate(AGENT_LINK, proto).is_err() {
+                let reply = if aaa_proto::negotiate(AGENT_LINK, proto)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     LinkMsg::Reject(invalid())
                 } else {
                     match host.install_lookup(peer, &installation_id, &plan_sha256) {
@@ -319,7 +367,11 @@ pub(crate) async fn link_control<R: tokio::io::AsyncRead + Unpin>(
                 return Ok(None);
             }
             LinkMsg::InstallAgentQuery { proto, machine_id, machine_name } if negotiated => {
-                let reply = if aaa_proto::negotiate(AGENT_LINK, proto).is_err() {
+                let reply = if aaa_proto::negotiate(AGENT_LINK, proto)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     LinkMsg::Reject(invalid())
                 } else {
                     match host.db.machine_by_fingerprint(peer)? {

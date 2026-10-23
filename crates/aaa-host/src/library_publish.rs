@@ -159,8 +159,9 @@ fn open_regular(path: &Path) -> Result<std::fs::File, ErrorBody> {
         .collect::<Vec<_>>();
     let mut file = std::fs::File::open("/").map_err(io_error)?;
     for (i, part) in parts.iter().enumerate() {
-        let name = std::ffi::CString::new(part.as_bytes())
-            .map_err(|_| err(ErrorCode::BadRequest, "파일 이름 형식이 아니다"))?;
+        let name = std::ffi::CString::new(part.as_bytes()).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, err(ErrorCode::BadRequest, "파일 이름 형식이 아니다"))
+        })?;
         let flags = libc::O_RDONLY
             | libc::O_CLOEXEC
             | libc::O_NOFOLLOW
@@ -358,7 +359,9 @@ impl Host {
             return Ok(Some(t.into()));
         }
         // 웹 올리기의 원본은 host 상태 폴더다: 사람이 고른 경로가 아니라 경로의 thread 번호를 근원으로 읽지 않는다
-        let uploaded = std::fs::canonicalize(self.state.join("library-uploads")).is_ok_and(|r| source.starts_with(r));
+        let uploaded = std::fs::canonicalize(self.state.join("library-uploads"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|r| source.starts_with(r));
         let parts = source.iter().rev().filter_map(|c| c.to_str()).filter(|_| !uploaded);
         for t in std::iter::once(name).chain(parts).flat_map(thread_numbers) {
             if known(&t)? {
@@ -371,7 +374,16 @@ impl Host {
     /// 목록·열람에 보일 근원 thread: publish 때 적은 것, 없으면 이름에 든 그 프로젝트의 thread(thread 사본 `t-NNNN`, 기록 전에 올린 것)
     pub(crate) fn report_thread(&self, project: &str, name: &str, row: Option<&LibraryReportRow>) -> Option<String> {
         row.and_then(|r| r.from_thread.clone()).or_else(|| {
-            thread_numbers(name).into_iter().find(|t| self.db.thread_get(project, t).ok().flatten().is_some())
+            thread_numbers(name).into_iter().find(|t| {
+                self.db
+                    .thread_get(project, t)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
         })
     }
 
@@ -483,7 +495,11 @@ impl Host {
             if existed {
                 std::fs::rename(&dest, &backup).map_err(io_error)?;
             }
-            let old_manifest = std::fs::read(&manifest).ok();
+            let old_manifest = std::fs::read(&manifest)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok();
             let now = aaa_common::util::now_ms();
             let commit = (|| {
                 std::fs::rename(&staging, &dest).map_err(io_error)?;
@@ -512,14 +528,26 @@ impl Host {
                 .map(|_| ())
             })();
             if let Err(e) = commit {
-                let _ = std::fs::remove_dir_all(&dest);
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_dir_all(&dest),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
                 if existed {
-                    let _ = std::fs::rename(&backup, &dest);
+                    aaa_common::diagnostic::ignored(
+                        std::fs::rename(&backup, &dest),
+                        "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                    );
                 }
                 if let Some(b) = old_manifest {
-                    let _ = crate::orch::write_atomic(&manifest, &b);
+                    aaa_common::diagnostic::ignored(
+                        crate::orch::write_atomic(&manifest, &b),
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                 } else {
-                    let _ = std::fs::remove_file(&manifest);
+                    aaa_common::diagnostic::ignored(
+                        std::fs::remove_file(&manifest),
+                        "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                    );
                 }
                 return Err(e);
             }
@@ -534,9 +562,16 @@ impl Host {
             Ok(())
         })();
         if staging.exists() {
-            let _ = std::fs::remove_dir_all(&staging);
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&staging),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
-        if result.is_ok() {
+        if result
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+        {
             // 복사·웹 업로드·실시간 등록·import도 보고 회수와 같은 작성 경고를 준다.
             // manifest 길이까지만 읽고, 기존 안전한 open으로 symlink·폴더 탈출을 거부한다.
             let warning_root = if live {
@@ -548,11 +583,21 @@ impl Host {
             let mut notes = Vec::new();
             for entry in files.iter().filter(|f| crate::report_sandbox::is_script(&f.path)) {
                 use std::io::Read;
-                let note = live_file(&warning_root, &entry.path).ok().and_then(|(file, _)| {
-                    let mut bytes = Vec::new();
-                    file.take(entry.size).read_to_end(&mut bytes).ok()?;
-                    crate::report_sandbox::warning(&entry.path, &bytes)
-                });
+                let note = live_file(&warning_root, &entry.path)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .and_then(|(file, _)| {
+                        let mut bytes = Vec::new();
+                        file.take(entry.size)
+                            .read_to_end(&mut bytes)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()?;
+                        crate::report_sandbox::warning(&entry.path, &bytes)
+                    });
                 if let Some(note) = note {
                     notes.push(note);
                 }
@@ -623,8 +668,17 @@ impl Host {
         let updated = row.as_ref().map(|r| r.updated).unwrap_or_else(|| {
             std::fs::metadata(manifest_path(&dir, name))
                 .and_then(|m| m.modified())
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .map(|t| t.as_millis() as u64)
                 .unwrap_or(0)
         });
@@ -670,7 +724,13 @@ mod scan_tests {
         std::os::unix::fs::symlink(state.join("outside"), root.join("sub")).unwrap();
         let result = scanned_file(&root, "sub/private.txt");
         std::fs::remove_dir_all(&state).unwrap();
-        assert!(result.is_err(), "순회에서 얻은 외부 이름과 크기를 목록에 싣지 않는다");
+        assert!(
+            result
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err(),
+            "순회에서 얻은 외부 이름과 크기를 목록에 싣지 않는다"
+        );
     }
 }
 
@@ -692,7 +752,18 @@ mod opened_file_tests {
         let denied = constrain_opened_file(&outside, &root);
         drop((inside, outside));
         std::fs::remove_dir_all(state).unwrap();
-        assert!(allowed.is_ok());
-        assert!(denied.is_err(), "밖에서 열린 일반 파일 handle을 등록 폴더의 파일로 내보내지 않는다");
+        assert!(
+            allowed
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        );
+        assert!(
+            denied
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err(),
+            "밖에서 열린 일반 파일 handle을 등록 폴더의 파일로 내보내지 않는다"
+        );
     }
 }

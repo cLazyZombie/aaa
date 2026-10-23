@@ -99,8 +99,17 @@ pub(crate) fn render(label: &str, args: &[String], env: &[(String, String)], log
 
 /// 설치하는 셸에서 가져갈 환경. 인스턴스면 그 이름도 넘겨 launchd가 띄운 aaa가 같은 폴더를 본다
 pub fn captured_env() -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> =
-        ["PATH", "LANG"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
+    let mut env: Vec<(String, String)> = ["PATH", "LANG"]
+        .iter()
+        .filter_map(|k| {
+            std::env::var(k)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .map(|v| (k.to_string(), v))
+        })
+        .collect();
     if let Some(name) = aaa_config::paths::instance() {
         env.push(("AAA_INSTANCE".into(), name));
     }
@@ -194,7 +203,10 @@ pub fn install(s: &Spec, replace: bool) -> Result<String> {
     human_only(&format!("{} LaunchAgent 설치", label(&s.role)))?;
     let target = format!("gui/{}", uid());
     if p.exists() {
-        let _ = launchctl(&["bootout", &format!("{target}/{}", label(&s.role))]);
+        aaa_common::diagnostic::ignored(
+            launchctl(&["bootout", &format!("{target}/{}", label(&s.role))]),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
     }
     std::fs::create_dir_all(p.parent().unwrap())?;
     std::fs::create_dir_all(log_path(&s.role).parent().unwrap())?;
@@ -204,7 +216,7 @@ pub fn install(s: &Spec, replace: bool) -> Result<String> {
     let (ok, text) = launchctl(&["bootstrap", &target, &p.to_string_lossy()])?;
     if !ok {
         // 반쯤 설치된 상태를 남기지 않는다
-        let _ = std::fs::remove_file(&p);
+        aaa_common::diagnostic::ignored(std::fs::remove_file(&p), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         bail!("launchctl bootstrap 실패(plist를 지웠다): {}", text.trim());
     }
     show(s)
@@ -264,7 +276,13 @@ fn restart_command(role: &str) -> Result<Vec<String>> {
             .lines()
             .map(str::trim)
             .find_map(|l| l.strip_prefix("pid = "))
-            .and_then(|s| s.parse().ok())
+            .and_then(|s| {
+                s.parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|p| *p > 0)
             .ok_or_else(|| anyhow::anyhow!("서비스 launcher PID가 없다"))?;
         if crate::restart::supported(role, pid)? {

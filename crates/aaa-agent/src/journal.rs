@@ -4,7 +4,9 @@ use std::path::Path;
 
 pub(crate) fn write<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     let clean = aaa_common::redact::to_value(value)?;
-    let bytes = serde_json::to_vec(&clean).map_err(|_| anyhow::anyhow!("가림 journal 직렬화 거부"))?;
+    let bytes = serde_json::to_vec(&clean).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, anyhow::anyhow!("가림 journal 직렬화 거부"))
+    })?;
     let dir = path.parent().context("journal 부모가 없다")?;
     std::fs::create_dir_all(dir)?;
     if dir.symlink_metadata()?.file_type().is_symlink() {

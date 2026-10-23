@@ -74,6 +74,9 @@ impl crate::Host {
         for r in &threads {
             let next = if full && self.machine_is_local(&r.machine_id) {
                 self.resolved_profile(Some(project), &r.machine_id, &r.profile)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
                     .ok()
                     .and_then(|p| limited_until(&p.harness, &p.model, &report, now))
             } else {
@@ -90,7 +93,10 @@ impl crate::Host {
             };
             if prev != next {
                 tracing::debug!(project, thread = %r.id, ?next, "사용량 한도 표지");
-                let _ = self.thread_events.send(self.thread_view(r));
+                aaa_common::diagnostic::ignored(
+                    self.thread_events.send(self.thread_view(r)),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
             if reset_due(prev, next, now) && r.role != aaa_proto::Role::Evaluator {
                 self.inbox_once(

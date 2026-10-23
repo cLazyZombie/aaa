@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 import type { TermServerMsg } from "./gen/proto";
 import { decodeBase64, rawLength, WIRE_MAX } from "./terminalInflate.ts";
 
@@ -51,7 +52,7 @@ export class TerminalReceiver {
           worker.terminate(); this.worker = null;
         } else this.fail();
       };
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "terminalReceive.ts:55");
       this.settleReady?.(false); this.settleReady = null;
     }
   }
@@ -92,7 +93,7 @@ export class TerminalReceiver {
       this.pendingBytes += budget;
       this.queue.push({ wire, message, bytes: budget });
       void this.drain();
-    } catch { this.fail(); }
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "terminalReceive.ts:96"); this.fail(); }
   }
 
   private async drain(): Promise<void> {
@@ -125,7 +126,7 @@ export class TerminalReceiver {
         }
         if (!this.closed) this.pendingBytes -= item.bytes;
       }
-    } catch { if (!this.closed) this.fail(); }
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "terminalReceive.ts:129"); if (!this.closed) this.fail(); }
     finally { this.running = false; }
   }
 

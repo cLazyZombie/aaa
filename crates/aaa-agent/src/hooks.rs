@@ -223,7 +223,17 @@ pub fn claude_settings(exe: &Path) -> Value {
 /// 안내 JSON 한 줄)이 있으면 준다. 옛 agent는 `ok`만 답하고, 옛 `aaa hook`은 `ok` 뒤를 읽지 않는다.
 pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     // Codex 중첩 thread의 사건은 보내지 않는다: 이 pane의 thread만 알린다
-    if harness == "codex" && nested_codex(std::env::var("CODEX_THREAD_ID").ok().as_deref(), &payload) {
+    if harness == "codex"
+        && nested_codex(
+            std::env::var("CODEX_THREAD_ID")
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .as_deref(),
+            &payload,
+        )
+    {
         return Ok(None);
     }
     let sock = std::env::var(ENV_SOCK).context("AAA_HOOK_SOCK이 없다(aaa 세션 밖)")?;

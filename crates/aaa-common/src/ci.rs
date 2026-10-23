@@ -114,7 +114,11 @@ pub fn response(out: &str, success: bool, q: &CiQuery) -> Result<CiAnswer> {
         .next()
         .and_then(|s| s.strip_prefix("HTTP/"))
         .and_then(|s| s.split_whitespace().nth(1))
-        .and_then(|s| s.parse::<u16>().ok())
+        .and_then(|s| {
+            s.parse::<u16>()
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
         .context("HTTP 상태 줄이 없다")?;
     let header = |name: &str| {
         headers

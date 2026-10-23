@@ -142,7 +142,13 @@ fn compact_window(v: &Value) -> Option<u64> {
                 'm' => (&s[..s.len() - 1], 1_000_000.0),
                 _ => (s.as_str(), 1.0),
             };
-            let x: f64 = digits.trim().parse().ok()?;
+            let x: f64 = digits
+                .trim()
+                .parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?;
             let x = if unit == 1.0 && x < 1_000.0 { x * 1_000.0 } else { x * unit };
             x.round() as u64
         }
@@ -195,10 +201,22 @@ pub fn stamp_ms(t: &str) -> Option<i64> {
     {
         return None;
     }
-    let num = |r: std::ops::Range<usize>| t.get(r)?.parse::<i64>().ok();
+    let num = |r: std::ops::Range<usize>| {
+        t.get(r)?
+            .parse::<i64>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+    };
     let (y, mo, d, h, mi, s) = (num(0..4)?, num(5..7)?, num(8..10)?, num(11..13)?, num(14..16)?, num(17..19)?);
     let frac = t[19..t.len() - 1].strip_prefix('.').unwrap_or("");
-    let ms = if frac.is_empty() { 0 } else { format!("{:0<3}", &frac[..frac.len().min(3)]).parse::<i64>().ok()? };
+    let ms = if frac.is_empty() {
+        0
+    } else {
+        format!("{:0<3}", &frac[..frac.len().min(3)])
+            .parse::<i64>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+    };
     // 그레고리력 날짜 → 1970-01-01부터 날 수(Howard Hinnant days_from_civil)
     let y = if mo <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
@@ -299,7 +317,10 @@ impl Reader {
 
     /// 늘어난 만큼 읽는다(`budget`을 줄인다). 처음 읽기가 끝에 닿기 전이면 None. `since_ms`: 지금 harness 프로세스가 시작한 때
     pub fn poll(&mut self, budget: &mut u64, since_ms: i64) -> Option<Snapshot> {
-        let meta = std::fs::metadata(&self.path).ok().filter(|m| m.is_file())?;
+        let meta = std::fs::metadata(&self.path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|m| m.is_file())?;
         let id = identity(&meta);
         // 다른 파일이 되었거나 줄었다: 처음부터
         if self.file != Some(id) || meta.len() < self.offset {
@@ -309,7 +330,11 @@ impl Reader {
             self.file = Some(id);
         }
         while self.offset < meta.len() && *budget > 0 {
-            let Ok(consumed) = self.read_some(meta.len(), (*budget).min(READ_BUDGET)) else { return None };
+            let Ok(consumed) = self.read_some(meta.len(), (*budget).min(READ_BUDGET)).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                return None;
+            };
             *budget = budget.saturating_sub(consumed);
             if consumed == 0 {
                 break;
@@ -407,7 +432,11 @@ impl Reader {
         if !planning && !background && !(answering && (!self.calls.is_empty() || !self.running.is_empty())) {
             return;
         }
-        let Ok(e) = serde_json::from_str::<Value>(line) else { return };
+        let Ok(e) = serde_json::from_str::<Value>(line)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let at = e.get("timestamp").and_then(Value::as_str).and_then(stamp_ms);
         let result = e.get("toolUseResult");
         if line.contains("<task-notification>") {
@@ -492,7 +521,11 @@ impl Reader {
 
     /// 컨텍스트: 본 대화 응답의 usage, 정리 끝의 전후 크기
     fn claude_context(&mut self, line: &str) {
-        let Ok(e) = serde_json::from_str::<Value>(line) else { return };
+        let Ok(e) = serde_json::from_str::<Value>(line)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         match e.get("type").and_then(Value::as_str) {
             Some("assistant") => {
                 // 하위 agent의 응답은 그 agent의 컨텍스트다. 합성 줄(`<synthetic>`, 오류·중단)은 usage가 0이다
@@ -512,8 +545,20 @@ impl Reader {
                     Some(w) => *w,
                     None => {
                         let settings = std::fs::read(&self.claude_settings)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
                             .ok()
-                            .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+                            .and_then(|b| {
+                                serde_json::from_slice::<Value>(&b)
+                                    .inspect_err(|error| {
+                                        aaa_common::diagnostic::observe(
+                                            error,
+                                            "선택 자료를 읽지 못해 기존 fallback을 쓴다",
+                                        )
+                                    })
+                                    .ok()
+                            });
                         let w = claude_window(model, settings.as_ref());
                         self.windows.insert(model.unwrap_or("").to_string(), w);
                         w
@@ -533,7 +578,11 @@ impl Reader {
     }
 
     fn codex_context(&mut self, line: &str) {
-        let Ok(e) = serde_json::from_str::<Value>(line) else { return };
+        let Ok(e) = serde_json::from_str::<Value>(line)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         // 사용량이 없는 줄(`info: null`, 한도만 알림)은 앞 값을 둔다
         let Some(info) = e.pointer("/payload/info").filter(|i| i.is_object()) else { return };
         let Some(used) = info.pointer("/last_token_usage/total_tokens").and_then(Value::as_u64) else { return };
@@ -627,15 +676,24 @@ impl Reader {
         if !line.contains("update_plan") {
             return;
         }
-        let Ok(e) = serde_json::from_str::<Value>(line) else { return };
+        let Ok(e) = serde_json::from_str::<Value>(line)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let Some(p) = e.get("payload") else { return };
         if p.get("type").and_then(Value::as_str) != Some("function_call")
             || p.get("name").and_then(Value::as_str) != Some("update_plan")
         {
             return;
         }
-        let Some(args) = p.get("arguments").and_then(Value::as_str).and_then(|a| serde_json::from_str::<Value>(a).ok())
-        else {
+        let Some(args) = p.get("arguments").and_then(Value::as_str).and_then(|a| {
+            serde_json::from_str::<Value>(a)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        }) else {
             return;
         };
         let Some(items) = args.get("plan").and_then(Value::as_array) else { return };
@@ -649,9 +707,13 @@ impl Reader {
     }
 
     fn observe_model(&mut self, e: &Value, model: Option<&str>, effort: Option<&str>) {
-        let Some(at_ms) =
-            e.get("timestamp").and_then(Value::as_str).and_then(stamp_ms).and_then(|n| u64::try_from(n).ok())
-        else {
+        let Some(at_ms) = e.get("timestamp").and_then(Value::as_str).and_then(stamp_ms).and_then(|n| {
+            u64::try_from(n)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        }) else {
             return;
         };
         self.model_observation =
@@ -687,12 +749,23 @@ fn locate(
     harness_session: Option<&str>,
 ) -> Option<(Source, PathBuf)> {
     match harness {
-        "claude" => Some((Source::Claude, crate::chat::inside(claude_root, std::path::Path::new(transcript?)).ok()?)),
+        "claude" => Some((
+            Source::Claude,
+            crate::chat::inside(claude_root, std::path::Path::new(transcript?))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?,
+        )),
         "codex" => {
             let id = harness_session?;
-            let path = transcript
-                .and_then(|p| crate::chat::codex_hint(codex_root, id, p))
-                .or_else(|| crate::chat::codex_file(codex_root, id).ok())?;
+            let path = transcript.and_then(|p| crate::chat::codex_hint(codex_root, id, p)).or_else(|| {
+                crate::chat::codex_file(codex_root, id)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })?;
             Some((Source::Codex, path))
         }
         _ => None,
@@ -707,7 +780,12 @@ impl crate::Agent {
             loop {
                 tokio::time::sleep(POLL_EVERY).await;
                 let m = me.clone();
-                let changed = tokio::task::spawn_blocking(move || m.poll_plans()).await.unwrap_or_default();
+                let changed = tokio::task::spawn_blocking(move || m.poll_plans())
+                    .await
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "계획 감시 task 실패 뒤 다음 사건 대기")
+                    })
+                    .unwrap_or_default();
                 for ev in changed {
                     me.harness_event(ev).await;
                 }

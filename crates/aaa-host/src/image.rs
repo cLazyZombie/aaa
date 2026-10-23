@@ -91,7 +91,10 @@ impl Host {
         }
         let parent = self.state.join("image-jobs");
         for p in [&parent, &parent.join(id)] {
-            if p.symlink_metadata().is_ok_and(|m| !m.is_dir()) {
+            if p.symlink_metadata()
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|m| !m.is_dir())
+            {
                 return Err(bad("이미지 작업 폴더를 확인한다"));
             }
         }
@@ -190,7 +193,13 @@ impl Host {
             let ids = self.db.meta_suffixes(PREFIX).map_err(io_error)?;
             if ids
                 .iter()
-                .filter_map(|id| self.image_load(id).ok())
+                .filter_map(|id| {
+                    self.image_load(id)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .filter(|j| j.view.state != ImageState::Forgotten)
                 .count()
                 >= 256
@@ -199,7 +208,13 @@ impl Host {
             }
             let own = ids
                 .iter()
-                .filter_map(|id| self.image_load(id).ok())
+                .filter_map(|id| {
+                    self.image_load(id)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .filter(|j| {
                     j.owner == owner
                         && j.project == project
@@ -308,7 +323,13 @@ impl Host {
                         .meta_suffixes(PREFIX)
                         .map_err(io_error)?
                         .iter()
-                        .filter_map(|id| self.image_load(id).ok())
+                        .filter_map(|id| {
+                            self.image_load(id)
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
+                                .ok()
+                        })
                         .filter(|j| matches!(j.view.state, ImageState::Queued | ImageState::Running))
                         .count();
                     if active >= 4 {
@@ -343,7 +364,10 @@ impl Host {
                 drop(guard);
                 if wait && matches!(job.view.state, ImageState::Queued | ImageState::Running) {
                     // 사건 또는 응답 상한으로 끝난다. 다시 보내도 생성은 하지 않는다.
-                    let _ = tokio::time::timeout(Duration::from_secs(1), changes.changed()).await;
+                    aaa_common::diagnostic::ignored_nested(
+                        tokio::time::timeout(Duration::from_secs(1), changes.changed()).await,
+                        "이미지 상태 사건 또는 상한 뒤 기존 기록 조회",
+                    );
                     job = self.image_load(&id)?;
                 }
                 return Ok(ImageResponse::Job(job.view));
@@ -389,7 +413,12 @@ impl Host {
 
     async fn image_run(self: Arc<Self>, id: &str) {
         let guard = self.thread_op_lock("image", id).lock_owned().await;
-        let Ok(mut job) = self.image_load(id) else { return };
+        let Ok(mut job) = self
+            .image_load(id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         if job.view.state != ImageState::Queued {
             return;
         }
@@ -398,14 +427,19 @@ impl Host {
         if let Err(e) = result {
             job.view.state = if e.code == ErrorCode::Unavailable { ImageState::Waiting } else { ImageState::Failed };
             job.view.reason = e.message;
-            let _ = self.image_save(&job);
+            aaa_common::diagnostic::ignored(self.image_save(&job), "보조 작업 실패 뒤 기존 처리를 계속한다");
             return;
         }
         // 송신 전 영속 표지. host가 중단되면 다음 host는 Unknown으로 남기며 다시 생성하지 않는다.
         job.launched = true;
         job.view.state = ImageState::Running;
         job.view.reason = "host Codex에서 이미지 생성 중".into();
-        if self.image_save(&job).is_err() {
+        if self
+            .image_save(&job)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             return;
         }
         let result = crate::image_rpc::generate(&self, &job).await;
@@ -418,7 +452,7 @@ impl Host {
             }
             Err(failure) => {
                 job.view.state = if failure.uncertain { ImageState::Unknown } else { ImageState::Failed };
-                job.view.reason = failure.reason.into();
+                job.view.reason = failure.reason;
                 job.launched = failure.sent;
                 if !failure.sent
                     && let Some(a) = &mut job.allocation
@@ -432,7 +466,7 @@ impl Host {
         {
             a.ended_at_ms = Some(util::now_ms());
         }
-        let _ = self.image_save(&job);
+        aaa_common::diagnostic::ignored(self.image_save(&job), "보조 작업 실패 뒤 기존 처리를 계속한다");
         self.db.audit("host", "image_generation", &format!("{} {} {:?}", job.project, id, job.view.state));
     }
 
@@ -477,8 +511,9 @@ impl Host {
                     input.select_with_percent(tx, util::now_ms(), RESERVE)?
                 } else {
                     let account = default.clone().ok_or_else(|| anyhow::anyhow!("Codex 기본 계정이 없다"))?;
-                    let generation =
-                        self.accounts.generation(&account).map_err(|_| anyhow::anyhow!("계정 인증을 읽지 못했다"))?;
+                    let generation = self.accounts.generation(&account).map_err(|source_error| {
+                        aaa_common::diagnostic::context(source_error, anyhow::anyhow!("계정 인증을 읽지 못했다"))
+                    })?;
                     let group = default_group.clone().unwrap_or_else(|| account.clone());
                     (
                         account,
@@ -497,8 +532,9 @@ impl Host {
                         },
                     )
                 };
-                let credential =
-                    self.accounts.credential(&account).map_err(|_| anyhow::anyhow!("계정 인증을 읽지 못했다"))?;
+                let credential = self.accounts.credential(&account).map_err(|source_error| {
+                    aaa_common::diagnostic::context(source_error, anyhow::anyhow!("계정 인증을 읽지 못했다"))
+                })?;
                 anyhow::ensure!(
                     credential.harness == "codex"
                         && credential.auth_generation.as_deref() == Some(&allocation.generation),
@@ -522,7 +558,8 @@ impl Host {
         for id in self.db.meta_suffixes(PREFIX)? {
             let mut job = match self.image_load(&id) {
                 Ok(job) => job,
-                Err(_) => {
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                     tracing::warn!("이미지 원장 한 건을 읽지 못했다. 해당 ID 재생성은 거부한다");
                     continue;
                 }
@@ -539,11 +576,16 @@ impl Host {
             }
             // 이전 helper를 추측해 종료하지 않는다. 이 원장 소유의 잔여 인증 파일만 회수한다.
             let home = self.image_dir(&id).map_err(|e| anyhow::anyhow!(e.message))?.join("rpc-home");
-            if home.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+            if home
+                .symlink_metadata()
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|m| m.is_dir())
+            {
                 match std::fs::remove_file(home.join("auth.json")) {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => {
+                    Err(source_error) => {
+                        aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                         tracing::warn!("이미지 helper의 잔여 인증 파일을 정리하지 못했다");
                     }
                 }
@@ -559,6 +601,9 @@ impl Host {
                 && let Some(ended) = a.ended_at_ms
                 && report.accounts.iter().find(|q| Some(&q.account) == j.view.account.as_ref()).is_some_and(|q| {
                     crate::account_pool::fresh_windows(q, Some(&j.model), util::now_ms())
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
                         .is_ok_and(|ws| ws.iter().all(|w| w.window.observed_at_ms > ended))
                 })
             {

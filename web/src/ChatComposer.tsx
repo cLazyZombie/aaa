@@ -1,3 +1,4 @@
+import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 // 대화 보기의 입력창(herdr-web-ui src/components/Composer.tsx의 글 칸·보내기·빠른 답과 PaneTerminal.tsx 2885~2950줄
 // `composer-queue`(이 기기에 붙잡은 메시지), 모양 herdr/Composer.css 그대로, 문구는 참고 i18n.ko.ts). 차이 목록 C2, plan §8.130.
 // 보내는 길은 터미널 입력줄과 같다(Term `sendTerminalLine`: 글 + Enter, 여러 줄은 bracketed paste). aaa는 host 대기열이 없어
@@ -502,7 +503,7 @@ export function ChatComposer({
       let sent: false | Promise<true | string>;
       try {
         sent = onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length, ctrl_enter: f.ctrlEnter ?? f.steer ?? false });
-      } catch {
+      } catch (ignoredError) { logIgnoredFailure(ignoredError, "ChatComposer.tsx:506");
         sent = false;
       }
       if (sent === false) {
@@ -519,7 +520,7 @@ export function ChatComposer({
         if (flightRef.current.phase === "stopping") { answered.current = { id: f.id, result: null }; return; }
         answer(f, null, again);
       });
-    })().catch(() => fail(f, { text: "수신 확인을 준비하지 못했습니다. 글은 보내지 않았습니다." }, "unknown"));
+    })().catch(ignoredFailure("ChatComposer.tsx:523", () => fail(f, { text: "수신 확인을 준비하지 못했습니다. 글은 보내지 않았습니다." }, "unknown")));
   };
   /** 전달 답: true는 글과 Enter가 pane에 들어갔다, 글은 거절 이유, null은 끊기거나 답이 없어 모른다 */
   const answer = (f: Flight, result: true | string | null, again?: () => void): void => {

@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 완료 목록은 host의 보관 원장을 검색한다. 필터는 페이지를 자르기 전에 적용한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -66,7 +67,7 @@ export function TaskArchiveView({ project, canEdit, rev, toolbar, repos, extende
     let live = true;
     void call({ op: "library_reports", project }).then((r) => {
       if (live && r.kind === "library_reports") setReports(r.reports);
-    }).catch(() => { /* 보관 원문과 thread 연결은 보고서 목록이 없어도 볼 수 있다. */ });
+    }).catch(ignoredFailure("TaskArchiveView.tsx:70", () => { /* 보관 원문과 thread 연결은 보고서 목록이 없어도 볼 수 있다. */ }));
     return () => { live = false; };
   }, [project, rev]);
   const restore = async (id: string) => {

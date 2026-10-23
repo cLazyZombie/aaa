@@ -1,3 +1,4 @@
+import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   AgentActivity,
@@ -176,7 +177,7 @@ export function splitQuestion(text: string): { tool: string | null; body: string
       if (typeof v[k] === "string") return { tool: m[1], body: v[k] as string };
     }
     return { tool: m[1], body: JSON.stringify(v, null, 2) };
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "App.tsx:180");
     return { tool: m[1], body: m[2] };
   }
 }
@@ -263,7 +264,7 @@ function storedSelection(): string | null {
     try {
       const value = window[storage].getItem(SELECTION_KEY);
       if (value !== null && /^(pane|thread):./.test(value)) return value;
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "App.tsx:267");
       /* 사생활 보호 창 */
     }
   }
@@ -274,7 +275,7 @@ function storeSelection(sel: string): void {
   for (const storage of ["sessionStorage", "localStorage"] as const) {
     try {
       window[storage].setItem(SELECTION_KEY, sel);
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "App.tsx:278");
       /* 사생활 보호 창 */
     }
   }
@@ -445,10 +446,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       if (!automationActive.current || r.kind !== "projects") return;
       const lists = await Promise.all(r.projects.map((p) => call({ op: "routines", project: p.name })));
       if (automationActive.current) setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
-    }).catch(() => {
+    }).catch(ignoredFailure("App.tsx:449", () => {
       // WebKit은 reload 때 pagehide 전에 요청을 취소할 수 있다. 실패한 읽기의 예약을 재실행하지 않는다.
       automationReload.current = false;
-    }).finally(() => {
+    })).finally(() => {
       automationLoading.current = false;
       if (automationReload.current) { automationReload.current = false; loadAutomations(); }
     });
@@ -510,7 +511,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (!late || since === null || project === null || subject === null) return told(raise(late));
     void pushedSince(since)
       .then((pushed) => pushed.some((p) => p.project === project && p.subject === subject))
-      .catch(() => false)
+      .catch(ignoredFailure("App.tsx:514", () => false))
       .then((got) => told(got ? "push로 받음 · 안 띄움" : raise(true)));
   };
   /** `replayFrom`: 다시 붙어 읽은 놓친 사건이면 끊긴 때 */
@@ -597,7 +598,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (role === "reader") show(null);
     else void call({ op: "thread_library", project: t.project, thread: t.id })
       .then((r) => show(r.kind === "library" && r.link && !r.link.revoked && r.link.expires_at_ms > Date.now() ? r.link.url : null))
-      .catch(() => show(null));
+      .catch(ignoredFailure("App.tsx:601", () => show(null)));
   };
 
   // 다른 agent의 턴 끝남(host `notice` 사건, plan §8.185): 「작업 완료」로 그 pane에. host는 보는 화면이 없던 턴만, 같은 턴의
@@ -674,7 +675,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           if (on)
             pushInfo()
               .then((i) => (alertKinds.current = new Set(i.kinds)))
-              .catch(() => {});
+              .catch(ignoredFailure("App.tsx:678", () => {}));
           if (on) {
             const read = questionReload.current.begin();
             call({ op: "questions", all: false })
@@ -690,7 +691,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 setQuestions(next);
                 setQuestionsSync((n) => n + 1);
               })
-              .catch(() => questionReload.current.failed(read));
+              .catch(ignoredFailure("App.tsx:694", () => questionReload.current.failed(read)));
           }
           if (on) { loadAutomations(); }
           if (on) {
@@ -713,7 +714,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 setThreads(next);
                 setThreadsSync((n) => n + 1);
               })
-              .catch(() => threadReload.current.failed(read));
+              .catch(ignoredFailure("App.tsx:717", () => threadReload.current.failed(read)));
           }
         },
         (t) => {
@@ -1200,7 +1201,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       .then((r) => {
         if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.flatMap((x) => [[x.name, x] as const, ...(x.versions ?? []).map((id) => [id, { ...x, name: id, report_id: id }] as const)])));
       })
-      .catch(() => {});
+      .catch(ignoredFailure("App.tsx:1204", () => {}));
     return () => {
       live = false;
     };
@@ -1918,10 +1919,10 @@ function SettingsScreen({ navigationTarget, role, device, machines, onSignedOut:
 }) {
   // 설정 → 기기 「로그아웃」(참고 App.tsx `lock`): 구독을 먼저 지운다(cookie가 있어야 지워지고, 잠긴 기기에 알림이 가지 않게). 답이 오다 끊겨도 host에 다시 묻는다
   const signOutHere = useCallback(async () => {
-    await removePushSubscription().catch(() => undefined);
+    await removePushSubscription().catch(ignoredFailure("App.tsx:1922", () => undefined));
     try {
       await signOut();
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "App.tsx:1925");
       throw new Error("로그아웃하지 못했습니다. 다시 시도해 주세요.");
     } finally {
       signedOut();

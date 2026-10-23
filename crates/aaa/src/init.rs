@@ -57,7 +57,10 @@ pub fn run(json: bool) -> Result<ExitCode> {
     std::fs::create_dir_all(&config)?;
     std::fs::write(&host_toml, host_toml_text(&name, port))?;
     if let Err(e) = aaa_config::load_host(&config) {
-        let _ = std::fs::remove_file(&host_toml);
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_file(&host_toml),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
         bail!("만든 host.toml을 읽지 못해 지웠다:\n{}", e.render());
     }
     std::fs::create_dir_all(&home)?;
@@ -135,18 +138,32 @@ fn used_ports() -> BTreeSet<u16> {
     let mut used = BTreeSet::new();
     let base = aaa_config::paths::default_config_dir_for(None);
     let Some(parent) = base.parent() else { return used };
-    let Ok(entries) = std::fs::read_dir(parent) else { return used };
+    let Ok(entries) = std::fs::read_dir(parent)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return used;
+    };
     for e in entries.flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
         if n != "aaa" && !n.starts_with("aaa-") {
             continue;
         }
-        let Ok(l) = aaa_config::load_host(&e.path()) else { continue };
+        let Ok(l) = aaa_config::load_host(&e.path())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         if l.files.is_empty() {
             continue;
         }
         for addr in [&l.config.host.agent_listen, &l.config.web.listen] {
-            if let Some(p) = addr.rsplit_once(':').and_then(|(_, p)| p.parse().ok()) {
+            if let Some(p) = addr.rsplit_once(':').and_then(|(_, p)| {
+                p.parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }) {
                 used.insert(p);
             }
         }
@@ -157,7 +174,10 @@ fn used_ports() -> BTreeSet<u16> {
 }
 
 fn bindable(addr: &str) -> bool {
-    std::net::TcpListener::bind(addr).is_ok()
+    std::net::TcpListener::bind(addr)
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
 }
 
 /// 다른 aaa가 적어 두지 않았고 지금 열 수 있는 첫 포트 쌍(Agent link p, 웹 p+1)

@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 모양 설정: 테마·팔레트·상태 표시·목록 줄·Agents 정렬·밀도·인터페이스·대화 글자 크기(herdr-web-ui lib/settings.ts `theme`·`palette`·`paletteLight`·
 // `paletteDark`·`statusIndicators`·`sidebarRows`·`agentOrder`·`density`·`uiFontSize`·`chatFontSize`, lib/paletteFor.ts, lib/typography.ts, applyToDocument).
 // 기본값도 참고와 같다: 어두움, amber, classic, 두 줄, 워크스페이스순, 여유, 밀도를 따르는 글자 크기.
@@ -89,7 +90,7 @@ function read(): Appearance {
     if (v !== null) return sanitizeAppearance(JSON.parse(v));
     const old = localStorage.getItem(OLD_KEY);
     if (old === "light" || old === "dark") return { ...DEFAULT, theme: old };
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "theme.ts:93");
     // 저장소를 못 쓰는 창(사생활 보호 등)은 기본값
   }
   return DEFAULT;
@@ -167,7 +168,7 @@ export function updateAppearance(patch: Partial<Appearance>) {
   try {
     localStorage.setItem(KEY, JSON.stringify(current));
     localStorage.removeItem(OLD_KEY);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "theme.ts:171");
     // 남기지 못해도 이번 창에서는 바뀐다
   }
   apply();

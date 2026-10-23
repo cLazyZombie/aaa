@@ -301,7 +301,15 @@ pub(crate) struct Receipt {
 }
 impl Receipt {
     pub(crate) fn read(path: &Path) -> Option<Receipt> {
-        serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+        serde_json::from_slice(
+            &std::fs::read(path)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?,
+        )
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
     }
 }
 
@@ -644,7 +652,10 @@ impl<'a> Setup<'a> {
         self.check_cancel()?;
 
         self.say(Tone::Step, format!("[5/{TOTAL}] 서비스 시작과 host 연결 확인"));
-        let _ = std::fs::remove_file(self.layout.status());
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_file(self.layout.status()),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
         let pid = self.sys.start_service(&def.name).context("서비스를 시작하지 못했습니다")?;
         self.say(Tone::Ok, format!("서비스 시작 (PID {pid})"));
         if !self.wait_connected(pid)? {
@@ -753,7 +764,11 @@ impl<'a> Setup<'a> {
             return Ok(());
         }
         let bytes = std::fs::read(&source).with_context(|| format!("{} 읽기", source.display()))?;
-        if std::fs::read(&exe).ok().is_some_and(|old| old == bytes) {
+        if std::fs::read(&exe)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .is_some_and(|old| old == bytes)
+        {
             self.say(Tone::Ok, format!("{} (이미 같은 파일)", exe.display()));
             return Ok(());
         }
@@ -783,7 +798,9 @@ impl<'a> Setup<'a> {
 
     fn write_config(&mut self, choices: &Choices) -> Result<()> {
         let path = self.layout.agent_toml();
-        let previous = std::fs::read(&path).ok();
+        let previous = std::fs::read(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         let text = agent_toml(previous.as_deref(), choices)?;
         if previous.as_deref() == Some(text.as_bytes()) {
             self.say(Tone::Ok, format!("{} (바꿀 것 없음)", path.display()));
@@ -864,7 +881,9 @@ impl<'a> Setup<'a> {
 
     fn write_receipt(&mut self, receipt: &Receipt) -> Result<()> {
         let path = self.layout.receipt();
-        let previous = std::fs::read(&path).ok();
+        let previous = std::fs::read(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         std::fs::create_dir_all(&self.layout.state)?;
         aaa_common::util::write_private(&path, &serde_json::to_vec_pretty(receipt)?)?;
         self.changes.push(Change::File { path, previous });
@@ -878,8 +897,18 @@ impl<'a> Setup<'a> {
         let mut checks = 0u32;
         loop {
             self.check_cancel()?;
-            if let Some(status) =
-                std::fs::read(self.layout.status()).ok().and_then(|b| serde_json::from_slice::<ServiceStatus>(&b).ok())
+            if let Some(status) = std::fs::read(self.layout.status())
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .and_then(|b| {
+                    serde_json::from_slice::<ServiceStatus>(&b)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 && status.pid == pid
                 && status.connected
             {
@@ -909,7 +938,9 @@ impl<'a> Setup<'a> {
 
     fn show_log_tail(&mut self) {
         let log = self.layout.log();
-        let Ok(text) = std::fs::read_to_string(&log) else {
+        let Ok(text) = std::fs::read_to_string(&log)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
             self.say(Tone::Hint, format!("서비스 로그가 아직 없습니다: {}", log.display()));
             return;
         };
@@ -968,10 +999,16 @@ impl<'a> Setup<'a> {
         match change {
             Change::Identity { created, shells, enrolled: false } => {
                 for path in &created {
-                    let _ = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+                    aaa_common::diagnostic::ignored(
+                        if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) },
+                        "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                    );
                 }
                 for shell in &shells {
-                    let _ = std::fs::remove_dir(shell);
+                    aaa_common::diagnostic::ignored(
+                        std::fs::remove_dir(shell),
+                        "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                    );
                 }
                 Ok(Some("새로 만든 장치 키(등록 전)".into()))
             }
@@ -1000,7 +1037,17 @@ impl<'a> Setup<'a> {
                     .map_err(|e| format!("파일 {}: {e}", path.display()))
             }
             Change::Dirs { created } => {
-                let removed = created.iter().filter(|dir| std::fs::remove_dir(dir).is_ok()).count();
+                let removed = created
+                    .iter()
+                    .filter(|dir| {
+                        std::fs::remove_dir(dir)
+                            .as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_ok()
+                    })
+                    .count();
                 Ok((removed > 0).then(|| format!("새로 만든 폴더 {}", created.last().unwrap_or(&created[0]).display())))
             }
             Change::Path { previous } => self
@@ -1016,7 +1063,7 @@ impl<'a> Setup<'a> {
                     .map_err(|e| format!("「서비스로 로그온」 권한: {e:#}"))
             }
             Change::Service { name } => {
-                let _ = self.sys.stop_service(&name);
+                aaa_common::diagnostic::ignored(self.sys.stop_service(&name), "보조 작업 실패 뒤 기존 처리를 계속한다");
                 self.sys
                     .delete_service(&name)
                     .map(|()| Some(format!("서비스 {name}")))
@@ -1045,7 +1092,16 @@ impl<'a> Setup<'a> {
             self.say(Tone::Hint, "host·이름을 바꾸려면 먼저 `setup --uninstall`로 서비스를 지운 뒤 다시 설치하세요.");
         }
         let same = same_file(&self.layout.source, &self.layout.exe)
-            || std::fs::read(&self.layout.source).ok() == std::fs::read(&self.layout.exe).ok();
+            || std::fs::read(&self.layout.source)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                == std::fs::read(&self.layout.exe)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok();
         let question = if same {
             if existing.running {
                 self.say(Tone::Ok, "같은 판이 이미 돌고 있습니다. 바꿀 것이 없습니다.");
@@ -1069,7 +1125,10 @@ impl<'a> Setup<'a> {
             if !same {
                 self.place_binary()?;
             }
-            let _ = std::fs::remove_file(self.layout.status());
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_file(self.layout.status()),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
             let pid = self.sys.start_service(&existing.name).context("서비스를 시작하지 못했습니다")?;
             self.changes.retain(|c| !matches!(c, Change::Stopped { .. }));
             self.say(Tone::Ok, format!("서비스 시작 (PID {pid})"));
@@ -1174,8 +1233,14 @@ impl<'a> Setup<'a> {
             }
             bail!("제거를 다 끝내지 못했습니다(설치 기록은 남겨 다시 할 수 있습니다)");
         }
-        let _ = std::fs::remove_file(self.layout.receipt());
-        let _ = std::fs::remove_file(self.layout.status());
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_file(self.layout.receipt()),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_file(self.layout.status()),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
         if args.purge {
             for dir in [self.layout.config.clone(), self.layout.state.clone()] {
                 match std::fs::remove_dir_all(&dir) {
@@ -1226,8 +1291,16 @@ impl<'a> Setup<'a> {
                 format!("  host {} · 이름 「{}」 · 설치 판 {}", receipt.host, receipt.name, receipt.version),
             );
         }
-        let status =
-            std::fs::read(self.layout.status()).ok().and_then(|b| serde_json::from_slice::<ServiceStatus>(&b).ok());
+        let status = std::fs::read(self.layout.status())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .and_then(|b| {
+                serde_json::from_slice::<ServiceStatus>(&b)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            });
         match (&info, status) {
             (Some(info), Some(status)) if info.running && status.pid == info.pid => self.say(
                 if status.connected { Tone::Ok } else { Tone::Warn },
@@ -1264,7 +1337,10 @@ pub(crate) fn normalize_host(raw: &str) -> Option<String> {
     };
     if has_port {
         let (_, port) = value.rsplit_once(':')?;
-        port.parse::<u16>().ok().filter(|p| *p != 0)?;
+        port.parse::<u16>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|p| *p != 0)?;
         Some(value.to_string())
     } else if value.contains(':') && !value.starts_with('[') {
         Some(format!("[{value}]:{AGENT_PORT}"))
@@ -1281,8 +1357,17 @@ struct AgentConfig {
 }
 
 fn read_agent_toml(path: &Path) -> AgentConfig {
-    let Ok(text) = std::fs::read_to_string(path) else { return AgentConfig::default() };
-    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else { return AgentConfig::default() };
+    let Ok(text) = std::fs::read_to_string(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return AgentConfig::default();
+    };
+    let Ok(doc) = text
+        .parse::<toml_edit::DocumentMut>()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return AgentConfig::default();
+    };
     let get = |key: &str| doc.get("agent").and_then(|a| a.get(key)).and_then(|v| v.as_str()).map(str::to_owned);
     AgentConfig {
         host: get("host").filter(|h| !h.is_empty() && h != "local"),
@@ -1294,7 +1379,11 @@ fn read_agent_toml(path: &Path) -> AgentConfig {
 /// 이 PC의 다른 aaa 인스턴스 설정(`%LOCALAPPDATA%\aaa*\config\agent.toml`)에서 host 주소를 고른다
 fn sibling_configs(layout: &Layout) -> Vec<AgentConfig> {
     let Some(parent) = layout.config.parent().and_then(Path::parent) else { return vec![] };
-    let Ok(dir) = std::fs::read_dir(parent) else { return vec![] };
+    let Ok(dir) = std::fs::read_dir(parent)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return vec![];
+    };
     let mut found: Vec<(PathBuf, AgentConfig)> = dir
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("aaa"))
@@ -1338,8 +1427,10 @@ fn agent_toml(previous: Option<&[u8]>, choices: &Choices) -> Result<String> {
 }
 
 fn list_dir(dir: &Path) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> =
-        std::fs::read_dir(dir).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|d| d.flatten().map(|e| e.path()).collect())
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default();
     out.sort();
     out
 }

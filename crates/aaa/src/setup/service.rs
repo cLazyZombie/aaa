@@ -46,7 +46,7 @@ unsafe extern "system" fn handler(control: u32, _: u32, _: *mut core::ffi::c_voi
     match control {
         SERVICE_CONTROL_STOP | SERVICE_CONTROL_SHUTDOWN => {
             state.report(SERVICE_STOP_PENDING, 0);
-            let _ = state.stop.send(true);
+            aaa_common::diagnostic::ignored(state.stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             NO_ERROR
         }
         SERVICE_CONTROL_INTERROGATE => NO_ERROR,
@@ -125,8 +125,14 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
     let state = aaa_config::paths::state_dir();
     std::fs::create_dir_all(&state).with_context(|| format!("{} 만들기", state.display()))?;
     let log_path = state.join("agent-service.log");
-    if std::fs::metadata(&log_path).is_ok_and(|m| m.len() > LOG_ROTATE) {
-        let _ = std::fs::rename(&log_path, state.join("agent-service.log.1"));
+    if std::fs::metadata(&log_path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|m| m.len() > LOG_ROTATE)
+    {
+        aaa_common::diagnostic::ignored(
+            std::fs::rename(&log_path, state.join("agent-service.log.1")),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
     }
     let mut log = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
     let _ = writeln!(log, "--- {} 서비스 시작 pid {}", aaa_common::util::software(), std::process::id());
@@ -149,7 +155,7 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
     let backend = std::thread::Builder::new().name("aaa-setup-agent".into()).spawn(move || {
         let result =
             crate::cli::supervised_role(aaa_proto::install::InstallRole::Agent, ready, connection, backend_stop);
-        let _ = ended.send(());
+        aaa_common::diagnostic::ignored(ended.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         result
     })?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
@@ -164,7 +170,7 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
         if !prepared {
             if !*control.stop.borrow() {
                 eprintln!("agent가 60초 안에 준비되지 않았다");
-                let _ = control.stop.send(true);
+                aaa_common::diagnostic::ignored(control.stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             }
             return;
         }
@@ -176,7 +182,7 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
                 _ = stop_rx.wait_for(|s| *s) => break,
                 _ = &mut done => break,
                 changed = connected.changed() => {
-                    if changed.is_err() { break }
+                    if changed.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                     let now = *connected.borrow_and_update();
                     write_status(now);
                 }
@@ -184,9 +190,9 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
         }
     });
     let stopping = *control.stop.borrow();
-    let _ = control.stop.send(true);
+    aaa_common::diagnostic::ignored(control.stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     let result = backend.join();
-    let _ = std::fs::remove_file(&status_path);
+    aaa_common::diagnostic::ignored(std::fs::remove_file(&status_path), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     let code = match result {
         Ok(Ok(code)) if code == ExitCode::SUCCESS && stopping => 0,
         Ok(Ok(_)) => 1,
@@ -194,7 +200,10 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
             eprintln!("agent 실패: {e:#}");
             1
         }
-        Err(_) => 1,
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            1
+        }
     };
     let _ = writeln!(log, "--- 서비스 끝 code {code}");
     Ok(code)

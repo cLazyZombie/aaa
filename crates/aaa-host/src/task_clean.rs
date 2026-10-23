@@ -89,7 +89,13 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r.status == ThreadStatus::Resolved && r.resolve_pending.is_none() && r.role != Role::Evaluator)
             .filter(|r| r.task_clean.why.is_some() && r.task_clean.judged_ms.is_none())
             .collect();
@@ -137,12 +143,20 @@ impl Host {
         // 보고 없음·중단은 branch가 우연히 main에 포함돼 있어도 완료로 바꾸지 않는다.
         let report = self.verified_report(rec)?;
         let repo = rec.repo.as_deref()?;
-        let dir = self.project_dir(&rec.project).ok()?;
-        let tasks = std::fs::read_to_string(dir.join("TASKS.md")).ok()?;
+        let dir = self
+            .project_dir(&rec.project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
+        let tasks = std::fs::read_to_string(dir.join("TASKS.md"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         if !tasks::parse(&tasks).iter().any(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
             return None;
         }
-        let conn = self.live_conn(&rec.machine_id).ok()?;
+        let conn = self
+            .live_conn(&rec.machine_id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let query = aaa_proto::GitQuery::MergedIntoMain { branch: rec.branch.clone(), commits: merge_commits(&report) };
         let response = conn
             .request_timeout(
@@ -160,7 +174,9 @@ impl Host {
 
     fn task_clean_one(&self, project: &str, dir: &Path, rec: &ThreadRec) -> Result<(), ErrorBody> {
         self.task_identify(project)?;
-        let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
+        let text = std::fs::read_to_string(dir.join("TASKS.md"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default();
         let (_, all) = tasks::parse_board(&text);
         let marker = self.report_marker(rec);
         let c = &rec.task_clean;
@@ -221,8 +237,13 @@ impl Host {
         // task_write의 파일 사건은 판정 저장보다 먼저 나간다. 그 사건으로 읽은 board는 올린 상위의
         // attention이 아직 없을 수 있다. 파일 hash가 같아도 DB 판정 확정 뒤 다시 읽게 한다.
         if !clean.is_empty() || !check.is_empty() {
-            let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
-            let _ = self.task_events.send((project.to_string(), tasks::sha256(&text)));
+            let text = std::fs::read_to_string(dir.join("TASKS.md"))
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+                .unwrap_or_default();
+            aaa_common::diagnostic::ignored(
+                self.task_events.send((project.to_string(), tasks::sha256(&text))),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
         Ok(())
     }
@@ -236,7 +257,9 @@ impl Host {
         before: &[TaskView],
         clean: &[(TaskView, String)],
     ) -> Vec<String> {
-        let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
+        let text = std::fs::read_to_string(dir.join("TASKS.md"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default();
         let (_, now) = tasks::parse_board(&text);
         let mut raised = Vec::new();
         for (t, _) in clean {
@@ -291,7 +314,11 @@ impl Host {
                 continue;
             }
             let Some(id) = t.thread.clone() else { continue };
-            let Ok(rec) = self.load(project, &id) else { continue };
+            let Ok(rec) = self.load(project, &id).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             let marker = self.report_marker(&rec);
             t.attention = attention(t, &rec, marker, parents.contains(&t.line));
         }

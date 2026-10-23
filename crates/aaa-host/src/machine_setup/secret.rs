@@ -13,10 +13,12 @@ impl Drop for Input {
 
 pub(super) fn framed(auth: &InstallAuthorization, password: Option<&MachineSetupPassword>) -> Result<Input, String> {
     let mut input = Input(b"aaa.install.input.v1\0".to_vec());
-    let authorization = serde_json::to_vec(auth).map_err(|_| "보호 승인을 만들지 못했다")?;
+    let authorization = serde_json::to_vec(auth)
+        .map_err(|e| aaa_common::diagnostic::context(e, "보호 승인을 만들지 못했다".to_string()))?;
     for (kind, bytes) in [(1u8, Some(authorization.as_slice())), (2, password.map(|p| p.0.as_bytes()))] {
         if let Some(bytes) = bytes {
-            let n = u32::try_from(bytes.len()).map_err(|_| "보호 입력이 너무 크다")?;
+            let n = u32::try_from(bytes.len())
+                .map_err(|e| aaa_common::diagnostic::context(e, "보호 입력이 너무 크다".to_string()))?;
             input.0.push(kind);
             input.0.extend_from_slice(&n.to_le_bytes());
             input.0.extend_from_slice(bytes);
@@ -56,7 +58,8 @@ pub(super) fn result(
             _ => {}
         }
     }
-    let mut value = serde_json::to_value(result).map_err(|_| "설치 결과를 읽지 못했다")?;
+    let mut value = serde_json::to_value(result)
+        .map_err(|e| aaa_common::diagnostic::context(e, "설치 결과를 읽지 못했다".to_string()))?;
     visit(&mut value, password);
-    serde_json::from_value(value).map_err(|_| "설치 결과를 읽지 못했다".into())
+    serde_json::from_value(value).map_err(|e| aaa_common::diagnostic::context(e, "설치 결과를 읽지 못했다".to_string()))
 }

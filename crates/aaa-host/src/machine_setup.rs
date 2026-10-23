@@ -100,7 +100,15 @@ pub(crate) fn parse_target(raw: &str) -> Result<Target, ErrorBody> {
     }
     let port = match port {
         None => None,
-        Some(p) => Some(p.parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| bad("포트는 1~65535"))?),
+        Some(p) => Some(
+            p.parse::<u16>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .filter(|p| *p > 0)
+                .ok_or_else(|| bad("포트는 1~65535"))?,
+        ),
     };
     let dest = match user {
         Some(u) => format!("{u}@{host}"),
@@ -120,7 +128,14 @@ pub(crate) fn parse_resolved(out: &str) -> Option<SshResolved> {
         match k.to_ascii_lowercase().as_str() {
             "user" => user = Some(v.to_string()),
             "hostname" => host = Some(v.to_string()),
-            "port" => port = v.parse().ok(),
+            "port" => {
+                port = v
+                    .parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }
             "proxyjump" => proxy_jump = !v.is_empty() && v != "none",
             "proxycommand" => proxy_jump |= !v.is_empty() && v != "none",
             _ => {}
@@ -138,7 +153,10 @@ pub(crate) fn key_of_line(line: &str) -> Option<HostKeyView> {
         return None;
     }
     let kind = parts.next()?;
-    let blob = base64::engine::general_purpose::STANDARD.decode(parts.next()?).ok()?;
+    let blob = base64::engine::general_purpose::STANDARD
+        .decode(parts.next()?)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let sum = Sha256::digest(&blob);
     Some(HostKeyView {
         kind: kind.to_string(),
@@ -291,7 +309,10 @@ impl Ssh {
             Ok(Err(e)) => {
                 Ran { ok: false, stdout: String::new(), stderr: format!("ssh를 실행하지 못했다: {e}") }
             }
-            Err(_) => Ran { ok: false, stdout: String::new(), stderr: "ssh: timed out".into() },
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                Ran { ok: false, stdout: String::new(), stderr: "ssh: timed out".into() }
+            }
         }
     }
 
@@ -333,8 +354,8 @@ impl Ssh {
             .filter(|l| key_of_line(l).is_some())
             .map(str::to_string)
             .collect();
-        let _ = std::fs::remove_file(&file);
-        let _ = std::fs::remove_file(&empty);
+        aaa_common::diagnostic::ignored(std::fs::remove_file(&file), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+        aaa_common::diagnostic::ignored(std::fs::remove_file(&empty), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         if lines.is_empty() { Err(why(&r.stderr)) } else { Ok(lines) }
     }
 
@@ -400,7 +421,10 @@ impl Host {
     fn setup_save(&self, job: &mut Job) {
         job.view.updated_ms = aaa_common::util::now_ms();
         if let Ok(raw) = serde_json::to_string(job) {
-            let _ = self.db.machine_setup_put(&job.view.job, &raw, job.view.updated_ms, KEEP);
+            aaa_common::diagnostic::ignored(
+                self.db.machine_setup_put(&job.view.job, &raw, job.view.updated_ms, KEEP),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         self.enroll_bump();
     }
@@ -408,7 +432,10 @@ impl Host {
     /// 작업이 아직 그 단계일 때만 바꾼다(그사이 멈춤·다른 단계로 갔으면 버린다)
     fn setup_update(&self, id: &str, from: MachineSetupPhase, f: impl FnOnce(&mut Job)) -> Option<Job> {
         let _g = self.setup_gate.lock().unwrap();
-        let mut job = self.setup_load(id).ok()?;
+        let mut job = self
+            .setup_load(id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         if job.view.phase != from {
             return None;
         }
@@ -419,14 +446,34 @@ impl Host {
 
     pub(crate) fn setup_list(&self) -> Result<Vec<MachineSetupView>, ErrorBody> {
         let rows = self.db.machine_setups().map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
-        Ok(rows.iter().filter_map(|r| serde_json::from_str::<Job>(r).ok()).map(|j| j.view).collect())
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                serde_json::from_str::<Job>(r)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .map(|j| j.view)
+            .collect())
     }
 
     /// host가 진행 중에 내려갔던 작업은 멈췄다고 적는다(host 시작 때 한 번)
     pub(crate) fn setup_recover(&self) {
-        let Ok(rows) = self.db.machine_setups() else { return };
+        let Ok(rows) = self
+            .db
+            .machine_setups()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         for raw in rows {
-            let Ok(mut job) = serde_json::from_str::<Job>(&raw) else { continue };
+            let Ok(mut job) = serde_json::from_str::<Job>(&raw).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if matches!(
                 job.view.phase,
                 MachineSetupPhase::Connecting
@@ -482,7 +529,7 @@ impl Host {
             }
         };
         let probed = ssh.probe(&t, &scratch).await;
-        let _ = std::fs::remove_dir(&scratch);
+        aaa_common::diagnostic::ignored(std::fs::remove_dir(&scratch), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         let lines = match probed {
             Ok(l) => l,
             Err(e) => {
@@ -655,7 +702,10 @@ impl Host {
             return Err(ErrorBody::new(ErrorCode::Conflict, "설치 중인 작업은 끝날 때까지 지우지 않는다"));
         }
         self.db.machine_setup_delete(id).map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
-        let _ = std::fs::remove_dir_all(self.state.join("ssh").join("jobs").join(id));
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_dir_all(self.state.join("ssh").join("jobs").join(id)),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
         self.db.audit(actor, "machine_setup_cancel", &job.view.target);
         self.enroll_bump();
         // 원격에 놓았던 aaa 임시 폴더를 지운다(실패해도 목록에서는 뺀다)
@@ -673,7 +723,9 @@ fn append_known(path: &Path, line: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         aaa_common::util::ensure_private_dir(dir)?;
     }
-    let have = std::fs::read_to_string(path).unwrap_or_default();
+    let have = std::fs::read_to_string(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default();
     if have.lines().any(|l| l == line) {
         return Ok(());
     }

@@ -70,7 +70,14 @@ pub(super) fn populate(plan: &InstallPlan, result: &mut InstallResult) {
                     plan.choices
                         .web_listen
                         .as_deref()
-                        .and_then(|address| address.parse::<std::net::SocketAddr>().ok())
+                        .and_then(|address| {
+                            address
+                                .parse::<std::net::SocketAddr>()
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
+                                .ok()
+                        })
                         .map(|a| a.port())
                 })
                 .flatten(),

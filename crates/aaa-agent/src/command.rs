@@ -66,9 +66,19 @@ pub async fn run(
     let err = tokio::spawn(capture(child.stderr.take()));
     let (status, timed_out) = match tokio::time::timeout(timeout, child.wait()).await {
         Ok(s) => (Some(s?), false),
-        Err(_) => {
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
             kill_group(&mut child);
-            (child.wait().await.ok(), true)
+            (
+                child
+                    .wait()
+                    .await
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok(),
+                true,
+            )
         }
     };
     let collect = |h: tokio::task::JoinHandle<(Vec<u8>, bool)>| async move {
@@ -96,7 +106,12 @@ async fn capture(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> (Vec<u8>, b
     let mut chunk = [0u8; 8192];
     loop {
         match pipe.read(&mut chunk).await {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
+            Err(error) => {
+                tracing::warn!(error = %aaa_common::diagnostic::Cause::capture(&error), "명령 출력 읽기 실패");
+                cut = true;
+                break;
+            }
             Ok(n) => {
                 let room = CAPTURE_BYTES.saturating_sub(buf.len());
                 buf.extend_from_slice(&chunk[..n.min(room)]);
@@ -116,7 +131,7 @@ fn kill_group(child: &mut tokio::process::Child) {
         }
         return;
     }
-    let _ = child.start_kill();
+    aaa_common::diagnostic::ignored(child.start_kill(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
 }
 
 #[cfg(all(test, unix))]

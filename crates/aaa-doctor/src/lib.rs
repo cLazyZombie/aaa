@@ -308,7 +308,14 @@ fn volume_check(dir: &str) -> Volume {
         }
         Ok(())
     })();
-    Volume { dir: dir.to_string(), ok: res.is_ok(), error: res.err().map(|e| e.to_string()) }
+    Volume {
+        dir: dir.to_string(),
+        ok: res
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok(),
+        error: res.err().map(|e| e.to_string()),
+    }
 }
 
 /// 전체 디스크 접근(FDA)이 있어야 열리는 시스템 TCC DB의 첫 16 byte를 읽어 본다(내용은 쓰지 않는다).

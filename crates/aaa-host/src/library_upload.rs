@@ -25,9 +25,17 @@ fn usage(dir: &std::path::Path) -> (usize, u64) {
     let mut stack = vec![dir.to_path_buf()];
     let (mut n, mut size) = (0, 0);
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         for e in rd.flatten() {
-            let Ok(m) = e.path().symlink_metadata() else { continue };
+            let Ok(m) = e.path().symlink_metadata().inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if m.is_dir() {
                 stack.push(e.path());
             } else if m.is_file() {
@@ -47,13 +55,31 @@ fn mark(root: &Path, upload: &str) -> PathBuf {
 
 /// 그 올리기를 마지막으로 쓴 때(ms): 표지의 내용, 표지가 없으면(표지 전에 만든 올리기) 폴더 시각
 fn last_put_ms(root: &Path, upload: &str) -> Option<u64> {
-    if let Some(ms) = std::fs::read_to_string(mark(root, upload)).ok().and_then(|t| t.trim().parse().ok()) {
+    if let Some(ms) = std::fs::read_to_string(mark(root, upload))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|t| {
+            t.trim()
+                .parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+    {
         return Some(ms);
     }
     std::fs::metadata(root.join(upload))
         .and_then(|m| m.modified())
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .map(|t| t.as_millis() as u64)
 }
 
@@ -65,7 +91,11 @@ impl Host {
     /// 하루 넘게 손대지 않은 올리기를 지운다(등록하지 않고 떠난 화면). 지금 쓰는 올리기는 두고, 쓸 때마다 그 표지를 새로 한다
     fn sweep_uploads(&self, keep: &str, now_ms: u64) {
         let root = self.uploads_root();
-        let Ok(rd) = std::fs::read_dir(&root) else { return };
+        let Ok(rd) = std::fs::read_dir(&root)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         for e in rd.flatten() {
             let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
             let id = name.strip_suffix(".put").unwrap_or(&name);
@@ -74,8 +104,14 @@ impl Host {
             }
             // 폴더 없이 남은 표지도 같은 시각으로 치운다
             if last_put_ms(&root, id).is_some_and(|ms| ms.saturating_add(STALE_MS) < now_ms) {
-                let _ = std::fs::remove_dir_all(root.join(id));
-                let _ = std::fs::remove_file(mark(&root, id));
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_dir_all(root.join(id)),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_file(mark(&root, id)),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
             }
         }
     }
@@ -105,7 +141,12 @@ impl Host {
         let dir = root.join(upload);
         let target = dir.join(path);
         let (files, total) = usage(&dir);
-        let replaced = target.symlink_metadata().ok().filter(|m| m.is_file()).map_or(0, |m| m.len());
+        let replaced = target
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|m| m.is_file())
+            .map_or(0, |m| m.len());
         if files >= FILES_MAX && replaced == 0 {
             return Err(err(ErrorCode::TooLarge, format!("한 보고서에 파일은 {FILES_MAX}개까지 올린다")));
         }
@@ -120,7 +161,7 @@ impl Host {
         std::fs::create_dir_all(parent).map_err(crate::orch::internal)?;
         let temp = parent.join(format!(".{}.part", aaa_common::util::new_id()));
         std::fs::write(&temp, bytes).and_then(|_| std::fs::rename(&temp, &target)).map_err(|e| {
-            let _ = std::fs::remove_file(&temp);
+            aaa_common::diagnostic::ignored(std::fs::remove_file(&temp), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
             crate::orch::internal(e)
         })?;
         // 치우기가 보는 시각을 지금으로. 못 쓰면 이 올리기가 하루 뒤 치워질 수 있어 실패로 알린다
@@ -160,8 +201,11 @@ impl Host {
         }
         let source = dir.to_str().ok_or_else(|| err(ErrorCode::BadRequest, "경로가 글이 아니다"))?;
         let out = self.library_publish(project, name, source, false, to_user.then_some(title), None, actor)?;
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::remove_file(mark(&self.uploads_root(), upload));
+        aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&dir), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_file(mark(&self.uploads_root(), upload)),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
         self.db.audit(actor, "library_upload", &format!("{project}/{name}"));
         Ok(out)
     }

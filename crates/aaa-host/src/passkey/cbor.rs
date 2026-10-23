@@ -20,8 +20,17 @@ impl Cbor {
     /// 정수 키·값(COSE 키는 작은 정수다)
     pub(crate) fn int(&self) -> Option<i64> {
         match *self {
-            Cbor::Uint(n) => i64::try_from(n).ok(),
-            Cbor::Nint(n) => i64::try_from(n).ok().map(|n| -1 - n),
+            Cbor::Uint(n) => i64::try_from(n)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok(),
+            Cbor::Nint(n) => i64::try_from(n)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .map(|n| -1 - n),
             _ => None,
         }
     }
@@ -81,8 +90,13 @@ fn item(buf: &[u8], at: &mut usize, depth: usize) -> Result<Cbor, &'static str> 
     }
     let n = argument(buf, at, info)?;
     // 남은 바이트보다 많은 항목은 있을 수 없다. 겹친 머리마다 미리 잡지 않게 자리는 조금만 먼저 잡는다
-    let count =
-        |n: u64| usize::try_from(n).ok().filter(|&n| n <= buf.len() - *at).ok_or("CBOR 길이가 남은 크기보다 크다");
+    let count = |n: u64| {
+        usize::try_from(n)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|&n| n <= buf.len() - *at)
+            .ok_or("CBOR 길이가 남은 크기보다 크다")
+    };
     Ok(match major {
         0 => Cbor::Uint(n),
         1 => Cbor::Nint(n),

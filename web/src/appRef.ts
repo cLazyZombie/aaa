@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 앱 안 참조(plan §8.329): coordinator가 채팅·post 제목에 쓰는 `aaa:question/<thread>`(그 thread의 질문 카드)와
 // `aaa:report/<이름>`(보고서 패널의 그 보고서). 터미널에서도 눌리게 쓰는 같은 host 링크 `<웹 주소>/#question=<thread>`·
 // `<웹 주소>/#report=<이름>`(plan §8.345)도 같은 참조다(`appLinkOf`). 웹 대화는 이것을 누르면 앱 안에서 여는 칩으로 그리고, 터미널에서는 글 그대로 읽힌다.
@@ -41,7 +42,7 @@ export function appLinkOf(href: string, origin: string): AppRef | null {
   let u: URL;
   try {
     u = new URL(href.trim(), origin);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "appRef.ts:45");
     return null;
   }
   if (u.origin !== origin || (u.pathname !== "/" && u.pathname !== "") || u.search !== "") return null;
@@ -50,7 +51,7 @@ export function appLinkOf(href: string, origin: string): AppRef | null {
   let target: string;
   try {
     target = decodeURIComponent(m[2]!);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "appRef.ts:54");
     return null;
   }
   if (m[1] === "report" && target.includes("/")) target = target.slice(target.indexOf("/") + 1);

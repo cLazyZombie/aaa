@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /**
  * Picking a font the device has installed. The Local Font Access API (queryLocalFonts) exists in
  * Chromium only and asks permission on a user gesture, so everything here is optional: where it is
@@ -47,7 +48,7 @@ export async function queryInstalledFonts(): Promise<InstalledFonts> {
   try {
     const families = uniqueFamilies(await query());
     return families.length === 0 ? { status: "unavailable" } : { status: "granted", families };
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "installedFonts.ts:51");
     return { status: "unavailable" };
   }
 }
@@ -82,7 +83,7 @@ export function isMonospaceFamily(family: string): boolean {
       context.font = `${variant} 32px "${name}", monospace`;
       return advancesAreMonospace(PROBE_GLYPHS.map((glyph) => context.measureText(glyph).width));
     });
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "installedFonts.ts:86");
     return true;
   }
 }

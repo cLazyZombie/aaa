@@ -92,7 +92,9 @@ pub fn encode<M: PayloadMessage>(mut msg: M, codec: Option<TerminalCodec>) -> Re
 async fn blocking<T: Send + 'static>(bytes: usize, work: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     ensure!(bytes <= PENDING_BYTES, "터미널 대기 바이트 상한");
     // 대기열 초과는 연결 오류다. 무한 대기하거나 별도 작업으로 재시도하지 않는다.
-    let bytes = BYTES.try_acquire_many(bytes.max(1) as u32).map_err(|_| anyhow::anyhow!("터미널 대기열 상한"))?;
+    let bytes = BYTES
+        .try_acquire_many(bytes.max(1) as u32)
+        .map_err(|source_error| crate::diagnostic::context(source_error, anyhow::anyhow!("터미널 대기열 상한")))?;
     let slot = JOBS.acquire().await?;
     tokio::task::spawn_blocking(move || {
         let (_bytes, _slot) = (bytes, slot);
@@ -124,11 +126,17 @@ pub fn inflate(data: &[u8], meta: TerminalCompression, allowed: TerminalCodec) -
                 ensure!(base + base / 8 * u64::from(window & 7) <= 1 << 20, "zstd window 상한");
             }
             ensure!(
-                zstd::zstd_safe::find_frame_compressed_size(data).ok() == Some(data.len()),
+                zstd::zstd_safe::find_frame_compressed_size(data)
+                    .inspect_err(|error| crate::diagnostic::observe(
+                        error,
+                        "선택 자료를 읽지 못해 기존 fallback을 쓴다"
+                    ))
+                    .ok()
+                    == Some(data.len()),
                 "zstd 잘림/남은 데이터"
             );
-            if let Some(size) =
-                zstd::zstd_safe::get_frame_content_size(data).map_err(|_| anyhow::anyhow!("zstd 크기 header"))?
+            if let Some(size) = zstd::zstd_safe::get_frame_content_size(data)
+                .map_err(|source_error| crate::diagnostic::context(source_error, anyhow::anyhow!("zstd 크기 header")))?
             {
                 ensure!(size == raw_len as u64, "zstd 원본 길이 불일치");
             }

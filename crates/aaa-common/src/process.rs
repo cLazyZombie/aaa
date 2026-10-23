@@ -24,7 +24,10 @@ pub fn responsible(pid: u32) -> Option<u32> {
                 return None;
             }
             let lookup: unsafe extern "C" fn(i32) -> i32 = std::mem::transmute(symbol);
-            u32::try_from(lookup(pid as i32)).ok().filter(|p| *p > 0)
+            u32::try_from(lookup(pid as i32))
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+                .filter(|p| *p > 0)
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -82,7 +85,9 @@ pub fn image(pid: u32) -> Option<std::path::PathBuf> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+        std::fs::read_link(format!("/proc/{pid}/exe"))
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
     #[cfg(windows)]
     {
@@ -101,7 +106,10 @@ pub fn image(pid: u32) -> Option<std::path::PathBuf> {
         if ok == 0 {
             return None;
         }
-        String::from_utf16(&path[..size as usize]).ok().map(std::path::PathBuf::from)
+        String::from_utf16(&path[..size as usize])
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .map(std::path::PathBuf::from)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -117,7 +125,11 @@ pub fn parent(pid: u32) -> Option<u32> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        stat_field(pid, 1).and_then(|v| v.parse().ok())
+        stat_field(pid, 1).and_then(|v| {
+            v.parse()
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
     }
     #[cfg(windows)]
     {
@@ -139,7 +151,16 @@ pub fn tty(pid: u32) -> Option<u64> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        stat_field(pid, 4).and_then(|v| v.parse::<i64>().ok()).filter(|d| *d > 0).map(|d| d as u64)
+        stat_field(pid, 4)
+            .and_then(|v| {
+                v.parse::<i64>()
+                    .inspect_err(|error| {
+                        crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .filter(|d| *d > 0)
+            .map(|d| d as u64)
     }
     #[cfg(not(unix))]
     {
@@ -157,7 +178,10 @@ pub fn session(pid: u32) -> Option<u32> {
         }
         // SAFETY: getsid는 pid만 읽는다
         let sid = unsafe { libc::getsid(pid as libc::pid_t) };
-        u32::try_from(sid).ok().filter(|s| *s > 0)
+        u32::try_from(sid)
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|s| *s > 0)
     }
     #[cfg(not(unix))]
     {
@@ -175,8 +199,17 @@ pub fn uid(pid: u32) -> Option<u32> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-        status.lines().find_map(|l| l.strip_prefix("Uid:"))?.split_whitespace().nth(1)?.parse().ok()
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status"))
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix("Uid:"))?
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
 }
 
@@ -229,7 +262,9 @@ fn stat_field(pid: u32, n: usize) -> Option<String> {
     if pid == 0 {
         return None;
     }
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let rest = stat.get(stat.rfind(')')? + 2..)?;
     rest.split_whitespace().nth(n).map(str::to_string)
 }

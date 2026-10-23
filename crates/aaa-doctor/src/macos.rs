@@ -48,7 +48,9 @@ pub fn pid_path(pid: i32) -> Option<String> {
         return None;
     }
     buf.truncate(n as usize);
-    String::from_utf8(buf).ok()
+    String::from_utf8(buf)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
 }
 
 /// 다른 프로세스(같은 사용자)의 책임 프로세스
@@ -144,23 +146,30 @@ fn read_item(service: &str) -> String {
             .skip_authenticated_items(true)
             .limit(Limit::Max(1))
             .search();
-        let _ = tx.send(match r {
-            Ok(v) if !v.is_empty() => "ok".to_string(),
-            Ok(_) => "not_found".to_string(),
-            Err(e) => match e.code() {
-                -25300 => "not_found".into(),
-                -25308 => "interaction_not_allowed".into(),
-                -25293 => "auth_failed".into(),
-                c => format!("error({c})"),
-            },
-        });
+        aaa_common::diagnostic::ignored(
+            tx.send(match r {
+                Ok(v) if !v.is_empty() => "ok".to_string(),
+                Ok(_) => "not_found".to_string(),
+                Err(e) => match e.code() {
+                    -25300 => "not_found".into(),
+                    -25308 => "interaction_not_allowed".into(),
+                    -25293 => "auth_failed".into(),
+                    c => format!("error({c})"),
+                },
+            }),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     });
     rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or_else(|_| "timeout(대화창 대기 의심)".into())
 }
 
 pub fn codesign_summary(exe: &str) -> Vec<String> {
     let out = Command::new("/usr/bin/codesign").args(["-dv", "--verbose=2", exe]).output();
-    let Ok(out) = out else { return vec!["codesign 실행 실패".into()] };
+    let Ok(out) =
+        out.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return vec!["codesign 실행 실패".into()];
+    };
     let text = String::from_utf8_lossy(&out.stderr);
     text.lines()
         .filter(|l| {
@@ -190,7 +199,7 @@ pub fn first_exec_samples(n: usize) -> Result<Vec<Sample>> {
         }
         out.push(Sample { first_ms: pair[0], warm_ms: pair[1], extra_ms: pair[0] - pair[1] });
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&dir), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     Ok(out)
 }
 
@@ -231,14 +240,23 @@ fn make_fresh(path: &Path) -> Result<()> {
 /// pane 밖에서 agent 일을 하는 장수 daemon의 계보(E6). ps로 찾고 책임 프로세스를 붙인다.
 pub fn daemons(patterns: &[String]) -> Vec<(i32, String, Option<i32>, Option<String>)> {
     let out = Command::new("/bin/ps").args(["-axo", "pid=,command="]).output();
-    let Ok(out) = out else { return vec![] };
+    let Ok(out) =
+        out.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return vec![];
+    };
     let me = std::process::id() as i32;
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|l| {
             let l = l.trim_start();
             let (pid, cmd) = l.split_once(' ')?;
-            let pid: i32 = pid.parse().ok()?;
+            let pid: i32 = pid
+                .parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?;
             (pid != me && patterns.iter().any(|p| cmd.contains(p.as_str()))).then(|| {
                 let r = responsible_for(pid);
                 (pid, cmd.to_string(), r, r.and_then(pid_path))

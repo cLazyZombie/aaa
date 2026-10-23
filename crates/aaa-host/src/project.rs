@@ -68,8 +68,15 @@ impl Default for ProjectSettings {
 impl ProjectSettings {
     pub(crate) fn load(dir: &Path) -> ProjectSettings {
         let table = std::fs::read_to_string(aaa_config::project_settings_file(dir))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
-            .and_then(|t| t.parse::<toml::Table>().ok())
+            .and_then(|t| {
+                t.parse::<toml::Table>()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .unwrap_or_default();
         Self::from_table(&table)
     }
@@ -78,7 +85,16 @@ impl ProjectSettings {
         let d = ProjectSettings::default();
         let s = |k: &str| t.get(k).and_then(|v| v.as_str()).map(str::to_string);
         let n = |k: &str, def: u32| {
-            t.get(k).and_then(|v| v.as_integer()).and_then(|i| u32::try_from(i).ok()).unwrap_or(def)
+            t.get(k)
+                .and_then(|v| v.as_integer())
+                .and_then(|i| {
+                    u32::try_from(i)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
+                .unwrap_or(def)
         };
         let start_threads = s("start_threads").filter(|v| matches!(v.as_str(), "propose" | "auto"));
         let trust_screens = s("trust_screens")
@@ -205,6 +221,7 @@ pub(crate) fn set_in_table(text: &str, key: &str, value: &str, repos: &str) -> R
     let number = |lo: i64| -> Result<i64, String> {
         value
             .parse()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .filter(|n| (lo..=1000).contains(n))
             .ok_or_else(|| format!("`{value}`는 {lo}~1000의 수가 아니다"))

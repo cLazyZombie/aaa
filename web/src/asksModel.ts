@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 「답할 것」 패널의 목록(plan §8.345, 사용자 결정 10-21 1B 2A 3A 4A 5A): thread 질문·coordinator 확인 필요 post·할 일 확인 필요를
 // 한 목록에 모으고, 답한 것은 host 기록(답할 때의 원문)이다. 주소 `#ask=<열쇠>`가 고른 것 하나를 본문 카드로 연다. 열쇠는 종류 글자와
 // 대상이다: `q:<thread>` 열린 질문, `r:<inbox 항목>` 확인 필요 post, `t:<task 제목>` 할 일, `d:<기록>` 답한 것.
@@ -95,7 +96,7 @@ export function askFileUrl(base: string | null | undefined, src: string): string
   let parts: string[];
   try {
     parts = clean.split("/").map((p) => decodeURIComponent(p));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "asksModel.ts:99");
     return null;
   }
   if (parts.some((p) => p === "" || p === "." || p === ".." || p.startsWith("."))) return null;

@@ -367,8 +367,14 @@ impl Host {
         }
         self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
         let dir = self.inbox_dir(&i.project);
-        let _ = std::fs::create_dir_all(dir.join("done"));
-        let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
+        aaa_common::diagnostic::ignored(
+            std::fs::create_dir_all(dir.join("done")),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
+        aaa_common::diagnostic::ignored(
+            std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id))),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
         self.inbox_bump();
     }
 
@@ -408,7 +414,10 @@ impl Host {
         self.tick_wake.notify_one();
         match done.wait_for(|n| *n >= want).await {
             Ok(n) => *n,
-            Err(_) => *self.tick_done.borrow(),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                *self.tick_done.borrow()
+            }
         }
     }
 
@@ -464,7 +473,10 @@ impl Host {
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;
         if let Ok(gone) = self.db.inbox_prune(aaa_common::util::now_ms().saturating_sub(keep)) {
             for (project, id) in gone {
-                let _ = std::fs::remove_file(self.inbox_dir(&project).join("done").join(format!("{id}.md")));
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_file(self.inbox_dir(&project).join("done").join(format!("{id}.md"))),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
             }
         }
     }
@@ -474,7 +486,13 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r.status == ThreadStatus::Open)
             .collect()
     }
@@ -543,14 +561,26 @@ impl Host {
     fn check_project_config(&self, project: &str, dir: &Path) {
         let path = aaa_config::project_settings_file(dir);
         let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        let Ok(text) = std::fs::read_to_string(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let Err(e) = text.parse::<toml_edit::DocumentMut>() else { return };
         let hash = hex::encode(sha2::Sha256::digest(text.as_bytes()));
         let key = format!("config_error:{project}");
-        if self.db.meta(&key).ok().flatten().as_deref() == Some(hash.as_str()) {
+        if self
+            .db
+            .meta(&key)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some(hash.as_str())
+        {
             return;
         }
-        let _ = self.db.set_meta(&key, &hash);
+        aaa_common::diagnostic::ignored(self.db.set_meta(&key, &hash), "보조 작업 실패 뒤 기존 처리를 계속한다");
         let first = e.to_string().lines().next().unwrap_or_default().to_string();
         self.inbox_add(project, "config-error", &file, "not usable", &format!("{file}을 읽지 못한다: {first}"));
     }
@@ -560,17 +590,42 @@ impl Host {
     /// 프로젝트 폴더는 agent가 고칠 수 있다: symlink·FIFO·큰 파일은 읽지 않고, 크기·시각이 그대로면 tick마다 다시 읽지 않는다.
     fn check_old_decisions(&self, project: &str, dir: &Path) {
         let path = dir.join("decisions.md");
-        let Ok(meta) = std::fs::symlink_metadata(&path) else { return };
+        let Ok(meta) = std::fs::symlink_metadata(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         if !meta.is_file() || meta.len() > OLD_DECISIONS_CAP {
             return;
         }
-        let stamp = format!("{}:{:?}", meta.len(), meta.modified().ok());
+        let stamp = format!(
+            "{}:{:?}",
+            meta.len(),
+            meta.modified()
+                .inspect_err(|error| aaa_common::diagnostic::observe(
+                    error,
+                    "선택 자료를 읽지 못해 기존 fallback을 쓴다"
+                ))
+                .ok()
+        );
         let seen = format!("old_decisions_stamp:{project}");
-        if self.db.meta(&seen).ok().flatten().as_deref() == Some(stamp.as_str()) {
+        if self
+            .db
+            .meta(&seen)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some(stamp.as_str())
+        {
             return;
         }
-        let _ = self.db.set_meta(&seen, &stamp);
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        aaa_common::diagnostic::ignored(self.db.set_meta(&seen, &stamp), "보조 작업 실패 뒤 기존 처리를 계속한다");
+        let Ok(text) = std::fs::read_to_string(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let n = text
             .lines()
             .filter_map(|l| l.strip_prefix("## "))
@@ -581,10 +636,18 @@ impl Host {
         }
         let hash = hex::encode(sha2::Sha256::digest(text.as_bytes()));
         let key = format!("old_decisions:{project}");
-        if self.db.meta(&key).ok().flatten().as_deref() == Some(hash.as_str()) {
+        if self
+            .db
+            .meta(&key)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some(hash.as_str())
+        {
             return;
         }
-        let _ = self.db.set_meta(&key, &hash);
+        aaa_common::diagnostic::ignored(self.db.set_meta(&key, &hash), "보조 작업 실패 뒤 기존 처리를 계속한다");
         self.inbox_add(
             project,
             "config-error",
@@ -631,7 +694,15 @@ impl Host {
         ids.sort();
         let hash = hex::encode(sha2::Sha256::digest(ids.join("\n").as_bytes()));
         let key = format!("nudged:{project}");
-        if self.db.meta(&key).ok().flatten().as_deref() == Some(hash.as_str()) {
+        if self
+            .db
+            .meta(&key)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some(hash.as_str())
+        {
             forget_box();
             return;
         }
@@ -639,7 +710,7 @@ impl Host {
         // 알림이 따로 갔고, 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 옛 묶음으로 깨우지 않는다
         let coord = if self.settings(project).nudge { self.coordinator_pane(dir) } else { None };
         let Some(coord) = coord else {
-            let _ = self.db.set_meta(&key, &hash);
+            aaa_common::diagnostic::ignored(self.db.set_meta(&key, &hash), "보조 작업 실패 뒤 기존 처리를 계속한다");
             forget_box();
             return;
         };
@@ -685,7 +756,10 @@ impl Host {
         match self.send_prompt(&coord.machine_id, &coord.id, &text).await {
             Ok(accepted) => {
                 // 받았는지 몰라도 같은 묶음은 다시 보내지 않는다(§8.5 a)
-                let _ = self.db.set_meta(&key, &hash);
+                aaa_common::diagnostic::ignored(
+                    self.db.set_meta(&key, &hash),
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
                 forget_box();
                 let state = if accepted { "accepted" } else { "unknown" };
                 self.flow_project(project, "nudge_sent", None, format!("{state}: {text}"));

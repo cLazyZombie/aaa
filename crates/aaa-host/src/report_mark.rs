@@ -157,8 +157,17 @@ impl Host {
 
     pub(crate) fn default_review_for(&self, r: &ThreadRec) -> bool {
         let frozen = self.thread_report_id(&r.project, &r.id, r.report_hash.as_deref()).and_then(|id| {
-            let dir = self.project_dir(&r.project).ok()?;
-            std::fs::read_to_string(dir.join("threads").join(format!("{id}.md"))).ok()
+            let dir = self
+                .project_dir(&r.project)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?;
+            std::fs::read_to_string(dir.join("threads").join(format!("{id}.md")))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
         });
         frozen.or_else(|| self.verified_report(r)).as_deref().is_some_and(default_review)
     }
@@ -178,13 +187,20 @@ impl Host {
 
     /// 사본 교체와 DB 갱신 사이의 다른 보고를 알림 의도로 읽지 않는다.
     pub(crate) fn verified_report(&self, r: &ThreadRec) -> Option<String> {
-        let dir = self.project_dir(&r.project).ok()?;
-        let bytes = std::fs::read(dir.join("threads").join(format!("{}.md", r.id))).ok()?;
+        let dir = self
+            .project_dir(&r.project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
+        let bytes = std::fs::read(dir.join("threads").join(format!("{}.md", r.id)))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         if Some(hex::encode(Sha256::digest(&bytes))).as_ref() != r.report_copy_hash.as_ref().or(r.report_hash.as_ref())
         {
             return None;
         }
-        String::from_utf8(bytes).ok()
+        String::from_utf8(bytes)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
 
     pub(crate) fn report_marker(&self, r: &ThreadRec) -> Option<&'static str> {

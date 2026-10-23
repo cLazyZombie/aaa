@@ -133,7 +133,7 @@ pub fn run(args: &Args, json: bool, instance: Option<&str>, config: Option<&Path
         let state_env = std::env::var_os("AAA_STATE_DIR").filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
         let invocation = args
             .invocation(json, instance.as_deref(), config.or(config_env.as_deref()), state.or(state_env.as_deref()))
-            .map_err(|_| Box::new(InstallResult::invalid()))?;
+            .map_err(|e| aaa_common::diagnostic::context(e, Box::new(InstallResult::invalid())))?;
         // 비밀 stdin을 읽기 전에 거부한다. thread/coordinator 도구는 보호 입력의 중계자가 될 수 없다.
         if invocation.secrets_stdin
             && (std::env::var_os("AAA_SESSION_ID").is_some() || std::env::var_os("AAA_HOOK_SOCK").is_some())
@@ -229,9 +229,23 @@ fn emit_at_seq(result: InstallResult, json: bool, stream: bool, seq: u64) -> Exi
             seq,
             result: Box::new(result),
         };
-        serde_json::to_writer(&mut out, &item).is_ok() && writeln!(out).is_ok()
+        serde_json::to_writer(&mut out, &item)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+            && writeln!(out)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
     } else if json {
-        serde_json::to_writer(&mut out, &result).is_ok() && writeln!(out).is_ok()
+        serde_json::to_writer(&mut out, &result)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+            && writeln!(out)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
     } else {
         let text = match result.status {
             InstallStatus::Planned if result.changes.iter().any(|c| c.kind == "authorization") => {
@@ -250,16 +264,46 @@ fn emit_at_seq(result: InstallResult, json: bool, stream: bool, seq: u64) -> Exi
             InstallStatus::NeedsUser => "다음 작업을 마친 뒤 같은 ID로 재개하세요.",
             _ => result.error.as_ref().map_or("설치 계획을 확인하세요", |e| &e.message),
         };
-        writeln!(out, "{text}").is_ok()
-            && result.installation_id.as_ref().is_none_or(|id| writeln!(out, "installation_id: {id}").is_ok())
-            && result.error.as_ref().is_none_or(|e| writeln!(out, "code: {}", e.code).is_ok())
-            && result
-                .needs_user
-                .iter()
-                .all(|need| writeln!(out, "{} ({}; {})", need.message, need.code, need.target).is_ok())
-            && result.plan_sha256.as_ref().is_none_or(|hash| writeln!(out, "plan_sha256: {hash}").is_ok())
+        writeln!(out, "{text}")
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+            && result.installation_id.as_ref().is_none_or(|id| {
+                writeln!(out, "installation_id: {id}")
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+            })
+            && result.error.as_ref().is_none_or(|e| {
+                writeln!(out, "code: {}", e.code)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+            })
+            && result.needs_user.iter().all(|need| {
+                writeln!(out, "{} ({}; {})", need.message, need.code, need.target)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+            })
+            && result.plan_sha256.as_ref().is_none_or(|hash| {
+                writeln!(out, "plan_sha256: {hash}")
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+            })
     };
-    if !written || out.flush().is_err() { ExitCode::FAILURE } else { ExitCode::from(code) }
+    if !written
+        || out
+            .flush()
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+    {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::from(code)
+    }
 }
 
 #[cfg(test)]

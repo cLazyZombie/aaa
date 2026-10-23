@@ -38,9 +38,14 @@ fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .spawn()?;
     let mut bytes = Vec::new();
     let read = child.stdout.take().unwrap().take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes);
-    if read.is_err() || bytes.len() > 2 * 1024 * 1024 {
-        let _ = child.kill();
-        let _ = child.wait();
+    if read
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+        || bytes.len() > 2 * 1024 * 1024
+    {
+        aaa_common::diagnostic::ignored(child.kill(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+        aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         bail!("Git 목록 비용 상한 또는 읽기 실패");
     }
     ensure!(child.wait()?.success(), "Git 객체 읽기 실패");
@@ -122,7 +127,16 @@ pub(super) fn collect_with_elapsed(
     // 비용 상한·손상 자료로 실패한 동일 커밋을 보고마다 다시 전체 스캔하지 않는다.
     // 다음 커밋은 마지막 성공 스냅샷에서 증분 집계를 다시 시작할 수 있다.
     let attempt_path = store.join("lines-attempt.json");
-    let attempted: Option<(u32, String)> = fs::read(&attempt_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+    let attempted: Option<(u32, String)> = fs::read(&attempt_path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|b| {
+            serde_json::from_slice(&b)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        });
     ensure!(attempted.as_ref() != Some(&(RULES, commit.to_string())), "같은 커밋의 줄 수 집계는 이미 시도함");
     aaa_common::util::write_json(&attempt_path, &(RULES, commit))?;
     let branch = text(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "detached".into());

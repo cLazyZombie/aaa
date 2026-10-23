@@ -7,6 +7,7 @@ pub(super) fn observe(paths: &SessionPaths, info: &SessionInfo) -> Option<Respon
         return None;
     }
     let observed = aaa_common::util::read_json::<aaa_session::files::MetaFile>(&paths.meta())
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
         .filter(|meta| meta.started_at_ms == info.started_at_ms && meta.child_pid == info.pid)
         .and_then(|meta| aaa_common::process::responsible(meta.host_pid))

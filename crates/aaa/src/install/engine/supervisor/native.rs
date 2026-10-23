@@ -49,7 +49,7 @@ fn denied() -> Fault {
     failure("service_policy_unverified", 3)
 }
 fn error(code: u32) -> Fault {
-    match code {
+    let mapped = match code {
         ERROR_ACCESS_DENIED | ERROR_PRIVILEGE_NOT_HELD | ERROR_ELEVATION_REQUIRED => {
             failure("administrator_approval_required", 3)
         }
@@ -65,10 +65,25 @@ fn error(code: u32) -> Fault {
         ERROR_SERVICE_EXISTS | ERROR_DUPLICATE_SERVICE_NAME => Fault::conflict(),
         ERROR_SERVICE_MARKED_FOR_DELETE => failure("service_removal_pending", 3),
         _ => failure("service_operation_failed", 1),
-    }
+    };
+    aaa_common::diagnostic::context(std::io::Error::from_raw_os_error(code as i32), mapped)
 }
 fn last() -> Fault {
     error(unsafe { GetLastError() })
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn invalid_process_reports_win32_cause_without_account_data() {
+        // PID 0은 OpenProcess로 열 수 없다. 서비스·계정·설정은 만들거나 바꾸지 않는다.
+        let fault = identity(0).err().expect("OpenProcess(0)은 거부돼야 한다");
+        let cause = fault.cause.expect("Win32 원인을 보존한다");
+        assert!(cause.os_code.is_some_and(|code| code != 0));
+        let result = fault.public();
+        assert!(serde_json::to_string(&result).unwrap().contains("os error"));
+    }
 }
 fn manager(access: u32) -> Result<Service> {
     let handle = unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), access) };
@@ -89,7 +104,8 @@ unsafe fn text(ptr: *const u16) -> Result<String> {
     }
     for n in 0..32768 {
         if unsafe { *ptr.add(n) } == 0 {
-            return String::from_utf16(unsafe { std::slice::from_raw_parts(ptr, n) }).map_err(|_| Fault::conflict());
+            return String::from_utf16(unsafe { std::slice::from_raw_parts(ptr, n) })
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()));
         }
     }
     Err(Fault::conflict())
@@ -115,7 +131,11 @@ fn account_sid(name: &str) -> Result<String> {
         if unsafe { GetComputerNameExW(ComputerNameNetBIOS, computer.as_mut_ptr(), &mut size) } == 0 {
             return Err(last());
         }
-        qualified = format!("{}\\{user}", String::from_utf16(&computer[..size as usize]).map_err(|_| denied())?);
+        qualified = format!(
+            "{}\\{user}",
+            String::from_utf16(&computer[..size as usize])
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?
+        );
         &qualified
     } else {
         name
@@ -259,7 +279,10 @@ fn process_identity(process: HANDLE) -> Result<Identity> {
     if unsafe { QueryFullProcessImageNameW(process, 0, image.as_mut_ptr(), &mut size) } == 0 {
         return Err(last());
     }
-    let image = PathBuf::from(String::from_utf16(&image[..size as usize]).map_err(|_| Fault::conflict())?);
+    let image = PathBuf::from(
+        String::from_utf16(&image[..size as usize])
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    );
     if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
         return Err(last());
     }
@@ -392,7 +415,7 @@ fn rights(policy: &Policy, sid: PSID) -> Result<Vec<String>> {
             }
             values.push(
                 String::from_utf16(unsafe { std::slice::from_raw_parts(item.Buffer, item.Length as usize / 2) })
-                    .map_err(|_| denied())?,
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?,
             );
         }
         Ok(values)

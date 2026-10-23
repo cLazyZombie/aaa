@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /** Whether a picture can go on the clipboard here: only the clipboard API takes one, and only in a secure context. */
 export function canCopyImage(): boolean {
   return typeof ClipboardItem !== "undefined" && typeof navigator.clipboard?.write === "function";
@@ -14,7 +15,7 @@ export async function copyImage(image: HTMLImageElement): Promise<boolean> {
   try {
     await navigator.clipboard.write([new ClipboardItem({ "image/png": pngOf(image) })]);
     return true;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "clipboard.ts:18");
     return false;
   }
 }
@@ -24,7 +25,7 @@ async function pngOf(image: HTMLImageElement): Promise<Blob> {
     const response = await fetch(image.currentSrc);
     const blob = await response.blob();
     if (response.ok && blob.type.split(";", 1)[0] === "image/png") return blob;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "clipboard.ts:28");
     /* the bytes could not be read again: the decoded picture is drawn instead */
   }
   if (image.naturalWidth === 0 || image.naturalHeight === 0) throw new Error("image not decoded");
@@ -61,7 +62,7 @@ export async function copyText(text: string, fallback?: HTMLElement | null): Pro
       await navigator.clipboard.writeText(text);
       return true;
     }
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "clipboard.ts:65");
     /* no clipboard API here, or the browser refused */
   }
   // A refusal can come late. If focus has moved on by then, the user is elsewhere (the message box,
@@ -83,7 +84,7 @@ export async function copyText(text: string, fallback?: HTMLElement | null): Pro
     input.focus({ preventScroll: true });
     input.select();
     copied = document.execCommand("copy");
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "clipboard.ts:87");
     /* the legacy copy command can be refused too */
   } finally {
     input.remove();

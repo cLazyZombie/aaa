@@ -35,7 +35,13 @@ pub struct HostPin {
 }
 
 pub fn load_pin(state: &Path) -> Option<HostPin> {
-    serde_json::from_slice(&util::read_private(&state.join("host.json")).ok()?).ok()
+    serde_json::from_slice(
+        &util::read_private(&state.join("host.json"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?,
+    )
+    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+    .ok()
 }
 
 pub fn save_pin(state: &Path, pin: &HostPin) -> Result<()> {

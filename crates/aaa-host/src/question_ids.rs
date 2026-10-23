@@ -38,7 +38,15 @@ impl Host {
             .iter()
             .map(|q| {
                 q.id.as_ref()
-                    .and_then(|id| self.db.question_target(Some(project), id).ok().flatten())
+                    .and_then(|id| {
+                        self.db
+                            .question_target(Some(project), id)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                            .flatten()
+                    })
                     .and_then(|t| t.draft)
             })
             .collect();
@@ -66,7 +74,18 @@ impl Host {
     pub(crate) fn question_catalog(&self, all: bool) -> Result<Vec<QuestionView>, ErrorBody> {
         let mut out = self.questions(all);
         for q in &mut out {
-            let project = q.project.clone().or_else(|| self.sole_project().ok().flatten()).unwrap_or_default();
+            let project = q
+                .project
+                .clone()
+                .or_else(|| {
+                    self.sole_project()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_default();
             q.short_id = Some(self.db.question_id(&project, "harness", &q.id, "", 0).map_err(internal)?);
         }
         for t in self.threads_of(None, None)? {
@@ -252,7 +271,14 @@ impl Host {
         }
         let complete = items.iter().all(|q| {
             q.id.as_ref().is_some_and(|id| {
-                self.db.question_target(Some(project), id).ok().flatten().is_some_and(|t| t.draft.is_some())
+                self.db
+                    .question_target(Some(project), id)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+                    .is_some_and(|t| t.draft.is_some())
             })
         });
         if !complete {
@@ -282,7 +308,11 @@ impl Host {
         } else {
             self.ask_answer(project, &target.subject, &hash, draft.picks, draft.text, actor)
         };
-        if result.is_err() {
+        if result
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             self.db.question_set_draft(&target, target.draft.as_ref()).map_err(internal)?;
         }
         result

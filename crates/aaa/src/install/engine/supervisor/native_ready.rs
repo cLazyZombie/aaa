@@ -54,10 +54,16 @@ impl Waiting {
             let path = spec.directory().join("ready.json");
             let pending = match path.symlink_metadata() {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
-                Err(_) => return Err(failure("service_ready_unverified", 3)),
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                    return Err(failure("service_ready_unverified", 3));
+                }
                 Ok(_) => {
-                    let bytes = private::read(&path, 128 * 1024).map_err(|_| failure("service_ready_unverified", 3))?;
-                    let ready: Ready = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+                    let bytes = private::read(&path, 128 * 1024).map_err(|source_error| {
+                        aaa_common::diagnostic::context(source_error, failure("service_ready_unverified", 3))
+                    })?;
+                    let ready: Ready = serde_json::from_slice(&bytes)
+                        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
                     // 잘못된 PID/context는 기다려 성공시키지 않는다. 정상 중간 connected=false만 pending이다.
                     if ready.schema != 1
                         || ready.pid != observed.pid

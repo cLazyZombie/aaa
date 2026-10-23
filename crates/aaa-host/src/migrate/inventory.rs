@@ -206,8 +206,15 @@ fn dir_size(dir: &Path) -> (u64, u64) {
     let mut bytes = 0;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        for e in std::fs::read_dir(&d).into_iter().flatten().filter_map(|e| e.ok()) {
-            let Ok(m) = std::fs::symlink_metadata(e.path()) else { continue };
+        for e in std::fs::read_dir(&d).into_iter().flatten().filter_map(|e| {
+            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        }) {
+            let Ok(m) = std::fs::symlink_metadata(e.path()).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if m.is_dir() {
                 stack.push(e.path());
             } else {
@@ -227,7 +234,14 @@ fn walk(dir: &Path, hash_max: Option<u64>) -> (Vec<FileEntry>, Vec<Excluded>, Ve
     let mut stack = vec![PathBuf::new()];
     while let Some(rel_dir) = stack.pop() {
         let mut entries: Vec<_> = match std::fs::read_dir(dir.join(&rel_dir)) {
-            Ok(r) => r.filter_map(|e| e.ok()).collect(),
+            Ok(r) => r
+                .filter_map(|e| {
+                    e.inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                })
+                .collect(),
             Err(e) => {
                 unreadable.push((rel_dir.to_string_lossy().to_string(), e.to_string()));
                 continue;
@@ -237,7 +251,9 @@ fn walk(dir: &Path, hash_max: Option<u64>) -> (Vec<FileEntry>, Vec<Excluded>, Ve
         for e in entries {
             let rel_path = rel_dir.join(e.file_name());
             let rel = rel_path.to_string_lossy().replace('\\', "/");
-            let Ok(meta) = std::fs::symlink_metadata(e.path()) else {
+            let Ok(meta) = std::fs::symlink_metadata(e.path()).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
                 unreadable.push((rel, "stat 실패".into()));
                 continue;
             };
@@ -305,9 +321,19 @@ pub fn resume_command(agent: &str, session: &str, args: &[String]) -> Option<Str
 }
 
 fn routine_entry(path: &Path) -> Option<RoutineEntry> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = std::fs::read_to_string(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let (fm, _) = source::front_matter(&text);
-    let t: toml::Table = fm.and_then(|f| toml::from_str(f).ok()).unwrap_or_default();
+    let t: toml::Table = fm
+        .and_then(|f| {
+            toml::from_str(f)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or_default();
     let schedule = t
         .get("schedule")
         .and_then(|v| v.as_str())
@@ -349,12 +375,17 @@ pub fn build(root: &Path, slug: &str, opts: &Opts) -> Result<Inventory> {
         .threads
         .iter()
         .map(|t| {
-            let report = std::fs::read(p.report_path(&t.id)).ok().map(|bytes| {
-                let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
-                let text = String::from_utf8_lossy(&bytes);
-                let next = aaa_proto::next_lines(&text).len();
-                ReportInfo { matches_record: sha == t.report_hash, sha256: sha, state_tag: state_tag(&text), next }
-            });
+            let report = std::fs::read(p.report_path(&t.id))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .map(|bytes| {
+                    let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
+                    let text = String::from_utf8_lossy(&bytes);
+                    let next = aaa_proto::next_lines(&text).len();
+                    ReportInfo { matches_record: sha == t.report_hash, sha256: sha, state_tag: state_tag(&text), next }
+                });
             let (library_files, library_bytes) = lib_bytes(&t.id);
             let machine = machine_of(t);
             let resume = (t.status == "open").then(|| {
@@ -416,7 +447,10 @@ pub fn build(root: &Path, slug: &str, opts: &Opts) -> Result<Inventory> {
     let mut routines: Vec<RoutineEntry> = std::fs::read_dir(p.dir.join("routines"))
         .into_iter()
         .flatten()
-        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
         .map(|e| e.path())
         .filter(|x| x.extension().is_some_and(|e| e == "md"))
         .filter_map(|x| routine_entry(&x))

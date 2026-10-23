@@ -14,7 +14,7 @@ pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> 
     }
     #[cfg(not(windows))]
     {
-        Err(Fault { code: "unsupported_user_path_platform", exit: 5 })
+        Err(Fault { code: "unsupported_user_path_platform", exit: 5, cause: None })
     }
 }
 pub(super) fn apply(plan: &InstallPlan, lease: &authorization::Lease) -> Result<bool> {
@@ -28,7 +28,7 @@ pub(super) fn apply(plan: &InstallPlan, lease: &authorization::Lease) -> Result<
     #[cfg(not(windows))]
     {
         let _ = lease;
-        Err(Fault { code: "unsupported_user_path_platform", exit: 5 })
+        Err(Fault { code: "unsupported_user_path_platform", exit: 5, cause: None })
     }
 }
 pub(super) fn observe(plan: &InstallPlan, result: &mut InstallResult) -> Result<()> {
@@ -42,6 +42,6 @@ pub(super) fn observe(plan: &InstallPlan, result: &mut InstallResult) -> Result<
     #[cfg(not(windows))]
     {
         let _ = result;
-        Err(Fault { code: "unsupported_user_path_platform", exit: 5 })
+        Err(Fault { code: "unsupported_user_path_platform", exit: 5, cause: None })
     }
 }

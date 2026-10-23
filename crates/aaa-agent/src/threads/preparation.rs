@@ -221,6 +221,10 @@ pub(super) async fn place(
                     let exists =
                         git(&top, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
                             .await
+                            .as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
                             .is_ok();
                     // 옛 agent가 남긴 완성된 자리도 정확한 경로·branch·HEAD·깨끗함이 모두 맞을 때만 회수한다.
                     if exists && !cwd.exists() || !exists && cwd.exists() {
@@ -246,8 +250,11 @@ pub(super) async fn place(
                 }
             };
             exclude_work_dirs(&top).await?;
-            let branch_exists =
-                git(&top, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T).await.is_ok();
+            let branch_exists = git(&top, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok();
             if placement.cwd.exists() {
                 check_worktree(&placement).await?;
             } else {
@@ -486,6 +493,8 @@ pub async fn cleanup_recorded(
         && let (Some(repo), Some(branch)) = (repo, branch)
         && git(Path::new(repo), &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
             .await
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
             .is_err()
     {
         return Ok(result);

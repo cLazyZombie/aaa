@@ -98,8 +98,19 @@ impl Host {
         let mut running = self.running_coordinators(&canonical);
         // 참고 `max_by_key(state_change_seq)`: 가장 최근에 상태가 바뀐 것
         running.sort_by_key(|p| std::cmp::Reverse(p.agent.as_ref().map_or(0, |a| a.since_ms)));
-        let recorded: Option<Recorded> =
-            self.db.meta(&record_key(project)).ok().flatten().and_then(|t| serde_json::from_str(&t).ok());
+        let recorded: Option<Recorded> = self
+            .db
+            .meta(&record_key(project))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .and_then(|t| {
+                serde_json::from_str(&t)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            });
         // 기록한 pane(재부팅 복원·`pane resume`이 대신했으면 그 새 pane)
         let is_recorded =
             |p: &PaneView| recorded.as_ref().is_some_and(|r| p.id == r.pane || p.replaced.contains(&r.pane));

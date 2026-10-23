@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 머신 등록·기기·웹 공개·보고서 올리기·키 교체의 순수 규칙(관리 GUI W5b, plan §8.355). 판정의 정본은 host다
 // (웹 조작 기기만, 마지막 조작 기기·host 머신 폐기 거부, 등록 코드 3번 틀리면 버림, 올리기 경로·상한). 화면은 고를 수 있는 것만 보인다.
 import { apiAtLeast } from "./automationModel.ts";
@@ -29,7 +30,7 @@ export function onPublicAddress(pageOrigin: string, publish: PublishState | null
   if (!publish?.url) return false;
   try {
     return new URL(publish.url).origin === new URL(pageOrigin).origin;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "adminModel.ts:33");
     return false;
   }
 }

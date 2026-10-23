@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 하위 오류 진단과 비밀값 경계(t-0912)
+
+- `cargo test --locked -p aaa-common --lib diagnostic::`: 중첩 anyhow의 OS 오류가 응답 왕복과 실제 tracing 사건에 남는지 검사한다. serde 오류 자체에 가짜 토큰이 들어가는 data 오류를 주입해 분류·행·열만 남는지, 닫힌 oneshot의 payload가 로그로 나오지 않는지도 검사한다. subscriber는 시험 thread 안에서만 설치한다.
+- `node --test web/test/apiOutcome.test.mjs web/test/errorDiagnostic.test.mjs`: 서버의 원인 요약 유지, 비 JSON·잘못된 envelope·HTTP 실패, 읽기 중 끊긴 body를 검증한다. 원문 오류/HTML을 표시하지 않는 단언도 포함한다.
+- 첫 전체 검증의 E2E88은 WebKit 데스크톱에서 B 선택이 모두 false였다. 별도 격리 진단에서 영상 응답을 pointerdown 뒤까지 보류한 뒤 metadata를 로드하면 선택지 y가 583.72→738.03으로 이동하고 pointerup은 A 영상에 도착했다. 원본의 button 없는 click과 같은 형태이며, 원본 시각의 pointerdown 자료는 없어 그 실행의 상세 순서를 소급 확정하지 않는다. 시험은 세 영상의 metadata 사건을 모두 본 뒤 B를 고르고, 재생 전 B 선택 반영과 기존 재생 후 B 유지 단언을 함께 검사한다. 원래 15초·20초 상한·양 엔진·양 화면·popup·sandbox·Range 검사를 유지한다. 서비스 워커 차단/응답 gate는 원인 진단에만 썼다.
+- 보조 정리·선택 파일의 fallback은 그대로이며 debug 관측만 더한다. 각 호출과 같은 모양의 시험을 늘리지 않고, 위 공통 소유 경계와 기존 host·agent·설치·웹 회귀를 전체 ci-local로 검사한다. Windows·Linux 전체 cross clippy와 Windows의 공통/설치 오류 시험도 실행한다. 고정 sleep·실패 재시도·시한 변경은 없다.
+- 오류 전달·민감 자료를 다루는 방식과 라이선스 참고는 [하위 오류 진단](error-diagnostics.md)에 적었다.
+
 ## E2E93 재개 조합의 독립 실행과 실패 phase(t-0896)
 
 - [CI 39923503523](https://github.com/cLazyZombie/aaa/actions/runs/39923503523)의 원본은 Claude 네 조합을 한 단계로 실행하다 합계 120초에 끝났다. artifact에는 e2e.log·실행 시간표만 있고 `resume-*.json`·host/agent 로그는 없다. 기존 `resumed` 안의 catch는 바깥 단계 타이머가 먼저 실패하면 실행되지 않는다. 당시 `--resume`와 `--continue` 중 어느 mode였는지는 원문으로 확정할 수 없다.

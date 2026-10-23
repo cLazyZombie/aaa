@@ -10,10 +10,10 @@ use windows_sys::Win32::{
 };
 const TARGET: &str = "HKCU/Environment/Path";
 fn required() -> Fault {
-    Fault { code: "path_registry_transaction_unavailable", exit: 3 }
+    Fault { code: "path_registry_transaction_unavailable", exit: 3, cause: None }
 }
 fn error(code: u32) -> Fault {
-    if matches!(
+    let mapped = if matches!(
         code,
         ERROR_TRANSACTIONAL_CONFLICT
             | ERROR_TRANSACTION_ALREADY_ABORTED
@@ -22,10 +22,11 @@ fn error(code: u32) -> Fault {
     ) {
         Fault::conflict()
     } else if code == ERROR_ACCESS_DENIED {
-        Fault { code: "path_registry_permission_required", exit: 3 }
+        Fault { code: "path_registry_permission_required", exit: 3, cause: None }
     } else {
         required()
-    }
+    };
+    aaa_common::diagnostic::context(std::io::Error::from_raw_os_error(code as i32), mapped)
 }
 fn w(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
@@ -229,7 +230,10 @@ fn directory(plan: &InstallPlan) -> Result<Vec<u16>> {
     Ok(Path::new(&plan.context.bin_path).parent().ok_or_else(Fault::conflict)?.as_os_str().encode_wide().collect())
 }
 fn value_hash(value: &Option<Value>) -> Result<String> {
-    Ok(hash(&aaa_common::install_crypto::canonical(value).map_err(|_| Fault::conflict())?))
+    Ok(hash(
+        &aaa_common::install_crypto::canonical(value)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    ))
 }
 pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> {
     let before = Registry::user_environment()?.read()?;
@@ -277,9 +281,14 @@ pub(super) fn apply(plan: &InstallPlan, lease: &authorization::Lease) -> Result<
         after: after.clone(),
         applied: false,
     };
-    if path.symlink_metadata().is_ok() {
+    if path
+        .symlink_metadata()
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
+    {
         let old: Record = serde_json::from_slice(&private::read(&path, 1024 * 1024).map_err(Fault::io)?)
-            .map_err(|_| Fault::conflict())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if old.schema != 1
             || old.installation_id != record.installation_id
             || old.plan_sha256 != record.plan_sha256
@@ -291,7 +300,12 @@ pub(super) fn apply(plan: &InstallPlan, lease: &authorization::Lease) -> Result<
         }
     }
     lease.valid_at(aaa_common::util::now_ms())?;
-    private::write(&path, &serde_json::to_vec(&record).map_err(|_| Fault::conflict())?).map_err(Fault::io)?;
+    private::write(
+        &path,
+        &serde_json::to_vec(&record)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    )
+    .map_err(Fault::io)?;
     let pending = registry.prepare(&before, &after)?;
     lease.valid_at(aaa_common::util::now_ms())?;
     pending.commit()?;
@@ -299,7 +313,12 @@ pub(super) fn apply(plan: &InstallPlan, lease: &authorization::Lease) -> Result<
         return Err(Fault::conflict());
     }
     record.applied = true;
-    private::write(&path, &serde_json::to_vec(&record).map_err(|_| Fault::conflict())?).map_err(Fault::io)?;
+    private::write(
+        &path,
+        &serde_json::to_vec(&record)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    )
+    .map_err(Fault::io)?;
     Ok(true)
 }
 pub(super) fn observe(plan: &InstallPlan, result: &mut InstallResult) -> Result<()> {

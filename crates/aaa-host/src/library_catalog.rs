@@ -11,8 +11,15 @@ use crate::{Host, orch::internal};
 fn modified_ms(path: &Path) -> u64 {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .map_or(0, |t| t.as_millis() as u64)
 }
 
@@ -56,12 +63,23 @@ impl Host {
             let dir = self.project_dir(&p)?;
             let catalog = self.db.library_catalog(&p).map_err(internal)?;
             // 보관을 읽지 못하면 예전 protected_copy처럼 모두 보호한다.
-            let protected = self.db.archive_list(&p).ok().map(|rows| referenced_names(&rows));
+            let protected = self
+                .db
+                .archive_list(&p)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .map(|rows| referenced_names(&rows));
             let resolved: HashSet<_> = catalog
                 .threads
                 .iter()
                 .filter_map(|(id, json)| {
-                    let rec: crate::orch::ThreadRec = serde_json::from_str(json).ok()?;
+                    let rec: crate::orch::ThreadRec = serde_json::from_str(json)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?;
                     (aaa_proto::valid_thread(id) && rec.status == ThreadStatus::Resolved).then_some(id.as_str())
                 })
                 .collect();

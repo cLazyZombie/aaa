@@ -148,7 +148,11 @@ fn command_files(root: &Path, source: CommandSource) -> Vec<SlashCommand> {
     let mut out = Vec::new();
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         let mut entries: Vec<_> = entries.flatten().map(|e| e.path()).collect();
         entries.sort();
         for path in entries {
@@ -164,7 +168,11 @@ fn command_files(root: &Path, source: CommandSource) -> Vec<SlashCommand> {
             if path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
             }
-            let Ok(rel) = path.with_extension("").strip_prefix(root).map(Path::to_path_buf) else { continue };
+            let Ok(rel) = path.with_extension("").strip_prefix(root).map(Path::to_path_buf).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             let name = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(":");
             let head = front(&path);
             out.push(SlashCommand {
@@ -184,7 +192,11 @@ fn command_files(root: &Path, source: CommandSource) -> Vec<SlashCommand> {
 
 /// `skills/<폴더>/SKILL.md`: 이름은 frontmatter `name`, 없으면 폴더 이름. `user-invocable: false`는 사람이 부르는 것이 아니다
 fn skills(root: &Path, source: CommandSource, trigger: &str) -> Vec<SlashCommand> {
-    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(root)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return Vec::new();
+    };
     let mut dirs: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.join("SKILL.md").is_file()).collect();
     dirs.sort();
     dirs.truncate(MAX_FILES);
@@ -219,7 +231,11 @@ struct Head {
 
 /// 파일 앞부분의 frontmatter(`name`·`description`·`argument-hint`·`user-invocable`)와, 설명이 없으면 본문 첫 줄
 fn front(path: &Path) -> Head {
-    let Ok(bytes) = read_head(path) else { return Head::default() };
+    let Ok(bytes) = read_head(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return Head::default();
+    };
     let text = String::from_utf8_lossy(&bytes);
     let mut head = Head::default();
     let mut lines = text.lines().peekable();

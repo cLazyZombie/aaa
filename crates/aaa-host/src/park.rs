@@ -199,7 +199,10 @@ impl Host {
         let text = request_text(project, id, request.note.as_deref());
         let rec = self.update_rec(project, id, |r| r.park = Some(request.clone()))?;
         if let Err(e) = self.thread_message(project, id, text, MessageMode::Queue, actor).await {
-            let _ = self.update_rec(project, id, |r| r.park = None);
+            aaa_common::diagnostic::ignored(
+                self.update_rec(project, id, |r| r.park = None),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
             return Err(ErrorBody {
                 message: format!(
                     "정리 부탁을 보내지 못해 보류하지 않았다: {}. 응답이 없으면 `aaa thread park {project} {id} --now`",
@@ -267,14 +270,26 @@ impl Host {
             r.group_changed_ms = Some(now);
             r.merged_seen_ms = None;
         })?;
-        let pane_rx = rec.pane.as_deref().and_then(|p| self.pane_events(p).ok());
+        let pane_rx = rec.pane.as_deref().and_then(|p| {
+            self.pane_events(p)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        });
         let mut forgot = false;
         if let Some(pane) = rec.pane.as_ref()
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
-            let _ = self.kill_session(&conn, pane).await;
+            aaa_common::diagnostic::ignored(
+                self.kill_session(&conn, pane).await,
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
-        let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
+        aaa_common::diagnostic::ignored(
+            conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await,
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
         if let Some(pane) = &rec.pane {
             let closed = match pane_rx {
                 None => Ok(false),
@@ -286,7 +301,10 @@ impl Host {
                     Err(e) => Err(e),
                 },
             };
-            forgot = closed.is_ok();
+            forgot = closed
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok();
             notes.push(match closed {
                 Ok(true) => "pane을 닫았다".into(),
                 Ok(false) => "pane은 이미 닫혔다".into(),
@@ -348,7 +366,9 @@ impl Host {
                 return;
             }
         };
-        park.uncommitted = crate::diff::diff_count(&view).ok();
+        park.uncommitted = crate::diff::diff_count(&view)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         if view.base_sha.is_empty() {
             park.git_unknown = Some("커밋이 없다".into());
             return;
@@ -373,19 +393,37 @@ impl Host {
 
     /// ticker: 맡긴 정리가 끝났거나 세션이 끝난 thread를 닫는다
     pub(crate) async fn park_pass(self: &Arc<Self>, project: &str) {
-        let Ok(dir) = self.project_dir(project) else { return };
+        let Ok(dir) = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let pending: Vec<ThreadRec> = self
             .db
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r.status == ThreadStatus::Open && r.park.as_ref().is_some_and(|p| p.parked_at_ms.is_none()))
-            .filter(|r| self.live_conn(&r.machine_id).is_ok())
+            .filter(|r| {
+                self.live_conn(&r.machine_id)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+            })
             .collect();
         for r in pending {
             let (live, agent) = self.thread_live(&r);
-            let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", r.id))).unwrap_or_default();
+            let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", r.id)))
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+                .unwrap_or_default();
             if (!live || ready_to_close(&r, &report, agent.map(|a| a.activity)))
                 && let Err(e) = self.park_close(project, &r.id, None, "ticker").await
             {
@@ -463,14 +501,17 @@ impl Host {
             Ok(v) => v,
             Err(e) => {
                 // 기동하지 못했다: 보류로 되돌린다(옮긴 자리도). 기동 결과를 모르면(시작 중) 그대로 둔다
-                let _ = self.update_rec(project, id, |r| {
-                    if matches!(r.status, ThreadStatus::Failed | ThreadStatus::Parked) {
-                        let mut back = before.clone();
-                        back.error = Some(format!("이어 하기 실패: {}", e.message));
-                        back.updated_at_ms = r.updated_at_ms;
-                        *r = back;
-                    }
-                });
+                aaa_common::diagnostic::ignored(
+                    self.update_rec(project, id, |r| {
+                        if matches!(r.status, ThreadStatus::Failed | ThreadStatus::Parked) {
+                            let mut back = before.clone();
+                            back.error = Some(format!("이어 하기 실패: {}", e.message));
+                            back.updated_at_ms = r.updated_at_ms;
+                            *r = back;
+                        }
+                    }),
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
                 self.tick_wake.notify_one();
                 return Err(e);
             }
@@ -523,7 +564,15 @@ impl Host {
         let here: Vec<String> = settings
             .repos
             .iter()
-            .filter(|x| self.resolve_machine(x.machine.as_deref()).ok().as_deref() == Some(target))
+            .filter(|x| {
+                self.resolve_machine(x.machine.as_deref())
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_deref()
+                    == Some(target)
+            })
             .map(|x| x.path.clone())
             .collect();
         if let Some(p) = repo {
@@ -570,7 +619,11 @@ impl Host {
         let options = machines
             .into_iter()
             .map(|(mid, name)| {
-                let connected = self.live_conn(&mid).is_ok();
+                let connected = self
+                    .live_conn(&mid)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok();
                 let way = self.unpark_way(r, &park, &mid, None);
                 let (conversation, repo, mut blocked) = match way {
                     Ok(Way::Same { resume }) => (if resume { "resume" } else { "new" }, r.repo.clone(), None),
@@ -638,8 +691,15 @@ impl Host {
         }
         let report = self
             .project_dir(&r.project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
-            .and_then(|d| std::fs::read_to_string(d.join("threads").join(format!("{}.md", r.id))).ok())
+            .and_then(|d| {
+                std::fs::read_to_string(d.join("threads").join(format!("{}.md", r.id)))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .unwrap_or_default();
         if report.trim().is_empty() {
             out.push_str("\n(마지막 보고가 없다)\n");

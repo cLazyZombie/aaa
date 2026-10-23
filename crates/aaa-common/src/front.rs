@@ -78,7 +78,10 @@ impl FrontClient {
         let tx = spawn_writer(w, MAX_FRAME);
         let rx = Inbound::Local(FrameRx::new(r, MAX_FRAME));
         // aaa 세션 안에서 실행했으면 그 세션을 알린다(사후 평가자 세션은 보기만 한다, §8.13)
-        let session = std::env::var("AAA_SESSION_ID").ok().filter(|s| !s.is_empty());
+        let session = std::env::var("AAA_SESSION_ID")
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|s| !s.is_empty());
         Self::hello(tx, rx, client, session).await
     }
 

@@ -93,7 +93,13 @@ pub fn utc_iso(ms: u64) -> String {
 pub fn parse_iso(text: &str) -> Option<u64> {
     let t = text.trim();
     let num = |s: &str| -> Option<i64> {
-        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) { s.parse().ok() } else { None }
+        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
+            s.parse()
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        } else {
+            None
+        }
     };
     let (date, time) = match t.split_once(['T', 't', ' ']) {
         Some((d, rest)) => (d, Some(rest)),
@@ -138,7 +144,9 @@ pub fn parse_iso(text: &str) -> Option<u64> {
         let frac_ms = if frac.is_empty() { 0 } else { num(&format!("{frac:0<3}")[..3])? };
         ms += ((h * 60 + mi) * 60 + s) * 1000 + frac_ms - offset;
     }
-    u64::try_from(ms).ok()
+    u64::try_from(ms)
+        .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
 }
 
 /// 파일 이름에 쓰는 UTC 시각(`20261016T120500Z`)
@@ -199,7 +207,9 @@ pub fn boot_id() -> String {
 
 #[cfg(target_os = "macos")]
 pub fn sysctl_string(name: &str) -> Option<String> {
-    let cname = std::ffi::CString::new(name).ok()?;
+    let cname = std::ffi::CString::new(name)
+        .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let mut len: libc::size_t = 0;
     unsafe {
         if libc::sysctlbyname(cname.as_ptr(), std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) != 0 {
@@ -213,7 +223,9 @@ pub fn sysctl_string(name: &str) -> Option<String> {
         while buf.last() == Some(&0) {
             buf.pop();
         }
-        String::from_utf8(buf).ok()
+        String::from_utf8(buf)
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
 }
 

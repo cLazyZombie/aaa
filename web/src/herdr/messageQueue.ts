@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /** Held messages are explicitly sent, never dispatched by reconnects or status changes.
  * aaa의 예외(plan §8.309): 대화 정리 중에 보낸 글(`after: "compaction"`)은 정리가 끝나면 입력창이 차례대로 보낸다. 보내다 실패하면
  * 표지를 떼어 보통 붙잡은 글이 된다(다시 저절로 보내지 않는다). 보관함은 같은 브라우저의 탭이 함께 보므로 글을 넣은 탭(`by`)만
@@ -57,14 +58,14 @@ export class MessageQueueStore {
       this.queues.delete(owner);
       this.read(owner);
       for (const listener of this.listeners) listener();
-    } catch { /* keep in-memory messages when storage cannot be read */ }
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "messageQueue.ts:61"); /* keep in-memory messages when storage cannot be read */ }
   }
 
   read(owner: string): HeldMessage[] {
     const cached = this.queues.get(owner);
     if (cached) return cached;
     let raw: string | null = null;
-    try { raw = this.storage().getItem(`herdr-web-ui:queue:${owner}`); } catch { /* private mode */ }
+    try { raw = this.storage().getItem(`herdr-web-ui:queue:${owner}`); } catch (ignoredError) { logIgnoredFailure(ignoredError, "messageQueue.ts:68"); /* private mode */ }
     let messages: HeldMessage[] = raw ? [{ id: newId(), text: raw }] : [];
     try {
       const data = JSON.parse(raw ?? "null");
@@ -79,7 +80,7 @@ export class MessageQueueStore {
           ids.add(value.id); return true;
         });
       }
-    } catch { /* previous versions stored a single plain-text message */ }
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "messageQueue.ts:83"); /* previous versions stored a single plain-text message */ }
     this.saved.set(owner, raw);
     this.queues.set(owner, messages);
     return messages;
@@ -94,7 +95,7 @@ export class MessageQueueStore {
       else this.storage().removeItem(key);
       this.saved.set(owner, raw);
       this.unsaved.delete(owner);
-    } catch { this.unsaved.add(owner); }
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "messageQueue.ts:98"); this.unsaved.add(owner); }
     for (const listener of this.listeners) listener();
   }
 

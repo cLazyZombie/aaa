@@ -2,22 +2,40 @@
 use super::*;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct ExactError {
     pub code: &'static str,
     pub conflict: bool,
+    pub cause: Option<aaa_common::diagnostic::Cause>,
 }
+// 진단 위치·파싱 행은 같은 오류 분류의 부가 자료다. 기존 code/conflict 비교 계약을 유지한다.
+impl PartialEq for ExactError {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code && self.conflict == other.conflict
+    }
+}
+impl Eq for ExactError {}
 impl std::fmt::Display for ExactError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.code)
+        f.write_str(self.code)?;
+        if let Some(cause) = self.cause {
+            write!(f, ": {cause}")?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for ExactError {}
+impl aaa_common::diagnostic::WithCause for ExactError {
+    fn with_cause(mut self, cause: aaa_common::diagnostic::Cause) -> Self {
+        self.cause = Some(cause);
+        self
+    }
+}
 fn unknown() -> ExactError {
-    ExactError { code: "tailscale_status_unknown", conflict: false }
+    ExactError { code: "tailscale_status_unknown", conflict: false, cause: None }
 }
 fn conflict() -> ExactError {
-    ExactError { code: "serve_port_conflict", conflict: true }
+    ExactError { code: "serve_port_conflict", conflict: true, cause: None }
 }
 #[derive(Clone)]
 pub struct Exact {
@@ -28,7 +46,9 @@ pub struct Exact {
     config: Value,
 }
 fn digest(value: &impl serde::Serialize) -> std::result::Result<String, ExactError> {
-    Ok(hex::encode(Sha256::digest(aaa_common::install_crypto::canonical(value).map_err(|_| unknown())?)))
+    Ok(hex::encode(Sha256::digest(
+        aaa_common::install_crypto::canonical(value).map_err(|e| aaa_common::diagnostic::context(e, unknown()))?,
+    )))
 }
 fn map<'a>(value: &'a Value, key: &str) -> std::result::Result<Option<&'a serde_json::Map<String, Value>>, ExactError> {
     match value.get(key) {
@@ -51,10 +71,11 @@ pub fn exact(out: Option<&TsOutput>, target_port: u16, port: u16) -> std::result
     if port == 0 || target_port == 0 {
         return Err(conflict());
     }
-    let out = out.ok_or(ExactError { code: "tailscale_missing", conflict: false })?;
-    let status: StatusJson = serde_json::from_str(out.status.as_deref().ok_or_else(unknown)?).map_err(|_| unknown())?;
+    let out = out.ok_or(ExactError { code: "tailscale_missing", conflict: false, cause: None })?;
+    let status: StatusJson = serde_json::from_str(out.status.as_deref().ok_or_else(unknown)?)
+        .map_err(|e| aaa_common::diagnostic::context(e, unknown()))?;
     if status.backend_state.as_deref() != Some("Running") {
-        return Err(ExactError { code: "tailscale_login_required", conflict: false });
+        return Err(ExactError { code: "tailscale_login_required", conflict: false, cause: None });
     }
     let dns = status.me.and_then(|node| node.dns_name).ok_or_else(unknown)?.trim_end_matches('.').to_ascii_lowercase();
     if dns.is_empty()
@@ -66,7 +87,8 @@ pub fn exact(out: Option<&TsOutput>, target_port: u16, port: u16) -> std::result
     {
         return Err(unknown());
     }
-    let mut config: Value = serde_json::from_str(out.serve.as_deref().ok_or_else(unknown)?).map_err(|_| unknown())?;
+    let mut config: Value = serde_json::from_str(out.serve.as_deref().ok_or_else(unknown)?)
+        .map_err(|e| aaa_common::diagnostic::context(e, unknown()))?;
     // 성공한 status의 JSON null은 미설정이다. 깨진 JSON은 미설정이 아니다.
     if config.is_null() {
         config = json!({});

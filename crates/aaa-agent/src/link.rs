@@ -228,7 +228,13 @@ async fn session_state_mode(
             loop {
                 tokio::time::sleep(PING_EVERY).await;
                 seq += 1;
-                if tx.json(&LinkMsg::Ping { seq }).await.is_err() {
+                if tx
+                    .json(&LinkMsg::Ping { seq })
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -279,7 +285,10 @@ async fn session_state_mode(
             };
             deadline = tokio::time::Instant::now() + DEAD_AFTER;
             match next {
-                Err(_) => bail!("{}초 동안 host 응답이 없다", DEAD_AFTER.as_secs()),
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                    bail!("{}초 동안 host 응답이 없다", DEAD_AFTER.as_secs())
+                }
                 Ok(Err(e)) => return Err(e.into()),
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(_)))) => {}
@@ -291,7 +300,10 @@ async fn session_state_mode(
                         // 느린 상대의 답 전송이 EOF·응답 상한 읽기를 막지 않게 한다.
                         let tx = tx.clone();
                         replies.spawn(async move {
-                            let _ = tx.json(&LinkMsg::Pong { seq }).await;
+                            aaa_common::diagnostic::ignored(
+                                tx.json(&LinkMsg::Pong { seq }).await,
+                                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                            );
                         });
                     }
                     Ok(LinkMsg::Pong { .. }) => {}
@@ -659,7 +671,12 @@ mod post_tests {
                 .await
                 .unwrap();
             let (result, backoff) = tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap();
-            assert!(result.is_err());
+            assert!(
+                result
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+            );
             assert!(!*ready.borrow());
             assert_eq!(backoff, if accepted { Duration::from_millis(250) } else { Duration::from_secs(30) });
             drop(tx);
@@ -961,7 +978,15 @@ mod terminal_compression_tests {
             tx.json(&LinkMsg::Reject(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::Forbidden, "fixture closed")))
                 .await
                 .unwrap();
-            assert!(tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_secs(3), running)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+            );
             agent.set_host(None);
         }
         drop(agent);

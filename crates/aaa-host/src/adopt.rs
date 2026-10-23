@@ -173,9 +173,11 @@ impl Host {
             r.branch = a.branch.clone();
             r.status = ThreadStatus::Open;
         })?;
-        let _ = conn
-            .request(AgentRequest::ThreadWatch { thread: format!("{project}/{id}"), work_dir: a.work_dir.clone() })
-            .await;
+        aaa_common::diagnostic::ignored(
+            conn.request(AgentRequest::ThreadWatch { thread: format!("{project}/{id}"), work_dir: a.work_dir.clone() })
+                .await,
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
         self.spawn_brief(project, &id);
         Ok(self.thread_view(&rec))
     }

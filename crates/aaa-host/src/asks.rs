@@ -73,12 +73,12 @@ fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
     for part in Path::new(path).components() {
         let Component::Normal(part) = part else { return Err(missing()) };
         at.push(part);
-        let m = std::fs::symlink_metadata(&at).map_err(|_| missing())?;
+        let m = std::fs::symlink_metadata(&at).map_err(|e| aaa_common::diagnostic::context(e, missing()))?;
         if m.file_type().is_symlink() {
             return Err(missing());
         }
     }
-    if !std::fs::symlink_metadata(&at).map_err(|_| missing())?.is_file() {
+    if !std::fs::symlink_metadata(&at).map_err(|e| aaa_common::diagnostic::context(e, missing()))?.is_file() {
         return Err(missing());
     }
     Ok(at)
@@ -87,7 +87,13 @@ fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
 impl Host {
     pub(crate) fn request_question_thread(&self, item: &InboxItem) -> Option<String> {
         let id = crate::notify::request_question(item)?;
-        match self.db.question_target(Some(&item.project), &id).ok().flatten() {
+        match self
+            .db
+            .question_target(Some(&item.project), &id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+        {
             Some(t) if t.kind == "thread" => Some(t.subject),
             Some(_) => None,
             None => Some(id),
@@ -124,12 +130,20 @@ impl Host {
     }
     /// 같은 프로젝트의 열린 질문 카드가 정본이다. post 처리만으로 질문의 답을 만들지 않는다.
     pub(crate) fn request_has_open_question(&self, item: &InboxItem) -> bool {
-        self.request_question_thread(item).and_then(|id| self.load(&item.project, &id).ok()).is_some_and(|r| {
-            r.status != aaa_proto::ThreadStatus::Resolved
-                && r.report_hash.is_some()
-                && !r.questions.is_empty()
-                && r.question_answer.is_none()
-        })
+        self.request_question_thread(item)
+            .and_then(|id| {
+                self.load(&item.project, &id)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .is_some_and(|r| {
+                r.status != aaa_proto::ThreadStatus::Resolved
+                    && r.report_hash.is_some()
+                    && !r.questions.is_empty()
+                    && r.question_answer.is_none()
+            })
     }
 
     /// 답을 보내기 전에 연결된 post를 잡는다. 전송을 기다리는 사이 새 질문에 온 post까지 끝내지 않는다.
@@ -167,7 +181,11 @@ impl Host {
             .filter(|i| {
                 let Some(thread) = self.request_question_thread(i) else { return false };
                 let mut history = done.iter().filter(|r| r.kind == AskKind::Question && r.subject == thread);
-                let Ok(rec) = self.load(project, &thread) else { return history.next().is_some() };
+                let Ok(rec) = self.load(project, &thread).inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                }) else {
+                    return history.next().is_some();
+                };
                 if rec.questions.is_empty() {
                     // 이미 닫힌 카드에 늦게 온 알림도 새 판단 요청으로 만들지 않는다.
                     rec.report_changed_ms.is_some_and(|at| at >= i.created_at_ms) || history.next().is_some()
@@ -279,8 +297,14 @@ impl Host {
         if self.request_has_open_question(i) {
             return Err(err(ErrorCode::BadRequest, "연결된 질문 카드에서 답한다. 답하면 이 post도 함께 처리된다"));
         }
-        let title =
-            self.db.post_of_item(project, item).ok().flatten().map(|p| p.input.title).unwrap_or(i.summary.clone());
+        let title = self
+            .db
+            .post_of_item(project, item)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .map(|p| p.input.title)
+            .unwrap_or(i.summary.clone());
         let by = self.answered_by(actor);
         let n = self.inbox_finish_with_notice(project, vec![i.clone()], &by, true, |_| {
             Some(format!("사용자가 확인 필요 post를 답함으로 표시했다({by}): 「{title}」. 답이 채팅에 없으면 다시 묻지 말고 처리된 것으로 본다"))
@@ -338,7 +362,10 @@ impl Host {
         let dir = self.project_dir(project)?;
         let root = dir.join("asks").join(&id);
         if let Err(e) = self.snapshot_request(&dir, &root, &post.input.body) {
-            let _ = std::fs::remove_dir_all(&root);
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&root),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
             return Err(internal(e));
         }
         let record = AskRecord {
@@ -387,7 +414,10 @@ impl Host {
         };
         let saved = self.db.request_answer(i, &record, &notice).map_err(internal);
         if !matches!(saved, Ok(true)) {
-            let _ = std::fs::remove_dir_all(&root);
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&root),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
             return saved.and_then(|_| Err(err(ErrorCode::BadRequest, "이미 답함")));
         }
         // DB 종료 뒤 파일 이동과 상태 사건도 기존 inbox 경로를 따른다. 답 기록은 위에서 이미 남겼다.
@@ -407,7 +437,11 @@ impl Host {
         let mut total = 0u64;
         for rel in library_refs(body) {
             let path = format!("library/{rel}");
-            let Ok(from) = file_under(dir, &path) else { continue };
+            let Ok(from) = file_under(dir, &path).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             let size = std::fs::metadata(&from)?.len();
             if total + size > SNAPSHOT_MAX {
                 continue;
@@ -433,7 +467,10 @@ impl Host {
         }
         let gone = self.db.ask_delete(project, (!all).then_some(ids)).map_err(internal)?;
         for id in &gone {
-            let _ = std::fs::remove_dir_all(dir.join("asks").join(id));
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(dir.join("asks").join(id)),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
         self.db.audit(actor, "ask_forget", &format!("{project} {}", gone.len()));
         if !gone.is_empty() {
@@ -445,10 +482,19 @@ impl Host {
     /// 답한 지 오래된 기록과 그 사본을 지운다(ticker)
     pub(crate) fn ask_prune_pass(&self, now_ms: u64) {
         let keep = u64::from(ASK_KEEP_DAYS) * 86_400_000;
-        let Ok(gone) = self.db.ask_prune(now_ms.saturating_sub(keep)) else { return };
+        let Ok(gone) = self
+            .db
+            .ask_prune(now_ms.saturating_sub(keep))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         for (project, id) in &gone {
             if let Ok(dir) = self.project_dir(project) {
-                let _ = std::fs::remove_dir_all(dir.join("asks").join(id));
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_dir_all(dir.join("asks").join(id)),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
             }
         }
         if !gone.is_empty() {
@@ -466,7 +512,12 @@ impl Host {
     /// 질문에 답했다: 그때의 질문·답과 보고 글·본문이 가리킨 library 파일을 사본으로 남긴다(thread_answer가 보낸 뒤)
     pub(crate) fn record_answer(&self, rec: &ThreadRec, answer: &QuestionAnswerView) {
         let project = &rec.project;
-        let Ok(dir) = self.project_dir(project) else { return };
+        let Ok(dir) = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let id = aaa_common::util::new_id();
         let root = dir.join("asks").join(&id);
         if let Err(e) = self.snapshot_question(&dir, rec, &root) {
@@ -524,7 +575,11 @@ impl Host {
         }
         let mut total = 0u64;
         for rel in refs {
-            let Ok((from, size)) = crate::library::local_file(dir, &rec.id, &rel) else { continue };
+            let Ok((from, size)) = crate::library::local_file(dir, &rec.id, &rel).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if total + size > SNAPSHOT_MAX {
                 tracing::warn!("답한 질문 사본 상한을 넘어 {rel}를 두지 않았다");
                 continue;
@@ -543,7 +598,12 @@ impl Host {
         if self.request_has_open_question(item) {
             return;
         }
-        let post = self.db.post_of_item(&item.project, &item.id).ok().flatten();
+        let post = self
+            .db
+            .post_of_item(&item.project, &item.id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten();
         let body = post.as_ref().map(|p| p.input.body.clone()).unwrap_or_else(|| item.summary.clone());
         let items = post
             .as_ref()
@@ -555,14 +615,26 @@ impl Host {
                     &p.body_sha256,
                     &aaa_proto::report_questions(&body),
                 )
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
             })
             .unwrap_or_default();
         let id = aaa_common::util::new_id();
         let files_base = if !items.is_empty() {
             self.project_dir(&item.project)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
-                .and_then(|dir| self.snapshot_request(&dir, &dir.join("asks").join(&id), &body).ok())
+                .and_then(|dir| {
+                    self.snapshot_request(&dir, &dir.join("asks").join(&id), &body)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .map(|_| record_files_base(&item.project, &id))
         } else {
             None
@@ -573,7 +645,13 @@ impl Host {
                 report_id: None,
                 question_id: post
                     .as_ref()
-                    .and_then(|p| self.post_question_ids(item, p).ok())
+                    .and_then(|p| {
+                        self.post_question_ids(item, p)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
                     .and_then(|ids| ids.into_iter().next()),
                 id,
                 kind: AskKind::Request,
@@ -635,7 +713,9 @@ impl Host {
         }
         if path == "report.md" {
             let p = dir.join("threads").join(format!("{thread}.md"));
-            let m = std::fs::symlink_metadata(&p).map_err(|_| err(ErrorCode::NotFound, "보고 사본이 없다"))?;
+            let m = std::fs::symlink_metadata(&p).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "보고 사본이 없다"))
+            })?;
             if !m.is_file() {
                 return Err(err(ErrorCode::NotFound, "보고 사본이 없다"));
             }

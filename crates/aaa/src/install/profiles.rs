@@ -3,7 +3,8 @@ use aaa_proto::install::InstallResult;
 
 pub fn names(text: &str) -> Result<Vec<String>, Box<InstallResult>> {
     let invalid = || super::error("invalid_profile", 2);
-    let doc: toml_edit::DocumentMut = text.parse().map_err(|_| invalid())?;
+    let doc: toml_edit::DocumentMut =
+        text.parse().map_err(|source_error| aaa_common::diagnostic::context(source_error, invalid()))?;
     if doc.get("schema").and_then(|v| v.as_integer()) != Some(1)
         || doc.iter().any(|(key, _)| !matches!(key, "schema" | "profiles"))
     {
@@ -21,10 +22,12 @@ pub fn names(text: &str) -> Result<Vec<String>, Box<InstallResult>> {
             return Err(invalid());
         }
     }
-    let host: aaa_config::HostConfig = toml_edit::de::from_str(text).map_err(|_| invalid())?;
+    let host: aaa_config::HostConfig = toml_edit::de::from_str(text)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, invalid()))?;
     let mut names = vec![];
     for (name, p) in host.profiles {
-        aaa_config::profile_edit::validate_profile(&name, &p).map_err(|_| invalid())?;
+        aaa_config::profile_edit::validate_profile(&name, &p)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, invalid()))?;
         if !matches!(p.harness.as_str(), "claude" | "codex")
             || !p.command.is_empty()
             || p.env.keys().any(|k| !matches!(k.as_str(), "LANG" | "LC_ALL" | "LC_CTYPE" | "TZ" | "TERM"))

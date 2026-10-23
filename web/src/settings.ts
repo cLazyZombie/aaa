@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 이 기기의 설정(herdr-web-ui lib/settings.ts). 설정 창(SettingsDialog.tsx)과 키 막대 ⌨ 단추가 바꾼다.
 // 참고처럼 「shared」 범위 값(구독 사용량 설정)은 host에 두어 기기끼리 나눈다(preferencesSync.ts, plan §8.79).
 // 이 파일은 그 값의 이 기기 사본도 localStorage에 둔다. 나머지는 이 기기 것이다(plan §8.45).
@@ -19,7 +20,7 @@ function read(): TerminalInputMode {
   try {
     const v = localStorage.getItem(KEY);
     return v === "line" || v === "direct" ? v : "auto";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:23");
     return "auto";
   }
 }
@@ -62,7 +63,7 @@ function readFontSize(): number {
     const raw = localStorage.getItem(FONT_KEY);
     const v = raw === null ? NaN : Number(raw);
     return Number.isFinite(v) ? clampFont(v) : DEFAULT_FONT_SIZE;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:66");
     return DEFAULT_FONT_SIZE;
   }
 }
@@ -74,7 +75,7 @@ export function setTerminalFontSize(size: number) {
   try {
     if (fontSize === DEFAULT_FONT_SIZE) localStorage.removeItem(FONT_KEY);
     else localStorage.setItem(FONT_KEY, String(fontSize));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:78");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -98,7 +99,7 @@ function readWheelSpeed(): number {
     const raw = localStorage.getItem(WHEEL_KEY);
     const v = raw === null ? NaN : Number(raw);
     return Number.isFinite(v) ? clampWheel(v) : TERMINAL_WHEEL_SPEED_MIN;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:102");
     return TERMINAL_WHEEL_SPEED_MIN;
   }
 }
@@ -114,7 +115,7 @@ export function setTerminalWheelSpeed(speed: number) {
   try {
     if (wheelSpeed === TERMINAL_WHEEL_SPEED_MIN) localStorage.removeItem(WHEEL_KEY);
     else localStorage.setItem(WHEEL_KEY, String(wheelSpeed));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:118");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -131,7 +132,7 @@ function readKeyBarItems(): KeyBarItem[] {
   try {
     const raw = localStorage.getItem(KEY_BAR_KEY);
     return sanitizeKeyBarItems(raw === null ? undefined : JSON.parse(raw));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:135");
     return DEFAULT_KEY_BAR_ITEMS;
   }
 }
@@ -145,7 +146,7 @@ export function setKeyBarItems(items: readonly KeyBarItem[]) {
   try {
     if (same(keyBarItems, DEFAULT_KEY_BAR_ITEMS)) localStorage.removeItem(KEY_BAR_KEY);
     else localStorage.setItem(KEY_BAR_KEY, JSON.stringify(keyBarItems));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:149");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -166,7 +167,7 @@ const MONO_FONT_FAMILY_KEY = "aaa:mono-font-family";
 function readFontFamily(key = FONT_FAMILY_KEY): string {
   try {
     return sanitizeFontFamily(localStorage.getItem(key));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:170");
     return "";
   }
 }
@@ -178,7 +179,7 @@ export function setTerminalFontFamily(family: string) {
   try {
     if (fontFamily === "") localStorage.removeItem(FONT_FAMILY_KEY);
     else localStorage.setItem(FONT_FAMILY_KEY, fontFamily);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:182");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -192,7 +193,7 @@ export function useTerminalFontFamily(): string {
 const COLOR_THEME_KEY = "aaa:terminal-color-theme";
 function readColorTheme(): TerminalColorTheme {
   try { return sanitizeTerminalColorTheme(localStorage.getItem(COLOR_THEME_KEY)); }
-  catch { return "app"; }
+  catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:196"); return "app"; }
 }
 let colorTheme = readColorTheme();
 export const getTerminalColorTheme = (): TerminalColorTheme => colorTheme;
@@ -201,7 +202,7 @@ export function setTerminalColorTheme(value: TerminalColorTheme) {
   try {
     if (colorTheme === "app") localStorage.removeItem(COLOR_THEME_KEY);
     else localStorage.setItem(COLOR_THEME_KEY, colorTheme);
-  } catch { /* 저장이 막혀도 이번 창의 선택은 쓴다. */ }
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:205"); /* 저장이 막혀도 이번 창의 선택은 쓴다. */ }
   listeners.forEach((f) => f());
 }
 export function useTerminalColorTheme(): TerminalColorTheme {
@@ -225,7 +226,7 @@ function saveDeviceFont(key: string, family: string) {
   try {
     if (family === "") localStorage.removeItem(key);
     else localStorage.setItem(key, family);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:229");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   initDeviceFonts();
@@ -256,7 +257,7 @@ const KEEP_SCREEN_KEY = "aaa:keep-screen-on";
 function readKeepScreenOn(): boolean {
   try {
     return localStorage.getItem(KEEP_SCREEN_KEY) === "1";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:260");
     return false;
   }
 }
@@ -268,7 +269,7 @@ export function setKeepScreenOn(on: boolean) {
   try {
     if (on) localStorage.setItem(KEEP_SCREEN_KEY, "1");
     else localStorage.removeItem(KEEP_SCREEN_KEY);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:272");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -299,7 +300,7 @@ function readToggle(name: TerminalToggle): boolean {
   try {
     const v = localStorage.getItem(TOGGLE_KEYS[name]);
     return v === "1" ? true : v === "0" ? false : TOGGLE_DEFAULTS[name];
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:303");
     return TOGGLE_DEFAULTS[name];
   }
 }
@@ -323,7 +324,7 @@ export function setTerminalToggle(name: TerminalToggle, on: boolean) {
   try {
     if (on === TOGGLE_DEFAULTS[name]) localStorage.removeItem(TOGGLE_KEYS[name]);
     else localStorage.setItem(TOGGLE_KEYS[name], on ? "1" : "0");
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:327");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -349,7 +350,7 @@ const MARKDOWN_WIDTH_KEY = "aaa:markdown-width";
 function readMarkdownWidth(): MarkdownWidth {
   try {
     return MARKDOWN_WIDTHS.find((width) => width === localStorage.getItem(MARKDOWN_WIDTH_KEY)) ?? "readable";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:353");
     return "readable";
   }
 }
@@ -367,7 +368,7 @@ export function setMarkdownWidth(width: MarkdownWidth) {
   try {
     if (width === "readable") localStorage.removeItem(MARKDOWN_WIDTH_KEY);
     else localStorage.setItem(MARKDOWN_WIDTH_KEY, width);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:371");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -394,7 +395,7 @@ function readShortcuts(): ShortcutOverrides {
   let stored: ShortcutOverrides = {};
   try {
     stored = sanitizeShortcutOverrides(JSON.parse(localStorage.getItem(SHORTCUT_KEY) ?? "{}"));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:398");
     // 막혔거나 깨진 값: 기본값
   }
   return { ...stored, ...NOT_IN_AAA };
@@ -415,7 +416,7 @@ export function setShortcutOverrides(next: ShortcutOverrides) {
   try {
     if (Object.keys(own).length === 0) localStorage.removeItem(SHORTCUT_KEY);
     else localStorage.setItem(SHORTCUT_KEY, JSON.stringify(own));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:419");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -462,7 +463,7 @@ function readAlert(name: AlertSetting): boolean {
   try {
     const v = localStorage.getItem(ALERT_KEYS[name]);
     return v === "1" ? true : v === "0" ? false : ALERT_DEFAULTS[name];
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:466");
     return ALERT_DEFAULTS[name];
   }
 }
@@ -481,7 +482,7 @@ export function setAlertSetting(name: AlertSetting, on: boolean) {
   try {
     if (on === ALERT_DEFAULTS[name]) localStorage.removeItem(ALERT_KEYS[name]);
     else localStorage.setItem(ALERT_KEYS[name], on ? "1" : "0");
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:485");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -505,7 +506,7 @@ export function setTerminalInputMode(next: TerminalInputMode) {
   try {
     if (next === "auto") localStorage.removeItem(KEY);
     else localStorage.setItem(KEY, next);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:509");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   listeners.forEach((f) => f());
@@ -538,7 +539,7 @@ const usageListeners = new Set<() => void>();
 function readUsage(): UsageSettings {
   try {
     return sanitizeUsage(JSON.parse(localStorage.getItem(USAGE_KEY) ?? "{}"));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:542");
     // 막혔거나 깨진 값: 기본값
     return sanitizeUsage({});
   }
@@ -556,7 +557,7 @@ export function updateUsageSettings(patch: Partial<UsageSettings>) {
   usage = { ...usage, ...patch };
   try {
     localStorage.setItem(USAGE_KEY, JSON.stringify(usage));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:560");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   usageListeners.forEach((f) => f());
@@ -583,7 +584,7 @@ function readDefaultView(): DefaultView {
   try {
     const v = localStorage.getItem(DEFAULT_VIEW_KEY);
     return v === "chat" || v === "terminal" ? v : "auto";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:587");
     return "auto";
   }
 }
@@ -601,7 +602,7 @@ export function setDefaultView(view: DefaultView) {
   try {
     if (view === "auto") localStorage.removeItem(DEFAULT_VIEW_KEY);
     else localStorage.setItem(DEFAULT_VIEW_KEY, view);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:605");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   defaultViewListeners.forEach((f) => f());
@@ -629,7 +630,7 @@ const chatSharedListeners = new Set<() => void>();
 function readChatShared(): ChatShared {
   try {
     return sanitizeChatShared(JSON.parse(localStorage.getItem(CHAT_SHARED_KEY) ?? "{}"));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:633");
     return sanitizeChatShared({});
   }
 }
@@ -646,7 +647,7 @@ export function updateChatShared(patch: Partial<ChatShared>) {
   chatShared = { ...chatShared, ...patch };
   try {
     localStorage.setItem(CHAT_SHARED_KEY, JSON.stringify(chatShared));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:650");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   chatSharedListeners.forEach((f) => f());
@@ -669,7 +670,7 @@ const sidebarSharedListeners = new Set<() => void>();
 function readSidebarShared(): SidebarShared {
   try {
     return sanitizeSidebarShared(JSON.parse(localStorage.getItem(SIDEBAR_SHARED_KEY) ?? "{}"));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:673");
     return sanitizeSidebarShared({});
   }
 }
@@ -686,7 +687,7 @@ export function updateSidebarShared(patch: Partial<SidebarShared>) {
   sidebarShared = sanitizeSidebarShared({ ...sidebarShared, ...patch });
   try {
     localStorage.setItem(SIDEBAR_SHARED_KEY, JSON.stringify(sidebarShared));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "settings.ts:690");
     // 저장이 막혀도 이 화면 동안은 바꾼 대로 둔다
   }
   sidebarSharedListeners.forEach((f) => f());

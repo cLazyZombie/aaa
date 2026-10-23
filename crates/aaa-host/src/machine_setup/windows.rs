@@ -68,7 +68,9 @@ pub(super) fn install(dir: &str, args: &str) -> Option<String> {
 
 #[cfg(test)]
 pub(super) fn install_instance(dir: &str, args: &str, instance: &str) -> Option<String> {
-    aaa_config::paths::check_instance(instance).ok()?;
+    aaa_config::paths::check_instance(instance)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     install_at(dir, &format!("--instance {instance} {args}"), &format!("aaa-{instance}"))
 }
 

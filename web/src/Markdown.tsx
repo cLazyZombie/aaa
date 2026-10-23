@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 보고서 Markdown(차이 목록 R1). herdr-web-ui `src/components/Markdown.tsx`(aa624cb)의 렌더를 옮기고, 파서는
 // `src/lib/markdown.ts`·`markdownHtml.ts`를 그대로 쓴다(herdr/markdown.ts). HTML은 해석하지 않는다(parseMarkdown html=false).
 // 참고에서 뺀 것: 수식(KaTeX)은 원문 그대로, mermaid는 code block. code block은 참고처럼 문법 강조한다(HighlightedCode).
@@ -278,7 +279,7 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
     try {
       await navigator.clipboard.writeText(value);
       ok = true;
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "Markdown.tsx:282");
       // clipboard API가 없거나 브라우저가 거절했다
     }
     setCopied(ok);

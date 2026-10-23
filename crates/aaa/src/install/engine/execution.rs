@@ -56,12 +56,16 @@ fn record_path(state: &Path, id: &str) -> Result<PathBuf> {
     Ok(state.join("install/executions").join(format!("{id}.json")))
 }
 fn scope_sha(scope: &[InstallPermission]) -> Result<String> {
-    Ok(hash(&serde_json::to_vec(scope).map_err(|_| Fault::conflict())?))
+    Ok(hash(
+        &serde_json::to_vec(scope)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    ))
 }
 fn read(state: &Path, id: &str) -> Result<Option<Record>> {
     match private::read(&record_path(state, id)?, 128 * 1024) {
         Ok(bytes) => {
-            let record: Record = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+            let record: Record = serde_json::from_slice(&bytes)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
             if record.schema != 1
                 || record.id != id
                 || record.worker_pid == 0
@@ -74,7 +78,9 @@ fn read(state: &Path, id: &str) -> Result<Option<Record>> {
             {
                 return Err(Fault::conflict());
             }
-            let issued = Authority::open(state).and_then(|a| a.issued(id)).map_err(|_| Fault::conflict())?;
+            let issued = Authority::open(state)
+                .and_then(|a| a.issued(id))
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
             if Path::new(&issued.plan.context.state_dir) != transaction::real_directory(state)?
                 || record.plan_sha256 != aaa_config::install::plan_sha256(&issued.plan)
                 || record.scope_sha256 != scope_sha(&issued.authorization.claims.permissions)?
@@ -118,7 +124,7 @@ fn read(state: &Path, id: &str) -> Result<Option<Record>> {
             Ok(Some(record))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(_) => Err(Fault::conflict()),
+        Err(source_error) => Err(aaa_common::diagnostic::context(source_error, Fault::conflict())),
     }
 }
 
@@ -289,7 +295,8 @@ impl Execution {
     fn save(&self) -> Result<()> {
         private::write(
             &record_path(&self.state, &self.record.id)?,
-            &serde_json::to_vec(&self.record).map_err(|_| Fault::conflict())?,
+            &serde_json::to_vec(&self.record)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
         )
         .map_err(Fault::io)
     }
@@ -357,13 +364,17 @@ pub(super) fn observe(state: &Path, instance: Option<&str>, id: &str) -> Result<
         match journal_dir(state, id).join("journal.json").symlink_metadata() {
             Ok(_) => return Ok(None),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(Fault::conflict()),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, Fault::conflict()));
+            }
         }
         // 승인만 발급된 ID도 조회 가능하다. status를 위해 nonce/lock/intent는 만들지 않는다.
         let input_path = state.join("install/authorization").join(format!("{id}.input.json"));
         match input_path.symlink_metadata() {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(_) => return Err(Fault::conflict()),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, Fault::conflict()));
+            }
             Ok(_) => {}
         }
         let issued = Authority::open(state)?.issued(id)?;

@@ -1,3 +1,4 @@
+import { ignoredFailure } from "../errorDiagnostic.ts";
 import { useEffect } from "react";
 import { usePageVisible } from "./visibility.ts";
 
@@ -5,13 +6,13 @@ import { usePageVisible } from "./visibility.ts";
 export function holdScreenWakeLock(wakeLock: Pick<WakeLock, "request">): () => void {
   let cancelled = false;
   let sentinel: WakeLockSentinel | null = null;
-  const release = (lock: WakeLockSentinel) => { void lock.release().catch(() => undefined); };
+  const release = (lock: WakeLockSentinel) => { void lock.release().catch(ignoredFailure("wakeLock.ts:9", () => undefined)); };
   void wakeLock.request("screen").then((lock) => {
     if (cancelled) release(lock);
     else sentinel = lock;
-  }).catch(() => {
+  }).catch(ignoredFailure("wakeLock.ts:13", () => {
     // Power saving, browser policy or permission may refuse it. Retry on the next visit.
-  });
+  }));
   return () => {
     cancelled = true;
     if (sentinel) { release(sentinel); sentinel = null; }

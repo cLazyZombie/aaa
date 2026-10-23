@@ -1555,9 +1555,12 @@ impl Db {
 
     pub fn audit(&self, actor: &str, action: &str, detail: &str) {
         let c = self.conn.lock().unwrap();
-        let _ = c.execute(
-            "INSERT INTO audit(ts,actor,action,detail) VALUES(?1,?2,?3,?4)",
-            params![aaa_common::util::now_ms() as i64, actor, action, detail],
+        aaa_common::diagnostic::ignored(
+            c.execute(
+                "INSERT INTO audit(ts,actor,action,detail) VALUES(?1,?2,?3,?4)",
+                params![aaa_common::util::now_ms() as i64, actor, action, detail],
+            ),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
         );
     }
 
@@ -1680,7 +1683,11 @@ pub(crate) fn pane_run_detail(spec: &aaa_proto::SpawnSpec) -> String {
 
 /// export에 넣는 thread 기록: launch env는 이름만. JSON이 아니면 그대로 둔다
 fn thread_data_without_env(data: &str) -> String {
-    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(data) else { return data.to_string() };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(data)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return data.to_string();
+    };
     if env_names_only(&mut v, &["launch", "env"]) { v.to_string() } else { data.to_string() }
 }
 
@@ -2080,7 +2087,12 @@ mod rollout_tests {
             done_at_ms: None,
         };
         db.conn.lock().unwrap().execute_batch("CREATE TRIGGER fail_rollout_inbox BEFORE INSERT ON inbox WHEN NEW.kind='rollout' BEGIN SELECT RAISE(ABORT, 'inbox write failed'); END;").unwrap();
-        assert!(db.save_rollout_record("r", "done", Some(&item)).is_err());
+        assert!(
+            db.save_rollout_record("r", "done", Some(&item))
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+        );
         assert_eq!(db.meta("rollout:r").unwrap().as_deref(), Some("running"), "inbox 없이 완료만 commit하면 안 된다");
         assert_eq!(db.meta("rollout:notice:r").unwrap(), None);
         db.conn.lock().unwrap().execute_batch("DROP TRIGGER fail_rollout_inbox;").unwrap();
@@ -2099,7 +2111,9 @@ mod audit_env_tests {
         ["host.db", "host.db-wal", "host.db-shm"]
             .iter()
             .filter(|f| {
-                std::fs::read(dir.join(f)).is_ok_and(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
+                std::fs::read(dir.join(f))
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
             })
             .map(|f| f.to_string())
             .collect()
@@ -2111,7 +2125,7 @@ mod audit_env_tests {
     fn open_scrubs_old_pane_run_env_values_and_vacuums() {
         let root = std::env::temp_dir().join(format!("aaa-audit-env-{}", std::process::id()));
         let (old, copy) = (root.join("old"), root.join("copy"));
-        let _ = std::fs::remove_dir_all(&root);
+        aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&root), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&copy).unwrap();
         let (value, gone) = ("aaa-canary-audit-5f29deba74dd23fe", "aaa-canary-deleted-0c827dbcceed4341");
@@ -2153,7 +2167,10 @@ mod audit_env_tests {
             c.execute("INSERT INTO audit(ts,actor,action,detail) VALUES(3,'local','web_publish','')", []).unwrap();
         }
         for f in ["host.db", "host.db-wal", "host.db-shm"] {
-            let _ = std::fs::copy(old.join(f), copy.join(f));
+            aaa_common::diagnostic::ignored(
+                std::fs::copy(old.join(f), copy.join(f)),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         assert!(
             !bytes_have(&copy, value).is_empty() && !bytes_have(&copy, gone).is_empty(),
@@ -2186,7 +2203,7 @@ mod audit_env_tests {
         };
         assert_eq!(again, got, "다시 열어도 그대로");
         drop(db);
-        let _ = std::fs::remove_dir_all(&root);
+        aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&root), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     }
 }
 

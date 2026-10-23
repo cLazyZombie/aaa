@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 import type { IBuffer, ILink, ILinkProvider } from "@xterm/xterm";
 
 /** what a name is made of: letters, digits and the marks that complete them (a decomposed `é` is two) */
@@ -38,7 +39,7 @@ export function fileUriPath(uri: string): string | null {
     if (/[\u0000-\u001f\u007f]/.test(path) || /^[\\/]{2}/.test(path)) return null;
     // `/C:/Users/me/a.md` is how a URI writes a Windows drive path
     return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "terminalFileLinks.ts:42");
     return null; // malformed URI input is not a file link
   }
 }

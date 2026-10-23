@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 그림 크게 보기(plan §8.353). 「답할 것」 본문 그림(t-0540)·task 첨부 그림·보고서 그림이 모두 이것으로 연다. 화면을 덮고(문서 맨 위),
 // 닫기·Esc·바깥 누름·아래로 쓸기·휴대폰 뒤로가 닫는다. 여럿이면 ←→·앞뒤 단추·옆으로 쓸기로 넘긴다. 두 손가락으로 키우고
 // 끌며, 두 번 누르면 그 자리를 키운다(데스크톱 trackpad 벌리기·ctrl+바퀴도). 손짓 계산은 lightboxGesture.ts에 있다.
@@ -100,7 +101,7 @@ export function Lightbox({ items, at, onAt, onClose }: { items: readonly Lightbo
     if (e.pointerType === "mouse" && e.button !== 0) return;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "Lightbox.tsx:104");
       // 이미 끝난 손가락(capture할 것이 없다)
     }
     const p = local(e.clientX, e.clientY);

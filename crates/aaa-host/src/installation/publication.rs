@@ -41,7 +41,11 @@ struct Receipt {
     mapping_sha256: Option<String>,
 }
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ErrorBody> {
-    serde_json::from_slice(&private_file::read(path, 1024 * 1024).map_err(|_| denied())?).map_err(|_| denied())
+    serde_json::from_slice(
+        &private_file::read(path, 1024 * 1024)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?,
+    )
+    .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))
 }
 fn exact_error(error: tailscale::ExactError) -> ErrorBody {
     err(if error.conflict { ErrorCode::Conflict } else { ErrorCode::Unavailable }, error.code)
@@ -56,7 +60,7 @@ fn ports(plan: &InstallPlan) -> Result<(u16, u16), ErrorBody> {
         .as_deref()
         .unwrap_or("127.0.0.1:7431")
         .parse::<std::net::SocketAddr>()
-        .map_err(|_| denied())?;
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
     if !web.ip().is_loopback() || web.port() == 0 {
         return Err(denied());
     }
@@ -72,15 +76,22 @@ impl Host {
         if !id_ok(id) || writing && peer.is_none() {
             return Err(denied());
         }
-        let root = self.state.parent().ok_or_else(denied)?.canonicalize().map_err(|_| denied())?;
+        let root = self
+            .state
+            .parent()
+            .ok_or_else(denied)?
+            .canonicalize()
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         let authority = root.join("install/authorization");
         let issued: Issued = read(&authority.join(format!("{id}.input.json")))?;
         let plan = issued.plan;
         let auth = issued.authorization;
         let c = &auth.claims;
         let now = if writing { util::now_ms() } else { c.issued_at_ms };
-        let checked = aaa_config::install::plan(plan.choices.clone(), plan.context.clone()).map_err(|_| denied())?;
-        let pin = private_file::read(&authority.join("issuer.pin"), 32).map_err(|_| denied())?;
+        let checked = aaa_config::install::plan(plan.choices.clone(), plan.context.clone())
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+        let pin = private_file::read(&authority.join("issuer.pin"), 32)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         if checked != plan
             || Path::new(&plan.context.state_dir) != root
             || c.installation_id != id
@@ -103,7 +114,11 @@ impl Host {
         let nonce: Nonce = read(&authority.join(format!("{}.json", c.nonce)))?;
         if nonce.installation_id != id
             || !nonce.consumed
-            || nonce.authorization_sha256 != digest(&install_crypto::canonical(&auth).map_err(|_| denied())?)
+            || nonce.authorization_sha256
+                != digest(
+                    &install_crypto::canonical(&auth)
+                        .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?,
+                )
         {
             return Err(denied());
         }
@@ -112,7 +127,11 @@ impl Host {
             || execution.id != id
             || execution.worker_pid == 0
             || execution.plan_sha256 != c.plan_sha256
-            || execution.scope_sha256 != digest(&serde_json::to_vec(&c.permissions).map_err(|_| denied())?)
+            || execution.scope_sha256
+                != digest(
+                    &serde_json::to_vec(&c.permissions)
+                        .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?,
+                )
             || execution.account_sha256 != digest(c.target_account.as_bytes())
             || execution.instance != c.instance
             || execution.stage != "files_applied"
@@ -128,7 +147,8 @@ impl Host {
                 return Err(denied());
             }
             let image = aaa_common::process::image(pid).ok_or_else(denied)?;
-            let bytes = std::fs::read(image).map_err(|_| denied())?;
+            let bytes =
+                std::fs::read(image).map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
             if digest(&bytes) != c.binary_sha256 {
                 return Err(denied());
             }
@@ -140,8 +160,14 @@ impl Host {
             .as_deref()
             .unwrap_or("127.0.0.1:7431")
             .parse::<std::net::SocketAddr>()
-            .map_err(|_| denied())?;
-        let bound = self.web_listen.lock().unwrap().as_deref().and_then(|s| s.parse::<std::net::SocketAddr>().ok());
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+        let bound = self.web_listen.lock().unwrap().as_deref().and_then(|s| {
+            s.parse::<std::net::SocketAddr>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        });
         if self.web_port() != web || bound != Some(expected) {
             return Err(denied());
         }
@@ -173,7 +199,10 @@ impl Host {
         let previous: Option<Receipt> = match path.symlink_metadata() {
             Ok(_) => Some(read(&path)?),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Err(denied()),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                return Err(denied());
+            }
         };
         if let Some(record) = &previous {
             if record.schema != 1
@@ -183,11 +212,17 @@ impl Host {
             {
                 return Err(denied());
             }
-            if record
-                .mapping_sha256
-                .as_ref()
-                .is_some_and(|hash| native.snapshot.mapping_sha256().ok().as_ref() != Some(hash))
-            {
+            if record.mapping_sha256.as_ref().is_some_and(|hash| {
+                native
+                    .snapshot
+                    .mapping_sha256()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_ref()
+                    != Some(hash)
+            }) {
                 return Err(err(ErrorCode::Conflict, "serve_port_conflict"));
             }
         }
@@ -203,19 +238,33 @@ impl Host {
             owned: false,
             mapping_sha256: None,
         });
-        private_file::write(&path, &serde_json::to_vec(&record).map_err(|_| unavailable())?)
-            .map_err(|_| unavailable())?;
+        private_file::write(
+            &path,
+            &serde_json::to_vec(&record)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?,
+        )
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         // 실제 compare-and-swap 직전까지 서명/현재 nonce/worker 소유를 다시 검사한다.
         self.install_execution(id, peer, true)?;
         let after = native.publish().await.map_err(exact_error)?;
         record.owned |= !reused;
         record.mapping_sha256 = Some(after.mapping_sha256().map_err(exact_error)?);
-        private_file::write(&path, &serde_json::to_vec(&record).map_err(|_| unavailable())?)
-            .map_err(|_| unavailable())?;
-        self.db.set_meta("publish_origin", &after.url().to_ascii_lowercase()).map_err(|_| unavailable())?;
-        self.db.set_meta("publish_selected_port", &port.to_string()).map_err(|_| unavailable())?;
+        private_file::write(
+            &path,
+            &serde_json::to_vec(&record)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?,
+        )
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+        self.db
+            .set_meta("publish_origin", &after.url().to_ascii_lowercase())
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+        self.db
+            .set_meta("publish_selected_port", &port.to_string())
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         if record.owned {
-            self.db.set_meta("publish_port", &port.to_string()).map_err(|_| unavailable())?;
+            self.db
+                .set_meta("publish_port", &port.to_string())
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         }
         let public_https =
             if self.install_https(&after.url()).await { InstallCheckState::Passed } else { InstallCheckState::Unknown };
@@ -247,7 +296,13 @@ impl Host {
         }
         if !current.reused
             || current.permission().map_err(exact_error)?.after_sha256 != record.permission.after_sha256
-            || current.mapping_sha256().ok() != record.mapping_sha256
+            || current
+                .mapping_sha256()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                != record.mapping_sha256
         {
             return Err(err(ErrorCode::Conflict, "serve_port_conflict"));
         }

@@ -30,7 +30,16 @@ fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
 }
 fn person(actor: &str) -> bool {
-    actor.strip_prefix("person:").and_then(|s| s.parse::<u32>().ok()).is_some_and(|pid| pid > 0)
+    actor
+        .strip_prefix("person:")
+        .and_then(|s| {
+            s.parse::<u32>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .is_some_and(|pid| pid > 0)
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
@@ -379,7 +388,12 @@ impl Host {
             // 기록을 남긴 뒤의 실패(저장)면 진행 루프가 이어 받는다
             Err(e) => {
                 drop(driving);
-                if self.load_rollout(&id).is_ok() {
+                if self
+                    .load_rollout(&id)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                {
                     self.resume_rollout();
                 }
                 return Err(e);
@@ -508,7 +522,10 @@ impl Host {
                 }
                 Ok(true)
             }
-            Err(_) => Ok(false),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                Ok(false)
+            }
         }
     }
     /// 같은 ID의 재시작 rollout은 같은 요청일 때만 그 기록을 돌려준다

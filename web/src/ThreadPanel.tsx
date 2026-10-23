@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
@@ -92,7 +93,7 @@ export function ThreadPanel({
     }
     call({ op: "thread_diff", project: t.project, thread: t.id, query: { scope: "branch" } })
       .then((r) => live && r.kind === "thread_diff" && setDiff(r.diff))
-      .catch(() => live && setDiff(null));
+      .catch(ignoredFailure("ThreadPanel.tsx:96", () => live && setDiff(null)));
     return () => {
       live = false;
     };

@@ -107,12 +107,26 @@ impl Host {
 
     /// `Instance` 보기(FRONT_API 1.50): 이 host가 맡은 프로젝트
     pub(crate) fn instance_view(&self) -> Option<ProjectView> {
-        let project = self.sole_project().ok().flatten()?;
-        self.project_dir(&project).ok().map(|dir| self.project_view(&project, &dir))
+        let project = self
+            .sole_project()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()?;
+        self.project_dir(&project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .map(|dir| self.project_view(&project, &dir))
     }
 
     pub(crate) fn project_status(&self, project: &str) -> ProjectStatus {
-        match self.db.meta(&status_key(project)).ok().flatten().as_deref() {
+        match self
+            .db
+            .meta(&status_key(project))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .as_deref()
+        {
             Some("paused") => ProjectStatus::Paused,
             Some("archived") => ProjectStatus::Archived,
             _ => ProjectStatus::Active,
@@ -139,7 +153,13 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r.status != ThreadStatus::Resolved)
             .collect()
     }
@@ -167,7 +187,7 @@ impl Host {
         for r in recs {
             let mut v = self.thread_view(r);
             v.project_status = ProjectStatus::Archived;
-            let _ = self.thread_events.send(v);
+            aaa_common::diagnostic::ignored(self.thread_events.send(v), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
     }
 
@@ -251,7 +271,10 @@ impl Host {
         // front가 다시 묻지 않고 알게 그 프로젝트 thread 사건을 다시 낸다(`ThreadView.project_status`)
         for j in self.db.threads(Some(project)).unwrap_or_default() {
             if let Ok(r) = serde_json::from_str::<ThreadRec>(&j) {
-                let _ = self.thread_events.send(self.thread_view(&r));
+                aaa_common::diagnostic::ignored(
+                    self.thread_events.send(self.thread_view(&r)),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
         }
         self.tick_wake.notify_one();
@@ -280,7 +303,13 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .collect();
         let trash = self.projects_root().join(".trash");
         let stamp = format!("{project}-{}", aaa_common::util::utc_compact(aaa_common::util::now_ms()));
@@ -307,7 +336,10 @@ impl Host {
         // 끝나지 않은 thread의 감시를 푼다(pane은 그대로, 참고도 닫지 않는다)
         for r in recs.iter().filter(|r| r.status != ThreadStatus::Resolved) {
             if let Ok(conn) = self.live_conn(&r.machine_id) {
-                let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{}", r.id) }).await;
+                aaa_common::diagnostic::ignored(
+                    conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{}", r.id) }).await,
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
             }
         }
         let mut notes =
@@ -377,7 +409,10 @@ impl Host {
         }
         let guide = dir.join("AGENTS.md");
         // aaa가 쓴 안내(표지 줄)면 새 이름으로 다시 쓴다. 옛 판 aaa의 안내도 표지가 있으면 지금 안내가 된다
-        let stock = std::fs::read_to_string(&guide).ok().is_some_and(|t| t.contains(crate::orch::GUIDE_MARK));
+        let stock = std::fs::read_to_string(&guide)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .is_some_and(|t| t.contains(crate::orch::GUIDE_MARK));
         let mut notes = vec![
             format!("폴더 {} → {}", dir.display(), new_dir.display()),
             "host 기록(thread·inbox·routine·평가)을 새 이름으로 옮긴다".into(),
@@ -398,7 +433,13 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .collect();
         std::fs::rename(&dir, &new_dir).map_err(|e| internal(format!("폴더 이름을 바꾸지 못했다: {e}")))?;
         let moved = self.db.project_rename(project, to, |json| match serde_json::from_str::<serde_json::Value>(json) {
@@ -406,11 +447,17 @@ impl Host {
                 v["project"] = to.into();
                 v.to_string()
             }
-            Err(_) => json.to_string(),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                json.to_string()
+            }
         });
         if let Err(e) = moved {
             // 기록을 못 옮겼으면 폴더도 되돌린다(기록과 폴더 이름이 어긋나지 않게)
-            let _ = std::fs::rename(&new_dir, &dir);
+            aaa_common::diagnostic::ignored(
+                std::fs::rename(&new_dir, &dir),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
             return Err(internal(format!("host 기록을 옮기지 못해 되돌렸다: {e:#}")));
         }
         self.accounts_bump();
@@ -418,8 +465,10 @@ impl Host {
             cap.project = to.to_string();
         }
         if stock {
-            let _ =
-                crate::orch::write_atomic(&new_dir.join("AGENTS.md"), crate::orch::coordinator_guide(to).as_bytes());
+            aaa_common::diagnostic::ignored(
+                crate::orch::write_atomic(&new_dir.join("AGENTS.md"), crate::orch::coordinator_guide(to).as_bytes()),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         self.db.audit(actor, "project_rename", &format!("{project} → {to}"));
         self.summary_marks.lock().unwrap().retain(|(p, _), _| p != project && p != to);
@@ -434,7 +483,10 @@ impl Host {
         self.hide_threads(&old_recs);
         for j in self.db.threads(Some(to)).unwrap_or_default() {
             if let Ok(r) = serde_json::from_str::<ThreadRec>(&j) {
-                let _ = self.thread_events.send(self.thread_view(&r));
+                aaa_common::diagnostic::ignored(
+                    self.thread_events.send(self.thread_view(&r)),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
         }
         self.tick_wake.notify_one();
@@ -482,7 +534,13 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r.status == ThreadStatus::Resolved && r.kind == ThreadKind::Worktree && r.cwd.is_some())
             .filter(|r| r.leftover.as_ref().is_some_and(|l| l.worktree || l.branch))
             .collect();
@@ -529,7 +587,10 @@ impl Host {
                 Ok(c) => {
                     let l = Leftover { worktree: !c.worktree_removed, branch: r.branch.is_some() && !c.branch_deleted };
                     let clean = !l.worktree && !l.branch;
-                    let _ = self.update_rec(project, &r.id, |x| x.leftover = Some(l));
+                    aaa_common::diagnostic::ignored(
+                        self.update_rec(project, &r.id, |x| x.leftover = Some(l)),
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                     if clean {
                         done += 1;
                         notes.push(format!("치웠다: {before}"));
@@ -556,8 +617,17 @@ impl Host {
             .into_iter()
             .filter(|f| {
                 std::fs::read_to_string(dir.join(f))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
                     .ok()
-                    .and_then(|t| t.parse::<toml::Table>().ok())
+                    .and_then(|t| {
+                        t.parse::<toml::Table>()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
                     .is_some_and(|t| t.get("safety").and_then(|s| s.get(project)).is_some())
             })
             .collect();

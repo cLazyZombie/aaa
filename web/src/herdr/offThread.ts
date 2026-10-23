@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /** The part of a `Worker` the queue uses, so a test can stand in for one. */
 export interface WorkerLike {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -61,7 +62,7 @@ export function createOffThreadQueue<Q, R>(spawn: () => WorkerLike, budgetMs: nu
     if (worker === null) {
       try {
         worker = spawn();
-      } catch {
+      } catch (ignoredError) { logIgnoredFailure(ignoredError, "offThread.ts:65");
         next.resolve(null);
         pump();
         return;
@@ -107,7 +108,7 @@ export function serveOffThread<Q, R>(handle: (request: Q) => { result: R; transf
     let answer: { result: R | null; transfer?: Transferable[] };
     try {
       answer = handle(request);
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "offThread.ts:111");
       answer = { result: null };
     }
     scope.postMessage({ id, result: answer.result } satisfies OffThreadAnswer<R>, answer.transfer ?? []);

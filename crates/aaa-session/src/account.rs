@@ -20,7 +20,10 @@ impl Drop for Prepared {
             task.abort();
         }
         if let Some(home) = &self.home {
-            let _ = std::fs::remove_file(home.join("auth.json"));
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_file(home.join("auth.json")),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
     }
 }
@@ -43,7 +46,11 @@ pub async fn prepare(
             task: None,
         });
     }
-    if home.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+    if home
+        .symlink_metadata()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
         bail!("인증 홈은 symlink일 수 없다")
     }
     aaa_common::util::ensure_private_dir(home)?;
@@ -67,14 +74,23 @@ pub async fn prepare(
             // 로컬 .claude.json에는 인증도 있으므로 읽거나 복사하지 않는다. 이 실행의 전용 파일만 만든다.
             let path = home.join(".claude.json");
             anyhow::ensure!(
-                !path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()),
+                !path
+                    .symlink_metadata()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|m| m.file_type().is_symlink()),
                 "격리 Claude 설정은 symlink일 수 없다"
             );
             let mut config = match std::fs::read(&path) {
-                Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
-                    .map_err(|_| anyhow::anyhow!("격리 Claude 설정 형식 오류"))?,
+                Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|source_error| {
+                    aaa_common::diagnostic::context(source_error, anyhow::anyhow!("격리 Claude 설정 형식 오류"))
+                })?,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
-                Err(_) => bail!("격리 Claude 설정 읽기 실패"),
+                Err(source_error) => {
+                    return Err(aaa_common::diagnostic::context(
+                        source_error,
+                        anyhow::anyhow!("격리 Claude 설정 읽기 실패"),
+                    ));
+                }
             };
             let config = config.as_object_mut().context("격리 Claude 설정 형식 오류")?;
             // host에서 로그인한 토큰으로 시작한다. 빈 격리 홈에서 로그인 안내를 다시 열지 않는다.
@@ -119,10 +135,17 @@ pub async fn prepare(
             let run = credential.run;
             let version = std::sync::Arc::new(tokio::sync::Mutex::new(credential.version));
             out.task = Some(tokio::spawn(async move {
-                while let Ok((stream, _)) = listener.accept().await {
+                while let Ok((stream, _)) = listener
+                    .accept()
+                    .await
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "수신 루프 종료 원인"))
+                {
                     let (tx, token, run, version) = (tx.clone(), token.clone(), run.clone(), version.clone());
                     tokio::spawn(async move {
-                        let _ = serve(stream, &token, run, version, tx).await;
+                        aaa_common::diagnostic::ignored(
+                            serve(stream, &token, run, version, tx).await,
+                            "보조 작업 실패 뒤 기존 처리를 계속한다",
+                        );
                     });
                 }
             }));
@@ -154,16 +177,22 @@ fn claude_bypass_requested(argv: &[String]) -> bool {
 fn prepare_claude_bypass(home: &Path, argv: &[String]) -> Result<()> {
     let path = home.join("settings.json");
     anyhow::ensure!(
-        !path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()),
+        !path
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| m.file_type().is_symlink()),
         "격리 Claude 설정은 symlink일 수 없다"
     );
     let bypass = claude_bypass_requested(argv);
     let mut settings = match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
-            .map_err(|_| anyhow::anyhow!("격리 Claude 설정 형식 오류"))?,
+        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, anyhow::anyhow!("격리 Claude 설정 형식 오류"))
+        })?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && !bypass => return Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
-        Err(_) => bail!("격리 Claude 설정 읽기 실패"),
+        Err(source_error) => {
+            return Err(aaa_common::diagnostic::context(source_error, anyhow::anyhow!("격리 Claude 설정 읽기 실패")));
+        }
     };
     let settings = settings.as_object_mut().context("격리 Claude 설정 형식 오류")?;
     // Claude 2.1.304의 우회 경고 수락 키. 권한 모드·다른 안내 수락은 새로 정하지 않는다.
@@ -194,8 +223,12 @@ pub fn private(path: &Path, bytes: &[u8]) -> Result<()> {
         drop(f);
         std::fs::rename(&tmp, path)
     })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    if result
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+    {
+        aaa_common::diagnostic::ignored(std::fs::remove_file(&tmp), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     }
     result.map_err(Into::into)
 }
@@ -212,7 +245,9 @@ async fn serve(
     let id = aaa_common::util::new_id();
     let request = AccountRefresh { run, session: String::new(), id, version: *current, request: SecretText(body) };
     let (reply, rx) = oneshot::channel();
-    tx.send(BrokerRequest { request, reply }).await.map_err(|_| anyhow::anyhow!("인증 중계가 닫혔다"))?;
+    tx.send(BrokerRequest { request, reply })
+        .await
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, anyhow::anyhow!("인증 중계가 닫혔다")))?;
     let response = tokio::time::timeout(std::time::Duration::from_secs(20), rx).await;
     let (status, body) = match response {
         Ok(Ok(r)) if r.response.is_some() => {
@@ -257,7 +292,9 @@ async fn read_http(stream: &mut tokio::net::TcpStream, token: &str) -> Result<St
     if sizes.len() != 1 {
         bail!("인증 요청 길이 오류")
     }
-    let len = *sizes[0].as_ref().map_err(|_| anyhow::anyhow!("인증 요청 길이 오류"))?;
+    let len = *sizes[0].as_ref().map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error.clone(), anyhow::anyhow!("인증 요청 길이 오류"))
+    })?;
     if len > 128 * 1024 {
         bail!("인증 요청 본문 상한")
     }
@@ -269,7 +306,8 @@ async fn read_http(stream: &mut tokio::net::TcpStream, token: &str) -> Result<St
         }
         buf.extend_from_slice(&chunk[..n]);
     }
-    String::from_utf8(buf[split + 4..end].to_vec()).map_err(|_| anyhow::anyhow!("인증 요청 형식 오류"))
+    String::from_utf8(buf[split + 4..end].to_vec())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, anyhow::anyhow!("인증 요청 형식 오류")))
 }
 
 pub const AUTH_ENV: &[&str] = &[

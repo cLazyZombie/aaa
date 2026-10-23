@@ -33,7 +33,12 @@ pub(super) struct AssetFile {
 
 fn preserved(launcher: &Path) -> Result<Vec<AssetFile>> {
     let path = transaction::target(launcher)?;
-    let bytes = std::fs::read(&path).map_err(|_| Fault { code: "installation_launcher_required", exit: 3 })?;
+    let bytes = std::fs::read(&path).map_err(|source_error| {
+        aaa_common::diagnostic::context(
+            source_error,
+            Fault { code: "installation_launcher_required", exit: 3, cause: None },
+        )
+    })?;
     // before == after라도 승인 검토 뒤 바뀐 launcher를 새 context로 채택하면 안 된다.
     Ok(vec![AssetFile { path, bytes, mode: None }])
 }
@@ -42,20 +47,26 @@ pub(super) fn proposals(plan: &InstallPlan) -> Result<Vec<AssetFile>> {
     if plan.choices.service != Some(InstallService::Launchd) {
         return Ok(Vec::new());
     }
-    let launcher = plan.choices.launcher.as_deref().ok_or(Fault { code: "installation_launcher_required", exit: 3 })?;
+    let launcher = plan.choices.launcher.as_deref().ok_or(Fault {
+        code: "installation_launcher_required",
+        exit: 3,
+        cause: None,
+    })?;
     let launcher = Path::new(launcher);
     if plan.choices.launcher_policy != Some(InstallLauncherPolicy::Install) {
         return preserved(launcher);
     }
-    let existing = std::fs::read(launcher).ok();
+    let existing = std::fs::read(launcher)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok();
     let asset = source(plan)?;
     match asset.symlink_metadata() {
         Ok(m) if m.is_file() && !m.file_type().is_symlink() && m.len() <= 4 * 1024 * 1024 => {}
         _ if existing.is_some() => return preserved(launcher),
-        _ => return Err(Fault { code: "installation_launcher_asset_required", exit: 3 }),
+        _ => return Err(Fault { code: "installation_launcher_asset_required", exit: 3, cause: None }),
     };
-    let package: Package =
-        serde_json::from_slice(&std::fs::read(asset).map_err(Fault::io)?).map_err(|_| Fault::conflict())?;
+    let package: Package = serde_json::from_slice(&std::fs::read(asset).map_err(Fault::io)?)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     let arch = match plan.context.platform.arch {
         InstallArch::Aarch64 => "aarch64",
         InstallArch::X86_64 => "x86_64",
@@ -65,7 +76,7 @@ pub(super) fn proposals(plan: &InstallPlan) -> Result<Vec<AssetFile>> {
     let version = if plan.context.version == "unverified" {
         let current = std::env::current_exe().map_err(Fault::io)?;
         if hash(&std::fs::read(current).map_err(Fault::io)?) != plan.context.binary_sha256 {
-            return Err(Fault { code: "installation_launcher_binary_unverified", exit: 3 });
+            return Err(Fault { code: "installation_launcher_binary_unverified", exit: 3, cause: None });
         }
         aaa_common::util::software().trim_start_matches("aaa ").to_owned()
     } else {
@@ -83,7 +94,9 @@ pub(super) fn proposals(plan: &InstallPlan) -> Result<Vec<AssetFile>> {
     let payload: Vec<Vec<u8>> = FILES
         .iter()
         .map(|name| {
-            base64::engine::general_purpose::STANDARD.decode(&package.files[*name]).map_err(|_| Fault::conflict())
+            base64::engine::general_purpose::STANDARD
+                .decode(&package.files[*name])
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))
         })
         .collect::<Result<_>>()?;
     if payload.iter().any(Vec::is_empty) {
@@ -101,7 +114,11 @@ pub(super) fn proposals(plan: &InstallPlan) -> Result<Vec<AssetFile>> {
         .zip(payload)
         .map(|(name, bytes)| {
             let path = root.join(name);
-            let before = std::fs::read(&path).ok();
+            let before = std::fs::read(&path)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok();
             if before.as_ref().is_some_and(|old| *old != bytes) {
                 return Err(Fault::conflict());
             }

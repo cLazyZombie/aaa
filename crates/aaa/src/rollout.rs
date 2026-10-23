@@ -176,5 +176,7 @@ async fn connect_ready(state: &std::path::Path, wait: bool) -> Result<aaa_common
         }
     })
     .await
-    .map_err(|_| anyhow::anyhow!("로컬 agent가 120초 안에 재연결하지 않았다"))?
+    .map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, anyhow::anyhow!("로컬 agent가 120초 안에 재연결하지 않았다"))
+    })?
 }

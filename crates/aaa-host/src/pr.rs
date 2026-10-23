@@ -290,7 +290,11 @@ async fn survives<F>(fut: F) -> bool
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    tokio::spawn(fut).await.is_ok()
+    tokio::spawn(fut)
+        .await
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
 }
 
 impl Host {
@@ -407,7 +411,12 @@ impl Host {
 
     /// 한 프로젝트의 열린 thread PR을 본다(herdr-projects steps.rs `pull_requests`)
     async fn pr_pass(self: &Arc<Self>, project: &str) {
-        let Ok(dir) = self.project_dir(project) else { return };
+        let Ok(dir) = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let mut checked = false;
         let mut failed = None;
         let mut unavailable = HashSet::new();
@@ -447,14 +456,29 @@ impl Host {
             return Err(why);
         }
         // 집 보고 사본 첫 줄의 `PR:`
-        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id))).unwrap_or_default();
+        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id)))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default();
         let mut url = match pr_line(&report) {
             Ok(url) => url.unwrap_or_default(),
             Err(note) => {
                 let key = format!("pr_line:{project}:{}", rec.id);
                 let hash = rec.report_hash.clone().unwrap_or_default();
-                if self.db.meta(&key).ok().flatten().as_deref() != Some(hash.as_str()) {
-                    let _ = self.db.set_meta(&key, &hash);
+                if self
+                    .db
+                    .meta(&key)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    != Some(hash.as_str())
+                {
+                    aaa_common::diagnostic::ignored(
+                        self.db.set_meta(&key, &hash),
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                     self.inbox_add(project, "pr", &rec.id, "bad PR: line", &format!("{}: {note}", label(&rec)));
                     self.flow(&rec, "pr_line_bad", Some(format!("threads/{}.md", rec.id)), note);
                 }
@@ -483,7 +507,10 @@ impl Host {
         }
         if rec.pr.as_deref().unwrap_or("") != url {
             let found = Some(url.clone()).filter(|u| !u.is_empty());
-            let _ = self.update_rec(project, &rec.id, |r| r.pr = found);
+            aaa_common::diagnostic::ignored(
+                self.update_rec(project, &rec.id, |r| r.pr = found),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         if url.is_empty() {
             return Ok(if queried { Poll::Queried } else { Poll::Skipped });
@@ -497,16 +524,43 @@ impl Host {
         }
         // 보고의 `#n`이 가리키는 저장소(herdr-projects thread `origin`, `other_pr_open`이 쓴다)
         let key = format!("pr_origin:{project}:{}", rec.id);
-        if !answer.origin.is_empty() && self.db.meta(&key).ok().flatten().as_deref() != Some(answer.origin.as_str()) {
-            let _ = self.db.set_meta(&key, &answer.origin);
+        if !answer.origin.is_empty()
+            && self
+                .db
+                .meta(&key)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .flatten()
+                .as_deref()
+                != Some(answer.origin.as_str())
+        {
+            aaa_common::diagnostic::ignored(
+                self.db.set_meta(&key, &answer.origin),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         let branch = rec.branch.clone().unwrap_or_default();
         match reduce(&answer.out, &branch, &answer.origin) {
             Err(e) => tracing::warn!(thread = %rec.id, "gh pr view 출력을 읽지 못했다: {e}"),
             Ok(Checked::Ignored(reason)) => {
                 let key = format!("pr_ignored:{project}:{}", rec.id);
-                if self.db.meta(&key).ok().flatten().as_deref() != Some(url.as_str()) {
-                    let _ = self.db.set_meta(&key, &url);
+                if self
+                    .db
+                    .meta(&key)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    != Some(url.as_str())
+                {
+                    aaa_common::diagnostic::ignored(
+                        self.db.set_meta(&key, &url),
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                     self.inbox_add(
                         project,
                         "pr",
@@ -519,8 +573,21 @@ impl Host {
             }
             Ok(Checked::Summary(summary)) => {
                 let key = format!("pr_summary:{project}:{}", rec.id);
-                let old: Option<Summary> =
-                    self.db.meta(&key).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
+                let old: Option<Summary> = self
+                    .db
+                    .meta(&key)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+                    .and_then(|j| {
+                        serde_json::from_str(&j)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    });
                 if old.as_ref() == Some(&summary) {
                     return Ok(Poll::Queried);
                 }
@@ -552,7 +619,10 @@ impl Host {
                     self.flow(&rec, "pr_merged", None, url.clone());
                 }
                 self.fire_pr_routines(project, dir, &rec, &url, &events, &summary).await;
-                let _ = self.db.set_meta(&key, &serde_json::to_string(&summary).unwrap());
+                aaa_common::diagnostic::ignored(
+                    self.db.set_meta(&key, &serde_json::to_string(&summary).unwrap()),
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
             }
         }
         Ok(Poll::Queried)
@@ -575,8 +645,15 @@ impl Host {
     }
 
     fn pr_summary(&self, project: &str, id: &str) -> Option<Summary> {
-        let json = self.db.meta(&format!("pr_summary:{project}:{id}")).ok().flatten()?;
-        serde_json::from_str(&json).ok()
+        let json = self
+            .db
+            .meta(&format!("pr_summary:{project}:{id}"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()?;
+        serde_json::from_str(&json)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
 
     /// resolve 때 PR을 한 번 더 본다(herdr-projects threads.rs `last_pr_lookup`): 보고 `PR:` 줄, 전에 찾은 것, branch 차례.
@@ -587,30 +664,51 @@ impl Host {
         }
         let cwd = rec.cwd.clone()?;
         let branch = rec.branch.clone().unwrap_or_default();
-        let dir = self.project_dir(project).ok()?;
-        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id))).unwrap_or_default();
+        let dir = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
+        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id)))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default();
         let url = match pr_line(&report) {
             Ok(Some(url)) => url,
             _ if rec.pr.as_deref().is_some_and(|u| !u.is_empty()) => rec.pr.clone()?,
-            _ => {
-                Some(self.pr_ask(&rec.machine_id, conn, &cwd, PrQuery::Find { branch: branch.clone() }).await.ok()?.out)
-                    .filter(|u| !u.is_empty())?
-            }
+            _ => Some(
+                self.pr_ask(&rec.machine_id, conn, &cwd, PrQuery::Find { branch: branch.clone() })
+                    .await
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()?
+                    .out,
+            )
+            .filter(|u| !u.is_empty())?,
         };
-        let answer = self.pr_ask(&rec.machine_id, conn, &cwd, PrQuery::View { url: url.clone() }).await.ok()?;
+        let answer = self
+            .pr_ask(&rec.machine_id, conn, &cwd, PrQuery::View { url: url.clone() })
+            .await
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         if answer.unavailable.is_some() {
             return None;
         }
-        let Checked::Summary(summary) = reduce(&answer.out, &branch, &answer.origin).ok()? else {
+        let Checked::Summary(summary) = reduce(&answer.out, &branch, &answer.origin)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+        else {
             return None;
         };
         if rec.pr.as_deref() != Some(url.as_str()) || rec.pr_state.as_deref().unwrap_or("") != summary.state {
             let (found, state, review) = (url.clone(), summary.state.clone(), summary.review_decision.clone());
-            let _ = self.update_rec(project, &rec.id, |r| {
-                r.pr = Some(found);
-                r.pr_state = Some(state).filter(|s| !s.is_empty());
-                r.pr_review = Some(review).filter(|s| !s.is_empty());
-            });
+            aaa_common::diagnostic::ignored(
+                self.update_rec(project, &rec.id, |r| {
+                    r.pr = Some(found);
+                    r.pr_state = Some(state).filter(|s| !s.is_empty());
+                    r.pr_review = Some(review).filter(|s| !s.is_empty());
+                }),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
             let change = describe_change(None, &summary);
             self.inbox_add(
                 project,
@@ -626,9 +724,22 @@ impl Host {
     /// 보고가 이름 붙인 PR 중 추적하는 것 밖에서 `gh` 계정이 연 것이 열려 있나(herdr-projects steps.rs `other_pr_open`).
     /// `gh` 실패와 그 질문을 모르는 옛 agent(기능 `pr.v2` 없음)는 열린 것으로 친다: 다음 셈에 다시 묻는다.
     pub(crate) async fn other_pr_open(&self, project: &str, rec: &ThreadRec) -> bool {
-        let Ok(dir) = self.project_dir(project) else { return true };
-        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id))).unwrap_or_default();
-        let origin = self.db.meta(&format!("pr_origin:{project}:{}", rec.id)).ok().flatten().unwrap_or_default();
+        let Ok(dir) = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return true;
+        };
+        let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id)))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default();
+        let origin = self
+            .db
+            .meta(&format!("pr_origin:{project}:{}", rec.id))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         let refs = report_refs(&report, &origin, rec.pr.as_deref().unwrap_or(""));
         if refs.is_empty() {
             return false;
@@ -642,7 +753,18 @@ impl Host {
         }
         for (repo, named) in refs {
             let open: BTreeSet<u32> = match self.pr_ask(&rec.machine_id, &conn, &cwd, PrQuery::OpenOwn { repo }).await {
-                Ok(a) if a.unavailable.is_none() => a.out.split(',').filter_map(|n| n.trim().parse().ok()).collect(),
+                Ok(a) if a.unavailable.is_none() => a
+                    .out
+                    .split(',')
+                    .filter_map(|n| {
+                        n.trim()
+                            .parse()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
+                    .collect(),
                 _ => return true,
             };
             if !open.is_disjoint(&named) {

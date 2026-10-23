@@ -23,7 +23,10 @@ fn digest(b: &[u8]) -> String {
 struct Scratch(std::path::PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_dir_all(&self.0),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
     }
 }
 
@@ -48,7 +51,13 @@ impl Run {
     pub(crate) fn new(a: &Start, now: u64) -> Self {
         Self {
             memory: a.memory,
-            close_idle_ms: a.close_idle.as_deref().and_then(|s| crate::automation::duration_ms(s).ok()),
+            close_idle_ms: a.close_idle.as_deref().and_then(|s| {
+                crate::automation::duration_ms(s)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }),
             last_input_ms: now,
             inbox_pending: true,
             ..Self::default()
@@ -88,7 +97,11 @@ fn memory_root(host: &Host, p: &str, name: &str) -> Result<std::path::PathBuf, E
     let root = host.project_dir(p)?.join("automations");
     let dest = root.join(format!("{name}.memory"));
     for path in [&root, &dest] {
-        if path.symlink_metadata().is_ok_and(|m| !m.is_dir()) {
+        if path
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| !m.is_dir())
+        {
             return Err(bad("기억 자리가 일반 폴더가 아니다"));
         }
     }
@@ -99,7 +112,11 @@ fn local_files(root: &Path) -> Result<Vec<(String, Vec<u8>)>, ErrorBody> {
     let mut files = vec![];
     let mut total = 0;
     while let Some(dir) = dirs.pop() {
-        if dir.symlink_metadata().is_ok_and(|m| !m.is_dir()) {
+        if dir
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| !m.is_dir())
+        {
             return Err(bad("기억 폴더에 symlink가 있다"));
         }
         if !dir.exists() {
@@ -139,8 +156,21 @@ fn local_files(root: &Path) -> Result<Vec<(String, Vec<u8>)>, ErrorBody> {
 /// 시험은 이 영역의 판정 시계만 움직인다. 실제 입력·보고 시각과 agent 활동은 그대로 남긴다.
 pub(crate) fn now_ms() -> u64 {
     std::env::var_os("AAA_TEST_AUTOMATION_CLOCK_FILE")
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| s.trim().parse().ok())
+        .and_then(|p| {
+            std::fs::read_to_string(p)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .and_then(|s| {
+            s.trim()
+                .parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .unwrap_or_else(aaa_common::util::now_ms)
 }
 
@@ -330,7 +360,10 @@ impl Host {
         let (current, large) = match fetch {
             Ok(v) => v,
             Err(e) => {
-                let _ = std::fs::remove_dir_all(&tmp);
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_dir_all(&tmp),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
                 return Err(e);
             }
         };
@@ -350,13 +383,19 @@ impl Host {
         };
         // 합쳐진 history도 기존 전송 상한 안에 있어야 한다. 실패해도 양쪽 원문은 남는다.
         if merged.files.len() > 1000 || merged.files.values().map(|b| b.len()).sum::<usize>() > 8 * 1024 * 1024 {
-            let _ = std::fs::remove_dir_all(&tmp);
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&tmp),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
             return Err(bad("합친 기억 이동 상한: 8MiB·1000개. 원본을 보존했다"));
         }
         std::fs::remove_dir_all(&tmp).map_err(bad)?;
         memory::write(&tmp, &merged.files)?;
         if memory::read(&dest)? != host {
-            let _ = std::fs::remove_dir_all(&tmp);
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&tmp),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
             return Err(bad("회수 중 host 기억이 바뀌었다. 원본을 보존했다"));
         }
         // 프로젝트의 기존 기억은 검증이 전부 끝날 때까지 보존한다.
@@ -375,7 +414,10 @@ impl Host {
         }
         if let Err(e) = std::fs::rename(&tmp, &dest) {
             if old.exists() {
-                let _ = std::fs::rename(&old, &dest);
+                aaa_common::diagnostic::ignored(
+                    std::fs::rename(&old, &dest),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
             }
             return Err(bad(e));
         }
@@ -439,7 +481,11 @@ impl Host {
                 continue;
             }
             let Some(work) = &rec.work_dir else { continue };
-            let Ok(conn) = self.live_conn(&rec.machine_id) else { continue };
+            let Ok(conn) = self.live_conn(&rec.machine_id).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             let pending =
                 match conn
                     .request(self.work_file_request(
@@ -456,7 +502,10 @@ impl Host {
             let rec = if rec.automation_run.as_ref().unwrap().inbox_pending != pending {
                 match self.update_rec(p, &rec.id, |r| r.automation_run.as_mut().unwrap().inbox_pending = pending) {
                     Ok(r) => r,
-                    Err(_) => continue,
+                    Err(source_error) => {
+                        aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                        continue;
+                    }
                 }
             } else {
                 rec
@@ -486,7 +535,11 @@ pub(crate) fn brief(a: &Start) -> &'static str {
 impl Host {
     pub(crate) fn automation_memory_view(&self, p: &str, name: &str) -> Result<aaa_proto::AutomationMemory, ErrorBody> {
         let file = memory_root(self, p, name)?.join("memory.md");
-        if file.symlink_metadata().is_ok_and(|m| !m.is_file()) {
+        if file
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| !m.is_file())
+        {
             return Err(bad("기억이 일반 파일이 아니다"));
         }
         use std::io::Read;

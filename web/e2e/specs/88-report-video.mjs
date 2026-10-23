@@ -71,15 +71,18 @@ export default async function ({ page }) {
       observers.push(observePopupLifecycle(p, note));
       try {
         const card = p.getByTestId(`request-ask-${request.id}`); await card.waitFor();
+        const video = card.getByLabel("시안 영상", { exact: true });
+        const choice = card.getByLabel("A 영상", { exact: true });
+        // metadata가 바꾼 영상 높이가 pointerdown/up 사이에 선택지를 밀지 않게 실제 로드를 먼저 관측한다.
+        await Promise.all([ready(video), ready(choice), ready(card.getByLabel("기존 영상 링크", { exact: true }))]);
         await p.getByTestId("thread-ask-pick-1B").click();
-        const video = card.getByLabel("시안 영상", { exact: true }); await ready(video);
+        await domIs(p, "재생 전 B 선택 반영", () => document.querySelector('[data-testid="thread-ask-pick-1B"]')?.getAttribute("aria-checked") === "true");
         const flags = await video.evaluate((v) => ({ muted: v.muted, inline: v.playsInline, controls: v.controls, paused: v.paused, autoplay: v.autoplay }));
         if (!flags.muted || !flags.inline || !flags.controls || !flags.paused || flags.autoplay) throw new Error(JSON.stringify(flags));
         const hash = await p.evaluate(() => location.hash);
         phase = "본문 재생·시간 전진·탐색";
         await card.getByRole("button", { name: "시안 영상 재생", exact: true }).click(); await moved(video); await seek(video);
         phase = "선택지 재생·시간 전진";
-        const choice = card.getByLabel("A 영상", { exact: true }); await ready(choice);
         await card.getByRole("button", { name: "A 영상 재생", exact: true }).click(); await moved(choice); await choice.evaluate((v) => v.pause());
         phase = "선택·주소 보존";
         const picked = await p.getByTestId("thread-ask-pick-1B").getAttribute("aria-checked");

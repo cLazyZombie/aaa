@@ -25,7 +25,7 @@ impl Drop for Secret {
     }
 }
 fn required() -> Fault {
-    Fault { code: "installation_private_password_input_required", exit: 3 }
+    Fault { code: "installation_private_password_input_required", exit: 3, cause: None }
 }
 pub(in crate::install::engine) fn prompt() -> Result<supervisor::Password> {
     outside_session()?;
@@ -45,16 +45,18 @@ pub(in crate::install::engine) fn prompt() -> Result<supervisor::Password> {
     }
     let mut secret = Secret(Vec::with_capacity(1024));
     print!("설치 사용자 계정 암호(Windows Hello PIN 아님, 입력은 표시되지 않습니다): ");
-    std::io::stdout().flush().map_err(|_| required())?;
+    std::io::stdout().flush().map_err(|source_error| aaa_common::diagnostic::context(source_error, required()))?;
     loop {
         let mut unit = 0u16;
         let mut read = 0;
         let ok = unsafe { ReadConsoleW(handle, (&mut unit as *mut u16).cast(), 1, &mut read, std::ptr::null()) };
         if ok == 0 || read != 1 {
-            return Err(Fault { code: "installation_cancelled", exit: 130 });
+            return Err(Fault { code: "installation_cancelled", exit: 130, cause: None });
         }
         match unit {
-            3 | 4 | 26 | 27 => return Err(Fault { code: "installation_cancelled", exit: 130 }),
+            3 | 4 | 26 | 27 => {
+                return Err(Fault { code: "installation_cancelled", exit: 130, cause: None });
+            }
             13 | 10 => {
                 println!();
                 if secret.0.is_empty() {

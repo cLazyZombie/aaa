@@ -25,7 +25,7 @@ mod web;
 mod worker;
 
 pub(super) fn launcher_asset_source(plan: &InstallPlan) -> std::result::Result<PathBuf, Box<InstallResult>> {
-    launcher_asset::source(plan).map_err(|e| super::error(e.code, e.exit))
+    launcher_asset::source(plan).map_err(|e| e.public())
 }
 
 pub(super) use apply::{inline as apply_inline, run as apply};
@@ -54,22 +54,40 @@ type Result<T> = std::result::Result<T, Fault>;
 struct Fault {
     code: &'static str,
     exit: u8,
+    cause: Option<aaa_common::diagnostic::Cause>,
 }
 impl Fault {
-    fn io(_: std::io::Error) -> Self {
-        Self { code: "installation_io_failed", exit: 1 }
+    #[track_caller]
+    fn io(error: std::io::Error) -> Self {
+        aaa_common::diagnostic::context(error, Self { code: "installation_io_failed", exit: 1, cause: None })
     }
     fn conflict() -> Self {
-        Self { code: "installation_content_conflict", exit: 4 }
+        Self { code: "installation_content_conflict", exit: 4, cause: None }
+    }
+    fn public(self) -> Box<InstallResult> {
+        use aaa_common::diagnostic::WithCause;
+        let result = super::error(self.code, self.exit);
+        match self.cause {
+            Some(cause) => result.with_cause(cause),
+            None => result,
+        }
+    }
+}
+impl aaa_common::diagnostic::WithCause for Fault {
+    fn with_cause(mut self, cause: aaa_common::diagnostic::Cause) -> Self {
+        self.cause = Some(cause);
+        self
     }
 }
 fn hash(bytes: &[u8]) -> String {
     hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
 }
 fn account_hash() -> Result<String> {
-    super::platform::account()
-        .map(|account| hash(account.as_bytes()))
-        .ok_or(Fault { code: "account_unavailable", exit: 5 })
+    super::platform::account().map(|account| hash(account.as_bytes())).ok_or(Fault {
+        code: "account_unavailable",
+        exit: 5,
+        cause: None,
+    })
 }
 fn id_ok(id: &str) -> bool {
     id.len() == 26 && id.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
@@ -167,13 +185,17 @@ fn read_journal(state: &Path, id: &str, instance: Option<&str>) -> Result<Journa
     let path = journal_dir(state, id).join("journal.json");
     let bytes = private::read(&path, 2 * 1024 * 1024).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            Fault { code: "installation_not_found", exit: 2 }
+            Fault { code: "installation_not_found", exit: 2, cause: None }
         } else {
-            Fault { code: "installation_record_untrusted", exit: 4 }
+            Fault { code: "installation_record_untrusted", exit: 4, cause: None }
         }
     })?;
-    let j: Journal =
-        serde_json::from_slice(&bytes).map_err(|_| Fault { code: "installation_record_invalid", exit: 2 })?;
+    let j: Journal = serde_json::from_slice(&bytes).map_err(|source_error| {
+        aaa_common::diagnostic::context(
+            source_error,
+            Fault { code: "installation_record_invalid", exit: 2, cause: None },
+        )
+    })?;
     if j.schema != 1
         || j.id != id
         || j.account != account_hash()?
@@ -193,7 +215,7 @@ fn read_journal(state: &Path, id: &str, instance: Option<&str>) -> Result<Journa
         || j.entries.iter().any(|e| !digest_ok(&e.after) || e.before.as_ref().is_some_and(|s| !digest_ok(s)))
         || j.version.as_deref().is_some_and(|v| aaa_config::parse_version(v).is_none())
     {
-        return Err(Fault { code: "installation_record_invalid", exit: 2 });
+        return Err(Fault { code: "installation_record_invalid", exit: 2, cause: None });
     }
     Ok(j)
 }
@@ -209,7 +231,7 @@ pub(super) fn status(
     validate_id(id)?;
     // 요청 ID는 신뢰할 수 있는 기록의 존재/성공과 별개다. 고정 단계만 덧붙이고 경로/문서는 노출하지 않는다.
     let failed = |fault: Fault, phase: &str| {
-        let mut result = super::error(fault.code, fault.exit);
+        let mut result = fault.public();
         result.installation_id = Some(id.into());
         if let Some(error) = &mut result.error {
             error.details.push(format!("phase={phase}"));
@@ -310,3 +332,18 @@ impl Journal {
     )
 )]
 mod transaction;
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn io_fault_keeps_cause_in_public_install_result() {
+        let result = Fault::io(std::io::Error::from_raw_os_error(5)).public();
+        let error = result.error.as_ref().unwrap();
+        assert_eq!(error.code, "installation_io_failed");
+        assert!(error.details.iter().any(|detail| detail.contains("os error 5")));
+        let encoded = serde_json::to_vec(&result).unwrap();
+        let decoded: InstallResult = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.error, result.error);
+    }
+}

@@ -89,16 +89,28 @@ impl Host {
             }
             (text[..end].to_string(), true)
         };
-        let raw = crate::automation::project_text(&root, &file).unwrap_or_default();
+        let raw = crate::automation::project_text(&root, &file)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "실행 안내 사본을 못 읽어 빈 사본을 쓴다"))
+            .unwrap_or_default();
         // 읽은 규칙은 본문 파일을 글로 풀어 두므로 참조는 원문 TOML에서 찾는다
         let body_file = file
             .ends_with(".toml")
-            .then(|| crate::automation::decode::<crate::automation::File>(&file, &raw).ok())
+            .then(|| {
+                crate::automation::decode::<crate::automation::File>(&file, &raw)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .flatten()
             .and_then(|f| f.action.texts().1.map(str::to_owned));
         let sha256 = hex::encode(sha2::Sha256::digest(raw.as_bytes()));
         let (text, truncated) = cut(raw);
-        let body = body_file.as_deref().map(|f| crate::automation::project_text(&root, f).unwrap_or_default());
+        let body = body_file.as_deref().map(|f| {
+            crate::automation::project_text(&root, f)
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "실행 본문 사본을 못 읽어 빈 사본을 쓴다"))
+                .unwrap_or_default()
+        });
         let (body, body_truncated) = body.map(cut).unwrap_or_default();
         Ok(Some(aaa_proto::RoutineSource { file, text, sha256, body_file, body, truncated, body_truncated }))
     }

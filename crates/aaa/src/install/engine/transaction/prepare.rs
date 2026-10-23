@@ -32,7 +32,11 @@ pub(super) fn proposal(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if path.symlink_metadata().is_ok_and(|m| m.nlink() != 1) {
+        if path
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| m.nlink() != 1)
+        {
             return Err(conflict());
         }
     }
@@ -63,7 +67,11 @@ struct Doc {
 impl Doc {
     fn load(path: PathBuf) -> Result<Self> {
         let before = text(&path)?;
-        let value: DocumentMut = before.as_deref().unwrap_or("schema = 1\n").parse().map_err(|_| conflict())?;
+        let value: DocumentMut = before
+            .as_deref()
+            .unwrap_or("schema = 1\n")
+            .parse()
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, conflict()))?;
         if value.get("schema").and_then(Item::as_integer) != Some(1) {
             return Err(conflict());
         }
@@ -125,7 +133,8 @@ fn string(s: &str) -> Item {
 }
 
 pub(super) fn install(plan: InstallPlan) -> Result<Request> {
-    let checked = aaa_config::install::plan(plan.choices.clone(), plan.context.clone()).map_err(|_| conflict())?;
+    let checked = aaa_config::install::plan(plan.choices.clone(), plan.context.clone())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, conflict()))?;
     if checked != plan {
         return Err(conflict());
     }
@@ -135,7 +144,7 @@ pub(super) fn install(plan: InstallPlan) -> Result<Request> {
     let mut directories = Vec::new();
     // safety 확대·PATH·서비스·등록은 이 파일 단계의 쓰기 권한으로 수행하지 않는다.
     if !c.allow_thread_profile.is_empty() || !c.allow_coordinator_profile.is_empty() {
-        return Err(Fault { code: "installation_policy_executor_required", exit: 5 });
+        return Err(Fault { code: "installation_policy_executor_required", exit: 5, cause: None });
     }
     let selected = c.from.as_ref().map(PathBuf::from).unwrap_or(std::env::current_exe().map_err(Fault::io)?);
     if snapshot(&selected)?.0.is_none() {
@@ -149,7 +158,9 @@ pub(super) fn install(plan: InstallPlan) -> Result<Request> {
     let before = if bin.exists() { Some(std::fs::read(&bin).map_err(Fault::io)?) } else { None };
     files.push(proposal(bin, Kind::Binary, before, binary, Some(0o755), false, true)?);
     for asset in super::super::launcher_asset::proposals(&plan)? {
-        let before = std::fs::read(&asset.path).ok();
+        let before = std::fs::read(&asset.path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         files.push(proposal(asset.path, Kind::Launcher, before, asset.bytes, asset.mode, true, true)?);
     }
     let local = c.role == Some(InstallRole::Agent) || c.local_agent != Some(InstallToggle::Disabled);
@@ -188,15 +199,18 @@ pub(super) fn install(plan: InstallPlan) -> Result<Request> {
         }
         for path in &c.profile_file {
             let profile = text(Path::new(path))?.ok_or_else(conflict)?;
-            super::super::super::profiles::names(&profile).map_err(|_| conflict())?;
-            let imported: DocumentMut = profile.parse().map_err(|_| conflict())?;
+            super::super::super::profiles::names(&profile)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, conflict()))?;
+            let imported: DocumentMut =
+                profile.parse().map_err(|source_error| aaa_common::diagnostic::context(source_error, conflict()))?;
             for (name, value) in imported.get("profiles").and_then(Item::as_table_like).ok_or_else(conflict)?.iter() {
                 for doc in [&host.base, &host.local] {
                     if let Some(old) = doc.value.get("profiles").and_then(|p| p.get(name)) {
                         let mut isolated = DocumentMut::new();
                         isolated["schema"] = toml_edit::value(1);
                         isolated["profiles"][name] = old.clone();
-                        super::super::super::profiles::names(&isolated.to_string()).map_err(|_| conflict())?;
+                        super::super::super::profiles::names(&isolated.to_string())
+                            .map_err(|source_error| aaa_common::diagnostic::context(source_error, conflict()))?;
                     }
                 }
                 for (key, value) in value.as_table_like().ok_or_else(conflict)?.iter() {
@@ -263,7 +277,9 @@ pub(super) fn install(plan: InstallPlan) -> Result<Request> {
     };
     if c.hooks == Some(InstallHooks::Install) {
         let home = c.codex_home.as_ref().map(PathBuf::from).unwrap_or_else(crate::integration::codex_home);
-        for edit in crate::integration::plan(home, Path::new(&plan.context.bin_path), false).map_err(|_| conflict())? {
+        for edit in crate::integration::plan(home, Path::new(&plan.context.bin_path), false)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, conflict()))?
+        {
             if let Some(after) = edit.after {
                 files.push(proposal(
                     edit.path,

@@ -18,7 +18,17 @@ use crate::orch::ThreadRec;
 
 /// 긴 턴(herdr-web-ui `LONG_TURN_MS`). `AAA_TEST_LONG_TURN_MS`는 시험에서만 줄인다(웹 E2E 11)
 pub(crate) fn long_turn_ms() -> u64 {
-    std::env::var("AAA_TEST_LONG_TURN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(60_000)
+    std::env::var("AAA_TEST_LONG_TURN_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|v| {
+            v.parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or(60_000)
 }
 
 pub(crate) fn in_turn(a: Option<AgentActivity>) -> bool {
@@ -89,7 +99,7 @@ impl Host {
 
     pub(crate) fn send_notice(&self, n: NoticeView) {
         tracing::debug!(kind = ?n.kind, pane = ?n.pane, "앱 안 알림");
-        let _ = self.notice_events.send(n);
+        aaa_common::diagnostic::ignored(self.notice_events.send(n), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     }
 
     /// 보는 화면 없이 끝난 턴. thread pane이면 ticker의 묶음 셈(`thread_pass`)까지 미룬다: 그 셈이 같은 턴의 새 보고를 알리면

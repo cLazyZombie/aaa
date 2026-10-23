@@ -78,7 +78,9 @@ fn ask(args: &Args, q: &Question) -> Result<Answer> {
             Err(inquire::InquireError::OperationInterrupted | inquire::InquireError::NotTTY) => {
                 return Ok(Answer::Cancel);
             }
-            Err(_) => return Err(error("installation_prompt_closed", 3)),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, error("installation_prompt_closed", 3)));
+            }
         }
     };
     Ok(match answer.as_str() {
@@ -102,14 +104,26 @@ fn save(path: &Path, choices: &InstallChoices, dry_run: bool) -> Result<()> {
     }
     let parent = engine::normalize_state(path.parent().ok_or_else(|| error("installation_draft_invalid", 2))?)?;
     let path = parent.join(path.file_name().ok_or_else(|| error("installation_draft_invalid", 2))?);
-    private::parents(&parent).map_err(|_| error("installation_draft_unavailable", 3))?;
-    let mut file = private::new_file(&path).map_err(|_| error("installation_draft_conflict", 4))?;
+    private::parents(&parent).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("installation_draft_unavailable", 3))
+    })?;
+    let mut file = private::new_file(&path).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("installation_draft_conflict", 4))
+    })?;
     serde_json::to_writer(&mut file, &Draft { schema: "aaa.install.draft.v1".into(), choices: choices.clone() })
-        .map_err(|_| error("installation_draft_invalid", 2))?;
-    file.flush().map_err(|_| error("installation_draft_unavailable", 3))?;
-    file.sync_all().map_err(|_| error("installation_draft_unavailable", 3))?;
+        .map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("installation_draft_invalid", 2))
+        })?;
+    file.flush().map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("installation_draft_unavailable", 3))
+    })?;
+    file.sync_all().map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("installation_draft_unavailable", 3))
+    })?;
     drop(file);
-    private::sync_parent(&path).map_err(|_| error("installation_draft_unavailable", 3))?;
+    private::sync_parent(&path).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("installation_draft_unavailable", 3))
+    })?;
     println!("초안을 사용자 전용 파일로 저장했습니다: {}", path.display());
     Ok(())
 }
@@ -119,8 +133,10 @@ fn defaults(choices: &InstallChoices) -> Result<(InstallChoices, bool)> {
         .as_deref()
         .map(PathBuf::from)
         .unwrap_or_else(|| aaa_config::paths::default_config_dir_for(choices.instance.as_deref()));
-    let host = aaa_config::load_host(&config).map_err(|_| error("invalid_existing_config", 2))?;
-    let agent = aaa_config::load_agent(&config).map_err(|_| error("invalid_existing_config", 2))?;
+    let host = aaa_config::load_host(&config)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_existing_config", 2)))?;
+    let agent = aaa_config::load_agent(&config)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_existing_config", 2)))?;
     let existing = !host.files.is_empty() || !agent.files.is_empty();
     let mut values = InstallChoices::default();
     if !host.files.is_empty() {
@@ -146,7 +162,9 @@ fn defaults(choices: &InstallChoices) -> Result<(InstallChoices, bool)> {
         if !agent.config.agent.work_mount.is_empty() {
             values.work_mount = Some(agent.config.agent.work_mount);
         }
-        values.min_free_gb = u32::try_from(agent.config.health.min_free_gb).ok();
+        values.min_free_gb = u32::try_from(agent.config.health.min_free_gb)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
     }
     Ok((values, existing))
 }
@@ -267,7 +285,8 @@ fn questions(choices: &InstallChoices, prior: &InstallChoices, existing: bool) -
 }
 fn set(choices: &mut InstallChoices, q: &Question, text: String, explicit: &Value) -> Result<()> {
     let before = choices.clone();
-    let mut value = serde_json::to_value(&*choices).map_err(|_| error("invalid_choices", 2))?;
+    let mut value = serde_json::to_value(&*choices)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choices", 2)))?;
     let next = match q.kind {
         Kind::Choice(options) => {
             if !options.contains(&text.as_str()) {
@@ -288,11 +307,17 @@ fn set(choices: &mut InstallChoices, q: &Question, text: String, explicit: &Valu
                 json!(text)
             }
         }
-        Kind::Number => json!(text.parse::<u32>().map_err(|_| error("invalid_number", 2))?),
-        Kind::Boolean => json!(text.parse::<bool>().map_err(|_| error("invalid_choice", 2))?),
-        Kind::List => {
-            serde_json::from_str::<Vec<String>>(&text).map(|v| json!(v)).map_err(|_| error("invalid_path_list", 2))?
-        }
+        Kind::Number => json!(
+            text.parse::<u32>()
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_number", 2)))?
+        ),
+        Kind::Boolean => json!(
+            text.parse::<bool>()
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choice", 2)))?
+        ),
+        Kind::List => serde_json::from_str::<Vec<String>>(&text)
+            .map(|v| json!(v))
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_path_list", 2)))?,
         Kind::Harness => json!(text.split(',').map(str::trim).collect::<Vec<_>>()),
         Kind::Storage => {
             if text == "internal" {
@@ -302,12 +327,14 @@ fn set(choices: &mut InstallChoices, q: &Question, text: String, explicit: &Valu
                 value["work_mount"] = json!(text);
                 value["work_storage"] = Value::Null;
             }
-            *choices = serde_json::from_value(value).map_err(|_| error("invalid_choices", 2))?;
+            *choices = serde_json::from_value(value)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choices", 2)))?;
             return Ok(());
         }
     };
     value[q.key] = next;
-    *choices = serde_json::from_value(value).map_err(|_| error("invalid_choices", 2))?;
+    *choices = serde_json::from_value(value)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choices", 2)))?;
     // 앞 질문을 바꾸면 초안의 종속 답도 무효화한다. 명시 argv는 숨겨서 덮지 않는다.
     let mut next = serde_json::to_value(&*choices).expect("choices");
     let empty = serde_json::to_value(InstallChoices::default()).expect("choices");
@@ -372,16 +399,21 @@ fn set(choices: &mut InstallChoices, q: &Question, text: String, explicit: &Valu
         }
         _ => {}
     }
-    *choices = serde_json::from_value(next).map_err(|_| error("invalid_choices", 2))?;
+    *choices = serde_json::from_value(next)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choices", 2)))?;
     Ok(())
 }
 pub(super) fn run(args: &Args, original: &InstallInvocation, reporter: &mut output::Reporter) -> Result<InstallResult> {
-    let explicit = serde_json::to_value(&original.choices).map_err(|_| error("invalid_choices", 2))?;
+    let explicit = serde_json::to_value(&original.choices)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choices", 2)))?;
     let mut choices = if let Some(path) = args.draft() {
-        let draft: Draft = serde_json::from_slice(
-            &aaa_common::private_file::read(path, 1024 * 1024).map_err(|_| error("installation_draft_untrusted", 2))?,
-        )
-        .map_err(|_| error("installation_draft_invalid", 2))?;
+        let draft: Draft =
+            serde_json::from_slice(&aaa_common::private_file::read(path, 1024 * 1024).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("installation_draft_untrusted", 2))
+            })?)
+            .map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("installation_draft_invalid", 2))
+            })?;
         if draft.schema != "aaa.install.draft.v1" {
             return Err(error("installation_draft_invalid", 2));
         }
@@ -389,13 +421,15 @@ pub(super) fn run(args: &Args, original: &InstallInvocation, reporter: &mut outp
     } else {
         InstallChoices::default()
     };
-    let mut merged = serde_json::to_value(&choices).map_err(|_| error("invalid_choices", 2))?;
+    let mut merged = serde_json::to_value(&choices)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choices", 2)))?;
     for (key, value) in explicit.as_object().expect("choices") {
         if provided(value) {
             merged[key] = value.clone();
         }
     }
-    choices = serde_json::from_value(merged).map_err(|_| error("invalid_choices", 2))?;
+    choices = serde_json::from_value(merged)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_choices", 2)))?;
     let mut state = Snapshot { choices, answered: BTreeSet::new() };
     let mut history: Vec<Snapshot> = vec![];
     let location = state

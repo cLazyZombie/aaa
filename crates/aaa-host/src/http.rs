@@ -66,7 +66,7 @@ pub(crate) async fn request(
             .with_root_certificates(roots)
             .with_no_client_auth();
         let name = rustls::pki_types::ServerName::try_from(t.host.clone())
-            .map_err(|_| HttpError::Io("host 이름 형식이 아니다".into()))?;
+            .map_err(|e| HttpError::Io(aaa_common::diagnostic::context(e, "host 이름 형식이 아니다".to_string())))?;
         Box::new(
             tokio_rustls::TlsConnector::from(Arc::new(cfg))
                 .connect(name, tcp)
@@ -139,7 +139,13 @@ async fn read_response<S: AsyncRead + Unpin + ?Sized>(s: &mut S, max: usize) -> 
     let status = lines
         .next()
         .and_then(|l| l.split_whitespace().nth(1))
-        .and_then(|c| c.parse().ok())
+        .and_then(|c| {
+            c.parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .ok_or_else(|| HttpError::Io("HTTP 응답이 아니다".into()))?;
     let headers: Vec<(String, String)> = lines
         .filter_map(|l| l.split_once(':'))
@@ -147,7 +153,11 @@ async fn read_response<S: AsyncRead + Unpin + ?Sized>(s: &mut S, max: usize) -> 
         .collect();
     let get = |name: &str| headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
     let chunked = get("transfer-encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
-    let length = get("content-length").and_then(|v| v.parse::<usize>().ok());
+    let length = get("content-length").and_then(|v| {
+        v.parse::<usize>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+    });
     // 본문을 `want`만큼(None이면 닫힐 때까지) 더 읽는다. 쌓인 것이 `limit`를 넘으면 그만 읽는다.
     async fn fill<S: AsyncRead + Unpin + ?Sized>(
         s: &mut S,
@@ -185,8 +195,9 @@ async fn read_response<S: AsyncRead + Unpin + ?Sized>(s: &mut S, max: usize) -> 
                 }
             };
             let size_text = String::from_utf8_lossy(&rest[..line_end]).to_string();
-            let size = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16)
-                .map_err(|_| HttpError::Io("chunked 크기 형식이 아니다".into()))?;
+            let size = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16).map_err(|e| {
+                HttpError::Io(aaa_common::diagnostic::context(e, "chunked 크기 형식이 아니다".to_string()))
+            })?;
             if size == 0 {
                 break;
             }

@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 관리 GUI W5b(plan §8.355): 설정 「머신」(등록 창·대기·승인·폐기), 「폰 및 기기」의 웹 공개 켜기·끄기, 보고서 「올리기」 창,
 // 「이 aaa」의 공유 링크 키 교체. host가 판정한다(웹 조작 기기만, 마지막 조작 기기·host 머신 폐기 거부, 등록 코드 3번 틀리면 버림).
 // 머신 등록은 새 머신 화면의 6자리 코드를 넣어야 승인한다(사용자 답 1A: CLI와 같은 보증). 등록 창·대기 목록은 host `enroll` 사건으로
@@ -64,7 +65,7 @@ export function useAdmin(): boolean | null {
     let live = true;
     me()
       .then((m) => live && setOk(canAdmin(m?.front_api)))
-      .catch(() => live && setOk(false));
+      .catch(ignoredFailure("AdminPages.tsx:68", () => live && setOk(false)));
     return () => {
       live = false;
     };

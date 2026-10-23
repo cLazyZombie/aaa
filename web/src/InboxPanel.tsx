@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 활동 막대 「알림함」 패널(관리 GUI W4, plan §8.343): coordinator 알림함(inbox)·흐름 사건·post. 알림함은 늘 `peek`로 읽는다:
 // 화면이 읽어도 「봤다」가 되지 않아 coordinator 묶음 알림(nudge)이 그대로 간다. 끝내기는 조작 기기만. 사용자가 답할 요청 post는
 // 「답할 것」이 다루므로(plan §8.345) post 탭과 알림함 탭 모두 수만 보이고 그리로 보낸다(같은 자료를 두 곳에 두지 않는다). post 목록은 조작 기기만 읽는다.
@@ -336,7 +337,7 @@ export function useInboxBadge(): number {
       loading = true;
       call({ op: "inbox", all: false, peek: true })
         .then((r) => live && r.kind === "inbox" && setCount(inboxOpen(r.items, r.omitted_open)))
-        .catch(() => undefined)
+        .catch(ignoredFailure("InboxPanel.tsx:340", () => undefined))
         .finally(() => {
           loading = false;
           if (again && live) {

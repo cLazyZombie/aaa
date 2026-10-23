@@ -85,7 +85,11 @@ impl Git<'_> {
     /// commit 이름을 full SHA로(없으면 None)
     async fn commit(&self, name: &str) -> Option<String> {
         let spec = format!("{name}^{{commit}}");
-        let out = self.ok(&["rev-parse", "--verify", "--quiet", "--end-of-options", &spec]).await.ok()?;
+        let out = self
+            .ok(&["rev-parse", "--verify", "--quiet", "--end-of-options", &spec])
+            .await
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         Some(String::from_utf8_lossy(&out).trim().to_string()).filter(|s| !s.is_empty())
     }
 }
@@ -101,7 +105,10 @@ impl TempIndex {
 
 impl Drop for TempIndex {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_dir_all(&self.0),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
     }
 }
 
@@ -141,7 +148,10 @@ async fn inner(dir: &Path, base: Option<&str>, q: &DiffQuery) -> Result<DiffView
     let head_sha = git.commit("HEAD").await;
     let head = match git.ok(&["symbolic-ref", "--quiet", "--short", "HEAD"]).await {
         Ok(b) => String::from_utf8_lossy(&b).trim().to_string(),
-        Err(_) => "HEAD".into(),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            "HEAD".into()
+        }
     };
     let (base_name, base_sha) = match q.scope {
         DiffScope::Uncommitted => ("HEAD".to_string(), head_sha.clone().unwrap_or_else(|| d::EMPTY_TREE.into())),

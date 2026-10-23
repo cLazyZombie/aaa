@@ -17,7 +17,14 @@ fn add(plan: &mut Plan, root: &Path, file: String, text: String) -> Result<(), S
     if plan.writes.contains_key(&file) {
         return Err(format!("{file}:1:1 이름: 변환 결과 이름이 겹친다"));
     }
-    if root.join(&file).symlink_metadata().is_ok() && !plan.originals.contains_key(&file) {
+    if root
+        .join(&file)
+        .symlink_metadata()
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
+        && !plan.originals.contains_key(&file)
+    {
         return Err(format!("{file}:1:1 이름: 이미 있는 파일은 덮어쓰지 않는다"));
     }
     plan.writes.insert(file, text);
@@ -374,7 +381,15 @@ pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
             }
         }
         for (file, backup, reused) in archived.iter().rev() {
-            if root.join(file).exists() && project_text(root, file).ok().as_ref() != plan.originals.get(file) {
+            if root.join(file).exists()
+                && project_text(root, file)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_ref()
+                    != plan.originals.get(file)
+            {
                 failures.push(format!("{file}: 원본 자리에 다른 파일이 있어 {backup} 보존"));
                 continue;
             }
@@ -522,7 +537,8 @@ impl Plan {
                     if bytes.len() as u64 != f.size || hex::encode(sha2::Sha256::digest(&bytes)) != f.sha256 {
                         return Err(bad("옛 기억 hash가 다르다".into()));
                     }
-                    let text = String::from_utf8(bytes).map_err(|_| bad("옛 기억은 UTF-8이어야 한다".into()))?;
+                    let text = String::from_utf8(bytes)
+                        .map_err(|e| aaa_common::diagnostic::context(e, bad("옛 기억은 UTF-8이어야 한다".into())))?;
                     let file = format!("automations/{name}.memory/{path}");
                     if !self.writes.contains_key(&file) {
                         add(self, &h.project_dir(p)?, file.clone(), text.clone()).map_err(bad)?;

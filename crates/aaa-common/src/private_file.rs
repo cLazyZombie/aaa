@@ -122,8 +122,12 @@ pub fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::rename(&tmp, path)?;
         sync_parent(path)
     })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    if result
+        .as_ref()
+        .inspect_err(|error| crate::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+    {
+        crate::diagnostic::ignored(std::fs::remove_file(&tmp), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     }
     result
 }
@@ -210,7 +214,9 @@ fn token_account(owner: bool) -> Option<String> {
         while *text.add(n) != 0 {
             n += 1;
         }
-        let sid = String::from_utf16(std::slice::from_raw_parts(text, n)).ok();
+        let sid = String::from_utf16(std::slice::from_raw_parts(text, n))
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         LocalFree(text.cast());
         sid
     }

@@ -34,7 +34,7 @@ fn kill_login(killer: &mut dyn portable_pty::ChildKiller, pid: Option<u32>) {
         return;
     }
     let _ = pid;
-    let _ = killer.kill();
+    aaa_common::diagnostic::ignored(killer.kill(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
 }
 
 pub(crate) struct LoginJob {
@@ -77,7 +77,10 @@ fn busy(state: &str) -> bool {
 struct Temp(PathBuf);
 impl Drop for Temp {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_dir_all(&self.0),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
     }
 }
 
@@ -116,14 +119,21 @@ impl Host {
         }
         let id = util::new_id();
         let root = self.state.join("account-logins");
-        if root.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+        if root
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
             return Err(fail());
         }
-        util::ensure_private_dir(&root).map_err(|_| fail())?;
+        util::ensure_private_dir(&root)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let temp = Temp(root.join(&id));
-        util::ensure_private_dir(&temp.0).map_err(|_| fail())?;
+        util::ensure_private_dir(&temp.0)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let home = temp.0.join(harness);
-        util::ensure_private_dir(&home).map_err(|_| fail())?;
+        util::ensure_private_dir(&home)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let mut command = CommandBuilder::new(harness);
         command.env_clear();
         for key in [
@@ -163,17 +173,21 @@ impl Host {
         }
         let pair = native_pty_system()
             .openpty(PtySize { rows: 32, cols: 512, pixel_width: 0, pixel_height: 0 })
-            .map_err(|_| fail())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         #[cfg(unix)]
         let output_fd = pair.master.as_raw_fd().ok_or_else(fail)?;
-        let mut child = pair.slave.spawn_command(command).map_err(|_| fail())?;
+        let mut child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let pid = child.process_id();
         let mut killer = child.clone_killer();
         let reader = match pair.master.try_clone_reader() {
             Ok(reader) => reader,
-            Err(_) => {
+            Err(source_error) => {
+                aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                 kill_login(&mut *child.clone_killer(), pid);
-                let _ = child.wait();
+                aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
                 return Err(fail());
             }
         };
@@ -259,7 +273,12 @@ impl Host {
             drop(pair.master);
             // 취소·금고 확정·상태 확정을 같은 상태 lock 아래 직렬화한다.
             let mut v = state.lock().unwrap();
-            let was_cancelled = end == "cancelled" || cancelled.try_recv().is_ok();
+            let was_cancelled = end == "cancelled"
+                || cancelled
+                    .try_recv()
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok();
             let secret = if end == "succeeded" && !was_cancelled && bytes.len() as u64 <= MAX_OUTPUT {
                 login_secret(&v.harness, &home, &bytes)
             } else {
@@ -268,10 +287,16 @@ impl Host {
             // 메일·만료는 임시 폴더를 지우기 전에 읽는다(Claude `.claude.json`)
             let identity = match &secret {
                 Ok(secret) => login_identity(&v.harness, &temp.0, &home, &bytes, secret),
-                Err(_) => Identity::default(),
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                    Identity::default()
+                }
             };
             // 평문 정리에 실패하면 기존 금고 값을 바꾸지 않는다.
-            let cleaned = std::fs::remove_dir_all(&temp.0).is_ok();
+            let cleaned = std::fs::remove_dir_all(&temp.0)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok();
             drop(temp);
             let other_email =
                 matches!((&v.expect_email, &identity.email), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b));
@@ -298,7 +323,13 @@ impl Host {
                     });
                 } else {
                     result = host.accounts.import(&v.account, &v.harness, &secret).map(|_| false);
-                    if result.is_ok() {
+                    if result
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+                    {
                         v.email = identity.email.clone();
                         host.account_logged_in(&v.account, &identity, false);
                     }
@@ -310,7 +341,10 @@ impl Host {
                 match result {
                     Ok(true) => "mismatch",
                     Ok(false) => "succeeded",
-                    Err(_) => "failed",
+                    Err(source_error) => {
+                        aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                        "failed"
+                    }
                 }
             }
             .into();
@@ -332,14 +366,14 @@ impl Host {
                         return None;
                     }
                     if let Some(cancel) = job.cancel.take() {
-                        let _ = cancel.send(());
+                        aaa_common::diagnostic::ignored(cancel.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
                     }
                     Some(job.finished.clone())
                 })
                 .collect::<Vec<_>>()
         };
         for done in finished {
-            let _ = login_finished(done).await;
+            aaa_common::diagnostic::ignored(login_finished(done).await, "보조 작업 실패 뒤 기존 처리를 계속한다");
         }
     }
 
@@ -421,7 +455,7 @@ impl Host {
                 && let Some(cancel) = job.cancel.take()
             {
                 tracing::info!(login = %id, "계정 로그인 취소 요청");
-                let _ = cancel.send(());
+                aaa_common::diagnostic::ignored(cancel.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             }
             (job.view.clone(), job.finished.clone())
         };
@@ -433,7 +467,7 @@ impl Host {
 
 async fn login_finished(mut done: watch::Receiver<bool>) -> Result<(), ErrorBody> {
     while !*done.borrow_and_update() {
-        done.changed().await.map_err(|_| fail())?;
+        done.changed().await.map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
     }
     Ok(())
 }
@@ -441,7 +475,8 @@ async fn login_finished(mut done: watch::Receiver<bool>) -> Result<(), ErrorBody
 /// PTY 출력의 ANSI 제어열을 뺀 글
 fn plain(output: &[u8]) -> Result<String, ErrorBody> {
     let text = String::from_utf8_lossy(output);
-    let ansi = regex::Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").map_err(|_| fail())?;
+    let ansi = regex::Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]")
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
     Ok(ansi.replace_all(&text, "").into_owned())
 }
 
@@ -462,7 +497,8 @@ fn login_identity(
 fn login_secret(harness: &str, home: &std::path::Path, output: &[u8]) -> Result<String, ErrorBody> {
     if harness == "claude" {
         let text = plain(output)?;
-        let token = regex::Regex::new(r"sk-ant-oat01-[A-Za-z0-9_-]+").map_err(|_| fail())?;
+        let token = regex::Regex::new(r"sk-ant-oat01-[A-Za-z0-9_-]+")
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let values: std::collections::BTreeSet<_> = token.find_iter(&text).map(|m| m.as_str()).collect();
         if values.len() != 1 {
             return Err(fail());
@@ -470,11 +506,13 @@ fn login_secret(harness: &str, home: &std::path::Path, output: &[u8]) -> Result<
         Ok(values.into_iter().next().ok_or_else(fail)?.into())
     } else {
         let path = home.join("auth.json");
-        let m = path.symlink_metadata().map_err(|_| fail())?;
+        let m =
+            path.symlink_metadata().map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         if !m.is_file() || m.len() > MAX_OUTPUT {
             return Err(fail());
         }
-        let value = std::fs::read_to_string(path).map_err(|_| fail())?;
+        let value = std::fs::read_to_string(path)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         Ok(value)
     }
 }

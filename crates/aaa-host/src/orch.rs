@@ -950,7 +950,10 @@ fn needs_default_followup(dir: &Path) -> bool {
 pub(crate) fn files_problems(dir: &Path, name: &str) -> Vec<String> {
     let mut problems = Vec::new();
     match std::fs::read(dir.join("AGENTS.md")) {
-        Err(_) => problems.push("AGENTS.md가 없다".to_string()),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            problems.push("AGENTS.md가 없다".to_string())
+        }
         Ok(b) => match String::from_utf8(b) {
             Ok(t) if t == coordinator_guide(name) => {}
             Ok(t) if t.contains(GUIDE_MARK) => problems.push("AGENTS.md가 지금 aaa의 coordinator 안내가 아니다".into()),
@@ -975,7 +978,11 @@ pub(crate) fn write_files(dir: &Path, name: &str) -> std::io::Result<()> {
     let guide = coordinator_guide(name);
     match std::fs::read(&agents) {
         Ok(b) if b == guide.as_bytes() => {}
-        Ok(b) if std::str::from_utf8(&b).is_ok_and(|t| t.contains(GUIDE_MARK)) => {
+        Ok(b)
+            if std::str::from_utf8(&b)
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|t| t.contains(GUIDE_MARK)) =>
+        {
             write_atomic(&agents, guide.as_bytes())?
         }
         Ok(_) => {
@@ -996,7 +1003,11 @@ pub(crate) fn write_files(dir: &Path, name: &str) -> std::io::Result<()> {
 /// 사람이 쓴 파일을 `<이름>.before-aaa`로 옮긴다. 이미 있으면 그것도 사람 글이라 옮기지 않고 실패한다
 fn keep_aside(path: &Path) -> std::io::Result<()> {
     let kept = path.with_file_name(format!("{}{KEPT}", path.file_name().unwrap().to_string_lossy()));
-    if std::fs::symlink_metadata(&kept).is_ok() {
+    if std::fs::symlink_metadata(&kept)
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
+    {
         return Err(std::io::Error::other(format!(
             "{}가 이미 있어 {}를 옮겨 두지 못한다: 둘을 직접 합치거나 하나를 치운 뒤 다시 한다",
             kept.display(),
@@ -1036,7 +1047,12 @@ impl Host {
     }
 
     pub(crate) fn project_view(&self, name: &str, dir: &Path) -> ProjectView {
-        let threads = self.db.threads(Some(name)).map(|v| v.len() as u32).unwrap_or(0);
+        let threads = self
+            .db
+            .threads(Some(name))
+            .map(|v| v.len() as u32)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "thread 개수 관측 실패 뒤 기존 0 표시"))
+            .unwrap_or(0);
         ProjectView {
             name: name.to_string(),
             path: dir.to_string_lossy().to_string(),
@@ -1125,7 +1141,10 @@ impl Host {
         }
         // 있는 쪽 파일에 쓴다(aaa.toml, 없으면 project.toml. plan §8.288)
         if key == "max_parallel_threads"
-            && value.parse::<u32>().is_ok_and(|n| n > self.settings(project).max_parallel_threads)
+            && value
+                .parse::<u32>()
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|n| n > self.settings(project).max_parallel_threads)
             && self.coordinator_project_of_actor(actor).as_deref() == Some(project)
         {
             return Err(err(
@@ -1215,7 +1234,12 @@ impl Host {
         let mut out: Vec<_> = std::fs::read_dir(&root)
             .into_iter()
             .flatten()
-            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                e.inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+            })
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
                 (valid_project(&name) && e.path().join("PROJECT.md").is_file()).then(|| (name, e.path()))
@@ -1240,7 +1264,10 @@ impl Host {
     /// 그 pane의 thread 사건을 다시 낸다(그 thread의 agent 상태가 바뀌었다)
     pub(crate) fn thread_changed(&self, pane: &str) {
         if let Some(rec) = self.thread_of_pane(pane) {
-            let _ = self.thread_events.send(self.thread_view(&rec));
+            aaa_common::diagnostic::ignored(
+                self.thread_events.send(self.thread_view(&rec)),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
@@ -1256,7 +1283,10 @@ impl Host {
         if let Err(e) = self.db.thread_save(&rec.project, &rec.id, rec.status.as_str(), &json) {
             tracing::error!(thread = %rec.id, "thread 기록 저장 실패: {e:#}");
         }
-        let _ = self.thread_events.send(self.thread_view(rec));
+        aaa_common::diagnostic::ignored(
+            self.thread_events.send(self.thread_view(rec)),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     }
 
     /// 최신 기록을 다시 읽어 고치고 저장한다. 읽은 뒤 agent 응답 등을 기다린 쪽은 이것으로 쓴다
@@ -1274,9 +1304,13 @@ impl Host {
         r.updated_at_ms = aaa_common::util::now_ms();
         r.remember_auth_env();
         let clean = aaa_common::redact::json(r.clone()).map_err(|_| internal("thread 기록 가림 거부"))?;
-        let json = serde_json::to_string(&clean).map_err(|_| internal("thread 기록 직렬화 거부"))?;
+        let json = serde_json::to_string(&clean)
+            .map_err(|e| aaa_common::diagnostic::context(e, internal("thread 기록 직렬화 거부")))?;
         self.db.thread_save(project, id, r.status.as_str(), &json).map_err(internal)?;
-        let _ = self.thread_events.send(self.thread_view(&r));
+        aaa_common::diagnostic::ignored(
+            self.thread_events.send(self.thread_view(&r)),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
         Ok(r)
     }
 
@@ -1387,9 +1421,22 @@ impl Host {
     /// 읽지 못하거나 제목이 비면 이름이다(옛 routine 파일에는 제목이 없다)
     pub(crate) fn automation_title(&self, project: &str, name: &str) -> String {
         self.project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
-            .and_then(|dir| crate::automation::project_text(&dir, &format!("automations/{name}.toml")).ok())
-            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|dir| {
+                crate::automation::project_text(&dir, &format!("automations/{name}.toml"))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .and_then(|text| {
+                text.parse::<toml::Table>()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .and_then(|t| t.get("title").and_then(|v| v.as_str()).map(str::trim).map(str::to_string))
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| name.to_string())
@@ -1400,7 +1447,13 @@ impl Host {
         let rows = self.db.threads(project).map_err(internal)?;
         Ok(rows
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| match role {
                 None => true,
                 Some(want) => r.role == want,
@@ -1477,17 +1530,20 @@ impl Host {
         let kind = kind.as_str();
         let _order = match self.flow_order.try_lock() {
             Ok(g) => g,
-            Err(_) => blocking(|| {
-                test_flow_waiting(&e);
-                self.flow_order.lock().unwrap_or_else(|p| p.into_inner())
-            }),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                blocking(|| {
+                    test_flow_waiting(&e);
+                    self.flow_order.lock().unwrap_or_else(|p| p.into_inner())
+                })
+            }
         };
         match self.db.flow_insert(&e) {
             Ok(seq) => {
                 e.seq = seq;
                 test_flow_hold(&e);
                 self.inbox_from_flow(&e);
-                let _ = self.flow_events.send(e);
+                aaa_common::diagnostic::ignored(self.flow_events.send(e), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             }
             Err(err) => tracing::error!(kind, "흐름 사건 저장 실패: {err:#}"),
         }
@@ -1727,14 +1783,23 @@ impl Host {
     /// memory 파일은 `memory/*.md`(이름순, symlink·숨은 파일 제외)다.
     pub(crate) fn brief(&self, dir: &Path, r: &ThreadRec, task: &str, restart: bool) -> String {
         use crate::brief_text::{BriefInput, THREAD_GUIDE, compose_brief};
-        let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
+        let read = |f: &str| {
+            std::fs::read_to_string(dir.join(f))
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+                .unwrap_or_default()
+        };
         let settings = crate::project::ProjectSettings::load(dir);
         let instructions = read("PROJECT.md");
         let title = instructions.lines().find_map(|l| l.strip_prefix("# ")).unwrap_or_default().trim().to_string();
         let mut mem: Vec<PathBuf> = std::fs::read_dir(dir.join("memory"))
             .into_iter()
             .flatten()
-            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                e.inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+            })
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "md"))
@@ -1744,7 +1809,11 @@ impl Host {
         let memory_files: Vec<(String, String)> = mem
             .iter()
             .filter_map(|f| {
-                let text = std::fs::read_to_string(f).ok()?;
+                let text = std::fs::read_to_string(f)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()?;
                 Some((f.file_name()?.to_string_lossy().to_string(), text))
             })
             .collect();
@@ -1780,9 +1849,9 @@ impl Host {
     }
 
     pub(crate) fn claim_thread(&self, project: &str, id: &str) -> Result<tokio::sync::OwnedMutexGuard<()>, ErrorBody> {
-        self.thread_op_lock(project, id)
-            .try_lock_owned()
-            .map_err(|_| bad(format!("{id}는 준비·정리 작업 중이다. thread show로 상태를 본다")))
+        self.thread_op_lock(project, id).try_lock_owned().map_err(|e| {
+            aaa_common::diagnostic::context(e, bad(format!("{id}는 준비·정리 작업 중이다. thread show로 상태를 본다")))
+        })
     }
 
     /// front가 판정한 요청자만 쓴다. env·요청 본문의 역할 자기 신고는 믿지 않는다.
@@ -1990,7 +2059,15 @@ impl Host {
                     if let Some(input) = &selection {
                         let (account, allocation) = input.select(tx, aaa_common::util::now_ms())?;
                         anyhow::ensure!(
-                            self.accounts.generation(&account).ok().as_deref() == Some(&allocation.generation),
+                            self.accounts
+                                .generation(&account)
+                                .inspect_err(|error| aaa_common::diagnostic::observe(
+                                    error,
+                                    "선택 자료를 읽지 못해 기존 fallback을 쓴다"
+                                ))
+                                .ok()
+                                .as_deref()
+                                == Some(&allocation.generation),
                             "start_wait: 계정 인증 세대 변경 · 새 관측 대기"
                         );
                         rec.account = Some(account);
@@ -2061,7 +2138,10 @@ impl Host {
         }
         let brief = self.brief(&dir, &rec, &a.task, false);
         // 세션이 생기기 전에도 웹·coordinator가 준비 중인 thread를 볼 수 있어야 한다.
-        let _ = self.thread_events.send(self.thread_view(&rec));
+        aaa_common::diagnostic::ignored(
+            self.thread_events.send(self.thread_view(&rec)),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
         let detail = if let Some(o) = &rec.over_limit {
             format!(
                 "{} · 한도 초과로 시작 · 사용자 지시: {}",
@@ -2181,7 +2261,12 @@ impl Host {
             harness: Some(launch.harness.clone()),
             profile: None,
             // agent가 머신별 env를 합친다. 재개 argv는 저장된 실행 계약을 유지한다.
-            resolved_profile: self.resolved_profile(Some(&rec.project), &rec.machine_id, &launch.profile).ok(),
+            resolved_profile: self
+                .resolved_profile(Some(&rec.project), &rec.machine_id, &launch.profile)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok(),
         };
         let pane = if let Some(name) = &rec.account {
             let mut credential = self.accounts.credential(name)?;
@@ -2224,9 +2309,11 @@ impl Host {
             self.replace_pane(&old, &pane, &rec.machine_id, actor).await;
         }
         if let (Ok(conn), Some(wd)) = (self.live_conn(&rec.machine_id), rec.work_dir.clone()) {
-            let _ = conn
-                .request(AgentRequest::ThreadWatch { thread: format!("{}/{}", rec.project, rec.id), work_dir: wd })
-                .await;
+            aaa_common::diagnostic::ignored(
+                conn.request(AgentRequest::ThreadWatch { thread: format!("{}/{}", rec.project, rec.id), work_dir: wd })
+                    .await,
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         Ok(())
     }
@@ -2505,7 +2592,12 @@ impl Host {
     /// agent가 report.md hash 변화를 알렸다
     pub(crate) fn on_report_changed(self: &Arc<Self>, mid: &str, key: &str, hash: Option<String>) {
         let Some((project, id)) = key.split_once('/') else { return };
-        let Ok(rec) = self.load(project, id) else { return };
+        let Ok(rec) = self
+            .load(project, id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         if rec.machine_id != mid || rec.status != ThreadStatus::Open || hash.is_none() || hash == rec.report_hash {
             return;
         }
@@ -2547,7 +2639,13 @@ impl Host {
     /// 실패한 회수는 report hash가 더 바뀌지 않아도 다음 ticker에서 다시 한다. 연결이 없으면 건너뛴다.
     pub(crate) fn retry_report_copies(self: &Arc<Self>, project: &str, now: u64) {
         for r in self.open_threads(project) {
-            if r.copy.as_deref() == Some("failed") && r.copy_retry_at_ms <= now && self.live_conn(&r.machine_id).is_ok()
+            if r.copy.as_deref() == Some("failed")
+                && r.copy_retry_at_ms <= now
+                && self
+                    .live_conn(&r.machine_id)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
             {
                 self.refresh_report(project, &r.id);
             }
@@ -2556,7 +2654,12 @@ impl Host {
 
     /// agent에 지금 report.md hash를 묻고(library는 읽지 않는다) 받은 것과 다르거나 앞 회수가 실패했으면 받는다
     async fn collect_if_changed(self: &Arc<Self>, project: &str, id: &str) {
-        let Ok(rec) = self.load(project, id) else { return };
+        let Ok(rec) = self
+            .load(project, id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let (Some(work_dir), Ok(conn)) = (rec.work_dir.clone(), self.live_conn(&rec.machine_id)) else { return };
         if let Some(warning) = &rec.question_warning {
             self.warn_question_format(&rec, warning).await;
@@ -2732,7 +2835,10 @@ impl Host {
                     if let Err(e) = received {
                         failed_files.push((f.clone(), e.message));
                         // 이전 검증 사본은 보존하되 새 manifest·불변 판에는 넣지 않는다.
-                        let _ = std::fs::remove_file(&target);
+                        aaa_common::diagnostic::ignored(
+                            std::fs::remove_file(&target),
+                            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                        );
                         if let Ok((previous, _)) = crate::library::local_file(&dir, id, &f.path) {
                             std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
                             std::fs::copy(previous, &target).map_err(internal)?;
@@ -2743,7 +2849,10 @@ impl Host {
             }
             .await;
             if let Err(e) = fetch {
-                let _ = std::fs::remove_dir_all(&tmp);
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_dir_all(&tmp),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
                 return Err(e);
             }
             let mut failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
@@ -2754,14 +2863,24 @@ impl Host {
                 lazy_size: Some(f.size),
             }));
             let dest = lib_root.join(id);
-            let old_manifest = std::fs::read(crate::library::manifest_path(&dir, id)).ok();
+            let old_manifest = std::fs::read(crate::library::manifest_path(&dir, id))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok();
             let same_files = same_tree(&tmp, &dest);
             if dest.exists() {
                 std::fs::remove_dir_all(&dest).map_err(internal)?;
             }
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
-            let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
+            let changed = !same_files
+                || std::fs::read(crate::library::manifest_path(&dir, id))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    != old_manifest;
             let mut version_created = false;
             if rec.report_hash.as_ref() != Some(&snap.hash)
                 || changed
@@ -3004,13 +3123,25 @@ impl Host {
         // 데려온 폴더는 사람 것이다: pane은 닫되 그 폴더·branch는 정리하지 않는다.
         let adopted = rec.kind == ThreadKind::Adopted;
         // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
-        let pane_rx = rec.pane.as_deref().and_then(|p| self.pane_events(p).ok());
+        let pane_rx = rec.pane.as_deref().and_then(|p| {
+            self.pane_events(p)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        });
         if let Some(pane) = rec.pane.as_ref()
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
-            let _ = self.kill_session(&conn, pane).await;
+            aaa_common::diagnostic::ignored(
+                self.kill_session(&conn, pane).await,
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
-        let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
+        aaa_common::diagnostic::ignored(
+            conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await,
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
         let mut notes = Vec::new();
         let mut cleanup_error = None;
         if adopted {
@@ -3060,7 +3191,10 @@ impl Host {
                         worktree: rec.kind == ThreadKind::Worktree && !kept && !c.worktree_removed,
                         branch: rec.branch.is_some() && !kept && !c.branch_deleted,
                     };
-                    let _ = self.update_rec(project, id, |r| r.leftover = Some(left));
+                    aaa_common::diagnostic::ignored(
+                        self.update_rec(project, id, |r| r.leftover = Some(left)),
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                     notes.push(format!(
                         "worktree {}, branch {}",
                         if c.worktree_removed { "삭제" } else { "유지" },
@@ -3095,7 +3229,10 @@ impl Host {
         }
         if let Some(e) = cleanup_error {
             let message = format!("정리 미완료: {}. `aaa thread resolve {project} {id}`로 이어서 한다", e.message);
-            let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
+            aaa_common::diagnostic::ignored(
+                self.update_rec(project, id, |r| r.error = Some(message.clone())),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
             return Err(ErrorBody { message, ..e });
         }
         // resolve_pending 중에는 확인 카드를 만들지 않는다. pane 정리가 끝난 뒤 병합을 확인하고
@@ -3187,8 +3324,18 @@ impl Host {
         let me = self.clone();
         tokio::spawn(async move {
             let Some(conn) = me.conn_of(&mid) else { return };
-            let Ok(rows) = me.db.threads(None) else { return };
-            for r in rows.iter().filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok()) {
+            let Ok(rows) = me.db.threads(None).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                return;
+            };
+            for r in rows.iter().filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }) {
                 // 아직 brief를 받지 않은 thread는 다시 보기 시작한다(host가 다시 뜬 뒤에도, herdr-projects ticker
                 // `brief_pass`처럼 기록에서 다시 찾는다)
                 if r.machine_id == mid && r.status == ThreadStatus::Open && r.brief == BriefState::Pending {
@@ -3198,9 +3345,14 @@ impl Host {
                     && r.status == ThreadStatus::Open
                     && let Some(w) = r.work_dir
                 {
-                    let _ = conn
-                        .request(AgentRequest::ThreadWatch { thread: format!("{}/{}", r.project, r.id), work_dir: w })
-                        .await;
+                    aaa_common::diagnostic::ignored(
+                        conn.request(AgentRequest::ThreadWatch {
+                            thread: format!("{}/{}", r.project, r.id),
+                            work_dir: w,
+                        })
+                        .await,
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                 }
             }
         });
@@ -3260,12 +3412,34 @@ fn same_tree(a: &Path, b: &Path) -> bool {
         let mut out = Vec::new();
         let mut stack = vec![root.to_path_buf()];
         while let Some(d) = stack.pop() {
-            for e in std::fs::read_dir(&d).ok()? {
-                let p = e.ok()?.path();
+            for e in std::fs::read_dir(&d)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?
+            {
+                let p = e
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()?
+                    .path();
                 if p.is_dir() {
                     stack.push(p);
                 } else {
-                    out.push((p.strip_prefix(root).ok()?.to_path_buf(), std::fs::read(&p).ok()?));
+                    out.push((
+                        p.strip_prefix(root)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()?
+                            .to_path_buf(),
+                        std::fs::read(&p)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()?,
+                    ));
                 }
             }
         }

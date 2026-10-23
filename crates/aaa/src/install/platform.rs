@@ -29,15 +29,32 @@ pub fn ancestor(path: &Path) -> Option<&Path> {
 pub fn storage(path: &Path) -> Option<(String, u64, Option<bool>)> {
     use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
     let path = ancestor(path)?;
-    let text = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let text = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: text는 NUL로 끝나고 stat은 syscall이 쓸 구조다. access는 파일을 만들지 않는다.
     if unsafe { libc::statvfs(text.as_ptr(), &mut stat) } != 0 {
         return None;
     }
-    let free = u64::try_from(u128::from(stat.f_bavail) * u128::from(stat.f_frsize)).ok()?;
+    let free = u64::try_from(u128::from(stat.f_bavail) * u128::from(stat.f_frsize))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let writable = unsafe { libc::access(text.as_ptr(), libc::W_OK) } == 0;
-    Some((format!("device:{}", path.metadata().ok()?.dev()), free, Some(writable)))
+    Some((
+        format!(
+            "device:{}",
+            path.metadata()
+                .inspect_err(|error| aaa_common::diagnostic::observe(
+                    error,
+                    "선택 자료를 읽지 못해 기존 fallback을 쓴다"
+                ))
+                .ok()?
+                .dev()
+        ),
+        free,
+        Some(writable),
+    ))
 }
 
 #[cfg(windows)]

@@ -33,7 +33,16 @@ pub struct Roots(Vec<PathBuf>);
 impl Roots {
     /// 있는 폴더만 실제 경로로 둔다(macOS `/tmp` → `/private/tmp`)
     pub fn new(paths: impl IntoIterator<Item = PathBuf>) -> Self {
-        let mut v: Vec<PathBuf> = paths.into_iter().filter_map(|p| p.canonicalize().ok()).collect();
+        let mut v: Vec<PathBuf> = paths
+            .into_iter()
+            .filter_map(|p| {
+                p.canonicalize()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .collect();
         v.sort();
         v.dedup();
         Roots(v)
@@ -90,7 +99,13 @@ pub fn locate(input: &str, cwd: Option<&Path>, home: &Path, roots: &Roots) -> Lo
     if let (Some(cwd), true, false) = (cwd, relative, outside) {
         let found: Vec<PathBuf> = files_named(cwd, rel)
             .into_iter()
-            .filter_map(|p| p.canonicalize().ok())
+            .filter_map(|p| {
+                p.canonicalize()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|p| roots.allows(p))
             .collect();
         match found.as_slice() {
@@ -121,21 +136,35 @@ pub enum Listed {
 /// 참고와 다른 것: 실제 경로로 허용 폴더 안만 읽고, 위 폴더(`parent`)도 허용 폴더 안일 때만 준다.
 pub fn list_dir(input: &str, cwd: Option<&Path>, home: &Path, roots: &Roots, hidden: bool) -> Listed {
     let target = if input.trim().is_empty() { Some(home.to_path_buf()) } else { resolve(input, cwd, home) };
-    let Some(real) = target.and_then(|p| p.canonicalize().ok()) else { return Listed::Missing };
+    let Some(real) = target.and_then(|p| {
+        p.canonicalize()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+    }) else {
+        return Listed::Missing;
+    };
     if !real.is_dir() {
         return Listed::Missing;
     }
     if !roots.allows(&real) {
         return Listed::Outside;
     }
-    let Ok(entries) = std::fs::read_dir(&real) else { return Listed::Missing };
+    let Ok(entries) = std::fs::read_dir(&real)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return Listed::Missing;
+    };
     let (mut directories, mut files) = (Vec::new(), Vec::new());
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !hidden && name.starts_with('.') {
             continue;
         }
-        let Ok(meta) = std::fs::metadata(entry.path()) else { continue };
+        let Ok(meta) = std::fs::metadata(entry.path())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         if meta.is_dir() {
             directories.push(name);
         } else if meta.is_file() && files.len() <= MAX_DIR_ENTRIES {
@@ -198,8 +227,13 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// 있는 일반 파일이면 허용 폴더 안인지까지 본다. 없으면 None, 밖이면 Err.
 fn checked(path: &Path, roots: &Roots) -> Option<Result<FileInfo, ()>> {
-    let real = path.canonicalize().ok()?;
-    let meta = std::fs::metadata(&real).ok()?;
+    let real = path
+        .canonicalize()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
+    let meta = std::fs::metadata(&real)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     if !meta.is_file() {
         return None;
     }
@@ -219,8 +253,15 @@ fn info(real: &Path, meta: &std::fs::Metadata) -> FileInfo {
     };
     let modified_ms = meta
         .modified()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     FileInfo {
@@ -236,14 +277,21 @@ fn info(real: &Path, meta: &std::fs::Metadata) -> FileInfo {
 pub(crate) use aaa_proto::mime_of;
 
 fn sniff_binary(path: &Path) -> bool {
-    let Ok(mut f) = File::open(path) else { return true };
+    let Ok(mut f) = File::open(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return true;
+    };
     let mut buf = vec![0u8; SNIFF_BYTES];
     let mut n = 0;
     while n < buf.len() {
         match f.read(&mut buf[n..]) {
             Ok(0) => break,
             Ok(k) => n += k,
-            Err(_) => return true,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                return true;
+            }
         }
     }
     buf[..n].contains(&0)
@@ -259,8 +307,19 @@ fn files_named(cwd: &Path, rel: &str) -> Vec<PathBuf> {
     let mut seen = 0usize;
     let mut stack = vec![(cwd.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        let Ok(entries) = std::fs::read_dir(&dir)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
+        let mut entries: Vec<_> = entries
+            .filter_map(|e| {
+                e.inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+            })
+            .collect();
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             seen += 1;
@@ -268,14 +327,23 @@ fn files_named(cwd: &Path, rel: &str) -> Vec<PathBuf> {
                 out.sort();
                 return out;
             }
-            let Ok(t) = e.file_type() else { continue };
+            let Ok(t) = e.file_type().inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             let path = e.path();
             if t.is_dir() {
                 let name = e.file_name();
                 if depth + 1 < WALK_DEPTH && !SKIP_DIRS.iter().any(|s| name == *s) {
                     stack.push((path, depth + 1));
                 }
-            } else if t.is_file() && path.strip_prefix(cwd).is_ok_and(|r| r.ends_with(&suffix)) {
+            } else if t.is_file()
+                && path
+                    .strip_prefix(cwd)
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|r| r.ends_with(&suffix))
+            {
                 out.push(path);
                 if out.len() >= CANDIDATES {
                     break;

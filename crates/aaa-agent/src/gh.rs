@@ -32,7 +32,9 @@ fn find(
 }
 
 pub(crate) fn command() -> Result<tokio::process::Command> {
-    let cwd = std::env::current_dir().ok();
+    let cwd = std::env::current_dir()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok();
     let paths = std::env::var_os("PATH").unwrap_or_default();
     let dirs = std::env::split_paths(&paths)
         .filter_map(|p| if p.is_absolute() { Some(p) } else { cwd.as_ref().map(|cwd| cwd.join(p)) });

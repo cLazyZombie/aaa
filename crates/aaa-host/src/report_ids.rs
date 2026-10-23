@@ -10,29 +10,67 @@ use std::path::Path;
 
 pub(crate) fn number(name: &str) -> Option<u64> {
     let digits = name.strip_prefix("r-")?;
-    (digits.len() >= 4 && digits.bytes().all(|b| b.is_ascii_digit())).then(|| digits.parse().ok()).flatten()
+    (digits.len() >= 4 && digits.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| {
+            digits
+                .parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .flatten()
 }
 
 impl Host {
     pub(crate) fn report_version_names(&self, project: &str, name: &str) -> Vec<String> {
-        let source =
-            self.db.report_target(project, name).ok().flatten().map(|v| v.source).unwrap_or_else(|| name.into());
-        self.db.report_ids(project, &source).unwrap_or_default().into_iter().map(|v| v.id).collect()
+        let source = self
+            .db
+            .report_target(project, name)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .map(|v| v.source)
+            .unwrap_or_else(|| name.into());
+        self.db
+            .report_ids(project, &source)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "보고 판 목록을 못 읽어 빈 목록을 쓴다"))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| v.id)
+            .collect()
     }
 
     pub(crate) fn report_id(&self, project: &str, name: &str) -> Option<String> {
-        if let Some(v) = self.db.report_target(project, name).ok().flatten() {
+        if let Some(v) = self
+            .db
+            .report_target(project, name)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+        {
             return Some(v.id);
         }
         self.report_version_names(project, name).into_iter().next()
     }
 
     pub(crate) fn thread_report_id(&self, project: &str, name: &str, hash: Option<&str>) -> Option<String> {
-        self.db.report_ids(project, name).ok()?.into_iter().find(|v| Some(v.revision.as_str()) == hash).map(|v| v.id)
+        self.db
+            .report_ids(project, name)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .into_iter()
+            .find(|v| Some(v.revision.as_str()) == hash)
+            .map(|v| v.id)
     }
 
     pub(crate) fn report_history_size(&self, project: &str, name: &str) -> u64 {
-        let Ok(dir) = self.project_dir(project) else { return 0 };
+        let Ok(dir) = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return 0;
+        };
         self.report_version_names(project, name)
             .into_iter()
             .map(|id| {
@@ -107,10 +145,23 @@ impl Host {
                 .map_err(internal)?;
             Ok(id.clone())
         })();
-        if result.is_err() {
-            let _ = std::fs::remove_dir_all(&dest);
-            let _ = std::fs::remove_file(manifest_path(&dir, &id));
-            let _ = std::fs::remove_file(dir.join("threads").join(format!("{id}.md")));
+        if result
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&dest),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_file(manifest_path(&dir, &id)),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_file(dir.join("threads").join(format!("{id}.md"))),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
         result
     }
@@ -125,14 +176,21 @@ impl Host {
             {
                 continue;
             }
-            let Ok(dir) = self.project_dir(&project) else {
+            let Ok(dir) = self.project_dir(&project).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
                 continue;
             };
             if !manifest_path(&dir, &name).is_file() {
                 continue;
             }
             let result = (|| {
-                let rec = self.load(&project, &name).ok();
+                let rec = self
+                    .load(&project, &name)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok();
                 let meta = self.db.library_report(&project, &name).map_err(internal)?.unwrap_or(LibraryReportRow {
                     project: project.clone(),
                     name: name.clone(),
@@ -142,7 +200,11 @@ impl Host {
                 });
                 let root =
                     meta.live.as_ref().map(std::path::PathBuf::from).unwrap_or_else(|| dir.join("library").join(&name));
-                let report = std::fs::read(dir.join("threads").join(format!("{name}.md"))).ok();
+                let report = std::fs::read(dir.join("threads").join(format!("{name}.md")))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok();
                 let files = self.report_manifest(&dir, &project, &name)?;
                 self.snapshot_report_version(
                     &project,

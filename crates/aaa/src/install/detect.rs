@@ -17,11 +17,12 @@ fn check_directory(p: &Path, code: &str) -> Result<()> {
         Ok(meta) if !meta.is_dir() => Err(error(code, 2)),
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(error("invalid_path", 2)),
+        Err(source_error) => Err(aaa_common::diagnostic::context(source_error, error("invalid_path", 2))),
     }
 }
 pub(super) fn real_dir(p: &Path) -> Result<PathBuf> {
-    let resolved = aaa_agent::work_root::check(p, None).map_err(|_| error("invalid_path", 2))?;
+    let resolved = aaa_agent::work_root::check(p, None)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_path", 2)))?;
     check_directory(&resolved, "invalid_path")?;
     Ok(resolved)
 }
@@ -34,7 +35,9 @@ fn real_file(p: &Path) -> Result<PathBuf> {
     let path = parent.join(p.file_name().ok_or_else(|| error("invalid_path", 2))?);
     match path.symlink_metadata() {
         Ok(_) => {
-            let resolved = path.canonicalize().map_err(|_| error("invalid_path", 2))?;
+            let resolved = path
+                .canonicalize()
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_path", 2)))?;
             if !resolved.is_file() {
                 return Err(error("invalid_path", 2));
             }
@@ -42,7 +45,7 @@ fn real_file(p: &Path) -> Result<PathBuf> {
             Ok(resolved)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path),
-        Err(_) => Err(error("invalid_path", 2)),
+        Err(source_error) => Err(aaa_common::diagnostic::context(source_error, error("invalid_path", 2))),
     }
 }
 fn digest(bytes: &[u8]) -> String {
@@ -52,17 +55,31 @@ fn digest(bytes: &[u8]) -> String {
 fn file_hash(p: &Path) -> Result<Option<String>> {
     let meta = match p.metadata() {
         Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound && p.symlink_metadata().is_err() => return Ok(None),
-        Err(_) => return Err(error("file_unreadable", 2)),
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound
+                && p.symlink_metadata()
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err() =>
+        {
+            return Ok(None);
+        }
+        Err(source_error) => {
+            return Err(aaa_common::diagnostic::context(source_error, error("file_unreadable", 2)));
+        }
     };
     if !meta.is_file() || meta.len() > 1024 * 1024 * 1024 {
         return Err(error("unsupported_file", 2));
     }
-    let mut file = std::fs::File::open(p).map_err(|_| error("file_unreadable", 2))?.take(1024 * 1024 * 1024 + 1);
+    let mut file = std::fs::File::open(p)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("file_unreadable", 2)))?
+        .take(1024 * 1024 * 1024 + 1);
     let mut sha = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buf = [0u8; 64 * 1024];
     loop {
-        let n = file.read(&mut buf).map_err(|_| error("file_unreadable", 2))?;
+        let n = file
+            .read(&mut buf)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("file_unreadable", 2)))?;
         if n == 0 {
             break;
         }
@@ -113,6 +130,7 @@ fn find_program(name: &str) -> Option<PathBuf> {
 }
 fn default_shell() -> String {
     std::env::var(if cfg!(windows) { "COMSPEC" } else { "SHELL" })
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| if cfg!(windows) { "cmd.exe".into() } else { "/bin/sh".into() })
@@ -160,9 +178,18 @@ fn unsupported(e: InstallError) -> Box<InstallResult> {
     r
 }
 fn binary_matches(path: &Path, platform: &InstallPlatform) -> bool {
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let Ok(mut f) = std::fs::File::open(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return false;
+    };
     let mut header = [0u8; 4096];
-    let Ok(n) = f.read(&mut header) else { return false };
+    let Ok(n) = f
+        .read(&mut header)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return false;
+    };
     if n < 64 {
         return false;
     }
@@ -236,12 +263,15 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
             return Err(error("invalid_existing_config", 2));
         }
     }
-    let host = aaa_config::load_host(&config).map_err(|_| error("invalid_existing_config", 2))?;
-    let agent = aaa_config::load_agent(&config).map_err(|_| error("invalid_existing_config", 2))?;
+    let host = aaa_config::load_host(&config)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_existing_config", 2)))?;
+    let agent = aaa_config::load_agent(&config)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_existing_config", 2)))?;
     let has_local = c.role == Some(InstallRole::Agent) || c.local_agent != Some(InstallToggle::Disabled);
     if has_local && c.min_free_gb.is_none() && !agent.files.is_empty() {
-        c.min_free_gb =
-            Some(u32::try_from(agent.config.health.min_free_gb).map_err(|_| error("invalid_existing_config", 2))?);
+        c.min_free_gb = Some(u32::try_from(agent.config.health.min_free_gb).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("invalid_existing_config", 2))
+        })?);
     }
     let mut files = BTreeMap::new();
     let mut existing = false;
@@ -271,7 +301,8 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
     result.instance = c.instance.clone();
     result.platform = Some(context.platform.clone());
     context.target_account = platform::account().ok_or_else(|| error("account_unavailable", 5))?;
-    let current = std::env::current_exe().map_err(|_| error("binary_unreadable", 2))?;
+    let current = std::env::current_exe()
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("binary_unreadable", 2)))?;
     let selected = c.from.as_deref().map(Path::new).unwrap_or(&current);
     context.binary_sha256 = file_hash(selected)?.ok_or_else(|| error("binary_unreadable", 2))?;
     if c.sha256.as_ref().is_some_and(|sha| !sha.eq_ignore_ascii_case(&context.binary_sha256)) {
@@ -309,17 +340,27 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
     }
     let mut observations = json!({});
     if has_local {
-        aaa_agent::work_root::inspect(&state.join("agent")).map_err(|_| error("invalid_work_root_ownership", 2))?;
+        aaa_agent::work_root::inspect(&state.join("agent")).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("invalid_work_root_ownership", 2))
+        })?;
         let root = Path::new(c.work_root.as_deref().unwrap());
         let mount = c.work_mount.as_deref().map(Path::new);
-        let resolved = aaa_agent::work_root::check(root, mount).map_err(|_| error("work_mount_unavailable", 2))?;
+        let resolved = aaa_agent::work_root::check(root, mount).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("work_mount_unavailable", 2))
+        })?;
         check_directory(&resolved, "work_root_not_directory")?;
         if context.platform.os == InstallOs::Macos && resolved.starts_with("/Volumes") && mount.is_none() {
             return Err(error("external_mount_required", 2));
         }
         check(&mut result, "work_root_ownership", InstallCheckState::Unknown);
         check(&mut result, "work_volume_stable_identity", InstallCheckState::Unknown);
-        if resolved.parent().is_none() || mount.is_some_and(|m| m.canonicalize().is_ok_and(|m| m == resolved)) {
+        if resolved.parent().is_none()
+            || mount.is_some_and(|m| {
+                m.canonicalize()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|m| m == resolved)
+            })
+        {
             return Err(error("work_root_is_volume_root", 2));
         }
         let (identity, free, writable) =
@@ -334,7 +375,9 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
         observations["work_storage"] = json!({"real_path":resolved,"identity":identity});
         c.work_root = Some(path_text(&resolved)?);
         if let Some(mount) = mount {
-            c.work_mount = Some(path_text(&mount.canonicalize().map_err(|_| error("work_mount_unavailable", 2))?)?);
+            c.work_mount = Some(path_text(&mount.canonicalize().map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("work_mount_unavailable", 2))
+            })?)?);
         }
         check(&mut result, "work_mount", InstallCheckState::Passed);
         check(&mut result, "work_free_space", InstallCheckState::Passed);
@@ -393,7 +436,8 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
         if file_hash(&path)?.is_none() || path.metadata().map_or(true, |m| m.len() > 1024 * 1024) {
             return Err(error("profile_unreadable", 2));
         }
-        let text = std::fs::read_to_string(&path).map_err(|_| error("profile_unreadable", 2))?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("profile_unreadable", 2)))?;
         profile_names.extend(super::profiles::names(&text)?);
         add_file(&mut files, &path)?;
     }
@@ -447,8 +491,9 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
     if shape.choices.service == Some(InstallService::Launchd) {
         if c.launcher_policy == Some(InstallLauncherPolicy::Install) {
             let provisional = aaa_config::install::plan(c.clone(), context.clone()).map_err(unsupported)?;
-            let asset = engine::launcher_asset_source(&provisional)
-                .map_err(|_| error("installation_launcher_asset_required", 3))?;
+            let asset = engine::launcher_asset_source(&provisional).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("installation_launcher_asset_required", 3))
+            })?;
             add_file(&mut files, &asset)?;
             if !asset.is_file() && !c.launcher.as_ref().is_some_and(|p| Path::new(p).is_file()) {
                 result.needs_user.push(InstallNeedsUser {
@@ -509,7 +554,9 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
     // 실효 설정과 선택 자원 내용은 private hash에만 반영한다. 원문/경로/계정은 공개 결과에 싣지 않는다.
     context.effective_config_sha256 = digest(
         &serde_json::to_vec(&json!({"host":host.config,"agent":agent.config,"files":files,"observed":observations}))
-            .map_err(|_| error("invalid_existing_config", 2))?,
+            .map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("invalid_existing_config", 2))
+            })?,
     );
     let plan = aaa_config::install::plan(c, context).map_err(unsupported)?;
     result.plan_sha256 = Some(aaa_config::install::plan_sha256(&plan));
@@ -528,8 +575,10 @@ fn repo_check(path: &Path) -> Result<()> {
     if !path.is_dir() {
         return Err(error("repo_unavailable", 2));
     }
-    let rt =
-        tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|_| error("repo_unavailable", 2))?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("repo_unavailable", 2)))?;
     rt.block_on(async {
         let mut cmd = tokio::process::Command::new("git");
         cmd.args(["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "safe.directory="])
@@ -546,16 +595,15 @@ fn repo_check(path: &Path) -> Result<()> {
     })
 }
 fn serve_check(result: &mut InstallResult, c: &InstallChoices, observations: &mut Value) -> Result<()> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| error("network_detection_unavailable", 5))?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("network_detection_unavailable", 5))
+    })?;
     let port = c
         .web_listen
         .as_deref()
         .unwrap_or("127.0.0.1:7431")
         .parse::<std::net::SocketAddr>()
-        .map_err(|_| error("invalid_web_listen", 2))?
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("invalid_web_listen", 2)))?
         .port();
     #[cfg(windows)]
     let exact = rt
@@ -569,7 +617,7 @@ fn serve_check(result: &mut InstallResult, c: &InstallChoices, observations: &mu
     match exact {
         Ok(exact) => {
             check(result, "tailscale", InstallCheckState::Passed);
-            observations["tailscale"] = json!({"before_sha256":exact.before_sha256().map_err(|_| error("tailscale_status_unknown", 3))?,"serve_port":exact.port,"target_port":exact.target_port,"reused":exact.reused});
+            observations["tailscale"] = json!({"before_sha256":exact.before_sha256().map_err(|source_error| aaa_common::diagnostic::context(source_error, error("tailscale_status_unknown", 3)))?,"serve_port":exact.port,"target_port":exact.target_port,"reused":exact.reused});
         }
         Err(fault) if fault.conflict => return Err(error(fault.code, 4)),
         Err(fault) => {

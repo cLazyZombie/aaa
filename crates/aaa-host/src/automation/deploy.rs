@@ -14,10 +14,15 @@ impl Host {
         let internal = |e: anyhow::Error| err(ErrorCode::Internal, e.to_string());
         let mut latest = None;
         for event in events {
-            let value: serde_json::Value = serde_json::from_str(&event.body)
-                .map_err(|_| err(ErrorCode::BadRequest, "배포 제안 Git 자료 형식이 아니다"))?;
-            let change: GitChange = serde_json::from_value(value["change"].clone())
-                .map_err(|_| err(ErrorCode::BadRequest, "배포 제안 Git 범위가 없다"))?;
+            let value: serde_json::Value = serde_json::from_str(&event.body).map_err(|source_error| {
+                aaa_common::diagnostic::context(
+                    source_error,
+                    err(ErrorCode::BadRequest, "배포 제안 Git 자료 형식이 아니다"),
+                )
+            })?;
+            let change: GitChange = serde_json::from_value(value["change"].clone()).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, err(ErrorCode::BadRequest, "배포 제안 Git 범위가 없다"))
+            })?;
             if event.source != "git"
                 || change.branch != "main"
                 || change.kind != "pushed"

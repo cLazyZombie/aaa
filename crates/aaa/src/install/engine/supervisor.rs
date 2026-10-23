@@ -14,12 +14,16 @@ mod runner;
 mod runtime;
 
 fn failure(code: &'static str, exit: u8) -> Fault {
-    Fault { code, exit }
+    Fault { code, exit, cause: None }
 }
 
 #[cfg(windows)]
 pub(super) fn system_sshd(pid: u32) -> bool {
-    let Ok(identity) = native::identity(pid) else { return false };
+    let Ok(identity) = native::identity(pid)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return false;
+    };
     let mut buffer = vec![0u16; 32768];
     let length = unsafe {
         windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32)
@@ -27,16 +31,36 @@ pub(super) fn system_sshd(pid: u32) -> bool {
     if length == 0 || length as usize >= buffer.len() {
         return false;
     }
-    let Ok(directory) = String::from_utf16(&buffer[..length as usize]) else { return false };
+    let Ok(directory) = String::from_utf16(&buffer[..length as usize])
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return false;
+    };
     identity.sid == "S-1-5-18"
-        && identity.image.canonicalize().ok().is_some_and(|image| {
-            Path::new(&directory).join("OpenSSH/sshd.exe").canonicalize().ok().as_ref() == Some(&image)
-        })
+        && identity
+            .image
+            .canonicalize()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .is_some_and(|image| {
+                Path::new(&directory)
+                    .join("OpenSSH/sshd.exe")
+                    .canonicalize()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_ref()
+                    == Some(&image)
+            })
 }
 
 #[cfg(windows)]
 pub(super) fn same_account(pid: u32) -> bool {
-    native::identity(pid).ok().is_some_and(|identity| Some(identity.sid) == crate::install::platform::account())
+    native::identity(pid)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .is_some_and(|identity| Some(identity.sid) == crate::install::platform::account())
 }
 
 fn roles(plan: &InstallPlan) -> Vec<InstallRole> {
@@ -79,7 +103,7 @@ pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> 
                 &plan.context.config_dir,
                 &plan.context.state_dir,
             ))
-            .map_err(|_| Fault::conflict())?,
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
         );
         result.push(InstallPermission {
             operation: InstallOperation::RegisterService,
@@ -107,7 +131,8 @@ pub(super) fn requires_password(plan: &InstallPlan) -> Result<bool> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(e) => return Err(Fault::io(e)),
     };
-    let id: String = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let id: String = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     let journal = read_journal(state, &id, plan.choices.instance.as_deref())?;
     if journal.phase != Phase::Configured {
         return Ok(true);
@@ -131,10 +156,10 @@ pub(super) fn requires_password(plan: &InstallPlan) -> Result<bool> {
         }
         let record: Record =
             serde_json::from_slice(&private::read(&directory.join("journal.json"), 128 * 1024).map_err(Fault::io)?)
-                .map_err(|_| Fault::conflict())?;
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         let spec: Spec =
             serde_json::from_slice(&private::read(&directory.join("context.json"), 128 * 1024).map_err(Fault::io)?)
-                .map_err(|_| Fault::conflict())?;
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         spec.validate()?;
         spec.guard_paths()?;
         spec.verify_plan(&installed)?;
@@ -204,7 +229,14 @@ pub(super) fn apply(
             let ready = if plan.choices.start == Some(InstallStart::Now) {
                 matches
                     && job.record.phase == ServicePhase::Ready
-                    && observed.as_ref().is_some_and(|o| verify_ready(&job.spec, &mut native::Scm, o).is_ok())
+                    && observed.as_ref().is_some_and(|o| {
+                        verify_ready(&job.spec, &mut native::Scm, o)
+                            .as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_ok()
+                    })
             } else {
                 matches && matches!(job.record.phase, ServicePhase::Registered | ServicePhase::Ready)
             };
@@ -249,8 +281,9 @@ impl Password {
         writer: &mut W,
         send: impl FnOnce(&mut W, &[u8]) -> Result<()>,
     ) -> Result<()> {
-        let mut text = String::from_utf16(&self.0[..self.0.len() - 1])
-            .map_err(|_| failure("service_account_auth_unavailable", 3))?;
+        let mut text = String::from_utf16(&self.0[..self.0.len() - 1]).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, failure("service_account_auth_unavailable", 3))
+        })?;
         let result = send(writer, text.as_bytes());
         // UTF-8 전송 buffer도 사용 직후 지운다. 0으로 바꾸는 동안에는 문자열을 읽지 않는다.
         unsafe { text.as_bytes_mut() }.iter_mut().for_each(|byte| unsafe { std::ptr::write_volatile(byte, 0) });
@@ -350,7 +383,12 @@ impl Spec {
             || !id_ok(&self.id)
             || self.account.is_empty()
             || !digest_ok(&self.binary_sha256)
-            || self.instance.as_deref().is_some_and(|s| aaa_config::paths::check_instance(s).is_err())
+            || self.instance.as_deref().is_some_and(|s| {
+                aaa_config::paths::check_instance(s)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+            })
             || [&self.profile, &self.executable, &self.config, &self.state].iter().any(|p| {
                 !p.is_absolute()
                     || p.components().any(|c| c == std::path::Component::ParentDir)
@@ -397,7 +435,10 @@ impl Spec {
             return Err(Fault::conflict());
         }
         let active = private::read(&self.state.join("install/active.json"), 128 * 1024).map_err(Fault::io)?;
-        if serde_json::from_slice::<String>(&active).map_err(|_| Fault::conflict())? != self.id {
+        if serde_json::from_slice::<String>(&active)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
+            != self.id
+        {
             return Err(Fault::conflict());
         }
         let plan = transaction::installed_plan(&self.state, &journal)?;
@@ -619,26 +660,32 @@ impl Job {
             return Err(Fault::conflict());
         }
         private::directory(&spec.state.join("install")).map_err(Fault::io)?;
-        let lock =
-            private::lock(&spec.state.join("install/supervisor.lock")).map_err(|_| failure("installation_busy", 4))?;
+        let lock = private::lock(&spec.state.join("install/supervisor.lock"))
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, failure("installation_busy", 4)))?;
         private::directory(&spec.directory()).map_err(Fault::io)?;
         let path = spec.directory().join("journal.json");
         let record = if path.exists() {
             let bytes = private::read(&path, 128 * 1024).map_err(Fault::io)?;
-            let record: Record = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+            let record: Record = serde_json::from_slice(&bytes)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
             if record.schema != 1
                 || record.context_sha256 != spec.sha()
                 || record.account_sha256 != account_hash()?
                 || record.before.as_ref().is_some_and(|s| !digest_ok(s))
                 || private::read(&spec.context(), 128 * 1024).map_err(Fault::io)?
-                    != serde_json::to_vec(&spec).map_err(|_| Fault::conflict())?
+                    != serde_json::to_vec(&spec)
+                        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
             {
                 return Err(Fault::conflict());
             }
             record
         } else {
-            private::write(&spec.context(), &serde_json::to_vec(&spec).map_err(|_| Fault::conflict())?)
-                .map_err(Fault::io)?;
+            private::write(
+                &spec.context(),
+                &serde_json::to_vec(&spec)
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+            )
+            .map_err(Fault::io)?;
             Record {
                 schema: 1,
                 context_sha256: spec.sha(),
@@ -659,7 +706,8 @@ impl Job {
     fn save(&self) -> Result<()> {
         private::write(
             &self.spec.directory().join("journal.json"),
-            &serde_json::to_vec(&self.record).map_err(|_| Fault::conflict())?,
+            &serde_json::to_vec(&self.record)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
         )
         .map_err(Fault::io)
     }
@@ -776,9 +824,11 @@ impl Job {
     }
 }
 fn verify_ready(spec: &Spec, manager: &mut impl Manager, observed: &Observation) -> Result<Process> {
-    let bytes = private::read(&spec.directory().join("ready.json"), 128 * 1024)
-        .map_err(|_| failure("service_ready_unverified", 3))?;
-    let ready: Ready = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let bytes = private::read(&spec.directory().join("ready.json"), 128 * 1024).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, failure("service_ready_unverified", 3))
+    })?;
+    let ready: Ready = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if !observed.running
         || observed.pid == 0
         || !ready.connected
@@ -898,9 +948,10 @@ pub(super) fn observe(
             continue;
         }
         let record: Record = serde_json::from_slice(&private::read(&path, 128 * 1024).map_err(Fault::io)?)
-            .map_err(|_| Fault::conflict())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         let bytes = private::read(&directory.join("context.json"), 128 * 1024).map_err(Fault::io)?;
-        let spec: Spec = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+        let spec: Spec = serde_json::from_slice(&bytes)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         spec.validate()?;
         if record.phase == ServicePhase::Removed {
             spec.guard_directories()?;

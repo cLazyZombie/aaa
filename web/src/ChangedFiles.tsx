@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 변경 파일 카드(plan §8.305). t3code 4b1024da `apps/web/src/components/chat/ChangedFilesTree.tsx:31-252`와
 // `DiffStatLabel.tsx:22-53`을 옮겼다: 「파일 N개 +a -d」 머리(붙어 있음), 폴더가 있으면 「모든 폴더 펼치기·접기」, 「diff 열기」
 // (카드 폭 24rem 밑에서는 글 없이 아이콘), 폴더는 처음에 접힘(펼침 상태는 thread마다 기억), 파일을 누르면 그 파일로 diff를 연다.
@@ -31,7 +32,7 @@ function expandKey(project: string, thread: string): string {
 export function readAllExpanded(project: string, thread: string): boolean {
   try {
     return window.localStorage.getItem(expandKey(project, thread)) === "1";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "ChangedFiles.tsx:35");
     return false;
   }
 }
@@ -40,7 +41,7 @@ function writeAllExpanded(project: string, thread: string, value: boolean): void
   try {
     if (value) window.localStorage.setItem(expandKey(project, thread), "1");
     else window.localStorage.removeItem(expandKey(project, thread));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "ChangedFiles.tsx:44");
     // 저장하지 못해도 이 화면 동안은 그대로다
   }
 }

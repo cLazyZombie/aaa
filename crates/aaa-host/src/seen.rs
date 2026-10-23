@@ -158,7 +158,10 @@ impl Host {
                 let Some(p) = i.panes.get_mut(id) else { continue };
                 if let Some(a) = p.agent.as_mut().filter(|a| !a.seen) {
                     a.seen = true;
-                    let _ = p.events.send(PaneEvent::State);
+                    aaa_common::diagnostic::ignored(
+                        p.events.send(PaneEvent::State),
+                        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                    );
                     changed = true;
                 }
             }
@@ -226,7 +229,12 @@ impl Host {
             clip(outcome, 120),
             build.as_deref().unwrap_or("?")
         );
-        match project.filter(|p| self.project_dir(p).is_ok()) {
+        match project.filter(|p| {
+            self.project_dir(p)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        }) {
             Some(p) => self.flow_project(p, "alert_outcome", None, detail),
             None => tracing::info!("앱 안 알림 {detail}"),
         }

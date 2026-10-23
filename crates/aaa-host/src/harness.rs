@@ -223,9 +223,19 @@ impl Host {
     }
 
     pub(crate) fn thread_of_pane(&self, pane: &str) -> Option<ThreadRec> {
-        let rows = self.db.threads(None).ok()?;
+        let rows = self
+            .db
+            .threads(None)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         rows.iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .find(|r| r.pane.as_deref() == Some(pane) && r.status != ThreadStatus::Resolved)
     }
 
@@ -259,7 +269,10 @@ impl Host {
                 p.alert = None;
                 p.answered = false;
                 p.transcript = None;
-                let _ = p.events.send(crate::PaneEvent::State);
+                aaa_common::diagnostic::ignored(
+                    p.events.send(crate::PaneEvent::State),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
                 drop(i);
                 self.bump();
                 self.close_questions_of(&ev.session);
@@ -411,7 +424,10 @@ impl Host {
             }
             p.alert = Some(now_alert);
             p.agent = Some(st);
-            let _ = p.events.send(crate::PaneEvent::State);
+            aaa_common::diagnostic::ignored(
+                p.events.send(crate::PaneEvent::State),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
             (next, answered_block, p.info.state.is_running(), finished)
         };
         self.bump();
@@ -458,7 +474,7 @@ impl Host {
             if let Some(f) = on_fire {
                 f();
             }
-            let _ = tx.send(ev.kind.clone());
+            aaa_common::diagnostic::ignored(tx.send(ev.kind.clone()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
         // 질문: 열리거나, harness가 넘어가면 닫힌다. 답한 확인창 뒤에 늦게 온 질문 사건(옛 agent의 Claude
         // Notification `permission_prompt`가 답보다 늦게 도착)은 그 질문을 다시 열지 않는다. 참고 herdr 0.9.5는 상태 hook을
@@ -484,7 +500,10 @@ impl Host {
             _ => {}
         }
         if let Some(rec) = self.thread_of_pane(&ev.session) {
-            let _ = self.thread_events.send(self.thread_view(&rec));
+            aaa_common::diagnostic::ignored(
+                self.thread_events.send(self.thread_view(&rec)),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
@@ -525,9 +544,24 @@ impl Host {
             tracing::error!("질문 저장 실패: {e:#}");
         }
         let mut view = q.clone();
-        let project = view.project.clone().or_else(|| self.sole_project().ok().flatten()).unwrap_or_default();
-        view.short_id = self.db.question_id(&project, "harness", &q.id, "", 0).ok();
-        let _ = self.question_events.send(view);
+        let project = view
+            .project
+            .clone()
+            .or_else(|| {
+                self.sole_project()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default();
+        view.short_id = self
+            .db
+            .question_id(&project, "harness", &q.id, "", 0)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
+        aaa_common::diagnostic::ignored(self.question_events.send(view), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     }
 
     /// 질문을 연다. 같은 pane에 이미 열린 질문이 있으면 본문만 더 자세한 쪽으로 바꾼다.
@@ -573,7 +607,13 @@ impl Host {
             .rec_list("questions", if all { None } else { Some("open") })
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .collect()
     }
 
@@ -611,7 +651,10 @@ impl Host {
                 Err(e) if Instant::now() >= until => {
                     return Err(err(ErrorCode::BadRequest, format!("{e}. 터미널에서 직접 답한다")));
                 }
-                Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                    tokio::time::sleep(Duration::from_millis(200)).await
+                }
             }
         };
         let conn = self.live_conn(&mid)?;
@@ -653,7 +696,11 @@ impl Host {
     fn read_menu(self: &Arc<Self>, id: String, pane: String) {
         let h = self.clone();
         tokio::spawn(async move {
-            let Ok((pid, mid)) = h.resolve_pane(&pane) else { return };
+            let Ok((pid, mid)) = h.resolve_pane(&pane).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                return;
+            };
             let until = Instant::now() + MENU_WAIT;
             loop {
                 let lines = h.screen_lines(&mid, &pid).await.unwrap_or_default();
@@ -878,14 +925,33 @@ impl Host {
             // Enter 뒤 확인창이면 그 Enter가 창에 갔을 수 있다: 받은 것으로 치지 않는다(t-0340 보안 감사)
             let still = self.pane_agent(pane).map(|a| a.activity) == Some(AgentActivity::Working);
             // 그 사이 턴이 끝났으면 받은 글로 새 턴이 시작되기를 기다린다
-            let ok = still || tokio::time::timeout(left(), accepted).await.is_ok_and(|r| r.is_ok());
+            let ok = still
+                || tokio::time::timeout(left(), accepted)
+                    .await
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|r| {
+                        r.as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_ok()
+                    });
             if ok && let Some(f) = screen_accept.take() {
                 f();
             }
             return Ok(ok);
         }
         if hooked {
-            return Ok(tokio::time::timeout(left(), accepted).await.is_ok_and(|r| r.is_ok()));
+            return Ok(tokio::time::timeout(left(), accepted)
+                .await
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|r| {
+                    r.as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+                }));
         }
         // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
         while Instant::now() < deadline {
@@ -921,7 +987,10 @@ impl Host {
             self.bump();
             self.tick_wake.notify_one();
             if let Some(r) = self.thread_of_pane(pane) {
-                let _ = self.thread_events.send(self.thread_view(&r));
+                aaa_common::diagnostic::ignored(
+                    self.thread_events.send(self.thread_view(&r)),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
         }
     }
@@ -931,7 +1000,9 @@ impl Host {
         let dir = self.project_dir(project).map_err(|e| std::io::Error::other(e.message))?;
         let path = dir.join("threads").join(format!("{id}.task.md"));
         let _guard = self.follow_up_lock.lock().unwrap();
-        let mut task = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut task = std::fs::read_to_string(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default();
         if !task.ends_with('\n') && !task.is_empty() {
             task.push('\n');
         }
@@ -948,7 +1019,10 @@ impl Host {
         self.summary_follow_ups(project, id, &task);
         drop(_guard);
         if let Ok(r) = self.load(project, id) {
-            let _ = self.thread_events.send(self.thread_view(&r));
+            aaa_common::diagnostic::ignored(
+                self.thread_events.send(self.thread_view(&r)),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
         Ok(())
     }
@@ -959,7 +1033,10 @@ impl Host {
             DeliveryState::Accepted => "accepted",
             DeliveryState::Unknown => "unknown",
         };
-        let _ = self.db.rec_put("messages", &m.id, state, &serde_json::to_string(m).unwrap(), (&m.project, &m.thread));
+        aaa_common::diagnostic::ignored(
+            self.db.rec_put("messages", &m.id, state, &serde_json::to_string(m).unwrap(), (&m.project, &m.thread)),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
     }
 
     /// 메시지 API(herdr-projects threads.rs `prompt`): 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다).
@@ -1063,7 +1140,10 @@ impl Host {
                     conn.request(AgentRequest::Input { session: pid.clone(), data: B64(b"\x1b".to_vec()) }).await?;
                     // 멈추면 입력 상자가 보인다: 화면 감지가 idle을 알린다(Claude 「Interrupted」 뒤 `live_prompt_box`).
                     // 멈춘 뒤 다음 입력을 받을 수 있게 되기를 기다리는 상한은 설정 `stop_wait_ms`(기본 15초)다.
-                    let _ = tokio::time::timeout(Duration::from_millis(self.cfg.projects.stop_wait_ms), stopped).await;
+                    aaa_common::diagnostic::ignored_nested(
+                        tokio::time::timeout(Duration::from_millis(self.cfg.projects.stop_wait_ms), stopped).await,
+                        "중단 확인 실패 뒤 기존 전달 판정을 따른다",
+                    );
                 }
                 self.deliver(&mut m, &mid, &pid).await;
             }
@@ -1074,17 +1154,23 @@ impl Host {
 
     async fn deliver(self: &Arc<Self>, m: &mut MessageView, mid: &str, pane: &str) {
         // 「받았다」는 받았다고 안 그 자리에서 기록한다: 받자마자 뜬 확인창(question_shown)보다 앞에 남게(CI m13)
-        let on_accept: Option<OnFire> = self.load(&m.project, &m.thread).ok().map(|rec| {
-            let me = self.clone();
-            let id = m.id.clone();
-            Box::new(move || me.flow(&rec, "message_accepted", None, id)) as OnFire
-        });
+        let on_accept: Option<OnFire> = self
+            .load(&m.project, &m.thread)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .map(|rec| {
+                let me = self.clone();
+                let id = m.id.clone();
+                Box::new(move || me.flow(&rec, "message_accepted", None, id)) as OnFire
+            });
         let r = self.submit(mid, pane, Some(&m.text), on_accept).await;
         m.state = if r == Ok(true) { DeliveryState::Accepted } else { DeliveryState::Unknown };
         self.save_message(m);
         // 입력한 글은(받았는지 몰라도) task 기록에 남겨 다시 시작하면 brief와 함께 읽게 한다(herdr-projects
         // thread.rs `append_follow_up`). 입력 전에 거부됐으면(Err) 남기지 않는다.
-        if r.is_ok()
+        if r.as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
             && !m.text.starts_with("[aaa ")
             && let Err(e) = self.append_follow_up(&m.project, &m.thread, &m.text)
         {
@@ -1109,7 +1195,13 @@ impl Host {
             .rec_list("messages", Some("queued"))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .collect();
         for mut m in left {
             m.state = DeliveryState::Unknown;

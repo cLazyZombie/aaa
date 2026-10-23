@@ -42,7 +42,11 @@ pub fn write(session_dir: &Path, att: &str, offset: u64, data: &[u8], eof: bool)
 /// task 첨부 한 조각을 thread 작업 폴더 `attachments/`에 쓴다(`AgentRequest::WorkAttachWrite`). 같은 이름은 덮어쓴다
 pub fn write_work(work_dir: &Path, att: &str, offset: u64, data: &[u8], eof: bool) -> Result<Option<(String, String)>> {
     let dir = work_dir.join("attachments");
-    if dir.symlink_metadata().is_ok_and(|m| !m.is_dir()) {
+    if dir
+        .symlink_metadata()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|m| !m.is_dir())
+    {
         bail!("attachments가 폴더가 아니다(symlink 등)");
     }
     write_in(&dir, att, offset, data, eof, true)
@@ -70,10 +74,14 @@ fn write_in(
         }
         if replace {
             // 끊긴 앞 전송의 조각은 버린다
-            let _ = std::fs::remove_file(&part);
+            aaa_common::diagnostic::ignored(std::fs::remove_file(&part), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         }
         let n = std::fs::read_dir(dir)?
-            .filter(|e| e.as_ref().is_ok_and(|e| !e.file_name().to_string_lossy().ends_with(".part")))
+            .filter(|e| {
+                e.as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|e| !e.file_name().to_string_lossy().ends_with(".part"))
+            })
             .count();
         if n >= MAX_FILES {
             bail!("이 세션의 첨부가 {MAX_FILES}개를 넘었다(세션 기록을 지우면 함께 지워진다)");

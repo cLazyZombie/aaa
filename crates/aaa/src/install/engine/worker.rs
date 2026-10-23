@@ -20,11 +20,13 @@ enum Reply {
     Result { result: Box<InstallResult> },
 }
 fn failed(code: &'static str, exit: u8) -> Fault {
-    Fault { code, exit }
+    Fault { code, exit, cause: None }
 }
 fn executor_sha() -> Result<String> {
     let exe = std::env::current_exe().map_err(Fault::io)?;
-    crate::update::sha256(&exe).map_err(|_| failed("installation_executor_unverified", 4))
+    crate::update::sha256(&exe).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, failed("installation_executor_unverified", 4))
+    })
 }
 fn socket(state: &Path, id: &str) -> Result<PathBuf> {
     #[cfg(unix)]
@@ -62,7 +64,10 @@ impl Bootstrap {
             }
         }
         let mut this = Self { path, listener: None };
-        this.listener = Some(LocalListener::bind(&this.path).map_err(|_| failed("installation_busy", 4))?);
+        this.listener =
+            Some(LocalListener::bind(&this.path).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, failed("installation_busy", 4))
+            })?);
         Ok(this)
     }
 }
@@ -72,7 +77,7 @@ impl Drop for Bootstrap {
         drop(self.listener.take());
         #[cfg(unix)]
         if let Some(parent) = self.path.parent() {
-            let _ = std::fs::remove_dir(parent);
+            aaa_common::diagnostic::ignored(std::fs::remove_dir(parent), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         }
     }
 }
@@ -133,8 +138,11 @@ fn spawn(state: &Path, id: &str, sha: &str, resume: bool) -> Result<Child> {
             );
         }
         #[cfg(not(windows))]
-        let _ = error;
-        failed("installation_worker_unavailable", 3)
+        tracing::info!(error = %aaa_common::diagnostic::Cause::capture(&error), "설치 worker 시작 실패");
+        aaa_common::diagnostic::WithCause::with_cause(
+            failed("installation_worker_unavailable", 3),
+            aaa_common::diagnostic::Cause::capture(&error),
+        )
     })
 }
 
@@ -182,27 +190,34 @@ pub(super) async fn launch(
         }
     })
     .await
-    .map_err(|_| failed("installation_worker_unavailable", 3))??;
+    .map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, failed("installation_worker_unavailable", 3))
+    })??;
     let (reader, mut writer) = tokio::io::split(connection);
     let mut rx = FrameRx::new(reader, 128 * 1024);
     let mut started = false;
     let result = loop {
-        let reply = rx.control::<Reply>().await.map_err(|_| failed("installation_worker_disconnected", 3))?;
+        let reply = rx.control::<Reply>().await.map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, failed("installation_worker_disconnected", 3))
+        })?;
         match reply {
             Reply::Started { installation_id } if !started && installation_id == id => {
                 execution::verify_started(state, &id, pid)?;
                 started = true;
-                reporter.started(&id).map_err(|_| failed("installation_progress_unavailable", 3))?;
+                reporter.started(&id).map_err(|source_error| {
+                    aaa_common::diagnostic::context(source_error, failed("installation_progress_unavailable", 3))
+                })?;
             }
-            Reply::Progress { progress } if started => {
-                reporter.progress(progress).map_err(|_| failed("installation_progress_unavailable", 3))?
-            }
+            Reply::Progress { progress } if started => reporter.progress(progress).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, failed("installation_progress_unavailable", 3))
+            })?,
             Reply::Private { request } if started => {
                 let answer = private_display::answer(request, state, private).await;
-                let bytes = serde_json::to_vec(&answer).map_err(|_| Fault::conflict())?;
-                write_frame(&mut writer, FrameKind::Control, &bytes, 4096)
-                    .await
-                    .map_err(|_| failed("installation_private_display_lost", 3))?;
+                let bytes = serde_json::to_vec(&answer)
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
+                write_frame(&mut writer, FrameKind::Control, &bytes, 4096).await.map_err(|source_error| {
+                    aaa_common::diagnostic::context(source_error, failed("installation_private_display_lost", 3))
+                })?;
             }
             Reply::Result { result } if started && result.installation_id.as_deref() == Some(id.as_str()) => {
                 break *result;
@@ -215,8 +230,12 @@ pub(super) async fn launch(
     };
     let status = completion
         .join()
-        .map_err(|_| failed("installation_worker_unavailable", 3))?
-        .map_err(|_| failed("installation_worker_unavailable", 3))?;
+        .map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, failed("installation_worker_unavailable", 3))
+        })?
+        .map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, failed("installation_worker_unavailable", 3))
+        })?;
     if status.code() != Some(i32::from(result.exit_code)) {
         return Err(failed("installation_worker_unverified", 4));
     }
@@ -268,7 +287,12 @@ pub(super) fn dispatch(state: &Path, id: &str, sha: &str, resume: bool) -> std::
         )?;
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(Fault::io)?;
         runtime.block_on(async {
-            let mut subscriber = Subscriber::connect(state, id).await.ok();
+            let mut subscriber = Subscriber::connect(state, id)
+                .await
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok();
             let result = match Execution::begin(issued.plan, &input.authorization, aaa_common::util::now_ms(), resume) {
                 Ok(mut execution) => {
                     if let Some(stream) = &mut subscriber {
@@ -280,7 +304,7 @@ pub(super) fn dispatch(state: &Path, id: &str, sha: &str, resume: bool) -> std::
                     progress(&mut subscriber, Progress::StageRunning).await;
                     let mut result = match execution.files() {
                         Ok(result) => result,
-                        Err(e) => *crate::install::error(e.code, e.exit),
+                        Err(e) => *e.public(),
                     };
                     if result.exit_code == 0 {
                         progress(
@@ -322,7 +346,7 @@ pub(super) fn dispatch(state: &Path, id: &str, sha: &str, resume: bool) -> std::
                         match execution.services(input.password.as_ref()) {
                             Ok(changed) => service_changed = changed,
                             Err(fault) => {
-                                result = *crate::install::error(fault.code, fault.exit);
+                                result = *fault.public();
                                 if fault.exit == 3 {
                                     result.status = InstallStatus::NeedsUser;
                                     result.error = None;
@@ -392,10 +416,10 @@ pub(super) fn dispatch(state: &Path, id: &str, sha: &str, resume: bool) -> std::
                     execution.finish(&result)?;
                     result
                 }
-                Err(fault) => *crate::install::error(fault.code, fault.exit),
+                Err(fault) => *fault.public(),
             };
             if let Some(stream) = &mut subscriber {
-                let _ = stream.send(&Reply::Result { result: Box::new(result.clone()) }).await;
+                stream.send(&Reply::Result { result: Box::new(result.clone()) }).await;
             }
             Ok(result.exit_code)
         })
@@ -404,7 +428,7 @@ pub(super) fn dispatch(state: &Path, id: &str, sha: &str, resume: bool) -> std::
 }
 
 fn stage_failure(fault: Fault, target: &str) -> InstallResult {
-    let mut result = *crate::install::error(fault.code, fault.exit);
+    let mut result = *fault.public();
     if fault.exit == 3 {
         result.status = InstallStatus::NeedsUser;
         result.error = None;

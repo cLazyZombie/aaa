@@ -150,7 +150,17 @@ impl crate::Host {
         let now = util::now_ms();
         // 호스트에 등록되고 pane과 결속된 참조만 쓴다. 로컬 홈·형제 폴더 탐색은 하지 않는다.
         let panes: Vec<_> = self.inner.lock().unwrap().panes.keys().cloned().collect();
-        let bindings: Vec<_> = panes.iter().filter_map(|p| self.pane_account(p).ok().flatten()).collect();
+        let bindings: Vec<_> = panes
+            .iter()
+            .filter_map(|p| {
+                self.pane_account(p)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .collect();
         let jobs = accounts.iter().map(|a| {
             let name = a.name.clone();
             let harness = a.harness.clone();
@@ -247,7 +257,14 @@ impl crate::Host {
         let finished = futures_util::future::join_all(jobs).await;
         for (name, entry) in finished {
             // 느린 조회 중 다시 로그인·삭제·재등록했다면 그 결과를 새 신원에 붙이지 않는다.
-            match self.accounts.generation(&name).ok() {
+            match self
+                .accounts
+                .generation(&name)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+            {
                 Some(g) if g == entry.generation => {
                     cache.entries.insert(name, entry);
                 }

@@ -4,7 +4,7 @@ use aaa_common::front::FrontClient;
 use aaa_proto::{DeviceRole, FrontRequest, FrontResponse};
 use worker::private_display::{Request, Subscriber};
 fn required() -> Fault {
-    Fault { code: "installation_first_device_pairing_required", exit: 3 }
+    Fault { code: "installation_first_device_pairing_required", exit: 3, cause: None }
 }
 fn wants_pairing(plan: &InstallPlan) -> bool {
     plan.choices.pairing == Some(InstallPairing::Controller)
@@ -12,8 +12,8 @@ fn wants_pairing(plan: &InstallPlan) -> bool {
 async fn client(plan: &InstallPlan) -> Result<FrontClient> {
     tokio::time::timeout(std::time::Duration::from_secs(10), FrontClient::connect(Path::new(&plan.context.state_dir)))
         .await
-        .map_err(|_| required())?
-        .map_err(|_| required())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, required()))?
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, required()))
 }
 async fn has_controller(client: &mut FrontClient) -> Result<bool> {
     match tokio::time::timeout(std::time::Duration::from_secs(10), client.call(FrontRequest::Devices)).await {
@@ -34,12 +34,12 @@ fn publish_ports(plan: &InstallPlan) -> Result<(u16, u16)> {
         .as_deref()
         .unwrap_or("127.0.0.1:7431")
         .parse::<std::net::SocketAddr>()
-        .map_err(|_| Fault::conflict())?
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
         .port();
     Ok((port, target))
 }
 fn publish_fault(error: aaa_host::tailscale::ExactError) -> Fault {
-    Fault { code: error.code, exit: if error.conflict { 4 } else { 3 } }
+    Fault { code: error.code, exit: if error.conflict { 4 } else { 3 }, cause: error.cause }
 }
 pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> {
     if !wants_publish(plan) {
@@ -52,11 +52,11 @@ pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> 
         Ok(vec![native.snapshot.permission().map_err(publish_fault)?])
     })
     .join()
-    .map_err(|_| Fault::conflict())?
+    .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
 }
 fn publication_error(error: aaa_proto::ErrorBody) -> Fault {
     if error.code == aaa_proto::ErrorCode::Conflict {
-        return Fault { code: "serve_port_conflict", exit: 4 };
+        return Fault { code: "serve_port_conflict", exit: 4, cause: None };
     }
     let code = match error.message.as_str() {
         "tailscale_conditional_apply_unavailable" => "tailscale_conditional_apply_unavailable",
@@ -64,7 +64,7 @@ fn publication_error(error: aaa_proto::ErrorBody) -> Fault {
         "tailscale_serve_setup_required" => "tailscale_serve_setup_required",
         _ => "tailscale_publication_unverified",
     };
-    Fault { code, exit: 3 }
+    Fault { code, exit: 3, cause: None }
 }
 async fn publication(plan: &InstallPlan, id: &str, writing: bool) -> Result<InstallPublication> {
     let request = if writing {
@@ -73,22 +73,28 @@ async fn publication(plan: &InstallPlan, id: &str, writing: bool) -> Result<Inst
         FrontRequest::InstallPublishStatus { installation_id: id.into() }
     };
     let action = async {
-        let mut client = FrontClient::connect(Path::new(&plan.context.state_dir))
-            .await
-            .map_err(|_| Fault { code: "installation_host_unavailable", exit: 3 })?;
+        let mut client = FrontClient::connect(Path::new(&plan.context.state_dir)).await.map_err(|source_error| {
+            aaa_common::diagnostic::context(
+                source_error,
+                Fault { code: "installation_host_unavailable", exit: 3, cause: None },
+            )
+        })?;
         // 이 요청이 처음 추가된 판을 고정한다. 미래 minor와 비교하지 않는다.
         if client.proto.major != 1 || client.proto.minor < 90 {
-            return Err(Fault { code: "installation_host_upgrade_required", exit: 3 });
+            return Err(Fault { code: "installation_host_upgrade_required", exit: 3, cause: None });
         }
         match client.call(request).await {
             Ok(Ok(FrontResponse::InstallPublished { publication })) => Ok(publication),
             Ok(Err(error)) => Err(publication_error(error)),
-            _ => Err(Fault { code: "tailscale_publication_unverified", exit: 3 }),
+            _ => Err(Fault { code: "tailscale_publication_unverified", exit: 3, cause: None }),
         }
     };
-    tokio::time::timeout(std::time::Duration::from_secs(600), action)
-        .await
-        .map_err(|_| Fault { code: "tailscale_publication_unverified", exit: 3 })?
+    tokio::time::timeout(std::time::Duration::from_secs(600), action).await.map_err(|source_error| {
+        aaa_common::diagnostic::context(
+            source_error,
+            Fault { code: "tailscale_publication_unverified", exit: 3, cause: None },
+        )
+    })?
 }
 pub(super) async fn publish(plan: &InstallPlan, id: &str) -> Result<bool> {
     if !wants_publish(plan) {
@@ -96,7 +102,7 @@ pub(super) async fn publish(plan: &InstallPlan, id: &str) -> Result<bool> {
     }
     let publication = publication(plan, id, true).await?;
     if publication.mapping != InstallCheckState::Passed || publication.public_https != InstallCheckState::Passed {
-        return Err(Fault { code: "tailscale_public_https_unverified", exit: 3 });
+        return Err(Fault { code: "tailscale_public_https_unverified", exit: 3, cause: None });
     }
     Ok(!publication.reused)
 }
@@ -109,7 +115,10 @@ pub(super) async fn pairing(plan: &InstallPlan, subscriber: &mut Option<Subscrib
         return Ok(false);
     }
     let subscriber = subscriber.as_mut().ok_or_else(required)?;
-    subscriber.request(Request::Pairing).await.map_err(|_| required())?;
+    subscriber
+        .request(Request::Pairing)
+        .await
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, required()))?;
     // 표시 ACK는 완료가 아니다. 실제 redeem의 host 상태 사건 뒤 Devices를 다시 읽는다.
     let closed = subscriber.closed();
     let wait = async {
@@ -120,11 +129,13 @@ pub(super) async fn pairing(plan: &InstallPlan, subscriber: &mut Option<Subscrib
             }
             tokio::select! {
                 _ = &mut closed => return Err(required()),
-                event = client.next() => if !event.is_ok_and(|event| event.is_some()) { return Err(required()); },
+                event = client.next() => if !event.inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok_and(|event| event.is_some()) { return Err(required()); },
             }
         }
     };
-    tokio::time::timeout(std::time::Duration::from_secs(600), wait).await.map_err(|_| required())?
+    tokio::time::timeout(std::time::Duration::from_secs(600), wait)
+        .await
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, required()))?
 }
 pub(super) async fn observe(plan: &InstallPlan, id: &str, result: &mut InstallResult) -> Result<()> {
     if wants_publish(plan) {
@@ -140,8 +151,14 @@ pub(super) async fn observe(plan: &InstallPlan, id: &str, result: &mut InstallRe
             summary.tailscale_serve.ownership =
                 if observed.owned { InstallOwnership::ThisInstance } else { InstallOwnership::External };
         }
-        let mapping = publication.as_ref().is_ok_and(|p| p.mapping == InstallCheckState::Passed);
-        let https = publication.as_ref().is_ok_and(|p| p.public_https == InstallCheckState::Passed);
+        let mapping = publication
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|p| p.mapping == InstallCheckState::Passed);
+        let https = publication
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|p| p.public_https == InstallCheckState::Passed);
         result.checks.push(InstallCheck {
             name: "tailscale_exact_mapping".into(),
             state: if mapping { InstallCheckState::Passed } else { InstallCheckState::Unknown },
@@ -166,7 +183,10 @@ pub(super) async fn observe(plan: &InstallPlan, id: &str, result: &mut InstallRe
     }
     let ready = match client(plan).await {
         Ok(mut client) => has_controller(&mut client).await.unwrap_or(false),
-        Err(_) => false,
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            false
+        }
     };
     result.checks.push(InstallCheck {
         name: "first_controller_pairing".into(),
@@ -198,6 +218,6 @@ pub(super) fn observe_readonly(plan: &InstallPlan, id: &str, result: &mut Instal
         Ok(snapshot)
     })
     .join()
-    .map_err(|_| required())??;
+    .map_err(|source_error| aaa_common::diagnostic::context(source_error, required()))??;
     Ok(())
 }
