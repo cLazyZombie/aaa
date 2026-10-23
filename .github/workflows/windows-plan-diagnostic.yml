@@ -1,0 +1,44 @@
+name: Windows install plan diagnostic
+on:
+  push:
+    branches: [diagnostic/t-0847-windows-plan]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: '1'
+jobs:
+  rust:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rust stable
+        id: rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          echo "rustc=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-v1-rust-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-v1-rust-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+      - name: Build and CLI regression
+        run: |
+          cargo build --locked -p aaa --bin aaa
+          cargo test --locked -p aaa --test install ssh_executors_report_missing_explicit_state_without_writing -- --nocapture
+      - name: Host regression
+        run: cargo test --locked -p aaa-host --lib machine_setup:: -- --nocapture
+      - name: Windows SYSTEM SSH to SCM and TLS registration
+        timeout-minutes: 20
+        shell: pwsh
+        run: ./scripts/ci-windows-sshd.ps1
