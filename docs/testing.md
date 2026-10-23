@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## restart 시험의 FDA 주입 환경 격리(t-0821)
+
+- `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`: FdaGate의 시험용 `posix_spawn` interpose가 `session-host` 자식을 열 때만 `DYLD_INSERT_LIBRARIES`·`AAA_TEST_FDA_GATE`를 제거한다. worker 자신의 환경과 실제 재시작 exec는 유지하며, 같은 worker PID의 라이브러리 로드·TCC open 진입을 재시작 전후 각각 1회·2회 확인한다. 제품 코드·launcher·실제 TCC DB·시스템 설정은 바꾸지 않는다.
+- fixture constructor가 라이브러리 로드 PID를 기록한다. 기존 pane과 재시작 뒤 새 pane 각각의 실제 session host PID가 기록에 없어야 하며, pane shell에도 두 변수가 없어야 한다. 보호된 `/bin/sh`가 DYLD 변수만 지우는 경우도 host 로드 검사로 잡는다. 격리 전에는 같은 owner의 새 단언이 session host 상속으로 3.47초에 실패했다. 원래 시험은 로컬 macOS 27.0.1에서 통과했으므로 이 대조를 macOS 15 CI의 즉시 종료 재현으로 해석하지 않는다. 그 실패와의 인과 및 실제 판정은 착지 뒤 main CI에서 확인한다.
+- 두 pane 모두 `wait_for`로 실행 상태를 확인하고 시험 전용 셸 prompt 출력을 기다린 뒤 명령을 보낸다. 화면의 줄 끝 공백 제거와 무관한 `aaa-restart-ready>`를 쓴다. 기존 명령·출력·책임 PID·기존 host PID 보존·승인 거부·detached 단언은 유지한다. 시한 연장·재시도·고정 sleep·판정 완화는 없다.
+- 실패하면 정리 전에 pane 목록·화면, `meta.json`·`exit.json`·`final.json`, session host·host·worker 로그와 FDA 로드/진입 PID를 CI 출력에 남긴다. session token이 든 `spec.json`은 출력하지 않는다. `AAA_RESTART_TEST_LAUNCHER`로 지정하는 기존 launcher 경로도 같은 owner로 확인하며, 정본 로컬 검증은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다.
+
 ## 종료된 coordinator와 상단 시작 안내(t-0816)
 
 - `node --test web/test/roster.test.mjs`: 종료된 coordinator가 트리·기타·프로젝트 머리·이전/다음 탐색에서 빠지고, 중단·복원 대기·끊긴 머신의 기록과 thread에 연결된 pane은 유지하는지 확인한다. 입력 pane 목록은 바꾸지 않는다. 명령 팔레트도 같은 `roster`를 쓴다.
