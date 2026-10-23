@@ -23,6 +23,8 @@ mod lab;
 mod pr_environment;
 #[path = "m13/preparation.rs"]
 mod preparation;
+#[path = "m13/report_events.rs"]
+mod report_events;
 #[path = "m13/rollout.rs"]
 mod rollout;
 #[path = "m13/secret_k0.rs"]
@@ -998,10 +1000,17 @@ fn remote_dir_thread_survives_host_restart() {
     std::fs::write(work_dir.join("report.md"), "## Report\n갱신\n\n## Next\n- 사용자 확인\n").unwrap();
     w.spawn_host("host2");
     wait_for("labB 재연결", Duration::from_secs(60), || w.h.connected("labB").then_some(()));
-    let v = w.wait_show("갱신된 보고", &id, |v| v["next"] == serde_json::json!(["사용자 확인"]));
+    // next 저장은 report_ready 발행보다 먼저다. 상태 조회 대신 수집 완료 사건을 끝 신호로 쓴다.
+    let mut flow = w.lab.follow("host2-flow", &w.h, "demo");
+    flow.until("재시작 뒤 보고 수집 완료", T, |e| {
+        e["kind"] == "report_ready" && e["thread"] == id && e["seq"].as_u64().is_some_and(|s| s > seen)
+    });
+    let v = w.show(&id);
+    assert_eq!(v["next"], serde_json::json!(["사용자 확인"]), "{v}");
     // 보고 첫 줄 태그로 확인 필요를 정하지 않는다(D9): 새 보고는 검토 대기
     assert_eq!(v["group"], "ready_for_review");
-    assert_eq!(w.kinds(seen), ["report_ready"]);
+    let kinds = w.kinds(seen);
+    assert_eq!(kinds, ["report_ready"], "host 재시작 뒤 사건: {kinds:?}");
     // host2가 다시 붙기 전에 낸 outage가 있으면 여기와 아래 항목 시각 확인이 잡는다
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
     assert!(!items.iter().any(|i| i["item_kind"] == "outage"), "host 재시작에 outage가 생겼다: {items:?}");
