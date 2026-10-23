@@ -3317,3 +3317,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - run 39984576747(fca9e7d3)은 Windows one-line install 시험의 실제 IRM이 시험 HTTP 서버 응답을 읽다가 connection reset으로 끝났다(`http_phase=4`, executor/config 미생성). 시험 서버는 응답을 쓴 뒤 write half-close로 EOF를 보내고 peer EOF까지 수신을 비워 종료한다. 실제 PowerShell 5.1/7의 `irm | iex`·ConPTY·검토·서명 승인·설치 기록 단언을 유지한다. Windows 후보는 격리 실기에서 해당 시험을 실행한 뒤 인계한다.
 - 참고 후보는 [xterm.js Viewport/Lifecycle](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Viewport.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)), [tracing callsite](https://github.com/tokio-rs/tracing/blob/master/tracing-core/src/callsite.rs)([MIT](https://github.com/tokio-rs/tracing/blob/master/LICENSE)), [PowerShell](https://github.com/PowerShell/PowerShell)([MIT](https://github.com/PowerShell/PowerShell/blob/master/LICENSE.txt))다. [Node process I/O](https://nodejs.org/api/process.html#a-note-on-process-io)의 자연 종료 계약도 따른다. 외부 코드·의존성은 추가하지 않는다.
 - 검증은 전체 ci-local·Linux strict cross clippy·공개 검사다. 재시도·시한 확대·기대값 완화·시험 삭제·GitHub rerun/revert는 하지 않는다. API·E2E 번호는 유지한다.
+
+## README 촬영과 E2E 목록 출력
+
+- `web/e2e/showcase.mjs --readme`는 실제 격리 host·agent와 가짜 agent로 README 매체를 만든다. 폐기된 evaluator 호출을 제거하고 auto mode·자동화·workspace 화면을 포함한다. 화면과 보고 사건으로 준비를 확인하며 가짜 thread 완료는 FIFO로 제어한다. 고정 sleep 제거에 맞춰 `fixed-sleeps.json`의 기존 허용 3건도 제거했다.
+- 새 thread의 행은 pane 준비보다 먼저 도착할 수 있다. GIF는 `thread show`의 pane과 `pane wait-output`의 실제 작업 출력을 확인한 뒤 해당 pane을 연다. 시한 연장으로 준비 경합을 숨기지 않는다.
+- `e2e-layout.test.mjs`의 전체 목록 단언이 첫 검증에서 실패했다. 102개 파일 중 stdout이 64개에서 잘렸다. 원인은 `--list`의 비동기 파이프 출력 직후 `process.exit(0)`였다. 착지에서는 main의 자연 종료 수리를 유지하고 후보의 중복 write callback 수리를 제외했다. 기존 전체 파일·중복·숫자 정렬 단언을 유지한다.
+- 촬영 격리·매체 목록·OSS 구성 참고는 [README 매체](readme-media.md)에 적었다. 실제 설치·서비스 변경은 이 문서 작업에서 실행하지 않는다.
