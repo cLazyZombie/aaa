@@ -75,6 +75,8 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { setAppBadge } from "./appBadge";
 import { watchBadgeFocus } from "./faviconBadge";
 import { PasskeyGesture, PasskeyNotice, usePasskeyState } from "./PasskeyPanel";
+import { RecentScreens } from "./RecentScreens";
+import { recentScreen, storedRecentScreens, type RecentContext, type RecentScreen } from "./recentScreenModel";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -352,6 +354,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 짝지은 뒤 10분 안 passkey 등록 안내(관리 GUI W7)
   const [passkey, reloadPasskey] = usePasskeyState();
   const [loaded, setLoaded] = useState(false);
+  const [restoreRecentAutomations] = useState(() => storedRecentScreens().some((key) => key.startsWith("automation:")));
   const [sel, setSel] = useState<string | null>(selectedFromHash());
   const [msg, setMsg] = useState<string | null>(null);
   // 768px 이하에서 목록은 pane 위의 drawer다(herdr-web-ui App.tsx 290~316줄, drawer.tsx). 769px부터는 늘 옆 칸이라
@@ -1171,7 +1174,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (automationShown && panelRef.current !== "automations") setPanel("automations");
   }, [automationShown]); // eslint-disable-line react-hooks/exhaustive-deps
   // 카드 목록과 본문 설정 화면이 같은 사본을 본다. 둘 중 하나가 보일 때만 읽는다
-  const automations = useAutomations(panel === "automations" || automationShown, shownThreads);
+  const automations = useAutomations(panel === "automations" || automationShown || restoreRecentAutomations, shownThreads);
   const automationOpen = automationTarget(automationAt);
   // 넓은 창에서 막대 「답할 것」으로 그 패널을 펼치면 본문도 「답할 것」(마지막으로 본 카드)
   const workspaceData = useWorkspaceData(panel === "workspace" || workspaceShown, up, workspaceShown ? sel : "workspace:", threadsSync);
@@ -1363,6 +1366,28 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     updateSidebarShared({ sidebarWidth: width });
     setDraggedSidebarWidth(null);
   };
+  const recentContext: RecentContext = {
+    panes, threads: [...threads.values()], tasks: taskBoard.board?.tasks ?? null,
+    reports: [...reportNames.values()], automations: automations.rows,
+  };
+  const resolveRecent = (key: string) => recentScreen(key, recentContext);
+  const recentCurrent = loaded ? resolveRecent(settingsOpen ? "settings:" : sel ?? "")?.key ?? null : null;
+  const openRecent = (target: RecentScreen) => {
+    if (target.key === "settings:") openSettings();
+    else if (target.selection.startsWith("pane:")) { choose(target.selection.slice(5)); reveal(target.selection); }
+    else if (target.selection.startsWith("thread:")) {
+      const thread = threads.get(target.selection.slice(7));
+      if (thread) { chooseThread(thread); reveal(target.selection); }
+    } else goSel(target.selection);
+    // 전환 목록의 focus가 사라진 뒤 새 화면의 입력으로. 원래 화면 취소는 RecentScreens가 원래 요소로 돌린다.
+    requestAnimationFrame(() => {
+      if (target.selection.startsWith("pane:")) {
+        const composer = document.querySelector<HTMLTextAreaElement>('.view .composer textarea[aria-label="메시지"]');
+        if (composer && composer.getClientRects().length > 0) composer.focus({ preventScroll: true });
+        else paneControls.current?.focusInput();
+      } else document.querySelector<HTMLElement>("main.view")?.focus({ preventScroll: true });
+    });
+  };
 
   return (
     <DrawerContext.Provider value={drawer}>
@@ -1460,7 +1485,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       </aside>
       {/* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫는다(참고 styles.css) */}
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
-      <main className="view">
+      <main className="view" tabIndex={-1}>
         <UpdateNotice hostBuild={hostWeb} />
         {role !== "reader" && <PasskeyNotice state={passkey} onChanged={reloadPasskey} />}
         {loaded && up && canControl && !settingsOpen && !coordinatorPane && (
@@ -1725,6 +1750,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         actions={paletteActions}
       />
       </ErrorBoundary>
+      <RecentScreens current={recentCurrent} resolve={resolveRecent} onOpen={openRecent} enabled={loaded && fileViewing === null && !paletteOpen && newPaneOn === null} />
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {

@@ -2855,3 +2855,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - Windows 실패 원문(run39808392236/job119927674887)은60.005초에 질문0/16, child 생존, reader 미완료, `manifest_request`/HTTP4, executor/config/active=false다. 시험용 `ConvertTo-Json | Set-Content`가 끝나지 않은 범위까지 확인했으며 cmdlet 내부 원인은 단정하지 않는다. 앞선 다른 main의 owner 성공이나 native probe 수리를 이번 재발의 성공 근거로 쓰지 않는다.
 - owner는 격리 lab에 manifest를 미리 쓰고 mock `Invoke-WebRequest`에서 그대로 복사한다. 실제 IRM/IEX 입구와 제품 manifest decoder·버전/URL/SHA·PE·native 검토/서명/파일/status 경계는 유지한다. 기존 PS5.1/7 루프·16질문·60초 상한과 모든 사후 단언을 유지하고 HTTP fixture 안의 JSON serializer pipeline만 제거한다.
 - `nice -n 15 cargo test --locked -p aaa --test install`과 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Windows strict cross clippy/build로 검증한다. 이 owner는 cfg(windows)이므로 macOS 통과나 cross만으로 Windows GREEN이라고 하지 않는다. 새 main의 Windows 실제 owner 결과가 남아 있다. 실제 CI 재실행·시한 증가·기대값 변경은 없다.
+
+## 설치 앱의 최근 화면 전환(t-0861)
+
+- `node --test web/test/recentScreenModel.test.mjs`는 MRU 상한·정방향/역방향 순회, pane/thread 중복 제거·재개, 끝남/보류/보관/닫힌 대상 제외, 할 일·보고서·자동화·설정 범위와 정확한 키/IME 경계를 검사한다.
+- E2E94는 실제 host·agent·PTY에서 두 데스크톱 엔진의 본문/주소 유지·Ctrl 해제 전환·양방향 순회·Esc focus 복귀·창 blur 취소·같은 JS task의 짧은 chord·선택 중 pane 종료·새로고침 후 기기 기록을 확인한다. 전환 전후 실제 WebSocket 입력 bytes가 비어 있어야 하며 일반 탭에서는 키의 defaultPrevented가 false이고 전환 목록이 없어야 한다. 고정 sleep이나 시한 연장은 없다.
+- 설정에서 pane을 여는 sidebar 도우미는 패널을 바꾸면서 설정을 닫아 이전 본문을 다시 방문한다. 이 중간 방문을 최근 기록에서 뺀다고 가정하지 않는다. E2E94는 설정에서 실제 Ctrl+Tab으로 직전 pane에 복귀한 뒤 다음 순서를 검사한다. 첫 시험의 reports/settings 불일치는 이 준비 동작 때문이었으며, 원래 설정 선택 기대값과 제품을 유지하고 준비 경로를 바로잡았다.
+- E2E의 `navigator.standalone` 모의와 Playwright 키 입력은 제품의 분기·입력 경로 검증이다. OS/브라우저가 예약한 키가 실제 PWA까지 오는지 증명하지 않는다. 수동 확인 결과는 운영체제·브라우저·창 모드·정방향/역방향/Ctrl 해제 수를 구분해 보고한다. 사용자 대화형 화면의 창 실행·전면 전환·키 주입은 사전 확인 없이 하지 않는다.
+- 정본은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다. 웹 제품과 문서만 변경하며 FRONT_API 버전·Rust 의존 경계는 유지한다.

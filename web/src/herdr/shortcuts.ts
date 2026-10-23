@@ -4,6 +4,7 @@ import { bindingChord, formatExactChord, isMacPlatform, parseExactChord, type Ex
 import { physicalKey } from "./keys.ts";
 
 import type { AppActions } from "../actions.ts";
+import { recentScreenChord, standaloneApp } from "../recentScreenModel.ts";
 
 export const SHORTCUTS = [
   { id: "palette", label: "Command palette", keys: ["Mod", "Shift", "K"] },
@@ -225,6 +226,7 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
     const platformIsMac = isMacPlatform();
     const onKeyDown = (event: KeyboardEvent): void => {
       if (recordingShortcut) return;
+      if (recentScreenChord(event) && standaloneApp()) return;
       const shortcut = matchShortcut(event, platformIsMac, shortcutOverrides);
       if (shortcut === null) return;
       if (keepsKeyForText(event)) return;

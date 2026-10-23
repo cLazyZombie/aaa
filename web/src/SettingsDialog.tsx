@@ -634,6 +634,7 @@ function ShortcutsPage() {
       <input
         type="search"
         className="input settings-shortcut-search"
+        data-shortcut-recording={recordingId !== null ? "true" : undefined}
         value={query}
         placeholder="단축키 검색"
         aria-label="단축키 검색"
@@ -646,7 +647,7 @@ function ShortcutsPage() {
           일치하는 단축키가 없습니다.
         </p>
       )}
-      <SettingsGroup className="settings-shortcuts" section="shortcuts" note="단축키는 이 브라우저와 기기에 적용됩니다. Mod+Shift 조합은 터미널 키를 그대로 남겨 두며, 기록 기능으로는 Ctrl, Alt 또는 (Mac에서는) ⌘를 쓰는 다른 조합도 누른 그대로 저장할 수 있습니다. 포커스된 입력란의 텍스트 선택은 기본 동작을 따릅니다. Tab/목록 키는 UI 안에서만 작동하며 전역 단축키가 아닙니다. 모바일 키 바는 앱 동작이 아닌 터미널 키를 보냅니다.">
+      <SettingsGroup className="settings-shortcuts" section="shortcuts" note="단축키는 이 브라우저와 기기에 적용됩니다. Mod+Shift 조합은 터미널 키를 그대로 남겨 두며, 기록 기능으로는 Ctrl, Alt 또는 (Mac에서는) ⌘를 쓰는 다른 조합도 누른 그대로 저장할 수 있습니다. 포커스된 입력란의 텍스트 선택은 기본 동작을 따릅니다. 설치 앱에서 Ctrl+Tab은 최근 화면 목록을 열고, Ctrl+Shift+Tab은 반대로 고릅니다. Ctrl을 떼면 선택한 화면을 엽니다. 일반 Tab/목록 키는 UI 안에서만 작동합니다. 모바일 키 바는 앱 동작이 아닌 터미널 키를 보냅니다.">
         {visible.map((id) => {
           const label = SHORTCUT_LABEL[id];
           const displayedKeys = shortcutDisplayKeys(id, overrides);

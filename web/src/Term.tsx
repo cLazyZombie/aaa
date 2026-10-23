@@ -1,4 +1,5 @@
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
+import { recentScreenChord, standaloneApp } from "./recentScreenModel";
 // pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
 // PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
 // - 이 화면이 지금 쓰는 화면이거나 아무도 쓰지 않으면 칸 크기에 맞춘다(열 때·창 크기가 바뀔 때).
@@ -835,6 +836,7 @@ export function TermView({
     // paste 사건이 기존 첨부로 보낸다: Ctrl+V에서 Async Clipboard를 읽던 것은 Safari 붙여넣기 확인 말풍선 때문에 없앴다(plan §8.232 후속).
     // 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
     term.attachCustomKeyEventHandler((event) => {
+      if (recentScreenChord(event) && standaloneApp()) return false;
       // 앱 단축키는 앱 몫이다(PaneTerminal 621줄): 창의 capture 처리기(herdr/shortcuts.ts useShortcuts)는 브라우저 기본만 막으므로
       // xterm이 그 키를 pane에 보내지 않게 먼저 거른다
       if (isAppShortcut(event, shortcutOverrides())) return false;
