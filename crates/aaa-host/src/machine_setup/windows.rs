@@ -68,9 +68,13 @@ pub(super) fn install(dir: &str, args: &str) -> Option<String> {
             r#"
 $ErrorActionPreference = 'Stop'
 $exe = Join-Path (Join-Path ([IO.Path]::GetTempPath()) '{dir}') 'aaa.exe'
+$base = $env:LOCALAPPDATA
+if ([string]::IsNullOrEmpty($base)) {{ $base = $env:USERPROFILE }}
+$state = Join-Path $base 'aaa\state'
 $p = New-Object Diagnostics.Process
 $p.StartInfo.FileName = $exe
-$p.StartInfo.Arguments = '{args}'
+# install-probe/bootstrap은 명시적 상태 경로가 필수다. 모든 단계가 detect의 기본 자리와 같아야 한다.
+$p.StartInfo.Arguments = '--state-dir "' + $state + '" {args}'
 $p.StartInfo.UseShellExecute = $false
 $p.StartInfo.CreateNoWindow = $true
 $p.StartInfo.RedirectStandardInput = $true

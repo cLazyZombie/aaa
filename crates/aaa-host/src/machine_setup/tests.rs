@@ -1567,6 +1567,20 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
 }
 
 #[test]
+fn failed_probe_keeps_remote_output_out_of_the_public_error() {
+    let response =
+        |stdout: &str| Ran { ok: false, stdout: stdout.into(), stderr: "private stderr: C:/Users/example/aaa".into() };
+    for code in [Some(2), Some(3), Some(4), Some(1)] {
+        let error = install::probe_response(&response(r#"{"private":"probe payload"}"#), code).err().unwrap();
+        assert!(error.contains(if code == Some(2) { "실행 인자·사용법" } else { "원격 install" }));
+        assert!(!error.contains("private") && !error.contains("probe payload"));
+    }
+    let malformed = install::probe_response(&response("malformed private proposal"), Some(0)).err().unwrap();
+    assert!(malformed.contains("계획을 읽지 못했다"));
+    assert!(!malformed.contains("private"));
+}
+
+#[test]
 fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
     use aaa_proto::install::*;
     let settings = MachineSetupSettings {
@@ -1610,6 +1624,17 @@ fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
     };
     let apply = decode(install::apply_script(&dir, "windows", "01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
     assert!(apply.contains("--secrets-stdin") && apply.contains("$stdinStream.CopyTo($p.StandardInput.BaseStream)"));
+    for script in [
+        install::probe_script(&dir, "windows", &"a".repeat(64)),
+        install::bootstrap_script(&dir, "windows", &"a".repeat(64), &"b".repeat(64)),
+        install::apply_script(&dir, "windows", "01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+    ] {
+        let script = decode(script.unwrap());
+        assert!(script.contains("$base = $env:LOCALAPPDATA"));
+        assert!(script.contains("$base = $env:USERPROFILE"));
+        assert!(script.contains("$state = Join-Path $base 'aaa\\state'"));
+        assert!(script.contains("$p.StartInfo.Arguments = '--state-dir \"' + $state + '\" install"));
+    }
     assert!(decode(windows::upload()).contains("Get-FileHash -LiteralPath"));
     assert!(windows::cleanup("aaa-setup.bad").is_none());
     assert_eq!(check::windows_check_argv()[0], "powershell.exe");

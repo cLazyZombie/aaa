@@ -1752,18 +1752,21 @@ pub fn main() -> ExitCode {
     }
     if let Cmd::InstallProbe { executor_sha256 } = &cli.cmd {
         let Some(state) = cli.state_dir.as_deref() else {
+            eprintln!("aaa: install-probe에는 --state-dir이 필요하다");
             return ExitCode::from(2);
         };
         return crate::install::probe_dispatch(state, executor_sha256);
     }
     if let Cmd::InstallBootstrap { executor_sha256, issuer_sha256 } = &cli.cmd {
         let Some(state) = cli.state_dir.as_deref() else {
+            eprintln!("aaa: install-bootstrap에는 --state-dir이 필요하다");
             return ExitCode::from(2);
         };
         return crate::install::bootstrap_dispatch(state, executor_sha256, issuer_sha256);
     }
     if let Cmd::InstallWorker { id, executor_sha256, resume } = &cli.cmd {
         let Some(state) = cli.state_dir.as_deref() else {
+            eprintln!("aaa: install-worker에는 --state-dir이 필요하다");
             return ExitCode::from(2);
         };
         return crate::install::worker_dispatch(state, id, executor_sha256, *resume);

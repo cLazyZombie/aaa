@@ -570,6 +570,24 @@ mod pairing;
 mod launchd;
 
 #[test]
+fn ssh_executors_report_missing_explicit_state_without_writing() {
+    let lab = Lab::new();
+    let sha = "a".repeat(64);
+    let before = snapshot(&lab.0);
+    for args in [
+        vec!["install-probe", "--executor-sha256", &sha],
+        vec!["install-bootstrap", "--executor-sha256", &sha, "--issuer-sha256", &sha],
+        vec!["install-worker", "--id", "01ARZ3NDEKTSV4RRFFQ69G5FAV", "--executor-sha256", &sha],
+    ] {
+        let output = lab.cmd(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8(output.stderr).unwrap().contains("--state-dir"));
+        assert_eq!(snapshot(&lab.0), before);
+    }
+}
+
+#[test]
 fn session_secret_input_is_refused_before_stdin_or_any_persistent_write() {
     use std::io::Write;
     let lab = Lab::new();
