@@ -101,7 +101,7 @@ async function until(what, fn, ms = 20_000) {
   }
 }
 
-// 사건으로 끝내는 기다림(새 시험): DOM은 MutationObserver·리소스 load/error, 주소는 hashchange.
+// 사건으로 끝내는 기다림(새 시험): DOM은 MutationObserver·native scroll·리소스 load/error, 주소는 hashchange.
 // ms는 실패 한도다(통과용 기다림이 아니다).
 // `fn(arg)`은 page에서 돈다(Playwright가 함수를 글로 옮기듯 글로 넘긴다).
 /**
@@ -124,12 +124,14 @@ const domIs = (p, what, fn, arg, ms = 20_000) =>
     const cleanup = () => {
       clearTimeout(stuck);
       mo.disconnect();
+      document.removeEventListener('scroll', check, true);
       document.removeEventListener('load', check, true);
       document.removeEventListener('error', check, true);
     };
     const check = () => { if (ok()) { cleanup(); done(); } };
     const mo = new MutationObserver(check);
     const stuck = setTimeout(() => { cleanup(); fail(new Error(${JSON.stringify(`${ms}ms 안에 ${what}이 되지 않았다`)})); }, ${ms});
+    document.addEventListener('scroll', check, true);
     document.addEventListener('load', check, true);
     document.addEventListener('error', check, true);
     mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });

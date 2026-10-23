@@ -5,6 +5,7 @@
 - E2E03은 실패한 viewport가 닫히기 전에 실제 키 처리 여부·native scroll·위치 쓰기·렌더 grid를 남긴다. 앞서 공통 진단에는 이미 닫힌 실패 화면 대신 기본 pane만 남았다.
 - E2E93은 터치·scrollend·위치 쓰기와 reset 전후 상태를 기존 대화 실패 자료에 함께 남긴다. E2E14는 닫는 문서의 lifecycle·keepalive 전송·요청 실패를 host 문서의 실패 진단과 함께 기록한다.
 - 계측은 사건·값을 바꾸지 않는다. 기존 20초 상한과 정확한 위치·테마 단언을 유지한다.
+- 별도 실제 Chromium 대조에서 `domIs`는 top=100·native scrollend 완료 후에도 끝나지 않았고, 위치가 같은 채 속성만 바꾸자 끝났다. scrollTop은 DOM mutation이 아니므로 `scroll`도 capture에서 관측하고 정리한다. 같은 대조의 수정판은 native scrollend 직후 끝난다. 이 누락을 원본 PageUp 실패의 원인으로 단정하지 않는다.
 - 참고: ttyd의 연결별 reset·dispose, WeTTY의 터미널 write 완료 ACK, xterm.js 5.5의 DOM 위치와 비동기 scroll 동기화(MIT), Playwright 공식 사건 대기·trace 문서(Apache-2.0). 외부 코드는 복사하지 않는다.
 
 ## E2E93 재개 조합의 독립 실행과 실패 phase(t-0896)
