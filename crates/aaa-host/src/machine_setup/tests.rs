@@ -1569,7 +1569,7 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
 #[test]
 fn failed_probe_keeps_remote_output_out_of_the_public_error() {
     let response =
-        |stdout: &str| Ran { ok: false, stdout: stdout.into(), stderr: "private stderr: C:/Users/example/aaa".into() };
+        |stdout: &str| Ran { ok: false, stdout: stdout.into(), stderr: "private stderr: C:/private/probe".into() };
     for code in [Some(2), Some(3), Some(4), Some(1)] {
         let error = install::probe_response(&response(r#"{"private":"probe payload"}"#), code).err().unwrap();
         assert!(error.contains(if code == Some(2) { "실행 인자·사용법" } else { "원격 install" }));
