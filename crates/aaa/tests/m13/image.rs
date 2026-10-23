@@ -3,20 +3,56 @@ use super::secret_k0::{canary, hits, needles, sha};
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 
+fn probe_script(command: &str, out: &Path, done: &Path) -> String {
+    let writing = done.with_extension("done.tmp");
+    // 셸은 printf 실행 전에 파일을 연다. 같은 폴더에서 쓰기·close 뒤 rename해야
+    // 완료 표지를 읽은 쪽이 빈 파일을 보지 않는다. 출력 파일도 이때 이미 닫혔다.
+    format!("{command} > {out:?} 2>&1\nprintf '%s' \"$?\" > {writing:?} && mv {writing:?} {done:?}\n")
+}
+
 fn probe(w: &World, pane: &str, name: &str, command: &str) -> (i32, String) {
     let out = w.lab.root.join(format!("image-{name}.out"));
     let done = w.lab.root.join(format!("image-{name}.done"));
-    let script =
-        w.task(&format!("image-{name}.sh"), &format!("{command} > {out:?} 2>&1\nprintf '%s' \"$?\" > {done:?}\n"));
+    let script = w.task(&format!("image-{name}.sh"), &probe_script(command, &out, &done));
     w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
-    wait_for_diag(
+    let exit = wait_for_diag(
         "이미지 CLI 완료 사건",
         T,
         || std::fs::read_to_string(&done).ok(),
         || format!("{}\n{}", w.h.screen(pane), std::fs::read_to_string(&out).unwrap_or_default()),
     );
-    let rc = std::fs::read_to_string(done).unwrap().parse().unwrap();
+    let rc = exit.parse().unwrap();
     (rc, std::fs::read_to_string(out).unwrap())
+}
+
+/// printf의 리다이렉션이 파일을 연 바로 뒤를 pipe로 붙잡는다. 파일 생성과 쓰기 사이를
+/// 실제로 관측하므로 빠른 머신에서도 빈 완료 표지 경합을 결정적으로 구별한다.
+#[test]
+fn probe_completion_is_published_only_after_exit_code_is_written() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+    let lab = Lab::new();
+    let out = lab.root.join("probe.out");
+    let done = lab.root.join("probe.done");
+    let script = format!(
+        "exec 3>&1\nprintf() {{ command printf 'exit-code-open\\n' >&3; IFS= read -r release; command printf \"$@\"; }}\n{}",
+        probe_script("(echo probe-output; exit 7)", &out, &done)
+    );
+    let mut child =
+        Command::new("/bin/sh").args(["-c", &script]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let early = std::fs::read_to_string(&done).ok();
+    let writing = std::fs::read_to_string(done.with_extension("done.tmp")).ok();
+    child.stdin.take().unwrap().write_all(b"release\n").unwrap();
+    let status = child.wait().unwrap();
+    assert_eq!(line.trim(), "exit-code-open");
+    assert!(status.success(), "{status}");
+    assert!(early.is_none(), "완료 전에 표지를 공개했다: {early:?}");
+    assert_eq!(writing.as_deref(), Some(""), "쓰기 전 경계를 실제로 관측한다");
+    assert_eq!(std::fs::read_to_string(&done).unwrap(), "7");
+    assert!(!done.with_extension("done.tmp").exists());
+    assert_eq!(std::fs::read_to_string(out).unwrap(), "probe-output\n");
 }
 fn result(text: &str) -> Value {
     text.lines()
