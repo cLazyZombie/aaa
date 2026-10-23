@@ -8,12 +8,18 @@ import { ApiError, loadPreferences, savePreferences } from "./api";
 import type { PreferencesChange, SharedPreferences } from "./herdr/preferences.ts";
 import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./herdr/sidebarPins.ts";
 import { preferencesChange, sanitizeShared, sharedSettings, takePreferences, type Baseline, type Local, type SharedLocal } from "./preferences.ts";
-import { updateChatShared, updateSidebarShared, updateUsageSettings, useChatShared, useSidebarShared, useUsageSettings } from "./settings";
-import { updateAppearance, useAppearance } from "./theme";
+import { currentChatShared, currentSidebarShared, currentUsageSettings, updateChatShared, updateSidebarShared, updateUsageSettings, useChatShared, useSidebarShared, useUsageSettings } from "./settings";
+import { currentAppearance, updateAppearance, useAppearance } from "./theme";
 
 const SEND_AFTER_MS = 600;
 /** 가는 길에 실패한 요청(망, host 재시작)은 이만큼 뒤 다시 보낸다 */
 const RETRY_MS = 5_000;
+
+/** 종료 사건은 React가 다음 그림을 내기 전에도 온다. 마지막 렌더 대신 store에서 읽는다. */
+function currentLocal(): Local {
+  const { theme, palette, sidebarRows, agentOrder } = currentAppearance();
+  return { settings: { theme, palette, sidebarRows, agentOrder, ...currentUsageSettings(), ...currentChatShared(), ...currentSidebarShared() }, pins: currentSidebarPins() };
+}
 
 /** 참고 `useSettings()` 자리: aaa의 공유 설정은 모양·사용량·대화·목록 store 넷에 있다 */
 function useSharedLocal(): { settings: SharedLocal; update: (patch: Partial<SharedLocal>) => void } {
@@ -49,6 +55,7 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
   // 보기 권한 기기: 남이 나눈 것을 받고 보내지 않는다. 제 변경은 다음 공유 변경까지만 간다
   const readOnly = useRef(false);
   const inFlight = useRef<PreferencesChange | null>(null);
+  const retry = useRef<number | undefined>(undefined);
   // 변경이 가는 동안 온 가장 새 문서: 그 변경보다 앞인지 뒤인지는 답(revision)이 와야 안다
   const held = useRef<SharedPreferences | null>(null);
   // 보낸 뒤나 실패한 뒤 기다림이 끝나면 보내는 effect를 다시 돌린다
@@ -115,50 +122,61 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
     };
   }, [enabled, loaded, loadAttempt, receive]);
 
+  const send = useCallback(() => {
+    if (!enabled || !loadedRef.current || readOnly.current || inFlight.current !== null) return;
+    latest.current = currentLocal();
+    const body = preferencesChange(base.current, latest.current);
+    if (body === null) return;
+    // 보내기는 미룬 것이든 떠날 때든 늘 keepalive다: 미룬 보통 요청이 가는 중에 화면이 사라지면 그 요청은 문서와 함께 끊기고,
+    // 떠날 때 보내기는 「가는 중」이라 다시 보내지 않아 값을 잃는다(spec 14 판정, plan §8.173). 몸은 공유 설정 몇 칸이라 keepalive 한도
+    // (64KiB) 안이다
+    inFlight.current = body;
+    savePreferences(body, true).then(
+      (saved) => {
+        // 답은 이 변경이 남긴 문서 전체다: 앞서 다른 곳에서 온 것은 함께 오고, 뒤에 온 것은 붙잡아 두었다가 이제 읽는다
+        absorb(saved);
+        settled();
+        // 가는 동안 바뀐 것을 이제 보낸다
+        setAttempt((count) => count + 1);
+      },
+      (error: unknown) => {
+        settled();
+        // 참고는 403이면 보기 전용, 404(옛 서버)면 멈춤. aaa 웹은 host binary 안에 있어 옛 host가 없다
+        if (error instanceof ApiError && error.body.code === "forbidden") readOnly.current = true;
+        else retry.current = window.setTimeout(() => setAttempt((count) => count + 1), RETRY_MS);
+      },
+    );
+  }, [enabled, absorb, settled]);
+
   const change = loaded ? preferencesChange(base.current, { settings, pins }) : null;
   const pending = change === null ? null : JSON.stringify(change);
   useEffect(() => {
     if (!enabled || !loaded || readOnly.current || pending === null || inFlight.current !== null) return;
-    let retry: number | undefined;
-    // 보내기는 미룬 것이든 떠날 때든 늘 keepalive다: 미룬 보통 요청이 가는 중에 화면이 사라지면 그 요청은 문서와 함께 끊기고,
-    // 떠날 때 보내기는 「가는 중」이라 다시 보내지 않아 값을 잃는다(spec 14 판정, plan §8.173). 몸은 공유 설정 몇 칸이라 keepalive 한도
-    // (64KiB) 안이다
-    const send = () => {
-      window.clearTimeout(timer);
-      if (inFlight.current !== null) return;
-      const body = JSON.parse(pending) as PreferencesChange;
-      inFlight.current = body;
-      savePreferences(body, true).then(
-        (saved) => {
-          // 답은 이 변경이 남긴 문서 전체다: 앞서 다른 곳에서 온 것은 함께 오고, 뒤에 온 것은 붙잡아 두었다가 이제 읽는다
-          absorb(saved);
-          settled();
-          // 가는 동안 바뀐 것을 이제 보낸다
-          setAttempt((count) => count + 1);
-        },
-        (error: unknown) => {
-          settled();
-          // 참고는 403이면 보기 전용, 404(옛 서버)면 멈춤. aaa 웹은 host binary 안에 있어 옛 host가 없다
-          if (error instanceof ApiError && error.body.code === "forbidden") readOnly.current = true;
-          else retry = window.setTimeout(() => setAttempt((count) => count + 1), RETRY_MS);
-        },
-      );
-    };
     const timer = window.setTimeout(send, SEND_AFTER_MS);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearTimeout(retry.current);
+    };
+  }, [enabled, loaded, pending, attempt, send]);
+
+  useEffect(() => {
+    if (!enabled) return;
     // 바꾸고 곧 탭·앱을 닫거나 다른 앱으로 가면 기다림을 건너뛰고 지금 보낸다(QA t-0337 Q11). 참고는 여기서 잃고,
     // t3code는 떠날 때 미룬 저장을 마저 쓴다(uiStateStore.ts `beforeunload → flush()`). iOS는 beforeunload를 믿을 수 없어
-    // pagehide와 가려짐을 듣고, keepalive로 화면이 사라져도 요청이 끝까지 가게 한다.
+    // pagehide와 가려짐도 듣고, keepalive로 화면이 사라져도 요청이 끝까지 가게 한다.
+    // pending effect에 묶으면 클릭과 같은 task의 종료 사건에 감시자가 아직 없다.
     const leave = () => send();
     const hidden = () => document.visibilityState === "hidden" && send();
+    window.addEventListener("beforeunload", leave);
     window.addEventListener("pagehide", leave);
     document.addEventListener("visibilitychange", hidden);
     return () => {
-      window.clearTimeout(timer);
-      window.clearTimeout(retry);
+      window.clearTimeout(retry.current);
+      window.removeEventListener("beforeunload", leave);
       window.removeEventListener("pagehide", leave);
       document.removeEventListener("visibilitychange", hidden);
     };
-  }, [enabled, loaded, pending, attempt, absorb, settled]);
+  }, [enabled, send]);
 
   return receive;
 }

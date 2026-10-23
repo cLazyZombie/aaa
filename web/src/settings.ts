@@ -567,6 +567,8 @@ function subscribeUsage(f: () => void): () => void {
   return () => usageListeners.delete(f);
 }
 
+export const currentUsageSettings = (): UsageSettings => usage;
+
 export function useUsageSettings(): UsageSettings {
   return useSyncExternalStore(subscribeUsage, () => usage);
 }
@@ -651,6 +653,8 @@ export function updateChatShared(patch: Partial<ChatShared>) {
   }
   chatSharedListeners.forEach((f) => f());
 }
+
+export const currentChatShared = (): ChatShared => chatShared;
 
 export function useChatShared(): ChatShared {
   return useSyncExternalStore(

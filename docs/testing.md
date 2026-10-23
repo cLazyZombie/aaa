@@ -2,6 +2,8 @@
 
 ## 웹 E2E 스크롤·닫힘 진단(t-0905)
 
+- E2E14는 실제 즉시 닫기·보내는 중 닫기를 유지하고, 클릭과 같은 task의 pagehide·beforeunload·hidden도 검사한다. 구판은 DOM 테마가 dark인데 실제 fetch는 0건이다. 종료 감시를 pending effect에서 분리하고 store의 현재 값을 읽는 판은 최신 dark를 keepalive로 정확히 한 번 보낸다. 종료 알림 두 번의 중복 방지와 host/다른 기기 반영을 함께 확인한다. 원본 CI에는 보내는 문서의 lifecycle 기록이 없어 당시 순서를 이 대조와 동일하다고 소급 확정하지 않는다.
+
 - E2E03은 PageUp→늦은 native scroll→PageDown뿐 아니라 반대 방향도 고정한다. 구판은 맨 아래 동기화 뒤의 PageUp이 20초 동안 취소된 상태(native 3249, 첫 줄 s-172)로 남았다. xterm 처리 전부터 끝이었는지를 capture에서 기억해 글꼴 보정 범위를 좁힌 판은 Chromium·WebKit 양쪽을 통과한다. 글꼴 17→19px 전환 뒤 끝 유지(E2E07)도 별도로 확인한다. 키·native 사건·버퍼 값이나 기존 시한은 바꾸지 않는다.
 
 - E2E03은 실패한 viewport가 닫히기 전에 실제 키 처리 여부·native scroll·위치 쓰기·렌더 grid를 남긴다. 앞서 공통 진단에는 이미 닫힌 실패 화면 대신 기본 pane만 남았다.

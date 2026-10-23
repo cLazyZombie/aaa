@@ -136,6 +136,42 @@ export default async function ({ ctl, page }) {
     await w.page.close({ runBeforeUnload: true });
     await arrives("light", "보내는 중에 닫힌 기기에서 바꾼 테마가");
     await w.page.context().close();
+    // 클릭과 같은 task에서 마지막 저장 기회가 와도 React의 다음 effect를 기다리지 않는다.
+    // 저장 타이머·응답은 늦추지 않고, 실제 fetch 경계에서 즉시 최신 값 한 번을 보냈는지 본다.
+    for (const event of ["pagehide", "beforeunload", "visibilitychange"]) {
+      const next = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+      const p = next.page;
+      try {
+        await htmlIs(p, "data-theme", "light");
+        const dialog = await settings(p);
+        const sent = await dialog.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).evaluate((button, event) => {
+          const sends = [];
+          const original = window.fetch;
+          window.fetch = function (input, init) {
+            const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+            if (body?.op === "preferences_set") sends.push({ body, keepalive: init.keepalive });
+            return original.apply(this, arguments);
+          };
+          button.click();
+          const leave = () => {
+            if (event === "visibilitychange") {
+              Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+              document.dispatchEvent(new Event(event));
+            } else window.dispatchEvent(new Event(event));
+          };
+          leave();
+          leave(); // 같은 종료의 다른 알림이 가는 중인 요청을 중복 전송하지 않는다.
+          return { theme: document.documentElement.dataset.theme, sends };
+        }, event);
+        if (sent.theme !== "dark" || sent.sends.length !== 1 || sent.sends[0].body.settings?.theme !== "dark" || sent.sends[0].keepalive !== true)
+          throw new Error(`같은 task의 ${event} 저장: ${JSON.stringify(sent)}`);
+        await arrives("dark", `${event}에서 바꾼 테마가`);
+      } finally { await p.context().close(); }
+      const restored = wrote(a);
+      await a.getByRole("region", { name: "설정" }).getByRole("group", { name: "테마" }).getByRole("button", { name: "밝게" }).click();
+      await restored;
+      await htmlIs(b, "data-theme", "light");
+    }
     for (const p of [a, b, r]) await p.context().close();
   });
   await step("GitHub 세 팔레트: 데스크톱·휴대폰에서 선택하고 다시 열어도 UI·ANSI 색과 설정이 남는다", async () => {
