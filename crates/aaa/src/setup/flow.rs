@@ -160,6 +160,8 @@ pub(crate) trait System {
     /// 암호 확인. `service`면 서비스 로그온(LOGON32_LOGON_SERVICE), 아니면 네트워크 로그온으로 본다
     fn logon(&mut self, account: &Account, secret: &Secret, service: bool) -> Result<Logon>;
     fn logon_right(&mut self, account: &Account) -> Result<Right>;
+    /// 이 계정으로 도는 서비스 이름들(권한을 뺄 때 다른 서비스가 쓰는지 본다)
+    fn account_services(&mut self, account: &Account) -> Result<Vec<String>>;
     fn set_logon_right(&mut self, account: &Account, on: bool) -> Result<()>;
     fn create_service(&mut self, def: &ServiceDef, account: &Account, secret: &Secret) -> Result<()>;
     /// 시작하고 RUNNING이 된 PID를 돌려준다
@@ -1080,9 +1082,19 @@ impl<'a> Setup<'a> {
         }
         if receipt.logon_right_added {
             let account = self.sys.account()?;
-            match self.sys.set_logon_right(&account, false) {
-                Ok(()) => self.say(Tone::Ok, format!("「서비스로 로그온」 권한 뺌 ({})", account.short())),
-                Err(e) => problems.push(format!("권한: {e:#}")),
+            let others: Vec<String> =
+                self.sys.account_services(&account)?.into_iter().filter(|name| name != &service).collect();
+            if others.is_empty() {
+                match self.sys.set_logon_right(&account, false) {
+                    Ok(()) => self.say(Tone::Ok, format!("「서비스로 로그온」 권한 뺌 ({})", account.short())),
+                    Err(e) => problems.push(format!("권한: {e:#}")),
+                }
+            } else {
+                // 빼면 그 서비스가 다음 시작에 1069로 실패한다
+                self.say(
+                    Tone::Hint,
+                    format!("「서비스로 로그온」 권한은 남깁니다: {}가 같은 계정으로 돕니다", others.join(", ")),
+                );
             }
         }
         if let Some(dir) = &receipt.path_added {

@@ -165,6 +165,9 @@ impl System for FakeSys {
     fn logon_right(&mut self, _: &Account) -> Result<Right> {
         Ok(self.right)
     }
+    fn account_services(&mut self, account: &Account) -> Result<Vec<String>> {
+        Ok(self.services.values().filter(|s| s.account == account.short()).map(|s| s.name.clone()).collect())
+    }
     fn set_logon_right(&mut self, _: &Account, on: bool) -> Result<()> {
         self.ops.push(format!("right {on}"));
         self.right = if on { Right::Granted } else { Right::Missing };
@@ -613,4 +616,22 @@ fn status_shows_service_and_connection() {
     assert!(ui.printed("실행 중 · 자동 시작 · 계정 .\\person"));
     assert!(ui.printed("host studio.example.ts.net:7430 · 이름 「pc-main」 · 설치 판 aaa 0.1.5"));
     assert!(ui.printed("host에 연결됨"));
+}
+
+#[test]
+fn uninstall_keeps_the_logon_right_while_another_service_uses_the_account() {
+    let lab = Lab::new();
+    let layout = lab.layout();
+    let mut sys = FakeSys::new(&layout);
+    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
+    assert!(Receipt::read(&layout.receipt()).unwrap().logon_right_added);
+    let other = ServiceInfo { name: "aaa-work-agent".into(), account: account().short(), ..sys.services["aaa-agent"].clone() };
+    sys.services.insert(other.name.clone(), other);
+    sys.ops.clear();
+    let mut ui = Script::new(&[""], &[]);
+    Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).uninstall(&Args { uninstall: true, ..Default::default() }).unwrap();
+    assert!(sys.did("delete aaa-agent") && !sys.did("right false"), "권한을 빼지 않는다: {:?}", sys.ops);
+    assert_eq!(sys.right, Right::Granted);
+    assert!(ui.printed("권한은 남깁니다: aaa-work-agent가 같은 계정으로 돕니다"));
 }

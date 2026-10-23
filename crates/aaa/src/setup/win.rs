@@ -594,6 +594,55 @@ fn configure(handle: &Sc, def: &ServiceDef) -> Result<()> {
     Ok(())
 }
 
+/// 모든 Win32 서비스 이름
+fn all_services() -> Result<Vec<String>> {
+    let scm = manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE)?;
+    let mut needed = 0;
+    let mut count = 0;
+    let mut resume = 0;
+    unsafe {
+        EnumServicesStatusExW(
+            scm.0,
+            SC_ENUM_PROCESS_INFO,
+            SERVICE_WIN32,
+            SERVICE_STATE_ALL,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+            &mut count,
+            &mut resume,
+            std::ptr::null(),
+        )
+    };
+    if needed == 0 || needed > 16 * 1024 * 1024 {
+        bail!("서비스 목록을 읽지 못했습니다: {}", os_error(last_error()));
+    }
+    // 두 호출 사이에 서비스가 늘 수 있어 여유를 둔다
+    let size = needed + 16 * 1024;
+    let mut buffer = vec![0usize; (size as usize).div_ceil(std::mem::size_of::<usize>())];
+    resume = 0;
+    if unsafe {
+        EnumServicesStatusExW(
+            scm.0,
+            SC_ENUM_PROCESS_INFO,
+            SERVICE_WIN32,
+            SERVICE_STATE_ALL,
+            buffer.as_mut_ptr().cast(),
+            size,
+            &mut needed,
+            &mut count,
+            &mut resume,
+            std::ptr::null(),
+        )
+    } == 0
+    {
+        bail!("서비스 목록을 읽지 못했습니다: {}", os_error(last_error()));
+    }
+    let entries =
+        unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<ENUM_SERVICE_STATUS_PROCESSW>(), count as usize) };
+    Ok(entries.iter().map(|e| unsafe { text(e.lpServiceName) }).collect())
+}
+
 struct WinSystem;
 
 impl WinSystem {
@@ -644,54 +693,7 @@ impl System for WinSystem {
     }
 
     fn aaa_services(&mut self) -> Result<Vec<ServiceInfo>> {
-        let scm = manager(SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE)?;
-        let mut needed = 0;
-        let mut count = 0;
-        let mut resume = 0;
-        unsafe {
-            EnumServicesStatusExW(
-                scm.0,
-                SC_ENUM_PROCESS_INFO,
-                SERVICE_WIN32,
-                SERVICE_STATE_ALL,
-                std::ptr::null_mut(),
-                0,
-                &mut needed,
-                &mut count,
-                &mut resume,
-                std::ptr::null(),
-            )
-        };
-        if needed == 0 || needed > 16 * 1024 * 1024 {
-            return Ok(vec![]);
-        }
-        let mut buffer = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
-        resume = 0;
-        if unsafe {
-            EnumServicesStatusExW(
-                scm.0,
-                SC_ENUM_PROCESS_INFO,
-                SERVICE_WIN32,
-                SERVICE_STATE_ALL,
-                buffer.as_mut_ptr().cast(),
-                needed,
-                &mut needed,
-                &mut count,
-                &mut resume,
-                std::ptr::null(),
-            )
-        } == 0
-        {
-            return Ok(vec![]);
-        }
-        let entries =
-            unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<ENUM_SERVICE_STATUS_PROCESSW>(), count as usize) };
-        let names: Vec<String> = entries
-            .iter()
-            .map(|e| unsafe { text(e.lpServiceName) })
-            .filter(|n| n.to_ascii_lowercase().starts_with("aaa"))
-            .collect();
-        drop(scm);
+        let names: Vec<String> = all_services()?.into_iter().filter(|n| n.to_ascii_lowercase().starts_with("aaa")).collect();
         Ok(names.iter().filter_map(|n| self.service(n).ok().flatten()).collect())
     }
 
@@ -789,6 +791,19 @@ impl System for WinSystem {
         } else {
             Right::Missing
         })
+    }
+
+    fn account_services(&mut self, account: &Account) -> Result<Vec<String>> {
+        let user = account.sam.rsplit('\\').next().unwrap_or(&account.sam).to_ascii_lowercase();
+        let mut names = Vec::new();
+        for name in all_services()? {
+            let Ok(Some(handle)) = open_service(&name, SERVICE_QUERY_CONFIG) else { continue };
+            let Ok((_, _, start_name)) = query_config(&handle) else { continue };
+            if start_name.rsplit('\\').next().is_some_and(|u| u.to_ascii_lowercase() == user) {
+                names.push(name);
+            }
+        }
+        Ok(names)
     }
 
     fn set_logon_right(&mut self, account: &Account, on: bool) -> Result<()> {
