@@ -57,9 +57,9 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw '대조 전 사용자 profile 준비 실패' }
               $payload = Join-Path $lab 'payload.bin'
               [IO.File]::WriteAllBytes($payload, [byte[]]::new(1048576))
-              $body = '$ErrorActionPreference="Stop"; $p=Join-Path ([IO.Path]::GetTempPath()) ("aaa-upload."+[Guid]::NewGuid().ToString("N")); Write-Output "AAA-COPY-START"; $f=[IO.File]::Create($p); try { [Console]::OpenStandardInput().CopyTo($f) } finally { $f.Dispose() }; Write-Output "AAA-COPY-END"; Write-Output ([IO.FileInfo]::new($p).Length); Write-Output ((Get-FileHash $p -Algorithm SHA256).Hash); Remove-Item -LiteralPath $p'
+              $body = '$ErrorActionPreference="Stop"; $p=Join-Path ([IO.Path]::GetTempPath()) ("aaa-upload."+[Guid]::NewGuid().ToString("N")); Write-Output "AAA-COPY-START"; $f=[IO.File]::Create($p); try { $s=[Console]::OpenStandardInput(); $left=1048576; $b=[byte[]]::new(65536); while ($left -gt 0) { $n=$s.Read($b,0,[Math]::Min($b.Length,$left)); if ($n -eq 0) { throw "truncated" }; $f.Write($b,0,$n); $left-=$n } } finally { $f.Dispose() }; Write-Output "AAA-COPY-END"; Write-Output ([IO.FileInfo]::new($p).Length); Write-Output ((Get-FileHash $p -Algorithm SHA256).Hash); Remove-Item -LiteralPath $p'
               $command = 'powershell -NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($body))
-              foreach ($mode in @('file', 'pipe')) { Write-LabDiagnostic ((& $probeBinary $mode $config $payload $command $known 2>&1) | Out-String) }
+              foreach ($mode in @('file', 'pipe')) { $result=(& $probeBinary $mode $config $payload $command $known 2>&1) | Out-String; Write-LabDiagnostic $result; if ($result -notmatch 'timed_out=false exit=Some\(0\)' -or $result -notmatch 'AAA-COPY-END') { throw '정해진 바이트 수 전송이 끝나지 않았다' } }
               return
           '@
           $path = Join-Path $env:RUNNER_TEMP 'sshd-upload-diagnostic.ps1'
