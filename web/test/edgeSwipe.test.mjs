@@ -235,8 +235,8 @@ describe("watchDrawerSwipe", () => {
   });
 
   const interrupted = (interrupt, internal = false) => {
-    const drawer = { style: {}, classList: { remove() {} }, getBoundingClientRect: () => ({ width: 300 }) };
-    const scrim = { style: {}, classList: { remove() {} }, getBoundingClientRect: () => ({ width: 390 }) };
+    const drawer = { style: {}, getBoundingClientRect: () => ({ width: 300 }) };
+    const scrim = { style: {}, getBoundingClientRect: () => ({ width: 390 }) };
     document.getElementById = () => drawer;
     document.querySelector = (selector) => selector === ".scrim" ? scrim : null;
     let open = false;
@@ -245,7 +245,7 @@ describe("watchDrawerSwipe", () => {
     const event = (x, timeStamp) => ({ touches: [{ clientX: x, clientY: 400 }], timeStamp, target: null, preventDefault() {}, stopPropagation() {} });
     listeners.get("touchstart")(event(25, 0));
     listeners.get("touchmove")(event(61, 20));
-    interrupt({ event, windowListeners, listeners });
+    interrupt({ event, windowListeners, listeners, stop });
     // 취소·이동 뒤 늦은 move/end도 메뉴를 다시 열면 안 된다.
     listeners.get("touchmove")(event(270, 40));
     listeners.get("touchend")({ touches: [], timeStamp: 50 });
@@ -271,6 +271,20 @@ describe("watchDrawerSwipe", () => {
       assert.equal(got.remaining, 0);
     });
   }
+
+  test("앱에서 대화를 고르면 진행 중인 쓸기를 버리고 늦은 터치도 무시한다", () => {
+    const got = interrupted(({ stop }) => stop.beforeNavigation());
+    assert.equal(got.open, false);
+    assert.equal(got.drawer.transform, "");
+    assert.equal(got.scrim.opacity, "");
+  });
+
+  test("시스템이 소유한 취소 불가능한 move는 메뉴를 열림으로 확정하지 않는다", () => {
+    const got = interrupted(({ event, listeners }) => listeners.get("touchmove")({ ...event(100, 30), cancelable: false }));
+    assert.equal(got.open, false);
+    assert.equal(got.drawer.transform, "");
+    assert.equal(got.scrim.opacity, "");
+  });
 
   test("설정 내부 되감기는 사용자 쓸기를 취소하지 않는다", () => {
     const got = interrupted(({ windowListeners }) => windowListeners.get("popstate")?.({}), true);

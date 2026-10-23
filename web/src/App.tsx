@@ -69,7 +69,6 @@ import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { DrawerDiagnostics } from "./DrawerDiagnostics";
 import { drawerTrace } from "./herdr/drawerTrace";
-import { watchDrawerNavigation } from "./herdr/drawerNavigation";
 import { highMachines, HIGH_STAT } from "./machineStats";
 import { automationAttention } from "./automationModel";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -369,23 +368,14 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 화면 안쪽에서 오른쪽으로 쓸면 열고 왼쪽으로 쓸면 닫는다. 왼쪽 끝은 브라우저 뒤로 몫이다(herdr/edgeSwipe.ts)
   // 이동은 진행 중인 손가락도 정리한다. 설정 닫기의 내부 복귀만 사용자 이동에서 뺀다.
   const drawerSwipe = useRef<ReturnType<typeof watchDrawerSwipe> | null>(null);
-  const drawerNavigation = useRef<ReturnType<typeof watchDrawerNavigation> | null>(null);
   useEffect(() => {
     const stop = watchDrawerSwipe(() => drawerOpenRef.current, (open) => {
       drawerOpenRef.current = open;
       setDrawerOpen(open);
     }, isSettingsRewind);
     drawerSwipe.current = stop;
-    const navigation = watchDrawerNavigation(() => window.matchMedia("(max-width: 768px)").matches
-      && (drawerOpenRef.current || (document.getElementById("workspace-drawer")?.getBoundingClientRect().right ?? 0) > 1),
-    stop.beforeNavigation, isSettingsRewind);
-    drawerNavigation.current = navigation;
-    return () => { drawerNavigation.current = null; navigation.dispose(); drawerSwipe.current = null; stop(); };
+    return () => { drawerSwipe.current = null; stop(); };
   }, []);
-  const afterDrawerClosed = (apply: () => void) => {
-    if (drawerNavigation.current) drawerNavigation.current.navigate(apply);
-    else apply();
-  };
   // Esc는 열린 drawer를 닫고 더 가지 않는다: capture 단계라 focus를 쥔 터미널은 받지 않는다. 위에 뜬 창(설정·확인창·
   // sheet)과 IME 조합은 제 Esc를 쓴다. 참고는 `[role="dialog"]`만 보지만 aaa 확인창은 alertdialog라 aria-modal로 본다.
   // aaa는 「더 보기」 메뉴가 drawer 안(목록 머리)에 있어 열린 메뉴도 제 Esc를 쓴다: 한 번은 메뉴, 다음은 drawer
@@ -843,12 +833,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // replace: 지금 칸을 바꾼다(앱이 고른 첫 화면, 고른 것 없음. goHash)
   const choose = (id: string | null, auto = false, replace = auto || id === null) => {
     drawerTrace("pane-select");
-    afterDrawerClosed(() => {
-      goHash(id ? `pane=${encodeURIComponent(id)}` : "", replace);
-      setSel(id ? `pane:${id}` : null);
-      setAutoSelected(auto);
-      setDrawerOpen(false);
-    });
+    goHash(id ? `pane=${encodeURIComponent(id)}` : "", replace);
+    setSel(id ? `pane:${id}` : null);
+    setAutoSelected(auto);
+    setDrawerOpen(false);
   };
   // 보던 pane이 새 pane으로 바뀌었다(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, PaneView.replaced): 그 자리를
   // 이은 pane을 따라가고 주소도 바꾼다(뒤로 가기에 옛 주소를 남기지 않는다, QA Q19)
@@ -862,14 +850,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     setSel(`pane:${next.id}`);
   }, [panes, sel]);
   const chooseThread = (t: ThreadView, from: string | null = null, replace = false) => {
-    afterDrawerClosed(() => {
-      setAutoSelected(false);
-      setDrawerOpen(false);
-      setBackTo(from);
-      openedHash.current = `#${hashOf(`thread:${threadKey(t)}`)}`;
-      goHash(openedHash.current.slice(1), replace);
-      setSel(`thread:${threadKey(t)}`);
-    });
+    setAutoSelected(false);
+    setDrawerOpen(false);
+    setBackTo(from);
+    openedHash.current = `#${hashOf(`thread:${threadKey(t)}`)}`;
+    goHash(openedHash.current.slice(1), replace);
+    setSel(`thread:${threadKey(t)}`);
   };
   // 할 일 「coordinator에게 맡기기」(t-0469 §3.4, plan §8.316): 도는 coordinator(없으면 기본 profile로 띄운 것, `project open`)의
   // 입력칸에 글을 채우고 그 pane을 연다. 보내기는 사람이 누른다. 대화 보기 입력창과 터미널 입력줄 초안을 함께 채운다(그 pane을 어느
@@ -886,11 +872,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 모든 thread(끝난 것까지, herdr-projects popup Threads). 프로젝트 고르기는 없다(host는 프로젝트 하나, plan §8.291)
   const chooseThreads = () => {
-    afterDrawerClosed(() => {
-      setDrawerOpen(false);
-      goHash("threads");
-      setSel("threads:");
-    });
+    setDrawerOpen(false);
+    goHash("threads");
+    setSel("threads:");
   };
   // 짧은 thread 주소(`#thread=<id>`)는 thread 목록을 받으면 내부 열쇠로 바꾼다. 보관한 프로젝트의 thread는 고르지 않는다
   useEffect(() => {
@@ -928,12 +912,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     asksAt.current = sel!;
   }, [asksShown, sel]);
   const goSel = (next: string | null) => {
-    afterDrawerClosed(() => {
-      setAutoSelected(false);
-      setDrawerOpen(false);
-      goHash(hashOf(next));
-      setSel(next);
-    });
+    setAutoSelected(false);
+    setDrawerOpen(false);
+    goHash(hashOf(next));
+    setSel(next);
   };
   const toggleReports = () => {
     if (reportsShown && !settingsOpen) goSel(beforeReports.current);
