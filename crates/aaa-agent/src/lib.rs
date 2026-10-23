@@ -5,6 +5,7 @@
 //! - host의 세션 요청은 세션별 pump task가 session host로 중계한다. 응답과 출력이 같은 task를 지나므로 순서가 지켜진다.
 //! - Claude·Codex 세션은 pump가 화면을 300ms마다 읽어 상태(작업 중·idle·질문)를 정한다(herdr 0.9.5 감지, plan §8.110).
 
+mod account_spawn;
 mod attach;
 mod chat;
 mod ci;
@@ -1324,20 +1325,19 @@ impl Agent {
                 }
             }
         }
-        if credential.as_ref().is_some_and(|c| c.harness == "codex") {
-            // 이 비공개 override를 실제 지원하는 버전만 인증을 받는다. unknown CLI로 직접 refresh하지 않는다.
-            let executable = spec.argv.first().context("Codex 실행 파일이 없다")?;
-            let mut command = tokio::process::Command::new(executable);
-            command.arg("--version").stdin(std::process::Stdio::null()).kill_on_drop(true);
-            let result = tokio::time::timeout(Duration::from_secs(5), command.output()).await;
-            anyhow::ensure!(
-                matches!(result, Ok(Ok(ref out)) if out.status.success() && out.stdout == b"codex-cli 0.163.0\n"),
-                "계정 Codex는 refresh 중계가 확인된 0.163.0이 필요하다"
-            );
-        }
         for (key, value) in &spec.env {
             aaa_common::redact::remember_env(key, value);
         }
+        let version = if let Some(c) = &credential {
+            let mut command = tokio::process::Command::new(spec.argv.first().map(String::as_str).unwrap_or(&c.harness));
+            command.envs(spec.env.iter().cloned());
+            if let Some(cwd) = &spec.cwd {
+                command.current_dir(cwd);
+            }
+            Some(aaa_common::harness_version::observe(command, &c.harness).await)
+        } else {
+            None
+        };
         // profile 없는 tab create와 저장된 Codex resume도 같은 pane 안에서 실행한다.
         if detect::Harness::of_session(None, &spec.argv) == Some(detect::Harness::Codex) {
             threads::ensure_codex_local(&mut spec.argv, 1);
@@ -1378,8 +1378,13 @@ impl Agent {
         };
         util::write_json(&paths.spec(), &file)
             .with_context(|| format!("pane 실행 명세 쓰기: {}", paths.spec().display()))?;
-        let log = std::fs::File::create(paths.log())
+        let mut log = std::fs::File::create(paths.log())
             .with_context(|| format!("session host 로그 열기: {}", paths.log().display()))?;
+        if let Some(version) = version {
+            use std::io::Write;
+            // thread의 pane ID로 찾는 시작 기록. 판 조회나 기록 실패가 실행을 막지 않는다.
+            let _ = writeln!(log, "harness_version session={id} run={:?} {version}", file.account_run);
+        }
         let mut cmd = std::process::Command::new(&self.exe);
         cmd.arg("session-host").arg("--dir").arg(&paths.dir);
         cmd.arg("--startup-stdin").stdin(std::process::Stdio::piped());
@@ -1401,11 +1406,16 @@ impl Agent {
         }
         let pid = child.id();
         // 좀비가 남지 않게 기다리는 thread. agent가 먼저 끝나면 OS 감독자가 거둔다.
+        let (exit_tx, mut exit_rx) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
-            let _ = child.wait();
+            let _ = exit_tx.send(child.wait());
         });
+        let mut startup_exit = None;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
+            if startup_exit.is_none() {
+                startup_exit = exit_rx.try_recv().ok();
+            }
             match self.attach(&paths, &file).await {
                 Ok(info) => {
                     self.send_host(&LinkMsg::Event(AgentEvent::SessionStarted(info.clone()))).await;
@@ -1418,13 +1428,19 @@ impl Agent {
                     self.send_host(&LinkMsg::Event(AgentEvent::SessionStarted(info.clone()))).await;
                     return Ok(info);
                 }
-                Err(e) if tokio::time::Instant::now() < deadline && util::pid_alive(pid) => {
+                Err(e) if tokio::time::Instant::now() < deadline && startup_exit.is_none() && util::pid_alive(pid) => {
                     tracing::trace!("session host 대기: {e:#}");
                     tokio::time::sleep(Duration::from_millis(40)).await;
                 }
                 Err(e) => {
+                    if startup_exit.is_none() && !util::pid_alive(pid) {
+                        startup_exit = exit_rx.await.ok();
+                    }
                     let log = std::fs::read_to_string(paths.log()).unwrap_or_default();
-                    bail!("session host가 준비되지 않았다: {e:#}\n{log}");
+                    bail!(
+                        "session host가 준비되지 않았다: pid={pid} 종료={startup_exit:?} 상태 폴더={} 연결={e:#}\n{log}",
+                        paths.dir.display()
+                    );
                 }
             }
         }
@@ -1482,7 +1498,7 @@ impl Agent {
                 .spawn_session_inner(spec, Some(credential))
                 .await
                 .map(AgentResponse::Session)
-                .map_err(|_| ErrorBody::new(ErrorCode::BadRequest, "계정 pane을 시작하지 못했다")),
+                .map_err(account_spawn::error),
             AgentRequest::AccountRefreshed { session, result } => {
                 if let Some(v) = &result.response {
                     aaa_common::redact::remember_auth("codex", &v.0);

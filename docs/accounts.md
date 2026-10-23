@@ -135,8 +135,8 @@ profile의 실행 옵션과 aaa hook을 유지하며 기존 홈·인증·설정 
 외부에서 바뀐 auth.json 사본을 host에 무조건 덮어쓰지 않는다.
 
 이 중계는 [Codex 0.163.0 공식 소스](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/login/src/auth/manager.rs)의
-동작에 맞춘다. URL override는 안정된 공개 설정 계약이 아니다. 지원하지 않는 CLI는 인증을
-전달하기 전에 거부한다. [공식 CI 인증 안내](https://learn.chatgpt.com/docs/auth/ci-cd-auth)의
+중계 경로를 참고했다. 실행한 `--version` 결과는 진단 로그와 pane 시작 기록에 남긴다.
+판·출력 형식·조회 실패로 인증 전달이나 시작을 막거나 경고하지 않는다. [공식 CI 인증 안내](https://learn.chatgpt.com/docs/auth/ci-cd-auth)의
 사본 동시 갱신 경고를 피하려고 갱신을 중앙에 모았다. [Claude 환경 변수](https://code.claude.com/docs/en/env-vars)와
 [Codex file 인증](https://learn.chatgpt.com/docs/auth)을 함께 참고했다.
 
@@ -162,8 +162,7 @@ session IPC로 메모리 가림 규칙을 복원한다. 인증 전달과 실행 
 - Codex는 host가 격리된 임시 홈에 해당 등록 계정의 인증만 전달하고 공식 app-server의
   `initialize` → `initialized` → `account/rateLimits/read`를 호출한다. `thread/start`·`turn/start`는
   보내지 않는다. 기존 중앙 갱신과 경합하지 않도록 helper의 갱신은 자기 loopback 거부 서버로만
-  보낸다. 인증을 새로 만들거나 갱신하지 않으며 실패는 카드에 남긴다. 인증 전달 전에 기존 계정
-  실행과 같은 `codex-cli 0.163.0`을 확인한다. 다른 판은 「조회 지원 안 됨」이다.
+  보낸다. 인증을 새로 만들거나 갱신하지 않으며 실패는 카드에 남긴다. `--version`은 진단 로그에만 남기며 판이나 조회 실패로 RPC 실행을 막지 않는다.
   [공식 RPC 문서](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)를 따른다.
 - Claude는 새 계정 pane에 주입한 상태줄 명령이 stdin의 `rate_limits.five_hour`·`seven_day`를
   그 pane의 전용 파일에 기록한다. 원격 agent도 비밀 없는 snapshot만 host에 보낸다. 이전 pane·

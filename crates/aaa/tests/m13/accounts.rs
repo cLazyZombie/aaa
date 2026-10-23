@@ -12,7 +12,7 @@ use std::sync::{
 const HARNESS: &str = r#"#!/usr/bin/env python3
 import os,sys,json,pathlib,socket,urllib.request,urllib.error,hashlib,base64,stat,subprocess,datetime
 if sys.argv[1:]==['--version']:
-    print('codex-cli 0.163.0');sys.exit(0)
+    print('development harness build');sys.exit(7)
 root=pathlib.Path(os.environ['ACCOUNT_PROOF'])
 tid=os.environ['AAA_THREAD']
 kind=os.environ['ACCOUNT_KIND']
@@ -1187,4 +1187,50 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
         p.starts_with(&w.scripts) || p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("host.db"))
     });
     assert!(found.is_empty(), "{found:?}");
+}
+
+/// 판 조회 실패 뒤에도 실제 실행을 시도하며, 실행 실패의 원인 사슬을 CLI까지 보존한다.
+#[test]
+fn account_spawn_failure_keeps_session_host_pid_and_underlying_error() {
+    let gate = Gate::new();
+    let w = world("http://127.0.0.1:1", &gate, "fake-local-token", "#!/missing-account-harness\n");
+    let auth = w.scripts.join("fake-auth.json");
+    std::fs::write(&auth, r#"{"tokens":{"access_token":"fake-access-token","refresh_token":"fake-refresh-token"}}"#)
+        .unwrap();
+    w.h.ok(&["account", "import", "work", "--harness", "codex", "--file", path_str(&auth)]);
+    let account_dir = w.h.state.join("agent/account-runs/demo/t-0001");
+    std::fs::create_dir_all(&account_dir).unwrap();
+    std::os::unix::fs::symlink(&w.scripts, account_dir.join("codex-home")).unwrap();
+    let task = w.task("task.txt", "실제 자식 실행 실패의 원인을 확인한다");
+    let result = w.h.json(&[
+        "thread",
+        "start",
+        "demo",
+        "--title",
+        "실행 실패",
+        "--profile",
+        "file",
+        "--account",
+        "work",
+        "--task-file",
+        &task,
+    ]);
+    let message = match result {
+        Err(error) => error,
+        Ok(started) => {
+            let failed =
+                w.wait_show("실행 실패 원인", started["id"].as_str().unwrap(), |v| v["status"] == "failed");
+            failed["error"].as_str().unwrap().to_string()
+        }
+    };
+    for expected in [
+        "계정 pane을 시작하지 못했다",
+        "session host가 준비되지 않았다",
+        "pid=",
+        "종료=",
+        "인증 홈은 symlink일 수 없다",
+    ] {
+        assert!(message.contains(expected), "{expected}: {message}");
+    }
+    assert!(!message.contains("fake-access-token") && !message.contains("fake-refresh-token"));
 }

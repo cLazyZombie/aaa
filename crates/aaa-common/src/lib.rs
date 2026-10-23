@@ -7,6 +7,7 @@ pub mod conn;
 pub mod diff;
 pub mod front;
 pub mod git_watch;
+pub mod harness_version;
 pub mod ipc;
 pub mod panic_log;
 pub mod pr;

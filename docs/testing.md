@@ -530,7 +530,7 @@
   실제 CLI·worker PID·hook token·로컬 IPC·TLS 원격 agent·host 원장·가짜 Codex·가짜 OAuth 제공자를 쓴다.
   두 계정의 선택·중앙 갱신 한 번·64KiB를 넘는 결과 전송·동일 SHA·인증/임시 홈 정리·토큰 합계,
   같은 ID 재전송·기본 변경·host/pane 재시작·파일 정리 뒤에도 재생성 없음,
-  다른 thread·위조 token·세션 없음·허용하지 않은 계정/profile·지원하지 않는 CLI와 임의 도구 요청 거부를 검사한다.
+  다른 thread·위조 token·세션 없음·허용하지 않은 계정/profile·임의 도구 요청 거부와 임의 CLI 판의 생성 진행을 검사한다.
   오류에 잘못 넣은 가짜 인증의 가림, worker 자기 목록·coordinator 소속 프로젝트 목록/정리도 확인한다.
   turn/start 응답보다 먼저 온 이미지 사건도 유지한다. 원문·토큰 조각·인코딩은 로그·DB·원격 파일에 없어야 한다.
 - `scripts/fixtures/image-codex.py`는 제품의 격리 홈·환경·argv를 확인하고 이미지 사건만 만든다.
@@ -3012,3 +3012,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `scripts/test-windows-service-pane.ps1`은 실행자가 기준 목록을 저장한 `C:\aaa-test\t-NNNN` 안에서만 쓴다. 전용 `aaa-test-…` SCM 가상 계정을 [CreateServiceW의 계약](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-createservicew)에 따라 NULL password로 만들고, 해당 폴더에만 접근을 허용한 뒤 원래 ACL로 돌린다. 실제 host·agent·thread 준비·session-host·ConPTY와 가짜 harness의 ready→입력→pong을 확인하고 네 프로세스가 모두 Session 0임을 검사한다. 실제 암호·사용자 서비스·설치·sshd·전역 PATH·방화벽은 바꾸지 않는다. 사용자 Codex 인증이나 실제 Codex TUI의 인수를 대신하지 않는다. 자기 서비스·프로세스·private 시험 디렉터리는 정리하고 결과·로그만 남긴다. 최종 실행자는 전역 기준 목록 대조 후 자기 시험 폴더도 지운다.
 - PowerShell 5.1용 원본은 UTF-8 BOM으로 저장하고 자식 출력도 UTF-8로 읽는다. `-ExecutionPolicy Bypass`는 시험 자식 process 인자에만 주며 저장된 정책을 바꾸지 않는다. 준비는 로그 줄·CLI 종료·제품 `pane wait-output`·SCM 종료 사건으로 확인한다. 고정 sleep·실패 재시도·시한 증가·단언 완화는 없다. 오류에는 thread 준비·자리·journal 권한·brief·pane 명세·PTY·자식 실행 단계와 해당 경로를 붙이며 인자 전체·환경값은 덧붙이지 않는다.
 - [WezTerm portable-pty ConPTY](https://github.com/wezterm/wezterm/blob/main/pty/src/win/conpty.rs)([MIT](https://github.com/wezterm/wezterm/blob/main/LICENSE.md)), [Windows Terminal의 ConPTY 구현](https://github.com/microsoft/terminal/blob/main/src/winconpty/winconpty.cpp)([MIT](https://github.com/microsoft/terminal/blob/main/LICENSE)), [OpenSSH for Windows의 PTY 실행 분리](https://github.com/PowerShell/openssh-portable/blob/latestw_all/contrib/win32/win32compat/w32-doexec.c)([BSD 계열 고지](https://github.com/PowerShell/openssh-portable/blob/latestw_all/LICENCE))를 먼저 조사했다. PTY·자식 실행·입출력 경계를 나누는 방식을 참고하며 코드나 의존성은 복사하지 않는다. ConPTY를 원인으로 가정해 우회하지 않는다. 정본은 전체 ci-local·공개 검사와 Windows strict cross clippy·실제 SCM owner다.
+
+
+## Harness 판 조회와 계정 pane 실패(t-0910, §8.471)
+
+- 공통 `harness_version`은 임의 Codex·Claude 판, CRLF, 조회 종료 7, 실행 파일 없음에도 판정 없이 진단 문자열을 반환하고 인증을 가리는지 본다.
+- m13 계정 owner는 판 조회가 개발판·종료 7을 반환해도 실제 계정 pane·동시 갱신·격리·재개가 진행되는지 확인한다. 판 조회 실패에도 실제 session-host를 실행하며, 격리 인증 홈 symlink 거부가 thread 실패 기록까지 PID·종료·원인 사슬과 함께 전해져야 한다. 이미지 owner의 과거 판 거부는 임의 판 생성 성공으로 교체하며, 사용량 RPC owner도 임의 판·종료 7 뒤 실제 조회를 확인한다.
+- Windows 서비스 시험의 선택 `-Codex C:\aaa-test\t-NNNN\codex.exe`는 전용 폴더의 실제 Codex 사본과 가짜 중앙 인증으로 별도 thread pane을 열어 SCM Session 0의 실제 Codex PID·실행 파일·running pane과 판 시작 기록을 확인한다. 화면 출력은 별도로 보존하며 TUI 상호작용 성공으로 해석하지 않는다. 운영 인증·설정·서비스는 읽기만 한다. SCM Session 0·가상 계정·입력/pong·기준 목록 복원 검사는 유지한다.
+- 참고는 WezTerm portable-pty의 ConPTY 오류 전파(MIT), Nushell `run_external`의 외부 명령 오류 사슬(MIT)이다. 외부 코드·의존성은 추가하지 않는다. 로컬 전체 ci-local·Linux cross clippy·공개 검사와 Windows 실기를 수행한다. 고정 sleep·시한 연장·재시도는 쓰지 않는다.

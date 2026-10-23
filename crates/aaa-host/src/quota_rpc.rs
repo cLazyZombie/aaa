@@ -8,7 +8,7 @@ use std::{
     process::Stdio,
     time::Duration,
 };
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const MAX: usize = 1 << 20;
 const DEADLINE: Duration = Duration::from_secs(15);
@@ -181,25 +181,7 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
     if util::ensure_private_dir(&home.0).is_err() {
         return snapshot;
     }
-    // 버전 조회도 같은 격리 홈에서 실행한다. 지원하지 않는 설치판에는 인증을 주지 않는다.
-    let version = command(exe, &home.0).arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).spawn();
-    let Ok(version) = version else {
-        snapshot.problem = Some(QuotaProblem::Unsupported);
-        return snapshot;
-    };
-    let mut version = ProbeChild(version);
-    let check = async {
-        let mut bytes = vec![];
-        version.stdout.take().ok_or(())?.take(129).read_to_end(&mut bytes).await.map_err(|_| ())?;
-        let status = version.wait().await.map_err(|_| ())?;
-        (status.success() && bytes == b"codex-cli 0.163.0\n").then_some(()).ok_or(())
-    };
-    let supported = matches!(tokio::time::timeout(Duration::from_secs(5), check).await, Ok(Ok(())));
-    terminate(&mut version).await;
-    if !supported {
-        snapshot.problem = Some(QuotaProblem::Unsupported);
-        return snapshot;
-    }
+    aaa_common::harness_version::observe(command(exe, &home.0), "codex").await;
     if util::write_private(&home.0.join("auth.json"), auth.as_bytes()).is_err()
         || util::write_private(
             &home.0.join("config.toml"),
@@ -272,6 +254,7 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn refresh_refusal_reads_the_post_body_before_closing() {
@@ -308,7 +291,7 @@ mod tests {
             r##"#!/usr/bin/env python3
 import os,sys,json,hashlib,urllib.request,urllib.error
 if sys.argv[1:] == ['--version']:
-    print('codex-cli 0.163.0'); sys.exit(0)
+    print('arbitrary development harness'); sys.exit(7)
 assert sys.argv[1:] == ['app-server']
 home=os.environ['CODEX_HOME']
 assert 'OPENAI_API_KEY' not in os.environ and 'CLAUDE_CODE_OAUTH_TOKEN' not in os.environ

@@ -217,20 +217,19 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
     assert_ne!(rc, 0);
     assert!(text.contains("다른 요청"), "{text}");
     control(&w, serde_json::json!({"version":"codex-cli 0.0.0"}));
-    let unsupported = aaa_common::util::new_id();
-    let (rc, text) = probe(&w, a, "unsupported", &generate(&unsupported, &received));
-    assert_ne!(rc, 0);
-    assert!(text.contains("0.163.0"), "{text}");
-    assert_eq!(attempts(&w).len(), 2, "지원하지 않는 CLI에는 인증·생성을 주지 않는다");
+    let arbitrary_version = aaa_common::util::new_id();
+    let (rc, text) = probe(&w, a, "arbitrary-version", &generate(&arbitrary_version, &received));
+    assert_eq!(rc, 0, "{text}");
+    assert_eq!(attempts(&w).len(), 3, "판은 생성 허용 여부를 결정하지 않는다");
     control(&w, serde_json::json!({"mode":"request"}));
     let denied = aaa_common::util::new_id();
     let (rc, _) = probe(&w, a, "approval", &generate(&denied, &received));
     assert_ne!(rc, 0);
-    assert_eq!(attempts(&w).len(), 3);
+    assert_eq!(attempts(&w).len(), 4);
     let (rc, _) =
         probe(&w, a, "approval-again", &format!("{:?} image start {denied} --output-dir {received:?}", lab::BIN));
     assert_ne!(rc, 0);
-    assert_eq!(attempts(&w).len(), 3, "실패한 생성은 명시 Start에도 재실행하지 않는다");
+    assert_eq!(attempts(&w).len(), 4, "실패한 생성은 명시 Start에도 재실행하지 않는다");
 
     w.lab.kill("image-host");
     restart_host(&mut w, "image-host2", &exe, &origin);
@@ -252,7 +251,7 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
         &format!("{:?} --json image fetch {id} --output-dir {received:?}", lab::BIN),
     );
     assert_eq!(rc, 0, "{text}");
-    assert_eq!(attempts(&w).len(), 3, "같은 thread 재시작은 기존 이미지를 읽는다");
+    assert_eq!(attempts(&w).len(), 4, "같은 thread 재시작은 기존 이미지를 읽는다");
     let (rc, text) = probe(&w, a, "own-list", &format!("{:?} --json image list", lab::BIN));
     assert_eq!(rc, 0, "{text}");
     assert!(
@@ -281,7 +280,7 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
     assert_eq!(result(&text)["job"]["state"], "forgotten");
     let (rc, _) = probe(&w, a, "forgotten-again", &generate(&id, &received));
     assert_ne!(rc, 0);
-    assert_eq!(attempts(&w).len(), 3);
+    assert_eq!(attempts(&w).len(), 4);
 
     let mut find = needles(&access, &access_hex);
     find.extend(needles(&refresh, &refresh_hex));
