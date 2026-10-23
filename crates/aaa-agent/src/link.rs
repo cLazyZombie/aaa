@@ -64,7 +64,15 @@ pub async fn run_with_state(
     loop {
         let started = Instant::now();
         match connect(&target).await {
-            Ok(stream) => match session_state(&agent, stream, state.as_ref(), &mut backoff).await {
+            Ok(stream) => match session_state_mode(
+                &agent,
+                stream,
+                state.as_ref(),
+                &mut backoff,
+                matches!(target, Target::Remote { .. }),
+            )
+            .await
+            {
                 Ok(()) => tracing::info!("host 연결이 닫혔다({target})"),
                 Err(e) => tracing::warn!("host 연결 끝: {e:#}"),
             },
@@ -109,6 +117,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "account_auth.v2".into(),
             "account_quota.v1".into(),
             "terminal.v1".into(),
+            aaa_proto::TERMINAL_ZSTD_FEATURE.into(),
             "report_copy.v2".into(),
             "deployment.v1".into(),
             #[cfg(target_os = "macos")]
@@ -162,11 +171,22 @@ pub fn hello(agent: &Agent) -> AgentHello {
     }
 }
 
+#[cfg(test)]
 async fn session_state(
     agent: &Arc<Agent>,
     stream: LocalStream,
     state: Option<&tokio::sync::watch::Sender<bool>>,
     backoff: &mut Duration,
+) -> Result<()> {
+    session_state_mode(agent, stream, state, backoff, false).await
+}
+
+async fn session_state_mode(
+    agent: &Arc<Agent>,
+    stream: LocalStream,
+    state: Option<&tokio::sync::watch::Sender<bool>>,
+    backoff: &mut Duration,
+    remote: bool,
 ) -> Result<()> {
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);
@@ -178,6 +198,7 @@ async fn session_state(
         tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("welcome 대기")??;
     let (health, replay, host_identity) = match first {
         LinkMsg::Welcome(w) => {
+            tx.set_terminal_zstd(remote && w.features.iter().any(|f| f == aaa_proto::TERMINAL_ZSTD_FEATURE));
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
             agent.host_image.store(w.features.iter().any(|f| f == "imagegen.v1"), std::sync::atomic::Ordering::Relaxed);
@@ -852,6 +873,76 @@ mod post_tests {
         drop(tx);
         drop(rx);
         running.await.unwrap().unwrap();
+        std::fs::remove_dir_all(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod terminal_compression_tests {
+    use super::*;
+    use aaa_proto::{AgentResponse, B64, HistoryChunk, HostWelcome, Outcome, TERMINAL_ZSTD_FEATURE};
+
+    #[tokio::test]
+    async fn remote_feature_intersection_is_reset_for_each_connection() {
+        let path = std::env::temp_dir().join(format!("aaa-terminal-agent-{}", aaa_common::util::new_id()));
+        let agent = Agent::new(path.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        for (remote, supported) in [(true, true), (true, false), (false, true), (false, false)] {
+            let (stream, peer) = tokio::io::duplex(65536);
+            let (state, mut ready) = tokio::sync::watch::channel(false);
+            let running = tokio::spawn({
+                let agent = agent.clone();
+                async move {
+                    session_state_mode(&agent, Box::new(stream), Some(&state), &mut Duration::from_millis(250), remote)
+                        .await
+                }
+            });
+            let (r, w) = tokio::io::split(peer);
+            let tx = spawn_writer(w, MAX_FRAME);
+            let mut rx = FrameRx::new(r, MAX_FRAME);
+            let LinkMsg::Hello(hello) = rx.control().await.unwrap() else { panic!("Hello 없음") };
+            assert!(hello.features.iter().any(|f| f == TERMINAL_ZSTD_FEATURE));
+            tx.json(&LinkMsg::Welcome(HostWelcome {
+                proto: AGENT_LINK,
+                host_id: "host".into(),
+                identity: None,
+                features: if supported { vec![TERMINAL_ZSTD_FEATURE.into()] } else { vec![] },
+            }))
+            .await
+            .unwrap();
+            drop(tokio::time::timeout(Duration::from_secs(3), ready.wait_for(|ready| *ready)).await.unwrap().unwrap());
+            let original = LinkMsg::Res {
+                id: "history".into(),
+                result: Outcome::Ok(AgentResponse::History(HistoryChunk {
+                    data: B64("한글\x1b[31m\r\n".as_bytes().repeat(1000)),
+                    compression: None,
+                    lines: 1000,
+                    more: true,
+                    found: true,
+                })),
+            };
+            agent.send_host(&original).await;
+            let message = tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    let msg = rx.control::<LinkMsg>().await.unwrap();
+                    if matches!(msg, LinkMsg::Res { .. }) {
+                        break msg;
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            let LinkMsg::Res { result: Outcome::Ok(AgentResponse::History(ref history)), .. } = message else {
+                panic!("기록 없음")
+            };
+            assert_eq!(history.compression.is_some(), remote && supported);
+            assert_eq!(aaa_common::terminal_payload::decode_link(message, remote && supported).unwrap(), original);
+            tx.json(&LinkMsg::Reject(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::Forbidden, "fixture closed")))
+                .await
+                .unwrap();
+            assert!(tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().is_err());
+            agent.set_host(None);
+        }
+        drop(agent);
         std::fs::remove_dir_all(path).unwrap();
     }
 }

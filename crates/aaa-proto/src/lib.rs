@@ -207,6 +207,8 @@ pub fn typescript_bindings() -> String {
         FrontEvent::decl(&cfg),
         SubmitStage::decl(&cfg),
         SteerRefusal::decl(&cfg),
+        TerminalCodec::decl(&cfg),
+        TerminalCompression::decl(&cfg),
         TermServerMsg::decl(&cfg),
         TermClientMsg::decl(&cfg),
         EventsClientMsg::decl(&cfg),

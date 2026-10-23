@@ -869,7 +869,7 @@ impl Agent {
             // 기억한 harness 상태는 다음 연결이 최신 snapshot으로 전달한다.
             tokio::select! {
                 _ = host.changed() => {}
-                _ = tx.json(&clean) => {}
+                _ = tx.link(&clean) => {}
             }
         }
     }
@@ -1108,7 +1108,10 @@ impl Agent {
                             }
                         }
                         Ok(Some(Incoming::Control(b))) => match serde_json::from_slice::<SessionMsg>(&b) {
-                            Ok(SessionMsg::Res { id: sid, result }) => {
+                            Ok(SessionMsg::Res { id: sid, mut result }) => {
+                                if aaa_common::terminal_payload::validate_ipc_response(&mut result).is_err() {
+                                    break Dropped::Lost("IPC 터미널 본문 거부".into());
+                                }
                                 if let Some(w) = watch.as_mut().filter(|w| w.owns(&sid)) {
                                     let harness = w.harness();
                                     if let Some(r) = w.answer(std::time::Instant::now(), result) {
@@ -1829,7 +1832,7 @@ impl Agent {
             AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,
         };
         if let Some(reply) = reply {
-            let _ = reply.json(&LinkMsg::Res { id, result: direct.into() }).await;
+            let _ = reply.link(&LinkMsg::Res { id, result: direct.into() }).await;
         }
     }
 
@@ -1978,6 +1981,7 @@ impl Agent {
                 Ok(AgentResponse::Subscribed {
                     session: info.id.clone(),
                     snapshot: Some(Snapshot {
+                        compression: None,
                         session: info.id.clone(),
                         offset: end,
                         cols: info.cols,
@@ -2146,6 +2150,7 @@ mod tests {
                 session: "snapshot-session".into(),
                 offset: snapshot.len() as u64,
                 snapshot: Some(aaa_proto::Snapshot {
+                    compression: None,
                     session: "snapshot-session".into(),
                     offset: snapshot.len() as u64,
                     cols: 80,

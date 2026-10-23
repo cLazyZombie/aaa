@@ -7636,3 +7636,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **색.** `terminalTheme.ts`가 ITheme을 만든다. WezTerm 정본의 GitHub Dark에서 배경 #24292e·기본 글자 #C9D1D9만 덮고 ANSI 16색·커서·커서 아래 글자·선택 색은 보존한다. 화면과 OSC 10/11의 rrggbb가 같은 테마를 쓴다. 여백·앞 기록 덮개의 token은 pane 안에서만 덮고, 앱 팔레트·글꼴·크기·명시 RGB·ANSI 256색 16~255는 바꾸지 않는다.
 - **출처.** WezTerm e2a98e1b8af156988ad0ac778658ac27b60a55fb `config/src/scheme_data.rs`·`docs/colorschemes/data.json`. 모음 iTerm2-Color-Schemes는 MIT, 원 테마 Al Duncanson/github-dark는 GPL-3.0이다. 원본·수치·고지와 변경 내역을 함께 배포한다. 상세와 수치는 `docs/terminal-themes.md`.
 - **검증.** 순수 규칙은 정본 fixture와 ANSI/커서/선택 색·기본값·단축 hex를 대조한다. E2E06은 Chromium 1280·WebKit 390에서 즉시 표시·앱 독립·기기 저장·다른 탭·재열기·복원을, E2E20은 실제 PTY OSC 10/11 응답·재접속·기본 복원을 확인한다. 기존 E2E 번호와 front protocol은 유지한다. Windows 4K의 테마×회색조 시안은 보고 library에 남기며 회색조는 제품에 적용하지 않는다.
+
+
+### 8.466 큰 터미널 기록의 전송 압축(t-0876)
+
+- 승인된 t-0868 설계대로 웹 큰 snapshot/history는 gzip 1, 원격 agent link는 양쪽 선택 기능 교집합의 zstd 1을 쓴다. 로컬 IPC·입력·ACK·상태·live·ring catch-up과 기록 보관량은 유지한다.
+- 4 KiB 이상에서 metadata 포함 최종 JSON의 12.5%·256 B 절감 조건을 모두 적용한다. 원시/압축 768 KiB·원본 길이 일치·기존 1 MiB frame·zstd window 1 MiB를 지키며 구판에는 identity를 보낸다.
+- 웹 Worker와 연결별 수신 큐로 순서를 보존하고 xterm 완료 뒤 원시 길이 ACK를 보낸다. 지원 확인을 재연결에 재사용해 online/pageshow의 즉시 WS 연결을 유지한다. 오류는 해당 연결을 끝내고 자동으로 identity 재해석하지 않는다.
+- 정본 계약·작업 수/바이트 상한·진단·고지는 [터미널 전송 압축](terminal-compression.md), 검증은 [시험 규칙](testing.md)의 t-0876 절과 E2E95다. 배포는 별도 승인이다.

@@ -1,3 +1,4 @@
+import { TerminalReceiver } from "./terminalReceive";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 // pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
 // PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
@@ -9,8 +10,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Mutable
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import type { ChatMessage, DeviceRole, LeaseView, PaneView, SubmitStage, InputSubmitMeta, InputReceiptMethod, TermClientMsg, TermServerMsg } from "./gen/proto";
-import { b64decode, b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
+import type { ChatMessage, DeviceRole, LeaseView, PaneView, SubmitStage, InputSubmitMeta, InputReceiptMethod, TermClientMsg } from "./gen/proto";
+import { b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { inputTraceId } from "./inputReceipt";
@@ -1330,27 +1331,27 @@ export function TermView({
         });
       });
     };
-    const connect = () => {
+    let connectEpoch = 0;
+    let receive: TerminalReceiver | null = null;
+    let gzipSupport: boolean | undefined;
+    const connect = async () => {
+      const epoch = ++connectEpoch;
+      receive?.close();
       setLink("connecting");
       // flow=ack: 이 화면은 출력 ACK를 보낸다(herdr-web-ui attach flow_control "ack"). 없으면 host는 보내기 줄로만 잰다
       // fg·bg: 이 화면의 색. host는 그 pane의 agent가 받은 뒤에 연다(그 뒤 프로그램이 묻는 색에 이 색으로 답한다)
       const colors = new URLSearchParams(termColors()).toString();
-      const ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?flow=ack&${colors}`));
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-      ws.onopen = () => {
-        delay = 500;
-        setLink("open");
-      };
-      ws.onmessage = (m) => {
-        if (m.data instanceof ArrayBuffer) {
-          received += m.data.byteLength;
-          const data = new Uint8Array(m.data);
+      let ws: WebSocket;
+      const receiver = new TerminalReceiver((item) => {
+        if (wsRef.current !== ws || !alive) return;
+        if ("binary" in item) {
+          const data = item.binary;
+          received += data.byteLength;
           const ack = acknowledge(ws, streamId, received);
           run(() => term.write(data, ack));
           return;
         }
-        const msg = JSON.parse(m.data as string) as TermServerMsg;
+        const msg = item.message;
         switch (msg.t) {
           case "snapshot": {
             trace("snapshot");
@@ -1361,7 +1362,7 @@ export function TermView({
             // 곧 온 state의 크기가 replay보다 먼저 걸려 replay가 다른 크기로 읽혔다(CI에서 빈 줄로 보인 실패, plan §8.59).
             const { cols, rows } = msg;
             setSize([cols, rows]);
-            const replay = b64decode(msg.replay);
+            const replay = item.payload!;
             streamId = msg.stream;
             received = replay.length;
             const ack = acknowledge(ws, msg.stream, received);
@@ -1405,7 +1406,7 @@ export function TermView({
               markHistory();
               break;
             }
-            prependHistory(b64decode(msg.data), msg.lines, msg.more);
+            prependHistory(item.payload!, msg.lines, msg.more);
             break;
           }
           case "readonly":
@@ -1469,8 +1470,25 @@ export function TermView({
             attachDone();
             break;
         }
+      }, () => {
+        setError("터미널 기록을 해제하지 못했다. 다시 연결해 주세요.");
+        ws?.close(4002, "terminal payload rejected");
+      }, undefined, gzipSupport === true);
+      receive = receiver;
+      // online/pageshow는 기존처럼 그 사건 안에서 새 WS를 연다. 지원 확인은 같은 브라우저에서 재사용한다.
+      const gzip = gzipSupport === undefined ? await receiver.ready : gzipSupport;
+      void receiver.ready.then((supported) => { if (epoch === connectEpoch) gzipSupport = supported; });
+      if (!alive || epoch !== connectEpoch) { receiver.close(); return; }
+      ws = new WebSocket(wsUrl(`/api/v1/panes/${encodeURIComponent(pane.id)}/ws?flow=ack&${colors}${gzip ? "&compression=gzip.v1" : ""}`));
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
+      ws.onopen = () => {
+        delay = 500;
+        setLink("open");
       };
+      ws.onmessage = (event) => receiver.push(event.data as string | ArrayBuffer);
       ws.onclose = (event) => {
+        receiver.close();
         if (wsRef.current === ws) wsRef.current = null;
         // 올리던 파일은 끝나지 않는다: 묶음의 나머지를 기다리게 두지 않는다
         attachDone();
@@ -1504,6 +1522,12 @@ export function TermView({
           return;
         }
         // 출력을 따라오지 못해 host가 닫았다: 자동으로 다시 붙지 않는다(과부하를 되풀이하지 않는다, herdr-web-ui ws.ts)
+        if (event.code === 4002 && !stopped) {
+          outputStopped = true;
+          stoppedHidden = false;
+          setLink("stopped");
+          return;
+        }
         if (event.code === OUTPUT_STALLED_CLOSE_CODE && !stopped) {
           outputStopped = true;
           stoppedHidden = document.visibilityState === "hidden" || (shownAt > 0 && Date.now() - shownAt <= SHOWN_GRACE_MS);
@@ -1525,6 +1549,8 @@ export function TermView({
     connect();
     return () => {
       alive = false;
+      connectEpoch += 1;
+      receive?.close();
       stopped = true;
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);

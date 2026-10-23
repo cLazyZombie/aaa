@@ -41,6 +41,7 @@ impl std::fmt::Display for Version {
 // 같은 1.10에 hello 선택 칸 `sha256`(실행 파일 SHA-256, plan §8.372)을 더한다. 옛 agent는 보내지 않고 옛 host는 버린다.
 // 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
 // 같은 1.11의 선택 기능 imagegen.v1: 세션 peer·token 확인 뒤 자기 이미지 요청/결과만 양쪽에서 보낸다.
+// 같은 1.11의 선택 기능 terminal_payload.zstd.v1: 원격 snapshot/history만 압축한다(t-0876). IPC는 원시다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
@@ -238,6 +239,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.112: SSH 머신 추가 M4: Windows SCM·보호 stdin. 서비스 암호는 웹 확인 창의 일회 입력만 받으며 작업·응답에 싣지 않는다.
 // 1.113: 예약의 앞 할 일(QueueOp::Reserve.after, TaskReservation.after·after_short_id). 앞 할 일이 완료 보관된 뒤 자리 대기에 든다.
 // 옛 host는 모르는 칸을 버려 바로 시작하므로 웹·CLI는 1.113 미만 host에 앞 할 일을 보내지 않는다. Agent link 변경 없음.
+// 같은 1.113의 웹 선택 query compression=gzip.v1과 snapshot/history compression metadata(t-0876).
 pub const FRONT_API: Version = Version { major: 1, minor: 113 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

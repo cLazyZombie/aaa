@@ -244,6 +244,29 @@ impl std::fmt::Debug for SpawnSpec {
     }
 }
 
+/// 협상한 터미널 본문 codec. 수준은 wire에 넣지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalCodec {
+    Gzip,
+    Zstd,
+}
+
+/// 협상한 네트워크 경계에서만 사용한다. IPC에는 보내지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TerminalCompression {
+    pub codec: TerminalCodec,
+    pub raw_len: u32,
+}
+
+// 필드 부재만 identity다. 명시 null/잘못된 metadata는 조용히 identity로 바꾸지 않는다.
+fn terminal_compression<'de, D: Deserializer<'de>>(d: D) -> Result<Option<TerminalCompression>, D::Error> {
+    TerminalCompression::deserialize(d).map(Some)
+}
+
+pub const TERMINAL_PAYLOAD_MAX: usize = 768 << 10;
+pub const TERMINAL_ZSTD_FEATURE: &str = "terminal_payload.zstd.v1";
+
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
 /// 이어지는 출력은 `offset`부터다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -254,6 +277,9 @@ pub struct Snapshot {
     pub cols: u16,
     pub rows: u16,
     pub replay: B64,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "terminal_compression")]
+    #[ts(optional)]
+    pub compression: Option<TerminalCompression>,
     /// `replay`의 기록 앞에 session host가 가진 기록이 더 있다(plan §8.118). 그 앞은 `History` 요청으로 받는다.
     /// 옛 session host는 보내지 않는다(false: 묻지 않는다).
     #[serde(default)]
@@ -264,6 +290,8 @@ pub struct Snapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryChunk {
     pub data: B64,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "terminal_compression")]
+    pub compression: Option<TerminalCompression>,
     pub lines: u32,
     /// 그 앞이 더 있다
     pub more: bool,
@@ -3948,6 +3976,9 @@ pub enum TermServerMsg {
     /// binary 출력을 xterm이 다 쓴 뒤 그 끝(replay 바이트 + 출력 바이트)을 `Ack`로 알린다(herdr-web-ui `pty-ack`).
     Snapshot {
         replay: B64,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "terminal_compression")]
+        #[ts(optional)]
+        compression: Option<TerminalCompression>,
         cols: u16,
         rows: u16,
         readonly: bool,
@@ -3960,6 +3991,9 @@ pub enum TermServerMsg {
     History {
         id: u32,
         data: B64,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "terminal_compression")]
+        #[ts(optional)]
+        compression: Option<TerminalCompression>,
         lines: u32,
         more: bool,
         found: bool,

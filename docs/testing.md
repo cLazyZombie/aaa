@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 터미널 기록 압축(t-0876)
+
+- `cargo test -p aaa-common terminal_payload --locked`: 두 codec의 정확한 일반·색상·한글·binary 왕복, 4095/4096 B와 이득 경계, 768 KiB/원시 JSON frame 상한, gzip CRC·잘림·남은 데이터·압축 폭탄, zstd window/dictionary, null·알 수 없는 metadata, IPC 거부를 검사한다. 실제 frame writer의 snapshot→binary→Pong 순서와 원시 offset, blocking 작업 두 개와 취소된 작업의 permit 보유도 사건으로 확인한다.
+- `cargo test -p aaa-agent -p aaa-host terminal_compression_tests --locked`: 실제 Hello/Welcome 처리에서 원격/로컬·선택 기능 유무·identity/압축의 조합과 재연결 초기화를 검사한다. 허용하지 않은 압축은 소비 전에 링크 오류가 나야 한다. 구판 필드 부재와 생성 TypeScript도 기존 proto 시험으로 확인한다.
+- `node --test web/test/terminalCompression.test.mjs`: 실제 native gzip의 CRC·길이·폭탄·취소와 Worker gate 대역을 사용한다. 해제 전 소비 없음, snapshot/binary/history/새 stream 순서, 늦은 결과 폐기, 구 host identity, 지원 실패, 재연결의 새 Worker 준비, raw_len 위조를 포함한 wire/raw 대기 예산을 검사한다.
+- E2E95 `95-terminal-compression`은 실제 PTY·host·agent·제품 Worker·xterm으로 Chromium/WebKit의 1280/390px에서 한글·색·줄 접힘·원시 길이 ACK·입력·재연결·두 쪽 prepend를 검사한다. 기기 크기를 먼저 적용한 뒤 기록을 생성하여 resize로 무효가 된 anchor를 압축 결함과 혼동하지 않는다. Worker 첫 해제를 gate로 잡아 ACK/표시가 앞서지 않는지 확인한다. 기존 E2E07의 스크롤·reset·즉시 wake 재연결·4008·host 재시작/session-host fallback owner도 유지한다.
+- E2E95의 회선 대조는 같은 source의 identity/gzip을 실제 WS 경계에서 byte-rate로 제한한다. 일반·색상·한글 표본을 1 Gbit/s/1ms·5 Mbit/s/50ms·1 Mbit/s/100ms 조건에서 비교하고 실제 wire/원시 길이·마지막 xterm ACK까지의 시간과 history 중 8키의 정확한 송신·PTY 전달·xterm 적용 ACK를 기록한다. 읽던 history를 유지하는 화면에서 키 echo가 viewport에 보인다고 가정하지 않는다. NIC/시스템 설정·기존 실패 시한은 바꾸지 않으며 고정 sleep·실패 재시도는 없다.
+- 필수 정본은 `nice -n 15 bash scripts/ci-local.sh --tee`, 의존 경계 시험·Linux/Windows strict cross·공개 검사다. 구판 실제 binary 조합, 제한 회선의 원격 frame, native Worker 메모리·취소, Windows native zstd C 빌드와 Edge/Safari 실기는 별도 실측 산출물로 구분한다. WebKit headless를 실제 Safari로, Edge headless를 설치된 PWA로 쓰지 않는다.
+
+
 ## 보고서 교체 시험의 Windows 파일 닫힘(t-0862)
 
 - `node --test web/test/reportFile.test.mjs`는 Windows에서 원래 writer의 남은 출력을 쓰고 FD를 닫은 뒤 보고서를 교체한다. POSIX에서는 기존처럼 교체 뒤 옛 FD에 늦게 쓰는 대조를 유지한다. 두 경로 모두 최종 본문 전체가 정확히 일치해야 하며 Windows 시험도 건너뛰지 않는다.
