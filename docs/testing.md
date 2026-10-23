@@ -8,6 +8,38 @@
 - 참고 후보는 [herdr-web-ui edgeSwipe](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/lib/edgeSwipe.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))와 [remix-run/history](https://github.com/remix-run/history/blob/main/packages/history/index.ts)([MIT](https://github.com/remix-run/history/blob/main/LICENSE))다. 이미 옮겨 둔 목록 스와이프와 PUSH/POP 구분을 따르며 외부 코드·의존성은 추가하지 않는다.
 - 완료 사건은 popstate·DOM·drawer transition이다. 고정 sleep·재시도·시한 연장 없이 로컬 전체 ci-local·Linux strict cross clippy·공개 검사를 수행한다. headless WebKit에서 주입한 touch와 기록 이동은 실제 iPhone OS의 미리보기 애니메이션을 확인한 것과 구별한다. t-0935와 겹칠 수 있는 파일은 `App.tsx`, `MachineInfoPanel.tsx`, `MachineInfoPanel.css`, 이 E2E98이며 정보 내용은 바꾸지 않는다. API와 E2E 번호를 유지하고 착지 창을 기다린다.
 
+## 같은 웹 출력의 Rust 재컴파일 방지(t-0933)
+
+- `npm run build`는 TypeScript 검사 뒤 Vite를 `web/node_modules/.cache/aaa-dist-*`에 실행한다.
+  plugin 출력까지 완성한 다음 bytes가 다른 파일·추가·삭제만 `dist`에 반영한다. 같은 파일과
+  상위 폴더의 mtime은 유지한다. Cargo의 기존 `web/dist` 감시는 보존하여 직접 고친 dist도 감지한다.
+- `node --test web/test/build.test.mjs`는 실제 Vite의 같은 출력, JS 변경에 따른 자산 이름 교체,
+  public 파일 추가·삭제, 실패 때 이전 dist·성공 표지 보존을 검사한다. 동기화 시험은 같은 길이·mtime의
+  다른 bytes, 파일/폴더 교체, 대소문자만 다른 이름을 확인한다. 과거 시각을 직접 지정하여 고정 대기 없이 검출한다.
+- 성공 시각은 감시 폴더 밖 `node_modules/.cache/aaa-web-build.stamp`에 기록한다.
+  `ci-local --only e2e`는 표지와 소스·public·빌드 스크립트의 시각을 비교하고, 표지가 없으면 index를 쓴다.
+  `scripts.test_ci_local`은 오래된 index와 최신 성공 표지, 표지 이후 스크립트 변경을 실제 CI 셸로 검사한다.
+- 다른 Cargo 실행이 끝난 자기 worktree에서 `nice -n 15 python3 scripts/check_web_rebuild.py --logs target/web-rebuild-check`를 실행한다.
+  실제 npm 빌드와 Cargo JSON의 `aaa-host`·`aaa` fresh를 대조한다. 동일 결과는 둘 다 fresh이며,
+  시험 public 파일의 추가·같은 길이/mtime 변경·삭제는 둘 다 재컴파일해야 한다. 기존 host 자산 시험으로
+  압축 복원한 내장 bytes와 전체 파일 목록을 원문과 대조한다. 시험 파일은 끝에 지우며 실패 단계·종료 코드·로그를 보존한다.
+- 성능은 같은 SHA·도구·환경·worktree 캐시에서 원본과 변경판의 전체 `ci-local.sh`를 연속 실행하여 비교한다.
+  준비 실행과 변경 없는 반복을 나누고 `workspace-summary.tsv`의 전체·단계 시간을 기록한다.
+  Windows는 BelowNormal 프로세스에서 기존 release 선검사를 포함한다. 준비 실패는 성공 표본으로 세지 않는다.
+- 먼저 [Cargo의 mtime 감시](https://doc.rust-lang.org/cargo/reference/build-scripts.html#rerun-if-changed)
+  ([MIT 선택](https://github.com/rust-lang/cargo/blob/master/LICENSE-MIT)),
+  [Vite build API](https://vite.dev/guide/api-javascript.html#build)
+  ([MIT](https://github.com/vitejs/vite/blob/main/LICENSE)),
+  [include_dir의 파일 포함·경로 추적](https://github.com/Michael-F-Bryan/include_dir/blob/master/macros/src/lib.rs)
+  ([MIT](https://github.com/Michael-F-Bryan/include_dir/blob/master/LICENSE))를 대조했다.
+  Vite의 완성된 출력과 Cargo의 기존 감시 경계를 따르며 외부 코드·의존성은 추가하지 않는다.
+  release 병렬화·LTO·codegen-units와 API·E2E 번호는 바꾸지 않는다.
+- 첫 변경판 전체 CI는 E2E12의 파일 보기 Back에서 30초 navigation 만료였다. 보고 iframe의 첫 HTML 응답을
+  파일 보기 open 뒤에 전달한 진단은 주 문서 이동 없이 iframe만 이동하고 파일 보기가 남는 같은 만료를 재현했다.
+  HTML 응답·그림만 보류한 다른 대조와 구별한다. E2E12는 기존 결과물 HTML·그림·sandbox 단언을 파일 링크
+  검사 앞으로 옮겨 결과물 준비 뒤 파일 보기의 기록을 검사한다. Back·닫힘·모든 기존 내용/격리 단언과 시한은 유지한다.
+  원본 실패 당시 iframe commit 기록은 없으므로 당시 사건 순서를 소급 확정하지 않는다. 제품 history 코드는 바꾸지 않는다.
+
 ## E2E93 재개 뒤 출력 구독과 종료 입력(t-0927)
 
 - t-0926 원본의 quit 5바이트는 host→agent→session PTY 쓰기 완료였고, 14:06:48.410Z에 agent의 `released` 감지도 있었다. 그러나 재연결 직후 보낸 두 session subscribe가 14:07:00.690Z에 모두 15초로 만료됐다. 화면은 `app-history-4`에 멈췄다. 부하 17.00/8.08/7.91을 시한 연장의 근거로 쓰지 않는다. 원본 보고·두 로그·화면/DOM/network 진단·검증 archive의 모든 파일을 읽고 사본을 보존했다. 당시 잠금 획득 순서는 로그에 없어 소급 확정하지 않으며, 아래 keeper에서 원본과 일치하는 구독 응답 유실 경로를 입증한다.

@@ -190,6 +190,36 @@ class CiLocal(unittest.TestCase):
         self.assertIn("TAIL-clippy", result.stdout)
         self.assertNotIn("── 함께:", result.stdout)
 
+    def test_unchanged_dist_uses_successful_web_build_time(self):
+        source = self.root / "web/src/main.ts"
+        source.parent.mkdir()
+        source.write_text("same emitted bytes")
+        stamp = self.root / "web/node_modules/.cache/aaa-web-build.stamp"
+        stamp.parent.mkdir(parents=True)
+        stamp.touch()
+        os.utime(self.root / "web/dist/index.html", (1, 1))
+        os.utime(source.parent, (1, 1))
+        os.utime(source, (2, 2))
+        os.utime(stamp, (3, 3))
+        result = self.run_ci("--only", "e2e")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue((self.root / "e2e.finished").exists())
+
+    def test_newer_build_script_still_rejects_stale_web(self):
+        source = self.root / "web/scripts/build.mjs"
+        source.parent.mkdir()
+        source.write_text("changed build script")
+        stamp = self.root / "web/node_modules/.cache/aaa-web-build.stamp"
+        stamp.parent.mkdir(parents=True)
+        stamp.touch()
+        os.utime(source.parent, (1, 1))
+        os.utime(source, (3, 3))
+        os.utime(stamp, (2, 2))
+        result = self.run_ci("--only", "e2e")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("web/scripts/build.mjs", (self.root / "logs/e2e.log").read_text())
+        self.assertFalse((self.root / "e2e.finished").exists())
+
     def test_build_failure_skips_dependents_but_runs_public(self):
         self.env["FAIL_STAGE"] = "build"
         result = self.run_ci("--tee")
