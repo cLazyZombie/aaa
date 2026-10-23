@@ -124,8 +124,14 @@ mod tests {
             let mut restored = 0;
             assert_ne!(unsafe { GetConsoleMode(handle, &mut restored) }, 0);
             assert_eq!(restored, cooked, "모든 경로에서 원래 console mode를 돌린다");
-            if case == "success" {
-                let password = result.unwrap_or_else(|_| panic!("console password success"));
+            if case == "session" || case == "hook" {
+                assert!(
+                    matches!(result, Err(Fault { code: "installation_secret_input_outside_required", exit: 3, .. })),
+                    "session guard must reject before prompting, case={case}, result={:?}",
+                    result.err()
+                );
+            } else if case == "success" {
+                let password = result.unwrap_or_else(|error| panic!("console password success: {error:?}"));
                 password
                     .send(&mut std::io::sink(), |_, bytes| {
                         assert!(bytes == CANARY.as_bytes(), "보호 입력이 정확해야 한다");
@@ -133,12 +139,16 @@ mod tests {
                     })
                     .unwrap();
             } else {
-                assert!(matches!(result, Err(Fault { exit: 130, .. })), "cancel/EOF closes without a credential");
+                assert!(
+                    matches!(result, Err(Fault { exit: 130, .. })),
+                    "cancel/EOF closes without a credential, case={case}, result={:?}",
+                    result.err()
+                );
             }
             println!("console-restored");
             return;
         }
-        for (case, suffix) in [("success", "\r"), ("cancel", "\x03"), ("eof", "\x1a")] {
+        for (case, suffix) in [("success", "\r"), ("cancel", "\x03"), ("eof", "\x1a"), ("session", ""), ("hook", "")] {
             let pair =
                 native_pty_system().openpty(PtySize { rows: 24, cols: 100, pixel_width: 0, pixel_height: 0 }).unwrap();
             let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
@@ -148,6 +158,15 @@ mod tests {
                 "--nocapture",
             ]);
             command.env("AAA_INSTALL_PASSWORD_CHILD", case);
+            // The test runner may itself be inside aaa. Only this owned console
+            // child represents the external user; leave the runner unchanged.
+            command.env_remove("AAA_SESSION_ID");
+            command.env_remove("AAA_HOOK_SOCK");
+            match case {
+                "session" => command.env("AAA_SESSION_ID", "test-session"),
+                "hook" => command.env("AAA_HOOK_SOCK", "test-hook"),
+                _ => {}
+            }
             let mut child = pair.slave.spawn_command(command).unwrap();
             let exit = child_exit::ChildExit::new(child.as_mut()).unwrap();
             drop(pair.slave);
@@ -217,9 +236,9 @@ mod tests {
             reading.join().unwrap();
             waiting.join().unwrap();
             let output = String::from_utf8_lossy(&output);
-            assert!(sent, "보호 prompt 전에 입력을 보내지 않는다");
+            assert_eq!(sent, case != "session" && case != "hook", "외부 console에서만 보호 prompt를 연다, case={case}");
             assert!(!output.contains(CANARY), "실제 입력한 credential이 TTY에 echo되면 안 된다");
-            assert_eq!(status.exit_code(), 0, "owned console child failed, case={case}");
+            assert_eq!(status.exit_code(), 0, "owned console child failed, case={case}, output={output}");
             assert!(output.contains("console-restored"));
         }
     }

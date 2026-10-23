@@ -17,6 +17,28 @@
 - 참고 후보는 [Playwright actionability](https://playwright.dev/docs/actionability)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))와 [Cypress 요소 조작](https://docs.cypress.io/app/core-concepts/interacting-with-elements)([MIT](https://github.com/cypress-io/cypress/blob/develop/LICENSE))다. visible과 실제 클릭 가능·animation·viewport를 구별하며 `force`·DOM click으로 우회하지 않는다. 외부 코드·의존성을 추가하지 않는다.
 - 로컬 검증: Playwright 1.64.1의 전체 E2E39, 준비/설정 owner와 초기 주소 제거 RED 대조, 웹 유닛·빌드·공개 검사. t-0924의 할 일 시트 history 수리와 변경 파일이 겹치지 않는다. 이 시험은 실제 iPhone OS 몸짓을 검증한 것이 아니다.
 
+## Windows bootstrap·암호 console의 자식 환경 격리(t-0922)
+
+- `cargo test --locked -p aaa --test windows_bootstrap`의 owner는 첫 cmdlet 전에
+  `$PSHOME/Modules`만 검색한다. shell별 새 분석 캐시와 `Get-FileHash`·`Invoke-RestMethod`를
+  가로채는 외부 시험 모듈 경로를 상속시켜도 실제 PS5.1/7의 내장 명령으로 기존
+  PE·SHA·native argv·종료 코드·표준 입출력·기존 파일 보존·실제 IRM/IEX 입구를 검사한다.
+  PS7 → Rust → PS5.1처럼 중간 native 프로세스가 있으면 PS7의 자동 모듈 경로 정리가
+  적용되지 않는 경계를 다룬다. 생산 bootstrap과 사용자·시스템 모듈 설정은 바꾸지 않는다.
+- `cargo test --locked -p aaa --bin aaa install::engine::input::password::tests::console_masks_and_restores_after_success_cancel_and_eof -- --exact --nocapture`는
+  ConPTY 자식에서만 `AAA_SESSION_ID`·`AAA_HOOK_SOCK`를 제거한다. 시험 runner가 aaa 세션
+  안이어도 성공·Ctrl-C·EOF의 보호 입력·비 echo·mode 복원을 검사한다. 두 변수를 각각
+  다시 넣은 자식은 입력 prompt 없이 원래 세션 거부 오류로 끝나야 한다. 실제 계정 암호는 쓰지 않는다.
+- 참고 후보는 [PowerShell의 모듈 경로 구성](https://github.com/PowerShell/PowerShell/blob/master/src/System.Management.Automation/engine/Modules/ModuleIntrinsics.cs)([MIT](https://github.com/PowerShell/PowerShell/blob/master/LICENSE.txt)),
+  [Cargo의 시험 자식 환경 격리](https://github.com/rust-lang/cargo/blob/master/crates/cargo-test-support/src/lib.rs)([MIT 선택](https://github.com/rust-lang/cargo/blob/master/LICENSE-MIT)),
+  [Pester의 명시적 시험 모듈 import](https://github.com/pester/Pester/blob/main/test.ps1)([Apache-2.0](https://github.com/pester/Pester/blob/main/LICENSE))다.
+  [공식 PSModulePath 설명](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath#starting-windows-powershell-from-powershell-7)에
+  따라 자식 환경 경계를 명시하며 외부 코드·의존성은 가져오지 않는다.
+- Windows 실기는 전용 실험실에서 PS7의 모듈 경로와 가짜 세션 변수 둘을 가진 runner로
+  두 owner를 실행한다. 전역 서비스·예약 작업·Run 키·사용자 PATH·방화벽 기준 목록을
+  전후 대조하고 시험 폴더를 정리한다. 로컬 전체 ci-local·공개 검사를 함께 실행하며
+  GitHub CI는 기다리지 않는다. 기존 시한·기대값을 완화하거나 실패를 재시도하지 않는다.
+
 ## 하위 오류 진단과 비밀값 경계(t-0912)
 
 - `cargo test --locked -p aaa-common --lib diagnostic::`: 중첩 anyhow의 OS 오류가 응답 왕복과 실제 tracing 사건에 남는지 검사한다. serde 오류 자체에 가짜 토큰이 들어가는 data 오류를 주입해 분류·행·열만 남는지, 닫힌 oneshot의 payload가 로그로 나오지 않는지도 검사한다. subscriber는 시험 thread 안에서만 설치한다.

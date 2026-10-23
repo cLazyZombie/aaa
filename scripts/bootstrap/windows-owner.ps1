@@ -1,5 +1,8 @@
 # Invoked by cargo test --test windows_bootstrap on Windows; no real network/SCM.
 param([string]$Bootstrap, [string]$Entry, [string]$EntryUrl, [string]$Fixture, [string]$Aaa, [string]$AaaVersion, [string]$Lab)
+# Native intermediaries inherit PS7 paths unchanged when they start PS5.1.
+# Select this interpreter's bundled modules before the first cmdlet/autoload.
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . $Bootstrap
