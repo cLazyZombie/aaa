@@ -143,11 +143,11 @@ ESC=$(printf '\033'); BEL=$(printf '\007'); LATE=$(printf '\016'); NL='
 RULE='────────────────────────────────────────'
 # 실제 Claude처럼 hook 출력(진행 안내 JSON)은 화면에 내지 않고 받는다. `HOOK_LOG`가 있으면 거기 한 줄씩 적는다
 hook() { out=$("$AA" hook --agent claude "$1"); [ -z "$out" ] || [ -z "$HOOK_LOG" ] || printf '%s\n' "$out" >> "$HOOK_LOG"; }
-key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); stty icanon; }
-keyt() { stty -icanon -echo min 0 time "$1"; k=$(dd bs=1 count=1 2>/dev/null); stty icanon; }
+key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); }
+keyt() { stty -icanon -echo min 0 time "$1"; k=$(dd bs=1 count=1 2>/dev/null); }
 box() { printf '%s\n\342\235\257 \n%s\n  ? for shortcuts' "$RULE" "$RULE"; }
 # 입력 대기: 커서를 입력 상자 「❯ 」 뒤에 둔다. Enter 뒤(커서는 상자 아래 선)에는 상자를 지운다.
-prompt() { stty echo; box; printf '\033[2A\r\033[2C'; }
+prompt() { stty icanon echo; box; printf '\033[2A\r\033[2C'; }
 taken() { printf '\033[2A\r\033[J'; }
 # 진행 보고가 실패해 진단 줄이 추가되어도 spinner를 그리기 전 자리부터 지운다.
 spin() { printf '\0337\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n'; box; }
@@ -194,13 +194,16 @@ menu() {
     pre=$(printf '\033[%sA\r\033[J' "$h")
     key
     if [ "$k" = "$ESC" ]; then
+      # Esc를 읽은 뒤에는 창을 먼저 지운다. 느린 suffix 읽기(stty/dd)가 답한 창을
+      # 800ms 이상 남겨 화면 감지가 새 질문으로 다시 알리게 하지 않는다.
+      printf '%s' "$pre"; pre=
       keyt 2
       if [ "$k" = "[" ]; then keyt 2; case "$k" in A) sel=0;; B) sel=1;; esac; continue; fi
       pick=cancel; break
     fi
     if [ -z "$k" ]; then if [ "$sel" = 0 ]; then pick=$3; else pick=$4; fi; break; fi
   done
-  printf '\033[%sA\r\033[J' "$h"
+  printf '%s' "$pre"
 }
 perm() {
   unspin
@@ -1539,6 +1542,24 @@ fn claude_race_ready_prepares_input_before_publishing_prompt() {
     assert!(flags.contains(&"-echo") && flags.contains(&"-icanon"), "준비 표지가 입력 모드보다 앞섰다: {mode}");
     assert!(output.contains("race armed") && output.contains("? for shortcuts"), "{output}");
     assert!(output.contains("received:<x>"), "{output}");
+}
+
+/// Esc 뒤 화살표 구별용 읽기가 늦어져도 이미 취소한 권한 창을 다시 질문하지 않는다.
+#[test]
+fn claude_menu_dismisses_escape_before_waiting_for_its_suffix() {
+    let (functions, _) = CLAUDE_AGENT.split_once("printf '\\033[2J\\033[H'").unwrap();
+    let script = format!(
+        "{functions}\nkeyt() {{ printf '\\nESC-DECODE-GATE\\n'; k=; }}\nmenu 'Do you want to proceed?' 0 '1. Yes' '2. No (esc)' 'Esc to cancel'\nprintf '\\npick:<%s>\\n' \"$pick\"\n"
+    );
+    let mut command = lab::terminal_command(Path::new("/bin/sh"));
+    command.args(["-c", &script]);
+    let output = lab::Terminal::spawn(command).read(&["fixture escape decode"], &[("Esc to cancel", "\u{1b}")], T);
+    let before = output.split("ESC-DECODE-GATE").next().unwrap();
+    let mut vt = aaa_vt::Vt::new(36, 120);
+    vt.feed(before.as_bytes());
+    let screen = vt.text("fixture");
+    assert!(!screen.lines.iter().any(|line| line.contains("Do you want to proceed?")), "{before:?}");
+    assert!(output.contains("pick:<cancel>"), "{output}");
 }
 
 /// thread `id`의 진행 보고가 `text`가 되기를 기다린다

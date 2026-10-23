@@ -234,6 +234,40 @@ impl Staged {
         self.0.as_deref().unwrap()
     }
 
+    /// 실행 이력이 없는 별도 inode. APFS clone은 수백 MB의 userspace 복사를 피한다.
+    /// clone을 지원하지 않는 볼륨도 create_new로 확보한 FD에만 데이터를 쓴다.
+    #[cfg(target_os = "macos")]
+    fn fresh_copy(&self, path: PathBuf) -> Result<Staged> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        let input = std::fs::File::open(self.path())?;
+        let destination = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+        // SAFETY: 살아 있는 source FD와 NUL 종료 경로다. 기존 목적지는 덮지 않는다.
+        let cloned = unsafe { libc::fclonefileat(input.as_raw_fd(), libc::AT_FDCWD, destination.as_ptr(), 0) };
+        if cloned == 0 {
+            return Ok(Staged(Some(path)));
+        }
+        let error = std::io::Error::last_os_error();
+        if !matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EXDEV)) {
+            return Err(error.into());
+        }
+        Self::fresh_copy_data(&input, path)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn fresh_copy_data(input: &std::fs::File, path: PathBuf) -> Result<Staged> {
+        use std::os::fd::AsRawFd;
+        let output = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+        let fresh = Staged(Some(path));
+        // SAFETY: 두 FD 모두 이 호출 동안 열려 있다. null state는 copyfile API의 기본 상태다.
+        if unsafe { libc::fcopyfile(input.as_raw_fd(), output.as_raw_fd(), std::ptr::null_mut(), libc::COPYFILE_DATA) }
+            != 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(fresh)
+    }
+
     /// 지금 것을 보관하고 이것을 그 자리로 rename한다. 보관 이름을 돌려준다
     fn install(mut self, place: &Place, current_version: &str, _checked_sha: &str) -> Result<PathBuf> {
         #[cfg(target_os = "macos")]
@@ -242,15 +276,8 @@ impl Staged {
             // self-check로 실행한 staging inode를 설치하면 다음 실행이 EXEC/SECURITY_POLICY로
             // 죽는 경우가 있다. 검사한 바이트만 실행 이력 없는 새 inode에 옮기고 rename한다.
             let path = place.dir.join(format!(".aaa-update-{}-install.tmp", std::process::id()));
-            let mut output = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .context("설치할 새 실행 파일을 만들지 못했다(기존 파일은 덮지 않는다)")?;
-            let fresh = Staged(Some(path));
-            let mut input = std::fs::File::open(self.path())?;
-            std::io::copy(&mut input, &mut output)?;
-            drop(output);
+            let fresh =
+                self.fresh_copy(path).context("설치할 새 실행 파일을 만들지 못했다(기존 파일은 덮지 않는다)")?;
             if sha256(fresh.path())? != _checked_sha {
                 bail!("self-check한 실행 파일과 설치할 바이트가 다르다(바꾸지 않았다)");
             }
@@ -579,6 +606,40 @@ pub(crate) fn installed_identity(exe: &std::path::Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fresh_install_image_has_its_own_inode_and_never_overwrites_an_existing_destination() {
+        use std::os::unix::fs::MetadataExt;
+        let root = std::env::temp_dir().join(format!("aaa-fresh-image-{}", aaa_common::util::new_id()));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("checked-image");
+        let target = root.join("install-image");
+        let bytes: Vec<_> = (0..131079).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&source, &bytes).unwrap();
+        let staged = Staged(Some(source.clone()));
+        let fresh = staged.fresh_copy(target.clone()).unwrap();
+        assert_ne!(source.metadata().unwrap().ino(), target.metadata().unwrap().ino());
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        // APFS clone도 hard link가 아니다. 검사한 inode의 뒤 변경은 새 이미지에 닿지 않는다.
+        std::fs::write(&source, b"changed source").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        assert!(staged.fresh_copy(target.clone()).is_err(), "기존 목적지는 덮지 않는다");
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        let copied_path = root.join("non-clone-image");
+        let input = std::fs::File::open(&source).unwrap();
+        let copied = Staged::fresh_copy_data(&input, copied_path.clone()).unwrap();
+        assert_ne!(source.metadata().unwrap().ino(), copied_path.metadata().unwrap().ino());
+        assert_eq!(std::fs::read(&copied_path).unwrap(), b"changed source");
+        assert!(Staged::fresh_copy_data(&input, copied_path.clone()).is_err());
+        assert_eq!(std::fs::read(&copied_path).unwrap(), b"changed source");
+        drop(input);
+        drop(copied);
+        drop(fresh);
+        assert!(!target.exists());
+        drop(staged);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

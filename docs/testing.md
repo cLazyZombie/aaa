@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## Rust 질문 재알림과 큰 실행 파일 처리(t-0864)
+
+- 원본 m13 DB에는 마지막 `make test` 권한 질문에 답한 뒤 831ms에 같은 본문·같은 사건 시각의 질문이 다시 열리고, 이어 idle에서 Gone이 된 기록이 있다. agent 원문에도 입력 → question 재감지 → idle 순서가 있다. 가짜 Claude의 Esc 처리는 바이트마다 `stty icanon`을 복원하고 suffix 구별용 `stty`·`dd`를 거치는 동안 답한 창을 남겼다. 제품은 입력 뒤 800ms에도 남은 창을 다시 묻는 기존 계약을 유지한다.
+- `claude_menu_dismisses_escape_before_waiting_for_its_suffix`는 실제 PTY의 suffix 읽기 직전에 표지를 넣고 그 이전 출력만 Vt로 해석한다. 구판은 권한 질문이 그대로 있어 결정적으로 실패한다. fixture는 Esc를 읽으면 창을 먼저 지우고 화살표이면 다시 그린다. 키마다 canonical 모드를 복원하지 않고 입력 상자를 열 때 복원한다. 기존 owner의 질문 5개·답·흐름·Enter 미전송·취소·화살표 선택·interrupt 단언과 30초는 그대로다.
+- 원본 update 실험실에는 203,079,104바이트 staging과 126,328,832바이트의 설치 임시 파일이 남았다. 실패 지점은 PTY EOF가 아니라 macOS의 새 inode로 하는 `std::io::copy` 도중이다. APFS는 `fclonefileat`으로 별도 inode를 만들고, clone 미지원/다른 볼륨만 `create_new`로 확보한 FD에 `fcopyfile(COPYFILE_DATA)`한다. 기존 경로는 덮지 않고, 전체 SHA-256 재검증·실행 권한·보관·rename은 유지한다. 다른 오류를 다시 시도하지 않는다.
+- `fresh_install_image_has_its_own_inode_and_never_overwrites_an_existing_destination`는 clone과 FD 복사 양쪽의 정확한 bytes·별도 inode·기존 목적지 거부·정리를 검사한다. 원본 실행 파일과 clone의 변경도 서로 전파되지 않는다. 실제 update owner는 원래 교체·보관·두 번 rollback·keep·self-check 전체와 20초를 유지한다.
+- install 원본에는 yes 뒤 EOF 상한과 빈 출력 상한만 있어 당시 stack은 없다. 별도 실제 승인 CLI에서 yes 뒤 `sample`은 `review::confirm`의 계획 재검사와 preview 아래 SHA-256 계산을 가리켰다. 해당 경로는 큰 debug 실행 파일을 반복해서 읽는다. 감지·payload·snapshot의 SHA-256을 기존 ring 구현으로 계산하며 검사를 생략하거나 cache하지 않는다. 이 stack은 원본 세 실행의 순간을 소급 증명하지 않는다. 자식 종료·PTY reader·기존 60초는 바꾸지 않는다.
+- 두 digest 시험은 빈 입력·독립 sha2 기준·64KiB 양쪽 경계·끝 조각·같은 경로/길이의 새 bytes, 디렉터리·1GiB 초과 거부를 검사한다. snapshot의 symlink 거부·권한·inode·수정 시각 검사는 유지한다. 정본 검증은 기존 `cargo test -p aaa --test install`, `--test e2e`, `--test m13`, `--test deps`를 포함하는 전체 `scripts/ci-local.sh`다. 기존 launchd CI 전용 ignored owner는 변경하지 않는다.
+- 참고: [Pexpect READY 시험](https://github.com/pexpect/pexpect/blob/master/tests/test_winsize.py)([ISC](https://github.com/pexpect/pexpect/blob/master/LICENSE)), [portable-pty 출력·종료 예제](https://github.com/wezterm/wezterm/blob/main/pty/examples/bash.rs)([MIT](https://github.com/wezterm/wezterm/blob/main/LICENSE.md)), [expectrl Session](https://github.com/zhiburt/expectrl/blob/main/src/session/mod.rs)([MIT](https://github.com/zhiburt/expectrl/blob/main/LICENSE))를 확인했다. 준비 뒤 입력하고 출력과 종료를 구분하는 방식을 따르며 고정 입력 지연은 적용하지 않았다. macOS 복사는 [Rust std의 clone/FD 복사 경로](https://github.com/rust-lang/rust/blob/master/library/std/src/sys/fs/unix.rs)(MIT/Apache-2.0)와 [Apple copyfile](https://github.com/apple-oss-distributions/copyfile/blob/main/copyfile.c)(APSL-2.0)의 API를 확인했다. 외부 소스 코드는 복사하거나 실행하지 않았고 의존성도 추가하지 않았다.
+
 ## Windows SSH 원격 install의 명시적 상태 경로(t-0847)
 
 - Windows 래퍼는 `install-probe`·`install-bootstrap`·`install --resume` 모두에 현지 `LOCALAPPDATA/aaa/state`를 한 인자로 전달한다. LOCALAPPDATA가 비어 있으면 USERPROFILE을 써서 `aaa-config::paths::default_state_dir_for(None)`과 맞춘다. 전역 AAA_STATE_DIR이나 host 머신의 경로를 전달하지 않는다.
