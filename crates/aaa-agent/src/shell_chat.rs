@@ -37,7 +37,9 @@ impl Tracker {
         if let Some(b) = found {
             self.binding = Some(b);
         }
-        if old == self.binding {
+        // 셸 복귀는 foreground 감시의 released가 알린다. 여기서 session_start(None)을 보내면
+        // 더 빠른 released 뒤 host의 agent를 되살릴 수 있다. 실제 교체 프로세스가 있을 때만 ID를 비운다.
+        if self.targets.is_empty() || old == self.binding {
             return None;
         }
         let harness = self.binding.as_ref().or(old.as_ref())?.harness;
@@ -393,8 +395,48 @@ mod tests {
         assert_eq!(t.update(first, None), None);
         assert_eq!(t.update(vec![(Harness::Codex, 101)], None), Some((Harness::Codex, None)));
         assert_eq!(t.update(vec![(Harness::Codex, 101)], Some(b.clone())), Some((Harness::Codex, Some(b))));
-        assert_eq!(t.update(Vec::new(), None), Some((Harness::Codex, None)));
         assert_eq!(t.update(Vec::new(), None), None);
+        assert!(t.binding.is_none(), "셸 복귀는 사건 없이 내부 연결만 지운다");
+        assert_eq!(t.update(Vec::new(), None), None);
+    }
+
+    #[tokio::test]
+    async fn shell_return_cannot_restart_released_harness_for_either_poll_order() {
+        for harness in [Harness::Codex, Harness::Claude] {
+            for released_first in [false, true] {
+                let lab = Lab::new();
+                let a = crate::Agent::new(lab.0.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+                let mut tracker = Tracker::new();
+                let binding = Binding { harness, id: ID.into(), path: lab.0.join("session.jsonl") };
+                let (h, b) = tracker.update(vec![(harness, 100)], Some(binding.clone())).unwrap();
+                a.shell_chat_event("s", h, b).await;
+                let release =
+                    || crate::detect::Report { kind: "released", message: None, question_kind: None, rule: None };
+                // foreground 감시(300ms)와 기록 감시(2초)는 어느 쪽이 먼저 셸 복귀를 보아도 된다.
+                if released_first {
+                    a.detected("s", harness, release()).await;
+                }
+                if let Some((h, b)) = tracker.update(Vec::new(), None) {
+                    a.shell_chat_event("s", h, b).await;
+                }
+                if !released_first {
+                    a.detected("s", harness, release()).await;
+                }
+                let events = a.harness_events();
+                assert_eq!(events.len(), 1, "{harness:?}, released_first={released_first}: {events:?}");
+                assert_eq!(events[0].kind, "released", "다시 붙는 host에도 해제만 재전송해야 한다");
+                assert!(tracker.binding.is_none());
+                assert!(!a.harness_started.lock().unwrap().contains_key("s"));
+                // 실제 다음 프로세스가 생기면 같은 대화 resume도 다시 연결할 수 있다.
+                let (h, b) = tracker.update(vec![(harness, 101)], Some(binding)).unwrap();
+                a.shell_chat_event("s", h, b).await;
+                assert!(
+                    a.harness_events()
+                        .iter()
+                        .any(|e| e.kind == "session_start" && e.harness_session.as_deref() == Some(ID))
+                );
+            }
+        }
     }
 
     #[tokio::test]

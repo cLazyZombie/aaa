@@ -2,6 +2,8 @@
 
 ## 셸 pane 재개·복귀 기록과 맨 위 앵커(t-0839)
 
+- t-0845의 E2E93 연결 해제 실패는 agent의 보존 사건에서 `released` 뒤 44ms 후 `session_start(null)`이 남아 host의 agent를 다시 만든 것으로 확정했다. 기록 감시는 앞 PID가 없는 셸 복귀 때 내부 연결만 지우고 foreground의 `released`가 해제를 맡는다. `shell_return_cannot_restart_released_harness_for_either_poll_order`는 Codex·Claude 각각 두 감시 순서를 직접 실행해 host 재연결용 사건이 해제 하나만 남으며 다음 실제 프로세스의 resume도 다시 연결되는지 확인한다. 수정 전 0.04초에 두 사건이 남아 실패했고 수리 뒤 정상이다. E2E93 owner는 원래 20초·`!state().agent`·대화 단추 제거 단언을 유지해 한 번 실행한다.
+
 - `nice -n 15 cargo test --locked -p aaa-agent --lib shell_chat`와 `chat_paths_tests`는 Codex의 `-<thread-id>_<rollout-id>.jsonl`을 열린 쓰기 FD·첫 session_meta와 대조한다. 대화 UUID와 기록 UUID를 구분하고 잘못된 접미사·다른 ID·허용 root 밖·하위 agent·여러 후보를 거른다. 같은 ID의 백업을 열어 고르지 않는 기존 조건을 유지한다. 계정 홈의 hook 경로·ID 조회·metadata 보완도 같은 판정을 쓴다.
 - `nice -n 15 cargo test --locked -p aaa-vt`는 고정 입력줄 위 일부 영역의 DECSTBM+LF가 기록과 replay에 남는지 확인한다. 중간 영역·CSI S는 기록을 만들지 않는다. xterm.js 5.5 `BufferService.scroll`·`InputHandler.scrollUp`의 판정을 따른다. 기존 구현은 첫 기록 유실 단언에서 실패했고 수리 뒤 정상이다. backend와 웹의 alternate 화면·커서·마우스 모드 경로는 유지한다.
 - `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs --spec 93-shell-chat --workers 1`: 기존 직접 실행 8조합에 연결 전 alternate 화면 복귀·대화 보기 선택·읽던 첫 메시지 복귀를 더한다. 새 owner는 두 엔진·1280px/390px에서 inline 터미널 기록 복원, Codex resume·Claude resume/continue의 이전 360메시지·입력창 고정, 프로그램의 마우스 보고 스크롤과 고정 footer, agent 재시작 뒤 실제 PID의 재연결을 확인한다. 재시작 전에 자기 실험실의 harness.json만 지워 저장한 ID의 재전송과 구분한다. 기존 byte cursor는 재시작에 무효가 되므로 새 cursor로 이전 기록 전체를 읽고 복귀를 검사한다.
