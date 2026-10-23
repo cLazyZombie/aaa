@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import { aaa, root, inList, domIs, inTime, drawerSettled, shot } from "./harness.mjs";
 import { pairDevice } from "./devices.mjs";
+import { observeHistory, assertHistoryUnchanged } from "./history-observer.mjs";
 
 let thread;
 const drawerIsOpen = (p) => p.locator("#workspace-drawer").evaluate((el) => el.classList.contains("is-open"));
@@ -63,6 +64,7 @@ export async function historyDestinations(browser) {
   }
   const engine = browser.browserType().name();
   const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone", { init: traceHistory });
+  const history = await observeHistory(p);
   try {
     const entries = [];
     const remember = async (selector) => {
@@ -92,7 +94,8 @@ export async function historyDestinations(browser) {
     await p.getByRole("tab", { name: "모양", exact: true }).click();
     await p.getByRole("tabpanel", { name: "모양", exact: true }).waitFor();
     await remember('#settings-panel[aria-label="모양"]');
-    const length = await p.evaluate(() => { window.__markHistoryDestination("순회 시작"); return history.length; });
+    const before = await history.snapshot();
+    await p.evaluate((snapshot) => window.__markHistoryDestination("순회 시작", snapshot), before);
 
     for (const open of [true, false]) {
       for (const direction of [-1, 1]) {
@@ -113,8 +116,10 @@ export async function historyDestinations(browser) {
       }
       await shot(p, `39-history-${engine}-${open ? "open" : "closed"}`);
     }
-    const actualLength = await p.evaluate(() => { window.__markHistoryDestination("순회 끝"); return history.length; });
-    if (actualLength !== length) throw new Error(`${engine}: 메뉴 토글·기록 순회가 기록 칸 수를 바꿨다: 기대=${length}, 실제=${actualLength}, 순서=${JSON.stringify(await p.evaluate(() => window.__historyDestinations))}`);
+    const after = await history.snapshot();
+    await p.evaluate((snapshot) => window.__markHistoryDestination("순회 끝", snapshot), after);
+    try { assertHistoryUnchanged(before, after); }
+    catch (error) { throw new Error(`${engine}: ${error.message}, 순서=${JSON.stringify(await p.evaluate(() => window.__historyDestinations))}`); }
 
     // 빈 첫 칸은 기존 규칙대로 보던 pane으로 정규화한다. 이 조기 return 경로도 메뉴를 닫아야 한다.
     await setDrawer(p, true);
@@ -150,6 +155,7 @@ export async function historyDestinations(browser) {
     await shot(p, `39-history-${engine}-failure`);
     throw error;
   } finally {
+    await history.close();
     await p.context().close();
   }
   await taskSheetHistory(browser);

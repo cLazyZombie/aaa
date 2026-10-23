@@ -109,6 +109,15 @@
 - 진단 v2의 layout commit/passive effect·기록 메서드와 쓰기 전/후·익명 목적지 번호는 유지한다. 기본 탭에서는 수집하지 않는다. 정본 ci-local·공개 검사와 E2E39 전체로 되돌림을 검증한다. Safari 기본 뒤로 미리보기는 미해결로 남기며 추가 실험 배포·실기 반복은 이번 범위에서 진행하지 않는다. API·E2E 번호는 유지한다.
 
 
+## E2E39의 Chromium 기록 목록 비교(t-0866)
+
+- t-0865의 진단에서 첫 pane 선택 뒤 길이는 3, `#threads` 4 → thread 5 → report 6 → reports 7이다. 다음 서로 다른 `#tasks`에서도 7이고, question 8 → asks 9 → 설정 목록 10 → 모양 11로 한 칸씩 작게 관측된다. 첫 Back의 popstate에서만 12로 보정되며 그 사이 `pushState`·`replaceState` 호출은 없다. 이미 준비한 열 목적지와 시작의 두 칸을 더하면 12다. 순회의 모든 목적지는 제자리걸음 없이 정확히 복원되므로, 끝에서 제품이 중복 항목 하나를 만든 실패가 아니라 시작 길이의 낡은 관측값을 기준으로 삼은 시험 결함이다.
+- Chromium은 `Page.getNavigationHistory`로 브라우저의 실제 항목 수·현재 위치·항목 ID와 목적지를 순회 전후 비교한다. 같은 수의 항목으로 바뀌어도 실패한다. WebKit은 기존 native `history.length` 비교를 유지한다. 진단의 순회 시작/끝에는 실제 목록을 함께 넣되 전체 URL·pairing query·임의 state는 저장하지 않는다. 모든 목적지·메뉴·설정·시트 단언과 사건 대기·시한은 그대로다.
+- 기존 fragment 탐침의 독립 페이지에서 Chromium renderer의 길이만 한 칸 작게 고정하고 실제 Back/Forward 뒤 native 값으로 돌린다. 옛 길이 비교는 실패하지만 브라우저 항목 목록은 같음을 확인한다. 이어 실제 pushState의 증감, 같은 수로 forward 항목을 바꾼 분기, replaceState의 목적지 교체를 거부한다. WebKit도 실제 추가·감소를 거부한다. 이 대조는 관측 결함을 결정적으로 검사하며 원본 Chromium 내부 IPC 경합의 재현은 아니다.
+- [Chromium renderer](https://chromium.googlesource.com/chromium/src/+/main/content/renderer/render_frame_impl.cc)의 `PrepareFrameForCommit`은 commit 인자의 기록 위치·길이를 WebView에 적용한다. 보고서 frame의 늦은 commit/취소와 겹칠 수 있는 구조는 확인했지만 원본에는 browser IPC trace가 없어 그 세부 시점은 확정하지 않는다. 새 진단은 renderer 값과 브라우저 목록을 함께 남겨 두 층을 구분한다.
+- 참고 후보는 [Playwright history 시험](https://github.com/microsoft/playwright/blob/main/tests/page/page-history.spec.ts)의 실제 엔진·주소 왕복, [Vue Router](https://github.com/vuejs/router/blob/main/packages/router/src/router.ts)의 같은 목적지 중복 이동 판정, [React Router history](https://github.com/remix-run/react-router/blob/main/packages/react-router/lib/router/history.ts)의 항목 key·index 구분이다. [Playwright Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE), [Vue MIT](https://github.com/vuejs/router/blob/main/LICENSE), [React Router MIT](https://github.com/remix-run/react-router/blob/main/LICENSE.md)를 확인했다. 실제 항목을 비교하는 방식을 따르고 코드·의존성은 가져오지 않는다. 제품에 중복 push 방지를 추가할 근거는 없다.
+- 해당 owner 전체는 `NODE_PATH=<Playwright 1.64.1 모듈> PLAYWRIGHT_BROWSERS_PATH=<격리 브라우저> AAA_BIN=<자기 빌드> nice -n 15 node web/e2e/web.e2e.mjs --spec 39 --workers 1`로 확인한다. 묶음 착지 때 전체 ci-local을 실행한다. 실패 재시도·시한 연장·기대 길이 변경은 하지 않는다.
+
 ## E2E39 기록 수 실패 진단(t-0825)
 
 - `history-destinations.mjs`는 제품이 시작하기 전에 `pushState`·`replaceState`와 native `popstate`·`hashchange`, iframe load를 기록한다. 각 사건에 경과 시각·length·hash·설정 쪽/깊이·시트 표시를 남기고, 순회 시작/끝과 메뉴 상태·방향·목적지를 함께 보존한다. pairing query·전체 URL·임의 history state는 기록하지 않는다.
