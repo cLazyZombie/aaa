@@ -8,7 +8,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::Path,
     process::{Command, Stdio},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 const RULES: u32 = 1;
@@ -89,6 +89,15 @@ fn inline_tests(body: &str) -> bool {
 }
 pub(super) fn collect(cwd: &Path, store: &Path, known: &[String]) -> Result<Option<CodeLines>> {
     let started = Instant::now();
+    collect_with_elapsed(cwd, store, known, || started.elapsed())
+}
+// Git 실행을 포함한 경과의 출처만 분리한다. 시험도 같은 750ms 검사·실패 기록·캐시 경로를 쓴다.
+pub(super) fn collect_with_elapsed(
+    cwd: &Path,
+    store: &Path,
+    known: &[String],
+    mut elapsed: impl FnMut() -> Duration,
+) -> Result<Option<CodeLines>> {
     let info = text(cwd, &["show", "-s", "--format=%H%n%T%n%ct", "HEAD"])?;
     let fields: Vec<_> = info.lines().collect();
     ensure!(fields.len() == 3, "커밋 자료 없음");
@@ -166,7 +175,7 @@ pub(super) fn collect(cwd: &Path, store: &Path, known: &[String]) -> Result<Opti
         let mut input = child.stdin.take().unwrap();
         let mut output = BufReader::new(child.stdout.take().unwrap());
         for (name, blob, size, lang) in &objects {
-            ensure!(started.elapsed().as_millis() < 750, "코드 집계 경과 상한");
+            ensure!(elapsed() < Duration::from_millis(750), "코드 집계 경과 상한");
             writeln!(input, "{blob}")?;
             input.flush()?;
             let mut header = String::new();

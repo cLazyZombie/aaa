@@ -1,5 +1,5 @@
 use super::*;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 struct Lab(PathBuf);
 impl Lab {
     fn new() -> Self {
@@ -113,6 +113,10 @@ fn git(l: &Lab, args: &[&str]) -> String {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     String::from_utf8(o.stdout).unwrap().trim().into()
 }
+fn collect_lines(cwd: &Path, store: &Path, known: &[String]) -> Result<Option<aaa_proto::CodeLines>> {
+    // 집계 규칙·오류 원인 시험은 실제 Git을 쓰되 머신 부하로 시간 상한에 걸리지 않게 한다.
+    lines::collect_with_elapsed(cwd, store, known, || Duration::ZERO)
+}
 #[test]
 fn code_lines_use_commit_objects_incrementally_handle_rename_delete_and_keep_mixed_code_as_total() {
     let l = Lab::new();
@@ -123,29 +127,29 @@ fn code_lines_use_commit_objects_incrementally_handle_rename_delete_and_keep_mix
     l.put("vendor/x.rs", "exclude\n");
     git(&l, &["add", "."]);
     git(&l, &["commit", "-qm", "first"]);
-    let a = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    let a = collect_lines(&l.0, &state.0, &[]).unwrap().unwrap();
     assert_eq!(a.total_lines, 4);
     assert_eq!(a.scanned_files, 2);
     assert_eq!(a.breakdown.as_ref().unwrap().get("e2e"), Some(&2));
     l.put("src/a.rs", "dirty\nnew\nlines\n");
-    let cached = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    let cached = collect_lines(&l.0, &state.0, &[]).unwrap().unwrap();
     assert_eq!(cached, a, "dirty 파일은 커밋의 줄 수를 바꾸지 않는다");
     git(&l, &["mv", "web/e2e/a.mjs", "src/b.mjs"]);
     l.put("src/a.rs", "fn main() {}\n#[cfg(test)]\nmod tests {}\n");
     git(&l, &["add", "."]);
     git(&l, &["commit", "-qm", "second"]);
-    let b = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    let b = collect_lines(&l.0, &state.0, &[]).unwrap().unwrap();
     assert_eq!(b.total_lines, 5);
     assert!(b.breakdown.is_none());
     assert_eq!(b.split_status, "mixed_inline_tests");
     assert_eq!(b.changed_files, 2);
     assert!(
-        lines::collect(&l.0, &state.0, &[format!("{}:1", b.commit)]).unwrap().is_none(),
+        collect_lines(&l.0, &state.0, &[format!("{}:1", b.commit)]).unwrap().is_none(),
         "host가 이미 가진 커밋·규칙은 다른 머신에서도 재집계하지 않는다"
     );
     git(&l, &["rm", "src/b.mjs"]);
     git(&l, &["commit", "-qm", "third"]);
-    let c = lines::collect(&l.0, &state.0, &[]).unwrap().unwrap();
+    let c = collect_lines(&l.0, &state.0, &[]).unwrap().unwrap();
     assert_eq!(c.total_lines, 3);
     assert_eq!(c.changed_files, 0);
 }
@@ -229,15 +233,75 @@ fn failed_code_scan_is_not_repeated_for_the_same_commit_and_next_commit_can_reco
     fs::write(l.0.join("broken.ts"), [0xff, 0xfe]).unwrap();
     git(&l, &["add", "."]);
     git(&l, &["commit", "-qm", "broken source"]);
-    let first = lines::collect(&l.0, &state.0, &[]).unwrap_err();
-    assert!(first.to_string().contains("UTF-8"));
+    // 같은 손상 객체도 예산이 먼저 끝나면 UTF-8 대신 시간 상한 오류가 난다.
+    let expired = Lab::new();
+    let limit_error = lines::collect_with_elapsed(&l.0, &expired.0, &[], || Duration::from_millis(750)).unwrap_err();
+    assert_eq!(limit_error.to_string(), "코드 집계 경과 상한");
+    let first = collect_lines(&l.0, &state.0, &[]).unwrap_err();
+    assert!(first.to_string().contains("UTF-8"), "{first:#}");
+    assert!(!state.0.join("lines.json").exists(), "실패한 집계를 성공 스냅샷으로 저장하지 않는다");
     // 같은 객체를 다시 해독하면 UTF-8 오류다. 두 번째 회수는 객체 읽기 전에 멈춘다.
-    let second = lines::collect(&l.0, &state.0, &[]).unwrap_err();
-    assert!(second.to_string().contains("이미 시도"));
+    let second =
+        lines::collect_with_elapsed(&l.0, &state.0, &[], || panic!("같은 커밋은 객체 읽기 전에 멈춘다")).unwrap_err();
+    assert!(second.to_string().contains("이미 시도"), "{second:#}");
     l.put("broken.ts", "export const repaired = true;\n");
     git(&l, &["add", "."]);
     git(&l, &["commit", "-qm", "fixed source"]);
-    assert_eq!(lines::collect(&l.0, &state.0, &[]).unwrap().unwrap().total_lines, 1);
+    assert_eq!(collect_lines(&l.0, &state.0, &[]).unwrap().unwrap().total_lines, 1);
+}
+
+#[test]
+fn code_scan_elapsed_limit_preserves_snapshot_and_next_commit_can_recover() {
+    let l = Lab::new();
+    git(&l, &["init", "-q", "-b", "main"]);
+    l.put("a.rs", "fn a() {}\n");
+    l.put("b.rs", "fn b() {}\n");
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "first"]);
+    let before_limit = Duration::from_nanos(749_999_999);
+    let limit = Duration::from_millis(750);
+    // 750ms 직전·정확한 경계·초과와 첫 객체 처리 뒤 상한 도달을 실제 대기 없이 검사한다.
+    let cases = [
+        ([before_limit; 2], true),
+        ([limit; 2], false),
+        ([Duration::from_millis(751); 2], false),
+        ([Duration::ZERO, limit], false),
+    ];
+    let states: Vec<_> = cases.iter().map(|_| Lab::new()).collect();
+    for state in &states {
+        assert_eq!(collect_lines(&l.0, &state.0, &[]).unwrap().unwrap().total_lines, 2);
+    }
+    l.put("a.rs", "fn a() {}\n// changed\n");
+    l.put("b.rs", "fn b() {}\n// changed\n");
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "changed"]);
+    for ((times, succeeds), state) in cases.iter().zip(&states) {
+        let snapshot = fs::read(state.0.join("lines.json")).unwrap();
+        let mut checks = 0;
+        let result = lines::collect_with_elapsed(&l.0, &state.0, &[], || {
+            let elapsed = times[checks];
+            checks += 1;
+            elapsed
+        });
+        if *succeeds {
+            assert_eq!(result.unwrap().unwrap().total_lines, 4);
+            assert_eq!(checks, 2);
+        } else {
+            let error = result.unwrap_err();
+            assert_eq!(error.to_string(), "코드 집계 경과 상한");
+            assert_eq!(checks, if times[0] < limit { 2 } else { 1 });
+            assert_eq!(fs::read(state.0.join("lines.json")).unwrap(), snapshot, "부분 집계는 저장하지 않는다");
+            let again = lines::collect_with_elapsed(&l.0, &state.0, &[], || panic!("실패한 커밋은 재스캔하지 않는다"))
+                .unwrap_err();
+            assert!(again.to_string().contains("이미 시도"), "{again:#}");
+        }
+    }
+    git(&l, &["commit", "--allow-empty", "-qm", "recover"]);
+    for ((_, succeeded), state) in cases.iter().zip(&states) {
+        let recovered = collect_lines(&l.0, &state.0, &[]).unwrap().unwrap();
+        assert_eq!(recovered.total_lines, 4);
+        assert_eq!(recovered.changed_files, if *succeeded { 0 } else { 2 });
+    }
 }
 
 #[cfg(unix)]

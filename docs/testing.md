@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 코드 줄 수 시험의 경과 시간 분리(t-0845)
+
+- `nice -n 15 cargo test --locked -p aaa-agent --lib workspace_metrics -- --nocapture`: 실제 Git 객체를 읽고, 집계 규칙·UTF-8 오류·같은 커밋 재스캔 방지·다음 커밋 회복 시험에는 고정 경과 0을 넣는다. 같은 손상 객체에 경과 750ms를 넣으면 시간 상한 오류가 먼저 발생하는 대조도 둔다. Git 자식 실행이 느려져도 오류 원인 시험의 결과가 달라지지 않으며, 오류 단언에는 실제 오류 원문을 남긴다.
+- 별도 경계 시험은 749,999,999ns·750ms·751ms와 첫 객체 처리 뒤 750ms 도달을 주입한다. 상한 오류·검사 횟수·기존 성공 스냅샷의 바이트 보존·부분 집계 미저장·동일 커밋 재스캔 방지·다음 커밋 증분 회복을 검사한다. 같은 커밋 재호출에서 경과 함수를 부르면 panic하므로 객체 검사 전에 멈추는지 확인한다. 고정 sleep·상한 연장·ignore·재시도는 없다.
+- 제품 입구는 기존과 같이 Git 조회 전에 `Instant::now()`를 만들고 각 객체 읽기 전에 실제 경과 `< 750ms`를 검사한다. 경과 출처만 함수 인자로 분리하며 API·집계 규칙·비용 상한·저장 형식은 유지한다. [원본 Windows CI](https://github.com/cLazyZombie/aaa/actions/runs/39895911745/job/120226199404)에는 UTF-8 단언 실패만 있고 첫 오류 값은 없어 750ms 오류가 원본 실패의 직접 원인이라고 확정하지 않는다. 코드에서 확인한 부하 의존 경로를 제거한다.
+- 참고 후보: [tokei 정확도 시험](https://github.com/XAMPPRocky/tokei/blob/master/tests/accuracy.rs)의 fixture 기반 집계 단언과 [scc worker 시험](https://github.com/boyter/scc/blob/master/processor/workers_test.go)의 입력별 직접 결과 단언. [tokei MIT](https://github.com/XAMPPRocky/tokei/blob/master/LICENCE-MIT)와 [scc MIT](https://github.com/boyter/scc/blob/master/LICENSE)를 확인했다. 확인한 집계·시험 경로에서 750ms 상한 시험 예제는 찾지 못했으며, 정확도와 실행 속도를 분리하는 방식만 따르고 코드는 복사하지 않았다.
+- 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`·의존 경계 시험·공개 검사다. Windows 실기 실행 여부는 보고에 별도로 남긴다.
+
 ## 입력 기록 초기화와 파일 보기 재열기 대기(t-0836)
 
 - 원본 [run 39889977347](https://github.com/cLazyZombie/aaa/actions/runs/39889977347)은 CPU 3개·worker 2개·94파일/105작업 중 E2E09의 「보낸 뒤 비움」과 E2E16의 「다시 읽은 뒤 소스」가 각각 20초에 실패했다. 앞 대기는 textarea가 아니라 진단 수집 건수다. 원본 산출물에는 해당 화면의 DOM·요청·사건 기록이 없어 세부 원인을 확정하지 않는다.
