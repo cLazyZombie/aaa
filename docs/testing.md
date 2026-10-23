@@ -1589,7 +1589,7 @@ hook CLI 진단은 기존 `codex_integration`의 무음 시험이 기본 exit 0�
 | 순수 규칙·판정(Rust) | 소스 옆 `#[cfg(test)]` | `cargo test -p <crate>` |
 | 여러 프로세스(host·agent·session·CLI) | `crates/aaa/tests/*.rs` + 실험실 `crates/aaa/tests/lab/mod.rs` | `cargo test -p aaa --test m13 <이름>` |
 | 웹 순수 규칙 | `web/test/*.test.mjs`(`node --test`) | `cd web && npm test` |
-| 웹 화면(실제 host·agent + Playwright) | `web/e2e/specs/NN-기능.mjs` + `web/e2e/lib/harness.mjs`(아래 「웹 E2E」) | `node web/e2e/web.e2e.mjs [--spec 07]` |
+| 웹 화면(실제 host·agent + Playwright) | `web/e2e/specs/번호-기능.mjs` + `web/e2e/lib/harness.mjs`(아래 「웹 E2E」) | `node web/e2e/web.e2e.mjs [--spec 07]` |
 
 ## 기다리기
 
@@ -1746,13 +1746,14 @@ web/e2e/web.e2e.mjs        입구: spec 파일마다 lib/child.mjs 프로세스�
 web/e2e/durations.json     파일마다 기록한 초. 함께 돌 때 긴 파일부터 넣는다
 web/e2e/lib/harness.mjs    실험실(host·agent·가짜 push·구독 서버·시험 프로그램)·Chromium·step·기다림·화면·IME·push 도우미, runSpec
 web/e2e/lib/devices.mjs    기기 꼴과 그 기기 규칙의 가짜(iOS 소리·알림), 기록을 사건으로 기다림(아래 「실기와 headless」)
-web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). export default async function ({ ctl, page }) { … }
+web/e2e/specs/번호-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). export default async function ({ ctl, page }) { … }
 ```
 
 - **파일마다 새 실험실.** host·agent·Chromium을 파일마다 새로 띄운다(`/tmp/aaw-<pid>`, 준비 약 1.5초, 웹 port는 host가 고른다). 앞 파일이 만든 pane·질문·구독·설정에 기대지 않으므로 파일 하나를 혼자, 여러 번, 다른 파일과 함께 돌릴 수 있다. 한 파일 안 단계는 차례로 돌고 앞 단계가 만든 상태를 쓸 수 있다(그래서 `--grep`으로 뒤 단계만 고르면 앞 단계가 만든 것이 없을 수 있다: 그때는 `--spec`으로 파일을 돈다).
 - **준비(`runSpec`).** host·agent(`labA`)·셸 탭 `t1`을 띄우고, 첫 화면 `ctl`·`page`(1280×800, 입력줄)를 t1에 연다. t1에는 `t1-42`가 찍혀 있다: 단계가 t1로 돌아왔는지는 이 글로 본다. 단계가 실패하면 그 파일의 나머지 단계는 돌지 않고 다음 파일로 간다. 파일 안 여러 단계가 같은 준비에 기대면 harness의 준비 도우미를 부른다(`pushLab`: push 서명 키·구독 하나·demo, 17·18). 준비는 `step(…, { always: true })`라 `--grep`으로 단계 하나만 골라도 돈다. 그 파일만 실험실 환경을 바꾸려면 `export const labEnv = { … }`(11: `AAA_TEST_DETECT_GRACE_MS`, 17·18: `AAA_TEST_NOTIFY_DEBOUNCE_MS`, 18: `AAA_TEST_PRESENCE_LEASE_MS`). 제품 시간을 줄이는 값은 그 기다림을 기본값으로 도는 파일을 하나 남긴다(위 표).
 - **함께 돌기.** 파일은 worker 여러 개가 함께 돈다. 기본은 10 CPU 이상이면 CPU 수의 5/8 내림·최대10개, 그 밖은 core 둘마다 하나다(`MAX_WORKERS`, t-0670·t-0810의 같은 머신 전체 검증으로 비교), `--workers 1`·`AAA_E2E_WORKERS=1`이면 예전처럼 차례로 돌고 출력을 바로 보인다. 2 이상이면 파일이 끝날 때 그 파일의 `## specs/…`와 단계 줄을 한 덩어리로 찍는다. 함께 돌 때는 `durations.json`의 긴 파일부터 넣는다(LPT): 가장 긴 파일이 늦게 시작해 혼자 남지 않게. 적지 않은 새 spec은 가장 긴 것으로 보고 맨 앞에 넣는다. 파일 시간이 크게 바뀌면 `--write-durations`(모두 통과한 실행의 시간을 적는다)로 다시 적는다. 시간이 늘어도 재시도·timeout 연장으로 넘기지 않는다: 한 파일이 혼자 오래 걸리면 그 파일을 기능별로 나눈다(앞 단계 상태에 기대는 단계는 그 준비를 도우미로).
 - **고르기.** `--spec 07`·`--spec 07-scroll-history,09`(파일), `--grep '앞 기록'`(단계 이름 정규식, `AAA_E2E_ONLY`와 같다), `--repeat 25`(고른 파일을 새 실험실로 25번, 끝에 통과 수와 중간·가장 긴 시간. 기본 worker 수로 함께 돈다: 혼자 돌 때 간헐 실패는 `--workers 1`), `--list`(돌지 않고 이름만). 스크린샷 폴더는 첫 인자.
+- **번호·수집.** 파일 번호는 두 자리 이상 숫자다(`01-…`, `99-…`, `100-…`). 목록·단일 worker 실행·요약·시간 기록·patch 도구의 파일 목록은 숫자 순으로 정렬한다. 병렬 worker의 기존 긴 작업 우선 배치는 유지하고 같은 우선순위에서는 숫자 순을 따른다. 새 기능은 빈 다음 번호를 쓰고 기존 번호를 재사용하지 않는다. 파일 규칙과 실제 runner `--list` 회귀는 모든 파일의 수집 및 99→100 순서를 함께 확인한다.
 - **새 기능.** 그 기능의 spec 끝에 단계를 더한다. 새 화면·새 기능 묶음이면 다음 번호로 새 spec을 만든다. 도우미는 두 spec 이상이 쓰면 harness에 두고 끝의 `export { … }`에 더하며, 하나만 쓰면 그 spec 안에 둔다. 단계 이름은 모든 spec에서 하나다. harness 이름을 쓰면 spec 머리 `import { … } from "../lib/harness.mjs"`에 더한다(빠지면 그 단계가 ReferenceError로 실패한다). 틀은 `web/test/e2e-layout.test.mjs`가 본다.
 - **기다리기.** pane 출력은 `waitOutput`(host 사건), DOM은 `domIs`(MutationObserver), 주소는 `hashIs`, 그 밖은 `until`(시한 있는 반복). 새 시험은 앞 셋을 먼저 쓴다. 「이 화면이 보내지 않았다」는 `sentFrames`로 바로 보고, 「pane이 다 받았다」는 보낸 글(`sentText`)과 받은 글이 같아질 때까지 기다린다(03 키 막대 `sent`).
 - **나누기 전 한 파일을 고친 branch.** 병합에서 `web/e2e/web.e2e.mjs`가 충돌하면 main의 입구를 받고 자기 변경을 옮긴다:
@@ -3301,3 +3302,8 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
   실제 외부 푸시 비발행은 Rust notify 큐 owner로 검사하며 UI 알림 개수로 추정하지 않는다.
 - 참고한 herdr-web-ui Composer/PromptCard(aa624cb, MIT), herdr-projects coordinator 안내·진행 hook(v0.2.35, MIT)의
   기존 이식 경계를 유지한다. 전체 ci-local·Linux strict cross·공개 검사를 수행하며 GitHub CI를 기다리지 않는다.
+
+## E2E 세 자리 번호 수집(t-0943)
+
+- 첫 세 자리 E2E100을 착지에 배정한 뒤 전체 gate의 파일 규칙 검사에서 RED를 확인했다. runner discovery도 두 자리만 받던 원인이므로 파일 규칙과 수집을 함께 두 자리 이상으로 바꾼다. 목록·단일 worker 실행·요약·시간 기록과 patch 파일 목록은 숫자 순을 따른다. 기존 LPT 배치와 단계 분할은 유지한다.
+- `e2e-layout.test.mjs`는 실제 runner의 `--list`에서 디렉터리의 모든 파일이 정확히 한 번 수집되고 E2E99 바로 다음에 E2E100이 오는지 검사한다. 기존 파일 형식·단계 이름 중복·harness export·duration 소유 검사는 유지한다. 시험을 제외하거나 번호를 재사용하지 않는다. 전체 gate는 새 수리 SHA에서 처음부터 한 번 실행한다.

@@ -1,5 +1,5 @@
 // 웹 front E2E: 실제 aaa host·agent를 띄우고 headless Chromium·WebKit으로 pairing·보기·입력·권한·알림·끊김을 확인한다.
-// 단계는 기능별 파일(web/e2e/specs/NN-*.mjs)에 있고, 파일마다 새 실험실(host·agent·Chromium, /tmp/aaw-<pid>)에서 돈다.
+// 단계는 기능별 파일(web/e2e/specs/번호-기능.mjs, 번호는 두 자리 이상)에 있고, 파일마다 새 실험실(host·agent·Chromium, /tmp/aaw-<pid>)에서 돈다.
 // 파일은 worker 여러 개가 함께 돈다(실험실끼리 나누는 것이 없다). 긴 파일부터 넣는다(durations.json, 기록한 초).
 //
 // 실행(저장소 루트): cargo build -p aaa && (cd web && npm run build) && cargo build -p aaa
@@ -24,6 +24,7 @@ import { planJobs, specDurations } from "./lib/jobs.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const specDir = path.join(here, "specs");
+const compareSpecs = (a, b) => parseInt(a, 10) - parseInt(b, 10) || a.localeCompare(b);
 const STEP = /^ {2}await step\("((?:[^"\\]|\\.)*)"/;
 const durationsFile = path.join(here, "durations.json");
 // 10 CPU 이상은 5/8 내림·최대10개, 그 밖은 core 둘마다 하나다. 실험실·브라우저는 작업마다 격리한다.
@@ -60,8 +61,8 @@ const only = grep ? new RegExp(grep) : null;
 
 const specs = fs
   .readdirSync(specDir)
-  .filter((f) => /^\d\d-.+\.mjs$/.test(f))
-  .sort()
+  .filter((f) => /^\d{2,}-[a-z0-9-]+\.mjs$/.test(f))
+  .sort(compareSpecs)
   .map((f) => {
     const steps = fs
       .readFileSync(path.join(specDir, f), "utf8")
@@ -151,7 +152,7 @@ else if (opt.writeDurations) {
     const ms = specDurations(runs, s.name, opt.repeat);
     durations[s.name] = Math.round(ms[ms.length >> 1] / 1000);
   }
-  const sorted = Object.fromEntries(Object.entries(durations).sort(([a], [b]) => a.localeCompare(b)));
+  const sorted = Object.fromEntries(Object.entries(durations).sort(([a], [b]) => compareSpecs(a, b)));
   fs.writeFileSync(durationsFile, `${JSON.stringify(sorted, null, 2)}\n`);
   console.log(`## ${path.relative(process.cwd(), durationsFile)}에 파일 ${picked.length}개 시간을 적었다`);
 }
