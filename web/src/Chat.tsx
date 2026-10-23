@@ -694,8 +694,9 @@ export function ChatPanel({
   const holdAnchor = (el: HTMLDivElement) => {
     const at = anchor.current;
     if (at === null || restoring.current) return;
-    // scroll 사건보다 먼저 ResizeObserver가 올 수 있다. 아직 반영 안 된 손의 이동을 덮지 않는다.
-    if (Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
+    // 자체 쓰기는 곧바로 되읽어 lastScrollTop에 둔다. 1px도 실제 이동이므로 허용 오차로 덮지 않는다.
+    // scroll 사건보다 먼저 ResizeObserver가 와도 아직 반영 안 된 손의 이동을 지킨다.
+    if (el.scrollTop !== lastScrollTop.current) return;
     const index = rowAtRef.current.get(at.rowId) ?? -1;
     const row = index < 0 ? undefined : chatRows(el)[index];
     if (row === undefined) return;
@@ -713,7 +714,7 @@ export function ChatPanel({
   const resizeRow = useRef<() => void>(() => {});
   resizeRow.current = () => {
     const el = list.current;
-    if (!el || Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
+    if (!el || el.scrollTop !== lastScrollTop.current) return;
     if (atBottom.current) scrollToEnd(false);
     else holdAnchor(el);
   };
@@ -817,7 +818,7 @@ export function ChatPanel({
     // 늦은 scroll 사건이 앞 쪽 읽기 중 따라가기를 다시 켜지 않게, 그리기 직후 반영한다.
     const end = Math.max(0, el.scrollHeight - el.clientHeight);
     if (lastScrollTop.current > end && Math.abs(el.scrollTop - end) <= 1) lastScrollTop.current = el.scrollTop;
-    if (Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
+    if (el.scrollTop !== lastScrollTop.current) return;
     if (atBottom.current) {
       el.style.removeProperty("--chat-tail-space");
       el.scrollTop = el.scrollHeight;
@@ -833,7 +834,7 @@ export function ChatPanel({
     if (el === null) return;
     let lane = "";
     const observer = new ResizeObserver((entries) => {
-      if (Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
+      if (el.scrollTop !== lastScrollTop.current) return;
       let follow = false;
       for (const entry of entries) {
         if (entry.target === el) { follow = true; continue; }
@@ -883,7 +884,7 @@ export function ChatPanel({
         onScroll={(e) => {
           // 위로 굴린 손만 따라가기를 끈다: 아래로 가는 자동 굴림은 다음 잰 높이보다 먼저 올 수 있다(참고 ChatView.tsx onScroll)
           const el = e.currentTarget;
-          const manual = Math.abs(el.scrollTop - lastScrollTop.current) > 1;
+          const manual = el.scrollTop !== lastScrollTop.current;
           const scrollingUp = el.scrollTop < lastScrollTop.current;
           lastScrollTop.current = el.scrollTop;
           if (manual && (!atBottom.current || scrollingUp)) {

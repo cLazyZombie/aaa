@@ -225,6 +225,29 @@ export default async function () {
       });
       assert.equal(headerShift.growth, 1, "안내 높이 변화 준비");
       assert.equal(headerShift.after, 0, `맨 위에서 안내 재측정: ${JSON.stringify(headerShift)}`);
+      // 실제 scroll 사건의 1px도 읽던 자리다. 끝난 입력 뒤 안내가 재측정돼도 그 줄을 지킨다.
+      const pixelAnchor = await inTime(chat.evaluate(async (c) => {
+        const trusted = await new Promise((done) => {
+          c.addEventListener("scroll", (event) => done(event.isTrusted), { once: true });
+          c.scrollBy(0, 1);
+        });
+        const top = c.scrollTop, first = c.querySelector(".chat-row").getBoundingClientRect().top;
+        const note = c.querySelector(".chat-note"), before = note.getBoundingClientRect().height;
+        note.style.paddingBottom = "2px";
+        await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+        return { trusted, top, after: c.scrollTop, first, afterFirst: c.querySelector(".chat-row").getBoundingClientRect().top,
+          growth: note.getBoundingClientRect().height - before };
+      }), 20_000, "1px 이동 뒤 안내 높이 측정");
+      assert.equal(pixelAnchor.trusted, true, "브라우저가 보낸 실제 scroll 사건");
+      assert.equal(pixelAnchor.top, 1, "실제 1px 스크롤 준비");
+      assert.equal(pixelAnchor.growth, 1, "1px 입력 뒤 안내 재측정 준비");
+      assert.equal(pixelAnchor.after, 2, `1px 입력 뒤 읽던 자리: ${JSON.stringify(pixelAnchor)}`);
+      assert.equal(pixelAnchor.afterFirst, pixelAnchor.first, "안내 재측정이 읽던 줄을 옮겼다");
+      // 이 회귀의 2→0 이동이 낸 scrollend를 다음 손가락의 종료로 받지 않는다.
+      await inTime(chat.evaluate((c) => new Promise((done) => {
+        c.addEventListener("scrollend", () => done(), { once: true });
+        c.scrollTop = 0;
+      })), 20_000, "1px 회귀 뒤 맨 위 복귀 완료");
       await shot(page, `shell-chat-${harness}-${engine.browserType().name()}-${width}`);
       // 데스크톱 휠과 Chromium 휴대폰의 실제 터치를 확인한다. 앞 쪽 갱신은 읽던 위치를 지킨다.
       const top = await chat.evaluate((c) => c.scrollTop);
