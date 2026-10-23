@@ -6,6 +6,28 @@ import { pairDevice } from "./devices.mjs";
 let thread;
 const drawerIsOpen = (p) => p.locator("#workspace-drawer").evaluate((el) => el.classList.contains("is-open"));
 
+// 제품보다 먼저 설치해 기록 쓰기·실제 브라우저 이동의 순서를 보존한다.
+// pairing 주소의 인증 자료는 남기지 않고 이 시험이 쓰는 목적지만 기록한다.
+function traceHistory() {
+  if (window !== window.top) return;
+  const trace = window.__historyDestinations = [];
+  const record = (event, detail) => trace.push({
+    event, at: Math.round(performance.now()), detail, length: history.length, hash: location.hash,
+    settings: new URLSearchParams(location.search).get("settings"),
+    entry: history.state?.["aaa:settings"] ?? null,
+    sheet: history.state?.["aaa:sheet"] ?? null,
+  });
+  window.__markHistoryDestination = record;
+  for (const method of ["pushState", "replaceState"]) {
+    const write = history[method].bind(history);
+    history[method] = (...args) => { write(...args); record(method); };
+  }
+  for (const event of ["popstate", "hashchange"]) addEventListener(event, () => record(event));
+  document.addEventListener("load", (event) => {
+    if (event.target?.tagName === "IFRAME") record("iframe-load");
+  }, true);
+}
+
 async function setDrawer(p, open) {
   if ((await drawerIsOpen(p)) !== open) {
     if (open) await p.locator(".view [data-testid='drawer-toggle']:visible").click();
@@ -40,7 +62,7 @@ export async function historyDestinations(browser) {
     thread = aaa("thread", "start", "demo", "--title", "이동 목적지", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/history-task.md`);
   }
   const engine = browser.browserType().name();
-  const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone");
+  const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone", { init: traceHistory });
   try {
     const entries = [];
     const remember = async (selector) => {
@@ -70,17 +92,18 @@ export async function historyDestinations(browser) {
     await p.getByRole("tab", { name: "모양", exact: true }).click();
     await p.getByRole("tabpanel", { name: "모양", exact: true }).waitFor();
     await remember('#settings-panel[aria-label="모양"]');
-    const length = await p.evaluate(() => history.length);
+    const length = await p.evaluate(() => { window.__markHistoryDestination("순회 시작"); return history.length; });
 
     for (const open of [true, false]) {
       for (const direction of [-1, 1]) {
         const targets = direction < 0 ? entries.slice(0, -1).reverse() : entries.slice(1);
         for (const entry of targets) {
           await setDrawer(p, open);
-          await inTime(p.evaluate((direction) => new Promise((done) => {
+          await inTime(p.evaluate(({ direction, open, entry }) => new Promise((done) => {
+            window.__markHistoryDestination("이동 전", { open, direction, entry });
             addEventListener("popstate", done, { once: true });
             if (direction < 0) history.back(); else history.forward();
-          }), direction), 20_000, "목적지 순회의 popstate");
+          }), { direction, open, entry }), 20_000, "목적지 순회의 popstate");
           await shown(p, entry);
           // React effect와 drawer transition까지 끝난 상태를 검사한다.
           await inTime(p.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))), 20_000, "목적지 그리기");
@@ -90,7 +113,8 @@ export async function historyDestinations(browser) {
       }
       await shot(p, `39-history-${engine}-${open ? "open" : "closed"}`);
     }
-    if (await p.evaluate(() => history.length) !== length) throw new Error(`${engine}: 메뉴 토글·기록 순회가 기록 칸을 추가했다`);
+    const actualLength = await p.evaluate(() => { window.__markHistoryDestination("순회 끝"); return history.length; });
+    if (actualLength !== length) throw new Error(`${engine}: 메뉴 토글·기록 순회가 기록 칸 수를 바꿨다: 기대=${length}, 실제=${actualLength}, 순서=${JSON.stringify(await p.evaluate(() => window.__historyDestinations))}`);
 
     // 빈 첫 칸은 기존 규칙대로 보던 pane으로 정규화한다. 이 조기 return 경로도 메뉴를 닫아야 한다.
     await setDrawer(p, true);
@@ -116,6 +140,13 @@ export async function historyDestinations(browser) {
       if (await drawerIsOpen(p)) throw new Error(`${engine}: 빈 칸 순회 뒤 메뉴 열림`);
     }
   } catch (error) {
+    try {
+      const trace = await p.evaluate(() => window.__historyDestinations);
+      fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+      fs.writeFileSync(`${root}/diagnostics/history-destinations-${engine}.json`, JSON.stringify(trace, null, 2));
+    } catch (diagnosticError) {
+      console.log(`기록 순회 진단 저장 실패: ${diagnosticError.message}`);
+    }
     await shot(p, `39-history-${engine}-failure`);
     throw error;
   } finally {

@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## E2E39 기록 수 실패 진단(t-0825)
+
+- `history-destinations.mjs`는 제품이 시작하기 전에 `pushState`·`replaceState`와 native `popstate`·`hashchange`, iframe load를 기록한다. 각 사건에 경과 시각·length·hash·설정 쪽/깊이·시트 표시를 남기고, 순회 시작/끝과 메뉴 상태·방향·목적지를 함께 보존한다. pairing query·전체 URL·임의 history state는 기록하지 않는다.
+- 마지막 비교의 기대/실제 length와 사건 순서를 실패 메시지에 넣는다. 순회 도중 실패해도 실험실의 `diagnostics/history-destinations-<engine>.json`에 기록을 저장하므로 기존 CI 산출물 수집에 포함된다. 증가·감소를 모두 실패로 유지하며 기존 목적지·본문·메뉴 단언, 시한과 사건 대기는 바꾸지 않는다.
+- 기준 be26951f에서 로컬 E2E39 전체 1회, 캡처 없는 목적지 순회 1회, 고정 8회/worker 3의 목적지 순회, 전체 ci-local과 원래 실패 머신의 동일 binary E2E39 전체 고정 3회/worker 3이 모두 통과했다. 별도로 보고서 응답을 다음 본문 이동까지 보류한 순서와 Chromium CPU 8배 감속도 각각 통과했다. 모든 수집본의 시작/끝 length는 12이고 순회 중 제품의 기록 쓰기는 없었다. 이 결과는 원본 실패 재현이나 원인 수리의 증거가 아니다.
+- 원본에는 기대/실제 length와 쓰기 순서가 없어 제품 결함·시험 경합·브라우저 관측 차이를 확정하지 못했다. 진단을 포함한 새 실패 자료가 필요하다. 제품을 추측해 바꾸거나 성공한 실행으로 원래 실패를 덮지 않는다.
+- 작업 폴더의 별도 복사본에만 마지막 `pushState`·`replaceState`를 주입한 대조는 기대 12/실제 13으로 실패하며 두 호출의 순서와 CI용 JSON 복사를 확인했다. 이 주입은 제품·최종 시험에 넣지 않으며 원본 결함 재현으로 해석하지 않는다.
+
 ## restart 시험의 FDA 주입 환경 격리(t-0821)
 
 - `nice -n 15 cargo test --locked -p aaa --test restart -- --nocapture`: FdaGate의 시험용 `posix_spawn` interpose가 `session-host` 자식을 열 때만 `DYLD_INSERT_LIBRARIES`·`AAA_TEST_FDA_GATE`를 제거한다. worker 자신의 환경과 실제 재시작 exec는 유지하며, 같은 worker PID의 라이브러리 로드·TCC open 진입을 재시작 전후 각각 1회·2회 확인한다. 제품 코드·launcher·실제 TCC DB·시스템 설정은 바꾸지 않는다.
