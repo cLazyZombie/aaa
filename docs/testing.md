@@ -3107,3 +3107,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - m13 계정 owner의 실제 로컬/TLS 원격 PTY는 raw mode에서 첫 DSR만 쓰고 응답을 받기 전까지 출력·인증·갱신을 시작하지 않는다. 기존 계정 동시 갱신·부분 회전·가림·재개 단언과 사건 시한은 유지한다.
 - 참고는 [Microsoft Terminal ConPTY 연결](https://github.com/microsoft/terminal/blob/main/src/cascadia/TerminalConnection/ConptyConnection.cpp)(MIT), [WezTerm portable-pty](https://github.com/wezterm/wezterm/blob/main/pty/src/win/pseudocon.rs)(MIT), [xterm InputHandler](https://github.com/xtermjs/xterm.js/blob/master/src/common/InputHandler.ts)(MIT)다. 질의 응답과 출력 처리 경계를 참고하며 외부 코드는 복사하지 않는다. Windows 재현용 raw 계측은 제품 커밋에서 제거한다.
 - 정본은 전체 ci-local·공개 검사·Linux cross strict clippy와 Windows 시험 서비스의 실제 Codex 화면·brief 전달이다. 운영 인증은 사용하지 않고 가짜 API 인증·loopback 주소로 시험한다. 결과·로그 보존 뒤 전용 서비스·확인한 PID·시험 폴더를 지우고 기준 목록을 대조한다.
+
+## 머신 정보 오른쪽 패널(t-0911)
+
+- E2E98은 실제 agent의 `MachineHealth.info` 수집을 기다리고 Chromium·WebKit ×1280·390에서 열기·닫기·Esc·데스크톱 머신 교체를 확인한다. amber·catppuccin·GitHub Dark 캡처와 패널 가로 넘침을 검사한다. 실제 수집과 구판/끊김 표시 fixture를 구분한다.
+- 웹 순수 규칙은 구판의 모름, 끊긴 지표 유지, 판 비교 경고 부재와 수집 시각을 확인한다. Rust는 명령 실패/첫 줄 추출·구판 역직렬화, 실제 Host의 disconnect 및 DB 재열기 뒤 마지막 정보 유지로 확인한다.
+- 명령·DOM·state 사건 완료를 기다리고 고정 sleep·재시도·시한 연장은 없다. 전체 ci-local과 공개 검사가 정본이다.
+
+- E2E58의 가짜 CLI는 `--version`을 로그인 FIFO와 분리한다. 수정 전 fixture에 `--version`을 주고 로그인 신호를 쓰면 인증 파일을 만드는 대조로 신호 소비를 확인했다. 두 가짜 CLI의 판 조회는 FIFO writer 없이 완료돼야 하며 실제 로그인·취소·계정 선택 단언과 기존 시간 상한은 유지한다.

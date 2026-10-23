@@ -12,6 +12,8 @@ fs.mkdirSync(bin, { recursive: true });
 // 공식 CLI 흉내: `go-<kind>` FIFO에서 한 줄(ok·fail)을 받으면 결과를 남기고 끝난다. 결과 글은 시험이 미리 써 둔다
 const fake = `#!/bin/sh
 kind=$(basename "$0")
+# 상태 표시용 판 조회는 로그인 FIFO를 열지 않는다.
+if [ "$1" = --version ]; then printf "%s fixture-version\\n" "$kind"; exit 0; fi
 read cmd < "${bin}/go-$kind"
 [ "$cmd" = ok ] || exit 1
 if [ "$kind" = codex ]; then
@@ -24,6 +26,9 @@ fi
 for (const kind of ["claude", "codex"]) {
   fs.writeFileSync(`${bin}/${kind}`, fake, { mode: 0o755 });
   execFileSync("mkfifo", [`${bin}/go-${kind}`]);
+  // FIFO에 쓰는 쪽이 없어도 --version은 즉시 끝나야 한다(로그인 신호를 소비하지 않는다).
+  const version = execFileSync(`${bin}/${kind}`, ["--version"], { timeout: 10_000, encoding: "utf8" }).trim();
+  if (version !== `${kind} fixture-version`) throw new Error(`가짜 CLI 판 조회: ${version}`);
 }
 export const labEnv = { PATH: `${bin}:${process.env.PATH}` };
 

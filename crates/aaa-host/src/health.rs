@@ -95,6 +95,12 @@ impl Host {
             if send {
                 m.health_sent = Some(HealthSent { cpu: h.cpu_pct, mem: mem_pct(&h), at_ms: now });
             }
+            if send {
+                // 끊김·host 재시작 뒤에도 마지막 표본과 수집 시각을 읽는다.
+                if let Ok(value) = serde_json::to_string(&h) {
+                    let _ = self.db.set_meta(&format!("machine_health:{mid}"), &value);
+                }
+            }
             m.health = Some((h, skew));
             (changed, send)
         };
@@ -161,6 +167,7 @@ mod tests {
 
     fn report(cpu: Option<u8>, mem_pct: Option<u64>) -> MachineHealth {
         MachineHealth {
+            info: None,
             at_ms: 1,
             disk_free_bytes: Some(100),
             disk_total_bytes: Some(1000),

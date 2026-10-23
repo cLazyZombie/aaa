@@ -125,6 +125,7 @@ pub fn typescript_bindings() -> String {
         Connection::decl(&cfg),
         MachineView::decl(&cfg),
         MachineHealth::decl(&cfg),
+        MachineInfo::decl(&cfg),
         MachineSelfcheck::decl(&cfg),
         HealthProblem::decl(&cfg),
         QueueState::decl(&cfg),

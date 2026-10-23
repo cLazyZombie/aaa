@@ -1,0 +1,15 @@
+.machine-info-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 70; width: min(420px, 100%); display: flex; flex-direction: column; background: var(--bg-panel); color: var(--text); border-left: var(--hairline) solid var(--border); box-shadow: var(--shadow-drawer); }
+.machine-info-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); border-bottom: var(--hairline) solid var(--border); }
+.machine-info-head h2 { margin: var(--space-1) 0 0; font-size: var(--fs-md); color: var(--text-strong); overflow-wrap: anywhere; }
+.machine-info-caption, .machine-info-body h3 { color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
+.machine-info-body { overflow-y: auto; overscroll-behavior: contain; padding: var(--space-4) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom)); }
+.machine-info-body section + section { margin-top: var(--space-5); }
+.machine-info-body h3 { margin: 0 0 var(--space-2); }
+.machine-info-body dl { margin: 0; }
+.machine-info-body dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-2) 0; border-bottom: var(--hairline) solid var(--border); font-size: var(--fs-sm); }
+.machine-info-body dt { color: var(--text-dim); }
+.machine-info-body dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.machine-info-stale { padding: var(--space-3); margin: 0 0 var(--space-4); background: var(--bg-elevated); border-radius: var(--radius-md); font-size: var(--fs-sm); }
+button.machine-title { justify-content: flex-start; gap: 0; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+button.machine-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius-sm); }
+@media (max-width: 640px) { .machine-info-panel { width: 100%; border-left: 0; } }

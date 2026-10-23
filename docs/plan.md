@@ -7708,3 +7708,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증·참고.** 가짜 Windows System·대상별 SHA owner, 두 OS 실기 후보와 별도 시험 SCM 서비스, host를 내린 독립 복구를 확인한다. Windows 읽기 전용 핸들의 FlushFileBuffers 오류 5를 네이티브 대조하고 복구 사본 flush를 쓰기 핸들로 고쳤다. rustup(MIT)·self-replace(Apache-2.0)·Tailscale(BSD-3-Clause)의 파일 보관·갱신용 사본 수명을 참고하고 외부 코드는 가져오지 않는다. 절차는 [시험](testing.md), 사용법·최초 baseline 반영 조건은 [Windows rollout](windows-rollout.md)을 따른다.
 
 - **34회차 착지 통합(t-0920).** 기준 main `92b997d4`의 마지막 §8.472·FRONT_API 1.113·AGENT_LINK 1.11·E2E97을 확인했다. t-0904·t-0918·t-0907·t-0912를 각각 --no-ff로 합치고 이미지 수리는 §8.473, Windows SCM rollout은 §8.474·FRONT_API 1.114로 배정한다. 판 조회의 로그 전용 처리·ConPTY 질의 우선 처리·이미지 타입 가림·SCM 독립 복구를 유지하며 오류 진단을 결합한다. 격리 Playwright 1.64.1·Chromium/WebKit 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 빌드를 한 번 확인한다. E2E97만 기존 오류 「입력 echo의 xterm ACK가 20초 안에 오지 않았다」로 실패하고 나머지가 통과하면 착지한다. 다른 실패는 원문·부하를 보존하고 push하지 않는다. GitHub CI는 기다리지 않으며 설치기 실행·배포·tag·release는 수행하지 않는다.
+
+### 8.475 머신 정보 오른쪽 패널(t-0911)
+
+- 머신 패널의 이름 단추를 누르면 오른쪽 420px 상세를 연다. 640px 이하에서는 전체 폭 시트이며 닫기·Esc·다른 머신 선택을 지원한다. 선택 ID만 웹에 두고 값은 host의 MachineView를 그대로 읽는다.
+- 연결·마지막 지표/정보 시각, OS/아키텍처·CPU 모델/논리 코어·CPU/메모리/디스크/부하, aaa·Claude Code·Codex 판·설치 방식·작업 폴더를 정보 행으로 표시한다. 빠진 값은 모름이며 끊긴 머신도 마지막 표본을 보인다. 판 비교·허용 판 목록·판 경고는 없다.
+- FRONT_API 1.115의 선택 `MachineHealth.info`에 시스템·harness 판 수집 시각을 싣는다. agent 시작 시와 10분마다 조회하고 기존 건강 보고/재연결 경로로 전한다. 각 명령은 기존 10초 상한을 따르며 조회 실패는 None이고 건강 problems에 넣지 않는다. AGENT_LINK 1.11은 유지한다(기존 Health 사건의 선택 칸, 구판은 생략/무시). host는 마지막 표본을 DB에 저장해 재시작 뒤에도 복원한다.
+- herdr-web-ui(MIT)의 MachineSidebar·DevicesPanel 정보 행과 기존 task 상세 시트의 테마 토큰을 따른다. herdr(Apache-2.0)·herdr-projects(MIT)의 머신/프로젝트 상태 구분도 확인했다. Glances(LGPL-3.0)의 시스템 정보/지표 분리를 참고하고 코드는 가져오지 않는다.
+- 웹 순수 규칙·실제 agent/host 저장 시험과 E2E98(Chromium·WebKit ×1280·390, 테마 캡처·전환·구판·끊김)을 검사한다. 전체 ci-local·공개 검사 뒤 묶음 착지 창을 기다린다. 절·API·E2E 번호는 착지 때 main과 대조한다.

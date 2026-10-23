@@ -80,7 +80,16 @@ fn the_machine_view_carries_the_last_hello_build_and_keeps_it_after_a_host_resta
         let older = view(&h);
         assert!(older.software_differs);
         assert_eq!(older.selfcheck, None);
+        let health: aaa_proto::MachineHealth = serde_json::from_value(serde_json::json!({
+            "at_ms": aaa_common::util::now_ms(), "disk_free_bytes": 50, "disk_total_bytes": 100,
+            "load_x100": 10, "cpus": 8, "on_ac": true, "toolchain": [], "problems": [], "warnings": [],
+            "info": { "at_ms": 1234, "os_version": "Example OS", "cpu_model": "Example CPU",
+                "claude": "claude 1", "codex": "codex 2", "installation": null, "work_root": "/work" }
+        }))
+        .unwrap();
+        h.on_health("m-b", health.clone());
         h.agent_disconnected("m-b", 2);
+        assert_eq!(view(&h).health, Some(health));
         Arc::downgrade(&h)
     });
     drop(rt);
@@ -95,6 +104,9 @@ fn the_machine_view_carries_the_last_hello_build_and_keeps_it_after_a_host_resta
         assert_eq!(after.sha256, Some("ab".repeat(32)));
         assert!(after.software_differs);
         assert!(after.features.is_empty() && after.selfcheck.is_none());
+        let info = after.health.unwrap().info.unwrap();
+        assert_eq!(info.codex.as_deref(), Some("codex 2"));
+        assert_eq!(info.at_ms, 1234);
         Arc::downgrade(&h)
     });
     drop(rt);

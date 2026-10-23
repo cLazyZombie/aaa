@@ -1,4 +1,5 @@
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
+import { MachineInfoPanel } from "./MachineInfoPanel";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   AgentActivity,
@@ -397,6 +398,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const drawer = useMemo(() => ({ open: drawerOpen, toggle: () => setDrawerOpen((open) => !open) }), [drawerOpen]);
   // 활동 막대(plan §8.240): 사이드바가 보이는 패널 하나, 넓은 창에서 접었나. 둘 다 기기마다 기억한다(sidebarPanel.ts).
   // 접힘은 769px부터만 뜻이 있다(좁은 창의 사이드바는 drawer이고 같은 단추가 drawer를 닫는다)
+  const [machineInfo, setMachineInfo] = useState<string | null>(null);
+  const closeMachineInfo = useCallback(() => setMachineInfo(null), []);
   const [panel, setPanel] = useState<SidebarPanel>(storedPanel);
   const [collapsed, setCollapsed] = useState(storedCollapsed);
   useEffect(() => storeSidebar(panel, collapsed), [panel, collapsed]);
@@ -1417,6 +1420,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <div className="sidebar-existing" hidden={settingsOpen && wideScreen}>
         <ErrorBoundary area="목록" resetKeys={[panel]}>
         <Sidebar
+          onMachineInfo={(id) => { setMachineInfo(id); setDrawerOpen(false); }}
           panel={panel}
           machines={machines}
           rollout={rollout}
@@ -1664,6 +1668,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         </ErrorBoundary>
         </div>
       </main>
+      {machineInfo && machines.find(m => m.id === machineInfo) && <MachineInfoPanel machine={machines.find(m => m.id === machineInfo)!} onClose={closeMachineInfo} />}
       <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
         <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
