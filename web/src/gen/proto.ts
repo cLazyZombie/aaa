@@ -302,6 +302,10 @@ selfcheck?: MachineSelfcheck, };
 
 export type MachineHealth = {
 /**
+ * 표시 전용 시스템 정보. 옛 agent는 생략하며 판 조회 실패로 세션을 막지 않는다.
+ */
+info?: MachineInfo,
+/**
  * agent 시계
  */
 at_ms: number,
@@ -333,6 +337,8 @@ problems: Array<HealthProblem>,
  * 거부하지는 않는 주의(배터리 전원 등)
  */
 warnings: Array<string>, };
+
+export type MachineInfo = { at_ms: number, os_version: string | null, cpu_model: string | null, claude: string | null, codex: string | null, installation: string | null, work_root: string, };
 
 export type MachineSelfcheck = { pass: boolean, reasons: Array<string>, };
 

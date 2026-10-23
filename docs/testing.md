@@ -3003,3 +3003,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `scripts/test-windows-service-pane.ps1`은 실행자가 기준 목록을 저장한 `C:\aaa-test\t-NNNN` 안에서만 쓴다. 전용 `aaa-test-…` SCM 가상 계정을 [CreateServiceW의 계약](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-createservicew)에 따라 NULL password로 만들고, 해당 폴더에만 접근을 허용한 뒤 원래 ACL로 돌린다. 실제 host·agent·thread 준비·session-host·ConPTY와 가짜 harness의 ready→입력→pong을 확인하고 네 프로세스가 모두 Session 0임을 검사한다. 실제 암호·사용자 서비스·설치·sshd·전역 PATH·방화벽은 바꾸지 않는다. 사용자 Codex 인증이나 실제 Codex TUI의 인수를 대신하지 않는다. 자기 서비스·프로세스·private 시험 디렉터리는 정리하고 결과·로그만 남긴다. 최종 실행자는 전역 기준 목록 대조 후 자기 시험 폴더도 지운다.
 - PowerShell 5.1용 원본은 UTF-8 BOM으로 저장하고 자식 출력도 UTF-8로 읽는다. `-ExecutionPolicy Bypass`는 시험 자식 process 인자에만 주며 저장된 정책을 바꾸지 않는다. 준비는 로그 줄·CLI 종료·제품 `pane wait-output`·SCM 종료 사건으로 확인한다. 고정 sleep·실패 재시도·시한 증가·단언 완화는 없다. 오류에는 thread 준비·자리·journal 권한·brief·pane 명세·PTY·자식 실행 단계와 해당 경로를 붙이며 인자 전체·환경값은 덧붙이지 않는다.
 - [WezTerm portable-pty ConPTY](https://github.com/wezterm/wezterm/blob/main/pty/src/win/conpty.rs)([MIT](https://github.com/wezterm/wezterm/blob/main/LICENSE.md)), [Windows Terminal의 ConPTY 구현](https://github.com/microsoft/terminal/blob/main/src/winconpty/winconpty.cpp)([MIT](https://github.com/microsoft/terminal/blob/main/LICENSE)), [OpenSSH for Windows의 PTY 실행 분리](https://github.com/PowerShell/openssh-portable/blob/latestw_all/contrib/win32/win32compat/w32-doexec.c)([BSD 계열 고지](https://github.com/PowerShell/openssh-portable/blob/latestw_all/LICENCE))를 먼저 조사했다. PTY·자식 실행·입출력 경계를 나누는 방식을 참고하며 코드나 의존성은 복사하지 않는다. ConPTY를 원인으로 가정해 우회하지 않는다. 정본은 전체 ci-local·공개 검사와 Windows strict cross clippy·실제 SCM owner다.
+
+## 머신 정보 오른쪽 패널(t-0911)
+
+- E2E98은 실제 agent의 `MachineHealth.info` 수집을 기다리고 Chromium·WebKit ×1280·390에서 열기·닫기·Esc·데스크톱 머신 교체를 확인한다. amber·catppuccin·GitHub Dark 캡처와 패널 가로 넘침을 검사한다. 실제 수집과 구판/끊김 표시 fixture를 구분한다.
+- 웹 순수 규칙은 구판의 모름, 끊긴 지표 유지, 판 비교 경고 부재와 수집 시각을 확인한다. Rust는 명령 실패/첫 줄 추출·구판 역직렬화, 실제 Host의 disconnect 및 DB 재열기 뒤 마지막 정보 유지로 확인한다.
+- 명령·DOM·state 사건 완료를 기다리고 고정 sleep·재시도·시한 연장은 없다. 전체 ci-local과 공개 검사가 정본이다.
+
+- E2E58의 가짜 CLI는 `--version`을 로그인 FIFO와 분리한다. 수정 전 fixture에 `--version`을 주고 로그인 신호를 쓰면 인증 파일을 만드는 대조로 신호 소비를 확인했다. 두 가짜 CLI의 판 조회는 FIFO writer 없이 완료돼야 하며 실제 로그인·취소·계정 선택 단언과 기존 시간 상한은 유지한다.

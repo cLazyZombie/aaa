@@ -1470,6 +1470,10 @@ pub struct MachineSelfcheck {
 /// agent가 주기적으로 보내는 머신 건강(§8.10)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MachineHealth {
+    /// 표시 전용 시스템 정보. 옛 agent는 생략하며 판 조회 실패로 세션을 막지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub info: Option<MachineInfo>,
     /// agent 시계
     #[ts(type = "number")]
     pub at_ms: u64,
@@ -1499,6 +1503,19 @@ pub struct MachineHealth {
     pub problems: Vec<HealthProblem>,
     /// 거부하지는 않는 주의(배터리 전원 등)
     pub warnings: Vec<String>,
+}
+
+/// agent가 10분마다 수집한 표시 전용 정보. 실패한 값은 None이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineInfo {
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub os_version: Option<String>,
+    pub cpu_model: Option<String>,
+    pub claude: Option<String>,
+    pub codex: Option<String>,
+    pub installation: Option<String>,
+    pub work_root: String,
 }
 
 /// 건강 이상 하나. `code`는 바뀌지 않는 종류(`disk`·`toolchain:<이름>`·`clock`)이고 `text`는 지금 값이 든 설명이다.

@@ -263,6 +263,7 @@ export interface SidebarProps {
   onPane: (id: string) => void;
   onThread: (t: ThreadView) => void;
   onNewShell: (m: MachineView) => void;
+  onMachineInfo: (id: string) => void;
   /** 모든 thread(끝난 것까지) 화면 */
   onThreads: () => void;
   /** 자동화 패널을 보이고 본문에 그 규칙 설정을 연다(thread 줄 「자동화 thread」 표지, plan t-0475 A1). 이름이 없으면 새 자동화(t-0628) */
@@ -414,7 +415,7 @@ function MachineStrip(props: SidebarProps) {
         return (
           <section key={m.id} className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
             <header className="machine-header">
-              <div className="machine-title">
+              <button type="button" className="machine-title" aria-label={`${m.name} 기기 정보`} onClick={() => props.onMachineInfo(m.id)}>
                 <span className="sidebar-mark" aria-hidden="true">
                   <Monitor />
                 </span>
@@ -425,7 +426,7 @@ function MachineStrip(props: SidebarProps) {
                   </span>
                 )}
                 <span className={`machine-dot is-${online ? (problems ? "error" : "connected") : "disconnected"}`} title={online ? (problems ? "점검 이상" : "연결됨") : "끊김"} aria-hidden="true" />
-              </div>
+              </button>
               {/* agent·CPU·MEM(plan §8.245·§8.256): 연결 중일 때만 */}
               {stats && (
                 <MachineMeters

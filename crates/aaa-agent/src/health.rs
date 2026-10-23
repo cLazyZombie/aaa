@@ -300,6 +300,7 @@ pub async fn collect(cfg: &HealthSection, work_root: &Path, work_mount: Option<&
         warnings.push("배터리 전원".into());
     }
     MachineHealth {
+        info: None,
         at_ms: aaa_common::util::now_ms(),
         disk_free_bytes: d.map(|x| x.0),
         disk_total_bytes: d.map(|x| x.1),
@@ -316,6 +317,58 @@ pub async fn collect(cfg: &HealthSection, work_root: &Path, work_mount: Option<&
     }
 }
 
+/// 표시용 명령은 실패 이유를 값으로 노출하지 않는다.
+async fn info_value(program: &str, args: &[&str]) -> Option<String> {
+    let argv: Vec<String> = std::iter::once(program).chain(args.iter().copied()).map(str::to_owned).collect();
+    run(&argv).await.ok().map(|s| first_line(&s)).filter(|s| !s.is_empty())
+}
+
+async fn machine_info(root: &Path) -> aaa_proto::MachineInfo {
+    let (claude, codex) = tokio::join!(info_value("claude", &["--version"]), info_value("codex", &["--version"]));
+    #[cfg(target_os = "macos")]
+    let (os_version, cpu_model) = tokio::join!(
+        info_value("/usr/bin/sw_vers", &["-productVersion"]),
+        info_value("/usr/sbin/sysctl", &["-n", "machdep.cpu.brand_string"])
+    );
+    #[cfg(target_os = "linux")]
+    let (os_version, cpu_model) = (
+        std::fs::read_to_string("/etc/os-release").ok().and_then(|s| {
+            s.lines().find_map(|l| l.strip_prefix("PRETTY_NAME=").map(|v| v.trim_matches('"').to_owned()))
+        }),
+        std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|s| {
+            s.lines().find_map(|l| {
+                l.strip_prefix("model name").and_then(|v| v.split_once(':')).map(|(_, v)| v.trim().to_owned())
+            })
+        }),
+    );
+    #[cfg(windows)]
+    let (os_version, cpu_model) = (
+        info_value("cmd.exe", &["/d", "/c", "ver"]).await,
+        std::env::var("PROCESSOR_IDENTIFIER").ok().filter(|v| !v.is_empty()),
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    let (os_version, cpu_model) = (None, None);
+    // 상속된 XPC_SERVICE_NAME만으로는 pane에서 시작한 시험 agent도 launchd로 오인한다.
+    // 직접 부모가 등록된 launcher인 경우만 launchd로 표시한다.
+    let installation = if cfg!(windows) && std::env::args_os().any(|a| a == "service-run") {
+        Some("Windows 서비스".to_owned())
+    } else {
+        aaa_common::process::parent(std::process::id())
+            .and_then(aaa_common::process::image)
+            .filter(|p| aaa_common::process::is_launcher(p))
+            .map(|_| "launchd".to_owned())
+    };
+    aaa_proto::MachineInfo {
+        at_ms: aaa_common::util::now_ms(),
+        os_version,
+        cpu_model,
+        claude,
+        codex,
+        installation,
+        work_root: root.to_string_lossy().into_owned(),
+    }
+}
+
 impl Agent {
     /// 주기 점검. 결과는 기억해 두었다가 host가 다시 붙을 때도 보낸다.
     pub fn start_health(self: &Arc<Self>, cfg: HealthSection) {
@@ -323,9 +376,16 @@ impl Agent {
         let every = Duration::from_secs(cfg.every_s);
         let (me, s) = (self.clone(), stats.clone());
         tokio::spawn(async move {
+            let mut info = None;
+            let mut observed = None;
             loop {
                 let threads = me.threads_cfg.lock().unwrap().clone();
                 let mut h = collect(&cfg, &threads.work_root, threads.work_mount.as_deref()).await;
+                if observed.is_none_or(|at: Instant| at.elapsed() >= Duration::from_secs(600)) {
+                    info = Some(machine_info(&threads.work_root).await);
+                    observed = Some(Instant::now());
+                }
+                h.info = info.clone();
                 s.lock().unwrap().fill(&mut h);
                 *me.health.lock().unwrap() = Some(h.clone());
                 me.send_health(h).await;
@@ -408,6 +468,7 @@ mod tests {
         let (used, total) = memory().unwrap();
         assert!(used > 0 && used <= total, "{used}/{total}");
         let mut h = MachineHealth {
+            info: None,
             at_ms: 0,
             disk_free_bytes: None,
             disk_total_bytes: None,
@@ -426,6 +487,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn display_probe_failure_is_unknown_and_old_health_has_no_info() {
+        assert_eq!(info_value("/bin/sh", &["-c", "exit 3"]).await, None);
+        assert_eq!(info_value("/bin/sh", &["-c", "printf 'tool 1\\nsecond'"]).await.as_deref(), Some("tool 1"));
+        let cfg = HealthSection { min_free_gb: 0, ..HealthSection::default() };
+        let h = collect(&cfg, Path::new("/tmp"), None).await;
+        let mut wire = serde_json::to_value(&h).unwrap();
+        wire.as_object_mut().unwrap().remove("info");
+        assert!(serde_json::from_value::<MachineHealth>(wire).unwrap().info.is_none());
+    }
+
+    #[tokio::test]
     async fn problems_from_disk_and_toolchain() {
         let mut cfg = HealthSection { every_s: 60, min_free_gb: 0, toolchain: Default::default() };
         cfg.toolchain.insert("ok".into(), vec!["/bin/sh".into(), "-c".into(), "echo 'tool 1.2'".into()]);
@@ -439,5 +511,16 @@ mod tests {
         let all = h.problems.iter().map(|p| format!("{}={}", p.code, p.text)).collect::<Vec<_>>().join(" | ");
         assert!(all.contains("toolchain:bad=toolchain bad 실패") && all.contains("nope"), "{all}");
         assert!(all.contains("disk=디스크 여유"), "{all}");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_info_tests {
+    #[tokio::test]
+    async fn windows_system_information_is_display_only() {
+        let info = super::machine_info(std::path::Path::new("C:\\aaa-test")).await;
+        assert!(info.os_version.as_deref().is_some_and(|v| v.contains("Windows")));
+        assert!(info.cpu_model.as_deref().is_some_and(|v| !v.is_empty()));
+        assert!(info.at_ms > 0);
     }
 }

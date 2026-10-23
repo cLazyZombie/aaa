@@ -7660,3 +7660,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **원인·수리.** 승격·서비스 token의 기본 owner가 Administrators이면 일반 생성한 `thread-preparations`도 그 소유권을 받는다. private ACL 이행의 `ReOpenFile`이 디렉터리에서 Win32 5로 실패해 thread 자리 생성·ConPTY에 이르지 못했다. 기본 owner가 현재 SID와 다른 token만 최초 handle에 `WRITE_OWNER`를 요청한다. 같은 handle의 기존 owner·객체 종류를 확인한 뒤 기존 private DACL·소유권 검증을 유지한다.
 - **진단.** thread 준비·작업 root 잠금·자리·journal 권한·brief·hook·pane 상태/명세/로그·PTY·자식 실행의 문맥을 오류 체인에 붙인다. 실행 인자 전체나 환경값은 추가하지 않는다. 원본 로그의 한글은 UTF-8로 정상이었으며 서비스 로그 형식은 바꾸지 않는다.
 - **검증.** 실제 Windows의 기존 ACL owner 실패 대조와 상속 journal·부모 ACL 보존 회귀를 검사한다. 별도 SCM 가상 계정에서 실제 host·agent·thread·session-host·ConPTY를 열고 Session 0과 ready/입력/pong을 확인한다. 실제 암호와 사용자 서비스·설정·sshd는 보존하며 기준 목록을 대조해 정리한다. API·프로토콜·기존 E2E 번호를 유지한다. 절 번호는 묶음 착지 때 main과 대조한다.
+
+### 8.472 머신 정보 오른쪽 패널(t-0911)
+
+- 머신 패널의 이름 단추를 누르면 오른쪽 420px 상세를 연다. 640px 이하에서는 전체 폭 시트이며 닫기·Esc·다른 머신 선택을 지원한다. 선택 ID만 웹에 두고 값은 host의 MachineView를 그대로 읽는다.
+- 연결·마지막 지표/정보 시각, OS/아키텍처·CPU 모델/논리 코어·CPU/메모리/디스크/부하, aaa·Claude Code·Codex 판·설치 방식·작업 폴더를 정보 행으로 표시한다. 빠진 값은 모름이며 끊긴 머신도 마지막 표본을 보인다. 판 비교·허용 판 목록·판 경고는 없다.
+- FRONT_API 1.114의 선택 `MachineHealth.info`에 시스템·harness 판 수집 시각을 싣는다. agent 시작 시와 10분마다 조회하고 기존 건강 보고/재연결 경로로 전한다. 각 명령은 기존 10초 상한을 따르며 조회 실패는 None이고 건강 problems에 넣지 않는다. AGENT_LINK 1.11은 유지한다(기존 Health 사건의 선택 칸, 구판은 생략/무시). host는 마지막 표본을 DB에 저장해 재시작 뒤에도 복원한다.
+- herdr-web-ui(MIT)의 MachineSidebar·DevicesPanel 정보 행과 기존 task 상세 시트의 테마 토큰을 따른다. herdr(Apache-2.0)·herdr-projects(MIT)의 머신/프로젝트 상태 구분도 확인했다. Glances(LGPL-3.0)의 시스템 정보/지표 분리를 참고하고 코드는 가져오지 않는다.
+- 웹 순수 규칙·실제 agent/host 저장 시험과 E2E98(Chromium·WebKit ×1280·390, 테마 캡처·전환·구판·끊김)을 검사한다. 전체 ci-local·공개 검사 뒤 묶음 착지 창을 기다린다. 절·API·E2E 번호는 착지 때 main과 대조한다.

@@ -102,3 +102,18 @@ describe("머신 상세 M0", () => {
     assert.equal(ago(NOW + 5000, NOW), "방금");
   });
 });
+
+describe("기기 정보 패널", () => {
+  it("구판은 모름, 판 차이를 경고하지 않고 끊긴 표본을 보존한다", async () => {
+    const { machineInfoGroups } = await import("../src/machineDetail.ts");
+    const rows = m => machineInfoGroups(m).flatMap(g => g.rows);
+    assert.equal(row(rows(base), "Codex").value, "모름");
+    const offline = { ...base, connection: "disconnected", software: "aaa old", software_differs: true, health: { ...health, info: { at_ms: NOW, cpu_model: "Example CPU", claude: "Claude 1", codex: "Codex 2", work_root: "/work", installation: null } } };
+    assert.equal(row(rows(offline), "CPU 모델").value, "Example CPU");
+    assert.equal(row(rows(offline), "aaa").value, "aaa old");
+    assert.equal(row(rows(offline), "Codex").value, "Codex 2");
+    assert.equal(row(rows(offline), "디스크 여유").value, "50.0 GB / 500.0 GB");
+    assert.equal(rows(offline).some(r => r.warn), false);
+    assert.notEqual(row(rows(offline), "정보 수집").value, "모름");
+  });
+});

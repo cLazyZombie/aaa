@@ -63,3 +63,36 @@ export function machineRows(m: MachineView, now: number): DetailRow[] {
     });
   return rows;
 }
+
+/** 판은 실제 조회 결과만 표시한다. 구판·조회 실패는 모름, 끊겨도 마지막 표본을 보인다. */
+export function machineInfoGroups(m: MachineView): { title: string; rows: DetailRow[] }[] {
+  const h = m.health;
+  const info = h?.info;
+  const value = (v: string | number | null | undefined) => v == null || v === "" ? "모름" : String(v);
+  const at = (n: number | null | undefined) => n ? new Date(n).toLocaleString("ko-KR", { hour12: false }) : "모름";
+  return [
+    { title: "연결", rows: [
+      { label: "상태", value: m.connection === "connected" ? "연결됨" : "끊김" },
+      { label: "역할", value: m.local ? "host 머신" : "agent 머신" },
+      { label: m.connection === "connected" ? "agent 연결" : "마지막 연결", value: at(m.last_seen_ms) },
+      { label: "지표 수집", value: at(h?.at_ms) },
+      { label: "정보 수집", value: at(info?.at_ms) },
+    ] },
+    { title: "시스템", rows: [
+      { label: "OS", value: [osLabel(m.os), info?.os_version, archLabel(m.arch)].filter(Boolean).join(" · ") || "모름" },
+      { label: "CPU 모델", value: value(info?.cpu_model) },
+      { label: "논리 코어", value: value(h?.cpus) },
+      { label: "CPU 사용", value: h?.cpu_pct == null ? "모름" : `${h.cpu_pct}%` },
+      { label: "메모리", value: h?.mem_used_bytes != null && h?.mem_total_bytes != null ? `${gb(h.mem_used_bytes)} / ${gb(h.mem_total_bytes)}` : "모름" },
+      { label: "디스크 여유", value: h?.disk_free_bytes != null && h?.disk_total_bytes != null ? `${gb(h.disk_free_bytes)} / ${gb(h.disk_total_bytes)}` : "모름" },
+      { label: "1분 부하", value: h?.load_x100 == null ? "모름" : (h.load_x100 / 100).toFixed(2) },
+    ] },
+    { title: "소프트웨어", rows: [
+      { label: "aaa", value: value(m.software) },
+      { label: "Claude Code", value: value(info?.claude) },
+      { label: "Codex", value: value(info?.codex) },
+      { label: "설치 방식", value: value(info?.installation) },
+      { label: "작업 폴더", value: value(info?.work_root) },
+    ] },
+  ];
+}

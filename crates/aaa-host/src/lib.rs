@@ -734,7 +734,10 @@ impl Host {
                     dev_mode: false,
                     conn: None,
                     last_seen_ms: m.last_seen_ms,
-                    health: None,
+                    health: db
+                        .meta(&format!("machine_health:{}", m.id))?
+                        .and_then(|v| serde_json::from_str(&v).ok())
+                        .map(|h| (h, 0)),
                     health_sent: None,
                     features: vec![],
                     identity: None,
