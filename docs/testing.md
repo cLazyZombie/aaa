@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 시스템 Zig로 Linux strict cross 검사
+
+- macOS에서는 Homebrew의 `zig`와 Rust의 `x86_64-unknown-linux-gnu` target을 준비한다. `nice -n 15 bash scripts/ci-local.sh --only linux-clippy --tee`는 workspace/all-targets/locked/keep-going과 `-D warnings`로 실제 Linux cfg를 검사한다. 기본 ci-local·GitHub OS별 검사는 유지하며 cross 단계는 명시할 때만 돈다.
+- `scripts/ci-linux-clippy.sh`는 현재 PATH 끝에 저장소의 `scripts/cross`를 붙인다. 기존 `x86_64-linux-gnu-gcc`·명시한 `CC_x86_64_unknown_linux_gnu`·`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER`를 우선한다. 없으면 작은 GCC 이름 wrapper가 `zig cc -target x86_64-linux-gnu`로 C 빌드와 링크를 연결한다. 셸 rc·전역 PATH·기본 native linker는 바꾸지 않는다.
+- wrapper는 `AAA_ZIG` 실행 파일, 현재 PATH의 `zig`, Homebrew 표준 경로 순서로 찾는다. 기존 작업 폴더의 Zig는 `AAA_ZIG=/path/to/zig` 또는 기존 PATH로 계속 사용할 수 있다. cc-rs가 덧붙이는 `--target=x86_64-unknown-linux-gnu`만 Zig 형식 `--target=x86_64-linux-gnu`로 바꾸고 나머지 인자는 유지한다. 명시 경로가 실패하면 다른 판으로 조용히 바꾸지 않고 원래 오류를 반환한다.
+- `python3 -m unittest scripts.test_linux_cross scripts.test_ci_local`은 공백·셸 문자 인자의 그대로 전달, Zig 종료 코드 전파, 기존 컴파일러·linker 보존과 선택 단계 집계를 확인한다. 실제 cross clippy와 전체 ci-local도 각각 실행한다. cross clippy는 Linux에서의 실행 시험을 대신하지 않는다.
+- 참고: [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)의 [MIT 라이선스](https://github.com/rust-cross/cargo-zigbuild/blob/main/LICENSE), [hermetic_cc_toolchain](https://github.com/uber/hermetic_cc_toolchain)의 [MIT 라이선스](https://github.com/uber/hermetic_cc_toolchain/blob/main/LICENSE). 두 구현의 `zig cc`와 명시 target 전달 방식을 참고하고 코드는 복사하지 않았다. 추가 Cargo 도구나 GCC toolchain 설치 없이 이 검사의 작은 연결만 둔다.
+
 ## GitHub 웹 E2E 직렬 실행과 파일 보기 Escape(t-0830)
 
 - 공개 `macos-15` arm64 러너는 [GitHub 사양](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에 따라 3 CPU다. 10 CPU 미만인 기존 로컬 기본값 `floor(cores / 2)`는 worker 1이 된다. CI만 `AAA_E2E_WORKERS=2`로 명시하고 로컬 기본과 `--workers` 우선순위는 유지한다. 모든 spec·브라우저·viewport·독립 단계는 그대로 한 번씩 실행한다.

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# GCC 이름을 기대하는 cc-rs와 Rust linker를 시스템 Zig에 연결한다.
+# AAA_ZIG에 실행 파일을 주거나 PATH 앞에 작업 폴더의 zig를 두어 판을 고를 수 있다.
+set -eu
+
+if [ -n "${AAA_ZIG:-}" ]; then
+  zig=$AAA_ZIG
+elif command -v zig >/dev/null 2>&1; then
+  zig=$(command -v zig)
+elif [ -x /opt/homebrew/bin/zig ]; then
+  zig=/opt/homebrew/bin/zig
+elif [ -x /usr/local/bin/zig ]; then
+  zig=/usr/local/bin/zig
+else
+  echo 'Linux cross 검사에 Zig가 필요하다: brew install zig 또는 AAA_ZIG=<zig 실행 파일>' >&2
+  exit 127
+fi
+# cc-rs는 clang 감지 뒤 Rust triple을 추가한다. Zig의 OS 자리에는 unknown이 없다.
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --target=x86_64-unknown-linux-gnu) args+=(--target=x86_64-linux-gnu) ;;
+    *) args+=("$arg") ;;
+  esac
+done
+exec "$zig" cc -target x86_64-linux-gnu "${args[@]}"
