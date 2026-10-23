@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 알림 중 터미널·대화 입력(t-0859)
+
+- E2E94 `94-notice-input`은 실제 host·agent·PTY를 띄우고 알림만 events WebSocket 경계에 주입한다. Chromium 3840px(DPR 2)·390px, WebKit 1280px·390px에서 각기 새 pane을 만든다. 알림 세 번의 등장·교체와 보고서 배지·질문/알림함 갱신 동안 6 frame마다 키를 보내며(60Hz에서 약 10타/초), 애니메이션 완료 사건으로 끝낸다. 고정 sleep·시한 연장은 없다.
+- 터미널은 보낸 글의 정확한 순서와 실제 PTY에서 돌아온 전체 글을 검사한다. 대화는 초안 전체가 같은지 검사하며 두 보기 모두 focusin 사건 없음·동일 textarea 유지·키 누락 없음·`role=status`/`aria-live=polite`를 본다. 필터 상자의 폭이 실제 카드보다 크면 실패한다. 구판은 첫 4K 알림에서 필터 3840px·카드 396px로 실패했다.
+- 키→DOM 반영 뒤 첫 frame(터미널은 PTY 왕복 포함)의 중앙값·95백분위·최대와 frame 간격·50ms 이상 작업을 진단으로 출력한다. 공유 머신의 속도 수치를 통과 조건으로 삼지 않는다. 회귀 판정은 필터 처리 범위와 정확한 입력·포커스다. Windows Edge 실사용과 headless macOS 계측을 동일시하지 않는다.
+- 참고 후보는 [VS Code 알림](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/browser/parts/notifications/notificationsToasts.ts), [react-hot-toast Toaster](https://github.com/timolins/react-hot-toast/blob/main/src/components/toaster.tsx), [Sonner Toaster](https://github.com/emilkowalski/sonner/blob/main/src/index.tsx)다. 세 프로젝트의 MIT 라이선스를 확인했다. 알림의 제한된 영역·포커스 유지·polite 알림 방식을 참고했고 코드나 의존성은 가져오지 않았다.
+- 전체 정본은 Playwright 1.64.1/격리 브라우저로 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다. 기존 E2E12·19의 알림 클릭·닫기·휴대폰 배치·소리 경로도 유지한다.
+
 ## Windows SSH 원격 install의 명시적 상태 경로(t-0847)
 
 - Windows 래퍼는 `install-probe`·`install-bootstrap`·`install --resume` 모두에 현지 `LOCALAPPDATA/aaa/state`를 한 인자로 전달한다. LOCALAPPDATA가 비어 있으면 USERPROFILE을 써서 `aaa-config::paths::default_state_dir_for(None)`과 맞춘다. 전역 AAA_STATE_DIR이나 host 머신의 경로를 전달하지 않는다.

@@ -42,8 +42,10 @@
 
 .droplet-goo {
   position: absolute;
-  left: 0;
-  right: 0;
+  /* SVG 필터는 투명한 부분도 처리한다. 4K 화면 전체를 매 프레임 흐리지 않고
+     실제 카드 폭만 잡는다. 세로 여백은 위로 쓸어 닫을 때의 기존 범위를 유지한다. */
+  left: calc((100% - var(--droplet-w)) / 2);
+  width: var(--droplet-w);
   top: 0;
   height: calc(var(--droplet-top) + var(--droplet-h) + var(--space-8));
   filter: url(#droplet-goo) drop-shadow(0 10px 14px var(--droplet-shadow));
