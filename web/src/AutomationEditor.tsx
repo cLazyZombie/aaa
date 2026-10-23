@@ -177,7 +177,9 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
   const [body, setBody] = useState<string | null>(null);
   const [check, setCheck] = useState<AutomationCheck | null>(null);
   const [preview, setPreview] = useState(false);
-  const [loading, setLoading] = useState(!creating);
+  // 새 초안도 첫 host 검사가 끝난 뒤 연다. 잠깐 보인 입력칸을 load가 제거하면
+  // focus와 실제 글 입력 사이에 대상이 사라져 이름 입력을 잃을 수 있다.
+  const [loading, setLoading] = useState(true);
   const [readOnlyReason, setReadOnlyReason] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
