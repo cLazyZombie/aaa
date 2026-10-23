@@ -14,6 +14,7 @@ for (const name of ["codex", "claude"]) {
 }
 const sid = (n) => `01900000-0000-7000-8000-${n.toString(16).padStart(12, "0")}`;
 let serial = 0;
+let shellDiagnostics = null;
 
 async function firstMessage(page, id) {
   const chat = page.getByTestId("chat");
@@ -35,7 +36,27 @@ async function resumed(engine, width, harness) {
   const pane = aaa("tab", "create", "--machine", "labA", "--label", name).tabs.at(-1).root.pane;
   const state = () => aaa("pane", "list").panes.find((p) => p.id === pane);
   const toggle = page.getByTestId("chat-toggle"), chat = page.getByTestId("chat");
-  let phase = "inline";
+  const diagnostics = new ChatDiagnostics(root, name);
+  shellDiagnostics = diagnostics;
+  diagnostics.page = page;
+  diagnostics.watch(page.context());
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/v1/call")) diagnostics.request(request, request.postDataJSON());
+  });
+  const connection = [];
+  page.on("websocket", (ws) => {
+    if (!ws.url().includes("/panes/")) return;
+    const entry = { pane: new URL(ws.url()).pathname.split("/").at(-2), at: Date.now() };
+    connection.push(entry);
+    diagnostics.remember([{ connection: entry }]);
+    ws.on("close", () => { entry.closed = Date.now(); });
+  });
+  let phase;
+  const mark = (next) => {
+    phase = next;
+    diagnostics.remember([{ at: Date.now(), phase, width, engine: engine.browserType().name(), harness }]);
+  };
+  mark("inline");
   const terminal = async () => {
     await toggle.waitFor();
     if (await toggle.getAttribute("aria-pressed") === "true") await toggle.click();
@@ -63,7 +84,7 @@ async function resumed(engine, width, harness) {
     await until("재개 전 원래 기록 연결", () => state().agent?.harness_session === id);
     await quit();
     for (const mode of harness === "codex" ? ["resume"] : ["--resume", "--continue"]) {
-      phase = `${mode}:terminal`;
+      mark(`${mode}:terminal`);
       aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${mode}${mode === "--continue" ? "" : ` ${id}`} --mouse`);
       await waitOutput(pane, "foreground-harness-ready");
       await until(`${mode}로 같은 대화 연결`, () => state().agent?.harness_session === id);
@@ -99,6 +120,7 @@ async function resumed(engine, width, harness) {
         }
         await until("프로그램 자체 대화 스크롤", async () => (await screenText(page)) !== previous);
         assert.deepEqual(await footer.boundingBox(), fixed, "프로그램 휠이 입력줄까지 움직였다");
+        mark(`${mode}:terminal:return-${turn + 1}`);
         await inList(page, "pane-t1");
         await inList(page, `pane-${name}`);
         await terminal();
@@ -107,7 +129,7 @@ async function resumed(engine, width, harness) {
       await toggle.waitFor();
       const newest = page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "pane_chat" && !r.request().postDataJSON()?.before);
       if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
-      phase = `${mode}:chat`;
+      mark(`${mode}:chat`);
       const reply = await (await newest).json();
       assert.ok(reply.ok?.messages?.some((message) => message.text.startsWith(`${id} 기록 359 ·`)), "재개한 최신 기록이 없다");
       // continue는 같은 기록의 읽던 맨 위를 복원한다. 화면 밖 최신 본문은 가상화되어 mount되지 않을 수 있다.
@@ -121,7 +143,7 @@ async function resumed(engine, width, harness) {
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
       // 자기 실험실 agent만 재시작한다. 저장된 연결을 없애 PID 증거로 다시 찾는지 확인한다.
       await stop("agent");
-      phase = `${mode}:restart`;
+      mark(`${mode}:restart`);
       const saved = `${root}/s/agent/sessions/${pane}/harness.json`;
       fs.rmSync(saved);
       start("agent", "agent", "--host", "local", "--name", "labA");
@@ -138,19 +160,49 @@ async function resumed(engine, width, harness) {
       await inList(page, `pane-${name}`);
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
       await shot(page, `${name}-${mode}-${width}`);
+      mark(`${mode}:quit`);
       await quit();
     }
+    mark("done");
   } catch (error) {
+    await diagnoseShell(error);
     fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
-    const view = await page.evaluate(() => ({
+    const view = await inTime(page.evaluate(() => ({
       terminal: { ...document.querySelector('[data-testid="terminal"]')?.dataset },
       screen: document.querySelector(".xterm-rows")?.textContent,
       viewport: [...document.querySelectorAll(".xterm-viewport")].map((el) => ({ top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight })),
       chat: document.querySelector('[data-testid="chat"]')?.textContent?.slice(0, 2000),
-    }));
+    })), 5000, "재개 실패 화면 수집").catch((error) => ({ captureError: String(error) }));
     fs.writeFileSync(`${root}/diagnostics/${name}.json`, JSON.stringify({ phase, width, engine: engine.browserType().name(), view }, null, 2));
     throw error;
-  } finally { await page.context().close(); }
+  } finally {
+    const phases = diagnostics.states.filter((state) => state.phase);
+    const closes1006 = await page.evaluate(() => window.__aaaTermLog.filter((entry) => entry.e === "ws close 1006").length).catch(() => null);
+    console.log("재개 진행", JSON.stringify({ name, width, engine: engine.browserType().name(), phase,
+      phases: phases.map((state) => [state.phase, state.at - diagnostics.started]),
+      connections: connection.length, closes1006,
+      samePaneReconnects: connection.filter((entry, i) => i > 0 && entry.pane === connection[i - 1].pane).length }));
+    diagnostics.stop();
+    shellDiagnostics = null;
+    await page.context().close();
+  }
+}
+
+function diagnoseShell(error) {
+  const diagnostics = shellDiagnostics;
+  if (!diagnostics) return;
+  if (!diagnostics.saving) {
+    const current = diagnostics.states.findLast((state) => state.phase);
+    diagnostics.errors = [{ ...current, error: String(error) }];
+    diagnostics.saving = diagnostics.save(error, inTime);
+  }
+  return diagnostics.saving;
+}
+
+async function harnessCase(harness, kind, width, run = resumed) {
+  const engine = kind === "chromium" ? browser : await webkit.launch({ headless: true });
+  try { await run(engine, width, harness); }
+  finally { if (engine !== browser) await engine.close(); }
 }
 
 export default async function () {
@@ -160,12 +212,18 @@ export default async function () {
     const id = sid(n * 3), next = sid(n * 3 + 1), decoy = sid(n * 3 + 2);
     const page = (await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { touch: width < 500 })).page;
     const diagnostics = new ChatDiagnostics(root, name);
+    shellDiagnostics = diagnostics;
     diagnostics.page = page;
     diagnostics.watch(page.context());
     page.on("request", (request) => {
       if (request.url().endsWith("/api/v1/call")) diagnostics.request(request, request.postDataJSON());
     });
-    let phase = "connect";
+    let phase;
+    const mark = (next) => {
+      phase = next;
+      diagnostics.remember([{ at: Date.now(), phase, width, engine: engine.browserType().name(), harness }]);
+    };
+    mark("connect");
     try {
       // 본문과 cwd가 비슷한 더 새 기록도 다른 PID의 것이면 고르지 않는다.
       const dir = harness === "codex" ? `${root}/codex/sessions/2026/10/23` : `${root}/claude/projects/shell`;
@@ -302,7 +360,7 @@ export default async function () {
       await inList(page, `pane-${name}`);
       assert.equal(await toggle.getAttribute("aria-pressed"), "true", "돌아오며 대화 보기 선택이 바뀌었다");
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
-      phase = "switch";
+      mark("switch");
       // 옛 파일의 맨 위를 읽던 상태를 확정한다. 새 파일은 이 위치를 이어받으면 안 된다.
       await chat.evaluate((c) => { c.scrollTop = 0; c.dispatchEvent(new Event("scroll", { bubbles: true })); });
       diagnostics.remember([{ phase, top: await chat.evaluate((c) => c.scrollTop) }]);
@@ -317,7 +375,7 @@ export default async function () {
       await domIs(page, "새 대화의 최신 끝 표시", atEnd);
       assert.equal(await chat.getByText(`${id} 기록`, { exact: false }).count(), 0, "이전 세션을 섞었다");
       if (width < 500) {
-        phase = "switch-away";
+        mark("switch-away");
         await firstMessage(page, next);
         await inList(page, "pane-t1");
         // 기록 파일이 쓰이는 중 감지되는 순서도 고정한다. 첫 300줄 뒤 실제 명령으로 나머지를 쓴다.
@@ -337,34 +395,62 @@ export default async function () {
       await page.getByTestId("chat-toggle").waitFor({ state: "detached" });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     } catch (error) {
-      diagnostics.remember([{ phase, width, engine: engine.browserType().name(), harness }]);
-      await diagnostics.save(error, inTime);
+      await diagnoseShell(error);
       throw error;
     } finally {
       diagnostics.stop();
+      shellDiagnostics = null;
       await page.context().close();
     }
   };
-  await step("셸에서 직접 연 Codex·Claude의 대화 연결과 스크롤(데스크톱 Chromium·WebKit)", async () => {
-    const safari = await webkit.launch({ headless: true });
-    try {
-      for (const engine of [browser, safari]) for (const harness of ["codex", "claude"]) await check(engine, 1280, harness);
-    } finally { await safari.close(); }
-  });
-  await step("셸에서 직접 연 Codex·Claude의 대화 연결과 스크롤(휴대폰 Chromium·WebKit 390px)", async () => {
-    const safari = await webkit.launch({ headless: true });
-    try {
-      for (const engine of [browser, safari]) for (const harness of ["codex", "claude"]) await check(engine, 390, harness);
-    } finally { await safari.close(); }
-  });
-  await step("Codex resume의 이전 대화·inline 기록 복원·agent 재시작(두 엔진·두 폭)", async () => {
-    const safari = await webkit.launch({ headless: true });
-    try { for (const engine of [browser, safari]) for (const width of [1280, 390]) await resumed(engine, width, "codex"); }
-    finally { await safari.close(); }
-  });
-  await step("Claude resume·continue의 이전 대화·복귀·agent 재시작(두 엔진·두 폭)", async () => {
-    const safari = await webkit.launch({ headless: true });
-    try { for (const engine of [browser, safari]) for (const width of [1280, 390]) await resumed(engine, width, "claude"); }
-    finally { await safari.close(); }
-  });
+  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 Chromium 1280", async () => {
+    await harnessCase("codex", "chromium", 1280, check);
+  }, { diagnose: diagnoseShell });
+  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 Chromium 390", async () => {
+    await harnessCase("codex", "chromium", 390, check);
+  }, { diagnose: diagnoseShell });
+  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 WebKit 1280", async () => {
+    await harnessCase("codex", "webkit", 1280, check);
+  }, { diagnose: diagnoseShell });
+  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 WebKit 390", async () => {
+    await harnessCase("codex", "webkit", 390, check);
+  }, { diagnose: diagnoseShell });
+  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 Chromium 1280", async () => {
+    await harnessCase("claude", "chromium", 1280, check);
+  }, { diagnose: diagnoseShell });
+  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 Chromium 390", async () => {
+    await harnessCase("claude", "chromium", 390, check);
+  }, { diagnose: diagnoseShell });
+  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 WebKit 1280", async () => {
+    await harnessCase("claude", "webkit", 1280, check);
+  }, { diagnose: diagnoseShell });
+  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 WebKit 390", async () => {
+    await harnessCase("claude", "webkit", 390, check);
+  }, { diagnose: diagnoseShell });
+  // 조합마다 새 pane·대화·기기를 만들며 앞 조합의 상태를 쓰지 않는다.
+  // agent 재시작이 다른 조합에 영향을 주지 않게 병렬 입구는 각 단계를 별도 실험실에 둔다.
+  await step("Codex resume 이전 대화·inline 복원·재시작 Chromium 1280", async () => {
+    await harnessCase("codex", "chromium", 1280);
+  }, { diagnose: diagnoseShell });
+  await step("Codex resume 이전 대화·inline 복원·재시작 Chromium 390", async () => {
+    await harnessCase("codex", "chromium", 390);
+  }, { diagnose: diagnoseShell });
+  await step("Codex resume 이전 대화·inline 복원·재시작 WebKit 1280", async () => {
+    await harnessCase("codex", "webkit", 1280);
+  }, { diagnose: diagnoseShell });
+  await step("Codex resume 이전 대화·inline 복원·재시작 WebKit 390", async () => {
+    await harnessCase("codex", "webkit", 390);
+  }, { diagnose: diagnoseShell });
+  await step("Claude resume·continue 이전 대화·복귀·재시작 Chromium 1280", async () => {
+    await harnessCase("claude", "chromium", 1280);
+  }, { diagnose: diagnoseShell });
+  await step("Claude resume·continue 이전 대화·복귀·재시작 Chromium 390", async () => {
+    await harnessCase("claude", "chromium", 390);
+  }, { diagnose: diagnoseShell });
+  await step("Claude resume·continue 이전 대화·복귀·재시작 WebKit 1280", async () => {
+    await harnessCase("claude", "webkit", 1280);
+  }, { diagnose: diagnoseShell });
+  await step("Claude resume·continue 이전 대화·복귀·재시작 WebKit 390", async () => {
+    await harnessCase("claude", "webkit", 390);
+  }, { diagnose: diagnoseShell });
 }

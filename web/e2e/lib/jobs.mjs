@@ -1,5 +1,5 @@
 // 이 spec의 단계는 앞 단계의 상태를 쓰지 않는다. 단계마다 새 실험실을 주고 같은 검사를 모두 실행한다.
-const independent = new Set(["37-chat-pages"]);
+const independent = new Set(["37-chat-pages", "93-shell-chat"]);
 const exact = (name) => `^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 
 export function planJobs(specs, { repeat, workers, durations, only }) {

@@ -1,5 +1,16 @@
 # 시험 쓰는 법
 
+## E2E93 재개 조합의 독립 실행과 실패 phase(t-0896)
+
+- [CI 39923503523](https://github.com/cLazyZombie/aaa/actions/runs/39923503523)의 원본은 Claude 네 조합을 한 단계로 실행하다 합계 120초에 끝났다. artifact에는 e2e.log·실행 시간표만 있고 `resume-*.json`·host/agent 로그는 없다. 기존 `resumed` 안의 catch는 바깥 단계 타이머가 먼저 실패하면 실행되지 않는다. 당시 `--resume`와 `--continue` 중 어느 mode였는지는 원문으로 확정할 수 없다.
+- 실패 화면의 390px 글꼴 직렬화는 두 엔진 대조에서 WebKit과 일치한다. 마지막 기록은 t1의 112×32와 harness의 47×35 snapshot이 번갈아 오고 입력·ACK도 계속된다. 1006만으로 같은 pane의 자동 재접속을 뜻하지 않는다. 로컬 phase·WebSocket 대상 계측은 정상 왕복에서도 같은 닫힘이 나오며, 연결 대상이 같은 연속 재접속은 0회였다. 원문에는 URL별 연결 ID가 없어 모든 닫힘의 원인을 소급 확정하지 않는다. E2E03의 기존 스크롤 수리와 같은 제품 원인이라고 묶지 않는다.
+- Codex·Claude 직접 실행·재개는 Chromium·WebKit ×1280·390px마다 별도 단계(전체 16개)다. Claude의 resume→continue·이전 전체 기록·터미널 휠 두 번과 복귀·보기 선택·agent 재시작·PID 재연결·종료 검사는 한 조합 안에서 그대로 이어 간다. 병렬 입구는 E2E37의 기존 계획 경로로 E2E93 단계를 각각 새 host·agent·기기 실험실에 둬 다른 조합의 agent 재시작과 섞이지 않게 한다. 단일 worker는 한 실험실에서 원래 순서로 실행한다. 직접 실행의 기존 스크롤·새 기록·복귀·종료 단언도 유지한다.
+- 기존 단계 120초·DOM 20초·locator 30초를 바꾸지 않는다. 독립 조합에 각자의 단계 한도를 적용하므로 네 조합 합계를 120초 성능 기준으로 재지는 않는다. 고정 sleep·실패 재시도·기대값 완화는 없다. `node --test web/test/e2e-jobs.test.mjs web/test/e2e-layout.test.mjs`는 source의 직접 실행 여덟 조합과 재개 여덟 조합이 정확히 한 번 선택되는지, 단일 worker·좁은 grep을 확인한다.
+- 첫 전체 검증에서 직접 실행 휴대폰 네 조합도 합계 120초에서 실패해 같은 방식으로 분리했다. 원본 실패를 보존하고 수정 뒤 전체 정본으로 다시 검증한다.
+- 직접 실행·재개 실패는 기존 `ChatDiagnostics`에 phase·엔진·폭·harness, HTTP 요청/응답과 연결 대상·수명을 남긴다. 단계의 `diagnose`에서도 저장하므로 바깥 타이머가 끝난 경우도 잡는다. 통과 때는 조합별 phase 경과·연결 수·같은 대상 연속 재접속 수만 출력한다. 실패 자료는 기존 artifact 수집 경로에 둔다.
+- 참고: [Playwright WebSocket 사건 시험](https://github.com/microsoft/playwright/blob/main/tests/library/web-socket.spec.ts)(Apache-2.0)은 frame·close를 사건으로 관측하며, [ttyd Xterm](https://github.com/tsl0922/ttyd/blob/main/html/src/components/terminal/xterm/index.ts)([MIT](https://github.com/tsl0922/ttyd/blob/main/LICENSE))은 연결 수명과 구독 해제를 구분한다. [WeTTY](https://github.com/butlerx/wetty/blob/main/src/client/wetty.ts)([MIT](https://github.com/butlerx/wetty/blob/main/LICENSE))와 [xterm 5.5 WriteBuffer](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/common/input/WriteBuffer.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))의 write 완료 뒤 흐름 제어도 확인했다. 외부 코드·의존성을 제품에 추가하지 않는다.
+- 검증은 같은 실행 파일의 기존 묶음 계측·CPU 저하 대조, 독립 조합 E2E93와 전체 `nice -n 15 bash scripts/ci-local.sh`, 공개 검사다. Playwright 1.64.1을 thread 내부에 준비한다. 제품·FRONT_API·AGENT_LINK·E2E 번호는 바꾸지 않는다.
+
 ## 앱·터미널 GitHub Dark 통일(t-0889)
 
 - E2E14는 Chromium·WebKit 각각 1280·390px에서 GitHub 세 팔레트 선택·host 저장·재열기·UI 대비를 검사한다.
