@@ -2,6 +2,8 @@
 
 ## 웹 E2E 스크롤·닫힘 진단(t-0905)
 
+- E2E93의 Chromium 휴대폰 준비는 터치 뒤 `scrollTop=0` 쓰기 대신 실제 반대 방향 터치로 처음까지 돌아가고 `scrollend`를 기다린다. [CI 39950463717](https://github.com/cLazyZombie/aaa/actions/runs/39950463717) 두 실패의 내부 trace는 최종 터치 위치 197.5/DOM 198 → 프로그램 쓰기 0 → compositor delta -1 → +1을 보인다. 새 입력·앱의 0→1 쓰기 없이 새 답변 전과 후에 각각 top 1이 됐다. 앱 없는 최소 HTML에서도 185.5px 터치 뒤 같은 프로그램 쓰기는 top 1, 실제 터치 복귀는 top 0이었다. 안내 높이 변화·실제 1px 이동과 읽던 줄 유지·새 답변 전후 정확한 0 단언은 그대로다. 브라우저 결함을 앱의 새 답변 갱신으로 오인하던 준비를 고치며, 제품에 1px 무시나 위치 재설정 루프를 넣지 않는다. 반올림 경로는 [Chromium ScrollTree::PullDeltaForMainThread](https://chromium.googlesource.com/chromium/src/+/156.0.8078.4/cc/trees/property_tree.cc)와 대조했다.
+
 - E2E14는 실제 즉시 닫기·보내는 중 닫기를 유지하고, 클릭과 같은 task의 pagehide·beforeunload·hidden도 검사한다. 구판은 DOM 테마가 dark인데 실제 fetch는 0건이다. 종료 감시를 pending effect에서 분리하고 store의 현재 값을 읽는 판은 최신 dark를 keepalive로 정확히 한 번 보낸다. 종료 알림 두 번의 중복 방지와 host/다른 기기 반영을 함께 확인한다. 원본 CI에는 보내는 문서의 lifecycle 기록이 없어 당시 순서를 이 대조와 동일하다고 소급 확정하지 않는다.
 
 - E2E03은 PageUp→늦은 native scroll→PageDown뿐 아니라 반대 방향도 고정한다. 구판은 맨 아래 동기화 뒤의 PageUp이 20초 동안 취소된 상태(native 3249, 첫 줄 s-172)로 남았다. xterm 처리 전부터 끝이었는지를 capture에서 기억해 글꼴 보정 범위를 좁힌 판은 Chromium·WebKit 양쪽을 통과한다. 글꼴 17→19px 전환 뒤 끝 유지(E2E07)도 별도로 확인한다. 키·native 사건·버퍼 값이나 기존 시한은 바꾸지 않는다.

@@ -339,8 +339,25 @@ export default async function () {
           window.shellResetWrites.push({ before, value, after: native.get.call(this), stack: new Error().stack });
         } });
         window.shellResetLayout = { top: c.scrollTop, note: c.querySelector(".chat-note")?.getBoundingClientRect().height, first: c.querySelector(".chat-row")?.getBoundingClientRect().top };
-        c.scrollTop = 0; c.dispatchEvent(new Event("scroll", { bubbles: true }));
       });
+      if (width < 500 && engine === browser) {
+        // Chromium의 소수 터치 위치를 scrollTop=0으로 덮으면 scrollend 뒤에도
+        // compositor 반올림 잔량(-1, +1)이 온다. 사용자가 처음을 읽듯 실제 터치로 돌아간다.
+        const before = await chat.evaluate((c) => {
+          window.shellScrollEnd = new Promise((done) => c.addEventListener("scrollend", () => done(), { once: true }));
+          return c.scrollTop;
+        });
+        const cdp = await page.context().newCDPSession(page);
+        try {
+          await inTime(cdp.send("Input.synthesizeScrollGesture", {
+            x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2),
+            yDistance: before + box.height, gestureSourceType: "touch", preventFling: true,
+          }), 20_000, "실제 터치로 맨 위 복귀");
+          await inTime(page.evaluate(() => window.shellScrollEnd), 20_000, "맨 위 터치 스크롤 종료");
+        } finally { await cdp.detach(); }
+      } else {
+        await chat.evaluate((c) => { c.scrollTop = 0; c.dispatchEvent(new Event("scroll", { bubbles: true })); });
+      }
       const settled = await chat.evaluate((c) => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done({ top: c.scrollTop, first: c.querySelector(".chat-row")?.getBoundingClientRect().top, note: c.querySelector(".chat-note")?.getBoundingClientRect().height, before: window.shellResetLayout, writes: window.shellResetWrites })))));
       if (settled.top !== 0) {
         fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
