@@ -59,6 +59,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const [versions, setVersions] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState<string | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [reading, setReading] = useState<{ tab: Tab; rows: LibraryReport[] } | null>(null);
   const [doomed, setDoomed] = useState<LibraryReport[] | null>(null);
   const [linkOpen, setLinkOpen] = useState<string | null>(null);
   // 「올리기」 창의 프로젝트(host는 프로젝트 하나다, 관리 GUI W5b)
@@ -121,6 +122,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const work = shown.filter((r) => !r.to_user && !r.archived);
   const cards = tab === "archive" ? archive : mine;
   const unseen = (reports ?? []).filter((r) => r.unseen).length;
+  const unreadRows = (tab === "work" ? work : cards).filter((r) => r.unseen);
   const pickedRows = work.filter((r) => picked.has(keyOf(r)));
   const setLink = (r: LibraryReport, link: LibraryReport["link"]) =>
     setReports((rows) => rows?.map((row) => row.project === r.project && row.name === r.name ? { ...row, link } : row) ?? null);
@@ -156,7 +158,11 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     </div>
     <div className="reports-toolbar">
       <button className="ghost small" onClick={() => void load()}>새로고침</button>
-      {canEdit && admin && <button className="ghost small" onClick={startUpload} data-testid="reports-upload">보고서 올리기</button>}
+      <span className="reports-toolbar-actions">
+        {canEdit && admin && <button className="ghost small" onClick={startUpload} data-testid="reports-upload">보고서 올리기</button>}
+        {canEdit && <button className="ghost small" data-testid="reports-mark-read" disabled={reports === null || unreadRows.length === 0}
+          onClick={() => setReading({ tab, rows: unreadRows })}>모두 읽음</button>}
+      </span>
     </div>
     {uploading && <UploadReportDialog project={uploading} onClose={() => setUploading(null)} onDone={() => void load()} />}
     {usage && <p className="muted" data-testid="reports-usage">합계 {storageSize(usage.size)} / {usage.max_size ? storageSize(usage.max_size) : "상한 꺼짐"}, 기한 {usage.max_days ? `${usage.max_days}일` : "꺼짐"} · 보관함 {storageSize(usage.archived_size)} (상한 제외)</p>}
@@ -227,6 +233,19 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
       type="button" className="ghost small" data-testid="reports-more"
       onClick={() => setVisible((v) => ({ ...v, [tab]: v[tab] + 50 }))}>보고서 더 보기</button>}
     </div>
+    {reading && <ConfirmDialog
+      title="보고서를 모두 읽음으로 바꿀까?"
+      body={`${reading.tab === "mine" ? "내 보고서" : reading.tab === "work" ? "작업 보고" : "보관함"}의 안 본 보고서 ${reading.rows.length}개를 읽음으로 바꾼다.`}
+      confirmLabel="모두 읽음"
+      onConfirm={async () => {
+        const r = await call({ op: "library_mark_read", reports: reading.rows.map((row) => ({ project: row.project, name: row.report_id ?? row.name })) });
+        if (r.kind !== "library_reports") throw new Error("host가 읽음 처리에 다른 답을 했다");
+        ++loadId.current;
+        setReports(r.reports);
+        setReading(null);
+      }}
+      onClose={() => setReading(null)}
+    />}
     {doomed && <ConfirmDialog
       title={doomed.length === 1 ? "보고서를 지울까?" : `보고서 ${doomed.length}개를 지울까?`}
       body={`${doomed.length === 1 ? keyOf(doomed[0]) : `${doomed.slice(0, 3).map(keyOf).join(", ")}${doomed.length > 3 ? ` 외 ${doomed.length - 3}개` : ""}`}를 모든 보고 판의 host 사본·공유 링크·목록에서 영구히 지운다.${doomed.some((r) => r.name.startsWith("t-")) ? " thread 사본은 회수한 보고 글도 함께 지운다." : ""} 되돌릴 수 없다.`}

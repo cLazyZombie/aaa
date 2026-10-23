@@ -1185,7 +1185,7 @@ title: string | null,
 /**
  * FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`). 없으면 host가 원본 경로·이름에서 그 프로젝트의 thread를 찾는다
  */
-from_thread?: string, } | { "op": "library_archive", reports: Array<LibraryRef>, archived: boolean, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
+from_thread?: string, } | { "op": "library_archive", reports: Array<LibraryRef>, archived: boolean, } | { "op": "library_mark_read", reports: Array<LibraryRef>, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */

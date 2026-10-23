@@ -7762,3 +7762,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 검증: host auto_mode owner, E2E100(켜기→자동 답→예외 유지→끄기→요약, 두 기기·재시작·hook·다시 정하기·Reader), Chromium/WebKit 1280·390px 캡처. 전체 ci-local·Linux strict cross·공개 검사. 병합은 착지 창, GitHub CI 대기는 없다.
 
 - **42회차 착지 통합(t-0943).** 시작 원격 main `6fd0ddff`에 t-0938 `6271ebf4`를 --no-ff로 합친다. 기존 setup §8.477·workspace §8.478·FRONT_API 1.117·E2E99를 보존하고 auto mode에 §8.479·FRONT_API 1.118·E2E100을 배정한다. 공통 SessionStart의 기억 재진입 안내와 coordinator 모드 조회를 함께 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패하면 원문·부하를 보존하고 재시도 없이 push를 멈춘다. 전체 검증에 salt를 넣지 않고 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI 대기·설치 실행·배포·tag·release는 하지 않는다.
+
+### 8.480. 보고서 모두 읽음(t-0952)
+
+- 「보고서 올리기」 옆에 「모두 읽음」을 둔다. 지금 탭의 안 본 보고서 전체(더 보기 밖 포함)를 확인 창의 정확한 개수와 함께 고정한다. 취소·Esc는 요청을 보내지 않으며, 안 봄이 없거나 목록을 받기 전에는 비활성이다. Reader에는 버튼을 숨긴다.
+- FRONT_API 1.119 `LibraryMarkRead { reports: LibraryRef[] }` → `LibraryReports`: 한 요청·한 DB transaction으로 읽음 표시한다. 권한은 기존 `LibraryOpen`과 같으며 Reader 호출도 허용한다. 웹에서는 확인한 최신 r 판을 보내고, 새 판이 생겼으면 옛 판의 확인으로 새 원본을 읽음 처리하지 않는다. 잘못된 이름·프로젝트는 쓰기 전에 거절한다. 중복·이미 읽은 항목은 멱등이다.
+- 실제 열람 시각·공유 링크의 opened는 바꾸지 않는다. 변경 때 기존 reports 사건을 한 번 보내 활동 막대·탭·다른 기기 배지를 갱신한다. 실패는 확인 창 안에 host 오류를 보이고 목록을 읽음으로 꾸미지 않는다. 버튼 묶음은 휴대폰에서 줄바꿈한다.
+- herdr-web-ui ConfirmDialog(MIT)의 취소 기본 초점·오류 표시와 Miniflux app.js(Apache-2.0)의 목록 일괄 읽음 패턴을 조사했다. 이미 이식된 확인 창을 재사용하고 외부 코드는 추가로 복사하지 않는다. E2E101과 host batch 시험으로 검증한다.

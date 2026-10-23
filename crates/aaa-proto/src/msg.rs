@@ -2850,6 +2850,10 @@ pub enum FrontRequest {
         reports: Vec<LibraryRef>,
         archived: bool,
     },
+    /// FRONT_API 1.119. 확인한 목록의 안 본 보고서를 한 번에 읽음 처리한다. Reader도 기존 열람과 같은 권한이다.
+    LibraryMarkRead {
+        reports: Vec<LibraryRef>,
+    },
     /// FRONT_API 1.43. 모든 판의 host 사본·목록·공유 링크·thread 보고를 지운다. 보관함도 명시 삭제한다.
     /// 진행 중 thread·완료 할 일 참조 보호는 유지한다.
     LibraryDelete {
@@ -3535,6 +3539,7 @@ impl FrontRequest {
                 | FrontRequest::ThreadUnpark { dry_run: true, .. }
                 | FrontRequest::LibraryReports { .. }
                 | FrontRequest::LibraryOpen { .. }
+                | FrontRequest::LibraryMarkRead { .. }
                 | FrontRequest::LibraryUsage
                 | FrontRequest::LibraryPrunePreview { .. }
                 | FrontRequest::ThreadNext { line: None, add: None, .. }
