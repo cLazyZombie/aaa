@@ -611,7 +611,7 @@ restored_by: number | null, };
 
 export type TaskLogFilter = "deleted" | "auto" | "restored";
 
-export type ThreadStartPreview = { profile_revision: string, model: string, effort: string,
+export type ThreadStartPreview = { workspace_access: { [key in string]: Array<string> }, profile_revision: string, model: string, effort: string,
 /**
  * task 제목(thread 제목이 된다)
  */
@@ -1211,7 +1211,7 @@ picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | 
 /**
  * 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
  */
-body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
+body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "workspace_access", project?: string, machine: string, } | { "op": "workspace_access_set", project?: string, machine: string, workspace: string, enabled: boolean, revision: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
 /**
  * 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
  */
@@ -1366,7 +1366,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "unpark_preview" } & UnparkPreview | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "workspace_access" } & WorkspaceAccessView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "unpark_preview" } & UnparkPreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -2269,6 +2269,14 @@ repos: Array<RepoChoice>,
  * host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
  */
 local_machine: string | null, task_notes: Array<string>, };
+
+export type WorkspaceAccessView = { project: string, machine: string, revision: string, workspaces: Array<WorkspaceAccessRow>, };
+
+export type WorkspaceAccessRow = { workspace: string, enabled: boolean,
+/**
+ * 비면 이 머신에 등록된 경로가 없다. 작업 폴더는 agent 작업 root를 쓴다.
+ */
+paths: Array<string>, };
 
 export type SettingsScope = "project" | "global";
 

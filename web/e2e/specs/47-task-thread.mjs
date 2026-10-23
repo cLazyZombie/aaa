@@ -65,6 +65,8 @@ export default async function ({ page }) {
     await dialog.getByRole("switch", { name: "앱 안에서" }).click();
     await page.keyboard.press("Escape");
     aaa("project", "create", "demo");
+    // 기존 바로 시작/한도 keeper는 자동으로 사용할 작업 폴더를 명시한다. 미설정 거부는 E2E99가 검사한다.
+    aaa("machine", "workspaces", "labA", "--allow", "작업 폴더");
     aaa("project", "set", "demo", "thread_profile", "fake");
     md = write(START);
     aaa("ticker", "tick");

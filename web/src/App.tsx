@@ -1506,7 +1506,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
         <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown, automationShown, workspaceShown]}>
-        {machineRoute && selectedMachine && <MachineInfoPanel page machine={selectedMachine} onClose={closeMachineInfo} />}
+        {machineRoute && selectedMachine && <MachineInfoPanel key={selectedMachine.id} role={role} page machine={selectedMachine} onClose={closeMachineInfo} />}
         {workspaceShown && <WorkspaceView state={workspaceData} route={sel} onRoute={goSel} up={up} />}
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
@@ -1687,7 +1687,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         </ErrorBoundary>
         </div>
       </main>
-      {!machineRoute && selectedMachine && <MachineInfoPanel machine={selectedMachine} onClose={closeMachineInfo} />}
+      {!machineRoute && selectedMachine && <MachineInfoPanel key={selectedMachine.id} role={role} machine={selectedMachine} onClose={closeMachineInfo} />}
       <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
         <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />

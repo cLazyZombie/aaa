@@ -59,7 +59,12 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
   // 고른 저장소가 있는 머신(작업 폴더는 연결된 모든 머신)
   const cands = choice === REPO_DIR ? machines.map((o) => o.machine) : (byName.get(choice) ?? []).map((x) => x.machine);
   const ownerMachine = fixed.machine ? (preview?.machine ?? null) : null;
-  const where = ownerMachine ?? (picked !== null && cands.includes(picked) ? picked : defaultMachine(cands, preview?.machine_order ?? []));
+  const allowed = preview?.workspace_access;
+  const autoCands = allowed ? cands.filter(m => allowed[m]?.includes(choice)) : cands;
+  const explicitMachine = ownerMachine ?? (picked && cands.includes(picked) ? picked : null);
+  const where = explicitMachine ?? defaultMachine(autoCands, preview?.machine_order ?? []);
+  const accessWarning = explicitMachine && allowed && !allowed[explicitMachine]?.includes(choice)
+    ? "이 머신의 자동 배정 허용은 꺼져 있습니다. 고정 머신 지정을 따라 시작합니다." : null;
   // 고른 머신의 그 저장소 경로. 한 머신에 같은 이름이 둘이면 이름을 보내 host가 까닭과 함께 거부하게 한다(말없이 고르지 않는다)
   const onWhere = (byName.get(choice) ?? []).filter((x) => x.machine === where);
   const repoPath = onWhere.length === 1 ? onWhere[0].path : choice;
@@ -70,7 +75,9 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
         ? `project.toml repos에 없는 저장소다: ${choice}`
         : ownerMachine !== null && choice !== REPO_DIR && !cands.includes(ownerMachine)
           ? `task 머신 ${ownerMachine}에 ${choice} 저장소가 없다(project.toml repos)`
-          : null;
+          : explicitMachine === null && autoCands.length === 0 && choice !== ""
+            ? "자동 배정이 허용된 머신이 없습니다. 기기 정보에서 workspace 허용을 켜거나 머신을 직접 고릅니다."
+            : null;
   const profiles = useMemo(() => {
     const on = where ? machines.filter((o) => o.machine === where) : machines;
     const names = [...new Set(on.flatMap((o) => o.profiles))];
@@ -90,10 +97,10 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
         holds: [],
         background: true,
         title: "",
-        machine: where || null,
+        machine: explicitMachine,
         profile,
         kind: choice === REPO_DIR ? "dir" : "worktree",
-        repo: choice === REPO_DIR ? null : repoPath,
+        repo: choice === REPO_DIR ? null : explicitMachine ? repoPath : choice,
         base: null,
         task: "",
         from_task: task.short_id ?? task.title,
@@ -163,8 +170,8 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
                 </label>
                 <label className="task-field">
                   <span>머신</span>
-                  <select className="input" value={where} disabled={busy || confirmOver || ownerMachine !== null || cands.length <= 1} onChange={(e) => setPicked(e.target.value)} data-testid="task-start-machine">
-                    <option value="">host 머신</option>
+                  <select className="input" value={explicitMachine ?? ""} disabled={busy || confirmOver || ownerMachine !== null} onChange={(e) => setPicked(e.target.value)} data-testid="task-start-machine">
+                    <option value="">자동{where ? ` · ${where}` : ""}</option>
                     {machines
                       .filter((o) => choice === "" || cands.includes(o.machine))
                       .map((o) => (
@@ -193,6 +200,7 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
                   {problem}
                 </p>
               )}
+              {accessWarning && <p className="banner task-start-warning" role="status">{accessWarning}</p>}
               {preview.warnings.map((w) => (
                 <p key={w} className="banner task-start-warning" role="status">
                   {w}

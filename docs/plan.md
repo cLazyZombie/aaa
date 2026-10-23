@@ -7742,3 +7742,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - macOS 실제 운영 서비스는 보존하며 별도 HOME·임시 label에서 검증한다. Linux는 폐기 가능한 Ubuntu 24.04 aarch64 VM의 user/system 서비스와 격리 host 연결을 확인한다. Windows 기존 setup 회귀는 실제 Windows에서 검증한다. 전체 ci-local·cross·공개 검사 후 착지 창을 기다린다. Front API 1.116·Agent link 1.11·E2E98은 유지하며 절 번호는 착지 때 main과 대조한다. 다운로드 bootstrap·release 게시·기존 install I4·운영 서비스 이관은 범위 밖이다.
 
 - **39회차 착지 통합(t-0937).** 시작 원격 main `bc98e49b`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. t-0928 `f612a716`과 t-0931 `a1e5ae6d`를 각각 --no-ff로 합쳐 시험 경합·제품 수리와 Unix setup을 보존한다. 새 setup 절은 다음 빈 번호 §8.477이며 시험 문서의 양쪽 절을 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·Linux와 Windows strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패는 원문·부하와 함께 보존하고 재시도 없이 push를 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 하지 않는다.
+
+### 8.478 머신별 workspace 자동 배정 허용(t-0935)
+
+- 경로·머신은 기존 프로젝트 repos/workspaces 설정만 쓴다. 자동 배정 허용은 host DB의 머신 ID별 workspace 이름 집합 한 곳에 둔다. 기기 정보 패널 내용 컴포넌트에서 Owner만 변경하고 Reader는 읽는다. safety/profile과 독립이다.
+- 최초 전환은 현재 모든 머신×workspace를 켠다. 이후 새 머신·프로젝트·workspace는 꺼짐이다. marker와 전체 기존 허용을 함께 확정해 재시작 때 사용자 설정을 보존한다. 준비 확인 뒤 사용자가 켜게 하는 기본값을 추천한다.
+- from-task·예약의 자동 후보는 허용된 연결 머신으로 제한한다. 없으면 예약을 queued로 두고 이유를 표시한다. 고정 머신은 꺼짐 경고와 함께 존중한다. 웹의 기본 선택도 machine=null로 전송하며 직접 고른 값만 고정한다. FRONT_API 1.117, E2E99를 추가한다. 자세한 정본·참고 라이선스·CLI는 docs/workspace-access.md다.
+- t-0936의 모바일 패널 열기·뒤로 이동과 범위를 나눈다. 이 변경의 App 연결은 role prop·machine key, 패널은 독립 MachineWorkspaceAccess 삽입이다. 패널 열기·라우팅은 변경하지 않는다. 모바일 키보드 Tab은 새 입력칸을 순회하도록 한다.
+
+- **40회차 착지 통합(t-0940).** 시작 원격 main `83ab3346`의 마지막 §8.477·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. t-0936 `b4b5d73b`와 t-0935 `a92538a8`을 각각 --no-ff로 합친다. 휴대폰 #machine 주소·본문·drawer·스와이프와 !page Tab 조건을 유지하면서 양쪽 패널 호출의 role·머신별 key와 workspace 설정을 결합한다. 새 workspace 절은 §8.478이며 FRONT_API 1.117·E2E99를 사용하고 E2E98 추가 검사를 보존한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·Linux와 Windows strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. E2E87을 포함해 모든 시험이 통과해야 push하며 실패는 원문·부하와 함께 보존하고 재시도하지 않는다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 하지 않는다.

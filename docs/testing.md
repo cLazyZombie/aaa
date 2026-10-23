@@ -3227,3 +3227,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - macOS는 시작 전/후 launchctl list·LaunchAgents 내용 해시·PATH를 저장하고 운영 aaa의 PID/상태가 같고 시험 label이 사라졌는지 비교한다. 실제 launchd는 별도 HOME의 임시 plist만 bootstrap/bootout한다. Linux는 Ubuntu 24.04 aarch64 VM에서 user/system을 각각 검사하고 systemd-analyze verify도 실행한다. 공백·`%`·`$` 경로, 로그의 일반 사용자 소유권을 포함한다. `WorkingDirectory`는 raw 경로, ExecStart는 `:`로 변수 치환을 끄며 로그를 사용자 권한으로 먼저 만든다.
 - 실제 시험에는 격리 host만 쓴다. VM 내부 → 운영 host/tailnet 경로는 이 owner의 보장 범위가 아니다. VM을 지운 뒤 Lima 목록을 대조한다. 로그를 공유할 때 개인 주소·사용자 경로·장치 지문을 제거한다.
 - 변경의 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`, Linux strict cross, 실제 Windows의 `cargo test --locked -p aaa --bin aaa setup::`다. 교차 빌드를 native 서비스 시험으로 대신하지 않으며 GitHub CI를 기다리지 않는다. Front API·Agent link·웹 E2E 번호는 유지한다.
+
+## 머신별 workspace 자동 배정 허용(t-0935)
+
+- `cargo test -p aaa-host workspace_access::`: 최초 기존 조합 전체 켜짐·전환 재실행/재시작 뒤 꺼짐 보존·새 머신/저장소/프로젝트 꺼짐, Reader/세션 agent 쓰기 거부·Owner 쓰기·판 충돌, 저장소/작업 폴더 자동 후보 필터·고정 머신 경고, 미설정 자동 예약의 queued·대기 이유·미기동을 검사한다.
+- E2E99 `99-machine-workspaces`: 실제 host/agent에서 Chromium·WebKit의 1280/390 화면으로 Owner 체크 저장·Reader 읽기/직접 API 쓰기 거부·다른 기기 갱신·판 충돌과 경로 정본을 확인하고 화면을 캡처한다. CLI 자동 시작의 후보 없음, 큐 대기 이유, 웹 자동/고정 구분과 허용 뒤 실제 자동 시작을 확인한다. 고정 sleep·실패 재시도·시한 연장은 없다.
+- 기존 m13 작업 폴더 keeper와 자동 저장소 시작 keeper, E2E47에는 실제 사용할 workspace 허용을 준비 단계에 명시한다. 로컬 repos.add의 /tmp → /private/tmp 정본화와 혼동하지 않도록 저장소 keeper는 경로@머신으로 등록한다. 기존 단언·시한은 유지한다.
+- 참고·정책·새 기본값·API는 [workspace-access.md](workspace-access.md)에 적었다. 정본은 전체 로컬 ci-local·Linux strict cross clippy·공개 검사다. 착지 창 전에는 병합·push하지 않고 GitHub CI는 기다리지 않는다.

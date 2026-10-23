@@ -144,12 +144,49 @@ impl Host {
             // 칸이 빈 task에 project.toml에 없는 경로를 주면 지금처럼 그 경로로 띄운다(일반 `thread start --repo`와 같다)
             (None, Some(g)) => match check_repo(&repos, g) {
                 Ok(name) => Some(name),
-                Err(_) if g.contains(['/', '\\']) => return Ok(None),
+                Err(_) if g.contains(['/', '\\']) => {
+                    return if a.machine.is_some() {
+                        Ok(Some("project.toml에 없는 workspace다. 명시한 머신 지정을 따른다".into()))
+                    } else {
+                        Err(err(ErrorCode::Unavailable, "자리 대기: 등록되지 않은 workspace는 자동 배정하지 않는다"))
+                    };
+                }
                 Err(e) => return Err(bad(e)),
             },
             (None, None) => None,
         };
-        let (order, local) = self.machine_order();
+        if let Some(name) = want.as_deref()
+            && name != REPO_DIR
+            && !repos.iter().any(|r| repo_name(&r.path) == Some(name))
+        {
+            return Err(bad(format!("project.toml repos에 {name} 저장소가 없다")));
+        }
+        let (mut order, local) = self.machine_order();
+        let workspace = want.as_deref().unwrap_or(REPO_DIR);
+        let explicit = a.machine.is_some();
+        let mut access_warning = None;
+        if let Some(machine) = &a.machine {
+            if !self.workspace_allowed(&a.project, workspace, machine)? {
+                access_warning =
+                    Some(format!("{machine}의 {workspace} 자동 배정 허용은 꺼져 있다. 명시한 머신 지정을 따른다"));
+            }
+        } else {
+            let mut allowed = Vec::new();
+            for machine in order {
+                if self.workspace_allowed(&a.project, workspace, &machine)? {
+                    allowed.push(machine);
+                }
+            }
+            order = allowed;
+            if order.is_empty() {
+                return Err(err(
+                    ErrorCode::Unavailable,
+                    format!(
+                        "자리 대기: {workspace} 자동 배정이 허용된 연결 머신이 없다. 기기 정보에서 workspace 허용을 켠다"
+                    ),
+                ));
+            }
+        }
         let mut warning = None;
         match want.as_deref() {
             None | Some(REPO_DIR) => {
@@ -190,6 +227,15 @@ impl Host {
                         format!("{name} 저장소가 host 로컬 머신에만 있는데 로컬 agent가 없다"),
                     ));
                 }
+                if !explicit {
+                    cands.retain(|(machine, _)| order.contains(machine));
+                    if cands.is_empty() {
+                        return Err(err(
+                            ErrorCode::Unavailable,
+                            format!("자리 대기: {name} 저장소가 있고 자동 배정이 허용된 연결 머신이 없다"),
+                        ));
+                    }
+                }
                 if let Some(m) = &a.machine {
                     cands.retain(|(cm, _)| cm == m);
                     if cands.is_empty() {
@@ -228,7 +274,13 @@ impl Host {
                 a.machine = Some(machine);
             }
         }
-        Ok(warning)
+        if !explicit {
+            a.automatic_workspace = Some(workspace.into());
+        }
+        Ok(match (warning, access_warning) {
+            (Some(a), Some(b)) => Some(format!("{a} · {b}")),
+            (a, b) => a.or(b),
+        })
     }
 }
 

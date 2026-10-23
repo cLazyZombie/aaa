@@ -337,6 +337,9 @@ pub(crate) struct StartOrigin {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StartArgs {
+    /// 자동으로 고른 workspace. 계정 배정 대기 뒤 실제 기동에도 현재 허용을 다시 확인한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) automatic_workspace: Option<String>,
     /// 일반 기동의 원본 할 일. 자동화는 비우며, 옛 풀 대기 기록도 읽는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) start_task: Option<aaa_proto::TaskView>,
@@ -1968,6 +1971,7 @@ impl Host {
             return Err(bad("worktree thread에는 --repo(그 머신의 repo 경로)가 필요하다. repo 없이 하려면 --kind dir"));
         }
         let mid = self.resolve_machine(a.machine.as_deref())?;
+        self.check_automatic_workspace(&a, &mid)?;
         let conn = self.live_conn(&mid)?;
         self.check_health(&mid)?;
         // task 첨부는 그 머신 작업 폴더로 넘긴다: 받지 못하는 agent면 thread를 만들기 전에 거부한다(plan §8.327)

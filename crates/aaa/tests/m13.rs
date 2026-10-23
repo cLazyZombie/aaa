@@ -565,6 +565,8 @@ fn world_build(
         || format!("host.log:\n{}\nagentA.log:\n{}", w.lab.log("host"), w.lab.log("agentA")),
     );
     w.h.ok(&["project", "create", "demo"]);
+    // 기존 오케스트레이션 keeper는 작업 가능한 실험실을 명시한다. 새 기본 꺼짐은 workspace_access와 E2E99가 소유한다.
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "작업 폴더"]);
     w
 }
 
@@ -1157,6 +1159,9 @@ fn task_repo_field_picks_machine_and_path() {
          - [ ] 모르는 일 [nope]\n",
     )
     .unwrap();
+    for machine in ["labA", "labB"] {
+        w.h.ok(&["machine", "workspaces", machine, "--allow", "repo"]);
+    }
     let r = w.start(&["--from-task", "원격 일"]);
     assert_eq!((r["machine"].as_str(), r["thread_kind"].as_str()), (Some("labB"), Some("worktree")), "{r}");
     assert_eq!(r["repo"].as_str(), Some(path_str(&repo_b)), "labB의 경로로 띄운다: {r}");
@@ -5707,6 +5712,9 @@ fn merged_pr_resolves_the_thread() {
 #[test]
 fn merged_thread_cleans_its_task() {
     let mut w = world_setup("tick_secs = 1\npr_poll_secs = 1\nmerge_grace_secs = 1\n", false, fake_gh);
+    // 자동 시작을 쓰는 병합 keeper는 실제로 사용할 workspace와 허용을 먼저 등록한다.
+    w.h.ok(&["project", "set", "demo", "repos.add", &format!("{}@labA", path_str(&w.repo))]);
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "repo"]);
     let stub = w.lab.root.join("gh");
     let mut f = w.lab.follow("follow", &w.h, "demo");
     git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);

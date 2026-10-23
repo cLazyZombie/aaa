@@ -290,6 +290,8 @@ pub fn typescript_bindings() -> String {
         AutomationReview::decl(&cfg),
         AutomationTrashEntry::decl(&cfg),
         ProjectSettingsView::decl(&cfg),
+        WorkspaceAccessView::decl(&cfg),
+        WorkspaceAccessRow::decl(&cfg),
         SettingsScope::decl(&cfg),
         SafetyRowView::decl(&cfg),
         SafetyView::decl(&cfg),

@@ -1,18 +1,24 @@
 // herdr-web-ui의 정보 행과 기존 task 상세 시트의 테마 토큰을 따른다.
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
-import type { MachineView } from "./gen/proto";
+import type { DeviceRole, MachineView } from "./gen/proto";
+import { MachineWorkspaceAccess } from "./MachineWorkspaceAccess";
 import { machineInfoGroups } from "./machineDetail";
 import { DrawerToggle } from "./drawer";
 import "./MachineInfoPanel.css";
 
-export function MachineInfoPanel({ machine, onClose, page = false }: { machine: MachineView; onClose: () => void; page?: boolean }) {
+export function MachineInfoPanel({ machine, role, onClose, page = false }: { machine: MachineView; role: DeviceRole; onClose: () => void; page?: boolean }) {
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const before = document.activeElement;
     close.current?.focus();
     const key = (e: KeyboardEvent) => {
-      if (!page && e.key === "Tab" && window.matchMedia("(max-width: 640px)").matches) { e.preventDefault(); close.current?.focus(); }
+      if (!page && e.key === "Tab" && window.matchMedia("(max-width: 640px)").matches) {
+        const buttons = [...(close.current?.closest("aside")?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)") ?? [])];
+        const first = buttons[0], last = buttons.at(-1);
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+      }
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); }
     };
     document.addEventListener("keydown", key, true);
@@ -29,6 +35,7 @@ export function MachineInfoPanel({ machine, onClose, page = false }: { machine: 
     </header>
     <div className="machine-info-body">
       {machine.connection !== "connected" && <p className="machine-info-stale">연결이 끊겼습니다. 마지막으로 받은 정보입니다.</p>}
+      <MachineWorkspaceAccess machineId={machine.id} role={role} />
       {machineInfoGroups(machine).map(({ title, rows }) => <section key={title}>
         <h3>{title}</h3><dl>{rows.map(r => <div key={r.label} data-label={r.label}><dt>{r.label}</dt><dd>{r.value}</dd></div>)}</dl>
       </section>)}

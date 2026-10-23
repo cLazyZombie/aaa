@@ -2741,6 +2741,9 @@ pub struct TaskBoard {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct ThreadStartPreview {
+    #[serde(default)]
+    pub workspace_access: std::collections::BTreeMap<String, Vec<String>>,
+
     pub profile_revision: String,
     pub model: String,
     pub effort: String,
@@ -2813,4 +2816,20 @@ pub struct ProjectContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub web_url: Option<String>,
+}
+
+/// 자동 배정 허용은 host DB, 저장소 경로는 프로젝트 설정이 정본이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct WorkspaceAccessView {
+    pub project: String,
+    pub machine: String,
+    pub revision: String,
+    pub workspaces: Vec<WorkspaceAccessRow>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct WorkspaceAccessRow {
+    pub workspace: String,
+    pub enabled: bool,
+    /// 비면 이 머신에 등록된 경로가 없다. 작업 폴더는 agent 작업 root를 쓴다.
+    pub paths: Vec<String>,
 }
