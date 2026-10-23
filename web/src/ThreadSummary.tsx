@@ -265,9 +265,11 @@ export function useSummaryHover(t: ThreadView | undefined, suppressed: boolean) 
   useEffect(() => () => window.clearTimeout(timer.current), []);
   useEffect(() => {
     if (!anchor) return;
-    // 굴리면 줄이 움직이므로 닫는다. 줄에 focus가 있으면 둔다(t3code tooltip.tsx `dismissUnfocused`)
-    const onScroll = () => {
-      if (!anchor.contains(document.activeElement)) close();
+    // 줄을 포함한 곳을 굴릴 때만 닫는다. 터미널 출력·대화의 scroll은 줄을 움직이지 않는다.
+    // 응답을 기다리는 중에도 anchor는 있으므로 무관한 scroll로 닫으면 도착한 요약까지 버리게 된다.
+    // 줄에 focus가 있으면 둔다(t3code tooltip.tsx `dismissUnfocused`).
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && event.target.contains(anchor) && !anchor.contains(document.activeElement)) close();
     };
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);

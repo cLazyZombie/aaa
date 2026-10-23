@@ -5,6 +5,8 @@ import fs from "node:fs";
 import assert from "node:assert/strict";
 import { root, AA, aaa, step, browser, webkit, pairPage, inList, domIs, until, inTime, focusIs, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
 
+import { SummaryDiagnostics } from "../lib/summaryDiagnostics.mjs";
+
 export const labEnv = { CODEX_HOME: `${root}/summary-codex` };
 const hostConfig = `${root}/c/host.toml`;
 fs.writeFileSync(hostConfig, fs.readFileSync(hostConfig, "utf8").replace('allow_profiles = ["fake"]', 'allow_profiles = ["fake", "astra-high"]')
@@ -39,6 +41,8 @@ const cardOf = (p) =>
   });
 
 export default async function ({ page }) {
+  const diagnostics = new SummaryDiagnostics(root, "summary-hover");
+  await diagnostics.watch(page);
   let id = "";
   await step("thread 요약: 요약 없이 지시가 쌓이면 단추에 점과 「받은 지시」, 요약을 쓰면 점이 사라지고 팝오버는 목표·지금만 펼치며 나머지는 접는다", async () => {
     aaa("project", "create", "demo");
@@ -143,11 +147,82 @@ export default async function ({ page }) {
     }
   });
 
+  await step("hover 중 터미널 출력: 요약 응답 전·카드 표시 후 scroll에도 유지하고 목록을 굴리면 닫는다", async () => {
+    const wk = await webkit.launch({ headless: true });
+    try {
+      for (const engine of [browser, wk]) {
+        const shell = aaa("pane", "list").panes.find((p) => p.name === "t1");
+        // 새 화면은 요약 cache가 없다. 실제 응답을 붙잡고 그 사이 실제 PTY 출력을 그린다.
+        // 네트워크 gate를 우회하는 service worker는 이 대조 화면에서만 차단한다(E2E37과 같은 조건).
+        const { page: p, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, { hash: `#pane=${encodeURIComponent(shell.id)}`, serviceWorkers: "block" });
+        const diagnostics = new SummaryDiagnostics(root, `summary-output-${engine.browserType().name()}`);
+        await diagnostics.watch(p);
+        let release;
+        const held = new Promise((resolve) => { release = resolve; });
+        let arrived;
+        const requested = new Promise((resolve) => { arrived = resolve; });
+        const routeSummary = async (route) => {
+          if (route.request().postDataJSON()?.op !== "thread_summary") return route.continue();
+          const response = await route.fetch();
+          arrived();
+          await held;
+          await route.fulfill({ response });
+        };
+        try {
+          await domIs(p, "셸 연결 완료", () => document.querySelector('[data-testid="terminal"]')?.dataset.readonly === "false");
+          await p.route("**/api/v1/call", routeSummary);
+          const row = p.getByTestId(`thread-demo-${id}`);
+          const rect = await row.boundingBox();
+          await row.hover();
+          assert.equal(await row.evaluate((el) => el.contains(document.activeElement)), false, "행 focus 예외에 기대지 않는다");
+          await inTime(requested, 20_000, "hover 타이머 뒤 실제 요약 응답 도착");
+          const printAndScroll = async (tag) => {
+            // 실제 viewport scroll 사건을 먼저 구독한다. 고정 sleep·가짜 scroll 사건 없이 출력 완료와 구분한다.
+            await p.evaluate(() => {
+              const viewport = document.querySelector(".xterm-viewport");
+              window.summaryOutputScroll = new Promise((resolve) => viewport.addEventListener("scroll", () => resolve(viewport.scrollTop), { once: true }));
+            });
+            aaa("pane", "run", "t1", `i=0; while [ $i -lt 100 ]; do printf '${tag}-%s\\n' "$i"; i=$((i+1)); done`);
+            assert.ok(await inTime(p.evaluate(() => window.summaryOutputScroll), 20_000, "PTY 출력의 실제 viewport scroll") > 0);
+            assert.deepEqual(await row.boundingBox(), rect, "터미널 출력이 thread 행을 옮기지 않는다");
+            assert.equal(await row.evaluate((el) => el.matches(":hover")), true, "포인터는 같은 thread 위에 있다");
+          };
+          await printAndScroll("summary-before-response");
+          release();
+          const card = p.getByTestId("summary-hover");
+          await diagnostics.visible("요약 응답 전 터미널 scroll 뒤 카드");
+          assert.ok((await cardOf(p)).text.includes("웹 왼쪽 패널 다듬기"));
+          const sameCard = await card.elementHandle();
+          await printAndScroll("summary-after-card");
+          assert.equal(await sameCard.evaluate((el) => el.isConnected), true, "열린 카드를 닫았다 다시 만들지 않는다");
+          assert.equal(await card.isVisible(), true);
+          await sameCard.dispose();
+          // 행을 포함한 목록의 실제 scroll은 기존처럼 닫는다. 포커스는 셸에 있으므로 focus 예외가 아니다.
+          await p.evaluate(() => {
+            const list = document.querySelector(".machine-list");
+            const spacer = document.createElement("div");
+            spacer.style.height = "1000px";
+            list.append(spacer);
+            list.scrollTop += 10;
+          });
+          await card.waitFor({ state: "detached" });
+          assert.deepEqual(errors, []);
+        } catch (error) {
+          await diagnostics.save(error, inTime);
+          throw error;
+        } finally {
+          release();
+          await p.context().close();
+        }
+      }
+    } finally { await wk.close(); }
+  });
+
   await step("thread 줄 hover 카드(데스크톱): 150ms 뒤 목표·지금·최근 변경·활동·시간·상태, 한 줄씩 보이고 떠나면·⋯ 메뉴면 닫힌다", async () => {
     const row = page.getByTestId(`thread-demo-${id}`);
     if ((await row.getAttribute("title")) !== null) throw new Error("hover 카드가 title tooltip을 대신한다");
     await row.hover();
-    await page.getByTestId("summary-hover").waitFor();
+    await diagnostics.visible("기본 thread 줄 hover");
     await domIs(page, "카드 자리", () => document.querySelector('[data-testid="summary-hover"]')?.style.visibility !== "hidden");
     const card = await cardOf(page);
     // 기존 여덟 줄에 모델 한 줄을 더한다. 정한 것·끝남·처음은 상세에서 읽는다.
@@ -171,11 +246,11 @@ export default async function ({ page }) {
     await page.getByTestId("summary-hover").waitFor({ state: "detached" });
     // ⋯ 메뉴(오른쪽 누름)가 열리면 카드는 없다
     await row.hover();
-    await page.getByTestId("summary-hover").waitFor();
+    await diagnostics.visible("메뉴 열기 전 두 번째 hover");
     await row.click({ button: "right" });
     await page.getByTestId("summary-hover").waitFor({ state: "detached" });
     await page.keyboard.press("Escape");
-  });
+  }, { diagnose: (error) => diagnostics.save(error, inTime) });
 
   await step("「작업」 트리(plan §8.280): 고정한 thread 줄(맨 앞 카드)도 같은 요약 카드, 「기타」의 thread 없는 agent에는 카드 없음", async () => {
     const plain = aaa("tab", "create", "--machine", "labA", "--label", "일반 agent", "--",
@@ -197,7 +272,7 @@ export default async function ({ page }) {
       if (await page.getByTestId("summary-hover").count()) throw new Error("thread 없는 agent에 빈 카드");
       await row.hover();
       await page.clock.runFor(200);
-      await page.getByTestId("summary-hover").waitFor();
+      await diagnostics.visible("고정한 thread 줄 hover");
       await domIs(page, "고정 카드 줄 요약 카드 자리", () => document.querySelector('[data-testid="summary-hover"]')?.style.visibility !== "hidden");
       if (!(await cardOf(page)).text.includes("웹 왼쪽 패널 다듬기")) throw new Error("고정한 줄의 thread 대응이 다르다");
       if (await row.getAttribute("title") !== null) throw new Error("고정한 줄에 title과 카드가 겹친다");
@@ -266,7 +341,7 @@ export default async function ({ page }) {
     report(["x", "~", " ", "x", " "]);
     await page.getByTestId(`thread-demo-${id}`).hover();
     const hover = page.getByTestId("summary-hover");
-    await hover.waitFor();
+    await diagnostics.visible("전체 진행 목록 hover");
     const progress = hover.getByTestId("summary-progress");
     await progress.waitFor();
     const states = await progress.getByRole("listitem").evaluateAll((ls) => ls.map((l) => l.dataset.state));
@@ -385,7 +460,7 @@ export default async function ({ page }) {
     for (const value of ["light", "dark"]) {
       await theme(page, value);
       await page.getByTestId(`thread-demo-${id}`).hover();
-      await hover.waitFor();
+      await diagnostics.visible(`모델 카드 ${value} 테마`);
       await shows(page, "최근 확인 모델: astra medium");
       await shot(page, `summary-model-hover-${value}`);
       await page.mouse.move(1000, 600);
@@ -440,5 +515,5 @@ export default async function ({ page }) {
     await shot(page, "summary-model-restarted");
     await page.keyboard.press("Escape");
     await page.getByTestId("summary-pop").waitFor({ state: "detached" });
-  });
+  }, { diagnose: (error) => diagnostics.save(error, inTime) });
 }

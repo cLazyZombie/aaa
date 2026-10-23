@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 요약 카드와 무관한 scroll 분리(t-0863)
+
+- 원본 E2E28 두 실패의 DOM·사건 trace는 이 작업 머신에 없다. 수정 전 Chromium 감속 4배·worker 2의 E2E16·28·84 전체와, 감속 6배·worker 3의 E2E28 고정 6회는 통과했다. 이 관측만으로 원본 실패의 사건 순서를 소급 확정하지 않는다.
+- 별도 결정적 대조는 새 화면에서 실제 `thread_summary` 응답을 붙잡고 hover 타이머 뒤 실제 셸 PTY에 100줄을 쓴다. xterm의 native viewport scroll을 확인하고, thread 행의 위치·포인터가 그대로인 상태에서 응답을 놓는다. 구판은 기존 `summary-hover visible` 30초 대기에서 실패한다. scroll capture가 anchor를 지워 `useSummary` effect를 정리하고, 도착한 응답을 버리는 제품 경합이다. 가상화나 마우스 진입 누락이 이 대조의 원인은 아니다.
+- `useSummaryHover`는 scroll 대상이 anchor를 포함할 때만 닫는다. 터미널 출력·대화 내부 scroll에는 카드와 응답 대기를 유지하고, 목록을 굴리면 기존처럼 닫는다. 행에 focus가 있는 경우·resize·마우스 이탈·누름·메뉴 억제·150ms/400ms 규칙은 유지한다.
+- E2E28의 새 회귀는 Chromium·WebKit 1280px에서 응답 전 scroll, 카드 표시 뒤 출력 scroll, 카드 DOM의 같은 객체 유지, 실제 목록 scroll의 닫힘을 검사한다. 새 대조 화면에만 service worker를 차단하여 route gate 우회를 막는다(E2E37과 같다). 기존 화면·브라우저·폭·테마·모델 전환 단언과 30초 locator·20초 DOM·120초 단계 상한은 유지한다. 고정 sleep·재시도는 추가하지 않는다.
+- hover visible 대기에는 단계 이름을 붙인다. `SummaryDiagnostics`는 포인터 진입·이탈·누름, scroll 대상과 행의 포함 관계·자리, 요약 HTTP 요청·응답, 카드 표시 전이를 제한된 메모리에 기록한다. 실패 때만 `diagnostics/summary-*`에 JSON·화면을 저장하고 공통 termDiag보다 먼저 수집한다. 제품 타이머를 바꾸거나 성공 경로에서 파일을 쓰지 않는다.
+- 참고 후보: [Radix Tooltip](https://github.com/radix-ui/primitives/blob/main/packages/react/tooltip/src/tooltip.tsx)의 진입·이탈 타이머 취소와 [Floating UI useDismiss](https://github.com/floating-ui/floating-ui/blob/master/packages/react/src/hooks/useDismiss.ts)의 `ancestorScroll` 범위다. [Radix MIT](https://github.com/radix-ui/primitives/blob/main/LICENSE)·[Floating UI MIT](https://github.com/floating-ui/floating-ui/blob/master/LICENSE)를 확인했다. 기준 행을 움직이는 스크롤과 무관한 스크롤을 구분하는 방식을 따르고 외부 코드·의존성은 가져오지 않았다.
+- 정본 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`·의존 경계 시험·공개 검사다. Playwright 1.64.1과 브라우저를 자기 작업 폴더에 격리한다. E2E16·84는 재현된 실패가 있을 때만 수정하며, 통과 실행은 원본 간헐 실패의 부재 증명으로 취급하지 않는다.
+
 ## Windows SSH 원격 install의 명시적 상태 경로(t-0847)
 
 - Windows 래퍼는 `install-probe`·`install-bootstrap`·`install --resume` 모두에 현지 `LOCALAPPDATA/aaa/state`를 한 인자로 전달한다. LOCALAPPDATA가 비어 있으면 USERPROFILE을 써서 `aaa-config::paths::default_state_dir_for(None)`과 맞춘다. 전역 AAA_STATE_DIR이나 host 머신의 경로를 전달하지 않는다.
