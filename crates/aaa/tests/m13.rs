@@ -5339,7 +5339,12 @@ fn pr_followup() {
     let stub = w.lab.root.join("gh");
     let mut f = w.lab.follow("follow", &w.h, "demo");
     let dir = w.projects.join("demo");
-    let put = |name: &str, body: &str| std::fs::write(dir.join("routines").join(format!("{name}.md")), body).unwrap();
+    let put = |name: &str, body: &str| {
+        // 실행 중인 ticker가 create/truncate와 write 사이의 빈 문서를 다른 오류로 관측하지 않게 한다.
+        let pending = dir.join("routines").join(format!(".{name}.pending"));
+        std::fs::write(&pending, body).unwrap();
+        std::fs::rename(pending, dir.join("routines").join(format!("{name}.md"))).unwrap();
+    };
 
     // 새 프로젝트에는 기본 pr-followup이 있다. 꺼진 pr routine과 함께 두고, 없는 trigger 파일이 알려지는 것으로 한 번 돈 것을 안다.
     put(

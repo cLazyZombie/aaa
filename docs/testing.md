@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## Windows SSH 원격 install의 명시적 상태 경로(t-0847)
+
+- Windows 래퍼는 `install-probe`·`install-bootstrap`·`install --resume` 모두에 현지 `LOCALAPPDATA/aaa/state`를 한 인자로 전달한다. LOCALAPPDATA가 비어 있으면 USERPROFILE을 써서 `aaa-config::paths::default_state_dir_for(None)`과 맞춘다. 전역 AAA_STATE_DIR이나 host 머신의 경로를 전달하지 않는다.
+- 실기에서 수정 전 제품 래퍼는 exit 2·빈 stdout/stderr였다. CLI가 명시적 상태 경로 누락으로 SSH 검증 전에 끝난다. 수정한 제품 래퍼는 공백이 든 LOCALAPPDATA와 값이 없는 USERPROFILE fallback에서 각각 exit 0·`planned` 제안을 반환했다. 실제 SYSTEM OpenSSH 계보를 검사했으며, 실험실 안 환경만 바꾸고 설치·SCM 등록은 실행하지 않았다.
+- `cargo test --locked -p aaa --test install ssh_executors_report_missing_explicit_state_without_writing`은 probe/bootstrap/worker의 필수 경로 누락을 실제 argv로 실행해 exit 2·명확한 stderr·비어 있는 stdout과 파일 불변을 확인한다. `cargo test --locked -p aaa-host --lib machine_setup::`는 세 Windows 명령의 공통 경로 전달, 원격 실패와 잘못된 JSON의 오류 처리·공개 오류에 원문이 없는 것을 검사한다. 기존 Windows CI의 실제 SYSTEM sshd→계획→bootstrap→SCM→TLS 등록 owner는 그대로 유지한다.
+- 실패한 probe의 종료 코드·stderr·stdout(JSON 포함)은 `cfg(test)`의 실험실 owner 로그에만 남긴다. 경로·계정이 든 원문을 제품 DTO/DB에 저장하지 않는다. CI 부모는 기존처럼 가짜 암호가 stdout/stderr에 있으면 출력 전에 실패시킨다. SSH 거부 3·충돌 4와 모든 시한·기대값은 유지한다.
+- 참고 후보는 [PowerShell SSHProcessMediator](https://github.com/PowerShell/PowerShell/blob/99a49e0eab9b137449b690ab4607d7932c6f9956/src/System.Management.Automation/engine/remoting/server/OutOfProcServerMediator.cs#L526)(MIT), [Win32-OpenSSH fd 초기화](https://github.com/PowerShell/openssh-portable/blob/274893f8d1fe86c4d128b514c3af4bc10cdc0c99/contrib/win32/win32compat/w32fd.c#L132)(구성요소별 BSD형), [cargo-dist PowerShell 설치기](https://github.com/axodotdev/cargo-dist/blob/29704544bb92182e513a2665401fd023e93035a9/cargo-dist/templates/installer/installer.ps1.j2)(MIT)다. 기존 raw stdin·새 핸들 규칙을 유지하고, 경로는 현지 환경에서 선택한다. 외부 코드를 복사하거나 실행하지 않았다.
+- 첫 전체 검증에서 기존 `m13::pr_followup`은 시험의 직접 write가 만든 빈 routine과 완성된 잘못된 trigger를 ticker가 각각 읽어 오류 2개를 기록했다. 원본 로그의 서로 다른 두 오류와 `routine_pass`의 내용 hash별 중복 방지를 대조했다. 시험 자료를 `.pending`에 완성한 뒤 `.md`로 rename하여 읽기 경합을 없앤다. 기존 오류 개수·PR 사건·시한은 유지한다.
+
 ## 코드 줄 수 시험의 경과 시간 분리(t-0845)
 
 - `nice -n 15 cargo test --locked -p aaa-agent --lib workspace_metrics -- --nocapture`: 실제 Git 객체를 읽고, 집계 규칙·UTF-8 오류·같은 커밋 재스캔 방지·다음 커밋 회복 시험에는 고정 경과 0을 넣는다. 같은 손상 객체에 경과 750ms를 넣으면 시간 상한 오류가 먼저 발생하는 대조도 둔다. Git 자식 실행이 느려져도 오류 원인 시험의 결과가 달라지지 않으며, 오류 단언에는 실제 오류 원문을 남긴다.

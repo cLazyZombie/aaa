@@ -205,6 +205,7 @@ pub(crate) fn apply_script(dir: &str, os: &str, id: &str) -> Option<String> {
 /// install 검증 SSH 입구의 종료 코드를 사람 말로
 pub(crate) fn remote_why(step: &str, r: &Ran, code: Option<i32>) -> String {
     match code {
+        Some(2) => format!("{step}: 원격 install의 실행 인자·사용법이 잘못됐다(exit 2)"),
         Some(3) => format!(
             "{step}: 그 머신의 install이 이 접속을 시스템 SSH 서버로 확인하지 못했다(macOS 「원격 로그인」·Windows 시스템 OpenSSH 서버만 믿는다)"
         ),
@@ -214,6 +215,20 @@ pub(crate) fn remote_why(step: &str, r: &Ran, code: Option<i32>) -> String {
         Some(255) | None => format!("{step}: {}", super::why(&r.stderr)),
         Some(c) => format!("{step}: 원격 install이 실패했다(exit {c})"),
     }
+}
+
+pub(super) fn probe_response(r: &Ran, code: Option<i32>) -> Result<InstallProposal, String> {
+    let result = if code != Some(0) {
+        Err(remote_why("원격 install 계획", r, code))
+    } else {
+        serde_json::from_str(&r.stdout).map_err(|_| "원격 install 계획을 읽지 못했다(같은 판인지 본다)".to_string())
+    };
+    // 제안 원문에는 경로·계정이 있다. 일회 실험실 owner의 실패 로그에만 남기고 제품 DTO/DB에는 넣지 않는다.
+    #[cfg(test)]
+    if result.is_err() {
+        eprintln!("install-probe 진단: {}", serde_json::json!({"exit": code, "stderr": r.stderr, "stdout": r.stdout}));
+    }
+    result
 }
 
 /// 원격 bootstrap이 private 채널로 돌려주는 준비 결과
@@ -530,11 +545,7 @@ impl Host {
             };
             let input = serde_json::to_vec(&c).map_err(|e| e.to_string())?;
             let (r, code) = ssh.exec_input(&t, &script, &input, STEP_TIMEOUT).await;
-            if code != Some(0) {
-                return Err(remote_why("원격 install 계획", &r, code));
-            }
-            let proposal: InstallProposal = serde_json::from_str(&r.stdout)
-                .map_err(|_| "원격 install 계획을 읽지 못했다(같은 판인지 본다)".to_string())?;
+            let proposal = probe_response(&r, code)?;
             let summary = review(&proposal, &sha, &placed.version)?;
             let path = self.setup_plan_path(id);
             serde_json::to_vec(&proposal)
