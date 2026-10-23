@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## E2E93 재개 뒤 출력 구독과 종료 입력(t-0927)
+
+- t-0926 원본의 quit 5바이트는 host→agent→session PTY 쓰기 완료였고, 14:06:48.410Z에 agent의 `released` 감지도 있었다. 그러나 재연결 직후 보낸 두 session subscribe가 14:07:00.690Z에 모두 15초로 만료됐다. 화면은 `app-history-4`에 멈췄다. 부하 17.00/8.08/7.91을 시한 연장의 근거로 쓰지 않는다. 원본 보고·두 로그·화면/DOM/network 진단·검증 archive의 모든 파일을 읽고 사본을 보존했다. 당시 잠금 획득 순서는 로그에 없어 소급 확정하지 않으며, 아래 keeper에서 원본과 일치하는 구독 응답 유실 경로를 입증한다.
+- 제품 원인: Welcome 뒤 `initialize`는 `harness_delivery` 잠금을 얻은 다음 host 송신자를 등록한다. 복구한 감지·hook 저장이 이 잠금을 쥐는 동안 reader는 초기 Subscribe를 처리할 수 있지만, session pump의 `send_host`는 송신자가 없어 응답을 버린다. 실제 두 session pump와 frame 연결을 사용한 `link::resume_tests::requests_read_before_host_publication_keep_session_replies_and_exit_output`은 잠금을 쥔 채 Welcome·두 요청·Ping을 읽게 고정한다. 수정 전에는 Pong 뒤에도 두 구독 응답이 없어 실패했다.
+- 요청 task는 host 등록 사건을 기다린 뒤 시작하며 reader의 Ping·EOF 처리는 계속된다. gate는 전체 replay 완료보다 먼저 열려 기존 replay 중 응답 동시 처리와 live hook 순서를 유지한다. keeper는 두 구독 응답→quit ACK→종료 출력 bytes를 검사한다. `eof_or_deadline_before_host_publication_does_not_start_mutating_requests`는 등록 전 EOF·요청 자체의 시한 만료 때 이름·spec 파일을 바꾸지 않는지 검사한다. 등록 대기에 쓴 시간도 기존 요청 예산에서 빼며 timeout을 늘리지 않는다. 기존 replay·backpressure·연결/codec 시험도 유지한다. wire/API·시한은 변경하지 않는다.
+- 별도로 기존 `fake-shell-harness.py --mouse`는 ESC 입력을 SGR 휠 64/65 정규식이 맞을 때만 비웠다. VT200 클릭(`CSI <0;…M/m`) 뒤 휠·quit까지 삼키는 결함을 실제 PTY와 WebKit 390의 실제 `.xterm-screen` 클릭으로 재현했다. 이 대조도 `resume:quit` 20초 실패였지만, 원본의 released·subscribe 만료와 구별한다. 시험 harness는 명령/제어 버퍼를 나누고 완성 CSI를 소비하며 휠 누름만 화면을 굴린다.
+- 기존 재개 8개 조합에서 실제 클릭→대화→agent 재시작→quit 경로와 클릭 누름·뗌 수신·quit 해석·최종 출력/정리를 검사한다. 직접 실행 8개와 기존 휠·기록·보기 복원도 유지한다. 최근 64개 입력 종류·button/final·명령 분류·종료 단계만 실험실에 기록하며 원문 글·좌표·환경값은 기록하지 않는다. 실패 시 `diagnostics/<조합>/`에 기존 자료와 pane 상태·최근 화면·load·해당 session-host 로그·입력 분류를 둔다. 바깥 단계 시한에도 수집하며 진단 오류가 최초 시험 오류를 덮지 않는다.
+- 참고 후보는 [herdr-web-ui PaneTerminal](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/PaneTerminal.tsx)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))과 [xterm 5.5 CoreMouseService](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/common/services/CoreMouseService.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))다. 전자의 입력 전달 경계와 후자의 VT200 클릭·휠 보고를 대조했다. 외부 코드·의존성은 추가하지 않는다.
+- 로컬 정본은 Playwright 1.64.1의 전체 E2E93, 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Linux strict cross clippy다. 기존 DOM 20초·locator 30초·단계 120초, 단언·E2E 번호를 유지하며 고정 sleep·실패 재시도·시한 연장은 없다. t-0928과 겹칠 수 있는 곳은 E2E93 spec·시험용 Python harness·이 문서 절이다. 공통 runner·시한 정책은 변경하지 않는다.
+
 ## 휴대폰 대화의 할 일 링크 뒤로·앞으로(t-0924)
 
 - `node web/e2e/web.e2e.mjs --spec 77 --workers 1`: 실제 host·agent의 coordinator 대화에서 d-ID 링크를 누른다. Chromium·WebKit 390px에서 native `history.back()`의 popstate와 React 반영 frame을 기다려 원래 대화 주소·대화 본문·상세 제거를 검사한다. 앞으로는 같은 할 일 상세·강조가 돌아오고 시트 표지가 없어야 한다. 두 번 왕복 뒤 Chromium의 실제 기록 목록/CDP 위치와 WebKit 기록 길이가 처음 상세를 연 직후와 같아야 한다.

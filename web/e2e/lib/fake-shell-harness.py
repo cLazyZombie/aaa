@@ -8,6 +8,7 @@ import time
 import re
 import termios
 import tty
+from collections import deque
 
 root, harness = Path(sys.argv[1]), Path(sys.argv[0]).name
 args = sys.argv[2:]
@@ -21,6 +22,18 @@ started = int(time.time() * 1000)
 record = None
 path = None
 registry = root / "claude/sessions" / f"{os.getpid()}.json"
+input_events = deque(maxlen=64)
+
+
+def input_event(kind, **fields):
+    # 시험 입력의 종류만 남긴다. 원문 글·좌표·환경값은 저장하지 않는다.
+    input_events.append({"at": int(time.time() * 1000), "kind": kind, **fields})
+    folder = root / "shell-input"
+    folder.mkdir(exist_ok=True)
+    (folder / f"{os.getpid()}.json").write_text(json.dumps({
+        "pid": os.getpid(), "harness": harness, "mode": mode, "session": session,
+        "events": list(input_events),
+    }))
 
 
 def line(text, n):
@@ -92,18 +105,34 @@ def commands():
         yield from sys.stdin
         return
     pending = ""
+    control = ""
     while True:
         char = sys.stdin.read(1)
         if not char:
             return
-        pending += char
-        if pending.startswith("\033"):
-            if re.fullmatch(r"\033\[<6[45];\d+;\d+[Mm]", pending):
+        if char == "\033":
+            control = char
+        elif control:
+            control += char
+            if control == "\033[":
+                continue
+            if control.startswith("\033[") and not ("@" <= char <= "~"):
+                continue
+            # CSI는 마지막 글자에서 끝난다. 클릭·focus 보고까지 소비해야 다음 quit을
+            # 삼키지 않는다. 휠 누름만 화면을 굴리고 뗌·다른 보고는 화면을 안 바꾼다.
+            mouse_report = re.fullmatch(r"\033\[<(\d+);\d+;\d+([Mm])", control)
+            button = int(mouse_report[1]) if mouse_report else None
+            is_wheel = button in (64, 65) and mouse_report[2] == "M"
+            input_event("control", button=button, final=char, wheel=is_wheel)
+            control = ""
+            if is_wheel:
                 yield "wheel"
-                pending = ""
         elif char in "\r\n":
+            input_event("command", command=pending if pending in ("quit", "open", "append") else "other")
             yield pending.strip()
             pending = ""
+        else:
+            pending += char
 
 
 old_tty = termios.tcgetattr(sys.stdin) if mouse else None
@@ -112,6 +141,7 @@ try:
         tty.setraw(sys.stdin)
     if mode:
         open_record(resume=True)
+    input_event("ready")
     screen()
     for command in commands():
         command = command.strip()
@@ -143,3 +173,4 @@ finally:
     if registry.exists():
         registry.unlink()
     print("\033[?1000l\033[?1006l\033[?1049l\nforeground-harness-exited", flush=True)
+    input_event("exited")
