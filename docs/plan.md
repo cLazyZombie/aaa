@@ -2715,6 +2715,15 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **뺀 것.** 참고의 새 탭·나누기·확대·사이드바 접기·PC 추가·알림 켜기·새로 고침·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없다. 셸 줄 표시(`AgentMark` 「s」)와 상태 없는 줄의 「—」 칸은 참고 그대로다.
 - **시험.** `web/test/palette.test.mjs`(참고 paletteSearch·paletteSettings·machinePalette 시험을 aaa 줄로). 웹 E2E 「명령 팔레트」(`specs/04-app-shell.mjs`): 돋보기로 열면 검색 칸 focus, 이름으로 찾아 Enter면 그 pane, Mod+Shift+K로 다시 열면 「최근」 맨 앞이 앞서 연 줄, `>테마`는 pane 없이 「테마 전환」이 먼저이고 Enter면 테마가 바뀜, 「터미널」로 찾은 설정 쪽은 그 쪽으로 열림, 휴대폰엔 돋보기 없음. 「앱 단축키」(`specs/03-keys.mjs`)는 Mod+Shift+K를 앱 몫으로 본다.
 
+#### 설치 앱의 최근 화면 전환(t-0934)
+
+- PWA standalone 창에서만 Ctrl+Tab·Ctrl+Shift+Tab으로 이 기기에서 방문한 실행 중 화면을 최근 순서로 고른다. 일반 브라우저 탭의 키 처리는 유지한다. thread pane·셸·coordinator를 포함하고, 종료된 pane·해결/보류/보관된 thread·끊긴 머신은 제외한다. 작업의 완료 보고/idle 표지와 pane 종료를 구분한다.
+- Ctrl 유지 중 후보 순서를 고정하고 본문·주소·방문 순서는 바꾸지 않는다. Ctrl을 놓거나 Enter/목록 클릭으로 확정할 때만 이동·MRU 갱신한다. Esc·창 포커스 상실·가려짐·선택 후보 종료는 취소한다. Shift를 놓는 것은 확정이 아니다. 후보 0개나 현재 화면 하나뿐이면 아무 화면도 열지 않는다.
+- 팔레트와 전환기가 `aaa:palette-recent`를 함께 쓴다. 방문 키를 최대 128개 기억하고 팔레트 표시는 기존 최근 셋을 유지한다. thread/pane 별칭은 같은 화면으로 센다. 저장 실패 시 이 페이지 메모리를 쓰고, 다른 창의 저장 사건은 반영하되 Ctrl을 누르는 동안의 후보 차례는 바꾸지 않는다. 기기 간 동기화와 API 변경은 없다.
+- 설정 → 단축키의 「최근 화면 전환」을 끄면 앱이 Ctrl+Tab을 가로채지 않는다. 켜져 있을 때는 capture 단계와 xterm 키 처리 양쪽에서 터미널로 새는 것을 막는다. 다른 대화상자·설정·파일 보기는 전환기가 가로채지 않는다.
+- 참고: [VS Code 최근 편집기 전환](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/browser/parts/editor/editorActions.ts)([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt)), [Windows Terminal MRU](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/interaction#tab-switcher-interface-style)([MIT](https://github.com/microsoft/terminal/blob/main/LICENSE)). 외부 코드·의존성을 추가하지 않는다.
+- 자동 검증은 E2E99와 `recentScreens`·`recentHistory` 유닛 시험이다. standalone 조건을 주입한 Playwright 입력은 설치된 PWA의 네이티브 키 전달 증거가 아니다. 사용자 지시로 Windows 잠금 해제 뒤 Edge/Chrome OS 입력과 Mac 직접 입력 확인을 후속 실기로 남긴다.
+
 ### 8.133 push 판정 근거 기록과 「쓰는 화면」 lease(10-18, 실기 07:39 「쓰는 화면」으로 push 생략·앱 안 알림 없음, 07:43 push와 앱 안 알림 둘 다)
 - **결함.** 07:39 host는 iPhone을 보이고 focus인 쓰는 기기로 보고 push를 건너뛰었는데(`push_skipped` 「쓰는 화면 2개」), 그 화면에는 앱 안 알림이 오지 않았다. 07:43에는 앱이 열려 있는데 push가 가서 앱 안 알림과 겹쳤다. host는 무엇을 보고 그렇게 정했는지 남기지 않아 어느 쪽인지 가를 수 없었다.
 - **판정 근거 기록(먼저).** host는 events 연결마다 알린 것을 시각과 함께 둔다(`seen.rs` `ConnRec`): 연 때, presence(쓰는 중인지, 웹이 보낸 까닭 `focus`·`blur`·`visibilitychange`·`pagehide`·`pageshow`·`freeze`·`resume`·`open`·`heartbeat`와 그때 `visibilityState`·`hasFocus()`), 마지막 앱 글(Text frame), 마지막 WebSocket pong. 쓰는 기기는 알린 길(`touch`·`입력`)과 때를 둔다.

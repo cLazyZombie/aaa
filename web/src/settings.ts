@@ -287,14 +287,15 @@ export function useKeepScreenOn(): boolean {
  * - wrapCode(기본 꺼짐): 파일 보기가 긴 줄을 옆으로 굴리지 않고 접는다(참고 `wrapCode`, 「파일 뷰어」 설정).
  * 기본값이면 지운다. 값은 "1"·"0".
  */
-export type TerminalToggle = "paneClipboard" | "releasePaneAway" | "enterSends" | "wrapCode";
+export type TerminalToggle = "paneClipboard" | "releasePaneAway" | "enterSends" | "wrapCode" | "recentScreens";
 const TOGGLE_KEYS: Record<TerminalToggle, string> = {
   paneClipboard: "aaa:pane-clipboard",
   releasePaneAway: "aaa:release-pane-away",
   enterSends: "aaa:enter-sends",
   wrapCode: "aaa:wrap-code",
+  recentScreens: "aaa:recent-screens",
 };
-const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false, enterSends: true, wrapCode: false };
+const TOGGLE_DEFAULTS: Record<TerminalToggle, boolean> = { paneClipboard: true, releasePaneAway: false, enterSends: true, wrapCode: false, recentScreens: true };
 
 function readToggle(name: TerminalToggle): boolean {
   try {
@@ -310,6 +311,7 @@ const toggles: Record<TerminalToggle, boolean> = {
   releasePaneAway: readToggle("releasePaneAway"),
   enterSends: readToggle("enterSends"),
   wrapCode: readToggle("wrapCode"),
+  recentScreens: readToggle("recentScreens"),
 };
 
 window.addEventListener("storage", (e) => {

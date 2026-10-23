@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## E2E99 설치 앱의 최근 화면 전환(t-0934)
+
+- `node --test web/test/recentScreens.test.mjs web/test/recentHistory.test.mjs`: 실제 palette 대상 모델로 thread/pane 별칭·실행/종료·보류/해결/보관·끊김, 방문 키 중복 제거·128개 한도·깨진 저장·저장 거부 시 메모리 유지·다른 창의 변경/삭제, 고정 MRU의 순환·역방향·0/1개·후보 제거를 확인한다. 완료 보고의 idle/done은 pane 종료로 보지 않는다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 99 --workers 1`: 실제 host·agent·키 입력을 보이는 PTY 셋을 만든다. Chromium(Win32)·WebKit(MacIntel)의 standalone 조건을 주입하고 Playwright 키 입력으로 순환·반대·Ctrl 확정·Esc 취소·blur 뒤 늦은 Ctrl 뗌·MRU 유지/확정·새로고침·팔레트 공유·선택 후보 종료를 검사한다. 설정 UI에서 끈 PWA와 일반 탭이 동일한 xterm bytes를 보내는지 대조한다.
+- 전환을 시작할 때 실제 `.xterm-screen`을 클릭한다. 앱→pane WebSocket 입력 기록을 동작 전후 대조해 Tab·Shift+Tab·Esc가 전환 중 PTY로 새지 않는지 검사한다. DOM·주소·키 사건·pane 종료를 기다리며 고정 sleep·재시도·시한 연장은 없다. 스크린샷은 `recent-chromium`·`recent-webkit`이다.
+- 이 자동 시험의 Chromium 입력은 CDP, WebKit 입력은 해당 엔진 protocol을 거친다. OS/브라우저의 예약 키 경로와 실제 설치 PWA는 검증하지 않는다. Windows 시험 PC의 잠금 해제 뒤 승인된 Edge/Chrome SendInput 시험과 Mac 시험 앱의 직접 키 입력 확인은 후속 실기로 남긴다. 자동 시험 통과를 실기 통과로 보고하지 않는다.
+- 기존 E2E03·04의 단축키·팔레트도 전체 로컬 `ci-local`에서 유지한다. wire/API와 기존 E2E 번호는 바꾸지 않는다. 구현은 plan §8.132의 설치 앱 전환 절을 따른다.
+
 ## E2E93 재개 뒤 출력 구독과 종료 입력(t-0927)
 
 - t-0926 원본의 quit 5바이트는 host→agent→session PTY 쓰기 완료였고, 14:06:48.410Z에 agent의 `released` 감지도 있었다. 그러나 재연결 직후 보낸 두 session subscribe가 14:07:00.690Z에 모두 15초로 만료됐다. 화면은 `app-history-4`에 멈췄다. 부하 17.00/8.08/7.91을 시한 연장의 근거로 쓰지 않는다. 원본 보고·두 로그·화면/DOM/network 진단·검증 archive의 모든 파일을 읽고 사본을 보존했다. 당시 잠금 획득 순서는 로그에 없어 소급 확정하지 않으며, 아래 keeper에서 원본과 일치하는 구독 응답 유실 경로를 입증한다.

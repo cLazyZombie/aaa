@@ -1,3 +1,4 @@
+import { recentScreenChord, standaloneWindow } from "./recentScreens.ts";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { TerminalReceiver } from "./terminalReceive";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
@@ -834,6 +835,7 @@ export function TermView({
     term.attachCustomKeyEventHandler((event) => {
       // 앱 단축키는 앱 몫이다(PaneTerminal 621줄): 창의 capture 처리기(herdr/shortcuts.ts useShortcuts)는 브라우저 기본만 막으므로
       // xterm이 그 키를 pane에 보내지 않게 먼저 거른다
+      if (recentScreenChord(event) && standaloneWindow() && terminalToggle("recentScreens")) return false;
       if (isAppShortcut(event, shortcutOverrides())) return false;
       // 유지 키 + 하드웨어 키(PaneTerminal 620~651줄): 비라틴 자판 글자는 자판 위치로 읽는다(ㅊ on KeyC + Ctrl = Ctrl+C)
       const held = modifiersRef.current;

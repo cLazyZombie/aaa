@@ -179,7 +179,8 @@ export function groupTargets(targets: readonly PaletteTarget[]): PaletteGroup[] 
 }
 
 export const RECENT_KEY = "aaa:palette-recent";
-const RECENT_LIMIT = 8;
+// 팔레트는 여전히 최근 셋만 보여 주지만 PWA 전환은 더 오래 방문한 화면도 돈다.
+export const RECENT_LIMIT = 128;
 
 export function rememberTarget(key: string, current: readonly string[]): string[] {
   return [key, ...current.filter((item) => item !== key)].slice(0, RECENT_LIMIT);
