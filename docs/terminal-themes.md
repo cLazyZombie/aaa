@@ -34,4 +34,4 @@ iTerm2-Color-Schemes **모음**의 라이선스는 MIT지만, 이 개별 테마�
 VS Code의 [통합 터미널 색 설정](https://code.visualstudio.com/api/references/theme-color#integrated-terminal-colors)처럼 앱 모양과 터미널 기본/ANSI 색을 분리한다.
 xterm.js의 [`ITheme`](https://xtermjs.org/docs/api/terminal/interfaces/itheme/)과
 [5.5 demo의 theme 사용](https://github.com/xtermjs/xterm.js/blob/5.5.0/demo/client.ts)을 참고해, renderer 변경 없이 같은 테마 값을 그리기와 OSC 응답에 사용한다.
-VS Code·xterm.js·WezTerm의 구현 라이선스는 MIT다. 다른 인기 스킴·스킴 편집/가져오기는 이번 변경에 포함하지 않는다.
+VS Code·xterm.js·WezTerm의 구현 라이선스는 MIT다. [추가 앱 테마 12종](theme-catalog.md)은 herdr처럼 앱·터미널을 묶고, ‘앱 팔레트 따름’에서 해당 원본 스킴을 쓴다. 독립 터미널 선택은 기존 두 개를 유지한다. 스킴 편집·가져오기는 추가하지 않는다.

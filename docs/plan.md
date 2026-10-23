@@ -7644,3 +7644,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **목적.** 사용자 10-23 「terminal 테마를 기본 테마에도」·「이름은 다 github dark로」. 기존 앱의 `github-dark`를 같은 터미널 색으로 갱신한다. 목록·밝기·시스템 짝을 확장할 필요가 없어 별도 제품 질문 없이 진행한다.
 - **색·이름.** 앱 배경·입력 바탕 #24292e, 글자 #C9D1D9. 앱을 따르는 터미널도 독립 GitHub Dark와 같은 ANSI·커서·선택 색을 쓴다. 나머지 앱 역할은 Primer primitives 7.10.0 dark 값이다. 터미널 표시 이름은 GitHub Dark, 기존 기기 저장 ID `wezterm-github-dark-user`는 유지한다. 앱·host 설정 형식과 FRONT_API·AGENT_LINK는 그대로다.
 - **출처·검증.** Primer·VS Code GitHub Theme의 MIT와 원 터미널 GPL-3.0·모음 MIT 고지를 보존한다. E2E14·06을 확장하고 E2E95에서 Chromium·WebKit의 1280·390px 실제 앱·터미널·대화·질문 카드를 확인한다. UI 대비는 유지하고 사용자 ANSI는 원색을 우선한다. 전체 ci-local·check-public 뒤 묶음 착지를 기다린다. 배포는 별도 승인이다. 절·E2E 번호는 착지 때 main과 대조한다.
+
+
+### 8.467 앱 GitHub Dark 복원과 테마 갤러리(t-0899)
+
+- **목적.** 사용자 10-23 일반 UI 색 되돌림·다른 테마 추가 지시. 앱 GitHub Dark는 adf056a9의 기본·입력·PWA·오류·ANSI 색으로 복원한다. 독립 터미널 GitHub Dark의 원색·이름·저장 ID는 유지한다.
+- **참고·범위.** herdr 네이티브의 Palette 원색과 이름을 웹의 앱·터미널 결합 및 시스템 밝기별 선택 구조에 옮긴다. Tokyo Night·One·Solarized·Gruvbox·Kanagawa·Rosé Pine의 밝음/어두움 12종을 더한다. 새 host·front API는 없다. 원색·출처·라이선스·보정은 docs/theme-catalog.md와 배포 자료에 남긴다.
+- **선택·대비.** 설정의 기존 select에 밝기별 목록, 펼치는 검색·색 미리보기를 더한다. UI 글자·상태·강조·구문색은 모든 면에서 4.5:1 이상으로 최소 보정하고 터미널 ANSI는 원색을 쓴다. 어두움 전용·추가 변형은 다음 묶음에 남긴다.
+- **검증.** E2E14·95를 복원 계약에 맞추고 E2E96에서 양 엔진·1280/390px의 선택·저장·재열기·OS 짝·대비·터미널 전송·갤러리 배치를 검사하고 캡처한다. 전체 ci-local·공개 검사 뒤 묶음 착지를 기다린다. 배포는 별도 승인이다. 절·E2E 번호는 착지 때 main과 대조한다.

@@ -1,0 +1,11 @@
+Gruvbox color palette
+Source: https://github.com/morhetz/gruvbox
+Original author: morhetz
+The upstream README.md explicitly licenses this theme under MIT/X11.
+Color values are carried through herdr (Apache-2.0) and iTerm2-Color-Schemes (MIT).
+Upstream license statement:
+
+
+[MIT/X11][]
+
+   [MIT/X11]: https://en.wikipedia.org/wiki/MIT_License

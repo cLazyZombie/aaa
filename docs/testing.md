@@ -1,19 +1,19 @@
 # 시험 쓰는 법
 
-## 앱·터미널 GitHub Dark 통일(t-0889)
+## 앱 색 복원·테마 갤러리(t-0899)
 
-- E2E14는 Chromium·WebKit 각각 1280·390px에서 GitHub 세 팔레트 선택·host 저장·재열기·UI 대비를 검사한다.
-  첫 화면 대조에서 Primer danger.fg의 새 배경 대비 4.38:1을 확인해 같은 Primer red[3]로 제품을 수리했다.
-  사용자 지시에 따라 Dark의 터미널 배경은 `#24292e`, ANSI는 기존 독립 테마 원색이다. Dark ANSI의 이전
-  4.5:1 보정 계약은 원색 보존으로 교체하며, UI 대비와 Light·Dimmed의 기존 ANSI 대비 단언은 유지한다.
-- E2E95는 실제 host·agent·PTY와 기기 저장을 사용해 이전 `wezterm-github-dark-user` 선택 복원·표시 이름
-  `GitHub Dark`·앱 팔레트 따름 전환 뒤 같은 기본/ANSI/선택 색을 확인한다. Chromium·WebKit 1280·390px에서
-  실제 터미널·Claude 기록의 사용자/답변/코드·수집된 질문 카드를 캡처한다. headless 화면이며 실제 휴대폰 실기는 아니다.
-- E2E06의 기존 기기별 저장·다른 탭·새 기기 비공유·기본 복원은 그대로 유지하고 새 표시 이름을 검사한다.
-  순수 terminalTheme owner는 새 선택 글자/커서 색 token이 없는 기존 팔레트의 기본값도 확인한다.
-- 참고는 Primer primitives v7.10.0 dark 색 자료(MIT), 공식 VS Code GitHub Theme colors.js(MIT),
-  기존 WezTerm 정본과 개별 GitHub Dark 원본(GPL-3.0)이다. 외부 코드는 추가하지 않는다.
-  사건·DOM·HTTP 응답으로 끝내며 고정 대기·재시도·시한 연장은 없다. 정본은 전체 ci-local과 공개 검사다.
+- E2E14는 복원된 앱 GitHub Dark의 `#0d1117`과 ANSI 전체 4.5:1, 기존 GitHub 밝기 짝·공유 저장·재열기를 유지한다.
+- E2E95는 Chromium·WebKit 1280·390px에서 adf056a9 앱 색 fixture를 실제 CSS에 덮기 전후 모든 token의 렌더 RGBA를 비교한다.
+  Vite의 hex 축약·alpha hex 변환은 canvas 8bit RGBA로 정규화한다. 독립 터미널 bg `#24292e`·원 ANSI와 저장 ID·표시 이름은 유지하고,
+  앱을 따르는 터미널은 원 bg·ANSI·커서로 분리한다. PWA·오류색·대화·질문 카드와 기준 화면도 캡처한다.
+- E2E96은 같은 4개 엔진/폭 조합에서 새 12종의 실제 선택·host 저장·기기 재열기·OS 밝기 짝·기존 CSS 팔레트 복귀를 검사한다.
+  UI 글자·보조·상태·강조·구문색은 기본·판·팝업·hover·입력 바탕과 4.5:1, 주 단추 글자도 4.5:1이어야 한다.
+  원 터미널 ANSI는 원색을 보존하며 UI 대비와 구분한다. 팔레트 변경의 colors frame과 재연결 URL의 fg/bg를 각각 검사한다.
+  초기 연결은 색을 URL로 보내므로 colors frame을 기다리지 않는다. 설정은 실제 닫힘·history 이동 뒤 다시 읽는다.
+- 갤러리의 검색·악센트 무시·빈 결과·선택, 견본 글자·코드의 실제 대비, 미리보기/이름의 카드 안 배치와 가로 넘침을 검사하고 갤러리·테마 화면을 남긴다.
+  순수 owner는 기존 GitHub 밝기 짝, 새 원색 자료·ANSI·밝기 짝·설정 보존을 검사한다. 터미널 owner의 독립 GitHub Dark 검사는 유지한다.
+- 출처·역할별 이식·개별 라이선스와 보정은 [테마 목록](theme-catalog.md)에 기록한다. 원본 실행 코드나 새 의존성은 추가하지 않는다.
+  사건·DOM·HTTP·WebSocket으로 끝내며 고정 대기·재시도·시한 연장은 없다. 정본은 전체 ci-local과 공개 검사다.
 
 ## 대화의 실제 1px 이동과 높이 측정(t-0886)
 

@@ -127,7 +127,7 @@ export default async function ({ ctl, page }) {
         ["webkit-desktop", wk, { width: 1280, height: 800 }], ["webkit-phone", wk, { width: 390, height: 844 }],
       ]) {
         const p = (await pairPage(engine, aaa("web", "pair").code, viewport)).page;
-        for (const [name, mode, bg] of [["github-light", "light", "#ffffff"], ["github-dark", "dark", "#24292e"], ["github-dark-dimmed", "dark", "#22272e"]]) {
+        for (const [name, mode, bg] of [["github-light", "light", "#ffffff"], ["github-dark", "dark", "#0d1117"], ["github-dark-dimmed", "dark", "#22272e"]]) {
           const d = await openSettings(p, "모양");
           const sent = p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set");
           await d.locator("#settings-palette").selectOption(name, { timeout: 3000 });
@@ -142,17 +142,17 @@ export default async function ({ ctl, page }) {
           if (look.mode !== mode || look.bg !== bg || look.palette !== name || look.ansi.some((c) => !/^#[0-9a-f]{6}$/i.test(c))) throw new Error(`${name}: ${JSON.stringify(look)}`);
           const colors = (await sentFrames(p, 0)).filter((f) => f.t === "colors");
           if (!colors.length || colors.some((f) => !/^[0-9a-f]{6}$/i.test(f.fg) || !/^[0-9a-f]{6}$/i.test(f.bg))) throw new Error(`${name} 터미널 기본색 protocol: ${JSON.stringify(colors)}`);
-          const contrasts = await p.evaluate((palette) => {
+          const contrasts = await p.evaluate(() => {
             const css = getComputedStyle(document.documentElement);
             const color = (name) => css.getPropertyValue(`--${name}`).trim().replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, "#$1$1$2$2$3$3");
             const lum = (hex) => hex.slice(1).match(/../g).map((x) => parseInt(x, 16) / 255).map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
             const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
             const pairs = ["text", "text-dim", "accent", "status-idle", "status-working", "status-blocked", "status-done", "notice"].flatMap((fg) => ["bg", "bg-panel", "bg-hover"].map((bg) => [fg, bg]));
             pairs.push(["primary-text", "primary"], ["primary-text", "primary-hover"]);
-            // 사용자 지정 GitHub Dark는 ANSI 원색을 보존한다. UI 대비는 다른 팔레트와 같은 기준이다.
-            if (palette !== "github-dark") pairs.push(...Array.from({ length: 16 }, (_, i) => [`ansi-${i}`, "term-bg"]));
+            // 앱 팔레트 따름은 복원된 앱 ANSI의 대비도 검사한다.
+            pairs.push(...Array.from({ length: 16 }, (_, i) => [`ansi-${i}`, "term-bg"]));
             return pairs.map(([fg, bg]) => ({ fg, bg, ratio: ratio(color(fg), color(bg)) }));
-          }, name);
+          });
           if (contrasts.some((c) => c.ratio < 4.5)) throw new Error(`${name} 대비: ${JSON.stringify(contrasts.filter((c) => c.ratio < 4.5))}`);
           console.log(`     ${device} ${name}: 최소 대비 ${Math.min(...contrasts.map((c) => c.ratio)).toFixed(2)}:1`);
           await shot(p, `${device}-${name}-settings`);
