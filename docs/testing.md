@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 보고서 교체 시험의 Windows 파일 닫힘(t-0862)
+
+- `node --test web/test/reportFile.test.mjs`는 Windows에서 원래 writer의 남은 출력을 쓰고 FD를 닫은 뒤 보고서를 교체한다. POSIX에서는 기존처럼 교체 뒤 옛 FD에 늦게 쓰는 대조를 유지한다. 두 경로 모두 최종 본문 전체가 정확히 일치해야 하며 Windows 시험도 건너뛰지 않는다.
+- 별도 공통 시험은 실제 `renameSync` 직전에 원래 보고서가 그대로 있고 같은 폴더의 임시 보고서가 전체 본문을 담았는지 검사한다. 실제 rename 한 번 뒤 최종 본문과 임시 파일 제거도 확인한다. 직접 덮어쓰기로 되돌리면 이 계약에서 실패한다.
+- E2E87은 파일 존재 대신 가짜 agent의 `asked-cards` 출력 사건을 기다린다. 이 출력은 `printf > report.md`가 끝나 FD가 닫힌 뒤에만 나온다. 파일의 마지막 글자를 읽는 것만으로는 close가 보장되지 않는다. 기존 20초 출력 대기와 8개 화면 조합·스크롤 단언은 유지하며 고정 sleep·교체 재시도는 추가하지 않는다. 웹 E2E 전체 harness는 Unix 전용이고 Windows에서는 같은 공개 helper를 쓰는 Node 시험을 실제 실행한다.
+- 참고 후보: [write-file-atomic의 close 뒤 rename](https://github.com/npm/write-file-atomic/blob/main/lib/index.js)([ISC](https://github.com/npm/write-file-atomic/blob/main/LICENSE.md)), [python-atomicwrites의 close 뒤 commit과 Windows 교체](https://github.com/untitaker/python-atomicwrites/blob/master/atomicwrites/__init__.py)([MIT](https://github.com/untitaker/python-atomicwrites/blob/master/LICENSE)). 완성·close·공개 순서만 따르고 외부 코드나 의존성은 가져오지 않는다. [Node fs.renameSync](https://nodejs.org/api/fs.html#fsrenamesyncoldpath-newpath)는 rename을 설명하며, [libuv Windows 구현](https://github.com/libuv/libuv/blob/v1.x/src/win/fs.c)의 `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` 경로도 확인한다. 열린 대상 교체의 EPERM은 Windows 실기 대조로 확인한다.
+- 정본 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`·공개 검사다. 착지 전 Windows 실기에서 수정 전 실패·수정 후 두 시험 통과와 실험실 정리·기준 목록 대조를 별도로 기록한다.
+
 ## Windows SSH 원격 install의 명시적 상태 경로(t-0847)
 
 - Windows 래퍼는 `install-probe`·`install-bootstrap`·`install --resume` 모두에 현지 `LOCALAPPDATA/aaa/state`를 한 인자로 전달한다. LOCALAPPDATA가 비어 있으면 USERPROFILE을 써서 `aaa-config::paths::default_state_dir_for(None)`과 맞춘다. 전역 AAA_STATE_DIR이나 host 머신의 경로를 전달하지 않는다.

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { publishReport } from "../lib/report-file.mjs";
-import { root, base, aaa, step, browser, webkit, pairPage, until, domIs, shot, openSettings, inTime } from "../lib/harness.mjs";
+import { root, base, aaa, step, browser, webkit, pairPage, until, domIs, shot, openSettings, inTime, waitOutput } from "../lib/harness.mjs";
 
 const frames = (p) => p.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
 const navigate = async (p, hash, selector) => {
@@ -79,8 +79,9 @@ export default async function () {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/scroll-task.md`, "질문 카드 시험\n본문 끝단 스크롤 회귀");
     thread = aaa("thread", "start", "demo", "--title", "본문 스크롤", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/scroll-task.md`);
-    // 생성은 원래 writer가 파일을 열었다는 뜻이다. 뒤의 보고서는 새 inode로 공개한다.
-    await until("가짜 agent 보고", () => fs.existsSync(`${thread.work_dir}/report.md`));
+    // asked-cards는 printf가 끝나 report.md의 FD가 닫힌 뒤에 나온다.
+    // 파일 존재나 마지막 글자만으로는 close를 보장하지 못한다(Windows는 열린 대상 교체가 실패한다).
+    await waitOutput(thread.pane, "asked-cards");
     fs.writeFileSync(`${thread.work_dir}/library/scroll.svg`, '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="300"><rect width="800" height="300" fill="#8a623a"/><circle cx="400" cy="150" r="110" fill="#bad8de"/></svg>');
     const content = Array.from({ length: 16 }, (_, i) => `#### 비교 ${i + 1}\n\n![비교 그림](library/scroll.svg)\n\n| 판단 | 내용 |\n| --- | --- |\n| 효과 | 긴 본문과 표를 끝까지 읽는다 |\n| 비용 | 스크롤 영역 안에서 확인한다 |\n`).join("\n");
     publishReport(`${thread.work_dir}/report.md`, `[결정 필요] 본문 스크롤\n\n## Report\n긴 보고서\n\n## Questions\n### 1. 긴 질문\n${content}\n- A 진행 (추천) — 끝까지 확인\n- B 보류 — 나중에 확인\n\n## Next\n\n## 진행\n- [ ] 본문 확인\n`);
