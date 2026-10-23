@@ -1,6 +1,7 @@
 // 기본 셸 → hook 없는 harness → 실제 프로세스/기록 연결 → host → 대화 페이지/스크롤.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { watchScroll } from "../lib/scrollDiagnostics.mjs";
 import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
 import {
   root, aaa, step, until, waitOutput, inList, domIs, shot, pairPage, browser, webkit, inTime, screenText, start, stop,
@@ -274,6 +275,7 @@ export default async function () {
       await chat.evaluate((c) => { c.scrollTop = 0; });
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
       await chat.getByText("처음이다", { exact: true }).waitFor();
+      await watchScroll(page, '[data-testid="chat"]');
       // 앞 안내의 높이가 늦게 재측정되는 경계. 맨 위에서 첫 row의 위치만 붙들면 1px 아래로 옮긴다.
       const headerShift = await chat.evaluate((c) => {
         const note = c.querySelector(".chat-note");
@@ -337,8 +339,25 @@ export default async function () {
           window.shellResetWrites.push({ before, value, after: native.get.call(this), stack: new Error().stack });
         } });
         window.shellResetLayout = { top: c.scrollTop, note: c.querySelector(".chat-note")?.getBoundingClientRect().height, first: c.querySelector(".chat-row")?.getBoundingClientRect().top };
-        c.scrollTop = 0; c.dispatchEvent(new Event("scroll", { bubbles: true }));
       });
+      if (width < 500 && engine === browser) {
+        // Chromium의 소수 터치 위치를 scrollTop=0으로 덮으면 scrollend 뒤에도
+        // compositor 반올림 잔량(-1, +1)이 온다. 사용자가 처음을 읽듯 실제 터치로 돌아간다.
+        const before = await chat.evaluate((c) => {
+          window.shellScrollEnd = new Promise((done) => c.addEventListener("scrollend", () => done(), { once: true }));
+          return c.scrollTop;
+        });
+        const cdp = await page.context().newCDPSession(page);
+        try {
+          await inTime(cdp.send("Input.synthesizeScrollGesture", {
+            x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2),
+            yDistance: before + box.height, gestureSourceType: "touch", preventFling: true,
+          }), 20_000, "실제 터치로 맨 위 복귀");
+          await inTime(page.evaluate(() => window.shellScrollEnd), 20_000, "맨 위 터치 스크롤 종료");
+        } finally { await cdp.detach(); }
+      } else {
+        await chat.evaluate((c) => { c.scrollTop = 0; c.dispatchEvent(new Event("scroll", { bubbles: true })); });
+      }
       const settled = await chat.evaluate((c) => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done({ top: c.scrollTop, first: c.querySelector(".chat-row")?.getBoundingClientRect().top, note: c.querySelector(".chat-note")?.getBoundingClientRect().height, before: window.shellResetLayout, writes: window.shellResetWrites })))));
       if (settled.top !== 0) {
         fs.mkdirSync(`${root}/diagnostics`, { recursive: true });

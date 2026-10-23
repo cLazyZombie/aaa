@@ -81,7 +81,28 @@ export default async function ({ ctl, page }) {
     await shot(r, "phone-reader-shared");
 
     // 바꾸고 곧바로 닫아도(보내기를 미루는 600ms 안) 값이 간다(QA t-0337 Q11): 떠날 때(pagehide) keepalive로 지금 보낸다
-    const q = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const closing = [];
+    const closeDiagnostics = {
+      init: () => {
+        const record = (event, extra = {}) => console.debug("preferences-leave " + JSON.stringify({ at: performance.now(), event, theme: document.documentElement.dataset.theme, ...extra }));
+        for (const name of ["beforeunload", "pagehide"]) window.addEventListener(name, () => record(name));
+        document.addEventListener("visibilitychange", () => record("visibility", { state: document.visibilityState }));
+        const original = window.fetch;
+        window.fetch = function (input, init) {
+          try {
+            const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+            if (body?.op === "preferences_set") record("send", { theme: body.settings?.theme, keepalive: init.keepalive });
+          } catch { /* 진단은 보내기를 막지 않는다. */ }
+          return original.apply(this, arguments);
+        };
+      },
+      onPage: p => {
+        p.on("console", m => { if (m.text().startsWith("preferences-leave ")) closing.push(JSON.parse(m.text().slice(18))); });
+        p.on("close", () => closing.push({ event: "closed" }));
+        p.on("requestfailed", r => { if (r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "preferences_set") closing.push({ event: "failed", reason: r.failure()?.errorText }); });
+      },
+    };
+    const q = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, closeDiagnostics);
     await htmlIs(q.page, "data-theme", "light");
     const qd = await settings(q.page);
     await qd.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).click();
@@ -93,7 +114,7 @@ export default async function ({ ctl, page }) {
         await until(`${what} host 문서에`, async () => (doc = await held(a))?.settings.theme === theme);
       } catch (e) {
         const other = await b.evaluate(() => document.documentElement.getAttribute("data-theme"));
-        throw new Error(`${e.message}: 보내는 쪽 — host 문서 revision ${doc?.revision} theme ${doc?.settings.theme}, 다른 기기 ${other}`);
+        throw new Error(`${e.message}: 보내는 쪽 — host 문서 revision ${doc?.revision} theme ${doc?.settings.theme}, 다른 기기 ${other}, 닫힘 ${JSON.stringify(closing)}`);
       }
       try {
         await domIs(b, `${what} 다른 기기에`, (t) => document.documentElement.getAttribute("data-theme") === t, theme);
@@ -106,7 +127,7 @@ export default async function ({ ctl, page }) {
     // 미룬 보내기(600ms)가 이미 나간 뒤 닫아도 간다: 느린 CI에서는 누름과 닫음 사이가 600ms를 넘을 수 있다. 그때 나간 보통 요청은 문서와
     // 함께 끊기고, 떠날 때 보내기는 「가는 중」이라 다시 보내지 않았다(코드로 찾은 빈틈, plan §8.173). 그래서 보내기는 늘 keepalive다.
     // 로컬 host는 몇 ms에 답해 고치기 전에도 이 경우는 통과한다(결정적 재현 아님): 그 요청이 나간 것을 본 뒤 닫는 꼴만 지킨다
-    const w = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const w = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, closeDiagnostics);
     await htmlIs(w.page, "data-theme", "dark");
     const wd = await settings(w.page);
     const issued = w.page.waitForRequest((x) => x.url().endsWith("/api/v1/call") && x.postDataJSON()?.op === "preferences_set");
@@ -115,6 +136,42 @@ export default async function ({ ctl, page }) {
     await w.page.close({ runBeforeUnload: true });
     await arrives("light", "보내는 중에 닫힌 기기에서 바꾼 테마가");
     await w.page.context().close();
+    // 클릭과 같은 task에서 마지막 저장 기회가 와도 React의 다음 effect를 기다리지 않는다.
+    // 저장 타이머·응답은 늦추지 않고, 실제 fetch 경계에서 즉시 최신 값 한 번을 보냈는지 본다.
+    for (const event of ["pagehide", "beforeunload", "visibilitychange"]) {
+      const next = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+      const p = next.page;
+      try {
+        await htmlIs(p, "data-theme", "light");
+        const dialog = await settings(p);
+        const sent = await dialog.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).evaluate((button, event) => {
+          const sends = [];
+          const original = window.fetch;
+          window.fetch = function (input, init) {
+            const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+            if (body?.op === "preferences_set") sends.push({ body, keepalive: init.keepalive });
+            return original.apply(this, arguments);
+          };
+          button.click();
+          const leave = () => {
+            if (event === "visibilitychange") {
+              Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+              document.dispatchEvent(new Event(event));
+            } else window.dispatchEvent(new Event(event));
+          };
+          leave();
+          leave(); // 같은 종료의 다른 알림이 가는 중인 요청을 중복 전송하지 않는다.
+          return { theme: document.documentElement.dataset.theme, sends };
+        }, event);
+        if (sent.theme !== "dark" || sent.sends.length !== 1 || sent.sends[0].body.settings?.theme !== "dark" || sent.sends[0].keepalive !== true)
+          throw new Error(`같은 task의 ${event} 저장: ${JSON.stringify(sent)}`);
+        await arrives("dark", `${event}에서 바꾼 테마가`);
+      } finally { await p.context().close(); }
+      const restored = wrote(a);
+      await a.getByRole("region", { name: "설정" }).getByRole("group", { name: "테마" }).getByRole("button", { name: "밝게" }).click();
+      await restored;
+      await htmlIs(b, "data-theme", "light");
+    }
     for (const p of [a, b, r]) await p.context().close();
   });
   await step("GitHub 세 팔레트: 데스크톱·휴대폰에서 선택하고 다시 열어도 UI·ANSI 색과 설정이 남는다", async () => {

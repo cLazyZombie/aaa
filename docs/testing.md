@@ -56,6 +56,19 @@
 - keeper는 새 캐시와 함께 `Invoke-RestMethod`를 내보내고 즉시 오류를 내는 외부 시험 모듈을 상속 경로에 넣는다. 실제 PS5.1/7의 내장 IRM으로 HTTP 본문을 받고, 기존 16개 질문·review/yes·서명 승인·파일/status·옛 실행 파일 보존을 모두 검사한다. 모듈 경로 격리를 지운 대조는 외부 명령을 선택해 이 실제 입구에서 실패해야 한다. 캐시 예열·고정 대기·시한 연장·재시도로 통과시키지 않는다.
 - 참고 후보는 [PowerShell 명령 자동 탐색](https://github.com/PowerShell/PowerShell/blob/v6.0.0/src/System.Management.Automation/engine/CommandDiscovery.cs)(MIT), [Pester CI의 PS5.1/7 분리](https://github.com/pester/Pester/blob/main/.github/workflows/ci.yml)와 [시험 모듈의 명시적 import](https://github.com/pester/Pester/blob/main/test.ps1)(Apache-2.0), [cargo-dist PowerShell 설치기](https://github.com/axodotdev/cargo-dist/blob/main/cargo-dist/templates/installer/installer.ps1.j2)(MIT 선택)다. Pester의 해당 경로에서 첫 사용 지연 전용 우회는 찾지 못했으며, 외부 코드·의존성은 가져오지 않았다. 캐시 위치 지정은 [PowerShell 5.1 공식 설명](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_windows_powershell_5.1?view=powershell-5.1#module-analysis-cache)을 따른다.
 - 정본은 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사와 실제 Windows의 `cargo test --locked -p aaa --test install`이다. Windows owner는 macOS에서 cfg로 제외되므로 로컬 통과를 Windows 실행으로 대신하지 않는다.
+## 웹 E2E 스크롤·닫힘 진단(t-0905)
+
+- E2E93의 Chromium 휴대폰 준비는 터치 뒤 `scrollTop=0` 쓰기 대신 실제 반대 방향 터치로 처음까지 돌아가고 `scrollend`를 기다린다. [CI 39950463717](https://github.com/cLazyZombie/aaa/actions/runs/39950463717) 두 실패의 내부 trace는 최종 터치 위치 197.5/DOM 198 → 프로그램 쓰기 0 → compositor delta -1 → +1을 보인다. 새 입력·앱의 0→1 쓰기 없이 새 답변 전과 후에 각각 top 1이 됐다. 앱 없는 최소 HTML에서도 185.5px 터치 뒤 같은 프로그램 쓰기는 top 1, 실제 터치 복귀는 top 0이었다. 안내 높이 변화·실제 1px 이동과 읽던 줄 유지·새 답변 전후 정확한 0 단언은 그대로다. 브라우저 결함을 앱의 새 답변 갱신으로 오인하던 준비를 고치며, 제품에 1px 무시나 위치 재설정 루프를 넣지 않는다. 반올림 경로는 [Chromium ScrollTree::PullDeltaForMainThread](https://chromium.googlesource.com/chromium/src/+/156.0.8078.4/cc/trees/property_tree.cc)와 대조했다.
+
+- E2E14는 실제 즉시 닫기·보내는 중 닫기를 유지하고, 클릭과 같은 task의 pagehide·beforeunload·hidden도 검사한다. 구판은 DOM 테마가 dark인데 실제 fetch는 0건이다. 종료 감시를 pending effect에서 분리하고 store의 현재 값을 읽는 판은 최신 dark를 keepalive로 정확히 한 번 보낸다. 종료 알림 두 번의 중복 방지와 host/다른 기기 반영을 함께 확인한다. 원본 CI에는 보내는 문서의 lifecycle 기록이 없어 당시 순서를 이 대조와 동일하다고 소급 확정하지 않는다.
+
+- E2E03은 PageUp→늦은 native scroll→PageDown뿐 아니라 반대 방향도 고정한다. 구판은 맨 아래 동기화 뒤의 PageUp이 20초 동안 취소된 상태(native 3249, 첫 줄 s-172)로 남았다. xterm 처리 전부터 끝이었는지를 capture에서 기억해 글꼴 보정 범위를 좁힌 판은 Chromium·WebKit 양쪽을 통과한다. 글꼴 17→19px 전환 뒤 끝 유지(E2E07)도 별도로 확인한다. 키·native 사건·버퍼 값이나 기존 시한은 바꾸지 않는다.
+
+- E2E03은 실패한 viewport가 닫히기 전에 실제 키 처리 여부·native scroll·위치 쓰기·렌더 grid를 남긴다. 앞서 공통 진단에는 이미 닫힌 실패 화면 대신 기본 pane만 남았다.
+- E2E93은 터치·scrollend·위치 쓰기와 reset 전후 상태를 기존 대화 실패 자료에 함께 남긴다. E2E14는 닫는 문서의 lifecycle·keepalive 전송·요청 실패를 host 문서의 실패 진단과 함께 기록한다.
+- 계측은 사건·값을 바꾸지 않는다. 기존 20초 상한과 정확한 위치·테마 단언을 유지한다.
+- 별도 실제 Chromium 대조에서 `domIs`는 top=100·native scrollend 완료 후에도 끝나지 않았고, 위치가 같은 채 속성만 바꾸자 끝났다. scrollTop은 DOM mutation이 아니므로 `scroll`도 capture에서 관측하고 정리한다. 같은 대조의 수정판은 native scrollend 직후 끝난다. 이 누락을 원본 PageUp 실패의 원인으로 단정하지 않는다.
+- 참고: ttyd의 연결별 reset·dispose, WeTTY의 터미널 write 완료 ACK, xterm.js 5.5의 DOM 위치와 비동기 scroll 동기화(MIT), Playwright 공식 사건 대기·trace 문서(Apache-2.0). 외부 코드는 복사하지 않는다.
 
 ## E2E93 재개 조합의 독립 실행과 실패 phase(t-0896)
 
