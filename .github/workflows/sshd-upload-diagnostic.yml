@@ -1,0 +1,67 @@
+name: Windows ssh upload diagnostic
+on:
+  push:
+    branches: [diagnostic/t-0827-ssh-upload]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: 파일 stdin과 pipe stdin의 EOF 대조
+        shell: pwsh
+        run: |
+          $rust = @'
+          use std::{env, fs, io::{Read, Write}, process::{Command, Stdio}, sync::mpsc, thread, time::{Duration, Instant}};
+          fn main() {
+              let a: Vec<_> = env::args().collect();
+              let mut c = Command::new("ssh.exe");
+              c.args(["-F", &a[2], "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", &format!("UserKnownHostsFile={}", a[5]), "-o", "ConnectTimeout=10", "-o", "RequestTTY=no", "ci", &a[4]]);
+              c.stdin(if a[1] == "file" { Stdio::from(fs::File::open(&a[3]).unwrap()) } else { Stdio::piped() });
+              let mut child = c.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+              let feed = child.stdin.take().map(|mut s| {
+                  let bytes = fs::read(&a[3]).unwrap();
+                  thread::spawn(move || { let _ = s.write_all(&bytes); })
+              });
+              let (tx, rx) = mpsc::channel();
+              let (mut out, mut err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+              let tx2 = tx.clone();
+              let readers = [thread::spawn(move || { let mut b=Vec::new(); let _=out.read_to_end(&mut b); let _=tx.send(b); }), thread::spawn(move || { let mut b=Vec::new(); let _=err.read_to_end(&mut b); let _=tx2.send(b); })];
+              let until = Instant::now() + Duration::from_secs(10);
+              let mut result = Vec::new();
+              for _ in 0..2 { match rx.recv_timeout(until.saturating_duration_since(Instant::now())) { Ok(b) => result.push(b), Err(_) => break } }
+              let timed_out = result.len() != 2;
+              if timed_out { let _ = child.kill(); }
+              let status = child.wait().unwrap();
+              for r in readers { r.join().unwrap(); }
+              if let Some(f) = feed { f.join().unwrap(); }
+              result.extend(rx.try_iter());
+              println!("mode={} timed_out={} exit={:?}", a[1], timed_out, status.code());
+              for b in result { println!("{}", String::from_utf8_lossy(&b)); }
+          }
+          '@
+          $probeSource = Join-Path $env:RUNNER_TEMP 'ssh-upload.rs'
+          $probeBinary = Join-Path $env:RUNNER_TEMP 'ssh-upload.exe'
+          [IO.File]::WriteAllText($probeSource, $rust)
+          & rustc.exe $probeSource -o $probeBinary
+          if ($LASTEXITCODE -ne 0) { throw 'stdin 대조 도구 빌드 실패' }
+          $source = [IO.File]::ReadAllText((Join-Path $pwd 'scripts/ci-windows-sshd.ps1'))
+          $marker = "    Write-Host 'M4 SYSTEM OpenSSH 실제 owner 시작'"
+          if (-not $source.Contains($marker)) { throw '진단 삽입 위치가 없다' }
+          $diagnostic = @'
+              $known = Join-Path $lab 'known_hosts'
+              $config = Join-Path $lab 'ssh_config'
+              Write-LabDiagnostic ((& ssh.exe -F $config -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ('UserKnownHostsFile=' + $known) ci 'cmd.exe /c ver' 2>&1) | Out-String)
+              if ($LASTEXITCODE -ne 0) { throw '대조 전 사용자 profile 준비 실패' }
+              $payload = Join-Path $lab 'payload.bin'
+              [IO.File]::WriteAllBytes($payload, [byte[]]::new(1048576))
+              $body = '$ErrorActionPreference="Stop"; $p=Join-Path ([IO.Path]::GetTempPath()) ("aaa-upload."+[Guid]::NewGuid().ToString("N")); Write-Output "AAA-COPY-START"; $f=[IO.File]::Create($p); try { [Console]::OpenStandardInput().CopyTo($f) } finally { $f.Dispose() }; Write-Output "AAA-COPY-END"; Write-Output ([IO.FileInfo]::new($p).Length); Write-Output ((Get-FileHash $p -Algorithm SHA256).Hash); Remove-Item -LiteralPath $p'
+              $command = 'powershell -NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($body))
+              foreach ($mode in @('file', 'pipe')) { Write-LabDiagnostic ((& $probeBinary $mode $config $payload $command $known 2>&1) | Out-String) }
+              return
+          '@
+          $path = Join-Path $env:RUNNER_TEMP 'sshd-upload-diagnostic.ps1'
+          [IO.File]::WriteAllText($path, $source.Replace($marker, $marker + "`n" + $diagnostic))
+          & $path
