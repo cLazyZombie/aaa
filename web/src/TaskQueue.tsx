@@ -11,10 +11,12 @@ const words: Record<QueueState, string> = { queued: "예약됨 · 자리 나면 
 /** 목록이 연 예약(끌어 놓기·⋯ 「자리 나면 시작 예약」): 내용 확인을 바로 열고, 예약한 뒤 그 차례(host 순번, 없으면 맨 뒤)로 옮긴다 */
 export type ReserveRequest = { seq: number; position: number | null };
 
-export function QueueControls({ task, board, canEdit, request, onStep, onUnreserved }: {
+export function QueueControls({ task, board, canEdit, afterApi, request, onStep, onUnreserved }: {
   task: TaskView;
   board: TaskBoard;
   canEdit: boolean;
+  /** 예약 확인에서 앞 할 일을 고른다(host가 그 할 일이 완료 보관될 때까지 기다린다) */
+  afterApi?: boolean;
   request?: ReserveRequest | null;
   /** 예약 위로·아래로·맨 앞으로(목록이 거르기에 맞춰 순번을 정한다). 없으면 그 일을 하지 않는다 */
   onStep?: (dir: MoveDir) => void;
@@ -28,6 +30,10 @@ export function QueueControls({ task, board, canEdit, request, onStep, onUnreser
   const q = board.queue?.find((q) => q.task_id === task.id);
   const pending = q && ["queued", "check"].includes(q.state);
   const why = q && pending ? queueWhy(q) : null;
+  // 앞 할 일(ULID, 빈 글은 없음). 예약 내용 갱신도 지금 앞 할 일을 그대로 다시 보낸다
+  const [after, setAfter] = useState("");
+  const afterWait = q?.state === "queued" && !!q.after && q.reason.startsWith("앞 할 일");
+  const choices = board.tasks.filter((t) => t.id && t.id !== task.id && !t.done);
   async function action(action: QueueOp) {
     if (busy) return;
     setBusy(true); setError("");
@@ -43,14 +49,14 @@ export function QueueControls({ task, board, canEdit, request, onStep, onUnreser
     setBusy(true); setError("");
     try {
       const r = await call({ op: "thread_start_preview", project: board.project, from_task: task.short_id ?? task.title, task_block: task.block_sha256 });
-      if (r.kind === "thread_start_preview") setPreview(r);
+      if (r.kind === "thread_start_preview") { setAfter(pending ? (q?.after ?? "") : ""); setPreview(r); }
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
   async function reserve(p: ThreadStartPreview) {
     if (busy) return;
     setBusy(true); setError("");
     try {
-      const r = await call({ op: "task_queue", project: board.project, action: { op: "reserve", task: task.short_id ?? task.title, block: p.task_block, profile: p.profile, profile_revision: p.profile_revision } });
+      const r = await call({ op: "task_queue", project: board.project, action: { op: "reserve", task: task.short_id ?? task.title, block: p.task_block, profile: p.profile, profile_revision: p.profile_revision, ...(afterApi && after ? { after } : {}) } });
       // 예약은 맨 뒤에 붙는다. 끌어 놓은 자리가 있으면 그 차례로 옮긴다
       const mine = r.kind === "task_queue" ? r.entries.find((e) => (task.id ? e.task_id === task.id : e.task.title === task.title) && e.state === "queued") : undefined;
       if (position !== null && mine) await call({ op: "task_queue", project: board.project, action: { op: "move", task_id: mine.task_id, position } });
@@ -67,9 +73,9 @@ export function QueueControls({ task, board, canEdit, request, onStep, onUnreser
     void inspect();
   }, [request, canEdit]); // eslint-disable-line react-hooks/exhaustive-deps
   return <section className={`task-queue-controls${pending ? " is-reserved" : ""}`} data-testid="task-queue-controls" data-state={q?.state ?? "none"}>
-    {q && <p className="task-queue-status" data-testid="task-queue-status">{pending && <span className={`task-reserved-dot${q.state === "check" ? " is-check" : ""}`} aria-hidden="true" />}<ThreadStageBadge stage={q.stage} /><span className="task-queue-word">{words[q.state]}</span>{q.thread && ` · ${q.thread}`}</p>}
-    {why && <div className="task-queue-why" role="note" data-testid="task-queue-why"><b>기다리는 까닭: {why}</b>{q?.state === "queued" && <span>다른 머신으로 바꾸지 않고 기다린다. 그동안 뒤의 예약이 먼저 시작될 수 있다.</span>}</div>}
-    {q && <p className="task-queue-meta">모델 {q.profile} {q.model} · effort {q.effort || "기본"} · 머신 {q.machine ?? "자동"}</p>}
+    {q && <p className="task-queue-status" data-testid="task-queue-status">{pending && <span className={`task-reserved-dot${q.state === "check" ? " is-check" : ""}`} aria-hidden="true" />}<ThreadStageBadge stage={q.stage} /><span className="task-queue-word">{afterWait ? "예약됨 · 앞 할 일 완료 뒤 시작" : words[q.state]}</span>{q.thread && ` · ${q.thread}`}</p>}
+    {why && <div className="task-queue-why" role="note" data-testid="task-queue-why"><b>기다리는 까닭: {why}</b>{q?.state === "queued" && <span>{afterWait ? "앞 할 일이 완료 보관되면 자리 차례에 든다." : "다른 머신으로 바꾸지 않고 기다린다."} 그동안 뒤의 예약이 먼저 시작될 수 있다.</span>}</div>}
+    {q && <p className="task-queue-meta">모델 {q.profile} {q.model} · effort {q.effort || "기본"} · 머신 {q.machine ?? "자동"}{q.after && <span data-testid="task-queue-after"> · {q.after_short_id ?? q.after} 완료 뒤 시작</span>}</p>}
     {canEdit && (!q || ["queued", "check", "cancelled", "finished"].includes(q.state)) && <button className="btn" type="button" disabled={busy} onClick={() => { setPosition(null); void inspect(); }} data-testid="task-reserve-preview">{pending ? "예약 내용 갱신" : "자리 나면 시작 예약"}</button>}
     {canEdit && pending && <div className="task-queue-actions">
       {onStep && <>
@@ -83,6 +89,14 @@ export function QueueControls({ task, board, canEdit, request, onStep, onUnreser
     {preview && <div data-testid="task-reserve-confirm">
       <p>모델 {preview.profile} {preview.model} · effort {preview.effort || "기본"} · 머신 {preview.machine ?? "자동 배정"} · 저장소 {task.repo ?? "정하지 않음"}{position !== null && ` · 예약 ${position}번째 자리에`}</p>
       <Markdown>{preview.task}</Markdown>
+      {afterApi && <label className="task-reserve-after">앞 할 일
+        <select className="input" value={after} disabled={busy} onChange={(e) => setAfter(e.target.value)} data-testid="task-reserve-after">
+          <option value="">없음 · 자리 나면 바로 시작</option>
+          {after && !choices.some((t) => t.id === after) && <option value={after}>{q?.after_short_id ?? after} · 완료 보관됨</option>}
+          {choices.map((t) => <option key={t.id} value={t.id!}>{t.short_id ? `${t.short_id} · ` : ""}{t.title}</option>)}
+        </select>
+        <span>고르면 그 할 일이 완료 보관된 뒤에 자리 차례에 든다.</span>
+      </label>}
       {(!task.repo || task.notes.length===0) && <p role="alert">먼저 설명·완료 범위 메모와 저장소 또는 작업 폴더를 저장한다.</p>}
       <button className="btn btn-primary" type="button" disabled={busy || !task.repo || task.notes.length===0} onClick={() => void reserve(preview)} data-testid="task-reserve-go">이 내용으로 예약</button>
       <button className="btn" type="button" disabled={busy} onClick={() => { setPreview(null); setPosition(null); }}>닫기</button>

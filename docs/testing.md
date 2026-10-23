@@ -1,5 +1,10 @@
 # 시험 쓰는 법
 
+## 예약의 앞 할 일(t-0829)
+
+- `nice -n 15 cargo test --locked -p aaa-host --lib task_queue::tests::reservation_after`: 없는 앞 할 일·자기 지정·순환 거부, 앞 할 일 완료 대기 중 뒤 예약의 자리 판정 진행, 완료 체크만으로는 보관 전까지 대기, 보관 정리 뒤 차례, 완료 없이 지운 앞 할 일의 확인 필요, host 재시작 보존과 이미 보관된 앞 할 일을 확인한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 92-task-after --workers 1`: 실제 host·agent에서 웹 예약 확인의 「앞 할 일」로 예약하고 tick 뒤 대기 까닭·thread 없음을 본다. 갱신 확인이 지금 앞 할 일을 고른 채 열리는지, CLI 순환 예약 거부를 본다. 앞 할 일을 `--done` 하고 tick 한 번에 보관·실제 기동을 host 기록으로 확인한다. WebKit 390px에서 확인창 가로 넘침이 없고 진행 중인 앞 할 일 뒤 예약이 기다리는지 본다. 고정 sleep·재시도·시한 연장은 없다.
+
 ## E2E39 기록 수 실패 진단(t-0825)
 
 - `history-destinations.mjs`는 제품이 시작하기 전에 `pushState`·`replaceState`와 native `popstate`·`hashchange`, iframe load를 기록한다. 각 사건에 경과 시각·length·hash·설정 쪽/깊이·시트 표시를 남기고, 순회 시작/끝과 메뉴 상태·방향·목적지를 함께 보존한다. pairing query·전체 URL·임의 history state는 기록하지 않는다.

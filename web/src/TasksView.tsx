@@ -437,6 +437,8 @@ export function TasksView({
   const queueApi = apiAtLeast(frontApi, [1, 85]);
   // 보류(plan §8.426)를 아는 host만 「보류」 칩을 둔다
   const parkApi = apiAtLeast(frontApi, [1, 105]);
+  // 예약의 앞 할 일(plan §8.463): 옛 host는 그 칸을 버리고 바로 자리 대기에 넣으므로 1.113부터 연다
+  const afterApi = apiAtLeast(frontApi, [1, 113]);
   const pick = (t: TaskView) => {
     if (target !== null) onTarget?.(t.short_id);
     setCreating(null);
@@ -934,6 +936,7 @@ export function TasksView({
               attachApi={attachApi}
               repoApi={repoApi}
               queueApi={queueApi}
+              afterApi={afterApi}
               reserveRequest={reserveReq}
               onQueueStep={(t, dir) => t.id && stepReserved(t.id, dir)}
               onUnreserved={(t) => t.id && setFlash(t.id)}

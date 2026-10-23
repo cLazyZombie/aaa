@@ -226,6 +226,7 @@ async fn reservation_edits_require_new_approval_and_cancel_survives_reopen() {
                 block: t.block_sha256,
                 profile: "claude".into(),
                 profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                after: None,
             },
             "device:user",
         )
@@ -432,6 +433,7 @@ async fn one_reservation(lab: &Lab) -> TaskReservation {
                 block: t.block_sha256,
                 profile: "claude".into(),
                 profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                after: None,
             },
             "device:user",
         )
@@ -468,6 +470,7 @@ async fn slot_released_during_queue_scan_does_not_bypass_the_moved_front() {
                         block: t.block_sha256,
                         profile: "claude".into(),
                         profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                        after: None,
                     },
                     "device:user",
                 )
@@ -640,6 +643,7 @@ async fn lost_launch_reply_reconciles_only_exact_machine_name_and_cwd() {
                 block: row.approved_block,
                 profile: row.profile,
                 profile_revision: row.profile_revision,
+                after: None,
             },
             "device:user",
         )
@@ -763,6 +767,7 @@ async fn stale_model_approval_cannot_migrate_or_unlink_task() {
                 block: t.block_sha256,
                 profile: "claude".into(),
                 profile_revision: "stale".into(),
+                after: None,
             },
             "device:user",
         )
@@ -850,6 +855,7 @@ async fn approved_default_model_is_protected_even_while_the_task_field_is_empty(
                 block: t.block_sha256,
                 profile: "claude".into(),
                 profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                after: None,
             },
             "device:user",
         )
@@ -902,6 +908,7 @@ async fn raw_selection_rewrite_cannot_be_reapproved_by_coordinator_but_user_edit
                 block: changed.block_sha256,
                 profile: "codex".into(),
                 profile_revision: model_selection(&lab.h, "codex").unwrap().2,
+                after: None,
             },
             "coordinator:verified-pane",
         )
@@ -941,6 +948,7 @@ async fn raw_selection_rewrite_cannot_be_reapproved_by_coordinator_but_user_edit
                 block: current.block_sha256,
                 profile: "codex".into(),
                 profile_revision: model_selection(&lab.h, "codex").unwrap().2,
+                after: None,
             },
             "coordinator:verified-pane",
         )
@@ -1320,6 +1328,7 @@ async fn requested_machine_only_change_keeps_the_approved_default_model() {
                 block: t.block_sha256,
                 profile: profile.clone(),
                 profile_revision: model_selection(&lab.h, &profile).unwrap().2,
+                after: None,
             },
             "device:user",
         )
@@ -1616,4 +1625,90 @@ async fn history_search_combines_repo_text_id_state_and_skips_unmatched_pages() 
     };
     assert_eq!(entries.len(), 2);
     assert!(entries.iter().any(|e| e.action == TaskAction::Restore));
+}
+
+async fn reserve_after(lab: &Lab, title: &str, after: Option<&str>) -> Result<FrontResponse, ErrorBody> {
+    let t = lab.h.task_board("demo").unwrap().tasks.into_iter().find(|t| t.title == title).unwrap();
+    lab.h
+        .task_queue(
+            "demo",
+            QueueOp::Reserve {
+                task: t.short_id.unwrap(),
+                block: t.block_sha256,
+                profile: "claude".into(),
+                profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                after: after.map(Into::into),
+            },
+            "device:user",
+        )
+        .await
+}
+
+fn queued<'a>(rows: &'a [TaskReservation], title: &str) -> &'a TaskReservation {
+    rows.iter().find(|r| r.task.title == title).unwrap()
+}
+
+/// 앞 할 일이 완료 보관될 때까지 뒤 예약은 자리 차례에 들지 않고, 그동안 다른 예약을 막지 않는다.
+#[tokio::test]
+async fn reservation_after_waits_for_the_previous_task_archive_without_blocking_others() {
+    let lab = Lab::new();
+    lab.write("## Backlog\n- [ ] 시안 (claude@mac-offline) [작업 폴더]\n  시안 범위\n- [ ] 구현 (claude@mac-offline) [작업 폴더]\n  구현 범위\n- [ ] 다른 일 (claude@mac-offline) [작업 폴더]\n  다른 범위\n- [ ] 지울 앞 일 (claude@mac-offline) [작업 폴더]\n  지울 범위\n- [ ] 지운 뒤 일 (claude@mac-offline) [작업 폴더]\n  뒤 범위\n");
+    let board = lab.h.task_board("demo").unwrap();
+    let short = |title: &str| board.tasks.iter().find(|t| t.title == title).unwrap().short_id.clone().unwrap();
+    let draft = short("시안");
+
+    let e = reserve_after(&lab, "구현", Some("없는 일")).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound, "{e:?}");
+    let e = reserve_after(&lab, "구현", Some(&short("구현"))).await.unwrap_err();
+    assert!(e.message.contains("순환"), "{e:?}");
+    reserve_after(&lab, "구현", Some(&draft)).await.unwrap();
+    // 앞 할 일이 이 예약을 기다리면 서로 영영 시작하지 않는다.
+    let e = reserve_after(&lab, "시안", Some(&short("구현"))).await.unwrap_err();
+    assert!(e.message.contains("순환"), "{e:?}");
+    reserve_after(&lab, "다른 일", None).await.unwrap();
+    reserve_after(&lab, "지운 뒤 일", Some("지울 앞 일")).await.unwrap();
+
+    let rows = lab.h.db.queue_list("demo").unwrap();
+    let r = queued(&rows, "구현");
+    assert_eq!(r.after.as_ref(), board.tasks.iter().find(|t| t.title == "시안").unwrap().id.as_ref());
+    assert_eq!(r.after_short_id.as_deref(), Some(draft.as_str()));
+    lab.h.queue_pass("demo").await.unwrap();
+    let rows = lab.h.db.queue_list("demo").unwrap();
+    assert_eq!(queued(&rows, "구현").state, S::Queued);
+    assert_eq!(queued(&rows, "구현").reason, format!("앞 할 일 {draft} 완료 대기"));
+    // 기다리는 예약 뒤의 예약은 자리·머신 판정까지 간다.
+    assert!(queued(&rows, "다른 일").reason.contains("머신 연결"), "{rows:#?}");
+    assert!(lab.h.db.threads(Some("demo")).unwrap().is_empty());
+
+    // 완료 체크만으로는 아직 활성 목록에 있다. 같은 순회의 정리가 보관한 뒤에 차례에 든다.
+    lab.write(&lab.text().replace("- [ ] 시안", "- [x] 시안"));
+    lab.h.queue_pass("demo").await.unwrap();
+    assert_eq!(queued(&lab.h.db.queue_list("demo").unwrap(), "구현").reason, format!("앞 할 일 {draft} 완료 대기"));
+    // 앞 할 일을 완료 없이 지우면 영영 오지 않는다.
+    let text = lab.text();
+    lab.write(
+        &text
+            .lines()
+            .filter(|l| !l.starts_with("- [ ] 지울 앞 일") && *l != "  지울 범위")
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    );
+    assert_ne!(lab.text(), text);
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    lab.h.queue_pass("demo").await.unwrap();
+    let rows = lab.h.db.queue_list("demo").unwrap();
+    assert!(queued(&rows, "구현").reason.contains("머신 연결"), "{rows:#?}");
+    let gone = queued(&rows, "지운 뒤 일");
+    assert_eq!(gone.state, S::Check);
+    assert!(gone.reason.contains("활성 목록과 완료 보관에 없다"), "{gone:#?}");
+
+    // 앞뒤는 host 재시작 뒤에도 남고, 이미 보관된 할 일도 앞 할 일로 받는다.
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    assert_eq!(
+        queued(&reopened.db.queue_list("demo").unwrap(), "구현").after_short_id.as_deref(),
+        Some(draft.as_str())
+    );
+    reserve_after(&lab, "다른 일", Some(&draft)).await.unwrap();
+    lab.h.queue_pass("demo").await.unwrap();
+    assert!(queued(&lab.h.db.queue_list("demo").unwrap(), "다른 일").reason.contains("머신 연결"));
 }

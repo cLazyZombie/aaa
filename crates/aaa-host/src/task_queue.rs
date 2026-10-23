@@ -285,11 +285,15 @@ impl Host {
         let _gate = self.queue_gate.lock().await;
         match action {
             QueueOp::List => unreachable!(),
-            QueueOp::Reserve { task, block, profile, profile_revision: approved_profile } => {
+            QueueOp::Reserve { task, block, profile, profile_revision: approved_profile, after } => {
                 let board = self.task_board(project)?;
                 let old = tasks::find(&board.tasks, &task)
                     .or_else(|| board.tasks.iter().find(|t| t.id.as_deref() == Some(&task)))
                     .ok_or_else(|| err(ErrorCode::NotFound, "task가 없다"))?;
+                let after = after.map(|a| self.after_id(project, &board.tasks, &a)).transpose()?;
+                if let (Some(after), Some(id)) = (&after, &old.id) {
+                    self.check_after_cycle(project, id, after)?;
+                }
                 if old.id.as_ref().is_some_and(|id| {
                     self.db.queue_list(project).is_ok_and(|rows| {
                         rows.iter().any(|r| {
@@ -429,6 +433,8 @@ impl Host {
                             reason: "자리 대기".into(),
                             launch_id: None,
                             thread: None,
+                            after,
+                            after_short_id: None,
                             stage: None,
                             actor: by.clone(),
                             created_ms: updating.map_or(now, |i| rows[i].created_ms),
@@ -482,6 +488,51 @@ impl Host {
         self.queue_changed(project);
         self.tick_wake.notify_one();
         Ok(FrontResponse::TaskQueue { entries: self.db.queue_list(project).map_err(internal)? })
+    }
+
+    /// 앞 할 일을 ULID로 정한다. 활성 목록이 먼저이고, 이미 완료 보관된 할 일도 받는다(바로 차례에 든다).
+    fn after_id(&self, project: &str, active: &[TaskView], value: &str) -> Result<String, ErrorBody> {
+        let value = self.task_selector(project, value)?;
+        if let Some(id) = tasks::find(active, &value).and_then(|t| t.id.clone()) {
+            return Ok(id);
+        }
+        self.db
+            .archive_list(project)
+            .map_err(internal)?
+            .into_iter()
+            .rev()
+            .find(|r| !r.restored && (r.task_id == value || r.task.title.eq_ignore_ascii_case(value.trim())))
+            .map(|r| r.task_id)
+            .ok_or_else(|| err(ErrorCode::NotFound, "앞 할 일이 활성 목록과 완료 보관에 없다"))
+    }
+
+    /// 앞 할 일을 따라가 자기에게 돌아오면 서로 기다려 영영 시작하지 않는다.
+    fn check_after_cycle(&self, project: &str, id: &str, after: &str) -> Result<(), ErrorBody> {
+        let rows = self.db.queue_list(project).map_err(internal)?;
+        let mut seen = std::collections::HashSet::new();
+        let mut cur = after.to_string();
+        loop {
+            if cur == id {
+                return Err(err(ErrorCode::BadRequest, "앞 할 일이 이 할 일을 기다린다(순환). 앞뒤를 다시 정한다"));
+            }
+            if !seen.insert(cur.clone()) {
+                return Ok(());
+            }
+            let next = rows.iter().find(|r| r.task_id == cur && matches!(r.state, S::Queued | S::Check));
+            match next.and_then(|r| r.after.clone()) {
+                Some(next) => cur = next,
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// 앞 할 일이 끝났나: 활성 목록에 있으면 기다리고, 없으면 완료 보관(복원 안 됨)에 있어야 끝난 것이다.
+    fn after_done(&self, project: &str, active: &[TaskView], after: &str) -> Result<Option<bool>, ErrorBody> {
+        if active.iter().any(|t| t.id.as_deref() == Some(after)) {
+            return Ok(Some(false));
+        }
+        let archived = self.db.archive_list(project).map_err(internal)?;
+        Ok(archived.iter().any(|r| r.task_id == after && !r.restored).then_some(true))
     }
 
     fn queue_changed(&self, project: &str) {
@@ -625,6 +676,22 @@ impl Host {
             {
                 self.queue_status(project, &row.task_id, S::Check, "예약 내용이 바뀌었다 · 내용을 확인해 예약 갱신")?;
                 continue;
+            }
+            // 앞 할 일을 기다리는 예약은 자리 차례를 막지 않는다. 뒤의 예약은 그대로 자리를 얻는다.
+            if let Some(after) = &row.after {
+                let name = row.after_short_id.as_deref().unwrap_or(after);
+                match self.after_done(project, &board.tasks, after)? {
+                    Some(true) => {}
+                    Some(false) => {
+                        self.queue_status(project, &row.task_id, S::Queued, &format!("앞 할 일 {name} 완료 대기"))?;
+                        continue;
+                    }
+                    None => {
+                        let why = format!("앞 할 일 {name}이 활성 목록과 완료 보관에 없다 · 예약 갱신 필요");
+                        self.queue_status(project, &row.task_id, S::Check, &why)?;
+                        continue;
+                    }
+                }
             }
             if !self.known_profiles(project).contains(&row.profile) {
                 self.queue_status(project, &row.task_id, S::Check, "알려지지 않은 모델")?;

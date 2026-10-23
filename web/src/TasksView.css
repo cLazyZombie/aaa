@@ -515,6 +515,9 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-queue-status { display: flex; align-items: center; gap: var(--space-2); }
 .task-queue-controls.is-reserved .task-queue-word { color: var(--reserved); }
 .task-queue-meta, .task-queue-home { color: var(--text-dim); font-size: var(--fs-xs); }
+.task-reserve-after { display: flex; flex-direction: column; gap: var(--space-1); margin-block: var(--space-2); font-size: var(--fs-sm); }
+.task-reserve-after select { width: 100%; min-width: 0; color: var(--text); }
+.task-reserve-after span { color: var(--text-dim); font-size: var(--fs-xs); }
 .task-queue-why { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--notice); border-radius: var(--radius-md); background: color-mix(in srgb, var(--notice) 10%, transparent); font-size: var(--fs-xs); }
 .task-queue-why b { color: var(--notice); }
 .task-queue-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
