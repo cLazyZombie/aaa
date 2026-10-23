@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
+
+- `node web/e2e/web.e2e.mjs --spec 98 --workers 1`: 실제 host·agent를 쓰고 Chromium·WebKit 390px에서 기기 이름을 누르면 `#machine=<id>` 한 칸만 더해지는지 검사한다. 가장자리 touchstart/move/cancel 뒤 native `history.back()`으로 원래 thread 목록에 돌아가며, 앞으로 같은 기기 정보가 다시 보인다. 두 번 왕복한 브라우저 기록을 기존 history observer로 비교한다(Chromium은 CDP의 실제 기록·위치, WebKit은 기록 길이).
+- 화면 안쪽에서 시작한 손가락을 중간에 붙잡아 목록의 실제 이동 거리와 `elementFromPoint`로 목록이 정보 패널 위에 드러남을 확인한다. 취소 뒤 목록이 닫히고 기록은 그대로여야 한다. 머리의 기존 목록 단추, 새로고침 뒤 주소 복원, 닫기도 검사한다. 기존 1280·390px 양 엔진의 판·정보·테마·Esc·머신 전환·구판·끊김 검사를 유지한다.
+- 수정 전에는 첫 기기 클릭 뒤 주소가 `#threads`에 머무는 RED를 확인했다. 기기 정보만 별도 고정 패널이라 목록보다 위에 겹치는 원인도 제거한다. 768px 이하에서는 기존 본문·drawer에 놓고 주소 기록만 사용한다. 데스크톱에서 클릭해 여는 420px 패널과 정보 행은 유지한다.
+- 참고 후보는 [herdr-web-ui edgeSwipe](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/lib/edgeSwipe.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))와 [remix-run/history](https://github.com/remix-run/history/blob/main/packages/history/index.ts)([MIT](https://github.com/remix-run/history/blob/main/LICENSE))다. 이미 옮겨 둔 목록 스와이프와 PUSH/POP 구분을 따르며 외부 코드·의존성은 추가하지 않는다.
+- 완료 사건은 popstate·DOM·drawer transition이다. 고정 sleep·재시도·시한 연장 없이 로컬 전체 ci-local·Linux strict cross clippy·공개 검사를 수행한다. headless WebKit에서 주입한 touch와 기록 이동은 실제 iPhone OS의 미리보기 애니메이션을 확인한 것과 구별한다. t-0935와 겹칠 수 있는 파일은 `App.tsx`, `MachineInfoPanel.tsx`, `MachineInfoPanel.css`, 이 E2E98이며 정보 내용은 바꾸지 않는다. API와 E2E 번호를 유지하고 착지 창을 기다린다.
+
 ## E2E93 재개 뒤 출력 구독과 종료 입력(t-0927)
 
 - t-0926 원본의 quit 5바이트는 host→agent→session PTY 쓰기 완료였고, 14:06:48.410Z에 agent의 `released` 감지도 있었다. 그러나 재연결 직후 보낸 두 session subscribe가 14:07:00.690Z에 모두 15초로 만료됐다. 화면은 `app-history-4`에 멈췄다. 부하 17.00/8.08/7.91을 시한 연장의 근거로 쓰지 않는다. 원본 보고·두 로그·화면/DOM/network 진단·검증 archive의 모든 파일을 읽고 사본을 보존했다. 당시 잠금 획득 순서는 로그에 없어 소급 확정하지 않으며, 아래 keeper에서 원본과 일치하는 구독 응답 유실 경로를 입증한다.

@@ -286,7 +286,8 @@ function storeSelection(sel: string): void {
  * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
  * plan §8.240. 프로젝트 없는 `#report=<이름>`은 보고서 목록을 받은 뒤 채운다), 할 일 화면 `#tasks`(plan §8.306), 「답할 것」 `#asks`·
  * `#ask=<열쇠>`(asksModel, plan §8.345), thread 질문 `#question=<thread>`(「답할 것」의 그 질문 카드, 답했으면 그때 기록, plan §8.329), 자동화 설정
- * `#automation=<project>/<name>`(새 자동화는 이름 없이, t-0628). host는
+ * `#automation=<project>/<name>`(새 자동화는 이름 없이, t-0628). 휴대폰 기기 정보는 `#machine=<id>`로 열며 본문과 같은
+ * 목록 drawer를 쓴다(t-0936). host는
  * 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
  * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
  * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
@@ -300,7 +301,7 @@ function selectedFromHash(): string | null {
   if (location.hash === "#asks") return "asks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|task|question|ask|automation|workspace)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|task|question|ask|automation|workspace|machine)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -399,7 +400,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 활동 막대(plan §8.240): 사이드바가 보이는 패널 하나, 넓은 창에서 접었나. 둘 다 기기마다 기억한다(sidebarPanel.ts).
   // 접힘은 769px부터만 뜻이 있다(좁은 창의 사이드바는 drawer이고 같은 단추가 drawer를 닫는다)
   const [machineInfo, setMachineInfo] = useState<string | null>(null);
-  const closeMachineInfo = useCallback(() => setMachineInfo(null), []);
+  const machineRoute = sel?.startsWith("machine:") === true;
+  const beforeMachine = useRef<string | null>(null);
+  const selectedMachine = machines.find(m => m.id === (machineRoute ? sel!.slice(8) : machineInfo));
   const [panel, setPanel] = useState<SidebarPanel>(storedPanel);
   const [collapsed, setCollapsed] = useState(storedCollapsed);
   useEffect(() => storeSidebar(panel, collapsed), [panel, collapsed]);
@@ -921,6 +924,21 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     goHash(hashOf(next));
     setSel(next);
   };
+  // 휴대폰은 다른 오른쪽 화면과 같은 주소·본문·목록 drawer를 쓴다. 시트 기록을 따로 쌓지 않는다.
+  const openMachineInfo = (id: string) => {
+    if (wideScreen) {
+      setMachineInfo(id);
+      setDrawerOpen(false);
+    } else {
+      if (!machineRoute) beforeMachine.current = sel;
+      setMachineInfo(null);
+      goSel(`machine:${id}`);
+    }
+  };
+  const closeMachineInfo = useCallback(() => {
+    if (machineRoute) goSel(beforeMachine.current ?? "threads:");
+    else setMachineInfo(null);
+  }, [machineRoute]);
   const toggleReports = () => {
     if (reportsShown && !settingsOpen) goSel(beforeReports.current);
     else goSel(reportsShown ? sel : reportsAt ?? "reports:");
@@ -1420,7 +1438,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <div className="sidebar-existing" hidden={settingsOpen && wideScreen}>
         <ErrorBoundary area="목록" resetKeys={[panel]}>
         <Sidebar
-          onMachineInfo={(id) => { setMachineInfo(id); setDrawerOpen(false); }}
+          onMachineInfo={openMachineInfo}
           panel={panel}
           machines={machines}
           rollout={rollout}
@@ -1488,6 +1506,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
         <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown, automationShown, workspaceShown]}>
+        {machineRoute && selectedMachine && <MachineInfoPanel page machine={selectedMachine} onClose={closeMachineInfo} />}
         {workspaceShown && <WorkspaceView state={workspaceData} route={sel} onRoute={goSel} up={up} />}
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
@@ -1565,7 +1584,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onThread={openThreadId}
           />
         )}
-        {reportsShown || tasksShown || asksShown || automationShown || workspaceShown ? null : currentThread ? (
+        {machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}
@@ -1668,7 +1687,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         </ErrorBoundary>
         </div>
       </main>
-      {machineInfo && machines.find(m => m.id === machineInfo) && <MachineInfoPanel machine={machines.find(m => m.id === machineInfo)!} onClose={closeMachineInfo} />}
+      {!machineRoute && selectedMachine && <MachineInfoPanel machine={selectedMachine} onClose={closeMachineInfo} />}
       <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
         <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
