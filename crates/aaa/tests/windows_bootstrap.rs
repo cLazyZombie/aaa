@@ -65,6 +65,22 @@ fn main() {
     for shell in ["powershell.exe", "pwsh.exe"] {
         let lab = root.join(shell);
         std::fs::create_dir(&lab).unwrap();
+        // A fresh cache and a hostile inherited module path must not select
+        // external Get-FileHash/IRM in place of this interpreter's own modules.
+        let ambient = lab.join("modules/BootstrapAmbient");
+        std::fs::create_dir_all(&ambient).unwrap();
+        std::fs::write(
+            ambient.join("BootstrapAmbient.psd1"),
+            "@{ ModuleVersion='1.0'; RootModule='BootstrapAmbient.psm1'; FunctionsToExport=@('Get-FileHash','Invoke-RestMethod'); CmdletsToExport=@(); AliasesToExport=@() }",
+        )
+        .unwrap();
+        std::fs::write(
+            ambient.join("BootstrapAmbient.psm1"),
+            "function Get-FileHash { throw 'bootstrap inherited external Get-FileHash' }\n\
+             function Invoke-RestMethod { throw 'bootstrap inherited external IRM' }\n\
+             Export-ModuleMember -Function Get-FileHash,Invoke-RestMethod\n",
+        )
+        .unwrap();
         // Exercise irm's octet-stream decoding and the actual pipe into iex, not only a local string.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/install.ps1", listener.local_addr().unwrap());
@@ -87,6 +103,8 @@ fn main() {
             stream.write_all(&body).unwrap();
         });
         let mut child = Command::new(shell)
+            .env("PSModulePath", ambient.parent().unwrap())
+            .env("PSModuleAnalysisCachePath", lab.join("module-analysis-cache"))
             .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-File"])
             .arg(repository.join("scripts/bootstrap/windows-owner.ps1"))
             .arg("-Bootstrap")
