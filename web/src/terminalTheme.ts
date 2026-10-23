@@ -5,7 +5,8 @@ import type { CSSProperties } from "react";
 export type TerminalColorTheme = "app" | "wezterm-github-dark-user";
 export const TERMINAL_COLOR_THEMES: readonly { value: TerminalColorTheme; label: string }[] = [
   { value: "app", label: "앱 팔레트 따름" },
-  { value: "wezterm-github-dark-user", label: "WezTerm GitHub Dark(사용자)" },
+  // 저장 ID는 기존 기기의 선택을 이어받는다.
+  { value: "wezterm-github-dark-user", label: "GitHub Dark" },
 ];
 
 export const ANSI_COLOR_KEYS = [
@@ -36,7 +37,8 @@ export function resolveTerminalTheme(id: TerminalColorTheme, token: (name: strin
   if (id === "wezterm-github-dark-user") return { ...WEZTERM_GITHUB_DARK_USER };
   const theme: ITheme = {
     background: token("--term-bg"), foreground: token("--term-fg"), cursor: token("--term-cursor"),
-    cursorAccent: token("--term-bg"), selectionBackground: token("--term-selection"),
+    cursorAccent: token("--term-cursor-accent") || token("--term-bg"), selectionBackground: token("--term-selection"),
+    selectionForeground: token("--term-selection-fg") || undefined,
   };
   ANSI_COLOR_KEYS.forEach((key, n) => { theme[key] = token(`--ansi-${n}`); });
   return theme;

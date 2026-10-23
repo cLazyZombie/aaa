@@ -65,11 +65,13 @@
   --ansi-15: #6e7781;
 }
 [data-palette="github-dark"] {
-  --bg: #0d1117;
+  /* GitHub Dark 터미널의 사용자 bg/fg·ANSI·커서·선택 색을 앱에도 쓴다.
+     나머지 면·상태·구문 색은 Primer dark 7.10.0. 원 테마 고지는 docs/terminal-themes.md. */
+  --bg: #24292e;
   --bg-panel: #161b22;
   --bg-elevated: #161b22;
   --bg-hover: #21262d;
-  --bg-input: #0d1117;
+  --bg-input: #24292e;
   --border: #30363d;
   --border-strong: #484f58;
   --bubble-border: var(--border);
@@ -84,49 +86,51 @@
   --primary-tint: rgba(46,160,67,0.15);
   --status-idle: #8b949e;
   --status-working: #58a6ff;
-  --status-blocked: #f85149;
+  --status-blocked: #ff7b72;
   --status-done: #3fb950;
   --status-working-tint: rgba(56,139,253,0.15);
   --status-blocked-tint: rgba(248,81,73,0.15);
   --status-done-tint: rgba(46,160,67,0.15);
   --danger-tint: rgba(248,81,73,0.15);
-  --danger-text: #f85149;
+  --danger-text: #ff7b72;
   --indicator-working: #d29922;
-  --indicator-blocked: #f85149;
+  --indicator-blocked: #ff7b72;
   --indicator-done: #58a6ff;
   --indicator-idle: #3fb950;
   --indicator-unknown: #8b949e;
   --notice: #d29922;
   --scrim: rgba(0, 0, 0, 0.6);
-  --term-bg: #0d1117;
+  --term-bg: #24292e;
   --term-fg: #c9d1d9;
-  --term-cursor: #58a6ff;
-  --term-selection: rgba(56,139,253,0.4);
+  --term-cursor: #c9d1d9;
+  --term-cursor-accent: #101216;
+  --term-selection: #3b5070;
+  --term-selection-fg: #ffffff;
   --syntax-comment: #8b949e;
   --syntax-function: #a371f7;
   --syntax-inserted: #3fb950;
-  --syntax-deleted: #f85149;
+  --syntax-deleted: #ff7b72;
   --syntax-keyword: #ff7b72;
   --syntax-string: #a5d6ff;
   --syntax-number: #79c0ff;
   --syntax-type: #7ee787;
   --syntax-variable: #ffa657;
   --syntax-meta: #d2a8ff;
-  --ansi-0: #8b949e;
-  --ansi-1: #ff7b72;
-  --ansi-2: #3fb950;
-  --ansi-3: #d29922;
-  --ansi-4: #58a6ff;
-  --ansi-5: #bc8cff;
-  --ansi-6: #39c5cf;
-  --ansi-7: #b1bac4;
-  --ansi-8: #8b949e;
-  --ansi-9: #ffa198;
+  --ansi-0: #000000;
+  --ansi-1: #f78166;
+  --ansi-2: #56d364;
+  --ansi-3: #e3b341;
+  --ansi-4: #6ca4f8;
+  --ansi-5: #db61a2;
+  --ansi-6: #2b7489;
+  --ansi-7: #ffffff;
+  --ansi-8: #4d4d4d;
+  --ansi-9: #f78166;
   --ansi-10: #56d364;
   --ansi-11: #e3b341;
-  --ansi-12: #79c0ff;
-  --ansi-13: #d2a8ff;
-  --ansi-14: #56d4dd;
+  --ansi-12: #6ca4f8;
+  --ansi-13: #db61a2;
+  --ansi-14: #2b7489;
   --ansi-15: #ffffff;
 }
 [data-palette="github-dark-dimmed"] {

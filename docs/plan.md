@@ -7637,3 +7637,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **색.** `terminalTheme.ts`가 ITheme을 만든다. WezTerm 정본의 GitHub Dark에서 배경 #24292e·기본 글자 #C9D1D9만 덮고 ANSI 16색·커서·커서 아래 글자·선택 색은 보존한다. 화면과 OSC 10/11의 rrggbb가 같은 테마를 쓴다. 여백·앞 기록 덮개의 token은 pane 안에서만 덮고, 앱 팔레트·글꼴·크기·명시 RGB·ANSI 256색 16~255는 바꾸지 않는다.
 - **출처.** WezTerm e2a98e1b8af156988ad0ac778658ac27b60a55fb `config/src/scheme_data.rs`·`docs/colorschemes/data.json`. 모음 iTerm2-Color-Schemes는 MIT, 원 테마 Al Duncanson/github-dark는 GPL-3.0이다. 원본·수치·고지와 변경 내역을 함께 배포한다. 상세와 수치는 `docs/terminal-themes.md`.
 - **검증.** 순수 규칙은 정본 fixture와 ANSI/커서/선택 색·기본값·단축 hex를 대조한다. E2E06은 Chromium 1280·WebKit 390에서 즉시 표시·앱 독립·기기 저장·다른 탭·재열기·복원을, E2E20은 실제 PTY OSC 10/11 응답·재접속·기본 복원을 확인한다. 기존 E2E 번호와 front protocol은 유지한다. Windows 4K의 테마×회색조 시안은 보고 library에 남기며 회색조는 제품에 적용하지 않는다.
+
+
+### 8.466 앱·터미널 GitHub Dark 통일(t-0889)
+
+- **목적.** 사용자 10-23 「terminal 테마를 기본 테마에도」·「이름은 다 github dark로」. 기존 앱의 `github-dark`를 같은 터미널 색으로 갱신한다. 목록·밝기·시스템 짝을 확장할 필요가 없어 별도 제품 질문 없이 진행한다.
+- **색·이름.** 앱 배경·입력 바탕 #24292e, 글자 #C9D1D9. 앱을 따르는 터미널도 독립 GitHub Dark와 같은 ANSI·커서·선택 색을 쓴다. 나머지 앱 역할은 Primer primitives 7.10.0 dark 값이다. 터미널 표시 이름은 GitHub Dark, 기존 기기 저장 ID `wezterm-github-dark-user`는 유지한다. 앱·host 설정 형식과 FRONT_API·AGENT_LINK는 그대로다.
+- **출처·검증.** Primer·VS Code GitHub Theme의 MIT와 원 터미널 GPL-3.0·모음 MIT 고지를 보존한다. E2E14·06을 확장하고 E2E95에서 Chromium·WebKit의 1280·390px 실제 앱·터미널·대화·질문 카드를 확인한다. UI 대비는 유지하고 사용자 ANSI는 원색을 우선한다. 전체 ci-local·check-public 뒤 묶음 착지를 기다린다. 배포는 별도 승인이다. 절·E2E 번호는 착지 때 main과 대조한다.

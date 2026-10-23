@@ -23,10 +23,14 @@ it("없거나 모르는 선택은 앱을 따르고 CSS 단축 hex도 OSC 6자리
   for (const value of [undefined, null, "", "app", "github-dark", {}, 7]) assert.equal(sanitizeTerminalColorTheme(value), "app");
   assert.equal(sanitizeTerminalColorTheme("wezterm-github-dark-user"), "wezterm-github-dark-user");
   const tokens = { "--term-bg": "#ABC", "--term-fg": "#123", "--term-cursor": "#789", "--term-selection": "rgba(1, 2, 3, .4)" };
-  const t = resolveTerminalTheme("app", (key) => tokens[key] ?? key);
+  const t = resolveTerminalTheme("app", (key) => tokens[key] ?? (key.startsWith("--ansi-") ? key : ""));
   assert.deepEqual(terminalThemeColors(t), { bg: "aabbcc", fg: "112233" });
   assert.equal(t.cursorAccent, "#ABC");
   assert.equal(t.selectionBackground, tokens["--term-selection"]);
+  assert.equal(t.selectionForeground, undefined);
+  const explicit = resolveTerminalTheme("app", (key) => ({ "--term-cursor-accent": "#101216", "--term-selection-fg": "#ffffff", ...tokens })[key] ?? "");
+  assert.equal(explicit.cursorAccent, "#101216");
+  assert.equal(explicit.selectionForeground, "#ffffff");
   assert.deepEqual(ANSI_COLOR_KEYS.map((key) => t[key]), Array.from({ length: 16 }, (_, i) => `--ansi-${i}`));
   assert.equal(terminalThemeStyle("app"), undefined);
   const style = terminalThemeStyle("wezterm-github-dark-user");
