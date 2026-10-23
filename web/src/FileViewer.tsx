@@ -235,14 +235,19 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
     };
   }, [locate, pane, target.path]);
 
-  useEffect(() => {
-    // 맨 위 겹이라 키를 받는다. 그 위에 native dialog가 떠 있으면 그것이 먼저다
+  useLayoutEffect(() => {
+    // 첫 focus rAF 전이나 터미널 재부착 뒤에도 Escape는 파일 보기 몫이다.
+    // xterm의 target 처리보다 먼저 받되, window capture의 상위 창·그림 크게 보기·native dialog는 먼저 둔다.
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape" && !nativeModalOver(surface.current)) onClose();
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 ||
+          lightbox.shown || nativeModalOver(surface.current)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, surface]);
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose, surface, lightbox.shown]);
 
   // Markdown의 링크는 그 문서가 있는 폴더 기준이다(참고 TextFileView openLink). 앱은 다시 그릴 때마다 새 onOpen을 주므로
   // ref로 읽어, 문맥 값은 파일이 바뀔 때만 바뀌고 memo한 Markdown은 그대로 둔다

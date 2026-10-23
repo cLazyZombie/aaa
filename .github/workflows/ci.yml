@@ -25,6 +25,9 @@ jobs:
     timeout-minutes: 40
     env:
       PLAYWRIGHT_VERSION: "1.64.1"
+      # 공개 macos-15 arm64는 3 CPU다. 로컬 기본(core/2 내림)은 1이 되어 전체가 직렬로 40분을 넘었다.
+      # host·agent·브라우저 실험실은 작업마다 격리하며 기존 모든 spec·조합을 한 번씩 실행한다.
+      AAA_E2E_WORKERS: "3"
     steps:
       - uses: actions/checkout@v5
       - name: Rust stable
@@ -63,13 +66,15 @@ jobs:
       - name: 웹 E2E(aaa 빌드 포함)
         id: e2e
         run: bash scripts/ci-local.sh --only e2e --logs . --tee
-      - name: 웹 E2E 실패 산출물
-        if: ${{ failure() && steps.e2e.outcome == 'failure' }}
+      - name: 웹 E2E 결과·진단
+        if: ${{ !cancelled() && (steps.e2e.outcome == 'success' || steps.e2e.outcome == 'failure') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: web-e2e-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          name: web-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             e2e.log
+            e2e-binary.log
+            workspace-summary.tsv
             e2e-failures/
           retention-days: 14
       - name: 실패 요약

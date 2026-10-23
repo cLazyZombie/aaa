@@ -94,11 +94,24 @@ const jobs = planJobs(picked, { repeat: opt.repeat, workers, durations, only });
 
 const t0 = Date.now();
 const runs = [];
-const runOne = ({ s, r, filter, part }) =>
+// 시작 때도 남겨야 취소된 run의 마지막 완료 파일과 아직 도는 파일을 구별할 수 있다.
+// 이 파일에는 시험 이름·시각·실행 조건만 쓰며 URL·환경 값·세션 내용은 쓰지 않는다.
+const timingDir = process.env.AAA_E2E_ARTIFACTS;
+if (timingDir) fs.mkdirSync(timingDir, { recursive: true });
+const timingFile = timingDir ? path.join(timingDir, "run-timings.jsonl") : null;
+if (timingFile) fs.writeFileSync(timingFile, "");
+const record = (event) => {
+  const row = { at: new Date().toISOString(), elapsedMs: Date.now() - t0, ...event };
+  console.log(`## 실행 ${JSON.stringify(row)}`);
+  if (timingFile) fs.appendFileSync(timingFile, `${JSON.stringify(row)}\n`);
+};
+record({ event: "suite-start", cores, workers, platform: process.platform, arch: process.arch, specs: picked.length, jobs: jobs.length });
+const runOne = ({ s, r, filter, part }, worker) =>
   new Promise((resolve) => {
     const head = `## specs/${s.file}${part ? ` [독립 단계 ${part}]` : ""}${opt.repeat > 1 ? ` (${r}/${opt.repeat})` : ""}`;
     if (workers === 1) console.log(head);
     const started = Date.now();
+    record({ event: "job-start", spec: s.name, repeat: r, part, worker });
     const out = [];
     const p = spawn(process.execPath, [path.join(here, "lib/child.mjs"), path.join(specDir, s.file)], {
       env: filter ? { ...env, AAA_E2E_ONLY: filter } : env,
@@ -108,17 +121,20 @@ const runOne = ({ s, r, filter, part }) =>
     p.stderr?.on("data", (c) => out.push(c));
     p.on("close", (c, sig) => {
       if (workers > 1) process.stdout.write(`${head}\n${Buffer.concat(out).toString("utf8")}`);
-      runs.push({ name: s.name, r, ok: !sig && c === 0, ms: Date.now() - started });
+      const run = { name: s.name, r, ok: !sig && c === 0, ms: Date.now() - started };
+      runs.push(run);
+      record({ event: "job-end", spec: s.name, repeat: r, part, worker, ms: run.ms, ok: run.ok, code: c, signal: sig });
       resolve();
     });
   });
 let next = 0;
 await Promise.all(
-  Array.from({ length: Math.min(workers, jobs.length) }, async () => {
-    while (next < jobs.length) await runOne(jobs[next++]);
+  Array.from({ length: Math.min(workers, jobs.length) }, async (_, worker) => {
+    while (next < jobs.length) await runOne(jobs[next++], worker + 1);
   }),
 );
 
+record({ event: "suite-end", jobs: runs.length, failed: runs.filter((run) => !run.ok).length });
 const sec = (ms) => `${(ms / 1000).toFixed(1)}초`;
 console.log(`## 요약: 파일 ${picked.length}개 × ${opt.repeat}번, worker ${workers}개, 모두 ${sec(Date.now() - t0)}`);
 console.log(`## 작업: ${runs.length}개(독립 단계 분할 포함, 실패한 작업은 다시 실행하지 않음)`);
