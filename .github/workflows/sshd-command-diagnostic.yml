@@ -19,11 +19,14 @@ jobs:
           $diagnostic = @'
               $ps = "Write-Output 'AAA-DETECT-1'; Write-Output 'Windows'; Write-Output `$env:PROCESSOR_ARCHITECTURE; Write-Output `$env:USERPROFILE; Write-Output '-'; Write-Output '-'; Write-Output 'AAA-DETECT-END'"
               $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps))
-              foreach ($command in @('cmd.exe /c ver', "sh -c 'echo AAA-DETECT-1; uname -s'", ('powershell -NoProfile -NonInteractive -EncodedCommand ' + $encoded))) {
+              $posix = 'sh -c ''echo AAA-DETECT-1; uname -s; uname -m; printf "%s\n" "${HOME:--}"; printf "%s\n" "${SHELL:--}"; if command -v aaa >/dev/null 2>&1; then aaa --version 2>/dev/null | head -n 1; elif [ -x "$HOME/.local/bin/aaa" ]; then "$HOME/.local/bin/aaa" --version 2>/dev/null | head -n 1; else echo -; fi; echo AAA-DETECT-END'''
+              foreach ($command in @('cmd.exe /c ver', $posix, ('powershell -NoProfile -NonInteractive -EncodedCommand ' + $encoded))) {
                   $result = & ssh.exe -F (Join-Path $lab 'ssh_config') -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ('UserKnownHostsFile=' + (Join-Path $lab 'known_hosts')) -o ('GlobalKnownHostsFile=' + (Join-Path $lab 'known_hosts')) -o ConnectTimeout=10 -o RequestTTY=no ci $command 2>&1
                   Write-LabDiagnostic ('remote exit: ' + $LASTEXITCODE)
                   Write-LabDiagnostic ($result | Out-String)
               }
+              Stop-Service -Name $service
+              (Get-Service -Name $service).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
               Write-LabDiagnostic ([IO.File]::ReadAllText((Join-Path $lab 'sshd-startup.log')))
               return
           '@
