@@ -1,0 +1,88 @@
+name: t-0830 웹 E2E 단일 진단
+
+on:
+  push:
+    branches: ["diagnostic/t-0830-web-e2e"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+jobs:
+  # 웹 front E2E(web/e2e/web.e2e.mjs): 실제 host·agent와 headless Chromium·WebKit. 터미널 한글 IME 기록 재생
+  # (macOS Safari·iPad 하드웨어 키보드·화면 키보드가 올라온 iPad)이 웹·터미널 코드를 바꾸는 모든 commit에서 돈다.
+  web-e2e:
+    name: web-e2e (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      PLAYWRIGHT_VERSION: "1.64.1"
+      # 공개 macos-15 arm64는 3 CPU다. 로컬 기본(core/2 내림)은 1이 되어 전체가 직렬로 40분을 넘었다.
+      # host·agent·브라우저 실험실은 작업마다 격리하며 기존 모든 spec·조합을 한 번씩 실행한다.
+      AAA_E2E_WORKERS: "3"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rust stable
+        id: rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          echo "rustc=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      # Rust 빌드 캐시(결정 D1). 설명은 rust job의 같은 단계에 있다.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      # Playwright 브라우저 캐시(결정 D3). 키는 playwright 판이다. 복원한 뒤에도 install을 돈다:
+      # 다 있으면 받지 않고 넘어가고, 빠진 브라우저만 받는다.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ env.PLAYWRIGHT_VERSION }}
+      # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령)
+      - name: Playwright(Chromium·WebKit)
+        run: npm install -g --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION" && npx -y "playwright@$PLAYWRIGHT_VERSION" install chromium webkit
+      # e2e는 target/debug/aaa만 쓴다: build 단계(--all-targets, 시험 binary 포함) 대신 e2e 단계가 그 binary만 빌드한다.
+      # 단계를 나눠 두면 GitHub step 시간에 웹 빌드와 E2E가 따로 보인다.
+      - name: 웹 빌드
+        run: bash scripts/ci-local.sh --only web --logs . --tee
+      - name: 웹 E2E(aaa 빌드 포함)
+        id: e2e
+        run: bash scripts/ci-local.sh --only e2e --logs . --tee
+      - name: 웹 E2E 결과·진단
+        if: ${{ !cancelled() && (steps.e2e.outcome == 'success' || steps.e2e.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: web-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            e2e.log
+            e2e-binary.log
+            workspace-summary.tsv
+            e2e-failures/
+          retention-days: 14
+      - name: 실패 요약
+        if: failure()
+        run: |
+          set +e +o pipefail
+          grep -nE '^(ok|FAIL) |IME ' e2e.log | tail -60
+          for d in /tmp/aaw-*; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*.log; do echo "## $f"; tail -c 3000 "$f"; done
+          done
+          true
