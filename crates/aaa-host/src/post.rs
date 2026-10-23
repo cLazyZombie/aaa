@@ -220,7 +220,11 @@ impl Host {
         let allowed = (input.to == "coordinator" && sender.role != Role::Coordinator)
             || (input.to == "user"
                 && sender.role == Role::Coordinator
-                && ((input.post_type == PostType::Request && input.needs_user)
+                && ((input.post_type == PostType::Data
+                    && !input.needs_user
+                    && input.topic == "auto-decision"
+                    && sender.verified == "coordinator-pane")
+                    || (input.post_type == PostType::Request && input.needs_user)
                     || (input.post_type == PostType::Notice
                         && !input.needs_user
                         && matches!(input.topic.as_str(), "task-complete" | "report"))));
@@ -375,6 +379,22 @@ impl Host {
                 return refused(aaa_common::diagnostic::context(source_error, "post 번호를 만들지 못했다".to_string()));
             }
         };
+        let auto_decision = if result.is_none() && input.topic == "auto-decision" {
+            match self.auto_post_decision(project, &input, &id, actor) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    result = Some(refused(e.message));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(d) = auto_decision
+            && let Err(e) = self.auto_reserve(project, d)
+        {
+            result = Some(refused(e.message));
+        }
         let result = result.unwrap_or_else(|| PostResult::Accepted { id: id.clone() });
         let accepted = matches!(result, PostResult::Accepted { .. });
         input.title = clean(&input.title);
@@ -395,6 +415,8 @@ impl Host {
             subject: if env.input.to == "user" { "coordinator".into() } else { who.clone() },
             event: if env.input.needs_user {
                 "post request for user".into()
+            } else if env.input.topic == "auto-decision" {
+                "auto decision".into()
             } else if env.input.to == "user" {
                 "post completed".into()
             } else {
@@ -442,14 +464,23 @@ impl Host {
             PostResult::Refused { reason, .. } => format!("{detail} reason={reason}"),
             _ => detail,
         };
-        if self
-            .db
-            .post_record(&env.input.post_id, &row, accepted.then_some(&env), item.as_ref(), actor, &audit)
-            .as_ref()
-            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
-            .is_err()
+        if let Err(e) =
+            self.db.post_record(&env.input.post_id, &row, accepted.then_some(&env), item.as_ref(), actor, &audit)
         {
-            return refused("post를 저장하지 못했다");
+            let message = format!("post 원장 저장 실패: {e:#}");
+            if accepted
+                && env.input.topic == "auto-decision"
+                && let Err(e) = self.auto_finish(project, &id, Some(message.clone()))
+            {
+                tracing::error!("자동 결정 실패 기록: {}", e.message);
+            }
+            return refused(message);
+        }
+        if accepted
+            && env.input.topic == "auto-decision"
+            && let Err(e) = self.auto_finish(project, &id, None)
+        {
+            return refused(format!("post {id} 저장 뒤 자동 결정 완료 기록 실패: {}", e.message));
         }
         if let Some(i) = item {
             self.inbox_publish(&i);

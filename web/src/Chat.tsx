@@ -1,3 +1,4 @@
+import { AutoDecisionLines } from "./AutoMode";
 // harness 대화 기록 보기(§8.27). 기록은 읽기만 하고 보내는 길은 입력창 ChatComposer(plan §8.130)다. agent가 Claude·Codex 기록에서 골라 준 줄을 보인다.
 // 도구 결과 본문은 agent가 빼고 보낸다. 생각은 설정 「생각 표시」(공유)를 켰을 때만 청해 접힌 「생각」 줄로 보인다
 // (herdr-web-ui ChatView.tsx `ThinkingRow`, plan §8.129). 다시 읽기(차이 목록 C3, 참고 ChatView·conversationRefresh.ts·status.ts
@@ -397,6 +398,7 @@ function AgentTurn({ text }: { text: string }) {
 }
 
 export function ChatPanel({
+  coordinator = false,
   pane,
   status,
   compacting = false,
@@ -411,6 +413,7 @@ export function ChatPanel({
   steer,
   findRequest = 0,
 }: {
+  coordinator?: boolean;
   pane: string;
   status?: AgentStatus;
   /** agent가 대화를 정리하는 중(plan §8.309): 대화 끝에 「대화 정리 중…」 줄 */
@@ -950,6 +953,7 @@ export function ChatPanel({
               </ChatRow>
             );
           })}
+          {coordinator && <AutoDecisionLines />}
           {pending.map((p) => (
             <UserTurn key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
               pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />

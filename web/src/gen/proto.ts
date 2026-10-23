@@ -1,6 +1,16 @@
 // 생성 파일: crates/aaa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.
 // 갱신: AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript
 
+export type AutoMode = { on: boolean, since_ms: number, ended_ms: number, by: string, run: number, decisions: number, };
+
+export type AutoDecision = { id: string, run: number, subject: string, question: ThreadQuestion, choice: string, pick: number | null, reason: string, action: string,
+/**
+ * 답을 바꿔도 이미 실행한 작업은 host가 되돌리지 않는다. 아직 알 수 없으면 null.
+ */
+reversible: boolean | null, decided_by: string, at_ms: number, outcome: string, error: string | null, reviewed: boolean, reconsideration: string | null, files_base: string | null, };
+
+export type AutoDecisionNote = { question: string, answer: string, reason: string, action: string, reversible: boolean, };
+
 export type MetricCounts = { passed: number, failed: number, skipped: number, filtered: number, unit: string, };
 
 export type MetricTiming = { name: string, duration_ms: number, start_ms: number | null, outcome: string, };
@@ -670,7 +680,7 @@ export type OwnerChoice = { machine: string, connected: boolean,
  */
 profiles: Array<string>, };
 
-export type ProjectContext = {
+export type ProjectContext = { auto_mode: AutoMode, auto_mode_exceptions: string,
 /**
  * inbox를 끝내도 해제 전까지 남는 활성 post 음소거 경고
  */
@@ -1057,7 +1067,7 @@ export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery,
 /**
  * 비었으면 등록된 모든 머신
  */
-machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null, } | { "op": "auto_decisions", project: string, before: string | null, id: string | null, } | { "op": "auto_mode_get", project: string, } | { "op": "auto_mode_set", project: string, on: boolean, } | { "op": "question_auto_answer", project: string, id: string, choice: string | null, text: string | null, reason: string, } | { "op": "auto_decision_review", project: string, id: string, answer: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -1338,7 +1348,7 @@ handled?: boolean, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**
  * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */
-muted?: Array<string>, } | { "kind": "asks", requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+muted?: Array<string>, } | { "kind": "auto_mode" } & AutoMode | { "kind": "auto_decisions", decisions: Array<AutoDecision>, next: string | null, } | { "kind": "asks", auto_mode: AutoMode, auto_decisions: Array<AutoDecision>, auto_next: string | null, auto_exceptions: number, requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -1465,7 +1475,7 @@ export type Skipped = { path: string, reason: string,
  */
 lazy_size: number | null, };
 
-export type ProjectView = { name: string, path: string, threads: number,
+export type ProjectView = { auto_mode?: AutoMode, name: string, path: string, threads: number,
 /**
  * FRONT_API 1.33. 옛 host는 보내지 않는다(active)
  */

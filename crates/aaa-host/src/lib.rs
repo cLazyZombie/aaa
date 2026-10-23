@@ -8,6 +8,7 @@ mod answer;
 mod app_badge;
 mod asks;
 mod attach;
+mod auto_mode;
 mod question_ids;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
@@ -1541,6 +1542,8 @@ impl Host {
                 | FrontRequest::WorkRootCheck { .. }
                 | FrontRequest::WorkRootSet { .. }
                 | FrontRequest::HookSet { .. }
+                | FrontRequest::AutoModeSet { .. }
+                | FrontRequest::AutoDecisionReview { .. }
         ) && (front::in_session(actor)
             || actor.starts_with("worker:")
             || actor.starts_with("evaluator:")
@@ -1691,6 +1694,22 @@ impl Host {
             FrontRequest::PostHandled { project, post_id } => self.post_handled(&project, &post_id, actor),
             FrontRequest::PostList { project } => self.post_list(&project),
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
+            FrontRequest::AutoDecisions { project, before, id } => {
+                self.project_dir(&project)?;
+                let (decisions, next) = self.auto_decision_page(&project, before.as_deref(), id.as_deref())?;
+                Ok(FrontResponse::AutoDecisions { decisions, next })
+            }
+            FrontRequest::AutoModeGet { project } => {
+                self.project_dir(&project)?;
+                self.auto_mode(&project).map(FrontResponse::AutoMode)
+            }
+            FrontRequest::AutoModeSet { project, on } => self.auto_mode_set(&project, on, actor),
+            FrontRequest::QuestionAutoAnswer { project, id, choice, text, reason } => {
+                self.auto_answer(&project, &id, choice, text, reason, actor).await
+            }
+            FrontRequest::AutoDecisionReview { project, id, answer } => {
+                self.auto_decision_review(&project, &id, answer, actor)
+            }
             FrontRequest::Asks { project } => self.asks_view(&project),
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
             FrontRequest::QuestionReply { project, id, choice, text } => {

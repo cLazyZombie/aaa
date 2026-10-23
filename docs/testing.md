@@ -3186,3 +3186,20 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 명령·DOM·state 사건 완료를 기다리고 고정 sleep·재시도·시한 연장은 없다. 전체 ci-local과 공개 검사가 정본이다.
 
 - E2E58의 가짜 CLI는 `--version`을 로그인 FIFO와 분리한다. 수정 전 fixture에 `--version`을 주고 로그인 신호를 쓰면 인증 파일을 만드는 대조로 신호 소비를 확인했다. 두 가짜 CLI의 판 조회는 FIFO writer 없이 완료돼야 하며 실제 로그인·취소·계정 선택 단언과 기존 시간 상한은 유지한다.
+
+## coordinator auto mode (t-0938, plan §8.477)
+
+- `cargo test --locked -p aaa-host auto_mode --lib`는 실제 Host·DB에서 사람만 모드 변경, 해당 프로젝트 coordinator만 자동 답,
+  모드 꺼짐·중복·확인창·사용자 전용 질문 거부, 일부 답 뒤 예외 카드 유지, 추천과 다른 선택·까닭·원문 보존,
+  auto-decision post의 외부 알림 큐 비발행, 재판단 요청의 원래 답 보존, host 재열기·프로젝트 이름 변경을 확인한다.
+  큰 원문 75개를 페이지로 읽어 중복·누락·frame 한도와 오래된 결정 재판단도 확인한다.
+- 첫 owner 실행에서 웹 기기 이름을 DB update transaction 안에서 조회해 같은 DB mutex를 다시 잡았다.
+  해당 자기 시험 PID를 종료하고, 기기 이름을 transaction 전에 읽도록 고쳤다. 시한·기대값을 바꾸거나 실패를 재시도로 덮지 않는다.
+- E2E99는 실제 host·agent·coordinator pane의 자식 CLI를 사용한다. 웹 두 기기 동기화·host 재시작 유지·compaction hook의
+  additionalContext·일반 자동 답과 예외 카드·구조화 auto-decision post·재판단·세 끄기 경로·한 번 요약·Reader 거부를 검사한다.
+  실제 자동 답 53개로 이전 페이지 읽기·옛 질문 주소·재판단을 확인한다.
+  Chromium·WebKit ×1280·390px에서 입력창·선택 카드·끄기 요약을 촬영하고 가로 넘침과 reduced-motion을 검사한다.
+- 완료는 요청 응답·PTY 출력·DOM·연결 사건으로 기다린다. 고정 sleep·재시도·시한 연장·단언 완화는 없다.
+  실제 외부 푸시 비발행은 Rust notify 큐 owner로 검사하며 UI 알림 개수로 추정하지 않는다.
+- 참고한 herdr-web-ui Composer/PromptCard(aa624cb, MIT), herdr-projects coordinator 안내·진행 hook(v0.2.35, MIT)의
+  기존 이식 경계를 유지한다. 전체 ci-local·Linux strict cross·공개 검사를 수행하며 GitHub CI를 기다리지 않는다.

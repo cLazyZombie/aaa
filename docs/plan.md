@@ -7733,3 +7733,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **37회차 착지 통합(t-0926).** 시작 원격 main `99c1ad0c`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. 준비된 t-0922 `7f3bd898`을 --no-ff로 합쳐 Windows bootstrap owner의 내장 모듈 경로와 암호 ConPTY 시험 자식의 세션 환경 격리를 유지한다. 시험 문서의 기존 절과 새 설명을 모두 보존하며 API·E2E 번호는 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 조건 빌드를 한 번 확인한다. 모든 시험이 통과해야 push하며 부하 중 시한 초과도 원문·부하를 보존하고 재시도 없이 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 수행하지 않는다.
 
 - **38회차 착지 통합(t-0932).** 시작 원격 main `58fb6163`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. 준비된 t-0927 `d3d7edee`를 --no-ff로 합쳐 초기 host 등록 전 구독 응답 유실과 E2E93 시험 입력 파서를 수리한다. 시험 문서의 기존 절과 새 설명을 모두 보존하며 API·E2E 번호는 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 조건 빌드를 한 번 확인한다. 모든 시험이 통과해야 push하며 부하 중 시한 초과도 원문·부하를 보존하고 재시도 없이 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 수행하지 않는다.
+
+### 8.477 coordinator auto mode (t-0938, 확정 1C·2B·3A·4A·5A)
+
+- 프로젝트별 host 원장 `auto-mode:<project>`가 on·since_ms·by·실행 번호·끄기 시각·이번 결정 수를 보존한다. 이름 변경·내보내기·삭제는 기존 project meta 수명을 따른다. host·coordinator 재시작에도 유지하며 사람이 끄거나 켠다. harness 권한·safety와 독립이다.
+- FRONT_API 1.117: `AutoModeGet/Set`, `AutoDecisions`, `QuestionAutoAnswer`, `AutoDecisionReview`, `ProjectView.auto_mode`·`ProjectContext.auto_mode/auto_mode_exceptions`, `Asks.auto_mode/auto_decisions/auto_exceptions/auto_next`. 선택 상태는 serde 기본값으로 구판을 읽는다. 새 자동 답은 별도 op라 구판 host에서 일반 답으로 강등되지 않는다. Agent link·Session IPC 판은 유지한다.
+- 검증된 해당 프로젝트 coordinator만 `question answer --auto --reason-file`과 `post user --data --topic auto-decision`을 쓴다. 질문 ID·현재 판·중복·켜짐·예외를 확인하고 전달 전에 원장을 예약한다. 실패·진행 중 전달은 재전송하지 않는다. 질문·추천·그림 사본과 까닭·답·시각·출처·후속 재판단 요청을 남긴다. 예외 질문은 카드에 남으며 자동 결정은 외부 푸시를 하지 않는다.
+- 기존 herdr Composer 고리의 보라→청록→분홍 2.6초 오로라, 입력창 안 AUTO·상태줄·머리 칩·⋯ 메뉴를 연결한다. 움직임 줄이기는 번짐 없이 테두리를 남긴다. host 사건으로 모든 기기가 같은 상태를 읽는다. 끄기 요약은 한 번 표시하며 입력은 계속 가능하다.
+- 자동 결정 목록은 최근 50개·128KiB 단위로 읽으며 이전 기록과 직접 ID 조회를 지원한다. 장기 모드의 기록 증가가 1MiB frame을 채우지 않는다. 자동 결정 목록·카드에서 확인 처리와 새 답을 받는다. host는 실행 결과를 되돌리지 않고 coordinator inbox로 재판단을 요청한다. CLI 답만으로 후속 실행의 가역성을 알 수 없으면 「coordinator 확인 필요」로 표시한다. 구조화 auto-decision post는 실행 내용·가역성을 함께 기록한다.
+- 참고: herdr-web-ui aa624cb의 Composer·PromptCard와 herdr-projects v0.2.35의 coordinator 안내·진행 hook(MIT). 기존 이식 구조를 확장하며 새 외부 의존성은 없다. 사용자 확정 설계가 일반 자동화 권한과 구별된다.
+- 검증: host auto_mode owner, E2E99(켜기→자동 답→예외 유지→끄기→요약, 두 기기·재시작·hook·다시 정하기·Reader), Chromium/WebKit 1280·390px 캡처. 전체 ci-local·Linux strict cross·공개 검사. 병합은 착지 창, GitHub CI 대기는 없다.

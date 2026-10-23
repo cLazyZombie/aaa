@@ -669,6 +669,9 @@ pub struct MessageView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectView {
+    #[serde(default)]
+    #[ts(optional, as = "Option<crate::AutoMode>")]
+    pub auto_mode: crate::AutoMode,
     pub name: String,
     pub path: String,
     pub threads: u32,
@@ -2791,6 +2794,10 @@ pub struct OwnerChoice {
 /// coordinator가 매 턴 처음 보는 프로젝트 요약(0.2.35 `context`)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectContext {
+    #[serde(default)]
+    pub auto_mode: crate::AutoMode,
+    #[serde(default)]
+    pub auto_mode_exceptions: String,
     /// inbox를 끝내도 해제 전까지 남는 활성 post 음소거 경고
     #[serde(default)]
     pub post_warnings: Vec<String>,
