@@ -133,7 +133,7 @@ fn resolve(harness: Harness, pid: u32, codex: &Path, claude: &Path) -> Option<Bi
                     continue;
                 }
                 let Some(id) = v["payload"]["id"].as_str() else { continue };
-                if !path.file_name()?.to_str()?.ends_with(&format!("-{id}.jsonl")) {
+                if !chat::codex_record_name(&path, id) {
                     continue;
                 }
                 id.to_string()
@@ -310,6 +310,18 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn codex_resumed_versioned_rollout_binds_to_thread_id_instead_of_rollout_id() {
+        let lab = Lab::new();
+        let _file = lab.codex(ID, serde_json::json!("cli"));
+        let path = lab.0.join(format!("rollout-test-{ID}_{OTHER}.jsonl"));
+        std::fs::rename(lab.0.join(format!("rollout-test-{ID}.jsonl")), &path).unwrap();
+        let b = resolve(Harness::Codex, std::process::id(), &lab.0, &lab.0).expect("재개 기록 연결");
+        assert_eq!(b.id, ID);
+        assert_eq!(b.path, path);
+        assert_eq!(chat::codex_hint(&lab.0, ID, path.to_str().unwrap()), Some(path));
     }
 
     #[test]

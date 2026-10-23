@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 셸 pane 재개·복귀 기록과 맨 위 앵커(t-0839)
+
+- `nice -n 15 cargo test --locked -p aaa-agent --lib shell_chat`와 `chat_paths_tests`는 Codex의 `-<thread-id>_<rollout-id>.jsonl`을 열린 쓰기 FD·첫 session_meta와 대조한다. 대화 UUID와 기록 UUID를 구분하고 잘못된 접미사·다른 ID·허용 root 밖·하위 agent·여러 후보를 거른다. 같은 ID의 백업을 열어 고르지 않는 기존 조건을 유지한다. 계정 홈의 hook 경로·ID 조회·metadata 보완도 같은 판정을 쓴다.
+- `nice -n 15 cargo test --locked -p aaa-vt`는 고정 입력줄 위 일부 영역의 DECSTBM+LF가 기록과 replay에 남는지 확인한다. 중간 영역·CSI S는 기록을 만들지 않는다. xterm.js 5.5 `BufferService.scroll`·`InputHandler.scrollUp`의 판정을 따른다. 기존 구현은 첫 기록 유실 단언에서 실패했고 수리 뒤 정상이다. backend와 웹의 alternate 화면·커서·마우스 모드 경로는 유지한다.
+- `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs --spec 93-shell-chat --workers 1`: 기존 직접 실행 8조합에 연결 전 alternate 화면 복귀·대화 보기 선택·읽던 첫 메시지 복귀를 더한다. 새 owner는 두 엔진·1280px/390px에서 inline 터미널 기록 복원, Codex resume·Claude resume/continue의 이전 360메시지·입력창 고정, 프로그램의 마우스 보고 스크롤과 고정 footer, agent 재시작 뒤 실제 PID의 재연결을 확인한다. 재시작 전에 자기 실험실의 harness.json만 지워 저장한 ID의 재전송과 구분한다. 기존 byte cursor는 재시작에 무효가 되므로 새 cursor로 이전 기록 전체를 읽고 복귀를 검사한다.
+- Chromium 휴대폰은 CDP의 실제 touch를 쓴다. Playwright WebKit 휴대폰에는 touch 이동 API가 없어 TermView에 touch 사건을 보내는 경로만 확인하며 실제 iPhone 조작과 구분한다. 사본의 그리기 표지(`data-view-base`) 뒤 첫 휠도 WebKit에서 버려져 viewport=0·ydisp=43으로 남는 결함을 재현했다. xterm의 자체 동기화 무시 표지는 같은 줄의 사건에만 적용한다. `xterm-source.test.mjs`는 실제 upstream 메서드에 같은 patch를 붙여 자체 동기화·합쳐진 사용자 스크롤·reset의 0 높이를 대조한다. native scrollTop만 보고 화면 이동 완료로 간주하지 않는다.
+- E2E93의 안내 높이 대조는 처음 메시지까지 읽고 scrollTop=0에서 안내 padding을 정확히 1px 늘린다. 기존 구현은 0→1px로 결정적으로 실패했다. 첫 줄을 고정하던 앵커가 안내 높이 변화를 따라가던 결함이며, 맨 위와 중간/앞 페이지 추가를 나눠 0을 유지한다. 기존 touch→scrollend→scrollTop=0→두 frame→정확히 0 단언도 유지한다. reset 경계의 JS 쓰기·stack·안내/첫 row 위치를 기록해 실패 때 diagnostics/shell-scroll-reset.json에 남긴다. t-0838의 통과한 대조 10회에는 쓰기가 없었고 원래 실패에는 계측이 없어, 이 대조만으로 원래 실패의 변경 주체를 소급 확정하지 않는다.
+- 사용자 설정의 `tui.alternate_screen="never"`는 Codex 자체의 고정 입력줄 스크롤을 끈다. thread와 셸은 같은 TermView·마우스 전달·ChatPanel을 사용하며 제품이 전역 설정을 바꾸지 않는다. 실제 사용자 pane의 키 입력·종료 없이 metadata만 대조한다. 정본은 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. 시한·단언·브라우저 조합을 줄이지 않는다.
+- 전체 Rust 검증에서 report_copy의 경고 대기 실패가 났고, 남은 DB는 새 adopted thread가 `host가 기동 전에 중단됨`으로 실패했음을 보였다. `adoption_preparation_is_not_a_crashed_launch`는 agent 준비 응답을 oneshot으로 보류하고 그 사이 실제 ticker를 한 번 실행한다. 기존 구현은 0.54초에 Starting→Failed로 실패한다. thread_insert transaction 안에서 기존 작업 claim을 얻어 준비 완료까지 유지한다. `nice -n 15 env -u AAA_SESSION_ID cargo test --locked -p aaa --test report_copy`는 새 경합과 기존 보고·library·불변 판 저장 실패/동일 hash 복구를 함께 검사한다. sleep·시한 연장으로 피하지 않는다.
+
 ## GitHub 웹 E2E 직렬 실행과 파일 보기 Escape(t-0830)
 
 - 공개 `macos-15` arm64 러너는 [GitHub 사양](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에 따라 3 CPU다. 10 CPU 미만인 기존 로컬 기본값 `floor(cores / 2)`는 worker 1이 된다. CI만 `AAA_E2E_WORKERS=2`로 명시하고 로컬 기본과 `--workers` 우선순위는 유지한다. 모든 spec·브라우저·viewport·독립 단계는 그대로 한 번씩 실행한다.

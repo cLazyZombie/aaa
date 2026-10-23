@@ -61,6 +61,12 @@ export interface ChatPosition {
   readonly atEnd: boolean;
 }
 
+/** 맨 위 안내를 읽던 자리는 0에 둔다. 앞 페이지가 붙어 기준 줄이 첫 줄이 아니게 되면 그 줄을 따라간다. */
+export function chatAnchorTop(rowTop: number, firstRow: boolean, at: Pick<ChatPosition, "offsetWithinRow" | "scrollOffset">): number {
+  if (firstRow && at.scrollOffset === 0 && at.offsetWithinRow <= 0) return 0;
+  return Math.max(0, rowTop + at.offsetWithinRow);
+}
+
 const remembered = new Map<string, ChatPosition>();
 
 export function readChatPosition(key: string): ChatPosition | undefined {

@@ -59,13 +59,28 @@ pub(crate) fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(real)
 }
 
-/// Codex 기록: `sessions/YYYY/MM/DD/rollout-…-<thread-id>.jsonl`
+/// Codex 0.163은 되돌린 기록에 `_<rollout-id>`를 붙인다. thread ID와 기록 ID를 섞지 않는다.
+pub(crate) fn codex_record_name(path: &Path, id: &str) -> bool {
+    if !aaa_common::util::harness_session_ok(id) {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(|s| s.to_str()).and_then(|s| s.strip_prefix("rollout-")) else {
+        return false;
+    };
+    let Some(stem) = name.strip_suffix(".jsonl") else { return false };
+    stem.ends_with(&format!("-{id}"))
+        || stem.rsplit_once('_').is_some_and(|(thread, rollout)| {
+            thread.ends_with(&format!("-{id}")) && aaa_common::util::harness_session_ok(rollout)
+        })
+}
+
+/// Codex 기록: `sessions/YYYY/MM/DD/rollout-…-<thread-id>[_<rollout-id>].jsonl`
 pub(crate) fn codex_hint(root: &Path, id: &str, transcript: &str) -> Option<PathBuf> {
     if !aaa_common::util::harness_session_ok(id) {
         return None;
     }
     let path = inside(root, Path::new(transcript)).ok()?;
-    path.file_name()?.to_str()?.ends_with(&format!("-{id}.jsonl")).then_some(path)
+    codex_record_name(&path, id).then_some(path)
 }
 
 /// 경로를 모르는 hook·옛 세션은 ID로 찾는다. 셸에서 확인한 정확한 경로가 있으면 `codex_hint`를 먼저 쓴다.
@@ -73,16 +88,14 @@ pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
     if !aaa_common::util::harness_session_ok(id) {
         return Err("Codex thread-id 형식이 아니다".into());
     }
-    let suffix = format!("-{id}.jsonl");
     let mut dirs = vec![(root.to_path_buf(), 0)];
     while let Some((dir, depth)) = dirs.pop() {
         let Ok(rd) = std::fs::read_dir(&dir) else { continue };
         for e in rd.flatten() {
             let Ok(ft) = e.file_type() else { continue };
-            let name = e.file_name().to_string_lossy().to_string();
             if ft.is_dir() && depth < 3 {
                 dirs.push((e.path(), depth + 1));
-            } else if ft.is_file() && name.starts_with("rollout-") && name.ends_with(&suffix) {
+            } else if ft.is_file() && codex_record_name(&e.path(), id) {
                 return inside(root, &e.path());
             }
         }
@@ -128,9 +141,7 @@ pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: 
             if meta["type"] != "session_meta"
                 || p["source"] != "cli"
                 || !p["timestamp"].as_str().and_then(aaa_common::util::parse_iso).is_some_and(|t| t >= started_ms)
-                || !p["id"]
-                    .as_str()
-                    .is_some_and(|s| aaa_common::util::harness_session_ok(s) && name.ends_with(&format!("-{s}.jsonl")))
+                || !p["id"].as_str().is_some_and(|s| codex_record_name(&path, s))
                 || !p["cwd"].as_str().and_then(|s| std::fs::canonicalize(s).ok()).is_some_and(|p| p == cwd)
             {
                 continue;
