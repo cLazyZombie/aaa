@@ -91,19 +91,65 @@ impl Terminal {
         self.spinning = false;
     }
     fn read_line(&mut self) -> Result<String> {
+        if let Some(line) = read_console_line()? {
+            return Ok(line);
+        }
         let mut line = String::new();
-        let read = std::io::stdin().lock().read_line(&mut line);
+        match std::io::stdin().lock().read_line(&mut line) {
+            Ok(0) => Err(Cancelled.into()),
+            Ok(_) => Ok(line.trim().to_string()),
+            Err(e) => Err(e.into()),
+        }
+    }
+}
+
+/// 콘솔 한 줄. std의 stdin은 Ctrl+C로 끊긴 ReadConsoleW를 다시 읽어 Enter까지 기다리므로 직접 읽는다.
+/// 콘솔이 아니면 None
+fn read_console_line() -> Result<Option<String>> {
+    let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    let mut original = 0;
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE || unsafe { GetConsoleMode(handle, &mut original) } == 0 {
+        return Ok(None);
+    }
+    let _restore = ConsoleMode { handle, original };
+    unsafe { SetConsoleMode(handle, original | ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT) };
+    let mut line: Vec<u16> = Vec::new();
+    loop {
+        let mut buffer = [0u16; 512];
+        let mut read = 0u32;
+        let ok = unsafe { ReadConsoleW(handle, buffer.as_mut_ptr().cast(), buffer.len() as u32, &mut read, std::ptr::null()) };
+        let aborted = ok == 0 || read == 0;
+        if aborted {
+            // Ctrl+C 처리기는 다른 thread에서 늦게 돌 수 있다
+            let started = Instant::now();
+            while !CANCEL.load(Ordering::SeqCst) && started.elapsed() < Duration::from_millis(300) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
         if CANCEL.load(Ordering::SeqCst) {
             println!();
             return Err(Cancelled.into());
         }
-        match read {
-            Ok(0) => Err(Cancelled.into()),
-            Ok(_) => Ok(line.trim().to_string()),
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Err(Cancelled.into()),
-            Err(e) => Err(e.into()),
+        if ok == 0 {
+            match last_error() {
+                ERROR_OPERATION_ABORTED => continue,
+                code => bail!("콘솔 입력을 읽지 못했습니다: {}", os_error(code)),
+            }
+        }
+        if read == 0 {
+            return Err(Cancelled.into());
+        }
+        line.extend_from_slice(&buffer[..read as usize]);
+        if line.last() == Some(&10) || line.len() > 4096 {
+            break;
         }
     }
+    let text = String::from_utf16_lossy(&line);
+    // Ctrl+Z Enter는 콘솔의 EOF다
+    if text.starts_with('\u{1a}') {
+        return Err(Cancelled.into());
+    }
+    Ok(Some(text.trim().to_string()))
 }
 
 impl Ui for Terminal {
