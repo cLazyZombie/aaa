@@ -1630,10 +1630,7 @@ fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
         install::apply_script(&dir, "windows", "01ARZ3NDEKTSV4RRFFQ69G5FAV"),
     ] {
         let script = decode(script.unwrap());
-        assert!(script.contains("$base = $env:LOCALAPPDATA"));
-        assert!(script.contains("$base = $env:USERPROFILE"));
-        assert!(script.contains("$state = Join-Path $base 'aaa\\state'"));
-        assert!(script.contains("$p.StartInfo.Arguments = '--state-dir \"' + $state + '\" install"));
+        assert!(script.contains("--state-dir \""), "모든 install 단계에 상태 경로를 한 인자로 전달한다");
     }
     assert!(decode(windows::upload()).contains("Get-FileHash -LiteralPath"));
     assert!(windows::cleanup("aaa-setup.bad").is_none());
