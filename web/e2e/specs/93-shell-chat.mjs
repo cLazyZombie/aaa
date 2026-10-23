@@ -1,6 +1,7 @@
 // 시험용 일반 셸 → hook 없는 harness → 실제 프로세스/기록 연결 → host → 대화 페이지/스크롤.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import { watchScroll } from "../lib/scrollDiagnostics.mjs";
 import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
 import {
@@ -38,6 +39,7 @@ async function resumed(engine, width, harness) {
   const state = () => aaa("pane", "list").panes.find((p) => p.id === pane);
   const toggle = page.getByTestId("chat-toggle"), chat = page.getByTestId("chat");
   const diagnostics = new ChatDiagnostics(root, name);
+  diagnostics.pane = pane;
   shellDiagnostics = diagnostics;
   diagnostics.page = page;
   diagnostics.watch(page.context());
@@ -127,6 +129,10 @@ async function resumed(engine, width, harness) {
         await terminal();
         await until("alternate 화면 사본 복원", async () => (await screenText(page)).includes("app-history-") && (await screenText(page)).includes("fixed-composer>"));
       }
+      // VT200은 휠뿐 아니라 클릭 누름·뗌도 보낸다. 복귀한 터미널을 실제로 누른 뒤
+      // 대화·agent 재시작을 거쳐 quit해도 시험 harness의 입력 해석이 막히면 안 된다.
+      mark(`${mode}:terminal:click`);
+      await page.locator(".xterm-screen").click();
       await toggle.waitFor();
       const newest = page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "pane_chat" && !r.request().postDataJSON()?.before);
       if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
@@ -163,6 +169,13 @@ async function resumed(engine, width, harness) {
       await shot(page, `${name}-${mode}-${width}`);
       mark(`${mode}:quit`);
       await quit();
+      const trace = fs.readdirSync(`${root}/shell-input`).map((file) => JSON.parse(fs.readFileSync(`${root}/shell-input/${file}`, "utf8")))
+        .find((trace) => trace.session === id && trace.harness === harness && trace.mode === mode);
+      for (const final of ["M", "m"]) {
+        assert.ok(trace?.events.some((event) => event.kind === "control" && event.button === 0 && event.final === final), "실제 클릭 보고를 받지 않았다");
+      }
+      assert.ok(trace.events.some((event) => event.kind === "command" && event.command === "quit"), "quit을 명령으로 읽지 않았다");
+      assert.equal(trace.events.at(-1).kind, "exited", "시험 harness의 출력·정리가 끝나지 않았다");
     }
     mark("done");
   } catch (error) {
@@ -195,7 +208,23 @@ function diagnoseShell(error) {
   if (!diagnostics.saving) {
     const current = diagnostics.states.findLast((state) => state.phase);
     diagnostics.errors = [{ ...current, error: String(error) }];
-    diagnostics.saving = diagnostics.save(error, inTime);
+    diagnostics.saving = Promise.resolve().then(async () => {
+      // 브라우저 진단만으로 PTY 전달과 시험 입력 해석을 구별할 수 없다. 바깥 단계의
+      // 시한에도 같은 진단을 남기며 수집 오류가 최초 시험 오류를 덮지 않게 한다.
+      const dir = `${root}/diagnostics/${diagnostics.label}`;
+      fs.mkdirSync(dir, { recursive: true });
+      const capture = (name, fn) => {
+        try { fn(); }
+        catch (captureError) { fs.writeFileSync(`${dir}/${name}-error.txt`, String(captureError)); }
+      };
+      capture("pane", () => fs.writeFileSync(`${dir}/pane.json`, JSON.stringify({
+        load: os.loadavg(), pane: aaa("pane", "list").panes.find((pane) => pane.id === diagnostics.pane),
+        recent: aaa("pane", "read", diagnostics.pane, "--source", "recent", "--lines", "100").text,
+      }, null, 2)));
+      capture("session", () => fs.copyFileSync(`${root}/s/agent/sessions/${diagnostics.pane}/session-host.log`, `${dir}/session-host.log`));
+      capture("input", () => fs.cpSync(`${root}/shell-input`, `${dir}/shell-input`, { recursive: true }));
+      await diagnostics.save(error, inTime);
+    }).catch((captureError) => { console.error(`셸 실패 진단 저장 오류: ${captureError}`); });
   }
   return diagnostics.saving;
 }
@@ -236,6 +265,7 @@ export default async function () {
         fs.writeFileSync(`${backup}/rollout-backup-${id}.jsonl`, JSON.stringify({ type: "session_meta", payload: { id, source: "cli" } }) + "\n");
       }
       const pane = aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh").tabs.at(-1).root.pane;
+      diagnostics.pane = pane;
       await inList(page, `pane-${name}`);
       aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${id}`);
       await waitOutput(pane, "foreground-harness-ready");

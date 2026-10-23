@@ -13,6 +13,9 @@ use aaa_common::conn::{FrameRx, Incoming, spawn_writer};
 use aaa_common::ipc::LocalStream;
 use aaa_common::tls;
 
+#[cfg(test)]
+mod resume_tests;
+
 pub enum Target {
     Local(PathBuf),
     Remote { addr: String, pin: String, id: tls::Identity },
@@ -243,12 +246,14 @@ async fn session_state_mode(
         })
     };
     // 큰 replay도 전송 backpressure에 막힐 수 있다. 그동안 EOF·기존 응답 상한과 요청 처리를 계속한다.
+    let (requests_ready, request_gate) = tokio::sync::watch::channel(false);
     let initialize = async {
         {
             // Hello의 스냅샷 뒤 Welcome을 기다리는 동안에도 감지·hook은 기억을 갱신한다.
             // 상태 사건은 replay 뒤에 세우되 일반 요청 응답은 Welcome 직후부터 보낸다.
             let _delivery = agent.harness_delivery.lock().await;
             agent.set_host(Some(tx.clone()));
+            requests_ready.send_replace(true);
             let compacting = agent.host_compacting.load(std::sync::atomic::Ordering::Relaxed);
             for ev in agent.harness_events().into_iter().filter(|ev| replay || !sent_harness.contains(ev)) {
                 tx.json(&LinkMsg::Event(aaa_proto::AgentEvent::Harness(super::for_host(ev, compacting)))).await?;
@@ -296,7 +301,45 @@ async fn session_state_mode(
                 Ok(Ok(Some(Incoming::Terminal(_)))) => {}
                 Ok(Ok(Some(Incoming::Control(b)))) => match serde_json::from_slice::<LinkMsg>(&b) {
                     Ok(LinkMsg::Req { id, body, deadline_ms }) => {
-                        tokio::spawn(agent.clone().handle_deadline(id, body, deadline_ms, Some(tx.clone())));
+                        // Welcome 직후에도 reader는 계속 돈다. 다만 session pump의 응답은
+                        // 등록된 host로 가므로 replay 울타리 앞에서 host 등록이 끝나야 한다.
+                        // 등록 전 EOF면 gate가 닫혀 아직 시작하지 않은 요청을 버린다.
+                        let (agent, reply, mut gate) = (agent.clone(), tx.clone(), request_gate.clone());
+                        let started = tokio::time::Instant::now();
+                        let wait = Duration::from_millis(deadline_ms.unwrap_or(600_000).clamp(1, 86_400_000));
+                        tokio::spawn(async move {
+                            let ready = tokio::time::timeout_at(started + wait, gate.wait_for(|ready| *ready))
+                                .await
+                                .map(|result| result.map(|_| ()));
+                            match ready {
+                                Ok(Ok(_)) => {}
+                                Ok(Err(error)) => {
+                                    aaa_common::diagnostic::observe(
+                                        &error,
+                                        "host 등록 전에 연결이 닫혀 요청을 시작하지 않는다",
+                                    );
+                                    return;
+                                }
+                                Err(error) => {
+                                    aaa_common::diagnostic::observe(&error, "host 등록 대기 중 요청 시한이 지남");
+                                    aaa_common::diagnostic::ignored(
+                                        reply
+                                            .link(&LinkMsg::Res {
+                                                id,
+                                                result: aaa_proto::Outcome::Err(aaa_proto::ErrorBody::new(
+                                                    aaa_proto::ErrorCode::Timeout,
+                                                    "host 등록 대기 중 요청 시한이 지났다",
+                                                )),
+                                            })
+                                            .await,
+                                        "요청 시한 오류를 알리지 못했다",
+                                    );
+                                    return;
+                                }
+                            }
+                            let remaining = wait.saturating_sub(started.elapsed()).as_millis().max(1) as u64;
+                            agent.handle_deadline(id, body, Some(remaining), Some(reply)).await;
+                        });
                     }
                     Ok(LinkMsg::Ping { seq }) => {
                         // 느린 상대의 답 전송이 EOF·응답 상한 읽기를 막지 않게 한다.
