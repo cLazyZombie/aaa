@@ -118,7 +118,8 @@ jobs:
         env:
           RELEASE_TARGET: ${{ matrix.target }}
           CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ matrix.debuginfo }}
-        run: cargo test --release --locked -p aaa-common --lib --target "$RELEASE_TARGET" panic_log::
+        run: |
+          cargo test --release --locked -p aaa-common --lib --target "$RELEASE_TARGET" panic_log::
       - name: macOS 고정 launcher asset
         if: runner.os == 'macOS'
         env:
