@@ -3020,3 +3020,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - m13 계정 owner는 판 조회가 개발판·종료 7을 반환해도 실제 계정 pane·동시 갱신·격리·재개가 진행되는지 확인한다. 판 조회 실패에도 실제 session-host를 실행하며, 격리 인증 홈 symlink 거부가 thread 실패 기록까지 PID·종료·원인 사슬과 함께 전해져야 한다. 이미지 owner의 과거 판 거부는 임의 판 생성 성공으로 교체하며, 사용량 RPC owner도 임의 판·종료 7 뒤 실제 조회를 확인한다.
 - Windows 서비스 시험의 선택 `-Codex C:\aaa-test\t-NNNN\codex.exe`는 전용 폴더의 실제 Codex 사본과 가짜 중앙 인증으로 별도 thread pane을 열어 SCM Session 0의 실제 Codex PID·실행 파일·running pane과 판 시작 기록을 확인한다. 화면 출력은 별도로 보존하며 TUI 상호작용 성공으로 해석하지 않는다. 운영 인증·설정·서비스는 읽기만 한다. SCM Session 0·가상 계정·입력/pong·기준 목록 복원 검사는 유지한다.
 - 참고는 WezTerm portable-pty의 ConPTY 오류 전파(MIT), Nushell `run_external`의 외부 명령 오류 사슬(MIT)이다. 외부 코드·의존성은 추가하지 않는다. 로컬 전체 ci-local·Linux cross clippy·공개 검사와 Windows 실기를 수행한다. 고정 sleep·시한 연장·재시도는 쓰지 않는다.
+
+## Windows Codex 빈 화면과 초기 DSR 교착(t-0910, §8.472)
+
+- 수정 전 Windows 시험 서비스의 raw PTY 최초 출력은 `[27,91,54,110]`(DSR) 한 번이고 질의 응답은 없었다. 같은 인증 가림 규칙에서 `Stream.push(ESC[6n, false)`는 마지막 n을 보류한다. 가림과 ConPTY가 서로 다음 출력을 기다리는 경계를 재현하며 운영 pane·서비스에는 입력하지 않는다.
+- `aaa-session output::tests`는 첫 DSR의 0~4바이트 분할, 인증 접두부 7바이트를 붙잡은 상태의 즉시 DSR·DA1·DA2 응답, 질의 앞뒤 인증 조각 전체 가림·공개 replay 비노출, resize 후 커서, 색 지정/되돌리기와 끝나지 않은 escape의 EOF 가림을 검사한다. `aaa-vt query_state_keeps_no_raw_scrollback_after_resize`는 resize 뒤에도 원문 scrollback이 생기지 않는지 확인한다.
+- m13 계정 owner의 실제 로컬/TLS 원격 PTY는 raw mode에서 첫 DSR만 쓰고 응답을 받기 전까지 출력·인증·갱신을 시작하지 않는다. 기존 계정 동시 갱신·부분 회전·가림·재개 단언과 사건 시한은 유지한다.
+- 참고는 [Microsoft Terminal ConPTY 연결](https://github.com/microsoft/terminal/blob/main/src/cascadia/TerminalConnection/ConptyConnection.cpp)(MIT), [WezTerm portable-pty](https://github.com/wezterm/wezterm/blob/main/pty/src/win/pseudocon.rs)(MIT), [xterm InputHandler](https://github.com/xtermjs/xterm.js/blob/master/src/common/InputHandler.ts)(MIT)다. 질의 응답과 출력 처리 경계를 참고하며 외부 코드는 복사하지 않는다. Windows 재현용 raw 계측은 제품 커밋에서 제거한다.
+- 정본은 전체 ci-local·공개 검사·Linux cross strict clippy와 Windows 시험 서비스의 실제 Codex 화면·brief 전달이다. 운영 인증은 사용하지 않고 가짜 API 인증·loopback 주소로 시험한다. 결과·로그 보존 뒤 전용 서비스·확인한 PID·시험 폴더를 지우고 기준 목록을 대조한다.

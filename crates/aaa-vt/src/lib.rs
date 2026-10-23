@@ -7,6 +7,7 @@ use aaa_proto::{ReadFormat, ReadSource, ScreenText, TermColors};
 
 pub struct Vt {
     parser: vt100::Parser<Modes>,
+    scrollback: usize,
 }
 
 /// vt100이 화면에 담지 않는 입력 모드. replay가 다시 말해 늦게 붙은 front도 프로그램이 요청한 형식으로 키를 보낸다.
@@ -91,7 +92,10 @@ pub const REPLAY_HISTORY_BYTES: usize = 384 << 10;
 
 impl Vt {
     pub fn new(rows: u16, cols: u16) -> Self {
-        Vt { parser: vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), SCROLLBACK, Modes::default()) }
+        Vt {
+            parser: vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), SCROLLBACK, Modes::default()),
+            scrollback: SCROLLBACK,
+        }
     }
 
     /// 화면 사본에 넣는다. 웹에는 원래 출력 bytes를 전달한다.
@@ -149,7 +153,7 @@ impl Vt {
         if hidden {
             out.extend_from_slice(b"\x1b[?25l");
         }
-        let mut p = vt100::Parser::new_with_callbacks(rows, cols, SCROLLBACK, modes);
+        let mut p = vt100::Parser::new_with_callbacks(rows, cols, self.scrollback, modes);
         p.process(&out);
         self.parser = p;
     }
@@ -1221,6 +1225,29 @@ fn history_row(s: &vt100::Screen, r: u16, cols: u16, joins: bool, out: &mut Vec<
     out.extend_from_slice(if joins { b"\x1b[m" } else { b"\x1b[m\r\n" });
 }
 
+/// 가림이 붙잡은 글과 무관하게 질의 시점의 실제 커서를 계산한다.
+/// 원문 화면은 프로세스 메모리에만 있고 조회·replay·저장 API를 노출하지 않는다.
+/// scrollback은 보존하지 않으며, 외부 화면·기록은 별도의 가린 Vt가 맡는다.
+pub struct QueryState(Vt);
+
+impl QueryState {
+    pub fn new(rows: u16, cols: u16) -> Self {
+        Self(Vt {
+            parser: vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), 0, Modes::default()),
+            scrollback: 0,
+        })
+    }
+    pub fn feed(&mut self, bytes: &[u8]) {
+        self.0.feed(bytes);
+    }
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        self.0.resize(rows, cols);
+    }
+    pub fn cursor_report(&self) -> Vec<u8> {
+        self.0.cursor_report()
+    }
+}
+
 /// 프로그램이 터미널에 묻는 것 중 session host가 답하는 것(답은 herdr 0.9.5의 ghostty와 같다)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Query {
@@ -1502,6 +1529,19 @@ mod width_cases;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_state_keeps_no_raw_scrollback_after_resize() {
+        let mut query = QueryState::new(3, 4);
+        query.feed(b"abcdef");
+        query.resize(3, 8);
+        assert_eq!(query.cursor_report(), b"\x1b[1;7R");
+        for _ in 0..100 {
+            query.feed(b"raw line\r\n");
+        }
+        query.0.parser.screen_mut().set_scrollback(usize::MAX);
+        assert_eq!(query.0.parser.screen().scrollback(), 0);
+    }
 
     /// `ScreenText.ansi`는 `read`의 Visible·Ansi와 같은 글이다(prompt_box가 흐린 placeholder를 가른다)
     #[test]
