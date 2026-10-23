@@ -3209,3 +3209,13 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 명령·DOM·state 사건 완료를 기다리고 고정 sleep·재시도·시한 연장은 없다. 전체 ci-local과 공개 검사가 정본이다.
 
 - E2E58의 가짜 CLI는 `--version`을 로그인 FIFO와 분리한다. 수정 전 fixture에 `--version`을 주고 로그인 신호를 쓰면 인증 파일을 만드는 대조로 신호 소비를 확인했다. 두 가짜 CLI의 판 조회는 FIFO writer 없이 완료돼야 하며 실제 로그인·취소·계정 선택 단언과 기존 시간 상한은 유지한다.
+
+
+## macOS·Linux setup(t-0931, plan §8.477)
+
+- `cargo test --locked -p aaa --bin aaa setup::`는 기존 Windows 질문·암호·정책·등록·되돌림과 Unix 세 종류의 질문/파일/제거, 구판 receipt 기본값, 서비스 파일 충돌·symlink·환경 거부·명령 인용을 함께 검사한다. 갱신의 부분 시작 실패에는 새 프로세스 정지 → 이전 실행 파일 복원 → 이전 서비스 재시작 순서를 단언한다.
+- 실제 OS owner는 `scripts/setup-unix-e2e.py`다. 실행 파일은 Cargo 산출물의 별도 사본으로 고정하고 `--binary <사본> --kind launchd|systemd-user|systemd-system --instance aaa-test-0000-x --root /tmp/aaa-test-0000-x`로 명시 실행한다. macOS에는 `--launcher <별도 시험 launcher>`가 필요하다. 기존 운영 서비스·설정·launcher를 시험 대상으로 쓰지 않는다. Linux 시스템 시험은 폐기 가능한 VM에서만 한다.
+- owner가 별도 HOME·설정·상태·작업 폴더와 loopback host를 만들고 실제 PTY에서 계획 확인·등록 코드 승인을 실행한다. native 관리자 등록/시작 → PID와 host 연결 → 상태 → 정지 후 동일 설치기로 재시작 → 제거/설정 보존 → 동명 외부 파일 거부 → Ctrl+C 무변경 → 재승인 없는 재설치 → purge/실행 파일 보존을 확인한다. 고정 sleep·재시도 대신 socket 생성·콘솔 출력·자식 종료·서비스 상태 사건과 상한으로 끝낸다.
+- macOS는 시작 전/후 launchctl list·LaunchAgents 내용 해시·PATH를 저장하고 운영 aaa의 PID/상태가 같고 시험 label이 사라졌는지 비교한다. 실제 launchd는 별도 HOME의 임시 plist만 bootstrap/bootout한다. Linux는 Ubuntu 24.04 aarch64 VM에서 user/system을 각각 검사하고 systemd-analyze verify도 실행한다. 공백·`%`·`$` 경로, 로그의 일반 사용자 소유권을 포함한다. `WorkingDirectory`는 raw 경로, ExecStart는 `:`로 변수 치환을 끄며 로그를 사용자 권한으로 먼저 만든다.
+- 실제 시험에는 격리 host만 쓴다. VM 내부 → 운영 host/tailnet 경로는 이 owner의 보장 범위가 아니다. VM을 지운 뒤 Lima 목록을 대조한다. 로그를 공유할 때 개인 주소·사용자 경로·장치 지문을 제거한다.
+- 변경의 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`, Linux strict cross, 실제 Windows의 `cargo test --locked -p aaa --bin aaa setup::`다. 교차 빌드를 native 서비스 시험으로 대신하지 않으며 GitHub CI를 기다리지 않는다. Front API·Agent link·웹 E2E 번호는 유지한다.

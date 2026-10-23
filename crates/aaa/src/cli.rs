@@ -128,9 +128,9 @@ enum Cmd {
     },
     /// 역할·작업 경로·서비스를 계획하고 명시적 승인 뒤 설치·재개한다
     Install(Box<crate::install::Args>),
-    /// Windows 설치기: 이 PC를 agent로 설치하고 서비스로 띄워 host에 연결한다(`aaa-setup.exe`로 두면 인자 없이 뜬다)
+    /// 이 PC를 agent로 설치하고 OS 서비스로 띄워 host에 연결한다(`aaa-setup`으로 두면 인자 없이 뜬다)
     Setup(crate::setup::Args),
-    /// (내부) `aaa setup`이 등록한 Windows 서비스 입구. SCM만 실행한다.
+    /// (내부) `aaa setup`이 등록한 서비스 입구. OS 감독자만 실행한다.
     #[command(hide = true)]
     SetupService,
     /// harness 전역 연동을 설치하거나 제거한다(기존 사용자 hook은 보존)
@@ -1809,7 +1809,9 @@ pub fn main() -> ExitCode {
         Cmd::Setup(args) => return crate::setup::run(args),
         #[cfg(windows)]
         Cmd::SetupService => return crate::setup::service::dispatch(),
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        Cmd::SetupService => return crate::setup::unix::dispatch(),
+        #[cfg(not(any(windows, unix)))]
         Cmd::SetupService => {
             eprintln!("aaa: setup-service는 Windows 서비스 입구다");
             return ExitCode::from(2);
@@ -3163,7 +3165,7 @@ async fn supervised_stop(stop: Option<tokio::sync::watch::Receiver<bool>>) {
 }
 
 /// OS 감독자의 고정 host/agent 역할만 실행한다. 임의 argv/셸을 받지 않는다.
-#[cfg(any(windows, target_os = "macos", test))]
+#[cfg(any(windows, unix, test))]
 pub(crate) fn supervised_role(
     role: aaa_proto::install::InstallRole,
     ready: tokio::sync::oneshot::Sender<()>,

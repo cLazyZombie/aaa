@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use super::Args;
+use super::{Args, ServiceKind};
 
 /// 원격 agent가 붙는 host 기본 포트(host.toml `agent_listen`)
 pub(crate) const AGENT_PORT: u16 = 7430;
@@ -129,6 +129,7 @@ pub(crate) struct ServiceDef {
 
 /// 암호 확인 결과
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum Logon {
     Ok,
     WrongPassword,
@@ -147,6 +148,14 @@ pub(crate) enum Right {
 }
 
 pub(crate) trait System {
+    /// 계획 확인 뒤, 파일 변경 전에 필요한 서비스 관리자 권한을 준비한다.
+    fn authorize(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// OS별 준비 파일. 기존 파일은 교체하지 않고 새 파일만 설치·되돌린다.
+    fn additional_files(&self) -> Vec<InstallFile> {
+        Vec::new()
+    }
     fn account(&mut self) -> Result<Account>;
     /// 이 PC의 이름(DNS hostname)
     fn computer(&mut self) -> String;
@@ -172,6 +181,13 @@ pub(crate) trait System {
     fn user_path(&mut self) -> Result<Option<String>>;
     /// None이면 값을 지운다
     fn set_user_path(&mut self, value: Option<&str>) -> Result<()>;
+}
+
+#[derive(Clone)]
+pub(crate) struct InstallFile {
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+    pub mode: u32,
 }
 
 /// SCM 밖 감시가 설치기가 만든 정확한 서비스만 멈추고 띄운다. stop/start 오류를 재시도하지 않는다.
@@ -203,6 +219,7 @@ pub(crate) fn restart_for_rollout(sys: &mut dyn System, layout: &Layout, caller_
 /// 설치 자리. 인스턴스마다 설정·상태·서비스 이름이 따로다
 #[derive(Debug, Clone)]
 pub(crate) struct Layout {
+    pub kind: ServiceKind,
     pub instance: Option<String>,
     /// 설치하는 실행 파일(이 설치기 자신)
     pub source: PathBuf,
@@ -244,7 +261,7 @@ impl Layout {
     }
     /// 기본 인스턴스만 사용자 PATH에 실행 파일 폴더를 둔다(인스턴스는 `aaa --instance`로 쓴다)
     fn wants_path(&self) -> bool {
-        self.instance.is_none()
+        self.kind == ServiceKind::WindowsScm && self.instance.is_none()
     }
     pub(crate) fn command(&self) -> String {
         let mut parts = vec![quote(&self.exe.to_string_lossy())];
@@ -313,6 +330,8 @@ pub(crate) struct ServiceStatus {
 /// 이 설치기가 바꾼 것(`setup.json`). 제거는 여기 적힌 것만 되돌린다
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Receipt {
+    #[serde(default)]
+    pub kind: ServiceKind,
     pub schema: u32,
     pub service: String,
     pub exe: PathBuf,
@@ -370,6 +389,9 @@ enum Change {
     Stopped {
         name: String,
     },
+    Started {
+        name: String,
+    },
 }
 
 /// 고른 값
@@ -406,8 +428,8 @@ impl<'a> Setup<'a> {
 
     /// `aaa setup`
     pub(crate) fn install(&mut self, args: &Args) -> Result<()> {
-        self.say(Tone::Title, format!("aaa 설치 · Windows agent  {}", self.version));
-        self.say(Tone::Plain, "이 PC를 aaa host에 연결하는 agent를 설치하고 Windows 서비스로 띄웁니다.");
+        self.say(Tone::Title, format!("aaa 설치 · {}  {}", self.layout.kind.title(), self.version));
+        self.say(Tone::Plain, "이 PC를 aaa host에 연결하는 agent를 설치하고 서비스로 띄웁니다.");
         self.say(Tone::Plain, "[ ] 안은 기본값입니다(Enter). Ctrl+C로 취소하면 바꾼 것을 되돌립니다.");
         self.say(Tone::Plain, "");
         let account = self.sys.account()?;
@@ -416,7 +438,13 @@ impl<'a> Setup<'a> {
         let receipt = Receipt::read(&self.layout.receipt());
         if let Some(existing) = existing {
             return match receipt {
-                Some(receipt) if receipt.service == service => self.update(args, &account, existing, receipt),
+                Some(receipt)
+                    if receipt.service == service
+                        && receipt.kind == self.layout.kind
+                        && receipt.exe == self.layout.exe =>
+                {
+                    self.update(args, &account, existing, receipt)
+                }
                 _ => {
                     self.say(Tone::Fail, format!("서비스 {service}가 이미 있지만 이 설치기가 만든 것이 아닙니다."));
                     self.say(Tone::Hint, format!("실행 파일: {}", existing.command));
@@ -455,8 +483,11 @@ impl<'a> Setup<'a> {
     /// 바꾸기 전: 질문·점검·계획·확인
     fn prepare(&mut self, args: &Args, account: &Account) -> Result<(Choices, Secret, Right)> {
         let choices = self.ask_choices(args)?;
-        let secret = self.ask_password(account)?;
-        let right = self.sys.logon_right(account)?;
+        let (secret, right) = if self.layout.kind == ServiceKind::WindowsScm {
+            (self.ask_password(account)?, self.sys.logon_right(account)?)
+        } else {
+            (Secret::new(Vec::new()), Right::Granted)
+        };
         if right == Right::Denied {
             self.say(Tone::Hint, format!("{}에 「서비스로 로그온 거부」 정책이 걸려 있습니다.", account.short()));
             self.say(Tone::Hint, "secpol.msc › 로컬 정책 › 사용자 권한 할당 › 「서비스로 로그온 거부」에서");
@@ -468,6 +499,7 @@ impl<'a> Setup<'a> {
         if !yes(&answer) {
             return Err(Cancelled.into());
         }
+        self.sys.authorize()?;
         Ok((choices, secret, right))
     }
 
@@ -621,6 +653,18 @@ impl<'a> Setup<'a> {
         for (key, value) in rows {
             self.say(Tone::Plain, format!("  {} {value}", pad(key, 10)));
         }
+        match self.layout.kind {
+            ServiceKind::Launchd => {
+                self.say(Tone::Hint, "GUI 로그인 뒤 실행합니다. launcher의 시스템 권한은 사용자가 설정합니다.")
+            }
+            ServiceKind::SystemdUser => {
+                self.say(Tone::Hint, "사용자 systemd가 실행되는 동안 동작합니다. linger 설정은 바꾸지 않습니다.")
+            }
+            ServiceKind::SystemdSystem => {
+                self.say(Tone::Hint, "부팅 때 이 사용자 계정으로 실행합니다. 서비스 등록에만 sudo를 씁니다.")
+            }
+            ServiceKind::WindowsScm => {}
+        }
         let others: Vec<ServiceInfo> =
             self.sys.aaa_services()?.into_iter().filter(|s| s.name != self.layout.service()).collect();
         if !others.is_empty() {
@@ -643,6 +687,13 @@ impl<'a> Setup<'a> {
 
         self.say(Tone::Step, format!("[2/{TOTAL}] 실행 파일 두기"));
         self.place_binary()?;
+        for file in self.sys.additional_files() {
+            anyhow::ensure!(!file.path.exists(), "준비 파일이 이미 있다: {}", file.path.display());
+            self.make_dirs(file.path.parent().context("준비 파일 부모")?)?;
+            self.changes.push(Change::File { path: file.path.clone(), previous: None });
+            aaa_common::util::write_private(&file.path, &file.bytes)?;
+            set_mode(&file.path, file.mode)?;
+        }
         self.check_cancel()?;
 
         self.say(Tone::Step, format!("[3/{TOTAL}] 설정 쓰기"));
@@ -650,7 +701,7 @@ impl<'a> Setup<'a> {
         let path_added = self.add_path()?;
         self.check_cancel()?;
 
-        self.say(Tone::Step, format!("[4/{TOTAL}] Windows 서비스 등록"));
+        self.say(Tone::Step, format!("[4/{TOTAL}] {} 등록", self.layout.kind.title()));
         let mut logon_right_added = false;
         if right == Right::Missing {
             self.sys.set_logon_right(account, true).context("「서비스로 로그온」 권한을 넣지 못했습니다")?;
@@ -658,11 +709,14 @@ impl<'a> Setup<'a> {
             logon_right_added = true;
             self.say(Tone::Ok, format!("「서비스로 로그온」 권한 추가 ({})", account.short()));
         }
-        self.confirm_service_logon(account, secret)?;
+        if self.layout.kind == ServiceKind::WindowsScm {
+            self.confirm_service_logon(account, secret)?;
+        }
         let def = self.layout.definition(&choices.name);
         self.sys.create_service(&def, account, secret).context("서비스를 등록하지 못했습니다")?;
         self.changes.push(Change::Service { name: def.name.clone() });
         let receipt = Receipt {
+            kind: self.layout.kind,
             schema: 1,
             service: def.name.clone(),
             exe: self.layout.exe.clone(),
@@ -813,6 +867,7 @@ impl<'a> Setup<'a> {
         self.changes.push(Change::Binary { path: exe.clone(), backup: backup.clone() });
         let partial = dir.join(format!(".aaa-setup-{}.exe", std::process::id()));
         std::fs::write(&partial, &bytes).with_context(|| format!("{} 쓰기", partial.display()))?;
+        set_mode(&partial, 0o755)?;
         std::fs::rename(&partial, &exe).with_context(|| format!("{} 두기", exe.display()))?;
         let size = bytes.len() as f64 / 1024.0 / 1024.0;
         self.say(Tone::Ok, format!("{} ({size:.0} MB)", exe.display()));
@@ -1043,7 +1098,11 @@ impl<'a> Setup<'a> {
                 self.layout.agent_state().display()
             )),
             Change::Binary { path, backup } => {
-                let restored = std::fs::remove_file(&path).and_then(|()| match &backup {
+                let removed = match std::fs::remove_file(&path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    result => result,
+                };
+                let restored = removed.and_then(|()| match &backup {
                     Some(backup) => std::fs::rename(backup, &path),
                     None => Ok(()),
                 });
@@ -1100,6 +1159,11 @@ impl<'a> Setup<'a> {
                 .start_service(&name)
                 .map(|_| Some(format!("서비스 {name} 다시 시작")))
                 .map_err(|e| format!("서비스 {name}(멈춘 채): {e:#}")),
+            Change::Started { name } => self
+                .sys
+                .stop_service(&name)
+                .map(|()| Some(format!("갱신한 서비스 {name} 멈춤")))
+                .map_err(|e| format!("갱신한 서비스 {name} 멈춤: {e:#}")),
         }
     }
 
@@ -1142,6 +1206,7 @@ impl<'a> Setup<'a> {
             self.say(Tone::Warn, "취소했습니다. 아무것도 바꾸지 않았습니다.");
             return Err(Cancelled.into());
         }
+        self.sys.authorize()?;
         let result = (|| -> Result<()> {
             if existing.running {
                 self.sys.stop_service(&existing.name).context("서비스를 멈추지 못했습니다")?;
@@ -1155,8 +1220,9 @@ impl<'a> Setup<'a> {
                 std::fs::remove_file(self.layout.status()),
                 "정리 실패가 본 작업의 결과를 덮지 않게 한다",
             );
+            // 부분 시작·연결 확인·영수증 기록 실패도 새 프로세스를 먼저 멈춘 뒤 파일을 복원한다.
+            self.changes.push(Change::Started { name: existing.name.clone() });
             let pid = self.sys.start_service(&existing.name).context("서비스를 시작하지 못했습니다")?;
-            self.changes.retain(|c| !matches!(c, Change::Stopped { .. }));
             self.say(Tone::Ok, format!("서비스 시작 (PID {pid})"));
             if !self.wait_connected(pid)? {
                 self.say(Tone::Warn, "아직 host에 연결되지 않았습니다.");
@@ -1191,6 +1257,10 @@ impl<'a> Setup<'a> {
             self.say(Tone::Plain, "이 인스턴스에는 `aaa setup` 설치 기록이 없습니다. 바꾼 것이 없습니다.");
             return Ok(());
         };
+        anyhow::ensure!(
+            receipt.service == service && receipt.kind == self.layout.kind && receipt.exe == self.layout.exe,
+            "설치 기록의 서비스·종류·실행 파일이 대상과 다릅니다"
+        );
         let mut plan = vec![format!("서비스 {service} 멈추고 지우기")];
         if receipt.logon_right_added {
             plan.push("이 설치기가 넣은 「서비스로 로그온」 권한 빼기".into());
@@ -1214,6 +1284,7 @@ impl<'a> Setup<'a> {
                 return Err(Cancelled.into());
             }
         }
+        self.sys.authorize()?;
         let mut problems = Vec::new();
         if existing.is_some() {
             if let Err(e) = self.sys.stop_service(&service) {
@@ -1344,6 +1415,18 @@ fn yes(answer: &str) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes" | "ㅛ" | "예" | "네")
 }
 
+fn set_mode(path: &Path, mode: u32) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .with_context(|| format!("{} 실행 권한 설정", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (path, mode);
+    Ok(())
+}
+
 /// 사람이 친 host 주소: 앞뒤 공백·`https://`·끝 `/`를 걷고 포트가 없으면 7430을 붙인다
 pub(crate) fn normalize_host(raw: &str) -> Option<String> {
     let mut value = raw.trim();
@@ -1404,6 +1487,9 @@ fn read_agent_toml(path: &Path) -> AgentConfig {
 
 /// 이 PC의 다른 aaa 인스턴스 설정(`%LOCALAPPDATA%\aaa*\config\agent.toml`)에서 host 주소를 고른다
 fn sibling_configs(layout: &Layout) -> Vec<AgentConfig> {
+    if layout.kind != ServiceKind::WindowsScm {
+        return Vec::new();
+    }
     let Some(parent) = layout.config.parent().and_then(Path::parent) else { return vec![] };
     let Ok(dir) = std::fs::read_dir(parent)
         .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
