@@ -143,6 +143,8 @@ pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<I
         _ => (None, Some(InstallStorage::Internal)),
     };
     Ok(InstallChoices {
+        #[cfg(test)]
+        instance: tests_binary::windows_instance(),
         role: Some(InstallRole::Agent),
         name: Some(s.name.clone()),
         // Windows 기본 자리(LOCALAPPDATA·설치 bin)는 원격 install이 현지 환경에서 채운다.
@@ -174,6 +176,10 @@ pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<I
 /// `sh -c '…'` 안의 원격 aaa 호출(전역 `--state-dir`은 원격 셸의 HOME으로)
 fn remote_aaa(dir: &str, os: &str, rest: &str) -> Option<String> {
     if os == "windows" {
+        #[cfg(test)]
+        if let Some(instance) = tests_binary::windows_instance() {
+            return super::windows::install_instance(dir, rest, &instance);
+        }
         return super::windows::install(dir, rest);
     }
     let suffix = state_suffix(os)?;
@@ -786,15 +792,38 @@ impl Host {
                 super::secret::Input(vec![])
             };
             let mut result = None;
+            #[cfg(test)]
+            let mut output = String::new();
             let (r, code) = ssh
-                .stream(&t, &script, input, APPLY_TIMEOUT, |line| match stream_line(line) {
-                    Line::Event(m) => {
-                        step(&super::secret::scrub(&m, password.as_ref()));
+                .stream(&t, &script, input, APPLY_TIMEOUT, |line| {
+                    #[cfg(test)]
+                    if output.len() < OUTPUT_LIMIT {
+                        output.push_str(line);
+                        output.push('\n');
                     }
-                    Line::Result(res) => result = super::secret::result(&res, password.as_ref()).ok().map(Box::new),
-                    Line::Other => {}
+                    match stream_line(line) {
+                        Line::Event(m) => {
+                            step(&super::secret::scrub(&m, password.as_ref()));
+                        }
+                        Line::Result(res) => result = super::secret::result(&res, password.as_ref()).ok().map(Box::new),
+                        Line::Other => {}
+                    }
                 })
                 .await;
+            // 원문은 실험실 owner의 로그에만 둔다. DTO/DB에는 기존 공개 오류만 남긴다.
+            #[cfg(test)]
+            if result.as_ref().is_none_or(|r| {
+                !matches!(r.status, InstallStatus::Completed | InstallStatus::Configured | InstallStatus::Unchanged)
+            }) || result.as_ref().is_some_and(|r| code != Some(i32::from(r.exit_code)))
+            {
+                let diagnostic = serde_json::json!({
+                    "exit": code,
+                    "stdout": super::secret::diagnostic(&output, password.as_ref()),
+                    "stderr": super::secret::diagnostic(&r.stderr, password.as_ref()),
+                    "result": result,
+                });
+                eprintln!("install-apply 진단: {diagnostic}");
+            }
             let result = result.ok_or_else(|| {
                 super::secret::scrub(&remote_why("원격 install 적용(결과 없음)", &r, code), password.as_ref())
             })?;
@@ -895,6 +924,17 @@ pub(crate) mod tests_binary {
     use std::path::PathBuf;
     thread_local! {
         static BINARY: RefCell<Option<(PathBuf, String)>> = const { RefCell::new(None) };
+        static WINDOWS_INSTANCE: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+    /// 명시적으로 승인된 Windows 실기 owner만 별도 SCM instance를 쓴다.
+    #[cfg(windows)]
+    pub(crate) fn set_windows_instance(instance: String) {
+        aaa_config::paths::check_instance(&instance).unwrap();
+        assert!(instance.starts_with("test-"));
+        WINDOWS_INSTANCE.with(|i| *i.borrow_mut() = Some(instance));
+    }
+    pub(super) fn windows_instance() -> Option<String> {
+        WINDOWS_INSTANCE.with(|i| i.borrow().clone())
     }
     /// 이 스레드(current_thread runtime)의 host가 보낼 파일과 판(실험실 시험은 unix만)
     #[cfg_attr(not(unix), allow(dead_code))]

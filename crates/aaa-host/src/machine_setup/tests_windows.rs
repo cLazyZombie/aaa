@@ -26,7 +26,8 @@ fn no_secret(root: &Path, password: &MachineSetupPassword) {
         if path.is_dir() {
             no_secret(&path, password);
         } else if path.is_file() {
-            let bytes = std::fs::read(path).unwrap();
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("영속 기록을 읽지 못했다: {} ({error})", path.display()));
             assert!(
                 !bytes.windows(password.0.len()).any(|w| w == password.0.as_bytes()),
                 "영속 기록에 보호 입력이 있다"
@@ -35,12 +36,32 @@ fn no_secret(root: &Path, password: &MachineSetupPassword) {
     }
 }
 
+fn close_lab_sshd() {
+    let service = std::env::var("AAA_WINDOWS_SSH_SERVICE").expect("실험실 sshd 서비스");
+    assert!(service.starts_with("aaa-ssh-") || service.starts_with("aaa-test-"));
+    assert!(service.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+    let script = windows::command(&format!(
+        r#"$ErrorActionPreference='Stop'
+$service=Get-CimInstance Win32_Service -Filter "Name='{service}'"
+$process=Get-Process -Id $service.ProcessId
+Stop-Service -Name '{service}'
+(Get-Service -Name '{service}').WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30))
+if (-not $process.WaitForExit(30000)) {{ throw 'lab sshd exit event' }}
+"#
+    ));
+    let status = std::process::Command::new("cmd.exe").args(["/c", &script]).status().unwrap();
+    assert!(status.success(), "실험실 sshd 종료: {status:?}");
+}
+
 #[test]
 #[ignore = "일회성 Windows CI 전용: scripts/ci-windows-sshd.ps1이 SYSTEM sshd·가짜 사용자·private stdin을 준비한다"]
 fn system_sshd_installs_a_current_user_scm_agent_and_registers_it() {
     assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
     assert!(std::env::var_os("AAA_SESSION_ID").is_none());
     let lab = PathBuf::from(std::env::var_os("AAA_WINDOWS_SSH_LAB").expect("CI 실험실"));
+    if let Ok(instance) = std::env::var("AAA_WINDOWS_SSH_INSTANCE") {
+        install::tests_binary::set_windows_instance(instance);
+    }
     let binary = PathBuf::from(std::env::var_os("AAA_WINDOWS_SSH_BINARY").expect("CI 실행 파일"));
     let mut text = String::new();
     std::io::stdin().read_to_string(&mut text).unwrap();
@@ -110,11 +131,23 @@ fn system_sshd_installs_a_current_user_scm_agent_and_registers_it() {
         // 암호 없는 첫 시도는 같은 설치 ID에서 멈춰야 한다. 이어서 전용 입력을 넣어 재개한다.
         host.call(DeviceRole::Controller, "device:ci", apply(None)).await.unwrap();
         let pending = leave(&host, &job, MachineSetupPhase::Installing).await;
-        assert_eq!(pending.phase, MachineSetupPhase::NeedsUser, "현지 입력 대기 단계");
+        assert_eq!(
+            pending.phase,
+            MachineSetupPhase::NeedsUser,
+            "현지 입력 대기 단계: error={:?}, install={:?}",
+            pending.error,
+            pending.install
+        );
         let original = pending.install.unwrap().installation_id.unwrap();
         host.call(DeviceRole::Controller, "device:ci", apply(Some(wrong_password.clone()))).await.unwrap();
         let rejected = leave(&host, &job, MachineSetupPhase::Installing).await;
-        assert_eq!(rejected.phase, MachineSetupPhase::NeedsUser, "잘못된 암호 뒤 재입력 대기");
+        assert_eq!(
+            rejected.phase,
+            MachineSetupPhase::NeedsUser,
+            "잘못된 암호 뒤 재입력 대기: error={:?}, install={:?}",
+            rejected.error,
+            rejected.install
+        );
         let rejected = rejected.install.unwrap();
         assert_eq!(rejected.installation_id.as_deref(), Some(original.as_str()));
         assert!(
@@ -122,7 +155,13 @@ fn system_sshd_installs_a_current_user_scm_agent_and_registers_it() {
         );
         host.call(DeviceRole::Controller, "device:ci", apply(Some(password.clone()))).await.unwrap();
         let installed = leave(&host, &job, MachineSetupPhase::Installing).await;
-        assert_eq!(installed.phase, MachineSetupPhase::Installed, "실제 Windows SCM 적용: {:?}", installed.error);
+        assert_eq!(
+            installed.phase,
+            MachineSetupPhase::Installed,
+            "실제 Windows SCM 적용: error={:?}, install={:?}",
+            installed.error,
+            installed.install
+        );
         let result = installed.install.unwrap();
         assert_eq!(result.installation_id.as_deref(), Some(original.as_str()), "같은 설치 ID 재개");
         assert_eq!(result.machine.as_deref(), Some("ci-pc"));
@@ -131,6 +170,10 @@ fn system_sshd_installs_a_current_user_scm_agent_and_registers_it() {
         let views = serde_json::to_string(&host.setup_list().unwrap()).unwrap();
         assert!(!views.contains(&password.0), "조회에 보호 입력이 있다");
     });
+    // listener가 보관한 Host·DB와 설치 잠금까지 닫은 뒤 완료된 영속 자료를 읽는다.
+    drop(runtime);
+    // SYSTEM sshd의 -E 로그는 쓰는 동안 share-read를 막는다. 그 writer의 실제 종료 뒤 모두 검사한다.
+    close_lab_sshd();
     no_secret(&lab, &password);
     no_secret(&lab, &wrong_password);
 }

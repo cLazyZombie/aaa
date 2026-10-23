@@ -1637,6 +1637,14 @@ fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
     assert_eq!(check::windows_check_argv()[0], "powershell.exe");
 }
 
+#[test]
+fn apply_diagnostic_redacts_raw_and_json_escaped_private_input() {
+    let password = aaa_proto::MachineSetupPassword(format!("{}\n\"\\", aaa_common::util::new_id()));
+    let encoded = serde_json::to_string(&password.0).unwrap();
+    let diagnostic = secret::diagnostic(&format!("{} {encoded}", password.0), Some(&password));
+    assert_eq!(diagnostic, "[비밀] \"[비밀]\"");
+}
+
 /// 가짜 암호는 실행 중에만 만들고 원문을 assertion/로그/파일에 넣지 않는다.
 #[cfg(unix)]
 #[test]

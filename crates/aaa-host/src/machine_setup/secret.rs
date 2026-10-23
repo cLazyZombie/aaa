@@ -32,6 +32,17 @@ pub(super) fn scrub(text: &str, password: Option<&MachineSetupPassword>) -> Stri
     }
 }
 
+/// 시험용 원격 출력에는 JSON 문자열로 escape된 비밀도 있을 수 있다.
+#[cfg(test)]
+pub(super) fn diagnostic(text: &str, password: Option<&MachineSetupPassword>) -> String {
+    let mut text = scrub(text, password);
+    if let Some(password) = password.filter(|p| !p.0.is_empty()) {
+        let encoded = serde_json::to_string(&password.0).expect("문자열 JSON");
+        text = text.replace(&encoded[1..encoded.len() - 1], "[비밀]");
+    }
+    text
+}
+
 /// 원격의 잘못된 오류/사건에도 암호를 되돌려 주지 않는다. JSON escape를 푼 문자열에서 가린다.
 pub(super) fn result(
     result: &aaa_proto::install::InstallResult,
