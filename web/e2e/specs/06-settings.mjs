@@ -8,6 +8,89 @@ import {
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("터미널 색 테마: ANSI·여백·OSC 색 즉시 반영, 앱 팔레트와 독립·기기별 저장·다른 탭·재열기·기본 복원(Chromium 1280·WebKit 390)", async () => {
+    const mobile = await webkit.launch({ headless: true });
+    const name = "terminal-colors";
+    const ansi = ["000000", "f78166", "56d364", "e3b341", "6ca4f8", "db61a2", "2b7489", "ffffff", "4d4d4d", "f78166", "56d364", "e3b341", "6ca4f8", "db61a2", "2b7489", "ffffff"];
+    const output = ansi.map((_, n) => `\x1b[38;5;${n}mANSI_${n}\x1b[0m\r\n`).join("");
+    aaa("tab", "create", "--machine", "labA", "--label", name, "--", process.execPath, "-e", `process.stdout.write(${JSON.stringify(output)});process.stdin.resume()`);
+    try {
+      for (const [engine, width, device] of [[browser, 1280, "desktop"], [mobile, 390, "phone"]]) {
+        const pg = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { hash: paneHash(name) })).page;
+        try {
+          await until("ANSI 출력", async () => (await screenText(pg)).includes("ANSI_15"));
+          await pg.evaluate(async () => { await document.fonts.ready; });
+          const read = () => pg.evaluate(() => {
+            const style = getComputedStyle(document.querySelector(".term"));
+            const rows = document.querySelector(".xterm-rows");
+            const css = getComputedStyle(rows);
+            return {
+              body: getComputedStyle(document.body).backgroundColor,
+              bg: getComputedStyle(document.querySelector(".term-scroll")).backgroundColor,
+              xtermBg: (() => {
+                // DOM renderer는 투명하다. 실제 글자 뒤에 처음 칠해진 조상의 바탕을 검사한다.
+                for (let e = document.querySelector(".xterm"); e; e = e.parentElement) {
+                  const bg = getComputedStyle(e).backgroundColor;
+                  if (bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") return bg;
+                }
+                return null;
+              })(),
+              fg: css.color, font: css.fontFamily, size: css.fontSize,
+              ansi: Array.from({ length: 16 }, (_, i) => style.getPropertyValue(`--ansi-${i}`).trim()),
+              colors: [...rows.querySelectorAll("span")].filter((e) => /^ANSI_\d+$/.test(e.textContent)).map((e) => [e.textContent, getComputedStyle(e).color]),
+              saved: localStorage.getItem("aaa:terminal-color-theme"),
+            };
+          });
+          const baseline = await read();
+          const close = async () => {
+            await pg.getByRole("button", { name: "설정 닫기", exact: true }).click();
+            await until("설정 기록 닫힘", () => !new URL(pg.url()).searchParams.has("settings"));
+          };
+          const choose = async (id) => {
+            const dialog = await openSettings(pg, "터미널");
+            const select = dialog.getByLabel("터미널 색 테마", { exact: true });
+            if (id === "wezterm-github-dark-user" && await select.inputValue() !== "app") throw new Error("새 기기의 기본 테마가 앱이 아니다");
+            await select.selectOption(id);
+            const rect = await select.boundingBox();
+            if (!rect || rect.x < 0 || rect.x + rect.width > width) throw new Error(`${device}: 색 테마 선택 넘침 ${JSON.stringify(rect)}`);
+            await close();
+          };
+          const mark = await sentCount(pg);
+          await choose("wezterm-github-dark-user");
+          await domIs(pg, "선택한 터미널 배경", () => getComputedStyle(document.querySelector(".term-scroll")).backgroundColor === "rgb(36, 41, 46)");
+          await until("OSC 색 변경 전송", async () => (await sentFrames(pg, mark)).some((f) => f.t === "colors" && f.fg === "c9d1d9" && f.bg === "24292e"));
+          const selected = await read();
+          if (selected.saved !== "wezterm-github-dark-user" || selected.xtermBg !== selected.bg || selected.body !== baseline.body || selected.font !== baseline.font || selected.size !== baseline.size) throw new Error(`${device}: 테마 적용 ${JSON.stringify(selected)}`);
+          const rgb = (hex) => `rgb(${hex.match(/../g).map((n) => parseInt(n, 16)).join(", ")})`;
+          for (let i = 0; i < 16; i++) {
+            if (selected.ansi[i].toLowerCase() !== `#${ansi[i]}` || !selected.colors.some(([text, color]) => text === `ANSI_${i}` && color === rgb(ansi[i]))) throw new Error(`${device}: ANSI ${i} 원색 미보존 ${JSON.stringify(selected)}`);
+          }
+          const appearance = await openSettings(pg, "모양");
+          await appearance.locator("#settings-palette").selectOption("charcoal");
+          await domIs(pg, "앱 팔레트만 변경", () => document.documentElement.dataset.palette === "charcoal" && getComputedStyle(document.querySelector(".term-scroll")).backgroundColor === "rgb(36, 41, 46)");
+          await appearance.locator("#settings-palette").selectOption("amber");
+          await domIs(pg, "앱 팔레트 복원", () => document.documentElement.dataset.palette === "amber");
+          await close();
+          await shot(pg, `${device}-terminal-color-theme`);
+          const tab = await pg.context().newPage();
+          await tab.goto(pg.url());
+          await domIs(tab, "다른 탭 선택 복원", () => getComputedStyle(document.querySelector(".term-scroll")).backgroundColor === "rgb(36, 41, 46)");
+          await pg.reload();
+          await domIs(pg, "새로고침 선택 복원", () => getComputedStyle(document.querySelector(".term-scroll")).backgroundColor === "rgb(36, 41, 46)");
+          const independent = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 })).page;
+          try {
+            if (await independent.evaluate(() => localStorage.getItem("aaa:terminal-color-theme")) !== null) throw new Error("다른 기기로 색 테마가 공유됐다");
+          } finally { await independent.context().close(); }
+          await choose("app");
+          await domIs(tab, "다른 탭도 기본 복원", () => localStorage.getItem("aaa:terminal-color-theme") === null && !document.querySelector(".term").style.getPropertyValue("--term-bg"));
+          await tab.close();
+          await domIs(pg, "앱 팔레트 터미널 복원", (bg) => getComputedStyle(document.querySelector(".term-scroll")).backgroundColor === bg, baseline.bg);
+          if ((await read()).saved !== null) throw new Error("기본 복원 뒤 저장 값이 남았다");
+        } finally { await pg.context().close(); }
+      }
+    } finally { await mobile.close(); aaa("pane", "kill", name); }
+  });
+
   await step("설정 본문·passkey 긴 값: Chromium·WebKit 밝음/어두움·1280/980/390/320px, 넘침 없음·딥링크·새로고침·뒤로/앞으로·사이드바 이동", async () => {
     const wk = await webkit.launch({ headless: true });
     try {

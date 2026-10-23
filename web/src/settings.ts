@@ -6,6 +6,7 @@ import { DEFAULT_KEY_BAR_ITEMS, keyBarItemId, sanitizeKeyBarItems, type KeyBarIt
 import { SYMBOLS_FONT, sanitizeFontFamily } from "./herdr/fontFamily.ts";
 import { CUSTOM_SHORTCUT_IDS, sanitizeShortcutOverrides, type ShortcutOverrides } from "./herdr/shortcutBindings.ts";
 import type { ShortcutId } from "./herdr/shortcuts.ts";
+import { sanitizeTerminalColorTheme, type TerminalColorTheme } from "./terminalTheme.ts";
 import { sanitizeChatShared, sanitizeSidebarShared, sanitizeUsage, type ChatShared, type SidebarShared, type UsageSettings } from "./preferences.ts";
 
 /** 터미널 입력 방식. auto는 바로 입력이다(herdr-web-ui settings.ts `terminalInputMode`, PaneTerminal 358줄). */
@@ -32,12 +33,13 @@ function subscribe(f: () => void): () => void {
 
 // 같은 기기의 다른 탭이 바꾼 값도 따른다
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY && e.key !== UI_FONT_FAMILY_KEY && e.key !== MONO_FONT_FAMILY_KEY && e.key !== FONT_FAMILY_KEY && e.key !== KEEP_SCREEN_KEY) return;
+  if (e.key !== KEY && e.key !== FONT_KEY && e.key !== WHEEL_KEY && e.key !== KEY_BAR_KEY && e.key !== UI_FONT_FAMILY_KEY && e.key !== MONO_FONT_FAMILY_KEY && e.key !== FONT_FAMILY_KEY && e.key !== KEEP_SCREEN_KEY && e.key !== COLOR_THEME_KEY) return;
   mode = read();
   fontSize = readFontSize();
   wheelSpeed = readWheelSpeed();
   keyBarItems = readKeyBarItems();
   fontFamily = readFontFamily();
+  colorTheme = readColorTheme();
   uiFontFamily = readFontFamily(UI_FONT_FAMILY_KEY);
   monoFontFamily = readFontFamily(MONO_FONT_FAMILY_KEY);
   initDeviceFonts();
@@ -184,6 +186,26 @@ export function setTerminalFontFamily(family: string) {
 
 export function useTerminalFontFamily(): string {
   return useSyncExternalStore(subscribe, () => fontFamily);
+}
+
+/** 터미널 색 테마는 이 기기에만 저장한다. 앱 팔레트를 따르는 기존 동작이 기본이다. */
+const COLOR_THEME_KEY = "aaa:terminal-color-theme";
+function readColorTheme(): TerminalColorTheme {
+  try { return sanitizeTerminalColorTheme(localStorage.getItem(COLOR_THEME_KEY)); }
+  catch { return "app"; }
+}
+let colorTheme = readColorTheme();
+export const getTerminalColorTheme = (): TerminalColorTheme => colorTheme;
+export function setTerminalColorTheme(value: TerminalColorTheme) {
+  colorTheme = sanitizeTerminalColorTheme(value);
+  try {
+    if (colorTheme === "app") localStorage.removeItem(COLOR_THEME_KEY);
+    else localStorage.setItem(COLOR_THEME_KEY, colorTheme);
+  } catch { /* 저장이 막혀도 이번 창의 선택은 쓴다. */ }
+  listeners.forEach((f) => f());
+}
+export function useTerminalColorTheme(): TerminalColorTheme {
+  return useSyncExternalStore(subscribe, getTerminalColorTheme);
 }
 
 // 화면·고정폭도 터미널과 같은 기기별 저장이다. 기본 목록은 CSS 정본을 참조한다.

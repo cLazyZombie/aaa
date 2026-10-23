@@ -18,6 +18,7 @@ import { AgentMark } from "./herdr/AgentMark.tsx";
 import { KeyBarSettings } from "./herdr/KeyBarSettings.tsx";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { FontFamilyInput } from "./FontFamilyInput";
+import { TERMINAL_COLOR_THEMES, sanitizeTerminalColorTheme } from "./terminalTheme";
 import { useInstallPrompt } from "./herdr/install.ts";
 import { previewAlertSound, unlockAlertSound } from "./herdr/alertSound.ts";
 import { nativeModalOver } from "./herdr/useFocusTrap.ts";
@@ -39,6 +40,7 @@ import {
   useMarkdownWidth,
   setKeepScreenOn,
   setTerminalFontFamily,
+  setTerminalColorTheme,
   setTerminalFontSize,
   setTerminalInputMode,
   setTerminalToggle,
@@ -53,6 +55,7 @@ import {
   alertSetting,
   useAlertSetting,
   useTerminalFontFamily,
+  useTerminalColorTheme,
   useTerminalFontSize,
   useTerminalInputMode,
   useTerminalToggle,
@@ -381,6 +384,7 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
   const mode = useTerminalInputMode();
   const fontSize = useTerminalFontSize();
   const fontFamily = useTerminalFontFamily();
+  const colorTheme = useTerminalColorTheme();
   const wheelSpeed = useTerminalWheelSpeed();
   const trace = useInputTrace();
   const paneClipboard = useTerminalToggle("paneClipboard");
@@ -403,6 +407,12 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
         {/* 참고 SettingsDialog 398~400줄(문구는 참고 i18n.ko.ts) */}
         <SettingsRow label="터미널 글꼴" description="쉼표로 구분하며 앞에서부터 차례로 사용합니다. 이 기기에 없는 글꼴은 기본 글꼴로 대체합니다." wide>
           <FontFamilyInput value={fontFamily} label="터미널 글꼴" onCommit={setTerminalFontFamily} />
+        </SettingsRow>
+        <SettingsRow label="터미널 색 테마" htmlFor="terminal-color-theme" description="이 기기에만 저장하며 앱 팔레트와 따로 고를 수 있습니다.">
+          <select id="terminal-color-theme" className="select settings-select" value={colorTheme}
+            onChange={(e) => setTerminalColorTheme(sanitizeTerminalColorTheme(e.target.value))}>
+            {TERMINAL_COLOR_THEMES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+          </select>
         </SettingsRow>
         {/* 참고 SettingsDialog 401~403줄(문구는 참고 i18n.ko.ts) */}
         <SettingsRow label="휠 스크롤 속도" description="휠을 한 번 굴릴 때 터미널이 움직이는 정도">

@@ -18,6 +18,7 @@ import { ChatComposer, type PendingSend } from "./ChatComposer";
 import { paneAgentStatus } from "./sidebarModel";
 import { refusalText, steerAvailability, steerSettled, STEER_IDLE, STEER_SLOW_MS, type SteerState } from "./steerQueued";
 import { onThemeChange, token } from "./theme";
+import { resolveTerminalTheme, terminalThemeColors, terminalThemeStyle } from "./terminalTheme";
 import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
 import { keyboardHoldsGrid, keyboardUp } from "./herdr/keyboard.ts";
@@ -39,6 +40,7 @@ import { KeyBar } from "./KeyBar";
 import { TerminalInput } from "./TerminalInput";
 import {
   getTerminalWheelSpeed,
+  getTerminalColorTheme,
   setTerminalFontSize,
   setTerminalInputMode,
   shortcutOverrides,
@@ -47,6 +49,7 @@ import {
   useDefaultView,
   useMedia,
   useTerminalFontFamily,
+  useTerminalColorTheme,
   useTerminalFontSize,
   useTerminalInputMode,
 } from "./settings";
@@ -110,31 +113,14 @@ const OUTPUT_STALLED_CLOSE_CODE = 4008;
 /** 다시 보인 뒤 이만큼 안에 온 4008은 가려져 있던 탓으로 친다(herdr-web-ui ws.ts SHOWN_GRACE_MS) */
 const SHOWN_GRACE_MS = 5_000;
 
-const ANSI = [
-  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-  "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
-] as const;
-
-/** 터미널 색은 style.css token을 그대로 읽는다(밝음·어두움마다 ANSI 16색이 따로 있다) */
+/** 설정한 터미널 색, 아니면 앱 팔레트의 token. 화면·OSC 응답이 같은 정본을 쓴다. */
 function termTheme(): ITheme {
-  const t: ITheme = {
-    background: token("--term-bg"),
-    foreground: token("--term-fg"),
-    cursor: token("--term-cursor"),
-    cursorAccent: token("--term-bg"),
-    selectionBackground: token("--term-selection"),
-  };
-  ANSI.forEach((k, n) => {
-    t[k] = token(`--ansi-${n}`);
-  });
-  return t;
+  return resolveTerminalTheme(getTerminalColorTheme(), token);
 }
 
 /** 이 화면의 터미널 기본 색(`rrggbb`). session host가 프로그램의 색 질의(OSC 10/11)에 이 색으로 답한다(plan §8.187) */
 function termColors(): { fg: string; bg: string } {
-  // CSS 빌드가 #ffffff를 #fff로 줄여도 protocol의 rrggbb 계약을 지킨다.
-  const hex = (name: string) => token(name).replace(/^#/, "").replace(/^([0-9a-f])([0-9a-f])([0-9a-f])$/i, "$1$1$2$2$3$3");
-  return { fg: hex("--term-fg"), bg: hex("--term-bg") };
+  return terminalThemeColors(termTheme());
 }
 
 export function TermView({
@@ -252,6 +238,7 @@ export function TermView({
   const terminalFontSize = useTerminalFontSize();
   const baseFontRef = useRef(terminalFontSize);
   const terminalFontFamily = useTerminalFontFamily();
+  const terminalColorTheme = useTerminalColorTheme();
   const fontFamilyRef = useRef(terminalFontFamily);
   fontFamilyRef.current = terminalFontFamily;
   /** 기본 글꼴 목록(--font-term)과, 넣은 WOFF2를 받았는지 */
@@ -1689,6 +1676,13 @@ export function TermView({
     if (chatView && chatable && leaseMineRef.current) send({ t: "release" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatView, chatable]);
+  // 기기별 색 선택도 열린 터미널과 session host의 OSC 10/11 응답에 바로 반영한다.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = termTheme();
+    send({ t: "colors", ...termColors() });
+  }, [terminalColorTheme]);
   // 설정에서 글자 크기를 바꾸면 따라간다(PaneTerminal 1996~2025줄). 같은 크기면(핀치가 이미 바꿨다) 아무 일도 없다.
   // 쓰는 중이면 이 화면 크기로 PTY를 다시 건다.
   useEffect(() => {
@@ -2057,7 +2051,7 @@ export function TermView({
     </>
   );
   return (
-    <section className="term" ref={sectionRef}>
+    <section className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
       <header className="term-head">
         {/* 좁은 창의 목록 drawer(drawer.tsx). 전에는 휴대폰에서 「목록으로」 화면을 바꿨다 */}
         <DrawerToggle />
