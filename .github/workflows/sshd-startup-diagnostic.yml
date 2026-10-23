@@ -32,8 +32,9 @@ jobs:
         run: |
           $baseline = Join-Path $env:RUNNER_TEMP 'original-sshd.ps1'
           $source = [IO.File]::ReadAllText((Join-Path $pwd 'scripts/ci-windows-sshd.ps1'))
-          $original = [regex]::Replace($source, '(?ms)^    # ssh-keygen.*?(?=^    & icacls.exe .* /setowner)', '')
+          $original = [regex]::Replace($source, '(?ms)^    # ssh-keygen.*?(?=^    & icacls.exe [^\r\n]* /setowner)', '')
           if ($source -eq $original) { throw '원본 DACL 대조를 만들지 못했다' }
+          if ($original.Contains('/reset') -or $original.Contains('시스템 host key DACL 준비 실패')) { throw '원본 대조에 후보 DACL 수리가 남았다' }
           [IO.File]::WriteAllText($baseline, $original)
           $failed = $false
           try { . $baseline -StartOnly } catch {
