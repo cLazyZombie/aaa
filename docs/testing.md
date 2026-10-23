@@ -1,5 +1,20 @@
 # 시험 쓰는 법
 
+## 앱·터미널 GitHub Dark 통일(t-0889)
+
+- E2E14는 Chromium·WebKit 각각 1280·390px에서 GitHub 세 팔레트 선택·host 저장·재열기·UI 대비를 검사한다.
+  첫 화면 대조에서 Primer danger.fg의 새 배경 대비 4.38:1을 확인해 같은 Primer red[3]로 제품을 수리했다.
+  사용자 지시에 따라 Dark의 터미널 배경은 `#24292e`, ANSI는 기존 독립 테마 원색이다. Dark ANSI의 이전
+  4.5:1 보정 계약은 원색 보존으로 교체하며, UI 대비와 Light·Dimmed의 기존 ANSI 대비 단언은 유지한다.
+- E2E95는 실제 host·agent·PTY와 기기 저장을 사용해 이전 `wezterm-github-dark-user` 선택 복원·표시 이름
+  `GitHub Dark`·앱 팔레트 따름 전환 뒤 같은 기본/ANSI/선택 색을 확인한다. Chromium·WebKit 1280·390px에서
+  실제 터미널·Claude 기록의 사용자/답변/코드·수집된 질문 카드를 캡처한다. headless 화면이며 실제 휴대폰 실기는 아니다.
+- E2E06의 기존 기기별 저장·다른 탭·새 기기 비공유·기본 복원은 그대로 유지하고 새 표시 이름을 검사한다.
+  순수 terminalTheme owner는 새 선택 글자/커서 색 token이 없는 기존 팔레트의 기본값도 확인한다.
+- 참고는 Primer primitives v7.10.0 dark 색 자료(MIT), 공식 VS Code GitHub Theme colors.js(MIT),
+  기존 WezTerm 정본과 개별 GitHub Dark 원본(GPL-3.0)이다. 외부 코드는 추가하지 않는다.
+  사건·DOM·HTTP 응답으로 끝내며 고정 대기·재시도·시한 연장은 없다. 정본은 전체 ci-local과 공개 검사다.
+
 ## m13 재시작 뒤 보고 수집 완료 사건(t-0880)
 
 - main `b6d7bda8`의 [CI 원문](https://github.com/cLazyZombie/aaa/actions/runs/39915021368)은 Ubuntu·macOS 모두 실제 사건 `[]`, 기대 `["report_ready"]`다. 추가 사건이나 harness 재전송 중복이 아니다. `orch.rs`의 수집은 `next`·`report_hash`를 먼저 저장하고 질문 정리 뒤 `report_ready`를 기록하므로, 상태 조회만으로 사건 발행 완료를 판정할 수 없다.

@@ -116,7 +116,7 @@ const THEME_COLOR: Record<Palette, Record<ResolvedTheme, string>> = {
   charcoal: { dark: "#171717", light: "#fafaf9" },
   catppuccin: { dark: "#181825", light: "#e6e9ef" },
   "github-light": { dark: "#0d1117", light: "#ffffff" },
-  "github-dark": { dark: "#0d1117", light: "#ffffff" },
+  "github-dark": { dark: "#24292e", light: "#ffffff" },
   "github-dark-dimmed": { dark: "#22272e", light: "#ffffff" },
 };
 

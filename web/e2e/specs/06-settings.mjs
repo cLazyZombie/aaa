@@ -50,6 +50,7 @@ export default async function ({ ctl, page }) {
             const dialog = await openSettings(pg, "터미널");
             const select = dialog.getByLabel("터미널 색 테마", { exact: true });
             if (id === "wezterm-github-dark-user" && await select.inputValue() !== "app") throw new Error("새 기기의 기본 테마가 앱이 아니다");
+            if (await select.locator('option[value="wezterm-github-dark-user"]').textContent() !== "GitHub Dark") throw new Error("터미널 표시 이름 불일치");
             await select.selectOption(id);
             const rect = await select.boundingBox();
             if (!rect || rect.x < 0 || rect.x + rect.width > width) throw new Error(`${device}: 색 테마 선택 넘침 ${JSON.stringify(rect)}`);
