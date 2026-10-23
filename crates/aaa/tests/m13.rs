@@ -178,6 +178,12 @@ out() { dd bs=8192 count=1 2>/dev/null <<EOF
 $1
 EOF
 }
+# 경합 시험의 준비 표지. 입력 모드와 화면이 모두 준비된 뒤 첫 글자를 받는다.
+race_ready() {
+  stty -icanon -echo min 1 time 0
+  out "$(printf 'race armed\n%s\n\342\235\257 \n%s\n  ? for shortcuts' "$RULE" "$RULE")"
+  printf '\033[3A\r\033[2C'
+}
 # $1 본문 $2 기본 선택(0·1) $3·$4 선택지 $5 아래 안내 $6 처음 그리기 앞에 함께 쓸 것. 창 하나를 한 번에 그리고(커서는
 # 안내 줄 아래), 그린 자리에서 다시 그리고, 고른 뒤 지운다.
 menu() {
@@ -234,8 +240,9 @@ while :; do
     *race*)
       # 치는 동안 뜨는 권한 창(t-0340 보안 감사): 받은 턴(작업 중)을 BEL로 마치면 입력 상자를 보인 채(쉼) 다음 입력의 첫
       # 글자를 받고, Enter 전에 권한 창을 그린다(상자 지우기와 함께 한 번에: host는 친 글에 화면이 반응한 뒤 Enter 전
-      # 검사를 한다). 그 Enter는 사람이 보지 않은 창의 기본 선택(「1. Yes」)을 고른다
-      spin; turn; echo "race armed"; prompt; key
+      # 검사를 한다). 준비 전에 echo를 끄고 상자도 한 번에 그려 TTY echo·늦은 상자 출력을 글 반응으로 오인하지 않게 한다.
+      # 그 Enter는 사람이 보지 않은 창의 기본 선택(「1. Yes」)을 고른다
+      spin; turn; race_ready; key
       menu " Bash command
 
    rm -rf build
@@ -1514,6 +1521,24 @@ fn questions_of_ended_panes_are_closed() {
 /// 가짜 Claude의 지금 턴을 마친다(BEL)
 fn finish_turn(w: &World, pane: &str) {
     w.h.ok(&["pane", "send-text", pane, "\u{7}"]);
+}
+
+/// race 준비 뒤 key()를 부르기 전의 TTY 모드를 잡는다. key()까지 실행한 뒤 확인하면
+/// 늦게 꺼진 echo를 놓친다. 실제 PTY에서 준비된 입력창과 한 글자 받음도 함께 확인한다.
+#[test]
+fn claude_race_ready_prepares_input_before_publishing_prompt() {
+    let (functions, _) = CLAUDE_AGENT.split_once("printf '\\033[2J\\033[H'").unwrap();
+    let script = format!(
+        "{functions}\nrace_ready\nprintf '\\nTTY-MODE-BEGIN\\n'\nstty -a\nprintf '\\nTTY-MODE-END\\n'\nkey\nprintf '\\nreceived:<%s>\\n' \"$k\"\n"
+    );
+    let mut command = lab::terminal_command(Path::new("/bin/sh"));
+    command.args(["-c", &script]);
+    let output = lab::Terminal::spawn(command).read(&["fixture race ready"], &[("TTY-MODE-END", "x")], T);
+    let mode = output.split("TTY-MODE-BEGIN").nth(1).unwrap().split("TTY-MODE-END").next().unwrap();
+    let flags: Vec<_> = mode.split(|c: char| c.is_whitespace() || c == ';').collect();
+    assert!(flags.contains(&"-echo") && flags.contains(&"-icanon"), "준비 표지가 입력 모드보다 앞섰다: {mode}");
+    assert!(output.contains("race armed") && output.contains("? for shortcuts"), "{output}");
+    assert!(output.contains("received:<x>"), "{output}");
 }
 
 /// thread `id`의 진행 보고가 `text`가 되기를 기다린다

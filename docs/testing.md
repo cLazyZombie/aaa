@@ -20,6 +20,17 @@
 - 참고 후보: [TanStack Virtual core](https://github.com/TanStack/virtual/blob/main/packages/virtual-core/src/index.ts)의 측정 높이 보정과 끝 따라가기, [react-window List](https://github.com/bvaughn/react-window/blob/master/lib/components/list/List.tsx)의 row key·측정과 이동 경로. [TanStack MIT](https://github.com/TanStack/virtual/blob/main/LICENSE)·[react-window MIT](https://github.com/bvaughn/react-window/blob/master/LICENSE.md)를 확인했다. 측정과 실제 위치를 대조하는 방식을 참고하고 외부 코드는 복사하지 않았다. 새 가상화 도구는 추가하지 않는다.
 - 정본은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다. Playwright 1.64.1과 브라우저는 자기 작업 폴더에 격리한다.
 
+## m13 권한 창 경합 fixture와 이미지 완료 표지(t-0850)
+
+- `claude_race_ready_prepares_input_before_publishing_prompt`는 실제 PTY에서 가짜 Claude의 준비 함수를 실행하고, 첫 `key()` 전에 `stty -a`를 수집한다. 구판의 `echo race armed → prompt(stty echo) → key(stty -echo)`는 준비 뒤에도 `echo·icanon`이 켜져 결정적으로 실패한다. 준비 전에 비정규·무반향 모드를 만들고 입력 상자를 한 번에 그린다. 준비 후 화면 변화는 TTY echo나 늦은 입력 상자가 아니라 실제 권한 메뉴다.
+- 기존 `claude_thread_states_questions_and_messages`의 `unknown`·`race 1. Yes` 부재·받음 사건 부재·질문/취소 단언을 유지한다. 제품은 글을 쓰기 전과 Enter 전에 화면·질문 상태를 검사한다. 제품의 Enter 전 재검사만 제거한 대조는 수정한 fixture에서도 `race 1. Yes`로 실패했다. 대조 뒤 제품 bytes를 복원했다. 이번 수리는 가짜 raw 입력창의 준비 계약을 바로잡으며, 임의의 실제 프로그램에서 화면 검사 뒤 새 메뉴가 뜨는 모든 순서를 해결했다는 뜻은 아니다.
+- `image::probe_completion_is_published_only_after_exit_code_is_written`는 셸 `printf`를 감싸 리다이렉션으로 파일을 연 직후 pipe로 멈춘다. 구판은 이때 최종 표지가 빈 문자열로 보여 실패한다. 임시 파일이 빈 상태에서 최종 표지가 없고, 해제 뒤 종료 코드 7·완성된 출력·임시 파일 제거를 확인한다. 같은 폴더의 임시 파일에 쓰고 닫은 뒤 `mv`로 완료 표지를 공개하며 소비자는 기다림에서 읽은 값 자체를 파싱한다.
+- 참고 후보: [Pexpect READY 대기 시험](https://github.com/pexpect/pexpect/blob/master/tests/test_winsize.py)과 [echo 준비 순서 설명](https://pexpect.readthedocs.io/en/stable/commonissues.html), [portable-pty Bash 예제](https://github.com/wezterm/wezterm/blob/main/pty/examples/bash.rs). [Pexpect ISC](https://github.com/pexpect/pexpect/blob/master/LICENSE)·[portable-pty MIT](https://github.com/wezterm/wezterm/blob/main/LICENSE.md)를 확인했다. 준비가 끝난 표지 뒤 입력하고 출력과 종료를 구분하는 방식을 따르며 코드는 복사하지 않았다. Pexpect의 고정 입력 지연은 적용하지 않는다.
+- E2E87은 가짜 agent의 `report.md` 생성만 본 뒤 긴 본문을 같은 inode에 쓰면 원래 printf의 남은 출력과 섞인다. 생성은 원래 writer가 파일을 열었다는 조건으로 유지하고, 긴 보고서를 같은 폴더의 임시 파일에 완성한 뒤 rename으로 교체한다. 옛 FD의 남은 쓰기는 교체된 보고서에 닿지 않는다. 공통 가짜 agent·제품 코드는 바꾸지 않는다.
+- `node --test web/test/reportFile.test.mjs`는 원래 fixture의 FD를 열어 일부를 쓰고 → 긴 보고서를 공개하고 → 옛 FD가 남은 질문을 쓰는 순서를 고정한다. 구판의 직접 쓰기는 정확한 본문 일치 단언에서 실패하고 rename 뒤에는 통과한다. 고정 sleep·기대값 완화가 없다. E2E87 owner는 Chromium/WebKit·데스크톱/휴대폰·밝음/어두움 8조합의 질문·보고서·thread·할 일·설정 스크롤 및 인증 화면 단언을 그대로 한 번 실행한다.
+- 추가 참고는 [write-file-atomic](https://github.com/npm/write-file-atomic/blob/main/lib/index.js)의 close 뒤 rename과 [python-atomicwrites](https://github.com/untitaker/python-atomicwrites/blob/master/atomicwrites/__init__.py)의 같은 파일시스템 내 교체다. [ISC](https://github.com/npm/write-file-atomic/blob/main/LICENSE.md)·[MIT](https://github.com/untitaker/python-atomicwrites/blob/master/LICENSE) 라이선스를 확인했고 코드·의존성은 가져오지 않았다.
+- 새 두 m13 경계 시험과 기존 두 owner는 `cargo test --locked -p aaa --test m13`의 정확한 이름 필터로 함께 실행한다. 정본은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`·의존 경계 시험·공개 검사다. E2E87 추가 수리 뒤에는 그 owner만 실행하며 전체 gate의 최종 판정은 묶음 착지에서 한다. E2E93은 별도 후보에서 처리한다. 시한·기대값·재시도·ignore는 바꾸지 않는다.
+
 ## 코드 줄 수 시험의 경과 시간 분리(t-0845)
 
 - `nice -n 15 cargo test --locked -p aaa-agent --lib workspace_metrics -- --nocapture`: 실제 Git 객체를 읽고, 집계 규칙·UTF-8 오류·같은 커밋 재스캔 방지·다음 커밋 회복 시험에는 고정 경과 0을 넣는다. 같은 손상 객체에 경과 750ms를 넣으면 시간 상한 오류가 먼저 발생하는 대조도 둔다. Git 자식 실행이 느려져도 오류 원인 시험의 결과가 달라지지 않으며, 오류 단언에는 실제 오류 원문을 남긴다.
