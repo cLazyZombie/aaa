@@ -1648,6 +1648,8 @@ pub fn section_lines(report: &str, name: &str) -> Vec<String> {
 pub const BRIEF_WORK_DIR: &str = "{{aaa:work_dir}}";
 /// 그 머신 aaa 실행 파일(진행 보고 명령)
 pub const BRIEF_EXE: &str = "{{aaa:exe}}";
+/// memory=true 자동화의 재독 안내. host가 세션 명세에 넣으며 hook 요청의 환경·경로는 믿지 않는다.
+pub const AUTOMATION_REENTRY_ENV: &str = "AAA_AUTOMATION_REENTRY";
 /// 임무 inbox의 목록 조회 한 명령. agent가 채우는 경로와 allow-list가 같은 quoting을 쓴다.
 pub const BRIEF_INBOX_LIST: &str = "{{aaa:inbox_list}}";
 pub const BRIEF_GIT_READS: &str = "{{aaa:git_reads}}";

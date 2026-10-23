@@ -419,7 +419,17 @@ impl Agent {
         // aaa가 hook 설정을 주는 thread 세션만 안내한다(herdr-projects `managed`: coordinator·thread pane)
         let managed = spec.spec.role.is_some();
         Ok(if managed && matches!(msg.harness.as_str(), "claude" | "codex") {
-            self.guide(&msg.session, &msg.payload, now).map(hooks::Reply::Text)
+            self.guide(
+                &msg.session,
+                &msg.payload,
+                spec.spec
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == aaa_proto::AUTOMATION_REENTRY_ENV)
+                    .map(|(_, text)| text.as_str()),
+                now,
+            )
+            .map(hooks::Reply::Text)
         } else {
             None
         })
@@ -427,7 +437,7 @@ impl Agent {
 
     /// Claude·Codex hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
     /// 넣지 않는다(`foreign_session`). 실행 파일 경로는 brief와 같은 꼴이다(`fill_brief`).
-    fn guide(&self, session: &str, p: &serde_json::Value, now: u64) -> Option<String> {
+    fn guide(&self, session: &str, p: &serde_json::Value, reentry: Option<&str>, now: u64) -> Option<String> {
         let kind = hooks::guide_kind(p)?;
         let id = p.get("session_id").and_then(|v| v.as_str());
         if kind != "SessionStart"
@@ -438,7 +448,7 @@ impl Agent {
         }
         let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
         let mut map = self.progress.lock().unwrap();
-        let text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
+        let text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now, reentry)?;
 
         Some(hooks::output(kind, &text))
     }

@@ -813,19 +813,59 @@ async fn reuse_open_batches_32_and_queues_without_new_thread_even_in_propose() {
 }
 
 #[tokio::test]
-async fn reuse_rejects_codex_without_compaction_reentry_hook() {
-    let mut l = Lab::new();
-    Arc::get_mut(&mut l.h)
-        .unwrap()
-        .cfg
-        .profiles
-        .insert("builder".into(), aaa_config::Profile { harness: "codex".into(), ..Default::default() });
-    let _a = l.fake(vec![]).await;
-    let _b = l.fake_on("b", "mac-b", vec![]).await;
-    let mut r = rule(&l, "reuse='open'");
-    let Action::Start(a) = &mut r.action else { panic!() };
-    a.profiles = vec!["builder".into()];
-    assert!(l.h.automation_start_approval("demo", &r).unwrap_err().message.contains("compaction"));
+async fn reuse_accepts_codex_and_seeds_memory_reentry_only_when_enabled() {
+    for memory in [false, true] {
+        let mut l = auto_lab();
+        Arc::get_mut(&mut l.h)
+            .unwrap()
+            .cfg
+            .profiles
+            .insert("builder".into(), aaa_config::Profile { harness: "codex".into(), ..Default::default() });
+        let agent = l.fake(vec!["work_files.v1".into()]).await;
+        let _b = l.fake_on("b", "mac-b", vec![]).await;
+        rule(&l, &format!("reuse='open'\nmemory={memory}"));
+        let root = l.h.project_dir("demo").unwrap();
+        let file = root.join("automations/check.toml");
+        let text = std::fs::read_to_string(&file)
+            .unwrap()
+            .replace("profiles=['claude']", "profiles=['builder']")
+            .replace("machines=['mac-a','mac-b']", "machines=['mac-a']");
+        std::fs::write(&file, &text).unwrap();
+        let r = automation::parse(&root, "check", &text).unwrap();
+        // 허용된 profile의 기존 승인 절차는 유지한다.
+        approve(&l, &r);
+        let mut events = l.h.thread_events.subscribe();
+        l.h.automation_submit("demo", &r, "input-1", "자료".into(), None).unwrap();
+        l.h.automation_drain("demo", &r).await.unwrap();
+        let rec = l.h.automation_open("demo", "check").unwrap().unwrap();
+        launched(&l, &mut events, &rec.id).await;
+        let rec = l.h.load("demo", &rec.id).unwrap();
+        let spec = agent
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|q| match q {
+                AgentRequest::Spawn(spec) => Some(spec.clone()),
+                _ => None,
+            })
+            .expect("자동화 세션 시작");
+        assert_eq!(spec.harness.as_deref(), Some("codex"));
+        let reentry = spec.env.iter().find(|(key, _)| key == "AAA_AUTOMATION_REENTRY");
+        assert_eq!(reentry.is_some(), memory);
+        if let Some((_, text)) = reentry {
+            let work = rec.work_dir.as_deref().unwrap();
+            assert!(text.contains(&format!("{work}/memory/memory.md")), "{text}");
+            assert!(text.contains(&format!("{work}/brief.md")), "{text}");
+            assert!(text.contains("4KiB") && text.contains("processed.txt"), "{text}");
+            assert!(std::path::Path::new(work).join("memory/memory.md").is_file());
+        }
+        // 둘째 입력도 새 thread를 만들지 않고 같은 실행에 잇는다.
+        l.h.automation_submit("demo", &r, "input-2", "다음 자료".into(), None).unwrap();
+        l.h.automation_drain("demo", &r).await.unwrap();
+        assert_eq!(l.h.automation_open("demo", "check").unwrap().unwrap().id, rec.id);
+        assert_eq!(starts(&agent), 1);
+    }
 }
 
 #[tokio::test]
