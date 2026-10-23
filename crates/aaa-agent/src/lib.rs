@@ -1260,7 +1260,8 @@ impl Agent {
 
         let id = util::new_id();
         let paths = SessionPaths::new(&self.state, &id);
-        util::ensure_private_dir(&paths.dir)?;
+        util::ensure_private_dir(&paths.dir)
+            .with_context(|| format!("pane 상태 폴더 준비: {}", paths.dir.display()))?;
         if spec.cwd.is_none() {
             spec.cwd = self.default_cwd.clone();
         }
@@ -1372,8 +1373,10 @@ impl Agent {
             account_run: credential.as_ref().map(|c| c.run.clone()),
             account_generation: credential.as_ref().and_then(|c| c.auth_generation.clone()),
         };
-        util::write_json(&paths.spec(), &file)?;
-        let log = std::fs::File::create(paths.log())?;
+        util::write_json(&paths.spec(), &file)
+            .with_context(|| format!("pane 실행 명세 쓰기: {}", paths.spec().display()))?;
+        let log = std::fs::File::create(paths.log())
+            .with_context(|| format!("session host 로그 열기: {}", paths.log().display()))?;
         let mut cmd = std::process::Command::new(&self.exe);
         cmd.arg("session-host").arg("--dir").arg(&paths.dir);
         cmd.arg("--startup-stdin").stdin(std::process::Stdio::piped());

@@ -7644,3 +7644,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **목적.** 사용자 10-23 「terminal 테마를 기본 테마에도」·「이름은 다 github dark로」. 기존 앱의 `github-dark`를 같은 터미널 색으로 갱신한다. 목록·밝기·시스템 짝을 확장할 필요가 없어 별도 제품 질문 없이 진행한다.
 - **색·이름.** 앱 배경·입력 바탕 #24292e, 글자 #C9D1D9. 앱을 따르는 터미널도 독립 GitHub Dark와 같은 ANSI·커서·선택 색을 쓴다. 나머지 앱 역할은 Primer primitives 7.10.0 dark 값이다. 터미널 표시 이름은 GitHub Dark, 기존 기기 저장 ID `wezterm-github-dark-user`는 유지한다. 앱·host 설정 형식과 FRONT_API·AGENT_LINK는 그대로다.
 - **출처·검증.** Primer·VS Code GitHub Theme의 MIT와 원 터미널 GPL-3.0·모음 MIT 고지를 보존한다. E2E14·06을 확장하고 E2E95에서 Chromium·WebKit의 1280·390px 실제 앱·터미널·대화·질문 카드를 확인한다. UI 대비는 유지하고 사용자 ANSI는 원색을 우선한다. 전체 ci-local·check-public 뒤 묶음 착지를 기다린다. 배포는 별도 승인이다. 절·E2E 번호는 착지 때 main과 대조한다.
+
+### 8.467 Windows 서비스 thread의 private journal 폴더 준비(t-0902)
+
+- **원인·수리.** 승격·서비스 token의 기본 owner가 Administrators이면 일반 생성한 `thread-preparations`도 그 소유권을 받는다. private ACL 이행의 `ReOpenFile`이 디렉터리에서 Win32 5로 실패해 thread 자리 생성·ConPTY에 이르지 못했다. 기본 owner가 현재 SID와 다른 token만 최초 handle에 `WRITE_OWNER`를 요청한다. 같은 handle의 기존 owner·객체 종류를 확인한 뒤 기존 private DACL·소유권 검증을 유지한다.
+- **진단.** thread 준비·작업 root 잠금·자리·journal 권한·brief·hook·pane 상태/명세/로그·PTY·자식 실행의 문맥을 오류 체인에 붙인다. 실행 인자 전체나 환경값은 추가하지 않는다. 원본 로그의 한글은 UTF-8로 정상이었으며 서비스 로그 형식은 바꾸지 않는다.
+- **검증.** 실제 Windows의 기존 ACL owner 실패 대조와 상속 journal·부모 ACL 보존 회귀를 검사한다. 별도 SCM 가상 계정에서 실제 host·agent·thread·session-host·ConPTY를 열고 Session 0과 ready/입력/pong을 확인한다. 실제 암호와 사용자 서비스·설정·sshd는 보존하며 기준 목록을 대조해 정리한다. API·프로토콜·기존 E2E 번호를 유지한다. 절 번호는 묶음 착지 때 main과 대조한다.

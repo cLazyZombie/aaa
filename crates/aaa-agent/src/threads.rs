@@ -258,7 +258,8 @@ async fn exclude_work_dirs(repo: &Path) -> Result<()> {
 }
 
 pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) -> Result<ThreadReady> {
-    preparation::prepare(cfg, p, wait).await
+    let thread = p.thread.clone();
+    preparation::prepare(cfg, p, wait).await.with_context(|| format!("thread {thread} 준비"))
 }
 
 async fn prepare_inner(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) -> Result<ThreadReady> {
@@ -270,15 +271,17 @@ async fn prepare_inner(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) ->
         None => with_safety(cfg, find_profile(cfg, &p.profile)?, p.safety.as_ref()),
     };
     let launch = resolve(&p.profile, &profile)?;
-    let (cwd, branch, base) = preparation::place(cfg, &p, wait).await?;
+    let (cwd, branch, base) = preparation::place(cfg, &p, wait).await.context("thread 자리 준비")?;
     let work_dir = cwd.join(".aaa").join(format!("{}-{}", p.project, p.thread));
     cfg.check_path(&work_dir)?;
-    std::fs::create_dir_all(work_dir.join("library"))?;
+    std::fs::create_dir_all(work_dir.join("library"))
+        .with_context(|| format!("thread 자료 폴더 생성: {}", work_dir.join("library").display()))?;
     std::fs::write(
         work_dir.join("brief.md"),
         fill_brief(&p.brief, &work_dir.to_string_lossy(), &cfg.exe.to_string_lossy()),
-    )?;
-    let launch = with_hooks(cfg, launch, &work_dir, profile.command.len().max(1))?;
+    )
+    .with_context(|| format!("thread brief 쓰기: {}", work_dir.join("brief.md").display()))?;
+    let launch = with_hooks(cfg, launch, &work_dir, profile.command.len().max(1)).context("thread hook 준비")?;
     Ok(ThreadReady {
         cwd: cwd.to_string_lossy().to_string(),
         work_dir: work_dir.to_string_lossy().to_string(),

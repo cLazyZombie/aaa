@@ -163,7 +163,7 @@ pub(super) async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duratio
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다");
     }
-    let _lease = cfg.lease()?;
+    let _lease = cfg.lease().context("thread 작업 root 잠금")?;
     let path = journal(cfg, &p)?;
     let lock = lock(&path);
     let _guard = lock.lock().await;
@@ -302,7 +302,8 @@ pub(super) async fn place(
                     placement
                 }
             };
-            std::fs::create_dir_all(&placement.cwd)?;
+            std::fs::create_dir_all(&placement.cwd)
+                .with_context(|| format!("thread 작업 폴더 생성: {}", placement.cwd.display()))?;
             placement
         }
         ThreadKind::Adopted => bail!("데려온 thread는 자리를 만들지 않는다(`thread adopt`)"),

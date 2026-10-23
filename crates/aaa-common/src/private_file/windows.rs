@@ -67,11 +67,18 @@ pub(crate) fn protect(path: &Path, directory: bool) -> io::Result<File> {
     use windows_sys::Win32::{
         Security::Authorization::SetSecurityInfo,
         Security::{GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, PROTECTED_DACL_SECURITY_INFORMATION},
-        Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, READ_CONTROL, ReOpenFile, WRITE_DAC, WRITE_OWNER,
-        },
+        Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, READ_CONTROL, WRITE_DAC, WRITE_OWNER},
     };
-    let access = READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES | if directory { 0 } else { GENERIC_READ };
+    let current = super::account().ok_or_else(denied)?;
+    let default_owner = super::default_owner().ok_or_else(denied)?;
+    // 승격·서비스 token은 Administrators를 기본 owner로 쓸 수 있다. 이 경우에만
+    // 최초 handle에 WRITE_OWNER를 요청한다. ReOpenFile은 디렉터리에서 접근 거부를
+    // 반환하므로, 처음 연 실제 객체를 검증한 뒤 같은 handle로 소유권까지 좁힌다.
+    let access = READ_CONTROL
+        | WRITE_DAC
+        | FILE_READ_ATTRIBUTES
+        | if directory { 0 } else { GENERIC_READ }
+        | if default_owner != current { WRITE_OWNER } else { 0 };
     let flags = FILE_FLAG_OPEN_REPARSE_POINT | if directory { FILE_FLAG_BACKUP_SEMANTICS } else { 0 };
     let file = OpenOptions::new().access_mode(access).custom_flags(flags).open(path)?;
     verify_kind(&file, directory)?;
@@ -97,30 +104,11 @@ pub(crate) fn protect(path: &Path, directory: bool) -> io::Result<File> {
     if owner.is_null() {
         return Err(denied());
     }
-    let current = super::account().ok_or_else(denied)?;
     let old_owner = sid_text(owner)?;
     let normalize_owner = old_owner != current;
-    if normalize_owner && Some(old_owner) != super::default_owner() {
+    if normalize_owner && old_owner != default_owner {
         return Err(denied());
     }
-    // 승격 token의 기본 owner는 Administrators일 수 있다. 그 token이 소유한 객체만 현재 SID로 좁힌다.
-    // 경로를 다시 열지 않고 검증한 실제 객체를 ReOpenFile로 연다. WRITE_OWNER가 없으면 그대로 실패한다.
-    let file = if normalize_owner {
-        let handle = unsafe {
-            ReOpenFile(
-                file.as_raw_handle(),
-                access | WRITE_OWNER,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                flags,
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
-        }
-        unsafe { File::from_raw_handle(handle) }
-    } else {
-        file
-    };
     let (_descriptor, attrs) = security(directory)?;
     let mut dacl = std::ptr::null_mut();
     let mut present = 0;
