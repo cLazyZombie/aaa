@@ -5,6 +5,7 @@ import {
   root, sleep, aaa, waitOutput, until, domIs, screenText, shot, pairPage, steps, step, browser, webkit, openSettings, sentFrames, sentCount, sentText, inList,
 } from "../lib/harness.mjs";
 import { receivedInput } from "../lib/received-input.mjs";
+import { pageScrollRace } from "../lib/terminal-page-scroll.mjs";
 
 export default async function ({ ctl, page }) {
   await step("키 막대(herdr-web-ui KeyBar): 터치 기기에서만, 유지 키는 다시 누를 때까지(래치)·하드웨어 키와 같은 bytes, DECCKM, 꾹 누르면 반복, 조합 중 회색, focus를 안 가져감", async () => {
@@ -605,6 +606,75 @@ export default async function ({ ctl, page }) {
       await p.context().close();
     }
     for (const name of ["shortkeys", "shortplain", "shortalt"]) aaa("pane", "kill", name);
+  });
+
+  await step("재연결·resize 뒤 연속 PageUp·PageDown: 늦은 native scroll은 다음 키를 되돌리지 않고 실제 사용자 스크롤은 유지한다(Chromium·WebKit)", async () => {
+    aaa("tab", "create", "--machine", "labA", "--label", "scrollrace", "--", process.execPath, `${root}/scroll.js`, "plain");
+    await waitOutput("scrollrace", "s-200");
+    const pane = () => aaa("pane", "list").panes.find((p) => p.name === "scrollrace");
+    const wk = await webkit.launch();
+    try {
+      for (const engine of [browser, wk]) {
+        let pipe;
+        let connections = 0;
+        let acknowledged = 0;
+        const route = (ws) => {
+          const server = ws.connectToServer();
+          const connection = ++connections;
+          pipe = { ws, server };
+          let snapshot;
+          server.onMessage((message) => {
+            if (typeof message === "string") {
+              const msg = JSON.parse(message);
+              if (msg.t === "snapshot") snapshot = { stream: msg.stream, bytes: Buffer.from(msg.replay, "base64").length };
+            }
+            ws.send(message);
+          });
+          ws.onMessage((message) => {
+            if (typeof message === "string") {
+              const msg = JSON.parse(message);
+              if (snapshot && msg.t === "ack" && msg.stream === snapshot.stream && msg.offset >= snapshot.bytes) acknowledged = connection;
+            }
+            server.send(message);
+          });
+          server.onClose((code, reason) => ws.close({ code, reason }));
+          ws.onClose((code, reason) => server.close({ code, reason }));
+        };
+        const { page: p, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+          platform: "Linux x86_64", hash: `#pane=${pane().id}`, wsRoute: [/\/api\/v1\/panes\//, route],
+        });
+        try {
+          await until("최초 snapshot을 xterm이 읽고 ACK", () => acknowledged === connections && acknowledged > 0);
+          // 두 번째 엔진은 앞 엔진의 30행을 replay로 받는다. 이 화면의 초기 grid 확정 뒤에 크기 변경 기준을 잡는다.
+          await domIs(p, "재연결 전 초기 grid 맞추기 완료", () => {
+            const el = document.querySelector('[data-testid="terminal"]');
+            return el?.dataset.fit === "same" && !el.dataset.fitPending && !document.querySelector(".term-scroll")?.hasAttribute("data-adopted-grid");
+          });
+          const oldRows = pane().rows;
+          const first = connections;
+          const previous = pipe;
+          previous.ws.close({ code: 1011, reason: "test reconnect" });
+          previous.server.close({ code: 1000, reason: "test reconnect" });
+          await until("재연결의 새 snapshot을 xterm이 읽고 ACK", () => connections > first && acknowledged === connections);
+          await p.setViewportSize({ width: 1100, height: 700 });
+          await until("재연결 뒤 새 PTY grid와 렌더 완료", async () => {
+            const current = pane();
+            if (current.rows === oldRows || !current.lease) return false;
+            return p.evaluate(({ rows }) => {
+              const el = document.querySelector('[data-testid="terminal"]');
+              const screen = document.querySelector(".xterm-screen");
+              const host = document.querySelector(".term-scroll");
+              return el && !el.dataset.fitPending && ["same", "sent"].includes(el.dataset.fit) &&
+                !host.hasAttribute("data-adopted-grid") && document.querySelector(".xterm-rows").childElementCount === rows &&
+                screen.getBoundingClientRect().right <= host.getBoundingClientRect().right + 0.5;
+            }, current);
+          });
+          await pageScrollRace(p);
+          if (errors.length) throw new Error(errors.join("; "));
+        } finally { await p.context().close(); }
+      }
+    } finally { await wk.close(); }
+    aaa("pane", "kill", "scrollrace");
   });
 
   await step("그냥 끌어 고르기·제자리 클릭·크기 되찾기(herdr-web-ui PaneTerminal): 마우스 보고 중에도 왼쪽 끌기는 고르고 놓으면 복사, 제자리 클릭은 프로그램에, 키는 보내기 전에 이 화면 크기를 건다", async () => {

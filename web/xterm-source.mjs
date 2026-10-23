@@ -59,7 +59,7 @@ export function buildXtermSource(webRoot) {
   mkdirSync(cache, { recursive: true });
   cpSync(join(pkg, "src"), source, { recursive: true });
   applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0.patch"), "utf8"));
-  // aaa: reset의 0 높이·자체 동기화와 합쳐진 사용자 scroll(patches/README.md, plan §8.105·t-0839)
+  // aaa: reset의 0 높이·자체 동기화와 합쳐진 사용자 scroll·연속 키(patches/README.md, plan §8.105·t-0839·t-0870)
   applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0-viewport.patch"), "utf8"));
   // xterm 소스는 .d.ts의 const enum을 쓴다: TypeScript가 먼저 풀어 줘야 vite가 읽는다
   const program = ts.createProgram(ts.sys.readDirectory(source, [".ts"], undefined, ["**/*"]), {

@@ -24,7 +24,7 @@ test("xterm 패치는 checkout과 npm 소스의 줄 끝에 관계없이 엄격�
 });
 
 // 빌드에 쓰는 실제 upstream 메서드에 같은 patch를 붙여 실행한다. DOM scroll 사건이 합쳐진 상태를 결정적으로 만든다.
-test("xterm 자체 동기화 뒤 합쳐진 사용자 scroll은 다른 줄이면 버리지 않는다", (t) => {
+function viewportProbes(t) {
   const root = mkdtempSync(join(tmpdir(), "aaa-xterm-scroll-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "src/browser"), { recursive: true });
@@ -35,26 +35,73 @@ test("xterm 자체 동기화 뒤 합쳐진 사용자 scroll은 다른 줄이면 
   const compile = (text) => {
     const source = ts.createSourceFile("Viewport.ts", text, ts.ScriptTarget.Latest, true);
     const viewport = source.statements.find(ts.isClassDeclaration);
-    const method = viewport.members.find((m) => m.name?.getText(source) === "_handleScroll");
-    const code = ts.transpileModule(`export class Probe { ${method.getText(source)} }`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+    const methods = viewport.members.filter((m) => ["_handleScroll", "_innerRefresh", "_refresh", "syncScrollArea"].includes(m.name?.getText(source)));
+    const code = ts.transpileModule(`export class Probe { ${methods.map((m) => m.getText(source)).join("\n")} }`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
     const module = {};
     new Function("exports", code)(module);
     return module.Probe;
   };
-  const patched = compile(readFileSync(file, "utf8"));
+  return { patched: compile(readFileSync(file, "utf8")), upstream: compile(original) };
+}
+
+test("xterm 자체 동기화 뒤 합쳐진 사용자 scroll은 다른 줄이면 버리지 않는다", (t) => {
+  const { patched, upstream } = viewportProbes(t);
   const run = (top, rowHeight = 18, implementation = patched) => {
     const requests = [];
     const state = {
       _viewportElement: { scrollTop: top, offsetParent: {} }, _currentRowHeight: rowHeight,
-      _bufferService: { buffer: { ydisp: 43 } }, _ignoreNextScrollEvent: true,
+      _bufferService: { buffer: { ydisp: 43 } }, _ignoreNextScrollEvent: true, _ignoredScrollTop: 774,
       _onRequestScrollLines: { fire: (request) => requests.push(request) },
+      syncScrollArea: () => {},
     };
     implementation.prototype._handleScroll.call(state, new Event("scroll"));
     assert.equal(state._ignoreNextScrollEvent, false);
     return requests;
   };
   assert.deepEqual(run(774), [{ amount: 0, suppressScrollEvent: true }], "자체 동기화 사건");
-  assert.deepEqual(run(0, 18, compile(original)), [{ amount: 0, suppressScrollEvent: true }], "upstream 대조는 같은 이동을 버린다");
+  assert.deepEqual(run(0, 18, upstream), [{ amount: 0, suppressScrollEvent: true }], "upstream 대조는 같은 이동을 버린다");
   assert.deepEqual(run(0), [{ amount: -43, suppressScrollEvent: true }], "같은 차례의 실제 위로 이동");
   assert.deepEqual(run(0, 0), [], "reset 중에는 줄 높이를 기다린다");
+});
+
+test("xterm PageUp의 늦은 native scroll이 다음 PageDown을 되돌리지 않는다", (t) => {
+  const { patched } = viewportProbes(t);
+  for (const rowHeight of [19, 18.5]) {
+    const requests = [];
+    const frames = [];
+    let nativeTop = 0;
+    const state = {
+      _viewportElement: {
+        // 브라우저가 scrollTop을 반올림한 실제 값을 되읽어야 한다.
+        get scrollTop() { return nativeTop; },
+        set scrollTop(value) { nativeTop = Math.round(value); },
+        offsetParent: {}, offsetHeight: 570,
+      },
+      _charSizeService: { height: 13 },
+      _renderDimensions: { device: { cell: { height: rowHeight } }, css: { canvas: { height: 570 } } },
+      _coreBrowserService: { dpr: 1, window: { requestAnimationFrame: (callback) => { frames.push(callback); return frames.length; } } },
+      _bufferService: { buffer: { ydisp: 142, lines: { length: 201 } } },
+      _lastRecordedBufferLength: 201, _lastScrollTop: 171 * rowHeight,
+      _scrollArea: { style: {} }, _refreshAnimationFrame: null,
+      _onRequestScrollLines: { fire: (request) => requests.push(request) },
+    };
+    Object.setPrototypeOf(state, patched.prototype);
+    state._activeBuffer = state._bufferService.buffer;
+    state._renderService = { dimensions: state._renderDimensions };
+    // PageUp의 동기화 frame → PageDown의 논리 위치 변경 → 앞선 native scroll.
+    patched.prototype._innerRefresh.call(state);
+    assert.equal(nativeTop, Math.round(142 * rowHeight));
+    state._bufferService.buffer.ydisp = 171;
+    state.syncScrollArea();
+    assert.equal(frames.length, 0, "다음 키 시점에는 이전 native 사건 전이라 _lastScrollTop이 옛 끝이다");
+    patched.prototype._handleScroll.call(state, new Event("scroll"));
+    assert.deepEqual(requests.splice(0), [{ amount: 0, suppressScrollEvent: true }], "앞선 자체 동기화는 새 목표를 덮지 않는다");
+    assert.equal(frames.length, 1, "native 사건의 위치를 읽은 뒤 새 목표의 DOM 동기화를 건다");
+    frames.shift()();
+    assert.equal(nativeTop, Math.round(171 * rowHeight), "다음 frame에 DOM도 새 목표로 간다");
+    // 다음 frame이 새 목표를 반영하고, 같은 차례에 사용자가 맨 위로 굴린 사건은 살린다.
+    nativeTop = 0;
+    patched.prototype._handleScroll.call(state, new Event("scroll"));
+    assert.deepEqual(requests.splice(0), [{ amount: -171, suppressScrollEvent: true }], "동기화와 합쳐진 실제 사용자 이동");
+  }
 });

@@ -1,7 +1,24 @@
 diff --git a/src/browser/Viewport.ts b/src/browser/Viewport.ts
 --- a/src/browser/Viewport.ts
 +++ b/src/browser/Viewport.ts
-@@ -187,15 +187,25 @@
+@@ -41,6 +41,7 @@
+
+   private _refreshAnimationFrame: number | null = null;
+   private _ignoreNextScrollEvent: boolean = false;
++  private _ignoredScrollTop: number = 0;
+   private _smoothScrollState: ISmoothScrollState = {
+     startTime: 0,
+     origin: -1,
+@@ -135,6 +136,8 @@
+       // want this event to scroll the terminal
+       this._ignoreNextScrollEvent = true;
+       this._viewportElement.scrollTop = scrollTop;
++      // aaa(t-0870): 반올림·clamp를 거친 실제 DOM 위치가 이 동기화의 사건 표지다.
++      this._ignoredScrollTop = this._viewportElement.scrollTop;
+     }
+
+     this._refreshAnimationFrame = null;
+@@ -187,15 +190,27 @@
      }
  
      // Ignore the event if it was flagged to ignore (when the source of the event is from Viewport)
@@ -12,11 +29,13 @@ diff --git a/src/browser/Viewport.ts b/src/browser/Viewport.ts
 -      return;
 -    }
 -
-+      // aaa(t-0839): native scroll events can be coalesced with a later user scroll.
-+      // Only ignore the event while it still points at the row we synchronized.
-+      // A stale flag must not discard a wheel that has moved to another row.
-+      if (this._currentRowHeight && Math.round(this._lastScrollTop / this._currentRowHeight) === this._bufferService.buffer.ydisp) {
++      // aaa(t-0839, t-0870): 자체 동기화와 합쳐진 사용자 이동은 버리지 않는다.
++      // 비교 기준은 DOM에 썼던 위치다. 그 뒤 PageDown이 바꾼 ydisp와 비교하면
++      // PageUp의 늦은 native scroll이 다음 키의 새 목표를 이전 위치로 되돌린다.
++      if (this._lastScrollTop === this._ignoredScrollTop) {
 +        this._onRequestScrollLines.fire({ amount: 0, suppressScrollEvent: true });
++        // 다음 키가 이 사건 전의 _lastScrollTop을 보고 동기화를 생략했을 수도 있다.
++        this.syncScrollArea();
 +        return;
 +      }
 +    }
