@@ -81,7 +81,28 @@ export default async function ({ ctl, page }) {
     await shot(r, "phone-reader-shared");
 
     // 바꾸고 곧바로 닫아도(보내기를 미루는 600ms 안) 값이 간다(QA t-0337 Q11): 떠날 때(pagehide) keepalive로 지금 보낸다
-    const q = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const closing = [];
+    const closeDiagnostics = {
+      init: () => {
+        const record = (event, extra = {}) => console.debug("preferences-leave " + JSON.stringify({ at: performance.now(), event, theme: document.documentElement.dataset.theme, ...extra }));
+        for (const name of ["beforeunload", "pagehide"]) window.addEventListener(name, () => record(name));
+        document.addEventListener("visibilitychange", () => record("visibility", { state: document.visibilityState }));
+        const original = window.fetch;
+        window.fetch = function (input, init) {
+          try {
+            const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+            if (body?.op === "preferences_set") record("send", { theme: body.settings?.theme, keepalive: init.keepalive });
+          } catch { /* 진단은 보내기를 막지 않는다. */ }
+          return original.apply(this, arguments);
+        };
+      },
+      onPage: p => {
+        p.on("console", m => { if (m.text().startsWith("preferences-leave ")) closing.push(JSON.parse(m.text().slice(18))); });
+        p.on("close", () => closing.push({ event: "closed" }));
+        p.on("requestfailed", r => { if (r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "preferences_set") closing.push({ event: "failed", reason: r.failure()?.errorText }); });
+      },
+    };
+    const q = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, closeDiagnostics);
     await htmlIs(q.page, "data-theme", "light");
     const qd = await settings(q.page);
     await qd.getByRole("group", { name: "테마" }).getByRole("button", { name: "어둡게" }).click();
@@ -93,7 +114,7 @@ export default async function ({ ctl, page }) {
         await until(`${what} host 문서에`, async () => (doc = await held(a))?.settings.theme === theme);
       } catch (e) {
         const other = await b.evaluate(() => document.documentElement.getAttribute("data-theme"));
-        throw new Error(`${e.message}: 보내는 쪽 — host 문서 revision ${doc?.revision} theme ${doc?.settings.theme}, 다른 기기 ${other}`);
+        throw new Error(`${e.message}: 보내는 쪽 — host 문서 revision ${doc?.revision} theme ${doc?.settings.theme}, 다른 기기 ${other}, 닫힘 ${JSON.stringify(closing)}`);
       }
       try {
         await domIs(b, `${what} 다른 기기에`, (t) => document.documentElement.getAttribute("data-theme") === t, theme);
@@ -106,7 +127,7 @@ export default async function ({ ctl, page }) {
     // 미룬 보내기(600ms)가 이미 나간 뒤 닫아도 간다: 느린 CI에서는 누름과 닫음 사이가 600ms를 넘을 수 있다. 그때 나간 보통 요청은 문서와
     // 함께 끊기고, 떠날 때 보내기는 「가는 중」이라 다시 보내지 않았다(코드로 찾은 빈틈, plan §8.173). 그래서 보내기는 늘 keepalive다.
     // 로컬 host는 몇 ms에 답해 고치기 전에도 이 경우는 통과한다(결정적 재현 아님): 그 요청이 나간 것을 본 뒤 닫는 꼴만 지킨다
-    const w = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const w = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, closeDiagnostics);
     await htmlIs(w.page, "data-theme", "dark");
     const wd = await settings(w.page);
     const issued = w.page.waitForRequest((x) => x.url().endsWith("/api/v1/call") && x.postDataJSON()?.op === "preferences_set");

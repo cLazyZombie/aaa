@@ -68,7 +68,7 @@ export class ChatDiagnostics {
       await Promise.all([
         inTime(this.page.evaluate(() => {
           const el = document.querySelector('[data-testid="chat"]');
-          return { states: window.takeChatStates?.() ?? [], html: el?.outerHTML,
+          return { states: [...(window.takeChatStates?.() ?? []), ...(window.takeScrollStates?.() ?? [])], reset: { before: window.shellResetLayout, writes: window.shellResetWrites }, html: el?.outerHTML,
             url: location.hash, top: el?.scrollTop, height: el?.scrollHeight, client: el?.clientHeight,
             noteBox: el?.querySelector('[data-testid="chat-history-start"]')?.getBoundingClientRect().toJSON() };
         }), 5000, "실패 DOM 수집").then((dom) => {

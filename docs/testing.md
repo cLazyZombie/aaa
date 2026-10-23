@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## 웹 E2E 스크롤·닫힘 진단(t-0905)
+
+- E2E03은 실패한 viewport가 닫히기 전에 실제 키 처리 여부·native scroll·위치 쓰기·렌더 grid를 남긴다. 앞서 공통 진단에는 이미 닫힌 실패 화면 대신 기본 pane만 남았다.
+- E2E93은 터치·scrollend·위치 쓰기와 reset 전후 상태를 기존 대화 실패 자료에 함께 남긴다. E2E14는 닫는 문서의 lifecycle·keepalive 전송·요청 실패를 host 문서의 실패 진단과 함께 기록한다.
+- 계측은 사건·값을 바꾸지 않는다. 기존 20초 상한과 정확한 위치·테마 단언을 유지한다.
+- 참고: ttyd의 연결별 reset·dispose, WeTTY의 터미널 write 완료 ACK, xterm.js 5.5의 DOM 위치와 비동기 scroll 동기화(MIT), Playwright 공식 사건 대기·trace 문서(Apache-2.0). 외부 코드는 복사하지 않는다.
+
 ## E2E93 재개 조합의 독립 실행과 실패 phase(t-0896)
 
 - [CI 39923503523](https://github.com/cLazyZombie/aaa/actions/runs/39923503523)의 원본은 Claude 네 조합을 한 단계로 실행하다 합계 120초에 끝났다. artifact에는 e2e.log·실행 시간표만 있고 `resume-*.json`·host/agent 로그는 없다. 기존 `resumed` 안의 catch는 바깥 단계 타이머가 먼저 실패하면 실행되지 않는다. 당시 `--resume`와 `--continue` 중 어느 mode였는지는 원문으로 확정할 수 없다.

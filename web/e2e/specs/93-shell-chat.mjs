@@ -1,6 +1,7 @@
 // 기본 셸 → hook 없는 harness → 실제 프로세스/기록 연결 → host → 대화 페이지/스크롤.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { watchScroll } from "../lib/scrollDiagnostics.mjs";
 import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
 import {
   root, aaa, step, until, waitOutput, inList, domIs, shot, pairPage, browser, webkit, inTime, screenText, start, stop,
@@ -274,6 +275,7 @@ export default async function () {
       await chat.evaluate((c) => { c.scrollTop = 0; });
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
       await chat.getByText("처음이다", { exact: true }).waitFor();
+      await watchScroll(page, '[data-testid="chat"]');
       // 앞 안내의 높이가 늦게 재측정되는 경계. 맨 위에서 첫 row의 위치만 붙들면 1px 아래로 옮긴다.
       const headerShift = await chat.evaluate((c) => {
         const note = c.querySelector(".chat-note");
