@@ -688,7 +688,13 @@ fn locate(
 ) -> Option<(Source, PathBuf)> {
     match harness {
         "claude" => Some((Source::Claude, crate::chat::inside(claude_root, std::path::Path::new(transcript?)).ok()?)),
-        "codex" => Some((Source::Codex, crate::chat::codex_file(codex_root, harness_session?).ok()?)),
+        "codex" => {
+            let id = harness_session?;
+            let path = transcript
+                .and_then(|p| crate::chat::codex_hint(codex_root, id, p))
+                .or_else(|| crate::chat::codex_file(codex_root, id).ok())?;
+            Some((Source::Codex, path))
+        }
         _ => None,
     }
 }

@@ -118,6 +118,29 @@ fn account_chat_rejects_ambiguous_foreign_nested_and_old_records() {
 }
 
 #[test]
+fn codex_chat_uses_the_exact_bound_file_even_when_the_id_has_a_backup_copy() {
+    let f = Fixture::new();
+    let first = f.rollout(ID, &f.agent.state, serde_json::json!("cli"), "2026-10-21T00:00:00.000Z");
+    let dir = f.root.join("2026/10/22");
+    std::fs::create_dir_all(&dir).unwrap();
+    let second = dir.join(first.file_name().unwrap());
+    std::fs::copy(&first, &second).unwrap();
+    for path in [&first, &second] {
+        assert_eq!(
+            f.agent.chat_path(Some("s"), "codex", path.to_str(), Some(ID)).unwrap(),
+            path.canonicalize().unwrap()
+        );
+    }
+    let outside = f.agent.state.join(format!("rollout-outside-{ID}.jsonl"));
+    std::fs::copy(&first, &outside).unwrap();
+    assert!(chat::codex_hint(&f.root, ID, outside.to_str().unwrap()).is_none());
+    assert!(chat::codex_hint(&f.root, HOOK, first.to_str().unwrap()).is_none());
+    assert!(chat::codex_hint(&f.root, "../bad", first.to_str().unwrap()).is_none());
+    // 옛 hook의 틀린 hint는 기존 ID 해석으로 돌아간다.
+    assert_eq!(f.agent.chat_path(Some("s"), "codex", outside.to_str(), Some(ID)).unwrap(), f.path(ID).unwrap());
+}
+
+#[test]
 fn codex_chat_uses_saved_home_and_account_home_overrides_profile_home() {
     let mut f = Fixture::new();
     let profile_home = f.agent.state.join("profile-codex");

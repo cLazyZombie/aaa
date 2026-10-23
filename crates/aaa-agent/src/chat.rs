@@ -60,6 +60,15 @@ pub(crate) fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
 }
 
 /// Codex 기록: `sessions/YYYY/MM/DD/rollout-…-<thread-id>.jsonl`
+pub(crate) fn codex_hint(root: &Path, id: &str, transcript: &str) -> Option<PathBuf> {
+    if !aaa_common::util::harness_session_ok(id) {
+        return None;
+    }
+    let path = inside(root, Path::new(transcript)).ok()?;
+    path.file_name()?.to_str()?.ends_with(&format!("-{id}.jsonl")).then_some(path)
+}
+
+/// 경로를 모르는 hook·옛 세션은 ID로 찾는다. 셸에서 확인한 정확한 경로가 있으면 `codex_hint`를 먼저 쓴다.
 pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
     if !aaa_common::util::harness_session_ok(id) {
         return Err("Codex thread-id 형식이 아니다".into());

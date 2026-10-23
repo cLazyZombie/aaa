@@ -32,6 +32,7 @@ mod quota;
 mod responsibility;
 mod selfcheck;
 mod settings_jobs;
+mod shell_chat;
 pub use selfcheck::start_selfcheck;
 mod slash;
 pub mod threads;
@@ -487,6 +488,11 @@ impl Agent {
         let mut map = self.harness_last.lock().unwrap();
         let list = map.entry(ev.session.clone()).or_default();
         let send = ev.clone();
+        // 셸 복귀 뒤 host가 다시 붙어도 옛 대화·계획을 되살리지 않는다.
+        if ev.kind == "released" {
+            list.clear();
+            self.harness_started.lock().unwrap().remove(&ev.session);
+        }
         if let Some(i) = list.iter().position(|e| Slot::of(e) == Some(slot)) {
             let same_state = |o: &aaa_proto::HarnessEvent| {
                 slot == Slot::State && (&o.harness, &o.kind, &o.message) == (&ev.harness, &ev.kind, &ev.message)
@@ -495,7 +501,7 @@ impl Agent {
                 return list[i].clone();
             }
             let old = list.remove(i);
-            if old.harness == ev.harness {
+            if old.harness == ev.harness && slot != Slot::Session {
                 ev.transcript = ev.transcript.or(old.transcript);
                 ev.harness_session = ev.harness_session.or(old.harness_session);
             }
@@ -669,6 +675,9 @@ impl Agent {
         if harness == "codex" {
             let id = harness_session.ok_or("Codex thread-id가 없다")?;
             let root = self.codex_root_for(session);
+            if let Some(path) = transcript.and_then(|p| chat::codex_hint(&root, id, p)) {
+                return Ok(path);
+            }
             if let Some(spec) = self.chat_spec(session)
                 && spec.spec.harness.as_deref() == Some("codex")
                 && spec
@@ -993,6 +1002,7 @@ impl Agent {
     ) {
         let id = spec.id.clone();
         let Detecting { mut watch, mut front, detect_ipc, colors_ipc } = detecting;
+        let mut shell_chat = Some(shell_chat::Tracker::new());
         let mut seq = 0u64;
         let pending = loop {
             let mut pending: HashMap<String, (String, bool)> = HashMap::new();
@@ -1006,10 +1016,29 @@ impl Agent {
             }
             let dropped = loop {
                 let watch_at = watch.as_ref().and_then(detect::Watch::next_at);
-                let detect_at = watch_at.into_iter().chain(front.as_ref().map(|(_, p)| p.next_at())).min();
+                let chat_at = front.as_ref().and_then(|_| shell_chat.as_ref().map(|c| c.next));
+                let detect_at =
+                    watch_at.into_iter().chain(front.as_ref().map(|(_, p)| p.next_at())).chain(chat_at).min();
                 tokio::select! {
                     _ = sleep_until(detect_at) => {
                         let now = std::time::Instant::now();
+                        if let Some((pid, _)) = front.as_ref()
+                            && shell_chat.as_ref().is_some_and(|c| c.next <= now)
+                        {
+                            let mut tracker = shell_chat.take().expect("셸 대화 감시");
+                            let (pid, codex, claude) = (*pid, self.codex_root_for(Some(&id)), self.claude_root_for(Some(&id)));
+                            let result = tokio::task::spawn_blocking(move || {
+                                let changed = tracker.poll(pid, &codex, &claude);
+                                (tracker, changed)
+                            }).await;
+                            let Ok((tracker, changed)) = result else {
+                                break Dropped::Lost("셸 대화 기록 조사 task가 끝났다".into());
+                            };
+                            shell_chat = Some(tracker);
+                            if let Some((h, b)) = changed {
+                                self.shell_chat_event(&id, h, b).await;
+                            }
+                        }
                         if let Some((pid, p)) = front.as_mut()
                             && p.next_at() <= now
                         {

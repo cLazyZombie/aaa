@@ -214,6 +214,15 @@ pub fn probe(shell_pid: u32, pgid: u32) -> Probe {
     }
 }
 
+/// 셸의 앞 그룹에서 이름이 확인된 harness만 돌려준다. 기록 연결은 wrapper와 실제 CLI를 함께 보되,
+/// 다른 그룹의 배경 작업·하위 agent를 따라가지 않는다.
+#[cfg(unix)]
+pub(crate) fn agents(shell_pid: u32) -> Vec<(Harness, u32)> {
+    let Some(pgid) = crate::cwd::foreground_process_group_id(shell_pid) else { return Vec::new() };
+    let Some(job) = platform::job(shell_pid, pgid) else { return Vec::new() };
+    job.processes.iter().filter_map(|p| Some((Harness::from_label(&normalized_name(p))?, p.pid))).collect()
+}
+
 /// 앞 그룹에서 agent 프로세스(herdr `identify_agent_process_in_job`): 그룹 leader가 먼저, 아니면 이름이 가장 분명한 것
 pub fn identify(job: &Job) -> Option<(Harness, u32)> {
     if let Some(p) = job.processes.iter().find(|p| p.pid == job.pgid)
