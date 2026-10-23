@@ -304,6 +304,8 @@ fn failure_after_registration_rolls_back_everything_but_the_registration() {
         "schema = 1\n# 내 설정\n[health]\nmin_free_gb = 5\n"
     );
     assert!(!layout.receipt().exists());
+    assert!(!layout.home.join("aaa-work").exists(), "이번에 만든 빈 작업 폴더도 지운다");
+    assert!(layout.config.is_dir(), "원래 있던 폴더는 남긴다");
     // host 등록과 장치 키는 남겨 다시 실행할 때 승인 없이 잇는다
     assert!(aaa_agent::identity::load_pin(&layout.state.join("agent")).is_some());
     assert!(ui.printed("되돌림: 서비스 aaa-agent"));
@@ -530,6 +532,22 @@ fn instance_layout_names_the_service_and_passes_explicit_dirs() {
         layout.command(),
         r#""C:\Users\Test User\AppData\Local\aaa-aaa-test-0878-a\bin\aaa.exe" --instance aaa-test-0878-a --config-dir C:\x\config --state-dir C:\x\state setup-service"#
     );
+}
+
+#[test]
+fn plan_columns_line_up_with_korean_labels() {
+    let lab = Lab::new();
+    let layout = lab.layout();
+    let mut sys = FakeSys::new(&layout);
+    let mut ui = Script::new(&["studio.example.ts.net", "", "", "n"], &["correct horse"]);
+    let _ = Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default());
+    let columns = |text: &str| text.chars().map(|c| if ('가'..='힣').contains(&c) { 2 } else { 1 }).sum::<usize>();
+    let exe = layout.exe.display().to_string();
+    for (label, value) in [("host", "studio.example.ts.net"), ("실행 파일", exe.as_str()), ("서비스", "aaa-agent ·")] {
+        let row = ui.out.iter().map(|(_, l)| l).find(|l| l.starts_with(&format!("  {label} "))).expect(label);
+        let at = row.find(value).expect(value);
+        assert_eq!(columns(&row[..at]), 13, "값은 같은 칸에서 시작한다: {row:?}");
+    }
 }
 
 #[test]

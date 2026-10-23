@@ -118,6 +118,7 @@ impl Ui for Terminal {
             Tone::Fail => format!("      {} {}", self.paint("31", "✗"), self.paint("31", line)),
             Tone::Hint => format!("      {}", self.paint("2", line)),
             Tone::Code => format!("      {}", self.paint("1;35", line)),
+            Tone::Info => format!("      {line}"),
         };
         println!("{out}");
     }
@@ -819,7 +820,8 @@ impl System for WinSystem {
                 scm.0,
                 wide(&def.name).as_ptr(),
                 wide(&def.display).as_ptr(),
-                SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | DELETE,
+                // 실패 동작의 다시 시작(SC_ACTION_RESTART)을 쓰려면 SERVICE_START가 있어야 한다
+                SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START | DELETE,
                 SERVICE_WIN32_OWN_PROCESS,
                 SERVICE_AUTO_START,
                 SERVICE_ERROR_NORMAL,

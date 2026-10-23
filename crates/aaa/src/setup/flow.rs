@@ -73,6 +73,8 @@ pub(crate) enum Tone {
     Fail,
     Hint,
     Code,
+    /// 단계 안의 보통 글(들여 씀)
+    Info,
 }
 
 pub(crate) trait Ui {
@@ -309,6 +311,8 @@ enum Change {
     Binary { path: PathBuf, backup: Option<PathBuf> },
     File { path: PathBuf, previous: Option<Vec<u8>> },
     Path { previous: Option<String> },
+    /// 이번에 만든 폴더(깊은 것부터). 비어 있을 때만 지운다
+    Dirs { created: Vec<PathBuf> },
     LogonRight,
     Service { name: String },
     Stopped { name: String },
@@ -350,10 +354,7 @@ impl<'a> Setup<'a> {
     pub(crate) fn install(&mut self, args: &Args) -> Result<()> {
         self.say(Tone::Title, format!("aaa 설치 · Windows agent  {}", self.version));
         self.say(Tone::Plain, "이 PC를 aaa host에 연결하는 agent를 설치하고 Windows 서비스로 띄웁니다.");
-        self.say(
-            Tone::Hint,
-            "[ ] 안은 기본값이라 Enter만 누르면 됩니다. Ctrl+C로 취소하면 이번에 바꾼 것을 되돌립니다.",
-        );
+        self.say(Tone::Plain, "[ ] 안은 기본값입니다(Enter). Ctrl+C로 취소하면 바꾼 것을 되돌립니다.");
         self.say(Tone::Plain, "");
         let account = self.sys.account()?;
         let service = self.layout.service();
@@ -365,11 +366,8 @@ impl<'a> Setup<'a> {
                 _ => {
                     self.say(Tone::Fail, format!("서비스 {service}가 이미 있지만 이 설치기가 만든 것이 아닙니다."));
                     self.say(Tone::Hint, format!("실행 파일: {}", existing.command));
-                    self.say(
-                        Tone::Hint,
-                        "예전 `aaa install`로 만든 서비스일 수 있습니다. 이 서비스는 건드리지 않았습니다. \
-                         다른 인스턴스로 설치하려면 `--instance <이름>`을 붙이세요.",
-                    );
+                    self.say(Tone::Hint, "예전 `aaa install`로 만든 서비스일 수 있습니다. 건드리지 않았습니다.");
+                    self.say(Tone::Hint, "다른 인스턴스로 설치하려면 `--instance <이름>`을 붙이세요.");
                     bail!("서비스 이름 충돌: {service}")
                 }
             };
@@ -379,11 +377,8 @@ impl<'a> Setup<'a> {
         let right = self.sys.logon_right(&account)?;
         if right == Right::Denied {
             self.say(Tone::Fail, format!("{}에 「서비스로 로그온 거부」 정책이 걸려 있습니다.", account.short()));
-            self.say(
-                Tone::Hint,
-                "로컬 보안 정책(secpol.msc) › 로컬 정책 › 사용자 권한 할당 › 「서비스로 로그온 거부」에서 이 계정을 \
-                 빼거나 관리자에게 문의하세요. 아무것도 바꾸지 않았습니다.",
-            );
+            self.say(Tone::Hint, "secpol.msc › 로컬 정책 › 사용자 권한 할당 › 「서비스로 로그온 거부」에서");
+            self.say(Tone::Hint, "이 계정을 빼거나 관리자에게 문의하세요. 아무것도 바꾸지 않았습니다.");
             bail!("서비스 로그온 거부 정책");
         }
         self.show_plan(&account, &choices, right)?;
@@ -416,7 +411,7 @@ impl<'a> Setup<'a> {
                 self.ui.ask("host 주소 (이름:포트)", host.as_deref())?
             };
             let Some(address) = normalize_host(&answer) else {
-                self.say(Tone::Warn, "host 주소를 넣어 주세요. 예: studio.example.ts.net 또는 studio.example.ts.net:7430");
+                self.say(Tone::Warn, "host 주소를 넣어 주세요. 예: studio.example.ts.net(포트 7430은 생략 가능)");
                 host = None;
                 continue;
             };
@@ -428,10 +423,8 @@ impl<'a> Setup<'a> {
                 }
                 Err(e) => {
                     self.say(Tone::Warn, format!("{address}에 연결하지 못했습니다: {e:#}"));
-                    self.say(
-                        Tone::Hint,
-                        "주소·포트(기본 7430)를 확인하세요. host의 agent_listen이 이 PC에서 보이는 주소여야 합니다(tailnet 등).",
-                    );
+                    self.say(Tone::Hint, "주소·포트(기본 7430)를 확인하세요. host.toml의 agent_listen이");
+                    self.say(Tone::Hint, "이 PC에서 닿는 주소여야 합니다(tailnet 이름 등).");
                     if args.yes {
                         bail!("host에 연결하지 못했습니다: {address}");
                     }
@@ -482,19 +475,11 @@ impl<'a> Setup<'a> {
     }
 
     fn ask_password(&mut self, account: &Account) -> Result<Secret> {
-        self.say(
-            Tone::Plain,
-            format!(
-                "서비스는 이 계정({})으로 돌아 이 계정의 codex·claude 로그인을 그대로 씁니다. Windows가 서비스를 \
-                 띄울 때 쓸 로그인 암호가 필요합니다.",
-                account.short()
-            ),
-        );
-        self.say(
-            Tone::Hint,
-            "Windows 로그인 암호입니다(PIN 아님). Microsoft 계정이면 그 계정 암호입니다. 암호는 Windows 서비스 \
-             설정에만 들어가고 파일·로그에 남지 않습니다.",
-        );
+        self.say(Tone::Plain, "");
+        self.say(Tone::Plain, format!("서비스는 이 계정({})으로 돌아 codex·claude 로그인을 그대로 씁니다.", account.short()));
+        self.say(Tone::Plain, "Windows가 서비스를 띄울 때 쓸 로그인 암호를 넣어 주세요.");
+        self.say(Tone::Hint, "PIN이 아니라 로그인 암호입니다. Microsoft 계정이면 그 계정 암호입니다.");
+        self.say(Tone::Hint, "암호는 Windows 서비스 설정에만 들어가고 파일·로그에 남지 않습니다.");
         for attempt in 1..=PASSWORD_TRIES {
             let secret = self.ui.secret("Windows 암호")?;
             if secret.is_empty() {
@@ -536,14 +521,11 @@ impl<'a> Setup<'a> {
             "새로 둠".to_string()
         };
         let mut rows = vec![
-            ("host", format!("{} 에 「{}」로 등록 (host에서 승인)", choices.host, choices.name)),
+            ("host", format!("{} 에 「{}」로 등록(host에서 승인)", choices.host, choices.name)),
             ("실행 파일", format!("{} ({binary})", exe.display())),
             ("설정", self.layout.agent_toml().display().to_string()),
             ("작업 폴더", choices.work_root.display().to_string()),
-            (
-                "서비스",
-                format!("{} · 자동 시작(지연) · 계정 {} · 실패하면 다시 시작", self.layout.service(), account.short()),
-            ),
+            ("서비스", format!("{} · 자동 시작 · {} 계정 · 멈추면 다시 시작", self.layout.service(), account.short())),
         ];
         if right == Right::Missing {
             rows.push(("권한", format!("{}에 「서비스로 로그온」 권한 추가", account.short())));
@@ -555,7 +537,7 @@ impl<'a> Setup<'a> {
             rows.push(("PATH", if present { "이미 있음".into() } else { format!("사용자 PATH에 {} 추가", dir.display()) }));
         }
         for (key, value) in rows {
-            self.say(Tone::Plain, format!("  {key:<9} {value}"));
+            self.say(Tone::Plain, format!("  {} {value}", pad(key, 10)));
         }
         let others: Vec<ServiceInfo> =
             self.sys.aaa_services()?.into_iter().filter(|s| s.name != self.layout.service()).collect();
@@ -563,10 +545,8 @@ impl<'a> Setup<'a> {
             self.say(Tone::Plain, "");
             for other in others {
                 let state = if other.running { "실행 중" } else { "정지" };
-                self.say(
-                    Tone::Hint,
-                    format!("참고: 이 PC에 다른 aaa 서비스 {}({state})가 있습니다. 이 설치는 그 서비스를 건드리지 않습니다.", other.name),
-                );
+                self.say(Tone::Hint, format!("참고: 이 PC에 다른 aaa 서비스 {}({state})가 있습니다.", other.name));
+                self.say(Tone::Hint, "      이 설치는 그 서비스를 건드리지 않습니다.");
             }
         }
         self.say(Tone::Plain, "");
@@ -676,14 +656,8 @@ impl<'a> Setup<'a> {
                 }
                 E::NameTaken => {
                     self.say(Tone::Warn, format!("이름 「{}」는 host에서 다른 등록이 쓰고 있습니다.", choices.name));
-                    self.say(
-                        Tone::Hint,
-                        format!(
-                            "이 PC의 예전 설치라면 host 웹 › 설정 › 머신에서 「{}」를 폐기한 뒤 Enter를 누르면 같은 \
-                             이름으로 다시 등록합니다. 다른 이름을 쓰려면 이름을 넣으세요.",
-                            choices.name
-                        ),
-                    );
+                    self.say(Tone::Hint, format!("이 PC의 예전 설치라면 host 웹 › 설정 › 머신에서 「{}」를 폐기하고", choices.name));
+                    self.say(Tone::Hint, "Enter를 누르면 같은 이름으로 다시 등록합니다. 다른 이름을 넣어도 됩니다.");
                     let current = choices.name.clone();
                     choices.name = self.ask_name("이 PC 이름", &current)?;
                 }
@@ -696,7 +670,7 @@ impl<'a> Setup<'a> {
                 }
                 E::UnsupportedVersion => {
                     self.say(Tone::Fail, format!("host와 판이 맞지 않습니다: {}", rejected.0.message));
-                    self.say(Tone::Hint, "host와 같은 판의 설치기를 쓰세요(host 웹 › 설정 › 머신 › 「직접 설치 안내」에 판이 있습니다).");
+                    self.say(Tone::Hint, "host와 같은 판의 설치기를 쓰세요(host 웹 › 설정 › 머신 › 「직접 설치 안내」).");
                     break Err(error);
                 }
                 _ => break Err(error),
@@ -723,8 +697,9 @@ impl<'a> Setup<'a> {
             self.say(Tone::Ok, format!("{} (이미 같은 파일)", exe.display()));
             return Ok(());
         }
-        let dir = exe.parent().context("실행 파일 폴더")?;
-        std::fs::create_dir_all(dir).with_context(|| format!("{} 만들기", dir.display()))?;
+        let dir = exe.parent().context("실행 파일 폴더")?.to_path_buf();
+        self.make_dirs(&dir)?;
+        let dir = dir.as_path();
         let backup = if exe.exists() {
             let old = dir.join(".aaa-old");
             std::fs::create_dir_all(&old)?;
@@ -753,13 +728,29 @@ impl<'a> Setup<'a> {
         if previous.as_deref() == Some(text.as_bytes()) {
             self.say(Tone::Ok, format!("{} (바꿀 것 없음)", path.display()));
         } else {
-            std::fs::create_dir_all(&self.layout.config)?;
+            self.make_dirs(&self.layout.config.clone())?;
             self.changes.push(Change::File { path: path.clone(), previous });
             aaa_common::util::write_private(&path, text.as_bytes()).with_context(|| format!("{} 쓰기", path.display()))?;
             self.say(Tone::Ok, path.display().to_string());
         }
-        std::fs::create_dir_all(&choices.work_root)
-            .with_context(|| format!("작업 폴더 {} 만들기", choices.work_root.display()))?;
+        self.make_dirs(&choices.work_root).with_context(|| format!("작업 폴더 {} 만들기", choices.work_root.display()))?;
+        Ok(())
+    }
+
+    /// 없는 폴더를 만들고 새로 생긴 것만 기록한다
+    fn make_dirs(&mut self, dir: &Path) -> Result<()> {
+        let mut created = Vec::new();
+        let mut at = Some(dir);
+        while let Some(path) = at
+            && !path.exists()
+        {
+            created.push(path.to_path_buf());
+            at = path.parent();
+        }
+        std::fs::create_dir_all(dir).with_context(|| format!("{} 만들기", dir.display()))?;
+        if !created.is_empty() {
+            self.changes.push(Change::Dirs { created });
+        }
         Ok(())
     }
 
@@ -941,6 +932,10 @@ impl<'a> Setup<'a> {
                     None => std::fs::remove_file(&path),
                 };
                 result.map(|()| Some(format!("파일 {}", path.display()))).map_err(|e| format!("파일 {}: {e}", path.display()))
+            }
+            Change::Dirs { created } => {
+                let removed = created.iter().filter(|dir| std::fs::remove_dir(dir).is_ok()).count();
+                Ok((removed > 0).then(|| format!("새로 만든 폴더 {}", created.last().unwrap_or(&created[0]).display())))
             }
             Change::Path { previous } => self
                 .sys
@@ -1289,15 +1284,26 @@ fn cli_name(layout: &Layout) -> String {
     }
 }
 
+/// 터미널 칸 너비(한글·전각은 2칸)
+fn width(text: &str) -> usize {
+    text.chars()
+        .map(|c| match c as u32 {
+            0x1100..=0x115F | 0x2E80..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6 => 2,
+            _ => 1,
+        })
+        .sum()
+}
+fn pad(text: &str, columns: usize) -> String {
+    format!("{text}{}", " ".repeat(columns.saturating_sub(width(text))))
+}
+
 /// 확인 코드 안내(System::enroll이 EnrollPending 때 보인다)
 pub(crate) fn code_lines(name: &str, code: &str) -> Vec<(Tone, String)> {
     let spaced = if code.len() == 6 { format!("{} {}", &code[..3], &code[3..]) } else { code.to_string() };
     vec![
         (Tone::Code, format!("확인 코드  {spaced}")),
-        (
-            Tone::Plain,
-            format!("host 웹 › 설정 › 머신 › 「승인을 기다리는 머신」에서 「{name}」의 「승인…」을 누르고 위 코드를 넣으세요."),
-        ),
+        (Tone::Info, "host 웹 › 설정 › 머신 › 「승인을 기다리는 머신」에서".to_string()),
+        (Tone::Info, format!("「{name}」의 「승인…」을 누르고 위 코드를 넣으세요.")),
         (Tone::Hint, format!("(host 터미널이면: aaa machine approve {name} --code {code})")),
     ]
 }
