@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Result, bail};
 use aaa_proto::{ErrorBody, ErrorCode};
+use anyhow::{Result, bail};
 
 use super::Args;
 use super::flow::*;
@@ -46,7 +46,11 @@ struct Script {
 }
 impl Script {
     fn new(answers: &[&'static str], secrets: &[&'static str]) -> Script {
-        Script { answers: answers.iter().copied().collect(), secrets: secrets.iter().copied().collect(), ..Default::default() }
+        Script {
+            answers: answers.iter().copied().collect(),
+            secrets: secrets.iter().copied().collect(),
+            ..Default::default()
+        }
     }
     fn printed(&self, needle: &str) -> bool {
         self.out.iter().any(|(_, line)| line.contains(needle))
@@ -111,14 +115,18 @@ impl FakeSys {
     }
 }
 fn account() -> Account {
-    Account { sam: r"PC-MAIN\person".into(), sid: "S-1-5-21-1-2-3-1001".into(), profile: PathBuf::from(r"C:\Users\person") }
+    Account {
+        sam: r"WIN-A\person".into(),
+        sid: "S-1-5-21-1-2-3-1001".into(),
+        profile: PathBuf::from(r"C:\Users\person"),
+    }
 }
 impl System for FakeSys {
     fn account(&mut self) -> Result<Account> {
         Ok(account())
     }
     fn computer(&mut self) -> String {
-        "PC-MAIN".into()
+        "WIN-A".into()
     }
     fn service(&mut self, name: &str) -> Result<Option<ServiceInfo>> {
         Ok(self.services.get(name).cloned())
@@ -256,7 +264,7 @@ fn fresh_install_asks_three_questions_and_a_password_then_connects() {
         [
             "reach studio.example.ts.net:7430",
             "logon network",
-            "enroll pc-main",
+            "enroll win-a",
             &path_op,
             "right true",
             "logon service",
@@ -270,13 +278,13 @@ fn fresh_install_asks_three_questions_and_a_password_then_connects() {
     let toml = std::fs::read_to_string(layout.config.join("agent.toml")).unwrap();
     let doc: toml_edit::DocumentMut = toml.parse().unwrap();
     assert_eq!(doc["agent"]["host"].as_str(), Some("studio.example.ts.net:7430"));
-    assert_eq!(doc["agent"]["name"].as_str(), Some("pc-main"));
+    assert_eq!(doc["agent"]["name"].as_str(), Some("win-a"));
     assert_eq!(doc["agent"]["work_root"].as_str(), Some(layout.home.join("aaa-work").to_str().unwrap()));
     assert!(layout.home.join("aaa-work").is_dir());
     let receipt = Receipt::read(&layout.receipt()).unwrap();
     assert!(receipt.logon_right_added);
     assert_eq!(receipt.path_added.as_deref(), layout.exe.parent());
-    assert_eq!((receipt.host.as_str(), receipt.name.as_str()), ("studio.example.ts.net:7430", "pc-main"));
+    assert_eq!((receipt.host.as_str(), receipt.name.as_str()), ("studio.example.ts.net:7430", "win-a"));
     let command = &sys.services["aaa-agent"].command;
     assert!(command.ends_with(" setup-service") && command.contains("aaa.exe"), "{command}");
     assert!(ui.printed("확인 코드  123 456"));
@@ -295,7 +303,8 @@ fn failure_after_registration_rolls_back_everything_but_the_registration() {
     sys.fail_start = true;
     let before_path = sys.path.clone();
     let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
-    let error = Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap_err();
+    let error =
+        Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap_err();
     assert!(format!("{error:#}").contains("1069"), "{error:#}");
 
     assert!(sys.did("delete aaa-agent") && sys.did("right false"));
@@ -319,9 +328,9 @@ fn failure_after_registration_rolls_back_everything_but_the_registration() {
     sys.fail_start = false;
     let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap();
-    assert_eq!(sys.enrolled_as, ["pc-main"], "두 번째 실행은 다시 승인받지 않는다");
+    assert_eq!(sys.enrolled_as, ["win-a"], "두 번째 실행은 다시 승인받지 않는다");
     assert!(ui.printed("이미 이 host에 등록돼 있습니다"));
-    assert!(ui.printed("「pc-main」로 등록(이미 등록됨, 승인 필요 없음)"));
+    assert!(ui.printed("「win-a」로 등록(이미 등록됨, 승인 필요 없음)"));
     let toml = std::fs::read_to_string(layout.config.join("agent.toml")).unwrap();
     assert!(toml.contains("# 내 설정") && toml.contains("min_free_gb = 5"), "다른 설정은 남긴다: {toml}");
     let kept: Vec<_> = std::fs::read_dir(layout.exe.parent().unwrap().join(".aaa-old")).unwrap().flatten().collect();
@@ -389,14 +398,14 @@ fn closed_window_and_taken_name_are_fixed_in_the_same_run() {
     let mut sys = FakeSys::new(&layout);
     sys.enroll = [Some(ErrorCode::EnrollClosed), Some(ErrorCode::NameTaken), None].into();
     // 질문 4개 → 등록 창 Enter → 새 이름
-    let mut ui = Script::new(&["studio.example.ts.net", "", "", "", "", "pc-main-2"], &["correct horse"]);
+    let mut ui = Script::new(&["studio.example.ts.net", "", "", "", "", "win-a-2"], &["correct horse"]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     assert!(ui.printed("host의 등록 창이 닫혀 있습니다."));
-    assert!(ui.printed("이름 「pc-main」는 host에서 다른 등록이 쓰고 있습니다."));
-    assert_eq!(sys.enrolled_as, ["pc-main-2"]);
-    assert_eq!(Receipt::read(&layout.receipt()).unwrap().name, "pc-main-2");
+    assert!(ui.printed("이름 「win-a」는 host에서 다른 등록이 쓰고 있습니다."));
+    assert_eq!(sys.enrolled_as, ["win-a-2"]);
+    assert_eq!(Receipt::read(&layout.receipt()).unwrap().name, "win-a-2");
     let toml = std::fs::read_to_string(layout.config.join("agent.toml")).unwrap();
-    assert!(toml.contains("name = \"pc-main-2\""), "{toml}");
+    assert!(toml.contains("name = \"win-a-2\""), "{toml}");
 }
 
 #[test]
@@ -456,7 +465,7 @@ fn uninstall_reverts_only_what_the_receipt_records() {
     assert_eq!(sys.ops, ["stop aaa-agent", "delete aaa-agent"], "넣지 않은 권한·PATH는 그대로 둔다");
     assert!(!layout.receipt().exists());
     assert!(layout.config.join("agent.toml").exists() && layout.state.join("agent/host.json").exists());
-    assert!(ui.printed("host 웹 › 설정 › 머신에서 「pc-main」를 폐기"));
+    assert!(ui.printed("host 웹 › 설정 › 머신에서 「win-a」를 폐기"));
 
     // 다시 설치 → 권한·PATH를 넣은 설치의 제거는 그것들도 뺀다
     sys.right = Right::Missing;
@@ -501,8 +510,11 @@ fn other_aaa_services_and_sibling_config_shape_the_defaults() {
     let layout = lab.layout();
     let sibling = layout.config.parent().unwrap().parent().unwrap().join("aaa-install-check/config");
     std::fs::create_dir_all(&sibling).unwrap();
-    std::fs::write(sibling.join("agent.toml"), "schema = 1\n[agent]\nhost = \"studio.example.ts.net:7430\"\nname = \"pc-main\"\n")
-        .unwrap();
+    std::fs::write(
+        sibling.join("agent.toml"),
+        "schema = 1\n[agent]\nhost = \"studio.example.ts.net:7430\"\nname = \"win-a\"\n",
+    )
+    .unwrap();
     let mut sys = FakeSys::new(&layout);
     sys.services.insert(
         "aaa-install-check-agent".into(),
@@ -550,7 +562,8 @@ fn plan_columns_line_up_with_korean_labels() {
     let _ = Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default());
     let columns = |text: &str| text.chars().map(|c| if ('가'..='힣').contains(&c) { 2 } else { 1 }).sum::<usize>();
     let exe = layout.exe.display().to_string();
-    for (label, value) in [("host", "studio.example.ts.net"), ("실행 파일", exe.as_str()), ("서비스", "aaa-agent ·")] {
+    for (label, value) in [("host", "studio.example.ts.net"), ("실행 파일", exe.as_str()), ("서비스", "aaa-agent ·")]
+    {
         let row = ui.out.iter().map(|(_, l)| l).find(|l| l.starts_with(&format!("  {label} "))).expect(label);
         let at = row.find(value).expect(value);
         assert_eq!(columns(&row[..at]), 13, "값은 같은 칸에서 시작한다: {row:?}");
@@ -563,9 +576,9 @@ fn host_addresses_are_normalized() {
         ("studio.example.ts.net", Some("studio.example.ts.net:7430")),
         ("  studio.example.ts.net:7430 ", Some("studio.example.ts.net:7430")),
         ("https://studio.example.ts.net:8443/", Some("studio.example.ts.net:8443")),
-        ("100.64.0.1", Some("100.64.0.1:7430")),
-        ("[fd7a::1]:7430", Some("[fd7a::1]:7430")),
-        ("fd7a::1", Some("[fd7a::1]:7430")),
+        ("192.0.2.10", Some("192.0.2.10:7430")),
+        ("[2001:db8::1]:7430", Some("[2001:db8::1]:7430")),
+        ("2001:db8::1", Some("[2001:db8::1]:7430")),
         ("studio:0", None),
         ("studio:http", None),
         ("", None),
@@ -616,7 +629,7 @@ fn status_shows_service_and_connection() {
     let mut ui = Script::new(&[], &[]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).status().unwrap();
     assert!(ui.printed("실행 중 · 자동 시작 · 계정 .\\person"));
-    assert!(ui.printed("host studio.example.ts.net:7430 · 이름 「pc-main」 · 설치 판 aaa 0.1.5"));
+    assert!(ui.printed("host studio.example.ts.net:7430 · 이름 「win-a」 · 설치 판 aaa 0.1.5"));
     assert!(ui.printed("host에 연결됨"));
 }
 
@@ -628,11 +641,14 @@ fn uninstall_keeps_the_logon_right_while_another_service_uses_the_account() {
     let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     assert!(Receipt::read(&layout.receipt()).unwrap().logon_right_added);
-    let other = ServiceInfo { name: "aaa-work-agent".into(), account: account().short(), ..sys.services["aaa-agent"].clone() };
+    let other =
+        ServiceInfo { name: "aaa-work-agent".into(), account: account().short(), ..sys.services["aaa-agent"].clone() };
     sys.services.insert(other.name.clone(), other);
     sys.ops.clear();
     let mut ui = Script::new(&[""], &[]);
-    Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).uninstall(&Args { uninstall: true, ..Default::default() }).unwrap();
+    Setup::new(&mut sys, &mut ui, layout.clone(), "v".into())
+        .uninstall(&Args { uninstall: true, ..Default::default() })
+        .unwrap();
     assert!(sys.did("delete aaa-agent") && !sys.did("right false"), "권한을 빼지 않는다: {:?}", sys.ops);
     assert_eq!(sys.right, Right::Granted);
     assert!(ui.printed("권한은 남깁니다: aaa-work-agent가 같은 계정으로 돕니다"));

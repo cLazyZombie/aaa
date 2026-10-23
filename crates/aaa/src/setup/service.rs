@@ -137,8 +137,7 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
 
     let status_path = state.join("setup-service.json");
     let write_status = |connected: bool| {
-        let status =
-            ServiceStatus { pid: std::process::id(), connected, changed_ms: aaa_common::util::now_ms() };
+        let status = ServiceStatus { pid: std::process::id(), connected, changed_ms: aaa_common::util::now_ms() };
         if let Err(e) = aaa_common::util::write_json(&status_path, &status) {
             eprintln!("연결 상태 파일을 쓰지 못했다: {e}");
         }
@@ -148,7 +147,8 @@ fn serve(argc: u32, argv: *mut *mut u16) -> Result<u32> {
     let (ended, mut done) = tokio::sync::oneshot::channel::<()>();
     let backend_stop = control.stop.subscribe();
     let backend = std::thread::Builder::new().name("aaa-setup-agent".into()).spawn(move || {
-        let result = crate::cli::supervised_role(aaa_proto::install::InstallRole::Agent, ready, connection, backend_stop);
+        let result =
+            crate::cli::supervised_role(aaa_proto::install::InstallRole::Agent, ready, connection, backend_stop);
         let _ = ended.send(());
         result
     })?;

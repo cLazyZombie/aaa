@@ -78,7 +78,13 @@ impl Terminal {
         let vt = unsafe { GetConsoleMode(out, &mut mode) } != 0
             && unsafe { SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) } != 0;
         unsafe { SetConsoleCtrlHandler(Some(on_ctrl), 1) };
-        Terminal { vt, color: vt && std::env::var_os("NO_COLOR").is_none(), spinning: false, frame: 0, last_plain: None }
+        Terminal {
+            vt,
+            color: vt && std::env::var_os("NO_COLOR").is_none(),
+            spinning: false,
+            frame: 0,
+            last_plain: None,
+        }
     }
     fn paint(&self, code: &str, text: &str) -> String {
         if self.color { format!("\x1b[{code}m{text}\x1b[0m") } else { text.to_string() }
@@ -117,7 +123,9 @@ fn read_console_line() -> Result<Option<String>> {
     loop {
         let mut buffer = [0u16; 512];
         let mut read = 0u32;
-        let ok = unsafe { ReadConsoleW(handle, buffer.as_mut_ptr().cast(), buffer.len() as u32, &mut read, std::ptr::null()) };
+        let ok = unsafe {
+            ReadConsoleW(handle, buffer.as_mut_ptr().cast(), buffer.len() as u32, &mut read, std::ptr::null())
+        };
         let aborted = ok == 0 || read == 0;
         if aborted {
             // Ctrl+C 처리기는 다른 thread에서 늦게 돌 수 있다
@@ -390,8 +398,7 @@ fn elevate(term: &mut Terminal) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let params: Vec<String> =
-        std::env::args_os().skip(1).map(|a| windows_quote(&a.to_string_lossy())).collect();
+    let params: Vec<String> = std::env::args_os().skip(1).map(|a| windows_quote(&a.to_string_lossy())).collect();
     let file = wide_os(exe.as_os_str());
     let verb = wide("runas");
     let params = wide(&params.join(" "));
@@ -739,7 +746,8 @@ impl System for WinSystem {
     }
 
     fn aaa_services(&mut self) -> Result<Vec<ServiceInfo>> {
-        let names: Vec<String> = all_services()?.into_iter().filter(|n| n.to_ascii_lowercase().starts_with("aaa")).collect();
+        let names: Vec<String> =
+            all_services()?.into_iter().filter(|n| n.to_ascii_lowercase().starts_with("aaa")).collect();
         Ok(names.iter().filter_map(|n| self.service(n).ok().flatten()).collect())
     }
 
@@ -805,7 +813,14 @@ impl System for WinSystem {
         let mut token = std::ptr::null_mut();
         let kind = if service { LOGON32_LOGON_SERVICE } else { LOGON32_LOGON_NETWORK };
         if unsafe {
-            LogonUserW(wide(user).as_ptr(), wide(domain).as_ptr(), secret.as_ptr(), kind, LOGON32_PROVIDER_DEFAULT, &mut token)
+            LogonUserW(
+                wide(user).as_ptr(),
+                wide(domain).as_ptr(),
+                secret.as_ptr(),
+                kind,
+                LOGON32_PROVIDER_DEFAULT,
+                &mut token,
+            )
         } == 0
         {
             return Ok(match last_error() {
@@ -978,7 +993,15 @@ impl System for WinSystem {
         let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
         let mut size = 0u32;
         let code = unsafe {
-            RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr(), flags, std::ptr::null_mut(), std::ptr::null_mut(), &mut size)
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                flags,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut size,
+            )
         };
         if code == ERROR_FILE_NOT_FOUND {
             return Ok(None);

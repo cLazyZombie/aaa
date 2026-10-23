@@ -163,4 +163,4 @@ aaa 코드는 [MIT](LICENSE)입니다.
 
 웹 터미널에는 [Meslotendard](https://github.com/cLazyZombie/Meslotendard) 0.3.1 글꼴(Regular·Bold, WOFF2)을 함께 넣었습니다. 이 글꼴은 SIL Open Font License 1.1이고, 구성 원본 Meslo LG(Apache 2.0)·Nerd Fonts·Pretendard(OFL 1.1)의 고지는 [web/public/fonts/meslotendard-0.3.1/](web/public/fonts/meslotendard-0.3.1/)에 있습니다. host는 같은 고지를 웹 주소 `/fonts/meslotendard-0.3.1/`로도 보냅니다.
 
-Windows 최초 실행 파일은 [저장한 PowerShell bootstrap과 설치 시험 절차](docs/windows-bootstrap.md)를 따릅니다. 공식 새 release의 판/SHA를 확인하고 실행합니다.
+Windows PC는 [설치기 `aaa-setup.exe`](docs/windows-setup.md) 하나로 설치·서비스·host 연결까지 끝냅니다. 예전 [PowerShell bootstrap 절차](docs/windows-bootstrap.md)도 남아 있습니다.

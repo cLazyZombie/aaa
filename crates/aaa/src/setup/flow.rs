@@ -309,15 +309,33 @@ impl Receipt {
 #[derive(Debug)]
 enum Change {
     /// 새로 만든 장치 키·machine ID(등록이 끝나지 않았을 때만 지운다). `shells`는 그때 새로 생긴 위 폴더(비면 지운다)
-    Identity { created: Vec<PathBuf>, shells: Vec<PathBuf>, enrolled: bool },
-    Binary { path: PathBuf, backup: Option<PathBuf> },
-    File { path: PathBuf, previous: Option<Vec<u8>> },
-    Path { previous: Option<String> },
+    Identity {
+        created: Vec<PathBuf>,
+        shells: Vec<PathBuf>,
+        enrolled: bool,
+    },
+    Binary {
+        path: PathBuf,
+        backup: Option<PathBuf>,
+    },
+    File {
+        path: PathBuf,
+        previous: Option<Vec<u8>>,
+    },
+    Path {
+        previous: Option<String>,
+    },
     /// 이번에 만든 폴더(깊은 것부터). 비어 있을 때만 지운다
-    Dirs { created: Vec<PathBuf> },
+    Dirs {
+        created: Vec<PathBuf>,
+    },
     LogonRight,
-    Service { name: String },
-    Stopped { name: String },
+    Service {
+        name: String,
+    },
+    Stopped {
+        name: String,
+    },
 }
 
 /// 고른 값
@@ -474,7 +492,8 @@ impl<'a> Setup<'a> {
         let work_root = if args.yes || args.work_root.is_some() {
             default_root
         } else {
-            let answer = self.ui.ask("작업 폴더 (thread·worktree가 생기는 곳)", Some(&default_root.to_string_lossy()))?;
+            let answer =
+                self.ui.ask("작업 폴더 (thread·worktree가 생기는 곳)", Some(&default_root.to_string_lossy()))?;
             PathBuf::from(answer)
         };
         if !work_root.is_absolute() {
@@ -495,7 +514,10 @@ impl<'a> Setup<'a> {
 
     fn ask_password(&mut self, account: &Account) -> Result<Secret> {
         self.say(Tone::Plain, "");
-        self.say(Tone::Plain, format!("서비스는 이 계정({})으로 돌아 codex·claude 로그인을 그대로 씁니다.", account.short()));
+        self.say(
+            Tone::Plain,
+            format!("서비스는 이 계정({})으로 돌아 codex·claude 로그인을 그대로 씁니다.", account.short()),
+        );
         self.say(Tone::Plain, "Windows가 서비스를 띄울 때 쓸 로그인 암호를 넣어 주세요.");
         self.say(Tone::Hint, "PIN이 아니라 로그인 암호입니다. Microsoft 계정이면 그 계정 암호입니다.");
         self.say(Tone::Hint, "암호는 Windows 서비스 설정에만 들어가고 파일·로그에 남지 않습니다.");
@@ -557,7 +579,10 @@ impl<'a> Setup<'a> {
             && let Some(dir) = self.layout.bin_dir()
         {
             let present = path_contains(&split_path(self.sys.user_path()?.as_deref()), dir, &self.layout.home);
-            rows.push(("PATH", if present { "이미 있음".into() } else { format!("사용자 PATH에 {} 추가", dir.display()) }));
+            rows.push((
+                "PATH",
+                if present { "이미 있음".into() } else { format!("사용자 PATH에 {} 추가", dir.display()) },
+            ));
         }
         for (key, value) in rows {
             self.say(Tone::Plain, format!("  {} {value}", pad(key, 10)));
@@ -645,13 +670,17 @@ impl<'a> Setup<'a> {
         if let Some(pin) = aaa_agent::identity::load_pin(&state)
             && pin.address == choices.host
         {
-            self.say(Tone::Ok, format!("이미 이 host에 등록돼 있습니다 (host fingerprint {}…)", &pin.fingerprint[..16]));
+            self.say(
+                Tone::Ok,
+                format!("이미 이 host에 등록돼 있습니다 (host fingerprint {}…)", &pin.fingerprint[..16]),
+            );
             return Ok(());
         }
         self.say(Tone::Hint, "host 웹 › 설정 › 머신에서 「등록 창 열기」를 먼저 눌러 두면 바로 이어집니다.");
         let before = list_dir(&state);
         let existed = state.exists();
-        let shells: Vec<PathBuf> = state.ancestors().skip(1).take_while(|p| !p.exists()).map(Path::to_path_buf).collect();
+        let shells: Vec<PathBuf> =
+            state.ancestors().skip(1).take_while(|p| !p.exists()).map(Path::to_path_buf).collect();
         let mut created = Vec::new();
         let result = loop {
             self.check_cancel()?;
@@ -681,7 +710,10 @@ impl<'a> Setup<'a> {
                 }
                 E::NameTaken => {
                     self.say(Tone::Warn, format!("이름 「{}」는 host에서 다른 등록이 쓰고 있습니다.", choices.name));
-                    self.say(Tone::Hint, format!("이 PC의 예전 설치라면 host 웹 › 설정 › 머신에서 「{}」를 폐기하고", choices.name));
+                    self.say(
+                        Tone::Hint,
+                        format!("이 PC의 예전 설치라면 host 웹 › 설정 › 머신에서 「{}」를 폐기하고", choices.name),
+                    );
                     self.say(Tone::Hint, "Enter를 누르면 같은 이름으로 다시 등록합니다. 다른 이름을 넣어도 됩니다.");
                     let current = choices.name.clone();
                     choices.name = self.ask_name("이 PC 이름", &current)?;
@@ -695,7 +727,10 @@ impl<'a> Setup<'a> {
                 }
                 E::UnsupportedVersion => {
                     self.say(Tone::Fail, format!("host와 판이 맞지 않습니다: {}", rejected.0.message));
-                    self.say(Tone::Hint, "host와 같은 판의 설치기를 쓰세요(host 웹 › 설정 › 머신 › 「직접 설치 안내」).");
+                    self.say(
+                        Tone::Hint,
+                        "host와 같은 판의 설치기를 쓰세요(host 웹 › 설정 › 머신 › 「직접 설치 안내」).",
+                    );
                     break Err(error);
                 }
                 _ => break Err(error),
@@ -755,10 +790,12 @@ impl<'a> Setup<'a> {
         } else {
             self.make_dirs(&self.layout.config.clone())?;
             self.changes.push(Change::File { path: path.clone(), previous });
-            aaa_common::util::write_private(&path, text.as_bytes()).with_context(|| format!("{} 쓰기", path.display()))?;
+            aaa_common::util::write_private(&path, text.as_bytes())
+                .with_context(|| format!("{} 쓰기", path.display()))?;
             self.say(Tone::Ok, path.display().to_string());
         }
-        self.make_dirs(&choices.work_root).with_context(|| format!("작업 폴더 {} 만들기", choices.work_root.display()))?;
+        self.make_dirs(&choices.work_root)
+            .with_context(|| format!("작업 폴더 {} 만들기", choices.work_root.display()))?;
         Ok(())
     }
 
@@ -841,9 +878,8 @@ impl<'a> Setup<'a> {
         let mut checks = 0u32;
         loop {
             self.check_cancel()?;
-            if let Some(status) = std::fs::read(self.layout.status())
-                .ok()
-                .and_then(|b| serde_json::from_slice::<ServiceStatus>(&b).ok())
+            if let Some(status) =
+                std::fs::read(self.layout.status()).ok().and_then(|b| serde_json::from_slice::<ServiceStatus>(&b).ok())
                 && status.pid == pid
                 && status.connected
             {
@@ -959,7 +995,9 @@ impl<'a> Setup<'a> {
                     Some(bytes) => aaa_common::util::write_private(&path, bytes),
                     None => std::fs::remove_file(&path),
                 };
-                result.map(|()| Some(format!("파일 {}", path.display()))).map_err(|e| format!("파일 {}: {e}", path.display()))
+                result
+                    .map(|()| Some(format!("파일 {}", path.display())))
+                    .map_err(|e| format!("파일 {}: {e}", path.display()))
             }
             Change::Dirs { created } => {
                 let removed = created.iter().filter(|dir| std::fs::remove_dir(dir).is_ok()).count();
@@ -1076,7 +1114,11 @@ impl<'a> Setup<'a> {
             plan.push(format!("이 설치기가 넣은 사용자 PATH 항목 {} 빼기", dir.display()));
         }
         if args.purge {
-            plan.push(format!("설정·상태 폴더 지우기: {} · {}", self.layout.config.display(), self.layout.state.display()));
+            plan.push(format!(
+                "설정·상태 폴더 지우기: {} · {}",
+                self.layout.config.display(),
+                self.layout.state.display()
+            ));
         }
         for line in &plan {
             self.say(Tone::Plain, format!("  {line}"));
@@ -1153,7 +1195,10 @@ impl<'a> Setup<'a> {
             );
         }
         self.say(Tone::Hint, format!("남긴 것: 실행 파일 {} (다른 aaa 명령도 씁니다)", receipt.exe.display()));
-        self.say(Tone::Hint, format!("host에서도 지우려면 host 웹 › 설정 › 머신에서 「{}」를 폐기하세요.", receipt.name));
+        self.say(
+            Tone::Hint,
+            format!("host에서도 지우려면 host 웹 › 설정 › 머신에서 「{}」를 폐기하세요.", receipt.name),
+        );
         Ok(())
     }
 
@@ -1176,9 +1221,13 @@ impl<'a> Setup<'a> {
             None => self.say(Tone::Warn, "등록돼 있지 않습니다"),
         }
         if let Some(receipt) = &receipt {
-            self.say(Tone::Plain, format!("  host {} · 이름 「{}」 · 설치 판 {}", receipt.host, receipt.name, receipt.version));
+            self.say(
+                Tone::Plain,
+                format!("  host {} · 이름 「{}」 · 설치 판 {}", receipt.host, receipt.name, receipt.version),
+            );
         }
-        let status = std::fs::read(self.layout.status()).ok().and_then(|b| serde_json::from_slice::<ServiceStatus>(&b).ok());
+        let status =
+            std::fs::read(self.layout.status()).ok().and_then(|b| serde_json::from_slice::<ServiceStatus>(&b).ok());
         match (&info, status) {
             (Some(info), Some(status)) if info.running && status.pid == info.pid => self.say(
                 if status.connected { Tone::Ok } else { Tone::Warn },
@@ -1329,7 +1378,12 @@ fn cli_name(layout: &Layout) -> String {
 fn width(text: &str) -> usize {
     text.chars()
         .map(|c| match c as u32 {
-            0x1100..=0x115F | 0x2E80..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6 => 2,
+            0x1100..=0x115F
+            | 0x2E80..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6 => 2,
             _ => 1,
         })
         .sum()

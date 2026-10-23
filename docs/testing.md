@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## Windows 설치기 aaa setup(t-0878)
+
+- 흐름은 `cargo test -p aaa --bin aaa setup::`가 macOS에서 본다. 가짜 `System`(SCM·LSA·PATH·등록)과 정해 둔 답의 `Ui`를 쓴다. 질문 순서, 바꾸기 전 점검, 바꾸는 순서(등록 → PATH → 권한 → 서비스 로그온 → 등록 → 시작), 실패·취소의 되돌림(옛 실행 파일·설정 원문·PATH 원문·새 빈 폴더·승인 전 장치 키), 등록 유지 뒤 재실행, 업데이트, 제거와 `--purge`, 남의 서비스 보존, 같은 계정의 권한 보존, 계획 칸 맞춤을 단언한다. 시간은 쓰지 않는다(`pause`가 즉시 돌아온다).
+- Windows 코드는 `cargo xwin clippy -p aaa --bin aaa --target x86_64-pc-windows-msvc -- -D warnings`로 검사한다. 실기는 Windows 시험 PC 규칙(memory machines)대로 전용 폴더·`aaa-test-0878-*` 이름·가짜 관리자 사용자·기준 목록 대조로 한다. 시험 host는 다른 머신에 별도 상태 폴더·포트로 띄우고 운영 host에는 붙지 않는다. 대화형 SSH는 pty 드라이버가 출력 사건(질문·확인 코드·완료 줄)을 기다려 답한다. 승인은 그 시험 host CLI(`AAA_SESSION_ID` 없는 환경)로 한다.
+- 실기 확인 항목: 등록 창 닫힘→Enter, 틀린 암호→다시, 승인, 서비스(계정·세션 0·지연 자동 시작·실패 동작), host 연결, 서비스 pane의 사용자 PATH(표지 `codex.cmd`), 1바이트 다른 실행 파일로 업데이트, 이름 충돌→새 이름, 승인 대기·질문 중 Ctrl+C(130과 되돌림), 터미널 없는 SSH(2), 관리자가 아닌 SSH(2), 제거·purge 뒤 권한 회수. 탐색기 더블클릭(UAC 창)은 사용자 데스크톱에 창을 띄우므로 사용자 확인으로 남긴다.
+- 정리 주의: 가짜 사용자로 비밀번호 SSH 로그온·서비스 로그온을 한 뒤에는 그 사용자를 지워도 프로필 hive(`HKU\<SID>`·`_Classes`)가 `Loaded`로 남을 수 있다. 그 SID의 프로세스·로그온 세션이 없어도 남았고 `reg unload`는 거부됐다. 재부팅·sshd 재시작은 하지 않으므로 그 프로필 폴더는 다음 재부팅 뒤 `Remove-CimInstance`로 지우고 보고에 남긴다. BITS 시작 방식은 Windows가 Auto↔Manual로 바꾸므로 기준 대조에서 시험 변경으로 세지 않는다(t-0853과 같은 관찰).
+
 ## 보고서 교체 시험의 Windows 파일 닫힘(t-0862)
 
 - `node --test web/test/reportFile.test.mjs`는 Windows에서 원래 writer의 남은 출력을 쓰고 FD를 닫은 뒤 보고서를 교체한다. POSIX에서는 기존처럼 교체 뒤 옛 FD에 늦게 쓰는 대조를 유지한다. 두 경로 모두 최종 본문 전체가 정확히 일치해야 하며 Windows 시험도 건너뛰지 않는다.

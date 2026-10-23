@@ -64,6 +64,8 @@ pub(crate) fn run(args: &Args) -> ExitCode {
 
 #[cfg(not(windows))]
 pub(crate) fn run(_args: &Args) -> ExitCode {
-    eprintln!("aaa setup은 Windows 설치기다. macOS는 `aaa service install --role agent`(docs/install-runbook.md)를 쓴다.");
+    eprintln!(
+        "aaa setup은 Windows 설치기다. macOS는 `aaa service install --role agent`(docs/install-runbook.md)를 쓴다."
+    );
     ExitCode::from(2)
 }

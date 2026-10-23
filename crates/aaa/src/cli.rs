@@ -1744,9 +1744,7 @@ pub fn main() -> ExitCode {
     use aaa_common::panic_log::{ProcessKind, set_process};
     set_process(match &cli.cmd {
         Cmd::Host => ProcessKind::Host,
-        Cmd::Agent(AgentArgs { cmd: None, .. }) | Cmd::DeploymentGuard { .. } | Cmd::SetupService => {
-            ProcessKind::Agent
-        }
+        Cmd::Agent(AgentArgs { cmd: None, .. }) | Cmd::DeploymentGuard { .. } | Cmd::SetupService => ProcessKind::Agent,
         Cmd::SessionHost { .. } => ProcessKind::SessionHost,
         _ => ProcessKind::Cli,
     });
