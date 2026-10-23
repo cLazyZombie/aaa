@@ -13,3 +13,10 @@
 button.machine-title { justify-content: flex-start; gap: 0; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 button.machine-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius-sm); }
 @media (max-width: 640px) { .machine-info-panel { width: 100%; border-left: 0; } }
+
+.machine-workspaces p { font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.5; }
+.machine-workspace-row { display: flex; gap: var(--space-3); align-items: center; min-height: 52px; padding: var(--space-2) 0; border-bottom: var(--hairline) solid var(--border); font-size: var(--fs-sm); cursor: pointer; }
+.machine-workspace-row > input { flex: 0 0 auto; width: 20px; height: 20px; accent-color: var(--accent); }
+.machine-workspace-row > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.machine-workspace-row small { display: block; margin-top: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
+.machine-workspace-row > span:last-child { color: var(--text-dim); white-space: nowrap; }

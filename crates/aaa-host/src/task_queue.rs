@@ -666,10 +666,23 @@ impl Host {
                         self.spawn_brief(project, tid);
                     }
                 }
+                let workspace = row.task.repo.as_deref().unwrap_or(tasks::REPO_DIR);
+                let running_reason = if let Some(machine) = &row.machine {
+                    match self.workspace_allowed(project, workspace, machine) {
+                        Ok(false) => {
+                            format!("시작한 thread · {machine}의 {workspace} 자동 허용은 꺼짐 · 고정 머신 지정 유지")
+                        }
+                        Ok(true) => "시작한 thread".into(),
+                        Err(e) if e.code == ErrorCode::NotFound => "시작한 thread · 고정 머신 등록이 없다".into(),
+                        Err(e) => return Err(e),
+                    }
+                } else {
+                    "시작한 thread".into()
+                };
                 let (state, why) = match r.status {
                     ThreadStatus::Starting => (S::Starting, "기동 결과 대조 중 · 같은 기동을 다시 보내지 않음"),
                     ThreadStatus::Open if r.error.is_some() => (S::Check, r.error.as_deref().unwrap()),
-                    ThreadStatus::Open => (S::Running, "시작한 thread"),
+                    ThreadStatus::Open => (S::Running, running_reason.as_str()),
                     ThreadStatus::Resolved if r.resolve_pending.is_some() => (S::Running, "resolve 정리 중"),
                     ThreadStatus::Resolved => (S::Finished, "resolve 완료"),
                     ThreadStatus::Parked => (S::Running, "보류 · 자리를 돌려주고 이어 하기를 기다린다"),
@@ -746,6 +759,7 @@ impl Host {
                 continue;
             }
             let mut a = StartArgs {
+                automatic_workspace: None,
                 start_task: None,
                 pool: None,
                 over_limit: None,
@@ -764,9 +778,27 @@ impl Host {
                 attachments: vec![],
             };
             if a.machine.is_none() {
-                a.machine = self.machine_order().0.into_iter().find(|m| {
+                let workspace = t.repo.as_deref().unwrap_or(tasks::REPO_DIR);
+                a.automatic_workspace = Some(workspace.into());
+                let mut allowed = Vec::new();
+                for m in self.machine_order().0 {
+                    if self.workspace_allowed(project, workspace, &m)? {
+                        allowed.push(m);
+                    }
+                }
+                if allowed.is_empty() {
+                    self.queue_status(
+                        project,
+                        &row.task_id,
+                        S::Queued,
+                        &format!("자리 대기: {workspace} 자동 배정이 허용된 연결 머신이 없다"),
+                    )?;
+                    continue;
+                }
+                a.machine = allowed.into_iter().find(|m| {
                     owners.iter().any(|o| &o.machine == m && o.connected && o.profiles.contains(&row.profile))
-                        && (t.repo.as_deref() == Some(tasks::REPO_DIR)
+                        && (t.repo.is_none()
+                            || t.repo.as_deref() == Some(tasks::REPO_DIR)
                             || self.settings(project).repos.iter().any(|r| {
                                 crate::task_repo::repo_name(&r.path) == t.repo.as_deref()
                                     && r.machine.as_deref().or(self.machine_order().1.as_deref()) == Some(m.as_str())
@@ -784,7 +816,9 @@ impl Host {
                 if let Some(w) = warning {
                     return Err(err(ErrorCode::BadRequest, w));
                 }
-                self.apply_task_repo(&mut a, picked.repo.as_deref(), None)?;
+                if let Some(warning) = self.apply_task_repo(&mut a, picked.repo.as_deref(), None)? {
+                    tracing::warn!(project, task = %row.task_id, warning, "고정 머신 지정의 workspace 자동 배정 허용이 꺼져 있다");
+                }
                 self.thread_start_mode(a, "host", true).await
             }
             .await;

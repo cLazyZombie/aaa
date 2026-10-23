@@ -243,7 +243,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.114: rollout의 플랫폼별 후보·대상별 고정 SHA. 옛 host에는 artifacts를 보내지 않는다.
 // 1.115: MachineHealth.info 표시 전용 시스템·harness 판. 옛 agent·host는 선택 칸을 생략·무시한다. AGENT_LINK는 유지한다.
 // 1.116: 보고 판 보관함(LibraryArchive·archived)과 별도 용량(archived_size). 완료 보고는 기본으로 내 보고서에 올린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 116 };
+// 1.117: WorkspaceAccess·WorkspaceAccessSet와 시작 미리보기의 머신별 자동 배정 허용.
+pub const FRONT_API: Version = Version { major: 1, minor: 117 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -4,6 +4,8 @@ use super::*;
 #[test]
 fn main_ancestor_archives_landing_without_asking_but_keeps_unmerged_and_missing_reports() {
     let mut w = world_with("tick_secs=3600\npr_poll_secs=3600\n");
+    w.h.ok(&["project", "set", "demo", "repos.add", &format!("{}@labA", path_str(&w.repo))]);
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "repo"]);
     let mut events = w.lab.follow("follow", &w.h, "demo");
     let board = w.projects.join("demo/TASKS.md");
     std::fs::write(&board, "## Backlog\n- [ ] 병합됨\n- [ ] 미병합\n- [ ] 보고 커밋\n- [ ] 중단\n").unwrap();

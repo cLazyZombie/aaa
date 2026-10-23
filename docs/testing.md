@@ -3186,3 +3186,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 명령·DOM·state 사건 완료를 기다리고 고정 sleep·재시도·시한 연장은 없다. 전체 ci-local과 공개 검사가 정본이다.
 
 - E2E58의 가짜 CLI는 `--version`을 로그인 FIFO와 분리한다. 수정 전 fixture에 `--version`을 주고 로그인 신호를 쓰면 인증 파일을 만드는 대조로 신호 소비를 확인했다. 두 가짜 CLI의 판 조회는 FIFO writer 없이 완료돼야 하며 실제 로그인·취소·계정 선택 단언과 기존 시간 상한은 유지한다.
+
+## 머신별 workspace 자동 배정 허용(t-0935)
+
+- `cargo test -p aaa-host workspace_access::`: 최초 기존 조합 전체 켜짐·전환 재실행/재시작 뒤 꺼짐 보존·새 머신/저장소/프로젝트 꺼짐, Reader/세션 agent 쓰기 거부·Owner 쓰기·판 충돌, 저장소/작업 폴더 자동 후보 필터·고정 머신 경고, 미설정 자동 예약의 queued·대기 이유·미기동을 검사한다.
+- E2E99 `99-machine-workspaces`: 실제 host/agent에서 Chromium·WebKit의 1280/390 화면으로 Owner 체크 저장·Reader 읽기/직접 API 쓰기 거부·다른 기기 갱신·판 충돌과 경로 정본을 확인하고 화면을 캡처한다. CLI 자동 시작의 후보 없음, 큐 대기 이유, 웹 자동/고정 구분과 허용 뒤 실제 자동 시작을 확인한다. 고정 sleep·실패 재시도·시한 연장은 없다.
+- 기존 m13 작업 폴더 keeper와 자동 저장소 시작 keeper, E2E47에는 실제 사용할 workspace 허용을 준비 단계에 명시한다. 로컬 repos.add의 /tmp → /private/tmp 정본화와 혼동하지 않도록 저장소 keeper는 경로@머신으로 등록한다. 기존 단언·시한은 유지한다.
+- 참고·정책·새 기본값·API는 [workspace-access.md](workspace-access.md)에 적었다. 정본은 전체 로컬 ci-local·Linux strict cross clippy·공개 검사다. 착지 창 전에는 병합·push하지 않고 GitHub CI는 기다리지 않는다.

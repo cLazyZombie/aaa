@@ -105,6 +105,7 @@ mod watch;
 mod watch_event;
 pub mod web;
 mod web_publication;
+mod workspace_access;
 mod workspace_metrics;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -891,6 +892,7 @@ impl Host {
             restore_tried: Mutex::new(HashSet::new()),
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
+        host.migrate_workspace_access()?;
         host.account_meta_backfill();
         host.backfill_report_stages()?;
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
@@ -1471,6 +1473,9 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
+        if matches!(&req, FrontRequest::WorkspaceAccessSet { .. }) && !account_meta::shows_email(role, actor) {
+            return Err(err(ErrorCode::Forbidden, "workspace 허용 변경은 Owner(웹 조작 기기·aaa 세션 밖 CLI)만 한다"));
+        }
         // 계정 인증 파일을 넣고 빼는 것은 host의 세션 밖 터미널만 한다
         if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
             && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
@@ -1709,6 +1714,12 @@ impl Host {
                 web_listen: self.web_listen.lock().unwrap().clone(),
                 machines: self.machine_views(),
             })),
+            FrontRequest::WorkspaceAccess { project, machine } => {
+                self.workspace_access_view(&project, &machine).map(FrontResponse::WorkspaceAccess)
+            }
+            FrontRequest::WorkspaceAccessSet { project, machine, workspace, enabled, revision } => self
+                .workspace_access_set(&project, &machine, &workspace, enabled, &revision, actor)
+                .map(FrontResponse::WorkspaceAccess),
             FrontRequest::Machines => Ok(FrontResponse::Machines { machines: self.machine_views() }),
             FrontRequest::Panes { role: want } => {
                 // 기본은 평가자 세션을 빼고, 역할을 주면 그 역할만(§8.13)
@@ -1777,6 +1788,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    automatic_workspace: None,
                     start_task: None,
                     pool: pool_request,
                     over_limit,

@@ -1393,6 +1393,16 @@ enum WorkspaceCmd {
 #[derive(Subcommand)]
 enum MachineCmd {
     List,
+    /// 머신별 workspace 자동 배정 허용을 읽거나 바꾼다(변경은 세션 밖 CLI만).
+    Workspaces {
+        name: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, conflicts_with = "deny")]
+        allow: Option<String>,
+        #[arg(long)]
+        deny: Option<String>,
+    },
     /// 등록 창을 연다(예: --open 10m)
     Enroll {
         #[arg(long, default_value = "10m")]
@@ -2447,6 +2457,26 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 MachineCmd::List => FrontRequest::Machines,
+                MachineCmd::Workspaces { name, project, allow, deny } => {
+                    let project = project_or_here(project)?;
+                    let request = FrontRequest::WorkspaceAccess { project: project.clone(), machine: name.clone() };
+                    if let Some(workspace) = allow.as_ref().or(deny.as_ref()) {
+                        let view = match front_call(request)? {
+                            Ok(FrontResponse::WorkspaceAccess(view)) => view,
+                            Err(e) => return front_print(json, Err(e)),
+                            _ => anyhow::bail!("workspace 허용 응답이 아니다"),
+                        };
+                        FrontRequest::WorkspaceAccessSet {
+                            project,
+                            machine: name,
+                            workspace: workspace.clone(),
+                            enabled: allow.is_some(),
+                            revision: view.revision,
+                        }
+                    } else {
+                        request
+                    }
+                }
                 MachineCmd::Enroll { close: true, .. } => FrontRequest::EnrollClose,
                 MachineCmd::Enroll { open, .. } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
                 MachineCmd::Pending => FrontRequest::EnrollPending,
@@ -4812,6 +4842,12 @@ fn render_front(r: &FrontResponse) -> String {
             let _ = writeln!(s, "codex hook: {}", if v.codex_installed { "설치됨" } else { "없음" });
             if let Some(p) = &v.codex_problem {
                 let _ = writeln!(s, "{p}");
+            }
+        }
+        FrontResponse::WorkspaceAccess(v) => {
+            let _ = writeln!(s, "{} · {}", v.project, v.machine);
+            for row in &v.workspaces {
+                let _ = writeln!(s, "{}: {}", row.workspace, if row.enabled { "켜짐" } else { "꺼짐" });
             }
         }
         FrontResponse::ProjectSettings(v) => {

@@ -3233,6 +3233,23 @@ pub enum FrontRequest {
         project: String,
     },
     /// FRONT_API 1.77. 저장소 하나를 제자리에서 바꾼다(`PATH[@MACHINE]`, `repos.remove`+`repos.add`를 한 번에, 차례는 그대로)
+    /// 머신별 workspace 자동 배정 허용(Reader도 읽는다). 경로는 project 설정이 정본이다.
+    WorkspaceAccess {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        machine: String,
+    },
+    /// Owner(웹 조작 기기·세션 밖 CLI)만 허용을 바꾼다.
+    WorkspaceAccessSet {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        machine: String,
+        workspace: String,
+        enabled: bool,
+        revision: String,
+    },
     ProjectRepoEdit {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3430,6 +3447,8 @@ impl FrontRequest {
             | FrontRequest::AutomationRestore { project, .. }
             | FrontRequest::AutomationRun { project, .. }
             | FrontRequest::ProjectSettings { project }
+            | FrontRequest::WorkspaceAccess { project, .. }
+            | FrontRequest::WorkspaceAccessSet { project, .. }
             | FrontRequest::ProjectRepoEdit { project, .. }
             | FrontRequest::ThreadResolvePreview { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
@@ -3494,6 +3513,7 @@ impl FrontRequest {
                 | FrontRequest::AutomationConvert { dry_run: true, .. }
                 | FrontRequest::AutomationRead { .. }
                 | FrontRequest::AutomationValidate { .. }
+                | FrontRequest::WorkspaceAccess { .. }
                 | FrontRequest::ProjectSettings { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
@@ -3801,6 +3821,7 @@ pub enum FrontResponse {
     },
     /// `project_settings`·`project_repo_edit`의 답
     ProjectSettings(crate::ProjectSettingsView),
+    WorkspaceAccess(crate::WorkspaceAccessView),
     Safety(crate::SafetyView),
     ProfileAdmin(crate::ProfileAdminView),
     ProfilePlan(crate::ProfilePlanView),

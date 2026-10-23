@@ -368,6 +368,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            automatic_workspace: None,
             start_task: None,
             pool: None,
             over_limit: None,
@@ -408,6 +409,7 @@ impl Host {
             warnings: warning.into_iter().collect(),
             repo: t.repo,
             local_machine,
+            workspace_access: self.workspace_access_preview(project)?,
             machine_order,
         }))
     }

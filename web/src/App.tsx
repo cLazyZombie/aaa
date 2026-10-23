@@ -1668,7 +1668,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         </ErrorBoundary>
         </div>
       </main>
-      {machineInfo && machines.find(m => m.id === machineInfo) && <MachineInfoPanel machine={machines.find(m => m.id === machineInfo)!} onClose={closeMachineInfo} />}
+      {machineInfo && machines.find(m => m.id === machineInfo) && <MachineInfoPanel key={machineInfo} role={role} machine={machines.find(m => m.id === machineInfo)!} onClose={closeMachineInfo} />}
       <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
         <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
