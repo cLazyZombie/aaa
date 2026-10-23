@@ -341,7 +341,7 @@ function QuestionCard({
     };
   }, []);
   const customId = useId();
-  const off = pending || !canControl || !!q.format_warning;
+  const off = pending || !canControl;
   const text = custom.trim();
   const got = picks.filter((p) => p !== null).length;
   const all = got === q.items.length;
@@ -368,7 +368,7 @@ function QuestionCard({
         {t ? <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
           : <span className="prompt-card-where">coordinator · {when(request!.created_ms)}</span>}
       </header>
-      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">{q.format_warning} 보고를 고친 뒤 답할 수 있다.</p>}
+      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">{q.format_warning} 아래에 보이는 선택지를 고르거나 직접 답을 입력할 수 있다.</p>}
       <QuestionReports items={q.items} body={request?.body} reportId={t?.report_id} project={t?.project} base={base} />
       {request && <h2 className="ask-card-title">{request.title}</h2>}
       {q.items.map((item, n) => {

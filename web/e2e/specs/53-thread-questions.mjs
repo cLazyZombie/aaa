@@ -378,7 +378,7 @@ export default async function ({ page }) {
     }
     aaa("thread", "resolve", "demo", t.id);
   }).finally(async () => { if (wk) await wk.close(); });
-  await step("강조 선택지·번호 목록 질문: M3 2개·3/2개 선택지, 누락 경고와 답 거부·inbox·수정 뒤 같은 글자 전달", async () => {
+  await step("강조 선택지·번호 목록 질문: M3 2개·3/2개 선택지, 누락 경고·직접 답·inbox·수정 뒤 같은 글자 전달", async () => {
     if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-question-format.md`, "질문 문법 회귀 시험\n");
     const t = aaa("thread", "start", "demo", "--title", "M3 질문 문법", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-question-format.md`);
@@ -404,15 +404,14 @@ export default async function ({ page }) {
     try {
       await phone.page.getByTestId("thread-ask-pick-1C").waitFor();
       await shot(phone.page, "53-m3-numbered-emphasis-phone");
-      // 파서가 놓친 첫 선택지를 재현한다. 일부 카드가 남아도 글자를 다시 붙여 보낼 수 없어야 한다.
+      // 일부 선택지를 못 읽어도 보이는 선택지와 직접 답을 쓸 수 있다.
       const broken = await write(source.replace("**A(추천)**", "**A(추천)"));
       await card.getByTestId("question-format-warning").waitFor();
-      if (!(await card.getByTestId("thread-ask-send").isDisabled()) || !(await card.getByTestId("thread-ask-pick-1A").isDisabled())) throw new Error("누락된 카드에서 답할 수 있다");
-      const call = (req) => page.evaluate(async (req) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req) })).json(), req);
-      const denied = await call({ op: "thread_answer", thread: t.id, report_hash: broken.report_hash, picks: [0, 0], text: null });
-      if (!denied.err?.message.includes("형식 확인 필요")) throw new Error(`직접 API가 누락 답을 받았다: ${JSON.stringify(denied)}`);
-      let cliError = ""; try { aaa("question", "answer", broken.questions.items[0].id, "A"); } catch (e) { cliError = String(e); }
-      if (!cliError.includes("형식 확인 필요")) throw new Error(`짧은 ID가 누락 답을 받았다: ${cliError}`);
+      if (await card.getByTestId("thread-ask-pick-1A").isDisabled()) throw new Error("경고가 선택을 막았다");
+      await card.getByTestId("thread-ask-text").fill("누락 원문의 첫 선택지로 진행");
+      await card.getByTestId("thread-ask-send").click();
+      await waitOutput(t.pane, "직접 쓴 답: 누락 원문의 첫 선택지로 진행");
+      await until("경고 카드 직접 답 저장", () => aaa("thread", "show", t.id).questions.answer?.text === "누락 원문의 첫 선택지로 진행");
       const warning = await until("coordinator 경고", () => aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.item_kind === "question-format-warning" && i.subject === t.id));
       if (warning.body.includes("thread inbox 전달 실패")) throw new Error(warning.body);
       const inboxName = `question-format-${broken.report_hash.slice(0,40)}.json`;
@@ -423,7 +422,28 @@ export default async function ({ page }) {
       const empty = await write("[결정 필요] 질문 1개: 누락\n## Questions\n### 1. 진행\n- **A 진행\n");
       if (empty.questions.items.length !== 1 || empty.questions.items[0].text !== "진행" || !empty.questions.format_warning) throw new Error("못 읽은 질문 제목과 경고가 없다");
       await until("비어도 경고 카드", async () => (await card.locator('[role="radio"]').count()) === 0 && (await card.getByTestId("thread-ask-send").isDisabled()));
+      await card.getByTestId("thread-ask-text").fill("선택지가 없어도 진행");
+      await card.getByTestId("thread-ask-send").click();
+      await waitOutput(t.pane, "직접 쓴 답: 선택지가 없어도 진행");
+      await until("빈 카드 직접 답 저장", () => aaa("thread", "show", t.id).questions.answer?.text === "선택지가 없어도 진행");
       await shot(page, "53-question-format-empty");
+      for (const name of ["r-1931", "r-1994"]) {
+        const raw = fs.readFileSync(fileURLToPath(new URL(`../../../crates/aaa-proto/tests/fixtures/${name}-questions.md`, import.meta.url)), "utf8");
+        const original = await write("[결정 필요] 질문 1개: 원문 회귀\n" + raw);
+        if (original.questions.format_warning || original.questions.items[0].choices.length !== 2) throw new Error(`${name}: 원문 오인식`);
+        const target = name === "r-1931" ? card : phone.page.getByTestId(`thread-ask-${t.id}`);
+        await target.getByTestId("thread-ask-pick-1B").filter({ hasText: original.questions.items[0].choices[1].label }).click();
+        await target.getByTestId("thread-ask-send").click();
+        await until(`${name} 카드 답 저장`, () => aaa("thread", "show", t.id).questions.answer?.summary === "1B");
+        await waitOutput(t.pane, original.questions.items[0].choices[1].label);
+      }
+      const cli = await write("[결정 필요] 질문 1개: CLI\n## Questions\n### 1. 진행\n- A 진행\n");
+      aaa("question", "answer", cli.questions.items[0].id, "A");
+      await until("경고 카드 CLI 답 저장", () => aaa("thread", "show", t.id).questions.answer?.summary === "1A");
+      await waitOutput(t.pane, "사용자 답(1A)");
+      await write("[결정 필요] 질문 1개: thread CLI\n## Questions\n### 1. 진행\n- A 진행\n");
+      aaa("thread", "answer", t.id, "1A");
+      await until("경고 카드 thread CLI 답 저장", () => aaa("thread", "show", t.id).questions.answer?.summary === "1A");
       const repaired = await write(source + "\n");
       if (repaired.questions.format_warning) throw new Error("수정 뒤 경고가 남았다");
       await card.getByTestId("thread-ask-pick-1C").click();
@@ -434,7 +454,7 @@ export default async function ({ page }) {
       const answer = aaa("thread", "show", t.id).questions.answer;
       if (answer?.summary !== "1C 2B") throw new Error(`글자가 달라졌다: ${JSON.stringify(answer)}`);
       const warnings = aaa("inbox", "list", "demo", "--all", "--peek").items.filter((i) => i.item_kind === "question-format-warning" && i.subject === t.id);
-      if (warnings.length !== 2) throw new Error(`보고별 경고 중복: ${JSON.stringify(warnings)}`);
+      if (warnings.length !== 4) throw new Error(`보고별 경고 중복: ${JSON.stringify(warnings)}`);
       if (phone.errors.length) throw new Error(phone.errors.join("; "));
     } finally {
       await phone.page.context().close();

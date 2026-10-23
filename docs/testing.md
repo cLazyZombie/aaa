@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## 질문 형식 경고와 답 전송(t-0956)
+
+- r-1931·r-1994에서 `## Questions` 절을 수정 없이 fixture로 보존한다. `A를 달성한 사건`과 `t3code 고정 판`을 각각 A·T 후보로 센 것이 원인이다. 한글·숫자까지 단어 경계에 포함하여 두 원문 모두 질문 1개·선택지 2개·추천 A를 읽고 경고가 없어야 한다.
+- proto 회귀는 두 원문과 A안·B안·A1을 검사한다. 기존 누락·글자 순서·상한·강조·fence 시험은 유지한다. 머리를 하나도 못 읽으면 원문을 둔 직접 답 카드 하나를 남긴다.
+- E2E53은 실제 host·agent에서 경고 카드 직접 답, 선택지 없는 카드 직접 답, 두 원문의 Chromium·WebKit 카드 B 답, 경고 카드의 짧은 질문 ID CLI 답과 정상 M3 질문을 검증한다. 답 저장·PTY 출력이 완료 사건이다. 기존 답 차단 단언은 의도적으로 답 허용 단언으로 대체한다. Reader 권한·낡은 hash·중복 답·없는 선택지 검사는 그대로다.
+- [herdr-projects v0.2.35 threads](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/threads.rs)·prompt_box와 [MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE)를 확인했다. 이 판은 pane 입력·질문 상태를 다루며 aaa의 Markdown 질문 카드 파서에 해당하는 구현은 없다. [marked의 block 규칙](https://github.com/markedjs/marked/blob/master/src/rules.ts)과 [MIT](https://github.com/markedjs/marked/blob/master/LICENSE)도 대조했다. 목록 표시와 선택지 문법을 구별하는 원칙만 참고하고 코드·의존성을 추가하지 않는다.
+- 로컬 전체 `nice -n 15 bash scripts/ci-local.sh`, 기존 E2E53, 공개 검사를 실행한다. FRONT_API·E2E 번호와 wire 필드는 유지한다. 경고는 thread inbox로 전달하며 사용자 답을 가로막지 않는다.
+- 실행 기록: 첫 ci-local은 전역 Playwright 1.59.1 때문에 E2E 시작 전에 멈췄다. 작업 폴더에 1.64.1을 설치하고 같은 CI 실행 파일 사본으로 전체 102파일·128작업을 실행했다. E2E53 포함 127작업 통과, E2E72는 고부하 중 223MiB SSH 전송이 화면 대기 30초를 넘었다(계획 시작 뒤 파일 마지막 쓰기 31.7초, 당시 관측 load 89~330). 분리 실행은 예상한 SSH 거부까지 갔지만 첫 실패의 사본이 정리 검사에 걸렸다. SHA·생성 시각으로 자기 사본을 확인해 정리한 뒤 동일 코드·시한·단언으로 전체 E2E72가 13.3초에 통과했다. 시한·기대값·시험 코드는 바꾸지 않았다. 웹 유닛 533개, Rust 1,278개(기존 제외 6개), 의존 경계, native/Linux strict clippy와 공개 검사도 통과했다.
+
 ## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
 
 - `node web/e2e/web.e2e.mjs --spec 98 --workers 1`: 실제 host·agent를 쓰고 Chromium·WebKit 390px에서 기기 이름을 누르면 `#machine=<id>` 한 칸만 더해지는지 검사한다. 가장자리 touchstart/move/cancel 뒤 native `history.back()`으로 원래 thread 목록에 돌아가며, 앞으로 같은 기기 정보가 다시 보인다. 두 번 왕복한 브라우저 기록을 기존 history observer로 비교한다(Chromium은 CDP의 실제 기록·위치, WebKit은 기록 길이).

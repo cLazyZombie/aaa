@@ -345,9 +345,6 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "질문 본문이 다르다. 다시 읽고 답한다"));
         }
         let parsed = aaa_proto::parse_report_questions(&post.input.body);
-        if let Some(warning) = parsed.warning {
-            return Err(err(ErrorCode::BadRequest, warning));
-        }
         let mut parsed = parsed.items;
         if parsed.is_empty() {
             parsed.push(aaa_proto::ThreadQuestion {

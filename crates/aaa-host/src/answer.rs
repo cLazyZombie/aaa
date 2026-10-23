@@ -87,9 +87,6 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let rec = self.load(project, id)?;
-        if let Some(warning) = &rec.question_warning {
-            return Err(err(ErrorCode::BadRequest, warning.clone()));
-        }
         if rec.questions.is_empty() {
             return Err(err(ErrorCode::BadRequest, format!("{id}에는 답할 질문이 없다")));
         }
