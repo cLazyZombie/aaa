@@ -13,6 +13,7 @@ mod restart;
 mod rollout;
 mod service;
 mod settings;
+mod setup;
 mod update;
 mod work_root;
 

@@ -293,6 +293,33 @@ async fn session_state(
 /// `aaa agent enroll <host:port>`: 등록 창이 열린 host에 장치 키를 등록한다.
 /// 양쪽이 같은 6자리 확인 코드를 계산하고, 사용자가 host에서 그 코드를 입력해 승인한다.
 pub async fn enroll(state: &std::path::Path, addr: &str, machine_id: &str, name: &str) -> Result<HostPin> {
+    enroll_with(state, addr, machine_id, name, |code, host_fp| {
+        println!("확인 코드: {} {}", &code[..3], &code[3..]);
+        println!("host 머신에서 다음을 실행해 승인한다:");
+        println!("  aaa machine approve {name} --code {code}");
+        println!("(host fingerprint {}…)", &host_fp[..16]);
+    })
+    .await
+}
+
+/// host가 등록을 거부했다(등록 창 닫힘·이름 충돌 등). `aaa setup`이 code로 다음 안내를 고른다
+#[derive(Debug)]
+pub struct EnrollRejected(pub aaa_proto::ErrorBody);
+impl std::fmt::Display for EnrollRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "등록 거부: {}", self.0)
+    }
+}
+impl std::error::Error for EnrollRejected {}
+
+/// `enroll`과 같은 wire. 확인 코드(6자리)와 host fingerprint는 출력하지 않고 `pending`에 넘긴다
+pub async fn enroll_with(
+    state: &std::path::Path,
+    addr: &str,
+    machine_id: &str,
+    name: &str,
+    mut pending: impl FnMut(&str, &str),
+) -> Result<HostPin> {
     let id = tls::load_or_create(state, "aaa-agent")?;
     let tcp = tokio::time::timeout(Duration::from_secs(10), tokio::net::TcpStream::connect(addr))
         .await
@@ -318,12 +345,7 @@ pub async fn enroll(state: &std::path::Path, addr: &str, machine_id: &str, name:
     loop {
         let msg: LinkMsg = rx.control().await?;
         match msg {
-            LinkMsg::EnrollPending => {
-                println!("확인 코드: {} {}", &code[..3], &code[3..]);
-                println!("host 머신에서 다음을 실행해 승인한다:");
-                println!("  aaa machine approve {name} --code {code}");
-                println!("(host fingerprint {}…)", &host_fp[..16]);
-            }
+            LinkMsg::EnrollPending => pending(&code, &host_fp),
             LinkMsg::EnrollAccepted { machine_id: mid } => {
                 if mid != machine_id {
                     bail!("host가 다른 machine ID로 등록했다: {mid}");
@@ -336,7 +358,7 @@ pub async fn enroll(state: &std::path::Path, addr: &str, machine_id: &str, name:
                 save_pin(state, &pin)?;
                 return Ok(pin);
             }
-            LinkMsg::Reject(e) => bail!("등록 거부: {e}"),
+            LinkMsg::Reject(e) => return Err(EnrollRejected(e).into()),
             other => bail!("예상하지 못한 응답: {other:?}"),
         }
     }

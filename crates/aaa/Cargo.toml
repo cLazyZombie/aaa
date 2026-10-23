@@ -40,7 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_Security_Authentication_Identity", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Environment", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Globalization", "Win32_System_SystemServices", "Win32_System_Services", "Win32_UI_Shell"] }
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Security_Authorization", "Win32_Security_Authentication_Identity", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Environment", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Globalization", "Win32_System_SystemServices", "Win32_System_Services", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
