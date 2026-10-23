@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## E2E03 연속 페이지 이동의 늦은 native scroll(t-0870)
+
+- 원본 실패는 30행 화면의 `s-143`·native top 2698px/끝 3249px였다. E2E03 일반 실행은 수정 전에도 통과했다. PageUp의 DOM 동기화 → PageDown → 앞선 native scroll 순서를 고정하면 구판이 같은 위치에서 기존 20초 끝 이동 단언에 실패한다. 재연결·resize는 이 순서를 노출하는 배경이며 오래된 `top0` 기대값이나 키 누락이 직접 원인은 아니다. 원본에는 브라우저 내부 호출 trace가 없어 당시 모든 callback 순서까지 소급 확정하지 않는다.
+- xterm 패치의 자체 동기화 판정은 현재 `buffer.ydisp` 대신 `_innerRefresh`가 DOM에 쓴 뒤 되읽은 위치를 쓴다. 자체 사건을 무시한 뒤 `syncScrollArea()`도 호출한다. 다음 키가 사건 전의 옛 `_lastScrollTop`을 보고 DOM 동기화를 생략할 수 있기 때문이다. 사용자가 다른 위치로 굴린 사건과 reset 중 0 높이 보호는 유지한다.
+- `node --test web/test/xterm-source.test.mjs`는 실제 npm upstream 메서드에 배포 patch를 적용해 실행한다. PageUp 뒤 논리 목표만 바뀐 경계, 늦은 native 사건, 다음 frame의 실제 DOM 위치, 19px·18.5px의 반올림, 자체 동기화와 합쳐진 사용자 이동을 검사한다. 구판은 이동량 -29/기대 0으로 실패했다. 논리 위치만 고친 중간판은 브라우저에서 DOM 2698px/기대 3249px로 실패했다.
+- E2E03의 새 단계는 실제 host·agent·PTY를 두고 Chromium·WebKit 각각 새 연결의 snapshot ACK → 연결 종료 → 새 연결의 snapshot ACK → viewport 변경 → 새 PTY grid와 실제 렌더 순서로 준비한다. PageUp이 만든 trusted native scroll의 capture 경계에서 같은 앱 PageDown 단축키를 호출한다. 버퍼·scrollTop·frame 값을 조작하지 않고 사건 순서만 고정하며, 최종 첫 줄·렌더의 top/base·native scroll 끝을 모두 확인한다. 뒤의 맨 위 이동은 native overflow 경로이며 실제 손가락이나 휠 조작을 재현했다는 뜻은 아니다. 기존 실제 키의 한 화면 이동·키 누출·alternate screen 단언도 유지한다.
+- 참고는 [xterm.js 5.5 Viewport](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Viewport.ts)의 비동기 DOM 동기화와 [CoreTerminal](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/common/CoreTerminal.ts)의 `scrollPages`·`scrollToBottom`, [VS Code XtermTerminal](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts)의 페이지/끝 이동 위임이다. [xterm MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)·[VS Code MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt)를 확인했다. xterm의 기존 API와 frame/scroll 분리를 따르며 외부 코드·의존성을 추가하지 않는다.
+- 정본 검증은 Playwright 1.64.1·격리 브라우저로 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다. 실패 재시도·고정 sleep·시한 증가·기대값 완화는 없다.
+
 ## 보고서 교체 시험의 Windows 파일 닫힘(t-0862)
 
 - `node --test web/test/reportFile.test.mjs`는 Windows에서 원래 writer의 남은 출력을 쓰고 FD를 닫은 뒤 보고서를 교체한다. POSIX에서는 기존처럼 교체 뒤 옛 FD에 늦게 쓰는 대조를 유지한다. 두 경로 모두 최종 본문 전체가 정확히 일치해야 하며 Windows 시험도 건너뛰지 않는다.
