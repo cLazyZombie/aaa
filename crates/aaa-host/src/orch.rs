@@ -2248,6 +2248,10 @@ impl Host {
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let old_pane = rec.pane.clone();
         let mut env = launch.env.clone();
+        env.retain(|(key, _)| key != aaa_proto::AUTOMATION_REENTRY_ENV);
+        if let Some(text) = crate::automation_thread::reentry(rec) {
+            env.push((aaa_proto::AUTOMATION_REENTRY_ENV.into(), text));
+        }
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
         env.push(("AAA_THREAD".into(), rec.id.clone()));
         let spec = SpawnSpec {

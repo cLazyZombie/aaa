@@ -165,12 +165,17 @@ pub fn guide_kind(p: &Value) -> Option<&'static str> {
 }
 
 /// 사건 하나에 넣을 안내(herdr-projects progress.rs `respond`, 글은 한국어로 옮김). 시계는 인자로 받는다.
-pub fn respond(rec: &mut Progress, kind: &str, prefix: &str, now_ms: u64) -> Option<String> {
+pub fn respond(rec: &mut Progress, kind: &str, prefix: &str, now_ms: u64, reentry: Option<&str>) -> Option<String> {
     match kind {
         "SessionStart" => {
             // 이 pane의 새 세션: 옛 보고는 더 이 세션을 말하지 않는다
             *rec = Progress { reminded_at: now_ms, ..Progress::default() };
-            Some(format!("# 진행 보고(aaa)\n\n{}", aaa_proto::progress_guidance(prefix)))
+            let mut text = format!("# 진행 보고(aaa)\n\n{}", aaa_proto::progress_guidance(prefix));
+            if let Some(reentry) = reentry {
+                text.push_str("\n\n");
+                text.push_str(reentry);
+            }
+            Some(text)
         }
         "UserPromptSubmit" => {
             rec.reminded_at = now_ms;
@@ -589,26 +594,37 @@ mod tests {
         assert_eq!(guide_kind(&json!({"hook_event_name":"Stop"})), None);
     }
 
+    #[test]
+    fn automation_reentry_is_session_start_context_only() {
+        let mut rec = Progress::default();
+        let reentry = "자동화 기억 재독: /work/.aaa/demo-t-0001/memory/memory.md";
+        for kind in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
+            let text = respond(&mut rec, kind, "aaa", 1_000_000, Some(reentry)).unwrap_or_default();
+            assert_eq!(text.contains(reentry), kind == "SessionStart", "{kind}: {text}");
+        }
+    }
+
     /// herdr-projects progress.rs `session_start_injects_instructions_and_resets_the_record`·
     /// `reminders_are_throttled_to_once_a_minute_and_stop_at_done`(초를 ms로)
     #[test]
     fn session_start_guides_and_reminders_are_throttled_to_once_a_minute() {
         let mut rec = Progress { percent: Some(50), reported_at: 5, reminded_at: 0 };
-        let text = respond(&mut rec, "SessionStart", "/p/aaa", 1_000_000).unwrap();
+        let text = respond(&mut rec, "SessionStart", "/p/aaa", 1_000_000, None).unwrap();
         assert!(text.contains("`/p/aaa report --percent 25"), "{text}");
+        assert!(!text.contains("자동화 기억"), "일반 thread에 기억 재독 안내가 섞였다: {text}");
         assert_eq!(rec, Progress { reported_at: 0, percent: None, reminded_at: 1_000_000 });
 
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_030_000).is_none());
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_061_000).is_some());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_030_000, None).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_061_000, None).is_some());
         assert_eq!(rec.reminded_at, 1_061_000);
         // 새 보고도 1분 동안 알림을 멈춘다
         rec.reported_at = 1_100_000;
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_130_000).is_none());
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_200_000).is_some());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_130_000, None).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_200_000, None).is_some());
         rec.percent = Some(100);
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 9_000_000).is_none());
-        assert!(respond(&mut rec, "UserPromptSubmit", "aaa", 9_001_000).unwrap().contains("Waiting for you"));
-        assert!(respond(&mut rec, "Stop", "aaa", 9_002_000).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 9_000_000, None).is_none());
+        assert!(respond(&mut rec, "UserPromptSubmit", "aaa", 9_001_000, None).unwrap().contains("Waiting for you"));
+        assert!(respond(&mut rec, "Stop", "aaa", 9_002_000, None).is_none());
         let out: Value = serde_json::from_str(&output("PostToolUse", "hi")).unwrap();
         assert_eq!(out, json!({"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"hi"}}));
     }

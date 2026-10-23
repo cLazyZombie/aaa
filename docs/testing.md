@@ -1,5 +1,24 @@
 # 시험 쓰는 법
 
+## 자동화 기억의 압축·재개 재독(t-0941)
+
+- `cargo test --locked -p aaa --test m13 automation_memory_reentry_`는
+  격리 host·실제 agent·PTY의 가짜 Claude/Codex에서 `reuse=open`, `memory=true` 자동화를 띄운다.
+  최초 기억을 옮긴 뒤 thread의 기억 파일을 바꾸고 `SessionStart(compact)`·`resume`을 CLI로 보낸다.
+  resume 전에는 agent를 실제로 재연결하여 세션 명세의 재독 문맥이 유지되는지도 본다.
+  가짜 harness는 hook 응답의 절대 경로를 열어 최신 bytes를 기록한다. 기록 파일 생성이 완료 사건이며
+  하위 agent 사건은 응답이 비어야 한다. 재독 안내를 제거한 변형은 두 harness 모두 compact 뒤
+  기억이 null이어서 실패한다. 실제 모델의 지시 이행·유료 모델의 실제 압축을 대신 검증하지 않는다.
+- host의 `reuse_accepts_codex_and_seeds_memory_reentry_only_when_enabled`는 Codex 승인·기억 선전송·두 번째 입력의
+  같은 thread 재사용과 `memory=false` 안내 부재를 검사한다. Codex 거부가 남은 원본에서 실패를 확인한다.
+  CLI `codex_hook_cli_reaches_host_and_returns_guidance`는 일반 세션 안내·내구 명세의 기억 안내·압축·재개·하위 agent 제외를 검사한다.
+  hook 유닛 시험은 진행 안내와 기억 안내가 SessionStart에서 함께 오고 다른 사건에 기억 안내가 없는지 검사한다.
+- 참고 후보는 [Codex hooks](https://learn.chatgpt.com/docs/hooks#sessionstart)([Codex Apache-2.0](https://github.com/openai/codex/blob/main/LICENSE))와
+  [herdr Codex hook](https://github.com/herdrdev/herdr/blob/v0.9.5/src/integration/assets/codex/herdr-agent-state.sh)([Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.9.5/LICENSE))다.
+  SessionStart의 추가 문맥과 세션 귀속 경계를 따른다. [Claude SessionStart](https://code.claude.com/docs/en/hooks#sessionstart)도 대조했다.
+  Claude Code 저장소는 상용 약관 적용으로 OSS로 간주하지 않는다. 외부 코드·의존성은 추가하지 않는다.
+- 전체 로컬 ci-local·Linux strict cross·의존 경계·공개 검사가 정본이다. 고정 sleep·실패 재시도·시한 확대는 없다.
+
 ## E2E93 재개 뒤 출력 구독과 종료 입력(t-0927)
 
 - t-0926 원본의 quit 5바이트는 host→agent→session PTY 쓰기 완료였고, 14:06:48.410Z에 agent의 `released` 감지도 있었다. 그러나 재연결 직후 보낸 두 session subscribe가 14:07:00.690Z에 모두 15초로 만료됐다. 화면은 `app-history-4`에 멈췄다. 부하 17.00/8.08/7.91을 시한 연장의 근거로 쓰지 않는다. 원본 보고·두 로그·화면/DOM/network 진단·검증 archive의 모든 파일을 읽고 사본을 보존했다. 당시 잠금 획득 순서는 로그에 없어 소급 확정하지 않으며, 아래 keeper에서 원본과 일치하는 구독 응답 유실 경로를 입증한다.

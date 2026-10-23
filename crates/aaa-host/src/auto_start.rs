@@ -146,11 +146,6 @@ impl Host {
         }
         for profile in &a.profiles {
             self.check_profile_allowed(p, profile)?;
-            if a.reuse == crate::automation::Reuse::Open
-                && self.configured_thread_profile(Some(p), profile)?.harness == "codex"
-            {
-                return Err(bad("do.start.reuse: Codex는 compaction 뒤 기억 재독 hook이 없어 open을 지원하지 않는다"));
-            }
         }
         let mut source_repos = BTreeSet::new();
         let query_machine = match &r.trigger {

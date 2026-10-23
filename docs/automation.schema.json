@@ -586,6 +586,7 @@
         },
         "memory": {
           "default": false,
+          "description": "open 전용. 기억을 보존하고 SessionStart(압축·재개 포함)에서 brief와 memory.md 재독을 안내한다.",
           "type": "boolean"
         },
         "profile_pick": {
@@ -610,7 +611,8 @@
         },
         "reuse": {
           "$ref": "#/$defs/Reuse",
-          "default": "new"
+          "default": "new",
+          "description": "new는 새 thread, open은 같은 규칙의 열린 thread에 이어 보냄(Claude·Codex)."
         },
         "text": {
           "type": [

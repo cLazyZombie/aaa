@@ -211,8 +211,10 @@ pub(crate) enum Reuse {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Start {
     #[serde(default)]
+    /// new는 새 thread, open은 같은 규칙의 열린 thread에 이어 보냄(Claude·Codex).
     pub reuse: Reuse,
     #[serde(default)]
+    /// open 전용. 기억을 보존하고 SessionStart(압축·재개 포함)에서 brief와 memory.md 재독을 안내한다.
     pub memory: bool,
     #[serde(default)]
     pub reports: bool,

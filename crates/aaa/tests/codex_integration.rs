@@ -649,6 +649,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     let start = invoke("s1", &token, Some(id), event("SessionStart", "startup")).await;
     let text = guidance(start, "SessionStart");
     assert!(text.contains("report --percent 25") && text.contains("진행 보고"), "{text}");
+    assert!(!text.contains("자동화 기억"), "일반 thread에 기억 안내가 섞였다: {text}");
     let p =
         state(&mut front, "s1", |p| p.agent.as_ref().is_some_and(|s| s.harness_session.as_deref() == Some(id))).await;
     assert_eq!(p.agent.unwrap().harness, "codex");
@@ -673,10 +674,26 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     let text = guidance(prompt, "UserPromptSubmit");
     assert!(text.contains("Waiting for you") && text.contains("새 일을"), "{text}");
     state(&mut front, "s1", |p| p.agent.as_ref().is_some_and(|s| s.progress.is_none())).await;
-    // 압축도 참고의 SessionStart로만 처리한다. 새 진행 안내를 돌려준다.
+    // host가 저장한 실행 문맥만 쓴다. hook 요청에 이 환경을 넣지 않아도 agent 재연결용 명세에서 읽는다.
+    let paths = SessionPaths::new(&a.state, "s1");
+    let mut spec: SpecFile = util::read_json(&paths.spec()).unwrap();
+    let reentry = "자동화 기억 재독: /work/.aaa/demo-t-0001/memory/memory.md";
+    spec.spec.env.push((aaa_proto::AUTOMATION_REENTRY_ENV.into(), reentry.into()));
+    util::write_json(&paths.spec(), &spec).unwrap();
     let compact = invoke("s1", &token, Some(id), event("SessionStart", "compact")).await;
     let text = guidance(compact, "SessionStart");
     assert!(text.contains("report --percent 25") && text.contains("진행 보고"), "{text}");
+    assert!(text.contains(reentry), "{text}");
+    let resume = invoke("s1", &token, Some(id), event("SessionStart", "resume")).await;
+    assert!(guidance(resume, "SessionStart").contains(reentry));
+    let child = vec![
+        "hook".into(),
+        "--agent".into(),
+        "codex".into(),
+        json!({"hook_event_name":"SessionStart","session_id":id,"source":"compact","agent_id":"child"}).to_string(),
+    ];
+    silent(invoke("s1", &token, Some(id), child).await);
+
     silent(invoke("s1", &token, Some(id), event("PostToolUse", "")).await);
     silent(invoke("s1", &token, Some(id), event("Stop", "")).await);
     silent(
