@@ -3307,3 +3307,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - 첫 세 자리 E2E100을 착지에 배정한 뒤 전체 gate의 파일 규칙 검사에서 RED를 확인했다. runner discovery도 두 자리만 받던 원인이므로 파일 규칙과 수집을 함께 두 자리 이상으로 바꾼다. 목록·단일 worker 실행·요약·시간 기록과 patch 파일 목록은 숫자 순을 따른다. 기존 LPT 배치와 단계 분할은 유지한다.
 - `e2e-layout.test.mjs`는 실제 runner의 `--list`에서 디렉터리의 모든 파일이 정확히 한 번 수집되고 E2E99 바로 다음에 E2E100이 오는지 검사한다. 기존 파일 형식·단계 이름 중복·harness export·duration 소유 검사는 유지한다. 시험을 제외하거나 번호를 재사용하지 않는다. 전체 gate는 새 수리 SHA에서 처음부터 한 번 실행한다.
+
+## README 촬영과 E2E 목록 출력
+
+- `web/e2e/showcase.mjs --readme`는 실제 격리 host·agent와 가짜 agent로 README 매체를 만든다. 폐기된 evaluator 호출을 제거하고 auto mode·자동화·workspace 화면을 포함한다. 화면과 보고 사건으로 준비를 확인하며 가짜 thread 완료는 FIFO로 제어한다. 고정 sleep 제거에 맞춰 `fixed-sleeps.json`의 기존 허용 3건도 제거했다.
+- 새 thread의 행은 pane 준비보다 먼저 도착할 수 있다. GIF는 `thread show`의 pane과 `pane wait-output`의 실제 작업 출력을 확인한 뒤 해당 pane을 연다. 시한 연장으로 준비 경합을 숨기지 않는다.
+- `e2e-layout.test.mjs`의 전체 목록 단언이 첫 검증에서 실패했다. 102개 파일 중 stdout이 64개에서 잘렸다. 원인은 `--list`의 비동기 파이프 출력 직후 `process.exit(0)`였다. 목록을 한 번 쓰고 write callback 완료 뒤 종료하도록 고쳤다. 기존 전체 파일·중복·숫자 정렬 단언을 유지한다.
+- 촬영 격리·매체 목록·OSS 구성 참고는 [README 매체](readme-media.md)에 적었다. 실제 설치·서비스 변경은 이 문서 작업에서 실행하지 않는다.

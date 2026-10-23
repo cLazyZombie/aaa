@@ -78,10 +78,9 @@ const picked = specs
 if (!picked.length) throw new Error(`고른 파일이 없다(--spec ${opt.spec ?? "-"}, --grep ${grep ?? "-"}): --list로 이름을 본다`);
 
 if (opt.list) {
-  for (const s of picked) {
-    console.log(`specs/${s.file}`);
-    for (const n of s.steps.filter((n) => !only || only.test(n))) console.log(`  ${n}`);
-  }
+  // 파이프 stdout은 비동기다. 종료 전에 마지막 바이트까지 전달해 목록이 잘리지 않게 한다.
+  const lines = picked.flatMap(s => [`specs/${s.file}`, ...s.steps.filter(n => !only || only.test(n)).map(n => `  ${n}`)]);
+  await new Promise((resolve, reject) => process.stdout.write(`${lines.join("\n")}\n`, error => error ? reject(error) : resolve()));
   process.exit(0);
 }
 
