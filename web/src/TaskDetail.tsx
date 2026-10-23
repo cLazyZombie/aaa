@@ -142,6 +142,8 @@ export function agentNames(owners: readonly OwnerChoice[] | null): string[] {
 
 export interface DetailProps {
   queueApi?: boolean;
+  /** host가 예약의 앞 할 일을 안다(FRONT_API 1.113) */
+  afterApi?: boolean;
   /** 목록이 연 예약(끌어 놓기·⋯): 내용 확인을 바로 연다 */
   reserveRequest?: ReserveRequest | null;
   /** 예약 위로·아래로·맨 앞으로(목록이 거르기에 맞춰 순번을 정한다) */
@@ -221,7 +223,7 @@ export function TaskDetail(props: DetailProps) {
         </button>
         <span className="task-detail-list">{t ? `${t.short_id ? `${t.short_id} · ` : ""}${t.line}줄` : props.gone ? "파일에서 빠짐" : "새 할 일"}</span>
       </header>
-      {t && props.queueApi && <QueueControls task={t} board={props.board} canEdit={props.canEdit} request={props.reserveRequest} onStep={props.onQueueStep && ((dir) => props.onQueueStep!(t, dir))} onUnreserved={props.onUnreserved} />}
+      {t && props.queueApi && <QueueControls task={t} board={props.board} canEdit={props.canEdit} afterApi={props.afterApi} request={props.reserveRequest} onStep={props.onQueueStep && ((dir) => props.onQueueStep!(t, dir))} onUnreserved={props.onUnreserved} />}
       {props.canEdit ? <TaskForm {...props} onCover={setCovered} /> : t && <ReadOnly {...props} onCover={setCovered} t={t} />}
     </aside>
   );

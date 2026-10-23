@@ -340,7 +340,11 @@ export type HealthProblem = { code: string, text: string, };
 
 export type QueueState = "queued" | "check" | "starting" | "running" | "finished" | "cancelled";
 
-export type QueueOp = { "op": "list" } | { "op": "reserve", task: string, block: string, profile: string, profile_revision: string, } | { "op": "cancel", task_id: string, } | { "op": "move", task_id: string, position: number, };
+export type QueueOp = { "op": "list" } | { "op": "reserve", task: string, block: string, profile: string, profile_revision: string,
+/**
+ * 앞 할 일(ID·제목). 그 할 일이 완료 보관될 때까지 이 예약은 시작하지 않는다(FRONT_API 1.113). 생략하면 바로 자리 대기
+ */
+after?: string, } | { "op": "cancel", task_id: string, } | { "op": "move", task_id: string, position: number, };
 
 export type TaskChoicePin = { owner: string | null, profile: string, machine: string | null, actor: string, at_ms: number, };
 
@@ -349,6 +353,14 @@ export type TaskReservation = { selection: TaskChoicePin, task_id: string, task:
  * 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
  */
 launch_id: string | null, thread: string | null,
+/**
+ * 앞 할 일의 ULID(FRONT_API 1.113). 완료 보관되기 전에는 자리 대기에 들지 않는다.
+ */
+after?: string,
+/**
+ * 앞 할 일의 표시 ID. 저장값 대신 host가 조회 때 채운다.
+ */
+after_short_id?: string,
 /**
  * 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
  */

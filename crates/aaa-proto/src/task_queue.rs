@@ -23,6 +23,10 @@ pub enum QueueOp {
         block: String,
         profile: String,
         profile_revision: String,
+        /// 앞 할 일(ID·제목). 그 할 일이 완료 보관될 때까지 이 예약은 시작하지 않는다(FRONT_API 1.113). 생략하면 바로 자리 대기
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        after: Option<String>,
     },
     Cancel {
         task_id: String,
@@ -62,6 +66,14 @@ pub struct TaskReservation {
     /// 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
     pub launch_id: Option<String>,
     pub thread: Option<String>,
+    /// 앞 할 일의 ULID(FRONT_API 1.113). 완료 보관되기 전에는 자리 대기에 들지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub after: Option<String>,
+    /// 앞 할 일의 표시 ID. 저장값 대신 host가 조회 때 채운다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub after_short_id: Option<String>,
     /// 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

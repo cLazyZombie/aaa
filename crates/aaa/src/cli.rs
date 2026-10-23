@@ -600,6 +600,9 @@ enum TaskCmd {
         block: Option<String>,
         #[arg(long)]
         profile: Option<String>,
+        /// 앞 할 일(ID·제목). 그 할 일이 완료 보관된 뒤에 자리 대기에 든다(예약을 갱신할 때 다시 준다)
+        #[arg(long, value_name = "ID_OR_TITLE")]
+        after: Option<String>,
     },
     /// 아직 시작하지 않은 예약을 취소한다(실행 중 thread는 그대로)
     Unreserve { task_id: String },
@@ -1911,7 +1914,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Task { cmd: TaskCmd::Queue } => {
             front(json, FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::List })
         }
-        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile } } => {
+        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile, after } } => {
             let project = project_or_here(None)?;
             let response = front_call(FrontRequest::ThreadStartPreview {
                 project: project.clone(),
@@ -1931,6 +1934,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         block: p.task_block,
                         profile: profile.unwrap_or(p.profile),
                         profile_revision: p.profile_revision,
+                        after,
                     },
                 },
             )
@@ -3346,6 +3350,12 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
         if matches!(&req, FrontRequest::TaskLog { task: Some(_), .. }) && c.proto.minor < 89 {
             anyhow::bail!("ID로 기록을 찾으려면 Front API 1.89 이상 host가 필요하다");
+        }
+        // 옛 host는 모르는 앞 할 일 칸을 버리고 바로 자리 대기에 넣는다.
+        if matches!(&req, FrontRequest::TaskQueue { action: aaa_proto::QueueOp::Reserve { after: Some(_), .. }, .. })
+            && c.proto.minor < 113
+        {
+            anyhow::bail!("앞 할 일을 붙인 예약은 Front API 1.113 이상 host가 필요하다");
         }
         c.call(req).await
     })
@@ -4945,13 +4955,17 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::TaskQueue { entries } => {
             for q in entries {
                 s.push_str(&format!(
-                    "{} · {} · {:?} · {} · 모델 {} · 머신 {} · {}{}\n",
+                    "{} · {} · {:?} · {} · 모델 {} · 머신 {}{} · {}{}\n",
                     q.position,
                     q.task.title,
                     q.state,
                     q.task.short_id.as_deref().unwrap_or(&q.task_id),
                     q.profile,
                     q.machine.as_deref().unwrap_or("자동"),
+                    q.after
+                        .as_ref()
+                        .map(|a| format!(" · {} 완료 뒤", q.after_short_id.as_deref().unwrap_or(a)))
+                        .unwrap_or_default(),
                     q.reason,
                     q.thread
                         .as_ref()
