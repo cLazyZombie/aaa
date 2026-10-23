@@ -7370,7 +7370,7 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - 사용자 결정에 따라 workspace와 그 아홉 package의 lockfile 판을 0.1.4로 맞춘다. 외부 의존성 판·실행 코드·설치 계약은 바꾸지 않는다. main 42dc637d의 Windows JobObjects 일반 의존성과 dev 없는 production release 빌드 검사를 포함한다.
 - 기존 v0.1.3 tag는 지우거나 옮기지 않는다. 버전 후보 검증·착지 창·main 병합 뒤 정확한 대상 main의 CI 네 job 전체 성공을 확인하고, 승인된 이번 한 번 v0.1.4 tag push·release 게시를 진행한다. release workflow 전체 성공과 publish, 실제 Windows bootstrap 다운로드의 SHA를 source·manifest·SHA256SUMS와 대조한 뒤에만 사용자 인수를 요청한다. 빌드가 실패하면 tag를 유지하고 원인을 보고한다.
-- pc-main 안내는 준비물·고정 판 다운로드·명령·확인·되돌리기·문제 로그를 유지하며 실제 내려받은 판/SHA로 채워 [검수 대기]로 보고한다. CI와 교차 검증은 실제 사용자 PC의 SCM logon·Session 0·부팅·LSA/UAC·조직 정책 인수를 대신하지 않는다. main의 마지막 §8.435·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인해 빈 §8.436을 쓰고 API/E2E 번호는 유지한다.
+- Windows PC 안내는 준비물·고정 판 다운로드·명령·확인·되돌리기·문제 로그를 유지하며 실제 내려받은 판/SHA로 채워 [검수 대기]로 보고한다. CI와 교차 검증은 실제 사용자 PC의 SCM logon·Session 0·부팅·LSA/UAC·조직 정책 인수를 대신하지 않는다. main의 마지막 §8.435·FRONT_API 1.106·AGENT_LINK 1.11·E2E 최대 번호86(88파일)을 직접 확인해 빈 §8.436을 쓰고 API/E2E 번호는 유지한다.
 
 ### 8.437 활동 막대 자동화·할 일 아이콘(10-22, t-0727)
 
@@ -7644,3 +7644,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **목적.** 사용자 10-23 「terminal 테마를 기본 테마에도」·「이름은 다 github dark로」. 기존 앱의 `github-dark`를 같은 터미널 색으로 갱신한다. 목록·밝기·시스템 짝을 확장할 필요가 없어 별도 제품 질문 없이 진행한다.
 - **색·이름.** 앱 배경·입력 바탕 #24292e, 글자 #C9D1D9. 앱을 따르는 터미널도 독립 GitHub Dark와 같은 ANSI·커서·선택 색을 쓴다. 나머지 앱 역할은 Primer primitives 7.10.0 dark 값이다. 터미널 표시 이름은 GitHub Dark, 기존 기기 저장 ID `wezterm-github-dark-user`는 유지한다. 앱·host 설정 형식과 FRONT_API·AGENT_LINK는 그대로다.
 - **출처·검증.** Primer·VS Code GitHub Theme의 MIT와 원 터미널 GPL-3.0·모음 MIT 고지를 보존한다. E2E14·06을 확장하고 E2E95에서 Chromium·WebKit의 1280·390px 실제 앱·터미널·대화·질문 카드를 확인한다. UI 대비는 유지하고 사용자 ANSI는 원색을 우선한다. 전체 ci-local·check-public 뒤 묶음 착지를 기다린다. 배포는 별도 승인이다. 절·E2E 번호는 착지 때 main과 대조한다.
+
+### 8.467 Windows 한 번 실행 설치기 `aaa setup`(t-0878)
+
+- **목적.** 사용자 10-23 16:3x 「windows installer 만드는게 이렇게 오래 걸릴 일인가? … 딱 윈도우 installer만드는것만 … 인스톨러의 ux도 신경써달라」. installer 하나를 실행하면 agent 설치·서비스·host 연결까지 한 실행에서 끝난다. 중간 종료 뒤 「같은 ID로 재개」는 없다(사용자 「중간에 멈추면 안되지. 암호는 입력하면 되고」). 기존 `aaa install`(서명 계획·journal·worker) 경로와 별개이며 그 설계를 따르지 않는다. 사용 문서는 [windows-setup](windows-setup.md).
+- **흐름.** 질문(host 주소·이 PC 이름·작업 폴더·Windows 암호)과 점검(관리자·대화형 콘솔·host TCP·`LogonUser` 암호·「서비스로 로그온 거부」)을 바꾸기 전에 끝낸다. 계획을 보이고 확인한 뒤 등록 → 실행 파일 → 설정·PATH → 권한·서비스 로그온 시험·SCM 등록 → 시작·연결 확인을 한다. 등록 창 닫힘·이름 충돌·승인 거절은 그 자리에서 고치고 다시 한다. 기존 수동 등록 wire(`Enroll`·`installation: None`)를 그대로 써서 b6d7bda8 host와 맞는다. agent의 `link::enroll_with`는 확인 코드를 출력 대신 호출자에게 주고, 거부는 `EnrollRejected(ErrorBody)`로 돌려 code로 안내를 고른다. `aaa agent enroll`의 출력은 같다.
+- **되돌리기.** 바꾼 것을 `Change`로 쌓고 실패·Ctrl+C면 거꾸로 되돌린 뒤 `되돌림:`·`남음:`을 보인다. 승인을 마친 등록과 장치 키는 남겨 다시 실행할 때 승인 없이 잇는다. 승인 전 새 장치 키와 새 폴더는 지운다. 설치 기록 `setup.json`은 이 설치기가 넣은 권한·PATH만 적고 `--uninstall`은 그것만 되돌린다. 같은 계정의 다른 서비스가 있으면 권한은 남긴다. 이 설치기가 만들지 않은 같은 이름 서비스는 건드리지 않는다.
+- **서비스.** `"<aaa.exe>" [--instance] setup-service`, 설치한 사용자 계정·자동 시작(지연)·실패 시 5/15/60초 다시 시작(`SERVICE_START`가 있어야 restart 동작을 쓸 수 있다). 서비스 token의 `CreateEnvironmentBlock`으로 사용자 환경을 만들어 사용자 PATH의 codex·claude를 찾는다. 출력은 `agent-service.log`, 연결 여부는 `setup-service.json`(PID 대조)에 쓰고 설치기가 그것으로 연결을 확인한다. `cli::supervised_role(Agent)`를 그대로 쓴다.
+- **콘솔.** 줄 입력은 `ReadConsoleW`를 직접 읽는다. std stdin은 Ctrl+C로 끊긴 읽기를 다시 시작해 Enter까지 취소가 늦기 때문이다. 암호는 echo·줄 입력을 끈 한 글자 읽기로 받고 원래 모드를 모든 경로에서 돌린다. 관리자가 아니면 데스크톱에서는 `runas`로 같은 인자를 다시 실행하고, SSH에서는 바꾸기 전에 멈춘다. 이름이 `aaa-setup`으로 시작하는 실행 파일은 다른 명령이 없으면 `setup`이다.
+- **검증.** macOS의 흐름 시험 18개(가짜 System·Ui)가 질문 순서·바꾼 순서·되돌림·재실행·업데이트·제거·충돌·칸 맞춤을 본다. Windows 11 실기 PC에서 전용 가짜 관리자 사용자의 대화형 SSH(ConPTY)로, 다른 Mac에 띄운 별도 시험 host(운영과 같은 b6d7bda8)에 붙여 했다. 등록 창 닫힘→Enter, 틀린 암호→다시, 승인, 서비스(세션 0·지연 자동·실패 동작), 연결, 서비스 pane의 사용자 PATH, 업데이트, 이름 충돌, 승인 대기·질문 중 Ctrl+C(130), 터미널 없는 SSH(2), 관리자 아님(2), 제거·purge를 확인했다. 정리 뒤 기준 목록과 대조했다. 탐색기 더블클릭(UAC)은 사용자 데스크톱에 창을 띄우므로 실기하지 않았다.
+- **남은 것.** host rollout의 Windows 재시작(지금은 launchd만)은 후속이다. API·Agent link·E2E 번호 변경은 없다.

@@ -128,6 +128,11 @@ enum Cmd {
     },
     /// 역할·작업 경로·서비스를 계획하고 명시적 승인 뒤 설치·재개한다
     Install(Box<crate::install::Args>),
+    /// Windows 설치기: 이 PC를 agent로 설치하고 서비스로 띄워 host에 연결한다(`aaa-setup.exe`로 두면 인자 없이 뜬다)
+    Setup(crate::setup::Args),
+    /// (내부) `aaa setup`이 등록한 Windows 서비스 입구. SCM만 실행한다.
+    #[command(hide = true)]
+    SetupService,
     /// harness 전역 연동을 설치하거나 제거한다(기존 사용자 hook은 보존)
     Integration {
         #[command(subcommand)]
@@ -1715,7 +1720,12 @@ pub fn main() -> ExitCode {
             Box::leak(aaa_common::util::software().trim_start_matches("aaa ").to_string().into_boxed_str());
         let command = Cli::command().version(version);
         let install_output = crate::install::requested_output(&command);
-        (install_output, command.try_get_matches().and_then(|m| Cli::from_arg_matches(&m)))
+        let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+        // `aaa-setup.exe`(더블클릭·SSH)는 설치 마법사다. 전역 인자는 setup 뒤에 와도 된다
+        if crate::setup::implied(&args, |name| command.find_subcommand(name).is_some()) {
+            args.insert(1, "setup".into());
+        }
+        (install_output, command.try_get_matches_from(args).and_then(|m| Cli::from_arg_matches(&m)))
     }) {
         Ok((_, Ok(cli))) => cli,
         Ok((install_output, Err(e))) => {
@@ -1734,7 +1744,7 @@ pub fn main() -> ExitCode {
     use aaa_common::panic_log::{ProcessKind, set_process};
     set_process(match &cli.cmd {
         Cmd::Host => ProcessKind::Host,
-        Cmd::Agent(AgentArgs { cmd: None, .. }) | Cmd::DeploymentGuard { .. } => ProcessKind::Agent,
+        Cmd::Agent(AgentArgs { cmd: None, .. }) | Cmd::DeploymentGuard { .. } | Cmd::SetupService => ProcessKind::Agent,
         Cmd::SessionHost { .. } => ProcessKind::SessionHost,
         _ => ProcessKind::Cli,
     });
@@ -1788,6 +1798,17 @@ pub fn main() -> ExitCode {
     if let Some(d) = &cli.state_dir {
         unsafe { std::env::set_var("AAA_STATE_DIR", d) };
     }
+    match &cli.cmd {
+        Cmd::Setup(args) => return crate::setup::run(args),
+        #[cfg(windows)]
+        Cmd::SetupService => return crate::setup::service::dispatch(),
+        #[cfg(not(windows))]
+        Cmd::SetupService => {
+            eprintln!("aaa: setup-service는 Windows 서비스 입구다");
+            return ExitCode::from(2);
+        }
+        _ => {}
+    }
     match run(cli) {
         Ok(code) => crate::restart::finish(code),
         Err(e) => {
@@ -1818,6 +1839,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
         Cmd::Install(_) => unreachable!("install은 환경 변경 전에 처리한다"),
         Cmd::ServiceRun { .. } => unreachable!("SCM은 환경 변경 전에 연결한다"),
+        Cmd::Setup(_) | Cmd::SetupService => unreachable!("setup은 run 전에 처리한다"),
         Cmd::InstallProbe { .. } | Cmd::InstallBootstrap { .. } | Cmd::InstallWorker { .. } => {
             unreachable!("installer worker는 환경 변경 전에 연결한다")
         }
