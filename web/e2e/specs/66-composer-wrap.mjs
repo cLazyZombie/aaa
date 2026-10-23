@@ -1,5 +1,6 @@
 // t-0563: 실제 host·agent의 입력칸. OS 입력기 대신 조합 사건을 재생하고, native textarea로 줄 경계를 대조한다.
 import fs from "node:fs";
+import assert from "node:assert/strict";
 import { aaa, AA, root, step, browser, webkit, pairPage, paneHash, shots, sentFrames, domIs } from "../lib/harness.mjs";
 import { composerStability } from "../lib/composer-stability.mjs";
 import { pairDevice } from "../lib/devices.mjs";
@@ -7,8 +8,15 @@ import { pairDevice } from "../lib/devices.mjs";
 const selector = '[data-testid="chat-composer"] .composer-text';
 
 // 제품의 textarea와 같은 CSS·폭인 독립 native textarea가 줄을 접는 자리다. canvas 글 폭 추정은 쓰지 않는다.
-async function geometry(box) {
-  return box.evaluate((el) => {
+async function geometry(box, fresh = false) {
+  return box.evaluate((el, fresh) => {
+    // 같은 native 기준의 탐색을 입력마다 반복하지 않는다. CSS 전체·실폭·글꼴 세대가 바뀌면 다시 잰다.
+    const state = window.__aaaWrapGeometry ??= { refs: new WeakMap(), epoch: 0, calls: 0, nativeRows: 0, cssWrites: 0, hits: 0 };
+    if (!state.listening) {
+      state.listening = true;
+      for (const event of ["loading", "loadingdone", "loadingerror"]) document.fonts.addEventListener(event, () => state.epoch++);
+    }
+    state.calls++;
     const cs = getComputedStyle(el);
     const rect = (node) => {
       const r = node.getBoundingClientRect();
@@ -17,37 +25,51 @@ async function geometry(box) {
     const surface = el.closest(".composer-surface");
     const lh = parseFloat(cs.lineHeight);
     const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    const probe = document.createElement("textarea");
-    for (const key of cs) probe.style.setProperty(key, cs.getPropertyValue(key));
-    Object.assign(probe.style, {
-      position: "fixed", left: "-10000px", top: "0", visibility: "hidden",
-      width: `${el.getBoundingClientRect().width}px`, height: "0", minHeight: "0", maxHeight: "none",
-    });
-    probe.tabIndex = -1;
-    probe.setAttribute("aria-hidden", "true");
+    const styles = [...cs].map((key) => [key, cs.getPropertyValue(key)]);
+    const width = el.getBoundingClientRect().width;
+    const key = JSON.stringify([styles, width, state.epoch, document.fonts.status, document.fonts.size]);
+    let reference = !fresh && document.fonts.status === "loaded" ? state.refs.get(el) : null;
+    if (reference?.key !== key) {
+      const probe = document.createElement("textarea");
+      for (const [name, value] of styles) { probe.style.setProperty(name, value); state.cssWrites++; }
+      Object.assign(probe.style, {
+        position: "fixed", left: "-10000px", top: "0", visibility: "hidden",
+        width: `${width}px`, height: "0", minHeight: "0", maxHeight: "none",
+      });
+      probe.tabIndex = -1;
+      probe.setAttribute("aria-hidden", "true");
+      reference = { key, probe, firstBreak: null };
+      if (!fresh) state.refs.set(el, reference);
+    } else state.hits++;
+    const probe = reference.probe;
     document.body.append(probe);
-    const rows = (value) => { probe.value = value; return Math.round((probe.scrollHeight - padding) / lh); };
-    const expectedRows = rows(el.value);
-    // 같은 한글 열에서 첫 줄이 넘는 글자 위치. 뒤에 더 쳐도 이 경계가 움직이면 안 된다.
-    const sample = "가나다라마바사아자차카타파하".repeat(30);
-    let low = 1, high = sample.length;
-    while (low < high) {
-      const mid = (low + high) >> 1;
-      if (rows(sample.slice(0, mid)) > 1) high = mid;
-      else low = mid + 1;
-    }
-    probe.remove();
+    const rows = (value) => { state.nativeRows++; probe.value = value; return Math.round((probe.scrollHeight - padding) / lh); };
+    let expectedRows;
+    try {
+      // 현재 입력값의 줄 수는 매번 실제 native textarea로 읽는다.
+      expectedRows = rows(el.value);
+      if (reference.firstBreak === null) {
+        const sample = "가나다라마바사아자차카타파하".repeat(30);
+        let low = 1, high = sample.length;
+        while (low < high) {
+          const mid = (low + high) >> 1;
+          if (rows(sample.slice(0, mid)) > 1) high = mid;
+          else low = mid + 1;
+        }
+        reference.firstBreak = low;
+      }
+    } finally { probe.remove(); }
     return {
       text: rect(el), surface: rect(surface), send: rect(surface.querySelector(".composer-send")),
       attach: rect(surface.querySelector('[aria-label="그림 첨부"]')),
       gauge: rect(surface.querySelector('[data-testid="context-gauge"]')),
       gap: parseFloat(getComputedStyle(surface.querySelector(".composer-controls-right")).columnGap),
-      lines: surface.dataset.lines, firstBreak: low, expectedRows,
+      lines: surface.dataset.lines, firstBreak: reference.firstBreak, expectedRows,
       rows: Math.round((el.scrollHeight - padding) / lh), lh, padding,
       clipped: el.scrollWidth > el.clientWidth + 1,
       focused: document.activeElement === el, value: el.value,
     };
-  });
+  }, fresh);
 }
 
 // ResizeObserver는 그리기가 끝난 크기 사건이다. 창 크기 변경에 따른 제품 ResizeObserver·높이 효과까지 기다린다.
@@ -73,12 +95,21 @@ export default async function () {
     aaa("tab", "create", "--machine", "labA", "--label", "wrap", "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA, hook);
   }, { always: true });
 
+  const progress = { device: null, state: null, devices: [] };
+  const geometryLog = [];
+  const diagnoseGeometry = () => {
+    fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+    fs.writeFileSync(`${root}/diagnostics/wrap-geometry.json`, JSON.stringify({ ...progress, last: geometryLog.slice(-30) }, null, 2));
+  };
   await step("입력칸 숨긴 게이지 자리 회수와 줄바꿈 폭 고정: Chromium·WebKit 데스크톱·휴대폰, 한글 조합 중·확정·영문·붙여넣기·창 폭 변경", async () => {
     const wk = await webkit.launch();
     const failures = [];
-    const log = [];
+    const log = geometryLog;
     try {
       for (const [name, engine, phone] of [["chromium-desktop", browser, false], ["webkit-desktop", wk, false], ["chromium-phone", browser, true], ["webkit-phone", wk, true]]) {
+        const started = Date.now();
+        progress.device = name;
+        progress.state = "연결";
         const hash = paneHash("wrap");
         const { page: p } = phone
           ? await pairDevice(engine, aaa("web", "pair").code, "iphone", { hash })
@@ -89,9 +120,16 @@ export default async function () {
         await domIs(p, "실제 컨텍스트 게이지", () => document.querySelector('[data-testid="context-gauge-value"]')?.textContent === "38%");
         await box.fill("");
         await box.focus();
+        const referenceMatches = async (label) => {
+          const cached = await geometry(box);
+          const independent = await geometry(box, true);
+          assert.deepEqual([cached.firstBreak, cached.expectedRows], [independent.firstBreak, independent.expectedRows], `${name} ${label}: 새 native 기준과 일치`);
+        };
+        await referenceMatches("빈 입력칸");
         const empty = await geometry(box);
         await box.fill("가");
         const initial = await geometry(box);
+        await referenceMatches("게이지 숨김 뒤");
         const reclaimed = empty.gauge.width > 0 ? empty.gauge.width + empty.gap : 0;
         if (Math.abs(initial.text.width - empty.text.width - reclaimed) > 0.5) failures.push(`${name}: 숨긴 게이지 폭·간격 ${reclaimed}px을 회수하지 않음`);
         if (initial.gauge.width !== 0 || Math.abs(initial.send.left - initial.text.right) > 0.5) failures.push(`${name}: 보내기 앞에 숨긴 게이지 빈자리가 남음`);
@@ -99,6 +137,7 @@ export default async function () {
         log.push({ device: name, state: "빈 입력칸", ...empty }, { device: name, state: "첫 입력", ...initial });
         const from = (await sentFrames(p)).length;
         const check = async (state, width = initial.text.width) => {
+          progress.state = state;
           const g = await geometry(box);
           log.push({ device: name, state, ...g });
           const bad = (why) => failures.push(`${name} ${state}: ${why}`);
@@ -158,7 +197,9 @@ export default async function () {
         const original = p.viewportSize();
         for (const size of [phone ? { width: 844, height: 390 } : { width: 1000, height: 800 }, original]) {
           await p.setViewportSize(size);
+          progress.state = `창 폭 ${size.width} resize`;
           await resized(box);
+          await referenceMatches(`창 폭 ${size.width}`);
           const width = (await geometry(box)).text.width;
           await check(`창 폭 ${size.width}`, width);
           // 바뀐 창 폭에서도 긴 글과 짧은 글이 같은 폭이다.
@@ -172,6 +213,13 @@ export default async function () {
         if (cleared.firstBreak !== empty.firstBreak) failures.push(`${name}: 지운 뒤 빈 입력칸의 줄 경계 복원 실패`);
         if (Math.abs(cleared.surface.height - initial.surface.height) > 0.5) failures.push(`${name}: 지운 뒤 한 줄 높이 복원 실패`);
         if ((await sentFrames(p, from)).some((x) => ["input", "submit", "bin"].includes(x.t))) failures.push(`${name}: 편집 중 pane에 전송함`);
+        const metrics = await p.evaluate(() => {
+          const { calls, nativeRows, cssWrites, hits } = window.__aaaWrapGeometry;
+          return { calls, nativeRows, cssWrites, hits };
+        });
+        const measured = { device: name, ms: Date.now() - started, ...metrics };
+        progress.devices.push(measured);
+        console.log("줄바꿈 기준 계측", JSON.stringify(measured));
         await p.context().close();
       }
     } finally {
@@ -180,6 +228,6 @@ export default async function () {
     }
     aaa("pane", "kill", "wrap");
     if (failures.length) throw new Error(`${failures.length}건: ${failures.slice(0, 24).join("; ")}`);
-  });
+  }, { diagnose: diagnoseGeometry });
   await step("첨부 뒤 여러 줄 한글 조합의 높이·스크롤 안정: Chromium·WebKit 데스크톱·휴대폰", composerStability);
 }

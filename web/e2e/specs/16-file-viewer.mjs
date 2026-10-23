@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 16-file-viewer(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, inList, openSettings } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, webkit, inList, openSettings, sentCount, sentFrames, sentText } from "../lib/harness.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -107,6 +107,11 @@ export default async function ({ ctl, page }) {
     const picWidth = await pic.evaluate((i) => i.decode().then(() => i.naturalWidth));
     if (picWidth !== 1 || !(await pic.getAttribute("src")).startsWith("/f/")) throw new Error(`Markdown 그림 ${picWidth} ${await pic.getAttribute("src")}`);
     await shot(dp, "desktop-file-markdown");
+    await pic.click();
+    await dp.getByTestId("lightbox").waitFor();
+    await dp.keyboard.press("Escape");
+    await dp.getByTestId("lightbox").waitFor({ state: "detached" });
+    if (!(await viewer(dp).isVisible())) throw new Error("그림 크게 보기 Escape가 파일 보기까지 닫았다");
     // 소스 보기: 줄 번호는 CSS counter라 글(복사)에 섞이지 않는다
     await viewer(dp).getByRole("button", { name: "소스 보기" }).click();
     await codeIs(dp, "Markdown 소스", readme);
@@ -551,8 +556,39 @@ export default async function ({ ctl, page }) {
       await domIs(p, what, () => document.querySelector('[data-testid="file-viewer-markdown"] .markdown-h1')?.textContent === "너비");
     };
     const closeViewer = async (p, what) => {
-      await p.keyboard.press("Escape");
-      await closed(p, what);
+      // capture의 target과 전파 뒤 defaultPrevented를 함께 남긴다. 창 내용·주소·임의 history 값은 기록하지 않는다.
+      await p.evaluate(() => {
+        window.__aaaFileEscape = [];
+        const onKey = (event) => {
+          if (event.key !== "Escape") return;
+          const row = {
+            event,
+            target: event.target instanceof Element ? event.target.tagName : null,
+            terminal: event.target instanceof Element && event.target.matches(".xterm-helper-textarea"),
+            viewer: Boolean(document.querySelector('[data-testid="file-viewer"]')),
+            preview: Boolean(history.state?.["aaa:file-preview"]),
+            trusted: event.isTrusted,
+          };
+          window.__aaaFileEscape.push(row);
+        };
+        window.addEventListener("keydown", onKey, { capture: true, once: true });
+      });
+      const mark = await sentCount(p);
+      try {
+        await p.keyboard.press("Escape");
+        await closed(p, what);
+        if (sentText(await sentFrames(p, mark)) !== "") throw new Error(`${what}: Escape가 터미널로 갔다`);
+      } catch (error) {
+        const diagnostic = await p.evaluate((mark) => ({
+          keys: window.__aaaFileEscape.map(({ event, ...row }) => ({ ...row, prevented: event.defaultPrevented })),
+          viewer: Boolean(document.querySelector('[data-testid="file-viewer"]')),
+          preview: Boolean(history.state?.["aaa:file-preview"]),
+          terminalEscape: window.__aaaSent.slice(mark).some((f) => f.t === "input" && f.data === "\u001b"),
+        }), mark);
+        fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+        fs.writeFileSync(`${root}/diagnostics/file-viewer-escape.json`, JSON.stringify({ what, ...diagnostic }, null, 2));
+        throw error;
+      }
     };
     const fileViewerGroup = async (p) => (await openSettings(p, "채팅")).locator(".settings-section", { has: p.getByRole("heading", { name: "파일 뷰어" }) });
     const settingsShown = async (p, what, wrap, width) => {
@@ -583,7 +619,44 @@ export default async function ({ ctl, page }) {
     await openMarkdown(dp, "기본 Markdown");
     const lane = await markdownShape(dp);
     if (lane.width > lane.room - 100) throw new Error(`기본 Markdown이 대화 열이 아니다 ${JSON.stringify(lane)}`);
+    // 맨 위 native dialog가 Escape를 쥐면 파일 보기는 남는다.
+    await dp.evaluate(() => {
+      const dialog = document.createElement("dialog");
+      dialog.dataset.testid = "file-escape-native";
+      dialog.textContent = "상위 창";
+      document.body.append(dialog);
+      dialog.showModal();
+    });
+    await dp.keyboard.press("Escape");
+    await domIs(dp, "상위 native 창만 닫힘", () => !document.querySelector('[data-testid="file-escape-native"]').open && Boolean(document.querySelector('[data-testid="file-viewer"]')));
+    await dp.getByTestId("file-escape-native").evaluate((dialog) => dialog.remove());
+    // 파일 내용은 첫 focus rAF보다 먼저 보일 수 있고, 터미널 부착도 focus를 되찾는다.
+    // 그 경계를 고정한다: 실제 xterm textarea에 focus가 있어도 Escape는 파일 보기만 닫아야 한다.
+    await dp.locator(".xterm-helper-textarea").focus();
+    const escapeStart = await sentCount(dp);
     await closeViewer(dp, "기본 Markdown Escape");
+    const leakedEscape = sentText(await sentFrames(dp, escapeStart));
+    if (leakedEscape !== "") throw new Error(`파일 보기 Escape가 터미널로 갔다: ${JSON.stringify(leakedEscape)}`);
+
+    // Chromium과 별개인 WebKit에서도 같은 포커스 경계·실제 키·PTY 무입력을 확인한다.
+    // 두 browser가 같은 pane의 크기 lease를 다투지 않도록 별도 pane으로 준비한다.
+    aaa("tab", "create", "--machine", "labA", "--label", "viewer-webkit", "--cwd", proj, "--", process.execPath, "-e", prog);
+    await waitOutput("viewer-webkit", "view>");
+    const wk = await webkit.launch();
+    try {
+      const wp = (await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+      await inList(wp, "pane-viewer-webkit");
+      await screenHas(wp, "WebKit viewer 줄들", "view>");
+      for (const kind of ["source", "markdown"]) {
+        if (kind === "source") await openSource(wp, "WebKit 소스");
+        else await openMarkdown(wp, "WebKit Markdown");
+        await wp.locator(".xterm-helper-textarea").focus();
+        await closeViewer(wp, `WebKit ${kind} Escape`);
+      }
+    } finally {
+      await wk.close();
+      aaa("pane", "kill", "viewer-webkit");
+    }
 
     // 채팅 설정 「파일 뷰어」에서 켠다(참고 순서: 빠른 답장 다음 무리)
     const group = await settingsShown(dp, "처음", false, "기본값");

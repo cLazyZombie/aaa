@@ -1,5 +1,17 @@
 # 시험 쓰는 법
 
+## GitHub 웹 E2E 직렬 실행과 파일 보기 Escape(t-0830)
+
+- 공개 `macos-15` arm64 러너는 [GitHub 사양](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)에 따라 3 CPU다. 10 CPU 미만인 기존 로컬 기본값 `floor(cores / 2)`는 worker 1이 된다. CI만 `AAA_E2E_WORKERS=2`로 명시하고 로컬 기본과 `--workers` 우선순위는 유지한다. 모든 spec·브라우저·viewport·독립 단계는 그대로 한 번씩 실행한다.
+- 원본 run `39805550736`의 SHA `4fe3e4ad`와 run `39879814485`의 SHA `ef5de571`은 spec 머리가 번호순이며, 다음 머리까지의 시간은 spec 실행·정리를 포함한다. 전자는 88번까지 2,161.8초, 후자는 83번까지 2,219.1초를 썼다. 마지막 시작 파일을 정지한 파일이라고 해석하지 않는다.
+- `ef5de571`의 Playwright 설치는 25초, 웹 빌드는 15초, aaa 준비 빌드는 약 138초였다. E2E 자체가 약 37분 동안 직렬로 누적돼 job의 40분 상한에 도달했다. 37-chat-pages 142.9초·39-phone-back 121.5초·23-composer-attachments 103.4초 등이 이어졌으며, 첫 브라우저 실행이나 83번 하나의 정지를 가리키는 자료는 없다. job 상한은 40분을 유지한다.
+- 입구는 CPU 수·worker 수·OS/arch·spec/job 수와 각 작업의 시작/끝·슬롯·경과 시간·종료 결과를 실시간으로 출력하고 `AAA_E2E_ARTIFACTS/run-timings.jsonl`에 남긴다. 병렬 출력의 `## specs/…`는 작업 완료 때 묶어 출력되므로 시작 순서로 읽지 않는다. CI는 통과·실패 모두 실행 로그·빌드 로그·단계 요약·시간 기록과 실패 진단을 산출물로 보존한다.
+- 원본 E2E16의 「기본 Markdown Escape」 실패에는 xterm의 `input` 메시지 `\u001b`와 PTY의 `^[` 출력이 함께 남았다. 파일 내용은 focus rAF보다 먼저 표시될 수 있고 터미널 부착도 focus를 옮긴다. FileViewer의 window bubble listener는 xterm textarea가 전파를 멈춘 키를 받지 못했다. document capture의 layout effect로 등록해 실제 키를 먼저 처리하고 기본 동작·전파를 막는다. 이미 처리한 키·IME·상위 native modal·그림 크게 보기는 먼저 둔다.
+- `NODE_PATH=<Playwright 1.64.1 모듈 폴더> PLAYWRIGHT_BROWSERS_PATH=<격리 브라우저 폴더> node web/e2e/web.e2e.mjs --spec 16 --workers 1`: 기존 전체 owner에 실제 textarea focus 경계·Chromium·WebKit 소스와 Markdown의 Escape 닫힘·터미널 무입력·상위 native 창과 그림 크게 보기 우선순위를 더한다. 구판은 textarea를 focus한 대조에서 원본과 같은 20초 닫힘 실패와 ESC 전송으로 실패한다. 원본의 모든 부착·focus 사건 순서까지 재현했다고 주장하지 않는다.
+- 단일 진단 [run 39885298949](https://github.com/cLazyZombie/aaa/actions/runs/39885298949)은 CPU 3개·worker 3개를 확인했다. 93파일·104작업을 모두 한 번 실행해 E2E 1,203.645초·job 23분 59초에 끝났으며 E2E16은 62.171초에 통과했다. 유일한 실패는 E2E66의 네 기기 줄바꿈 단계가 120초를 넘긴 것이다. 최종 설정은 worker 2개로 여유를 두며, 이 설정의 원격 판정은 착지 뒤 main CI에 남긴다. 이 실패를 통과로 바꾸거나 진단 job을 재실행하지 않는다.
+- E2E66의 `geometry`는 CSS 전체·실폭·글꼴 로딩 세대가 같은 독립 native textarea와 첫 줄 경계를 재사용한다. 현재 입력값의 native 줄 수·실제 폭·행 수·focus·PTY 무전송은 매 상태 검사한다. 높이/CSS/폭이 바뀌거나 글꼴이 로딩 중이면 기준을 다시 만들며, 기준 요소는 측정 뒤 DOM에서 뺀다. 빈 입력·게이지 숨김·두 viewport 변경마다 캐시 없는 새 native 기준과 경계·줄 수를 대조한다. 모든 음절·자모·기기·단언·120초 상한을 유지한다. 실패 때 `diagnostics/wrap-geometry.json`은 현재 기기·진행 상태·직전 측정과 완료 기기별 비용을 남긴다.
+- 실패하면 `diagnostics/file-viewer-escape.json`에 실제 키의 target 종류·터미널 여부·isTrusted·defaultPrevented·viewer/history 유무와 ESC 누출 여부를 남긴다. 본문·주소·임의 history state는 기록하지 않는다. 기존 닫힘 단언·20초 대기·120초 단계 상한·실패 판정을 유지한다. 정본은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사이며, GitHub 확인은 진단 branch의 단일 job 또는 착지 뒤 main CI로 한다. 실패 재실행·시한 증가·기대값 완화는 없다.
+
 ## 예약의 앞 할 일(t-0829)
 
 - `nice -n 15 cargo test --locked -p aaa-host --lib task_queue::tests::reservation_after`: 없는 앞 할 일·자기 지정·순환 거부, 앞 할 일 완료 대기 중 뒤 예약의 자리 판정 진행, 완료 체크만으로는 보관 전까지 대기, 보관 정리 뒤 차례, 완료 없이 지운 앞 할 일의 확인 필요, host 재시작 보존과 이미 보관된 앞 할 일을 확인한다.
@@ -12,6 +24,7 @@
 - 처음 후보 E2E는 메뉴가 닫힌 직후 아직 이전 pane인데 대화 보기 단추를 누르거나 Back을 보내 준비 경합으로 실패했다. `inList`의 pane 선택 완료는 메뉴 애니메이션 종료와 별도로 해당 행의 aria-current=true DOM 사건을 기다린다. 새 회귀의 첫 frame 관측은 이 완료 전의 주소·기존 pane을 직접 확인한다. 준비 완료를 기다리는 것이며 제품의 두 frame 순서·Back 단언·시한을 바꾸지 않는다. 실패는 보존하며 통과를 위한 같은 실행의 재시도는 없다.
 - E2E39 `fragment-history.mjs`는 Chromium·WebKit의 실제 location.hash→popstate/hashchange, Back, B 재선택 때 전체 칸 수 유지, history.pushState가 popstate를 만들지 않음을 대조한다. 원본 결과는 실험실 diagnostics/fragment-*.json에 남긴다. 앱의 일반 기록 메서드는 location.hash이며 직후 popstate를 Back이라고 단정하지 않는다. history.length는 현재 위치가 아니다.
 - 진단 v2는 실제 메서드와 쓰기 전/후를 구분하고 주소 원문 대신 목적지별 탭 내부 번호를 쓴다. 닫힘 frame을 허용하는 것은 Safari 합성 스냅숏 완료 신호가 아니다. 배포 뒤 iPhone 재확인은 coordinator가 요청하며 OS 미리보기까지 고쳐졌다는 판정은 실기 전에는 하지 않는다. 기존 E2E39 전체와 정본 ci-local·공개 검사를 수행한다. API·E2E 번호는 유지한다.
+
 
 ## E2E39 기록 수 실패 진단(t-0825)
 
@@ -757,7 +770,7 @@ resource_limits 변경은 하지 않는다.
 - 상태를 이어 쓰는23-composer-attachments 등의 spec은 분할하지 않는다. 공통 준비의 `always`도 유지한다.
   `node --test web/test/e2e-jobs.test.mjs`는 원 source의12개 조합이 반복마다 정확히 한 번 선택되는지,
   의존 단계 보존·grep·문장 부호·시간 합계를 확인한다. 실패 재시도는 없다.
-- 기본 작업 수는 16 CPU 이상이면10개, 그 밖은 CPU 둘마다 하나다(t-0670). 명시한 `AAA_E2E_WORKERS`와 `--workers`는 그대로 적용한다.
+- 기본 작업 수는 10 CPU 이상이면 5/8 내림·최대 10개, 그 밖은 CPU 둘마다 하나다. GitHub macOS job은 2개를 명시한다(t-0830). 명시한 `AAA_E2E_WORKERS`와 `--workers`는 그대로 적용한다.
   요약의 전체 시간은 wall time이며 분할 spec의 행은 독립 작업 점유 시간의 합계라고 표시한다.
   단계·전체 시한이나 실패 판정은 바꾸지 않는다. 같은 실행 파일을 고정한 전후 측정과 전체 정본으로 검증한다.
 
@@ -1879,7 +1892,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - 성공할 때는 진단 파일·추가 출력·추가 HTTP 요청·대기가 없다. 앞 기록 요청/응답과 논리적인 DOM 전이는 256개까지 메모리에 모은다. DOM 전이는 기존 두 animation frame 대기의 반환값으로 가져오며 frame·브라우저 왕복을 더하지 않는다. 가상 본문 mount 때마다 행을 세거나 높이를 재지 않는다.
 - 실패 지점은 기존 터미널 진단이 화면을 움직이기 전에 저장한다. 실험실 `diagnostics/pages-<browser>-<width>-<harness>/`의 `failure.json`에는 시작·실패 시각, 원래 오류, 요청 cursor·응답 before/history·첫/끝 ID·행 수·HTTP 수신 여부와 DOM 전이가 있다. `dom.json`은 실패 당시 HTML·위치·처음 표지 좌표와 남은 DOM 전이, `screen.png`는 화면, `host.log`·`agent.log`는 해당 조합 시작 이후 로그와 앞 다섯 줄이다. 인증 설정·DB·cookie는 복사하지 않고 실험실의 시작 fingerprint도 가린다.
 - renderer가 응답하지 않아도 먼저 받은 요청/응답·DOM 전이와 로그는 남는다. DOM·화면 수집이 실패하면 각각 `dom-error.txt`·`screen-error.txt`를 남긴다. 이 수집에만 별도 상한을 둔다(DOM은 기존 `inTime`의 5초 인수·6초 Node 울타리, 화면은 5초). 시험의 기존 제한·단언은 바뀌지 않는다. 단계 전체의 120초 실패도 같은 진단을 실행한다.
-- `bash scripts/ci-local.sh --only e2e --logs <폴더>`는 실패 진단을 `<폴더>/e2e-failures/aaw-<pid>/`에 복사하고 `e2e.log`에 경로를 남긴다. GitHub의 같은 명령(`--logs .`)은 `e2e.log`와 `e2e-failures/`를 `web-e2e-failure-<run>-<attempt>` artifact로 14일 보존한다. 실험실 전체는 업로드하지 않는다.
+- `bash scripts/ci-local.sh --only e2e --logs <폴더>`는 실패 진단을 `<폴더>/e2e-failures/aaw-<pid>/`에 복사하고 `e2e.log`에 경로를 남긴다. GitHub의 같은 명령(`--logs .`)은 통과·실패 모두 `e2e.log`·`e2e-binary.log`·`workspace-summary.tsv`와 `e2e-failures/`(시간 기록 포함)를 `web-e2e-result-<run>-<attempt>` artifact로 14일 보존한다. 실험실 전체는 업로드하지 않는다.
 - 산출물 점검은 첫 조합의 `처음 도달` 직후 예외를 한 번 주입해 공식 ci-local의 해당 E2E만 실패시킨다. 요청/응답·2,400행/처음이다 전이·DOM·PNG·host/agent 구간이 로그 폴더에 복사됐는지 본 뒤 소스를 bytes로 복원한다. 이 변형은 진단 경로의 검증이며 원래 간헐 실패의 재현이 아니다. 복원한 소스에서 전체 ci-local·check-public을 통과해야 한다. 다음 실제 실패의 artifact로 별도 원인 수리 thread를 연다.
 
 ### macOS 27 WebKit 끝 이동 경쟁(t-0474)
