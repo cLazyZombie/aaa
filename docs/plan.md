@@ -7684,3 +7684,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 계정 pane 실패는 원인 사슬과 session-host PID·종료 결과·연결·로그를 보존하고 인증을 가려 host 응답·agent 경고에 남긴다. Front API·Agent link wire 변경은 없다.
 
 - **32회차 착지 통합(t-0914).** 기준 main `ea220817`의 마지막 §8.470·FRONT_API 1.113·AGENT_LINK 1.11·E2E97을 확인했다. t-0910의 `ac523d6a` 하나를 --no-ff로 합치며 겹친 후보 절을 빈 §8.471로 옮기고 시험 문서 참조를 맞췄다. API/link/E2E 번호를 유지한다. 격리 Playwright 1.64.1·Chromium/WebKit 기동 확인 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 빌드로 검증한다. GitHub CI를 기다리지 않으며 배포·tag·release는 수행하지 않는다.
+
+
+### 8.472 보고서 보관함과 완료 보고 기본 표시(t-0915)
+
+- 모든 프로젝트에서 완료 표지 보고의 회수·resolve 뒤 마지막 보고를 같은 사본으로 「내 보고서」에 안 봄으로 올린다. 시작 시 기존 완료 사본도 올린다. 본문 revision으로 멱등 처리하여 재수집·resolve·재시작은 열람 상태를 바꾸지 않는다. 외부 푸시는 추가하지 않는다.
+- 웹의 보관함은 r 판별 고정이다. 넣기·빼기·과거 판 선택·작업 보고 일괄 보관을 지원한다. 보관 용량은 별도로 세고 자동 정리의 기한·합계 상한에서 제외한다. 명시 삭제는 보관 여부와 무관하게 기존 전체 판 삭제와 진행 중·완료 할 일 참조 보호를 유지한다.
+- FRONT_API 1.114: LibraryArchive, LibraryReport.archived, LibraryUsage·LibraryPrunePlan.archived_size. DB의 project별 보관·완료 revision을 export·rename·delete에 포함한다. agent link 변경 없음.
+- host 실제 파일로 용량과 개별 정리 후보를 구해 manifest 없는 종료 thread 폴더·누락 잔여 파일을 포함한다. 최신 별칭과 최신 r 판은 함께 정리해 오래된 판으로 번호가 돌아가지 않게 한다. 수집 중 임시 폴더·외부 live 원본·symlink는 보호 경계를 유지한다. 기존 자동 정리의 6시간 주기는 유지한다.
+- OSS 참고는 Zulip의 읽음/별표 flag와 트랜잭션·commit 뒤 사건(표시 상태와 원본 분리, Apache-2.0), Grafana snapshot의 만료와 명시 삭제 분리(AGPL-3.0), actions/upload-artifact의 불변 판과 retention(MIT)이다. 코드·의존성을 복사하지 않는다. 검증은 [시험 규칙](testing.md)의 t-0915 절과 확장 E2E21·36, 전체 ci-local·Linux strict cross·공개 검사다. 착지 시 절·API 판을 main과 대조한다.

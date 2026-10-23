@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 보고서 보관함과 완료 보고 기본 표시(t-0915, plan §8.472)
+
+- `report_ids::tests`는 한 판만 보관, 재발행 뒤 원문 고정, 자동 정리 뒤 판 열기, 재시작·명시 삭제, 일괄 요청의 사전 검증·Reader 거부, 보관 변경 뒤 정리 미리보기 충돌을 검사한다. 실제 폴더의 미등재 파일·manifest 없는 폴더와 수집 중 임시 파일을 세고 symlink를 따라가지 않는 경계도 확인한다.
+- `library_links::tests::archive_alone_can_exceed_the_limit_without_evicting_new_reports`는 1 MiB 상한에 1.1 MB 보관 판과 0.2 MB 일반 사본을 만들어 보관함이 상한을 소비하지 않는지 확인한다. 최신 별칭·최신 r 판을 용량 경계에서 함께 정리하고 옛 보관 판은 유지하는 회귀도 검사한다. 기존 live·진행 중·완료 보관 참조·초과 알림·6시간 주기 시험을 유지한다.
+- `orch::report_tests`는 실제 report collect 경계에서 완료 보고의 자동 내 보고서·안 봄과 같은 폴더 수를 확인한다. 열람 뒤 재수집·backfill·재시작·resolve의 같은 revision은 읽음 상태를 유지한다. 기존 완료 사본의 backfill도 검사한다.
+- 확장 E2E21은 실제 웹 한 번 보관/해제·과거 판 선택·명시 삭제·별도 용량·Reader 제한을 Chromium/WebKit 1280/390px로 검증하고 화면을 남긴다. 진행 중 보고는 작업 탭에서 보호하고 resolve 뒤 내 보고서에 안 봄으로 이동하는지 검사한다. 완료 보고는 갱신 때만 다시 안 봄이고 source+r 두 사본 이외의 복제는 없는지 실제 폴더를 대조한다. E2E36의 작업 줄 번호 시험은 진행 중 표지로 그 상태를 명시한다.
+- 참고: [Zulip message flags](https://github.com/zulip/zulip/blob/main/zerver/actions/message_flags.py)([Apache-2.0](https://github.com/zulip/zulip/blob/main/LICENSE)), [Grafana snapshot](https://github.com/grafana/grafana/blob/main/pkg/services/dashboardsnapshots/service.go)([AGPL-3.0](https://github.com/grafana/grafana/blob/main/LICENSE)), [upload-artifact retention](https://github.com/actions/upload-artifact#retention-period)([MIT](https://github.com/actions/upload-artifact/blob/main/LICENSE)). 표시 상태와 사본 분리·기한과 명시 삭제 분리만 참고하고 코드는 추가하지 않는다.
+- 정본은 전체 `nice -n 15 bash scripts/ci-local.sh`, Linux strict cross와 공개 검사다. 고정 sleep·재시도·시한/기대값 완화는 쓰지 않는다.
+
+
 ## E2E93 재개 조합의 독립 실행과 실패 phase(t-0896)
 
 - [CI 39923503523](https://github.com/cLazyZombie/aaa/actions/runs/39923503523)의 원본은 Claude 네 조합을 한 단계로 실행하다 합계 120초에 끝났다. artifact에는 e2e.log·실행 시간표만 있고 `resume-*.json`·host/agent 로그는 없다. 기존 `resumed` 안의 catch는 바깥 단계 타이머가 먼저 실패하면 실행되지 않는다. 당시 `--resume`와 `--continue` 중 어느 mode였는지는 원문으로 확정할 수 없다.

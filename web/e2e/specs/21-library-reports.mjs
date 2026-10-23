@@ -204,7 +204,9 @@ export default async function ({ page }) {
     } finally { await safari.close(); }
   });
 
-  await step("작업 보고(plan §8.256): 진행 중 thread의 사본은 고를 수 없고 host도 거부, resolve하면 풀린다, 끝난 것 모두 고르기·확인 한 번으로 모두 지운다", async () => {
+  await step("작업 보고(plan §8.256): 진행 중 thread의 사본은 고를 수 없고 host도 거부, resolve하면 내 보고서에 자동으로 올린다, 끝난 것 모두 고르기·확인 한 번으로 모두 지운다", async () => {
+    // 진행 중 보고의 작업 탭 보호를 확인한 뒤 resolve 자동 표시를 확인한다.
+    fs.writeFileSync(`${root}/report-fixture.md`, fs.readFileSync(`${root}/report-fixture.md`, "utf8").replace("[완료] 맡긴 일과 확인 끝", "[진행 중] 작업 확인 중"));
     fs.writeFileSync(`${root}/task-reports.md`, "웹 보기");
     const t = aaa("thread", "start", "demo", "--title", "보고 정리", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-reports.md`);
     await until("thread 사본", () => aaa("library", "list", "--project", "demo").reports.some((r) => r.name === t.id));
@@ -228,12 +230,18 @@ export default async function ({ page }) {
     await shot(page, "reports-work-390");
     await page.setViewportSize({ width: 1280, height: 800 });
     aaa("thread", "resolve", "demo", t.id, "--skip-copy");
-    await domIs(page, "resolve하면 풀림", (id) => document.querySelector(`[data-testid="report-demo-${id}"]`)?.dataset.busy === "false", t.id);
-    await row.locator(".report-pick").check();
+    await page.getByTestId("reports-tab-mine").click();
+    const completed = page.getByTestId(`report-demo-${t.id}`);
+    await completed.waitFor();
+    if ((await completed.getAttribute("data-unseen")) !== "true") throw new Error("resolve한 마지막 보고가 내 보고서의 안 봄으로 올라오지 않았다");
+    if (!fs.existsSync(`${root}/projects/demo/library/${t.id}`) || !fs.existsSync(`${root}/projects/demo/threads/${t.id}.files.json`)) throw new Error("thread 사본 자리가 다르다");
+    await completed.getByTestId("report-delete").click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "영구히 지우기" }).click();
+    await page.getByRole("alertdialog").waitFor({ state: "detached" });
+    await page.getByTestId("reports-tab-work").click();
     const picked = await page.locator(".report-pick:checked").count();
     const names = aaa("library", "list").reports.filter((r) => !r.to_user).map((r) => `${r.project}/${r.name}`);
     if (picked !== names.length) throw new Error(`고른 수 ${picked}, 작업 보고 ${names.length}`);
-    if (!fs.existsSync(`${root}/projects/demo/library/${t.id}`) || !fs.existsSync(`${root}/projects/demo/threads/${t.id}.files.json`)) throw new Error("thread 사본 자리가 다르다");
     await page.getByTestId("reports-delete").click();
     const dialog = page.getByRole("alertdialog");
     if (!(await dialog.getByRole("heading").innerText()).includes(`${picked}개`)) throw new Error(`확인 창: ${await dialog.innerText()}`);
@@ -245,4 +253,89 @@ export default async function ({ page }) {
     if (fs.existsSync(`${root}/projects/demo/library/${t.id}`) || fs.existsSync(`${root}/projects/demo/threads/${t.id}.files.json`)) throw new Error("thread 사본이 남았다");
     if (!left.some((r) => r.name === "page")) throw new Error("내 보고서까지 지웠다");
   });
+  await step("보고서 보관함: 특정 판 고정·별도 용량·한 번에 넣기와 빼기·Reader 제한·명시 삭제", async () => {
+    const source = `${root}/archive-source`;
+    fs.mkdirSync(source);
+    fs.writeFileSync(`${source}/index.html`, "<!doctype html><meta charset=utf-8><h1>보관한 첫 판</h1>");
+    const first = aaa("library", "publish", source, "--name", "archive-demo", "--to-user").report_id;
+    await page.getByTestId("reports-tab-mine").click();
+    const row = page.getByTestId("report-demo-archive-demo");
+    await row.waitFor();
+    await row.getByTestId("report-archive").click();
+    await until("첫 판 보관", () => aaa("library", "list").reports.some((r) => r.name === first && r.archived));
+    fs.writeFileSync(`${source}/index.html`, "<!doctype html><meta charset=utf-8><h1>나중의 둘째 판</h1>");
+    const second = aaa("library", "publish", source, "--name", "archive-demo", "--to-user").report_id;
+    await until("보관 판은 하나", () => aaa("library", "list").reports.filter((r) => r.archived).length === 1);
+    await row.getByRole("combobox", { name: "demo/archive-demo 보관할 판" }).waitFor();
+    const safari = await webkit.launch({ headless: true });
+    try {
+      for (const engine of [browser, safari]) {
+        for (const width of [1280, 390]) {
+          const dev = await pairPage(engine, aaa("web", "pair").code, { width, height: width === 390 ? 844 : 800 });
+          try {
+            await dev.page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+            await inList(dev.page, "activity-reports");
+            await dev.page.getByTestId("reports-tab-archive").click();
+            const saved = dev.page.getByTestId(`report-demo-${first}`);
+            await saved.waitFor();
+            if (await dev.page.getByTestId(`report-demo-${second}`).count()) throw new Error("후속 판을 자동 보관했다");
+            const usage = await dev.page.getByTestId("reports-usage").innerText();
+            if (!usage.includes("보관함") || !usage.includes("상한 제외")) throw new Error(`보관함 별도 용량: ${usage}`);
+            const v = aaa("library", "show", first);
+            if (!(await (await fetch(new URL(v.base, base))).text()).includes("보관한 첫 판")) throw new Error("보관 판이 최신 본문으로 바뀌었다");
+            const bounds = await dev.page.getByTestId("reports-panel").evaluate((p) => ({ width: innerWidth, right: p.getBoundingClientRect().right, overflow: p.scrollWidth > p.clientWidth + 1 }));
+            if (bounds.right > bounds.width + 1 || bounds.overflow) throw new Error(`보관함 폭 넘침 ${JSON.stringify(bounds)}`);
+            await shot(dev.page, `reports-archive-${engine === browser ? "chromium" : "webkit"}-${width}`);
+          } finally { await dev.page.context().close(); }
+        }
+      }
+      const reader = await pairPage(safari, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
+      try {
+        await inList(reader.page, "activity-reports");
+        await reader.page.getByTestId("reports-tab-archive").click();
+        await reader.page.getByTestId(`report-demo-${first}`).waitFor();
+        if (await reader.page.getByTestId("report-archive").count() || await reader.page.getByTestId("report-delete").count()) throw new Error("Reader에게 보관 변경을 보였다");
+      } finally { await reader.page.context().close(); }
+    } finally { await safari.close(); }
+    await page.getByTestId("reports-tab-archive").click();
+    await page.getByTestId(`report-demo-${first}`).getByTestId("report-archive").click();
+    await until("보관함에서 빼기", () => !aaa("library", "list").reports.some((r) => r.archived));
+    await page.getByTestId("reports-tab-mine").click();
+    await row.getByRole("combobox").selectOption(first);
+    await row.getByTestId("report-archive").click();
+    await page.getByTestId("reports-tab-archive").click();
+    const saved = page.getByTestId(`report-demo-${first}`);
+    await saved.waitFor();
+    await saved.getByTestId("report-delete").click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "영구히 지우기" }).click();
+    await page.getByRole("alertdialog").waitFor({ state: "detached" });
+    await until("보관 보고 명시 삭제", () => !aaa("library", "list").reports.some((r) => ["archive-demo", first, second].includes(r.name)));
+  });
+
+  await step("완료 보고 기본 동작: 자동 내 보고서·안 봄·사본 추가 없음·재완료와 resolve 멱등", async () => {
+    fs.writeFileSync(`${root}/report-fixture.md`, "[완료] 자동으로 올릴 결과\n\n## Report\n완료 본문 하나\n");
+    fs.writeFileSync(`${root}/automatic-task.md`, "완료 자동 표시");
+    const before = new Set(fs.readdirSync(`${root}/projects/demo/library`));
+    const t = aaa("thread", "start", "demo", "--title", "자동 완료 결과", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/automatic-task.md`);
+    await page.getByTestId("reports-tab-mine").click();
+    const card = page.getByTestId(`report-demo-${t.id}`);
+    await domIs(page, "완료 보고 자동 안 봄", (id) => document.querySelector(`[data-testid="report-demo-${id}"]`)?.dataset.unseen === "true", t.id);
+    const row = aaa("library", "list").reports.find((r) => r.name === t.id);
+    const added = fs.readdirSync(`${root}/projects/demo/library`).filter((n) => !before.has(n));
+    if (added.length !== 2 || !added.includes(t.id) || !added.includes(row.report_id)) throw new Error(`자동 올리기가 별도 사본을 만들었다: ${JSON.stringify(added)}`);
+    if (!await card.getByTestId("report-delete").isDisabled()) throw new Error("진행 중 thread를 자동 완료 카드에서 지울 수 있다");
+    await card.getByTestId("report-open").click();
+    await page.getByTestId("report-back").click();
+    await until("완료 보고 봄", () => !aaa("library", "list").reports.find((r) => r.name === t.id).unseen);
+    const previous = aaa("thread", "show", "demo", t.id).report_hash;
+    const work = aaa("thread", "show", "demo", t.id).work_dir;
+    fs.writeFileSync(`${work}/report.md`, "[완료] 갱신한 결과\n\n## Report\n완료 본문 둘\n");
+    await until("새 완료 판", () => aaa("thread", "show", "demo", t.id).report_hash !== previous);
+    await domIs(page, "새 완료 보고 다시 안 봄", (id) => document.querySelector(`[data-testid="report-demo-${id}"]`)?.dataset.unseen === "true", t.id);
+    await card.getByTestId("report-open").click();
+    await page.getByTestId("report-back").click();
+    aaa("thread", "resolve", "demo", t.id, "--skip-copy");
+    if (aaa("library", "list").reports.find((r) => r.name === t.id).unseen) throw new Error("같은 본문의 resolve가 다시 안 봄으로 바꿨다");
+  });
+
 }

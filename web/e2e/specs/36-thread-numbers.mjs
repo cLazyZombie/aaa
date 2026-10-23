@@ -51,6 +51,8 @@ export default async function ({ page }) {
   let thread;
   await step("보고서 thread 번호: thread library에서 올린 사용자 보고서·--thread·접두사 붙인 import는 번호를, thread 사본 줄은 번호 한 번만, 근원 없는 보고서는 번호 없이", async () => {
     aaa("project", "create", "demo");
+    // 진행 중인 작업 보고의 줄 배치를 유지한다. 완료 자동 표시는 E2E21에서 검사한다.
+    fs.writeFileSync(`${root}/report-fixture.md`, fs.readFileSync(`${root}/report-fixture.md`, "utf8").replace("[완료] 맡긴 일과 확인 끝", "[진행 중] 작업 확인 중"));
     fs.writeFileSync(`${root}/task-numbers.md`, "번호 보기");
     thread = aaa("thread", "start", "demo", "--title", "번호 보고", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-numbers.md`);
     await until("thread 사본", () => aaa("library", "list", "--project", "demo").reports.some((r) => r.name === thread.id));

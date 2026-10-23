@@ -1416,6 +1416,13 @@ enum MachineCmd {
 
 #[derive(Subcommand)]
 enum LibraryCmd {
+    /// 현재 판 또는 지정한 r 판을 자동 정리에서 제외한다. --remove는 보관함에서 뺀다.
+    Archive {
+        #[arg(required = true)]
+        names: Vec<String>,
+        #[arg(long)]
+        remove: bool,
+    },
     /// 이름·thread ID·r-NNNN으로 특정 보고 판과 파일 목록을 읽는다.
     #[command(alias = "open")]
     Show { name: String },
@@ -2449,6 +2456,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 LibraryCmd::Link { thread, legacy, days } => {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::LibraryLink { project, thread, days }
+                }
+                LibraryCmd::Archive { names, remove } => {
+                    let project = project_or_here(None)?;
+                    FrontRequest::LibraryArchive {
+                        reports: names
+                            .into_iter()
+                            .map(|name| aaa_proto::LibraryRef { project: project.clone(), name })
+                            .collect(),
+                        archived: !remove,
+                    }
                 }
                 LibraryCmd::Show { name } => FrontRequest::LibraryOpen { project: project_or_here(None)?, name },
                 LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
@@ -4880,6 +4897,7 @@ fn render_front(r: &FrontResponse) -> String {
                 if plan.max_days == 0 { "꺼짐".into() } else { format!("{}일", plan.max_days) },
                 plan.remaining_size
             );
+            let _ = writeln!(s, "보관함 {}B(상한 제외)", plan.archived_size);
             for r in &plan.candidates {
                 let _ = writeln!(s, "정리 예정 {}/{} · {}B · {}", r.project, r.name, r.size, r.reason);
             }
@@ -4890,10 +4908,19 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::LibraryRotated => {
             s.push_str("보고서 키를 교체했다. 옛 공유 링크는 모두 끝났다. pairing은 그대로다.\n")
         }
-        FrontResponse::LibraryUsage { size, reports, live, problems, max_size, max_days, protected_size } => {
+        FrontResponse::LibraryUsage {
+            size,
+            reports,
+            live,
+            problems,
+            max_size,
+            max_days,
+            protected_size,
+            archived_size,
+        } => {
             let _ = writeln!(
                 s,
-                "보고서 {reports}개 · 합계 {size}B / {}, 기한 {} · 실시간 {live}개 · 확인 문제 {problems}개",
+                "보고서 {reports}개 · 합계 {size}B / {}, 기한 {} · 보관함 {archived_size}B(상한 제외) · 실시간 {live}개 · 확인 문제 {problems}개",
                 if *max_size == 0 { "꺼짐".into() } else { format!("{max_size}B") },
                 if *max_days == 0 { "꺼짐".into() } else { format!("{max_days}일") }
             );

@@ -2794,8 +2794,13 @@ pub enum FrontRequest {
         #[ts(optional)]
         from_thread: Option<String>,
     },
-    /// FRONT_API 1.43. 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌리지 않는다.
-    /// 끝나지 않은 thread의 사본이 하나라도 있으면 아무것도 지우지 않는다.
+    /// FRONT_API 1.114. 현재 판 또는 지정한 r 판을 보관함에 넣거나 뺀다. 사본을 추가하지 않는다.
+    LibraryArchive {
+        reports: Vec<LibraryRef>,
+        archived: bool,
+    },
+    /// FRONT_API 1.43. 모든 판의 host 사본·목록·공유 링크·thread 보고를 지운다. 보관함도 명시 삭제한다.
+    /// 진행 중 thread·완료 할 일 참조 보호는 유지한다.
     LibraryDelete {
         reports: Vec<LibraryRef>,
     },
@@ -3836,6 +3841,10 @@ pub enum FrontResponse {
     LibraryPrunePreview(LibraryPrunePlan),
     LibraryRotated,
     LibraryUsage {
+        /// FRONT_API 1.114. size·max_size에서 제외한 보관함 용량.
+        #[serde(default)]
+        #[ts(type = "number")]
+        archived_size: u64,
         #[ts(type = "number")]
         size: u64,
         reports: u32,

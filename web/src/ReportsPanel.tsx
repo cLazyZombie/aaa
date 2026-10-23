@@ -40,15 +40,14 @@ export function ReportThread({ id }: { id: string | undefined }) {
 /** 목록 줄의 번호 표지. thread 사본처럼 보이는 이름이 곧 번호면 번호가 두 번 보이지 않게 뺀다 */
 const rowThread = (r: LibraryReport) => r.from_thread === r.name && !r.title ? undefined : r.from_thread;
 
-type Tab = "mine" | "work";
+type Tab = "mine" | "work" | "archive";
 
 const keyOf = (r: { project: string; name: string }) => `${r.project}/${r.name}`;
 const when = (ms: number) => new Date(ms).toLocaleString("ko-KR");
 
 /**
  * 목록·크기·링크 상태는 host 정본이다. 파일 경로나 등록 원본 경로를 웹에 싣지 않는다. 「열기」는 본문에서(`onView`), 「새 창」은 따로.
- * 두 탭(사용자 결정 10-19, plan §8.256): 「내 보고서」는 coordinator가 `library publish --to-user`로 보낸 웹 보고서이고 안 본 것에
- * 점과 수를 단다(연 순간 host가 봄으로 적는다). 「작업 보고」는 thread 사본·그 밖의 publish·import이고 골라서 한꺼번에 지운다.
+ * 「내 보고서」는 완료 보고와 사용자에게 보낸 보고다. 「작업 보고」는 나머지 사본이고 「보관함」은 자동 정리에서 제외한 특정 판이다.
  * 지우기는 확인 창 한 번 뒤 host 사본·공유 링크·목록에서 영구히 지우며, 진행 중(끝나지 않은) thread의 사본은 고를 수 없다.
  */
 export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: number; onView: (r: LibraryReport) => void }) {
@@ -56,6 +55,8 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const [usage, setUsage] = useState<Extract<FrontResponse, { kind: "library_usage" }> | null>(null);
   const [problem, setProblem] = useState("");
   const [tab, setTab] = useState<Tab>("mine");
+  const [saving, setSaving] = useState(false);
+  const [versions, setVersions] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState<string | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [doomed, setDoomed] = useState<LibraryReport[] | null>(null);
@@ -64,7 +65,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const [uploading, setUploading] = useState<string | null>(null);
   const admin = useAdmin();
   const loadId = useRef(0);
-  const [visible, setVisible] = useState({ mine: 50, work: 50 });
+  const [visible, setVisible] = useState({ mine: 50, work: 50, archive: 50 });
   const load = useCallback(async () => {
     const id = ++loadId.current;
     setProblem("");
@@ -115,12 +116,32 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   };
   // host는 프로젝트 하나라(plan §8.291) 프로젝트로 거르지 않는다
   const shown = reports ?? [];
-  const mine = shown.filter((r) => r.to_user);
-  const work = shown.filter((r) => !r.to_user);
+  const archive = shown.filter((r) => r.archived);
+  const mine = shown.filter((r) => r.to_user && !r.archived);
+  const work = shown.filter((r) => !r.to_user && !r.archived);
+  const cards = tab === "archive" ? archive : mine;
   const unseen = (reports ?? []).filter((r) => r.unseen).length;
   const pickedRows = work.filter((r) => picked.has(keyOf(r)));
   const setLink = (r: LibraryReport, link: LibraryReport["link"]) =>
     setReports((rows) => rows?.map((row) => row.project === r.project && row.name === r.name ? { ...row, link } : row) ?? null);
+  const archiveReports = async (rows: LibraryReport[], archived: boolean) => {
+    setSaving(true);
+    setProblem("");
+    try {
+      await call({ op: "library_archive", reports: rows.map((r) => ({ project: r.project, name: versions[keyOf(r)] ?? r.report_id ?? r.name })), archived });
+      setPicked(new Set());
+      await load();
+    } catch (e) { setProblem(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
+  const archiveAction = (r: LibraryReport) => canEdit && <>
+    {!r.archived && r.versions.length > 1 && <select aria-label={`${keyOf(r)} 보관할 판`} value={versions[keyOf(r)] ?? r.report_id ?? r.name}
+      onChange={(e) => setVersions((v) => ({ ...v, [keyOf(r)]: e.target.value }))}>
+      {r.versions.map((id) => <option value={id} key={id}>{id}{id === r.report_id ? " 최신" : ""}</option>)}
+    </select>}
+    <button className="ghost small" data-testid="report-archive" disabled={saving || !r.report_id}
+      onClick={() => void archiveReports([r], !r.archived)}>{r.archived ? "보관함에서 빼기" : "보관함에 넣기"}</button>
+  </>;
   const tabButton = (t: Tab, label: string, badge: ReactNode) => (
     <button type="button" role="tab" id={`reports-tab-${t}`} aria-selected={tab === t} aria-controls="reports-tabpanel"
       className={`reports-tab${tab === t ? " is-on" : ""}`} data-testid={`reports-tab-${t}`} onClick={() => setTab(t)}>
@@ -130,19 +151,20 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   return <div className="reports-panel" data-testid="reports-panel" data-status={reports === null ? "loading" : "ready"} data-tab={tab}>
     <div className="reports-tabs" role="tablist" aria-label="보고서 종류">
       {tabButton("mine", "내 보고서", unseen > 0 && <span className="reports-count is-new" data-testid="reports-unseen" aria-label={`안 본 보고서 ${unseen}`}>{unseen > 99 ? "99+" : unseen}</span>)}
-      {tabButton("work", "작업 보고", reports !== null && <span className="reports-count">{(reports ?? []).filter((r) => !r.to_user).length}</span>)}
+      {tabButton("work", "작업 보고", reports !== null && <span className="reports-count">{work.length}</span>)}
+      {tabButton("archive", "보관함", reports !== null && <span className="reports-count">{archive.length}</span>)}
     </div>
     <div className="reports-toolbar">
       <button className="ghost small" onClick={() => void load()}>새로고침</button>
       {canEdit && admin && <button className="ghost small" onClick={startUpload} data-testid="reports-upload">보고서 올리기</button>}
     </div>
     {uploading && <UploadReportDialog project={uploading} onClose={() => setUploading(null)} onDone={() => void load()} />}
-    {usage && <p className="muted" data-testid="reports-usage">합계 {storageSize(usage.size)} / {usage.max_size ? storageSize(usage.max_size) : "상한 꺼짐"}, 기한 {usage.max_days ? `${usage.max_days}일` : "꺼짐"}</p>}
+    {usage && <p className="muted" data-testid="reports-usage">합계 {storageSize(usage.size)} / {usage.max_size ? storageSize(usage.max_size) : "상한 꺼짐"}, 기한 {usage.max_days ? `${usage.max_days}일` : "꺼짐"} · 보관함 {storageSize(usage.archived_size)} (상한 제외)</p>}
     {usage && usage.max_size > 0 && usage.protected_size > usage.max_size && <p role="alert">보호 사본만으로 상한을 넘었다. 자동 삭제하지 않는다</p>}
     {problem && <p role="alert">{problem}</p>}
     <div id="reports-tabpanel" role="tabpanel" aria-labelledby={`reports-tab-${tab}`}>
-    {reports === null ? <p>보고서를 읽고 있다…</p> : tab === "mine" ? (
-      mine.length === 0 ? <p className="muted">coordinator가 보낸 보고서가 없다. thread 사본과 그 밖에 올린 보고서는 「작업 보고」에 있다</p> : mine.slice(0, visible.mine).map((r) => {
+    {reports === null ? <p>보고서를 읽고 있다…</p> : tab !== "work" ? (
+      cards.length === 0 ? <p className="muted">{tab === "archive" ? "보관함이 비었다. 보관한 판은 자동 정리되지 않는다" : "아직 내 보고서가 없다. 끝난 작업의 보고서가 자동으로 올라온다"}</p> : cards.slice(0, visible[tab]).map((r) => {
         const key = keyOf(r);
         return <article className={`report-card report-mine${r.unseen ? " is-unseen" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-unseen={r.unseen ? "true" : "false"}>
           <div className="report-heading">
@@ -154,7 +176,8 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
           <div className="report-actions">
             <button className="small" data-testid="report-open" onClick={() => onView(r)}>열기</button>
             <button className="ghost small" disabled={opening !== null} onClick={() => void open(r)}>새 창</button>
-            {canEdit && <button className="ghost small report-delete" data-testid="report-delete" onClick={() => setDoomed([r])}><Trash2 className="i" aria-hidden="true" />지우기</button>}
+            {archiveAction(r)}
+            {canEdit && <button disabled={r.busy} className="ghost small report-delete" data-testid="report-delete" onClick={() => setDoomed([r])}><Trash2 className="i" aria-hidden="true" />지우기</button>}
           </div>
           {canEdit && <ReportLink project={r.project} name={r.name} link={r.link} onChange={(link) => setLink(r, link)} />}
         </article>;
@@ -166,6 +189,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
           <span className="spacer" />
           <button className="ghost small" data-testid="reports-pick-done" disabled={!work.some((r) => !r.busy)}
             onClick={() => setPicked(new Set(work.filter((r) => !r.busy).map(keyOf)))}>끝난 것 모두 고르기</button>
+          <button className="ghost small" disabled={saving || pickedRows.length === 0} onClick={() => void archiveReports(pickedRows, true)}>보관함에 넣기</button>
           <button className="small danger" data-testid="reports-delete" disabled={pickedRows.length === 0} onClick={() => setDoomed(pickedRows)}>
             <Trash2 className="i" aria-hidden="true" />지우기
           </button>
@@ -189,6 +213,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
               <span className="report-row-actions">
                 <button className="ghost small" data-testid="report-open" onClick={() => onView(r)}>열기</button>
                 <button className="ghost small" disabled={opening !== null} onClick={() => void open(r)}>새 창</button>
+                {archiveAction(r)}
                 {canEdit && <button className="ghost small" aria-expanded={linkOpen === key} onClick={() => setLinkOpen((k) => k === key ? null : key)}>공유 링크</button>}
               </span>
             </div>
@@ -198,7 +223,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
         })}
       </>
     )}
-    {reports !== null && (tab === "mine" ? mine.length : work.length) > visible[tab] && <button
+    {reports !== null && (tab === "work" ? work.length : cards.length) > visible[tab] && <button
       type="button" className="ghost small" data-testid="reports-more"
       onClick={() => setVisible((v) => ({ ...v, [tab]: v[tab] + 50 }))}>보고서 더 보기</button>}
     </div>
