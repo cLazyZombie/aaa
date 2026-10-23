@@ -350,7 +350,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RoutineCmd,
     },
-    /// 자동화 파일의 정본 스키마
+    /// 자동화 정의·실행 기록·승인·이관
     Automation {
         #[command(subcommand)]
         cmd: AutomationCmd,
@@ -794,11 +794,48 @@ fn task_edit_cmd(json: bool, ops: Vec<aaa_proto::TaskOp>, user_request: Option<S
 
 #[derive(Subcommand)]
 enum AutomationCmd {
-    /// 처음·넓힌 자동 시작 범위를 본 hash로 승인한다(사람의 aaa 밖 터미널)
-    Approve { name: String, approval_sha256: String },
+    /// 자기 입력의 처리 결과를 인증된 post 경로로 남긴다
+    Input {
+        #[command(subcommand)]
+        cmd: AutomationInputCmd,
+    },
+    /// thread 시작 또는 명령 실행 범위를 본 hash로 승인한다(사람의 aaa 밖 터미널)
+    Approve {
+        name: String,
+        approval_sha256: String,
+        #[arg(long, default_value="thread", value_parser=["thread","command"])]
+        capability: String,
+    },
+    /// 자동화 목록과 현재 상태
+    List,
+    /// 설정 원문과 검증 결과
+    Show {
+        name: String,
+    },
+    /// 실행 원장과 옛 관측 기록
+    Runs {
+        name: String,
+        #[arg(long)]
+        before: Option<String>,
+    },
+    Enable {
+        name: String,
+    },
+    Disable {
+        name: String,
+    },
+    /// schema 2로 이관한다. 미리보기 hash를 적용 때 그대로 준다
+    Migrate {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        plan_sha256: Option<String>,
+    },
     /// 옛 파일을 검증 뒤 TOML로 옮기고 원본은 .converted/에 보존한다
-    Convert { project: Option<String> },
-    /// 보낸 결과를 모르는 `do.message` 묶음을 대상 thread를 확인한 뒤 푼다(사람의 aaa 밖 터미널). 그 묶음은 다시 보내지 않는다.
+    Convert {
+        project: Option<String>,
+    },
+    /// 결과 불명인 명령·입력 전달 묶음을 확인한 뒤 푼다(사람의 aaa 밖 터미널). 그 묶음은 다시 실행하지 않는다.
     /// 묶음 id는 `routine list --json`의 `queue.inflight.id`다
     Unblock {
         name: String,
@@ -808,16 +845,35 @@ enum AutomationCmd {
         #[arg(long)]
         discard: bool,
     },
-    /// 조건을 기다리지 않고 동작을 한 번 돌린다(명령 조건은 명령을 지금 돌린다). 꺼짐·승인되지 않은 범위는 거부한다
-    Run { name: String },
+    /// 지금 실행한다. run show <실행 ID>는 상세 조회다. 수동 실행도 꺼짐·승인·정책을 지킨다
+    Run {
+        name: String,
+        /// `run show <실행 ID>`로 상세를 읽는다
+        id: Option<String>,
+    },
     /// 끈 뒤 automations/.trash/로 옮긴다. 대기 입력은 취소하고 기록·본문 파일은 둔다
-    Delete { name: String },
+    Delete {
+        name: String,
+    },
     /// 지운 자동화를 꺼진 채로 되살린다. id는 `routine list`의 「지운 자동화」 줄이다
-    Restore { id: String },
+    Restore {
+        id: String,
+    },
     /// Rust 정본 타입에서 JSON Schema를 출력한다
     Schema {
         #[arg(long)]
         mission: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AutomationInputCmd {
+    Complete {
+        run: String,
+        #[arg(long,value_parser=["completed","failed","needs-decision"])]
+        outcome: String,
+        #[arg(long)]
+        report: Option<String>,
     },
 }
 
@@ -2152,9 +2208,70 @@ fn run(cli: Cli) -> Result<ExitCode> {
             "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
              `aaa thread next <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
         ),
-        Cmd::Automation { cmd: AutomationCmd::Approve { name, approval_sha256 } } => {
+        Cmd::Automation {
+            cmd: AutomationCmd::Input { cmd: AutomationInputCmd::Complete { run, outcome, report } },
+        } => {
+            let completion = aaa_proto::AutomationCompletion {
+                run,
+                outcome: match outcome.as_str() {
+                    "completed" => aaa_proto::AutomationOutcome::Completed,
+                    "failed" => aaa_proto::AutomationOutcome::Failed,
+                    _ => aaa_proto::AutomationOutcome::NeedsDecision,
+                },
+                report,
+            };
+            use sha2::Digest;
+            let body = serde_json::to_string(&completion)?;
+            let input = aaa_proto::PostInput {
+                post_id: hex::encode(
+                    &sha2::Sha256::digest(
+                        format!("{}\n{body}", std::env::var("AAA_SESSION_ID").unwrap_or_default()).as_bytes(),
+                    )[..16],
+                ),
+                to: "coordinator".into(),
+                post_type: aaa_proto::PostType::Data,
+                topic: "automation-input-complete".into(),
+                title: "자동화 입력 처리 결과".into(),
+                body,
+                needs_user: false,
+                refs: vec![completion.run],
+            };
+            let rt = tokio::runtime::Runtime::new()?;
+            let result = rt.block_on(aaa_agent::post::send(serde_json::to_value(input)?))?;
+            let success = matches!(result, aaa_proto::PostResult::AutomationCompleted { .. });
+            println!("{}", serde_json::to_string(&result)?);
+            Ok(if success { ExitCode::SUCCESS } else { ExitCode::from(1) })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Approve { name, approval_sha256, capability } } => {
             crate::person::require("aaa automation approve")?;
-            front(json, FrontRequest::AutomationApprove { project: project_or_here(None)?, name, approval_sha256 })
+            let project = project_or_here(None)?;
+            front(
+                json,
+                if capability == "command" {
+                    FrontRequest::RoutineApprove { project, name, command_sha256: approval_sha256 }
+                } else {
+                    FrontRequest::AutomationApprove { project, name, approval_sha256 }
+                },
+            )
+        }
+        Cmd::Automation { cmd: AutomationCmd::List } => {
+            front(json, FrontRequest::Routines { project: project_or_here(None)? })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Show { name } } => {
+            front(json, FrontRequest::AutomationRead { project: project_or_here(None)?, name })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Runs { name, before } } => {
+            front(json, FrontRequest::AutomationExecutions { project: project_or_here(None)?, name, before })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Enable { name } } => {
+            front(json, FrontRequest::RoutineToggle { project: project_or_here(None)?, name, on: Some(true) })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Disable { name } } => {
+            front(json, FrontRequest::RoutineToggle { project: project_or_here(None)?, name, on: Some(false) })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Migrate { dry_run, plan_sha256 } } => {
+            anyhow::ensure!(dry_run || plan_sha256.is_some(), "적용에는 --plan-sha256 <미리보기 hash>가 필요하다");
+            front(json, FrontRequest::AutomationConvert { project: project_or_here(None)?, dry_run, plan_sha256 })
         }
         Cmd::Automation { cmd: AutomationCmd::Convert { project } } => front(
             json,
@@ -2164,10 +2281,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             crate::person::require("aaa automation unblock")?;
             front(json, FrontRequest::AutomationUnblock { project: project_or_here(None)?, name, batch, discard })
         }
-        Cmd::Automation { cmd: AutomationCmd::Run { name } } => front(
-            json,
-            FrontRequest::AutomationRun { project: project_or_here(None)?, name, key: aaa_common::util::new_id() },
-        ),
+        Cmd::Automation { cmd: AutomationCmd::Run { name, id } } => {
+            let project = project_or_here(None)?;
+            if name == "show"
+                && let Some(id) = id
+            {
+                front(json, FrontRequest::AutomationExecution { project, id })
+            } else {
+                anyhow::ensure!(id.is_none(), "run <이름> 또는 run show <실행 ID>를 쓴다");
+                front(json, FrontRequest::AutomationRun { project, name, key: aaa_common::util::new_id() })
+            }
+        }
         Cmd::Automation { cmd: AutomationCmd::Delete { name } } => {
             let project = project_or_here(None)?;
             // 지금 판을 읽고 그 판을 지운다(그 사이 바뀌면 host가 거부한다)
@@ -3768,7 +3892,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         }
     };
     let code = match &result {
-        PostResult::Accepted { .. } => 0,
+        PostResult::Accepted { .. } | PostResult::AutomationCompleted { .. } => 0,
         PostResult::Refused { .. } => 1,
         PostResult::Queued { .. } => 2,
     };
@@ -3780,6 +3904,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         println!("{}", value);
     } else {
         match result {
+            PostResult::AutomationCompleted { id, run } => println!("{id} · 입력 처리 기록됨 {run}"),
             PostResult::Accepted { id } => println!(
                 "ok {id}{}",
                 match handled {
@@ -4955,7 +5080,8 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str("worktree 남기기를 권한다(--keep-worktree)\n");
             }
         }
-        FrontResponse::AutomationConverted { files, .. } => {
+        FrontResponse::AutomationConverted { files, dry_run, plan_sha256 } => {
+            let _ = writeln!(s, "{} · 계획 {}", if *dry_run { "이관 미리보기" } else { "이관 완료" }, plan_sha256);
             if files.is_empty() {
                 s.push_str("변환할 옛 파일이 없다\n");
             } else {
@@ -4965,7 +5091,43 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str("변환 파일과 보존 사본을 coordinator 폴더 git에 한 커밋으로 남긴다.\n");
             }
         }
-        FrontResponse::RoutineRuns { runs, .. } => {
+        FrontResponse::AutomationExecutions { runs, next } => {
+            for run in runs {
+                let _ = writeln!(s, "{}\t{:?} · {:?} · {}", run.id, run.state, run.receipt, run.reason);
+            }
+            if let Some(next) = next {
+                let _ = writeln!(s, "이전 실행: --before {next}");
+            }
+        }
+        FrontResponse::AutomationExecution { run } => {
+            let _ = writeln!(
+                s,
+                "{}\t{:?} · {:?}\n{}\nthread: {} · 후속 결과: {}",
+                run.id,
+                run.stage,
+                run.state,
+                run.reason,
+                run.thread.as_deref().unwrap_or("미연결"),
+                run.outcome.as_deref().unwrap_or("미연결")
+            );
+            for event in &run.events {
+                let _ = writeln!(
+                    s,
+                    "{}\t{:?} · {:?} · {}",
+                    aaa_common::util::utc_text(event.at_ms),
+                    event.stage,
+                    event.state,
+                    event.reason
+                );
+            }
+        }
+        FrontResponse::RoutineRuns { runs, executions, .. } => {
+            for run in executions {
+                let _ = writeln!(s, "{}\t{:?} · {:?} · {}", run.id, run.state, run.receipt, run.reason);
+            }
+            if !runs.is_empty() {
+                s.push_str("옛 관측 기록(작업 성공 증거 아님)\n");
+            }
             for r in runs {
                 let _ = writeln!(
                     s,

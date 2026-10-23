@@ -1001,7 +1001,7 @@ export type PostType = "notice" | "data" | "request";
 
 export type PostInput = { post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
-export type PostResult = { "state": "accepted", id: string, } | { "state": "refused", reason: string, existing: string | null, } | { "state": "queued", post_id: string, };
+export type PostResult = { "state": "accepted", id: string, } | { "state": "automation_completed", id: string, run: string, } | { "state": "refused", reason: string, existing: string | null, } | { "state": "queued", post_id: string, };
 
 export type PostSender = { thread: string | null, role: Role, mission: string | null, machine: string, session: string | null, verified: string, };
 
@@ -1221,7 +1221,7 @@ picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | 
 /**
  * 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
  */
-body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "workspace_access", project?: string, machine: string, } | { "op": "workspace_access_set", project?: string, machine: string, workspace: string, enabled: boolean, revision: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
+body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "workspace_access", project?: string, machine: string, } | { "op": "workspace_access_set", project?: string, machine: string, workspace: string, enabled: boolean, revision: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "automation_executions", project?: string, name: string, before?: string, } | { "op": "automation_execution", project?: string, id: string, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
 /**
  * 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
  */
@@ -1384,7 +1384,7 @@ dry_run: boolean,
 /**
  * 계획 hash. 실행 요청에 실어 보내면 그 사이 바뀐 계획을 거부한다.
  */
-plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
+plan_sha256: string, } | { "kind": "automation_executions", runs: Array<AutomationExecution>, next: string | null, } | { "kind": "automation_execution", run: AutomationExecution, } | { "kind": "routine_runs", runs: Array<RoutineRun>, executions: Array<AutomationExecution>,
 /**
  * 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
  */
@@ -2095,6 +2095,50 @@ body: string, done: boolean,
  * coordinator(또는 사람)가 `aaa inbox`로 본 적이 있다. 처음 보는 항목만 알린다.
  */
 seen: boolean, created_at_ms: number, done_at_ms: number | null, };
+
+export type AutomationCompletion = { run: string, outcome: AutomationOutcome, report: string | null, };
+
+export type AutomationOutcome = "completed" | "failed" | "needs_decision";
+
+export type AutomationDefinition = { schema: number, title: string, enabled: boolean, trigger: AutomationTrigger, observe?: AutomationObserve | null, condition: AutomationCondition, action: AutomationAction, policy: AutomationPolicy, };
+
+export type AutomationTrigger = { "kind": "schedule", every?: string | null, daily?: string | null, catch_up: AutomationCatchUp, } | { "kind": "event", source: AutomationEventSource, repo?: string | null, machine?: string | null, };
+
+export type AutomationCatchUp = "once" | "skip";
+
+export type AutomationEventSource = "thread" | "pr" | "ci" | "git";
+
+export type AutomationObserve = { "kind": "command" } & AutomationCommand;
+
+export type AutomationCommand = { command: string, machine?: string | null, };
+
+export type AutomationCondition = { events: Array<string>, repos: Array<string>, branches: Array<string>, workflows: Array<string>, include_automation: boolean, output_changed: boolean, min_commits: number | null, };
+
+export type AutomationPolicy = { batch: string | null, min_gap: string | null, max_per_day: number | null, max_running: number | null, usage_session_below: number | null, usage_week_below: number | null, };
+
+export type AutomationAction = { "kind": "notice" } & AutomationNotice | { "kind": "message" } & AutomationMessage | { "kind": "thread" } & AutomationThread | { "kind": "command" } & AutomationCommand | { "kind": "proposal" };
+
+export type AutomationNotice = { text: string | null, text_file: string | null, notify: boolean, };
+
+export type AutomationMessage = { thread: string, text?: string | null, text_file?: string | null, };
+
+export type AutomationThread = { title: string, repo?: string | null, profiles: Array<string>, machines: Array<string>, reuse: AutomationReuse, memory: boolean, reports: boolean, close_idle?: string | null, profile_pick: AutomationProfilePick, machine_pick: AutomationMachinePick, wait: Array<string>, wait_max?: string | null, text?: string | null, text_file?: string | null, brief_file?: string | null, };
+
+export type AutomationReuse = "new" | "open";
+
+export type AutomationProfilePick = "first" | "week-left";
+
+export type AutomationMachinePick = "idlest";
+
+export type AutomationRunState = "queued" | "waiting" | "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "unknown";
+
+export type AutomationStage = "trigger" | "observe" | "condition" | "policy" | "action" | "follow_up" | "legacy";
+
+export type AutomationReceipt = "notice_created" | "message_delivered" | "thread_started" | "proposal_created" | "command_exited";
+
+export type AutomationRunEvent = { at_ms: number, stage: AutomationStage, state: AutomationRunState, reason: string, };
+
+export type AutomationExecution = { id: string, name: string, input_id: string, revision: string, source: string, created_at_ms: number, updated_at_ms: number, state: AutomationRunState, stage: AutomationStage, reason: string, receipt: AutomationReceipt | null, thread: string | null, task: string | null, report: string | null, input_file: string | null, processed: boolean, outcome: string | null, legacy: boolean, events: Array<AutomationRunEvent>, };
 
 export type RoutineView = {
 /**

@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { ThreadView } from "./gen/proto";
 import { AutomationEditor } from "./AutomationEditor";
 import { AutomationPage, RuleDetail } from "./AutomationDetail";
+import { apiAtLeast } from "./automationModel";
 import { canEditAutomations } from "./automationForm";
 import { openThreads, type Automations } from "./automationData";
 
@@ -44,12 +45,12 @@ export function AutomationView({ shown, target, data, canControl, threads, onClo
   if (!target) body = page("자동화", "왼쪽 「자동화」 목록에서 자동화를 고른다.", "automation-empty");
   else if (target.name === null)
     body = canControl && canEdit
-      ? <AutomationEditor key={key} project={project} onClose={onClose} onSaved={async (name) => { await load(); onOpen(project, name, true); }} />
+      ? <AutomationEditor canV2={apiAtLeast(frontApi, 1, 119)} key={key} project={project} onClose={onClose} onSaved={async (name) => { await load(); onOpen(project, name, true); }} />
       : page("새 자동화", frontApi === undefined ? "읽는 중…" : "이 기기나 host에서는 새 자동화를 만들 수 없다.", "automation-empty");
   // 편집 중에 다른 기기가 지워도 편집 화면은 남는다: 저장하면 host가 「지워졌다」 충돌로 알린다
   else if (editing === key && !rule?.web_read_only_reason)
     // 닫을 때도 다시 읽는다: 그 사이 지워졌으면 바로 「지워졌다」 안내다
-    body = <AutomationEditor key={key} project={project} name={target.name} onClose={() => { setEditing(null); void load(); }} onSaved={async () => { await load(); setEditing(null); }} />;
+    body = <AutomationEditor canV2={apiAtLeast(frontApi, 1, 119)} key={key} project={project} name={target.name} onClose={() => { setEditing(null); void load(); }} onSaved={async () => { await load(); setEditing(null); }} />;
   else if (!rule)
     body = loading
       ? page(target.name, "읽는 중…", "automation-empty")

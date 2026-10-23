@@ -7762,3 +7762,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 검증: host auto_mode owner, E2E100(켜기→자동 답→예외 유지→끄기→요약, 두 기기·재시작·hook·다시 정하기·Reader), Chromium/WebKit 1280·390px 캡처. 전체 ci-local·Linux strict cross·공개 검사. 병합은 착지 창, GitHub CI 대기는 없다.
 
 - **42회차 착지 통합(t-0943).** 시작 원격 main `6fd0ddff`에 t-0938 `6271ebf4`를 --no-ff로 합친다. 기존 setup §8.477·workspace §8.478·FRONT_API 1.117·E2E99를 보존하고 auto mode에 §8.479·FRONT_API 1.118·E2E100을 배정한다. 공통 SessionStart의 기억 재진입 안내와 coordinator 모드 조회를 함께 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패하면 원문·부하를 보존하고 재시도 없이 push를 멈춘다. 전체 검증에 salt를 넣지 않고 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI 대기·설치 실행·배포·tag·release는 하지 않는다.
+
+### 8.480 자동화 단일 정의·실행 원장(t-0939)
+
+- 사용자 1A·2A: `schema=2`의 trigger → observe? → condition → action → policy와 공통 내구 큐를 구현한다. notice/command/thread/message/proposal은 동작 영수증으로 구별하고 후속 thread·task·보고·입력 처리 신고를 따로 표시한다. 야간 검사 등 운영 notice를 직접 thread 시작으로 바꾸지 않는다.
+- 정본 DTO·스키마·TS는 aaa-proto, 판정·큐·원장은 aaa-host, 명령 실행은 기존 agent다. 기존 큐/예산/커서/grant는 호환 정본으로 보존하고 새 실행 테이블은 receipt와 같은 SQLite transaction으로 갱신한다. 불명 명령·메시지는 자동 재실행하지 않는다.
+- on/do/limits·routine·mission 읽기 어댑터와 journal 이관은 파일별 원본/목적 bytes·계획 hash를 검사한다. a-ID·열린 thread·기억·processed·현재 profiles를 유지한다. 감시 harness를 고정하지 않고 t-0941 공통 기억 재독, t-0935 workspace, t-0938 auto mode owner를 사용한다.
+- CLI automation list/show/runs/run show/enable/disable/migrate/input complete와 기존 alias, 웹 원장·직접 명령 편집, coordinator 생성 안내를 맞춘다. 사람 전용 승인·safety·배포·일반 resolve 권한은 확대하지 않는다.
+- FRONT_API 1.119, `automation_results.v1`, E2E101(착지 시 최신 main 번호와 다시 대조). [계약·운영](automation-v2.md), [시험](testing.md). 기존 source 관측 로그는 작업 성공으로 승격하지 않는다.

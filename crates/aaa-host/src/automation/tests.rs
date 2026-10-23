@@ -140,7 +140,7 @@ fn converter_preserves_values_archives_sources_and_second_run_is_quiet() {
     for file in [
         "routines/.converted/read.md",
         "automations/read.toml",
-        "automations/read.md",
+        "automations/read.brief.md",
         "missions/.converted/watch.md",
         "automations/watch.brief.md",
         "automations/watch.memory/memory.md",
@@ -190,9 +190,9 @@ fn public_schema_artifacts_match_rust_types_and_exclusive_tables() {
         assert_eq!(std::fs::read_to_string(path).unwrap(), text, "Rust 정본 타입이 바뀌면 공개 스키마도 함께 검토한다");
     }
     let rule = schema();
-    assert_eq!(rule["$defs"]["Condition"]["oneOf"].as_array().unwrap().len(), 6);
-    assert_eq!(rule["$defs"]["Action"]["oneOf"].as_array().unwrap().len(), 4);
-    assert_eq!(rule["$defs"]["Inbox"]["not"]["required"], serde_json::json!(["text", "text_file"]));
+    assert_eq!(rule["$defs"]["AutomationTrigger"]["oneOf"].as_array().unwrap().len(), 2);
+    assert_eq!(rule["$defs"]["AutomationAction"]["oneOf"].as_array().unwrap().len(), 5);
+    assert_eq!(rule["$defs"]["AutomationNotice"]["not"]["required"], serde_json::json!(["text", "text_file"]));
 }
 
 fn convert(root: &std::path::Path) -> Result<Vec<String>, String> {
@@ -466,6 +466,7 @@ async fn converted_followup_survives_doctor_and_project_create() {
     let h = crate::Host::open(cfg, p.0.join("host")).unwrap();
     h.project_create("demo", Default::default(), "local:cli").unwrap();
     let dir = p.0.join("projects/demo");
+    legacy_followup(&dir);
     convert(&dir).unwrap();
     let converted = std::fs::read(dir.join("automations/pr-followup.toml")).unwrap();
     let response = h.project_files(true, "local:cli");
@@ -486,6 +487,7 @@ async fn archived_followup_without_toml_is_not_revived_by_doctor_or_create() {
     let p = Project::new();
     let h = demo_host(&p);
     let dir = p.0.join("projects/demo");
+    legacy_followup(&dir);
     convert(&dir).unwrap();
     std::fs::remove_file(dir.join("automations/pr-followup.toml")).unwrap();
     let before = snapshot(&dir);
@@ -495,6 +497,13 @@ async fn archived_followup_without_toml_is_not_revived_by_doctor_or_create() {
     std::fs::remove_file(dir.join("PROJECT.md")).unwrap();
     h.project_create("demo", Default::default(), "local:cli").unwrap();
     assert_eq!(snapshot(&dir), before);
+}
+
+fn legacy_followup(root: &std::path::Path) {
+    // 이관 시험의 실제 구형 파일. 새 프로젝트 기본값(v2)과 구별한다.
+    std::fs::remove_file(root.join("automations/pr-followup.toml")).unwrap();
+    std::fs::create_dir_all(root.join("routines")).unwrap();
+    std::fs::write(root.join(crate::routine::PR_FOLLOWUP), crate::routine::PR_FOLLOWUP_TEMPLATE).unwrap();
 }
 
 fn demo_host(p: &Project) -> std::sync::Arc<crate::Host> {
@@ -1128,7 +1137,8 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
     let p = Project::new();
     let h = demo_host(&p);
     let dir = p.0.join("projects/demo");
-    // 새 프로젝트가 만드는 옛 pr-followup을 먼저 변환해 E2E34와 같은 무변경 fixture로 만든다.
+    // 구형 프로젝트 fixture를 변환해 웹 읽기 전용 경계를 검사한다.
+    legacy_followup(&dir);
     let (files, _) = h.automation_convert("demo", false, None, "local:cli").await.unwrap();
     assert!(files.contains(&"routines/.converted/pr-followup.md".to_string()));
     // 웹 보호는 프로젝트 생략을 채운 뒤 적용한다. 일반 변환의 기존 계약을 유지한다.
@@ -1235,4 +1245,98 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::Forbidden);
     assert_eq!(snapshot(&dir), before);
+}
+
+#[test]
+fn v2_preserves_scope_profile_timing_and_command_approval() {
+    let p = Project::new();
+    let rules = [
+        "[on.schedule]\nevery='10m'\n[do.inbox]\ntext='안내'",
+        "[on.command]\nevery='10m'\ncommand='git status --porcelain'\nmachine='mac-a'\n[do.inbox]\n",
+        "[on.pr]\nevents=['review']\n[do.message]\nthread='owner'\ntext='확인'",
+        "[on.ci]\nrepo='aaa'\nbranches=['main']\nevents=['failed']\n[do.start]\ntitle='CI'\nrepo='aaa'\nprofiles=['migration-time-profile']\nmachines=['mac-a']\ntext='분류'\nreuse='open'\nmemory=true\nreports=true\nclose_idle='30m'\n[limits]\nbatch='2m'\nusage_week_below=10",
+        "[on.thread]\nevents=['report_ready']\nrepos=['rc']\n[do.start]\ntitle='검증'\nrepo='rc'\nprofiles=['another-current-profile']\nmachines=['mac-a']\ntext='검증'\nreuse='open'\nmemory=true",
+        "enabled=false\n[on.schedule]\ndaily='04:00'\ncatch_up='skip'\n[do.start]\ntitle='예약'\nprofiles=['reviewer']\nmachines=['mac-a']\ntext='예약'",
+        "[on.schedule]\ndaily='03:00'\n[do.inbox]\ntext='야간 검사는 coordinator가 시작한다'",
+    ];
+    for raw in rules {
+        let old = model::read("automations/check.toml", raw).unwrap();
+        let encoded = model::encode(&old).unwrap();
+        assert_eq!(model::read("automations/check.toml", &encoded).unwrap(), old);
+        let before = parse(&p.0, "check", raw).unwrap();
+        let after = parse(&p.0, "check", &encoded).unwrap();
+        assert_eq!(before.command_sha256(), after.command_sha256());
+        assert_eq!(File::from_routine(&before), File::from_routine(&after));
+    }
+    let direct = "schema=2\n[trigger]\nkind='schedule'\nevery='10m'\n[action]\nkind='command'\ncommand='git status --porcelain'\nmachine='mac-a'";
+    let observed = parse(&p.0, "check", rules[1]).unwrap();
+    let direct = parse(&p.0, "check", direct).unwrap();
+    assert_ne!(observed.command_sha256(), direct.command_sha256(), "조회 승인이 직접 실행 권한으로 커지면 안 된다");
+}
+
+#[test]
+fn v2_rejects_unknown_fields_and_inapplicable_conditions() {
+    let p = Project::new();
+    for extra in ["schema=3", "schema=2\nunknown=true"] {
+        assert!(
+            parse(&p.0, "bad", &format!("{extra}\n[trigger]\nkind='schedule'\nevery='10m'\n[action]\nkind='notice'"))
+                .is_err()
+        );
+    }
+    assert!(
+        parse(
+            &p.0,
+            "bad",
+            "schema=2\n[trigger]\nkind='schedule'\nevery='10m'\n[condition]\nbranches=['main']\n[action]\nkind='notice'"
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn migration_journal_resumes_partial_files_and_refuses_unrelated_edits() {
+    let p = Project::new();
+    let old = "[on.schedule]\ndaily='03:00'\n[do.inbox]\ntext='그대로'";
+    p.write("automations/night.toml", old);
+    p.write("automations/night.memory/processed.txt", "old-input.json\n");
+    p.write("automations/second.toml", old);
+    let plan = convert::prepare(&p.0, "mac-a").unwrap();
+    let encoded = serde_json::to_string(&plan).unwrap();
+    // 첫 파일 rename 뒤 host가 중단된 상태를 만든다. 남은 파일과 백업은 복구가 완성한다.
+    let partial: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    p.write("automations/night.toml", partial["writes"]["automations/night.toml"].as_str().unwrap());
+    let plan: convert::Plan = serde_json::from_str(&encoded).unwrap();
+    convert::resume(&p.0, &plan).unwrap();
+    let first = snapshot(&p.0);
+    convert::resume(&p.0, &plan).unwrap();
+    assert_eq!(snapshot(&p.0), first, "복구 재실행은 같은 bytes");
+    assert_eq!(
+        std::fs::read_to_string(p.0.join("automations/night.memory/processed.txt")).unwrap(),
+        "old-input.json\n"
+    );
+    assert!(convert::prepare(&p.0, "mac-a").unwrap().listing().is_empty());
+    p.write("automations/night.toml", "# 다른 편집\n");
+    assert!(convert::resume(&p.0, &plan).unwrap_err().contains("다른 편집"));
+}
+
+#[tokio::test]
+async fn equal_schedule_input_ids_in_different_rules_create_distinct_notices() {
+    let p = Project::new();
+    let h = demo_host(&p);
+    let root = h.project_dir("demo").unwrap();
+    for name in ["first", "second"] {
+        let rule = parse(
+            &root,
+            name,
+            "schema=2\n[trigger]\nkind='schedule'\nevery='1m'\n[action]\nkind='notice'\ntext='독립 안내'",
+        )
+        .unwrap();
+        h.automation_submit("demo", &rule, "schedule:42", String::new(), None).unwrap();
+        h.automation_drain_at("demo", &rule, aaa_common::util::now_ms()).await.unwrap();
+    }
+    let items = h.db.inbox_list(Some("demo"), true).unwrap();
+    let a = items.iter().find(|i| i.subject == "first").unwrap();
+    let b = items.iter().find(|i| i.subject == "second").unwrap();
+    assert_ne!(a.id, b.id);
+    assert_eq!(a.body, b.body);
 }

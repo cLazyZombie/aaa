@@ -6,6 +6,7 @@ export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1" };
 
 const dir = () => `${root}/projects/auto-detail`;
 const CHECK = '+++\n# 보존할 주석\nschedule = "every 1s"\nenabled = true\n+++\n자료를 확인한다.\n';
+const FOLLOWUP = '+++\non="pr"\nevents=["checks-failed","review"]\nenabled=true\n+++\n\nPR의 실패와 검토를 확인한다.\n';
 const WATCH = '+++\nprofile="fake"\nevents=["git_pushed"]\nrepos=["app"]\nwithdrawal="none"\n+++\n자료를 분류한다.\n';
 const call = (p, req) => p.evaluate(async (body) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json(), req);
 /** 본문 설정 화면이 화면 폭 안에 있고 옆으로 넘치지 않는다(떠 있는 창이 아니다, t-0628) */
@@ -26,6 +27,8 @@ const closeDetail = async (p) => {
 export default async function ({ page }) {
   await step("자동화 설정: 카드를 누르면 본문에 요약·설정(조건·동작·대상·큐)·승인 범위·마지막 건너뜀·기록·파일 원문이 열린다", async () => {
     aaa("project", "create", "auto-detail");
+    fs.unlinkSync(`${dir()}/automations/pr-followup.toml`);
+    fs.writeFileSync(`${dir()}/routines/pr-followup.md`, FOLLOWUP);
     fs.writeFileSync(`${dir()}/routines/check.md`, CHECK);
     fs.mkdirSync(`${dir()}/missions`, { recursive: true });
     fs.writeFileSync(`${dir()}/missions/watch.md`, WATCH);
@@ -70,7 +73,7 @@ export default async function ({ page }) {
 
   await step("새 형식으로 바꾸기: 미리보기는 쓰지 않고 생기는 규칙·보존 위치를 보이며, 실행은 본 계획만 바꾼다. Reader는 미리보기만", async () => {
     const before = { check: fs.readFileSync(`${dir()}/routines/check.md`, "utf8"), watch: fs.readFileSync(`${dir()}/missions/watch.md`, "utf8") };
-    const followup = fs.readFileSync(`${dir()}/routines/pr-followup.md`, "utf8");
+    const followup = FOLLOWUP;
     const oldFollowup = followup.replace(/PR의[\s\S]*/, "Old English copy\n");
     fs.mkdirSync(`${dir()}/routines/.converted`, { recursive: true });
     fs.writeFileSync(`${dir()}/routines/.converted/check.md`, before.check);

@@ -86,6 +86,7 @@ function ActionFields({ form, update }: { form: Form; update: (f: Form) => void 
   const a = actionOf(form);
   const set = (key: string, value: unknown) => update(setField(form, "do", key, value));
   switch (kind) {
+    case "command": return <><Text label="실행 명령" value={a.command} onChange={(v) => set("command", v)} mono testid="automation-action-command" /><Text label="실행 머신" value={a.machine} onChange={(v) => set("machine", v)} placeholder="비우면 host 머신" /></>;
     case "inbox": return <Toggle label="휴대폰에도 알린다(앱 안 알림)" value={a.notify} onChange={(v) => set("notify", v)} />;
     case "message": return <Text label="받는 thread" value={a.thread} onChange={(v) => set("thread", v)} placeholder="owner 또는 t-0123" hint="owner는 사건의 thread다(일정·명령에는 없다)" testid="automation-form-thread" />;
     case "start": return <>
@@ -162,7 +163,8 @@ function ConflictPanel({ conflict, onReopen, onOverwrite }: { conflict: Conflict
   </section>;
 }
 
-export function AutomationEditor({ project, name: openName, onClose, onSaved }: {
+export function AutomationEditor({ canV2 = false, project, name: openName, onClose, onSaved }: {
+  canV2?: boolean;
   project: string;
   /** 없으면 새 자동화 */
   name?: string;
@@ -331,9 +333,9 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
         </section>
         <section className="automation-section" aria-label="동작">
           <h3>동작</h3>
-          <Field label="종류"><select className="input" data-testid="automation-form-action" value={actionKind(form) ?? ""} onChange={(e) => updateForm(setAction(form, e.target.value as ActionKind))}>{actionKinds.map((a) => <option key={a.kind} value={a.kind}>{a.label}</option>)}</select></Field>
+          <Field label="종류"><select className="input" data-testid="automation-form-action" value={actionKind(form) ?? ""} onChange={(e) => updateForm(setAction(form, e.target.value as ActionKind))}>{actionKinds.filter((a) => a.kind !== "command" || canV2).map((a) => <option key={a.kind} value={a.kind}>{a.label}</option>)}</select></Field>
           <ActionFields form={form} update={updateForm} />
-          {actionKind(form) !== "deploy" && <div className="automation-body">
+          {actionKind(form) !== "deploy" && actionKind(form) !== "command" && <div className="automation-body">
             <div className="automation-tools"><span>본문{body_.file ? ` · ${body_.file}` : ""} (Markdown)</span><button type="button" className="btn btn-ghost" aria-pressed={preview} onClick={() => setPreview((p) => !p)}>{preview ? "고치기" : "미리보기"}</button></div>
             {preview ? <div className="automation-preview" data-testid="automation-body-preview"><Markdown>{bodyText || "(비었다)"}</Markdown></div>
               : <textarea className="input automation-textarea" value={bodyText} onChange={(e) => updateBody(e.target.value)} aria-label="본문" data-testid="automation-form-body" spellCheck={false} />}

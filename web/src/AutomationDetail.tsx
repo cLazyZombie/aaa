@@ -10,7 +10,7 @@ import { call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { Toggle } from "./herdr/SettingsControls";
-import type { RoutineRun, RoutineSource, RoutineView, ThreadView } from "./gen/proto";
+import type { AutomationExecution, RoutineRun, RoutineSource, RoutineView, ThreadView } from "./gen/proto";
 import { cardTone, cardWord, lastSkip, legacyRule, ruleTargets, runTone, runWord, shortTrigger, stuckBatch } from "./automationModel";
 import { runKey } from "./automationForm";
 
@@ -91,6 +91,9 @@ function Closing({ at }: { at: number }) {
 /** routine_runs 50건과 파일 원문. 줄이 바뀌면(host 기록이 늘면) 다시 읽는다 */
 function useRuns(project: string, name: string, stamp: unknown) {
   const [runs, setRuns] = useState<RoutineRun[]>([]);
+  const [executions,setExecutions] = useState<AutomationExecution[]>([]);
+  const [next,setNext] = useState<string | null>(null);
+  const [moreBusy,setMoreBusy] = useState(false);
   const [source, setSource] = useState<RoutineSource | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,7 +104,7 @@ function useRuns(project: string, name: string, stamp: unknown) {
     try {
       const r = await call({ op: "routine_runs", project, name });
       if (r.kind !== "routine_runs") throw new Error("기록 응답이 아니다");
-      if (mine === ticket.current) { setRuns(r.runs); setSource(r.source ?? null); setError(null); }
+      if (mine === ticket.current) { setRuns(r.runs); setExecutions(r.executions ?? []); setNext(r.executions?.length === 100 ? r.executions[99].id : null); setSource(r.source ?? null); setError(null); }
     } catch (e) {
       if (mine === ticket.current) setError(String(e));
     } finally {
@@ -110,7 +113,18 @@ function useRuns(project: string, name: string, stamp: unknown) {
   }, [project, name]);
   useEffect(() => { void load(); }, [load, stamp]);
   useEffect(() => () => { ++ticket.current; }, []);
-  return { runs, source, error, loading, load };
+  const loadMore = async () => {
+    if (!next || moreBusy) return;
+    const mine=ticket.current;
+    setMoreBusy(true);
+    try {
+      const r=await call({op:"automation_executions",project,name,before:next});
+      if (r.kind!=="automation_executions") throw new Error("실행 원장 응답이 아니다");
+      if (mine===ticket.current) {setExecutions(old=>[...old,...r.runs]);setNext(r.next);}
+    } catch(e) {if (mine===ticket.current) setError(String(e));}
+    finally {setMoreBusy(false);}
+  };
+  return { runs, executions, next, moreBusy, loadMore, source, error, loading, load };
 }
 
 export function RuleDetail({ project, rule, canControl, canEdit = false, running = [], onEdit = () => {}, onChanged, onThread, onClose, onDeleted }: {
@@ -130,7 +144,7 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
   onDeleted: () => void;
 }) {
   canControl = canControl && !rule.web_read_only_reason;
-  const { runs, source, error, loading, load } = useRuns(project, rule.name, rule.last_result?.at_ms);
+  const { runs, executions, next, moreBusy, loadMore, source, error, loading, load } = useRuns(project, rule.name, rule.last_result?.at_ms);
   const [unblock, setUnblock] = useState<{ batch: string; discard: boolean } | null>(null);
   // 지금 실행·지우기·명령 승인·자동 시작 승인 확인창. 지금 실행 key는 창을 열 때 한 번 정한다(같은 누름은 host가 한 번만 받는다)
   const [ask, setAsk] = useState<{ kind: "run"; key: string } | { kind: "delete" } | { kind: "command" } | { kind: "start" } | null>(null);
@@ -228,6 +242,17 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
       ]} />
       {rule.start_approved === true && rule.start_scope && <pre className="automation-scope">{rule.start_scope}</pre>}
     </Section>
+    {executions.length > 0 && <Section title="실행 원장" testid="automation-executions">
+      <p className="muted">동작의 전달·시작 결과와 후속 작업의 완료를 구분합니다.</p>
+      {executions.map(run => <details key={run.id} data-testid="automation-execution">
+        <summary>{short(run.updated_at_ms)} · {executionWord(run)} · {run.reason}</summary>
+        <Facts rows={[["실행",<code>{run.id}</code>],["원인",<code>{run.source} · {run.input_id}</code>],["설정 판",<code>{run.revision || "옛 입력"}</code>],
+          ["후속 작업",run.thread ? <button type="button" className="ghost small" onClick={() => onThread?.(run.thread!)}>{run.thread}</button> : "미연결"],
+          ["할 일",run.task ?? "미연결"],["입력 처리",run.processed ? "확인됨(작업 성공과 별도)" : "미확인"],["후속 결과",run.outcome ? ({completed:"완료 신고",failed:"실패 신고",needs_decision:"결정 필요 신고"}[run.outcome] ?? run.outcome) : "미연결"],["보고",run.report ?? "미연결"]]} />
+        <ol>{run.events.map((e,i) => <li key={i} className="automation-run-detail">{time(e.at_ms)} · {stageWord[e.stage]} · {e.reason}</li>)}</ol>
+      </details>)}
+      {next && <button type="button" className="ghost small" disabled={moreBusy} onClick={()=>void loadMore()}>이전 실행 더 읽기</button>}
+    </Section>}
     <Section title={`기록 · 최근 ${runs.length}건(최대 50)`} testid="automation-runs" tools={<button type="button" className="ghost small" onClick={() => void load()}>기록 다시 읽기</button>}>
       {skip && <p className="automation-run automation-skip" aria-label="마지막 건너뜀"><span className="automation-dim">마지막 건너뜀</span><RunLine run={skip} /></p>}
       <Runs runs={runs} loading={loading} onThread={onThread} />
@@ -303,4 +328,11 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
       }}
     />}
   </AutomationPage>;
+}
+
+const stageWord: Record<AutomationExecution["stage"],string> = {trigger:"접수",observe:"조회",condition:"조건",policy:"정책",action:"동작",follow_up:"후속 작업",legacy:"옛 관측"};
+function executionWord(run: AutomationExecution): string {
+  if (run.legacy) return "옛 관측(결과 미확인)";
+  if (run.state === "succeeded" && run.receipt) return {notice_created:"안내 전달됨",message_delivered:"입력 전달됨",thread_started:"thread 시작됨",proposal_created:"제안 등록됨",command_exited:"명령 성공"}[run.receipt];
+  return {queued:"접수",waiting:"대기",running:"실행 중",succeeded:"동작 완료",failed:"실패",skipped:"건너뜀",cancelled:"취소",unknown:"결과 불명"}[run.state];
 }

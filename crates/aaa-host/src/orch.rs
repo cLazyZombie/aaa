@@ -727,17 +727,22 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   `aaa profile add|edit|remove|allow|default`는 사용자가 시켜도 하지 않는다: 사용자가 aaa 밖 터미널에서 칠 명령을 알려 준다.
   도는 agent는 다시 띄울 때까지 옛 권한으로 돈다고 말한다.
 
-## 특수 임무
-
-## routine
-- 사용자가 일정 작업이나 지켜보는 일을 요청하면 `routines/<이름>.md`를 만들거나 고친다: `+++` 사이 TOML front matter에
-  `schedule`(`every <N>m|h|d` 또는 `daily HH:MM`, host 머신 지역 시각), 선택 `command`·`machine`(명령을 돌릴 머신),
-  `enabled`를 쓴다. 모르는 키는 오류다. 본문은 때가 되면 inbox 항목으로 받을 안내다. `command`가 있는 routine은 사용자가 routine
-  명령을 켜고(safety `routine_commands`) 그 명령을 승인(`aaa routine approve`, 사용자만)한 뒤에만 돈다: 승인이 필요하면
-  사용자에게 알린다.
-- `routines/<이름>.md`는 일정 작업이다(`aaa routine list`). `on = \"pr\"`(선택 `events = [\"opened\", \"checks-failed\", \"review\", \"merged\"]`)이면
-  일정 대신 thread의 PR 사건에 본문을 그 thread에 보낸다. `routines/pr-followup.md`가 있어 thread가 실패한 check를
-  고치고 리뷰 댓글에 답하게 한다. 멈추려면 파일을 지우지 말고 `enabled = false`로 둔다.
+## 자동화
+- 사용자가 일정 작업이나 감시를 요청하면 `automations/<이름>.toml`에 `schema = 2`를 쓴다.
+  `trigger`(schedule/event) → 선택 `observe`(승인된 명령 조회) → `condition` → `action` → `policy` 순서다.
+  `aaa automation schema`가 정본이다. 본문은 `automations/<이름>.brief.md`로 둘 수 있다.
+- 동작은 notice(coordinator 안내), command(승인된 명령), thread(시작·열린 thread 재사용), message(owner/특정 thread),
+  proposal(배포 제안)이다. notice 전달·thread 시작은 본래 작업 완료가 아니다. `aaa automation runs <이름>`과
+  `aaa automation run show <실행 ID>`에서 마지막 오류·대기 사유·연결 thread·후속 처리 신고를 확인한다.
+- 명령은 safety `routine_commands`와 사람의 `aaa automation approve --capability command <이름> <hash>`가 모두 필요하다.
+  thread 시작 범위 승인도 사람만 한다. 이관은 승인을 만들지 않는다. 자동화·inbox·본문은 병합·push·배포·resolve 허가가 아니다.
+- `aaa automation list|show|enable|disable`을 쓴다. 옛 routine 명령·on/do/limits 파일은 호환 입구다.
+  `aaa automation migrate --dry-run`으로 계획을 읽고 같은 hash로 적용한다. 현재 profiles·일정·켜짐·입력·기억을 보존한다.
+- 자동화 기억은 공통 SessionStart(compact/resume) 안내로 다시 읽는다. harness 이름을 고정하지 않는다.
+  processed.txt는 입력 처리 확인이며 작업 성공 증거가 아니다. 처리 결과는 자기 입력 execution_ids에 대해
+  `aaa automation input complete <실행 ID> --outcome completed|failed|needs-decision [--report r-NNNN]`으로 남긴다.
+- PR 감시의 message(owner)는 실패 check·리뷰를 그 thread에 알린다. 야간 검사 등 기존 notice를 thread 시작으로 임의 변경하지 않는다.
+  멈추려면 `enabled = false`로 둔다.
 
 ## 사용자가 채팅에서 요청하지 않으면 하지 않는 것
 병합, force push, branch 지우기, worktree 지우기, thread 끝내기(`thread resolve`).
@@ -933,14 +938,23 @@ pub fn project_scaffold(name: &str, project_md: &str, include_default_pr: bool) 
         ("AGENTS.md", coordinator_guide(name)),
     ];
     if include_default_pr {
-        files.push((crate::routine::PR_FOLLOWUP, crate::routine::PR_FOLLOWUP_TEMPLATE.into()));
+        files.push(("automations/pr-followup.toml", default_followup()));
+        files.push(("automations/automation.schema.json", crate::automation_schema()));
     }
     files.push(("PROJECT.md", project_md.into()));
-    ProjectScaffold { directories: &["memory", "routines", "threads", "library", "inbox", "uploads"], files }
+    ProjectScaffold {
+        directories: &["memory", "routines", "automations", "threads", "library", "inbox", "uploads"],
+        files,
+    }
 }
 
 /// 표지 없는 AGENTS.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
 const KEPT: &str = ".before-aaa";
+
+fn default_followup() -> String {
+    let rule = crate::routine::parse("pr-followup", crate::routine::PR_FOLLOWUP_TEMPLATE).expect("내장 PR 규칙");
+    crate::automation::model::encode(&crate::automation::File::from_routine(&rule)).expect("내장 PR 직렬화")
+}
 
 /// 변환본 또는 보존 사본이 있으면 doctor와 create가 옛 기본 규칙을 되살리지 않는다.
 fn needs_default_followup(dir: &Path) -> bool {
@@ -969,7 +983,7 @@ pub(crate) fn files_problems(dir: &Path, name: &str) -> Vec<String> {
         problems.push("uploads/가 없다".into());
     }
     if needs_default_followup(dir) {
-        problems.push(format!("{}가 없다", crate::routine::PR_FOLLOWUP));
+        problems.push("automations/pr-followup.toml이 없다".into());
     }
     problems
 }
@@ -997,9 +1011,13 @@ pub(crate) fn write_files(dir: &Path, name: &str) -> std::io::Result<()> {
         Err(e) => return Err(e),
     }
     std::fs::create_dir_all(dir.join("uploads"))?;
-    let followup = dir.join(crate::routine::PR_FOLLOWUP);
+    let followup = dir.join("automations/pr-followup.toml");
     if needs_default_followup(dir) {
-        write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes())?;
+        write_atomic(&followup, default_followup().as_bytes())?;
+        let schema = dir.join("automations/automation.schema.json");
+        if !schema.exists() {
+            write_atomic(&schema, crate::automation_schema().as_bytes())?;
+        }
     }
     Ok(())
 }
@@ -1124,9 +1142,9 @@ impl Host {
         }
         // 기본 `pr` routine(herdr-projects `write_default_routine`). PROJECT.md가 마지막이 되게 뼈대보다 먼저 쓴다.
         // 옮기기(`migrate::convert`)는 0.2의 routine을 꺼서 넣으므로 여기서만 쓴다.
-        let followup = dir.join(crate::routine::PR_FOLLOWUP);
+        let followup = dir.join("automations/pr-followup.toml");
         if needs_default_followup(&dir) {
-            write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes()).map_err(internal)?;
+            write_atomic(&followup, default_followup().as_bytes()).map_err(internal)?;
         }
         write_atomic(&dir.join("project.toml"), toml.as_bytes()).map_err(internal)?;
         write_skeleton(&dir, name, &format!("# {name}\n\n지침을 여기에 쓴다.\n")).map_err(internal)?;

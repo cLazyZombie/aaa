@@ -1,7 +1,7 @@
 //! 변환 계획을 먼저 검증하고, 실패하면 이번 변환의 파일만 되돌린다.
 use super::*;
 use std::{collections::BTreeMap, io::Write, path::Path};
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Plan {
     writes: BTreeMap<String, String>,
     originals: BTreeMap<String, String>,
@@ -9,6 +9,7 @@ pub(super) struct Plan {
     pub(super) targets: Vec<(String, String)>,
     state_hash: String,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Archive {
     path: String,
     reuse: bool,
@@ -34,10 +35,10 @@ fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), 
     let (text, external) = spec.action.texts();
     if external.is_none() && text.is_some_and(|s| s.len() > 4096) {
         let body = text.unwrap();
-        let path = format!("automations/{name}.md");
-        add(plan, root, path.clone(), format!("{body}\n"))?;
+        let path = format!("automations/{name}.brief.md");
+        add(plan, root, path.clone(), body.to_string())?;
         match &mut spec.action {
-            Action::Deploy => {}
+            Action::Deploy | Action::Command(_) => {}
             Action::Inbox(a) => {
                 a.text = None;
                 a.text_file = Some(path)
@@ -53,8 +54,7 @@ fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), 
             }
         }
     }
-    let serialized =
-        format!("#:schema ./automation.schema.json\n{}", toml::to_string_pretty(&spec).map_err(|e| e.to_string())?);
+    let serialized = super::model::encode(&spec)?;
     let parsed = parse_with(name, &serialized, |path| {
         plan.writes.get(path).cloned().map(Ok).unwrap_or_else(|| project_text(root, path))
     })?;
@@ -121,7 +121,19 @@ pub(super) fn prepare(root: &Path, machine: &str) -> Result<Plan, String> {
             } else {
                 let mut value: toml::Value = toml::from_str(&original).map_err(|e| e.to_string())?;
                 let wake = value.get_mut("do").and_then(|v| v.as_table_mut()).and_then(|t| t.remove("wake"));
-                let Some(wake) = wake else { continue };
+                let Some(wake) = wake else {
+                    if super::model::is_v2(&original) {
+                        continue;
+                    }
+                    let spec = super::model::read(&file, &original)?;
+                    let roundtrip = super::model::from_v2(super::model::to_v2(&spec))?;
+                    if roundtrip != spec {
+                        return Err(format!("{file}: 변환 의미가 다르다"));
+                    }
+                    plan.originals.insert(file, original);
+                    rule(&mut plan, root, &name, spec)?;
+                    continue;
+                };
                 crate::legacy_mission::validate_wake(&wake)?;
                 let target = wake.get("mission").and_then(|v| v.as_str()).ok_or("do.wake.mission이 없다")?.to_owned();
                 let def = definitions.get(&target).ok_or_else(|| format!("missions/{target}: 옛 임무가 없다"))?;
@@ -309,6 +321,7 @@ impl Plan {
         hex::encode(h.finalize())
     }
 }
+#[cfg(test)]
 pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
     if plan.originals.is_empty() {
         return Ok(vec![]);
@@ -550,8 +563,97 @@ impl Plan {
                 serde_json::json!({"target":target,"rule":name,"text":self.writes[&format!("automations/{name}.toml")],"data":data}),
             );
         }
-        // 큐·기억도 미리보기 hash에 포함한다.
-        self.state_hash = serde_json::to_string(&journal).map_err(|e| bad(e.to_string()))?;
+        // 실제 옮기는 큐·기억은 journal에 묶는다. 제자리인 cursor·실행 기록은
+        // 이관이 쓰지 않으므로 정상 tick 때문에 미리보기를 무효화하지 않는다.
+        // 승인과 참조 본문은 설정 의미의 일부이므로 함께 비교한다.
+        let root = h.project_dir(p)?;
+        let mut retained = std::collections::BTreeMap::new();
+        for file in self.writes.keys().filter(|f| f.ends_with(".toml")) {
+            let name = Path::new(file).file_stem().unwrap().to_string_lossy();
+            let key = format!("automation_start_approval:{p}:{name}");
+            retained.insert(key.clone(), h.db.meta(&key).map_err(|e| bad(e.to_string()))?);
+            let rule = super::model::read(file, &self.writes[file]).map_err(bad)?;
+            if let Some(body) = rule.action.texts().1 {
+                retained.insert(
+                    format!("file:{body}"),
+                    Some(
+                        self.writes
+                            .get(body)
+                            .cloned()
+                            .map(Ok)
+                            .unwrap_or_else(|| project_text(&root, body))
+                            .map_err(bad)?,
+                    ),
+                );
+            }
+        }
+        self.state_hash = serde_json::to_string(&(journal.clone(), retained)).map_err(|e| bad(e.to_string()))?;
         Ok(journal)
     }
+}
+
+/// DB journal에서 재개한다. 알려진 원본/목적 bytes 외의 파일은 덮지 않는다.
+pub(super) fn resume(root: &Path, plan: &Plan) -> Result<Vec<String>, String> {
+    for file in plan.originals.keys().chain(plan.writes.keys()) {
+        parent(root, file)?;
+        if root.join(file).symlink_metadata().is_ok() {
+            let current = project_text(root, file)?;
+            if plan.originals.get(file) != Some(&current) && plan.writes.get(file) != Some(&current) {
+                return Err(format!("{file}: 이관 도중 다른 편집 발견 · journal 보존"));
+            }
+        }
+    }
+    for (file, archive) in &plan.archives {
+        parent(root, &archive.path)?;
+        let original = &plan.originals[file];
+        if root.join(&archive.path).symlink_metadata().is_ok() {
+            if project_text(root, &archive.path)? != *original {
+                return Err(format!("{}: 보존 사본 충돌", archive.path));
+            }
+        } else {
+            std::fs::create_dir_all(root.join(&archive.path).parent().unwrap()).map_err(|e| e.to_string())?;
+            let dest = root.join(&archive.path);
+            let temp = dest.parent().unwrap().join(format!(".aaa-backup-{}.tmp", aaa_common::util::new_id()));
+            let result = (|| -> std::io::Result<()> {
+                let mut f = std::fs::OpenOptions::new().create_new(true).write(true).open(&temp)?;
+                f.write_all(original.as_bytes())?;
+                f.sync_all()?;
+                std::fs::hard_link(&temp, &dest)?;
+                #[cfg(unix)]
+                std::fs::File::open(dest.parent().unwrap())?.sync_all()?;
+                Ok(())
+            })();
+            let _ = std::fs::remove_file(&temp);
+            result.map_err(|e| e.to_string())?;
+        }
+    }
+    for (file, text) in &plan.writes {
+        if root.join(file).exists() && project_text(root, file)? == *text {
+            continue;
+        }
+        let dest = root.join(file);
+        std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+        let temp = dest.parent().unwrap().join(format!(".aaa-migrate-{}.tmp", aaa_common::util::new_id()));
+        let result = (|| -> std::io::Result<()> {
+            let mut f = std::fs::OpenOptions::new().create_new(true).write(true).open(&temp)?;
+            f.write_all(text.as_bytes())?;
+            f.sync_all()?;
+            std::fs::rename(&temp, &dest)?;
+            #[cfg(unix)]
+            std::fs::File::open(dest.parent().unwrap())?.sync_all()?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(&temp);
+            return Err(e.to_string());
+        }
+    }
+    for file in plan.originals.keys().filter(|f| !plan.writes.contains_key(*f)) {
+        match std::fs::remove_file(root.join(file)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(plan.listing())
 }

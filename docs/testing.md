@@ -3307,3 +3307,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - 첫 세 자리 E2E100을 착지에 배정한 뒤 전체 gate의 파일 규칙 검사에서 RED를 확인했다. runner discovery도 두 자리만 받던 원인이므로 파일 규칙과 수집을 함께 두 자리 이상으로 바꾼다. 목록·단일 worker 실행·요약·시간 기록과 patch 파일 목록은 숫자 순을 따른다. 기존 LPT 배치와 단계 분할은 유지한다.
 - `e2e-layout.test.mjs`는 실제 runner의 `--list`에서 디렉터리의 모든 파일이 정확히 한 번 수집되고 E2E99 바로 다음에 E2E100이 오는지 검사한다. 기존 파일 형식·단계 이름 중복·harness export·duration 소유 검사는 유지한다. 시험을 제외하거나 번호를 재사용하지 않는다. 전체 gate는 새 수리 SHA에서 처음부터 한 번 실행한다.
+
+## 자동화 schema 2·공통 실행 원장(t-0939)
+
+- `cargo test -p aaa-host --lib automation`은 v1/v2의 profiles·시각·켜짐·범위·명령 승인 해시 보존, 이관 journal 재개·충돌, 큐/receipt/원장의 같은 transaction, 다른 규칙의 같은 예정 시각 ID 격리를 검사한다. 명령 응답 저장/receipt 삽입에 각각 SQLite 실패를 주입하고 재시작해 RPC가 한 번뿐인지 확인한다. worker의 자기 실행만 처리 신고할 수 있고 다른 thread·없는 보고·다른 결과 덮쓰기는 거부한다.
+- `cargo test -p aaa --test m13 routines`는 실제 로컬·원격 agent의 명령 승인·출력 변화·이관 후 같은 출력 중복 방지와 기존 안내 동작을 확인한다. 입력 조회의 intent/result를 공통 큐에 넣어도 이전 source·알림 계약을 보존한다.
+- `node web/e2e/web.e2e.mjs --spec 101 --workers 1`은 실제 host에서 이관 dry-run 무변경·stale hash 거부·시각/profiles/processed 보존·notice 영수증과 후속 결과 미연결을 검증한다. Chromium과 휴대폰 WebKit에서 실행 단계 타임라인을 연다. 기존 E2E34/40/48/49/55/64도 유지한다. 고정 sleep이나 실패 재시도는 추가하지 않는다.
+- FRONT_API 1.119와 `automation_results.v1` capability가 새 실행 조회/입력 신고를 구분한다. 일반 post accepted를 입력 결과 기록 성공으로 해석하지 않는다. N-1 agent에는 새 결과 variant를 보내지 않는다.
+
+- 이 후보의 전체 검증에서 E2E `--list`가 103개 중 64개에서 잘린 기존 결함을 확인했다. POSIX pipe의 비동기 stdout을 `process.exit(0)`이 먼저 끊는 원인이라 목록 출력 완료 callback을 기다린다. 기존 실제 수집 목록 시험의 전체 집합·숫자 순서 단언은 유지한다. [Node.js process.exit 설명](https://nodejs.org/api/process.html#processexitcode)을 따른다. 실패 재시도·기대값 축소·시한 변경은 없다.

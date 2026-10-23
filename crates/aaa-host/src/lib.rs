@@ -635,8 +635,8 @@ pub struct Host {
     /// thread의 사용량 한도가 풀리는 때(usage_limit.rs): ticker가 채우고 thread 보기가 읽는다
     usage_limits: usage_limit::LimitMap,
     /// 지금 도는 routine 명령(`<project>/<name>`)
-    routine_running: Mutex<HashSet<String>>,
     automation_sources: tokio::sync::Mutex<()>,
+    automation_dispatch: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
     pr: Mutex<pr::PrMemory>,
     watch: Mutex<watch::Memory>,
@@ -864,8 +864,8 @@ impl Host {
             follow_up_lock: Mutex::new(()),
             summary_marks: Mutex::new(HashMap::new()),
             usage_limits: Mutex::new(HashMap::new()),
-            routine_running: Mutex::new(HashSet::new()),
             automation_sources: tokio::sync::Mutex::new(()),
+            automation_dispatch: Mutex::new(HashMap::new()),
             pr: Mutex::new(pr::PrMemory::default()),
             watch: Mutex::new(watch::Memory::default()),
             view_caps: Mutex::new(HashMap::new()),
@@ -2147,11 +2147,38 @@ impl Host {
                 &project,
                 self.automation_unblock(&project, &name, &batch, discard, actor).and_then(|_| self.routines(&project)),
             ),
+            FrontRequest::AutomationExecutions { project, name, before } => self
+                .project_dir(&project)
+                .and_then(|_| {
+                    self.db
+                        .automation_executions(&project, Some(&name), before.as_deref())
+                        .map_err(|e| err(ErrorCode::Internal, e.to_string()))
+                })
+                .and_then(|mut runs| {
+                    self.automation_execution_links(&project, &mut runs)?;
+                    let next = (runs.len() == 100).then(|| runs.last().unwrap().id.clone());
+                    Ok(FrontResponse::AutomationExecutions { runs, next })
+                }),
+            FrontRequest::AutomationExecution { project, id } => self
+                .project_dir(&project)
+                .and_then(|_| {
+                    self.db.automation_execution(&project, &id).map_err(|e| err(ErrorCode::Internal, e.to_string()))
+                })
+                .and_then(|run| run.ok_or_else(|| err(ErrorCode::NotFound, "실행이 없다")))
+                .and_then(|mut run| {
+                    self.automation_execution_links(&project, std::slice::from_mut(&mut run))?;
+                    Ok(FrontResponse::AutomationExecution { run })
+                }),
             FrontRequest::RoutineRuns { project, name } => self.routine_runs(&project, &name).and_then(|runs| {
-                Ok(FrontResponse::RoutineRuns { runs, source: self.routine_source(&project, &name)? })
+                let mut executions = self
+                    .db
+                    .automation_executions(&project, Some(&name), None)
+                    .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+                self.automation_execution_links(&project, &mut executions)?;
+                Ok(FrontResponse::RoutineRuns { runs, executions, source: self.routine_source(&project, &name)? })
             }),
             FrontRequest::RoutineToggle { project, name, on } => {
-                self.routines_reply(&project, self.routine_toggle(&project, &name, on, actor))
+                self.routines_reply(&project, self.routine_toggle(&project, &name, on, actor).await)
             }
             FrontRequest::RoutineApprove { project, name, command_sha256 } => {
                 self.routines_reply(&project, self.routine_approve(&project, &name, &command_sha256, actor))

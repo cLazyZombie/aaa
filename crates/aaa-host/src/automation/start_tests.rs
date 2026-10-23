@@ -25,10 +25,16 @@ impl Drop for Lab {
 }
 impl Lab {
     fn new() -> Self {
+        Self::with_commands(false)
+    }
+    fn with_commands(commands: bool) -> Self {
         let root = std::env::temp_dir().join(format!("aaa-automation-{}", util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
         cfg.projects.root = root.join("projects").to_string_lossy().into();
         cfg.notify.web_push = false;
+        if commands {
+            cfg.projects.routine_commands.push("demo".into());
+        }
         let h = Host::open(cfg, root.join("host")).unwrap();
         h.project_create("demo", Default::default(), "local:cli").unwrap();
         Self { h, root }
@@ -319,7 +325,7 @@ async fn start_admission_owns_the_thread_before_recovery_can_observe_it() {
     }));
     let mut events = l.h.thread_events.subscribe();
     l.h.automation_submit("demo", &r, "due:admission", "기동 선점 대조".into(), None).unwrap();
-    let result = l.h.automation_drain("demo", &r).await;
+    let result = l.h.automation_drain_at("demo", &r, util::now_ms()).await;
     *l.h.start_admitted_hook.lock().unwrap() = None;
     assert!(observed.load(Ordering::SeqCst), "DB에 보인 새 기동을 복구기가 실패로 바꾸거나 선점했다");
     result.unwrap();
@@ -353,6 +359,8 @@ async fn failed_start_admission_rolls_back_the_row_and_releases_the_claim() {
         action: r.action.clone(),
         source: "test".into(),
         start_scope: Some(l.h.automation_start_scope("demo", &r, start).unwrap()),
+        observe: None,
+        revision: String::new(),
     };
     let error = l.h.automation_start("demo", &r, &event, now, "rejected-input").await.err().expect("입장 SQL 오류");
     assert!(error.message.contains("admission rejected"), "{error:?}");
@@ -442,7 +450,7 @@ async fn rollout_selects_capable_candidate_while_an_older_agent_is_connected() {
     approve(&l, &r);
     let mut events = l.h.thread_events.subscribe();
     l.h.automation_submit("demo", &r, "rollout:1", "자료".into(), None).unwrap();
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     let id = l.h.db.meta(&crate::auto_start::start_key("demo", "check", "rollout:1")).unwrap().unwrap();
     launched(&l, &mut events, &id).await;
     assert_eq!(starts(&old), 0);
@@ -481,19 +489,19 @@ async fn start_waits_for_approval_and_holds_then_creates_each_occurrence_once() 
     let b = l.fake_on("b", "mac-b", vec![]).await;
     let r = rule(&l, "");
     l.h.automation_submit("demo", &r, "due:1", "first push".into(), None).unwrap();
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(starts(&a) + starts(&b), 0);
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 0);
     assert!(l.h.db.threads(Some("demo")).unwrap().is_empty());
     let one = seed(&l, "m", &["timing"]);
     let two = seed(&l, "b", &["timing"]);
     approve(&l, &r);
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(starts(&a) + starts(&b), 0);
     l.h.update_rec("demo", &two.id, |rec| rec.status = ThreadStatus::Resolved).unwrap();
     let crash = rusqlite::Connection::open(l.root.join("host/host.db")).unwrap();
     crash.execute_batch("CREATE TRIGGER crash_start_receipt BEFORE INSERT ON meta WHEN NEW.key LIKE 'automation_done:%' BEGIN SELECT RAISE(ABORT,'crash after thread commit'); END;").unwrap();
-    let error = l.h.automation_drain("demo", &r).await.unwrap_err();
+    let error = l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap_err();
     assert!(error.message.contains("crash after thread commit"));
     crash.execute_batch("DROP TRIGGER crash_start_receipt").unwrap();
     let records = l.h.db.threads(Some("demo")).unwrap();
@@ -516,7 +524,7 @@ async fn start_waits_for_approval_and_holds_then_creates_each_occurrence_once() 
     let id = automatic[0].id.clone();
     // thread commit 뒤 receipt 실패로 남은 실제 inflight를 다시 처리해도 두 번째 thread를 만들지 않는다.
     l.h.automation_submit("demo", &r, "due:1", "first push".into(), None).unwrap();
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(l.h.db.meta(&crate::auto_start::start_key("demo", "check", "due:1")).unwrap(), Some(id));
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 3);
     let history = l.h.routine_history("demo", "check").unwrap();
@@ -527,7 +535,7 @@ async fn start_waits_for_approval_and_holds_then_creates_each_occurrence_once() 
     assert_eq!(history.today, 1);
     // 새 기본은 규칙당 1개다. 다음 사건은 입력을 보존하며 자리가 날 때까지 기다린다.
     l.h.automation_submit("demo", &r, "due:2", "second push".into(), None).unwrap();
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 3);
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 1);
     assert!(
@@ -535,7 +543,7 @@ async fn start_waits_for_approval_and_holds_then_creates_each_occurrence_once() 
     );
     let mut expanded = r.clone();
     expanded.limits.max_running = Some(2);
-    l.h.automation_drain("demo", &expanded).await.unwrap();
+    l.h.automation_drain_at("demo", &expanded, util::now_ms()).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 4);
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 2);
     assert_eq!(l.h.load("demo", &one.id).unwrap().holds, vec!["timing"]);
@@ -550,7 +558,7 @@ async fn start_propose_keeps_one_durable_proposal_without_creating_thread() {
     approve(&l, &r);
     for _ in 0..2 {
         l.h.automation_submit("demo", &r, "due:1", "data".into(), None).unwrap();
-        l.h.automation_drain("demo", &r).await.unwrap();
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     }
     let proposals: Vec<_> =
         l.h.db.inbox_list(Some("demo"), true).unwrap().into_iter().filter(|i| i.event == "proposed").collect();
@@ -619,7 +627,7 @@ async fn start_idlest_counts_working_threads_before_list_order() {
     .unwrap();
     assert_eq!(l.h.thread_show("demo", &busy.id).unwrap().group, ThreadGroup::Working);
     l.h.automation_submit("demo", &r, "due:1", "data".into(), None).unwrap();
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     let id = l.h.db.meta(&crate::auto_start::start_key("demo", "check", "due:1")).unwrap().unwrap();
     assert_eq!(l.h.load("demo", &id).unwrap().machine_id, "b");
     for (cpu_a, cpu_b, connected_a, expected) in [(90, 10, true, "b"), (10, 10, true, "m"), (0, 90, false, "b")] {
@@ -635,7 +643,7 @@ async fn start_idlest_counts_working_threads_before_list_order() {
             l.h.agent_disconnected("m", 1);
         }
         l.h.automation_submit("demo", &r, "due:1", "data".into(), None).unwrap();
-        l.h.automation_drain("demo", &r).await.unwrap();
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
         let id = l.h.db.meta(&crate::auto_start::start_key("demo", "check", "due:1")).unwrap().unwrap();
         assert_eq!(l.h.load("demo", &id).unwrap().machine_id, expected, "CPU {cpu_a}/{cpu_b}, 연결 {connected_a}");
     }
@@ -657,6 +665,10 @@ async fn start_explicit_wait_expiry_and_changed_brief_notice_do_not_repeat() {
     l.h.automation_drain_at("demo", &r, now + 60_001).await.unwrap();
     l.h.automation_drain_at("demo", &r, now + 120_000).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 2);
+    assert_eq!(
+        l.h.db.automation_executions("demo", Some("check"), None).unwrap()[0].state,
+        AutomationRunState::Skipped
+    );
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 0);
     let mut changed = r.clone();
     let Action::Start(a) = &mut changed.action else { panic!() };
@@ -682,7 +694,7 @@ async fn start_schedule_without_coordinator_keeps_the_due_slot_across_cursor_rep
     let saved = serde_json::json!({"last_run_ms":last}).to_string();
     l.h.db.set_meta("routine:demo:check", &saved).unwrap();
     l.h.routine_pass("demo", &dir, false);
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 1, "일정형 자동 시작은 coordinator pane이 없어도 실행한다");
     let event = format!("schedule:{}", last + 600_000);
     let receipt = l.h.db.meta(&crate::auto_start::start_key("demo", "check", &event)).unwrap();
@@ -690,7 +702,7 @@ async fn start_schedule_without_coordinator_keeps_the_due_slot_across_cursor_rep
     // source cursor를 저장하기 전 crash를 재현한다. 전달은 이미 thread와 함께 내구 확정됐다.
     l.h.db.set_meta("routine:demo:check", &saved).unwrap();
     l.h.routine_pass("demo", &dir, false);
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 1);
     assert_eq!(l.h.db.meta(&crate::auto_start::start_key("demo", "check", &event)).unwrap(), receipt);
 }
@@ -706,19 +718,19 @@ async fn start_changed_scope_cancels_old_input_and_body_updates_keep_approval() 
     let mut current = r.clone();
     let Action::Start(a) = &mut current.action else { panic!() };
     a.machines.pop();
-    l.h.automation_drain("demo", &current).await.unwrap();
+    l.h.automation_drain_at("demo", &current, util::now_ms()).await.unwrap();
     assert!(l.h.db.threads(Some("demo")).unwrap().is_empty());
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 0);
     l.h.automation_submit("demo", &current, "body:next", "data".into(), None).unwrap();
     let Action::Start(a) = &mut current.action else { panic!() };
     a.text = Some("현재 작업 본문".into());
-    l.h.automation_drain("demo", &current).await.unwrap();
+    l.h.automation_drain_at("demo", &current, util::now_ms()).await.unwrap();
     let id = l.h.db.meta(&crate::auto_start::start_key("demo", "check", "body:next")).unwrap().unwrap();
     let body = std::fs::read_to_string(l.h.project_dir("demo").unwrap().join(format!("threads/{id}.task.md"))).unwrap();
     assert!(body.contains("현재 작업 본문"));
     l.h.automation_submit("demo", &current, "action:old", "data".into(), None).unwrap();
     current.action = Action::Inbox(Default::default());
-    l.h.automation_drain("demo", &current).await.unwrap();
+    l.h.automation_drain_at("demo", &current, util::now_ms()).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 1);
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 1);
     assert!(
@@ -780,7 +792,7 @@ async fn reuse_open_batches_32_and_queues_without_new_thread_even_in_propose() {
         l.h.automation_start_approval("demo", &r).unwrap(),
         l.h.automation_start_approval("demo", &next).unwrap()
     );
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     let queue = l.h.automation_queue("demo", "check").unwrap();
     assert_eq!((queue.pending, queue.inflight), (1, None));
     let writes: Vec<_> = b
@@ -797,7 +809,7 @@ async fn reuse_open_batches_32_and_queues_without_new_thread_even_in_propose() {
     let body: serde_json::Value = serde_json::from_slice(&writes[0]).unwrap();
     assert_eq!(body["inputs"].as_array().unwrap().len(), 32);
     assert!(l.h.routine_runs("demo", "check").unwrap().iter().all(|run| run.thread.as_deref() == Some(&newer.id)));
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 0);
     assert_eq!(starts(&a) + starts(&b), 0);
     // 같은 입력 receipt는 다시 전달하지 않는다.
@@ -807,7 +819,7 @@ async fn reuse_open_batches_32_and_queues_without_new_thread_even_in_propose() {
         l.h.update_rec("demo", id, |r| r.status = ThreadStatus::Resolved).unwrap();
     }
     l.h.automation_submit("demo", &r, "fresh", "다음 입력".into(), None).unwrap();
-    l.h.automation_drain("demo", &r).await.unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
     assert!(l.h.routine_runs("demo", "check").unwrap().iter().any(|r| r.detail.contains("제안")));
     assert_eq!(starts(&a) + starts(&b), 0);
 }
@@ -836,7 +848,7 @@ async fn reuse_accepts_codex_and_seeds_memory_reentry_only_when_enabled() {
         approve(&l, &r);
         let mut events = l.h.thread_events.subscribe();
         l.h.automation_submit("demo", &r, "input-1", "자료".into(), None).unwrap();
-        l.h.automation_drain("demo", &r).await.unwrap();
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
         let rec = l.h.automation_open("demo", "check").unwrap().unwrap();
         launched(&l, &mut events, &rec.id).await;
         let rec = l.h.load("demo", &rec.id).unwrap();
@@ -862,7 +874,7 @@ async fn reuse_accepts_codex_and_seeds_memory_reentry_only_when_enabled() {
         }
         // 둘째 입력도 새 thread를 만들지 않고 같은 실행에 잇는다.
         l.h.automation_submit("demo", &r, "input-2", "다음 자료".into(), None).unwrap();
-        l.h.automation_drain("demo", &r).await.unwrap();
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
         assert_eq!(l.h.automation_open("demo", "check").unwrap().unwrap().id, rec.id);
         assert_eq!(starts(&agent), 1);
     }
@@ -1031,4 +1043,73 @@ async fn previous_agent_keeps_input_and_memory_transfer_with_legacy_file_frames(
         )),
         "1.9 agent에 새 태그를 보냈다"
     );
+}
+
+#[tokio::test]
+async fn command_result_and_uncertain_intent_survive_restart_without_reexecution() {
+    for lose_result in [false, true] {
+        let l = Lab::with_commands(true);
+        let fake = l.fake(vec![]).await;
+        let root = l.h.project_dir("demo").unwrap();
+        let text = "schema=2\n[trigger]\nkind='schedule'\nevery='1m'\n[action]\nkind='command'\ncommand='check-once'\nmachine='mac-a'\n";
+        std::fs::write(root.join("automations/check.toml"), text).unwrap();
+        let rule = automation::parse(&root, "check", text).unwrap();
+        l.h.routine_approve("demo", "check", &rule.command_sha256(), "local:cli").unwrap();
+        l.h.automation_submit("demo", &rule, "one", String::new(), None).unwrap();
+        let sql = rusqlite::Connection::open(l.root.join("host/host.db")).unwrap();
+        if lose_result {
+            sql.execute_batch("CREATE TRIGGER reject_result BEFORE UPDATE ON meta WHEN NEW.key='automation:demo:check' AND json_extract(NEW.value,'$.inflight.command_result') IS NOT NULL BEGIN SELECT RAISE(ABORT,'result failed'); END;").unwrap();
+        } else {
+            sql.execute_batch("CREATE TRIGGER reject_receipt BEFORE INSERT ON meta WHEN NEW.key LIKE 'automation_done:%' BEGIN SELECT RAISE(ABORT,'receipt failed'); END;").unwrap();
+        }
+        assert!(l.h.automation_drain_at("demo", &rule, util::now_ms()).await.is_err());
+        let count =
+            || fake.requests.lock().unwrap().iter().filter(|r| matches!(r, AgentRequest::RunCommand { .. })).count();
+        assert_eq!(count(), 1);
+        sql.execute_batch("DROP TRIGGER IF EXISTS reject_result; DROP TRIGGER IF EXISTS reject_receipt;").unwrap();
+        let restarted = Host::open(l.h.cfg.clone(), l.root.join("host")).unwrap();
+        restarted.automation_drain_at("demo", &rule, util::now_ms()).await.unwrap();
+        let run = restarted.db.automation_executions("demo", Some("check"), None).unwrap().remove(0);
+        assert_eq!(run.state, if lose_result { AutomationRunState::Unknown } else { AutomationRunState::Succeeded });
+        assert_eq!(count(), 1, "저장된 결과는 이어 받고 결과 불명은 재실행하지 않는다");
+        if lose_result {
+            assert!(restarted.automation_queue("demo", "check").unwrap().inflight.unwrap().unknown);
+        }
+    }
+}
+
+#[tokio::test]
+async fn durable_start_receipt_recovers_success_without_restarting_or_spending_budget() {
+    let l = auto_lab();
+    let a = l.fake(vec![]).await;
+    let b = l.fake_on("b", "mac-b", vec![]).await;
+    let r = rule(&l, "");
+    l.h.automation_submit("demo", &r, "due:recovered", "data".into(), None).unwrap();
+    l.h.db.set_meta(&crate::auto_start::start_key("demo", &r.name, "due:recovered"), "t-0042").unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    let run = l.h.db.automation_executions("demo", Some(&r.name), None).unwrap().remove(0);
+    assert_eq!(run.state, AutomationRunState::Succeeded);
+    assert_eq!(run.receipt, Some(AutomationReceipt::ThreadStarted));
+    assert_eq!(run.thread.as_deref(), Some("t-0042"));
+    assert!(run.outcome.is_none());
+    assert_eq!(l.h.automation_count("demo", &r.name).unwrap(), 0);
+    assert!(l.h.db.threads(Some("demo")).unwrap().is_empty());
+    assert_eq!(starts(&a) + starts(&b), 0);
+}
+
+#[tokio::test]
+async fn toggle_waits_for_dispatch_and_preserves_new_definition() {
+    let l = auto_lab();
+    let r = rule(&l, "");
+    let gate = l.h.automation_dispatch_lock("demo");
+    let guard = gate.lock().await;
+    let future = l.h.routine_toggle("demo", &r.name, Some(false), "local:cli");
+    tokio::pin!(future);
+    assert!(matches!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(future.as_mut().poll(cx))).await,
+        std::task::Poll::Pending
+    ));
+    drop(guard);
+    let views = future.await.unwrap();
+    assert!(!views.iter().find(|v| v.name == r.name).unwrap().enabled);
 }

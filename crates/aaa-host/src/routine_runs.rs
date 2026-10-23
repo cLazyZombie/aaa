@@ -46,6 +46,39 @@ impl History {
     }
 }
 impl Host {
+    pub(crate) fn automation_execution_links(
+        &self,
+        p: &str,
+        runs: &mut [aaa_proto::AutomationExecution],
+    ) -> Result<(), ErrorBody> {
+        self.project_dir(p)?;
+        let board = if runs.iter().any(|r| r.thread.is_some()) {
+            self.task_board(p).inspect_err(|e| tracing::warn!(error=%e.message,"실행의 연결 task를 읽지 못했다")).ok()
+        } else {
+            None
+        };
+        for run in runs {
+            if !run.processed
+                && let Some(input) = run.input_file.as_deref().and_then(|s| s.strip_prefix("inbox/"))
+            {
+                let root = self.project_dir(p)?;
+                let path = format!("automations/{}.memory/processed.txt", run.name);
+                if root.join(&path).exists()
+                    && let Ok(text) = crate::automation::project_text(&root, &path)
+                {
+                    run.processed = text.lines().any(|line| line.trim() == input);
+                }
+            }
+            if let (Some(thread), Some(board)) = (&run.thread, &board) {
+                let mut tasks = board.tasks.iter().filter(|t| t.thread.as_ref() == Some(thread));
+                let first = tasks.next();
+                if tasks.next().is_none() {
+                    run.task = first.and_then(|t| t.short_id.clone());
+                }
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn routine_history(&self, p: &str, name: &str) -> Result<History, ErrorBody> {
         self.project_dir(p)?;
         let text =
@@ -96,7 +129,7 @@ impl Host {
         let body_file = file
             .ends_with(".toml")
             .then(|| {
-                crate::automation::decode::<crate::automation::File>(&file, &raw)
+                crate::automation::model::read(&file, &raw)
                     .inspect_err(|error| {
                         aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
                     })
@@ -123,6 +156,11 @@ impl Host {
         detail: &str,
         thread: Option<&str>,
     ) {
+        if status == "waiting"
+            && let Err(e) = self.db.automation_wait(p, name, id, detail, thread)
+        {
+            tracing::error!(%e,"자동화 대기 기록 실패");
+        }
         let run = RoutineRun {
             id: id.into(),
             at_ms: aaa_common::util::now_ms(),

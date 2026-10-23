@@ -82,6 +82,8 @@ if (opt.list) {
     console.log(`specs/${s.file}`);
     for (const n of s.steps.filter((n) => !only || only.test(n))) console.log(`  ${n}`);
   }
+  // POSIX pipe의 console 출력은 비동기다. 목록을 다 쓰기 전에 강제 종료하면 뒷부분이 사라진다.
+  await new Promise((resolve, reject) => process.stdout.write("", (error) => error ? reject(error) : resolve()));
   process.exit(0);
 }
 
