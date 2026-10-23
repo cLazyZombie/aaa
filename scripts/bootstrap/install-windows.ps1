@@ -141,14 +141,12 @@ function Invoke-AaaBootstrap {
         $asset = $manifest.assets.'windows-x86_64'
         if ($asset.url -cne $assetUrl -or $asset.sha256 -cnotmatch '^[a-fA-F0-9]{64}$') { throw 'bootstrap_manifest_mismatch' }
         if ($ExpectedHash -and $asset.sha256 -ine $ExpectedHash) { throw 'bootstrap_checksum_mismatch' }
-        $separateExecutor = $false
         # The one-line entry may coexist with an older aaa. Stage the verified new executor
         # separately; the Rust plan/approval owns all decisions about existing installations.
         if ($ExpectedHash -and [IO.File]::Exists($destination) -and
             (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ine $ExpectedHash) {
             $destination = [IO.Path]::Combine($profile, '.local', 'share', 'aaa', 'installers', $ExpectedHash.Substring(0, 16).ToLowerInvariant(), 'aaa.exe')
             Assert-AaaPath $destination $false
-            $separateExecutor = $true
             [Console]::WriteLine('Existing aaa is preserved. Reviewing the installation with a separately verified executor.')
         }
         # Existing, different binaries are never overwritten (including running ones).
@@ -169,11 +167,7 @@ function Invoke-AaaBootstrap {
             [IO.File]::Move($stage, $destination)
             $stage = $null
         }
-        $installArguments = @('install') + $Arguments
-        if ($separateExecutor -and -not @($Arguments | Where-Object { $_ -ceq '--bin-path' -or $_.StartsWith('--bin-path=') }).Count) {
-            # The reviewed plan must use this executor, not overwrite/reject the older default binary.
-            $installArguments += @('--bin-path', $destination)
-        }
+        $installArguments = @('setup') + $Arguments
         return (Invoke-AaaNative $destination $installArguments)
     } catch {
         $code = $_.Exception.Message

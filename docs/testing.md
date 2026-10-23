@@ -3324,3 +3324,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 새 thread의 행은 pane 준비보다 먼저 도착할 수 있다. GIF는 `thread show`의 pane과 `pane wait-output`의 실제 작업 출력을 확인한 뒤 해당 pane을 연다. 시한 연장으로 준비 경합을 숨기지 않는다.
 - `e2e-layout.test.mjs`의 전체 목록 단언이 첫 검증에서 실패했다. 102개 파일 중 stdout이 64개에서 잘렸다. 원인은 `--list`의 비동기 파이프 출력 직후 `process.exit(0)`였다. 착지에서는 main의 자연 종료 수리를 유지하고 후보의 중복 write callback 수리를 제외했다. 기존 전체 파일·중복·숫자 정렬 단언을 유지한다.
 - 촬영 격리·매체 목록·OSS 구성 참고는 [README 매체](readme-media.md)에 적었다. 실제 설치·서비스 변경은 이 문서 작업에서 실행하지 않는다.
+
+
+## v0.1.6 공개판과 Windows setup 입구(t-0958)
+
+- `python3 -m unittest scripts.test_release`는 같은 Cargo 판의 tag, OS별 자산·심볼·launcher 결속, 판·독립 payload SHA를 넣은 `install.ps1`과 체크섬을 검사한다.
+- Windows의 `cargo test --locked -p aaa --test windows_bootstrap`은 PowerShell 5.1·7에서 실제 PE·프로세스·argv·stdio와 `irm | iex` 입구를 실행한다. 새 입구가 `setup`을 정확히 전달하고 기존 실행 파일·설정은 보존하며 `install` 전용 인자를 붙이지 않는지 확인한다. 실제 aaa의 `setup --help` 성공과 콘솔 없는 `setup --yes` 거부·설정/상태 변경 없음을 검사한다. 기존 install dry-run 검사는 기존 install 통합 시험에 남는다.
+- 게시 전에는 별도 worktree·target에서 전체 `nice -n 15 bash scripts/ci-local.sh --tee`, Linux·Windows strict cross clippy, dev 의존성 기능이 없는 Windows release 빌드와 공개 검사를 수행한다. Playwright 1.64.1은 별도 경로에 격리한다.
+- 게시 뒤 tag SHA·workflow 성공·전체 자산의 공개 URL 다운로드/체크섬·manifest 결속과 macOS/Windows의 `--version`을 대조한다. Windows에서는 격리 폴더의 다운로드 파일만 실행하며 설치·서비스는 변경하지 않는다. 실패한 tag는 옮기거나 지우지 않고 원문을 보존한다.

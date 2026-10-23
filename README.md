@@ -39,7 +39,7 @@ Claude Code·Codex가 각 머신에서 일하고, aaa는 그 터미널과 작업
 
 **host를 먼저 준비하고 각 머신에서 `aaa setup`으로 agent를 연결합니다.** ✋는 사용자가 자기 터미널이나 설정 화면에서 직접 해야 하는 단계입니다.
 
-> 이 README는 현재 main의 기능을 설명합니다. 공개 release **v0.1.5에는 `aaa setup`이 없습니다.** 아래 setup 흐름에는 현재 소스 빌드 또는 이 기능을 포함한 새 배포 실행 파일이 필요합니다. 기존 Windows 한 줄 설치는 `aaa install`을 실행하는 별도 경로이며, macOS·Linux 다운로드용 한 줄 설치는 아직 제공하지 않습니다.
+> 공개 release **v0.1.6부터 macOS·Linux·Windows의 `aaa setup`을 포함합니다.** Windows 한 줄 설치도 `aaa setup`을 실행합니다. macOS·Linux 다운로드용 한 줄 설치는 아직 제공하지 않으므로 아래처럼 실행 파일을 직접 받습니다.
 
 아래에서 설치 뒤의 `aaa`는 설치된 실행 파일을 뜻합니다. macOS·Linux의 기본 경로는 `~/.local/bin/aaa`, Windows는 `%USERPROFILE%\.local\bin\aaa.exe`입니다. PATH에 없다면 전체 경로로 실행하세요.
 
@@ -54,7 +54,7 @@ Claude Code·Codex가 각 머신에서 일하고, aaa는 그 터미널과 작업
 
 host는 웹과 프로젝트 상태를 관리하고, 각 agent는 자기 머신의 터미널과 작업 폴더를 관리합니다. 웹은 host에만 연결합니다. 웹을 닫거나 연결이 끊겨도 머신에서 실행 중인 세션은 이어집니다. 머신 재부팅이 실행 중인 프로세스까지 보존하는 것은 아닙니다.
 
-실행 파일은 [GitHub releases](https://github.com/cLazyZombie/aaa/releases)에서 자기 OS·CPU에 맞는 것을 받고 같은 release의 `SHA256SUMS`로 확인합니다. 내려받은 판에 필요한 기능이 있는지 `aaa --version`과 `aaa setup --help`로 확인하세요. 현재 main을 직접 빌드하려면 [개발](#개발)을 따릅니다.
+v0.1.6 실행 파일은 [GitHub releases](https://github.com/cLazyZombie/aaa/releases)에서 자기 OS·CPU에 맞는 것을 받고 같은 release의 `SHA256SUMS`로 확인합니다. 내려받은 판에 필요한 기능이 있는지 `aaa --version`과 `aaa setup --help`로 확인하세요. 현재 main을 직접 빌드하려면 [개발](#개발)을 따릅니다.
 
 ### 1. host 준비 ✋
 
@@ -81,6 +81,8 @@ aaa의 pane 밖, **설치할 사용자 계정의 일반 터미널**에서 실행
 
 **macOS**
 
+release에서 CPU에 맞는 `aaa-macos-aarch64` 또는 `aaa-macos-x86_64`를 받고 `SHA256SUMS`로 확인한 뒤 `aaa`로 이름을 바꾸고 `chmod +x aaa`로 실행 권한을 줍니다. 새 Mac은 같은 CPU의 `aaa-launcher-macos-….json`도 같은 폴더에 받습니다.
+
 ```sh
 ./aaa setup --host host.example.ts.net --name mac-a
 ```
@@ -88,6 +90,8 @@ aaa의 pane 밖, **설치할 사용자 계정의 일반 터미널**에서 실행
 사용자 LaunchAgent로 등록하며 로그인 뒤 자동 실행합니다. 기존 `~/Applications/aaa-launcher.app`을 보존해 사용합니다. 새 Mac은 실행 파일과 맞는 launcher package가 필요합니다. ✋ 개발자 도구·전체 디스크 접근 권한, 잠긴 키체인은 사용자가 직접 처리합니다. [macOS 준비와 설치](docs/unix-setup.md#macos)를 따릅니다.
 
 **Linux**
+
+release에서 CPU에 맞는 `aaa-linux-x86_64` 또는 `aaa-linux-aarch64`를 받고 `SHA256SUMS`로 확인한 뒤 `aaa`로 이름을 바꾸고 `chmod +x aaa`로 실행 권한을 줍니다.
 
 ```sh
 ./aaa setup --host host.example.ts.net --name linux-a
@@ -102,6 +106,14 @@ aaa의 pane 밖, **설치할 사용자 계정의 일반 터미널**에서 실행
 ✋ unit 등록·시작에 필요한 권한만 `sudo`로 받습니다. 설치기 전체를 `sudo`로 실행하지 않습니다. [Linux 서비스와 로그](docs/unix-setup.md#linux)를 참고하세요.
 
 **Windows**
+
+관리자 PowerShell에서 한 줄로 받아 설치합니다.
+
+```powershell
+irm https://github.com/cLazyZombie/aaa/releases/latest/download/install.ps1 | iex
+```
+
+직접 받을 때는 release의 `aaa-windows-x86_64.exe`를 `aaa.exe`로 이름을 바꾼 뒤 실행합니다.
 
 ```powershell
 .\aaa.exe setup --host host.example.ts.net --name win-a
