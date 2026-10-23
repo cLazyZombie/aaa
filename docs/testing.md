@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## 대화의 실제 1px 이동과 높이 측정(t-0886)
+
+- 원본 t-0883은 Chromium 390px·Codex에서 reset 직후 0, 두 frame 뒤 1px였다. JS 쓰기는 reset 한 번뿐이고 안내 높이는 같았다. 원본에는 브라우저 trace가 없어 당시의 모든 내부 순서를 소급 확정하지 않는다.
+- 실제 host·agent·PTY와 원래 360개 메시지를 쓰는 별도 경계 대조에서 같은 0→1px를 재현했다. native 466→467px를 `> 1` 판정이 자동 이동으로 분류해 앵커를 갱신하지 않았고, 가상 row 측정이 466px로 되돌렸다. 이어 scrollend → reset 0 → compositor 1px가 왔다. Chromium trace의 `ScrollableArea::scrollOffsetChanged`는 되돌림·reset을 `kProgrammatic`, 뒤의 1px를 `kCompositor`로 기록했다. 정수·분수 터치 이동량과 reset 실행 경계를 정해 조사했으며 통과한 반복으로 실패를 덮지 않는다. 뒤 표본의 앞 reset에서 온 scrollend가 섞인 경계는 원인 판정에서 제외한다.
+- 제품은 자체 쓰기 직후 되읽어 저장한 `lastScrollTop`과 실제 DOM 위치를 정확히 비교한다. 목표의 서브픽셀 값과 되읽은 정수 사이 오차를 실제 사용자 1px 이동과 혼동하지 않는다. scroll 사건·ResizeObserver·row 측정·새 기록 commit의 미반영 이동 보호에 같은 규칙을 적용한다. 복귀 목표의 반올림 허용·끝 판정 문턱은 유지한다.
+- E2E93의 새 회귀는 `scrollBy(0, 1)`이 낸 trusted native scroll → 안내 높이 정확히 +1px → ResizeObserver 순서다. 손가락의 물리 입력을 이 API 호출로 대신 검증했다는 뜻은 아니다. 처음 위치는 정확히 1px, 보정 뒤 2px이며 첫 row의 화면 좌표는 같아야 한다. 구판은 top=0·첫 row +2px로 실패했다. 기존 맨 위 안내 높이 변경의 정확한 0, 실제 Chromium touch·scrollend 뒤 reset의 정확한 0, append·prepend·복귀·파일 전환·재개·agent 재시작과 양 엔진·양 폭·양 harness를 유지한다. 시한·기대값 완화·재시도·고정 sleep은 없다.
+- 참고 후보는 [TanStack Virtual core](https://github.com/TanStack/virtual/blob/main/packages/virtual-core/src/index.ts)의 실제 scroll offset 관측과 목표/되읽기 구분, [react-window useScrollToIndex](https://github.com/bvaughn/react-window/blob/master/lib/core/useScrollToIndex.ts)의 실측 후 복귀 보정·입력 취소다. [TanStack MIT](https://github.com/TanStack/virtual/blob/main/LICENSE)·[react-window MIT](https://github.com/bvaughn/react-window/blob/master/LICENSE.md)를 확인했다. [Chromium ScrollableArea](https://github.com/chromium/chromium/blob/main/third_party/blink/renderer/core/scroll/scrollable_area.cc)의 programmatic/compositor 구분도 대조했다. 외부 코드나 의존성을 추가하지 않는다.
+- 새 회귀의 2→0 복귀도 자기 `scrollend`까지 기다린 뒤 기존 터치를 시작한다. 처음 추가한 검사에서 이 사건을 남기면 다음 터치 종료 대기가 미리 풀려 top=29px가 남는 준비 경합을 확인했다. 종료 사건을 기다리지 않고 두 frame만 더 자거나 시한을 늘려 넘기지 않는다.
+- 정본 검증은 Playwright 1.64.1과 격리 브라우저의 전체 `nice -n 15 bash scripts/ci-local.sh --tee`·공개 검사다. 실험용 반복·전역 prototype 계측·CDP trace는 최종 시험에 넣지 않는다.
 ## 새 자동화의 초기 검사와 이름 입력(t-0882)
 
 - E2E82 원본은 자동화②의 이름만 빈 채 저장 단추가 disabled였다. 원본에는 입력·DOM 교체 trace가 없어 당시 callback 순서까지 소급 확정하지 않는다. 별도 실제 host·브라우저 대조에서 초기 `automation_validate` 전송 직전 이름 칸에 focus·select를 두고 응답을 보류했다. `load`의 loading 반영 뒤 원래 input은 detached, focus는 BODY였으며 브라우저 `insertText("nudge")` 뒤 검사 응답을 놓아도 이름은 빈 문자열이었다. 제목·본문의 외부 동기화가 이름 상태를 덮는 경로는 없다.
