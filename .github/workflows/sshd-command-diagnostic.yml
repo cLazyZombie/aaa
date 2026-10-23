@@ -1,0 +1,32 @@
+name: Windows ssh command diagnostic
+on:
+  push:
+    branches: [diagnostic/t-0827-ssh-commands]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: SYSTEM sshd의 실제 명령과 종료 코드
+        shell: pwsh
+        run: |
+          $source = [IO.File]::ReadAllText((Join-Path $pwd 'scripts/ci-windows-sshd.ps1'))
+          $marker = "    Write-Host 'M4 SYSTEM OpenSSH 실제 owner 시작'"
+          if (-not $source.Contains($marker)) { throw '진단 삽입 위치가 없다' }
+          $diagnostic = @'
+              $ps = "Write-Output 'AAA-DETECT-1'; Write-Output 'Windows'; Write-Output `$env:PROCESSOR_ARCHITECTURE; Write-Output `$env:USERPROFILE; Write-Output '-'; Write-Output '-'; Write-Output 'AAA-DETECT-END'"
+              $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps))
+              foreach ($command in @('cmd.exe /c ver', "sh -c 'echo AAA-DETECT-1; uname -s'", ('powershell -NoProfile -NonInteractive -EncodedCommand ' + $encoded))) {
+                  $result = & ssh.exe -F (Join-Path $lab 'ssh_config') -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ('UserKnownHostsFile=' + (Join-Path $lab 'known_hosts')) -o ('GlobalKnownHostsFile=' + (Join-Path $lab 'known_hosts')) -o ConnectTimeout=10 -o RequestTTY=no ci $command 2>&1
+                  Write-LabDiagnostic ('remote exit: ' + $LASTEXITCODE)
+                  Write-LabDiagnostic ($result | Out-String)
+              }
+              Write-LabDiagnostic ([IO.File]::ReadAllText((Join-Path $lab 'sshd-startup.log')))
+              return
+          '@
+          $path = Join-Path $env:RUNNER_TEMP 'sshd-command-diagnostic.ps1'
+          [IO.File]::WriteAllText($path, $source.Replace($marker, $marker + "`n" + $diagnostic))
+          & $path
