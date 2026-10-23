@@ -4197,7 +4197,7 @@ primary 근거:
 | 웹 Ctrl+V → 세 OS | HTTPS 공개 주소(시험 tailnet 또는 localhost)의 실제 host와 fixture agent로 검증한다. synthetic 이벤트는 component 계약일 뿐이다 |
 | 입력·대상 경합 | 한글 draft+이미지, 이미지 직후 Enter, 여러 이미지 순서, 느린 업로드 중 pane 전환·lease 상실을 본다. 텍스트 손실·중복·자동 Enter·잘못된 pane 입력이 없어야 한다 |
 | 전송·수명·권한 | offset 재개, ACK 유실, agent 단절 시 즉시 실패·draft 유지, detach 뒤 지연 읽기, quota·disk full·MIME 위장·Windows 한글 경로·junction·reader/revoke를 본다 |
-| 실제 Claude·Codex smoke | 지원을 선언한 CLI 버전·OS에서 이미지 인식 경로와 draft를 확인한다. 모델 설명 문장을 기대값으로 쓰지 않는다 |
+| 실제 Claude·Codex smoke | 실행한 CLI 판·OS를 기록하고 이미지 인식 경로와 draft를 확인한다. 모델 설명 문장을 기대값으로 쓰지 않는다 |
 
 ## 14. 단계별 로드맵
 
@@ -6038,7 +6038,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 
 - **계약.** profile과 별개인 `thread start --account`로 등록한 인증 신원을 고른다. 계정 미지정은 기존 인증 그대로이며 배포로 이미 실행 중인 thread/pane의 인증 환경을 바꾸지 않는다. 실제 로그인은 사람이 aaa 밖 터미널에서 하고 `account import --harness claude|codex --file`은 그 결과만 등록한다. 등록·삭제는 host 로컬의 pane 밖 CLI로 제한한다.
 - **저장과 전달.** K 확정판의 봉투 암호화·권한·원자 저장에 맞춘 최소 금고를 먼저 둔다(전체 관리 화면·범용 참조는 후속). host 상태 폴더의 `secrets.key`(KEK, 0600)와 `accounts/`(0700, 계정 파일 0600)에 보관한다. 무작위 DEK를 감싸고 별칭·harness·버전을 AAD로 묶는다. 전용 TLS/UDS 요청과 session 시작 stdin pipe로만 보내고 spec·journal·argv에는 비밀을 쓰지 않는다. Claude는 자식 env `CLAUDE_CODE_OAUTH_TOKEN`, Codex는 thread별 0700 홈·0600 인증/설정을 쓰며 정상 종료 시 auth만 지우고 대화 기록은 조회·재개용으로 남긴다.
-- **동시 실행과 갱신.** 같은 계정을 여러 머신·작업에 동시에 넘기며 실행권/lease로 막지 않는다. Codex 0.163.0 공식 소스의 비공개 URL override를 버전 확인 뒤 사용해 pane별 localhost capability 중계 → agent → host로 갱신을 모은다. host의 계정별 갱신 mutex·버전 비교가 오래된 요청에 최신 인증을 돌려주고 최신 요청 하나만 제공자에 보낸다. 회전 결과를 암호화·원자 저장한 뒤 답하며 부분/null 토큰은 이전 값을 유지한다. auth.json 사본을 맹목적으로 되쓰기하지 않는다.
+- **동시 실행과 갱신.** 같은 계정을 여러 머신·작업에 동시에 넘기며 실행권/lease로 막지 않는다. Codex의 비공개 URL override를 사용해 pane별 localhost capability 중계 → agent → host로 갱신을 모은다. host의 계정별 갱신 mutex·버전 비교가 오래된 요청에 최신 인증을 돌려주고 최신 요청 하나만 제공자에 보낸다. 회전 결과를 암호화·원자 저장한 뒤 답하며 부분/null 토큰은 이전 값을 유지한다. auth.json 사본을 맹목적으로 되쓰기하지 않는다.
 - **실패와 후속.** 금고 키 손상은 해당 인증 시작만 잠그고 계정 미지정 기능은 계속 제공한다. 미지원 CLI·host 단절·제공자 거부는 명시적으로 실패하며 직접 갱신 우회나 자동 재시도는 없다. 제공자 회전 성공과 host 저장 사이 crash에는 재로그인·재등록이 필요할 수 있다. 영속 갱신 의도·계정 세대와 CAS·결과 불명 복구·비정상 종료 임시 인증 청소는 후속 설계다. 계약·근거·남는 위험은 [작업별 계정 인증](accounts.md)에 적었다.
 - **비밀 비노출.** 등록 값의 원문·8바이트 조각·JSON/URL/base64 변형을 PTY·출력·post의 영속 outbox·DB·journal·로그·오류/패닉 경계에서 가린다. PTY의 chunk·ANSI·개행 분할을 포함한다. 실제 실행 입력과 인증 전송은 가리지 않으며 재접속 agent는 인증한 session IPC에서 메모리 가림 규칙을 복원한다.
 - **프로토콜.** FRONT_API 1.66(`account_import/list/remove`·`thread_start_account`·선택 `ThreadView.account`), AGENT_LINK 1.9(`account_auth.v1`, 전용 spawn·갱신·계정 pane 기록 조회), SESSION_IPC 1.3(갱신·메모리 가림 규칙). 별도 시작 요청이므로 옛 host가 account를 무시해 기존 인증으로 실행하지 못한다. 계정 미지정의 옛 session 연결은 유지한다. 웹 E2E 신규 spec 번호는 없으며 최신 main의 48·49는 그대로 둔다.
@@ -6588,7 +6588,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 ### 8.363 계정별 사용량 수집과 웹 카드(10-21, t-0561, 멀티 계정 A2)
 
 - **범위.** 확정 계획 t-0500 §1.4·§3.2·§5의 A2를 W5a 계정 화면에 붙인다. 계정·창마다 남은 양, 리셋·관측 시각, 머신·출처, 최신·오래됨·모름·실패를 보인다. A3 자동 배정과 실험 Claude get_usage는 넣지 않는다.
-- **수집.** 등록 계정만 읽는다. Codex 0.163.0 공식 app-server를 격리 홈에서 실행하고 initialize → initialized → account/rateLimits/read만 보낸다(thread/start·turn/start 0회). 별도 helper의 인증 갱신은 자기 loopback에서 거부하고 중앙 갱신을 유지한다. Claude는 계정 pane에 주입한 상태줄의 창별 원래 관측 시각만 쓰며 관측 없으면 사용량 모름이다. 원격 agent에는 account_quota.v1을 알린 경우에만 결속된 pane snapshot을 묻는다.
+- **수집.** 등록 계정만 읽는다. Codex 공식 app-server를 격리 홈에서 실행하고 initialize → initialized → account/rateLimits/read만 보낸다(thread/start·turn/start 0회). 별도 helper의 인증 갱신은 자기 loopback에서 거부하고 중앙 갱신을 유지한다. Claude는 계정 pane에 주입한 상태줄의 창별 원래 관측 시각만 쓰며 관측 없으면 사용량 모름이다. 원격 agent에는 account_quota.v1을 알린 경우에만 결속된 pane snapshot을 묻는다.
 - **세대·보호.** 로그인마다 토큰과 무관한 무작위 세대를 암호문 AAD·pane spec·cache에 묶어 재등록 후 옛 관측·늦은 응답을 거부한다. §8.351의 기존 금고는 세대 없는 AAD로 계속 읽고 첫 재암호화에도 같은 세대를 유지한다. 계정 메일·인증 원문·원본 RPC를 새 응답·기록에 넣지 않는다. 버킷 이름·stderr·알림에도 가림을 적용하며 임시 인증 홈·자식은 정리한다.
 - **판정.** 자동 조회 60초·수동 조회 하한 30초와 429 재조회 시각을 지킨다. 실패 때 마지막 값과 원래 시각을 남긴다. 2분까지 최신·10분까지 오래됨, 리셋 경계·너무 오래됨·시계 차이는 모름으로 둔다. 빠진 창은 새 시각으로 갱신하지 않고 기간 모름·모델 창을 나누며 같은 시각 충돌에는 작은 잔량을 쓴다. NaN·범위 밖 숫자를 100%로 만들지 않는다.
 - **호환.** FRONT_API 1.83의 GET /api/v1/account-usage[?refresh=1]은 인증된 보기 기기도 읽는다(no-store). 웹은 1.83 미만 host에서 카드를 그리지 않는다. AGENT_LINK 1.10은 유지하며 account_quota.v1로만 새 요청을 보낸다. W6a의 1.82·plan §8.361과 t-0560 §8.362는 유지한다. 웹 E2E는 기존 62~64와 겹치지 않게 65-account-quota로 옮겼다.
@@ -7326,7 +7326,7 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
   coordinator는 소속 프로젝트의 목록·결과 조회와 끝난 파일 정리만 더 허용한다. 다른 thread의 생성은 시작하지 못한다.
   일반 Front 쓰기·다른 pane 조작·계정 관리 권한은 열지 않는다. thread 소유권은 pane 재시작에도 유지한다.
   host는 agent/session crate에 의존하지 않고 인증을 원격 agent에 보내지 않는다.
-- **실행·인증.** host의 Codex 0.163.0을 인증 전에 검사한다. 허용한 Codex profile의 명시 모델·effort를 고정하고
+- **실행·인증.** host Codex의 판 조회는 로그·시작 기록에만 남기고 인증 전달·생성을 막지 않는다. 허용한 Codex profile의 명시 모델·effort를 고정하고
   shell·plugin·hook·하위 agent·웹 도구를 끈 빈 private 홈/read-only 실행에 해당 계정만 넣는다.
   기본 provider 덮어쓰기는 CLI가 거부하므로 같은 공식 OpenAI 인증·기본 주소를 사용하는 `aaa-image` 설정으로
   request/stream 재시도를 0으로 정한다. API key·종량 과금·머신 로컬 로그인·다른 모델로 전환하지 않는다.
@@ -7660,3 +7660,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **원인·수리.** 승격·서비스 token의 기본 owner가 Administrators이면 일반 생성한 `thread-preparations`도 그 소유권을 받는다. private ACL 이행의 `ReOpenFile`이 디렉터리에서 Win32 5로 실패해 thread 자리 생성·ConPTY에 이르지 못했다. 기본 owner가 현재 SID와 다른 token만 최초 handle에 `WRITE_OWNER`를 요청한다. 같은 handle의 기존 owner·객체 종류를 확인한 뒤 기존 private DACL·소유권 검증을 유지한다.
 - **진단.** thread 준비·작업 root 잠금·자리·journal 권한·brief·hook·pane 상태/명세/로그·PTY·자식 실행의 문맥을 오류 체인에 붙인다. 실행 인자 전체나 환경값은 추가하지 않는다. 원본 로그의 한글은 UTF-8로 정상이었으며 서비스 로그 형식은 바꾸지 않는다.
 - **검증.** 실제 Windows의 기존 ACL owner 실패 대조와 상속 journal·부모 ACL 보존 회귀를 검사한다. 별도 SCM 가상 계정에서 실제 host·agent·thread·session-host·ConPTY를 열고 Session 0과 ready/입력/pong을 확인한다. 실제 암호와 사용자 서비스·설정·sshd는 보존하며 기준 목록을 대조해 정리한다. API·프로토콜·기존 E2E 번호를 유지한다. 절 번호는 묶음 착지 때 main과 대조한다.
+
+
+## §8.469 Harness 판 조회와 계정 pane 시작 진단(t-0910)
+
+- Codex·Claude 계정 pane의 `--version`은 실행 파일·PID·종료 결과·stdout/stderr를 가려 agent 로그와 해당 pane의 `session-host.log` 시작 줄에 남긴다. 판 허용 목록·정확 일치·판 경고가 없으며 조회 실패·5초 상한도 인증 전달이나 session-host 실행을 막지 않는다.
+- host의 Codex 이미지 생성·계정 사용량 helper도 판을 로그에만 남긴다. 이미지 작업은 `harness-version.log`로 시작 기록을 보존한다. 실제 RPC·인증·프로세스 실행 실패는 원래 작업 결과로 처리한다. Claude의 판 고정 검사는 없으며 공통 기록 규칙을 적용한다.
+- 계정 pane 실패는 원인 사슬과 session-host PID·종료 결과·연결·로그를 보존하고 인증을 가려 host 응답·agent 경고에 남긴다. Front API·Agent link wire 변경은 없다.

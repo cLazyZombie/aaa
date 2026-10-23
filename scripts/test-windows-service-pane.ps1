@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Aaa,
     [Parameter(Mandatory=$true)][string]$Lab,
     [Parameter(Mandatory=$true)][ValidatePattern('^aaa-test-[a-z0-9-]+$')][string]$ServiceName,
+    [string]$Codex,
     [switch]$Worker
 )
 $ErrorActionPreference='Stop'
@@ -16,6 +17,10 @@ $Lab=[IO.Path]::GetFullPath($Lab).TrimEnd('\')
 $Aaa=[IO.Path]::GetFullPath($Aaa)
 if($Lab -notmatch '^C:\\aaa-test\\t-[0-9]+$' -or -not $Aaa.StartsWith($Lab+'\',[StringComparison]::OrdinalIgnoreCase)) {
     throw '전용 C:\aaa-test\t-NNNN 안의 실행 파일만 허용한다'
+}
+if($Codex) {
+    $Codex=[IO.Path]::GetFullPath($Codex)
+    if(-not $Codex.StartsWith($Lab+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Codex도 시험 폴더 안의 사본만 허용한다'}
 }
 $run=Join-Path $Lab 'service-pane'
 if($Worker) {
@@ -44,6 +49,12 @@ while($null -ne ($line=[Console]::ReadLine())) {
 }
 '@,[Text.UTF8Encoding]::new($false))
         $powershell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $codexProfile=if($Codex){@"
+[profiles.codex-probe]
+agent = "codex"
+command = ['$Codex', '--disable', 'plugins', '--disable', 'remote_plugin']
+env = { OPENAI_BASE_URL = 'http://127.0.0.1:1/v1' }
+"@}else{''}
         $fixtureProfile=@"
 [profiles.probe]
 harness = "custom"
@@ -60,8 +71,9 @@ mode = "none"
 name = "mac-a"
 [projects]
 root = '$projects'
-allow_profiles = ["probe"]
+allow_profiles = ["probe", "codex-probe"]
 $fixtureProfile
+$codexProfile
 "@,[Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $env:AAA_CONFIG_DIR 'agent.toml'),@"
 schema = 1
@@ -104,11 +116,11 @@ work_root = '$work'
             $out=$p.StandardOutput.ReadToEndAsync();$err=$p.StandardError.ReadToEndAsync()
             if(-not $p.WaitForExit(30000)){$p.Kill();$p.WaitForExit();throw 'CLI 종료 사건 시한 초과'}
             $text=$out.GetAwaiter().GetResult();$errors=$err.GetAwaiter().GetResult()
-            if($p.ExitCode -ne 0){throw ('CLI '+($Arguments -join ' ')+': '+$errors)}
+            if($p.ExitCode -ne 0){throw ('CLI '+($Arguments -join ' ')+': '+$errors+' '+$text)}
             [IO.File]::AppendAllText((Join-Path $run 'cli.jsonl'),$text+"`n",[Text.UTF8Encoding]::new($false))
             return ($text | ConvertFrom-Json)
         }
-        $hostProcess=$null;$agentProcess=$null;$thread=$null
+        $hostProcess=$null;$agentProcess=$null;$thread=$null;$codexPane=$null
         try {
             $hostProcess=Start-Aaa @('host')
             Wait-Log $hostProcess 'host 시작' 'host'
@@ -138,9 +150,57 @@ work_root = '$work'
                 $process=Get-Process -Id $processId
                 if($process.SessionId -ne 0){throw 'pane 경로가 Session 0 밖이다'}
             }
-            [ordered]@{session=0;virtual_service_account=$true;thread=$thread.id;pane=$thread.pane;host_pid=$hostProcess.Id;agent_pid=$agentProcess.Id;session_host_pid=$meta.host_pid;harness_pid=$meta.child_pid;result='pane-ready-and-pong'} |
+            $codexPane=$null
+            if($Codex) {
+                # 운영 계정·토큰은 읽지 않는다. 중앙 계정 전달 경로에 가짜 인증만 넣는다.
+                $auth=Join-Path $run 'fake-auth.json'
+                $claims='{"sub":"fixture-user","exp":4102444800,"https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account","chatgpt_plan_type":"plus"}}'
+                $payload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($claims)).TrimEnd('=').Replace('+','-').Replace('/','_')
+                $jwt='eyJhbGciOiJub25lIn0.'+$payload+'.fixture'
+                $fixtureAuth=@{auth_mode='apikey';OPENAI_API_KEY='fake-service-api-key';tokens=@{id_token=$jwt;access_token='fake-service-access-token';refresh_token='fake-service-refresh-token';account_id='fixture-account'}} | ConvertTo-Json -Depth 4
+                [IO.File]::WriteAllText($auth,$fixtureAuth,[Text.UTF8Encoding]::new($false))
+                $null=Invoke-Aaa @('account','import','fixture','--harness','codex','--file',$auth)
+                $codexThread=Invoke-Aaa @('thread','start','probe','--title','codex-account-pane','--profile','codex-probe','--account','fixture','--machine','mac-a','--kind','dir','--task-file',$task)
+                $codexPane=$codexThread.pane
+                if(-not $codexPane){throw '계정 Codex thread pane이 없다'}
+                $codexSessions=Invoke-Aaa @('pane','list')
+                $codexInfo=$codexSessions.panes | Where-Object {$_.id -eq $codexPane} | Select-Object -First 1
+                if(-not $codexInfo -or $codexInfo.state -ne 'running'){throw '실제 Codex pane이 실행 중이 아니다'}
+                $codexMeta=Get-Content -LiteralPath (Join-Path $env:AAA_STATE_DIR ('agent\sessions\'+$codexPane+'\meta.json')) -Raw -Encoding UTF8 | ConvertFrom-Json
+                $codexProcess=Get-Process -Id $codexMeta.child_pid
+                if($codexProcess.Path -ine $Codex -or $codexProcess.SessionId -ne 0){throw 'SCM Session 0의 실제 시험 Codex가 아니다'}
+                Remember-Process $codexProcess
+                # 사용자 지시 범위는 실제 pane 기동이다. TUI 출력은 후속 진단을 위해 보존한다.
+                $snapshot=Invoke-Aaa @('pane','read',$codexPane)
+                [IO.File]::WriteAllText((Join-Path $run 'codex-screen.json'),($snapshot | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+                $codexLog=Join-Path $env:AAA_STATE_DIR ('agent\sessions\'+$codexPane+'\session-host.log')
+                $logStream=[IO.File]::Open($codexLog,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+                $logReader=[IO.StreamReader]::new($logStream,[Text.UTF8Encoding]::new($false,$true))
+                try {$versionRecord=$logReader.ReadToEnd()} finally {$logReader.Dispose()}
+                if(-not $versionRecord.Contains('harness_version') -or -not $versionRecord.Contains('codex-cli')){throw 'Codex 판 시작 기록이 없다'}
+                [IO.File]::WriteAllText((Join-Path $run 'codex-version-record.txt'),$versionRecord,[Text.UTF8Encoding]::new($false))
+                Remove-Item -LiteralPath $auth
+            }
+            [ordered]@{session=0;virtual_service_account=$true;thread=$thread.id;pane=$thread.pane;host_pid=$hostProcess.Id;agent_pid=$agentProcess.Id;session_host_pid=$meta.host_pid;harness_pid=$meta.child_pid;codex_account_pane=$codexPane;codex_pid=$codexMeta.child_pid;result='pane-ready-and-pong'} |
                 ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $run 'result.json') -Encoding UTF8
+        } catch {
+            [IO.File]::WriteAllText((Join-Path $run 'primary-failure.txt'),($_ | Out-String),[Text.UTF8Encoding]::new($false))
+            if($codexPane) {
+                try {
+                    $paneInfo=Invoke-Aaa @('pane','get',$codexPane)
+                    [IO.File]::WriteAllText((Join-Path $run 'codex-pane.json'),($paneInfo | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+                    $snapshot=Invoke-Aaa @('pane','read',$codexPane)
+                    [IO.File]::WriteAllText((Join-Path $run 'codex-screen.json'),($snapshot | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+                    $sessionDir=Join-Path $env:AAA_STATE_DIR ('agent\sessions\'+$codexPane)
+                    foreach($name in @('meta.json','session-host.log')) {
+                        Copy-Item -LiteralPath (Join-Path $sessionDir $name) -Destination (Join-Path $run ('codex-'+$name))
+                    }
+                    Get-CimInstance Win32_Process | Where-Object {$_.ParentProcessId -eq $paneInfo.pid -or $_.ProcessId -eq $paneInfo.pid} | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $run 'codex-processes.json') -Encoding UTF8
+                } catch {}
+            }
+            throw
         } finally {
+            if($codexPane){$null=Invoke-Aaa @('pane','close',$codexPane)}
             if($thread -and $thread.pane){$null=Invoke-Aaa @('pane','close',$thread.pane)}
             # 직접 시작한 host/agent와 해당 시험 session metadata의 PID만 정리한다.
             $sessionRoot=Join-Path $env:AAA_STATE_DIR 'agent\sessions'
@@ -149,7 +209,7 @@ work_root = '$work'
                     $meta=Get-Content -LiteralPath $metaFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
                     foreach($processId in @($meta.child_pid,$meta.host_pid)) {
                         $p=Get-Process -Id $processId -ErrorAction SilentlyContinue
-                        if($p -and $p.Path -in @($Aaa,$powershell)){$p.Kill();$p.WaitForExit()}
+                        if($p -and $p.Path -in @($Aaa,$powershell,$Codex)){$p.Kill();$p.WaitForExit()}
                     }
                 }
             }
@@ -174,7 +234,7 @@ if(Get-Service -Name $ServiceName -ErrorAction SilentlyContinue){throw '서비�
 [void][IO.Directory]::CreateDirectory($run)
 $script=Join-Path $run 'owner.ps1'
 Copy-Item -LiteralPath $PSCommandPath -Destination $script
-$encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("& '$script' -Worker -Aaa '$Aaa' -Lab '$Lab' -ServiceName '$ServiceName'"))
+$encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("& '$script' -Worker -Aaa '$Aaa' -Lab '$Lab' -ServiceName '$ServiceName' -Codex '$Codex'"))
 $source=@"
 using System;
 using System.Diagnostics;

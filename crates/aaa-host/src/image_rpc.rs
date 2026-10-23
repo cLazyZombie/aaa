@@ -1,4 +1,4 @@
-//! Codex 0.163.0 내장 이미지 생성. 환경·홈·작업 폴더를 격리하고 stdout 원문은 버린다.
+//! Codex 내장 이미지 생성. 환경·홈·작업 폴더를 격리하고 stdout 원문은 버린다.
 use crate::{
     Host,
     image::{Job, descriptor, image_extension},
@@ -14,10 +14,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+#[cfg(test)]
+use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const FAILED: &str = "host Codex 이미지 생성 실패 · 같은 작업은 자동으로 다시 생성하지 않는다";
-const UNSUPPORTED: &str = "이미지 생성은 host의 Codex 0.163.0 설치가 필요하다";
+const LAB_DISABLED: &str = "시험에서는 명시한 이미지 harness만 실행한다";
 const MAX_LINE: usize = 72 * 1024 * 1024;
 
 pub(crate) struct RunFailure {
@@ -223,7 +225,7 @@ fn config(model: &str) -> Result<Vec<u8>, &'static str> {
 pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>, Option<u64>), RunFailure> {
     let fake = if cfg!(debug_assertions) { std::env::var_os("AAA_TEST_IMAGE_CODEX") } else { None };
     if std::env::var_os("AAA_USAGE_HOME").is_some() && fake.is_none() {
-        return Err(UNSUPPORTED.into());
+        return Err(LAB_DISABLED.into());
     }
     let exe = fake.as_deref().map(Path::new).unwrap_or(Path::new("codex"));
     let dir = h.image_dir(&job.begin.id).map_err(|_| FAILED)?;
@@ -233,26 +235,8 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
     }
     util::ensure_private_dir(&path).map_err(|_| FAILED)?;
     let home = Home(path.canonicalize().map_err(|_| FAILED)?);
-    // 인증 전 버전 확인. child PID 하나만 종료하며 process group을 사용하지 않는다.
-    let mut version = command(exe, &home.0)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|_| UNSUPPORTED)?;
-    let check = async {
-        let mut out = vec![];
-        version.stdout.take().ok_or(UNSUPPORTED)?.take(129).read_to_end(&mut out).await.map_err(|_| UNSUPPORTED)?;
-        let status = version.wait().await.map_err(|_| UNSUPPORTED)?;
-        if !status.success() || out != b"codex-cli 0.163.0\n" {
-            return Err(UNSUPPORTED);
-        }
-        Ok(())
-    };
-    let supported = tokio::time::timeout(Duration::from_secs(5), check).await;
-    let _ = version.kill().await;
-    let _ = version.wait().await;
-    supported.map_err(|_| UNSUPPORTED)??;
+    let version = aaa_common::harness_version::observe(command(exe, &home.0), "codex").await;
+    let _ = util::write_private(&dir.join("harness-version.log"), version.as_bytes());
     let account = job.view.account.as_ref().ok_or(FAILED)?;
     let credential = h.accounts.credential(account).map_err(|_| FAILED)?;
     if credential.auth_generation.as_ref() != job.allocation.as_ref().map(|a| &a.generation) {
@@ -494,7 +478,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "설치된 Codex 0.163.0의 무인증·무생성 설정 계약 확인"]
+    #[ignore = "설치된 Codex의 무인증·무생성 설정 계약 확인"]
     async fn installed_codex_accepts_isolated_image_config_without_authentication() {
         let path = std::env::temp_dir().join(format!("aaa-image-config-{}", util::new_id()));
         util::ensure_private_dir(&path).unwrap();
