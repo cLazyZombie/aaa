@@ -52,3 +52,11 @@ SOFTWARE.
 ```
 
 xterm.js 자체도 MIT다: Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js), Copyright (c) 2014-2016, SourceLair Private Company, Copyright (c) 2012-2013, Christopher Jeffrey. 전문은 `node_modules/@xterm/xterm/LICENSE`에 있다.
+
+## Viewport 해제 뒤 callback(t-0945)
+
+`xterm-5.5.0-viewport.patch`는 upstream `Disposable._isDisposed`도 확인한다.
+생성자의 task와 `reset()`의 frame은 viewport가 끝난 뒤에도 도착할 수 있다.
+`syncScrollArea`는 해제된 renderer 크기를 읽지 않고, `_innerRefresh`는 DOM을 갱신하지 않는다.
+기존 deferred terminal disposal은 유지한다. 실제 upstream 메서드 대조는
+`web/test/xterm-source.test.mjs`, 실제 WebKit 연결/시계/오류 검사는 E2E84가 맡는다.

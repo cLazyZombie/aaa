@@ -1,6 +1,6 @@
 //! owner: 실제 CLI→host→로컬/원격 agent→session→PTY의 인증 전달·회전·비노출 계약.
 //! 기존 K0는 전달 비밀·PTY 가림·refresh를 다루지 않는다. 임의 sleep·운영 인증은 쓰지 않는다.
-use super::secret_k0::{canary, hits, needles, sha};
+use super::secret_k0::{canary as hex_canary, hits, needles, sha};
 use super::*;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -8,6 +8,45 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+
+// 8자 부분 누출 검사는 유지한다. nonce를 hex digest와 겹치지 않는 문자로 일대일 변환한다.
+// 16자 알파벳·32자리(128 bit)는 그대로이며 hash/시각 같은 정상 기록과 우연 일치를 피한다.
+fn canary(tag: &str) -> (String, String) {
+    let (_, random) = hex_canary(tag);
+    let random = credential_nonce(&random);
+    (format!("aaa-canary-{tag}-{random}"), random)
+}
+
+fn credential_nonce(hex: &str) -> String {
+    hex.bytes()
+        .map(|byte| match byte {
+            b'0'..=b'9' => (b'g' + byte - b'0') as char,
+            b'a'..=b'f' => (b'q' + byte - b'a') as char,
+            _ => panic!("nonce는 hex여야 한다"),
+        })
+        .collect()
+}
+
+#[test]
+fn credential_canary_distinguishes_hex_metadata_and_detects_every_eight_byte_fragment() {
+    let lab = Lab::new();
+    let random = "0123456789abcdef0123456789abcdef";
+    let value = format!("aaa-canary-proof-{random}");
+    let file = lab.root.join("record");
+    // 정상 64자리 digest 하나가 nonce의 8자와 겹치면 기존 scanner는 누출로 판정한다.
+    std::fs::write(&file, format!("sha256={}{}", &random[14..22], "a".repeat(56))).unwrap();
+    assert!(!hits(std::slice::from_ref(&file), &needles(&value, random), &|_| false).is_empty());
+    let nonce = credential_nonce(random);
+    let value = format!("aaa-canary-proof-{nonce}");
+    let find = needles(&value, &nonce);
+    assert!(hits(std::slice::from_ref(&file), &find, &|_| false).is_empty());
+    assert_eq!(nonce.len(), 32);
+    assert_eq!(nonce.chars().collect::<std::collections::HashSet<_>>().len(), 16);
+    for start in 0..=nonce.len() - 8 {
+        std::fs::write(&file, &nonce.as_bytes()[start..start + 8]).unwrap();
+        assert!(!hits(std::slice::from_ref(&file), &find, &|_| false).is_empty(), "8자 조각 {start}");
+    }
+}
 
 const HARNESS: &str = r#"#!/usr/bin/env python3
 import os,sys,json,pathlib,socket,urllib.request,urllib.error,hashlib,base64,stat,subprocess,datetime

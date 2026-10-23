@@ -82,8 +82,8 @@ if (opt.list) {
     console.log(`specs/${s.file}`);
     for (const n of s.steps.filter((n) => !only || only.test(n))) console.log(`  ${n}`);
   }
-  process.exit(0);
-}
+} else {
+// 목록은 stdout의 비동기 전송까지 자연 종료로 비운다. 실행은 이 분기에서만 시작한다.
 
 const env = { ...process.env };
 if (opt.shots) env.AAA_E2E_SHOTS = opt.shots;
@@ -155,4 +155,6 @@ else if (opt.writeDurations) {
   const sorted = Object.fromEntries(Object.entries(durations).sort(([a], [b]) => compareSpecs(a, b)));
   fs.writeFileSync(durationsFile, `${JSON.stringify(sorted, null, 2)}\n`);
   console.log(`## ${path.relative(process.cwd(), durationsFile)}에 파일 ${picked.length}개 시간을 적었다`);
+}
+
 }

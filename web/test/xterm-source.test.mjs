@@ -35,7 +35,7 @@ function viewportProbes(t) {
   const compile = (text) => {
     const source = ts.createSourceFile("Viewport.ts", text, ts.ScriptTarget.Latest, true);
     const viewport = source.statements.find(ts.isClassDeclaration);
-    const methods = viewport.members.filter((m) => ["_handleScroll", "_innerRefresh", "_refresh", "syncScrollArea"].includes(m.name?.getText(source)));
+    const methods = viewport.members.filter((m) => ["reset", "_handleScroll", "_innerRefresh", "_refresh", "syncScrollArea"].includes(m.name?.getText(source)));
     const code = ts.transpileModule(`export class Probe { ${methods.map((m) => m.getText(source)).join("\n")} }`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
     const module = {};
     new Function("exports", code)(module);
@@ -103,5 +103,28 @@ test("xterm PageUp의 늦은 native scroll이 다음 PageDown을 되돌리지 �
     nativeTop = 0;
     patched.prototype._handleScroll.call(state, new Event("scroll"));
     assert.deepEqual(requests.splice(0), [{ amount: -171, suppressScrollEvent: true }], "동기화와 합쳐진 실제 사용자 이동");
+  }
+});
+
+test("xterm reset frame·생성 task·refresh는 dispose 뒤 renderer를 읽지 않는다", (t) => {
+  const { patched, upstream } = viewportProbes(t);
+  for (const implementation of [upstream, patched]) {
+    const frames = [];
+    let reads = 0;
+    const state = {
+      _isDisposed: false,
+      _coreBrowserService: { window: { requestAnimationFrame: (callback) => frames.push(callback) } },
+      _bufferService: { buffer: { lines: { length: 0 } } },
+      _renderService: { get dimensions() { reads++; throw new TypeError("renderer disposed"); } },
+      _charSizeService: { get height() { reads++; throw new TypeError("disposed refresh"); } },
+    };
+    Object.setPrototypeOf(state, implementation.prototype);
+    state.reset();
+    state._isDisposed = true; // upstream Disposable.dispose가 설정하는 수명 표지
+    for (const callback of [frames.shift(), () => state.syncScrollArea(), () => state._innerRefresh()]) {
+      if (implementation === upstream) assert.throws(callback, TypeError, "구판은 renderer 제거 뒤에도 읽는다");
+      else assert.doesNotThrow(callback);
+    }
+    assert.equal(reads, implementation === upstream ? 3 : 0);
   }
 });

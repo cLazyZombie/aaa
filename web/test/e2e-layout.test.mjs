@@ -75,3 +75,23 @@ test("실제 수집 목록은 E2E99·100을 포함한 모든 파일을 숫자 �
     assert.ok(parseInt(listed[i - 1], 10) <= parseInt(listed[i], 10), `${listed[i - 1]} → ${listed[i]}`);
   }
 });
+
+// 대량 출력은 pipe의 용량을 넘긴다. 강제 exit는 끝을 잃고 자연 종료는 write 완료를 기다린다.
+test("목록은 pipe에 남은 출력까지 모두 전달하고 끝난다", (t) => {
+  const cache = path.join(repo, "web/node_modules/.cache");
+  fs.mkdirSync(cache, { recursive: true });
+  const root = fs.mkdtempSync(path.join(cache, "e2e-list-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "specs"));
+  fs.mkdirSync(path.join(root, "lib"));
+  fs.copyFileSync(path.join(repo, "web/e2e/web.e2e.mjs"), path.join(root, "runner.mjs"));
+  fs.copyFileSync(path.join(repo, "web/e2e/lib/jobs.mjs"), path.join(root, "lib/jobs.mjs"));
+  const names = Array.from({ length: 400 }, (_, i) => `${String(i).padStart(3, "0")}-fixture.mjs`);
+  for (const name of names) fs.writeFileSync(path.join(root, "specs", name), `  await step("${"가".repeat(1000)}", async () => {});\n`);
+  const output = execFileSync(process.execPath, [path.join(root, "runner.mjs"), "--list"], {
+    encoding: "utf8", maxBuffer: 4 * 1024 * 1024, env: { ...process.env, AAA_E2E_ONLY: "" },
+  });
+  assert.deepEqual(output.split("\n").filter((line) => line.startsWith("specs/")).map((line) => line.slice(6)), names);
+  assert.equal(output.split("\n").filter((line) => line.startsWith("  ")).length, names.length);
+  assert.ok(output.endsWith(`  ${"가".repeat(1000)}\n`));
+});
