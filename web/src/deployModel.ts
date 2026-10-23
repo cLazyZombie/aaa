@@ -19,7 +19,7 @@ export function newDeployId(): string {
 /** 후보 경로: 빌드 머신의 `<절대 경로>/aaa` 또는 `~/<폴더>/aaa`(host·agent가 provenance·symlink를 다시 본다) */
 export function candidatePathOk(path: string): boolean {
   const p = path.trim();
-  return (p.startsWith("/") || p.startsWith("~/")) && /\/aaa$/.test(p) && !p.split("/").includes("..");
+  return (p.startsWith("/") || p.startsWith("~/") || /^[A-Za-z]:[\\/]/.test(p)) && /[\\/]aaa(?:\.exe)?$/.test(p) && !p.split(/[\\/]/).includes("..");
 }
 
 export type PlanInput = { source: string; path: string; machines: string[] };

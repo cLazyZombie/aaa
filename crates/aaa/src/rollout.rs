@@ -20,6 +20,9 @@ pub(crate) enum DeployCmd {
         /// 생략/all이면 등록된 전부. host 머신은 항상 맨 앞에 포함한다
         #[arg(long, value_delimiter = ',', default_value = "all")]
         machines: Vec<String>,
+        /// OS·아키텍처별 후보 JSON 배열(os, arch, source_machine, from, sha256)
+        #[arg(long, requires_all = ["file", "commit"])]
+        artifacts: Option<std::path::PathBuf>,
     },
     /// 같은 rollout ID를 조회한다. --wait는 host 재연결 뒤에도 조회만 한다
     Status {
@@ -33,7 +36,11 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
         use aaa_common::front::FrontClient;
         let state = aaa_config::paths::state_dir();
         match cmd {
-            DeployCmd::Start { from, file, sha256, commit, mut machines } => {
+            DeployCmd::Start { from, file, sha256, commit, mut machines, artifacts } => {
+                let artifacts: Vec<aaa_proto::RolloutArtifact> = match artifacts {
+                    Some(path) => serde_json::from_slice(&std::fs::read(path)?)?,
+                    None => vec![],
+                };
                 let (from, source_machine) = match file {
                     Some(file) => {
                         let (machine, path) = file
@@ -50,6 +57,9 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                 let mut c = FrontClient::connect_as(&state, "deploy").await?;
                 if c.proto.minor < 51 {
                     bail!("먼저 rollout API를 아는 host·agent를 반영한다");
+                }
+                if !artifacts.is_empty() && c.proto.minor < 114 {
+                    bail!("플랫폼별 후보에는 FRONT_API 1.114 이상 host가 필요하다");
                 }
                 let context = c.call(FrontRequest::DeployContext).await?.map_err(|e| anyhow::anyhow!(e.message))?;
                 match context {
@@ -70,6 +80,12 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                             from,
                             commit.as_deref().unwrap_or("미지정")
                         );
+                        for artifact in &artifacts {
+                            eprintln!(
+                                "추가 후보 {}/{}: {}:{} · {}",
+                                artifact.os, artifact.arch, artifact.source_machine, artifact.from, artifact.sha256
+                            );
+                        }
                         if crate::person::ask("배포를 시작할까? yes를 입력한다: ")? != "yes" {
                             eprintln!("배포를 취소했습니다");
                             return Ok(ExitCode::from(1));
@@ -85,7 +101,7 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                     json,
                     c.call(FrontRequest::RolloutStart {
                         id,
-                        spec: RolloutSpec { from, source_machine, sha256, commit, machines, restart: None },
+                        spec: RolloutSpec { from, source_machine, sha256, commit, machines, artifacts, restart: None },
                     })
                     .await?,
                 )

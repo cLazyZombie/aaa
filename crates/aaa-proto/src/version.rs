@@ -238,7 +238,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.112: SSH 머신 추가 M4: Windows SCM·보호 stdin. 서비스 암호는 웹 확인 창의 일회 입력만 받으며 작업·응답에 싣지 않는다.
 // 1.113: 예약의 앞 할 일(QueueOp::Reserve.after, TaskReservation.after·after_short_id). 앞 할 일이 완료 보관된 뒤 자리 대기에 든다.
 // 옛 host는 모르는 칸을 버려 바로 시작하므로 웹·CLI는 1.113 미만 host에 앞 할 일을 보내지 않는다. Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 113 };
+// 1.114: rollout의 플랫폼별 후보·대상별 고정 SHA. 옛 host에는 artifacts를 보내지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 114 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

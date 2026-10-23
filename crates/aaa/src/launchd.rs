@@ -232,6 +232,7 @@ pub fn restart(role: &str) -> Result<String> {
     restart_with(role, false)
 }
 /// host가 승인한 배포 executor에서만 부른다. CLI에 우회 인자는 없다.
+#[cfg(not(windows))]
 pub(crate) fn restart_authorized(role: &str) -> Result<String> {
     restart_with(role, true)
 }

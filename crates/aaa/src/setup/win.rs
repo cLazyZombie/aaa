@@ -315,6 +315,13 @@ fn layout() -> Result<Layout> {
     Ok(Layout { instance, source, exe, config, state, explicit_dirs, home })
 }
 
+pub(super) fn restart_for_rollout(exe: &Path) -> Result<String> {
+    let mut target = layout()?;
+    // guard는 사본에서 돈다. 설치 경로는 agent가 보존한 target을 쓰며 guard 자신의 경로로 추정하지 않는다.
+    target.exe = exe.to_path_buf();
+    super::flow::restart_for_rollout(&mut WinSystem, &target, std::process::id())
+}
+
 pub(super) fn run(args: &Args) -> ExitCode {
     let mut term = Terminal::new();
     let pause_at_end = owns_console() && !over_ssh();

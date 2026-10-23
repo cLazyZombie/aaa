@@ -7654,3 +7654,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **콘솔.** 줄 입력은 `ReadConsoleW`를 직접 읽는다. std stdin은 Ctrl+C로 끊긴 읽기를 다시 시작해 Enter까지 취소가 늦기 때문이다. 암호는 echo·줄 입력을 끈 한 글자 읽기로 받고 원래 모드를 모든 경로에서 돌린다. 관리자가 아니면 데스크톱에서는 `runas`로 같은 인자를 다시 실행하고, SSH에서는 바꾸기 전에 멈춘다. 이름이 `aaa-setup`으로 시작하는 실행 파일은 다른 명령이 없으면 `setup`이다.
 - **검증.** macOS의 흐름 시험 18개(가짜 System·Ui)가 질문 순서·바꾼 순서·되돌림·재실행·업데이트·제거·충돌·칸 맞춤을 본다. Windows 11 실기 PC에서 전용 가짜 관리자 사용자의 대화형 SSH(ConPTY)로, 다른 Mac에 띄운 별도 시험 host(운영과 같은 b6d7bda8)에 붙여 했다. 등록 창 닫힘→Enter, 틀린 암호→다시, 승인, 서비스(세션 0·지연 자동·실패 동작), 연결, 서비스 pane의 사용자 PATH, 업데이트, 이름 충돌, 승인 대기·질문 중 Ctrl+C(130), 터미널 없는 SSH(2), 관리자 아님(2), 제거·purge를 확인했다. 정리 뒤 기준 목록과 대조했다. 탐색기 더블클릭(UAC)은 사용자 데스크톱에 창을 띄우므로 실기하지 않았다.
 - **남은 것.** host rollout의 Windows 재시작(지금은 launchd만)은 후속이다. API·Agent link·E2E 번호 변경은 없다.
+
+### 8.472 Windows SCM rollout과 플랫폼별 후보(t-0907)
+
+- **목적·범위.** t-0878의 Windows 서비스 agent를 기존 host→agent 순차 배포에 포함한다. 사용자 q-1231 1A로 플랫폼별 후보 입력 확장도 함께 맡았다. 기존 done·stopped·stopped_rolled_back·recovering·recovery_failed와 독립 감시를 유지한다.
+- **후보.** FRONT_API 1.114의 선택적 `RolloutSpec.artifacts`에 OS·아키텍처·보관 머신·파일·SHA를 받는다. 기본 후보는 host 플랫폼이다. 같은 소스 커밋을 요구하고 대상별 후보를 시작 시 각 단계에 고정한다. 전송·설치 영수증, 새 프로세스 확인, guard 기대 SHA가 모두 그 고정값을 쓴다. 다른 플랫폼 후보가 빠졌거나 중복·잘못된 경로·SHA면 교체 전에 거부한다. 기존 입력과 옛 내구 기록은 기본 후보를 계속 쓴다. CLI는 구형 host에 새 칸을 보내지 않는다. Agent link와 기존 웹 E2E 번호는 유지한다.
+- **Windows.** 새 baseline agent가 windows_scm_rollout.v1을 알린 뒤부터 지원한다. 실행 중인 exe는 설치기와 같이 .aaa-old로 rename한 뒤 staging을 원래 이름에 둔다. 새 파일 두기가 실패하면 원래 이름을 복원한다. agent 자신의 stop으로 실행기가 사라지지 않도록 독립 guard가 SCM 제어를 맡고, Running 작업은 새 agent가 SHA를 확인해 완료한다. SCM PID와 새 agent instance·실행 판·SHA를 구별한다. 감시 프로세스는 서비스 Job에서 분리하며 분리를 거부하면 교체 전에 실패한다.
+- **복구.** 기존 guard 사본과 baseline SHA 고정을 사용한다. 새 서비스 시작 실패·다른 판·기존 시한 초과는 복원→SCM 재시작→옛 실행 신원 검증으로 간다. host가 없어도 파일·서비스를 복구하고 재연결 뒤 같은 rollout 기록으로 확인한다. 서비스 계정·암호·실패 정책을 바꾸지 않는다. Windows host·Linux 감독자와 일반 서비스 CLI 전체 확장은 범위 밖이다.
+- **검증·참고.** 가짜 Windows System·대상별 SHA owner, 두 OS 실기 후보와 별도 시험 SCM 서비스, host를 내린 독립 복구를 확인한다. Windows 읽기 전용 핸들의 FlushFileBuffers 오류 5를 네이티브 대조하고 복구 사본 flush를 쓰기 핸들로 고쳤다. rustup(MIT)·self-replace(Apache-2.0)·Tailscale(BSD-3-Clause)의 파일 보관·갱신용 사본 수명을 참고하고 외부 코드는 가져오지 않는다. 절차는 [시험](testing.md), 사용법·최초 baseline 반영 조건은 [Windows rollout](windows-rollout.md)을 따른다.

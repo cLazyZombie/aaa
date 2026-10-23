@@ -215,13 +215,13 @@ impl Manager {
 /// 빌드 폴더의 `aaa`와 옆 `provenance.json`(16KiB 이하)만 받는다. symlink·다른 이름·일반 파일이 아닌 입력은 거부한다
 fn candidate_files(path: &str) -> Result<(PathBuf, serde_json::Value), ErrorBody> {
     let path = path.strip_prefix("~/").map(|p| aaa_config::paths::home().join(p)).unwrap_or_else(|| path.into());
-    if !path.is_absolute() || path.file_name().is_none_or(|n| n != "aaa") {
+    if !path.is_absolute() || path.file_name().is_none_or(|n| n != "aaa" && n != "aaa.exe") {
         return Err(error("빌드 후보 폴더의 aaa만 읽는다"));
     }
     let parent = path.parent().unwrap().canonicalize().map_err(error)?;
     let file_path = path.canonicalize().map_err(error)?;
     let provenance = parent.join("provenance.json");
-    if file_path != parent.join("aaa") || provenance.canonicalize().map_err(error)? != provenance {
+    if file_path != parent.join(path.file_name().unwrap()) || provenance.canonicalize().map_err(error)? != provenance {
         return Err(error("후보 symlink는 허용하지 않는다"));
     }
     let provenance_meta = std::fs::metadata(&provenance).map_err(error)?;

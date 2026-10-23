@@ -238,6 +238,44 @@ impl System for FakeSys {
 const DEFAULTS: [&str; 4] = ["studio.example.ts.net", "", "", ""];
 
 #[test]
+fn rollout_scm_restart_checks_ownership_and_runs_stop_then_start_once() {
+    let lab = Lab::new();
+    let mut layout = lab.layout();
+    layout.instance = Some("aaa-test-0907-x".into());
+    layout.explicit_dirs = true;
+    std::fs::create_dir_all(&layout.state).unwrap();
+    let mut sys = FakeSys::new(&layout);
+    let service = ServiceInfo {
+        name: layout.service(),
+        running: true,
+        pid: 99,
+        automatic: true,
+        account: account().sam,
+        command: layout.command(),
+    };
+    sys.services.insert(service.name.clone(), service.clone());
+    assert!(restart_for_rollout(&mut sys, &layout, 99).unwrap_err().to_string().contains("자기 서비스"));
+    assert!(sys.ops.is_empty());
+    sys.services.get_mut(&service.name).unwrap().command.push_str(" --foreign");
+    assert!(restart_for_rollout(&mut sys, &layout, 1).unwrap_err().to_string().contains("배포 대상과 다르다"));
+    assert!(sys.ops.is_empty());
+    sys.services.insert(service.name.clone(), service.clone());
+    let mut implicit = layout.clone();
+    implicit.explicit_dirs = false;
+    sys.services.get_mut(&service.name).unwrap().command = implicit.command();
+    assert!(restart_for_rollout(&mut sys, &layout, 1).unwrap_err().to_string().contains("배포 대상과 다르다"));
+    assert!(sys.ops.is_empty(), "다른 상태 폴더를 쓰는 기본 서비스에 닿으면 안 된다");
+    sys.services.insert(service.name.clone(), service.clone());
+    restart_for_rollout(&mut sys, &layout, 1).unwrap();
+    assert_eq!(sys.ops, [format!("stop {}", service.name), format!("start {}", service.name)]);
+    sys.ops.clear();
+    sys.fail_start = true;
+    assert!(restart_for_rollout(&mut sys, &layout, 1).unwrap_err().to_string().contains("1069"));
+    assert_eq!(sys.ops, [format!("stop {}", service.name), format!("start {}", service.name)]);
+    assert!(!sys.services[&service.name].running);
+}
+
+#[test]
 fn fresh_install_asks_three_questions_and_a_password_then_connects() {
     let lab = Lab::new();
     let layout = lab.layout();

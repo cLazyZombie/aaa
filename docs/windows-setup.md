@@ -89,5 +89,5 @@ Ctrl+C(질문·승인 대기 어디서든)나 실패 때는 **이번 실행이 �
 
 ## 남은 것
 
-- host 배포(rollout)의 Windows 재시작은 아직 launchd만 안다. 이 서비스는 설치기 재실행이나 `sc stop/start`로 바꾼다.
+- host 배포의 Windows SCM 재시작·복구와 플랫폼별 후보 입력은 [Windows rollout](windows-rollout.md)을 따른다.
 - 탐색기 더블클릭(UAC) 경로와 도메인·Microsoft 계정은 실기로 확인하지 않았다(시험은 [testing](testing.md)의 「Windows 설치기」).

@@ -83,10 +83,23 @@ pub struct RolloutSpec {
     pub sha256: String,
     pub commit: Option<String>,
     pub machines: Vec<String>,
+    /// 기본 후보와 플랫폼이 다른 대상의 후보. 시작 때 머신별 단계에 고정하며 재연결 뒤 다시 고르지 않는다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<RolloutArtifact>>", optional)]
+    pub artifacts: Vec<RolloutArtifact>,
     /// 재시작만 하는 rollout(관리 GUI W6c, 답 1A): 대상 한 머신의 이 서비스를 지금 판 그대로 다시 띄우고 guard로 확인한다.
     /// 후보·전송·교체가 없고 `from`·`sha256`은 host가 재시작 전 실행 신원으로 채운다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart: Option<DeployService>,
+}
+/// 같은 커밋에서 빌드한 OS·아키텍처별 실행 파일. source_machine은 후보를 보관한 머신이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutArtifact {
+    pub os: String,
+    pub arch: String,
+    pub source_machine: String,
+    pub from: String,
+    pub sha256: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -101,6 +114,9 @@ pub enum RolloutPhase {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct RolloutStep {
     pub machine: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub artifact: Option<RolloutArtifact>,
     pub phase: RolloutPhase,
     pub job_id: String,
     pub completed: bool,

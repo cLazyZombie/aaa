@@ -30,7 +30,7 @@ describe("관리 W6a", () => {
     assert.equal(ids.size, 50);
   });
   it("후보는 빌드 머신의 절대 경로나 ~/ 아래 …/aaa", () => {
-    for (const ok of ["/opt/aaa/candidate/aaa", "~/aaa-candidate/aaa", " ~/c/aaa "]) assert.equal(candidatePathOk(ok), true, ok);
+    for (const ok of ["/opt/aaa/candidate/aaa", "~/aaa-candidate/aaa", " ~/c/aaa ", "C:\\candidate\\aaa.exe", "/opt/candidate/aaa.exe"]) assert.equal(candidatePathOk(ok), true, ok);
     for (const bad of ["", "aaa", "c/aaa", "/opt/aaa/candidate", "/opt/aaa-x", "~/../x/aaa", "mac-b:/opt/aaa"]) assert.equal(candidatePathOk(bad), false, bad);
   });
   it("시작은 점검한 그 후보·대상이 모두 준비됐고 진행 중 rollout이 없을 때만", () => {

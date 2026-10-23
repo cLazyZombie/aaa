@@ -115,7 +115,7 @@ impl Host {
                 service,
                 host_machine,
                 baseline,
-                expected_sha256: r.spec.sha256.clone(),
+                expected_sha256: machine_spec(r, &machine).sha256,
                 expected_software: format!(
                     "aaa {}",
                     r.version.as_deref().ok_or_else(|| internal("검증한 후보 판이 없다"))?
