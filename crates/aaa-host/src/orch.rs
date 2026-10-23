@@ -850,7 +850,8 @@ pub(crate) fn thread_group_with(
         return ThreadGroup::ReadyForReview;
     }
     // 6: harness나 진행 보고로 작업 중. 방금 brief를 받았고 아직 새 보고가 없어도 작업 중(`delivered_ms`)
-    let just_delivered = r.delivered_at_ms.is_some_and(|t| now_ms.saturating_sub(t) < delivered_ms)
+    let just_delivered = pane_exists
+        && r.delivered_at_ms.is_some_and(|t| now_ms.saturating_sub(t) < delivered_ms)
         && r.report_hash == r.delivered_report;
     if matches!(state, Some(A::Working | A::Question)) || prompt_pending || self_working || just_delivered {
         return ThreadGroup::Working;
@@ -3713,6 +3714,10 @@ mod tests {
         assert_eq!(thread_group(&t, false, None, NOW), ThreadGroup::ReadyForReview);
         let acked = ThreadRec { acked_hash: Some("h".into()), ..t };
         assert_eq!(thread_group(&acked, false, None, NOW), ThreadGroup::Idle);
+        // 보고가 brief 받음보다 먼저 도착해도 종료된 pane은 유예 창 동안 일하지 않는다.
+        let recent = ThreadRec { delivered_at_ms: Some(NOW), delivered_report: Some("h".into()), ..acked };
+        assert_eq!(thread_group(&recent, true, None, NOW), ThreadGroup::Working);
+        assert_eq!(thread_group(&recent, false, None, NOW), ThreadGroup::Idle);
         assert_eq!(thread_group(&open_thread(), false, None, NOW), ThreadGroup::WaitingOnYou);
     }
 

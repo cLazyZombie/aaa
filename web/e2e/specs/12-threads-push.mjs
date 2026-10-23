@@ -170,7 +170,20 @@ export default async function ({ page }) {
     // 결과물 파일은 새 탭 대신 앱 안 파일 보기로 연다(차이 목록 R1): 같은 보기 경로(/v/)로 읽고, 문서 안 그림·링크는 결과물 안에서 푼다
     const viewer = page.getByTestId("file-viewer");
     await page.getByTestId("files").getByTestId("library-file").filter({ hasText: "docs/notes.md" }).click();
-    await until("결과물 Markdown 보기", async () => (await viewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "결과 메모");
+    await until("결과물 Markdown 보기", async () => (await viewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "결과 메모").catch(async (error) => {
+      // locator의 null만 남기지 않고 보기의 오류·읽기 단계와 해당 자료의 요청 시간을 보존한다.
+      const state = await page.evaluate(() => {
+        const viewer = document.querySelector('[data-testid="file-viewer"]');
+        return { visibility: document.visibilityState, focused: document.hasFocus(), present: !!viewer,
+          title: viewer?.querySelector('h1, h2')?.textContent,
+          heading: viewer?.querySelector('.markdown-h1')?.textContent,
+          problem: viewer?.querySelector('[role="alert"]')?.textContent,
+          note: viewer?.querySelector('.file-viewer-note')?.textContent,
+          resources: performance.getEntriesByType("resource").filter((r) => new URL(r.name).pathname.endsWith("/docs/notes.md"))
+            .map((r) => ({ type: r.initiatorType, duration: r.duration, bytes: r.transferSize, size: r.decodedBodySize })) };
+      });
+      throw new Error(`${error.message}: ${JSON.stringify(state)}`);
+    });
     const pic = await until("Markdown 안 그림(../pic.png)", async () => {
       const w = await viewer.locator(".file-viewer-markdown img.markdown-image").evaluate((i) => (i.complete ? i.naturalWidth : 0)).catch(() => 0);
       return w > 0 ? w : null;

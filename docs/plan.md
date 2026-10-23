@@ -1935,7 +1935,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이 변경 전에 연 thread(기록 없음)는 처음 볼 때 전이가 아니다. 그때의 보고는 옛 방식으로 이미 알렸으니 새 보고로 치지 않는다. 새 thread는 시작할 때 「작업 중」을 적는다.
 - **언제 세나.** 참고는 15초 tick이다. aaa는 `tick_secs`에 더해 harness 상태·진행 보고·세션 끝남·보고 사본·ack·brief 상태가 바뀌면 바로 센다.
   - **사건이 보고보다 먼저 온다.** agent는 report.md를 1초마다 본다. 그래서 턴 끝·진행 보고·세션 끝남이 먼저 오면, 옛 보고로 셀 때 「쉼」 다음에 「새 보고」가 따로 오고 `Done` 직전의 중간 보고가 검토 대기가 된다. thread의 그런 사건이 오면 host는 agent에 report.md hash를 먼저 묻는다(library는 읽지 않는다). 바뀌었으면 사본을 받은 뒤 센다(`refresh_report`). 그동안 묶음 셈은 그 thread를 건너뛴다. 참고는 같은 tick 안에서 파일 hash를 읽는다(`fresh_hash`).
-  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. brief를 보낸 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오면 더 기다리지 않는다(host.toml `[projects] delivered_working_secs`, 기본 15. 시험에서 줄인다). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
+  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. 살아 있는 pane이 brief를 받은 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오거나 pane이 종료되면 이 유예를 적용하지 않는다(host.toml `[projects] delivered_working_secs`, 기본 15. 시험에서 줄인다). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
   - 연결되지 않은 머신의 thread는 세지 않는다(참고 `remote_pass`: 닿지 않으면 상태도 묶음도 항목도 바꾸지 않는다).
 - **전이 항목(F2·F3, hp `src/steps.rs` `write_thread_items`·`transition_event`).** 확인 필요나 쉼으로 바뀔 때만 `thread-state` 항목 하나를 낸다.
   - 사건 말은 참고 그대로다: `blocked on a prompt`·`pane closed`·`agent gone`·`waiting on you`·`idle`.

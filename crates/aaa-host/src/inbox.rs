@@ -960,7 +960,7 @@ mod tests {
         cfg.notify.web_push = false;
         cfg.projects.root = state.join("projects").display().to_string();
         cfg.projects.outage_secs = 60;
-        let h = Host::open(cfg, state.clone()).unwrap();
+        let h = Host::open(cfg.clone(), state.clone()).unwrap();
         let projects = ["demo".to_string()];
         for (n, p) in projects.iter().enumerate() {
             h.project_create(p, Default::default(), "test").unwrap();
@@ -979,7 +979,7 @@ mod tests {
                 h.db.thread_import(p, &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
             }
         }
-        let count = |p: &str, subject: &str, event: &str| {
+        let count = |h: &Host, p: &str, subject: &str, event: &str| {
             h.db.inbox_list(Some(p), true)
                 .unwrap()
                 .iter()
@@ -999,14 +999,37 @@ mod tests {
         h.outage_pass(&projects, &machines(true, true), 1_000);
         h.outage_pass(&projects, &machines(true, true), 2_000);
         for p in &projects {
-            assert_eq!((count(p, "mac-a", "recovered"), count(p, "mac-b", "recovered")), (1, 1), "{p}");
+            assert_eq!((count(&h, p, "mac-a", "recovered"), count(&h, p, "mac-b", "recovered")), (1, 1), "{p}");
         }
         // 회복 뒤 새로 오래 끊기면 다시 알린다(열린 옛 끊김 항목이 막지 않는다)
         h.outage_pass(&projects, &machines(false, true), 10_000);
+        h.outage_pass(&projects, &machines(false, true), 69_999);
+        assert_eq!(count(&h, "demo", "mac-a", "down"), 1, "기준 직전에는 알리지 않는다");
         h.outage_pass(&projects, &machines(false, true), 70_000);
         for p in &projects {
-            assert_eq!(count(p, "mac-a", "down"), 2, "{p}");
+            assert_eq!(count(&h, p, "mac-a", "down"), 2, "{p}");
         }
+        // 실제 DB를 다시 열어 이미 알린 끊김을 잇는다. 메모리 Outage를 넘기지 않는다.
+        drop(h);
+        let h = Host::open(cfg.clone(), state.clone()).unwrap();
+        h.outage_pass(&projects, &machines(false, true), 500_000);
+        h.outage_pass(&projects, &machines(false, true), 600_000);
+        assert_eq!(count(&h, "demo", "mac-a", "down"), 2, "재시작 뒤 down 중복 없음");
+        h.outage_pass(&projects, &machines(true, true), 600_001);
+        h.outage_pass(&projects, &machines(true, true), 600_002);
+        assert_eq!(count(&h, "demo", "mac-a", "recovered"), 2, "영속 down의 회복 한 번");
+        drop(h);
+        let h = Host::open(cfg, state.clone()).unwrap();
+        // 옛 연결·알림 시각이 아무리 오래돼도 새 host가 처음 본 끊김부터 잰다.
+        h.outage_pass(&projects, &machines(false, true), 9_000_000);
+        h.outage_pass(&projects, &machines(false, true), 9_059_999);
+        assert_eq!(count(&h, "demo", "mac-a", "down"), 2);
+        h.outage_pass(&projects, &machines(true, true), 9_059_999);
+        assert_eq!(count(&h, "demo", "mac-a", "recovered"), 2, "짧은 끊김은 알림 없음");
+        h.outage_pass(&projects, &machines(false, true), 9_100_000);
+        h.outage_pass(&projects, &machines(false, true), 9_160_000);
+        h.outage_pass(&projects, &machines(false, true), 9_260_000);
+        assert_eq!(count(&h, "demo", "mac-a", "down"), 3, "새 긴 끊김 한 번");
         drop(h);
         std::fs::remove_dir_all(&state).unwrap();
     }
