@@ -150,11 +150,37 @@ export default async function ({ page }) {
     if ((await box.inputValue()) !== "버튼이 잘린다\n여백도 본다") throw new Error(`입력칸 글이 바뀌었다: ${await box.inputValue()}`);
     if (notesOf("화면 고치기").some((l) => l.includes(name))) throw new Error("고치는 중인데 바로 저장했다");
     await shot(page, "attach-desktop-draft");
-    await detail.getByTestId("task-save").click();
-    // 글 뒤에 첨부 줄이 차례대로 온다
-    await until("저장한 첨부 줄", () => notesOf("화면 고치기").join("|") === `버튼이 잘린다|여백도 본다|![그림](uploads/${sha(shotPng).slice(0, 16)}.png)|![그림](uploads/${name})`);
-    if (await page.locator('[role="alertdialog"], [data-testid^="task-conflict"]').count()) throw new Error("충돌 창이 떴다");
-    await countIs(page, 2);
+    // 저장은 파일에 반영됐지만 HTTP 응답은 아직 안 온 차례를 만든다.
+    // 그사이 다른 task를 골라도 늦은 응답이 선택·새 폼을 덮으면 안 된다.
+    let release;
+    const gate = new Promise((done) => { release = done; });
+    const saveRoute = async (route) => {
+      if (route.request().postDataJSON()?.op !== "task_edit") return route.continue();
+      const response = await route.fetch();
+      await gate;
+      await route.fulfill({ response });
+    };
+    await page.route("**/api/v1/call", saveRoute);
+    const saved = page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "task_edit");
+    try {
+      await detail.getByTestId("task-save").click();
+      // 글 뒤에 첨부 줄이 차례대로 온다
+      await until("저장한 첨부 줄", () => notesOf("화면 고치기").join("|") === `버튼이 잘린다|여백도 본다|![그림](uploads/${sha(shotPng).slice(0, 16)}.png)|![그림](uploads/${name})`);
+      if (await page.locator('[role="alertdialog"], [data-testid^="task-conflict"]').count()) throw new Error("충돌 창이 떴다");
+      await countIs(page, 2);
+      if (await detail.getByTestId("task-form").getAttribute("data-task-saving") !== "true") throw new Error("저장 응답을 풀기 전에 폼이 끝났다");
+      await pick(page, "폰에서 붙이기");
+      await domIs(page, "저장 중 다음 task 선택", () => document.querySelector('[data-testid="task-detail"]')?.getAttribute("aria-label") === "할 일 폰에서 붙이기");
+      release();
+      await (await saved).finished();
+      // 응답 처리와 그 뒤 React commit/paint까지 지나간 뒤에도 선택을 보존한다.
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const label = await page.getByTestId("task-detail").getAttribute("aria-label");
+      if (label !== "할 일 폰에서 붙이기") throw new Error(`늦은 저장이 선택을 덮었다: ${label}`);
+    } finally {
+      release();
+      await page.unrouteAll({ behavior: "wait" });
+    }
   });
 
   await step("붙여넣기 칸·떼기: 칸에 붙인 그림은 저장되고, 글만 붙이면 까닭을 알린다. ×로 떼면 줄만 지우고 파일은 남는다", async () => {

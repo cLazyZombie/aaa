@@ -8,6 +8,29 @@
 - 참고 후보는 [herdr-web-ui 시트 기록](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/lib/sheetHistory.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))와 [remix-run/history](https://github.com/remix-run/history/blob/main/packages/history/index.ts)([MIT](https://github.com/remix-run/history/blob/main/LICENSE))다. 전자의 시트 기록과 후자의 PUSH/POP 구분을 참고했고 외부 코드·의존성을 추가하지 않는다. [History API의 기록 추가](https://developer.mozilla.org/en-US/docs/Web/API/History/pushState)와 [WebKit의 뒤로·앞으로 몸짓](https://developer.apple.com/documentation/webkit/wkwebview/allowsbackforwardnavigationgestures)도 확인한다.
 - 정본은 기준 main `5085e64f` 위 전체 `nice -n 15 bash scripts/ci-local.sh`·Linux strict cross clippy·공개 검사다. GitHub CI는 기다리지 않고 착지 창 전에는 main 병합·push하지 않는다. API와 E2E 번호는 유지한다.
 
+## 간헐 E2E·Rust 시험의 회귀 소유 정리(t-0928)
+
+실패 재시도·시한 확대·기대값 완화 없이 제품 결함과 시험 경합을 나눈다. 과거 보고에서 E2E66은 부하 중 최소 3회,
+E2E11·52·89와 아래 m13 세 경로는 각각 최소 1회 실패를 확인했다. 전체 실행 횟수가 없어 실패율로 해석하지 않는다.
+
+| 시험 | 수정·축소 이유 | 유지하거나 옮긴 회귀 단언 |
+| --- | --- | --- |
+| E2E66 줄바꿈 | 168음절 전수 조합·수백 키 입력을 native 줄 경계 전후 10표본으로 축소. 시험 helper의 캐시와 같은 helper의 fresh 자기 비교 삭제 | Chromium·WebKit × 데스크톱·휴대폰, 독립 native textarea의 줄 수·폭, IME 중/확정, 긴 입력·영문·paste·resize·높이 복원·focus·미전송 |
+| E2E11 선택 질문 | PTY 출력 뒤에도 host 답 저장 응답이 남을 수 있음 | Enter 전에 등록한 `question_answer` 응답 완료·오류 검사 뒤 정확한 두 답과 화면 입력을 대조 |
+| E2E52 첨부 | 실제 저장 응답을 늦추면 다른 task 선택을 덮는 제품 결함 | 실제 `task_edit`를 처리한 뒤 응답만 gate로 보류. 다른 task 선택 뒤 풀어도 선택 보존. 기존 파일 bytes·메모·첨부·떼기 단언 유지 |
+| E2E89 책임 경고 | 일반 HTTP 전부의 fetch/fulfill 고리에서 이미 처리한 Route 오류 | context의 실제 `Response.json()` 결과 중 책임 관측값만 fixture로 변환. HTTP 수명은 브라우저에 맡기고 상태·Reader·폭·무변경 단언 유지 |
+| m13 `remote_dir_thread_survives_host_restart` | 물리적 재접속을 outage 5초와 경쟁시키는 단언·7초 sleep·추가 재시작 두 번 제거 | 실제 TLS 재연결·보고 수집·사건은 m13. 시간 경계·down/recovered 중복·실제 DB 재개는 `inbox::tests::restarted_host_recovers_only_an_outage_still_open` |
+| m13 `memory_and_restart` | 짧은 working 유예를 CLI 왕복으로 확인하는 중복 단언 제거 | 유예 경계는 `orch::tests::a_just_delivered_brief_is_working_until_a_report_or_a_tick`. 실제 memory 변경·새 pane·brief·resume와 종료 pane idle은 m13에 유지 |
+| m13 `claude_thread_states_questions_and_messages` | accepted와 harness 실제 수신을 구분. 제한된 visible 화면에 과거 출력이 계속 남을 필요 없음 | 실제 `got` 출력 뒤 interrupt/stop. Interrupted→긴급 입력 순서·중단 횟수·권한 질문 보호·정확한 질문/입력 기록 유지 |
+
+- E2E52의 정상 저장은 그대로 새 폼을 연다. 응답을 기다리던 폼의 선택이 현재 선택과 같을 때만 새 폼을 열어 다른 선택·닫힘·초안을 덮지 않는다. 구판에 응답 gate를 적용하면 선택 보존 단언이 실패하고 수정판은 기존 전체 첨부 흐름을 통과한다.
+- 보고가 brief 확인보다 먼저 도착한 종료 pane은 최근 전달 유예 때문에 working에 남았다. `just_delivered`에 살아 있는 pane 조건을 추가하고 기존 `a_closed_pane_needs_you_only_without_a_report`에 같은 기록의 실행/종료 비교를 넣는다. 구판의 결정적 RED와 수정판 GREEN을 확인한다.
+- outage 기존 시각 경계에 기준 직전/정각, 실제 `Host::open`으로 DB를 다시 연 뒤 down 중복 없음·회복 한 번·새 host의 짧은 끊김을 더한다. 제품의 outage 기준을 0으로 바꾸면 기준 직전 단언이 실패한다. 줄 수를 항상 1로 망가뜨리면 축소한 E2E66이 네 화면의 줄 분류에서 실패한다. 변형 뒤 원본을 복원하고 웹·실행 파일을 다시 빌드한다.
+- 고정 sleep ratchet에서 m13의 제거된 1건을 내린다. 새 시험 전용 production 고리는 없다. E2E39·03·14·26·97의 기존 수리는 보존한다. E2E93 재개의 Subscribe 응답 유실과 가짜 터미널 제어 입력 파서는 t-0927이 맡는다. E2E47 닫기 실패는 즉시 Escape 대조로 재현하지 못했으므로 근거 없이 고치지 않는다.
+- 정본은 `nice -n 15 bash scripts/ci-local.sh`·Linux strict cross·공개 검사다. 고정한 `AAA_BIN`으로 전체 E2E를 `--repeat 2` 실행해 동시 Rust/E2E 부하·작업별 시간·실패 원문을 기록한다. 이 반복은 측정이며 실패를 통과로 치환하지 않는다. GitHub CI는 기다리지 않는다.
+- 추가 E2E 6 workers를 기본 CI와 겹친 과부하 측정은 E2E 정본 126/126, 반복 250/252였다. 반복의 E2E07 설정 클릭·E2E12 Markdown 보기 실패는 원본 화면 상태가 부족해 원인 미확정으로 남긴다. 해당 단언에 단추 상태·애니메이션·보기 오류·자료 요청 시간 진단을 추가한다. Rust SSH 감지는 내구 DB에서 시한 오류를 회수해 단언에도 그 이유를 넣고, restart 준비 실패는 실제 sample의 dyld 초기화와 기한 뒤 연결 기록을 보존한다. 시한·핵심 단언은 그대로이며 이 과부하 실패를 이후 기본 CI 통과로 지우지 않는다.
+- 참고는 [Playwright의 사용자 동작·격리·대기](https://playwright.dev/docs/best-practices)와 [flaky 구분](https://playwright.dev/docs/test-retries)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [herdr-web-ui의 unit/integration 분리](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/scripts/ci-tests.ts)와 [독립 UI 세션 정리](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/scripts/ui-contexts-regression.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))다. 계층별 회귀 소유·완료 사건·격리를 참고했으며 코드·의존성을 가져오지 않는다.
+
 ## E2E39 설정 준비와 첫 thread 목록의 경합(t-0923)
 
 - `pairPage`의 머신 행 부착은 첫 thread 목록 수신·자동 첫 선택 완료가 아니다. 실제 첫 `threads` 응답을 메뉴 열림 뒤까지 보류하면 빈 주소의 자동 `choose`가 메뉴를 닫아 `pane-bk1` 클릭이 viewport 밖→비표시로 30초에 실패한다. t-0921 원문과 같은 실패 경로를 재현했지만, 원문에는 엔진·서랍 상태가 없어 당시 사건 순서를 소급 확정하지 않는다.
@@ -343,7 +366,7 @@
 - 원본 E2E16의 「기본 Markdown Escape」 실패에는 xterm의 `input` 메시지 `\u001b`와 PTY의 `^[` 출력이 함께 남았다. 파일 내용은 focus rAF보다 먼저 표시될 수 있고 터미널 부착도 focus를 옮긴다. FileViewer의 window bubble listener는 xterm textarea가 전파를 멈춘 키를 받지 못했다. document capture의 layout effect로 등록해 실제 키를 먼저 처리하고 기본 동작·전파를 막는다. 이미 처리한 키·IME·상위 native modal·그림 크게 보기는 먼저 둔다.
 - `NODE_PATH=<Playwright 1.64.1 모듈 폴더> PLAYWRIGHT_BROWSERS_PATH=<격리 브라우저 폴더> node web/e2e/web.e2e.mjs --spec 16 --workers 1`: 기존 전체 owner에 실제 textarea focus 경계·Chromium·WebKit 소스와 Markdown의 Escape 닫힘·터미널 무입력·상위 native 창과 그림 크게 보기 우선순위를 더한다. 구판은 textarea를 focus한 대조에서 원본과 같은 20초 닫힘 실패와 ESC 전송으로 실패한다. 원본의 모든 부착·focus 사건 순서까지 재현했다고 주장하지 않는다.
 - 단일 진단 [run 39885298949](https://github.com/cLazyZombie/aaa/actions/runs/39885298949)은 CPU 3개·worker 3개를 확인했다. 93파일·104작업을 모두 한 번 실행해 E2E 1,203.645초·job 23분 59초에 끝났으며 E2E16은 62.171초에 통과했다. 유일한 실패는 E2E66의 네 기기 줄바꿈 단계가 120초를 넘긴 것이다. 최종 설정은 worker 2개로 여유를 두며, 이 설정의 원격 판정은 착지 뒤 main CI에 남긴다. 이 실패를 통과로 바꾸거나 진단 job을 재실행하지 않는다.
-- E2E66의 `geometry`는 CSS 전체·실폭·글꼴 로딩 세대가 같은 독립 native textarea와 첫 줄 경계를 재사용한다. 현재 입력값의 native 줄 수·실제 폭·행 수·focus·PTY 무전송은 매 상태 검사한다. 높이/CSS/폭이 바뀌거나 글꼴이 로딩 중이면 기준을 다시 만들며, 기준 요소는 측정 뒤 DOM에서 뺀다. 빈 입력·게이지 숨김·두 viewport 변경마다 캐시 없는 새 native 기준과 경계·줄 수를 대조한다. 모든 음절·자모·기기·단언·120초 상한을 유지한다. 실패 때 `diagnostics/wrap-geometry.json`은 현재 기기·진행 상태·직전 측정과 완료 기기별 비용을 남긴다.
+- E2E66의 당시 캐시 최적화는 t-0928에서 제거했다. 현재는 native 줄 경계 전후 표본마다 독립 native textarea를 새로 만들고 실제 줄 수·폭·focus·미전송을 대조한다. 양 엔진·양 화면과 120초 상한을 유지하며 자세한 축소·회귀 소유는 t-0928 절을 따른다. 실패 때 `diagnostics/wrap-geometry.json`에 현재 기기·진행 상태·직전 측정과 완료 기기별 비용을 남긴다.
 - 실패하면 `diagnostics/file-viewer-escape.json`에 실제 키의 target 종류·터미널 여부·isTrusted·defaultPrevented·viewer/history 유무와 ESC 누출 여부를 남긴다. 본문·주소·임의 history state는 기록하지 않는다. 기존 닫힘 단언·20초 대기·120초 단계 상한·실패 판정을 유지한다. 정본은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사이며, GitHub 확인은 진단 branch의 단일 job 또는 착지 뒤 main CI로 한다. 실패 재실행·시한 증가·기대값 완화는 없다.
 
 ## 셸에서 직접 실행한 Codex·Claude 기록 연결(t-0832)
@@ -3034,7 +3057,7 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 서로 다른 SHA인 agent 사본으로 바꾼 뒤 CLI 재시작으로 launcher·worker PID와 기존 pane이 유지되는지 확인한다. 기존 pane·새 pane에서 고유 코드를 넣은 C·Rust 실행 파일과 cargo run·build.rs의 실제 책임 PID를 확인하고 첫/재실행 시간을 보존한다. 시험 도구 `scripts/pane-responsibility-probe.py`의 출력은 작업 저장소 `target/restart-probes` 아래에 둔다(임시 OS 폴더의 Cargo target은 쓰지 않는다). 권한 미등록 CI에서는 속도 상한을 합격 조건으로 삼지 않는다.
 - 잘못된 worker 생성 시각·승인과 다른 실행 파일은 launchctl 변경 호출 전에 거부한다. launcher를 직접 종료하는 별도 단계는 pane을 남기고 새 agent의 재연결에서 `detached`가 갱신되는지 확인한다. 시험은 준비 기록·host 사건·명령 완료 출력으로 끝낸다. 셸 화면은 끝 공백을 잘라 내므로 `$ ` 문자열을 준비 사건으로 기다리지 않는다.
 - `cargo test -p aaa-agent --lib responsibility --locked`는 실제 경로 분류·조회 실패를 확인한다. 기존 직렬화/TypeScript 계약 검사는 선택 필드의 이전 판 호환을 유지한다.
-- E2E89은 실제 host·agent·thread를 사용하고 관측값만 응답 경계에서 바꾼다. Chromium 1280/320px, WebKit 390px Reader의 경고·접힌 경로 상세·정리 창·가로 넘침·보기 권한·보류 무변경을 확인하고 캡처한다. 보고서 iframe이 필요 없는 이 시험은 「사람을 기다림」 fixture로 sandbox/ServiceWorker 주입을 분리한다. 실제 보류·저장·이어 하기는 기존 E2E85와 함께 검증한다. 목록과 터미널 표지도 직접 확인하며, 응답 경계의 route handler는 context를 닫기 전 `unrouteAll({behavior: "wait"})`로 완료를 기다린다.
+- E2E89은 실제 host·agent·thread를 사용하고 관측값만 응답 경계에서 바꾼다. Chromium 1280/320px, WebKit 390px Reader의 경고·접힌 경로 상세·정리 창·가로 넘침·보기 권한·보류 무변경을 확인하고 캡처한다. 보고서 iframe이 필요 없는 이 시험은 「사람을 기다림」 fixture로 sandbox/ServiceWorker 주입을 분리한다. 실제 보류·저장·이어 하기는 기존 E2E85와 함께 검증한다. 목록과 터미널 표지도 직접 확인한다. t-0928부터 HTTP route 재처리 없이 context의 `Response.json()` 결과에서 책임 관측값만 바꾸며 실제 요청의 완료·취소 수명은 브라우저가 맡는다.
 - 최초 회귀에서 준비 기록 상위 폴더 누락을 재현해 수정했다. 새 fixture launcher가 시작하지 않은 실행은 해당 PID의 syspolicyd YARA 오류·종료와 직전 DetachedSignatures EMFILE을 기록했다. 시스템 설정·시한·기대값을 바꾸지 않고 기존 등록 launcher를 사용하는 별도 경로에서 책임·첫 실행을 검증한다. 준비 기록 신원은 파일 경로 문자열 대신 커널 생성 시각·부모·UID·boot로 대조한다(원자 교체된 옛 실행 파일의 경로 조회를 신원으로 쓰지 않는다).
 - 전체 검사에서 기존 task 경고 유일성 시험이 새 책임 안내의 `경고:` 접두어 때문에 실패했다. 책임 안내를 별도 `개발자 도구:` 줄로 표시해 기존 task 경고 계약·단언은 유지하며, 새 restart 회귀가 `pane list`의 기존 무인자 JSON 출력에 책임 관측값이 포함되는지 확인한다.
 - 추가 CLI 시험의 최초 문구 단언은 pane 명령의 기존 JSON 전용 계약을 잘못 가정했다. 불필요한 pane 글 출력 분기를 없애고, `--json` 없는 실제 CLI 출력도 JSON 한 줄이며 책임 관측값을 포함하는지 검사한다. thread 글 출력의 별도 진단과 웹 표지는 유지한다.

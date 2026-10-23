@@ -133,8 +133,13 @@ export default async function ({ ctl, page }) {
     ({ q, card } = await opened(p1, [q.menu.id]));
     if ((await card.locator("h2").textContent()) !== "이름") throw new Error(`둘째 질문 ${await card.innerText()}`);
     await card.locator(".prompt-card-custom input").fill("한글 이름");
+    // PTY의 답 출력은 host가 답을 저장하기 전이다. 이 요청의 완료를 본 뒤 기록을 읽는다.
+    const answered = page.waitForResponse((r) => r.url().endsWith("/api/v1/call")
+      && r.request().postDataJSON()?.op === "question_answer" && r.request().postDataJSON()?.id === q.id);
     await card.locator(".prompt-card-custom input").press("Enter");
     await said("ask1", "answer: custom 한글 이름");
+    const answer = await (await answered).json();
+    if (answer.err) throw new Error(`직접 쓴 답 저장: ${JSON.stringify(answer.err)}`);
     const done = aaa("question", "list", "--all").questions.filter((x) => x.pane === p1 && x.state === "answered").map((x) => x.answer);
     if (JSON.stringify(done) !== JSON.stringify(["3. 파일 몇 개", "직접: 한글 이름"])) throw new Error(`답한 질문 ${JSON.stringify(done)}`);
 

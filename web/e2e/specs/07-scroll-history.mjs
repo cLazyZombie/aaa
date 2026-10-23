@@ -118,7 +118,22 @@ export default async function ({ ctl, page }) {
     await dp.mouse.wheel(0, -100);
     await until("1× 보고 하나", () => reports() === before + 1);
     const dlg = await openSettings(dp, "터미널");
-    for (let i = 0; i < 2; i++) await dlg.getByRole("button", { name: "휠 스크롤 빠르게" }).click();
+    for (let i = 0; i < 2; i++) {
+      await dlg.getByRole("button", { name: "휠 스크롤 빠르게" }).click().catch(async (error) => {
+        // 단추가 사라짐·비활성·움직임 중 어느 경우인지 남긴다. 클릭을 재시도하지 않는다.
+        const state = await dp.evaluate(() => {
+          const button = document.querySelector('button[aria-label="휠 스크롤 빠르게"]');
+          const rect = button?.getBoundingClientRect();
+          const css = button && getComputedStyle(button);
+          return { visibility: document.visibilityState, focused: document.hasFocus(),
+            present: !!button, disabled: button?.disabled, display: css?.display, visible: css?.visibility,
+            rect: rect && [rect.x, rect.y, rect.width, rect.height],
+            animations: document.getAnimations().map((a) => ({ state: a.playState, time: a.currentTime })),
+            selectedTab: document.querySelector('[role="tab"][aria-selected="true"]')?.textContent };
+        });
+        throw new Error(`${error.message}: 휠 속도 클릭 ${i + 1} ${JSON.stringify(state)}`);
+      });
+    }
     await dp.keyboard.press("Escape");
     await dlg.waitFor({ state: "hidden" });
     await dp.mouse.move(box.x + box.width / 2, box.y + box.height / 2);

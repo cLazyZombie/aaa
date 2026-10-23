@@ -26,12 +26,23 @@ export default async function ({ page }) {
                 if ((v.project === "demo" && v.id === id) || v.id === original.pane) v.responsibility = value;
                 for (const child of Object.values(v)) if (child && typeof child === "object") visit(child);
               };
-              await context.route("**/api/v1/call", async (route) => {
-                const response = await route.fetch();
-                const body = await response.json();
-                visit(body);
-                await route.fulfill({ response, json: body });
-              });
+              // 실제 HTTP 전송·취소·응답은 브라우저가 소유한다. 관측값만 JSON 읽기
+              // 경계에서 바꿔 종료 중인 요청에 두 번째 Route 응답을 보내지 않는다.
+              await context.addInitScript(({ id, pane, value }) => {
+                const json = Response.prototype.json;
+                Response.prototype.json = async function () {
+                  const body = await json.call(this);
+                  if (new URL(this.url, location.href).pathname === "/api/v1/call") {
+                    const visit = (v) => {
+                      if (!v || typeof v !== "object") return;
+                      if ((v.project === "demo" && v.id === id) || v.id === pane) v.responsibility = value;
+                      for (const child of Object.values(v)) if (child && typeof child === "object") visit(child);
+                    };
+                    visit(body);
+                  }
+                  return body;
+                };
+              }, { id, pane: original.pane, value });
               // App의 pane 목록은 events, 터미널 상태는 pane WS로 갱신한다. 같은 관측 fixture를 두 경계에도 적용한다.
               await context.routeWebSocket(/\/api\/v1\/(?:panes\/[^/]+\/ws|events)(?:\?|$)/, (socket) => {
                 const server = socket.connectToServer();
@@ -101,7 +112,6 @@ export default async function ({ page }) {
           const current = aaa("thread", "show", "demo", id);
           if (current.status !== "open" || current.pane !== original.pane || current.park) throw new Error("안내를 보기만 했는데 pane이나 보류 상태가 바뀌었다");
         } finally {
-          await p.context().unrouteAll({ behavior: "wait" });
           await p.context().close();
         }
       }

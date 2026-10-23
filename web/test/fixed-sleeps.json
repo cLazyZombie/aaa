@@ -5,6 +5,5 @@
   "web/e2e/specs/07-scroll-history.mjs": 1,
   "web/e2e/specs/09-ime.mjs": 5,
   "web/e2e/specs/10-soft-keyboard.mjs": 3,
-  "crates/aaa/tests/m13.rs": 1,
   "crates/aaa-host/src/notify.rs": 2
 }
