@@ -28,6 +28,11 @@ function Show-SshdStartupFailure([DateTime]$Since) {
     }
     Write-LabDiagnostic ((Get-CimInstance Win32_Service -Filter "Name='$service'" |
         Select-Object Name, State, StartName, ProcessId, ExitCode, ServiceSpecificExitCode | Format-List | Out-String))
+    foreach ($name in @('hostkey', 'sshd_config')) {
+        Write-LabDiagnostic ($name + ' ACL: ' + (Get-Acl -LiteralPath (Join-Path $lab $name)).Sddl)
+    }
+    $serviceLog = Join-Path $lab 'sshd-startup.log'
+    if (Test-Path -LiteralPath $serviceLog) { Write-LabDiagnostic ([IO.File]::ReadAllText($serviceLog)) }
     foreach ($log in @('System', 'Application', 'OpenSSH/Admin', 'OpenSSH/Operational')) {
         $events = Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $Since } -ErrorAction SilentlyContinue |
             Where-Object { $_.ProviderName -match 'OpenSSH|Application Error|Windows Error Reporting' -or $_.Message -like "*$service*" } |
@@ -47,7 +52,7 @@ function Show-SshdStartupFailure([DateTime]$Since) {
     try {
         while ($watch.ElapsedMilliseconds -lt 10000) {
             $line = $probe.StandardError.ReadLineAsync()
-            if (-not $line.Wait([int](10000 - $watch.ElapsedMilliseconds))) { break }
+            if (-not $line.Wait([int][Math]::Max(1, 10000 - $watch.ElapsedMilliseconds))) { break }
             $message = $line.GetAwaiter().GetResult()
             if ($null -eq $message) { break }
             Write-LabDiagnostic $message
@@ -101,11 +106,17 @@ Host ci
     # host private key는 SYSTEM/Administrators만 읽는다. 일회 사용자에는 공개 인증 키/폴더 읽기만 준다.
     & icacls.exe $lab /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw '실험실 ACL 준비 실패' }
+    # ssh-keygen이 private key에 넣은 runner의 명시적 ACE는 폴더 ACL 변경으로 지워지지 않는다.
+    # SYSTEM sshd는 그 runner를 현재 사용자로 보지 않으므로 host key DACL도 새로 만든다.
+    & icacls.exe (Join-Path $lab 'hostkey') /reset | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '시스템 host key DACL 초기화 실패' }
+    & icacls.exe (Join-Path $lab 'hostkey') /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '시스템 host key DACL 준비 실패' }
     & icacls.exe (Join-Path $lab 'hostkey') /setowner '*S-1-5-18' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw '시스템 host key 소유권 준비 실패' }
     & $sshd -t -f (Join-Path $lab 'sshd_config')
     if ($LASTEXITCODE -ne 0) { throw '시스템 sshd 설정 검사 실패' }
-    [void](New-Service -Name $service -BinaryPathName ('"' + $sshd + '" -f "' + (Join-Path $lab 'sshd_config') + '"') -StartupType Manual)
+    [void](New-Service -Name $service -BinaryPathName ('"' + $sshd + '" -f "' + (Join-Path $lab 'sshd_config') + '" -E "' + (Join-Path $lab 'sshd-startup.log') + '"') -StartupType Manual)
     $createdService = $true
     $started = Get-Date
     try {
