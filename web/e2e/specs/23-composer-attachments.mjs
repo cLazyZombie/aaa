@@ -278,7 +278,7 @@ while True:
     await p.context().close();
   });
 
-  await step("긴 글 수신: 4천 자 표시 상한 뒤에도 입력 잠금이 풀리고 같은 앞부분의 다른 글은 확인이 아니다", async () => {
+  await step("긴 글 수신: 4천 자 표시 상한 뒤에도 대기 말이 정리되고 같은 앞부분의 다른 글은 확인이 아니다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = client.page;
     const box = await openChat(p);
@@ -289,10 +289,10 @@ while True:
     await press(p);
     await waitOutput("composer", `CMP_RECEIVED_${++received}`);
     fs.appendFileSync(transcript, chatLine(message.slice(0, -4) + "다른 끝"));
-    await domIs(p, "다른 긴 글은 확인 아님", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.includes("긴 합성 글")));
-    if (!await box.evaluate((el) => el.readOnly)) throw new Error("같은 앞부분만으로 잠금을 풀었다");
+    await domIs(p, "다른 긴 글은 확인 아님", () => [...document.querySelectorAll('[data-role="user"]:not(.is-pending)')].some((el) => el.textContent.includes("긴 합성 글")));
+    assert.equal(await p.locator(".chat-msg.user.is-pending").count(), 1, "같은 앞부분은 온전한 수신 증거가 아니다");
     fs.appendFileSync(transcript, chatLine(message));
-    await domIs(p, "긴 글도 온전한 수신 확인", () => document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
+    await domIs(p, "긴 글도 온전한 수신 확인", () => document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector(".chat-msg.user.is-pending"));
     fs.unlinkSync(hold);
     await p.context().close();
   });
@@ -311,10 +311,10 @@ while True:
     fs.appendFileSync(transcript, JSON.stringify({ type: "user", origin: { kind: "task-notification", producer: "session-task" }, message: { role: "user", content: text } }) + "\n"
       + JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "알림 경계 확인" }] } }) + "\n");
     await domIs(p, "내부 알림 뒤 기록 갱신", () => [...document.querySelectorAll('[data-role="assistant"]')].some(el => el.textContent.includes("알림 경계 확인")));
-    assert.equal(await p.locator('[data-role="user"]').count(), before, "비사람 알림은 사용자 말풍선에서 제외");
-    assert.ok(await box.evaluate(el => el.readOnly), "같은 내용의 내부 알림으로 입력 잠금을 풀지 않는다");
+    assert.equal(await p.locator('[data-role="user"]:not(.is-pending)').count(), before, "비사람 알림은 사용자 말풍선에서 제외");
+    assert.equal(await p.locator(".chat-msg.user.is-pending").count(), 1, "내부 알림은 수신 증거가 아니다");
     fs.appendFileSync(transcript, JSON.stringify({ type: "user", origin: { kind: "human" }, message: { role: "user", content: text } }) + "\n");
-    await domIs(p, "사람이 보낸 알림 예시 수신", () => document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
+    await domIs(p, "사람이 보낸 알림 예시 수신", () => document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector(".chat-msg.user.is-pending"));
     assert.equal(await p.locator('[data-role="user"]').count(), before + 1);
     await shot(p, "claude-internal-notification-literal-mobile");
     fs.unlinkSync(hold);
@@ -390,7 +390,7 @@ while True:
     await reader.page.context().close();
   });
 
-  await step("보내기 상태: 보내짐(기록 증거)까지 잠금, 3초 막힘의 탈출구는 Enter를 막는다, 오래 걸림·늦은 확인·잠금 풀기, 작업 중 대기 말", async () => {
+  await step("보내기 상태: ACK 뒤 입력 가능·늦은 기록과 초안 분리, 3초 탈출구는 Enter를 막는다, 작업 중 대기 말", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = client.page;
     const box = await openChat(p);
@@ -403,55 +403,26 @@ while True:
     const users = (text) => p.evaluate((text) => [...document.querySelectorAll('[data-role="user"]')].filter((el) => el.textContent.trim() === text).length, text);
     const before = (await sentFrames(p)).length;
 
-    // 바로 보낸다. agent가 받은 기록이 올 때까지 글이 잠긴 채 남고 단추는 도는 표시다. 다른 기록·옛 같은 글은 증거가 아니다
+    // 전달 ACK와 기록 수신을 분리한다. 옛 같은 글·다른 글은 대기 말을 없애지 않는다.
     fs.writeFileSync(hold, "hold");
     await box.fill("같은 글 재전송");
     await press(p);
     await waitOutput("composer", `CMP_RECEIVED_${++received}`);
-    await phase("sent");
-    if (await box.inputValue() !== "같은 글 재전송" || !await readOnly()) throw new Error("전달된 글이 보내짐 전에 사라졌거나 풀렸다");
-    if (!await p.getByRole("button", { name: "보내는 중 · 취소할 수 없음", exact: true }).isDisabled()) throw new Error("전달 뒤에 단추를 누를 수 있다");
-    await shot(p, "chat-send-sent");
-    // 앞 글이 보내지기 전에는 다음 글을 보내지 않는다(웹 대기열 없음)
-    await box.press("Enter");
-    // 가는 글은 초안에 없다: 같은 pane을 새로 열어도 보통 초안으로 돌아오지 않는다
-    const again = await p.context().newPage();
-    await again.goto(p.url());
-    if (await (await openChat(again)).inputValue() !== "") throw new Error("전달 중인 글이 다른 탭 초안으로 돌아왔다");
-    await again.close();
+    await phase("none");
+    await domIs(p, "기록 대기", () => document.querySelector(".chat-msg.user.is-pending"));
+    assert.equal(await box.inputValue(), "");
+    assert.equal(await readOnly(), false);
+    await box.fill("다음 초안");
     fs.appendFileSync(transcript, chatLine("다른 기기 메시지"));
-    await domIs(p, "다른 기기 메시지 기록", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "다른 기기 메시지"));
-    await p.clock.runFor(SLOW_MS + 1);
-    await phase("slow");
-    await box.press("Control+Enter");
-    await box.evaluate(el => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, isComposing: true, keyCode: 229, bubbles: true })));
-    const blocked = (await sentFrames(p)).filter(f => f.t === "input_trace" && f.event === "ctrl_enter_blocked");
-    for (const reason of ["locked", "composing"]) assert.ok(blocked.some(f => f.method === reason), `대화 입력 Ctrl+Enter 차단 이유: ${reason}`);
-    await shot(p, "chat-send-slow");
-    if (await submits(before) !== 1) throw new Error("잠긴 동안 다시 보냈거나 다음 글을 보냈다");
-    // 늦게라도 기록에 오르면 비우고 푼다
+    await domIs(p, "다른 기록 도착", () => [...document.querySelectorAll('[data-role="user"]')].some(el => el.textContent.trim() === "다른 기기 메시지"));
+    assert.equal(await p.locator(".chat-msg.user.is-pending").count(), 1);
     fs.appendFileSync(transcript, chatLine("같은 글 재전송"));
-    await phase("none");
-    if (await users("같은 글 재전송") !== 2 || await box.inputValue() !== "" || await readOnly()) throw new Error("늦은 반영 뒤 비우고 풀지 않았다");
-
-    // 오래 걸림에서 잠금 풀기: 갔을 수 있는 글을 고칠 수 있게 돌려준다(다시 보내지 않는다)
-    await box.fill("먹힌 글");
-    await press(p);
-    await waitOutput("composer", `CMP_RECEIVED_${++received}`);
-    await phase("sent");
-    await p.clock.runFor(SLOW_MS + 1);
-    await phase("slow");
-    await p.getByRole("button", { name: "잠금 풀기", exact: true }).click();
-    await phase("none");
-    if (await box.inputValue() !== "먹힌 글" || await readOnly() || await submits(before) !== 2) throw new Error("잠금 풀기가 글을 돌려주지 않았거나 다시 보냈다");
-    fs.unlinkSync(hold);
-
-    // 바로 반영: 기록에 오르면 비우고 푼다. 안내 줄은 없다
-    await box.fill("386 추천대로 해");
-    await submit(p);
-    await phase("none");
-    if (await users("386 추천대로 해") !== 1 || await readOnly() || await submits(before) !== 3) throw new Error("즉시 반영이 다르다");
+    await domIs(p, "늦은 수신 확인", () => !document.querySelector(".chat-msg.user.is-pending"));
+    assert.equal(await box.inputValue(), "다음 초안");
+    assert.equal(await users("같은 글 재전송"), 2);
+    assert.equal(await submits(before), 1);
     await shot(p, "chat-send-reflected");
+    fs.unlinkSync(hold);
 
     // 전달 전에 막힘: agent가 멈춰 글 요청이 돌아오지 않는다. 3초 뒤에만 탈출구가 나오고, 누르면 host가 Enter를 보내지 않는다
     const agent = procs.get("agent");
@@ -463,13 +434,16 @@ while True:
       if (await p.getByRole("button", { name: "멈추고 글 돌려받기", exact: true }).count() !== 0) throw new Error("3초 전에 탈출구가 보였다");
       await p.clock.runFor(STUCK_MS + 1);
       await phase("stuck");
+      await box.fill("다음 글"); // ACK가 막혀도 편집 가능. 실패한 글이 이 초안을 덮으면 안 된다.
       await shot(p, "chat-send-stuck");
       await p.getByRole("button", { name: "멈추고 글 돌려받기", exact: true }).click();
       await phase("none");
     } finally {
       process.kill(agent.pid, "SIGCONT");
     }
-    if (!(await p.getByTestId("chat-note").innerText()).includes("Enter를 보내지 않음") || await box.inputValue() !== "막힌 글" || await readOnly()) throw new Error("탈출구가 글을 돌려주지 않았거나 단계를 말하지 않았다");
+    if (!(await p.getByTestId("chat-note").innerText()).includes("Enter를 보내지 않음") || await box.inputValue() !== "다음 글" || await readOnly()) throw new Error("탈출구가 글을 돌려주지 않았거나 단계를 말하지 않았다");
+    assert.equal(await p.getByTestId("chat-queue").getByRole("textbox").inputValue(), "막힌 글", "실패한 앞 글은 수동 보관함에 보존");
+    await p.getByTestId("chat-queue").getByRole("button", { name: /버리기/ }).click();
     await shot(p, "chat-send-stopped");
     // 멈춘 글은 agent 입력창에만 남고 제출되지 않았다: 다음 글이 그 뒤에 붙어 한 번에 간다(Enter가 갔다면 따로 왔다)
     await box.fill("다음 글");
@@ -477,9 +451,13 @@ while True:
     await waitOutput("composer", `CMP_RECEIVED_${++received}`);
     const got = JSON.parse(fs.readFileSync(receipts, "utf8"));
     if (got.text !== "막힌 글다음 글") throw new Error(`멈춘 submit의 Enter가 갔다: ${JSON.stringify(got)}`);
+    await phase("none");
+    // Enter가 가지 않은 앞 글과 합쳐졌으므로 수신 증거가 아니다. 입력은 열고 대기 말은 남긴다.
+    await domIs(p, "다른 내용은 확인 아님", () => document.querySelector(".chat-msg.user.is-pending"));
     await p.clock.runFor(SLOW_MS + 1);
-    await phase("slow");
-    await p.getByRole("button", { name: "잠금 풀기", exact: true }).click();
+    // 이 fixture는 UserPromptSubmit으로 working이므로 대기 경고는 턴이 끝나야 센다.
+    fs.appendFileSync(transcript, chatLine("다음 글"));
+    await domIs(p, "정확한 내용 뒤 확인", () => !document.querySelector(".chat-msg.user.is-pending"));
     await box.fill("");
 
     // Claude 작업 중: 대기열 줄이 보내짐이다. 풀고 대화 끝 점선 대기 말, 흡수되면 보통 말
@@ -502,7 +480,7 @@ while True:
     const events = aaa("debug", "input", "--pane", "composer", "--since", "1h").events;
     const queuedReceipt = events.find((e) => e.event === "ui" && e.detail.includes("QueueOperation"));
     if (!queuedReceipt || !events.some((e) => e.id === queuedReceipt.id && e.event === "received" && e.detail.includes("multiline=true"))) throw new Error("여러 줄 대기 수신 진단이 같은 ID로 이어지지 않았다");
-    for (const stage of ["Slow", "Unlock", "Cancel", "Unlocked"]) if (!events.some((e) => e.event === "ui" && e.detail.includes(`event=${stage}`))) throw new Error(`입력 진단 사건 누락: ${stage}`);
+    for (const stage of ["Pending", "Cancel", "Unlocked"]) if (!events.some((e) => e.event === "ui" && e.detail.includes(`event=${stage}`))) throw new Error(`입력 진단 사건 누락: ${stage}`);
     if (JSON.stringify(events).includes("작업 중 추가") || JSON.stringify(events).includes("먹힌 글")) throw new Error("진단에 사용자 글이 남았다");
     if (client.errors.length) throw new Error(client.errors.join("; "));
     await p.context().close();

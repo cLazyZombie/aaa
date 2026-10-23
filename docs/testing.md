@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## inbox 턴의 대화 입력 잠금 제거(t-0955)
+
+- `node web/e2e/web.e2e.mjs --spec 101 --workers 1`은 실제 host·agent·PTY의 가짜 Claude에 `pane run`으로 inbox 안내를 주입한다. 이 호출은 nudge와 같은 `send_prompt` 길이다. 모델 대신 기록 반영만 보류하고 사람 글 두 개의 PTY 수신 순서·대기 말·미전송 초안·포커스를 검사한다. coordinator/일반 pane × Chromium/WebKit × 1280/390px의 8조합이다. 같은 글 두 번의 개별 수신도 확인한다. 원본은 첫 전송 뒤 readOnly=true로 실패했다.
+- E2E23의 긴 글 hash·내부 알림 제외 단언은 잠금 대신 대기 말의 수신 여부를 검사한다. 전송 전 취소/Enter 차단·첨부·Codex·steering·compaction 검사는 유지한다. E2E35는 ACK 뒤 빈 초안이 한 줄로 줄어드는 동작을 반영하며 한 frame 높이 증가·상태 글 노출·IME 검사를 유지한다. 기존 잠금 풀기 시험은 제거한 제품 단계에 맞춰 늦은 수신이 새 초안을 보존하는 시험으로 대체한다.
+- 참고 후보: [herdr-web-ui Composer](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Composer.tsx), [pending-input](https://github.com/devswha/herdr-web-ui/blob/main/server/pending-input.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE)); [herdr-projects nudge](https://github.com/eliasstravik/herdr-projects/blob/1f05c002f22c8355733c567ef47c511612bcdb1f/src/steps.rs), [prompt](https://github.com/eliasstravik/herdr-projects/blob/1f05c002f22c8355733c567ef47c511612bcdb1f/src/threads.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/1f05c002f22c8355733c567ef47c511612bcdb1f/LICENSE)). 편집 가능한 초안과 작업 중 입력을 따르며 별도 서버 대기열은 도입하지 않는다.
+- 실제 유료 모델의 응답/도구 호출 지연과 iPhone 실기 자판은 이 headless 시험으로 확인했다고 보지 않는다. 고정 sleep·시한 연장 없이 PTY 출력·ACK·DOM으로 끝낸다.
+
 ## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
 
 - `node web/e2e/web.e2e.mjs --spec 98 --workers 1`: 실제 host·agent를 쓰고 Chromium·WebKit 390px에서 기기 이름을 누르면 `#machine=<id>` 한 칸만 더해지는지 검사한다. 가장자리 touchstart/move/cancel 뒤 native `history.back()`으로 원래 thread 목록에 돌아가며, 앞으로 같은 기기 정보가 다시 보인다. 두 번 왕복한 브라우저 기록을 기존 history observer로 비교한다(Chromium은 CDP의 실제 기록·위치, WebKit은 기록 길이).

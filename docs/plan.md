@@ -7762,3 +7762,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 검증: host auto_mode owner, E2E100(켜기→자동 답→예외 유지→끄기→요약, 두 기기·재시작·hook·다시 정하기·Reader), Chromium/WebKit 1280·390px 캡처. 전체 ci-local·Linux strict cross·공개 검사. 병합은 착지 창, GitHub CI 대기는 없다.
 
 - **42회차 착지 통합(t-0943).** 시작 원격 main `6fd0ddff`에 t-0938 `6271ebf4`를 --no-ff로 합친다. 기존 setup §8.477·workspace §8.478·FRONT_API 1.117·E2E99를 보존하고 auto mode에 §8.479·FRONT_API 1.118·E2E100을 배정한다. 공통 SessionStart의 기억 재진입 안내와 coordinator 모드 조회를 함께 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패하면 원문·부하를 보존하고 재시도 없이 push를 멈춘다. 전체 검증에 salt를 넣지 않고 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI 대기·설치 실행·배포·tag·release는 하지 않는다.
+
+### 8.480 inbox 처리 중 대화 입력과 전달 확인 분리(t-0955)
+
+- coordinator·일반 thread의 대화 입력창은 전송 확인 중에도 편집한다. 전송한 글은 초안에서 빼며, 글+Enter 전달 ACK 뒤 기록에 아직 없는 글은 기존 대기 말에 둔다. Claude·Codex와 working 상태 사건의 도착 순서로 입력 가능 여부를 나누지 않는다. ACK를 모델의 읽음으로 표시하지 않는다.
+- 전송 자체는 기존 submit 하나씩 확인한다. 3초 확인 지연의 취소·연결 끊김·권한 오류는 기존 경로로 처리한다. 새 초안이 있으면 실패한 글은 수동 보관함에 남기고 덮지 않는다. 정리 중 보관함·자동 전송 설정·Ctrl+Enter steering은 유지한다.
+- 수신 확인은 온전한 글의 hash·출현 횟수로 대기 말만 정리한다. 같은 글 연속 전송은 각각 다음 출현을 기다린다. 쉼 이후 10초 동안 기록이 없으면 기존 대기 말 경고를 사용한다. 입력창의 별도 sent/slow 잠금 단계와 잠금 풀기 단추는 제거한다.
+- host nudge는 `inbox::nudge` → `send_prompt`로 PTY에 들어가며 웹 Composer의 flight를 만들지 않는다. 웹은 `Term::sendTerminalLine` → WS submit → `submit_work`에서 글·Enter 전달 ACK를 받는다. host는 주입 알림 턴이 끝날 때까지 웹 submit을 기다리지 않는다. 대화에는 기존 `[aaa inbox]` 원문 표지를 유지하고 `aaa inbox 안내` 머리를 붙여 사람 글과 구분한다. 이 머리는 원문 표지의 분류이며 출처 인증이 아니다. transcript의 role=user는 harness 형식이며, 출처 인증 필드는 새로 만들지 않는다.
+- 참고: herdr-web-ui Composer·pending-input(MIT)의 편집 가능한 초안과 전송/기록 구분, herdr-projects 1f05c00(MIT)의 nudge·작업 중 prompt. 새 서버 대기열·외부 의존성은 추가하지 않는다. FRONT_API 변경 없음. E2E101 및 기존 E2E23·35·50으로 확인한다.

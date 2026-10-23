@@ -1115,11 +1115,6 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .chat-user-image img, .chat-user-image > span { display: block; width: min(9rem, 38vw); height: 7rem; }
 .chat-user-image img { object-fit: cover; }
 .chat-user-image > span { white-space: normal; padding: var(--space-2); box-sizing: border-box; overflow-wrap: anywhere; font-size: var(--fs-xs); }
-/* 보내기 상태(plan §8.247·§8.292, ChatComposer). 잠긴 글 칸은 글을 그대로 두고 흐리게(readOnly), 상태 글은 그리지 않고(화면 읽기용
-   .visually-hidden), 둥근 단추 하나가 보내기·진행(.composer-send[aria-busy])·막혔을 때의 탈출구(Stop과 같은 원)를 맡는다 */
-.composer-surface.is-locked { background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg)); }
-.composer-surface.is-locked:focus-within { border-color: var(--border); }
-.composer-surface.is-locked > .composer-text { color: var(--text-dim); cursor: default; }
 /* coordinator 입력창(t-0437 3안): 2px 보라 테두리 + 바깥 번짐, 맞은편 두 줄기 빛이 6초에 한 바퀴. 굵기는 바깥 box-shadow 고리로
    더해 배치가 움직이지 않는다. 포커스·잠김에도 파랑·회색으로 바뀌지 않고 보라를 지킨다(포커스는 옅은 고리 하나를 더한다).
    빛(.composer-glow)은 둥근 고리 모양 mask 안에서 conic-gradient 정사각형을 transform으로만 돌린다: 색을 다시 칠하지 않고 합성만
@@ -1561,3 +1556,6 @@ summary.chat-compact-head { cursor: pointer; }
 .view-content { display: contents; }
 /* 가려진 터미널도 같은 폭·높이로 유지해 설정 조작 중 PTY를 0열로 만들지 않는다. */
 .view-content[hidden] { display: flex; flex-direction: column; position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+
+/* harness는 주입 안내도 user로 기록한다. 원문 표지는 유지하며 inbox 안내를 별도로 이름 붙인다. */
+.chat-inbox-label { color: var(--text-dim); font-size: var(--fs-xs); text-align: right; margin-bottom: var(--space-1); }
