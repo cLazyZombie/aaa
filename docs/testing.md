@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## 기기별 터미널 색 테마(t-0853)
+
+- `node --test web/test/terminalTheme.test.mjs`: WezTerm 정본 fixture의 ANSI 16색·커서·선택 색을 그대로 쓰고 사용자 bg/fg만 덮는지 확인한다. 모르는 선택→앱 기본, 독립 테마의 앱 token 무참조, 반환값 변형 격리, CSS 단축 hex→OSC 6자리도 검사한다.
+- E2E06의 「터미널 색 테마」 단계는 Chromium 1280·WebKit 390에서 실제 설정 선택, ANSI 16색 원색·여백·글꼴/크기 유지·OSC colors 전송, 앱 팔레트와 독립, 기기 저장·새 기기 미공유·같은 기기 다른 탭·새로고침·기본 복원·선택 상자 넘침을 확인한다. DOM renderer 자체는 투명하고 `.term-scroll`이 바탕을 그리므로 글자 뒤 처음 칠해진 조상의 색까지 대조한다. 초기 시험이 xterm 요소 자체의 배경을 불투명하다고 가정해 실패한 것을 확인하고 이 실제 그리기 경로로 검사를 바로잡았다. 제품 기대 색·시한을 완화하지 않는다.
+- E2E20은 기존 0·1·2화면 질의/중복 답 금지 단언을 유지한다. 두 번째 기기에서 독립 테마를 고른 직후·재접속·기본 복원 때 PTY가 받는 OSC 10/11 전체 답을 고정 기대 색과 대조한다. xterm이 별도로 답을 보내지 않는 것도 검사한다. 실제 session host 경로를 쓰며 고정 sleep·재시도는 없다.
+- Windows 시안은 실기 Edge의 격리된 프로필과 실제 aaa host/agent/web 빌드를 쓴다. 같은 고정 출력·13px·150%·3840×2160에서 앱 GitHub Dark/WezTerm 사용자 색 각각 기본 LCD/회색조 합성을 대조한다. 사용자 화면 배율·ClearType·설치 글꼴은 바꾸지 않는다. 회색조 합성은 시안에만 넣고 제품 CSS에는 적용하지 않는다. 정본 검증은 전체 ci-local·공개 검사다.
+
 ## Windows SSH 원격 install의 명시적 상태 경로(t-0847)
 
 - Windows 래퍼는 `install-probe`·`install-bootstrap`·`install --resume` 모두에 현지 `LOCALAPPDATA/aaa/state`를 한 인자로 전달한다. LOCALAPPDATA가 비어 있으면 USERPROFILE을 써서 `aaa-config::paths::default_state_dir_for(None)`과 맞춘다. 전역 AAA_STATE_DIR이나 host 머신의 경로를 전달하지 않는다.

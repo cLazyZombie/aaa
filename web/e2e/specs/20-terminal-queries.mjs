@@ -3,7 +3,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 20-terminal-queries(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, until, screenText, pairPage, step, browser, inList, sentFrames, sentCount, sentText } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, until, screenText, pairPage, step, browser, inList, sentFrames, sentCount, sentText, openSettings, domIs } from "../lib/harness.mjs";
 
 // 질의 프로그램: 시작하자마자 바탕 색을 묻는다(vim·Claude Code처럼). "#x"를 받으면 질의 x를 쓰고 표지 Q<n>.을 찍는다.
 // "#z"면 그 질의 뒤 받은 것(답)을 SUM:<n>:JSON으로 보인다(SUM:0은 시작할 때 물은 것의 답)
@@ -64,9 +64,10 @@ export default async function ({ page }) {
     const started = await answer();
     if (!startOk(started)) bad.push(`시작할 때 ${startName}: pane이 받은 답 ${JSON.stringify(started)}`);
     // 색은 마지막으로 연 화면의 것이다(화면 0개일 때는 첫 화면이 t1을 열며 알렸다)
-    const round = async (label, colorsFrom) => {
-      const colors = await termColors(colorsFrom);
+    const round = async (label, colorsFrom, selectedColors) => {
+      const colors = selectedColors ?? await termColors(colorsFrom);
       for (const [k, [name, ok]] of Object.entries(want(colors))) {
+        if (selectedColors && k !== "f" && k !== "g") continue;
         const marks = await Promise.all(views.map((v) => sentCount(v)));
         aaa("pane", "send-text", "queries", `#${k}`);
         n += 1;
@@ -90,6 +91,21 @@ export default async function ({ page }) {
     await until("둘째 화면 질의 프로그램", async () => (await screenText(other)).includes(`SUM:${n}:`));
     views.push(other);
     await round("화면 2개", other);
+    // 기기별 터미널 색 선택은 그리기뿐 아니라 실제 PTY가 받는 OSC 10/11 응답도 바꾼다.
+    const choose = async (id) => {
+      const dialog = await openSettings(other, "터미널");
+      await dialog.getByLabel("터미널 색 테마", { exact: true }).selectOption(id);
+      await other.getByRole("button", { name: "설정 닫기", exact: true }).click();
+      await until("설정 주소 닫힘", () => !new URL(other.url()).searchParams.has("settings"));
+    };
+    await choose("wezterm-github-dark-user");
+    await domIs(other, "독립 테마 배경", () => getComputedStyle(document.querySelector(".term-scroll")).backgroundColor === "rgb(36, 41, 46)");
+    await round("독립 테마 즉시 OSC", other, ["#c9d1d9", "#24292e"]);
+    await other.reload();
+    await until("독립 테마 재접속", async () => (await screenText(other)).includes(`SUM:${n}:`));
+    await round("독립 테마 재접속 OSC", other, ["#c9d1d9", "#24292e"]);
+    await choose("app");
+    await round("앱 팔레트 복원 OSC", other, await termColors(other));
     await other.context().close();
     if (bad.length) throw new Error(bad.join("\n"));
   });

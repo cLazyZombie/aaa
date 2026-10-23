@@ -7625,3 +7625,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **기존 pane 데려오기.** 전체 검증에서 드러난 Starting/복구 경합도 수리한다. thread 행을 공개하는 transaction 안에서 작업 claim을 얻고 agent의 adopt 준비 응답까지 유지한다. 실제 작업 중인 pane을 중단된 시작으로 오인하지 않으며 기존 시작의 같은 소유권 규칙을 따른다. oneshot으로 준비 응답을 보류하고 실제 ticker를 실행하는 report_copy 회귀로 확인한다.
 - **스크롤 경로.** thread·셸은 같은 TermView·마우스 보고·ChatPanel을 쓴다. Codex의 `tui.alternate_screen="never"` 설정은 프로그램 자체의 고정 입력줄 스크롤을 끄므로 터미널 전체 기록 스크롤과 구분한다. 사용자 전역 설정을 제품이 덮어쓰지 않는다. 대화 보기의 맨 위는 안내 높이가 변해도 0에 둔다. 앞 페이지 추가·중간 위치는 메시지 ID 앵커를 지킨다. xterm 자체 동기화 무시 표지는 같은 줄에만 적용해 WebKit 복귀 직후 합쳐진 사용자 휠을 버리지 않는다.
 - **추가 검증.** E2E93에 두 엔진·두 폭의 연결 전 inline 기록/alternate 화면 복귀, 보기 선택 유지, Codex resume·Claude resume/continue의 이전 대화 전체·입력창 고정, 기록 연결 파일을 지운 agent 재시작을 더한다. agent 재시작의 옛 byte cursor는 기존 계약대로 무효화하고 새 cursor로 이전 기록을 다시 읽는다. 1px 안내 높이 변화는 기존 구현에서 0→1px 실패, 수리 뒤 정확히 0을 요구한다. API·E2E 번호는 유지한다.
+
+### 8.465 기기별 터미널 색 테마(t-0853)
+
+- **목적.** 사용자 10-23: 웹 터미널과 WezTerm의 글꼴은 비슷하고 배경 대비가 거친 느낌을 만든다. 회색조 기본 변경은 보류하고 터미널 색을 앱 팔레트와 따로 고른다.
+- **설정.** 설정 → 터미널 → 「터미널 색 테마」. 기기 저장 `aaa:terminal-color-theme`, 기본 `app`은 키를 지워 기존 앱 팔레트를 따른다. 첫 독립 선택은 `wezterm-github-dark-user`(「WezTerm GitHub Dark(사용자)」). 모르는 저장 값은 기본으로 읽고 같은 기기의 다른 탭도 반영한다. host 공유 설정·API·DB는 바꾸지 않는다.
+- **색.** `terminalTheme.ts`가 ITheme을 만든다. WezTerm 정본의 GitHub Dark에서 배경 #24292e·기본 글자 #C9D1D9만 덮고 ANSI 16색·커서·커서 아래 글자·선택 색은 보존한다. 화면과 OSC 10/11의 rrggbb가 같은 테마를 쓴다. 여백·앞 기록 덮개의 token은 pane 안에서만 덮고, 앱 팔레트·글꼴·크기·명시 RGB·ANSI 256색 16~255는 바꾸지 않는다.
+- **출처.** WezTerm e2a98e1b8af156988ad0ac778658ac27b60a55fb `config/src/scheme_data.rs`·`docs/colorschemes/data.json`. 모음 iTerm2-Color-Schemes는 MIT, 원 테마 Al Duncanson/github-dark는 GPL-3.0이다. 원본·수치·고지와 변경 내역을 함께 배포한다. 상세와 수치는 `docs/terminal-themes.md`.
+- **검증.** 순수 규칙은 정본 fixture와 ANSI/커서/선택 색·기본값·단축 hex를 대조한다. E2E06은 Chromium 1280·WebKit 390에서 즉시 표시·앱 독립·기기 저장·다른 탭·재열기·복원을, E2E20은 실제 PTY OSC 10/11 응답·재접속·기본 복원을 확인한다. 기존 E2E 번호와 front protocol은 유지한다. Windows 4K의 테마×회색조 시안은 보고 library에 남기며 회색조는 제품에 적용하지 않는다.
