@@ -118,6 +118,40 @@ struct FdaGate {
     root: PathBuf,
     library: PathBuf,
 }
+
+/// 정리 전에 shell 종료 코드·PTY stderr·session host 로그를 CI 본문에도 남긴다.
+struct PaneDiagnostics {
+    node: Node,
+    lab: PathBuf,
+    gate: PathBuf,
+}
+impl Drop for PaneDiagnostics {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        eprintln!("restart panes: {:?}", self.node.json(&["pane", "list"]));
+        for name in ["loaded", "entered"] {
+            eprintln!("restart FDA {name}: {}", std::fs::read_to_string(self.gate.join(name)).unwrap_or_default());
+        }
+        for name in ["host.log", "spawn.log"] {
+            eprintln!("restart {name}: {}", std::fs::read_to_string(self.lab.join(name)).unwrap_or_default());
+        }
+        let Ok(sessions) = std::fs::read_dir(self.node.state.join("agent/sessions")) else { return };
+        for session in sessions.flatten() {
+            eprintln!("restart session {:?}", session.file_name());
+            // spec.json에는 session token이 있어 출력하지 않는다.
+            for name in ["meta.json", "exit.json", "final.json", "session-host.log"] {
+                if let Ok(text) = std::fs::read_to_string(session.path().join(name)) {
+                    eprintln!("restart {name}: {text}");
+                }
+            }
+            if let Some(id) = session.file_name().to_str() {
+                eprintln!("restart screen: {:?}", self.node.json(&["pane", "read", id, "--source", "visible"]));
+            }
+        }
+    }
+}
 impl FdaGate {
     fn new(root: &Path) -> Self {
         let root = root.join("fda-gate");
@@ -141,6 +175,28 @@ impl FdaGate {
             let markers = std::fs::read_to_string(self.root.join("entered")).ok()?;
             (markers.lines().filter(|p| *p == worker.to_string()).count() == count).then_some(())
         });
+        let loaded = std::fs::read_to_string(self.root.join("loaded")).unwrap();
+        assert_eq!(loaded.lines().filter(|p| *p == worker.to_string()).count(), count, "{loaded}");
+    }
+    fn ready_pane(&self, node: &Node, id: &str) {
+        wait_for("pane 실행 상태", T, || {
+            let p = pane(node, id);
+            assert!(!matches!(p["state"].as_str(), Some("exited" | "lost" | "interrupted")), "pane이 먼저 끝났다: {p}");
+            (p["state"] == "running").then_some(())
+        });
+        node.wait_output(id, "aaa-restart-ready>", T);
+        let pid = node.session_host_pid(id).unwrap();
+        let loaded = std::fs::read_to_string(self.root.join("loaded")).unwrap();
+        assert!(!loaded.lines().any(|p| p == pid.to_string()), "FDA fixture가 session host {pid}에 상속됐다: {loaded}");
+        // 보호된 /bin/sh는 DYLD 변수를 스스로 버릴 수 있다. host의 실제 로드 PID와 shell 환경을 따로 확인한다.
+        node.ok(&[
+            "pane",
+            "run",
+            id,
+            "printf 'fixture-%s=%s\\n' env \"${DYLD_INSERT_LIBRARIES+x}${AAA_TEST_FDA_GATE+x}\"",
+        ]);
+        let done = node.wait_output(id, "fixture-env=", T);
+        assert_eq!(done["matched_line"], "fixture-env=", "FDA fixture 환경이 pane에 상속됐다: {done}");
     }
     fn complete(&self) {
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
@@ -155,6 +211,8 @@ impl FdaGate {
 fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     let mut lab = Lab::new();
     let node = lab.node("n", Some("schema = 1\n[host]\nagent_listen = '127.0.0.1:0'\n[web]\nlisten = '127.0.0.1:0'\n[local_agent]\nmode = 'none'\n"));
+    // pane read는 줄 끝 공백을 제거한다. 공백에 기대지 않는 이 시험 전용 준비 사건을 쓴다.
+    std::fs::write(node.cfg.join("shrc"), "PS1='aaa-restart-ready> '\n").unwrap();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let probes = Probes::new(&repo);
     let fda = FdaGate::new(&probes.root);
@@ -217,6 +275,7 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     lab.spawn_command("spawn", command);
     let launcher_pid = wait_for("launcher PID", T, || std::fs::read_to_string(&pidfile).ok()?.parse::<u32>().ok());
     let launcher = Launcher { pid: launcher_pid, image: image.clone() };
+    let _diagnostics = PaneDiagnostics { node: node.clone(), lab: lab.root.clone(), gate: fda.root.clone() };
     wait_for("agent 재시작 준비", T, || {
         assert!(process::image(launcher.pid).is_some(), "준비 전에 시험 launcher가 종료됐다");
         node.state.join("service-restart/agent.json").exists().then_some(())
@@ -230,6 +289,7 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     let mut watch = lab::watch::HostWatch::new(&node, T);
     watch.wait("agent 연결", |w| w.connected("labA").then_some(()));
     let old = node.new_pane(None, "labA", Some("existing"), &[], probes.root.to_str());
+    fda.ready_pane(&node, &old);
     node.ok(&["pane", "run", &old, "printf 'old-%s\\n' ready"]);
     node.wait_output(&old, "old-ready", T);
     let old_host = node.session_host_pid(&old).unwrap();
@@ -333,6 +393,7 @@ fn worker_exec_preserves_launcher_existing_pane_and_new_pane_responsibility() {
     node.ok(&["pane", "run", &old, "printf 'old-pane-alive\\n'"]);
     node.wait_output(&old, "old-pane-alive", T);
     let new = node.new_pane(None, "labA", Some("new"), &[], probes.root.to_str());
+    fda.ready_pane(&node, &new);
     node.ok(&["pane", "run", &new, "printf 'new-%s\\n' ready"]);
     node.wait_output(&new, "new-ready", T);
     assert_eq!(pane(&node, &old)["responsibility"]["state"], "launcher");
