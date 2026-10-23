@@ -43,12 +43,18 @@ pub(crate) struct Args {
     pub purge: bool,
 }
 
-/// 실행 파일 이름이 `aaa-setup…`이면 인자 없는 실행을 `aaa setup`으로 본다
-pub(crate) fn implied(args: &[std::ffi::OsString]) -> bool {
-    let [program] = args else { return false };
-    let program = program.to_string_lossy();
+/// 실행 파일 이름이 `aaa-setup…`이고 첫 인자가 다른 명령이 아니면 `aaa setup`으로 본다
+/// (`aaa-setup.exe`, `aaa-setup.exe --uninstall`, `aaa-setup.exe --instance work`)
+pub(crate) fn implied(args: &[std::ffi::OsString], is_command: impl Fn(&str) -> bool) -> bool {
+    let Some(program) = args.first().map(|p| p.to_string_lossy()) else { return false };
     let file = program.rsplit(['\\', '/']).next().unwrap_or_default();
-    file.to_ascii_lowercase().starts_with("aaa-setup")
+    if !file.to_ascii_lowercase().starts_with("aaa-setup") {
+        return false;
+    }
+    match args.get(1).map(|a| a.to_string_lossy()) {
+        None => true,
+        Some(first) => !(is_command(&first) || matches!(first.as_ref(), "-h" | "--help" | "-V" | "--version")),
+    }
 }
 
 #[cfg(windows)]

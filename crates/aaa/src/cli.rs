@@ -1721,9 +1721,9 @@ pub fn main() -> ExitCode {
         let command = Cli::command().version(version);
         let install_output = crate::install::requested_output(&command);
         let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
-        // `aaa-setup.exe`를 인자 없이(더블클릭·SSH) 실행하면 설치 마법사다
-        if crate::setup::implied(&args) {
-            args.push("setup".into());
+        // `aaa-setup.exe`(더블클릭·SSH)는 설치 마법사다. 전역 인자는 setup 뒤에 와도 된다
+        if crate::setup::implied(&args, |name| command.find_subcommand(name).is_some()) {
+            args.insert(1, "setup".into());
         }
         (install_output, command.try_get_matches_from(args).and_then(|m| Cli::from_arg_matches(&m)))
     }) {

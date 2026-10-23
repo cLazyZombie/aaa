@@ -552,12 +552,18 @@ fn host_addresses_are_normalized() {
 }
 
 #[test]
-fn implied_setup_only_for_a_bare_setup_named_binary() {
+fn setup_named_binary_runs_the_wizard_unless_another_command_is_given() {
     use std::ffi::OsString;
-    assert!(super::implied(&[OsString::from(r"C:\Downloads\aaa-setup.exe")]));
-    assert!(super::implied(&[OsString::from("AAA-SETUP (1).exe")]));
-    assert!(!super::implied(&[OsString::from(r"C:\bin\aaa.exe")]));
-    assert!(!super::implied(&[OsString::from("aaa-setup.exe"), OsString::from("--status")]));
+    let is_command = |name: &str| matches!(name, "setup" | "agent" | "status");
+    let implied = |args: &[&str]| super::implied(&args.iter().map(OsString::from).collect::<Vec<_>>(), is_command);
+    assert!(implied(&[r"C:\Downloads\aaa-setup.exe"]));
+    assert!(implied(&["AAA-SETUP (1).exe"]));
+    assert!(implied(&["aaa-setup.exe", "--uninstall"]));
+    assert!(implied(&["aaa-setup.exe", "--instance", "work"]));
+    assert!(!implied(&["aaa-setup.exe", "status"]));
+    assert!(!implied(&["aaa-setup.exe", "--version"]));
+    assert!(!implied(&[r"C:\bin\aaa.exe"]));
+    assert!(!implied(&["aaa.exe", "--uninstall"]));
 }
 
 #[test]
