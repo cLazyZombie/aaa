@@ -1,5 +1,5 @@
 //! 안전 모드(관리 GUI W6b, plan §8.370): 원문 가림, 오류 글 정리, 마지막 정상 설정 보관·되돌리기, 뜰 주소, 기기별 화면과 POST 권한.
-//! host 재시작 전체(설정을 깨고 다시 띄우기)는 웹 E2E 63이 실제 binary로 본다.
+//! host 재시작 전체(설정을 깨고 다시 띄우기)는 웹 E2E 68이 실제 binary로 본다.
 use super::*;
 use axum::body::Body;
 use tower::ServiceExt;
@@ -402,4 +402,93 @@ async fn restore_needs_a_controller_and_this_origin_then_ends_safe_mode() {
         l.safe.db.audit_actions(),
         [("device:ctl", "safe_retry"), ("device:ctl", "safe_restore")].map(|(a, b)| (a.to_string(), b.to_string()))
     );
+}
+
+#[tokio::test]
+async fn restored_listener_keeps_queued_http_until_normal_host_serves() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let l = lab();
+    let state = l._t.0.join("state");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    l.safe.db.set_meta(LISTEN_KEY, &addr.to_string()).unwrap();
+    let good = format!("schema = 1\n[web]\nlisten = \"{addr}\"\n");
+    std::fs::write(l.config.join("host.toml"), &good).unwrap();
+    keep_last_good(&l.config, &[l.config.join("host.toml")]).unwrap();
+    std::fs::write(l.config.join("host.toml"), format!("{good}\n[broken\n")).unwrap();
+    let errors = aaa_config::load_host(&l.config).unwrap_err();
+    let (ready, waiting) = tokio::sync::oneshot::channel();
+    let safe =
+        tokio::spawn(run(errors, l.config.clone(), state.clone(), Some(listener), Some(ready), std::future::pending()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), waiting).await.unwrap().unwrap();
+
+    // 실제 POST 응답을 다 읽고 serving 종료까지 기다린다. 시간 경과로 handoff를 짐작하지 않는다.
+    let mut post = tokio::net::TcpStream::connect(addr).await.unwrap();
+    post.write_all(format!(
+        "POST /api/v1/safe/restore HTTP/1.1\r\nHost: {addr}\r\nOrigin: http://{addr}\r\nCookie: {}=ctl-token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        crate::web::cookie_name(false),
+    ).as_bytes()).await.unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), post.read_to_string(&mut response)).await.unwrap().unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.contains("safe-reloading"), "{response}");
+    let SafeExit::Reload(listener) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), safe).await.unwrap().unwrap().unwrap()
+    else {
+        panic!("정상 host로 넘기지 않았다");
+    };
+    assert_eq!(listener.local_addr().unwrap(), addr);
+
+    // 정상 Host조차 열기 전, 같은 주소에 실제 HTTP 요청을 넣는다.
+    let mut queued = tokio::net::TcpStream::connect(addr).await.unwrap();
+    queued
+        .write_all(
+            format!(
+                "GET /api/v1/me HTTP/1.1\r\nHost: {addr}\r\nCookie: {}=ctl-token\r\nConnection: close\r\n\r\n",
+                crate::web::cookie_name(false)
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let loaded = aaa_config::load_host(&l.config).unwrap();
+    let host = crate::Host::open(loaded.config, state.join("host")).unwrap();
+    host.start_supervisor();
+    crate::web::resume(&host, listener).await.unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), queued.read_to_string(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.contains("controller"), "{response}");
+    assert!(!response.contains("safe_mode"), "{response}");
+    assert_eq!(*host.web_listen.lock().unwrap(), Some(addr.to_string()));
+}
+
+#[tokio::test]
+async fn reload_honors_ephemeral_port_changed_address_and_disabled_web() {
+    for listen in ["127.0.0.1:0", "changed", ""] {
+        let t = tmp();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let old = listener.local_addr().unwrap();
+        let mut cfg = aaa_config::HostConfig::default();
+        let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let configured = if listen == "changed" { other.local_addr().unwrap().to_string() } else { listen.into() };
+        drop(other);
+        cfg.web.listen = configured.clone();
+        let host = crate::Host::open(cfg, t.0.join("state").join("host")).unwrap();
+        host.start_supervisor();
+        crate::web::resume(&host, listener).await.unwrap();
+        assert_eq!(tokio::net::TcpStream::connect(old).await.is_ok(), listen == "127.0.0.1:0", "옛 주소: {listen}");
+        if configured.is_empty() {
+            assert_eq!(*host.web_listen.lock().unwrap(), None);
+            assert_eq!(host.db.meta(LISTEN_KEY).unwrap().as_deref(), Some(""));
+        } else {
+            let actual: std::net::SocketAddr = host.web_listen.lock().unwrap().as_ref().unwrap().parse().unwrap();
+            assert_eq!(actual, if listen == "changed" { configured.parse().unwrap() } else { old });
+            assert!(tokio::net::TcpStream::connect(actual).await.is_ok());
+        }
+    }
 }

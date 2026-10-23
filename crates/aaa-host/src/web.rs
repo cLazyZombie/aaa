@@ -53,6 +53,21 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     start_bound(host, listener)
 }
 
+/// 안전 모드와 같은 주소면 이미 열린 소켓·접속 대기열을 그대로 이어 받는다.
+/// 「다시 읽기」로 주소를 바꾸거나 웹을 끄면 새 설정을 따른다.
+pub(crate) async fn resume(host: &Arc<Host>, listener: tokio::net::TcpListener) -> Result<()> {
+    let addr = listener.local_addr()?;
+    let same_address = host.cfg.web.listen.parse::<std::net::SocketAddr>().ok().is_some_and(|configured| {
+        configured.ip() == addr.ip() && (configured.port() == 0 || configured.port() == addr.port())
+    });
+    if same_address {
+        start_bound(host, listener)
+    } else {
+        drop(listener);
+        start(host).await
+    }
+}
+
 /// 소유한 실제 listener를 serving에 넘긴다. cfg 값만으로 web 준비를 선언하지 않는다.
 pub(crate) fn start_bound(host: &Arc<Host>, listener: tokio::net::TcpListener) -> Result<()> {
     let addr = listener.local_addr()?;

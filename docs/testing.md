@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 안전 모드 복원의 웹 listener 인계(t-0890)
+
+- 26회차 E2E68 원본은 정상 host 시작·웹 listen 뒤 세션 1개의 agent 재연결을 기록했다. pane 20초 실패 시 DOM·요청·프로세스 종료 기록이 없어 그 브라우저의 정확한 실패 경로나 agent 종료 주체를 소급 확정하지 않는다. 수정 전 일반 E2E68도 10.3초에 통과했다. 부하만으로 재현했다고 하지 않는다.
+- 실제 안전 모드 serving 종료와 정상 host 초기화 사이를 debug Unix 제어 소켓 `AAA_TEST_SAFE_RELOAD_HOLD`로 붙잡으면 수정 전 TCP 접속은 `ECONNREFUSED`다. 안전 모드는 axum의 graceful shutdown이 listener를 닫기 전에 같은 소켓의 사본을 유지하고 정상 host에 대기열째 넘긴다. 같은 주소와 `:0`은 열린 주소를 이어 쓰고, 「다시 읽기」로 주소를 바꾸거나 웹을 끄면 새 설정을 따른다. 외부 API·프런트 상태·감독자 ready 계약은 바꾸지 않는다.
+- `cargo test --locked -p aaa-host --lib safe_mode::`: 실제 HTTP 복원 POST 완료와 안전 모드 serving 종료를 확인한 뒤, 아직 정상 Host가 없는 상태에 HTTP 요청을 넣는다. 정상 웹 인계 뒤 동일 요청의 조작 기기 200 응답을 확인한다. 같은 `:0` 주소 유지·다른 포트로 변경·웹 끄기와 기존 가림·CSRF·Reader·백업 계약도 검사한다.
+- E2E68은 같은 제어 경계에서 실제 TCP 접속과 브라우저의 자동 Refresh 요청을 관측한 다음에만 정상 host 초기화를 놓는다. 기존 `pane-t1` 20초 상한·같은 host 프로세스·agent 재연결 단언에 기존 PTY `t1-42` 출력 복원을 더한다. 시간 경과나 준비 표지 완화로 통과시키지 않는다. 제품의 Refresh 3초는 그대로이며 새 시험의 고정 sleep·재시도는 없다.
+- 각 단계의 `diagnose`는 화면을 움직이는 공통 진단 전에 `diagnostics/safe-mode/`에 각 기기 DOM·PNG, 요청의 경로·op·상태·실패, navigation·WebSocket, host·agent 로그와 프로세스 PID·exit code·signal·killed를 남긴다. cookie·짝짓기 code·입력 본문은 요청 기록에 넣지 않는다. 종료 사건마다 기록을 갱신해 시험 실패 당시 살아 있던 agent와 harness가 뒤에 죽인 agent를 구별한다. 구판 제어 대조에서는 실패 시 agent가 살아 있었고, harness의 SIGKILL 종료 사건과 같은 시각에 host의 agent 연결 끊김이 생겼다. 이 대조를 원본 종료 주체의 직접 증거로 보지는 않는다.
+- 참고는 [NATS Go 재연결 시험](https://github.com/nats-io/nats.go/blob/main/test/reconnect_test.go)의 서버 중지·재연결 callback 관측이다. [Apache-2.0](https://github.com/nats-io/nats.go/blob/main/LICENSE)을 확인했다. 실제 재시작과 접속 완료를 구분하는 방법만 참고하며 코드·의존성을 복사하지 않는다. listener 소유권·graceful 종료는 이미 쓰는 axum 0.8의 `serve::Listener`와 Tokio `TcpListener::into_std`·표준 `TcpListener::try_clone`을 쓴다.
+- 최종 검증은 Playwright 1.64.1로 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. GitHub CI를 위한 직접 push는 하지 않는다.
+
 ## 앱·터미널 GitHub Dark 통일(t-0889)
 
 - E2E14는 Chromium·WebKit 각각 1280·390px에서 GitHub 세 팔레트 선택·host 저장·재열기·UI 대비를 검사한다.

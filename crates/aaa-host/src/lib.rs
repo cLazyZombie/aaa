@@ -3474,19 +3474,41 @@ pub async fn run(
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     tokio::pin!(shutdown);
+    let mut web_listener = None;
     loop {
         match aaa_config::load_host(&config_dir) {
             Ok(loaded) => {
                 for w in &loaded.warnings {
                     eprintln!("{w}");
                 }
-                return run_host(loaded.config, config_dir, &loaded.files, state_root, ready.take(), shutdown).await;
+                return run_host(
+                    loaded.config,
+                    config_dir,
+                    &loaded.files,
+                    state_root,
+                    web_listener,
+                    ready.take(),
+                    shutdown,
+                )
+                .await;
             }
             Err(errors) => {
-                match safe_mode::run(errors, config_dir.clone(), state_root.clone(), ready.take(), shutdown.as_mut())
-                    .await?
+                match safe_mode::run(
+                    errors,
+                    config_dir.clone(),
+                    state_root.clone(),
+                    web_listener.take(),
+                    ready.take(),
+                    shutdown.as_mut(),
+                )
+                .await?
                 {
-                    safe_mode::SafeExit::Reload => continue,
+                    safe_mode::SafeExit::Reload(listener) => {
+                        web_listener = Some(listener);
+                        #[cfg(all(unix, debug_assertions))]
+                        safe_mode::test_reload_hold().await?;
+                        continue;
+                    }
                     safe_mode::SafeExit::Shutdown => return Ok(()),
                 }
             }
@@ -3499,6 +3521,7 @@ async fn run_host(
     config_dir: PathBuf,
     files: &[PathBuf],
     state_root: PathBuf,
+    web_listener: Option<tokio::net::TcpListener>,
     ready: Option<tokio::sync::oneshot::Sender<()>>,
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
@@ -3518,7 +3541,11 @@ async fn run_host(
     host.web_gate.send_replace(false);
     link::start(&host).await?;
     front::start(&host).await?;
-    web::start(&host).await?;
+    if let Some(listener) = web_listener {
+        web::resume(&host, listener).await?;
+    } else {
+        web::start(&host).await?;
+    }
     host.web_gate.send_replace(true);
     // 입구가 다 열렸다: 이 설정을 안전 모드의 「마지막 정상 설정」으로 보관한다
     if let Err(e) = safe_mode::keep_last_good(&config_dir, files) {
