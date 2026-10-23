@@ -338,6 +338,7 @@ fn cancelling_before_changes_leaves_nothing() {
     let error = Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap_err();
     assert!(error.downcast_ref::<Cancelled>().is_some());
     assert_eq!(sys.ops, ["reach studio.example.ts.net:7430", "logon network"]);
+    assert!(ui.printed("취소했습니다. 아무것도 바꾸지 않았습니다."));
     assert!(!layout.home.exists(), "파일을 하나도 만들지 않는다");
 
     // Ctrl+C도 같다
@@ -362,7 +363,8 @@ fn wrong_passwords_are_asked_again_and_three_misses_stop_before_changes() {
     let mut sys = FakeSys::new(&layout);
     let mut ui = Script::new(&DEFAULTS[..3], &["a", "b", "c"]);
     let error = Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap_err();
-    assert!(format!("{error:#}").contains("암호"));
+    assert!(format!("{error:#}").contains("암호가 3번 맞지 않았습니다"));
+    assert!(ui.printed("아무것도 바꾸지 않았습니다."));
     assert!(!sys.ops.iter().any(|o| o.starts_with("enroll")), "{:?}", sys.ops);
     assert!(!layout.home.exists());
 }

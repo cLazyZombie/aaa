@@ -374,21 +374,19 @@ impl<'a> Setup<'a> {
                 }
             };
         }
-        let choices = self.ask_choices(args)?;
-        let mut secret = self.ask_password(&account)?;
-        let right = self.sys.logon_right(&account)?;
-        if right == Right::Denied {
-            self.say(Tone::Fail, format!("{}에 「서비스로 로그온 거부」 정책이 걸려 있습니다.", account.short()));
-            self.say(Tone::Hint, "secpol.msc › 로컬 정책 › 사용자 권한 할당 › 「서비스로 로그온 거부」에서");
-            self.say(Tone::Hint, "이 계정을 빼거나 관리자에게 문의하세요. 아무것도 바꾸지 않았습니다.");
-            bail!("서비스 로그온 거부 정책");
-        }
-        self.show_plan(&account, &choices, right)?;
-        let answer = self.ui.ask("진행할까요? (Y/n)", Some("Y"))?;
-        if !yes(&answer) {
-            self.say(Tone::Plain, "아무것도 바꾸지 않고 끝냅니다.");
-            return Err(Cancelled.into());
-        }
+        let (choices, mut secret, right) = match self.prepare(args, &account) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.ui.spin_end();
+                if error.downcast_ref::<Cancelled>().is_some() {
+                    self.say(Tone::Warn, "취소했습니다. 아무것도 바꾸지 않았습니다.");
+                } else {
+                    self.say(Tone::Fail, format!("설치하지 못했습니다: {error:#}"));
+                    self.say(Tone::Plain, "아무것도 바꾸지 않았습니다.");
+                }
+                return Err(error);
+            }
+        };
         self.say(Tone::Plain, "");
         let result = self.apply(&account, choices, &mut secret, right);
         drop(secret);
@@ -400,6 +398,25 @@ impl<'a> Setup<'a> {
                 Err(error)
             }
         }
+    }
+
+    /// 바꾸기 전: 질문·점검·계획·확인
+    fn prepare(&mut self, args: &Args, account: &Account) -> Result<(Choices, Secret, Right)> {
+        let choices = self.ask_choices(args)?;
+        let secret = self.ask_password(account)?;
+        let right = self.sys.logon_right(account)?;
+        if right == Right::Denied {
+            self.say(Tone::Hint, format!("{}에 「서비스로 로그온 거부」 정책이 걸려 있습니다.", account.short()));
+            self.say(Tone::Hint, "secpol.msc › 로컬 정책 › 사용자 권한 할당 › 「서비스로 로그온 거부」에서");
+            self.say(Tone::Hint, "이 계정을 빼거나 관리자에게 문의하세요.");
+            bail!("이 계정은 서비스로 로그온할 수 없습니다(정책)");
+        }
+        self.show_plan(account, &choices, right)?;
+        let answer = self.ui.ask("진행할까요? (Y/n)", Some("Y"))?;
+        if !yes(&answer) {
+            return Err(Cancelled.into());
+        }
+        Ok((choices, secret, right))
     }
 
     fn ask_choices(&mut self, args: &Args) -> Result<Choices> {
@@ -507,8 +524,7 @@ impl<'a> Setup<'a> {
                 Logon::Other(why) => bail!("암호를 확인하지 못했습니다: {why}"),
             }
         }
-        self.say(Tone::Fail, "암호가 맞지 않아 멈춥니다. 아무것도 바꾸지 않았습니다.");
-        bail!("암호 확인 실패")
+        bail!("암호가 {PASSWORD_TRIES}번 맞지 않았습니다")
     }
 
     fn show_plan(&mut self, account: &Account, choices: &Choices, right: Right) -> Result<()> {
@@ -1003,6 +1019,7 @@ impl<'a> Setup<'a> {
         };
         let answer = if args.yes { "Y".to_string() } else { self.ui.ask(question, Some("Y"))? };
         if !yes(&answer) {
+            self.say(Tone::Warn, "취소했습니다. 아무것도 바꾸지 않았습니다.");
             return Err(Cancelled.into());
         }
         let result = (|| -> Result<()> {
