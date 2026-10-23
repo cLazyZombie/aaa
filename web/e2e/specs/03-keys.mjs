@@ -4,6 +4,7 @@
 import {
   root, sleep, aaa, waitOutput, until, domIs, screenText, shot, pairPage, steps, step, browser, webkit, openSettings, sentFrames, sentCount, sentText, inList,
 } from "../lib/harness.mjs";
+import { receivedInput } from "../lib/received-input.mjs";
 
 export default async function ({ ctl, page }) {
   await step("키 막대(herdr-web-ui KeyBar): 터치 기기에서만, 유지 키는 다시 누를 때까지(래치)·하드웨어 키와 같은 bytes, DECCKM, 꾹 누르면 반복, 조합 중 회색, focus를 안 가져감", async () => {
@@ -663,7 +664,15 @@ export default async function ({ ctl, page }) {
     const pcols = () => aaa("pane", "list").panes.find((x) => x.name === "mouseapp").cols;
     const dcols = pcols();
     // 둘째 화면이 크기를 가져간다(키 막대 없는 데스크톱: 터미널 누름은 클릭 보고도 보낸다)
+    const clickStart = lastSeq();
+    const clickMark = await sentCount(sp);
     await sp.getByTestId("terminal").click();
+    // 다른 연결의 키가 마우스 해제를 추월하지 않도록 실제 PTY 수신까지 확인한다.
+    // 누름·해제는 같은 좌표의 정확한 두 SGR 보고여야 하며 read 조각 수에는 기대지 않는다.
+    await until("둘째 클릭 누름·해제 전송", async () =>
+      /^\x1b\[<0;(\d+);(\d+)M\x1b\[<0;\1;\2m$/.test(sentText(await sentFrames(sp, clickMark))));
+    const secondClick = sentText(await sentFrames(sp, clickMark));
+    await until("둘째 클릭 누름·해제 수신", () => receivedInput(after(clickStart)) === secondClick);
     await until("둘째 화면 크기", () => pcols() < dcols);
     const shared = aaa("pane", "list").panes.find((p) => p.name === "mouseapp");
     // host가 바뀐 직후에는 첫 화면에 앞 state가 남을 수 있다. 그 화면도 새 grid를 받고 맞추기를 판단한 뒤 키를 친다.
@@ -676,9 +685,8 @@ export default async function ({ ctl, page }) {
     // 보낸 순서는 이 화면이 WebSocket에 쓴 순서로 본다(프로그램 쪽은 SIGWINCH와 입력 읽기의 순서가 정해지지 않는다).
     // 화면 안 기록(sentFrames, init script)으로 읽는다: 연 뒤에 단 Playwright framesent는 그 전에 열린 WebSocket을 놓친다
     const mark = await sentCount(dp);
-    n = lastSeq();
     await dp.keyboard.press("z");
-    await until("z 받음", () => after(n).some(([, k, v]) => k === "GOT" && v === "z"));
+    await until("마우스 해제 다음 z 수신", () => receivedInput(after(clickStart)) === secondClick + "z");
     await until("크기 되찾음", () => pcols() === dcols);
     const frames = await sentFrames(dp, mark);
     const order = frames.filter((f) => f.t === "resize" || (f.t === "input" && f.data === "z")).map((f) => f.t);

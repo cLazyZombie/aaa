@@ -8,6 +8,13 @@
 - 참고 후보: [tokei 정확도 시험](https://github.com/XAMPPRocky/tokei/blob/master/tests/accuracy.rs)의 fixture 기반 집계 단언과 [scc worker 시험](https://github.com/boyter/scc/blob/master/processor/workers_test.go)의 입력별 직접 결과 단언. [tokei MIT](https://github.com/XAMPPRocky/tokei/blob/master/LICENCE-MIT)와 [scc MIT](https://github.com/boyter/scc/blob/master/LICENSE)를 확인했다. 확인한 집계·시험 경로에서 750ms 상한 시험 예제는 찾지 못했으며, 정확도와 실행 속도를 분리하는 방식만 따르고 코드는 복사하지 않았다.
 - 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`·의존 경계 시험·공개 검사다. Windows 실기 실행 여부는 보고에 별도로 남긴다.
 
+## E2E03의 마우스 해제와 키 입력 흐름(t-0845 후속)
+
+- 원본 전체 gate에서 「z 받음」은 실제 `GOT:7:"z\u001b[<0;40;11m"`을 받고도 단일 `GOT === "z"`를 기다려 20초에 실패했다. 둘째 화면 클릭의 마우스 해제를 받은 사건을 먼저 확인하고 첫 화면에서 z를 보낸다. 받은 GOT 조각을 순서대로 이어 전체가 정확한 클릭 누름·해제+z인지 검사한다. 같은 좌표의 SGR 누름·해제 쌍, 최초 클릭의 해제·끌기 무전송, 다른 화면 크기 적용·원래 크기 회복, WebSocket resize→input 순서 단언을 유지한다. 시한·제품 코드는 바꾸지 않는다.
+- `node --test web/test/receivedInput.test.mjs`: 해제+z가 합쳐진 정상 조각을 구판의 단일 z 단언이 놓치는 대조를 둔다. CSI 안을 포함한 모든 분할 경계·한 byte씩 분할·중간 SIZE 사건에서도 정확히 같은 흐름을 검사한다. 해제 누락·z 선행·중복/추가 키는 거부하므로 부분 문자열만 찾아 통과시키지 않는다.
+- `NODE_PATH=<Playwright 1.64.1 모듈 폴더> PLAYWRIGHT_BROWSERS_PATH=<격리 브라우저 폴더> AAA_BIN=<이번 검증 실행 파일> node web/e2e/web.e2e.mjs --spec 03-keys --workers 1`: 수정 뒤 전체 owner를 한 번 실행한다. 원래 전체 gate의 E2E03·93 실패 원문을 보존하고 전체 gate는 t-0839와 같은 묶음 착지에서 판정한다. 실패 재시도·시한 증가·단언 완화는 없다.
+- 참고: [node-pty UnixTerminal 시험](https://github.com/microsoft/node-pty/blob/main/src/unixTerminal.test.ts)의 수신 자료 누적과 [xterm.js parser 시험](https://github.com/xtermjs/xterm.js/blob/master/src/common/parser/EscapeSequenceParser.test.ts)의 한 글자씩 나눈 입력 대조를 따른다. [node-pty MIT](https://github.com/microsoft/node-pty/blob/main/LICENSE)·[xterm.js MIT](https://github.com/xtermjs/xterm.js/blob/master/LICENSE)를 확인했고 코드는 복사하지 않았다.
+
 ## 입력 기록 초기화와 파일 보기 재열기 대기(t-0836)
 
 - 원본 [run 39889977347](https://github.com/cLazyZombie/aaa/actions/runs/39889977347)은 CPU 3개·worker 2개·94파일/105작업 중 E2E09의 「보낸 뒤 비움」과 E2E16의 「다시 읽은 뒤 소스」가 각각 20초에 실패했다. 앞 대기는 textarea가 아니라 진단 수집 건수다. 원본 산출물에는 해당 화면의 DOM·요청·사건 기록이 없어 세부 원인을 확정하지 않는다.
