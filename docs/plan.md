@@ -7692,3 +7692,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **확인.** 최초 질의의 모든 분할·보류 인증 앞뒤의 커서/DA·색 지정/되돌리기·resize·EOF 가림, 실제 계정 PTY의 첫 DSR→응답→인증 갱신을 검사한다. Windows 가상 서비스 Session 0에서 실제 Codex TUI·brief 전달을 확인한다. Front API·Agent link·E2E 번호는 바꾸지 않는다.
 
 - **33회차 착지 통합(t-0917).** 기준 main `126140b2`의 마지막 §8.471·FRONT_API 1.113·AGENT_LINK 1.11·E2E97을 확인했다. t-0910의 `7332a23c` 하나를 --no-ff로 합치고 새 §8.472를 유지한다. 격리 Playwright 1.64.1·Chromium/WebKit 기동 확인 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 빌드를 확인한다. E2E97만 기존 오류 「입력 echo의 xterm ACK가 20초 안에 오지 않았다」로 실패하고 나머지가 통과하면 사용자 결정에 따라 착지한다. GitHub CI는 기다리지 않으며 설치 실행·배포·tag·release는 수행하지 않는다.
+
+### 8.473 이미지 결과 hook의 base64 가림 충돌(t-0918)
+
+- host의 성공한 결과를 agent가 `imagegen.v1` JSON 문자열로 바꾼 뒤 일반 hook 글 가림을 다시 적용했다. base64의 우연한 인증 조각 일치가 `*`로 바뀌어 CLI decode가 실패했다. 544 KiB 시험 PNG·가짜 인증으로 운영과 같은 `Invalid symbol 42, offset 3787`을 재현했다.
+- hook 응답을 글/이미지 타입으로 나누고 마지막 IPC 직렬화에서 기존 B64 가림 serializer를 적용한다. 실제 bytes·오류의 인증 가림과 hook token·peer PID·이미지 소유권·SHA 검사는 유지한다. 실패에는 작업 ID·출력 번호·원시 offset·해독 단계와 원래 원인을 남긴다.
+- 기존 m13 이미지 owner의 로컬·원격 생성·다시 받기·재시작·중복 방지·비노출 및 64 KiB 전후 타입 가림 회귀로 검증한다. 전체 ci-local·공개 검사 뒤 병합 준비로 둔다. wire·API·기능 협상·E2E 번호는 유지하며 절 번호는 착지 때 main과 대조한다.

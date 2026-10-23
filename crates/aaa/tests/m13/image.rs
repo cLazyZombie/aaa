@@ -90,7 +90,9 @@ fn restart_host(w: &mut World, tag: &str, exe: &Path, upstream: &str) {
 
 #[test]
 fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_or_duplicates() {
-    let mut w = world();
+    // 원시 PNG와 무관한 인증 조각이 base64 offset 3787에서만 겹친다.
+    // 로컬·원격 agent 양쪽의 실제 가림 규칙에 등록한다.
+    let mut w = world_with("[profiles.fake.env]\nOPENAI_API_KEY = \"cG5nMDkx-image-canary-0918\"\n");
     w.lab.kill("host");
     let cfg = w.h.cfg.join("host.toml");
     let text = std::fs::read_to_string(&cfg).unwrap().replace("allow_profiles = [", "allow_profiles = [\"image\", ");
@@ -176,7 +178,7 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
     assert_eq!(first["job"]["account"], "work-codex");
     assert_eq!(first["job"]["total_tokens"], 123);
     let output = Path::new(first["files"][0].as_str().unwrap());
-    assert!(std::fs::metadata(output).unwrap().len() > aaa_proto::IMAGE_CHUNK as u64);
+    assert_eq!(std::fs::metadata(output).unwrap().len(), 544 * 1024);
     assert_eq!(attempts(&w).len(), 1);
     assert_eq!(upstream.calls.load(std::sync::atomic::Ordering::SeqCst), 1, "기존 중앙 회전 owner로 한 번 갱신");
     let accounts = w.h.ok(&["account", "list"]);

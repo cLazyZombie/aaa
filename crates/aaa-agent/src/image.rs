@@ -5,7 +5,7 @@ use aaa_common::{
     util,
 };
 use aaa_proto::{AgentEvent, ImageRequest, ImageResponse, LinkMsg, Outcome};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::time::Duration;
 
 pub async fn send(request: ImageRequest) -> Result<ImageResponse> {
@@ -14,12 +14,13 @@ pub async fn send(request: ImageRequest) -> Result<ImageResponse> {
         .as_deref()
         .and_then(|s| s.strip_prefix("imagegen.v1 "))
         .ok_or_else(|| anyhow::anyhow!("이 agent는 이미지 생성을 모른다(imagegen.v1 필요)"))?;
-    let result: Outcome<ImageResponse> = serde_json::from_str(text)?;
+    let result: Outcome<ImageResponse> =
+        serde_json::from_str(text).context("이미지 hook 응답 JSON·base64 해독(imagegen.v1)")?;
     result.into_result().map_err(|e| anyhow::anyhow!(e.message))
 }
 
 impl Agent {
-    pub(crate) async fn on_image(&self, msg: HookMsg, pid: Option<u32>) -> Result<String> {
+    pub(crate) async fn on_image(&self, msg: HookMsg, pid: Option<u32>) -> Result<Outcome<ImageResponse>> {
         let panes: Vec<_> = self
             .sessions()
             .into_iter()
@@ -47,8 +48,8 @@ impl Agent {
             .await;
         let result = tokio::time::timeout(Duration::from_millis(2500), rx).await;
         self.image_waiters.lock().unwrap().remove(&id);
-        let result =
-            result.map_err(|_| anyhow::anyhow!("이미지 요청 응답을 받지 못했다. 같은 작업 ID로 상태를 확인한다"))??;
-        Ok(format!("imagegen.v1 {}", serde_json::to_string(&result)?))
+        result
+            .map_err(|_| anyhow::anyhow!("이미지 요청 응답을 받지 못했다. 같은 작업 ID로 상태를 확인한다"))?
+            .context("이미지 host 응답 채널이 닫혔다")
     }
 }

@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## 이미지 결과의 base64 글 가림 충돌(t-0918)
+
+- 기존 m13 이미지 owner의 가짜 Codex는 표준 라이브러리만으로 887×1774 RGBA·544 KiB PNG를 만든다. CRC가 있는 ancillary chunk에 가짜 인증과 인코딩 글자만 겹치는 bytes를 넣는다. 로컬·TLS 원격 thread의 profile env에 같은 가짜 인증을 등록하고 실제 CLI→hook→agent link→host→가짜 생성→조각 전송을 탄다. 생성 계정·외부 API는 쓰지 않는다.
+- 수정 전 실제 `generate`는 `Invalid symbol 42, offset 3787`로 실패했다. 수정 뒤 로컬·원격 생성, 같은 ID 재전송·`fetch`, host 재시작·새 pane의 기존 결과 수신, SHA·길이 검증과 기존 인증 비노출·접근 거부·중복 생성 방지 단언을 유지한다. PNG에는 첫 조각 외에 64 KiB 경계 양쪽과 마지막 조각에도 충돌을 넣는다.
+- `hooks::tests::image_reply_preserves_encoded_collisions_and_masks_actual_secret_bytes`는 64 KiB 전후 세 길이에서 옛 글 가림의 정확한 3787 decode 오류와 새 응답의 bytes 일치·EOF를 대조한다. 실제 인증 bytes·일반 hook 글·hook 실패·이미지 오류는 계속 가려야 한다. 기존 session-start 안내 시험도 타입 있는 hook 응답을 확인한다.
+- 운영 두 PNG의 읽기 전용 대조에서 offset 3787 주변 base64 구간이 같고 대응 raw 위치가 모두 첫 `caBX` chunk 안임을 확인했다. 이 chunk는 [C2PA PNG의 JUMBF 컨테이너](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_special_consideration_for_png)다. 같은 오류 위치가 전송 청크 경계임을 뜻하지 않는다. 실제 인증·인증서 본문이나 지문은 시험 자료로 복사하지 않는다.
+- 먼저 [Serde serializer의 newtype 구별](https://github.com/serde-rs/serde/blob/master/serde_core/src/ser/mod.rs)([MIT](https://github.com/serde-rs/serde/blob/master/LICENSE-MIT))과 [tracing의 구조 있는 진단](https://github.com/tokio-rs/tracing/blob/master/tracing/README.md)([MIT](https://github.com/tokio-rs/tracing/blob/master/LICENSE))을 조사했다. 기존 B64 가림 serializer를 IPC 직렬화까지 적용하고 단계·작업·offset 문맥을 유지한다. Relay의 타입별 PII 처리도 대조했으나 FSL-1.1-Apache-2.0이라 코드를 가져오지 않았다. 새 의존성은 없다.
+- 정본은 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사다. 사건·프로세스 종료·원본 SHA로 끝내며 sleep·재시도·시한 연장·기대값 완화는 없다. wire·기능 협상·FRONT_API·AGENT_LINK·E2E 번호를 바꾸지 않는다.
+- t-0918의 전체 실행(622초)은 web·fmt·build·clippy·public 통과, Rust 1,227개 통과·1개 실패, 웹 작업 124/125개 통과였다. load average 87.53에서 원격 재시작 시험은 listen 뒤 재접속 5.50초로 outage 기준 5초를 넘었고, E2E66의 네 화면 합계는 127.97초로 단계 120초를 넘었다. 원본을 보존하고 다른 검증을 마친 뒤 같은 실행 파일·단언·시한으로 각각 한 번 분리 대조했다. 원격 시험은 17.01초, E2E66의 같은 줄바꿈 단계는 20.54초(전체 파일 30.75초)에 통과했다. 전체 명령의 실패 결과를 성공으로 바꾸지 않는다.
+
 ## Windows 한 줄 설치 owner의 첫 모듈 탐색 격리(t-0904)
 
 - 원본 CI39935743297은 PS5.1 `irm_entry`·HTTP accept 대기(1)·질문 0/16이었다. 원본에는 명령 trace가 없으므로 당시 멈춘 메서드를 소급 확정하지 않는다. 별도 Windows 진단39942924094의 차가운 첫 `irm`은 AWS·Graph 등 러너의 무관한 모듈을 분석했다. AWS 분석·캐시 처리의 한 구간만 35.79초였고, 실제 Utility 모듈을 찾기까지 53.46초가 걸렸다. 이 대조는 HTTP(4)·`payload_written`까지 간 뒤 원래 60초에 실패했으며, 종료 직전 PowerShell 스택은 설치 자식의 `Process.WaitForExit`였다. HTTP 이전의 환경 준비가 설치 owner의 사건 상한을 소모하는 경로를 확인한 것이다.
