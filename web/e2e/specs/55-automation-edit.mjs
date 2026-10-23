@@ -3,7 +3,7 @@
 // 「저장만으로는 돌지 않음」은 저절로 돌지 않는 thread 사건 규칙을 저장한 뒤 ticker 울타리(`ticker tick`) 뒤에 기록 0건으로 본다.
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot, webkit } from "../lib/harness.mjs";
+import { root, aaa, step, browser, pairPage, until, domIs, inTime, drawerSettled, shot, webkit } from "../lib/harness.mjs";
 
 const dir = () => `${root}/projects/demo`;
 const file = (name) => `${dir()}/automations/${name}.toml`;
@@ -332,6 +332,91 @@ export default async function ({ page }) {
     if (rejected.err?.code !== "forbidden") throw new Error(`시스템 웹 복원: ${JSON.stringify(rejected)}`);
     aaa("automation", "restore", trash.id);
     if (rule("idle-audit").enabled) throw new Error("CLI 꺼진 채 복원 실패");
+  });
+
+  await step("초기 검사: 이름 칸은 첫 검사 뒤 열리고 두 번째 자동화도 입력·저장 중 같은 칸을 유지한다", async () => {
+    const wk = await webkit.launch({ headless: true });
+    try {
+      for (const engine of [browser, wk]) for (const width of [1280, 390]) {
+        let release;
+        let reached;
+        let completed;
+        let routeError;
+        let held = false;
+        const gate = new Promise((done) => { release = done; });
+        const checking = new Promise((done) => { reached = done; });
+        const handled = new Promise((done) => { completed = done; });
+        const dev = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, {
+          serviceWorkers: "block",
+          init: () => {
+            // load가 setLoading을 호출한 바로 뒤, React가 그 변경을 그리기 전의 실제 DOM이다.
+            // 관측만 한다. 입력·effect·타이머·host 응답 내용을 바꾸지 않는다.
+            window.__automationInitialInputs = [];
+            const fetch_ = window.fetch;
+            window.fetch = function (url, options) {
+              if (typeof options?.body === "string" && JSON.parse(options.body).op === "automation_validate") {
+                window.__automationInitialInputs.push(!!document.querySelector('[data-testid="automation-form-name"]'));
+              }
+              return fetch_.call(this, url, options);
+            };
+          },
+          route: ["**/api/v1/call", async (route) => {
+            if (held || route.request().postDataJSON()?.op !== "automation_validate") return route.fallback();
+            held = true;
+            try {
+              const response = await route.fetch();
+              reached();
+              await gate;
+              await route.fulfill({ response });
+            } catch (e) { routeError = e; reached(); }
+            finally { completed(); }
+          }],
+        });
+        const p = dev.page;
+        const label = `${engine.browserType().name()}-${width}`;
+        try {
+          await p.evaluate(() => { location.hash = "#automation=demo%2F"; });
+          await inTime(checking, 20_000, `${label} 초기 검사 응답`);
+          if (routeError) throw routeError;
+          const editor = p.getByTestId("automation-editor");
+          await editor.getByRole("status").getByText("읽는 중…").waitFor();
+          const firstExposed = await p.evaluate(() => window.__automationInitialInputs[0]);
+          if (firstExposed !== false) throw new Error(`${label}: 초기 검사 전에 이름 칸 노출(${firstExposed})`);
+          if (await editor.getByTestId("automation-form-name").count() || !(await editor.getByTestId("automation-save").isDisabled())) throw new Error(`${label}: 초기 검사 중 편집 가능`);
+          release();
+          await inTime(handled, 20_000, `${label} 초기 검사 전달`);
+          if (routeError) throw routeError;
+          // 같은 화면에서 두 번 연다(E2E82 자동화① → 다른 화면 → 자동화②).
+          for (let n = 1; n <= 2; n++) {
+            if (n === 2) await p.evaluate(() => { location.hash = "#automation=demo%2F"; });
+            const name = `name-${label}-${n}`;
+            const input = editor.getByTestId("automation-form-name");
+            await input.fill(name);
+            const original = await input.elementHandle();
+            try {
+              await editor.getByTestId("automation-form-title").fill(`확인 글 ${n}`);
+              await editor.getByTestId("automation-form-condition").selectOption("thread");
+              await editor.getByTestId("automation-form-body").fill(`입력 보존 ${n}`);
+              await tomlHas(p, editor, `text = "입력 보존 ${n}"`);
+              if (!(await original.evaluate((el) => el.isConnected && el === document.querySelector('[data-testid="automation-form-name"]')))) throw new Error(`${label}: 입력 중 이름 칸 교체`);
+              if ((await input.inputValue()) !== name) throw new Error(`${label}: 이름 입력 유실`);
+              await editor.getByTestId("automation-save").click();
+              await editor.waitFor({ state: "detached" });
+              await p.getByTestId("automation-detail").waitFor();
+              const text = fs.readFileSync(`${root}/projects/demo/automations/${name}.toml`, "utf8");
+              if (!text.includes(`title = "확인 글 ${n}"`) || !text.includes(`text = "입력 보존 ${n}"`)) throw new Error(`${label}: 저장 내용 유실`);
+              await p.evaluate(() => { location.hash = "#threads"; });
+              await p.locator('[data-testid="automation-view"][data-shown="false"]').waitFor({ state: "attached" });
+            } finally { await original.dispose(); }
+          }
+          if (dev.errors.length) throw new Error(dev.errors.join("\n"));
+        } finally {
+          release();
+          if (held) await inTime(handled, 20_000, `${label} 초기 검사 정리`);
+          await p.context().close();
+        }
+      }
+    } finally { await wk.close(); }
   });
 
 }

@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 새 자동화의 초기 검사와 이름 입력(t-0882)
+
+- E2E82 원본은 자동화②의 이름만 빈 채 저장 단추가 disabled였다. 원본에는 입력·DOM 교체 trace가 없어 당시 callback 순서까지 소급 확정하지 않는다. 별도 실제 host·브라우저 대조에서 초기 `automation_validate` 전송 직전 이름 칸에 focus·select를 두고 응답을 보류했다. `load`의 loading 반영 뒤 원래 input은 detached, focus는 BODY였으며 브라우저 `insertText("nudge")` 뒤 검사 응답을 놓아도 이름은 빈 문자열이었다. 제목·본문의 외부 동기화가 이름 상태를 덮는 경로는 없다.
+- 새 자동화도 loading 상태에서 시작한다. 첫 검사가 끝나기 전 잠깐 노출됐던 입력칸을 제거하는 순서가 사라지며, 이후의 검사·폼/TOML 전환·저장은 기존 경로를 쓴다.
+- E2E55의 「초기 검사」 단계는 Chromium·WebKit 각각 1280px·390px에서 실제 초기 응답을 보류한다. fetch 호출 경계의 DOM을 관측해 첫 검사 전 이름 칸 노출을 잡는다(구판 RED). 보류 중 로딩·저장 비활성, 응답 뒤 이름 입력, 같은 input 객체 유지, 제목·본문의 실제 저장을 검사한다. 각 화면에서 다른 화면에 다녀온 뒤 두 번째 자동화도 만들고 저장한다. service worker는 이 대조 화면에서만 막고 응답 내용·effect·입력값은 조작하지 않는다.
+- 참고는 [React 제어 입력](https://react.dev/reference/react-dom/components/input)의 동기 상태 반영과 [React 상태 보존](https://react.dev/learn/preserving-and-resetting-state), [React Hook Form createFormControl](https://github.com/react-hook-form/react-hook-form/blob/master/src/logic/createFormControl.ts)의 초기 isLoading·외부 값 동기화다. [React Hook Form MIT](https://github.com/react-hook-form/react-hook-form/blob/master/LICENSE)를 확인했다. 외부 코드·의존성은 추가하지 않는다.
+- 수정 전 결정적 대조와 회귀 RED를 보존하고 수정 뒤 E2E55·82, 전체 `nice -n 15 bash scripts/ci-local.sh --tee`·공개 검사를 실행한다. 기존 20초 사건 대기·30초 locator·120초 단계 상한을 유지하며 고정 sleep·재시도·기대값 완화는 없다.
+
 ## E2E03 연속 페이지 이동의 늦은 native scroll(t-0870)
 
 - 원본 실패는 30행 화면의 `s-143`·native top 2698px/끝 3249px였다. E2E03 일반 실행은 수정 전에도 통과했다. PageUp의 DOM 동기화 → PageDown → 앞선 native scroll 순서를 고정하면 구판이 같은 위치에서 기존 20초 끝 이동 단언에 실패한다. 재연결·resize는 이 순서를 노출하는 배경이며 오래된 `top0` 기대값이나 키 누락이 직접 원인은 아니다. 원본에는 브라우저 내부 호출 trace가 없어 당시 모든 callback 순서까지 소급 확정하지 않는다.
