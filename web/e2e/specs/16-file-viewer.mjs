@@ -46,6 +46,41 @@ async function clickLink(page, text) {
   await page.mouse.up();
 }
 
+// 원문·주소·history state 대신 클릭·기록 이동·파일 요청의 단계만 남긴다.
+async function observeFileOpen(page) {
+  await page.evaluate(() => {
+    window.__aaaFileOpen = [];
+    const record = (type, extra = {}) => {
+      const term = document.querySelector('[data-testid="terminal"]');
+      window.__aaaFileOpen.push({
+        at: performance.now(), type, ...extra,
+        settings: Boolean(document.querySelector('[role="region"][aria-label="설정"]')),
+        settingsEntry: Boolean(history.state?.['aaa:settings']),
+        preview: Boolean(history.state?.['aaa:file-preview']),
+        viewer: Boolean(document.querySelector('[data-testid="file-viewer"]')),
+        code: document.querySelector('[data-testid="file-viewer-code"]')?.textContent?.length ?? null,
+        fit: term?.dataset.fit, pending: term?.hasAttribute('data-fit-pending'),
+        selection: Boolean(getSelection()?.toString()), fonts: document.fonts.status,
+      });
+      if (window.__aaaFileOpen.length > 200) window.__aaaFileOpen.shift();
+    };
+    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'popstate'])
+      window.addEventListener(type, (event) => record(type, {
+        target: event.target instanceof Element ? event.target.tagName : null,
+        x: event.clientX, y: event.clientY,
+      }), true);
+    for (const method of ['pushState', 'replaceState', 'go', 'back']) {
+      const original = history[method].bind(history);
+      history[method] = (...args) => { record(method); return original(...args); };
+    }
+    window.__aaaFileOpenRecord = record;
+  });
+  page.on('request', (request) => {
+    const data = request.postDataJSON?.();
+    if (data?.op === 'pane_file') void page.evaluate(() => window.__aaaFileOpenRecord('pane_file')).catch(() => {});
+  });
+}
+
 const viewer = (page) => page.getByTestId("file-viewer");
 const closed = (page, what) => domIs(page, `${what} 닫힘`, () => !document.querySelector('[data-testid="file-viewer"]'));
 const screenHas = (page, what, text) => domIs(page, what, (t) => document.querySelector(".xterm-rows")?.textContent.includes(t), text);
@@ -548,8 +583,16 @@ export default async function ({ ctl, page }) {
         return { width: md.getBoundingClientRect().width, room: md.parentElement.getBoundingClientRect().width };
       });
     const openSource = async (p, what) => {
-      await clickLink(p, "src/wide.ts");
-      await codeIs(p, what, source);
+      try {
+        await p.evaluate((what) => window.__aaaFileOpenRecord?.(what), what);
+        await clickLink(p, "src/wide.ts");
+        await codeIs(p, what, source);
+      } catch (error) {
+        await p.evaluate(() => window.__aaaFileOpenRecord?.('failure'));
+        fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+        fs.writeFileSync(`${root}/diagnostics/file-open.json`, JSON.stringify({ what, events: await p.evaluate(() => window.__aaaFileOpen) }, null, 2));
+        throw error;
+      }
     };
     const openMarkdown = async (p, what) => {
       await clickLink(p, "docs/wide.md");
@@ -609,6 +652,7 @@ export default async function ({ ctl, page }) {
     };
 
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await observeFileOpen(dp);
     await inList(dp, "pane-viewer");
     await screenHas(dp, "viewer 줄들", "view>");
     // 기본: 긴 줄은 한 줄로 옆으로 굴리고, Markdown은 대화 열 너비(그보다 넓은 파일 보기 가운데)
@@ -678,6 +722,7 @@ export default async function ({ ctl, page }) {
 
     // 이 기기에 남는다: 다시 읽어도 그대로, 다른 기기는 기본값
     await dp.reload();
+    await observeFileOpen(dp);
     await inList(dp, "pane-viewer");
     await screenHas(dp, "다시 읽은 viewer", "view>");
     await settingsShown(dp, "다시 읽은 뒤", true, "전체 너비");

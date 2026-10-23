@@ -446,6 +446,7 @@ export default async function ({ ctl, page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
+  let tracePage;
   await step("입력 기록(실기 키보드 진단): 켜면 터미널 사건·textarea 값·화면 키보드 상태·보낸 글을 모으고, 보내면 host diag/에 남는다", async () => {
     // pairing 없이는 남기지 않는다
     const anon = await fetch(`${base}api/v1/diag/input`, {
@@ -456,6 +457,18 @@ export default async function ({ ctl, page }) {
     if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
     aaa("tab", "create", "--machine", "labA", "--label", "traceapp", "--", process.execPath, `${root}/paste.js`);
     const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    tracePage = tp;
+    await tp.evaluate(() => {
+      window.__aaaTraceTimeline = [];
+      const record = (type) => {
+        const text = document.querySelector(".settings-row:has([aria-label='입력 기록'])")?.textContent ?? '';
+        const count = /(\d+)개 모았습니다/.exec(text)?.[1] ?? null;
+        window.__aaaTraceTimeline.push({ at: performance.now(), type, count, sent: Boolean(document.querySelector('[data-testid="trace-msg"]')?.textContent?.startsWith('보냈다:')) });
+        if (window.__aaaTraceTimeline.length > 150) window.__aaaTraceTimeline.shift();
+      };
+      new MutationObserver(() => record('dom')).observe(document, { subtree: true, childList: true, characterData: true });
+      for (const type of ['selectionchange', 'focus', 'blur']) document.addEventListener(type, () => record(type), true);
+    });
     // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 → 터미널 쪽 맨 끝 「진단」에 있다(사용자 화면 10-18, plan §8.82·§8.97)
     if ((await tp.getByText("입력 기록", { exact: false }).count()) !== 0) throw new Error("목록에 입력 기록 단추가 있다");
     const dialog = tp.getByRole("region", { name: "설정" });
@@ -500,5 +513,9 @@ export default async function ({ ctl, page }) {
     if ((await traceSwitch.getAttribute("aria-checked")) !== "false") throw new Error("입력 기록이 꺼지지 않았다");
     await tp.context().close();
     aaa("pane", "kill", "traceapp");
-  });
+  }, { diagnose: async () => {
+    if (!tracePage) return;
+    fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+    fs.writeFileSync(`${root}/diagnostics/input-trace.json`, JSON.stringify(await tracePage.evaluate(() => window.__aaaTraceTimeline), null, 2));
+  } });
 }
