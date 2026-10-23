@@ -1,3 +1,4 @@
+import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 // thread diff 패널(plan §8.305). t3code 4b1024da `apps/web/src/components/DiffPanel.tsx`(193~1180줄)를 옮겼다.
 // - 범위: 「main 대비」(branch, 기본)·「미커밋」(t3code Changes·Uncommitted). 턴 범위는 없다(t-0403).
 // - 그리기: `@pierre/diffs` CodeView(파일마다 접기, 붙는 머리, 가상화), `lineDiffType: "none"`, 줄바꿈·공백 무시 토글(패널 안에서만,
@@ -79,7 +80,7 @@ function shadowCss(header: number): string {
 function readStyle(): "unified" | "split" {
   try {
     return window.localStorage.getItem(STYLE_KEY) === "split" ? "split" : "unified";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "DiffPanel.tsx:83");
     return "unified";
   }
 }
@@ -91,7 +92,7 @@ function filePath(d: FileDiffMetadata): string {
 function parse(patch: string, key: string): FileDiffMetadata[] {
   try {
     return parsePatchFiles(patch, contentKey(key, patch)).flatMap((p) => p.files);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "DiffPanel.tsx:95");
     return [];
   }
 }
@@ -239,7 +240,7 @@ export default function DiffPanel({
             const fileDiff = parse(r.diff.patch ?? "", `thread-diff:${scopeKey}:${p}`)[0] ?? null;
             setFileLoads((cur) => new Map(cur).set(p, { status: "ready", fileDiff, truncated: r.diff.truncated }));
           })
-          .catch(() => setFileLoads((cur) => new Map(cur).set(p, { status: "failed" })));
+          .catch(ignoredFailure("DiffPanel.tsx:243", () => setFileLoads((cur) => new Map(cur).set(p, { status: "failed" }))));
       }
     },
     [fileLoads, stats, project, thread, scope, ignoreWhitespace, scopeKey],
@@ -422,7 +423,7 @@ export default function DiffPanel({
               setStyle(next);
               try {
                 window.localStorage.setItem(STYLE_KEY, next);
-              } catch {
+              } catch (ignoredError) { logIgnoredFailure(ignoredError, "DiffPanel.tsx:426");
                 // 이 화면 동안만
               }
             }}

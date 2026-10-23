@@ -24,7 +24,9 @@ const MIN_CPU_WINDOW: Duration = Duration::from_secs(1);
 #[cfg(unix)]
 fn disk(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: c는 NUL로 끝나는 경로이고 st는 쓸 수 있는 statvfs다
     if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
@@ -120,7 +122,18 @@ fn memory() -> Option<(u64, u64)> {
 #[cfg(any(target_os = "linux", all(test, unix)))]
 fn parse_proc_stat(text: &str) -> Option<CpuTicks> {
     let line = text.lines().find(|l| l.starts_with("cpu "))?;
-    let v: Vec<u64> = line.split_whitespace().skip(1).take(8).map(|x| x.parse().ok()).collect::<Option<_>>()?;
+    let v: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .take(8)
+        .map(|x| {
+            x.parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .collect::<Option<_>>()?;
     (v.len() >= 5).then(|| CpuTicks { idle: v[3] + v[4], total: v.iter().sum() })
 }
 
@@ -129,7 +142,14 @@ fn parse_proc_stat(text: &str) -> Option<CpuTicks> {
 fn parse_meminfo(text: &str) -> Option<(u64, u64)> {
     let kb = |key: &str| -> Option<u64> {
         let l = text.lines().find(|l| l.starts_with(key))?;
-        l[key.len()..].trim().trim_end_matches("kB").trim().parse::<u64>().ok().map(|k| k * 1024)
+        l[key.len()..]
+            .trim()
+            .trim_end_matches("kB")
+            .trim()
+            .parse::<u64>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .map(|k| k * 1024)
     };
     let (total, avail) = (kb("MemTotal:")?, kb("MemAvailable:")?);
     (total > 0).then(|| (total.saturating_sub(avail), total))
@@ -137,12 +157,20 @@ fn parse_meminfo(text: &str) -> Option<(u64, u64)> {
 
 #[cfg(target_os = "linux")]
 fn cpu_ticks() -> Option<CpuTicks> {
-    parse_proc_stat(&std::fs::read_to_string("/proc/stat").ok()?)
+    parse_proc_stat(
+        &std::fs::read_to_string("/proc/stat")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?,
+    )
 }
 
 #[cfg(target_os = "linux")]
 fn memory() -> Option<(u64, u64)> {
-    parse_meminfo(&std::fs::read_to_string("/proc/meminfo").ok()?)
+    parse_meminfo(
+        &std::fs::read_to_string("/proc/meminfo")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?,
+    )
 }
 
 #[cfg(windows)]
@@ -213,7 +241,10 @@ impl Stats {
 /// 전원 연결 여부. 배터리가 없는 Mac은 `pmset`이 AC Power를 알린다.
 async fn on_ac() -> Option<bool> {
     if cfg!(target_os = "macos") {
-        let out = run(&["pmset".into(), "-g".into(), "batt".into()]).await.ok()?;
+        let out = run(&["pmset".into(), "-g".into(), "batt".into()])
+            .await
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         if out.contains("'AC Power'") {
             Some(true)
         } else if out.contains("'Battery Power'") {
@@ -223,11 +254,21 @@ async fn on_ac() -> Option<bool> {
         }
     } else if cfg!(target_os = "linux") {
         let mut any = false;
-        for e in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
+        for e in std::fs::read_dir("/sys/class/power_supply")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .flatten()
+        {
             let p = e.path();
-            if std::fs::read_to_string(p.join("type")).is_ok_and(|t| t.trim() == "Mains") {
+            if std::fs::read_to_string(p.join("type"))
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|t| t.trim() == "Mains")
+            {
                 any = true;
-                if std::fs::read_to_string(p.join("online")).is_ok_and(|o| o.trim() == "1") {
+                if std::fs::read_to_string(p.join("online"))
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|o| o.trim() == "1")
+                {
                     return Some(true);
                 }
             }

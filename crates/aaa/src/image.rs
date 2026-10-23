@@ -133,7 +133,10 @@ async fn fetch(v: &ImageView, dir: &Path) -> Result<Vec<PathBuf>> {
             let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
             if let Err(e) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
                 drop(file);
-                let _ = std::fs::remove_file(&path);
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_file(&path),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
                 return Err(e.into());
             }
         }

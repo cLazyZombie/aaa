@@ -156,7 +156,7 @@ impl State {
     fn output(&mut self, data: &[u8]) {
         let (clean, replies) = self.output.feed(data, &mut self.vt);
         for reply in replies {
-            let _ = self.input.send(reply);
+            aaa_common::diagnostic::ignored(self.input.send(reply), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
         self.emit(&clean);
     }
@@ -191,7 +191,10 @@ impl State {
             self.subs.remove(&conn);
             if let Some(tx) = self.conns.get(&conn).cloned() {
                 tokio::spawn(async move {
-                    let _ = tx.json(&SessionMsg::Resync).await;
+                    aaa_common::diagnostic::ignored(
+                        tx.json(&SessionMsg::Resync).await,
+                        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                    );
                 });
             }
         }
@@ -214,14 +217,22 @@ impl State {
                                 offset: f,
                             }),
                         };
-                        let _ = tx.json(&res).await;
+                        aaa_common::diagnostic::ignored(tx.json(&res).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
                         for (i, part) in bytes.chunks(CHUNK).enumerate() {
                             let c = TerminalChunk {
                                 session: self.id.clone(),
                                 offset: f + (i * CHUNK) as u64,
                                 data: part.to_vec(),
                             };
-                            if tx.terminal(&c).await.is_err() {
+                            if tx
+                                .terminal(&c)
+                                .await
+                                .as_ref()
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                                })
+                                .is_err()
+                            {
                                 break;
                             }
                         }
@@ -243,10 +254,12 @@ impl State {
                 if self.exit.is_some() {
                     Err(ErrorBody::new(ErrorCode::SessionExited, "세션이 끝났다"))
                 } else {
-                    self.input
-                        .send(data.0)
-                        .map(|_| AgentResponse::Done)
-                        .map_err(|_| ErrorBody::new(ErrorCode::SessionExited, "입력 통로가 닫혔다"))
+                    self.input.send(data.0).map(|_| AgentResponse::Done).map_err(|source_error| {
+                        aaa_common::diagnostic::context(
+                            source_error,
+                            ErrorBody::new(ErrorCode::SessionExited, "입력 통로가 닫혔다"),
+                        )
+                    })
                 }
             }
             SessionRequest::Resize { cols, rows } => {
@@ -294,12 +307,15 @@ impl State {
                 Ok(AgentResponse::Done)
             }
         };
-        let _ = tx.json(&SessionMsg::Res { id, result: result.into() }).await;
+        aaa_common::diagnostic::ignored(
+            tx.json(&SessionMsg::Res { id, result: result.into() }).await,
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     }
 
     async fn broadcast(&self, msg: SessionMsg) {
         for tx in self.conns.values() {
-            let _ = tx.json(&msg).await;
+            aaa_common::diagnostic::ignored(tx.json(&msg).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
     }
 }
@@ -314,7 +330,9 @@ pub fn main_with_startup(dir: PathBuf, startup_stdin: bool) -> Result<()> {
         if b.len() > aaa_proto::MAX_FRAME {
             anyhow::bail!("인증 pipe 상한 초과")
         }
-        Some(serde_json::from_slice::<super::files::Startup>(&b).map_err(|_| anyhow::anyhow!("인증 pipe 형식 오류"))?)
+        Some(serde_json::from_slice::<super::files::Startup>(&b).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, anyhow::anyhow!("인증 pipe 형식 오류"))
+        })?)
     } else {
         None
     };
@@ -446,9 +464,20 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
         let mut buf = vec![0u8; 16 << 10];
         loop {
             match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
+                Err(error) => {
+                    tracing::debug!(pid = ?child_pid, error = %aaa_common::diagnostic::Cause::capture(&error), "PTY 출력 읽기 종료");
+                    break;
+                }
                 Ok(n) => {
-                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                    if out_tx
+                        .blocking_send(buf[..n].to_vec())
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -473,8 +502,12 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
     });
     let (exit_tx, mut exit_rx) = mpsc::channel::<Option<i32>>(1);
     std::thread::spawn(move || {
-        let code = child.wait().ok().map(|st| st.exit_code() as i32);
-        let _ = exit_tx.blocking_send(code);
+        let code = child
+            .wait()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .map(|st| st.exit_code() as i32);
+        aaa_common::diagnostic::ignored(exit_tx.blocking_send(code), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     });
 
     let listener = aaa_common::ipc::LocalListener::bind(&paths.sock).context("session socket")?;
@@ -484,7 +517,11 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
         let cmd_tx = cmd_tx.clone();
         tokio::spawn(async move {
             let mut next = 1u64;
-            while let Ok(stream) = listener.accept().await {
+            while let Ok(stream) = listener
+                .accept()
+                .await
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "수신 루프 종료 원인"))
+            {
                 let conn = next;
                 next += 1;
                 tokio::spawn(serve_conn(conn, stream, token.clone(), cmd_tx.clone()));
@@ -540,7 +577,7 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
             }
             Some(cmd) = cmd_rx.recv() => match cmd {
                 Cmd::Connected { conn, tx, proto } => {
-                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info(), account_rules: authenticated.then(|| aaa_proto::SecretText(aaa_common::redact::snapshot())) }).await;
+                    aaa_common::diagnostic::ignored(tx.json(&SessionMsg::Welcome { proto, info: st.info(), account_rules: authenticated.then(|| aaa_proto::SecretText(aaa_common::redact::snapshot())) }).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
                     for pending in refreshes.values() {let _=tx.json(&SessionMsg::AccountRefresh(pending.request.clone())).await;}
                     st.conns.insert(conn, tx);
                 }
@@ -571,14 +608,24 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
     st.broadcast(SessionMsg::Updated(info)).await;
     // 바로 끝난 명령도 agent가 붙어 종료 상태·마지막 화면을 받을 수 있게 잠깐 더 응답한다(2초).
     // `AAA_TEST_SESSION_LINGER_MS`는 시험에서만 쓴다(m13: 끝난 세션을 지우는 agent가 이 창을 기다리지 않는지)
-    let ms = std::env::var("AAA_TEST_SESSION_LINGER_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(2000);
+    let ms = std::env::var("AAA_TEST_SESSION_LINGER_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|v| {
+            v.parse::<u64>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or(2000);
     let until = tokio::time::Instant::now() + Duration::from_millis(ms);
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(until) => break,
             Some(cmd) = cmd_rx.recv() => match cmd {
                 Cmd::Connected { conn, tx, proto } => {
-                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info(), account_rules: None }).await;
+                    aaa_common::diagnostic::ignored(tx.json(&SessionMsg::Welcome { proto, info: st.info(), account_rules: None }).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
                     st.conns.insert(conn, tx);
                 }
                 Cmd::Disconnected { conn } => { st.conns.remove(&conn); st.subs.remove(&conn); }
@@ -599,27 +646,53 @@ async fn serve_conn(conn: u64, stream: aaa_common::ipc::LocalStream, token: Stri
             let agreed = match negotiate(SESSION_IPC, proto) {
                 Ok(v) => v,
                 Err(e) => {
-                    let _ = tx
-                        .json(&SessionMsg::Reject(ErrorBody::new(ErrorCode::UnsupportedVersion, e.to_string())))
-                        .await;
+                    aaa_common::diagnostic::ignored(
+                        tx.json(&SessionMsg::Reject(ErrorBody::new(ErrorCode::UnsupportedVersion, e.to_string())))
+                            .await,
+                        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                    );
                     return;
                 }
             };
             // Welcome(info)은 상태를 가진 main loop가 보낸다.
-            if cmd_tx.send(Cmd::Connected { conn, tx: tx.clone(), proto: agreed }).await.is_err() {
+            if cmd_tx
+                .send(Cmd::Connected { conn, tx: tx.clone(), proto: agreed })
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 return;
             }
         }
         _ => {
-            let _ = tx.json(&SessionMsg::Reject(ErrorBody::new(ErrorCode::Unauthorized, "token이 다르다"))).await;
+            aaa_common::diagnostic::ignored(
+                tx.json(&SessionMsg::Reject(ErrorBody::new(ErrorCode::Unauthorized, "token이 다르다"))).await,
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
             return;
         }
     }
-    while let Ok(Some(Incoming::Control(b))) = rx.next().await {
-        let Ok(SessionMsg::Req { id, body }) = serde_json::from_slice::<SessionMsg>(&b) else { break };
-        if cmd_tx.send(Cmd::Req { conn, id, body }).await.is_err() {
+    while let Ok(Some(Incoming::Control(b))) =
+        rx.next().await.inspect_err(|error| aaa_common::diagnostic::observe(error, "수신 루프 종료 원인"))
+    {
+        let Ok(SessionMsg::Req { id, body }) = serde_json::from_slice::<SessionMsg>(&b)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            break;
+        };
+        if cmd_tx
+            .send(Cmd::Req { conn, id, body })
+            .await
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             break;
         }
     }
-    let _ = cmd_tx.send(Cmd::Disconnected { conn }).await;
+    aaa_common::diagnostic::ignored(
+        cmd_tx.send(Cmd::Disconnected { conn }).await,
+        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+    );
 }

@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 자동화 목록 자료(정본은 host): 사이드바 카드 목록(AutomationPanel)과 본문 설정 화면(AutomationView)이 같은 사본을 본다(t-0628).
 // 패널이나 설정 화면이 보일 때만 읽는다: 열 때·포커스를 되찾을 때·보이는 동안 30초마다, 그리고 thread 사건(보고·Idle·입력)마다.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -42,7 +43,7 @@ export function useAutomations(active: boolean, threads: ThreadView[]): Automati
     if (!active) return;
     void load();
     // 옛 host는 판을 알리지 않는다: 미리보기(dry_run)를 버리고 변환하므로 그때는 변환 단추를 두지 않는다
-    if (frontApi === undefined) me().then((m) => setFrontApi(m?.front_api ?? null)).catch(() => setFrontApi(null));
+    if (frontApi === undefined) me().then((m) => setFrontApi(m?.front_api ?? null)).catch(ignoredFailure("automationData.ts:46", () => setFrontApi(null)));
     const refresh = () => { if (!document.hidden) void load(); };
     const timer = window.setInterval(refresh, 30_000);
     window.addEventListener("focus", refresh);

@@ -35,8 +35,9 @@ impl Agent {
             self.host_image.load(std::sync::atomic::Ordering::Relaxed) && self.host_tx().is_some(),
             "연결된 host의 imagegen.v1 지원이 필요하다"
         );
-        let request: ImageRequest =
-            serde_json::from_value(msg.payload).map_err(|_| anyhow::anyhow!("이미지 요청 형식을 확인한다"))?;
+        let request: ImageRequest = serde_json::from_value(msg.payload).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, anyhow::anyhow!("이미지 요청 형식을 확인한다"))
+        })?;
         let id = util::new_id();
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
@@ -49,7 +50,12 @@ impl Agent {
         let result = tokio::time::timeout(Duration::from_millis(2500), rx).await;
         self.image_waiters.lock().unwrap().remove(&id);
         result
-            .map_err(|_| anyhow::anyhow!("이미지 요청 응답을 받지 못했다. 같은 작업 ID로 상태를 확인한다"))?
+            .map_err(|source_error| {
+                aaa_common::diagnostic::context(
+                    source_error,
+                    anyhow::anyhow!("이미지 요청 응답을 받지 못했다. 같은 작업 ID로 상태를 확인한다"),
+                )
+            })?
             .context("이미지 host 응답 채널이 닫혔다")
     }
 }

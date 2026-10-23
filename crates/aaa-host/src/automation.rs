@@ -311,6 +311,7 @@ pub(crate) fn decode_fragment<T: serde::de::DeserializeOwned>(
 
 pub(crate) fn field_error(file: &str, text: &str, field: &str, message: &str) -> String {
     let offset = toml_edit::Document::parse(text)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
         .and_then(|doc| {
             let mut item = doc.as_item();
@@ -335,7 +336,8 @@ pub(crate) fn project_text(root: &std::path::Path, relative: &str) -> Result<Str
     let components: Vec<_> = path.components().collect();
     for (index, component) in components.iter().enumerate() {
         at.push(component.as_os_str());
-        let metadata = std::fs::symlink_metadata(&at).map_err(|_| "글 파일을 읽지 못한다")?;
+        let metadata = std::fs::symlink_metadata(&at)
+            .map_err(|e| aaa_common::diagnostic::context(e, "글 파일을 읽지 못한다".to_string()))?;
         if metadata.file_type().is_symlink()
             || (index + 1 < components.len() && !metadata.is_dir())
             || (index + 1 == components.len() && !metadata.is_file())
@@ -346,7 +348,8 @@ pub(crate) fn project_text(root: &std::path::Path, relative: &str) -> Result<Str
             return Err("글 파일은 1MiB 이하여야 한다".into());
         }
     }
-    std::fs::read_to_string(at).map_err(|_| "글 파일은 UTF-8이어야 한다".into())
+    std::fs::read_to_string(at)
+        .map_err(|e| aaa_common::diagnostic::context(e, "글 파일을 읽지 못했다(UTF-8 필요)".to_string()))
 }
 
 impl Scheduled {

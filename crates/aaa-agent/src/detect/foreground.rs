@@ -328,7 +328,15 @@ fn name_from_path_token(token: &str) -> Option<String> {
         if path.components().count() < 2 {
             return None;
         }
-        label(std::fs::canonicalize(path).ok()?.file_name()?.to_str()?)
+        label(
+            std::fs::canonicalize(path)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?
+                .file_name()?
+                .to_str()?,
+        )
     })
 }
 
@@ -404,7 +412,10 @@ mod platform {
     fn process(pid: u32, info: &libc::proc_bsdinfo) -> Option<Process> {
         let end = info.pbi_comm.iter().position(|&b| b == 0).unwrap_or(info.pbi_comm.len());
         let bytes: Vec<u8> = info.pbi_comm[..end].iter().map(|&b| b as u8).collect();
-        let name = String::from_utf8(bytes).ok().filter(|n| !n.is_empty())?;
+        let name = String::from_utf8(bytes)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|n| !n.is_empty())?;
         let args = procargs2(pid);
         let argv = args.as_deref().and_then(argv_of);
         // 로그인 셸은 「-zsh」로 보인다(herdr `process_argv0_name`)
@@ -477,7 +488,14 @@ mod platform {
 
     /// `[argc: i32] [exec_path\0] [\0…] [argv[0]\0] [argv[1]\0] …`(herdr `procargs2_argv`)
     fn argv_of(buf: &[u8]) -> Option<Vec<String>> {
-        let argc = i32::from_ne_bytes(buf.get(..4)?.try_into().ok()?);
+        let argc = i32::from_ne_bytes(
+            buf.get(..4)?
+                .try_into()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?,
+        );
         if argc < 1 {
             return None;
         }
@@ -539,16 +557,26 @@ mod platform {
 
     /// (pgrp, comm). comm에 빈칸·괄호가 있을 수 있어 마지막 ')' 뒤부터 센다: state ppid pgrp …
     fn stat(pid: u32) -> Option<(u32, String)> {
-        let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let s = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let open = s.find('(')?;
         let close = s.rfind(')')?;
         let name = s.get(open + 1..close)?.to_string();
-        let pgrp: i64 = s.get(close + 2..)?.split_whitespace().nth(2)?.parse().ok()?;
+        let pgrp: i64 = s
+            .get(close + 2..)?
+            .split_whitespace()
+            .nth(2)?
+            .parse()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         (pgrp > 0).then_some((pgrp as u32, name))
     }
 
     fn argv(pid: u32) -> Option<Vec<String>> {
-        let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        let bytes = std::fs::read(format!("/proc/{pid}/cmdline"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let parts: Vec<String> = bytes
             .split(|&b| b == 0)
             .filter(|p| !p.is_empty())
@@ -558,11 +586,31 @@ mod platform {
     }
 
     fn children(pid: u32) -> Vec<u32> {
-        let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else { return Vec::new() };
+        let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return Vec::new();
+        };
         tasks
             .flatten()
-            .filter_map(|t| std::fs::read_to_string(t.path().join("children")).ok())
-            .flat_map(|s| s.split_whitespace().filter_map(|p| p.parse().ok()).collect::<Vec<u32>>())
+            .filter_map(|t| {
+                std::fs::read_to_string(t.path().join("children"))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .flat_map(|s| {
+                s.split_whitespace()
+                    .filter_map(|p| {
+                        p.parse()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
+                    .collect::<Vec<u32>>()
+            })
             .collect()
     }
 }

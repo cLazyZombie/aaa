@@ -478,10 +478,16 @@ fn region<'a>(input: DetectionInput<'a>, spec: &str) -> &'a str {
 }
 
 fn region_count(spec: &str, name: &str) -> Option<usize> {
-    spec.strip_prefix(name)
-        .and_then(|rest| rest.strip_prefix('('))
-        .and_then(|rest| rest.strip_suffix(')'))
-        .and_then(|count| count.parse::<usize>().ok())
+    spec.strip_prefix(name).and_then(|rest| rest.strip_prefix('(')).and_then(|rest| rest.strip_suffix(')')).and_then(
+        |count| {
+            count
+                .parse::<usize>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        },
+    )
 }
 
 fn top_region_count(spec: &str) -> Option<usize> {
@@ -489,7 +495,11 @@ fn top_region_count(spec: &str) -> Option<usize> {
     if count.starts_with('0') || !count.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    count.parse::<usize>().ok().filter(|count| *count <= MAX_TOP_REGION_LINE_COUNT)
+    count
+        .parse::<usize>()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .filter(|count| *count <= MAX_TOP_REGION_LINE_COUNT)
 }
 
 fn bottom_lines(content: &str, count: usize) -> &str {

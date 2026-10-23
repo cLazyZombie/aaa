@@ -21,7 +21,17 @@ use crate::{Host, err};
 /// herdr agent prompt의 AGENT_PROMPT_SUBMIT_DELAY. Codex가 글·paste 끝을 처리하기 전에 Enter가
 /// 도착하면 Enter를 paste 안 줄바꿈으로 삼는다. 웹·thread message·keys가 같은 간격을 쓴다.
 pub(crate) async fn submission_gap() {
-    let ms = std::env::var("AAA_TEST_SUBMIT_GAP_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(300);
+    let ms = std::env::var("AAA_TEST_SUBMIT_GAP_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|v| {
+            v.parse::<u64>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or(300);
     tokio::time::sleep(Duration::from_millis(ms)).await;
 }
 
@@ -437,7 +447,9 @@ impl Host {
                 }
             }
         };
-        tokio::time::timeout(crate::REQUEST_TIMEOUT, reached).await.map_err(|_| err(ErrorCode::Timeout, timeout_msg))
+        tokio::time::timeout(crate::REQUEST_TIMEOUT, reached)
+            .await
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, err(ErrorCode::Timeout, timeout_msg)))
     }
 
     /// `pane close`(herdr `close_pane`): 세션을 끝내고, 끝났다는 사건이 오면 layout과 기록에서 지운다.
@@ -485,7 +497,10 @@ impl Host {
             let got = match deadline {
                 Some(d) => match tokio::time::timeout_at(d, next).await {
                     Ok(r) => r,
-                    Err(_) => return Err(err(ErrorCode::Timeout, "기다린 글이 나오지 않았다(시한 지남)")),
+                    Err(source_error) => {
+                        aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                        return Err(err(ErrorCode::Timeout, "기다린 글이 나오지 않았다(시한 지남)"));
+                    }
                 },
                 None => next.await,
             };

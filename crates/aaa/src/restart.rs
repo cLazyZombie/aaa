@@ -55,8 +55,14 @@ mod mac {
             if REEXEC.load(Ordering::SeqCst) {
                 return;
             }
-            if util::read_json::<Ready>(&self.path).is_ok_and(|r| r.nonce == self.nonce) {
-                let _ = std::fs::remove_file(&self.path);
+            if util::read_json::<Ready>(&self.path)
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|r| r.nonce == self.nonce)
+            {
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_file(&self.path),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
             }
         }
     }

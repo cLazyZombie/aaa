@@ -14,7 +14,12 @@ pub const HOST_LABEL: &str = "dev.aaa.host";
 
 /// 실행 파일이 들어 있는 .app 번들 경로
 pub fn bundle_root() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let exe = std::env::current_exe()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        .canonicalize()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let macos = exe.parent()?;
     let contents = macos.parent()?;
     let app = contents.parent()?;

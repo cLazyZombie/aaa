@@ -28,7 +28,17 @@ impl Db {
     }
 
     pub(crate) fn task_long_id(&self, project: &str, short: &str) -> Result<Option<String>> {
-        let Some(n) = short.strip_prefix("d-").and_then(|s| s.parse::<i64>().ok()).filter(|n| *n > 0) else {
+        let Some(n) = short
+            .strip_prefix("d-")
+            .and_then(|s| {
+                s.parse::<i64>()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .filter(|n| *n > 0)
+        else {
             return Ok(None);
         };
         // 표시한 정규형만 ID로 읽어 비슷한 제목을 가리지 않는다.

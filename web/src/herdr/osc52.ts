@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /**
  * OSC 52 (clipboard set): a pane program's "copy" button can only emit an escape
  * sequence down the pty - it cannot reach the browser clipboard by itself. xterm
@@ -24,7 +25,7 @@ export function parseOsc52(payload: string): string | null {
   let bytes: Uint8Array;
   try {
     bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "osc52.ts:28");
     return null; // invalid base64
   }
   if (bytes.byteLength > MAX_OSC52_BYTES) return null;

@@ -21,7 +21,10 @@ impl Host {
         }
         let versions = match self.db.report_ids(&r.project, &r.name) {
             Ok(versions) => versions,
-            Err(_) => return true,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                return true;
+            }
         };
         // 복원 뒤에도 완료 당시 결과와 메모는 보관에 남는다. 미확정 보관도 먼저 보호하며,
         // DB를 읽지 못하면 유일한 결과 사본을 정리하지 않는다.
@@ -221,15 +224,21 @@ impl Host {
         self.db.library_report_remove(project, name).map_err(crate::orch::internal)?;
         self.view_caps.lock().unwrap().retain(|_, c| c.project != project || c.thread != name);
         if dest.exists() {
-            std::fs::remove_dir_all(&dest).map_err(|_| err(ErrorCode::Unavailable, "보고서 사본 삭제 실패"))?;
+            std::fs::remove_dir_all(&dest).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, err(ErrorCode::Unavailable, "보고서 사본 삭제 실패"))
+            })?;
         }
         let manifest = manifest_path(&dir, name);
         if manifest.exists() || !with_report {
-            std::fs::remove_file(manifest).map_err(|_| err(ErrorCode::Unavailable, "보고서 목록 삭제 실패"))?;
+            std::fs::remove_file(manifest).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, err(ErrorCode::Unavailable, "보고서 목록 삭제 실패"))
+            })?;
         }
         let report = dir.join("threads").join(format!("{name}.md"));
         if with_report && (name.starts_with("t-") || crate::report_ids::number(name).is_some()) && report.exists() {
-            std::fs::remove_file(report).map_err(|_| err(ErrorCode::Unavailable, "보고 사본 삭제 실패"))?;
+            std::fs::remove_file(report).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, err(ErrorCode::Unavailable, "보고 사본 삭제 실패"))
+            })?;
         }
         Ok(())
     }
@@ -262,7 +271,13 @@ impl Host {
             .db
             .meta(LAST_PASS)
             .map_err(crate::orch::internal)?
-            .and_then(|n| n.parse::<u64>().ok())
+            .and_then(|n| {
+                n.parse::<u64>()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .is_some_and(|last| now >= last && now - last < EVERY_MS)
         {
             return Ok(skipped());

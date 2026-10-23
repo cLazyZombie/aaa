@@ -126,7 +126,11 @@ impl Host {
         data: Vec<u8>,
     ) -> Result<Option<Attached>, ErrorBody> {
         let r = self.attach_step(role, actor, front, pane, up, offset, total, sha256, data).await;
-        if r.is_err() || matches!(r, Ok(Some(_))) {
+        if r.as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+            || matches!(r, Ok(Some(_)))
+        {
             *up = None;
         }
         r
@@ -212,7 +216,12 @@ impl Host {
     /// pane에 경로를 넣을지 다시 확인하고 넣는다. 넣지 않으면 그 이유를 돌려준다.
     async fn attach_insert(self: &Arc<Self>, id: &str, mid: &str, path: &str) -> (bool, Option<String>) {
         let no = |s: &str| (false, Some(s.to_string()));
-        if self.check_running(id).is_err() {
+        if self
+            .check_running(id)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             return no("그 사이 세션이 끝났다");
         }
         // hook을 보내는 harness(Claude·Codex) pane은 입력창일 때만
@@ -228,7 +237,12 @@ impl Host {
                 return no("선택 창이 떠 있어 경로를 넣지 않았다");
             }
         }
-        let Ok(conn) = self.live_conn(mid) else { return no("agent와 연결이 끊겼다") };
+        let Ok(conn) = self
+            .live_conn(mid)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return no("agent와 연결이 끊겼다");
+        };
         let quoted = shell_quoted(path);
         // herdr-web-ui는 xterm `paste`로 넣는다: 프로그램이 bracketed paste를 켰을 때만 감싼다(셸·harness 같다)
         let paste = self.key_modes(id).paste(&quoted);

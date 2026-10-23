@@ -119,7 +119,16 @@ pub fn parse_numstat(out: &[u8]) -> Vec<NumstatRow> {
         } else {
             (path.to_string(), None)
         };
-        v.push((path, old, a.parse().ok(), d.parse().ok()));
+        v.push((
+            path,
+            old,
+            a.parse()
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok(),
+            d.parse()
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok(),
+        ));
     }
     v
 }

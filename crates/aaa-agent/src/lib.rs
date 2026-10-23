@@ -149,7 +149,9 @@ async fn connect_session(paths: &SessionPaths, spec: &SpecFile) -> Result<Sessio
 /// session host 프로세스가 있다(`meta.json`의 pid). 좀비이거나 pid가 다시 쓰였으면 있다고 하지만, 그때는 다시 붙을 때
 /// 받는 쪽이 없어(`ConnectError::Gone`) 안다
 fn session_host_alive(paths: &SessionPaths) -> bool {
-    util::read_json::<MetaFile>(&paths.meta()).is_ok_and(|m| util::pid_alive(m.host_pid))
+    util::read_json::<MetaFile>(&paths.meta())
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|m| util::pid_alive(m.host_pid))
 }
 
 /// 끊긴 뒤 `attempt`번째로 다시 붙기 전 간격: 0.5초부터 두 배씩, 많아야 30초(herdr `client/endpoint/supervisor.rs`
@@ -284,12 +286,22 @@ impl Agent {
         let listener = aaa_common::ipc::LocalListener::bind(&hooks::socket(&self.state)).context("hook socket")?;
         let me = self.clone();
         tokio::spawn(async move {
-            while let Ok((mut s, pid)) = listener.accept_peer().await {
+            while let Ok((mut s, pid)) = listener
+                .accept_peer()
+                .await
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "수신 루프 종료 원인"))
+            {
                 let me = me.clone();
                 tokio::spawn(async move {
                     let reply = hooks::reply(me.on_hook(&mut s, pid).await);
-                    let _ = tokio::io::AsyncWriteExt::write_all(&mut s, reply.as_bytes()).await;
-                    let _ = tokio::io::AsyncWriteExt::shutdown(&mut s).await;
+                    aaa_common::diagnostic::ignored(
+                        tokio::io::AsyncWriteExt::write_all(&mut s, reply.as_bytes()).await,
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
+                    aaa_common::diagnostic::ignored(
+                        tokio::io::AsyncWriteExt::shutdown(&mut s).await,
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                 });
             }
         });
@@ -614,7 +626,12 @@ impl Agent {
             let mut last: Option<Option<String>> = None;
             loop {
                 let wd = work_dir.clone();
-                let hash = tokio::task::spawn_blocking(move || threads::report_hash(&wd)).await.unwrap_or(None);
+                let hash = tokio::task::spawn_blocking(move || threads::report_hash(&wd))
+                    .await
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "보고 감시 task 실패 뒤 다음 사건 대기")
+                    })
+                    .unwrap_or(None);
                 if last.as_ref() != Some(&hash) {
                     me.send_host(&LinkMsg::Event(AgentEvent::ReportChanged { thread: t.clone(), hash: hash.clone() }))
                         .await;
@@ -629,16 +646,26 @@ impl Agent {
     }
 
     fn chat_spec(&self, session: Option<&str>) -> Option<SpecFile> {
-        session
-            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric()))
-            .and_then(|s| util::read_json::<SpecFile>(&SessionPaths::new(&self.state, s).spec()).ok())
+        session.filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric())).and_then(|s| {
+            util::read_json::<SpecFile>(&SessionPaths::new(&self.state, s).spec())
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
     }
 
     pub(crate) fn codex_root_for(&self, session: Option<&str>) -> PathBuf {
         let spec = self.chat_spec(session);
         spec.as_ref()
             .and_then(|s| s.account_run.as_deref())
-            .and_then(|r| aaa_session::files::account_home(&self.state, r).ok())
+            .and_then(|r| {
+                aaa_session::files::account_home(&self.state, r)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .or_else(|| {
                 spec.as_ref()?
                     .spec
@@ -653,14 +680,26 @@ impl Agent {
     pub(crate) fn claude_root_for(&self, session: Option<&str>) -> PathBuf {
         let run = session
             .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric()))
-            .and_then(|s| util::read_json::<SpecFile>(&SessionPaths::new(&self.state, s).spec()).ok())
+            .and_then(|s| {
+                util::read_json::<SpecFile>(&SessionPaths::new(&self.state, s).spec())
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|s| s.spec.harness.as_deref() == Some("claude"))
             .and_then(|s| s.account_run)
             .filter(|r| aaa_proto::account_run_parts(r).is_some_and(|(_, task)| aaa_proto::valid_thread(task)));
-        run.and_then(|r| aaa_session::files::account_home(&self.state, &r).ok())
-            .map(|h| h.with_file_name("claude-home").join("projects"))
-            .filter(|h| h.parent().is_some_and(Path::is_dir))
-            .unwrap_or_else(chat::claude_root)
+        run.and_then(|r| {
+            aaa_session::files::account_home(&self.state, &r)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .map(|h| h.with_file_name("claude-home").join("projects"))
+        .filter(|h| h.parent().is_some_and(Path::is_dir))
+        .unwrap_or_else(chat::claude_root)
     }
     fn chat_path(
         &self,
@@ -734,9 +773,24 @@ impl Agent {
                 .await
                 .unwrap_or_else(|e| (Err(e.to_string()), "unavailable".into()));
                 if resolve {
-                    resolve_at = now + if found.is_ok() { CHAT_RESOLVE_EVERY } else { CHAT_MISSING_RESOLVE_EVERY };
+                    resolve_at = now
+                        + if found
+                            .as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_ok()
+                        {
+                            CHAT_RESOLVE_EVERY
+                        } else {
+                            CHAT_MISSING_RESOLVE_EVERY
+                        };
                 }
-                let missing = found.is_ok() && seen.ends_with("\0missing");
+                let missing = found
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                    && seen.ends_with("\0missing");
                 path = Some(found);
                 if observed.as_ref() != Some(&seen) {
                     if missing {
@@ -799,7 +853,13 @@ impl Agent {
             (e.info.pid, e.info.cwd.clone())
         };
         let live = match pid {
-            Some(pid) => tokio::task::spawn_blocking(move || cwd::follow_cwd(pid)).await.ok().flatten(),
+            Some(pid) => tokio::task::spawn_blocking(move || cwd::follow_cwd(pid))
+                .await
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .flatten(),
             None => None,
         };
         let Some(dir) = live.or_else(|| spawned.map(PathBuf::from)) else {
@@ -842,7 +902,10 @@ impl Agent {
         if gone {
             let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
             for p in pumps {
-                let _ = p.try_send(PumpCmd::HostGone);
+                aaa_common::diagnostic::ignored(
+                    p.try_send(PumpCmd::HostGone),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
         }
     }
@@ -875,7 +938,12 @@ impl Agent {
     pub async fn recover(self: &Arc<Self>) -> Result<()> {
         let dir = self.state.join("sessions");
         let mut ids: Vec<String> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                e.inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+            })
             .filter(|e| e.path().join("spec.json").exists())
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
@@ -921,14 +989,21 @@ impl Agent {
         *self.term_colors.lock().unwrap() = Some(c);
         let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
         for p in pumps {
-            let _ = p.send(PumpCmd::Colors(c)).await;
+            aaa_common::diagnostic::ignored(
+                p.send(PumpCmd::Colors(c)).await,
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
     /// session host가 없는 세션의 정보(파일에서)
     fn offline_info(&self, paths: &SessionPaths, spec: &SpecFile) -> SessionInfo {
-        let meta: Option<MetaFile> = util::read_json(&paths.meta()).ok();
-        let exit: Option<ExitFile> = util::read_json(&paths.exit()).ok();
+        let meta: Option<MetaFile> = util::read_json(&paths.meta())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
+        let exit: Option<ExitFile> = util::read_json(&paths.exit())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         let state = match &exit {
             Some(x) => SessionState::Exited { code: x.code },
             None if spec.boot_id != self.boot_id => SessionState::Interrupted,
@@ -1009,7 +1084,10 @@ impl Agent {
             let colors = *self.term_colors.lock().unwrap();
             if let Some(c) = colors.filter(|_| colors_ipc) {
                 seq += 1;
-                let _ = tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await;
+                aaa_common::diagnostic::ignored(
+                    tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await,
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
             let dropped = loop {
                 let watch_at = watch.as_ref().and_then(detect::Watch::next_at);
@@ -1028,7 +1106,7 @@ impl Agent {
                                 let changed = tracker.poll(pid, &codex, &claude);
                                 (tracker, changed)
                             }).await;
-                            let Ok((tracker, changed)) = result else {
+                            let Ok((tracker, changed)) = result.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")) else {
                                 break Dropped::Lost("셸 대화 기록 조사 task가 끝났다".into());
                             };
                             shell_chat = Some(tracker);
@@ -1058,7 +1136,7 @@ impl Agent {
                         }
                         let due = watch.as_ref().and_then(detect::Watch::next_at).is_some_and(|t| t <= now);
                         if let Some((sid, body)) = watch.as_mut().filter(|_| due).and_then(|w| w.due(now))
-                            && tx.json(&SessionMsg::Req { id: sid, body }).await.is_err()
+                            && tx.json(&SessionMsg::Req { id: sid, body }).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err()
                         {
                             break Dropped::Lost("session host에 쓰지 못했다".into());
                         }
@@ -1073,7 +1151,7 @@ impl Agent {
                             let is_sub = matches!(body, SessionRequest::Subscribe { .. });
                             if matches!(body, SessionRequest::Unsubscribe) { forwarding = false; }
                             pending.insert(sid.clone(), (host_id, is_sub));
-                            if tx.json(&SessionMsg::Req { id: sid, body }).await.is_err() {
+                            if tx.json(&SessionMsg::Req { id: sid, body }).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                                 break Dropped::Lost("session host에 쓰지 못했다".into());
                             }
                         }
@@ -1081,7 +1159,7 @@ impl Agent {
                             if forwarding {
                                 forwarding = false;
                                 seq += 1;
-                                let _ = tx.json(&SessionMsg::Req { id: format!("u{seq}"), body: SessionRequest::Unsubscribe }).await;
+                                aaa_common::diagnostic::ignored(tx.json(&SessionMsg::Req { id: format!("u{seq}"), body: SessionRequest::Unsubscribe }).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
                             }
                         }
                         Some(PumpCmd::Close) | None => break Dropped::Closed,
@@ -1089,7 +1167,7 @@ impl Agent {
                         Some(PumpCmd::Colors(c)) => {
                             seq += 1;
                             if colors_ipc
-                                && tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await.is_err()
+                                && tx.json(&SessionMsg::Req { id: format!("c{seq}"), body: SessionRequest::Colors(c) }).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err()
                             {
                                 break Dropped::Lost("session host에 쓰지 못했다".into());
                             }
@@ -1099,14 +1177,14 @@ impl Agent {
                         Ok(Some(Incoming::Terminal(chunk))) => {
                             if forwarding {
                                 match self.host_tx() {
-                                    Some(h) => { if h.terminal(&chunk).await.is_err() { forwarding = false; } }
+                                    Some(h) => { if h.terminal(&chunk).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { forwarding = false; } }
                                     None => forwarding = false,
                                 }
                             }
                         }
                         Ok(Some(Incoming::Control(b))) => match serde_json::from_slice::<SessionMsg>(&b) {
                             Ok(SessionMsg::Res { id: sid, mut result }) => {
-                                if aaa_common::terminal_payload::validate_ipc_response(&mut result).is_err() {
+                                if aaa_common::terminal_payload::validate_ipc_response(&mut result).as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                                     break Dropped::Lost("IPC 터미널 본문 거부".into());
                                 }
                                 if let Some(w) = watch.as_mut().filter(|w| w.owns(&sid)) {
@@ -1478,7 +1556,7 @@ impl Agent {
             AgentRequest::DeployStatus { id } => self.deployments.status(&id).map(|job| self.deployments.response(job)),
             AgentRequest::ImageReply { request_id, result } => {
                 if let Some(tx) = self.image_waiters.lock().unwrap().remove(&request_id) {
-                    let _ = tx.send(result);
+                    aaa_common::diagnostic::ignored(tx.send(result), "수신자가 끝난 뒤에도 현재 작업은 마친다");
                 }
                 return;
             }
@@ -1489,7 +1567,12 @@ impl Agent {
             AgentRequest::AccountQuota { session, generation } => self
                 .quota_snapshot(&session, &generation)
                 .map(|snapshot| AgentResponse::AccountQuota { snapshot })
-                .map_err(|_| ErrorBody::new(ErrorCode::BadRequest, "사용량 관측을 읽지 못했다")),
+                .map_err(|source_error| {
+                    aaa_common::diagnostic::context(
+                        source_error,
+                        ErrorBody::new(ErrorCode::BadRequest, "사용량 관측을 읽지 못했다"),
+                    )
+                }),
             AgentRequest::SpawnAccount { spec, credential } => self
                 .spawn_session_inner(spec, Some(credential))
                 .await
@@ -1823,8 +1906,12 @@ impl Agent {
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
                 .and_then(|r| {
-                    r.map(AgentResponse::WorkspaceMetrics)
-                        .map_err(|_| ErrorBody::new(ErrorCode::Unavailable, "지표 수집 자료를 읽지 못했다"))
+                    r.map(AgentResponse::WorkspaceMetrics).map_err(|source_error| {
+                        aaa_common::diagnostic::context(
+                            source_error,
+                            ErrorBody::new(ErrorCode::Unavailable, "지표 수집 자료를 읽지 못했다"),
+                        )
+                    })
                 })
             }
             AgentRequest::GitQuery { cwd, query } => git_watch::query(&cwd, &query)
@@ -1847,7 +1934,10 @@ impl Agent {
             AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,
         };
         if let Some(reply) = reply {
-            let _ = reply.link(&LinkMsg::Res { id, result: direct.into() }).await;
+            aaa_common::diagnostic::ignored(
+                reply.link(&LinkMsg::Res { id, result: direct.into() }).await,
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
@@ -1945,7 +2035,14 @@ impl Agent {
                         break;
                     }
                     Some(e) if !closing => {
-                        closing = e.pump.as_ref().is_some_and(|p| p.try_send(PumpCmd::Close).is_ok());
+                        closing = e.pump.as_ref().is_some_and(|p| {
+                            p.try_send(PumpCmd::Close)
+                                .as_ref()
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                                })
+                                .is_ok()
+                        });
                     }
                     Some(_) => {}
                 }
@@ -1975,7 +2072,12 @@ impl Agent {
         };
         let result = match (pump, info) {
             (Some(p), _) => {
-                if p.send(PumpCmd::Host { host_id: id.clone(), body }).await.is_ok() {
+                if p.send(PumpCmd::Host { host_id: id.clone(), body })
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                {
                     return;
                 }
                 Err(ErrorBody::new(ErrorCode::SessionExited, "세션이 끝났다"))
@@ -1991,8 +2093,13 @@ impl Agent {
         let paths = SessionPaths::new(&self.state, &info.id);
         match body {
             SessionRequest::Subscribe { .. } => {
-                let replay = std::fs::read(paths.final_replay()).unwrap_or_default();
-                let end = util::read_json::<ExitFile>(&paths.exit()).map(|x| x.end_offset).unwrap_or(0);
+                let replay = std::fs::read(paths.final_replay())
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+                    .unwrap_or_default();
+                let end = util::read_json::<ExitFile>(&paths.exit())
+                    .map(|x| x.end_offset)
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+                    .unwrap_or(0);
                 Ok(AgentResponse::Subscribed {
                     session: info.id.clone(),
                     snapshot: Some(Snapshot {
@@ -2010,7 +2117,12 @@ impl Agent {
             SessionRequest::Unsubscribe => Ok(AgentResponse::Done),
             SessionRequest::Screen => util::read_json::<ScreenText>(&paths.final_screen())
                 .map(AgentResponse::Screen)
-                .map_err(|_| ErrorBody::new(ErrorCode::SessionExited, "마지막 화면 기록이 없다")),
+                .map_err(|source_error| {
+                    aaa_common::diagnostic::context(
+                        source_error,
+                        ErrorBody::new(ErrorCode::SessionExited, "마지막 화면 기록이 없다"),
+                    )
+                }),
             _ => Err(ErrorBody::new(ErrorCode::SessionExited, "세션이 끝났다")),
         }
     }

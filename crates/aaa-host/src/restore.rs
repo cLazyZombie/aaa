@@ -266,7 +266,14 @@ impl Host {
             if shell {
                 resume_argv(h, s)
             } else if program(&info.argv).as_deref() == Some(h.as_str())
-                || self.pane_account(id).ok().flatten().is_some_and(|r| r.harness == *h)
+                || self
+                    .pane_account(id)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+                    .is_some_and(|r| r.harness == *h)
             {
                 resume_in_place(&info.argv, h, s)
             } else {
@@ -315,7 +322,10 @@ impl Host {
             let mut bytes = shell_line(&line).into_bytes();
             bytes.push(b'\r');
             if let Ok(conn) = self.live_conn(mid) {
-                let _ = conn.request(AgentRequest::Input { session: new.clone(), data: B64(bytes) }).await;
+                aaa_common::diagnostic::ignored(
+                    conn.request(AgentRequest::Input { session: new.clone(), data: B64(bytes) }).await,
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
             }
         }
         match (plan, key) {
@@ -341,7 +351,10 @@ impl Host {
     fn note_restore(&self, id: &str, why: &str) {
         if let Some(p) = self.inner.lock().unwrap().panes.get_mut(id) {
             p.restore_error = Some(why.to_string());
-            let _ = p.events.send(crate::PaneEvent::State);
+            aaa_common::diagnostic::ignored(
+                p.events.send(crate::PaneEvent::State),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
         self.bump();
     }

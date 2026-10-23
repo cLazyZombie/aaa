@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 질문 안 자료를 같은 Markdown 파서로 찾는다. code·그림을 보고서 링크로 세지 않으며 기기·API·로컬 절대 경로는 열지 않는다.
 import { parseMarkdown, type InlineNode, type MarkdownBlock } from "./herdr/markdown.ts";
 import { appLinkOf, appRefOf, splitAppRefs } from "./appRef.ts";
@@ -24,7 +25,7 @@ export function questionMaterials({ items, body, reportId, project, base, origin
     if (ref?.kind === "report") return report(ref.target, inside?.kind === "report" ? inside.project : undefined, label);
     const local = askFileUrl(base, href);
     let url: URL;
-    try { url = new URL(local ?? href, origin); } catch { return; }
+    try { url = new URL(local ?? href, origin); } catch (ignoredError) { logIgnoredFailure(ignoredError, "questionMaterials.ts:28"); return; }
     if (!local && inside?.kind !== "view" && (url.origin === origin || !/^https?:$/.test(url.protocol))) return;
     const key = url.href;
     if (!found.has(key)) found.set(key, { key, label, kind: "url", url: local ?? url.href });

@@ -34,6 +34,7 @@ fn res_frame_within(id: String, result: Result<FrontResponse, ErrorBody>, max: u
     let FrontMsg::Res { id, result } = msg else { unreachable!() };
     // 드문 일이라 종류 이름을 얻으려고 한 번 더 직렬화한다
     let kind = serde_json::to_value(&result)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
         .and_then(|v| v.get("ok").and_then(|r| r.get("kind")).and_then(|k| k.as_str()).map(str::to_string))
         .unwrap_or_else(|| "?".into());
@@ -237,7 +238,13 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
         let (tx, mut ev) = (tx.clone(), host.layout_events.subscribe());
         tokio::spawn(async move {
             while let Ok(w) = ev.recv().await {
-                if tx.json(&FrontMsg::Event(FrontEvent::Workspace(w))).await.is_err() {
+                if tx
+                    .json(&FrontMsg::Event(FrontEvent::Workspace(w)))
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -259,32 +266,38 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     e = flow.recv() => match e {
                         Ok(e) => FrontEvent::Flow(e),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(_) => break,
+                        Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); break },
                     },
                     t = threads.recv() => match t {
                         Ok(t) => FrontEvent::Thread(Box::new(t)),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(_) => break,
+                        Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); break },
                     },
                     q = questions.recv() => match q {
                         Ok(q) => FrontEvent::Question(q),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(_) => break,
+                        Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); break },
                     },
                     n = notices.recv() => match n {
                         // 새 앱 전용 종류를 옛 CLI의 enum으로 보내지 않는다. CLI는 Welcome 경고를 읽는다.
                         Ok(n) if matches!(n.kind, aaa_proto::NoticeKind::HostIssue | aaa_proto::NoticeKind::HostRecovered | aaa_proto::NoticeKind::PostMuted | aaa_proto::NoticeKind::RolloutFinished | aaa_proto::NoticeKind::RolloutFailed) => continue,
                         Ok(n) => FrontEvent::Notice(n),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(_) => break,
+                        Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); break },
                     },
                     t = tasks.recv() => match t {
                         Ok((project, sha256)) if tasks_known => FrontEvent::Tasks { project, sha256 },
                         Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(_) => break,
+                        Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); break },
                     },
                 };
-                if tx.json(&FrontMsg::Event(ev)).await.is_err() {
+                if tx
+                    .json(&FrontMsg::Event(ev))
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -297,7 +310,21 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
             loop {
                 let ev =
                     FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(DeviceRole::Local) };
-                if tx.json(&FrontMsg::Event(ev)).await.is_err() || changed.changed().await.is_err() {
+                if tx
+                    .json(&FrontMsg::Event(ev))
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                    || changed
+                        .changed()
+                        .await
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_err()
+                {
                     break;
                 }
             }
@@ -322,7 +349,12 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                         let r = host
                             .attach_chunk(role, &actor, &front, &pane, &mut upload, offset, total, &sha256, data.0)
                             .await;
-                        upload_failed = r.is_err();
+                        upload_failed = r
+                            .as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_err();
                         r.map(|a| match a {
                             Some(a) => FrontResponse::Attached { path: a.path, inserted: a.inserted, note: a.note },
                             None => FrontResponse::Done,
@@ -331,7 +363,15 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     body => host.call_from(role, &actor, Some(&front), body).await,
                 };
                 for id in ids {
-                    if tx.control(res_frame(id, result.clone())).await.is_err() {
+                    if tx
+                        .control(res_frame(id, result.clone()))
+                        .await
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -356,7 +396,10 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     waits.retain(|t| !t.is_finished());
                     waits.push(tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
-                        let _ = tx.control(res_frame(id, result)).await;
+                        aaa_common::diagnostic::ignored(
+                            tx.control(res_frame(id, result)).await,
+                            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                        );
                     }));
                 }
                 body @ (FrontRequest::PaneInput { .. }
@@ -371,13 +414,19 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                 | FrontRequest::PaneAttach { .. }
                 | FrontRequest::PaneRelease { .. }
                 | FrontRequest::PaneKill { .. }) => {
-                    let _ = ordered_tx.send((id, body));
+                    aaa_common::diagnostic::ignored(
+                        ordered_tx.send((id, body)),
+                        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                    );
                 }
                 body => {
                     let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
                     tokio::spawn(async move {
                         let result = host.call_from(role, &actor, Some(&front), body).await;
-                        let _ = tx.control(res_frame(id, result)).await;
+                        aaa_common::diagnostic::ignored(
+                            tx.control(res_frame(id, result)).await,
+                            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                        );
                     });
                 }
             }
@@ -411,6 +460,9 @@ fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
         Ok(_) => Ok(ReqFrame::Other),
         Err(e) => {
             let id = serde_json::from_slice::<serde_json::Value>(b)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
                 .and_then(|v| v.get("id")?.as_str().map(str::to_string));
             match id {
@@ -445,7 +497,11 @@ impl OrderedInput {
         if let FrontRequest::PaneInput { pane, data } = &mut body {
             // frame 상한보다 충분히 작게 묶는다. 너무 큰 붙여넣기도 다음 요청을 삼키지 않는다.
             while data.0.len() < 64 * 1024 && ids.len() < 256 {
-                let Ok((id, next)) = self.rx.try_recv() else { break };
+                let Ok((id, next)) = self.rx.try_recv().inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                }) else {
+                    break;
+                };
                 match next {
                     FrontRequest::PaneInput { pane: p, data: d }
                         if p == *pane && data.0.len() + d.0.len() <= 64 * 1024 =>

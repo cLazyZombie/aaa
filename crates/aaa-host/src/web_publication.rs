@@ -62,12 +62,30 @@ impl Host {
     }
 
     fn publication_status(&self, out: Option<&tailscale::TsOutput>) -> PublishState {
-        let selected = self.db.meta("publish_selected_port").ok().flatten().and_then(|s| s.parse::<u16>().ok());
+        let selected = self
+            .db
+            .meta("publish_selected_port")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .and_then(|s| {
+                s.parse::<u16>()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            });
         let plan = tailscale::installation_plan(out, self.web_port(), &self.cfg.web.publish_ports, selected);
         let known = plan.state == "running"
             && out
                 .and_then(|o| o.serve.as_deref())
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .and_then(|s| {
+                    serde_json::from_str::<serde_json::Value>(s)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .is_some_and(|v| v.is_object() || v.is_null());
         // 없음도 관측한 상태다. origin 삭제와 관측 표지는 한 transaction으로 기록한다.
         let observed = !known
@@ -77,13 +95,33 @@ impl Host {
                     plan.serving.as_ref().map(|(url, _)| url.to_ascii_lowercase()).as_deref(),
                     plan.dns_name.as_deref(),
                 )
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
                 .is_ok();
-        let pending = self.pending_publication().ok().flatten();
+        let pending = self
+            .pending_publication()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten();
         PublishState {
             tailscale: plan.state.into(),
             dns_name: plan.dns_name,
             url: plan.serving.map(|(url, _)| url),
-            owned_port: self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok()),
+            owned_port: self
+                .db
+                .meta("publish_port")
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .flatten()
+                .and_then(|p| {
+                    p.parse()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                }),
             web_port: self.web_port(),
             message: if let Some(p) = pending {
                 Some(format!("공개 포트 전환이 남아 있다: aaa web publish --port {}", p.new_port))
@@ -130,10 +168,18 @@ impl Host {
     pub(crate) async fn publish_off(&self) -> Result<PublishState, ErrorBody> {
         let _gate = self.publish_gate.lock().await;
         self.no_pending_publication()?;
-        let port =
-            self.db.meta("publish_port").map_err(unavailable)?.and_then(|p| p.parse().ok()).ok_or_else(|| {
-                err(ErrorCode::NotFound, "aaa가 만든 공개가 없다(다른 서비스의 매핑은 건드리지 않는다)")
-            })?;
+        let port = self
+            .db
+            .meta("publish_port")
+            .map_err(unavailable)?
+            .and_then(|p| {
+                p.parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .ok_or_else(|| err(ErrorCode::NotFound, "aaa가 만든 공개가 없다(다른 서비스의 매핑은 건드리지 않는다)"))?;
         let before = exact(Native.read().await.as_ref(), self.web_port(), port)?;
         if before.reused {
             Native.off(port).await.map_err(unavailable)?;
@@ -167,10 +213,18 @@ impl Host {
             }
             pending
         } else {
-            let old_port =
-                self.db.meta("publish_port").map_err(unavailable)?.and_then(|p| p.parse().ok()).ok_or_else(|| {
-                    err(ErrorCode::NotFound, "aaa가 만든 공개가 없다. 먼저 aaa web publish로 공개한다")
-                })?;
+            let old_port = self
+                .db
+                .meta("publish_port")
+                .map_err(unavailable)?
+                .and_then(|p| {
+                    p.parse()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
+                .ok_or_else(|| err(ErrorCode::NotFound, "aaa가 만든 공개가 없다. 먼저 aaa web publish로 공개한다"))?;
             let old = exact(out.as_ref(), self.web_port(), old_port)?;
             if old_port == port && target.reused {
                 return Ok(self.publication_status(out.as_ref()));

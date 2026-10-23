@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // pane이 열리는 보기: 대화(chat) 또는 터미널(herdr-web-ui `src/lib/paneLens.ts` `defaultLens`·`PaneLenses`와 App.tsx `storedView`,
 // settings.ts `forgetPaneViews`). 손으로 고른 보기는 이 기기에 pane마다 남고 늘 이긴다. 고른 적이 없으면 설정 「패널 기본 화면」의
 // 기본이고, pane에 agent가 있는지 안 뒤로는 이 화면 동안 그 보기로 둔다(agent가 뜨거나 끝나도 쓰던 보기를 바꾸지 않는다).
@@ -56,7 +57,7 @@ export function pickedLens(key: string): PaneLens | null {
   try {
     const stored = localStorage.getItem(`${PANE_VIEW_KEY_PREFIX}${key}`);
     return stored === "chat" || stored === "terminal" ? stored : null;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "paneLens.ts:60");
     return null;
   }
 }
@@ -64,7 +65,7 @@ export function pickedLens(key: string): PaneLens | null {
 export function rememberLens(key: string, lens: PaneLens): void {
   try {
     localStorage.setItem(`${PANE_VIEW_KEY_PREFIX}${key}`, lens);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "paneLens.ts:68");
     // 저장이 막혀도 이 화면 동안은 고른 대로 둔다
   }
 }
@@ -80,7 +81,7 @@ export function forgetPaneViews(given?: Pick<Storage, "length" | "key" | "remove
       if (key?.startsWith(PANE_VIEW_KEY_PREFIX)) keys.push(key);
     }
     for (const key of keys) storage.removeItem(key);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "paneLens.ts:84");
     // 막힌 곳에는 잊을 것도 없다
   }
   return keys.length;

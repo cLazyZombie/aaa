@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 명령 팔레트의 검색·묶음(herdr-web-ui aa624cb src/lib/paletteSearch.ts·machinePalette.ts·paletteSettings.ts를 aaa 목록에 맞춰 옮김).
 // 참고는 PC마다 workspace 묶음에 pane 줄을 둔다. aaa의 workspace 자리는 머신 안 프로젝트(thread 줄)와 thread에 딸리지 않은
 // pane 묶음이고, 줄 하나는 목록 줄 하나다(sidebarModel `rosterRows`: thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고를 연다).
@@ -200,7 +201,7 @@ export function loadRecent(read: (key: string) => string | null): string[] {
     const value: unknown = JSON.parse(read(RECENT_KEY) ?? "[]");
     if (!Array.isArray(value)) return [];
     return [...new Set(value.filter((item): item is string => typeof item === "string"))].slice(0, RECENT_LIMIT);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "palette.ts:204");
     return [];
   }
 }

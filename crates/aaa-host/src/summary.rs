@@ -241,9 +241,23 @@ pub(crate) fn split_meta(file: &str) -> (Option<Meta>, &str) {
     let mut seen = None;
     for kv in body.split_whitespace() {
         match kv.split_once('=') {
-            Some(("at", v)) => at = v.parse().ok(),
+            Some(("at", v)) => {
+                at = v
+                    .parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }
             Some(("by", v)) => by = Some(v.to_string()),
-            Some(("seen", v)) => seen = v.parse().ok(),
+            Some(("seen", v)) => {
+                seen = v
+                    .parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }
             _ => {}
         }
     }
@@ -354,7 +368,10 @@ fn report_progress(report: &str) -> Option<Vec<SummaryStep>> {
             }
         }
     }
-    let steps = parse(&section).ok()?.progress;
+    let steps = parse(&section)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        .progress;
     (!steps.is_empty()).then_some(steps)
 }
 
@@ -372,7 +389,13 @@ fn progress_path(dir: &Path, id: &str) -> std::path::PathBuf {
 }
 
 fn read_progress(dir: &Path, id: &str) -> Option<ReportProgress> {
-    serde_json::from_slice(&std::fs::read(progress_path(dir, id)).ok()?).ok()
+    serde_json::from_slice(
+        &std::fs::read(progress_path(dir, id))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?,
+    )
+    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+    .ok()
 }
 
 fn effective_meta(meta: Option<Meta>, progress: Option<&ReportProgress>) -> Option<Meta> {
@@ -450,7 +473,10 @@ impl Host {
         if let Some(c) = self.summary_marks.lock().unwrap().get(&key) {
             return Some(c.mark());
         }
-        let dir = self.project_dir(project).ok()?;
+        let dir = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let c = read_cache(&dir, id);
         Some(self.summary_marks.lock().unwrap().entry(key).or_insert(c).mark())
     }
@@ -476,7 +502,13 @@ impl Host {
         self.load(project, id)?;
         let dir = self.project_dir(project)?;
         let _guard = self.follow_up_lock.lock().unwrap();
-        let read = |name: String| std::fs::read_to_string(dir.join("threads").join(name)).ok();
+        let read = |name: String| {
+            std::fs::read_to_string(dir.join("threads").join(name))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        };
         let file = read(format!("{id}.summary.md"));
         let task = read(format!("{id}.task.md")).unwrap_or_default();
         let report = read(format!("{id}.md")).unwrap_or_default();
@@ -488,7 +520,16 @@ impl Host {
             }
             None => (None, None),
         };
-        let mut parsed = text.as_deref().and_then(|t| parse(t).ok()).unwrap_or_default();
+        let mut parsed = text
+            .as_deref()
+            .and_then(|t| {
+                parse(t)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .unwrap_or_default();
         let progress = read_progress(&dir, id);
         let meta = effective_meta(meta, progress.as_ref());
         if let Some(p) = progress {
@@ -537,7 +578,9 @@ impl Host {
         {
             // 지시 덧붙이기와 엇갈리지 않게(그 사이에 온 지시를 「본 것」으로 세지 않는다)
             let _guard = self.follow_up_lock.lock().unwrap();
-            let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).unwrap_or_default();
+            let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md")))
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+                .unwrap_or_default();
             let total = follow_ups(&task).len() as u32;
             let at_ms = aaa_common::util::now_ms().max(read_cache(&dir, id).at_ms.unwrap_or(0).saturating_add(1));
             let meta = Meta { at_ms, by, seen: total };
@@ -548,7 +591,10 @@ impl Host {
             );
         }
         self.db.audit(actor, "thread_summary_set", &format!("{project}/{id} {} bytes", text.len()));
-        let _ = self.thread_events.send(self.thread_view(&rec));
+        aaa_common::diagnostic::ignored(
+            self.thread_events.send(self.thread_view(&rec)),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
         self.thread_summary(project, id)
     }
 
@@ -563,9 +609,14 @@ impl Host {
 }
 
 fn read_cache(dir: &Path, id: &str) -> MarkCache {
-    let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md"))).unwrap_or_default();
+    let task = std::fs::read_to_string(dir.join("threads").join(format!("{id}.task.md")))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default();
     let total = follow_ups(&task).len() as u32;
-    let meta = std::fs::read_to_string(summary_path(dir, id)).ok().and_then(|f| split_meta(&f).0);
+    let meta = std::fs::read_to_string(summary_path(dir, id))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|f| split_meta(&f).0);
     let progress = read_progress(dir, id);
     match effective_meta(meta, progress.as_ref()) {
         Some(m) => MarkCache { at_ms: Some(m.at_ms), seen: m.seen, total },

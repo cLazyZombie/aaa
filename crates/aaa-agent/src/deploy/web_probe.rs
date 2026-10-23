@@ -21,7 +21,10 @@ pub(super) async fn until_answer(listen: String) {
 }
 
 pub(super) async fn answers(listen: &str, limit: Duration) -> bool {
-    let Ok(addr) = listen.parse::<SocketAddr>() else {
+    let Ok(addr) = listen
+        .parse::<SocketAddr>()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
         return false;
     };
     // 모든 주소에 연 웹도 같은 머신에서는 loopback으로 묻는다
@@ -31,19 +34,36 @@ pub(super) async fn answers(listen: &str, limit: Duration) -> bool {
     } else {
         addr
     };
-    tokio::time::timeout(limit, ask(target)).await.ok().flatten().is_some_and(|reply| unauthorized(&reply))
+    tokio::time::timeout(limit, ask(target))
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten()
+        .is_some_and(|reply| unauthorized(&reply))
 }
 
 async fn ask(addr: SocketAddr) -> Option<Vec<u8>> {
-    let mut stream = tokio::net::TcpStream::connect(addr).await.ok()?;
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     // host는 Host 헤더가 정확히 `127.0.0.1:<연 port>`일 때만 loopback 요청으로 받는다(DNS rebinding 방어)
     let request = format!(
         "GET /api/v1/me HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
         addr.port()
     );
-    stream.write_all(request.as_bytes()).await.ok()?;
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let mut reply = Vec::new();
-    stream.take(MAX_REPLY).read_to_end(&mut reply).await.ok()?;
+    stream
+        .take(MAX_REPLY)
+        .read_to_end(&mut reply)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     Some(reply)
 }
 

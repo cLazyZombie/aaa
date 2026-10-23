@@ -216,10 +216,16 @@ impl Host {
             let deploy = common_rule.as_ref().is_some_and(|r| matches!(r.action, crate::automation::Action::Deploy));
             let red = policy.alert_kinds.contains(&n.kind.as_str());
             if red && !n.record_only && !deploy {
-                let existing = n
-                    .append
-                    .as_ref()
-                    .and_then(|id| self.db.inbox_list(Some(p), true).ok()?.into_iter().find(|i| &i.id == id));
+                let existing = n.append.as_ref().and_then(|id| {
+                    self.db
+                        .inbox_list(Some(p), true)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?
+                        .into_iter()
+                        .find(|i| &i.id == id)
+                });
                 if let Some(mut item) = existing {
                     if !item.body.contains(&n.id) {
                         item.body.push_str(&format!("\n\n{}\n{}", n.id, n.text));

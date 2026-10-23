@@ -142,6 +142,9 @@ impl Agent {
             }
             let result = tokio::time::timeout(Duration::from_millis(2500), rx)
                 .await
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
                 .and_then(Result::ok)
                 .unwrap_or_else(|| PostResult::Queued { post_id: id.clone() });
@@ -156,24 +159,34 @@ impl Agent {
         }
         let _gate = self.post_gate.lock().unwrap();
         let path = self.post_out().join(format!("{id}.json"));
-        let Ok(p) = util::read_json::<Pending>(&path) else { return };
+        let Ok(p) = util::read_json::<Pending>(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let receipt = self.post_receipt(&p.session, id);
         let stored = util::ensure_private_dir(receipt.parent().unwrap()).and_then(|_| {
             util::write_json(&receipt, &Receipt { input_sha: input_sha(&p.input), result: result.clone() })
         });
-        if stored.is_err() {
+        if stored
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             return;
         }
-        let _ = std::fs::remove_file(path);
+        aaa_common::diagnostic::ignored(std::fs::remove_file(path), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         if let Some(tx) = self.post_waiters.lock().unwrap().remove(id) {
-            let _ = tx.send(result);
+            aaa_common::diagnostic::ignored(tx.send(result), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
     }
     pub(crate) async fn replay_posts(&self) {
         if *self.host_post.lock().unwrap() != Some(true) {
             return;
         }
-        let Ok(entries) = std::fs::read_dir(self.post_out()) else {
+        let Ok(entries) = std::fs::read_dir(self.post_out())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
             return;
         };
         let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();

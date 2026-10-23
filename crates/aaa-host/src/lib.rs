@@ -214,12 +214,17 @@ impl AgentConn {
                 o.into_result()
             }
             Ok(Err(e)) => Err(e),
-            Err(_) => {
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                 timed_out = true;
                 self.pending.lock().unwrap().remove(&id);
                 // 무슨 요청이었는지 남긴다(op과 세션만: 입력 바이트 같은 내용은 남기지 않는다)
                 let what = match &msg {
-                    LinkMsg::Req { body, .. } => serde_json::to_value(body).ok(),
+                    LinkMsg::Req { body, .. } => serde_json::to_value(body)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok(),
                     _ => None,
                 };
                 let field =
@@ -241,9 +246,9 @@ impl AgentConn {
             host.agent_request_finished(timed_out, responded);
         }
         if let Some((session, bytes, true)) = &input {
-            tracing::debug!(request = %id, %session, bytes, ok = result.is_ok(), "pane 입력: host 확인");
+            tracing::debug!(request = %id, %session, bytes, ok = result.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok(), "pane 입력: host 확인");
         } else if let Some((session, bytes, _)) = &input {
-            tracing::info!(request = %id, %session, bytes, ok = result.is_ok(), "pane 입력: host 확인");
+            tracing::info!(request = %id, %session, bytes, ok = result.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok(), "pane 입력: host 확인");
         }
         result
     }
@@ -256,7 +261,10 @@ impl AgentConn {
             pending.drain().collect()
         };
         for (_, tx) in drained {
-            let _ = tx.send(Outcome::Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")));
+            aaa_common::diagnostic::ignored(
+                tx.send(Outcome::Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다"))),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 }
@@ -301,7 +309,13 @@ impl MachineBuild {
             software: Some(hello.software.clone()),
             sha256: hello.sha256.clone(),
             // agent가 정한 꼴(`pass`·`reasons`)만 읽는다. 모르는 꼴이면 보이지 않는다
-            selfcheck: hello.selfcheck.as_ref().and_then(|v| serde_json::from_value(v.clone()).ok()),
+            selfcheck: hello.selfcheck.as_ref().and_then(|v| {
+                serde_json::from_value(v.clone())
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }),
         }
     }
 }
@@ -753,7 +767,18 @@ impl Host {
                 Err(e) => tracing::warn!(%name, "workspace 기록을 읽지 못했다: {e}"),
             }
         }
-        let web_port = cfg.web.listen.rsplit_once(':').and_then(|(_, p)| p.parse().ok()).unwrap_or(0);
+        let web_port = cfg
+            .web
+            .listen
+            .rsplit_once(':')
+            .and_then(|(_, p)| {
+                p.parse()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .unwrap_or(0);
         let dev_mode = cfg.local_agent.mode == LocalAgentMode::Child;
         let host = Arc::new(Host {
             health: Mutex::new(supervisor::Health::load(&db)),
@@ -900,7 +925,7 @@ impl Host {
 
     /// hello를 받아들였다: 머신·pane 목록을 갱신하고 모든 세션을 구독한다.
     pub fn agent_connected(self: &Arc<Self>, hello: &aaa_proto::AgentHello, local: bool, conn: AgentConn) {
-        let _ = self.db.touch_machine(hello);
+        aaa_common::diagnostic::ignored(self.db.touch_machine(hello), "보조 작업 실패 뒤 기존 처리를 계속한다");
         let generation = conn.generation;
         // 연결을 공개하기 전에 상태 복원 울타리를 친다. host 재시작 뒤에는 실행 중인 pane도 아직 agent=None이다.
         // Hello의 모든 harness 상태를 재생하기 전 ticker가 보면 쉼(no agent)라는 거짓 전이가 생긴다.
@@ -975,7 +1000,10 @@ impl Host {
                 if let Some(m) = p.mirror.as_mut() {
                     m.synced = false;
                 }
-                let _ = p.events.send(PaneEvent::State);
+                aaa_common::diagnostic::ignored(
+                    p.events.send(PaneEvent::State),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
             subscribe = hello
                 .sessions
@@ -1030,7 +1058,7 @@ impl Host {
             if let Some(mm) = p.mirror.as_mut() {
                 mm.synced = false;
             }
-            let _ = p.events.send(PaneEvent::State);
+            aaa_common::diagnostic::ignored(p.events.send(PaneEvent::State), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
         drop(i);
         self.chat_machine_gone(machine_id);
@@ -1067,7 +1095,10 @@ impl Host {
                 let mut vt = Vt::new(s.rows, s.cols);
                 vt.feed(&s.replay.0);
                 p.mirror = Some(Mirror { vt, offset: s.offset, synced: true, source_more: s.history_more });
-                let _ = p.events.send(PaneEvent::Reset);
+                aaa_common::diagnostic::ignored(
+                    p.events.send(PaneEvent::Reset),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
             None => match p.mirror.as_mut() {
                 Some(m) if m.offset == offset => m.synced = true,
@@ -1096,7 +1127,10 @@ impl Host {
                 let start = m.offset;
                 m.vt.feed(&data);
                 m.offset = end;
-                let _ = p.events.send(PaneEvent::Output(start, Arc::new(data)));
+                aaa_common::diagnostic::ignored(
+                    p.events.send(PaneEvent::Output(start, Arc::new(data))),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
                 None
             }
         };
@@ -1132,7 +1166,7 @@ impl Host {
             }
             let exited = exited_by_itself(&p.info, &info, p.kill_sent);
             p.info = info.clone();
-            let _ = p.events.send(PaneEvent::State);
+            aaa_common::diagnostic::ignored(p.events.send(PaneEvent::State), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             exited
         };
         if closing {
@@ -1219,7 +1253,13 @@ impl Host {
             p.info
                 .cwd
                 .as_deref()
-                .and_then(|cwd| std::fs::canonicalize(cwd).ok())
+                .and_then(|cwd| {
+                    std::fs::canonicalize(cwd)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .and_then(|cwd| projects.iter().find(|(_, dir)| *dir == cwd).map(|(name, _)| name.clone()))
         } else {
             None
@@ -1256,7 +1296,14 @@ impl Host {
         };
         // 상태 잠금을 잡은 채 DB를 조회하지 않는다.
         for pane in &mut v {
-            pane.account = self.pane_account(&pane.id).ok().flatten().map(|a| a.account);
+            pane.account = self
+                .pane_account(&pane.id)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .flatten()
+                .map(|a| a.account);
         }
         // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
@@ -1270,7 +1317,12 @@ impl Host {
             let i = self.inner.lock().unwrap();
             i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
         }?;
-        view.account = self.pane_account(id).ok().flatten().map(|a| a.account);
+        view.account = self
+            .pane_account(id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .map(|a| a.account);
         Some(view)
     }
 
@@ -1278,7 +1330,14 @@ impl Host {
         self.project_directories()
             .into_iter()
             .filter(|(name, _)| self.project_status(name) != aaa_proto::ProjectStatus::Archived)
-            .filter_map(|(name, dir)| std::fs::canonicalize(dir).ok().map(|dir| (name, dir)))
+            .filter_map(|(name, dir)| {
+                std::fs::canonicalize(dir)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .map(|dir| (name, dir))
+            })
             .collect()
     }
 
@@ -1442,7 +1501,12 @@ impl Host {
         let req = if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::MachineSetupApply { .. }) {
             req
         } else {
-            aaa_common::redact::json(req).map_err(|_| err(ErrorCode::BadRequest, "요청 가림 실패로 처리를 거부했다"))?
+            aaa_common::redact::json(req).map_err(|source_error| {
+                aaa_common::diagnostic::context(
+                    source_error,
+                    err(ErrorCode::BadRequest, "요청 가림 실패로 처리를 거부했다"),
+                )
+            })?
         };
         // 기기·머신 신뢰와 공개 범위는 사람이 바꾼다. coordinator도 Local이지만 세션 안이다.
         if matches!(
@@ -1536,7 +1600,9 @@ impl Host {
             match self.instance_project() {
                 Ok(p) => *project = p,
                 Err(e) if needs_project => return Err(e),
-                Err(_) => {}
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                }
             }
         }
         // 보호 판정도 생략한 프로젝트를 채운 뒤에 한다(일괄 변환은 프로젝트 파일을 읽는다).
@@ -2419,7 +2485,10 @@ impl Host {
                     i.machines.remove(&id).and_then(|m| m.conn)
                 };
                 if let Some(c) = conn {
-                    let _ = c.tx.json(&LinkMsg::Reject(err(ErrorCode::NotEnrolled, "등록이 폐기됐다"))).await;
+                    aaa_common::diagnostic::ignored(
+                        c.tx.json(&LinkMsg::Reject(err(ErrorCode::NotEnrolled, "등록이 폐기됐다"))).await,
+                        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                    );
                     c.fail_all();
                 }
                 self.db.audit(actor, "machine_revoke", &name);
@@ -2527,7 +2596,7 @@ impl Host {
                 return;
             }
             p.lease = to;
-            let _ = p.events.send(PaneEvent::State);
+            aaa_common::diagnostic::ignored(p.events.send(PaneEvent::State), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
         self.bump();
         // 보는 웹 화면이 그 pane을 쓰기 시작하면 봤다(seen.rs).
@@ -2690,7 +2759,10 @@ impl Host {
         }
         // 데려온 thread는 그 pane이 정본이다(다시 띄울 launch가 없다): 새 pane이 대신하면 thread도 따라간다
         if let Some(r) = self.thread_of_pane(old).filter(|r| r.kind == aaa_proto::ThreadKind::Adopted) {
-            let _ = self.update_rec(&r.project, &r.id, |x| x.pane = Some(new.to_string()));
+            aaa_common::diagnostic::ignored(
+                self.update_rec(&r.project, &r.id, |x| x.pane = Some(new.to_string())),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         {
             let mut ws = self.workspaces.lock().unwrap();
@@ -2745,7 +2817,10 @@ impl Host {
                 tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
             }
             self.db.audit(actor, "workspace_close", &name);
-            let _ = self.layout_events.send(Workspace { name, tabs: vec![] });
+            aaa_common::diagnostic::ignored(
+                self.layout_events.send(Workspace { name, tabs: vec![] }),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
@@ -2784,7 +2859,7 @@ impl Host {
             tracing::warn!(workspace = %w.name, "workspace 저장 실패: {e}");
         }
         self.workspaces.lock().unwrap().insert(w.name.clone(), w.clone());
-        let _ = self.layout_events.send(w.clone());
+        aaa_common::diagnostic::ignored(self.layout_events.send(w.clone()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     }
 
     async fn layout_apply(
@@ -3019,9 +3094,17 @@ impl Host {
             if has_role || elsewhere {
                 continue;
             }
-            let Ok(conn) = self.live_conn(&mid) else { continue };
+            let Ok(conn) = self.live_conn(&mid).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if running {
-                let Ok(rx) = self.pane_events(id) else { continue };
+                let Ok(rx) = self.pane_events(id).inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                }) else {
+                    continue;
+                };
                 self.db.audit(actor, "pane_kill", id);
                 if let Err(e) = self.kill_session(&conn, id).await {
                     tracing::warn!(pane = %id, "닫으며 끝내지 못했다: {}", e.message);
@@ -3043,7 +3126,10 @@ impl Host {
 
     /// pane이 들어 있는 workspace(main을 먼저). layout 요청에 workspace를 주지 않으면 이것을 쓴다(herdr는 pane ID가 workspace를 정한다).
     pub fn workspace_of_pane(&self, pane: &str) -> Option<String> {
-        let (id, _) = self.resolve_pane(pane).ok()?;
+        let (id, _) = self
+            .resolve_pane(pane)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let ws = self.workspaces.lock().unwrap();
         if ws.get(DEFAULT_WORKSPACE).is_some_and(|w| aaa_proto::layout::ws_contains(w, &id)) {
             return Some(DEFAULT_WORKSPACE.to_string());
@@ -3091,7 +3177,10 @@ impl Host {
         let panes: Vec<String> = w.tabs.iter().flat_map(|t| aaa_proto::layout::leaves(&t.root)).collect();
         self.close_panes(&panes, name, actor).await;
         self.db.audit(actor, "workspace_close", name);
-        let _ = self.layout_events.send(Workspace { name: name.to_string(), tabs: vec![] });
+        aaa_common::diagnostic::ignored(
+            self.layout_events.send(Workspace { name: name.to_string(), tabs: vec![] }),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
         Ok(FrontResponse::Workspaces { workspaces: self.workspace_summaries() })
     }
 
@@ -3110,7 +3199,10 @@ impl Host {
         if let Err(e) = self.db.delete_workspace(name) {
             tracing::warn!(workspace = %name, "workspace 지우기 실패: {e}");
         }
-        let _ = self.layout_events.send(Workspace { name: name.to_string(), tabs: vec![] });
+        aaa_common::diagnostic::ignored(
+            self.layout_events.send(Workspace { name: name.to_string(), tabs: vec![] }),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
         w.name = to.to_string();
         self.save_workspace(&w);
         self.db.audit(actor, "workspace_rename", &format!("{name} -> {to}"));
@@ -3129,7 +3221,10 @@ impl Host {
             "home" => return None,
             path => return Some(path.to_string()),
         }
-        let (src, _) = self.resolve_pane(from?).ok()?;
+        let (src, _) = self
+            .resolve_pane(from?)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let (conn, launch) = {
             let i = self.inner.lock().unwrap();
             let p = i.panes.get(&src)?;
@@ -3283,7 +3378,12 @@ impl Host {
                     &p.machine_id,
                     name,
                 )
-                .map_err(|_| err(ErrorCode::Forbidden, "설치 등록의 기존 신원·폐기 상태가 다릅니다"))?;
+                .map_err(|source_error| {
+                    aaa_common::diagnostic::context(
+                        source_error,
+                        err(ErrorCode::Forbidden, "설치 등록의 기존 신원·폐기 상태가 다릅니다"),
+                    )
+                })?;
         } else {
             self.db
                 .upsert_machine(&p.machine_id, name, Some(&p.fingerprint), false)
@@ -3291,7 +3391,7 @@ impl Host {
         }
         self.machine_registered(&p.machine_id, name);
         if let Some(tx) = p.accept {
-            let _ = tx.send(());
+            aaa_common::diagnostic::ignored(tx.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
         self.db.audit(actor, "enroll_approve", name);
         drop(e);
@@ -3366,11 +3466,15 @@ impl Host {
 
     /// cookie token의 기기. 들어올 때마다 「마지막으로 본 때」를 1분에 한 번까지 적는다(참고 `match`)
     pub fn device_role(&self, token: &str) -> Option<(String, DeviceRole)> {
-        let d = self.db.device_by_token_hash(&token_hash(token)).ok()??;
+        let d = self
+            .db
+            .device_by_token_hash(&token_hash(token))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()??;
         let now = util::now_ms();
         if d.last_seen_ms.is_none_or(|seen| now.saturating_sub(seen) >= DEVICE_SEEN_WRITE_MS) {
             // 기록은 입장을 막지 않는다
-            let _ = self.db.device_seen(&d.id, now);
+            aaa_common::diagnostic::ignored(self.db.device_seen(&d.id, now), "보조 작업 실패 뒤 기존 처리를 계속한다");
         }
         let role = if d.role == "reader" { DeviceRole::Reader } else { DeviceRole::Controller };
         Some((d.id, role))
@@ -3381,7 +3485,10 @@ impl Host {
         let done = self.db.revoke_device(id).map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
         if done {
             self.revoked_devices.lock().unwrap().insert(id.to_string());
-            let _ = self.device_revoked.send(id.to_string());
+            aaa_common::diagnostic::ignored(
+                self.device_revoked.send(id.to_string()),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
             self.bump();
         }
         Ok(done)
@@ -3416,7 +3523,7 @@ impl Host {
 
     /// 공개 주소를 tailscale에서 다시 읽는다(host 시작 때: 지난 실행 뒤 serve 포트가 바뀌었을 수 있다)
     pub async fn refresh_publish(&self) {
-        let _ = self.publish_status().await;
+        self.publish_status().await;
     }
 
     /// host와 같은 머신의 agent인가(brief의 uploads 주석)
@@ -3453,14 +3560,36 @@ pub(crate) fn test_localhost_public() -> bool {
 /// 공개 origin. 아직 serve 상태를 한 번도 읽지 못한 옛 DB만 publish_port·이름으로 대신한다.
 /// 매핑 없음도 관측한 상태이므로 publish_observed 뒤에는 옛 포트를 되살리지 않는다.
 pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
-    if let Some(o) = db.meta("publish_origin").ok().flatten() {
+    if let Some(o) = db
+        .meta("publish_origin")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten()
+    {
         return Some(o);
     }
-    if db.meta("publish_observed").ok().flatten().is_some() {
+    if db
+        .meta("publish_observed")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten()
+        .is_some()
+    {
         return None;
     }
-    let dns = db.meta("publish_dns").ok().flatten()?;
-    let port = db.meta("publish_port").ok().flatten()?.parse().ok()?;
+    let dns = db
+        .meta("publish_dns")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten()?;
+    let port = db
+        .meta("publish_port")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten()?
+        .parse()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
 }
 
@@ -3526,7 +3655,7 @@ async fn run_host(
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
-    let _ = host.config_dir.set(config_dir.clone());
+    aaa_common::diagnostic::ignored(host.config_dir.set(config_dir.clone()), "보조 작업 실패 뒤 기존 처리를 계속한다");
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
     // 한 host는 프로젝트 하나(plan §8.283): 입구를 열기 전에 본다. 보관 상태가 DB에 있어 open 뒤에야 셀 수 있다
     match host.sole_project() {
@@ -3555,7 +3684,7 @@ async fn run_host(
     host.start_ticker();
     host.start_notifier();
     if let Some(ready) = ready {
-        let _ = ready.send(());
+        aaa_common::diagnostic::ignored(ready.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     }
     if host.cfg.local_agent.mode == LocalAgentMode::Child {
         let h = host.clone();
@@ -3605,7 +3734,7 @@ fn spawn_local_agent(state_root: &std::path::Path) -> Result<()> {
     let mut child = cmd.spawn()?;
     tracing::info!(pid = child.id(), "개발 모드: 로컬 agent를 띄웠다");
     std::thread::spawn(move || {
-        let _ = child.wait();
+        aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     });
     Ok(())
 }
@@ -3622,7 +3751,7 @@ pub async fn shutdown_signal() {
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        aaa_common::diagnostic::ignored(tokio::signal::ctrl_c().await, "보조 작업 실패 뒤 기존 처리를 계속한다");
     }
 }
 
@@ -3637,7 +3766,10 @@ mod pairing_tests {
     struct Tmp(PathBuf);
     impl Drop for Tmp {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&self.0),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
     }
 
@@ -3805,9 +3937,19 @@ mod pairing_tests {
         let (h, _t) = host();
         let now = Instant::now();
         let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
-        assert!(h.redeem_pairing_at(&code, "", now + PAIR_CODE_TTL).is_err());
+        assert!(
+            h.redeem_pairing_at(&code, "", now + PAIR_CODE_TTL)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+        );
         let (code, _) = h.mint_pairing(DeviceRole::Controller, now);
-        assert!(h.redeem_pairing_at(&code, "", now + PAIR_CODE_TTL - Duration::from_secs(1)).is_ok());
+        assert!(
+            h.redeem_pairing_at(&code, "", now + PAIR_CODE_TTL - Duration::from_secs(1))
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -3844,7 +3986,10 @@ mod pairing_tests {
         h.mint_pairing(DeviceRole::Controller, now);
         for i in 0..5 {
             // 다른 코드로 틀린다(한 코드의 5번 한도와 따로 센다)
-            let _ = h.redeem_pairing_at(&format!("{i:06}x"), "", now);
+            aaa_common::diagnostic::ignored(
+                h.redeem_pairing_at(&format!("{i:06}x"), "", now),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         assert_eq!(h.redeem_pairing_at("1", "", now).unwrap_err().code, ErrorCode::Unavailable);
         // 창이 지나면 처음처럼 기다림 없이 다섯 번
@@ -3861,11 +4006,19 @@ mod pairing_tests {
         let now = Instant::now();
         h.mint_pairing(DeviceRole::Controller, now);
         for _ in 0..12 {
-            let _ = h.redeem_pairing_at("1", "", now);
+            aaa_common::diagnostic::ignored(
+                h.redeem_pairing_at("1", "", now),
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
         // CLI(`aaa web pair`)나 controller 기기가 새 코드를 만들면 남이 틀려 둔 잠금 없이 바로 쓴다
         let code = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
-        assert!(h.redeem_pairing_at(&code, "", now).is_ok());
+        assert!(
+            h.redeem_pairing_at(&code, "", now)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -3990,7 +4143,12 @@ mod pairing_tests {
             assert_eq!(e.code, ErrorCode::BadRequest, "{bad:?}");
         }
         assert!(h.enroll.lock().unwrap().pending.is_empty());
-        assert!(h.enroll_request("mac-b", "01M", "fp", "sas").is_ok());
+        assert!(
+            h.enroll_request("mac-b", "01M", "fp", "sas")
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        );
     }
 }
 

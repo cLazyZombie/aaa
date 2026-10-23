@@ -74,7 +74,10 @@ pub(crate) fn parse(raw: Option<&str>) -> SharedPreferences {
     match serde_json::from_str::<SharedPreferences>(raw) {
         Ok(doc) => match change_body(doc.settings, doc.pins) {
             Ok(c) => SharedPreferences { revision: doc.revision, settings: c.settings, pins: c.pins },
-            Err(_) => empty,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                empty
+            }
         },
         Err(e) => {
             tracing::warn!("공유 설정을 읽지 못해 비운 채 시작한다: {e}");

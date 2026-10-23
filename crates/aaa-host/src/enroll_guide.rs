@@ -17,7 +17,12 @@ fn tailnet_ip(ip: IpAddr) -> bool {
 /// 연 주소에서 새 머신이 칠 주소 후보를 만든다(앞이 추천)
 pub(crate) fn addresses(listen: &str, tailnet: Option<&str>, hostname: &str) -> Vec<EnrollAddress> {
     let at = |address: String, source: &str| EnrollAddress { address, source: source.into() };
-    let Ok(addr) = listen.parse::<SocketAddr>() else { return vec![at(listen.into(), "listen")] };
+    let Ok(addr) = listen
+        .parse::<SocketAddr>()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return vec![at(listen.into(), "listen")];
+    };
     let port = addr.port();
     let ip = addr.ip();
     let mut out = Vec::new();
@@ -44,7 +49,10 @@ impl Host {
             None => vec![],
             Some(l) => {
                 // tailnet 이름은 모든 주소나 tailnet 주소로 열었을 때만 쓴다(그 밖이면 묻지 않는다)
-                let wide = l.parse::<SocketAddr>().is_ok_and(|a| a.ip().is_unspecified() || tailnet_ip(a.ip()));
+                let wide = l
+                    .parse::<SocketAddr>()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|a| a.ip().is_unspecified() || tailnet_ip(a.ip()));
                 let dns = if wide {
                     let out = crate::tailscale::read().await;
                     crate::tailscale::plan(out.as_ref(), 0, &[]).dns_name

@@ -91,12 +91,36 @@ fn wait_reason(
     now: u64,
     usage_blocked: bool,
 ) -> Option<&'static str> {
-    if now < first.saturating_add(l.batch.as_deref().and_then(|s| duration_ms(s).ok()).unwrap_or(0)) {
+    if now
+        < first.saturating_add(
+            l.batch
+                .as_deref()
+                .and_then(|s| {
+                    duration_ms(s)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
+                .unwrap_or(0),
+        )
+    {
         return Some("입력 묶는 중");
     }
-    if last
-        .is_some_and(|at| now < at.saturating_add(l.min_gap.as_deref().and_then(|s| duration_ms(s).ok()).unwrap_or(0)))
-    {
+    if last.is_some_and(|at| {
+        now < at.saturating_add(
+            l.min_gap
+                .as_deref()
+                .and_then(|s| {
+                    duration_ms(s)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
+                .unwrap_or(0),
+        )
+    }) {
         return Some("최소 간격");
     }
     if l.max_per_day.filter(|n| *n > 0).is_some_and(|n| count >= n) {
@@ -173,7 +197,15 @@ impl Host {
             for id in owners.into_iter().filter(|id| aaa_proto::valid_thread(id)) {
                 if let Ok(file) = std::fs::File::open(root.join(format!("{id}.md"))) {
                     let mut bytes = vec![];
-                    if file.take(65536).read_to_end(&mut bytes).is_ok() {
+                    if file
+                        .take(65536)
+                        .read_to_end(&mut bytes)
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+                    {
                         reports.insert(id, String::from_utf8_lossy(&bytes).into_owned().into());
                     }
                 }
@@ -419,10 +451,17 @@ impl Host {
             .into_iter()
             .filter(|e| e.role != Some(aaa_proto::Role::Evaluator) && wanted.events.contains(&e.kind))
             .filter(|e| {
-                let rec = e
-                    .thread
-                    .as_deref()
-                    .and_then(|t| recs.entry(t.to_string()).or_insert_with(|| self.load(p, t).ok()).clone());
+                let rec = e.thread.as_deref().and_then(|t| {
+                    recs.entry(t.to_string())
+                        .or_insert_with(|| {
+                            self.load(p, t)
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
+                                .ok()
+                        })
+                        .clone()
+                });
                 let mine = rec.as_ref().and_then(|r| r.automation.as_deref());
                 if mine.is_some_and(|a| a == rule || !wanted.include_automation) {
                     return false;
@@ -494,7 +533,12 @@ impl Host {
         tokio::spawn(async move {
             let inner = h.clone();
             let project = p.clone();
-            if tokio::spawn(async move { inner.automation_pass(&project).await }).await.is_err() {
+            if tokio::spawn(async move { inner.automation_pass(&project).await })
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 tracing::error!(project=%p,"자동화 task panic");
             }
             h.watch_finished("automation", &p);
@@ -508,18 +552,28 @@ impl Host {
             .map_or(true, |s| !s.pending.is_empty() || s.inflight.is_some())
     }
     pub(crate) fn automation_message_pending(&self, p: &str, target: &str) -> bool {
-        let Ok(dir) = self.project_dir(p) else { return false };
+        let Ok(dir) = self
+            .project_dir(p)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return false;
+        };
         let (rules, _) = crate::routine::load_all(&dir);
         rules.iter().filter(|r|r.enabled).any(|r| {
             match self.db.meta(&key(p,&r.name)).map_err(internal).and_then(|s|state(s).map_err(internal)) {
-                Ok(s)=>s.inflight.as_ref().is_some_and(|b| b.target.as_deref() == Some(target)) || s.pending.iter().chain(s.inflight.iter().flat_map(|b|&b.events)).any(|e| matches!(&e.action,Action::Message(a) if (a.thread=="owner" && e.owner.as_deref()==Some(target)) || a.thread==target) || matches!(&e.action, Action::Start(a) if a.reuse == super::Reuse::Open && self.load(p,target).is_ok_and(|t| t.automation.as_deref()==Some(&r.name)))),
-                Err(_)=>true,
+                Ok(s)=>s.inflight.as_ref().is_some_and(|b| b.target.as_deref() == Some(target)) || s.pending.iter().chain(s.inflight.iter().flat_map(|b|&b.events)).any(|e| matches!(&e.action,Action::Message(a) if (a.thread=="owner" && e.owner.as_deref()==Some(target)) || a.thread==target) || matches!(&e.action, Action::Start(a) if a.reuse == super::Reuse::Open && self.load(p,target).inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok_and(|t| t.automation.as_deref()==Some(&r.name)))),
+                Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); true },
             }
         })
     }
 
     pub(crate) async fn automation_pass(self: &Arc<Self>, p: &str) {
-        let Ok(dir) = self.project_dir(p) else { return };
+        let Ok(dir) = self
+            .project_dir(p)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let rules = {
             let _guard = self.automation_sources.lock().await;
             let (rules, _) = crate::routine::load_all(&dir);
@@ -791,7 +845,7 @@ impl Host {
                             self.record_routine(p,&r.name,&batch.id,"waiting",&e.message,Some(&target));
                             return Ok(());
                         }
-                        Err(_) => { message_unknown = true; }
+                        Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); message_unknown = true; }
                     }
                     start_outcome = Some(crate::auto_start::StartOutcome {
                         thread: Some(target),
@@ -817,6 +871,9 @@ impl Host {
                         .iter()
                         .map(|e| {
                             serde_json::from_str::<serde_json::Value>(&e.body)
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
                                 .ok()
                                 .and_then(|v| v["body"].as_str().map(str::to_string))
                                 .unwrap_or_else(|| e.body.clone())
@@ -861,6 +918,9 @@ impl Host {
                         target,
                         if first.source == "pr" && batch.events.len() == 1 {
                             serde_json::from_str::<serde_json::Value>(&first.body)
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
                                 .ok()
                                 .and_then(|v| v["prompt"].as_str().map(str::to_string))
                                 .unwrap_or_else(|| first.body.clone())
@@ -946,6 +1006,9 @@ impl Host {
             && let Ok(rec) = self.load(p, thread)
         {
             let events = serde_json::from_str::<serde_json::Value>(&first.body)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
                 .and_then(|v| v["events"].as_array().cloned())
                 .unwrap_or_default()

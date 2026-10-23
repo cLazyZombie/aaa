@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.311)은
 // 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
 // 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
@@ -712,7 +713,7 @@ export function reportUrlOf(target: string, origin: string): ReportUrl | null {
   let url: URL;
   try {
     url = new URL(target);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "tasksModel.ts:716");
     return null;
   }
   try {
@@ -723,7 +724,7 @@ export function reportUrlOf(target: string, origin: string): ReportUrl | null {
     const key = decodeURIComponent(report[1]!);
     const at = key.indexOf("/");
     return at > 0 && at < key.length - 1 ? { kind: "report", project: key.slice(0, at), name: key.slice(at + 1) } : null;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "tasksModel.ts:727");
     return null;
   }
 }

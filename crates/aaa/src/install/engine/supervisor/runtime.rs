@@ -39,7 +39,7 @@ unsafe extern "system" fn handler(control: u32, _: u32, _: *mut core::ffi::c_voi
     match control {
         SERVICE_CONTROL_STOP | SERVICE_CONTROL_SHUTDOWN => {
             state.state(SERVICE_STOP_PENDING, 0);
-            let _ = state.stop.send(true);
+            aaa_common::diagnostic::ignored(state.stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             0
         }
         SERVICE_CONTROL_INTERROGATE => {
@@ -59,7 +59,10 @@ unsafe extern "system" fn service_main(argc: u32, argv: *mut *mut u16) {
         let code = match result {
             Ok(Ok(())) => 0,
             Ok(Err(fault)) => u32::from(fault.exit),
-            Err(_) => 1,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                1
+            }
         };
         control.state(SERVICE_STOPPED, code);
     }
@@ -72,7 +75,8 @@ fn read_spec(invocation: &Invocation) -> Result<Spec> {
     if hash(&bytes) != invocation.sha {
         return Err(Fault::conflict());
     }
-    let spec: Spec = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let spec: Spec = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     spec.validate()?;
     spec.guard_paths()?;
     spec.verify_files()?;
@@ -109,7 +113,7 @@ fn entry(argc: u32, argv: *mut *mut u16) -> Result<()> {
             }),
             stop,
         })
-        .map_err(|_| Fault::conflict())?;
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     let control = CONTROL.get().ok_or_else(Fault::conflict)?;
     if !control.state(SERVICE_START_PENDING, 0) {
         return Err(failure("service_status_failed", 1));
@@ -194,7 +198,11 @@ fn service_log(path: &Path) -> Result<File> {
 pub(super) fn dispatch(context: &Path, sha: &str) -> std::process::ExitCode {
     if !digest_ok(sha)
         || !context.is_absolute()
-        || INVOCATION.set(Invocation { context: context.into(), sha: sha.into() }).is_err()
+        || INVOCATION
+            .set(Invocation { context: context.into(), sha: sha.into() })
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
     {
         return std::process::ExitCode::from(4);
     }

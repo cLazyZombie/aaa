@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // Worker와 악성 입력 시험이 함께 쓰는 제한된 gzip 해제. 본문은 기록하지 않는다.
 export const PAYLOAD_MAX = 768 * 1024;
 export const WIRE_MAX = 1024 * 1024;
@@ -26,8 +27,8 @@ export async function inflateGzip(data: Uint8Array<ArrayBuffer>, rawLen: number,
   let cancelled = false;
   const cancel = () => {
     cancelled = true;
-    void reader.cancel().catch(() => {});
-    void writer.abort().catch(() => {});
+    void reader.cancel().catch(ignoredFailure("terminalInflate.ts:30", () => {}));
+    void writer.abort().catch(ignoredFailure("terminalInflate.ts:31", () => {}));
   };
   signal?.addEventListener("abort", cancel, { once: true });
   // native inflate에 전체 압축 폭탄을 한 번에 넘기지 않는다. 입력은 최대 1 KiB씩 공급한다.
@@ -39,7 +40,7 @@ export async function inflateGzip(data: Uint8Array<ArrayBuffer>, rawLen: number,
     await writer.close();
   })();
   // reader 실패와 동시에 writer가 실패해도 unhandled rejection을 만들지 않는다.
-  void feed.catch(() => {});
+  void feed.catch(ignoredFailure("terminalInflate.ts:43", () => {}));
   try {
     const out = new Uint8Array(rawLen);
     let offset = 0;

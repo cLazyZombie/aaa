@@ -87,7 +87,14 @@ fn proxies_to(target: Option<&str>, port: u16) -> bool {
     let rest = t.strip_prefix("http://").unwrap_or(t);
     let (hostport, path) = rest.split_once('/').unwrap_or((rest, ""));
     let (host, p) = match hostport.rsplit_once(':') {
-        Some((h, p)) => (h, p.parse::<u16>().ok()),
+        Some((h, p)) => (
+            h,
+            p.parse::<u16>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok(),
+        ),
         None => (hostport, Some(80)),
     };
     matches!(host, "127.0.0.1" | "localhost" | "[::1]") && p == Some(port) && path.is_empty()
@@ -106,7 +113,11 @@ fn object_values(value: &serde_json::Value, key: &str) -> bool {
 pub fn plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16]) -> Plan {
     let none = Plan { state: "missing", dns_name: None, serving: None, free_port: None, taken: vec![] };
     let Some(out) = out else { return none };
-    let status: Option<StatusJson> = out.status.as_deref().and_then(|s| serde_json::from_str(s).ok());
+    let status: Option<StatusJson> = out.status.as_deref().and_then(|s| {
+        serde_json::from_str(s)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+    });
     let Some(status) = status.filter(|s| s.backend_state.as_deref() == Some("Running")) else {
         return Plan { state: "stopped", ..none };
     };
@@ -114,7 +125,13 @@ pub fn plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16]) -> Plan {
     let serve = out
         .serve
         .as_deref()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|s| {
+            serde_json::from_str::<serde_json::Value>(s)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .filter(|v| {
             v.is_null()
                 || (v.is_object()
@@ -124,16 +141,37 @@ pub fn plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16]) -> Plan {
                         .and_then(serde_json::Value::as_object)
                         .is_none_or(|sites| sites.values().all(|site| object_values(site, "Handlers"))))
         })
-        .and_then(|v| serde_json::from_value::<Option<ServeJson>>(v).ok());
+        .and_then(|v| {
+            serde_json::from_value::<Option<ServeJson>>(v)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        });
     let serve = match serve {
         Some(serve) => serve.unwrap_or_default(),
         _ => return Plan { state: "error", dns_name: dns, ..none },
     };
-    let taken: Vec<u16> = serve.tcp.keys().filter_map(|k| k.parse().ok()).collect();
+    let taken: Vec<u16> = serve
+        .tcp
+        .keys()
+        .filter_map(|k| {
+            k.parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .collect();
     let mut serving = None;
     for (hostport, site) in &serve.web {
         let Some((host, p)) = hostport.rsplit_once(':') else { continue };
-        let Ok(p) = p.parse::<u16>() else { continue };
+        let Ok(p) = p
+            .parse::<u16>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         // HTTP listener는 쓸모가 없다(다른 기기에서 secure context가 아니다)
         if !serve.tcp.get(&p.to_string()).is_some_and(|t| t.https) {
             continue;
@@ -191,7 +229,10 @@ async fn run(bin: &str, args: &[&str], timeout: Duration) -> Result<(bool, Strin
             Ok((o.status.success(), text))
         }
         Ok(Err(e)) => Err(e.into()),
-        Err(_) => bail!("tailscale {}이 {}초 안에 끝나지 않았다", args.join(" "), timeout.as_secs()),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            bail!("tailscale {}이 {}초 안에 끝나지 않았다", args.join(" "), timeout.as_secs())
+        }
     }
 }
 
@@ -201,7 +242,12 @@ pub async fn read() -> Option<TsOutput> {
         run(&bin, &["status", "--json"], READ_TIMEOUT),
         run(&bin, &["serve", "status", "--json"], READ_TIMEOUT)
     );
-    let ok = |r: Result<(bool, String)>| r.ok().filter(|(ok, _)| *ok).map(|(_, t)| t);
+    let ok = |r: Result<(bool, String)>| {
+        r.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|(ok, _)| *ok)
+            .map(|(_, t)| t)
+    };
     Some(TsOutput { status: ok(s), serve: ok(v) })
 }
 

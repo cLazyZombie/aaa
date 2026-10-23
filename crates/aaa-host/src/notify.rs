@@ -27,8 +27,15 @@ const TEXT_CAP: usize = 3500;
 /// 1초를 기다렸다. 12는 설정 1초로 돈다)
 fn debounce(secs: u64) -> Duration {
     std::env::var("AAA_TEST_NOTIFY_DEBOUNCE_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
+        .and_then(|v| {
+            v.parse::<u64>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .map_or(Duration::from_secs(secs), Duration::from_millis)
 }
 
@@ -387,9 +394,10 @@ pub(crate) fn parse_url(url: &str) -> Result<Target, String> {
     };
     let (authority, path) = rest.split_once('/').map(|(a, p)| (a, format!("/{p}"))).unwrap_or((rest, "/".into()));
     let (host, port) = match authority.rsplit_once(':') {
-        Some((h, p)) if !h.ends_with(']') || h.starts_with('[') => {
-            (h.trim_matches(|c| c == '[' || c == ']').to_string(), p.parse().map_err(|_| "port 형식이 아니다")?)
-        }
+        Some((h, p)) if !h.ends_with(']') || h.starts_with('[') => (
+            h.trim_matches(|c| c == '[' || c == ']').to_string(),
+            p.parse().map_err(|e| aaa_common::diagnostic::context(e, "port 형식이 아니다".to_string()))?,
+        ),
         _ => (authority.to_string(), if tls { 443 } else { 80 }),
     };
     if host.is_empty() {
@@ -423,7 +431,8 @@ pub(crate) async fn post_raw(url: &str, headers: &[(&str, String)], body: &[u8])
             .map_err(|e| e.to_string())?
             .with_root_certificates(roots)
             .with_no_client_auth();
-        let name = rustls::pki_types::ServerName::try_from(t.host.clone()).map_err(|_| "host 이름 형식이 아니다")?;
+        let name = rustls::pki_types::ServerName::try_from(t.host.clone())
+            .map_err(|e| aaa_common::diagnostic::context(e, "host 이름 형식이 아니다".to_string()))?;
         let mut s = tokio_rustls::TlsConnector::from(Arc::new(cfg))
             .connect(name, tcp)
             .await
@@ -438,7 +447,16 @@ pub(crate) async fn post_raw(url: &str, headers: &[(&str, String)], body: &[u8])
         read_head(&mut s, &mut buf).await;
     }
     let line = String::from_utf8_lossy(&buf).lines().next().unwrap_or_default().to_string();
-    line.split_whitespace().nth(1).and_then(|c| c.parse().ok()).ok_or_else(|| "HTTP 응답이 아니다".into())
+    line.split_whitespace()
+        .nth(1)
+        .and_then(|c| {
+            c.parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .ok_or_else(|| "HTTP 응답이 아니다".into())
 }
 
 /// 응답 머리(빈 줄까지)만 읽는다. 상태 코드만 쓴다.
@@ -536,13 +554,18 @@ impl Host {
             && !muted(self.settings(&item.project).mute, item)
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
         {
-            let _ = tx.send(item.clone());
+            aaa_common::diagnostic::ignored(tx.send(item.clone()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
     }
 
     /// post와 섞지 않는 유일한 예외. supervisor만 정적인 안전 필드로 이 항목을 만든다.
     pub(crate) async fn publish_host_health(&self, event: crate::supervisor::Transition) -> bool {
-        let project = self.sole_project().ok().flatten().unwrap_or_default();
+        let project = self
+            .sole_project()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         let item = InboxItem {
             id: format!("host-health-{}", event.id),
             project: project.clone(),
@@ -563,7 +586,8 @@ impl Host {
                 }
             }
             Ok(false) => return true, // 이미 내구 inbox에 확정했다. 외부 발송은 반복하지 않는다.
-            Err(_) => {
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                 tracing::error!("host 이상 inbox 저장 실패");
                 return false;
             }
@@ -643,7 +667,10 @@ impl Host {
                         Ok(Ok(code)) if (200..300).contains(&code) => Ok(code),
                         Ok(Ok(code)) => Err(format!("HTTP {code}")),
                         Ok(Err(e)) => Err(e),
-                        Err(_) => Err(format!("{}초 안에 끝나지 않았다", SEND_TIMEOUT.as_secs())),
+                        Err(source_error) => {
+                            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                            Err(format!("{}초 안에 끝나지 않았다", SEND_TIMEOUT.as_secs()))
+                        }
                     };
                     for project in place.projects() {
                         match &res {

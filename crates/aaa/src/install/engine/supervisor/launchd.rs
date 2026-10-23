@@ -19,7 +19,9 @@ impl Context {
         }
         let launcher = plan.choices.launcher.as_deref().ok_or_else(|| failure("installation_launcher_required", 3))?;
         let launcher = transaction::target(Path::new(launcher))?;
-        let bytes = std::fs::read(&launcher).map_err(|_| failure("installation_launcher_required", 3))?;
+        let bytes = std::fs::read(&launcher).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, failure("installation_launcher_required", 3))
+        })?;
         let this = Self { launcher, launcher_sha256: hash(&bytes) };
         this.validate()?;
         Ok(Some(this))
@@ -105,7 +107,14 @@ pub(super) fn apply(plan: &InstallPlan, id: &str, lease: &authorization::Lease) 
         let ready = same
             && if plan.choices.start == Some(InstallStart::Now) {
                 job.record.phase == ServicePhase::Ready
-                    && observed.as_ref().is_some_and(|o| verify_ready(&job.spec, &mut manager, o).is_ok())
+                    && observed.as_ref().is_some_and(|o| {
+                        verify_ready(&job.spec, &mut manager, o)
+                            .as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_ok()
+                    })
             } else {
                 matches!(job.record.phase, ServicePhase::Registered | ServicePhase::Ready)
             };

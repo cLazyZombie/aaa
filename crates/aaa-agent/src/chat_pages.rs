@@ -38,7 +38,12 @@ fn file_history(path: &Path, file: &std::fs::File) -> std::io::Result<(String, u
     // snapshot과 revision 비교를 같은 잠금 안에서 한다. 동시 append 읽기의 순서 역전을 축소로 오인하지 않는다.
     let mut revisions = REVISIONS.lock().unwrap();
     let meta = file.metadata()?;
-    let identity = format!("{:?}", meta.created().ok());
+    let identity = format!(
+        "{:?}",
+        meta.created()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+    );
     #[cfg(unix)]
     let identity = {
         use std::os::unix::fs::MetadataExt;
@@ -51,18 +56,31 @@ fn file_history(path: &Path, file: &std::fs::File) -> std::io::Result<(String, u
     let old = revisions.entry(path.to_path_buf()).or_insert_with(|| Revision {
         identity: identity.clone(),
         len: meta.len(),
-        modified: meta.modified().ok(),
+        modified: meta
+            .modified()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok(),
         generation: aaa_common::util::new_id(),
     });
     if old.identity != identity
         || meta.len() < old.len
-        || (meta.len() == old.len && meta.modified().ok() != old.modified)
+        || (meta.len() == old.len
+            && meta
+                .modified()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                != old.modified)
     {
         old.generation = aaa_common::util::new_id();
     }
     old.identity = identity.clone();
     old.len = meta.len();
-    old.modified = meta.modified().ok();
+    old.modified = meta
+        .modified()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok();
     let fingerprint = format!("{}:{identity}:{}:{}", *PROCESS, path.to_string_lossy(), old.generation);
     Ok((format!("{:x}", Sha256::digest(fingerprint.as_bytes())), meta.len()))
 }
@@ -237,6 +255,7 @@ fn selected(file: &mut std::fs::File, start: u64, size: u64) -> std::io::Result<
                 de.end()?;
                 Ok(value)
             })
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok())
     };
     let Some(shape) = pass(None, true)? else { return Ok(None) };

@@ -4,7 +4,7 @@ use std::io::Read;
 
 pub(super) struct VerifiedSsh(());
 fn denied() -> Fault {
-    Fault { code: "installation_verified_ssh_required", exit: 3 }
+    Fault { code: "installation_verified_ssh_required", exit: 3, cause: None }
 }
 impl VerifiedSsh {
     fn current() -> Result<Self> {
@@ -30,12 +30,20 @@ fn system_sshd(pid: u32) -> bool {
     #[cfg(not(target_os = "macos"))]
     let image = match std::fs::read_link(format!("/proc/{pid}/exe")) {
         Ok(p) => p,
-        Err(_) => return false,
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            return false;
+        }
     };
     if image != Path::new("/usr/sbin/sshd") && image != Path::new("/usr/libexec/sshd-keygen-wrapper") {
         return false;
     }
-    let Ok(meta) = image.symlink_metadata() else { return false };
+    let Ok(meta) = image
+        .symlink_metadata()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return false;
+    };
     if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o022 != 0 {
         return false;
     }
@@ -46,7 +54,11 @@ fn system_sshd(pid: u32) -> bool {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else { return false };
+        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return false;
+        };
         status.lines().find_map(|l| l.strip_prefix("Uid:")).and_then(|v| v.split_whitespace().nth(1)) == Some("0")
     }
 }
@@ -60,7 +72,10 @@ pub(super) fn probe(state: &Path, executor_sha256: &str) -> std::process::ExitCo
     let result = (|| -> Result<()> {
         let _ssh = VerifiedSsh::current()?;
         let exe = std::env::current_exe().map_err(Fault::io)?;
-        if !digest_ok(executor_sha256) || crate::update::sha256(&exe).map_err(|_| Fault::conflict())? != executor_sha256
+        if !digest_ok(executor_sha256)
+            || crate::update::sha256(&exe)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
+                != executor_sha256
         {
             return Err(Fault::conflict());
         }
@@ -69,9 +84,11 @@ pub(super) fn probe(state: &Path, executor_sha256: &str) -> std::process::ExitCo
         if bytes.len() > 2 * 1024 * 1024 {
             return Err(Fault::conflict());
         }
-        let choices: InstallChoices = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+        let choices: InstallChoices = serde_json::from_slice(&bytes)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         let invocation = InstallInvocation { choices, dry_run: true, non_interactive: true, ..Default::default() };
-        let (result, plan) = crate::install::detect::inspect(&invocation).map_err(|_| Fault::conflict())?;
+        let (result, plan) = crate::install::detect::inspect(&invocation)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if Path::new(&plan.context.state_dir) != transaction::real_directory(state)?
             || plan.context.binary_sha256 != executor_sha256
         {
@@ -79,7 +96,7 @@ pub(super) fn probe(state: &Path, executor_sha256: &str) -> std::process::ExitCo
         }
         let permissions = scope::all(&plan)?;
         serde_json::to_writer(std::io::stdout().lock(), &InstallProposal { plan, permissions, result })
-            .map_err(|_| Fault::conflict())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         Ok(())
     })();
     std::process::ExitCode::from(result.map_or_else(|fault| fault.exit, |_| 0))
@@ -97,7 +114,10 @@ pub(super) fn dispatch(state: &Path, executor_sha256: &str, issuer_sha256: &str)
         // 입력 읽기/파일 생성보다 먼저 OS ancestry와 고정 helper image를 확인한다.
         let ssh = VerifiedSsh::current()?;
         let exe = std::env::current_exe().map_err(Fault::io)?;
-        if !digest_ok(executor_sha256) || crate::update::sha256(&exe).map_err(|_| Fault::conflict())? != executor_sha256
+        if !digest_ok(executor_sha256)
+            || crate::update::sha256(&exe)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
+                != executor_sha256
         {
             return Err(Fault::conflict());
         }
@@ -106,11 +126,12 @@ pub(super) fn dispatch(state: &Path, executor_sha256: &str, issuer_sha256: &str)
         if input.len() > 2 * 1024 * 1024 {
             return Err(Fault::conflict());
         }
-        let package: InstallBootstrapPackage = serde_json::from_slice(&input).map_err(|_| Fault::conflict())?;
+        let package: InstallBootstrapPackage = serde_json::from_slice(&input)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         use base64::Engine as _;
         let public = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&package.issuer_public_key)
-            .map_err(|_| Fault::conflict())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if !digest_ok(issuer_sha256)
             || hash(&public) != issuer_sha256
             || package.plan.context.binary_sha256 != executor_sha256
@@ -135,8 +156,9 @@ pub(super) fn dispatch(state: &Path, executor_sha256: &str, issuer_sha256: &str)
             plan_sha256: auth.claims.plan_sha256.clone(),
             agent_identity: identity.map(|(_, tls)| tls.fingerprint),
         };
-        serde_json::to_writer(std::io::stdout().lock(), &response)
-            .map_err(|_| Fault::io(std::io::Error::other("private result")))?;
+        serde_json::to_writer(std::io::stdout().lock(), &response).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, Fault::io(std::io::Error::other("private result")))
+        })?;
         Ok(())
     })();
     // raw SSH/계정/서명/입력은 stderr나 public 결과에 넣지 않는다.

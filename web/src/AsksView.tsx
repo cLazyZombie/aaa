@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ListId } from "./ListId";
 // 「답할 것」(plan §8.345, 사용자 결정 10-21 1B·1A 2B): 사이드바 패널(AsksPanel)에 답할 것·답한 것 목록, 본문(AsksView)에 고른 것
 // 하나의 카드. 카드 본문은 thread가 질문에 실은 Markdown(그림·표·code·링크)이라 웹페이지처럼 보인다: HTML은 해석하지 않고
@@ -559,7 +560,7 @@ export function useAsksData(up: boolean): { data: AsksData | null; put: (r: Fron
       .then((r) => {
         if (n === seq.current) put(r);
       })
-      .catch(() => {});
+      .catch(ignoredFailure("AsksView.tsx:563", () => {}));
   }, [put]);
   useEffect(() => {
     if (up) load();

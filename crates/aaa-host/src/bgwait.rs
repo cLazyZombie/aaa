@@ -164,7 +164,10 @@ impl crate::Host {
                             p.turn_from = crate::notice::turn_from(Some(was), next, p.turn_from, now);
                         }
                     }
-                    let _ = p.events.send(crate::PaneEvent::State);
+                    aaa_common::diagnostic::ignored(
+                        p.events.send(crate::PaneEvent::State),
+                        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                    );
                 }
             }
         }

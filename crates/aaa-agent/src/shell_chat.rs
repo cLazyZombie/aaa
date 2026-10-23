@@ -109,11 +109,20 @@ impl crate::Agent {
 
 fn read_json(path: &Path) -> Option<serde_json::Value> {
     // symlink·FIFO와 거대 등록 파일을 읽지 않는다. 대화 본문은 기존 chat reader만 읽는다.
-    let meta = std::fs::symlink_metadata(path).ok()?;
+    let meta = std::fs::symlink_metadata(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     if !meta.is_file() || meta.len() > 256 * 1024 {
         return None;
     }
-    serde_json::from_reader(std::fs::File::open(path).ok()?.take(256 * 1024)).ok()
+    serde_json::from_reader(
+        std::fs::File::open(path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .take(256 * 1024),
+    )
+    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+    .ok()
 }
 
 fn resolve(harness: Harness, pid: u32, codex: &Path, claude: &Path) -> Option<Binding> {
@@ -123,14 +132,32 @@ fn resolve(harness: Harness, pid: u32, codex: &Path, claude: &Path) -> Option<Bi
     };
     let mut found = Vec::new();
     for path in open_files(pid) {
-        let Ok(path) = chat::inside(root, &path) else { continue };
+        let Ok(path) = chat::inside(root, &path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         let id = match harness {
             Harness::Codex => {
                 let mut bytes = Vec::new();
-                std::io::BufReader::new(std::fs::File::open(&path).ok()?.take(256 * 1024))
-                    .read_until(b'\n', &mut bytes)
-                    .ok()?;
-                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else { continue };
+                std::io::BufReader::new(
+                    std::fs::File::open(&path)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?
+                        .take(256 * 1024),
+                )
+                .read_until(b'\n', &mut bytes)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?;
+                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes).inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                }) else {
+                    continue;
+                };
                 if v["type"] != "session_meta" || v["payload"]["source"] != "cli" {
                     continue;
                 }
@@ -177,8 +204,17 @@ fn claude_registry(pid: u32, root: &Path) -> Option<Binding> {
     }
     // 프로젝트 디렉터리 하나 아래의 정확한 UUID만 찾는다(하위 agent·symlink 폴더 제외).
     let mut found = Vec::new();
-    for dir in std::fs::read_dir(root).ok()?.flatten() {
-        if !dir.file_type().ok()?.is_dir() {
+    for dir in std::fs::read_dir(root)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        .flatten()
+    {
+        if !dir
+            .file_type()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .is_dir()
+        {
             continue;
         }
         if let Ok(path) = chat::inside(root, &dir.path().join(format!("{id}.jsonl"))) {
@@ -201,10 +237,24 @@ fn process_started_ms(pid: u32) -> Option<u64> {
 
 #[cfg(target_os = "linux")]
 fn process_started_ms(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let ticks: u64 = stat.get(stat.rfind(')')? + 2..)?.split_whitespace().nth(19)?.parse().ok()?;
-    let boot: u64 =
-        std::fs::read_to_string("/proc/stat").ok()?.lines().find_map(|l| l.strip_prefix("btime "))?.parse().ok()?;
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
+    let ticks: u64 = stat
+        .get(stat.rfind(')')? + 2..)?
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
+    let boot: u64 = std::fs::read_to_string("/proc/stat")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("btime "))?
+        .parse()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     // SAFETY: sysconf는 메모리를 넘기지 않는 조회다.
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
     (hz > 0).then(|| boot * 1000 + ticks * 1000 / hz as u64)
@@ -222,11 +272,23 @@ fn open_files(pid: u32) -> Vec<PathBuf> {
         .flatten()
         .flatten()
         .filter_map(|e| {
-            let info = std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", e.file_name().to_str()?)).ok()?;
+            let info = std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", e.file_name().to_str()?))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?;
             let flags = info.lines().find_map(|l| l.strip_prefix("flags:"))?.trim();
-            let flags = u32::from_str_radix(flags, 8).ok()?;
+            let flags = u32::from_str_radix(flags, 8)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?;
             (flags & libc::O_ACCMODE as u32 != libc::O_RDONLY as u32).then_some(())?;
-            std::fs::read_link(e.path()).ok()
+            std::fs::read_link(e.path())
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
         })
         .collect()
 }

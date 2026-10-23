@@ -70,9 +70,12 @@ impl Host {
         Duration::from_secs(self.cfg.projects.ci_poll_secs.max(min))
     }
     fn ci_enabled(&self, project: &str) -> bool {
-        self.project_dir(project).ok().is_some_and(|dir| {
-            crate::routine::load_all(&dir).0.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Ci(_)))
-        })
+        self.project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .is_some_and(|dir| {
+                crate::routine::load_all(&dir).0.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Ci(_)))
+            })
     }
     pub(crate) fn ci_next_due(&self) -> Option<Instant> {
         self.watch_next_due("ci", self.ci_every(), |p| self.ci_enabled(p))
@@ -89,7 +92,12 @@ impl Host {
         tokio::spawn(async move {
             let inner = h.clone();
             let project = p.clone();
-            if tokio::spawn(async move { inner.ci_pass(&project).await }).await.is_err() {
+            if tokio::spawn(async move { inner.ci_pass(&project).await })
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 tracing::error!(project=%p,"CI 조회 task panic. 다음 주기에 다시 본다");
             }
             h.watch_finished("ci", &p);
@@ -121,7 +129,14 @@ impl Host {
             .into_iter()
             .filter(|repo| {
                 (repo.path == c.repo || Path::new(&repo.path).file_name().is_some_and(|s| s == c.repo.as_str()))
-                    && self.resolve_machine(repo.machine.as_deref()).ok().as_deref() == Some(mid.as_str())
+                    && self
+                        .resolve_machine(repo.machine.as_deref())
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .as_deref()
+                        == Some(mid.as_str())
             })
             .collect();
         if found.len() != 1 {
@@ -130,7 +145,12 @@ impl Host {
         Ok((self.live_conn(&mid)?, found[0].path.clone(), mid))
     }
     async fn ci_pass(self: &Arc<Self>, p: &str) {
-        let Ok(dir) = self.project_dir(p) else { return };
+        let Ok(dir) = self
+            .project_dir(p)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let mut groups: BTreeMap<(String, String), Vec<Routine>> = BTreeMap::new();
         for r in crate::routine::load_all(&dir).0.into_iter().filter(|r| r.enabled) {
             let Trigger::Ci(c) = &r.trigger else { continue };
@@ -344,11 +364,15 @@ impl Host {
                 if !red && !historical {
                     self.automation_cancel(p, &r.name, "이미 회복한 CI 결과", |e| {
                         e.source == "ci"
-                            && serde_json::from_str::<serde_json::Value>(&e.body).is_ok_and(|v| {
-                                v["repo"] == c.repo
-                                    && v["branch"] == *branch
-                                    && matches!(v["result"].as_str(), Some("failed" | "stuck"))
-                            })
+                            && serde_json::from_str::<serde_json::Value>(&e.body)
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")
+                                })
+                                .is_ok_and(|v| {
+                                    v["repo"] == c.repo
+                                        && v["branch"] == *branch
+                                        && matches!(v["result"].as_str(), Some("failed" | "stuck"))
+                                })
                     })?;
                     for pending in &mut s.outbox {
                         if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&pending.text)

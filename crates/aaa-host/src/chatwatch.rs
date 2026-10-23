@@ -109,7 +109,10 @@ impl crate::Host {
     /// agent가 감시하는 기록이 바뀌었다(켜 둔 그 머신의 것만 받는다)
     pub(crate) fn on_chat_changed(&self, mid: &str, key: String, signature: String) {
         if self.chats.lock().unwrap().on.get(&key).is_some_and(|w| w.machine == mid) {
-            let _ = self.chat_notes.send(ChatNote::Changed { pane: key, signature });
+            aaa_common::diagnostic::ignored(
+                self.chat_notes.send(ChatNote::Changed { pane: key, signature }),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
@@ -119,7 +122,10 @@ impl crate::Host {
         let gone: Vec<String> = c.on.iter().filter(|(_, w)| w.machine == mid).map(|(p, _)| p.clone()).collect();
         for pane in gone {
             c.on.remove(&pane);
-            let _ = self.chat_notes.send(ChatNote::Live { pane, live: false });
+            aaa_common::diagnostic::ignored(
+                self.chat_notes.send(ChatNote::Live { pane, live: false }),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
     }
 
@@ -159,7 +165,10 @@ impl crate::Host {
                 (sends, live, conns)
             };
             for (pane, live) in live {
-                let _ = me.chat_notes.send(ChatNote::Live { pane, live });
+                aaa_common::diagnostic::ignored(
+                    me.chat_notes.send(ChatNote::Live { pane, live }),
+                    "수신자가 끝난 뒤에도 현재 작업은 마친다",
+                );
             }
             for (machine, generation, req) in sends {
                 // 끊긴 연결의 감시는 agent가 이미 끝냈다

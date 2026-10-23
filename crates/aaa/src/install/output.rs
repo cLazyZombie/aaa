@@ -38,7 +38,11 @@ impl Reporter {
             let parent =
                 engine::normalize_state(path.parent().ok_or_else(|| error("installation_events_path_invalid", 2))?)?;
             let path = parent.join(path.file_name().ok_or_else(|| error("installation_events_path_invalid", 2))?);
-            if path.symlink_metadata().is_ok()
+            if path
+                .symlink_metadata()
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
                 || path.starts_with(&plan.context.state_dir)
                 || path.starts_with(&plan.context.config_dir)
                 || path == Path::new(&plan.context.bin_path)
@@ -57,10 +61,12 @@ impl Reporter {
         self.id = Some(id.into());
         if let Some(path) = &self.path {
             let parent = path.parent().ok_or_else(|| error("installation_events_path_invalid", 2))?;
-            aaa_common::private_file::parents(parent).map_err(|_| error("installation_events_unavailable", 3))?;
-            self.file = Some(
-                aaa_common::private_file::new_file(path).map_err(|_| error("installation_events_unavailable", 3))?,
-            );
+            aaa_common::private_file::parents(parent).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("installation_events_unavailable", 3))
+            })?;
+            self.file = Some(aaa_common::private_file::new_file(path).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("installation_events_unavailable", 3))
+            })?);
         }
         self.event(
             InstallPhase::Authorize,
@@ -70,19 +76,20 @@ impl Reporter {
         )
     }
     fn write(&mut self, item: &InstallStreamItem) -> Result<()> {
-        let mut bytes = serde_json::to_vec(item).map_err(|_| error("installation_progress_unavailable", 3))?;
+        let mut bytes = serde_json::to_vec(item).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("installation_progress_unavailable", 3))
+        })?;
         bytes.push(b'\n');
         if let Some(file) = &mut self.file {
-            file.write_all(&bytes)
-                .and_then(|_| file.flush())
-                .map_err(|_| error("installation_events_unavailable", 3))?;
+            file.write_all(&bytes).and_then(|_| file.flush()).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("installation_events_unavailable", 3))
+            })?;
         }
         if self.stream {
             let mut stdout = std::io::stdout().lock();
-            stdout
-                .write_all(&bytes)
-                .and_then(|_| stdout.flush())
-                .map_err(|_| error("installation_progress_unavailable", 3))?;
+            stdout.write_all(&bytes).and_then(|_| stdout.flush()).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, error("installation_progress_unavailable", 3))
+            })?;
         }
         Ok(())
     }
@@ -187,10 +194,24 @@ impl Reporter {
                 seq: self.seq,
                 result: Box::new(result.clone()),
             };
-            let written = serde_json::to_writer(&mut *file, &item).is_ok()
-                && writeln!(file).is_ok()
-                && file.flush().is_ok()
-                && file.sync_all().is_ok();
+            let written = serde_json::to_writer(&mut *file, &item)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+                && writeln!(file)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                && file
+                    .flush()
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                && file
+                    .sync_all()
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok();
             if !written {
                 return super::emit_at_seq(
                     {

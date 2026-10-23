@@ -113,7 +113,11 @@ pub(super) fn preserve(
     let root = dest.parent().unwrap().join(&relative);
     // symlink로 운영 기억 밖을 따라가지 않는다.
     for path in root.ancestors().take(3) {
-        if path.symlink_metadata().is_ok_and(|m| !m.is_dir()) {
+        if path
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| !m.is_dir())
+        {
             return Err(bad("충돌 보존 자리가 일반 폴더가 아니다"));
         }
     }
@@ -127,8 +131,15 @@ pub(super) fn preserve(
                 .map_err(bad)?;
             std::fs::rename(&tmp, &root).map_err(bad)
         })();
-        if result.is_err() {
-            let _ = std::fs::remove_dir_all(&tmp);
+        if result
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&tmp),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
         result?;
     }

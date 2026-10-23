@@ -15,8 +15,12 @@ fn publish(spec: &Spec, session: u32, elevated: bool, created: u64, connected: b
         elevated,
         boot: aaa_common::util::boot_id(),
     };
-    private::write(&spec.directory().join("ready.json"), &serde_json::to_vec(&ready).map_err(|_| Fault::conflict())?)
-        .map_err(Fault::io)
+    private::write(
+        &spec.directory().join("ready.json"),
+        &serde_json::to_vec(&ready)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    )
+    .map_err(Fault::io)
 }
 
 pub(super) fn run(
@@ -41,7 +45,7 @@ pub(super) fn run(
         .name("aaa-service-role".into())
         .spawn(move || {
             let result = crate::cli::supervised_role(role, ready, connection, backend_stop);
-            let _ = ended.send(());
+            aaa_common::diagnostic::ignored(ended.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             result
         })
         .map_err(Fault::io)?;
@@ -58,7 +62,11 @@ pub(super) fn run(
     }
     let mut announce = || {
         let connected = role == InstallRole::Host || *state.borrow_and_update();
-        publish(spec, session, elevated, created, connected).is_ok() && running_state()
+        publish(spec, session, elevated, created, connected)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+            && running_state()
     };
     if prepared && !*stop.borrow() && !announce() && !*stop.borrow() {
         fault = Some(failure("service_status_failed", 1));
@@ -71,9 +79,9 @@ pub(super) fn run(
                     _ = stop_rx.wait_for(|stopped| *stopped) => break,
                     _ = &mut done => break,
                     changed = state.changed(), if role == InstallRole::Agent => {
-                        if changed.is_err() { break }
+                        if changed.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                         let connected = *state.borrow_and_update();
-                        if (publish(spec, session, elevated, created, connected).is_err() || !running_state()) && !*stop.borrow() {
+                        if (publish(spec, session, elevated, created, connected).as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() || !running_state()) && !*stop.borrow() {
                             fault = Some(failure("service_status_failed", 1));
                             break;
                         }
@@ -83,14 +91,21 @@ pub(super) fn run(
         });
     }
     if fault.is_some() {
-        let _ = stop.send(true);
+        aaa_common::diagnostic::ignored(stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     }
     let result = backend.join();
     // 다음 process의 proof를 지우지 않도록 현재 context/PID를 확인한다.
     let path = spec.directory().join("ready.json");
     if private::read(&path, 128 * 1024)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
-        .and_then(|b| serde_json::from_slice::<Ready>(&b).ok())
+        .and_then(|b| {
+            serde_json::from_slice::<Ready>(&b)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .is_some_and(|proof| proof.pid == std::process::id() && proof.context_sha256 == spec.sha())
     {
         std::fs::remove_file(&path).map_err(Fault::io)?;

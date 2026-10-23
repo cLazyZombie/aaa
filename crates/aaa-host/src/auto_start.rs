@@ -465,8 +465,19 @@ impl Host {
                 ));
                 continue;
             }
-            let profiles: Vec<_> =
-                a.profiles.iter().filter(|n| self.resolved_profile(Some(p), &mid, n).is_ok()).cloned().collect();
+            let profiles: Vec<_> = a
+                .profiles
+                .iter()
+                .filter(|n| {
+                    self.resolved_profile(Some(p), &mid, n)
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+                })
+                .cloned()
+                .collect();
             if profiles.is_empty() {
                 blocked.push(format!("{name} 사용 가능한 profile 없음"));
                 continue;

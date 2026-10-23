@@ -27,7 +27,7 @@ pub(super) fn desired(
     mut equal: impl FnMut(&[u16], &[u16], bool) -> Result<bool>,
 ) -> Result<Value> {
     if directory.is_empty() || directory.iter().any(|c| [0, b';' as u16, b'"' as u16].contains(c)) {
-        return Err(Fault { code: "path_entry_unrepresentable", exit: 3 });
+        return Err(Fault { code: "path_entry_unrepresentable", exit: 3, cause: None });
     }
     let mut units = before.map(Value::units).transpose()?.unwrap_or_default();
     if let Some(before) = before {
@@ -43,7 +43,7 @@ pub(super) fn desired(
     units.extend_from_slice(directory);
     units.push(0);
     if units.len() > 32767 {
-        return Err(Fault { code: "path_registry_unavailable", exit: 3 });
+        return Err(Fault { code: "path_registry_unavailable", exit: 3, cause: None });
     }
     Ok(Value { kind: before.map_or(2, |v| v.kind), bytes: units.into_iter().flat_map(u16::to_le_bytes).collect() })
 }

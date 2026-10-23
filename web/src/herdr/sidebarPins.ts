@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /**
  * The browser's pinned sidebar rows: agents and workspaces, in one list shared with the other
  * browsers of the server. Keys include the PC so an id reused on another PC never receives the
@@ -36,7 +37,7 @@ export function pruneWorkspacePins(keys: readonly string[], machineId: string, l
 
 function storage(): Storage | null {
   try { return typeof localStorage === "undefined" ? null : localStorage; }
-  catch { return null; }
+  catch (ignoredError) { logIgnoredFailure(ignoredError, "sidebarPins.ts:40"); return null; }
 }
 
 export function loadSidebarPins(): string[] {
@@ -46,12 +47,12 @@ export function loadSidebarPins(): string[] {
     if (value === undefined || value === null) return [];
     const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed) ? [...new Set(parsed.filter((key): key is string => typeof key === "string" && key.length > 0))] : [];
-  } catch { return []; }
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "sidebarPins.ts:50"); return []; }
 }
 
 export function saveSidebarPins(keys: readonly string[]): void {
   try { storage()?.setItem(STORAGE_KEY, JSON.stringify([...new Set(keys)])); }
-  catch { /* storage denied: pins last for the session */ }
+  catch (ignoredError) { logIgnoredFailure(ignoredError, "sidebarPins.ts:55"); /* storage denied: pins last for the session */ }
 }
 
 /**

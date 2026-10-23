@@ -74,12 +74,16 @@ pub(crate) fn local_file(dir: &Path, id: &str, path: &str) -> Result<(PathBuf, u
     let mut local = dir.to_path_buf();
     for part in std::iter::once("library").chain(std::iter::once(id)).chain(path.split('/')) {
         local.push(part);
-        let m = std::fs::symlink_metadata(&local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?;
+        let m = std::fs::symlink_metadata(&local).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "host 사본이 없다"))
+        })?;
         if m.file_type().is_symlink() {
             return Err(err(ErrorCode::NotFound, "symlink는 열지 않는다"));
         }
     }
-    let m = std::fs::symlink_metadata(&local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?;
+    let m = std::fs::symlink_metadata(&local).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "host 사본이 없다"))
+    })?;
     if !m.is_file() {
         return Err(err(ErrorCode::NotFound, "일반 파일이 아니다"));
     }
@@ -94,8 +98,21 @@ fn file_type(path: &str, local: Option<&Path>) -> (String, FileKind) {
         use std::io::Read;
         let mut buf = Vec::new();
         local
-            .and_then(|p| std::fs::File::open(p).ok())
-            .and_then(|f| f.take(SNIFF_BYTES).read_to_end(&mut buf).ok())
+            .and_then(|p| {
+                std::fs::File::open(p)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .and_then(|f| {
+                f.take(SNIFF_BYTES)
+                    .read_to_end(&mut buf)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .is_some_and(|_| !buf.contains(&0))
     };
     match aaa_proto::mime_of(name) {
@@ -213,7 +230,17 @@ impl ViewSource {
 
 impl Host {
     pub(crate) fn manifest(&self, dir: &Path, id: &str) -> Vec<LibraryFile> {
-        std::fs::read(manifest_path(dir, id)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        std::fs::read(manifest_path(dir, id))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .and_then(|b| {
+                serde_json::from_slice(&b)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn thread_library(
@@ -253,7 +280,13 @@ impl Host {
         let storage = id.to_string();
         let report = (rec.as_ref().is_some_and(|r| r.report_hash.is_some())
             || self.db.report_target(project, &storage).map_err(super::orch::internal)?.is_some())
-        .then(|| std::fs::read(dir.join("threads").join(format!("{storage}.md"))).ok())
+        .then(|| {
+            std::fs::read(dir.join("threads").join(format!("{storage}.md")))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .flatten()
         .map(|b| String::from_utf8_lossy(&b).into_owned());
         let cap = hex::encode(rand::random::<[u8; 24]>());
@@ -335,7 +368,12 @@ impl Host {
             Some(root) => crate::library_publish::live_file(Path::new(&root), path)?,
             None => {
                 let (local, size) = local_file(&dir, id, path)?;
-                (std::fs::File::open(local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?, size)
+                (
+                    std::fs::File::open(local).map_err(|source_error| {
+                        aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "host 사본이 없다"))
+                    })?,
+                    size,
+                )
             }
         };
         if size > max {
@@ -361,8 +399,15 @@ impl Host {
                 Attachment::Request { hash } => self.request_file(&project, &id, &hash, path),
                 Attachment::Answer => self.ask_file(&project, &id, path),
             }?;
-            let file = std::fs::File::open(local).map_err(|_| err(ErrorCode::NotFound, "첨부 파일이 없다"))?;
-            let size = file.metadata().map_err(|_| err(ErrorCode::NotFound, "첨부 파일이 없다"))?.len();
+            let file = std::fs::File::open(local).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "첨부 파일이 없다"))
+            })?;
+            let size = file
+                .metadata()
+                .map_err(|source_error| {
+                    aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "첨부 파일이 없다"))
+                })?
+                .len();
             return Ok(view(ViewSource::Local(file, size)));
         }
         if path.split('/').any(|c| c.starts_with('.') && c != "." && c != "..") {
@@ -390,8 +435,15 @@ impl Host {
                 return Ok(view(ViewSource::Local(file, size)));
             }
             let (local, _) = local_file(&dir, &id, path)?;
-            let file = std::fs::File::open(local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?;
-            let size = file.metadata().map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?.len();
+            let file = std::fs::File::open(local).map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "host 사본이 없다"))
+            })?;
+            let size = file
+                .metadata()
+                .map_err(|source_error| {
+                    aaa_common::diagnostic::context(source_error, err(ErrorCode::NotFound, "host 사본이 없다"))
+                })?
+                .len();
             return Ok(view(ViewSource::Local(file, size)));
         }
         if signed {

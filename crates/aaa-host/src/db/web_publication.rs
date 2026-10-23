@@ -13,7 +13,12 @@ struct UrlMove<'a> {
 impl<'a> UrlMove<'a> {
     fn new(old: &str, new: &'a str) -> Self {
         let mut pattern = regex::escape(old);
-        if !old.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) {
+        if !old.rsplit_once(':').is_some_and(|(_, p)| {
+            p.parse::<u16>()
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        }) {
             pattern.push_str("(?::443)?");
         }
         Self {

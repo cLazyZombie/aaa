@@ -30,12 +30,25 @@ impl Host {
             let dir = self.project_dir(&project.name)?;
             // workspace라는 명시적 관계만 묶는다. 이름·remote URL로는 합치지 않는다.
             let table = std::fs::read_to_string(aaa_config::project_settings_file(&dir))
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
-                .and_then(|s| s.parse::<toml::Table>().ok())
+                .and_then(|s| {
+                    s.parse::<toml::Table>()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .unwrap_or_default();
             let aliases = table.get("workspaces").or_else(|| table.get("repos")).and_then(|v| v.as_array());
             for repo in self.settings(&project.name).repos {
-                let Ok(machine) = self.resolve_machine(repo.machine.as_deref()) else { continue };
+                let Ok(machine) = self.resolve_machine(repo.machine.as_deref()).inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                }) else {
+                    continue;
+                };
                 let Some(view) = self.machine_views().into_iter().find(|m| m.id == machine) else { continue };
                 let alias = aliases
                     .and_then(|a| {
@@ -57,7 +70,13 @@ impl Host {
                     .db
                     .meta(&format!("workspace-collection:{}:{id}:{}", project.name, view.name))
                     .map_err(internal)?
-                    .and_then(|s| serde_json::from_str::<(u64, Vec<String>)>(&s).ok());
+                    .and_then(|s| {
+                        serde_json::from_str::<(u64, Vec<String>)>(&s)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    });
                 out.push(Registration {
                     project: project.name.clone(),
                     path: repo.path.clone(),
@@ -154,9 +173,19 @@ impl Host {
     /// 실패해도 보고·검증의 성공 여부를 바꾸지 않는다.원문 로그·경로는 웹에 전달하지 않는다.
     pub(crate) async fn collect_workspace_metrics(self: &Arc<Self>, project: &str, thread: &str) {
         let _gate = self.metrics_gate.lock().await;
-        let Ok(rec) = self.load(project, thread) else { return };
+        let Ok(rec) = self
+            .load(project, thread)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let Some(repo) = rec.repo.as_deref() else { return };
-        let Ok(registrations) = self.metric_registrations() else { return };
+        let Ok(registrations) = self
+            .metric_registrations()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let Some(reg) =
             registrations.into_iter().find(|r| r.project == project && r.machine == rec.machine_id && r.path == repo)
         else {
@@ -165,7 +194,12 @@ impl Host {
         if !reg.view.machines[0].supported {
             return;
         }
-        let Ok(conn) = self.live_conn(&rec.machine_id) else { return };
+        let Ok(conn) = self
+            .live_conn(&rec.machine_id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let cwd = rec.cwd.as_deref().unwrap_or(repo).to_string();
         let Some((_, id)) = reg.view.id.split_once('/') else { return };
         let mut value = match conn
@@ -178,7 +212,13 @@ impl Host {
         {
             Ok(AgentResponse::WorkspaceMetrics(value)) => value,
             _ => {
-                if self.db.workspace_collection_error(project, id, &reg.view.machines[0].name).is_ok() {
+                if self
+                    .db
+                    .workspace_collection_error(project, id, &reg.view.machines[0].name)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                {
                     self.workspace_metrics_changed.send_modify(|n| *n = n.wrapping_add(1));
                 }
                 return;

@@ -10,12 +10,20 @@ use std::{
 };
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+#[track_caller]
+fn failure<E: std::any::Any>(error: E) {
+    tracing::info!(error = %aaa_common::diagnostic::Cause::capture(&error), "사용량 RPC 실패");
+}
+
 const MAX: usize = 1 << 20;
 const DEADLINE: Duration = Duration::from_secs(15);
 struct Home(PathBuf);
 impl Drop for Home {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_dir_all(&self.0),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
     }
 }
 struct Refuse(tokio::task::JoinHandle<()>);
@@ -32,7 +40,7 @@ fn refuse_refresh(listener: tokio::net::TcpListener) -> Refuse {
         let app = axum::Router::new()
             .fallback(|_: axum::body::Bytes| async { (axum::http::StatusCode::UNAUTHORIZED, "{}") })
             .layer(axum::extract::DefaultBodyLimit::max(MAX));
-        let _ = axum::serve(listener, app).await;
+        aaa_common::diagnostic::ignored(axum::serve(listener, app).await, "보조 작업 실패 뒤 기존 처리를 계속한다");
     }))
 }
 
@@ -66,8 +74,8 @@ fn kill_group(child: &tokio::process::Child) {
 }
 async fn terminate(child: &mut ProbeChild) {
     kill_group(child);
-    let _ = child.kill().await;
-    let _ = child.wait().await;
+    aaa_common::diagnostic::ignored(child.kill().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+    aaa_common::diagnostic::ignored(child.wait().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
 }
 
 fn command(exe: &Path, home: &Path) -> tokio::process::Command {
@@ -96,7 +104,7 @@ fn command(exe: &Path, home: &Path) -> tokio::process::Command {
 async fn line<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, ()> {
     let mut out = vec![];
     loop {
-        let b = r.fill_buf().await.map_err(|_| ())?;
+        let b = r.fill_buf().await.map_err(failure)?;
         if b.is_empty() {
             return Err(());
         }
@@ -108,7 +116,7 @@ async fn line<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, ()> {
         out.extend_from_slice(&b[..n]);
         r.consume(n);
         if end {
-            return serde_json::from_slice(&out).map_err(|_| ());
+            return serde_json::from_slice(&out).map_err(failure);
         }
     }
 }
@@ -173,26 +181,52 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
         retry_at_ms: None,
     };
     let parent = state.join("quota-probes");
-    if parent.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) || util::ensure_private_dir(&parent).is_err()
+    if parent
+        .symlink_metadata()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|m| m.file_type().is_symlink())
+        || util::ensure_private_dir(&parent)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
     {
         return snapshot;
     }
     let home = Home(parent.join(util::new_id()));
-    if util::ensure_private_dir(&home.0).is_err() {
-        return snapshot;
-    }
-    aaa_common::harness_version::observe(command(exe, &home.0), "codex").await;
-    if util::write_private(&home.0.join("auth.json"), auth.as_bytes()).is_err()
-        || util::write_private(
-            &home.0.join("config.toml"),
-            b"cli_auth_credentials_store = \"file\"\n[analytics]\nenabled = false\n",
-        )
+    if util::ensure_private_dir(&home.0)
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
         .is_err()
     {
         return snapshot;
     }
-    let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:0").await else { return snapshot };
-    let Ok(addr) = listener.local_addr() else { return snapshot };
+    aaa_common::harness_version::observe(command(exe, &home.0), "codex").await;
+    if util::write_private(&home.0.join("auth.json"), auth.as_bytes())
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+        || util::write_private(
+            &home.0.join("config.toml"),
+            b"cli_auth_credentials_store = \"file\"\n[analytics]\nenabled = false\n",
+        )
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+    {
+        return snapshot;
+    }
+    let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return snapshot;
+    };
+    let Ok(addr) = listener
+        .local_addr()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return snapshot;
+    };
     let _refuse = refuse_refresh(listener);
     let child = command(exe, &home.0)
         .arg("app-server")
@@ -200,12 +234,16 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn();
-    let Ok(child) = child else { return snapshot };
+    let Ok(child) =
+        child.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return snapshot;
+    };
     let mut child = ProbeChild(child);
     let exchange = async {
         let mut tx = child.stdin.take().ok_or(())?;
         let mut rx = BufReader::new(child.stdout.take().ok_or(())?);
-        tx.write_all(format!("{}\n", json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"aaa-quota","title":"aaa","version":env!("CARGO_PKG_VERSION")}}})).as_bytes()).await.map_err(|_| ())?;
+        tx.write_all(format!("{}\n", json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"aaa-quota","title":"aaa","version":env!("CARGO_PKG_VERSION")}}})).as_bytes()).await.map_err(failure)?;
         let init = response(&mut rx, 1).await?;
         if init.get("error").is_some() {
             return Ok(init);
@@ -214,12 +252,19 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
             b"{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"account/rateLimits/read\"}\n",
         )
         .await
-        .map_err(|_| ())?;
+        .map_err(failure)?;
         response(&mut rx, 2).await
     };
     let result = tokio::time::timeout(DEADLINE, exchange).await;
     // 자기 자식 PID만 종료하고 wait가 끝난 뒤 인증 홈을 지운다.
     terminate(&mut child).await;
+    match &result {
+        Err(error) => {
+            tracing::info!(error = %aaa_common::diagnostic::Cause::capture(error), "사용량 RPC 시간 초과");
+        }
+        Ok(Err(())) => tracing::info!("사용량 RPC 교환 실패: 앞 단계 진단을 확인한다"),
+        Ok(Ok(_)) => {}
+    }
     if let Ok(Ok(v)) = result {
         if v.get("error").is_some() {
             let (problem, retry) = error(&v, now);

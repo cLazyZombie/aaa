@@ -11,14 +11,19 @@ const MAX_LIFETIME_MS: u64 = 10 * 60 * 1000;
 const LIMIT: u64 = 1024 * 1024;
 
 fn denied() -> Fault {
-    Fault { code: "installation_authorization_invalid", exit: 3 }
+    Fault { code: "installation_authorization_invalid", exit: 3, cause: None }
 }
 fn bytes(value: &impl Serialize) -> Result<Vec<u8>> {
-    aaa_common::install_crypto::canonical(value).map_err(|_| denied())
+    aaa_common::install_crypto::canonical(value)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))
 }
 
 fn lock_fault(error: std::io::Error) -> Fault {
-    if error.kind() == std::io::ErrorKind::WouldBlock { Fault { code: "installation_busy", exit: 4 } } else { denied() }
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        Fault { code: "installation_busy", exit: 4, cause: None }
+    } else {
+        denied()
+    }
 }
 
 pub(super) struct Authority {
@@ -115,8 +120,10 @@ impl Authority {
             (Err(a), Err(b))
                 if a.kind() == std::io::ErrorKind::NotFound && b.kind() == std::io::ErrorKind::NotFound =>
             {
-                let document = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).map_err(|_| denied())?;
-                let pair = Ed25519KeyPair::from_pkcs8(document.as_ref()).map_err(|_| denied())?;
+                let document = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+                let pair = Ed25519KeyPair::from_pkcs8(document.as_ref())
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
                 private::write(&key, document.as_ref()).map_err(Fault::io)?;
                 private::write(&pin, pair.public_key().as_ref()).map_err(Fault::io)?;
             }
@@ -135,9 +142,12 @@ impl Authority {
         Ok(this)
     }
     fn public_key(&self) -> Result<Vec<u8>> {
-        private::verify_directory(self.root.parent().ok_or_else(denied)?).map_err(|_| denied())?;
-        private::verify_directory(&self.root).map_err(|_| denied())?;
-        let pin = private::read(&self.root.join("issuer.pin"), 32).map_err(|_| denied())?;
+        private::verify_directory(self.root.parent().ok_or_else(denied)?)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+        private::verify_directory(&self.root)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+        let pin = private::read(&self.root.join("issuer.pin"), 32)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         if pin.len() != 32 {
             return Err(denied());
         }
@@ -157,9 +167,11 @@ impl Authority {
     }
     /// 조회 자체는 만료와 상관없이 원래 서명/발급 기록을 읽는다. 실행은 begin에서 현재 시간을 다시 검사한다.
     pub(super) fn issued(&self, id: &str) -> Result<Issued> {
-        let input: Issued =
-            serde_json::from_slice(&private::read(&self.input_path(id)?, 2 * LIMIT).map_err(|_| denied())?)
-                .map_err(|_| denied())?;
+        let input: Issued = serde_json::from_slice(
+            &private::read(&self.input_path(id)?, 2 * LIMIT)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?,
+        )
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         if input.authorization.claims.installation_id != id {
             return Err(denied());
         }
@@ -172,10 +184,17 @@ impl Authority {
         Ok(input)
     }
     fn check_plan(plan: &InstallPlan, permissions: &[InstallPermission]) -> Result<()> {
-        let checked = aaa_config::install::plan(plan.choices.clone(), plan.context.clone()).map_err(|_| denied())?;
+        let checked = aaa_config::install::plan(plan.choices.clone(), plan.context.clone())
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         if checked != *plan
             || super::super::platform::account().as_deref() != Some(&plan.context.target_account)
-            || super::super::platform::platform().ok().as_ref() != Some(&plan.context.platform)
+            || super::super::platform::platform()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .as_ref()
+                != Some(&plan.context.platform)
             || permissions.is_empty()
             || permissions.len() > 256
             || permissions.iter().any(|p| {
@@ -224,8 +243,10 @@ impl Authority {
                 return Err(denied());
             }
         }
-        let document = private::read(&self.root.join("issuer.pk8"), 4096).map_err(|_| denied())?;
-        let pair = Ed25519KeyPair::from_pkcs8(&document).map_err(|_| denied())?;
+        let document = private::read(&self.root.join("issuer.pk8"), 4096)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+        let pair = Ed25519KeyPair::from_pkcs8(&document)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         if pair.public_key().as_ref() != pin {
             return Err(denied());
         }
@@ -243,8 +264,11 @@ impl Authority {
             nonce: aaa_common::util::new_id(),
             issuer: format!("local-ed25519:{}", hash(&pin)),
         };
-        let signer = aaa_common::install_crypto::Signer::open(&document).map_err(|_| denied())?;
-        let signature = signer.sign_authorization(&claims).map_err(|_| denied())?;
+        let signer = aaa_common::install_crypto::Signer::open(&document)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+        let signature = signer
+            .sign_authorization(&claims)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         let authorization = InstallAuthorization { claims, signature, enrollment: None };
         let record = Record {
             authorization_sha256: hash(&bytes(&authorization)?),
@@ -252,10 +276,22 @@ impl Authority {
             consumed: false,
         };
         let path = self.record_path(&authorization.claims.nonce)?;
-        if path.symlink_metadata().is_ok() {
+        if path
+            .symlink_metadata()
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+        {
             return Err(denied());
         }
-        if id.is_none() && self.input_path(&authorization.claims.installation_id)?.symlink_metadata().is_ok() {
+        if id.is_none()
+            && self
+                .input_path(&authorization.claims.installation_id)?
+                .symlink_metadata()
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        {
             return Err(denied());
         }
         private::write(&path, &bytes(&record)?).map_err(Fault::io)?;
@@ -273,9 +309,11 @@ impl Authority {
         let pin = self.public_key()?;
         Self::check_signed(&pin, authorization, plan, permissions, now)?;
         let c = &authorization.claims;
-        let record: Record =
-            serde_json::from_slice(&private::read(&self.record_path(&c.nonce)?, LIMIT).map_err(|_| denied())?)
-                .map_err(|_| denied())?;
+        let record: Record = serde_json::from_slice(
+            &private::read(&self.record_path(&c.nonce)?, LIMIT)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?,
+        )
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         if record.installation_id != c.installation_id || record.authorization_sha256 != hash(&bytes(authorization)?) {
             return Err(denied());
         }
@@ -335,7 +373,7 @@ impl Authority {
         use base64::Engine as _;
         let pin = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&package.issuer_public_key)
-            .map_err(|_| denied())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
         if pin.len() != 32 || Path::new(&package.plan.context.state_dir) != transaction::real_directory(state)? {
             return Err(denied());
         }
@@ -350,11 +388,15 @@ impl Authority {
                 match this.input_path(&auth.claims.installation_id)?.symlink_metadata() {
                     Ok(_) => Some(this.issued(&auth.claims.installation_id)?),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(_) => return Err(denied()),
+                    Err(source_error) => {
+                        return Err(aaa_common::diagnostic::context(source_error, denied()));
+                    }
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Err(denied()),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, denied()));
+            }
         };
         if let Some(original) = &existing {
             if original.plan != package.plan
@@ -382,7 +424,14 @@ impl Authority {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // root가 경쟁 중 생겼더라도 원래 key가 있으면 다른 최초 신뢰를 덮지 않는다.
-                if this.root.join("issuer.pk8").symlink_metadata().is_ok() {
+                if this
+                    .root
+                    .join("issuer.pk8")
+                    .symlink_metadata()
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                {
                     return Err(denied());
                 }
                 use std::io::Write;
@@ -392,7 +441,9 @@ impl Authority {
                 drop(file);
                 private::sync_parent(&pin_path).map_err(Fault::io)?;
             }
-            Err(_) => return Err(denied()),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, denied()));
+            }
         }
         // 잠금 뒤 같은 ID의 불변식을 다시 검사한다.
         if let Ok(original) = this.issued(&auth.claims.installation_id)
@@ -408,8 +459,11 @@ impl Authority {
         };
         match path.symlink_metadata() {
             Ok(_) => {
-                let prior: Record = serde_json::from_slice(&private::read(&path, LIMIT).map_err(|_| denied())?)
-                    .map_err(|_| denied())?;
+                let prior: Record = serde_json::from_slice(
+                    &private::read(&path, LIMIT)
+                        .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?,
+                )
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
                 if prior.authorization_sha256 != record.authorization_sha256
                     || prior.installation_id != record.installation_id
                 {
@@ -420,7 +474,9 @@ impl Authority {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 private::write(&path, &bytes(&record)?).map_err(Fault::io)?
             }
-            Err(_) => return Err(denied()),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, denied()));
+            }
         }
         private::write(
             &this.input_path(&auth.claims.installation_id)?,

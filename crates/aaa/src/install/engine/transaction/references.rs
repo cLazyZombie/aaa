@@ -37,7 +37,8 @@ pub(super) fn read(file: &FileSpec) -> Result<Option<Record>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(Fault::io(e)),
     };
-    let record: Record = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let record: Record = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if record.schema != 1
         || record.resource != resource_key(&file.path)
         || !digest_ok(&record.after)

@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /** Unsent terminal lines belong to a PC/pane, never to the currently mounted view. */
 const listeners = new Set<() => void>();
 const pending = new Map<string, { written: string; canClear: boolean }>();
@@ -14,7 +15,7 @@ const PREFIX = "herdr-web-ui:terminal-line:";
 export const TERMINAL_LINE_LIMIT = 32_768;
 export function readTerminalDraft(owner: string): string {
   if (memory.has(owner)) return memory.get(owner)!;
-  try { return (localStorage.getItem(PREFIX + owner) ?? "").slice(0, TERMINAL_LINE_LIMIT); } catch { return ""; }
+  try { return (localStorage.getItem(PREFIX + owner) ?? "").slice(0, TERMINAL_LINE_LIMIT); } catch (ignoredError) { logIgnoredFailure(ignoredError, "terminalDraft.ts:18"); return ""; }
 }
 export function writeTerminalDraft(owner: string, text: string): void {
   const value = text.slice(0, TERMINAL_LINE_LIMIT).replace(/[\uD800-\uDBFF]$/, "");
@@ -24,7 +25,7 @@ export function writeTerminalDraft(owner: string, text: string): void {
   try {
     if (value) localStorage.setItem(PREFIX + owner, value);
     else localStorage.removeItem(PREFIX + owner);
-  } catch { /* private mode: preserve across view changes in memory */ }
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "terminalDraft.ts:28"); /* private mode: preserve across view changes in memory */ }
   notify();
 }
 

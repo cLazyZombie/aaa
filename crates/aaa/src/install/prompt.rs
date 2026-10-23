@@ -11,7 +11,9 @@ pub(super) fn line(question: &str) -> Result<String, Box<InstallResult>> {
 // 모드를 준비한 뒤에만 응답을 요청한다. 표시 직후 들어온 취소도 같은 경계를 지난다.
 fn show(question: &str) -> Result<(), Box<InstallResult>> {
     print!("{question}");
-    std::io::stdout().flush().map_err(|_| error("installation_prompt_closed", 3))
+    std::io::stdout()
+        .flush()
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, error("installation_prompt_closed", 3)))
 }
 #[cfg(unix)]
 mod unix {
@@ -42,12 +44,16 @@ mod unix {
         // read_line은 VEOL의 Ctrl+C 뒤에도 LF를 더 기다린다. 실제 canonical read 한 덩어리를 읽는다.
         use std::io::Read;
         let mut value = vec![0u8; 65536];
-        let count = std::io::stdin().lock().read(&mut value).map_err(|_| error("installation_prompt_closed", 3))?;
+        let count = std::io::stdin().lock().read(&mut value).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("installation_prompt_closed", 3))
+        })?;
         value.truncate(count);
         if value.is_empty() || value.contains(&3) {
             return Err(error("installation_cancelled", 130));
         }
-        let value = String::from_utf8(value).map_err(|_| error("installation_prompt_invalid", 2))?;
+        let value = String::from_utf8(value).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("installation_prompt_invalid", 2))
+        })?;
         Ok(value.trim_end_matches(['\r', '\n']).into())
     }
 }
@@ -104,7 +110,9 @@ mod windows {
         if value.is_empty() || value.iter().any(|unit| matches!(unit, 3 | 26)) {
             return Err(error("installation_cancelled", 130));
         }
-        let value = String::from_utf16(&value).map_err(|_| error("installation_prompt_invalid", 2))?;
+        let value = String::from_utf16(&value).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, error("installation_prompt_invalid", 2))
+        })?;
         Ok(value.trim_end_matches(['\r', '\n']).into())
     }
 }

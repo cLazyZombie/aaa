@@ -25,7 +25,12 @@ pub fn accepts_gzip(headers: &axum::http::HeaderMap) -> bool {
     let mut gzip = None;
     let mut wildcard = false;
     for value in headers.get_all(axum::http::header::ACCEPT_ENCODING) {
-        let Ok(value) = value.to_str() else { continue };
+        let Ok(value) = value
+            .to_str()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         for encoding in value.split(',') {
             let mut parts = encoding.trim().split(';');
             let name = parts.next().unwrap_or("").trim();
@@ -34,7 +39,13 @@ pub fn accepts_gzip(headers: &axum::http::HeaderMap) -> bool {
                 if let Some((key, value)) = parameter.trim().split_once('=')
                     && key.trim().eq_ignore_ascii_case("q")
                 {
-                    accepted = value.trim().parse::<f32>().is_ok_and(|q| q > 0.0 && q <= 1.0);
+                    accepted = value
+                        .trim()
+                        .parse::<f32>()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok_and(|q| q > 0.0 && q <= 1.0);
                 }
             }
             if name.eq_ignore_ascii_case("gzip") {

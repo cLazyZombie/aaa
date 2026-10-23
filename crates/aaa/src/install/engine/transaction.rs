@@ -78,7 +78,8 @@ struct Transaction {
 }
 
 pub(super) fn real_directory(path: &Path) -> Result<PathBuf> {
-    let real = aaa_agent::work_root::check(path, None).map_err(|_| Fault::conflict())?;
+    let real = aaa_agent::work_root::check(path, None)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     for ancestor in real.ancestors() {
         match ancestor.symlink_metadata() {
             Ok(meta) if meta.is_dir() => return Ok(real),
@@ -95,7 +96,11 @@ pub(super) fn target(path: &Path) -> Result<PathBuf> {
     }
     let parent = real_directory(path.parent().ok_or_else(Fault::conflict)?)?;
     let path = parent.join(path.file_name().ok_or_else(Fault::conflict)?);
-    if path.symlink_metadata().is_ok_and(|m| !m.is_file()) {
+    if path
+        .symlink_metadata()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|m| !m.is_file())
+    {
         return Err(Fault::conflict());
     }
     Ok(path)
@@ -171,7 +176,18 @@ fn snapshot(path: &Path) -> Result<(Option<String>, Option<u32>)> {
         sha.update(&buf[..n]);
     }
     let finished = file.metadata().map_err(Fault::io)?;
-    if finished.len() != total || opened.modified().ok() != finished.modified().ok() || mode(&opened) != mode(&finished)
+    if finished.len() != total
+        || opened
+            .modified()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            != finished
+                .modified()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        || mode(&opened) != mode(&finished)
     {
         return Err(Fault::conflict());
     }
@@ -215,7 +231,7 @@ fn locks(state: &Path, manifest: &Manifest) -> Result<Locks> {
         let path = parent.join(format!(".aaa-install-resource-{key}.lock"));
         let file = private::lock(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::WouldBlock {
-                Fault { code: "installation_resource_busy", exit: 4 }
+                Fault { code: "installation_resource_busy", exit: 4, cause: None }
             } else {
                 Fault::io(e)
             }
@@ -225,15 +241,18 @@ fn locks(state: &Path, manifest: &Manifest) -> Result<Locks> {
     Ok(held)
 }
 fn json_bytes(value: &impl Serialize) -> Result<Vec<u8>> {
-    serde_json::to_vec(value).map_err(|_| Fault::conflict())
+    serde_json::to_vec(value).map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))
 }
 fn pointer(path: &Path) -> Result<Option<String>> {
     let bytes = match private::read(path, 1024) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(Fault::conflict()),
+        Err(source_error) => {
+            return Err(aaa_common::diagnostic::context(source_error, Fault::conflict()));
+        }
     };
-    let id: String = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let id: String = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if !id_ok(&id) {
         return Err(Fault::conflict());
     }
@@ -267,7 +286,8 @@ fn load(state: &Path, journal: &Journal) -> Result<Manifest> {
     if hash(&bytes) != journal.manifest_sha256 {
         return Err(Fault::conflict());
     }
-    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let manifest: Manifest = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if manifest.schema != 1
         || real_directory(Path::new(&manifest.plan.context.state_dir))? != state
         || manifest.files.len() != journal.entries.len()
@@ -296,7 +316,10 @@ fn load(state: &Path, journal: &Journal) -> Result<Manifest> {
     }
     if let Some(root) = &manifest.root {
         root_volume(root)?;
-        if aaa_agent::work_root::check(&root.path, root.mount.as_deref()).map_err(|_| Fault::conflict())? != root.path {
+        if aaa_agent::work_root::check(&root.path, root.mount.as_deref())
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
+            != root.path
+        {
             return Err(Fault::conflict());
         }
     }
@@ -316,7 +339,14 @@ pub(super) fn installed_plan(state: &Path, journal: &Journal) -> Result<InstallP
 pub(super) fn observe(state: &Path, journal: Journal) -> Result<InstallResult> {
     let manifest = load(state, &journal)?;
     if journal.phase == Phase::Configured
-        && manifest.files.iter().any(|f| snapshot(&f.path).ok() != Some((Some(f.after.clone()), Some(f.mode))))
+        && manifest.files.iter().any(|f| {
+            snapshot(&f.path)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                != Some((Some(f.after.clone()), Some(f.mode)))
+        })
     {
         return Err(Fault::conflict());
     }
@@ -328,9 +358,27 @@ pub(super) fn observe(state: &Path, journal: Journal) -> Result<InstallResult> {
             let entry = &journal.entries[index];
             let current = snapshot(&f.path)?;
             let before = current == (f.before.clone(), f.before_mode)
-                && f.before_inode.as_ref() == if current.0.is_some() { identity(&f.path).ok() } else { None }.as_ref();
+                && f.before_inode.as_ref()
+                    == if current.0.is_some() {
+                        identity(&f.path)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    } else {
+                        None
+                    }
+                    .as_ref();
             let after = current == (Some(f.after.clone()), Some(f.mode))
-                && entry.inode.as_ref().is_none_or(|ino| identity(&f.path).ok().as_ref() == Some(ino));
+                && entry.inode.as_ref().is_none_or(|ino| {
+                    identity(&f.path)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .as_ref()
+                        == Some(ino)
+                });
             if match entry.state {
                 Step::Pending => !before,
                 Step::Staged => !before && !after,
@@ -349,7 +397,8 @@ pub(super) fn journal_locks(state: &Path, journal: &Journal) -> Result<Locks> {
     locks(state, &manifest)
 }
 fn root_volume(root: &RootSpec) -> Result<()> {
-    aaa_agent::work_root::check(&root.path, root.mount.as_deref()).map_err(|_| Fault::conflict())?;
+    aaa_agent::work_root::check(&root.path, root.mount.as_deref())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if super::super::platform::storage(&root.path).map(|s| s.0).as_ref() != Some(&root.volume) {
         return Err(Fault::conflict());
     }
@@ -358,9 +407,10 @@ fn root_volume(root: &RootSpec) -> Result<()> {
 fn observe_root(state: &Path, manifest: &Manifest) -> Result<()> {
     let Some(root) = &manifest.root else { return Ok(()) };
     root_volume(root)?;
-    let real = aaa_agent::work_root::check(&root.path, root.mount.as_deref()).map_err(|_| Fault::conflict())?;
+    let real = aaa_agent::work_root::check(&root.path, root.mount.as_deref())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     let saved = aaa_agent::work_root::inspect(&state.join("agent"))
-        .map_err(|_| Fault::conflict())?
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
         .ok_or_else(Fault::conflict)?;
     if saved.applied.as_ref() != Some(&root.path)
         || saved.applied_mount != root.mount
@@ -372,8 +422,8 @@ fn observe_root(state: &Path, manifest: &Manifest) -> Result<()> {
     if snapshot(&marker)?.0.is_none() || marker.metadata().map_err(Fault::io)?.len() > 4096 {
         return Err(Fault::conflict());
     }
-    let marker: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(marker).map_err(Fault::io)?).map_err(|_| Fault::conflict())?;
+    let marker: serde_json::Value = serde_json::from_slice(&std::fs::read(marker).map_err(Fault::io)?)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if marker.get("schema").and_then(serde_json::Value::as_u64) != Some(1)
         || marker.get("owner").and_then(serde_json::Value::as_str) != Some(&saved.owner)
     {
@@ -444,7 +494,10 @@ impl Transaction {
             && journal.phase == Phase::Configured
             && !manifest.files.iter().any(|f| f.force)
             && journal.goal_sha256 == goal_sha256
-            && observe(&state, journal.clone()).is_ok()
+            && observe(&state, journal.clone())
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
         {
             let old = load(&state, &journal)?;
             return Ok(Self {
@@ -469,7 +522,15 @@ impl Transaction {
         }
         for f in &manifest.files {
             if snapshot(&f.path)? != (f.before.clone(), f.before_mode)
-                || f.before_inode.as_ref().is_some_and(|inode| identity(&f.path).ok().as_ref() != Some(inode))
+                || f.before_inode.as_ref().is_some_and(|inode| {
+                    identity(&f.path)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .as_ref()
+                        != Some(inode)
+                })
             {
                 return Err(Fault::conflict());
             }
@@ -570,7 +631,15 @@ impl Transaction {
         let f = &self.manifest.files[i];
         if target(&f.path)? != f.path
             || snapshot(&f.path)? != (f.before.clone(), f.before_mode)
-            || f.before_inode.as_ref().is_some_and(|inode| identity(&f.path).ok().as_ref() != Some(inode))
+            || f.before_inode.as_ref().is_some_and(|inode| {
+                identity(&f.path)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_ref()
+                    != Some(inode)
+            })
         {
             return Err(Fault::conflict());
         }
@@ -578,7 +647,11 @@ impl Transaction {
             self.journal.entries[i].state = Step::Applied;
             return self.save();
         }
-        if f.path.metadata().is_ok_and(|m| m.permissions().readonly()) {
+        if f.path
+            .metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| m.permissions().readonly())
+        {
             return Err(Fault::conflict());
         }
         if f.before.is_some() {
@@ -622,7 +695,15 @@ impl Transaction {
         let f = &self.manifest.files[i];
         if target(&f.path)? != f.path
             || snapshot(&f.path)? != (f.before.clone(), f.before_mode)
-            || f.before_inode.as_ref().is_some_and(|inode| identity(&f.path).ok().as_ref() != Some(inode))
+            || f.before_inode.as_ref().is_some_and(|inode| {
+                identity(&f.path)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_ref()
+                    != Some(inode)
+            })
         {
             return Err(Fault::conflict());
         }
@@ -658,7 +739,13 @@ impl Transaction {
             let forced_pending = f.force && self.journal.entries[i].state == Step::Pending;
             let forced_staged_before = f.force
                 && self.journal.entries[i].state == Step::Staged
-                && self.journal.entries[i].inode.as_ref() != identity(&f.path).ok().as_ref();
+                && self.journal.entries[i].inode.as_ref()
+                    != identity(&f.path)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .as_ref();
             if current == (Some(f.after.clone()), Some(f.mode)) && !forced_pending && !forced_staged_before {
                 if self.journal.entries[i].state == Step::Pending
                     && (f.before.as_ref() != Some(&f.after) || f.before_mode != Some(f.mode))
@@ -694,7 +781,8 @@ impl Transaction {
             let root = self.manifest.root.as_ref().ok_or_else(Fault::conflict)?;
             let agent = self.state.join("agent");
             private::directory(&agent).map_err(Fault::io)?;
-            aaa_agent::work_root::activate(&agent, &root.path, root.mount.as_deref()).map_err(|_| Fault::conflict())?;
+            aaa_agent::work_root::activate(&agent, &root.path, root.mount.as_deref())
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
             self.journal.root = Some(Step::Applied);
             self.save()?;
             return Ok(true);
@@ -711,7 +799,12 @@ impl Transaction {
     fn receipt(&self) -> Result<()> {
         let path = self.state.join("install/receipt.json");
         let bytes = json_bytes(&self.journal.id)?;
-        if private::read(&path, 1024).ok().as_ref() != Some(&bytes) {
+        if private::read(&path, 1024)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .as_ref()
+            != Some(&bytes)
+        {
             private::write(&path, &bytes).map_err(Fault::io)?;
         }
         Ok(())
@@ -747,7 +840,7 @@ fn prepared_matches(path: &Path, bytes: &[u8]) -> Result<bool> {
         Ok(old) if old == bytes => Ok(true),
         Ok(_) => Err(Fault::conflict()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(_) => Err(Fault::conflict()),
+        Err(source_error) => Err(aaa_common::diagnostic::context(source_error, Fault::conflict())),
     }
 }
 

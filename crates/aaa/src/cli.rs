@@ -1910,10 +1910,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 let m = file.symlink_metadata().context("인증 결과 파일을 열지 못했다")?;
                 anyhow::ensure!(m.is_file() && m.len() <= 128 * 1024, "인증 결과는 128KiB 이하 일반 파일이어야 한다");
                 let mut secret = String::new();
-                std::fs::File::open(file)?
-                    .take(128 * 1024 + 1)
-                    .read_to_string(&mut secret)
-                    .map_err(|_| anyhow::anyhow!("인증 결과 파일을 읽지 못했다"))?;
+                std::fs::File::open(file)?.take(128 * 1024 + 1).read_to_string(&mut secret).map_err(
+                    |source_error| {
+                        aaa_common::diagnostic::context(source_error, anyhow::anyhow!("인증 결과 파일을 읽지 못했다"))
+                    },
+                )?;
                 aaa_common::redact::remember_auth(&harness, &secret);
                 front(json, FrontRequest::AccountImport { name, harness, secret: aaa_proto::SecretText(secret) })
             }
@@ -2386,7 +2387,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 Some(p) => p,
                 None => {
                     let mut t = String::new();
-                    let _ = std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 1 << 20), &mut t);
+                    aaa_common::diagnostic::ignored(
+                        std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 1 << 20), &mut t),
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                     t
                 }
             };
@@ -2572,6 +2576,7 @@ fn current_pane(pane: Option<String>) -> Result<String> {
     match pane {
         Some(p) => Ok(p),
         None => std::env::var("AAA_SESSION_ID")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .filter(|s| !s.is_empty())
             .context("--current는 aaa 세션 안에서만 쓴다(AAA_SESSION_ID가 없다). --pane으로 pane을 준다"),
@@ -2668,7 +2673,13 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
                 let mut last = Ok(FrontResponse::Done);
                 for req in aaa_common::front::attach_requests(&pane, &bytes) {
                     last = c.call(req).await?;
-                    if last.is_err() {
+                    if last
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -2838,8 +2849,18 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
                 Err(e) => (false, format!("Codex 전역 hook 점검 실패: {e:#}")),
             };
             let r = doctor::probe(&doctor::ProbeOptions { samples: 3, throughput: false, ..Default::default() });
-            let machines = front_call(FrontRequest::Machines).ok().and_then(Result::ok);
-            let usage = front_call(FrontRequest::LibraryUsage).ok().and_then(Result::ok);
+            let machines = front_call(FrontRequest::Machines)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .and_then(Result::ok);
+            let usage = front_call(FrontRequest::LibraryUsage)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .and_then(Result::ok);
             if json {
                 let mut value = serde_json::to_value(&r)?;
                 value["pr_tracking"] = serde_json::to_value(&machines)?;
@@ -3036,9 +3057,18 @@ fn agent_controlled(
         let id = aaa_common::tls::load_or_create(&state, "aaa-agent")?;
         aaa_agent::link::Target::Remote { addr: host.clone(), pin: pin.fingerprint, id }
     };
-    let default_cwd = Some(cfg.agent.default_cwd.clone())
-        .filter(|c| !c.is_empty())
-        .or_else(|| std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()));
+    let default_cwd = Some(cfg.agent.default_cwd.clone()).filter(|c| !c.is_empty()).or_else(|| {
+        std::env::var("HOME")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .or_else(|| {
+                std::env::var("USERPROFILE")
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+    });
     rt.block_on(async move {
         let agent = aaa_agent::Agent::new(state.clone(), ident.machine_id, name, a.dev_mode, default_cwd)?;
         agent.configure_deployment(crate::deployment::execute)?;
@@ -3086,7 +3116,7 @@ fn agent_controlled(
         agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
         if let Some(ready) = ready {
-            let _ = ready.send(());
+            aaa_common::diagnostic::ignored(ready.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
         }
         let supervised = stop.is_some();
         tokio::select! {
@@ -3102,7 +3132,14 @@ fn agent_controlled(
 async fn supervised_stop(stop: Option<tokio::sync::watch::Receiver<bool>>) {
     let Some(mut stop) = stop else { return std::future::pending().await };
     loop {
-        if *stop.borrow_and_update() || stop.changed().await.is_err() {
+        if *stop.borrow_and_update()
+            || stop
+                .changed()
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+        {
             return;
         }
     }
@@ -3232,7 +3269,12 @@ fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
                 key: key.clone(),
                 value: value.clone(),
             })?;
-            if json || res.is_err() {
+            if json
+                || res
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+            {
                 return front_print(json, res);
             }
             println!("{project}: {key} = {}", value.trim());
@@ -3584,6 +3626,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
     // 프로젝트는 생략한다(plan §8.288): Front 길이면 host가 맡은 하나를 채운다
     let mut control = if session {
         rt.block_on(aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .filter(|c| c.role.can_control())
     } else {
@@ -3692,7 +3735,15 @@ fn render_thread_pane(s: &mut String, v: &aaa_proto::ThreadPaneView) {
     use std::fmt::Write as _;
     let agent = v
         .agent
-        .map(|a| serde_json::to_value(a).ok().and_then(|x| x.as_str().map(String::from)).unwrap_or_default())
+        .map(|a| {
+            serde_json::to_value(a)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .and_then(|x| x.as_str().map(String::from))
+                .unwrap_or_default()
+        })
         .unwrap_or_else(|| "상태 모름".into());
     if let Some(r) = &v.read {
         let _ = writeln!(s, "{} · pane {} · agent {agent}", v.thread, v.pane);

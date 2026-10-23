@@ -94,33 +94,52 @@ fn native(service: InstallService, roles: &[&str], instance: Option<&str>, home:
     if service == InstallService::None {
         return Inventory { files, manager: InstallCheckState::NotRequested, present: None };
     }
-    let manager = tokio::runtime::Builder::new_current_thread().enable_all().build().ok().and_then(|rt| {
-        let binary = ["/usr/bin/systemctl", "/bin/systemctl"].into_iter().find(|p| Path::new(p).is_file())?;
-        rt.block_on(async {
-            let mut present = false;
-            for role in roles {
-                let mut cmd = tokio::process::Command::new(binary);
-                cmd.arg(if user { "--user" } else { "--system" })
-                    .args(["show", "--no-pager", "--no-ask-password", "--property=LoadState", "--value"])
-                    .arg(format!("{}.service", unit_name(instance, role)))
-                    .env("SYSTEMD_PAGERSECURE", "1")
-                    .env("SYSTEMD_COLORS", "0")
-                    .stdin(std::process::Stdio::null())
-                    .kill_on_drop(true);
-                let out =
-                    tokio::time::timeout(std::time::Duration::from_millis(2500), cmd.output()).await.ok()?.ok()?;
-                if !out.status.success() {
-                    return None;
+    let manager = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|rt| {
+            let binary = ["/usr/bin/systemctl", "/bin/systemctl"].into_iter().find(|p| Path::new(p).is_file())?;
+            rt.block_on(async {
+                let mut present = false;
+                for role in roles {
+                    let mut cmd = tokio::process::Command::new(binary);
+                    cmd.arg(if user { "--user" } else { "--system" })
+                        .args(["show", "--no-pager", "--no-ask-password", "--property=LoadState", "--value"])
+                        .arg(format!("{}.service", unit_name(instance, role)))
+                        .env("SYSTEMD_PAGERSECURE", "1")
+                        .env("SYSTEMD_COLORS", "0")
+                        .stdin(std::process::Stdio::null())
+                        .kill_on_drop(true);
+                    let out = tokio::time::timeout(std::time::Duration::from_millis(2500), cmd.output())
+                        .await
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?;
+                    if !out.status.success() {
+                        return None;
+                    }
+                    match std::str::from_utf8(&out.stdout)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?
+                        .trim()
+                    {
+                        "not-found" => {}
+                        "loaded" | "masked" | "error" | "bad-setting" | "merged" => present = true,
+                        _ => return None,
+                    }
                 }
-                match std::str::from_utf8(&out.stdout).ok()?.trim() {
-                    "not-found" => {}
-                    "loaded" | "masked" | "error" | "bad-setting" | "merged" => present = true,
-                    _ => return None,
-                }
-            }
-            Some(present)
-        })
-    });
+                Some(present)
+            })
+        });
     Inventory {
         files,
         manager: if manager.is_some() { InstallCheckState::Passed } else { InstallCheckState::Unknown },

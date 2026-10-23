@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 새 pane 창의 agent 고르기(herdr-web-ui aa624cb src/components/AgentPicker.tsx를 옮김, 모양 herdr/NewSessionDialog.css).
 // 다른 곳: herdr가 아는 agent 종류 대신 이 머신 agent.toml의 profile이 줄이 되고, 표시는 그 profile의 harness 표시다.
 // 마지막 고른 것은 참고와 같은 열쇠에 둔다.
@@ -22,7 +23,7 @@ const LAST_AGENT_KEY = "herdr-web-ui:new-session-agent";
 export function rememberedAgent(): string {
   try {
     return window.localStorage.getItem(LAST_AGENT_KEY) ?? "";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "AgentPicker.tsx:26");
     return "";
   }
 }
@@ -30,7 +31,7 @@ export function rememberedAgent(): string {
 export function rememberAgent(kind: string): void {
   try {
     window.localStorage.setItem(LAST_AGENT_KEY, kind);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "AgentPicker.tsx:34");
     /* private mode: the choice simply is not remembered */
   }
 }

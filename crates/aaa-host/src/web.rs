@@ -57,9 +57,16 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
 /// 「다시 읽기」로 주소를 바꾸거나 웹을 끄면 새 설정을 따른다.
 pub(crate) async fn resume(host: &Arc<Host>, listener: tokio::net::TcpListener) -> Result<()> {
     let addr = listener.local_addr()?;
-    let same_address = host.cfg.web.listen.parse::<std::net::SocketAddr>().ok().is_some_and(|configured| {
-        configured.ip() == addr.ip() && (configured.port() == 0 || configured.port() == addr.port())
-    });
+    let same_address = host
+        .cfg
+        .web
+        .listen
+        .parse::<std::net::SocketAddr>()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .is_some_and(|configured| {
+            configured.ip() == addr.ip() && (configured.port() == 0 || configured.port() == addr.port())
+        });
     if same_address {
         start_bound(host, listener)
     } else {
@@ -89,7 +96,9 @@ pub(crate) fn start_bound(host: &Arc<Host>, listener: tokio::net::TcpListener) -
         async move {
             host.task_progress(crate::supervisor::Task::Web);
             // 오류의 원문은 외부 알림에 넣지 않는다. 정상 조기 종료도 supervisor가 이상으로 판정한다.
-            let _ = axum::serve(listener, router(host)).await;
+            if let Err(error) = axum::serve(listener, router(host)).await {
+                tracing::warn!(error = %aaa_common::diagnostic::Cause::capture(&error), "웹 서버 중단");
+            }
         }
     });
     Ok(())
@@ -169,7 +178,16 @@ pub fn router(host: Arc<Host>) -> Router {
 }
 
 pub(crate) fn host_header(h: &HeaderMap) -> String {
-    h.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
+    h.get(header::HOST)
+        .and_then(|v| {
+            v.to_str()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or("")
+        .to_string()
 }
 
 async fn install_probe(State(host): State<Arc<Host>>, Path(challenge): Path<String>) -> Response {
@@ -185,7 +203,11 @@ fn is_loopback_host(host: &str) -> bool {
 
 /// 요청이 HTTPS(serve) 경유인가: 브라우저가 보는 주소가 loopback이 아니거나 proxy가 https라고 알린다.
 pub(crate) fn via_https(h: &HeaderMap) -> bool {
-    let proto = h.get("x-forwarded-proto").and_then(|v| v.to_str().ok());
+    let proto = h.get("x-forwarded-proto").and_then(|v| {
+        v.to_str()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+    });
     proto == Some("https") || !is_loopback_host(&host_header(h))
 }
 
@@ -196,10 +218,27 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     let Some(expected) = host.web_origin(&host_header(h)) else {
         return (StatusCode::MISDIRECTED_REQUEST, "알 수 없는 Host").into_response();
     };
-    let is_ws =
-        h.get(header::UPGRADE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+    let is_ws = h
+        .get(header::UPGRADE)
+        .and_then(|v| {
+            v.to_str()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
     if !matches!(*req.method(), Method::GET | Method::HEAD) || is_ws {
-        let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
+        let origin = h
+            .get(header::ORIGIN)
+            .and_then(|v| {
+                v.to_str()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .unwrap_or("");
         if !origin.eq_ignore_ascii_case(&expected) {
             return (StatusCode::FORBIDDEN, "허용하지 않은 Origin").into_response();
         }
@@ -266,7 +305,15 @@ async fn pane_file_view(
         (code, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], msg).into_response()
     };
     // 다른 site의 페이지가 그림·script·fetch로 이 파일을 읽으려는 것(참고 `crossSiteFileRead`). 새 탭·내려받기(navigate)는 된다
-    let fetch = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let fetch = |name: &str| {
+        headers.get(name).and_then(|v| {
+            v.to_str()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+    };
     if fetch("sec-fetch-site").is_some_and(|s| s != "same-origin" && s != "none")
         && fetch("sec-fetch-mode") != Some("navigate")
     {
@@ -407,7 +454,18 @@ async fn view_file(
 
 /// 브라우저 문서 탐색만 열람이다. cookie 없는 외부 탭도 포함하며 fetch·그림·미리보기·HEAD는 제외한다.
 fn report_navigation(method: &Method, headers: &HeaderMap) -> bool {
-    let value = |key: &str| headers.get(key).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let value = |key: &str| {
+        headers
+            .get(key)
+            .and_then(|v| {
+                v.to_str()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .unwrap_or("")
+    };
     method == Method::GET
         && value("sec-fetch-mode") == "navigate"
         && matches!(value("sec-fetch-dest"), "document" | "iframe" | "frame")
@@ -446,7 +504,16 @@ async fn serve_view(
     let src = file.source;
     let size = src.size();
     let generated = matches!(src, crate::library::ViewSource::Page(_));
-    let range = match crate::files::parse_range(headers.get(header::RANGE).and_then(|v| v.to_str().ok()), size) {
+    let range = match crate::files::parse_range(
+        headers.get(header::RANGE).and_then(|v| {
+            v.to_str()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        }),
+        size,
+    ) {
         Ok(r) => r,
         Err(()) => {
             return Response::builder()
@@ -524,7 +591,12 @@ fn cookie_name_in(instance: Option<&str>, https: bool) -> String {
 pub(crate) fn cookie_token(h: &HeaderMap) -> Option<String> {
     let name = cookie_name(via_https(h));
     for v in h.get_all(header::COOKIE) {
-        let Ok(s) = v.to_str() else { continue };
+        let Ok(s) = v
+            .to_str()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         for part in s.split(';') {
             let Some((k, val)) = part.split_once('=') else { continue };
             if k.trim() == name {
@@ -573,7 +645,10 @@ async fn task_file(
     if !role.can_control() {
         return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 첨부할 수 없다"));
     }
-    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::task_attach::MAX_BYTES as usize).await else {
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::task_attach::MAX_BYTES as usize)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::BadRequest, "파일은 16MiB까지 첨부한다"))),
@@ -603,7 +678,10 @@ async fn library_upload(
     if !role.can_control() {
         return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 보고서를 올릴 수 없다"));
     }
-    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::library_upload::FILE_MAX as usize).await else {
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::library_upload::FILE_MAX as usize)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::TooLarge, "파일 하나는 16MiB까지 올린다"))),
@@ -650,7 +728,11 @@ fn ask_file_response(
     if device(host, headers).is_none() {
         return unauthorized();
     }
-    let bytes = path.and_then(|p| std::fs::read(p).map_err(|_| ErrorBody::new(ErrorCode::NotFound, "파일이 없다")));
+    let bytes = path.and_then(|p| {
+        std::fs::read(p).map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, ErrorBody::new(ErrorCode::NotFound, "파일이 없다"))
+        })
+    });
     match bytes {
         Ok(bytes) => Response::builder()
             .header(header::CONTENT_TYPE, crate::library::content_type(name))
@@ -702,7 +784,10 @@ async fn chat_image(State(host): State<Arc<Host>>, Path(pane): Path<String>, req
         )
             .into_response();
     }
-    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 16 << 20).await else {
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 16 << 20)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::BadRequest, "그림은 16MiB까지 붙여 넣는다"))),
@@ -1131,7 +1216,13 @@ async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axu
     }
     let json = headers
         .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.to_str()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .is_some_and(|v| v.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("application/json")));
     if !json {
         return bad_request("content-type이 application/json이 아니다");
@@ -1139,7 +1230,11 @@ async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axu
     if body.len() > DIAG_MAX {
         return bad_request(format!("기록은 {}KiB까지", DIAG_MAX >> 10));
     }
-    if serde_json::from_slice::<serde_json::Value>(&body).is_err() {
+    if serde_json::from_slice::<serde_json::Value>(&body)
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+    {
         return bad_request("JSON이 아니다");
     }
     let dir = host.state.join("diag");
@@ -1162,7 +1257,10 @@ async fn diag_input(State(host): State<Arc<Host>>, headers: HeaderMap, body: axu
         names.sort();
         let extra = names.len().saturating_sub(DIAG_KEEP);
         for n in &names[..extra] {
-            let _ = std::fs::remove_file(dir.join(n));
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_file(dir.join(n)),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
     }
     host.db.audit(&format!("device:{id}"), "diag_input", &name);
@@ -1210,7 +1308,10 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut last_badge = None;
     let close_revoked = |mut socket: WebSocket| async move {
         let frame = CloseFrame { code: DEVICE_REVOKED_CLOSE_CODE, reason: DEVICE_REVOKED_REASON.into() };
-        let _ = socket.send(Message::Close(Some(frame))).await;
+        aaa_common::diagnostic::ignored(
+            socket.send(Message::Close(Some(frame))).await,
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     };
     // 듣기 시작한 뒤에 다시 본다(pane_session과 같다)
     if host.is_revoked(&dev) {
@@ -1232,7 +1333,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     // 제 빌드와 견준다(참고는 보이는 동안 상태를 묻는다, plan §8.166)
     if let Some(build) = web_build() {
         let text = serde_json::to_string(&FrontEvent::Web { build }).unwrap();
-        if socket.send(Message::Text(text.into())).await.is_err() {
+        if socket
+            .send(Message::Text(text.into()))
+            .await
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             return;
         }
     }
@@ -1244,7 +1351,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             {
                 last_badge = Some(count);
                 let text = serde_json::to_string(&FrontEvent::AppBadge { count }).unwrap();
-                if socket.send(Message::Text(text.into())).await.is_err() {
+                if socket
+                    .send(Message::Text(text.into()))
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -1253,7 +1366,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_preferences = false;
             let doc = preferences.borrow_and_update().clone();
             let text = serde_json::to_string(&FrontEvent::Preferences(doc)).unwrap();
-            if socket.send(Message::Text(text.into())).await.is_err() {
+            if socket
+                .send(Message::Text(text.into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
@@ -1262,7 +1381,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             reports.borrow_and_update();
             let unseen = host.db.library_unseen_count().unwrap_or(0);
             let text = serde_json::to_string(&FrontEvent::Reports { unseen }).unwrap();
-            if socket.send(Message::Text(text.into())).await.is_err() {
+            if socket
+                .send(Message::Text(text.into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
@@ -1270,7 +1395,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_asks = false;
             asks.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Asks { requests: host.user_request_count() }).unwrap();
-            if socket.send(Message::Text(text.into())).await.is_err() {
+            if socket
+                .send(Message::Text(text.into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
@@ -1278,7 +1409,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_inbox = false;
             inbox.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Inbox).unwrap();
-            if socket.send(Message::Text(text.into())).await.is_err() {
+            if socket
+                .send(Message::Text(text.into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
@@ -1286,7 +1423,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_accounts = false;
             accounts.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Accounts).unwrap();
-            if socket.send(Message::Text(text.into())).await.is_err() {
+            if socket
+                .send(Message::Text(text.into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
@@ -1294,7 +1437,13 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_enroll = false;
             enroll.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Enroll).unwrap();
-            if socket.send(Message::Text(text.into())).await.is_err() {
+            if socket
+                .send(Message::Text(text.into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
@@ -1306,13 +1455,25 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 Err(e) => Outcome::Err(e),
             };
             let text = serde_json::to_string(&FrontEvent::Rollout { result }).unwrap();
-            if socket.send(Message::Text(text.into())).await.is_err() {
+            if socket
+                .send(Message::Text(text.into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
         if send_state {
             let ev = FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(role) };
-            if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
+            if socket
+                .send(Message::Text(serde_json::to_string(&ev).unwrap().into()))
+                .await
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
+            {
                 break;
             }
         }
@@ -1330,7 +1491,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 }
             }
             r = changed.changed() => {
-                if r.is_err() { break }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = true;
                 send_rollout = true;
             }
@@ -1340,12 +1501,12 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 match q {
                     Ok(q) => {
                         let text = serde_json::to_string(&FrontEvent::Question(q)).unwrap();
-                        if socket.send(Message::Text(text.into())).await.is_err() {
+                        if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                             break;
                         }
                     }
                     // 놓쳤으면 끊는다. 웹은 다시 붙으며 질문 목록을 새로 읽는다.
-                    Err(_) => break,
+                    Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); break },
                 }
             }
             t = threads.recv() => {
@@ -1355,11 +1516,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     Ok(mut t) => {
                         attachment_thread(&host, &dev, &mut t);
                         let text = serde_json::to_string(&FrontEvent::Thread(Box::new(t))).unwrap();
-                        if socket.send(Message::Text(text.into())).await.is_err() {
+                        if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); break },
                 }
             }
             // 앱 안 알림(notice.rs). 기록하지 않으므로 놓친 것은 버린다(끊지 않는다)
@@ -1368,7 +1529,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 match n {
                     Ok(n) => {
                         let text = serde_json::to_string(&FrontEvent::Notice(n)).unwrap();
-                        if socket.send(Message::Text(text.into())).await.is_err() {
+                        if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                             break;
                         }
                     }
@@ -1382,7 +1543,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 match t {
                     Ok((project, sha256)) => {
                         let text = serde_json::to_string(&FrontEvent::Tasks { project, sha256 }).unwrap();
-                        if socket.send(Message::Text(text.into())).await.is_err() {
+                        if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                             break;
                         }
                     }
@@ -1390,42 +1551,42 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 }
             }
             r = preferences.changed() => {
-                if r.is_err() { break }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = false;
                 send_preferences = true;
             }
             r = rollouts.changed() => {
-                if r.is_err() { break; }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break; }
                 send_rollout = true;
             }
             r = workspace_metrics.changed() => {
-                if r.is_err() { break; }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break; }
                 send_state = false;
                 let text = serde_json::to_string(&FrontEvent::WorkspaceMetrics).unwrap();
-                if socket.send(Message::Text(text.into())).await.is_err() { break; }
+                if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break; }
             }
             r = reports.changed() => {
-                if r.is_err() { break }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = false;
                 send_reports = true;
             }
             r = asks.changed() => {
-                if r.is_err() { break }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = false;
                 send_asks = true;
             }
             r = inbox.changed() => {
-                if r.is_err() { break }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = false;
                 send_inbox = true;
             }
             r = accounts.changed() => {
-                if r.is_err() { break }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = false;
                 send_accounts = true;
             }
             r = enroll.changed() => {
-                if r.is_err() { break }
+                if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = false;
                 send_enroll = true;
             }
@@ -1453,7 +1614,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 };
                 let mut gone = false;
                 for ev in evs {
-                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
+                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                         gone = true;
                         break;
                     }
@@ -1468,7 +1629,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     tracing::info!("상태 사건 연결이 {}초 동안 답하지 않아 끊는다", dead_after.as_secs());
                     break;
                 }
-                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                if socket.send(Message::Ping(Default::default())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                     break;
                 }
             }
@@ -1498,7 +1659,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                             }
                             Ok(EventsClientMsg::Ping { id }) => {
                                 let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
-                                if socket.send(Message::Text(text.into())).await.is_err() {
+                                if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                                     break;
                                 }
                             }
@@ -1513,12 +1674,12 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                                         host.chat_watch(&pane, true);
                                     }
                                     let ev = FrontEvent::ChatWatching { live: host.chat_live(&pane), pane };
-                                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
+                                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                                         break;
                                     }
                                 }
                             }
-                            Err(_) => {}
+                            Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");}
                         }
                     }
                     _ => {}
@@ -1551,16 +1712,29 @@ async fn front_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSock
         let message =
             aaa_proto::FrontMsg::Reject(ErrorBody::new(ErrorCode::Unavailable, aaa_common::front::TUI_REMOVED));
         if let Ok(text) = serde_json::to_string(&message) {
-            let _ = socket.send(Message::Text(text.into())).await;
+            aaa_common::diagnostic::ignored(
+                socket.send(Message::Text(text.into())).await,
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
         }
-        let _ = socket.close().await;
+        aaa_common::diagnostic::ignored(socket.close().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     })
 }
 
 /// 상태 사건 연결의 WebSocket ping 간격과, 아무것도 받지 못하면 끊는 시간(15초·45초: ping 두 번을 놓치고도 남는다).
 /// `AAA_TEST_EVENTS_PING_MS`는 시험에서만 줄인다(끊는 시간은 그 세 배).
 fn events_liveness() -> (std::time::Duration, std::time::Duration) {
-    let ms = std::env::var("AAA_TEST_EVENTS_PING_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(15_000);
+    let ms = std::env::var("AAA_TEST_EVENTS_PING_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|v| {
+            v.parse::<u64>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or(15_000);
     (std::time::Duration::from_millis(ms), std::time::Duration::from_millis(ms * 3))
 }
 
@@ -1571,7 +1745,12 @@ fn web_build() -> Option<String> {
     if let Ok(v) = std::env::var("AAA_TEST_WEB_BUILD") {
         return Some(v);
     }
-    let html = assets::WEB_ASSETS.iter().find(|asset| asset.name == "index.html")?.identity().ok()?;
+    let html = assets::WEB_ASSETS
+        .iter()
+        .find(|asset| asset.name == "index.html")?
+        .identity()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     main_bundle(&String::from_utf8_lossy(&html))
 }
 
@@ -1586,7 +1765,17 @@ fn main_bundle(html: &str) -> Option<String> {
 }
 
 fn presence_lease() -> std::time::Duration {
-    let ms = std::env::var("AAA_TEST_PRESENCE_LEASE_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(25_000);
+    let ms = std::env::var("AAA_TEST_PRESENCE_LEASE_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|v| {
+            v.parse::<u64>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or(25_000);
     std::time::Duration::from_millis(ms)
 }
 
@@ -1701,23 +1890,40 @@ impl WebPayload {
         if bytes > aaa_proto::TERMINAL_PAYLOAD_MAX {
             return None;
         }
-        let _bytes = self.pending.clone().try_acquire_many_owned(bytes.max(1) as u32).ok()?;
+        let _bytes = self
+            .pending
+            .clone()
+            .try_acquire_many_owned(bytes.max(1) as u32)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let _serial = self.serial.lock().await;
         let codec = self.gzip.then_some(aaa_proto::TerminalCodec::Gzip);
-        let bytes = aaa_common::terminal_payload::encode_async(msg, codec).await.ok()?;
-        String::from_utf8(bytes).ok()
+        let bytes = aaa_common::terminal_payload::encode_async(msg, codec)
+            .await
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
+        String::from_utf8(bytes)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
 }
 impl OutSender {
     async fn msg(&self, m: TermServerMsg) -> bool {
         let Some(text) = self.payload.prepare(m).await else {
             tracing::warn!("웹 터미널 본문 거부");
-            let _ = self.stop.send(Some((4002, "terminal payload rejected")));
+            aaa_common::diagnostic::ignored(
+                self.stop.send(Some((4002, "terminal payload rejected"))),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
             return false;
         };
         let m = Message::Text(text.into());
         self.buffered.fetch_add(frame_len(&m), Ordering::Relaxed);
-        self.tx.send(m).is_ok()
+        self.tx
+            .send(m)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
     }
 }
 
@@ -1757,15 +1963,15 @@ impl Outbox {
                 // 연결이 그냥 끝나 보내는 쪽이 사라진 것(Err)은 정지가 아니다: 4008 없이 끝낸다
                 let m = tokio::select! {
                     biased;
-                    r = stopped.changed() => if r.is_ok() { break } else { return },
+                    r = stopped.changed() => if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok() { break } else { return },
                     m = rx.recv() => match m { Some(m) => m, None => return },
                 };
                 let n = frame_len(&m);
                 // 막힌 보내기도 닫기가 끊는다(보내던 frame은 tungstenite 버퍼에 통째로 있어 흐름이 깨지지 않는다)
                 let ok = tokio::select! {
                     biased;
-                    r = stopped.changed() => if r.is_ok() { break } else { return },
-                    r = sink.send(m) => r.is_ok(),
+                    r = stopped.changed() => if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok() { break } else { return },
+                    r = sink.send(m) => r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok(),
                 };
                 left.fetch_sub(n, Ordering::Relaxed);
                 if !ok {
@@ -1775,7 +1981,10 @@ impl Outbox {
             // 따라오지 못했거나 기기가 취소됐다: 남은 줄은 버리고 그 code로 닫는다. 그 닫기도 못 가면 연결을 버린다.
             let (code, reason) = stopped.borrow().unwrap_or((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON));
             let close = Message::Close(Some(CloseFrame { code, reason: reason.into() }));
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sink.send(close)).await;
+            aaa_common::diagnostic::ignored_nested(
+                tokio::time::timeout(std::time::Duration::from_secs(2), sink.send(close)).await,
+                "웹소켓 닫기 실패 뒤 연결 해제",
+            );
         });
         Self {
             tx,
@@ -1791,7 +2000,11 @@ impl Outbox {
 
     fn send(&self, m: Message) -> bool {
         self.buffered.fetch_add(frame_len(&m), Ordering::Relaxed);
-        self.tx.send(m).is_ok()
+        self.tx
+            .send(m)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
     }
 
     fn msg(&self, m: &TermServerMsg) -> bool {
@@ -1816,12 +2029,18 @@ impl Outbox {
     /// 기록에는 어느 pane인지와 밀린 양(ACK 안 된 것·보내지 못한 것)을 남긴다: 무엇이 쏟아졌는지·누가 느렸는지를 가른다.
     fn stop(&self, why: &str, pane: &str, pending: u64) {
         tracing::info!(why, pane, pending, buffered = self.buffered(), "웹 터미널 출력 정지(4008)");
-        let _ = self.stop.send(Some((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON)));
+        aaa_common::diagnostic::ignored(
+            self.stop.send(Some((OUTPUT_STALLED_CLOSE_CODE, OUTPUT_STALLED_REASON))),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     }
 
     /// 기기가 취소됐다: 밀린 출력도 보내지 않고 4401로 닫는다
     fn revoked(&self) {
-        let _ = self.stop.send(Some((DEVICE_REVOKED_CLOSE_CODE, DEVICE_REVOKED_REASON)));
+        aaa_common::diagnostic::ignored(
+            self.stop.send(Some((DEVICE_REVOKED_CLOSE_CODE, DEVICE_REVOKED_REASON))),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     }
 }
 
@@ -1850,7 +2069,10 @@ async fn open_stream(
         .await;
     let Some(text) = text else {
         tracing::warn!("웹 터미널 snapshot 거부");
-        let _ = out.stop.send(Some((4002, "terminal payload rejected")));
+        aaa_common::diagnostic::ignored(
+            out.stop.send(Some((4002, "terminal payload rejected"))),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
         return None;
     };
     if bytes > 0 {
@@ -1890,7 +2112,7 @@ async fn pane_loop(
     // 그 pane의 agent가 이 화면의 색을 받은 뒤에 화면을 연다: 화면이 본 뒤 프로그램이 묻는 색에는 이 색으로 답한다(plan §8.187).
     // agent가 늦으면 여는 것도 늦다(요청 시한까지). 끊긴 agent는 기다리지 않는다
     if let Some(wait) = colors.and_then(|c| host.front_colors(&front.id, &id, c)) {
-        let _ = wait.await;
+        aaa_common::diagnostic::ignored(wait.await, "보조 작업 실패 뒤 기존 처리를 계속한다");
     }
     // 이 연결이 그 pane을 보는 동안(seen.rs). 가려지면 웹은 lease를 놓을 뿐 연결은 두므로 「보는 중」은 기기의 presence가 정한다
     host.view_term(&front.id, &dev, Some(&id));
@@ -2089,9 +2311,9 @@ async fn pane_session(
                                 )),
                                 SubmitEnd::Done(r) => r,
                             };
-                            host.db.audit(&actor, "web_submit", &format!("pane={id} front={} submit={sid} bytes={bytes} steer={steer} ok={}", front.id, sent.is_ok()));
-                            host.input_event(&id, &trace, if sent.is_ok() { "delivered" } else { "failed" }, &format!("code={:?}", sent.as_ref().err().map(|e| &e.code)));
-                            let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
+                            host.db.audit(&actor, "web_submit", &format!("pane={id} front={} submit={sid} bytes={bytes} steer={steer} ok={}", front.id, sent.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok()));
+                            host.input_event(&id, &trace, if sent.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok() { "delivered" } else { "failed" }, &format!("code={:?}", sent.as_ref().err().map(|e| &e.code)));
+                            let reply = TermServerMsg::Submitted { id: sid, ok: sent.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok(), message: sent.err().map(|e| e.message) };
                             if !out.msg(&reply) {
                                 tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 확인 응답 연결 닫힘");
                                 break 'conn;
@@ -2142,7 +2364,7 @@ async fn pane_session(
                         Ok(TermClientMsg::Colors { fg, bg }) => {
                             let wait = aaa_proto::TermColors::from_hex(&fg, &bg).and_then(|c| host.front_colors(&front.id, &id, c));
                             if let Some(wait) = wait {
-                                let _ = wait.await;
+                                aaa_common::diagnostic::ignored(wait.await, "보조 작업 실패 뒤 기존 처리를 계속한다");
                             }
                             None
                         }
@@ -2214,7 +2436,17 @@ async fn steer_queued(
     let sent = host
         .call_from(role, actor, Some(front), FrontRequest::PaneInput { pane: pane.to_string(), data: B64(data) })
         .await;
-    host.db.audit(actor, "web_steer_queued", &format!("pane={pane} front={} ok={}", front.id, sent.is_ok()));
+    host.db.audit(
+        actor,
+        "web_steer_queued",
+        &format!(
+            "pane={pane} front={} ok={}",
+            front.id,
+            sent.as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+        ),
+    );
     match sent {
         Ok(_) => {
             host.input_event(pane, trace, "steer_sent", "agent_ack=true");
@@ -2255,7 +2487,12 @@ fn cancel_submit(stage: &AtomicU8) -> SubmitStage {
             SUBMIT_STOPPED_NO_ENTER => return SubmitStage::NoEnter,
             _ => return SubmitStage::TooLate,
         };
-        if stage.compare_exchange(now, next, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        if stage
+            .compare_exchange(now, next, Ordering::SeqCst, Ordering::SeqCst)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+        {
             return answer;
         }
     }
@@ -2263,7 +2500,11 @@ fn cancel_submit(stage: &AtomicU8) -> SubmitStage {
 
 /// 일꾼이 다음 단계로 간다. 멈춤이 먼저 이겼으면 false(그 쓰기를 하지 않는다)
 fn advance_submit(stage: &AtomicU8, from: u8, to: u8) -> bool {
-    stage.compare_exchange(from, to, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+    stage
+        .compare_exchange(from, to, Ordering::SeqCst, Ordering::SeqCst)
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
 }
 
 /// 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다). 답은 둘 다 pane에 들어간 뒤다.
@@ -2288,7 +2529,7 @@ async fn submit_work(
         return SubmitEnd::Stopped(SubmitStage::NotSent);
     }
     let sent = host.call_from(role, actor, Some(front), typed(data.into_bytes())).await;
-    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "text", "웹 입력: agent 응답");
+    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "text", "웹 입력: agent 응답");
     if let Err(e) = sent {
         return SubmitEnd::Done(Err(e));
     }
@@ -2306,8 +2547,12 @@ async fn submit_work(
     // Ctrl+Enter로 보낸 글: 작업 중인 Claude는 Enter 대신 sendNow로 지금 턴에 넣는다(그 밖은 Enter, plan §8.239 후속)
     let enter = host.submit_key_data(pane, steer, ctrl_enter.then_some(trace));
     let sent = host.call_from(role, actor, Some(front), typed(enter)).await;
-    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = if steer { "steer" } else { "enter" }, "웹 입력: agent 응답");
-    if sent.is_ok() {
+    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = if steer { "steer" } else { "enter" }, "웹 입력: agent 응답");
+    if sent
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
+    {
         host.input_event(pane, trace, "written_submit", if steer { "steer=true" } else { "key=enter" });
     }
     SubmitEnd::Done(sent.map(|_| ()))
@@ -2384,7 +2629,10 @@ async fn static_file(req: Request) -> Response {
         match asset.identity() {
             Ok(std::borrow::Cow::Borrowed(bytes)) => Body::from(bytes),
             Ok(std::borrow::Cow::Owned(bytes)) => Body::from(bytes),
-            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "웹 자산을 복원하지 못했다").into_response(),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "웹 자산을 복원하지 못했다").into_response();
+            }
         }
     };
     let mut response =
@@ -2510,7 +2758,10 @@ mod guard_tests {
     struct Lab(Arc<Host>, std::path::PathBuf);
     impl Drop for Lab {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.1);
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(&self.1),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
     }
 

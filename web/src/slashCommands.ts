@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 입력칸 「/」 목록의 규칙(plan §8.323). herdr-web-ui `src/lib/compose.ts` 229~271줄의 순위(prefix < 단어 경계 < 부분 < 글자 순서 <
 // 설명)와 사용 횟수를 옮겼다. 다른 곳: harness 명령은 메시지 맨 앞에서만 연다(t3code 「A provider expands a slash command only when
 // it opens the whole message」). 줄 중간·경로(`/Users/…`)에서는 열지 않는다. 확인창·숨김·터미널 알림은 agent 표의 분류를 따른다.
@@ -91,7 +92,7 @@ export function readUsage(): Record<string, number> {
   try {
     const raw = JSON.parse(localStorage.getItem(USAGE_KEY) ?? "{}");
     return raw && typeof raw === "object" ? raw as Record<string, number> : {};
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "slashCommands.ts:95");
     return {};
   }
 }
@@ -101,7 +102,7 @@ export function bumpUsage(name: string): void {
     const usage = readUsage();
     usage[name] = (usage[name] ?? 0) + 1;
     localStorage.setItem(USAGE_KEY, JSON.stringify(usage));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "slashCommands.ts:105");
     // 개인 창·막힌 저장소: 순위만 덜 맞는다
   }
 }

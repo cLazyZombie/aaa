@@ -74,11 +74,18 @@ fn short(v: Option<&serde_json::Value>) -> Option<String> {
 /// 메일은 `email`(옛 판은 `https://api.openai.com/profile`의 `email`), plan은 `https://api.openai.com/auth`의 `chatgpt_plan_type`
 pub(crate) fn codex_identity(auth: &str) -> Identity {
     let claims = (|| {
-        let auth: serde_json::Value = serde_json::from_str(auth).ok()?;
+        let auth: serde_json::Value = serde_json::from_str(auth)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let jwt = auth.get("tokens")?.get("id_token")?.as_str()?;
         let body = jwt.split('.').nth(1)?.trim_end_matches('=');
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(body).ok()?;
-        serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(body)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     })();
     let Some(c) = claims else { return Identity::default() };
     Identity {
@@ -94,11 +101,26 @@ pub(crate) fn claude_identity(output: &str, dirs: &[&Path], now: u64) -> Identit
     let mut out = Identity { expires_ms: valid_for_ms(output).map(|d| now.saturating_add(d)), ..Default::default() };
     for dir in dirs {
         let p = dir.join(".claude.json");
-        let Ok(m) = p.symlink_metadata() else { continue };
+        let Ok(m) = p
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         if !m.is_file() || m.len() > MAX_FILE {
             continue;
         }
-        let Some(v) = std::fs::read(&p).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else {
+        let Some(v) = std::fs::read(&p)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .and_then(|b| {
+                serde_json::from_slice::<serde_json::Value>(&b)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+        else {
             continue;
         };
         if let Some(e) = email(v.pointer("/oauthAccount/emailAddress")) {
@@ -113,9 +135,13 @@ pub(crate) fn claude_identity(output: &str, dirs: &[&Path], now: u64) -> Identit
 fn valid_for_ms(text: &str) -> Option<u64> {
     let re =
         regex::Regex::new(r"(?i)valid for\s+(\d{1,5})\s*(years?|yrs?|y|months?|mo|weeks?|w|days?|d|hours?|hrs?|h)\b")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()?;
     let c = re.captures(text)?;
-    let n: u64 = c[1].parse().ok()?;
+    let n: u64 = c[1]
+        .parse()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let unit = c[2].to_ascii_lowercase();
     let day = 24 * 3600 * 1000;
     let each = match unit.as_str() {
@@ -150,7 +176,19 @@ fn key(name: &str) -> String {
 
 impl Host {
     pub(crate) fn account_meta(&self, name: &str) -> AccountMeta {
-        self.db.meta(&key(name)).ok().flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        self.db
+            .meta(&key(name))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .and_then(|s| {
+                serde_json::from_str(&s)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .unwrap_or_default()
     }
 
     fn save_account_meta(&self, name: &str, m: &AccountMeta) {
@@ -160,7 +198,10 @@ impl Host {
                     tracing::warn!(account = %name, "계정 기록을 쓰지 못했다: {e:#}");
                 }
             }
-            Err(_) => tracing::warn!(account = %name, "계정 기록을 만들지 못했다"),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                tracing::warn!(account = %name, "계정 기록을 만들지 못했다")
+            }
         }
         self.accounts_bump();
     }
@@ -215,7 +256,14 @@ impl Host {
         let mut m = self.account_meta(name);
         match outcome {
             RefreshOutcome::Rejected => {
-                let current = self.accounts.list().ok().and_then(|l| l.into_iter().find(|a| a.name == name));
+                let current = self
+                    .accounts
+                    .list()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .and_then(|l| l.into_iter().find(|a| a.name == name));
                 if m.rejected_ms.is_some() || current.is_none_or(|a| a.version != version) {
                     return;
                 }
@@ -245,7 +293,7 @@ impl Host {
 
     pub(crate) fn account_meta_remove(&self, name: &str) {
         let _gate = self.account_meta_gate.lock().unwrap();
-        let _ = self.db.del_meta(&key(name));
+        aaa_common::diagnostic::ignored(self.db.del_meta(&key(name)), "보조 작업 실패 뒤 기존 처리를 계속한다");
         if let Ok(project) = self.instance_project() {
             self.inbox_finish_where(&project, |i| i.item_kind == "account" && i.subject == name);
         }
@@ -254,13 +302,33 @@ impl Host {
 
     /// 이 기록 전에 등록한 계정(사용자 답 3A): 저장된 Codex 인증에서 메일·plan만 채운다. 날짜는 모른다
     pub(crate) fn account_meta_backfill(&self) {
-        let Ok(list) = self.accounts.list() else { return };
+        let Ok(list) = self
+            .accounts
+            .list()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let _gate = self.account_meta_gate.lock().unwrap();
         for a in list {
-            if a.harness != "codex" || self.db.meta(&key(&a.name)).ok().flatten().is_some() {
+            if a.harness != "codex"
+                || self
+                    .db
+                    .meta(&key(&a.name))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+                    .is_some()
+            {
                 continue;
             }
-            let Ok(c) = self.accounts.credential(&a.name) else { continue };
+            let Ok(c) = self.accounts.credential(&a.name).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             let id = codex_identity(&c.secret.0);
             if id.email.is_some() || id.plan.is_some() {
                 self.save_account_meta(&a.name, &AccountMeta { email: id.email, plan: id.plan, ..Default::default() });
@@ -271,9 +339,18 @@ impl Host {
     /// 상태가 바뀐 계정을 알림함에 낸다(확인 필요). 같은 상태는 한 번만, 정상으로 돌아오면 그 계정 항목을 끝낸다.
     /// 알림에는 별칭·harness만 싣는다(메일 없음)
     pub(crate) fn account_health_pass(&self) {
-        let Ok(list) = self.accounts.list() else { return };
+        let Ok(list) = self
+            .accounts
+            .list()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return;
+        };
         let now = util::now_ms();
-        let project = self.instance_project().ok();
+        let project = self
+            .instance_project()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         for a in list {
             let _gate = self.account_meta_gate.lock().unwrap();
             let mut m = self.account_meta(&a.name);

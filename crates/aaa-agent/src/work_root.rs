@@ -40,7 +40,11 @@ fn existing(path: &Path) -> Result<&Path> {
 pub(crate) fn inferred_mount(path: &Path) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        let mut components = path.strip_prefix("/Volumes").ok()?.components();
+        let mut components = path
+            .strip_prefix("/Volumes")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .components();
         if let Some(std::path::Component::Normal(name)) = components.next() {
             return Some(Path::new("/Volumes").join(name));
         }

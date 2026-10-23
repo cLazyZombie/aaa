@@ -33,7 +33,14 @@ pub(crate) fn job_card(
         machine,
         work: job
             .map(|j| DeployWork::from(&j.action))
-            .or_else(|| serde_json::from_value::<DeployAction>(record["action"].clone()).ok().map(|a| (&a).into()))
+            .or_else(|| {
+                serde_json::from_value::<DeployAction>(record["action"].clone())
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .map(|a| (&a).into())
+            })
             .unwrap_or(DeployWork::Update),
         state: job.map(|j| j.state),
         error: job.and_then(|j| match j.state {
@@ -173,7 +180,13 @@ impl Host {
         self.db
             .meta(&format!("deploy:{id}"))
             .map_err(internal)?
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|s| {
+                serde_json::from_str::<serde_json::Value>(&s)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .ok_or_else(|| err(ErrorCode::NotFound, "배포 기록이 없다"))
     }
     pub(crate) async fn deployment_status(
@@ -195,7 +208,13 @@ impl Host {
             .db
             .meta(&format!("deploy:{id}"))
             .map_err(|e| err(ErrorCode::Internal, e.to_string()))?
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|s| {
+                serde_json::from_str::<serde_json::Value>(&s)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r["project"] == project)
             .ok_or_else(|| err(ErrorCode::NotFound, "이 프로젝트의 배포 기록이 없다"))?;
         let mid =
@@ -232,7 +251,11 @@ impl Host {
         let project = self.instance_project()?;
         let mut records = Vec::new();
         for id in self.db.meta_suffixes("deploy:").map_err(internal)? {
-            let Ok(record) = self.deploy_record(&id) else { continue };
+            let Ok(record) = self.deploy_record(&id).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if record["project"] == project.as_str()
                 && let Some(mid) = record["machine"].as_str().map(str::to_string)
             {
@@ -266,9 +289,16 @@ impl Host {
         let record = self
             .db
             .meta(&format!("deploy:{}", job.id))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .flatten()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+            .and_then(|s| {
+                serde_json::from_str::<serde_json::Value>(&s)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            });
         if record.as_ref().is_some_and(|r| {
             r["machine"] == mid
                 && r["project"] == job.project

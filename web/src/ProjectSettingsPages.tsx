@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 설정 창의 「이 aaa」·「저장소」(관리 GUI W4, plan §8.343). host가 맡은 프로젝트 하나의 설정(`aaa.toml`, 없으면 `project.toml`)을
 // `project_settings`로 읽고, 값 하나씩 `project_set`(CLI `aaa project set`과 같은 key)으로 고친다. 저장소 고치기는
 // `project_repo_edit` 한 번이라 차례가 그대로다. 멈춤·재개는 `project_lifecycle`, 정리는 미리보기를 본 뒤 확인 창으로 실행한다.
@@ -135,7 +136,7 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
     let live = true;
     call({ op: "profiles", machine: null })
       .then((r) => live && r.kind === "profiles" && setProfiles(r.profiles.map((p: ProfileView) => p.name)))
-      .catch(() => undefined);
+      .catch(ignoredFailure("ProjectSettingsPages.tsx:139", () => undefined));
     return () => {
       live = false;
     };
@@ -409,7 +410,7 @@ export function ReposPage({ role }: { role: DeviceRole }) {
     let live = true;
     call({ op: "machines" })
       .then((r) => live && r.kind === "machines" && setMachines(r.machines))
-      .catch(() => undefined);
+      .catch(ignoredFailure("ProjectSettingsPages.tsx:413", () => undefined));
     return () => {
       live = false;
     };

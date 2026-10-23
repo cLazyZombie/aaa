@@ -227,11 +227,17 @@ pub(super) fn probe_response(r: &Ran, code: Option<i32>) -> Result<InstallPropos
     let result = if code != Some(0) {
         Err(remote_why("원격 install 계획", r, code))
     } else {
-        serde_json::from_str(&r.stdout).map_err(|_| "원격 install 계획을 읽지 못했다(같은 판인지 본다)".to_string())
+        serde_json::from_str(&r.stdout).map_err(|e| {
+            aaa_common::diagnostic::context(e, "원격 install 계획을 읽지 못했다(같은 판인지 본다)".to_string())
+        })
     };
     // 제안 원문에는 경로·계정이 있다. 일회 실험실 owner의 실패 로그에만 남기고 제품 DTO/DB에는 넣지 않는다.
     #[cfg(test)]
-    if result.is_err() {
+    if result
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+    {
         eprintln!("install-probe 진단: {}", serde_json::json!({"exit": code, "stderr": r.stderr, "stdout": r.stdout}));
     }
     result
@@ -261,7 +267,15 @@ pub(crate) fn review(
     let mut operations: Vec<String> = p
         .permissions
         .iter()
-        .filter_map(|x| serde_json::to_value(x.operation).ok()?.as_str().map(str::to_string))
+        .filter_map(|x| {
+            serde_json::to_value(x.operation)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?
+                .as_str()
+                .map(str::to_string)
+        })
         .collect();
     operations.sort();
     operations.dedup();
@@ -287,7 +301,10 @@ pub(crate) fn stream_line(line: &str) -> Line {
     match serde_json::from_str::<InstallStreamItem>(line.trim_end_matches('\r')) {
         Ok(InstallStreamItem::Event { message, .. }) => Line::Event(message),
         Ok(InstallStreamItem::Result { result, .. }) => Line::Result(result),
-        Err(_) => Line::Other,
+        Err(source_error) => {
+            aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            Line::Other
+        }
     }
 }
 
@@ -371,8 +388,8 @@ impl Ssh {
         let mut stdin = child.stdin.take();
         let feed = async {
             if let Some(s) = stdin.as_mut() {
-                let _ = s.write_all(input).await;
-                let _ = s.shutdown().await;
+                aaa_common::diagnostic::ignored(s.write_all(input).await, "보조 작업 실패 뒤 기존 처리를 계속한다");
+                aaa_common::diagnostic::ignored(s.shutdown().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
             }
             drop(stdin.take());
         };
@@ -391,7 +408,10 @@ impl Ssh {
             ),
             Ok(Ok(_)) => fail("원격 출력이 너무 크다".into()),
             Ok(Err(e)) => fail(format!("ssh: {e}")),
-            Err(_) => fail("ssh: timed out".into()),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                fail("ssh: timed out".into())
+            }
         }
     }
 
@@ -419,8 +439,11 @@ impl Ssh {
         let run = async {
             let feed = async move {
                 if let Some(s) = stdin.as_mut() {
-                    let _ = s.write_all(&input.0).await;
-                    let _ = s.shutdown().await;
+                    aaa_common::diagnostic::ignored(
+                        s.write_all(&input.0).await,
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
+                    aaa_common::diagnostic::ignored(s.shutdown().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
                 }
                 drop(stdin);
                 drop(input);
@@ -428,12 +451,19 @@ impl Ssh {
             let mut stderr = String::new();
             let errs = async {
                 let mut buf = Vec::new();
-                let _ = (&mut err).take(OUTPUT_LIMIT as u64).read_to_end(&mut buf).await;
+                aaa_common::diagnostic::ignored(
+                    (&mut err).take(OUTPUT_LIMIT as u64).read_to_end(&mut buf).await,
+                    "SSH 오류 출력 읽기 실패 뒤 종료 상태도 확인",
+                );
                 stderr = String::from_utf8_lossy(&buf).into_owned();
             };
             let lines = async {
                 let mut lines = tokio::io::BufReader::new(out).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
+                while let Ok(Some(line)) = lines
+                    .next_line()
+                    .await
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "수신 루프 종료 원인"))
+                {
                     each(&line);
                 }
             };
@@ -444,7 +474,10 @@ impl Ssh {
         match tokio::time::timeout(timeout, run).await {
             Ok((Ok(status), stderr)) => (Ran { ok: status.success(), stdout: String::new(), stderr }, status.code()),
             Ok((Err(e), _)) => fail(format!("ssh: {e}")),
-            Err(_) => fail("ssh: timed out".into()),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                fail("ssh: timed out".into())
+            }
         }
     }
 }
@@ -558,7 +591,10 @@ impl Host {
                 .map_err(std::io::Error::other)
                 .and_then(|b| {
                     aaa_common::private_file::directory(path.parent().unwrap())?;
-                    let _ = std::fs::remove_file(&path);
+                    aaa_common::diagnostic::ignored(
+                        std::fs::remove_file(&path),
+                        "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                    );
                     aaa_common::private_file::write(&path, &b)
                 })
                 .map_err(|e| format!("계획을 host 작업 폴더에 두지 못했다: {e}"))?;
@@ -569,12 +605,18 @@ impl Host {
             Ok((result, ..)) if result.status == InstallStatus::Failed => MachineSetupPhase::Failed,
             Ok((_, summary, _)) if summary.needs_user.is_empty() => MachineSetupPhase::Review,
             Ok(_) => MachineSetupPhase::NeedsUser,
-            Err(_) => MachineSetupPhase::Failed,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                MachineSetupPhase::Failed
+            }
         };
         // 확인을 기다리는 계획만 원격 임시 폴더를 남긴다(적용이 그 파일을 쓴다)
         if phase != MachineSetupPhase::Review {
             ssh.cleanup(&t, &keep).await;
-            let _ = std::fs::remove_file(self.setup_plan_path(id));
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_file(self.setup_plan_path(id)),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
         self.setup_update(id, MachineSetupPhase::Planning, |j| {
             j.view.phase = phase;
@@ -627,9 +669,10 @@ impl Host {
                 return Err(conflict("화면의 계획이 지금 계획과 다르다: 계획을 다시 본다"));
             }
             let raw = aaa_common::private_file::read(&self.setup_plan_path(id), OUTPUT_LIMIT as u64)
-                .map_err(|_| conflict("계획 파일이 없다: 계획을 다시 만든다"))?;
-            let proposal: InstallProposal =
-                serde_json::from_slice(&raw).map_err(|_| conflict("계획 파일을 읽지 못했다: 계획을 다시 만든다"))?;
+                .map_err(|e| aaa_common::diagnostic::context(e, conflict("계획 파일이 없다: 계획을 다시 만든다")))?;
+            let proposal: InstallProposal = serde_json::from_slice(&raw).map_err(|e| {
+                aaa_common::diagnostic::context(e, conflict("계획 파일을 읽지 못했다: 계획을 다시 만든다"))
+            })?;
             if aaa_config::install::plan_sha256(&proposal.plan) != plan_sha256 {
                 return Err(conflict("계획 파일이 화면의 계획과 다르다"));
             }
@@ -700,8 +743,12 @@ impl Host {
         p: &InstallProposal,
         again: Option<(&str, &str)>,
     ) -> Result<String, ErrorBody> {
-        let scope = aaa_common::install_crypto::canonical(&p.permissions)
-            .map_err(|_| ErrorBody::new(ErrorCode::Internal, "승인 범위를 정리하지 못했다"))?;
+        let scope = aaa_common::install_crypto::canonical(&p.permissions).map_err(|source_error| {
+            aaa_common::diagnostic::context(
+                source_error,
+                ErrorBody::new(ErrorCode::Internal, "승인 범위를 정리하지 못했다"),
+            )
+        })?;
         let request = InstallApprovalRequest {
             installation_id: again.map(|a| a.0.to_string()),
             plan: p.plan.clone(),
@@ -722,7 +769,7 @@ impl Host {
             crate::installation::export(&self.state, id).map_err(|e| format!("서명 package: {}", e.message))?;
         let public = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&package.issuer_public_key)
-            .map_err(|_| "서명 package의 발급자 키를 읽지 못했다".to_string())?;
+            .map_err(|e| aaa_common::diagnostic::context(e, "서명 package의 발급자 키를 읽지 못했다".to_string()))?;
         let bytes = serde_json::to_vec(&package).map_err(|e| e.to_string())?;
         let script = bootstrap_script(dir, os, &package.plan.context.binary_sha256, &sha256_hex(&public))
             .ok_or("원격 bootstrap 명령을 만들지 못했다")?;
@@ -730,8 +777,8 @@ impl Host {
         if code != Some(0) {
             return Err(remote_why("원격 install 승인 받기", &r, code));
         }
-        let prepared: Prepared =
-            serde_json::from_str(r.stdout.trim()).map_err(|_| "원격 bootstrap 답을 읽지 못했다".to_string())?;
+        let prepared: Prepared = serde_json::from_str(r.stdout.trim())
+            .map_err(|e| aaa_common::diagnostic::context(e, "원격 bootstrap 답을 읽지 못했다".to_string()))?;
         if prepared.installation_id != id
             || prepared.plan_sha256 != package.authorization.claims.plan_sha256
             || prepared.agent_identity.as_deref().is_some_and(|a| !hex_ok(a))
@@ -785,8 +832,8 @@ impl Host {
             step("원격 install 적용 중");
             let script = apply_script(dir, os, &installation).ok_or("원격 적용 명령을 만들지 못했다")?;
             let input = if os == "windows" {
-                let package =
-                    crate::installation::export(&self.state, &installation).map_err(|_| "보호 승인을 읽지 못했다")?;
+                let package = crate::installation::export(&self.state, &installation)
+                    .map_err(|e| aaa_common::diagnostic::context(e, "보호 승인을 읽지 못했다".to_string()))?;
                 super::secret::framed(&package.authorization, password.as_ref())?
             } else {
                 super::secret::Input(vec![])
@@ -805,7 +852,14 @@ impl Host {
                         Line::Event(m) => {
                             step(&super::secret::scrub(&m, password.as_ref()));
                         }
-                        Line::Result(res) => result = super::secret::result(&res, password.as_ref()).ok().map(Box::new),
+                        Line::Result(res) => {
+                            result = super::secret::result(&res, password.as_ref())
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
+                                .ok()
+                                .map(Box::new)
+                        }
                         Line::Other => {}
                     }
                 })
@@ -827,7 +881,14 @@ impl Host {
             let result = result.ok_or_else(|| {
                 super::secret::scrub(&remote_why("원격 install 적용(결과 없음)", &r, code), password.as_ref())
             })?;
-            if code.is_some_and(|c| u8::try_from(c).ok() != Some(result.exit_code)) {
+            if code.is_some_and(|c| {
+                u8::try_from(c)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    != Some(result.exit_code)
+            }) {
                 return Err(format!("원격 install의 종료 코드({code:?})가 결과({})와 다르다", result.exit_code));
             }
             Ok::<_, String>(result)
@@ -838,10 +899,18 @@ impl Host {
         drop(password);
         if !keep {
             ssh.cleanup(&t, dir).await;
-            let _ = std::fs::remove_file(self.setup_plan_path(id));
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_file(self.setup_plan_path(id)),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
         }
         let name = proposal.plan.choices.name.clone().unwrap_or_default();
-        let registered = self.db.machines().ok().is_some_and(|m| m.iter().any(|m| m.name == name));
+        let registered = self
+            .db
+            .machines()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .is_some_and(|m| m.iter().any(|m| m.name == name));
         self.setup_update(id, MachineSetupPhase::Installing, |j| {
             if !keep {
                 j.remote_dir = None;
@@ -911,7 +980,10 @@ fn release_base() -> String {
         return b;
     }
     if cfg!(debug_assertions)
-        && let Some(b) = std::env::var("AAA_TEST_RELEASE_BASE").ok().filter(|b| !b.is_empty())
+        && let Some(b) = std::env::var("AAA_TEST_RELEASE_BASE")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|b| !b.is_empty())
     {
         return b;
     }

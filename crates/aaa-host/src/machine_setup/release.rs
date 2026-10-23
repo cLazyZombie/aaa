@@ -40,7 +40,10 @@ fn hex_ok(s: &str) -> bool {
 }
 
 fn file_sha(path: &Path) -> Option<String> {
-    std::fs::read(path).ok().map(|b| hex::encode(Sha256::digest(b)))
+    std::fs::read(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .map(|b| hex::encode(Sha256::digest(b)))
 }
 
 /// `x.y.z`(앞자리 0 없음)만 판으로 받는다
@@ -71,7 +74,8 @@ pub(crate) fn file_name(kind: Kind, key: &str) -> String {
 
 /// manifest에서 `key`(`macos-x86_64` 등) 파일을 고른다: 판·주소·SHA 꼴을 본다
 fn select(raw: &[u8], base: &str, version: &str, kind: Kind, key: &str) -> Result<(String, String), String> {
-    let m: Manifest = serde_json::from_slice(raw).map_err(|_| "release manifest를 읽지 못했다".to_string())?;
+    let m: Manifest = serde_json::from_slice(raw)
+        .map_err(|e| aaa_common::diagnostic::context(e, "release manifest를 읽지 못했다".to_string()))?;
     if m.version.strip_prefix('v').unwrap_or(&m.version) != version {
         return Err(format!("release manifest 판({})이 host 판({version})과 다르다", m.version));
     }
@@ -120,7 +124,10 @@ async fn run(mut c: tokio::process::Command, limit: Duration) -> Result<Vec<u8>,
         Ok(Ok(o)) if o.status.success() => Ok(o.stdout),
         Ok(Ok(o)) => Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(200).collect()),
         Ok(Err(e)) => Err(format!("curl을 실행하지 못했다: {e}")),
-        Err(_) => Err("시간 안에 받지 못했다".into()),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            Err("시간 안에 받지 못했다".into())
+        }
     }
 }
 
@@ -141,7 +148,7 @@ pub(crate) async fn fetch(cache: &Path, base: &str, version: &str, kind: Kind, k
     aaa_common::util::ensure_private_dir(cache).map_err(|e| e.to_string())?;
     aaa_common::util::ensure_private_dir(&dir).map_err(|e| e.to_string())?;
     let part = dir.join(format!("{}.part", file_name(kind, key)));
-    let _ = std::fs::remove_file(&part);
+    aaa_common::diagnostic::ignored(std::fs::remove_file(&part), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     let mut c = curl(&url, "300");
     c.arg("--output").arg(&part);
     let what = match kind {
@@ -151,7 +158,7 @@ pub(crate) async fn fetch(cache: &Path, base: &str, version: &str, kind: Kind, k
     run(c, Duration::from_secs(330)).await.map_err(|e| format!("release {what} 받기: {e}"))?;
     let got = file_sha(&part).unwrap_or_default();
     if got != sha256 {
-        let _ = std::fs::remove_file(&part);
+        aaa_common::diagnostic::ignored(std::fs::remove_file(&part), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         return Err(format!("받은 release {what}의 SHA-256이 manifest와 다르다(기대 {sha256}, 받음 {got})"));
     }
     #[cfg(unix)]

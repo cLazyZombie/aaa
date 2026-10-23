@@ -61,31 +61,37 @@ impl Sealed {
 
 fn random<const N: usize>() -> Result<[u8; N], ErrorBody> {
     let mut b = [0; N];
-    SystemRandom::new().fill(&mut b).map_err(|_| fail())?;
+    SystemRandom::new().fill(&mut b).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
     Ok(b)
 }
 fn cipher(key: &[u8]) -> Result<aead::LessSafeKey, ErrorBody> {
-    Ok(aead::LessSafeKey::new(aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key).map_err(|_| fail())?))
+    Ok(aead::LessSafeKey::new(
+        aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?,
+    ))
 }
 fn seal(key: &[u8], nonce: [u8; 12], aad: &[u8], value: &[u8]) -> Result<String, ErrorBody> {
     let mut b = value.to_vec();
     cipher(key)?
         .seal_in_place_append_tag(aead::Nonce::assume_unique_for_key(nonce), aead::Aad::from(aad), &mut b)
-        .map_err(|_| fail())?;
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
     Ok(hex::encode(b))
 }
 fn open(key: &[u8], nonce: &str, aad: &[u8], value: &str) -> Result<Vec<u8>, ErrorBody> {
-    let n: [u8; 12] = hex::decode(nonce).map_err(|_| fail())?.try_into().map_err(|_| fail())?;
-    let mut b = hex::decode(value).map_err(|_| fail())?;
+    let n: [u8; 12] = hex::decode(nonce)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
+        .try_into()
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+    let mut b = hex::decode(value).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
     Ok(cipher(key)?
         .open_in_place(aead::Nonce::assume_unique_for_key(n), aead::Aad::from(aad), &mut b)
-        .map_err(|_| fail())?
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
         .to_vec())
 }
 
 /// 최종 파일·부모를 symlink로 바꾸어 금고 밖을 읽거나 쓰지 않는다.
 fn regular(path: &Path) -> Result<(), ErrorBody> {
-    let m = path.symlink_metadata().map_err(|_| fail())?;
+    let m = path.symlink_metadata().map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
     if !m.is_file() || m.len() > MAX as u64 * 4 {
         return Err(fail());
     }
@@ -98,7 +104,16 @@ struct Store {
 impl Store {
     fn key(&self, create: bool) -> Result<[u8; 32], ErrorBody> {
         if !self.key_path.exists() {
-            if !create || self.root.read_dir().ok().is_some_and(|mut d| d.next().is_some()) {
+            if !create
+                || self
+                    .root
+                    .read_dir()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .is_some_and(|mut d| d.next().is_some())
+            {
                 return Err(fail());
             }
             use std::io::Write;
@@ -110,18 +125,33 @@ impl Store {
                 use std::os::unix::fs::OpenOptionsExt;
                 opts.mode(0o600);
             }
-            let mut f = opts.open(&self.key_path).map_err(|_| fail())?;
-            f.write_all(&k).and_then(|_| f.sync_all()).map_err(|_| fail())?;
+            let mut f = opts
+                .open(&self.key_path)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+            f.write_all(&k)
+                .and_then(|_| f.sync_all())
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         }
         regular(&self.key_path)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if self.key_path.metadata().map_err(|_| fail())?.permissions().mode() & 0o077 != 0 {
+            if self
+                .key_path
+                .metadata()
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
+                .permissions()
+                .mode()
+                & 0o077
+                != 0
+            {
                 return Err(fail());
             }
         }
-        std::fs::read(&self.key_path).map_err(|_| fail())?.try_into().map_err(|_| fail())
+        std::fs::read(&self.key_path)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
+            .try_into()
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))
     }
     fn path(&self, name: &str) -> Result<PathBuf, ErrorBody> {
         if !valid_name(name) {
@@ -132,7 +162,10 @@ impl Store {
     fn record(&self, name: &str) -> Result<Sealed, ErrorBody> {
         let p = self.path(name)?;
         regular(&p)?;
-        let r: Sealed = serde_json::from_slice(&std::fs::read(p).map_err(|_| fail())?).map_err(|_| fail())?;
+        let r: Sealed = serde_json::from_slice(
+            &std::fs::read(p).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?,
+        )
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         if r.name != name {
             return Err(fail());
         }
@@ -143,7 +176,8 @@ impl Store {
         let key = self.key(false)?;
         let aad = r.aad();
         let dek = open(&key, &r.wrapped_nonce, &aad, &r.wrapped)?;
-        let value = String::from_utf8(open(&dek, &r.nonce, &aad, &r.data)?).map_err(|_| fail())?;
+        let value = String::from_utf8(open(&dek, &r.nonce, &aad, &r.data)?)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         redact::remember_auth(&r.harness, &value);
         let generation = r.auth_generation();
         Ok(AccountCredential {
@@ -165,10 +199,16 @@ impl Store {
         generation: Option<String>,
     ) -> Result<AccountView, ErrorBody> {
         let path = self.path(name)?;
-        if self.root.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+        if self
+            .root
+            .symlink_metadata()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
             return Err(fail());
         }
-        util::ensure_private_dir(&self.root).map_err(|_| fail())?;
+        util::ensure_private_dir(&self.root)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let key = self.key(true)?;
         let dek = random::<32>()?;
         let nonce = random::<12>()?;
@@ -206,8 +246,12 @@ impl Store {
             std::fs::File::open(&self.root)?.sync_all()?;
             Ok::<_, std::io::Error>(())
         })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(temp);
+        if result
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
+            aaa_common::diagnostic::ignored(std::fs::remove_file(temp), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
             return Err(fail());
         }
         Ok(r.view())
@@ -242,7 +286,7 @@ impl Accounts {
         // 키/한 계정이 잠겨도 계정 미지정 기능은 계속 제공한다.
         if let Ok(accounts) = out.list() {
             for a in accounts {
-                let _ = out.credential(&a.name);
+                aaa_common::diagnostic::ignored(out.credential(&a.name), "보조 작업 실패 뒤 기존 처리를 계속한다");
             }
         }
         Ok(out)
@@ -252,12 +296,17 @@ impl Accounts {
         if !s.root.exists() {
             return Ok(vec![]);
         }
-        if s.root.symlink_metadata().map_err(|_| fail())?.file_type().is_symlink() {
+        if s.root
+            .symlink_metadata()
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
+            .file_type()
+            .is_symlink()
+        {
             return Err(fail());
         }
         let mut out = vec![];
-        for e in s.root.read_dir().map_err(|_| fail())? {
-            let e = e.map_err(|_| fail())?;
+        for e in s.root.read_dir().map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))? {
+            let e = e.map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
             let name = e.file_name();
             let name = name.to_string_lossy();
             if let Some(n) = name.strip_suffix(".json") {
@@ -294,7 +343,7 @@ impl Accounts {
         let s = self.store.lock().unwrap();
         let p = s.path(name)?;
         regular(&p)?;
-        std::fs::remove_file(p).map_err(|_| fail())
+        std::fs::remove_file(p).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))
     }
     pub(crate) async fn refresh(
         &self,
@@ -310,7 +359,10 @@ impl Accounts {
             Ok((version, response)) => {
                 (AccountRefreshed { id: String::new(), version, response: Some(SecretText(response)) }, outcome)
             }
-            Err(_) => (AccountRefreshed { id: String::new(), version, response: None }, outcome),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                (AccountRefreshed { id: String::new(), version, response: None }, outcome)
+            }
         }
     }
     #[cfg(test)]
@@ -328,8 +380,10 @@ impl Accounts {
         if c.harness != "codex" || version > c.version {
             return Err(fail());
         }
-        let mut auth: serde_json::Value = serde_json::from_str(&c.secret.0).map_err(|_| fail())?;
-        let req: serde_json::Value = serde_json::from_str(&request.0).map_err(|_| fail())?;
+        let mut auth: serde_json::Value = serde_json::from_str(&c.secret.0)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        let req: serde_json::Value = serde_json::from_str(&request.0)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         if req.get("grant_type").and_then(|v| v.as_str()) != Some("refresh_token") {
             return Err(fail());
         }
@@ -345,14 +399,14 @@ impl Accounts {
         {
             url = format!("{}/oauth/token", origin.trim_end_matches('/'));
         }
-        let body=serde_json::to_vec(&serde_json::json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann","grant_type":"refresh_token","refresh_token":auth["tokens"]["refresh_token"]})).map_err(|_|fail())?;
+        let body=serde_json::to_vec(&serde_json::json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann","grant_type":"refresh_token","refresh_token":auth["tokens"]["refresh_token"]})).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(15),
             crate::http::request("POST", &url, &[("Content-Type", "application/json".into())], &body, MAX),
         )
         .await
-        .map_err(|_| fail())?
-        .map_err(|_| fail())?;
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         redact::remember_auth("codex", &String::from_utf8_lossy(&response.body));
         if response.status != 200 {
             // 묻는 사이 다시 로그인해 금고 판이 올랐으면 거부는 옛 인증의 것이다(끊김이 아니다)
@@ -361,7 +415,8 @@ impl Accounts {
             }
             return Err(fail());
         }
-        let tokens: serde_json::Value = serde_json::from_slice(&response.body).map_err(|_| fail())?;
+        let tokens: serde_json::Value = serde_json::from_slice(&response.body)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         for k in ["access_token", "refresh_token"] {
             if let Some(v) = tokens.get(k).filter(|v| !v.is_null()) {
                 let v = v.as_str().filter(|s| s.len() >= 12).ok_or_else(fail)?;
@@ -372,7 +427,8 @@ impl Accounts {
             auth["tokens"]["id_token"] = v.into();
         }
         auth["last_refresh"] = util::utc_iso(util::now_ms()).into();
-        let value = serde_json::to_string(&auth).map_err(|_| fail())?;
+        let value = serde_json::to_string(&auth)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         redact::remember_auth("codex", &value);
         let s = self.store.lock().unwrap();
         if s.record(name)?.version != version {
@@ -393,7 +449,7 @@ fn token_response(auth: &serde_json::Value) -> Result<String, ErrorBody> {
             out.insert(k.into(), v.clone());
         }
     }
-    serde_json::to_string(&out).map_err(|_| fail())
+    serde_json::to_string(&out).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))
 }
 fn validate(harness: &str, value: &str) -> Result<(), ErrorBody> {
     if value.len() < 12 || value.len() > MAX {
@@ -402,7 +458,8 @@ fn validate(harness: &str, value: &str) -> Result<(), ErrorBody> {
     match harness {
         "claude" if value.bytes().all(|b| b.is_ascii_graphic()) => Ok(()),
         "codex" => {
-            let v: serde_json::Value = serde_json::from_str(value).map_err(|_| fail())?;
+            let v: serde_json::Value = serde_json::from_str(value)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
             for k in ["access_token", "refresh_token"] {
                 if !v["tokens"][k].as_str().is_some_and(|s| s.len() >= 12) {
                     return Err(fail());
@@ -452,7 +509,9 @@ impl crate::Host {
                 if let Some(previous) = previous {
                     self.save_account_run(&previous)?;
                 } else {
-                    self.db.del_meta(&format!("account-run:{}", binding.run)).map_err(|_| fail())?;
+                    self.db
+                        .del_meta(&format!("account-run:{}", binding.run))
+                        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
                 }
                 match other {
                     Err(e) => Err(e),
@@ -464,6 +523,7 @@ impl crate::Host {
     pub(crate) async fn account_refresh(self: Arc<Self>, mid: String, request: aaa_proto::AccountRefresh) {
         let bound = self
             .account_run(&request.run)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .flatten()
             .filter(|r| r.machine == mid && r.pane.as_deref().is_none_or(|p| p == request.session))
@@ -472,7 +532,13 @@ impl crate::Host {
             request
                 .run
                 .split_once('/')
-                .and_then(|(p, t)| self.load(p, t).ok())
+                .and_then(|(p, t)| {
+                    self.load(p, t)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .filter(|r| {
                     r.machine_id == mid
                         && (r.pane.as_deref() == Some(&request.session)
@@ -490,7 +556,10 @@ impl crate::Host {
         };
         result.id = request.id;
         if let Ok(conn) = self.live_conn(&mid) {
-            let _ = conn.request(aaa_proto::AgentRequest::AccountRefreshed { session: request.session, result }).await;
+            aaa_common::diagnostic::ignored(
+                conn.request(aaa_proto::AgentRequest::AccountRefreshed { session: request.session, result }).await,
+                "보조 작업 실패 뒤 기존 처리를 계속한다",
+            );
         }
     }
 }

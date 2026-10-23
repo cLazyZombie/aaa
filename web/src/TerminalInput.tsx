@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 터미널 입력줄. herdr-web-ui `src/components/TerminalInput.tsx`(aa624cb)를 옮겼다.
 //
 // 휴대폰 키보드는 친 글을 고쳐 쓴다(받아쓰기가 구절을 고치고, IME가 음절을 마친다). 터미널은 이미 보낸 키를
@@ -182,7 +183,7 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
             if (removed > 0) setNote(hiddenNote(removed));
           } else setNote(result);
         })
-        .catch(() => setNote("확인하지 못했다. 다시 보내기 전에 터미널을 본다"))
+        .catch(ignoredFailure("TerminalInput.tsx:186", () => setNote("확인하지 못했다. 다시 보내기 전에 터미널을 본다")))
         .finally(() => {
           setTerminalDraftSending(owner, false);
         });

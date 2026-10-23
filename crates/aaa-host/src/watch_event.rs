@@ -37,7 +37,7 @@ impl Host {
                 self.db.flow_insert_once(&flow, &key).map_err(|e| err(ErrorCode::Internal, e.to_string()))?
             {
                 flow.seq = seq;
-                let _ = self.flow_events.send(flow);
+                aaa_common::diagnostic::ignored(self.flow_events.send(flow), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             }
         }
         Ok(())

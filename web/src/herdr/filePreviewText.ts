@@ -1,3 +1,4 @@
+import { ignoredFailure } from "../errorDiagnostic.ts";
 /** Text shows its first part: this also bounds parsing and highlighting in the viewer. */
 export const TEXT_PREVIEW_BYTES = 256 * 1024;
 
@@ -24,7 +25,7 @@ function countLines(text: string): number {
 
 /** Range is a request, not a client memory limit: a peer can ignore it or a file can grow. */
 export async function readFilePreviewText(response: Response, limit: number, options: { signal?: AbortSignal; timeoutMs?: number; /** Opt in to a logical-line budget, counted on bytes as they stream. */ maxLines?: number; /** On the deadline, return what arrived as a cut prefix instead of failing, when anything did. */ partialOnTimeout?: boolean } = {}): Promise<FilePreviewText> {
-  const discard = () => { void response.body?.cancel().catch(() => {}); };
+  const discard = () => { void response.body?.cancel().catch(ignoredFailure("filePreviewText.ts:28", () => {})); };
   // An empty file has no first byte to send for Range. Discard any error body, never render it.
   if (response.status === 416 && response.headers.get("content-range")?.trim() === "bytes */0") {
     discard();
@@ -54,7 +55,7 @@ export async function readFilePreviewText(response: Response, limit: number, opt
   let stopped: Error | undefined;
   let reject!: (error: Error) => void;
   const interruption = new Promise<never>((_, fail) => { reject = fail; });
-  const stop = (error: Error) => { stopped = error; reject(error); void reader.cancel().catch(() => {}); };
+  const stop = (error: Error) => { stopped = error; reject(error); void reader.cancel().catch(ignoredFailure("filePreviewText.ts:58", () => {})); };
   const aborted = () => stop(new Error("File preview aborted."));
   const timedOut = new Error("File preview timed out.");
   const timer = setTimeout(() => stop(timedOut), options.timeoutMs ?? 5_000);
@@ -85,7 +86,7 @@ export async function readFilePreviewText(response: Response, limit: number, opt
           more = !next.done;
         }
         // Never wait on a remote cancellation promise, or a hostile/stalled body can hold the UI.
-        void reader.cancel().catch(() => {});
+        void reader.cancel().catch(ignoredFailure("filePreviewText.ts:89", () => {}));
         return finish(more, by);
       }
     }

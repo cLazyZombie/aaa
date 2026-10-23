@@ -48,7 +48,7 @@ impl Vapid {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 aaa_common::util::ensure_private_dir(&dir)?;
                 let doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
-                    .map_err(|_| anyhow!("VAPID 키 생성 실패"))?;
+                    .map_err(|e| aaa_common::diagnostic::context(e, anyhow!("VAPID 키 생성 실패")))?;
                 aaa_common::util::write_private(&path, doc.as_ref())?;
                 doc.as_ref().to_vec()
             }
@@ -70,7 +70,10 @@ impl Vapid {
         let header = B64URL.encode(br#"{"typ":"JWT","alg":"ES256"}"#);
         let claims = serde_json::json!({ "aud": audience, "exp": now_s + 12 * 3600, "sub": subject });
         let input = format!("{header}.{}", B64URL.encode(claims.to_string()));
-        let sig = self.key.sign(&SystemRandom::new(), input.as_bytes()).map_err(|_| anyhow!("VAPID 서명 실패"))?;
+        let sig = self
+            .key
+            .sign(&SystemRandom::new(), input.as_bytes())
+            .map_err(|e| aaa_common::diagnostic::context(e, anyhow!("VAPID 서명 실패")))?;
         Ok(format!("vapid t={input}.{}, k={}", B64URL.encode(sig.as_ref()), self.public_b64()))
     }
 }
@@ -127,7 +130,9 @@ impl ring::hkdf::KeyType for Len {
 fn hkdf(salt: &[u8], ikm: &[u8], info: &[u8], len: usize) -> Result<Vec<u8>> {
     let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, salt).extract(ikm);
     let mut out = vec![0u8; len];
-    prk.expand(&[info], Len(len)).and_then(|o| o.fill(&mut out)).map_err(|_| anyhow!("HKDF 실패"))?;
+    prk.expand(&[info], Len(len))
+        .and_then(|o| o.fill(&mut out))
+        .map_err(|e| aaa_common::diagnostic::context(e, anyhow!("HKDF 실패")))?;
     Ok(out)
 }
 
@@ -145,11 +150,15 @@ fn derive(ecdh: &[u8], auth: &[u8], ua_pub: &[u8], as_pub: &[u8], salt: &[u8]) -
 /// 한 레코드짜리 aes128gcm 본문(RFC 8188): salt(16) · rs(4) · idlen(1) · keyid(as 공개키 65) · 암호문
 fn seal(cek: &[u8], nonce: &[u8], salt: &[u8], as_pub: &[u8], payload: &[u8]) -> Result<Vec<u8>> {
     use ring::aead::{AES_128_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
-    let key = LessSafeKey::new(UnboundKey::new(&AES_128_GCM, cek).map_err(|_| anyhow!("CEK"))?);
+    let key = LessSafeKey::new(
+        UnboundKey::new(&AES_128_GCM, cek).map_err(|e| aaa_common::diagnostic::context(e, anyhow!("CEK")))?,
+    );
     let mut data = payload.to_vec();
     data.push(2); // 마지막 레코드 구분, padding 없음
-    let nonce = Nonce::try_assume_unique_for_key(nonce).map_err(|_| anyhow!("NONCE"))?;
-    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut data).map_err(|_| anyhow!("암호화 실패"))?;
+    let nonce =
+        Nonce::try_assume_unique_for_key(nonce).map_err(|e| aaa_common::diagnostic::context(e, anyhow!("NONCE")))?;
+    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut data)
+        .map_err(|e| aaa_common::diagnostic::context(e, anyhow!("암호화 실패")))?;
     let mut out = Vec::with_capacity(86 + data.len());
     out.extend_from_slice(salt);
     out.extend_from_slice(&4096u32.to_be_bytes());
@@ -167,12 +176,17 @@ pub(crate) fn encrypt(payload: &[u8], p256dh: &str, auth: &str) -> Result<Vec<u8
         bail!("기기 키 길이가 맞지 않다");
     }
     let rng = SystemRandom::new();
-    let mine = EphemeralPrivateKey::generate(&ECDH_P256, &rng).map_err(|_| anyhow!("임시 키 생성 실패"))?;
-    let as_pub = mine.compute_public_key().map_err(|_| anyhow!("임시 공개키"))?.as_ref().to_vec();
+    let mine = EphemeralPrivateKey::generate(&ECDH_P256, &rng)
+        .map_err(|e| aaa_common::diagnostic::context(e, anyhow!("임시 키 생성 실패")))?;
+    let as_pub = mine
+        .compute_public_key()
+        .map_err(|e| aaa_common::diagnostic::context(e, anyhow!("임시 공개키")))?
+        .as_ref()
+        .to_vec();
     let ecdh = agree_ephemeral(mine, &UnparsedPublicKey::new(&ECDH_P256, &ua_pub), |k| k.to_vec())
-        .map_err(|_| anyhow!("기기 공개키가 P-256 점이 아니다"))?;
+        .map_err(|e| aaa_common::diagnostic::context(e, anyhow!("기기 공개키가 P-256 점이 아니다")))?;
     let mut salt = [0u8; 16];
-    rng.fill(&mut salt).map_err(|_| anyhow!("난수"))?;
+    rng.fill(&mut salt).map_err(|e| aaa_common::diagnostic::context(e, anyhow!("난수")))?;
     let (cek, nonce) = derive(&ecdh, &auth, &ua_pub, &as_pub, &salt)?;
     seal(&cek, &nonce, &salt, &as_pub, payload)
 }
@@ -277,14 +291,20 @@ impl Host {
             ];
             match tokio::time::timeout(SEND_TIMEOUT, crate::notify::post_raw(&sub.endpoint, &headers, &body)).await {
                 Ok(r) => r,
-                Err(_) => Err(format!("{}초 안에 끝나지 않았다", SEND_TIMEOUT.as_secs())),
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                    Err(format!("{}초 안에 끝나지 않았다", SEND_TIMEOUT.as_secs()))
+                }
             }
         }
         .await;
         match res {
             Ok(code) if (200..300).contains(&code) => Sent::Ok,
             Ok(404 | 410) => {
-                let _ = self.db.push_del(&sub.endpoint, None);
+                aaa_common::diagnostic::ignored(
+                    self.db.push_del(&sub.endpoint, None),
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
                 Sent::Gone
             }
             Ok(code) => Sent::Failed(format!("HTTP {code}")),
@@ -347,7 +367,17 @@ impl Host {
                 continue;
             }
             // 기존 coordinator 사용자 post만 보낸다. 배지 전용 조용한 push는 만들지 않는다.
-            let body = payload(place, &mine, titles, self.app_badge_count().ok()).to_string();
+            let body = payload(
+                place,
+                &mine,
+                titles,
+                self.app_badge_count()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok(),
+            )
+            .to_string();
             match self.push_one(s, body.as_bytes()).await {
                 Sent::Ok => {
                     ok += 1;

@@ -1,13 +1,14 @@
 import { apiFetch } from "./apiRequest";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AccountQuota, AccountQuotaReport, Outcome } from "./gen/proto";
+import type { AccountQuota, AccountQuotaReport } from "./gen/proto";
+import { readApiResponse } from "./apiOutcome";
 import { onAccountsChanged } from "./api";
 import { usePageVisible } from "./pageVisible";
 import { quotaLabel, quotaLeft, quotaProblem, quotaState, quotaTime } from "./accountQuotaModel";
 
 export function useAccountQuota(enabled: boolean) {
   const [report, setReport] = useState<AccountQuotaReport | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now);
   const seq = useRef(0);
@@ -17,10 +18,9 @@ export function useAccountQuota(enabled: boolean) {
     setBusy(true);
     try {
       const res = await apiFetch(`/api/v1/account-usage${refresh ? "?refresh=1" : ""}`, { credentials: "same-origin", cache: "no-store" });
-      const v = await res.json() as Outcome<AccountQuotaReport>;
-      if (!res.ok || "err" in v) throw new Error("quota");
-      if (mine === seq.current) { setReport(v.ok); setError(false); setNow(Date.now()); }
-    } catch { if (mine === seq.current) setError(true); }
+      const report = await readApiResponse<AccountQuotaReport>(res);
+      if (mine === seq.current) { setReport(report); setError(null); setNow(Date.now()); }
+    } catch (error) { if (mine === seq.current) setError(error instanceof Error ? error.message : "사용량 응답 읽기 실패"); }
     finally { if (mine === seq.current) setBusy(false); }
   }, []);
   useEffect(() => {
@@ -34,11 +34,11 @@ export function useAccountQuota(enabled: boolean) {
   return { report, error, busy, now, refresh: () => void load(true) };
 }
 
-export function AccountQuotaCard({ quota, now, failed }: { quota: AccountQuota | undefined; now: number; failed: boolean }) {
+export function AccountQuotaCard({ quota, now, failed }: { quota: AccountQuota | undefined; now: number; failed: boolean | string | null }) {
   const windows = quota?.windows ?? [];
   return <section className="acct-quota" data-testid="account-quota" aria-label="구독 남은 사용량">
     <h4>남은 사용량</h4>
-    {(failed || quota?.problem) && <p className="op-muted" data-testid="quota-problem">{failed ? "다시 읽지 못함 · 마지막 관측" : quotaProblem[quota!.problem!]}</p>}
+    {(failed || quota?.problem) && <p className="op-muted" data-testid="quota-problem">{failed ? `다시 읽지 못함 · 마지막 관측${typeof failed === "string" ? `: ${failed}` : ""}` : quotaProblem[quota!.problem!]}</p>}
     {windows.map((w) => {
       const state = failed ? "unknown" : quotaState(w, now);
       return <div key={`${w.limit_id}/${w.scope}/${w.duration_mins}/${w.window_id}`} className={`acct-quota-window is-${state}`} data-testid="quota-window" data-state={state}>

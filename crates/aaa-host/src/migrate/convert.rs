@@ -80,7 +80,10 @@ fn front_value(v: &toml::Value) -> String {
 pub fn disable_routine(text: &str) -> Option<String> {
     let (fm, body) = source::front_matter(text);
     let fm = fm?;
-    let mut doc: toml_edit::DocumentMut = fm.parse().ok()?;
+    let mut doc: toml_edit::DocumentMut = fm
+        .parse()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     doc["enabled"] = toml_edit::value(false);
     Some(format!("+++\n{}+++\n{body}", doc))
 }
@@ -88,7 +91,10 @@ pub fn disable_routine(text: &str) -> Option<String> {
 fn host_running(state_root: &Path) -> bool {
     #[cfg(unix)]
     {
-        std::os::unix::net::UnixStream::connect(state_root.join("host").join("front.sock")).is_ok()
+        std::os::unix::net::UnixStream::connect(state_root.join("host").join("front.sock"))
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
     }
     #[cfg(not(unix))]
     {
@@ -226,12 +232,27 @@ impl Copier<'_> {
     fn copy_tree(&mut self, rel_dir: &str) {
         let mut stack = vec![PathBuf::from(rel_dir)];
         while let Some(d) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(self.src.join(&d)) else { continue };
-            let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+            let Ok(rd) = std::fs::read_dir(self.src.join(&d)).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
+            let mut entries: Vec<_> = rd
+                .filter_map(|e| {
+                    e.inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                })
+                .collect();
             entries.sort_by_key(|e| e.file_name());
             for e in entries {
                 let rel = d.join(e.file_name());
-                let Ok(m) = std::fs::symlink_metadata(e.path()) else { continue };
+                let Ok(m) = std::fs::symlink_metadata(e.path()).inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                }) else {
+                    continue;
+                };
                 let r = rel.to_string_lossy().replace('\\', "/");
                 if let Some(why) = super::inventory::exclusion(&r, m.is_dir()) {
                     self.out.excluded.push((r, why.to_string()));
@@ -314,14 +335,20 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
     }
     drop(c);
     // routine: 꺼서 넣는다
-    for e in std::fs::read_dir(p.dir.join("routines")).into_iter().flatten().filter_map(|e| e.ok()) {
+    for e in std::fs::read_dir(p.dir.join("routines")).into_iter().flatten().filter_map(|e| {
+        e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")).ok()
+    }) {
         let path = e.path();
         if path.extension().is_none_or(|x| x != "md") || !path.is_file() {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let rel = format!("routines/{name}");
-        match std::fs::read_to_string(&path).ok().and_then(|t| disable_routine(&t)) {
+        match std::fs::read_to_string(&path)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .and_then(|t| disable_routine(&t))
+        {
             Some(text) => match write_new(&dir.join(&rel), text.as_bytes()) {
                 Ok(()) => out.rewritten.push((rel, "enabled = false(전환 때 켠다)".into())),
                 Err(e) => out.failed.push((rel, e.to_string())),
@@ -364,7 +391,9 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
                 machine.clone()
             }
         };
-        let report = std::fs::read(dir.join(format!("threads/{}.md", t.id))).ok();
+        let report = std::fs::read(dir.join(format!("threads/{}.md", t.id)))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok();
         let rec = thread_rec(&dest.project, t, &machine_id, report.as_deref(), now_ms);
         if db.thread_import(&dest.project, &t.id, rec.status.as_str(), &serde_json::to_string(&rec)?)? {
             out.threads_imported.push(t.id.clone());
@@ -395,8 +424,17 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
         let done_at = i.done.then(|| {
             std::fs::metadata(p.dir.join(&rel))
                 .and_then(|m| m.modified())
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
                 .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
                 .map_or(created, |d| d.as_millis() as u64)
         });
         let item = InboxItem {

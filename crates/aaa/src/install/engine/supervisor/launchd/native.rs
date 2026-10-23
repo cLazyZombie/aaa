@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 pub(super) struct Launchd;
 fn call(args: &[String]) -> Result<(bool, String)> {
     let args: Vec<_> = args.iter().map(String::as_str).collect();
-    crate::update::run_limited(Path::new("/bin/launchctl"), &args)
-        .map_err(|_| failure("service_manager_unavailable", 3))
+    crate::update::run_limited(Path::new("/bin/launchctl"), &args).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, failure("service_manager_unavailable", 3))
+    })
 }
 fn domain() -> String {
     format!("gui/{}", unsafe { libc::geteuid() })
@@ -45,7 +46,11 @@ fn loaded(spec: &Spec) -> Result<Option<u32>> {
     {
         return Err(Fault::conflict());
     }
-    let pid = field("pid = ").map(str::parse::<u32>).transpose().map_err(|_| Fault::conflict())?.unwrap_or(0);
+    let pid = field("pid = ")
+        .map(str::parse::<u32>)
+        .transpose()
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
+        .unwrap_or(0);
     Ok(Some(pid))
 }
 pub(super) fn identity(pid: u32) -> Result<(libc::proc_bsdinfo, PathBuf)> {
@@ -122,7 +127,7 @@ pub(super) fn verify_launcher(spec: &Spec) -> Result<()> {
         Path::new("/usr/bin/codesign"),
         &["--verify", "--strict", &signed.to_string_lossy()],
     )
-    .map_err(|_| failure("service_launcher_unverified", 3))?;
+    .map_err(|source_error| aaa_common::diagnostic::context(source_error, failure("service_launcher_unverified", 3)))?;
     if !ok {
         return Err(failure("service_launcher_unverified", 3));
     }
@@ -132,9 +137,13 @@ fn proof(spec: &Spec) -> Result<Ready> {
     let bytes = match private::read(&spec.directory().join("ready.json"), 128 * 1024) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(failure("service_ready_pending", 3)),
-        Err(_) => return Err(failure("service_ready_unverified", 3)),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            return Err(failure("service_ready_unverified", 3));
+        }
     };
-    serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())
+    serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))
 }
 fn discard_stopped_proof(spec: &Spec) -> Result<()> {
     let ready = match proof(spec) {
@@ -191,14 +200,20 @@ impl Manager for Launchd {
                 }
                 return Ok(None);
             }
-            Err(_) => return Err(Fault::conflict()),
+            Err(source_error) => {
+                return Err(aaa_common::diagnostic::context(source_error, Fault::conflict()));
+            }
         };
         let desired = Configuration::desired(spec);
         if bytes != desired.command.as_bytes() {
             return Err(Fault::conflict());
         }
         let launcher = loaded(spec)?.unwrap_or(0);
-        let child = proof(spec).ok().filter(|p| process(spec, p.pid, launcher).is_ok()).map(|p| p.pid);
+        let child = proof(spec)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|p| process(spec, p.pid, launcher).is_ok())
+            .map(|p| p.pid);
         Ok(Some(Observation { configuration: desired, running: launcher > 0, pid: child.unwrap_or(launcher) }))
     }
     fn create(&mut self, spec: &Spec, password: Option<&Password>) -> Result<()> {
@@ -228,7 +243,14 @@ impl Manager for Launchd {
                         return Err(failure("service_ready_unverified", 3));
                     }
                     let observed = self.query(spec)?.ok_or_else(Fault::conflict)?;
-                    if ready.connected && verify_ready(spec, self, &observed).is_ok() {
+                    if ready.connected
+                        && verify_ready(spec, self, &observed)
+                            .as_ref()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                            })
+                            .is_ok()
+                    {
                         return Ok(observed);
                     }
                     // 시작 중인 connected=false만 기다린다. 다른 프로세스의 proof는 채택하지 않는다.
@@ -248,7 +270,10 @@ impl Manager for Launchd {
         // PID가 0인 등록도 bootout한다. 자식이 없다는 사실은 등록 해제와 다르다.
         if pid > 0 {
             if let Ok(ready) = proof(spec)
-                && process(spec, ready.pid, pid).is_ok()
+                && process(spec, ready.pid, pid)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
             {
                 waits.extend(Events::process(ready.pid)?);
             }
@@ -314,8 +339,10 @@ pub(super) fn install_plist(spec: &Spec) -> Result<()> {
         }
         Err(e) => return Err(Fault::io(e)),
     }
-    let src = std::ffi::CString::new(stage.as_os_str().as_bytes()).map_err(|_| Fault::conflict())?;
-    let dst = std::ffi::CString::new(dest.as_os_str().as_bytes()).map_err(|_| Fault::conflict())?;
+    let src = std::ffi::CString::new(stage.as_os_str().as_bytes())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
+    let dst = std::ffi::CString::new(dest.as_os_str().as_bytes())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     // SAFETY: 두 NUL 종료 경로가 살아 있으며 RENAME_EXCL로 기존 경로를 대체하지 않는다.
     if unsafe { libc::renameatx_np(libc::AT_FDCWD, src.as_ptr(), libc::AT_FDCWD, dst.as_ptr(), libc::RENAME_EXCL) } != 0
     {
@@ -364,7 +391,10 @@ impl Events {
             Ok(event) => Ok(Some(event)),
             // 신원 검증과 구독 사이에 이미 끝난 process는 종료 사건과 같다.
             Err(e) if e.raw_os_error() == Some(libc::ESRCH) => Ok(None),
-            Err(_) => Err(failure("service_ready_unavailable", 3)),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                Err(failure("service_ready_unavailable", 3))
+            }
         }
     }
     fn wait(&mut self, remaining: Duration) -> Result<()> {

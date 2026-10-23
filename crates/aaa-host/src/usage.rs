@@ -38,7 +38,17 @@ pub const MIN_REFRESH_MS: u64 = 30_000;
 
 /// `MIN_REFRESH_MS`. `AAA_TEST_USAGE_REFRESH_MS`는 시험에서만 줄인다(웹 E2E 32: 가짜 구독 숫자를 바꾼 뒤 바로 다시 읽는다)
 pub(crate) fn min_refresh_ms() -> u64 {
-    std::env::var("AAA_TEST_USAGE_REFRESH_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(MIN_REFRESH_MS)
+    std::env::var("AAA_TEST_USAGE_REFRESH_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|v| {
+            v.parse()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .unwrap_or(MIN_REFRESH_MS)
 }
 /// 실패나 끝난 로그인 뒤: CLI의 다음 refresh를 곧 알아챌 만큼
 pub const RETRY_MS: u64 = 60_000;
@@ -91,7 +101,10 @@ impl UsageContext {
     /// 이 host 머신의 실제 환경. `AAA_USAGE_HOME`이면 시험 고리(모듈 설명).
     pub fn system() -> UsageContext {
         let now: NowFn = Arc::new(aaa_common::util::now_ms);
-        let origin = std::env::var("AAA_USAGE_ORIGIN").ok().filter(|v| !v.is_empty());
+        let origin = std::env::var("AAA_USAGE_ORIGIN")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|v| !v.is_empty());
         if let Some(home) = std::env::var_os("AAA_USAGE_HOME").filter(|v| !v.is_empty()) {
             return UsageContext {
                 home: PathBuf::from(home),
@@ -124,12 +137,17 @@ fn spawn_capped(argv: &[&str]) -> Option<(Option<i32>, Option<String>, bool)> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()?;
     let mut out = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         use std::io::Read as _;
         let mut buf = Vec::new();
-        let n = (&mut out).take(MAX_READ_BYTES as u64 + 1).read_to_end(&mut buf).ok()?;
+        let n = (&mut out)
+            .take(MAX_READ_BYTES as u64 + 1)
+            .read_to_end(&mut buf)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         (n <= MAX_READ_BYTES).then(|| String::from_utf8_lossy(&buf).to_string())
     });
     let started = Instant::now();
@@ -139,14 +157,26 @@ fn spawn_capped(argv: &[&str]) -> Option<(Option<i32>, Option<String>, bool)> {
             Ok(Some(s)) => break Some(s),
             Ok(None) if started.elapsed() >= COMMAND_TIMEOUT => {
                 timed_out = true;
-                let _ = child.kill();
-                break child.wait().ok();
+                aaa_common::diagnostic::ignored(child.kill(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+                break child
+                    .wait()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok();
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(_) => break None,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                break None;
+            }
         }
     };
-    let output = reader.join().ok().flatten();
+    let output = reader
+        .join()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten();
     Some((status.and_then(|s| s.code()), output, timed_out))
 }
 
@@ -250,7 +280,12 @@ fn text(v: Option<&Value>) -> Option<String> {
 fn number(v: Option<&Value>) -> Option<f64> {
     match v {
         Some(Value::Number(n)) => n.as_f64().filter(|f| f.is_finite()),
-        Some(Value::String(s)) if !s.trim().is_empty() => s.trim().parse::<f64>().ok().filter(|f| f.is_finite()),
+        Some(Value::String(s)) if !s.trim().is_empty() => s
+            .trim()
+            .parse::<f64>()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|f| f.is_finite()),
         _ => None,
     }
 }
@@ -258,7 +293,9 @@ fn percent(v: f64) -> f64 {
     (v.clamp(0.0, 100.0) * 10.0).round() / 10.0
 }
 fn parse_json(source: Option<String>) -> Option<Value> {
-    serde_json::from_str(&source?).ok()
+    serde_json::from_str(&source?)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
 }
 fn json_record(source: Option<String>) -> Json {
     record(parse_json(source).as_ref())
@@ -267,18 +304,32 @@ fn json_record(source: Option<String>) -> Json {
 /// 파일 글. 없거나 MAX_READ_BYTES를 넘으면 None
 fn read_text(path: &Path) -> Option<String> {
     use std::io::Read as _;
-    let f = std::fs::File::open(path).ok()?;
+    let f = std::fs::File::open(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let mut buf = Vec::new();
-    f.take(MAX_READ_BYTES as u64 + 1).read_to_end(&mut buf).ok()?;
+    f.take(MAX_READ_BYTES as u64 + 1)
+        .read_to_end(&mut buf)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     (buf.len() <= MAX_READ_BYTES).then(|| String::from_utf8_lossy(&buf).to_string())
 }
 
 /// `home` 안 이름이 `prefix`(".codex-")로 시작하는 폴더들(이름 순)
 fn sibling_dirs(home: &Path, prefix: &str) -> Vec<PathBuf> {
-    let Ok(rd) = std::fs::read_dir(home) else { return vec![] };
+    let Ok(rd) = std::fs::read_dir(home)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return vec![];
+    };
     let mut v: Vec<PathBuf> = rd
         .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && e.file_name().to_string_lossy().starts_with(prefix))
+        .filter(|e| {
+            e.file_type()
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|t| t.is_dir())
+                && e.file_name().to_string_lossy().starts_with(prefix)
+        })
         .map(|e| e.path())
         .collect();
     v.sort();
@@ -299,7 +350,17 @@ fn iso_time(v: Option<&Value>) -> Option<String> {
 fn jwt_claims(token: &str) -> Json {
     let Some(payload) = token.split('.').nth(1) else { return Json::new() };
     let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('='));
-    raw.ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).map(|v| record(Some(&v))).unwrap_or_default()
+    raw.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|b| {
+            serde_json::from_slice::<Value>(&b)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .map(|v| record(Some(&v)))
+        .unwrap_or_default()
 }
 fn jwt_expiry(token: &str) -> Option<u64> {
     number(jwt_claims(token).get("exp")).map(|s| (s * 1000.0) as u64)
@@ -338,8 +399,14 @@ fn retry_after(header: Option<&str>, now: u64) -> Option<u64> {
     if let Ok(secs) = h.parse::<f64>() {
         return Some((secs.max(0.0) * 1000.0) as u64);
     }
-    let at = httpdate::parse_http_date(h).ok()?;
-    let at = at.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+    let at = httpdate::parse_http_date(h)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
+    let at = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        .as_millis() as u64;
     Some(at.saturating_sub(now))
 }
 
@@ -375,8 +442,8 @@ async fn request_json(
             retry_after_ms: retry_after(answer.header("retry-after"), (ctx.now)()),
         });
     }
-    let v: Value =
-        serde_json::from_slice(&answer.body).map_err(|_| ReadError::Other(format!("{host}: JSON이 아니다")))?;
+    let v: Value = serde_json::from_slice(&answer.body)
+        .map_err(|e| ReadError::Other(aaa_common::diagnostic::context(e, format!("{host}: JSON이 아니다"))))?;
     Ok(record(Some(&v)))
 }
 
@@ -423,7 +490,11 @@ fn keychain_or_file(
     source: &str,
     account: Option<Account>,
 ) -> Vec<Found> {
-    let item = keychain.as_ref().ok().and_then(|o| o.clone());
+    let item = keychain
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|o| o.clone());
     let file_is_later = matches!((&file, &item), (Some(f), Some(i)) if matches!((f.expires_at, i.expires_at), (Some(a), Some(b)) if a > b));
     if let Some(i) = item
         && !file_is_later

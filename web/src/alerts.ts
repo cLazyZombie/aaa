@@ -1,3 +1,4 @@
+import { diagnosticReason, ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 // 이 기기의 알림(plan §8.70, herdr-web-ui App.tsx 알림 부분·lib/notifications.ts·Droplet·alertSound).
 // 앱 안에는 질문이 열림(입력 필요)·thread의 새 보고(작업 완료)를 계속 띄운다. 외부 Web Push는 coordinator 사용자 post만이다.
 // - 앱 안(Droplet): 앱이 보일 때 위에서 내려온다. 그 자리를 이미 보고 있으면 띄우지 않는다.
@@ -52,7 +53,7 @@ export async function enableAlerts(): Promise<boolean> {
     if (endpoint) await pushTest(endpoint);
     return endpoint !== null;
   } catch (err) {
-    console.warn("web push unavailable, alerts stay tab-only", err);
+    console.warn("web push unavailable, alerts stay tab-only", diagnosticReason(err));
     return false;
   }
 }
@@ -61,7 +62,7 @@ export async function enableAlerts(): Promise<boolean> {
 export async function disableAlerts(): Promise<void> {
   setAlertSetting("alertsOn", false);
   put({ pushOn: false });
-  await removePushSubscription().catch((err) => console.warn("could not drop the push subscription", err));
+  await removePushSubscription().catch((err) => console.warn("could not drop the push subscription", diagnosticReason(err)));
 }
 
 /** 「알림」 항목이 말하는 이 기기의 상태(참고 App.tsx `bell`, 문구는 참고 i18n.ko.ts) */
@@ -88,9 +89,9 @@ export function useAlerts(): { bell: Bell; visible: boolean; offDot: boolean; no
       .then((endpoint) => {
         if (!cancelled) put({ pushOn: endpoint !== null });
       })
-      .catch(() => {
+      .catch(ignoredFailure("alerts.ts:92", () => {
         if (!cancelled) put({ pushOn: false });
-      });
+      }));
     return () => {
       cancelled = true;
     };
@@ -304,7 +305,7 @@ async function showTabNotification(title: string, body: string, tag: string, url
       window.focus();
       location.hash = url.slice(2);
     });
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "alerts.ts:308");
     /* no way to show it here: the list still carries the change */
   }
 }

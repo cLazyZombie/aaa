@@ -74,12 +74,23 @@ fn page_file(reference: &str, folder: &Path, roots: &Roots) -> Option<PathBuf> {
     if target == folder {
         return None;
     }
-    let file = target.canonicalize().ok()?;
-    let inside = file.strip_prefix(folder).ok()?;
+    let file = target
+        .canonicalize()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
+    let inside = file
+        .strip_prefix(folder)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     if inside.as_os_str().is_empty() || inside.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.')) {
         return None;
     }
-    (roots.allows(&file) && std::fs::metadata(&file).ok()?.is_file()).then_some(file)
+    (roots.allows(&file)
+        && std::fs::metadata(&file)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .is_file())
+    .then_some(file)
 }
 
 /// `decodeURIComponent`: 잘못된 `%`나 UTF-8이 아니면 None
@@ -89,15 +100,27 @@ fn percent_decode(s: &str) -> Option<String> {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' {
-            let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
+            let hex = std::str::from_utf8(b.get(i + 1..i + 3)?)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()?;
+            out.push(
+                u8::from_str_radix(hex, 16)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()?,
+            );
             i += 3;
         } else {
             out.push(b[i]);
             i += 1;
         }
     }
-    String::from_utf8(out).ok()
+    String::from_utf8(out)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
 }
 
 /// 넣을 파일을 고르고 읽는다: 주소마다 한 번 찾고, 크기 상한을 센다
@@ -120,11 +143,16 @@ impl Embedder<'_> {
         if !accepts.takes(mime) {
             return None;
         }
-        let size = std::fs::metadata(&file).ok()?.len();
+        let size = std::fs::metadata(&file)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .len();
         if size > EMBED_FILE_BYTES || size > self.left {
             return None;
         }
-        let bytes = std::fs::read(&file).ok()?;
+        let bytes = std::fs::read(&file)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         self.left = self.left.saturating_sub(bytes.len() as u64);
         Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
     }

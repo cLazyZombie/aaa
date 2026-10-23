@@ -44,7 +44,12 @@ pub(crate) fn parse_schedule(text: &str, seconds: bool) -> Result<Schedule, Stri
     if let Some(rest) = text.strip_prefix("every ") {
         let rest = rest.trim();
         let (digits, unit) = rest.split_at(rest.len().saturating_sub(1));
-        let n: u64 = digits.parse().ok().filter(|n| *n > 0).ok_or_else(bad)?;
+        let n: u64 = digits
+            .parse()
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(bad)?;
         let unit = match unit {
             "s" if seconds => 1,
             "s" => return Err(format!("초 단위는 받지 않는다: `{text}`(가장 짧은 주기는 `every 1m`)")),
@@ -58,7 +63,10 @@ pub(crate) fn parse_schedule(text: &str, seconds: bool) -> Result<Schedule, Stri
     }
     if let Some(rest) = text.strip_prefix("daily ") {
         let (h, m) = rest.trim().split_once(':').ok_or_else(bad)?;
-        let (h, m): (u32, u32) = (h.parse().map_err(|_| bad())?, m.parse().map_err(|_| bad())?);
+        let (h, m): (u32, u32) = (
+            h.parse().map_err(|e| aaa_common::diagnostic::context(e, bad()))?,
+            m.parse().map_err(|e| aaa_common::diagnostic::context(e, bad()))?,
+        );
         if h > 23 || m > 59 {
             return Err(bad());
         }
@@ -452,14 +460,24 @@ impl Host {
     fn routine_state(&self, project: &str, name: &str) -> State {
         self.db
             .meta(&format!("routine:{project}:{name}"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .flatten()
-            .and_then(|j| serde_json::from_str(&j).ok())
+            .and_then(|j| {
+                serde_json::from_str(&j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .unwrap_or_default()
     }
 
     fn save_routine_state(&self, project: &str, name: &str, s: &State) {
-        let _ = self.db.set_meta(&format!("routine:{project}:{name}"), &serde_json::to_string(s).unwrap());
+        aaa_common::diagnostic::ignored(
+            self.db.set_meta(&format!("routine:{project}:{name}"), &serde_json::to_string(s).unwrap()),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
     }
 
     /// safety `routine_commands`(host.toml `[safety.*]`, 옛 `[projects] routine_commands`). 쓸 때마다 다시 읽는다.
@@ -468,7 +486,12 @@ impl Host {
     }
 
     pub(crate) fn routine_approved(&self, project: &str, r: &Routine) -> bool {
-        self.db.meta(&format!("routine_ok:{project}:{}", r.name)).ok().flatten().as_deref()
+        self.db
+            .meta(&format!("routine_ok:{project}:{}", r.name))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .as_deref()
             == Some(r.command_sha256().as_str())
     }
 
@@ -508,7 +531,13 @@ impl Host {
                     Ok(Some((sha, approved))) => {
                         view.start_approval_sha256 = Some(sha);
                         view.start_approved = Some(approved);
-                        view.start_scope = self.automation_start_scope_text(project, r).ok().flatten();
+                        view.start_scope = self
+                            .automation_start_scope_text(project, r)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                            .flatten();
                     }
                     Err(e) => view.error = Some(e.message),
                     _ => {}
@@ -658,8 +687,21 @@ impl Host {
         let (ok, broken) = load_all(dir);
         for (file, hash, e) in broken {
             let key = format!("routine_broken:{project}:{file}");
-            if self.db.meta(&key).ok().flatten().as_deref() != Some(hash.as_str()) {
-                let _ = self.db.set_meta(&key, &hash);
+            if self
+                .db
+                .meta(&key)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .flatten()
+                .as_deref()
+                != Some(hash.as_str())
+            {
+                aaa_common::diagnostic::ignored(
+                    self.db.set_meta(&key, &hash),
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
                 let stem = std::path::Path::new(&file).file_stem().unwrap_or_default().to_string_lossy();
                 self.inbox_add(project, "config-error", &stem, "not usable", &format!("{file}을 쓸 수 없다: {e}"));
                 self.flow_project(project, "routine_broken", Some(file.clone()), e);

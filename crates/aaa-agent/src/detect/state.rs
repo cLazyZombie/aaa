@@ -29,8 +29,15 @@ pub const STARTUP_GRACE: Duration = Duration::from_secs(3);
 /// 3초를 기다렸다. 15는 기본값으로 돈다)
 fn startup_grace() -> Duration {
     std::env::var("AAA_TEST_DETECT_GRACE_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
+        .and_then(|v| {
+            v.parse::<u64>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .map_or(STARTUP_GRACE, Duration::from_millis)
 }
 

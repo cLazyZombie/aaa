@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 명령 팔레트(herdr-web-ui aa624cb src/components/CommandPalette.tsx를 옮김, 모양 herdr/CommandPalette.css 그대로, 문구는 참고
 // i18n.ko.ts). Mod+Shift+K나 목록 머리 돋보기로 열고, 목록 줄(thread·pane)을 찾아 열거나 동작을 부른다. 찾지 않으면 최근 연 줄 셋이
 // 앞에 선다. `>`는 동작만, 상태 칩(목록 밖에서 a·b·w·i·d 키)은 줄만 거른다. 설정 쪽은 찾을 때만 나온다. ←·→는 묶음을 건넌다.
@@ -114,11 +115,11 @@ function rowKey(sectionId: string, row: PaletteRow): string {
 }
 
 function storeRecent(recent: string[]): string[] {
-  try { window.localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch { /* private mode: keep this page's history */ }
+  try { window.localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch (ignoredError) { logIgnoredFailure(ignoredError, "CommandPalette.tsx:118"); /* private mode: keep this page's history */ }
   return recent;
 }
 
-const readRecent = (): string[] => loadRecent((key) => { try { return window.localStorage.getItem(key); } catch { return null; } });
+const readRecent = (): string[] => loadRecent((key) => { try { return window.localStorage.getItem(key); } catch (ignoredError) { logIgnoredFailure(ignoredError, "CommandPalette.tsx:122"); return null; } });
 
 function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
   const overrides = useShortcutOverrides();

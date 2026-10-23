@@ -162,7 +162,13 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) && r.role != Role::Evaluator)
             .filter(|r| connected.contains(r.machine_id.as_str()))
             // 재부팅 뒤 복원 중인 머신의 thread는 끝난 뒤에 센다(사라졌다가 돌아온 것으로 보지 않게, restore.rs)
@@ -184,7 +190,11 @@ impl Host {
                 continue;
             }
             let _guard = self.rec_lock.lock().unwrap();
-            let Ok(mut r) = self.load(project, &id) else { continue };
+            let Ok(mut r) = self.load(project, &id).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if !matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) {
                 continue;
             }
@@ -249,10 +259,21 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r.status == ThreadStatus::Open && r.role != Role::Evaluator)
             .filter(|r| r.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("merged")))
-            .filter(|r| self.live_conn(&r.machine_id).is_ok())
+            .filter(|r| {
+                self.live_conn(&r.machine_id)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+            })
             .collect();
         for r in merged {
             if self.automation_message_pending(project, &r.id) {
@@ -261,7 +282,10 @@ impl Host {
             let seen = match r.merged_seen_ms {
                 Some(t) => t,
                 None => {
-                    let _ = self.update_rec(project, &r.id, |x| x.merged_seen_ms = Some(now));
+                    aaa_common::diagnostic::ignored(
+                        self.update_rec(project, &r.id, |x| x.merged_seen_ms = Some(now)),
+                        "보조 작업 실패 뒤 기존 처리를 계속한다",
+                    );
                     now
                 }
             };
@@ -290,9 +314,24 @@ impl Host {
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
+            .filter_map(|j| {
+                serde_json::from_str::<ThreadRec>(j)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .filter(|r| r.status == ThreadStatus::Open && r.role != Role::Evaluator)
-            .filter(|r| r.last_group == Some(ThreadGroup::Idle) && self.live_conn(&r.machine_id).is_ok())
+            .filter(|r| {
+                r.last_group == Some(ThreadGroup::Idle)
+                    && self
+                        .live_conn(&r.machine_id)
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+            })
             .filter(|r| auto_resolve_due(r, now, self.started_ms, limit))
             .map(|r| r.id)
             .collect();
@@ -337,7 +376,12 @@ impl Host {
             summary = format!("{id} {summary}");
         }
         let hash = r.report_hash.clone();
-        if self.update_rec(project, &r.id, |x| x.review_item_hash = hash).is_err() {
+        if self
+            .update_rec(project, &r.id, |x| x.review_item_hash = hash)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             return false;
         }
         let event =
@@ -353,17 +397,23 @@ impl Host {
     /// 한 머신의 기록된 pane이 모두 사라졌다: 세션 항목 한 건. 다시 하나라도 살면(또는 다시 시작하면) 잊는다.
     fn session_lost_item(&self, project: &str, mid: &str, lost: bool, threads: &[String]) {
         let key = format!("sessions_lost:{project}:{mid}");
-        let written = self.db.meta(&key).ok().flatten().is_some();
+        let written = self
+            .db
+            .meta(&key)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
+            .is_some();
         if !lost {
             if written {
-                let _ = self.db.del_meta(&key);
+                aaa_common::diagnostic::ignored(self.db.del_meta(&key), "보조 작업 실패 뒤 기존 처리를 계속한다");
             }
             return;
         }
         if written {
             return;
         }
-        let _ = self.db.set_meta(&key, "1");
+        aaa_common::diagnostic::ignored(self.db.set_meta(&key, "1"), "보조 작업 실패 뒤 기존 처리를 계속한다");
         let name = self.machine_name(mid);
         let summary = format!(
             "머신 {name}의 thread 세션이 모두 끝났다(agent 재시작·재부팅). thread {}개가 `aaa thread restart {project} <id>`를 기다린다: {}",

@@ -64,7 +64,18 @@ impl Place {
         let serial = self
             .kept()
             .iter()
-            .filter_map(|p| p.file_name()?.to_str()?.strip_prefix(&prefix)?.split_once('-')?.0.parse::<u64>().ok())
+            .filter_map(|p| {
+                p.file_name()?
+                    .to_str()?
+                    .strip_prefix(&prefix)?
+                    .split_once('-')?
+                    .0
+                    .parse::<u64>()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .max()
             .unwrap_or(0)
             + 1;
@@ -95,9 +106,15 @@ impl Place {
                 .with_context(|| format!("보관한 것 가운데 `{n}`가 없다(`aaa update list`)"));
         }
         let cur = sha256(&self.exe)?;
-        kept.into_iter().find(|p| sha256(p).is_ok_and(|s| s != cur)).with_context(|| {
-            format!("되돌릴 옛 실행 파일이 없다({}가 비었거나 모두 지금과 같다)", self.old().display())
-        })
+        kept.into_iter()
+            .find(|p| {
+                sha256(p)
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|s| s != cur)
+            })
+            .with_context(|| {
+                format!("되돌릴 옛 실행 파일이 없다({}가 비었거나 모두 지금과 같다)", self.old().display())
+            })
     }
 }
 
@@ -127,16 +144,26 @@ pub(crate) fn run_limited(bin: &Path, args: &[&str]) -> Result<(bool, String)> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut text = String::new();
-        let _ = std::io::Read::read_to_string(&mut out, &mut text);
+        aaa_common::diagnostic::ignored(
+            std::io::Read::read_to_string(&mut out, &mut text),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
         let mut e = String::new();
-        let _ = std::io::Read::read_to_string(&mut err, &mut e);
-        let _ = tx.send(text + &e);
+        aaa_common::diagnostic::ignored(
+            std::io::Read::read_to_string(&mut err, &mut e),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
+        aaa_common::diagnostic::ignored(tx.send(text + &e), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     });
     match rx.recv_timeout(CHECK_LIMIT) {
-        Ok(text) => Ok((child.wait()?.success(), text)),
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
+        Ok(text) => {
+            let status = child.wait().context("후보 실행 종료 대기")?;
+            if status.success() { Ok((true, text)) } else { Ok((false, format!("종료 {status}: {text}"))) }
+        }
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            aaa_common::diagnostic::ignored(child.kill(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+            aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
             Ok((false, format!("{}초 안에 끝나지 않았다", CHECK_LIMIT.as_secs())))
         }
     }
@@ -289,7 +316,10 @@ impl Staged {
         #[cfg(not(windows))]
         {
             // Unix는 실행 파일 자리를 비우지 않고 링크로 보관한다.
-            if std::fs::hard_link(&place.exe, &kept).is_err() {
+            if std::fs::hard_link(&place.exe, &kept)
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "링크 보관 실패 뒤 복사로 보관한다"))
+                .is_err()
+            {
                 std::fs::copy(&place.exe, &kept)
                     .with_context(|| format!("지금 실행 파일을 {}에 보관하지 못했다", kept.display()))?;
             }
@@ -299,7 +329,7 @@ impl Staged {
             .with_context(|| format!("실행 중인 파일을 {}에 보관하지 못했다", kept.display()))?;
         let path = self.0.take().unwrap();
         if let Err(error) = std::fs::rename(&path, &place.exe) {
-            let _ = std::fs::remove_file(&path);
+            aaa_common::diagnostic::ignored(std::fs::remove_file(&path), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
             #[cfg(windows)]
             if let Err(restore) = std::fs::rename(&kept, &place.exe) {
                 bail!("설치 실패: {error}; 원래 경로 복원 실패: {restore}. 보관 파일: {}", kept.display());
@@ -313,7 +343,7 @@ impl Staged {
 impl Drop for Staged {
     fn drop(&mut self) {
         if let Some(p) = self.0.take() {
-            let _ = std::fs::remove_file(p);
+            aaa_common::diagnostic::ignored(std::fs::remove_file(p), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         }
     }
 }
@@ -322,7 +352,11 @@ impl Drop for Staged {
 fn prune(place: &Place, keep: u32) -> Vec<PathBuf> {
     let mut gone = Vec::new();
     for p in place.kept().into_iter().skip(keep as usize) {
-        if std::fs::remove_file(&p).is_ok() {
+        if std::fs::remove_file(&p)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+        {
             gone.push(p);
         }
     }
@@ -553,7 +587,11 @@ fn checked_rollback_at(exe: &Path, expected: &str, keep: u32, pin: Option<&Path>
         place
             .kept()
             .into_iter()
-            .find(|p| sha256(p).is_ok_and(|s| s == expected))
+            .find(|p| {
+                sha256(p)
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok_and(|s| s == expected)
+            })
             .context("배포 전 SHA-256의 보관본이 없다: 다른 보관본을 추정하지 않는다")?
     };
     let staged = Staged::copy_from(&chosen, &place)?;
@@ -584,7 +622,13 @@ pub fn list(json: bool) -> Result<ExitCode> {
         .iter()
         .map(|p| {
             let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            (name, kept_version(p), sha256(p).unwrap_or_default())
+            (
+                name,
+                kept_version(p),
+                sha256(p)
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+                    .unwrap_or_default(),
+            )
         })
         .collect();
     if json {

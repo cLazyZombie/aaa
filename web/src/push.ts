@@ -1,3 +1,4 @@
+import { diagnosticReason, ignoredFailure } from "./errorDiagnostic.ts";
 // service worker 등록(PWA)과 이 기기의 Web Push 구독(§8.26). herdr-web-ui src/lib/push.ts를 옮겼다(plan §8.70).
 // 구독은 브라우저가 만들고 host에 endpoint·키를 맡긴다. host는 질문·보고 준비 같은 알림을 암호화해 보낸다.
 // service worker와 PushManager는 secure context(https·localhost)에만 있고, iPhone은 홈 화면 앱에만 있다.
@@ -6,7 +7,7 @@ import { ApiError, pushInfo, pushSubscribe, pushTest, pushUnsubscribe, type Aler
 /** 앱을 열 때 한 번 등록한다. 등록에 실패해도 화면은 그대로 쓴다. */
 export function registerServiceWorker() {
   if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
-  navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("service worker 등록 실패", e));
+  navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("service worker 등록 실패", diagnosticReason(e)));
   // 알림을 누르면 service worker가 열린 창에 보낼 곳을 알린다
   navigator.serviceWorker.addEventListener("message", (e) => {
     const d = e.data as { type?: string; hash?: string } | null;
@@ -77,7 +78,7 @@ let operations: Promise<unknown> = Promise.resolve();
 export function ensurePushSubscription(alerts?: AlertPrefs): Promise<string | null> {
   if (pending) return pending;
   const request = operations
-    .catch(() => undefined)
+    .catch(ignoredFailure("push.ts:81", () => undefined))
     .then(() => subscribeDevice(alerts))
     .finally(() => {
       if (pending === request) pending = null;
@@ -111,7 +112,7 @@ async function subscribeDevice(alerts?: AlertPrefs): Promise<string | null> {
 export function removePushSubscription(): Promise<void> {
   // A later enable must enqueue a new registration after this removal, not join the old one.
   pending = null;
-  const request = operations.catch(() => undefined).then(unsubscribeDevice);
+  const request = operations.catch(ignoredFailure("push.ts:115", () => undefined)).then(unsubscribeDevice);
   operations = request;
   return request;
 }

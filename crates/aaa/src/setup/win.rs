@@ -92,7 +92,7 @@ impl Terminal {
     fn clear_spin(&mut self) {
         if self.spinning && self.vt {
             print!("\r\x1b[2K");
-            let _ = std::io::stdout().flush();
+            aaa_common::diagnostic::ignored(std::io::stdout().flush(), "보조 작업 실패 뒤 기존 처리를 계속한다");
         }
         self.spinning = false;
     }
@@ -201,7 +201,7 @@ impl Ui for Terminal {
             const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             self.frame = (self.frame + 1) % FRAMES.len();
             print!("\r\x1b[2K      {} {label} {}", self.paint("36", FRAMES[self.frame]), self.paint("2", &clock));
-            let _ = std::io::stdout().flush();
+            aaa_common::diagnostic::ignored(std::io::stdout().flush(), "보조 작업 실패 뒤 기존 처리를 계속한다");
             self.spinning = true;
         } else if self.last_plain.is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {
             println!("      … {label} {clock}");
@@ -329,9 +329,12 @@ pub(super) fn run(args: &Args) -> ExitCode {
     if pause_at_end {
         term.spin_end();
         print!("\nEnter를 누르면 이 창을 닫습니다.");
-        let _ = std::io::stdout().flush();
+        aaa_common::diagnostic::ignored(std::io::stdout().flush(), "보조 작업 실패 뒤 기존 처리를 계속한다");
         let mut line = String::new();
-        let _ = std::io::stdin().lock().read_line(&mut line);
+        aaa_common::diagnostic::ignored(
+            std::io::stdin().lock().read_line(&mut line),
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
     }
     code
 }
@@ -393,7 +396,10 @@ fn elevate(term: &mut Terminal) -> ExitCode {
     }
     let answer = match term.ask("관리자 창을 열어 계속할까요? (Y/n)", Some("Y")) {
         Ok(answer) => answer,
-        Err(_) => return ExitCode::from(130),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            return ExitCode::from(130);
+        }
     };
     if !matches!(answer.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes" | "ㅛ" | "예" | "네") {
         return ExitCode::from(130);
@@ -755,7 +761,17 @@ impl System for WinSystem {
     fn aaa_services(&mut self) -> Result<Vec<ServiceInfo>> {
         let names: Vec<String> =
             all_services()?.into_iter().filter(|n| n.to_ascii_lowercase().starts_with("aaa")).collect();
-        Ok(names.iter().filter_map(|n| self.service(n).ok().flatten()).collect())
+        Ok(names
+            .iter()
+            .filter_map(|n| {
+                self.service(n)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .collect())
     }
 
     fn reach(&mut self, addr: &str) -> Result<()> {
@@ -780,7 +796,7 @@ impl System for WinSystem {
         rt.block_on(async {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let request = aaa_agent::link::enroll_with(state, addr, &ident.machine_id, name, move |code, _| {
-                let _ = tx.send(code.to_string());
+                aaa_common::diagnostic::ignored(tx.send(code.to_string()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             });
             tokio::pin!(request);
             let started = Instant::now();
@@ -865,8 +881,16 @@ impl System for WinSystem {
         let user = account.sam.rsplit('\\').next().unwrap_or(&account.sam).to_ascii_lowercase();
         let mut names = Vec::new();
         for name in all_services()? {
-            let Ok(Some(handle)) = open_service(&name, SERVICE_QUERY_CONFIG) else { continue };
-            let Ok((_, _, start_name)) = query_config(&handle) else { continue };
+            let Ok(Some(handle)) = open_service(&name, SERVICE_QUERY_CONFIG).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
+            let Ok((_, _, start_name)) = query_config(&handle).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if start_name.rsplit('\\').next().is_some_and(|u| u.to_ascii_lowercase() == user) {
                 names.push(name);
             }

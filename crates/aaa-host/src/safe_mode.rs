@@ -78,7 +78,10 @@ pub fn keep_last_good(config_dir: &Path, files: &[PathBuf]) -> Result<()> {
             texts.push((name, text));
         }
     }
-    let readable = aaa_config::load_host(&next).is_ok();
+    let readable = aaa_config::load_host(&next)
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok();
     std::fs::remove_dir_all(&next)?;
     if !readable {
         anyhow::bail!("시작한 뒤 설정 파일이 바뀌어 읽히지 않는다: 지난 정상 설정을 그대로 둔다");
@@ -88,7 +91,14 @@ pub fn keep_last_good(config_dir: &Path, files: &[PathBuf]) -> Result<()> {
         let target = dir.join(name);
         match texts.iter().find(|(n, _)| *n == name) {
             Some((_, text)) => {
-                if std::fs::read(&target).ok().as_deref() != Some(text.as_slice()) {
+                if std::fs::read(&target)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_deref()
+                    != Some(text.as_slice())
+                {
                     aaa_common::util::write_private(&target, text)?;
                 }
             }
@@ -107,7 +117,13 @@ pub fn keep_last_good(config_dir: &Path, files: &[PathBuf]) -> Result<()> {
 
 /// 보관한 정상 설정의 파일 이름들. 보관한 적이 없으면 None
 fn kept(config_dir: &Path) -> Option<Vec<String>> {
-    serde_json::from_slice(&std::fs::read(last_good_dir(config_dir).join("files.json")).ok()?).ok()
+    serde_json::from_slice(
+        &std::fs::read(last_good_dir(config_dir).join("files.json"))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?,
+    )
+    .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+    .ok()
 }
 
 /// 지금 설정 파일을 옆에 `<이름>.broken-<UTC>`로 남기고 마지막 정상 설정으로 바꾼다. 정상 설정에 없던 파일은 남긴 뒤 치운다.
@@ -156,10 +172,13 @@ pub(crate) fn restore(config_dir: &Path, now_ms: u64) -> Result<Vec<PathBuf>> {
         if let Err(e) = made {
             // 이 파일을 남기지 못했다: 앞서 남긴 것도 치우고 아무 파일도 바꾸지 않는다(같은 초에 다시 눌러도 막히지 않게)
             for b in &backups {
-                let _ = std::fs::remove_file(b);
+                aaa_common::diagnostic::ignored(std::fs::remove_file(b), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
             }
             if e.kind() != std::io::ErrorKind::AlreadyExists {
-                let _ = std::fs::remove_file(&backup);
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_file(&backup),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
             }
             return Err(anyhow::Error::from(e).context(format!("{backup_name} 만들기")));
         }
@@ -175,7 +194,12 @@ pub(crate) fn restore(config_dir: &Path, now_ms: u64) -> Result<Vec<PathBuf>> {
     };
     for (i, (name, current, _, text)) in changes.iter().enumerate() {
         if let Err(e) = put(current, text) {
-            let restored = changes[..i].iter().all(|(_, done, now, _)| put(done, now).is_ok());
+            let restored = changes[..i].iter().all(|(_, done, now, _)| {
+                put(done, now)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+            });
             let e = anyhow::Error::from(e).context(format!("{name} 바꾸기"));
             if !restored {
                 // 원래 내용으로도 돌리지 못했다: 남긴 사본이 고치던 원문의 유일한 사본이라 지우지 않는다
@@ -185,7 +209,7 @@ pub(crate) fn restore(config_dir: &Path, now_ms: u64) -> Result<Vec<PathBuf>> {
                 );
             }
             for b in &backups {
-                let _ = std::fs::remove_file(b);
+                aaa_common::diagnostic::ignored(std::fs::remove_file(b), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
             }
             return Err(e);
         }
@@ -196,12 +220,22 @@ pub(crate) fn restore(config_dir: &Path, now_ms: u64) -> Result<Vec<PathBuf>> {
 /// 안전 모드가 뜰 주소: 정상 host가 마지막으로 연 주소(웹을 끈 채 시작했으면 None) → 보관한 정상 설정의 listen. 둘 다 없거나 빈 주소면 None
 pub(crate) fn listen_addr(db: &Db, config_dir: &Path) -> Option<String> {
     // 빈 값은 지난 정상 시작이 웹을 끈 설정이었다는 기록이다
-    if let Some(addr) = db.meta(LISTEN_KEY).ok().flatten() {
+    if let Some(addr) = db
+        .meta(LISTEN_KEY)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten()
+    {
         return (!addr.is_empty()).then_some(addr);
     }
     // 이 판으로 정상 시작한 적이 없다(업그레이드 직후): 설정과 무관한 기본 주소에 뜨지 않는다(다른 aaa의 port일 수 있다)
     kept(config_dir)?;
-    let listen = aaa_config::load_host(&last_good_dir(config_dir)).ok()?.config.web.listen;
+    let listen = aaa_config::load_host(&last_good_dir(config_dir))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        .config
+        .web
+        .listen;
     (!listen.is_empty()).then_some(listen)
 }
 
@@ -390,7 +424,15 @@ pub(crate) fn clean_message(d: &Diag, hidden: &[String]) -> String {
         .filter(|l| {
             !l.is_empty()
                 && !l.starts_with('|')
-                && !l.split_once('|').is_some_and(|(n, _)| n.trim().parse::<u32>().is_ok())
+                && !l.split_once('|').is_some_and(|(n, _)| {
+                    n.trim()
+                        .parse::<u32>()
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+                })
         })
         .collect::<Vec<_>>()
         .join(" · ");
@@ -479,12 +521,12 @@ pub async fn run(
     let listener = tokio::net::TcpListener::from_std(listener)?;
     tracing::error!(%addr, "설정을 읽지 못해 안전 모드로 웹만 연다:\n{}", errors.render());
     if let Some(ready) = ready {
-        let _ = ready.send(());
+        aaa_common::diagnostic::ignored(ready.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
     }
     let (done, mut reload) = tokio::sync::watch::channel(false);
     let safe = Arc::new(Safe { db, port, config_dir, errors: Mutex::new(errors), done });
     let serve = axum::serve(listener, router(safe.clone())).with_graceful_shutdown(async move {
-        let _ = reload.wait_for(|v| *v).await;
+        aaa_common::diagnostic::ignored(reload.wait_for(|v| *v).await, "보조 작업 실패 뒤 기존 처리를 계속한다");
     });
     tokio::select! {
         r = serve => {
@@ -512,7 +554,16 @@ async fn guard(State(safe): State<Arc<Safe>>, req: Request, next: Next) -> Respo
         return (StatusCode::MISDIRECTED_REQUEST, "알 수 없는 Host").into_response();
     };
     if !matches!(*req.method(), Method::GET | Method::HEAD) {
-        let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
+        let origin = h
+            .get(header::ORIGIN)
+            .and_then(|v| {
+                v.to_str()
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .unwrap_or("");
         if !origin.eq_ignore_ascii_case(&expected) {
             return (StatusCode::FORBIDDEN, "허용하지 않은 Origin").into_response();
         }
@@ -548,7 +599,13 @@ enum Who {
 }
 fn who(safe: &Safe, h: &axum::http::HeaderMap) -> Who {
     let Some(token) = crate::web::cookie_token(h) else { return Who::Nobody };
-    match safe.db.device_by_token_hash(&crate::token_hash(&token)).ok().flatten() {
+    match safe
+        .db
+        .device_by_token_hash(&crate::token_hash(&token))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten()
+    {
         Some(d) if d.role == "reader" => Who::Reader,
         Some(d) => Who::Controller(d.id),
         None => Who::Nobody,
@@ -611,7 +668,11 @@ fn body_for(safe: &Safe, who: &Who, notice: Option<&str>) -> String {
             let mut files = String::new();
             for name in FILES {
                 let path = safe.config_dir.join(name);
-                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                let Ok(text) = std::fs::read_to_string(&path).inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                }) else {
+                    continue;
+                };
                 let (lines, h) = mask(&text);
                 hidden.extend(h);
                 let bad: Vec<usize> =
@@ -664,7 +725,7 @@ fn forbidden(safe: &Safe, who: &Who) -> Response {
 fn reload(safe: &Safe, who: &Who, done_note: &str) -> Response {
     match aaa_config::load_host(&safe.config_dir) {
         Ok(_) => {
-            let _ = safe.done.send(true);
+            aaa_common::diagnostic::ignored(safe.done.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             let body = format!(
                 "<h1>aaa 안전 모드</h1><p class=note role=status data-testid=safe-reloading>{}</p><p><a href=/>다시 열기</a></p>",
                 esc(done_note)

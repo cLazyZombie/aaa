@@ -256,7 +256,10 @@ impl Host {
         if let Some(after) = saved.after {
             self.task_identity_seen(project, &saved.before.sha256, &after);
             self.db.audit("host", "task_identity_migrate", project);
-            let _ = self.task_events.send((project.to_string(), after.sha256));
+            aaa_common::diagnostic::ignored(
+                self.task_events.send((project.to_string(), after.sha256)),
+                "수신자가 끝난 뒤에도 현재 작업은 마친다",
+            );
             self.tick_wake.notify_one();
         }
         Ok(())
@@ -295,11 +298,18 @@ impl Host {
                     self.check_after_cycle(project, id, after)?;
                 }
                 if old.id.as_ref().is_some_and(|id| {
-                    self.db.queue_list(project).is_ok_and(|rows| {
-                        rows.iter().any(|r| {
-                            &r.task_id == id && r.approved_block == block && matches!(r.state, S::Starting | S::Running)
+                    self.db
+                        .queue_list(project)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")
                         })
-                    })
+                        .is_ok_and(|rows| {
+                            rows.iter().any(|r| {
+                                &r.task_id == id
+                                    && r.approved_block == block
+                                    && matches!(r.state, S::Starting | S::Running)
+                            })
+                        })
                 }) {
                     return Ok(FrontResponse::TaskQueue { entries: self.db.queue_list(project).map_err(internal)? });
                 }
@@ -313,9 +323,15 @@ impl Host {
                     ));
                 }
                 if let Some(tid) = &old.thread
-                    && self.load(project, tid).is_ok_and(|r| {
-                        matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) || r.resolve_pending.is_some()
-                    })
+                    && self
+                        .load(project, tid)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok_and(|r| {
+                            matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting)
+                                || r.resolve_pending.is_some()
+                        })
                 {
                     return Err(err(ErrorCode::Conflict, format!("이미 {tid}가 맡고 있다")));
                 }
@@ -536,7 +552,10 @@ impl Host {
     }
 
     fn queue_changed(&self, project: &str) {
-        let _ = self.task_events.send((project.into(), "queue".into()));
+        aaa_common::diagnostic::ignored(
+            self.task_events.send((project.into(), "queue".into())),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     }
     fn queue_status(&self, project: &str, id: &str, state: S, reason: &str) -> Result<(), ErrorBody> {
         let changed = self
@@ -603,13 +622,17 @@ impl Host {
 
     pub(crate) fn recover_launches(self: &Arc<Self>, project: &str) {
         for text in self.db.threads(Some(project)).unwrap_or_default() {
-            let Ok(rec) = serde_json::from_str::<crate::orch::ThreadRec>(&text) else {
+            let Ok(rec) = serde_json::from_str::<crate::orch::ThreadRec>(&text).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
                 continue;
             };
             if rec.status != ThreadStatus::Starting {
                 continue;
             }
-            let Ok(_claim) = self.claim_thread(project, &rec.id) else {
+            let Ok(_claim) = self.claim_thread(project, &rec.id).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
                 continue;
             };
             if let Ok(r) = self.recover_thread_start(&rec)
@@ -658,8 +681,9 @@ impl Host {
                     && let Some(t) =
                         self.task_board(project)?.tasks.into_iter().find(|t| t.id.as_deref() == Some(&row.task_id))
                     && t.thread.is_none()
+                    && let Some(reason) = self.link_started(project, &t, tid, "host").await
                 {
-                    let _ = self.link_started(project, &t, tid, "host").await;
+                    tracing::warn!(error = %aaa_common::redact::text(&reason), "시작한 thread의 task 연결 실패");
                 }
                 continue;
             }
@@ -766,7 +790,9 @@ impl Host {
             .await;
             match prep {
                 Ok(v) => {
-                    let _ = self.link_started(project, t, &v.id, "host").await;
+                    if let Some(reason) = self.link_started(project, t, &v.id, "host").await {
+                        tracing::warn!(error = %aaa_common::redact::text(&reason), "시작한 thread의 task 연결 실패");
+                    }
                     self.queue_changed(project);
                 }
                 Err(e) => {

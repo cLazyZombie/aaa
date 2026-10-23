@@ -17,22 +17,36 @@ pub(in crate::install) fn run(
 ) -> PublicResult {
     let authority = match Authority::open(state) {
         Ok(authority) => authority,
-        Err(_) => return Ok(required(planned.map(|p| p.0))),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            return Ok(required(planned.map(|p| p.0)));
+        }
     };
     let resume = invocation.resume.as_deref();
-    let original = resume.and_then(|id| authority.issued(id).ok());
+    let original = resume.and_then(|id| {
+        authority
+            .issued(id)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+    });
     if resume.is_some() && original.is_none() {
         return Ok(required(None));
     }
     let provided = if let Some(path) = &invocation.authorization_file {
         match Input::file(Path::new(path)) {
             Ok(authorization) => Some(authorization),
-            Err(_) => return Ok(required(planned.map(|p| p.0))),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                return Ok(required(planned.map(|p| p.0)));
+            }
         }
     } else if invocation.authorization_stdin {
         match Input::authorization(std::io::stdin().lock()) {
             Ok(authorization) => Some(authorization),
-            Err(_) => return Ok(required(planned.map(|p| p.0))),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                return Ok(required(planned.map(|p| p.0)));
+            }
         }
     } else {
         None
@@ -43,7 +57,7 @@ pub(in crate::install) fn run(
         return Ok(result.clone());
     }
     let input = if invocation.secrets_stdin {
-        Input::framed(std::io::stdin().lock(), provided).map_err(|e| crate::install::error(e.code, e.exit))?
+        Input::framed(std::io::stdin().lock(), provided).map_err(|e| e.public())?
     } else if let Some(authorization) = provided {
         Input { authorization, password: None }
     } else if let Some(issued) = &original {
@@ -64,18 +78,16 @@ pub(in crate::install) fn inline(
     }
     let plan = consent.plan();
     let state = Path::new(&plan.context.state_dir);
-    if consent.resume().is_none()
-        && scope::all(plan).map_err(|e| crate::install::error(e.code, e.exit))? != consent.scope()
-    {
+    if consent.resume().is_none() && scope::all(plan).map_err(|e| e.public())? != consent.scope() {
         return Err(crate::install::error("installation_content_conflict", 4));
     }
-    let authority = Authority::initialize(state).map_err(|e| crate::install::error(e.code, e.exit))?;
+    let authority = Authority::initialize(state).map_err(|e| e.public())?;
     let now = aaa_common::util::now_ms();
     let authorization = match consent.resume() {
         Some(id) => authority.refresh(id, now, 5 * 60 * 1000),
         None => authority.issue(plan, consent.scope().to_vec(), now, 5 * 60 * 1000),
     }
-    .map_err(|e| crate::install::error(e.code, e.exit))?;
+    .map_err(|e| e.public())?;
     execute(
         invocation,
         Some(planned),
@@ -93,12 +105,15 @@ fn execute(
     mut input: Input,
     reporter: &mut crate::install::output::Reporter,
 ) -> PublicResult {
-    let authority = Authority::open(state).map_err(|e| crate::install::error(e.code, e.exit))?;
+    let authority = Authority::open(state).map_err(|e| e.public())?;
     let resume = invocation.resume.as_deref();
     let id = &input.authorization.claims.installation_id;
     let issued = match authority.issued(id) {
         Ok(issued) => issued,
-        Err(_) => return Ok(required(planned.map(|p| p.0))),
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            return Ok(required(planned.map(|p| p.0)));
+        }
     };
     if resume.is_some_and(|resume| resume != id) || issued.plan.choices.instance.as_deref() != instance {
         return Err(crate::install::error("installation_target_mismatch", 4));
@@ -110,6 +125,8 @@ fn execute(
             &input.authorization.claims.permissions,
             aaa_common::util::now_ms(),
         )
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
         .is_err()
     {
         return Ok(required(planned.map(|p| p.0)));
@@ -146,7 +163,7 @@ fn execute(
             return Err(crate::install::error("installation_unexpected_secret_input", 2));
         }
         #[cfg(windows)]
-        if !supervisor::requires_password(&issued.plan).map_err(|e| crate::install::error(e.code, e.exit))? {
+        if !supervisor::requires_password(&issued.plan).map_err(|e| e.public())? {
             return Err(crate::install::error("installation_unexpected_secret_input", 2));
         }
     }
@@ -154,14 +171,14 @@ fn execute(
     #[cfg(windows)]
     if issued.plan.choices.service == Some(InstallService::WindowsScm)
         && input.password.is_none()
-        && supervisor::requires_password(&issued.plan).map_err(|e| crate::install::error(e.code, e.exit))?
+        && supervisor::requires_password(&issued.plan).map_err(|e| e.public())?
     {
         let pending = match issued.plan.choices.service_password_source {
             Some(InstallPasswordSource::Prompt)
                 if !invocation.non_interactive && !invocation.json && !invocation.json_stream =>
             {
                 super::super::review::require_outside(state)?;
-                input.password = Some(input::prompt().map_err(|e| crate::install::error(e.code, e.exit))?);
+                input.password = Some(input::prompt().map_err(|e| e.public())?);
                 None
             }
             Some(InstallPasswordSource::Broker) => Some("installation_password_broker_unavailable"),
@@ -181,10 +198,9 @@ fn execute(
 
     let known_id = input.authorization.claims.installation_id.clone();
     let known_hash = input.authorization.claims.plan_sha256.clone();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| crate::install::error("installation_worker_unavailable", 3))?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, crate::install::error("installation_worker_unavailable", 3))
+    })?;
     runtime
         .block_on(worker::launch(
             state,
@@ -194,11 +210,8 @@ fn execute(
             !invocation.non_interactive && !invocation.json && !invocation.json_stream,
         ))
         .map_err(|fault| {
-            let mut result = if fault.exit == 3 {
-                crate::install::needs(fault.code, "installation")
-            } else {
-                crate::install::error(fault.code, fault.exit)
-            };
+            let mut result =
+                if fault.exit == 3 { crate::install::needs(fault.code, "installation") } else { fault.public() };
             crate::install::context(&issued.plan, &mut result);
             result.installation_id = Some(known_id.clone());
             result.plan_sha256 = Some(known_hash);

@@ -1,3 +1,4 @@
+import { diagnosticReason } from "./errorDiagnostic.ts";
 // 화면 한 부분의 그리기 오류를 그 자리에서 멈춘다(plan §8.266). React는 잡히지 않은 그리기·effect 오류에서 앱 전체를 내려
 // 휴대폰 홈 화면 앱이 빈 화면이 된다. 본문·목록·겹쳐 뜨는 창(파일 보기·팔레트·설정)을 따로 감싸 한 곳이 깨져도 나머지와
 // host 연결은 남고, 그 자리에 까닭과 「다시 그리기」·「새로고침」을 둔다.
@@ -43,7 +44,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
-    console.error(`[aaa] ${this.props.area}${objectParticle(this.props.area)} 그리지 못했다`, error, info.componentStack);
+    console.error(`[aaa] ${this.props.area}${objectParticle(this.props.area)} 그리지 못했다`, diagnosticReason(error), info.componentStack);
   }
 
   render() {

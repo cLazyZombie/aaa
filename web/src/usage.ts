@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 import { apiFetch } from "./apiRequest";
 // 구독 사용량(plan 한도) 화면 쪽. herdr-web-ui `src/lib/usage.ts`(aa624cb)를 옮겼다.
 // 그대로 복사하지 못한 까닭: 참고는 api.ts·settings.ts·i18n·visibility를 부른다. aaa에 맞춰 그 import만 바꾸고
@@ -135,7 +136,7 @@ export function useUsage(enabled: boolean) {
       const next = await fetchUsage(refresh);
       if (current === generation.current)
         setReport((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "usage.ts:139");
       // 끊겼거나 다시 뜨는 중: 마지막 보고를 둔다
     } finally {
       if (current === generation.current) setLoading(false);

@@ -274,6 +274,7 @@ pub struct Row {
 
 fn read(dir: &Path, name: &str) -> Option<String> {
     std::fs::read_to_string(dir.join(name))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
         .filter(|_| std::fs::read_to_string(dir.join(format!("{name}.rc"))).map(|rc| rc.trim() == "0").unwrap_or(true))
 }
@@ -327,16 +328,33 @@ pub fn analyze_tick(dir: &Path, opts: &Opts) -> Result<Vec<Row>> {
     // 머신별 herdr 스냅샷·진행 보고
     let mut snaps: BTreeMap<String, Snapshot> = BTreeMap::new();
     let mut reports: BTreeMap<String, Vec<SelfReport>> = BTreeMap::new();
-    for e in std::fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+    for e in std::fs::read_dir(dir)?.filter_map(|e| {
+        e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")).ok()
+    }) {
         let name = e.file_name().to_string_lossy().to_string();
         if let Some(m) = name.strip_prefix("herdr-").and_then(|n| n.strip_suffix(".json")) {
-            if let Some(s) = read(dir, &name).and_then(|t| source::parse_snapshot(&t).ok()) {
+            if let Some(s) = read(dir, &name).and_then(|t| {
+                source::parse_snapshot(&t)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            }) {
                 snaps.insert(m.to_string(), s);
             }
         } else if let Some(m) = name.strip_prefix("progress-").and_then(|n| n.strip_suffix(".txt"))
             && let Some(t) = read(dir, &name)
         {
-            let v = sections(&t).into_iter().filter_map(|(_, b)| serde_json::from_str(&b).ok()).collect();
+            let v = sections(&t)
+                .into_iter()
+                .filter_map(|(_, b)| {
+                    serde_json::from_str(&b)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
+                .collect();
             reports.insert(m.to_string(), v);
         }
     }
@@ -442,7 +460,10 @@ pub fn analyze_tick(dir: &Path, opts: &Opts) -> Result<Vec<Row>> {
     if let Some(text) = read(dir, "aaa-threads.json") {
         let v: serde_json::Value = serde_json::from_str(&text).context("aaa-threads.json")?;
         let mut screens: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for e in std::fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+        for e in std::fs::read_dir(dir)?.filter_map(|e| {
+            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        }) {
             let name = e.file_name().to_string_lossy().to_string();
             if name.starts_with("aaa-screens-")
                 && name.ends_with(".txt")
@@ -491,8 +512,14 @@ pub type BadTicks = Vec<(String, String)>;
 
 /// tick 폴더들(이름 순) → 모든 줄
 pub fn analyze(ticks: &Path, opts: &Opts) -> Result<(Vec<Row>, BadTicks)> {
-    let mut dirs: Vec<_> =
-        std::fs::read_dir(ticks)?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    let mut dirs: Vec<_> = std::fs::read_dir(ticks)?
+        .filter_map(|e| {
+            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
     dirs.sort();
     let mut rows = Vec::new();
     let mut bad = Vec::new();

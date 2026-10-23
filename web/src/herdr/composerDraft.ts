@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /** Drafts and in-flight sends belong to their pane, even while its composer is unmounted. */
 type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 interface Draft { text: string; sending: boolean }
@@ -30,7 +31,7 @@ export class ComposerDraftStore {
     let draft = this.drafts.get(key);
     if (!draft) {
       let text: string | null = null;
-      try { text = this.storage().getItem(key); } catch { /* private mode */ }
+      try { text = this.storage().getItem(key); } catch (ignoredError) { logIgnoredFailure(ignoredError, "composerDraft.ts:34"); /* private mode */ }
       this.saved.set(key, text);
       draft = { text: text ?? "", sending: false };
       this.drafts.set(key, draft);
@@ -47,7 +48,7 @@ export class ComposerDraftStore {
       const { sent, at } = value as Partial<InFlight>;
       if (typeof sent !== "string" || typeof at !== "number" || !Number.isFinite(at)) return null;
       return Date.now() - at > SEND_LEASE_MS ? null : { sent, at };
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "composerDraft.ts:51");
       return null;
     }
   }
@@ -61,7 +62,7 @@ export class ComposerDraftStore {
       this.expiries.set(key, this.schedule(() => { this.expiries.delete(key); this.refresh(key); }, lease.at + SEND_LEASE_MS - Date.now() + 1));
     }
     let text: string | null = null;
-    try { text = this.storage().getItem(key); } catch { return; }
+    try { text = this.storage().getItem(key); } catch (ignoredError) { logIgnoredFailure(ignoredError, "composerDraft.ts:65"); return; }
     if (text === this.saved.get(key) && sending === draft.sending) return;
     if (text !== this.saved.get(key)) {
       // another tab changed it while a send was on its way: the same rule as a local edit
@@ -85,7 +86,7 @@ export class ComposerDraftStore {
       else this.storage().removeItem(key);
       this.saved.set(key, text || null);
       this.unsaved.delete(key);
-    } catch { this.unsaved.add(key); }
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "composerDraft.ts:89"); this.unsaved.add(key); }
     this.notify();
   }
   /** `sent`: the draft text this send carries, settled once it is acknowledged */
@@ -99,14 +100,14 @@ export class ComposerDraftStore {
     this.drafts.set(key, { ...draft, sending: true });
     // the lease, so a second tab on this pane sees the send instead of the text it carries
     try { this.storage().setItem(SENDING_PREFIX + key, JSON.stringify({ sent: sent ?? "", at: Date.now() })); }
-    catch { /* private mode: the flag stays this tab's alone */ }
+    catch (ignoredError) { logIgnoredFailure(ignoredError, "composerDraft.ts:103"); /* private mode: the flag stays this tab's alone */ }
     this.notify();
     return true;
   }
   end(key: string): void {
     this.pending.delete(key);
     this.own.delete(key);
-    try { this.storage().removeItem(SENDING_PREFIX + key); } catch { /* private mode */ }
+    try { this.storage().removeItem(SENDING_PREFIX + key); } catch (ignoredError) { logIgnoredFailure(ignoredError, "composerDraft.ts:110"); /* private mode */ }
     this.drafts.set(key, { ...this.read(key), sending: false });
     this.notify();
   }

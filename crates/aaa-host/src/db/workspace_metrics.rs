@@ -72,7 +72,13 @@ impl Db {
         let key = format!("workspace-collection:{project}:{workspace}:{machine}");
         let last = self
             .meta(&key)?
-            .and_then(|s| serde_json::from_str::<(u64, Vec<String>)>(&s).ok())
+            .and_then(|s| {
+                serde_json::from_str::<(u64, Vec<String>)>(&s)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
             .map(|c| c.0)
             .unwrap_or(0);
         self.set_meta(&key, &serde_json::to_string(&(last, vec!["agent 전송 대기 또는 수집 오류"]))?)

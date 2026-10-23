@@ -5,15 +5,18 @@ use std::io::Write;
 
 type PublicResult<T> = std::result::Result<T, Box<InstallResult>>;
 fn public(fault: Fault) -> Box<InstallResult> {
-    crate::install::error(fault.code, fault.exit)
+    fault.public()
 }
 pub(in crate::install) fn normalize_state(state: &Path) -> PublicResult<PathBuf> {
     crate::install::detect::real_dir(state)
 }
 pub(in crate::install) fn read_plan(path: &Path) -> PublicResult<InstallPlan> {
-    let bytes =
-        private::read(path, 1024 * 1024).map_err(|_| crate::install::error("installation_plan_untrusted", 2))?;
-    serde_json::from_slice(&bytes).map_err(|_| crate::install::error("installation_plan_invalid", 2))
+    let bytes = private::read(path, 1024 * 1024).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, crate::install::error("installation_plan_untrusted", 2))
+    })?;
+    serde_json::from_slice(&bytes).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, crate::install::error("installation_plan_invalid", 2))
+    })
 }
 pub(in crate::install) fn original_plan(state: &Path, id: &str) -> PublicResult<InstallPlan> {
     Ok(Authority::open(state).and_then(|a| a.issued(id)).map_err(public)?.plan)
@@ -39,7 +42,7 @@ pub(in crate::install) fn issue(
             return Err(Fault::conflict());
         }
         let parent = crate::install::detect::real_dir(output.parent().ok_or_else(Fault::conflict)?)
-            .map_err(|_| Fault::conflict())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         let output = parent.join(output.file_name().ok_or_else(Fault::conflict)?);
         match output.symlink_metadata() {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -57,7 +60,8 @@ pub(in crate::install) fn issue(
         // 기존 out은 덮어쓰지 않는다. 생성 때부터 사용자 전용 ACL/mode를 가진다.
         private::parents(&parent).map_err(Fault::io)?;
         let mut file = private::new_file(&output).map_err(Fault::io)?;
-        serde_json::to_writer(&mut file, &authorization).map_err(|_| Fault::conflict())?;
+        serde_json::to_writer(&mut file, &authorization)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         file.flush().map_err(Fault::io)?;
         file.sync_all().map_err(Fault::io)?;
         drop(file);
@@ -84,11 +88,17 @@ pub(in crate::install) fn issue(
 pub(in crate::install) fn resume_requires_consent(state: &Path, id: &str, now: u64) -> PublicResult<bool> {
     let issuer = Authority::open(state).map_err(public)?;
     let issued = issuer.issued(id).map_err(public)?;
-    Ok(issuer.validate(&issued.authorization, &issued.plan, &issued.authorization.claims.permissions, now).is_err())
+    Ok(issuer
+        .validate(&issued.authorization, &issued.plan, &issued.authorization.claims.permissions, now)
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err())
 }
 pub(in crate::install) fn executor_matches(plan: &InstallPlan) -> PublicResult<bool> {
-    let image = std::env::current_exe().map_err(|_| public(Fault::conflict()))?;
-    let sha = crate::update::sha256(&image).map_err(|_| public(Fault::conflict()))?;
+    let image = std::env::current_exe()
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, public(Fault::conflict())))?;
+    let sha = crate::update::sha256(&image)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, public(Fault::conflict())))?;
     Ok(sha == plan.context.binary_sha256)
 }
 /// 선택한 instance 안의 최신 서명 기록만 읽는다. 다른 instance를 재개하거나 기록을 고치지 않는다.
@@ -99,13 +109,18 @@ pub(in crate::install) fn previous_installation(
     let root = state.join("install/authorization");
     match root.symlink_metadata() {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(public(Fault::conflict())),
+        Err(source_error) => {
+            return Err(aaa_common::diagnostic::context(source_error, public(Fault::conflict())));
+        }
         Ok(_) => {}
     }
     let issuer = Authority::open(state).map_err(public)?;
     let mut latest = None;
-    for entry in std::fs::read_dir(root).map_err(|_| public(Fault::conflict()))? {
-        let entry = entry.map_err(|_| public(Fault::conflict()))?;
+    for entry in std::fs::read_dir(root)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, public(Fault::conflict())))?
+    {
+        let entry =
+            entry.map_err(|source_error| aaa_common::diagnostic::context(source_error, public(Fault::conflict())))?;
         let name = entry.file_name();
         let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".input.json")) else { continue };
         if id_ok(id) && latest.as_deref().is_none_or(|prior: &str| prior < id) {

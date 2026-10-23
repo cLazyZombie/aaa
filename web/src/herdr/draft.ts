@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /**
  * The disconnected-input draft: while the socket is down, typed text is held for the
  * user to review and send after reconnect instead of being queued and fired blindly.
@@ -37,7 +38,7 @@ interface StoredDraft extends InputDraft { at: number }
 export function restoreDraft(raw: string | null, now: number): InputDraft {
   if (raw === null) return EMPTY_DRAFT;
   let value: unknown;
-  try { value = JSON.parse(raw); } catch { return EMPTY_DRAFT; }
+  try { value = JSON.parse(raw); } catch (ignoredError) { logIgnoredFailure(ignoredError, "draft.ts:41"); return EMPTY_DRAFT; }
   if (typeof value !== "object" || value === null) return EMPTY_DRAFT;
   const { text, truncated, leftOut, at } = value as Partial<StoredDraft>;
   if (typeof text !== "string") return EMPTY_DRAFT;

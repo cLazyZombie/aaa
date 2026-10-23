@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /** Lexical paths only: the browser cannot resolve a remote PC's symlinks or filesystem case. */
 function directoryPath(cwd: string | null | undefined): string | null {
   if (!cwd) return null;
@@ -55,7 +56,7 @@ export class RecentDirectoryStore {
           return paths;
         }
       }
-    } catch { /* Unavailable or malformed browser storage retains this page's history. */ }
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "recent-directories.ts:59"); /* Unavailable or malformed browser storage retains this page's history. */ }
     return this.memory.get(machineId) ?? [];
   }
 
@@ -69,7 +70,7 @@ export class RecentDirectoryStore {
     try {
       this.storage().setItem(`herdr-web-ui:recent-directories:${machineId}`, JSON.stringify(next));
       this.unsaved.delete(machineId);
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "recent-directories.ts:73");
       // A read may still work after a quota/write failure; do not replace unsaved history with it.
       this.unsaved.add(machineId);
     }

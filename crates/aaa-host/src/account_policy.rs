@@ -22,7 +22,10 @@ pub(crate) struct PaneAccount {
 
 impl Host {
     pub(crate) fn default_account(&self, harness: &str) -> Result<Option<String>, ErrorBody> {
-        let name = self.db.meta(&format!("default-account:{harness}")).map_err(|_| fail())?;
+        let name = self
+            .db
+            .meta(&format!("default-account:{harness}"))
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         if name.as_ref().is_some_and(|n| !crate::accounts::valid_name(n)) {
             return Err(fail());
         }
@@ -50,17 +53,23 @@ impl Host {
                 if c.harness != harness {
                     return Err(fail());
                 }
-                self.db.set_meta(&key, name).map_err(|_| fail())
+                self.db
+                    .set_meta(&key, name)
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))
             }
-            None => self.db.del_meta(&key).map_err(|_| fail()),
+            None => {
+                self.db.del_meta(&key).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))
+            }
         }
     }
 
     pub(crate) fn account_run(&self, run: &str) -> Result<Option<PaneAccount>, ErrorBody> {
         self.db
             .meta(&format!("account-run:{run}"))
-            .map_err(|_| fail())?
-            .map(|s| serde_json::from_str(&s).map_err(|_| fail()))
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
+            .map(|s| {
+                serde_json::from_str(&s).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))
+            })
             .transpose()
     }
 
@@ -79,7 +88,11 @@ impl Host {
     }
 
     pub(crate) fn pane_account(&self, pane: &str) -> Result<Option<PaneAccount>, ErrorBody> {
-        let Some(run) = self.db.meta(&format!("account-pane:{pane}")).map_err(|_| fail())? else {
+        let Some(run) = self
+            .db
+            .meta(&format!("account-pane:{pane}"))
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?
+        else {
             return Ok(None);
         };
         let record = self.account_run(&run)?.ok_or_else(fail)?;
@@ -90,7 +103,8 @@ impl Host {
     }
 
     pub(crate) fn save_account_run(&self, record: &PaneAccount) -> Result<(), ErrorBody> {
-        let text = serde_json::to_string(record).map_err(|_| fail())?;
+        let text = serde_json::to_string(record)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         self.db
             .update_meta_checked(&format!("account-run:{}", record.run), &[], |_| {
                 let extra = record
@@ -100,7 +114,7 @@ impl Host {
                     .unwrap_or_default();
                 Ok((text, extra))
             })
-            .map_err(|_| fail())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         Ok(())
     }
 
@@ -124,7 +138,7 @@ impl Host {
                 previous = old;
                 Ok((text, vec![]))
             })
-            .map_err(|_| fail())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         Ok(previous)
     }
 

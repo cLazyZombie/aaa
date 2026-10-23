@@ -120,7 +120,10 @@ fn sorted_md(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
-        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "md") && p.is_file())
         .collect();
@@ -143,7 +146,10 @@ pub fn read(root: &Path, slug: &str) -> Result<HpProject> {
     let mut tomls: Vec<PathBuf> = std::fs::read_dir(dir.join("threads"))
         .into_iter()
         .flatten()
-        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            e.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "toml") && p.is_file())
         .collect();

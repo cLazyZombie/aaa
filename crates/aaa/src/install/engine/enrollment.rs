@@ -18,7 +18,7 @@ struct Prepared {
     pin_intent: Option<String>,
 }
 fn required(code: &'static str) -> Fault {
-    Fault { code, exit: 3 }
+    Fault { code, exit: 3, cause: None }
 }
 pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> {
     let mut permissions = scope::enrollment(plan);
@@ -32,8 +32,8 @@ fn record_path(plan: &InstallPlan, id: &str) -> PathBuf {
     Path::new(&plan.context.state_dir).join("install/authorization").join(format!("{id}.identity.json"))
 }
 fn read_record(plan: &InstallPlan, lease: &Lease, path: &Path) -> Result<Prepared> {
-    let record: Prepared =
-        serde_json::from_slice(&private::read(path, 65536).map_err(Fault::io)?).map_err(|_| Fault::conflict())?;
+    let record: Prepared = serde_json::from_slice(&private::read(path, 65536).map_err(Fault::io)?)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     let goal = scope::enrollment(plan).into_iter().next().ok_or_else(Fault::conflict)?;
     let permission = lease.permission(plan, &goal)?;
     if record.schema != 2
@@ -47,7 +47,11 @@ fn read_record(plan: &InstallPlan, lease: &Lease, path: &Path) -> Result<Prepare
     Ok(record)
 }
 pub(super) fn prepared(plan: &InstallPlan, id: &str) -> bool {
-    record_path(plan, id).symlink_metadata().is_ok()
+    record_path(plan, id)
+        .symlink_metadata()
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
 }
 pub(super) fn prepare(
     plan: &InstallPlan,
@@ -76,10 +80,17 @@ pub(super) fn prepare(
                 prepared: None,
                 pin_intent: None,
             };
-            private::write(&path, &serde_json::to_vec(&record).map_err(|_| Fault::conflict())?).map_err(Fault::io)?;
+            private::write(
+                &path,
+                &serde_json::to_vec(&record)
+                    .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+            )
+            .map_err(Fault::io)?;
             record
         }
-        Err(_) => return Err(Fault::conflict()),
+        Err(source_error) => {
+            return Err(aaa_common::diagnostic::context(source_error, Fault::conflict()));
+        }
     };
     files::prepare(plan, lease, &path, &mut record).map(Some)
 }
@@ -91,10 +102,16 @@ pub(super) async fn apply(
 ) -> Result<bool> {
     let Some((identity, tls)) = prepare(plan, lease)? else { return Ok(false) };
     let agent_state = Path::new(&plan.context.state_dir).join("agent");
-    if agent_state.join("host.json").symlink_metadata().is_ok() {
+    if agent_state
+        .join("host.json")
+        .symlink_metadata()
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
+    {
         let pin: aaa_agent::identity::HostPin =
             serde_json::from_slice(&private::read(&agent_state.join("host.json"), 65536).map_err(Fault::io)?)
-                .map_err(|_| Fault::conflict())?;
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if Some(&pin.address) != plan.choices.host.as_ref() {
             return Err(Fault::conflict());
         }
@@ -106,7 +123,9 @@ pub(super) async fn apply(
             &pin.fingerprint,
         )
         .await
-        .map_err(|_| required("installation_enrollment_not_verified"))?
+        .map_err(|source_error| {
+            aaa_common::diagnostic::context(source_error, required("installation_enrollment_not_verified"))
+        })?
         .is_some()
         {
             record_enrolled(plan, lease, &pin.fingerprint)?;
@@ -129,7 +148,9 @@ pub(super) async fn apply(
                 grant,
             )
             .await
-            .map_err(|_| required("installation_enrollment_not_verified"))?;
+            .map_err(|source_error| {
+                aaa_common::diagnostic::context(source_error, required("installation_enrollment_not_verified"))
+            })?;
             files::commit(plan, lease, &pin).map(|_| true)
         }
         Some(InstallEnroll::Wait) => {
@@ -139,7 +160,7 @@ pub(super) async fn apply(
                 .join("install/authorization")
                 .join(format!("{}.identity.json", lease.id()));
             let record: Prepared = serde_json::from_slice(&private::read(&path, 65536).map_err(Fault::io)?)
-                .map_err(|_| Fault::conflict())?;
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
             let binding = InstallEnrollmentBinding {
                 installation_id: lease.id().into(),
                 plan_sha256: aaa_config::install::plan_sha256(plan),
@@ -153,8 +174,12 @@ pub(super) async fn apply(
                     host,
                 )
                 .await
-                .map_err(|_| required("installation_private_enrollment_not_verified"))?
-                {
+                .map_err(|source_error| {
+                    aaa_common::diagnostic::context(
+                        source_error,
+                        required("installation_private_enrollment_not_verified"),
+                    )
+                })? {
                     files::commit(plan, lease, &pin)?;
                     return Ok(false);
                 }
@@ -175,12 +200,18 @@ pub(super) async fn apply(
                     pending_host: record.host_identity.as_deref(),
                 },
                 |challenge| async move {
-                    record_pending(plan, lease, &challenge.host_fingerprint)
-                        .map_err(|_| anyhow::anyhow!("설치 등록 신원 기록을 확인하세요"))?;
+                    record_pending(plan, lease, &challenge.host_fingerprint).map_err(|source_error| {
+                        aaa_common::diagnostic::context(
+                            source_error,
+                            anyhow::anyhow!("설치 등록 신원 기록을 확인하세요"),
+                        )
+                    })?;
                     subscriber
                         .request(Request::Sas { code: challenge.code, host_fingerprint: challenge.host_fingerprint })
                         .await
-                        .map_err(|_| anyhow::anyhow!("보호 표시 연결 종료"))
+                        .map_err(|source_error| {
+                            aaa_common::diagnostic::context(source_error, anyhow::anyhow!("보호 표시 연결 종료"))
+                        })
                 },
                 closed,
             );
@@ -201,7 +232,10 @@ pub(super) async fn apply(
                         "installation_private_enrollment_not_verified"
                     }))
                 }
-                Err(_) => Err(required("installation_enrollment_wait_expired")),
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                    Err(required("installation_enrollment_wait_expired"))
+                }
             }
         }
         _ => Err(Fault::conflict()),
@@ -216,8 +250,8 @@ pub(super) fn observe(plan: &InstallPlan, id: &str, result: &mut InstallResult) 
     let state = Path::new(&plan.context.state_dir);
     let path = state.join("install/authorization").join(format!("{id}.identity.json"));
     let ready = (|| -> Result<bool> {
-        let record: Prepared =
-            serde_json::from_slice(&private::read(&path, 65536).map_err(Fault::io)?).map_err(|_| Fault::conflict())?;
+        let record: Prepared = serde_json::from_slice(&private::read(&path, 65536).map_err(Fault::io)?)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if record.schema != 2
             || record.installation_id != id
             || record.plan_sha256 != aaa_config::install::plan_sha256(plan)
@@ -231,7 +265,13 @@ pub(super) fn observe(plan: &InstallPlan, id: &str, result: &mut InstallResult) 
             p.operation == goal.operation
                 && p.target == goal.target
                 && p.after_sha256 == goal.after_sha256
-                && p.before_sha256.as_ref() == files::digest(&record.before).ok().as_ref()
+                && p.before_sha256.as_ref()
+                    == files::digest(&record.before)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .as_ref()
         }) {
             return Err(Fault::conflict());
         }
@@ -248,7 +288,7 @@ pub(super) fn observe(plan: &InstallPlan, id: &str, result: &mut InstallResult) 
         let cert = private::read(&agent.join("tls/cert.der"), 1024 * 1024).map_err(Fault::io)?;
         let pin: aaa_agent::identity::HostPin =
             serde_json::from_slice(&private::read(&agent.join("host.json"), 65536).map_err(Fault::io)?)
-                .map_err(|_| Fault::conflict())?;
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         if Some(hash(&cert)) != record.agent_identity
             || Some(pin.fingerprint) != record.host_identity
             || Some(pin.address) != plan.choices.host
@@ -260,7 +300,10 @@ pub(super) fn observe(plan: &InstallPlan, id: &str, result: &mut InstallResult) 
     let ready = match ready {
         Ok(value) => value,
         Err(e) if e.exit == 4 => return Err(e),
-        Err(_) => false,
+        Err(source_error) => {
+            aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+            false
+        }
     };
     result.checks.push(InstallCheck {
         name: "agent_enrollment".into(),
@@ -282,11 +325,16 @@ pub(super) fn observe(plan: &InstallPlan, id: &str, result: &mut InstallResult) 
 fn record_enrolled(plan: &InstallPlan, lease: &Lease, host: &str) -> Result<()> {
     let path =
         Path::new(&plan.context.state_dir).join("install/authorization").join(format!("{}.identity.json", lease.id()));
-    let mut record: Prepared =
-        serde_json::from_slice(&private::read(&path, 65536).map_err(Fault::io)?).map_err(|_| Fault::conflict())?;
+    let mut record: Prepared = serde_json::from_slice(&private::read(&path, 65536).map_err(Fault::io)?)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     record.enrolled = true;
     record.host_identity = Some(host.into());
-    private::write(&path, &serde_json::to_vec(&record).map_err(|_| Fault::conflict())?).map_err(Fault::io)
+    private::write(
+        &path,
+        &serde_json::to_vec(&record)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    )
+    .map_err(Fault::io)
 }
 
 fn record_pending(plan: &InstallPlan, lease: &Lease, host: &str) -> Result<()> {
@@ -295,8 +343,8 @@ fn record_pending(plan: &InstallPlan, lease: &Lease, host: &str) -> Result<()> {
     }
     let path =
         Path::new(&plan.context.state_dir).join("install/authorization").join(format!("{}.identity.json", lease.id()));
-    let mut record: Prepared =
-        serde_json::from_slice(&private::read(&path, 65536).map_err(Fault::io)?).map_err(|_| Fault::conflict())?;
+    let mut record: Prepared = serde_json::from_slice(&private::read(&path, 65536).map_err(Fault::io)?)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     if record.plan_sha256 != aaa_config::install::plan_sha256(plan)
         || record.installation_id != lease.id()
         || record.account_sha256 != account_hash()?
@@ -305,5 +353,10 @@ fn record_pending(plan: &InstallPlan, lease: &Lease, host: &str) -> Result<()> {
         return Err(Fault::conflict());
     }
     record.host_identity = Some(host.into());
-    private::write(&path, &serde_json::to_vec(&record).map_err(|_| Fault::conflict())?).map_err(Fault::io)
+    private::write(
+        &path,
+        &serde_json::to_vec(&record)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?,
+    )
+    .map_err(Fault::io)
 }

@@ -90,7 +90,13 @@ pub(crate) fn body(e: &PostEnvelope) -> String {
 impl Host {
     pub(crate) fn receive_post(&self, mid: &str, session: &str, input: PostInput) -> PostResult {
         // 접수 뒤 Ack가 유실되고 thread가 끝나도, 검증했던 원장의 결과가 정본이다.
-        if let Some(old) = self.db.post_row(&input.post_id).map_err(|_| ()).unwrap_or(None) {
+        let previous = match self.db.post_row(&input.post_id) {
+            Ok(previous) => previous,
+            Err(error) => {
+                return refused(aaa_common::diagnostic::context(error, "post 원장을 읽지 못했다".to_string()));
+            }
+        };
+        if let Some(old) = previous {
             if old.session.as_deref() == Some(session) && old.machine == mid && old.content_sha == content_sha(&input) {
                 self.db.audit(&format!("post:{}@{mid}", old.sender), "post_replay", &input.post_id);
                 return old.result;
@@ -194,7 +200,9 @@ impl Host {
         }
         let previous = match self.db.post_row(&input.post_id) {
             Ok(v) => v,
-            Err(_) => return refused("post 원장을 읽지 못했다"),
+            Err(source_error) => {
+                return refused(aaa_common::diagnostic::context(source_error, "post 원장을 읽지 못했다".to_string()));
+            }
         };
         if let Some(old) = previous {
             if old.project == project
@@ -246,10 +254,23 @@ impl Host {
         };
         let recent = match self.db.post_recent(project, &who, now.saturating_sub(86400000), None) {
             Ok(v) => v,
-            Err(_) => return refused("post 원장을 읽지 못했다"),
+            Err(source_error) => {
+                return refused(aaa_common::diagnostic::context(source_error, "post 원장을 읽지 못했다".to_string()));
+            }
         };
         let mute_key = format!("post_muted:{project}:{who}");
-        if result.is_none() && quota == "standard" && self.db.meta(&mute_key).ok().flatten().is_some() {
+        if result.is_none()
+            && quota == "standard"
+            && self
+                .db
+                .meta(&mute_key)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+                .flatten()
+                .is_some()
+        {
             result = Some(refused("muted: 조작 권한 aaa post unmute가 필요하다"));
         }
         if result.is_none() {
@@ -267,7 +288,12 @@ impl Host {
         if result.is_none() && quota != "report" {
             let quota_recent = match self.db.post_recent(project, &who, now.saturating_sub(86400000), Some(quota)) {
                 Ok(v) => v,
-                Err(_) => return refused("post 원장을 읽지 못했다"),
+                Err(source_error) => {
+                    return refused(aaa_common::diagnostic::context(
+                        source_error,
+                        "post 원장을 읽지 못했다".to_string(),
+                    ));
+                }
             };
             // 두 사용자 의도를 합쳐 분당 30·시간당 60·하루 300건. 초과해도 자동 mute하지 않는다.
             let (burst, hourly, daily, burst_secs) =
@@ -286,9 +312,18 @@ impl Host {
                 let since = self
                     .db
                     .meta(&format!("post_unmuted:{project}:{who}"))
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
                     .ok()
                     .flatten()
-                    .and_then(|v| v.parse::<u64>().ok())
+                    .and_then(|v| {
+                        v.parse::<u64>()
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
                     .unwrap_or(0);
                 let refusals = quota_recent
                     .iter()
@@ -300,7 +335,15 @@ impl Host {
                     .count()
                     + 1;
                 if quota == "standard" && refusals >= cfg.mute_after as usize {
-                    if self.db.set_meta(&mute_key, &now.to_string()).is_err() {
+                    if self
+                        .db
+                        .set_meta(&mute_key, &now.to_string())
+                        .as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_err()
+                    {
                         return refused("mute를 저장하지 못했다");
                     }
                     self.db.audit(actor, "post_mute", &detail);
@@ -328,7 +371,9 @@ impl Host {
         }
         let id = match self.db.post_next_id() {
             Ok(id) => id,
-            Err(_) => return refused("post 번호를 만들지 못했다"),
+            Err(source_error) => {
+                return refused(aaa_common::diagnostic::context(source_error, "post 번호를 만들지 못했다".to_string()));
+            }
         };
         let result = result.unwrap_or_else(|| PostResult::Accepted { id: id.clone() });
         let accepted = matches!(result, PostResult::Accepted { .. });
@@ -375,7 +420,12 @@ impl Host {
                     i.summary =
                         format!("{who} {}: 「{} {}{link}」", kind(&env.input.post_type), ids.join(" "), env.input.title)
                 }
-                Err(_) => return refused("질문 번호를 저장하지 못했다"),
+                Err(source_error) => {
+                    return refused(aaa_common::diagnostic::context(
+                        source_error,
+                        "질문 번호를 저장하지 못했다".to_string(),
+                    ));
+                }
             }
         }
         let row = PostRow {
@@ -395,6 +445,8 @@ impl Host {
         if self
             .db
             .post_record(&env.input.post_id, &row, accepted.then_some(&env), item.as_ref(), actor, &audit)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
             .is_err()
         {
             return refused("post를 저장하지 못했다");
@@ -471,7 +523,15 @@ impl Host {
         }
         let alias_id = alias
             .filter(|t| t.kind == "post")
-            .and_then(|t| self.db.post_of_item(project, &t.subject).ok().flatten())
+            .and_then(|t| {
+                self.db
+                    .post_of_item(project, &t.subject)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .flatten()
+            })
             .map(|p| p.id);
         let id = alias_id.as_deref().unwrap_or(id);
         let row = self

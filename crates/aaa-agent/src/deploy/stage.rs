@@ -283,7 +283,12 @@ fn inspect(exe: &Path, execute: Executor, path: &str) -> Result<AgentResponse, E
             dry_run: true,
         },
     )
-    .map_err(|_| error("후보 dry-run(self-check·판 고정)이 실패했다. 빌드 머신에서 `aaa update --from <후보> --dry-run`으로 확인한다"))?;
+    .map_err(|cause| {
+        aaa_common::diagnostic::context(
+            cause,
+            error("후보 dry-run(self-check·판 확인) 실패: 실행기 출력 원문은 비밀값 때문에 생략한다"),
+        )
+    })?;
     let receipt: serde_json::Value = serde_json::from_str(&checked).map_err(error)?;
     let version = receipt["version"].as_str().ok_or_else(|| error("self-check 판이 없다"))?;
     if receipt["sha256"] != sha256 || sha(&file_path)? != sha256 {

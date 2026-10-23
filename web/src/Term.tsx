@@ -1,3 +1,4 @@
+import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { TerminalReceiver } from "./terminalReceive";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 // pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
@@ -263,7 +264,7 @@ export function TermView({
   const [draft, setDraftState] = useState<InputDraft>(() => {
     try {
       return restoreDraft(localStorage.getItem(draftKey), Date.now());
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "Term.tsx:267");
       return EMPTY_DRAFT;
     }
   });
@@ -276,7 +277,7 @@ export function TermView({
     try {
       if (draftIsEmpty(draft)) localStorage.removeItem(draftKey);
       else localStorage.setItem(draftKey, JSON.stringify({ ...draft, at: Date.now() }));
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "Term.tsx:280");
       // private mode: 이 화면 동안만 남는다
     }
   }, [draft, draftKey]);
@@ -954,7 +955,7 @@ export function TermView({
           term.options.fontFamily = family;
           setFontGen((g) => g + 1);
         })
-        .catch(() => undefined);
+        .catch(ignoredFailure("Term.tsx:958", () => undefined));
     }
     // xterm의 글 붙여 넣기보다 먼저 본다: 그림이면 가로채고, 아니면 그대로 둔다
     const onPaste = (e: ClipboardEvent) => {

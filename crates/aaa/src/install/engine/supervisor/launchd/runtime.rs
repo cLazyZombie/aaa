@@ -9,7 +9,8 @@ fn read_spec(context: &Path, sha: &str) -> Result<Spec> {
     if hash(&bytes) != sha {
         return Err(Fault::conflict());
     }
-    let spec: Spec = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let spec: Spec = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
     spec.validate()?;
     spec.guard_paths()?;
     spec.verify_files()?;
@@ -32,8 +33,9 @@ pub(super) fn dispatch(context: &Path, sha: &str) -> std::process::ExitCode {
     }
 }
 fn entry(context: &Path, sha: &str) -> Result<()> {
-    let (parent, _) =
-        native::identity(unsafe { libc::getppid() } as u32).map_err(|_| failure("service_controller_required", 3))?;
+    let (parent, _) = native::identity(unsafe { libc::getppid() } as u32).map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, failure("service_controller_required", 3))
+    })?;
     if parent.pbi_ppid != 1 || parent.pbi_uid != unsafe { libc::geteuid() } {
         return Err(failure("service_controller_required", 3));
     }
@@ -66,8 +68,9 @@ fn entry(context: &Path, sha: &str) -> Result<()> {
         )
     };
     let registration =
-        crate::restart::register(spec.role(), Some((spec.executable.clone(), spec.binary_sha256.clone())))
-            .map_err(|_| failure("service_restart_not_ready", 3))?;
+        crate::restart::register(spec.role(), Some((spec.executable.clone(), spec.binary_sha256.clone()))).map_err(
+            |source_error| aaa_common::diagnostic::context(source_error, failure("service_restart_not_ready", 3)),
+        )?;
     crate::restart::signals_ready().map_err(Fault::io)?;
     let restart_context = context.to_path_buf();
     let restart_sha = sha.to_string();
@@ -75,13 +78,13 @@ fn entry(context: &Path, sha: &str) -> Result<()> {
         rt.block_on(async {
             loop {
                 tokio::select! {
-                    _ = term.recv() => { let _ = signal_stop.send(true); break; },
-                    _ = interrupt.recv() => { let _ = signal_stop.send(true); break; },
+                    _ = term.recv() => { aaa_common::diagnostic::ignored(signal_stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다"); break; },
+                    _ = interrupt.recv() => { aaa_common::diagnostic::ignored(signal_stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다"); break; },
                     _ = restart.recv(), if registration.is_some() => {
                         // 설치 서비스의 승인 SHA가 달라졌으면 새 승인이 먼저다. 원래 backend를 살려 둔다.
-                        if read_spec(&restart_context, &restart_sha).is_ok() {
+                        if read_spec(&restart_context, &restart_sha).as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_ok() {
                             crate::restart::request();
-                            let _ = signal_stop.send(true);
+                            aaa_common::diagnostic::ignored(signal_stop.send(true), "수신자가 끝난 뒤에도 현재 작업은 마친다");
                             break;
                         }
                         eprintln!("승인된 설치 파일과 달라 worker 재시작을 거부했다. 새 install 승인이 필요하다");
@@ -92,7 +95,7 @@ fn entry(context: &Path, sha: &str) -> Result<()> {
         })
     });
     let result = runner::run(&spec, session, process.elevated, process.created, stop, || true);
-    let _ = finished.send(());
-    let _ = signals.join();
+    aaa_common::diagnostic::ignored(finished.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
+    aaa_common::diagnostic::ignored(signals.join(), "보조 작업 실패 뒤 기존 처리를 계속한다");
     result
 }

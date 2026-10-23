@@ -86,9 +86,13 @@ impl Host {
     /// 머신마다 붐빔과 host 로컬 머신 이름
     fn busy(&self) -> (Vec<Busy>, Option<String>) {
         let mut open: HashMap<String, u32> = HashMap::new();
-        for r in
-            self.db.threads(None).unwrap_or_default().iter().filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
-        {
+        for r in self.db.threads(None).unwrap_or_default().iter().filter_map(|j| {
+            serde_json::from_str::<ThreadRec>(j)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        }) {
             if matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) {
                 *open.entry(r.machine_id).or_default() += 1;
             }

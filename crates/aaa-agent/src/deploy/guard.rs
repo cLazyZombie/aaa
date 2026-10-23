@@ -78,7 +78,13 @@ fn views(state: &Path) -> Vec<DeployGuardView> {
         .flatten()
         .flatten()
         .filter_map(|e| e.file_name().to_str()?.strip_suffix(".guard.json").map(str::to_owned))
-        .filter_map(|id| read(state, &id).ok())
+        .filter_map(|id| {
+            read(state, &id)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .collect()
 }
 pub(super) fn for_install(state: &Path, job: &str) -> Option<DeployGuardView> {
@@ -282,7 +288,7 @@ impl Agent {
         let mut child = command.spawn().context("독립 복구 감시 실행")?;
         let child_pid = child.id();
         std::thread::spawn(move || {
-            let _ = child.wait();
+            aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         });
         let result = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
@@ -450,27 +456,33 @@ fn expired(view: &mut DeployGuardView, now: u64) {
     }
 }
 async fn publish(state: &Path, view: &DeployGuardView) -> Result<()> {
-    if read(state, &view.spec.id).is_ok_and(|old| old == *view) {
+    if read(state, &view.spec.id)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok_and(|old| old == *view)
+    {
         return Ok(());
     }
     save(state, view)?;
     // 상태 파일 commit 뒤에만 알린다. agent가 내려가도 기록과 복구 프로세스는 남는다.
-    let _ = tokio::time::timeout(Duration::from_secs(2), async {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let mut s = aaa_common::ipc::connect(&crate::hooks::socket(state)).await?;
-        let msg = crate::hooks::HookMsg {
-            session: view.spec.id.clone(),
-            token: String::new(),
-            harness: "deploy_guard".into(),
-            payload: serde_json::json!({"id":view.spec.id}),
-        };
-        s.write_all(&serde_json::to_vec(&msg)?).await?;
-        s.shutdown().await?;
-        let mut reply = Vec::new();
-        s.read_to_end(&mut reply).await?;
-        Ok::<_, anyhow::Error>(())
-    })
-    .await;
+    aaa_common::diagnostic::ignored_nested(
+        tokio::time::timeout(Duration::from_secs(2), async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut s = aaa_common::ipc::connect(&crate::hooks::socket(state)).await?;
+            let msg = crate::hooks::HookMsg {
+                session: view.spec.id.clone(),
+                token: String::new(),
+                harness: "deploy_guard".into(),
+                payload: serde_json::json!({"id":view.spec.id}),
+            };
+            s.write_all(&serde_json::to_vec(&msg)?).await?;
+            s.shutdown().await?;
+            let mut reply = Vec::new();
+            s.read_to_end(&mut reply).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await,
+        "배포 상태 commit 뒤 알림은 최선 노력",
+    );
     Ok(())
 }
 
@@ -505,10 +517,17 @@ async fn handle_control(
     exe: &Path,
     view: &mut DeployGuardView,
 ) -> Result<()> {
-    if pid.is_none() || pid != agent_pid(state).ok() {
+    if pid.is_none()
+        || pid
+            != agent_pid(state)
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "제어 요청의 agent PID를 읽지 못했다"))
+                .ok()
+    {
         return Ok(());
     }
-    view.installed_sha256 = sha(exe).unwrap_or_default();
+    view.installed_sha256 = sha(exe)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "설치한 파일 SHA를 읽지 못했다"))
+        .unwrap_or_default();
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, aaa_proto::MAX_FRAME);
     let mut rx = FrameRx::new(r, aaa_proto::MAX_FRAME);
@@ -519,7 +538,7 @@ async fn handle_control(
         _ => Err("감시 제어 frame을 읽지 못했다".into()),
     };
     publish(state, view).await?;
-    let _ = tx.json(&response).await;
+    aaa_common::diagnostic::ignored(tx.json(&response).await, "감시 제어 응답의 수신자가 끝났다");
     Ok(())
 }
 /// 파일 복구·SCM 중지/시작을 기다리는 동안에도 Status·Observe·Recover를 처리한다.
@@ -583,7 +602,10 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
     // 새 host 웹 묻기(W6c). 루프 회전마다 새로 시작하면 잦은 상태 조회에 한 번의 물음도 끝나지 못하므로 따로 띄워 둔다
     let mut probe: Option<(String, tokio::task::JoinHandle<()>)> = None;
     loop {
-        view.installed_sha256 = sha(&exe).map(|s| s.to_string()).unwrap_or_default();
+        view.installed_sha256 = sha(&exe)
+            .map(|s| s.to_string())
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default();
         expired(&mut view, util::now_ms());
         publish(&state, &view).await?;
         if view.phase.terminal() {
@@ -694,7 +716,11 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
         }
         let answer = async {
             match probe.as_mut() {
-                Some((_, task)) => task.await.is_ok(),
+                Some((_, task)) => task
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok(),
                 None => std::future::pending().await,
             }
         };

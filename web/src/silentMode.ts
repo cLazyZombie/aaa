@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // iPhone·iPad 무음 스위치를 켜 두어도 알림 소리를 낸다(plan §8.83, 사용자 보고 10-18). 참고(herdr-web-ui alertSound.ts)에는 없다.
 // WebKit은 Web Audio만 쓰는 페이지를 AmbientSound 범주로 둔다(MediaSessionManagerCocoa.mm). 이 범주는 다른 앱 소리와
 // 섞이는 대신 무음 스위치를 따른다. 무음 스위치를 무시하는 범주는 Audio Session API(Safari 16.4+)의 "playback"뿐이다.
@@ -29,14 +30,14 @@ export function beforeAlertSound() {
   if (!s || !alertSetting("alertSilent")) return;
   try {
     if (s.type !== "playback") s.type = "playback";
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "silentMode.ts:33");
     return;
   }
   clearTimeout(restore);
   restore = setTimeout(() => {
     try {
       s.type = "auto";
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "silentMode.ts:40");
       /* 되돌리지 못하면 다음 소리 뒤에 다시 해 본다 */
     }
   }, HOLD_MS);

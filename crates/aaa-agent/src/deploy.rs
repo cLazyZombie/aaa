@@ -95,7 +95,9 @@ impl Manager {
             if !valid(&id) {
                 continue;
             }
-            let Ok(mut job) = self.status(&id) else {
+            let Ok(mut job) = self.status(&id).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
                 continue;
             };
             if !matches!(job.state, DeployState::Queued | DeployState::Running) {
@@ -103,7 +105,13 @@ impl Manager {
             }
             let restarted = job.state == DeployState::Running
                 && job.action == (DeployAction::Restart { service: DeployService::Agent })
-                && sha(exe).ok().as_deref() == Some(job.expected_sha256.as_str());
+                && sha(exe)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+                    .as_deref()
+                    == Some(job.expected_sha256.as_str());
             job.state = if restarted { DeployState::Completed } else { DeployState::Interrupted };
             job.result = Some(
                 if restarted {
@@ -226,12 +234,15 @@ impl Manager {
         }
         let execute = (*self.executor.lock().unwrap())?;
         if matches!(job.action, DeployAction::Restart { .. })
-            && guard::read(self.root.parent()?, &job.id).is_ok()
+            && guard::read(self.root.parent()?, &job.id)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
             && let Err(e) = guard::rpc(self.root.parent()?, &job.id, aaa_proto::DeployGuardControl::Activate).await
         {
             job.state = DeployState::Failed;
             job.result = Some(format!("감시를 활성화하지 못해 재시작하지 않았다: {e:#}"));
-            let _ = self.save(&job);
+            aaa_common::diagnostic::ignored(self.save(&job), "보조 작업 실패 뒤 기존 처리를 계속한다");
             return Some(job);
         }
         #[cfg(windows)]
@@ -256,7 +267,7 @@ impl Manager {
                 result => {
                     job.state = DeployState::Failed;
                     job.result = Some(format!("교체 잠금을 얻지 못했다: {result:?}"));
-                    let _ = self.save(&job);
+                    aaa_common::diagnostic::ignored(self.save(&job), "보조 작업 실패 뒤 기존 처리를 계속한다");
                     return Some(job);
                 }
             }
@@ -274,7 +285,7 @@ impl Manager {
         {
             job.state = DeployState::Failed;
             job.result = Some(format!("설치 감시 승인 실패: {e:#}"));
-            let _ = self.save(&job);
+            aaa_common::diagnostic::ignored(self.save(&job), "보조 작업 실패 뒤 기존 처리를 계속한다");
             return Some(job);
         }
         let action = match &job.action {
@@ -291,7 +302,15 @@ impl Manager {
             .and_then(|r| r),
             Err(e) => Err(e.message),
         };
-        job.state = if result.is_ok() { DeployState::Completed } else { DeployState::Failed };
+        job.state = if result
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_ok()
+        {
+            DeployState::Completed
+        } else {
+            DeployState::Failed
+        };
         job.result = Some(result.unwrap_or_else(|e| e).chars().take(4096).collect());
         job.updated_ms = aaa_common::util::now_ms();
         if let Err(e) = self.save(&job) {
@@ -315,7 +334,12 @@ impl Agent {
         action: DeployAction,
     ) {
         let result = self.deployments.prepare(&self.exe, id, project, action);
-        let run = result.as_ref().ok().filter(|(_, run)| *run).map(|(job, _)| job.clone());
+        let run = result
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .filter(|(_, run)| *run)
+            .map(|(job, _)| job.clone());
         self.send_host(&aaa_proto::LinkMsg::Res {
             id: request_id,
             result: result.map(|(job, _)| self.deployments.response(job)).into(),

@@ -82,9 +82,16 @@ fn process_cwd(pid: u32) -> Option<PathBuf> {
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn foreground_process_group_id(pid: u32) -> Option<u32> {
     // "pid (comm) state ppid pgrp session tty_nr tpgid ...": comm에 빈칸·괄호가 있을 수 있어 마지막 ')' 뒤부터 센다
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let rest = stat.get(stat.rfind(')')? + 2..)?;
-    let tpgid: i32 = rest.split_whitespace().nth(5)?.parse().ok()?;
+    let tpgid: i32 = rest
+        .split_whitespace()
+        .nth(5)?
+        .parse()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     (tpgid > 0).then_some(tpgid as u32)
 }
 
@@ -93,7 +100,9 @@ fn process_cwd(pid: u32) -> Option<PathBuf> {
     if pid == 0 {
         return None;
     }
-    std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
 }
 
 /// herdr `src/platform/windows.rs` `pane_process_cwd`·`process_cwd_from_handle`: 다른 프로세스의 PEB에서
@@ -161,7 +170,9 @@ mod win {
         if unsafe { QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut len) } == 0 {
             return None;
         }
-        String::from_utf16(&path[..len as usize]).ok()
+        String::from_utf16(&path[..len as usize])
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
 
     /// shim 바로 아래 셸 프로세스가 하나뿐이면 그것(herdr `shim_shell_pid`)
@@ -356,7 +367,9 @@ mod win {
         if !ok || read != usize::from(s.Length) {
             return None;
         }
-        String::from_utf16(&buf).ok()
+        String::from_utf16(&buf)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
     }
 }
 

@@ -1,3 +1,4 @@
+import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { ListId } from "./ListId";
 import { taskTarget } from "./appIds";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
@@ -111,14 +112,14 @@ function readAutoSeen(): number | null {
   try {
     const v = localStorage.getItem(AUTO_SEEN_KEY);
     return v === null ? null : Number(v) || 0;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:115");
     return null;
   }
 }
 function writeAutoSeen(id: number): void {
   try {
     localStorage.setItem(AUTO_SEEN_KEY, String(id));
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:122");
     // 저장이 막혀도 이 화면 동안은 기억한다
   }
 }
@@ -128,7 +129,7 @@ const REPO_KEY = (project: string) => `aaa:tasks:repo:${project}`;
 function readRepo(project: string): string | null {
   try {
     return project ? localStorage.getItem(REPO_KEY(project)) : null;
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:132");
     return null;
   }
 }
@@ -137,7 +138,7 @@ function writeRepo(project: string, repo: string | null): void {
     if (!project) return;
     if (repo === null) localStorage.removeItem(REPO_KEY(project));
     else localStorage.setItem(REPO_KEY(project), repo);
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:141");
     // 저장이 막혀도 이 화면 동안은 기억한다
   }
 }
@@ -194,7 +195,7 @@ export function useSeenMine(board: TaskBoard | null): { seen: ReadonlySet<string
     try {
       const v = localStorage.getItem(MINE_SEEN_KEY);
       return v === null ? null : new Set(JSON.parse(v) as string[]);
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:198");
       return null;
     }
   });
@@ -204,7 +205,7 @@ export function useSeenMine(board: TaskBoard | null): { seen: ReadonlySet<string
       const next = new Set([...(old ?? []), ...keys]);
       try {
         localStorage.setItem(MINE_SEEN_KEY, JSON.stringify([...next]));
-      } catch {
+      } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:208");
         // 저장이 막혀도 이 화면 동안은 기억한다
       }
       return next;
@@ -330,7 +331,7 @@ export function TasksView({
     if (!shown || frontApi !== null) return;
     me()
       .then((m) => setFrontApi(m?.front_api ?? ""))
-      .catch(() => setFrontApi(""));
+      .catch(ignoredFailure("TasksView.tsx:334", () => setFrontApi("")));
   }, [shown, frontApi]);
   const ownersSeq = useRef(0);
   const loadOwners = useCallback(() => {
@@ -340,9 +341,9 @@ export function TasksView({
       .then((r) => {
         if (n === ownersSeq.current && r.kind === "assignable") setOwners(r.owners);
       })
-      .catch(() => {
+      .catch(ignoredFailure("TasksView.tsx:344", () => {
         if (n === ownersSeq.current) setOwners((old) => old ?? []);
-      });
+      }));
   }, [shown, canEdit]);
   const machineConnections = JSON.stringify(machines.map((m) => [m.id, m.name, m.connection]).sort());
   const newTask = creating !== null;
@@ -359,7 +360,7 @@ export function TasksView({
     if (!shown || !editApi) return;
     call({ op: "task_log", before: null, limit: 100, filter: null })
       .then((r) => r.kind === "task_log" && setLog(r.entries))
-      .catch(() => undefined);
+      .catch(ignoredFailure("TasksView.tsx:363", () => undefined));
   }, [shown, editApi, sha]);
   // 처음 읽은 기기는 지금 기록까지를 본 것으로 둔다(지난 자동 정리를 한꺼번에 알리지 않는다)
   useEffect(() => {
@@ -487,7 +488,7 @@ export function TasksView({
       const r = await edit([{ op: "update", at: anchorOf(cur), title: null, owner: null, person: false, profile: null, machine: null, notes: after, thread: null, done: null, repo: null }], { title: cur.title, owner, thread: cur.thread, notes: after });
       if (r) boardRef.current = r.board;
     });
-    notesChain.current = next.catch(() => undefined);
+    notesChain.current = next.catch(ignoredFailure("TasksView.tsx:491", () => undefined));
     return next;
   };
   const onSave = async (ops: TaskOp[], mine: MyEdit | null): Promise<SaveResult> => {

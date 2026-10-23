@@ -207,7 +207,9 @@ fn project_dir(name: &str) -> Result<PathBuf> {
 
 /// 프로젝트 설정 글(`aaa.toml`, 없으면 project.toml)
 fn project_toml(dir: &Path) -> String {
-    std::fs::read_to_string(aaa_config::project_settings_file(dir)).unwrap_or_default()
+    std::fs::read_to_string(aaa_config::project_settings_file(dir))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default()
 }
 
 /// 값을 정할 층(host와 같은 차례: 프로젝트 표 → default 표 → 옛 자리 → 기본값)과 버린 값 경고
@@ -340,7 +342,9 @@ fn show_text(target: &Target, rows: &[safety::Row], eff: &safety::Safety, warnin
 /// host.toml 글(없으면 `schema = 1`부터)
 fn host_text() -> (PathBuf, String) {
     let path = config_dir().join("host.toml");
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = std::fs::read_to_string(&path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default();
     let text = if text.trim().is_empty() { format!("schema = {}\n", aaa_config::SCHEMA) } else { text };
     (path, text)
 }
@@ -348,7 +352,11 @@ fn host_text() -> (PathBuf, String) {
 /// host.local.toml이 같은 key를 덮거나, 프로젝트 표를 고칠 때 `[safety]` 표 하나(plan §8.288)에 같은 key가 있으면 알린다
 /// (고친 값이 닿지 않는다)
 fn shadowed(table: &str, key: &str) -> Option<String> {
-    let read = |f: &str| std::fs::read_to_string(config_dir().join(f)).unwrap_or_default();
+    let read = |f: &str| {
+        std::fs::read_to_string(config_dir().join(f))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default()
+    };
     let local = read("host.local.toml");
     if safety::has_key(&local, table, key) {
         return Some(format!("host.local.toml의 [safety.{table}] {key}가 이 값을 덮는다: 그 파일에서도 고친다"));
@@ -509,8 +517,13 @@ fn edit_profiles(json: bool, change: profile_edit::ProfileChange) -> Result<Exit
             "profile 바꾸기는 host 머신 터미널에서 한다(host.toml 없음). 확인은 `aaa profile list`·`aaa profile resolve`로 한다"
         );
     }
-    profile_edit::apply_in(&std::fs::read_to_string(&file).unwrap_or_default(), &change)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    profile_edit::apply_in(
+        &std::fs::read_to_string(&file)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+            .unwrap_or_default(),
+        &change,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
     crate::person::require(&format!("{what}(profile 바꾸기)"))?;
     let message = profile_edit::apply(&config_dir(), &change).map_err(|e| anyhow::anyhow!(e))?;
     let note = "host가 다음에 profile을 쓸 때 읽는다(다시 띄우지 않아도 된다). 이미 도는 thread는 다시 띄울 때까지 옛 설정이다";

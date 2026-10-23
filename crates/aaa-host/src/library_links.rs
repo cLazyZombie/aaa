@@ -52,13 +52,17 @@ impl SigningKey {
             return None;
         }
         let (id, sig) = cap.split_at(16);
-        let supplied = hex::decode(sig).ok()?;
+        let supplied = hex::decode(sig)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         let message = Self::message(id);
         // HMAC의 앞 128bit를 쓴다. 뒤 128bit는 계산한 값으로 채워 ring의 상수 시간 verify로 비교한다.
         let expected = hmac::sign(&self.0, message.as_bytes());
         let mut tag = expected.as_ref().to_vec();
         tag[..16].copy_from_slice(&supplied);
-        hmac::verify(&self.0, message.as_bytes(), &tag).ok()?;
+        hmac::verify(&self.0, message.as_bytes(), &tag)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         Some(id)
     }
 }
@@ -67,6 +71,7 @@ impl Host {
     pub(crate) fn link_view(&self, r: LibraryLinkRow) -> LinkView {
         let size = self
             .project_dir(&r.project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .map(|d| {
                 self.report_manifest(&d, &r.project, &r.thread)
@@ -151,7 +156,13 @@ impl Host {
     }
 
     pub(crate) fn latest_library_link(&self, project: &str, thread: &str) -> Option<LinkView> {
-        self.db.library_links(Some(project)).ok()?.into_iter().find(|r| r.thread == thread).map(|r| self.link_view(r))
+        self.db
+            .library_links(Some(project))
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?
+            .into_iter()
+            .find(|r| r.thread == thread)
+            .map(|r| self.link_view(r))
     }
 
     pub(crate) fn library_link_revoke(&self, id: &str, actor: &str) -> Result<LinkView, ErrorBody> {
@@ -176,7 +187,12 @@ impl Host {
 
     /// 열람 기록 실패가 보고서 열기를 막지 않는다. API 열기와 실제 문서 응답이 같은 기록을 쓴다.
     pub(crate) fn library_opened(&self, project: &str, name: &str) {
-        if let Some(v) = self.db.report_target(project, name).ok().flatten()
+        if let Some(v) = self
+            .db
+            .report_target(project, name)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()
+            .flatten()
             && self.report_id(project, &v.source).as_deref() == Some(name)
         {
             self.library_opened(project, &v.source);

@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // task 첨부(plan §8.327, 사용자 10-20 「할일에 이미지 첨부할수있게 해」·「붙여넣기도 지원하게」·「폰에서 캡쳐 후 복사해서 바로 붙이게」·
 // 「md·html 문서도 task에 첨부(링크)」). 메모의 첨부 줄(tasksModel `attachmentsOf`)을 그림은 썸네일 줄, 문서·링크는 줄 목록으로 보인다.
 // 그림을 누르면 크게 보고, 문서는 파일 보기(md는 그려서, html은 보고서처럼 sandbox 페이지)로, 바깥 주소는 새 창으로 연다. 조작 기기는
@@ -316,7 +317,7 @@ function LinkForm({ project, busy, onAdd, onCancel }: { project: string; busy?: 
     let live = true;
     call({ op: "library_reports", project })
       .then((r) => live && setReports(r.kind === "library_reports" ? r.reports.filter((x) => x.project === project && !x.problem) : []))
-      .catch(() => live && setReports([]));
+      .catch(ignoredFailure("TaskAttachments.tsx:320", () => live && setReports([])));
     return () => {
       live = false;
     };
@@ -327,7 +328,7 @@ function LinkForm({ project, busy, onAdd, onCancel }: { project: string; busy?: 
     setFiles(null);
     call({ op: "library_open", project, name: report })
       .then((r) => live && setFiles(r.kind === "library" ? r.files.filter((f) => /\.(md|html?)$/i.test(f.path)) : []))
-      .catch(() => live && setFiles([]));
+      .catch(ignoredFailure("TaskAttachments.tsx:331", () => live && setFiles([])));
     return () => {
       live = false;
     };

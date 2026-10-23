@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /*
  * A phone's sheets move as an iPhone's do. Every surface on a `.modal-scrim` (the dialogs, the
  * palette, the row sheet) is a bottom sheet at SHEET_QUERY: it rises when it opens (styles.css),
@@ -193,12 +194,12 @@ function pageStyles(): CSSStyleSheet | null {
   for (const sheet of document.styleSheets) {
     try {
       for (const rule of sheet.cssRules) if (!(rule instanceof CSSImportRule)) text += `${rule.cssText}\n`;
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "sheets.ts:197");
       // another origin's sheet keeps its rules to itself; none of the app's is one
     }
   }
   const sheet = new CSSStyleSheet();
-  try { sheet.replaceSync(text); } catch { return null; }
+  try { sheet.replaceSync(text); } catch (ignoredError) { logIgnoredFailure(ignoredError, "sheets.ts:202"); return null; }
   pageRules = { count: document.styleSheets.length, sheet };
   return sheet;
 }

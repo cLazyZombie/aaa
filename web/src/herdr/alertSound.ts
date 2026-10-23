@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 /**
  * The alert sound: a short chime the open tab plays itself when an alert is due. It is page
  * audio, not a system notification, so it is heard where notifications stay quiet - a macOS
@@ -46,7 +47,7 @@ export async function unlockAlertSound(): Promise<boolean> {
   if (context.state !== "running") {
     try {
       await context.resume();
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "alertSound.ts:50");
       return false;
     }
   }

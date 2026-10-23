@@ -84,13 +84,18 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
                             continue;
                         }
                     };
-                    let Ok(permit) = gate.clone().try_acquire_owned() else {
+                    let Ok(permit) = gate.clone().try_acquire_owned().inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                    }) else {
                         tracing::warn!(%peer, "인증 전 연결이 너무 많아 끊었다");
                         continue;
                     };
                     let (host, acceptor) = (host.clone(), acceptor.clone());
                     tokio::spawn(async move {
-                        let _ = tcp.set_nodelay(true);
+                        aaa_common::diagnostic::ignored(
+                            tcp.set_nodelay(true),
+                            "보조 작업 실패 뒤 기존 처리를 계속한다",
+                        );
                         let tls = match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
                             Ok(Ok(s)) => s,
                             _ => {
@@ -104,7 +109,14 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
                             let sas = tls::sas(c, &host.identity.fingerprint, &fp).unwrap_or_default();
                             (fp, sas)
                         };
-                        let known = host.db.machine_by_fingerprint(&fp).ok().flatten();
+                        let known = host
+                            .db
+                            .machine_by_fingerprint(&fp)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                            .flatten();
                         let res = match known {
                             Some(m) => {
                                 drop(permit);
@@ -124,7 +136,10 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
 }
 
 async fn reject(tx: &FrameTx, code: ErrorCode, msg: &str) -> Result<()> {
-    let _ = tx.json(&LinkMsg::Reject(ErrorBody::new(code, msg))).await;
+    aaa_common::diagnostic::ignored(
+        tx.json(&LinkMsg::Reject(ErrorBody::new(code, msg))).await,
+        "수신자가 끝난 뒤에도 현재 작업은 마친다",
+    );
     tokio::time::sleep(Duration::from_millis(50)).await;
     bail!("{msg}")
 }
@@ -164,7 +179,11 @@ async fn enroll<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     tx.json(&LinkMsg::EnrollPending).await?;
     tracing::info!(name = %req.machine_name, "등록 요청: host에서 확인 코드로 승인을 기다린다");
     // 상대가 끊으면 대기를 버린다
-    let closed = async { while let Ok(Some(_)) = rx.next().await {} };
+    let closed = async {
+        while let Ok(Some(_)) =
+            rx.next().await.inspect_err(|error| aaa_common::diagnostic::observe(error, "수신 루프 종료 원인"))
+        {}
+    };
     tokio::select! {
         r = accepted => match r {
             Ok(()) => {
@@ -173,7 +192,7 @@ async fn enroll<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 tracing::info!(name = %req.machine_name, "등록 승인");
                 Ok(())
             }
-            Err(_) => reject(&tx, ErrorCode::EnrollCodeMismatch, "등록이 승인되지 않았다").await,
+            Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); reject(&tx, ErrorCode::EnrollCodeMismatch, "등록이 승인되지 않았다").await },
         },
         _ = closed => {
             host.enroll_cancel(&req.machine_name, fp);
@@ -215,7 +234,10 @@ async fn serve(
     let mut cleanup = None;
     let result =
         AssertUnwindSafe(serve_connection(host.clone(), stream, known, pid, &mut cleanup)).catch_unwind().await;
-    let panicked = result.is_err();
+    let panicked = result
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err();
     if panicked {
         host.task_panicked(Task::AgentLink);
     }
@@ -227,11 +249,23 @@ async fn serve(
             host.agent_disconnected(&mid, conn.generation);
         }
     }));
-    if cleaned.is_err() && !panicked {
+    if cleaned
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_err()
+        && !panicked
+    {
         host.task_panicked(Task::AgentLink);
     }
     match result {
-        Ok(result) if cleaned.is_ok() => result,
+        Ok(result)
+            if cleaned
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok() =>
+        {
+            result
+        }
         _ => bail!("agent-link panic: 내용 숨김"),
     }
 }
@@ -268,7 +302,16 @@ async fn serve_connection(
             let name = known
                 .as_ref()
                 .map(|(id, _)| id.as_str())
-                .and_then(|id| host.db.machines().ok()?.into_iter().find(|m| m.id == id))
+                .and_then(|id| {
+                    host.db
+                        .machines()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?
+                        .into_iter()
+                        .find(|m| m.id == id)
+                })
                 .map_or(req.machine_name, |m| m.name);
             return reject(&tx, ErrorCode::BadRequest, &already_enrolled(&name)).await;
         }
@@ -290,7 +333,10 @@ async fn serve_connection(
     }
     if local {
         // 시작 중이면 웹을 연 뒤에 보낸다(`Host::web_gate`)
-        let _ = host.web_gate.subscribe().wait_for(|open| *open).await;
+        aaa_common::diagnostic::ignored(
+            host.web_gate.subscribe().wait_for(|open| *open).await,
+            "보조 작업 실패 뒤 기존 처리를 계속한다",
+        );
     }
     let terminal_zstd = !local && hello.features.iter().any(|f| f == aaa_proto::TERMINAL_ZSTD_FEATURE);
     tx.json(&LinkMsg::Welcome(HostWelcome {
@@ -333,7 +379,13 @@ async fn serve_connection(
             loop {
                 tokio::time::sleep(PING_EVERY).await;
                 seq += 1;
-                if tx.json(&LinkMsg::Ping { seq }).await.is_err() {
+                if tx
+                    .json(&LinkMsg::Ping { seq })
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -352,7 +404,7 @@ async fn serve_connection(
         loop {
             let next = tokio::time::timeout(DEAD_AFTER, rx.next()).await;
             match next {
-                Err(_) => bail!("{}초 동안 agent 응답이 없다", DEAD_AFTER.as_secs()),
+                Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다"); bail!("{}초 동안 agent 응답이 없다", DEAD_AFTER.as_secs()) },
                 Ok(Err(e)) => return Err(e.into()),
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(c)))) => host.on_chunk(&mid, c),
@@ -361,7 +413,7 @@ async fn serve_connection(
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
                     msg @ LinkMsg::Event(AgentEvent::Image { .. }) => msg,
                     msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. } | AgentResponse::ReportTransfer(_) | AgentResponse::ReportFileChunk { .. }), .. } => msg,
-                    msg => aaa_common::redact::json(msg).map_err(|_| anyhow::anyhow!("agent 메시지 가림 거부"))?,
+                    msg => aaa_common::redact::json(msg).map_err(|source_error| aaa_common::diagnostic::context(source_error, anyhow::anyhow!("agent 메시지 가림 거부")))?,
                 } {
                     LinkMsg::Event(AgentEvent::Image { request_id, session, request }) => {
                         if hello.features.iter().any(|f| f == "imagegen.v1") {
@@ -370,8 +422,8 @@ async fn serve_connection(
                                 let result = h.image_request(&m, &session, request).await.map_err(|mut e| {
                                     e.message = aaa_common::redact::text(&e.message); e
                                 });
-                                let _ = tx.json(&LinkMsg::Req { id: format!("image-{request_id}"), deadline_ms: None,
-                                    body: aaa_proto::AgentRequest::ImageReply { request_id, result: result.into() } }).await;
+                                aaa_common::diagnostic::ignored(tx.json(&LinkMsg::Req { id: format!("image-{request_id}"), deadline_ms: None,
+                                    body: aaa_proto::AgentRequest::ImageReply { request_id, result: result.into() } }).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
                             });
                         }
                     }
@@ -384,7 +436,7 @@ async fn serve_connection(
                             host.on_subscribed(session, snapshot.clone(), *offset);
                         }
                         if let Some(waiter) = pending.lock().unwrap().remove(&id) {
-                            let _ = waiter.send(result);
+                            aaa_common::diagnostic::ignored(waiter.send(result), "수신자가 끝난 뒤에도 현재 작업은 마친다");
                         }
                     }
                     LinkMsg::Event(AgentEvent::SessionStarted(info)) => host.on_session(&mid, info, true),
@@ -416,7 +468,7 @@ async fn serve_connection(
                     }
                     LinkMsg::Event(AgentEvent::Health(h)) => host.on_health(&mid, h),
                     LinkMsg::Ping { seq } => {
-                        let _ = tx.json(&LinkMsg::Pong { seq }).await;
+                        aaa_common::diagnostic::ignored(tx.json(&LinkMsg::Pong { seq }).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
                     }
                     LinkMsg::Pong { .. } => {}
                     other => tracing::debug!("무시한 agent 메시지: {other:?}"),
@@ -433,7 +485,12 @@ async fn serve_connection(
 
 /// 같은 머신의 agent(UDS, 같은 사용자): 등록 없이 로컬 머신으로 받아들인다.
 async fn register_local(host: &Host, hello: &AgentHello, tx: &FrameTx) -> Result<()> {
-    let known = host.db.machine_by_name(&hello.machine_name).ok().flatten();
+    let known = host
+        .db
+        .machine_by_name(&hello.machine_name)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .flatten();
     if let Some(m) = &known
         && m.id != hello.machine_id
     {
@@ -478,8 +535,26 @@ mod post_tests {
             tx.json(&LinkMsg::InstallEnrollProbe { proto: AGENT_LINK }).await.unwrap();
             if rekey {
                 // stale 연결에는 다른 key의 기존 등록 결과도 주지 않는다.
-                assert!(tokio::time::timeout(Duration::from_secs(10), rx.control::<LinkMsg>()).await.unwrap().is_err());
-                assert!(running.await.unwrap().is_err());
+                assert!(
+                    tokio::time::timeout(Duration::from_secs(10), rx.control::<LinkMsg>())
+                        .await
+                        .unwrap()
+                        .inspect_err(|error| aaa_common::diagnostic::observe(
+                            error,
+                            "성공 여부만 쓰는 분기의 하위 오류"
+                        ))
+                        .is_err()
+                );
+                assert!(
+                    running
+                        .await
+                        .unwrap()
+                        .inspect_err(|error| aaa_common::diagnostic::observe(
+                            error,
+                            "성공 여부만 쓰는 분기의 하위 오류"
+                        ))
+                        .is_err()
+                );
             } else {
                 assert!(matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::InstallEnrollCapabilities { .. }));
                 tx.json(&LinkMsg::InstallAgentQuery {
@@ -555,7 +630,11 @@ mod post_tests {
         rec.work_dir = Some("/work/.aaa/p-t-0001".into());
         host.db.thread_import("p", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
         let fake = tokio::spawn(async move {
-            while let Ok(msg) = rx.control::<LinkMsg>().await {
+            while let Ok(msg) = rx
+                .control::<LinkMsg>()
+                .await
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "수신 루프 종료 원인"))
+            {
                 match msg {
                     LinkMsg::Req { id, body: request, .. } => {
                         let response = match request {
@@ -905,9 +984,29 @@ mod terminal_compression_tests {
                         .unwrap();
                         drop(tx);
                         drop(rx);
-                        assert!(tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().is_ok());
+                        assert!(
+                            tokio::time::timeout(Duration::from_secs(3), running)
+                                .await
+                                .unwrap()
+                                .unwrap()
+                                .inspect_err(|error| aaa_common::diagnostic::observe(
+                                    error,
+                                    "성공 여부만 쓰는 분기의 하위 오류"
+                                ))
+                                .is_ok()
+                        );
                     } else {
-                        assert!(tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().is_err());
+                        assert!(
+                            tokio::time::timeout(Duration::from_secs(3), running)
+                                .await
+                                .unwrap()
+                                .unwrap()
+                                .inspect_err(|error| aaa_common::diagnostic::observe(
+                                    error,
+                                    "성공 여부만 쓰는 분기의 하위 오류"
+                                ))
+                                .is_err()
+                        );
                     }
                 }
             }

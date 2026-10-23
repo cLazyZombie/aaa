@@ -6,14 +6,15 @@ use std::path::PathBuf;
 
 type Result<T> = std::result::Result<T, Box<InstallResult>>;
 pub(super) fn require_outside(state: &Path) -> Result<()> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| error("installation_authorization_unavailable", 3))?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("installation_authorization_unavailable", 3))
+    })?;
     rt.block_on(outside_async(state))
 }
 pub(super) async fn outside_async(state: &Path) -> Result<()> {
-    crate::person::require("설치 승인/보호 표시").map_err(|_| error("installation_external_tty_required", 3))?;
+    crate::person::require("설치 승인/보호 표시").map_err(|source_error| {
+        aaa_common::diagnostic::context(source_error, error("installation_external_tty_required", 3))
+    })?;
     if !std::io::stdout().is_terminal() {
         return Err(error("installation_private_display_required", 3));
     }

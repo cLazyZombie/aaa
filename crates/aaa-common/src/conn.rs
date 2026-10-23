@@ -46,11 +46,16 @@ impl FrameTx {
         let Some((data, _)) = msg.payload() else { return self.json(&msg).await };
         let bytes = data.0.len();
         if bytes > aaa_proto::TERMINAL_PAYLOAD_MAX {
-            let _ = self.tx.send(Out::Stop).await;
+            crate::diagnostic::ignored(self.tx.send(Out::Stop).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
             return Err(Closed);
         }
-        let Ok(permit) = self.payload_bytes.clone().try_acquire_many_owned(bytes.max(1) as u32) else {
-            let _ = self.tx.send(Out::Stop).await;
+        let Ok(permit) = self
+            .payload_bytes
+            .clone()
+            .try_acquire_many_owned(bytes.max(1) as u32)
+            .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            crate::diagnostic::ignored(self.tx.send(Out::Stop).await, "수신자가 끝난 뒤에도 현재 작업은 마친다");
             return Err(Closed);
         };
         self.tx.send(Out::Payload(Box::new(msg), permit)).await.map_err(|_| Closed)
@@ -96,8 +101,8 @@ pub fn spawn_writer<W: AsyncWrite + Unpin + Send + 'static>(mut w: W, max: usize
                     let codec = mode.load(Ordering::Relaxed).then_some(aaa_proto::TerminalCodec::Zstd);
                     match crate::terminal_payload::encode_async(*msg, codec).await {
                         Ok(bytes) => (FrameKind::Control, bytes, Some(permit)),
-                        Err(_) => {
-                            tracing::warn!("터미널 전송 본문 거부");
+                        Err(source_error) => {
+                            tracing::warn!(error = %crate::diagnostic::Cause::capture(&source_error), "터미널 전송 본문 거부");
                             break;
                         }
                     }
@@ -114,7 +119,7 @@ pub fn spawn_writer<W: AsyncWrite + Unpin + Send + 'static>(mut w: W, max: usize
             }
         }
         use tokio::io::AsyncWriteExt;
-        let _ = w.shutdown().await;
+        crate::diagnostic::ignored(w.shutdown().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     });
     FrameTx { tx, terminal_zstd, payload_bytes: Arc::new(tokio::sync::Semaphore::new(PENDING_BYTES)) }
 }
@@ -144,9 +149,11 @@ impl FrameOut {
         match self.rx.recv().await? {
             Out::Stop => None,
             Out::Frame(kind, payload) => Some((kind, payload)),
-            Out::Payload(msg, _permit) => {
-                crate::terminal_payload::encode_async(*msg, None).await.ok().map(|bytes| (FrameKind::Control, bytes))
-            }
+            Out::Payload(msg, _permit) => crate::terminal_payload::encode_async(*msg, None)
+                .await
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+                .map(|bytes| (FrameKind::Control, bytes)),
         }
     }
 }

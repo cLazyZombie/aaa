@@ -57,7 +57,10 @@ impl ColorFronts {
 pub(crate) fn spawn_pushes(conn: AgentConn, current: Option<TermColors>) -> mpsc::UnboundedSender<ColorPush> {
     let (tx, mut rx) = mpsc::unbounded_channel::<ColorPush>();
     if let Some(colors) = current {
-        let _ = tx.send(ColorPush { colors, done: None });
+        aaa_common::diagnostic::ignored(
+            tx.send(ColorPush { colors, done: None }),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     }
     tokio::spawn(async move {
         while let Some(p) = rx.recv().await {
@@ -65,7 +68,7 @@ pub(crate) fn spawn_pushes(conn: AgentConn, current: Option<TermColors>) -> mpsc
                 tracing::debug!("화면 색을 보내지 못했다: {}", e.message);
             }
             if let Some(done) = p.done {
-                let _ = done.send(());
+                aaa_common::diagnostic::ignored(done.send(()), "수신자가 끝난 뒤에도 현재 작업은 마친다");
             }
         }
     });
@@ -76,7 +79,10 @@ pub(crate) fn spawn_pushes(conn: AgentConn, current: Option<TermColors>) -> mpsc
 pub(crate) fn push_all(i: &Inner) {
     let Some(colors) = i.colors.current else { return };
     for tx in i.machines.values().filter_map(|m| m.colors.as_ref()) {
-        let _ = tx.send(ColorPush { colors, done: None });
+        aaa_common::diagnostic::ignored(
+            tx.send(ColorPush { colors, done: None }),
+            "수신자가 끝난 뒤에도 현재 작업은 마친다",
+        );
     }
 }
 
@@ -93,7 +99,9 @@ impl Host {
         let machine = i.panes.get(pane)?.machine_id.clone();
         let tx = i.machines.get(&machine)?.colors.as_ref()?;
         let (done, wait) = oneshot::channel();
-        tx.send(ColorPush { colors: current, done: Some(done) }).ok()?;
+        tx.send(ColorPush { colors: current, done: Some(done) })
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+            .ok()?;
         Some(wait)
     }
 }

@@ -6,20 +6,20 @@ const CONFIG: &str = "/localapi/v0/serve-config";
 const STATUS: &str = "/localapi/v0/status";
 const MAX: usize = 1024 * 1024;
 fn unavailable() -> ExactError {
-    ExactError { code: "tailscale_conditional_apply_unavailable", conflict: false }
+    ExactError { code: "tailscale_conditional_apply_unavailable", conflict: false, cause: None }
 }
 fn permission() -> ExactError {
-    ExactError { code: "tailscale_serve_permission_required", conflict: false }
+    ExactError { code: "tailscale_serve_permission_required", conflict: false, cause: None }
 }
 fn conflict() -> ExactError {
-    ExactError { code: "serve_port_conflict", conflict: true }
+    ExactError { code: "serve_port_conflict", conflict: true, cause: None }
 }
 fn response(response: &crate::http::Response) -> std::result::Result<(), ExactError> {
     match response.status {
         200 => Ok(()),
         412 => Err(conflict()),
         401 | 403 => Err(permission()),
-        _ => Err(ExactError { code: "tailscale_serve_setup_required", conflict: false }),
+        _ => Err(ExactError { code: "tailscale_serve_setup_required", conflict: false, cause: None }),
     }
 }
 async fn connect() -> std::result::Result<aaa_common::ipc::LocalStream, ExactError> {
@@ -28,7 +28,7 @@ async fn connect() -> std::result::Result<aaa_common::ipc::LocalStream, ExactErr
         // 이 prefix는 관리자만 server를 만들 수 있다. 임의 pipe/user-mode fallback은 사용하지 않는다.
         let pipe = tokio::net::windows::named_pipe::ClientOptions::new()
             .open(r"\\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled")
-            .map_err(|_| unavailable())?;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
         Ok(Box::new(pipe))
     }
     #[cfg(not(windows))]
@@ -43,10 +43,12 @@ async fn request(
     body: &[u8],
 ) -> std::result::Result<crate::http::Response, ExactError> {
     tokio::time::timeout(Duration::from_secs(10), async {
-        crate::http::request_stream(connect().await?, method, path, headers, body, MAX).await.map_err(|_| unavailable())
+        crate::http::request_stream(connect().await?, method, path, headers, body, MAX)
+            .await
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))
     })
     .await
-    .map_err(|_| unavailable())?
+    .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?
 }
 pub struct Conditional {
     pub snapshot: Exact,
@@ -62,8 +64,10 @@ pub async fn conditional_snapshot(target_port: u16, port: u16) -> std::result::R
         .filter(|etag| !etag.is_empty() && etag.len() <= 256 && etag.bytes().all(|b| b.is_ascii_graphic()))
         .ok_or_else(unavailable)?
         .to_owned();
-    let status = String::from_utf8(status.body).map_err(|_| unavailable())?;
-    let serve = String::from_utf8(config.body).map_err(|_| unavailable())?;
+    let status = String::from_utf8(status.body)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
+    let serve = String::from_utf8(config.body)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
     let snapshot = exact(Some(&TsOutput { status: Some(status), serve: Some(serve) }), target_port, port)?;
     Ok(Conditional { snapshot, etag })
 }
@@ -77,7 +81,8 @@ async fn post<S: AsyncRead + AsyncWrite + Unpin>(
     {
         return Err(unavailable());
     }
-    let body = serde_json::to_vec(&conditional.snapshot.desired_config()).map_err(|_| unavailable())?;
+    let body = serde_json::to_vec(&conditional.snapshot.desired_config())
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
     let reply = crate::http::request_stream(
         stream,
         "POST",
@@ -87,7 +92,7 @@ async fn post<S: AsyncRead + AsyncWrite + Unpin>(
         MAX,
     )
     .await
-    .map_err(|_| unavailable())?;
+    .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))?;
     response(&reply)
 }
 impl Conditional {
@@ -97,7 +102,7 @@ impl Conditional {
         }
         tokio::time::timeout(Duration::from_secs(10), async { post(connect().await?, &self).await })
             .await
-            .map_err(|_| unavailable())??;
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, unavailable()))??;
         let after = conditional_snapshot(self.snapshot.target_port, self.snapshot.port).await?.snapshot;
         if !after.reused || !self.snapshot.preserves(&after) {
             return Err(conflict());

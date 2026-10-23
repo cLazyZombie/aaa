@@ -48,8 +48,10 @@ pub(crate) fn inside(root: &Path, path: &Path) -> Result<PathBuf, String> {
     if !path.is_absolute() || path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         return Err(deny());
     }
-    let root = std::fs::canonicalize(root).map_err(|_| "기록 폴더가 없다".to_string())?;
-    let real = std::fs::canonicalize(path).map_err(|_| "기록 파일이 없다".to_string())?;
+    let root = std::fs::canonicalize(root)
+        .map_err(|e| aaa_common::diagnostic::context(e, "기록 폴더를 열지 못했다".to_string()))?;
+    let real = std::fs::canonicalize(path)
+        .map_err(|e| aaa_common::diagnostic::context(e, "기록 파일을 열지 못했다".to_string()))?;
     if !real.starts_with(&root) || real.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         return Err(deny());
     }
@@ -79,7 +81,9 @@ pub(crate) fn codex_hint(root: &Path, id: &str, transcript: &str) -> Option<Path
     if !aaa_common::util::harness_session_ok(id) {
         return None;
     }
-    let path = inside(root, Path::new(transcript)).ok()?;
+    let path = inside(root, Path::new(transcript))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     codex_record_name(&path, id).then_some(path)
 }
 
@@ -90,9 +94,17 @@ pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
     }
     let mut dirs = vec![(root.to_path_buf(), 0)];
     while let Some((dir, depth)) = dirs.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         for e in rd.flatten() {
-            let Ok(ft) = e.file_type() else { continue };
+            let Ok(ft) = e.file_type().inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if ft.is_dir() && depth < 3 {
                 dirs.push((e.path(), depth + 1));
             } else if ft.is_file() && codex_record_name(&e.path(), id) {
@@ -112,13 +124,22 @@ pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: 
     if !aaa_common::util::harness_session_ok(id) {
         return Err("Codex thread-id 형식이 아니다".into());
     }
-    let cwd = std::fs::canonicalize(cwd).map_err(|_| "실행 작업 폴더가 없다")?;
+    let cwd = std::fs::canonicalize(cwd)
+        .map_err(|e| aaa_common::diagnostic::context(e, "실행 작업 폴더를 열지 못했다".to_string()))?;
     let mut found = None;
     let mut dirs = vec![(root.to_path_buf(), 0)];
     while let Some((dir, depth)) = dirs.pop() {
-        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(dir)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         for entry in rd.flatten() {
-            let Ok(kind) = entry.file_type() else { continue };
+            let Ok(kind) = entry.file_type().inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             if kind.is_dir() && depth < 3 {
                 dirs.push((entry.path(), depth + 1));
                 continue;
@@ -127,22 +148,47 @@ pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: 
             if !kind.is_file() || !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
                 continue;
             }
-            let Ok(path) = inside(root, &entry.path()) else { continue };
-            let Ok(file) = std::fs::File::open(&path) else { continue };
+            let Ok(path) = inside(root, &entry.path()).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
+            let Ok(file) = std::fs::File::open(&path).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             // session_meta 첫 줄만 읽는다. 손상된 거대 줄·FIFO·symlink를 따라가지 않는다.
             let mut bytes = Vec::new();
-            if std::io::BufReader::new(file.take(CHUNK)).read_until(b'\n', &mut bytes).is_err()
+            if std::io::BufReader::new(file.take(CHUNK))
+                .read_until(b'\n', &mut bytes)
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_err()
                 || bytes.last() != Some(&b'\n')
             {
                 continue;
             }
-            let Ok(meta) = serde_json::from_slice::<Value>(&bytes) else { continue };
+            let Ok(meta) = serde_json::from_slice::<Value>(&bytes).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                continue;
+            };
             let p = &meta["payload"];
             if meta["type"] != "session_meta"
                 || p["source"] != "cli"
                 || !p["timestamp"].as_str().and_then(aaa_common::util::parse_iso).is_some_and(|t| t >= started_ms)
                 || !p["id"].as_str().is_some_and(|s| codex_record_name(&path, s))
-                || !p["cwd"].as_str().and_then(|s| std::fs::canonicalize(s).ok()).is_some_and(|p| p == cwd)
+                || !p["cwd"]
+                    .as_str()
+                    .and_then(|s| {
+                        std::fs::canonicalize(s)
+                            .inspect_err(|error| {
+                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                            })
+                            .ok()
+                    })
+                    .is_some_and(|p| p == cwd)
             {
                 continue;
             }
@@ -317,7 +363,16 @@ fn codex_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
             msg(role, &text.join("\n")).into_iter().collect()
         }
         Some("function_call") => {
-            let args: Value = p["arguments"].as_str().and_then(|a| serde_json::from_str(a).ok()).unwrap_or(Value::Null);
+            let args: Value = p["arguments"]
+                .as_str()
+                .and_then(|a| {
+                    serde_json::from_str(a)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                })
+                .unwrap_or(Value::Null);
             msg(ChatRole::Tool, &tool_line(p["name"].as_str().unwrap_or("tool"), &args)).into_iter().collect()
         }
         // 생각은 요약(summary_text)만 남는다(본문은 암호화되어 있다)
@@ -357,7 +412,11 @@ fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
         if !line.windows(15).any(|w| w == b"queue-operation") {
             continue;
         }
-        let Ok(v) = serde_json::from_slice::<Value>(line) else { continue };
+        let Ok(v) = serde_json::from_slice::<Value>(line)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            continue;
+        };
         if v["type"] != "queue-operation" {
             continue;
         }
@@ -522,9 +581,23 @@ pub(crate) fn read_path(
 
 /// 기록 파일이 바뀌었는지 보는 값(참고 conversation-monitor.ts `fileIdentity`): 장치·inode·크기·고친 시각. 없으면 `missing`
 pub fn identity(path: &Path) -> String {
-    let Ok(m) = std::fs::metadata(path) else { return "missing".into() };
-    let modified =
-        m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    let Ok(m) = std::fs::metadata(path)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return "missing".into();
+    };
+    let modified = m
+        .modified()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
+        .map_or(0, |d| d.as_nanos());
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;

@@ -23,12 +23,18 @@ const LAB_DISABLED: &str = "시험에서는 명시한 이미지 harness만 실�
 const MAX_LINE: usize = 72 * 1024 * 1024;
 
 pub(crate) struct RunFailure {
-    pub reason: &'static str,
+    pub reason: String,
     pub uncertain: bool,
     pub sent: bool,
 }
 impl From<&'static str> for RunFailure {
     fn from(reason: &'static str) -> Self {
+        Self { reason: reason.into(), uncertain: false, sent: false }
+    }
+}
+
+impl From<String> for RunFailure {
+    fn from(reason: String) -> Self {
         Self { reason, uncertain: false, sent: false }
     }
 }
@@ -36,7 +42,10 @@ impl From<&'static str> for RunFailure {
 struct Home(PathBuf);
 impl Drop for Home {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        aaa_common::diagnostic::ignored(
+            std::fs::remove_dir_all(&self.0),
+            "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
     }
 }
 struct Proxy(tokio::task::JoinHandle<()>);
@@ -66,50 +75,52 @@ fn command(exe: &Path, home: &Path) -> tokio::process::Command {
         .kill_on_drop(true);
     c
 }
-async fn line<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, &'static str> {
+async fn line<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, String> {
     let mut out = Vec::new();
     loop {
-        let b = r.fill_buf().await.map_err(|_| FAILED)?;
+        let b = r.fill_buf().await.map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
         if b.is_empty() {
-            return Err(FAILED);
+            return Err(FAILED.into());
         }
         let n = b.iter().position(|b| *b == b'\n').map(|n| n + 1).unwrap_or(b.len());
         if out.len() + n > MAX_LINE {
-            return Err(FAILED);
+            return Err(FAILED.into());
         }
         let end = b[n - 1] == b'\n';
         out.extend_from_slice(&b[..n]);
         r.consume(n);
         if end {
-            return serde_json::from_slice(&out).map_err(|_| FAILED);
+            return serde_json::from_slice(&out).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()));
         }
     }
 }
-async fn write(tx: &mut tokio::process::ChildStdin, v: Value) -> Result<(), &'static str> {
-    let mut bytes = serde_json::to_vec(&v).map_err(|_| FAILED)?;
+async fn write(tx: &mut tokio::process::ChildStdin, v: Value) -> Result<(), String> {
+    let mut bytes = serde_json::to_vec(&v).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     bytes.push(b'\n');
-    tx.write_all(&bytes).await.map_err(|_| FAILED)
+    tx.write_all(&bytes).await.map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))
 }
-async fn response<R: AsyncBufRead + Unpin>(rx: &mut R, id: u32) -> Result<Value, &'static str> {
+async fn response<R: AsyncBufRead + Unpin>(rx: &mut R, id: u32) -> Result<Value, String> {
     for _ in 0..128 {
         let v = line(rx).await?;
         if v.get("id").and_then(Value::as_u64) == Some(id as u64) && v.get("method").is_none() {
             if v.get("error").is_some() {
-                return Err(FAILED);
+                return Err(FAILED.into());
             }
             return Ok(v["result"].clone());
         }
         if v.get("id").is_some() {
-            return Err(FAILED);
+            return Err(FAILED.into());
         } // 승인·동적 도구·로그인 요청은 실행하지 않는다.
     }
-    Err(FAILED)
+    Err(FAILED.into())
 }
 
-async fn proxy(h: &Arc<Host>, job: &Job, version: u64) -> Result<(Proxy, String), &'static str> {
+async fn proxy(h: &Arc<Host>, job: &Job, version: u64) -> Result<(Proxy, String), String> {
     use axum::{Router, http::StatusCode, routing::post};
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|_| FAILED)?;
-    let addr = listener.local_addr().map_err(|_| FAILED)?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
+    let addr = listener.local_addr().map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     let cap = util::new_id();
     let route = format!("/{cap}");
     let url = format!("http://{addr}{route}");
@@ -127,16 +138,34 @@ async fn proxy(h: &Arc<Host>, job: &Job, version: u64) -> Result<(Proxy, String)
                 let version = version.clone();
                 async move {
                     let mut version = version.lock().await;
-                    if h.accounts.generation(&account).ok().as_deref() != Some(&generation) {
+                    if h.accounts
+                        .generation(&account)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .as_deref()
+                        != Some(&generation)
+                    {
                         return (StatusCode::UNAUTHORIZED, "{}".to_string());
                     }
-                    let Ok(body) = String::from_utf8(body.to_vec()) else {
+                    let Ok(body) = String::from_utf8(body.to_vec()).inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+                    }) else {
                         return (StatusCode::BAD_REQUEST, "{}".into());
                     };
                     let (result, outcome) = h.accounts.refresh(&account, *version, &SecretText(body)).await;
                     // 중앙 gate 대기 중 다시 로그인했으면 Served가 새 신원을 담을 수 있다.
                     // 옛 이미지 작업에는 그 응답을 전달하지 않는다.
-                    if h.accounts.generation(&account).ok().as_deref() != Some(&generation) {
+                    if h.accounts
+                        .generation(&account)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()
+                        .as_deref()
+                        != Some(&generation)
+                    {
                         return (StatusCode::UNAUTHORIZED, "{}".into());
                     }
                     h.account_refresh_seen(&account, outcome, *version);
@@ -152,14 +181,14 @@ async fn proxy(h: &Arc<Host>, job: &Job, version: u64) -> Result<(Proxy, String)
         .layer(axum::extract::DefaultBodyLimit::max(128 * 1024));
     Ok((
         Proxy(tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
+            aaa_common::diagnostic::ignored(axum::serve(listener, app).await, "보조 작업 실패 뒤 기존 처리를 계속한다");
         })),
         url,
     ))
 }
 
 // 명시한 모델만 사용한다. API key·로컬 설정·자동 model 전환·망 재시도는 허용하지 않는다.
-fn config(model: &str) -> Result<Vec<u8>, &'static str> {
+fn config(model: &str) -> Result<Vec<u8>, String> {
     let mut value = toml::Table::new();
     value.insert("model".into(), model.into());
     value.insert("model_provider".into(), "aaa-image".into());
@@ -219,7 +248,7 @@ fn config(model: &str) -> Result<Vec<u8>, &'static str> {
         )])
         .into(),
     );
-    toml::to_string(&value).map(String::into_bytes).map_err(|_| FAILED)
+    toml::to_string(&value).map(String::into_bytes).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))
 }
 
 pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>, Option<u64>), RunFailure> {
@@ -228,29 +257,41 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
         return Err(LAB_DISABLED.into());
     }
     let exe = fake.as_deref().map(Path::new).unwrap_or(Path::new("codex"));
-    let dir = h.image_dir(&job.begin.id).map_err(|_| FAILED)?;
+    let dir = h.image_dir(&job.begin.id).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     let path = dir.join("rpc-home");
-    if path.symlink_metadata().is_ok() {
+    if path
+        .symlink_metadata()
+        .as_ref()
+        .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+        .is_ok()
+    {
         return Err(FAILED.into());
     }
-    util::ensure_private_dir(&path).map_err(|_| FAILED)?;
-    let home = Home(path.canonicalize().map_err(|_| FAILED)?);
+    util::ensure_private_dir(&path).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
+    let home = Home(path.canonicalize().map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?);
     let version = aaa_common::harness_version::observe(command(exe, &home.0), "codex").await;
-    let _ = util::write_private(&dir.join("harness-version.log"), version.as_bytes());
+    aaa_common::diagnostic::ignored(
+        util::write_private(&dir.join("harness-version.log"), version.as_bytes()),
+        "판 조회 로그 기록 실패 뒤 이미지 작업은 계속한다",
+    );
     let account = job.view.account.as_ref().ok_or(FAILED)?;
-    let credential = h.accounts.credential(account).map_err(|_| FAILED)?;
+    let credential =
+        h.accounts.credential(account).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     if credential.auth_generation.as_ref() != job.allocation.as_ref().map(|a| &a.generation) {
         return Err(FAILED.into());
     }
-    let auth: Value = serde_json::from_str(&credential.secret.0).map_err(|_| FAILED)?;
+    let auth: Value = serde_json::from_str(&credential.secret.0)
+        .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     if auth["tokens"]["access_token"].as_str().is_none()
         || auth["tokens"]["refresh_token"].as_str().is_none()
         || auth.get("OPENAI_API_KEY").is_some_and(|v| !v.is_null())
     {
         return Err(FAILED.into());
     }
-    util::write_private(&home.0.join("auth.json"), credential.secret.0.as_bytes()).map_err(|_| FAILED)?;
-    util::write_private(&home.0.join("config.toml"), &config(&job.model)?).map_err(|_| FAILED)?;
+    util::write_private(&home.0.join("auth.json"), credential.secret.0.as_bytes())
+        .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
+    util::write_private(&home.0.join("config.toml"), &config(&job.model)?)
+        .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     let (_proxy, refresh_url) = proxy(h, job, credential.version).await?;
     let mut child = command(exe, &home.0)
         .arg("app-server")
@@ -260,7 +301,7 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .map_err(|_| FAILED)?;
+        .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     let mut sent = false;
     let mut terminal = false;
     let exchange = async {
@@ -275,13 +316,14 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
             "developerInstructions":"Use the supplied image inputs in order. After generating the image, stop. Do not read any local files or change models."}})).await?;
         let start = response(&mut rx, 2).await?;
         if start["model"] != job.model || start["modelProvider"] != "aaa-image" {
-            return Err("Codex가 지정한 모델·provider를 유지하지 않았다 · 생성하지 않았다");
+            return Err("Codex가 지정한 모델·provider를 유지하지 않았다 · 생성하지 않았다".into());
         }
         let thread = start.pointer("/thread/id").and_then(Value::as_str).ok_or(FAILED)?.to_string();
         let mut input = vec![json!({"type":"text","text": format!("{}\nBackground requirement: {}.", job.begin.prompt,
             if job.begin.transparent { "transparent with alpha" } else { "opaque" })})];
         for (index, _) in job.begin.inputs.iter().enumerate() {
-            let bytes = std::fs::read(dir.join(format!("input-{index}"))).map_err(|_| FAILED)?;
+            let bytes = std::fs::read(dir.join(format!("input-{index}")))
+                .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
             let mime = match image_extension(&bytes).ok_or(FAILED)? {
                 "jpg" => "image/jpeg",
                 "webp" => "image/webp",
@@ -305,15 +347,15 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
                 if v["id"] == 3 && v.get("method").is_none() {
                     if v.get("error").is_some() {
                         terminal = true;
-                        return Err(FAILED);
+                        return Err(FAILED.into());
                     }
                     continue;
                 }
-                return Err(FAILED);
+                return Err(FAILED.into());
             }
             let params = &v["params"];
             if params["threadId"].as_str().is_some_and(|id| id != thread) {
-                return Err(FAILED);
+                return Err(FAILED.into());
             }
             match v["method"].as_str() {
                 Some("thread/tokenUsage/updated") => {
@@ -325,7 +367,7 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
                 Some("turn/completed") => {
                     terminal = true;
                     if params["turn"]["status"] != "completed" {
-                        return Err(FAILED);
+                        return Err(FAILED.into());
                     }
                     if let Some(items) = params["turn"]["items"].as_array() {
                         for item in items.iter().filter(|i| i["type"] == "imageGeneration") {
@@ -333,20 +375,20 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
                         }
                     }
                     if outputs.is_empty() {
-                        return Err("Codex가 이미지 결과를 주지 않았다 · API 과금으로 전환하지 않았다");
+                        return Err("Codex가 이미지 결과를 주지 않았다 · API 과금으로 전환하지 않았다".into());
                     }
                     return Ok((outputs, tokens));
                 }
-                Some("error") if params["willRetry"] != true => return Err(FAILED),
+                Some("error") if params["willRetry"] != true => return Err(FAILED.into()),
                 _ => {}
             }
         }
-        Err(FAILED)
+        Err(FAILED.into())
     };
     let result = tokio::time::timeout(Duration::from_secs(600), exchange).await;
-    let _ = child.kill().await;
-    let _ = child.wait().await;
-    result.unwrap_or(Err("이미지 생성 10분 상한 · 결과 불명, 자동 재생성 없음")).map_err(|reason| RunFailure {
+    aaa_common::diagnostic::ignored(child.kill().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+    aaa_common::diagnostic::ignored(child.wait().await, "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+    result.unwrap_or(Err("이미지 생성 10분 상한 · 결과 불명, 자동 재생성 없음".into())).map_err(|reason| RunFailure {
         reason,
         uncertain: sent && !terminal,
         sent,
@@ -359,39 +401,40 @@ fn save_output(
     dir: &Path,
     seen: &mut HashSet<String>,
     outputs: &mut Vec<ImageFile>,
-) -> Result<(), &'static str> {
+) -> Result<(), String> {
     let id = item["id"].as_str().ok_or(FAILED)?;
     if seen.contains(id) {
         return Ok(());
     }
     if item["failure"].is_object() {
-        return Err("Codex 이미지 생성 한도·제공자 오류 · 계정과 상태를 확인한다");
+        return Err("Codex 이미지 생성 한도·제공자 오류 · 계정과 상태를 확인한다".into());
     }
     if item["status"] != "completed" || outputs.len() >= IMAGE_MAX_COUNT {
-        return Err(FAILED);
+        return Err(FAILED.into());
     }
     let bytes = if let Some(path) = item["savedPath"].as_str() {
         let path = Path::new(path);
-        let canonical = path.canonicalize().map_err(|_| FAILED)?;
+        let canonical = path.canonicalize().map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
         if !canonical.starts_with(home.join("generated_images")) || path != canonical {
-            return Err(FAILED);
+            return Err(FAILED.into());
         }
-        let m = path.symlink_metadata().map_err(|_| FAILED)?;
+        let m = path.symlink_metadata().map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
         if !m.is_file() || m.len() > IMAGE_MAX_BYTES {
-            return Err(FAILED);
+            return Err(FAILED.into());
         }
-        std::fs::read(path).map_err(|_| FAILED)?
+        std::fs::read(path).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?
     } else {
         let data = item["result"].as_str().ok_or(FAILED)?;
         if data.len() > IMAGE_MAX_BYTES as usize * 4 / 3 + 4 {
-            return Err(FAILED);
+            return Err(FAILED.into());
         }
-        STANDARD.decode(data).map_err(|_| FAILED)?
+        STANDARD.decode(data).map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?
     };
     if bytes.is_empty() || bytes.len() as u64 > IMAGE_MAX_BYTES || image_extension(&bytes).is_none() {
-        return Err(FAILED);
+        return Err(FAILED.into());
     }
-    util::write_private(&dir.join(format!("output-{}", outputs.len())), &bytes).map_err(|_| FAILED)?;
+    util::write_private(&dir.join(format!("output-{}", outputs.len())), &bytes)
+        .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     outputs.push(descriptor(&bytes));
     seen.insert(id.into());
     Ok(())

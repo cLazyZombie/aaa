@@ -114,7 +114,12 @@ impl Host {
                 .ok_or_else(|| err(ErrorCode::BadRequest, "그림은 PNG·JPEG·GIF·WebP만 첨부한다"))?,
             Some(k) => {
                 let ext = doc_ext(k).ok_or_else(|| err(ErrorCode::BadRequest, "문서는 md·html만 첨부한다"))?;
-                if std::str::from_utf8(bytes).is_err() || bytes.contains(&0) {
+                if std::str::from_utf8(bytes)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err()
+                    || bytes.contains(&0)
+                {
                     return Err(err(ErrorCode::BadRequest, "문서가 UTF-8 글이 아니다"));
                 }
                 ext
@@ -139,9 +144,12 @@ impl Host {
                 }
             }
             Ok(_) => return Err(err(ErrorCode::Internal, format!("uploads/{name}가 일반 파일이 아니다"))),
-            Err(_) => std::fs::create_dir_all(&dir)
-                .and_then(|_| aaa_common::util::write_private(&path, bytes))
-                .map_err(|e| err(ErrorCode::Internal, e.to_string()))?,
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                std::fs::create_dir_all(&dir)
+                    .and_then(|_| aaa_common::util::write_private(&path, bytes))
+                    .map_err(|e| err(ErrorCode::Internal, e.to_string()))?
+            }
         }
         self.db.audit(actor, "task_file", &format!("{project} {name} {} bytes", bytes.len()));
         Ok(format!("uploads/{name}"))
@@ -158,14 +166,22 @@ impl Host {
                 std::fs::read(&path).map_err(|e| err(ErrorCode::Internal, e.to_string()))
             }
             Ok(_) => Err(err(ErrorCode::BadRequest, "일반 파일이 아니거나 너무 크다")),
-            Err(_) => Err(err(ErrorCode::NotFound, format!("uploads/{name}가 없다"))),
+            Err(source_error) => {
+                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                Err(err(ErrorCode::NotFound, format!("uploads/{name}가 없다")))
+            }
         }
     }
 
     /// `--from-task`의 첨부: 메모가 가리키는 host 파일을 고르고 할 일 글의 경로를 `attachments/<이름>`으로 바꾼다. 없는 파일
     /// (보고서 사본이 agent에만 있는 것 포함)은 넘기지 않고 경고 한 줄로 알린다
     pub(crate) fn task_attachments(&self, project: &str, task: &mut String) -> (Vec<TaskFile>, Vec<String>) {
-        let Ok(dir) = self.project_dir(project) else { return (vec![], vec![]) };
+        let Ok(dir) = self
+            .project_dir(project)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+        else {
+            return (vec![], vec![]);
+        };
         let mut found: Vec<TaskFile> = Vec::new();
         let mut missing = Vec::new();
         for target in refs(task) {
@@ -173,12 +189,18 @@ impl Host {
                 dir.join("uploads")
                     .join(name)
                     .symlink_metadata()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
                     .is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES)
                     .then(|| TaskFile { name: name.to_string(), src: target.clone(), sent: false })
             } else {
                 // 보고서 안 문서: 내용 hash로 이름을 붙인다(보고서마다 같은 이름 plan.md가 겹치지 않는다)
                 library_ref(&target).and_then(|(report, path)| {
-                    let bytes = self.report_doc_bytes(project, report, path, MAX_BYTES).ok()?;
+                    let bytes = self
+                        .report_doc_bytes(project, report, path, MAX_BYTES)
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                        })
+                        .ok()?;
                     let ext = doc_ext(&path.rsplit('.').next()?.to_ascii_lowercase())?;
                     Some(TaskFile {
                         name: format!("{}.{ext}", &hex::encode(Sha256::digest(&bytes))[..16]),

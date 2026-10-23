@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "../errorDiagnostic.ts";
 import type { FileInfo } from "../gen/proto.ts";
 import { fileUriPath } from "./terminalFileLinks.ts";
 
@@ -17,7 +18,7 @@ export function markdownImagePath(src: string, markdownPath: string): string | n
   if (target === "" || /^(?:https?:|data:|blob:|\/\/)/i.test(src.trim())) return null;
   let path = fileUriPath(target);
   // a file URI comes decoded; any other path is decoded here, once
-  if (path === null) { try { path = decodeURI(target); } catch { return null; } }
+  if (path === null) { try { path = decodeURI(target); } catch (ignoredError) { logIgnoredFailure(ignoredError, "markdownImages.ts:21"); return null; } }
   if (/^~|^[A-Za-z]:|\\/.test(path)) return null;
   if (!path.startsWith("/")) {
     const folder = markdownPath.slice(0, markdownPath.lastIndexOf("/") + 1);
@@ -48,7 +49,7 @@ export async function markdownImagePreview(
     return info.size > MAX_INLINE_IMAGE_BYTES
       ? { kind: "too-large", size: info.size, downloadUrl: fileUrl(info.path, true) }
       : { kind: "inline", url: fileUrl(info.path, false) };
-  } catch {
+  } catch (ignoredError) { logIgnoredFailure(ignoredError, "markdownImages.ts:52");
     return null;
   }
 }

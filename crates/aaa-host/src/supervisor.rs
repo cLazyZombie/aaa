@@ -125,7 +125,10 @@ impl Health {
                         );
                     }
                 }
-                Err(_) => tracing::error!("저장한 host 이상 상태를 읽지 못했다"),
+                Err(source_error) => {
+                    aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                    tracing::error!("저장한 host 이상 상태를 읽지 못했다")
+                }
             }
         }
         health
@@ -143,7 +146,12 @@ impl Health {
     }
 
     fn persist(&self, db: &crate::db::Db) -> bool {
-        if db.set_meta("host_health_v1", &self.snapshot_without(None)).is_err() {
+        if db
+            .set_meta("host_health_v1", &self.snapshot_without(None))
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+        {
             tracing::error!("host 이상 상태 저장 실패");
             return false;
         }
@@ -300,7 +308,12 @@ impl Host {
         tokio::spawn(async move {
             loop {
                 // factory 생성 단계의 panic과 정상 조기 종료도 감지한다.
-                let panicked = AssertUnwindSafe(async { factory().await }).catch_unwind().await.is_err();
+                let panicked = AssertUnwindSafe(async { factory().await })
+                    .catch_unwind()
+                    .await
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_err();
                 let failures = if panicked { host.task_panicked(task) } else { host.task_failed(task) };
                 if failures > RESTARTS {
                     break;

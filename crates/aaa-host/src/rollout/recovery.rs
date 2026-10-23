@@ -175,7 +175,10 @@ impl Host {
         {
             // 세우기의 답만 잃었으면 agent에 감시가 서 있다: 그 머신의 다음 감시 세우기를 시한까지 막지 않게 취소해 둔다
             if r.spec.restart.is_some() {
-                let _ = self.guard_control(&machine, &spec, Control::Cancel).await;
+                aaa_common::diagnostic::ignored(
+                    self.guard_control(&machine, &spec, Control::Cancel).await,
+                    "보조 작업 실패 뒤 기존 처리를 계속한다",
+                );
             }
             r.state = RolloutState::Stopped;
             r.error = Some(reason);

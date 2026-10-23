@@ -502,15 +502,27 @@ pub(crate) fn suggest(t: &TaskView, open_threads: &[String]) -> Option<TaskSugge
         moved.insert(0, tail);
         title = front;
     }
-    if owner.as_deref().is_some_and(|o| owner_shape(o).is_err()) {
+    if owner.as_deref().is_some_and(|o| {
+        owner_shape(o)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+    }) {
         owner = None;
     }
-    if changes.is_empty() || check_title(&title).is_err() {
+    if changes.is_empty()
+        || check_title(&title)
+            .as_ref()
+            .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+            .is_err()
+    {
         return None;
     }
     let fields = Fields { owner: owner.as_deref(), repo: t.repo.as_deref(), thread: thread.as_deref() };
     let line = task_line("", ' ', &title, fields);
-    reads_back(&line, &title, fields).ok()?;
+    reads_back(&line, &title, fields)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     moved.extend(t.notes.iter().cloned());
     Some(TaskSuggestion { title, owner, thread, notes: moved, line, changes })
 }

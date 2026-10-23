@@ -33,8 +33,15 @@ const LOOK_EVERY: Duration = Duration::from_millis(250);
 /// 멈춘다: 웹 E2E는 thread마다 3초를 기다렸다)
 fn settle() -> Duration {
     std::env::var("AAA_TEST_BRIEF_SETTLE_MS")
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
+        .and_then(|v| {
+            v.parse::<u64>()
+                .inspect_err(|error| {
+                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                })
+                .ok()
+        })
         .map_or(SETTLE, Duration::from_millis)
 }
 
@@ -190,7 +197,11 @@ impl Host {
         // 이 확인창으로 연 질문. 확인창 하나에 질문은 한 번만 연다.
         let mut asked: Option<String> = None;
         loop {
-            let Ok(rec) = self.load(project, id) else { return };
+            let Ok(rec) = self.load(project, id).inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
+            }) else {
+                return;
+            };
             if rec.status != ThreadStatus::Open || rec.brief != BriefState::Pending {
                 return;
             }

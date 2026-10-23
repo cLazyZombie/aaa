@@ -19,7 +19,7 @@ impl std::ops::Deref for Lock {
 impl Drop for Lock {
     fn drop(&mut self) {
         #[cfg(unix)]
-        let _ = self.0.unlock();
+        aaa_common::diagnostic::ignored(self.0.unlock(), "보조 작업 실패 뒤 기존 처리를 계속한다");
     }
 }
 pub(super) fn lock(path: &std::path::Path) -> std::io::Result<Lock> {

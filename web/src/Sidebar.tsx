@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
@@ -162,7 +163,7 @@ function useFold(key: string, initial = false, oldKey?: string): [boolean, () =>
       // 예전 이름의 기억(에이전트 패널 저장소 폴더 접힘)은 새 이름이 없을 때 읽는다
       const v = localStorage.getItem(key) ?? (oldKey ? localStorage.getItem(oldKey) : null);
       return v === null ? initial : v === "1";
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "Sidebar.tsx:166");
       return initial;
     }
   });
@@ -170,7 +171,7 @@ function useFold(key: string, initial = false, oldKey?: string): [boolean, () =>
     setFolded(!folded);
     try {
       localStorage.setItem(key, folded ? "0" : "1");
-    } catch {
+    } catch (ignoredError) { logIgnoredFailure(ignoredError, "Sidebar.tsx:174");
       // 저장이 막히면 이 화면 동안만
     }
   };
@@ -575,7 +576,7 @@ function Roster(props: SidebarProps) {
         let payload: { key?: string };
         try {
           payload = JSON.parse(event.dataTransfer.getData(PANE_ROW_DRAG));
-        } catch {
+        } catch (ignoredError) { logIgnoredFailure(ignoredError, "Sidebar.tsx:579");
           return;
         }
         setDragKey(null);

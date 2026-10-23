@@ -60,9 +60,12 @@ fn profiles_in(text: &str) -> Result<std::collections::BTreeMap<String, Profile>
         return Ok(Default::default());
     }
     toml_ok(text)?;
-    toml_edit::de::from_str::<aaa_config::HostConfig>(text)
-        .map(|c| c.profiles)
-        .map_err(|_| bad("host.toml의 설정 형식이 맞지 않다: host 터미널에서 `aaa config check`로 본다"))
+    toml_edit::de::from_str::<aaa_config::HostConfig>(text).map(|c| c.profiles).map_err(|e| {
+        aaa_common::diagnostic::context(
+            e,
+            bad("host.toml의 설정 형식이 맞지 않다: host 터미널에서 `aaa config check`로 본다"),
+        )
+    })
 }
 
 fn row(name: &str, p: &Profile, builtin: bool, local: bool) -> ProfileAdminRow {
@@ -90,7 +93,9 @@ fn profile_row(profiles: &std::collections::BTreeMap<String, Profile>, name: &st
 }
 
 fn read_in(dir: &Path, file: &str) -> String {
-    std::fs::read_to_string(dir.join(file)).unwrap_or_default()
+    std::fs::read_to_string(dir.join(file))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default()
 }
 
 /// host.local.toml이 같은 key를 덮거나, `[safety]` 표 하나에 같은 key가 있으면 알린다(CLI `shadowed`와 같다). 모든 프로젝트
@@ -136,6 +141,7 @@ fn below(layers: &safety::Layers, key: &str, kept: bool) -> Option<String> {
 fn local_defines(dir: &Path, table: &str, name: &str) -> bool {
     read_in(dir, "host.local.toml")
         .parse::<toml_edit::DocumentMut>()
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
         .is_ok_and(|d| d.get(table).and_then(|t| t.get(name)).is_some())
 }
 
@@ -172,7 +178,7 @@ impl Host {
     /// env 값일 수 있다)가 들어 있다
     fn web_config(&self) -> Result<aaa_config::HostConfig, ErrorBody> {
         self.profile_config()
-            .map_err(|_| bad("host 설정을 읽지 못했다: host 터미널에서 `aaa config check`로 본다(까닭에 값이 들어 있을 수 있어 웹에 싣지 않는다)"))
+            .map_err(|e| aaa_common::diagnostic::context(e, bad("host 설정을 읽지 못했다: host 터미널에서 `aaa config check`로 본다(까닭에 값이 들어 있을 수 있어 웹에 싣지 않는다)")))
     }
 
     fn host_toml_rev(&self, dir: &Path) -> Result<file_rev::Rev, ErrorBody> {

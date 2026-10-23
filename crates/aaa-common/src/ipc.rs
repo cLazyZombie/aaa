@@ -26,7 +26,14 @@ fn pipe_name(path: &Path) -> String {
     // 같은 기존 디렉터리의 8.3 이름과 긴 이름도 같은 주소다. socket leaf는
     // 파일이 아니므로 부모만 OS에 조회한다. 조회 실패는 기존 주소를 유지한다.
     let path = PathBuf::from(path.to_string_lossy().replace('/', "\\"));
-    let expanded = path.parent().and_then(|parent| long_pipe_parent(parent).ok()).zip(path.file_name());
+    let expanded = path
+        .parent()
+        .and_then(|parent| {
+            long_pipe_parent(parent)
+                .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+                .ok()
+        })
+        .zip(path.file_name());
     legacy_pipe_name(&expanded.map_or_else(|| path.clone(), |(parent, leaf)| parent.join(leaf)))
 }
 
@@ -58,7 +65,11 @@ fn legacy_pipe_name(path: &Path) -> String {
 fn pipe_alias(path: &Path) -> Option<String> {
     // 기존 pipe 이름을 바꾸지 않는다. install의 canonical state(\\?\...)와
     // 이미 실행 중인 host의 DOS state가 같은 실제 디렉터리일 때만 별칭을 찾는다.
-    let parent = path.parent()?.canonicalize().ok()?;
+    let parent = path
+        .parent()?
+        .canonicalize()
+        .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?;
     let leaf = path.file_name()?;
     let text = leaf.to_str()?;
     if text.ends_with(['.', ' ']) || text.contains(':') {
@@ -81,7 +92,13 @@ fn pipe_alias(path: &Path) -> Option<String> {
         }
     };
     // verbatim 이름의 DOS 해석이 다른 경로를 가리키면 확장하지 않는다.
-    if alias.parent()?.canonicalize().ok()? != parent {
+    if alias
+        .parent()?
+        .canonicalize()
+        .inspect_err(|error| crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()?
+        != parent
+    {
         return None;
     }
     (alias != path).then(|| pipe_name(&alias))
@@ -109,7 +126,11 @@ impl LocalListener {
             }
             // 이전 프로세스가 남긴 socket 파일. 살아 있는 상대가 있으면 bind 전에 확인한다.
             if path.exists() {
-                if std::os::unix::net::UnixStream::connect(path).is_ok() {
+                if std::os::unix::net::UnixStream::connect(path)
+                    .as_ref()
+                    .inspect_err(|error| crate::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
+                {
                     return Err(io::Error::new(io::ErrorKind::AddrInUse, format!("이미 사용 중: {}", path.display())));
                 }
                 std::fs::remove_file(path)?;
@@ -145,7 +166,16 @@ impl LocalListener {
             let uid = unsafe { libc::getuid() };
             match s.peer_cred() {
                 Ok(c) if c.uid() == uid => {
-                    let pid = c.pid().and_then(|p| u32::try_from(p).ok()).filter(|p| *p > 0);
+                    let pid = c
+                        .pid()
+                        .and_then(|p| {
+                            u32::try_from(p)
+                                .inspect_err(|error| {
+                                    crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
+                                .ok()
+                        })
+                        .filter(|p| *p > 0);
                     return Ok((Box::new(s), pid));
                 }
                 _ => {
@@ -174,7 +204,7 @@ impl LocalListener {
 impl Drop for LocalListener {
     fn drop(&mut self) {
         #[cfg(unix)]
-        let _ = std::fs::remove_file(&self.path);
+        crate::diagnostic::ignored(std::fs::remove_file(&self.path), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
     }
 }
 
@@ -194,7 +224,15 @@ pub async fn connect_peer(path: &Path) -> io::Result<(LocalStream, Option<u32>)>
         if peer.uid() != unsafe { libc::getuid() } {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "private IPC peer owner"));
         }
-        peer.pid().and_then(|pid| u32::try_from(pid).ok()).filter(|pid| *pid > 0)
+        peer.pid()
+            .and_then(|pid| {
+                u32::try_from(pid)
+                    .inspect_err(|error| {
+                        crate::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                    })
+                    .ok()
+            })
+            .filter(|pid| *pid > 0)
     };
     #[cfg(windows)]
     let pid = {

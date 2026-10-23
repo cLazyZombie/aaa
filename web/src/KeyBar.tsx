@@ -1,3 +1,4 @@
+import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // herdr-web-ui(MIT, aa624cb) src/components/KeyBar.tsx를 옮긴 것. 바꾼 곳: lucide 아이콘·i18n 대신 aaa 글(한국어 이름표),
 // CSS는 style.css(.key-bar·.key). 맨 앞 입력줄 전환(⌨)은 터치 기기에만(Term.tsx가 넘긴다). 고지는 web/src/herdr/README.md.
 import { useCallback, useLayoutEffect, useRef, type MouseEvent, type PointerEvent, type ReactNode } from "react";
@@ -121,7 +122,7 @@ function Key({ dataKey, label, pressed, onPress, children, disabled, repeatable,
         pointer.cancelClick = false;
         repeatRef.current?.press(event.clientX, event.clientY);
         // Capture keeps release/move visible outside the key; browser panning can still cancel it.
-        try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch (ignoredError) { logIgnoredFailure(ignoredError, "KeyBar.tsx:125");}
       }}
       onPointerMove={repeatable ? (event) => {
         if (pointerRef.current.id !== event.pointerId) return;

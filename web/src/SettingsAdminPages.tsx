@@ -1,3 +1,4 @@
+import { ignoredFailure } from "./errorDiagnostic.ts";
 // 관리 GUI W5c(plan §8.357): 설정 「안전」(safety 실효값·출처, 웹은 yolo·start_threads·trust_screens·coordinator_deploy만 바꾼다),
 // 「profile」(profile 더하기·고치기·지우기와 허용 목록·기본값, 미리보기 → 적용), 「머신」의 작업 폴더(보기·점검·전환)와 Codex hook
 // (설치·제거). host가 판정한다(조작 기기만, custom profile·명령 인자 거부, 본 판과 다르면 conflict, 절대 경로만). 웹 조작 기기가 임의
@@ -38,7 +39,7 @@ function useSettingsAdmin(): boolean | null {
     let live = true;
     me()
       .then((m) => live && setOk(canSettings(m?.front_api)))
-      .catch(() => live && setOk(false));
+      .catch(ignoredFailure("SettingsAdminPages.tsx:42", () => live && setOk(false)));
     return () => {
       live = false;
     };
