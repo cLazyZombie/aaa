@@ -69,7 +69,8 @@ jobs:
         run: bash scripts/ci-local.sh --only clippy --logs . --tee
       - name: 머신 추가 host 유닛
         timeout-minutes: 15
-        run: cargo test --locked -p aaa-host --lib machine_setup::tests:: -- --nocapture
+        run: |
+          cargo test --locked -p aaa-host --lib machine_setup::tests:: -- --nocapture
       # 운영 Mac에는 등록하지 않는다. 기존 일회성 CI 계정에서만 필수 실제 등록 owner를 돈다.
       - name: macOS LaunchAgent 실제 등록·ready·instance 보존
         if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
