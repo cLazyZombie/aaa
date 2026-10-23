@@ -303,6 +303,9 @@ pub struct LinkView {
 /// FRONT_API 1.38. thread 결과물과 별도로 올린 보고서의 전체 목록 한 줄.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LibraryReport {
+    /// FRONT_API 1.114. 보관함의 불변 판. 자동 정리와 상한 계산에서 제외한다.
+    #[serde(default)]
+    pub archived: bool,
     /// FRONT_API 1.95. 특정 판 사본의 보존 용량. size는 기존 최신 사본 크기다.
     #[serde(default)]
     #[ts(type = "number")]
@@ -325,7 +328,7 @@ pub struct LibraryReport {
     /// 읽기 실패·상한 초과도 목록에서 감추지 않는다.
     pub problem: Option<String>,
     pub link: Option<LinkView>,
-    /// FRONT_API 1.43. coordinator가 사용자에게 보낸 웹 보고서(`library publish --to-user`, 「내 보고서」). 아니면 작업 보고다.
+    /// FRONT_API 1.43. 완료 보고 또는 사용자에게 보낸 보고서(「내 보고서」). 자동 표시는 같은 사본을 쓴다.
     #[serde(default)]
     pub to_user: bool,
     /// FRONT_API 1.43. `--to-user`로 보낼 때 준 제목
@@ -2011,6 +2014,10 @@ pub fn slug(title: &str) -> String {
 /// FRONT_API 1.40. 자동 정리와 dry-run이 공유하는 판정 결과(크기는 실시간 원본 제외).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LibraryPrunePlan {
+    /// FRONT_API 1.114. 상한 밖에서 따로 보존하는 사본 용량.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub archived_size: u64,
     #[ts(type = "number")]
     pub size: u64,
     #[ts(type = "number")]

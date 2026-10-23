@@ -48,7 +48,9 @@ mod input_log;
 pub mod installation;
 mod legacy_mission;
 mod library;
+mod library_archive;
 mod library_catalog;
+mod library_inventory;
 mod library_links;
 mod library_publish;
 mod library_retention;
@@ -1917,6 +1919,7 @@ impl Host {
                 let to_user = to_user.then_some(title.as_deref());
                 self.library_publish(&project, &name, &source, live, to_user, from_thread.as_deref(), actor)
             }
+            FrontRequest::LibraryArchive { reports, archived } => self.library_archive(&reports, archived, actor),
             FrontRequest::LibraryDelete { reports } => self.library_delete(&reports, actor),
             FrontRequest::LibraryImport { project, source, prefix } => {
                 self.library_import(&project, &source, &prefix, actor)
@@ -3667,6 +3670,7 @@ async fn run_host(
     }
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
     host.backfill_report_ids().map_err(|e| anyhow::anyhow!(e.message))?;
+    host.backfill_completed_reports().map_err(|e| anyhow::anyhow!(e.message))?;
     host.backfill_review_questions().map_err(|e| anyhow::anyhow!(e.message))?;
     host.forget_queued_messages();
     host.start_supervisor();

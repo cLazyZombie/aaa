@@ -34,9 +34,11 @@ function identityPeer() {
 }
 
 function routeWire(stats, bps = 1e9, rtt = 1) {
-  return (socket) => {
+  return async (socket) => {
+    if (stats.pane && !socket.url().includes(encodeURIComponent(stats.pane))) { socket.connectToServer(); return; }
+    // 재접속 시점의 snapshot이 시험 출력의 중간을 잡지 않게 실제 PTY 완료 사건으로 연결을 놓는다.
+    if (stats.beforeConnect) await stats.beforeConnect;
     const server = socket.connectToServer();
-    if (stats.pane && !socket.url().includes(encodeURIComponent(stats.pane))) return;
     stats.started = performance.now();
     let echoTail = "";
     let binaryBytes = 0;
@@ -120,9 +122,12 @@ let keys = ""; process.stdin.on("data", data => {
           await page.getByTestId("terminal").click();
           await domIs(page, "기기 크기 적용", () => !document.querySelector(".term-scroll[data-adopted-grid]"));
           stats.payloads = []; stats.acks = []; stats.delivered = []; stats.inputs = [];
+          let releaseConnect;
+          stats.beforeConnect = new Promise((resolve) => { releaseConnect = resolve; });
           stats.disconnect();
           aaa("pane", "send-text", paneName, "l");
-          await waitOutput(paneName, "COMPRESS_READY>");
+          try { await waitOutput(paneName, "COMPRESS_READY>"); }
+          finally { stats.beforeConnect = null; releaseConnect(); }
           await domIs(page, "Worker가 snapshot 해제를 붙잡음", () => window.__inflateHeld === true);
           const snapshot = stats.payloads.find((item) => item.kind === "snapshot");
           assert.equal(snapshot.compression, "gzip");

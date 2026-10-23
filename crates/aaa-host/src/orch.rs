@@ -459,7 +459,7 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 사용자에게 웹 보고서(맨 위에 index.html이 있는 폴더)를 보여 줄 때는
 `aaa library publish <폴더> --name <이름> --to-user --title '<제목>'`로 보낸다. 웹 보고서 화면 「내 보고서」와
 활동 막대 배지에 안 봄으로 뜨고, 사용자 알림 post(topic report)가 함께 남는다. 같은 이름으로 다시 보내면 다시 안 봄이다.
-index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
+수동 웹 보고서는 index.html이 없으면 거절한다. thread의 [완료] 보고와 resolve한 마지막 보고는 aaa가 같은 사본으로 「내 보고서」에 안 봄으로 자동으로 올린다. 별도로 publish하지 않는다. 보관함에 넣은 특정 판은 자동 정리와 용량 상한에서 빠지며 명시 삭제는 가능하다.
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
 채팅·보고에서는 그 보고서의 r-NNNN만 쓴다(아래 「앱 안 참조」).
 발행 결과의 r-NNNN은 그 판의 영속 번호다. 새로 발행하거나 새 thread 보고를 쓰면 새 번호가 나온다.
@@ -2892,7 +2892,7 @@ impl Host {
                     name: id.into(),
                     updated: aaa_common::util::now_ms(),
                     from_thread: Some(id.into()),
-                    ..Default::default()
+                    ..self.db.library_report(project, id).map_err(internal)?.unwrap_or_default()
                 };
                 match self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)
                 {
@@ -2939,6 +2939,7 @@ impl Host {
                 // 같은 원본 판의 재수집도 저장 사본을 복구한다. 옛 host의 가린 본문에는 별도 hash가 없을 수 있다.
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 self.summary_report_received(project, id, &String::from_utf8_lossy(&report), &hash, summary_seen)?;
+                self.complete_thread_report(project, id, &String::from_utf8_lossy(&report), &hash)?;
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
                 // library가 앞 사본과 달라졌을 때만 알린다
                 if rec.report_hash.as_ref() == Some(&hash) {
@@ -3117,6 +3118,14 @@ impl Host {
             r.last_group = Some(ThreadGroup::Resolved);
             r.merged_seen_ms = None;
         })?;
+        if let Some(revision) = &rec.report_hash {
+            let path = self.project_dir(project)?.join("threads").join(format!("{id}.md"));
+            match std::fs::read_to_string(path) {
+                Ok(body) => self.complete_thread_report(project, id, &body, revision)?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(crate::library_publish::io_error(e)),
+            }
+        }
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
         // 그 사본이 「진행 중」(지울 수 없음)에서 풀린다: 보고서 화면이 다시 읽는다(plan §8.256)
         self.reports_bump();

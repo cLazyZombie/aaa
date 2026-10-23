@@ -13,6 +13,11 @@ const OVERFLOW: &str = "library_retention_overflow";
 
 impl Host {
     pub(crate) fn protected_copy(&self, r: &LibraryReport) -> bool {
+        if let Ok(Some(version)) = self.db.report_target(&r.project, &r.name) {
+            let mut source = r.clone();
+            source.name = version.source;
+            return self.protected_copy(&source);
+        }
         // t- 보고서는 thread가 없거나 읽지 못해도 안전하게 남긴다.
         if r.name.starts_with("t-")
             && self.load(&r.project, &r.name).map_or(true, |t| t.status != ThreadStatus::Resolved)
@@ -59,16 +64,13 @@ impl Host {
             self.project_dir(p)?;
         }
         // --project로 후보를 제한해도 상한은 host 전체 합계다.
-        let mut reports = self.library_reports(None, false)?;
-        reports.retain(|r| !r.live || r.history_size > 0);
-        for r in &mut reports {
-            r.size = if r.live { r.history_size } else { r.size.saturating_add(r.history_size) };
-        }
-        reports.sort_by(|a, b| (a.updated_at_ms, &a.project, &a.name).cmp(&(b.updated_at_ms, &b.project, &b.name)));
-        let size = reports.iter().map(|r| r.size).sum();
-        let protected_size = reports.iter().filter(|r| r.live || r.busy).map(|r| r.size).sum();
+        let reports = self.library_inventory()?;
+        let archived_size = reports.iter().filter(|r| r.archived).map(|r| r.size).sum();
+        let size = reports.iter().filter(|r| !r.archived).map(|r| r.size).sum();
+        let protected_size = reports.iter().filter(|r| !r.archived && r.protected).map(|r| r.size).sum();
         let mut plan = LibraryPrunePlan {
             size,
+            archived_size,
             remaining_size: size,
             protected_size,
             max_size: limit,
@@ -78,36 +80,50 @@ impl Host {
         if limit > 0 && protected_size > limit {
             return Ok(plan);
         }
+        // 최신 이름과 그 r 판을 용량 때문에 절반만 지우면 남은 별칭이 옛 r 번호를 가리킬 수 있다.
+        // 보관한 판은 별도 family라 이 묶음 삭제에도 들어가지 않는다.
+        let mut families = std::collections::BTreeMap::new();
+        for r in reports {
+            families.entry((r.project.clone(), r.family.clone())).or_insert_with(Vec::new).push(r);
+        }
+        let mut families: Vec<_> = families.into_values().collect();
+        for family in &mut families {
+            family.sort_by_key(|r| r.name != r.family);
+        }
+        families.sort_by_cached_key(|family| {
+            let r = &family[0];
+            (r.updated_at_ms, r.project.clone(), r.family.clone())
+        });
         let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
         let mut capacity = Vec::new();
-        for r in reports {
-            if r.live || r.busy || project.is_some_and(|p| p != r.project) {
-                continue;
-            }
-            if days > 0 && r.updated_at_ms < cutoff {
+        let select = |family: Vec<crate::library_inventory::LibraryCopy>, reason: &str, plan: &mut LibraryPrunePlan| {
+            for r in family {
                 plan.remaining_size = plan.remaining_size.saturating_sub(r.size);
                 plan.candidates.push(LibraryPruneEntry {
                     project: r.project,
                     name: r.name,
                     size: r.size,
-                    reason: "기한".into(),
+                    reason: reason.into(),
                 });
+            }
+        };
+        for family in families {
+            if family.iter().any(|r| r.archived || r.protected || project.is_some_and(|p| p != r.project)) {
+                continue;
+            }
+            if days > 0 && family[0].updated_at_ms < cutoff {
+                select(family, "기한", &mut plan);
             } else {
-                capacity.push(r);
+                capacity.push(family);
             }
         }
-        for r in capacity {
+        for family in capacity {
             if limit == 0 || plan.remaining_size <= limit {
                 break;
             }
-            plan.remaining_size = plan.remaining_size.saturating_sub(r.size);
-            plan.candidates.push(LibraryPruneEntry {
-                project: r.project,
-                name: r.name,
-                size: r.size,
-                reason: "용량".into(),
-            });
+            select(family, "용량", &mut plan);
         }
+
         Ok(plan)
     }
 
@@ -159,21 +175,16 @@ impl Host {
     pub(crate) fn library_usage(&self) -> Result<FrontResponse, ErrorBody> {
         let _lock = self.library_ops.lock().unwrap();
         let reports = self.library_reports(None, false)?;
+        let inventory = self.library_inventory()?;
         Ok(FrontResponse::LibraryUsage {
-            size: reports
-                .iter()
-                .map(|r| if r.live { r.history_size } else { r.size.saturating_add(r.history_size) })
-                .sum(),
-            reports: reports.len() as u32,
+            size: inventory.iter().filter(|r| !r.archived).map(|r| r.size).sum(),
+            archived_size: inventory.iter().filter(|r| r.archived).map(|r| r.size).sum(),
+            reports: reports.iter().filter(|r| !r.archived).count() as u32,
             live: reports.iter().filter(|r| r.live).count() as u32,
             problems: reports.iter().filter(|r| r.problem.is_some()).count() as u32,
             max_size: self.cfg.projects.library_max_mb.saturating_mul(1024 * 1024),
             max_days: self.cfg.projects.library_max_days,
-            protected_size: reports
-                .iter()
-                .filter(|r| r.live || r.busy)
-                .map(|r| if r.live { r.history_size } else { r.size.saturating_add(r.history_size) })
-                .sum(),
+            protected_size: inventory.iter().filter(|r| !r.archived && r.protected).map(|r| r.size).sum(),
         })
     }
 
@@ -183,7 +194,13 @@ impl Host {
         // 도중에 실패해도 이미 지운 수·크기를 한 줄로 남긴다.
         let result = (|| {
             for r in &plan.candidates {
-                self.remove_report(&r.project, &r.name, false, actor, "library_prune")?;
+                // 정리는 개별 물리 사본 단위다. 보관한 r 판과 별칭의 다른 판을 함께 지우지 않는다.
+                let version = self.db.report_target(&r.project, &r.name).map_err(crate::orch::internal)?.is_some();
+                self.remove_report_copy(&r.project, &r.name, version)?;
+                if version {
+                    self.db.report_deleted(&r.project, &r.name).map_err(crate::orch::internal)?;
+                }
+                self.db.audit(actor, "library_prune", &format!("{}/{}", r.project, r.name));
                 bytes = bytes.saturating_add(r.size);
                 removed.push(format!("{}/{}", r.project, r.name));
             }
@@ -224,20 +241,30 @@ impl Host {
         self.db.library_report_remove(project, name).map_err(crate::orch::internal)?;
         self.view_caps.lock().unwrap().retain(|_, c| c.project != project || c.thread != name);
         if dest.exists() {
-            std::fs::remove_dir_all(&dest).map_err(|source_error| {
-                aaa_common::diagnostic::context(source_error, err(ErrorCode::Unavailable, "보고서 사본 삭제 실패"))
+            let remove = if dest.is_dir() { std::fs::remove_dir_all(&dest) } else { std::fs::remove_file(&dest) };
+            remove.map_err(|e| {
+                aaa_common::diagnostic::context(
+                    e,
+                    err(ErrorCode::Unavailable, format!("보고서 {project}/{name} 사본 삭제 실패")),
+                )
             })?;
         }
         let manifest = manifest_path(&dir, name);
-        if manifest.exists() || !with_report {
-            std::fs::remove_file(manifest).map_err(|source_error| {
-                aaa_common::diagnostic::context(source_error, err(ErrorCode::Unavailable, "보고서 목록 삭제 실패"))
+        if manifest.exists() {
+            std::fs::remove_file(manifest).map_err(|e| {
+                aaa_common::diagnostic::context(
+                    e,
+                    err(ErrorCode::Unavailable, format!("보고서 {project}/{name} 목록 삭제 실패")),
+                )
             })?;
         }
         let report = dir.join("threads").join(format!("{name}.md"));
         if with_report && (name.starts_with("t-") || crate::report_ids::number(name).is_some()) && report.exists() {
-            std::fs::remove_file(report).map_err(|source_error| {
-                aaa_common::diagnostic::context(source_error, err(ErrorCode::Unavailable, "보고 사본 삭제 실패"))
+            std::fs::remove_file(report).map_err(|e| {
+                aaa_common::diagnostic::context(
+                    e,
+                    err(ErrorCode::Unavailable, format!("보고서 {project}/{name} 본문 삭제 실패")),
+                )
             })?;
         }
         Ok(())

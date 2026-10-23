@@ -371,4 +371,110 @@ async fn archived_r_attachment_protects_its_entire_report_family_from_delete_and
     assert!(removed.is_empty());
     assert_eq!(lab.file(&first, "index.html").await, b"first");
     assert_eq!(lab.file(&second, "index.html").await, b"next");
+    // manifest가 없는 옛 잔여 폴더도 완료 할 일의 참조 보호를 유지한다.
+    std::fs::remove_file(manifest_path(&lab.h.project_dir("demo").unwrap(), "week")).unwrap();
+    assert!(lab.h.library_prune_preview(None, Some(1), u64::MAX).unwrap().candidates.is_empty());
+}
+
+#[tokio::test]
+async fn archive_pins_one_version_outside_capacity_and_survives_prune_restart_and_explicit_delete() {
+    let lab = Lab::new();
+    let first = lab.publish("week", "first", false);
+    lab.h.library_archive(&[LibraryRef { project: "demo".into(), name: "week".into() }], true, "test").unwrap();
+    let second = lab.publish("week", "second", false);
+    let rows = lab.h.library_reports(None, false).unwrap();
+    assert_eq!(rows.iter().filter(|r| r.archived).map(|r| r.name.as_str()).collect::<Vec<_>>(), vec![first.as_str()]);
+    let FrontResponse::LibraryUsage { size, archived_size, .. } = lab.h.library_usage().unwrap() else { panic!() };
+    assert_eq!((size, archived_size), (24, 10), "선택한 판만 상한 밖이다. 새 판을 자동으로 보관하지 않는다");
+    let preview = lab.h.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    assert_eq!(preview.archived_size, 10);
+    assert!(preview.candidates.iter().any(|c| c.name == second));
+    assert!(!preview.candidates.iter().any(|c| c.name == first));
+    lab.h.library_prune_at(None, 1, u64::MAX, "test").unwrap();
+    assert_eq!(lab.file(&first, "index.html").await, b"first");
+    assert!(lab.h.report_library("demo", &second, None, false).is_err());
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("state")).unwrap();
+    assert_eq!(reopened.library_reports(None, false).unwrap().iter().filter(|r| r.archived).count(), 1);
+    assert!(reopened.library_prune_preview(None, Some(1), u64::MAX).unwrap().candidates.is_empty());
+    // 최신 이름이 정리된 뒤에도 보관 판을 사용자가 명시 삭제할 수 있다.
+    reopened.library_delete(&[LibraryRef { project: "demo".into(), name: first.clone() }], "test").unwrap();
+    assert!(reopened.report_library("demo", &first, None, false).is_err());
+    assert!(!reopened.db.library_archived("demo", &first).unwrap());
+}
+
+#[tokio::test]
+async fn archive_validates_batch_permissions_and_invalidates_prune_preview() {
+    let lab = Lab::new();
+    let first = lab.publish("week", "first", false);
+    let refs = vec![LibraryRef { project: "demo".into(), name: first.clone() }];
+    let request = FrontRequest::LibraryArchive { reports: refs.clone(), archived: true };
+    assert_eq!(
+        lab.h.call(DeviceRole::Reader, "device:r", request).await.unwrap_err().code,
+        aaa_proto::ErrorCode::Forbidden
+    );
+    let mut invalid = refs.clone();
+    invalid.push(LibraryRef { project: "demo".into(), name: "missing".into() });
+    assert!(lab.h.library_archive(&invalid, true, "test").is_err());
+    assert!(!lab.h.db.library_archived("demo", &first).unwrap());
+    let plan = lab.h.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    let expected = plan.candidates.iter().map(|r| format!("{}/{}", r.project, r.name)).collect::<Vec<_>>();
+    lab.h
+        .call(
+            DeviceRole::Controller,
+            "device:c",
+            FrontRequest::LibraryArchive { reports: refs.clone(), archived: true },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        lab.h.library_prune_apply(None, Some(1), &expected, u64::MAX, "test").unwrap_err().code,
+        aaa_proto::ErrorCode::Conflict
+    );
+    assert_eq!(lab.file(&first, "index.html").await, b"first");
+    lab.h.library_archive(&refs, false, "test").unwrap();
+    assert!(lab.h.library_prune_preview(None, Some(1), u64::MAX).unwrap().candidates.iter().any(|c| c.name == first));
+}
+
+#[test]
+fn actual_inventory_includes_unlisted_and_orphan_bytes_without_following_symlinks() {
+    let lab = Lab::new();
+    lab.publish("week", "first", false);
+    let dir = lab.h.project_dir("demo").unwrap();
+    std::fs::write(dir.join("library/week/unlisted.bin"), b"leftover").unwrap();
+    std::fs::create_dir(dir.join("library/orphan")).unwrap();
+    std::fs::write(dir.join("library/orphan/file.bin"), b"orphan").unwrap();
+    std::fs::create_dir(dir.join("library/.collecting")).unwrap();
+    std::fs::write(dir.join("library/.collecting/file.bin"), b"active").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&lab.root, dir.join("library/week/outside")).unwrap();
+    let FrontResponse::LibraryUsage { size, protected_size, .. } = lab.h.library_usage().unwrap() else { panic!() };
+    assert_eq!((size, protected_size), (40, 6));
+    let plan = lab.h.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    assert!(plan.candidates.iter().any(|c| c.name == "week" && c.size == 18));
+    assert!(plan.candidates.iter().any(|c| c.name == "orphan" && c.size == 6));
+    assert!(!plan.candidates.iter().any(|c| c.name == ".collecting"));
+    lab.h.library_prune_at(None, 1, u64::MAX, "test").unwrap();
+    assert!(!dir.join("library/orphan").exists());
+    assert!(dir.join("library/.collecting/file.bin").exists());
+    assert!(lab.root.join("source/index.html").exists());
+}
+
+#[test]
+fn archive_batch_and_completion_ledgers_follow_project_export_and_rename() {
+    let lab = Lab::new();
+    let first = lab.publish("one", "first", false);
+    let second = lab.publish("two", "second", false);
+    let refs = [first.clone(), second.clone()].map(|name| LibraryRef { project: "demo".into(), name });
+    lab.h.library_archive(&refs, true, "test").unwrap();
+    assert_eq!(lab.h.library_reports(None, false).unwrap().iter().filter(|r| r.archived).count(), 2);
+    lab.h.db.library_complete("demo", "one", "revision", "제목", 10).unwrap();
+    let exported = lab.h.db.project_export("demo").unwrap();
+    assert_eq!(exported["library_archives"].as_array().unwrap().len(), 2);
+    assert_eq!(exported["library_completion"].as_array().unwrap().len(), 1);
+    lab.h.db.project_rename("demo", "renamed", str::to_string).unwrap();
+    assert!(lab.h.db.library_archived("renamed", &first).unwrap());
+    assert!(!lab.h.db.library_archived("demo", &first).unwrap());
+    assert!(!lab.h.db.library_complete("renamed", "one", "revision", "제목", 20).unwrap());
+    lab.h.db.library_archive_set(&[("renamed".into(), first), ("renamed".into(), second.clone())], false).unwrap();
+    assert!(!lab.h.db.library_archived("renamed", &second).unwrap());
 }

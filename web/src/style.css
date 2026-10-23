@@ -1078,7 +1078,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .report-heading strong { min-width: 0; overflow-wrap: anywhere; }
 .report-card p { margin: 6px 0; }
 .report-card .library-link { margin-top: 10px; }
-/* 두 탭(plan §8.256): 내 보고서(안 본 점·수)와 작업 보고(골라 지우기) */
+/* 내 보고서·작업 보고·보관함(plan §8.472) */
 .reports-tabs { display: flex; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
 .reports-tab { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-dim); font-weight: 600; }
 .reports-tab:hover:not(:disabled) { background: transparent; color: var(--text); }
@@ -1098,7 +1098,7 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .report-pick { flex: none; margin: 0 0 0 4px; }
 .report-row-name { min-width: 0; flex: 1 1 10em; overflow: hidden; color: var(--text); font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .report-row-meta { font-size: var(--fs-xs); white-space: nowrap; }
-.report-row-actions { display: inline-flex; gap: 2px; }
+.report-row-actions { display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 2px; }
 .report-tag { padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-dim); font-size: var(--fs-2xs); white-space: nowrap; }
 .report-tag.is-busy { border-color: var(--status-working); color: var(--status-working); }
 /* 보고서를 낸 thread 번호(사용자 요청 10-20): 이름 왼쪽, 줄어들지 않는다 */

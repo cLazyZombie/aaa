@@ -23,7 +23,7 @@ fn modified_ms(path: &Path) -> u64 {
         .map_or(0, |t| t.as_millis() as u64)
 }
 
-fn referenced_names(rows: &[aaa_proto::ArchivedTask]) -> HashSet<String> {
+pub(crate) fn referenced_names(rows: &[aaa_proto::ArchivedTask]) -> HashSet<String> {
     let mut names = HashSet::new();
     let mut body = |text: &str| {
         for path in crate::task_attach::refs(text) {
@@ -131,6 +131,7 @@ impl Host {
                 });
                 let link = links.remove(name).map(|r| self.link_view_summary(r, size, report_id.clone()));
                 reports.push(LibraryReport {
+                    archived: false,
                     project: p.clone(),
                     name: name.into(),
                     report_id,
@@ -147,6 +148,12 @@ impl Host {
                     busy,
                     from_thread,
                 });
+            }
+            // 보관한 특정 판은 최신 이름과 별도로 표시한다. 최신 이름을 정리한 뒤에도 남는다.
+            for id in &catalog.archived {
+                if self.db.report_target(&p, id).map_err(internal)?.is_some() {
+                    reports.push(self.report_view(&p, id, reveal)?);
+                }
             }
         }
         reports.sort_by(|a, b| {

@@ -264,6 +264,7 @@ impl Db {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         tx.execute("DELETE FROM library_reports WHERE project=?1 AND name=?2", params![project, name])?;
+        tx.execute("DELETE FROM library_archives WHERE project=?1 AND name=?2", params![project, name])?;
         tx.execute("UPDATE library_links SET revoked=1 WHERE project=?1 AND thread=?2", params![project, name])?;
         tx.commit()?;
         Ok(())
@@ -346,6 +347,10 @@ impl Db {
                project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, source TEXT NOT NULL, revision TEXT NOT NULL,
                ready INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
                PRIMARY KEY(project,id), UNIQUE(project,seq));
+             CREATE TABLE IF NOT EXISTS library_archives(
+               project TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(project,name));
+             CREATE TABLE IF NOT EXISTS library_completion(
+               project TEXT NOT NULL, name TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(project,name));
              CREATE TABLE IF NOT EXISTS library_reports(
                project TEXT NOT NULL, name TEXT NOT NULL, live TEXT, updated INTEGER NOT NULL,
                PRIMARY KEY(project,name));
@@ -1729,7 +1734,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 19] = [
+const PROJECT_TABLES: [&str; 21] = [
     "threads",
     "repo_workspaces",
     "repo_metrics",
@@ -1739,6 +1744,8 @@ const PROJECT_TABLES: [&str; 19] = [
     "evaluations",
     "library_links",
     "library_reports",
+    "library_archives",
+    "library_completion",
     "report_ids",
     "question_ids",
     "posts",

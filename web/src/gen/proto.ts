@@ -1175,7 +1175,7 @@ title: string | null,
 /**
  * FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`). 없으면 host가 원본 경로·이름에서 그 프로젝트의 thread를 찾는다
  */
-from_thread?: string, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
+from_thread?: string, } | { "op": "library_archive", reports: Array<LibraryRef>, archived: boolean, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
@@ -1378,7 +1378,11 @@ plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
 /**
  * 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
  */
-source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_resolved", project: string, name: string, } | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
+source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_resolved", project: string, name: string, } | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage",
+/**
+ * FRONT_API 1.114. size·max_size에서 제외한 보관함 용량.
+ */
+archived_size: number, size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "accounts" } | { "ev": "workspace_metrics" } | { "ev": "enroll" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
@@ -2460,6 +2464,10 @@ size: number, };
 
 export type LibraryReport = {
 /**
+ * FRONT_API 1.114. 보관함의 불변 판. 자동 정리와 상한 계산에서 제외한다.
+ */
+archived: boolean,
+/**
  * FRONT_API 1.95. 특정 판 사본의 보존 용량. size는 기존 최신 사본 크기다.
  */
 history_size: number,
@@ -2476,7 +2484,7 @@ report_id?: string, project: string, name: string, size: number, updated_at_ms: 
  */
 problem: string | null, link: LinkView | null,
 /**
- * FRONT_API 1.43. coordinator가 사용자에게 보낸 웹 보고서(`library publish --to-user`, 「내 보고서」). 아니면 작업 보고다.
+ * FRONT_API 1.43. 완료 보고 또는 사용자에게 보낸 보고서(「내 보고서」). 자동 표시는 같은 사본을 쓴다.
  */
 to_user: boolean,
 /**
@@ -2498,7 +2506,11 @@ from_thread?: string, };
 
 export type LibraryRef = { project: string, name: string, };
 
-export type LibraryPrunePlan = { size: number, remaining_size: number, protected_size: number, max_size: number, max_days: number, candidates: Array<LibraryPruneEntry>, };
+export type LibraryPrunePlan = {
+/**
+ * FRONT_API 1.114. 상한 밖에서 따로 보존하는 사본 용량.
+ */
+archived_size: number, size: number, remaining_size: number, protected_size: number, max_size: number, max_days: number, candidates: Array<LibraryPruneEntry>, };
 
 export type LibraryPruneEntry = { project: string, name: string, size: number,
 /**

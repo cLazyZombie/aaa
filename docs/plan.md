@@ -7716,3 +7716,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - FRONT_API 1.115의 선택 `MachineHealth.info`에 시스템·harness 판 수집 시각을 싣는다. agent 시작 시와 10분마다 조회하고 기존 건강 보고/재연결 경로로 전한다. 각 명령은 기존 10초 상한을 따르며 조회 실패는 None이고 건강 problems에 넣지 않는다. AGENT_LINK 1.11은 유지한다(기존 Health 사건의 선택 칸, 구판은 생략/무시). host는 마지막 표본을 DB에 저장해 재시작 뒤에도 복원한다.
 - herdr-web-ui(MIT)의 MachineSidebar·DevicesPanel 정보 행과 기존 task 상세 시트의 테마 토큰을 따른다. herdr(Apache-2.0)·herdr-projects(MIT)의 머신/프로젝트 상태 구분도 확인했다. Glances(LGPL-3.0)의 시스템 정보/지표 분리를 참고하고 코드는 가져오지 않는다.
 - 웹 순수 규칙·실제 agent/host 저장 시험과 E2E98(Chromium·WebKit ×1280·390, 테마 캡처·전환·구판·끊김)을 검사한다. 전체 ci-local·공개 검사 뒤 묶음 착지 창을 기다린다. 절·API·E2E 번호는 착지 때 main과 대조한다.
+
+### 8.476 보고서 보관함과 완료 보고 기본 표시(t-0915)
+
+- 모든 프로젝트에서 완료 표지 보고의 회수·resolve 뒤 마지막 보고를 같은 사본으로 「내 보고서」에 안 봄으로 올린다. 시작 시 기존 완료 사본도 올린다. 본문 revision으로 멱등 처리하여 재수집·resolve·재시작은 열람 상태를 바꾸지 않는다. 외부 푸시는 추가하지 않는다.
+- 웹의 보관함은 r 판별 고정이다. 넣기·빼기·과거 판 선택·작업 보고 일괄 보관을 지원한다. 보관 용량은 별도로 세고 자동 정리의 기한·합계 상한에서 제외한다. 명시 삭제는 보관 여부와 무관하게 기존 전체 판 삭제와 진행 중·완료 할 일 참조 보호를 유지한다.
+- FRONT_API 1.116: LibraryArchive, LibraryReport.archived, LibraryUsage·LibraryPrunePlan.archived_size. DB의 project별 보관·완료 revision을 export·rename·delete에 포함한다. agent link 변경 없음.
+- host 실제 파일로 용량과 개별 정리 후보를 구해 manifest 없는 종료 thread 폴더·누락 잔여 파일을 포함한다. 최신 별칭과 최신 r 판은 함께 정리해 오래된 판으로 번호가 돌아가지 않게 한다. 수집 중 임시 폴더·외부 live 원본·symlink는 보호 경계를 유지한다. 기존 자동 정리의 6시간 주기는 유지한다.
+- OSS 참고는 Zulip의 읽음/별표 flag와 트랜잭션·commit 뒤 사건(표시 상태와 원본 분리, Apache-2.0), Grafana snapshot의 만료와 명시 삭제 분리(AGPL-3.0), actions/upload-artifact의 불변 판과 retention(MIT)이다. 코드·의존성을 복사하지 않는다. 검증은 [시험 규칙](testing.md)의 t-0915 절과 확장 E2E21·36, 전체 ci-local·Linux strict cross·공개 검사다. 착지 시 절·API 판을 main과 대조한다.
+
+- **35회차 착지 통합(t-0921).** 기준 main `18ee85db`의 마지막 §8.474·FRONT_API 1.114·AGENT_LINK 1.11·E2E97을 확인했다. t-0919·t-0905·t-0911·t-0915를 각각 --no-ff로 합치고 기기 정보는 §8.475·FRONT_API 1.115·E2E98, 보고서 보관함은 §8.476·FRONT_API 1.116으로 배정한다. E2E93의 실제 터치 복귀와 /bin/sh 고정, E2E97의 방향별 FIFO와 PTY 출력 완료 후 연결 처리를 함께 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 빌드를 한 번 확인한다. 이번 회차는 예외 없이 모든 시험이 통과해야 push하며 실패는 원문·부하를 보존하고 재시도하지 않는다. GitHub CI는 기다리지 않으며 설치기는 복사·SHA·판 확인만 한다. 설치 실행·배포·tag·release는 수행하지 않는다.

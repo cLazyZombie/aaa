@@ -524,3 +524,39 @@ async fn same_revision_recovery_repairs_the_body_and_keeps_ack() {
     assert_eq!(rec.acked_hash, previous.acked_hash);
     assert_eq!(lab.h.verified_report(&rec).as_deref(), Some("[진행 중] 시험 중\n"));
 }
+
+#[tokio::test]
+async fn completed_report_automatically_uses_the_same_copy_and_does_not_reset_seen_on_collect_or_restart() {
+    let lab = Lab::with_report(0, b"old", "test.log", b"old", "[완료] 시험 완료\n");
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    let report = lab.h.library_reports(Some("p"), false).unwrap().remove(0);
+    assert!(report.to_user && report.unseen);
+    assert_eq!(report.from_thread.as_deref(), Some("t-0001"));
+    let dir = lab.h.project_dir("p").unwrap();
+    let copies = || std::fs::read_dir(dir.join("library")).unwrap().count();
+    let before = copies();
+    lab.h.library_opened("p", "t-0001");
+    // 같은 본문의 첨부 복구가 새 r 판을 만들어도 열람 상태를 유지한다.
+    std::fs::write(dir.join("library/t-0001/test.log"), b"damaged").unwrap();
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    lab.h.backfill_completed_reports().unwrap();
+    let row = lab.h.db.library_report("p", "t-0001").unwrap().unwrap();
+    assert!(row.to_user && !row.unseen(), "같은 완료 보고는 다시 안 봄으로 바꾸지 않는다");
+    assert_eq!(copies(), before + 1, "첨부 복구의 새 불변 판 하나만 만들고 자동 올리기 사본은 추가하지 않는다");
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+    reopened.backfill_completed_reports().unwrap();
+    assert!(!reopened.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
+}
+
+#[tokio::test]
+async fn resolved_last_report_and_existing_completed_reports_are_automatically_listed() {
+    let lab = Lab::new(0, b"old");
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    assert!(!lab.h.db.library_report("p", "t-0001").unwrap().unwrap().to_user);
+    let rec = lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Resolved).unwrap();
+    lab.h.backfill_completed_reports().unwrap();
+    assert!(lab.h.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
+    lab.h.library_opened("p", "t-0001");
+    lab.h.complete_thread_report("p", "t-0001", "[진행 중]", rec.report_hash.as_deref().unwrap()).unwrap();
+    assert!(!lab.h.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
+}

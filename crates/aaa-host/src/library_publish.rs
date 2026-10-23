@@ -43,9 +43,8 @@ pub(crate) fn thread_numbers(s: &str) -> Vec<String> {
     out
 }
 
-pub(crate) fn io_error(_: std::io::Error) -> ErrorBody {
-    // 개인 경로를 API 오류·로그로 내보내지 않는다.
-    err(ErrorCode::Unavailable, "보고서 파일을 읽거나 쓸 수 없다")
+pub(crate) fn io_error(e: std::io::Error) -> ErrorBody {
+    err(ErrorCode::Unavailable, format!("보고서 파일 I/O 실패: {e} (OS {:?})", e.raw_os_error()))
 }
 
 fn plain(path: &Path) -> Result<std::fs::Metadata, ErrorBody> {
@@ -313,7 +312,8 @@ impl Host {
             if !safe_rel(&r.name)
                 || r.name.contains('/')
                 || (!manifest_path(&dir, &r.name).exists()
-                    && self.db.library_report(&r.project, &r.name).map_err(super::orch::internal)?.is_none())
+                    && self.db.library_report(&r.project, &r.name).map_err(super::orch::internal)?.is_none()
+                    && self.report_version_names(&r.project, &r.name).is_empty())
             {
                 return Err(err(ErrorCode::NotFound, format!("보고서가 없다: {}/{}", r.project, r.name)));
             }
@@ -687,6 +687,7 @@ impl Host {
             Err(e) => (0, Some(e.message)),
         };
         let mut view = LibraryReport {
+            archived: self.db.library_archived(project, name).map_err(super::orch::internal)?,
             project: project.into(),
             name: name.into(),
             report_id: self.report_id(project, name),

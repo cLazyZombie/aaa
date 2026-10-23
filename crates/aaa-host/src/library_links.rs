@@ -822,7 +822,10 @@ mod tests {
         else {
             panic!("prune 응답")
         };
-        assert_eq!(removed, vec!["demo/old", "demo/t-0001"]);
+        assert_eq!(
+            removed,
+            vec!["demo/old".to_string(), format!("demo/{}", old.report_id.as_ref().unwrap()), "demo/t-0001".into()]
+        );
         assert!(dir.join("library/t-0002/index.html").is_file());
         assert_eq!(std::fs::read(dir.join("threads/t-0001.md")).unwrap(), b"keep report");
         assert_eq!(lab.h.load("demo", "t-0001").unwrap().status, aaa_proto::ThreadStatus::Resolved);
@@ -1334,5 +1337,56 @@ mod tests {
         assert!(telegram["text"].as_str().unwrap().contains("\n보기: https://"));
         assert_eq!(telegram["disable_web_page_preview"], true);
         assert!(!lab.h.db.inbox_list(Some("demo"), false).unwrap()[0].body.contains("/v/"));
+    }
+    #[test]
+    fn archive_alone_can_exceed_the_limit_without_evicting_new_reports() {
+        let lab = Lab::with_retention(0, 1);
+        let source = lab.state.join("large-archive");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), vec![b'x'; 1_100_000]).unwrap();
+        let FrontResponse::LibraryLink(first) =
+            lab.h.library_publish("demo", "week", source.to_str().unwrap(), false, None, None, "test").unwrap()
+        else {
+            panic!()
+        };
+        lab.h
+            .library_archive(&[aaa_proto::LibraryRef { project: "demo".into(), name: "week".into() }], true, "test")
+            .unwrap();
+        std::fs::write(source.join("index.html"), vec![b'y'; 100_000]).unwrap();
+        lab.h.library_publish("demo", "week", source.to_str().unwrap(), false, None, None, "test").unwrap();
+        let plan = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
+        assert_eq!((plan.archived_size, plan.size, plan.protected_size), (1_100_000, 200_000, 0));
+        assert!(plan.candidates.is_empty(), "보관함은 일반 사본 상한을 먹지 않는다");
+        assert!(lab.h.db.library_archived("demo", &first.report_id.unwrap()).unwrap());
+    }
+    #[test]
+    fn capacity_never_leaves_latest_alias_pointing_at_an_older_archived_version() {
+        let lab = Lab::with_retention(0, 1);
+        let source = lab.state.join("latest-family");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), b"old").unwrap();
+        let FrontResponse::LibraryLink(first) =
+            lab.h.library_publish("demo", "week", source.to_str().unwrap(), false, None, None, "test").unwrap()
+        else {
+            panic!()
+        };
+        lab.h
+            .library_archive(&[aaa_proto::LibraryRef { project: "demo".into(), name: "week".into() }], true, "test")
+            .unwrap();
+        std::fs::write(source.join("index.html"), vec![b'x'; 800_000]).unwrap();
+        let FrontResponse::LibraryLink(second) =
+            lab.h.library_publish("demo", "week", source.to_str().unwrap(), false, None, None, "test").unwrap()
+        else {
+            panic!()
+        };
+        let plan = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
+        assert_eq!(
+            plan.candidates.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            vec!["week", second.report_id.as_deref().unwrap()]
+        );
+        lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
+        assert!(!lab.h.project_dir("demo").unwrap().join("library/week").exists());
+        assert!(lab.h.report_library("demo", first.report_id.as_deref().unwrap(), None, false).is_ok());
+        assert!(lab.h.report_library("demo", second.report_id.as_deref().unwrap(), None, false).is_err());
     }
 }

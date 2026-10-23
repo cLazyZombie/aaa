@@ -3108,6 +3108,28 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 참고는 [Microsoft Terminal ConPTY 연결](https://github.com/microsoft/terminal/blob/main/src/cascadia/TerminalConnection/ConptyConnection.cpp)(MIT), [WezTerm portable-pty](https://github.com/wezterm/wezterm/blob/main/pty/src/win/pseudocon.rs)(MIT), [xterm InputHandler](https://github.com/xtermjs/xterm.js/blob/master/src/common/InputHandler.ts)(MIT)다. 질의 응답과 출력 처리 경계를 참고하며 외부 코드는 복사하지 않는다. Windows 재현용 raw 계측은 제품 커밋에서 제거한다.
 - 정본은 전체 ci-local·공개 검사·Linux cross strict clippy와 Windows 시험 서비스의 실제 Codex 화면·brief 전달이다. 운영 인증은 사용하지 않고 가짜 API 인증·loopback 주소로 시험한다. 결과·로그 보존 뒤 전용 서비스·확인한 PID·시험 폴더를 지우고 기준 목록을 대조한다.
 
+## 전체 검증의 셸·snapshot·목록 준비 경계(t-0915)
+
+- E2E93 실패 원본 pane spec의 argv는 비어 있었고 머신 기본 login shell을 골랐다. PTY 입력 ACK 뒤에도 harness 준비 표지가 없었다. 일반 셸에서 연 harness를 검사하는 이 시험은 공통 t1 실험실과 같은 명시적 `/bin/sh`를 써 머신의 개인 셸 초기화에 기대지 않는다. 16개 조합·단계 이름·20초/120초 상한은 유지한다.
+- E2E97 원본은 작은 snapshot 뒤 약 499 KB의 live 출력을 받았고, 앞 기록 요청은 0줄·more=false였다. 출력 중 자동 재접속이 열려 중간 snapshot을 받은 경합이다. 다음 WS의 server 연결만 보류하고 실제 PTY `COMPRESS_READY>` 뒤 놓아 전체 출력을 본 snapshot으로 Worker·ACK·두 번 prepend를 검사한다. 회선 속도·compression·위치 기대값은 바꾸지 않는다.
+- E2E26 원본은 WebKit desktop의 목록 행 평가에서 `closest(selector)`가 null이었다. DOM 교체 전에 고른 행과 나중 부모를 섞지 않고 같은 DOM 평가에서 현재 컨테이너·마지막 행의 경계·hit test가 맞는 사건을 기다린다. 기존 실제 overflow·휠·스크롤 끝·머리/바닥·행 선택 단언을 유지한다.
+- E2E66은 원본 load average 50~60에서 네 기기의 계측만 약 136초여서 단계 120초를 넘었다. 코드를 바꾸지 않고 부하가 내려간 뒤 독립 실행하면 같은 호출 수·nativeRows·CSS 쓰기·cache hit 수로 37.5초에 끝났다(네 기기 계측 8.0~10.9초, 원본 28.8~38.9초). 원본 실패를 남기고 부하 근거와 독립 통과를 함께 기록한다. 시한·기대값·조합은 유지한다.
+
+## 가짜 Claude의 화살표와 신뢰 질문 중복(t-0915 전체 검증)
+
+- 전체 검증 원본에서 신뢰 질문에 Yes를 보낸 뒤 438ms 안에 같은 trust 질문이 다시 생겼다. 원본 다섯 질문 기대값에 trust/Gone 하나가 추가되어 실패했다. 보관함 코드는 이 신뢰/brief 단계에서 호출되지 않았다.
+- 실제 PTY에 `Esc [ B Enter`를 한 번에 넣고 선택을 다시 그리는 경계에서 멈추면 기존 fixture가 사이에 Working을 쓴다(RED). 단일 Esc를 바로 지우는 처리가 화살표에도 적용되어 확인창을 잠깐 닫고 다시 열었다.
+- 메뉴만 최대 3바이트를 한 번에 읽어 완전한 화살표는 선택만 옮긴다. 나눠 온 Esc suffix와 단독 Esc의 기존 처리는 유지한다. 새 PTY keeper는 선택을 옮기기까지 Working이 한 번도 없고 질문이 유지되는지 검사한다. 기존 Esc keeper·원래 질문 5개·interrupt·질문/메시지 인수 단언은 유지한다. 고정 sleep·시한·기대값을 바꾸지 않는다.
+
+## 보고서 보관함과 완료 보고 기본 표시(t-0915, plan §8.476)
+
+- `report_ids::tests`는 한 판만 보관, 재발행 뒤 원문 고정, 자동 정리 뒤 판 열기, 재시작·명시 삭제, 일괄 요청의 사전 검증·Reader 거부, 보관 변경 뒤 정리 미리보기 충돌을 검사한다. 실제 폴더의 미등재 파일·manifest 없는 폴더와 수집 중 임시 파일을 세고 symlink를 따라가지 않는 경계도 확인한다.
+- `library_links::tests::archive_alone_can_exceed_the_limit_without_evicting_new_reports`는 1 MiB 상한에 1.1 MB 보관 판과 0.2 MB 일반 사본을 만들어 보관함이 상한을 소비하지 않는지 확인한다. 최신 별칭·최신 r 판을 용량 경계에서 함께 정리하고 옛 보관 판은 유지하는 회귀도 검사한다. 기존 live·진행 중·완료 보관 참조·초과 알림·6시간 주기 시험을 유지한다.
+- `orch::report_tests`는 실제 report collect 경계에서 완료 보고의 자동 내 보고서·안 봄과 같은 폴더 수를 확인한다. 열람 뒤 재수집·backfill·재시작·resolve의 같은 revision은 읽음 상태를 유지한다. 기존 완료 사본의 backfill도 검사한다.
+- 확장 E2E21은 실제 웹 한 번 보관/해제·과거 판 선택·명시 삭제·별도 용량·Reader 제한을 Chromium/WebKit 1280/390px로 검증하고 화면을 남긴다. 진행 중 보고는 작업 탭에서 보호하고 resolve 뒤 내 보고서에 안 봄으로 이동하는지 검사한다. 완료 보고는 갱신 때만 다시 안 봄이고 source+r 두 사본 이외의 복제는 없는지 실제 폴더를 대조한다. E2E36의 작업 줄 번호 시험은 진행 중 표지로 그 상태를 명시한다.
+- 참고: [Zulip message flags](https://github.com/zulip/zulip/blob/main/zerver/actions/message_flags.py)([Apache-2.0](https://github.com/zulip/zulip/blob/main/LICENSE)), [Grafana snapshot](https://github.com/grafana/grafana/blob/main/pkg/services/dashboardsnapshots/service.go)([AGPL-3.0](https://github.com/grafana/grafana/blob/main/LICENSE)), [upload-artifact retention](https://github.com/actions/upload-artifact#retention-period)([MIT](https://github.com/actions/upload-artifact/blob/main/LICENSE)). 표시 상태와 사본 분리·기한과 명시 삭제 분리만 참고하고 코드는 추가하지 않는다.
+- 정본은 전체 `nice -n 15 bash scripts/ci-local.sh`, Linux strict cross와 공개 검사다. 고정 sleep·재시도·시한/기대값 완화는 쓰지 않는다.
+
 ## 머신 정보 오른쪽 패널(t-0911)
 
 - E2E98은 실제 agent의 `MachineHealth.info` 수집을 기다리고 Chromium·WebKit ×1280·390에서 열기·닫기·Esc·데스크톱 머신 교체를 확인한다. amber·catppuccin·GitHub Dark 캡처와 패널 가로 넘침을 검사한다. 실제 수집과 구판/끊김 표시 fixture를 구분한다.
