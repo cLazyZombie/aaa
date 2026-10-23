@@ -52,7 +52,7 @@ while($null -ne ($line=[Console]::ReadLine())) {
         $codexProfile=if($Codex){@"
 [profiles.codex-probe]
 agent = "codex"
-command = ['$Codex', '--disable', 'plugins', '--disable', 'remote_plugin']
+command = ['$Codex', '--disable', 'plugins', '--disable', 'remote_plugin', '--dangerously-bypass-approvals-and-sandbox']
 env = { OPENAI_BASE_URL = 'http://127.0.0.1:1/v1' }
 "@}else{''}
         $fixtureProfile=@"
@@ -170,7 +170,28 @@ work_root = '$work'
                 $codexProcess=Get-Process -Id $codexMeta.child_pid
                 if($codexProcess.Path -ine $Codex -or $codexProcess.SessionId -ne 0){throw 'SCM Session 0의 실제 시험 Codex가 아니다'}
                 Remember-Process $codexProcess
-                # 사용자 지시 범위는 실제 pane 기동이다. TUI 출력은 후속 진단을 위해 보존한다.
+                $null=Invoke-Aaa @('pane','wait-output',$codexPane,'--match','OpenAI Codex','--timeout','20000')
+                # 고정 대기 없이 실제 brief_delivered 사건으로 자동 안내 완료를 확인한다.
+                $events=Start-Aaa @('--json','events','probe','--follow')
+                $eventErrors=$events.StandardError.ReadToEndAsync()
+                try {
+                    $eventClock=[Diagnostics.Stopwatch]::StartNew()
+                    while($true) {
+                        $line=$events.StandardOutput.ReadLineAsync()
+                        if(-not $line.Wait([int][Math]::Max(1,20000-$eventClock.ElapsedMilliseconds))){throw 'Codex brief 전달 사건 시한 초과'}
+                        $eventLine=$line.GetAwaiter().GetResult()
+                        if($null -eq $eventLine){throw 'Codex brief 전달 사건 전 EOF'}
+                        if($eventLine.Contains('brief_delivered')) {
+                            $shown=Invoke-Aaa @('thread','show','probe',$codexThread.id)
+                            if($shown.brief -eq 'delivered'){break}
+                        }
+                        if($eventClock.ElapsedMilliseconds -ge 20000){throw 'Codex brief 전달 사건 시한 초과'}
+                    }
+                    [IO.File]::WriteAllText((Join-Path $run 'codex-thread.json'),($shown | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+                } finally {
+                    if(-not $events.HasExited){$events.Kill();$events.WaitForExit()}
+                    $null=$eventErrors.GetAwaiter().GetResult()
+                }
                 $snapshot=Invoke-Aaa @('pane','read',$codexPane)
                 [IO.File]::WriteAllText((Join-Path $run 'codex-screen.json'),($snapshot | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
                 $codexLog=Join-Path $env:AAA_STATE_DIR ('agent\sessions\'+$codexPane+'\session-host.log')
@@ -181,7 +202,7 @@ work_root = '$work'
                 [IO.File]::WriteAllText((Join-Path $run 'codex-version-record.txt'),$versionRecord,[Text.UTF8Encoding]::new($false))
                 Remove-Item -LiteralPath $auth
             }
-            [ordered]@{session=0;virtual_service_account=$true;thread=$thread.id;pane=$thread.pane;host_pid=$hostProcess.Id;agent_pid=$agentProcess.Id;session_host_pid=$meta.host_pid;harness_pid=$meta.child_pid;codex_account_pane=$codexPane;codex_pid=$codexMeta.child_pid;result='pane-ready-and-pong'} |
+            [ordered]@{session=0;virtual_service_account=$true;thread=$thread.id;pane=$thread.pane;host_pid=$hostProcess.Id;agent_pid=$agentProcess.Id;session_host_pid=$meta.host_pid;harness_pid=$meta.child_pid;codex_account_pane=$codexPane;codex_pid=$codexMeta.child_pid;codex_brief=$shown.brief;result='pane-ready-and-pong'} |
                 ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $run 'result.json') -Encoding UTF8
         } catch {
             [IO.File]::WriteAllText((Join-Path $run 'primary-failure.txt'),($_ | Out-String),[Text.UTF8Encoding]::new($false))

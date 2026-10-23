@@ -17,10 +17,11 @@ use portable_pty::{CommandBuilder, PtySize};
 use tokio::sync::mpsc;
 
 use super::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
+use crate::output::Output;
 use crate::ring::Ring;
 use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use aaa_common::util;
-use aaa_vt::{DefaultColors, Found, Query, QueryScanner, Scanned, Vt};
+use aaa_vt::Vt;
 
 /// 출력 보존 상한(재접속 때 이 범위 안이면 bytes만 이어 보낸다)
 pub const RING_BYTES: usize = 2 << 20;
@@ -101,9 +102,8 @@ struct State {
     vt: Vt,
     /// 화면 변화 순번(출력·크기 변경). agent의 상태 감지가 그대로인 화면을 다시 읽지 않게 한다(herdr `detection_content_seq`).
     screen_seq: u64,
-    queries: QueryScanner,
-    /// 색 질의(OSC 10/11)의 답: 화면이 알려 준 색과 프로그램이 정한 색
-    colors: DefaultColors,
+    /// 질의는 원문에서 먼저 처리하고, 화면·기록에는 가린 출력만 넘긴다.
+    output: Output,
     ring: Ring,
     conns: HashMap<u64, FrameTx>,
     subs: HashSet<u64>,
@@ -154,26 +154,11 @@ impl State {
     /// PTY 출력. 프로그램의 질의(DA1·DA2·커서 위치·기본 색)는 session host가 질의 시점의 화면으로 답하고 출력에서 뺀다:
     /// front가 아니라 session host가 터미널이다(붙은 front가 몇이든 답은 한 번, aaa-vt `QueryScanner`)
     fn output(&mut self, data: &[u8]) {
-        let Scanned { out, found } = self.queries.scan(data);
-        let mut start = 0;
-        for (at, f) in found {
-            self.vt.feed(&out[start..at]);
-            start = at;
-            let reply = match f {
-                Found::Query(Query::CursorPosition) => Some(self.vt.cursor_report()),
-                Found::Query(Query::DefaultColor(c, term)) => self.colors.reply(c, term),
-                Found::Query(q) => q.fixed_reply().map(<[u8]>::to_vec),
-                _ => {
-                    self.colors.note(f);
-                    None
-                }
-            };
-            if let Some(reply) = reply {
-                let _ = self.input.send(reply);
-            }
+        let (clean, replies) = self.output.feed(data, &mut self.vt);
+        for reply in replies {
+            let _ = self.input.send(reply);
         }
-        self.vt.feed(&out[start..]);
-        self.emit(&out);
+        self.emit(&clean);
     }
 
     /// VT에 먹인 출력을 보존하고 구독자에게 보낸다
@@ -269,6 +254,7 @@ impl State {
                 match self.master.resize(size) {
                     Ok(()) => {
                         self.vt.resize(rows, cols);
+                        self.output.resize(rows, cols);
                         self.screen_seq += 1;
                         let info = self.info();
                         self.broadcast(SessionMsg::Updated(info.clone())).await;
@@ -304,7 +290,7 @@ impl State {
                 Ok(AgentResponse::History(chunk))
             }
             SessionRequest::Colors(c) => {
-                self.colors.host = Some(c);
+                self.output.host_colors(c);
                 Ok(AgentResponse::Done)
             }
         };
@@ -393,7 +379,6 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
         None => None,
     };
     let mut refreshes = HashMap::<String, crate::account::BrokerRequest>::new();
-    let mut redactor = aaa_common::redact::Stream::default();
 
     let pty = portable_pty::native_pty_system();
     let pair = pty
@@ -515,8 +500,7 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
         started_at_ms,
         vt: Vt::new(rows, cols),
         screen_seq: 0,
-        queries: QueryScanner::default(),
-        colors: DefaultColors::new(spec.colors),
+        output: Output::new(rows, cols, spec.colors),
         ring: Ring::new(RING_BYTES),
         conns: HashMap::new(),
         subs: HashSet::new(),
@@ -537,7 +521,7 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
         };
         tokio::select! {
             data = out_rx.recv(), if reader_open => match data {
-                Some(d) => {let clean=redactor.push(&d,false);st.output(&clean);},
+                Some(d) => st.output(&d),
                 None => {
                     reader_open = false;
                     if st.exit.is_some() { break; }
@@ -570,13 +554,11 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
         }
     }
 
-    let tail = redactor.push(&[], true);
-    st.output(&tail);
+    // 질의로 보류한 끝도 가림을 통과한 뒤에만 화면·마지막 기록에 남긴다.
+    let tail = st.output.finish();
+    st.vt.feed(&tail);
+    st.emit(&tail);
     drop(prepared.take());
-    // 질의일까 붙들었던 끝(끝나지 않은 escape)도 마저 남긴다
-    let held = st.queries.take_held();
-    st.vt.feed(&held);
-    st.emit(&held);
     // 종료 기록: 마지막 화면을 남겨 agent가 세션 종료 뒤에도 보여 줄 수 있게 한다.
     let (rows, cols) = st.vt.size();
     util::write_private(&paths.final_replay(), &st.vt.replay())?;

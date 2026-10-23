@@ -7684,3 +7684,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 계정 pane 실패는 원인 사슬과 session-host PID·종료 결과·연결·로그를 보존하고 인증을 가려 host 응답·agent 경고에 남긴다. Front API·Agent link wire 변경은 없다.
 
 - **32회차 착지 통합(t-0914).** 기준 main `ea220817`의 마지막 §8.470·FRONT_API 1.113·AGENT_LINK 1.11·E2E97을 확인했다. t-0910의 `ac523d6a` 하나를 --no-ff로 합치며 겹친 후보 절을 빈 §8.471로 옮기고 시험 문서 참조를 맞췄다. API/link/E2E 번호를 유지한다. 격리 Playwright 1.64.1·Chromium/WebKit 기동 확인 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 빌드로 검증한다. GitHub CI를 기다리지 않으며 배포·tag·release는 수행하지 않는다.
+
+### 8.472 Windows 계정 pane의 ConPTY 초기 질의 교착(t-0910)
+
+- **원인.** ConPTY의 첫 출력 `ESC[6n`이 인증 가림 Stream에 먼저 들어가 끝 문자 `n`을 인증 접두부로 보류했다. 질의 scanner가 완성된 질의를 받지 못하고 ConPTY도 답을 기다려 Codex의 실행 시작·출력·brief 전달이 멈췄다.
+- **수리.** session-host는 원문에서 터미널 질의·색 사건을 먼저 읽고 답한다. 가림 규칙이 있는 pane의 원문 커서 계산은 scrollback 없는 전용 메모리 상태에서만 하며 조회·replay·저장 API를 노출하지 않는다. 가림이 없는 pane은 기존 공개 VT의 커서를 그대로 쓴다. 질의를 뺀 본문만 기존 가림을 통과해 공개 VT·ring·snapshot·최종 기록으로 간다. 질의로 나뉜 인증·끝나지 않은 escape도 가림을 유지한다. resize·색 변경·DA/DSR 순서를 보존한다.
+- **확인.** 최초 질의의 모든 분할·보류 인증 앞뒤의 커서/DA·색 지정/되돌리기·resize·EOF 가림, 실제 계정 PTY의 첫 DSR→응답→인증 갱신을 검사한다. Windows 가상 서비스 Session 0에서 실제 Codex TUI·brief 전달을 확인한다. Front API·Agent link·E2E 번호는 바꾸지 않는다.
+
+- **33회차 착지 통합(t-0917).** 기준 main `126140b2`의 마지막 §8.471·FRONT_API 1.113·AGENT_LINK 1.11·E2E97을 확인했다. t-0910의 `7332a23c` 하나를 --no-ff로 합치고 새 §8.472를 유지한다. 격리 Playwright 1.64.1·Chromium/WebKit 기동 확인 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 빌드를 확인한다. E2E97만 기존 오류 「입력 echo의 xterm ACK가 20초 안에 오지 않았다」로 실패하고 나머지가 통과하면 사용자 결정에 따라 착지한다. GitHub CI는 기다리지 않으며 설치 실행·배포·tag·release는 수행하지 않는다.

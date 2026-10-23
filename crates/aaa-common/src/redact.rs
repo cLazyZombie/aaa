@@ -13,6 +13,11 @@ struct Rules {
 }
 static RULES: LazyLock<RwLock<Rules>> = LazyLock::new(Default::default);
 
+/// 이 프로세스에 실제 가림 규칙이 있는지. 비밀 원문은 노출하지 않는다.
+pub fn active() -> bool {
+    !RULES.read().unwrap_or_else(|e| e.into_inner()).needles.is_empty()
+}
+
 pub fn remember(value: &str) {
     if value.len() < 12 {
         return;

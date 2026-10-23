@@ -13,6 +13,17 @@ const HARNESS: &str = r#"#!/usr/bin/env python3
 import os,sys,json,pathlib,socket,urllib.request,urllib.error,hashlib,base64,stat,subprocess,datetime
 if sys.argv[1:]==['--version']:
     print('development harness build');sys.exit(7)
+# ConPTY처럼 첫 출력은 커서 질의뿐이며 답을 받기 전에는 다음 출력을 만들지 않는다.
+import termios,tty,select
+saved=termios.tcgetattr(0)
+tty.setraw(0)
+os.write(1,b'\x1b[6n')
+reply=b''
+while not reply.endswith(b'R'):
+    assert select.select([0],[],[],5)[0], 'first cursor reply blocked by authentication redactor'
+    reply+=os.read(0,1)
+assert reply==b'\x1b[1;1R', 'wrong initial cursor position'
+termios.tcsetattr(0,termios.TCSANOW,saved)
 root=pathlib.Path(os.environ['ACCOUNT_PROOF'])
 tid=os.environ['AAA_THREAD']
 kind=os.environ['ACCOUNT_KIND']
