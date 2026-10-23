@@ -1,6 +1,7 @@
 # Windows GitHub Actions 일회성 runner 전용. 운영 설정·계정·기존 sshd 서비스는 바꾸지 않는다.
 # SYSTEM의 System32/OpenSSH/sshd.exe를 임시 서비스로 띄우고 일회 계정 SCM 설치를 본다.
 # 가짜 계정 암호는 부모 메모리 → 시험 자식 anonymous stdin으로만 전달한다. argv/env/파일/로그 금지.
+param([switch]$StartOnly)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:OS -ne 'Windows_NT') { throw '일회성 Windows CI 전용이다' }
 $sshd = Join-Path $env:SystemRoot 'System32\OpenSSH\sshd.exe'
@@ -16,6 +17,51 @@ $password = 'Aa1!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToStrin
 $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
 $createdUser = $false
 $createdService = $false
+function Write-LabDiagnostic([string]$Message) {
+    # 진단에도 보호 입력을 그대로 내보내지 않는다. 환경·키·설정 본문은 수집하지 않는다.
+    [Console]::Out.WriteLine($Message.Replace($password, '<redacted>'))
+}
+function Show-SshdStartupFailure([DateTime]$Since) {
+    Write-LabDiagnostic ('sshd version: ' + (Get-Item -LiteralPath $sshd).VersionInfo.FileVersion)
+    foreach ($operation in @('queryex', 'qc')) {
+        Write-LabDiagnostic ((& sc.exe $operation $service 2>&1) | Out-String)
+    }
+    Write-LabDiagnostic ((Get-CimInstance Win32_Service -Filter "Name='$service'" |
+        Select-Object Name, State, StartName, ProcessId, ExitCode, ServiceSpecificExitCode | Format-List | Out-String))
+    foreach ($log in @('System', 'Application', 'OpenSSH/Admin', 'OpenSSH/Operational')) {
+        $events = Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $Since } -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -match 'OpenSSH|Application Error|Windows Error Reporting' -or $_.Message -like "*$service*" } |
+            Select-Object -First 20 TimeCreated, Id, ProviderName, Message
+        Write-LabDiagnostic ($log + ': ' + ($events | Format-List | Out-String))
+    }
+    # 서비스 실패와 단독 설정/권한 실패를 구분한다. listener 또는 EOF 사건까지만 읽는다.
+    $probe = New-Object Diagnostics.Process
+    $probe.StartInfo.FileName = $sshd
+    $probe.StartInfo.Arguments = '-ddd -e -f "' + (Join-Path $lab 'sshd_config') + '"'
+    $probe.StartInfo.UseShellExecute = $false
+    $probe.StartInfo.RedirectStandardOutput = $true
+    $probe.StartInfo.RedirectStandardError = $true
+    [void]$probe.Start()
+    $stdout = $probe.StandardOutput.ReadToEndAsync()
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        while ($watch.ElapsedMilliseconds -lt 10000) {
+            $line = $probe.StandardError.ReadLineAsync()
+            if (-not $line.Wait([int](10000 - $watch.ElapsedMilliseconds))) { break }
+            $message = $line.GetAwaiter().GetResult()
+            if ($null -eq $message) { break }
+            Write-LabDiagnostic $message
+            if ($message -match 'Server listening on') { break }
+        }
+    } finally {
+        # 직접 시작해 보관한 프로세스 객체 하나만 끝낸다.
+        if (-not $probe.HasExited) { $probe.Kill() }
+        $probe.WaitForExit()
+        Write-LabDiagnostic ('standalone exit: ' + $probe.ExitCode)
+        Write-LabDiagnostic $stdout.GetAwaiter().GetResult()
+        $probe.Dispose()
+    }
+}
 try {
     [void](New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -AccountNeverExpires)
     $createdUser = $true
@@ -61,9 +107,16 @@ Host ci
     if ($LASTEXITCODE -ne 0) { throw '시스템 sshd 설정 검사 실패' }
     [void](New-Service -Name $service -BinaryPathName ('"' + $sshd + '" -f "' + (Join-Path $lab 'sshd_config') + '"') -StartupType Manual)
     $createdService = $true
-    Start-Service -Name $service
-    (Get-Service -Name $service).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+    $started = Get-Date
+    try {
+        Start-Service -Name $service
+        (Get-Service -Name $service).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+    } catch {
+        try { Show-SshdStartupFailure $started } catch { Write-LabDiagnostic ('시작 진단 실패: ' + $_.Exception.Message) }
+        throw
+    }
     Write-Host 'M4 SYSTEM OpenSSH 실제 owner 시작'
+    if ($StartOnly) { return }
     $test = New-Object Diagnostics.Process
     $test.StartInfo.FileName = (Get-Command cargo.exe).Source
     $test.StartInfo.Arguments = 'test --locked -p aaa-host --lib machine_setup::tests_windows::system_sshd_installs_a_current_user_scm_agent_and_registers_it -- --ignored --exact --nocapture'
