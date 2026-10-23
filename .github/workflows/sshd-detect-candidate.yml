@@ -1,0 +1,136 @@
+name: Windows ssh detection candidate
+on:
+  push:
+    branches: [diagnostic/t-0827-ssh-detect-candidate]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+jobs:
+  rust:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      # 생성 파일(web/src/gen/proto.ts) 최신 확인 테스트가 줄 끝을 비교한다
+      - run: git config --global core.autocrlf false
+      # ubuntu는 이력을 모두 받는다(약 11MiB): 공개 검사가 이번 push·PR의 커밋 메시지·author를, 고정 sleep ratchet이
+      # 기준의 기준 파일을 본다. 얕은 checkout이면 둘 다 볼 커밋이 없어 늘 건너뛰었다(10-18 감사)
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: ${{ matrix.os == 'ubuntu-24.04' && '0' || '1' }}
+      - name: Rust stable
+        id: rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+          rustup default stable
+          rustc --version
+          echo "rustc=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      # Rust 빌드 캐시(결정 D1): 의존 crate 받은 것(registry·git)과 target. 키는 job·OS·rustc 판·주·Cargo.lock이다.
+      # - 키가 꼭 맞으면 복원만 하고 다시 저장하지 않는다(키마다 한 번 쓴다). 그래서 한 주 안에서는 커지지 않는다.
+      # - Cargo.lock이 바뀌면 같은 주의 캐시를 이어 받아 짓고 새 키로 저장한다. 주가 바뀌면 처음부터 지어 새로 저장한다.
+      # - 복원이 실패하면(받기 오류·없음) 캐시 없이 처음부터 짓는다. 다시 짓는 판단은 cargo fingerprint가 한다.
+      #   받은 파일이 깨져 빌드가 실패하면 통과로 넘어가지 않는다: 그때는 key의 v1을 올려 버린다.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-v1-${{ github.job }}-${{ runner.os }}-${{ steps.rust.outputs.rustc }}-${{ steps.rust.outputs.week }}-
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령). 여기서는 OS별로 어느 단계를 도는지만 정한다.
+      - name: 웹 front 빌드(host 실행 파일에 포함)
+        env:
+          # 고정 sleep ratchet 「origin/main보다 올리지 않는다」의 기준(web/test/fixed-sleeps.test.mjs). 주면 건너뛰지 않는다.
+          # main push는 그 전 main(origin/main이 이미 HEAD라 자기와 비교하게 된다), 그 밖에는 origin/main. 이력이 있는 ubuntu만
+          AAA_SLEEP_BASE: ${{ matrix.os == 'ubuntu-24.04' && (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before || 'origin/main') || '' }}
+        run: bash scripts/ci-local.sh --only web --logs . --tee
+      - name: fmt
+        if: matrix.os == 'ubuntu-24.04'
+        run: bash scripts/ci-local.sh --only fmt --logs . --tee
+      - name: build
+        id: build
+        run: bash scripts/ci-local.sh --only build --logs . --tee
+      - name: clippy
+        run: bash scripts/ci-local.sh --only clippy --logs . --tee
+      - name: 머신 추가 host 유닛
+        timeout-minutes: 15
+        run: cargo test --locked -p aaa-host --lib machine_setup::tests:: -- --nocapture
+      # 운영 Mac에는 등록하지 않는다. 기존 일회성 CI 계정에서만 필수 실제 등록 owner를 돈다.
+      - name: macOS LaunchAgent 실제 등록·ready·instance 보존
+        if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
+        timeout-minutes: 15
+        run: cargo test -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture 2>&1 | tee launchd-registration.log
+      # 「SSH로 추가」 실제 경로(plan §8.420): install 검증 SSH 입구가 믿는 root sshd를 이 일회성 계정에만 띄운다. 원격 HOME은 실험실이고
+      # 시험이 runner 실제 HOME이 그대로인지 본다. 운영 Mac에서는 돌리지 않는다(스크립트가 GITHUB_ACTIONS가 아니면 멈춘다).
+      - name: SSH로 설치·등록 실제 root sshd·LaunchAgent
+        if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash scripts/ci-root-sshd.sh 2>&1 | tee ssh-install.log
+      # 암호는 일회성 시험 계정의 가짜 값이며 anonymous stdin만 쓴다. 기존 runner 계정/sshd 설정은 보존한다.
+      - name: Windows SYSTEM SSH로 설치·사용자 SCM·등록
+        if: ${{ !cancelled() && matrix.os == 'windows-2025' && steps.build.outcome == 'success' }}
+        timeout-minutes: 20
+        shell: pwsh
+        run: ./scripts/ci-windows-sshd.ps1
+      # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
+      # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
+      # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).
+      - name: public
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
+        env:
+          AAA_PUBLIC_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (!github.event.created && github.event.before) || 'origin/main' }}
+        run: bash scripts/ci-local.sh --only public --logs . --tee
+      # 로그를 내려받지 않고도 원인을 보도록 실패 내용을 annotation으로 남긴다.
+      - name: 실패 요약
+        if: failure()
+        run: |
+          # 기본 셸은 -e -o pipefail이다. 찾는 줄이 없어도 요약은 끝까지 간다.
+          set +e +o pipefail
+          # annotation은 step마다 개수 제한이 있어 파일별이 아니라 묶음별로 하나씩 남긴다.
+          # 제목은 인자가 아니라 stdin 첫 줄로 넘긴다: Windows에서 한국어 인자가 code page를 거쳐 깨졌다(「ëë‚˜ì§€…」).
+          annotate() {
+            { printf '%s\n' "$1"; cat; } | node -e 'const a=require("fs").readFileSync(0,"utf8").replace(/\r/g,""); const i=a.indexOf("\n"); const e=(s)=>s.replace(/%/g,"%25").replace(/\n/g,"%0A"); let t=a.slice(i+1); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+e(a.slice(0,i)).replace(/:/g,"%3A").replace(/,/g,"%2C")+"::"+e(t))'
+          }
+          if [ -f launchd-registration.log ]; then tail -c 12000 launchd-registration.log | annotate 'macOS LaunchAgent'; fi
+          if [ -f ssh-install.log ]; then tail -c 12000 ssh-install.log | annotate 'SSH로 설치·등록'; fi
+          for f in build.log clippy.log; do
+            [ -f "$f" ] || continue
+            grep -nE -A8 "^error|^warning" "$f" | head -80 | annotate "$f"
+          done
+          # 테스트 실패 본문(진단 출력 포함)
+          for f in test.log; do
+            [ -f "$f" ] && awk '/^failures:/{p=1} p{print} /^test result: FAILED/{p=0}' "$f" | annotate "$f"
+          done
+          # 단계 한도로 멈춘 시험: 어느 binary(Running 줄)의 어느 시험이 끝나지 않았는지(libtest가 60초 넘으면 알린다)
+          for f in test.log; do
+            [ -f "$f" ] && grep -q 'has been running for over' "$f" && grep -E '^ +Running |has been running for over' "$f" | tail -20 | annotate "$f: 끝나지 않은 시험"
+          done
+          # 실험실: 남겨진 host·agent 로그와 세션 폴더(session-host.log, exit.json, meta.json)
+          for d in $(cat test.log clipboard.log 2>/dev/null | grep -o '실험실 기록을 남겼다: .*'  | sed 's/^실험실 기록을 남겼다: //' | sort -u); do
+            [ -d "$d" ] || d=$(cygpath -u "$d" 2>/dev/null)
+            [ -d "$d" ] || continue
+            # annotation은 공개다: 세션 spec.json의 token 값과 env의 …TOKEN·SECRET·PASSWORD·KEY 값은 가린다(일회용 러너 세션이라도
+            # 비밀값 모양을 남기지 않는다). env는 ["이름", "값"]이라 한 줄이면 sed가, 이름과 값이 줄을 나누면 awk가 다음 줄을 가린다
+            # (10-18 287c1d1 annotation에 AAA_HOOK_TOKEN 값이 그대로 나갔다)
+            find "$d" -type f \( -name '*.log' -o -name '*.json' \) | while read -r f; do
+              echo "## ${f#"$d"/}"; tail -c 1500 "$f"; echo
+            done | sed -E 's/("token"[[:space:]]*:[[:space:]]*")[^"]*"/\1<가림>"/g; s/("[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*"[[:space:]]*,[[:space:]]*")[^"]*"/\1<가림>"/g' \
+              | awk '{ if (m) sub(/"[^"]*"/, "\"<가림>\""); m = ($0 ~ /"[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*",[[:space:]]*$/); print }' \
+              | annotate "$(basename "$d")"
+          done
+          true
