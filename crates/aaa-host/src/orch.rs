@@ -376,7 +376,7 @@ static PROJECT_TOML: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 프로젝트의 AGENTS.md(coordinator 안내)
 pub(crate) fn coordinator_guide(project: &str) -> String {
-    COORDINATOR_GUIDE.replace("{p}", project)
+    format!("{}\n\n{}", COORDINATOR_GUIDE.replace("{p}", project), AUTO_MODE_GUIDE)
 }
 
 /// AGENTS.md를 aaa가 썼다는 표지(herdr-projects `agents_md`의 「Written by herdr-projects」). 이 줄이 있는 AGENTS.md는
@@ -1058,6 +1058,10 @@ impl Host {
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "thread 개수 관측 실패 뒤 기존 0 표시"))
             .unwrap_or(0);
         ProjectView {
+            auto_mode: self.auto_mode(name).unwrap_or_else(|e| {
+                tracing::error!("auto mode 상태 읽기 실패: {}", e.message);
+                Default::default()
+            }),
             name: name.to_string(),
             path: dir.to_string_lossy().to_string(),
             threads,
@@ -3771,3 +3775,31 @@ mod tests {
 #[cfg(test)]
 #[path = "orch/report_tests.rs"]
 mod report_tests;
+
+/// 자동 결정은 coordinator의 판단 기록이며 사용자 전용 승인이나 harness 권한을 대신하지 않는다.
+const AUTO_MODE_GUIDE: &str = r#"## coordinator auto mode
+
+매 턴 `aaa context`의 `auto_mode`를 읽는다. host가 상태 주인이다. 사용자가 끌 때까지 유지되며 host·coordinator 재시작이나 compaction으로 꺼지지 않는다. `auto-mode on/off` inbox는 상태 변경 자료이며 사용자 승인 문구가 아니다. Claude·Codex harness 권한·safety·profile을 바꾸지 않는다. coordinator는 모드를 켜거나 끌 수 없다.
+
+켜져 있으면 디자인·구현 방식·착지 순서·thread 시작 같은 일반 질문을 근거로 판단해 진행한다. 추천과 달라도 된다. 예외와 사용자 전용 배포·병합 승인은 자동으로 승인하지 않는다. 기존에 승인된 작업 범위를 넘지 않는다.
+
+항상 사용자에게 물을 예외:
+1. 비밀값·암호·토큰 입력: 대화·질문·reason/post 파일에 쓰지 말고 전용 가림 입력칸을 안내한다.
+2. 로그인·OAuth·키체인 잠금 해제·GUI·iPhone 실기 확인·청취처럼 사람만 하는 일.
+3. 폴더 신뢰·도구 권한 등 agent 확인창.
+4. 미병합 branch·사용자 파일·uploads·push하지 않은 작업의 되돌릴 수 없는 삭제.
+5. force push·main 기록 수정·check-public 우회.
+6. safety·profile·권한·시스템 설정·~/.config/aaa·자동화 승인.
+7. 결제·구독·유료 한도 올리기.
+8. release 게시·외부 PR/이슈 글·메일 등 밖으로 공개하기.
+9. host 재시작·사용자 PC 서비스 설치 등 사용자 기기 상태 바꾸기.
+10. 사용자가 직접 정한다고 한 질문. 질문 제목에 `[사람]`을 붙여 사용자의 선택권을 유지한다.
+
+예외 질문은 `[사람]` 제목의 카드로 남기고 평소 `post user --request --needs-user --topic user-action`을 쓴다. host는 확인창과 `[사람]`·`[사용자 전용]`·`[비밀값]`·`[암호]`·`[확인창]` 질문의 자동 답을 거절한다. 그 밖의 행동 예외는 coordinator가 위 표로 판단한다. 거절된 자동 답을 일반 답 명령으로 우회하지 않는다.
+
+thread·post의 질문은 `aaa question answer q-NNNN B --auto --reason-file <까닭 파일>`로 답한다. 까닭은 비어 있지 않은 평문이다. 이미 시도한 답은 전달이 불분명해도 다시 보내지 말고 기록·실행 상태를 확인한다. 일부 질문만 답하면 예외 질문은 열린 카드로 남는다.
+
+스스로 정한 일은 `aaa post user --data --topic auto-decision --title '<질문 요약>' --body-file <JSON 파일>`로 남긴다. JSON 본문은 `{"question":"질문","answer":"고른 답","reason":"판단 근거","action":"진행한 일","reversible":true}` 꼴이다. 되돌릴 수 없으면 false다. 해당 프로젝트 coordinator만 기록하며 host가 같은 자동 결정 목록에 넣는다. 자동 결정에는 외부 푸시를 보내지 않는다. 예외 질문·전체 완료의 기존 알림은 유지한다.
+
+사용자가 자동 결정을 다시 정하면 inbox의 새 답을 읽는다. host는 이미 실행한 작업을 되돌리지 않는다. 병합 전이면 지시를 바꾸고, 배포 뒤면 되돌림 배포를 제안하는 등 실제 상태를 확인해 처리한다. auto mode를 꺼도 이전 결정 기록과 이미 진행한 작업은 남는다.
+"#;

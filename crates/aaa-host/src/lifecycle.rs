@@ -360,6 +360,7 @@ impl Host {
         notes.extend(self.safety_table_note(project, "삭제한"));
         Ok(FrontResponse::ProjectChange(ProjectChange {
             project: aaa_proto::ProjectView {
+                auto_mode: self.auto_mode(project)?,
                 name: project.to_string(),
                 path: target.to_string_lossy().into_owned(),
                 threads: recs.len() as u32,

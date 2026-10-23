@@ -1,5 +1,7 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod auto_mode;
+pub use auto_mode::*;
 pub mod workspace_metrics;
 pub use workspace_metrics::*;
 pub mod task_queue;
@@ -62,6 +64,9 @@ pub fn typescript_bindings() -> String {
     use ts_rs::TS;
     let cfg = ts_rs::Config::default();
     let decls = [
+        AutoMode::decl(&cfg),
+        AutoDecision::decl(&cfg),
+        AutoDecisionNote::decl(&cfg),
         MetricCounts::decl(&cfg),
         MetricTiming::decl(&cfg),
         MetricRanking::decl(&cfg),

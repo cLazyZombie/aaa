@@ -1,3 +1,4 @@
+import { AutoModeChip } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { TerminalReceiver } from "./terminalReceive";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
@@ -2096,6 +2097,7 @@ export function TermView({
           <span className="term-title-line">
             {agent && <AgentMark agent={agent} size={18} />}
             <strong>{title ?? (pane.name || pane.id)}</strong>
+            {pane.role === "coordinator" && <AutoModeChip />}
           </span>
           <span className="muted">
             {crumb ?? pane.machine} · {size[0]}×{size[1]} <ResponsibilityBadge value={pane.responsibility} />
@@ -2124,7 +2126,7 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
+      {chatView && chatable && <ChatPanel coordinator={pane.role === "coordinator"} pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}

@@ -1017,6 +1017,8 @@ impl Host {
         }
         let page = self.inbox(project, false, peek)?;
         Ok(ProjectContext {
+            auto_mode: self.auto_mode(project)?,
+            auto_mode_exceptions: aaa_proto::AUTO_MODE_EXCEPTIONS.into(),
             post_warnings: self.post_warnings(project)?,
             project: project.to_string(),
             path: dir.display().to_string(),

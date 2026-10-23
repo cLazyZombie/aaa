@@ -1,3 +1,4 @@
+import { AutoModeProvider, AutoModeMenu } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { MachineInfoPanel } from "./MachineInfoPanel";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -24,7 +25,7 @@ import { composerDrafts } from "./herdr/composerDraft.ts";
 import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
 import { reportDoc, reportDocLink, taskBadge, uploadsBase, type TaskAttachment } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
-import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
+import { ApiError, call, me, onAsksChanged, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
 import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
@@ -1174,7 +1175,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const shownThreads = allThreads.filter(inSidebar);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
   // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
-  const { data: asksData, put: putAsks } = useAsksData(up);
+  const { data: asksData, put: putAsks, moreAuto } = useAsksData(up);
+  useEffect(() => {
+    const id = sel?.startsWith("question:q-") ? `auto-${sel.slice("question:".length)}` : sel?.startsWith("ask:a:") ? sel.slice("ask:a:".length) : null;
+    if (!up || !id || !asksData?.autoMode) return;
+    let active = true, seq = 0;
+    const load = () => {
+      const n = ++seq;
+      void call({ op: "auto_decisions", project: "", before: null, id }).then(r => { if (active && n === seq) putAsks(r); }).catch(ignoredFailure("자동 결정 직접 주소 읽기", () => {}));
+    };
+    load();
+    const unwatch = onAsksChanged(load);
+    return () => { active = false; unwatch(); };
+  }, [sel, up, !!asksData?.autoMode, putAsks]);
   const asksDone = asksData?.done ?? [];
   const askList = useMemo(() => openAsks(shownThreads, asksData, taskBoard.board?.tasks ?? []), [threads, asksData, taskBoard.board]); // eslint-disable-line react-hooks/exhaustive-deps
   const askKey = sel?.startsWith("ask:")
@@ -1182,8 +1195,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     : sel?.startsWith("question:")
       ? (questionKey(sel.slice("question:".length), shownThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
       : null;
-  const askSelection = useAskSelection(askKey, askList, asksDone);
-  const askSelected = askSelection.kind === "open" ? askSelection.ask.key : askSelection.kind === "done" ? `d:${askSelection.record.id}` : null;
+  const autoQuestion = sel?.startsWith("question:") ? asksData?.autoDecisions?.find(d => d.question.id === sel.slice("question:".length) && d.outcome === "answered") : null;
+  const askSelection = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions);
+  const askSelected = askSelection.kind === "auto" ? `a:${askSelection.decision.id}` : askSelection.kind === "open" ? askSelection.ask.key : askSelection.kind === "done" ? `d:${askSelection.record.id}` : null;
   // 질문 링크로 들어오면 사이드바도 「답할 것」 목록으로 바꾼다(목록 + 카드, 1B. 휴대폰은 drawer를 열면 그 목록이다)
   useEffect(() => {
     if (asksShown && panelRef.current !== "asks") setPanel("asks");
@@ -1387,8 +1401,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
 
   return (
+    <AutoModeProvider data={asksData} put={putAsks} canControl={canControl} onPick={k => goSel(`ask:${k}`)}>
     <DrawerContext.Provider value={drawer}>
-    <HeadContext.Provider value={{ more: <MoreMenu onThreads={chooseThreads} />, note: headNote }}>
+    <HeadContext.Provider value={{ more: <MoreMenu onThreads={chooseThreads} coordinator={!!current?.coordinator_project} />, note: headNote }}>
     <AppRefContext.Provider value={appRefs}>
     <DrawerDiagnostics />
     <div
@@ -1464,6 +1479,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               selected={asksShown ? askSelected : null}
               canControl={canControl}
               onPick={(k) => goSel(`ask:${k}`)}
+              onMoreAuto={moreAuto}
               onForgetAll={async () => putAsks(await call({ op: "ask_forget", ids: [], all: true }))}
             />
           }
@@ -1764,6 +1780,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     </AppRefContext.Provider>
     </HeadContext.Provider>
     </DrawerContext.Provider>
+    </AutoModeProvider>
   );
 }
 
@@ -1771,7 +1788,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
  * 머리의 「더 보기」 메뉴(참고 App.tsx moreItems·header-more): 링크 복사와 「알림」(이 기기 상태를 말하고 누르면 켜고 끈다).
  * 알림이 꺼져 있으면 메뉴 단추에 점을 단다. 찾기·파일 보기 항목은 그 기능을 옮길 때 넣는다.
  */
-function MoreMenu({ onThreads }: { onThreads: () => void }) {
+function MoreMenu({ onThreads, coordinator }: { onThreads: () => void; coordinator: boolean }) {
   const alerts = useAlerts();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -1853,6 +1870,7 @@ function MoreMenu({ onThreads }: { onThreads: () => void }) {
       )}
       {open && (
         <div className="more-menu" role="menu" aria-label="더 보기" ref={menu} onKeyDown={onMenuKey} onBlur={onMenuBlur}>
+          {coordinator && <AutoModeMenu close={close} />}
           <button
             role="menuitem"
             onClick={() => {

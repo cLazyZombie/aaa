@@ -2119,6 +2119,40 @@ pub enum FrontRequest {
         picks: Vec<Option<u32>>,
         text: Option<String>,
     },
+    /// coordinator 모드 상태. 읽기는 모든 front, 변경은 사람만.
+    AutoDecisions {
+        #[serde(default)]
+        project: String,
+        #[serde(default)]
+        before: Option<String>,
+        #[serde(default)]
+        id: Option<String>,
+    },
+    AutoModeGet {
+        #[serde(default)]
+        project: String,
+    },
+    AutoModeSet {
+        #[serde(default)]
+        project: String,
+        on: bool,
+    },
+    /// 검증한 coordinator만 자동 답을 보낸다. 일반 답과 별도 op라 구판 host에서 사람 답으로 강등되지 않는다.
+    QuestionAutoAnswer {
+        #[serde(default)]
+        project: String,
+        id: String,
+        choice: Option<String>,
+        text: Option<String>,
+        reason: String,
+    },
+    /// 확인 처리 또는 새 답 전달. null은 확인, 글은 coordinator에 재판단 요청(되돌림 실행은 하지 않는다).
+    AutoDecisionReview {
+        #[serde(default)]
+        project: String,
+        id: String,
+        answer: Option<String>,
+    },
     /// 사람이 읽는 질문 ID로 선택·직접 답을 기록한다. 일부만 답하면 나머지는 열린 채로 남는다.
     QuestionReply {
         #[serde(default)]
@@ -3379,6 +3413,11 @@ impl FrontRequest {
             | FrontRequest::AskHandle { project, .. }
             | FrontRequest::AskAnswer { project, .. }
             | FrontRequest::QuestionReply { project, .. }
+            | FrontRequest::AutoModeGet { project, .. }
+            | FrontRequest::AutoDecisions { project, .. }
+            | FrontRequest::AutoModeSet { project, .. }
+            | FrontRequest::QuestionAutoAnswer { project, .. }
+            | FrontRequest::AutoDecisionReview { project, .. }
             | FrontRequest::AskForget { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }
@@ -3476,6 +3515,8 @@ impl FrontRequest {
                 | FrontRequest::DeployJobs
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
+                | FrontRequest::AutoModeGet { .. }
+                | FrontRequest::AutoDecisions { .. }
                 | FrontRequest::WorkspaceDashboard { .. }
                 | FrontRequest::Machines
                 | FrontRequest::MachineSetupList
@@ -3627,7 +3668,20 @@ pub enum FrontResponse {
         muted: Vec<String>,
     },
     /// 「답할 것」(FRONT_API 1.78): 열린 확인 필요 post, 답한 것(최신부터), 자동 정리 기간
+    AutoMode(crate::AutoMode),
+    AutoDecisions {
+        decisions: Vec<crate::AutoDecision>,
+        next: Option<String>,
+    },
     Asks {
+        #[serde(default)]
+        auto_mode: crate::AutoMode,
+        #[serde(default)]
+        auto_decisions: Vec<crate::AutoDecision>,
+        #[serde(default)]
+        auto_next: Option<String>,
+        #[serde(default)]
+        auto_exceptions: u32,
         requests: Vec<crate::UserRequestView>,
         done: Vec<crate::AskRecord>,
         keep_days: u32,

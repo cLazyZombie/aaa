@@ -1,3 +1,4 @@
+import { useAutoMode, AutoModeSwitch, AutoModeStatus } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 // 대화 보기의 입력창(herdr-web-ui src/components/Composer.tsx의 글 칸·보내기·빠른 답과 PaneTerminal.tsx 2885~2950줄
 // `composer-queue`(이 기기에 붙잡은 메시지), 모양 herdr/Composer.css 그대로, 문구는 참고 i18n.ko.ts). 차이 목록 C2, plan §8.130.
@@ -231,6 +232,8 @@ export function ChatComposer({
   coordinator = false,
   context = null,
 }: ChatComposerProps) {
+  const auto = useAutoMode();
+  const autoOn = coordinator && !!auto?.mode?.on;
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
   // 탭이 안 보이면 coordinator 테두리의 빛을 세운다(브라우저가 그리기를 멈추는 것에 기대지 않고 애니메이션 자체를 멈춘다)
@@ -797,7 +800,7 @@ export function ChatComposer({
   }, [compacting, connected, asking, flight, queued, working, autoSendQueued]);
 
   const placeholder = connected
-    ? `${agentLabel}에게 메시지…`
+    ? (autoOn ? "coordinator에게 지시하기" : `${agentLabel}에게 메시지…`)
     : "재연결 중… 메시지는 여기에 보관되고 대기열에 넣지 않습니다";
   return (
     <>
@@ -937,7 +940,7 @@ export function ChatComposer({
           </div>
         )}
         {/* 보내는 동안에도 글이 정한 배치 그대로다: 상태는 단추가 보이고 상태 글은 그리지 않는다(plan §8.292) */}
-        <div ref={surfaceRef} data-lines={lines} className={`composer-surface${coordinator ? " is-coordinator" : ""}${dragging ? " is-dragging" : ""}${locked ? " is-locked" : ""}`}
+        <div ref={surfaceRef} data-lines={lines} className={`composer-surface${coordinator ? " is-coordinator" : ""}${autoOn ? " is-auto" : ""}${dragging ? " is-dragging" : ""}${locked ? " is-locked" : ""}`}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
@@ -1000,6 +1003,7 @@ export function ChatComposer({
           <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
             onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; uploadImages(files); }} />
           <div className="composer-controls composer-controls-left">
+            {autoOn && <AutoModeSwitch />}
             <button type="button" className="icon-button" aria-label="그림 첨부" title="그림 첨부" disabled={!connected || uploading || locked}
               onPointerDown={(event) => event.preventDefault()} onClick={() => picker.current?.click()}><ImagePlus aria-hidden="true" /></button>
           </div>
@@ -1074,6 +1078,7 @@ export function ChatComposer({
             )}
           </div>
         </div>
+        {coordinator && <AutoModeStatus />}
       </div>
       {confirming && (
         <ConfirmDialog
