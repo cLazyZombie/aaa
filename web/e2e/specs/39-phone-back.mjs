@@ -11,7 +11,8 @@ import fs from "node:fs";
 import { aaa, step, browser, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 import { historyDestinations } from "../lib/history-destinations.mjs";
-import { settingsDrawerHistory } from "../lib/settings-drawer-history.mjs";
+import { settingsDrawerHistory, settingsPanePreparation } from "../lib/settings-drawer-history.mjs";
+import { SettingsDrawerDiagnostics } from "../lib/settings-drawer-diagnostics.mjs";
 import { drawerNavigation } from "../lib/drawer-navigation.mjs";
 import { fragmentHistory } from "../lib/fragment-history.mjs";
 
@@ -94,6 +95,7 @@ const fmt = (s) => `${s.hash || "(주소 없음)"}${s.viewer ? "+보기" : ""}${
 
 export default async function () {
   let url;
+  const settingsDiagnostics = new SettingsDrawerDiagnostics(root);
   await step("준비: 보고서 publish, 보고서 링크가 든 대화 pane과 셸 pane 둘", async () => {
     aaa("project", "create", "demo");
     const input = `${root}/report-39`;
@@ -375,14 +377,21 @@ export default async function () {
     }
   });
 
+  await step("설정 준비: 첫 thread 목록이 메뉴 열림 뒤 도착해도 bk1 클릭을 마친다(Chromium·WebKit)", async () => {
+    await settingsPanePreparation(browser, settingsDiagnostics);
+    const wk = await webkit.launch();
+    try { await settingsPanePreparation(wk, settingsDiagnostics); }
+    finally { await wk.close(); }
+  }, { diagnose: (error) => settingsDiagnostics.save(error) });
+
   await step("설정 닫기의 내부 복귀는 사용자가 연 메뉴를 유지하고 실제 뒤로·앞으로는 닫는다(Chromium·WebKit)", async () => {
-    await settingsDrawerHistory(browser);
+    await settingsDrawerHistory(browser, settingsDiagnostics);
     const wk = await webkit.launch();
     try {
-      await settingsDrawerHistory(wk);
+      await settingsDrawerHistory(wk, settingsDiagnostics);
     } finally {
       await wk.close();
     }
-  });
+  }, { diagnose: (error) => settingsDiagnostics.save(error) });
 
 }
