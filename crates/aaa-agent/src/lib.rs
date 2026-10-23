@@ -287,11 +287,7 @@ impl Agent {
             while let Ok((mut s, pid)) = listener.accept_peer().await {
                 let me = me.clone();
                 tokio::spawn(async move {
-                    let reply = match me.on_hook(&mut s, pid).await {
-                        Ok(out) => format!("ok\n{}", out.unwrap_or_default()),
-                        Err(e) => format!("error: {e:#}\n"),
-                    };
-                    let reply = aaa_common::redact::text(&reply);
+                    let reply = hooks::reply(me.on_hook(&mut s, pid).await);
                     let _ = tokio::io::AsyncWriteExt::write_all(&mut s, reply.as_bytes()).await;
                     let _ = tokio::io::AsyncWriteExt::shutdown(&mut s).await;
                 });
@@ -305,7 +301,7 @@ impl Agent {
         self: &Arc<Self>,
         s: &mut aaa_common::ipc::LocalStream,
         pid: Option<u32>,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<hooks::Reply>> {
         let msg = hooks::read_msg(s).await?;
         if msg.harness == "deploy_guard" {
             let guard = deploy::guard::read(&self.state, &msg.session)?;
@@ -343,14 +339,14 @@ impl Agent {
             bail!("hook token이 맞지 않는다");
         }
         if msg.harness == "imagegen" {
-            return self.on_image(msg, pid).await.map(Some);
+            return self.on_image(msg, pid).await.map(hooks::Reply::Image).map(Some);
         }
         if msg.harness == "post" {
             let result = self.on_post(msg.clone(), pid).await;
             if let Err(e) = &result {
                 self.reject_post(&msg, &e.to_string()).await;
             }
-            return result.map(Some);
+            return result.map(hooks::Reply::Text).map(Some);
         }
         if matches!(msg.harness.as_str(), "codex" | "quota") {
             // 옛 notify는 harness를 선언하지 않은 aaa 셸에서도 왔다. token·peer 검사는 계속 적용한다.
@@ -391,7 +387,7 @@ impl Agent {
             );
         }
         if msg.harness == "quota" {
-            return self.record_quota(&spec, &msg.payload).map(Some);
+            return self.record_quota(&spec, &msg.payload).map(hooks::Reply::Text).map(Some);
         }
         if msg.harness == "claude"
             && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
@@ -411,7 +407,7 @@ impl Agent {
         // aaa가 hook 설정을 주는 thread 세션만 안내한다(herdr-projects `managed`: coordinator·thread pane)
         let managed = spec.spec.role.is_some();
         Ok(if managed && matches!(msg.harness.as_str(), "claude" | "codex") {
-            self.guide(&msg.session, &msg.payload, now)
+            self.guide(&msg.session, &msg.payload, now).map(hooks::Reply::Text)
         } else {
             None
         })
@@ -2277,7 +2273,7 @@ mod tests {
             drop((tx, rx, listener));
         });
         a.attach(&paths, &spec).await.unwrap();
-        let reply = pending.await.unwrap().unwrap();
+        let hooks::Reply::Text(reply) = pending.await.unwrap().unwrap() else { panic!("hook 안내 형식") };
         assert!(reply.contains("report --percent 25"), "{reply}");
         let (_, bytes) = out.recv().await.unwrap();
         let event: LinkMsg = serde_json::from_slice(&bytes).unwrap();

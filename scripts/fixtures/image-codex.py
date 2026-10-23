@@ -7,9 +7,11 @@ import os
 from pathlib import Path
 import socket
 import stat
+import struct
 import sys
 import tomllib
 import urllib.request
+import zlib
 
 root = Path(__file__).resolve().parent
 control = json.loads((root / "image-control.json").read_text())
@@ -76,8 +78,26 @@ for line in sys.stdin:
             send(dict(id=request["id"], result=dict(turn=dict(id="turn-image"))))
             send(dict(id="untrusted-request", method="item/commandExecution/requestApproval", params={}))
             continue
-        data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==")
-        data += b"fixture-image-transfer" * 10000
+        def chunk(kind, payload):
+            body = kind + payload
+            return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body))
+
+        # 실제 PNG(887×1774 RGBA, 544 KiB). 등록한 가짜 인증 조각과
+        # base64 글자만 겹치고 원시 바이트는 겹치지 않게 한다. 일반 글 가림은
+        # 첫 조각의 offset 3787에 '*'를 넣어 Invalid symbol 42를 재현한다.
+        header = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 887, 1774, 8, 6, 0, 0, 0))
+        pixels = chunk(b"IDAT", zlib.compress((b"\0" + b"\x20\x80\x40\xff" * 887) * 1774))
+        padding = bytearray(544 * 1024 - len(header) - len(pixels) - 24)
+        collision = base64.b64decode("AAAcG5nMDkxA")
+        for offset in (2838, 65520, 65539, 8 * 65536 + 2838):
+            start = offset - len(header) - 8
+            padding[start:start + len(collision)] = collision
+        data = header + chunk(b"aaAa", padding) + pixels + chunk(b"IEND", b"")
+        assert len(data) == 544 * 1024
+        # 각 전송 조각은 base64 정렬을 다시 시작한다. 경계 양쪽과 마지막
+        # 조각에 의도한 충돌이 실제로 있는지 준비 단계에서 확인한다.
+        for offset in (0, 65536, 8 * 65536):
+            assert b"cG5nMDkx" in base64.b64encode(data[offset:offset + 65536])
         images = home / "generated_images"
         images.mkdir()
         output = images / "result.png"

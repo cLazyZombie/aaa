@@ -7684,3 +7684,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 계정 pane 실패는 원인 사슬과 session-host PID·종료 결과·연결·로그를 보존하고 인증을 가려 host 응답·agent 경고에 남긴다. Front API·Agent link wire 변경은 없다.
 
 - **32회차 착지 통합(t-0914).** 기준 main `ea220817`의 마지막 §8.470·FRONT_API 1.113·AGENT_LINK 1.11·E2E97을 확인했다. t-0910의 `ac523d6a` 하나를 --no-ff로 합치며 겹친 후보 절을 빈 §8.471로 옮기고 시험 문서 참조를 맞췄다. API/link/E2E 번호를 유지한다. 격리 Playwright 1.64.1·Chromium/WebKit 기동 확인 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 빌드로 검증한다. GitHub CI를 기다리지 않으며 배포·tag·release는 수행하지 않는다.
+
+### 8.472 이미지 결과 hook의 base64 가림 충돌(t-0918)
+
+- host의 성공한 결과를 agent가 `imagegen.v1` JSON 문자열로 바꾼 뒤 일반 hook 글 가림을 다시 적용했다. base64의 우연한 인증 조각 일치가 `*`로 바뀌어 CLI decode가 실패했다. 544 KiB 시험 PNG·가짜 인증으로 운영과 같은 `Invalid symbol 42, offset 3787`을 재현했다.
+- hook 응답을 글/이미지 타입으로 나누고 마지막 IPC 직렬화에서 기존 B64 가림 serializer를 적용한다. 실제 bytes·오류의 인증 가림과 hook token·peer PID·이미지 소유권·SHA 검사는 유지한다. 실패에는 작업 ID·출력 번호·원시 offset·해독 단계와 원래 원인을 남긴다.
+- 기존 m13 이미지 owner의 로컬·원격 생성·다시 받기·재시작·중복 방지·비노출 및 64 KiB 전후 타입 가림 회귀로 검증한다. 전체 ci-local·공개 검사 뒤 병합 준비로 둔다. wire·API·기능 협상·E2E 번호는 유지하며 절 번호는 착지 때 main과 대조한다.

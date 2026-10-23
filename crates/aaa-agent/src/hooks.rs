@@ -47,6 +47,29 @@ pub struct HookMsg {
     pub payload: Value,
 }
 
+/// 글과 이미지 bytes의 구별을 로컬 IPC 직렬화까지 유지한다.
+pub(crate) enum Reply {
+    Text(String),
+    Image(aaa_proto::Outcome<aaa_proto::ImageResponse>),
+}
+
+pub(crate) fn reply(result: Result<Option<Reply>>) -> String {
+    let encoded = result.and_then(|out| match out {
+        None => Ok(String::new()),
+        Some(Reply::Text(text)) => Ok(aaa_common::redact::text(&text)),
+        Some(Reply::Image(result)) => {
+            let clean = aaa_common::redact::to_value(&result).context("이미지 hook 응답 가림 직렬화")?;
+            // B64는 원시 bytes를 가린 뒤 인코딩했다. 완성된 JSON을 글로 다시 가리면
+            // 우연히 겹친 base64 글자가 '*'로 바뀌어 수신측 decode가 실패한다.
+            Ok(format!("imagegen.v1 {clean}"))
+        }
+    });
+    match encoded {
+        Ok(out) => format!("ok\n{out}"),
+        Err(error) => aaa_common::redact::text(&format!("error: {error:#}\n")),
+    }
+}
+
 fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string())
 }
@@ -285,6 +308,51 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_reply_preserves_encoded_collisions_and_masks_actual_secret_bytes() {
+        use aaa_proto::{B64, IMAGE_CHUNK, ImageResponse, Outcome};
+        use base64::Engine as _;
+        let secret = "cG5nMDkx-image-canary-0918";
+        aaa_common::redact::remember(secret);
+        let collision = base64::engine::general_purpose::STANDARD.decode("AAAcG5nMDkxA").unwrap();
+        for size in [IMAGE_CHUNK - 1, IMAGE_CHUNK, IMAGE_CHUNK + 1] {
+            let mut raw = vec![0; size];
+            raw[2838..2838 + collision.len()].copy_from_slice(&collision);
+            let original = Outcome::Ok(ImageResponse::Chunk { data: B64(raw.clone()), eof: true });
+            let old = aaa_common::redact::text(&serde_json::to_string(&original).unwrap());
+            assert!(
+                serde_json::from_str::<Outcome<ImageResponse>>(&old)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Invalid symbol 42, offset 3787")
+            );
+            let encoded = reply(Ok(Some(Reply::Image(original))));
+            let restored: Outcome<ImageResponse> =
+                serde_json::from_str(encoded.strip_prefix("ok\nimagegen.v1 ").unwrap()).unwrap();
+            let Outcome::Ok(ImageResponse::Chunk { data, eof }) = restored else { panic!("이미지 응답 형식") };
+            assert_eq!(data.0, raw);
+            assert!(eof);
+        }
+        // B64라고 가림을 생략하지 않는다. 실제 인증 bytes와 일반 글·오류는 계속 가린다.
+        let encoded = reply(Ok(Some(Reply::Image(Outcome::Ok(ImageResponse::Chunk {
+            data: B64(secret.as_bytes().to_vec()),
+            eof: true,
+        })))));
+        let restored: Outcome<ImageResponse> =
+            serde_json::from_str(encoded.strip_prefix("ok\nimagegen.v1 ").unwrap()).unwrap();
+        let Outcome::Ok(ImageResponse::Chunk { data, .. }) = restored else { panic!("이미지 응답 형식") };
+        assert_eq!(data.0, vec![b'*'; secret.len()]);
+        for out in [
+            Ok(Some(Reply::Text(secret.into()))),
+            Err(anyhow::anyhow!("hook 실패: {secret}")),
+            Ok(Some(Reply::Image(Outcome::Err(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::BadRequest, secret))))),
+        ] {
+            let encoded = reply(out);
+            assert!(!encoded.contains("cG5nMDkx"));
+            assert!(encoded.contains("********"));
+        }
+    }
     use serde_json::json;
 
     /// JSON을 읽은 agent가 응답·종료한 뒤 클라이언트가 쓰기 반쪽을 닫는 실제 IPC 차례.

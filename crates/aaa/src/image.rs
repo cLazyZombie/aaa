@@ -3,7 +3,7 @@ use aaa_proto::{
     B64, IMAGE_CHUNK, IMAGE_MAX_BYTES, IMAGE_MAX_COUNT, ImageBegin, ImageFile, ImageRequest, ImageResponse, ImageState,
     ImageView,
 };
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use clap::Subcommand;
 use sha2::{Digest, Sha256};
 use std::{
@@ -92,7 +92,11 @@ async fn fetch(v: &ImageView, dir: &Path) -> Result<Vec<PathBuf>> {
         let mut bytes = vec![];
         loop {
             let ImageResponse::Chunk { data, eof } =
-                send(ImageRequest::Read { id: v.id.clone(), index: index as u32, offset: bytes.len() as u64 }).await?
+                send(ImageRequest::Read { id: v.id.clone(), index: index as u32, offset: bytes.len() as u64 })
+                    .await
+                    .with_context(|| {
+                        format!("이미지 결과 수신: 작업 {}, 출력 {index}, offset {}", v.id, bytes.len())
+                    })?
             else {
                 bail!("이미지 조각 응답이 아니다")
             };
