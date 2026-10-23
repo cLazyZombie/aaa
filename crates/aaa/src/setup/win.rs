@@ -312,7 +312,7 @@ fn layout() -> Result<Layout> {
         state.parent().unwrap_or(&state).join("bin").join("aaa.exe")
     };
     let source = std::env::current_exe().context("이 설치기 경로")?;
-    Ok(Layout { instance, source, exe, config, state, explicit_dirs, home })
+    Ok(Layout { kind: super::ServiceKind::WindowsScm, instance, source, exe, config, state, explicit_dirs, home })
 }
 
 pub(super) fn restart_for_rollout(exe: &Path) -> Result<String> {
@@ -340,6 +340,10 @@ pub(super) fn run(args: &Args) -> ExitCode {
 }
 
 fn run_in(args: &Args, term: &mut Terminal) -> ExitCode {
+    if args.service.is_some_and(|kind| kind != super::ServiceKind::WindowsScm) || args.launcher.is_some() {
+        term.say(Tone::Fail, "Windows에서는 Windows SCM 서비스를 씁니다. --launcher는 macOS 전용입니다.");
+        return ExitCode::from(2);
+    }
     let layout = match layout() {
         Ok(layout) => layout,
         Err(e) => {

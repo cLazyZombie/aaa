@@ -1,4 +1,4 @@
-//! `aaa setup`: Windows PC 하나를 agent로 설치하고 서비스로 띄워 host에 연결하는 대화형 설치기.
+//! `aaa setup`: PC 하나를 agent로 설치하고 OS 서비스로 띄워 host에 연결하는 대화형 설치기.
 //!
 //! 실행 파일을 `aaa-setup.exe`로 이름 붙여 두면 인자 없이 실행(탐색기 더블클릭·SSH)해도 이 마법사가 뜬다.
 //! 질문은 host 주소·이 PC 이름·작업 폴더·Windows 암호뿐이고 모두 기본값이 있다(암호 제외). 한 실행 안에서
@@ -9,14 +9,36 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 mod flow;
 #[cfg(windows)]
 pub(crate) mod service;
 #[cfg(test)]
 mod tests;
+#[cfg(unix)]
+pub(crate) mod unix;
 #[cfg(windows)]
 mod win;
+
+#[derive(clap::ValueEnum, Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ServiceKind {
+    #[default]
+    WindowsScm,
+    Launchd,
+    SystemdUser,
+    SystemdSystem,
+}
+impl ServiceKind {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::WindowsScm => "Windows 서비스",
+            Self::Launchd => "macOS LaunchAgent",
+            Self::SystemdUser => "Linux 사용자 서비스",
+            Self::SystemdSystem => "Linux 시스템 서비스",
+        }
+    }
+}
 
 #[derive(clap::Args, Debug, Default, Clone)]
 pub(crate) struct Args {
@@ -41,6 +63,12 @@ pub(crate) struct Args {
     /// `--uninstall`과 함께: 이 인스턴스의 설정·상태 폴더도 지운다
     #[arg(long, requires = "uninstall")]
     pub purge: bool,
+    /// 서비스 종류(기본: Windows SCM, macOS launchd, Linux systemd-user)
+    #[arg(long, value_enum)]
+    pub service: Option<ServiceKind>,
+    /// macOS 불변 launcher 실행 파일(기존 파일은 보존한다)
+    #[arg(long)]
+    pub launcher: Option<PathBuf>,
 }
 
 /// 실행 파일 이름이 `aaa-setup…`이고 첫 인자가 다른 명령이 아니면 `aaa setup`으로 본다
@@ -68,7 +96,12 @@ pub(crate) fn restart_for_rollout(exe: &std::path::Path) -> anyhow::Result<Strin
     win::restart_for_rollout(exe)
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+pub(crate) fn run(args: &Args) -> ExitCode {
+    unix::run(args)
+}
+
+#[cfg(not(any(windows, unix)))]
 pub(crate) fn run(_args: &Args) -> ExitCode {
     eprintln!(
         "aaa setup은 Windows 설치기다. macOS는 `aaa service install --role agent`(docs/install-runbook.md)를 쓴다."

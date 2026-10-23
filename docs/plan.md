@@ -7731,3 +7731,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **36회차 착지 통합(t-0925).** 시작 원격 main `5085e64f`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. 준비된 t-0924·t-0923을 각각 --no-ff로 합치고 할 일 상세의 주소 기록 수리와 설정 시험의 첫 pane 준비를 함께 유지한다. 시험 문서의 두 설명 절을 보존하며 API·E2E 번호는 유지한다. t-0922는 시작 시점 전체 검증 실패가 남아 제외한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 조건 빌드를 한 번 확인한다. 실패는 원문·부하를 보존하고 재시도 없이 push를 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 수행하지 않는다.
 
 - **37회차 착지 통합(t-0926).** 시작 원격 main `99c1ad0c`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. 준비된 t-0922 `7f3bd898`을 --no-ff로 합쳐 Windows bootstrap owner의 내장 모듈 경로와 암호 ConPTY 시험 자식의 세션 환경 격리를 유지한다. 시험 문서의 기존 절과 새 설명을 모두 보존하며 API·E2E 번호는 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 조건 빌드를 한 번 확인한다. 모든 시험이 통과해야 push하며 부하 중 시한 초과도 원문·부하를 보존하고 재시도 없이 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 수행하지 않는다.
+
+
+### 8.477 macOS·Linux 대화형 agent setup(t-0931)
+
+- Windows에서 쓰던 질문 → host 등록 → 실행 파일/설정 → 서비스 → 연결 흐름을 Unix System 구현으로 넓힌다. macOS는 GUI LaunchAgent와 기존 불변 launcher 또는 같은 배포 SHA의 launcher package를, Linux는 기본 systemd user와 명시 systemd system을 쓴다. 일반 사용자로 실행하고 시스템 unit 제어만 sudo에 맡긴다.
+- 같은 설치의 조회·재시작·실행 파일 갱신·제거·purge를 지원한다. Unix는 Windows 암호/로그온 정책/PATH 변경을 호출하지 않는다. 기록한 파일 내용·경로·계정이 다른 서비스와 기존 macOS 감독자를 보존한다. 갱신 실패는 새 프로세스를 먼저 멈춘 뒤 이전 파일/서비스를 복원한다. 하위 오류와 남은 항목을 표시한다.
+- rustup-init(MIT/Apache-2.0)·cargo-dist installer(템플릿 MIT)·Tailscale installer(BSD-3-Clause)의 설치/OS 경계와 사전 점검을 참고했다. 외부 코드는 가져오지 않는다. 사용법과 범위는 [Unix setup](unix-setup.md), 회귀·격리 실기 owner는 [시험](testing.md)을 따른다.
+- macOS 실제 운영 서비스는 보존하며 별도 HOME·임시 label에서 검증한다. Linux는 폐기 가능한 Ubuntu 24.04 aarch64 VM의 user/system 서비스와 격리 host 연결을 확인한다. Windows 기존 setup 회귀는 실제 Windows에서 검증한다. 전체 ci-local·cross·공개 검사 후 착지 창을 기다린다. Front API 1.116·Agent link 1.11·E2E98은 유지하며 절 번호는 착지 때 main과 대조한다. 다운로드 bootstrap·release 게시·기존 install I4·운영 서비스 이관은 범위 밖이다.
