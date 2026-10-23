@@ -3,15 +3,16 @@ import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { MachineView } from "./gen/proto";
 import { machineInfoGroups } from "./machineDetail";
+import { DrawerToggle } from "./drawer";
 import "./MachineInfoPanel.css";
 
-export function MachineInfoPanel({ machine, onClose }: { machine: MachineView; onClose: () => void }) {
+export function MachineInfoPanel({ machine, onClose, page = false }: { machine: MachineView; onClose: () => void; page?: boolean }) {
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const before = document.activeElement;
     close.current?.focus();
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Tab" && window.matchMedia("(max-width: 640px)").matches) { e.preventDefault(); close.current?.focus(); }
+      if (!page && e.key === "Tab" && window.matchMedia("(max-width: 640px)").matches) { e.preventDefault(); close.current?.focus(); }
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); }
     };
     document.addEventListener("keydown", key, true);
@@ -19,9 +20,10 @@ export function MachineInfoPanel({ machine, onClose }: { machine: MachineView; o
       document.removeEventListener("keydown", key, true);
       if (before instanceof HTMLElement && before.isConnected) before.focus();
     };
-  }, [onClose]);
-  return <aside className="machine-info-panel" aria-label={`${machine.name} 기기 정보`} data-testid="machine-info-panel">
-    <header className="machine-info-head">
+  }, [onClose, page]);
+  return <aside className={`machine-info-panel${page ? " is-page" : ""}`} aria-label={`${machine.name} 기기 정보`} data-testid="machine-info-panel">
+    <header className={`machine-info-head${page ? " term-head" : ""}`}>
+      {page && <DrawerToggle />}
       <div><span className="machine-info-caption">기기 정보</span><h2>{machine.name}</h2></div>
       <button ref={close} type="button" className="ghost icon" aria-label="기기 정보 닫기" onClick={onClose}><X aria-hidden="true" /></button>
     </header>
