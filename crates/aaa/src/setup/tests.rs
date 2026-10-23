@@ -318,6 +318,7 @@ fn failure_after_registration_rolls_back_everything_but_the_registration() {
     Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap();
     assert_eq!(sys.enrolled_as, ["pc-main"], "두 번째 실행은 다시 승인받지 않는다");
     assert!(ui.printed("이미 이 host에 등록돼 있습니다"));
+    assert!(ui.printed("「pc-main」로 등록(이미 등록됨, 승인 필요 없음)"));
     let toml = std::fs::read_to_string(layout.config.join("agent.toml")).unwrap();
     assert!(toml.contains("# 내 설정") && toml.contains("min_free_gb = 5"), "다른 설정은 남긴다: {toml}");
     let kept: Vec<_> = std::fs::read_dir(layout.exe.parent().unwrap().join(".aaa-old")).unwrap().flatten().collect();
@@ -403,6 +404,7 @@ fn enrollment_that_never_succeeds_removes_the_new_device_key() {
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap_err();
     assert!(ui.printed("host와 판이 맞지 않습니다"));
     assert!(!layout.state.join("agent").exists(), "등록 전 만든 장치 키는 지운다");
+    assert!(!layout.state.exists() && !layout.home.exists(), "그때 새로 생긴 위 폴더도 비면 지운다");
     assert!(ui.printed("되돌림: 새로 만든 장치 키(등록 전)"));
     assert!(!sys.ops.iter().any(|o| o.starts_with("create") || o.starts_with("right")));
 }

@@ -306,8 +306,8 @@ impl Receipt {
 /// 이번 실행이 바꾼 것(되돌릴 순서의 반대로 쌓는다)
 #[derive(Debug)]
 enum Change {
-    /// 새로 만든 장치 키·machine ID(등록이 끝나지 않았을 때만 지운다)
-    Identity { created: Vec<PathBuf>, enrolled: bool },
+    /// 새로 만든 장치 키·machine ID(등록이 끝나지 않았을 때만 지운다). `shells`는 그때 새로 생긴 위 폴더(비면 지운다)
+    Identity { created: Vec<PathBuf>, shells: Vec<PathBuf>, enrolled: bool },
     Binary { path: PathBuf, backup: Option<PathBuf> },
     File { path: PathBuf, previous: Option<Vec<u8>> },
     Path { previous: Option<String> },
@@ -521,7 +521,12 @@ impl<'a> Setup<'a> {
             "새로 둠".to_string()
         };
         let mut rows = vec![
-            ("host", format!("{} 에 「{}」로 등록(host에서 승인)", choices.host, choices.name)),
+            ("host", {
+                let pinned = aaa_agent::identity::load_pin(&self.layout.agent_state())
+                    .is_some_and(|pin| pin.address == choices.host);
+                let how = if pinned { "이미 등록됨, 승인 필요 없음" } else { "host에서 승인" };
+                format!("{} 에 「{}」로 등록({how})", choices.host, choices.name)
+            }),
             ("실행 파일", format!("{} ({binary})", exe.display())),
             ("설정", self.layout.agent_toml().display().to_string()),
             ("작업 폴더", choices.work_root.display().to_string()),
@@ -628,6 +633,7 @@ impl<'a> Setup<'a> {
         self.say(Tone::Hint, "host 웹 › 설정 › 머신에서 「등록 창 열기」를 먼저 눌러 두면 바로 이어집니다.");
         let before = list_dir(&state);
         let existed = state.exists();
+        let shells: Vec<PathBuf> = state.ancestors().skip(1).take_while(|p| !p.exists()).map(Path::to_path_buf).collect();
         let mut created = Vec::new();
         let result = loop {
             self.check_cancel()?;
@@ -641,7 +647,8 @@ impl<'a> Setup<'a> {
                     vec![]
                 };
                 if !created.is_empty() {
-                    self.changes.push(Change::Identity { created: created.clone(), enrolled: false });
+                    let shells = shells.clone();
+                    self.changes.push(Change::Identity { created: created.clone(), shells, enrolled: false });
                 }
             }
             let Err(error) = attempt else { break Ok(()) };
@@ -905,9 +912,12 @@ impl<'a> Setup<'a> {
     /// 성공하면 화면 글, 남기는 것은 Err
     fn undo(&mut self, change: Change) -> Result<Option<String>, String> {
         match change {
-            Change::Identity { created, enrolled: false } => {
+            Change::Identity { created, shells, enrolled: false } => {
                 for path in &created {
                     let _ = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+                }
+                for shell in &shells {
+                    let _ = std::fs::remove_dir(shell);
                 }
                 Ok(Some("새로 만든 장치 키(등록 전)".into()))
             }
@@ -1014,6 +1024,8 @@ impl<'a> Setup<'a> {
             next.version = self.version.clone();
             self.write_receipt(&next)?;
             self.changes.clear();
+            self.say(Tone::Plain, "");
+            self.say(Tone::Title, format!("완료 — 「{}」를 {}로 바꿨습니다.", receipt.name, self.version));
             Ok(())
         })();
         if let Err(error) = &result {
