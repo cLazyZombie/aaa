@@ -7,6 +7,7 @@
 - `cargo test --locked -p aaa --test install ssh_executors_report_missing_explicit_state_without_writing`은 probe/bootstrap/worker의 필수 경로 누락을 실제 argv로 실행해 exit 2·명확한 stderr·비어 있는 stdout과 파일 불변을 확인한다. `cargo test --locked -p aaa-host --lib machine_setup::`는 세 Windows 명령의 공통 경로 전달, 원격 실패와 잘못된 JSON의 오류 처리·공개 오류에 원문이 없는 것을 검사한다. 기존 Windows CI의 실제 SYSTEM sshd→계획→bootstrap→SCM→TLS 등록 owner는 그대로 유지한다.
 - 실패한 probe의 종료 코드·stderr·stdout(JSON 포함)은 `cfg(test)`의 실험실 owner 로그에만 남긴다. 경로·계정이 든 원문을 제품 DTO/DB에 저장하지 않는다. CI 부모는 기존처럼 가짜 암호가 stdout/stderr에 있으면 출력 전에 실패시킨다. SSH 거부 3·충돌 4와 모든 시한·기대값은 유지한다.
 - 참고 후보는 [PowerShell SSHProcessMediator](https://github.com/PowerShell/PowerShell/blob/99a49e0eab9b137449b690ab4607d7932c6f9956/src/System.Management.Automation/engine/remoting/server/OutOfProcServerMediator.cs#L526)(MIT), [Win32-OpenSSH fd 초기화](https://github.com/PowerShell/openssh-portable/blob/274893f8d1fe86c4d128b514c3af4bc10cdc0c99/contrib/win32/win32compat/w32fd.c#L132)(구성요소별 BSD형), [cargo-dist PowerShell 설치기](https://github.com/axodotdev/cargo-dist/blob/29704544bb92182e513a2665401fd023e93035a9/cargo-dist/templates/installer/installer.ps1.j2)(MIT)다. 기존 raw stdin·새 핸들 규칙을 유지하고, 경로는 현지 환경에서 선택한다. 외부 코드를 복사하거나 실행하지 않았다.
+- 첫 전체 검증에서 기존 `m13::pr_followup`은 시험의 직접 write가 만든 빈 routine과 완성된 잘못된 trigger를 ticker가 각각 읽어 오류 2개를 기록했다. 원본 로그의 서로 다른 두 오류와 `routine_pass`의 내용 hash별 중복 방지를 대조했다. 시험 자료를 `.pending`에 완성한 뒤 `.md`로 rename하여 읽기 경합을 없앤다. 기존 오류 개수·PR 사건·시한은 유지한다.
 
 ## 입력 기록 초기화와 파일 보기 재열기 대기(t-0836)
 
