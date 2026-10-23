@@ -26,12 +26,30 @@ const HIDDEN: &str = "«가림»";
 const MARK: &str = "safe_mode";
 
 /// 안전 모드가 끝난 까닭
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum SafeExit {
-    /// 설정을 다시 읽을 수 있다(되돌리기·다시 읽기): 부른 쪽이 정상 host로 다시 시작한다
-    Reload,
+    /// 설정을 다시 읽을 수 있다. 같은 주소의 TCP 대기열을 정상 host에 넘긴다.
+    Reload(tokio::net::TcpListener),
     /// 종료 신호
     Shutdown,
+}
+
+/// 실제 안전 모드 serving 종료와 정상 host 시작 사이를 사건으로 고정한다. 제품 release에는 없다.
+#[cfg(all(unix, debug_assertions))]
+pub(crate) async fn test_reload_hold() -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Some(path) = std::env::var_os("AAA_TEST_SAFE_RELOAD_HOLD") else { return Ok(()) };
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let mut control = tokio::net::UnixStream::connect(path).await?;
+        control.write_all(b"waiting\n").await?;
+        let mut release = [0];
+        control.read_exact(&mut release).await?;
+        anyhow::ensure!(release == *b"R", "안전 모드 시험 해제 표지");
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("안전 모드 시험 해제 상한")??;
+    Ok(())
 }
 
 /// 마지막 정상 설정의 폴더(설정 폴더 아래, 0700). 상태 폴더에 두지 않는다: 평문 env 값·인증 값은 원래 설정 폴더에만 있고,
@@ -434,6 +452,7 @@ pub async fn run(
     errors: ConfigErrors,
     config_dir: PathBuf,
     state_root: PathBuf,
+    listener: Option<tokio::net::TcpListener>,
     ready: Option<tokio::sync::oneshot::Sender<()>>,
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<SafeExit> {
@@ -448,8 +467,16 @@ pub async fn run(
             errors.render()
         );
     };
-    let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("안전 모드 웹 listen {addr}"))?;
+    let listener = match listener {
+        Some(listener) => listener,
+        None => tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("안전 모드 웹 listen {addr}"))?,
+    };
     let port = listener.local_addr()?.port();
+    // axum의 graceful shutdown은 소유한 listener를 닫는다. 같은 소켓의 사본을 유지해야
+    // 정상 host 초기화 중 Refresh 요청이 ECONNREFUSED로 끝나지 않고 TCP 대기열에서 기다린다.
+    let listener = listener.into_std()?;
+    let held = tokio::net::TcpListener::from_std(listener.try_clone()?)?;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
     tracing::error!(%addr, "설정을 읽지 못해 안전 모드로 웹만 연다:\n{}", errors.render());
     if let Some(ready) = ready {
         let _ = ready.send(());
@@ -462,7 +489,7 @@ pub async fn run(
     tokio::select! {
         r = serve => {
             r?;
-            Ok(if *safe.done.borrow() { SafeExit::Reload } else { SafeExit::Shutdown })
+            Ok(if *safe.done.borrow() { SafeExit::Reload(held) } else { SafeExit::Shutdown })
         }
         _ = shutdown => Ok(SafeExit::Shutdown),
     }
