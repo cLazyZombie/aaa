@@ -57,6 +57,42 @@ export async function pageScrollRace(page) {
   }, before).catch(async (error) => {
     throw new Error(`${error.message}: 전 ${JSON.stringify(before)}, 사건 ${JSON.stringify(event)}, 후 ${JSON.stringify(await readScroll(page))}, 사건들 ${JSON.stringify(await page.evaluate(() => window.takeScrollStates()))}`);
   });
+  // 반대 순서도 지킨다. 맨 아래로 쓴 native 사건 전에 새 PageUp을 누르면,
+  // 글꼴 재측정용 맨 아래 보정이 그 키를 취소해서는 안 된다.
+  await page.keyboard.press("Control+Shift+PageUp");
+  await domIs(page, "반대 순서 준비: 한 화면 위", (before) => {
+    const el = document.querySelector('[data-testid="terminal"]');
+    return Number(el.dataset.viewTop) === before.base - (before.rows - 1);
+  }, before).catch(async error => { throw new Error(`${error.message}: 전 ${JSON.stringify(before)}, 후 ${JSON.stringify(await readScroll(page))}, states ${JSON.stringify(await page.evaluate(() => window.takeScrollStates()))}`); });
+  const above = await readScroll(page);
+  await page.evaluate(() => {
+    const vp = document.querySelector(".xterm-viewport");
+    window.__bottomScrollRace = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        document.removeEventListener("scroll", onScroll, true);
+        resolve({ error: "20000ms 안에 PageDown native scroll이 오지 않았다" });
+      }, 20_000);
+      const onScroll = event => {
+        if (event.target !== vp || vp.scrollTop < vp.scrollHeight - vp.clientHeight - 1) return;
+        clearTimeout(timer);
+        document.removeEventListener("scroll", onScroll, true);
+        const key = new KeyboardEvent("keydown", { key: "PageUp", code: "PageUp", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+        document.body.dispatchEvent(key);
+        resolve({ native: event.isTrusted, taken: key.defaultPrevented });
+      };
+      document.addEventListener("scroll", onScroll, true);
+    });
+  });
+  await page.keyboard.press("Control+Shift+PageDown");
+  const bottomEvent = await page.evaluate(() => window.__bottomScrollRace);
+  if (!bottomEvent.native || !bottomEvent.taken) throw new Error(`native 맨 아래와 앱 PageUp 처리 확인: ${JSON.stringify(bottomEvent)}`);
+  await domIs(page, "늦은 맨 아래 scroll 뒤 PageUp → 한 화면 위", (above) => {
+    const el = document.querySelector('[data-testid="terminal"]');
+    const vp = document.querySelector(".xterm-viewport");
+    return Number(el.dataset.viewTop) === above.top && vp.scrollTop === above.nativeTop;
+  }, above).catch(async error => {
+    throw new Error(`${error.message}: 기대 ${JSON.stringify(above)}, 후 ${JSON.stringify(await readScroll(page))}`);
+  });
   // 자체 동기화 무시 표지를 무조건 소비하는 과거 구현으로 되돌리면 첫 사용자 이동을 버린다.
   // 실제 native overflow 스크롤 뒤 DOM과 xterm의 맨 위가 함께 옮겨야 한다.
   await page.locator(".xterm-viewport").evaluate((vp) => { vp.scrollTop = 0; });

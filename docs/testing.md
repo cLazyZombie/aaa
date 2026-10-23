@@ -2,6 +2,8 @@
 
 ## 웹 E2E 스크롤·닫힘 진단(t-0905)
 
+- E2E03은 PageUp→늦은 native scroll→PageDown뿐 아니라 반대 방향도 고정한다. 구판은 맨 아래 동기화 뒤의 PageUp이 20초 동안 취소된 상태(native 3249, 첫 줄 s-172)로 남았다. xterm 처리 전부터 끝이었는지를 capture에서 기억해 글꼴 보정 범위를 좁힌 판은 Chromium·WebKit 양쪽을 통과한다. 글꼴 17→19px 전환 뒤 끝 유지(E2E07)도 별도로 확인한다. 키·native 사건·버퍼 값이나 기존 시한은 바꾸지 않는다.
+
 - E2E03은 실패한 viewport가 닫히기 전에 실제 키 처리 여부·native scroll·위치 쓰기·렌더 grid를 남긴다. 앞서 공통 진단에는 이미 닫힌 실패 화면 대신 기본 pane만 남았다.
 - E2E93은 터치·scrollend·위치 쓰기와 reset 전후 상태를 기존 대화 실패 자료에 함께 남긴다. E2E14는 닫는 문서의 lifecycle·keepalive 전송·요청 실패를 host 문서의 실패 진단과 함께 기록한다.
 - 계측은 사건·값을 바꾸지 않는다. 기존 20초 상한과 정확한 위치·테마 단언을 유지한다.

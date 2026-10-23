@@ -610,10 +610,18 @@ export function TermView({
     // 화면이 다섯 줄쯤 위에 멈추고 새 출력도 따라가지 않았다(CI eeee514·52caa0a, plan §8.60). 화면(DOM)이 맨 아래인데
     // 버퍼가 위면 그 사건이다: 맨 아래로 되돌린다. xterm의 처리 뒤에 돌도록 open 뒤에 단다.
     const viewport = el.querySelector<HTMLElement>(".xterm-viewport");
-    const onViewportScroll = () => {
+    // xterm이 이 사건을 읽기 전에도 끝을 보고 있었을 때만 보정한다. 키가 이미 위로 옮긴 뒤
+    // 늦게 도착한 맨 아래 사건으로 새 키의 위치까지 되돌리면 PageUp이 사라진다.
+    let scrollStartedAtEnd: Event | null = null;
+    const beforeViewportScroll = (event: Event) => {
       const buf = term.buffer.active;
-      if (viewport && viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 1 && buf.viewportY < buf.baseY) term.scrollToBottom();
+      scrollStartedAtEnd = buf.viewportY === buf.baseY ? event : null;
     };
+    const onViewportScroll = (event: Event) => {
+      const buf = term.buffer.active;
+      if (scrollStartedAtEnd === event && viewport && viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 1 && buf.viewportY < buf.baseY) term.scrollToBottom();
+    };
+    viewport?.addEventListener("scroll", beforeViewportScroll, true);
     viewport?.addEventListener("scroll", onViewportScroll);
     // 맨 아래가 아닌 보통 화면이면 「맨 아래로 이동」을 보인다. 참고는 herdr 기록 위치(offset_from_bottom)를 묻고, aaa는 xterm 기록을 본다.
     const markScrolled = () => {
@@ -1533,6 +1541,7 @@ export function TermView({
       document.removeEventListener("visibilitychange", onWake);
       wsRef.current?.close();
       el.removeEventListener("paste", onPaste, true);
+      viewport?.removeEventListener("scroll", beforeViewportScroll, true);
       viewport?.removeEventListener("scroll", onViewportScroll);
       viewport?.removeEventListener("scroll", markScrolled);
       scrolledSub.dispose();
