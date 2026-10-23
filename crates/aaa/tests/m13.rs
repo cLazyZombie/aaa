@@ -195,7 +195,10 @@ menu() {
     if [ "$sel" = 0 ]; then o=$(printf ' \342\235\257 %s\n   %s' "$3" "$4"); else o=$(printf '   %s\n \342\235\257 %s' "$3" "$4"); fi
     out "$pre$(printf '%s\n%s\n%s\n\n %s' "$RULE" "$1" "$o" "$5")"
     pre=$(printf '\033[%sA\r\033[J' "$h")
-    key
+    # 한 번에 온 화살표는 세 바이트를 함께 받는다. Esc처럼 창을 지웠다가 다시 그리면
+    # 감지기가 잠깐 Working을 본 뒤 같은 신뢰 질문을 새 질문으로 연다.
+    stty -icanon -echo min 1 time 0; k=$(dd bs=3 count=1 2>/dev/null)
+    case "$k" in "$ESC[A") sel=0; continue;; "$ESC[B") sel=1; continue;; esac
     if [ "$k" = "$ESC" ]; then
       # 답한 창은 바로 지우되 suffix를 읽는 동안에는 작업 중이다. 빈 화면은 idle로
       # 감지되어 다음 메시지의 첫 글자를 suffix dd가 먹는다. 지움과 작업 표지를 함께 낸다.
@@ -1580,6 +1583,27 @@ fn claude_menu_dismisses_escape_before_waiting_for_its_suffix() {
     );
     assert!(detected.visible_working, "{detected:?}\n{before:?}");
     assert!(output.contains("pick:<cancel>"), "{output}");
+}
+
+/// 실제 PTY에 함께 온 화살표는 질문을 지우거나 Working으로 바꾸지 않고 선택만 옮긴다.
+#[test]
+fn claude_menu_arrow_preserves_the_question_until_enter() {
+    let (functions, _) = CLAUDE_AGENT.split_once("printf '\\033[2J\\033[H'").unwrap();
+    let script = format!(
+        "{functions}\nout() {{ printf '%s\n' \"$1\"; if [ \"$sel\" = 1 ]; then printf 'ARROW-REDRAW-GATE\n'; exit 0; fi; }}\nmenu 'Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder' 'Enter to confirm · Esc to cancel'\n"
+    );
+    let mut command = lab::terminal_command(Path::new("/bin/sh"));
+    command.args(["-c", &script]);
+    let output = lab::Terminal::spawn(command).read(&["fixture arrow redraw"], &[("Esc to cancel", "\u{1b}[B\r")], T);
+    let before = output.split("ARROW-REDRAW-GATE").next().unwrap();
+    assert!(!before.contains("Working"), "화살표를 취소로 그렸다: {before:?}");
+    let mut vt = aaa_vt::Vt::new(36, 120);
+    vt.feed(before.as_bytes());
+    let detected = aaa_agent::detect::detect(
+        aaa_agent::detect::Harness::Claude,
+        aaa_agent::detect::DetectionInput { screen: &vt.detection_text(), osc_title: "", osc_progress: "" },
+    );
+    assert_eq!(detected.state, aaa_agent::detect::State::Blocked, "{before:?}");
 }
 
 /// thread `id`의 진행 보고가 `text`가 되기를 기다린다

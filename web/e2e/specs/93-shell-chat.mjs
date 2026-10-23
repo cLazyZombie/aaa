@@ -1,4 +1,4 @@
-// 기본 셸 → hook 없는 harness → 실제 프로세스/기록 연결 → host → 대화 페이지/스크롤.
+// 시험용 일반 셸 → hook 없는 harness → 실제 프로세스/기록 연결 → host → 대화 페이지/스크롤.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
@@ -33,7 +33,7 @@ async function firstMessage(page, id) {
 async function resumed(engine, width, harness) {
   const name = `resume-${harness}-${++serial}`, id = sid(serial * 3);
   const page = (await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { touch: width < 500 })).page;
-  const pane = aaa("tab", "create", "--machine", "labA", "--label", name).tabs.at(-1).root.pane;
+  const pane = aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh").tabs.at(-1).root.pane;
   const state = () => aaa("pane", "list").panes.find((p) => p.id === pane);
   const toggle = page.getByTestId("chat-toggle"), chat = page.getByTestId("chat");
   const diagnostics = new ChatDiagnostics(root, name);
@@ -234,7 +234,7 @@ export default async function () {
         fs.mkdirSync(backup, { recursive: true });
         fs.writeFileSync(`${backup}/rollout-backup-${id}.jsonl`, JSON.stringify({ type: "session_meta", payload: { id, source: "cli" } }) + "\n");
       }
-      const pane = aaa("tab", "create", "--machine", "labA", "--label", name).tabs.at(-1).root.pane;
+      const pane = aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh").tabs.at(-1).root.pane;
       await inList(page, `pane-${name}`);
       aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${id}`);
       await waitOutput(pane, "foreground-harness-ready");

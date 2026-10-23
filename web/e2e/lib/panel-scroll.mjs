@@ -43,12 +43,14 @@ async function reachEnd(p, selector, rowSelector, wheel) {
   // WebKit 휴대폰에서도 실제 overflow 컨테이너를 굴린다(합성 touchmove는 native 스크롤을 하지 않는다).
   await list.evaluate((el) => { el.scrollTop = el.scrollHeight; });
   await domIs(p, "목록 끝 도착", (s) => { const e = document.querySelector(s); return e.scrollTop > 100 && Math.abs(e.scrollHeight - e.clientHeight - e.scrollTop) <= 2; }, selector);
-  const visible = await last.evaluate((el, selector) => {
-    const r = el.getBoundingClientRect(), parent = el.closest(selector).getBoundingClientRect();
+  await domIs(p, `마지막 행이 목록 안에 보이고 눌린다: ${selector}`, ({ selector, rowSelector }) => {
+    // React 목록 교체와 locator 평가 사이에 분리된 옛 행을 잡지 않는다. 같은 DOM 평가에서 현재 행·부모를 함께 읽는다.
+    const parentEl = document.querySelector(selector), el = parentEl?.querySelectorAll(rowSelector).item(parentEl.querySelectorAll(rowSelector).length - 1);
+    if (!el || !parentEl) return false;
+    const r = el.getBoundingClientRect(), parent = parentEl.getBoundingClientRect();
     const x = r.left + r.width / 2, y = Math.min(r.bottom, parent.bottom) - 3;
     return r.top >= parent.top - 1 && r.bottom <= parent.bottom + 1 && el.contains(document.elementFromPoint(x, y));
-  }, selector);
-  assert.ok(visible, `마지막 행이 목록 안에 보이고 눌린다: ${selector}`);
+  }, { selector, rowSelector });
   if (await list.evaluate((el) => !!el.closest("#sidebar-column"))) {
     const fixed = await p.evaluate(() => [".list-head", ".list-foot"].every((s) => {
       const r = document.querySelector(`#sidebar-column ${s}`).getBoundingClientRect();
