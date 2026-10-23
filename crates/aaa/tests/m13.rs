@@ -141,6 +141,7 @@ const CLAUDE_AGENT: &str = r#"#!/bin/sh
 ESC=$(printf '\033'); BEL=$(printf '\007'); LATE=$(printf '\016'); NL='
 '; typed=; queued=
 RULE='────────────────────────────────────────'
+WORKING=$(printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)')
 # 실제 Claude처럼 hook 출력(진행 안내 JSON)은 화면에 내지 않고 받는다. `HOOK_LOG`가 있으면 거기 한 줄씩 적는다
 hook() { out=$("$AA" hook --agent claude "$1"); [ -z "$out" ] || [ -z "$HOOK_LOG" ] || printf '%s\n' "$out" >> "$HOOK_LOG"; }
 key() { stty -icanon -echo min 1 time 0; k=$(dd bs=1 count=1 2>/dev/null); }
@@ -150,7 +151,7 @@ box() { printf '%s\n\342\235\257 \n%s\n  ? for shortcuts' "$RULE" "$RULE"; }
 prompt() { stty icanon echo; box; printf '\033[2A\r\033[2C'; }
 taken() { printf '\033[2A\r\033[J'; }
 # 진행 보고가 실패해 진단 줄이 추가되어도 spinner를 그리기 전 자리부터 지운다.
-spin() { printf '\0337\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n'; box; }
+spin() { printf '\0337%s\n' "$WORKING"; box; }
 unspin() { printf '\0338\033[J'; }
 # 일하는 동안 친 글은 Claude처럼 입력 상자에 보인다(커서는 상자 아래 안내 줄 첫 칸)
 shown() { printf '\033[2A\r\342\235\257 %s\033[K\033[2B\r' "$typed"; }
@@ -194,9 +195,9 @@ menu() {
     pre=$(printf '\033[%sA\r\033[J' "$h")
     key
     if [ "$k" = "$ESC" ]; then
-      # Esc를 읽은 뒤에는 창을 먼저 지운다. 느린 suffix 읽기(stty/dd)가 답한 창을
-      # 800ms 이상 남겨 화면 감지가 새 질문으로 다시 알리게 하지 않는다.
-      printf '%s' "$pre"; pre=
+      # 답한 창은 바로 지우되 suffix를 읽는 동안에는 작업 중이다. 빈 화면은 idle로
+      # 감지되어 다음 메시지의 첫 글자를 suffix dd가 먹는다. 지움과 작업 표지를 함께 낸다.
+      printf '%s' "$pre$WORKING$NL"; pre=$(printf '\033[1A\r\033[J')
       keyt 2
       if [ "$k" = "[" ]; then keyt 2; case "$k" in A) sel=0;; B) sel=1;; esac; continue; fi
       pick=cancel; break
@@ -1544,7 +1545,7 @@ fn claude_race_ready_prepares_input_before_publishing_prompt() {
     assert!(output.contains("received:<x>"), "{output}");
 }
 
-/// Esc 뒤 화살표 구별용 읽기가 늦어져도 이미 취소한 권한 창을 다시 질문하지 않는다.
+/// Esc suffix를 읽는 동안 답한 권한 창을 다시 묻거나 다음 입력을 받을 수 있는 idle로 오인하지 않는다.
 #[test]
 fn claude_menu_dismisses_escape_before_waiting_for_its_suffix() {
     let (functions, _) = CLAUDE_AGENT.split_once("printf '\\033[2J\\033[H'").unwrap();
@@ -1559,6 +1560,16 @@ fn claude_menu_dismisses_escape_before_waiting_for_its_suffix() {
     vt.feed(before.as_bytes());
     let screen = vt.text("fixture");
     assert!(!screen.lines.iter().any(|line| line.contains("Do you want to proceed?")), "{before:?}");
+    let detected = aaa_agent::detect::detect(
+        aaa_agent::detect::Harness::Claude,
+        aaa_agent::detect::DetectionInput { screen: &vt.detection_text(), osc_title: "", osc_progress: "" },
+    );
+    assert_eq!(
+        detected.state,
+        aaa_agent::detect::State::Working,
+        "suffix 읽기가 끝나기 전에 다음 메시지를 허용했다: {detected:?}\n{before:?}"
+    );
+    assert!(detected.visible_working, "{detected:?}\n{before:?}");
     assert!(output.contains("pick:<cancel>"), "{output}");
 }
 
@@ -1756,8 +1767,10 @@ fn claude_thread_states_questions_and_messages() {
     // interrupt: 일하는 중이면 Esc로 멈춘 뒤, 멈춤(입력 상자)이 보이면 보낸다. 멈추기 전에 보낸 글은 사라진다.
     assert_eq!(w.message(&id, "long run", false)["state"], "accepted");
     let (m4, screen) = w.interrupt(&id, &pane, "urgent");
-    assert_eq!(m4["state"], "accepted", "{m4}");
-    let after = &screen[screen.find("got: long run").unwrap()..];
+    assert_eq!(m4["state"], "accepted", "{m4}\n{screen}");
+    let start =
+        screen.find("got: long run").unwrap_or_else(|| panic!("interrupt 반환 화면에 앞선 받음이 없다:\n{screen}"));
+    let after = &screen[start..];
     assert!(after.find("Interrupted").is_some_and(|i| after.find("got: urgent").is_some_and(|u| i < u)), "{screen}");
     // 두 번째 interrupt
     let t = lab::now_ms();
@@ -1765,7 +1778,7 @@ fn claude_thread_states_questions_and_messages() {
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
     assert_eq!(w.message(&id, "long again", false)["state"], "accepted");
     let (m5, screen) = w.interrupt(&id, &pane, "urgent2");
-    assert_eq!(m5["state"], "accepted", "{m5}");
+    assert_eq!(m5["state"], "accepted", "{m5}\n{screen}");
     // 거절 셋(늦은 짝·치는 동안 뜬 권한 창·Esc 거절)과 interrupt 둘
     assert_eq!(screen.matches("Interrupted").count(), 5, "{screen}");
     // thread stop: Esc 한 번(세션은 그대로)
