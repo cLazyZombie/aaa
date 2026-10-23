@@ -12,6 +12,14 @@
 - E2E66의 `geometry`는 CSS 전체·실폭·글꼴 로딩 세대가 같은 독립 native textarea와 첫 줄 경계를 재사용한다. 현재 입력값의 native 줄 수·실제 폭·행 수·focus·PTY 무전송은 매 상태 검사한다. 높이/CSS/폭이 바뀌거나 글꼴이 로딩 중이면 기준을 다시 만들며, 기준 요소는 측정 뒤 DOM에서 뺀다. 빈 입력·게이지 숨김·두 viewport 변경마다 캐시 없는 새 native 기준과 경계·줄 수를 대조한다. 모든 음절·자모·기기·단언·120초 상한을 유지한다. 실패 때 `diagnostics/wrap-geometry.json`은 현재 기기·진행 상태·직전 측정과 완료 기기별 비용을 남긴다.
 - 실패하면 `diagnostics/file-viewer-escape.json`에 실제 키의 target 종류·터미널 여부·isTrusted·defaultPrevented·viewer/history 유무와 ESC 누출 여부를 남긴다. 본문·주소·임의 history state는 기록하지 않는다. 기존 닫힘 단언·20초 대기·120초 단계 상한·실패 판정을 유지한다. 정본은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사이며, GitHub 확인은 진단 branch의 단일 job 또는 착지 뒤 main CI로 한다. 실패 재실행·시한 증가·기대값 완화는 없다.
 
+## 셸에서 직접 실행한 Codex·Claude 기록 연결(t-0832)
+
+- `nice -n 15 cargo test --locked -p aaa-agent --lib shell_chat`: 실제 OS에서 자기 PID가 쓰기로 연 기록만 연결하고, 더 새 미개방 파일·여러 CLI 후보·하위 agent·root 밖 symlink를 거르는지 확인한다. Claude PID 등록의 다른 PID·오래된 시작 시각·background·잘못된 UUID·중복 프로젝트 기록 거부, 교체·해제·기존 hook 중복 방지를 검사한다. 운영 홈·설정·인증 파일은 읽거나 바꾸지 않는다.
+- `nice -n 15 cargo test --locked -p aaa-host --lib shell_harness_replacement`: 같은 pane의 다른 실행이 옛 세션 ID·Claude 기록 경로를 이어받지 않고 셸 복귀에서 모두 해제되는지 확인한다.
+- `chat_paths_tests::codex_chat_uses_the_exact_bound_file_even_when_the_id_has_a_backup_copy`는 같은 UUID의 두 파일을 각각 정확한 경로로 고를 수 있고, root 밖 경로·다른 ID·잘못된 UUID는 hint로 쓰지 않는지 검사한다. E2E93에도 같은 ID의 미개방 백업을 두어 실제 쓰기 파일을 읽는지 확인한다.
+- `NODE_PATH=$(npm root -g) nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 93-shell-chat --workers 1`: 실제 기본 셸에서 hook을 호출하지 않는 Python harness를 실행한다. Codex는 실제 쓰기 FD를 유지하고 Claude는 실제 PID 등록만 남긴다. 연결 전 읽기 오류, 늦은 첫 기록 뒤 자동 연결, 앞 페이지부터 360줄 전체, 갱신 때 읽던 위치, 같은 PID의 세션 전환, 종료 뒤 셸 복귀를 확인한다. 데스크톱 Chromium/WebKit과 390px 두 엔진을 쓰며 Chromium 휴대폰은 CDP의 실제 touch 입력·scrollend, mobile WebKit은 Playwright wheel 미지원 때문에 DOM scroll 경로를 확인한다. 실제 iPhone 인수와 구분한다.
+- 새 시험 준비에서 화면 밖 메시지의 본문은 가상화로 mount되지 않는다는 것을 확인했다. 갱신은 실제 응답의 메시지 ID와 row shell commit으로 기다린다. 터치 뒤 관성 스크롤은 scrollend로 끝내고, 맨 위로 돌린 뒤 두 native frame에서 가상 row의 위치 측정을 끝낸 다음 갱신을 검사한다. 고정 sleep·재시도·시한 연장·제품 기대값 변경은 없다. 정본 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사·의존 경계 시험을 수행한다.
+
 ## 예약의 앞 할 일(t-0829)
 
 - `nice -n 15 cargo test --locked -p aaa-host --lib task_queue::tests::reservation_after`: 없는 앞 할 일·자기 지정·순환 거부, 앞 할 일 완료 대기 중 뒤 예약의 자리 판정 진행, 완료 체크만으로는 보관 전까지 대기, 보관 정리 뒤 차례, 완료 없이 지운 앞 할 일의 확인 필요, host 재시작 보존과 이미 보관된 앞 할 일을 확인한다.

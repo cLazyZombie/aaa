@@ -266,7 +266,7 @@ impl Host {
                 self.tick_wake.notify_one();
                 return;
             }
-            if ev.transcript.is_some() {
+            if ev.kind == "session_start" || ev.transcript.is_some() {
                 p.transcript = ev.transcript.clone();
             }
             let prev = p.agent.clone();
@@ -291,7 +291,7 @@ impl Host {
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
             }
-            if ev.harness_session.is_some() {
+            if ev.kind == "session_start" || ev.harness_session.is_some() {
                 st.harness_session = ev.harness_session.clone();
             }
             let next = next_activity(prev.as_ref(), &ev);
@@ -1354,6 +1354,27 @@ mod tests {
             context: None,
             model_observation: None,
         }
+    }
+
+    #[tokio::test]
+    async fn shell_harness_replacement_clears_the_previous_chat_identity() {
+        let (h, _tmp) = host_with_pane();
+        let id = "019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0";
+        let mut first = codex_event("session_start", 1_000);
+        first.harness = "claude".into();
+        first.harness_session = Some(id.into());
+        first.transcript = Some("/example/projects/session.jsonl".into());
+        h.on_harness("m", first);
+        assert_eq!(h.pane_agent("s").unwrap().harness_session.as_deref(), Some(id));
+        h.on_harness("m", codex_event("session_start", 2_000));
+        assert_eq!(h.pane_agent("s").unwrap().harness_session, None);
+        assert_eq!(h.inner.lock().unwrap().panes["s"].transcript, None);
+        let mut second = codex_event("session_start", 3_000);
+        second.harness_session = Some(id.into());
+        h.on_harness("m", second);
+        h.on_harness("m", codex_event("released", 4_000));
+        assert!(h.pane_agent("s").is_none());
+        assert_eq!(h.inner.lock().unwrap().panes["s"].transcript, None);
     }
 
     #[tokio::test]

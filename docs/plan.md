@@ -7611,3 +7611,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **경계.** 앞 할 일을 기다리는 예약은 자리 울타리(§8.385 순회 차례)를 세우지 않아 뒤의 다른 예약이 자리를 얻는다. 예약 때 앞 할 일을 ID·제목으로 찾고(활성 우선, 이미 보관된 할 일도 받아 바로 차례에 든다), 미기동 예약의 앞 할 일을 따라가 자기에게 돌아오는 순환과 자기 지정을 거부한다. 앞 할 일 하나만 받으며 여러 선행·저장소 착지 gate는 후속이다.
 - **계약(FRONT_API 1.113).** `QueueOp::Reserve.after`(선택), `TaskReservation.after`(ULID 저장)·`after_short_id`(조회 때 host가 채움). 옛 host는 모르는 칸을 버리고 바로 자리 대기에 넣으므로 웹은 1.113 미만 host에 고르기를 그리지 않고 CLI는 보내기 전에 거부한다. Agent link 변경 없음.
 - **검증.** host `task_queue::tests::reservation_after_waits_for_the_previous_task_archive_without_blocking_others`, 웹 E2E92(실제 host·agent의 웹 예약 → 대기 → 완료 체크 tick에 실제 기동, CLI 순환 거부, WebKit 390px 넘침 없음). 착지 때 main의 마지막 §·FRONT_API·E2E 번호를 다시 확인한다.
+
+### 8.464 셸에서 직접 실행한 harness의 대화 기록 연결(t-0832)
+
+- **문제.** 기본 셸 pane에서 직접 실행한 Codex·Claude는 앞 프로세스 이름으로 상태만 감지했다. hook이 없는 실행은 harness 세션 ID·기록 위치가 없어 대화 보기가 실패했고, 전체 화면 TUI의 alternate screen에는 일반 터미널 scrollback도 없었다.
+- **연결.** agent가 셸의 앞 프로세스 그룹에서 확인한 harness만 2초마다 조사한다. Codex는 해당 프로세스가 쓰기로 연 rollout의 `session_meta`에서 CLI 세션 ID를 확인한다. 대화와 계획 모두 확인한 경로를 우선해 같은 ID의 백업 사본을 읽지 않는다. Claude는 같은 PID의 `sessions/<pid>.json`에 있는 interactive 세션 ID·프로세스 시작 시각을 대조하고, 쓰기로 열린 JSONL도 보완 경로로 쓴다. 기존 기록 root·UUID·일반 파일·symlink 경계를 유지한다. cwd나 최근 파일만으로 연결하지 않으며, 여러 후보·하위 agent 기록은 고르지 않는다.
+- **수명.** 첫 기록이 늦게 생겨도 다시 확인하고 기존 대화 감시·페이지 API로 읽는다. 같은 프로세스의 대화 전환을 반영하며, 프로세스 교체·셸 복귀 시 옛 ID와 경로를 지운다. hook이 먼저 연결한 같은 세션은 다시 시작으로 알리지 않는다. 이미 사용자가 고른 터미널/대화 보기는 그대로 두고 기존 「대화」 단추로 읽는다.
+- **대체 화면 검토.** alternate screen의 덮어쓰기·지우기는 지난 대화 줄과 일대일로 대응하지 않는다. 화면 사본을 scrollback에 누적하면 spinner·상태줄·확인창까지 대화처럼 중복되어 복원되지 않은 기록을 만든다. 이번에는 이를 추가하지 않고 터미널의 기존 휠/터치 전달과 PageUp·PageDown 경로를 유지한다. 기록이 없는 실행·허용 root 밖의 실행별 홈·PID 등록이 없는 옛 Claude는 hook이나 터미널 프로그램 자체의 기록 보기가 필요하다. Windows의 셸 앞 harness 감지는 기존처럼 지원하지 않는다.
+- **검증.** agent의 실제 OS FD·PID 등록·모호성·교체·재전송 시험과 host의 ID 초기화 시험, E2E93의 hook 없는 셸·PTY → agent → host → Chromium/WebKit 1280px·390px 대화 페이지·갱신·대화 전환·종료를 확인한다. FRONT_API·AGENT_LINK 계약과 번호는 바꾸지 않는다. 절·E2E 번호는 착지 때 main과 대조한다.
