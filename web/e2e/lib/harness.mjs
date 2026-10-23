@@ -469,6 +469,11 @@ async function inList(p, target) {
     throw new Error(`목록 항목이 보이지 않는다(${p.viewportSize()?.width}px): ${JSON.stringify(at)}`);
   }
   await item.click();
+  // 메뉴 닫힘과 목적지 전환은 서로 다른 사건이다. 휴대폰은 닫힌 이전 화면을 그린 뒤
+  // 다음 frame에 pane을 고르므로 메뉴가 사라진 것만 보고 다음 조작을 보내지 않는다.
+  if (typeof target === "string" && target.startsWith("pane-")) {
+    await domIs(p, `${target} 선택 완료`, (id) => document.querySelector(`[data-testid="${CSS.escape(id)}"]`)?.getAttribute("aria-current") === "true", target);
+  }
   // 줄을 고르면 drawer가 닫히며 미끄러진다. 그동안은 아직 pane 위에 있어 다음 누름을 가져가므로 끝날 때까지 기다린다
   await drawerSettled(p, true);
 }

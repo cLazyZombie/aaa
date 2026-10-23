@@ -7,6 +7,20 @@ let seq = 0;
 let since = 0;
 const entries: Entry[] = [];
 const counts: Record<string, number> = {};
+// 원문 주소 대신 탭 안에서만 뜻이 있는 번호로 같은 목적지 복귀를 구분한다.
+const routes = new Map<string, number>();
+let routeSequence = 0;
+
+function routeNumber(): number {
+  const query = new URLSearchParams(location.search);
+  const key = `${location.hash ?? ""}|${query.get("settings") ?? ""}|${query.get("settings-keybar") ?? ""}`;
+  const known = routes.get(key);
+  if (known !== undefined) return known;
+  const number = ++routeSequence;
+  routes.set(key, number);
+  if (routes.size > 100) routes.delete(routes.keys().next().value!);
+  return number;
+}
 
 export function drawerTraceEnabled(): boolean {
   return typeof location !== "undefined" && new URLSearchParams(location.search).get("drawer-debug") === "1";
@@ -20,12 +34,12 @@ export function drawerTrace(event: string, fields: Fields = {}): void {
   entries.push({ ...fields, seq: ++seq, ms: Math.round(performance.now() - since), event,
     open: drawer?.classList.contains("is-open") ?? false,
     right: box ? Math.round(box.right) : null,
-    inline: drawer?.style.transform ?? "", narrow: innerWidth <= 768, historyLength: history.length });
+    inline: drawer?.style.transform ?? "", narrow: innerWidth <= 768, historyLength: history.length, route: routeNumber() });
   if (entries.length > LIMIT) entries.shift();
 }
 
 export function drawerTraceText(): string {
-  return JSON.stringify({ version: 1, viewport: [innerWidth, innerHeight], counts, dropped: Math.max(0, seq - entries.length), entries }, null, 2);
+  return JSON.stringify({ version: 2, viewport: [innerWidth, innerHeight], counts, dropped: Math.max(0, seq - entries.length), entries }, null, 2);
 }
 
 export function startDrawerTrace(): () => void {

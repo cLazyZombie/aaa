@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## iPhone 뒤로 미리보기의 닫힘 frame 순서(t-0805 후속)
+
+- 376a344c 배포 뒤 사용자 기록 요약은 430×775·5회·dropped 0이며 원문 JSON 파일은 없다. 사용자 후속 답으로 Safari 탭·홈 화면 앱에서 모두 끄는 동안만 이전 메뉴가 보이고 손을 놓으면 사라짐이 확인됐다. 마지막 「계속 열림」 버튼 1회는 실제 잔류로 해석하지 않으며 「미리보기만」으로 정정한다. DOM의 open=false/right=0과 OS 미리보기 이미지는 구분한다.
+- E2E39의 독립 frame 관측은 메뉴에서 A→B를 고른 뒤 첫 native rAF에 메뉴 닫힘과 이전 주소 A 보존을 요구한다. 기준 9a03960f는 메뉴가 닫혔지만 이미 B 주소여서 RED였다. 제품 진단의 layout commit(false) → 첫 frame → 다음 frame 준비 → 실제 history-write 순서도 함께 검사한다. React useEffect의 옛 drawer-render는 실제 commit/paint 시각이 아니므로 drawer-commit(useLayoutEffect)과 drawer-effect(useEffect)로 나눴다.
+- `drawerNavigation.test.mjs`는 두 frame 이전 기록·본문 변경 금지, 마지막 선택만 적용, 실제 pop/hash/pagehide/숨김/정리 뒤 취소, 메뉴 재개방 때 취소, 내부 설정 복귀 예외, 이미 닫힘·넓은 화면의 즉시 이동을 검사한다. callback을 실제 사건으로 전달하며 고정 sleep·시한 변경은 없다.
+- 처음 후보 E2E는 메뉴가 닫힌 직후 아직 이전 pane인데 대화 보기 단추를 누르거나 Back을 보내 준비 경합으로 실패했다. `inList`의 pane 선택 완료는 메뉴 애니메이션 종료와 별도로 해당 행의 aria-current=true DOM 사건을 기다린다. 새 회귀의 첫 frame 관측은 이 완료 전의 주소·기존 pane을 직접 확인한다. 준비 완료를 기다리는 것이며 제품의 두 frame 순서·Back 단언·시한을 바꾸지 않는다. 실패는 보존하며 통과를 위한 같은 실행의 재시도는 없다.
+- E2E39 `fragment-history.mjs`는 Chromium·WebKit의 실제 location.hash→popstate/hashchange, Back, B 재선택 때 전체 칸 수 유지, history.pushState가 popstate를 만들지 않음을 대조한다. 원본 결과는 실험실 diagnostics/fragment-*.json에 남긴다. 앱의 일반 기록 메서드는 location.hash이며 직후 popstate를 Back이라고 단정하지 않는다. history.length는 현재 위치가 아니다.
+- 진단 v2는 실제 메서드와 쓰기 전/후를 구분하고 주소 원문 대신 목적지별 탭 내부 번호를 쓴다. 닫힘 frame을 허용하는 것은 Safari 합성 스냅숏 완료 신호가 아니다. 배포 뒤 iPhone 재확인은 coordinator가 요청하며 OS 미리보기까지 고쳐졌다는 판정은 실기 전에는 하지 않는다. 기존 E2E39 전체와 정본 ci-local·공개 검사를 수행한다. API·E2E 번호는 유지한다.
+
 ## E2E39 기록 수 실패 진단(t-0825)
 
 - `history-destinations.mjs`는 제품이 시작하기 전에 `pushState`·`replaceState`와 native `popstate`·`hashchange`, iframe load를 기록한다. 각 사건에 경과 시각·length·hash·설정 쪽/깊이·시트 표시를 남기고, 순회 시작/끝과 메뉴 상태·방향·목적지를 함께 보존한다. pairing query·전체 URL·임의 history state는 기록하지 않는다.

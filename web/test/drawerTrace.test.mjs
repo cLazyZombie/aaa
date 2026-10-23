@@ -34,6 +34,14 @@ test("쓸기 진단은 명시한 탭에서만 수집하고 최근 사건과 총 
     assert.equal(trace.counts.disabled, undefined);
     assert.equal(trace.entries.at(-1).seq, 806);
     assert.doesNotMatch(text, /private-(?:pair|url|state|text)/);
+    const initialRoute = trace.entries.at(-1).route;
+    globalThis.location.hash = "#private-route";
+    drawerTrace("other-route");
+    assert.notEqual(JSON.parse(drawerTraceText()).entries.at(-1).route, initialRoute);
+    globalThis.location.hash = "";
+    drawerTrace("back-route");
+    assert.equal(JSON.parse(drawerTraceText()).entries.at(-1).route, initialRoute);
+    assert.doesNotMatch(drawerTraceText(), /private-route/);
     stop();
     assert.equal(handlers.size, 0);
     assert.equal(disconnected, true);
