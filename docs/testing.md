@@ -3317,3 +3317,27 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - run 39984576747(fca9e7d3)은 Windows one-line install 시험의 실제 IRM이 시험 HTTP 서버 응답을 읽다가 connection reset으로 끝났다(`http_phase=4`, executor/config 미생성). 시험 서버는 응답을 쓴 뒤 write half-close로 EOF를 보내고 peer EOF까지 수신을 비워 종료한다. 실제 PowerShell 5.1/7의 `irm | iex`·ConPTY·검토·서명 승인·설치 기록 단언을 유지한다. Windows 후보는 격리 실기에서 해당 시험을 실행한 뒤 인계한다.
 - 참고 후보는 [xterm.js Viewport/Lifecycle](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Viewport.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)), [tracing callsite](https://github.com/tokio-rs/tracing/blob/master/tracing-core/src/callsite.rs)([MIT](https://github.com/tokio-rs/tracing/blob/master/LICENSE)), [PowerShell](https://github.com/PowerShell/PowerShell)([MIT](https://github.com/PowerShell/PowerShell/blob/master/LICENSE.txt))다. [Node process I/O](https://nodejs.org/api/process.html#a-note-on-process-io)의 자연 종료 계약도 따른다. 외부 코드·의존성은 추가하지 않는다.
 - 검증은 전체 ci-local·Linux strict cross clippy·공개 검사다. 재시도·시한 확대·기대값 완화·시험 삭제·GitHub rerun/revert는 하지 않는다. API·E2E 번호는 유지한다.
+
+
+## Windows Codex 첫 신뢰·YOLO 유지(t-0953)
+
+- `cargo test --locked -p aaa-session --lib account::tests::`는 실제 계정 설정 생성으로
+  공백·한글 cwd의 신뢰 키 한 개, 재시작 동일성, coordinator → user에서 사전 신뢰 제거를 검사한다.
+  Windows 수정 전에는 DOS cwd 키 조회가 `None`이라 실패하고 수정 뒤에는 통과한다. Mac에서는 같은
+  설정·정책 회귀와 기존 Claude 계정 시험을 유지한다. TOML 문서 파서로 실제 저장 bytes를 읽는다.
+- `scripts/test-windows-codex-onboarding.ps1`은 PowerShell 7에서 실행하며 `-Lab C:\aaa-test\t-NNNN` 안의
+  후보 `-Aaa`와 실제 `-Codex` 사본만 받는다. 실행자가 서비스·예약 작업·
+  Run 키·사용자 PATH·방화벽 기준 목록을 저장·대조한다. 운영 설치·서비스·인증·개인 Codex 설정·sshd는
+  바꾸지 않는다. 임의 loopback 포트의 Responses fixture와 가짜 API 인증을 쓰며 유료 모델은 호출하지 않는다.
+- 실제 host → agent → session-host → ConPTY → Codex에서 git worktree의 첫 brief, 같은 thread의
+  새 대화 재시작, `login=false` 셸의 `Get-Content`·`git status` 명령 결과와 최종 응답을 확인한다. 개인
+  PowerShell profile의 PATH 덮어쓰기·설치된 별도 shim에 기대지 않는다. 실제 rollout의
+  `approval_policy=never`·`sandbox_policy=danger-full-access`와 자기 cwd 신뢰 한 개도 검사한다.
+  thread에 신뢰·샌드박스·명령 승인 질문이 생기면 실패한다. 모든 자식은 숨겨 실행하며 GUI·UAC가 없다.
+- 준비 로그·CLI 종료·실제 명령 결과 HTTP·pane 출력이 완료 사건이다. 고정 sleep·실패 재시도·시한 확대는
+  없으며 실패 화면·원인·host/agent 로그를 전용 폴더에 남긴다. 직접 시작한 Process와 자기 session metadata의
+  PID·실행 경로를 확인해 정리한다. 실행자가 결과 보존 뒤 시험 폴더도 지운다.
+- 먼저 Codex 0.164.0과 herdr v0.9.5(Apache-2.0)의 CODEX_HOME·신뢰 조회·시작 흐름을 대조했다.
+  Codex와 같은 dunce 1.0.5(CC0-1.0 OR MIT-0 OR Apache-2.0)를 Windows 의존성으로 사용한다.
+  Responses SSE fixture의 최소 사건은 Codex의 공식 tests/common/responses.rs를 참고한다.
+  제품 API·Agent link·E2E 번호는 유지하며 전체 ci-local·Linux strict cross·공개 검사 뒤 착지를 기다린다.

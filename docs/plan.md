@@ -7762,3 +7762,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 검증: host auto_mode owner, E2E100(켜기→자동 답→예외 유지→끄기→요약, 두 기기·재시작·hook·다시 정하기·Reader), Chromium/WebKit 1280·390px 캡처. 전체 ci-local·Linux strict cross·공개 검사. 병합은 착지 창, GitHub CI 대기는 없다.
 
 - **42회차 착지 통합(t-0943).** 시작 원격 main `6fd0ddff`에 t-0938 `6271ebf4`를 --no-ff로 합친다. 기존 setup §8.477·workspace §8.478·FRONT_API 1.117·E2E99를 보존하고 auto mode에 §8.479·FRONT_API 1.118·E2E100을 배정한다. 공통 SessionStart의 기억 재진입 안내와 coordinator 모드 조회를 함께 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패하면 원문·부하를 보존하고 재시도 없이 push를 멈춘다. 전체 검증에 salt를 넣지 않고 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI 대기·설치 실행·배포·tag·release는 하지 않는다.
+
+
+### 8.480 Windows 계정 Codex 첫 신뢰·YOLO 유지(t-0953)
+
+- Windows canonicalize의 확장 경로로 기록한 cwd 신뢰가 Codex TUI의 DOS 조회와 어긋나 첫 신뢰·sandbox 안내를 반복했다. Codex와 같은 dunce로 뜻이 같은 경로만 줄여 기록한다. 본 저장소·이웃 worktree로 신뢰를 넓히지 않는다.
+- YOLO 인자는 기존 최초·재개 argv를 유지하며 Windows sandbox 선택·설치·UAC는 추가하지 않는다. 개인 Codex 홈은 그대로 두고 user 신뢰 정책에서는 사전 기록을 없앤다.
+- Windows native 회귀의 수정 전 실패·수정 후 통과, 실제 Codex의 첫 실행·재시작 brief와 승인 없는 명령, 전체 ci-local·Linux strict cross·공개 검사로 확인한다. 실기 thread는 자기 폴더에 격리하며 설치·운영 서비스는 바꾸지 않는다. [시험 절차](testing.md)의 전용 폴더·기준 목록 규칙을 따른다.
+- Codex·herdr(Apache-2.0)의 설정 홈과 신뢰 조회를 참고하고 dunce 1.0.5(CC0-1.0 OR MIT-0 OR Apache-2.0)를 Windows 의존성으로 사용한다. API·Agent link·웹 E2E 번호는 유지하며 절 번호는 착지 때 main과 대조한다.
