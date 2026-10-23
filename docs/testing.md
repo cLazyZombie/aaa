@@ -8,6 +8,15 @@
 - 참고 후보는 [herdr-web-ui 시트 기록](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/lib/sheetHistory.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))와 [remix-run/history](https://github.com/remix-run/history/blob/main/packages/history/index.ts)([MIT](https://github.com/remix-run/history/blob/main/LICENSE))다. 전자의 시트 기록과 후자의 PUSH/POP 구분을 참고했고 외부 코드·의존성을 추가하지 않는다. [History API의 기록 추가](https://developer.mozilla.org/en-US/docs/Web/API/History/pushState)와 [WebKit의 뒤로·앞으로 몸짓](https://developer.apple.com/documentation/webkit/wkwebview/allowsbackforwardnavigationgestures)도 확인한다.
 - 정본은 기준 main `5085e64f` 위 전체 `nice -n 15 bash scripts/ci-local.sh`·Linux strict cross clippy·공개 검사다. GitHub CI는 기다리지 않고 착지 창 전에는 main 병합·push하지 않는다. API와 E2E 번호는 유지한다.
 
+## E2E39 설정 준비와 첫 thread 목록의 경합(t-0923)
+
+- `pairPage`의 머신 행 부착은 첫 thread 목록 수신·자동 첫 선택 완료가 아니다. 실제 첫 `threads` 응답을 메뉴 열림 뒤까지 보류하면 빈 주소의 자동 `choose`가 메뉴를 닫아 `pane-bk1` 클릭이 viewport 밖→비표시로 30초에 실패한다. t-0921 원문과 같은 실패 경로를 재현했지만, 원문에는 엔진·서랍 상태가 없어 당시 사건 순서를 소급 확정하지 않는다.
+- 설정 owner는 시작 주소를 기존 `paneHash("bk1")`로 명시한다. 실제 pane 클릭과 설정 목록·모양 깊이 2, 패널/X 닫기, 늦은 내부 되감기 뒤 메뉴 유지, bk2 선택과 사용자 Back/Forward의 메뉴 닫힘 검사는 유지한다. 앱의 history·공통 `inList`·시한·기대값은 바꾸지 않는다.
+- E2E39의 「설정 준비」는 Chromium·WebKit 390px에서 실제 host의 첫 `threads` 응답을 메뉴가 열린 사건 뒤에 전달하고 bk1 클릭 완료를 검사한다. context.route가 요청을 소유하도록 이 gate 대조만 Service Worker를 막는다. 일반 설정 owner는 원래 Service Worker 설정을 쓴다. 초기 주소 지정을 제거한 변형은 같은 keeper에서 실패해야 한다. 고정 sleep·실패 재시도·상한 연장은 없다.
+- 실패 시 `diagnostics/settings-drawer/<engine>-<close>.json`·PNG에 엔진·panel/X/준비 경로·진행 단계, 원래 오류·stack, drawer/pane/toggle/panel의 표시·좌표·transform·animation, 설정 기록과 되감기, 최근 클릭·기록 이동·서랍 변화 사건을 남긴다. context 정리와 화면을 움직이는 공통 진단보다 먼저 저장하며, 바깥 단계 120초 만료에도 같은 `diagnose`를 호출한다. pairing query·cookie·임의 history.state·본문은 수집하지 않는다. 저장 오류는 최초 시험 오류를 덮지 않는다.
+- 참고 후보는 [Playwright actionability](https://playwright.dev/docs/actionability)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))와 [Cypress 요소 조작](https://docs.cypress.io/app/core-concepts/interacting-with-elements)([MIT](https://github.com/cypress-io/cypress/blob/develop/LICENSE))다. visible과 실제 클릭 가능·animation·viewport를 구별하며 `force`·DOM click으로 우회하지 않는다. 외부 코드·의존성을 추가하지 않는다.
+- 로컬 검증: Playwright 1.64.1의 전체 E2E39, 준비/설정 owner와 초기 주소 제거 RED 대조, 웹 유닛·빌드·공개 검사. t-0924의 할 일 시트 history 수리와 변경 파일이 겹치지 않는다. 이 시험은 실제 iPhone OS 몸짓을 검증한 것이 아니다.
+
 ## 하위 오류 진단과 비밀값 경계(t-0912)
 
 - `cargo test --locked -p aaa-common --lib diagnostic::`: 중첩 anyhow의 OS 오류가 응답 왕복과 실제 tracing 사건에 남는지 검사한다. serde 오류 자체에 가짜 토큰이 들어가는 data 오류를 주입해 분류·행·열만 남는지, 닫힌 oneshot의 payload가 로그로 나오지 않는지도 검사한다. subscriber는 시험 thread 안에서만 설치한다.
