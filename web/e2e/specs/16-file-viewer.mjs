@@ -2,7 +2,8 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 16-file-viewer(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, domIs, shot, pairPage, step, browser, webkit, inList, openSettings, sentCount, sentFrames, sentText } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, domIs, inTime, shot, pairPage, step, browser, webkit, inList, openSettings, sentCount, sentFrames, sentText } from "../lib/harness.mjs";
+import { waitForSettingsExit } from "../lib/settings-closed.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -44,6 +45,49 @@ async function clickLink(page, text) {
   await domIs(page, `${text} 링크`, () => document.querySelector(".xterm-screen").classList.contains("xterm-cursor-pointer"));
   await page.mouse.down();
   await page.mouse.up();
+}
+
+// 원문·주소·history state 대신 클릭·기록 이동·파일 요청의 단계만 남긴다.
+async function observeFileOpen(page) {
+  await page.evaluate(() => {
+    window.__aaaFileOpen = [];
+    const record = (type, extra = {}) => {
+      const term = document.querySelector('[data-testid="terminal"]');
+      window.__aaaFileOpen.push({
+        at: performance.now(), type, ...extra,
+        settings: Boolean(document.querySelector('[role="region"][aria-label="설정"]')),
+        settingsEntry: Boolean(history.state?.['aaa:settings']),
+        preview: Boolean(history.state?.['aaa:file-preview']),
+        viewer: Boolean(document.querySelector('[data-testid="file-viewer"]')),
+        code: document.querySelector('[data-testid="file-viewer-code"]')?.textContent?.length ?? null,
+        fit: term?.dataset.fit, pending: term?.hasAttribute('data-fit-pending'),
+        selection: Boolean(getSelection()?.toString()), fonts: document.fonts.status,
+      });
+      if (window.__aaaFileOpen.length > 200) window.__aaaFileOpen.shift();
+    };
+    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'popstate'])
+      window.addEventListener(type, (event) => record(type, {
+        target: event.target instanceof Element ? event.target.tagName : null,
+        x: event.clientX, y: event.clientY,
+      }), true);
+    for (const method of ['pushState', 'replaceState', 'go', 'back']) {
+      const original = history[method].bind(history);
+      history[method] = (...args) => { record(method); return original(...args); };
+    }
+    window.__aaaFileOpenRecord = record;
+  });
+  if (!page.__aaaFileOpenListening) {
+    page.__aaaFileOpenListening = true;
+    const fileRequest = (request) => {
+      if (new URL(request.url()).pathname.startsWith('/f/')) return 'file-content';
+      try { return request.postDataJSON()?.op === 'pane_file' ? 'pane_file' : null; }
+      catch { return null; }
+    };
+    const record = (type, extra = {}) => void page.evaluate(([type, extra]) => window.__aaaFileOpenRecord?.(type, extra), [type, extra]).catch(() => {});
+    page.on('request', (request) => { const kind = fileRequest(request); if (kind) record(`${kind}-start`); });
+    page.on('response', (response) => { const kind = fileRequest(response.request()); if (kind) record(`${kind}-response`, { status: response.status() }); });
+    page.on('requestfailed', (request) => { const kind = fileRequest(request); if (kind) record(`${kind}-failed`); });
+  }
 }
 
 const viewer = (page) => page.getByTestId("file-viewer");
@@ -286,7 +330,8 @@ export default async function ({ ctl, page }) {
     fs.writeFileSync(
       `${proj}/site/app.js`,
       [
-        'document.addEventListener("securitypolicyviolation", (e) => { document.body.dataset.csp = e.violatedDirective; });',
+        // 막은 그림도 CSP 사건을 낸다. fetch 차단의 완료는 connect-src 사건만 증명한다.
+        'document.addEventListener("securitypolicyviolation", (e) => { if (e.violatedDirective === "connect-src") document.body.dataset.csp = e.violatedDirective; });',
         'document.addEventListener("DOMContentLoaded", () => {',
         '  try { localStorage.length; document.body.dataset.storage = "yes"; } catch { document.body.dataset.storage = "none"; }',
         '  document.body.dataset.ran = "yes";',
@@ -329,6 +374,8 @@ export default async function ({ ctl, page }) {
     if ((await frameEl.getAttribute("sandbox")) !== "allow-scripts") throw new Error("페이지 iframe sandbox");
     const frame = await (await frameEl.elementHandle()).contentFrame();
     await frame.locator("body[data-ran='yes'][data-csp]").waitFor();
+    // 그 뒤 다른 CSP 사건이 와도 실제 fetch 차단을 관측한 표지는 보존된다.
+    await frame.evaluate(() => document.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', { violatedDirective: 'img-src' })));
     const inside = await frame.evaluate(() => ({
       pic: document.getElementById("pic").getAttribute("src").slice(0, 22),
       env: document.getElementById("env").getAttribute("src"),
@@ -548,8 +595,16 @@ export default async function ({ ctl, page }) {
         return { width: md.getBoundingClientRect().width, room: md.parentElement.getBoundingClientRect().width };
       });
     const openSource = async (p, what) => {
-      await clickLink(p, "src/wide.ts");
-      await codeIs(p, what, source);
+      try {
+        await p.evaluate((what) => window.__aaaFileOpenRecord?.(what), what);
+        await clickLink(p, "src/wide.ts");
+        await codeIs(p, what, source);
+      } catch (error) {
+        await p.evaluate(() => window.__aaaFileOpenRecord?.('failure'));
+        fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+        fs.writeFileSync(`${root}/diagnostics/file-open.json`, JSON.stringify({ what, events: await p.evaluate(() => window.__aaaFileOpen) }, null, 2));
+        throw error;
+      }
     };
     const openMarkdown = async (p, what) => {
       await clickLink(p, "docs/wide.md");
@@ -605,10 +660,11 @@ export default async function ({ ctl, page }) {
     const settled = (box) => box.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
     const closeSettings = async (p) => {
       await p.keyboard.press("Escape");
-      await p.getByRole("region", { name: "설정" }).waitFor({ state: "detached" });
+      await inTime(p.evaluate(waitForSettingsExit), 20_000, "설정 닫힘과 기록 이동");
     };
 
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await observeFileOpen(dp);
     await inList(dp, "pane-viewer");
     await screenHas(dp, "viewer 줄들", "view>");
     // 기본: 긴 줄은 한 줄로 옆으로 굴리고, Markdown은 대화 열 너비(그보다 넓은 파일 보기 가운데)
@@ -678,6 +734,7 @@ export default async function ({ ctl, page }) {
 
     // 이 기기에 남는다: 다시 읽어도 그대로, 다른 기기는 기본값
     await dp.reload();
+    await observeFileOpen(dp);
     await inList(dp, "pane-viewer");
     await screenHas(dp, "다시 읽은 viewer", "view>");
     await settingsShown(dp, "다시 읽은 뒤", true, "전체 너비");
