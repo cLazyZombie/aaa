@@ -1640,9 +1640,16 @@ impl Drop for Presence {
 /// `fg`·`bg`(`rrggbb`)는 그 화면의 터미널 기본 색이다(plan §8.187).
 #[derive(Deserialize)]
 struct PaneWsQuery {
+    compression: Option<String>,
     flow: Option<String>,
     fg: Option<String>,
     bg: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+struct PaneFlow {
+    acks: bool,
+    gzip: bool,
 }
 
 async fn pane_ws(
@@ -1658,9 +1665,9 @@ async fn pane_ws(
     }
     // 그림 조각(512KiB, base64)이 들어갈 만큼만 받는다
     // ACK를 하지 않는 화면(다시 띄우기 전에 받은 옛 웹)은 보내기 줄로만 잰다
-    let acks = q.flow.as_deref() == Some("ack");
+    let flow = PaneFlow { acks: q.flow.as_deref() == Some("ack"), gzip: q.compression.as_deref() == Some("gzip.v1") };
     let colors = q.fg.zip(q.bg).and_then(|(fg, bg)| aaa_proto::TermColors::from_hex(&fg, &bg));
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, acks, colors, socket))
+    ws.max_message_size(1 << 20).on_upgrade(move |socket| pane_loop(host, id, dev, role, flow, colors, socket))
 }
 
 /// 한 터미널 연결의 보내기 줄. frame은 쓰기 task가 차례로 보내고, `buffered`는 아직 보내지 못한 바이트다
@@ -1671,17 +1678,44 @@ struct Outbox {
     buffered: Arc<AtomicU64>,
     /// 남은 줄을 버리고 이 code로 닫는다(4008 출력 정지, 4401 기기 취소)
     stop: tokio::sync::watch::Sender<Option<(u16, &'static str)>>,
+    payload: Arc<WebPayload>,
 }
 
 /// `Outbox`에 보내기만 하는 손잡이(앞 기록 답처럼 연결 loop 밖에서 끝나는 일)
 struct OutSender {
+    payload: Arc<WebPayload>,
     tx: tokio::sync::mpsc::UnboundedSender<Message>,
     buffered: Arc<AtomicU64>,
+    stop: tokio::sync::watch::Sender<Option<(u16, &'static str)>>,
 }
 
+struct WebPayload {
+    gzip: bool,
+    serial: tokio::sync::Mutex<()>,
+    pending: Arc<tokio::sync::Semaphore>,
+}
+impl WebPayload {
+    async fn prepare(&self, mut msg: TermServerMsg) -> Option<String> {
+        use aaa_common::terminal_payload::PayloadMessage;
+        let bytes = msg.payload().map_or(0, |(data, _)| data.0.len());
+        if bytes > aaa_proto::TERMINAL_PAYLOAD_MAX {
+            return None;
+        }
+        let _bytes = self.pending.clone().try_acquire_many_owned(bytes.max(1) as u32).ok()?;
+        let _serial = self.serial.lock().await;
+        let codec = self.gzip.then_some(aaa_proto::TerminalCodec::Gzip);
+        let bytes = aaa_common::terminal_payload::encode_async(msg, codec).await.ok()?;
+        String::from_utf8(bytes).ok()
+    }
+}
 impl OutSender {
-    fn msg(&self, m: &TermServerMsg) -> bool {
-        let m = Message::Text(serde_json::to_string(m).unwrap().into());
+    async fn msg(&self, m: TermServerMsg) -> bool {
+        let Some(text) = self.payload.prepare(m).await else {
+            tracing::warn!("웹 터미널 본문 거부");
+            let _ = self.stop.send(Some((4002, "terminal payload rejected")));
+            return false;
+        };
+        let m = Message::Text(text.into());
         self.buffered.fetch_add(frame_len(&m), Ordering::Relaxed);
         self.tx.send(m).is_ok()
     }
@@ -1690,8 +1724,17 @@ impl OutSender {
 /// 앞 기록 답(plan §8.67): 찾지 못했으면 붙이지 않는다
 fn history_reply(id: u32, o: Option<aaa_vt::Older>) -> TermServerMsg {
     match o {
-        Some(o) => TermServerMsg::History { id, data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
-        None => TermServerMsg::History { id, data: B64(Vec::new()), lines: 0, more: false, found: false },
+        Some(o) => TermServerMsg::History {
+            compression: None,
+            id,
+            data: B64(o.data),
+            lines: o.lines as u32,
+            more: o.more,
+            found: true,
+        },
+        None => {
+            TermServerMsg::History { compression: None, id, data: B64(Vec::new()), lines: 0, more: false, found: false }
+        }
     }
 }
 
@@ -1704,7 +1747,7 @@ fn frame_len(m: &Message) -> u64 {
 }
 
 impl Outbox {
-    fn new(mut sink: futures_util::stream::SplitSink<WebSocket, Message>) -> Self {
+    fn new(mut sink: futures_util::stream::SplitSink<WebSocket, Message>, gzip: bool) -> Self {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
         let buffered = Arc::new(AtomicU64::new(0));
         let (stop, mut stopped) = tokio::sync::watch::channel(None);
@@ -1734,7 +1777,16 @@ impl Outbox {
             let close = Message::Close(Some(CloseFrame { code, reason: reason.into() }));
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sink.send(close)).await;
         });
-        Self { tx, buffered, stop }
+        Self {
+            tx,
+            buffered,
+            stop,
+            payload: Arc::new(WebPayload {
+                gzip,
+                serial: tokio::sync::Mutex::new(()),
+                pending: Arc::new(tokio::sync::Semaphore::new(1 << 20)),
+            }),
+        }
     }
 
     fn send(&self, m: Message) -> bool {
@@ -1748,7 +1800,12 @@ impl Outbox {
 
     /// 다른 task가 이 줄에 보낼 손잡이(보낸 bytes는 같은 `buffered`에 센다)
     fn sender(&self) -> OutSender {
-        OutSender { tx: self.tx.clone(), buffered: self.buffered.clone() }
+        OutSender {
+            tx: self.tx.clone(),
+            buffered: self.buffered.clone(),
+            payload: self.payload.clone(),
+            stop: self.stop.clone(),
+        }
     }
 
     fn buffered(&self) -> u64 {
@@ -1769,7 +1826,7 @@ impl Outbox {
 }
 
 /// snapshot 하나가 새 출력 구독이다: 새 번호의 창을 열고, replay가 느린 연결을 건널 시간을 준다(참고 `join`)
-fn open_stream(
+async fn open_stream(
     out: &Outbox,
     streams: &mut u32,
     a: &mut crate::Attach,
@@ -1779,15 +1836,23 @@ fn open_stream(
     *streams += 1;
     let mut window = OutputWindow::new(*streams);
     let bytes = a.replay.len() as u64;
-    let text = serde_json::to_string(&TermServerMsg::Snapshot {
-        replay: B64(std::mem::take(&mut a.replay)),
-        cols: a.cols,
-        rows: a.rows,
-        readonly,
-        stream: *streams,
-        history_more: a.more,
-    })
-    .unwrap();
+    let text = out
+        .payload
+        .prepare(TermServerMsg::Snapshot {
+            compression: None,
+            replay: B64(std::mem::take(&mut a.replay)),
+            cols: a.cols,
+            rows: a.rows,
+            readonly,
+            stream: *streams,
+            history_more: a.more,
+        })
+        .await;
+    let Some(text) = text else {
+        tracing::warn!("웹 터미널 snapshot 거부");
+        let _ = out.stop.send(Some((4002, "terminal payload rejected")));
+        return None;
+    };
     if bytes > 0 {
         let wire = text.len() as u64;
         window.join(wire, out.buffered(), now);
@@ -1816,7 +1881,7 @@ async fn pane_loop(
     id: String,
     dev: String,
     role: DeviceRole,
-    acks: bool,
+    flow: PaneFlow,
     colors: Option<aaa_proto::TermColors>,
     socket: WebSocket,
 ) {
@@ -1829,7 +1894,7 @@ async fn pane_loop(
     }
     // 이 연결이 그 pane을 보는 동안(seen.rs). 가려지면 웹은 lease를 놓을 뿐 연결은 두므로 「보는 중」은 기기의 presence가 정한다
     host.view_term(&front.id, &dev, Some(&id));
-    pane_session(&host, &id, &dev, role, &front, acks, socket).await;
+    pane_session(&host, &id, &dev, role, &front, flow, socket).await;
     host.view_term(&front.id, &dev, None);
     host.front_gone(&front.id);
 }
@@ -1840,9 +1905,10 @@ async fn pane_session(
     dev: &str,
     role: DeviceRole,
     front: &FrontRef,
-    acks: bool,
+    flow: PaneFlow,
     socket: WebSocket,
 ) {
+    let PaneFlow { acks, gzip } = flow;
     let id = id.to_string();
     let actor = format!("device:{dev}");
     // 취소를 듣기 시작한 뒤에 다시 본다: upgrade와 취소가 엇갈려도 놓치지 않는다(t3code SessionStore `awaitInvalidation`)
@@ -1855,14 +1921,14 @@ async fn pane_session(
     let mut input_traces = std::collections::HashMap::<String, u8>::new();
     let Some(view) = host.pane_view_of(&id, role) else { return };
     let (sink, mut stream) = socket.split();
-    let out = Outbox::new(sink);
+    let out = Outbox::new(sink, gzip);
     let started = std::time::Instant::now();
     let now = || started.elapsed().as_millis() as u64;
     let mut streams = 0;
     if !out.msg(&TermServerMsg::Front { id: front.id.clone(), steer_queued: true }) {
         return;
     }
-    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly, now()) else { return };
+    let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly, now()).await else { return };
     let mut rx = attach.rx;
     if !out.msg(&readonly_msg(&view, role)) || !out.msg(&TermServerMsg::State { pane: Box::new(view) }) {
         return;
@@ -1935,7 +2001,7 @@ async fn pane_session(
                     let Some(mut a) = host.attach_pane(&id) else { break };
                     next = a.offset;
                     let readonly = host.pane_view_of(&id, role).map(|p| p.readonly).unwrap_or(true);
-                    let Some(w) = open_stream(&out, &mut streams, &mut a, readonly, now()) else { break };
+                    let Some(w) = open_stream(&out, &mut streams, &mut a, readonly, now()).await else { break };
                     rx = a.rx;
                     window = w;
                 }
@@ -2056,7 +2122,7 @@ async fn pane_session(
                             let anchor: Vec<String> = anchor.into_iter().take(8).collect();
                             match host.older_history(&id, &anchor, depth as usize) {
                                 crate::OlderHistory::Ready(o) => {
-                                    if !out.msg(&history_reply(hid, o)) {
+                                    if !out.sender().msg(history_reply(hid, o)).await {
                                         break;
                                     }
                                 }
@@ -2066,7 +2132,7 @@ async fn pane_session(
                                     let session = id.clone();
                                     tokio::spawn(async move {
                                         let o = Host::older_from_agent(&conn, session, anchor, depth as usize).await;
-                                        out.msg(&history_reply(hid, o));
+                                        out.msg(history_reply(hid, o)).await;
                                     });
                                 }
                             }

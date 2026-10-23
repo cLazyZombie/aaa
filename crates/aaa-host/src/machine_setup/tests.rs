@@ -1519,6 +1519,7 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
         h.on_subscribed(
             &pane,
             Some(aaa_proto::Snapshot {
+                compression: None,
                 session: pane.clone(),
                 offset: 0,
                 cols: 160,

@@ -1,8 +1,13 @@
 //! frame 연결 도우미: 읽는 쪽과, 여러 task가 함께 쓰는 쓰기 task.
 
+use crate::terminal_payload::{PENDING_BYTES, PayloadMessage};
 use aaa_proto::{FrameError, FrameKind, TerminalChunk, take_frame, write_frame};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::sync::mpsc;
 
@@ -13,12 +18,16 @@ pub enum Incoming {
 
 enum Out {
     Frame(FrameKind, Vec<u8>),
+    Payload(Box<aaa_proto::LinkMsg>, tokio::sync::OwnedSemaphorePermit),
+    Stop,
 }
 
 /// 쓰기 handle. 복제해서 여러 task가 쓴다. 연결이 끊기면 send가 실패한다.
 #[derive(Clone)]
 pub struct FrameTx {
     tx: mpsc::Sender<Out>,
+    terminal_zstd: Arc<AtomicBool>,
+    payload_bytes: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -26,6 +35,26 @@ pub struct FrameTx {
 pub struct Closed;
 
 impl FrameTx {
+    /// 원격 Hello/Welcome의 기능 교집합에서만 켠다. 매 연결의 초기값은 false다.
+    pub fn set_terminal_zstd(&self, enabled: bool) {
+        self.terminal_zstd.store(enabled, Ordering::Relaxed);
+    }
+
+    /// 터미널 응답의 codec은 writer가 앞뒤 출력과 같은 차례에 실행한다.
+    pub async fn link(&self, msg: &aaa_proto::LinkMsg) -> Result<(), Closed> {
+        let mut msg = msg.clone();
+        let Some((data, _)) = msg.payload() else { return self.json(&msg).await };
+        let bytes = data.0.len();
+        if bytes > aaa_proto::TERMINAL_PAYLOAD_MAX {
+            let _ = self.tx.send(Out::Stop).await;
+            return Err(Closed);
+        }
+        let Ok(permit) = self.payload_bytes.clone().try_acquire_many_owned(bytes.max(1) as u32) else {
+            let _ = self.tx.send(Out::Stop).await;
+            return Err(Closed);
+        };
+        self.tx.send(Out::Payload(Box::new(msg), permit)).await.map_err(|_| Closed)
+    }
     pub async fn json<T: Serialize>(&self, v: &T) -> Result<(), Closed> {
         self.control(serde_json::to_vec(v).expect("JSON 직렬화")).await
     }
@@ -56,8 +85,24 @@ impl FrameTx {
 /// 쓰기 task를 띄운다. 연결이 실패하거나 모든 handle이 사라지면 끝난다.
 pub fn spawn_writer<W: AsyncWrite + Unpin + Send + 'static>(mut w: W, max: usize) -> FrameTx {
     let (tx, mut rx) = mpsc::channel::<Out>(512);
+    let terminal_zstd = Arc::new(AtomicBool::new(false));
+    let mode = terminal_zstd.clone();
     tokio::spawn(async move {
-        while let Some(Out::Frame(kind, payload)) = rx.recv().await {
+        while let Some(out) = rx.recv().await {
+            let (kind, payload, _permit) = match out {
+                Out::Stop => break,
+                Out::Frame(kind, payload) => (kind, payload, None),
+                Out::Payload(msg, permit) => {
+                    let codec = mode.load(Ordering::Relaxed).then_some(aaa_proto::TerminalCodec::Zstd);
+                    match crate::terminal_payload::encode_async(*msg, codec).await {
+                        Ok(bytes) => (FrameKind::Control, bytes, Some(permit)),
+                        Err(_) => {
+                            tracing::warn!("터미널 전송 본문 거부");
+                            break;
+                        }
+                    }
+                }
+            };
             if let Err(e) = write_frame(&mut w, kind, &payload, max).await {
                 // 상한을 넘는 frame은 보낸 쪽 결함이다: 연결이 닫히므로 상대가 까닭을 알 수 없어 경고로 남긴다
                 if matches!(e, FrameError::TooLarge { .. }) {
@@ -71,14 +116,21 @@ pub fn spawn_writer<W: AsyncWrite + Unpin + Send + 'static>(mut w: W, max: usize
         use tokio::io::AsyncWriteExt;
         let _ = w.shutdown().await;
     });
-    FrameTx { tx }
+    FrameTx { tx, terminal_zstd, payload_bytes: Arc::new(tokio::sync::Semaphore::new(PENDING_BYTES)) }
 }
 
 /// 쓰기 task 없이 handle과 그 줄을 만든다. 줄을 비우는 쪽이 frame을 옮긴다(WebSocket 위 Front API는 제어 frame 하나를
 /// 글 메시지 하나로 보낸다, plan §6.2). handle이 모두 사라지면 줄이 끝난다.
 pub fn frame_channel() -> (FrameTx, FrameOut) {
     let (tx, rx) = mpsc::channel::<Out>(512);
-    (FrameTx { tx }, FrameOut { rx })
+    (
+        FrameTx {
+            tx,
+            terminal_zstd: Arc::new(AtomicBool::new(false)),
+            payload_bytes: Arc::new(tokio::sync::Semaphore::new(PENDING_BYTES)),
+        },
+        FrameOut { rx },
+    )
 }
 
 /// `frame_channel`의 받는 쪽
@@ -89,7 +141,13 @@ pub struct FrameOut {
 impl FrameOut {
     /// 다음 frame. handle이 모두 사라지면 None
     pub async fn recv(&mut self) -> Option<(FrameKind, Vec<u8>)> {
-        self.rx.recv().await.map(|Out::Frame(kind, payload)| (kind, payload))
+        match self.rx.recv().await? {
+            Out::Stop => None,
+            Out::Frame(kind, payload) => Some((kind, payload)),
+            Out::Payload(msg, _permit) => {
+                crate::terminal_payload::encode_async(*msg, None).await.ok().map(|bytes| (FrameKind::Control, bytes))
+            }
+        }
     }
 }
 

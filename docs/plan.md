@@ -7667,3 +7667,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **참고·범위.** herdr 네이티브의 Palette 원색과 이름을 웹의 앱·터미널 결합 및 시스템 밝기별 선택 구조에 옮긴다. Tokyo Night·One·Solarized·Gruvbox·Kanagawa·Rosé Pine의 밝음/어두움 12종을 더한다. 새 host·front API는 없다. 원색·출처·라이선스·보정은 docs/theme-catalog.md와 배포 자료에 남긴다.
 - **선택·대비.** 설정의 기존 select에 밝기별 목록, 펼치는 검색·색 미리보기를 더한다. UI 글자·상태·강조·구문색은 모든 면에서 4.5:1 이상으로 최소 보정하고 터미널 ANSI는 원색을 쓴다. 어두움 전용·추가 변형은 다음 묶음에 남긴다.
 - **검증.** E2E14·95를 복원 계약에 맞추고 E2E96에서 양 엔진·1280/390px의 선택·저장·재열기·OS 짝·대비·터미널 전송·갤러리 배치를 검사하고 캡처한다. 전체 ci-local·공개 검사 뒤 묶음 착지를 기다린다. 배포는 별도 승인이다. 절·E2E 번호는 착지 때 main과 대조한다.
+
+### 8.470 큰 터미널 기록의 전송 압축(t-0876)
+
+- 승인된 t-0868 설계대로 웹 큰 snapshot/history는 gzip 1, 원격 agent link는 양쪽 선택 기능 교집합의 zstd 1을 쓴다. 로컬 IPC·입력·ACK·상태·live·ring catch-up과 기록 보관량은 유지한다.
+- 4 KiB 이상에서 metadata 포함 최종 JSON의 12.5%·256 B 절감 조건을 모두 적용한다. 원시/압축 768 KiB·원본 길이 일치·기존 1 MiB frame·zstd window 1 MiB를 지키며 구판에는 identity를 보낸다.
+- 웹 Worker와 연결별 수신 큐로 순서를 보존하고 xterm 완료 뒤 원시 길이 ACK를 보낸다. 지원 확인을 재연결에 재사용해 online/pageshow의 즉시 WS 연결을 유지한다. 오류는 해당 연결을 끝내고 자동으로 identity 재해석하지 않는다.
+- 정본 계약·작업 수/바이트 상한·진단·고지는 [터미널 전송 압축](terminal-compression.md), 검증은 [시험 규칙](testing.md)의 t-0876 절과 E2E97다. 배포는 별도 승인이다.
+
+- **31회차 착지 통합(t-0908).** 기준 main `1123d038`의 마지막 §8.468·FRONT_API 1.113·AGENT_LINK 1.11과 E2E95를 확인했다. 테마는 §8.469·E2E96, 압축은 §8.470·E2E97로 배정하고 기존 E2E95를 보존한다. 압축은 선택 기능 협상으로 API/link 판을 유지한다. 두 후보를 각각 --no-ff로 합친 뒤 전체 ci-local·공개 검사·양 OS strict cross와 dev 없는 Windows release 빌드를 한 번 확인한다. GitHub CI는 실행·대기하지 않으며 배포·tag·release는 수행하지 않는다.

@@ -87,6 +87,15 @@
 - Windows 코드는 `cargo xwin clippy -p aaa --bin aaa --target x86_64-pc-windows-msvc -- -D warnings`로 검사한다. 실기는 Windows 시험 PC 규칙(memory machines)대로 전용 폴더·`aaa-test-0878-*` 이름·가짜 관리자 사용자·기준 목록 대조로 한다. 시험 host는 다른 머신에 별도 상태 폴더·포트로 띄우고 운영 host에는 붙지 않는다. 대화형 SSH는 pty 드라이버가 출력 사건(질문·확인 코드·완료 줄)을 기다려 답한다. 승인은 그 시험 host CLI(`AAA_SESSION_ID` 없는 환경)로 한다.
 - 실기 확인 항목: 등록 창 닫힘→Enter, 틀린 암호→다시, 승인, 서비스(계정·세션 0·지연 자동 시작·실패 동작), host 연결, 서비스 pane의 사용자 PATH(표지 `codex.cmd`), 1바이트 다른 실행 파일로 업데이트, 이름 충돌→새 이름, 승인 대기·질문 중 Ctrl+C(130과 되돌림), 터미널 없는 SSH(2), 관리자가 아닌 SSH(2), 제거·purge 뒤 권한 회수. 탐색기 더블클릭(UAC 창)은 사용자 데스크톱에 창을 띄우므로 사용자 확인으로 남긴다.
 - 정리 주의: 가짜 사용자로 비밀번호 SSH 로그온·서비스 로그온을 한 뒤에는 그 사용자를 지워도 프로필 hive(`HKU\<SID>`·`_Classes`)가 `Loaded`로 남을 수 있다. 그 SID의 프로세스·로그온 세션이 없어도 남았고 `reg unload`는 거부됐다. 재부팅·sshd 재시작은 하지 않으므로 그 프로필 폴더는 다음 재부팅 뒤 `Remove-CimInstance`로 지우고 보고에 남긴다. BITS 시작 방식은 Windows가 Auto↔Manual로 바꾸므로 기준 대조에서 시험 변경으로 세지 않는다(t-0853과 같은 관찰).
+## 터미널 기록 압축(t-0876)
+
+- `cargo test -p aaa-common terminal_payload --locked`: 두 codec의 정확한 일반·색상·한글·binary 왕복, 4095/4096 B와 이득 경계, 768 KiB/원시 JSON frame 상한, gzip CRC·잘림·남은 데이터·압축 폭탄, zstd window/dictionary, null·알 수 없는 metadata, IPC 거부를 검사한다. 실제 frame writer의 snapshot→binary→Pong 순서와 원시 offset, blocking 작업 두 개와 취소된 작업의 permit 보유도 사건으로 확인한다.
+- `cargo test -p aaa-agent -p aaa-host terminal_compression_tests --locked`: 실제 Hello/Welcome 처리에서 원격/로컬·선택 기능 유무·identity/압축의 조합과 재연결 초기화를 검사한다. 허용하지 않은 압축은 소비 전에 링크 오류가 나야 한다. 구판 필드 부재와 생성 TypeScript도 기존 proto 시험으로 확인한다.
+- `node --test web/test/terminalCompression.test.mjs`: 실제 native gzip의 CRC·길이·폭탄·취소와 Worker gate 대역을 사용한다. 해제 전 소비 없음, snapshot/binary/history/새 stream 순서, 늦은 결과 폐기, 구 host identity, 지원 실패, 재연결의 새 Worker 준비, raw_len 위조를 포함한 wire/raw 대기 예산을 검사한다.
+- E2E97 `97-terminal-compression`은 실제 PTY·host·agent·제품 Worker·xterm으로 Chromium/WebKit의 1280/390px에서 한글·색·줄 접힘·원시 길이 ACK·입력·재연결·두 쪽 prepend를 검사한다. 기기 크기를 먼저 적용한 뒤 기록을 생성하여 resize로 무효가 된 anchor를 압축 결함과 혼동하지 않는다. Worker 첫 해제를 gate로 잡아 ACK/표시가 앞서지 않는지 확인한다. 기존 E2E07의 스크롤·reset·즉시 wake 재연결·4008·host 재시작/session-host fallback owner도 유지한다.
+- E2E97의 회선 대조는 같은 source의 identity/gzip을 실제 WS 경계에서 byte-rate로 제한한다. 일반·색상·한글 표본을 1 Gbit/s/1ms·5 Mbit/s/50ms·1 Mbit/s/100ms 조건에서 비교하고 실제 wire/원시 길이·마지막 xterm ACK까지의 시간과 history 중 8키의 정확한 송신·PTY 전달·xterm 적용 ACK를 기록한다. 읽던 history를 유지하는 화면에서 키 echo가 viewport에 보인다고 가정하지 않는다. NIC/시스템 설정·기존 실패 시한은 바꾸지 않으며 고정 sleep·실패 재시도는 없다.
+- 필수 정본은 `nice -n 15 bash scripts/ci-local.sh --tee`, 의존 경계 시험·Linux/Windows strict cross·공개 검사다. 구판 실제 binary 조합, 제한 회선의 원격 frame, native Worker 메모리·취소, Windows native zstd C 빌드와 Edge/Safari 실기는 별도 실측 산출물로 구분한다. WebKit headless를 실제 Safari로, Edge headless를 설치된 PWA로 쓰지 않는다.
+
 
 ## 보고서 교체 시험의 Windows 파일 닫힘(t-0862)
 

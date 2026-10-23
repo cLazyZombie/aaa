@@ -140,7 +140,15 @@ impl State {
     fn snapshot(&self) -> Snapshot {
         let (rows, cols) = self.vt.size();
         let (replay, history_more) = self.vt.replay_more();
-        Snapshot { session: self.id.clone(), offset: self.ring.end(), cols, rows, replay: B64(replay), history_more }
+        Snapshot {
+            compression: None,
+            session: self.id.clone(),
+            offset: self.ring.end(),
+            cols,
+            rows,
+            replay: B64(replay),
+            history_more,
+        }
     }
 
     /// PTY 출력. 프로그램의 질의(DA1·DA2·커서 위치·기본 색)는 session host가 질의 시점의 화면으로 답하고 출력에서 뺀다:
@@ -282,8 +290,16 @@ impl State {
             })),
             SessionRequest::History { anchor, depth } => {
                 let chunk = match self.vt.older(&anchor, depth as usize, aaa_vt::REPLAY_HISTORY) {
-                    Some(o) => HistoryChunk { data: B64(o.data), lines: o.lines as u32, more: o.more, found: true },
-                    None => HistoryChunk { data: B64(Vec::new()), lines: 0, more: false, found: false },
+                    Some(o) => HistoryChunk {
+                        compression: None,
+                        data: B64(o.data),
+                        lines: o.lines as u32,
+                        more: o.more,
+                        found: true,
+                    },
+                    None => {
+                        HistoryChunk { compression: None, data: B64(Vec::new()), lines: 0, more: false, found: false }
+                    }
                 };
                 Ok(AgentResponse::History(chunk))
             }

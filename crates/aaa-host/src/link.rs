@@ -292,6 +292,7 @@ async fn serve_connection(
         // 시작 중이면 웹을 연 뒤에 보낸다(`Host::web_gate`)
         let _ = host.web_gate.subscribe().wait_for(|open| *open).await;
     }
+    let terminal_zstd = !local && hello.features.iter().any(|f| f == aaa_proto::TERMINAL_ZSTD_FEATURE);
     tx.json(&LinkMsg::Welcome(HostWelcome {
         identity: hello.features.iter().any(|f| f == "rollout_recovery.v1").then(|| aaa_proto::RuntimeIdentity {
             sha256: host.running_sha256.clone(),
@@ -306,6 +307,7 @@ async fn serve_connection(
         // harness_hello.v1: hello의 harness 사건을 읽는다(agent는 연결 뒤 다시 보내지 않는다, 재부팅 복원)
         features: vec![
             "terminal.v1".into(),
+            aaa_proto::TERMINAL_ZSTD_FEATURE.into(),
             "health.v1".into(),
             "harness_hello.v1".into(),
             "post.v1".into(),
@@ -354,7 +356,7 @@ async fn serve_connection(
                 Ok(Err(e)) => return Err(e.into()),
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(c)))) => host.on_chunk(&mid, c),
-                Ok(Ok(Some(Incoming::Control(b)))) => match match serde_json::from_slice::<LinkMsg>(&b)? {
+                Ok(Ok(Some(Incoming::Control(b)))) => match match aaa_common::terminal_payload::decode_link_async(serde_json::from_slice::<LinkMsg>(&b)?, terminal_zstd).await? {
                     // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
                     msg @ LinkMsg::Event(AgentEvent::Image { .. }) => msg,
@@ -823,3 +825,94 @@ mod post_tests {
 
 #[cfg(test)]
 mod supervision_tests;
+
+#[cfg(test)]
+mod terminal_compression_tests {
+    use super::*;
+    use aaa_proto::{B64, HistoryChunk, TERMINAL_ZSTD_FEATURE, TerminalCodec};
+
+    #[tokio::test]
+    async fn local_old_and_new_agent_wires_are_checked_before_consumption() {
+        let path = std::env::temp_dir().join(format!("aaa-terminal-host-{}", util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        let host = Host::open(cfg, path.clone()).unwrap();
+        let peer = "a".repeat(64);
+        host.db.upsert_machine("remote", "mac-a", Some(&peer), false).unwrap();
+        for remote in [false, true] {
+            for supported in [false, true] {
+                for compressed in [false, true] {
+                    let (stream, other) = tokio::io::duplex(65536);
+                    let running = tokio::spawn(serve(
+                        host.clone(),
+                        Box::new(stream),
+                        remote.then(|| ("remote".into(), peer.clone())),
+                        None,
+                    ));
+                    let (r, w) = tokio::io::split(other);
+                    let tx = spawn_writer(w, MAX_FRAME);
+                    let mut rx = FrameRx::new(r, MAX_FRAME);
+                    tx.json(&LinkMsg::Hello(AgentHello {
+                        proto: AGENT_LINK,
+                        machine_id: if remote { "remote" } else { "local" }.into(),
+                        machine_name: if remote { "mac-a" } else { "mac-b" }.into(),
+                        boot_id: "boot".into(),
+                        os: "test".into(),
+                        arch: "test".into(),
+                        software: "test".into(),
+                        features: if supported {
+                            vec!["terminal.v1".into(), TERMINAL_ZSTD_FEATURE.into()]
+                        } else {
+                            vec!["terminal.v1".into()]
+                        },
+                        dev_mode: true,
+                        sha256: None,
+                        selfcheck: None,
+                        sessions: vec![],
+                        identity: None,
+                        harness: vec![],
+                    }))
+                    .await
+                    .unwrap();
+                    assert!(
+                        matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Welcome(w) if w.features.iter().any(|f| f == TERMINAL_ZSTD_FEATURE))
+                    );
+                    let msg = LinkMsg::Res {
+                        id: "history".into(),
+                        result: Outcome::Ok(AgentResponse::History(HistoryChunk {
+                            data: B64(vec![b'x'; 8192]),
+                            compression: None,
+                            lines: 1000,
+                            more: true,
+                            found: true,
+                        })),
+                    };
+                    tx.control(
+                        aaa_common::terminal_payload::encode(msg, compressed.then_some(TerminalCodec::Zstd)).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                    if !compressed || remote && supported {
+                        tx.json(&LinkMsg::Ping { seq: 876 }).await.unwrap();
+                        tokio::time::timeout(Duration::from_secs(3), async {
+                            loop {
+                                if matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Pong { seq: 876 }) {
+                                    break;
+                                }
+                            }
+                        })
+                        .await
+                        .unwrap();
+                        drop(tx);
+                        drop(rx);
+                        assert!(tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().is_ok());
+                    } else {
+                        assert!(tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().is_err());
+                    }
+                }
+            }
+        }
+        drop(host);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+}

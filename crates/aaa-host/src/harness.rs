@@ -1423,6 +1423,7 @@ mod tests {
             h.on_subscribed(
                 "s",
                 Some(Snapshot {
+                    compression: None,
                     session: "s".into(),
                     offset: 0,
                     cols: 80,

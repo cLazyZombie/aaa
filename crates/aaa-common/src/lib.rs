@@ -25,3 +25,6 @@ pub mod install_crypto;
 
 #[cfg(all(test, windows))]
 mod windows_acl_tests;
+
+/// 협상한 터미널 snapshot/history의 제한된 전송 코덱.
+pub mod terminal_payload;

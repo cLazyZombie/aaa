@@ -25,6 +25,8 @@ webpki-roots.workspace = true
 futures-util.workspace = true
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
 backtrace = "0.3"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
+zstd = { version = "0.13.3", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
