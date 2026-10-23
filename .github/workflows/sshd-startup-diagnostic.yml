@@ -38,7 +38,7 @@ jobs:
           [IO.File]::WriteAllText($baseline, $original)
           $failed = $false
           try { . $baseline -StartOnly } catch {
-            if ($_.FullyQualifiedErrorId -notmatch 'CouldNotStartService') { throw }
+            if ($_.FullyQualifiedErrorId -ne 'StartServiceFailed,Microsoft.PowerShell.Commands.StartServiceCommand') { throw }
             $failed = $true
           }
           if (-not $failed) { throw '원본 서비스가 실패하지 않아 DACL 원인이 입증되지 않았다' }
