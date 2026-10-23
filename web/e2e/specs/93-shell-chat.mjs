@@ -1,6 +1,7 @@
 // 기본 셸 → hook 없는 harness → 실제 프로세스/기록 연결 → host → 대화 페이지/스크롤.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
 import {
   root, aaa, step, until, waitOutput, inList, domIs, shot, pairPage, browser, webkit, inTime, screenText, start, stop,
 } from "../lib/harness.mjs";
@@ -158,6 +159,13 @@ export default async function () {
     const name = `shell-${harness}-${n}`;
     const id = sid(n * 3), next = sid(n * 3 + 1), decoy = sid(n * 3 + 2);
     const page = (await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { touch: width < 500 })).page;
+    const diagnostics = new ChatDiagnostics(root, name);
+    diagnostics.page = page;
+    diagnostics.watch(page.context());
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/v1/call")) diagnostics.request(request, request.postDataJSON());
+    });
+    let phase = "connect";
     try {
       // 본문과 cwd가 비슷한 더 새 기록도 다른 PID의 것이면 고르지 않는다.
       const dir = harness === "codex" ? `${root}/codex/sessions/2026/10/23` : `${root}/claude/projects/shell`;
@@ -271,16 +279,46 @@ export default async function () {
       await inList(page, `pane-${name}`);
       assert.equal(await toggle.getAttribute("aria-pressed"), "true", "돌아오며 대화 보기 선택이 바뀌었다");
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
+      phase = "switch";
+      // 옛 파일의 맨 위를 읽던 상태를 확정한다. 새 파일은 이 위치를 이어받으면 안 된다.
+      await chat.evaluate((c) => { c.scrollTop = 0; c.dispatchEvent(new Event("scroll", { bubbles: true })); });
+      diagnostics.remember([{ phase, top: await chat.evaluate((c) => c.scrollTop) }]);
       aaa("pane", "run", pane, `switch ${next}`);
       await until("같은 프로세스의 새 대화 연결", () => state().agent?.harness_session === next);
       await chat.getByText(`${next} 기록 359 ·`, { exact: false }).first().waitFor();
+      // 본문이 mount돼도 화면 밖일 수 있다. 새 대화에서는 최신 끝이 실제로 보여야 한다.
+      const atEnd = () => {
+        const c = document.querySelector('[data-testid="chat"]');
+        return c && Math.abs(c.scrollHeight - c.clientHeight - c.scrollTop) <= 1;
+      };
+      await domIs(page, "새 대화의 최신 끝 표시", atEnd);
       assert.equal(await chat.getByText(`${id} 기록`, { exact: false }).count(), 0, "이전 세션을 섞었다");
+      if (width < 500) {
+        phase = "switch-away";
+        await firstMessage(page, next);
+        await inList(page, "pane-t1");
+        // 기록 파일이 쓰이는 중 감지되는 순서도 고정한다. 첫 300줄 뒤 실제 명령으로 나머지를 쓴다.
+        aaa("pane", "run", pane, `switch-paused ${decoy}`);
+        await until("떠난 동안 새 대화 연결", () => state().agent?.harness_session === decoy);
+        await inList(page, `pane-${name}`);
+        await chat.getByText(`${decoy} 기록 299 ·`, { exact: false }).first().waitFor();
+        await domIs(page, "쓰는 중 새 파일 복귀의 최신 끝 표시", atEnd);
+        aaa("pane", "run", pane, "finish-history");
+        await chat.getByText(`${decoy} 기록 359 ·`, { exact: false }).first().waitFor();
+        await domIs(page, "새 파일 복귀의 최신 끝 표시", atEnd);
+        assert.equal(await chat.getByText(`${next} 기록`, { exact: false }).count(), 0, "옛 파일의 복귀 위치를 섞었다");
+      }
       aaa("pane", "run", pane, "quit");
       await waitOutput(pane, "foreground-harness-exited");
       await until("셸 복귀 때 연결 해제", () => !state().agent);
       await page.getByTestId("chat-toggle").waitFor({ state: "detached" });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    } catch (error) {
+      diagnostics.remember([{ phase, width, engine: engine.browserType().name(), harness }]);
+      await diagnostics.save(error, inTime);
+      throw error;
     } finally {
+      diagnostics.stop();
       await page.context().close();
     }
   };

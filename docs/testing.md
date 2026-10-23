@@ -1,5 +1,16 @@
 # 시험 쓰는 법
 
+## 셸 대화 파일 전환의 최신 끝(t-0851)
+
+- 원본 t-0849와 두 번째 t-0850 E2E93의 실패 ID는 휴대폰 WebKit·Claude에서 `switch`한 새 대화다. 원본 실험실과 agent 사건·JSONL은 확인했지만 실패 화면의 DOM·trace는 없어 당시 스크롤 상태까지 소급 확정하지 않는다. 원래 owner를 제품 수정 전 한 번 실행하면 통과할 수 있다. `visible`은 화면 밖에 mount된 본문도 인정하므로 원래 단언만으로 최신 끝 표시를 보장하지 않는다.
+- 별도 원인 실험은 구판 웹 번들을 쓰고 같은 PID가 새 파일의 300줄을 먼저 쓴 뒤, 실제 앞 쪽 응답 commit으로 300줄이 합쳐진 것을 확인하고 마지막 60줄을 쓴다. `기록 359`의 원래 30초 visible 대기가 실패하며 실패 DOM은 360개 row shell·최신 본문 없음·top=21800/height=51084/client=665다. 최신 요청은 계속 150줄을 받으므로 전송 미완료가 아니라 옛 읽기 상태와 가상화의 결합이다. 원본 두 실행에는 DOM/전송 trace가 없어 동일한 쓰기 시점까지 소급 확정하지 않는다. 이 원인 실험은 정본 owner와 별도이며 정본의 모든 조합은 유지한다.
+- 결정적 회귀는 옛 파일의 첫 줄을 읽고 `scrollTop=0`·scroll 사건을 확정한 뒤 실제 같은 PID로 파일을 전환한다. 기존 `기록 359` visible 단언을 유지하고, 최신 끝과 실제 scroll 위치가 1px 안에서 맞는지도 검사한다. 구판은 새 최신 150줄 뒤 앞 150줄을 자동 요청하고 중간에 남아 실패한다. 기존 30초 locator·20초 DOM 상한·브라우저 조합·재개 단계는 유지한다.
+- 390px 양 엔진·양 harness에서는 떠난 동안 새 파일로 바꾼 뒤 복귀도 검사한다. fixture는 첫 300줄 뒤 멈추고 `finish-history` 명령으로 나머지 60줄을 쓴다. 고정 sleep 없이 실제 PID 연결·본문 commit으로 진행하며, 기록을 쓰는 중 감지되어도 최신 끝을 계속 따라가는지 확인한다. 같은 파일의 prepend·append와 맨 위 0 유지·읽던 줄 복귀는 기존 owner가 그대로 검사한다.
+- `ChatPanel.commitPage`는 이미 받은 `history`가 바뀌거나, 복귀 기준 줄의 history가 새 파일과 다를 때 기준 줄·복귀·끝 따라가기를 초기화한다. 새 파일의 첫 쪽을 그리기 전에 적용하며 같은 파일의 앞 쪽·새 답변에는 적용하지 않는다. API·cursor 계약·가상화 기준은 바꾸지 않는다.
+- 실패 진단은 기존 `ChatDiagnostics`를 E2E93에도 연결해 단계·폭·엔진·harness·전환 전 위치, 요청별 before/history/첫·끝 ID/개수, 실패 DOM·스크롤 높이·화면을 남긴다. fixture의 내용만 쓰며 통과 경로에 파일 쓰기나 별도 대기는 없다.
+- 참고 후보: [TanStack Virtual core](https://github.com/TanStack/virtual/blob/main/packages/virtual-core/src/index.ts)의 측정 높이 보정과 끝 따라가기, [react-window List](https://github.com/bvaughn/react-window/blob/master/lib/components/list/List.tsx)의 row key·측정과 이동 경로. [TanStack MIT](https://github.com/TanStack/virtual/blob/main/LICENSE)·[react-window MIT](https://github.com/bvaughn/react-window/blob/master/LICENSE.md)를 확인했다. 측정과 실제 위치를 대조하는 방식을 참고하고 외부 코드는 복사하지 않았다. 새 가상화 도구는 추가하지 않는다.
+- 정본은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다. Playwright 1.64.1과 브라우저는 자기 작업 폴더에 격리한다.
+
 ## 코드 줄 수 시험의 경과 시간 분리(t-0845)
 
 - `nice -n 15 cargo test --locked -p aaa-agent --lib workspace_metrics -- --nocapture`: 실제 Git 객체를 읽고, 집계 규칙·UTF-8 오류·같은 커밋 재스캔 방지·다음 커밋 회복 시험에는 고정 경과 0을 넣는다. 같은 손상 객체에 경과 750ms를 넣으면 시간 상한 오류가 먼저 발생하는 대조도 둔다. Git 자식 실행이 느려져도 오류 원인 시험의 결과가 달라지지 않으며, 오류 단언에는 실제 오류 원문을 남긴다.

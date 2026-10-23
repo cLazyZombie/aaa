@@ -439,6 +439,19 @@ export function ChatPanel({
   const olderBusy = useRef(false);
   const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
   const commitPage = (page: ChatView, older = false) => {
+    const previous = chatRef.current?.history;
+    // 새 파일에는 이전 대화의 기준 줄·앞 쪽 위치가 없다. 맨 위를 읽던 상태까지 넘기면
+    // 최신 쪽을 받자마자 앞 쪽을 자동으로 채워 가상화된 최신 본문을 다시 숨긴다.
+    // 돌아오는 중 파일이 바뀐 경우도 같은 경계다. 같은 파일의 append·prepend는 자리를 지킨다.
+    if (page.history && ((previous && previous !== page.history)
+      || (restoring.current && restoreFrom && !restoreFrom.rowId.startsWith(`${page.history}:`)))) {
+      cancelRestore.current?.();
+      restoring.current = false;
+      setPositioning(false);
+      anchor.current = null;
+      atBottom.current = true;
+      hideJump();
+    }
     const next = mergeChatPage(chatRef.current, page, older);
     chatRef.current = next;
     setChat(next);
