@@ -68,7 +68,7 @@ fn system_sshd_installs_a_current_user_scm_agent_and_registers_it() {
             _ => panic!("SSH 시작 응답"),
         };
         let view = leave(&host, &job, MachineSetupPhase::Connecting).await;
-        assert_eq!(view.phase, MachineSetupPhase::Trust, "시스템 SSH 접속 단계");
+        assert_eq!(view.phase, MachineSetupPhase::Trust, "시스템 SSH 접속 단계: {:?}", view.error);
         host.call(
             DeviceRole::Controller,
             "device:ci",
@@ -77,7 +77,7 @@ fn system_sshd_installs_a_current_user_scm_agent_and_registers_it() {
         .await
         .unwrap();
         let view = leave(&host, &job, MachineSetupPhase::Detecting).await;
-        assert_eq!(view.phase, MachineSetupPhase::Ready, "Windows 감지 단계");
+        assert_eq!(view.phase, MachineSetupPhase::Ready, "Windows 감지 단계: {:?}", view.error);
         let detected = view.detected.unwrap();
         assert_eq!(detected.os, "windows");
         let settings = MachineSetupSettings {

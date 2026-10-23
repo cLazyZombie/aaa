@@ -16,6 +16,56 @@ $password = 'Aa1!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToStrin
 $secure = ConvertTo-SecureString -String $password -AsPlainText -Force
 $createdUser = $false
 $createdService = $false
+function Write-LabDiagnostic([string]$Message) {
+    # 진단에도 보호 입력을 그대로 내보내지 않는다. 환경·키·설정 본문은 수집하지 않는다.
+    [Console]::Out.WriteLine($Message.Replace($password, '<redacted>'))
+}
+function Show-SshdStartupFailure([DateTime]$Since) {
+    Write-LabDiagnostic ('sshd version: ' + (Get-Item -LiteralPath $sshd).VersionInfo.FileVersion)
+    foreach ($operation in @('queryex', 'qc')) {
+        Write-LabDiagnostic ((& sc.exe $operation $service 2>&1) | Out-String)
+    }
+    Write-LabDiagnostic ((Get-CimInstance Win32_Service -Filter "Name='$service'" |
+        Select-Object Name, State, StartName, ProcessId, ExitCode, ServiceSpecificExitCode | Format-List | Out-String))
+    foreach ($name in @('hostkey', 'sshd_config')) {
+        Write-LabDiagnostic ($name + ' ACL: ' + (Get-Acl -LiteralPath (Join-Path $lab $name)).Sddl)
+    }
+    $serviceLog = Join-Path $lab 'sshd-startup.log'
+    if (Test-Path -LiteralPath $serviceLog) { Write-LabDiagnostic ([IO.File]::ReadAllText($serviceLog)) }
+    foreach ($log in @('System', 'Application', 'OpenSSH/Admin', 'OpenSSH/Operational')) {
+        $events = Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $Since } -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -match 'OpenSSH|Application Error|Windows Error Reporting' -or $_.Message -like "*$service*" } |
+            Select-Object -First 20 TimeCreated, Id, ProviderName, Message
+        Write-LabDiagnostic ($log + ': ' + ($events | Format-List | Out-String))
+    }
+    # 서비스 실패와 단독 설정/권한 실패를 구분한다. listener 또는 EOF 사건까지만 읽는다.
+    $probe = New-Object Diagnostics.Process
+    $probe.StartInfo.FileName = $sshd
+    $probe.StartInfo.Arguments = '-ddd -e -f "' + (Join-Path $lab 'sshd_config') + '"'
+    $probe.StartInfo.UseShellExecute = $false
+    $probe.StartInfo.RedirectStandardOutput = $true
+    $probe.StartInfo.RedirectStandardError = $true
+    [void]$probe.Start()
+    $stdout = $probe.StandardOutput.ReadToEndAsync()
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        while ($watch.ElapsedMilliseconds -lt 10000) {
+            $line = $probe.StandardError.ReadLineAsync()
+            if (-not $line.Wait([int][Math]::Max(1, 10000 - $watch.ElapsedMilliseconds))) { break }
+            $message = $line.GetAwaiter().GetResult()
+            if ($null -eq $message) { break }
+            Write-LabDiagnostic $message
+            if ($message -match 'Server listening on') { break }
+        }
+    } finally {
+        # 직접 시작해 보관한 프로세스 객체 하나만 끝낸다.
+        if (-not $probe.HasExited) { $probe.Kill() }
+        $probe.WaitForExit()
+        Write-LabDiagnostic ('standalone exit: ' + $probe.ExitCode)
+        Write-LabDiagnostic $stdout.GetAwaiter().GetResult()
+        $probe.Dispose()
+    }
+}
 try {
     [void](New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -AccountNeverExpires)
     $createdUser = $true
@@ -55,14 +105,26 @@ Host ci
     # host private key는 SYSTEM/Administrators만 읽는다. 일회 사용자에는 공개 인증 키/폴더 읽기만 준다.
     & icacls.exe $lab /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw '실험실 ACL 준비 실패' }
+    # ssh-keygen이 private key에 넣은 runner의 명시적 ACE는 폴더 ACL 변경으로 지워지지 않는다.
+    # SYSTEM sshd는 그 runner를 현재 사용자로 보지 않으므로 host key DACL도 새로 만든다.
+    & icacls.exe (Join-Path $lab 'hostkey') /reset | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '시스템 host key DACL 초기화 실패' }
+    & icacls.exe (Join-Path $lab 'hostkey') /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '시스템 host key DACL 준비 실패' }
     & icacls.exe (Join-Path $lab 'hostkey') /setowner '*S-1-5-18' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw '시스템 host key 소유권 준비 실패' }
     & $sshd -t -f (Join-Path $lab 'sshd_config')
     if ($LASTEXITCODE -ne 0) { throw '시스템 sshd 설정 검사 실패' }
-    [void](New-Service -Name $service -BinaryPathName ('"' + $sshd + '" -f "' + (Join-Path $lab 'sshd_config') + '"') -StartupType Manual)
+    [void](New-Service -Name $service -BinaryPathName ('"' + $sshd + '" -f "' + (Join-Path $lab 'sshd_config') + '" -E "' + (Join-Path $lab 'sshd-startup.log') + '"') -StartupType Manual)
     $createdService = $true
-    Start-Service -Name $service
-    (Get-Service -Name $service).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+    $started = Get-Date
+    try {
+        Start-Service -Name $service
+        (Get-Service -Name $service).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+    } catch {
+        try { Show-SshdStartupFailure $started } catch { Write-LabDiagnostic ('시작 진단 실패: ' + $_.Exception.Message) }
+        throw
+    }
     Write-Host 'M4 SYSTEM OpenSSH 실제 owner 시작'
     $test = New-Object Diagnostics.Process
     $test.StartInfo.FileName = (Get-Command cargo.exe).Source
