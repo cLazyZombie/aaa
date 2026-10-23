@@ -16,14 +16,13 @@
 
 - `nice -n 15 cargo test --locked -p aaa-host --lib task_queue::tests::reservation_after`: 없는 앞 할 일·자기 지정·순환 거부, 앞 할 일 완료 대기 중 뒤 예약의 자리 판정 진행, 완료 체크만으로는 보관 전까지 대기, 보관 정리 뒤 차례, 완료 없이 지운 앞 할 일의 확인 필요, host 재시작 보존과 이미 보관된 앞 할 일을 확인한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 92-task-after --workers 1`: 실제 host·agent에서 웹 예약 확인의 「앞 할 일」로 예약하고 tick 뒤 대기 까닭·thread 없음을 본다. 갱신 확인이 지금 앞 할 일을 고른 채 열리는지, CLI 순환 예약 거부를 본다. 앞 할 일을 `--done` 하고 tick 한 번에 보관·실제 기동을 host 기록으로 확인한다. WebKit 390px에서 확인창 가로 넘침이 없고 진행 중인 앞 할 일 뒤 예약이 기다리는지 본다. 고정 sleep·재시도·시한 연장은 없다.
-## iPhone 뒤로 미리보기의 닫힘 frame 순서(t-0805 후속)
+## iPhone 뒤로 미리보기 수리 철회(t-0805 후속)
 
-- 376a344c 배포 뒤 사용자 기록 요약은 430×775·5회·dropped 0이며 원문 JSON 파일은 없다. 사용자 후속 답으로 Safari 탭·홈 화면 앱에서 모두 끄는 동안만 이전 메뉴가 보이고 손을 놓으면 사라짐이 확인됐다. 마지막 「계속 열림」 버튼 1회는 실제 잔류로 해석하지 않으며 「미리보기만」으로 정정한다. DOM의 open=false/right=0과 OS 미리보기 이미지는 구분한다.
-- E2E39의 독립 frame 관측은 메뉴에서 A→B를 고른 뒤 첫 native rAF에 메뉴 닫힘과 이전 주소 A 보존을 요구한다. 기준 9a03960f는 메뉴가 닫혔지만 이미 B 주소여서 RED였다. 제품 진단의 layout commit(false) → 첫 frame → 다음 frame 준비 → 실제 history-write 순서도 함께 검사한다. React useEffect의 옛 drawer-render는 실제 commit/paint 시각이 아니므로 drawer-commit(useLayoutEffect)과 drawer-effect(useEffect)로 나눴다.
-- `drawerNavigation.test.mjs`는 두 frame 이전 기록·본문 변경 금지, 마지막 선택만 적용, 실제 pop/hash/pagehide/숨김/정리 뒤 취소, 메뉴 재개방 때 취소, 내부 설정 복귀 예외, 이미 닫힘·넓은 화면의 즉시 이동을 검사한다. callback을 실제 사건으로 전달하며 고정 sleep·시한 변경은 없다.
-- 처음 후보 E2E는 메뉴가 닫힌 직후 아직 이전 pane인데 대화 보기 단추를 누르거나 Back을 보내 준비 경합으로 실패했다. `inList`의 pane 선택 완료는 메뉴 애니메이션 종료와 별도로 해당 행의 aria-current=true DOM 사건을 기다린다. 새 회귀의 첫 frame 관측은 이 완료 전의 주소·기존 pane을 직접 확인한다. 준비 완료를 기다리는 것이며 제품의 두 frame 순서·Back 단언·시한을 바꾸지 않는다. 실패는 보존하며 통과를 위한 같은 실행의 재시도는 없다.
-- E2E39 `fragment-history.mjs`는 Chromium·WebKit의 실제 location.hash→popstate/hashchange, Back, B 재선택 때 전체 칸 수 유지, history.pushState가 popstate를 만들지 않음을 대조한다. 원본 결과는 실험실 diagnostics/fragment-*.json에 남긴다. 앱의 일반 기록 메서드는 location.hash이며 직후 popstate를 Back이라고 단정하지 않는다. history.length는 현재 위치가 아니다.
-- 진단 v2는 실제 메서드와 쓰기 전/후를 구분하고 주소 원문 대신 목적지별 탭 내부 번호를 쓴다. 닫힘 frame을 허용하는 것은 Safari 합성 스냅숏 완료 신호가 아니다. 배포 뒤 iPhone 재확인은 coordinator가 요청하며 OS 미리보기까지 고쳐졌다는 판정은 실기 전에는 하지 않는다. 기존 E2E39 전체와 정본 ci-local·공개 검사를 수행한다. API·E2E 번호는 유지한다.
+- 376a344c 배포 뒤 5회와 bcf2abaf 뒤 2회 모두 Safari 탭·홈 화면 앱에서 끄는 동안만 이전 메뉴가 보이고 손을 놓으면 사라졌다. 원문 JSON 파일은 없으며 사용자 기록 요약과 답을 근거로 한다. 처음의 「계속 열림」 버튼은 「미리보기만」으로 정정됐다. 앱 DOM은 open=false/right=0이며, 사용자 캡처에도 이전 항목 쪽 메뉴와 밀려 나가는 현재 대화가 보인다. 강제 DOM 숨김과 두 rAF 대기는 이 증상에 효과가 없었다.
+- 사용자 10-23 「쉽게 고쳐지는게 아니면 원래대로 수정해」에 따라 이동을 지연하던 `drawerNavigation`과 전용 시험, 이전 주소 A를 첫 frame까지 보존하도록 요구하던 E2E 실험 단언을 제거했다. 기록 전 class 제거·강제 layout도 제거했다. 이 실험은 Safari 스냅숏 완료를 검증하지 못했으며 유지할 제품 요구가 아니다. 실패를 재시도하거나 시한을 늘려 통과시키는 변경이 아니다.
+- 메뉴 선택은 기존처럼 기록·본문을 바로 바꾸고 React 상태로 닫는다. `inList`가 해당 pane 행의 aria-current=true를 기다리는 준비 경계, E2E39의 A→메뉴로 B→Back과 모든 목적지·양방향 이동·설정 내부 복귀·넓은 화면의 기존 단언은 유지한다. 취소·이동·복원 뒤 늦은 터치로 재개방되지 않는 유닛/E2E도 유지하며, 앱 이동 중 쓸기 취소와 취소 불가능한 move를 검사한다.
+- E2E39 `fragment-history.mjs`는 Chromium·WebKit의 실제 location.hash→popstate/hashchange, Back, B 재선택 때 전체 칸 수 유지, history.pushState가 popstate를 만들지 않음을 대조한다. 원본은 실험실 diagnostics/fragment-*.json에 남긴다. 직후 popstate를 Back이라고 단정하지 않으며 history.length는 현재 위치가 아니다.
+- 진단 v2의 layout commit/passive effect·기록 메서드와 쓰기 전/후·익명 목적지 번호는 유지한다. 기본 탭에서는 수집하지 않는다. 정본 ci-local·공개 검사와 E2E39 전체로 되돌림을 검증한다. Safari 기본 뒤로 미리보기는 미해결로 남기며 추가 실험 배포·실기 반복은 이번 범위에서 진행하지 않는다. API·E2E 번호는 유지한다.
 
 
 ## E2E39 기록 수 실패 진단(t-0825)
@@ -74,10 +73,10 @@
 
 ## 메뉴 선택 뒤 휴대폰 쓸기의 진단과 정리(t-0805)
 
-- 사용자 순서는 대화 A → 메뉴에서 B 선택 → 왼쪽 가장자리 뒤로다. 수정 전 E2E39의 진단본은 두 메뉴 선택 모두 `history-write`에서 `open=true`, 메뉴 오른쪽 경계 343px로 실패했다. 뒤로가 끝난 상태만 검사하던 시험과 달리 기록을 쓰기 직전의 DOM을 확인한다. 이것은 열린 DOM 경계의 재현이며 Safari OS 미리보기 이미지 자체의 재현은 아니다.
+- 사용자 순서는 대화 A → 메뉴에서 B 선택 → 왼쪽 가장자리 뒤로다. 초기 진단본은 두 메뉴 선택 모두 history-write 순간 open=true·오른쪽 경계 343px를 확인했다. 이 DOM 경계만으로 Safari OS 미리보기의 원인을 확정하지 않는다. 강제 숨김·두 frame 대기의 철회와 현재 검증 범위는 위 후속 절을 따른다.
 - `drawer-navigation.mjs`는 Chromium·WebKit 390px에서 위 순서, x25의 빠른 쓸기 후 touchcancel만 도착한 경우, native popstate 뒤 늦은 move/end와 move/cancel, pagehide/pageshow 사건 경계를 검사한다. 메뉴 class·inline transform·실제 경계가 닫혀야 한다. Touch 생성은 WebKit의 `document.createTouch/List`와 Chromium의 생성자를 각각 쓴다. 설정 내부 되감기·모든 목적지·390/430px·홈 화면 앱 흉내·넓은 화면의 기존 E2E39 단언은 유지한다. 실제 bfcache 복원이나 iPhone OS 몸짓을 합성 사건으로 입증했다고 쓰지 않는다.
 - 유닛 `node --test web/test/edgeSwipe.test.mjs`의 빠른 취소·popstate·pagehide·pageshow 네 회귀는 원래 구현에서 모두 메뉴 재개방으로 실패했다. 설정 내부 되감기와 정상 안쪽 flick·기존 손가락 추적은 유지한다. 시한 연장·실패 재시도·단언 완화·고정 sleep은 없다.
-- 실기는 배포 뒤 새 탭의 앱 주소 query에 `drawer-debug=1`을 넣고 진단 창을 접은 채 한다. A → 메뉴로 B → 가장자리 뒤로를 보통 속도 3회·천천히 3회, 같은 몸짓을 중간에 취소하기 3회 진행한다. 매번 정상/미리보기만/계속 열림 중 하나를 표시하고 마지막에 기록을 저장한다. 시작 위치·속도·사건 순서와 총 빈도는 JSON에 남는다. 처음부터 보이던 오래된 미리보기와 새 이동 뒤의 결과를 구분하려고 배포 뒤 새 탭에서 시작한다.
+- 실기 진단은 앱 주소 query의 `drawer-debug=1`로 켠다. A → 메뉴로 B → 가장자리 뒤로 뒤 정상/미리보기만/계속 열림을 표시하고 기록을 저장할 수 있다. 과거 9회 확인 절차를 추가 사용자 요청으로 취급하지 않는다. 이번 되돌림에서 새 실기 반복은 요청하지 않는다.
 - `?drawer-debug=1` 없는 탭에는 진단 UI·사건 수집이 없다. 진단은 최근 800개 사건과 전체 개수만 탭 메모리에 두며 URL·history.state·본문·인증 값을 기록하지 않는다. DOM 경계가 닫혔는데 사용자에게 미리보기만 보이면 OS 스냅숏 후보로 분류한다. 화면 합성 결과는 DOM 로그만으로 단정하지 않는다. 정본 검증은 전체 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사다.
 
 ## 시작 자가 검사와 agent 종료 분리(t-0808)

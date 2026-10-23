@@ -89,9 +89,9 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
   let follow: { drawer: HTMLElement; scrim: HTMLElement | null; width: number; shown: number; x: number; at: number; speed: number } | null = null;
   const onStart = (event: TouchEvent): void => {
     const touch = event.touches[0];
-    // 가장자리 몸짓은 미리보기를 취소해도 메뉴를 열지 않는다. 기존 메뉴도 즉시 거둔다.
+    // 가장자리 몸짓은 미리보기를 취소해도 메뉴를 열지 않는다. 기존 메뉴도 닫는다.
     if (touch && narrow.matches && touch.clientX <= EDGE_PX) {
-      if (isOpen() || follow !== null) closeImmediately("edge-start");
+      if (isOpen() || follow !== null) cancel("edge-start");
       start = null;
       return;
     }
@@ -190,29 +190,17 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     drawerTrace("swipe-cancel", { reason, speed: held?.speed ?? 0, shown: held?.shown ?? 0 });
     setOpen(false);
   };
-  // React의 다음 commit과 닫기 애니메이션보다 먼저 기록을 쓰면 열린 메뉴가 Safari
-  // 뒤로 미리보기의 후보로 남는다. 기록 경계·페이지 보관은 DOM도 즉시 숨긴다.
-  const closeImmediately = (reason: string): void => {
-    if (!narrow.matches) return;
-    cancel(reason);
-    const drawer = document.getElementById?.("workspace-drawer");
-    const scrim = document.querySelector<HTMLElement>(".scrim");
-    for (const node of [drawer, scrim]) {
-      if (!node) continue;
-      node.style.transition = "none";
-      node.classList.remove("is-open");
-      node.getBoundingClientRect(); // 닫힌 끝점을 기록 전에 확정한다.
-      node.style.transition = "";
-    }
-  };
+  // 기록·복원 경계에서는 진행 중인 몸짓을 버리고 React 상태로 닫는다.
+  // class·layout을 강제해도 Safari의 이전 화면 스냅숏은 바뀌지 않아 제거했다.
+  const cancelNavigation = (reason: string): void => { if (narrow.matches) cancel(reason); };
   const onCancel = (): void => { if (start !== null || follow !== null) cancel("touchcancel"); };
   const onPop = (event: PopStateEvent): void => {
     const internal = internalNavigation(event);
     drawerTrace("swipe-popstate", { internal });
-    if (!internal) closeImmediately("popstate");
+    if (!internal) cancelNavigation("popstate");
   };
-  const onHide = (): void => closeImmediately("pagehide");
-  const onShow = (event: PageTransitionEvent): void => { if (event.persisted) closeImmediately("pageshow"); };
+  const onHide = (): void => cancelNavigation("pagehide");
+  const onShow = (event: PageTransitionEvent): void => { if (event.persisted) cancelNavigation("pageshow"); };
   document.addEventListener("touchstart", onStart, { capture: true, passive: true });
   document.addEventListener("touchmove", onMove, { capture: true, passive: false });
   document.addEventListener("touchend", onEnd, { capture: true, passive: true });
@@ -230,5 +218,5 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     window.removeEventListener("pageshow", onShow);
     if (follow !== null) cancel("cleanup");
   };
-  return Object.assign(cleanup, { beforeNavigation: () => closeImmediately("history-write") });
+  return Object.assign(cleanup, { beforeNavigation: () => cancelNavigation("history-write") });
 }
