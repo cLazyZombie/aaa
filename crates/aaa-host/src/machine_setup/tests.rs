@@ -195,6 +195,53 @@ fn host_for(lab: &Lab) -> Arc<Host> {
 const WEB: &str = "device:phone";
 
 #[cfg(unix)]
+#[test]
+fn a_trusted_connection_reaches_powershell_after_the_posix_command_exits_255() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(lab) = lab() else { return };
+    let shell = lab.root.join("detect-shell");
+    let events = lab.root.join("detect-events");
+    // 실제 SSH 인증·host key 확인은 유지하고 Windows cmd의 명령 계약만 강제한다.
+    std::fs::write(
+        &shell,
+        format!(
+            r#"#!/bin/sh
+case "$SSH_ORIGINAL_COMMAND" in
+  'echo AAA-SSH-1')
+    echo connect >> '{events}'
+    echo AAA-SSH-1 ;;
+  'sh -c '*)
+    echo posix >> '{events}'
+    echo 'The system cannot find the path specified.' >&2
+    exit 255 ;;
+  'powershell -NoProfile -NonInteractive -EncodedCommand '*)
+    echo powershell >> '{events}'
+    printf 'AAA-DETECT-1\nWindows\nAMD64\nC:\\Users\\me\n-\n-\nAAA-DETECT-END\n' ;;
+  *) exit 255 ;;
+esac
+"#,
+            events = events.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let public = std::fs::read_to_string(lab.root.join("userkey.pub")).unwrap();
+    std::fs::write(lab.root.join("authorized_keys"), format!("command=\"{}\" {public}", shell.display())).unwrap();
+    let host = host_for(&lab);
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        let job = start(&host, "lab").await;
+        let trust = leave(&host, &job.job, MachineSetupPhase::Connecting).await;
+        assert_eq!(trust.phase, MachineSetupPhase::Trust);
+        assert!(!events.exists(), "키를 믿기 전에 원격 명령을 실행했다");
+        host.setup_trust(&job.job, &trust.host_keys[0].sha256, WEB).await.unwrap();
+        let ready = leave(&host, &job.job, MachineSetupPhase::Detecting).await;
+        assert_eq!(ready.phase, MachineSetupPhase::Ready, "{:?}", ready.error);
+        assert_eq!(ready.detected.unwrap().os, "windows");
+        assert_eq!(std::fs::read_to_string(&events).unwrap(), "connect\nposix\npowershell\n");
+    });
+}
+
+#[cfg(unix)]
 async fn start(h: &Arc<Host>, target: &str) -> MachineSetupView {
     match h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupStart { target: target.into() }).await.unwrap()
     {
@@ -1562,9 +1609,7 @@ fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
             .unwrap()
     };
     let apply = decode(install::apply_script(&dir, "windows", "01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
-    assert!(
-        apply.contains("--secrets-stdin") && apply.contains("OpenStandardInput().CopyTo($p.StandardInput.BaseStream)")
-    );
+    assert!(apply.contains("--secrets-stdin") && apply.contains("$stdinStream.CopyTo($p.StandardInput.BaseStream)"));
     assert!(decode(windows::upload()).contains("Get-FileHash -LiteralPath"));
     assert!(windows::cleanup("aaa-setup.bad").is_none());
     assert_eq!(check::windows_check_argv()[0], "powershell.exe");

@@ -7,7 +7,7 @@
 //!   내민 키만 받는다(인증하지 않으므로 원격에서 아무것도 돌지 않는다. ProxyJump도 같다). 그다음 aaa 전용 known_hosts와 사용자
 //!   known_hosts로 `StrictHostKeyChecking=yes` 접속을 한다: 아는 키면 바로 감지, 모르는 키면 「믿음」 단계, 바뀐 키면 멈춘다.
 //!   사람이 지문을 믿으면 받은 줄을 aaa 전용 known_hosts(`<state>/ssh/known_hosts`)에만 더한다. 사용자 known_hosts는 읽기만 한다.
-//! - **감지.** `sh -c`로 `uname -s`·`uname -m`·HOME·SHELL·aaa 판을 읽고, 표지가 없으면(Windows 기본 셸 cmd) PowerShell
+//! - **감지.** 고정 echo로 믿는 키의 접속을 확인한 뒤 `sh -c`로 `uname -s`·`uname -m`·HOME·SHELL·aaa 판을 읽고, 표지가 없으면(Windows 기본 셸 cmd) PowerShell
 //!   `-EncodedCommand`로 다시 읽는다. 그래도 모르면 사람이 고른다. release 대상(macOS arm64·x86_64, Linux x86_64·arm64,
 //!   Windows x86_64)이 아닌 조합은 「지원 안 함」.
 //! - **작업.** host DB `machine_setups`에 JSON으로 남고 바뀔 때마다 웹 `enroll` 사건을 보낸다. host가 진행 중에 다시 시작하면
@@ -29,6 +29,8 @@ mod windows;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const RUN_TIMEOUT: Duration = Duration::from_secs(45);
 const CONNECT_TIMEOUT_S: u32 = 10;
+// cmd도 지원하는 고정 명령. POSIX 명령의 255 종료와 SSH 자체 실패를 섞지 않는다.
+const CONNECT_SCRIPT: &str = "echo AAA-SSH-1";
 /// 목록에 남기는 작업 수(오래된 것부터 지운다)
 const KEEP: usize = 20;
 const MARK: &str = "AAA-DETECT-1";
@@ -242,8 +244,18 @@ struct Ran {
 }
 
 impl Ssh {
+    fn process() -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("ssh");
+        command.stdin(std::process::Stdio::null()).kill_on_drop(true);
+        // OpenSSH 조상에게 받은 fd 표는 여기서 새로 만든 stdin/stdout/stderr와 다르다.
+        // Win32-OpenSSH w32fd.c의 fd_table_initialize도 이 조상 상속 문제를 지적한다.
+        #[cfg(windows)]
+        command.env_remove("c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE");
+        command
+    }
+
     fn base(&self, target: &Target) -> tokio::process::Command {
-        let mut c = tokio::process::Command::new("ssh");
+        let mut c = Self::process();
         if let Some(cfg) = &self.config {
             c.arg("-F").arg(cfg);
         }
@@ -266,8 +278,6 @@ impl Ssh {
             "-o",
             "LogLevel=ERROR",
         ]);
-        c.stdin(std::process::Stdio::null());
-        c.kill_on_drop(true);
         c
     }
 
@@ -286,14 +296,14 @@ impl Ssh {
     }
 
     async fn resolve(&self, target: &Target) -> Option<SshResolved> {
-        let mut c = tokio::process::Command::new("ssh");
+        let mut c = Self::process();
         if let Some(cfg) = &self.config {
             c.arg("-F").arg(cfg);
         }
         if let Some(p) = target.port {
             c.arg("-p").arg(p.to_string());
         }
-        c.arg("-G").arg("--").arg(&target.dest).stdin(std::process::Stdio::null()).kill_on_drop(true);
+        c.arg("-G").arg("--").arg(&target.dest);
         let r = Self::run(c, PROBE_TIMEOUT).await;
         r.ok.then(|| parse_resolved(&r.stdout)).flatten()
     }
@@ -348,7 +358,7 @@ fn quote(p: &Path) -> String {
 }
 
 enum KeyCheck {
-    Known(Ran),
+    Known,
     New,
     Changed,
     Failed(String),
@@ -361,8 +371,8 @@ fn classify(r: Ran) -> KeyCheck {
         KeyCheck::Changed
     } else if r.stderr.contains("Host key verification failed") || r.stderr.contains("host key is known") {
         KeyCheck::New
-    } else if r.stdout.contains(MARK) || r.ok {
-        KeyCheck::Known(r)
+    } else if r.ok {
+        KeyCheck::Known
     } else {
         KeyCheck::Failed(why(&r.stderr))
     }
@@ -485,9 +495,9 @@ impl Host {
             }
         };
         let keys: Vec<HostKeyView> = lines.iter().filter_map(|l| key_of_line(l)).collect();
-        let check = classify(ssh.exec(&t, &posix_script()).await);
+        let check = classify(ssh.exec(&t, CONNECT_SCRIPT).await);
         let next = match &check {
-            KeyCheck::Known(_) => MachineSetupPhase::Detecting,
+            KeyCheck::Known => MachineSetupPhase::Detecting,
             KeyCheck::New => MachineSetupPhase::Trust,
             KeyCheck::Changed | KeyCheck::Failed(_) => MachineSetupPhase::Failed,
         };
@@ -515,10 +525,8 @@ impl Host {
                 _ => {}
             }
         });
-        if updated.is_some()
-            && let KeyCheck::Known(r) = check
-        {
-            self.setup_detected(id, &ssh, &t, r).await;
+        if updated.is_some() && matches!(check, KeyCheck::Known) {
+            self.setup_detected(id, &ssh, &t).await;
         }
     }
 
@@ -530,7 +538,8 @@ impl Host {
     }
 
     /// 감지 출력(POSIX)을 읽고, 표지가 없으면 PowerShell로 한 번 더
-    async fn setup_detected(&self, id: &str, ssh: &Ssh, t: &Target, first: Ran) {
+    async fn setup_detected(&self, id: &str, ssh: &Ssh, t: &Target) {
+        let first = ssh.exec(t, &posix_script()).await;
         let mut found = parse_detect(&first.stdout);
         if found.is_none() || found.as_ref().is_some_and(|d| d.os == "windows") {
             let r = ssh.exec(t, &powershell_script()).await;
@@ -592,8 +601,8 @@ impl Host {
         let id2 = id.to_string();
         tokio::spawn(async move {
             let ssh = host.ssh();
-            match classify(ssh.exec(&t, &posix_script()).await) {
-                KeyCheck::Known(r) => host.setup_detected(&id2, &ssh, &t, r).await,
+            match classify(ssh.exec(&t, CONNECT_SCRIPT).await) {
+                KeyCheck::Known => host.setup_detected(&id2, &ssh, &t).await,
                 KeyCheck::Changed => {
                     host.setup_fail(&id2, MachineSetupPhase::Detecting, "host key가 그사이 바뀌었다: 멈춘다".into())
                 }

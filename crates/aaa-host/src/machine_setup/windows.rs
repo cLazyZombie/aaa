@@ -9,13 +9,35 @@ pub(super) fn command(body: &str) -> String {
     )
 }
 
+/// .NET Framework ConsoleStream은 OpenSSH의 overlapped stdin pipe에서 멈춘다.
+/// PowerShell SSHProcessMediator처럼 표준 핸들을 FileStream으로 연다:
+/// https://github.com/PowerShell/PowerShell/issues/14478#issuecomment-1064764004
+/// 프로세스 소유 표준 핸들은 닫지 않는다. 입력 내용은 Add-Type 소스에 들어가지 않는다.
+const STDIN: &str = r#"
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class AaaSetupNative {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr GetStdHandle(int kind);
+}
+'@
+$handle = [Microsoft.Win32.SafeHandles.SafeFileHandle]::new([AaaSetupNative]::GetStdHandle(-10), $false)
+if ($handle.IsInvalid) { throw 'stdin handle unavailable' }
+$stdinStream = [IO.FileStream]::new($handle, [IO.FileAccess]::Read)
+"#;
+
+fn command_with_stdin(body: &str) -> String {
+    command(&format!("$ErrorActionPreference='Stop'\n{STDIN}\n{body}"))
+}
+
 /// host에는 임시 폴더의 무작위 이름만 돌려준다. 경로·사용자 이름을 shell 글로 보간하지 않는다.
 pub(super) fn safe_dir(dir: &str) -> bool {
     dir.strip_prefix("aaa-setup.").is_some_and(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 pub(super) fn upload() -> String {
-    command(
+    command_with_stdin(
         r#"
 $ErrorActionPreference = 'Stop'
 $name = 'aaa-setup.' + [Guid]::NewGuid().ToString('N')
@@ -23,7 +45,7 @@ $dir = Join-Path ([IO.Path]::GetTempPath()) $name
 [void][IO.Directory]::CreateDirectory($dir)
 $exe = Join-Path $dir 'aaa.exe'
 $file = [IO.File]::Create($exe)
-try { [Console]::OpenStandardInput().CopyTo($file) } finally { $file.Dispose() }
+try { $stdinStream.CopyTo($file) } finally { $file.Dispose(); $stdinStream.Dispose() }
 Write-Output 'AAA-UP-1'
 Write-Output $name
 Write-Output ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant())
@@ -42,7 +64,7 @@ pub(super) fn cleanup(dir: &str) -> Option<String> {
 /// PowerShell의 text pipeline을 거치지 않는다. stdin EOF까지 원시 bytes를 넘긴 뒤 child exit를 그대로 낸다.
 pub(super) fn install(dir: &str, args: &str) -> Option<String> {
     safe_dir(dir).then(|| {
-        command(&format!(
+        command_with_stdin(&format!(
             r#"
 $ErrorActionPreference = 'Stop'
 $exe = Join-Path (Join-Path ([IO.Path]::GetTempPath()) '{dir}') 'aaa.exe'
@@ -53,7 +75,7 @@ $p.StartInfo.UseShellExecute = $false
 $p.StartInfo.CreateNoWindow = $true
 $p.StartInfo.RedirectStandardInput = $true
 [void]$p.Start()
-try {{ [Console]::OpenStandardInput().CopyTo($p.StandardInput.BaseStream) }} finally {{ $p.StandardInput.Close() }}
+try {{ $stdinStream.CopyTo($p.StandardInput.BaseStream) }} finally {{ $p.StandardInput.Close(); $stdinStream.Dispose() }}
 $p.WaitForExit()
 exit $p.ExitCode
 "#
