@@ -138,6 +138,20 @@ fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_inst
     let digest = hex::encode(sha2::Sha256::digest(std::fs::read(BIN).unwrap()));
     for shell in ["powershell.exe", "pwsh.exe"] {
         let lab = Lab::new();
+        // 차가운 명령 탐색이 러너의 AWS/Graph 등 무관한 모듈을 분석하지 않게 한다.
+        // 같은 이름의 ambient 명령이 있어도 실제 내장 IRM으로 HTTP를 받아야 한다.
+        let ambient = lab.0.join("ambient-modules/OutsideInstaller");
+        std::fs::create_dir_all(&ambient).unwrap();
+        std::fs::write(
+            ambient.join("OutsideInstaller.psd1"),
+            "@{ ModuleVersion='1.0'; RootModule='OutsideInstaller.psm1'; FunctionsToExport=@('Invoke-RestMethod'); CmdletsToExport=@(); AliasesToExport=@() }",
+        )
+        .unwrap();
+        std::fs::write(
+            ambient.join("OutsideInstaller.psm1"),
+            "function Invoke-RestMethod { throw 'unrelated module must not serve the installation entry' }\nExport-ModuleMember -Function Invoke-RestMethod\n",
+        )
+        .unwrap();
         let old_binary = lab.0.join(".local/bin/aaa.exe");
         std::fs::create_dir_all(old_binary.parent().unwrap()).unwrap();
         std::fs::write(&old_binary, b"old aaa executor preserved").unwrap();
@@ -189,6 +203,7 @@ fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_inst
         std::fs::write(
             &runner,
             r#"[IO.File]::WriteAllText($env:AAA_TEST_TRACE, 'powershell_started')
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 function Invoke-WebRequest {
     param($Uri, $OutFile, [switch]$UseBasicParsing)
     $base = 'https://github.com/cLazyZombie/aaa/releases/download/v' + $env:AAA_TEST_VERSION
@@ -237,6 +252,9 @@ exit $global:LASTEXITCODE
             }
         }
         command
+            .env("PSModulePath", ambient.parent().unwrap())
+            // LOCALAPPDATA 환경만 바꿔도 Windows 폴더 API의 캐시 위치는 바뀌지 않는다.
+            .env("PSModuleAnalysisCachePath", lab.0.join("module-analysis-cache"))
             .env("AAA_TEST_VERSION", env!("CARGO_PKG_VERSION"))
             .env("AAA_TEST_MANIFEST", &manifest)
             .env("AAA_TEST_PAYLOAD", BIN)

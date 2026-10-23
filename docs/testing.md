@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## Windows 한 줄 설치 owner의 첫 모듈 탐색 격리(t-0904)
+
+- 원본 CI39935743297은 PS5.1 `irm_entry`·HTTP accept 대기(1)·질문 0/16이었다. 원본에는 명령 trace가 없으므로 당시 멈춘 메서드를 소급 확정하지 않는다. 별도 Windows 진단39942924094의 차가운 첫 `irm`은 AWS·Graph 등 러너의 무관한 모듈을 분석했다. AWS 분석·캐시 처리의 한 구간만 35.79초였고, 실제 Utility 모듈을 찾기까지 53.46초가 걸렸다. 이 대조는 HTTP(4)·`payload_written`까지 간 뒤 원래 60초에 실패했으며, 종료 직전 PowerShell 스택은 설치 자식의 `Process.WaitForExit`였다. HTTP 이전의 환경 준비가 설치 owner의 사건 상한을 소모하는 경로를 확인한 것이다.
+- `recovery::one_line_entry_keeps_the_external_console_through_review_and_signed_file_installation`은 첫 cmdlet 전에 해당 인터프리터의 `$PSHOME/Modules`만 검색하게 한다. `PSModuleAnalysisCachePath`도 shell별 Lab 파일로 지정한다. Windows 폴더 API는 LOCALAPPDATA 환경 변경만으로 다른 캐시 폴더를 반환하지 않으므로 기존 환경 격리만으로는 충분하지 않았다. 사용자·시스템 모듈이나 캐시 설정을 바꾸지 않는 시험 전용 변경이다. 생산 설치기·실제 `irm | iex`·공통 PTY 60초 상한은 그대로다.
+- keeper는 새 캐시와 함께 `Invoke-RestMethod`를 내보내고 즉시 오류를 내는 외부 시험 모듈을 상속 경로에 넣는다. 실제 PS5.1/7의 내장 IRM으로 HTTP 본문을 받고, 기존 16개 질문·review/yes·서명 승인·파일/status·옛 실행 파일 보존을 모두 검사한다. 모듈 경로 격리를 지운 대조는 외부 명령을 선택해 이 실제 입구에서 실패해야 한다. 캐시 예열·고정 대기·시한 연장·재시도로 통과시키지 않는다.
+- 참고 후보는 [PowerShell 명령 자동 탐색](https://github.com/PowerShell/PowerShell/blob/v6.0.0/src/System.Management.Automation/engine/CommandDiscovery.cs)(MIT), [Pester CI의 PS5.1/7 분리](https://github.com/pester/Pester/blob/main/.github/workflows/ci.yml)와 [시험 모듈의 명시적 import](https://github.com/pester/Pester/blob/main/test.ps1)(Apache-2.0), [cargo-dist PowerShell 설치기](https://github.com/axodotdev/cargo-dist/blob/main/cargo-dist/templates/installer/installer.ps1.j2)(MIT 선택)다. Pester의 해당 경로에서 첫 사용 지연 전용 우회는 찾지 못했으며, 외부 코드·의존성은 가져오지 않았다. 캐시 위치 지정은 [PowerShell 5.1 공식 설명](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_windows_powershell_5.1?view=powershell-5.1#module-analysis-cache)을 따른다.
+- 정본은 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사와 실제 Windows의 `cargo test --locked -p aaa --test install`이다. Windows owner는 macOS에서 cfg로 제외되므로 로컬 통과를 Windows 실행으로 대신하지 않는다.
+
 ## E2E93 재개 조합의 독립 실행과 실패 phase(t-0896)
 
 - [CI 39923503523](https://github.com/cLazyZombie/aaa/actions/runs/39923503523)의 원본은 Claude 네 조합을 한 단계로 실행하다 합계 120초에 끝났다. artifact에는 e2e.log·실행 시간표만 있고 `resume-*.json`·host/agent 로그는 없다. 기존 `resumed` 안의 catch는 바깥 단계 타이머가 먼저 실패하면 실행되지 않는다. 당시 `--resume`와 `--continue` 중 어느 mode였는지는 원문으로 확정할 수 없다.
