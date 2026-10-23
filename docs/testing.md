@@ -1,5 +1,36 @@
 # 시험 쓰는 법
 
+## Windows SCM rollout과 플랫폼별 후보(t-0907)
+
+- host `rollout::web_tests::mixed_platform_candidates_are_pinned_before_transfer_and_guard_uses_target_sha`는
+  macOS·Windows hello를 두고 빠진 플랫폼 후보 거부, 단계별 후보 고정, 재연결 뒤 선택 보존,
+  전송 영수증·guard의 Windows SHA 대조를 확인한다. 기존 rollout·복구·권한 시험도 유지한다.
+- agent `deploy::guard::tests::windows_restart_is_owned_by_the_guard_and_is_not_repeated_after_resume`는
+  활성화 전 미실행, 활성화 뒤 한 번, 내구 기록 재독 뒤 재실행 없음과 기존 복구 전이를 검사한다.
+  `setup::tests::rollout_scm_restart_checks_ownership_and_runs_stop_then_start_once`는 가짜 Windows System으로
+  자기 서비스·다른 명령 거부, 정확한 시험 instance 이름, stop→start와 시작 실패의 재시도 없음을 확인한다.
+- guard의 차단된 서비스 작업 시험은 게이트를 닫은 채 동시 Status 세 개·Observe·Commit을 실제 IPC로 처리한다.
+  확정 뒤 작업 게이트를 열어 SCM 오류가 늦게 도착해도 확정 상태를 되돌리지 않는다. 이미 복구 중인 시한도 늘리지 않는다.
+- Windows 실기는 `scripts/test_windows_rollout.py`를 명시해서 실행한다. macOS의 별도 host·local agent,
+  암호 없는 SCM 가상 계정의 `aaa-test-NNNN-x-agent`, SSH 역방향 시험 포트만 사용한다.
+  실제 두 OS 후보를 같은 커밋 salt로 빌드해 준다. 시험 도구는 macOS launchctl 요청만 기록하고,
+  자신이 소유한 host·agent PID를 교체해 실제 재연결을 관측한다. Windows 교체와 SCM 중지·시작은 제품이 수행한다.
+  성공의 대상별 실행 SHA·안정된 작업 ID·done을 확인한다.
+- `--failure-binary`에는 `--version`·`config check`를 통과하고 서비스 입구는 실패하는 시험 PE를 준다.
+  두 번째 rollout의 Windows 단절 직후 시험 host를 내린다. host가 없는 동안 Windows 서비스가
+  baseline 파일 SHA와 SCM Running으로 복구돼야 한다. host를 다시 띄운 뒤 같은 작업 ID의
+  `stopped_rolled_back`·guard `restored`, 앞서 성공한 macOS 파일 보존을 확인한다.
+  후보 runtime 실패를 만들려고 제품에 시험용 분기나 시한 변경을 넣지 않는다.
+- 도구의 Windows 경로는 `C:\aaa-test\t-NNNN`만 받고 instance는 `aaa-test-NNNN-x` 형식으로 제한한다.
+  전역 PATH·사용자 서비스·sshd·방화벽·GUI는 바꾸지 않는다. 시험 전 서비스·예약 작업·Run 키·사용자 PATH·
+  방화벽 목록을 보존하고, 도구 종료 뒤 시험 폴더·프로세스·서비스를 정리한 다음 기준과 대조한다.
+  guard PID는 해당 실험실의 실행 경로·명령줄을 확인한 것만 각각 종료한다.
+- 첫 실기의 감시 준비 오류 5는 Windows `File::open(...).sync_all()`을 별도 네이티브 대조로 확인했다.
+  읽기 전용 핸들은 오류 5이고 쓰기 핸들은 성공한다. 복구 사본은 쓰기 핸들로 flush하며
+  복사·동기화·감시 준비에 실패하면 설치를 시작하지 않는다. 실패를 재시도나 시한 연장으로 넘기지 않는다.
+- 정본은 전체 `nice -n 15 bash scripts/ci-local.sh`(Playwright 1.64.1), Linux strict cross clippy,
+  Windows 네이티브 build·clippy·관련 owner와 공개 검사다. 외부 Windows 실기는 전체 ci-local에서 자동 실행하지 않는다.
+
 ## 이미지 결과의 base64 글 가림 충돌(t-0918)
 
 - 기존 m13 이미지 owner의 가짜 Codex는 표준 라이브러리만으로 887×1774 RGBA·544 KiB PNG를 만든다. CRC가 있는 ancillary chunk에 가짜 인증과 인코딩 글자만 겹치는 bytes를 넣는다. 로컬·TLS 원격 thread의 profile env에 같은 가짜 인증을 등록하고 실제 CLI→hook→agent link→host→가짜 생성→조각 전송을 탄다. 생성 계정·외부 API는 쓰지 않는다.

@@ -192,6 +192,7 @@ pub fn typescript_bindings() -> String {
         FrontRequest::decl(&cfg),
         SharedPreferences::decl(&cfg),
         RolloutSpec::decl(&cfg),
+        RolloutArtifact::decl(&cfg),
         RolloutPhase::decl(&cfg),
         RolloutStep::decl(&cfg),
         RolloutState::decl(&cfg),

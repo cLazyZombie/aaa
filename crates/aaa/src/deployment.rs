@@ -41,6 +41,7 @@ pub(crate) fn route(json: bool, machine: Option<String>, action: DeployAction) -
                     sha256: String::new(),
                     commit: None,
                     machines: machine.into_iter().collect(),
+                    artifacts: vec![],
                     restart: Some(service),
                 };
                 let result = rt.block_on(c.call(FrontRequest::RolloutStart { id: id.clone(), spec }))?;
@@ -106,6 +107,15 @@ pub(crate) fn execute(exe: &std::path::Path, action: DeployAction) -> Result<Str
             }
             DeployAction::CheckedRollback { sha256 } => return crate::update::checked_rollback(exe, &sha256),
             DeployAction::Restart { service } => {
+                #[cfg(windows)]
+                let service_state = {
+                    anyhow::ensure!(
+                        service == aaa_proto::DeployService::Agent,
+                        "Windows rollout은 agent 서비스만 지원한다"
+                    );
+                    crate::setup::restart_for_rollout(exe)?
+                };
+                #[cfg(not(windows))]
                 let service_state = crate::launchd::restart_authorized(service.as_str())?;
                 let identity = crate::update::installed_identity(exe)?;
                 return Ok(serde_json::json!({"service": service_state, "installed": serde_json::from_str::<serde_json::Value>(&identity)?}).to_string());

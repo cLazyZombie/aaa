@@ -9,9 +9,8 @@
 //! - 순서(plan §11 「교체」): 같은 폴더에 staging(`.aaa-update-<pid>.tmp`, herdr와 같은 자리라 rename이 원자적) →
 //!   self-check(주어진 파일을 실행해 `--version`이 `aaa x.y.z`, `config check`가 이 Mac 설정을 받는지) → version 고정 검사 →
 //!   지금 것을 `.aaa-old/`에 보관(hard link, 실행 파일 자리는 비지 않는다) → rename. 제자리 쓰기는 없다.
-//! - Windows(접속만 하는 PC의 `%USERPROFILE%\.local\bin\aaa.exe`, install-runbook 11번)도 같은 순서다. 도는 exe 자리에 rename이
-//!   된다(std rename의 POSIX 방식, Windows CI 시험 `replaces_a_running_exe`). herdr Windows는 release 폴더마다 풀고 junction·PATH를
-//!   바꾸는 설치 스크립트(`distribution/install.ps1`)를 쓴다: aaa는 고정 경로 하나라 따르지 않았다.
+//! - Windows는 설치기와 같이 도는 exe를 `.aaa-old/`로 rename한 뒤 staging을 원래 이름에 둔다.
+//!   새 파일 두기가 실패하면 보관 파일을 원래 이름으로 복원한다. 서비스 제어는 독립 rollout guard가 맡는다.
 //! - 도는 host·agent는 옛 이미지로 계속 돈다. 다시 띄우기는 사람이 `aaa service restart`로 한다(자동 재시작 없음, plan §11).
 //! - 참고와 다름: herdr는 도는 서버를 멈출지·넘길지(`--handoff`) 묻는다. aaa는 session host가 세션을 가져 agent·host를 다시
 //!   띄워도 이어진다(결정 3): 바꾼 뒤 다시 띄우기를 알린다. brew·mise·nix 설치 감지는 없다(aaa는 고정 경로 하나).
@@ -287,17 +286,25 @@ impl Staged {
         let old = place.old();
         std::fs::create_dir_all(&old).with_context(|| format!("{}를 만들지 못했다", old.display()))?;
         let kept = place.backup_path(aaa_common::util::now_ms(), current_version);
-        // 실행 파일 자리가 비지 않게 링크로 보관한다(같은 폴더 아래라 같은 볼륨). 링크를 못 걸면 복사한다
-        if std::fs::hard_link(&place.exe, &kept).is_err() {
-            std::fs::copy(&place.exe, &kept)
-                .with_context(|| format!("지금 실행 파일을 {}에 보관하지 못했다", kept.display()))?;
+        #[cfg(not(windows))]
+        {
+            // Unix는 실행 파일 자리를 비우지 않고 링크로 보관한다.
+            if std::fs::hard_link(&place.exe, &kept).is_err() {
+                std::fs::copy(&place.exe, &kept)
+                    .with_context(|| format!("지금 실행 파일을 {}에 보관하지 못했다", kept.display()))?;
+            }
         }
+        #[cfg(windows)]
+        std::fs::rename(&place.exe, &kept)
+            .with_context(|| format!("실행 중인 파일을 {}에 보관하지 못했다", kept.display()))?;
         let path = self.0.take().unwrap();
-        // Windows도 도는 exe 자리에 그대로 rename한다: std rename이 POSIX 방식(FILE_RENAME_FLAG_POSIX_SEMANTICS)으로 바꾼다
-        // (Windows 시험 `replaces_a_running_exe`)
-        if let Err(e) = std::fs::rename(&path, &place.exe) {
+        if let Err(error) = std::fs::rename(&path, &place.exe) {
             let _ = std::fs::remove_file(&path);
-            bail!("{}를 바꾸지 못했다: {e}", place.exe.display());
+            #[cfg(windows)]
+            if let Err(restore) = std::fs::rename(&kept, &place.exe) {
+                bail!("설치 실패: {error}; 원래 경로 복원 실패: {restore}. 보관 파일: {}", kept.display());
+            }
+            bail!("{}를 바꾸지 못했다: {error}", place.exe.display());
         }
         Ok(kept)
     }

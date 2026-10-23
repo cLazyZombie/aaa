@@ -4,6 +4,85 @@ use super::*;
 use aaa_proto::{AgentHello, DeviceRole, FrontRequest};
 
 const WEB: &str = "device:phone";
+
+#[test]
+fn mixed_platform_candidates_are_pinned_before_transfer_and_guard_uses_target_sha() {
+    in_lab(|h| async move {
+        {
+            let mut inner = h.inner.lock().unwrap();
+            let local = inner.machines.get_mut("m").unwrap();
+            local.os = Some("macos".into());
+            local.build.arch = Some("aarch64".into());
+        }
+        let (writer, _reader) = tokio::io::duplex(65536);
+        h.agent_connected(
+            &AgentHello {
+                proto: AGENT_LINK,
+                machine_id: "win".into(),
+                machine_name: "win-a".into(),
+                boot_id: "boot".into(),
+                os: "windows".into(),
+                arch: "x86_64".into(),
+                software: "test".into(),
+                features: vec![],
+                dev_mode: true,
+                sha256: None,
+                selfcheck: None,
+                sessions: vec![],
+                identity: None,
+                harness: vec![],
+            },
+            false,
+            crate::AgentConn::new(aaa_common::conn::spawn_writer(writer, MAX_FRAME), 2),
+        );
+        let mut r = super::tests::record();
+        r.spec.machines = vec!["m".into(), "win".into()];
+        r.spec.source_machine = Some("m".into());
+        assert!(h.pin_artifacts(&r.spec).unwrap_err().message.contains("windows/x86_64"));
+        let artifact = RolloutArtifact {
+            os: "windows".into(),
+            arch: "x86_64".into(),
+            source_machine: "m".into(),
+            from: "/candidate/windows/aaa.exe".into(),
+            sha256: "b".repeat(64),
+        };
+        r.spec.artifacts = vec![artifact.clone()];
+        r.steps = h.pin_artifacts(&r.spec).unwrap();
+        assert!(r.steps.iter().filter(|s| s.machine == "m").all(|s| s.artifact.is_none()));
+        assert!(r.steps.iter().filter(|s| s.machine == "win").all(|s| s.artifact.as_ref() == Some(&artifact)));
+        let baseline = RuntimeIdentity {
+            sha256: "c".repeat(64),
+            software: "aaa 0.1.5".into(),
+            instance: "before".into(),
+            started_ms: 1,
+            web: None,
+        };
+        r.steps.iter_mut().find(|s| s.machine == "win" && s.phase == RolloutPhase::Preflight).unwrap().baseline =
+            Some(baseline);
+        let cursor = r.steps.iter().position(|s| s.machine == "win" && s.phase == RolloutPhase::AgentUpdate).unwrap();
+        let restart = h.set_guard_spec(&mut r, cursor).unwrap().unwrap();
+        assert_eq!(r.steps[restart].guard.as_ref().unwrap().expected_sha256, artifact.sha256);
+        // 내구 기록을 읽은 뒤 hello의 플랫폼이 달라져도 다시 고르지 않는다.
+        let restored: RolloutView = serde_json::from_slice(&serde_json::to_vec(&r).unwrap()).unwrap();
+        h.inner.lock().unwrap().machines.get_mut("win").unwrap().os = Some("macos".into());
+        assert_eq!(machine_spec(&restored, "win").sha256, artifact.sha256);
+        assert_eq!(machine_spec(&restored, "m").sha256, r.spec.sha256);
+        let mut stage = DeployStageView {
+            rollout: r.id.clone(),
+            project: r.project.clone(),
+            sha256: artifact.sha256,
+            total: 1,
+            offset: 1,
+            complete: true,
+            version: r.version.clone(),
+        };
+        assert!(stage_receipt(&restored, &machine_spec(&restored, "win").sha256, &stage).is_ok());
+        stage.sha256 = r.spec.sha256;
+        assert!(stage_receipt(&restored, &machine_spec(&restored, "win").sha256, &stage).is_err());
+        assert!(candidate_path(r"C:\candidate\aaa.exe", true));
+        assert!(!candidate_path(r"C:relative\aaa.exe", true));
+    });
+}
 /// 시험 몸을 따로 만든 runtime에서 돌리고, runtime을 끝낸 뒤 상태 폴더를 지운다. `agent_connected`가 띄운 task(`rewatch` 등)는
 /// 이 시험에서 한 번도 돌지 않은 채 Host를 쥐고 있어, runtime을 끝내야 Host와 host DB가 닫힌다. Windows는 열린 DB가 든 폴더를
 /// 지우지 못한다(os error 32, `deploy` 시험과 같다). Host가 정말 닫혔는지는 모든 OS에서 본다
@@ -210,6 +289,7 @@ async fn web_controllers_restart_only_and_session_agents_cannot_plan_body(h: Arc
         sha256: "a".repeat(64),
         commit: None,
         machines: vec![],
+        artifacts: vec![],
         restart: None,
     };
     let e = h.call(DeviceRole::Controller, WEB, FrontRequest::RolloutStart { id: new_id(), spec }).await.unwrap_err();
@@ -226,6 +306,7 @@ fn restart_spec(machines: &[&str], service: DeployService) -> RolloutSpec {
         sha256: String::new(),
         commit: None,
         machines: machines.iter().map(|m| m.to_string()).collect(),
+        artifacts: vec![],
         restart: Some(service),
     }
 }

@@ -62,6 +62,12 @@ pub(crate) fn run(args: &Args) -> ExitCode {
     win::run(args)
 }
 
+/// host가 승인한 독립 배포 감시에서만 서비스 재시작을 실행한다.
+#[cfg(windows)]
+pub(crate) fn restart_for_rollout(exe: &std::path::Path) -> anyhow::Result<String> {
+    win::restart_for_rollout(exe)
+}
+
 #[cfg(not(windows))]
 pub(crate) fn run(_args: &Args) -> ExitCode {
     eprintln!(

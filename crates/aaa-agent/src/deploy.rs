@@ -234,6 +234,13 @@ impl Manager {
             let _ = self.save(&job);
             return Some(job);
         }
+        #[cfg(windows)]
+        if job.action == (DeployAction::Restart { service: DeployService::Agent })
+            && guard::read(self.root.parent()?, &job.id).is_ok()
+        {
+            // Activate를 받은 독립 guard가 SCM을 제어한다. Running은 새 agent의 configure가 SHA 대조 뒤 완료한다.
+            return None;
+        }
         let mutating = matches!(
             job.action,
             DeployAction::Update { dry_run: false, .. }

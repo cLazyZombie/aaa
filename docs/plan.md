@@ -7698,3 +7698,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - host의 성공한 결과를 agent가 `imagegen.v1` JSON 문자열로 바꾼 뒤 일반 hook 글 가림을 다시 적용했다. base64의 우연한 인증 조각 일치가 `*`로 바뀌어 CLI decode가 실패했다. 544 KiB 시험 PNG·가짜 인증으로 운영과 같은 `Invalid symbol 42, offset 3787`을 재현했다.
 - hook 응답을 글/이미지 타입으로 나누고 마지막 IPC 직렬화에서 기존 B64 가림 serializer를 적용한다. 실제 bytes·오류의 인증 가림과 hook token·peer PID·이미지 소유권·SHA 검사는 유지한다. 실패에는 작업 ID·출력 번호·원시 offset·해독 단계와 원래 원인을 남긴다.
 - 기존 m13 이미지 owner의 로컬·원격 생성·다시 받기·재시작·중복 방지·비노출 및 64 KiB 전후 타입 가림 회귀로 검증한다. 전체 ci-local·공개 검사 뒤 병합 준비로 둔다. wire·API·기능 협상·E2E 번호는 유지하며 절 번호는 착지 때 main과 대조한다.
+
+### 8.474 Windows SCM rollout과 플랫폼별 후보(t-0907)
+
+- **목적·범위.** t-0878의 Windows 서비스 agent를 기존 host→agent 순차 배포에 포함한다. 사용자 q-1231 1A로 플랫폼별 후보 입력 확장도 함께 맡았다. 기존 done·stopped·stopped_rolled_back·recovering·recovery_failed와 독립 감시를 유지한다.
+- **후보.** FRONT_API 1.114의 선택적 `RolloutSpec.artifacts`에 OS·아키텍처·보관 머신·파일·SHA를 받는다. 기본 후보는 host 플랫폼이다. 같은 소스 커밋을 요구하고 대상별 후보를 시작 시 각 단계에 고정한다. 전송·설치 영수증, 새 프로세스 확인, guard 기대 SHA가 모두 그 고정값을 쓴다. 다른 플랫폼 후보가 빠졌거나 중복·잘못된 경로·SHA면 교체 전에 거부한다. 기존 입력과 옛 내구 기록은 기본 후보를 계속 쓴다. CLI는 구형 host에 새 칸을 보내지 않는다. Agent link와 기존 웹 E2E 번호는 유지한다.
+- **Windows.** 새 baseline agent가 windows_scm_rollout.v1을 알린 뒤부터 지원한다. 실행 중인 exe는 설치기와 같이 .aaa-old로 rename한 뒤 staging을 원래 이름에 둔다. 새 파일 두기가 실패하면 원래 이름을 복원한다. agent 자신의 stop으로 실행기가 사라지지 않도록 독립 guard가 SCM 제어를 맡고, Running 작업은 새 agent가 SHA를 확인해 완료한다. SCM PID와 새 agent instance·실행 판·SHA를 구별한다. 감시 프로세스는 서비스 Job에서 분리하며 분리를 거부하면 교체 전에 실패한다.
+- **복구.** 기존 guard 사본과 baseline SHA 고정을 사용한다. 새 서비스 시작 실패·다른 판·기존 시한 초과는 복원→SCM 재시작→옛 실행 신원 검증으로 간다. host가 없어도 파일·서비스를 복구하고 재연결 뒤 같은 rollout 기록으로 확인한다. 서비스 계정·암호·실패 정책을 바꾸지 않는다. Windows host·Linux 감독자와 일반 서비스 CLI 전체 확장은 범위 밖이다.
+- **검증·참고.** 가짜 Windows System·대상별 SHA owner, 두 OS 실기 후보와 별도 시험 SCM 서비스, host를 내린 독립 복구를 확인한다. Windows 읽기 전용 핸들의 FlushFileBuffers 오류 5를 네이티브 대조하고 복구 사본 flush를 쓰기 핸들로 고쳤다. rustup(MIT)·self-replace(Apache-2.0)·Tailscale(BSD-3-Clause)의 파일 보관·갱신용 사본 수명을 참고하고 외부 코드는 가져오지 않는다. 절차는 [시험](testing.md), 사용법·최초 baseline 반영 조건은 [Windows rollout](windows-rollout.md)을 따른다.

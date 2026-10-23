@@ -174,6 +174,32 @@ pub(crate) trait System {
     fn set_user_path(&mut self, value: Option<&str>) -> Result<()>;
 }
 
+/// SCM 밖 감시가 설치기가 만든 정확한 서비스만 멈추고 띄운다. stop/start 오류를 재시도하지 않는다.
+#[cfg(any(windows, test))]
+pub(crate) fn restart_for_rollout(sys: &mut dyn System, layout: &Layout, caller_pid: u32) -> Result<String> {
+    let name = layout.service();
+    let before = sys.service(&name)?.with_context(|| format!("서비스 {name}이 없다. 먼저 aaa setup으로 설치한다"))?;
+    let mut explicit = layout.clone();
+    explicit.explicit_dirs = true;
+    let mut default = layout.clone();
+    default.explicit_dirs = false;
+    let implicit_dirs = layout.config == aaa_config::paths::default_config_dir_for(layout.instance.as_deref())
+        && layout.state == aaa_config::paths::default_state_dir_for(layout.instance.as_deref());
+    anyhow::ensure!(
+        before.command == explicit.command() || (implicit_dirs && before.command == default.command()),
+        "서비스 {name}의 실행 경로·인스턴스·설정이 배포 대상과 다르다"
+    );
+    anyhow::ensure!(
+        before.pid == 0 || before.pid != caller_pid,
+        "자기 서비스는 안에서 멈출 수 없다. 독립 복구 감시가 있는 aaa deploy로 재시작한다"
+    );
+    sys.stop_service(&name)?;
+    let pid = sys.start_service(&name)?;
+    let after = sys.service(&name)?.context("시작한 서비스가 사라졌다")?;
+    anyhow::ensure!(pid != 0 && after.running && after.pid == pid, "SCM이 새 서비스 PID를 확인하지 못했다");
+    Ok(format!("다시 띄웠다: {name} · PID {pid}. 실행 SHA는 rollout 감시가 확인한다"))
+}
+
 /// 설치 자리. 인스턴스마다 설정·상태·서비스 이름이 따로다
 #[derive(Debug, Clone)]
 pub(crate) struct Layout {

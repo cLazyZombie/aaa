@@ -120,14 +120,16 @@ pub fn hello(agent: &Agent) -> AgentHello {
             aaa_proto::TERMINAL_ZSTD_FEATURE.into(),
             "report_copy.v2".into(),
             "deployment.v1".into(),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             "rollout.v1".into(),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             "deploy_stage.v1".into(),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             "rollout_recovery.v1".into(),
+            #[cfg(windows)]
+            "windows_scm_rollout.v1".into(),
             // 웹 「배포」의 빌드 후보 읽기(`AgentRequest::DeployCandidate`, 관리 GUI W6a)
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             "deploy_candidate.v1".into(),
             "post.v1".into(),
             "imagegen.v1".into(),

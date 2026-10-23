@@ -54,6 +54,7 @@ fn steps(machines: &[String], transfer: bool) -> Vec<RolloutStep> {
 fn step(machine: &str, phase: RolloutPhase) -> RolloutStep {
     RolloutStep {
         machine: machine.into(),
+        artifact: None,
         phase,
         job_id: aaa_common::util::new_id(),
         completed: false,
@@ -84,6 +85,24 @@ fn action(spec: &RolloutSpec, id: &str, phase: RolloutPhase) -> DeployAction {
         RolloutPhase::AgentRestart => DeployAction::Restart { service: DeployService::Agent },
     }
 }
+/// 시작 때 단계에 고정한 후보만 쓴다. hello·머신 이름이 바뀌어도 진행 중 선택은 바뀌지 않는다.
+fn machine_spec(r: &RolloutView, machine: &str) -> RolloutSpec {
+    let mut spec = r.spec.clone();
+    if let Some(artifact) = r.steps.iter().find(|s| s.machine == machine).and_then(|s| s.artifact.as_ref()) {
+        spec.from.clone_from(&artifact.from);
+        spec.sha256.clone_from(&artifact.sha256);
+        spec.source_machine = Some(artifact.source_machine.clone());
+    }
+    spec
+}
+fn candidate_path(path: &str, remote: bool) -> bool {
+    Path::new(path).is_absolute()
+        || (remote
+            && (path.starts_with("~/")
+                || (path.as_bytes().get(1) == Some(&b':')
+                    && path.as_bytes()[0].is_ascii_alphabetic()
+                    && matches!(path.as_bytes().get(2), Some(b'\\' | b'/')))))
+}
 /// 완료 영수증은 요청·소속·ID와 일치해야 한다. 재시작은 설치 파일과 실행 이미지를 구별한다.
 fn assess(
     r: &RolloutView,
@@ -95,7 +114,10 @@ fn assess(
     let AgentResponse::Deployment { job, running_software, running_sha256, running_instance, .. } = response else {
         return Err(internal("배포 응답이 아니다"));
     };
-    if job.id != step.job_id || job.project != r.project || job.action != action(&r.spec, &r.id, step.phase) {
+    if job.id != step.job_id
+        || job.project != r.project
+        || job.action != action(&machine_spec(r, &step.machine), &r.id, step.phase)
+    {
         return Err(internal("배포 영수증이 기록한 요청과 다르다"));
     }
     match job.state {
@@ -110,7 +132,7 @@ fn assess(
         RolloutPhase::Preflight | RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate => {
             let value: serde_json::Value =
                 serde_json::from_str(job.result.as_deref().unwrap_or("")).map_err(internal)?;
-            if value["sha256"] != r.spec.sha256 {
+            if value["sha256"] != machine_spec(r, &step.machine).sha256 {
                 return Err(err(ErrorCode::BadRequest, "후보/설치 SHA-256 불일치"));
             }
             let version = value["version"].as_str().ok_or_else(|| internal("후보 판이 없다"))?;
@@ -126,7 +148,7 @@ fn assess(
             if step.host_instance.as_deref() == Some(host_instance) {
                 return Ok(None);
             }
-            if host_sha != r.spec.sha256
+            if host_sha != machine_spec(r, &step.machine).sha256
                 || aaa_common::util::software() != format!("aaa {}", r.version.as_deref().unwrap_or(""))
             {
                 return Err(err(ErrorCode::BadRequest, "옛 host가 돌아왔다: 실행 판/SHA-256 불일치"));
@@ -137,7 +159,7 @@ fn assess(
             if running_instance.is_empty() || running_instance == job.instance {
                 return Ok(None);
             }
-            if running_sha256 != r.spec.sha256
+            if running_sha256 != machine_spec(r, &step.machine).sha256
                 || running_software != format!("aaa {}", r.version.as_deref().unwrap_or(""))
             {
                 return Err(err(ErrorCode::BadRequest, "옛 agent가 돌아왔다: 실행 판/SHA-256 불일치"));
@@ -212,7 +234,44 @@ impl Host {
         if !self.machine_feature(mid, "rollout_recovery.v1") {
             return Some(err(ErrorCode::UnsupportedVersion, "먼저 독립 복구 감시를 아는 host·agent를 반영한다"));
         }
+        let windows = self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.os.as_deref() == Some("windows"));
+        if windows && !self.machine_feature(mid, "windows_scm_rollout.v1") {
+            return Some(err(ErrorCode::UnsupportedVersion, "먼저 Windows SCM rollout을 아는 agent를 설치한다"));
+        }
         None
+    }
+    fn rollout_platform(&self, mid: &str) -> Result<(String, String), ErrorBody> {
+        let inner = self.inner.lock().unwrap();
+        let machine = inner.machines.get(mid).ok_or_else(|| internal("대상 머신이 없다"))?;
+        Ok((
+            machine.os.clone().ok_or_else(|| internal("대상 OS가 없다"))?,
+            machine.build.arch.clone().ok_or_else(|| internal("대상 아키텍처가 없다"))?,
+        ))
+    }
+    fn pin_artifacts(&self, spec: &RolloutSpec) -> Result<Vec<RolloutStep>, ErrorBody> {
+        let host_platform = self.rollout_platform(&spec.machines[0])?;
+        let mut selected = std::collections::HashMap::new();
+        for mid in &spec.machines {
+            let platform = self.rollout_platform(mid)?;
+            let artifact = spec.artifacts.iter().find(|a| (a.os.clone(), a.arch.clone()) == platform);
+            if let Some(artifact) = artifact {
+                if mid == &spec.machines[0]
+                    && (artifact.from != spec.from
+                        || artifact.sha256 != spec.sha256
+                        || Some(&artifact.source_machine) != spec.source_machine.as_ref())
+                {
+                    return Err(err(ErrorCode::BadRequest, "host 플랫폼 후보는 기본 후보와 같아야 한다"));
+                }
+                selected.insert(mid.clone(), artifact.clone());
+            } else if platform != host_platform {
+                return Err(err(ErrorCode::BadRequest, format!("{}/{} 플랫폼 후보가 없다", platform.0, platform.1)));
+            }
+        }
+        let mut result = steps(&spec.machines, spec.source_machine.is_some());
+        for step in &mut result {
+            step.artifact = selected.get(&step.machine).cloned();
+        }
+        Ok(result)
     }
     /// host 머신을 맨 앞에, 나머지는 받은 순서(비었으면 등록된 전부를 ID 순)로
     fn rollout_order(&self, requested: &[String]) -> Result<Vec<String>, ErrorBody> {
@@ -252,7 +311,7 @@ impl Host {
         if !valid_id(&id)
             || spec.sha256.len() != 64
             || !spec.sha256.bytes().all(|b| b.is_ascii_hexdigit())
-            || !(Path::new(&spec.from).is_absolute() || (spec.source_machine.is_some() && spec.from.starts_with("~/")))
+            || !candidate_path(&spec.from, spec.source_machine.is_some())
             || spec.commit.as_ref().is_some_and(|c| c.len() != 40 || !c.bytes().all(|b| b.is_ascii_hexdigit()))
         {
             return Err(err(ErrorCode::BadRequest, "ID·절대 경로·SHA-256·커밋 형식을 확인한다"));
@@ -261,6 +320,24 @@ impl Host {
         if let Some(source) = &spec.source_machine {
             spec.source_machine = Some(self.resolve_machine(Some(source))?);
         }
+        if !spec.artifacts.is_empty() && (spec.source_machine.is_none() || spec.commit.is_none()) {
+            return Err(err(ErrorCode::BadRequest, "플랫폼별 후보는 기본 빌드 머신과 동일 소스 커밋이 필요하다"));
+        }
+        let mut platforms = std::collections::HashSet::new();
+        for artifact in &mut spec.artifacts {
+            if !matches!(artifact.os.as_str(), "macos" | "windows" | "linux")
+                || !matches!(artifact.arch.as_str(), "aarch64" | "x86_64")
+                || !platforms.insert((artifact.os.clone(), artifact.arch.clone()))
+                || !candidate_path(&artifact.from, true)
+                || artifact.sha256.len() != 64
+                || !artifact.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return Err(err(ErrorCode::BadRequest, "플랫폼 후보의 OS·아키텍처·중복·경로·SHA를 확인한다"));
+            }
+            artifact.sha256.make_ascii_lowercase();
+            artifact.source_machine = self.resolve_machine(Some(&artifact.source_machine))?;
+        }
+        spec.artifacts.sort_by(|a, b| (&a.os, &a.arch).cmp(&(&b.os, &b.arch)));
         let _gate = self.deployment_gate.lock().unwrap();
         // 같은 ID의 중복 시작은 기존 요청과 같을 때만 조회로 취급한다.
         if let Ok(old) = self.load_rollout(&id) {
@@ -296,6 +373,12 @@ impl Host {
                 return Err(err(ErrorCode::UnsupportedVersion, "빌드 머신에 deploy_stage.v1이 필요하다"));
             }
         }
+        for artifact in &spec.artifacts {
+            self.live_conn(&artifact.source_machine)?;
+            if !self.machine_feature(&artifact.source_machine, "deploy_stage.v1") {
+                return Err(err(ErrorCode::UnsupportedVersion, "플랫폼 후보 빌드 머신에 deploy_stage.v1이 필요하다"));
+            }
+        }
         let machines = self.rollout_order(&spec.machines)?;
         for mid in &machines {
             if let Some(e) = self.target_problem(mid, spec.source_machine.is_some()) {
@@ -303,12 +386,13 @@ impl Host {
             }
         }
         spec.machines = machines;
+        let pinned_steps = self.pin_artifacts(&spec)?;
         let now = aaa_common::util::now_ms();
         let mut r = RolloutView {
             id,
             project,
             actor: actor.into(),
-            steps: steps(&spec.machines, spec.source_machine.is_some()),
+            steps: pinned_steps,
             spec,
             state: RolloutState::Running,
             cursor: 0,
@@ -450,6 +534,7 @@ impl Host {
                 sha256: baseline.sha256,
                 commit: None,
                 machines: vec![mid.to_string()],
+                artifacts: vec![],
                 restart: Some(service),
             },
             state: RolloutState::Running,
@@ -567,7 +652,7 @@ impl Host {
         if self.rollout_busy()? {
             return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다. 끝난 뒤 다시 점검한다"));
         }
-        if !(Path::new(&path).is_absolute() || path.starts_with("~/")) {
+        if !candidate_path(&path, true) {
             return Err(err(ErrorCode::BadRequest, "후보는 빌드 머신의 절대 경로나 ~/로 시작하는 경로다"));
         }
         let src = self.resolve_machine(Some(&source))?;
@@ -595,13 +680,17 @@ impl Host {
             built_at,
         };
         let local = self.resolve_machine(None)?;
+        let host_platform = self.rollout_platform(&local)?;
         let targets = self
             .rollout_order(&machines)?
             .into_iter()
             .map(|mid| RolloutTargetView {
                 machine: self.machine_name(&mid),
                 host: mid == local,
-                problem: self.target_problem(&mid, true).map(|e| e.message),
+                problem: self.target_problem(&mid, true).map(|e| e.message).or_else(|| {
+                    (self.rollout_platform(&mid).ok().as_ref() != Some(&host_platform))
+                        .then(|| "다른 플랫폼은 CLI --artifacts로 해당 플랫폼 후보를 함께 지정한다".into())
+                }),
             })
             .collect();
         Ok(FrontResponse::RolloutPlan { plan: RolloutPlanView { candidate, targets, busy: self.rollout_busy()? } })
@@ -781,7 +870,7 @@ impl Host {
                 conn.request(AgentRequest::DeployStart {
                     id: step.job_id.clone(),
                     project: r.project.clone(),
-                    action: action(&r.spec, &r.id, step.phase),
+                    action: action(&machine_spec(r, &step.machine), &r.id, step.phase),
                 })
                 .await?
             }
@@ -817,8 +906,9 @@ impl Host {
         assess(r, step, response, &self.rollout_instance, &self.running_sha256)
     }
     async fn transfer_candidate(&self, r: &mut RolloutView, cursor: usize) -> Result<Option<String>, ErrorBody> {
-        let source = r.spec.source_machine.as_ref().ok_or_else(|| internal("빌드 머신 기록이 없다"))?.clone();
         let target = r.steps[cursor].machine.clone();
+        let candidate = machine_spec(r, &target);
+        let source = candidate.source_machine.as_ref().ok_or_else(|| internal("빌드 머신 기록이 없다"))?.clone();
         // 새 host의 DB 머신에는 hello 전 기능 목록이 없다. 미연결을 기능 소멸로 확정하지 않는다.
         self.live_conn(&source)?;
         let dest = self.live_conn(&target)?;
@@ -830,7 +920,7 @@ impl Host {
         let initial = dest.request(AgentRequest::DeployStageStatus { rollout: r.id.clone() }).await;
         let mut offset = match initial {
             Ok(AgentResponse::DeployStage { stage }) => {
-                let version = stage_receipt(r, &stage)?;
+                let version = stage_receipt(r, &candidate.sha256, &stage)?;
                 r.steps[cursor].transferred_bytes = stage.offset;
                 r.steps[cursor].total_bytes = stage.total;
                 if version.is_some() {
@@ -854,10 +944,10 @@ impl Host {
             let response = self
                 .live_conn(&source)?
                 .request(AgentRequest::DeployFetch {
-                    path: r.spec.from.clone(),
+                    path: candidate.from.clone(),
                     offset,
                     len: DEPLOY_CHUNK as u32,
-                    sha256: r.spec.sha256.clone(),
+                    sha256: candidate.sha256.clone(),
                 })
                 .await?;
             let AgentResponse::DeployChunk { offset: got, data, eof, total } = response else {
@@ -888,7 +978,7 @@ impl Host {
                         offset,
                         data,
                         eof,
-                        sha256: r.spec.sha256.clone(),
+                        sha256: candidate.sha256.clone(),
                         total,
                     },
                     Duration::from_millis(left),
@@ -897,7 +987,7 @@ impl Host {
             let AgentResponse::DeployStage { stage } = reply else {
                 return Err(internal("전송 영수증이 아니다"));
             };
-            let version = stage_receipt(r, &stage)?;
+            let version = stage_receipt(r, &candidate.sha256, &stage)?;
             if stage.offset != next || stage.total != total || stage.complete != eof {
                 return Err(err(ErrorCode::BadRequest, "조각 영수증 offset/EOF 불일치"));
             }
@@ -911,10 +1001,10 @@ impl Host {
         }
     }
 }
-fn stage_receipt(r: &RolloutView, stage: &DeployStageView) -> Result<Option<String>, ErrorBody> {
+fn stage_receipt(r: &RolloutView, expected: &str, stage: &DeployStageView) -> Result<Option<String>, ErrorBody> {
     if stage.rollout != r.id
         || stage.project != r.project
-        || stage.sha256 != r.spec.sha256
+        || stage.sha256 != expected
         || stage.total == 0
         || stage.total > DEPLOY_MAX_BYTES
         || stage.offset > stage.total
@@ -948,6 +1038,7 @@ mod tests {
                 sha256: "a".repeat(64),
                 commit: None,
                 machines: vec!["host".into(), "remote".into()],
+                artifacts: vec![],
                 restart: None,
             },
             state: RolloutState::Running,
@@ -968,7 +1059,7 @@ mod tests {
             job: DeployJob {
                 id: step.job_id.clone(),
                 project: r.project.clone(),
-                action: action(&r.spec, &r.id, step.phase),
+                action: action(&machine_spec(r, &step.machine), &r.id, step.phase),
                 state,
                 instance: "old-agent".into(),
                 executor_pid: 1,
@@ -1048,17 +1139,17 @@ mod tests {
             complete: false,
             version: None,
         };
-        assert_eq!(stage_receipt(&r, &receipt).unwrap(), None);
+        assert_eq!(stage_receipt(&r, &r.spec.sha256, &receipt).unwrap(), None);
         receipt.complete = true;
         receipt.version = r.version.clone();
-        assert!(stage_receipt(&r, &receipt).is_err());
+        assert!(stage_receipt(&r, &r.spec.sha256, &receipt).is_err());
         receipt.offset = 10;
-        assert_eq!(stage_receipt(&r, &receipt).unwrap(), r.version);
+        assert_eq!(stage_receipt(&r, &r.spec.sha256, &receipt).unwrap(), r.version);
         receipt.project = "other".into();
-        assert!(stage_receipt(&r, &receipt).is_err());
+        assert!(stage_receipt(&r, &r.spec.sha256, &receipt).is_err());
         receipt.project = r.project.clone();
         receipt.sha256 = "b".repeat(64);
-        assert!(stage_receipt(&r, &receipt).is_err());
+        assert!(stage_receipt(&r, &r.spec.sha256, &receipt).is_err());
         assert_eq!(
             action(&r.spec, &r.id, RolloutPhase::HostUpdate),
             DeployAction::UpdateStaged { rollout: r.id.clone(), dry_run: false }

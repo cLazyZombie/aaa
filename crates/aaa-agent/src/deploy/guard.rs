@@ -185,8 +185,9 @@ impl Agent {
                     return Err(InstalledChanged.into());
                 }
                 std::fs::copy(&self.exe, &pin)?;
-                let file = std::fs::File::open(&pin)?;
-                file.sync_all()?;
+                // Windows FlushFileBuffers는 쓰기 핸들이 필요하다. 읽기 전용 File::open은 오류 5다.
+                let file = std::fs::OpenOptions::new().write(true).open(&pin).context("복구 사본 동기화 핸들")?;
+                file.sync_all().context("복구 사본 내구 동기화")?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -269,6 +270,15 @@ impl Agent {
                 });
             }
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            use windows_sys::Win32::System::Threading::{
+                CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
+            };
+            // 서비스 종료·부모 Job 수명과 분리한다. breakaway가 금지되면 세우기 단계에서 실패하며 교체하지 않는다.
+            command.creation_flags(CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+        }
         let mut child = command.spawn().context("독립 복구 감시 실행")?;
         let child_pid = child.id();
         std::thread::spawn(move || {
@@ -320,6 +330,17 @@ fn begin_restore(view: &mut DeployGuardView, reason: String, now: u64) {
     view.phase = Phase::Restoring;
     view.error = Some(reason);
     view.deadline_ms = now + WINDOW_MS;
+}
+fn restart_failed(view: &mut DeployGuardView, error: String, now: u64) {
+    // SCM 응답보다 새 프로세스의 신원 확인·Commit이 먼저 끝날 수 있다. 확정 영수증은 되돌리지 않는다.
+    match view.phase {
+        Phase::AwaitingNew | Phase::NewReady => begin_restore(view, error, now),
+        Phase::Restarting => {
+            view.phase = Phase::Failed;
+            view.error = Some(error);
+        }
+        _ => {}
+    }
 }
 fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
     match control {
@@ -378,7 +399,7 @@ fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
                 } else {
                     begin_restore(view, "재시작 뒤 옛 판/다른 SHA가 돌아왔다".into(), now);
                 }
-            } else if view.phase == Phase::AwaitingOld
+            } else if matches!(view.phase, Phase::Restarting | Phase::AwaitingOld)
                 && identity.started_ms
                     >= if service == DeployService::Host { view.host_restart_ms } else { view.agent_restart_ms }
                 && (if service == DeployService::Host { view.host_restart_ms } else { view.agent_restart_ms }) != 0
@@ -453,6 +474,74 @@ async fn publish(state: &Path, view: &DeployGuardView) -> Result<()> {
     Ok(())
 }
 
+type Peer = std::io::Result<(aaa_common::ipc::LocalStream, Option<u32>)>;
+struct Controls {
+    rx: tokio::sync::mpsc::Receiver<Peer>,
+    accept: tokio::task::JoinHandle<()>,
+}
+impl Controls {
+    fn new(listener: LocalListener) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        let accept = tokio::spawn(async move {
+            loop {
+                let peer = listener.accept_peer().await;
+                let failed = peer.is_err();
+                if tx.send(peer).await.is_err() || failed {
+                    break;
+                }
+            }
+        });
+        Self { rx, accept }
+    }
+}
+impl Drop for Controls {
+    fn drop(&mut self) {
+        self.accept.abort();
+    }
+}
+async fn handle_control(
+    (stream, pid): (aaa_common::ipc::LocalStream, Option<u32>),
+    state: &Path,
+    exe: &Path,
+    view: &mut DeployGuardView,
+) -> Result<()> {
+    if pid.is_none() || pid != agent_pid(state).ok() {
+        return Ok(());
+    }
+    view.installed_sha256 = sha(exe).unwrap_or_default();
+    let (r, w) = tokio::io::split(stream);
+    let tx = spawn_writer(w, aaa_proto::MAX_FRAME);
+    let mut rx = FrameRx::new(r, aaa_proto::MAX_FRAME);
+    let response = match tokio::time::timeout(Duration::from_secs(2), rx.control::<Envelope>()).await {
+        Ok(Ok(envelope)) if envelope.token == agent_auth(state)?.token => {
+            apply(view, envelope.control, util::now_ms()).map(|_| view.clone()).map_err(|e| e.to_string())
+        }
+        _ => Err("감시 제어 frame을 읽지 못했다".into()),
+    };
+    publish(state, view).await?;
+    let _ = tx.json(&response).await;
+    Ok(())
+}
+/// 파일 복구·SCM 중지/시작을 기다리는 동안에도 Status·Observe·Recover를 처리한다.
+/// Windows listener는 별도 accept task가 즉시 다음 pipe instance를 준비하므로 작업 시간만큼 BUSY가 남지 않는다.
+async fn during<F: std::future::Future>(
+    controls: &mut Controls,
+    state: &Path,
+    exe: &Path,
+    view: &mut DeployGuardView,
+    operation: F,
+) -> Result<F::Output> {
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            result = &mut operation => return Ok(result),
+            peer = controls.rx.recv() => {
+                handle_control(peer.context("감시 listener 종료")??, state, exe, view).await?;
+            }
+        }
+    }
+}
+
 /// CLI 내부 진입점. 임의 spec/실행 경로를 받지 않고 agent가 띄운 PID에 보낸 grant만 받는다.
 pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
     let state = aaa_config::paths::state_dir().join("agent");
@@ -480,7 +569,7 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
         .open(state.join("deployments").join(format!("{id}.guard.lock")))?;
     lease.try_lock().context("같은 guard 실행기가 이미 살아 있다")?;
     let _lease = Lease(lease);
-    let listener = LocalListener::bind(&socket(&state, id, "g"))?;
+    let mut controls = Controls::new(LocalListener::bind(&socket(&state, id, "g"))?);
     let mut view = read(&state, id)?;
     if view.spec != grant.view.spec {
         bail!("감시 정본이 승인과 다르다");
@@ -500,6 +589,21 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
         if view.phase.terminal() {
             return Ok(());
         }
+        #[cfg(windows)]
+        if start_windows_restart(&mut view, util::now_ms()) {
+            // 재시작 의도를 먼저 내구 기록한다. 감시가 죽어 재개돼도 같은 SCM 요청을 다시 실행하지 않는다.
+            publish(&state, &view).await?;
+            let target = exe.clone();
+            let source = pin.clone();
+            let operation = tokio::task::spawn_blocking(move || {
+                execute(&target, DeployAction::Restart { service: DeployService::Agent }, &source)
+            });
+            let result = during(&mut controls, &state, &exe, &mut view, operation).await??;
+            if let Err(error) = result {
+                restart_failed(&mut view, format!("Windows 서비스 재시작 실패: {error}"), util::now_ms());
+            }
+            continue;
+        }
         if view.phase == Phase::Restoring {
             let uncertain = view.restore_started;
             view.restore_started = true;
@@ -509,7 +613,7 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
             let root = state.join("deployments");
             let expected = view.spec.baseline.sha256.clone();
             let activated = view.activated;
-            let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let operation = tokio::task::spawn_blocking(move || -> Result<bool, String> {
                 let _replacement = replacement_lease(&root).map_err(|e| e.to_string())?;
                 let current = sha(&target).map_err(|e| e.message)?;
                 // 이 잠금 뒤에는 진행 중 설치의 rename이 남아 있지 않다.
@@ -526,8 +630,8 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
                     return Err("복구 뒤 설치 SHA 불일치".into());
                 }
                 Ok(true)
-            })
-            .await?;
+            });
+            let result = during(&mut controls, &state, &exe, &mut view, operation).await??;
             match result {
                 Ok(false) => {
                     view.phase = Phase::Cancelled;
@@ -564,12 +668,11 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
                 publish(&state, &view).await?;
                 let target = exe.clone();
                 let source = pin.clone();
-                let result =
-                    tokio::task::spawn_blocking(move || execute(&target, DeployAction::Restart { service }, &source))
-                        .await?;
+                let operation =
+                    tokio::task::spawn_blocking(move || execute(&target, DeployAction::Restart { service }, &source));
+                let result = during(&mut controls, &state, &exe, &mut view, operation).await??;
                 if let Err(e) = result {
-                    view.phase = Phase::Failed;
-                    view.error = Some(e);
+                    restart_failed(&mut view, e, util::now_ms());
                     continue;
                 }
                 view.restart_index += 1;
@@ -600,16 +703,8 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
         tokio::select! {
             _=tokio::time::sleep(Duration::from_millis(remaining))=>{},
             ok=answer => probed = Some(ok),
-            peer=listener.accept_peer()=>{
-                let (stream,pid)=peer?;
-                if pid.is_none() || pid!=agent_pid(&state).ok() { continue; }
-                view.installed_sha256=sha(&exe).unwrap_or_default();
-                let (r,w)=tokio::io::split(stream); let tx=spawn_writer(w,aaa_proto::MAX_FRAME); let mut rx=FrameRx::new(r,aaa_proto::MAX_FRAME);
-                let response=match tokio::time::timeout(Duration::from_secs(2),rx.control::<Envelope>()).await {
-                    Ok(Ok(envelope)) if envelope.token==agent_auth(&state)?.token=>apply(&mut view,envelope.control,util::now_ms()).map(|_|view.clone()).map_err(|e|e.to_string()),
-                    _=>Err("감시 제어 frame을 읽지 못했다".into()),
-                };
-                publish(&state,&view).await?; let _=tx.json(&response).await;
+            peer=controls.rx.recv()=>{
+                handle_control(peer.context("감시 listener 종료")??, &state, &exe, &mut view).await?;
             }
         }
         if let Some(answered) = probed {
@@ -621,9 +716,99 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
     }
 }
 
+#[cfg(any(windows, test))]
+fn start_windows_restart(view: &mut DeployGuardView, now: u64) -> bool {
+    if view.phase != Phase::AwaitingNew
+        || !view.activated
+        || view.spec.service != DeployService::Agent
+        || view.agent_restart_ms != 0
+    {
+        return false;
+    }
+    view.agent_restart_ms = now;
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn blocked_service_operation_still_answers_status_and_observes_the_new_agent() {
+        let temp = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() };
+        let root = temp.join(format!("gr-{}", util::new_id()));
+        std::fs::create_dir_all(root.join("deployments")).unwrap();
+        write_identity(&root.join("deployments")).unwrap();
+        let exe = root.join("aaa");
+        std::fs::write(&exe, b"candidate").unwrap();
+        let mut v = view(DeployService::Agent, false);
+        v.spec.expected_sha256 = sha(&exe).unwrap();
+        apply(&mut v, Control::Activate, util::now_ms()).unwrap();
+        let id = v.spec.id.clone();
+        save(&root, &v).unwrap();
+        let mut controls = Controls::new(LocalListener::bind(&socket(&root, &id, "g")).unwrap());
+        let (release, pending) = tokio::sync::oneshot::channel();
+        let server_root = root.clone();
+        let server = tokio::spawn(async move {
+            during(&mut controls, &server_root, &exe, &mut v, pending).await.unwrap().unwrap();
+            restart_failed(&mut v, "늦게 도착한 SCM 오류".into(), util::now_ms());
+            v
+        });
+        // 시간 경과가 아니라 세 개의 실제 RPC 응답을 받은 뒤에만 서비스 작업을 놓는다.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let (a, b, c) = tokio::join!(
+                rpc(&root, &id, Control::Status),
+                rpc(&root, &id, Control::Status),
+                rpc(&root, &id, Control::Status)
+            );
+            for response in [a, b, c] {
+                assert_eq!(response.unwrap().phase, Phase::AwaitingNew);
+            }
+            let ready = rpc(
+                &root,
+                &id,
+                Control::Observe {
+                    service: DeployService::Agent,
+                    identity: RuntimeIdentity {
+                        sha256: sha(&root.join("aaa")).unwrap(),
+                        software: "aaa 0.1.2+new".into(),
+                        instance: "new-agent".into(),
+                        started_ms: util::now_ms(),
+                        web: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(ready.phase, Phase::NewReady);
+            assert_eq!(rpc(&root, &id, Control::Commit).await.unwrap().phase, Phase::VerifiedNew);
+            release.send(()).unwrap();
+            assert_eq!(server.await.unwrap().phase, Phase::VerifiedNew);
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn windows_restart_is_owned_by_the_guard_and_is_not_repeated_after_resume() {
+        let mut v = view(DeployService::Agent, false);
+        assert!(!start_windows_restart(&mut v, 1));
+        apply(&mut v, Control::Activate, 2).unwrap();
+        assert!(start_windows_restart(&mut v, 3));
+        let mut resumed: DeployGuardView = serde_json::from_slice(&serde_json::to_vec(&v).unwrap()).unwrap();
+        assert!(!start_windows_restart(&mut resumed, 4));
+        begin_restore(&mut resumed, "SCM start 실패".into(), 5);
+        let recovery_deadline = resumed.deadline_ms;
+        restart_failed(&mut resumed, "늦은 중복 실패".into(), 6);
+        assert_eq!(resumed.deadline_ms, recovery_deadline);
+        assert!(!start_windows_restart(&mut resumed, 6));
+        assert_eq!(resumed.phase, Phase::Restoring);
+        resumed.phase = Phase::Restored;
+        restart_failed(&mut resumed, "확인 뒤 늦은 SCM 실패".into(), 7);
+        assert_eq!(resumed.phase, Phase::Restored);
+        let mut host = view(DeployService::Host, true);
+        apply(&mut host, Control::Activate, 2).unwrap();
+        assert!(!start_windows_restart(&mut host, 3));
+    }
     fn view(service: DeployService, host_machine: bool) -> DeployGuardView {
         DeployGuardView {
             spec: DeployGuardSpec {
