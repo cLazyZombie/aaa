@@ -126,13 +126,15 @@ prepare_e2e_bin() {
   echo "이번 빌드의 웹 E2E 실행 사본: $E2E_BIN"
 }
 step_e2e() {
-  local root newer
+  local root newer built
   if [ -n "$E2E_PREP_FAILED" ]; then cat "$LOGS/e2e-binary.log"; return 1; fi
   # 옛 번들·옛 binary로 시험하지 않는다(--only e2e처럼 web·build 없이 돌 때). host 실행 파일은 web/dist를 넣어 빌드된다
   if [ -z "$(result_of web)" ]; then
     [ -f web/dist/index.html ] || { echo "web/dist가 없다: web 단계를 함께 돈다(--only web,e2e)"; return 1; }
-    newer=$(find web/src web/public web/patches web/index.html web/package.json web/package-lock.json web/vite.config.ts \
-      web/tsconfig.json web/xterm-source.mjs -newer web/dist/index.html -print 2>/dev/null | head -1)
+    built=web/node_modules/.cache/aaa-web-build.stamp
+    [ -f "$built" ] || built=web/dist/index.html
+    newer=$(find web/src web/public web/patches web/scripts web/index.html web/package.json web/package-lock.json web/vite.config.ts \
+      web/tsconfig.json web/xterm-source.mjs -newer "$built" -print 2>/dev/null | head -1)
     [ -z "$newer" ] || { echo "web/dist가 ${newer}보다 오래됐다: web 단계를 함께 돈다(--only web,e2e)"; return 1; }
   fi
   root=${NODE_PATH:-$(npm root -g)} || return 1
