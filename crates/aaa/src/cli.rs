@@ -2972,7 +2972,8 @@ fn agent_controlled(
 ) -> Result<ExitCode> {
     let cfg = load_or_exit(aaa_config::load_agent(&aaa_config::paths::config_dir()))?;
     let root = aaa_config::paths::state_dir();
-    // 인스턴스 폴더는 이름만큼 길다: 다른 Mac에서도 socket을 열 수 있는지 먼저 본다(plan §8.294)
+    // Unix 인스턴스의 실제 socket 길이를 검사한다. Windows IPC는 경로를 hash한 Named Pipe다.
+    #[cfg(unix)]
     if aaa_config::paths::instance().is_some() {
         crate::init::socket_fits(&root)?;
     }

@@ -54,8 +54,10 @@ pub fn validate_invocation(i: &InstallInvocation, tty: bool) -> Result<(), Insta
         "status_is_read_only",
     )?;
     let source = i.choices.service_password_source;
+    // 재개는 저장된 서명 계획에서 입력 정책을 읽는다. 보호 채널을 고르려고 계획 선택을 바꾸지 않는다.
+    let resume_source = i.resume.is_some() && source.is_none();
     require(
-        (!i.secrets_stdin || source == Some(InstallPasswordSource::Stdin))
+        (!i.secrets_stdin || source == Some(InstallPasswordSource::Stdin) || resume_source)
             && (i.dry_run || source != Some(InstallPasswordSource::Stdin) || i.secrets_stdin),
         "password_stdin_source_required",
     )?;

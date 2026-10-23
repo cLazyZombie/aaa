@@ -63,6 +63,16 @@ pub(super) fn cleanup(dir: &str) -> Option<String> {
 
 /// PowerShell의 text pipeline을 거치지 않는다. stdin EOF까지 원시 bytes를 넘긴 뒤 child exit를 그대로 낸다.
 pub(super) fn install(dir: &str, args: &str) -> Option<String> {
+    install_at(dir, args, "aaa")
+}
+
+#[cfg(test)]
+pub(super) fn install_instance(dir: &str, args: &str, instance: &str) -> Option<String> {
+    aaa_config::paths::check_instance(instance).ok()?;
+    install_at(dir, &format!("--instance {instance} {args}"), &format!("aaa-{instance}"))
+}
+
+fn install_at(dir: &str, args: &str, state_name: &str) -> Option<String> {
     safe_dir(dir).then(|| {
         command_with_stdin(&format!(
             r#"
@@ -70,7 +80,7 @@ $ErrorActionPreference = 'Stop'
 $exe = Join-Path (Join-Path ([IO.Path]::GetTempPath()) '{dir}') 'aaa.exe'
 $base = $env:LOCALAPPDATA
 if ([string]::IsNullOrEmpty($base)) {{ $base = $env:USERPROFILE }}
-$state = Join-Path $base 'aaa\state'
+$state = Join-Path $base '{state_name}\state'
 $p = New-Object Diagnostics.Process
 $p.StartInfo.FileName = $exe
 # install-probe/bootstrap은 명시적 상태 경로가 필수다. 모든 단계가 detect의 기본 자리와 같아야 한다.

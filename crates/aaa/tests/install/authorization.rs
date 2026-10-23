@@ -299,6 +299,51 @@ fn cancelled_or_automated_or_session_review_creates_no_issuer_or_approval() {
 }
 
 #[test]
+fn protected_stdin_resumes_the_signed_plan_and_rejects_an_unused_password_before_writes() {
+    let lab = Lab::new();
+    let approval = lab.0.join("approval.json");
+    assert_eq!(terminal(&lab, &authorize_args(&lab, &approval, true), Some("yes\r"), false).0, 0);
+    let authorization: Value = serde_json::from_slice(&std::fs::read(&approval).unwrap()).unwrap();
+    let id = authorization["claims"]["installation_id"].as_str().unwrap();
+    let run = |password: bool| {
+        let auth = serde_json::to_vec(&authorization).unwrap();
+        let mut input = b"aaa.install.input.v1\0".to_vec();
+        input.push(1);
+        input.extend((auth.len() as u32).to_le_bytes());
+        input.extend(auth);
+        if password {
+            input.push(2);
+            input.extend((CANARY.len() as u32).to_le_bytes());
+            input.extend(CANARY.as_bytes());
+        }
+        let mut child = lab
+            .command(&["install", "--resume", id, "--non-interactive", "--yes", "--json-stream", "--secrets-stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&input).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(CANARY));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(CANARY));
+        let result: Value =
+            serde_json::from_slice(output.stdout.split(|b| *b == b'\n').rfind(|l| !l.is_empty()).unwrap()).unwrap();
+        (output.status.code(), result["result"].clone())
+    };
+    let before = snapshot(&lab.0);
+    let (code, rejected) = run(true);
+    assert_eq!(code, Some(2), "{rejected}");
+    assert_eq!(rejected["error"]["code"], "installation_unexpected_secret_input");
+    assert_eq!(snapshot(&lab.0), before, "미사용 암호는 nonce·파일 쓰기 전에 거부한다");
+    let (code, installed) = run(false);
+    assert_eq!(code, Some(0), "{installed}");
+    assert_eq!(installed["installation_id"], id);
+    assert_eq!(installed["plan_sha256"], authorization["claims"]["plan_sha256"]);
+    assert!(lab.0.join("config/agent.toml").is_file());
+}
+
+#[test]
 fn issued_approval_runs_the_real_file_worker_and_status_keeps_the_public_id() {
     let lab = Lab::new();
     let approval = lab.0.join("approval.json");

@@ -134,6 +134,7 @@ Host ci
     $test.StartInfo.RedirectStandardOutput = $true
     $test.StartInfo.RedirectStandardError = $true
     $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_LAB'] = $lab
+    $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_SERVICE'] = $service
     $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_BINARY'] = (Resolve-Path 'target/debug/aaa.exe').Path
     foreach ($name in @('AAA_SESSION_ID', 'AAA_HOOK_SOCK')) { $test.StartInfo.EnvironmentVariables.Remove($name) }
     [void]$test.Start()

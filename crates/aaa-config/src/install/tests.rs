@@ -204,3 +204,25 @@ fn output_and_private_input_modes_never_turn_into_prompts() {
     password.choices.service_password_source = Some(InstallPasswordSource::Prompt);
     assert_eq!(validate_invocation(&password, false).unwrap_err().code, "private_tty_required");
 }
+
+#[test]
+fn protected_resume_uses_the_saved_plan_without_changing_password_choices() {
+    let resume = InstallInvocation {
+        resume: Some("01ARZ3NDEKTSV4RRFFQ69G5FAV".into()),
+        non_interactive: true,
+        yes: true,
+        json_stream: true,
+        secrets_stdin: true,
+        ..Default::default()
+    };
+    assert!(validate_invocation(&resume, false).is_ok());
+    let first = InstallInvocation { resume: None, ..resume.clone() };
+    assert_eq!(validate_invocation(&first, false).unwrap_err().code, "password_stdin_source_required");
+    for source in [InstallPasswordSource::Prompt, InstallPasswordSource::Broker] {
+        let mut changed = resume.clone();
+        changed.choices.service_password_source = Some(source);
+        assert_eq!(validate_invocation(&changed, false).unwrap_err().code, "password_stdin_source_required");
+    }
+    let conflicted = InstallInvocation { authorization_stdin: true, ..resume };
+    assert_eq!(validate_invocation(&conflicted, false).unwrap_err().code, "stdin_source_conflict");
+}

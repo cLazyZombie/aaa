@@ -8,6 +8,7 @@ use windows_sys::Win32::{
     System::{
         Environment::*,
         Services::*,
+        SystemInformation::{ComputerNameNetBIOS, GetComputerNameExW},
         SystemServices::{SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY},
         Threading::*,
     },
@@ -105,6 +106,20 @@ unsafe fn sid_text(sid: PSID) -> Result<String> {
     result
 }
 fn account_sid(name: &str) -> Result<String> {
+    // SCM은 현지 계정을 `.\user`로 돌려주지만 LookupAccountNameW는 이 약칭을 해석하지 않는다.
+    // 환경 변수 대신 OS의 NetBIOS 이름으로 한정해 다른 도메인의 동명 계정과 섞지 않는다.
+    let qualified;
+    let name = if let Some(user) = name.strip_prefix(".\\") {
+        let mut computer = [0u16; 256];
+        let mut size = computer.len() as u32;
+        if unsafe { GetComputerNameExW(ComputerNameNetBIOS, computer.as_mut_ptr(), &mut size) } == 0 {
+            return Err(last());
+        }
+        qualified = format!("{}\\{user}", String::from_utf16(&computer[..size as usize]).map_err(|_| denied())?);
+        &qualified
+    } else {
+        name
+    };
     let mut sid_len = 0;
     let mut domain_len = 0;
     let mut use_ = 0;
@@ -700,6 +715,21 @@ impl Manager for Scm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scm_dot_account_and_os_qualified_account_resolve_to_the_same_sid() {
+        let current = identity(unsafe { GetCurrentProcessId() }).unwrap();
+        let name = account_name(&current.sid).unwrap();
+        assert!(account_sid(&name).unwrap() == current.sid, "현재 계정의 정규 이름·SID 왕복");
+        let (_, user) = name.rsplit_once('\\').unwrap();
+        let mut computer = [0u16; 256];
+        let mut size = computer.len() as u32;
+        assert_ne!(unsafe { GetComputerNameExW(ComputerNameNetBIOS, computer.as_mut_ptr(), &mut size) }, 0);
+        let computer = String::from_utf16(&computer[..size as usize]).unwrap();
+        let local = account_sid(&format!("{computer}\\{user}"));
+        // 도메인 계정으로 도는 환경에서도 현지 동명 계정 조회 결과와 정확히 같아야 한다.
+        assert!(account_sid(&format!(".\\{user}")) == local, "SCM 현지 약칭은 OS의 현지 계정만 가리킨다");
+    }
+
     #[test]
     fn process_observation_rejects_completed_process_with_its_handle_still_open() {
         use std::io::Read;
