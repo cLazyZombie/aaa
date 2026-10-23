@@ -12,20 +12,25 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
-    report_copy_recovers(false, false).await;
+    report_copy_recovers(false, false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failing_library_keeps_the_new_report_and_healthy_files_and_recovers_without_a_new_hash() {
-    report_copy_recovers(true, false).await;
+    report_copy_recovers(true, false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failing_report_history_keeps_the_new_report_and_recovers_without_a_new_hash() {
-    report_copy_recovers(false, true).await;
+    report_copy_recovers(false, true, false).await;
 }
 
-async fn report_copy_recovers(fail_library: bool, fail_history: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn adoption_preparation_is_not_a_crashed_launch() {
+    report_copy_recovers(false, false, true).await;
+}
+
+async fn report_copy_recovers(fail_library: bool, fail_history: bool, interleave_adopt: bool) {
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
     let node = lab.node("host", Some(&format!(
@@ -102,17 +107,26 @@ async fn report_copy_recovers(fail_library: bool, fail_history: bool) {
     let attempts = Arc::new(AtomicUsize::new(0));
     let (fail, count) = (failing.clone(), attempts.clone());
     let sender = tx.clone();
+    let (adopt_seen, adopt_wait) = tokio::sync::oneshot::channel();
+    let (adopt_finish, adopt_resume) = tokio::sync::oneshot::channel();
+    let mut pause = interleave_adopt.then_some((adopt_seen, adopt_resume));
     let fake = tokio::spawn(async move {
         while let Ok(msg) = rx.control::<LinkMsg>().await {
             match msg {
                 LinkMsg::Req { id, body, .. } => {
                     let result = match body {
-                        AgentRequest::ThreadAdopt(_) => Outcome::Ok(AgentResponse::ThreadAdopted(ThreadAdopted {
-                            cwd: "/work".into(),
-                            work_dir: "/work/.aaa/demo-t-0001".into(),
-                            repo: None,
-                            branch: None,
-                        })),
+                        AgentRequest::ThreadAdopt(_) => {
+                            if let Some((seen, resume)) = pause.take() {
+                                seen.send(()).unwrap();
+                                resume.await.unwrap();
+                            }
+                            Outcome::Ok(AgentResponse::ThreadAdopted(ThreadAdopted {
+                                cwd: "/work".into(),
+                                work_dir: "/work/.aaa/demo-t-0001".into(),
+                                repo: None,
+                                branch: None,
+                            }))
+                        }
                         request @ (AgentRequest::ReportCollect { .. } | AgentRequest::ReportTransfer { .. }) => {
                             let (transfer, max_library_bytes) = match request {
                                 AgentRequest::ReportTransfer { max_library_bytes, .. } => (true, max_library_bytes),
@@ -182,7 +196,18 @@ async fn report_copy_recovers(fail_library: bool, fail_history: bool) {
             }
         }
     });
-    let adopted = node.json(&["thread", "adopt", "demo", "--pane", "s", "--title", "보고 회수 시험"]).unwrap();
+    let adopt_node = node.clone();
+    let adopting = tokio::task::spawn_blocking(move || {
+        adopt_node.json(&["thread", "adopt", "demo", "--pane", "s", "--title", "보고 회수 시험"])
+    });
+    if interleave_adopt {
+        tokio::time::timeout(limit, adopt_wait).await.expect("agent의 adopt 준비 요청").unwrap();
+        node.ticks(1);
+        let preparing = node.json(&["thread", "show", "demo", "t-0001"]).unwrap();
+        assert_eq!(preparing["status"], "starting", "실제 adopt 준비를 중단된 기동으로 오인했다: {preparing}");
+        adopt_finish.send(()).unwrap();
+    }
+    let adopted = adopting.await.unwrap().unwrap();
     assert_eq!(adopted["group"], "working", "{adopted}");
     tx.json(&LinkMsg::Event(AgentEvent::ReportChanged { thread: "demo/t-0001".into(), hash: Some("changed".into()) }))
         .await

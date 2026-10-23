@@ -108,18 +108,21 @@ impl Host {
             launch: Some(launch),
             ..ThreadRec::starting(project, title, &mid, harness, Role::Worker, ThreadKind::Adopted, now)
         };
+        // Starting이 ticker에 보이기 전에 소유권을 얻는다. agent의 준비 응답까지 중단된 기동으로 복구하지 않는다.
+        let mut _claim = None;
         let id = self
             .db
-            .thread_insert_admitted(
+            .try_thread_insert_admitted(
                 project,
                 None,
                 None,
                 Some(self.settings(project).max_parallel_threads),
                 None,
                 |id| {
+                    _claim = Some(self.claim_thread(project, id).map_err(|e| anyhow::anyhow!(e.message))?);
                     let mut r = rec.clone();
                     r.id = id.to_string();
-                    serde_json::to_string(&r).unwrap()
+                    Ok(serde_json::to_string(&r).unwrap())
                 },
             )
             .map(|(id, _)| id)

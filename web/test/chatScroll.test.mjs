@@ -2,7 +2,7 @@
 // `scrollAnchor.ts` resolveWorkGroupScrollAnchor, `timelineScrollAnchoring.ts` rememberTimelinePosition을 aaa 기록으로.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "../src/chatScroll.ts";
+import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "../src/chatScroll.ts";
 
 const msg = (role, text) => ({ role, text });
 
@@ -50,5 +50,17 @@ describe("자리 기억(참고 rememberTimelinePosition)", () => {
     for (let i = 0; i < 101; i++) rememberChatPosition(`lru-${i}`, at, false);
     assert.equal(readChatPosition("lru-0"), undefined);
     assert.notEqual(readChatPosition("lru-100"), undefined);
+  });
+});
+
+describe("안내 높이와 맨 위", () => {
+  const at = { offsetWithinRow: -48, scrollOffset: 0 };
+  it("안내가 1~2px 커져도 맨 위는 정확히 0", () => {
+    assert.equal(chatAnchorTop(49, true, at), 0);
+    assert.equal(chatAnchorTop(50, true, at), 0);
+  });
+  it("앞 페이지가 붙거나 중간을 읽던 자리는 줄을 따라간다", () => {
+    assert.equal(chatAnchorTop(1000, false, at), 952);
+    assert.equal(chatAnchorTop(1000, true, { offsetWithinRow: 12, scrollOffset: 1012 }), 1012);
   });
 });

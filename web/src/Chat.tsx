@@ -25,7 +25,7 @@ import { imagePaths } from "./herdr/composerImages";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import type { PendingSend } from "./ChatComposer";
-import { chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
+import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
 import { ChatRow } from "./ChatRow";
 import { mergeChatPage } from "./chatPages";
@@ -589,7 +589,7 @@ export function ChatPanel({
         const row = rows[index];
         const rowId = rowIdsRef.current[index];
         // 안내 아래 첫 줄은 viewport보다 아래일 수 있다. 그 음수 거리도 그대로 보존한다.
-        if (row && rowId) anchor.current = { rowId, offsetWithinRow: top - row.getBoundingClientRect().top };
+        if (row && rowId) anchor.current = { rowId, offsetWithinRow: top - row.getBoundingClientRect().top, scrollOffset: el.scrollTop };
       }
       commitPage(response, true);
       setOlderState("idle");
@@ -664,7 +664,7 @@ export function ChatPanel({
   // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
   // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다). 같은 자리를 이 pane의 읽던 자리로도 기억한다(plan §8.266, 참고 MessagesTimeline
   // handleScroll의 rememberTimelinePosition). 기억한 자리로 돌아가는 동안은 둘 다 쉰다
-  const anchor = useRef<{ rowId: string; offsetWithinRow: number } | null>(null);
+  const anchor = useRef<{ rowId: string; offsetWithinRow: number; scrollOffset: number } | null>(null);
   const keepAnchor = (el: HTMLDivElement) => {
     if (restoring.current) return;
     const rows = chatRows(el);
@@ -675,7 +675,7 @@ export function ChatPanel({
     const at = chatScrollAnchor(ids, tops, el.scrollTop);
     // 맨 위 안내를 읽을 때 첫 메시지까지의 빈 거리도 보존한다.
     if (at && at.rowId === ids[0] && el.scrollTop < tops[0]!) at.offsetWithinRow = el.scrollTop - tops[0]!;
-    anchor.current = at ? { rowId: at.rowId, offsetWithinRow: at.offsetWithinRow } : null;
+    anchor.current = at ?? null;
     if (at) rememberChatPosition(pane, { ...at, atEnd: atBottom.current || (chatIsAtEnd(el) && !el.style.getPropertyValue("--chat-tail-space")) }, atBottom.current);
   };
   const holdAnchor = (el: HTMLDivElement) => {
@@ -687,7 +687,7 @@ export function ChatPanel({
     const row = index < 0 ? undefined : chatRows(el)[index];
     if (row === undefined) return;
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
-    const target = top + at.offsetWithinRow;
+    const target = chatAnchorTop(top, index === 0, at);
     // 짧은 최신 쪽 아래의 빈 자리도 읽던 화면이다(t3code anchored end space).
     const extra = target - (el.scrollHeight - el.clientHeight);
     if (extra > 0) {
@@ -739,7 +739,8 @@ export function ChatPanel({
     const target = () => {
       const row = index < 0 ? undefined : chatRows(el)[index];
       if (row === undefined) return restoreFrom.scrollOffset;
-      const offset = el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top + restoreFrom.offsetWithinRow;
+      const top = el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      const offset = chatAnchorTop(top, index === 0, restoreFrom);
       return Math.max(0, Math.min(offset, el.scrollHeight - el.clientHeight));
     };
     el.scrollTop = target();
@@ -758,7 +759,7 @@ export function ChatPanel({
       } else if (++stableFrames >= 2) {
         finish();
         // 추정 높이의 주변 줄이 늦게 mount돼도 저장한 row가 계속 기준이다.
-        anchor.current = { rowId: restoreFrom.rowId, offsetWithinRow: restoreFrom.offsetWithinRow };
+        anchor.current = { rowId: restoreFrom.rowId, offsetWithinRow: restoreFrom.offsetWithinRow, scrollOffset: el.scrollTop };
         rememberChatPosition(pane, { ...restoreFrom, scrollOffset: el.scrollTop }, false);
         return;
       }
@@ -884,7 +885,7 @@ export function ChatPanel({
           if (atBottom.current) hideJump();
           else soonShowJump();
           // holdAnchor가 낸 scroll은 읽던 줄을 바꾸지 않는다. 가상 row의 실측이 끝날 때까지 같은 줄을 잡는다.
-          if (manual || atBottom.current) keepAnchor(el);
+          if (manual || atBottom.current || el.scrollTop === 0) keepAnchor(el);
           if (el.scrollTop < 400 && olderState === "idle") loadOlder();
         }}
       >

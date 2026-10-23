@@ -1675,6 +1675,33 @@ mod tests {
     }
 
     #[test]
+    fn replay_keeps_history_scrolled_above_a_fixed_composer() {
+        let mut a = Vt::new(6, 30);
+        a.feed(b"\x1b[6;1Hfixed-input>\x1b[1;4r\x1b[1;1H");
+        for i in 0..30 {
+            a.feed(format!("history-{i}\r\n").as_bytes());
+        }
+        a.feed(b"\x1b[r\x1b[6;13H");
+        let text = a.read(ReadSource::Recent, Some(100), ReadFormat::Text);
+        assert!(text.text.contains("history-0"), "입력줄 위에서 밀린 기록이 사라졌다: {}", text.text);
+        let mut b = Vt::new(6, 30);
+        b.feed(&a.replay());
+        assert_eq!(b.read(ReadSource::Recent, Some(100), ReadFormat::Text).text, text.text);
+        assert!(b.text("s").lines.last().unwrap().contains("fixed-input>"));
+    }
+
+    #[test]
+    fn interior_regions_and_explicit_scroll_up_do_not_create_history() {
+        for scroll in [b"\x1b[2;4r\x1b[4;1H\n".as_slice(), b"\x1b[1;4r\x1b[S", b"\x1b[S"] {
+            let mut v = Vt::new(6, 30);
+            v.feed(b"top\r\nsecond\r\nthird\r\nfourth\r\nfifth\r\nfixed-input>");
+            v.feed(scroll);
+            assert_eq!(v.history_len(), 0, "{scroll:?}");
+            assert!(v.text("s").lines.last().unwrap().contains("fixed-input>") || scroll == b"\x1b[S");
+        }
+    }
+
+    #[test]
     fn replay_keeps_alternate_screen_over_normal_screen() {
         let mut a = Vt::new(5, 20);
         for i in 1..=10 {

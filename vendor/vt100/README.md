@@ -9,6 +9,9 @@ workspace의 `[patch.crates-io]`가 이 판을 쓴다. workspace 밖(`exclude`)�
 
 ## 바꾼 것
 
+- **입력줄 위 기록(`Grid::scroll_up`).** xterm.js 5.5의 `BufferService.scroll`처럼 맨 위부터 시작하는 일부 영역의 LF도
+  normal scrollback에 남긴다. 화면 중간 영역과 `CSI S`는 `InputHandler.scrollUp`처럼 기록을 만들지 않는다. Codex inline이
+  입력줄을 보호하며 밀어 올린 기록도 웹 재접속 사본에 남게 한다(t-0839).
 - **폭과 묶음(`src/widths.rs`, `src/widths_table.rs`, `Screen::text`).** 글자마다 표(grapheme 부류·폭·묶기 방식)를 보고,
   앞 글자와 묶을지는 addon `shouldJoin`과 같은 규칙으로 정한다. 앞 칸 묶음에 붙는 글자는 그 칸에 더하고, 붙어서 한 칸
   묶음이 두 칸이 되면(⚠ 뒤 VS16) 그 자리에서 넓힌다. 끝 칸이라 자리가 없으면 xterm처럼 이은 줄로 다음 줄 처음에 옮긴다.

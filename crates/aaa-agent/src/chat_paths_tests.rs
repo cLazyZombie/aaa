@@ -118,6 +118,22 @@ fn account_chat_rejects_ambiguous_foreign_nested_and_old_records() {
 }
 
 #[test]
+fn codex_chat_resolves_versioned_rollout_from_id_hint_and_account_metadata() {
+    let f = Fixture::new();
+    let old = f.rollout(ID, &f.agent.state, serde_json::json!("cli"), "2026-10-21T00:00:00.000Z");
+    let versioned = old.with_file_name(format!("rollout-test-{ID}_{HOOK}.jsonl"));
+    std::fs::rename(old, &versioned).unwrap();
+    let expected = versioned.canonicalize().unwrap();
+    assert_eq!(f.path(ID).unwrap(), expected);
+    assert_eq!(f.path(HOOK).unwrap(), expected);
+    assert_eq!(f.agent.chat_path(Some("s"), "codex", versioned.to_str(), Some(ID)).unwrap(), expected);
+    for tail in ["bad", "../bad", "", "01900000-0000-7000-9000-000000000001_extra"] {
+        assert!(!chat::codex_record_name(Path::new(&format!("rollout-test-{ID}_{tail}.jsonl")), ID));
+    }
+    assert!(!chat::codex_record_name(&versioned, HOOK), "기록 ID를 대화 ID로 썼다");
+}
+
+#[test]
 fn codex_chat_uses_the_exact_bound_file_even_when_the_id_has_a_backup_copy() {
     let f = Fixture::new();
     let first = f.rollout(ID, &f.agent.state, serde_json::json!("cli"), "2026-10-21T00:00:00.000Z");
