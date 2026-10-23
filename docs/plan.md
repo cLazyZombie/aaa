@@ -7654,3 +7654,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **콘솔.** 줄 입력은 `ReadConsoleW`를 직접 읽는다. std stdin은 Ctrl+C로 끊긴 읽기를 다시 시작해 Enter까지 취소가 늦기 때문이다. 암호는 echo·줄 입력을 끈 한 글자 읽기로 받고 원래 모드를 모든 경로에서 돌린다. 관리자가 아니면 데스크톱에서는 `runas`로 같은 인자를 다시 실행하고, SSH에서는 바꾸기 전에 멈춘다. 이름이 `aaa-setup`으로 시작하는 실행 파일은 다른 명령이 없으면 `setup`이다.
 - **검증.** macOS의 흐름 시험 18개(가짜 System·Ui)가 질문 순서·바꾼 순서·되돌림·재실행·업데이트·제거·충돌·칸 맞춤을 본다. Windows 11 실기 PC에서 전용 가짜 관리자 사용자의 대화형 SSH(ConPTY)로, 다른 Mac에 띄운 별도 시험 host(운영과 같은 b6d7bda8)에 붙여 했다. 등록 창 닫힘→Enter, 틀린 암호→다시, 승인, 서비스(세션 0·지연 자동·실패 동작), 연결, 서비스 pane의 사용자 PATH, 업데이트, 이름 충돌, 승인 대기·질문 중 Ctrl+C(130), 터미널 없는 SSH(2), 관리자 아님(2), 제거·purge를 확인했다. 정리 뒤 기준 목록과 대조했다. 탐색기 더블클릭(UAC)은 사용자 데스크톱에 창을 띄우므로 실기하지 않았다.
 - **남은 것.** host rollout의 Windows 재시작(지금은 launchd만)은 후속이다. API·Agent link·E2E 번호 변경은 없다.
+
+### 8.468 Windows 서비스 thread의 private journal 폴더 준비(t-0902)
+
+- **원인·수리.** 승격·서비스 token의 기본 owner가 Administrators이면 일반 생성한 `thread-preparations`도 그 소유권을 받는다. private ACL 이행의 `ReOpenFile`이 디렉터리에서 Win32 5로 실패해 thread 자리 생성·ConPTY에 이르지 못했다. 기본 owner가 현재 SID와 다른 token만 최초 handle에 `WRITE_OWNER`를 요청한다. 같은 handle의 기존 owner·객체 종류를 확인한 뒤 기존 private DACL·소유권 검증을 유지한다.
+- **진단.** thread 준비·작업 root 잠금·자리·journal 권한·brief·hook·pane 상태/명세/로그·PTY·자식 실행의 문맥을 오류 체인에 붙인다. 실행 인자 전체나 환경값은 추가하지 않는다. 원본 로그의 한글은 UTF-8로 정상이었으며 서비스 로그 형식은 바꾸지 않는다.
+- **검증.** 실제 Windows의 기존 ACL owner 실패 대조와 상속 journal·부모 ACL 보존 회귀를 검사한다. 별도 SCM 가상 계정에서 실제 host·agent·thread·session-host·ConPTY를 열고 Session 0과 ready/입력/pong을 확인한다. 실제 암호와 사용자 서비스·설정·sshd는 보존하며 기준 목록을 대조해 정리한다. API·프로토콜·기존 E2E 번호를 유지한다. 절 번호는 묶음 착지 때 main과 대조한다.

@@ -245,6 +245,26 @@ fn state_and_tls_are_private_on_creation_and_legacy_reload() {
 }
 
 #[test]
+fn inherited_thread_journal_directory_is_normalized_without_changing_parent() {
+    let lab = Lab::new();
+    let state = lab.0.join("state");
+    crate::util::ensure_private_dir(&state).unwrap();
+    let before = snapshot(&state);
+    // journal::write는 기존 private state 아래에 std::fs로 폴더를 만든다.
+    // DACL은 상속해도 승격·서비스 token의 기본 owner는 Administrators일 수 있다.
+    let journal = state.join("thread-preparations");
+    std::fs::create_dir(&journal).unwrap();
+    for _ in 0..2 {
+        crate::util::ensure_private_dir(&journal).unwrap();
+        crate::private_file::verify_directory(&journal).unwrap();
+        assert_private(open(&journal, true).as_raw_handle(), true);
+    }
+    crate::util::write_private(&journal.join("thread.json"), b"ready").unwrap();
+    assert_eq!(crate::util::read_private(&journal.join("thread.json")).unwrap(), b"ready");
+    assert_eq!(snapshot(&state), before, "기존 state의 소유권·ACL은 유지한다");
+}
+
+#[test]
 fn secret_hard_links_and_wrong_kinds_are_rejected_without_rewriting() {
     let lab = Lab::new();
     let state = lab.0.join("state");

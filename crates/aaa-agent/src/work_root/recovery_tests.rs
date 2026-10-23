@@ -138,7 +138,8 @@ async fn root_switch_imports_legacy_once_and_recovers_the_original_worktree() {
     // root 변경 트랜잭션 동안 새 준비는 시작하지 않으며 다른 state도 같은 root를 차지하지 못한다.
     let transaction = RootTransaction::open(&lab.state).unwrap();
     let error = threads::prepare(&lab.cfg, lab.request("t-0003"), WAIT).await.unwrap_err();
-    assert!(error.to_string().contains("진행 중"), "{error:#}");
+    assert_eq!(error.to_string(), "thread t-0003 준비");
+    assert!(error.root_cause().to_string().contains("진행 중"), "{error:#}");
     drop(transaction);
     let error = activate(&lab.dir.join("other-state"), &lab.cfg.work_root, lab.cfg.work_mount.as_deref()).unwrap_err();
     assert!(error.to_string().contains("다른 agent"), "{error:#}");

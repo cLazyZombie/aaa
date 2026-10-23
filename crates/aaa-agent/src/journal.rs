@@ -10,7 +10,7 @@ pub(crate) fn write<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     if dir.symlink_metadata()?.file_type().is_symlink() {
         bail!("journal 폴더는 symlink일 수 없다");
     }
-    aaa_common::util::ensure_private_dir(dir)?;
+    aaa_common::util::ensure_private_dir(dir).with_context(|| format!("journal 폴더 권한 설정: {}", dir.display()))?;
     let tmp = dir.join(format!(".{}.tmp", aaa_common::util::new_id()));
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
