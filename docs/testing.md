@@ -2725,3 +2725,9 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - Windows의 별도 SSH 설정 파일 `-f`는 [Microsoft OpenSSH 구성 문서](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh-server-configuration)를 따른다. 서비스 등록은 일회 runner에서만 수행한다. 정본 로컬 검증은 `nice -n 15 bash scripts/ci-local.sh --tee`와 공개 검사, Windows cfg는 `cargo xwin clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings`다. 교차 컴파일 성공을 실제 Windows owner 성공으로 대신하지 않는다.
 
 - E2E72 첫 실행과 진단 실행은 WebKit의 service worker가 활성화된 context에서 list fixture를 한 번도 받지 않아(list=0), 실제 실패 작업만 남은 화면의 설치 단추를 기다렸다. 이 화면 fixture context만 기존 다른 UI fixture처럼 serviceWorkers=block으로 고친다. 실제 UI/host 요청·암호 지우기·보관 부재 단언과 30초 상한은 유지하며 PWA/service worker 자체의 기존 시험은 바꾸지 않는다.
+
+## Windows 한 줄 owner의 manifest fixture pipeline 제거(t-0485, plan §8.462)
+
+- Windows 실패 원문(run39808392236/job119927674887)은60.005초에 질문0/16, child 생존, reader 미완료, `manifest_request`/HTTP4, executor/config/active=false다. 시험용 `ConvertTo-Json | Set-Content`가 끝나지 않은 범위까지 확인했으며 cmdlet 내부 원인은 단정하지 않는다. 앞선 다른 main의 owner 성공이나 native probe 수리를 이번 재발의 성공 근거로 쓰지 않는다.
+- owner는 격리 lab에 manifest를 미리 쓰고 mock `Invoke-WebRequest`에서 그대로 복사한다. 실제 IRM/IEX 입구와 제품 manifest decoder·버전/URL/SHA·PE·native 검토/서명/파일/status 경계는 유지한다. 기존 PS5.1/7 루프·16질문·60초 상한과 모든 사후 단언을 유지하고 HTTP fixture 안의 JSON serializer pipeline만 제거한다.
+- `nice -n 15 cargo test --locked -p aaa --test install`과 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사·Windows strict cross clippy/build로 검증한다. 이 owner는 cfg(windows)이므로 macOS 통과나 cross만으로 Windows GREEN이라고 하지 않는다. 새 main의 Windows 실제 owner 결과가 남아 있다. 실제 CI 재실행·시한 증가·기대값 변경은 없다.

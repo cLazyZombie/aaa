@@ -7592,3 +7592,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **M5.** Linux 서비스 적용은 아직 install I4가 없어 열지 않는다. I4 착지 뒤 같은 계약으로 이어 구현한다.
 
 - **착지 통합(t-0818).** 기준 main `69507be4`의 마지막 §8.460을 확인해 M4를 §8.461로 옮겼다. FRONT_API 1.112는 이번 선택적 암호 입력에 배정하고 AGENT_LINK 1.11·E2E91까지의 기존 번호를 유지한다. Windows 실제 owner는 착지한 exact main CI로 판정한다.
+
+### 8.462 Windows 한 줄 입구 owner의 manifest transport 준비(t-0485)
+
+- main `eaebe576`의 Windows job `119927674887` 원문은 `answered=0/16`, `needle=설치 방식`, `child_exit=None`, `reader_done=false`이고 transport stage는 `manifest_request`, HTTP 단계4다. executor/config/active가 없으므로 실제 질문·승인·파일 적용 이전이다. 앞서 `4fe3e4ad`에서 같은 owner가 통과해도 이번 실패를 예외나 성공으로 바꾸지 않는다.
+- `manifest_request`와 `manifest_written` 사이의 유일한 구간은 시험용 `ConvertTo-Json | Set-Content`다. 이 중첩 PowerShell pipeline에서의 정지는 확인했지만, cmdlet 내부 대기 원인은 미확인이다. native 버전 probe/승인 뒤 EOF 정지와 구분한다.
+- 실제 HTTP 응답처럼 manifest를 Rust에서 미리 직렬화하고 mock transport는 payload와 같은 `[IO.File]::Copy`로 이미 준비한 바이트를 쓴다. 입구의 manifest 파싱·판/URL/SHA 검사와 실제 native 실행은 그대로다. PS5.1/7·질문16개·서명 승인·파일/status·옛 실행 파일 보존·job 한 건 단언과60초 사건 상한은 유지한다. 제품 코드·시험 전용 제품 flag/export·별도 관찰용 시험을 추가하지 않는다.
+- macOS gate와 Windows cross는 호환성 검증이다. 실제 Windows owner의 수리 후 판정은 새 착지 main CI로 남긴다. m13 자동화 기록 경합은 t-0814가 맡고 이 후보에서 고치지 않는다. v0.1.5는 수리 착지 뒤 exact main 네 job·Windows owner가 모두 GREEN일 때만 게시한다. API/link/E2E 번호는 유지한다.
+
+- **착지 통합(t-0824).** 기준 main `be26951f`의 마지막 §8.461과 FRONT_API 1.112·AGENT_LINK 1.11·기존 E2E 번호를 확인해 겹친 절만 §8.462로 옮긴다. 승인된 진단 CI에서 원본·후보 모두 Windows install 25/25를 통과해 원본 정지는 미재현이다. 원인 미확정의 시험 fixture 강화로 채택하며 실제 Windows 판정은 새 main CI에 맡긴다. 제품 변경·배포·tag·release는 없다.
