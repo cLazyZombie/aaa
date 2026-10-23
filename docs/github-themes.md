@@ -5,7 +5,7 @@
 | 표시 이름 | 저장 이름 | 기본 바탕 |
 |---|---|---|
 | GitHub Light | `github-light` | `#ffffff` |
-| GitHub Dark | `github-dark` | `#24292e` |
+| GitHub Dark | `github-dark` | `#0d1117` |
 | GitHub Dark Dimmed | `github-dark-dimmed` | `#22272e` |
 
 웹에서 고르면 이름의 밝기도 함께 고른다. 이후 밝기 단추·시스템 설정은 기존처럼 동작한다. Light의 어두운 짝은 Dark,
@@ -28,30 +28,20 @@ Dark·Dimmed의 밝은 짝은 Light다. 시스템 설정의 밝음·어두움 �
 표면은 canvas.default/subtle, 주 글자는 fg.default, 보조 글자는 fg.muted, 강조·작업 중은 accent,
 확인 필요·오류는 danger, 완료는 success, 주의는 attention이다. 웹은 `github-themes.css`를 쓴다.
 
-## 사용자 GitHub Dark 통합(t-0889)
+## 앱 색 복원과 독립 터미널(t-0899)
 
-사용자 2026-10-23 지시로 기존 `github-dark`를 터미널의 GitHub Dark에 맞춘다. 같은 이름을 중복 추가하지 않는다.
-앱의 기본 바탕·입력 바탕은 `#24292e`, 주 글자는 `#c9d1d9`이고, 터미널의 ANSI 16색·커서·선택 색도
-[터미널 색 자료](terminal-themes.md)와 같다. 터미널에 없는 앱의 판·테두리·강조·상태·구문 색은
-Primer primitives 7.10.0 `dark.json` 값을 쓴다. 예를 들어 판은 `canvas.subtle` `#161b22`,
-테두리는 `border.default` `#30363d`, 강조는 `accent.fg` `#58a6ff`다.
-새 배경에서 `danger.fg` `#f85149`의 대비가 4.38:1이므로 오류·삭제 글자와 확인 필요 표지는
-같은 Primer `scale.red[3]` `#ff7b72`로 높여 기존 UI 대비 4.5:1을 유지한다.
-원 터미널 테마의 GPL-3.0·모음 MIT 고지는 유지하고, Primer MIT 고지는
-`web/public/licenses/primer-primitives-LICENSE.txt`에 그대로 배포한다.
-[VS Code GitHub Theme](https://github.com/primer/github-vscode-theme/blob/main/src/colors.js)의 Primer 역할 매핑도 확인했다.
-새 의존성·설정 구조·host 계약은 추가하지 않는다. 기존 밝기 짝과 시스템 모드 규칙을 유지한다.
+사용자 지시로 앱 팔레트는 t-0889 이전(adf056a9)으로 복원했다. 기본·입력·PWA 바탕은 `#0d1117`,
+오류·삭제·확인 필요 빨강은 `#f85149`다. `github-themes.css`의 색 정의 전체가 그 기준과 같다.
+‘앱 팔레트 따름’ 터미널도 원래 앱 ANSI·커서·선택 색으로 돌아간다.
+독립 터미널 선택 `GitHub Dark`는 배경 `#24292e`, 글자 `#c9d1d9`, 원 ANSI 16색과 기존 저장 ID를 유지한다.
 
-주 글자·보조 글자·강조·상태색은 기본·판·hover 바탕 모두에서 대비 4.5:1 이상인
-같은 Primer 색 계열의 가장 가까운 밝기로 보정했다. Light·Dimmed의 ANSI 16색도 터미널 바탕과 4.5:1 이상이다.
-밝은 테마의 white/bright white는 어두운 회색이다. Dimmed의 보조 글자는 hover 위 대비를 위해 fg.default까지 밝힌다.
-이것이 Light·Dimmed에서 원본과 다르게 둔 이유다.
-사용자 지정 Dark의 ANSI는 원색을 우선하므로 black·bright black·cyan은 4.5:1 미만일 수 있다.
-UI 본문·보조 글자·강조·상태색은 기존 대비 기준을 유지한다. 명시 RGB와 ANSI 256색 중 16~255는 프로그램이 지정한 값을 유지한다.
+앱 주 글자·보조 글자·강조·상태·ANSI는 원래 보정된 Primer 색으로 기본·판·hover에서 4.5:1 이상이다.
+독립 GitHub Dark 터미널의 ANSI는 사용자 지정 원색을 보존하므로 black·bright black·cyan은 이 기준 밖이다.
+GPL-3.0 원 테마·모음 MIT·Primer MIT 고지를 모두 유지한다. 명시 RGB·ANSI 256색 중 16~255도 그대로다.
 
 ## 확인
 
 웹 E2E14는 Chromium·WebKit의 데스크톱·휴대폰에서 세 이름 선택·host 저장·다시 열기·UI 대비를 확인한다.
-E2E95는 기존 기기 저장값 복원·이름 통일·앱과 독립 터미널 색 일치 및 실제 대화·질문 카드 화면을 확인한다.
+E2E95는 기존 기기 저장값 복원·이름 유지·앱과 독립 터미널의 색 분리 및 adf056a9의 전체 색 token 일치 및 실제 대화·질문 카드 화면을 확인한다.
 
 TUI 테마 구현은 2026-10-19 삭제했다. 보존 tag `tui-last`와 복구 방법은 [삭제 기록](removed-tui.md)을 본다.

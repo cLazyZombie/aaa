@@ -1,0 +1,6 @@
+herdr palette color data
+Source: https://github.com/herdrdev/herdr
+Revision: 2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01
+File: src/app/state.rs, Palette
+Licensed under Apache-2.0.
+Changes: mapped color roles to aaa web tokens; adjusted UI foreground contrast to 4.5:1; terminal scheme colors are listed separately.

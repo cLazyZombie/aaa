@@ -4,6 +4,8 @@
 // <html data-theme>·data-palette·data-density·--ui-scale을 늘 달고(참고 applyToDocument), 실제 색·크기는 herdr/tokens.css에 있다.
 // 참고처럼 theme·palette·sidebarRows·agentOrder는 host 공유 설정이다(preferencesSync.ts, plan §8.79). 나머지는 이 기기 것이다.
 // 이 store는 이 기기 사본을 localStorage에 두고, 공유 값이 오면 preferencesSync가 updateAppearance로 놓는다.
+import { THEME_CATALOG, type CatalogPalette } from "./themeCatalog.ts";
+import { catalogTheme, catalogTokens } from "./catalogTheme.ts";
 import { useSyncExternalStore } from "react";
 import type { StatusIndicators } from "./herdr/status.ts";
 import { fontScale, sanitizeUiFontSize } from "./herdr/typography.ts";
@@ -11,7 +13,7 @@ import { fontScale, sanitizeUiFontSize } from "./herdr/typography.ts";
 export type ThemeSetting = "dark" | "light" | "system";
 export type ResolvedTheme = "dark" | "light";
 /** amber: herdr 모양(기본), charcoal: 무채색 Ghostty식 어두움, catppuccin: 어두우면 Mocha, 밝으면 Latte */
-export type Palette = "amber" | "charcoal" | "catppuccin" | "github-light" | "github-dark" | "github-dark-dimmed";
+export type Palette = CatalogPalette | "amber" | "charcoal" | "catppuccin" | "github-light" | "github-dark" | "github-dark-dimmed";
 /** 한 줄은 이름, 두 줄은 하는 일과 그 아래 이름(참고 `SidebarRows`) */
 export type SidebarRows = "one" | "two";
 /** Agents 목록 차례: 머신 목록 차례, 또는 기다리는 agent 먼저 그다음 최근 바뀐 것(참고 `AgentOrder`) */
@@ -39,7 +41,7 @@ export interface Appearance {
 export const CHAT_FONT_MIN = 11;
 export const CHAT_FONT_MAX = 24;
 
-export const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin", "github-light", "github-dark", "github-dark-dimmed"];
+export const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin", "github-light", "github-dark", "github-dark-dimmed", ...THEME_CATALOG.map((theme) => theme.id)];
 const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two", agentOrder: "workspace", density: "comfortable", uiFontSize: null, chatFontSize: null };
 const KEY = "aaa:appearance";
 /** 전에 쓰던 열쇠(밝음·어두움만 남았다). 처음 한 번 옮긴다 */
@@ -107,16 +109,18 @@ export function paletteFor(a: Pick<Appearance, "theme" | "palette" | "paletteLig
   const chosen = a.theme === "system" ? (resolved === "dark" ? a.paletteDark : a.paletteLight) : a.palette;
   // GitHub는 이름이 밝기를 포함한다. 밝기 전환·OS 변경 때 같은 계열의 짝을 그린다.
   if (chosen.startsWith("github-")) return resolved === "light" ? "github-light" : chosen === "github-dark-dimmed" ? chosen : "github-dark";
+  const catalog = catalogTheme(chosen);
+  if (catalog) return catalog.mode === resolved ? catalog.id : catalog.pair;
   return chosen;
 }
 
 /** PWA 제목 막대 색은 판 바탕을 따른다(참고 settings.ts THEME_COLOR) */
-const THEME_COLOR: Record<Palette, Record<ResolvedTheme, string>> = {
+const THEME_COLOR: Record<Exclude<Palette, CatalogPalette>, Record<ResolvedTheme, string>> = {
   amber: { dark: "#181613", light: "#faf8f3" },
   charcoal: { dark: "#171717", light: "#fafaf9" },
   catppuccin: { dark: "#181825", light: "#e6e9ef" },
   "github-light": { dark: "#0d1117", light: "#ffffff" },
-  "github-dark": { dark: "#24292e", light: "#ffffff" },
+  "github-dark": { dark: "#0d1117", light: "#ffffff" },
   "github-dark-dimmed": { dark: "#22272e", light: "#ffffff" },
 };
 
@@ -124,19 +128,26 @@ const subs = new Set<() => void>();
 let current: Appearance = read();
 let resolved: ResolvedTheme = resolveTheme(current.theme);
 
+let appliedCatalogKeys: string[] = [];
+
 function apply() {
   resolved = resolveTheme(current.theme);
   const palette = paletteFor(current, resolved);
   const root = document.documentElement;
   root.dataset["theme"] = resolved;
   root.dataset["palette"] = palette;
+  appliedCatalogKeys.forEach((key) => root.style.removeProperty(key));
+  const catalog = catalogTheme(palette);
+  const colors = catalog ? catalogTokens(catalog.id) : {};
+  Object.entries(colors).forEach(([key, value]) => root.style.setProperty(key, value));
+  appliedCatalogKeys = Object.keys(colors);
   // 참고 applyToDocument: 밀도와, 모든 --fs-*(--fs-input 말고)에 곱하는 배율 = 고른 본문 크기 / 밀도의 본문 크기
   root.dataset["density"] = current.density;
   root.style.setProperty("--ui-scale", String(fontScale(uiFontSize(current), BODY_FONT[current.density])));
   // 대화는 인터페이스 위의 배율(참고 applyToDocument `--chat-scale`): 고른 크기는 그 크기로, 안 고르면 인터페이스를 따른다
   root.style.setProperty("--chat-scale", String(fontScale(chatFontSize(current), uiFontSize(current))));
   root.style.colorScheme = resolved;
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[palette][resolved]);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", (catalog ? catalog.colors.panel_bg : THEME_COLOR[palette as Exclude<Palette, CatalogPalette>][resolved]));
   subs.forEach((f) => f());
 }
 
