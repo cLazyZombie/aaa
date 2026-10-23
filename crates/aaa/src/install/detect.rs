@@ -7,7 +7,6 @@ use std::time::Duration;
 use super::{engine, error, platform};
 use aaa_proto::install::*;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 type Result<T> = std::result::Result<T, Box<InstallResult>>;
 fn path_text(p: &Path) -> Result<String> {
@@ -47,7 +46,7 @@ fn real_file(p: &Path) -> Result<PathBuf> {
     }
 }
 fn digest(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+    hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
 }
 /// 입력/설정에 있는 device/FIFO와 무한 stream을 읽지 않는다. 큰 binary는 순차 hash한다.
 fn file_hash(p: &Path) -> Result<Option<String>> {
@@ -60,7 +59,7 @@ fn file_hash(p: &Path) -> Result<Option<String>> {
         return Err(error("unsupported_file", 2));
     }
     let mut file = std::fs::File::open(p).map_err(|_| error("file_unreadable", 2))?.take(1024 * 1024 * 1024 + 1);
-    let mut sha = Sha256::new();
+    let mut sha = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buf = [0u8; 64 * 1024];
     loop {
         let n = file.read(&mut buf).map_err(|_| error("file_unreadable", 2))?;
@@ -69,8 +68,9 @@ fn file_hash(p: &Path) -> Result<Option<String>> {
         }
         sha.update(&buf[..n]);
     }
-    Ok(Some(hex::encode(sha.finalize())))
+    Ok(Some(hex::encode(sha.finish())))
 }
+
 fn add_file(files: &mut BTreeMap<String, Option<String>>, path: &Path) -> Result<bool> {
     let hash = file_hash(path)?;
     let exists = hash.is_some();
@@ -580,4 +580,39 @@ fn serve_check(result: &mut InstallResult, c: &InstallChoices, observations: &mu
     }
     change(result, "tailscale_serve", "publish_after_authorization");
     Ok(())
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn file_and_memory_digests_match_independent_vectors_and_fresh_bytes() {
+        struct Directory(PathBuf);
+        impl Drop for Directory {
+            fn drop(&mut self) {
+                std::fs::remove_dir_all(&self.0).unwrap();
+            }
+        }
+        let lab = Directory(std::env::temp_dir().join(format!("aaa-digest-{}", aaa_common::util::new_id())));
+        std::fs::create_dir(&lab.0).unwrap();
+        let path = lab.0.join("digest-input");
+        assert_eq!(file_hash(&path).unwrap(), None);
+        for size in [0, 3, 65535, 65536, 65537, 131079] {
+            let bytes: Vec<_> = (0..size).map(|i| (i % 251) as u8).collect();
+            std::fs::write(&path, &bytes).unwrap();
+            let expected = hex::encode(Sha256::digest(&bytes));
+            assert_eq!(file_hash(&path).unwrap(), Some(expected.clone()));
+            assert_eq!(digest(&bytes), expected);
+        }
+        for bytes in [b"abc", b"abd"] {
+            std::fs::write(&path, bytes).unwrap();
+            assert_eq!(file_hash(&path).unwrap(), Some(hex::encode(Sha256::digest(bytes))));
+        }
+        assert_eq!(file_hash(&lab.0).unwrap_err().error.as_ref().map(|e| e.code.as_str()), Some("unsupported_file"));
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(1024 * 1024 * 1024 + 1).unwrap();
+        assert_eq!(file_hash(&path).unwrap_err().error.as_ref().map(|e| e.code.as_str()), Some("unsupported_file"));
+    }
 }

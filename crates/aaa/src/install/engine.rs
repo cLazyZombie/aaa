@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use aaa_proto::install::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 mod apply;
 mod authorization;
@@ -65,7 +64,7 @@ impl Fault {
     }
 }
 fn hash(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+    hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
 }
 fn account_hash() -> Result<String> {
     super::platform::account()

@@ -156,7 +156,7 @@ fn snapshot(path: &Path) -> Result<(Option<String>, Option<u32>)> {
             return Err(Fault::conflict());
         }
     }
-    let mut sha = Sha256::new();
+    let mut sha = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buf = [0u8; 65536];
     let mut total = 0u64;
     loop {
@@ -175,7 +175,7 @@ fn snapshot(path: &Path) -> Result<(Option<String>, Option<u32>)> {
     {
         return Err(Fault::conflict());
     }
-    Ok((Some(hex::encode(sha.finalize())), Some(mode(&finished))))
+    Ok((Some(hex::encode(sha.finish())), Some(mode(&finished))))
 }
 fn resource_key(path: &Path) -> String {
     #[cfg(windows)]

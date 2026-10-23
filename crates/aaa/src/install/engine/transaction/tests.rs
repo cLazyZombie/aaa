@@ -120,6 +120,35 @@ pub(in crate::install::engine) fn tree(
 }
 
 #[test]
+fn snapshots_and_payload_digests_match_independent_sha256_without_caching() {
+    use sha2::{Digest, Sha256};
+    let lab = Lab::new();
+    let path = lab.0.join("snapshot-input");
+    assert_eq!(snapshot(&path).unwrap(), (None, None));
+    for size in [0, 3, 65535, 65536, 65537, 131079] {
+        let bytes: Vec<_> = (0..size).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &bytes).unwrap();
+        let expected = hex::encode(Sha256::digest(&bytes));
+        assert_eq!(hash(&bytes), expected);
+        assert_eq!(snapshot(&path).unwrap(), (Some(expected), Some(mode(&path.metadata().unwrap()))));
+    }
+    for bytes in [b"abc", b"abd"] {
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(snapshot(&path).unwrap().0, Some(hex::encode(Sha256::digest(bytes))));
+    }
+    assert!(snapshot(&lab.0).is_err(), "파일만 읽는다");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(1024 * 1024 * 1024 + 1).unwrap();
+    assert!(snapshot(&path).is_err(), "기존 1GiB 한도를 유지한다");
+    #[cfg(unix)]
+    {
+        let link = lab.0.join("snapshot-link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(snapshot(&link).is_err(), "symlink는 따라가지 않는다");
+    }
+}
+
+#[test]
 fn file_steps_resume_after_rename_without_rewriting_or_leaking_private_payloads() {
     let lab = Lab::new();
     let a = lab.put("config/a.toml", format!("old={CANARY}").as_bytes());
