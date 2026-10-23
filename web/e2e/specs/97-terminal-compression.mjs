@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { performance } from "node:perf_hooks";
+import { RateLimitedWire } from "../lib/rate-limited-wire.mjs";
 import { aaa, root, step, browser, webkit, pairPage, inList, waitOutput, domIs, screenText, shot, termDiag } from "../lib/harness.mjs";
 
 function observeWorker() {
@@ -36,13 +37,21 @@ function routeWire(stats, bps = 1e9, rtt = 1) {
   return (socket) => {
     const server = socket.connectToServer();
     if (stats.pane && !socket.url().includes(encodeURIComponent(stats.pane))) return;
-    const timers = new Set();
     stats.started = performance.now();
-    let end = stats.started;
-    let upstreamEnd = stats.started;
-    let closed = false;
     let echoTail = "";
     let binaryBytes = 0;
+    const downstream = new RateLimitedWire((raw) => {
+      socket.send(raw);
+      stats.delivered.push({ kind: typeof raw === "string" ? JSON.parse(raw).t : "binary", at: performance.now() });
+    }, bps, rtt);
+    const upstream = new RateLimitedWire((raw) => {
+      if (typeof raw === "string") {
+        const msg = JSON.parse(raw);
+        if (msg.t === "ack") { stats.acks.push({ stream: msg.stream, offset: msg.offset, at: performance.now() }); stats.onAck?.(); }
+        if (msg.t === "input") stats.inputs.push({ at: performance.now(), bytes: Buffer.byteLength(msg.data), data: msg.data });
+      } else stats.inputs.push({ at: performance.now(), bytes: raw.length, data: Buffer.from(raw).toString("utf8") });
+      server.send(raw);
+    }, bps, rtt);
     server.onMessage((raw) => {
       const size = typeof raw === "string" ? Buffer.byteLength(raw) : raw.length;
       let kind = "binary";
@@ -59,32 +68,13 @@ function routeWire(stats, bps = 1e9, rtt = 1) {
       if (kind === "binary") {
         binaryBytes += size;
         echoTail = (echoTail + Buffer.from(raw).toString("utf8")).slice(-2048);
+        stats.binaryTail = echoTail; stats.binaryBytes = binaryBytes;
         if (stats.expectedEcho && echoTail.includes(stats.expectedEcho)) stats.echoOffset = binaryBytes;
       }
-      const started = performance.now();
-      end = Math.max(end, started + rtt / 2) + size * 8000 / bps;
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        if (!closed) { socket.send(raw); stats.delivered.push({ kind, at: performance.now() }); }
-      }, Math.max(0, end - performance.now()));
-      timers.add(timer);
+      downstream.push(raw, size);
     });
-    socket.onMessage((raw) => {
-      const size = typeof raw === "string" ? Buffer.byteLength(raw) : raw.length;
-      upstreamEnd = Math.max(upstreamEnd, performance.now() + rtt / 2) + size * 8000 / bps;
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        if (closed) return;
-        if (typeof raw === "string") {
-          const msg = JSON.parse(raw);
-          if (msg.t === "ack") { stats.acks.push({ stream: msg.stream, offset: msg.offset, at: performance.now() }); stats.onAck?.(); }
-          if (msg.t === "input") stats.inputs.push({ at: performance.now(), bytes: Buffer.byteLength(msg.data) });
-        } else stats.inputs.push({ at: performance.now(), bytes: raw.length });
-        server.send(raw);
-      }, Math.max(0, upstreamEnd - performance.now()));
-      timers.add(timer);
-    });
-    const clear = () => { closed = true; for (const timer of timers) clearTimeout(timer); timers.clear(); };
+    socket.onMessage((raw) => upstream.push(raw, typeof raw === "string" ? Buffer.byteLength(raw) : raw.length));
+    const clear = () => { downstream.close(); upstream.close(); };
     server.onClose((code, reason) => { clear(); socket.close({ code, reason }); });
     socket.onClose((code, reason) => { clear(); server.close({ code, reason }); });
     stats.disconnect = () => { clear(); socket.close({ code: 1011, reason: "test reconnect" }); server.close(); };
@@ -210,18 +200,21 @@ let keys = ""; process.stdin.on("data", data => {
             await dev.page.getByTestId("terminal").evaluate((el) => { const vp = el.querySelector(".xterm-viewport"); vp.scrollTop = 0; vp.dispatchEvent(new Event("scroll")); });
             keys += "abcdefgh";
             stats.expectedEcho = `KEY:${keys}`;
+            let echoDeadline;
             const applied = new Promise((resolve, reject) => {
-              const deadline = setTimeout(() => reject(new Error("입력 echo의 xterm ACK가 20초 안에 오지 않았다")), 20_000);
+              echoDeadline = setTimeout(() => reject(new Error("입력 echo의 xterm ACK가 20초 안에 오지 않았다")), 20_000);
               stats.onAck = () => {
-                if (stats.echoOffset !== undefined && stats.acks.some((ack) => ack.stream === snapshot.stream && ack.offset >= snapshot.raw + stats.echoOffset)) { clearTimeout(deadline); resolve(performance.now()); }
+                if (stats.echoOffset !== undefined && stats.acks.some((ack) => ack.stream === snapshot.stream && ack.offset >= snapshot.raw + stats.echoOffset)) { resolve(performance.now()); }
               };
             });
             const inputStarted = performance.now();
-            await dev.page.keyboard.type("abcdefgh");
-            await waitOutput(paneName, `KEY:${keys}`);
-            const inputPtyMs = performance.now() - inputStarted;
-            const inputAppliedAckMs = await applied - inputStarted;
+            const [inputPtyMs, appliedAt] = await Promise.all([
+              dev.page.keyboard.type("abcdefgh").then(() => waitOutput(paneName, `KEY:${keys}`)).then(() => performance.now() - inputStarted),
+              applied,
+            ]).finally(() => { clearTimeout(echoDeadline); stats.onAck = undefined; });
+            const inputAppliedAckMs = appliedAt - inputStarted;
             assert.equal(stats.inputs.reduce((sum, input) => sum + input.bytes, 0), 8);
+            assert.equal(stats.inputs.map((input) => input.data).join(""), "abcdefgh");
             await domIs(dev.page, "제한 회선 history prepend 완료", () => Number(document.querySelector('[data-testid="terminal"]')?.dataset.historyApplied) >= 1);
             const history = stats.payloads.find((item) => item.kind === "history");
             assert.equal(history.compression, compressed ? "gzip" : null);

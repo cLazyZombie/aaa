@@ -87,6 +87,15 @@
 - Windows 코드는 `cargo xwin clippy -p aaa --bin aaa --target x86_64-pc-windows-msvc -- -D warnings`로 검사한다. 실기는 Windows 시험 PC 규칙(memory machines)대로 전용 폴더·`aaa-test-0878-*` 이름·가짜 관리자 사용자·기준 목록 대조로 한다. 시험 host는 다른 머신에 별도 상태 폴더·포트로 띄우고 운영 host에는 붙지 않는다. 대화형 SSH는 pty 드라이버가 출력 사건(질문·확인 코드·완료 줄)을 기다려 답한다. 승인은 그 시험 host CLI(`AAA_SESSION_ID` 없는 환경)로 한다.
 - 실기 확인 항목: 등록 창 닫힘→Enter, 틀린 암호→다시, 승인, 서비스(계정·세션 0·지연 자동 시작·실패 동작), host 연결, 서비스 pane의 사용자 PATH(표지 `codex.cmd`), 1바이트 다른 실행 파일로 업데이트, 이름 충돌→새 이름, 승인 대기·질문 중 Ctrl+C(130과 되돌림), 터미널 없는 SSH(2), 관리자가 아닌 SSH(2), 제거·purge 뒤 권한 회수. 탐색기 더블클릭(UAC 창)은 사용자 데스크톱에 창을 띄우므로 사용자 확인으로 남긴다.
 - 정리 주의: 가짜 사용자로 비밀번호 SSH 로그온·서비스 로그온을 한 뒤에는 그 사용자를 지워도 프로필 hive(`HKU\<SID>`·`_Classes`)가 `Loaded`로 남을 수 있다. 그 SID의 프로세스·로그온 세션이 없어도 남았고 `reg unload`는 거부됐다. 재부팅·sshd 재시작은 하지 않으므로 그 프로필 폴더는 다음 재부팅 뒤 `Remove-CimInstance`로 지우고 보고에 남긴다. BITS 시작 방식은 Windows가 Auto↔Manual로 바꾸므로 기준 대조에서 시험 변경으로 세지 않는다(t-0853과 같은 관찰).
+## E2E97 회선 제한기의 FIFO 보존(t-0919)
+
+- 기존 main의 로컬 재현은 ANSI·1 Mbit/s·100ms·identity에서 마지막 ACK가 snapshot 395,283 B + live 348 B = 395,631 B까지 왔는데 echo 탐색이 끝나지 않았다. 추가 binary 계측에서는 한글 표본의 같은 조건에서 `abcdefgh`가 `bcdeafgh`로 PTY에 도착했다. 압축 해제나 xterm flush 누락으로 판정하지 않는다.
+- 원인은 시험 회선의 메시지별 독립 타이머다. 절대 도착 시각이 증가해도 상대 지연을 다시 계산해 소수 밀리초를 버리는 Node 타이머는 등록 지연에 따라 메시지를 앞지를 수 있다. 방향마다 `RateLimitedWire`의 FIFO와 타이머 하나를 두며, 기존 byte-rate·RTT 식으로 계산한 도착 시각을 확인한 뒤 전달한다. 양방향은 독립이며 연결 종료는 큐·타이머를 폐기한다.
+- `node --test web/test/rateLimitedWire.test.mjs`는 실제 쓰는 회선 owner에 Node의 소수 지연 절삭과 등록 중 시계 진행을 넣는다. 구 독립 타이머는 `bacdefgh`로 실패하며, 수리는 `abcdefgh`를 전달한다. 큰 history 뒤 binary·state 순서, 예정 시각 이전 미전달, 반대 방향 입력의 독립, 종료 뒤 자료 폐기도 확인한다. 실제 시간을 자거나 실패를 재시도하지 않는다.
+- E2E97은 기존 Chromium/WebKit × 1280/390px와 일반·ANSI·한글 × identity/gzip × 세 회선 조건을 모두 유지한다. 8키의 바이트 수에 실제 순서 단언을 더하고, PTY 대기와 최종 xterm ACK 대기를 함께 구독하여 거절 시 진단·정리가 빠지지 않게 한다. 실패 로그에는 송신 순서·binary 끝부분·바이트 수·stream별 ACK를 남긴다. 기존 ACK 20초·단계 120초·기대 echo와 history prepend 조건은 그대로다.
+- 참고: [xterm.js flow control](https://xtermjs.org/docs/guides/flowcontrol/)의 write 완료 callback과 [ttyd writeData](https://github.com/tsl0922/ttyd/blob/main/html/src/components/terminal/xterm/index.ts)의 흐름 제어를 조사했다. [xterm.js MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)·[ttyd MIT](https://github.com/tsl0922/ttyd/blob/main/LICENSE)를 확인했다. [Node 타이머 계약](https://nodejs.org/api/timers.html#settimeoutcallback-delay-args)의 소수 지연 절삭·실행 순서 비보장을 대조했다. 외부 코드·의존성과 제품 API 변경은 없다.
+- 정본은 기존 전체 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다. GitHub CI는 기다리지 않는다.
+
 ## 터미널 기록 압축(t-0876)
 
 - `cargo test -p aaa-common terminal_payload --locked`: 두 codec의 정확한 일반·색상·한글·binary 왕복, 4095/4096 B와 이득 경계, 768 KiB/원시 JSON frame 상한, gzip CRC·잘림·남은 데이터·압축 폭탄, zstd window/dictionary, null·알 수 없는 metadata, IPC 거부를 검사한다. 실제 frame writer의 snapshot→binary→Pong 순서와 원시 offset, blocking 작업 두 개와 취소된 작업의 permit 보유도 사건으로 확인한다.
