@@ -554,6 +554,49 @@ mod tests {
         assert_eq!(lab.h.report_library("demo", "weekly", None, false).unwrap().from_thread, None);
     }
 
+    #[tokio::test]
+    async fn mark_read_batch_is_atomic_idempotent_and_preserves_new_reports() {
+        let lab = Lab::new();
+        let page = lab.state.join("batch-page");
+        std::fs::create_dir(&page).unwrap();
+        std::fs::write(page.join("index.html"), "첫 판").unwrap();
+        let send = |name| {
+            lab.h
+                .library_publish("demo", name, page.to_str().unwrap(), false, Some(Some("보고")), None, "test")
+                .unwrap()
+        };
+        send("one");
+        send("two");
+        let first = lab.h.report_id("demo", "one").unwrap();
+        let second = lab.h.report_id("demo", "two").unwrap();
+        let reference = |name: &str| aaa_proto::LibraryRef { project: "demo".into(), name: name.into() };
+        let request =
+            |names: &[&str]| FrontRequest::LibraryMarkRead { reports: names.iter().map(|n| reference(n)).collect() };
+        let error = lab.h.call(DeviceRole::Reader, "device:r", request(&[&first, "../bad"])).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        assert_eq!(lab.h.db.library_unseen_count().unwrap(), 2, "잘못된 항목 뒤에 부분 갱신하지 않는다");
+        // 창을 띄운 뒤 새 판을 보내면 옛 판을 확인해도 새 판은 안 봄으로 남는다.
+        std::fs::write(page.join("index.html"), "둘째 판").unwrap();
+        send("one");
+        send("three");
+        let mut changed = lab.h.reports_changed.subscribe();
+        changed.borrow_and_update();
+        let response = lab.h.call(DeviceRole::Reader, "device:r", request(&[&first, &second, &second])).await.unwrap();
+        let FrontResponse::LibraryReports { reports } = response else {
+            panic!("목록 응답");
+        };
+        assert!(!reports.iter().find(|r| r.name == "two").unwrap().unseen);
+        assert!(reports.iter().find(|r| r.name == "one").unwrap().unseen);
+        assert!(reports.iter().find(|r| r.name == "three").unwrap().unseen);
+        assert!(changed.has_changed().unwrap(), "활동 배지·다른 기기 갱신");
+        assert_eq!(lab.h.db.library_unseen_count().unwrap(), 2);
+        changed.borrow_and_update();
+        lab.h.call(DeviceRole::Reader, "device:r", request(&[&second])).await.unwrap();
+        assert!(!changed.has_changed().unwrap(), "같은 요청은 멱등");
+        let link = lab.h.latest_library_link("demo", "two").unwrap();
+        assert!(link.last_opened_at_ms.is_none(), "실제 열람으로 기록하지 않는다");
+    }
+
     /// 사용자 보고서(plan §8.256): index.html이 있어야 보내고, 보내면 안 봄·알림 post, 열면 봄, 다시 보내면 다시 안 봄,
     /// --to-user 없이 다시 올리면 작업 보고. 지우기는 끝나지 않은 thread가 하나라도 있으면 아무것도 지우지 않고, 아니면 사본·목록·
     /// thread 보고 사본·공유 링크를 모두 끝낸다. 보기 권한은 지우지 못한다.

@@ -1074,6 +1074,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .reports-panel { min-width: 0; }
 .reports-toolbar, .report-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .reports-toolbar { margin-bottom: 12px; }
+.reports-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .report-card { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .report-heading strong { min-width: 0; overflow-wrap: anywhere; }
 .report-card p { margin: 6px 0; }

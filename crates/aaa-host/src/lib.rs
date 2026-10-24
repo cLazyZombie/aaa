@@ -1972,6 +1972,7 @@ impl Host {
             FrontRequest::LibraryReports { project } => self
                 .library_reports(project.as_deref(), role.can_control())
                 .map(|reports| FrontResponse::LibraryReports { reports }),
+            FrontRequest::LibraryMarkRead { reports } => self.library_mark_read(&reports, actor, role.can_control()),
             FrontRequest::LibraryOpen { project, name } => {
                 let view = self.report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())?;
                 self.library_opened(&project, &name);

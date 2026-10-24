@@ -1,5 +1,11 @@
 # 시험 쓰는 법
 
+## 보고서 모두 읽음(t-0952)
+
+- `node web/e2e/web.e2e.mjs --spec 101 --workers 1`: 실제 host DB의 내 보고서 105개와 별도 보관 판을 사용한다. Chromium·WebKit 1280·390px에서 버튼·확인 창을 캡처하고 확인 개수·취소의 무요청·오류 보존·빈 탭 비활성·한 요청·첫 50개 밖 처리·보관함 범위·활동/탭 배지·Reader 숨김·가로 넘침을 검사한다. DOM·응답이 완료 사건이며 고정 대기와 실패 재시도는 없다.
+- host `mark_read_batch_is_atomic_idempotent_and_preserves_new_reports`는 Reader의 기존 열람 권한, 잘못된 항목의 부분 쓰기 방지, 중복/재요청 멱등, 새 판·새 보고서 보존, 배지 사건과 실제 열람 시각 보존을 검사한다.
+- 참고는 [herdr-web-ui ConfirmDialog](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/ConfirmDialog.tsx)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)), [Miniflux app.js](https://github.com/miniflux/v2/blob/main/internal/ui/static/js/app.js)([Apache-2.0](https://github.com/miniflux/v2/blob/main/LICENSE))다. 기존 확인 창을 재사용하며 새 외부 코드·의존성은 추가하지 않는다.
+
 ## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
 
 - `node web/e2e/web.e2e.mjs --spec 98 --workers 1`: 실제 host·agent를 쓰고 Chromium·WebKit 390px에서 기기 이름을 누르면 `#machine=<id>` 한 칸만 더해지는지 검사한다. 가장자리 touchstart/move/cancel 뒤 native `history.back()`으로 원래 thread 목록에 돌아가며, 앞으로 같은 기기 정보가 다시 보인다. 두 번 왕복한 브라우저 기록을 기존 history observer로 비교한다(Chromium은 CDP의 실제 기록·위치, WebKit은 기록 길이).
