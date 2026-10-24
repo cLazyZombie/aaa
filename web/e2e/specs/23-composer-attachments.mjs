@@ -755,6 +755,7 @@ draw();
     aaa("pane", "kill", "steer-codex");
   });
 
+  let imageDiagnosticPage;
   await step("대화 이미지: Chrome·Safari·iPhone·iPad에서 올린 그림을 coordinator가 읽고 task 첨부로 thread에 넘긴다", async () => {
     let imageDevice = "setup", imageMethod = "setup";
     const imageLog = (event, label, extra = {}) => {
@@ -782,6 +783,7 @@ draw();
         imageDevice = name; imageMethod = "setup";
         const client = name === "iphone" || name === "ipad" ? await imageAwait("pairDevice(wk, aaa(\"web\", \"pair\").code, name)", async () => (pairDevice(wk, aaa("web", "pair").code, name))) : await imageAwait("pairPage(name === \"chrome\" ? browser : wk, aaa(\"web\", \"pair\").code, { width: 1280, height: 800 })", async () => (pairPage(name === "chrome" ? browser : wk, aaa("web", "pair").code, { width: 1280, height: 800 })));
         const p = client.page;
+        imageDiagnosticPage = p;
         const box = await imageAwait("openChat(p)", async () => (openChat(p)));
         const composer = p.getByTestId("chat-composer");
         for (const method of ["paste", "drop", "picker"]) {
@@ -824,10 +826,6 @@ draw();
           if (method === "paste") {
             const turn = p.locator(".chat-turn-user").filter({ hasText: `그림 확인 ${name} ${method}` });
             const thumb = turn.getByRole("button", { name: "첨부 그림 확대", exact: true });
-            imageLog("thumbnail", "before decode", await imageAwait("thumbnail state", () => thumb.locator("img").evaluate((img) => ({
-              complete: img.complete, naturalWidth: img.naturalWidth, loading: img.loading,
-              top: img.getBoundingClientRect().top, bottom: img.getBoundingClientRect().bottom, viewport: innerHeight,
-            }))));
             await imageAwait("thumb.locator(\"img\").evaluate((img) => img.decode())", async () => (thumb.locator("img").evaluate((img) => img.decode())));
             if (await imageAwait("thumb.evaluate((el) => el.querySelector(\"img\").getBoundingClientRect().bottom > el.getBoundingClient", async () => (thumb.evaluate((el) => el.querySelector("img").getBoundingClientRect().bottom > el.getBoundingClientRect().bottom + 1)))) throw new Error(`${name} 기록 썸네일 잘림`);
             await imageAwait("thumb.scrollIntoViewIfNeeded()", async () => (thumb.scrollIntoViewIfNeeded()));
@@ -915,7 +913,18 @@ draw();
     const path = /^@([^\s]+) /.exec(await imageAwait("box.inputValue()", async () => (box.inputValue())))?.[1];
     if (!path?.startsWith(`${root}/s/agent/sessions/`) || !fs.readFileSync(path).equals(large)) throw new Error("agent에 저장한 여러 조각 그림이 다르다");
     await imageAwait("generic.page.context().close()", async () => (generic.page.context().close()));
-  });
+  }, { diagnose: async () => {
+    if (!imageDiagnosticPage || imageDiagnosticPage.isClosed()) return;
+    const state = await imageDiagnosticPage.evaluate(() => ({
+      images: [...document.querySelectorAll(".chat-user-image img")].map((img) => ({
+        complete: img.complete, naturalWidth: img.naturalWidth, loading: img.loading,
+        top: img.getBoundingClientRect().top, bottom: img.getBoundingClientRect().bottom,
+      })), viewport: innerHeight,
+    }));
+    fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+    fs.writeFileSync(`${root}/diagnostics/image-state.json`, JSON.stringify(state, null, 2));
+    console.log("IMAGE-FAILURE-STATE " + JSON.stringify(state));
+  } });
 
   await step("옛 대화 첨부: 원본을 보존하며 안내하고 다시 올린 새 링크로 시작하면 같은 바이트가 전달된다", async () => {
     const png = fs.readFileSync(`${root}/pic.png`);
