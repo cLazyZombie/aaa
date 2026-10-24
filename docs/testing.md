@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## E2E102·E2E37 병렬 부하의 입력·위치 경합(t-0969)
+
+- 원본 조건인 전체 E2E worker 10개에서 E2E102 WebKit 1280의 초안 유실을 재현했다. 입력 capture에는 새 글이 있었지만 React의 `updateTextarea` commit이 빈 값을 썼고, bubble `onChange`가 초안을 받지 못했다. 같은 글 30회 전송의 고정 4회 대조에서는 3회가 원래와 같은 보내기 단추 click 30초 만료였다. 실패 당시 입력칸·초안 저장은 비었고 중단 단추가 있어 locator가 찾는 보내기 단추가 사라졌다. 실패를 통과 표본으로 바꾸지 않는다.
+- E2E102는 root의 native input capture 뒤 `mouseup` 선택 사건을 끼워 앞선 selection commit → input bubble 순서를 결정적으로 검사한다. 구판은 보내지 않은 초안이 비어 실패하고 수정판은 보존해야 한다. 자연 실패 당시 모든 commit의 기원을 소급 확정하는 것은 아니며 같은 덮어쓰기 경로를 제어한 회귀다. 제품은 활성 입력칸의 window input capture에서 새 글과 커서를 먼저 저장한다. React root의 처리보다 먼저 받아 뒤의 commit이 새 DOM 값을 덮지 않게 한다. 숨김·해제 때 listener를 정리하고 기존 change 경로도 유지하며 같은 글의 이중 저장은 피한다. 8조합의 PTY 수신 순서·ACK 전 다음 초안·늦은 기록·포커스·중복 전송 단언은 그대로다.
+- E2E37은 제어 응답을 보류한 WebKit 1280에서 원래의 row40 `77.5 → 114`를 재현했다. 전후 scrollTop=3082·scrollHeight=248369이고, 대화 영역 y=97→133.5와 안내 띠 높이 36.5px가 같다. 스크롤 이동과 연결 안내의 화면 배치를 혼동한 시험 순서 결함이다. 실제 WS 응답을 복귀 DOM 검사 뒤에 전달해 띠가 있는 동안의 영역 안 행 위치도 1px로 검사하고, 제어권·띠 제거를 확인한 뒤 기존 절대 좌표 1px 단언을 유지한다. 제품 스크롤 코드는 바꾸지 않는다.
+- 실패 시 context를 닫기 전에 DOM·화면·PTY 기록·입력 사건을 보존한다. `AAA_CHAT_TRACE=1`은 해당 대화 context의 screenshot·snapshot trace도 실패 산출물에 넣는다. trace가 순서에 영향을 줄 수 있어 원본 조건 대조는 trace 없이도 실행한다. 시한 확대·재시도·기대값 완화·시험 삭제·고정 sleep은 없다. E2E 번호와 FRONT_API를 유지한다.
+- 먼저 [Playwright actionability](https://github.com/microsoft/playwright/blob/main/docs/src/actionability.md)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [TanStack Virtual](https://github.com/TanStack/virtual/blob/main/packages/virtual-core/src/index.ts)([MIT](https://github.com/TanStack/virtual/blob/main/LICENSE)), [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)·[UpdateBatching](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/ReactDOMUpdateBatching.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))를 대조했다. 공개 capture API와 기존 host의 제어 사건을 사용하며 외부 코드·의존성은 추가하지 않는다.
+- 최종 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 worker 10개 전체 E2E, Linux strict cross clippy·공개 검사다. 기존 E2E23·35·66의 IME·첨부·전송 높이·Enter 검사도 유지한다. headless WebKit의 주입 사건을 실제 iPhone 키보드 실기 통과로 해석하지 않는다.
+
 ## E2E105 설치 앱의 최근 화면 전환(t-0934)
 
 - `node --test web/test/recentScreens.test.mjs web/test/recentHistory.test.mjs`: 실제 palette 대상 모델로 thread/pane 별칭·실행/종료·보류/해결/보관·끊김, 방문 키 중복 제거·128개 한도·깨진 저장·저장 거부 시 메모리 유지·다른 창의 변경/삭제, 고정 MRU의 순환·역방향·0/1개·후보 제거를 확인한다. 완료 보고의 idle/done은 pane 종료로 보지 않는다.

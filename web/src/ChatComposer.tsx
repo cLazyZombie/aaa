@@ -688,6 +688,25 @@ export function ChatComposer({
   // 너머는 빈 칸이다. 부른 글은 커서를 끝에 둔다. 확인창(질문·승인)·첨부가 있으면 하지 않는다. 다른 곳: aaa는 보내는 중(flight)에도
   // 입력창이 가는 글을 보여 주므로 그때도 하지 않는다
   const recall = useRef<RecallPosition | null>(null);
+  const editText = useCallback((element: HTMLTextAreaElement): void => {
+    const { value, selectionStart } = element;
+    if (composerDrafts.read(draftKey).text !== value) setText(value);
+    setCaret(selectionStart);
+    if (recall.current?.recalled !== value) recall.current = null;
+    setNote(null);
+  }, [draftKey, setText]);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const element = textareaRef.current;
+    if (!element) return;
+    const view = element.ownerDocument.defaultView;
+    if (!view) return;
+    // React root의 capture가 앞선 commit을 마치며 controlled 값을 복원하기 전에 받는다.
+    // WebKit의 input capture에는 새 글이 있지만 bubble onChange 전에 빈 값으로 돌아갈 수 있다.
+    const input = (event: Event) => { if (event.target === element) editText(element); };
+    view.addEventListener("input", input, true);
+    return () => view.removeEventListener("input", input, true);
+  }, [active, editText]);
   const recallKey = (direction: "backward" | "forward", box: HTMLTextAreaElement): boolean => {
     if (asking || flightRef.current !== null || attachmentsRef.current.length > 0) return false;
     if (recall.current === null && textRef.current.length > 0) return false;
@@ -986,12 +1005,7 @@ export function ChatComposer({
               event.preventDefault();
               if (!locked) uploadImages(images);
             }}
-            onChange={(event) => {
-              setText(event.target.value);
-              setCaret(event.target.selectionStart);
-              if (recall.current?.recalled !== event.target.value) recall.current = null;
-              setNote(null);
-            }}
+            onChange={(event) => editText(event.currentTarget)}
           />
           <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
             onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; uploadImages(files); }} />
