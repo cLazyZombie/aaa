@@ -620,8 +620,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-stage-cell .thread-stage { max-width: 100%; margin: 0; white-space: normal; overflow-wrap: anywhere; }
 .task-id-cell { min-width: 0; }
 .task-row[data-kind] .task-title {
-  white-space: normal;
-  overflow-wrap: anywhere;
   padding-inline-start: min(calc(var(--task-depth, 0) * var(--space-3)), var(--space-5));
 }
 .task-row[data-kind] .task-crumb { display: block; max-width: none; white-space: normal; }

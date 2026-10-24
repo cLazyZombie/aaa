@@ -5,6 +5,7 @@
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 101-task-row-layout --workers 1`은 실제 host의 일반·예약·하위·병합 대기 행을 만든다. 모델·머신·저장소·메모·첨부·연결 thread를 함께 표시한다.
 - WebKit 1366×1024·1024×1366·390×844와 Chromium 1280×900·1920×1080에서 상태 원·ID·제목·메뉴의 x좌표, 표시된 칩·표지·제목의 교차 면적, 행 경계와 가로 overflow를 검사한다. 표지 글의 잘림, 첨부 3개, 제목으로 상세 열기·닫기도 확인한다. 글꼴 준비·host 보고 단계·DOM을 완료 사건으로 쓰며 고정 대기는 없다.
 - 전체 검증에서 E2E100은 auto mode 표지가 보인 직후 아직 pane 구독이 연결되지 않아 `재연결 중…` 문구와 정상 placeholder를 비교했다. `ChatComposer`의 `connected`로 활성화되는 첨부 단추를 완료 사건으로 기다린 뒤 기존 문구를 그대로 검사한다. 제품·기대값·시한은 바꾸지 않는다.
+- E2E43의 긴 제목 말줄임 검사를 유지한다. 하위 일은 행 전체 패딩 대신 실제 제목 글의 시작 위치가 안쪽이고 ID 열은 상위와 같아야 한다. 행 전체 들여쓰기가 열을 어긋나게 했던 기존 검사와 제품 배치를 함께 바꾼다.
 - 기존 E2E43·47·52·67·76의 메뉴·thread 이동·예약 끌기·순서·첨부 조작을 유지한다. 수정 전 같은 화면 크기의 열 어긋남을 RED로 기록하고, 전체 로컬 `ci-local.sh`로 검증한다. API는 변경하지 않는다.
 - [herdr-web-ui Sidebar.css](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)의 공통 선행·제목·후행 열과 축소 가능한 제목을 참고했다([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)). [herdr-projects overview.rs](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/overview.rs)의 ID·제목·상태·위치 나열도 대조했으나 텍스트 출력이라 반응형 배치에는 쓰지 않는다([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE)). 외부 코드나 의존성을 추가하지 않는다.
 
