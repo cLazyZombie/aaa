@@ -3,7 +3,8 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
-import { aaa, step, browser, webkit, pairPage, domIs, root, AA, waitOutput, shot, shots, sentFrames, paneHash } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, pairPage, domIs, root, AA, waitOutput, shot, shots, sentFrames, paneHash, inTime } from "../lib/harness.mjs";
+import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
 
 // coordinator도 실제 Claude 감지기를 쓰게 한다. 이 spec만의 격리 host 설정이다.
 const config = `${root}/c/host.toml`;
@@ -39,6 +40,7 @@ while True:
       for (const [engineName, engine] of [['chromium', browser], ['webkit', wk]]) {
         for (const width of [1280, 390]) for (const role of ['coordinator', 'thread']) {
           const name = `inbox-${engineName}-${width}-${role}`;
+          const diagnostics = new ChatDiagnostics(root, name);
           const dir = `${root}/claude/projects/-${name}`;
           fs.mkdirSync(dir, { recursive: true });
           const transcript = `${dir}/s.jsonl`, receipts = `${dir}/received`;
@@ -66,6 +68,7 @@ while True:
             server.onMessage(raw => {
               let message;
               try { message = JSON.parse(String(raw)); } catch { /* binary output */ }
+              if (message) diagnostics.remember([{ at: Date.now(), type: message.t }]);
               if (firstAck && message?.t === 'submitted') {
                 firstAck = false;
                 releaseAck = () => socket.send(raw);
@@ -75,8 +78,39 @@ while True:
           };
           const capture = shots && width === 390 && role === 'coordinator';
           const recordingEngine = capture ? { newContext: options => engine.newContext({ ...options, recordVideo: { dir: `${shots}/video`, size: { width: 390, height: 844 } } }) } : engine;
-          const dev = await pairPage(recordingEngine, aaa('web', 'pair').code, { width, height: 844 }, { hash: role === 'thread' ? paneHash(pane) : `#pane=${encodeURIComponent(pane)}`, touch: width === 390, wsRoute: [/\/api\/v1\/panes\/[^/]+\/ws/, route] });
+          const dev = await pairPage(recordingEngine, aaa('web', 'pair').code, { width, height: 844 }, { hash: role === 'thread' ? paneHash(pane) : `#pane=${encodeURIComponent(pane)}`, touch: width === 390, wsRoute: [/\/api\/v1\/panes\/[^/]+\/ws/, route],
+            setup: context => diagnostics.watch(context),
+            init: () => {
+              const states = [];
+              window.takeChatStates = () => states.splice(0);
+              const remember = state => {
+                states.push({ at: Date.now(), ...state });
+                if (states.length > 256) states.shift();
+              };
+              window.inboxSelectionInterleavings = 0;
+              // selection commit을 input bubble 앞에 끼워 WebKit의 초안 유실을 재현한다.
+              // 새 글보다 앞선 선택 갱신으로 commit하지 않고 onChange가 초안을 받아야 한다.
+              document.addEventListener('DOMContentLoaded', () => {
+                document.getElementById('root').addEventListener('input', event => {
+                  if (event.target.getAttribute('aria-label') !== '메시지' || event.target.value !== '아직 보내지 않은 초안') return;
+                  window.inboxSelectionInterleavings++;
+                  event.target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                  remember({ event: 'selection commit', value: event.target.value });
+                }, true);
+              });
+              for (const type of ['input', 'pointerdown', 'pointerup', 'click', 'focusin', 'focusout']) {
+                document.addEventListener(type, event => {
+                  if (!event.target.closest?.('[data-testid="chat-composer"]')) return;
+                  remember({ event: type, tag: event.target.tagName,
+                    label: event.target.getAttribute('aria-label'), value: event.target.value,
+                    disabled: event.target.disabled });
+                }, true);
+              }
+            },
+          });
           const p = dev.page;
+          diagnostics.page = p;
+          diagnostics.errors = dev.errors;
           try {
             if (!await p.getByTestId('chat-composer').count()) await p.getByTestId('chat-toggle').click();
             const box = p.getByRole('textbox', { name: '메시지', exact: true });
@@ -111,6 +145,7 @@ while True:
             fs.appendFileSync(transcript, line('첫 사람 메시지') + line('두 번째 사람 메시지'));
             await domIs(p, '늦은 기록은 대기 말만 정리', () => !document.querySelector('.chat-msg.user.is-pending'));
             assert.equal(await box.inputValue(), '아직 보내지 않은 초안');
+            assert.equal(await p.evaluate(() => window.inboxSelectionInterleavings), 1, 'input 중 selection commit도 검사했다');
             assert.equal(await box.evaluate(el => document.activeElement === el), true);
             // 같은 글 두 번도 서로 다른 전송이다. 첫 수신은 첫 대기 말만 정리한다.
             for (let n = 0; n < 2; n++) {
@@ -124,7 +159,13 @@ while True:
             fs.appendFileSync(transcript, line('같은 추가 지시'));
             await domIs(p, '두 번째 수신 뒤 정리', () => !document.querySelector('.chat-msg.user.is-pending'));
             assert.deepEqual(dev.errors, []);
+          } catch (error) {
+            diagnostics.remember([{ at: Date.now(), receipts: fs.existsSync(receipts) ? fs.readFileSync(receipts, 'utf8') : null,
+              sent: await sentFrames(p) }]);
+            await diagnostics.save(error, inTime);
+            throw error;
           } finally {
+            diagnostics.stop();
             await p.context().close();
             if (capture) await p.video().saveAs(`${shots}/${name}.webm`);
             aaa('pane', 'kill', pane); // 이 조합에서 직접 만든 pane만 닫는다.

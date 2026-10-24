@@ -10,11 +10,13 @@ export class ChatDiagnostics {
     this.started = Date.now();
     this.network = [];
     this.states = [];
+    this.checkpoints = [];
     this.requests = new WeakMap();
     this.pending = new Set();
     this.active = true;
   }
   remember(states = []) {
+    this.checkpoints.push(...states.filter(state => state.phase));
     this.states.push(...states);
     if (this.states.length > LIMIT) this.states.splice(0, this.states.length - LIMIT);
   }
@@ -33,6 +35,8 @@ export class ChatDiagnostics {
       count: chat?.messages?.length, error: body.err };
   }
   watch(context) {
+    this.context = context;
+    if (process.env.AAA_CHAT_TRACE) this.tracing = context.tracing.start({ screenshots: true, snapshots: true });
     context.on("page", (page) => { this.page = page; });
     context.on("response", (response) => {
       const entry = this.requests.get(response.request());
@@ -55,7 +59,7 @@ export class ChatDiagnostics {
     const write = (name, value) => fs.writeFileSync(path.join(dir, name), value);
     const summary = () => write("failure.json", JSON.stringify({ label: this.label,
       started: new Date(this.started).toISOString(), failed: new Date().toISOString(),
-      error: String(error), errors: this.errors ?? [], network: this.network, states: this.states }, null, 2));
+      error: String(error), errors: this.errors ?? [], network: this.network, states: this.states, checkpoints: this.checkpoints }, null, 2));
     // renderer가 응답하지 않아도 이미 받은 HTTP·DOM 전이와 로그는 남는다.
     summary();
     for (const role of ["host", "agent"]) {
@@ -69,6 +73,9 @@ export class ChatDiagnostics {
         inTime(this.page.evaluate(() => {
           const el = document.querySelector('[data-testid="chat"]');
           return { states: [...(window.takeChatStates?.() ?? []), ...(window.takeScrollStates?.() ?? [])], reset: { before: window.shellResetLayout, writes: window.shellResetWrites }, html: el?.outerHTML,
+            composer: document.querySelector('[data-testid="chat-composer"]')?.outerHTML,
+            draft: document.querySelector('[aria-label="메시지"]')?.value,
+            focus: document.activeElement?.outerHTML,
             url: location.hash, top: el?.scrollTop, height: el?.scrollHeight, client: el?.clientHeight,
             noteBox: el?.querySelector('[data-testid="chat-history-start"]')?.getBoundingClientRect().toJSON() };
         }), 5000, "실패 DOM 수집").then((dom) => {
@@ -78,6 +85,8 @@ export class ChatDiagnostics {
         this.page.screenshot({ path: path.join(dir, "screen.png"), timeout: 5000 })
           .catch((error) => write("screen-error.txt", String(error))),
         inTime(Promise.allSettled([...this.pending]), 5000, "실패 HTTP 수집").catch(() => {}),
+        this.tracing?.then(() => this.context.tracing.stop({ path: path.join(dir, "trace.zip") }))
+          .catch((error) => write("trace-error.txt", String(error))),
       ]);
     }
     this.stop();

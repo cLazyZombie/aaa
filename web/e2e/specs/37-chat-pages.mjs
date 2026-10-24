@@ -10,6 +10,12 @@ const line = (harness, n) => JSON.stringify(harness === "claude"
 const frame = (page, diagnostics) => page.evaluate(() => new Promise((resolve) =>
   requestAnimationFrame(() => requestAnimationFrame(() => resolve(window.takeChatStates())))))
   .then((states) => diagnostics.remember(states));
+const position = row => row.evaluate(row => {
+  const el = row.closest('.chat');
+  return { rowY: row.getBoundingClientRect().y, y: el.getBoundingClientRect().y,
+    top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight,
+    banners: [...document.querySelectorAll('.term:not([hidden]) .banner')].map(el => ({ text: el.textContent, y: el.getBoundingClientRect().y, height: el.getBoundingClientRect().height })) };
+});
 export default async function () {
   // 독립 Chromium 작업은 사용하지 않는 WebKit 프로세스를 띄우지 않는다.
   let safari;
@@ -32,9 +38,22 @@ export default async function () {
       : { type: "agent-turn-complete", "thread-id": id };
     aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", '"$0" hook --agent "$1" "$2"; exec cat', AA, harness, JSON.stringify(payload));
     await until("harness 기록 연결", () => aaa("pane", "list").panes.find((p) => p.name === label)?.agent?.harness === harness);
+    const paneId = aaa("pane", "list").panes.find(p => p.name === label).id;
     let gate = null;
+    let controlGate = null;
     const ph = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, {
       serviceWorkers: "block",
+      // 대화 복원과 제어권 응답은 독립이다. 돌아올 때 실제 WS 응답을 DOM 검사 뒤에 전달한다.
+      wsRoute: [/\/api\/v1\/panes\/[^/]+\/ws/, socket => {
+        const server = socket.connectToServer();
+        socket.onMessage(raw => server.send(raw));
+        server.onMessage(raw => {
+          if (controlGate && socket.url().includes(paneId)) {
+            controlGate.messages.push(() => socket.send(raw));
+            controlGate.arrive();
+          } else socket.send(raw);
+        });
+      }],
       setup: async (context) => {
         diagnostics.watch(context);
         if (!process.env.AAA_CHAT_FRAME_MS) return;
@@ -147,19 +166,49 @@ export default async function () {
     if (mounted > 300) throw new Error(`긴 기록 본문 mount 무제한: ${mounted}`);
     await shot(page, `${label}-beginning`);
     const restoreRow = chat.locator(".chat-row").nth(40);
+    const controlled = page.getByTestId('terminal').and(page.locator('[data-readonly="false"]'));
+    await controlled.waitFor({ state: 'attached' });
+    await page.getByTestId('readonly-banner').waitFor({ state: 'hidden' });
     // shell은 항상 있다. 실제 스크롤로 본문이 화면 근처에서 mount되게 한다.
     await restoreRow.evaluate((row) => { const el = row.closest(".chat"); el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top + 20; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
     await frame(page, diagnostics);
     const restoreId = await restoreRow.getAttribute("data-chat-id");
-    const restoreY = (await restoreRow.boundingBox()).y;
+    const beforePosition = await position(restoreRow);
+    const restoreY = beforePosition.rowY;
+    diagnostics.remember([{ at: Date.now(), phase: "before pane switch", restoreId, restoreY,
+      layout: beforePosition }]);
     await inList(page, "pane-t1");
+    let arriveControl;
+    const controlArrived = new Promise(resolve => { arriveControl = resolve; });
+    controlGate = { messages: [], arrive: arriveControl };
+    const releaseControl = () => {
+      const held = controlGate;
+      controlGate = null;
+      for (const send of held?.messages ?? []) send();
+    };
+    releases.add(releaseControl);
     await inList(page, `pane-${label}`);
     phase("row40 복원");
+    await inTime(controlArrived, 20_000, `${label} 복귀 제어 응답`);
+    await page.getByTestId('readonly-banner').waitFor();
     await page.getByTestId("chat").and(page.locator('[aria-busy="false"]')).waitFor();
     await page.getByTestId("chat").locator(`[data-chat-id="${restoreId}"] .markdown`).waitFor();
     await frame(page, diagnostics);
-    const restoredY = (await page.getByTestId("chat").locator(`[data-chat-id="${restoreId}"]`).boundingBox()).y;
+    const waitingPosition = await position(restoreRow);
+    diagnostics.remember([{ at: Date.now(), phase: 'control pending', layout: waitingPosition }]);
+    const beforeOffset = beforePosition.rowY - beforePosition.y;
+    const waitingOffset = waitingPosition.rowY - waitingPosition.y;
+    if (Math.abs(waitingOffset - beforeOffset) > 1) throw new Error(`${label}: 제어 응답 전 row40 위치 ${beforeOffset} → ${waitingOffset}`);
+    releaseControl();
+    await controlled.waitFor({ state: 'attached' });
+    await page.getByTestId('readonly-banner').waitFor({ state: 'hidden' });
+    await frame(page, diagnostics);
+    const afterPosition = await position(page.getByTestId("chat").locator(`[data-chat-id="${restoreId}"]`));
+    const restoredY = afterPosition.rowY;
+    diagnostics.remember([{ at: Date.now(), phase: "after pane switch", restoredY,
+      layout: afterPosition }]);
     if (Math.abs(restoredY - restoreY) > 1) throw new Error(`${label}: pane 왕복 row40 위치 ${restoreY} → ${restoredY}`);
+    console.log(`${label} restore`, JSON.stringify({ before: beforePosition, controlPending: waitingPosition, after: afterPosition }));
     await chat.evaluate((el) => { el.scrollTop = 0; window.flushChatResize(); el.dispatchEvent(new Event("scroll", { bubbles: true })); });
     await chat.getByText("기록 0 ·", { exact: false }).first().waitFor();
     // 최신 읽기 사이에 두 쪽 이상 자랐어도 중간 400줄을 빠뜨리지 않는다.
