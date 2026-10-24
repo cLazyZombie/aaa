@@ -7820,3 +7820,5 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 한 그래프에서 머신별 색·원/사각 점·실선/점선을 표시한다. 머신 필터로 하나만 볼 수 있고 profile별 시계열은 서로 연결하지 않는다. 테스트·E2E 수는 머신 필터와 독립된 workspace 최신 기록을 쓴다. 코드 줄 수는 main 커밋별 한 번만 보관한다. branch 선택 UI·URL 질의·응답 목록을 제거한다.
 - workspace 패널에 기존 list-body와 같은 남은 높이 배분을 적용하고 공통 list-foot를 바닥에 붙인다. 짧은 목록·긴 목록 모두 사용량은 설정 톱니와 같은 바닥에 남고 목록만 스크롤한다. 답할 것·작업·할 일 화면에서도 같은 바닥 줄을 쓴다.
 - FRONT_API 1.121, Agent link 1.11 선택 기능 workspace_metrics.v2다. 기존 E2E90을 두 agent·두 clone fixture, Chromium/WebKit 1280·820·390·320px와 사용량 위치 검사로 확장한다. 절·API 판은 착지 때 main과 대조한다.
+
+- 47회차 착지 통합(t-0967): 원격 main `daaa43f1`에 t-0959 `cfafc97f`·t-0961 `13ac4bb8`·t-0964 `1947e397`를 각각 --no-ff로 합친다. 기존 E2E101~106과 §8.484·FRONT_API 1.120을 보존하고 iPad 행 정렬에 E2E107, workspace 통계에 §8.485·FRONT_API 1.121을 배정한다. E2E23은 main의 같은 submit 수신 진단·실제 기록 이미지 수명 수리를 유지하고 후보의 E2E100 연결 사건·E2E43 공통 열 검사를 함께 보존한다. 격리 Playwright 1.64.1의 양 엔진 기동을 확인한 뒤 전체 ci-local·공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패하면 원문·load average를 보존하고 재시도 없이 push를 멈춘다. 전체 검증에 salt를 넣지 않고 push 뒤 착지 SHA salt의 Windows 설치기를 전용 폴더에 전달·해시·판 확인한다. GitHub CI는 기다리지 않으며 설치 실행·배포·tag·release는 하지 않는다.
