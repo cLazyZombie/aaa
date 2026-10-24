@@ -88,8 +88,34 @@ impl Lab {
 }
 impl Drop for Lab {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).unwrap();
+        if let Err(error) = std::fs::remove_dir_all(&self.0) {
+            // Windows에서 실패한 shell의 자식이 exe를 잡고 있을 수 있다.
+            // 원래 단계/PTY panic을 두 번째 panic/abort로 덮어쓰지 않는다.
+            if std::thread::panicking() {
+                eprintln!("install lab cleanup failed while unwinding: {error}");
+            } else {
+                panic!("install lab cleanup failed: {error}");
+            }
+        }
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn cleanup_failure_preserves_the_original_panic_instead_of_aborting_the_test_binary() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let lab = Lab::new();
+    let path = lab.0.clone();
+    let locked =
+        std::fs::OpenOptions::new().write(true).create_new(true).share_mode(0).open(path.join("held.exe")).unwrap();
+    let result = std::panic::catch_unwind(move || {
+        let _lab = lab;
+        panic!("original install stage failure");
+    });
+    drop(locked);
+    std::fs::remove_dir_all(path).unwrap();
+    let original = result.unwrap_err();
+    assert_eq!(original.downcast_ref::<&str>(), Some(&"original install stage failure"));
 }
 #[derive(PartialEq, Eq)]
 struct FileView {

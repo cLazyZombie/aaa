@@ -127,11 +127,11 @@ fn status_failure_retains_the_requested_id_and_safe_phase_without_writes() {
     assert!(snapshot(&lab.0) == before, "오류 진단을 위해 state/nonce/lock을 만들면 안 된다");
 }
 
-/// PS 5.1/7의 실제 irm | iex → PE → 마법사/서명 승인/파일 적용 경계다.
+/// PS 5.1/7의 실제 irm | iex → PE → setup 콘솔/취소 경계다.
 /// HTTP transport만 격리하며 실제 SCM/계정/LSA는 변경하지 않는다.
 #[cfg(windows)]
 #[test]
-fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_installation() {
+fn one_line_entry_enters_setup_and_cancels_without_installation_changes() {
     use sha2::Digest;
     use std::io::{BufRead, Read, Write};
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
@@ -232,25 +232,9 @@ exit $global:LASTEXITCODE
 "#,
         )
         .unwrap();
-        let work = format!("{}\r", lab.0.join("work").display());
-        let steps = [
-            ("설치 방식", "fresh\r"),
-            ("이 머신의 역할", "agent\r"),
-            ("머신 표시 이름", "windows-a\r"),
-            ("작업 root 절대 경로", work.as_str()),
-            ("저장소(internal", "internal\r"),
-            ("남겨 둘 여유 GB", "0\r"),
-            ("사용할 harness", "none\r"),
-            ("harness 로그인 검사", "defer\r"),
-            ("서비스 관리자", "none\r"),
-            ("지금 시작할까요", "deferred\r"),
-            ("사용자 PATH", "preserve\r"),
-            ("연결할 host:port", "example.ts.net:7430\r"),
-            ("네트워크", "direct\r"),
-            ("host 등록 방식", "skip\r"),
-            ("검토 후 승인할까요", "review\r"),
-            ("정확히 yes", "yes\r"),
-        ];
+        // 공개 입구는 v0.1.6부터 setup이다. 계정/서비스 조작 전 첫 질문에서
+        // 실제 콘솔 EOF(Ctrl+Z Enter)로 취소한다. install의 서명 적용은 별도 owner다.
+        let steps = [("host 주소 (이름:포트)", "\x1a\r")];
         let inherited = lab.command(&[]);
         let mut command = Command::new(shell);
         command.env_clear();
@@ -260,6 +244,10 @@ exit $global:LASTEXITCODE
             }
         }
         command
+            .env("TEMP", &lab.0)
+            .env("TMP", &lab.0)
+            // 비관리자 실행도 UAC 창을 열지 않고 실패하도록 제한한다.
+            .env("SSH_CONNECTION", "fixture")
             .env("PSModulePath", ambient.parent().unwrap())
             // LOCALAPPDATA 환경만 바꿔도 Windows 폴더 API의 캐시 위치는 바뀌지 않는다.
             .env("PSModuleAnalysisCachePath", lab.0.join("module-analysis-cache"))
@@ -292,17 +280,61 @@ exit $global:LASTEXITCODE
             std::fs::read_to_string(&trace).unwrap(),
             http_phase.load(Ordering::Relaxed),
         );
-        assert_eq!(code, 0, "{}: {}", shell, redact_private(&text));
+        assert_eq!(code, 130, "{}: {}", shell, redact_private(&text));
+        assert!(text.contains("취소했습니다. 아무것도 바꾸지 않았습니다."), "{}", redact_private(&text));
+        assert_eq!(std::fs::read_to_string(&trace).unwrap(), "entry_returned");
         server.join().unwrap();
         assert_eq!(std::fs::read(&old_binary).unwrap(), b"old aaa executor preserved");
-        assert!(lab.0.join("config/agent.toml").is_file());
-        let id: String = serde_json::from_slice(
-            &aaa_common::private_file::read(&lab.0.join("state/install/active.json"), 1024).unwrap(),
-        )
-        .unwrap();
-        let status = json(&lab.cmd(&["install", "--status", &id, "--json"]));
-        assert_eq!(status["installation_id"], id, "{status}");
-        assert_eq!(status["exit_code"], 0, "{status}");
-        assert_eq!(std::fs::read_dir(lab.0.join("state/install/jobs")).unwrap().count(), 1);
+        let executor = lab.0.join(".local/share/aaa/installers").join(&digest[..16]).join("aaa.exe");
+        assert_eq!(hex::encode(sha2::Sha256::digest(std::fs::read(executor).unwrap())), digest);
+        assert!(!lab.0.join("config").exists(), "setup 취소가 설정을 만들면 안 된다");
+        assert!(!lab.0.join("state").exists(), "setup 취소가 설치 기록을 만들면 안 된다");
     }
+}
+
+/// 공개 setup 입구와 독립된 기존 install의 전체 질문·검토·서명 파일 적용 계약.
+#[cfg(windows)]
+#[test]
+fn external_console_reviews_and_installs_signed_files_without_service_changes() {
+    let lab = Lab::new();
+    let old_binary = lab.0.join(".local/bin/aaa.exe");
+    std::fs::create_dir_all(old_binary.parent().unwrap()).unwrap();
+    std::fs::write(&old_binary, b"old aaa executor preserved").unwrap();
+    // 설치는 binary 옆에 소유 기록도 쓴다. Cargo 산출물을 설치 대상으로 삼으면
+    // 다음 빌드와 충돌하므로 공개 bootstrap과 같이 Lab 안의 별도 사본을 쓴다.
+    let executor = lab.0.join("executor/aaa.exe");
+    std::fs::create_dir(executor.parent().unwrap()).unwrap();
+    std::fs::copy(BIN, &executor).unwrap();
+    let work = format!("{}\r", lab.0.join("work").display());
+    let steps = [
+        ("설치 방식", "fresh\r"),
+        ("이 머신의 역할", "agent\r"),
+        ("머신 표시 이름", "windows-a\r"),
+        ("작업 root 절대 경로", work.as_str()),
+        ("저장소(internal", "internal\r"),
+        ("남겨 둘 여유 GB", "0\r"),
+        ("사용할 harness", "none\r"),
+        ("harness 로그인 검사", "defer\r"),
+        ("서비스 관리자", "none\r"),
+        ("지금 시작할까요", "deferred\r"),
+        ("사용자 PATH", "preserve\r"),
+        ("연결할 host:port", "example.ts.net:7430\r"),
+        ("네트워크", "direct\r"),
+        ("host 등록 방식", "skip\r"),
+        ("검토 후 승인할까요", "review\r"),
+        ("정확히 yes", "yes\r"),
+    ];
+    let args = ["install".into(), "--bin-path".into(), executor.to_string_lossy().into_owned()];
+    let (code, text) = terminal_steps(&lab, &args, &steps, false);
+    assert_eq!(code, 0, "{}", redact_private(&text));
+    assert_eq!(std::fs::read(&old_binary).unwrap(), b"old aaa executor preserved");
+    assert!(lab.0.join("config/agent.toml").is_file());
+    let id: String = serde_json::from_slice(
+        &aaa_common::private_file::read(&lab.0.join("state/install/active.json"), 1024).unwrap(),
+    )
+    .unwrap();
+    let status = json(&lab.cmd(&["install", "--status", &id, "--json"]));
+    assert_eq!(status["installation_id"], id, "{status}");
+    assert_eq!(status["exit_code"], 0, "{status}");
+    assert_eq!(std::fs::read_dir(lab.0.join("state/install/jobs")).unwrap().count(), 1);
 }
