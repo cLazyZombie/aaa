@@ -2,8 +2,10 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 16-file-viewer(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { root, aaa, waitOutput, domIs, inTime, shot, pairPage, step, browser, webkit, inList, openSettings, sentCount, sentFrames, sentText } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, domIs, inTime, shot, shots, pairPage, step, browser, webkit, inList, openSettings, sentCount, sentFrames, sentText } from "../lib/harness.mjs";
 import { waitForSettingsExit } from "../lib/settings-closed.mjs";
+import { watchVirtualSource, saveVirtualSource } from "../lib/virtual-source-diagnostics.mjs";
+import { holdSettingsExit, releaseSettingsExit } from "../lib/settings-exit-gate.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -778,6 +780,7 @@ export default async function ({ ctl, page }) {
     await dp.context().close();
     aaa("pane", "kill", "viewer");
   });
+  const virtualPages = new Set();
   await step("긴 소스 가상화(herdr-web-ui VirtualSource·sourcePreview·filePreviewText, @pierre/diffs 1.5.2, plan §8.175): 2,000줄 넘는 소스는 줄마다 요소를 두지 않고 보이는 둘레의 줄만 그리며, 5,000줄·256K자까지는 패키지 worker가 앱 색으로 칠하고 그보다 길면 글 그대로에 「너무 길어 강조 표시를 생략했습니다」를 단다. 줄 참조는 그 줄을 가운데로 데려오고, 「긴 줄 바꿈」을 따르며, 256KiB 넘는 소스는 8MiB까지 다 읽는다. 빈 파일도 연다. 함께 넣은 패키지의 라이선스 고지를 보낸다", async () => {
     const proj = `${root}/files/big`;
     fs.mkdirSync(`${proj}/src`, { recursive: true });
@@ -797,8 +800,11 @@ export default async function ({ ctl, page }) {
 
     // 가상화한 줄은 패키지의 shadow root 안이다: 문서의 MutationObserver(domIs)가 보지 못해 frame마다 본다
     const virtualIs = (p, what, fn, arg) =>
-      p.waitForFunction(fn, arg, { polling: "raf", timeout: 20_000 }).catch((e) => {
-        throw new Error(`20000ms 안에 ${what}이 되지 않았다: ${e.message.split("\n")[0]}`);
+      p.waitForFunction(fn, arg, { polling: "raf", timeout: 20_000 }).catch(async (e) => {
+        let state;
+        try { state = await p.evaluate(() => window.__aaaVirtualSource?.snapshot().current); }
+        catch (error) { console.log(`가상 소스 상태 읽기 오류: ${error}`); }
+        throw new Error(`20000ms 안에 ${what}이 되지 않았다: ${e.message.split("\n")[0]} ${JSON.stringify(state)}`);
       });
     // 그 줄이 보기 가운데(줄 높이 안)에 있다
     const centered = (p, what, line) =>
@@ -849,6 +855,7 @@ export default async function ({ ctl, page }) {
         return span?.textContent === "export" && span.style.color === "var(--herdr-code-token-keyword)";
       });
     const openAt = async (p, link, what, line) => {
+      await watchVirtualSource(p, line);
       await clickLink(p, link);
       await centered(p, what, line);
     };
@@ -858,6 +865,8 @@ export default async function ({ ctl, page }) {
     };
 
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    virtualPages.add(dp);
+    await observeFileOpen(dp);
     await inList(dp, "pane-big");
     await screenHas(dp, "big 줄들", "big>");
 
@@ -895,12 +904,20 @@ export default async function ({ ctl, page }) {
     // 「긴 줄 바꿈」을 켜면 가상화한 긴 줄도 접는다(이 기기 설정, 위 단계와 같은 곳)
     const group = (await openSettings(dp, "채팅")).locator(".settings-section", { has: dp.getByRole("heading", { name: "파일 뷰어" }) });
     await group.getByRole("switch", { name: "긴 줄 바꿈" }).click();
+    if (await group.getByRole("switch", { name: "긴 줄 바꿈" }).getAttribute("aria-checked") !== "true") throw new Error("긴 줄 바꿈 설정이 반영되지 않았다");
+    // DOM이 사라진 뒤에도 history.go가 아직 오지 않은 순서를 고정한다.
+    await holdSettingsExit(dp);
     await dp.keyboard.press("Escape");
     await dp.getByRole("region", { name: "설정" }).waitFor({ state: "detached" });
+    const exited = inTime(dp.evaluate(waitForSettingsExit), 20_000, "긴 줄 바꿈 설정의 기록 복귀");
+    await releaseSettingsExit(dp, exited);
     await openAt(dp, "src/big.ts:2500", "접은 big.ts 2500번째 줄 가운데", 2500);
+    await paintedIs(dp, "접은 소스의 worker 강조 반영");
+    await centered(dp, "재측정한 big.ts 2500번째 줄 가운데", 2500);
     const wrapped = await shape(dp, 2501);
     if (wrapped.height < 3 * colored.height || wrapped.sideways > 0) throw new Error(`긴 줄 바꿈을 켠 가상화 소스 ${JSON.stringify(wrapped)}`);
     await shot(dp, "desktop-file-virtual-wrap");
+    if (shots) fs.writeFileSync(`${shots}/desktop-file-virtual-wrap.json`, JSON.stringify(await dp.evaluate(() => window.__aaaVirtualSource.snapshot()), null, 2));
     await closeViewer(dp, "접은 big.ts Escape");
 
     // 함께 넣은 패키지의 라이선스 고지를 host가 보낸다(빌드가 모은 것: 따로 받는 조각의 Shiki 문법, Apache NOTICE, 패치한
@@ -928,6 +945,9 @@ export default async function ({ ctl, page }) {
       ["ipad", { width: 820, height: 1180 }, { touch: true, deviceScaleFactor: 2 }, "src/huge.ts:11000", 11_000],
     ]) {
       const tp = (await pairPage(browser, aaa("web", "pair").code, size, opts)).page;
+      virtualPages.add(tp);
+      await observeFileOpen(tp);
+      await watchVirtualSource(tp, line);
       await inList(tp, "pane-big");
       await screenHas(tp, `${name} big 줄들`, "big>");
       const at = await textPoint(tp, link);
@@ -941,5 +961,12 @@ export default async function ({ ctl, page }) {
       await tp.context().close();
     }
     aaa("pane", "kill", "big");
-  });
+  }, { diagnose: async () => {
+    let index = 0;
+    for (const p of virtualPages) {
+      if (p.isClosed()) continue;
+      try { await saveVirtualSource(p, `${root}/diagnostics`, `virtual-source-${++index}`); }
+      catch (error) { console.log(`가상 소스 진단 저장 오류: ${error}`); }
+    }
+  } });
 }
