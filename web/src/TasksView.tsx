@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { ListId } from "./ListId";
 import { taskTarget } from "./appIds";
@@ -1159,7 +1160,7 @@ function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, can
   return (
     <li
       className={`task-row is-${state}${reserved ? " is-reserved" : ""}${row.kind === "under" ? " is-under" : ""}${selected ? " is-selected" : ""}${t.done ? " is-done" : ""}${dragging ? " is-dragging" : ""}${drop ? ` is-drop-${drop}` : ""}${flash ? " is-flash" : ""}`}
-      style={{ paddingLeft: `calc(${depth} * var(--space-5))` }}
+      style={{ "--task-depth": depth } as CSSProperties}
       data-task-state={state}
       data-kind={row.kind}
       data-testid={reserved && row.missing ? `task-q-${row.q.task_id}` : `task-${t.line}`}
@@ -1185,18 +1186,16 @@ function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, can
           onStep(e.key === "ArrowUp" ? "up" : "down");
         }}
       >
-        <ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} />
+        <span className="task-stage-cell"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></span>
         {reserved ? <span className={`task-reserved-dot${check ? " is-check" : ""}`} role="img" aria-label={check ? "예약 · 확인 필요" : "예약됨"} title={check ? "예약 · 확인 필요(상세에 까닭)" : "예약됨 · 자리 나면 시작"} /> : <StateIcon state={state} />}
-        {reserved && row.crumb && (
-          <span className="task-crumb" data-testid="task-crumb">
-            {row.crumb.short_id ?? ""} {row.crumb.title} ›
-          </span>
-        )}
-        {t.short_id && <ListId id={t.short_id} testId="task-short-id" />}
+        <span className="task-id-cell">{t.short_id && <ListId id={t.short_id} testId="task-short-id" />}</span>
         <span className="task-title">
           <span className="sr-only">{reserved ? (check ? "예약 · 확인 필요" : "예약") : TASK_STATE_LABEL[state]}: </span>
+          {reserved && row.crumb && <span className="task-crumb" data-testid="task-crumb">{row.crumb.short_id ?? ""} {row.crumb.title} › </span>}
           {t.title}
         </span>
+      </button>
+      <div className="task-row-chips">
         {reserved && row.missing && <span className="task-chip task-problem">task 없음</span>}
         {row.kind === "task" && row.reservedKids > 0 && <span className="task-chip task-kids-reserved">하위 {row.reservedKids} 예약됨</span>}
         {flash && <span className="task-flash-note" data-testid="task-flash">↩ 원래 자리로 돌아옴</span>}
@@ -1219,8 +1218,8 @@ function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, can
             {attachments}
           </span>
         )}
-      </button>
-      {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
+        {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
+      </div>
       {ordering ? (
         <span className="task-steps">
           <button type="button" className={`task-step${reserved ? " is-reserved" : ""}`} aria-label={reserved ? "예약 위로" : "위로"} disabled={!steps.up} data-testid={`task-step-up-${t.line}`} onClick={() => onStep("up")}>

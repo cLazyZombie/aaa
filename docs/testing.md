@@ -27,6 +27,14 @@
 - [herdr-projects v0.2.35 threads](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/threads.rs)·prompt_box와 [MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE)를 확인했다. 이 판은 pane 입력·질문 상태를 다루며 aaa의 Markdown 질문 카드 파서에 해당하는 구현은 없다. [marked의 block 규칙](https://github.com/markedjs/marked/blob/master/src/rules.ts)과 [MIT](https://github.com/markedjs/marked/blob/master/LICENSE)도 대조했다. 목록 표시와 선택지 문법을 구별하는 원칙만 참고하고 코드·의존성을 추가하지 않는다.
 - 로컬 전체 `nice -n 15 bash scripts/ci-local.sh`, 기존 E2E53, 공개 검사를 실행한다. FRONT_API·E2E 번호와 wire 필드는 유지한다. 경고는 thread inbox로 전달하며 사용자 답을 가로막지 않는다.
 - 실행 기록: 첫 ci-local은 전역 Playwright 1.59.1 때문에 E2E 시작 전에 멈췄다. 작업 폴더에 1.64.1을 설치하고 같은 CI 실행 파일 사본으로 전체 102파일·128작업을 실행했다. E2E53 포함 127작업 통과, E2E72는 고부하 중 223MiB SSH 전송이 화면 대기 30초를 넘었다(계획 시작 뒤 파일 마지막 쓰기 31.7초, 당시 관측 load 89~330). 분리 실행은 예상한 SSH 거부까지 갔지만 첫 실패의 사본이 정리 검사에 걸렸다. SHA·생성 시각으로 자기 사본을 확인해 정리한 뒤 동일 코드·시한·단언으로 전체 E2E72가 13.3초에 통과했다. 시한·기대값·시험 코드는 바꾸지 않았다. 웹 유닛 533개, Rust 1,278개(기존 제외 6개), 의존 경계, native/Linux strict clippy와 공개 검사도 통과했다.
+## iPad 할 일 행의 열 정렬(t-0959)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 107-task-row-layout --workers 1`은 실제 host의 일반·예약·하위·병합 대기 행을 만든다. 모델·머신·저장소·메모·첨부·연결 thread를 함께 표시한다.
+- WebKit 1366×1024·1024×1366·390×844와 Chromium 1280×900·1920×1080에서 상태 원·ID·제목·메뉴의 x좌표, 표시된 칩·표지·제목의 교차 면적, 행 경계와 가로 overflow를 검사한다. 표지 글의 잘림, 첨부 3개, 제목으로 상세 열기·닫기도 확인한다. 글꼴 준비·host 보고 단계·DOM을 완료 사건으로 쓰며 고정 대기는 없다.
+- 전체 검증에서 E2E100은 auto mode 표지가 보인 직후 아직 pane 구독이 연결되지 않아 `재연결 중…` 문구와 정상 placeholder를 비교했다. `ChatComposer`의 `connected`로 활성화되는 첨부 단추를 완료 사건으로 기다린 뒤 기존 문구를 그대로 검사한다. 제품·기대값·시한은 바꾸지 않는다.
+- E2E43의 긴 제목 말줄임 검사를 유지한다. 하위 일은 행 전체 패딩 대신 실제 제목 글의 시작 위치가 안쪽이고 ID 열은 상위와 같아야 한다. 행 전체 들여쓰기가 열을 어긋나게 했던 기존 검사와 제품 배치를 함께 바꾼다.
+- 기존 E2E43·47·52·67·76의 메뉴·thread 이동·예약 끌기·순서·첨부 조작을 유지한다. 수정 전 같은 화면 크기의 열 어긋남을 RED로 기록하고, 전체 로컬 `ci-local.sh`로 검증한다. API는 변경하지 않는다.
+- [herdr-web-ui Sidebar.css](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)의 공통 선행·제목·후행 열과 축소 가능한 제목을 참고했다([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)). [herdr-projects overview.rs](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/overview.rs)의 ID·제목·상태·위치 나열도 대조했으나 텍스트 출력이라 반응형 배치에는 쓰지 않는다([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE)). 외부 코드나 의존성을 추가하지 않는다.
 
 ## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
 
