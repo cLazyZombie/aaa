@@ -1,5 +1,15 @@
 # 시험 쓰는 법
 
+## E2E16 긴 줄 바꿈 뒤 줄 참조 재열기(t-0978)
+
+- [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40062175921/job/120777851872)은 SHA 1583a1ed에서 「접은 big.ts 2500번째 줄 가운데」 20초 만료다. 원문과 결과 artifact를 확보했으나 소스 행 좌표·파일 보기 화면·trace가 없어 당시 거짓 조건을 소급 확정하지 않는다. 수정 전 전체 E2E16과 가상화 단계 단독은 각각 한 번 통과했으며 이 통과를 결함 부재의 증거로 삼지 않는다.
+- 설정의 실제 `history.go`를 viewer mount 뒤에 전달한 대조에서 원래 20초 실패가 재현됐다. DOM은 닫혔지만 설정 기록은 남은 상태에서 파일 열기가 새 기록을 쌓고, 늦은 native popstate가 파일 보기를 제거했다. 실패 당시 viewer=false·row 없음·viewport 없음·selected=false이고 설정이 다시 표시됐다. 가상화 행 측정이나 중앙 좌표 오차 전에 파일 보기 자체가 사라지는 시험 준비 순서 결함이다. 이 대조가 원본 CI 사건 순서와 같았다고 단정하지 않는다.
+- 가상화 단계도 기존 `waitForSettingsExit`로 설정 DOM·history state·query가 모두 설정 밖인 사건을 기다린다. `settings-exit-gate.mjs`는 DOM 제거 뒤 실제 go를 보류한 채 waiter가 끝나지 않았는지 확인하고 native go/popstate를 풀어 소스를 연다. DOM 제거만 기다리던 변형은 `pending=-1·shown=false·entry/query=true·exited=true`로 즉시 실패해야 한다. 기존 단위 owner `web/test/settingsClosed.test.mjs`의 양방향 사건 순서·실패 상한·정리 검사도 유지한다.
+- 설정 switch 반영 → 기록 복귀 → 소스 열기 → 선택 행 중앙 → worker 강조 반영 → 중앙 재확인 → 긴 행의 실제 높이/가로 넘침을 검사한다. 기존 20초·120초 상한, 행 수·선택·가운데 허용 폭·문법 색·기기별 설정·라이선스·휴대폰/iPad 조합을 유지한다. 재시도·기대값 완화·고정 sleep·제품 가상화 변경은 없다.
+- `virtual-source-diagnostics.mjs`는 shadow 행 존재·선택·행/viewport 사각형·중앙 차이·scrollTop/Height·wrap/가로 넘침·긴 행 높이와 DOM/resize/scroll/popstate·파일 요청/클릭 순서를 관측한다. 바깥 단계 만료도 `diagnose`로 context 정리·공통 termDiag 전에 JSON/PNG를 보존한다. `AAA_FILE_VIEWER_TRACE=1`이면 해당 가상화 context의 screenshot/snapshot trace도 실패 산출물에 넣는다. 성공 촬영의 `desktop-file-virtual-wrap.json`에도 같은 측정을 남긴다. 구조화 JSON에는 소스 본문·전체 URL·임의 history state·cookie를 수집하지 않는다. trace에는 격리 실험실의 fixture 화면이 포함된다.
+- 참고 후보는 [herdr-web-ui VirtualSource](https://github.com/devswha/ovis/blob/main/src/components/VirtualSource.tsx)([MIT](https://github.com/devswha/ovis/blob/main/LICENSE))와 [TanStack Virtual](https://github.com/TanStack/virtual/blob/main/packages/virtual-core/src/index.ts)([MIT](https://github.com/TanStack/virtual/blob/main/LICENSE))이다. 줄 추정/재측정 뒤 이동을 대조하고, 이번 재현에서는 그 단계 이전의 기록 경계를 수리한다. 코드 복사나 외부 의존성 추가는 없다.
+- 검증 범위는 `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 16 --workers 1`, 웹 유닛·typecheck·빌드와 공개 검사다. 무거운 전체 CI는 착지에서 수행하며 E2E 번호·FRONT_API 계약은 바꾸지 않는다.
+
 ## E2E102·E2E37 병렬 부하의 입력·위치 경합(t-0969)
 
 - 원본 조건인 전체 E2E worker 10개에서 E2E102 WebKit 1280의 초안 유실을 재현했다. 입력 capture에는 새 글이 있었지만 React의 `updateTextarea` commit이 빈 값을 썼고, bubble `onChange`가 초안을 받지 못했다. 같은 글 30회 전송의 고정 4회 대조에서는 3회가 원래와 같은 보내기 단추 click 30초 만료였다. 실패 당시 입력칸·초안 저장은 비었고 중단 단추가 있어 locator가 찾는 보내기 단추가 사라졌다. 실패를 통과 표본으로 바꾸지 않는다.
