@@ -66,5 +66,5 @@ xterm.js 자체도 MIT다: Copyright (c) 2017-2019, The xterm.js authors (https:
 `xterm-5.5.0-lifecycle.patch`는 CoreBrowserService의 ScreenDprMonitor를 기존
 Disposable에 등록하는 한 줄이다. upstream 5.5.0은 이 monitor를 해제하지 않아
 터미널을 다시 만들 때마다 window resize와 media query listener를 하나씩 남긴다.
-실제 upstream 모듈의 20회 생성/해제 대조와 E2E102의 전역 listener 수로 확인한다.
+실제 upstream 모듈의 20회 생성/해제 대조와 E2E104의 전역 listener 수로 확인한다.
 xterm의 기존 MIT 저작권·라이선스 고지를 유지한다.
