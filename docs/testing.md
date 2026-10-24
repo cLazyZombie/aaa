@@ -6,6 +6,13 @@
 - 수정 전 같은 fixture에서 휴대폰 빈 열·제목 폭 회귀가 실패했다. 휴대폰에서만 빈 단계 열을 없애 실제 단계 표지를 칩 줄로 옮기고, 메모 표시는 제목 단추 안으로 옮긴다. iPad·데스크톱의 공통 열은 유지한다. 화면 크기를 재현한 headless 검사이며 실제 iPhone 실기는 아니다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 107,43,47,52,67,76 --workers 1`과 웹 유닛·타입 검사·빌드·공개 검사를 수행한다. 글꼴·DOM·host 사건으로 기다리며 고정 sleep이나 시한·기대값 완화는 없다.
 - 먼저 [Tailwind의 반응형 grid-column](https://tailwindcss.com/docs/grid-column)([MIT](https://github.com/tailwindlabs/tailwindcss/blob/main/LICENSE))과 [Bootstrap의 반응형 grid](https://getbootstrap.com/docs/5.3/layout/grid/)([MIT](https://github.com/twbs/bootstrap/blob/main/LICENSE))를 대조했다. 작은 폭에서 열 구성을 바꾸는 방식을 참고하고 기존 CSS에만 적용한다. 외부 코드·패키지는 추가하지 않는다.
+## 머신 판의 짧은 커밋 통일(t-0982)
+
+- 공통 `util::software()`에서 커밋 salt를 12자리로 만든다. Mac 배포 스크립트는 이미 12자리를 전달하며, Windows 전달 빌드처럼 `AAA_BUILD_SALT`에 40자리를 줘도 CLI·setup 안내/영수증·host/agent 보고는 같은 짧은 판을 쓴다. salt 없는 release와 P0 임의 문자열은 유지한다. 전체 커밋 출처·실행 파일 SHA-256·배포 검증 신원은 줄이지 않는다.
+- `cargo test --locked -p aaa-common --lib software_tests`는 긴/짧은 생성 결과, 같은 버전·커밋 접두의 양방향 비교, 다른 커밋/버전/임의 salt, 같은 12자리 뒤가 다른 전체 커밋을 검사한다. host의 `machine_view_tests`는 실제 hello·DB 재시작 뒤에도 옛 긴 판을 짧게 제공하고 원문은 보존하는지 확인한다.
+- `AAA_BUILD_SALT=0123456789abcdef0123456789abcdef01234567 cargo test --locked -p aaa --test software`는 실제 빌드한 CLI와 이름을 바꾼 setup 실행 파일의 `--version`이 `aaa 0.1.6+0123456789ab`인지 검사한다. 같은 salt로 `cargo test --locked -p aaa --bin aaa setup::tests::setup_records_the_current_short_build_version`는 격리 설치 흐름의 안내·영수증을 확인한다. OS 서비스는 가짜이며 실제 Windows 설치 검증을 뜻하지 않는다.
+- E2E35의 기존 배포/전체 SHA/권한/초점/화면 조합 단언은 그대로 두고 짧은 판에 「host와 다름」이 붙지 않는 머신을 추가한다. Chromium·WebKit × 390/1280px에서 확인한다. Mac 빌드 스크립트의 기존 Python 계약도 12자리 salt·판을 검사한다. 완료는 프로세스 종료·DB 재열기·DOM 사건으로 판단한다.
+- 참고 후보는 [Git의 커밋 접두 표기](https://git-scm.com/docs/git-rev-parse)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))와 [Rust semver의 build metadata 비교](https://docs.rs/semver/latest/semver/struct.BuildMetadata.html)([MIT/Apache-2.0](https://github.com/dtolnay/semver))다. 접두 개념을 따르되, 같은 패키지 버전의 서로 다른 빌드도 구별해야 하므로 metadata를 무시하는 버전 요구식은 쓰지 않는다. 외부 코드·의존성 추가는 없다.
 
 ## E2E16 긴 줄 바꿈 뒤 줄 참조 재열기(t-0978)
 
