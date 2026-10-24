@@ -250,7 +250,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.121: 원격 저장소별 main 지표·workspace 공통 개수, branch 선택 제거. agent 기능 workspace_metrics.v2.
 // 1.122: LibraryReport.repo — 보고서 저장소 거르기. 경로 대신 할 일과 같은 이름을 보낸다.
 // 1.123: AutomationCondition.min_open_threads — 일정의 열린 일반 thread 최소 개수.
-pub const FRONT_API: Version = Version { major: 1, minor: 123 };
+// 1.124: 하단 Claude의 등록 계정 상태줄 관측과 UsageProblem의 관측 대기·오래됨·단절·미지원·접근 거부.
+pub const FRONT_API: Version = Version { major: 1, minor: 124 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

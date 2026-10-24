@@ -2,7 +2,13 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { root, AA, aaa, step, browser, pairPage, openSettings, domIs, waitOutput, shot, stop, until } from "../lib/harness.mjs";
+import { root, AA, aaa, step, browser, pairPage, openSettings, domIs, waitOutput, shot, stop, until, usageHome, inList } from "../lib/harness.mjs";
+
+// 운영 결함과 같은 조건: 기본 홈의 OAuth는 끝났고 등록 계정의 Claude 상태줄은 정상이다.
+const localClaude = `${usageHome}/.claude/.credentials.json`;
+const localCredential = JSON.parse(fs.readFileSync(localClaude, "utf8"));
+localCredential.claudeAiOauth.expiresAt = 1;
+fs.writeFileSync(localClaude, JSON.stringify(localCredential));
 
 const fake = `${root}/quota-codex`;
 const modeFile = `${root}/quota-modes.json`;
@@ -35,7 +41,11 @@ const reset=Math.floor(Date.now()/1000)+10000;
 send({five_hour:{used_percentage:40,resets_at:reset},seven_day:{used_percentage:20,resets_at:reset+604800}});
 process.stdout.write('QUOTA-OBSERVED\\r\\n❯ ');
 process.stdin.setRawMode(true);
-process.stdin.on('data',b=>{if(b.toString().includes('\\x1b[17~')){send({five_hour:{used_percentage:70,resets_at:reset}});process.stdout.write('QUOTA-UPDATED\\r\\n❯ ');}});
+process.stdin.on('data',b=>{
+ if(b.toString().includes('\\x1b[17~')){send({five_hour:{used_percentage:70,resets_at:reset}});process.stdout.write('QUOTA-UPDATED\\r\\n❯ ');}
+ if(b.toString().includes('\\x1b[18~')){send({five_hour:{used_percentage:2,resets_at:reset},seven_day:{used_percentage:94,resets_at:reset+604800}});process.stdout.write('QUOTA-SIDEBAR\\r\\n❯ ');}
+ if(b.toString().includes('\\x1b[19~')){send({five_hour:{used_percentage:70,resets_at:reset},seven_day:{used_percentage:20,resets_at:reset+604800}});process.stdout.write('QUOTA-RESTORED\\r\\n❯ ');}
+});
 `, { mode: 0o755 });
 let host = fs.readFileSync(`${root}/c/host.toml`, "utf8");
 host = host.replace('[profiles.fake]\nagent = "custom"', '[profiles.fake]\nagent = "claude"').replace(`command = ["/bin/sh", "${root}/fake.sh"]`, `command = [${JSON.stringify(claude)}]`);
@@ -63,10 +73,12 @@ export default async function ({ page }) {
   await step("등록한 두 Codex 계정의 공식 무작업 조회와 관측 없는 Claude", async () => {
     aaa("project", "create", "demo");
     register("work"); register("spare"); register("observer", "claude");
+    await page.reload();
     const dialog = await openSettings(page, "계정"); panel = dialog.getByTestId("settings-accounts");
     await quota(panel, "work").getByText("75% 남음", { exact: true }).waitFor();
     await quota(panel, "spare").getByText("40% 남음", { exact: true }).waitFor();
     await quota(panel, "observer").getByText("5시간 사용량 모름", { exact: true }).waitFor();
+    await page.getByTestId("usage-strip").locator('[data-provider="claude"] .usage-chip-value').getByText("관측 대기", { exact: true }).waitFor();
     const data = await page.evaluate(() => fetch('/api/v1/account-usage').then(r=>r.json()));
     assert.equal(data.ok.accounts.length, 3);
     assert.ok(!JSON.stringify(data).includes("canary") && !JSON.stringify(data).includes("@example.com"));
@@ -85,6 +97,30 @@ export default async function ({ page }) {
     const next = (await refresh(page)).accounts.find((a) => a.account === "observer");
     assert.equal(next.windows.find((w) => w.duration_mins === 10080).observed_at_ms, first.windows.find((w) => w.duration_mins === 10080).observed_at_ms);
     await quota(panel, "observer").getByText("30% 남음", { exact: true }).waitFor();
+  });
+  await step("하단 Claude는 만료된 기본 OAuth 대신 등록 계정 상태줄의 5시간 98%·주간 6%, 관측 전에는 까닭을 표시한다", async () => {
+    aaa("pane", "send-keys", pane, "F7"); await waitOutput(pane, "QUOTA-SIDEBAR");
+    await refresh(page);
+    for (const width of [1280, 390]) {
+      const { page: footer } = await pairPage(browser, aaa("web", "pair").code, { width, height: 900 });
+      const settings = await openSettings(footer, "구독 사용량");
+      await settings.getByRole("group", { name: "막대가 보이는 것" }).getByRole("button", { name: "남은 양" }).click();
+      await footer.getByRole("button", { name: "설정 닫기", exact: true }).click();
+      await inList(footer, "usage-strip");
+      const strip = footer.getByTestId("usage-strip");
+      await strip.locator('[data-provider="claude"] .usage-chip-value').getByText("6%", { exact: true }).waitFor();
+      assert.equal(await strip.locator('[data-provider="claude"]').count(), 1);
+      assert.equal(await strip.locator('[data-provider="codex"] .usage-chip-value').textContent(), "27%");
+      const region = footer.locator(".usage-popover").getByRole("region", { name: "Claude · observer", exact: true });
+      await region.getByText("98% 남음", { exact: true }).waitFor();
+      await region.getByText("6% 남음", { exact: true }).waitFor();
+      assert.ok(!(await region.innerText()).includes("로그인"));
+      await shot(footer, `65-sidebar-claude-${width}`);
+      await footer.context().close();
+    }
+    // 기존 단절·실패 회귀의 세션 30% 관측으로 돌려놓는다.
+    aaa("pane", "send-keys", pane, "F8"); await waitOutput(pane, "QUOTA-RESTORED");
+    await refresh(page);
   });
   await step("401·429는 마지막 관측과 까닭, 제한 시각 전 다시 읽기는 RPC를 더 보내지 않는다", async () => {
     fs.writeFileSync(modeFile, JSON.stringify({ work: "429", spare: "401" }));

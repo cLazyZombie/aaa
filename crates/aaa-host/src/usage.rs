@@ -963,6 +963,9 @@ impl UsageService {
                 };
                 (settle(Some(usage), FRESH_MS), cleared)
             }
+            Err(ReadError::Http { status: 403, .. }) if id == UsageProviderId::Claude => {
+                (keep(UsageProblem::Denied, sign_in.plan.clone(), RETRY_MS), cleared)
+            }
             Err(ReadError::Http { status: 401 | 403, .. }) => {
                 (keep(UsageProblem::Expired, sign_in.plan.clone(), RETRY_MS), cleared)
             }
@@ -985,7 +988,108 @@ impl UsageService {
 #[cfg(test)]
 mod tests;
 
+/// A2가 검증한 로그인 세대·계정 귀속을 그대로 쓴다. 다른 계정·기본 홈의 수치를 섞지 않는다.
+fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_proto::AccountQuota>) -> ProviderUsage {
+    use aaa_proto::{QuotaFreshness, QuotaProblem, QuotaSource};
+    let mut usage = ProviderUsage {
+        id: UsageProviderId::Claude,
+        key: format!("claude:registered:{name}"),
+        account: Some(name.into()),
+        plan,
+        windows: vec![],
+        problem: None,
+        checked_at: None,
+    };
+    let Some(quota) = quota.filter(|q| q.account == name && q.harness == "claude") else {
+        usage.problem = Some(UsageProblem::Failed);
+        return usage;
+    };
+    let problem = |p| match p {
+        QuotaProblem::Expired => UsageProblem::Expired,
+        QuotaProblem::RateLimited => UsageProblem::RateLimited,
+        QuotaProblem::Locked => UsageProblem::Locked,
+        QuotaProblem::Disconnected => UsageProblem::Disconnected,
+        QuotaProblem::Unsupported => UsageProblem::Unsupported,
+        QuotaProblem::Unknown => UsageProblem::Unobserved,
+        QuotaProblem::Failed | QuotaProblem::ClockSkew => UsageProblem::Failed,
+    };
+    usage.problem = quota.problem.map(problem);
+    let mut observed_at = None::<u64>;
+    for item in &quota.windows {
+        let w = &item.window;
+        if item.source != QuotaSource::ClaudeStatusline
+            || w.limit_id != "claude"
+            || w.scope.is_some()
+            || item.conflict
+            || !aaa_common::quota::valid(w)
+        {
+            usage.problem.get_or_insert(UsageProblem::Failed);
+            continue;
+        }
+        let (kind, duration) = match w.duration_mins {
+            Some(300) => (UsageWindowKind::Session, FIVE_HOURS),
+            Some(10080) => (UsageWindowKind::Week, SEVEN_DAYS),
+            _ => continue,
+        };
+        let resets_at = w.resets_at_ms.map(utc_iso);
+        usage.windows.push(UsageWindow {
+            kind,
+            scope: None,
+            used_percent: w.used_percent,
+            starts_at: start_of(&resets_at, Some(duration)),
+            resets_at,
+        });
+        observed_at = Some(observed_at.map_or(w.observed_at_ms, |old| old.min(w.observed_at_ms)));
+        if let Some(p) = item.problem {
+            usage.problem.get_or_insert(problem(p));
+        } else if item.freshness != QuotaFreshness::Fresh {
+            // 수신 시각으로 옛 창을 새것으로 만들지 않는다. 마지막 숫자와 관측 시각은 보존한다.
+            if usage.problem == Some(UsageProblem::Unobserved) {
+                usage.problem = Some(UsageProblem::Stale);
+            } else {
+                usage.problem.get_or_insert(UsageProblem::Stale);
+            }
+        }
+    }
+    usage.windows.sort_by_key(|w| if w.kind == UsageWindowKind::Session { 0 } else { 1 });
+    usage.checked_at = observed_at.map(utc_iso);
+    if usage.windows.is_empty() {
+        usage.problem.get_or_insert(UsageProblem::Unobserved);
+    }
+    usage
+}
+
 impl crate::Host {
+    /// 등록 Claude는 그 계정에 결속된 상태줄 관측을 쓴다. 기본 홈의 OAuth와는 별도 인증이다.
+    /// 로컬 사용량 캐시는 자동화의 기존 의미를 유지하고, 웹 응답에서만 자료원을 고른다.
+    pub(crate) async fn sidebar_usage(self: &Arc<Self>, refresh: bool) -> UsageReport {
+        let accounts = match self.accounts.list() {
+            Ok(accounts) => accounts.into_iter().filter(|a| a.harness == "claude").collect::<Vec<_>>(),
+            Err(error) => {
+                tracing::warn!(?error, "하단 사용량의 등록 계정 목록을 읽지 못했다");
+                return self.usage.report(refresh).await;
+            }
+        };
+        if accounts.is_empty() {
+            return self.usage.report(refresh).await;
+        }
+        let (mut report, quotas) = tokio::join!(self.usage.report(refresh), self.quota_report(refresh));
+        if let Err(error) = &quotas {
+            tracing::warn!(?error, "하단 사용량의 등록 계정 관측을 읽지 못했다");
+        }
+        // 등록 계정을 쓰는 host의 Claude 하단은 등록 계정 목록을 따른다. 무관한 기본 로그인으로 채우지 않는다.
+        report.providers.retain(|p| p.id != UsageProviderId::Claude);
+        let mut registered = accounts
+            .into_iter()
+            .map(|account| {
+                let quota = quotas.as_ref().ok().and_then(|r| r.accounts.iter().find(|q| q.account == account.name));
+                registered_claude_usage(&account.name, account.plan, quota)
+            })
+            .collect::<Vec<_>>();
+        registered.extend(report.providers);
+        UsageReport { providers: registered }
+    }
+
     /// 웹이 없어도 캐시를 갱신한다. 서비스 자체의 TTL·429 backoff를 그대로 쓴다.
     pub(crate) fn refresh_usage(self: &Arc<Self>) {
         if !self.watch_claim("usage", "", Duration::ZERO) {

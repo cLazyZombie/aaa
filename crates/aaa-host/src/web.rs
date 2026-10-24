@@ -1177,7 +1177,7 @@ async fn usage_report(
     if device(&host, &headers).is_none() {
         return unauthorized();
     }
-    let report = host.usage.report(q.refresh.as_deref() == Some("1")).await;
+    let report = host.sidebar_usage(q.refresh.as_deref() == Some("1")).await;
     let mut res = Json(Outcome::Ok(report)).into_response();
     res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res

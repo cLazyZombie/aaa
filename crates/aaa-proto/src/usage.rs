@@ -1,7 +1,8 @@
 //! 구독 사용량(plan 한도). herdr-web-ui `shared/protocol.ts`(aa624cb) 281~327줄의 `Usage` 형식을 그대로 옮겼다.
 //!
 //! `GET /api/v1/usage[?refresh=1]` → `UsageReport`: host 머신의 CLI가 로그인한 구독의 한도(5시간 세션·주·월)를
-//! 그 CLI 자신의 로그인으로 읽는다(host `usage.rs`). 이 머신에 로그인한 구독만, 계정마다 한 번 나온다.
+//! 그 CLI 자신의 로그인으로 읽는다(host `usage.rs`). 등록 Claude 계정이 있으면 계정별 상태줄 관측을 쓴다.
+//! 그 밖은 host 머신의 로컬 로그인에서 읽는다. 계정마다 한 번 나온다.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -48,6 +49,13 @@ pub enum UsageProblem {
     RateLimited,
     Failed,
     Locked,
+    /// 등록 계정의 상태줄을 아직 관측하지 못함
+    Unobserved,
+    Stale,
+    Disconnected,
+    Unsupported,
+    /// 인증 만료와 구별되는 사용량 API 접근 거부(403)
+    Denied,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -67,7 +75,7 @@ pub struct ProviderUsage {
     pub checked_at: Option<String>,
 }
 
-/// GET /api/v1/usage: 이 머신의 CLI가 로그인한 구독만, 계정마다 한 번
+/// GET /api/v1/usage: 등록 Claude의 상태줄 관측, 그 밖은 host CLI 로그인. 계정마다 한 번
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 pub struct UsageReport {
     pub providers: Vec<ProviderUsage>,

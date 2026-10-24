@@ -5,6 +5,7 @@ import type { ProviderUsage, UsageWindow } from "./gen/proto";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { useUsageSettings, type UsageCount, type UsageGlance } from "./settings";
+import { usageProblemLabel, usageProblemText } from "./usageProblem";
 import {
   formatPercent,
   formatResetIn,
@@ -27,23 +28,6 @@ function level(window: UsageWindow | null): string {
   return window !== null && window.used_percent >= HIGH_PERCENT ? " is-high" : "";
 }
 
-/** 보이는 숫자가 오래됐거나 없는 까닭. 새것이면 null */
-function problemText(usage: ProviderUsage): string | null {
-  const name = PROVIDER_NAME[usage.id];
-  switch (usage.problem) {
-    case "expired":
-      return `로그인이 끝났다. ${name}을(를) 열어 다시 로그인한다.`;
-    case "rate_limited":
-      return `${name}이(가) 늦추라고 했다. 마지막 숫자다.`;
-    case "failed":
-      return `${name}에 닿지 못했다.`;
-    case "locked":
-      return "이 로그인을 담은 keychain을 host가 열 수 없다.";
-    default:
-      return null;
-  }
-}
-
 /** 끝난 로그인·닿지 못함은 오류다. 늦추라고 했거나 잠겼으면 마지막 숫자가 그대로다 */
 function isError(usage: ProviderUsage): boolean {
   return usage.problem === "expired" || usage.problem === "failed";
@@ -52,16 +36,16 @@ function isError(usage: ProviderUsage): boolean {
 function Chip({ usage, count, glance }: { usage: ProviderUsage; count: UsageCount; glance: UsageGlance }) {
   const window = glanceWindow(usage, glance);
   return (
-    <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`} data-provider={usage.id}>
+    <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`} data-provider={usage.id} title={usageProblemText(usage) ?? usageName(usage)}>
       <AgentMark agent={PROVIDER_MARK[usage.id]} size={14} />
-      <span className="usage-chip-value">{window ? formatPercent(meterPercent(window, count)) : "—"}</span>
+      <span className="usage-chip-value">{window ? formatPercent(meterPercent(window, count)) : usageProblemLabel(usage)}</span>
       <span className="usage-chip-bar" style={{ "--fill": `${window ? meterPercent(window, count) : 0}%` } as CSSProperties} />
     </span>
   );
 }
 
 function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; count: UsageCount }) {
-  const problem = problemText(usage);
+  const problem = usageProblemText(usage);
   return (
     <section className="usage-provider" aria-label={usageName(usage)}>
       <header className="usage-provider-head">
@@ -157,7 +141,7 @@ export function UsageMeters() {
   const summary = shown
     .map((usage) => {
       const window = glanceWindow(usage, settings.usageGlance);
-      return `${usageName(usage)} ${window ? meterText(window, count) : "—"}`;
+      return `${usageName(usage)} ${window ? meterText(window, count) : usageProblemLabel(usage)}${usage.problem ? ` (${usageProblemText(usage)})` : ""}`;
     })
     .join(", ");
 

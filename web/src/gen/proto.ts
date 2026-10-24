@@ -2748,7 +2748,7 @@ resets_at: string | null,
  */
 starts_at: string | null, };
 
-export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked";
+export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked" | "unobserved" | "stale" | "disconnected" | "unsupported" | "denied";
 
 export type ProviderUsage = { id: UsageProviderId,
 /**
