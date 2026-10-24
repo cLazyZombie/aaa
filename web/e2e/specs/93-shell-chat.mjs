@@ -310,6 +310,7 @@ export default async function () {
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
       await chat.getByText("처음이다", { exact: true }).waitFor();
       await watchScroll(page, '[data-testid="chat"]');
+      mark("scroll:header");
       // 앞 안내의 높이가 늦게 재측정되는 경계. 맨 위에서 첫 row의 위치만 붙들면 1px 아래로 옮긴다.
       const headerShift = await chat.evaluate((c) => {
         const note = c.querySelector(".chat-note");
@@ -319,6 +320,7 @@ export default async function () {
       });
       assert.equal(headerShift.growth, 1, "안내 높이 변화 준비");
       assert.equal(headerShift.after, 0, `맨 위에서 안내 재측정: ${JSON.stringify(headerShift)}`);
+      mark("scroll:pixel-anchor");
       // 실제 scroll 사건의 1px도 읽던 자리다. 끝난 입력 뒤 안내가 재측정돼도 그 줄을 지킨다.
       const pixelAnchor = await inTime(chat.evaluate(async (c) => {
         const trusted = await new Promise((done) => {
@@ -343,6 +345,7 @@ export default async function () {
         c.scrollTop = 0;
       })), 20_000, "1px 회귀 뒤 맨 위 복귀 완료");
       await shot(page, `shell-chat-${harness}-${engine.browserType().name()}-${width}`);
+      mark("scroll:input");
       // 데스크톱 휠과 Chromium 휴대폰의 실제 터치를 확인한다. 앞 쪽 갱신은 읽던 위치를 지킨다.
       const top = await chat.evaluate((c) => c.scrollTop);
       const box = await chat.boundingBox();
@@ -352,11 +355,14 @@ export default async function () {
         });
         const cdp = await page.context().newCDPSession(page);
         const x = Math.round(box.x + box.width / 2), y = Math.round(box.y + box.height - 50);
-        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
-        for (let i = 1; i <= 8; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - i * 25, id: 1 }] });
-        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-        await inTime(page.evaluate(() => window.shellScrollEnd), 20_000, "손을 뗀 뒤 관성 스크롤 종료");
-        await cdp.detach();
+        try {
+          // 개별 CDP move의 송신 간격은 부하에 따라 달라져 반대 방향 fling도 만든다.
+          // 브라우저가 실제 touch를 일정한 속도로 보내고 손을 멈춘 뒤 떼게 한다.
+          await inTime(cdp.send("Input.synthesizeScrollGesture", {
+            x, y, yDistance: -200, gestureSourceType: "touch", preventFling: true,
+          }), 20_000, "실제 터치로 대화 스크롤");
+          await inTime(page.evaluate(() => window.shellScrollEnd), 20_000, "대화 터치 스크롤 종료");
+        } finally { await cdp.detach(); }
       } else if (width < 500) {
         // Playwright의 mobile WebKit은 wheel 입력을 제공하지 않는다. 같은 브라우저 scroll 경로를 쓴다.
         await chat.evaluate((c) => c.scrollBy(0, 300));
@@ -365,6 +371,7 @@ export default async function () {
         await page.mouse.wheel(0, 300);
       }
       await page.waitForFunction((before) => document.querySelector('[data-testid="chat"]').scrollTop > before, top);
+      mark("scroll:return");
       await chat.evaluate((c) => {
         const native = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
         window.shellResetWrites = [];
@@ -399,6 +406,7 @@ export default async function () {
       }
       // 실제 두 frame에서 가상 row의 위치 측정을 끝낸 뒤 새 답변을 쓴다.
       assert.equal(settled.top, 0, `${name}: 새 답변을 쓰기 전 자리`);
+      mark("append");
       const appended = page.waitForResponse(async (r) => {
         if (!r.url().endsWith("/api/v1/call") || r.request().postDataJSON()?.op !== "pane_chat") return false;
         return (await r.json()).ok?.messages?.some((m) => m.text === `${id} 새 답변`);

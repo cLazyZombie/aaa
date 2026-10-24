@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## E2E93 터치 뒤 반대 방향 관성(t-0996)
+
+- t-0995의 Chromium 390px·Claude 직접 실행 실패는 터치 중 0→197px, 손을 뗀 뒤 197→0px의 native scroll이다. 해당 구간의 JS 위치 쓰기와 안내 높이 변화는 없었다. t-0851의 다른 history 위치 누수, t-0886의 1px 앵커 오분류, t-0905의 프로그램 reset 뒤 ±1px, t-0927·t-0932의 구독/종료 경합과 구별한다. 원본에는 touchmove 시각·compositor trace가 없어 당시 속도 표본까지 소급 확정하지 않는다.
+- 앱·React·기록 요청·위치 복원이 없는 최소 HTML에서 같은 8개 CDP move에 불규칙한 timestamp(시작부터 ms: `0,1,2,3,4,5,6,7,39`, 종료 `40`)를 주면 185→0px가 재현된다. Chromium 내부 trace는 손이 위로만 움직였는데 양의 Y fling 속도를 보인다. 실제 E2E93도 이 시각 대조에서 다른 E2E와 병렬로 3/3회 원래의 `scrollTop>0` 30초 대기를 실패했다. 이는 입력 시각을 제어한 원인 대조이며 원본 부하가 같은 표본을 만들었다는 재현은 아니다. 시각을 고정하지 않은 수정 전 E2E93 3회와 최소 HTML 30회는 통과했다.
+- 직접 실행의 Chromium 휴대폰 입력을 기존 맨 위 복귀와 같은 `Input.synthesizeScrollGesture`의 `gestureSourceType: touch, preventFling: true`로 보낸다. 브라우저가 터치 이동과 정지를 생성한 뒤 손을 떼며, Node의 개별 move 송신 간격에 관성 속도를 맡기지 않는다. 실제 터치·scrollend 뒤 이동 여부, 맨 위의 정확한 0, 실제 1px·안내 +1px의 읽던 줄, append·복귀·다른 파일 최신 끝 단언은 유지한다. 이 owner는 앱의 읽던 자리 보존을 검사하며 브라우저의 fling 속도 추정 자체를 인수 조건으로 삼지 않는다.
+- t-0896의 독립 16단계를 유지한다. 조합마다 새 실험실이며 이번 실패는 합계 120초가 아닌 한 조합의 위치 조건이다. 추가 분할은 이 입력 경합을 없애지 못하므로 하지 않는다. 대신 직접 실행의 안내·1px·입력·맨 위 복귀·append phase를 나누고, 공통 스크롤 진단에 touchmove/cancel의 좌표와 event timestamp를 더한다. 제품 코드·API·번호·기존 단언·20/30/120초 상한은 바꾸지 않는다. 고정 sleep·실패 재시도는 없다.
+- 부하 검증은 E2E93의 Claude 직접 실행 Chromium 390px를 `--repeat 12 --workers 3`으로 실행하면서 별도 runner의 E2E43·47·52 전체를 `--repeat 6 --workers 3`으로 함께 실행한다. `--grep`은 E2E93의 독립 조합만 고르며, 선행 준비를 쓰는 동반 spec에는 적용하지 않는다. 전체 E2E93·30·37·103·104와 웹 유닛·타입·빌드·공개 검사도 확인한다. 브라우저는 내부 공용 캐시를 사용하며 iPhone 실기 결과로 해석하지 않는다.
+- 참고 후보는 [Chromium의 synthetic smooth move](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/common/input/synthetic_smooth_move_gesture.cc)([BSD-3-Clause](https://chromium.googlesource.com/chromium/src/+/main/LICENSE))와 [Playwright의 입력 시험 지침](https://github.com/microsoft/playwright/blob/main/docs/src/input.md)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))이다. 브라우저가 만드는 실제 입력·정지 경계를 따르며 외부 코드·의존성은 추가하지 않는다.
+
 ## GitHub Pages 한 줄 설치 입구(t-0987)
 
 - 자동 재게시(t-0990): 같은 계약 시험에 `workflow_run`의 release 완료·성공·동일 저장소·main 문맥과 수동 실행, 배포 gate·두 URL 검증 연결을 단언한다. 실제 workflow의 bash 조건을 추출해 gh 응답 fixture와 실제 jq로 수동·정식판·사전판 tag/flag·초안·과거판·다른 tag·API 503을 검사한다. HTTP fixture로 공개 두 파일의 정상·이전 본문·404를 검사하고, 생성 전 latest가 바뀌면 자산 다운로드·파일 생성 없이 실패하는지 확인한다. 실제 release·tag·Pages 게시는 로컬 시험에서 하지 않는다.
