@@ -7831,3 +7831,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 필터는 탭 분류·50개씩 더 보기·개수·안 봄 배지보다 먼저 적용한다. 모두 읽음·끝난 것 모두 선택·보관·삭제는 걸러진 행만 다룬다. 필터를 바꾸면 선택과 더 보기 수를 초기화한다. 전체 용량 안내는 필터와 무관한 host 전체 용량이다.
 - 검증은 E2E108(Chromium/WebKit의 데스크톱·iPad·휴대폰 폭), 기존 보고서 E2E21·80·101과 공통 칩 회귀 E2E76·77, 웹 유닛과 host 목록 시험으로 한다. 화면 폭 재현이며 실기 기기 시험을 뜻하지 않는다.
 - 참고: [herdr workspace 묶기](https://github.com/herdrdev/herdr/blob/master/src/client/shell/sidebar.rs)(Apache-2.0), [Ovis/옛 herdr-web-ui 폴더 필터](https://github.com/devswha/ovis/blob/main/scripts/folder-filter-regression.ts)와 [Sidebar 기기 기억](https://github.com/devswha/ovis/blob/main/src/components/Sidebar.tsx)(MIT), [herdr-projects 보드 필터 시험](https://github.com/eliasstravik/herdr-projects/blob/main/tests/board_keys/filters.rs)(MIT)을 확인했다. 저장소별 묶음·개수·선택 표시·기기 기억을 참고하며, 보고서 필터 전용 UI는 이 참고 파일들에서 찾지 못했다. 외부 코드는 추가하지 않고 기존 칩과 RowMenu를 재사용한다.
+
+### 8.487 일정의 열린 일반 thread 조건(t-0993)
+
+- schema 2 `condition.min_open_threads`는 일정·명령 조회에만 적용한다. 같은 프로젝트의 open/starting 일반 worker만 세며 자동화·coordinator·평가자·resolved/failed/parked는 제외한다.
+- 조건 미달 차례는 기존 일정 커서를 소비하고 마지막 건너뜀에 개수를 기록한다. inbox·내구 입력을 만들지 않고 catch_up으로 되살리지 않는다. 웹 폼·검토·CLI 원문·공개 schema를 함께 유지한다.
+- FRONT_API 1.123, 기존 E2E55에 폼/TOML/검토/저장/재열기/제거/CLI 회귀를 추가한다. 운영 자동화 파일의 조건 활성화는 착지·배포 뒤 coordinator가 한다.

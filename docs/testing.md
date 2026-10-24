@@ -3574,3 +3574,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - E2E108은 격리 host의 보고서 원장·보관 판·TASKS.md를 만들고 실제 API로 읽는다. Chromium/WebKit × 1280/820/390px에서 세 탭의 필터·전체/미지정·새로고침 뒤 기억·일괄 읽음의 DB 범위·저장소 왕복 뒤 선택 해제·가로 넘침을 확인한다. DB fixture는 agent 수집 thread 없이 준비한다. 브라우저 DOM·요청 완료가 사건이며 고정 sleep·재시도·시한 확대는 없다.
 - 공통 칩 추출은 E2E76·77, 기존 보고서 권한·열기·보관은 E2E21, 대량 목록·더 보기는 E2E80, 모두 읽음은 E2E101로 회귀 검사한다. 변경 전후 같은 fixture의 세 폭 캡처를 보고 library에 둔다.
 - 실행 결과: 웹 유닛 547개, proto TypeScript 생성 계약 2개, host 보고서 시험 29개, crate 의존 경계 2개, host/proto all-targets clippy, 웹 타입·빌드·공개 검사 통과. E2E21·76·77·80·101과 E2E108을 통과했다. 첫 E2E108은 확인창의 실제 `alertdialog` 역할을 `dialog`로 찾은 시험 선택자 오류였으며 선택자를 고쳤다. 캡처는 메뉴 DOM과 `watchSheetExits`가 만든 닫힌 shadow root의 퇴장 잔상 host 제거를 기다린다(기존 E2E86과 같은 사건). 메뉴 열림은 유한 애니메이션 종료를 기다려 닫히던 시트가 그림에 남지 않게 한다.
+
+## 일정의 열린 일반 thread 조건(t-0993)
+
+- `cargo test -p aaa-host --lib automation::tests`는 schema 2 일정·명령 조회의 변환·재직렬화, 0·음수·사건 조건 거부와 기존 승인 계약을 확인한다. 실제 host DB에 프로젝트별 worker·자동화·coordinator·완료·실패·보류 thread를 넣고 일정 pass→내구 큐→inbox를 실행한다. 조건 미달에는 마지막 건너뜀만 남고 inbox는 없어야 하며, 일반 thread가 생겨도 같은 차례가 부활하지 않고 다음 차례에 안내 한 건을 남긴다. 시계 대기는 기존 일정 상태를 과거 차례로 준비하는 것으로 대신한다.
+- E2E55에 열린 일반 thread 최소 개수의 폼 입력→실제 host TOML 검사→검토 문구→저장→CLI show/목록→다시 열기→빈 칸 제거를 추가한다. 기존 충돌·승인·복구·휴대폰 화면 시험을 유지한다. host 응답·DOM 사건으로 끝내고 고정 sleep·재시도·시한 증가는 없다.
+- 웹 폼 유닛은 일정↔명령 조회에서 조건 보존, 사건 전환·빈 칸에서 제거를 확인한다. proto 생성 계약·공개 JSON schema·웹 유닛/타입/빌드·crate 의존 검사·host/proto clippy·공개 검사를 수행한다. 실제 운영 idle-audit 설정과 배포는 이 후보의 시험에 포함하지 않는다.
+
+- 검증 결과: 웹 유닛 548개·타입/빌드, host 전체 유닛 639개(기존 2개 제외, 자동화 71개 포함), 의존 경계 2개, proto 생성 계약 2개, E2E55 전체(14.2초), host/proto/CLI all-targets clippy·fmt·공개 검사가 통과했다. 새 host fixture는 observe의 tagged TOML 형식과 INSERT API로 바로잡았다. 처음에는 누락된 kind와 UPDATE만 하는 thread_save 때문에 실패했으며 제품 기대값·시한은 바꾸지 않았다. 전역 Playwright 1.59.1은 두고 자기 폴더에 1.64.1을 설치해 사용했다.

@@ -211,6 +211,7 @@ pub(crate) struct Routine {
     pub trigger: Trigger,
     /// 적은 일정, 또는 `on pr: <사건들>`
     pub schedule_text: String,
+    pub min_open_threads: Option<u32>,
     pub command: String,
     pub machine: Option<String>,
     pub enabled: bool,
@@ -326,6 +327,7 @@ fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
         catch_up: Default::default(),
         trigger,
         schedule_text,
+        min_open_threads: None,
         command: f.command.trim().to_string(),
         machine: f.machine.filter(|m| !m.trim().is_empty()),
         enabled: f.enabled,
@@ -379,7 +381,7 @@ pub(crate) fn load_all(dir: &Path) -> (Vec<Routine>, Vec<(String, String, String
 
 /// 목록 줄의 조건 낱말(웹 목록·검토 화면이 같은 글을 쓴다)
 pub(crate) fn trigger_label(r: &Routine) -> String {
-    match &r.trigger {
+    let label = match &r.trigger {
         Trigger::Ci(c) => format!("{} {} CI ({})", c.repo, c.branches.join(", "), c.events.join(", ")),
         Trigger::Git(g) => format!("{} {} Git ({})", g.repo, g.branches.join(", "), g.events.join(", ")),
         Trigger::Thread(t) => format!(
@@ -389,6 +391,10 @@ pub(crate) fn trigger_label(r: &Routine) -> String {
         ),
         Trigger::Schedule(_) if !r.command.is_empty() => format!("{} 명령 출력 변화", r.schedule_text),
         _ => r.schedule_text.clone(),
+    };
+    match r.min_open_threads {
+        Some(n) => format!("{label} · 열린 일반 thread {n}개 이상(자동화·완료·보류 제외)"),
+        None => label,
     }
 }
 
@@ -704,6 +710,24 @@ impl Host {
         self.routines(project)
     }
 
+    /// pane 연결 여부와 무관하게 프로젝트 원장에서 열린 일반 작업만 센다.
+    fn automation_open_threads(&self, project: &str) -> Result<usize, ErrorBody> {
+        let rows = self.db.threads(Some(project)).map_err(internal)?;
+        let records = rows
+            .into_iter()
+            .map(|row| serde_json::from_str::<crate::orch::ThreadRec>(&row))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(internal)?;
+        Ok(records
+            .iter()
+            .filter(|r| {
+                r.automation.is_none()
+                    && r.role == aaa_proto::Role::Worker
+                    && matches!(r.status, aaa_proto::ThreadStatus::Open | aaa_proto::ThreadStatus::Starting)
+            })
+            .count())
+    }
+
     /// ticker 한 번: 읽지 못한 파일을 알리고, 차례가 된 routine을 돌린다
     pub(crate) fn routine_pass(self: &Arc<Self>, project: &str, dir: &Path, coordinator: bool) {
         let (ok, broken) = load_all(dir);
@@ -782,6 +806,27 @@ impl Host {
             st.last_run_ms = Some(now);
             let planned = due_at(schedule, last, now, off).unwrap_or(now);
             let run_id = format!("schedule:{planned}");
+            if let Some(min) = r.min_open_threads {
+                match self.automation_open_threads(project) {
+                    Ok(count) if count >= min as usize => {}
+                    Ok(count) => {
+                        self.record_routine(
+                            project,
+                            &r.name,
+                            &run_id,
+                            "skipped",
+                            &format!("열린 일반 thread 부족: {count}/{min}"),
+                            None,
+                        );
+                        self.save_routine_state(project, &r.name, &st);
+                        continue;
+                    }
+                    Err(e) => {
+                        self.record_routine(project, &r.name, &run_id, "failed", &e.message, None);
+                        continue;
+                    }
+                }
+            }
             if !coordinator
                 && !matches!(
                     r.action,

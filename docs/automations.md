@@ -251,3 +251,23 @@ close_idle는 마지막 입력 뒤 새로 쓴 `[완료]`, agent의 Idle, 빈 내
 보고 묶음이 검토/쉼인지는 판정에 쓰지 않는다. 입력 전 보고 hash도 대조하여 늦게 회수한 옛 완료로 끝내지 않는다.
 자동화 `[완료]`는 저절로 확인하고 inbox 한 줄만 남긴다. 웹/푸시 완료 알림을 내지 않으며, 확인 필요 보고는 기존 알림을 유지한다.
 「열림」 칩 옆 끝남 예정은 보고·활동·처리 상태 사건에 따라 바뀐다.
+
+## 열린 작업이 있을 때만 일정 실행(t-0993)
+
+schema 2의 일정 트리거(명령 조회 포함)에 `condition.min_open_threads = 1`을 쓰면 같은 프로젝트에 열린 일반 worker thread가 있을 때만 실행한다. 생략하면 기존대로 돌며, 값은 1 이상의 정수다. 시작 중인 일반 worker도 세지만 자동화가 띄운 thread·coordinator·평가자·완료·실패·보류 thread는 세지 않는다. `include_automation`은 기존 thread 사건 필터에만 쓰며 이 개수에는 영향을 주지 않는다.
+
+```toml
+schema = 2
+[trigger]
+kind = "schedule"
+every = "10m"
+[condition]
+min_open_threads = 1
+[action]
+kind = "notice"
+text = "열린 작업을 점검한다"
+```
+
+개수가 부족하면 inbox나 실행 입력을 만들지 않고 마지막 건너뜀에 실제 개수/최소 개수를 기록한다. 그 차례는 소비하므로 `catch_up = "once"`여도 나중에 thread가 열렸다는 이유로 소급 실행하지 않는다. 웹 폼에서 최소 개수를 고치거나 비워 제거할 수 있고, 검토·목록과 CLI `automation show`의 원문에도 조건이 남는다. 사건 트리거에는 이 조건을 쓸 수 없다. FRONT_API 1.123부터 지원한다.
+
+[Airflow ShortCircuitOperator](https://airflow.apache.org/docs/apache-airflow-providers-standard/stable/operators/python.html#shortcircuitoperator)([Apache-2.0](https://github.com/apache/airflow/blob/main/LICENSE))의 조건 불충족 시 건너뜀과 [Healthchecks 상태 모델](https://github.com/healthchecks/healthchecks/blob/master/hc/api/models.py)([BSD-3-Clause](https://github.com/healthchecks/healthchecks/blob/master/LICENSE))의 일정·상태 분리를 대조했다. 기존 host 일정 커서와 건너뜀 기록을 이용하며 외부 코드나 의존성을 추가하지 않는다.

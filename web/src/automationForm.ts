@@ -63,7 +63,7 @@ const pick = (from: Record<string, unknown>, keys: string[]): Record<string, unk
 /** 조건 종류를 바꾼다. 겹치는 칸(일정·저장소·branch·머신)은 이어 쓴다 */
 export function setCondition(form: Form, kind: ConditionKind): Form {
   const old = condition(form);
-  const timing = pick(old, ["every", "daily", "catch_up"]);
+  const timing = pick(old, ["every", "daily", "catch_up", "min_open_threads"]);
   const target = pick(old, ["repo", "branches", "machine"]);
   if (!timing.every && !timing.daily) timing.daily = "09:00";
   const next: Record<ConditionKind, Record<string, unknown>> = {

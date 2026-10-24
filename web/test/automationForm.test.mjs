@@ -1,7 +1,7 @@
 // 자동화 편집 초안 규칙(src/automationForm.ts, 관리 GUI W2, plan §8.342). 합치기·검사의 정본은 host 유닛 automation::edit이다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { actionKind, bodyOf, canEditAutomations, conditionKind, lineDiff, newForm, parseList, parsePercent, setAction, setCondition, setField, USAGE_DEFAULTS, validName } from "../src/automationForm.ts";
+import { actionKind, bodyOf, canEditAutomations, condition, conditionKind, lineDiff, newForm, parseList, parsePercent, setAction, setCondition, setField, USAGE_DEFAULTS, validName } from "../src/automationForm.ts";
 
 describe("자동화 편집 초안", () => {
   it("편집은 1.76 이상 host만: 옛 host는 새 요청을 모른다", () => {
@@ -59,4 +59,16 @@ describe("자동화 편집 초안", () => {
     assert.deepEqual(d.map((l) => `${l.kind}:${l.text}`), ["same:a", "add:x", "del:b", "same:c"]);
     assert.deepEqual(lineDiff("same", "same").map((l) => l.kind), ["same"]);
   });
+});
+
+// 일정과 명령 조회를 오가도 열린 thread 조건을 보존한다. 사건으로 바꾸면 제거한다.
+it("열린 일반 thread 최소 개수의 편집·제거·조건 전환", () => {
+  let f = setField(newForm(), "on", "min_open_threads", 2);
+  assert.equal(condition(f).min_open_threads, 2);
+  f = setCondition(f, "command");
+  assert.equal(condition(f).min_open_threads, 2);
+  f = setCondition(f, "schedule");
+  assert.equal(condition(f).min_open_threads, 2);
+  assert.equal(condition(setField(f, "on", "min_open_threads", null)).min_open_threads, undefined);
+  assert.equal(condition(setCondition(f, "thread")).min_open_threads, undefined);
 });

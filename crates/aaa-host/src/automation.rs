@@ -90,6 +90,8 @@ pub(crate) enum CatchUp {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Scheduled {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_open_threads: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub every: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily: Option<String>,
@@ -99,6 +101,8 @@ pub(crate) struct Scheduled {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Command {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_open_threads: Option<u32>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub every: Option<String>,
@@ -517,13 +521,26 @@ pub(crate) fn parse_with(
         front.insert(key.into(), value);
     };
     let mut catch_up = CatchUp::Once;
+    let min_open_threads = match &spec.on {
+        Condition::Schedule(s) => s.min_open_threads,
+        Condition::Command(c) => c.min_open_threads,
+        _ => None,
+    };
+    if min_open_threads == Some(0) {
+        return Err(bad("condition.min_open_threads", "1 이상의 개수를 쓴다"));
+    }
     match &spec.on {
         Condition::Schedule(s) => {
             put("schedule", s.expression().map_err(|e| bad("on.schedule", e))?.into());
             catch_up = s.catch_up;
         }
         Condition::Command(c) => {
-            let s = Scheduled { every: c.every.clone(), daily: c.daily.clone(), catch_up: c.catch_up };
+            let s = Scheduled {
+                every: c.every.clone(),
+                daily: c.daily.clone(),
+                catch_up: c.catch_up,
+                min_open_threads: c.min_open_threads,
+            };
             put("schedule", s.expression().map_err(|e| bad("on.command", e))?.into());
             if c.command.trim().is_empty() {
                 return Err(bad("on.command.command", "명령이 비었다"));
@@ -600,6 +617,7 @@ pub(crate) fn parse_with(
     r.action = spec.action;
     r.limits = spec.limits;
     r.catch_up = catch_up;
+    r.min_open_threads = min_open_threads;
     Ok(r)
 }
 
@@ -652,9 +670,11 @@ pub(crate) fn duration_text(seconds: u64) -> String {
 impl Scheduled {
     pub fn from_schedule(s: &crate::routine::Schedule, catch_up: CatchUp) -> Self {
         match s {
-            crate::routine::Schedule::Every(n) => Self { every: Some(duration_text(*n)), daily: None, catch_up },
+            crate::routine::Schedule::Every(n) => {
+                Self { every: Some(duration_text(*n)), daily: None, catch_up, min_open_threads: None }
+            }
             crate::routine::Schedule::Daily(h, m) => {
-                Self { daily: Some(format!("{h:02}:{m:02}")), every: None, catch_up }
+                Self { daily: Some(format!("{h:02}:{m:02}")), every: None, catch_up, min_open_threads: None }
             }
         }
     }
@@ -669,11 +689,16 @@ impl File {
                     every: schedule.every,
                     daily: schedule.daily,
                     catch_up: r.catch_up,
+                    min_open_threads: r.min_open_threads,
                     command: r.command.clone(),
                     machine: r.machine.clone(),
                 })
             }
-            Trigger::Schedule(s) => Condition::Schedule(Scheduled::from_schedule(s, r.catch_up)),
+            Trigger::Schedule(s) => {
+                let mut schedule = Scheduled::from_schedule(s, r.catch_up);
+                schedule.min_open_threads = r.min_open_threads;
+                Condition::Schedule(schedule)
+            }
             Trigger::Thread(t) => Condition::Thread(t.clone()),
             Trigger::Pr(events) => Condition::Pr(Pr { events: events.clone() }),
             Trigger::Ci(c) => Condition::Ci(Ci {
