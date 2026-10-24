@@ -21,6 +21,8 @@ def read_url(url: str) -> bytes:
     except (urllib.error.URLError, OSError) as error:
         # 리디렉션의 서명 URL은 로그에 남기지 않는다.
         cause = getattr(error, 'reason', error)
+        if isinstance(error, urllib.error.HTTPError):
+            error.close()
         raise ValueError(f"release 다운로드 실패: {url} ({type(error).__name__}, "
                          f"http={getattr(error, 'code', None)}, cause={type(cause).__name__}, "
                          f"errno={getattr(cause, 'errno', None)})") from None
@@ -67,12 +69,27 @@ def render(manifest: dict, checksums: str, output: Path) -> str:
     return version
 
 
+def verify_site(output: Path, url: str) -> None:
+    """게시 완료 사건 뒤 두 공개 입구를 실제 게시 artifact와 바이트로 대조한다."""
+    version = json.loads((output / 'release.json').read_text(encoding='utf-8'))['version']
+    for name in ('install.sh', 'install.ps1'):
+        remote = url.rstrip('/') + '/' + name
+        if read_url(remote) != (output / name).read_bytes():
+            raise ValueError(f"Pages 게시 내용 불일치: {remote} (기대 판 v{version})")
+        print(f"Pages 게시 확인: {remote} (v{version})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--metadata-dir", type=Path, help="격리 시험용 manifest.json·SHA256SUMS 폴더")
+    parser.add_argument("--expected-tag", default="", help="자동 게시를 깨운 정식 release tag")
+    parser.add_argument("--verify-url", help="생성 대신 게시된 두 URL을 output 파일과 대조")
     args = parser.parse_args()
     try:
+        if args.verify_url:
+            verify_site(args.output, args.verify_url)
+            return
         if args.metadata_dir:
             manifest = json.loads((args.metadata_dir / "manifest.json").read_text(encoding="utf-8"))
             sums = (args.metadata_dir / "SHA256SUMS").read_text(encoding="utf-8")
@@ -81,6 +98,8 @@ def main() -> None:
             tag = latest["tag_name"]
             if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) or latest["draft"] or latest["prerelease"]:
                 raise ValueError("공개 stable release가 아니다")
+            if args.expected_tag and tag != args.expected_tag:
+                raise ValueError(f"최신 release가 바뀌었다: 기대 {args.expected_tag}, 실제 {tag}")
             # latest를 한 번만 해석한다. 이후 파일들은 같은 불변 tag에서 받는다.
             manifest = json.loads(read_url(f"{RELEASES}/{tag}/manifest.json"))
             if tag != 'v' + manifest.get('version', ''):

@@ -11,13 +11,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
-from scripts.build_install_site import render
-from scripts.release import ASSETS, LAUNCHERS, RELEASES, render_windows_entry
+from scripts.build_install_site import main, render, verify_site
+from scripts.release import ASSETS, LAUNCHERS, RELEASES, ROOT, render_windows_entry
 
 
 class SiteFixture(unittest.TestCase):
@@ -89,6 +91,32 @@ class SiteFixture(unittest.TestCase):
 
 
 class SiteContract(SiteFixture):
+    def test_published_urls_match_artifact_and_reject_old_or_missing_entry(self):
+        self.build()
+        self.serve()
+        verify_site(self.site, self.url)
+        self.assertEqual(self.requests, ['/install.sh', '/install.ps1'])
+        for name in ('install.sh', 'install.ps1'):
+            original = self.payloads[name]
+            self.payloads[name] = b'old release'
+            with self.assertRaisesRegex(ValueError, name):
+                verify_site(self.site, self.url)
+            del self.payloads[name]
+            with self.assertRaisesRegex(ValueError, 'http=404'):
+                verify_site(self.site, self.url)
+            self.payloads[name] = original
+
+    def test_changed_latest_fails_before_downloading_assets_or_writing_output(self):
+        latest = json.dumps(dict(tag_name='v0.1.7', draft=False, prerelease=False)).encode()
+        with mock.patch('scripts.build_install_site.read_url', return_value=latest) as read:
+            with mock.patch.object(sys, 'argv', ['build_install_site.py', '--output', str(self.site),
+                                               '--expected-tag', 'v0.1.6']):
+                with self.assertRaises(SystemExit) as error, mock.patch('sys.stderr'):
+                    main()
+        self.assertEqual(error.exception.code, 1)
+        read.assert_called_once_with('https://api.github.com/repos/cLazyZombie/aaa/releases/latest')
+        self.assertFalse(self.site.exists())
+
     def test_generated_windows_entry_is_the_existing_release_owner(self):
         self.build()
         digest = hashlib.sha256(self.payloads[ASSETS['windows-x86_64']]).hexdigest()
@@ -119,6 +147,78 @@ class SiteContract(SiteFixture):
                 with self.assertRaises(ValueError):
                     render(manifest, sums, output)
                 self.assertFalse(output.exists(), '검증 전에 Pages 파일을 만들었다')
+
+
+class PagesWorkflow(unittest.TestCase):
+    def setUp(self):
+        self.workflow = (ROOT / '.github/workflows/install-pages.yml').read_text(encoding='utf-8')
+
+    def test_trigger_trust_main_and_deploy_contract(self):
+        for required in (
+            'workflow_dispatch:', 'workflow_run:', 'workflows: [release]', 'types: [completed]',
+            "github.repository == 'cLazyZombie/aaa'", "github.ref == 'refs/heads/main'",
+            "github.event_name == 'workflow_dispatch'", "github.event_name == 'workflow_run'",
+            "github.event.workflow_run.conclusion == 'success'",
+            "github.event.workflow_run.event == 'push'",
+            'github.event.workflow_run.head_repository.full_name == github.repository',
+            "startsWith(github.event.workflow_run.head_branch, 'v')",
+            "if: needs.build.outputs.publish == 'true'", 'name: github-pages',
+            '--expected-tag "$EXPECTED_TAG"', '--verify-url "$PAGE_URL"',
+            'name: github-pages\n          path: target/pages-artifact',
+        ):
+            self.assertIn(required, self.workflow)
+        self.assertNotIn('\n  release:', self.workflow)
+        # 완료한 release의 코드·artifact를 실행하지 않고 main의 게시 도구만 실행한다.
+        self.assertNotIn('ref:', self.workflow)
+        self.assertEqual(self.workflow.count("if: steps.release.outputs.publish == 'true'"), 3)
+        deploy = self.workflow.split('\n  deploy:', 1)[1]
+        self.assertIn('contents: read', deploy)
+        self.assertLess(deploy.index('Pages 게시'), deploy.index('두 공개 설치 URL'))
+
+    @unittest.skipUnless(os.name == 'posix' and shutil.which('jq'), '실제 bash·jq로 게시 조건을 검사한다')
+    def test_actual_gate_handles_manual_stable_prerelease_draft_old_and_api_error(self):
+        gate = textwrap.dedent(self.workflow.split('        run: |\n', 1)[1]
+                               .split('      - name:', 1)[0])
+        with tempfile.TemporaryDirectory(prefix='aaa-pages-gate-') as temporary:
+            root = Path(temporary)
+            gh = root / 'gh'
+            gh.write_text(f'#!{sys.executable}\n' + '''import json, os, subprocess, sys
+if os.environ['FAIL_API'] == '1':
+    print('release API: HTTP 503', file=sys.stderr)
+    sys.exit(1)
+path = sys.argv[2]
+release = dict(tag_name=os.environ['TAG'], draft=os.environ['DRAFT'] == '1',
+               prerelease=os.environ['PRERELEASE'] == '1')
+if path.endswith('/latest'):
+    release['tag_name'] = os.environ['LATEST']
+sys.exit(subprocess.run(['jq', '-r', sys.argv[4]], input=json.dumps(release), text=True).returncode)
+''', encoding='utf-8')
+            gh.chmod(0o755)
+            for case, updates, publish, code in (
+                ('stable', {}, True, 0),
+                ('manual', dict(EVENT_NAME='workflow_dispatch', FAIL_API='1'), True, 0),
+                ('prerelease-tag', dict(RELEASE_TAG='v0.1.6-rc.1'), False, 0),
+                ('prerelease-flag', dict(PRERELEASE='1'), False, 0),
+                ('draft', dict(DRAFT='1'), False, 0),
+                ('old', dict(LATEST='v0.1.7'), False, 0),
+                ('foreign-tag', dict(TAG='v0.1.7'), False, 0),
+                ('api-error', dict(FAIL_API='1'), False, 1),
+            ):
+                with self.subTest(case=case):
+                    output = root / case
+                    env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
+                               GITHUB_OUTPUT=str(output), GITHUB_REPOSITORY='example/aaa',
+                               EVENT_NAME='workflow_run', RELEASE_TAG='v0.1.6', TAG='v0.1.6',
+                               LATEST='v0.1.6', DRAFT='0', PRERELEASE='0', FAIL_API='0')
+                    env.update(updates)
+                    result = subprocess.run(['bash', '-c', gate], env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, code, result.stderr)
+                    actual = output.read_text() if output.exists() else ''
+                    self.assertEqual('publish=true\n' in actual, publish, result.stdout)
+                    if case == 'stable':
+                        self.assertIn('tag=v0.1.6\n', actual)
+                    if case == 'api-error':
+                        self.assertIn('HTTP 503', result.stderr)
 
 
 UNIX_PAYLOAD = '''import json, os, pathlib, sys
