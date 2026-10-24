@@ -22,7 +22,10 @@ export async function watchScroll(page, selector) {
       native.set.call(this, value);
       record('write', { before, value, stack: new Error().stack });
     } });
-    for (const type of ['scroll', 'scrollend', 'touchstart', 'touchend']) el.addEventListener(type, e => record(type, { trusted: e.isTrusted }), { capture: true, passive: true });
+    for (const type of ['scroll', 'scrollend', 'touchstart', 'touchmove', 'touchend', 'touchcancel']) el.addEventListener(type, e => record(type, {
+      trusted: e.isTrusted, stamp: e.timeStamp,
+      touches: e.touches && [...e.touches].map(t => ({ id: t.identifier, x: t.clientX, y: t.clientY })),
+    }), { capture: true, passive: true });
     document.addEventListener('keydown', e => queueMicrotask(() => record('key', { key: e.key, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey, taken: e.defaultPrevented, target: e.target?.tagName })), true);
     record('watch');
   });
