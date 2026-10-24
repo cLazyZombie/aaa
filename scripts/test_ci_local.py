@@ -75,7 +75,7 @@ class CiLocal(unittest.TestCase):
         (self.root / "web/dist").mkdir(parents=True)
         # e2e의 기존 번들 최신성 검사도 그대로 실행한다.
         (self.root / "web/dist/index.html").touch()
-        for name in ("ci-local.sh", "ci_stream.py"):
+        for name in ("ci-local.sh", "ci_stream.py", "workspace_metrics.py"):
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
         for name in ("cargo", "npm", "node", "python3", "public"):
             self.write_tool(self.root / "tools" / name)

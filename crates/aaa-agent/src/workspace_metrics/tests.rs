@@ -346,27 +346,115 @@ fn remote_identity_normalizes_transport_but_keeps_forks_and_path_case_separate()
     assert_eq!(mainline::remote_id("/work/app"), None);
 }
 #[test]
-fn collection_excludes_branch_unpushed_and_pre_checkout_runs() {
+fn legacy_runs_need_main_checkout_but_confirmed_records_and_code_follow_pushed_objects() {
     let l = Lab::new();
     let state = Lab::new();
     fixture(&l);
     main_repo(&l);
     let saved = collect(&state.0, &l.0, "ws", &[]).unwrap();
     assert_eq!(saved.runs.len(), 1);
-    assert_eq!(saved.code_lines.unwrap().branch, "main");
+    assert_eq!(saved.code_lines.as_ref().unwrap().branch, "main");
     git(&l, &["checkout", "-qb", "thread"]);
     let branch = collect(&state.0, &l.0, "ws", &[]).unwrap();
-    assert!(branch.runs.is_empty() && branch.code_lines.is_none());
+    assert_eq!(branch.runs, saved.runs, "확정한 main 결과는 현재 checkout과 독립이다");
+    assert_eq!(branch.code_lines.unwrap().commit, saved.code_lines.unwrap().commit);
     assert!(branch.remote_id.is_some());
     git(&l, &["checkout", "-q", "main"]);
     l.put("src/app.ts", "export const n = 2;\n");
     git(&l, &["add", "src"]);
     git(&l, &["commit", "-qm", "not pushed"]);
-    assert!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs.is_empty());
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, saved.runs);
     git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     let main = mainline::Mainline::read(&l.0).unwrap();
     assert!(!main.accepts(main.stable_since_ms - 1, main.stable_since_ms + 100));
     // 오래된 캐시 판은 전혀 읽지 않는다.
     fixture(&l);
     assert!(collect(&Lab::new().0, &l.0, "ws", &[]).unwrap().runs.is_empty());
+}
+
+fn archive_fixture(l: &Lab, name: &str, commit: &str, outcome: &str) {
+    let tree = git(l, &["rev-parse", &format!("{commit}^{{tree}}")]);
+    let remote = mainline::remote_id("https://example.com/team/app.git").unwrap();
+    let dir = format!(".git/aaa-workspace-runs/run-{name}");
+    let data = serde_json::json!({"format":1,"commit":commit,"tree":tree,"remote":remote,"clean":true,
+        "started_at_ms":1000000000000u64,"ended_at_ms":1000000001000u64,"artifact_bytes":1234});
+    l.put(&format!("{dir}/provenance.json"), &data.to_string());
+    l.put(&format!("{dir}/workspace-summary.tsv"), &format!("v1|1000000000|1|{outcome}\nbuild|ok|0|1|0.25|unused\n"));
+}
+
+#[test]
+fn ci_archive_waits_for_main_then_survives_stale_checkout_deleted_sources_and_recollection() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    let old = git(&l, &["rev-parse", "HEAD"]);
+    git(&l, &["checkout", "-qb", "landing"]);
+    l.put("src/app.ts", "export const n = 2;\nexport const second = true;\n");
+    git(&l, &["commit", "-qam", "landing tree"]);
+    let pushed = git(&l, &["rev-parse", "HEAD"]);
+    archive_fixture(&l, "success", &pushed, "succeeded");
+    archive_fixture(&l, "failure", &pushed, "failed");
+    git(&l, &["checkout", "-q", "main"]);
+    let before = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert!(before.runs.is_empty());
+    assert!(before.notes.iter().any(|n| n.contains("반영 대기 CI 실행 2개")));
+    git(&l, &["update-ref", "refs/remotes/origin/main", &pushed]);
+    assert_eq!(git(&l, &["rev-parse", "HEAD"]), old, "등록 checkout은 옛 main 그대로");
+    let after = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(after.runs.len(), 2, "push 전의 부정 결과를 캐시하지 않는다");
+    assert!(after.runs.iter().all(|r| r.commit == pushed && r.build_ms == Some(250) && r.artifact_bytes == Some(1234)));
+    assert!(after.runs.iter().any(|r| r.outcome == "failed"));
+    assert_eq!(after.code_lines.unwrap().total_lines, 2, "코드는 origin/main 객체 기준");
+    fs::remove_dir_all(l.0.join(".git/aaa-workspace-runs/run-success")).unwrap();
+    fs::remove_dir_all(l.0.join(".git/aaa-workspace-runs/run-failure")).unwrap();
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, after.runs);
+}
+
+#[test]
+fn ci_archive_excludes_side_branch_even_after_merge_and_reports_bad_provenance() {
+    let l = Lab::new();
+    main_repo(&l);
+    git(&l, &["checkout", "-qb", "candidate"]);
+    l.put("src/new.ts", "export const candidate = 1;\n");
+    git(&l, &["add", "src"]);
+    git(&l, &["commit", "-qm", "candidate"]);
+    let candidate = git(&l, &["rev-parse", "HEAD"]);
+    archive_fixture(&l, "candidate", &candidate, "succeeded");
+    git(&l, &["checkout", "-q", "main"]);
+    git(&l, &["merge", "--no-ff", "-qm", "landing", "candidate"]);
+    let main = git(&l, &["rev-parse", "HEAD"]);
+    git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    archive_fixture(&l, "landing", &main, "succeeded");
+    archive_fixture(&l, "wrong-tree", &main, "succeeded");
+    let path = l.0.join(".git/aaa-workspace-runs/run-wrong-tree/provenance.json");
+    let mut source: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    source["tree"] = serde_json::json!("0".repeat(40));
+    fs::write(path, source.to_string()).unwrap();
+    let got = collect(&Lab::new().0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(got.runs.len(), 1);
+    assert_eq!(got.runs[0].commit, main);
+    assert!(got.notes.iter().any(|n| n.contains("tree 불일치")));
+    assert!(got.notes.iter().any(|n| n.contains("반영 대기 CI 실행 1개")));
+}
+
+#[test]
+fn new_ci_provenance_cannot_fall_back_to_legacy_and_archive_backlog_advances() {
+    let l = Lab::new();
+    let state = Lab::new();
+    fixture(&l);
+    main_repo(&l);
+    l.put("target/ci-local/run/workspace-source.json", "{}");
+    assert!(
+        collect(&state.0, &l.0, "ws", &[]).unwrap().runs.is_empty(),
+        "새 runner 출처 오류를 시각 추정으로 우회하지 않는다"
+    );
+    let commit = git(&l, &["rev-parse", "HEAD"]);
+    for i in 0..33 {
+        archive_fixture(&l, &format!("backlog-{i}"), &commit, "succeeded");
+    }
+    let first = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(first.runs.len(), 32);
+    assert!(first.notes.iter().any(|n| n.contains("새 종료 입력 32개")));
+    let next = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(next.runs.len(), 33, "이미 수집한 최신 입력이 다음 회수의 예산을 차지하지 않는다");
 }

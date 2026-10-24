@@ -3646,3 +3646,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 웹 폼 유닛은 일정↔명령 조회에서 조건 보존, 사건 전환·빈 칸에서 제거를 확인한다. proto 생성 계약·공개 JSON schema·웹 유닛/타입/빌드·crate 의존 검사·host/proto clippy·공개 검사를 수행한다. 실제 운영 idle-audit 설정과 배포는 이 후보의 시험에 포함하지 않는다.
 
 - 검증 결과: 웹 유닛 548개·타입/빌드, host 전체 유닛 639개(기존 2개 제외, 자동화 71개 포함), 의존 경계 2개, proto 생성 계약 2개, E2E55 전체(14.2초), host/proto/CLI all-targets clippy·fmt·공개 검사가 통과했다. 새 host fixture는 observe의 tagged TOML 형식과 INSERT API로 바로잡았다. 처음에는 누락된 kind와 UPDATE만 하는 thread_save 때문에 실패했으며 제품 기대값·시한은 바꾸지 않았다. 전역 Playwright 1.59.1은 두고 자기 폴더에 1.64.1을 설치해 사용했다.
+
+## workspace CI 종료 원장 회수(t-1004)
+
+- 운영 원장과 최근 작업을 읽기만 해 대조했다. 실행 0건·코드 줄 수 1건이었고, 최근 24시간에 변경된 보존 자료에는 CI 종료 요약 파일 213개가 있었다(복사본 포함, 고유 실행 수 아님). t-1000의 네 gate 결과도 원장에 없었다. 별도 착지 worktree·외부 `--logs`·정리된 원본과 등록 checkout의 옛 HEAD 때문에 수집되지 않았다. 화면 기간·머신 필터나 DB 보존 삭제가 원인은 아니었다.
+- `python3 -m unittest scripts.test_workspace_metrics scripts.test_ci_local`은 실제 CI 셸·Git으로 성공/실패 종료, 외부 로그 폴더, 출처 변경/미커밋 거부, 원문 출력 제외와 누락된 Rust 부속 결과를 확인한다. 보관 실패는 CI 종료 코드를 덮지 않는다. 새 시험도 ci-local의 Python 목록에 포함한다.
+- `nice -n 15 cargo test --locked -p aaa-agent -p aaa-host --lib workspace_metrics`는 push 전 대기→같은 입력의 push 후 확정, 옛 등록 checkout에서도 origin/main 객체 집계, 후보 브랜치 시간의 main 혼입 방지, tree 불일치 진단, 실패 실행·크기 보존, 원본 삭제 후 재회수와 기존 host 중복/필터를 검사한다. 기존 구형 요약의 시작/reflog·수집 전후 checkout 검사는 유지한다. 예전 「현재 checkout이 branch면 이미 확정한 main 기록도 숨긴다」 단언만 origin/main 객체 기준으로 바꾼다.
+- E2E90 마지막 단계는 제품 CI 셸과 종료 보관 스크립트를 실제 별도 worktree에서 실행한다. 검사 단계만 격리된 public 성공/실패 명령으로 준비한다. agent→host→열린 실행 표의 갱신은 실제 제품 경로다. 미push 동안 실행 수가 늘지 않고, origin/main ref 갱신 뒤 worktree·외부 원본 로그를 먼저 지워도 성공/실패 두 건과 실행 커밋·머신·새 main 코드 줄 수가 보이는지 확인한다. 보고 재회수 뒤 중복도 검사한다. 기존 Chromium/WebKit·모든 화면 폭·밝음/어두움 단언은 유지한다. ref 갱신은 외부 Git 서버 없이 push 완료 상태를 나타내며 실제 운영 UI 확인은 배포 뒤 한다.
+- Playwright는 저장소 요구 판 1.64.1의 npm 패키지만 작업 폴더에 두고 기존 내부 공용 Chromium/WebKit 캐시를 사용한다. 브라우저 설치·시한 연장·실패 재시도·고정 sleep은 추가하지 않는다.
