@@ -11,11 +11,12 @@ export function workspaceQuery(params: URLSearchParams): WorkspaceQuery {
     days: [1, 7, 30].includes(Number(params.get("days"))) ? Number(params.get("days")) : 7,
     granularity: params.get("by") === "day" ? "day" : "run",
     utc_offset_minutes: params.get("tz") === "utc" ? 0 : 540,
-    code_axis: params.get("axis"), code_branch: params.get("branch"),
+    code_axis: params.get("axis"),
   };
 }
 export function workspaceRoute(route: string | null, change: Record<string, string | null>): string {
   const params = workspaceParams(route);
+  params.delete("branch");
   for (const [key, value] of Object.entries(change)) { if (value === null || value === "") params.delete(key); else params.set(key, value); }
   return `workspace:${params}`;
 }

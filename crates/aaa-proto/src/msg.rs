@@ -1074,7 +1074,7 @@ pub enum AgentRequest {
         uncopied: bool,
     },
     /// git.v1을 알린 repo 머신 agent만 origin head·변화 객체를 읽는다.
-    /// workspace_metrics.v1: 기존 종료 산출물과 커밋별 코드 줄 수만 회수한다.
+    /// workspace_metrics.v2: 등록한 main checkout의 push 확인 결과와 원격 신원을 회수한다.
     WorkspaceMetrics {
         cwd: String,
         workspace_key: String,

@@ -28,6 +28,8 @@ pub struct MetricRanking {
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MetricRun {
+    #[serde(default)]
+    pub commit: String,
     pub run_id: String,
     #[ts(type = "number")]
     pub observed_at_ms: u64,
@@ -72,6 +74,8 @@ pub struct CodeLines {
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct WorkspaceCollected {
+    #[serde(default)]
+    pub remote_id: Option<String>,
     pub runs: Vec<MetricRun>,
     pub code_lines: Option<CodeLines>,
     pub notes: Vec<String>,
@@ -103,7 +107,6 @@ pub struct WorkspaceQuery {
     pub granularity: Option<String>,
     pub utc_offset_minutes: Option<i32>,
     pub code_axis: Option<String>,
-    pub code_branch: Option<String>,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MetricPoint {
@@ -122,9 +125,8 @@ pub struct WorkspaceDashboard {
     pub workspaces: Vec<RepoWorkspace>,
     pub workspace_id: Option<String>,
     pub runs: Vec<MetricRun>,
+    pub counts_run: Option<Box<MetricRun>>,
     pub code_lines: Vec<CodeLines>,
-    pub code_branches: Vec<String>,
-    pub code_branch: Option<String>,
     pub verification_trend: Vec<MetricPoint>,
     pub build_trend: Vec<MetricPoint>,
     pub artifact_trend: Vec<MetricPoint>,

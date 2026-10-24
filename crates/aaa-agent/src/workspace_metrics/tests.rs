@@ -55,6 +55,7 @@ fn ci_reads_existing_counts_and_spec_work_without_inventing_individual_test_time
 fn same_input_version_reuses_small_summary_after_source_logs_disappear() {
     let l = Lab::new();
     fixture(&l);
+    main_repo(&l);
     let state = Lab::new();
     let a = collect(&state.0, &l.0, "ws", &[]).unwrap();
     assert_eq!(a.runs.len(), 1);
@@ -108,6 +109,7 @@ fn git(l: &Lab, args: &[&str]) -> String {
     let o = std::process::Command::new("git")
         .args(["-C", l.0.to_str().unwrap(), "-c", "user.name=Test", "-c", "user.email=test@example.com"])
         .args(args)
+        .env("GIT_COMMITTER_DATE", "2001-01-01T00:00:00Z")
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -156,6 +158,7 @@ fn code_lines_use_commit_objects_incrementally_handle_rename_delete_and_keep_mix
 #[test]
 fn malformed_or_oversized_inputs_remain_pending_without_a_successful_zero() {
     let l = Lab::new();
+    main_repo(&l);
     let state = Lab::new();
     l.put("target/verification/summary.json", "{");
     let r = collect(&state.0, &l.0, "ws", &[]).unwrap();
@@ -179,6 +182,7 @@ fn malformed_or_oversized_inputs_remain_pending_without_a_successful_zero() {
 #[test]
 fn engine_uses_existing_timings_and_runtime_reports_without_treating_rc_timing_as_engine() {
     let l = Lab::new();
+    main_repo(&l);
     let state = Lab::new();
     l.put("target/verify-timing.txt", "verify.sh timing (all gates passed)\ntotal 12s\n");
     let rc = collect(&state.0, &l.0, "ws", &[]).unwrap();
@@ -211,6 +215,7 @@ fn bounded_log_read_keeps_known_total_instead_of_discarding_the_entire_run() {
     let l = Lab::new();
     let state = Lab::new();
     fixture(&l);
+    main_repo(&l);
     // 각각은 한도 안이지만 두 파일 합계는 회수 예산을 넘긴다.
     let log = "x".repeat((MAX_INPUT / 2 + 100) as usize);
     l.put("target/ci-local/run/rust/a.log", &log);
@@ -317,4 +322,51 @@ fn collection_lock_releases_when_the_owner_finishes_even_with_an_inherited_descr
     let next = CollectionLock(aaa_common::private_file::lock(&path).unwrap());
     drop(inherited);
     drop(next);
+}
+
+fn main_repo(l: &Lab) {
+    git(l, &["init", "-q", "-b", "main"]);
+    l.put("src/app.ts", "export const n = 1;\n");
+    git(l, &["add", "src"]);
+    git(l, &["commit", "-qm", "main fixture"]);
+    git(l, &["remote", "add", "origin", "https://example.com/team/app.git"]);
+    git(l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    if let Ok(body) = fs::read_to_string(l.0.join("target/ci-local/run/workspace-summary.tsv")) {
+        l.put("target/ci-local/run/workspace-summary.tsv", &body.replace("v1|100|", "v1|1000000000|"));
+    }
+}
+#[test]
+fn remote_identity_normalizes_transport_but_keeps_forks_and_path_case_separate() {
+    let id = mainline::remote_id("https://example.com/team/App.git");
+    assert!(id.is_some());
+    assert_eq!(id, mainline::remote_id(&format!("git@{}:team/App.git", "example.com".to_ascii_uppercase())));
+    assert_eq!(id, mainline::remote_id("ssh://git@example.com/team/App"));
+    assert_ne!(id, mainline::remote_id("https://example.com/fork/App.git"));
+    assert_ne!(id, mainline::remote_id("https://example.com/team/app.git"));
+    assert_eq!(mainline::remote_id("/work/app"), None);
+}
+#[test]
+fn collection_excludes_branch_unpushed_and_pre_checkout_runs() {
+    let l = Lab::new();
+    let state = Lab::new();
+    fixture(&l);
+    main_repo(&l);
+    let saved = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(saved.runs.len(), 1);
+    assert_eq!(saved.code_lines.unwrap().branch, "main");
+    git(&l, &["checkout", "-qb", "thread"]);
+    let branch = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert!(branch.runs.is_empty() && branch.code_lines.is_none());
+    assert!(branch.remote_id.is_some());
+    git(&l, &["checkout", "-q", "main"]);
+    l.put("src/app.ts", "export const n = 2;\n");
+    git(&l, &["add", "src"]);
+    git(&l, &["commit", "-qm", "not pushed"]);
+    assert!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs.is_empty());
+    git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    let main = mainline::Mainline::read(&l.0).unwrap();
+    assert!(!main.accepts(main.stable_since_ms - 1, main.stable_since_ms + 100));
+    // 오래된 캐시 판은 전혀 읽지 않는다.
+    fixture(&l);
+    assert!(collect(&Lab::new().0, &l.0, "ws", &[]).unwrap().runs.is_empty());
 }

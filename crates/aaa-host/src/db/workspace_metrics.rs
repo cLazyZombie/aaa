@@ -5,40 +5,26 @@ use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 
 impl Db {
-    pub(crate) fn repo_workspace_id(&self, project: &str, registration: &str, alias: Option<&str>) -> Result<String> {
-        let mut db = self.conn.lock().unwrap();
-        let tx = db.transaction()?;
-        let existing: Option<String> = tx
+    /// URL을 정규화한 SHA256만 신원으로 쓴다. 모르는 등록은 빈 ID로 대기한다.
+    pub(crate) fn repo_workspace_id(&self, project: &str, registration: &str, remote: Option<&str>) -> Result<String> {
+        let db = self.conn.lock().unwrap();
+        if let Some(remote) = remote {
+            anyhow::ensure!(
+                remote.len() == 64 && remote.bytes().all(|b| b.is_ascii_hexdigit()),
+                "원격 저장소 신원 형식 오류"
+            );
+            let id = format!("ws-{remote}");
+            db.execute("INSERT INTO repo_workspaces(project,registration,id) VALUES(?1,?2,?3) ON CONFLICT(project,registration) DO UPDATE SET id=excluded.id", params![project,registration,id])?;
+            return Ok(id);
+        }
+        Ok(db
             .query_row(
                 "SELECT id FROM repo_workspaces WHERE project=?1 AND registration=?2",
                 params![project, registration],
                 |r| r.get(0),
             )
-            .optional()?;
-        let old_id = existing.clone();
-        let id = if let Some(alias) = alias {
-            format!("ws-{alias}")
-        } else {
-            existing.unwrap_or_else(|| format!("ws-{}", aaa_common::util::new_id()))
-        };
-        if old_id.as_deref() == Some(id.as_str()) {
-            tx.commit()?;
-            return Ok(id);
-        }
-        tx.execute("INSERT INTO repo_workspaces(project,registration,id) VALUES(?1,?2,?3) ON CONFLICT(project,registration) DO UPDATE SET id=excluded.id",params![project,registration,id])?;
-        if let Some(old) = old_id.filter(|old| old != &id) {
-            let remaining: u32 = tx.query_row(
-                "SELECT COUNT(*) FROM repo_workspaces WHERE project=?1 AND id=?2",
-                params![project, old],
-                |r| r.get(0),
-            )?;
-            if remaining == 0 {
-                tx.execute("INSERT OR IGNORE INTO repo_metrics SELECT project,?3,kind,id,at_ms,data FROM repo_metrics WHERE project=?1 AND workspace=?2",params![project,old,id])?;
-                tx.execute("DELETE FROM repo_metrics WHERE project=?1 AND workspace=?2", params![project, old])?;
-            }
-        }
-        tx.commit()?;
-        Ok(id)
+            .optional()?
+            .unwrap_or_default())
     }
     pub(crate) fn save_workspace_metrics(
         &self,
@@ -50,11 +36,17 @@ impl Db {
         let mut db = self.conn.lock().unwrap();
         let tx = db.transaction()?;
         for run in &value.runs {
+            if run.commit.is_empty() {
+                continue;
+            }
             let mut run = run.clone();
             run.machine = machine.into();
+            run.run_id = format!("{machine}:{}", run.run_id);
             tx.execute("INSERT INTO repo_metrics(project,workspace,kind,id,at_ms,data) VALUES(?1,?2,'run',?3,?4,?5) ON CONFLICT(project,workspace,kind,id) DO NOTHING",params![project,workspace,run.run_id,run.observed_at_ms,serde_json::to_string(&run)?])?;
         }
-        if let Some(lines) = &value.code_lines {
+        if let Some(lines) = &value.code_lines
+            && lines.branch == "main"
+        {
             let id = format!("{}:{}", lines.commit, lines.rules_version);
             tx.execute("INSERT INTO repo_metrics(project,workspace,kind,id,at_ms,data) VALUES(?1,?2,'lines',?3,?4,?5) ON CONFLICT(project,workspace,kind,id) DO NOTHING",params![project,workspace,id,lines.observed_at_ms,serde_json::to_string(lines)?])?;
         }

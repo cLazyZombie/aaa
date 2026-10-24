@@ -247,7 +247,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.118: coordinator auto mode 상태·자동 답 원장·재판단 요청. harness 권한은 바꾸지 않는다.
 // 1.119: LibraryMarkRead로 확인한 보고서 목록을 한 번에 읽음 처리한다.
 // 1.120: 자동화 schema 2·실행 원장·입력 결과 연결. 옛 routine API는 호환 어댑터다.
-pub const FRONT_API: Version = Version { major: 1, minor: 120 };
+// 1.121: 원격 저장소별 main 지표·workspace 공통 개수, branch 선택 제거. agent 기능 workspace_metrics.v2.
+pub const FRONT_API: Version = Version { major: 1, minor: 121 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

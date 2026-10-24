@@ -48,10 +48,11 @@ fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         bail!("Git 목록 비용 상한 또는 읽기 실패");
     }
-    ensure!(child.wait()?.success(), "Git 객체 읽기 실패");
+    let status = child.wait()?;
+    ensure!(status.success(), "Git {} 종료 실패: {status}", args.join(" "));
     Ok(bytes)
 }
-fn text(cwd: &Path, args: &[&str]) -> Result<String> {
+pub(super) fn text(cwd: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(git(cwd, args)?)?.trim().to_string())
 }
 fn language(path: &str) -> Option<&'static str> {

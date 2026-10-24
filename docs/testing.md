@@ -3428,3 +3428,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 실제 기록의 해당 메시지가 나타나는 DOM 사건을 먼저 기다리고 `.is-pending`이 없는 메시지에서 썸네일을 고른다. 화면에 스크롤해 lazy loading을 시작한 뒤 기존 decode·바이트·해시·잘림·썸네일·삭제·권한 단언을 그대로 수행한다. decode 시작 때 연결된 실제 메시지 이미지인지도 검사한다. 제품 코드는 바꾸지 않으며 시한·기대값 완화·재시도·단계 삭제는 없다.
 - 수리 SHA의 E2E23 전체 10회 모두 통과 뒤 같은 SHA로 필수 gate를 처음부터 한 번 수행한다. 진단 재현의 실패와 수리 뒤 안정성 표본을 구분한다.
 - [Playwright locator](https://playwright.dev/docs/api/class-locator#locator-scroll-into-view-if-needed)(Apache-2.0), [HTML 이미지 처리](https://html.spec.whatwg.org/multipage/images.html), [WebKit ImageLoader](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/loader/ImageLoader.cpp)(LGPL-2.0-or-later)를 대조했다. 외부 코드는 가져오지 않는다.
+## workspace main 통계·사용량 바닥 고정(t-0961)
+
+- `cargo test -p aaa-agent -p aaa-host workspace_metrics`: origin 정규화·fork 구별, main checkout/미push/HEAD 변경 전 실행 제외, 원장 재시작·중복 제거·두 머신·여러 프로젝트 동일 remote 묶음, 통계 전용 초기화와 다른 데이터 보존을 검사한다. Git 실행과 SQLite는 실제 경로를 사용한다. 기존 parser·비용 상한·코드 집계 시험은 유지한다.
+- E2E90은 실제 host와 두 agent를 등록하고 두 clone의 SSH/HTTPS origin을 같은 저장소로 묶는다. fixture origin/main ref는 외부 Git 서버 없이 push 완료 상태를 나타낸다. thread worktree에는 별도 결과를 두어 main 수집에 포함되지 않음을 검사한다. 조회·필터·개수·그래프는 제품 API와 렌더링을 그대로 사용한다.
+- Chromium/WebKit × 1280/820/390/320px × 밝음/어두움에서 URL·상세 키보드·가로 넘침·수집 오류·머신 선/점과 필터를 검사한다. 실제 등록/원장에 긴 목록 fixture를 추가하여 workspace만 스크롤되고 공통 사용량 바닥 줄은 설정 톱니 옆에 남는지 확인한다. 답할 것·작업·할 일도 같은 위치를 검사한다. 기기 크기를 재현한 headless 시험이며 실제 iPad/iPhone 실기라고 부르지 않는다. DOM·등록 완료·보고 hash·수집 갱신이 완료 사건이다.
+- 참고 후보: [herdr-web-ui Sidebar](https://github.com/devswha/herdr-web-ui/blob/main/src/components/Sidebar.css)([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE)), [herdr-projects](https://github.com/eliasstravik/herdr-projects)([MIT](https://github.com/eliasstravik/herdr-projects/blob/main/LICENSE)), [Recharts 다중 선 예제](https://recharts.github.io/en-US/examples/LineChartHasMultiSeries/)([MIT](https://github.com/recharts/recharts/blob/main/LICENSE)). 앞의 두 저장소에서 전용 통계/차트 모듈은 찾지 못했다. 기존 sidebar flex 구조와 Recharts의 시계열별 선·범례 구분을 참고한다. 현재 앱은 차트 라이브러리 없이 SVG를 쓰므로 새 패키지나 외부 코드는 추가하지 않는다.
+
+- 전체 회귀에서 발견한 E2E23 경합: 낙관적 대기 말이 나타났다고 enqueue가 읽혔다고 가정해 즉시 remove를 기록하면 수신 방식이 PastedContent로 관측된다. QueueOperation 진단 사건을 확인한 뒤 remove를 기록하도록 fixture 순서를 고친다. 기존 동일 입력 ID·여러 줄·진단 비밀값 배제 단언과 한도는 유지한다.
+- E2E23의 기록 썸네일은 수신 때 교체되는 낙관적 말 대신 실제 기록 말을 선택하고, 제품의 `loading=lazy`에 맞춰 먼저 화면 안으로 스크롤한 뒤 decode를 기다린다. 임시 DOM 교체와 이미지 decode/스크롤의 경합 및 화면 밖 그림의 순환 대기를 없애며, 썸네일 잘림 단언과 단계 한도는 유지한다.

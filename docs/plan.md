@@ -6892,7 +6892,7 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 ### 8.393 할 일 한 목록·예약 맨 위(t-0611)
 
-- iPad 행 정렬 수리(t-0959): 표지·상태 원·ID·제목을 공통 열에 놓고, 표지가 없는 행도 같은 자리를 남긴다. 하위 일은 제목 글만 들여쓴다. 칩은 별도 줄에서 폭에 맞춰 접고 긴 제목은 남은 공통 폭에서 말줄임한다. E2E101은 iPad 양 방향·데스크톱 두 폭·휴대폰의 열 정렬·겹침·잘림을 검사한다. API는 유지한다.
+- iPad 행 정렬 수리(t-0959): 표지·상태 원·ID·제목을 공통 열에 놓고, 표지가 없는 행도 같은 자리를 남긴다. 하위 일은 제목 글만 들여쓴다. 칩은 별도 줄에서 폭에 맞춰 접고 긴 제목은 남은 공통 폭에서 말줄임한다. E2E107은 iPad 양 방향·데스크톱 두 폭·휴대폰의 열 정렬·겹침·잘림을 검사한다. API는 유지한다.
 
 - 사용자 승인 시안(t-0580 3판, 10-21)대로 웹 할 일 화면의 「## 목록」 나누기와 위쪽 「▼ 예약 N」 칸을 없애고 한 목록으로 보인다. 예약(자리 대기·확인 필요)은 맨 위에 host 예약 차례대로 숫자·「예약 N」 글 없이 보라 표지만 두고(확인 필요는 노랑), 그 밑에 일반 할 일을 파일 차례로 둔다. 차례의 정본은 host 예약 기록이다(t-0564).
 - 시작 중·진행 중이 된 예약은 원래 자리에 ◉로 보인다(1A). 상위를 예약하면 하위가 그 밑에 함께 올라가고(2A), 하위만 예약하면 상위 경로가 붙고 상위 행에 「하위 N 예약됨」이 붙는다. 머신 연결 대기·확인 필요 같은 특별한 까닭과 풀면 돌아갈 자리는 상세에만 보인다.
@@ -7812,3 +7812,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - on/do/limits·routine·mission 읽기 어댑터와 journal 이관은 파일별 원본/목적 bytes·계획 hash를 검사한다. a-ID·열린 thread·기억·processed·현재 profiles를 유지한다. 감시 harness를 고정하지 않고 t-0941 공통 기억 재독, t-0935 workspace, t-0938 auto mode owner를 사용한다.
 - CLI automation list/show/runs/run show/enable/disable/migrate/input complete와 기존 alias, 웹 원장·직접 명령 편집, coordinator 생성 안내를 맞춘다. 사람 전용 승인·safety·배포·일반 resolve 권한은 확대하지 않는다.
 - FRONT_API 1.120, `automation_results.v1`, E2E106. [계약·운영](automation-v2.md), [시험](testing.md). 기존 source 관측 로그는 작업 성공으로 승격하지 않는다.
+### 8.485 workspace main 통계와 공통 사용량 바닥 줄(t-0961)
+
+- §8.455의 등록별 통계·branch 선택을 대체한다. origin의 host와 저장소 경로를 정규화한 SHA256으로 머신·프로젝트에 관계없이 묶는다. SSH scp/SSH URL/HTTPS 표기를 합치고 저장소 경로의 대소문자·fork는 구별한다. URL 인증 정보·원문은 host로 보내지 않는다. 원격 신원을 모르는 등록은 수집 전 상태이며 이름만으로 합치지 않는다.
+- 보고 회수의 수집 대상은 thread cwd가 아닌 등록 repo의 main checkout이다. HEAD=origin/main이고 실행 시작부터 HEAD reflog 변경이 없음을 확인한 결과만 저장한다. ci-local의 시작 시각, rc의 시작 marker, 엔진의 종료 시각−전체 경과를 사용한다. main 전환 이전·미push·출처 불명 실행은 제외한다. reflog의 초 경계는 보수적으로 제외하며 수집 전후 HEAD·remote를 대조한다. 별도 검증이나 fetch는 실행하지 않는다. main 반영 후 보고 회수에서 원장에 확정하며 화면 조회는 원장만 읽는다.
+- host 통계 전용 marker `workspace-metrics-schema=2` 전환은 repo_metrics·repo_workspaces·workspace-collection 메타만 한 transaction으로 초기화한다. thread·task·보고서·다른 메타는 유지한다. agent는 workspace-metrics-v2 캐시를 사용하여 구형 캐시를 재수입하지 않는다. 이후 재시작은 v2 원장을 보존한다.
+- 한 그래프에서 머신별 색·원/사각 점·실선/점선을 표시한다. 머신 필터로 하나만 볼 수 있고 profile별 시계열은 서로 연결하지 않는다. 테스트·E2E 수는 머신 필터와 독립된 workspace 최신 기록을 쓴다. 코드 줄 수는 main 커밋별 한 번만 보관한다. branch 선택 UI·URL 질의·응답 목록을 제거한다.
+- workspace 패널에 기존 list-body와 같은 남은 높이 배분을 적용하고 공통 list-foot를 바닥에 붙인다. 짧은 목록·긴 목록 모두 사용량은 설정 톱니와 같은 바닥에 남고 목록만 스크롤한다. 답할 것·작업·할 일 화면에서도 같은 바닥 줄을 쓴다.
+- FRONT_API 1.121, Agent link 1.11 선택 기능 workspace_metrics.v2다. 기존 E2E90을 두 agent·두 clone fixture, Chromium/WebKit 1280·820·390·320px와 사용량 위치 검사로 확장한다. 절·API 판은 착지 때 main과 대조한다.
