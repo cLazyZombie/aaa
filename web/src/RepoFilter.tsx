@@ -1,5 +1,5 @@
 // 할 일·보고서의 저장소 칩과 이 기기 기억을 함께 쓴다.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, CircleDashed, Folder, FolderGit2, Layers } from "lucide-react";
 import { RowMenu } from "./RowMenu";
 import { useMediaQuery } from "./herdr/useMediaQuery";
@@ -9,13 +9,17 @@ import { REPO_DIR } from "./tasksModel";
 export type RepoChoice = { key: string; label: string; n: number };
 export function useRepoFilter(scope: "tasks" | "reports", project: string) {
   const key = `aaa:${scope}:repo:${project}`;
-  const [state, setState] = useState<{ key: string; value: string | null }>({ key: "", value: null });
-  useEffect(() => {
-    let value = null;
+  const read = () => {
+    let value: string | null = null;
     try { value = project ? localStorage.getItem(key) : null; }
     catch (error) { logIgnoredFailure(error, "저장소 거르기 읽기"); }
-    setState({ key, value });
-  }, [key, project]);
+    return { key, value };
+  };
+  const [state, setState] = useState(read);
+  // 보고서 응답에서 프로젝트를 처음 알게 된다. effect까지 전체 목록을 그리지 않고
+  // 새 key의 기억을 같은 render에서 적용한다. 일반 재렌더에서는 저장소를 다시 읽지 않는다.
+  const current = state.key === key ? state : read();
+  if (current !== state) setState(current);
   const setValue = (value: string | null) => {
     setState({ key, value });
     try {
@@ -24,7 +28,7 @@ export function useRepoFilter(scope: "tasks" | "reports", project: string) {
       else localStorage.setItem(key, value);
     } catch (error) { logIgnoredFailure(error, "저장소 거르기 저장"); }
   };
-  return [state.key === key ? state.value : null, setValue] as const;
+  return [current.value, setValue] as const;
 }
 
 export function RepoFilter({ value, choices, total, onChange, testId }: {

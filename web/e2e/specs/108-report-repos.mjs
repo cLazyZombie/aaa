@@ -4,6 +4,22 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, step, shot, browser, webkit, pairPage } from "../lib/harness.mjs";
 
+// 새로고침 첫 DOM부터 본다. 최종 필터만 기다리면 중간의 전체 목록 노출을 놓친다.
+function observeRepoRestore() {
+  window.repoRestore = [];
+  const sample = () => {
+    if (!document.querySelector('[data-testid="report-demo-mine-aaa"]')) return;
+    const state = {
+      repo: document.querySelector('[data-testid="reports-repo"]')?.getAttribute('data-repo'),
+      cards: document.querySelectorAll('.report-card').length,
+      stored: localStorage.getItem('aaa:reports:repo:demo'),
+      hash: location.hash,
+    };
+    if (JSON.stringify(window.repoRestore.at(-1)?.state) !== JSON.stringify(state)) window.repoRestore.push({ at: performance.now(), state });
+  };
+  new MutationObserver(sample).observe(document, { childList: true, subtree: true, attributes: true });
+}
+
 export default async function () {
   await step("보고서 저장소: 세 탭·기기 기억·읽음 범위·선택 해제·세 화면 폭", async () => {
     aaa("project", "create", "demo");
@@ -71,9 +87,18 @@ export default async function () {
             await page.getByRole("alertdialog").getByRole("button", { name: "모두 읽음", exact: true }).click();
             await page.getByRole("alertdialog").waitFor({ state: "hidden" });
             assert.equal(db.prepare("SELECT count(*) AS n FROM library_reports WHERE seen_at IS NOT NULL").get().n, 1);
+            await page.context().addInitScript(observeRepoRestore);
             await page.reload();
             await page.getByTestId("report-demo-mine-aaa").waitFor();
-            assert.equal(await page.getByTestId("reports-repo").getAttribute("data-repo"), "aaa");
+            try {
+              assert.equal(await page.getByTestId("reports-repo").getAttribute("data-repo"), "aaa");
+              const restored = await page.evaluate(() => window.repoRestore);
+              assert.ok(restored.length > 0, "새로고침 첫 카드 관측");
+              assert.deepEqual(restored.filter(({ state }) => state.repo !== "aaa" || state.cards !== 1), [], "기억한 필터로 첫 카드부터 표시");
+            } catch (error) {
+              console.error("보고서 필터 복원", label, width, await page.evaluate(() => window.repoRestore));
+              throw error;
+            }
             assert.deepEqual(await page.evaluate(() => [localStorage.getItem("aaa:tasks:repo:demo"), localStorage.getItem("aaa:reports:repo:other")]), ["rc", "rc"]);
             await choose("정하지 않음");
             await page.getByTestId("report-demo-mine-none").waitFor();

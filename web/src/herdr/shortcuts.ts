@@ -214,6 +214,7 @@ function layoutLabel(key: string): string {
 
 /** True while Settings records a chord: the dispatcher below stands down so the pressed chord is not run. */
 let recordingShortcut = false;
+export const isShortcutRecording = (): boolean => recordingShortcut;
 export function setShortcutRecording(recording: boolean): void {
   recordingShortcut = recording;
 }

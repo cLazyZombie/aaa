@@ -79,7 +79,16 @@ export default async function () {
             aaa("pane", "send-keys", opened.pane.id, "ctrl+c");
             await notice.waitFor();
             assert.equal(panes().find(x => x.id === opened.pane.id)?.state, "exited");
-            await domIs(p, "종료된 coordinator 줄 없음", id => !document.querySelector(`.pane-item[data-pane="${id}"]`) && !document.querySelector('[data-origin="coordinator"]'), opened.pane.id);
+            try {
+              await domIs(p, "종료된 coordinator 줄 없음", id => !document.querySelector(`.pane-item[data-pane="${id}"]`) && !document.querySelector('[data-origin="coordinator"]'), opened.pane.id);
+            } catch (error) {
+              console.error("coordinator 종료 DOM", await p.evaluate(id => ({
+                rows: document.querySelectorAll(`.pane-item[data-pane="${id}"]`).length,
+                origins: [...document.querySelectorAll('[data-origin="coordinator"]')].map(el => ({ tag: el.tagName, className: el.className, hidden: el.hidden, pane: el.getAttribute("data-pane") })),
+                previews: document.querySelectorAll(".terminal-preview").length,
+              }), opened.pane.id));
+              throw error;
+            }
             await shot(p, `91-${name}-${width}-exited`);
             await p.reload();
             await notice.waitFor();

@@ -360,6 +360,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [passkey, reloadPasskey] = usePasskeyState();
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());
+  // 본문을 바꾸지 않는 목록도 마지막으로 열었을 때 전환기의 현재 화면으로 센다.
+  const [recentPanel, setRecentPanel] = useState<"automations" | "asks" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   // 768px 이하에서 목록은 pane 위의 drawer다(herdr-web-ui App.tsx 290~316줄, drawer.tsx). 769px부터는 늘 옆 칸이라
   // 좁은 창이 열어 둔 drawer가 다음에 좁아질 때 다시 나오지 않게 닫는다
@@ -767,6 +769,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 지금 칸을 바꾼다: 뒤로 끝에 빈 「하나를 고른다」 칸이 남지 않는다(herdr-web-ui App.tsx 1091줄 첫 쓰기·autoSelected는
   // replaceState, deepLink.ts `isNavigation`은 pane 없는 곳을 이동으로 치지 않는다, plan §8.301)
   const goHash = (hash: string, replace = false) => {
+    setRecentPanel(null);
     const next = hash ? `#${hash}` : "";
     drawerSwipe.current?.beforeNavigation();
     if (settingsEntry(history.state)) {
@@ -819,6 +822,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       const next = selectedFromHash();
       if (!settingsEntry(history.state)) setSettingsOpen(false);
       if (!own) {
+        setRecentPanel(null);
         // 브라우저 뒤로·앞으로는 popstate에서 drawer를 닫는다(plan §8.340). 목록 줄을 직접 고를 때는 choose·chooseThread 등이 닫는다.
         // Safari 가장자리 뒤로 쓸기는 drawer를 열지 않는다(왼쪽 끝은 브라우저 몫, plan §8.408).
         // 고른 것이 없는 칸(옛 첫 칸·「고른 것 없음」)이나 닫힌 pane의 칸에 닿으면 지금 화면에 머물고 그 칸에 지금 주소를 쓴다(참고
@@ -1238,6 +1242,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => { if (workspaceShown) setPanel("workspace"); }, [workspaceShown]);
   const showPanel = (next: SidebarPanel) => {
     const opening = settingsOpen || collapsed || next !== panelRef.current;
+    setRecentPanel(opening && (next === "automations" || (next === "asks" && !wideScreen)) ? next : null);
     if (settingsOpen) {
       closeSettings();
       setPanel(next);
@@ -1776,8 +1781,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           }}
         />
       )}
-      <RecentSwitcher standalone={homeScreenApp} blocked={!loaded || settingsOpen || paletteOpen || fileViewing !== null || newPaneOn !== null}
-        targets={recentScreenTargets} selected={sel} onOpen={(id) => { choose(id); reveal(`pane:${id}`); }} />
+      <RecentSwitcher standalone={homeScreenApp} blocked={!loaded || paletteOpen || fileViewing !== null || newPaneOn !== null}
+        targets={recentScreenTargets} selected={settingsOpen ? "settings:" : recentPanel && panel === recentPanel && !collapsed && (wideScreen || drawerOpen) ? `${recentPanel}:` : sel} onOpen={(screen) => {
+          if (screen === "settings:") openSettings();
+          else if (screen === "automations:") {
+            goSel(sel);
+            setPanel("automations"); setCollapsed(false); setRecentPanel("automations");
+            setDrawerOpen(!wideScreen);
+          }
+          else {
+            goSel(screen); reveal(screen);
+            if (screen === "asks:") { setPanel("asks"); setDrawerOpen(!wideScreen); }
+          }
+        }} />
       <ErrorBoundary area="명령 팔레트" resetKeys={[paletteOpen]} onDismiss={closePalette}>
       <CommandPalette
         open={paletteOpen}
