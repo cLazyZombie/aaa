@@ -759,7 +759,7 @@ draw();
   await step("대화 이미지: Chrome·Safari·iPhone·iPad에서 올린 그림을 coordinator가 읽고 task 첨부로 thread에 넘긴다", async () => {
     let imageDevice = "setup", imageMethod = "setup";
     const imageLog = (event, label, extra = {}) => {
-      const row = { event, device: imageDevice, method: imageMethod, label, ...extra };
+      const row = { at: new Date().toISOString(), event, device: imageDevice, method: imageMethod, label, ...extra };
       fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
       fs.appendFileSync(`${root}/diagnostics/image-await.jsonl`, JSON.stringify(row) + "\n");
       console.log("IMAGE-AWAIT " + JSON.stringify(row));
@@ -784,6 +784,9 @@ draw();
         const client = name === "iphone" || name === "ipad" ? await imageAwait("pairDevice(wk, aaa(\"web\", \"pair\").code, name)", async () => (pairDevice(wk, aaa("web", "pair").code, name))) : await imageAwait("pairPage(name === \"chrome\" ? browser : wk, aaa(\"web\", \"pair\").code, { width: 1280, height: 800 })", async () => (pairPage(name === "chrome" ? browser : wk, aaa("web", "pair").code, { width: 1280, height: 800 })));
         const p = client.page;
         imageDiagnosticPage = p;
+        p.on("console", (message) => {
+          if (message.text().startsWith("IMAGE-DECODE ")) imageLog("decode", message.text());
+        });
         const box = await imageAwait("openChat(p)", async () => (openChat(p)));
         const composer = p.getByTestId("chat-composer");
         for (const method of ["paste", "drop", "picker"]) {
@@ -831,7 +834,13 @@ draw();
                 connected: img.isConnected, complete: img.complete, naturalWidth: img.naturalWidth,
                 pendingMessage: !!img.closest(".chat-turn-user")?.querySelector(".is-pending"),
               } };
-              return img.decode().then(() => { decode.state = "resolved"; }, (error) => { decode.state = "rejected"; throw error; });
+              const log = (event) => console.log("IMAGE-DECODE " + JSON.stringify({ event, before: decode.before,
+                connected: img.isConnected, complete: img.complete, naturalWidth: img.naturalWidth }));
+              log("start");
+              const observer = new MutationObserver(() => { if (!img.isConnected) { log("detached"); observer.disconnect(); } });
+              observer.observe(document, { childList: true, subtree: true });
+              return img.decode().then(() => { decode.state = "resolved"; log("resolved"); observer.disconnect(); },
+                (error) => { decode.state = "rejected"; log("rejected"); observer.disconnect(); throw error; });
             }));
             if (await imageAwait("thumb.evaluate((el) => el.querySelector(\"img\").getBoundingClientRect().bottom > el.getBoundingClient", async () => (thumb.evaluate((el) => el.querySelector("img").getBoundingClientRect().bottom > el.getBoundingClientRect().bottom + 1)))) throw new Error(`${name} 기록 썸네일 잘림`);
             await imageAwait("thumb.scrollIntoViewIfNeeded()", async () => (thumb.scrollIntoViewIfNeeded()));
