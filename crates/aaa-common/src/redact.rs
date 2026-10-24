@@ -204,6 +204,9 @@ pub fn text(value: &str) -> String {
     String::from_utf8_lossy(&bytes(value.as_bytes())).into_owned()
 }
 
+mod live;
+pub use live::LiveStream;
+
 mod wire;
 
 /// 가림 실패의 이유만 남긴다. serde 오류에는 원문이 들어갈 수 있어 보관하지 않는다.

@@ -1284,3 +1284,61 @@ fn account_spawn_failure_keeps_session_host_pid_and_underlying_error() {
     }
     assert!(!message.contains("fake-access-token") && !message.contains("fake-refresh-token"));
 }
+
+/// 실기 send와 같은 한 바이트 입력 → 실제 host/agent/PTY/VT를 거쳐 다음 키 전에 보인다.
+#[test]
+fn authenticated_terminal_echo_does_not_wait_for_the_next_ascii_key() {
+    let gate = Gate::new();
+    let secret: String = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        .chars()
+        .map(|c| format!("{c}~~~~~~~~~~~"))
+        .collect();
+    let script = r#"#!/usr/bin/env python3
+import os,sys,tty
+if sys.argv[1:]==['--version']:
+    print('fixture');sys.exit(0)
+tty.setraw(0)
+os.write(1,b'echo-ready!\r\n')
+while True:
+    data=os.read(0,1)
+    if not data or data==b'\x03': break
+    os.write(1,data)
+"#;
+    let w = world("http://127.0.0.1:1", &gate, &secret, script);
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    rt.block_on(async {
+        use aaa_proto::{B64, FrontRequest, FrontResponse};
+        let mut client = aaa_common::front::FrontClient::connect_as(&w.h.state, "input-echo-test").await.unwrap();
+        let pane = match client
+            .call(FrontRequest::PaneRun {
+                machine: Some("labA".into()),
+                name: None,
+                argv: vec![],
+                cwd: Some(path_str(&w.scripts).into()),
+                cols: Some(120),
+                rows: Some(32),
+                profile: Some("token".into()),
+            })
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            FrontResponse::Pane(p) => p.id,
+            other => panic!("pane 시작: {other:?}"),
+        };
+        w.h.wait_output(&pane, "echo-ready!", T);
+        let mut expected = String::new();
+        for ch in "status aaa123! 한글".chars() {
+            let text = ch.to_string();
+            client
+                .call(FrontRequest::PaneInput { pane: pane.clone(), data: B64(text.into_bytes()) })
+                .await
+                .unwrap()
+                .unwrap();
+            expected.push(ch);
+            // 다음 키를 보내서 앞 글자를 풀지 않는다. VT에 나타난 사건으로만 진행한다.
+            w.h.wait_output(&pane, expected.trim_end(), T);
+        }
+        client.call(FrontRequest::PaneInput { pane, data: B64(vec![3]) }).await.unwrap().unwrap();
+    });
+}
