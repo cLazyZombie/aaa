@@ -259,6 +259,8 @@ E2E11·52·89와 아래 m13 세 경로는 각각 최소 1회 실패를 확인했
 | m13 `memory_and_restart` | 짧은 working 유예를 CLI 왕복으로 확인하는 중복 단언 제거 | 유예 경계는 `orch::tests::a_just_delivered_brief_is_working_until_a_report_or_a_tick`. 실제 memory 변경·새 pane·brief·resume와 종료 pane idle은 m13에 유지 |
 | m13 `claude_thread_states_questions_and_messages` | accepted와 harness 실제 수신을 구분. 제한된 visible 화면에 과거 출력이 계속 남을 필요 없음 | 실제 `got` 출력 뒤 interrupt/stop. Interrupted→긴급 입력 순서·중단 횟수·권한 질문 보호·정확한 질문/입력 기록 유지 |
 
+- memory 재시작은 새 원문 `API는 v3로 바꾼다`의 포함과 옛 원문 `API는 v2로 한다`의 부재를 함께 검사한다. brief의 진행 보고 실행 경로에 우연히 `v2`가 있어도 실패하지 않는다. `landing-v2` 경로에서 실제 시험을 수행하고, 새 memory에 옛 원문도 함께 남긴 변형이 같은 단언에서 실패하는지 확인한다.
+
 - E2E52의 정상 저장은 그대로 새 폼을 연다. 응답을 기다리던 폼의 선택이 현재 선택과 같을 때만 새 폼을 열어 다른 선택·닫힘·초안을 덮지 않는다. 구판에 응답 gate를 적용하면 선택 보존 단언이 실패하고 수정판은 기존 전체 첨부 흐름을 통과한다.
 - 보고가 brief 확인보다 먼저 도착한 종료 pane은 최근 전달 유예 때문에 working에 남았다. `just_delivered`에 살아 있는 pane 조건을 추가하고 기존 `a_closed_pane_needs_you_only_without_a_report`에 같은 기록의 실행/종료 비교를 넣는다. 구판의 결정적 RED와 수정판 GREEN을 확인한다.
 - outage 기존 시각 경계에 기준 직전/정각, 실제 `Host::open`으로 DB를 다시 연 뒤 down 중복 없음·회복 한 번·새 host의 짧은 끊김을 더한다. 제품의 outage 기준을 0으로 바꾸면 기준 직전 단언이 실패한다. 줄 수를 항상 1로 망가뜨리면 축소한 E2E66이 네 화면의 줄 분류에서 실패한다. 변형 뒤 원본을 복원하고 웹·실행 파일을 다시 빌드한다.

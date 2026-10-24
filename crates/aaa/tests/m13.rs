@@ -1967,7 +1967,8 @@ fn memory_and_restart() {
     // 다시 시작 안내는 thread 규칙 다음, 프로젝트 지침 앞이다(herdr-projects `compose_brief`)
     let at = |n: &str| brief.find(n).unwrap_or_else(|| panic!("{n} 없음: {brief}"));
     assert!(at("# thread brief") < at("**이 일을 앞서 시도한 것이") && at("**이 일을 앞서 시도한 것이") < at("# 지침"));
-    assert!(brief.contains("API는 v3로 바꾼다") && !brief.contains("v2"), "{brief}");
+    // 진행 보고 실행 경로의 v2는 memory 판과 무관하다. 옛 memory 원문이 다시 들어오지 않았는지 본다.
+    assert!(brief.contains("API는 v3로 바꾼다") && !brief.contains("API는 v2로 한다"), "{brief}");
     w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered");
     // 짧은 working 유예의 경계는 orch의 a_just_delivered_brief_is_working_until_a_report_or_a_tick이
     // 가상 시각으로 지킨다. 이 시험은 실제 재시작·새 memory·brief 전달을 지킨다.
