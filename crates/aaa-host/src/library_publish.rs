@@ -663,6 +663,22 @@ impl Host {
     }
 
     pub(crate) fn report_view(&self, project: &str, name: &str, reveal: bool) -> Result<LibraryReport, ErrorBody> {
+        let mut view = self.report_view_without_repo(project, name, reveal)?;
+        if let Some(thread) = &view.from_thread {
+            let catalog = self.db.library_catalog(project).map_err(super::orch::internal)?;
+            let archived = self.db.archive_list(project).map_err(super::orch::internal)?;
+            view.repo = crate::library_catalog::report_repos(&self.project_dir(project)?, &catalog.threads, &archived)?
+                .remove(thread);
+        }
+        Ok(view)
+    }
+
+    pub(crate) fn report_view_without_repo(
+        &self,
+        project: &str,
+        name: &str,
+        reveal: bool,
+    ) -> Result<LibraryReport, ErrorBody> {
         let dir = self.project_dir(project)?;
         let row = self.db.library_report(project, name).map_err(super::orch::internal)?;
         let updated = row.as_ref().map(|r| r.updated).unwrap_or_else(|| {
@@ -687,6 +703,7 @@ impl Host {
             Err(e) => (0, Some(e.message)),
         };
         let mut view = LibraryReport {
+            repo: None,
             archived: self.db.library_archived(project, name).map_err(super::orch::internal)?,
             project: project.into(),
             name: name.into(),

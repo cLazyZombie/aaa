@@ -3565,3 +3565,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `node --test web/test/rolloutStatus.test.mjs`는 머신의 모든 단계가 끝나야 완료임을 확인하고, 현재 머신·대기 머신·실패 뒤 미진행을 구별한다. 판은 `MachineView.software`만 표시하며 배포 대상으로 덮지 않는다.
 - t-0963의 OSS 조사(herdr Apache-2.0, ovis RowMenu MIT, herdr-projects MIT)를 이어 쓴다. 머신별 상태·실행 판과 대상 판 분리, 앵커 아래 팝업/휴대폰 시트, 머리 요약과 행별 결과 구성을 따른다. 외부 코드나 의존성은 추가하지 않고 기존 focus trap과 native dialog를 사용한다.
 - 실행 결과: 웹 유닛 540개·타입 검사·빌드·E2E35-rollout(8.2초)·공개 검사 통과. 첫 E2E는 견본이 공통 준비 머신을 없애 대기했으므로 실제 준비 머신을 보존하도록 수리했다. 이어 native dialog의 inert 해제 전 초점 복귀 실패를 확인하여 닫기 뒤 실제 opener로 복귀하도록 고쳤다. 시한·기대값은 바꾸지 않았다. iPhone 실기와 운영 배포는 이 자동 검증에 포함하지 않는다.
+
+## 보고서 저장소 거르기(t-0991)
+
+- `cargo test -p aaa-host --lib library_links::tests`는 실제 thread 원장·TASKS.md·보관 할 일에서 저장소를 찾는 우선순위, Windows 형태 경로의 이름 추출, 모르는 저장소, 단건과 일괄 목록 일치를 확인한다. 기존 판·보관·live·권한·삭제 시험을 유지한다.
+- 웹 유닛 `reportRepos.test.mjs`는 전체·이름·정하지 않음·옛 host 응답·선택지 개수와 빈 목록을 확인한다. 타입 검사·웹 빌드도 수행한다.
+- E2E108은 격리 host의 보고서 원장·보관 판·TASKS.md를 만들고 실제 API로 읽는다. Chromium/WebKit × 1280/820/390px에서 세 탭의 필터·전체/미지정·새로고침 뒤 기억·일괄 읽음의 DB 범위·저장소 왕복 뒤 선택 해제·가로 넘침을 확인한다. DB fixture는 agent 수집 thread 없이 준비한다. 브라우저 DOM·요청 완료가 사건이며 고정 sleep·재시도·시한 확대는 없다.
+- 공통 칩 추출은 E2E76·77, 기존 보고서 권한·열기·보관은 E2E21, 대량 목록·더 보기는 E2E80, 모두 읽음은 E2E101로 회귀 검사한다. 변경 전후 같은 fixture의 세 폭 캡처를 보고 library에 둔다.
+- 실행 결과: 웹 유닛 547개, proto TypeScript 생성 계약 2개, host 보고서 시험 29개, crate 의존 경계 2개, host/proto all-targets clippy, 웹 타입·빌드·공개 검사 통과. E2E21·76·77·80·101과 E2E108을 통과했다. 첫 E2E108은 확인창의 실제 `alertdialog` 역할을 `dialog`로 찾은 시험 선택자 오류였으며 선택자를 고쳤다. 캡처는 메뉴 DOM 제거·두 렌더링 frame과 유한 애니메이션 종료를 기다려 WebKit의 닫히던 시트가 그림에 남지 않게 한다.

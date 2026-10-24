@@ -1,3 +1,6 @@
+import { RepoFilter, useRepoFilter } from "./RepoFilter";
+import { TaskFilterChips } from "./TaskHistoryTools";
+import { reportRepoChoices, filterReports } from "./reportRepos";
 import { ListId } from "./ListId";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Trash2 } from "lucide-react";
@@ -116,12 +119,21 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     );
   };
   // host는 프로젝트 하나라(plan §8.291) 프로젝트로 거르지 않는다
-  const shown = reports ?? [];
+  const project = reports?.[0]?.project ?? "";
+  const [repo, setRepo] = useRepoFilter("reports", project);
+  const choices = reportRepoChoices(reports ?? []);
+  const repoOn = repo !== null && choices.some((c) => c.key === repo) ? repo : null;
+  const shown = filterReports(reports ?? [], repoOn);
+  const changeRepo = (value: string | null) => {
+    setRepo(value);
+    setPicked(new Set());
+    setVisible({ mine: 50, work: 50, archive: 50 });
+  };
   const archive = shown.filter((r) => r.archived);
   const mine = shown.filter((r) => r.to_user && !r.archived);
   const work = shown.filter((r) => !r.to_user && !r.archived);
   const cards = tab === "archive" ? archive : mine;
-  const unseen = (reports ?? []).filter((r) => r.unseen).length;
+  const unseen = shown.filter((r) => r.unseen).length;
   const unreadRows = (tab === "work" ? work : cards).filter((r) => r.unseen);
   const pickedRows = work.filter((r) => picked.has(keyOf(r)));
   const setLink = (r: LibraryReport, link: LibraryReport["link"]) =>
@@ -156,6 +168,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
       {tabButton("work", "작업 보고", reports !== null && <span className="reports-count">{work.length}</span>)}
       {tabButton("archive", "보관함", reports !== null && <span className="reports-count">{archive.length}</span>)}
     </div>
+    <TaskFilterChips label="거르기" repo={<RepoFilter value={repoOn} choices={choices} total={reports?.length ?? 0} onChange={changeRepo} testId="reports-repo" />}>{null}</TaskFilterChips>
     <div className="reports-toolbar">
       <button className="ghost small" onClick={() => void load()}>새로고침</button>
       <span className="reports-toolbar-actions">
@@ -169,7 +182,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     {usage && usage.max_size > 0 && usage.protected_size > usage.max_size && <p role="alert">보호 사본만으로 상한을 넘었다. 자동 삭제하지 않는다</p>}
     {problem && <p role="alert">{problem}</p>}
     <div id="reports-tabpanel" role="tabpanel" aria-labelledby={`reports-tab-${tab}`}>
-    {reports === null ? <p>보고서를 읽고 있다…</p> : tab !== "work" ? (
+    {reports === null ? <p>보고서를 읽고 있다…</p> : repoOn !== null && (tab === "work" ? work : cards).length === 0 ? <p className="muted">이 저장소의 보고서가 없다</p> : tab !== "work" ? (
       cards.length === 0 ? <p className="muted">{tab === "archive" ? "보관함이 비었다. 보관한 판은 자동 정리되지 않는다" : "아직 내 보고서가 없다. 끝난 작업의 보고서가 자동으로 올라온다"}</p> : cards.slice(0, visible[tab]).map((r) => {
         const key = keyOf(r);
         return <article className={`report-card report-mine${r.unseen ? " is-unseen" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-unseen={r.unseen ? "true" : "false"}>

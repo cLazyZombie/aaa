@@ -7822,3 +7822,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - FRONT_API 1.121, Agent link 1.11 선택 기능 workspace_metrics.v2다. 기존 E2E90을 두 agent·두 clone fixture, Chromium/WebKit 1280·820·390·320px와 사용량 위치 검사로 확장한다. 절·API 판은 착지 때 main과 대조한다.
 
 - 47회차 착지 통합(t-0967): 원격 main `daaa43f1`에 t-0959 `cfafc97f`·t-0961 `13ac4bb8`·t-0964 `1947e397`를 각각 --no-ff로 합친다. 기존 E2E101~106과 §8.484·FRONT_API 1.120을 보존하고 iPad 행 정렬에 E2E107, workspace 통계에 §8.485·FRONT_API 1.121을 배정한다. E2E23은 main의 같은 submit 수신 진단·실제 기록 이미지 수명 수리를 유지하고 후보의 E2E100 연결 사건·E2E43 공통 열 검사를 함께 보존한다. 격리 Playwright 1.64.1의 양 엔진 기동을 확인한 뒤 전체 ci-local·공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패하면 원문·load average를 보존하고 재시도 없이 push를 멈춘다. 전체 검증에 salt를 넣지 않고 push 뒤 착지 SHA salt의 Windows 설치기를 전용 폴더에 전달·해시·판 확인한다. GitHub CI는 기다리지 않으며 설치 실행·배포·tag·release는 하지 않는다.
+
+### 8.486 보고서 저장소 거르기(t-0991)
+
+- 보고서의 내 보고서·작업 보고·보관함에 할 일과 같은 저장소 칩·메뉴를 둔다. `RepoFilter`로 기존 할 일 UI와 기기 기억 코드를 공유한다. 전체·저장소 이름·정하지 않음 중 하나를 고르며, 세 탭은 같은 선택을 쓴다. 보고서가 있는 저장소만 선택지에 세고 출처 없는 보고서는 정하지 않음에 모은다.
+- 이 기기 localStorage의 `aaa:reports:repo:<project>`로 프로젝트별 선택을 기억한다. 할 일의 기존 `aaa:tasks:repo:<project>`와는 독립이다. 없어진 저장소 선택은 전체로 보여 주며 저장이 막혀도 현재 화면에서 동작한다.
+- FRONT_API 1.122의 `LibraryReport.repo`는 경로가 아닌 할 일과 같은 이름이다. 원본 thread를 연결한 활성 할 일의 명시된 저장소 → 보관 할 일의 명시된 저장소 → thread 원장의 시작 저장소 마지막 이름 순서다. Windows 구분자도 기존 `task_repo::repo_name`으로 처리한다. thread 없는 직접 publish·알 수 없는 옛 기록은 생략한다. 보관한 판도 원본 thread로 같은 규칙을 적용한다. API 판 이전 응답도 정하지 않음으로 다룬다.
+- 필터는 탭 분류·50개씩 더 보기·개수·안 봄 배지보다 먼저 적용한다. 모두 읽음·끝난 것 모두 선택·보관·삭제는 걸러진 행만 다룬다. 필터를 바꾸면 선택과 더 보기 수를 초기화한다. 전체 용량 안내는 필터와 무관한 host 전체 용량이다.
+- 검증은 E2E108(Chromium/WebKit의 데스크톱·iPad·휴대폰 폭), 기존 보고서 E2E21·80·101과 공통 칩 회귀 E2E76·77, 웹 유닛과 host 목록 시험으로 한다. 화면 폭 재현이며 실기 기기 시험을 뜻하지 않는다.
+- 참고: [herdr workspace 묶기](https://github.com/herdrdev/herdr/blob/master/src/client/shell/sidebar.rs)(Apache-2.0), [Ovis/옛 herdr-web-ui 폴더 필터](https://github.com/devswha/ovis/blob/main/scripts/folder-filter-regression.ts)와 [Sidebar 기기 기억](https://github.com/devswha/ovis/blob/main/src/components/Sidebar.tsx)(MIT), [herdr-projects 보드 필터 시험](https://github.com/eliasstravik/herdr-projects/blob/main/tests/board_keys/filters.rs)(MIT)을 확인했다. 저장소별 묶음·개수·선택 표시·기기 기억을 참고하며, 보고서 필터 전용 UI는 이 참고 파일들에서 찾지 못했다. 외부 코드는 추가하지 않고 기존 칩과 RowMenu를 재사용한다.
