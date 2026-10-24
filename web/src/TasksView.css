@@ -596,3 +596,45 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-completed-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
 .task-completed-report { display: inline-flex; align-items: center; gap: var(--space-2); margin: var(--space-2); }
 .task-completed-more { margin-top: var(--space-3); }
+
+/* 행마다 같은 열: 표지가 없는 줄도 자리를 남긴다. 칩은 별도 줄에서 접혀
+   왼쪽 패널·오른쪽 상세가 차지한 실제 목록 폭과 무관하게 제목을 밀지 않는다. */
+.task-row[data-kind] {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(28px, max-content);
+  column-gap: var(--space-1);
+  row-gap: 0;
+  align-items: start;
+  padding-block: var(--space-1);
+}
+.task-row[data-kind] > .task-grip { grid-column: 1; grid-row: 1; align-self: center; }
+.task-row[data-kind] > .task-pick {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: 5em 16px 7ch minmax(0, 1fr);
+  column-gap: var(--space-1);
+  font-size: var(--fs-sm);
+}
+.task-stage-cell { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; gap: 2px; }
+.task-stage-cell .thread-stage { max-width: 100%; margin: 0; white-space: normal; overflow-wrap: anywhere; }
+.task-id-cell { min-width: 0; }
+.task-row[data-kind] .task-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  padding-inline-start: min(calc(var(--task-depth, 0) * var(--space-3)), var(--space-5));
+}
+.task-row[data-kind] .task-crumb { display: block; max-width: none; white-space: normal; }
+.task-row-chips {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0 var(--space-2) var(--space-1);
+}
+.task-row-chips > .task-chip { min-width: 0; max-width: 100%; }
+.task-row[data-kind] > .task-menu-button,
+.task-row[data-kind] > .task-steps { grid-column: 3; grid-row: 1; align-self: center; }

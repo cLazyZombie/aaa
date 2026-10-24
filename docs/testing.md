@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## iPad 할 일 행의 열 정렬(t-0959)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 101-task-row-layout --workers 1`은 실제 host의 일반·예약·하위·병합 대기 행을 만든다. 모델·머신·저장소·메모·첨부·연결 thread를 함께 표시한다.
+- WebKit 1366×1024·1024×1366·390×844와 Chromium 1280×900·1920×1080에서 상태 원·ID·제목·메뉴의 x좌표, 표시된 칩·표지·제목의 교차 면적, 행 경계와 가로 overflow를 검사한다. 표지 글의 잘림, 첨부 3개, 제목으로 상세 열기·닫기도 확인한다. 글꼴 준비·host 보고 단계·DOM을 완료 사건으로 쓰며 고정 대기는 없다.
+- 전체 검증에서 E2E100은 auto mode 표지가 보인 직후 아직 pane 구독이 연결되지 않아 `재연결 중…` 문구와 정상 placeholder를 비교했다. `ChatComposer`의 `connected`로 활성화되는 첨부 단추를 완료 사건으로 기다린 뒤 기존 문구를 그대로 검사한다. 제품·기대값·시한은 바꾸지 않는다.
+- 기존 E2E43·47·52·67·76의 메뉴·thread 이동·예약 끌기·순서·첨부 조작을 유지한다. 수정 전 같은 화면 크기의 열 어긋남을 RED로 기록하고, 전체 로컬 `ci-local.sh`로 검증한다. API는 변경하지 않는다.
+- [herdr-web-ui Sidebar.css](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)의 공통 선행·제목·후행 열과 축소 가능한 제목을 참고했다([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)). [herdr-projects overview.rs](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/overview.rs)의 ID·제목·상태·위치 나열도 대조했으나 텍스트 출력이라 반응형 배치에는 쓰지 않는다([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE)). 외부 코드나 의존성을 추가하지 않는다.
+
 ## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
 
 - `node web/e2e/web.e2e.mjs --spec 98 --workers 1`: 실제 host·agent를 쓰고 Chromium·WebKit 390px에서 기기 이름을 누르면 `#machine=<id>` 한 칸만 더해지는지 검사한다. 가장자리 touchstart/move/cancel 뒤 native `history.back()`으로 원래 thread 목록에 돌아가며, 앞으로 같은 기기 정보가 다시 보인다. 두 번 왕복한 브라우저 기록을 기존 history observer로 비교한다(Chromium은 CDP의 실제 기록·위치, WebKit은 기록 길이).

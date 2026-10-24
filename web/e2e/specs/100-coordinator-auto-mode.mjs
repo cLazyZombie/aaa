@@ -99,6 +99,8 @@ export default async function () {
         pages.push(p); await showCoordinator(p); await p.getByTestId("auto-mode-switch").waitFor();
         const duration = await p.locator(".composer-glow").evaluate(el => getComputedStyle(el, "::before").animationDuration);
         assert.equal(duration, "2.6s");
+        // auto mode 표지는 host 상태만으로 먼저 나타난다. 입력은 pane 구독이 연결된 뒤 검사한다.
+        await domIs(p, "coordinator 입력 연결", () => document.querySelector('.composer-surface.is-coordinator button[aria-label="그림 첨부"]')?.disabled === false);
         assert.equal(await p.getByRole("textbox", { name: "메시지", exact: true }).getAttribute("placeholder"), "coordinator에게 지시하기");
         assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         assert.equal(await p.locator(".auto-lines").evaluate(el => [...el.querySelectorAll("button")].every(b => b.scrollWidth <= b.clientWidth + 1 && b.scrollHeight <= b.clientHeight + 1)), true, "자동 결정 줄은 휴대폰 폭에서 줄바꿈한다");
