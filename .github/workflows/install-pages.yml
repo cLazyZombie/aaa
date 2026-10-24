@@ -1,0 +1,41 @@
+name: 설치 스크립트 Pages 게시
+
+# Pages 활성화·최초 공개는 사용자 승인 뒤에만 한다. 병합·release로 자동 게시하지 않는다.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'cLazyZombie/aaa' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: 설치 입구 계약 검사
+        run: python3 -m unittest scripts.test_install_site scripts.test_release
+      - name: 공개 최신판으로 설치 입구 생성
+        run: python3 scripts/build_install_site.py --output target/install-site
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: target/install-site
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Pages 게시
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

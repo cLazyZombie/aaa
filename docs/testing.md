@@ -1,5 +1,14 @@
 # 시험 쓰는 법
 
+## GitHub Pages 한 줄 설치 입구(t-0987)
+
+- `python3 -m unittest scripts.test_install_site scripts.test_release`는 로컬 HTTP 서버와 격리 HOME·임시 폴더에서 생성한 입구를 실행한다. macOS·Linux는 실제 POSIX sh와 제어 터미널로 `curl | sh` → `/dev/tty` → `setup` 인자·빈 인자·한글·종료 코드·정리를 검사한다. 네 OS/CPU 자산 선택은 `uname`만 바꾼 fixture로 검사하며 네 CPU의 네이티브 실행 결과로 해석하지 않는다. macOS launcher 동반·기존 설치 파일 보존을 확인한다.
+- 체크섬 불일치·누락·중복·manifest 불일치·외부 URL·지원하지 않는 OS/CPU·터미널 없음·다운로드 404·실행 판 불일치 때 setup 호출이 없어야 한다. curl 종료 코드 22도 오류에 남는지 단언한다. 성공만 기다리는 고정 sleep·재시도·시한 확대는 없다. HTTP 응답·PTY EOF·자식 종료가 완료 사건이다. 자식의 제어 터미널 준비는 새 Python 프로세스가 맡아 HTTP thread가 있는 부모의 fork 실행을 피한다.
+- Windows는 실제 PE fixture를 rustc로 만들고 PowerShell 5.1·7의 실제 `irm | iex`를 실행한다. 공식 다운로드 URL만 로컬 HTTP로 돌리고 파일 SHA·PE·판·기존 설치 보존·setup 호출·종료 코드를 실제 경계에서 검사한다. 나쁜 SHA는 실행하지 않는다. 생성한 Windows 입구의 bytes가 기존 `release.render_windows_entry` 결과와 같은지도 검사한다. 서비스 설치는 fixture의 범위가 아니다. `ci-local.sh`의 Unix Python 단계와 세 OS `distribution.yml`에서 계속 실행한다.
+- macOS와 Lima Ubuntu 24.04 arm64에서 각각 13개 중 12 통과·Windows 전용 1 제외, Windows 실기에서 9 통과·Unix 전용 4 제외다. 로컬 관련 Python 계약 전체는 47개 중 45 통과·기존 Linux 제한 1/Windows 전용 1 제외다. 공개 v0.1.6의 네이티브 macOS arm64·Linux arm64·Windows x86_64 실행 파일도 격리 경로에 실제로 받아 SHA·판 검증 뒤 `setup --help`를 호출했다. 운영 서비스 설치·등록 시험으로 부르지 않는다.
+- Windows 첫 준비는 깨진 Scoop Python shim 때문에 실행되지 않았다. 기존 Python 실행 파일을 직접 지정한 뒤 기본 cp1252에서 새 시험의 UTF-8 셸 읽기와 기존 release 시험의 Cargo 읽기가 실패했다. 새 읽기는 UTF-8을 명시하고, 기존 release 시험은 해당 자식의 `PYTHONUTF8=1`로 실행했다. 시스템 PATH·Python·인코딩 설정은 바꾸지 않는다. Windows 서비스·예약 작업·Run 키·사용자 PATH·방화벽 전후 목록을 비교하고 시험 폴더와 Linux VM을 정리한다.
+- [Herdr](https://github.com/herdrdev/herdr/blob/master/distribution/install.sh)(Apache-2.0), [Ovis/옛 herdr-web-ui](https://github.com/devswha/ovis/blob/main/install.sh)(MIT), [herdr-projects](https://github.com/eliasstravik/herdr-projects/blob/main/crates/flow/src/install.rs)(MIT)의 플랫폼 선택·검증·터미널 입력·Pages 구성을 참고했다. 상세 라이선스·범위는 [설치 입구 문서](install-pages.md)에 있다. 외부 코드·의존성은 추가하지 않았다.
+
 ## 휴대폰 할 일의 빈 열·메모 줄(t-0980)
 
 - E2E107은 기존 WebKit iPad 양 방향·Chromium 데스크톱 두 폭에 WebKit/Chromium 320·390px를 함께 검사한다. 휴대폰 상태 원의 왼쪽 여백 40px 이하, 제목 폭 100px 이상, 행 높이 76px 이하, 메타정보가 없는 행 40px 이하, 메모와 끌기 손잡이의 제목 줄 배치를 확인한다. 기존 열 정렬·교차 면적·잘림·가로 넘침·첨부·상세 열기 검사를 유지한다.
