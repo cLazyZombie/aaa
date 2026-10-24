@@ -127,6 +127,24 @@ export default async function ({ page }) {
       fenceBg: "rgba(0, 0, 0, 0)",
     };
     if (JSON.stringify(md) !== JSON.stringify(want)) throw new Error(`보고 Markdown ${JSON.stringify(md)}`);
+    // 보고 iframe의 첫 이동이 파일 보기의 pushState 뒤에 끼면 Back은 iframe 기록을 고르고
+    // page.goBack은 주 문서 이동 없이 만료된다. 결과물 준비를 먼저 마친 뒤 파일 보기 기록을 검사한다.
+    const frameEl = await page.getByTestId("library-frame").elementHandle();
+    const frame = await until("결과물 frame", async () => frameEl && (await frameEl.contentFrame()));
+    const probe = await until("결과물 HTML 실행", async () => {
+      const d = await frame.evaluate(() => ({
+        title: document.getElementById("t")?.textContent,
+        pic: document.getElementById("pic")?.naturalWidth,
+        ...document.body.dataset,
+      }));
+      // 제어 API 시험(api)이 그림을 다 읽기보다 먼저 끝날 수 있다: 그림까지 기다린다
+      return d.api && d.pic ? d : null;
+    });
+    if (probe.title !== "결과 보고" || probe.pic !== 1) throw new Error(`결과물 표시: ${JSON.stringify(probe)}`);
+    // opaque origin: 부모 문서·cookie·제어 API에 닿지 못한다
+    if (probe.parent !== "blocked" || probe.cookie === "visible" || probe.api === "200") {
+      throw new Error(`결과물이 격리되지 않았다: ${JSON.stringify(probe)}`);
+    }
     // 보고서 안 파일 링크(1장 J 나머지, plan §8.171): 그 thread의 머신·worktree(agent가 시작한 폴더) 기준으로 찾아 앱 안 파일 보기
     // (`/f/` 읽기 경로)로 연다. 보고·결과물이 있는 `.aaa/…`(work_dir) 기준이 아니다
     const cwd = aaa("thread", "show", "demo", t.id).cwd;
@@ -148,29 +166,26 @@ export default async function ({ page }) {
     await domIs(page, "없는 파일 알림", () => document.querySelector('[data-testid="file-viewer"] [role="alert"]')?.textContent === "이 경로에 읽을 수 있는 파일이 없습니다.");
     await page.goBack();
     await domIs(page, "없는 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
-    const frameEl = await page.getByTestId("library-frame").elementHandle();
-    const frame = await until("결과물 frame", async () => frameEl && (await frameEl.contentFrame()));
-    const probe = await until("결과물 HTML 실행", async () => {
-      const d = await frame.evaluate(() => ({
-        title: document.getElementById("t")?.textContent,
-        pic: document.getElementById("pic")?.naturalWidth,
-        ...document.body.dataset,
-      }));
-      // 제어 API 시험(api)이 그림을 다 읽기보다 먼저 끝날 수 있다: 그림까지 기다린다
-      return d.api && d.pic ? d : null;
-    });
-    if (probe.title !== "결과 보고" || probe.pic !== 1) throw new Error(`결과물 표시: ${JSON.stringify(probe)}`);
-    // opaque origin: 부모 문서·cookie·제어 API에 닿지 못한다
-    if (probe.parent !== "blocked" || probe.cookie === "visible" || probe.api === "200") {
-      throw new Error(`결과물이 격리되지 않았다: ${JSON.stringify(probe)}`);
-    }
     const big = page.getByTestId("files").locator("li", { hasText: "big.bin" });
     if (!(await big.innerText()).includes("agent에서 읽음")) throw new Error(await big.innerText());
     await shot(page, "desktop-thread-library");
     // 결과물 파일은 새 탭 대신 앱 안 파일 보기로 연다(차이 목록 R1): 같은 보기 경로(/v/)로 읽고, 문서 안 그림·링크는 결과물 안에서 푼다
     const viewer = page.getByTestId("file-viewer");
     await page.getByTestId("files").getByTestId("library-file").filter({ hasText: "docs/notes.md" }).click();
-    await until("결과물 Markdown 보기", async () => (await viewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "결과 메모");
+    await until("결과물 Markdown 보기", async () => (await viewer.getByTestId("file-viewer-markdown").locator(".markdown-h1").textContent().catch(() => null)) === "결과 메모").catch(async (error) => {
+      // locator의 null만 남기지 않고 보기의 오류·읽기 단계와 해당 자료의 요청 시간을 보존한다.
+      const state = await page.evaluate(() => {
+        const viewer = document.querySelector('[data-testid="file-viewer"]');
+        return { visibility: document.visibilityState, focused: document.hasFocus(), present: !!viewer,
+          title: viewer?.querySelector('h1, h2')?.textContent,
+          heading: viewer?.querySelector('.markdown-h1')?.textContent,
+          problem: viewer?.querySelector('[role="alert"]')?.textContent,
+          note: viewer?.querySelector('.file-viewer-note')?.textContent,
+          resources: performance.getEntriesByType("resource").filter((r) => new URL(r.name).pathname.endsWith("/docs/notes.md"))
+            .map((r) => ({ type: r.initiatorType, duration: r.duration, bytes: r.transferSize, size: r.decodedBodySize })) };
+      });
+      throw new Error(`${error.message}: ${JSON.stringify(state)}`);
+    });
     const pic = await until("Markdown 안 그림(../pic.png)", async () => {
       const w = await viewer.locator(".file-viewer-markdown img.markdown-image").evaluate((i) => (i.complete ? i.naturalWidth : 0)).catch(() => 0);
       return w > 0 ? w : null;

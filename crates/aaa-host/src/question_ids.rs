@@ -190,6 +190,18 @@ impl Host {
         text: Option<String>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.reply_by_id_inner(project, id, choice, text, actor, false).await
+    }
+
+    pub(crate) async fn reply_by_id_inner(
+        self: &Arc<Self>,
+        project: &str,
+        id: &str,
+        choice: Option<&str>,
+        text: Option<String>,
+        actor: &str,
+        auto: bool,
+    ) -> Result<FrontResponse, ErrorBody> {
         let target = self.db.question_target((!project.is_empty()).then_some(project), id).map_err(internal)?;
         let Some(target) = target else {
             // 숫자로만 된 옛 무작위 확인창 ID도 기존 경로로 받는다.
@@ -216,9 +228,6 @@ impl Host {
                 .questions
                 .filter(|q| q.answer.is_none() && q.report_hash == target.revision)
                 .ok_or_else(|| err(ErrorCode::BadRequest, "이미 닫혔거나 바뀐 질문이다"))?;
-            if let Some(warning) = q.format_warning {
-                return Err(err(ErrorCode::BadRequest, warning));
-            }
             (q.items, q.report_hash)
         } else {
             let r = self
@@ -227,12 +236,7 @@ impl Host {
                 .find(|r| r.id == target.subject)
                 .ok_or_else(|| err(ErrorCode::BadRequest, "이미 닫힌 질문이다"))?;
             match r.questions {
-                Some(q) if q.report_hash == target.revision => {
-                    if let Some(warning) = q.format_warning {
-                        return Err(err(ErrorCode::BadRequest, warning));
-                    }
-                    (q.items, q.report_hash)
-                }
+                Some(q) if q.report_hash == target.revision => (q.items, q.report_hash),
                 Some(_) => return Err(err(ErrorCode::BadRequest, "질문이 바뀌었다")),
                 None => (
                     vec![ThreadQuestion {
@@ -263,7 +267,7 @@ impl Host {
             picks: vec![pick],
             text,
             summary: choice.unwrap_or("직접").to_string(),
-            by: self.answered_by(actor),
+            by: if auto { "coordinator(auto)".into() } else { self.answered_by(actor) },
             at_ms: aaa_common::util::now_ms(),
         };
         if !self.db.question_claim_draft(&target, &answer).map_err(internal)? {

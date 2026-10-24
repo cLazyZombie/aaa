@@ -128,9 +128,9 @@ enum Cmd {
     },
     /// 역할·작업 경로·서비스를 계획하고 명시적 승인 뒤 설치·재개한다
     Install(Box<crate::install::Args>),
-    /// Windows 설치기: 이 PC를 agent로 설치하고 서비스로 띄워 host에 연결한다(`aaa-setup.exe`로 두면 인자 없이 뜬다)
+    /// 이 PC를 agent로 설치하고 OS 서비스로 띄워 host에 연결한다(`aaa-setup`으로 두면 인자 없이 뜬다)
     Setup(crate::setup::Args),
-    /// (내부) `aaa setup`이 등록한 Windows 서비스 입구. SCM만 실행한다.
+    /// (내부) `aaa setup`이 등록한 서비스 입구. OS 감독자만 실행한다.
     #[command(hide = true)]
     SetupService,
     /// harness 전역 연동을 설치하거나 제거한다(기존 사용자 hook은 보존)
@@ -456,11 +456,21 @@ enum QuestionCmd {
         choice: Option<String>,
         #[arg(long)]
         text: Option<String>,
+        /// coordinator auto mode로 답한다(검증한 coordinator만)
+        #[arg(long, requires = "reason_file")]
+        auto: bool,
+        #[arg(long, requires = "auto")]
+        reason_file: Option<PathBuf>,
     },
 }
 
 #[derive(Subcommand)]
 enum ProjectCmd {
+    /// coordinator auto mode를 켜거나 끈다(사람 전용, 생략하면 조회)
+    AutoMode {
+        #[arg(value_parser = ["on", "off"])]
+        mode: Option<String>,
+    },
     /// 프로젝트 목록(보관한 것은 `--all`일 때만)
     List {
         #[arg(long)]
@@ -1393,6 +1403,16 @@ enum WorkspaceCmd {
 #[derive(Subcommand)]
 enum MachineCmd {
     List,
+    /// 머신별 workspace 자동 배정 허용을 읽거나 바꾼다(변경은 세션 밖 CLI만).
+    Workspaces {
+        name: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, conflicts_with = "deny")]
+        allow: Option<String>,
+        #[arg(long)]
+        deny: Option<String>,
+    },
     /// 등록 창을 연다(예: --open 10m)
     Enroll {
         #[arg(long, default_value = "10m")]
@@ -1809,7 +1829,9 @@ pub fn main() -> ExitCode {
         Cmd::Setup(args) => return crate::setup::run(args),
         #[cfg(windows)]
         Cmd::SetupService => return crate::setup::service::dispatch(),
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        Cmd::SetupService => return crate::setup::unix::dispatch(),
+        #[cfg(not(any(windows, unix)))]
         Cmd::SetupService => {
             eprintln!("aaa: setup-service는 Windows 서비스 입구다");
             return ExitCode::from(2);
@@ -2426,8 +2448,19 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 QuestionCmd::List { all } => FrontRequest::Questions { all },
-                QuestionCmd::Answer { id, choice, text } => {
-                    if id.strip_prefix("q-").is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit())) {
+                QuestionCmd::Answer { id, choice, text, auto, reason_file } => {
+                    if auto {
+                        FrontRequest::QuestionAutoAnswer {
+                            project: project_or_here(None)?,
+                            id,
+                            choice,
+                            text,
+                            reason: std::fs::read_to_string(reason_file.expect("clap requires reason_file"))?,
+                        }
+                    } else if id
+                        .strip_prefix("q-")
+                        .is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit()))
+                    {
                         FrontRequest::QuestionReply { project: project_or_here(None)?, id, choice, text }
                     } else {
                         FrontRequest::QuestionAnswer {
@@ -2447,6 +2480,26 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 MachineCmd::List => FrontRequest::Machines,
+                MachineCmd::Workspaces { name, project, allow, deny } => {
+                    let project = project_or_here(project)?;
+                    let request = FrontRequest::WorkspaceAccess { project: project.clone(), machine: name.clone() };
+                    if let Some(workspace) = allow.as_ref().or(deny.as_ref()) {
+                        let view = match front_call(request)? {
+                            Ok(FrontResponse::WorkspaceAccess(view)) => view,
+                            Err(e) => return front_print(json, Err(e)),
+                            _ => anyhow::bail!("workspace 허용 응답이 아니다"),
+                        };
+                        FrontRequest::WorkspaceAccessSet {
+                            project,
+                            machine: name,
+                            workspace: workspace.clone(),
+                            enabled: allow.is_some(),
+                            revision: view.revision,
+                        }
+                    } else {
+                        request
+                    }
+                }
                 MachineCmd::Enroll { close: true, .. } => FrontRequest::EnrollClose,
                 MachineCmd::Enroll { open, .. } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
                 MachineCmd::Pending => FrontRequest::EnrollPending,
@@ -3163,7 +3216,7 @@ async fn supervised_stop(stop: Option<tokio::sync::watch::Receiver<bool>>) {
 }
 
 /// OS 감독자의 고정 host/agent 역할만 실행한다. 임의 argv/셸을 받지 않는다.
-#[cfg(any(windows, target_os = "macos", test))]
+#[cfg(any(windows, unix, test))]
 pub(crate) fn supervised_role(
     role: aaa_proto::install::InstallRole,
     ready: tokio::sync::oneshot::Sender<()>,
@@ -3237,6 +3290,16 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
 
 fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
     match cmd {
+        ProjectCmd::AutoMode { mode } => {
+            let project = project_or_here(None)?;
+            front(
+                json,
+                match mode {
+                    Some(mode) => FrontRequest::AutoModeSet { project, on: mode == "on" },
+                    None => FrontRequest::AutoModeGet { project },
+                },
+            )
+        }
         ProjectCmd::List { all } => front(json, FrontRequest::Projects { all }),
         ProjectCmd::Pause { project } => lifecycle(json, project_or_here(project)?, ProjectAction::Pause),
         ProjectCmd::Resume { project } => lifecycle(json, project_or_here(project)?, ProjectAction::Resume),
@@ -4209,6 +4272,13 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         let _ = writeln!(s, "⚠ {w}");
     }
     let _ = writeln!(s, "프로젝트 {} ({})", c.project, c.path);
+    let _ = writeln!(
+        s,
+        "auto_mode: {} · 자동 결정 {} · coordinator 전용(권한 모드와 무관)",
+        if c.auto_mode.on { "on" } else { "off" },
+        c.auto_mode.decisions
+    );
+    let _ = writeln!(s, "auto 예외(늘 사용자): {}", c.auto_mode_exceptions);
     let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
     match &c.web_url {
         Some(u) => {
@@ -4814,6 +4884,12 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{p}");
             }
         }
+        FrontResponse::WorkspaceAccess(v) => {
+            let _ = writeln!(s, "{} · {}", v.project, v.machine);
+            for row in &v.workspaces {
+                let _ = writeln!(s, "{}: {}", row.workspace, if row.enabled { "켜짐" } else { "꺼짐" });
+            }
+        }
         FrontResponse::ProjectSettings(v) => {
             let _ = writeln!(s, "{} ({}, {:?})", v.project, v.file, v.status);
             let _ = writeln!(s, "goal: {}", v.goal);
@@ -5055,6 +5131,17 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{}", assignable_line(owners));
             }
         },
+        FrontResponse::AutoDecisions { decisions, next } => {
+            for d in decisions {
+                let _ = writeln!(s, "{}\t{} → {}\t{}\n까닭: {}", d.id, d.question.text, d.choice, d.outcome, d.reason);
+            }
+            if let Some(next) = next {
+                let _ = writeln!(s, "이전 기록: {next}");
+            }
+        }
+        FrontResponse::AutoMode(m) => {
+            let _ = writeln!(s, "auto_mode: {} · 자동 결정 {}", if m.on { "on" } else { "off" }, m.decisions);
+        }
         FrontResponse::Context(c) => render_context(&mut s, c),
         FrontResponse::TaskQueue { entries } => {
             for q in entries {
@@ -5209,7 +5296,21 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         // 「답할 것」(웹 화면이 쓴다): CLI는 확인 필요 post와 답한 것을 한 줄씩 보인다
-        FrontResponse::Asks { requests, done, keep_days } => {
+        FrontResponse::Asks { requests, done, keep_days, auto_mode, auto_decisions, auto_exceptions, .. } => {
+            let _ = writeln!(
+                s,
+                "auto_mode: {} · 자동 결정 {} · 예외 {} 기다림",
+                if auto_mode.on { "on" } else { "off" },
+                auto_mode.decisions,
+                auto_exceptions
+            );
+            for d in auto_decisions {
+                let _ = writeln!(
+                    s,
+                    "자동으로 정함\t{}\t{} → {}\t{}\t{}\n까닭: {}",
+                    d.id, d.question.text, d.choice, d.decided_by, d.outcome, d.reason
+                );
+            }
             for r in requests {
                 let _ = writeln!(s, "답할 것\t{}\t{}", r.id, r.title);
             }

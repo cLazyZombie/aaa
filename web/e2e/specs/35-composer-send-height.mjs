@@ -152,12 +152,12 @@ export default async function () {
           // 터치 기기의 Enter는 줄바꿈이라 보내기 단추로 보낸다(23 「대화 Enter」)
           const send = () => touch ? p.getByRole("button", { name: "메시지 보내기", exact: true }).click() : box.press("Enter");
           /** 한 번 보내기의 높이 기록을 판정한다: 보내기 전 높이(rest)보다 큰 그리기가 없고 끝에 처음 높이로 돌아온다 */
-          const judge = (label, sizes, rest, end) => {
+          const judge = (label, sizes, rest, end, expected = rest) => {
             log.push(`${name} ${label}: ${sizes.map((s) => `${s.what}=${s.h}(${s.lines},${s.state})`).join(" ")}`);
             for (const what of ["surface", "group"]) {
               const grew = sizes.filter((s) => s.what === what && s.h > rest[what] + 0.5);
               if (grew.length) bad.push(`${name} ${label}: ${what} ${Math.round(rest[what])}px → ${grew.map((s) => `${s.h}px(${s.state})`).join(",")}`);
-              if (Math.abs(end[what] - rest[what]) > 0.5) bad.push(`${name} ${label}: 끝 ${what} ${end[what]}px ≠ 처음 ${rest[what]}px`);
+              if (Math.abs(end[what] - expected[what]) > 0.5) bad.push(`${name} ${label}: 끝 ${what} ${end[what]}px ≠ 예상 ${expected[what]}px`);
             }
           };
           const quiet = async (label) => {
@@ -183,7 +183,7 @@ export default async function () {
           await record(p);
           await send();
           await waitOutput(pane.id, `SEND_RECEIVED_${++received[kind]}`);
-          await state(p, "sent");
+          await cleared(p);
           await quiet("전달됨");
           await capture("sent");
           judge("전달됨으로", await recorded(p), rest, await heights(p));
@@ -224,10 +224,10 @@ export default async function () {
           await record(p);
           await send();
           await waitOutput(pane.id, `SEND_RECEIVED_${++received[kind]}`);
-          await state(p, "sent");
+          await cleared(p);
           await quiet("여러 줄 전달됨");
           await capture("multiline-sent");
-          judge("여러 줄 전달됨으로", await recorded(p), rest, await heights(p));
+          judge("여러 줄 전달됨으로", await recorded(p), rest, await heights(p), single); // ACK 뒤 빈 초안은 한 줄로 줄어든다.
           fs.unlinkSync(pane.hold);
           fs.appendFileSync(pane.transcript, userLine("첫 줄\n둘째 줄"));
           await cleared(p);

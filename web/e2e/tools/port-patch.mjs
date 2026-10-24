@@ -39,7 +39,7 @@ for (const l of fs.readFileSync(patchFile, "utf8").split("\n")) {
 // 끝 빈 줄(patch 끝)은 문맥이 아니다
 for (const h of hunks) while (h.pre.at(-1) === "" && h.post.at(-1) === "") h.pre.pop(), h.post.pop();
 
-const files = [path.join(e2e, "lib/harness.mjs"), ...fs.readdirSync(path.join(e2e, "specs")).sort().map((f) => path.join(e2e, "specs", f))];
+const files = [path.join(e2e, "lib/harness.mjs"), ...fs.readdirSync(path.join(e2e, "specs")).sort((a, b) => parseInt(a, 10) - parseInt(b, 10) || a.localeCompare(b)).map((f) => path.join(e2e, "specs", f))];
 const text = new Map(files.map((f) => [f, fs.readFileSync(f, "utf8").split("\n")]));
 
 /** lines 안에서 seq가 시작하는 자리들 */

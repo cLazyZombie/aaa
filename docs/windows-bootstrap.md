@@ -1,7 +1,7 @@
 # Windows 한 줄 설치와 사용자 설치 시험
 
 Windows x86_64, Windows PowerShell 5.1 또는 PowerShell 7의 자기 계정 외부 콘솔에서 시작한다.
-이 입구가 포함된 새 release 게시 후에는 다음 한 줄을 쓴다. 0.1.4에는 `install.ps1`이 없다.
+v0.1.6부터 다음 한 줄은 검증한 실행 파일의 `aaa setup`을 시작한다. v0.1.5는 기존 `aaa install`을 실행하며 v0.1.4에는 `install.ps1`이 없다.
 
 ```powershell
 irm https://github.com/cLazyZombie/aaa/releases/latest/download/install.ps1 | iex
@@ -13,15 +13,20 @@ script는 shell로 돌아오고 `$LASTEXITCODE`에 결과를 남기며 실행 �
 SCM·계정·UAC/LSA 변경은 검토한 설치 계획과 별도 명시 승인에 따른다. ARM64/32비트는 지원하지 않는다.
 
 기존 `aaa.exe`와 같은 SHA면 재사용한다. 다른 판이면 구판을 덮지 않고
-`%USERPROFILE%\.local\share\aaa\installers\<SHA 앞 16자리>\aaa.exe`에 새 executor를 검증해 놓는다.
-이 경우 설치 계획의 bin target도 그 위치를 명시하여 구판을 쓰는 다른 instance를 보존한다.
-설정·작업·hook·journal·identity를 삭제하고 시작하지 않는다. 처음 `aaa 이름`에는 이어갈 기존 이름을 고른다.
-중단 기록이 있으면 같은 실행 파일은 원래 ID/계획의 재검토·새 승인을 통해 resume할 수 있다.
-다른 실행 파일에 결속된 승인 또는 충돌 기록은 새 repair 계획을 검토하며, 다른 instance의 공유 hook은 바꾸지 않는다.
+`%USERPROFILE%\.local\share\aaa\installers\<SHA 앞 16자리>\aaa.exe`에 새 실행 파일을 검증해 놓는다.
+이 새 실행 파일로 `setup`을 시작하며 설치 대상 파일·설정·서비스의 변경은 setup 계획에서 확인한다.
+bootstrap은 `install` 전용 `--bin-path`를 넘기지 않는다. host 등록 창을 먼저 열고,
+관리자 권한의 대화형 콘솔에서 host·이름·작업 폴더와 계획을 확인한다. 암호는 설치기의 숨김 입력칸에만 넣는다.
+기존 설치와의 충돌·갱신·제거는 [Windows setup](windows-setup.md)을 따른다.
 
-host 등록 창이 닫혔다면 host 웹 또는 host의 `aaa machine enroll --open 10m`으로 먼저 연다.
-agent SAS를 확인한 뒤 같은 한 줄 입구에서 같은 이름/중단 ID를 선택한다. Controller passkey 등록과 agent 승인은 별개다.
-새 repair는 원래 기록을 지우지 않는다. 외부 편집·공유 소유권·정책 문제는 설명과 함께 멈추며 권한으로 우회하지 않는다.
+저장 파일 방식에서 `-InstallArgs @('--help')`는 `aaa setup --help`를 실행한다.
+기존 `install`의 `--role`·`--dry-run`·`--resume` 인자는 새 bootstrap에서 쓰지 않는다.
+`setup --status`·`setup --uninstall`과 instance 선택 방법은 위 setup 문서를 따른다.
+
+## v0.1.5 기존 install 경로 기록
+
+아래 내용은 **v0.1.5 bootstrap과 `aaa install`의 기록**이다. v0.1.6 이후 setup 입구의 사용법이 아니다.
+기존 판을 재현할 때는 v0.1.5의 고정 tag URL과 그 판의 script SHA를 사용한다.
 
 아래 저장 파일 방식은 판을 직접 고정하는 관리용 대안이다. 일반 사용자에게 여러 명령 입력을 요구하지 않는다.
 

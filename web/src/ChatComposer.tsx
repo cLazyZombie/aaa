@@ -1,3 +1,4 @@
+import { useAutoMode, AutoModeSwitch, AutoModeStatus } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 // 대화 보기의 입력창(herdr-web-ui src/components/Composer.tsx의 글 칸·보내기·빠른 답과 PaneTerminal.tsx 2885~2950줄
 // `composer-queue`(이 기기에 붙잡은 메시지), 모양 herdr/Composer.css 그대로, 문구는 참고 i18n.ko.ts). 차이 목록 C2, plan §8.130.
@@ -9,14 +10,10 @@ import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 // 글 칸 높이는 참고 `sizeTextarea`(글만큼, CSS 10줄에서 멈춤)다. 한 줄이면 보내기 단추를 같은 줄에 두는 것은 t3code `resting`
 // 배치(ChatComposer.tsx `isComposerResting`, useComposerMultilinePrompt.ts)이고, 데스크톱·긴 대화로 묶은 조건 없이 글만 본다(plan §8.215).
 // 다른 곳: 참고의 슬래시 명령·파일 멘션·받아쓰기·제안 칩·크기 손잡이·멈춤 단추·상태 줄은 옮기지 않았다.
-// 보내기 상태(plan §8.247, 사용자 10-19): 보내기는 바로 가고, 보낸 글이 「보내짐」이 될 때까지 입력창에 남아 잠긴다(readOnly:
-// disabled는 focus를 잃어 휴대폰 자판이 닫힌다, 참고 Composer.tsx 1272~1274줄). 앞 글이 보내져야 다음 글을 쓴다(웹 대기열 없음).
-// 보내짐은 agent가 받은 기록 증거다: 대화 기록에 같은 새 사람 글(Claude는 작업 중이면 대기열 줄이 그것이다), 기록에 대기를 남기지
-// 않는 Codex가 작업 중이면 host의 전달(글+Enter)이다. 그때는 대화 끝에 대기 말로 남긴다. 둥근 단추는 도는 표시이고(t3code
-// `isSendBusy`), host가 3초 동안 전달을 확인하지 않을 때만 ×(탈출구)가 된다. 보내는 동안 입력창에 상태 글은 그리지 않는다(사용자
-// 10-20 「입력창에 다른 메세지 다 빼」, plan §8.292): 단계는 도는 단추·×·흐린 글 칸이 보이고, 글은 화면 읽기용으로만 둔다. 그래서
-// 한 줄 배치가 보내는 동안에도 그대로다(높이가 늘었다 줄지 않는다). ×를 누르면 host가 멈춘 단계를 답한다: 보내지 않음·
-// Enter 안 침·늦음. 답이 없으면 모름이다. 전달 뒤 10초 동안 증거가 없으면 경고판에서 사람이 잠금을 푼다.
+// 보내기 상태(t-0955): 전송 중에도 다음 초안을 쓴다. 글+Enter 전달 ACK 뒤에는 기록을 기다리는
+// 글을 기존 대기 말에 둔다. harness 상태 사건·기록 반영이 늦어도 입력창을 잠그지 않는다.
+// 전송 자체는 하나씩 확인한다. 3초 동안 ACK가 없으면 기존 ×로 Enter 전송을 취소할 수 있다.
+// 기록 증거는 대기 말만 정리하며 다음 초안은 건드리지 않는다. ACK는 모델이 읽었다는 증거가 아니다.
 // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속)는 안내 없이 글을 steering으로 보낸다: 같은 보내기 길에 `steer`를 붙인다(`ctrlEnter`).
 // plan §8.266(t3code 참고): 작업 중이고 입력창이 비면 보내기 자리가 「중단」(Esc, 키 막대와 같은 길)이고, 빈 입력창의 ↑·↓는 이 대화
 // 기록의 사람 글을 다시 부르며(t3code composerPromptHistory.ts), 보내는 글의 보이지 않는 문자는 빼고 몇 개를 뺐는지 알린다(hiddenChars.ts).
@@ -64,7 +61,7 @@ export const STUCK_MS = 3000;
 /** 「/」 목록을 다시 묻는 간격(명령·skill 파일이 바뀔 수 있다, plan §8.323) */
 const COMMANDS_REFRESH_MS = 5 * 60_000;
 const SLOW_MS = 10_000;
-/** 작업 중에 보내 harness 대기열에 들어간 글. 기록에 같은 새 사람 글이 보이면 지운다.
+/** 전달 ACK를 받았지만 아직 기록에 없는 글. 기록에 같은 새 사람 글이 보이면 지운다.
  * `stale`: 그 harness가 이미 적었어야 할 때가 지났는데 기록에 없다(Enter가 먹혔을 수 있다) */
 export interface PendingSend {
   id: number;
@@ -76,8 +73,8 @@ export interface PendingSend {
   at: number;
   stale: boolean;
 }
-/** 보내는 중(host 답 전) → 막힘(3초, 탈출구) → 멈추는 중 / 전달됨(보내짐 증거 기다림) → 오래 걸림 */
-type Phase = "sending" | "stuck" | "stopping" | "sent" | "slow";
+/** 보내는 중(host 답 전) → 막힘(3초, 탈출구) → 멈추는 중 */
+type Phase = "sending" | "stuck" | "stopping";
 interface Flight {
   id: number;
   trace: string;
@@ -167,6 +164,7 @@ function terminalNote(c: SlashCommand, action: "picker" | "screen"): Note {
 }
 
 export interface ChatComposerProps {
+  active?: boolean;
   /** 붙잡은 메시지의 주인(머신:pane, 참고 `queueOwner`) */
   owner: string;
   pane: string;
@@ -208,6 +206,7 @@ export interface ChatComposerProps {
 }
 
 export function ChatComposer({
+  active = true,
   owner,
   pane,
   touch,
@@ -231,6 +230,10 @@ export function ChatComposer({
   coordinator = false,
   context = null,
 }: ChatComposerProps) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const auto = useAutoMode();
+  const autoOn = coordinator && !!auto?.mode?.on;
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
   // 탭이 안 보이면 coordinator 테두리의 빛을 세운다(브라우저가 그리기를 멈추는 것에 기대지 않고 애니메이션 자체를 멈춘다)
@@ -251,14 +254,15 @@ export function ChatComposer({
   flightRef.current = flight;
   const locked = flight !== null;
   useEffect(() => onBusy?.(locked), [locked, onBusy]);
-  // 가는 글은 초안에서 뺐어도 기록에 오를 때까지 입력창에 보인다
-  const shown = flight?.source === "box" ? flight.text : text;
+  // 전송 중인 글과 다음 초안을 분리한다.
+  const shown = text;
   const [note, setNote] = useState<Note | null>(null);
   // 입력칸 「/」 목록(plan §8.323): pane을 열 때와 5분마다 agent에 묻는다. 옛 host·agent면 목록·확인창 없이 글로 보낸다
   const [commandList, setCommandList] = useState<CommandList | null>(null);
   const commandListRef = useRef(commandList);
   commandListRef.current = commandList;
   useEffect(() => {
+    if (!active || !visible) return;
     let live = true;
     setCommandList(null);
     const load = () => void call({ op: "pane_commands", pane }).then((r) => {
@@ -270,7 +274,7 @@ export function ChatComposer({
       live = false;
       window.clearInterval(timer);
     };
-  }, [pane, harness]);
+  }, [active, visible, pane, harness]);
   const [caret, setCaret] = useState(0);
   const pendingCaret = useRef<{ value: string; at: number; focus: boolean } | null>(null);
   const [menuActive, setMenuActive] = useState(0);
@@ -309,7 +313,7 @@ export function ChatComposer({
     return query === "" ? groups(items).flatMap((g) => g.items) : rank(items, query, readUsage());
   }, [query, commandList, working]);
   // 다 친 숨은 명령(`/exit`)은 빈 목록 대신 닫는다: 보내면 확인창이 묻는다
-  const menuOpen = query !== null && commandList !== null && menuClosed !== shown
+  const menuOpen = active && query !== null && commandList !== null && menuClosed !== shown
     && !(menuItems.length === 0 && commandOf(commandList, shown) !== null);
   useEffect(() => setMenuActive(0), [query]);
   /** 목록에서 고름: 「/이름 」을 넣고(바로 보내지 않는다) 커서를 그 뒤에 둔다 */
@@ -416,8 +420,8 @@ export function ChatComposer({
     const placement = pendingCaret.current;
     pendingCaret.current = null;
     const box = textareaRef.current;
-    if (!placement || !box || locked || box.value !== placement.value) return;
-    if (placement.focus) box.focus();
+    if (!placement || !box || box.value !== placement.value) return;
+    if (activeRef.current && placement.focus) box.focus();
     box.setSelectionRange(placement.at, placement.at);
   });
   // 줄 수와 무관하게 단추는 옆 칸에 둔다. 배치 전환으로 글 칸 폭이 바뀌면 이미 접힌 줄이 다시 움직인다.
@@ -427,23 +431,23 @@ export function ChatComposer({
   // 실제 글 칸 폭을 본다. 창·옆 목록뿐 아니라 단추 칸 폭(맥락 게이지)이 바뀌어도 다시 잰다.
   useEffect(() => {
     const element = textareaRef.current;
-    if (!element) return;
+    if (!active || !element) return;
     const observer = new ResizeObserver(([entry]) => setBoxWidth(entry.contentRect.width));
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [active]);
 
   // 실제 칸을 auto로 줄여 scrollHeight를 읽으면 매 입력마다 강제 layout에서 입력창과 커서 자리도 왕복한다.
   // 자연 높이는 별도 칸에서 한 번만 재고 최종 높이만 적용한다. CSS의 높이 상한과 native 커서 스크롤은 유지한다.
   // 폭·padding은 줄 수에 따라 바꾸지 않는다(t-0563 사용자 1A). 글꼴·크기·밀도 변경에도 다시 잰다.
   useLayoutEffect(() => {
     const element = textareaRef.current;
-    if (!element) return;
+    if (!active || !element) return;
     const { height, rows } = measureText(element);
     setLines(shown === "" || rows <= 1 ? "one" : "more");
     const size = `${height}px`;
     if (element.style.height !== size) element.style.height = size;
-  }, [shown, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
+  }, [active, shown, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
 
   // 끝난 보내기를 지운다: 이 보내기가 아직 지금 것일 때만(늦은 답이 다음 보내기를 지우지 않는다)
   const finish = (f: Flight): boolean => {
@@ -452,7 +456,7 @@ export function ChatComposer({
     setFlight(null);
     return true;
   };
-  /** 기록에 올랐거나 harness 대기열에 들어갔다: 입력창은 이미 비었고 첨부를 놓는다 */
+  /** 전달 ACK 뒤 전송 단추를 풀고 첨부를 놓는다. 기록 수신은 대기 말에서 따로 추적한다 */
   const settle = (f: Flight, fallback?: InputReceiptMethod): void => {
     if (!finish(f)) return;
     const method = seen(f) ? [...(messagesRef.current ?? [])].reverse().map((m) => receiptMethod(f.text, m, f.hash)).find((m) => m !== null) : fallback;
@@ -475,7 +479,14 @@ export function ChatComposer({
       return;
     }
     // 보내기 시작에 비운 초안: 그 사이 다른 탭이 쓴 글이 있으면 그것을 둔다
-    if (f.source === "box") composerDrafts.set(draftKey, (current) => current === "" ? f.text : current);
+    if (f.source === "box") {
+      if (composerDrafts.read(draftKey).text === "") setText(f.text);
+      else {
+        messageQueues.add(owner, f.text); // 새 초안을 덮거나 실패한 글을 잃지 않는다.
+        clearAttachments(f.attachments);
+        note = { ...note, retry: undefined }; // 보관함에서 실패한 글을 직접 확인하고 보낸다.
+      }
+    }
     setNote(note);
   };
   const step = (f: Flight, phase: Phase, more: Partial<Flight> = {}): void => {
@@ -484,15 +495,15 @@ export function ChatComposer({
     const next: Flight = { ...current, ...more, phase, at: Date.now() };
     flightRef.current = next;
     setFlight(next);
-    if (phase === "slow" || phase === "stuck") onInputTrace(f.trace, phase);
+    if (phase === "stuck") onInputTrace(f.trace, phase);
   };
-  /** 바로 보낸다. 보내짐까지 입력창은 잠긴다 */
+  /** 바로 보낸다. 전달 확인 중에도 다음 초안은 편집한다 */
   const deliver = (given: Omit<Flight, "id" | "trace" | "phase" | "at" | "before">): void => {
     setNote(null);
     const f: Flight = { ...given, id: ++flightSequence.current, trace: inputTraceId(), phase: "sending", at: Date.now(), before: messagesRef.current === null ? null : occurrences(given.text) };
     flightRef.current = f;
     setFlight(f);
-    // 가는 글은 초안에 두지 않는다: 잠긴 채 새로 읽어도 같은 글이 보통 초안으로 돌아와 두 번 가지 않는다
+    // 가는 글은 초안에 두지 않는다: 새로 읽어도 같은 글이 보통 초안으로 돌아와 두 번 가지 않는다
     if (f.source === "box") setText("");
     onInputTrace(f.trace, "preparing");
     const again = f.source === "queue" ? undefined : () => send(f.source === "reply" ? f.text : undefined, f.steer);
@@ -500,9 +511,16 @@ export function ChatComposer({
       f.hash = await receiptHash(f.text);
       if (flightRef.current?.id !== f.id) return;
       f.before = messagesRef.current === null ? null : occurrences(f.text, messagesRef.current, f.hash);
+      // 같은 글을 연속 보냈으면 기록 한 줄이 두 보내기를 동시에 확인하지 않게 차례를 잡는다.
+      if (f.before !== null) {
+        for (const p of pending) {
+          if (p.before !== null && (f.hash ? p.hash === f.hash : p.text === f.text))
+            f.before = Math.max(f.before, p.before + 1);
+        }
+      }
       let sent: false | Promise<true | string>;
       try {
-        sent = onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length, ctrl_enter: f.ctrlEnter ?? f.steer ?? false });
+        sent = !activeRef.current ? false : onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length, ctrl_enter: f.ctrlEnter ?? f.steer ?? false });
       } catch (ignoredError) { logIgnoredFailure(ignoredError, "ChatComposer.tsx:506");
         sent = false;
       }
@@ -533,19 +551,19 @@ export function ChatComposer({
       return;
     }
     onSent();
-      if (f.source === "queue" && f.queueId !== undefined) {
-        messageQueues.remove(owner, f.queueId);
-        messageQueues.endSend(owner, f.queueId);
-      }
-      // 보낼 때 대화 기록을 읽지 못했으면(Claude 첫 hook 전 등) 기록 증거가 올 수 없다: host의 전달이 보내짐이다.
-      // harness 명령(게이지의 /compact 등)도 사람 글로 기록되지 않는다(plan §8.321)
-      if (seen(f) || f.before === null || slashCommand(f.text)) settle(f, f.before === null ? "no_transcript" : seen(f) ? undefined : "slash_command");
-      else if (harness === "codex" && workingRef.current) {
-        // Codex는 작업 중에 받은 글을 다음 도구 호출 뒤 읽을 때에야 기록한다: host의 전달이 보내짐이고 대화 끝 대기 말로 기다린다
-        setPending((list) => [...list, { id: f.id, trace: f.trace, hash: f.hash, text: f.text, before: f.before, at: Date.now(), stale: false }]);
-        onInputTrace(f.trace, "pending", "codex_delivery");
-        settle(f, "codex_delivery");
-    } else step(f, "sent");
+    if (f.source === "queue" && f.queueId !== undefined) {
+      messageQueues.remove(owner, f.queueId);
+      messageQueues.endSend(owner, f.queueId);
+    }
+    // 첫 hook 전 등 기록 증거를 읽을 수 없거나 harness 명령이면 기존 전달 확인만 사용한다.
+    if (seen(f) || f.before === null || slashCommand(f.text)) {
+      settle(f, f.before === null ? "no_transcript" : seen(f) ? undefined : "slash_command");
+    } else {
+      // 주입 알림 처리·상태 사건 지연·기록 지연 모두 같은 길이다. 전달 확인과 기록 수신을 구분한다.
+      setPending((list) => [...list, { id: f.id, trace: f.trace, hash: f.hash, text: f.text, before: f.before, at: Date.now(), stale: false }]);
+      onInputTrace(f.trace, "pending");
+      settle(f);
+    }
   };
   /** 탈출구: 전달 전에 막힌 보내기를 멈추고 글을 돌려받는다. host가 확실히 말할 때만 「보내지 않음」 */
   const escape = (): void => {
@@ -567,47 +585,30 @@ export function ChatComposer({
         : stage === "no_enter"
           ? { text: "멈췄습니다. 제출하지 않았습니다(Enter를 보내지 않음). 에이전트 입력창에 글이 남았을 수 있으니 터미널을 확인하세요.", inspect: true }
           : { text: "멈췄습니다. 전송 여부를 확인하지 못했습니다. 다시 보내기 전에 터미널을 확인하세요.", inspect: true });
-      textareaRef.current?.focus();
+      if (activeRef.current) textareaRef.current?.focus();
     });
   };
-  /** 오래 걸림에서 「잠금 풀기」: 갔을 수 있는 글을 고칠 수 있게 돌려놓는다 */
-  const unlock = (): void => {
-    const f = flightRef.current;
-    if (f === null || !finish(f)) return;
-    onInputTrace(f.trace, "unlock");
-    if (f.source === "box") composerDrafts.set(draftKey, (current) => current === "" ? f.text : current);
-    textareaRef.current?.focus();
-  };
-
-  // 3초 동안 전달 답이 없으면 탈출구, 전달됨에서 10초 동안 보내짐 증거가 없으면 오래 걸림. 늦게 걸린 타이머도 시작 때부터 잰다.
-  // 대화 정리 중에는 harness가 글을 읽지 않으므로 오래 걸림을 세지 않고, 정리가 끝난 때부터 다시 잰다(plan §8.309)
-  const wasCompacting = useRef(compacting);
+  // 전달 확인이 늦으면 기존 취소 경로를 제공한다. 다음 초안은 계속 편집할 수 있다.
   useEffect(() => {
-    const ended = wasCompacting.current && !compacting;
-    wasCompacting.current = compacting;
-    if (flight?.phase !== "sending" && flight?.phase !== "sent") return;
-    // 멈춤이 늦어 돌아온 보내기는 다시 탈출구를 보이지 않는다
-    if (flight.phase === "sending" && flight.escaped) return;
-    if (flight.phase === "sent" && compacting) return;
-    if (flight.phase === "sent" && ended) { step(flight, "sent"); return; }
-    const [wait, phase]: [number, Phase] = flight.phase === "sending" ? [STUCK_MS, "stuck"] : [SLOW_MS, "slow"];
-    const timer = window.setTimeout(() => step(flight, phase), Math.max(0, flight.at + wait - Date.now()));
+    if (!active) return;
+    if (flight?.phase !== "sending" || flight.escaped) return;
+    const timer = window.setTimeout(() => step(flight, "stuck"), Math.max(0, flight.at + STUCK_MS - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [flight, compacting]);
-  // 기록에 같은 새 사람 글이 보이면(늦게라도) 비우고 푼다. 대기 말도 기록에 오른 것은 지운다
+  }, [active, flight]);
+  // 새 사람 글이 실제 기록에 오르면 대기 말만 지운다. 다음 초안은 유지한다.
   useEffect(() => {
-    if (flight && (flight.phase === "sent" || flight.phase === "slow") && seen(flight, messages)) settle(flight);
     for (const p of pending.filter((p) => p.trace && seen(p, messages))) {
       const method = [...(messages ?? [])].reverse().map((m) => receiptMethod(p.text, m, p.hash)).find((m) => m !== null);
       onInputTrace(p.trace!, "receipt", method ?? undefined);
     }
     if (pending.some((p) => seen(p, messages))) setPending((list) => list.filter((p) => !seen(p, messages)));
-  }, [messages, flight, pending]);
-  // 대기 말(Codex 작업 중)이 기록에 없을 때: 작업이 끝나고 10초 뒤에도 없으면 Enter가 먹혔을 수 있다
+  }, [messages, pending]);
+  // 대기 말이 기록에 없을 때: 작업이 끝나고 10초 뒤에도 없으면 Enter가 먹혔을 수 있다
   const idleSince = useRef<number | null>(working ? null : Date.now());
   if (working) idleSince.current = null;
   else idleSince.current ??= Date.now();
   useEffect(() => {
+    if (!active) return;
     const due = (p: PendingSend) => idleSince.current === null ? Infinity : Math.max(p.at, idleSince.current) + SLOW_MS;
     const next = Math.min(...pending.filter((p) => !p.stale).map(due));
     if (!Number.isFinite(next)) return;
@@ -617,13 +618,13 @@ export function ChatComposer({
       setPending((list) => list.map((p) => !p.stale && due(p) <= Date.now() ? { ...p, stale: true } : p));
     }, Math.max(0, next - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [pending, working]);
+  }, [active, pending, working]);
 
   /** `steer`: Ctrl+Enter로 작업 중에 보낸다(지금 턴에 끼워 넣는다). 붙잡지 않는다 */
   /** `confirmed`: 확인창에서 「보내기」를 눌렀다 */
   const send = (given?: string, steer = false, ctrlEnter = false, confirmed = false): void => {
     const raw = (given ?? textRef.current).trim();
-    if (raw === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
+    if (!activeRef.current || raw === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
     // 보이지 않는 문자는 빼고 보낸다(plan §8.266). 보내짐 증거(기록의 같은 글)도 뺀 글로 맞춘다
     const { text: cleaned, removed } = stripHidden(raw);
     const message = cleaned.trim();
@@ -767,7 +768,7 @@ export function ChatComposer({
       setQueueError({ id, text: HIDDEN_ONLY });
       return;
     }
-    if (flightRef.current !== null || !connected || !messageQueues.beginSend(owner, id)) return;
+    if (!activeRef.current || flightRef.current !== null || !connected || !messageQueues.beginSend(owner, id)) return;
     setQueueError(null);
     deliver({ text: message, source: "queue", queueId: id, attachments: [], ...(steer ? { steer } : {}) });
     if (removed > 0) setNote({ text: hiddenNote(removed), quiet: true });
@@ -776,9 +777,16 @@ export function ChatComposer({
   // 질문 중이면 답한 뒤, 끊겼으면 다시 붙은 뒤에 보낸다. 작업 중이고 「대기 메시지 자동 전송」을 껐으면 그 설정대로 보통 붙잡은 글로 둔다.
   // 이 기기 보관함은 localStorage라 정리 중에 앱을 닫았어도 다시 열 때 보낸다. 같은 브라우저의 탭이 함께 보므로 글을 넣은 탭만 보내고,
   // 그 탭에 이 pane 입력창이 없으면(닫힘·새로고침·다른 pane) 물어본 뒤 넘겨받는다: 두 탭이 같은 글을 보내지 않는다
-  useEffect(() => openComposer(owner), [owner]);
+  useEffect(() => active ? openComposer(owner) : undefined, [active, owner]);
   useEffect(() => {
-    if (compacting || !connected || asking || flight !== null) return;
+    if (active) return;
+    setConfirming(null);
+    setMenuClosed(textRef.current);
+    setDragging(false);
+    pendingCaret.current = null;
+  }, [active]);
+  useEffect(() => {
+    if (!active || !visible || compacting || !connected || asking || flight !== null) return;
     const step = compactionStep(queued, (id) => messageQueues.isSending(id), TAB_ID, working && !autoSendQueued);
     if (step === null) return;
     if (step === "release") {
@@ -794,10 +802,10 @@ export function ChatComposer({
       if (live && !open) messageQueues.adopt(owner, step.adopt);
     });
     return () => { live = false; };
-  }, [compacting, connected, asking, flight, queued, working, autoSendQueued]);
+  }, [active, visible, compacting, connected, asking, flight, queued, working, autoSendQueued]);
 
   const placeholder = connected
-    ? `${agentLabel}에게 메시지…`
+    ? (autoOn ? "coordinator에게 지시하기" : `${agentLabel}에게 메시지…`)
     : "재연결 중… 메시지는 여기에 보관되고 대기열에 넣지 않습니다";
   return (
     <>
@@ -806,7 +814,7 @@ export function ChatComposer({
           ref={holdPageRef}
           className={`composer-queue${working ? "" : " is-ready"}`}
           aria-label="대기 메시지"
-          data-testid="chat-queue"
+          data-testid={active ? "chat-queue" : undefined}
           data-compacting={compacting || undefined}
         >
           <div className="composer-queue-heading">
@@ -830,7 +838,7 @@ export function ChatComposer({
             </p>
           )}
           {asking && (
-            <p className="composer-queue-error is-quiet" role="status" data-testid="chat-queue-hint">
+            <p className="composer-queue-error is-quiet" role="status" data-testid={active ? "chat-queue-hint" : undefined}>
               질문에 답한 뒤 보낼 수 있습니다
             </p>
           )}
@@ -874,7 +882,7 @@ export function ChatComposer({
                   </button>
                 </div>
                 {queueError?.id === message.id && (
-                  <p className="composer-queue-error" role={queueError.inspect ? "alert" : "status"} data-testid="chat-queue-error">
+                  <p className="composer-queue-error" role={queueError.inspect ? "alert" : "status"} data-testid={active ? "chat-queue-error" : undefined}>
                     {queueError.inspect && <TriangleAlert aria-hidden="true" />}
                     <span>{queueError.text}</span>
                     {queueError.inspect && (
@@ -896,7 +904,7 @@ export function ChatComposer({
         className="composer"
         role="group"
         aria-label="메시지 입력창"
-        data-testid="chat-composer"
+        data-testid={active ? "chat-composer" : undefined}
       >
         {replies.length > 0 && (
           <div className="composer-quick" role="group" aria-label="빠른 답장">
@@ -915,9 +923,9 @@ export function ChatComposer({
           </div>
         )}
         {/* 메시지가 가지 못한 까닭(취소는 조용한 알림): 상자 위끝에, 상자와 함께 읽힌다 */}
-        {note !== null && flight?.phase !== "slow" && (
+        {note !== null && (
           // 확실히 보내지 않은 멈춤은 조용히, 갔는지 모르면 경고판, 가지 못했으면 빨간 띠
-          <div className={`composer-note${note.quiet ? " is-quiet" : note.inspect ? " is-slow" : ""}`} role={note.quiet ? "status" : "alert"} data-testid="chat-note">
+          <div className={`composer-note${note.quiet ? " is-quiet" : note.inspect ? " is-slow" : ""}`} role={note.quiet ? "status" : "alert"} data-testid={active ? "chat-note" : undefined}>
             {note.quiet ? <Info className="composer-note-icon" aria-hidden="true" /> : <TriangleAlert className="composer-note-icon" aria-hidden="true" />}
             <span className="composer-note-text">{note.text}</span>
             {(note.retry || note.inspect) && <span className="composer-note-actions">
@@ -926,18 +934,8 @@ export function ChatComposer({
             </span>}
           </div>
         )}
-        {flight?.phase === "slow" && (
-          <div className="composer-note is-slow" role="alert" data-testid="chat-note">
-            <Clock className="composer-note-icon" aria-hidden="true" />
-            <span className="composer-note-text">전달했지만 10초가 지나도 대화 기록에 보이지 않습니다. 에이전트 입력창에 글이 남아 있는지 확인하세요. 잠금을 풀어도 이미 간 글은 되돌리지 않습니다.</span>
-            <span className="composer-note-actions">
-              <button type="button" className="composer-note-action" onClick={onInspect}>터미널 보기</button>
-              <button type="button" className="composer-note-action" onClick={unlock}>잠금 풀기</button>
-            </span>
-          </div>
-        )}
         {/* 보내는 동안에도 글이 정한 배치 그대로다: 상태는 단추가 보이고 상태 글은 그리지 않는다(plan §8.292) */}
-        <div ref={surfaceRef} data-lines={lines} className={`composer-surface${coordinator ? " is-coordinator" : ""}${dragging ? " is-dragging" : ""}${locked ? " is-locked" : ""}`}
+        <div ref={surfaceRef} data-lines={lines} className={`composer-surface${coordinator ? " is-coordinator" : ""}${autoOn ? " is-auto" : ""}${dragging ? " is-dragging" : ""}`}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
@@ -947,7 +945,7 @@ export function ChatComposer({
           onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
           onDrop={(event) => { event.preventDefault(); setDragging(false); uploadImages(Array.from(event.dataTransfer.files)); }}
         >
-          {coordinator && <span className="composer-glow" aria-hidden="true" data-paused={visible ? undefined : ""} />}
+          {coordinator && <span className="composer-glow" aria-hidden="true" data-paused={active && visible ? undefined : ""} />}
           {menuOpen && (
             <SlashMenu id={menuId} items={menuItems} grouped={query === ""} active={Math.min(menuActive, Math.max(0, menuItems.length - 1))}
               onHover={setMenuActive} onPick={pickCommand} />
@@ -968,8 +966,6 @@ export function ChatComposer({
             rows={1}
             maxLength={MAX_COMPOSER_CHARS}
             value={shown}
-            readOnly={locked}
-            aria-readonly={locked || undefined}
             placeholder={placeholder}
             aria-label="메시지"
             // agent에게 쓰는 글은 대개 산문이다: 휴대폰 자판의 고침·제안·문장 대문자를 둔다(터미널 입력줄은 끈다)
@@ -1000,21 +996,20 @@ export function ChatComposer({
           <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
             onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; uploadImages(files); }} />
           <div className="composer-controls composer-controls-left">
+            {active && autoOn && <AutoModeSwitch />}
             <button type="button" className="icon-button" aria-label="그림 첨부" title="그림 첨부" disabled={!connected || uploading || locked}
               onPointerDown={(event) => event.preventDefault()} onClick={() => picker.current?.click()}><ImagePlus aria-hidden="true" /></button>
           </div>
-          {/* 화면 읽기용 단계 글(그리지 않는다, 배치 밖): 화면에는 단추(도는 표시·×)와 흐린 글 칸이 단계를 보인다 */}
+          {/* 화면 읽기용 단계 글(그리지 않는다, 배치 밖): 화면에는 단추(도는 표시·×)로 단계를 보인다 */}
           {flight && (
-            <div className="visually-hidden" role="status" data-testid="chat-send-state" data-state={flight.phase}>
+            <div className="visually-hidden" role="status" data-testid={active ? "chat-send-state" : undefined} data-state={flight.phase}>
               {flight.phase === "sending" ? "보내는 중 · 전달을 확인하는 중"
                 : flight.phase === "stuck" ? "전달 확인이 늦습니다 · ×로 멈추고 글 돌려받기"
-                : flight.phase === "stopping" ? "멈추는 중…"
-                : flight.phase === "sent" ? "전달됨 · 대화에 오르면 풀립니다 · 취소할 수 없음"
-                : "전달됨 · 10초 넘음 · 취소할 수 없음"}
+                : "멈추는 중…"}
             </div>
           )}
           <div className="composer-controls composer-controls-right">
-            {context && (
+            {active && context && (
               <ContextGauge
                 context={context}
                 agentLabel={agentLabel}
@@ -1039,7 +1034,7 @@ export function ChatComposer({
                 className="composer-action composer-interrupt"
                 aria-label="작업 중단(Esc)"
                 title="작업 중단 · Esc를 보낸다"
-                data-testid="chat-interrupt"
+                data-testid={active ? "chat-interrupt" : undefined}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={onInterrupt}
               >
@@ -1074,8 +1069,9 @@ export function ChatComposer({
             )}
           </div>
         </div>
+        {active && coordinator && <AutoModeStatus />}
       </div>
-      {confirming && (
+      {active && confirming && (
         <ConfirmDialog
           title={`${confirming.command.insert.trim()}를 보낼까요?`}
           body={confirming.command.kind === "danger"

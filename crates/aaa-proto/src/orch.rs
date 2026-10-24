@@ -669,6 +669,9 @@ pub struct MessageView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectView {
+    #[serde(default)]
+    #[ts(optional, as = "Option<crate::AutoMode>")]
+    pub auto_mode: crate::AutoMode,
     pub name: String,
     pub path: String,
     pub threads: u32,
@@ -1086,7 +1089,7 @@ pub struct ThreadView {
 /// thread가 구현 전에 모아 묻는 질문 묶음(plan §8.329). 그 보고에 묶인다: 새 보고가 오면 새 질문이고 답도 비운다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestions {
-    /// 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+    /// 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치를 알린다. 답 전송은 허용한다. 옛 host는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub format_warning: Option<String>,
@@ -1249,13 +1252,14 @@ fn unmark_leading(text: &str) -> String {
     out
 }
 
-/// A~Z 후보는 엄격한 선택지 파싱과 별도로 센다. 잘못된 구두점·강조 때문에 버린 줄도 경고한다.
+/// A~Z 뒤에 글자·숫자가 이어지는 단어(A를·A안·t3code)는 후보가 아니다.
+/// 후보는 엄격한 선택지 파싱과 별도로 센다. 잘못된 구두점·강조 때문에 버린 줄도 경고한다.
 fn choice_letter(text: &str) -> Option<char> {
     let item = text.trim().strip_prefix("- ").or_else(|| text.trim().strip_prefix("* "))?;
     let item = item.trim_start_matches(['*', '_']);
     let mut chars = item.chars();
     let letter = chars.next()?;
-    (letter.is_ascii_alphabetic() && chars.next().is_none_or(|c| !c.is_ascii_alphabetic()))
+    (letter.is_ascii_alphabetic() && chars.next().is_none_or(|c| !c.is_alphanumeric()))
         .then_some(letter.to_ascii_uppercase())
 }
 
@@ -1369,7 +1373,7 @@ fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
     }
 }
 
-/// 보고를 읽은 결과와 누락·글자 불일치 진단. 경고가 있으면 host는 카드 답을 받지 않는다.
+/// 보고를 읽은 결과와 누락·글자 불일치 진단. 경고는 진단용이며 읽은 선택지·직접 답 전송을 막지 않는다.
 #[derive(Debug, Default)]
 pub struct ParsedReportQuestions {
     pub items: Vec<ThreadQuestion>,
@@ -1484,6 +1488,15 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
             out.items.len(),
             declared.map(|n| format!("(선언한 질문 {n}개)")).unwrap_or_default()
         ));
+    }
+    if out.warning.is_some() && out.items.is_empty() {
+        out.items.push(ThreadQuestion {
+            id: None,
+            text: "직접 답".into(),
+            choices: Vec::new(),
+            body: body_of(&report.lines().map(str::to_string).collect::<Vec<_>>(), QUESTION_BODY_MAX),
+            after: None,
+        });
     }
     out
 }
@@ -1648,6 +1661,8 @@ pub fn section_lines(report: &str, name: &str) -> Vec<String> {
 pub const BRIEF_WORK_DIR: &str = "{{aaa:work_dir}}";
 /// 그 머신 aaa 실행 파일(진행 보고 명령)
 pub const BRIEF_EXE: &str = "{{aaa:exe}}";
+/// memory=true 자동화의 재독 안내. host가 세션 명세에 넣으며 hook 요청의 환경·경로는 믿지 않는다.
+pub const AUTOMATION_REENTRY_ENV: &str = "AAA_AUTOMATION_REENTRY";
 /// 임무 inbox의 목록 조회 한 명령. agent가 채우는 경로와 allow-list가 같은 quoting을 쓴다.
 pub const BRIEF_INBOX_LIST: &str = "{{aaa:inbox_list}}";
 pub const BRIEF_GIT_READS: &str = "{{aaa:git_reads}}";
@@ -2207,6 +2222,34 @@ mod tests {
     }
 
     #[test]
+    fn report_questions_do_not_count_korean_words_or_alphanumeric_names() {
+        for report in [
+            include_str!("../tests/fixtures/r-1931-questions.md"),
+            include_str!("../tests/fixtures/r-1994-questions.md"),
+        ] {
+            let parsed = parse_report_questions(report);
+            assert!(parsed.warning.is_none(), "{parsed:?}");
+            assert_eq!(parsed.items.len(), 1);
+            assert_eq!(parsed.items[0].choices.len(), 2);
+            assert!(parsed.items[0].choices[0].recommended);
+        }
+        for word in ["A를 달성", "A안 추천", "B안", "t3code", "A1 항목"] {
+            assert_eq!(choice_letter(&format!("- {word}")), None, "{word}");
+        }
+    }
+
+    #[test]
+    fn report_questions_keep_a_direct_answer_card_when_no_heading_is_read() {
+        let report = "[결정 필요] 질문 1개: 진행\n## Questions\n### 진행할까요\n- A 진행\n- B 보류\n";
+        let parsed = parse_report_questions(report);
+        assert!(parsed.warning.is_some());
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(parsed.items[0].text, "직접 답");
+        assert!(parsed.items[0].choices.is_empty());
+        assert!(parsed.items[0].body.as_deref().unwrap().contains("### 진행할까요"));
+    }
+
+    #[test]
     fn report_questions_accept_choice_emphasis_and_recommendation_spacing() {
         for a in ["**A(추천)**", "**A** (추천)", "*A* (추천)", "A(추천)", "A (추천)", "__A(추천)__", "_A_ (추천)"]
         {
@@ -2741,6 +2784,9 @@ pub struct TaskBoard {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct ThreadStartPreview {
+    #[serde(default)]
+    pub workspace_access: std::collections::BTreeMap<String, Vec<String>>,
+
     pub profile_revision: String,
     pub model: String,
     pub effort: String,
@@ -2791,6 +2837,10 @@ pub struct OwnerChoice {
 /// coordinator가 매 턴 처음 보는 프로젝트 요약(0.2.35 `context`)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectContext {
+    #[serde(default)]
+    pub auto_mode: crate::AutoMode,
+    #[serde(default)]
+    pub auto_mode_exceptions: String,
     /// inbox를 끝내도 해제 전까지 남는 활성 post 음소거 경고
     #[serde(default)]
     pub post_warnings: Vec<String>,
@@ -2813,4 +2863,20 @@ pub struct ProjectContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub web_url: Option<String>,
+}
+
+/// 자동 배정 허용은 host DB, 저장소 경로는 프로젝트 설정이 정본이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct WorkspaceAccessView {
+    pub project: String,
+    pub machine: String,
+    pub revision: String,
+    pub workspaces: Vec<WorkspaceAccessRow>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct WorkspaceAccessRow {
+    pub workspace: String,
+    pub enabled: bool,
+    /// 비면 이 머신에 등록된 경로가 없다. 작업 폴더는 agent 작업 root를 쓴다.
+    pub paths: Vec<String>,
 }

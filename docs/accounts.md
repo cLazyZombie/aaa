@@ -263,6 +263,9 @@ host의 유효한 safety `trust_screens`가 `coordinator`이면 thread의 실제
 Codex는 `config.toml`의 `projects.<절대 경로>.trust_level = "trusted"`, Claude는
 격리 홈 `.claude.json`의 `projects[절대 경로].hasTrustDialogAccepted = true`를 사용한다.
 경로는 정규화한 cwd 하나이며 부모 폴더·본 저장소·다른 worktree를 추가하지 않는다.
+Windows Codex에는 공식 CLI와 같은 `dunce::simplified`로 DOS 표기를 쓴다. Rust의
+`canonicalize`가 붙이는 `\\?\` 접두를 그대로 신뢰 키로 쓰면 TUI가 cwd를 찾지 못해 본 저장소의
+신뢰 창을 띄운다. 긴 경로·예약 이름처럼 DOS로 줄일 수 없는 경로는 dunce가 그대로 보존한다.
 Codex는 cwd 기록을 저장소 루트보다 먼저 조회하므로 worktree에서도 본 저장소 신뢰를 넓힐 필요가 없다.
 session은 허용 경로와 실제 cwd가 다르거나 thread가 아닌 실행의 사전 신뢰 요청을 거부한다.
 
@@ -297,3 +300,27 @@ Codex 0.163.0의 [공식 시작 코드](https://github.com/openai/codex/blob/rus
 [첫 실행 화면 코드](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/onboarding/onboarding_screen.rs)에서는
 Claude의 우회 경고에 대응하는 별도 첫 실행 수락을 찾지 못했다. 로그인·폴더 신뢰와 Windows
 샌드박스 안내는 별개이며 이번 변경에서 Codex 수락 키를 추가하지 않는다.
+
+
+## Windows Codex의 신뢰·샌드박스 첫 실행(t-0953)
+
+YOLO 인자는 이미 최초 실행과 재개에 모두 전달된다. Windows의 반복 안내는 인자 누락이 아니라
+격리 설정의 확장 경로 키와 Codex TUI의 DOS 경로 조회가 어긋난 데서 시작한다.
+Codex는 신뢰 결정을 그 자리에서 새로 받으면 Windows sandbox 안내를 이어 열며,
+비관리자 sandbox를 고르면 `auto` 권한 preset을 적용한다. 그래서 처음 표시한 YOLO와 달리
+도구 명령의 승인을 요구할 수 있다. 다음 시작에 aaa가 격리 설정을 다시 만들면 이 선택도 사라진다.
+
+cwd 신뢰 키를 공식 구현과 맞추어 첫 안내에 진입하지 않게 한다. `windows.sandbox` 선택이나
+`windows_wsl_setup_acknowledged`를 YOLO의 필수 설정으로 기록하지 않는다. 관리자 설치·UAC·
+비관리자 sandbox 초기화 없이 기존 `--dangerously-bypass-approvals-and-sandbox`가 적용된다.
+사용자의 개인 Codex 홈은 읽거나 바꾸지 않으며 `trust_screens=user`일 때 사전 신뢰도 넣지 않는다.
+
+근거는 [OpenAI 권한 문서](https://learn.chatgpt.com/docs/agent-approvals-security),
+[Windows 설정](https://learn.chatgpt.com/docs/config-file/config-reference),
+Codex 0.164.0의 [신뢰 키 정규화](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/config/src/loader/mod.rs),
+[첫 실행 sandbox preset](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/tui/src/chatwidget/windows_sandbox_prompts.rs),
+[선택 뒤 권한 적용](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/tui/src/app/event_dispatch.rs)이다.
+Codex와 [herdr의 CODEX_HOME 연동](https://github.com/herdrdev/herdr/blob/v0.9.5/src/integration/env.rs)은
+Apache-2.0이며, herdr의 hook 설치는 격리 홈 선택만 참고하고 코드는 복사하지 않는다.
+[dunce 1.0.5](https://docs.rs/dunce/1.0.5/dunce/)의 라이선스는
+CC0-1.0 OR MIT-0 OR Apache-2.0이며 Windows 의존성으로만 사용한다.

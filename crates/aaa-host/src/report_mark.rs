@@ -68,7 +68,10 @@ impl Host {
         if rec.question_warning_sent == rec.report_hash {
             return;
         }
-        let mut body = format!("{warning}\n보고: threads/{}.md\n보고를 고쳐 다시 제출하면 답할 수 있다.", rec.id);
+        let mut body = format!(
+            "{warning}\n보고: threads/{}.md\n사용자는 읽힌 선택지나 직접 입력으로 답할 수 있다. 보고 형식도 고친다.",
+            rec.id
+        );
         if let Some(work) = &rec.work_dir {
             let result = async {
                 let conn = self.live_conn(&rec.machine_id)?;
@@ -131,12 +134,9 @@ impl Host {
                 q.id = None;
             }
             let changed = old_items != new_items && !default_review(&report);
-            let warning = question_warning(&report)
-                .or_else(|| {
-                    changed
-                        .then(|| "형식 확인 필요: 이전 host와 질문 해석이 달라졌다. 보고를 고쳐 다시 제출한다.".into())
-                })
-                .or_else(|| rec.question_warning.clone());
+            let warning = question_warning(&report).or_else(|| {
+                changed.then(|| "형식 확인 필요: 이전 host와 질문 해석이 달라졌다. 보고를 고쳐 다시 제출한다.".into())
+            });
             if changed {
                 self.db
                     .question_clear_drafts(
@@ -233,7 +233,41 @@ mod tests {
     }
 
     #[test]
-    fn old_unanswered_cards_are_reparsed_and_changed_letters_require_a_new_report() {
+    fn reparsing_original_reports_clears_false_warning_without_changing_question_ids() {
+        for original in [
+            include_str!("../../aaa-proto/tests/fixtures/r-1931-questions.md"),
+            include_str!("../../aaa-proto/tests/fixtures/r-1994-questions.md"),
+        ] {
+            let root = std::env::temp_dir().join(format!("aaa-question-upgrade-{}", aaa_common::util::new_id()));
+            let mut cfg = aaa_config::HostConfig::default();
+            cfg.projects.root = root.join("projects").display().to_string();
+            let h = Host::open(cfg, root.join("host")).unwrap();
+            h.project_create("p", Default::default(), "test").unwrap();
+            let report = format!("[결정 필요] 질문 1개: 원문\n{original}");
+            let mut rec =
+                ThreadRec::starting("p", "진행", "m", "codex", aaa_proto::Role::Worker, aaa_proto::ThreadKind::Dir, 0);
+            rec.id = "t-0001".into();
+            rec.status = aaa_proto::ThreadStatus::Open;
+            rec.report_hash = Some(hex::encode(Sha256::digest(report.as_bytes())));
+            rec.questions = h
+                .identify_questions("p", "thread", &rec.id, rec.report_hash.as_deref().unwrap(), &questions(&report))
+                .unwrap();
+            let id = rec.questions[0].id.clone();
+            rec.question_warning = Some("형식 확인 필요: 선택지 3개 중 2개를 읽었다".into());
+            h.db.thread_import("p", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+            std::fs::write(h.project_dir("p").unwrap().join("threads/t-0001.md"), report).unwrap();
+            h.backfill_review_questions().unwrap();
+            let q = h.thread_show("p", &rec.id).unwrap().questions.unwrap();
+            assert!(q.format_warning.is_none());
+            assert_eq!(q.items[0].id, id);
+            assert_eq!(q.items[0].choices.len(), 2);
+            drop(h);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn old_unanswered_cards_are_reparsed_and_stale_warnings_are_cleared() {
         let root = std::env::temp_dir().join(format!("aaa-question-upgrade-{}", aaa_common::util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
         cfg.projects.root = root.join("projects").display().to_string();
@@ -253,7 +287,7 @@ mod tests {
         assert_eq!(view.items[0].choices.len(), 3);
         assert!(view.format_warning.unwrap().contains("이전 host"));
         h.backfill_review_questions().unwrap();
-        assert!(h.thread_show("p", "t-0001").unwrap().questions.unwrap().format_warning.is_some());
+        assert!(h.thread_show("p", "t-0001").unwrap().questions.unwrap().format_warning.is_none());
         drop(h);
         std::fs::remove_dir_all(root).unwrap();
     }

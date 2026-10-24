@@ -63,6 +63,7 @@ export class ConversationRefresh {
 
   /** 최신 읽기 뒤에 이전 쪽을 시작한다. 다음 최신 읽기는 이전 쪽 전송을 기다리지 않는다. */
   page<T>(read: () => Promise<T>): Promise<T> {
+    this.clearTimer();
     return new Promise<T>((resolve, reject) => {
       this.pages.push(async () => { try { resolve(await read()); } catch (error) { reject(error); } });
       void this.drain();

@@ -1,159 +1,220 @@
 # aaa
 
-**aaa = Any Agent, Anywhere.** 여러 Mac에서 도는 Claude Code·Codex를 한 화면에서 보고 움직입니다.
+**Any Agent, Anywhere. 여러 머신의 코딩 agent에게 일을 맡기고, 웹과 휴대폰에서 이어 갑니다.**
 
-- **한 목록**: 모든 머신의 agent·터미널·thread가 상태(작업 중·질문·검토 대기·확인 필요)와 함께 한 목록에 모입니다.
-- **웹 터미널**: 브라우저나 휴대폰에서 바로 치고, agent의 확인창에는 카드로 답합니다.
-- **일 맡기기**: 프로젝트의 coordinator에게 말하면 일을 thread로 나눠 여러 머신에 맡기고, 끝나면 보고서가 옵니다.
-- **끊겨도 이어짐**: 세션은 각 머신이 지킵니다. 웹을 닫거나 서비스를 다시 띄워도 agent는 계속 돕니다.
+Claude Code·Codex가 각 머신에서 일하고, aaa는 그 터미널과 작업을 한곳에 모읍니다. CLI로 세션을 만들고 제어하며, 브라우저에서는 진행을 보고 질문에 답하고 결과물을 엽니다. host 한 대에 macOS·Linux·Windows agent를 연결할 수 있습니다.
 
-![coordinator에 일을 맡기면 다른 머신의 thread가 일하고 보고가 온다](docs/media/flow.gif)
+[설치](#설치) · [첫 프로젝트](#첫-프로젝트) · [사용법](docs/usage.md) · [개발](#개발)
 
-| 질문에 웹에서 답하기 | thread 보고서 |
-|---|---|
-| ![Claude 확인창이 웹 카드로 뜬다](docs/media/question.png) | ![thread가 쓴 보고와 결과물](docs/media/report.png) |
+![coordinator에게 주문 내역 CSV 기능을 맡기고 thread의 진행과 보고를 확인하는 흐름](docs/media/flow.gif)
 
-<p align="center"><img src="docs/media/phone.png" width="300" alt="휴대폰에서 본 프로젝트·thread 목록"></p>
+## 한곳에서 맡기고 확인하기
 
-> 화면은 가짜 머신(`mac-a`·`mac-b`)과 가짜 agent로 찍었습니다. 다시 찍기: `node web/e2e/showcase.mjs --readme docs/media`(아래 「개발」).
+- **한 목록, 웹 터미널.** 머신마다 열린 agent·셸과 작업 상태를 보고, 같은 터미널에 바로 입력합니다. 탭과 분할 창도 쓸 수 있습니다.
+- **coordinator와 thread.** 프로젝트의 coordinator에게 목표를 말합니다. 작업은 별도 thread의 worktree·branch 또는 일반 폴더에서 진행하고, 지침과 기억을 공유합니다.
+- **질문 카드.** agent 확인창과 작업 중 결정할 일을 모아 보고 답합니다. 답한 질문도 다시 열어 당시 선택을 확인할 수 있습니다.
+- **보고서와 결과물.** 진행·완료 보고, 그림·영상·웹 결과물을 읽고 필요한 보고서는 보관합니다.
+- **휴대폰.** 같은 작업과 터미널을 좁은 화면에서 다룹니다. 홈 화면 앱과 알림도 지원합니다.
+- **auto mode.** 켜 둔 프로젝트에서는 coordinator가 일반 질문을 판단하고 까닭을 기록합니다. 사용자 전용 결정·비밀값·위험한 변경 같은 예외는 계속 묻습니다. 언제든 끄거나 결정 재검토를 요청할 수 있습니다.
+- **자동화.** 일정·작업 사건 등의 조건으로 coordinator에게 알리거나 thread를 시작합니다. 실행 대상과 승인 범위, 최근 기록을 웹에서 확인합니다.
+- **머신별 workspace.** 어느 머신에 어떤 저장소·작업 폴더의 일을 자동 배정할지 정합니다. 새 머신과 workspace는 자동 배정이 꺼진 채 시작합니다.
 
-## Mac에 설치
+![데스크톱에서 여러 머신의 작업과 웹 터미널을 함께 보는 화면](docs/media/desktop.png)
 
-Mac 한 대(**host Mac**)에 host와 agent를 두고, 다른 Mac은 agent만 더합니다. ✋ 표시는 사람이 직접 하는 단계입니다(GUI 설정이나 터미널에서 `yes` 입력). 순서와 확인 기준은 [운영 설치 점검표](docs/install-runbook.md)에 자세히 있습니다.
+| 질문에 답하기 | 결과 보고 읽기 |
+| --- | --- |
+| ![agent 확인창을 웹 카드로 보여 준다](docs/media/question.png) | ![thread의 변경 내용과 다음 행동을 읽는다](docs/media/report.png) |
 
-**준비물**: [Tailscale](https://tailscale.com/download/mac)(로그인), Xcode Command Line Tools(`xcode-select --install`), 쓸 agent CLI(`claude`·`codex`, 로그인까지).
+| auto mode 켜고 끄기 | 자동화 조건과 실행 기록 |
+| --- | --- |
+| ![coordinator 대화의 auto mode와 켜짐 표시](docs/media/auto-mode.png) | ![매일 작업 현황을 정리하는 자동화의 설정](docs/media/automation.png) |
 
-### 1. aaa 받기
+| 머신별 자동 배정 | 휴대폰의 작업 목록 |
+| --- | --- |
+| ![머신 정보에서 workspace 자동 배정을 고른다](docs/media/workspaces.png) | <img src="docs/media/phone.png" width="260" alt="휴대폰에서 열린 작업 목록"> |
 
-공개 [release](https://github.com/cLazyZombie/aaa/releases)에서 받아 체크섬을 확인하고 `~/.local/bin/aaa`에 둡니다. Intel Mac은 `aaa-macos-aarch64`를 `aaa-macos-x86_64`로 바꿉니다.
+화면은 **가짜 머신 `mac-a`·`mac-b`, 가짜 agent와 견본 프로젝트**로 새로 촬영했습니다. 실제 계정·운영 화면을 담지 않습니다. GIF는 실제 UI의 네 장면을 이어 붙인 짧은 시연입니다.
 
-```bash
-cd ~/Downloads
-curl -fLO https://github.com/cLazyZombie/aaa/releases/latest/download/aaa-macos-aarch64
-curl -fLO https://github.com/cLazyZombie/aaa/releases/latest/download/SHA256SUMS
-grep ' aaa-macos-aarch64$' SHA256SUMS | shasum -a 256 -c     # 「OK」가 나와야 한다
-mkdir -p ~/.local/bin && install -m 755 aaa-macos-aarch64 ~/.local/bin/aaa
-~/.local/bin/aaa --version
+## 설치
+
+**host를 먼저 준비하고 각 머신에서 `aaa setup`으로 agent를 연결합니다.** ✋는 사용자가 자기 터미널이나 설정 화면에서 직접 해야 하는 단계입니다.
+
+> 공개 release **v0.1.6부터 macOS·Linux·Windows의 `aaa setup`을 포함합니다.** Windows 한 줄 설치도 `aaa setup`을 실행합니다. macOS·Linux 다운로드용 한 줄 설치는 아직 제공하지 않으므로 아래처럼 실행 파일을 직접 받습니다.
+
+아래에서 설치 뒤의 `aaa`는 설치된 실행 파일을 뜻합니다. macOS·Linux의 기본 경로는 `~/.local/bin/aaa`, Windows는 `%USERPROFILE%\.local\bin\aaa.exe`입니다. PATH에 없다면 전체 경로로 실행하세요.
+
+### 준비물과 역할
+
+| 역할 | 환경 | 준비할 것 |
+| --- | --- | --- |
+| host | macOS 운영 절차 제공 | aaa, Tailscale 로그인, 고정 launcher와 사용자 권한 설정 |
+| macOS agent | GUI 로그인한 사용자 | aaa와 launcher, 사용할 agent CLI의 설치·로그인 |
+| Linux agent | glibc·systemd | aaa, 실행 중인 사용자 systemd manager, agent CLI의 설치·로그인 |
+| Windows agent | Windows x86_64 | aaa, 관리자 권한의 대화형 콘솔, agent CLI의 설치·로그인, Windows 로그인 암호 |
+
+host는 웹과 프로젝트 상태를 관리하고, 각 agent는 자기 머신의 터미널과 작업 폴더를 관리합니다. 웹은 host에만 연결합니다. 웹을 닫거나 연결이 끊겨도 머신에서 실행 중인 세션은 이어집니다. 머신 재부팅이 실행 중인 프로세스까지 보존하는 것은 아닙니다.
+
+v0.1.6 실행 파일은 [GitHub releases](https://github.com/cLazyZombie/aaa/releases)에서 자기 OS·CPU에 맞는 것을 받고 같은 release의 `SHA256SUMS`로 확인합니다. 내려받은 판에 필요한 기능이 있는지 `aaa --version`과 `aaa setup --help`로 확인하세요. 현재 main을 직접 빌드하려면 [개발](#개발)을 따릅니다.
+
+### 1. host 준비 ✋
+
+host 설치는 `setup`의 대상이 아닙니다. [운영 설치 점검표](docs/install-runbook.md)의 launcher 준비 → host 설정 → host 서비스 등록 순서를 따릅니다. macOS의 개발자 도구·전체 디스크 접근 권한과 키체인은 사용자가 직접 설정합니다. 기존 설치가 있으면 새 설정으로 덮어쓰지 않습니다.
+
+host가 실행되면 웹을 열고 사용할 기기를 연결합니다.
+
+```sh
+~/.local/bin/aaa web publish
+~/.local/bin/aaa web pair
 ```
 
-명령은 늘 전체 경로 `~/.local/bin/aaa`로 칩니다(launchd·셸의 PATH에 기대지 않습니다).
+✋ 표시된 tailnet HTTPS 주소를 브라우저에서 열고 1회용 코드를 넣습니다. 읽기 전용 기기는 `web pair --reader`로 연결합니다. 휴대폰도 같은 tailnet에 로그인해야 합니다. iPhone은 Safari의 **공유 → 홈 화면에 추가**로 열고 그 앱에서 알림을 켭니다.
 
-### 2. launcher 등록(한 번) ✋
+웹 **설정 → 머신 → 등록 창 열기**를 누르거나 host 터미널에서 등록 창을 엽니다.
 
-서비스는 작은 고정 launcher(`~/Applications/aaa-launcher.app`)가 띄웁니다. aaa를 바꿔도 이 등록은 다시 하지 않습니다.
-
-```bash
-git clone --depth 1 https://github.com/cLazyZombie/aaa ~/src/aaa
-bash ~/src/aaa/p0/launcher/install.sh
+```sh
+~/.local/bin/aaa machine enroll --open 10m
 ```
 
-✋ **시스템 설정 → 개인정보 보호 및 보안**에서 `~/Applications/aaa-launcher.app`(홈 폴더 → 응용 프로그램)을 **개발자 도구**와 **전체 디스크 접근 권한** 두 목록에 「+」로 넣고 켭니다. 자세한 것은 [P0 절차서](docs/p0-runbook.md)에 있습니다.
+### 2. 각 머신에서 agent 설치 ✋
 
-### 3. 설정
+aaa의 pane 밖, **설치할 사용자 계정의 일반 터미널**에서 실행합니다. `host.example.ts.net`은 예시이므로 host의 주소로 바꿉니다. SSH로 실행할 때는 `ssh -t`로 대화형 터미널을 붙입니다.
 
-```bash
-mkdir -p ~/.config/aaa
-~/.local/bin/aaa config example host | sed 's/^mode = "child"/mode = "launchd"/' > ~/.config/aaa/host.toml   # host Mac만
-~/.local/bin/aaa config example agent > ~/.config/aaa/agent.toml
-~/.local/bin/aaa config check
+**macOS**
+
+release에서 CPU에 맞는 `aaa-macos-aarch64` 또는 `aaa-macos-x86_64`를 받고 `SHA256SUMS`로 확인한 뒤 `aaa`로 이름을 바꾸고 `chmod +x aaa`로 실행 권한을 줍니다. 새 Mac은 같은 CPU의 `aaa-launcher-macos-….json`도 같은 폴더에 받습니다.
+
+```sh
+./aaa setup --host host.example.ts.net --name mac-a
 ```
 
-host의 `[local_agent] mode`를 `launchd`로 바꿔 agent는 따로 서비스로 띄웁니다. 나머지는 예시 그대로 써도 됩니다(값 설명은 예시 파일의 주석).
+사용자 LaunchAgent로 등록하며 로그인 뒤 자동 실행합니다. 기존 `~/Applications/aaa-launcher.app`을 보존해 사용합니다. 새 Mac은 실행 파일과 맞는 launcher package가 필요합니다. ✋ 개발자 도구·전체 디스크 접근 권한, 잠긴 키체인은 사용자가 직접 처리합니다. [macOS 준비와 설치](docs/unix-setup.md#macos)를 따릅니다.
 
-### 4. 서비스 설치 ✋
+**Linux**
 
-launchd에 등록하므로 자기 터미널에서 치고 `yes`를 입력합니다. host를 agent보다 먼저 설치합니다. macOS가 「백그라운드 항목이 추가됨」을 띄우면 허용합니다.
+release에서 CPU에 맞는 `aaa-linux-x86_64` 또는 `aaa-linux-aarch64`를 받고 `SHA256SUMS`로 확인한 뒤 `aaa`로 이름을 바꾸고 `chmod +x aaa`로 실행 권한을 줍니다.
 
-```bash
-~/.local/bin/aaa service install --role host  --aaa ~/.local/bin/aaa   # host Mac만
-~/.local/bin/aaa service install --role agent --aaa ~/.local/bin/aaa
-~/.local/bin/aaa status                                                # 로컬 머신이 연결돼 있으면 된다
+```sh
+./aaa setup --host host.example.ts.net --name linux-a
 ```
 
-Codex를 쓰면 hook도 설치합니다. 새 Codex 세션의 Hooks 화면에서 aaa hook을 신뢰합니다(✋).
+기본은 systemd 사용자 서비스입니다. 로그아웃 뒤에도 유지되는지는 사용자 manager·linger 설정에 달려 있으며 설치기가 linger를 켜지 않습니다. 부팅 때 실행할 시스템 서비스를 원하면 일반 사용자로 다음 명령을 실행합니다.
 
-```bash
-~/.local/bin/aaa integration install codex
-~/.local/bin/aaa doctor
+```sh
+./aaa setup --service systemd-system --host host.example.ts.net --name linux-a
 ```
 
-### 5. 웹과 휴대폰
+✋ unit 등록·시작에 필요한 권한만 `sudo`로 받습니다. 설치기 전체를 `sudo`로 실행하지 않습니다. [Linux 서비스와 로그](docs/unix-setup.md#linux)를 참고하세요.
 
-```bash
-~/.local/bin/aaa web publish     # tailnet 안 HTTPS로 공개하고 주소를 보인다(기존 tailscale serve 항목은 건드리지 않는다)
-~/.local/bin/aaa web pair        # 1회용 코드. 보기만 할 기기는 --reader
+**Windows**
+
+관리자 PowerShell에서 한 줄로 받아 설치합니다.
+
+```powershell
+irm https://github.com/cLazyZombie/aaa/releases/latest/download/install.ps1 | iex
 ```
 
-✋ 브라우저나 휴대폰에서 그 주소를 열고 코드를 넣습니다. iPhone은 Safari 공유 → 「홈 화면에 추가」로 앱처럼 쓰고, 알림은 그 앱에서 켭니다.
+직접 받을 때는 release의 `aaa-windows-x86_64.exe`를 `aaa.exe`로 이름을 바꾼 뒤 실행합니다.
 
-### 6. 다른 Mac 더하기
-
-다른 Mac에서 1·2단계를 하고, `agent.toml`만 만들어 host 주소를 적습니다(`mac-a`는 host Mac의 tailnet 이름).
-
-```bash
-mkdir -p ~/.config/aaa
-~/.local/bin/aaa config example agent | sed 's/^host = "local"/host = "mac-a.example.ts.net:7430"/' > ~/.config/aaa/agent.toml
+```powershell
+.\aaa.exe setup --host host.example.ts.net --name win-a
 ```
 
-그리고 agent 서비스를 설치하고(✋) host에 등록합니다.
+같은 실행 파일을 `aaa-setup.exe`로 받은 경우 `.\aaa-setup.exe`만 실행해도 됩니다. ✋ 관리자 권한의 대화형 콘솔에서 계획을 확인하고 **Windows 로그인 암호를 설치기의 숨김 입력칸에만** 입력합니다. PIN과는 다릅니다. 암호를 채팅·질문 답·명령 인자·보고서에 넣지 않습니다. 사용자 계정으로 Windows 서비스를 등록해 그 계정의 agent 로그인과 환경을 사용합니다. [Windows 설치기](docs/windows-setup.md)에 상세 절차가 있습니다.
 
-```bash
-~/.local/bin/aaa service install --role agent --aaa ~/.local/bin/aaa   # ✋ 새 Mac
-~/.local/bin/aaa machine enroll --open 10m                     # host Mac: 등록 창을 연다
-~/.local/bin/aaa agent enroll mac-a.example.ts.net:7430        # 새 Mac: 확인 코드가 나온다
-~/.local/bin/aaa machine approve mac-b --code <코드>           # host Mac: 새 Mac 이름과 그 코드로 승인
-~/.local/bin/aaa machine list                                  # host Mac: 모두 「연결」
+세 OS 모두 host 주소·머신 이름·작업 폴더와 변경 계획을 확인한 뒤 등록을 진행합니다. ✋ 설치기에 나온 확인 코드를 host 웹의 **승인을 기다리는 머신 → 승인**에 입력합니다. 설치기는 같은 실행에서 파일·설정·서비스를 준비하고 host 연결까지 확인합니다.
+
+### 3. 완료 확인과 첫 연결
+
+설치한 머신에서:
+
+```sh
+aaa setup --status
 ```
 
-### 업데이트
+host에서:
 
-✋ 각 Mac의 일반 터미널에서 새 release로 바꾸고(`yes`) 서비스를 다시 띄웁니다. host Mac부터, host → agent 순서입니다. 세션은 그대로 이어집니다.
-
-```bash
-~/.local/bin/aaa update                          # 최신 release를 받아 검사 뒤 교체(--dry-run이면 검사만)
-~/.local/bin/aaa service restart --role host     # host Mac만
-~/.local/bin/aaa service restart --role agent
+```sh
+~/.local/bin/aaa machine list
 ```
 
-되돌리기는 `aaa update rollback`입니다. 판 고정·여러 머신 순서는 [점검표 9](docs/install-runbook.md#9-업그레이드)에 있습니다.
+**서비스 실행과 host 연결이 모두 확인되고, host 목록에서 새 머신이 「연결」이면 agent 설치가 끝난 것입니다.** 연결 실패 뒤 서비스를 남겼다는 것만으로 설치 완료로 보지 않습니다. 설치기가 표시한 로그 위치와 오류를 확인합니다.
 
-## 시작하기
+Codex를 쓰는 머신은 hook을 설치합니다. ✋ 새 Codex 세션의 Hooks 화면에서 aaa hook을 검토하고 신뢰합니다.
 
-```bash
-~/.local/bin/aaa project create shop --repo ~/work/shop   # 프로젝트(저장소는 PATH 또는 PATH@머신)
-~/.local/bin/aaa project open shop                        # coordinator를 띄운다
+```sh
+aaa integration install codex
+aaa doctor
 ```
 
-웹 목록에서 coordinator를 열고 할 일을 말하면 됩니다. 웹 화면·단축키·CLI는 [사용법](docs/usage.md)에 있습니다.
+웹의 머신 정보에서 **자동 배정할 workspace**를 고릅니다. 저장소와 작업 폴더가 준비된 머신만 켜세요. 자동 배정과 명시적 머신 지정의 차이는 [workspace 설정](docs/workspace-access.md)에 있습니다.
 
-## 더 읽기
+### 갱신·제거
 
-- [구조 지도](docs/architecture.md): 기능을 추가·수정할 개발자를 위한 구성 요소와 코드 길잡이
-- [사용법](docs/usage.md): 웹 화면, 자주 쓰는 CLI
-- [운영 설치 점검표](docs/install-runbook.md): 설치·업그레이드·되돌리기·coordinator 배포
-- [보고서 운영](docs/library.md): 보고서 올리기·실시간 폴더·정리
-- [프로젝트 계획](docs/plan.md): 구조(host·agent·front)와 설계 결정
-- [시험 쓰는 법](docs/testing.md)
+setup으로 설치한 agent는 **새 실행 파일로 같은 instance의 setup을 다시 실행**합니다. 등록을 유지하고 서비스를 갱신·재시작해 연결을 확인합니다. host·이름을 바꾸거나 예전 설치 방식에서 옮길 때는 각 OS 문서의 제거·충돌 안내를 따릅니다.
+
+```sh
+aaa setup --status
+aaa setup --uninstall
+```
+
+제거해도 실행 파일은 남습니다. 설정·상태까지 지우는 `--purge`와 별도 instance의 조회·제거는 [Unix](docs/unix-setup.md#상태갱신제거)·[Windows](docs/windows-setup.md#다시-실행상태제거) 문서를 먼저 확인하세요. host의 업데이트·되돌리기는 [운영 점검표](docs/install-runbook.md#9-업그레이드)를 따릅니다.
+
+## 첫 프로젝트
+
+host에서 프로젝트를 만들고 coordinator를 엽니다. 아래 예시의 저장소는 미리 준비합니다.
+
+```sh
+~/.local/bin/aaa project create shop --repo ~/work/shop
+~/.local/bin/aaa project open shop
+```
+
+웹에서 coordinator에게 할 일을 말하세요. thread가 일하는 동안 목록에서 상태를 보고, **답할 것**에서 결정하고, 보고에서 결과와 다음 행동을 확인합니다. 원격 저장소는 `PATH@머신`으로 등록합니다.
+
+auto mode는 coordinator의 **더 보기 메뉴**에서 켭니다. 자동 결정의 까닭과 남은 예외를 확인할 수 있고 언제든 끌 수 있습니다. 반복할 일은 **자동화**에서 조건·동작을 설정하고 필요한 실행 범위를 승인합니다. [사용법](docs/usage.md)과 [자동화](docs/automations.md)에 자세한 흐름이 있습니다.
+
+## 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| [사용법](docs/usage.md) | 웹 화면·단축키·자주 쓰는 CLI |
+| [macOS·Linux setup](docs/unix-setup.md) / [Windows setup](docs/windows-setup.md) | 준비·서비스·로그·갱신·제거 |
+| [운영 설치 점검표](docs/install-runbook.md) | host 준비·기존 수동 설치·업데이트·복구 |
+| [머신별 workspace](docs/workspace-access.md) | 자동 배정 허용과 고정 머신 지정 |
+| [자동화](docs/automations.md) | 일정·사건·승인·실행 기록 |
+| [보고서 운영](docs/library.md) | 결과물·보관·웹 보고서 sandbox |
+| [구조 지도](docs/architecture.md) / [프로젝트 계획](docs/plan.md) | crate 역할과 설계 결정 |
+| [시험 쓰는 법](docs/testing.md) | 유닛·통합·웹 E2E 검증 |
 
 ## 개발
 
-CI(`.github/workflows/ci.yml`)와 같은 단계를 로컬에서 한 번에 돈다. 단계의 명령은 `scripts/ci-local.sh`에만 있고 CI도 이 스크립트를 단계별로 부른다.
+Rust toolchain·Node.js·npm이 필요합니다. 웹을 먼저 빌드하면 Rust 실행 파일에 포함됩니다.
 
 ```sh
-bash scripts/ci-local.sh                     # 전부: web fmt build clippy test e2e public
-bash scripts/ci-local.sh --only test,e2e     # 고른 단계만
-bash scripts/ci-local.sh --skip e2e          # 빼고 전부
+git clone https://github.com/cLazyZombie/aaa
+cd aaa
+(cd web && npm ci --no-audit --no-fund && npm run build)
+cargo build --locked -p aaa --bin aaa
+./target/debug/aaa --help
 ```
 
-- 끝에 단계마다 걸린 시간과 결과를 요약하고, 실패한 단계는 로그 위치(`target/ci-local/<시각>/<단계>.log`)를 보인다. 실패를 다시 돌려 통과시키지 않는다.
-- `e2e`는 웹 E2E(Playwright Chromium·WebKit)다. Unix만이고 playwright를 전역 npm 모듈로 찾는다: `npm install -g playwright@1.64.1 && npx playwright@1.64.1 install chromium webkit`.
-  격리 설치는 `NODE_PATH`로 모듈 폴더를 지정한다. ci-local은 지정한 경로를 우선하고 Playwright 판을 확인한다.
-- `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. push 전에 돈다. 저장소 파일은 기본 1MiB 이하이며, 스크립트의 `size_limit`에 정확한 경로·이유·상한을 명시한 예외만 허용한다. 누적 설계 원문 `docs/plan.md`는 2MiB, 버전 고정 Meslotendard 0.3.1 Bold·Regular 글꼴은 각각 기존 2,163,908·2,137,228바이트까지다. 크기 예외도 금지 확장자·비밀값 검사는 그대로 받는다.
-- README 그림은 가짜 실험실로 다시 찍는다(ffmpeg 필요). 영상 폴더를 더 주면 mp4도 만든다.
-  ```sh
-  (cd web && npm run build) && cargo build -p aaa
-  NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs --readme docs/media
-  ```
+배포용은 `cargo build --locked --release -p aaa --bin aaa`로 빌드합니다. macOS launcher 준비는 [P0 절차서](docs/p0-runbook.md)를 따릅니다. Linux·Windows 실행 파일은 해당 환경에서 빌드합니다.
+
+CI와 같은 단계는 `scripts/ci-local.sh`에 있습니다.
+
+```sh
+bash scripts/ci-local.sh                     # web fmt build clippy test e2e public
+bash scripts/ci-local.sh --only web,e2e,public
+```
+
+웹 E2E는 Unix에서 Playwright 1.64.1의 Chromium·WebKit을 사용합니다. `npm install -g playwright@1.64.1`과 `npx playwright@1.64.1 install chromium webkit`으로 준비합니다. 별도 설치는 `NODE_PATH`를 지정합니다. 실패한 단계의 원인은 `target/ci-local/` 로그로 확인하며 재시도로 덮지 않습니다.
+
+README 매체는 ffmpeg와 Chromium으로 재생성합니다. 앞의 웹·Rust 빌드가 먼저 필요합니다.
+
+```sh
+NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs --readme docs/media
+```
+
+장면 목록과 격리·구성 참고는 [README 매체 안내](docs/readme-media.md)에 있습니다. 실험실은 가짜 홈·설정·머신 이름을 쓰며 운영 서비스에 붙지 않습니다. 촬영 뒤 띄운 프로세스를 정리합니다. 공개 전에 `bash scripts/check-public.sh`를 돌리고 그림 속 글자도 확인합니다. README 매체는 파일마다 1 MiB 아래로 유지합니다.
 
 ## 라이선스
 
@@ -162,5 +223,3 @@ aaa 코드는 [MIT](LICENSE)입니다.
 웹 화면에 함께 넣은 npm 패키지(긴 소스 보기의 `@pierre/diffs`·`@pierre/theme`(Apache-2.0)과 Shiki(MIT)·`diff`(BSD-3-Clause), React·xterm 등)의 라이선스 고지는 웹 빌드가 모아 `web/dist/licenses/THIRD_PARTY_NOTICES.txt`에 둡니다(`web/scripts/license-notices.ts`). host는 그것을 웹 주소 `/licenses/THIRD_PARTY_NOTICES.txt`로 보냅니다.
 
 웹 터미널에는 [Meslotendard](https://github.com/cLazyZombie/Meslotendard) 0.3.1 글꼴(Regular·Bold, WOFF2)을 함께 넣었습니다. 이 글꼴은 SIL Open Font License 1.1이고, 구성 원본 Meslo LG(Apache 2.0)·Nerd Fonts·Pretendard(OFL 1.1)의 고지는 [web/public/fonts/meslotendard-0.3.1/](web/public/fonts/meslotendard-0.3.1/)에 있습니다. host는 같은 고지를 웹 주소 `/fonts/meslotendard-0.3.1/`로도 보냅니다.
-
-Windows PC는 [설치기 `aaa-setup.exe`](docs/windows-setup.md) 하나로 설치·서비스·host 연결까지 끝냅니다. 예전 [PowerShell bootstrap 절차](docs/windows-bootstrap.md)도 남아 있습니다.

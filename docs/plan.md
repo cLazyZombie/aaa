@@ -1935,7 +1935,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 이 변경 전에 연 thread(기록 없음)는 처음 볼 때 전이가 아니다. 그때의 보고는 옛 방식으로 이미 알렸으니 새 보고로 치지 않는다. 새 thread는 시작할 때 「작업 중」을 적는다.
 - **언제 세나.** 참고는 15초 tick이다. aaa는 `tick_secs`에 더해 harness 상태·진행 보고·세션 끝남·보고 사본·ack·brief 상태가 바뀌면 바로 센다.
   - **사건이 보고보다 먼저 온다.** agent는 report.md를 1초마다 본다. 그래서 턴 끝·진행 보고·세션 끝남이 먼저 오면, 옛 보고로 셀 때 「쉼」 다음에 「새 보고」가 따로 오고 `Done` 직전의 중간 보고가 검토 대기가 된다. thread의 그런 사건이 오면 host는 agent에 report.md hash를 먼저 묻는다(library는 읽지 않는다). 바뀌었으면 사본을 받은 뒤 센다(`refresh_report`). 그동안 묶음 셈은 그 thread를 건너뛴다. 참고는 같은 tick 안에서 파일 hash를 읽는다(`fresh_hash`).
-  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. brief를 보낸 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오면 더 기다리지 않는다(host.toml `[projects] delivered_working_secs`, 기본 15. 시험에서 줄인다). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
+  - **방금 brief를 받은 thread.** 참고는 안내를 보낸 tick을 작업 중으로 두고 다음 tick에 센다(`delivered`). 방금 일을 받은 agent는 아직 쉼으로 읽히기 때문이다. aaa는 사건마다 세므로 이를 시간으로 옮겼다. 살아 있는 pane이 brief를 받은 뒤 15초(참고 `TICK`) 동안은 작업 중이고, 그 사이 새 보고가 오거나 pane이 종료되면 이 유예를 적용하지 않는다(host.toml `[projects] delivered_working_secs`, 기본 15. 시험에서 줄인다). 이것이 없으면 hook 없는 harness가 brief를 받자마자 「쉼」 항목을 낸다.
   - 연결되지 않은 머신의 thread는 세지 않는다(참고 `remote_pass`: 닿지 않으면 상태도 묶음도 항목도 바꾸지 않는다).
 - **전이 항목(F2·F3, hp `src/steps.rs` `write_thread_items`·`transition_event`).** 확인 필요나 쉼으로 바뀔 때만 `thread-state` 항목 하나를 낸다.
   - 사건 말은 참고 그대로다: `blocked on a prompt`·`pane closed`·`agent gone`·`waiting on you`·`idle`.
@@ -2722,7 +2722,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - 팔레트와 전환기가 `aaa:palette-recent`를 함께 쓴다. 방문 키를 최대 128개 기억하고 팔레트 표시는 기존 최근 셋을 유지한다. thread/pane 별칭은 같은 화면으로 센다. 저장 실패 시 이 페이지 메모리를 쓰고, 다른 창의 저장 사건은 반영하되 Ctrl을 누르는 동안의 후보 차례는 바꾸지 않는다. 기기 간 동기화와 API 변경은 없다.
 - 설정 → 단축키의 「최근 화면 전환」을 끄면 앱이 Ctrl+Tab을 가로채지 않는다. 켜져 있을 때는 capture 단계와 xterm 키 처리 양쪽에서 터미널로 새는 것을 막는다. 다른 대화상자·설정·파일 보기는 전환기가 가로채지 않는다.
 - 참고: [VS Code 최근 편집기 전환](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/browser/parts/editor/editorActions.ts)([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt)), [Windows Terminal MRU](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/interaction#tab-switcher-interface-style)([MIT](https://github.com/microsoft/terminal/blob/main/LICENSE)). 외부 코드·의존성을 추가하지 않는다.
-- 자동 검증은 E2E99와 `recentScreens`·`recentHistory` 유닛 시험이다. standalone 조건을 주입한 Playwright 입력은 설치된 PWA의 네이티브 키 전달 증거가 아니다. 사용자 지시로 Windows 잠금 해제 뒤 Edge/Chrome OS 입력과 Mac 직접 입력 확인을 후속 실기로 남긴다.
+- 자동 검증은 E2E105와 `recentScreens`·`recentHistory` 유닛 시험이다. standalone 조건을 주입한 Playwright 입력은 설치된 PWA의 네이티브 키 전달 증거가 아니다. 사용자 지시로 별도 실기 host 없이 착지·배포한 뒤 Mac 운영 PWA에서 직접 키 입력을 확인한다. Windows Edge/Chrome OS 키 전달은 미확인으로 남긴다.
 
 ### 8.133 push 판정 근거 기록과 「쓰는 화면」 lease(10-18, 실기 07:39 「쓰는 화면」으로 push 생략·앱 안 알림 없음, 07:43 push와 앱 안 알림 둘 다)
 - **결함.** 07:39 host는 iPhone을 보이고 focus인 쓰는 기기로 보고 push를 건너뛰었는데(`push_skipped` 「쓰는 화면 2개」), 그 화면에는 앱 안 알림이 오지 않았다. 07:43에는 앱이 열려 있는데 push가 가서 앱 안 알림과 겹쳤다. host는 무엇을 보고 그렇게 정했는지 남기지 않아 어느 쪽인지 가를 수 없었다.
@@ -6960,6 +6960,8 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 ### 8.400 질문 카드의 강조·번호 목록과 누락 방지(t-0618)
 
+- **t-0956 수정:** 후보 글자 뒤의 한글·숫자는 같은 단어로 읽는다(`A를`, `t3code`). 형식 경고는 진단으로만 남기고 웹·thread answer·question answer·post 답을 허용한다. 선택지를 못 읽으면 직접 답을 쓸 수 있고, 질문 머리도 못 읽으면 원문을 둔 직접 답 카드로 보존한다. 재시작 때 같은 원문을 다시 읽어 오래된 오인 경고를 지운다. 아래의 답 잠금·거부 규칙을 대체한다.
+
 - **문제·동작.** `- **A(추천)**`를 빠뜨려 B를 A로 전달하던 경계를 고친다. 선택지 글자의 굵게·기울임과
   `A(추천)`·`A (추천)`을 읽고 `N. **제목**` 질문도 본문·선택지와 함께 읽는다.
   t-0621의 선택지 뒤 E/F 설명·그림도 `after`에 남겨 질문이 빠지지 않고 원래 순서로 보인다.
@@ -7721,7 +7723,7 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 ### 8.475 머신 정보 오른쪽 패널(t-0911)
 
-- 머신 패널의 이름 단추를 누르면 오른쪽 420px 상세를 연다. 640px 이하에서는 전체 폭 시트이며 닫기·Esc·다른 머신 선택을 지원한다. 선택 ID만 웹에 두고 값은 host의 MachineView를 그대로 읽는다.
+- 머신 패널의 이름 단추를 누르면 오른쪽 420px 상세를 연다. 768px 이하에서는 `#machine=<id>` 본문 화면으로 열며 다른 오른쪽 화면과 같은 주소 기록·목록 drawer를 사용한다(t-0936). 뒤로는 원래 화면, 앞으로는 같은 기기 정보, 화면 안쪽 반 스와이프는 손가락을 따라 목록이 드러난다. 추가 시트 기록은 만들지 않는다. 닫기·Esc·다른 머신 선택을 지원하며 정보 내용과 데스크톱 패널은 유지한다. 선택 ID만 웹에 두고 값은 host의 MachineView를 그대로 읽는다.
 - 연결·마지막 지표/정보 시각, OS/아키텍처·CPU 모델/논리 코어·CPU/메모리/디스크/부하, aaa·Claude Code·Codex 판·설치 방식·작업 폴더를 정보 행으로 표시한다. 빠진 값은 모름이며 끊긴 머신도 마지막 표본을 보인다. 판 비교·허용 판 목록·판 경고는 없다.
 - FRONT_API 1.115의 선택 `MachineHealth.info`에 시스템·harness 판 수집 시각을 싣는다. agent 시작 시와 10분마다 조회하고 기존 건강 보고/재연결 경로로 전한다. 각 명령은 기존 10초 상한을 따르며 조회 실패는 None이고 건강 problems에 넣지 않는다. AGENT_LINK 1.11은 유지한다(기존 Health 사건의 선택 칸, 구판은 생략/무시). host는 마지막 표본을 DB에 저장해 재시작 뒤에도 복원한다.
 - herdr-web-ui(MIT)의 MachineSidebar·DevicesPanel 정보 행과 기존 task 상세 시트의 테마 토큰을 따른다. herdr(Apache-2.0)·herdr-projects(MIT)의 머신/프로젝트 상태 구분도 확인했다. Glances(LGPL-3.0)의 시스템 정보/지표 분리를 참고하고 코드는 가져오지 않는다.
@@ -7742,3 +7744,61 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **37회차 착지 통합(t-0926).** 시작 원격 main `99c1ad0c`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. 준비된 t-0922 `7f3bd898`을 --no-ff로 합쳐 Windows bootstrap owner의 내장 모듈 경로와 암호 ConPTY 시험 자식의 세션 환경 격리를 유지한다. 시험 문서의 기존 절과 새 설명을 모두 보존하며 API·E2E 번호는 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 조건 빌드를 한 번 확인한다. 모든 시험이 통과해야 push하며 부하 중 시한 초과도 원문·부하를 보존하고 재시도 없이 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 수행하지 않는다.
 
 - **38회차 착지 통합(t-0932).** 시작 원격 main `58fb6163`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. 준비된 t-0927 `d3d7edee`를 --no-ff로 합쳐 초기 host 등록 전 구독 응답 유실과 E2E93 시험 입력 파서를 수리한다. 시험 문서의 기존 절과 새 설명을 모두 보존하며 API·E2E 번호는 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross·dev 없는 Windows release 조건 빌드를 한 번 확인한다. 모든 시험이 통과해야 push하며 부하 중 시한 초과도 원문·부하를 보존하고 재시도 없이 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 수행하지 않는다.
+
+### 8.477 macOS·Linux 대화형 agent setup(t-0931)
+
+- Windows에서 쓰던 질문 → host 등록 → 실행 파일/설정 → 서비스 → 연결 흐름을 Unix System 구현으로 넓힌다. macOS는 GUI LaunchAgent와 기존 불변 launcher 또는 같은 배포 SHA의 launcher package를, Linux는 기본 systemd user와 명시 systemd system을 쓴다. 일반 사용자로 실행하고 시스템 unit 제어만 sudo에 맡긴다.
+- 같은 설치의 조회·재시작·실행 파일 갱신·제거·purge를 지원한다. Unix는 Windows 암호/로그온 정책/PATH 변경을 호출하지 않는다. 기록한 파일 내용·경로·계정이 다른 서비스와 기존 macOS 감독자를 보존한다. 갱신 실패는 새 프로세스를 먼저 멈춘 뒤 이전 파일/서비스를 복원한다. 하위 오류와 남은 항목을 표시한다.
+- rustup-init(MIT/Apache-2.0)·cargo-dist installer(템플릿 MIT)·Tailscale installer(BSD-3-Clause)의 설치/OS 경계와 사전 점검을 참고했다. 외부 코드는 가져오지 않는다. 사용법과 범위는 [Unix setup](unix-setup.md), 회귀·격리 실기 owner는 [시험](testing.md)을 따른다.
+- macOS 실제 운영 서비스는 보존하며 별도 HOME·임시 label에서 검증한다. Linux는 폐기 가능한 Ubuntu 24.04 aarch64 VM의 user/system 서비스와 격리 host 연결을 확인한다. Windows 기존 setup 회귀는 실제 Windows에서 검증한다. 전체 ci-local·cross·공개 검사 후 착지 창을 기다린다. Front API 1.116·Agent link 1.11·E2E98은 유지하며 절 번호는 착지 때 main과 대조한다. 다운로드 bootstrap·release 게시·기존 install I4·운영 서비스 이관은 범위 밖이다.
+
+- **39회차 착지 통합(t-0937).** 시작 원격 main `bc98e49b`의 마지막 §8.476·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. t-0928 `f612a716`과 t-0931 `a1e5ae6d`를 각각 --no-ff로 합쳐 시험 경합·제품 수리와 Unix setup을 보존한다. 새 setup 절은 다음 빈 번호 §8.477이며 시험 문서의 양쪽 절을 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·Linux와 Windows strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패는 원문·부하와 함께 보존하고 재시도 없이 push를 멈춘다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 하지 않는다.
+
+### 8.478 머신별 workspace 자동 배정 허용(t-0935)
+
+- 경로·머신은 기존 프로젝트 repos/workspaces 설정만 쓴다. 자동 배정 허용은 host DB의 머신 ID별 workspace 이름 집합 한 곳에 둔다. 기기 정보 패널 내용 컴포넌트에서 Owner만 변경하고 Reader는 읽는다. safety/profile과 독립이다.
+- 최초 전환은 현재 모든 머신×workspace를 켠다. 이후 새 머신·프로젝트·workspace는 꺼짐이다. marker와 전체 기존 허용을 함께 확정해 재시작 때 사용자 설정을 보존한다. 준비 확인 뒤 사용자가 켜게 하는 기본값을 추천한다.
+- from-task·예약의 자동 후보는 허용된 연결 머신으로 제한한다. 없으면 예약을 queued로 두고 이유를 표시한다. 고정 머신은 꺼짐 경고와 함께 존중한다. 웹의 기본 선택도 machine=null로 전송하며 직접 고른 값만 고정한다. FRONT_API 1.117, E2E99를 추가한다. 자세한 정본·참고 라이선스·CLI는 docs/workspace-access.md다.
+- t-0936의 모바일 패널 열기·뒤로 이동과 범위를 나눈다. 이 변경의 App 연결은 role prop·machine key, 패널은 독립 MachineWorkspaceAccess 삽입이다. 패널 열기·라우팅은 변경하지 않는다. 모바일 키보드 Tab은 새 입력칸을 순회하도록 한다.
+
+- **40회차 착지 통합(t-0940).** 시작 원격 main `83ab3346`의 마지막 §8.477·FRONT_API 1.116·AGENT_LINK 1.11·E2E98을 확인했다. t-0936 `b4b5d73b`·t-0935 `a92538a8`·t-0933 `a4220de9`를 각각 --no-ff로 합친다. 전체 검증 시작 전 추가된 t-0933의 동일 웹 출력 mtime 보존·성공 표지 최신성 검사와 E2E12 단언 순서·기존 진단을 함께 유지한다. 휴대폰 #machine 주소·본문·drawer·스와이프와 !page Tab 조건을 유지하면서 양쪽 패널 호출의 role·머신별 key와 workspace 설정을 결합한다. 새 workspace 절은 §8.478이며 FRONT_API 1.117·E2E99를 사용하고 E2E98 추가 검사를 보존한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·Linux와 Windows strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. E2E87을 포함해 모든 시험이 통과해야 push하며 실패는 원문·부하와 함께 보존하고 재시도하지 않는다. 전체 CI에는 salt를 넣지 않으며 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI는 기다리지 않고 설치 실행·배포·tag·release는 하지 않는다.
+### 8.479 coordinator auto mode (t-0938, 확정 1C·2B·3A·4A·5A)
+
+- 프로젝트별 host 원장 `auto-mode:<project>`가 on·since_ms·by·실행 번호·끄기 시각·이번 결정 수를 보존한다. 이름 변경·내보내기·삭제는 기존 project meta 수명을 따른다. host·coordinator 재시작에도 유지하며 사람이 끄거나 켠다. harness 권한·safety와 독립이다.
+- FRONT_API 1.118: `AutoModeGet/Set`, `AutoDecisions`, `QuestionAutoAnswer`, `AutoDecisionReview`, `ProjectView.auto_mode`·`ProjectContext.auto_mode/auto_mode_exceptions`, `Asks.auto_mode/auto_decisions/auto_exceptions/auto_next`. 선택 상태는 serde 기본값으로 구판을 읽는다. 새 자동 답은 별도 op라 구판 host에서 일반 답으로 강등되지 않는다. Agent link·Session IPC 판은 유지한다.
+- 검증된 해당 프로젝트 coordinator만 `question answer --auto --reason-file`과 `post user --data --topic auto-decision`을 쓴다. 질문 ID·현재 판·중복·켜짐·예외를 확인하고 전달 전에 원장을 예약한다. 실패·진행 중 전달은 재전송하지 않는다. 질문·추천·그림 사본과 까닭·답·시각·출처·후속 재판단 요청을 남긴다. 예외 질문은 카드에 남으며 자동 결정은 외부 푸시를 하지 않는다.
+- 기존 herdr Composer 고리의 보라→청록→분홍 2.6초 오로라, 입력창 안 AUTO·상태줄·머리 칩·⋯ 메뉴를 연결한다. 움직임 줄이기는 번짐 없이 테두리를 남긴다. host 사건으로 모든 기기가 같은 상태를 읽는다. 끄기 요약은 한 번 표시하며 입력은 계속 가능하다.
+- 자동 결정 목록은 최근 50개·128KiB 단위로 읽으며 이전 기록과 직접 ID 조회를 지원한다. 장기 모드의 기록 증가가 1MiB frame을 채우지 않는다. 자동 결정 목록·카드에서 확인 처리와 새 답을 받는다. host는 실행 결과를 되돌리지 않고 coordinator inbox로 재판단을 요청한다. CLI 답만으로 후속 실행의 가역성을 알 수 없으면 「coordinator 확인 필요」로 표시한다. 구조화 auto-decision post는 실행 내용·가역성을 함께 기록한다.
+- 참고: herdr-web-ui aa624cb의 Composer·PromptCard와 herdr-projects v0.2.35의 coordinator 안내·진행 hook(MIT). 기존 이식 구조를 확장하며 새 외부 의존성은 없다. 사용자 확정 설계가 일반 자동화 권한과 구별된다.
+- 검증: host auto_mode owner, E2E100(켜기→자동 답→예외 유지→끄기→요약, 두 기기·재시작·hook·다시 정하기·Reader), Chromium/WebKit 1280·390px 캡처. 전체 ci-local·Linux strict cross·공개 검사. 병합은 착지 창, GitHub CI 대기는 없다.
+
+- **42회차 착지 통합(t-0943).** 시작 원격 main `6fd0ddff`에 t-0938 `6271ebf4`를 --no-ff로 합친다. 기존 setup §8.477·workspace §8.478·FRONT_API 1.117·E2E99를 보존하고 auto mode에 §8.479·FRONT_API 1.118·E2E100을 배정한다. 공통 SessionStart의 기억 재진입 안내와 coordinator 모드 조회를 함께 유지한다. 격리 Playwright 1.64.1·양 엔진 기동 뒤 전체 ci-local·공개 검사·양 OS strict cross clippy·dev 없는 Windows release 조건 빌드를 한 번 수행한다. 실패하면 원문·부하를 보존하고 재시도 없이 push를 멈춘다. 전체 검증에 salt를 넣지 않고 push 뒤 착지 SHA salt의 Windows 설치기를 복사·SHA·판 확인만 한다. GitHub CI 대기·설치 실행·배포·tag·release는 하지 않는다.
+
+### 8.480. 보고서 모두 읽음(t-0952)
+
+- 「보고서 올리기」 옆에 「모두 읽음」을 둔다. 지금 탭의 안 본 보고서 전체(더 보기 밖 포함)를 확인 창의 정확한 개수와 함께 고정한다. 취소·Esc는 요청을 보내지 않으며, 안 봄이 없거나 목록을 받기 전에는 비활성이다. Reader에는 버튼을 숨긴다.
+- FRONT_API 1.119 `LibraryMarkRead { reports: LibraryRef[] }` → `LibraryReports`: 한 요청·한 DB transaction으로 읽음 표시한다. 권한은 기존 `LibraryOpen`과 같으며 Reader 호출도 허용한다. 웹에서는 확인한 최신 r 판을 보내고, 새 판이 생겼으면 옛 판의 확인으로 새 원본을 읽음 처리하지 않는다. 잘못된 이름·프로젝트는 쓰기 전에 거절한다. 중복·이미 읽은 항목은 멱등이다.
+- 실제 열람 시각·공유 링크의 opened는 바꾸지 않는다. 변경 때 기존 reports 사건을 한 번 보내 활동 막대·탭·다른 기기 배지를 갱신한다. 실패는 확인 창 안에 host 오류를 보이고 목록을 읽음으로 꾸미지 않는다. 버튼 묶음은 휴대폰에서 줄바꿈한다.
+- herdr-web-ui ConfirmDialog(MIT)의 취소 기본 초점·오류 표시와 Miniflux app.js(Apache-2.0)의 목록 일괄 읽음 패턴을 조사했다. 이미 이식된 확인 창을 재사용하고 외부 코드는 추가로 복사하지 않는다. E2E101과 host batch 시험으로 검증한다.
+
+### 8.481. Windows 계정 Codex 첫 신뢰·YOLO 유지(t-0953)
+
+- Windows canonicalize의 확장 경로로 기록한 cwd 신뢰가 Codex TUI의 DOS 조회와 어긋나 첫 신뢰·sandbox 안내를 반복했다. Codex와 같은 dunce로 뜻이 같은 경로만 줄여 기록한다. 본 저장소·이웃 worktree로 신뢰를 넓히지 않는다.
+- YOLO 인자는 기존 최초·재개 argv를 유지하며 Windows sandbox 선택·설치·UAC는 추가하지 않는다. 개인 Codex 홈은 그대로 두고 user 신뢰 정책에서는 사전 기록을 없앤다.
+- Windows native 회귀의 수정 전 실패·수정 후 통과, 실제 Codex의 첫 실행·재시작 brief와 승인 없는 명령, 전체 ci-local·Linux strict cross·공개 검사로 확인한다. 실기 thread는 자기 폴더에 격리하며 설치·운영 서비스는 바꾸지 않는다. [시험 절차](testing.md)의 전용 폴더·기준 목록 규칙을 따른다.
+- Codex·herdr(Apache-2.0)의 설정 홈과 신뢰 조회를 참고하고 dunce 1.0.5(CC0-1.0 OR MIT-0 OR Apache-2.0)를 Windows 의존성으로 사용한다. API·Agent link·웹 E2E 번호는 유지하며 절 번호는 착지 때 main과 대조한다.
+### 8.482 inbox 처리 중 대화 입력과 전달 확인 분리(t-0955)
+
+- coordinator·일반 thread의 대화 입력창은 전송 확인 중에도 편집한다. 전송한 글은 초안에서 빼며, 글+Enter 전달 ACK 뒤 기록에 아직 없는 글은 기존 대기 말에 둔다. Claude·Codex와 working 상태 사건의 도착 순서로 입력 가능 여부를 나누지 않는다. ACK를 모델의 읽음으로 표시하지 않는다.
+- 전송 자체는 기존 submit 하나씩 확인한다. 3초 확인 지연의 취소·연결 끊김·권한 오류는 기존 경로로 처리한다. 새 초안이 있으면 실패한 글은 수동 보관함에 남기고 덮지 않는다. 정리 중 보관함·자동 전송 설정·Ctrl+Enter steering은 유지한다.
+- 수신 확인은 온전한 글의 hash·출현 횟수로 대기 말만 정리한다. 같은 글 연속 전송은 각각 다음 출현을 기다린다. 쉼 이후 10초 동안 기록이 없으면 기존 대기 말 경고를 사용한다. 입력창의 별도 sent/slow 잠금 단계와 잠금 풀기 단추는 제거한다.
+- host nudge는 `inbox::nudge` → `send_prompt`로 PTY에 들어가며 웹 Composer의 flight를 만들지 않는다. 웹은 `Term::sendTerminalLine` → WS submit → `submit_work`에서 글·Enter 전달 ACK를 받는다. host는 주입 알림 턴이 끝날 때까지 웹 submit을 기다리지 않는다. 대화에는 기존 `[aaa inbox]` 원문 표지를 유지하고 `aaa inbox 안내` 머리를 붙여 사람 글과 구분한다. 이 머리는 원문 표지의 분류이며 출처 인증이 아니다. transcript의 role=user는 harness 형식이며, 출처 인증 필드는 새로 만들지 않는다.
+- 참고: herdr-web-ui Composer·pending-input(MIT)의 편집 가능한 초안과 전송/기록 구분, herdr-projects 1f05c00(MIT)의 nudge·작업 중 prompt. 새 서버 대기열·외부 의존성은 추가하지 않는다. FRONT_API 변경 없음. E2E102 및 기존 E2E23·35·50으로 확인한다.
+### 8.483 대화 다시 열기의 제한 보관(t-0957, q-1258 A)
+
+- coordinator·일반 대화에 같은 정책을 쓴다. App은 최근 3개의 기존 TermView를 안정된 머신/pane 식별자로 유지하고, 이미 있는 Chat 상태가 표시용 캐시다. 별도 본문 저장소·영속 저장·증분 API·새 의존성은 없다. host의 최신 pane이 실행 상태·권한의 정본이다.
+- 데이터 commit 때 UTF-8 JSON 크기를 재어 합계 8 MiB를 제한한다. 비활성 LRU부터 제거하고, 활성 대화가 단독 초과하면 읽기는 허용하되 떠날 때 제거한다. 숨긴 뒤 5분 만료는 App의 가장 가까운 만료 타이머 하나로 처리한다. 이 수치는 DOM·문자열·xterm을 포함한 heap 상한이 아니다.
+- 숨은 화면은 hidden·inert로 입력/배치에서 제외하고 xterm·pane WS·chat 구독·읽기/명령 목록 폴링·찾기 단축키·행 observer·UI 타이머를 정리한다. 전역 events는 공유한다. 송신 ACK/실패 정리는 유지하고 새 송신·자동 전송·포커스·resize/claim을 막는다. 재활성화 때 xterm은 기존 경로로 새로 생성한다.
+- 본문·받은 앞 쪽·읽던 row/offset·접힘·초안은 그대로 복원한 뒤 기존 최신 쪽 읽기 한 번으로 확인한다. 같은 history의 merge/gap fill을 재사용하고, 확인된 session/history 교체·표시 옵션 변경·pane 삭제·로그인/권한 문맥 변경에는 기존 초기화 경계를 적용한다.
+- 참고는 herdr-web-ui aa624cb의 paneTabCache(개수 제한)와 t3code c8c9ccf의 threadRetention(5분), 둘 다 MIT다. 코드·의존성은 복사하지 않는다. FRONT_API·AGENT_LINK·Rust crate 경계는 변경하지 않는다.
+- 검증은 보관 순수 규칙, E2E103의 Chromium/WebKit 1280·390px 전후 계측과 80ms 지연 대조, E2E104의 제어한 시계·응답 gate·수명/입력 경계, 기존 읽기·검색·송신·재연결 회귀 및 전체 ci-local·Linux strict cross·공개 검사다. 운영 Codex 기록과 실제 iPhone 검증 여부는 합성 기록·headless 결과와 구분한다. 절·새 E2E 번호는 착지 시 main과 대조한다.

@@ -289,6 +289,8 @@ export function TasksView({
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Key | null>(null);
   const [creating, setCreating] = useState<TaskDraft | null>(null);
+  const selection = useRef({ picked, creating });
+  selection.current = { picked, creating };
   // 저장한 뒤 폼을 새 판으로 다시 연다
   const [saves, setSaves] = useState(0);
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -497,9 +499,12 @@ export function TasksView({
     if (r.log_ids.length === 0) return { kind: "none" };
     const title = mine?.title ?? "";
     const t = r.board.tasks.find((x) => x.title === title) ?? r.board.tasks.find((x) => x.title.toLowerCase() === title.toLowerCase());
-    setCreating(null);
-    if (t) setPicked({ title: t.title, line: t.line });
-    setSaves((n) => n + 1);
+    // 저장을 기다리는 동안 다른 할 일을 고르거나 상세를 닫았으면 그 선택·초안을 보존한다.
+    if (selection.current.picked === picked && selection.current.creating === creating) {
+      setCreating(null);
+      if (t) setPicked({ title: t.title, line: t.line });
+      setSaves((n) => n + 1);
+    }
     return { kind: "saved", title };
   };
   const remove = async (t: TaskView) => {

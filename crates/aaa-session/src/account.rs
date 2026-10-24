@@ -119,6 +119,11 @@ pub async fn prepare(
             ])?;
             let mut config = format!("cli_auth_credentials_store = \"file\"\nnotify = {notify}\n");
             if let Some(cwd) = trusted {
+                // Codex의 cwd·신뢰 조회와 같은 표기다. Windows canonicalize의 \\?\ 접두가
+                // 남으면 첫 실행 TUI가 cwd 기록을 못 찾고 본 저장소 신뢰·sandbox 설치를 묻는다.
+                // dunce는 DOS로 바꿔도 뜻이 같은 경로만 줄인다(긴 경로·예약 이름은 보존).
+                #[cfg(windows)]
+                let cwd = dunce::simplified(&cwd);
                 // JSON 문자열은 TOML basic string으로도 유효하다(따옴표·역슬래시를 escape).
                 let key = serde_json::to_string(&cwd.to_string_lossy())?;
                 config.push_str(&format!("\n[projects.{key}]\ntrust_level = \"trusted\"\n"));
@@ -352,6 +357,40 @@ mod tests {
             trust_cwd: cwd.map(|p| p.to_string_lossy().into_owned()),
             auth_generation: None,
         }
+    }
+
+    #[tokio::test]
+    async fn codex_trust_uses_native_cwd_without_trusting_repository_or_neighbours() {
+        let lab = Lab::new();
+        let home = lab.0.join("codex-home");
+        let cwd = lab.0.join("worktree with spaces and 한글");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let canonical = cwd.canonicalize().unwrap();
+        #[cfg(windows)]
+        let native = canonical.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+        #[cfg(not(windows))]
+        let native = canonical.to_str().unwrap();
+        let mut auth = credential(Some(&cwd));
+        auth.harness = "codex".into();
+        auth.secret = SecretText(r#"{"OPENAI_API_KEY":"fake-test-credential"}"#.into());
+        let (tx, _) = mpsc::channel(1);
+        let argv = ["codex".into(), "--dangerously-bypass-approvals-and-sandbox".into()];
+        let prepared = prepare(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
+        let read =
+            || toml::from_str::<toml::Value>(&std::fs::read_to_string(home.join("config.toml")).unwrap()).unwrap();
+        let config = read();
+        let projects = config["projects"].as_table().unwrap();
+        assert_eq!(projects.len(), 1, "부모 저장소·다른 worktree로 신뢰를 넓히지 않는다");
+        assert_eq!(projects.get(native).map(|v| v["trust_level"].as_str()), Some(Some("trusted")));
+        assert!(config.get("windows").is_none(), "YOLO 실행에 샌드박스 설치를 요청하지 않는다");
+        drop(prepared);
+        // 재시작도 같은 키를 쓰며 coordinator → user 변경 때 사전 신뢰를 없앤다.
+        let prepared = prepare(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
+        assert_eq!(read(), config);
+        drop(prepared);
+        auth.trust_cwd = None;
+        let _prepared = prepare(&home, auth, Path::new("aaa"), tx, &argv).await.unwrap();
+        assert!(read().get("projects").is_none());
     }
 
     #[tokio::test]

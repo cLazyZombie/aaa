@@ -8,6 +8,7 @@ mod answer;
 mod app_badge;
 mod asks;
 mod attach;
+mod auto_mode;
 mod question_ids;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
@@ -105,6 +106,7 @@ mod watch;
 mod watch_event;
 pub mod web;
 mod web_publication;
+mod workspace_access;
 mod workspace_metrics;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -891,6 +893,7 @@ impl Host {
             restore_tried: Mutex::new(HashSet::new()),
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
+        host.migrate_workspace_access()?;
         host.account_meta_backfill();
         host.backfill_report_stages()?;
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
@@ -1471,6 +1474,9 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
+        if matches!(&req, FrontRequest::WorkspaceAccessSet { .. }) && !account_meta::shows_email(role, actor) {
+            return Err(err(ErrorCode::Forbidden, "workspace 허용 변경은 Owner(웹 조작 기기·aaa 세션 밖 CLI)만 한다"));
+        }
         // 계정 인증 파일을 넣고 빼는 것은 host의 세션 밖 터미널만 한다
         if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
             && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
@@ -1541,6 +1547,8 @@ impl Host {
                 | FrontRequest::WorkRootCheck { .. }
                 | FrontRequest::WorkRootSet { .. }
                 | FrontRequest::HookSet { .. }
+                | FrontRequest::AutoModeSet { .. }
+                | FrontRequest::AutoDecisionReview { .. }
         ) && (front::in_session(actor)
             || actor.starts_with("worker:")
             || actor.starts_with("evaluator:")
@@ -1691,6 +1699,22 @@ impl Host {
             FrontRequest::PostHandled { project, post_id } => self.post_handled(&project, &post_id, actor),
             FrontRequest::PostList { project } => self.post_list(&project),
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
+            FrontRequest::AutoDecisions { project, before, id } => {
+                self.project_dir(&project)?;
+                let (decisions, next) = self.auto_decision_page(&project, before.as_deref(), id.as_deref())?;
+                Ok(FrontResponse::AutoDecisions { decisions, next })
+            }
+            FrontRequest::AutoModeGet { project } => {
+                self.project_dir(&project)?;
+                self.auto_mode(&project).map(FrontResponse::AutoMode)
+            }
+            FrontRequest::AutoModeSet { project, on } => self.auto_mode_set(&project, on, actor),
+            FrontRequest::QuestionAutoAnswer { project, id, choice, text, reason } => {
+                self.auto_answer(&project, &id, choice, text, reason, actor).await
+            }
+            FrontRequest::AutoDecisionReview { project, id, answer } => {
+                self.auto_decision_review(&project, &id, answer, actor)
+            }
             FrontRequest::Asks { project } => self.asks_view(&project),
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
             FrontRequest::QuestionReply { project, id, choice, text } => {
@@ -1709,6 +1733,12 @@ impl Host {
                 web_listen: self.web_listen.lock().unwrap().clone(),
                 machines: self.machine_views(),
             })),
+            FrontRequest::WorkspaceAccess { project, machine } => {
+                self.workspace_access_view(&project, &machine).map(FrontResponse::WorkspaceAccess)
+            }
+            FrontRequest::WorkspaceAccessSet { project, machine, workspace, enabled, revision } => self
+                .workspace_access_set(&project, &machine, &workspace, enabled, &revision, actor)
+                .map(FrontResponse::WorkspaceAccess),
             FrontRequest::Machines => Ok(FrontResponse::Machines { machines: self.machine_views() }),
             FrontRequest::Panes { role: want } => {
                 // 기본은 평가자 세션을 빼고, 역할을 주면 그 역할만(§8.13)
@@ -1777,6 +1807,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    automatic_workspace: None,
                     start_task: None,
                     pool: pool_request,
                     over_limit,
@@ -1941,6 +1972,7 @@ impl Host {
             FrontRequest::LibraryReports { project } => self
                 .library_reports(project.as_deref(), role.can_control())
                 .map(|reports| FrontResponse::LibraryReports { reports }),
+            FrontRequest::LibraryMarkRead { reports } => self.library_mark_read(&reports, actor, role.can_control()),
             FrontRequest::LibraryOpen { project, name } => {
                 let view = self.report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())?;
                 self.library_opened(&project, &name);

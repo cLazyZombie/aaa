@@ -1,3 +1,4 @@
+import { AutoDecisionCard } from "./AutoMode";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ListId } from "./ListId";
 // 「답할 것」(plan §8.345, 사용자 결정 10-21 1B·1A 2B): 사이드바 패널(AsksPanel)에 답할 것·답한 것 목록, 본문(AsksView)에 고른 것
@@ -7,8 +8,8 @@ import { ListId } from "./ListId";
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
 import { QuestionReports } from "./QuestionReports";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
-import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X } from "lucide-react";
-import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
+import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X, Zap } from "lucide-react";
+import type { AutoDecision, AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
 import { Markdown, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths";
@@ -47,6 +48,7 @@ export function AsksPanel({
   canControl,
   onPick,
   onForgetAll,
+  onMoreAuto,
 }: {
   open: OpenAsk[];
   data: AsksData | null;
@@ -55,10 +57,18 @@ export function AsksPanel({
   canControl: boolean;
   onPick: (key: string) => void;
   onForgetAll: () => Promise<void>;
+  onMoreAuto: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState(false);
+  const [moreBusy, setMoreBusy] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
   const now = Date.now();
-  const done = data?.done ?? [];
+  const auto = data?.autoDecisions ?? [];
+  const autoIds = new Set(auto.filter(d => d.outcome === "answered").map(d => d.question.id));
+  const done = (data?.done ?? []).filter(r => !r.items.length || !r.items.every(q => autoIds.has(q.id)));
+  const autoRow = (d: AutoDecision) => <button type="button" className={`ask-row is-auto${selected === `a:${d.id}` ? " is-selected" : ""}`} key={d.id} data-testid="auto-decision-row" data-key={`a:${d.id}`} onClick={() => onPick(`a:${d.id}`)}>
+    <span className="ask-row-mark"><Zap /></span><span className="ask-row-text"><span className="ask-row-title">{d.question.id} {d.question.text} → {d.choice}</span><span className="ask-row-meta">{d.outcome === "answered" ? (d.reviewed ? "확인함" : "자동 결정") : "전달 확인 필요"} · {when(d.at_ms)}</span></span>
+  </button>;
   const Row = ({ k, kind, title, meta, ids = [], isDone }: { k: string; kind: keyof typeof KIND_ICON; title: string; meta: string; ids?: string[]; isDone?: boolean }) => {
     const Icon = isDone ? Check : KIND_ICON[kind];
     return (
@@ -86,6 +96,10 @@ export function AsksPanel({
           <Row key={a.key} k={a.key} kind="task" ids={a.task.short_id ? [a.task.short_id] : []} title={a.task.title} meta={openMeta(a, now)} />
         ),
       )}
+      <h3 className="asks-panel-head">자동으로 정한 것 <span data-testid="asks-auto-count">{auto.length}</span></h3>
+      {auto.map(autoRow)}
+      {data?.autoNext && <button disabled={moreBusy} onClick={() => { setMoreBusy(true); setMoreError(null); void onMoreAuto().catch(e => setMoreError(String(e))).finally(() => setMoreBusy(false)); }}>이전 자동 결정 더 보기</button>}
+      {moreError && <p role="alert">{moreError}</p>}
       <h3 className="asks-panel-head">
         답한 것 <span data-testid="asks-done-count">{done.length}</span>
         {canControl && done.length > 0 && (
@@ -113,7 +127,7 @@ export function AsksPanel({
 
 // ───────────── 본문 ─────────────
 
-export type AskSelection = { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord } | { kind: "missing"; id: string } | { kind: "none" };
+export type AskSelection = { kind: "auto"; decision: AutoDecision } | { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord } | { kind: "missing"; id: string } | { kind: "none" };
 
 export function AsksView({
   shown,
@@ -145,12 +159,12 @@ export function AsksView({
   const lightbox = useLightbox();
   const setZoom = (z: { src: string; alt: string }) => lightbox.open({ items: [z], at: 0 });
   const body = useRef<HTMLDivElement>(null);
-  const key = selection.kind === "open" ? selection.ask.key : selection.kind === "done" ? `d:${selection.record.id}` : "";
+  const key = selection.kind === "auto" ? `a:${selection.decision.id}` : selection.kind === "open" ? selection.ask.key : selection.kind === "done" ? `d:${selection.record.id}` : "";
   useEffect(() => {
     if (body.current) body.current.scrollTop = 0;
   }, [key]);
   const head =
-    selection.kind === "open"
+    selection.kind === "auto" ? { title: "자동으로 정한 것", sub: selection.decision.question.text } : selection.kind === "open"
       ? selection.ask.kind === "question"
         ? { title: `${selection.ask.thread.id} · ${selection.ask.thread.title || selection.ask.thread.id}`, sub: `답할 것 · 질문 ${selection.ask.thread.questions.items.length}개` }
         : selection.ask.kind === "request"
@@ -212,6 +226,7 @@ export function AsksView({
               </div>
             </section>
           )}
+          {selection.kind === "auto" && <AutoDecisionCard key={selection.decision.id} decision={selection.decision} />}
           {selection.kind === "done" && (
             <DoneCard key={selection.record.id} r={selection.record} canControl={canControl} onForget={() => onForget(selection.record.id)} onZoom={setZoom} onThread={onThread} />
           )}
@@ -233,7 +248,7 @@ function KindChip({ kind, done }: { kind: keyof typeof KIND_ICON; done?: string 
 }
 
 /** 질문 본문 Markdown: 그림은 `files_base` 아래 `library/…`만, 링크한 library 파일은 새 탭(결과물처럼 sandbox) */
-function AskMarkdown({ base, children, className }: { base: string | null | undefined; children: string; className?: string }) {
+export function AskMarkdown({ base, children, className }: { base: string | null | undefined; children: string; className?: string }) {
   const attachment = useCallback((src: string) => askFileUrl(base, src), [base]);
   const resolve = useCallback(async (src: string) => {
     const url = askFileUrl(base, src);
@@ -326,7 +341,7 @@ function QuestionCard({
     };
   }, []);
   const customId = useId();
-  const off = pending || !canControl || !!q.format_warning;
+  const off = pending || !canControl;
   const text = custom.trim();
   const got = picks.filter((p) => p !== null).length;
   const all = got === q.items.length;
@@ -353,7 +368,7 @@ function QuestionCard({
         {t ? <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
           : <span className="prompt-card-where">coordinator · {when(request!.created_ms)}</span>}
       </header>
-      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">{q.format_warning} 보고를 고친 뒤 답할 수 있다.</p>}
+      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">{q.format_warning} 아래에 보이는 선택지를 고르거나 직접 답을 입력할 수 있다.</p>}
       <QuestionReports items={q.items} body={request?.body} reportId={t?.report_id} project={t?.project} base={base} />
       {request && <h2 className="ask-card-title">{request.title}</h2>}
       {q.items.map((item, n) => {
@@ -548,12 +563,25 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
 }
 
 /** host 「답할 것」 자료(열린 확인 필요 post·답한 것 기록): 연결할 때와 host `asks` 사건마다 읽는다. 조작 응답도 같은 꼴이라 `put`으로 바로 넣는다 */
-export function useAsksData(up: boolean): { data: AsksData | null; put: (r: FrontResponse) => void } {
+export function useAsksData(up: boolean): { data: AsksData | null; put: (r: FrontResponse) => void; moreAuto: () => Promise<void> } {
   const [data, setData] = useState<AsksData | null>(null);
   const seq = useRef(0);
+  const mergeAuto = (fresh: AutoDecision[], old: AutoDecision[] = []) => [...new Map([...old, ...fresh].map(d => [d.id, d])).values()].sort((a, b) => b.at_ms - a.at_ms);
   const put = useCallback((r: FrontResponse) => {
-    if (r.kind === "asks") setData({ requests: r.requests, done: r.done, keepDays: r.keep_days });
+    if (r.kind === "asks") {
+      ++seq.current;
+      setData(old => ({ requests: r.requests, done: r.done, keepDays: r.keep_days, autoMode: r.auto_mode,
+        autoDecisions: mergeAuto(r.auto_decisions ?? [], old?.autoDecisions), autoExceptions: r.auto_exceptions, autoNext: r.auto_next }));
+    } else if (r.kind === "auto_decisions") {
+      setData(old => old ? { ...old, autoDecisions: mergeAuto(r.decisions, old.autoDecisions) } : old);
+    }
   }, []);
+  const moreAuto = useCallback(async () => {
+    if (!data?.autoNext) return;
+    const r = await call({ op: "auto_decisions", project: "", before: data.autoNext, id: null });
+    put(r);
+    if (r.kind === "auto_decisions") setData(old => old ? { ...old, autoNext: r.next } : old);
+  }, [data?.autoNext, put]);
   const load = useCallback(() => {
     const n = ++seq.current;
     call({ op: "asks" })
@@ -566,12 +594,16 @@ export function useAsksData(up: boolean): { data: AsksData | null; put: (r: Fron
     if (up) load();
   }, [up, load]);
   useEffect(() => onAsksChanged(load), [load]);
-  return { data, put };
+  return { data, put, moreAuto };
 }
 
 /** 열쇠 → 본문에 그릴 것 */
-export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRecord[]): AskSelection {
+export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRecord[], auto: AutoDecision[] = []): AskSelection {
   return useMemo<AskSelection>(() => {
+    if (key?.startsWith("a:")) {
+      const decision = auto.find(d => d.id === key.slice(2)) ?? (key === "a:" ? auto[0] : undefined);
+      return decision ? { kind: "auto", decision } : { kind: "none" };
+    }
     if (key?.startsWith("d:")) {
       const r = done.find((x) => x.id === key.slice(2));
       if (r) return { kind: "done", record: r };
@@ -584,6 +616,6 @@ export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRe
     // 영속 ID 링크가 닫혔거나 지워졌어도 다른 질문을 그 ID의 카드처럼 열지 않는다.
     if (/^q:q-\d{4,}$/.test(key ?? "")) return { kind: "missing", id: key!.slice(2) };
     return open[0] ? { kind: "open", ask: open[0] } : { kind: "none" };
-  }, [key, open, done]);
+  }, [key, open, done, auto]);
 }
 

@@ -382,3 +382,112 @@ fn automation_threads_leave_user_capacity_and_queue_slots_available() {
     assert_eq!(restarted["automation_trigger"], trigger);
     assert_eq!(w.show(&next)["status"], "open");
 }
+
+/// fake harness가 압축 때 기억을 버린 뒤 실제 hook 응답의 경로를 열어 최신 파일을 읽는다.
+/// 모델의 지시 이행 자체를 보장하지 않으며 host→세션 명세→CLI→agent 응답의 계약을 검사한다.
+#[test]
+fn automation_memory_reentry_claude_after_compact_and_resume() {
+    memory_reentry("claude");
+}
+
+#[test]
+fn automation_memory_reentry_codex_after_compact_and_resume() {
+    memory_reentry("codex");
+}
+
+fn memory_reentry(harness: &str) {
+    let mut w = world();
+    w.h.in_terminal(&["profile", "edit", "claude", "--agent", harness], &[], T);
+    w.h.in_terminal(&["safety", "set", "start_threads", "auto"], &[("[y/N]", "y")], T);
+    let idle = if harness == "claude" {
+        include_str!("../../../aaa-host/tests/fixtures/prompt_box/claude-empty.ansi")
+    } else {
+        include_str!("../../../aaa-host/tests/fixtures/prompt_box/codex-empty.ansi")
+    };
+    let script = r#"#!/usr/bin/env python3
+import json, os, pathlib, subprocess, sys
+harness = HARNESS
+idle = IDLE
+work = pathlib.Path('.aaa') / (os.environ['AAA_PROJECT'] + '-' + os.environ['AAA_THREAD'])
+sid = '019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0'
+def hook(source, **extra):
+    event = dict(hook_event_name='SessionStart', session_id=sid, source=source, **extra)
+    result = subprocess.run([os.environ['AA'], 'hook', '--agent', harness, json.dumps(event)],
+                            check=True, capture_output=True, text=True)
+    if extra:
+        assert not result.stdout, result.stdout
+        return
+    context = json.loads(result.stdout)['hookSpecificOutput']['additionalContext']
+    # 압축으로 사라진 문맥을 대신해 hook이 돌려준 절대 경로만 따른다.
+    paths = [pathlib.Path(p) for p in context.split('`')[1::2] if p.endswith('/memory/memory.md')]
+    if source == 'startup' and not paths:
+        # 최초 brief의 기억 안내로 시작한다. 압축·재개에서는 이 fallback을 쓰지 않는다.
+        memory = (work / 'memory/memory.md').read_text()
+    elif len(paths) == 1:
+        memory = paths[0].read_text()
+        assert str(paths[0].parent.parent / 'brief.md') in context, context
+        assert '4KiB' in context and 'processed.txt' in context, context
+    else:
+        memory = None
+    (work / ('probe-' + source + '.json')).write_text(json.dumps(dict(memory=memory, context=context)))
+hook('startup')
+print('\x1b[2J\x1b[H' + idle, end='', flush=True)
+for line in sys.stdin:
+    line = line.strip()
+    if line == 'probe-compact':
+        hook('compact')
+    elif line == 'probe-resume':
+        hook('resume')
+    elif line == 'probe-child':
+        hook('compact', agent_id='child')
+        (work / 'probe-child.json').write_text('{}')
+    print('\x1b[2J\x1b[Hgot: ' + line + '\n' + idle, end='', flush=True)
+"#
+    .replace("HARNESS", &serde_json::to_string(harness).unwrap())
+    .replace("IDLE", &serde_json::to_string(idle).unwrap());
+    std::fs::write(w.scripts.join("claude.sh"), script).unwrap();
+    let dir = w.projects.join("demo/automations");
+    std::fs::create_dir_all(dir.join("check.memory")).unwrap();
+    std::fs::write(dir.join("check.memory/memory.md"), "처음 기억\n").unwrap();
+    std::fs::write(dir.join("check.toml"), "[on.schedule]\nevery='1h'\n[do.start]\ntitle='기억 재독'\ntext='기억을 읽는다'\nprofiles=['claude']\nmachines=['labA']\nreuse='open'\nmemory=true\n").unwrap();
+    let rule = wait_for("자동화 승인 범위", T, || {
+        w.h.ok(&["routine", "list", "demo"])["routines"]
+            .as_array()?
+            .iter()
+            .find(|r| r["name"] == "check" && r["start_approval_sha256"].is_string())
+            .cloned()
+    });
+    w.h.in_terminal(&["automation", "approve", "check", rule["start_approval_sha256"].as_str().unwrap()], &[], T);
+    w.h.ok(&["automation", "run", "check"]);
+    let id = wait_for("자동화 thread 시작", T, || {
+        w.h.ticks(1);
+        automatic(&w).first()?.get("thread")?.as_str().map(str::to_owned)
+    });
+    let row = w.wait_show("자동화 brief 수신", &id, |v| v["brief"] == "delivered");
+    let pane = row["pane"].as_str().unwrap();
+    let work = PathBuf::from(row["work_dir"].as_str().unwrap());
+    let probe = |source: &str| {
+        wait_for("기억 파일 재독 완료", T, || {
+            std::fs::read(work.join(format!("probe-{source}.json")))
+                .ok()
+                .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap())
+        })
+    };
+    assert_eq!(probe("startup")["memory"], "처음 기억\n", "{harness}");
+    for (source, memory) in [("compact", "압축 뒤 최신 기억\n"), ("resume", "재개 뒤 최신 기억\n")] {
+        if source == "resume" {
+            let mut watch = HostWatch::new(&w.h, T);
+            watch.wait("재시작 전 연결 상태", |s| s.connected("labA").then_some(()));
+            w.lab.kill("agentA");
+            watch.wait("agent 연결 종료", |s| (!s.connected("labA")).then_some(()));
+            w.lab.spawn("agentA-reconnected", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+            watch.wait("agent 재연결", |s| s.connected("labA").then_some(()));
+        }
+        std::fs::write(work.join("memory/memory.md"), memory).unwrap();
+        w.h.ok(&["pane", "run", pane, &format!("probe-{source}")]);
+        assert_eq!(probe(source)["memory"], memory, "{harness}/{source}");
+    }
+    w.h.ok(&["pane", "run", pane, "probe-child"]);
+    probe("child");
+    w.h.ok(&["thread", "resolve", "demo", &id]);
+}

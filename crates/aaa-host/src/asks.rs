@@ -281,7 +281,12 @@ impl Host {
 
     pub(crate) fn asks_view(&self, project: &str) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
+        let (auto_decisions, auto_next) = self.auto_decision_page(project, None, None)?;
         Ok(FrontResponse::Asks {
+            auto_mode: self.auto_mode(project)?,
+            auto_decisions,
+            auto_next,
+            auto_exceptions: self.auto_exception_count(project)?,
             requests: self.user_requests(project)?,
             done: self.db.ask_list(project).map_err(internal)?,
             keep_days: ASK_KEEP_DAYS,
@@ -340,9 +345,6 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "질문 본문이 다르다. 다시 읽고 답한다"));
         }
         let parsed = aaa_proto::parse_report_questions(&post.input.body);
-        if let Some(warning) = parsed.warning {
-            return Err(err(ErrorCode::BadRequest, warning));
-        }
         let mut parsed = parsed.items;
         if parsed.is_empty() {
             parsed.push(aaa_proto::ThreadQuestion {
@@ -431,7 +433,7 @@ impl Host {
     }
 
     /// coordinator가 미리 publish한 `library/<이름>/<파일>`만 복사한다. 외부·symlink는 열지 않는다.
-    fn snapshot_request(&self, dir: &Path, root: &Path, body: &str) -> std::io::Result<()> {
+    pub(crate) fn snapshot_request(&self, dir: &Path, root: &Path, body: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(root)?;
         std::fs::write(root.join("report.md"), body)?;
         let mut total = 0u64;
@@ -557,7 +559,7 @@ impl Host {
         }
     }
 
-    fn snapshot_question(&self, dir: &Path, rec: &ThreadRec, root: &Path) -> std::io::Result<()> {
+    pub(crate) fn snapshot_question(&self, dir: &Path, rec: &ThreadRec, root: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(root)?;
         let report = dir.join("threads").join(format!("{}.md", rec.id));
         if report.is_file() {
@@ -1105,7 +1107,7 @@ mod tests {
         assert_eq!(h.user_request_count(), 1);
         h.ask_handle("demo", &open[0].id, "device:phone").unwrap();
         assert!(seen.has_changed().unwrap());
-        let FrontResponse::Asks { requests, done, keep_days } = h.asks_view("demo").unwrap() else { panic!() };
+        let FrontResponse::Asks { requests, done, keep_days, .. } = h.asks_view("demo").unwrap() else { panic!() };
         assert_eq!((requests.len(), done.len(), keep_days), (0, 1, ASK_KEEP_DAYS));
         assert_eq!(
             (done[0].kind, done[0].summary.as_str(), done[0].by.as_str()),

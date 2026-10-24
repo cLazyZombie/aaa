@@ -565,6 +565,8 @@ fn world_build(
         || format!("host.log:\n{}\nagentA.log:\n{}", w.lab.log("host"), w.lab.log("agentA")),
     );
     w.h.ok(&["project", "create", "demo"]);
+    // 기존 오케스트레이션 keeper는 작업 가능한 실험실을 명시한다. 새 기본 꺼짐은 workspace_access와 E2E99가 소유한다.
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "작업 폴더"]);
     w
 }
 
@@ -957,7 +959,6 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
 fn remote_dir_thread_survives_host_restart() {
     let mut w = world();
     w.add_remote();
-    let connected_at = Instant::now();
     let v = w.start(&[
         "--title",
         "원격 일",
@@ -992,15 +993,10 @@ fn remote_dir_thread_survives_host_restart() {
 
     // host 재시작 중에 보고가 바뀌어도, 다시 붙은 agent가 지금 hash를 알려 사본을 다시 받는다
     // 원격 agent가 같은 주소로 다시 붙게 처음 받은 포트를 고정한다
-    // 끊김은 새 host가 처음 본 때부터 잰다(herdr-projects `Outage`): 연결된 지 기준(5초)보다 오래된 머신도
-    // 다시 붙는 동안 「오래 끊김」이 되지 않는다. 매초 검사해 붙기 전 검사가 반드시 있게 한다.
+    // 알림의 시간 경계·재시작 영속성은 inbox의 가상 시각 owner가 맡는다.
+    // 실제 TLS 재연결 속도를 알림 기준 5초와 비교하지 않는다.
     let toml = std::fs::read_to_string(w.h.cfg.join("host.toml")).unwrap();
-    let toml = toml
-        .replace("127.0.0.1:0", &w.addr)
-        .replace("library_copy_mb = 1\n", "library_copy_mb = 1\noutage_secs = 5\ntick_secs = 1\n");
-    assert!(toml.contains("outage_secs = 5"), "{toml}");
-    std::fs::write(w.h.cfg.join("host.toml"), toml).unwrap();
-    std::thread::sleep(Duration::from_secs(7).saturating_sub(connected_at.elapsed()));
+    std::fs::write(w.h.cfg.join("host.toml"), toml.replace("127.0.0.1:0", &w.addr)).unwrap();
     w.lab.kill("host");
     // host가 없는 동안 agent 머신에서 보고가 바뀐다
     let work_dir = PathBuf::from(v["work_dir"].as_str().unwrap());
@@ -1018,44 +1014,6 @@ fn remote_dir_thread_survives_host_restart() {
     assert_eq!(v["group"], "ready_for_review");
     let kinds = w.kinds(seen);
     assert_eq!(kinds, ["report_ready"], "host 재시작 뒤 사건: {kinds:?}");
-    // host2가 다시 붙기 전에 낸 outage가 있으면 여기와 아래 항목 시각 확인이 잡는다
-    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
-    assert!(!items.iter().any(|i| i["item_kind"] == "outage"), "host 재시작에 outage가 생겼다: {items:?}");
-
-    // 머신이 끊긴 채 host를 다시 띄워도 기준(5초) 전에는 알리지 않는다. 옛 코드는 마지막 연결 시각(7초 넘게 전)부터
-    // 재서 첫 검사에 바로 알렸다. 기준 뒤 한 번, 돌아오면 한 번 알린다.
-    // 「기준 전에는 없다」는 시험 시계로 재지 않고 host가 남긴 항목 시각으로 본다: host3를 띄운 때보다 5초 넘게 뒤여야 한다.
-    // host3가 끊김을 처음 본 때는 띄운 때보다 늦으므로 부하로 늦어져도 거짓 실패가 없고, 일찍 알리면 늘 잡힌다.
-    w.lab.kill("agentB");
-    w.lab.kill("host2");
-    let spawned_ms = aaa_common::util::now_ms();
-    w.spawn_host("host3");
-    let downs = || -> Vec<Value> {
-        let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
-        items.into_iter().filter(|i| i["item_kind"] == "outage" && i["event"] == "down").collect()
-    };
-    let outage = |event: &str| {
-        let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
-        items.iter().filter(|i| i["item_kind"] == "outage" && i["event"] == event).count()
-    };
-    wait_for("host3 응답", T, || w.h.json(&["inbox", "list", "demo", "--peek"]).ok());
-    let down = wait_for("outage down", T, || downs().into_iter().next());
-    let at = down["created_at_ms"].as_u64().unwrap();
-    assert!(
-        at >= spawned_ms + 5000,
-        "host가 끊김을 본 지 기준(5초) 전에 outage가 생겼다: 띄운 뒤 {}ms {down}",
-        at as i64 - spawned_ms as i64
-    );
-    // 알린 끊김이 이어지는 동안 host를 다시 띄워도 그 끊김은 이어진다(plan §8.134): 다시 「down」을 쓰지 않고, 돌아오면
-    // 「recovered」를 한 번 쓴다. 옛 host는 새로 띄우면 알린 것을 잊어 회복을 영영 쓰지 않았다.
-    w.lab.kill("host3");
-    // 위 `outage`가 w.h를 빌려 쥐고 있어 칸을 따로 넘긴다
-    spawn_host(&mut w.lab, "host4", &w.h, w.settle_ms);
-    wait_for("host4 응답", T, || w.h.json(&["inbox", "list", "demo", "--peek"]).ok());
-    let b = w.lab.node("b", None);
-    w.lab.spawn("agentB2", &b, &["agent", "--host", &w.addr, "--name", "labB"]);
-    wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));
-    assert_eq!(outage("down"), 1);
 }
 /// task 첨부(plan §8.327): `--from-task`로 다른 머신(TLS, 상태 폴더가 다른 labB)에 thread를 띄우면 메모가 가리키는 host 파일
 /// (올린 그림·보고서 안 문서)을 그 머신 작업 폴더 `attachments/`에 복사하고, 할 일 글·brief는 그 머신에서 열 수 있는 경로만 쓴다
@@ -1201,6 +1159,9 @@ fn task_repo_field_picks_machine_and_path() {
          - [ ] 모르는 일 [nope]\n",
     )
     .unwrap();
+    for machine in ["labA", "labB"] {
+        w.h.ok(&["machine", "workspaces", machine, "--allow", "repo"]);
+    }
     let r = w.start(&["--from-task", "원격 일"]);
     assert_eq!((r["machine"].as_str(), r["thread_kind"].as_str()), (Some("labB"), Some("worktree")), "{r}");
     assert_eq!(r["repo"].as_str(), Some(path_str(&repo_b)), "labB의 경로로 띄운다: {r}");
@@ -1799,17 +1760,18 @@ fn claude_thread_states_questions_and_messages() {
 
     // interrupt: 일하는 중이면 Esc로 멈춘 뒤, 멈춤(입력 상자)이 보이면 보낸다. 멈추기 전에 보낸 글은 사라진다.
     assert_eq!(w.message(&id, "long run", false)["state"], "accepted");
+    // accepted는 hook이 먼저 알릴 수 있다. 실제 앞선 턴의 수신을 확인하고 중단한다.
+    w.wait_screen(&pane, "got: long run");
     let (m4, screen) = w.interrupt(&id, &pane, "urgent");
     assert_eq!(m4["state"], "accepted", "{m4}\n{screen}");
-    let start =
-        screen.find("got: long run").unwrap_or_else(|| panic!("interrupt 반환 화면에 앞선 받음이 없다:\n{screen}"));
-    let after = &screen[start..];
-    assert!(after.find("Interrupted").is_some_and(|i| after.find("got: urgent").is_some_and(|u| i < u)), "{screen}");
+    // 앞선 출력이 visible 화면에서 밀려나도 된다. 중단 뒤 긴급 입력의 순서는 유지한다.
+    assert!(screen.rfind("Interrupted").is_some_and(|i| screen.find("got: urgent").is_some_and(|u| i < u)), "{screen}");
     // 두 번째 interrupt
     let t = lab::now_ms();
     finish_turn(&w, &pane);
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
     assert_eq!(w.message(&id, "long again", false)["state"], "accepted");
+    w.wait_screen(&pane, "got: long again");
     let (m5, screen) = w.interrupt(&id, &pane, "urgent2");
     assert_eq!(m5["state"], "accepted", "{m5}\n{screen}");
     // 거절 셋(늦은 짝·치는 동안 뜬 권한 창·Esc 거절)과 interrupt 둘
@@ -1819,6 +1781,7 @@ fn claude_thread_states_questions_and_messages() {
     finish_turn(&w, &pane);
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
     assert_eq!(w.message(&id, "long three", false)["state"], "accepted");
+    w.wait_screen(&pane, "got: long three");
     let t = lab::now_ms();
     w.h.ok(&["thread", "stop", "demo", &id]);
     agent_became(&mut ev, &id, AgentActivity::Idle, t);
@@ -1958,7 +1921,7 @@ fn thread_read_and_keys() {
 /// (새 brief·resume). 결정이 적힌 옛 decisions.md는 brief에 넣지 않고, memory로 옮기라고 내용당 한 번 알린다.
 #[test]
 fn memory_and_restart() {
-    let w = world_product_settle();
+    let w = world();
     let dir = w.projects.join("demo");
     assert!(!dir.join("decisions.md").exists(), "새 프로젝트에는 결정 기록이 없다");
     std::fs::write(dir.join("MEMORY.md"), "# Memory\n\n- [API](memory/api.md): API 판\n").unwrap();
@@ -2005,10 +1968,9 @@ fn memory_and_restart() {
     let at = |n: &str| brief.find(n).unwrap_or_else(|| panic!("{n} 없음: {brief}"));
     assert!(at("# thread brief") < at("**이 일을 앞서 시도한 것이") && at("**이 일을 앞서 시도한 것이") < at("# 지침"));
     assert!(brief.contains("API는 v3로 바꾼다") && !brief.contains("v2"), "{brief}");
-    let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered");
-    // hook이 없는 harness는 일하는지 알 수 없다: 방금 안내를 받은 thread는 작업 중이다(herdr-projects ticker `delivered`,
-    // 다음 tick에야 7번 줄로 쉼이 된다). 같은 보고(같은 hash)를 다시 썼으니 새 보고는 없다.
-    assert_eq!(v["group"], "working");
+    w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered");
+    // 짧은 working 유예의 경계는 orch의 a_just_delivered_brief_is_working_until_a_report_or_a_tick이
+    // 가상 시각으로 지킨다. 이 시험은 실제 재시작·새 memory·brief 전달을 지킨다.
     let seen = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len() as u64;
 
     // resume: 같은 대화를 잇는다(custom harness는 같은 명령). brief 안내는 하지 않는다: 새 세션이 입력을 기다리고
@@ -5750,6 +5712,9 @@ fn merged_pr_resolves_the_thread() {
 #[test]
 fn merged_thread_cleans_its_task() {
     let mut w = world_setup("tick_secs = 1\npr_poll_secs = 1\nmerge_grace_secs = 1\n", false, fake_gh);
+    // 자동 시작을 쓰는 병합 keeper는 실제로 사용할 workspace와 허용을 먼저 등록한다.
+    w.h.ok(&["project", "set", "demo", "repos.add", &format!("{}@labA", path_str(&w.repo))]);
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "repo"]);
     let stub = w.lab.root.join("gh");
     let mut f = w.lab.follow("follow", &w.h, "demo");
     git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);

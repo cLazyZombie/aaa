@@ -251,6 +251,22 @@ impl Db {
         Ok(changed)
     }
 
+    /// 목록의 읽음 표시는 실제 열람(link.opened)과 구별한다. 전체를 한 transaction으로 쓴다.
+    pub(crate) fn library_mark_read(&self, reports: &[(String, String)], now: u64) -> Result<usize> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        for (project, name) in reports {
+            changed += tx.execute(
+                "UPDATE library_reports SET seen_at=MAX(?3,COALESCE(sent_at,0))
+                 WHERE project=?1 AND name=?2 AND to_user=1 AND (seen_at IS NULL OR seen_at < sent_at)",
+                params![project, name, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     pub(crate) fn library_unseen_count(&self) -> Result<u32> {
         Ok(self.conn.lock().unwrap().query_row(

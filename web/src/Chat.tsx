@@ -1,3 +1,4 @@
+import { AutoDecisionLines } from "./AutoMode";
 // harness 대화 기록 보기(§8.27). 기록은 읽기만 하고 보내는 길은 입력창 ChatComposer(plan §8.130)다. agent가 Claude·Codex 기록에서 골라 준 줄을 보인다.
 // 도구 결과 본문은 agent가 빼고 보낸다. 생각은 설정 「생각 표시」(공유)를 켰을 때만 청해 접힌 「생각」 줄로 보인다
 // (herdr-web-ui ChatView.tsx `ThinkingRow`, plan §8.129). 다시 읽기(차이 목록 C3, 참고 ChatView·conversationRefresh.ts·status.ts
@@ -28,6 +29,7 @@ import type { PendingSend } from "./ChatComposer";
 import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
 import { ChatRow } from "./ChatRow";
+import { usePageVisible } from "./pageVisible";
 import { mergeChatPage } from "./chatPages";
 import { steerLabel, type SteerState } from "./steerQueued";
 import { groupChatRows, groupExpanded, readExpandedGroups, rememberExpandedGroups, rowIndexById, summarizeToolGroup, toggleExpanded, toolGroupKind, type ChatDisplayRow, type ToolGroupKind } from "./toolGroups";
@@ -177,12 +179,14 @@ function plainText(markdown: string): string {
 
 /** 참고 `CopyButton`: 복사하고 잠깐 「복사됨」 */
 function CopyButton({
+  active,
   text,
   label,
   className = "icon-button chat-copy",
   children,
   onResult,
 }: {
+  active: boolean;
   text: string;
   label: string;
   className?: string;
@@ -190,11 +194,16 @@ function CopyButton({
   onResult: (ok: boolean) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!active) { setCopied(false); return; }
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [active, copied]);
   const copy = async () => {
     const ok = await copyText(text);
     setCopied(ok);
     onResult(ok);
-    if (ok) window.setTimeout(() => setCopied(false), 1500);
   };
   return (
     <button type="button" className={copied ? `${className} is-copied` : className} onClick={() => void copy()} aria-label={copied ? "복사됨" : label} title={copied ? "복사됨" : label}>
@@ -216,13 +225,14 @@ function useCopyResult() {
 }
 
 /** 참고 `UserMessage`: 긴 말은 몇 줄만 보이고 「전체 메시지 보기」로 펼친다. 잘린 곳은 흐리게 */
-function UserMessage({ text, pending = false }: { text: string; pending?: boolean }) {
+function UserMessage({ active, text, pending = false }: { active: boolean; text: string; pending?: boolean }) {
   const canFold = useMemo(() => shouldFoldUserMessage(text), [text]);
   const [open, setOpen] = useState(false);
   const capped = canFold && !open;
   const body = useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = useState(false);
   useLayoutEffect(() => {
+    if (!active) return;
     const node = body.current;
     if (!capped || node === null) {
       setClipped(false);
@@ -233,15 +243,15 @@ function UserMessage({ text, pending = false }: { text: string; pending?: boolea
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [capped]);
+  }, [active, capped]);
   // 대화 안 찾기가 잘린 아래의 찾음으로 갈 때 편다(ChatFind.tsx, 참고 t3code `data-thread-find-fold`·beforematch)
   useEffect(() => {
     const node = body.current;
-    if (!capped || node === null) return;
+    if (!active || !capped || node === null) return;
     const reveal = () => setOpen(true);
     node.addEventListener("beforematch", reveal);
     return () => node.removeEventListener("beforematch", reveal);
-  }, [capped]);
+  }, [active, capped]);
   const card = useRef<HTMLDivElement>(null);
   const folding = useRef(false);
   const toggle = () => {
@@ -328,15 +338,16 @@ function PendingTag({ harness, stale, onDismiss, steer }: Pending) {
 }
 
 /** 사람 말: 카드와 그 복사(마우스면 카드 옆, 터치면 아래) */
-function UserTurn({ text, pane, onOpenFile, pending }: { text: string; pane: string; onOpenFile?: (path: string) => void; pending?: Pending }) {
+function UserTurn({ active, text, pane, onOpenFile, pending }: { active: boolean; text: string; pane: string; onOpenFile?: (path: string) => void; pending?: Pending }) {
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-user">
+      {text.trimStart().startsWith("[aaa inbox] ") && <div className="chat-inbox-label" data-testid="chat-inbox-label">aaa inbox 안내</div>}
       {onOpenFile && <UserImages pane={pane} text={text} onOpenFile={onOpenFile} />}
       <div className="chat-user-row">
-        <UserMessage text={text} pending={pending !== undefined} />
+        <UserMessage active={active} text={text} pending={pending !== undefined} />
         <div className="chat-turn-meta">
-          <CopyButton text={text} label="메시지 복사" onResult={onResult} />
+          <CopyButton active={active} text={text} label="메시지 복사" onResult={onResult} />
         </div>
       </div>
       {pending && <PendingTag {...pending} />}
@@ -375,7 +386,7 @@ function ImageThumb({ pane, path, onOpenFile }: { pane: string; path: string; on
 }
 
 /** 답: 카드 없이 Markdown, 그 아래 마크다운·일반 텍스트 복사(참고 `chat-agent-meta`) */
-function AgentTurn({ text }: { text: string }) {
+function AgentTurn({ active, text }: { active: boolean; text: string }) {
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-agent">
@@ -383,10 +394,10 @@ function AgentTurn({ text }: { text: string }) {
         <Markdown>{text}</Markdown>
       </div>
       <div className="chat-turn-meta chat-agent-meta">
-        <CopyButton className="chat-meta-btn" text={text} label="마크다운으로 복사" onResult={onResult}>
+        <CopyButton active={active} className="chat-meta-btn" text={text} label="마크다운으로 복사" onResult={onResult}>
           <span className="chat-meta-fmt">MD</span>
         </CopyButton>
-        <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(text)} label="일반 텍스트로 복사" onResult={onResult}>
+        <CopyButton active={active} className="chat-meta-btn chat-meta-plain" text={plainText(text)} label="일반 텍스트로 복사" onResult={onResult}>
           <span className="chat-meta-fmt">TXT</span>
           <span className="chat-meta-word">일반 텍스트</span>
         </CopyButton>
@@ -397,6 +408,9 @@ function AgentTurn({ text }: { text: string }) {
 }
 
 export function ChatPanel({
+  active = true,
+  onBytes,
+  coordinator = false,
   pane,
   status,
   compacting = false,
@@ -411,6 +425,9 @@ export function ChatPanel({
   steer,
   findRequest = 0,
 }: {
+  active?: boolean;
+  onBytes?: (bytes: number) => void;
+  coordinator?: boolean;
   pane: string;
   status?: AgentStatus;
   /** agent가 대화를 정리하는 중(plan §8.309): 대화 끝에 「대화 정리 중…」 줄 */
@@ -432,6 +449,10 @@ export function ChatPanel({
   /** 머리 돋보기·팔레트 「대화에서 찾기」가 올린다: 바뀌면 찾기 칸을 연다(plan §8.308) */
   findRequest?: number;
 }) {
+  const visible = usePageVisible();
+  const reading = active && visible;
+  const readingRef = useRef(reading);
+  readingRef.current = reading;
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const chatRef = useRef<ChatView | null>(null);
@@ -455,13 +476,14 @@ export function ChatPanel({
     const next = mergeChatPage(chatRef.current, page, older);
     chatRef.current = next;
     setChat(next);
+    onBytes?.(new TextEncoder().encode(JSON.stringify(next)).byteLength);
   };
   const list = useRef<HTMLDivElement>(null);
   const touchY = useRef<number | null>(null);
   // 굴림(plan §8.266, t3code ChatView.tsx:4004~4030·4443~4505, MessagesTimeline.tsx:871~955·1112~1141, chatScroll.ts):
   // thread(pane)마다 읽던 자리를 기억한다. 끝을 따라가던 곳이면 끝으로, 아니면 기억한 줄의 그 거리로 돌아오고 「맨 아래로」 단추를
   // 바로 보인다. 이 화면이 보낸 뒤(`readNow`)는 사용자 결정 §8.250대로 끝으로 간다(참고는 보낸 말을 위에 고정하는 anchoring-new-turn)
-  const [restoreFrom] = useState(() => {
+  const [restoreFrom, setRestoreFrom] = useState(() => {
     const remembered = readChatPosition(pane);
     return remembered?.atEnd === false ? remembered : null;
   });
@@ -494,23 +516,27 @@ export function ChatPanel({
   const [pollKey, setPollKey] = useState(0);
   const seen = useRef(status);
   useEffect(() => {
-    if (statusEdgeRead(seen.current, status)) setPollKey((key) => key + 1);
+    if (active && statusEdgeRead(seen.current, status)) setPollKey((key) => key + 1);
     seen.current = status;
-  }, [status]);
+  }, [active, status]);
 
   const [refresh] = useState(() => new ConversationRefresh());
   const [pushes, setPushes] = useState(false);
   useEffect(() => {
-    let alive = true;
-    const generation = ++epoch.current;
     chatRef.current = null;
     setChat(null);
+    onBytes?.(0);
+  }, [pane, showThinking, onBytes]);
+  useEffect(() => {
+    if (!reading) return;
+    let alive = true;
+    const generation = ++epoch.current;
     olderBusy.current = false;
     setOlderState("idle");
     refresh.setRead(async () => {
       try {
         const r = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true });
-        if (!alive) return;
+        if (!alive || !readingRef.current) return;
         if (r.kind === "chat") {
           // 최신 쪽이 통째로 앞으로 이동했어도 사이 기록을 버리지 않는다(참고 ChatView gap fill).
           const held = chatRef.current;
@@ -520,7 +546,7 @@ export function ChatPanel({
             let gap = r;
             while (gap.before && !gap.messages.some((m) => m.id && known.has(m.id))) {
               const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true, before: gap.before });
-              if (!alive || epoch.current !== generation) return;
+              if (!alive || !readingRef.current || epoch.current !== generation) return;
               if (previous.kind !== "chat" || previous.history !== r.history) break;
               if (previous.before === gap.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
               newest = mergeChatPage(newest, previous, true);
@@ -528,10 +554,11 @@ export function ChatPanel({
             }
           }
           // 앞 쪽을 읽다가 pane을 떠났다면 기억한 row까지 다시 채운 뒤 한 번에 복원한다.
-          if (restoring.current && restoreFrom?.rowId.startsWith(`${r.history}:`)) {
+          if (restoring.current && restoreFrom?.rowId.startsWith(`${r.history}:`)
+            && !held?.messages.some(m => m.id === restoreFrom.rowId)) {
             while (newest.before && !newest.messages.some((m) => m.id === restoreFrom.rowId)) {
               const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true, before: newest.before });
-              if (!alive || epoch.current !== generation) return;
+              if (!alive || !readingRef.current || epoch.current !== generation) return;
               if (previous.kind !== "chat" || previous.history !== r.history) break;
               if (previous.before === newest.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
               newest = mergeChatPage(newest, previous, true);
@@ -559,11 +586,11 @@ export function ChatPanel({
       refresh.setPushes(false);
       setPushes(false);
     };
-  }, [pane, showThinking, refresh, onMessages]);
+  }, [reading, pane, showThinking, refresh, onMessages, onBytes]);
   // 처음·보낸 뒤·턴 시작과 끝은 읽기를 끊지 않고 바로 읽는다(읽는 곳은 위 effect가 먼저 둔다)
   useEffect(() => {
-    refresh.refresh();
-  }, [pane, showThinking, pollKey, readNow, refresh]);
+    if (reading) refresh.refresh();
+  }, [reading, pane, showThinking, pollKey, readNow, refresh]);
 
   // 앞 쪽 하나를 받아 붙인다. 찾기의 「앞 기록도 찾기」(plan §8.310)는 결과를 보고 다음 쪽을 부른다. 이미 받는 중이면 그 결과를 기다린다
   const olderRun = useRef<Promise<OlderOutcome> | null>(null);
@@ -575,6 +602,7 @@ export function ChatPanel({
   };
   const loadOlder = () => void pageOlder();
   const readOlder = async (keepFollowing: boolean): Promise<OlderOutcome> => {
+    if (!reading) return "gone";
     const before = chatRef.current?.before;
     if (!before || !chatRef.current?.history) return "done";
     const generation = epoch.current;
@@ -587,7 +615,7 @@ export function ChatPanel({
         if (epoch.current !== generation) throw new Error("이 대화 읽기는 끝났습니다");
         return call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true, before });
       });
-      if (epoch.current !== generation) return "gone";
+      if (!readingRef.current || epoch.current !== generation) return "gone";
       if (response.kind !== "chat" || !response.history) {
         throw new Error("이 host는 앞 기록 읽기를 지원하지 않습니다");
       }
@@ -609,7 +637,7 @@ export function ChatPanel({
       setError(null);
       return "loaded";
     } catch (e) {
-      if (epoch.current !== generation) return "gone";
+      if (!readingRef.current || epoch.current !== generation) return "gone";
       setOlderState("failed");
       setError(e instanceof Error ? e.message : String(e));
       return "failed";
@@ -620,8 +648,8 @@ export function ChatPanel({
   // 빈/도구 전용 쪽도 다음 cursor로 진행한다. 짧은 화면은 스크롤 사건이 없어도 앞 쪽을 채운다.
   useEffect(() => {
     const el = list.current;
-    if (el && el.scrollTop < 400 && (!atBottom.current || el.scrollHeight <= el.clientHeight) && olderState === "idle" && chat?.before) loadOlder();
-  }, [chat, olderState]);
+    if (reading && el && el.scrollTop < 400 && (!atBottom.current || el.scrollHeight <= el.clientHeight) && olderState === "idle" && chat?.before) loadOlder();
+  }, [reading, chat, olderState]);
 
   // 줄 id(chatScroll.ts): React key이자 읽던 자리의 기준이다. 차례 번호를 key로 쓰면 agent가 기록 앞을 자를 때마다 같은 DOM에
   // 다음 말이 들어가 보던 화면이 밀린다(사용자 10-19 16:5x 「위를 보고 있으면 거기에 멈춰 있게」)
@@ -660,7 +688,7 @@ export function ChatPanel({
     if (count === 0) return null;
     const last = fresh.at(-1);
     return { count, row: last ? `pending-${last.id}` : `message-${lastQueued}` };
-  }, [chat, pending]);
+  }, [active, chat, pending]);
   const steerFor = (row: string): SteerView | undefined =>
     steer && steerTarget?.row === row ? { ...steer, count: steerTarget.count } : undefined;
   const rowIdsRef = useRef(rowIds);
@@ -671,7 +699,7 @@ export function ChatPanel({
   // 그 말의 id가 곧 화면 줄 id다(도구 묶음은 찾지 않는다)
   const chatMessages = useMemo(() => chat?.messages ?? [], [chat]);
   const messageRowIds = useMemo(() => chatRowIds(chatMessages), [chatMessages]);
-  const find = useChatFind({ container: list, messages: chatMessages, rowIds: messageRowIds, canOpen: onOpenFile !== undefined, openRequest: findRequest,
+  const find = useChatFind({ enabled: active, container: list, messages: chatMessages, rowIds: messageRowIds, canOpen: onOpenFile !== undefined, openRequest: findRequest,
     more: Boolean(chat?.before || chat?.truncated), loadEarlier: chat?.history && chat.before ? () => pageOlder(true) : null });
   // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
   // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
@@ -714,16 +742,40 @@ export function ChatPanel({
   const resizeRow = useRef<() => void>(() => {});
   resizeRow.current = () => {
     const el = list.current;
-    if (!el || el.scrollTop !== lastScrollTop.current) return;
+    if (!active || !layoutActive.current || !el || el.scrollTop !== lastScrollTop.current) return;
     if (atBottom.current) scrollToEnd(false);
     else holdAnchor(el);
   };
   const onRowResize = useCallback(() => resizeRow.current(), []);
+  const layoutActive = useRef(false);
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (!active || !el) return;
+    // 받아 둔 과거 위치도 기존 두 frame 복원으로 지킨다. 가상 row의 재측정 중간 위치를 완료로 알리지 않는다.
+    if (chatRef.current && !atBottom.current && anchor.current) {
+      restoring.current = true;
+      setPositioning(true);
+      setRestoreFrom({ ...anchor.current, atEnd: false });
+    }
+    // display:none 동안 브라우저가 scrollTop을 줄여도 마지막으로 읽던 위치가 기준이다.
+    el.scrollTop = lastScrollTop.current;
+    lastScrollTop.current = el.scrollTop;
+    if (!restoring.current) {
+      if (atBottom.current) scrollToEnd(false);
+      else holdAnchor(el);
+    }
+    layoutActive.current = true;
+    return () => {
+      layoutActive.current = false;
+      if (jumpTimer.current !== null) window.clearTimeout(jumpTimer.current);
+      jumpTimer.current = null;
+    };
+  }, [active]);
   // 기억한 자리로(참고 MessagesTimeline 871~955줄): 기록을 처음 그린 뒤 그 줄 위 + 거리로 굴리고, 그림·글꼴로 높이가 바뀌어도
   // 두 frame 동안 같을 때까지 맞춘다. 줄이 없어졌으면 굴림 거리로. 손이 굴리면(휠·끌기·누름·굴림 키) 그 자리에서 그친다
   useLayoutEffect(() => {
     const el = list.current;
-    if (el === null || !restoring.current || restoreFrom === null || chat === null) return;
+    if (!active || el === null || !restoring.current || restoreFrom === null || chat === null) return;
     let frame: number | null = null;
     const finish = () => {
       if (frame !== null) cancelAnimationFrame(frame);
@@ -785,7 +837,7 @@ export function ChatPanel({
       if (cancelRestore.current === finish) cancelRestore.current = null;
       detach();
     };
-  }, [chat, restoreFrom]);
+  }, [active, chat, restoreFrom]);
   /** 끝으로 가서 따라간다(참고 scrollToEnd). 단추는 부드럽게, 보낸 뒤는 바로 */
   const scrollToEnd = (animated: boolean) => {
     cancelRestore.current?.();
@@ -804,16 +856,16 @@ export function ChatPanel({
   // 이 화면이 보낸 뒤는 끝으로(사용자 결정 §8.250 「입력 보낸 뒤에는 맨 아래로」). 처음 값은 지난 보내기다
   const sentSeen = useRef(readNow);
   useLayoutEffect(() => {
-    if (readNow === sentSeen.current) return;
+    if (!active || readNow === sentSeen.current) return;
     sentSeen.current = readNow;
     scrollToEnd(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 보낸 때만
-  }, [readNow]);
+  }, [active, readNow]);
 
   // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect). 아니면 보던 줄을 지킨다
   useLayoutEffect(() => {
     const el = list.current;
-    if (el === null) return;
+    if (!active || el === null) return;
     // 기록이 짧아져 브라우저가 옛 위치를 새 끝으로 줄인 것은 손의 이동이 아니다.
     // 늦은 scroll 사건이 앞 쪽 읽기 중 따라가기를 다시 켜지 않게, 그리기 직후 반영한다.
     const end = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -825,13 +877,13 @@ export function ChatPanel({
       lastScrollTop.current = el.scrollTop;
     }
     else holdAnchor(el);
-  }, [chat, pending]);
+  }, [active, chat, pending]);
   // 입력창이 커지거나(여러 줄·보내기 상태·알림) 키보드가 오르거나 창이 좁아지면 보기가 굴림 사건 없이 줄어든다. 폭·글자가 바뀌어
   // 대화가 다시 접혀도 그렇다. 맨 아래를 보던 사람은 바로 맨 아래에 남는다. 높이만 는 것(접힌 말 펼침)은 손이 한 일이라 따라가지 않는다
   // (참고 herdr-web-ui `aa624cb` ChatView.tsx ResizeObserver, plan §8.250)
   useEffect(() => {
     const el = list.current;
-    if (el === null) return;
+    if (!active || el === null) return;
     let lane = "";
     const observer = new ResizeObserver((entries) => {
       if (el.scrollTop !== lastScrollTop.current) return;
@@ -851,7 +903,7 @@ export function ChatPanel({
     observer.observe(el);
     if (el.firstElementChild !== null) observer.observe(el.firstElementChild);
     return () => observer.disconnect();
-  }, []);
+  }, [active]);
 
   return (
     <OpenFileContext.Provider value={onOpenFile ?? null}>
@@ -861,7 +913,7 @@ export function ChatPanel({
       <div
         className="chat"
         ref={list}
-        data-testid="chat"
+        data-testid={active ? "chat" : undefined}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "End" && !(e.target instanceof Element && e.target.closest("input, textarea, [contenteditable=true]"))) {
@@ -884,6 +936,7 @@ export function ChatPanel({
         onScroll={(e) => {
           // 위로 굴린 손만 따라가기를 끈다: 아래로 가는 자동 굴림은 다음 잰 높이보다 먼저 올 수 있다(참고 ChatView.tsx onScroll)
           const el = e.currentTarget;
+          if (!active || !layoutActive.current || el.clientHeight === 0) return;
           const manual = el.scrollTop !== lastScrollTop.current;
           const scrollingUp = el.scrollTop < lastScrollTop.current;
           lastScrollTop.current = el.scrollTop;
@@ -908,7 +961,7 @@ export function ChatPanel({
             {harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
             {chat?.truncated && " 앞부분은 생략했다."}
           </p>
-          <p className="chat-note" data-testid="chat-history-start">
+          <p className="chat-note" data-testid={active ? "chat-history-start" : undefined}>
             {chat?.history && !chat.before ? "처음이다" : chat?.before ? (
               <button type="button" className="chat-older" disabled={olderState === "loading"} onClick={loadOlder}>
                 {olderState === "loading" ? "앞 기록 불러오는 중…" : olderState === "failed" ? "앞 기록 다시 불러오기" : "앞 기록 더 보기"}
@@ -930,9 +983,9 @@ export function ChatPanel({
               ) : m.role === "command_output" ? (
                 <CommandOutputRow key={key} text={m.text} />
               ) : m.role === "user" ? (
-                <UserTurn key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
+                <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (
-                <AgentTurn key={key} text={m.text} />
+                <AgentTurn active={active} key={key} text={m.text} />
               ) : (
                 <div key={key} className={`chat-msg ${m.role}`} data-role={m.role}>
                   {linkFilePaths(m.text, onOpenFile ?? null)}
@@ -940,7 +993,7 @@ export function ChatPanel({
               );
             };
             return (
-              <ChatRow key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={virtual} onResize={onRowResize}>
+              <ChatRow active={active} key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={virtual} onResize={onRowResize}>
                 {row.kind === "tools" ? (
                   <ToolGroup messages={row.indices.map((i) => chat.messages[i]!)} expanded={groupExpanded(row, expandedGroups)}
                     live={status === "working" && n === displayRows.length - 1} onToggle={() => toggleGroup(row)}>
@@ -950,8 +1003,9 @@ export function ChatPanel({
               </ChatRow>
             );
           })}
+          {coordinator && <AutoDecisionLines />}
           {pending.map((p) => (
-            <UserTurn key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
+            <UserTurn active={active} key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
               pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
           ))}
           {chat && chat.messages.length === 0 && pending.length === 0 && !error && !compacting && <p className="chat-note">아직 대화가 없다.</p>}
@@ -960,7 +1014,7 @@ export function ChatPanel({
         {/* 「맨 아래로」(참고 ChatView.tsx:8074 「Scroll to end」): 대화 아래 가운데에 뜬다. 입력창 focus를 뺏지 않는다 */}
         {showJump && (
           <div className="chat-jump">
-            <button type="button" className="chat-jump-button" data-testid="chat-jump" onPointerDown={(e) => e.preventDefault()} onClick={() => scrollToEnd(true)}>
+            <button type="button" className="chat-jump-button" data-testid={active ? "chat-jump" : undefined} onPointerDown={(e) => e.preventDefault()} onClick={() => scrollToEnd(true)}>
               <ArrowDown aria-hidden="true" />
               맨 아래로
             </button>

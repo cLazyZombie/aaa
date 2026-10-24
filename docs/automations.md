@@ -224,7 +224,14 @@ max_per_day = 2
 
 `do.start.reuse = "open"`이면 같은 규칙이 만든 가장 최근 Starting/Open thread로 입력을 모은다. 기본 `new`는 사건마다 새 thread다.
 `memory = true`, `close_idle = "30m"`, `reports = true`를 선택할 수 있다. memory·close_idle는 open에서만 받으며 reports는 승인 범위 hash를 바꾸지 않는다.
-Codex profile의 open은 거부한다. 기존 임무의 제한은 대화 길이가 아니라 compaction 뒤 지시를 재독시킬 hook이 없는 데서 왔다.
+Claude·Codex profile 모두 open을 지원한다. `memory=true` 자동화에만 공통 `SessionStart` hook이 작업 폴더의
+`brief.md`와 `memory/memory.md`를 지금 파일에서 다시 읽도록 안내한다. 압축(`source=compact`)·재개(`resume`)와
+새 시작에도 같은 기억 규칙(4KiB 요약·history·processed.txt)을 돌려준다. 기억 본문은 hook에 복사하지 않으므로
+그 뒤 갱신한 파일을 읽으며, 하위 agent·일반 thread·기억을 끈 자동화에는 이 안내를 넣지 않는다.
+
+재독 안내는 host가 기억을 옮긴 뒤 세션 명세에 저장하여 agent 재연결에도 보존한다. 업그레이드 전에 시작한 pane은
+이 문맥이 없으므로 thread를 재시작하거나 다음 새 실행부터 적용한다. Codex는 기존 전역 연동이 설치되고 hooks가 켜져 있어야 한다.
+실제 모델의 파일 읽기 이행은 harness에 달려 있으며, hook은 그 작업을 요청하는 문맥을 제공한다.
 
 한 사건 자체가 512KiB를 넘으면 접수를 거부해 source 원본·커서를 보존한다. 입력은 최대 32건·512KiB 묶음으로 작업 폴더 inbox에 먼저 기록하고 Queue 메시지로 알린다. 확인창 동안 파일을 보존하며,
 전달 여부를 모르면 막힌 큐에 남긴다. 자동으로 다시 보내지 않는다. 「확인하고 풀기」는 기존 상세 화면에서 한다.

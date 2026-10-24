@@ -1,6 +1,16 @@
 // 생성 파일: crates/aaa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.
 // 갱신: AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript
 
+export type AutoMode = { on: boolean, since_ms: number, ended_ms: number, by: string, run: number, decisions: number, };
+
+export type AutoDecision = { id: string, run: number, subject: string, question: ThreadQuestion, choice: string, pick: number | null, reason: string, action: string,
+/**
+ * 답을 바꿔도 이미 실행한 작업은 host가 되돌리지 않는다. 아직 알 수 없으면 null.
+ */
+reversible: boolean | null, decided_by: string, at_ms: number, outcome: string, error: string | null, reviewed: boolean, reconsideration: string | null, files_base: string | null, };
+
+export type AutoDecisionNote = { question: string, answer: string, reason: string, action: string, reversible: boolean, };
+
 export type MetricCounts = { passed: number, failed: number, skipped: number, filtered: number, unit: string, };
 
 export type MetricTiming = { name: string, duration_ms: number, start_ms: number | null, outcome: string, };
@@ -611,7 +621,7 @@ restored_by: number | null, };
 
 export type TaskLogFilter = "deleted" | "auto" | "restored";
 
-export type ThreadStartPreview = { profile_revision: string, model: string, effort: string,
+export type ThreadStartPreview = { workspace_access: { [key in string]: Array<string> }, profile_revision: string, model: string, effort: string,
 /**
  * task 제목(thread 제목이 된다)
  */
@@ -670,7 +680,7 @@ export type OwnerChoice = { machine: string, connected: boolean,
  */
 profiles: Array<string>, };
 
-export type ProjectContext = {
+export type ProjectContext = { auto_mode: AutoMode, auto_mode_exceptions: string,
 /**
  * inbox를 끝내도 해제 전까지 남는 활성 post 음소거 경고
  */
@@ -1057,7 +1067,7 @@ export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery,
 /**
  * 비었으면 등록된 모든 머신
  */
-machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null, } | { "op": "auto_decisions", project: string, before: string | null, id: string | null, } | { "op": "auto_mode_get", project: string, } | { "op": "auto_mode_set", project: string, on: boolean, } | { "op": "question_auto_answer", project: string, id: string, choice: string | null, text: string | null, reason: string, } | { "op": "auto_decision_review", project: string, id: string, answer: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -1175,7 +1185,7 @@ title: string | null,
 /**
  * FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`). 없으면 host가 원본 경로·이름에서 그 프로젝트의 thread를 찾는다
  */
-from_thread?: string, } | { "op": "library_archive", reports: Array<LibraryRef>, archived: boolean, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
+from_thread?: string, } | { "op": "library_archive", reports: Array<LibraryRef>, archived: boolean, } | { "op": "library_mark_read", reports: Array<LibraryRef>, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
@@ -1211,7 +1221,7 @@ picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | 
 /**
  * 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
  */
-body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
+body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "workspace_access", project?: string, machine: string, } | { "op": "workspace_access_set", project?: string, machine: string, workspace: string, enabled: boolean, revision: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
 /**
  * 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
  */
@@ -1338,7 +1348,7 @@ handled?: boolean, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**
  * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */
-muted?: Array<string>, } | { "kind": "asks", requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+muted?: Array<string>, } | { "kind": "auto_mode" } & AutoMode | { "kind": "auto_decisions", decisions: Array<AutoDecision>, next: string | null, } | { "kind": "asks", auto_mode: AutoMode, auto_decisions: Array<AutoDecision>, auto_next: string | null, auto_exceptions: number, requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -1366,7 +1376,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "unpark_preview" } & UnparkPreview | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "workspace_access" } & WorkspaceAccessView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "unpark_preview" } & UnparkPreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -1465,7 +1475,7 @@ export type Skipped = { path: string, reason: string,
  */
 lazy_size: number | null, };
 
-export type ProjectView = { name: string, path: string, threads: number,
+export type ProjectView = { auto_mode?: AutoMode, name: string, path: string, threads: number,
 /**
  * FRONT_API 1.33. 옛 host는 보내지 않는다(active)
  */
@@ -1719,7 +1729,7 @@ pending: number, };
 
 export type ThreadQuestions = {
 /**
- * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+ * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치를 알린다. 답 전송은 허용한다. 옛 host는 생략한다.
  */
 format_warning?: string,
 /**
@@ -2269,6 +2279,14 @@ repos: Array<RepoChoice>,
  * host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
  */
 local_machine: string | null, task_notes: Array<string>, };
+
+export type WorkspaceAccessView = { project: string, machine: string, revision: string, workspaces: Array<WorkspaceAccessRow>, };
+
+export type WorkspaceAccessRow = { workspace: string, enabled: boolean,
+/**
+ * 비면 이 머신에 등록된 경로가 없다. 작업 폴더는 agent 작업 root를 쓴다.
+ */
+paths: Array<string>, };
 
 export type SettingsScope = "project" | "global";
 

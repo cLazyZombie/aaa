@@ -35,7 +35,7 @@ function viewportProbes(t) {
   const compile = (text) => {
     const source = ts.createSourceFile("Viewport.ts", text, ts.ScriptTarget.Latest, true);
     const viewport = source.statements.find(ts.isClassDeclaration);
-    const methods = viewport.members.filter((m) => ["_handleScroll", "_innerRefresh", "_refresh", "syncScrollArea"].includes(m.name?.getText(source)));
+    const methods = viewport.members.filter((m) => ["reset", "_handleScroll", "_innerRefresh", "_refresh", "syncScrollArea"].includes(m.name?.getText(source)));
     const code = ts.transpileModule(`export class Probe { ${methods.map((m) => m.getText(source)).join("\n")} }`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
     const module = {};
     new Function("exports", code)(module);
@@ -103,5 +103,65 @@ test("xterm PageUp의 늦은 native scroll이 다음 PageDown을 되돌리지 �
     nativeTop = 0;
     patched.prototype._handleScroll.call(state, new Event("scroll"));
     assert.deepEqual(requests.splice(0), [{ amount: -171, suppressScrollEvent: true }], "동기화와 합쳐진 실제 사용자 이동");
+  }
+});
+
+test("xterm reset frame·생성 task·refresh는 dispose 뒤 renderer를 읽지 않는다", (t) => {
+  const { patched, upstream } = viewportProbes(t);
+  for (const implementation of [upstream, patched]) {
+    const frames = [];
+    let reads = 0;
+    const state = {
+      _isDisposed: false,
+      _coreBrowserService: { window: { requestAnimationFrame: (callback) => frames.push(callback) } },
+      _bufferService: { buffer: { lines: { length: 0 } } },
+      _renderService: { get dimensions() { reads++; throw new TypeError("renderer disposed"); } },
+      _charSizeService: { get height() { reads++; throw new TypeError("disposed refresh"); } },
+    };
+    Object.setPrototypeOf(state, implementation.prototype);
+    state.reset();
+    state._isDisposed = true; // upstream Disposable.dispose가 설정하는 수명 표지
+    for (const callback of [frames.shift(), () => state.syncScrollArea(), () => state._innerRefresh()]) {
+      if (implementation === upstream) assert.throws(callback, TypeError, "구판은 renderer 제거 뒤에도 읽는다");
+      else assert.doesNotThrow(callback);
+    }
+    assert.equal(reads, implementation === upstream ? 3 : 0);
+  }
+});
+
+test("xterm 배율 monitor는 terminal 해제 때 resize·media listener도 해제한다", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aaa-xterm-lifecycle-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, "src/browser/services"), { recursive: true });
+  const name = "browser/services/CoreBrowserService";
+  const original = readFileSync(new URL(`../node_modules/@xterm/xterm/src/${name}.ts`, import.meta.url), "utf8");
+  writeFileSync(join(root, `src/${name}.ts`), original);
+  applyPatch(root, readFileSync(new URL("../patches/xterm-5.5.0-lifecycle.patch", import.meta.url), "utf8"));
+  const patched = readFileSync(join(root, `src/${name}.ts`), "utf8");
+  for (const text of [original, patched]) {
+    const modules = new Map();
+    const load = id => {
+      if (modules.has(id)) return modules.get(id);
+      const source = id === name ? text : readFileSync(new URL(`../node_modules/@xterm/xterm/src/${id}.ts`, import.meta.url), "utf8");
+      const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, useDefineForClassFields: false } }).outputText;
+      const exports = {}; modules.set(id, exports);
+      new Function("require", "exports", code)(load, exports);
+      return exports;
+    };
+    const { CoreBrowserService } = load(name);
+    const resize = new Set(), media = new Set();
+    const window = {
+      devicePixelRatio: 1,
+      addEventListener: (type, fn) => { assert.equal(type, "resize"); resize.add(fn); },
+      removeEventListener: (type, fn) => { assert.equal(type, "resize"); resize.delete(fn); },
+      matchMedia: () => ({ addListener: fn => media.add(fn), removeListener: fn => media.delete(fn) }),
+    };
+    for (let n = 0; n < 20; n++) {
+      const service = new CoreBrowserService(new EventTarget(), window, {});
+      assert.equal(resize.size, text === patched ? 1 : n + 1);
+      service.dispose();
+      assert.equal(resize.size, text === patched ? 0 : n + 1);
+      assert.equal(media.size, text === patched ? 0 : n + 1);
+    }
   }
 });

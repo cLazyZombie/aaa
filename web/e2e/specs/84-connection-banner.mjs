@@ -64,18 +64,22 @@ export default async function () {
       await page.locator(`[data-testid="terminal"][data-pane-name="${id === pane.id ? "banner-chat" : "t1"}"]`).waitFor({ state: "attached" });
     };
     const openHeld = async () => {
+      const began = await page.evaluate(() => Date.now());
       await page.evaluate(() => { window.holdPaneOpen = true; window.connectionBanners = []; });
       await select(pane.id);
       const toggle = page.getByTestId("chat-toggle");
       if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.evaluate((el) => el.click());
       await page.getByTestId("chat").getByText("연결 시험 기록 2399", { exact: true }).waitFor();
+      // 복귀 본문을 먼저 그리는 세 frame도 제어한 시계로 실행한다. 499/500ms 예산에는 이 시간을 포함한다.
+      await page.clock.runFor(50);
       await waitOpen();
+      return (await page.evaluate(() => Date.now())) - began;
     };
     try {
       await domIs(page, "첫 셸 연결 완료", () => document.querySelector('[data-testid="terminal"]')?.getAttribute("data-readonly") === "false");
       await page.clock.pauseAt(new Date());
-      await openHeld();
-      await page.clock.runFor(499);
+      const firstElapsed = await openHeld();
+      await page.clock.runFor(499 - firstElapsed);
       assert.equal(await banner.count(), 0, "499ms까지 연결 띠 없음");
       await page.evaluate(() => window.releasePaneOpen());
       await page.clock.runFor(1);
@@ -85,8 +89,8 @@ export default async function () {
 
       const shell = aaa("pane", "list").panes.find((p) => p.name === "t1");
       await select(shell.id);
-      await openHeld();
-      await page.clock.runFor(499);
+      const secondElapsed = await openHeld();
+      await page.clock.runFor(499 - secondElapsed);
       assert.equal(await banner.count(), 0, "새 연결도 지연을 새로 셈");
       await page.clock.runFor(1);
       await banner.getByText("연결하는 중", { exact: true }).waitFor();

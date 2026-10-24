@@ -10,6 +10,18 @@
 .machine-info-body dt { color: var(--text-dim); }
 .machine-info-body dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .machine-info-stale { padding: var(--space-3); margin: 0 0 var(--space-4); background: var(--bg-elevated); border-radius: var(--radius-md); font-size: var(--fs-sm); }
+.machine-info-panel.is-page { position: relative; inset: auto; z-index: auto; width: 100%; min-height: 0; flex: 1; border: 0; box-shadow: none; }
+.machine-info-panel.is-page .machine-info-head { flex-shrink: 0; height: calc(var(--head) + env(safe-area-inset-top, 0px)); padding: var(--space-2) var(--space-3); padding-top: calc(var(--space-2) + env(safe-area-inset-top, 0px)); }
+.machine-info-panel.is-page .machine-info-head > div { flex: 1; min-width: 0; }
+.machine-info-panel.is-page h2 { margin-top: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.machine-info-panel.is-page .machine-info-body { flex: 1; min-height: 0; }
 button.machine-title { justify-content: flex-start; gap: 0; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 button.machine-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius-sm); }
 @media (max-width: 640px) { .machine-info-panel { width: 100%; border-left: 0; } }
+
+.machine-workspaces p { font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.5; }
+.machine-workspace-row { display: flex; gap: var(--space-3); align-items: center; min-height: 52px; padding: var(--space-2) 0; border-bottom: var(--hairline) solid var(--border); font-size: var(--fs-sm); cursor: pointer; }
+.machine-workspace-row > input { flex: 0 0 auto; width: 20px; height: 20px; accent-color: var(--accent); }
+.machine-workspace-row > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.machine-workspace-row small { display: block; margin-top: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
+.machine-workspace-row > span:last-child { color: var(--text-dim); white-space: nowrap; }

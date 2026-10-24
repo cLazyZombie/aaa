@@ -188,7 +188,7 @@ async fn reports_update_progress_preserve_goal_and_keep_later_instructions_acros
 }
 
 #[tokio::test]
-async fn question_format_warning_keeps_even_empty_cards_blocks_all_answers_and_notifies_once() {
+async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_once() {
     for report in [
         "[결정 필요] 질문 1개: 진행\n## Questions\n### 1. 진행\n- **A 진행\n- B 보류\n- C 멈춤\n",
         "[검수 대기] 질문 1개: 진행\n## Questions\n### 1. 진행\n- A 진행\n",
@@ -201,10 +201,10 @@ async fn question_format_warning_keeps_even_empty_cards_blocks_all_answers_and_n
         assert!(!q.review, "명시한 질문이 깨지면 기본 검수 카드로 대신하지 않는다");
         assert_eq!(view.copy.as_deref(), Some("complete"));
         let err = lab.h.thread_answer("p", "t-0001", &q.report_hash, vec![Some(0)], None, "test").await.unwrap_err();
-        assert!(err.message.contains("형식 확인 필요"));
+        assert_eq!(err.message, "thread 세션이 없다");
         if let Some(id) = q.items.first().and_then(|q| q.id.as_deref()) {
             let err = lab.h.reply_by_id("p", id, Some("A"), None, "test").await.unwrap_err();
-            assert!(err.message.contains("형식 확인 필요"));
+            assert_eq!(err.message, "thread 세션이 없다");
             assert!(lab.h.db.question_target(Some("p"), id).unwrap().unwrap().draft.is_none());
         }
         lab.h.collect("p", "t-0001", true).await.unwrap();

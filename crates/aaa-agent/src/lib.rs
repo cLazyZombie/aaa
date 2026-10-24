@@ -419,7 +419,32 @@ impl Agent {
         // aaa가 hook 설정을 주는 thread 세션만 안내한다(herdr-projects `managed`: coordinator·thread pane)
         let managed = spec.spec.role.is_some();
         Ok(if managed && matches!(msg.harness.as_str(), "claude" | "codex") {
-            self.guide(&msg.session, &msg.payload, now).map(hooks::Reply::Text)
+            let auto_context = if spec.spec.role == Some(aaa_proto::Role::Coordinator)
+                && matches!(hooks::guide_kind(&msg.payload), Some("SessionStart" | "UserPromptSubmit"))
+            {
+                let project = spec
+                    .spec
+                    .cwd
+                    .as_deref()
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .and_then(|p| p.to_str())
+                    .unwrap_or_default();
+                Some(self.coordinator_auto_context(project).await)
+            } else {
+                None
+            };
+            self.guide(
+                &msg.session,
+                &msg.payload,
+                spec.spec
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == aaa_proto::AUTOMATION_REENTRY_ENV)
+                    .map(|(_, text)| text.as_str()),
+                now,
+                auto_context.as_deref(),
+            )
+            .map(hooks::Reply::Text)
         } else {
             None
         })
@@ -427,7 +452,14 @@ impl Agent {
 
     /// Claude·Codex hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
     /// 넣지 않는다(`foreign_session`). 실행 파일 경로는 brief와 같은 꼴이다(`fill_brief`).
-    fn guide(&self, session: &str, p: &serde_json::Value, now: u64) -> Option<String> {
+    fn guide(
+        &self,
+        session: &str,
+        p: &serde_json::Value,
+        reentry: Option<&str>,
+        now: u64,
+        auto_context: Option<&str>,
+    ) -> Option<String> {
         let kind = hooks::guide_kind(p)?;
         let id = p.get("session_id").and_then(|v| v.as_str());
         if kind != "SessionStart"
@@ -438,9 +470,38 @@ impl Agent {
         }
         let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
         let mut map = self.progress.lock().unwrap();
-        let text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
+        let mut text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now, reentry)?;
+        if let Some(context) = auto_context {
+            text.push_str("\n\n");
+            text.push_str(context);
+        }
 
         Some(hooks::output(kind, &text))
+    }
+
+    /// coordinator는 host 머신에 있다. 재시작·compaction 뒤에도 캐시 대신 host의 정본을 읽는다.
+    async fn coordinator_auto_context(&self, project: &str) -> String {
+        let root = self.state.parent().unwrap_or(&self.state);
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            let mut client = aaa_common::front::FrontClient::connect(root).await?;
+            match client.call(aaa_proto::FrontRequest::AutoModeGet { project: project.into() }).await?? {
+                aaa_proto::FrontResponse::AutoMode(mode) => Ok::<_, anyhow::Error>(mode),
+                _ => anyhow::bail!("auto mode 조회의 응답 종류가 다르다"),
+            }
+        })
+        .await;
+        match result {
+            Ok(Ok(mode)) => format!(
+                "aaa coordinator auto_mode: {} · 자동 결정 {}. 매 턴 aaa context로 다시 확인한다. harness 권한과 무관하며 사용자 전용 승인을 대신하지 않는다. 예외: {}",
+                if mode.on { "on" } else { "off" },
+                mode.decisions,
+                aaa_proto::AUTO_MODE_EXCEPTIONS
+            ),
+            other => {
+                tracing::warn!("coordinator hook auto mode 조회 실패: {other:?}");
+                "aaa coordinator auto_mode: 확인 못함. 자동 결정 전에 aaa context로 host 상태와 예외 목록을 확인한다. 이전 상태를 추측하지 않는다.".into()
+            }
+        }
     }
 
     /// harness 사건을 기억하고(다시 알릴 것이면) host에 보낸다

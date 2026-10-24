@@ -796,7 +796,7 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
             .await
             .unwrap();
         let ready = leave(&h, &job.job, MachineSetupPhase::Detecting).await;
-        assert_eq!(ready.phase, MachineSetupPhase::Ready);
+        assert_eq!(ready.phase, MachineSetupPhase::Ready, "감지 실패: {:?}", ready.error);
         let detected = as_mac(&h, &job.job);
         let settings = MachineSetupSettings {
             name: "lab-b".into(),

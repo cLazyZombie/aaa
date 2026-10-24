@@ -707,6 +707,7 @@ fn cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted() {
 fn queued_job(l: &Lab, id: &str) -> Job {
     let job = Job {
         args: StartArgs {
+            automatic_workspace: None,
             start_task: None,
             pool: Some(PoolRequest { id: id.into(), size: AccountTaskSize::Medium }),
             over_limit: None,

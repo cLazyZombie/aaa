@@ -1,0 +1,8 @@
+diff --git a/src/browser/services/CoreBrowserService.ts b/src/browser/services/CoreBrowserService.ts
+--- a/src/browser/services/CoreBrowserService.ts
++++ b/src/browser/services/CoreBrowserService.ts
+@@ -14,3 +14,3 @@
+   private _isFocused = false;
+   private _cachedIsFocused: boolean | undefined = undefined;
+-  private _screenDprMonitor = new ScreenDprMonitor(this._window);
++  private _screenDprMonitor = this.register(new ScreenDprMonitor(this._window));

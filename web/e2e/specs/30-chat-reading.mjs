@@ -5,7 +5,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 30-chat-reading(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { root, aaa, AA, step, inList, until, domIs, waitOutput, shot } from "../lib/harness.mjs";
+import { root, aaa, AA, step, inList, until, domIs, waitOutput, shot, inTime, webkit, pairPage } from "../lib/harness.mjs";
 
 export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0" };
 
@@ -76,6 +76,44 @@ async function openChat(p, label, count = 60) {
   }
   await p.getByTestId("chat-composer").waitFor();
   await until("대화 기록", async () => (await p.locator('[data-testid="chat"] .chat-msg').count()) >= count);
+  await p.locator('[data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
+}
+
+async function lateAck(page, label, session) {
+  // host가 받은 뒤 ACK만 늦어진 보내기: 화면을 숨겨 연결이 끝나도 결과 정리·초안 복구는 남고 재전송하지 않는다.
+  readingPane(label, session);
+  await waitOutput(label, "received 0");
+  const target = aaa("pane", "list").panes.find(p => p.name === label);
+  let ack, arrive;
+  const arrived = new Promise(resolve => { arrive = resolve; });
+  await page.context().routeWebSocket(new RegExp(`/api/v1/panes/${target.id}/ws`), socket => {
+    const server = socket.connectToServer();
+    server.onMessage(raw => {
+      if (typeof raw === "string") {
+        const message = JSON.parse(raw);
+        if (message.t === "submitted") { ack = message; arrive(); return; }
+      }
+      socket.send(raw);
+    });
+    socket.onMessage(raw => server.send(raw));
+  });
+  await openChat(page, label);
+  await page.locator('[data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
+  const late = "전환 직전 한 번 보내기";
+  const lateBox = page.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
+  await lateBox.fill(late);
+  await page.getByRole("button", { name: "메시지 보내기", exact: true }).click();
+  await inTime(arrived, 20_000, "실제 host 송신 ACK 보류");
+  assert.equal(ack.ok, true);
+  await waitOutput(label, `received ${Buffer.byteLength(`${late}\r`)}`);
+  await page.evaluate(() => { location.hash = "tasks"; });
+  await domIs(page, "숨긴 송신의 초안 복구", id => document.querySelector(`.term[data-pane="${id}"] textarea[aria-label="메시지"]`)?.value === "전환 직전 한 번 보내기", target.id);
+  await openChat(page, label);
+  await page.locator('[data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
+  assert.equal(await lateBox.inputValue(), late);
+  assert.equal(fs.readFileSync(`${directory}/${label}.bytes`, "utf8"), `${late}\r`);
+  await lateBox.fill("");
+  aaa("pane", "kill", label);
 }
 
 export default async function ({ page }) {
@@ -140,7 +178,7 @@ export default async function ({ page }) {
         el.addEventListener('scroll', () => { window.__earlyChatScroll = { before, after: el.scrollTop }; }, { once: true });
         el.scrollTop = 0;
       });
-      observer.observe(document.body, { childList: true, subtree: true });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "data-testid"] });
     });
     await openChat(page, "cr1");
     await page.waitForFunction(() => window.__earlyChatScroll !== null);
@@ -190,6 +228,13 @@ export default async function ({ page }) {
     await box.press("ArrowUp");
     assert.equal(await box.inputValue(), "쓰던 글");
     await box.fill("");
+    await lateAck(page, "cr3", "6f1e2d3c-4b5a-4987-8a6b-5c4d3e2f1a03");
+    const safari = await webkit.launch({ headless: true });
+    try {
+      const mirror = await pairPage(safari, aaa("web", "pair").code, { width: 390, height: 844 });
+      await lateAck(mirror.page, "cr4", "6f1e2d3c-4b5a-4987-8a6b-5c4d3e2f1a04");
+      assert.deepEqual(mirror.errors, []);
+    } finally { await safari.close(); }
     aaa("pane", "kill", "cr1");
     aaa("pane", "kill", "cr2");
   });

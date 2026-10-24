@@ -368,6 +368,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            automatic_workspace: None,
             start_task: None,
             pool: None,
             over_limit: None,
@@ -408,6 +409,7 @@ impl Host {
             warnings: warning.into_iter().collect(),
             repo: t.repo,
             local_machine,
+            workspace_access: self.workspace_access_preview(project)?,
             machine_order,
         }))
     }
@@ -1015,6 +1017,8 @@ impl Host {
         }
         let page = self.inbox(project, false, peek)?;
         Ok(ProjectContext {
+            auto_mode: self.auto_mode(project)?,
+            auto_mode_exceptions: aaa_proto::AUTO_MODE_EXCEPTIONS.into(),
             post_warnings: self.post_warnings(project)?,
             project: project.to_string(),
             path: dir.display().to_string(),

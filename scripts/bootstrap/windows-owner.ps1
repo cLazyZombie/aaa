@@ -43,7 +43,7 @@ $target = New-Profile ('user space ' + [char]0xd55c + [char]0xae00)
 $unicode = ([char]0xd55c).ToString() + [char]0xae00
 $arguments = @('--read-stdin', '', 'two words', 'quote"middle', 'C:\ends with space\', '\\"', '&|<>^%$();', $unicode, "a`nb")
 Assert ((Invoke-AaaBootstrap '1.2.3' $arguments) -eq 23) 'child exit must be preserved'
-$expected = (@('install') + $arguments | ForEach-Object {
+$expected = (@('setup') + $arguments | ForEach-Object {
     ([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($_))).Replace('-', '').ToLowerInvariant() + "`n"
 }) -join ''
 Assert ([IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV) -ceq $expected) 'native argv changed'
@@ -62,7 +62,7 @@ try {
     $mutantTarget = New-Profile 'mutant-argv'
     Assert ((Invoke-AaaBootstrap '1.2.3' @('two words', '', 'quote"middle')) -eq 23) 'mutation did not reach native argv'
     $mutantOutput = [IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV)
-    $intact = "696e7374616c6c`n74776f20776f726473`n`n71756f7465226d6964646c65`n"
+    $intact = "7365747570`n74776f20776f726473`n`n71756f7465226d6964646c65`n"
     Assert ($mutantOutput -cne $intact) 'native owner missed naive quoting regression'
 } finally { Set-Item Function:\ConvertTo-AaaCommandLine $quoteOwner }
 
@@ -128,22 +128,20 @@ try {
     Assert (@([IO.Directory]::GetFileSystemEntries($outside)).Count -eq 0) 'junction target changed'
 } finally { [IO.Directory]::Delete((Join-Path $env:USERPROFILE '.local')) }
 
-# Actual aaa, not a fixture, still owns dry-run and denies --yes as authority.
+# Actual setup CLI accepts help and rejects unattended --yes before any installation change.
 $target = New-Profile 'real-aaa'
 $script:base = "https://github.com/cLazyZombie/aaa/releases/download/v$AaaVersion"
 $script:manifestVersion = $AaaVersion
 $script:url = "$script:base/aaa-windows-x86_64.exe"
 $script:payload = $Aaa
 $script:digest = (Get-FileHash -LiteralPath $Aaa -Algorithm SHA256).Hash
-$common = @('--role', 'agent', '--name', 'windows-a', '--host', 'example.ts.net:7430', '--network', 'direct',
-    '--enroll', 'skip', '--work-root', (Join-Path $env:USERPROFILE 'work'), '--work-storage', 'internal',
-    '--harness', 'none', '--service', 'none', '--start', 'deferred', '--non-interactive', '--json')
-$result = Invoke-AaaBootstrap $AaaVersion ($common + @('--dry-run'))
-Assert ($result -eq 0) 'real aaa dry-run failed'
-Assert (-not [IO.Directory]::Exists($env:AAA_STATE_DIR)) 'dry-run wrote state'
-$result = Invoke-AaaBootstrap $AaaVersion ($common + @('--yes'))
-Assert ($result -eq 3) '--yes granted authority'
-Assert (-not [IO.Directory]::Exists($env:AAA_STATE_DIR)) 'unauthorized install wrote state'
+$result = Invoke-AaaBootstrap $AaaVersion @('--help')
+Assert ($result -eq 0) 'real aaa setup help failed'
+Assert (-not [IO.Directory]::Exists($env:AAA_STATE_DIR)) 'setup help wrote state'
+$result = Invoke-AaaBootstrap $AaaVersion @('--yes')
+Assert ($result -eq 2) 'setup accepted unattended --yes'
+Assert (-not [IO.Directory]::Exists($env:AAA_STATE_DIR)) 'unattended setup wrote state'
+Assert (-not [IO.Directory]::Exists($env:AAA_CONFIG_DIR)) 'unattended setup wrote config'
 # Exactly the published irm | iex entry: no user version/hash/InstallArgs and no shell exit.
 $target = New-Profile 'one-line'
 $env:AAA_BOOTSTRAP_VERSION = $AaaVersion
@@ -159,7 +157,7 @@ try {
     Assert ($ErrorActionPreference -ceq 'Continue') 'entry leaked ErrorActionPreference into user shell'
 } finally { $ErrorActionPreference = $priorPreference }
 Assert ($global:LASTEXITCODE -eq 23) 'one-line lost child exit or returned before installer'
-Assert ([IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV) -ceq "696e7374616c6c`n") 'one-line did not enter interactive install'
+Assert ([IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV) -ceq "7365747570`n") 'one-line did not enter interactive setup'
 Assert ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ceq $script:digest) 'one-line bytes differ'
 # An old executable and partial config must survive startup of the new verified executor.
 $target = New-Profile 'one-line-old-installation'
@@ -174,11 +172,11 @@ Assert ([IO.File]::ReadAllText($target) -ceq 'old aaa: preserve other instances'
 Assert ([IO.File]::ReadAllText($oldConfig) -ceq 'partial configuration: do not delete') 'bootstrap changed partial config'
 $staged = Join-Path $env:USERPROFILE ('.local\share\aaa\installers\' + $script:digest.Substring(0, 16).ToLowerInvariant() + '\aaa.exe')
 Assert ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash -ceq $script:digest) 'staged executor hash mismatch'
-$expected = (@('install', '--bin-path', $staged) | ForEach-Object {
+$expected = (@('setup') | ForEach-Object {
     ([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($_))).Replace('-', '').ToLowerInvariant() + "`n"
 }) -join ''
 $actual = [IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV)
-Assert ($actual -ceq $expected) ("staged executor did not bind the native plan target: actual_hex=[" +
+Assert ($actual -ceq $expected) ("staged executor did not enter setup: actual_hex=[" +
     $actual.Replace("`n", ',') + "] expected_hex=[" + $expected.Replace("`n", ',') + "]")
 # A changed remote manifest must not replace the independently embedded payload digest.
 $target = New-Profile 'one-line-manifest-tamper'

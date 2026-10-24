@@ -133,7 +133,7 @@ fn status_failure_retains_the_requested_id_and_safe_phase_without_writes() {
 #[test]
 fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_installation() {
     use sha2::Digest;
-    use std::io::{BufRead, Write};
+    use std::io::{BufRead, Read, Write};
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
     let digest = hex::encode(sha2::Sha256::digest(std::fs::read(BIN).unwrap()));
     for shell in ["powershell.exe", "pwsh.exe"] {
@@ -196,7 +196,15 @@ fn one_line_entry_keeps_the_external_console_through_review_and_signed_file_inst
             server_phase.store(3, Ordering::Relaxed);
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
             stream.write_all(&body).unwrap();
+            // 완전한 응답을 FIN으로 닫는다. Windows에서 write 직후 socket을 버리면
+            // IRM이 아직 읽는 동안 reset으로 관측할 수 있다. peer EOF까지 수신도 비운다.
+            stream.shutdown(std::net::Shutdown::Write).unwrap();
             server_phase.store(4, Ordering::Relaxed);
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+            let mut trailing = Vec::new();
+            reader.read_to_end(&mut trailing).unwrap();
+            assert!(trailing.is_empty(), "entry GET 뒤 예상하지 않은 요청 bytes");
+            server_phase.store(5, Ordering::Relaxed);
         });
         let trace = lab.0.join("entry-stage.txt");
         let runner = lab.0.join("entry-owner.ps1");

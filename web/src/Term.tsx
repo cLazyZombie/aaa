@@ -1,4 +1,5 @@
 import { recentScreenChord, standaloneWindow } from "./recentScreens.ts";
+import { AutoModeChip } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { TerminalReceiver } from "./terminalReceive";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
@@ -128,6 +129,8 @@ function termColors(): { fg: string; bg: string } {
 
 export function TermView({
   pane,
+  active = true,
+  onChatBytes,
   role,
   title,
   agent,
@@ -140,6 +143,8 @@ export function TermView({
   autoSelected = false,
 }: {
   pane: PaneView;
+  active?: boolean;
+  onChatBytes?: (key: string, bytes: number) => void;
   role: DeviceRole;
   /** 목록과 같은 이름(thread pane이면 thread 제목) */
   title?: string;
@@ -158,6 +163,9 @@ export function TermView({
   /** App이 스스로 고른 pane(주소의 pane이 없어 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected) */
   autoSelected?: boolean;
 }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const reportChatBytes = useCallback((bytes: number) => onChatBytes?.(`${pane.machine_id}:${pane.id}`, bytes), [onChatBytes, pane.machine_id, pane.id]);
   const box = useRef<HTMLDivElement>(null);
   const openFileRef = useRef(onOpenFile);
   openFileRef.current = onOpenFile;
@@ -174,10 +182,10 @@ export function TermView({
   const [showLink, setShowLink] = useState(false);
   useEffect(() => {
     setShowLink(false);
-    if (!linking) return;
+    if (!active || !linking) return;
     const timer = window.setTimeout(() => setShowLink(true), 500);
     return () => window.clearTimeout(timer);
-  }, [linking, pane.id]);
+  }, [active, linking, pane.id]);
   const [readonly, setReadonly] = useState(true);
   const [reason, setReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -234,8 +242,8 @@ export function TermView({
   useEffect(() => {
     const wasAuto = autoSelectedRef.current;
     autoSelectedRef.current = autoSelected;
-    if (wasAuto && !autoSelected && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) termRef.current?.focus();
-  }, [autoSelected]);
+    if (active && wasAuto && !autoSelected && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) termRef.current?.focus();
+  }, [active, autoSelected]);
   inputLineRef.current = inputLine;
   // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
   const terminalFontSize = useTerminalFontSize();
@@ -290,7 +298,10 @@ export function TermView({
     setClipNote(note);
     clipTimerRef.current = window.setTimeout(() => setClipNote(null), 2500);
   }, []);
-  useEffect(() => () => window.clearTimeout(clipTimerRef.current), []);
+  useEffect(() => {
+    if (!active) { window.clearTimeout(clipTimerRef.current); setClipNote(null); }
+    return () => window.clearTimeout(clipTimerRef.current);
+  }, [active]);
   /** 보내지 못한 입력의 까닭(참고 `inputError`). 닫기로 지운다 */
   const [inputError, setInputError] = useState<string | null>(null);
   const ended = pane.state !== "running";
@@ -320,17 +331,17 @@ export function TermView({
   // 위로 굴려 맨 아래가 아니다: 「맨 아래로 이동」 단추(herdr-web-ui TerminalViewportTools `terminal-jump-bottom`)
   const [scrolledUp, setScrolledUp] = useState(false);
   const canControlRef = useRef(canControl);
-  canControlRef.current = canControl;
+  canControlRef.current = canControl && active;
   const endedRef = useRef(ended);
   endedRef.current = ended;
 
   const send = (m: TermClientMsg) => {
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
+    if (activeRef.current && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
   };
   const input = (data: string) => {
     trace("send", { data, readonly: readonlyRef.current });
-    if (!readonlyRef.current) send({ t: "input", data });
+    if (activeRef.current && !readonlyRef.current) send({ t: "input", data });
   };
   /**
    * 답(submitted)을 기다리는 입력줄 보내기(herdr-web-ui ws.ts `submits`). 보낸 연결이 닫히면 확인 못 함으로 끝난다:
@@ -338,7 +349,7 @@ export function TermView({
    */
   const submitsRef = useRef(new Map<number, { ws: WebSocket; done: (result: true | string | null) => void }>());
   /** 멈춤 요청의 답(submit id → 단계, null은 답이 오지 않음) */
-  const cancelsRef = useRef(new Map<number, (stage: SubmitStage | null) => void>());
+  const cancelsRef = useRef(new Map<number, { ws: WebSocket; done: (stage: SubmitStage | null) => void }>());
   const submitIdRef = useRef(0);
   /** 「지금 보내기」 답을 기다리는 것(id → 보낸 연결). 연결이 닫히면 확인 못 함이다 */
   const steersRef = useRef(new Map<number, WebSocket>());
@@ -460,11 +471,12 @@ export function TermView({
   // blur가 조합 중 글자를 확정하는데, 버려진 그 글이 옛 pane으로 가면 안 된다(herdr-web-ui PaneTerminal presentedRef 검사).
   const presentRef = useRef(true);
   useLayoutEffect(() => {
-    presentRef.current = true;
+    presentRef.current = active;
+    if (!active) { readonlyRef.current = true; setReadonly(true); setLink("closed"); }
     return () => {
       presentRef.current = false;
     };
-  }, [pane.id]);
+  }, [active, pane.id]);
 
   // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
   const fromTerminal = (data: string, modifiedEnter = false) => {
@@ -527,6 +539,7 @@ export function TermView({
   // 정리 중에는 harness가 대기 글을 읽지 않으므로 세지 않고, 정리가 끝난 때부터 다시 잰다
   const wasCompacting = useRef(compacting);
   useEffect(() => {
+    if (!active) return;
     const ended = wasCompacting.current && !compacting;
     wasCompacting.current = compacting;
     if (ended && steer.phase === "sent") {
@@ -544,10 +557,37 @@ export function TermView({
       return () => window.clearTimeout(timer);
     }
     if (steer.phase === "failed" && pendingCount === 0) setSteer(STEER_IDLE);
-  }, [steer, pendingCount, compacting]);
+  }, [active, steer, pendingCount, compacting]);
   const steerOpen = steerKnown && canControl && !readonly ? steerAvailability(paneAgentStatus(pane), composerBusy, compacting) : "hidden";
 
+  const attachedBefore = useRef(false);
   useEffect(() => {
+    if (!active) return;
+    readonlyRef.current = true;
+    setReadonly(true);
+    setLink("connecting");
+    // 복귀의 첫 본문을 먼저 그린다. 입력 연결은 별도로 준비하며, 빠른 전환은 예약도 취소한다.
+    if (!attachedBefore.current) {
+      attachedBefore.current = true;
+      return attachTerminal();
+    }
+    let frame = 0;
+    let timer: number | undefined;
+    let cleanup: (() => void) | undefined;
+    let paints = 0;
+    const painted = () => {
+      if (++paints < 3) frame = requestAnimationFrame(painted);
+      else timer = window.setTimeout(() => { cleanup = attachTerminal(); }, 0);
+    };
+    frame = requestAnimationFrame(painted);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      cleanup?.();
+    };
+  }, [active, pane.id]);
+
+  function attachTerminal() {
     // 모든 기기가 설정한 크기(기본 13px)로 연다. 좁은 화면만 11px로 줄이던 것은 없앴다(herdr-web-ui와 같다)
     const fontSize = baseFontRef.current;
     // xterm은 처음 연 글꼴로 cell 크기를 잰다. 넣은 WOFF2가 아직 안 받아졌으면 그것을 뺀 목록으로 열고,
@@ -1472,7 +1512,7 @@ export function TermView({
           case "submit_cancelled": {
             const answer = cancelsRef.current.get(msg.id);
             cancelsRef.current.delete(msg.id);
-            answer?.(msg.stage);
+            answer?.done(msg.stage);
             break;
           }
           case "error":
@@ -1500,9 +1540,10 @@ export function TermView({
       ws.onmessage = (event) => receiver.push(event.data as string | ArrayBuffer);
       ws.onclose = (event) => {
         receiver.close();
-        if (wsRef.current === ws) wsRef.current = null;
+        const wasCurrent = wsRef.current === ws;
+        if (wasCurrent) wsRef.current = null;
         // 올리던 파일은 끝나지 않는다: 묶음의 나머지를 기다리게 두지 않는다
-        attachDone();
+        if (wasCurrent) attachDone();
         // 기다리던 앞 기록 답은 오지 않는다: 다시 붙으면 새 snapshot부터 다시 받는다
         historyWait = null;
         for (const [id, waiting] of submitsRef.current)
@@ -1512,8 +1553,9 @@ export function TermView({
           }
         // 멈춤 답도 오지 않는다: 모름
         for (const [id, answer] of cancelsRef.current) {
+          if (answer.ws !== ws) continue;
           cancelsRef.current.delete(id);
-          answer(null);
+          answer.done(null);
         }
         // 「지금 보내기」 답도 오지 않는다: 보냈는지 모른다
         for (const [id, sent] of steersRef.current)
@@ -1521,6 +1563,7 @@ export function TermView({
             steersRef.current.delete(id);
             setSteer((s) => (s.phase === "sending" && s.id === id ? { phase: "failed", ...refusalText(null, null, agentNameRef.current) } : s));
           }
+        if (!alive) return;
         readonlyRef.current = true;
         setReadonly(true);
         setLink("closed");
@@ -1569,6 +1612,7 @@ export function TermView({
       window.removeEventListener("pageshow", onWake);
       document.removeEventListener("visibilitychange", onWake);
       wsRef.current?.close();
+      attachDone();
       el.removeEventListener("paste", onPaste, true);
       viewport?.removeEventListener("scroll", beforeViewportScroll, true);
       viewport?.removeEventListener("scroll", onViewportScroll);
@@ -1612,6 +1656,8 @@ export function TermView({
       viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
       termRef.current = null;
+      fitRef.current = null;
+      el.replaceChildren();
       // 앞 기록을 붙이는 중에 붙잡은 출력은 버린다: 이 터미널에 더 쓰지 않는다
       holding = null;
       // xterm이 걸어 둔 frame·task가 돈 뒤에 치운다(PaneTerminal 1982줄 `disposeAfterPendingFrame`): snapshot의 RIS로 Viewport.reset이
@@ -1621,9 +1667,7 @@ export function TermView({
       // frame 뒤에 RIS를 읽어 reset frame이 치운 뒤에 돌았다(CI 6번 중 1번, t-0332 재현).
       term.write("", () => disposeAfterPendingFrame(term));
     };
-    // pane.id가 바뀔 때만 새로 붙는다. cols/rows는 snapshot이 알려 준다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pane.id]);
+  }
 
   // 자동 맞추기: 조작할 수 있고, 연결돼 있고, 터미널이 보이고, 이 탭을 쓰는 중(보이고 focus)일 때만.
   // claim이 아니면 이 화면이 지금 쓰는 화면이거나 아무도 쓰지 않을 때만 맞춘다. claim이면(focus를 얻음·터미널 누름)
@@ -1695,7 +1739,7 @@ export function TermView({
     const mark = (why: string): void => {
       if (box.current) box.current.dataset.fit = why;
     };
-    if (!canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return mark("off");
+    if (!activeRef.current || !canControl || readonly || link !== "open" || me === null || (chatView && chatable) || !inUse()) return mark("off");
     // 보기만 하는 동안은 크기를 걸지 않는다(돌아올 때 back이 풀고 건다)
     if (releasedRef.current) return mark("released");
     if (heldByOther && !claim) return mark("other");
@@ -1764,6 +1808,7 @@ export function TermView({
   const sectionRef = useRef<HTMLElement>(null);
   const stackRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (!active) return;
     let releaseTimer: number | undefined;
     const cancelLeave = () => {
       window.clearTimeout(releaseTimer);
@@ -1804,10 +1849,10 @@ export function TermView({
       document.removeEventListener("visibilitychange", vis);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pane.id]);
+  }, [active, pane.id]);
   useEffect(() => {
     const el = box.current;
-    if (!el) return;
+    if (!active || !el) return;
     let t: number | undefined;
     // 표지 `data-fit-pending`: 크기 바뀜 뒤 맞추기를 기다리는 동안(그 판단은 data-fit에 남는다)
     const ro = new ResizeObserver(() => {
@@ -1841,7 +1886,7 @@ export function TermView({
       host?.removeEventListener("touchmove", pan);
       host?.removeEventListener("wheel", pan);
     };
-  }, [pane.id]);
+  }, [active, pane.id]);
 
   // 키 막대(herdr-web-ui PaneTerminal 2218~2245줄). 항목은 기기별 저장값(설정 「키 바 편집」이 바꾼다), 없으면 참고 기본 배열.
   const barItems = useKeyBarItems();
@@ -1890,7 +1935,7 @@ export function TermView({
   const sendTerminalLine = (value: string, steer = false, traceId?: string, meta?: InputSubmitMeta): false | Promise<true | string> => {
     const term = termRef.current;
     const ws = wsRef.current;
-    if (!term || readonlyRef.current || !ws || ws.readyState !== WebSocket.OPEN) return false;
+    if (!activeRef.current || !canControlRef.current || pane.readonly || !term || readonlyRef.current || !ws || ws.readyState !== WebSocket.OPEN) return false;
     // 그 글과 Enter가 붙잡은 입력 옆에 들어가면 붙잡은 앞부분 없이 줄이 돈다(PaneTerminal 2338줄)
     if (!draftIsEmpty(draftRef.current)) return Promise.resolve(HELD_FIRST);
     autoFit.current(true);
@@ -1938,7 +1983,7 @@ export function TermView({
         cancelsRef.current.delete(id);
         resolve(null);
       }, CANCEL_REPLY_MS);
-      cancelsRef.current.set(id, (stage) => {
+      cancelsRef.current.set(id, { ws, done: (stage) => {
         window.clearTimeout(timer);
         if (stage === "not_sent" || stage === "no_enter") {
           const waiting = submitsRef.current.get(id);
@@ -1946,7 +1991,7 @@ export function TermView({
           waiting?.done(stage === "not_sent" ? "멈춤: 보내지 않았다" : "멈춤: Enter를 보내지 않았다");
         }
         resolve(stage);
-      });
+      } });
     });
   };
   const pressEnter = (): boolean | string => {
@@ -1987,7 +2032,7 @@ export function TermView({
   inputSlotRef.current = inputSlot;
   useLayoutEffect(() => {
     const surface = scrollRef.current;
-    if (!surface || !inputSlot) return;
+    if (!active || !surface || !inputSlot) return;
     const measure = () => {
       const room = inputSlot.getBoundingClientRect().bottom - surface.getBoundingClientRect().top;
       inputSlot.style.setProperty("--terminal-input-room", `${Math.max(0, Math.floor(room))}px`);
@@ -1999,7 +2044,7 @@ export function TermView({
     observer.observe(surface);
     observer.observe(inputSlot);
     return () => observer.disconnect();
-  }, [inputSlot]);
+  }, [active, inputSlot]);
 
   let banner: string | null = null;
   // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다. 중단된 pane(재부팅 뒤 다시 뜨지 않음)은 터미널 칸의 자리 표시가 까닭과
@@ -2014,7 +2059,7 @@ export function TermView({
 
   // 단축키가 시키는 일(PaneTerminal 2665~2692줄 `focusInput`·`scrollPage`·`sendApplicationPage`). 열린 창(설정 등)이 있으면 하지 않는다
   useLayoutEffect(() => {
-    if (!controls) return;
+    if (!active || !controls) return;
     const modalOpen = () => document.querySelector("[aria-modal='true'], dialog[open]") !== null;
     const current: PaneControls = {
       focusInput: () => {
@@ -2074,12 +2119,12 @@ export function TermView({
         </div>
       )}
       {banner && (
-        <div className={`banner ${readonly ? "warn" : ""}`} role="status" data-testid="readonly-banner">
+        <div className={`banner ${readonly ? "warn" : ""}`} role="status" data-testid={active ? "readonly-banner" : undefined}>
           {banner}
         </div>
       )}
       {attach && (
-        <div className={`banner ${attach.ok ? "" : "warn"}`} role="status" data-testid="attach-banner">
+        <div className={`banner ${attach.ok ? "" : "warn"}`} role="status" data-testid={active ? "attach-banner" : undefined}>
           {attach.text}
           <button type="button" className="ghost icon small" onClick={() => setAttach(null)} aria-label="닫기">
             <Icon name="close" />
@@ -2089,8 +2134,8 @@ export function TermView({
     </>
   );
   return (
-    <section className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
-      <header className="term-head">
+    <section hidden={!active} inert={!active} data-pane={pane.id} className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
+      {active && <header className="term-head">
         {/* 좁은 창의 목록 drawer(drawer.tsx). 전에는 휴대폰에서 「목록으로」 화면을 바꿨다 */}
         <DrawerToggle />
         <HeadNote />
@@ -2098,6 +2143,7 @@ export function TermView({
           <span className="term-title-line">
             {agent && <AgentMark agent={agent} size={18} />}
             <strong>{title ?? (pane.name || pane.id)}</strong>
+            {pane.role === "coordinator" && <AutoModeChip />}
           </span>
           <span className="muted">
             {crumb ?? pane.machine} · {size[0]}×{size[1]} <ResponsibilityBadge value={pane.responsibility} />
@@ -2105,7 +2151,7 @@ export function TermView({
         </div>
         {status}
         {chatView && chatable && (
-          <button type="button" className="ghost icon chat-find-open" data-testid="chat-find-open" aria-label="대화에서 찾기" title={`대화에서 찾기 (${modKeyLabel() === "⌘" ? "⌘F" : "Ctrl+F"})`}
+          <button type="button" className="ghost icon chat-find-open" data-testid={active ? "chat-find-open" : undefined} aria-label="대화에서 찾기" title={`대화에서 찾기 (${modKeyLabel() === "⌘" ? "⌘F" : "Ctrl+F"})`}
             onPointerDown={(e) => e.preventDefault()} onClick={() => setFindRequest((n) => n + 1)}>
             <Search aria-hidden="true" />
           </button>
@@ -2115,7 +2161,7 @@ export function TermView({
             className="ghost chat-btn"
             aria-label={chatView ? "터미널" : "대화"}
             aria-pressed={chatView}
-            data-testid="chat-toggle"
+            data-testid={active ? "chat-toggle" : undefined}
             onClick={() => setChatView(!chatView)}
             title={chatView ? "터미널로 본다" : "대화 기록으로 본다(읽기 전용)"}
           >
@@ -2123,30 +2169,30 @@ export function TermView({
             <span className="head-button-label">{chatView ? "터미널" : "대화"}</span>
           </button>
         )}
-        <HeadMore />
-      </header>
+        {active && <HeadMore />}
+      </header>}
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
+      {chatView && chatable && <ChatPanel active={active} onBytes={reportChatBytes} coordinator={pane.role === "coordinator"} pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
-      <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
+      {active && <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
         <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""} data-adopted-grid={adopted ? "" : undefined}>
           {/* 시험이 「이 pane이 입력을 받는다」를 기다리는 표지: 그 전에 친 글은 붙잡힌다(draft 띠) */}
-          <div className="term-box" ref={box} data-testid="terminal" data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
+          <div className="term-box" ref={box} data-testid={active ? "terminal" : undefined} data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
         </div>
         {/* 중단된 pane(재부팅 뒤 다시 띄우지 못했거나 일부러 두었다): 옛 화면 대신 까닭을 보인다(참고 PaneTerminal 2727~2734줄
             `is-restore-error`, plan §8.111). 다시 여는 길도 여기 둔다(QA Q22: 데스크톱은 줄 메뉴가 오른쪽 클릭에만 있다).
             thread pane은 `thread restart`가 띄운다(까닭 글에 명령이 있다) */}
         {stopped && (
-          <div className="terminal-placeholder is-restore-error" role="status" data-testid="restore-error">
+          <div className="terminal-placeholder is-restore-error" role="status" data-testid={active ? "restore-error" : undefined}>
             <div className="terminal-placeholder-inner">
               <TriangleAlert aria-hidden="true" />
               <span>이 pane은 다시 뜨지 않았다</span>
               <span className="terminal-placeholder-detail">{pane.restore_error ?? "agent backend가 다시 떴을 때 이 세션이 없었다"}</span>
               {canControl && (!pane.role || pane.role === "coordinator") && (
-                <button type="button" className="btn btn-primary" data-testid="pane-resume" disabled={resuming} onClick={() => void resume()}>
+                <button type="button" className="btn btn-primary" data-testid={active ? "pane-resume" : undefined} disabled={resuming} onClick={() => void resume()}>
                   <RotateCcw aria-hidden="true" />
                   다시 열기
                 </button>
@@ -2157,9 +2203,9 @@ export function TermView({
         )}
         <div className="terminal-banners">
           {link === "stopped" && (
-            <div className="banner warn" role="status" data-testid="output-stalled">
+            <div className="banner warn" role="status" data-testid={active ? "output-stalled" : undefined}>
               <span>이 기기가 출력을 따라가지 못해 터미널 출력을 멈췄다.</span>
-              <button type="button" data-testid="output-reconnect" onClick={() => reattachRef.current()}>
+              <button type="button" data-testid={active ? "output-reconnect" : undefined} onClick={() => reattachRef.current()}>
                 다시 연결
               </button>
             </div>
@@ -2167,12 +2213,12 @@ export function TermView({
           {!flowNotices && notices}
           {/* 참고 i18n.ko 「View only while you use another window · click to type」 */}
           {released && (
-            <div className="banner observe" role="status" data-testid="released-banner">
+            <div className="banner observe" role="status" data-testid={active ? "released-banner" : undefined}>
               다른 창을 쓰는 동안 보기 전용 · 클릭하면 입력
             </div>
           )}
           {!banner && held && !ended && (
-            <div className="banner draft" role="status" data-testid="draft-banner">
+            <div className="banner draft" role="status" data-testid={active ? "draft-banner" : undefined}>
               <span className="draft-label">터미널이 준비될 때까지 붙잡은 입력:</span>
               {draft.text.length > 0 && <code className="draft-text">{draft.text}</code>}
               {/* 앞부분만 보이면 끝을 잃은 입력도 온전해 보인다 */}
@@ -2180,17 +2226,17 @@ export function TermView({
               {/* Enter는 붙잡지 않는다: 이것이 없으면 두 명령이 한 줄로, 붙여 넣은 글이 온전하게 보인다 */}
               {draft.leftOut && <span className="draft-note">Enter·줄바꿈은 뺐다: 보내기는 Enter를 누르지 않는다.</span>}
               <span className="draft-actions">
-                <button type="button" data-testid="draft-send" disabled={draft.text.length === 0 || readonly} onClick={sendDraft}>
+                <button type="button" data-testid={active ? "draft-send" : undefined} disabled={draft.text.length === 0 || readonly} onClick={sendDraft}>
                   보내기
                 </button>
-                <button type="button" className="ghost" data-testid="draft-discard" onClick={discardDraft}>
+                <button type="button" className="ghost" data-testid={active ? "draft-discard" : undefined} onClick={discardDraft}>
                   버리기
                 </button>
               </span>
             </div>
           )}
           {inputError && (
-            <div className="banner warn" role="status" data-testid="input-error">
+            <div className="banner warn" role="status" data-testid={active ? "input-error" : undefined}>
               {inputError}
               <button type="button" className="ghost icon small" onClick={() => setInputError(null)} aria-label="닫기">
                 <Icon name="close" />
@@ -2198,25 +2244,25 @@ export function TermView({
             </div>
           )}
           {clipNote && (
-            <div className="banner" role="status" data-testid="clipboard-note">
+            <div className="banner" role="status" data-testid={active ? "clipboard-note" : undefined}>
               {clipNote}
             </div>
           )}
         </div>
         {/* 위로 굴린 동안 grid 오른쪽 아래(칸이 보이는 끝)에 뜬다. 누름이 focus를 가져가지 않는다(참고 TerminalViewportTools 244~247줄) */}
-        {scrolledUp && !chatView && (
+        {active && scrolledUp && !chatView && (
           <JumpToBottom stack={stackRef} onJump={() => termRef.current?.scrollToBottom()} />
         )}
-      </div>
-      <span ref={pinchBadgeRef} className="pinch-badge" data-testid="pinch-badge" aria-live="polite" hidden />
+      </div>}
+      <span ref={pinchBadgeRef} className="pinch-badge" data-testid={active ? "pinch-badge" : undefined} aria-live="polite" hidden />
       {dock}
       {/* 입력줄은 그리드 마지막 줄 위에 뜬다. 흐름에는 한 줄 높이만 두어 자라도 PTY 크기를 바꾸지 않는다(PaneTerminal 3008~3016줄) */}
-      {inputLine && (
+      {active && inputLine && (
         <div ref={setInputSlot} className="terminal-input-slot">
           <TerminalInput
             key={pane.id}
             owner={`${pane.machine}:${pane.id}`}
-            connected={!locked}
+            connected={active && link === "open" && !pane.readonly && !locked}
             onComposing={setLineComposing}
             onSend={sendTerminalLine}
             onEnter={pressEnter}
@@ -2241,7 +2287,7 @@ export function TermView({
           accept="image/png,image/jpeg,image/gif,image/webp"
           multiple
           hidden
-          data-testid="attach-file"
+          data-testid={active ? "attach-file" : undefined}
           onChange={(e) => {
             const files = Array.from(e.target.files ?? []);
             e.target.value = "";
@@ -2253,12 +2299,13 @@ export function TermView({
       {chatView && chatable && canControl && !stopped && (
         <ChatComposer
           key={pane.id}
+          active={active}
           owner={`${pane.machine_id}:${pane.id}`}
           agentLabel={pane.agent?.harness === "codex" ? "Codex" : "Claude"}
           harness={pane.agent?.harness === "codex" ? "codex" : "claude"}
           pending={pendingSends}
           setPending={setPendingSends}
-          connected={!locked}
+          connected={active && link === "open" && !pane.readonly && !locked}
           pane={pane.id}
           touch={coarse}
           working={paneAgentStatus(pane) === "working"}
@@ -2280,7 +2327,7 @@ export function TermView({
           onBusy={setComposerBusy}
         />
       )}
-      {canControl && !stopped && !(chatView && chatable) && (
+      {active && canControl && !stopped && !(chatView && chatable) && (
         <KeyBar
           items={barItems}
           modifiers={modifiers}

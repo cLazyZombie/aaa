@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit -p . && vite build",
+    "build": "tsc --noEmit -p . && node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test test/*.test.mjs",
     "e2e": "node e2e/web.e2e.mjs"

@@ -21,6 +21,7 @@ impl Lab {
         let home = self.0.join("home");
         let local = home.join("AppData/Local/aaa");
         Layout {
+            kind: super::ServiceKind::WindowsScm,
             instance: None,
             source: self.0.join("download/aaa-setup.exe"),
             exe: home.join(".local/bin/aaa.exe"),
@@ -82,6 +83,7 @@ impl Ui for Script {
 }
 
 struct FakeSys {
+    windows: bool,
     status: PathBuf,
     password: &'static str,
     right: Right,
@@ -91,12 +93,15 @@ struct FakeSys {
     path: Option<String>,
     unreachable: Vec<String>,
     fail_start: bool,
+    fail_after_start_once: bool,
+    remove_binary_on_failure: Option<PathBuf>,
     connects: bool,
     ops: Vec<String>,
 }
 impl FakeSys {
     fn new(layout: &Layout) -> FakeSys {
         FakeSys {
+            windows: layout.kind == super::ServiceKind::WindowsScm,
             status: layout.status(),
             password: "correct horse",
             right: Right::Missing,
@@ -106,6 +111,8 @@ impl FakeSys {
             path: Some(r"C:\tools;%USERPROFILE%\scoop\shims".into()),
             unreachable: vec![],
             fail_start: false,
+            fail_after_start_once: false,
+            remove_binary_on_failure: None,
             connects: true,
             ops: vec![],
         }
@@ -159,6 +166,7 @@ impl System for FakeSys {
         )
     }
     fn logon(&mut self, account: &Account, secret: &Secret, service: bool) -> Result<Logon> {
+        assert!(self.windows, "Unix에서는 Windows 로그온을 호출하지 않는다");
         assert_eq!(account.sid, "S-1-5-21-1-2-3-1001");
         self.ops.push(if service { "logon service".into() } else { "logon network".into() });
         if service && self.right != Right::Granted {
@@ -182,7 +190,9 @@ impl System for FakeSys {
         Ok(())
     }
     fn create_service(&mut self, def: &ServiceDef, account: &Account, secret: &Secret) -> Result<()> {
-        assert_eq!(secret.text(), self.password, "확인한 암호로 등록한다");
+        if self.windows {
+            assert_eq!(secret.text(), self.password, "확인한 암호로 등록한다");
+        }
         self.ops.push(format!("create {}", def.name));
         self.services.insert(
             def.name.clone(),
@@ -200,11 +210,17 @@ impl System for FakeSys {
     fn start_service(&mut self, name: &str) -> Result<u32> {
         self.ops.push(format!("start {name}"));
         if self.fail_start {
+            if let Some(path) = &self.remove_binary_on_failure {
+                std::fs::remove_file(path)?;
+            }
             bail!("Windows가 이 계정으로 서비스를 띄우지 못했습니다(1069)");
         }
         let service = self.services.get_mut(name).expect("등록한 서비스");
         service.running = true;
         service.pid = 4242;
+        if std::mem::take(&mut self.fail_after_start_once) {
+            bail!("서비스 부분 시작 뒤 확인 실패");
+        }
         if self.connects {
             let status = ServiceStatus { pid: 4242, connected: true, changed_ms: 1 };
             std::fs::write(&self.status, serde_json::to_vec(&status)?)?;
@@ -485,6 +501,28 @@ fn rerun_updates_the_binary_and_restarts_without_asking_again() {
 }
 
 #[test]
+fn update_partial_start_stops_new_process_restores_binary_and_restarts_previous() {
+    for kind in [super::ServiceKind::WindowsScm, super::ServiceKind::SystemdUser] {
+        let lab = Lab::new();
+        let mut layout = lab.layout();
+        layout.kind = kind;
+        let mut sys = FakeSys::new(&layout);
+        let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+        Setup::new(&mut sys, &mut ui, layout.clone(), "old".into()).install(&Args::default()).unwrap();
+        std::fs::write(&layout.source, b"newer-binary").unwrap();
+        sys.ops.clear();
+        sys.fail_after_start_once = true;
+        let mut ui = Script::new(&[""], &[]);
+        let error = Setup::new(&mut sys, &mut ui, layout.clone(), "new".into()).install(&Args::default()).unwrap_err();
+        assert!(format!("{error:#}").contains("부분 시작"));
+        assert_eq!(sys.ops, ["stop aaa-agent", "start aaa-agent", "stop aaa-agent", "start aaa-agent"]);
+        assert!(sys.services["aaa-agent"].running);
+        assert_eq!(std::fs::read(&layout.exe).unwrap(), b"new-binary");
+        assert_eq!(Receipt::read(&layout.receipt()).unwrap().version, "old");
+    }
+}
+
+#[test]
 fn uninstall_reverts_only_what_the_receipt_records() {
     let lab = Lab::new();
     let layout = lab.layout();
@@ -575,6 +613,7 @@ fn other_aaa_services_and_sibling_config_shape_the_defaults() {
 #[test]
 fn instance_layout_names_the_service_and_passes_explicit_dirs() {
     let layout = Layout {
+        kind: super::ServiceKind::WindowsScm,
         instance: Some("aaa-test-0878-a".into()),
         source: PathBuf::from(r"C:\aaa-test\aaa-setup.exe"),
         exe: PathBuf::from(r"C:\Users\Test User\AppData\Local\aaa-aaa-test-0878-a\bin\aaa.exe"),
@@ -589,6 +628,74 @@ fn instance_layout_names_the_service_and_passes_explicit_dirs() {
         layout.command(),
         r#""C:\Users\Test User\AppData\Local\aaa-aaa-test-0878-a\bin\aaa.exe" --instance aaa-test-0878-a --config-dir C:\x\config --state-dir C:\x\state setup-service"#
     );
+}
+
+#[test]
+fn unix_flow_does_not_ask_windows_password_or_change_path() {
+    for kind in [super::ServiceKind::Launchd, super::ServiceKind::SystemdUser, super::ServiceKind::SystemdSystem] {
+        let lab = Lab::new();
+        let mut layout = lab.layout();
+        layout.kind = kind;
+        let mut sys = FakeSys::new(&layout);
+        let original_path = sys.path.clone();
+        let mut ui = Script::new(&["Y"], &[]);
+        let args = Args {
+            host: Some("host.example.ts.net".into()),
+            name: Some("linux-a".into()),
+            work_root: Some(lab.0.join("work")),
+            yes: true,
+            ..Default::default()
+        };
+        Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&args).unwrap();
+        assert_eq!(sys.path, original_path);
+        assert!(!sys.ops.iter().any(|op| op.starts_with("logon ") || op.starts_with("right ")));
+        assert!(!ui.asked.iter().any(|question| question.contains("암호")));
+        assert_eq!(Receipt::read(&layout.receipt()).unwrap().kind, kind);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_ne!(std::fs::metadata(&layout.exe).unwrap().permissions().mode() & 0o111, 0);
+        }
+        Setup::new(&mut sys, &mut ui, layout.clone(), "v".into())
+            .uninstall(&Args { uninstall: true, yes: true, ..Default::default() })
+            .unwrap();
+        assert!(!sys.services.contains_key(&layout.service()));
+        assert_eq!(sys.path, original_path);
+    }
+}
+
+#[test]
+fn failed_new_binary_is_restored_even_if_destination_disappeared() {
+    let lab = Lab::new();
+    let mut layout = lab.layout();
+    layout.kind = super::ServiceKind::SystemdUser;
+    std::fs::create_dir_all(layout.exe.parent().unwrap()).unwrap();
+    std::fs::write(&layout.exe, b"old executable").unwrap();
+    let mut sys = FakeSys::new(&layout);
+    sys.fail_start = true;
+    sys.remove_binary_on_failure = Some(layout.exe.clone());
+    let mut ui = Script::new(&["Y"], &[]);
+    let args = Args {
+        host: Some("host.example.ts.net".into()),
+        name: Some("linux-a".into()),
+        work_root: Some(lab.0.join("work")),
+        yes: true,
+        ..Default::default()
+    };
+    assert!(Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&args).is_err());
+    assert_eq!(std::fs::read(&layout.exe).unwrap(), b"old executable");
+    assert!(!sys.services.contains_key(&layout.service()));
+}
+
+#[test]
+fn old_windows_receipts_keep_their_service_kind() {
+    let receipt: Receipt = serde_json::from_str(
+        r#"{"schema":1,"service":"aaa-agent","exe":"aaa.exe",
+        "host":"host.example.ts.net","name":"win-a","version":"v","logon_right_added":false,
+        "path_added":null,"installed_ms":1}"#,
+    )
+    .unwrap();
+    assert_eq!(receipt.kind, super::ServiceKind::WindowsScm);
 }
 
 #[test]
