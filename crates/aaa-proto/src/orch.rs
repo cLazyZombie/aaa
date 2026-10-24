@@ -1089,7 +1089,7 @@ pub struct ThreadView {
 /// thread가 구현 전에 모아 묻는 질문 묶음(plan §8.329). 그 보고에 묶인다: 새 보고가 오면 새 질문이고 답도 비운다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestions {
-    /// 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+    /// 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치를 알린다. 답 전송은 허용한다. 옛 host는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub format_warning: Option<String>,
@@ -1252,13 +1252,14 @@ fn unmark_leading(text: &str) -> String {
     out
 }
 
-/// A~Z 후보는 엄격한 선택지 파싱과 별도로 센다. 잘못된 구두점·강조 때문에 버린 줄도 경고한다.
+/// A~Z 뒤에 글자·숫자가 이어지는 단어(A를·A안·t3code)는 후보가 아니다.
+/// 후보는 엄격한 선택지 파싱과 별도로 센다. 잘못된 구두점·강조 때문에 버린 줄도 경고한다.
 fn choice_letter(text: &str) -> Option<char> {
     let item = text.trim().strip_prefix("- ").or_else(|| text.trim().strip_prefix("* "))?;
     let item = item.trim_start_matches(['*', '_']);
     let mut chars = item.chars();
     let letter = chars.next()?;
-    (letter.is_ascii_alphabetic() && chars.next().is_none_or(|c| !c.is_ascii_alphabetic()))
+    (letter.is_ascii_alphabetic() && chars.next().is_none_or(|c| !c.is_alphanumeric()))
         .then_some(letter.to_ascii_uppercase())
 }
 
@@ -1372,7 +1373,7 @@ fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
     }
 }
 
-/// 보고를 읽은 결과와 누락·글자 불일치 진단. 경고가 있으면 host는 카드 답을 받지 않는다.
+/// 보고를 읽은 결과와 누락·글자 불일치 진단. 경고는 진단용이며 읽은 선택지·직접 답 전송을 막지 않는다.
 #[derive(Debug, Default)]
 pub struct ParsedReportQuestions {
     pub items: Vec<ThreadQuestion>,
@@ -1487,6 +1488,15 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
             out.items.len(),
             declared.map(|n| format!("(선언한 질문 {n}개)")).unwrap_or_default()
         ));
+    }
+    if out.warning.is_some() && out.items.is_empty() {
+        out.items.push(ThreadQuestion {
+            id: None,
+            text: "직접 답".into(),
+            choices: Vec::new(),
+            body: body_of(&report.lines().map(str::to_string).collect::<Vec<_>>(), QUESTION_BODY_MAX),
+            after: None,
+        });
     }
     out
 }
@@ -2209,6 +2219,34 @@ mod tests {
         assert!(qs[0].choices[0].label.starts_with("install I3이 main에 올 때까지"));
         assert!(qs[0].choices[2].label.starts_with("install 순서를 바꿔"));
         assert!(qs[1].text.starts_with("M3 끝까지 시험할 곳:"));
+    }
+
+    #[test]
+    fn report_questions_do_not_count_korean_words_or_alphanumeric_names() {
+        for report in [
+            include_str!("../tests/fixtures/r-1931-questions.md"),
+            include_str!("../tests/fixtures/r-1994-questions.md"),
+        ] {
+            let parsed = parse_report_questions(report);
+            assert!(parsed.warning.is_none(), "{parsed:?}");
+            assert_eq!(parsed.items.len(), 1);
+            assert_eq!(parsed.items[0].choices.len(), 2);
+            assert!(parsed.items[0].choices[0].recommended);
+        }
+        for word in ["A를 달성", "A안 추천", "B안", "t3code", "A1 항목"] {
+            assert_eq!(choice_letter(&format!("- {word}")), None, "{word}");
+        }
+    }
+
+    #[test]
+    fn report_questions_keep_a_direct_answer_card_when_no_heading_is_read() {
+        let report = "[결정 필요] 질문 1개: 진행\n## Questions\n### 진행할까요\n- A 진행\n- B 보류\n";
+        let parsed = parse_report_questions(report);
+        assert!(parsed.warning.is_some());
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(parsed.items[0].text, "직접 답");
+        assert!(parsed.items[0].choices.is_empty());
+        assert!(parsed.items[0].body.as_deref().unwrap().contains("### 진행할까요"));
     }
 
     #[test]

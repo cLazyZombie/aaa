@@ -1729,7 +1729,7 @@ pending: number, };
 
 export type ThreadQuestions = {
 /**
- * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+ * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치를 알린다. 답 전송은 허용한다. 옛 host는 생략한다.
  */
 format_warning?: string,
 /**

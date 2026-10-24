@@ -228,9 +228,6 @@ impl Host {
                 .questions
                 .filter(|q| q.answer.is_none() && q.report_hash == target.revision)
                 .ok_or_else(|| err(ErrorCode::BadRequest, "이미 닫혔거나 바뀐 질문이다"))?;
-            if let Some(warning) = q.format_warning {
-                return Err(err(ErrorCode::BadRequest, warning));
-            }
             (q.items, q.report_hash)
         } else {
             let r = self
@@ -239,12 +236,7 @@ impl Host {
                 .find(|r| r.id == target.subject)
                 .ok_or_else(|| err(ErrorCode::BadRequest, "이미 닫힌 질문이다"))?;
             match r.questions {
-                Some(q) if q.report_hash == target.revision => {
-                    if let Some(warning) = q.format_warning {
-                        return Err(err(ErrorCode::BadRequest, warning));
-                    }
-                    (q.items, q.report_hash)
-                }
+                Some(q) if q.report_hash == target.revision => (q.items, q.report_hash),
                 Some(_) => return Err(err(ErrorCode::BadRequest, "질문이 바뀌었다")),
                 None => (
                     vec![ThreadQuestion {
