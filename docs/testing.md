@@ -3388,3 +3388,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - E2E30은 Chromium과 WebKit 390px에서 실제 host의 제출 ACK만 보류하고 화면을 떠난다. 연결 종료 뒤 송신 정리·초안 복구와 정확한 입력 bytes 한 번을 검사한다. E2E25는 설정 복귀 뒤 실제 readonly 해제를 기다리고, E2E84는 복귀 그리기 세 frame을 제어한 시계로 실행하되 그 시간을 기존 499/500ms 예산에 포함한다. 시한·기대값을 바꾸지 않는다.
 - `conversationRefresh.test.mjs`는 최신 읽기 → 앞 쪽 두 번 → 숨김 뒤 타이머 0개를 검사한다. 구판은 앞 쪽 읽기의 drain이 기존 타이머 참조를 덮어 2개를 남긴다(RED). 앞 쪽을 시작하기 전에 기존 타이머를 정리하며 기존 lane·주기는 유지한다.
 - E2E104는 숨긴 동안 1280→900px·390→430px 폭 변경에서도 같은 row/offset을 검사한다. 10회·20회 왕복의 DOM·리스너·타이머를 대조하고 Chromium은 GC 완료 뒤 실제 CDP heap 수치도 기록한다. WebKit에서 같은 API가 없으면 heap은 미측정으로 남기며 DOM 수를 heap 상한으로 해석하지 않는다.
+
+## 머신 패널 배포 팝업 A안(t-0964)
+
+- E2E35는 기존 Reader의 전송률·복구·긴 오류·전체 SHA·시작 권한 거부·재연결·알림 검사를 유지한다. 목록의 큰 카드와 성공 카드 접기 검사는 승인된 A안에 맞춰 「최근 배포」 팝업 검사로 대체한다. 설정의 배포 카드는 기존 접기를 유지한다.
+- Chromium·WebKit × 390·1280px에서 배포 없음·진행·완료·복구 중·복구 완료·복구 실패·중단·host 끊김·조회 실패를 검사한다. 실행 판/대상 판 분리, host와 다름·알 수 없음·마지막 확인, 닫기·Escape·바깥 누름·초점 복귀·Tab 가두기, 휴대폰 아래 시트, SHA 줄바꿈과 움직임 줄이기를 확인한다. WS 사건과 DOM이 완료 조건이며 고정 sleep은 없다.
+- `node --test web/test/rolloutStatus.test.mjs`는 머신의 모든 단계가 끝나야 완료임을 확인하고, 현재 머신·대기 머신·실패 뒤 미진행을 구별한다. 판은 `MachineView.software`만 표시하며 배포 대상으로 덮지 않는다.
+- t-0963의 OSS 조사(herdr Apache-2.0, ovis RowMenu MIT, herdr-projects MIT)를 이어 쓴다. 머신별 상태·실행 판과 대상 판 분리, 앵커 아래 팝업/휴대폰 시트, 머리 요약과 행별 결과 구성을 따른다. 외부 코드나 의존성은 추가하지 않고 기존 focus trap과 native dialog를 사용한다.
+- 실행 결과: 웹 유닛 540개·타입 검사·빌드·E2E35-rollout(8.2초)·공개 검사 통과. 첫 E2E는 견본이 공통 준비 머신을 없애 대기했으므로 실제 준비 머신을 보존하도록 수리했다. 이어 native dialog의 inert 해제 전 초점 복귀 실패를 확인하여 닫기 뒤 실제 opener로 복귀하도록 고쳤다. 시한·기대값은 바꾸지 않았다. iPhone 실기와 운영 배포는 이 자동 검증에 포함하지 않는다.

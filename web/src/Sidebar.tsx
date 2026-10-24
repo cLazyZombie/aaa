@@ -52,7 +52,9 @@ import "./herdr/Machines.css";
 import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
 import type { Automations } from "./automationData";
-import { RolloutCard, type RolloutSnapshot } from "./RolloutCard";
+import { type RolloutSnapshot } from "./RolloutCard";
+import { RolloutPopover } from "./RolloutPopover";
+import { aaaVersion, machineRollout, rolloutBusy, rolloutLabels } from "./rolloutStatus";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
 
@@ -332,7 +334,6 @@ export function Sidebar(props: SidebarProps) {
         <Roster {...props} />
       </div>
       <div {...panelProps("machines", props.panel)} className="sidebar-panel machines-panel">
-        <RolloutCard snapshot={props.rollout ?? null} connected={props.connected ?? false} />
         <MachineStrip {...props} />
       </div>
       <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
@@ -406,13 +407,28 @@ function threadsByPane(threads: ThreadView[]) {
 
 function MachineStrip(props: SidebarProps) {
   const threadOf = threadsByPane(props.threads);
-  return (
+  const [showRollout, setShowRollout] = useState<HTMLElement | null>(null);
+  const heading = useRef<HTMLElement>(null);
+  const snapshot = props.rollout ?? null;
+  const card = snapshot && "ok" in snapshot ? snapshot.ok : null;
+  const connected = props.connected ?? false;
+  const status = !connected ? "상태 확인 불가" : snapshot && "err" in snapshot ? "조회 실패" : card && card.state !== "done" ? rolloutLabels[card.state] : null;
+  return (<>
+    <header className="machine-panel-heading" ref={heading} data-state={card?.state}>
+      <h2>머신 <span>{props.machines.length}</span></h2>
+      {status && <button type="button" className="machine-rollout-status" aria-haspopup="dialog" onClick={(event) => setShowRollout(event.currentTarget)}>
+        {connected && card && rolloutBusy(card.state) && <span className="rollout-spinner" aria-hidden="true" />}{status}
+      </button>}
+      <button type="button" className="machine-recent-rollout" aria-haspopup="dialog" onClick={(event) => setShowRollout(event.currentTarget)}>최근 배포</button>
+    </header>
+    {showRollout && props.panel === "machines" && <RolloutPopover snapshot={snapshot} connected={connected} anchor={heading} opener={showRollout} onClose={() => setShowRollout(null)} />}
     <section className="machine-strip" aria-label={PANEL_LABEL.machines}>
       {props.machines.map((m) => {
         const online = m.connection === "connected";
         const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
         const stats = machineStats(m);
         const agents = machineAgents(props, m, threadOf);
+        const deployment = machineRollout(card, m.name);
         return (
           <section key={m.id} className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
             <header className="machine-header">
@@ -454,6 +470,15 @@ function MachineStrip(props: SidebarProps) {
                 </button>
               )}
             </header>
+            <p className="machine-software">
+              {m.software ? aaaVersion(m.software) : "aaa 판 알 수 없음"}
+              {m.software && m.software_differs && " · host와 다름"}
+              {m.software && (!online || !connected) && " · 마지막 확인"}
+              {deployment && <span className="machine-rollout-status" data-state={card?.steps[card.cursor]?.machine === m.name ? card.state : undefined}>
+                {deployment.busy && connected && <span className="rollout-spinner" aria-hidden="true" />}
+                {!connected ? `마지막 수신: ${deployment.label}` : deployment.label}
+              </span>}
+            </p>
             {/* 연결됨은 평소라 말하지 않는다. 그 밖의 상태와 점검 이상은 이름 아래 글로(참고 machine-state) */}
             {!online ? (
               <p className="machine-state is-disconnected" role="status">
@@ -474,7 +499,7 @@ function MachineStrip(props: SidebarProps) {
         );
       })}
     </section>
-  );
+  </>);
 }
 
 /**
