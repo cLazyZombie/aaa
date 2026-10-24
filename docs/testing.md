@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 머신 판의 짧은 커밋 통일(t-0982)
+
+- 공통 `util::software()`에서 커밋 salt를 12자리로 만든다. Mac 배포 스크립트는 이미 12자리를 전달하며, Windows 전달 빌드처럼 `AAA_BUILD_SALT`에 40자리를 줘도 CLI·setup 안내/영수증·host/agent 보고는 같은 짧은 판을 쓴다. salt 없는 release와 P0 임의 문자열은 유지한다. 전체 커밋 출처·실행 파일 SHA-256·배포 검증 신원은 줄이지 않는다.
+- `cargo test --locked -p aaa-common --lib software_tests`는 긴/짧은 생성 결과, 같은 버전·커밋 접두의 양방향 비교, 다른 커밋/버전/임의 salt, 같은 12자리 뒤가 다른 전체 커밋을 검사한다. host의 `machine_view_tests`는 실제 hello·DB 재시작 뒤에도 옛 긴 판을 짧게 제공하고 원문은 보존하는지 확인한다.
+- `AAA_BUILD_SALT=0123456789abcdef0123456789abcdef01234567 cargo test --locked -p aaa --test software`는 실제 빌드한 CLI와 이름을 바꾼 setup 실행 파일의 `--version`이 `aaa 0.1.6+0123456789ab`인지 검사한다. 같은 salt로 `cargo test --locked -p aaa --bin aaa setup::tests::setup_records_the_current_short_build_version`는 격리 설치 흐름의 안내·영수증을 확인한다. OS 서비스는 가짜이며 실제 Windows 설치 검증을 뜻하지 않는다.
+- E2E35의 기존 배포/전체 SHA/권한/초점/화면 조합 단언은 그대로 두고 짧은 판에 「host와 다름」이 붙지 않는 머신을 추가한다. Chromium·WebKit × 390/1280px에서 확인한다. Mac 빌드 스크립트의 기존 Python 계약도 12자리 salt·판을 검사한다. 완료는 프로세스 종료·DB 재열기·DOM 사건으로 판단한다.
+- 참고 후보는 [Git의 커밋 접두 표기](https://git-scm.com/docs/git-rev-parse)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))와 [Rust semver의 build metadata 비교](https://docs.rs/semver/latest/semver/struct.BuildMetadata.html)([MIT/Apache-2.0](https://github.com/dtolnay/semver))다. 접두 개념을 따르되, 같은 패키지 버전의 서로 다른 빌드도 구별해야 하므로 metadata를 무시하는 버전 요구식은 쓰지 않는다. 외부 코드·의존성 추가는 없다.
+
 ## E2E16 긴 줄 바꿈 뒤 줄 참조 재열기(t-0978)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40062175921/job/120777851872)은 SHA 1583a1ed에서 「접은 big.ts 2500번째 줄 가운데」 20초 만료다. 원문과 결과 artifact를 확보했으나 소스 행 좌표·파일 보기 화면·trace가 없어 당시 거짓 조건을 소급 확정하지 않는다. 수정 전 전체 E2E16과 가상화 단계 단독은 각각 한 번 통과했으며 이 통과를 결함 부재의 증거로 삼지 않는다.

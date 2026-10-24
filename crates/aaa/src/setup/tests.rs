@@ -292,6 +292,22 @@ fn rollout_scm_restart_checks_ownership_and_runs_stop_then_start_once() {
 }
 
 #[test]
+fn setup_records_the_current_short_build_version() {
+    let lab = Lab::new();
+    let layout = lab.layout();
+    let mut sys = FakeSys::new(&layout);
+    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let version = aaa_common::util::software();
+    Setup::new(&mut sys, &mut ui, layout.clone(), version.clone()).install(&Args::default()).unwrap();
+    assert!(ui.printed(&version));
+    assert_eq!(Receipt::read(&layout.receipt()).unwrap().version, version);
+    let salt = aaa_common::util::BUILD_SALT;
+    if (12..=40).contains(&salt.len()) && salt.bytes().all(|b| b.is_ascii_hexdigit()) {
+        assert_eq!(version, format!("aaa {}+{}", env!("CARGO_PKG_VERSION"), &salt[..12]));
+    }
+}
+
+#[test]
 fn fresh_install_asks_three_questions_and_a_password_then_connects() {
     let lab = Lab::new();
     let layout = lab.layout();

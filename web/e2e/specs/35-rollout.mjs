@@ -100,6 +100,7 @@ export default async function () {
                   { ...base, id: "demo-b", name: "mac-b", software: "0.1.4+old", software_differs: true },
                   { ...base, id: "demo-c", name: "mac-c", software: "", connection: "disconnected" },
                   { ...base, id: "demo-d", name: "mac-d", software: "0.1.3+last", connection: "disconnected" },
+                  { ...base, id: "demo-e", name: "mac-e", software: "aaa 0.1.6+0123456789ab", software_differs: false },
                 ];
                 return socket.send(JSON.stringify(msg));
               }
@@ -119,6 +120,8 @@ export default async function () {
           await recent.waitFor();
           if (await card.count()) throw new Error("큰 배포 카드가 목록에 남았다");
           await domIs(p, "머신별 실행 판", () => document.querySelector('[data-testid="machine-mac-b"] .machine-software')?.textContent.includes("aaa 0.1.4+old · host와 다름"));
+          await domIs(p, "같은 커밋의 짧은 실행 판", () => document.querySelector('[data-testid="machine-mac-e"] .machine-software')?.textContent.trim() === "aaa 0.1.6+0123456789ab");
+          await shot(p, `35-software-${engine.browserType().name()}-${width}`);
           for (const [name, text] of [["mac-c", "aaa 판 알 수 없음"], ["mac-d", "마지막 확인"]]) {
             if (!(await p.getByTestId(`machine-${name}`).textContent()).includes(text)) throw new Error(text);
           }

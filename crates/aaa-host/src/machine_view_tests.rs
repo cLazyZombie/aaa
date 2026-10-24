@@ -34,6 +34,43 @@ fn view(h: &Host) -> MachineView {
 }
 
 #[test]
+fn long_agent_software_is_compared_before_shortening_and_survives_restart() {
+    let root = std::env::temp_dir().join(format!("aaa-machine-software-{}", aaa_common::util::new_id()));
+    let host = util::software();
+    let (long, short, differs) = match host.rsplit_once('+') {
+        Some((version, commit)) if commit.len() == 12 && commit.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            (format!("{version}+{commit}0000000000000000000000000000"), host.clone(), false)
+        }
+        _ => ("aaa 0.1.6+0123456789abcdef0123456789abcdef01234567".into(), "aaa 0.1.6+0123456789ab".into(), true),
+    };
+    for connected in [true, false] {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let weak = rt.block_on(async {
+            let h = open(&root);
+            if connected {
+                h.db.upsert_machine("m-b", "mac-b", Some("fp"), false).unwrap();
+                h.agent_connected(
+                    &hello(&long, None),
+                    false,
+                    crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
+                );
+            }
+            let machine = view(&h);
+            assert_eq!(machine.software.as_deref(), Some(short.as_str()));
+            assert_eq!(machine.software_differs, differs);
+            assert_eq!(machine.connection == Connection::Connected, connected);
+            assert_eq!(serde_json::to_value(machine).unwrap()["software"], short);
+            // 배포 신원으로도 쓰는 원문은 보존하고 화면만 정규화한다.
+            assert_eq!(h.inner.lock().unwrap().machines["m-b"].build.software.as_deref(), Some(long.as_str()));
+            Arc::downgrade(&h)
+        });
+        drop(rt);
+        assert!(weak.upgrade().is_none());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn the_machine_view_carries_the_last_hello_build_and_keeps_it_after_a_host_restart() {
     let root = std::env::temp_dir().join(format!("aaa-machine-view-{}", aaa_common::util::new_id()));
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();

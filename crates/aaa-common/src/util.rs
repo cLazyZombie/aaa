@@ -167,10 +167,74 @@ pub const BUILD_SALT: &str = match option_env!("AAA_BUILD_SALT") {
 };
 
 pub fn software() -> String {
-    if BUILD_SALT.is_empty() {
-        format!("aaa {}", env!("CARGO_PKG_VERSION"))
-    } else {
-        format!("aaa {}+{}", env!("CARGO_PKG_VERSION"), BUILD_SALT)
+    software_with_salt(env!("CARGO_PKG_VERSION"), BUILD_SALT)
+}
+
+fn software_with_salt(version: &str, salt: &str) -> String {
+    if salt.is_empty() { format!("aaa {version}") } else { short_software(&format!("aaa {version}+{salt}")) }
+}
+
+// 배포 커밋은 12자리 이상 40자리 이하의 hex다. P0의 임의 salt는 그대로 둔다.
+fn software_commit(software: &str) -> Option<(&str, &str)> {
+    let (version, commit) = software.rsplit_once('+')?;
+    ((12..=40).contains(&commit.len()) && commit.bytes().all(|b| b.is_ascii_hexdigit())).then_some((version, commit))
+}
+
+/// 모든 OS의 판 문자열과 옛 agent의 화면 표기를 12자리 커밋으로 맞춘다.
+pub fn short_software(software: &str) -> String {
+    match software_commit(software) {
+        Some((version, commit)) => format!("{version}+{}", &commit[..12]),
+        None => software.to_owned(),
+    }
+}
+
+/// 옛 40자리 agent도 같은 버전·커밋 접두면 같은 판이다. 줄이기 전에 비교해 충돌을 숨기지 않는다.
+pub fn same_software(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    match (software_commit(a), software_commit(b)) {
+        (Some((av, ac)), Some((bv, bc))) => av == bv && (ac.starts_with(bc) || bc.starts_with(ac)),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod software_tests {
+    use super::{same_software, short_software, software_with_salt};
+
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn build_salt_produces_the_same_twelve_digit_version_on_every_os() {
+        assert_eq!(software_with_salt("0.1.6", COMMIT), "aaa 0.1.6+0123456789ab");
+        assert_eq!(software_with_salt("0.1.6", &COMMIT[..12]), "aaa 0.1.6+0123456789ab");
+        assert_eq!(software_with_salt("0.1.6", ""), "aaa 0.1.6");
+        assert_eq!(software_with_salt("0.1.6", "p0-upgrade"), "aaa 0.1.6+p0-upgrade");
+    }
+
+    #[test]
+    fn old_long_and_short_commits_match_in_both_directions() {
+        let long = format!("aaa 0.1.6+{COMMIT}");
+        let short = "aaa 0.1.6+0123456789ab";
+        assert!(same_software(&long, short));
+        assert!(same_software(short, &long));
+        assert_eq!(short_software(&long), short);
+        for other in [
+            "aaa 0.1.6+fedcba987654",
+            "aaa 0.1.7+0123456789ab",
+            "aaa 0.1.6",
+            "aaa 0.1.6+0123456789ab-extra",
+            "aaa 0.1.6+0123456789a",
+            "aaa 0.1.6+한글한글한글한글",
+            // 앞 12자리가 같아도 두 전체 커밋이 다르면 다른 판이다.
+            "aaa 0.1.6+0123456789ab0000000000000000000000000000",
+        ] {
+            assert!(!same_software(&long, other), "{other}");
+            assert!(!same_software(other, &long), "{other}");
+        }
+        assert!(same_software("aaa 0.1.6+p0-upgrade", "aaa 0.1.6+p0-upgrade"));
+        assert!(!same_software("aaa 0.1.6+p0-upgrade", "aaa 0.1.6+p0"));
     }
 }
 
