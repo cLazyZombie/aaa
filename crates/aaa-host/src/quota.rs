@@ -131,6 +131,24 @@ fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot,
 }
 
 impl crate::Host {
+    /// 마지막 완료된 웹 계정 사용량을 읽는다. 조회 중인 RPC의 잠금·응답을 기다리지 않는다.
+    /// 재로그인 전 세대와 삭제된 계정은 판정에 쓰지 않는다.
+    pub(crate) fn cached_account_quota(&self, name: &str, harness: &str) -> Result<AccountQuota, ErrorBody> {
+        if !self.accounts.list()?.iter().any(|a| a.name == name && a.harness == harness) {
+            return Err(crate::err(ErrorCode::BadRequest, "등록 계정과 profile의 harness가 다르거나 계정이 없다"));
+        }
+        let generation = self.accounts.generation(name)?;
+        let entry: Option<Entry> = self
+            .db
+            .meta(&format!("account-quota-v1/{name}"))
+            .map_err(crate::orch::internal)?
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(crate::orch::internal)?;
+        let entry = entry.filter(|e| e.generation == generation).unwrap_or_default();
+        Ok(merge(&entry, name, harness, util::now_ms()))
+    }
+
     pub(crate) async fn quota_generation(&self, name: &str) -> Option<String> {
         self.account_quota.lock().await.entries.get(name).map(|e| e.generation.clone())
     }

@@ -10,6 +10,7 @@ use std::{
 struct Registration {
     project: String,
     path: String,
+    registration: String,
     machine: String,
     view: RepoWorkspace,
 }
@@ -27,22 +28,6 @@ impl Host {
     fn metric_registrations(&self) -> Result<Vec<Registration>, ErrorBody> {
         let mut out = Vec::new();
         for project in self.projects() {
-            let dir = self.project_dir(&project.name)?;
-            // workspace라는 명시적 관계만 묶는다. 이름·remote URL로는 합치지 않는다.
-            let table = std::fs::read_to_string(aaa_config::project_settings_file(&dir))
-                .inspect_err(|error| {
-                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                })
-                .ok()
-                .and_then(|s| {
-                    s.parse::<toml::Table>()
-                        .inspect_err(|error| {
-                            aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                        })
-                        .ok()
-                })
-                .unwrap_or_default();
-            let aliases = table.get("workspaces").or_else(|| table.get("repos")).and_then(|v| v.as_array());
             for repo in self.settings(&project.name).repos {
                 let Ok(machine) = self.resolve_machine(repo.machine.as_deref()).inspect_err(|error| {
                     aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다")
@@ -50,39 +35,25 @@ impl Host {
                     continue;
                 };
                 let Some(view) = self.machine_views().into_iter().find(|m| m.id == machine) else { continue };
-                let alias = aliases
-                    .and_then(|a| {
-                        a.iter().find(|v| {
-                            v.get("path").and_then(|v| v.as_str()) == Some(repo.path.as_str())
-                                && v.get("machine").and_then(|v| v.as_str()) == repo.machine.as_deref()
-                        })
-                    })
-                    .and_then(|v| v.get("workspace"))
-                    .and_then(|v| v.as_str())
-                    .filter(|v| {
-                        !v.is_empty()
-                            && v.len() <= 100
-                            && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                    });
                 let key = hex::encode(Sha256::digest(format!("{machine}:{}", repo.path).as_bytes()));
-                let id = self.db.repo_workspace_id(&project.name, &key, alias).map_err(internal)?;
-                let collection = self
-                    .db
-                    .meta(&format!("workspace-collection:{}:{id}:{}", project.name, view.name))
-                    .map_err(internal)?
-                    .and_then(|s| {
-                        serde_json::from_str::<(u64, Vec<String>)>(&s)
-                            .inspect_err(|error| {
-                                aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                            })
-                            .ok()
-                    });
+                let id = self.db.repo_workspace_id(&project.name, &key, None).map_err(internal)?;
+                let collection =
+                    self.db.meta(&format!("workspace-collection::{id}:{}", view.name)).map_err(internal)?.and_then(
+                        |s| {
+                            serde_json::from_str::<(u64, Vec<String>)>(&s)
+                                .inspect_err(|error| {
+                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
+                                })
+                                .ok()
+                        },
+                    );
                 out.push(Registration {
                     project: project.name.clone(),
                     path: repo.path.clone(),
+                    registration: key,
                     machine: machine.clone(),
                     view: RepoWorkspace {
-                        id: format!("{}/{id}", project.name),
+                        id,
                         project: project.name.clone(),
                         name: crate::task_repo::repo_name(&repo.path).unwrap_or("저장소").into(),
                         machines: vec![WorkspaceMachine {
@@ -94,7 +65,7 @@ impl Host {
                                 .unwrap()
                                 .machines
                                 .get(&machine)
-                                .is_some_and(|m| m.features.iter().any(|f| f == "workspace_metrics.v1")),
+                                .is_some_and(|m| m.features.iter().any(|f| f == "workspace_metrics.v2")),
                         }],
                         last_collected_ms: collection.as_ref().map(|c| c.0).filter(|t| *t > 0),
                         collection_notes: collection.map(|c| c.1).unwrap_or_default(),
@@ -108,6 +79,9 @@ impl Host {
         let now = aaa_common::util::now_ms();
         let mut groups: BTreeMap<String, RepoWorkspace> = BTreeMap::new();
         for r in self.metric_registrations()? {
+            if r.view.id.is_empty() {
+                continue;
+            }
             let v =
                 groups.entry(r.view.id.clone()).or_insert_with(|| RepoWorkspace { machines: vec![], ..r.view.clone() });
             for m in r.view.machines {
@@ -120,7 +94,8 @@ impl Host {
             v.collection_notes.sort();
             v.collection_notes.dedup();
         }
-        let workspaces: Vec<_> = groups.into_values().collect();
+        let mut workspaces: Vec<_> = groups.into_values().collect();
+        workspaces.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
         let selected = query
             .workspace_id
             .as_ref()
@@ -131,27 +106,23 @@ impl Host {
         let Some(workspace) = selected else { return Ok(dashboard) };
         let days = query.days.unwrap_or(7).clamp(1, 30);
         let since = period_start(now, days, query.utc_offset_minutes.unwrap_or(0));
-        let (_, id) = workspace.id.split_once('/').ok_or_else(|| internal("workspace ID 오류"))?;
-        let (mut runs, mut lines, truncated) =
-            self.db.workspace_records(&workspace.project, id, since).map_err(internal)?;
+        let id = &workspace.id;
+        let (mut runs, mut lines, truncated) = self.db.workspace_records("", id, since).map_err(internal)?;
         dashboard.profiles =
             runs.iter().filter_map(|r| r.profile.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+        dashboard.counts_run = runs
+            .iter()
+            .filter(|r| r.tests.is_some() || r.e2e_files.is_some())
+            .max_by_key(|r| r.observed_at_ms)
+            .cloned()
+            .map(Box::new);
         runs.retain(|r| {
             query.machine.as_ref().is_none_or(|m| &r.machine == m)
                 && query.profile.as_ref().is_none_or(|p| r.profile.as_deref().unwrap_or("unknown") == p)
         });
         runs.sort_by_key(|r| r.observed_at_ms);
         lines.sort_by_key(|r| r.observed_at_ms);
-        dashboard.code_branches = lines.iter().map(|l| l.branch.clone()).collect::<BTreeSet<_>>().into_iter().collect();
-        let branch = query.code_branch.clone().or_else(|| {
-            if dashboard.code_branches.iter().any(|b| b == "main") {
-                Some("main".into())
-            } else {
-                lines.last().map(|l| l.branch.clone())
-            }
-        });
-        lines.retain(|l| Some(&l.branch) == branch.as_ref());
-        dashboard.code_branch = branch;
+        lines.retain(|l| l.branch == "main");
         if query.code_axis.as_deref() != Some("commit") {
             let offset = query.utc_offset_minutes.unwrap_or(0).clamp(-720, 840) as i64 * 60_000;
             let mut days = BTreeMap::new();
@@ -200,27 +171,39 @@ impl Host {
         else {
             return;
         };
-        let cwd = rec.cwd.as_deref().unwrap_or(repo).to_string();
-        let Some((_, id)) = reg.view.id.split_once('/') else { return };
+        let cwd = repo.to_string();
+        let id = &reg.view.id;
         let mut value = match conn
             .request(AgentRequest::WorkspaceMetrics {
                 cwd,
                 workspace_key: reg.view.id.clone(),
-                known_code_commits: self.db.workspace_code_commits(project, id).unwrap_or_default(),
+                known_code_commits: self.db.workspace_code_commits("", id).unwrap_or_default(),
             })
             .await
         {
             Ok(AgentResponse::WorkspaceMetrics(value)) => value,
-            _ => {
+            other => {
+                match other {
+                    Err(error) => tracing::warn!(%error, machine=%reg.machine, "workspace 수집 요청 실패"),
+                    Ok(_) => tracing::warn!(machine=%reg.machine, "workspace 수집 응답 종류 불일치"),
+                }
                 if self
                     .db
-                    .workspace_collection_error(project, id, &reg.view.machines[0].name)
+                    .workspace_collection_error("", id, &reg.view.machines[0].name)
                     .as_ref()
                     .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
                     .is_ok()
                 {
                     self.workspace_metrics_changed.send_modify(|n| *n = n.wrapping_add(1));
                 }
+                return;
+            }
+        };
+        let Some(remote) = value.remote_id.as_deref() else { return };
+        let id = match self.db.repo_workspace_id(project, &reg.registration, Some(remote)) {
+            Ok(id) => id,
+            Err(error) => {
+                tracing::warn!(%error, "workspace 원격 신원 저장 실패");
                 return;
             }
         };
@@ -233,7 +216,7 @@ impl Host {
             run.slow_tests.items.truncate(5);
             run.slow_e2e.items.truncate(5);
         }
-        if let Err(e) = self.db.save_workspace_metrics(project, id, &reg.view.machines[0].name, &value) {
+        if let Err(e) = self.db.save_workspace_metrics("", &id, &reg.view.machines[0].name, &value) {
             tracing::warn!(error=%e,"workspace 지표 보존 실패");
         } else {
             self.workspace_metrics_changed.send_modify(|n| *n = n.wrapping_add(1));

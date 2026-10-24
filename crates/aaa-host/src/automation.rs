@@ -4,6 +4,7 @@ mod deploy;
 pub(crate) mod edit;
 pub(crate) mod model;
 pub(crate) mod runtime;
+mod usage;
 /// coordinator 운영 규칙의 웹 보호 표지. 파일 내용·제목과 무관하게 이름으로 판정한다.
 /// 다른 운영 자동화는 사용자 결정 없이 여기에 더하지 않는다. CLI·파일 편집은 그대로 허용한다.
 pub(crate) fn web_read_only_reason(name: &str) -> Option<&'static str> {

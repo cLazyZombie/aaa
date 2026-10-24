@@ -9,6 +9,13 @@
 - 먼저 [Playwright actionability](https://github.com/microsoft/playwright/blob/main/docs/src/actionability.md)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [TanStack Virtual](https://github.com/TanStack/virtual/blob/main/packages/virtual-core/src/index.ts)([MIT](https://github.com/TanStack/virtual/blob/main/LICENSE)), [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)·[UpdateBatching](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/ReactDOMUpdateBatching.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))를 대조했다. 공개 capture API와 기존 host의 제어 사건을 사용하며 외부 코드·의존성은 추가하지 않는다.
 - 최종 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 worker 10개 전체 E2E, Linux strict cross clippy·공개 검사다. 기존 E2E23·35·66의 IME·첨부·전송 높이·Enter 검사도 유지한다. headless WebKit의 주입 사건을 실제 iPhone 키보드 실기 통과로 해석하지 않는다.
 
+## 자동화 Codex profile의 계정별 사용량(t-0970)
+
+- `cargo test -p aaa-host quota_gate`: 세션 5%·주간 10%는 남은 비율이며 경계와 같을 때 허용하는지 확인한다. 주간 창만 있는 계정의 세션 문턱은 확인 불가로 남기고, 설정된 창만 검사한다. 실패·오래된 관측·리셋 경과·충돌·모델별 별도 몫·비정상 숫자를 허용하지 않는다. 로컬 공급자·계정을 섞어 누락을 채우지 않는다.
+- 실제 Host·DB와 기존 agent frame fixture로 원격 Codex의 기본 계정, 재사용 thread의 고정 계정, 이전 로그인 세대 배제, 입력 보존·회복·중복 영수증을 검증한다. 진행 중인 계정 수집 잠금을 잡은 상태에서도 마지막 완료 캐시의 판정을 마쳐야 한다. 정상 회복 뒤 파일 전달은 한 번이고 새 thread는 만들지 않는다. 실제 계정·구독 요청·고정 sleep·재시도는 없다.
+- `cargo test -p aaa-host automation::`로 기존 자동화 회귀를, `cargo test -p aaa-host ticker_refreshes_usage_without_a_browser_and_releases_pending_input`로 브라우저 없는 갱신·구독 응답 지연·입력 보존 회귀를 검사한다. UI·wire 형식은 바꾸지 않아 새 브라우저 E2E를 추가하지 않는다. 운영 자동화 파일·승인·문턱은 시험에서 변경하지 않는다.
+- [CodexBar의 Codex 자료원](https://github.com/steipete/CodexBar/blob/main/docs/codex.md)([MIT](https://github.com/steipete/CodexBar/blob/main/LICENSE))의 계정별 구독 창·CLI RPC와 [ccusage의 Codex 로그 집계](https://github.com/ccusage/ccusage/blob/main/docs/guide/codex/index.md)([MIT](https://github.com/ccusage/ccusage/blob/main/apps/ccusage/LICENSE))를 비교했다. 구독 문턱은 기존 계정 RPC 캐시를 재사용하고, 토큰·비용 추정으로 대신하지 않는다. 외부 코드·의존성은 추가하지 않는다.
+
 ## E2E105 설치 앱의 최근 화면 전환(t-0934)
 
 - `node --test web/test/recentScreens.test.mjs web/test/recentHistory.test.mjs`: 실제 palette 대상 모델로 thread/pane 별칭·실행/종료·보류/해결/보관·끊김, 방문 키 중복 제거·128개 한도·깨진 저장·저장 거부 시 메모리 유지·다른 창의 변경/삭제, 고정 MRU의 순환·역방향·0/1개·후보 제거를 확인한다. 완료 보고의 idle/done은 pane 종료로 보지 않는다.
@@ -36,6 +43,14 @@
 - [herdr-projects v0.2.35 threads](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/threads.rs)·prompt_box와 [MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE)를 확인했다. 이 판은 pane 입력·질문 상태를 다루며 aaa의 Markdown 질문 카드 파서에 해당하는 구현은 없다. [marked의 block 규칙](https://github.com/markedjs/marked/blob/master/src/rules.ts)과 [MIT](https://github.com/markedjs/marked/blob/master/LICENSE)도 대조했다. 목록 표시와 선택지 문법을 구별하는 원칙만 참고하고 코드·의존성을 추가하지 않는다.
 - 로컬 전체 `nice -n 15 bash scripts/ci-local.sh`, 기존 E2E53, 공개 검사를 실행한다. FRONT_API·E2E 번호와 wire 필드는 유지한다. 경고는 thread inbox로 전달하며 사용자 답을 가로막지 않는다.
 - 실행 기록: 첫 ci-local은 전역 Playwright 1.59.1 때문에 E2E 시작 전에 멈췄다. 작업 폴더에 1.64.1을 설치하고 같은 CI 실행 파일 사본으로 전체 102파일·128작업을 실행했다. E2E53 포함 127작업 통과, E2E72는 고부하 중 223MiB SSH 전송이 화면 대기 30초를 넘었다(계획 시작 뒤 파일 마지막 쓰기 31.7초, 당시 관측 load 89~330). 분리 실행은 예상한 SSH 거부까지 갔지만 첫 실패의 사본이 정리 검사에 걸렸다. SHA·생성 시각으로 자기 사본을 확인해 정리한 뒤 동일 코드·시한·단언으로 전체 E2E72가 13.3초에 통과했다. 시한·기대값·시험 코드는 바꾸지 않았다. 웹 유닛 533개, Rust 1,278개(기존 제외 6개), 의존 경계, native/Linux strict clippy와 공개 검사도 통과했다.
+## iPad 할 일 행의 열 정렬(t-0959)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 107-task-row-layout --workers 1`은 실제 host의 일반·예약·하위·병합 대기 행을 만든다. 모델·머신·저장소·메모·첨부·연결 thread를 함께 표시한다.
+- WebKit 1366×1024·1024×1366·390×844와 Chromium 1280×900·1920×1080에서 상태 원·ID·제목·메뉴의 x좌표, 표시된 칩·표지·제목의 교차 면적, 행 경계와 가로 overflow를 검사한다. 표지 글의 잘림, 첨부 3개, 제목으로 상세 열기·닫기도 확인한다. 글꼴 준비·host 보고 단계·DOM을 완료 사건으로 쓰며 고정 대기는 없다.
+- 전체 검증에서 E2E100은 auto mode 표지가 보인 직후 아직 pane 구독이 연결되지 않아 `재연결 중…` 문구와 정상 placeholder를 비교했다. `ChatComposer`의 `connected`로 활성화되는 첨부 단추를 완료 사건으로 기다린 뒤 기존 문구를 그대로 검사한다. 제품·기대값·시한은 바꾸지 않는다.
+- E2E43의 긴 제목 말줄임 검사를 유지한다. 하위 일은 행 전체 패딩 대신 실제 제목 글의 시작 위치가 안쪽이고 ID 열은 상위와 같아야 한다. 행 전체 들여쓰기가 열을 어긋나게 했던 기존 검사와 제품 배치를 함께 바꾼다.
+- 기존 E2E43·47·52·67·76의 메뉴·thread 이동·예약 끌기·순서·첨부 조작을 유지한다. 수정 전 같은 화면 크기의 열 어긋남을 RED로 기록하고, 전체 로컬 `ci-local.sh`로 검증한다. API는 변경하지 않는다.
+- [herdr-web-ui Sidebar.css](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)의 공통 선행·제목·후행 열과 축소 가능한 제목을 참고했다([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)). [herdr-projects overview.rs](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/overview.rs)의 ID·제목·상태·위치 나열도 대조했으나 텍스트 출력이라 반응형 배치에는 쓰지 않는다([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE)). 외부 코드나 의존성을 추가하지 않는다.
 
 ## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
 
@@ -3429,3 +3444,19 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 실제 기록의 해당 메시지가 나타나는 DOM 사건을 먼저 기다리고 `.is-pending`이 없는 메시지에서 썸네일을 고른다. 화면에 스크롤해 lazy loading을 시작한 뒤 기존 decode·바이트·해시·잘림·썸네일·삭제·권한 단언을 그대로 수행한다. decode 시작 때 연결된 실제 메시지 이미지인지도 검사한다. 제품 코드는 바꾸지 않으며 시한·기대값 완화·재시도·단계 삭제는 없다.
 - 수리 SHA의 E2E23 전체 10회 모두 통과 뒤 같은 SHA로 필수 gate를 처음부터 한 번 수행한다. 진단 재현의 실패와 수리 뒤 안정성 표본을 구분한다.
 - [Playwright locator](https://playwright.dev/docs/api/class-locator#locator-scroll-into-view-if-needed)(Apache-2.0), [HTML 이미지 처리](https://html.spec.whatwg.org/multipage/images.html), [WebKit ImageLoader](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/loader/ImageLoader.cpp)(LGPL-2.0-or-later)를 대조했다. 외부 코드는 가져오지 않는다.
+## workspace main 통계·사용량 바닥 고정(t-0961)
+
+- `cargo test -p aaa-agent -p aaa-host workspace_metrics`: origin 정규화·fork 구별, main checkout/미push/HEAD 변경 전 실행 제외, 원장 재시작·중복 제거·두 머신·여러 프로젝트 동일 remote 묶음, 통계 전용 초기화와 다른 데이터 보존을 검사한다. Git 실행과 SQLite는 실제 경로를 사용한다. 기존 parser·비용 상한·코드 집계 시험은 유지한다.
+- E2E90은 실제 host와 두 agent를 등록하고 두 clone의 SSH/HTTPS origin을 같은 저장소로 묶는다. fixture origin/main ref는 외부 Git 서버 없이 push 완료 상태를 나타낸다. thread worktree에는 별도 결과를 두어 main 수집에 포함되지 않음을 검사한다. 조회·필터·개수·그래프는 제품 API와 렌더링을 그대로 사용한다.
+- Chromium/WebKit × 1280/820/390/320px × 밝음/어두움에서 URL·상세 키보드·가로 넘침·수집 오류·머신 선/점과 필터를 검사한다. 실제 등록/원장에 긴 목록 fixture를 추가하여 workspace만 스크롤되고 공통 사용량 바닥 줄은 설정 톱니 옆에 남는지 확인한다. 답할 것·작업·할 일도 같은 위치를 검사한다. 기기 크기를 재현한 headless 시험이며 실제 iPad/iPhone 실기라고 부르지 않는다. DOM·등록 완료·보고 hash·수집 갱신이 완료 사건이다.
+- 참고 후보: [herdr-web-ui Sidebar](https://github.com/devswha/herdr-web-ui/blob/main/src/components/Sidebar.css)([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE)), [herdr-projects](https://github.com/eliasstravik/herdr-projects)([MIT](https://github.com/eliasstravik/herdr-projects/blob/main/LICENSE)), [Recharts 다중 선 예제](https://recharts.github.io/en-US/examples/LineChartHasMultiSeries/)([MIT](https://github.com/recharts/recharts/blob/main/LICENSE)). 앞의 두 저장소에서 전용 통계/차트 모듈은 찾지 못했다. 기존 sidebar flex 구조와 Recharts의 시계열별 선·범례 구분을 참고한다. 현재 앱은 차트 라이브러리 없이 SVG를 쓰므로 새 패키지나 외부 코드는 추가하지 않는다.
+
+- 전체 회귀에서 발견한 E2E23 경합: 낙관적 대기 말이 나타났다고 enqueue가 읽혔다고 가정해 즉시 remove를 기록하면 수신 방식이 PastedContent로 관측된다. QueueOperation 진단 사건을 확인한 뒤 remove를 기록하도록 fixture 순서를 고친다. 기존 동일 입력 ID·여러 줄·진단 비밀값 배제 단언과 한도는 유지한다.
+- E2E23의 기록 썸네일은 수신 때 교체되는 낙관적 말 대신 실제 기록 말을 선택하고, 제품의 `loading=lazy`에 맞춰 먼저 화면 안으로 스크롤한 뒤 decode를 기다린다. 임시 DOM 교체와 이미지 decode/스크롤의 경합 및 화면 밖 그림의 순환 대기를 없애며, 썸네일 잘림 단언과 단계 한도는 유지한다.
+## 머신 패널 배포 팝업 A안(t-0964)
+
+- E2E35는 기존 Reader의 전송률·복구·긴 오류·전체 SHA·시작 권한 거부·재연결·알림 검사를 유지한다. 목록의 큰 카드와 성공 카드 접기 검사는 승인된 A안에 맞춰 「최근 배포」 팝업 검사로 대체한다. 설정의 배포 카드는 기존 접기를 유지한다.
+- Chromium·WebKit × 390·1280px에서 배포 없음·진행·완료·복구 중·복구 완료·복구 실패·중단·host 끊김·조회 실패를 검사한다. 실행 판/대상 판 분리, host와 다름·알 수 없음·마지막 확인, 닫기·Escape·바깥 누름·초점 복귀·Tab 가두기, 휴대폰 아래 시트, SHA 줄바꿈과 움직임 줄이기를 확인한다. WS 사건과 DOM이 완료 조건이며 고정 sleep은 없다.
+- `node --test web/test/rolloutStatus.test.mjs`는 머신의 모든 단계가 끝나야 완료임을 확인하고, 현재 머신·대기 머신·실패 뒤 미진행을 구별한다. 판은 `MachineView.software`만 표시하며 배포 대상으로 덮지 않는다.
+- t-0963의 OSS 조사(herdr Apache-2.0, ovis RowMenu MIT, herdr-projects MIT)를 이어 쓴다. 머신별 상태·실행 판과 대상 판 분리, 앵커 아래 팝업/휴대폰 시트, 머리 요약과 행별 결과 구성을 따른다. 외부 코드나 의존성은 추가하지 않고 기존 focus trap과 native dialog를 사용한다.
+- 실행 결과: 웹 유닛 540개·타입 검사·빌드·E2E35-rollout(8.2초)·공개 검사 통과. 첫 E2E는 견본이 공통 준비 머신을 없애 대기했으므로 실제 준비 머신을 보존하도록 수리했다. 이어 native dialog의 inert 해제 전 초점 복귀 실패를 확인하여 닫기 뒤 실제 opener로 복귀하도록 고쳤다. 시한·기대값은 바꾸지 않았다. iPhone 실기와 운영 배포는 이 자동 검증에 포함하지 않는다.

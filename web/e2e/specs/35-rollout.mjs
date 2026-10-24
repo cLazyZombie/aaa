@@ -37,6 +37,7 @@ export default async function () {
     const send = () => peer.send(JSON.stringify({ ev: "rollout", result: { ok: latest } }));
     try {
       await inList(p, "activity-machines");
+      await p.getByRole("button", { name: "최근 배포", exact: true }).click();
       const card = p.getByTestId("rollout-card");
       await domIs(p, "배포 전송 진행", () => document.querySelector('[data-testid="rollout-card"]')?.textContent.includes("50%"));
       if (!(await card.textContent()).includes("mac-b")) throw new Error("실패/진행 머신 이름이 없다");
@@ -47,6 +48,7 @@ export default async function () {
       const toggle = p.locator(".view [data-testid='drawer-toggle']");
       await toggle.waitFor();
       if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+      await p.getByRole("button", { name: "최근 배포", exact: true }).click();
       await card.waitFor({ state: "visible" });
       await domIs(p, "재연결 뒤 같은 배포", () => document.querySelector('[data-testid="rollout-card"]')?.textContent.includes("이전 실행 확인 중"));
       latest = { ...latest, state: "stopped_rolled_back", recovery_phase: "restored" };
@@ -62,10 +64,12 @@ export default async function () {
       if (denied.err?.code !== "forbidden") throw new Error(`Reader 시작 권한: ${JSON.stringify(denied)}`);
       const layout = await card.evaluate((node) => ({ overflow: node.scrollWidth > node.clientWidth + 1, error: getComputedStyle(node.querySelector('[role="alert"]')).webkitLineClamp }));
       if (layout.overflow || !["none", "", "0"].includes(layout.error)) throw new Error(`카드 잘림 ${JSON.stringify(layout)}`);
+      await p.getByRole("button", { name: "배포 상세 닫기" }).click();
       await inList(p, "activity-work");
       const oldHash = await p.evaluate(() => location.hash);
       peer.send(JSON.stringify({ ev: "notice", kind: "rollout_failed", title: "배포 실패 · 복구 완료", pane: null, machine: "", project: null, thread: null, agent: null, turn_ms: null, long: true, at_ms: Date.now() }));
       await p.getByRole("button", { name: /배포 실패 · 복구 완료,.*패널 열기/ }).click();
+      await p.getByRole("button", { name: "최근 배포", exact: true }).click();
       await card.waitFor({ state: "visible" });
       if (await p.evaluate(() => location.hash) !== oldHash) throw new Error("배포 알림이 보던 pane 주소를 바꿨다");
       await shot(p, "rollout-phone-reader");
@@ -74,71 +78,96 @@ export default async function () {
       if (dev.errors.length) throw new Error(dev.errors.join("\n"));
     } finally { await p.context().close(); }
   });
-  await step("끝난 배포만 접기·펼치기, 같은 배포 갱신 유지, 새 배포와 모든 실패·복구는 다시 표시(WebKit 390·데스크톱 1280)", async () => {
+  await step("A안: 두 엔진·두 화면의 상태·실행 판·팝업 초점·줄바꿈·움직임 줄이기", async () => {
     const wk = await webkit.launch();
     try {
-      for (const phone of [true, false]) {
-        let latest = { ...fixture(), state: "done", cursor: 3, steps: fixture().steps.map((s) => ({ ...s, completed: true, transferred_bytes: s.total_bytes })) };
+      for (const engine of [browser, wk]) for (const width of [390, 1280]) {
+        let latest = fixture();
         let peer;
-        const opts = { wsRoute: [/\/api\/v1\/events$/, (socket) => {
-          peer = socket;
-          const server = socket.connectToServer();
-          server.onMessage((raw) => {
-            if (typeof raw === "string" && JSON.parse(raw).ev === "rollout") socket.send(JSON.stringify({ ev: "rollout", result: { ok: latest } }));
-            else socket.send(raw);
-          });
-          socket.onMessage((raw) => server.send(raw));
-        }] };
-        const dev = phone
-          ? await pairDevice(wk, aaa("web", "pair", "--reader").code, "iphone", opts)
-          : await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 }, opts);
+        const dev = await pairPage(engine, aaa("web", "pair", "--reader").code, { width, height: 844 }, {
+          wsRoute: [/\/api\/v1\/events$/, (socket) => {
+            peer = socket;
+            const server = socket.connectToServer();
+            server.onMessage((raw) => {
+              if (typeof raw !== "string") return socket.send(raw);
+              const msg = JSON.parse(raw);
+              if (msg.ev === "rollout") return socket.send(JSON.stringify({ ev: "rollout", result: { ok: latest } }));
+              if (msg.ev === "state") {
+                const base = msg.machines[0];
+                msg.machines = [
+                  ...msg.machines,
+                  { ...base, id: "demo-a", name: "mac-a", software: "0.1.5+confirmed", software_differs: false },
+                  { ...base, id: "demo-b", name: "mac-b", software: "0.1.4+old", software_differs: true },
+                  { ...base, id: "demo-c", name: "mac-c", software: "", connection: "disconnected" },
+                  { ...base, id: "demo-d", name: "mac-d", software: "0.1.3+last", connection: "disconnected" },
+                ];
+                return socket.send(JSON.stringify(msg));
+              }
+              socket.send(raw);
+            });
+            socket.onMessage((raw) => server.send(raw));
+          }],
+        });
         const p = dev.page;
+        const recent = p.getByRole("button", { name: "최근 배포", exact: true });
+        const dialog = p.getByRole("dialog", { name: "최근 배포" });
+        const close = p.getByRole("button", { name: "배포 상세 닫기" });
         const card = p.getByTestId("rollout-card");
-        const toggle = card.getByRole("button", { name: "배포 상세 접기" });
-        const tag = phone ? "phone" : "desktop";
-        const send = async () => {
-          latest = { ...latest, updated_ms: latest.updated_ms + 1 };
-          peer.send(JSON.stringify({ ev: "rollout", result: { ok: latest } }));
-          await domIs(p, "새 배포 상태 반영", (ms) => document.querySelector('[data-testid="rollout-card"]')?.dataset.updated === String(ms), latest.updated_ms);
-        };
+        const send = (result) => peer.send(JSON.stringify({ ev: "rollout", result }));
         try {
           await inList(p, "activity-machines");
-          await domIs(p, "성공한 배포", () => document.querySelector('[data-testid="rollout-card"]')?.dataset.state === "done");
-          await shot(p, `35-${tag}-done-open`);
-          if (await toggle.count() !== 1) throw new Error("성공한 배포의 접기 단추가 없다");
-          const openHeight = await card.evaluate((e) => e.getBoundingClientRect().height);
-          await toggle.click();
-          const expand = card.getByRole("button", { name: "배포 상세 펼치기" });
-          await expand.waitFor();
-          if (await card.locator(".rollout-steps").isVisible()) throw new Error("접은 배포의 단계가 보인다");
-          if (await card.evaluate((e) => e.getBoundingClientRect().height) >= openHeight / 2) throw new Error("접은 카드가 여전히 큰 공간을 차지한다");
-          await shot(p, `35-${tag}-done-folded`);
-          await send();
-          if (await expand.count() !== 1) throw new Error("같은 배포의 상태 갱신이 접기를 풀었다");
-          await inList(p, "activity-work");
-          await inList(p, "activity-machines");
-          if (await expand.count() !== 1) throw new Error("패널 전환이 접기를 풀었다");
-          await expand.click();
-          if (!await card.locator(".rollout-steps").isVisible()) throw new Error("펼친 배포의 단계가 없다");
-          await toggle.click();
-          // 다른 ID의 성공한 배포도 다시 보인다.
-          latest = { ...latest, id: "01ARZ3NDEKTSV4RRFFQ69G5FAW" };
-          await send();
-          if (!await card.locator(".rollout-steps").isVisible() || await toggle.count() !== 1) throw new Error("새 배포가 접힌 채다");
-          for (const state of ["running", "recovering", "stopped", "stopped_rolled_back", "recovery_failed"]) {
-            latest = { ...latest, state: "done", error: null, recovery_phase: null };
-            await send();
-            await toggle.click();
-            latest = { ...latest, state, error: state === "running" ? null : "배포 확인 필요", recovery_phase: state === "recovering" ? "awaiting_old" : null };
-            await send();
-            if (!await card.locator(".rollout-steps").isVisible()) throw new Error(`${state} 배포가 숨었다`);
-            if (await card.getByRole("button", { name: /배포 상세 (접기|펼치기)/ }).count()) throw new Error(`${state} 배포를 접을 수 있다`);
+          await recent.waitFor();
+          if (await card.count()) throw new Error("큰 배포 카드가 목록에 남았다");
+          await domIs(p, "머신별 실행 판", () => document.querySelector('[data-testid="machine-mac-b"] .machine-software')?.textContent.includes("aaa 0.1.4+old · host와 다름"));
+          for (const [name, text] of [["mac-c", "aaa 판 알 수 없음"], ["mac-d", "마지막 확인"]]) {
+            if (!(await p.getByTestId(`machine-${name}`).textContent()).includes(text)) throw new Error(text);
           }
-          await shot(p, `35-${tag}-recovery-failed-visible`);
+          await recent.click();
+          await close.waitFor();
+          await domIs(p, "닫기에 초점", () => document.activeElement?.getAttribute("aria-label") === "배포 상세 닫기");
+          await p.keyboard.press("Shift+Tab");
+          if (await p.evaluate(() => document.activeElement?.tagName) !== "SUMMARY") throw new Error("역방향 Tab 가두기 실패");
+          await p.keyboard.press("Tab");
+          if (!await close.evaluate((e) => e === document.activeElement)) throw new Error("Tab 가두기 실패");
+          await p.keyboard.press("Escape");
+          await dialog.waitFor({ state: "detached" });
+          if (!await recent.evaluate((e) => e === document.activeElement)) throw new Error("초점 복귀 실패");
+          await recent.click();
+          for (const state of ["running", "recovering", "stopped", "stopped_rolled_back", "recovery_failed", "done"]) {
+            latest = { ...fixture(), state, updated_ms: latest.updated_ms + 1 };
+            if (state === "done") latest.steps = latest.steps.map((s) => ({ ...s, completed: true }));
+            send({ ok: latest });
+            await domIs(p, "배포 상태 반영", (state) => document.querySelector('[data-testid="rollout-card"]')?.dataset.state === state, state);
+            if (await card.getByRole("button").count()) throw new Error("읽기 전용 상세에 조작 단추가 있다");
+            if (!(await p.getByTestId("machine-mac-b").textContent()).includes("0.1.4+old")) throw new Error("대상 판으로 실행 판을 덮었다");
+            const spins = await p.locator(".machine-panel-heading .rollout-spinner").count();
+            if (spins !== (["running", "recovering"].includes(state) ? 1 : 0)) throw new Error(`잘못된 회전: ${state}`);
+          }
+          send({ ok: null });
+          await domIs(p, "배포 없음", () => document.querySelector('[data-testid="rollout-card"]')?.textContent.includes("배포 기록이 없습니다"));
+          send({ err: { code: "unavailable", message: "상태 조회 · 응답 없음" } });
+          await domIs(p, "조회 실패", () => document.querySelector(".machine-panel-heading")?.textContent.includes("조회 실패"));
+          if (!(await card.textContent()).includes("상태 조회 · 응답 없음")) throw new Error("조회 오류 유실");
+          send({ ok: fixture() });
+          await domIs(p, "진행 상태", () => document.querySelector('[data-testid="rollout-card"]')?.dataset.state === "running");
+          await p.emulateMedia({ reducedMotion: "reduce" });
+          if (await p.locator(".rollout-spinner").first().evaluate((e) => getComputedStyle(e).animationName) !== "none") throw new Error("움직임 줄이기 실패");
+          await card.locator("summary").click();
+          const box = await dialog.boundingBox();
+          if (!box || box.x < 0 || box.x + box.width > width + 1 || await dialog.evaluate((e) => e.scrollWidth > e.clientWidth + 1)) throw new Error("팝업 가로 넘침");
+          if (width === 390 && Math.abs(box.y + box.height - 844) > 2) throw new Error("휴대폰 아래 시트가 아니다");
+          await shot(p, `35-a-${engine.browserType().name()}-${width}`);
+          await p.mouse.click(width - 2, 2);
+          await dialog.waitFor({ state: "detached" });
+          await recent.click();
+          await p.context().setOffline(true);
+          peer.close();
+          await domIs(p, "끊김 표시", () => document.querySelector(".machine-panel-heading")?.textContent.includes("상태 확인 불가"));
+          if (await p.locator(".rollout-spinner").count()) throw new Error("끊긴 상태가 회전한다");
+          if (!(await card.textContent()).includes("마지막 수신 상태")) throw new Error("오래된 상태 경고 없음");
           if (dev.errors.length) throw new Error(dev.errors.join("\n"));
         } finally { await p.context().close(); }
       }
     } finally { await wk.close(); }
   });
-
 }

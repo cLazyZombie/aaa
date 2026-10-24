@@ -506,6 +506,17 @@ impl Db {
             installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
             fingerprint TEXT NOT NULL, machine TEXT NOT NULL UNIQUE, name TEXT NOT NULL)",
         )?;
+        // v1에는 원격 신원·main 근거가 없다. 통계 전용 자료만 원자적으로 초기화한다.
+        let metrics_version: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key='workspace-metrics-schema'", [], |r| r.get(0))
+            .optional()?;
+        if metrics_version.as_deref() != Some("2") {
+            let tx = conn.transaction()?;
+            tx.execute_batch("DELETE FROM repo_metrics; DELETE FROM repo_workspaces;
+                DELETE FROM meta WHERE key LIKE 'workspace-collection:%';
+                INSERT INTO meta(key,value) VALUES('workspace-metrics-schema','2') ON CONFLICT(key) DO UPDATE SET value='2';")?;
+            tx.commit()?;
+        }
         Ok(Db { conn: Mutex::new(conn) })
     }
 

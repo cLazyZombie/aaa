@@ -830,6 +830,7 @@ impl Host {
                 }
             }
         }
+        let mut start_usage = None;
         if before.inflight.is_none()
             && let Some(event) = before.pending.first()
             && matches!(event.action, Action::Start(_))
@@ -869,7 +870,9 @@ impl Host {
                     })?;
                     return Ok(());
                 }
-                crate::auto_start::Decision::Ready(_) | crate::auto_start::Decision::Reuse(_) => {}
+                decision @ (crate::auto_start::Decision::Ready(_) | crate::auto_start::Decision::Reuse(_)) => {
+                    start_usage = Some(self.automation_start_usage(p, &decision, &r.limits).await?);
+                }
             }
         }
         if before.inflight.is_none()
@@ -913,7 +916,15 @@ impl Host {
             }
         }
         let mut usage_unknown = false;
-        let usage_blocked = if r.limits.usage_session_below.is_some() || r.limits.usage_week_below.is_some() {
+        let mut usage_detail = None;
+        let usage_blocked = if let Some(check) = start_usage {
+            let blocked = check.blocked();
+            if let super::usage::Check::Unknown(detail) = check {
+                usage_unknown = true;
+                usage_detail = Some(detail);
+            }
+            blocked
+        } else if r.limits.usage_session_below.is_some() || r.limits.usage_week_below.is_some() {
             let report = self.usage.cached().await;
             let mut session_seen = r.limits.usage_session_below.is_none();
             let mut week_seen = r.limits.usage_week_below.is_none();
@@ -1023,14 +1034,28 @@ impl Host {
             .map_err(internal)?;
         if let Some((id, reason)) = wait {
             let reason = if reason == "사용량 문턱 또는 확인 불가" {
-                if usage_unknown { "사용량 확인 불가" } else { "사용량 문턱" }
+                if usage_unknown {
+                    usage_detail
+                        .map(|detail| format!("사용량 확인 불가: {detail}"))
+                        .unwrap_or_else(|| "사용량 확인 불가".into())
+                } else {
+                    "사용량 문턱".into()
+                }
             } else {
-                reason
+                reason.into()
             };
-            self.record_routine(p, &r.name, &id, "waiting", reason, None);
-            if reason == "사용량 확인 불가" {
+            self.record_routine(p, &r.name, &id, "waiting", &reason, None);
+            if reason.starts_with("사용량 확인 불가") {
                 // routine 차례로 세면 일정 source가 회복 뒤에도 미처리 안내로 보고 멈춘다.
-                self.inbox_once(p, "usage", &r.name, "usage unavailable", "사용량 확인 불가: 구독 로그인 또는 조회 상태를 확인한다. 입력은 보존하며 ticker가 다시 읽으면 판정한다");
+                self.inbox_once(
+                    p,
+                    "usage",
+                    &r.name,
+                    "usage unavailable",
+                    &format!(
+                        "{reason}: 구독 로그인 또는 조회 상태를 확인한다. 입력은 보존하며 ticker가 다시 읽으면 판정한다"
+                    ),
+                );
             }
         }
         let Some(mut batch) = selected else { return Ok(()) };

@@ -73,8 +73,15 @@ export default async function ({ page }) {
     if ((await page.getByTestId("tasks-list").locator(".task-list-name").count()) !== 0) throw new Error("목록 머리가 남았다");
     const order = await page.getByTestId("tasks-rest").locator(".task-row").evaluateAll((els) => els.map((e) => e.dataset.testid));
     if (order.join() !== Object.values(LINE).map((l) => `task-${l}`).join()) throw new Error(`한 목록 차례 ${order}`);
-    const pad = (line) => page.getByTestId(`task-${line}`).evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft));
-    if (!((await pad(LINE.sub)) > (await pad(LINE.login)))) throw new Error("하위 task 들여쓰기");
+    // 열은 유지하고 하위 제목 글만 들여쓴다. CSS 속성 대신 실제 글과 ID 위치를 확인한다.
+    const position = (line) => page.getByTestId(`task-${line}`).evaluate((el) => {
+      const text = [...el.querySelector('.task-title').childNodes].find(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+      const range = document.createRange();
+      range.selectNode(text);
+      return { text: range.getBoundingClientRect().left, id: el.querySelector('.list-id').getBoundingClientRect().left };
+    });
+    const parentPosition = await position(LINE.login), childPosition = await position(LINE.sub);
+    if (!(childPosition.text > parentPosition.text) || Math.abs(childPosition.id - parentPosition.id) > 1) throw new Error(`하위 제목 들여쓰기와 ID 열: ${JSON.stringify({ parentPosition, childPosition })}`);
     // owner를 오독하지 않는다: 형식 어긋남 칩이고 사람 칩(「t-0101 S4 뒤, …」)이 없다
     const tidy = page.getByTestId(`task-${LINE.tidy}`);
     if (!(await tidy.textContent()).includes("형식 어긋남") || (await tidy.locator(".task-owner").count()) !== 0) throw new Error(`정리 줄 ${await tidy.textContent()}`);
