@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## 자동화 Codex profile의 계정별 사용량(t-0970)
+
+- `cargo test -p aaa-host quota_gate`: 세션 5%·주간 10%는 남은 비율이며 경계와 같을 때 허용하는지 확인한다. 주간 창만 있는 계정의 세션 문턱은 확인 불가로 남기고, 설정된 창만 검사한다. 실패·오래된 관측·리셋 경과·충돌·모델별 별도 몫·비정상 숫자를 허용하지 않는다. 로컬 공급자·계정을 섞어 누락을 채우지 않는다.
+- 실제 Host·DB와 기존 agent frame fixture로 원격 Codex의 기본 계정, 재사용 thread의 고정 계정, 이전 로그인 세대 배제, 입력 보존·회복·중복 영수증을 검증한다. 진행 중인 계정 수집 잠금을 잡은 상태에서도 마지막 완료 캐시의 판정을 마쳐야 한다. 정상 회복 뒤 파일 전달은 한 번이고 새 thread는 만들지 않는다. 실제 계정·구독 요청·고정 sleep·재시도는 없다.
+- `cargo test -p aaa-host automation::`로 기존 자동화 회귀를, `cargo test -p aaa-host ticker_refreshes_usage_without_a_browser_and_releases_pending_input`로 브라우저 없는 갱신·구독 응답 지연·입력 보존 회귀를 검사한다. UI·wire 형식은 바꾸지 않아 새 브라우저 E2E를 추가하지 않는다. 운영 자동화 파일·승인·문턱은 시험에서 변경하지 않는다.
+- [CodexBar의 Codex 자료원](https://github.com/steipete/CodexBar/blob/main/docs/codex.md)([MIT](https://github.com/steipete/CodexBar/blob/main/LICENSE))의 계정별 구독 창·CLI RPC와 [ccusage의 Codex 로그 집계](https://github.com/ccusage/ccusage/blob/main/docs/guide/codex/index.md)([MIT](https://github.com/ccusage/ccusage/blob/main/apps/ccusage/LICENSE))를 비교했다. 구독 문턱은 기존 계정 RPC 캐시를 재사용하고, 토큰·비용 추정으로 대신하지 않는다. 외부 코드·의존성은 추가하지 않는다.
+
 ## E2E105 설치 앱의 최근 화면 전환(t-0934)
 
 - `node --test web/test/recentScreens.test.mjs web/test/recentHistory.test.mjs`: 실제 palette 대상 모델로 thread/pane 별칭·실행/종료·보류/해결/보관·끊김, 방문 키 중복 제거·128개 한도·깨진 저장·저장 거부 시 메모리 유지·다른 창의 변경/삭제, 고정 MRU의 순환·역방향·0/1개·후보 제거를 확인한다. 완료 보고의 idle/done은 pane 종료로 보지 않는다.
