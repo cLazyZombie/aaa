@@ -53,8 +53,6 @@ curl -fsSL https://cLazyZombie.github.io/aaa/install.sh | sh
 irm https://cLazyZombie.github.io/aaa/install.ps1 | iex
 ```
 
-> Pages 입구는 게시 준비 중입니다. 최초 게시 전에는 [아래 수동 다운로드](#수동-다운로드소스-빌드)를 사용합니다. 게시 담당자는 [Pages 게시 절차](docs/install-pages.md)를 따릅니다.
-
 macOS·Linux는 arm64와 x86_64, Windows는 x86_64를 지원합니다. 설치할 사용자 계정으로 실행하고, aaa pane 밖에서 진행합니다. SSH는 `ssh -t`로 터미널을 붙입니다. macOS·Linux의 설치 명령 전체를 `sudo`로 실행하지 않습니다.
 
 ### 2. setup 질문에 답하기 ✋
