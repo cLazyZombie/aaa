@@ -160,7 +160,11 @@ async function resumed(engine, width, harness) {
       });
       await until("재시작 뒤 host 연결", () => state().connection === "connected" && state().agent?.harness_session === id);
       await inList(page, "pane-t1");
+      const revalidated = page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "pane_chat" && r.request().postDataJSON()?.pane === pane && !r.request().postDataJSON()?.before);
       await inList(page, `pane-${name}`);
+      // 보관 본문은 API보다 먼저 보인다. 재시작의 새 cursor 검사는 이번 재검증의 commit 뒤에 시작한다.
+      const latestHistory = (await (await revalidated).json()).ok.history;
+      await domIs(page, "재시작 재검증 commit", history => document.querySelector('[data-testid="chat"] [data-chat-id]')?.getAttribute("data-chat-id")?.startsWith(`${history}:`), latestHistory);
       // 재시작은 기존 byte cursor를 무효화한다(chat_pages). 새 cursor로 이전 대화 전체를 다시 읽을 수 있어야 한다.
       await firstMessage(page, id);
       await inList(page, "pane-t1");

@@ -3317,3 +3317,17 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - run 39984576747(fca9e7d3)은 Windows one-line install 시험의 실제 IRM이 시험 HTTP 서버 응답을 읽다가 connection reset으로 끝났다(`http_phase=4`, executor/config 미생성). 시험 서버는 응답을 쓴 뒤 write half-close로 EOF를 보내고 peer EOF까지 수신을 비워 종료한다. 실제 PowerShell 5.1/7의 `irm | iex`·ConPTY·검토·서명 승인·설치 기록 단언을 유지한다. Windows 후보는 격리 실기에서 해당 시험을 실행한 뒤 인계한다.
 - 참고 후보는 [xterm.js Viewport/Lifecycle](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Viewport.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)), [tracing callsite](https://github.com/tokio-rs/tracing/blob/master/tracing-core/src/callsite.rs)([MIT](https://github.com/tokio-rs/tracing/blob/master/LICENSE)), [PowerShell](https://github.com/PowerShell/PowerShell)([MIT](https://github.com/PowerShell/PowerShell/blob/master/LICENSE.txt))다. [Node process I/O](https://nodejs.org/api/process.html#a-note-on-process-io)의 자연 종료 계약도 따른다. 외부 코드·의존성은 추가하지 않는다.
 - 검증은 전체 ci-local·Linux strict cross clippy·공개 검사다. 재시도·시한 확대·기대값 완화·시험 삭제·GitHub rerun/revert는 하지 않는다. API·E2E 번호는 유지한다.
+
+## 대화 다시 열기의 제한 보관(t-0957, plan §8.480)
+
+- `node --test web/test/retainedChats.test.mjs`는 최근 3개 LRU·합계 8 MiB·활성 단독 초과 후 이탈·숨김 5분 만료와 pane 삭제·확인된 session 교체를 검사한다. 시간은 함수 인자로 주며 실시간 대기를 하지 않는다.
+- E2E101은 격리 host·실제 agent·coordinator·일반 pane의 2,400행 합성 Claude 기록으로 Chromium/WebKit ×1280·390px 각각 3회 처음/할 일 왕복/받아 둔 과거 위치를 잰다. Chromium 80ms 회선 지연은 별도 대조다. 본문·row 위치 준비 뒤 두 frame을 포함하고 송신 연결 시간과 재요청 수를 따로 기록한다. `AAA_CHAT_BASELINE=1`은 구판 실행 파일의 기준 계측에만 쓰며 새 보관 단언을 생략한다. `AAA_CHAT_MEASUREMENTS=<파일>`로 수치 원자료를 보존한다.
+- E2E102는 네 pane의 LRU·hidden/inert·재검증 응답 전 같은 DOM/초안 표시·늦은 응답 버리기·숨김 HTTP/입력 0회·5분 만료·20회 왕복 뒤 수/관측기 증가·UTF-8 용량·활성 단독 초과·새 답·history/session 교체·표시 옵션·로그아웃을 검사한다. 용량 응답 fixture는 실제 host 응답의 본문 크기만 제어하고 생각 줄을 접어 DOM 비용과 구분한다. 만료는 Playwright 시계로 진행하며 실제 5분을 자지 않는다.
+- 기존 E2E22·29·30·37·41·44·93의 대화 스크롤·검색·송신·재연결과 두 controller의 입력 소유를 유지한다. 보관된 DOM을 추가해도 기존 시험 표지는 활성 화면에만 달며, 보관 수는 `.term[data-pane]`로 검사한다. 재시도·시한 확대·기대값 완화 없이 요청/응답·DOM·연결·frame 사건으로 끝낸다. Playwright 시계는 첫 대화를 열기 전에 설치해 App의 만료 타이머도 소유한다.
+- 처음 비교는 같은 기준 SHA·도구·fixture를 쓴다. 공유 머신의 부하·headless 휴대폰 크기와 실제 iPhone, 합성 Claude와 운영 Codex를 구분하고 80ms 목표는 실측으로 판정한다. 전체 ci-local·Linux strict cross·의존 경계·공개 검사가 완료 조건이며 착지 창 전에는 병합·push하지 않는다.
+
+- 20회 왕복 대조에서 xterm 5.5.0 CoreBrowserService의 미등록 ScreenDprMonitor 때문에 window resize listener가 10회에서 22개, 20회에서 32개로 늘어나는 RED를 확인했다. 기존 Disposable 등록 한 줄로 monitor를 정리한다. 실제 upstream 모듈 대조는 `xterm-source.test.mjs`에서 resize와 media listener 모두를 검사하며, E2E102의 수 증가 없음 단언을 유지한다.
+- 과거 위치의 캐시 복귀도 기존 두 frame 안정화 경로를 쓴다. 재검증의 최신 쪽에 기준 행이 없더라도 보관 본문에 있으면 복원을 위한 앞 쪽 읽기를 하지 않는다. agent 재시작의 새 cursor 시험(E2E93)은 보관된 옛 「처음이다」와 구분해 이번 최신 응답의 history commit 뒤 이전 쪽을 읽는다.
+- E2E30은 Chromium과 WebKit 390px에서 실제 host의 제출 ACK만 보류하고 화면을 떠난다. 연결 종료 뒤 송신 정리·초안 복구와 정확한 입력 bytes 한 번을 검사한다. E2E25는 설정 복귀 뒤 실제 readonly 해제를 기다리고, E2E84는 복귀 그리기 세 frame을 제어한 시계로 실행하되 그 시간을 기존 499/500ms 예산에 포함한다. 시한·기대값을 바꾸지 않는다.
+- `conversationRefresh.test.mjs`는 최신 읽기 → 앞 쪽 두 번 → 숨김 뒤 타이머 0개를 검사한다. 구판은 앞 쪽 읽기의 drain이 기존 타이머 참조를 덮어 2개를 남긴다(RED). 앞 쪽을 시작하기 전에 기존 타이머를 정리하며 기존 lane·주기는 유지한다.
+- E2E102는 숨긴 동안 1280→900px·390→430px 폭 변경에서도 같은 row/offset을 검사한다. 10회·20회 왕복의 DOM·리스너·타이머를 대조하고 Chromium은 GC 완료 뒤 실제 CDP heap 수치도 기록한다. WebKit에서 같은 API가 없으면 heap은 미측정으로 남기며 DOM 수를 heap 상한으로 해석하지 않는다.

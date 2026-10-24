@@ -30,16 +30,18 @@ function findText(m: ChatMessage): string | null {
   return m.role === "user" ? unwrapPasted(m.text) : m.role === "assistant" ? m.text : null;
 }
 
-function useDebounced<T>(value: T, ms: number): T {
+function useDebounced<T>(value: T, ms: number, enabled: boolean): T {
   const [settled, setSettled] = useState(value);
   useEffect(() => {
+    if (!enabled) return;
     const timer = window.setTimeout(() => setSettled(value), ms);
     return () => window.clearTimeout(timer);
-  }, [value, ms]);
+  }, [value, ms, enabled]);
   return settled;
 }
 
 export interface ChatFindOptions {
+  enabled?: boolean;
   /** 대화 굴림 칸(`.chat`) */
   container: React.RefObject<HTMLDivElement | null>;
   messages: readonly ChatMessage[];
@@ -64,7 +66,9 @@ export interface EarlierState {
   pages: number;
 }
 
-export function useChatFind({ container, messages, rowIds, canOpen, openRequest, more, loadEarlier }: ChatFindOptions) {
+export function useChatFind({ enabled = true, container, messages, rowIds, canOpen, openRequest, more, loadEarlier }: ChatFindOptions) {
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [focusRequest, setFocusRequest] = useState(0);
@@ -74,9 +78,9 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
   const [revealed, setRevealed] = useState<number | null>(null);
   const restoreFocus = useRef<HTMLElement | null>(null);
   const trimmed = query.trim();
-  const debounced = useDebounced(trimmed, 100);
+  const debounced = useDebounced(trimmed, 100, enabled);
   // 참고처럼 친 말이 100ms 머문 뒤에 찾는다. 그 사이에는 앞 결과를 그대로 둔다
-  const searched = open ? debounced : "";
+  const searched = enabled && open ? debounced : "";
 
   // 줄마다 센 수는 같은 말·같은 글이면 다시 세지 않는다: 앞 쪽을 이어 받는 동안 새 쪽의 말만 센다(받는 쪽과 세는 쪽을 나눔, plan §8.310)
   const counted = useRef<{ key: string; byId: Map<string, { text: string; count: number }> }>({ key: "", byId: new Map() });
@@ -151,6 +155,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
   };
 
   const openFind = useCallback(() => {
+    if (!enabledRef.current) return;
     if (!open) restoreFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setOpen(true);
     // 이미 열렸어도 다시 칸에 가고 말을 고른다(참고 focusRequestId). 말이 있으면 보이는 자리부터 다시
@@ -198,23 +203,31 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
     setRevealed(null);
     const back = restoreFocus.current;
     restoreFocus.current = null;
-    if (back?.isConnected) back.focus({ preventScroll: true });
+    if (enabledRef.current && back?.isConnected) back.focus({ preventScroll: true });
   }, [stopEarlier]);
+
+  useEffect(() => {
+    if (enabled) return;
+    stopEarlier();
+    setOpen(false);
+    restoreFocus.current = null;
+  }, [enabled, stopEarlier]);
 
   const seenRequest = useRef(openRequest);
   useEffect(() => {
-    if (openRequest === seenRequest.current) return;
+    if (!enabled || openRequest === seenRequest.current) return;
     seenRequest.current = openRequest;
     openFind();
-  }, [openRequest, openFind]);
+  }, [enabled, openRequest, openFind]);
 
   // ⌘F(Mac)·Ctrl+F: 대화를 보는 동안은 브라우저 찾기 대신 이것(참고 keybindings `mod+f` → chat.find, 터미널 focus가 아닐 때).
   // Esc는 열렸을 때 닫는다(참고 useChatShortcuts dismissFind: 조합 중·이미 쓴 Esc·열린 창이면 두고)
   useEffect(() => {
+    if (!enabled) return;
     const mac = isMacPlatform();
     const modalOpen = () => document.querySelector("[aria-modal='true'], dialog[open]") !== null;
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229 || modalOpen()) return;
+      if (!enabledRef.current || event.isComposing || event.keyCode === 229 || modalOpen()) return;
       const mod = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
       if (mod && !event.shiftKey && !event.altKey && (event.code === "KeyF" || event.key.toLowerCase() === "f")) {
         event.preventDefault();
@@ -223,7 +236,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
       }
     };
     const onEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || !open || event.defaultPrevented || event.isComposing || event.keyCode === 229 || modalOpen()) return;
+      if (!enabledRef.current || event.key !== "Escape" || !open || event.defaultPrevented || event.isComposing || event.keyCode === 229 || modalOpen()) return;
       event.preventDefault();
       close();
     };
@@ -233,7 +246,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("keydown", onEscape);
     };
-  }, [open, openFind, close]);
+  }, [enabled, open, openFind, close]);
 
   // 칠하기와 그 자리로 가기(참고 useThreadFindHighlights·useThreadFindNavigation). 그린 줄의 Range만 칠한다: 가상화로 본문이 없는 줄은
   // 가까이 올 때 mount되고 MutationObserver가 다시 칠한다
@@ -246,6 +259,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
   const revealState = useRef<{ navigation: number; tries: number; frame: number | null } | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     const el = container.current;
     const registry = highlights();
     const clearRows = () => {
@@ -406,7 +420,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
       clearRows();
     };
     // rows가 바뀌면(새 말·앞 쪽) 아래 effect가 다시 칠한다
-  }, [container, searched]);
+  }, [enabled, container, searched]);
 
   // 고른 찾음이 바뀌면 다시 칠하고 그 자리로 간다. 기록만 늘었으면(같은 이동) 칠하기만 한다
   useLayoutEffect(() => {

@@ -1561,3 +1561,6 @@ summary.chat-compact-head { cursor: pointer; }
 .view-content { display: contents; }
 /* 가려진 터미널도 같은 폭·높이로 유지해 설정 조작 중 PTY를 0열로 만들지 않는다. */
 .view-content[hidden] { display: flex; flex-direction: column; position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+
+/* 보관한 대화는 레이아웃·입력에 참여하지 않는다. .term의 flex보다 우선한다. */
+.term[hidden] { display: none; }

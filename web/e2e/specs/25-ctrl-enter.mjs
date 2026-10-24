@@ -157,6 +157,8 @@ draw();
       await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
       await page.keyboard.press("Escape");
       await d.waitFor({ state: "detached" });
+      // 본문 복귀와 입력 연결은 별개다. 실제 readonly 해제 뒤 키를 보낸다.
+      await page.locator('[data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
     };
     let box = await chat("ce-modern");
     let modernFrom = await sentCount(page);
@@ -238,6 +240,8 @@ draw();
       await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
       await page.keyboard.press("Escape");
       await d.waitFor({ state: "detached" });
+      // 본문 복귀와 입력 연결은 별개다. 실제 readonly 해제 뒤 키를 보낸다.
+      await page.locator('[data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
     };
     // 작업 중에 붙잡아 「지금 보내기」를 누른다
     const hold = async (pg, box, text) => {
