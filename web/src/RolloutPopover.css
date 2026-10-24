@@ -1,0 +1,23 @@
+.machine-panel-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; }
+.machine-panel-heading h2 { font-size: 14px; margin: 0; }
+.machine-recent-rollout { margin-left: auto; font-size: 12px; }
+.machine-rollout-status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent); }
+button.machine-rollout-status { background: none; border: 0; cursor: pointer; padding: 4px; }
+.machine-software { margin: 2px 12px 8px; font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
+.machine-software .machine-rollout-status { margin-left: 8px; }
+.rollout-spinner { width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: rollout-spin 1s linear infinite; flex: none; }
+@keyframes rollout-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .rollout-spinner { animation: none; } }
+.rollout-popover { position: fixed; margin: 0; left: var(--rollout-left); top: var(--rollout-top); width: 500px; max-width: calc(100vw - 16px); max-height: calc(100dvh - var(--rollout-top) - 8px); padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 16px 48px #0005; overflow-y: auto; overscroll-behavior: contain; }
+.rollout-popover::backdrop { background: #0002; }
+.rollout-popover-heading { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.rollout-popover-heading h2 { margin: 0; font-size: 14px; }
+.rollout-popover .rollout-card { margin: 0; border: 0; padding: 16px; }
+.rollout-readonly { margin: 0; padding: 0 16px 16px; color: var(--text-dim); font-size: 11px; }
+@media (max-width: 768px) {
+  .rollout-popover { left: 0; top: auto; bottom: 0; width: 100%; max-width: 100%; max-height: 84dvh; border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
+}
+.machine-panel-heading:is([data-state="stopped"], [data-state="recovery_failed"]) .machine-rollout-status,
+.machine-rollout-status:is([data-state="stopped"], [data-state="recovery_failed"]) { color: var(--danger-text); }
+.machine-panel-heading:is([data-state="recovering"], [data-state="stopped_rolled_back"]) .machine-rollout-status,
+.machine-rollout-status:is([data-state="recovering"], [data-state="stopped_rolled_back"]) { color: var(--notice); }
