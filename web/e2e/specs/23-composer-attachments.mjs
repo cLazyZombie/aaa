@@ -462,6 +462,7 @@ while True:
 
     // Claude 작업 중: 대기열 줄이 보내짐이다. 풀고 대화 끝 점선 대기 말, 흡수되면 보통 말
     fs.writeFileSync(`${hold}-queue`, "");
+    const beforeQueued = (await sentFrames(p)).length;
     await box.fill("작업 중 추가\n두 번째 줄");
     await press(p);
     await waitOutput("composer", `CMP_RECEIVED_${++received}`);
@@ -469,6 +470,13 @@ while True:
       && document.querySelector('[data-testid="chat-pending"]')?.textContent.includes("대기 중")
       && !document.querySelector('[data-testid="chat-pending"]').textContent.includes("읽습니다")
       && document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
+    // 같은 모양의 낙관적 대기 말만으로 enqueue 관측을 판단하지 않는다.
+    // 현재 submit의 trace가 실제 queue_operation 수신으로 host에 기록된 뒤에만 흡수한다.
+    const queuedTrace = (await sentFrames(p, beforeQueued)).find((frame) => frame.t === "submit")?.trace;
+    assert.ok(queuedTrace, "여러 줄 submit의 진단 ID");
+    const queuedReceipt = await until("현재 여러 줄 입력의 enqueue 수신 진단", () =>
+      aaa("debug", "input", "--pane", "composer", "--since", "1h").events.find((event) =>
+        event.id.endsWith(`:${queuedTrace}`) && event.event === "ui" && event.detail.includes("event=Receipt method=Some(QueueOperation)")));
     await shot(p, "chat-send-pending");
     fs.appendFileSync(transcript, [
       { type: "queue-operation", operation: "remove", content: '<pasted_content id="local_408">\n작업 중 추가\n두 번째 줄\n</pasted_content id="local_408">', reason: "absorbed_mid_turn" },
@@ -478,8 +486,12 @@ while True:
       && [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.includes("작업 중 추가")));
     fs.unlinkSync(`${hold}-queue`);
     const events = aaa("debug", "input", "--pane", "composer", "--since", "1h").events;
-    const queuedReceipt = events.find((e) => e.event === "ui" && e.detail.includes("QueueOperation"));
-    if (!queuedReceipt || !events.some((e) => e.id === queuedReceipt.id && e.event === "received" && e.detail.includes("multiline=true"))) throw new Error("여러 줄 대기 수신 진단이 같은 ID로 이어지지 않았다");
+    if (!events.some((e) => e.id === queuedReceipt.id && e.event === "received" && e.detail.includes("multiline=true"))) throw new Error("여러 줄 대기 수신 진단이 같은 ID로 이어지지 않았다");
+    const stages = events.filter((e) => e.id === queuedReceipt.id);
+    const receivedAt = stages.findIndex((e) => e.event === "received");
+    const deliveredAt = stages.findIndex((e) => e.event === "delivered");
+    const receiptAt = stages.findIndex((e) => e.event === "ui" && e.detail.includes("event=Receipt method=Some(QueueOperation)"));
+    assert.ok(receivedAt >= 0 && receivedAt < deliveredAt && deliveredAt < receiptAt, "같은 ID의 received → delivered → QueueOperation receipt 순서");
     for (const stage of ["Pending", "Cancel", "Unlocked"]) if (!events.some((e) => e.event === "ui" && e.detail.includes(`event=${stage}`))) throw new Error(`입력 진단 사건 누락: ${stage}`);
     if (JSON.stringify(events).includes("작업 중 추가") || JSON.stringify(events).includes("먹힌 글")) throw new Error("진단에 사용자 글이 남았다");
     if (client.errors.length) throw new Error(client.errors.join("; "));

@@ -3405,3 +3405,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - FRONT_API 1.120와 `automation_results.v1` capability가 새 실행 조회/입력 신고를 구분한다. 일반 post accepted를 입력 결과 기록 성공으로 해석하지 않는다. N-1 agent에는 새 결과 variant를 보내지 않는다.
 
 - 착지 통합에서는 t-0945가 main에 넣은 자연 종료 방식의 E2E `--list` 수리를 유지한다. 후보의 출력 callback·강제 종료 중복 수리는 제거하고 실제 전체 목록·대량 pipe 단언은 유지한다.
+
+## E2E23의 실제 enqueue 관측 뒤 흡수(t-0962)
+
+- 낙관적 `.is-pending`과 transcript enqueue의 점선 말은 같은 모양이다. 앞 표시만 확인하고 remove·queued_command를 쓰면 웹이 enqueue를 읽기 전에 흡수된 pasted_content만 읽어 QueueOperation 진단을 놓친다.
+- 현재 submit의 trace를 잡고 host의 해당 ID `Receipt method=Some(QueueOperation)` 사건을 기존 `until`로 확인한 뒤 흡수한다. 기존 여러 줄·대기/흡수·초안·취소·중복 제출·본문 비기록 단언을 유지하며, 같은 ID의 received → delivered → QueueOperation receipt 순서도 검사한다. 기존 20초 실패 상한을 그대로 쓰며 고정 대기·재시도·시한 확대·시험 삭제는 없다.
+- E2E23 전체를 새 실험실에서 10회 단독 실행한 뒤 같은 수정 SHA에서 전체 ci-local·공개 검사·양 OS strict cross clippy·production Windows release를 한 번 수행한다. 반복 도중 실패도 통과 표본으로 바꾸지 않고 보존·중단한다.
+- [Playwright 사건 대기](https://playwright.dev/docs/events)와 [WebSocket 관측](https://playwright.dev/docs/api/class-websocket)(Apache-2.0)을 대조했다. 브라우저 송신만이 아니라 기존 host 진단 원장에 도착한 사건을 관측하며 외부 코드·의존성을 추가하지 않는다.
