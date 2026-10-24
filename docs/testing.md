@@ -1,5 +1,30 @@
 # 시험 쓰는 법
 
+## Windows Python 셸 계약 시험의 경계(t-0984)
+
+- `python -m unittest -v scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_ci_local scripts.test_linux_cross`를 세 OS에서 실행한다.
+  Windows는 네이티브 Python과 Git for Windows를 쓴다. `bash`를 PATH에서 그대로 찾으면 WSL 입구가 선택될 수 있으므로,
+  `shell_test_support.bash_executable`이 PATH의 Git 설치 옆 Bash를 명시한다. Git Bash가 없으면 원인을 담은 오류로 실패한다.
+- `.gitattributes`는 셸 스크립트와 확장자 없는 cross wrapper를 LF로 체크아웃한다.
+  Windows의 `core.autocrlf=true`에서도 Bash가 CRLF를 명령 일부로 읽지 않아야 한다.
+  Zig fixture도 LF로 쓰고 wrapper를 Bash의 인자로 전달한다. 공백 경로·달러 문자·각 인자·종료 코드 23의 단언을 유지한다.
+- Windows에서 추가로 건너뛰는 것은 공개 검사의 개행·탭 파일명 시험 3건,
+  가짜 Cargo와 시험 바이너리의 Unix shebang 실행 시험 1건,
+  Unix 전용 CI 단계와 shebang 도구 시험 10건, Unix 컴파일러·linker PATH 시험 1건이다.
+  각 시험 또는 클래스에 사유를 적는다. 기존 deploy-build·symlink·비 UTF-8 파일명 skip도 유지한다.
+  로그 스트리밍 시험은 `CiStream`으로 분리하여 Windows에서도 UTF-8 청크 경계와 완료 후 drain을 실제 검사한다.
+  공개 검사의 경로별 크기 상한, Rust runner의 Python 자식 병렬 실행, release 계약, Zig wrapper 검사는 Windows에서도 실행한다.
+- 기준 main a17bce49의 Windows 재현은 40건 중 실패 8·오류 9·skip 10이다.
+  옛 15건 목록 대신 이 결과를 기준으로 삼는다. 시한·기대값·재시도 정책과 제품 코드는 바꾸지 않는다.
+  수정판은 Windows 15 통과·25 skip, macOS 39 통과·1 skip, Ubuntu 24.04 38 통과·2 skip이다.
+  Unix에서는 기존 플랫폼 skip만 남는다. macOS 전달본의 CRLF 변환과 새 Ubuntu VM의 rustc·Node 누락을
+  먼저 해결한 뒤 같은 시험을 실행했다. 전달용 `git archive`에는 `-c core.autocrlf=false`를 지정한다.
+- 참고 후보는 [CPython의 조건부 skip](https://github.com/python/cpython/blob/main/Lib/test/test_subprocess.py)
+  ([PSF-2.0](https://github.com/python/cpython/blob/main/LICENSE))과
+  [Meson의 Windows 실행 파일·shebang 처리](https://github.com/mesonbuild/meson/blob/master/mesonbuild/programs.py)
+  ([Apache-2.0](https://github.com/mesonbuild/meson/blob/master/COPYING))다.
+  플랫폼 전제는 명시적으로 건너뛰고, 가능한 스크립트 호출에는 interpreter를 명시하는 경계만 참고했다. 코드 복사·의존성 추가는 없다.
+
 ## E2E16 긴 줄 바꿈 뒤 줄 참조 재열기(t-0978)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40062175921/job/120777851872)은 SHA 1583a1ed에서 「접은 big.ts 2500번째 줄 가운데」 20초 만료다. 원문과 결과 artifact를 확보했으나 소스 행 좌표·파일 보기 화면·trace가 없어 당시 거짓 조건을 소급 확정하지 않는다. 수정 전 전체 E2E16과 가상화 단계 단독은 각각 한 번 통과했으며 이 통과를 결함 부재의 증거로 삼지 않는다.

@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from scripts.shell_test_support import bash_executable
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -14,13 +16,13 @@ class LinuxCross(unittest.TestCase):
     def test_zig_override_preserves_each_argument_and_exit_code(self):
         with tempfile.TemporaryDirectory(prefix="aaa-zig ") as directory:
             zig = Path(directory) / "zig fixture"
-            zig.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\nexit 23\n')
+            zig.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\nexit 23\n', newline="\n")
             zig.chmod(0o755)
             result = subprocess.run(
-                [str(ROOT / "scripts/cross/x86_64-linux-gnu-gcc"),
+                [bash_executable(), (ROOT / "scripts/cross/x86_64-linux-gnu-gcc").as_posix(),
                  "--target=x86_64-unknown-linux-gnu", "-c",
                  "source with spaces.c", "-DNAME=$literal"],
-                env=dict(os.environ, AAA_ZIG=str(zig)), capture_output=True, text=True,
+                env=dict(os.environ, AAA_ZIG=zig.as_posix()), capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 23)
             self.assertEqual(result.stdout.splitlines(),
@@ -28,6 +30,7 @@ class LinuxCross(unittest.TestCase):
                               "--target=x86_64-linux-gnu", "-c",
                               "source with spaces.c", "-DNAME=$literal"])
 
+    @unittest.skipUnless(os.name == "posix", "Unix PATH·컴파일러 경로와 shebang 도구를 검사한다")
     def test_existing_compiler_and_linker_are_preserved(self):
         with tempfile.TemporaryDirectory(prefix="aaa-cross-") as directory:
             cargo = Path(directory) / "cargo"
