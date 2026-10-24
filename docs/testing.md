@@ -24,6 +24,15 @@
 - 웹 유닛은 수집 실패 사유의 빈 값·재로그인 단정 방지를 확인한다. proto TypeScript 생성 계약, 웹 유닛·타입·빌드, host 전체 유닛, 의존 경계·clippy·공개 검사를 수행한다. 운영 배포와 실기 UI 확인은 포함하지 않는다.
 - 먼저 [CodexBar의 Claude 자료원](https://github.com/steipete/CodexBar/blob/main/docs/claude.md)([MIT](https://github.com/steipete/CodexBar/blob/main/LICENSE))과 [OpenUsage의 인증 자료원](https://github.com/robinebers/openusage/blob/main/docs/providers/claude.md)([MIT](https://github.com/robinebers/openusage/blob/main/LICENSE))을 대조했다. 모델 실행 인증과 사용량 조회 인증의 차이·계정 귀속을 참고하고, 구현은 기존 A2 상태줄 수집을 재사용한다. 외부 코드·의존성은 추가하지 않는다.
 
+## 휴대폰 터미널 영어의 마지막 글자 지연(t-1001)
+
+- E2E09의 「휴대폰 영어 조합」은 WebKit·Chromium의 iPhone UA·390px에서 다음 키가 이전 composition을 끝내는 순서를 재생한다. 마지막 `s`의 compositionend나 다음 키를 주기 전에 실제 host→agent→PTY에 `status`가 모두 도착해야 한다. 양 엔진은 공용 브라우저 캐시와 저장소의 Chromium launcher를 쓴다.
+- 구판 소스 대조는 `statu`, 수정판은 `status`다. 구판 WebKit E2E도 마지막 글자 송신 조건에서 실패한다. 원인은 이 사건 순서에서 xterm이 인쇄 가능한 영어도 IME 조합으로 끝까지 보류하는 것이다. 이번 영어 현상의 실제 iPhone 사건 기록은 제공되지 않았으므로 기기의 정확한 사건 순서까지 확인한 결과는 아니다. 배포 뒤 iPhone 확인은 사용자가 한다.
+- 자동 수정 `status→state`의 정확한 DEL/새 꼬리 bytes, Space·Backspace·Enter, 실제 한글 composition·iPhone의 composition 없는 한글 replacement, 붙여넣기 전 한글 확정, composition 없는 영어 키를 같은 실제 PTY에서 검사한다. 가로챈 입력만 보고 통과시키지 않는다. 시험 프로그램이 실제 stdin 원본 bytes를 파일로 보존한다. 기존 paste fixture의 화면 로그는 JSON.stringify가 DEL을 이스케이프하지 않아 터미널에서 삭제 byte를 잃으므로 삭제 검증에 쓰지 않는다. 붙여넣기의 bracketed paste 표지도 정확히 비교한다. WebSocket 송신·PTY 수신·DOM 준비 사건으로 끝내며 고정 sleep·재시도·시한 확대는 추가하지 않는다.
+- `web/test/mobile-composition.test.mjs`는 실제 배포 패치가 적용된 upstream helper로 구판/수정판, 한 단어 교정·삭제, 한글 보류·영문에서 한글 전환, 같은 task의 한글 확정→영문 순서, keydown 229 fallback 중복 방지, 데스크톱·화면 읽기 모드를 확인한다. 기존 E2E03·08·09·10으로 Ctrl+Enter·대기 말·입력줄·화면 키보드 회귀를 함께 검사한다.
+- `Term.tsx`의 onData→fromTerminal→deliver는 Claude·Codex·셸이 공유한다. 별도 `TerminalInput`의 입력줄 조합 확정/전송과 Ctrl+Enter 판정은 바꾸지 않는다. 프로토콜·backend·E2E 번호도 바꾸지 않는다. 참고 후보·라이선스·교정 범위는 [xterm 패치 설명](../web/patches/README.md)에 적었다.
+
+
 ## E2E93 터치 뒤 반대 방향 관성(t-0996)
 
 - t-0995의 Chromium 390px·Claude 직접 실행 실패는 터치 중 0→197px, 손을 뗀 뒤 197→0px의 native scroll이다. 해당 구간의 JS 위치 쓰기와 안내 높이 변화는 없었다. t-0851의 다른 history 위치 누수, t-0886의 1px 앵커 오분류, t-0905의 프로그램 reset 뒤 ±1px, t-0927·t-0932의 구독/종료 경합과 구별한다. 원본에는 touchmove 시각·compositor trace가 없어 당시 속도 표본까지 소급 확정하지 않는다.

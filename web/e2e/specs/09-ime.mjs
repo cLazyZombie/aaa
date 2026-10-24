@@ -223,6 +223,108 @@ export default async function ({ ctl, page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
+  await step("휴대폰 영어 조합은 다음 키 없이 PTY 도착·자동 수정·한글 보류", async () => {
+    // DEL은 JSON.stringify에도 제어 byte로 남아 터미널 화면이 버린다. 실제 stdin bytes를 파일로 보존한다.
+    const received = `${root}/mobile-input.bin`;
+    fs.writeFileSync(`${root}/mobile-input.js`, `
+      const fs = require("node:fs");
+      fs.writeFileSync(${JSON.stringify(received)}, "");
+      process.stdin.setRawMode(true);
+      process.stdout.write("\\x1b[?2004hpaste> ");
+      process.stdin.on("data", data => fs.appendFileSync(${JSON.stringify(received)}, data));
+    `);
+    aaa("tab", "create", "--machine", "labA", "--label", "mobileLatin", "--", process.execPath, `${root}/mobile-input.js`);
+    const wk = await webkit.launch();
+    const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Version/27.0 Mobile/15E148 Safari/604.1";
+    try {
+      for (const [name, engine] of [["WebKit", wk], ["Chromium", browser]]) {
+        const { page: p } = await pairPage(engine, aaa("web", "pair").code, { width: 390, height: 844 }, { userAgent, platform: "iPhone", touch: true });
+        try {
+          await inList(p, "pane-mobileLatin");
+          await until("영어 입력 준비", async () => (await screenText(p)).includes("paste>") && await p.getByTestId("readonly-banner").count() === 0);
+          const input = p.locator(".xterm-helper-textarea");
+          await input.focus();
+          await input.evaluate(el => { el.value = ""; });
+          const offset = fs.statSync(received).size;
+          const got = () => fs.readFileSync(received).subarray(offset).toString("utf8");
+          const from = await sentCount(p);
+          const expect = async (want) => {
+            await until(`${name} 입력 송신 ${JSON.stringify(want)}`, async () => sentText(await sentFrames(p, from)).length >= want.length)
+              .catch(async error => { throw new Error(`${error.message}; 실제 송신=${JSON.stringify(sentText(await sentFrames(p, from)))}`); });
+            const sent = sentText(await sentFrames(p, from));
+            if (sent !== want) throw new Error(`${name} 송신 ${JSON.stringify(sent)} != ${JSON.stringify(want)}`);
+            await until(`${name} 실제 PTY 수신 ${JSON.stringify(want)}`, () => got().length >= want.length)
+              .catch(error => { throw new Error(`${error.message}; 수신 bytes=${JSON.stringify(got())}`); });
+            if (got() !== want) throw new Error(`${name} PTY bytes ${JSON.stringify(got())} != ${JSON.stringify(want)}`);
+          };
+          // 마지막 s의 compositionend/다음 키를 주지 않는다. 구판은 statu에 머문다.
+          for (const ch of "status") {
+            await input.evaluate((el, ch) => {
+              if (el.value) el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: el.value.at(-1) }));
+              el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Unidentified", keyCode: 229, isComposing: true }));
+              el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+              el.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertCompositionText", data: ch, isComposing: true }));
+              el.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: ch }));
+              el.value += ch;
+              el.setSelectionRange(el.value.length, el.value.length);
+              el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", data: ch, isComposing: true }));
+              el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, keyCode: 229 }));
+            }, ch);
+          }
+          await expect("status");
+          await input.dispatchEvent("compositionend", { data: "s" });
+          // 예측 교정은 이미 보낸 status의 꼬리 us를 지우고 e로 바꾼다.
+          await input.evaluate(el => {
+            el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Unidentified", keyCode: 229 }));
+            el.setSelectionRange(0, el.value.length);
+            el.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertReplacementText", data: "state" }));
+            el.value = "state";
+            el.setSelectionRange(5, 5);
+            el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertReplacementText", data: "state" }));
+            el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, keyCode: 229 }));
+          });
+          let want = "status\x7f\x7fe";
+          await expect(want);
+          await input.press("Space"); want += " ";
+          await input.press("Backspace"); want += "\x7f";
+          await input.press("Enter"); want += "\r";
+          await expect(want);
+          // 실제 composition 사건과 iPhone의 사건 없는 한글 replacement 둘 다 보류한다.
+          await input.evaluate(el => {
+            el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+            for (const text of ["ㅎ", "하", "한"]) {
+              el.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: text }));
+              el.value = text; el.setSelectionRange(text.length, text.length);
+              el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", data: text, isComposing: true }));
+            }
+          });
+          // 입력 handler가 모두 끝난 상태의 정확한 bytes: 미확정 자모가 없어야 한다.
+          if (sentText(await sentFrames(p, from)) !== want) throw new Error(`${name} 미확정 한글을 보냈다`);
+          await input.dispatchEvent("compositionend", { data: "한" });
+          await expect(want += "한");
+          await input.press("Enter"); await expect(want += "\r");
+          await iphoneKey(p, "ㅎ", [["insert", "ㅎ"]]);
+          await iphoneKey(p, "ㅏ", [["delete"], ["insert", "하"]]);
+          await iphoneKey(p, "ㄴ", [["delete"], ["insert", "한"]]);
+          if (sentText(await sentFrames(p, from)) !== want) throw new Error(`${name} 한글 replacement를 확정 전에 보냈다`);
+          // 붙여넣기는 보류 음절부터 확정하고 이어서 원문을 전달한다.
+          await input.evaluate(el => {
+            const clipboardData = new DataTransfer();
+            clipboardData.setData("text/plain", "paste");
+            el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+          });
+          await expect(want += "한\x1b[200~paste\x1b[201~");
+          await input.press("Enter"); await expect(want += "\r");
+          // composition 없는 iPhone 영어 키도 정확히 한 번 전달한다.
+          for (const ch of "status") await iphoneKey(p, ch, [["insert", ch]]);
+          await expect(want += "status");
+          console.log(`     ${name} 390px: status 마지막 글자까지 다음 키 전에 PTY 수신`);
+        } finally { await p.context().close(); }
+      }
+    } finally { await wk.close(); }
+    aaa("pane", "kill", "mobileLatin");
+  });
+
   await step("iPhone 화면 키보드 사용자 기록 재생(10-17): 「한글」을 자모마다 keydown으로 친 뒤 blur → pane에는 완성된 음절만", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "iphoneA", "--", process.execPath, `${root}/spin.js`);
     const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0.1 Mobile/15E148 Safari/604.1";

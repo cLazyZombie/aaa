@@ -68,3 +68,21 @@ Disposable에 등록하는 한 줄이다. upstream 5.5.0은 이 monitor를 해�
 터미널을 다시 만들 때마다 window resize와 media query listener를 하나씩 남긴다.
 실제 upstream 모듈의 20회 생성/해제 대조와 E2E104의 전역 listener 수로 확인한다.
 xterm의 기존 MIT 저작권·라이선스 고지를 유지한다.
+
+## iOS 영어 예측 조합(t-1001)
+
+`xterm-5.5.0-mobile-input.patch`는 기존 IME 패치 뒤에 적용한다. iPhone/iPad Safari의
+실제 composition 범위가 인쇄 가능한 ASCII일 때 `input`에서 바로 보내고, 기존 watermark로
+`compositionend`의 중복 전송을 막는다. 한글·다른 비 ASCII 조합과 데스크톱·화면 읽기 모드는
+기존 확정 경로를 쓴다. 영어에서 비 ASCII로 바뀌면 먼저 보낸 ASCII 꼬리만 되돌린다.
+
+이미 보낸 편집기 값과 일치하는 `beforeinput`의 replacement/삭제는 공통 접두 뒤의 ASCII를
+DEL로 지우고 새 꼬리를 보낸다. 다른 키·새 조합·붙여넣기·blur·reset은 이 교정용 기억을
+버린다. 커서를 옮긴 뒤의 알 수 없는 과거 입력이나 비 ASCII의 삭제 폭을 추측하지 않는다.
+같은 차례의 이전 한글 확정은 먼저 보내며, 이미 처리한 편집은 keydown 229 fallback이
+중복 전송하지 않는다. 소스 대조 유닛과 E2E09의 실제 PTY 수신으로 검사한다.
+
+참고는 기존 [xterm CompositionHelper](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/input/CompositionHelper.ts)
+(MIT)와 [herdr-web-ui PaneTerminal](https://github.com/devswha/herdr-web-ui/blob/main/src/components/PaneTerminal.tsx)
+([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE))다. 기존 queue/watermark 경계를
+따르며 새 외부 코드·의존성을 가져오지 않았다. 이 추가 패치는 aaa 자체 수정이다.

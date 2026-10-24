@@ -59,6 +59,8 @@ export function buildXtermSource(webRoot) {
   mkdirSync(cache, { recursive: true });
   cpSync(join(pkg, "src"), source, { recursive: true });
   applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0.patch"), "utf8"));
+  // iOS 영어 예측 조합은 바로 보내고, 이미 보낸 꼬리의 자동 수정은 DEL로 고친다.
+  applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0-mobile-input.patch"), "utf8"));
   // aaa: reset의 0 높이·자체 동기화와 합쳐진 사용자 scroll·연속 키(patches/README.md, plan §8.105·t-0839·t-0870)
   applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0-viewport.patch"), "utf8"));
   // 배율 monitor도 terminal 수명에 묶는다. 해제한 terminal의 resize/media listener를 남기지 않는다.
