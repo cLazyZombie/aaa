@@ -1,8 +1,11 @@
 name: 설치 스크립트 Pages 게시
 
-# Pages 활성화·최초 공개는 사용자 승인 뒤에만 한다. 병합·release로 자동 게시하지 않는다.
+# Pages 설정은 바꾸지 않는다. 정식 release 성공 뒤 main에서 자동 재게시한다.
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
 
 permissions:
   contents: read
@@ -13,29 +16,85 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'cLazyZombie/aaa' && github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'cLazyZombie/aaa' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'v')))
     runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
+      - name: 공개 최신 정식판인지 확인
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo '정식 vX.Y.Z tag가 아니므로 게시하지 않는다'
+            exit 0
+          fi
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq 'select(.draft == false and .prerelease == false) | .tag_name')
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if [[ "$release" == "$RELEASE_TAG" && "$release" == "$latest" ]]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+            echo "tag=$release" >> "$GITHUB_OUTPUT"
+          else
+            echo '공개 최신 정식판이 아니므로 게시하지 않는다'
+          fi
       - name: 설치 입구 계약 검사
+        if: steps.release.outputs.publish == 'true'
         run: python3 -m unittest scripts.test_install_site scripts.test_release
       - name: 공개 최신판으로 설치 입구 생성
-        run: python3 scripts/build_install_site.py --output target/install-site
+        if: steps.release.outputs.publish == 'true'
+        env:
+          EXPECTED_TAG: ${{ steps.release.outputs.tag }}
+        run: python3 scripts/build_install_site.py --output target/install-site --expected-tag "$EXPECTED_TAG"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        if: steps.release.outputs.publish == 'true'
         with:
           path: target/install-site
   deploy:
     needs: build
+    if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: github-pages
+          path: target/pages-artifact
+      - name: 게시할 설치 입구 복원
+        run: |
+          mkdir -p target/install-site
+          tar -xf target/pages-artifact/artifact.tar -C target/install-site
       - name: Pages 게시
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+      - name: 두 공개 설치 URL의 판·내용 확인
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: python3 scripts/build_install_site.py --output target/install-site --verify-url "$PAGE_URL"

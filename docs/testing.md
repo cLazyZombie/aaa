@@ -2,6 +2,7 @@
 
 ## GitHub Pages 한 줄 설치 입구(t-0987)
 
+- 자동 재게시(t-0990): 같은 계약 시험에 `workflow_run`의 release 완료·성공·동일 저장소·main 문맥과 수동 실행, 배포 gate·두 URL 검증 연결을 단언한다. 실제 workflow의 bash 조건을 추출해 gh 응답 fixture와 실제 jq로 수동·정식판·사전판 tag/flag·초안·과거판·다른 tag·API 503을 검사한다. HTTP fixture로 공개 두 파일의 정상·이전 본문·404를 검사하고, 생성 전 latest가 바뀌면 자산 다운로드·파일 생성 없이 실패하는지 확인한다. 실제 release·tag·Pages 게시는 로컬 시험에서 하지 않는다.
 - `python3 -m unittest scripts.test_install_site scripts.test_release`는 로컬 HTTP 서버와 격리 HOME·임시 폴더에서 생성한 입구를 실행한다. macOS·Linux는 실제 POSIX sh와 제어 터미널로 `curl | sh` → `/dev/tty` → `setup` 인자·빈 인자·한글·종료 코드·정리를 검사한다. 네 OS/CPU 자산 선택은 `uname`만 바꾼 fixture로 검사하며 네 CPU의 네이티브 실행 결과로 해석하지 않는다. macOS launcher 동반·기존 설치 파일 보존을 확인한다.
 - 체크섬 불일치·누락·중복·manifest 불일치·외부 URL·지원하지 않는 OS/CPU·터미널 없음·다운로드 404·실행 판 불일치 때 setup 호출이 없어야 한다. curl 종료 코드 22도 오류에 남는지 단언한다. 성공만 기다리는 고정 sleep·재시도·시한 확대는 없다. HTTP 응답·PTY EOF·자식 종료가 완료 사건이다. 자식의 제어 터미널 준비는 새 Python 프로세스가 맡아 HTTP thread가 있는 부모의 fork 실행을 피한다.
 - Windows는 실제 PE fixture를 rustc로 만들고 PowerShell 5.1·7의 실제 `irm | iex`를 실행한다. 공식 다운로드 URL만 로컬 HTTP로 돌리고 파일 SHA·PE·판·기존 설치 보존·setup 호출·종료 코드를 실제 경계에서 검사한다. 나쁜 SHA는 실행하지 않는다. 생성한 Windows 입구의 bytes가 기존 `release.render_windows_entry` 결과와 같은지도 검사한다. 서비스 설치는 fixture의 범위가 아니다. `ci-local.sh`의 Unix Python 단계와 세 OS `distribution.yml`에서 계속 실행한다.
