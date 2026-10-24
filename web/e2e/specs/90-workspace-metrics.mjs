@@ -3,9 +3,7 @@
 import fs from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import readline from "node:readline";
-import crypto from "node:crypto";
 import { terminateSessionHosts } from "../lib/session-cleanup.mjs";
-import { DatabaseSync } from "node:sqlite";
 import { aaa, AA, env, procs, start, stop, inTime, root, step, domIs, until, pairPage, browser, webkit, shot, inList, openSettings } from "../lib/harness.mjs";
 // 두 agent가 같은 host에 연결되는 격리 TCP 실험실이다.
 const hostToml = `${root}/c/host.toml`;
@@ -144,16 +142,29 @@ export default async function ({ page }) {
     await shot(page, "workspace-filtered");
   });
   await step("긴 workspace 목록 fixture를 실제 등록·원장에 추가한다", async () => {
-    const machine = aaa("machine", "list").machines.find(m => m.name === "labA");
-    const db = new DatabaseSync(`${root}/s/host/host.db`);
-    try {
-      const insert = db.prepare("INSERT INTO repo_workspaces(project,registration,id) VALUES(?,?,?)");
-      for (let i=0; i<24; i++) {
-        const path = `${root}/sample-${String(i).padStart(2,"0")}`;
+    // host DB에는 host만 쓴다. 고유 origin을 가진 실제 checkout을 등록하고,
+    // 보고 회수 → agent 신원 수집 → host 원장 저장이 끝난 뒤 목록을 검사한다.
+    // 기존 thread 두 개와 합쳐 기본 동시 한도(10) 안에서 여섯 개씩 수집한다.
+    for (let batch=0; batch<24; batch+=6) {
+      const fixtures = [];
+      for (let i=batch; i<batch+6; i++) {
+        const name = `sample-${String(i).padStart(2,"0")}`;
+        const path = `${root}/${name}`;
+        execFileSync("git", ["clone", "--quiet", "--shared", repo, path]);
+        execFileSync("git", ["-C", path, "remote", "set-url", "origin", `https://example.com/team/${name}.git`]);
         aaa("project", "set", "demo", "repos.add", `${path}@labA`);
-        insert.run("demo", crypto.createHash("sha256").update(`${machine.id}:${path}`).digest("hex"), `ws-${crypto.createHash("sha256").update(`fixture-${i}`).digest("hex")}`);
+        const fixture = aaa("thread", "start", "demo", "--title", name, "--machine", "labA", "--repo", path, "--profile", "fake", "--task-file", `${root}/metrics-task.md`);
+        fixtures.push({ name, id: fixture.id });
       }
-    } finally { db.close(); }
+      await until(`workspace 묶음 ${batch/6+1}의 실제 수집`, async () => {
+        const listed = (await api(page)).workspaces;
+        return fixtures.every(f => listed.some(w => w.name === f.name && w.id));
+      });
+      // 다음 묶음이 동시 thread 한도를 차지하지 않게 끝낸다. dirty 산출물은 실험실과 함께 지운다.
+      for (const fixture of fixtures) aaa("thread", "resolve", "demo", fixture.id, "--keep-worktree");
+    }
+    const listed = (await api(page)).workspaces;
+    if (listed.length !== 25 || listed.filter(w => w.name.startsWith("sample-")).length !== 24) throw new Error(`긴 workspace 목록 수집 실패: ${JSON.stringify(listed)}`);
   });
   await step("workspace: Chromium·WebKit 휴대폰·밝음·어두움 Reader와 drawer·URL, 가로 넘침·조회 오류", async () => {
     const safari = await webkit.launch({ headless: true });
