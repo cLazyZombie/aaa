@@ -9,6 +9,15 @@
 - Windows 첫 준비는 깨진 Scoop Python shim 때문에 실행되지 않았다. 기존 Python 실행 파일을 직접 지정한 뒤 기본 cp1252에서 새 시험의 UTF-8 셸 읽기와 기존 release 시험의 Cargo 읽기가 실패했다. 새 읽기는 UTF-8을 명시하고, 기존 release 시험은 해당 자식의 `PYTHONUTF8=1`로 실행했다. 시스템 PATH·Python·인코딩 설정은 바꾸지 않는다. Windows 서비스·예약 작업·Run 키·사용자 PATH·방화벽 전후 목록을 비교하고 시험 폴더와 Linux VM을 정리한다.
 - [Herdr](https://github.com/herdrdev/herdr/blob/master/distribution/install.sh)(Apache-2.0), [Ovis/옛 herdr-web-ui](https://github.com/devswha/ovis/blob/main/install.sh)(MIT), [herdr-projects](https://github.com/eliasstravik/herdr-projects/blob/main/crates/flow/src/install.rs)(MIT)의 플랫폼 선택·검증·터미널 입력·Pages 구성을 참고했다. 상세 라이선스·범위는 [설치 입구 문서](install-pages.md)에 있다. 외부 코드·의존성은 추가하지 않았다.
 
+## E2E90 workspace fixture의 SQLite 쓰기 경합(t-0989)
+
+- 긴 목록 fixture는 실행 중인 host DB를 Node `DatabaseSync`로 열어 직접 INSERT하던 연결을 없앴다. CLI `project set repos.add`로 고유 origin의 실제 Git checkout 24개를 등록하고, 가짜 harness thread의 실제 보고 회수 → agent 신원 수집 → host 원장 저장을 거친다. 기존 thread 두 개와 함께 기본 동시 한도 10개를 넘지 않도록 여섯 개씩 준비한다. dashboard API에 묶음의 모든 이름과 ID가 나타나는 사건을 기다린 뒤 fixture thread를 resolve하여 동시 실행 한도를 비운다. 최종 workspace 25개(기존 두 머신의 같은 origin 1개 + fixture 24개)를 확인한다.
+- `repos.add`의 응답은 audit 쓰기 완료만 뜻하며, 앞선 보고 회수의 비동기 지표 저장 완료를 보장하지 않는다. 같은 host의 `collect_workspace_metrics`는 `repo_workspace_id` upsert와 `save_workspace_metrics` transaction으로 `repo_metrics`·`meta`를 쓴다. 별도 Node 연결에는 busy handler가 없어 host writer와 겹치면 SQLite 코드 5(`SQLITE_BUSY`)로 즉시 실패할 수 있다. 다른 E2E는 DB 파일이 격리되어 직접적인 같은 DB writer가 아니다.
+- 수정 전 대조는 격리 실험실 DB의 `workspace-collection:%` meta INSERT에 계산만 하는 진단 trigger를 걸어 실제 host 수집 transaction의 잠금 구간을 넓혔다. 보고 변경 뒤 `BEGIN IMMEDIATE`의 코드 5로 host 잠금을 확인하고 기존 `repo_workspaces` INSERT의 `database is locked`·busy timeout 0을 재현했다. 외부 연결이 잠금을 대신 잡지 않았으며 진단 trigger는 제품·정규 시험에 넣지 않는다. 원본 착지 실패 순간의 정확한 SQL을 소급 확정하는 대조는 아니다.
+- `NODE_PATH=<격리 Playwright 모듈> node web/e2e/web.e2e.mjs --spec 90,43,47,52 --repeat 3 --workers 6`으로 다른 E2E와 병렬 부하에서 전체 E2E90을 반복한다. 긴 목록 준비 구간에도 다른 보고 회수 시험이 겹치도록 `--spec 90,12-threads-push --repeat 3 --workers 6`도 실행한다. Chromium/WebKit × 1280/820/390/320px × 밝음/어두움, 목록 스크롤·바닥 줄·Reader·URL·조회 오류와 기존 통계 단언을 유지한다. 고정 sleep·재시도·시한 확대·기대값 완화·제품 코드 변경은 없다. 웹 유닛·타입 검사·빌드·공개 검사도 수행한다.
+- 최종 두 병렬 실행은 12/12·6/6 작업 통과이며 E2E90은 합계 6/6 통과했다. 묶음 fixture 준비는 약 33~36초, E2E90 전체는 중간 66.3~69.2초였다. 직접 SQL fixture의 약 34초보다 실제 수집 비용이 늘지만, 한 개씩 수집한 초기판의 약 93초보다 짧다. 웹 유닛은 546개 모두 통과했다.
+- 먼저 [Playwright fixture 격리](https://github.com/microsoft/playwright/blob/main/docs/src/test-fixtures-js.md)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))와 [Node SQLite 연결·timeout](https://github.com/nodejs/node/blob/main/doc/api/sqlite.md)([MIT](https://github.com/nodejs/node/blob/main/LICENSE))을 대조했다. fixture 수명 경계와 연결별 busy handler를 참고하되 기존 제품 CLI·수집 경로를 사용한다. 외부 코드·의존성 추가는 없다.
+
 ## 휴대폰 할 일의 빈 열·메모 줄(t-0980)
 
 - E2E107은 기존 WebKit iPad 양 방향·Chromium 데스크톱 두 폭에 WebKit/Chromium 320·390px를 함께 검사한다. 휴대폰 상태 원의 왼쪽 여백 40px 이하, 제목 폭 100px 이상, 행 높이 76px 이하, 메타정보가 없는 행 40px 이하, 메모와 끌기 손잡이의 제목 줄 배치를 확인한다. 기존 열 정렬·교차 면적·잘림·가로 넘침·첨부·상세 열기 검사를 유지한다.
