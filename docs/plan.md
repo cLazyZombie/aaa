@@ -7846,3 +7846,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 기본 홈 OAuth와 등록 계정의 실행 인증은 별개다. 하단 `GET /api/v1/usage`는 등록 Claude 계정이 있으면 A2의 계정·로그인 세대별 상태줄 관측을 사용한다. 등록 계정이 없으면 기존 로컬 인증 조회를 유지한다. Codex 자료원과 자동화의 로컬 사용량 캐시는 바꾸지 않는다.
 - FRONT_API 1.124: `UsageProblem`에 관측 대기·오래됨·단절·미지원·접근 거부를 더한다. 값 없는 칩은 「—」 대신 사유를 보인다. 403을 만료로 해석하지 않으며 Claude access token 만료만으로 재로그인을 요구하지 않는다. 인증 파일·키체인·운영 설정은 수정하지 않는다.
 - E2E65의 기본 OAuth 만료와 등록 상태줄 5시간 98%·주간 6% 공존, 계정 중복 없음·Codex 값 보존·실패 사유를 검사한다. 기존 계정·세대·단절 검사를 유지하고 E2E32의 로컬 한도·초기화 동작도 확인한다.
+
+### workspace CI 기록 누락 수리(t-1004, §8.485 보완)
+
+- 등록 main checkout만의 `target/ci-local`을 읽는 방식은 별도 착지 worktree·외부 `--logs`·push 전 검증·worktree 정리를 놓쳤다. ci-local이 시작/끝의 커밋·tree·origin 신원과 추적 파일의 미커밋 변경을 확인하고 Git 공용 디렉터리의 `aaa-workspace-runs/run-*`에 작은 종료 요약을 원자적으로 보관한다. 경로·origin 원문·환경·터미널 출력 대신 기존 단계·libtest 개수·E2E 집계만 보존한다. 보관 실패는 원인과 함께 stderr에 남기며 검증의 성공/실패를 바꾸지 않는다.
+- 보고 회수 때 같은 머신의 공용 종료 요약을 읽고 실행 커밋이 origin/main의 첫 부모 계보에 반영된 경우에만 확정한다. 미push는 대기로 두어 ref가 갱신되면 같은 입력을 회수한다. 후보 브랜치 자체의 검증은 병합 후에도 main 검증으로 섞지 않는다. 등록 checkout HEAD는 옛 main이어도 되고 코드 줄 수도 origin/main 객체에서 읽는다. fetch·추가 빌드·검증은 실행하지 않는다. 구형 ci-local/rc/엔진 입력은 기존 main checkout·시작 시각·reflog 확인을 유지한다. 새 출처 파일이 있는 CI는 구형 경로로 이중 기록하거나 출처 검사를 우회하지 않는다.
+- 직접 실행한 cargo·E2E·release 성능 실험과 push 자체는 검증 실행 기록을 만들지 않는다. ci-local 선택 단계도 기록 대상이며 성공·실패를 모두 보존한다. 새로 확인한 입력은 회수당 32개, agent의 확정 실행 보관·전송은 최근 256개다. 웹의 기간·머신·profile·p50 조건은 유지한다. 기존 원장은 초기화하지 않고 과거 출처 불명 실행도 소급 귀속하지 않는다. 프로토콜·DB 스키마·E2E 번호는 바꾸지 않는다.
+- 참고: [Cargo timings](https://doc.rust-lang.org/cargo/reference/timings.html)(Cargo MIT/Apache-2.0)의 실행별 결과 보존, [herdr-projects threads](https://github.com/eliasstravik/herdr-projects/blob/main/src/threads.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/main/LICENSE))의 종료 보고 회수, [Ovis Sidebar](https://github.com/devswha/ovis/blob/main/src/components/Sidebar.tsx)([MIT](https://github.com/devswha/ovis/blob/main/LICENSE))의 workspace 구분을 대조했다. [herdr](https://github.com/herdrdev/herdr)([Apache-2.0](https://github.com/herdrdev/herdr/blob/master/LICENSE))도 확인했으나 범용 빌드 지표 수집 모듈을 재사용하지는 않았다. 기존 Rust parser와 보고 회수 경로를 유지하며 외부 코드·의존성은 추가하지 않는다.

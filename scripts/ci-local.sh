@@ -96,7 +96,7 @@ step_test() {
   if [ "$OS" = windows ]; then cargo test --workspace --locked --no-fail-fast; return $?; fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
-  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_linux_cross >"$LOGS/python.log" 2>&1 &
+  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_linux_cross >"$LOGS/python.log" 2>&1 &
   python_pid=$!
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
   wait "$python_pid" || python_code=$?
@@ -230,6 +230,7 @@ skipped() {
 TOGETHER="test e2e clippy"
 
 started=$(date +%s)
+python3 scripts/workspace_metrics.py start "$LOGS" || true
 echo "ci-local: $OS, 로그 $LOGS"
 for s in web fmt build; do
   skipped "$s" || { run_step "$s"; collect "$s"; }
@@ -279,6 +280,7 @@ echo "ci-local 요약($OS, 모두 $(( finished - started ))초, 로그 $LOGS)"
 metric_outcome=succeeded
 [ -z "$failed" ] || metric_outcome=failed
 { printf 'v1|%s|%s|%s\n' "$started" "$((finished - started))" "$metric_outcome"; printf '%s' "$RESULTS"; } > "$LOGS/workspace-summary.tsv" || true
+python3 scripts/workspace_metrics.py finish "$LOGS" || true
 for s in $ALL; do
   printf '%s' "$RESULTS" | awk -F'|' -v s="$s" '$1==s { printf "  %-9s %-8s %s~%s %5s초  %s\n", $1, ($2=="ok"||$2=="FAIL")?$2:"-", $3, $4, $5, ($2=="ok")?"":($2=="FAIL")?$6:$2 }'
 done

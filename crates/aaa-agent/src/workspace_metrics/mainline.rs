@@ -51,3 +51,10 @@ impl Mainline {
         start_ms >= self.stable_since_ms && start_ms <= end_ms
     }
 }
+
+/// 등록 checkout이 옛 main에 머물러 있어도 push된 객체를 읽는다. fetch는 하지 않는다.
+pub(super) fn pushed(cwd: &Path) -> Result<(String, String)> {
+    let remote = remote_id(&lines::text(cwd, &["remote", "get-url", "origin"])?).context("origin 신원 미확인")?;
+    let commit = lines::text(cwd, &["rev-parse", "refs/remotes/origin/main^{commit}"])?;
+    Ok((remote, commit))
+}

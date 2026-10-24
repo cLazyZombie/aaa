@@ -1,7 +1,7 @@
 // 승인된 workspace A: 실제 보고 감시→agent 기존 산출물 수집→host 원장→웹 조회.
 // fixture는 기존 runner의 종료 결과만 만들며 지표 API·집계·UI를 대체하지 않는다.
 import fs from "node:fs";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import readline from "node:readline";
 import { terminateSessionHosts } from "../lib/session-cleanup.mjs";
 import { aaa, AA, env, procs, start, stop, inTime, root, step, domIs, until, pairPage, browser, webkit, shot, inList, openSettings } from "../lib/harness.mjs";
@@ -215,6 +215,44 @@ export default async function ({ page }) {
     await page.route("**/api/v1/call", async (route) => route.request().postDataJSON()?.op === "workspace_dashboard" ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ err: { code: "unavailable", message: "지표 조회 오류 fixture" } }) }) : route.fallback());
     await page.getByRole("button", { name: "다시 읽기", exact: true }).click(); await page.getByRole("alert").filter({ hasText: "지표 조회 오류 fixture" }).first().waitFor();
     if (!(await page.locator(".ws-metrics").textContent()).includes("2분 44초")) throw new Error("오류 때 마지막 성공 요약 보존");
+  });
+  await step("별도 로그의 실제 ci-local 종료를 push 뒤 회수하고 착지 worktree 삭제 후에도 보존한다", async () => {
+    await page.unroute("**/api/v1/call");
+    const landing = `${root}/landing`;
+    const git = (...args) => execFileSync("git", ["-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { encoding:"utf8", stdio:"pipe" }).trim();
+    git("worktree", "add", "-qb", "landing", landing, "main");
+    const runGit = (...args) => execFileSync("git", ["-C", landing, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { encoding:"utf8", stdio:"pipe" }).trim();
+    put(`${landing}/src/product.ts`, "// comment\nexport const value = 2;\nexport const added = true;\n");
+    runGit("commit", "-qam", "landing source");
+    const commit = runGit("rev-parse", "HEAD");
+    fs.mkdirSync(`${landing}/scripts`);
+    for (const name of ["ci-local.sh", "workspace_metrics.py"]) fs.copyFileSync(new URL(`../../../scripts/${name}`, import.meta.url), `${landing}/scripts/${name}`);
+    for (const code of [0, 7]) {
+      put(`${landing}/scripts/check-public.sh`, `exit ${code}\n`);
+      const result = spawnSync("bash", ["scripts/ci-local.sh", "--only", "public", "--logs", `${root}/external-logs-${code}`], { cwd:landing, env, encoding:"utf8" });
+      if (result.status !== (code === 0 ? 0 : 1) || result.stderr.includes("요약 보관 실패")) throw new Error(`실제 CI 종료 보관: ${result.status} ${result.stdout} ${result.stderr}`);
+    }
+    fs.appendFileSync(`${work}/report.md`, "\n미push 착지 결과 준비\n");
+    await until("push 전 main 반영 대기", async () => (await api(page)).workspaces.find(w => w.id === workspace)?.collection_notes.some(n => n.includes("반영 대기 CI 실행 2개")));
+    if ((await api(page)).runs.length !== 4) throw new Error("미push 실행을 main 기록에 넣었다");
+    git("update-ref", "refs/remotes/origin/main", commit);
+    git("worktree", "remove", "--force", landing);
+    for (const code of [0, 7]) fs.rmSync(`${root}/external-logs-${code}`, { recursive:true });
+    if (git("rev-parse", "HEAD") === commit) throw new Error("등록 checkout이 새 main으로 이동했다");
+    await page.getByRole("tab", { name:"실행 기록", exact:true }).click();
+    fs.appendFileSync(`${work}/report.md`, "\nmain push와 착지 폴더 정리 완료\n");
+    await domIs(page, "열린 실행 표에 실제 CI 두 건 표시", () => document.querySelectorAll('.ws-table-scroll tbody tr').length === 6);
+    const got = await api(page);
+    const archived = got.runs.filter(r => r.commit === commit);
+    if (archived.length !== 2 || !archived.some(r => r.outcome === "failed") || !archived.some(r => r.outcome === "succeeded") || archived.some(r => r.machine !== "labA" || !r.source.includes("main 반영 확인"))) throw new Error(JSON.stringify(got));
+    if (got.code_lines.at(-1)?.commit !== commit || got.code_lines.at(-1)?.total_lines !== 3) throw new Error("등록 HEAD가 아닌 push된 main 코드 집계 실패");
+    const collected = got.workspaces.find(w => w.id === workspace).last_collected_ms;
+    fs.appendFileSync(`${work}/report.md`, "\n같은 실행 재회수\n");
+    await until("중복 없이 원장 재회수", async () => {
+      const value = await api(page);
+      return value.workspaces.find(w => w.id === workspace).last_collected_ms > collected && value.runs.length === 6;
+    });
+    await shot(page, "workspace-ci-after-push");
   });
   } finally {
     await stop("metrics-agentB");
