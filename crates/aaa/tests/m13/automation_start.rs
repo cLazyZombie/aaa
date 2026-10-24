@@ -301,7 +301,12 @@ fn legacy_mission_files_are_inert_and_convert_with_memory_and_pending_input() {
     assert_eq!(std::fs::read_to_string(project.join("automations/watch.memory/history/old.md")).unwrap(), "원문\n");
     assert_eq!(std::fs::read_to_string(project.join("missions/.converted/watch.md")).unwrap(), source);
     let rule = std::fs::read_to_string(project.join("automations/watch.toml")).unwrap();
-    assert!(rule.contains("[do.start]") && rule.contains("reuse = \"open\"") && rule.contains("memory = true"));
+    assert!(
+        rule.contains("[action]")
+            && rule.contains("kind = \"thread\"")
+            && rule.contains("reuse = \"open\"")
+            && rule.contains("memory = true")
+    );
     let queue: Value = serde_json::from_str(&db.meta("automation:demo:watch").unwrap().unwrap()).unwrap();
     assert_eq!(queue["pending"][0]["body"], "old CI data");
     w.h.ticks(2);

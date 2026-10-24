@@ -1,9 +1,13 @@
 // 자동화 편집 초안의 순수 규칙(관리 GUI W2, plan §8.342). 폼 값은 host 정본 타입(`automations/*.toml`)과 같은 모양이다:
 // 화면은 이 값을 고치고, host(`automation_validate`)가 바뀐 칸만 원문 TOML에 합친다. 기본값 채우기·검사의 정본은 host다.
+import type { AutomationDefinition, AutomationCommand, AutomationNotice, AutomationMessage, AutomationThread } from "./gen/proto";
 import { apiAtLeast } from "./automationModel.ts";
 
 export type ConditionKind = "schedule" | "command" | "thread" | "pr" | "ci" | "git";
-export type ActionKind = "inbox" | "message" | "start" | "deploy";
+export type ActionKind = "inbox" | "message" | "start" | "command" | "deploy";
+/** 기존 폼의 편집 어댑터. 저장 정본은 생성된 schema 2 계약이다. */
+export type Definition = AutomationDefinition;
+export type ActionFields = Partial<AutomationCommand & AutomationNotice & AutomationMessage & AutomationThread>;
 export type Form = Record<string, unknown> & { on?: Record<string, Record<string, unknown>>; do?: Record<string, Record<string, unknown>> | "deploy"; limits?: Record<string, unknown> };
 
 /** 편집·지금 실행·지운 목록은 1.76 이상 host만 안다(옛 host는 모르는 요청으로 거절한다) */
@@ -22,6 +26,7 @@ export const actionKinds: Array<{ kind: ActionKind; label: string }> = [
   { kind: "message", label: "thread에 글" },
   { kind: "start", label: "새 thread 시작" },
   { kind: "deploy", label: "배포 제안" },
+  { kind: "command", label: "승인된 명령 실행" },
 ];
 export const PR_EVENTS = ["opened", "checks-failed", "review", "merged"];
 export const CI_EVENTS = ["failed", "stuck", "fixed", "passed"];
@@ -78,6 +83,7 @@ export function setAction(form: Form, kind: ActionKind): Form {
   const old = action(form);
   const text = typeof old.text === "string" ? old.text : "";
   const next: Record<Exclude<ActionKind, "deploy">, Record<string, unknown>> = {
+    command: { command: "" },
     inbox: { text },
     message: { thread: typeof old.thread === "string" ? old.thread : "owner", text },
     start: { title: typeof old.title === "string" ? old.title : "", profiles: [], machines: [], text },

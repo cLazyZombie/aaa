@@ -27,9 +27,21 @@ pub struct PostInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PostResult {
-    Accepted { id: String },
-    Refused { reason: String, existing: Option<String> },
-    Queued { post_id: String },
+    Accepted {
+        id: String,
+    },
+    /// 입력 처리 원장까지 기록됨(FRONT_API 1.120). 일반 post 수락과 구별한다.
+    AutomationCompleted {
+        id: String,
+        run: String,
+    },
+    Refused {
+        reason: String,
+        existing: Option<String>,
+    },
+    Queued {
+        post_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

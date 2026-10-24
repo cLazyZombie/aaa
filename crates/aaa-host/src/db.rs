@@ -7,6 +7,7 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
 mod automation_ids;
+pub(crate) mod automation_runs;
 #[cfg(test)]
 mod inbox_tests;
 mod library_catalog;
@@ -395,6 +396,8 @@ impl Db {
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS automation_runs(project TEXT NOT NULL,id TEXT NOT NULL,name TEXT NOT NULL,input_id TEXT NOT NULL,batch TEXT,updated INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(project,id));
+             CREATE INDEX IF NOT EXISTS automation_runs_name ON automation_runs(project,name,updated);
              CREATE TABLE IF NOT EXISTS automation_ids(project TEXT NOT NULL, name TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,name), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_ids(project TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,task_id), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
@@ -606,7 +609,8 @@ impl Db {
             }
         }
         let old = tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?;
-        let (value, extra) = update(old)?;
+        let (value, extra) = update(old.clone())?;
+        automation_runs::sync(&tx, key, old.as_deref(), &value, &extra)?;
         for (key, value) in std::iter::once((key.to_string(), value)).chain(extra) {
             tx.execute(
                 "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1750,7 +1754,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 21] = [
+const PROJECT_TABLES: [&str; 22] = [
     "threads",
     "repo_workspaces",
     "repo_metrics",
@@ -1768,6 +1772,7 @@ const PROJECT_TABLES: [&str; 21] = [
     "task_log",
     "task_ids",
     "automation_ids",
+    "automation_runs",
     "task_queue",
     "task_queue_log",
     "task_archive",

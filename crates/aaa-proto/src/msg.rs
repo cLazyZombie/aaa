@@ -3312,6 +3312,21 @@ pub enum FrontRequest {
         expected: Vec<String>,
     },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
+    AutomationExecutions {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        #[serde(default)]
+        #[ts(optional)]
+        before: Option<String>,
+    },
+    AutomationExecution {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+    },
     RoutineRuns {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3479,6 +3494,8 @@ impl FrontRequest {
             | FrontRequest::MissionOpen { project, .. }
             | FrontRequest::Routines { project, .. }
             | FrontRequest::RoutineRuns { project, .. }
+            | FrontRequest::AutomationExecution { project, .. }
+            | FrontRequest::AutomationExecutions { project, .. }
             | FrontRequest::RoutineApprove { project, .. }
             | FrontRequest::AutomationApprove { project, .. }
             | FrontRequest::AutomationConvert { project, .. }
@@ -3556,6 +3573,8 @@ impl FrontRequest {
                 | FrontRequest::MissionShow { .. }
                 | FrontRequest::Routines { .. }
                 | FrontRequest::RoutineRuns { .. }
+                | FrontRequest::AutomationExecution { .. }
+                | FrontRequest::AutomationExecutions { .. }
                 | FrontRequest::AutomationConvert { dry_run: true, .. }
                 | FrontRequest::AutomationRead { .. }
                 | FrontRequest::AutomationValidate { .. }
@@ -3906,8 +3925,17 @@ pub enum FrontResponse {
         #[serde(default)]
         plan_sha256: String,
     },
+    AutomationExecutions {
+        runs: Vec<crate::AutomationExecution>,
+        next: Option<String>,
+    },
+    AutomationExecution {
+        run: crate::AutomationExecution,
+    },
     RoutineRuns {
         runs: Vec<crate::RoutineRun>,
+        #[serde(default)]
+        executions: Vec<crate::AutomationExecution>,
         /// 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
         #[serde(default)]
         source: Option<crate::RoutineSource>,

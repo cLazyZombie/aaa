@@ -135,6 +135,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             #[cfg(any(target_os = "macos", windows))]
             "deploy_candidate.v1".into(),
             "post.v1".into(),
+            "automation_results.v1".into(),
             "imagegen.v1".into(),
             "mission.v1".into(), // N-1 host의 파일 전송
             "work_files.v1".into(),
@@ -206,6 +207,7 @@ async fn session_state_mode(
             tx.set_terminal_zstd(remote && w.features.iter().any(|f| f == aaa_proto::TERMINAL_ZSTD_FEATURE));
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
+            *agent.host_automation_results.lock().unwrap() = w.features.iter().any(|f| f == "automation_results.v1");
             agent.host_image.store(w.features.iter().any(|f| f == "imagegen.v1"), std::sync::atomic::Ordering::Relaxed);
             *agent.host_work_files.lock().unwrap() = w.features.iter().any(|f| f == "work_files.v1");
             *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");

@@ -57,9 +57,9 @@ export default async function ({ page }) {
     await sheet.getByRole("button", { name: "미리보기", exact: true }).click();
     await until("Markdown 미리보기", async () => (await sheet.getByTestId("automation-body-preview").locator("strong").textContent()) === "실패");
     await shot(page, "automation-edit-new-form");
-    await tomlHas(page, sheet, "[on.thread]");
+    await tomlHas(page, sheet, "[trigger]");
     const text = await sheet.getByTestId("automation-toml").inputValue();
-    for (const want of ["#:schema ./automation.schema.json", 'title = "실패 확인"', 'events = ["thread_failed"]', "[do.inbox]", "usage_session_below = 5", "usage_week_below = 10"]) if (!text.includes(want)) throw new Error(`새 원문 ${want}:\n${text}`);
+    for (const want of ["#:schema ./automation.schema.json", 'title = "실패 확인"', 'events = ["thread_failed"]', "schema = 2", 'source = "thread"', "[action]", 'kind = "notice"', "usage_session_below = 5", "usage_week_below = 10"]) if (!text.includes(want)) throw new Error(`새 원문 ${want}:\n${text}`);
     if (/catch_up|notify|enabled/.test(text)) throw new Error(`기본값 칸을 썼다:\n${text}`);
     if (fs.existsSync(file("watch"))) throw new Error("검사가 파일을 썼다");
     await sheet.getByTestId("automation-tab-review").click();

@@ -7793,3 +7793,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 본문·받은 앞 쪽·읽던 row/offset·접힘·초안은 그대로 복원한 뒤 기존 최신 쪽 읽기 한 번으로 확인한다. 같은 history의 merge/gap fill을 재사용하고, 확인된 session/history 교체·표시 옵션 변경·pane 삭제·로그인/권한 문맥 변경에는 기존 초기화 경계를 적용한다.
 - 참고는 herdr-web-ui aa624cb의 paneTabCache(개수 제한)와 t3code c8c9ccf의 threadRetention(5분), 둘 다 MIT다. 코드·의존성은 복사하지 않는다. FRONT_API·AGENT_LINK·Rust crate 경계는 변경하지 않는다.
 - 검증은 보관 순수 규칙, E2E103의 Chromium/WebKit 1280·390px 전후 계측과 80ms 지연 대조, E2E104의 제어한 시계·응답 gate·수명/입력 경계, 기존 읽기·검색·송신·재연결 회귀 및 전체 ci-local·Linux strict cross·공개 검사다. 운영 Codex 기록과 실제 iPhone 검증 여부는 합성 기록·headless 결과와 구분한다. 절·새 E2E 번호는 착지 시 main과 대조한다.
+
+### 8.484 자동화 단일 정의·실행 원장(t-0939)
+
+- 사용자 1A·2A: `schema=2`의 trigger → observe? → condition → action → policy와 공통 내구 큐를 구현한다. notice/command/thread/message/proposal은 동작 영수증으로 구별하고 후속 thread·task·보고·입력 처리 신고를 따로 표시한다. 야간 검사 등 운영 notice를 직접 thread 시작으로 바꾸지 않는다.
+- 정본 DTO·스키마·TS는 aaa-proto, 판정·큐·원장은 aaa-host, 명령 실행은 기존 agent다. 기존 큐/예산/커서/grant는 호환 정본으로 보존하고 새 실행 테이블은 receipt와 같은 SQLite transaction으로 갱신한다. 불명 명령·메시지는 자동 재실행하지 않는다.
+- on/do/limits·routine·mission 읽기 어댑터와 journal 이관은 파일별 원본/목적 bytes·계획 hash를 검사한다. a-ID·열린 thread·기억·processed·현재 profiles를 유지한다. 감시 harness를 고정하지 않고 t-0941 공통 기억 재독, t-0935 workspace, t-0938 auto mode owner를 사용한다.
+- CLI automation list/show/runs/run show/enable/disable/migrate/input complete와 기존 alias, 웹 원장·직접 명령 편집, coordinator 생성 안내를 맞춘다. 사람 전용 승인·safety·배포·일반 resolve 권한은 확대하지 않는다.
+- FRONT_API 1.120, `automation_results.v1`, E2E106. [계약·운영](automation-v2.md), [시험](testing.md). 기존 source 관측 로그는 작업 성공으로 승격하지 않는다.

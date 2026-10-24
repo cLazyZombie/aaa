@@ -3388,3 +3388,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - E2E30은 Chromium과 WebKit 390px에서 실제 host의 제출 ACK만 보류하고 화면을 떠난다. 연결 종료 뒤 송신 정리·초안 복구와 정확한 입력 bytes 한 번을 검사한다. E2E25는 설정 복귀 뒤 실제 readonly 해제를 기다리고, E2E84는 복귀 그리기 세 frame을 제어한 시계로 실행하되 그 시간을 기존 499/500ms 예산에 포함한다. 시한·기대값을 바꾸지 않는다.
 - `conversationRefresh.test.mjs`는 최신 읽기 → 앞 쪽 두 번 → 숨김 뒤 타이머 0개를 검사한다. 구판은 앞 쪽 읽기의 drain이 기존 타이머 참조를 덮어 2개를 남긴다(RED). 앞 쪽을 시작하기 전에 기존 타이머를 정리하며 기존 lane·주기는 유지한다.
 - E2E104는 숨긴 동안 1280→900px·390→430px 폭 변경에서도 같은 row/offset을 검사한다. 10회·20회 왕복의 DOM·리스너·타이머를 대조하고 Chromium은 GC 완료 뒤 실제 CDP heap 수치도 기록한다. WebKit에서 같은 API가 없으면 heap은 미측정으로 남기며 DOM 수를 heap 상한으로 해석하지 않는다.
+
+## 자동화 schema 2·공통 실행 원장(t-0939)
+
+- `cargo test -p aaa-host --lib automation`은 v1/v2의 profiles·시각·켜짐·범위·명령 승인 해시 보존, 이관 journal 재개·충돌, 큐/receipt/원장의 같은 transaction, 다른 규칙의 같은 예정 시각 ID 격리를 검사한다. 명령 응답 저장/receipt 삽입에 각각 SQLite 실패를 주입하고 재시작해 RPC가 한 번뿐인지 확인한다. worker의 자기 실행만 처리 신고할 수 있고 다른 thread·없는 보고·다른 결과 덮쓰기는 거부한다.
+- `cargo test -p aaa --test m13 routines`는 실제 로컬·원격 agent의 명령 승인·출력 변화·이관 후 같은 출력 중복 방지와 기존 안내 동작을 확인한다. 입력 조회의 intent/result를 공통 큐에 넣어도 이전 source·알림 계약을 보존한다.
+- `node web/e2e/web.e2e.mjs --spec 106 --workers 1`은 실제 host에서 이관 dry-run 무변경·stale hash 거부·시각/profiles/processed 보존·notice 영수증과 후속 결과 미연결을 검증한다. Chromium과 휴대폰 WebKit에서 실행 단계 타임라인을 연다. 기존 E2E34/40/48/49/55/64도 유지한다. 고정 sleep이나 실패 재시도는 추가하지 않는다.
+- FRONT_API 1.120와 `automation_results.v1` capability가 새 실행 조회/입력 신고를 구분한다. 일반 post accepted를 입력 결과 기록 성공으로 해석하지 않는다. N-1 agent에는 새 결과 variant를 보내지 않는다.
+
+- 착지 통합에서는 t-0945가 main에 넣은 자연 종료 방식의 E2E `--list` 수리를 유지한다. 후보의 출력 callback·강제 종료 중복 수리는 제거하고 실제 전체 목록·대량 pipe 단언은 유지한다.

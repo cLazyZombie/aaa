@@ -91,6 +91,10 @@ impl Agent {
         } else {
             let input: PostInput = aaa_common::redact::json(serde_json::from_value::<PostInput>(msg.payload)?)?;
             ensure!(valid_id(&input.post_id), "post ID 형식이 아니다");
+            ensure!(
+                input.topic != "automation-input-complete" || *self.host_automation_results.lock().unwrap(),
+                "입력 처리 결과는 automation_results.v1 host가 필요하다"
+            );
             // host도 검사한다. 여기서는 디스크 상한을 넘기기 전에 큰 글을 막는다.
             ensure!(
                 input.body.len() <= 65536 && input.title.chars().count() <= 120,
@@ -193,6 +197,9 @@ impl Agent {
         paths.sort();
         for path in paths {
             if let Ok(p) = util::read_json::<Pending>(&path) {
+                if p.input.topic == "automation-input-complete" && !*self.host_automation_results.lock().unwrap() {
+                    continue;
+                }
                 self.send_host(&LinkMsg::Event(AgentEvent::Post { session: p.session, input: p.input })).await;
             }
         }
@@ -380,5 +387,17 @@ mod tests {
         a.replay_posts().await;
         a.send_host(&LinkMsg::Pong { seq: 43 }).await;
         assert_eq!(next(&mut rx).await, LinkMsg::Pong { seq: 43 });
+        *a.host_post.lock().unwrap() = Some(true);
+        let mut completion = input(2);
+        completion.topic = "automation-input-complete".into();
+        let out = hook(&a, "s1", &token(), serde_json::to_value(completion).unwrap()).await;
+        assert!(out.contains("automation_results.v1 host가 필요하다"), "{out}");
+        assert!(!a.post_out().exists());
+        a.replay_posts().await;
+        // post.v1 host는 기존 거부 감사 사건을 안다. 새 완료 결과나 입력은 보내지 않는다.
+        assert!(matches!(next(&mut rx).await, LinkMsg::Event(AgentEvent::PostRejected { session, reason, .. })
+            if session == "s1" && reason.contains("automation_results.v1")));
+        a.send_host(&LinkMsg::Pong { seq: 44 }).await;
+        assert_eq!(next(&mut rx).await, LinkMsg::Pong { seq: 44 });
     }
 }

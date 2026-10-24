@@ -357,6 +357,7 @@ async fn serve_connection(
             "health.v1".into(),
             "harness_hello.v1".into(),
             "post.v1".into(),
+            "automation_results.v1".into(),
             "imagegen.v1".into(),
             "mission.v1".into(), // N-1 agent의 파일 전송
             "work_files.v1".into(),
@@ -462,7 +463,9 @@ async fn serve_connection(
                     }
                     LinkMsg::Event(AgentEvent::Post { session, input }) => {
                         if hello.features.iter().any(|f| f == "post.v1") {
-                            let result = host.receive_post(&mid, &session, input.clone());
+                            let result = if input.topic == "automation-input-complete" && !hello.features.iter().any(|f|f=="automation_results.v1") {
+                                aaa_proto::PostResult::Refused {reason:"입력 처리 결과는 automation_results.v1 agent가 필요하다".into(),existing:None}
+                            } else {host.receive_post(&mid, &session, input.clone())};
                             tx.json(&LinkMsg::Req { id: format!("post-{}", input.post_id), deadline_ms: None, body: aaa_proto::AgentRequest::PostAck { post_id: input.post_id, result } }).await?;
                         }
                     }

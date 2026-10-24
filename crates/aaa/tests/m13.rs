@@ -5232,7 +5232,7 @@ const GUIDE_SECTIONS: &[&str] = &[
     "## 무엇이 누구 것인가",
     "## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)",
     "## 작업 요약(웹 카드)",
-    "사용자가 일정 작업이나 지켜보는 일을 요청하면 `routines/<이름>.md`를 만들거나 고친다",
+    "사용자가 일정 작업이나 감시를 요청하면 `automations/<이름>.toml`에 `schema = 2`를 쓴다",
 ];
 
 /// `aaa doctor files`의 프로젝트 한 줄
@@ -5264,6 +5264,7 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
             "project.toml",
             "memory",
             "routines",
+            "automations",
             "threads",
             "library",
             "inbox",
@@ -5319,7 +5320,7 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
         assert!(guide.contains("#task=<project>/d-NNNN"), "{guide}");
         assert!(!guide.contains("채팅에서 thread 질문·보고서를 가리킬 때는"), "{guide}");
     }
-    assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
+    assert!(old.join("uploads").is_dir() && old.join("automations/pr-followup.toml").is_file());
     assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
     // 사람 글은 옆에 그대로
     assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
@@ -5418,7 +5419,7 @@ fn pr_followup() {
     assert_eq!(errors[0]["subject"], "broken");
     let list = String::from_utf8_lossy(&w.h.run(&["routine", "list", "demo"]).stdout).to_string();
     assert!(list.contains("landing\ton pr: checks-failed, merged → 주인 thread에 글 · 꺼짐\t지난 기록 없음 · 다음 사건 오면 · 오늘 0 · 건너뜀 - · 출처 routine\n"), "{list}");
-    assert!(list.contains("pr-followup\ton pr: checks-failed, review → 주인 thread에 글\t지난 기록 없음 · 다음 사건 오면 · 오늘 0 · 건너뜀 - · 출처 routine\n"), "{list}");
+    assert!(list.contains("pr-followup\ton pr: checks-failed, review → 주인 thread에 글\t지난 기록 없음 · 다음 사건 오면 · 오늘 0 · 건너뜀 - · 출처 automation\n"), "{list}");
 
     let task = w.task("pr.md", "PR을 연다");
     let id = w.start(&["--title", "PR", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task])["id"]
@@ -5458,7 +5459,7 @@ fn pr_followup() {
     let e = f.until("pr_changed", T, |e| e["kind"] == "pr_changed" && e["thread"] == id.as_str());
     assert!(e["detail"].as_str().unwrap().contains("PR checks failing [checks-failed]"), "{e}");
     let e = f.until("routine_prompted", T, |e| e["kind"] == "routine_prompted" && e["thread"] == id.as_str());
-    assert_eq!(e["evidence"], "routines/pr-followup.md", "{e}");
+    assert_eq!(e["evidence"], "automations/pr-followup.toml", "{e}");
     w.h.wait_output_unwrapped(&pane, &format!("got: [aaa routine pr-followup] PR {url}이 바뀌었다: check 1개 실패"), T);
     w.h.wait_output_unwrapped(&pane, "got: PR의 실패한 check를 고치고", T);
 
@@ -5521,7 +5522,11 @@ fn pr_followup() {
     let events = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().clone();
     let prompted: Vec<&Value> = events.iter().filter(|e| e["kind"] == "routine_prompted").collect();
     let by: Vec<&str> = prompted.iter().map(|e| e["evidence"].as_str().unwrap()).collect();
-    assert_eq!(by, ["routines/pr-followup.md", "routines/pr-followup.md", "routines/landing.md"], "{prompted:?}");
+    assert_eq!(
+        by,
+        ["automations/pr-followup.toml", "automations/pr-followup.toml", "routines/landing.md"],
+        "{prompted:?}"
+    );
     let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
     let pr_events: Vec<&str> =
         items.iter().filter(|i| i["item_kind"] == "pr").map(|i| i["event"].as_str().unwrap()).collect();

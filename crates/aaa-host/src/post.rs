@@ -279,8 +279,10 @@ impl Host {
         }
         if result.is_none() {
             // 같은 ID는 위에서 재확인한다. 내용 중복은 rate를 쓰지 않는다.
-            if let Some((_, _, _, PostResult::Accepted { id })) =
-                recent.iter().find(|(_, _, h, r)| h == &hash && matches!(r, PostResult::Accepted { .. }))
+            if let Some((_, _, _, PostResult::Accepted { id } | PostResult::AutomationCompleted { id, .. })) =
+                recent.iter().find(|(_, _, h, r)| {
+                    h == &hash && matches!(r, PostResult::Accepted { .. } | PostResult::AutomationCompleted { .. })
+                })
             {
                 result = Some(PostResult::Refused {
                     reason: "24시간 안 같은 글이다".into(),
@@ -302,8 +304,12 @@ impl Host {
             // 두 사용자 의도를 합쳐 분당 30·시간당 60·하루 300건. 초과해도 자동 mute하지 않는다.
             let (burst, hourly, daily, burst_secs) =
                 if quota == "user" { (30, 60, 300, 60) } else { (cfg.burst, cfg.hourly, cfg.daily, cfg.burst_secs) };
-            let accepted: Vec<_> =
-                quota_recent.iter().filter(|(_, _, _, r)| matches!(r, PostResult::Accepted { .. })).collect();
+            let accepted: Vec<_> = quota_recent
+                .iter()
+                .filter(|(_, _, _, r)| {
+                    matches!(r, PostResult::Accepted { .. } | PostResult::AutomationCompleted { .. })
+                })
+                .collect();
             if accepted.len() >= daily as usize
                 || accepted.iter().filter(|(_, at, _, _)| now.saturating_sub(*at) < 3600000).count() >= hourly as usize
                 || accepted
@@ -395,8 +401,32 @@ impl Host {
         {
             result = Some(refused(e.message));
         }
-        let result = result.unwrap_or_else(|| PostResult::Accepted { id: id.clone() });
-        let accepted = matches!(result, PostResult::Accepted { .. });
+        let mut completed_run = None;
+        if result.is_none() && input.topic == "automation-input-complete" {
+            let completion = (|| -> anyhow::Result<()> {
+                anyhow::ensure!(
+                    sender.verified == "peer+token"
+                        && sender.role == Role::Worker
+                        && input.post_type == PostType::Data
+                        && !input.needs_user,
+                    "인증된 worker의 입력 처리 자료만 받는다"
+                );
+                let rec = rec.ok_or_else(|| anyhow::anyhow!("thread 신원이 없다"))?;
+                anyhow::ensure!(rec.automation.is_some(), "자동화 thread가 아니다");
+                let completion: aaa_proto::AutomationCompletion = serde_json::from_str(&input.body)?;
+                self.db.automation_complete(project, &rec.id, &completion)?;
+                completed_run = Some(completion.run);
+                Ok(())
+            })();
+            if let Err(e) = completion {
+                result = Some(refused(e.to_string()));
+            }
+        }
+        let result = result.unwrap_or_else(|| match completed_run {
+            Some(run) => PostResult::AutomationCompleted { id: id.clone(), run },
+            None => PostResult::Accepted { id: id.clone() },
+        });
+        let accepted = matches!(result, PostResult::Accepted { .. } | PostResult::AutomationCompleted { .. });
         input.title = clean(&input.title);
         let env = PostEnvelope {
             id: id.clone(),
@@ -529,7 +559,7 @@ impl Host {
     pub(crate) fn post_status_view(&self, project: &str, id: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let result = self.post_status(project, id, actor)?;
         let handled = match &result {
-            PostResult::Accepted { id } => {
+            PostResult::Accepted { id } | PostResult::AutomationCompleted { id, .. } => {
                 self.db.post_inbox(project, id).map_err(|e| bad(e.to_string()))?.map(|i| i.done)
             }
             _ => None,
@@ -829,6 +859,52 @@ mod tests {
         h.db.project_rename("demo", "renamed", |s| s.into()).unwrap();
         assert!(h.post_status("demo", &input(1).post_id, "local:cli").is_err());
         assert_eq!(h.post_status("renamed", &input(1).post_id, "local:cli").unwrap(), accepted);
+    }
+
+    #[test]
+    fn automation_completion_uses_authenticated_thread_and_explicit_receipt() {
+        use sha2::{Digest, Sha256};
+        let (h, _lab) = host();
+        let mut rec = crate::orch::ThreadRec::starting(
+            "demo",
+            "감시",
+            "machine-id",
+            "fake",
+            Role::Worker,
+            aaa_proto::ThreadKind::Adopted,
+            1,
+        );
+        rec.id = "t-0001".into();
+        rec.pane = Some("s1".into());
+        rec.status = aaa_proto::ThreadStatus::Open;
+        rec.automation = Some("watch".into());
+        h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+        let key = "automation:demo:watch";
+        h.db.update_meta(key, |_| Ok(serde_json::json!({"pending":[{"id":"event","source":"ci"}]}).to_string()))
+            .unwrap();
+        let run = h.db.automation_executions("demo", Some("watch"), None).unwrap().remove(0);
+        let receipt = format!("automation_done:demo:watch:{}", hex::encode(Sha256::digest(b"event")));
+        h.db.update_meta_checked(key, &[], |_| Ok((serde_json::json!({"pending":[]}).to_string(), vec![(receipt,
+            serde_json::json!({"state":"succeeded","stage":"action","reason":"시작","receipt":"thread_started","thread":rec.id}).to_string())]))).unwrap();
+        let mut completion = input(1);
+        completion.post_type = PostType::Data;
+        completion.needs_user = false;
+        completion.topic = "automation-input-complete".into();
+        completion.body = serde_json::json!({"run":run.id,"outcome":"completed"}).to_string();
+        let mut forged = sender();
+        forged.verified = "local".into();
+        assert!(matches!(
+            h.store_post("demo", forged, completion.clone(), "local:cli", Some(&rec), 1),
+            PostResult::Refused { .. }
+        ));
+        assert!(!h.db.automation_execution("demo", &run.id).unwrap().unwrap().processed);
+        completion.post_id = input(2).post_id;
+        let accepted = h.receive_post("machine-id", "s1", completion.clone());
+        assert!(matches!(&accepted, PostResult::AutomationCompleted{run: id, ..} if id == &run.id), "{accepted:?}");
+        assert_eq!(h.receive_post("machine-id", "s1", completion), accepted);
+        let finished = h.db.automation_execution("demo", &run.id).unwrap().unwrap();
+        assert!(finished.processed);
+        assert_eq!(finished.outcome.as_deref(), Some("completed"));
     }
 
     fn coordinator_host() -> (Arc<Host>, Lab) {

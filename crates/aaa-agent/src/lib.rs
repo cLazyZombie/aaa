@@ -214,6 +214,7 @@ pub struct Agent {
     /// 지금 host가 정리 사건(`compacting.v1`, plan §8.309)을 아는가. 모르는 host에는 정리 중을 `working`으로 보낸다
     host_compacting: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
+    host_automation_results: Mutex<bool>,
     host_image: std::sync::atomic::AtomicBool,
     image_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::ImageResponse>>>>,
     host_mission: Mutex<bool>,
@@ -272,6 +273,7 @@ impl Agent {
             host_compacting: std::sync::atomic::AtomicBool::new(false),
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
+            host_automation_results: Mutex::new(false),
             host_image: std::sync::atomic::AtomicBool::new(false),
             image_waiters: Mutex::new(HashMap::new()),
             host_mission: Mutex::new(false),

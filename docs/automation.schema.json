@@ -1,187 +1,61 @@
 {
   "$defs": {
-    "Action": {
-      "oneOf": [
-        {
-          "enum": [
-            "deploy"
-          ],
-          "type": "string"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "inbox": {
-              "$ref": "#/$defs/Inbox"
-            }
-          },
-          "required": [
-            "inbox"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "message": {
-              "$ref": "#/$defs/Message"
-            }
-          },
-          "required": [
-            "message"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "start": {
-              "$ref": "#/$defs/Start"
-            }
-          },
-          "required": [
-            "start"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "CatchUp": {
-      "enum": [
-        "once",
-        "skip"
-      ],
-      "type": "string"
-    },
-    "Ci": {
-      "additionalProperties": false,
-      "properties": {
-        "branches": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "events": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "machine": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "repo": {
-          "type": "string"
-        },
-        "workflows": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "repo",
-        "branches"
-      ],
-      "type": "object"
-    },
-    "Command": {
-      "additionalProperties": false,
-      "oneOf": [
-        {
-          "not": {
-            "required": [
-              "daily"
-            ]
-          },
-          "required": [
-            "every"
-          ]
-        },
-        {
-          "not": {
-            "required": [
-              "every"
-            ]
-          },
-          "required": [
-            "daily"
-          ]
-        }
-      ],
-      "properties": {
-        "catch_up": {
-          "$ref": "#/$defs/CatchUp",
-          "default": "once"
-        },
-        "command": {
-          "type": "string"
-        },
-        "daily": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "every": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "machine": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "command"
-      ],
-      "type": "object"
-    },
-    "Condition": {
+    "AutomationAction": {
       "oneOf": [
         {
           "additionalProperties": false,
           "properties": {
-            "schedule": {
-              "$ref": "#/$defs/Scheduled"
+            "kind": {
+              "const": "notice",
+              "type": "string"
+            },
+            "notify": {
+              "default": false,
+              "type": "boolean"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text_file": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
-            "schedule"
+            "kind"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
           "properties": {
-            "command": {
-              "$ref": "#/$defs/Command"
-            }
-          },
-          "required": [
-            "command"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
+            "kind": {
+              "const": "message",
+              "type": "string"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text_file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "thread": {
-              "$ref": "#/$defs/Threads"
+              "type": "string"
             }
           },
           "required": [
+            "kind",
             "thread"
           ],
           "type": "object"
@@ -189,42 +63,143 @@
         {
           "additionalProperties": false,
           "properties": {
-            "pr": {
-              "$ref": "#/$defs/Pr"
+            "brief_file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "close_idle": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "thread",
+              "type": "string"
+            },
+            "machine_pick": {
+              "$ref": "#/$defs/AutomationMachinePick",
+              "default": "idlest"
+            },
+            "machines": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "memory": {
+              "default": false,
+              "type": "boolean"
+            },
+            "profile_pick": {
+              "$ref": "#/$defs/AutomationProfilePick",
+              "default": "first"
+            },
+            "profiles": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "repo": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reports": {
+              "default": false,
+              "type": "boolean"
+            },
+            "reuse": {
+              "$ref": "#/$defs/AutomationReuse",
+              "default": "new"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text_file": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "wait": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "wait_max": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
-            "pr"
+            "kind",
+            "title",
+            "profiles",
+            "machines"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
           "properties": {
-            "ci": {
-              "$ref": "#/$defs/Ci"
+            "command": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "command",
+              "type": "string"
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
-            "ci"
+            "kind",
+            "command"
           ],
           "type": "object"
         },
         {
           "additionalProperties": false,
           "properties": {
-            "git": {
-              "$ref": "#/$defs/Git"
+            "kind": {
+              "const": "proposal",
+              "type": "string"
             }
           },
           "required": [
-            "git"
+            "kind"
           ],
           "type": "object"
         }
       ]
     },
-    "Git": {
+    "AutomationCatchUp": {
+      "enum": [
+        "once",
+        "skip"
+      ],
+      "type": "string"
+    },
+    "AutomationCondition": {
       "additionalProperties": false,
       "properties": {
         "branches": {
@@ -234,57 +209,99 @@
           "type": "array"
         },
         "events": {
-          "default": [],
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "machine": {
+        "include_automation": {
+          "type": "boolean"
+        },
+        "min_commits": {
+          "format": "uint32",
+          "minimum": 0,
           "type": [
-            "string",
+            "integer",
             "null"
           ]
         },
-        "repo": {
-          "type": "string"
+        "output_changed": {
+          "type": "boolean"
+        },
+        "repos": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "workflows": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
-      "required": [
-        "repo",
-        "branches"
-      ],
       "type": "object"
     },
-    "Inbox": {
-      "additionalProperties": false,
+    "AutomationEventSource": {
+      "enum": [
+        "thread",
+        "pr",
+        "ci",
+        "git"
+      ],
+      "type": "string"
+    },
+    "AutomationMachinePick": {
+      "enum": [
+        "idlest"
+      ],
+      "type": "string"
+    },
+    "AutomationMessage": {
       "not": {
         "required": [
           "text",
           "text_file"
         ]
-      },
-      "properties": {
-        "notify": {
-          "default": false,
-          "type": "boolean"
-        },
-        "text": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "text_file": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
+      }
     },
-    "Limits": {
+    "AutomationNotice": {
+      "not": {
+        "required": [
+          "text",
+          "text_file"
+        ]
+      }
+    },
+    "AutomationObserve": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "command",
+              "type": "string"
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "command"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AutomationPolicy": {
       "additionalProperties": false,
       "properties": {
         "batch": {
@@ -302,19 +319,8 @@
           ]
         },
         "max_running": {
-          "description": "do.start 규칙별 동시 한도. 생략·0은 1개(자동화 thread는 일반 실행 한도에서 빠진다).",
           "format": "uint32",
           "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "min_commits": {
-          "description": "배포 제안: 최근 성공 커밋 또는 등록 head 뒤의 새 main 커밋(1~100).",
-          "format": "uint32",
-          "maximum": 100,
-          "minimum": 1,
           "type": [
             "integer",
             "null"
@@ -328,13 +334,10 @@
             {
               "const": 0
             }
-          ],
-          "description": "생략 또는0이면 제한 없음"
+          ]
         },
         "usage_session_below": {
           "format": "double",
-          "maximum": 100,
-          "minimum": 0,
           "type": [
             "number",
             "null"
@@ -342,8 +345,6 @@
         },
         "usage_week_below": {
           "format": "double",
-          "maximum": 100,
-          "minimum": 0,
           "type": [
             "number",
             "null"
@@ -352,156 +353,21 @@
       },
       "type": "object"
     },
-    "MachinePick": {
-      "enum": [
-        "idlest"
-      ],
-      "type": "string"
-    },
-    "Message": {
-      "additionalProperties": false,
-      "not": {
-        "required": [
-          "text",
-          "text_file"
-        ]
-      },
-      "properties": {
-        "text": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "text_file": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "thread": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "thread"
-      ],
-      "type": "object"
-    },
-    "Pr": {
-      "additionalProperties": false,
-      "properties": {
-        "events": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "ProfilePick": {
+    "AutomationProfilePick": {
       "enum": [
         "first",
         "week-left"
       ],
       "type": "string"
     },
-    "Reuse": {
+    "AutomationReuse": {
       "enum": [
         "new",
         "open"
       ],
       "type": "string"
     },
-    "Scheduled": {
-      "additionalProperties": false,
-      "oneOf": [
-        {
-          "not": {
-            "required": [
-              "daily"
-            ]
-          },
-          "required": [
-            "every"
-          ]
-        },
-        {
-          "not": {
-            "required": [
-              "every"
-            ]
-          },
-          "required": [
-            "daily"
-          ]
-        }
-      ],
-      "properties": {
-        "catch_up": {
-          "$ref": "#/$defs/CatchUp",
-          "default": "once"
-        },
-        "daily": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "every": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "Start": {
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "memory": {
-                "const": true
-              }
-            },
-            "required": [
-              "memory"
-            ]
-          },
-          "then": {
-            "properties": {
-              "reuse": {
-                "const": "open"
-              }
-            },
-            "required": [
-              "reuse"
-            ]
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "close_idle"
-            ]
-          },
-          "then": {
-            "properties": {
-              "reuse": {
-                "const": "open"
-              }
-            },
-            "required": [
-              "reuse"
-            ]
-          }
-        }
-      ],
+    "AutomationThread": {
       "oneOf": [
         {
           "not": {
@@ -562,80 +428,6 @@
         }
       ],
       "properties": {
-        "brief_file": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "close_idle": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "machine_pick": {
-          "$ref": "#/$defs/MachinePick",
-          "default": "idlest"
-        },
-        "machines": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "memory": {
-          "default": false,
-          "description": "open 전용. 기억을 보존하고 SessionStart(압축·재개 포함)에서 brief와 memory.md 재독을 안내한다.",
-          "type": "boolean"
-        },
-        "profile_pick": {
-          "$ref": "#/$defs/ProfilePick",
-          "default": "first"
-        },
-        "profiles": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "repo": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "reports": {
-          "default": false,
-          "type": "boolean"
-        },
-        "reuse": {
-          "$ref": "#/$defs/Reuse",
-          "default": "new",
-          "description": "new는 새 thread, open은 같은 규칙의 열린 thread에 이어 보냄(Claude·Codex)."
-        },
-        "text": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "text_file": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "title": {
-          "type": "string"
-        },
-        "wait": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "wait_max": {
           "anyOf": [
             {
@@ -644,70 +436,139 @@
             {
               "const": 0
             }
-          ],
-          "description": "생략 또는0이면 제한 없음"
+          ]
         }
-      },
-      "required": [
-        "title",
-        "profiles",
-        "machines"
-      ],
-      "type": "object"
+      }
     },
-    "Threads": {
-      "additionalProperties": false,
-      "properties": {
-        "events": {
-          "items": {
-            "type": "string"
+    "AutomationTrigger": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "not": {
+                "required": [
+                  "daily"
+                ]
+              },
+              "required": [
+                "every"
+              ]
+            },
+            {
+              "not": {
+                "required": [
+                  "every"
+                ]
+              },
+              "required": [
+                "daily"
+              ]
+            }
+          ],
+          "properties": {
+            "catch_up": {
+              "$ref": "#/$defs/AutomationCatchUp",
+              "default": "once"
+            },
+            "daily": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "every": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "schedule",
+              "type": "string"
+            }
           },
-          "type": "array"
+          "required": [
+            "kind"
+          ],
+          "type": "object"
         },
-        "include_automation": {
-          "description": "자동화가 띄운 thread의 사건도 받는다(plan t-0475 §3.5). 기본은 뺀다: 자동화 thread의 보고가 규칙을 깨워 다시 thread를 띄우는\n고리를 막는다. 켜도 이 규칙이 띄운 thread의 사건은 늘 뺀다",
-          "type": "boolean"
-        },
-        "repos": {
-          "default": [],
-          "items": {
-            "type": "string"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "event",
+              "type": "string"
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "repo": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/AutomationEventSource"
+            }
           },
-          "type": "array"
+          "required": [
+            "kind",
+            "source"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "events"
-      ],
-      "type": "object"
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "do": {
-      "$ref": "#/$defs/Action"
+    "action": {
+      "$ref": "#/$defs/AutomationAction"
+    },
+    "condition": {
+      "$ref": "#/$defs/AutomationCondition",
+      "default": {}
     },
     "enabled": {
       "default": true,
       "type": "boolean"
     },
-    "limits": {
-      "$ref": "#/$defs/Limits",
+    "observe": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AutomationObserve"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "policy": {
+      "$ref": "#/$defs/AutomationPolicy",
       "default": {}
     },
-    "on": {
-      "$ref": "#/$defs/Condition"
+    "schema": {
+      "const": 2
     },
     "title": {
       "default": "",
       "type": "string"
+    },
+    "trigger": {
+      "$ref": "#/$defs/AutomationTrigger"
     }
   },
   "required": [
-    "on",
-    "do"
+    "schema",
+    "trigger",
+    "action"
   ],
-  "title": "AAA 자동화",
+  "title": "AAA 자동화 v2",
   "type": "object"
 }

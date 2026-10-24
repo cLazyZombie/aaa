@@ -2,6 +2,7 @@
 mod convert;
 mod deploy;
 pub(crate) mod edit;
+pub(crate) mod model;
 pub(crate) mod runtime;
 /// coordinator 운영 규칙의 웹 보호 표지. 파일 내용·제목과 무관하게 이름으로 판정한다.
 /// 다른 운영 자동화는 사용자 결정 없이 여기에 더하지 않는다. CLI·파일 편집은 그대로 허용한다.
@@ -158,6 +159,7 @@ pub(crate) struct Git {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Action {
+    Command(aaa_proto::AutomationCommand),
     Deploy,
     Inbox(Inbox),
     Message(Message),
@@ -366,7 +368,7 @@ impl Scheduled {
 impl Action {
     pub fn texts(&self) -> (Option<&str>, Option<&str>) {
         match self {
-            Self::Deploy => (None, None),
+            Self::Deploy | Self::Command(_) => (None, None),
             Self::Inbox(a) => (a.text.as_deref(), a.text_file.as_deref()),
             Self::Message(a) => (a.text.as_deref(), a.text_file.as_deref()),
             Self::Start(a) => (a.text.as_deref(), a.brief_file.as_deref().or(a.text_file.as_deref())),
@@ -374,7 +376,7 @@ impl Action {
     }
     pub fn set_text(&mut self, value: String) {
         let (text, file) = match self {
-            Self::Deploy => return,
+            Self::Deploy | Self::Command(_) => return,
             Self::Inbox(a) => (&mut a.text, &mut a.text_file),
             Self::Message(a) => (&mut a.text, &mut a.text_file),
             Self::Start(a) => {
@@ -388,6 +390,7 @@ impl Action {
     pub fn field(&self) -> &'static str {
         match self {
             Self::Deploy => "do.deploy",
+            Self::Command(_) => "action",
             Self::Inbox(_) => "do.inbox",
             Self::Message(_) => "do.message",
             Self::Start(_) => "do.start",
@@ -396,6 +399,7 @@ impl Action {
     pub fn label(&self) -> String {
         match self {
             Self::Deploy => "배포 제안".into(),
+            Self::Command(_) => "명령 실행".into(),
             Self::Inbox(_) => "coordinator 안내".into(),
             Self::Message(a) => format!("{} thread에 글", if a.thread == "owner" { "주인" } else { &a.thread }),
             Self::Start(a) => format!("새 thread · {}", a.title),
@@ -414,7 +418,7 @@ pub(crate) fn parse_with(
 ) -> Result<crate::routine::Routine, String> {
     use crate::routine::{Routine, Trigger};
     let file = format!("automations/{name}.toml");
-    let mut spec: File = decode(&file, text)?;
+    let mut spec = model::read(&file, text)?;
     let bad = |field: &str, message: &str| field_error(&file, text, field, message);
     if !aaa_proto::valid_project(name) {
         return Err(bad("title", "자동화 이름 형식이 아니다"));
@@ -582,6 +586,13 @@ pub(crate) fn parse_with(
         r.trigger = Trigger::Thread(t.clone());
         r.schedule_text = format!("on thread: {}", t.events.join(", "));
     }
+    if let Action::Command(a) = &spec.action {
+        if a.command.trim().is_empty() {
+            return Err(bad("action.command", "명령이 비었다"));
+        }
+        r.command = a.command.clone();
+        r.machine = a.machine.clone();
+    }
     r.enabled = spec.enabled;
     r.title = if spec.title.is_empty() { name.into() } else { spec.title };
     r.file = file;
@@ -606,35 +617,21 @@ pub(crate) fn duration_ms(value: &str) -> Result<u64, String> {
 mod tests;
 
 pub(crate) fn schema() -> serde_json::Value {
-    let mut schema = serde_json::to_value(schemars::schema_for!(File)).expect("schema serialize");
-    for name in ["Scheduled", "Command"] {
-        schema["$defs"][name]["oneOf"] = serde_json::json!([{"required":["every"],"not":{"required":["daily"]}},{"required":["daily"],"not":{"required":["every"]}}]);
+    let mut schema = serde_json::to_value(schemars::schema_for!(aaa_proto::AutomationDefinition)).expect("schema");
+    schema["title"] = "AAA 자동화 v2".into();
+    schema["properties"]["schema"] = serde_json::json!({"const":2});
+    schema["$defs"]["AutomationTrigger"]["oneOf"][0]["oneOf"] = serde_json::json!([{"required":["every"],"not":{"required":["daily"]}},{"required":["daily"],"not":{"required":["every"]}}]);
+    for (name, field) in [("AutomationPolicy", "min_gap"), ("AutomationThread", "wait_max")] {
+        schema["$defs"][name]["properties"][field] = serde_json::json!({"anyOf":[{"type":"string"},{"const":0}]});
     }
-    schema["title"] = "AAA 자동화".into();
-    for (name, field) in [("Limits", "min_gap"), ("Start", "wait_max")] {
-        schema["$defs"][name]["properties"][field] =
-            serde_json::json!({"anyOf":[{"type":"string"},{"const":0}],"description":"생략 또는0이면 제한 없음"});
+    for name in ["AutomationNotice", "AutomationMessage"] {
+        schema["$defs"][name]["not"] = serde_json::json!({"required":["text","text_file"]});
     }
-    schema["$defs"]["Limits"]["properties"]["max_per_day"]["minimum"] = 0.into();
-    schema["$defs"]["Limits"]["properties"]["max_running"]["minimum"] = 0.into();
-    schema["$defs"]["Start"]["oneOf"] = serde_json::json!([
+    schema["$defs"]["AutomationThread"]["oneOf"] = serde_json::json!([
         {"required":["text"],"not":{"anyOf":[{"required":["text_file"]},{"required":["brief_file"]}]}},
         {"required":["text_file"],"not":{"anyOf":[{"required":["text"]},{"required":["brief_file"]}]}},
         {"required":["brief_file"],"not":{"anyOf":[{"required":["text"]},{"required":["text_file"]}]}}
     ]);
-    schema["$defs"]["Start"]["allOf"] = serde_json::json!([
-        {"if":{"required":["memory"],"properties":{"memory":{"const":true}}},"then":{"required":["reuse"],"properties":{"reuse":{"const":"open"}}}},
-        {"if":{"required":["close_idle"]},"then":{"required":["reuse"],"properties":{"reuse":{"const":"open"}}}}
-    ]);
-    schema["$defs"]["Limits"]["properties"]["min_commits"]["minimum"] = 1.into();
-    schema["$defs"]["Limits"]["properties"]["min_commits"]["maximum"] = 100.into();
-    for field in ["usage_session_below", "usage_week_below"] {
-        schema["$defs"]["Limits"]["properties"][field]["minimum"] = 0.into();
-        schema["$defs"]["Limits"]["properties"][field]["maximum"] = 100.into();
-    }
-    for name in ["Inbox", "Message"] {
-        schema["$defs"][name]["not"] = serde_json::json!({"required":["text","text_file"]});
-    }
     schema
 }
 
@@ -665,7 +662,7 @@ impl File {
     pub fn from_routine(r: &crate::routine::Routine) -> Self {
         use crate::routine::Trigger;
         let on = match &r.trigger {
-            Trigger::Schedule(s) if !r.command.is_empty() => {
+            Trigger::Schedule(s) if !r.command.is_empty() && !matches!(r.action, Action::Command(_)) => {
                 let schedule = Scheduled::from_schedule(s, r.catch_up);
                 Condition::Command(Command {
                     every: schedule.every,
@@ -697,6 +694,27 @@ impl File {
 }
 
 impl crate::Host {
+    pub(crate) fn automation_recover(&self, p: &str) -> Result<Vec<String>, aaa_proto::ErrorBody> {
+        let bad = |e: String| crate::err(aaa_proto::ErrorCode::Internal, e);
+        let key = format!("automation_migration:{p}");
+        let Some(raw) = self.db.meta(&key).map_err(|e| bad(e.to_string()))? else { return Ok(vec![]) };
+        let plan: convert::Plan = serde_json::from_str(&raw).map_err(|e| bad(e.to_string()))?;
+        let files = convert::resume(&self.project_dir(p)?, &plan).map_err(bad)?;
+        self.legacy_mission_recover(p)?;
+        for name in self.db.meta_suffixes(&format!("automation:{p}:")).map_err(|e| bad(e.to_string()))? {
+            self.db
+                .update_meta(&format!("automation:{p}:{name}"), |raw| {
+                    raw.ok_or_else(|| anyhow::anyhow!("큐가 사라졌다"))
+                })
+                .map_err(|e| bad(e.to_string()))?;
+        }
+        for name in self.db.meta_suffixes(&format!("routine_runs:{p}:")).map_err(|e| bad(e.to_string()))? {
+            let history = self.routine_history(p, &name)?;
+            self.db.automation_import_observations(p, &name, &history.runs).map_err(|e| bad(e.to_string()))?;
+        }
+        self.db.del_meta(&key).map_err(|e| bad(e.to_string()))?;
+        Ok(files)
+    }
     /// `dry_run`이면 계획만 답한다(쓰기·임무 seed·audit 없음). `expected`가 있으면 그 계획일 때만 변환한다.
     pub(crate) async fn automation_convert(
         &self,
@@ -706,6 +724,8 @@ impl crate::Host {
         actor: &str,
     ) -> Result<(Vec<String>, String), aaa_proto::ErrorBody> {
         let _guard = self.automation_sources.lock().await;
+        let dispatch = self.automation_dispatch_lock(p);
+        let _dispatch = dispatch.lock().await;
         let root = self.project_dir(p)?;
         let mut plan = convert::prepare(&root, &self.resolve_machine(None).unwrap_or_default())
             .map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
@@ -727,7 +747,13 @@ impl crate::Host {
                     .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?,
             )
             .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?;
-        let files = convert::apply(&root, plan).map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
+        self.db
+            .set_meta(
+                &format!("automation_migration:{p}"),
+                &serde_json::to_string(&plan).map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?,
+            )
+            .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?;
+        let files = self.automation_recover(p)?;
         self.legacy_mission_recover(p)?;
         self.db.audit(actor, "automation_convert", &format!("{p}: {} files", files.len()));
         self.tick_wake.notify_one();

@@ -1,5 +1,7 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod automation;
+pub use automation::*;
 pub mod auto_mode;
 pub use auto_mode::*;
 pub mod workspace_metrics;
@@ -283,6 +285,28 @@ pub fn typescript_bindings() -> String {
         DeliveryState::decl(&cfg),
         MessageView::decl(&cfg),
         InboxItem::decl(&cfg),
+        AutomationCompletion::decl(&cfg),
+        AutomationOutcome::decl(&cfg),
+        AutomationDefinition::decl(&cfg),
+        AutomationTrigger::decl(&cfg),
+        AutomationCatchUp::decl(&cfg),
+        AutomationEventSource::decl(&cfg),
+        AutomationObserve::decl(&cfg),
+        AutomationCommand::decl(&cfg),
+        AutomationCondition::decl(&cfg),
+        AutomationPolicy::decl(&cfg),
+        AutomationAction::decl(&cfg),
+        AutomationNotice::decl(&cfg),
+        AutomationMessage::decl(&cfg),
+        AutomationThread::decl(&cfg),
+        AutomationReuse::decl(&cfg),
+        AutomationProfilePick::decl(&cfg),
+        AutomationMachinePick::decl(&cfg),
+        AutomationRunState::decl(&cfg),
+        AutomationStage::decl(&cfg),
+        AutomationReceipt::decl(&cfg),
+        AutomationRunEvent::decl(&cfg),
+        AutomationExecution::decl(&cfg),
         RoutineView::decl(&cfg),
         AutomationMemory::decl(&cfg),
         AutomationClosing::decl(&cfg),

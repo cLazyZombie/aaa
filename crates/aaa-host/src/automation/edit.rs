@@ -2,7 +2,7 @@
 //! 원본은 프로젝트의 TOML 파일이다. 저장은 사람이 본 판(sha256)일 때만 쓰고, 다르면 아무것도 쓰지 않고 `conflict`로 거부한다.
 //! 쓰기는 공용 저장 helper(`file_rev`, plan §8.311)로 한다: 파일마다 lock, rename 직전 다시 읽어 그사이 바뀌었으면 판 대조를 다시 한다.
 //! 폼 값은 정본 타입(`File`)으로 읽은 뒤 바뀐 칸만 원문에 고친다: 주석·순서·나머지 칸은 toml_edit로 그대로 둔다.
-use super::{File, decode, field_error, parse_with, project_text};
+use super::{File, field_error, parse_with, project_text};
 use crate::{Host, err};
 use aaa_proto::{AutomationCheck, AutomationDoc, AutomationReview, AutomationTrashEntry, ErrorBody, ErrorCode};
 use serde_json::{Map, Value};
@@ -93,7 +93,7 @@ fn writable_body(root: &Path, relative: &str) -> Result<(), ErrorBody> {
 
 /// 폼 값(TOML과 같은 모양)을 정본 타입으로 읽는다. 오류는 칸 경로와 함께 낸다.
 fn form_file(form: Value) -> Result<File, String> {
-    serde_path_to_error::deserialize::<_, File>(form).map_err(|e| format!("폼 {}: {}", e.path(), e.inner()))
+    super::model::form(form)
 }
 
 fn scalar(v: &Value) -> Option<toml_edit::Value> {
@@ -220,7 +220,7 @@ fn prune(doc: &mut DocumentMut, file: &str, target: &File, mut inserted: Vec<Vec
     for p in inserted {
         let mut trial = doc.clone();
         if remove_path(trial.as_table_mut(), &p)
-            && decode::<File>(file, &trial.to_string())
+            && crate::automation::model::read(file, &trial.to_string())
                 .inspect_err(|error| {
                     aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
                 })
@@ -236,10 +236,12 @@ fn prune(doc: &mut DocumentMut, file: &str, target: &File, mut inserted: Vec<Vec
 /// 폼 값을 원문에 합친다. 원문이 비었으면 새 파일 글을 만든다.
 pub(crate) fn merge_form(file: &str, text: &str, form: Value) -> Result<String, String> {
     let target = form_file(form)?;
-    let after = serde_json::to_value(&target).map_err(|e| e.to_string())?;
+    let v2 = super::model::is_v2(text) || text.trim().is_empty();
+    let value = |f: &File| if v2 { serde_json::to_value(super::model::to_v2(f)) } else { serde_json::to_value(f) };
+    let after = value(&target).map_err(|e| e.to_string())?;
     if text.trim().is_empty() {
         // 새 파일: 정본 타입의 칸 순서(제목·켜짐·조건·동작·한도)로 쓰고 기본값 칸은 뺀다
-        let canonical = toml::to_string_pretty(&target).map_err(|e| e.to_string())?;
+        let canonical = super::model::encode(&target)?;
         let mut doc: DocumentMut = canonical.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
         integral_floats(doc.as_table_mut());
         let mut inserted = Vec::new();
@@ -249,8 +251,8 @@ pub(crate) fn merge_form(file: &str, text: &str, form: Value) -> Result<String, 
             }
         }
         prune(&mut doc, file, &target, inserted);
-        let out = format!("#:schema ./automation.schema.json\n{doc}");
-        return match decode::<File>(file, &out) {
+        let out = doc.to_string();
+        return match crate::automation::model::read(file, &out) {
             Ok(read) if read == target => Ok(out),
             Ok(_) => Err("새 원문이 폼 값과 다르게 읽힌다".into()),
             Err(e) => Err(format!("새 원문을 읽지 못한다: {e}")),
@@ -268,9 +270,9 @@ pub(crate) fn merge_form(file: &str, text: &str, form: Value) -> Result<String, 
         let doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
             format!("원문 TOML을 읽지 못해 폼을 합칠 수 없다. TOML에서 먼저 고친다: {}", e.message())
         })?;
-        let before = decode::<File>(file, text)
+        let before = crate::automation::model::read(file, text)
             .map_err(|e| format!("원문을 정본 타입으로 읽지 못해 폼을 합칠 수 없다. TOML에서 먼저 고친다: {e}"))?;
-        (doc, serde_json::to_value(&before).map_err(|e| e.to_string())?)
+        (doc, value(&before).map_err(|e| e.to_string())?)
     };
     let (Value::Object(before), Value::Object(after)) = (before, after) else {
         return Err("폼 값이 표가 아니다".into());
@@ -280,7 +282,7 @@ pub(crate) fn merge_form(file: &str, text: &str, form: Value) -> Result<String, 
     prune(&mut doc, file, &target, inserted);
     let out = format!("{lead}{doc}");
     // 합친 글을 다시 읽어 폼 값과 같은지 본다(합치기 결함이 엉뚱한 칸을 쓰지 않게)
-    match decode::<File>(file, &out) {
+    match crate::automation::model::read(file, &out) {
         Ok(read) if read == target => Ok(out),
         Ok(_) => Err("합친 원문이 폼 값과 다르게 읽힌다. TOML에서 고친다".into()),
         Err(e) => Err(format!("합친 원문을 읽지 못한다: {e}")),
@@ -320,7 +322,7 @@ impl Host {
         let parsed = if file.ends_with(".md") {
             crate::routine::parse(name, text)
         } else {
-            match decode::<File>(file, text) {
+            match crate::automation::model::read(file, text) {
                 Ok(f) => {
                     check.form = serde_json::to_value(&f)
                         .inspect_err(|error| {
@@ -333,7 +335,7 @@ impl Host {
                     return check;
                 }
             }
-            let body_file = decode::<File>(file, text)
+            let body_file = crate::automation::model::read(file, text)
                 .inspect_err(|error| {
                     aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
                 })
@@ -403,7 +405,7 @@ impl Host {
         let legacy = file.ends_with(".md");
         let body_file = (!legacy)
             .then(|| {
-                decode::<File>(&file, &text)
+                crate::automation::model::read(&file, &text)
                     .inspect_err(|error| {
                         aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
                     })
@@ -470,6 +472,8 @@ impl Host {
             return Err(bad("자동화 이름 형식이 아니다(영문 소문자·숫자·-·_)"));
         }
         let _guard = self.automation_sources.lock().await;
+        let dispatch = self.automation_dispatch_lock(p);
+        let _dispatch = dispatch.lock().await;
         let root = self.project_dir(p)?;
         let file = rule_file(name);
         if current(&root, &format!("routines/{name}.md"))?.is_some() {
@@ -495,14 +499,14 @@ impl Host {
         let body_write = match body {
             None => None,
             Some(body) => {
-                let decoded = decode::<File>(&file, &text).map_err(bad)?;
+                let decoded = crate::automation::model::read(&file, &text).map_err(bad)?;
                 let path =
                     decoded.action.texts().1.map(str::to_owned).ok_or_else(|| {
                         bad(field_error(&file, &text, "do", "본문 파일 칸(text_file·brief_file)이 없다"))
                     })?;
                 // 웹이 새로 쓰는 본문은 automations/ 안에만 둔다. 이 규칙이 이미 가리키던 파일은 그 자리에 고친다
                 let before = now.as_deref().and_then(|t| {
-                    decode::<File>(&file, t)
+                    crate::automation::model::read(&file, t)
                         .inspect_err(|error| {
                             aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
                         })
@@ -572,6 +576,8 @@ impl Host {
             return Err(bad("자동화 이름 형식이 아니다"));
         }
         let _guard = self.automation_sources.lock().await;
+        let dispatch = self.automation_dispatch_lock(p);
+        let _dispatch = dispatch.lock().await;
         let root = self.project_dir(p)?;
         let file = rule_file(name);
         let Some(text) = current(&root, &file)? else {
@@ -652,6 +658,8 @@ impl Host {
     pub(crate) async fn automation_restore(&self, p: &str, id: &str, actor: &str) -> Result<String, ErrorBody> {
         let (name, _) = trash_id(id).ok_or_else(|| bad("지운 자동화 id 형식이 아니다"))?;
         let _guard = self.automation_sources.lock().await;
+        let dispatch = self.automation_dispatch_lock(p);
+        let _dispatch = dispatch.lock().await;
         let root = self.project_dir(p)?;
         let from = format!("{TRASH}/{id}");
         let text =
@@ -692,6 +700,8 @@ impl Host {
         let root = self.project_dir(p)?;
         // 지우기·저장과 줄 세운다: 찾은 규칙이 넣기 전에 지워지지 않는다
         let _guard = self.automation_sources.lock().await;
+        let dispatch = self.automation_dispatch_lock(p);
+        let _dispatch = dispatch.lock().await;
         let (rules, broken) = crate::routine::load_all(&root);
         let Some(r) = rules.into_iter().find(|r| r.name == name) else {
             if broken.iter().any(|(f, _, _)| Path::new(f).file_stem().is_some_and(|s| s == name)) {
@@ -714,35 +724,8 @@ impl Host {
         if let Some((_, false)) = self.automation_start_approval(p, &r)? {
             return Err(err(ErrorCode::Forbidden, "자동 시작 범위가 승인되지 않았다. 먼저 「승인 검토」에서 승인한다"));
         }
-        let once = format!("automation_manual:{p}:{name}:{}", sha256(key));
-        if !r.command.is_empty() {
-            if !self.routine_commands_allowed(p) {
-                return Err(err(ErrorCode::Forbidden, "safety routine_commands가 꺼져 있어 명령을 돌리지 않는다"));
-            }
-            if !self.routine_approved(p, &r) {
-                return Err(err(ErrorCode::Forbidden, "명령이 승인되지 않았다. 먼저 명령을 승인한다"));
-            }
-            // 돌고 있으면 key를 쓰지 않고 거부한다(같은 key로 다시 누를 수 있다)
-            let running = format!("{p}/{name}");
-            if !self.routine_running.lock().unwrap().insert(running.clone()) {
-                return Err(bad("지난 명령이 아직 돈다. 끝난 뒤 다시 한다"));
-            }
-            match self.db.update_meta_checked(&once, &[&once], |_| Ok((actor.into(), vec![]))) {
-                Ok(true) => {}
-                other => {
-                    self.routine_running.lock().unwrap().remove(&running);
-                    other.map_err(internal)?;
-                    return Ok((false, "이미 받은 실행이다".into()));
-                }
-            }
-            self.db.audit(actor, "automation_run", &format!("{p}/{name} 명령"));
-            let me = self.clone();
-            let project = p.to_string();
-            tokio::spawn(async move {
-                me.routine_run(&project, &r).await;
-                me.routine_running.lock().unwrap().remove(&running);
-            });
-            return Ok((true, "명령을 지금 돌린다. 출력이 바뀌면 동작이 돈다".into()));
+        if !r.command.is_empty() && (!self.routine_commands_allowed(p) || !self.routine_approved(p, &r)) {
+            return Err(err(ErrorCode::Forbidden, "자동화 명령 허용과 명령 범위 승인이 필요하다"));
         }
         let id = format!("{}:{key}", super::runtime::MANUAL);
         let event = super::runtime::Event {
@@ -753,6 +736,8 @@ impl Host {
             action: r.action.clone(),
             source: super::runtime::MANUAL.into(),
             start_scope: None,
+            observe: None,
+            revision: String::new(),
         };
         let accepted = self.automation_accept(p, &r, event)?;
         if !accepted {
@@ -771,7 +756,7 @@ mod tests {
     use super::*;
 
     fn form(text: &str) -> Value {
-        serde_json::to_value(decode::<File>("automations/x.toml", text).unwrap()).unwrap()
+        serde_json::to_value(crate::automation::model::read("automations/x.toml", text).unwrap()).unwrap()
     }
 
     #[test]
@@ -797,7 +782,7 @@ mod tests {
         // 기본값 칸(events = [], machine 없음)을 새로 쓰지 않는다
         assert!(!out.contains("events"), "{out}");
         assert!(out.contains("usage_week_below = 10\n"), "{out}");
-        assert_eq!(decode::<File>("automations/x.toml", &out).unwrap(), form_file(f).unwrap());
+        assert_eq!(crate::automation::model::read("automations/x.toml", &out).unwrap(), form_file(f).unwrap());
     }
 
     #[test]
@@ -807,10 +792,10 @@ mod tests {
         assert!(out.starts_with("#:schema ./automation.schema.json\n"), "{out}");
         assert!(!out.contains("catch_up") && !out.contains("notify") && !out.contains("enabled"), "{out}");
         assert!(out.contains("usage_session_below = 5\n") && out.contains("usage_week_below = 10\n"), "{out}");
-        let on = out.find("[on.schedule]").unwrap();
-        let act = out.find("[do.inbox]").unwrap();
+        let on = out.find("[trigger]").unwrap();
+        let act = out.find("[action]").unwrap();
         assert!(out.find("title").unwrap() < on && on < act, "{out}");
-        assert_eq!(decode::<File>("automations/x.toml", &out).unwrap(), form_file(f).unwrap());
+        assert_eq!(crate::automation::model::read("automations/x.toml", &out).unwrap(), form_file(f).unwrap());
     }
 
     #[test]
