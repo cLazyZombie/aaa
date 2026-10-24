@@ -1560,3 +1560,5 @@ summary.chat-compact-head { cursor: pointer; }
 
 /* harness는 주입 안내도 user로 기록한다. 원문 표지는 유지하며 inbox 안내를 별도로 이름 붙인다. */
 .chat-inbox-label { color: var(--text-dim); font-size: var(--fs-xs); text-align: right; margin-bottom: var(--space-1); }
+/* 보관한 대화는 레이아웃·입력에 참여하지 않는다. .term의 flex보다 우선한다. */
+.term[hidden] { display: none; }

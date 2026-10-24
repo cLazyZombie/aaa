@@ -31,6 +31,7 @@ import { AccessGate } from "./AccessGate";
 import { takePairCode } from "./herdr/phone";
 import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
+import { CHAT_IDLE_MS, chatExpiry, chatKey, hasChat, retainChats, type RetainedChat } from "./retainedChats";
 import { QuestionReload } from "./questionReload";
 import { ThreadReload } from "./threadReload";
 import { SummaryButton } from "./ThreadSummary";
@@ -113,7 +114,7 @@ export function App() {
   if (auth.state === "loading") return <p className="center muted">불러오는 중</p>;
   if (auth.state === "error") return <Unreachable reason={auth.msg} onRetry={check} />;
   if (auth.state === "pair") return <AccessGate initialCode={pairCode} onUnlocked={check} />;
-  return <Main role={auth.role} device={auth.device} onSignedOut={check} />;
+  return <Main key={`${auth.device}:${auth.role}`} role={auth.role} device={auth.device} onSignedOut={check} />;
 }
 
 /** host에 닿지 못한 첫 화면(모양은 연결 화면 카드, 문구는 offline.html과 같다). 네트워크가 돌아오면 App이 다시 묻는다 */
@@ -1109,6 +1110,25 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [sel]);
 
   const current = panes.find((p) => `pane:${p.id}` === sel) ?? null;
+  const activePane = current && (!settingsOpen || !hasChat(current)) ? chatKey(current) : null;
+  const [retained, setRetained] = useState<readonly RetainedChat[]>([]);
+  const chats = retainChats(retained, panes, activePane, Date.now());
+  // 선택과 함께 목록을 조정해 첫 frame부터 기존 DOM을 표시한다.
+  if (chats !== retained) setRetained(chats);
+  const onChatBytes = useCallback((key: string, bytes: number) => {
+    setRetained(entries => entries.map(e => e.key === key && e.bytes !== bytes ? { ...e, bytes } : e));
+  }, []);
+  const expires = chatExpiry(chats);
+  useEffect(() => {
+    if (expires === null) return;
+    const timer = window.setTimeout(() => setRetained(entries => entries.filter(e => e.hiddenAt === null || e.hiddenAt + CHAT_IDLE_MS > Date.now())), Math.max(0, expires - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [expires]);
+  const termPanes = chats.flatMap(e => {
+    const pane = panes.find(p => chatKey(p) === e.key);
+    return pane ? [{ pane, key: `${e.key}:${e.session ?? ""}:${e.bornAt}` }] : [];
+  });
+  if (current && !hasChat(current)) termPanes.push({ pane: current, key: chatKey(current) });
   const currentThread = sel?.startsWith("thread:") ? (threads.get(sel.slice(7)) ?? null) : null;
   // 화면 켜짐 유지: pane이나 thread를 보는 동안(herdr-web-ui App.tsx 842줄, 보이는 동안만 건다)
   const keepScreenOn = useKeepScreenOn();
@@ -1299,10 +1319,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);
   const canControl = role !== "reader";
   const open = [...questions.values()].sort((a, b) => a.created_at_ms - b.created_at_ms);
-  const currentQ = current ? open.filter((q) => q.pane === current.id) : [];
   // 그 thread 보고의 질문 칩(입력칸 위): 지금 보고에 답하지 않은 질문이 있을 때만(답한 기록은 대화 칩이 보인다)
-  const currentThreadQuestions = current ? threadOfPane.get(current.id)?.questions : null;
-  const dockAsk = currentThreadQuestions != null && currentThreadQuestions.answer == null;
   const whereOf = (q: QuestionView) => {
     if (q.project && q.thread) return threads.get(`${q.project}/${q.thread}`)?.title ?? `${q.project}/${q.thread}`;
     const p = panes.find((x) => x.id === q.pane);
@@ -1600,6 +1617,66 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onThread={openThreadId}
           />
         )}
+        {termPanes.map(({ pane: p, key }) => {
+          const paneQuestions = open.filter(q => q.pane === p.id);
+          const questions = threadOfPane.get(p.id)?.questions;
+          const paneAsk = questions != null && questions.answer == null;
+          return (<TermView
+            key={key}
+            active={activePane === chatKey(p)}
+            onChatBytes={onChatBytes}
+            controls={paneControls}
+            pane={p}
+            role={role}
+            autoSelected={activePane === chatKey(p) && autoSelected}
+            onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: p.id }) : undefined}
+            onOpenLink={openLink}
+            title={paneTitle(p)}
+            agent={agentOf(p, threadOfPane.get(p.id))}
+            crumb={`${p.machine} › ${paneSub(p)}`}
+            status={activePane === chatKey(p) ? (
+              <>
+                <AgentChip p={p} />
+                {/* thread pane이면 그 보고서로(목록의 thread 줄은 pane을 연다, 차이 목록 L4) */}
+                {threadOfPane.get(p.id) && (
+                  <button className="ghost small" data-testid="open-report" aria-label="보고" onClick={() => chooseThread(threadOfPane.get(p.id)!)}>
+                    <Icon name="file" />
+                    <span className="head-button-label">보고</span>
+                  </button>
+                )}
+                {/* 작업 요약(plan §8.259): 데스크톱 팝오버, 휴대폰 아래 시트 */}
+                {threadOfPane.get(p.id) && <SummaryButton t={threadOfPane.get(p.id)!} />}
+              </>
+            ) : null}
+            dock={
+              activePane === chatKey(p) && (paneQuestions.length > 0 || paneAsk) ? (
+                <div className="dock">
+                  {paneQuestions.map((q) =>
+                    q.menu ? (
+                      // 창이 바뀌면 고른 것·쓴 글을 새 창에 넘기지 않는다(참고: 질문마다 새 카드)
+                      <PromptCard
+                        key={`${q.id} ${q.menu.id}`}
+                        menu={q.menu}
+                        where={`${whereOf(q)} · ${q.machine}`}
+                        canControl={canControl}
+                        onAnswer={(pick) => answerMenu(q, q.menu!, pick)}
+                        testid={`dock-question-${q.id}`}
+                      />
+                    ) : (
+                      <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} docked />
+                    ),
+                  )}
+                  {/* 그 thread 보고의 질문(plan §8.329, 사용자 결정 10-20 4A): 입력칸 위 한 줄 칩, 누르면 질문 카드 */}
+                  {paneAsk && (
+                    <div className="dock-ref" data-testid="dock-question">
+                      <AppRefChip at={{ kind: "question", target: threadOfPane.get(p.id)!.id }} />
+                    </div>
+                  )}
+                </div>
+              ) : null
+            }
+          />);
+        })}
         {machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
@@ -1622,61 +1699,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onBack={() => choose(null)}
             onPane={canControl ? (id) => choose(id) : undefined}
           />
-        ) : current ? (
-          <TermView
-            key={current.id}
-            controls={paneControls}
-            pane={current}
-            role={role}
-            autoSelected={autoSelected}
-            onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: current.id }) : undefined}
-            onOpenLink={openLink}
-            title={paneTitle(current)}
-            agent={agentOf(current, threadOfPane.get(current.id))}
-            crumb={`${current.machine} › ${paneSub(current)}`}
-            status={
-              <>
-                <AgentChip p={current} />
-                {/* thread pane이면 그 보고서로(목록의 thread 줄은 pane을 연다, 차이 목록 L4) */}
-                {threadOfPane.get(current.id) && (
-                  <button className="ghost small" data-testid="open-report" aria-label="보고" onClick={() => chooseThread(threadOfPane.get(current.id)!)}>
-                    <Icon name="file" />
-                    <span className="head-button-label">보고</span>
-                  </button>
-                )}
-                {/* 작업 요약(plan §8.259): 데스크톱 팝오버, 휴대폰 아래 시트 */}
-                {threadOfPane.get(current.id) && <SummaryButton t={threadOfPane.get(current.id)!} />}
-              </>
-            }
-            dock={
-              currentQ.length > 0 || dockAsk ? (
-                <div className="dock">
-                  {currentQ.map((q) =>
-                    q.menu ? (
-                      // 창이 바뀌면 고른 것·쓴 글을 새 창에 넘기지 않는다(참고: 질문마다 새 카드)
-                      <PromptCard
-                        key={`${q.id} ${q.menu.id}`}
-                        menu={q.menu}
-                        where={`${whereOf(q)} · ${q.machine}`}
-                        canControl={canControl}
-                        onAnswer={(pick) => answerMenu(q, q.menu!, pick)}
-                        testid={`dock-question-${q.id}`}
-                      />
-                    ) : (
-                      <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} docked />
-                    ),
-                  )}
-                  {/* 그 thread 보고의 질문(plan §8.329, 사용자 결정 10-20 4A): 입력칸 위 한 줄 칩, 누르면 질문 카드 */}
-                  {dockAsk && (
-                    <div className="dock-ref" data-testid="dock-question">
-                      <AppRefChip at={{ kind: "question", target: threadOfPane.get(current.id)!.id }} />
-                    </div>
-                  )}
-                </div>
-              ) : null
-            }
-          />
-        ) : (
+        ) : current ? null : (
           <>
           {/* 보일 것이 없을 때의 머리: 좁은 창의 목록 단추·머리 알림·「더 보기」 */}
           <header className="term-head empty-head">

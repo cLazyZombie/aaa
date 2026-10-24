@@ -7785,3 +7785,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 수신 확인은 온전한 글의 hash·출현 횟수로 대기 말만 정리한다. 같은 글 연속 전송은 각각 다음 출현을 기다린다. 쉼 이후 10초 동안 기록이 없으면 기존 대기 말 경고를 사용한다. 입력창의 별도 sent/slow 잠금 단계와 잠금 풀기 단추는 제거한다.
 - host nudge는 `inbox::nudge` → `send_prompt`로 PTY에 들어가며 웹 Composer의 flight를 만들지 않는다. 웹은 `Term::sendTerminalLine` → WS submit → `submit_work`에서 글·Enter 전달 ACK를 받는다. host는 주입 알림 턴이 끝날 때까지 웹 submit을 기다리지 않는다. 대화에는 기존 `[aaa inbox]` 원문 표지를 유지하고 `aaa inbox 안내` 머리를 붙여 사람 글과 구분한다. 이 머리는 원문 표지의 분류이며 출처 인증이 아니다. transcript의 role=user는 harness 형식이며, 출처 인증 필드는 새로 만들지 않는다.
 - 참고: herdr-web-ui Composer·pending-input(MIT)의 편집 가능한 초안과 전송/기록 구분, herdr-projects 1f05c00(MIT)의 nudge·작업 중 prompt. 새 서버 대기열·외부 의존성은 추가하지 않는다. FRONT_API 변경 없음. E2E102 및 기존 E2E23·35·50으로 확인한다.
+### 8.483 대화 다시 열기의 제한 보관(t-0957, q-1258 A)
+
+- coordinator·일반 대화에 같은 정책을 쓴다. App은 최근 3개의 기존 TermView를 안정된 머신/pane 식별자로 유지하고, 이미 있는 Chat 상태가 표시용 캐시다. 별도 본문 저장소·영속 저장·증분 API·새 의존성은 없다. host의 최신 pane이 실행 상태·권한의 정본이다.
+- 데이터 commit 때 UTF-8 JSON 크기를 재어 합계 8 MiB를 제한한다. 비활성 LRU부터 제거하고, 활성 대화가 단독 초과하면 읽기는 허용하되 떠날 때 제거한다. 숨긴 뒤 5분 만료는 App의 가장 가까운 만료 타이머 하나로 처리한다. 이 수치는 DOM·문자열·xterm을 포함한 heap 상한이 아니다.
+- 숨은 화면은 hidden·inert로 입력/배치에서 제외하고 xterm·pane WS·chat 구독·읽기/명령 목록 폴링·찾기 단축키·행 observer·UI 타이머를 정리한다. 전역 events는 공유한다. 송신 ACK/실패 정리는 유지하고 새 송신·자동 전송·포커스·resize/claim을 막는다. 재활성화 때 xterm은 기존 경로로 새로 생성한다.
+- 본문·받은 앞 쪽·읽던 row/offset·접힘·초안은 그대로 복원한 뒤 기존 최신 쪽 읽기 한 번으로 확인한다. 같은 history의 merge/gap fill을 재사용하고, 확인된 session/history 교체·표시 옵션 변경·pane 삭제·로그인/권한 문맥 변경에는 기존 초기화 경계를 적용한다.
+- 참고는 herdr-web-ui aa624cb의 paneTabCache(개수 제한)와 t3code c8c9ccf의 threadRetention(5분), 둘 다 MIT다. 코드·의존성은 복사하지 않는다. FRONT_API·AGENT_LINK·Rust crate 경계는 변경하지 않는다.
+- 검증은 보관 순수 규칙, E2E103의 Chromium/WebKit 1280·390px 전후 계측과 80ms 지연 대조, E2E104의 제어한 시계·응답 gate·수명/입력 경계, 기존 읽기·검색·송신·재연결 회귀 및 전체 ci-local·Linux strict cross·공개 검사다. 운영 Codex 기록과 실제 iPhone 검증 여부는 합성 기록·headless 결과와 구분한다. 절·새 E2E 번호는 착지 시 main과 대조한다.

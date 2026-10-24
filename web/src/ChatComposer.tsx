@@ -164,6 +164,7 @@ function terminalNote(c: SlashCommand, action: "picker" | "screen"): Note {
 }
 
 export interface ChatComposerProps {
+  active?: boolean;
   /** 붙잡은 메시지의 주인(머신:pane, 참고 `queueOwner`) */
   owner: string;
   pane: string;
@@ -205,6 +206,7 @@ export interface ChatComposerProps {
 }
 
 export function ChatComposer({
+  active = true,
   owner,
   pane,
   touch,
@@ -228,6 +230,8 @@ export function ChatComposer({
   coordinator = false,
   context = null,
 }: ChatComposerProps) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const auto = useAutoMode();
   const autoOn = coordinator && !!auto?.mode?.on;
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
@@ -258,6 +262,7 @@ export function ChatComposer({
   const commandListRef = useRef(commandList);
   commandListRef.current = commandList;
   useEffect(() => {
+    if (!active || !visible) return;
     let live = true;
     setCommandList(null);
     const load = () => void call({ op: "pane_commands", pane }).then((r) => {
@@ -269,7 +274,7 @@ export function ChatComposer({
       live = false;
       window.clearInterval(timer);
     };
-  }, [pane, harness]);
+  }, [active, visible, pane, harness]);
   const [caret, setCaret] = useState(0);
   const pendingCaret = useRef<{ value: string; at: number; focus: boolean } | null>(null);
   const [menuActive, setMenuActive] = useState(0);
@@ -308,7 +313,7 @@ export function ChatComposer({
     return query === "" ? groups(items).flatMap((g) => g.items) : rank(items, query, readUsage());
   }, [query, commandList, working]);
   // 다 친 숨은 명령(`/exit`)은 빈 목록 대신 닫는다: 보내면 확인창이 묻는다
-  const menuOpen = query !== null && commandList !== null && menuClosed !== shown
+  const menuOpen = active && query !== null && commandList !== null && menuClosed !== shown
     && !(menuItems.length === 0 && commandOf(commandList, shown) !== null);
   useEffect(() => setMenuActive(0), [query]);
   /** 목록에서 고름: 「/이름 」을 넣고(바로 보내지 않는다) 커서를 그 뒤에 둔다 */
@@ -416,7 +421,7 @@ export function ChatComposer({
     pendingCaret.current = null;
     const box = textareaRef.current;
     if (!placement || !box || box.value !== placement.value) return;
-    if (placement.focus) box.focus();
+    if (activeRef.current && placement.focus) box.focus();
     box.setSelectionRange(placement.at, placement.at);
   });
   // 줄 수와 무관하게 단추는 옆 칸에 둔다. 배치 전환으로 글 칸 폭이 바뀌면 이미 접힌 줄이 다시 움직인다.
@@ -426,23 +431,23 @@ export function ChatComposer({
   // 실제 글 칸 폭을 본다. 창·옆 목록뿐 아니라 단추 칸 폭(맥락 게이지)이 바뀌어도 다시 잰다.
   useEffect(() => {
     const element = textareaRef.current;
-    if (!element) return;
+    if (!active || !element) return;
     const observer = new ResizeObserver(([entry]) => setBoxWidth(entry.contentRect.width));
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [active]);
 
   // 실제 칸을 auto로 줄여 scrollHeight를 읽으면 매 입력마다 강제 layout에서 입력창과 커서 자리도 왕복한다.
   // 자연 높이는 별도 칸에서 한 번만 재고 최종 높이만 적용한다. CSS의 높이 상한과 native 커서 스크롤은 유지한다.
   // 폭·padding은 줄 수에 따라 바꾸지 않는다(t-0563 사용자 1A). 글꼴·크기·밀도 변경에도 다시 잰다.
   useLayoutEffect(() => {
     const element = textareaRef.current;
-    if (!element) return;
+    if (!active || !element) return;
     const { height, rows } = measureText(element);
     setLines(shown === "" || rows <= 1 ? "one" : "more");
     const size = `${height}px`;
     if (element.style.height !== size) element.style.height = size;
-  }, [shown, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
+  }, [active, shown, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
 
   // 끝난 보내기를 지운다: 이 보내기가 아직 지금 것일 때만(늦은 답이 다음 보내기를 지우지 않는다)
   const finish = (f: Flight): boolean => {
@@ -515,7 +520,7 @@ export function ChatComposer({
       }
       let sent: false | Promise<true | string>;
       try {
-        sent = onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length, ctrl_enter: f.ctrlEnter ?? f.steer ?? false });
+        sent = !activeRef.current ? false : onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length, ctrl_enter: f.ctrlEnter ?? f.steer ?? false });
       } catch (ignoredError) { logIgnoredFailure(ignoredError, "ChatComposer.tsx:506");
         sent = false;
       }
@@ -580,15 +585,16 @@ export function ChatComposer({
         : stage === "no_enter"
           ? { text: "멈췄습니다. 제출하지 않았습니다(Enter를 보내지 않음). 에이전트 입력창에 글이 남았을 수 있으니 터미널을 확인하세요.", inspect: true }
           : { text: "멈췄습니다. 전송 여부를 확인하지 못했습니다. 다시 보내기 전에 터미널을 확인하세요.", inspect: true });
-      textareaRef.current?.focus();
+      if (activeRef.current) textareaRef.current?.focus();
     });
   };
   // 전달 확인이 늦으면 기존 취소 경로를 제공한다. 다음 초안은 계속 편집할 수 있다.
   useEffect(() => {
+    if (!active) return;
     if (flight?.phase !== "sending" || flight.escaped) return;
     const timer = window.setTimeout(() => step(flight, "stuck"), Math.max(0, flight.at + STUCK_MS - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [flight]);
+  }, [active, flight]);
   // 새 사람 글이 실제 기록에 오르면 대기 말만 지운다. 다음 초안은 유지한다.
   useEffect(() => {
     for (const p of pending.filter((p) => p.trace && seen(p, messages))) {
@@ -602,6 +608,7 @@ export function ChatComposer({
   if (working) idleSince.current = null;
   else idleSince.current ??= Date.now();
   useEffect(() => {
+    if (!active) return;
     const due = (p: PendingSend) => idleSince.current === null ? Infinity : Math.max(p.at, idleSince.current) + SLOW_MS;
     const next = Math.min(...pending.filter((p) => !p.stale).map(due));
     if (!Number.isFinite(next)) return;
@@ -611,13 +618,13 @@ export function ChatComposer({
       setPending((list) => list.map((p) => !p.stale && due(p) <= Date.now() ? { ...p, stale: true } : p));
     }, Math.max(0, next - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [pending, working]);
+  }, [active, pending, working]);
 
   /** `steer`: Ctrl+Enter로 작업 중에 보낸다(지금 턴에 끼워 넣는다). 붙잡지 않는다 */
   /** `confirmed`: 확인창에서 「보내기」를 눌렀다 */
   const send = (given?: string, steer = false, ctrlEnter = false, confirmed = false): void => {
     const raw = (given ?? textRef.current).trim();
-    if (raw === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
+    if (!activeRef.current || raw === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
     // 보이지 않는 문자는 빼고 보낸다(plan §8.266). 보내짐 증거(기록의 같은 글)도 뺀 글로 맞춘다
     const { text: cleaned, removed } = stripHidden(raw);
     const message = cleaned.trim();
@@ -761,7 +768,7 @@ export function ChatComposer({
       setQueueError({ id, text: HIDDEN_ONLY });
       return;
     }
-    if (flightRef.current !== null || !connected || !messageQueues.beginSend(owner, id)) return;
+    if (!activeRef.current || flightRef.current !== null || !connected || !messageQueues.beginSend(owner, id)) return;
     setQueueError(null);
     deliver({ text: message, source: "queue", queueId: id, attachments: [], ...(steer ? { steer } : {}) });
     if (removed > 0) setNote({ text: hiddenNote(removed), quiet: true });
@@ -770,9 +777,16 @@ export function ChatComposer({
   // 질문 중이면 답한 뒤, 끊겼으면 다시 붙은 뒤에 보낸다. 작업 중이고 「대기 메시지 자동 전송」을 껐으면 그 설정대로 보통 붙잡은 글로 둔다.
   // 이 기기 보관함은 localStorage라 정리 중에 앱을 닫았어도 다시 열 때 보낸다. 같은 브라우저의 탭이 함께 보므로 글을 넣은 탭만 보내고,
   // 그 탭에 이 pane 입력창이 없으면(닫힘·새로고침·다른 pane) 물어본 뒤 넘겨받는다: 두 탭이 같은 글을 보내지 않는다
-  useEffect(() => openComposer(owner), [owner]);
+  useEffect(() => active ? openComposer(owner) : undefined, [active, owner]);
   useEffect(() => {
-    if (compacting || !connected || asking || flight !== null) return;
+    if (active) return;
+    setConfirming(null);
+    setMenuClosed(textRef.current);
+    setDragging(false);
+    pendingCaret.current = null;
+  }, [active]);
+  useEffect(() => {
+    if (!active || !visible || compacting || !connected || asking || flight !== null) return;
     const step = compactionStep(queued, (id) => messageQueues.isSending(id), TAB_ID, working && !autoSendQueued);
     if (step === null) return;
     if (step === "release") {
@@ -788,7 +802,7 @@ export function ChatComposer({
       if (live && !open) messageQueues.adopt(owner, step.adopt);
     });
     return () => { live = false; };
-  }, [compacting, connected, asking, flight, queued, working, autoSendQueued]);
+  }, [active, visible, compacting, connected, asking, flight, queued, working, autoSendQueued]);
 
   const placeholder = connected
     ? (autoOn ? "coordinator에게 지시하기" : `${agentLabel}에게 메시지…`)
@@ -800,7 +814,7 @@ export function ChatComposer({
           ref={holdPageRef}
           className={`composer-queue${working ? "" : " is-ready"}`}
           aria-label="대기 메시지"
-          data-testid="chat-queue"
+          data-testid={active ? "chat-queue" : undefined}
           data-compacting={compacting || undefined}
         >
           <div className="composer-queue-heading">
@@ -824,7 +838,7 @@ export function ChatComposer({
             </p>
           )}
           {asking && (
-            <p className="composer-queue-error is-quiet" role="status" data-testid="chat-queue-hint">
+            <p className="composer-queue-error is-quiet" role="status" data-testid={active ? "chat-queue-hint" : undefined}>
               질문에 답한 뒤 보낼 수 있습니다
             </p>
           )}
@@ -868,7 +882,7 @@ export function ChatComposer({
                   </button>
                 </div>
                 {queueError?.id === message.id && (
-                  <p className="composer-queue-error" role={queueError.inspect ? "alert" : "status"} data-testid="chat-queue-error">
+                  <p className="composer-queue-error" role={queueError.inspect ? "alert" : "status"} data-testid={active ? "chat-queue-error" : undefined}>
                     {queueError.inspect && <TriangleAlert aria-hidden="true" />}
                     <span>{queueError.text}</span>
                     {queueError.inspect && (
@@ -890,7 +904,7 @@ export function ChatComposer({
         className="composer"
         role="group"
         aria-label="메시지 입력창"
-        data-testid="chat-composer"
+        data-testid={active ? "chat-composer" : undefined}
       >
         {replies.length > 0 && (
           <div className="composer-quick" role="group" aria-label="빠른 답장">
@@ -911,7 +925,7 @@ export function ChatComposer({
         {/* 메시지가 가지 못한 까닭(취소는 조용한 알림): 상자 위끝에, 상자와 함께 읽힌다 */}
         {note !== null && (
           // 확실히 보내지 않은 멈춤은 조용히, 갔는지 모르면 경고판, 가지 못했으면 빨간 띠
-          <div className={`composer-note${note.quiet ? " is-quiet" : note.inspect ? " is-slow" : ""}`} role={note.quiet ? "status" : "alert"} data-testid="chat-note">
+          <div className={`composer-note${note.quiet ? " is-quiet" : note.inspect ? " is-slow" : ""}`} role={note.quiet ? "status" : "alert"} data-testid={active ? "chat-note" : undefined}>
             {note.quiet ? <Info className="composer-note-icon" aria-hidden="true" /> : <TriangleAlert className="composer-note-icon" aria-hidden="true" />}
             <span className="composer-note-text">{note.text}</span>
             {(note.retry || note.inspect) && <span className="composer-note-actions">
@@ -931,7 +945,7 @@ export function ChatComposer({
           onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
           onDrop={(event) => { event.preventDefault(); setDragging(false); uploadImages(Array.from(event.dataTransfer.files)); }}
         >
-          {coordinator && <span className="composer-glow" aria-hidden="true" data-paused={visible ? undefined : ""} />}
+          {coordinator && <span className="composer-glow" aria-hidden="true" data-paused={active && visible ? undefined : ""} />}
           {menuOpen && (
             <SlashMenu id={menuId} items={menuItems} grouped={query === ""} active={Math.min(menuActive, Math.max(0, menuItems.length - 1))}
               onHover={setMenuActive} onPick={pickCommand} />
@@ -982,20 +996,20 @@ export function ChatComposer({
           <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
             onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; uploadImages(files); }} />
           <div className="composer-controls composer-controls-left">
-            {autoOn && <AutoModeSwitch />}
+            {active && autoOn && <AutoModeSwitch />}
             <button type="button" className="icon-button" aria-label="그림 첨부" title="그림 첨부" disabled={!connected || uploading || locked}
               onPointerDown={(event) => event.preventDefault()} onClick={() => picker.current?.click()}><ImagePlus aria-hidden="true" /></button>
           </div>
           {/* 화면 읽기용 단계 글(그리지 않는다, 배치 밖): 화면에는 단추(도는 표시·×)로 단계를 보인다 */}
           {flight && (
-            <div className="visually-hidden" role="status" data-testid="chat-send-state" data-state={flight.phase}>
+            <div className="visually-hidden" role="status" data-testid={active ? "chat-send-state" : undefined} data-state={flight.phase}>
               {flight.phase === "sending" ? "보내는 중 · 전달을 확인하는 중"
                 : flight.phase === "stuck" ? "전달 확인이 늦습니다 · ×로 멈추고 글 돌려받기"
                 : "멈추는 중…"}
             </div>
           )}
           <div className="composer-controls composer-controls-right">
-            {context && (
+            {active && context && (
               <ContextGauge
                 context={context}
                 agentLabel={agentLabel}
@@ -1020,7 +1034,7 @@ export function ChatComposer({
                 className="composer-action composer-interrupt"
                 aria-label="작업 중단(Esc)"
                 title="작업 중단 · Esc를 보낸다"
-                data-testid="chat-interrupt"
+                data-testid={active ? "chat-interrupt" : undefined}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={onInterrupt}
               >
@@ -1055,9 +1069,9 @@ export function ChatComposer({
             )}
           </div>
         </div>
-        {coordinator && <AutoModeStatus />}
+        {active && coordinator && <AutoModeStatus />}
       </div>
-      {confirming && (
+      {active && confirming && (
         <ConfirmDialog
           title={`${confirming.command.insert.trim()}를 보낼까요?`}
           body={confirming.command.kind === "danger"
