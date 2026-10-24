@@ -636,3 +636,26 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-row-chips > .task-chip { min-width: 0; max-width: 100%; }
 .task-row[data-kind] > .task-menu-button,
 .task-row[data-kind] > .task-steps { grid-column: 3; grid-row: 1; align-self: center; }
+
+/* 휴대폰에서는 빈 표지 열을 없애고 실제 표지만 메타정보 줄에 둔다.
+   메모 표시는 제목 끝의 작은 자리로 올려 메모만 있는 행을 한 줄로 유지한다. */
+.task-stage-mobile, .task-notes-mobile { display: none; }
+@media (max-width: 480px) {
+  .task-row[data-kind] { padding-block: 0; }
+  .task-row[data-kind] > .task-pick {
+    position: relative;
+    grid-template-columns: 16px 7ch minmax(0, 1fr);
+    padding-right: var(--space-5);
+  }
+  .task-row[data-kind] .task-stage-cell { display: none; }
+  .task-row-chips { padding-block: 0; }
+  .task-stage-mobile:not(:empty) { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+  .task-row-chips > .task-notes-mark { display: none; }
+  .task-notes-mobile {
+    display: inline;
+    color: var(--text-dim);
+    position: absolute;
+    right: var(--space-2);
+    top: var(--space-2);
+  }
+}

@@ -28,7 +28,7 @@ export default async function () {
     const errors = [];
     const wk = await webkit.launch({ headless: true });
     try {
-      for (const [engine, name, width, height] of [[wk, "ipad-landscape", 1366, 1024], [wk, "ipad-portrait", 1024, 1366], [browser, "desktop-1280", 1280, 900], [browser, "desktop-1920", 1920, 1080], [wk, "phone", 390, 844]]) {
+      for (const [engine, name, width, height] of [[wk, "ipad-landscape", 1366, 1024], [wk, "ipad-portrait", 1024, 1366], [browser, "desktop-1280", 1280, 900], [browser, "desktop-1920", 1920, 1080], [wk, "phone", 390, 844], [wk, "phone-320", 320, 740], [browser, "phone-chromium", 390, 844], [browser, "phone-320-chromium", 320, 740]]) {
         const { page: p } = await pairPage(engine, aaa("web", "pair").code, { width, height }, { hash: "#tasks", touch: engine === wk });
         await domIs(p, "할 일과 단계 준비", () => document.querySelectorAll('.task-row[data-kind]').length === 6 && document.querySelector('.task-row [data-stage="merge_ready"]'));
         await p.evaluate(() => document.fonts.ready);
@@ -40,7 +40,22 @@ export default async function () {
           const columns = new Map();
           for (const row of rows) {
             const r = row.getBoundingClientRect();
-            const leaves = [...row.querySelectorAll('.thread-stage, .task-state, .task-reserved-dot, .list-id, .task-title, .task-chip, .task-notes-mark, .task-attach-mark, .task-menu-button')].filter(e => e.getBoundingClientRect().width > 0);
+            if (innerWidth <= 480) {
+              const state = row.querySelector('.task-state, .task-reserved-dot').getBoundingClientRect();
+              const title = row.querySelector('.task-title').getBoundingClientRect();
+              if (state.left - r.left > 40) problems.push(`${row.dataset.title}: 휴대폰 왼쪽 빈 열`);
+              if (title.width < 100) problems.push(`${row.dataset.title}: 휴대폰 제목 폭 ${title.width}`);
+              if (r.height > 76) problems.push(`${row.dataset.title}: 휴대폰 행 높이 ${r.height}`);
+              const chips = row.querySelector('.task-row-chips');
+              const hasChips = [...chips.children].some(e => e.getBoundingClientRect().height > 0);
+              if (!hasChips && r.height > 40) problems.push(`${row.dataset.title}: 메모만 있는 행이 두 줄`);
+              const note = row.querySelector('.task-notes-mobile')?.getBoundingClientRect();
+              const pick = row.querySelector('.task-pick').getBoundingClientRect();
+              if (note && (note.top < pick.top || note.bottom > pick.bottom)) problems.push(`${row.dataset.title}: 메모 별도 줄`);
+              const grip = row.querySelector('.task-grip')?.getBoundingClientRect();
+              if (grip && (grip.top < title.top - 8 || grip.bottom > title.bottom + 8)) problems.push(`${row.dataset.title}: 손잡이 별도 줄`);
+            }
+            const leaves = [...row.querySelectorAll('.thread-stage, .task-state, .task-reserved-dot, .list-id, .task-title, .task-chip, .task-notes-mark, .task-notes-mobile, .task-attach-mark, .task-menu-button')].filter(e => e.getBoundingClientRect().width > 0);
             for (const e of leaves) {
               const b = e.getBoundingClientRect();
               if (b.left < r.left - 1 || b.right > r.right + 1 || b.top < r.top - 1 || b.bottom > r.bottom + 1) problems.push(`${row.dataset.title}: ${e.className} 행 밖`);
@@ -69,6 +84,14 @@ export default async function () {
         await p.locator('.task-row').filter({ hasText: titles[0] }).locator('.task-pick').click();
         await p.getByTestId('task-detail').waitFor();
         await p.getByTestId('task-detail-close').click();
+        if (width === 320) {
+          for (const resized of [820, 320]) {
+            await p.setViewportSize({ width: resized, height });
+            const cell = resized <= 480 ? '.task-stage-mobile' : '.task-stage-cell';
+            await p.locator('.task-row').filter({ hasText: titles[1] }).locator(`${cell} [data-stage="merge_ready"]`).waitFor();
+            assert.equal(await p.locator('.task-row').filter({ hasText: titles[1] }).locator('[data-stage="merge_ready"]').count(), 1, '폭 변경 뒤 단계 표지 중복');
+          }
+        }
         await p.close();
       }
     } finally { await wk.close(); }
