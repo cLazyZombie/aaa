@@ -1,5 +1,12 @@
 # 시험 쓰는 법
 
+## 휴대폰 할 일의 빈 열·메모 줄(t-0980)
+
+- E2E107은 기존 WebKit iPad 양 방향·Chromium 데스크톱 두 폭에 WebKit/Chromium 320·390px를 함께 검사한다. 휴대폰 상태 원의 왼쪽 여백 40px 이하, 제목 폭 100px 이상, 행 높이 76px 이하, 메타정보가 없는 행 40px 이하, 메모와 끌기 손잡이의 제목 줄 배치를 확인한다. 기존 열 정렬·교차 면적·잘림·가로 넘침·첨부·상세 열기 검사를 유지한다.
+- 수정 전 같은 fixture에서 휴대폰 빈 열·제목 폭 회귀가 실패했다. 휴대폰에서만 빈 단계 열을 없애 실제 단계 표지를 칩 줄로 옮기고, 메모 표시는 제목 단추 안으로 옮긴다. iPad·데스크톱의 공통 열은 유지한다. 화면 크기를 재현한 headless 검사이며 실제 iPhone 실기는 아니다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 107,43,47,52,67,76 --workers 1`과 웹 유닛·타입 검사·빌드·공개 검사를 수행한다. 글꼴·DOM·host 사건으로 기다리며 고정 sleep이나 시한·기대값 완화는 없다.
+- 먼저 [Tailwind의 반응형 grid-column](https://tailwindcss.com/docs/grid-column)([MIT](https://github.com/tailwindlabs/tailwindcss/blob/main/LICENSE))과 [Bootstrap의 반응형 grid](https://getbootstrap.com/docs/5.3/layout/grid/)([MIT](https://github.com/twbs/bootstrap/blob/main/LICENSE))를 대조했다. 작은 폭에서 열 구성을 바꾸는 방식을 참고하고 기존 CSS에만 적용한다. 외부 코드·패키지는 추가하지 않는다.
+
 ## E2E16 긴 줄 바꿈 뒤 줄 참조 재열기(t-0978)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40062175921/job/120777851872)은 SHA 1583a1ed에서 「접은 big.ts 2500번째 줄 가운데」 20초 만료다. 원문과 결과 artifact를 확보했으나 소스 행 좌표·파일 보기 화면·trace가 없어 당시 거짓 조건을 소급 확정하지 않는다. 수정 전 전체 E2E16과 가상화 단계 단독은 각각 한 번 통과했으며 이 통과를 결함 부재의 증거로 삼지 않는다.

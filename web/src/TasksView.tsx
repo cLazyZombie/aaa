@@ -317,6 +317,7 @@ export function TasksView({
     writeRepo(project, r);
   };
   const coarse = useMediaQuery("(pointer: coarse)");
+  const compactRows = useMediaQuery("(max-width: 480px)");
   const editApi = apiAtLeast(frontApi, EDIT_API);
   const canEdit = !reader && editApi;
   const linkApi = canEdit && apiAtLeast(frontApi, LINK_API);
@@ -684,6 +685,7 @@ export function TasksView({
     return {
       t,
       row: r,
+      compact: compactRows,
       stage: t.thread ? stages.get(t.thread) : undefined,
       overLimit: t.thread ? overLimits.get(t.thread) : undefined,
       depth: r.kind === "reserved" ? 0 : r.depth,
@@ -1124,6 +1126,7 @@ function MenuButton({ title, open, testid, onToggle }: { title: string; open: bo
 }
 
 type RowProps = {
+  compact: boolean;
   t: TaskView;
   row: Exclude<TaskListRow, { kind: "gap" }>;
   stage?: ThreadStage;
@@ -1153,7 +1156,7 @@ type RowProps = {
 };
 
 /** 한 목록의 행: 예약은 숫자·까닭 글 없이 보라 표지(확인 필요는 노랑)만, 하위만 예약했으면 상위 경로를 붙인다. 일반 행은 상태 아이콘 */
-function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, canEdit, ordering, steps, onStep, draggable, dragging, drop, flash, menuOpen, onPick, onThread, onMenu, onDragStart, onDragEnd, onDragOver, onDrop }: RowProps) {
+function TaskRow({ t, row, compact, stage, overLimit, depth, state, selected, groups, canEdit, ordering, steps, onStep, draggable, dragging, drop, flash, menuOpen, onPick, onThread, onMenu, onDragStart, onDragEnd, onDragOver, onDrop }: RowProps) {
   const attachments = attachmentsOf(t.notes.join("\n")).length;
   const reserved = row.kind === "reserved";
   const check = reserved && row.q.state === "check";
@@ -1186,7 +1189,7 @@ function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, can
           onStep(e.key === "ArrowUp" ? "up" : "down");
         }}
       >
-        <span className="task-stage-cell"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></span>
+        <span className="task-stage-cell">{!compact && <><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></>}</span>
         {reserved ? <span className={`task-reserved-dot${check ? " is-check" : ""}`} role="img" aria-label={check ? "예약 · 확인 필요" : "예약됨"} title={check ? "예약 · 확인 필요(상세에 까닭)" : "예약됨 · 자리 나면 시작"} /> : <StateIcon state={state} />}
         <span className="task-id-cell">{t.short_id && <ListId id={t.short_id} testId="task-short-id" />}</span>
         <span className="task-title">
@@ -1194,8 +1197,10 @@ function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, can
           {reserved && row.crumb && <span className="task-crumb" data-testid="task-crumb">{row.crumb.short_id ?? ""} {row.crumb.title} › </span>}
           {t.title}
         </span>
+        {compact && withoutAttachments(t.notes.join("\n")) !== "" && <span className="task-notes-mobile" role="img" aria-label="메모 있음" title="메모 있음">≡</span>}
       </button>
       <div className="task-row-chips">
+        {compact && <span className="task-stage-mobile"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></span>}
         {reserved && row.missing && <span className="task-chip task-problem">task 없음</span>}
         {row.kind === "task" && row.reservedKids > 0 && <span className="task-chip task-kids-reserved">하위 {row.reservedKids} 예약됨</span>}
         {flash && <span className="task-flash-note" data-testid="task-flash">↩ 원래 자리로 돌아옴</span>}
@@ -1207,7 +1212,7 @@ function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, can
             {t.repo}
           </span>
         )}
-        {withoutAttachments(t.notes.join("\n")) !== "" && (
+        {!compact && withoutAttachments(t.notes.join("\n")) !== "" && (
           <span className="task-notes-mark" role="img" aria-label="메모 있음" title="메모 있음">
             ≡
           </span>
