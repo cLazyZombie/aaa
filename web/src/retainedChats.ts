@@ -1,4 +1,4 @@
-// 화면 자체가 표시용 캐시다. 여기에는 본문 사본 없이 수명·예산만 둔다.
+// 화면과 pane 연결의 수명은 같다. 여기에는 본문 사본 없이 수명·예산만 둔다.
 import type { PaneView } from "./gen/proto";
 
 export const CHAT_LIMIT = 3;
@@ -30,7 +30,13 @@ export function retainChats(previous: readonly RetainedChat[], panes: readonly P
     next = [held ?? { key: current, bornAt: now, session: live.get(current)!.agent?.harness_session ?? null, bytes: 0, hiddenAt: null }, ...next.filter(e => e.key !== current)];
   }
   // 활성 대화 단독 초과는 허용한다. 떠나면 즉시 버리고, 비활성 LRU부터 예산을 비운다.
-  next = next.filter(e => e.key === current || e.bytes <= CHAT_BYTES).slice(0, CHAT_LIMIT);
+  // 일반 셸을 보고 있을 때도 pane 연결 총수는 4를 넘기지 않는다.
+  const ordinaryLimit = CHAT_LIMIT - (current && !live.has(current) ? 1 : 0);
+  let ordinary = 0, coordinators = 0;
+  next = next.filter(e => {
+    if (e.key !== current && e.bytes > CHAT_BYTES) return false;
+    return live.get(e.key)?.role === "coordinator" ? ++coordinators <= 1 : ++ordinary <= ordinaryLimit;
+  });
   let bytes = next.reduce((sum, e) => sum + e.bytes, 0);
   for (let i = next.length - 1; bytes > CHAT_BYTES && i >= 0; i--) {
     const entry = next[i]!;

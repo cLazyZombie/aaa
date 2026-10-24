@@ -1,3 +1,16 @@
+## 보관 대화의 연결 수명(t-1010)
+
+- 보관 DOM·xterm·pane WS는 같은 수명을 쓴다. 일반 3개와 coordinator 1개를 각각 LRU로 제한하며 숨긴 지 5분이 지나면 함께 제거한다. coordinator도 기존 대화 본문 8MiB 공통 예산에서 예외가 아니다. 일반 셸을 보는 동안은 그 연결도 일반 세 자리 안에 둔다.
+- 숨긴 pane은 크기를 release하고 입력·resize·앞 터미널 기록 요청을 보내지 않는다. 압축 출력은 계속 파싱하고 ACK한다. 기존 서버의 흐름 제어는 ACK 중단 시 연결을 닫으므로 일시 정지 프로토콜을 추가하지 않았다. 숨은 xterm은 그리기를 멈추고, ChatPanel의 HTTP 갱신도 멈춘다. 앞 터미널 기록을 붙이는 도중 숨기면 파싱 완료 뒤 render 대기를 풀어 출력이 쌓이지 않게 한다.
+- `retainedChats.test.mjs`는 일반/특별 자리, 두 coordinator의 교체, 개별 5분 경계, 공통 용량 퇴거, 일반 셸 자리와 기존 삭제·세션 교체를 검사한다. E2E104는 Chromium/WebKit × 1280/390px에서 실제 최대 네 소켓·일반 LRU·만료 후 소켓 종료·숨김 송신 없음과 기존 본문/초안/예산/리스너 검사를 수행한다.
+- E2E84는 제어한 시계로 첫 연결/재연결의 입력창 안내를 499ms까지 숨기고 500ms부터 표시하는지 확인한다. 빠른 연결에는 평소 placeholder를 유지하며 보내기 가능 여부는 기존 connected 조건 그대로다.
+- E2E109는 실제 coordinator를 일반 이동/Ctrl+Tab으로 각각 12회 왕복한다. 보관 복귀는 새 연결 없이 살아 있는 xterm에 첫 휠을 보낸다. 송신 정확히 1프레임과 실제 PTY의 SGR 휠 정확히 1개를 함께 확인하고, 후속 입력 도착까지 중복이 없는지 확인한다. 5분 만료 뒤에는 새 snapshot 전 송신 0개, 준비 뒤 첫 휠 1개를 검사한다. 기존 20초 상한은 유지한다. 앞 기록 응답을 보류한 채 숨긴 뒤 응답을 풀어, render 없이 파싱 완료·출력/ACK 진행과 크기 점유 해제를 확인한다. 만료는 `clock.fastForward`로 타이머 사건만 실행하며 5분치 애니메이션 frame을 합성하지 않는다.
+- t-1009 원문은 b44e35bd 실패를 원인 미확정으로 분류했다. 시간 초과만으로 미송신/중복을 구별하거나 공용 실패 화면을 대상 pane으로 단정하지 않는다. E2E109의 실패 자료에는 대상 pane·실제 활성 pane·이동 목적지/방식/회차·송신 목록·PTY 수신 수를 남긴다. 복귀 때 새 xterm을 만들던 경로와 그 휠 큐를 제거했으며, 이는 과거 CI 원인을 소급 확정한 것이 아니다.
+- 참고: [herdr-web-ui PaneTerminal](https://github.com/devswha/herdr-web-ui/blob/main/src/components/PaneTerminal.tsx)([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE))의 보관/표시/크기 권한 분리, [VS Code TerminalInstance](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts)([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))의 표시 수명과 인스턴스 수명 분리, [Chrome Page Lifecycle](https://developer.chrome.com/docs/web-platform/page-lifecycle-api)(문서 CC-BY-4.0, 예제 Apache-2.0)의 숨김/폐기 구분을 대조했다. 외부 코드·의존성은 추가하지 않았다. 브라우저가 탭 자체를 폐기하는 경우는 웹앱이 연결을 보장할 수 없으며 기존 재연결 경로를 따른다.
+
+- 최종 검증: 웹 유닛 559개·타입/번들·host 빌드·의존 경계 2개·공개 검사, 관련 E2E12파일/27작업(worker 4, 128.3초)과 CPU 4배 감속 Chromium E2E109·동반 E2E93(worker 2, 두 작업 30.0초)을 통과했다. E2E109의 Chromium 1280·WebKit 390에서 실제 PTY 휠 1회와 만료/숨김 앞 기록을 확인했다. E2E103의 기존 보관 계측도 별도 통과했다.
+- 첫 검증의 E2E109 WebKit은 12회 실제 휠 검사 뒤 `clock.runFor(5분)`에서 단계 120초 상한에 걸렸다. 만료 검사에 필요 없는 반복 frame을 `fastForward`로 생략하고 frame 관측기를 복귀 구간에만 켰다. 상한·정확히 한 번 단언은 그대로이며 같은 실패를 재시도해 통과시키지 않았다. E2E30은 실제 ACK 보류 뒤 숨김 연결을 명시적으로 끊어 기존 초안 복구/중복 제출 방지 계약을 유지한다.
+
 ## 실기 영숫자 지연과 PTY 순차 가림(t-1002)
 
 - iPhone 실기에서 `status aaa123!`의 ASCII는 composition 없이 각 keydown에서 즉시 send했다. 기존 `redact::Stream`에 영숫자 접두부를 가진 합성 인증을 등록하면 `status→statu`, 숫자 한 글자 보류, 구두점에서 해제가 재현된다. 실제 인증을 시험·보고에 쓰지 않는다.

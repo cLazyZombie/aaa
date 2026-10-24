@@ -35,3 +35,28 @@ test("삭제·확인된 session 교체·chat 없는 pane은 보관하지 않는�
   assert.equal(chatExpiry(visit([], "a")), null);
   assert.equal(chatKey(panes[0]), key("a"));
 });
+
+test("coordinator 한 자리와 일반 세 자리는 따로, 만료·용량 예산은 함께", () => {
+  const live = [...panes, { ...pane("coord"), role: "coordinator" }, { ...pane("coord2"), role: "coordinator" }];
+  const go = (entries, id, at = 0) => visit(entries, id, at, live);
+  let entries = go([], "coord");
+  for (const id of ["a", "b", "c"]) entries = go(entries, id, 1);
+  assert.equal(entries.length, 4);
+  entries = go(entries, "d", 2);
+  assert.deepEqual(entries.map(e => e.key), [key("d"), key("c"), key("b"), key("coord")]);
+  entries = go(entries, "coord2", 3);
+  assert.deepEqual(entries.map(e => e.key), [key("coord2"), key("d"), key("c"), key("b")]);
+  entries = go(entries, "b", 4);
+  entries = go(entries, "b", CHAT_IDLE_MS + 3);
+  assert.deepEqual(entries.map(e => e.key), [key("b"), key("coord2")]);
+  entries = go(entries, "b", CHAT_IDLE_MS + 4);
+  assert.deepEqual(entries.map(e => e.key), [key("b")]);
+  entries = go(go([], "coord"), "a", 1).map(e => ({ ...e, bytes: CHAT_BYTES }));
+  assert.deepEqual(go(entries, "a", 2).map(e => e.key), [key("a")]);
+});
+test("일반 셸의 활성 연결도 일반 세 자리 안에 둔다", () => {
+  const live = [...panes, { ...pane("coord"), role: "coordinator" }, pane("shell", "shell", "shell")];
+  let entries = [];
+  for (const id of ["coord", "a", "b", "c", "shell"]) entries = visit(entries, id, 0, live);
+  assert.deepEqual(entries.map(e => e.key), [key("c"), key("b"), key("coord")]);
+});

@@ -5,6 +5,19 @@ import { root, AA, aaa, step, browser, webkit, pairPage, domIs, until, waitOutpu
 import { frames, shown, go, prepare, line } from "../lib/chat-retention.mjs";
 function instrument() {
   const timers = new Set(), listeners = new Map();
+  window.retainedSockets = [];
+  window.retainedSocketPeak = 0;
+  const Native = window.WebSocket;
+  window.WebSocket = class extends Native {
+    constructor(url, protocols) {
+      super(url, protocols);
+      if (!String(url).includes('/panes/')) return;
+      window.retainedSockets.push(this);
+      this.addEventListener('open', () => {
+        window.retainedSocketPeak = Math.max(window.retainedSocketPeak, window.retainedSockets.filter(s => s.readyState === WebSocket.OPEN).length);
+      });
+    }
+  };
   window.installRetentionTimers = () => {
     timers.clear();
     const timeout = window.setTimeout.bind(window), clear = window.clearTimeout.bind(window);
@@ -70,10 +83,15 @@ async function check(engine, width, fixture) {
     await frames(page);
     assert.ok((await term(page, id).locator(".chat-row:last-child").textContent()).includes(id), "선택한 pane의 본문");
   };
-  // 최근 세 개·네 번째 LRU와 빠른 왕복에서 내용/활성 pane 하나를 확인한다.
+  // coordinator 1 + 일반 3. 네 번째 일반 대화는 일반 LRU만 버린다.
   await open(ids[0]); await open(ids[1]); await open(ids[2]);
   assert.equal(await page.locator('.term').count(), 3);
   await open(ids[0]); await open(ids[3]);
+  assert.equal(await page.locator(".term").count(), 4);
+  await page.waitForFunction(() => window.retainedSockets.filter(s => s.readyState === WebSocket.OPEN).length === 4);
+  await open(ids[4]);
+  await page.waitForFunction(() => window.retainedSockets.filter(s => s.readyState === WebSocket.OPEN).length === 4);
+  assert.equal(await term(page, ids[0]).count(), 1, "coordinator는 일반 LRU에서 제외");
   assert.equal(await term(page, ids[1]).count(), 0);
   assert.equal(await page.locator('.term:not([hidden])').count(), 1);
   assert.equal(await page.locator('.term[hidden]:not([inert])').count(), 0);
@@ -111,6 +129,8 @@ async function check(engine, width, fixture) {
   await open(ids[0]); await go(page, 'tasks'); await frames(page);
   await page.clock.runFor(5 * 60_000); await frames(page);
   assert.equal(await term(page, ids[0]).count(), 0, "대화 만료/용량 퇴거");
+  await page.waitForFunction(() => window.retainedSockets.every(s => s.readyState === WebSocket.CLOSED));
+  assert.ok(await page.evaluate(() => window.retainedSocketPeak <= 4), "동시 pane 연결 최대 4");
   await open(ids[0]);
   // 숨은 동안 폭이 바뀌어도 같은 row와 그 안의 거리를 복원한다.
   const readRow = shown(page).locator('.chat-row').nth(80);
@@ -201,9 +221,9 @@ async function check(engine, width, fixture) {
 export default async function () {
   let fixture, safari;
   try {
-  await step("대화 수명: 네 pane 준비", async () => {
+  await step("대화 수명: coordinator와 일반 네 pane 준비", async () => {
     fixture = await prepare(); fixture.extra = [];
-    for (let n = 0; n < 2; n++) {
+    for (let n = 0; n < 3; n++) {
       const label = `retention-extra-${n}`;
       aaa('tab', 'create', '--machine', 'labA', '--label', label, '--', '/bin/sh', '-c', '"$0" hook --agent claude "$1"; exec cat', AA, fixture.hook);
       fixture.extra.push((await until('추가 대화 hook', () => aaa('pane', 'list').panes.find(p => p.name === label && p.agent))).id);
