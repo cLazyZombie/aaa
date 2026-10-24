@@ -3412,3 +3412,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 현재 submit의 trace를 잡고 host의 해당 ID `Receipt method=Some(QueueOperation)` 사건을 기존 `until`로 확인한 뒤 흡수한다. 기존 여러 줄·대기/흡수·초안·취소·중복 제출·본문 비기록 단언을 유지하며, 같은 ID의 received → delivered → QueueOperation receipt 순서도 검사한다. 기존 20초 실패 상한을 그대로 쓰며 고정 대기·재시도·시한 확대·시험 삭제는 없다.
 - E2E23 전체를 새 실험실에서 10회 단독 실행한 뒤 같은 수정 SHA에서 전체 ci-local·공개 검사·양 OS strict cross clippy·production Windows release를 한 번 수행한다. 반복 도중 실패도 통과 표본으로 바꾸지 않고 보존·중단한다.
 - [Playwright 사건 대기](https://playwright.dev/docs/events)와 [WebSocket 관측](https://playwright.dev/docs/api/class-websocket)(Apache-2.0)을 대조했다. 브라우저 송신만이 아니라 기존 host 진단 원장에 도착한 사건을 관측하며 외부 코드·의존성을 추가하지 않는다.
+
+## E2E23 이미지 decode 대상 수명(t-0962)
+
+- 이미지 단계의 71개 await 앞뒤를 기기·paste/drop/picker와 함께 진단 파일·stdout에 기록한다. decode 대상의 연결·로딩·임시 말 여부와 분리 사건도 남기며, 실패 때만 현재 이미지 배치를 읽어 사전 layout flush로 재현을 가리지 않는다.
+- 같은 조건의 병렬 실험실에서 `thumb.locator("img").evaluate(img => img.decode())`에 120초 동안 멈춤을 재현했다. 대상은 임시 메시지에서 이미 분리된 이미지(`connected=false`, `pendingMessage=true`, `complete=false`)였고 실제 기록의 현재 이미지는 로드돼 있었다. submit ACK 뒤 임시 말이 실제 기록으로 바뀌기 전에 locator가 옛 노드를 잡은 시험 순서 결함이다.
+- 실제 기록의 해당 메시지가 나타나는 DOM 사건을 먼저 기다리고 `.is-pending`이 없는 메시지에서 썸네일을 고른다. 화면에 스크롤해 lazy loading을 시작한 뒤 기존 decode·바이트·해시·잘림·썸네일·삭제·권한 단언을 그대로 수행한다. decode 시작 때 연결된 실제 메시지 이미지인지도 검사한다. 제품 코드는 바꾸지 않으며 시한·기대값 완화·재시도·단계 삭제는 없다.
+- 수리 SHA의 E2E23 전체 10회 모두 통과 뒤 같은 SHA로 필수 gate를 처음부터 한 번 수행한다. 진단 재현의 실패와 수리 뒤 안정성 표본을 구분한다.
+- [Playwright locator](https://playwright.dev/docs/api/class-locator#locator-scroll-into-view-if-needed)(Apache-2.0), [HTML 이미지 처리](https://html.spec.whatwg.org/multipage/images.html), [WebKit ImageLoader](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/loader/ImageLoader.cpp)(LGPL-2.0-or-later)를 대조했다. 외부 코드는 가져오지 않는다.

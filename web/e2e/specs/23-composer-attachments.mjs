@@ -827,13 +827,21 @@ draw();
           const got = await imageAwait("submit(p)", async () => (submit(p)));
           if (got.images.length !== 1 || got.images[0].path !== path || got.images[0].sha256 !== digest || !got.text.includes(`그림 확인 ${name} ${method}`)) throw new Error(`coordinator가 읽은 그림/글 ${JSON.stringify(got)}`);
           if (method === "paste") {
-            const turn = p.locator(".chat-turn-user").filter({ hasText: `그림 확인 ${name} ${method}` });
+            // submit ACK는 기록 갱신이 아니다. 임시 말의 이미지는 실제 기록 도착 때 교체된다.
+            await imageAwait("실제 그림 기록 수신", () => domIs(p, "실제 그림 기록 수신", (text) =>
+              [...document.querySelectorAll(".chat-turn-user")].some((turn) => turn.textContent.includes(text)
+                && !turn.querySelector(".is-pending")), `그림 확인 ${name} ${method}`));
+            const turn = p.locator(".chat-turn-user").filter({ hasText: `그림 확인 ${name} ${method}` })
+              .filter({ hasNot: p.locator(".is-pending") });
             const thumb = turn.getByRole("button", { name: "첨부 그림 확대", exact: true });
+            // lazy 이미지는 실제 기록의 썸네일을 화면에 넣은 뒤 decode한다.
+            await imageAwait("thumb.scrollIntoViewIfNeeded()", async () => (thumb.scrollIntoViewIfNeeded()));
             await imageAwait("record thumbnail decode", async () => thumb.locator("img").evaluate((img) => {
               const decode = window.__imageDecode = { img, state: "pending", before: {
                 connected: img.isConnected, complete: img.complete, naturalWidth: img.naturalWidth,
                 pendingMessage: !!img.closest(".chat-turn-user")?.querySelector(".is-pending"),
               } };
+              if (!decode.before.connected || decode.before.pendingMessage) throw new Error("실제 기록의 연결된 이미지로 decode해야 한다");
               const log = (event) => console.log("IMAGE-DECODE " + JSON.stringify({ event, before: decode.before,
                 connected: img.isConnected, complete: img.complete, naturalWidth: img.naturalWidth }));
               log("start");
@@ -843,7 +851,6 @@ draw();
                 (error) => { decode.state = "rejected"; log("rejected"); observer.disconnect(); throw error; });
             }));
             if (await imageAwait("thumb.evaluate((el) => el.querySelector(\"img\").getBoundingClientRect().bottom > el.getBoundingClient", async () => (thumb.evaluate((el) => el.querySelector("img").getBoundingClientRect().bottom > el.getBoundingClientRect().bottom + 1)))) throw new Error(`${name} 기록 썸네일 잘림`);
-            await imageAwait("thumb.scrollIntoViewIfNeeded()", async () => (thumb.scrollIntoViewIfNeeded()));
             await imageAwait("shot(p, `chat-image-${name}`)", async () => (shot(p, `chat-image-${name}`)));
           }
           await imageAwait("composer.locator(\".composer-attachment\").waitFor({ state: \"detached\" })", async () => (composer.locator(".composer-attachment").waitFor({ state: "detached" })));
