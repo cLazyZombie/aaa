@@ -2202,7 +2202,7 @@ export function TermView({
     </>
   );
   return (
-    <section hidden={!active} inert={!active} data-pane={pane.id} data-origin={pane.coordinator_project ? "coordinator" : undefined} className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
+    <section hidden={!active} inert={!active} data-pane={pane.id} data-screen-role={pane.coordinator_project ? "coordinator" : undefined} className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
       {active && <header className="term-head">
         {/* 좁은 창의 목록 drawer(drawer.tsx). 전에는 휴대폰에서 「목록으로」 화면을 바꿨다 */}
         <DrawerToggle />

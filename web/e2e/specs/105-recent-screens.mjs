@@ -230,7 +230,7 @@ export default async function () {
             await capture(`coordinator-row-${name}-${theme}`);
             await inList(p, `pane-${coordinator.name}`);
             await p.keyboard.down("Control"); await p.keyboard.press("Tab"); await modal.waitFor();
-            const option = modal.locator('[data-origin="coordinator"]');
+            const option = modal.locator('[data-screen-role="coordinator"]');
             assert.equal(await option.locator('.coordinator-label').innerText(), "coordinator");
             assert.notEqual(await option.evaluate(el => getComputedStyle(el).boxShadow), "none");
             assert.equal(await option.evaluate(el => el.scrollWidth <= el.clientWidth), true);

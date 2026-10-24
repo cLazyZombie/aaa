@@ -144,7 +144,7 @@
 
 /* 역할은 상태·선택색과 분리한다. 좁은 머리에서는 둘째 줄에 둔다. */
 .coordinator-label { color: var(--coordinator); font-size: var(--fs-xs); font-weight: var(--fw-medium); margin-right: var(--space-2); white-space: nowrap; }
-.term[data-origin="coordinator"] > .term-head { box-shadow: inset 0 -1px var(--coordinator); }
+.term[data-screen-role="coordinator"] > .term-head { box-shadow: inset 0 -1px var(--coordinator); }
 
 /* ── 바탕 ───────────────────────────────────────────── */
 * { box-sizing: border-box; }

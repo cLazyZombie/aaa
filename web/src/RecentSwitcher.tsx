@@ -103,7 +103,7 @@ export function RecentSwitcher({ standalone, blocked, targets, selected, onOpen 
     <section className="menu recent-switcher" role="dialog" aria-modal="true" aria-label="최근 화면" data-testid="recent-switcher" ref={surface} tabIndex={-1}>
       <header>최근 화면</header>
       <div role="listbox" tabIndex={0} aria-label="방문한 화면" aria-activedescendant={`recent-screen-${rows.findIndex((row) => row.key === cycle.key)}`}>
-        {rows.map((target, index) => <button key={target.key} id={`recent-screen-${index}`} type="button" role="option" aria-selected={target.key === cycle.key} tabIndex={-1} data-origin={target.coordinator ? "coordinator" : undefined}
+        {rows.map((target, index) => <button key={target.key} id={`recent-screen-${index}`} type="button" role="option" aria-selected={target.key === cycle.key} tabIndex={-1} data-screen-role={target.coordinator ? "coordinator" : undefined}
           onClick={() => { active.current = { ...cycle, key: target.key }; finishRef.current(true); }}>
           <span>{target.title}</span><small>{target.coordinator && <b className="coordinator-label">coordinator</b>}{target.detail}</small>
         </button>)}
