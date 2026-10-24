@@ -856,14 +856,14 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
                 {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
                 {online && <AgentCounts pane={p} />}
               </span>
-              {where && <span className="workspace-place">{where}</span>}
+              {(where || p.coordinator_project) && <span className="workspace-place">{p.coordinator_project && <b className="coordinator-label">coordinator</b>}{where}</span>}
             </span>
           ) : (
             <span className="workspace-copy">
               <span className="workspace-name">{title}</span>
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
               {online && <AgentCounts pane={p} />}
-              <span className="worktree-workspace-label">{[machineName, ended].filter(Boolean).join(" · ")}</span>
+              <span className="worktree-workspace-label">{p.coordinator_project && <b className="coordinator-label">coordinator</b>}{[machineName, ended].filter(Boolean).join(" · ")}</span>
             </span>
           )}
           <span className="visually-hidden">{agent ?? "셸"}</span>

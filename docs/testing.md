@@ -131,6 +131,15 @@
 - `cargo test -p aaa-host automation::`로 기존 자동화 회귀를, `cargo test -p aaa-host ticker_refreshes_usage_without_a_browser_and_releases_pending_input`로 브라우저 없는 갱신·구독 응답 지연·입력 보존 회귀를 검사한다. UI·wire 형식은 바꾸지 않아 새 브라우저 E2E를 추가하지 않는다. 운영 자동화 파일·승인·문턱은 시험에서 변경하지 않는다.
 - [CodexBar의 Codex 자료원](https://github.com/steipete/CodexBar/blob/main/docs/codex.md)([MIT](https://github.com/steipete/CodexBar/blob/main/LICENSE))의 계정별 구독 창·CLI RPC와 [ccusage의 Codex 로그 집계](https://github.com/ccusage/ccusage/blob/main/docs/guide/codex/index.md)([MIT](https://github.com/ccusage/ccusage/blob/main/apps/ccusage/LICENSE))를 비교했다. 구독 문턱은 기존 계정 RPC 캐시를 재사용하고, 토큰·비용 추정으로 대신하지 않는다. 외부 코드·의존성은 추가하지 않는다.
 
+## E2E105 앱 화면 방문과 coordinator 구별(t-0997)
+
+- 기존 전환기는 palette의 실행 중 pane만 후보로 만들고 `target.pane.id`만 열었다. 보고서·할 일 방문은 기록되지 않고 설정은 전환 자체를 막았다. 수정 전 실제 host·브라우저에서 보고서→할 일→Ctrl+Tab을 눌러 coordinator만 나오는 화면과 「방문한 보고서 목록 누락」 실패를 재현했다.
+- 같은 E2E105에 Chromium·WebKit × 1280·390px의 보고서·할 일·자동화·설정·답할 것·작업 공간 방문→목록 포함→Ctrl 해제 이동을 추가한다. 개별 보고서 본문·공유한 할 일 상세 주소 재열기, 넓은 화면의 할 일 선택 보존, 설정에서 전환/단축키 기록 우선, Ctrl 유지 중 주소·MRU 불변, coordinator 머리/목록/전환기 표시와 밝은·어두운 테마의 가로 넘침을 검사한다. 기존 셸 키 누수·Esc·blur·종료·일반 탭/끄기 검사는 유지한다.
+- `node --test web/test/recentScreens.test.mjs web/test/recentHistory.test.mjs`는 앱 목록·상세 주소 보존, 임의 URL 제외, pane 생명주기 필터와 앱 화면의 분리를 함께 확인한다. 고정 sleep·시한 확대·실패 재시도는 없다. 실제 설치 PWA의 OS 키 전달은 기존처럼 운영에서 사용자가 확인한다.
+- 참고 구성: [VS Code MRU](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/browser/parts/editor/editorActions.ts)(MIT)의 확정 전 순서 유지, [herdr-web-ui Sidebar](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)(MIT)의 기존 토큰과 선택색을 보존하는 얇은 테두리, [herdr-projects popup](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/popup.rs)(MIT)의 역할/화면 분류. 외부 코드를 복사하거나 의존성을 추가하지 않는다.
+- 자동화 목록을 본문으로 바꾼 초기 구현은 E2E26의 본문 유지와 E2E40의 휴대폰 메뉴 동작을 깨뜨려 제거했다. 기존 패널 동작에 방문 기록만 붙였고 두 시험을 통과했다. 같은 페이지의 늦은 hashchange는 다음 패널 방문을 지우지 않는다. 시험의 휴대폰 task 상세는 주소 없는 시트가 이동 시 닫히는 기존 계약과 공유 주소의 복원을 구분한다. 촬영은 시트 닫힘 그림의 animationend·DOM 제거를 기다린다.
+- coordinator 복귀의 읽기 전용·빈 본문 문제는 사용자 정정에 따라 별도 d-0275 범위다. 여기서는 Term의 역할 속성과 표시 글자만 바꾸며 연결 로직은 다루지 않는다.
+
 ## E2E105 설치 앱의 최근 화면 전환(t-0934)
 
 - `node --test web/test/recentScreens.test.mjs web/test/recentHistory.test.mjs`: 실제 palette 대상 모델로 thread/pane 별칭·실행/종료·보류/해결/보관·끊김, 방문 키 중복 제거·128개 한도·깨진 저장·저장 거부 시 메모리 유지·다른 창의 변경/삭제, 고정 MRU의 순환·역방향·0/1개·후보 제거를 확인한다. 완료 보고의 idle/done은 pane 종료로 보지 않는다.

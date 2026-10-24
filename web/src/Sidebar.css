@@ -84,6 +84,7 @@
    4px을 띄운다: 프로젝트가 하나면 머리 없이 들여쓰기 0이라 머리 기준 9px 막대가 Claude 표지(칸 34px 가운데 18px, 8px부터)를
    덮었다(사용자 10-19 「보라 세로선이 claude 아이콘을 가려」, plan §8.286) */
 .workspace[data-origin="coordinator"] { --origin-bar: var(--coordinator); }
+.workspace[data-origin="coordinator"] > .workspace-header { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--coordinator) 45%, transparent); }
 .workspace[data-origin="automation"] { --origin-bar: var(--automation); }
 .workspace[data-origin] > .workspace-header > .workspace-select::before {
   content: "";

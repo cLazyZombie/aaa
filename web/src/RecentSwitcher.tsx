@@ -1,7 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PaletteTarget } from "./palette.ts";
-import { currentRecent, visitScreen } from "./recentHistory.ts";
-import { liveRecentTargets, moveRecentCycle, recentScreenChord, startRecentCycle, visitedScreens, type RecentCycle } from "./recentScreens.ts";
+import { currentRecent, useRecentHistory, visitScreen } from "./recentHistory.ts";
+import { recentTargets, moveRecentCycle, recentScreenChord, startRecentCycle, visitedScreens, type RecentCycle } from "./recentScreens.ts";
+import { isShortcutRecording } from "./herdr/shortcuts.ts";
 import { useTerminalToggle } from "./settings.ts";
 import { useFocusTrap } from "./herdr/useFocusTrap.ts";
 import "./RecentSwitcher.css";
@@ -11,14 +12,15 @@ interface Props {
   blocked: boolean;
   targets: readonly PaletteTarget[];
   selected: string | null;
-  onOpen: (pane: string) => void;
+  onOpen: (screen: string) => void;
 }
 
 /** Ctrl 유지 중에는 본문·주소·MRU를 바꾸지 않는다. ref로 같은 프레임의 Tab→Ctrl 뗌도 처리한다. */
 export function RecentSwitcher({ standalone, blocked, targets, selected, onOpen }: Props) {
   const enabled = useTerminalToggle("recentScreens");
-  const live = useMemo(() => liveRecentTargets(targets), [targets]);
-  const currentKey = targets.find((target) => selected !== null && target.keys.includes(selected))?.key ?? null;
+  const recent = useRecentHistory();
+  const live = useMemo(() => recentTargets(targets, selected === null ? recent : [...recent, selected]), [targets, recent, selected]);
+  const currentKey = live.find((target) => selected !== null && target.keys.includes(selected))?.key ?? null;
   useLayoutEffect(() => { if (currentKey !== null) visitScreen(currentKey); }, [currentKey]);
   const [cycle, setCycle] = useState<RecentCycle | null>(null);
   const active = useRef<RecentCycle | null>(null);
@@ -40,7 +42,7 @@ export function RecentSwitcher({ standalone, blocked, targets, selected, onOpen 
         ? now.live.find((target) => target.key === value.key) : undefined;
       restore.current = allowRestore && document.hasFocus() && (!target || target.key === now.currentKey);
       change(null);
-      if (target?.pane) { visitScreen(target.key); now.onOpen(target.pane.id); }
+      if (target) { visitScreen(target.key); now.onOpen(target.open); }
     };
     finishRef.current = finish;
     const consume = (event: KeyboardEvent) => { event.preventDefault(); event.stopImmediatePropagation(); };
@@ -59,7 +61,7 @@ export function RecentSwitcher({ standalone, blocked, targets, selected, onOpen 
         }
         return;
       }
-      if (!now.standalone || !now.enabled || now.blocked || !recentScreenChord(event)) return;
+      if (!now.standalone || !now.enabled || now.blocked || isShortcutRecording() || !recentScreenChord(event)) return;
       // 다른 창의 입력·설정에서 기록 중인 키를 빼앗지 않는다.
       if (document.querySelector('[aria-modal="true"], dialog[open]')) return;
       consume(event);
@@ -100,10 +102,10 @@ export function RecentSwitcher({ standalone, blocked, targets, selected, onOpen 
   return <div className="modal-scrim palette-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) finishRef.current(false); }}>
     <section className="menu recent-switcher" role="dialog" aria-modal="true" aria-label="최근 화면" data-testid="recent-switcher" ref={surface} tabIndex={-1}>
       <header>최근 화면</header>
-      <div role="listbox" tabIndex={0} aria-label="방문한 실행 중 화면" aria-activedescendant={`recent-screen-${rows.findIndex((row) => row.key === cycle.key)}`}>
-        {rows.map((target, index) => <button key={target.key} id={`recent-screen-${index}`} type="button" role="option" aria-selected={target.key === cycle.key} tabIndex={-1}
+      <div role="listbox" tabIndex={0} aria-label="방문한 화면" aria-activedescendant={`recent-screen-${rows.findIndex((row) => row.key === cycle.key)}`}>
+        {rows.map((target, index) => <button key={target.key} id={`recent-screen-${index}`} type="button" role="option" aria-selected={target.key === cycle.key} tabIndex={-1} data-origin={target.coordinator ? "coordinator" : undefined}
           onClick={() => { active.current = { ...cycle, key: target.key }; finishRef.current(true); }}>
-          <span>{target.title}</span><small>{[target.machine.name, target.project].filter(Boolean).join(" · ")}</small>
+          <span>{target.title}</span><small>{target.coordinator && <b className="coordinator-label">coordinator</b>}{target.detail}</small>
         </button>)}
       </div>
       <footer>Ctrl 놓기: 열기 · Shift+Tab: 반대 · Esc: 취소</footer>

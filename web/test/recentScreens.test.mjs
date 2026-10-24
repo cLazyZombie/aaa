@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { paletteTargets, rememberTarget, loadRecent, RECENT_LIMIT } from "../src/palette.ts";
-import { liveRecentTargets, visitedScreens, startRecentCycle, moveRecentCycle, recentScreenChord } from "../src/recentScreens.ts";
+import { appScreenTarget, recentTargets, liveRecentTargets, visitedScreens, startRecentCycle, moveRecentCycle, recentScreenChord } from "../src/recentScreens.ts";
 
 const machines = [{ id: "m", name: "mac-a", connection: "connected" }];
 const pane = (id, extra = {}) => ({ id, machine_id: "m", name: id, argv: [], state: "running", ...extra });
 const thread = (id, extra = {}) => ({ id, project: "demo", title: id, machine: "mac-a", pane: id, status: "open", group: "working", ...extra });
+
+test("앱 목록·상세·설정도 방문 순서와 열 주소를 보존하며 pane 생명주기 필터와 분리한다", () => {
+  const keys = ["reports:", "reports:demo/r-0001", "tasks:", "task:d-0001", "automations:", "automation:demo/daily", "settings:", "asks:", "question:q-0001", "workspace:", "workspace:m/repo"];
+  const panes = paletteTargets(machines, [pane("coord", { coordinator_project: "demo" }), pane("gone", { state: "exited" })], []);
+  const targets = recentTargets(panes, [...keys, "reports:", "pane:gone", "https://example.com"]);
+  assert.deepEqual(visitedScreens(targets, keys).map(t => t.open), keys);
+  assert.equal(targets.length, keys.length + 1);
+  assert.equal(targets[0].coordinator, true);
+  for (const key of ["https://example.com", "pane:gone", "unknown:", "settings"]) assert.equal(appScreenTarget(key), null);
+});
 
 test("완료 보고의 쉼은 포함하고 종료·보류·해결·보관·연결 해제는 제외한다", () => {
   const panes = [pane("work", { agent: { activity: "idle", seen: false } }), pane("shell"), pane("coord", { coordinator_project: "demo", role: "coordinator" }), pane("gone", { state: "exited" }), pane("park"), pane("resolved"), pane("archived")];

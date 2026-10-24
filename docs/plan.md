@@ -2717,11 +2717,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 #### 설치 앱의 최근 화면 전환(t-0934)
 
-- PWA standalone 창에서만 Ctrl+Tab·Ctrl+Shift+Tab으로 이 기기에서 방문한 실행 중 화면을 최근 순서로 고른다. 일반 브라우저 탭의 키 처리는 유지한다. thread pane·셸·coordinator를 포함하고, 종료된 pane·해결/보류/보관된 thread·끊긴 머신은 제외한다. 작업의 완료 보고/idle 표지와 pane 종료를 구분한다.
+- PWA standalone 창에서만 Ctrl+Tab·Ctrl+Shift+Tab으로 이 기기에서 방문한 실행 중 화면을 최근 순서로 고른다. 일반 브라우저 탭의 키 처리는 유지한다. thread pane·셸·coordinator와 보고서·할 일·자동화·설정·답할 것·작업 공간을 포함한다. 목록과 상세 주소를 각각 방문 기록에 남기며 설정에서는 설정 화면 자체를 한 항목으로 센다(t-0997). 종료된 pane·해결/보류/보관된 thread·끊긴 머신은 제외한다. 작업의 완료 보고/idle 표지와 pane 종료를 구분한다.
 - Ctrl 유지 중 후보 순서를 고정하고 본문·주소·방문 순서는 바꾸지 않는다. Ctrl을 놓거나 Enter/목록 클릭으로 확정할 때만 이동·MRU 갱신한다. Esc·창 포커스 상실·가려짐·선택 후보 종료는 취소한다. Shift를 놓는 것은 확정이 아니다. 후보 0개나 현재 화면 하나뿐이면 아무 화면도 열지 않는다.
 - 팔레트와 전환기가 `aaa:palette-recent`를 함께 쓴다. 방문 키를 최대 128개 기억하고 팔레트 표시는 기존 최근 셋을 유지한다. thread/pane 별칭은 같은 화면으로 센다. 저장 실패 시 이 페이지 메모리를 쓰고, 다른 창의 저장 사건은 반영하되 Ctrl을 누르는 동안의 후보 차례는 바꾸지 않는다. 기기 간 동기화와 API 변경은 없다.
-- 설정 → 단축키의 「최근 화면 전환」을 끄면 앱이 Ctrl+Tab을 가로채지 않는다. 켜져 있을 때는 capture 단계와 xterm 키 처리 양쪽에서 터미널로 새는 것을 막는다. 다른 대화상자·설정·파일 보기는 전환기가 가로채지 않는다.
+- 설정 → 단축키의 「최근 화면 전환」을 끄면 앱이 Ctrl+Tab을 가로채지 않는다. 켜져 있을 때는 capture 단계와 xterm 키 처리 양쪽에서 터미널로 새는 것을 막는다. 다른 대화상자·파일 보기·설정의 단축키 기록 중에는 전환기가 가로채지 않는다. 일반 설정 화면에서는 전환할 수 있다.
 - 참고: [VS Code 최근 편집기 전환](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/browser/parts/editor/editorActions.ts)([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt)), [Windows Terminal MRU](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/interaction#tab-switcher-interface-style)([MIT](https://github.com/microsoft/terminal/blob/main/LICENSE)). 외부 코드·의존성을 추가하지 않는다.
+- coordinator는 최근 화면 목록의 얇은 색 막대, 대화 머리의 아래 테두리, 작업 목록 줄의 얇은 테두리와 `coordinator` 역할 글자로 구별한다(t-0997). 기존 coordinator 색 token을 쓰고 선택·실행 상태 표시는 유지한다. 자동화 목록은 보던 본문을 유지하는 기존 패널 동작으로 방문·복귀하며, 휴대폰에서는 목록 drawer를 연다.
 - 자동 검증은 E2E105와 `recentScreens`·`recentHistory` 유닛 시험이다. standalone 조건을 주입한 Playwright 입력은 설치된 PWA의 네이티브 키 전달 증거가 아니다. 사용자 지시로 별도 실기 host 없이 착지·배포한 뒤 Mac 운영 PWA에서 직접 키 입력을 확인한다. Windows Edge/Chrome OS 키 전달은 미확인으로 남긴다.
 
 ### 8.133 push 판정 근거 기록과 「쓰는 화면」 lease(10-18, 실기 07:39 「쓰는 화면」으로 push 생략·앱 안 알림 없음, 07:43 push와 앱 안 알림 둘 다)
