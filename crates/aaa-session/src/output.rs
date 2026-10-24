@@ -1,6 +1,6 @@
 //! 터미널 질의와 화면 가림은 서로 기다리지 않는다.
 //! ConPTY의 첫 DSR 응답이 인증 접두부 보류에 막히면 자식은 시작조차 못 한다.
-use aaa_common::redact::Stream;
+use aaa_common::redact::LiveStream;
 use aaa_proto::TermColors;
 use aaa_vt::{DefaultColors, Found, Query, QueryScanner, QueryState};
 
@@ -8,7 +8,7 @@ pub(crate) struct Output {
     scanner: QueryScanner,
     cursor: Option<QueryState>,
     colors: DefaultColors,
-    redactor: Stream,
+    redactor: LiveStream,
 }
 
 impl Output {
@@ -17,7 +17,7 @@ impl Output {
             scanner: QueryScanner::default(),
             cursor: aaa_common::redact::active().then(|| QueryState::new(rows, cols)),
             colors: DefaultColors::new(colors),
-            redactor: Stream::default(),
+            redactor: LiveStream::default(),
         }
     }
 
@@ -52,8 +52,8 @@ impl Output {
         if let Some(cursor) = &mut self.cursor {
             cursor.feed(raw);
         }
-        // 질의를 뺀 본문만 가린다. 질의 앞뒤 인증 조각도 같은 Stream에서 검사한다.
-        let safe = self.redactor.push(raw, false);
+        // 질의를 뺀 본문만 가린다. 질의 앞뒤 인증 조각도 같은 LiveStream에서 검사한다. 앞 최대 7바이트 선표시는 q-1285 승인 범위다.
+        let safe = self.redactor.push(raw);
         screen.feed(&safe);
         clean.extend(safe);
     }
@@ -66,7 +66,7 @@ impl Output {
         self.colors.host = Some(colors);
     }
     pub fn finish(&mut self) -> Vec<u8> {
-        self.redactor.push(&self.scanner.take_held(), true)
+        self.redactor.push(&self.scanner.take_held())
     }
 }
 
@@ -96,9 +96,28 @@ mod tests {
     }
 
     #[test]
+    fn iphone_ascii_echo_reaches_screen_before_next_input() {
+        for ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".chars() {
+            aaa_common::redact::remember(&format!("{ch}~~~~~~~~~~~"));
+        }
+        let mut output = Fixture::new(32, 120, None);
+        let mut expected = String::new();
+        for ch in "status aaa123! 한글".chars() {
+            let text = ch.to_string();
+            assert_eq!(output.feed(text.as_bytes()).0, text.as_bytes());
+            expected.push(ch);
+            assert!(output.screen.detection_text().contains(expected.trim_end()));
+        }
+        // 출력 쪽 수정이 입력 교정·붙여넣기 표시·Enter/Backspace 제어를 붙잡지 않는다.
+        let controls = b"\x08 \x08\r\n\x1b[200~paste\x1b[201~\x1b[31m!\x1b[0m";
+        assert_eq!(output.feed(controls).0, controls);
+        assert!(output.finish().is_empty());
+    }
+
+    #[test]
     fn conpty_cursor_query_replies_before_any_further_output_despite_auth_suffix() {
         aaa_common::redact::remember("fixture-native-conpty-canary0910");
-        let mut old = Stream::default();
+        let mut old = aaa_common::redact::Stream::default();
         assert_ne!(old.push(b"\x1b[6n", false), b"\x1b[6n", "원본 교착의 n 보류를 재현한다");
         for split in 0..=4 {
             let mut output = Fixture::new(32, 120, None);
@@ -112,21 +131,22 @@ mod tests {
     }
 
     #[test]
-    fn pending_secret_does_not_block_queries_or_change_cursor_and_never_reaches_records() {
+    fn live_secret_masks_from_eighth_byte_and_keeps_query_cursor_correct() {
         let secret = "fixture-native-conpty-canary0910";
         aaa_common::redact::remember(secret);
         let mut output = Fixture::new(32, 120, None);
         let (mut clean, replies) = output.feed(&secret.as_bytes()[..7]);
-        assert!(clean.is_empty() && replies.is_empty());
+        assert_eq!(clean, secret.as_bytes()[..7]);
+        assert!(replies.is_empty());
         let (part, replies) = output.feed(b"\x1b[6n\x1b[c\x1b[>c");
         clean.extend(part);
         assert_eq!(replies, [b"\x1b[1;8R".to_vec(), b"\x1b[?62;22c".to_vec(), b"\x1b[>1;0;0c".to_vec()]);
         clean.extend(output.feed(&secret.as_bytes()[7..]).0);
         clean.extend(output.finish());
-        assert_eq!(clean, vec![b'*'; secret.len()]);
+        assert_eq!(clean, [secret.as_bytes()[..7].to_vec(), vec![b'*'; secret.len() - 7]].concat());
         let mut screen = aaa_vt::Vt::new(32, 120);
         screen.feed(&clean);
-        assert!(!String::from_utf8_lossy(&screen.replay()).contains("fixture"));
+        assert!(!screen.replay().windows(8).any(|w| secret.as_bytes().windows(8).any(|s| s == w)));
     }
 
     #[test]
@@ -144,6 +164,6 @@ mod tests {
         let (mut clean, _) = output.feed(secret.as_bytes());
         clean.extend(output.feed(b"\x1b[").0);
         clean.extend(output.finish());
-        assert_eq!(clean, [vec![b'*'; secret.len()], b"\x1b[".to_vec()].concat());
+        assert_eq!(clean, [secret.as_bytes()[..7].to_vec(), vec![b'*'; secret.len() - 7], b"\x1b[".to_vec()].concat());
     }
 }

@@ -1,3 +1,12 @@
+## 실기 영숫자 지연과 PTY 순차 가림(t-1002)
+
+- iPhone 실기에서 `status aaa123!`의 ASCII는 composition 없이 각 keydown에서 즉시 send했다. 기존 `redact::Stream`에 영숫자 접두부를 가진 합성 인증을 등록하면 `status→statu`, 숫자 한 글자 보류, 구두점에서 해제가 재현된다. 실제 인증을 시험·보고에 쓰지 않는다.
+- q-1285 1A는 PTY 앞 최대 7바이트 선표시를 허용했다. `LiveStream`은 각 push의 모든 바이트를 바로 반환하고 원문 및 CSI·CR/LF를 뺀 8바이트 창만 유지한다. 겹치는 조각의 8번째 이후 바이트는 가린다. 일반 `Stream`/`bytes`의 완전 가림은 유지한다.
+- `cargo test --locked -p aaa-common --lib redact::`는 실기 send 순서의 각 글자 즉시 반환, 모든 청크 경계·한 바이트 청크, ANSI·개행 사이 인증 조각, 겹치는 조각, 기존 완전 가림을 검사한다.
+- `cargo test --locked -p aaa-session --lib output::tests`는 실제 query scanner→순차 필터→VT에서 각 글자가 다음 입력 전 화면에 나타나는지, 한글·제어문자·붙여넣기 표지, DSR·색·resize·EOF를 확인한다. 기존 접두부 보류/전체 별표 기대는 승인된 PTY 계약에 맞춰 앞 7바이트+가림으로 바꾸되 8바이트 원문 비노출 검사를 유지한다.
+- `cargo test --locked -p aaa --test m13 accounts::authenticated_terminal_echo_does_not_wait_for_the_next_ascii_key -- --exact`는 합성 인증을 가진 실제 host/agent/session/PTY에 실기 send와 같은 글자를 한 번에 하나씩 넣는다. 그 글자의 화면 반영을 확인하기 전에는 다음 글자를 보내지 않는다. 출력 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
+- 기존 `accounts::account_credentials_parallel_refresh_and_all_records_are_redacted`도 실행해 로컬·TLS 원격 계정/갱신/출력/기록의 원문·8바이트 조각 비노출을 확인한다. 브라우저 입력 코드는 바꾸지 않는다. 실제 iPhone·운영 Claude 확인은 새 session-host 적용 후 사용자가 한다.
+
 # 시험 쓰는 법
 
 ## coordinator 복귀의 연결 준비·본문 보존(t-0998)
