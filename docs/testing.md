@@ -5,6 +5,12 @@
 - `node web/e2e/web.e2e.mjs --spec 101 --workers 1`: 실제 host DB의 내 보고서 105개와 별도 보관 판을 사용한다. Chromium·WebKit 1280·390px에서 버튼·확인 창을 캡처하고 확인 개수·취소의 무요청·오류 보존·빈 탭 비활성·한 요청·첫 50개 밖 처리·보관함 범위·활동/탭 배지·Reader 숨김·가로 넘침을 검사한다. DOM·응답이 완료 사건이며 고정 대기와 실패 재시도는 없다.
 - host `mark_read_batch_is_atomic_idempotent_and_preserves_new_reports`는 Reader의 기존 열람 권한, 잘못된 항목의 부분 쓰기 방지, 중복/재요청 멱등, 새 판·새 보고서 보존, 배지 사건과 실제 열람 시각 보존을 검사한다.
 - 참고는 [herdr-web-ui ConfirmDialog](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/ConfirmDialog.tsx)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)), [Miniflux app.js](https://github.com/miniflux/v2/blob/main/internal/ui/static/js/app.js)([Apache-2.0](https://github.com/miniflux/v2/blob/main/LICENSE))다. 기존 확인 창을 재사용하며 새 외부 코드·의존성은 추가하지 않는다.
+## inbox 턴의 대화 입력 잠금 제거(t-0955)
+
+- `node web/e2e/web.e2e.mjs --spec 102 --workers 1`은 실제 host·agent·PTY의 가짜 Claude에 `pane run`으로 inbox 안내를 주입한다. 이 호출은 nudge와 같은 `send_prompt` 길이다. 모델 대신 기록 반영만 보류하고 사람 글 두 개의 PTY 수신 순서·대기 말·미전송 초안·포커스를 검사한다. coordinator/일반 pane × Chromium/WebKit × 1280/390px의 8조합이다. 같은 글 두 번의 개별 수신도 확인한다. 원본은 첫 전송 뒤 readOnly=true로 실패했다.
+- E2E23의 긴 글 hash·내부 알림 제외 단언은 잠금 대신 대기 말의 수신 여부를 검사한다. 전송 전 취소/Enter 차단·첨부·Codex·steering·compaction 검사는 유지한다. E2E35는 ACK 뒤 빈 초안이 한 줄로 줄어드는 동작을 반영하며 한 frame 높이 증가·상태 글 노출·IME 검사를 유지한다. 기존 잠금 풀기 시험은 제거한 제품 단계에 맞춰 늦은 수신이 새 초안을 보존하는 시험으로 대체한다.
+- 참고 후보: [herdr-web-ui Composer](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Composer.tsx), [pending-input](https://github.com/devswha/herdr-web-ui/blob/main/server/pending-input.ts)([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE)); [herdr-projects nudge](https://github.com/eliasstravik/herdr-projects/blob/1f05c002f22c8355733c567ef47c511612bcdb1f/src/steps.rs), [prompt](https://github.com/eliasstravik/herdr-projects/blob/1f05c002f22c8355733c567ef47c511612bcdb1f/src/threads.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/1f05c002f22c8355733c567ef47c511612bcdb1f/LICENSE)). 편집 가능한 초안과 작업 중 입력을 따르며 별도 서버 대기열은 도입하지 않는다.
+- 실제 유료 모델의 응답/도구 호출 지연과 iPhone 실기 자판은 이 headless 시험으로 확인했다고 보지 않는다. 고정 sleep·시한 연장 없이 PTY 출력·ACK·DOM으로 끝낸다.
 
 ## 휴대폰 기기 정보의 뒤로·앞으로와 목록 스와이프(t-0936)
 

@@ -7776,3 +7776,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - YOLO 인자는 기존 최초·재개 argv를 유지하며 Windows sandbox 선택·설치·UAC는 추가하지 않는다. 개인 Codex 홈은 그대로 두고 user 신뢰 정책에서는 사전 기록을 없앤다.
 - Windows native 회귀의 수정 전 실패·수정 후 통과, 실제 Codex의 첫 실행·재시작 brief와 승인 없는 명령, 전체 ci-local·Linux strict cross·공개 검사로 확인한다. 실기 thread는 자기 폴더에 격리하며 설치·운영 서비스는 바꾸지 않는다. [시험 절차](testing.md)의 전용 폴더·기준 목록 규칙을 따른다.
 - Codex·herdr(Apache-2.0)의 설정 홈과 신뢰 조회를 참고하고 dunce 1.0.5(CC0-1.0 OR MIT-0 OR Apache-2.0)를 Windows 의존성으로 사용한다. API·Agent link·웹 E2E 번호는 유지하며 절 번호는 착지 때 main과 대조한다.
+### 8.482 inbox 처리 중 대화 입력과 전달 확인 분리(t-0955)
+
+- coordinator·일반 thread의 대화 입력창은 전송 확인 중에도 편집한다. 전송한 글은 초안에서 빼며, 글+Enter 전달 ACK 뒤 기록에 아직 없는 글은 기존 대기 말에 둔다. Claude·Codex와 working 상태 사건의 도착 순서로 입력 가능 여부를 나누지 않는다. ACK를 모델의 읽음으로 표시하지 않는다.
+- 전송 자체는 기존 submit 하나씩 확인한다. 3초 확인 지연의 취소·연결 끊김·권한 오류는 기존 경로로 처리한다. 새 초안이 있으면 실패한 글은 수동 보관함에 남기고 덮지 않는다. 정리 중 보관함·자동 전송 설정·Ctrl+Enter steering은 유지한다.
+- 수신 확인은 온전한 글의 hash·출현 횟수로 대기 말만 정리한다. 같은 글 연속 전송은 각각 다음 출현을 기다린다. 쉼 이후 10초 동안 기록이 없으면 기존 대기 말 경고를 사용한다. 입력창의 별도 sent/slow 잠금 단계와 잠금 풀기 단추는 제거한다.
+- host nudge는 `inbox::nudge` → `send_prompt`로 PTY에 들어가며 웹 Composer의 flight를 만들지 않는다. 웹은 `Term::sendTerminalLine` → WS submit → `submit_work`에서 글·Enter 전달 ACK를 받는다. host는 주입 알림 턴이 끝날 때까지 웹 submit을 기다리지 않는다. 대화에는 기존 `[aaa inbox]` 원문 표지를 유지하고 `aaa inbox 안내` 머리를 붙여 사람 글과 구분한다. 이 머리는 원문 표지의 분류이며 출처 인증이 아니다. transcript의 role=user는 harness 형식이며, 출처 인증 필드는 새로 만들지 않는다.
+- 참고: herdr-web-ui Composer·pending-input(MIT)의 편집 가능한 초안과 전송/기록 구분, herdr-projects 1f05c00(MIT)의 nudge·작업 중 prompt. 새 서버 대기열·외부 의존성은 추가하지 않는다. FRONT_API 변경 없음. E2E102 및 기존 E2E23·35·50으로 확인한다.

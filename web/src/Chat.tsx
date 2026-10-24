@@ -333,6 +333,7 @@ function UserTurn({ text, pane, onOpenFile, pending }: { text: string; pane: str
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-user">
+      {text.trimStart().startsWith("[aaa inbox] ") && <div className="chat-inbox-label" data-testid="chat-inbox-label">aaa inbox 안내</div>}
       {onOpenFile && <UserImages pane={pane} text={text} onOpenFile={onOpenFile} />}
       <div className="chat-user-row">
         <UserMessage text={text} pending={pending !== undefined} />
