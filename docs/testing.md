@@ -9,6 +9,34 @@
 - 먼저 [Playwright actionability](https://github.com/microsoft/playwright/blob/main/docs/src/actionability.md)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [TanStack Virtual](https://github.com/TanStack/virtual/blob/main/packages/virtual-core/src/index.ts)([MIT](https://github.com/TanStack/virtual/blob/main/LICENSE)), [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)·[UpdateBatching](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/ReactDOMUpdateBatching.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))를 대조했다. 공개 capture API와 기존 host의 제어 사건을 사용하며 외부 코드·의존성은 추가하지 않는다.
 - 최종 검증은 전체 `nice -n 15 bash scripts/ci-local.sh`와 worker 10개 전체 E2E, Linux strict cross clippy·공개 검사다. 기존 E2E23·35·66의 IME·첨부·전송 높이·Enter 검사도 유지한다. headless WebKit의 주입 사건을 실제 iPhone 키보드 실기 통과로 해석하지 않는다.
 
+## Ubuntu 진단 로그 capture의 첫 callsite 등록(t-0973)
+
+- [원문 CI의 Ubuntu test](https://github.com/cLazyZombie/aaa/actions/runs/40041938212/job/120714799001)는
+  5c66fdf3에서 `RUST_TEST_THREADS=8`로 `ci-local.sh --only test`를 실행했다. `rust_tests.py`가
+  `cargo test --workspace --locked --no-fail-fast --no-run`으로 준비한 aaa-common 실행 파일 전체
+  48개 시험을 필터 없이 실행했고, info 경로는 통과했지만 debug 경로는 1건·64건 모두 0건이었다.
+- 당시 Cargo.lock과 같은 tracing 0.1.44·tracing-core 0.1.36을 사용한다. workspace feature에는
+  `max_level_*`·`release_max_level_*`가 없다. Capture의 기본 `max_level_hint=None`은 TRACE이며,
+  subscriber 등록은 OnceLock 한 번뿐이다. 원인은 subscriber 해제 경쟁이 아니라 tracing-core의
+  단일 Dispatch 최적화다. 등록된 Dispatch가 하나면 `Rebuilder::JustOne`은 callsite를 처음
+  실행한 thread의 기본 subscriber로 interest를 계산한다. capture 밖 thread는 NoSubscriber라서
+  `observe`의 공통 debug callsite가 `never`로 굳고, 이후 `with_default`는 캐시를 재계산하지 않는다.
+- `cargo test -p aaa-common --locked capture_after_an_uncaptured_thread_first_uses_the_callsite -- --nocapture`는
+  같은 시험 실행 파일의 정확한 시험 하나를 새 프로세스로 실행한다. 빈 capture로 subscriber를
+  준비한 뒤 capture 밖 thread가 `observe`를 먼저 실행하게 하고 `join`으로 등록 완료를 확정한다.
+  수정 전에는 기존 비밀 payload 시험의 기대 1건이 실제 0건으로 실패했다. 수정 후에는 같은
+  payload 시험과 기존 8 thread × 64건의 개수·OS 코드 분리 검사를 모두 통과해야 한다.
+  동적 최대 level TRACE와 capture 밖 사건의 수집 제외도 검사한다. 고정 sleep·반복·시한 변경은 없다.
+- 시험 전용 subscriber를 전역에 한 번 설치하고 수집 대상만 thread-local로 바꾼다. capture 밖 사건은
+  필드를 포맷하지 않고 버린다. 기존 중첩 capture의 복원 guard와 비노출 단언은 유지한다.
+  제품 subscriber·로그 수준·진단 본문·API는 바꾸지 않는다. macOS에서도 같은 순서를 재현하므로
+  Linux VM·컨테이너는 만들지 않는다. 전체 로컬 CI와 Linux strict cross clippy로 함께 검사한다.
+- 참고 후보는 [tracing-core의 callsite 구현](https://github.com/tokio-rs/tracing/blob/tracing-core-0.1.36/tracing-core/src/callsite.rs)
+  ([MIT](https://github.com/tokio-rs/tracing/blob/master/LICENSE))와
+  [tracing-test의 한 번만 설치하는 전역 subscriber](https://github.com/dbrgn/tracing-test/blob/main/tracing-test-macro/src/lib.rs)
+  ([MIT 또는 Apache-2.0](https://github.com/dbrgn/tracing-test/blob/main/LICENSE-MIT))다.
+  전역 초기화 방식만 참고하며 외부 코드나 의존성을 추가하지 않는다.
+
 ## 자동화 Codex profile의 계정별 사용량(t-0970)
 
 - `cargo test -p aaa-host quota_gate`: 세션 5%·주간 10%는 남은 비율이며 경계와 같을 때 허용하는지 확인한다. 주간 창만 있는 계정의 세션 문턱은 확인 불가로 남기고, 설정된 창만 검사한다. 실패·오래된 관측·리셋 경과·충돌·모델별 별도 몫·비정상 숫자를 허용하지 않는다. 로컬 공급자·계정을 섞어 누락을 채우지 않는다.
@@ -3364,7 +3392,7 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - run 39992760202(6c76bffa)의 실패는 E2E 목록 `Set(95)` 대 `Set(102)`다. Vite의 `Build failed in 9ms`는 이전 dist 보존을 확인하는 음성 시험이며 그 시험은 통과했다. `--list` 직후 `process.exit(0)`이 pipe의 미전송 출력을 버리는 경로를 없애고 자연 종료한다. `e2e-layout.test.mjs`는 실제 runner 사본과 400개·약 1.2MB 목록으로 끝 이름·단계까지 비교한다. 구판 사본은 UTF-8 중간에서도 잘리고 400개 중 일부만 반환하는 RED를 재현한다. 실제 전체 파일 수집·숫자 정렬 단언을 유지한다.
 - run 39988045321(6fd0ddff)은 E2E84 WebKit에서 해제된 xterm renderer의 `dimensions`를 읽었다. upstream `Viewport.reset()`의 frame과 constructor의 task는 disposable로 취소되지 않는다. 기존 한 frame 뒤 정리만으로 모든 callback 순서를 보장하지 않으므로 실제 `Viewport.syncScrollArea`·`_innerRefresh`에 upstream `Disposable._isDisposed` 수명 검사를 붙인다. `xterm-source.test.mjs`는 패치 전후 실제 메서드와 reset callback을 실행해 해제 뒤 구판 예외·수정판 무접근을 비교한다. 기존 scroll·IME 패치와 E2E84의 오류 0건 단언을 유지한다.
-- run 39980858301(83ab3346)은 `diagnostic::tests::ignored_send_error_does_not_format_its_private_payload`의 로그 1건이 0건이었다. 로컬 원본 100개 실행에서는 재현하지 못했으며 당시 callsite cache 변경 순서는 남아 있지 않다. 시험마다 subscriber를 만들고 버리는 전역 interest 갱신 경합을 제거하여, 하나의 살아 있는 Dispatch와 thread별 수집기를 쓴다. 8개 thread가 barrier 뒤 각각 64개를 기록해 누락·혼입 없이 독립 수집되는지 검사한다. 오류 payload 비노출·로그 정확한 개수 단언은 유지하고 제품 로그 필터는 바꾸지 않는다.
+- run 39980858301(83ab3346)은 `diagnostic::tests::ignored_send_error_does_not_format_its_private_payload`의 로그 1건이 0건이었다. 로컬 원본 100개 실행에서는 재현하지 못했으며 당시 callsite cache 변경 순서는 남아 있지 않다. 당시에는 subscriber 생성·해제의 전역 interest 갱신 경합을 의심하여, 하나의 Dispatch를 유지하고 thread별 수집기를 썼다. 그러나 run 40041938212에서도 재발했다. t-0973이 capture 밖 첫 호출의 단일 Dispatch interest 캐시 문제를 결정적으로 재현하고 전역 시험 subscriber로 교정했다(이 문서 첫 절). 기존 8개 thread × 64건의 개수·분리와 오류 payload 비노출 단언은 유지하고 제품 로그 필터는 바꾸지 않는다.
 - run 39973893610(bc98e49b)은 accounts 시험에서 DB WAL의 무작위 8자 조각 하나를 검출했다. 원본 WAL artifact가 없어 당시 실제 누출인지 정상 hex metadata와의 일치인지 소급 확정하지 않는다. 실제 로컬 인증 회전·비노출 원본 시험은 통과했다. 정상 64자리 digest와 hex nonce의 8자 일치도 같은 검출을 만드는 결정적 대조를 추가한다. accounts fixture의 nonce는 16문자·32자리·128bit를 유지한 채 hex 밖 알파벳으로 일대일 변환한다. 실제 8자 조각 25개 모두를 계속 검출하며 원문·base64·URL·JSON·DB/WAL·로그·미전송 post 검사를 유지한다. 제품 redactor나 허용 기대값은 바꾸지 않는다.
 - run 39984576747(fca9e7d3)은 Windows one-line install 시험의 실제 IRM이 시험 HTTP 서버 응답을 읽다가 connection reset으로 끝났다(`http_phase=4`, executor/config 미생성). 시험 서버는 응답을 쓴 뒤 write half-close로 EOF를 보내고 peer EOF까지 수신을 비워 종료한다. 실제 PowerShell 5.1/7의 `irm | iex`·ConPTY·검토·서명 승인·설치 기록 단언을 유지한다. Windows 후보는 격리 실기에서 해당 시험을 실행한 뒤 인계한다.
 - 참고 후보는 [xterm.js Viewport/Lifecycle](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Viewport.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)), [tracing callsite](https://github.com/tokio-rs/tracing/blob/master/tracing-core/src/callsite.rs)([MIT](https://github.com/tokio-rs/tracing/blob/master/LICENSE)), [PowerShell](https://github.com/PowerShell/PowerShell)([MIT](https://github.com/PowerShell/PowerShell/blob/master/LICENSE.txt))다. [Node process I/O](https://nodejs.org/api/process.html#a-note-on-process-io)의 자연 종료 계약도 따른다. 외부 코드·의존성은 추가하지 않는다.

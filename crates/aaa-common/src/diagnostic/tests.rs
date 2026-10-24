@@ -16,24 +16,25 @@ impl Visit for Fields {
         self.0.push_str(&format!("{}={value:?} ", field.name()));
     }
 }
-// subscriber 등록/해제 때 바뀌는 프로세스 전역 callsite cache와 시험을 경쟁시키지 않는다.
-// Dispatch는 하나를 계속 살려 두고 실제 기록은 각 시험 thread로 나눈다.
+// Dispatch가 하나뿐이면 tracing은 callsite를 처음 실행한 thread의 기본 subscriber로
+// interest를 정한다. capture 밖에서도 같은 subscriber를 보게 전역으로 한 번 설치한다.
+// 이 유닛 시험 실행 파일에만 적용되며 실제 기록은 capture 중인 thread로 나눈다.
 thread_local! { static CURRENT_LOG: RefCell<Option<Log>> = const { RefCell::new(None) }; }
 struct Capture;
 impl Log {
     fn capture<T>(&self, f: impl FnOnce() -> T) -> T {
-        static DISPATCH: OnceLock<tracing::Dispatch> = OnceLock::new();
-        let dispatch = DISPATCH.get_or_init(|| tracing::Dispatch::new(Capture));
+        static INITIALIZED: OnceLock<()> = OnceLock::new();
+        INITIALIZED.get_or_init(|| {
+            tracing::subscriber::set_global_default(Capture).expect("진단 유닛 시험 subscriber 설치");
+        });
         struct Reset(Option<Log>);
         impl Drop for Reset {
             fn drop(&mut self) {
                 CURRENT_LOG.with(|current| current.replace(self.0.take()));
             }
         }
-        tracing::dispatcher::with_default(dispatch, || {
-            let _reset = Reset(CURRENT_LOG.with(|current| current.replace(Some(self.clone()))));
-            f()
-        })
+        let _reset = Reset(CURRENT_LOG.with(|current| current.replace(Some(self.clone()))));
+        f()
     }
 }
 impl Subscriber for Capture {
@@ -46,10 +47,10 @@ impl Subscriber for Capture {
     fn record(&self, _: &Id, _: &Record<'_>) {}
     fn record_follows_from(&self, _: &Id, _: &Id) {}
     fn event(&self, event: &Event<'_>) {
-        let mut fields = Fields(String::new());
-        event.record(&mut fields);
         CURRENT_LOG.with(|current| {
             if let Some(log) = current.borrow().as_ref() {
+                let mut fields = Fields(String::new());
+                event.record(&mut fields);
                 log.0.lock().unwrap().push(fields.0);
             }
         });
@@ -145,4 +146,45 @@ fn parallel_capture_keeps_every_event_in_its_own_log() {
     for thread in threads {
         thread.join().unwrap();
     }
+}
+
+#[test]
+fn capture_after_an_uncaptured_thread_first_uses_the_callsite() {
+    const CHILD: &str = "AAA_DIAGNOSTIC_CAPTURE_REGRESSION";
+    if std::env::var_os(CHILD).is_none() {
+        // callsite는 프로세스마다 한 번 등록된다. 다른 시험의 실행 순서와 분리한다.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "diagnostic::tests::capture_after_an_uncaptured_thread_first_uses_the_callsite",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "격리 capture 회귀 실패: {}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    // Dispatch는 이미 살아 있지만 observe의 debug callsite는 아직 등록되지 않았다.
+    // capture 밖 thread가 그 callsite를 먼저 등록하는 사건을 join으로 확정한다.
+    let uncaptured = Log::default();
+    uncaptured.capture(|| {});
+    assert_eq!(tracing::level_filters::LevelFilter::current(), tracing::level_filters::LevelFilter::TRACE);
+    std::thread::spawn(|| {
+        ignored::<(), _>(Err(std::io::Error::from_raw_os_error(5)), "capture 밖 첫 호출");
+    })
+    .join()
+    .unwrap();
+    assert!(uncaptured.0.lock().unwrap().is_empty());
+    assert_eq!(tracing::level_filters::LevelFilter::current(), tracing::level_filters::LevelFilter::TRACE);
+
+    ignored_send_error_does_not_format_its_private_payload();
+    parallel_capture_keeps_every_event_in_its_own_log();
 }
