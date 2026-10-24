@@ -171,6 +171,8 @@ export function TermView({
   openFileRef.current = onOpenFile;
   const scrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  // 보관된 pane의 마지막 화면만 남긴다. 입력·소켓·xterm 인스턴스는 이탈 때 기존대로 정리한다.
+  const previewRef = useRef<HTMLElement | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   /** 출력이 멈춘 연결을 다시 붙인다(「다시 연결」 단추) */
@@ -473,6 +475,8 @@ export function TermView({
   useLayoutEffect(() => {
     presentRef.current = active;
     if (!active) { readonlyRef.current = true; setReadonly(true); setLink("closed"); }
+    // term-stack은 활성 화면에서만 mount된다. 새 칸에도 첫 paint 전에 이전 본문을 옮긴다.
+    else if (previewRef.current) box.current?.append(previewRef.current);
     return () => {
       presentRef.current = false;
     };
@@ -565,6 +569,7 @@ export function TermView({
     if (!active) return;
     readonlyRef.current = true;
     setReadonly(true);
+    setReason(null);
     setLink("connecting");
     // 복귀의 첫 본문을 먼저 그린다. 입력 연결은 별도로 준비하며, 빠른 전환은 예약도 취소한다.
     if (!attachedBefore.current) {
@@ -641,6 +646,10 @@ export function TermView({
     // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
     matchHerdrWidths(term);
     term.open(box.current!);
+    // 새 snapshot을 그릴 때까지 이전 본문을 덮지 않는다(복귀 전 세 frame에도 보인다).
+    if (previewRef.current && term.element) term.element.style.visibility = "hidden";
+    let snapshotPaintPending = false;
+    let outputPainted = false;
     // FitAddon은 scrollback이 있으면 세로 scrollbar 자리를 빼고 칸을 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라
     // 기본값 15px을 빼서 오른쪽 두 칸쯤이 늘 비었다. 참고는 scrollback 0이라 빼지 않는다(PaneTerminal 542~546줄). aaa xterm은
     // 기록을 가지므로(plan §8.67) scrollback을 두고, 그 자리를 0으로 둔다(scrollbar는 그리지 않는다: style.css, plan §8.124).
@@ -1319,6 +1328,13 @@ export function TermView({
     const renderSub = term.onRender(() => {
       const el = box.current;
       if (!el) return;
+      if (snapshotPaintPending) {
+        snapshotPaintPending = false;
+        outputPainted = true;
+        previewRef.current?.remove();
+        previewRef.current = null;
+        if (term.element) term.element.style.visibility = "";
+      }
       el.dataset.viewTop = String(term.buffer.active.viewportY);
       el.dataset.viewBase = String(term.buffer.active.baseY);
     });
@@ -1426,10 +1442,17 @@ export function TermView({
                 otherKeysRef.current = 0;
                 term.resize(cols, rows);
               });
-              term.write(replay, ack);
+              term.write(replay, () => {
+                ack();
+                if (!alive) return;
+                snapshotPaintPending = true;
+                term.refresh(0, term.rows - 1);
+              });
             });
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
+            // WebSocket open은 전송로만 열렸다는 뜻이다. host의 첫 화면·권한을 받은 뒤 입력 준비가 된다.
+            setLink("open");
             setError(null);
             break;
           }
@@ -1535,7 +1558,6 @@ export function TermView({
       wsRef.current = ws;
       ws.onopen = () => {
         delay = 500;
-        setLink("open");
       };
       ws.onmessage = (event) => receiver.push(event.data as string | ArrayBuffer);
       ws.onclose = (event) => {
@@ -1657,7 +1679,15 @@ export function TermView({
       offTheme();
       termRef.current = null;
       fitRef.current = null;
-      el.replaceChildren();
+      if (outputPainted && term.element) {
+        const preview = term.element.cloneNode(true) as HTMLElement;
+        preview.classList.add("terminal-preview");
+        preview.inert = true;
+        preview.setAttribute("aria-hidden", "true");
+        preview.querySelectorAll(".xterm-helpers, [id]").forEach(node => node.remove());
+        previewRef.current = preview;
+      }
+      el.replaceChildren(...(previewRef.current ? [previewRef.current] : []));
       // 앞 기록을 붙이는 중에 붙잡은 출력은 버린다: 이 터미널에 더 쓰지 않는다
       holding = null;
       // xterm이 걸어 둔 frame·task가 돈 뒤에 치운다(PaneTerminal 1982줄 `disposeAfterPendingFrame`): snapshot의 RIS로 Viewport.reset이

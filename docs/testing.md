@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## coordinator 복귀의 연결 준비·본문 보존(t-0998)
+
+- E2E109는 실제 host·agent·coordinator와 2,400행 합성 Claude 기록을 준비한다. WebSocket open은 통과시키고 실제 수신 메시지만 gate에 보류해 snapshot 전을 검사한다. thread·할 일·보고서에서 일반 이동/standalone Ctrl+Tab 각각 두 번씩 돌아오며, MutationObserver와 매 frame에서 거짓 「읽기 전용」이 없는지, 이전 터미널 본문이 첫 화면부터 남는지 확인한다. gate를 풀면 표시 사본이 없어지고 실제 입력이 PTY 화면에 나타나야 한다. Chromium 1280px·WebKit 390px, 합계 24회다. OS가 예약한 Ctrl+Tab의 네이티브 전달 시험은 아니다.
+- 수정 전 Chromium의 12회 모두 거짓 띠와 빈 본문이 재현됐다. 연결 완료를 socket open에서 snapshot 수신으로 옮기고, 이탈 시 xterm을 정리하면서 표시 전용 DOM 사본만 남긴다. active 조건으로 term-stack도 사라지므로 복귀 layout effect에서 새 칸으로 옮기고, 새 snapshot의 파싱·render 완료 뒤 사본을 제거한다. 소켓·xterm을 숨은 동안 살려 두거나 기록을 별도 저장하지 않는다.
+- E2E109의 Reader 복귀는 「보기 권한」 안내와 입력 송신 0회를 확인한다. 기존 E2E02는 다른 controller가 크기를 점유해도 동시 입력이 가능한 제품 정책을 유지하고, E2E13은 실제 agent 끊김/복구·host 재시작의 안내를 검사한다. E2E84의 499/500ms 연결 안내, E2E104의 보관·숨김 송신·DOM/관측기 수명, E2E105의 전환 키 경계도 유지한다. 고정 sleep·시한 연장·실패 재시도는 없다.
+- 검증: 웹 유닛 548개·타입 검사·번들/host 빌드, E2E02·07·09·13·30(chat-reading/thread-preparation)·84·97·103·104·105·109 총 12개 파일과 공개 검사를 통과했다. 새 fixture의 입력 방식/단추 선택자를 실제 UI에 맞추고, Reader 휴대폰 기본 대화 보기에서는 터미널로 전환한 뒤 입력 차단을 검사했다. 제품 시한·기대값은 바꾸지 않았다. 운영 배포·실기 확인은 이 검증에 포함하지 않는다.
+- 참고 후보는 [herdr-web-ui의 PaneTerminal](https://github.com/devswha/ovis/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/PaneTerminal.tsx)([MIT](https://github.com/devswha/ovis/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))와 [herdr의 wire protocol](https://github.com/herdrdev/herdr/blob/v0.9.5/src/protocol/wire.rs)([Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.9.5/LICENSE))이다. 전자의 presented/connected/inputReady/outputReady 분리와 후자의 연결 handshake·pane 표시 메시지 구분을 대조했다. 기존 aaa snapshot·권한 경로에만 적용하며 코드 복사·외부 의존성·API 변경은 없다.
+
 ## E2E93 터치 뒤 반대 방향 관성(t-0996)
 
 - t-0995의 Chromium 390px·Claude 직접 실행 실패는 터치 중 0→197px, 손을 뗀 뒤 197→0px의 native scroll이다. 해당 구간의 JS 위치 쓰기와 안내 높이 변화는 없었다. t-0851의 다른 history 위치 누수, t-0886의 1px 앵커 오분류, t-0905의 프로그램 reset 뒤 ±1px, t-0927·t-0932의 구독/종료 경합과 구별한다. 원본에는 touchmove 시각·compositor trace가 없어 당시 속도 표본까지 소급 확정하지 않는다.
