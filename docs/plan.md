@@ -7769,3 +7769,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - FRONT_API 1.119 `LibraryMarkRead { reports: LibraryRef[] }` → `LibraryReports`: 한 요청·한 DB transaction으로 읽음 표시한다. 권한은 기존 `LibraryOpen`과 같으며 Reader 호출도 허용한다. 웹에서는 확인한 최신 r 판을 보내고, 새 판이 생겼으면 옛 판의 확인으로 새 원본을 읽음 처리하지 않는다. 잘못된 이름·프로젝트는 쓰기 전에 거절한다. 중복·이미 읽은 항목은 멱등이다.
 - 실제 열람 시각·공유 링크의 opened는 바꾸지 않는다. 변경 때 기존 reports 사건을 한 번 보내 활동 막대·탭·다른 기기 배지를 갱신한다. 실패는 확인 창 안에 host 오류를 보이고 목록을 읽음으로 꾸미지 않는다. 버튼 묶음은 휴대폰에서 줄바꿈한다.
 - herdr-web-ui ConfirmDialog(MIT)의 취소 기본 초점·오류 표시와 Miniflux app.js(Apache-2.0)의 목록 일괄 읽음 패턴을 조사했다. 이미 이식된 확인 창을 재사용하고 외부 코드는 추가로 복사하지 않는다. E2E101과 host batch 시험으로 검증한다.
+
+### 8.481. Windows 계정 Codex 첫 신뢰·YOLO 유지(t-0953)
+
+- Windows canonicalize의 확장 경로로 기록한 cwd 신뢰가 Codex TUI의 DOS 조회와 어긋나 첫 신뢰·sandbox 안내를 반복했다. Codex와 같은 dunce로 뜻이 같은 경로만 줄여 기록한다. 본 저장소·이웃 worktree로 신뢰를 넓히지 않는다.
+- YOLO 인자는 기존 최초·재개 argv를 유지하며 Windows sandbox 선택·설치·UAC는 추가하지 않는다. 개인 Codex 홈은 그대로 두고 user 신뢰 정책에서는 사전 기록을 없앤다.
+- Windows native 회귀의 수정 전 실패·수정 후 통과, 실제 Codex의 첫 실행·재시작 brief와 승인 없는 명령, 전체 ci-local·Linux strict cross·공개 검사로 확인한다. 실기 thread는 자기 폴더에 격리하며 설치·운영 서비스는 바꾸지 않는다. [시험 절차](testing.md)의 전용 폴더·기준 목록 규칙을 따른다.
+- Codex·herdr(Apache-2.0)의 설정 홈과 신뢰 조회를 참고하고 dunce 1.0.5(CC0-1.0 OR MIT-0 OR Apache-2.0)를 Windows 의존성으로 사용한다. API·Agent link·웹 E2E 번호는 유지하며 절 번호는 착지 때 main과 대조한다.

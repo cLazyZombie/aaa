@@ -24,3 +24,7 @@ libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+dunce.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
