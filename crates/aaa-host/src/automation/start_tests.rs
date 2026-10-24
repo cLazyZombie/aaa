@@ -301,6 +301,114 @@ fn starts(f: &Fake) -> usize {
     f.requests.lock().unwrap().iter().filter(|q| matches!(q, AgentRequest::ThreadPrepare(_))).count()
 }
 
+/// 브라우저·실제 로그인·구독 요청 없이 웹과 같은 내구 캐시로 원격 Codex 자동화를 판정한다.
+#[tokio::test]
+async fn quota_gate_codex_uses_bound_account_and_preserves_pending_until_each_window_recovers() {
+    let mut l = auto_lab();
+    Arc::get_mut(&mut l.h)
+        .unwrap()
+        .cfg
+        .profiles
+        .insert("builder".into(), aaa_config::Profile { harness: "codex".into(), ..Default::default() });
+    let _a = l.fake(vec![]).await;
+    let agent = l.fake_on("b", "mac-b", vec!["work_files.v1".into()]).await;
+    let auth = r#"{"tokens":{"access_token":"fixture-access-only","refresh_token":"fixture-refresh-only"}}"#;
+    for account in ["work", "other"] {
+        l.h.accounts.import(account, "codex", auth).unwrap();
+    }
+    l.h.set_default_account("codex", Some("work")).unwrap();
+    let mut r = rule(&l, "reuse='open'");
+    let Action::Start(a) = &mut r.action else { panic!() };
+    a.profiles = vec!["builder".into()];
+    r.limits.usage_session_below = Some(5.0);
+    r.limits.usage_week_below = Some(10.0);
+    let root = l.h.project_dir("demo").unwrap();
+    std::fs::write(root.join("automations/check.toml"), toml::to_string(&automation::File::from_routine(&r)).unwrap())
+        .unwrap();
+    approve(&l, &r);
+    let generation = l.h.accounts.generation("work").unwrap();
+    let cache = |generation: &str, session: Option<f64>, week: f64| {
+        let now = util::now_ms();
+        let windows: Vec<_> = [(300, session), (10080, Some(week))].into_iter().filter_map(|(duration, used)| {
+            used.map(|used| serde_json::json!({"limit_id":"codex","window_id":format!("w-{duration}"),"scope":null,"duration_mins":duration,"used_percent":used,"observed_at_ms":now,"resets_at_ms":now+3600000}))
+        }).collect();
+        let entry = serde_json::json!({"generation":generation,"attempted_ms":now,"next_ms":now+60000,"readings":{"host":{"machine":"host","received_at_ms":now,"snapshot":{"generation":generation,"source":"codex_rpc","sampled_at_ms":now,"problem":null,"retry_at_ms":null,"windows":windows}}}});
+        l.h.db.set_meta("account-quota-v1/work", &entry.to_string()).unwrap();
+    };
+    cache(&generation, Some(50.0), 19.0);
+    let ready = crate::auto_start::Decision::Ready(crate::auto_start::Choice {
+        machine: "b".into(),
+        profile: "builder".into(),
+        repo: None,
+    });
+    assert!(!l.h.machine_is_local("b"), "원격 실행 fixture");
+    // 로컬 로그인 캐시는 비어 있지만 원격 머신도 등록 기본 계정으로 판정한다.
+    let updating = l.h.account_quota.lock().await;
+    assert_eq!(l.h.automation_start_usage("demo", &ready, &r.limits).await.unwrap(), automation::usage::Check::Allowed);
+    drop(updating);
+    let rec = seed(&l, "b", &[]);
+    l.h.update_rec("demo", &rec.id, |t| {
+        t.profile = "builder".into();
+        t.account = Some("work".into());
+        t.automation = Some("check".into());
+        t.pane = Some("s1".into());
+        t.work_dir = Some(l.root.join("work").to_string_lossy().into());
+    })
+    .unwrap();
+    // 기본 계정의 다른 신원·빈 사용량으로 기존 thread를 막거나 통과시키지 않는다.
+    l.h.set_default_account("codex", Some("other")).unwrap();
+    assert!(matches!(
+        l.h.automation_start_usage("demo", &ready, &r.limits).await.unwrap(),
+        automation::usage::Check::Unknown(_)
+    ));
+    l.h.automation_submit("demo", &r, "input-quota", "보존할 입력".into(), None).unwrap();
+    cache(&generation, None, 19.0);
+    l.h.automation_drain("demo", &r).await.unwrap();
+    assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 1);
+    assert!(l.h.routine_runs("demo", "check").unwrap().iter().any(|r| r.detail.contains("세션(5시간) 창 없음")));
+    cache("previous-login", Some(0.0), 0.0);
+    assert!(
+        matches!(
+            l.h.automation_start_usage("demo", &crate::auto_start::Decision::Reuse(rec.id.clone()), &r.limits)
+                .await
+                .unwrap(),
+            automation::usage::Check::Unknown(_)
+        ),
+        "이전 로그인 세대는 배제"
+    );
+    cache(&generation, Some(96.0), 19.0);
+    l.h.automation_drain("demo", &r).await.unwrap();
+    assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 1);
+    assert!(l.h.routine_runs("demo", "check").unwrap().iter().any(|r| r.detail == "사용량 문턱"));
+    cache(&generation, Some(50.0), 19.0);
+    l.h.automation_drain("demo", &r).await.unwrap();
+    assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 0);
+    l.h.automation_submit("demo", &r, "input-quota", "보존할 입력".into(), None).unwrap();
+    l.h.automation_drain("demo", &r).await.unwrap();
+    assert_eq!(starts(&agent), 0);
+    let writes =
+        agent.requests.lock().unwrap().iter().filter(|q| matches!(q, AgentRequest::WorkFileWrite { .. })).count();
+    assert_eq!(writes, 1, "보존한 입력은 열린 thread에 한 번만 전달");
+    l.h.accounts.remove("work").unwrap();
+    assert!(
+        matches!(
+            l.h.automation_start_usage("demo", &crate::auto_start::Decision::Reuse(rec.id.clone()), &r.limits)
+                .await.unwrap(),
+            automation::usage::Check::Unknown(s) if s.contains("캐시 조회 실패")
+        ),
+        "삭제한 계정의 캐시는 실행 근거가 되지 않는다"
+    );
+    l.h.set_default_account("codex", None).unwrap();
+    assert!(matches!(
+        l.h.automation_start_usage("demo", &ready, &r.limits).await.unwrap(),
+        automation::usage::Check::Unknown(s) if s.contains("등록 계정 없음")
+    ));
+    assert_eq!(
+        l.h.automation_start_usage("demo", &ready, &automation::Limits::default()).await.unwrap(),
+        automation::usage::Check::Allowed
+    );
+}
+
 #[tokio::test]
 async fn start_admission_owns_the_thread_before_recovery_can_observe_it() {
     use std::sync::atomic::{AtomicBool, Ordering};
