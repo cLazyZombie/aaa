@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+from scripts.shell_test_support import bash_executable
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MIB = 1024 * 1024
@@ -43,9 +45,10 @@ class PublicCheckTest(unittest.TestCase):
         self.git("add", "--", name)
 
     def check(self, *args):
-        return subprocess.run(["bash", "scripts/check-public.sh", *(args or ("HEAD",))],
+        return subprocess.run([bash_executable(), "scripts/check-public.sh", *(args or ("HEAD",))],
                               cwd=self.repo, env=self.env, capture_output=True, text=True)
 
+    @unittest.skipUnless(os.name == "posix", "개행 파일명은 Windows에서 만들 수 없다")
     def test_current_index_names_and_size_boundary(self):
         self.file("space dir/at boundary.bin", MIB)
         passed = self.check()
@@ -61,6 +64,7 @@ class PublicCheckTest(unittest.TestCase):
             self.assertIn("금지 확장자: " + name, blocked.stdout)
         self.assertIn("1MiB 넘는 파일: space dir/over boundary.bin", blocked.stdout)
 
+    @unittest.skipUnless(os.name == "posix", "개행 파일명은 Windows에서 만들 수 없다")
     def test_history_includes_deleted_forbidden_file(self):
         clean = self.check("--history", "HEAD")
         self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
@@ -75,6 +79,7 @@ class PublicCheckTest(unittest.TestCase):
         self.assertNotEqual(history.returncode, 0, history.stdout + history.stderr)
         self.assertIn("금지 확장자: " + name, history.stdout)
 
+    @unittest.skipUnless(os.name == "posix", "개행·탭 파일명은 Windows에서 만들 수 없다")
     def test_size_uses_worktree_bytes_and_preserves_unusual_names(self):
         names = ["line\nbreak.bin", "tab\tname.bin", "-leading.bin", "한글.bin"]
         for name in names:
@@ -119,7 +124,7 @@ class PublicCheckTest(unittest.TestCase):
         self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
         with open(raw_path, "ab") as output:
             output.write(b"x")
-        blocked = subprocess.run(["bash", "scripts/check-public.sh", "HEAD"], cwd=self.repo,
+        blocked = subprocess.run([bash_executable(), "scripts/check-public.sh", "HEAD"], cwd=self.repo,
                                  env=self.env, capture_output=True)
         self.assertNotEqual(blocked.returncode, 0, blocked.stdout + blocked.stderr)
         self.assertIn(b"1MiB " + "넘는 파일: ".encode() + raw_name, blocked.stdout)

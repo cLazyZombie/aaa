@@ -201,6 +201,7 @@ raise SystemExit(int(sys.argv[3]))
                 self.assertLessEqual(active, 15)
             self.assertEqual(active, 0)
 
+    @unittest.skipUnless(os.name == "posix", "가짜 Cargo·시험 실행 파일의 Unix shebang이 필요하다")
     def test_real_runner_keeps_all_artifacts_and_doctests_after_a_binary_failure(self):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-pipeline-") as tmp:
             root = Path(tmp)

@@ -64,6 +64,7 @@ sys.exit(7 if os.environ.get("FAIL_STAGE") == stage else 0)
 '''
 
 
+@unittest.skipUnless(os.name == "posix", "Unix shebang 도구와 Unix CI 단계 분기를 검사한다")
 class CiLocal(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="aaa-ci-contract-")
@@ -249,13 +250,17 @@ class CiLocal(unittest.TestCase):
         for stage in ("test", "e2e", "clippy", "public"):
             self.assertIn(f"{stage}|ok|", summary)
 
+
+class CiStream(unittest.TestCase):
     def test_reader_preserves_unicode_across_chunks_and_drains_after_done(self):
-        logs = self.root / "logs"
+        temporary = tempfile.TemporaryDirectory(prefix="aaa-ci-stream-")
+        self.addCleanup(temporary.cleanup)
+        logs = Path(temporary.name) / "logs"
         logs.mkdir()
         (logs / "test.log").write_text("x" * 8191 + "한글\n" + "y" * 20000 + "끝")
         done = logs / "done"
         done.touch()
-        result = subprocess.run([sys.executable, str(self.root / "scripts/ci_stream.py"),
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/ci_stream.py"),
                                  str(logs), str(done), "test"],
                                 env=dict(os.environ, PYTHONIOENCODING="ascii"),
                                 capture_output=True, text=True, timeout=10)
