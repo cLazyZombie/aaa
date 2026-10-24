@@ -2,6 +2,8 @@
 
 `aaa setup`은 host 주소·머신 이름·작업 폴더를 확인하고, 등록 → 실행 파일 → 설정 → 서비스 → host 연결을 한 실행에서 진행한다. Windows 암호 질문은 Unix에서 나오지 않는다. host 웹에서 등록 창을 열고 설치기에 표시된 확인 코드로 승인한다.
 
+[README의 한 줄 설치](../README.md#설치)는 같은 setup을 연다. Pages 셸 입구는 실행 파일과 macOS launcher를 검증해 준비한다. 게시 상태·수동 다운로드는 README, 생성·게시 절차는 [Pages 안내](install-pages.md)를 따른다.
+
 사용자가 일반 터미널에서 실행한다. SSH는 `ssh -t`로 터미널을 붙인다. aaa pane 안이거나 표준 입력이 터미널이 아니면 설치·제거를 거부한다. `--status`는 읽기 전용이라 터미널 없이도 쓸 수 있다. `-y`는 질문 기본값을 사용하며 첫 설치의 최종 계획 확인과 host 등록 승인을 생략하지 않는다.
 
 ## macOS
@@ -53,4 +55,4 @@ systemd가 있는 glibc 환경에서 일반 사용자로 실행한다. 기본은
 
 [rustup-init](https://github.com/rust-lang/rustup/blob/master/src/cli/self_update.rs)(MIT 또는 Apache-2.0)의 자기 실행 파일 배치와 OS별 경계, [cargo-dist installer](https://github.com/axodotdev/cargo-dist/blob/main/cargo-dist/templates/installer/installer.sh.j2)(해당 템플릿 MIT)의 설치 위치와 PATH 변경 구분, [Tailscale installer](https://github.com/tailscale/tailscale/blob/main/scripts/installer.sh)(BSD-3-Clause)의 OS 사전 점검을 참고했다. 외부 코드·의존성을 가져오지 않는다. systemd 명령 인자와 실행 환경은 [systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)·[systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)의 규칙을 따른다.
 
-이 변경은 `setup`의 Unix 실행 경로다. release 게시·macOS/Linux 다운로드 bootstrap·기존 `aaa install`의 Linux I4·운영 서비스 이관을 완료했다는 뜻은 아니다.
+이 문서는 `setup`의 Unix 실행 경로다. 다운로드 입구는 [Pages 안내](install-pages.md)에서 따로 다룬다. 기존 `aaa install`의 Linux I4·운영 서비스 이관을 완료했다는 뜻은 아니다.

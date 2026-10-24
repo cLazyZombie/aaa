@@ -37,107 +37,63 @@ Claude Code·Codex가 각 머신에서 일하고, aaa는 그 터미널과 작업
 
 ## 설치
 
-**host를 먼저 준비하고 각 머신에서 `aaa setup`으로 agent를 연결합니다.** ✋는 사용자가 자기 터미널이나 설정 화면에서 직접 해야 하는 단계입니다.
+**host를 먼저 [운영 점검표](docs/install-runbook.md)대로 준비하고, 각 머신의 일반 터미널에서 아래 한 줄을 실행합니다.** 스크립트가 OS·CPU에 맞는 공개 release를 받고 SHA-256을 검증한 뒤 `aaa setup`을 엽니다. ✋는 사용자가 직접 해야 하는 단계입니다.
 
-> 공개 release **v0.1.6부터 macOS·Linux·Windows의 `aaa setup`을 포함합니다.** Windows 한 줄 설치도 `aaa setup`을 실행합니다. macOS·Linux 다운로드용 한 줄 설치는 아직 제공하지 않으므로 아래처럼 실행 파일을 직접 받습니다.
+### 1. 한 줄로 시작 ✋
 
-아래에서 설치 뒤의 `aaa`는 설치된 실행 파일을 뜻합니다. macOS·Linux의 기본 경로는 `~/.local/bin/aaa`, Windows는 `%USERPROFILE%\.local\bin\aaa.exe`입니다. PATH에 없다면 전체 경로로 실행하세요.
+**macOS · Linux**
 
-### 준비물과 역할
+```sh
+curl -fsSL https://cLazyZombie.github.io/aaa/install.sh | sh
+```
 
-| 역할 | 환경 | 준비할 것 |
+**Windows — 관리자 PowerShell**
+
+```powershell
+irm https://cLazyZombie.github.io/aaa/install.ps1 | iex
+```
+
+> Pages 입구는 게시 준비 중입니다. 최초 게시 전에는 [아래 수동 다운로드](#수동-다운로드소스-빌드)를 사용합니다. 게시 담당자는 [Pages 게시 절차](docs/install-pages.md)를 따릅니다.
+
+macOS·Linux는 arm64와 x86_64, Windows는 x86_64를 지원합니다. 설치할 사용자 계정으로 실행하고, aaa pane 밖에서 진행합니다. SSH는 `ssh -t`로 터미널을 붙입니다. macOS·Linux의 설치 명령 전체를 `sudo`로 실행하지 않습니다.
+
+### 2. setup 질문에 답하기 ✋
+
+1. **host 주소·머신 이름·작업 폴더**를 확인합니다. host 주소는 스크립트에 넣지 않고 setup에서 입력합니다.
+2. 설치기가 보여 주는 **변경 계획**을 확인합니다. 실행 파일·설정·등록·서비스 처리는 setup이 맡습니다.
+3. host 웹의 **설정 → 머신 → 등록 창 열기**를 누릅니다. 설치기에 나온 확인 코드를 **승인을 기다리는 머신 → 승인**에 입력합니다. host 터미널에서는 `aaa machine enroll --open 10m`으로 등록 창을 열 수도 있습니다.
+4. 같은 설치 화면에서 서비스 시작과 host 연결 결과를 확인합니다.
+
+OS별 준비는 다음과 같습니다.
+
+| OS | setup이 준비하는 것 | 사용자가 준비할 것 |
 | --- | --- | --- |
-| host | macOS 운영 절차 제공 | aaa, Tailscale 로그인, 고정 launcher와 사용자 권한 설정 |
-| macOS agent | GUI 로그인한 사용자 | aaa와 launcher, 사용할 agent CLI의 설치·로그인 |
-| Linux agent | glibc·systemd | aaa, 실행 중인 사용자 systemd manager, agent CLI의 설치·로그인 |
-| Windows agent | Windows x86_64 | aaa, 관리자 권한의 대화형 콘솔, agent CLI의 설치·로그인, Windows 로그인 암호 |
+| macOS | 사용자 LaunchAgent·새 설치의 launcher | GUI 로그인, 개발자 도구·전체 디스크 접근 권한, 잠긴 키체인 해제 |
+| Linux | 기본 systemd 사용자 서비스 | glibc·systemd와 실행 중인 사용자 manager |
+| Windows | 사용자 계정의 Windows 서비스 | 관리자 콘솔, Windows 로그인 암호(PIN과 다름) |
 
-host는 웹과 프로젝트 상태를 관리하고, 각 agent는 자기 머신의 터미널과 작업 폴더를 관리합니다. 웹은 host에만 연결합니다. 웹을 닫거나 연결이 끊겨도 머신에서 실행 중인 세션은 이어집니다. 머신 재부팅이 실행 중인 프로세스까지 보존하는 것은 아닙니다.
+macOS 입구는 같은 release의 launcher package도 검증해 setup에 넘깁니다. 기존 launcher는 보존합니다. Linux의 로그아웃 뒤 실행은 manager·linger 설정에 달려 있으며 setup은 linger를 켜지 않습니다. 시스템 서비스는 [Linux 설치 안내](docs/unix-setup.md#linux)에 따라 선택합니다.
 
-v0.1.6 실행 파일은 [GitHub releases](https://github.com/cLazyZombie/aaa/releases)에서 자기 OS·CPU에 맞는 것을 받고 같은 release의 `SHA256SUMS`로 확인합니다. 내려받은 판에 필요한 기능이 있는지 `aaa --version`과 `aaa setup --help`로 확인하세요. 현재 main을 직접 빌드하려면 [개발](#개발)을 따릅니다.
+**Windows 로그인 암호는 설치기의 숨김 입력칸에만 입력합니다.** 채팅·명령 인자·보고서에 넣지 않습니다. 사용할 agent CLI의 설치와 로그인은 각 머신에서 따로 준비합니다. 상세 절차는 [macOS·Linux setup](docs/unix-setup.md)과 [Windows setup](docs/windows-setup.md)에 있습니다.
 
-### 1. host 준비 ✋
-
-host 설치는 `setup`의 대상이 아닙니다. [운영 설치 점검표](docs/install-runbook.md)의 launcher 준비 → host 설정 → host 서비스 등록 순서를 따릅니다. macOS의 개발자 도구·전체 디스크 접근 권한과 키체인은 사용자가 직접 설정합니다. 기존 설치가 있으면 새 설정으로 덮어쓰지 않습니다.
-
-host가 실행되면 웹을 열고 사용할 기기를 연결합니다.
-
-```sh
-~/.local/bin/aaa web publish
-~/.local/bin/aaa web pair
-```
-
-✋ 표시된 tailnet HTTPS 주소를 브라우저에서 열고 1회용 코드를 넣습니다. 읽기 전용 기기는 `web pair --reader`로 연결합니다. 휴대폰도 같은 tailnet에 로그인해야 합니다. iPhone은 Safari의 **공유 → 홈 화면에 추가**로 열고 그 앱에서 알림을 켭니다.
-
-웹 **설정 → 머신 → 등록 창 열기**를 누르거나 host 터미널에서 등록 창을 엽니다.
-
-```sh
-~/.local/bin/aaa machine enroll --open 10m
-```
-
-### 2. 각 머신에서 agent 설치 ✋
-
-aaa의 pane 밖, **설치할 사용자 계정의 일반 터미널**에서 실행합니다. `host.example.ts.net`은 예시이므로 host의 주소로 바꿉니다. SSH로 실행할 때는 `ssh -t`로 대화형 터미널을 붙입니다.
-
-**macOS**
-
-release에서 CPU에 맞는 `aaa-macos-aarch64` 또는 `aaa-macos-x86_64`를 받고 `SHA256SUMS`로 확인한 뒤 `aaa`로 이름을 바꾸고 `chmod +x aaa`로 실행 권한을 줍니다. 새 Mac은 같은 CPU의 `aaa-launcher-macos-….json`도 같은 폴더에 받습니다.
-
-```sh
-./aaa setup --host host.example.ts.net --name mac-a
-```
-
-사용자 LaunchAgent로 등록하며 로그인 뒤 자동 실행합니다. 기존 `~/Applications/aaa-launcher.app`을 보존해 사용합니다. 새 Mac은 실행 파일과 맞는 launcher package가 필요합니다. ✋ 개발자 도구·전체 디스크 접근 권한, 잠긴 키체인은 사용자가 직접 처리합니다. [macOS 준비와 설치](docs/unix-setup.md#macos)를 따릅니다.
-
-**Linux**
-
-release에서 CPU에 맞는 `aaa-linux-x86_64` 또는 `aaa-linux-aarch64`를 받고 `SHA256SUMS`로 확인한 뒤 `aaa`로 이름을 바꾸고 `chmod +x aaa`로 실행 권한을 줍니다.
-
-```sh
-./aaa setup --host host.example.ts.net --name linux-a
-```
-
-기본은 systemd 사용자 서비스입니다. 로그아웃 뒤에도 유지되는지는 사용자 manager·linger 설정에 달려 있으며 설치기가 linger를 켜지 않습니다. 부팅 때 실행할 시스템 서비스를 원하면 일반 사용자로 다음 명령을 실행합니다.
-
-```sh
-./aaa setup --service systemd-system --host host.example.ts.net --name linux-a
-```
-
-✋ unit 등록·시작에 필요한 권한만 `sudo`로 받습니다. 설치기 전체를 `sudo`로 실행하지 않습니다. [Linux 서비스와 로그](docs/unix-setup.md#linux)를 참고하세요.
-
-**Windows**
-
-관리자 PowerShell에서 한 줄로 받아 설치합니다.
-
-```powershell
-irm https://github.com/cLazyZombie/aaa/releases/latest/download/install.ps1 | iex
-```
-
-직접 받을 때는 release의 `aaa-windows-x86_64.exe`를 `aaa.exe`로 이름을 바꾼 뒤 실행합니다.
-
-```powershell
-.\aaa.exe setup --host host.example.ts.net --name win-a
-```
-
-같은 실행 파일을 `aaa-setup.exe`로 받은 경우 `.\aaa-setup.exe`만 실행해도 됩니다. ✋ 관리자 권한의 대화형 콘솔에서 계획을 확인하고 **Windows 로그인 암호를 설치기의 숨김 입력칸에만** 입력합니다. PIN과는 다릅니다. 암호를 채팅·질문 답·명령 인자·보고서에 넣지 않습니다. 사용자 계정으로 Windows 서비스를 등록해 그 계정의 agent 로그인과 환경을 사용합니다. [Windows 설치기](docs/windows-setup.md)에 상세 절차가 있습니다.
-
-세 OS 모두 host 주소·머신 이름·작업 폴더와 변경 계획을 확인한 뒤 등록을 진행합니다. ✋ 설치기에 나온 확인 코드를 host 웹의 **승인을 기다리는 머신 → 승인**에 입력합니다. 설치기는 같은 실행에서 파일·설정·서비스를 준비하고 host 연결까지 확인합니다.
-
-### 3. 완료 확인과 첫 연결
+### 3. 완료 확인
 
 설치한 머신에서:
 
 ```sh
+aaa --version
 aaa setup --status
 ```
+
+기본 실행 파일은 macOS·Linux의 `~/.local/bin/aaa`, Windows의 `%USERPROFILE%\.local\bin\aaa.exe`입니다. PATH에서 찾지 못하면 이 전체 경로로 실행합니다.
 
 host에서:
 
 ```sh
-~/.local/bin/aaa machine list
+aaa machine list
 ```
 
-**서비스 실행과 host 연결이 모두 확인되고, host 목록에서 새 머신이 「연결」이면 agent 설치가 끝난 것입니다.** 연결 실패 뒤 서비스를 남겼다는 것만으로 설치 완료로 보지 않습니다. 설치기가 표시한 로그 위치와 오류를 확인합니다.
+**서비스 실행과 host 연결이 확인되고, host 목록에서 새 머신이 「연결」이면 설치가 끝난 것입니다.** 연결 실패 뒤 서비스를 남긴 것만으로 완료로 보지 않습니다. 설치기가 표시한 로그 위치와 원인을 확인합니다.
 
 Codex를 쓰는 머신은 hook을 설치합니다. ✋ 새 Codex 세션의 Hooks 화면에서 aaa hook을 검토하고 신뢰합니다.
 
@@ -146,18 +102,62 @@ aaa integration install codex
 aaa doctor
 ```
 
-웹의 머신 정보에서 **자동 배정할 workspace**를 고릅니다. 저장소와 작업 폴더가 준비된 머신만 켜세요. 자동 배정과 명시적 머신 지정의 차이는 [workspace 설정](docs/workspace-access.md)에 있습니다.
+웹의 머신 정보에서 **자동 배정할 workspace**를 고릅니다. 저장소와 작업 폴더가 준비된 머신만 켜세요. [workspace 설정](docs/workspace-access.md)에 자세한 설명이 있습니다.
+
+### host와 웹 준비
+
+host는 웹과 프로젝트 상태를 관리하고 각 agent는 자기 머신의 터미널·작업 폴더를 관리합니다. 웹은 host에만 연결합니다. 웹을 닫거나 연결이 끊겨도 실행 중인 세션은 이어집니다. 머신 재부팅이 실행 중인 프로세스까지 보존하는 것은 아닙니다.
+
+host 설치는 setup의 대상이 아닙니다. macOS host의 launcher → 설정 → 서비스 등록은 [운영 설치 점검표](docs/install-runbook.md)를 따릅니다. Tailscale 로그인과 사용자 권한을 준비하고 기존 설정을 보존합니다. host를 실행한 뒤 웹을 열고 기기를 연결합니다.
+
+```sh
+~/.local/bin/aaa web publish
+~/.local/bin/aaa web pair
+```
+
+✋ 표시된 tailnet HTTPS 주소를 브라우저에서 열고 1회용 코드를 넣습니다. 읽기 전용 기기는 `web pair --reader`로 연결합니다. 휴대폰도 같은 tailnet에 로그인해야 합니다. iPhone은 Safari의 **공유 → 홈 화면에 추가**로 열고 그 앱에서 알림을 켭니다.
+
+### 수동 다운로드·소스 빌드
+
+[GitHub releases](https://github.com/cLazyZombie/aaa/releases/latest)에서 실행 파일과 같은 release의 `SHA256SUMS`를 받습니다. 세 OS의 setup은 v0.1.6부터 제공합니다.
+
+| OS·CPU | 실행 파일 |
+| --- | --- |
+| macOS Apple Silicon | `aaa-macos-aarch64` |
+| macOS Intel | `aaa-macos-x86_64` |
+| Linux arm64 | `aaa-linux-aarch64` |
+| Linux x86_64 | `aaa-linux-x86_64` |
+| Windows x86_64 | `aaa-windows-x86_64.exe` |
+
+macOS·Linux는 `shasum -a 256 <파일>` 또는 `sha256sum <파일>`, Windows는 `Get-FileHash <파일> -Algorithm SHA256`의 값을 해당 파일의 `SHA256SUMS` 행과 비교합니다. 일치한 실행 파일을 Unix에서는 `aaa`, Windows에서는 `aaa.exe`로 이름을 바꿉니다. 새 Mac은 같은 CPU의 `aaa-launcher-macos-….json`도 받아 SHA를 확인하고 실행 파일 옆에 둡니다.
+
+```sh
+chmod +x aaa
+./aaa setup
+```
+
+```powershell
+.\aaa.exe setup
+```
+
+Windows는 기존 공개 release의 한 줄 입구도 사용할 수 있습니다.
+
+```powershell
+irm https://github.com/cLazyZombie/aaa/releases/latest/download/install.ps1 | iex
+```
+
+현재 소스를 직접 빌드하려면 [개발](#개발)을 따릅니다.
 
 ### 갱신·제거
 
-setup으로 설치한 agent는 **새 실행 파일로 같은 instance의 setup을 다시 실행**합니다. 등록을 유지하고 서비스를 갱신·재시작해 연결을 확인합니다. host·이름을 바꾸거나 예전 설치 방식에서 옮길 때는 각 OS 문서의 제거·충돌 안내를 따릅니다.
+갱신은 새 실행 파일로 같은 instance의 setup을 다시 실행합니다. 위 한 줄 명령은 Pages에 게시된 판의 setup을 실행합니다. 등록을 유지하고 서비스를 갱신·재시작해 연결을 확인합니다. host·이름 변경이나 예전 설치 방식에서 옮길 때는 OS별 안내를 따릅니다.
 
 ```sh
 aaa setup --status
 aaa setup --uninstall
 ```
 
-제거해도 실행 파일은 남습니다. 설정·상태까지 지우는 `--purge`와 별도 instance의 조회·제거는 [Unix](docs/unix-setup.md#상태갱신제거)·[Windows](docs/windows-setup.md#다시-실행상태제거) 문서를 먼저 확인하세요. host의 업데이트·되돌리기는 [운영 점검표](docs/install-runbook.md#9-업그레이드)를 따릅니다.
+제거해도 실행 파일은 남습니다. `--purge`와 별도 instance의 조회·제거는 [Unix](docs/unix-setup.md#상태갱신제거)·[Windows](docs/windows-setup.md#다시-실행상태제거) 문서를 먼저 확인하세요. host의 업데이트·되돌리기는 [운영 점검표](docs/install-runbook.md#9-업그레이드)를 따릅니다.
 
 ## 첫 프로젝트
 

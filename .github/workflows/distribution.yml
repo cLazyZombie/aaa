@@ -2,20 +2,31 @@ name: release 계약
 
 on:
   pull_request:
-    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", "scripts/bootstrap/**", "scripts/release.py", "scripts/test_release.py", "Cargo.toml"]
+    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", ".github/workflows/install-pages.yml", "scripts/bootstrap/**", "scripts/release.py", "scripts/test_release.py", "scripts/build_install_site.py", "scripts/test_install_site.py", "Cargo.toml"]
   push:
     branches: [main]
-    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", "scripts/bootstrap/**", "scripts/release.py", "scripts/test_release.py", "Cargo.toml"]
+    paths: [".github/workflows/release.yml", ".github/workflows/distribution.yml", ".github/workflows/install-pages.yml", "scripts/bootstrap/**", "scripts/release.py", "scripts/test_release.py", "scripts/build_install_site.py", "scripts/test_install_site.py", "Cargo.toml"]
 
 permissions:
   contents: read
 
 jobs:
   validate:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
+      - name: Windows PE 시험 도구
+        if: runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
       - name: release 도구 계약 시험
-        run: python3 -m unittest scripts.test_release
+        run: python3 -m unittest scripts.test_release scripts.test_install_site
