@@ -1340,3 +1340,84 @@ async fn equal_schedule_input_ids_in_different_rules_create_distinct_notices() {
     assert_ne!(a.id, b.id);
     assert_eq!(a.body, b.body);
 }
+
+#[test]
+fn scheduled_open_thread_condition_roundtrips_and_rejects_wrong_triggers() {
+    let p = Project::new();
+    let source = "schema=2\n[trigger]\nkind='schedule'\nevery='10m'\n[condition]\nmin_open_threads=1\n[action]\nkind='notice'\ntext='점검'\n";
+    for observe in ["", "[observe]\nkind='command'\ncommand='echo data'\n"] {
+        let source = if observe.is_empty() {
+            source.to_string()
+        } else {
+            source
+                .replace("[condition]", &format!("{observe}[condition]"))
+                .replace("min_open_threads=1", "min_open_threads=1\noutput_changed=true")
+        };
+        let r = parse(&p.0, "check", &source).unwrap();
+        assert_eq!(r.min_open_threads, Some(1));
+        assert!(crate::routine::trigger_label(&r).contains("열린 일반 thread 1개 이상"));
+        let encoded = model::encode(&File::from_routine(&r)).unwrap();
+        assert_eq!(parse(&p.0, "check", &encoded).unwrap().min_open_threads, Some(1));
+        assert!(parse(&p.0, "check", &source.replace("min_open_threads=1", "min_open_threads=0")).is_err());
+        assert!(parse(&p.0, "check", &source.replace("min_open_threads=1", "min_open_threads=-1")).is_err());
+    }
+    let invalid = source.replace("kind='schedule'\nevery='10m'", "kind='event'\nsource='thread'");
+    assert!(parse(&p.0, "check", &invalid).unwrap_err().contains("condition"));
+}
+
+#[tokio::test]
+async fn schedule_requires_open_worker_threads_without_catching_up_skips() {
+    use aaa_proto::{Role, ThreadStatus};
+    let p = Project::new();
+    let h = demo_host(&p);
+    let dir = p.0.join("projects/demo");
+    p.write("projects/demo/automations/check.toml", "schema=2\n[trigger]\nkind='schedule'\nevery='1m'\n[condition]\nmin_open_threads=1\n[action]\nkind='notice'\ntext='점검'\n");
+    let add = |project: &str, id: &str, status, automation: Option<&str>, role| {
+        let mut r = crate::orch::ThreadRec::starting(project, id, "m", "fake", role, aaa_proto::ThreadKind::Dir, 1);
+        r.status = status;
+        r.automation = automation.map(str::to_string);
+        assert!(h.db.thread_import(project, id, "fixture", &serde_json::to_string(&r).unwrap()).unwrap());
+    };
+    let due = || {
+        h.db.set_meta(
+            "routine:demo:check",
+            &serde_json::json!({"last_run_ms": aaa_common::util::now_ms() - 120_000}).to_string(),
+        )
+        .unwrap()
+    };
+    let check_skip = || {
+        due();
+        h.routine_pass("demo", &dir, true);
+        let views = h.routines("demo").unwrap();
+        let view = views.iter().find(|r| r.name == "check").unwrap();
+        assert_eq!(view.last_skip.as_ref().unwrap().detail, "열린 일반 thread 부족: 0/1");
+        assert!(h.db.inbox_list(Some("demo"), false).unwrap().iter().all(|i| i.subject != "check"));
+    };
+    check_skip();
+    add("demo", "t-0001", ThreadStatus::Open, Some("ci-watch"), Role::Worker);
+    check_skip();
+    add("demo", "t-0002", ThreadStatus::Parked, None, Role::Worker);
+    check_skip();
+    add("demo", "t-0003", ThreadStatus::Resolved, None, Role::Worker);
+    add("demo", "t-0004", ThreadStatus::Failed, None, Role::Worker);
+    add("demo", "t-0005", ThreadStatus::Open, None, Role::Coordinator);
+    add("other", "t-0001", ThreadStatus::Open, None, Role::Worker);
+    check_skip();
+    add("demo", "t-0006", ThreadStatus::Open, None, Role::Worker);
+    // 방금 소비한 차례를 같은 분에 catch_up으로 깨우지 않는다.
+    h.routine_pass("demo", &dir, true);
+    let rule = parse(&dir, "check", &std::fs::read_to_string(dir.join("automations/check.toml")).unwrap()).unwrap();
+    h.automation_drain("demo", &rule).await.unwrap();
+    assert!(h.db.inbox_list(Some("demo"), false).unwrap().iter().all(|i| i.subject != "check"));
+    due();
+    h.routine_pass("demo", &dir, true);
+    let rule = parse(&dir, "check", &std::fs::read_to_string(dir.join("automations/check.toml")).unwrap()).unwrap();
+    h.automation_drain("demo", &rule).await.unwrap();
+    assert_eq!(
+        h.db.inbox_list(Some("demo"), false).unwrap().iter().filter(|i| i.subject == "check").count(),
+        1,
+        "queue={:?}, runs={:?}",
+        h.automation_queue("demo", "check"),
+        h.routine_runs("demo", "check")
+    );
+}

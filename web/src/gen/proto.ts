@@ -2112,7 +2112,11 @@ export type AutomationObserve = { "kind": "command" } & AutomationCommand;
 
 export type AutomationCommand = { command: string, machine?: string | null, };
 
-export type AutomationCondition = { events: Array<string>, repos: Array<string>, branches: Array<string>, workflows: Array<string>, include_automation: boolean, output_changed: boolean, min_commits: number | null, };
+export type AutomationCondition = {
+/**
+ * 일정에 필요한 열린 일반 thread 최소 개수. 자동화·완료·보류 thread는 제외한다.
+ */
+min_open_threads: number | null, events: Array<string>, repos: Array<string>, branches: Array<string>, workflows: Array<string>, include_automation: boolean, output_changed: boolean, min_commits: number | null, };
 
 export type AutomationPolicy = { batch: string | null, min_gap: string | null, max_per_day: number | null, max_running: number | null, usage_session_below: number | null, usage_week_below: number | null, };
 

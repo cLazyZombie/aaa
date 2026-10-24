@@ -225,6 +225,15 @@
             "null"
           ]
         },
+        "min_open_threads": {
+          "description": "일정에 필요한 열린 일반 thread 최소 개수. 자동화·완료·보류 thread는 제외한다.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "output_changed": {
           "type": "boolean"
         },

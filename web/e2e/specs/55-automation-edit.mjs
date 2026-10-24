@@ -82,6 +82,35 @@ export default async function ({ page }) {
     if (aaa("inbox", "list", "demo", "--peek").items.some((i) => i.subject === "watch" && i.item_kind === "routine")) throw new Error("저장만으로 안내가 생겼다");
   });
 
+  await step("일정의 열린 일반 thread 조건: 폼·TOML·검토·저장·다시 열기·CLI", async () => {
+    await page.getByTestId("automation-new-demo").click();
+    const sheet = page.getByTestId("automation-editor");
+    await sheet.waitFor();
+    await sheet.getByTestId("automation-form-name").fill("active-check");
+    await sheet.getByTestId("automation-form-body").fill("열린 작업을 점검한다");
+    await sheet.getByTestId("automation-form-min-open-threads").fill("1");
+    await tomlHas(page, sheet, "min_open_threads = 1");
+    await sheet.getByTestId("automation-tab-review").click();
+    await until("검토에 열린 thread 조건", async () => (await sheet.getByTestId("automation-review").textContent()).includes("열린 일반 thread 1개 이상(자동화·완료·보류 제외)"));
+    await sheet.getByTestId("automation-save").click();
+    await sheet.waitFor({ state: "detached" });
+    const detail = page.getByTestId("automation-detail");
+    await detail.waitFor();
+    const doc = aaa("automation", "show", "active-check");
+    if (!doc.doc.text.includes("min_open_threads = 1")) throw new Error(`CLI show 조건 누락: ${JSON.stringify(doc)}`);
+    if (!rule("active-check").trigger.includes("열린 일반 thread 1개 이상")) throw new Error("CLI 목록 조건 누락");
+    await detail.getByRole("button", { name: "고치기", exact: true }).click();
+    await sheet.waitFor();
+    if (await sheet.getByTestId("automation-form-min-open-threads").inputValue() !== "1") throw new Error("다시 연 폼 조건 누락");
+    await sheet.getByTestId("automation-form-min-open-threads").fill("");
+    await tomlHas(page, sheet, "[trigger]");
+    if ((await sheet.getByTestId("automation-toml").inputValue()).includes("min_open_threads")) throw new Error("빈 조건 제거 실패");
+    await sheet.getByTestId("automation-save").click();
+    await sheet.waitFor({ state: "detached" });
+    await detail.waitFor();
+    await closeDetail(page);
+  });
+
   await step("충돌: 두 브라우저·파일 직접 편집 중 본 판이 아니면 아무것도 쓰지 않고 차이를 보이며, 사람이 고른다", async () => {
     // a(page)가 편집기를 연 채, 파일을 직접 고친다
     const sheetA = page.getByTestId("automation-editor");

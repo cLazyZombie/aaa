@@ -76,6 +76,10 @@ pub struct AutomationCommand {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(default, deny_unknown_fields)]
 pub struct AutomationCondition {
+    /// 일정에 필요한 열린 일반 thread 최소 개수. 자동화·완료·보류 thread는 제외한다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1))]
+    pub min_open_threads: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

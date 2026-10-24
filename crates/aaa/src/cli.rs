@@ -4958,6 +4958,9 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::AutomationDoc { doc } => {
             let _ = writeln!(s, "{} · {} · sha256 {}", doc.name, doc.file, doc.sha256);
+            if let Some(review) = &doc.check.review {
+                let _ = writeln!(s, "{} → {}", review.trigger, review.action);
+            }
             for e in doc.check.errors.iter().chain(&doc.check.warnings) {
                 let _ = writeln!(s, "  {e}");
             }

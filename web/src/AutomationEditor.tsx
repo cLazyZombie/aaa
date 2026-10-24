@@ -49,6 +49,7 @@ function Timing({ form, update }: { form: Form; update: (f: Form) => void }) {
     </fieldset>
     {daily ? <Text label="시각(host 지역 시간)" value={c.daily} onChange={(v) => set("daily", v)} placeholder="09:00" testid="automation-form-daily" />
       : <Text label="간격" value={c.every} onChange={(v) => set("every", v)} placeholder="30m · 2h · 1d" testid="automation-form-every" />}
+    <Text label="열린 일반 thread 최소 개수" value={c.min_open_threads} onChange={(v) => set("min_open_threads", v === "" ? null : Number(v))} placeholder="비우면 제한 없음" testid="automation-form-min-open-threads" hint="자동화·완료·보류 thread는 제외한다. 부족한 차례는 기록하고 넘긴다" />
     <Field label="놓친 차례"><select className="input" value={c.catch_up === "skip" ? "skip" : "once"} onChange={(e) => set("catch_up", e.target.value)}><option value="once">한 번으로 모아 돈다</option><option value="skip">기록하고 넘긴다</option></select></Field>
   </>;
 }

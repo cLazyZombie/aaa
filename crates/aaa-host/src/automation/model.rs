@@ -35,7 +35,9 @@ pub(crate) fn from_v2(d: D) -> Result<File, String> {
     remaining.min_commits = None;
     let on = match d.trigger {
         T::Schedule { every, daily, catch_up } => {
-            let schedule = Scheduled { every, daily, catch_up: convert(catch_up)? };
+            remaining.min_open_threads = None;
+            let schedule =
+                Scheduled { every, daily, catch_up: convert(catch_up)?, min_open_threads: c.min_open_threads };
             if let Some(O::Command(cmd)) = d.observe {
                 if !c.output_changed {
                     return Err("observe.command에는 condition.output_changed=true가 필요하다".into());
@@ -45,6 +47,7 @@ pub(crate) fn from_v2(d: D) -> Result<File, String> {
                     every: schedule.every,
                     daily: schedule.daily,
                     catch_up: schedule.catch_up,
+                    min_open_threads: schedule.min_open_threads,
                     command: cmd.command,
                     machine: cmd.machine,
                 })
@@ -123,12 +126,16 @@ pub(crate) fn to_v2(f: &File) -> D {
     let mut c = C { min_commits: f.limits.min_commits, ..Default::default() };
     let mut observe = None;
     let trigger = match &f.on {
-        Condition::Schedule(s) => T::Schedule {
-            every: s.every.clone(),
-            daily: s.daily.clone(),
-            catch_up: convert(s.catch_up).expect("catchup"),
-        },
+        Condition::Schedule(s) => {
+            c.min_open_threads = s.min_open_threads;
+            T::Schedule {
+                every: s.every.clone(),
+                daily: s.daily.clone(),
+                catch_up: convert(s.catch_up).expect("catchup"),
+            }
+        }
         Condition::Command(s) => {
+            c.min_open_threads = s.min_open_threads;
             observe = Some(O::Command(aaa_proto::AutomationCommand {
                 command: s.command.clone(),
                 machine: s.machine.clone(),
