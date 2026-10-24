@@ -303,6 +303,11 @@ pub struct LinkView {
 /// FRONT_API 1.38. thread 결과물과 별도로 올린 보고서의 전체 목록 한 줄.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LibraryReport {
+    /// FRONT_API 1.122. 연결된 할 일 저장소 이름, 없으면 원본 thread 저장소의 마지막 이름. 모르면 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo: Option<String>,
+
     /// FRONT_API 1.114. 보관함의 불변 판. 자동 정리와 상한 계산에서 제외한다.
     #[serde(default)]
     pub archived: bool,

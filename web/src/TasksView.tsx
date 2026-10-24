@@ -1,3 +1,4 @@
+import { RepoFilter, useRepoFilter } from "./RepoFilter";
 import type { CSSProperties } from "react";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { ListId } from "./ListId";
@@ -21,24 +22,19 @@ import {
   ArrowUp,
   ArrowUpDown,
   ArrowUpToLine,
-  ChevronDown,
   ChevronRight,
-  CircleDashed,
   CircleDot,
   Clock,
   Copy,
   CornerDownRight,
   Ellipsis,
   FileCode,
-  Folder,
-  FolderGit2,
   GripVertical,
   Link2,
   ListPlus,
   Paperclip,
   Pencil,
   Plus,
-  Layers,
   Trash2,
   Undo2,
   X,
@@ -78,7 +74,6 @@ import {
   moveOp,
   newAutoCleans,
   noteItems,
-  REPO_DIR,
   taskState,
   addAttachment,
   attachmentLine,
@@ -121,25 +116,6 @@ function writeAutoSeen(id: number): void {
   try {
     localStorage.setItem(AUTO_SEEN_KEY, String(id));
   } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:122");
-    // 저장이 막혀도 이 화면 동안은 기억한다
-  }
-}
-
-/** 저장소 거르기(§8.393): 이 기기에 프로젝트마다 기억한다. 없으면 전체(null), 빈 글은 「정하지 않음」 */
-const REPO_KEY = (project: string) => `aaa:tasks:repo:${project}`;
-function readRepo(project: string): string | null {
-  try {
-    return project ? localStorage.getItem(REPO_KEY(project)) : null;
-  } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:132");
-    return null;
-  }
-}
-function writeRepo(project: string, repo: string | null): void {
-  try {
-    if (!project) return;
-    if (repo === null) localStorage.removeItem(REPO_KEY(project));
-    else localStorage.setItem(REPO_KEY(project), repo);
-  } catch (ignoredError) { logIgnoredFailure(ignoredError, "TasksView.tsx:141");
     // 저장이 막혀도 이 화면 동안은 기억한다
   }
 }
@@ -309,13 +285,7 @@ export function TasksView({
   // 목록이 연 예약(끌어 놓기·⋯ 「자리 나면 시작 예약」)
   const [reserveReq, setReserveReq] = useState<ReserveRequest | null>(null);
   const project = board?.project ?? "";
-  const [repo, setRepoState] = useState<string | null>(null);
-  // 저장소 거르기는 이 기기에 프로젝트마다 기억한다
-  useEffect(() => setRepoState(readRepo(project)), [project]);
-  const setRepo = (r: string | null) => {
-    setRepoState(r);
-    writeRepo(project, r);
-  };
+  const [repo, setRepo] = useRepoFilter("tasks", project);
   const coarse = useMediaQuery("(pointer: coarse)");
   const compactRows = useMediaQuery("(max-width: 480px)");
   const editApi = apiAtLeast(frontApi, EDIT_API);
@@ -664,10 +634,7 @@ export function TasksView({
     return () => window.clearTimeout(timer);
   }, [flashShown]);
   const repoLabel = repoOn === null ? "전체" : (choices.find((c) => c.key === repoOn)?.label ?? repoOn);
-  const repoItems = (): RowMenuItem[] => [
-    { id: "repo-all", label: "전체", hint: String(total), icon: Layers, checked: repoOn === null, run: () => setRepo(null) },
-    ...choices.map((c, i) => ({ id: `repo-${c.key || "none"}`, label: c.label, hint: String(c.n), icon: c.key === "" ? CircleDashed : c.key === REPO_DIR ? Folder : FolderGit2, divider: i === 0, checked: repoOn === c.key, run: () => setRepo(c.key) })),
-  ];
+
   const rowProps = (r: Exclude<TaskListRow, { kind: "gap" }>) => {
     const t = r.t;
     const reserved = r.kind === "reserved";
@@ -754,18 +721,7 @@ export function TasksView({
           <>
             <TaskSearchInput value={query} onChange={setQuery} label="할 일 검색" testId="tasks-search" />
             <TaskFilterChips label="거르기" repo={
-              <button
-                type="button"
-                className={`task-chip tasks-repo${repoOn !== null ? " is-on" : ""}`}
-                aria-haspopup="menu"
-                aria-expanded={menu?.key === "repo"}
-                data-testid="tasks-repo"
-                data-repo={repoOn ?? ""}
-                onClick={(e) => openMenu("repo", e.currentTarget, "저장소로 거르기", repoItems())}
-              >
-                {coarse ? (repoOn === null ? "저장소" : repoLabel) : `저장소: ${repoLabel}`}
-                <ChevronDown aria-hidden="true" />
-              </button>
+              <RepoFilter value={repoOn} choices={choices} total={total} onChange={setRepo} testId="tasks-repo" />
             }>
                 {TASK_FILTERS.filter((f) => (f.id !== "reserved" || queueApi) && (f.id !== "parked" || parkApi)).map((f) => (
                   <button key={f.id} type="button" className={`task-chip tasks-filter tasks-filter-${f.id}${filter === f.id ? " is-on" : ""}`} aria-pressed={filter === f.id} data-testid={`tasks-filter-${f.id}`} onClick={() => setFilter(f.id)}>
@@ -1023,7 +979,7 @@ export function TasksView({
         </div>
       )}
       {/* 저장소 메뉴는 목록 응답 전에도 열 수 있다. 열린 동안에도 최신 항목·개수·프로젝트의 선택 함수를 쓴다. */}
-      {menu && <RowMenu anchor={menu.anchor} title={menu.title} items={menu.key === "repo" ? repoItems() : menu.items} onClose={() => setMenu(null)} />}
+      {menu && <RowMenu anchor={menu.anchor} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
       {dialog?.kind === "conflict" && (
         <ConflictDialog
           conflict={dialog.conflict}

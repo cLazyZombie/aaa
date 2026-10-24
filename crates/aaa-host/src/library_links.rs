@@ -307,6 +307,43 @@ mod tests {
     }
 
     #[test]
+    fn report_repository_uses_task_archive_then_thread_and_keeps_unknown() {
+        let lab = Lab::new();
+        for n in 1..=4 {
+            let id = format!("t-{n:04}");
+            lab.report(&id, &[("result.txt", b"done", false)]);
+            let mut rec = lab.h.load("demo", &id).unwrap();
+            rec.repo = match n {
+                1 => Some("/work/actual".into()),
+                2 => Some("C:\\work\\windows-repo\\".into()),
+                3 => Some("/work/old".into()),
+                _ => None,
+            };
+            lab.h.db.thread_save("demo", &id, "resolved", &serde_json::to_string(&rec).unwrap()).unwrap();
+        }
+        std::fs::write(
+            lab.h.project_dir("demo").unwrap().join("TASKS.md"),
+            "# Tasks\n\n## Backlog\n- [ ] 연결 [task-repo] · t-0001\n",
+        )
+        .unwrap();
+        let archive: aaa_proto::ArchivedTask = serde_json::from_value(serde_json::json!({
+            "task_id":"fixture-task","task":{"id":"fixture-task","list":"Backlog","title":"완료","notes":[],"done":true,"repo":"archive-repo","thread":"t-0003"},
+            "body":"","reason":"완료","completed_ms":1,"restored":false,"committed":true,"removed_sha256":"","history":[]
+        })).unwrap();
+        lab.h.db.archive_save("demo", &archive).unwrap();
+        let rows = lab.h.library_reports(None, false).unwrap();
+        for (id, expected) in [
+            ("t-0001", Some("task-repo")),
+            ("t-0002", Some("windows-repo")),
+            ("t-0003", Some("archive-repo")),
+            ("t-0004", None),
+        ] {
+            assert_eq!(rows.iter().find(|r| r.name == id).unwrap().repo.as_deref(), expected);
+            assert_eq!(lab.h.report_view("demo", id, false).unwrap().repo.as_deref(), expected);
+        }
+    }
+
+    #[test]
     fn catalog_matches_single_report_after_versions_archives_and_live_changes() {
         let lab = Lab::new();
         let source = lab.state.join("source");

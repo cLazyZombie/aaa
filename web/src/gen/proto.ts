@@ -2526,6 +2526,10 @@ size: number, };
 
 export type LibraryReport = {
 /**
+ * FRONT_API 1.122. 연결된 할 일 저장소 이름, 없으면 원본 thread 저장소의 마지막 이름. 모르면 생략한다.
+ */
+repo?: string,
+/**
  * FRONT_API 1.114. 보관함의 불변 판. 자동 정리와 상한 계산에서 제외한다.
  */
 archived: boolean,

@@ -63,14 +63,16 @@ impl Host {
             let dir = self.project_dir(&p)?;
             let catalog = self.db.library_catalog(&p).map_err(internal)?;
             // 보관을 읽지 못하면 예전 protected_copy처럼 모두 보호한다.
-            let protected = self
+            let archived_tasks = self
                 .db
                 .archive_list(&p)
                 .inspect_err(|error| {
                     aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
                 })
-                .ok()
-                .map(|rows| referenced_names(&rows));
+                .ok();
+            let protected = archived_tasks.as_deref().map(referenced_names);
+            let repos = report_repos(&dir, &catalog.threads, archived_tasks.as_deref().unwrap_or_default())?;
+            let first_report = reports.len();
             let resolved: HashSet<_> = catalog
                 .threads
                 .iter()
@@ -131,6 +133,7 @@ impl Host {
                 });
                 let link = links.remove(name).map(|r| self.link_view_summary(r, size, report_id.clone()));
                 reports.push(LibraryReport {
+                    repo: None,
                     archived: false,
                     project: p.clone(),
                     name: name.into(),
@@ -152,8 +155,11 @@ impl Host {
             // 보관한 특정 판은 최신 이름과 별도로 표시한다. 최신 이름을 정리한 뒤에도 남는다.
             for id in &catalog.archived {
                 if self.db.report_target(&p, id).map_err(internal)?.is_some() {
-                    reports.push(self.report_view(&p, id, reveal)?);
+                    reports.push(self.report_view_without_repo(&p, id, reveal)?);
                 }
+            }
+            for report in &mut reports[first_report..] {
+                report.repo = report.from_thread.as_ref().and_then(|id| repos.get(id)).cloned();
             }
         }
         reports.sort_by(|a, b| {
@@ -161,4 +167,31 @@ impl Host {
         });
         Ok(reports)
     }
+}
+
+/// 목록 전체에 한 번만 읽는다. 이미 끝난 thread도 원장에 남아 있어 필터에 포함한다.
+pub(crate) fn report_repos(
+    dir: &Path,
+    threads: &HashMap<String, String>,
+    archived: &[aaa_proto::ArchivedTask],
+) -> Result<HashMap<String, String>, ErrorBody> {
+    let text = match std::fs::read_to_string(dir.join("TASKS.md")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(internal(format!("보고서 저장소: TASKS.md 읽기 실패: {error}"))),
+    };
+    let mut repos = HashMap::new();
+    for (id, json) in threads {
+        let rec: crate::orch::ThreadRec = serde_json::from_str(json).map_err(internal)?;
+        if let Some(name) = rec.repo.as_deref().and_then(crate::task_repo::repo_name) {
+            repos.insert(id.clone(), name.to_string());
+        }
+    }
+    // 보관된 할 일 다음 활성 할 일의 명시된 칸을 우선한다. 칸이 비면 실제 thread 저장소를 유지한다.
+    for task in archived.iter().map(|a| &a.task).chain(crate::tasks::parse_board(&text).1.iter()) {
+        if let (Some(thread), Some(repo)) = (&task.thread, &task.repo) {
+            repos.insert(thread.clone(), repo.clone());
+        }
+    }
+    Ok(repos)
 }
