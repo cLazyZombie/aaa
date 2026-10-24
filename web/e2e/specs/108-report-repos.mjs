@@ -38,7 +38,7 @@ export default async function () {
               await page.getByTestId("reports-repo").click();
               await page.locator('.row-menu, .row-sheet').getByText(name, { exact: true }).click();
               await page.locator('.row-menu, .row-sheet').waitFor({ state: "hidden" });
-              await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+              await domIs(page, "저장소 시트 퇴장 완료", () => !document.querySelector('body > [inert][aria-hidden="true"]'));
             };
             await page.getByTestId("reports-repo").click();
             await page.locator('.row-menu, .row-sheet').waitFor();
