@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## E2E105 설치 앱의 최근 화면 전환(t-0934)
+
+- `node --test web/test/recentScreens.test.mjs web/test/recentHistory.test.mjs`: 실제 palette 대상 모델로 thread/pane 별칭·실행/종료·보류/해결/보관·끊김, 방문 키 중복 제거·128개 한도·깨진 저장·저장 거부 시 메모리 유지·다른 창의 변경/삭제, 고정 MRU의 순환·역방향·0/1개·후보 제거를 확인한다. 완료 보고의 idle/done은 pane 종료로 보지 않는다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 105 --workers 1`: 실제 host·agent·키 입력을 보이는 PTY 셋을 만든다. Chromium(Win32)·WebKit(MacIntel)의 standalone 조건을 주입하고 Playwright 키 입력으로 순환·반대·Ctrl 확정·Esc 취소·blur 뒤 늦은 Ctrl 뗌·MRU 유지/확정·새로고침·팔레트 공유·선택 후보 종료를 검사한다. 설정 UI에서 끈 PWA와 일반 탭이 동일한 xterm bytes를 보내는지 대조한다.
+- 전환을 시작할 때 실제 `.xterm-screen`을 클릭한다. 앱→pane WebSocket 입력 기록을 동작 전후 대조해 Tab·Shift+Tab·Esc가 전환 중 PTY로 새지 않는지 검사한다. DOM·주소·키 사건·pane 종료를 기다리며 고정 sleep·재시도·시한 연장은 없다. 스크린샷은 `recent-chromium`·`recent-webkit`이다.
+- 이 자동 시험의 Chromium 입력은 CDP, WebKit 입력은 해당 엔진 protocol을 거친다. OS/브라우저의 예약 키 경로와 실제 설치 PWA는 검증하지 않는다. 최신 사용자 지시대로 별도 시험 host는 띄우지 않고 착지·배포 뒤 Mac 운영 PWA에서 사용자가 직접 확인한다. Windows Edge/Chrome OS 입력도 미확인으로 남긴다. 자동 시험 통과를 실기 통과로 보고하지 않는다.
+- 기존 E2E03·04의 단축키·팔레트도 전체 로컬 `ci-local`에서 유지한다. wire/API와 기존 E2E 번호는 바꾸지 않는다. 구현은 plan §8.132의 설치 앱 전환 절을 따른다.
+
 ## 보고서 모두 읽음(t-0952)
 
 - `node web/e2e/web.e2e.mjs --spec 101 --workers 1`: 실제 host DB의 내 보고서 105개와 별도 보관 판을 사용한다. Chromium·WebKit 1280·390px에서 버튼·확인 창을 캡처하고 확인 개수·취소의 무요청·오류 보존·빈 탭 비활성·한 요청·첫 50개 밖 처리·보관함 범위·활동/탭 배지·Reader 숨김·가로 넘침을 검사한다. DOM·응답이 완료 사건이며 고정 대기와 실패 재시도는 없다.

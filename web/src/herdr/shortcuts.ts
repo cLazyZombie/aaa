@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { useShortcutOverrides } from "../settings.ts";
+import { recentScreenChord, standaloneWindow } from "../recentScreens.ts";
+import { terminalToggle, useShortcutOverrides } from "../settings.ts";
 import { bindingChord, formatExactChord, isMacPlatform, parseExactChord, type ExactChord, type ShortcutOverrides } from "./shortcutBindings.ts";
 import { physicalKey } from "./keys.ts";
 
@@ -225,6 +226,7 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
     const platformIsMac = isMacPlatform();
     const onKeyDown = (event: KeyboardEvent): void => {
       if (recordingShortcut) return;
+      if (recentScreenChord(event) && standaloneWindow() && terminalToggle("recentScreens")) return;
       const shortcut = matchShortcut(event, platformIsMac, shortcutOverrides);
       if (shortcut === null) return;
       if (keepsKeyForText(event)) return;

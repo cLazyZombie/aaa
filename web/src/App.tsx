@@ -57,6 +57,8 @@ import { showDroplet } from "./herdr/droplet";
 import { useFileViewer } from "./herdr/useFileViewer.ts";
 import { FileViewer } from "./FileViewer.tsx";
 import { NewSessionDialog } from "./NewSessionDialog";
+import { RecentSwitcher } from "./RecentSwitcher";
+import { paletteTargets } from "./palette";
 import { CommandPalette, type PaletteActions } from "./CommandPalette";
 import { currentAppearance, updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
@@ -1193,6 +1195,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter(inSidebar);
+  // 닫힌 thread의 pane을 독립 셸로 오인하지 않도록 전체 thread로 별칭을 만든다.
+  const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
   // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
   const { data: asksData, put: putAsks, moreAuto } = useAsksData(up);
@@ -1772,6 +1776,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           }}
         />
       )}
+      <RecentSwitcher standalone={homeScreenApp} blocked={!loaded || settingsOpen || paletteOpen || fileViewing !== null || newPaneOn !== null}
+        targets={recentScreenTargets} selected={sel} onOpen={(id) => { choose(id); reveal(`pane:${id}`); }} />
       <ErrorBoundary area="명령 팔레트" resetKeys={[paletteOpen]} onDismiss={closePalette}>
       <CommandPalette
         open={paletteOpen}

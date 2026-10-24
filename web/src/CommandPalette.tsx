@@ -1,10 +1,9 @@
-import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 명령 팔레트(herdr-web-ui aa624cb src/components/CommandPalette.tsx를 옮김, 모양 herdr/CommandPalette.css 그대로, 문구는 참고
 // i18n.ko.ts). Mod+Shift+K나 목록 머리 돋보기로 열고, 목록 줄(thread·pane)을 찾아 열거나 동작을 부른다. 찾지 않으면 최근 연 줄 셋이
 // 앞에 선다. `>`는 동작만, 상태 칩(목록 밖에서 a·b·w·i·d 키)은 줄만 거른다. 설정 쪽은 찾을 때만 나온다. ←·→는 묶음을 건넌다.
 // 다른 곳: 참고의 묶음은 workspace, aaa는 머신 안 프로젝트와 pane 묶음이다(palette.ts). 참고의 탭·나누기·확대·사이드바·PC 추가·
 // 알림 켜기·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없어 뺐다. plan §8.132.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { FileText, ListChecks, ListPlus, MessageSquarePlus, PanelLeft, Settings, SunMoon, SwitchCamera, TextSearch, X } from "lucide-react";
 import { TasksIcon } from "./activityIcons";
 
@@ -21,13 +20,10 @@ import {
   ACTION_ALIASES,
   FILTER_KEYS,
   groupTargets,
-  loadRecent,
   parseQuery,
   rankByTitle,
   rankTargets,
-  RECENT_KEY,
   recentTargets,
-  rememberTarget,
   requestSettingsPage,
   SETTINGS_PAGE_ENTRIES,
   paletteTargets,
@@ -37,6 +33,7 @@ import {
   type PaletteTarget,
   type SettingsPageId,
 } from "./palette";
+import { useRecentHistory } from "./recentHistory.ts";
 import { PAGES } from "./SettingsDialog";
 import { StatusBadge } from "./Sidebar";
 import { useShortcutOverrides, useSidebarShared } from "./settings";
@@ -114,13 +111,6 @@ function rowKey(sectionId: string, row: PaletteRow): string {
   return `${sectionId}:${row.kind === "pane" ? row.target.key : row.action.id}`;
 }
 
-function storeRecent(recent: string[]): string[] {
-  try { window.localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch (ignoredError) { logIgnoredFailure(ignoredError, "CommandPalette.tsx:118"); /* private mode: keep this page's history */ }
-  return recent;
-}
-
-const readRecent = (): string[] => loadRecent((key) => { try { return window.localStorage.getItem(key); } catch (ignoredError) { logIgnoredFailure(ignoredError, "CommandPalette.tsx:122"); return null; } });
-
 function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
   const overrides = useShortcutOverrides();
   if (!shortcutId) return null;
@@ -134,7 +124,7 @@ export function CommandPalette({ open, onClose, machines, panes, threads, select
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<PaletteStatusFilter>("all");
   const [selection, setSelection] = useState<PaletteSelection>(NO_SELECTION);
-  const [recentKeys, setRecentKeys] = useState<string[]>(readRecent);
+  const recentKeys = useRecentHistory();
   const inputRef = useRef<HTMLInputElement>(null);
   // a pane picked here is where the keyboard goes: the focus is not given back to the opener
   const navigated = useRef(false);
@@ -174,19 +164,10 @@ export function CommandPalette({ open, onClose, machines, panes, threads, select
     setSelection(NO_SELECTION);
     focusedRow.current = null;
     requestSettingsPage(null);
-    setRecentKeys(readRecent());
   }, [open]);
 
   const { paneOrder } = useSidebarShared();
   const targets = useMemo(() => paletteTargets(machines, panes, threads, paneOrder), [machines, panes, threads, paneOrder]);
-  // 목록에서 연 줄도 최근이다(참고: 고른 pane이 바뀌면 기억한다)
-  const selectedTarget = selected === null ? undefined : targets.find((target) => target.keys.includes(selected));
-  const selectedKey = selectedTarget?.key ?? null;
-  useEffect(() => {
-    if (selectedKey === null) return;
-    setRecentKeys((current) => (current[0] === selectedKey ? current : storeRecent(rememberTarget(selectedKey, readRecent()))));
-  }, [selectedKey]);
-
   const paletteActions = useMemo<PaletteAction[]>(() => [
     ...(actions.openNewSession ? [{ id: "new", label: "새 pane", icon: MessageSquarePlus, shortcut: "new-session", run: actions.openNewSession }] satisfies PaletteAction[] : []),
     ...(actions.toggleView ? [{ id: "view", label: actions.view === "chat" ? "터미널로 전환" : "채팅으로 전환", icon: SwitchCamera, shortcut: "toggle-view", run: actions.toggleView }] satisfies PaletteAction[] : []),
@@ -304,7 +285,6 @@ export function CommandPalette({ open, onClose, machines, panes, threads, select
     setSelection((current) => (current.key === key && current.index === index ? current : { key, index }));
   };
   const runTarget = (target: PaletteTarget): void => {
-    setRecentKeys((current) => storeRecent(rememberTarget(target.key, current)));
     navigated.current = true;
     onOpen(target.open);
     onClose();
