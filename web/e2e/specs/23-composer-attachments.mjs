@@ -756,78 +756,102 @@ draw();
   });
 
   await step("대화 이미지: Chrome·Safari·iPhone·iPad에서 올린 그림을 coordinator가 읽고 task 첨부로 thread에 넘긴다", async () => {
+    let imageDevice = "setup", imageMethod = "setup";
+    const imageLog = (event, label, extra = {}) => {
+      const row = { event, device: imageDevice, method: imageMethod, label, ...extra };
+      fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+      fs.appendFileSync(`${root}/diagnostics/image-await.jsonl`, JSON.stringify(row) + "\n");
+      console.log("IMAGE-AWAIT " + JSON.stringify(row));
+    };
+    const imageAwait = async (label, action) => {
+      imageLog("before", label);
+      try {
+        const value = await action();
+        imageLog("after", label);
+        return value;
+      } catch (error) {
+        imageLog("error", label, { error: String(error) });
+        throw error;
+      }
+    };
     const png = fs.readFileSync(`${root}/pic.png`);
     const digest = crypto.createHash("sha256").update(png).digest("hex");
-    const wk = await webkit.launch();
+    const wk = await imageAwait("webkit.launch()", async () => (webkit.launch()));
     try {
       for (const name of ["chrome", "safari", "iphone", "ipad"]) {
-        const client = name === "iphone" || name === "ipad" ? await pairDevice(wk, aaa("web", "pair").code, name) : await pairPage(name === "chrome" ? browser : wk, aaa("web", "pair").code, { width: 1280, height: 800 });
+        imageDevice = name; imageMethod = "setup";
+        const client = name === "iphone" || name === "ipad" ? await imageAwait("pairDevice(wk, aaa(\"web\", \"pair\").code, name)", async () => (pairDevice(wk, aaa("web", "pair").code, name))) : await imageAwait("pairPage(name === \"chrome\" ? browser : wk, aaa(\"web\", \"pair\").code, { width: 1280, height: 800 })", async () => (pairPage(name === "chrome" ? browser : wk, aaa("web", "pair").code, { width: 1280, height: 800 })));
         const p = client.page;
-        const box = await openChat(p);
+        const box = await imageAwait("openChat(p)", async () => (openChat(p)));
         const composer = p.getByTestId("chat-composer");
         for (const method of ["paste", "drop", "picker"]) {
-          const before = (await sentFrames(p)).length;
-          await box.fill(`그림 확인 ${name} ${method}`);
+          imageMethod = method;
+          const before = (await imageAwait("sentFrames(p)", async () => (sentFrames(p)))).length;
+          await imageAwait("box.fill(`그림 확인 ${name} ${method}`)", async () => (box.fill(`그림 확인 ${name} ${method}`)));
           if (method === "picker") {
             const choose = p.waitForEvent("filechooser");
-            await composer.getByRole("button", { name: "그림 첨부", exact: true }).click();
-            await (await choose).setFiles(name === "iphone"
+            await imageAwait("composer.getByRole(\"button\", { name: \"그림 첨부\", exact: true }).click()", async () => (composer.getByRole("button", { name: "그림 첨부", exact: true }).click()));
+            await imageAwait("(await choose).setFiles(name === \"iphone\"", async () => ((await choose).setFiles(name === "iphone"
               ? { name: "IMG_0001.PNG", mimeType: "", buffer: png }
-              : `${root}/pic.png`);
-          } else if (!await fileEvent(box, method, png, method === "paste" ? "그림의 대체 텍스트" : "")) throw new Error(`${name} ${method} 파일 사건을 처리하지 않았다`);
-          await domIs(p, "첨부 완료", () => document.querySelector(".composer-attachment")?.classList.contains("is-ready"));
-          const text = await box.inputValue();
+              : `${root}/pic.png`)));
+          } else if (!await imageAwait("fileEvent(box, method, png, method === \"paste\" ? \"그림의 대체 텍스트\" : \"\")", async () => (fileEvent(box, method, png, method === "paste" ? "그림의 대체 텍스트" : "")))) throw new Error(`${name} ${method} 파일 사건을 처리하지 않았다`);
+          await imageAwait("domIs(p, \"첨부 완료\", () => document.querySelector(\".composer-attachment\")?.classList.contains(\"is-ready", async () => (domIs(p, "첨부 완료", () => document.querySelector(".composer-attachment")?.classList.contains("is-ready"))));
+          const text = await imageAwait("box.inputValue()", async () => (box.inputValue()));
           const path = /^@([^\s]+) /.exec(text)?.[1];
           if (path !== `${project}/uploads/${digest.slice(0, 16)}.png` || !fs.readFileSync(path).equals(png)) throw new Error(`${name} ${method}: uploads 이름·원본과 다르다 ${text}`);
-          const sent = await sentFrames(p, before);
+          const sent = await imageAwait("sentFrames(p, before)", async () => (sentFrames(p, before)));
           if (sent.some((f) => ["input", "submit", "attach"].includes(f.t))) throw new Error(`보내기 전에 pane에 입력했다 ${JSON.stringify(sent)}`);
-          await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+          await imageAwait("composer.locator(\".composer-attachment img\").evaluate((img) => img.decode())", async () => (composer.locator(".composer-attachment img").evaluate((img) => img.decode())));
           if (method === "paste") {
             // 대화 → 터미널은 입력창을 실제로 내린다. 초안 경로와 썸네일을 함께 복원해야 한다.
-            await p.getByTestId("chat-toggle").click();
-            await composer.waitFor({ state: "detached" });
-            await p.getByTestId("chat-toggle").click();
-            await composer.waitFor();
-            await inList(p, "activity-reports");
-            await domIs(p, "보고서 화면", () => document.querySelector('[data-testid="reports-view"]')?.dataset.shown === "true");
-            await openChat(p);
+            await imageAwait("p.getByTestId(\"chat-toggle\").click()", async () => (p.getByTestId("chat-toggle").click()));
+            await imageAwait("composer.waitFor({ state: \"detached\" })", async () => (composer.waitFor({ state: "detached" })));
+            await imageAwait("p.getByTestId(\"chat-toggle\").click()", async () => (p.getByTestId("chat-toggle").click()));
+            await imageAwait("composer.waitFor()", async () => (composer.waitFor()));
+            await imageAwait("inList(p, \"activity-reports\")", async () => (inList(p, "activity-reports")));
+            await imageAwait("domIs(p, \"보고서 화면\", () => document.querySelector('[data-testid=\"reports-view\"]')?.dataset.shown === \"", async () => (domIs(p, "보고서 화면", () => document.querySelector('[data-testid="reports-view"]')?.dataset.shown === "true")));
+            await imageAwait("openChat(p)", async () => (openChat(p)));
           } else {
-            await p.reload();
-            await openChat(p);
+            await imageAwait("p.reload()", async () => (p.reload()));
+            await imageAwait("openChat(p)", async () => (openChat(p)));
           }
-          assert.equal(await box.inputValue(), text, `${name} ${method}: 화면 이동 뒤 첨부 초안`);
-          await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
-          assert.equal(await composer.locator(".composer-attachment").count(), 1, `${name} ${method}: 복원한 미리보기 하나`);
-          if (method === "paste") await shot(p, `composer-image-${name}`);
-          const got = await submit(p);
+          assert.equal(await imageAwait("box.inputValue()", async () => (box.inputValue())), text, `${name} ${method}: 화면 이동 뒤 첨부 초안`);
+          await imageAwait("composer.locator(\".composer-attachment img\").evaluate((img) => img.decode())", async () => (composer.locator(".composer-attachment img").evaluate((img) => img.decode())));
+          assert.equal(await imageAwait("composer.locator(\".composer-attachment\").count()", async () => (composer.locator(".composer-attachment").count())), 1, `${name} ${method}: 복원한 미리보기 하나`);
+          if (method === "paste") await imageAwait("shot(p, `composer-image-${name}`)", async () => (shot(p, `composer-image-${name}`)));
+          const got = await imageAwait("submit(p)", async () => (submit(p)));
           if (got.images.length !== 1 || got.images[0].path !== path || got.images[0].sha256 !== digest || !got.text.includes(`그림 확인 ${name} ${method}`)) throw new Error(`coordinator가 읽은 그림/글 ${JSON.stringify(got)}`);
           if (method === "paste") {
             const turn = p.locator(".chat-turn-user").filter({ hasText: `그림 확인 ${name} ${method}` });
             const thumb = turn.getByRole("button", { name: "첨부 그림 확대", exact: true });
-            await thumb.locator("img").evaluate((img) => img.decode());
-            if (await thumb.evaluate((el) => el.querySelector("img").getBoundingClientRect().bottom > el.getBoundingClientRect().bottom + 1)) throw new Error(`${name} 기록 썸네일 잘림`);
-            await thumb.scrollIntoViewIfNeeded();
-            await shot(p, `chat-image-${name}`);
+            imageLog("thumbnail", "before decode", await imageAwait("thumbnail state", () => thumb.locator("img").evaluate((img) => ({
+              complete: img.complete, naturalWidth: img.naturalWidth, loading: img.loading,
+              top: img.getBoundingClientRect().top, bottom: img.getBoundingClientRect().bottom, viewport: innerHeight,
+            }))));
+            await imageAwait("thumb.locator(\"img\").evaluate((img) => img.decode())", async () => (thumb.locator("img").evaluate((img) => img.decode())));
+            if (await imageAwait("thumb.evaluate((el) => el.querySelector(\"img\").getBoundingClientRect().bottom > el.getBoundingClient", async () => (thumb.evaluate((el) => el.querySelector("img").getBoundingClientRect().bottom > el.getBoundingClientRect().bottom + 1)))) throw new Error(`${name} 기록 썸네일 잘림`);
+            await imageAwait("thumb.scrollIntoViewIfNeeded()", async () => (thumb.scrollIntoViewIfNeeded()));
+            await imageAwait("shot(p, `chat-image-${name}`)", async () => (shot(p, `chat-image-${name}`)));
           }
-          await composer.locator(".composer-attachment").waitFor({ state: "detached" });
+          await imageAwait("composer.locator(\".composer-attachment\").waitFor({ state: \"detached\" })", async () => (composer.locator(".composer-attachment").waitFor({ state: "detached" })));
           if (method === "picker") {
             // coordinator가 받은 경로를 task 메모에 넣고 실제 thread 시작까지 간다(휴대폰도 같은 경계).
             const title = `대화 그림 ${name}`;
             const image = `uploads/${digest.slice(0, 16)}.png`;
             const before = fs.readdirSync(`${project}/uploads`).sort();
-            const taskUpload = await p.evaluate(async (b64) => {
+            const taskUpload = await imageAwait("p.evaluate(async (b64) => {", async () => (p.evaluate(async (b64) => {
               const r = await fetch("/api/v1/projects/images/uploads", { method: "POST", body: Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) });
               return r.json();
-            }, png.toString("base64"));
+            }, png.toString("base64"))));
             assert.equal(taskUpload.ok?.path, image, `${name}: 대화와 task 올리기의 이름`);
             assert.deepEqual(fs.readdirSync(`${project}/uploads`).sort(), before, `${name}: 같은 내용은 파일 하나`);
-            const edited = await p.evaluate(async ({ title, image }) => {
+            const edited = await imageAwait("p.evaluate(async ({ title, image }) => {", async () => (p.evaluate(async ({ title, image }) => {
               const r = await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
                 op: "task_edit", project: "images", base_sha256: null,
                 ops: [{ op: "add", list: "Backlog", title, notes: [`![그림](${image})`], person: false }],
               }) });
               return r.json();
-            }, { title, image });
+            }, { title, image })));
             assert.equal(edited.ok?.kind, "task_edited", `${name}: task 메모 첨부 ${JSON.stringify(edited)}`);
             const started = aaa("thread", "start", "images", "--from-task", title, "--link-task", "--machine", "labA", "--profile", "fake", "--kind", "dir");
             const thread = aaa("thread", "show", "images", started.id);
@@ -835,62 +859,62 @@ draw();
             assert.deepEqual(fs.readFileSync(copied), png, `${name}: thread 첨부 바이트`);
             const task = fs.readFileSync(`${project}/threads/${started.id}.task.md`, "utf8");
             assert.ok(task.includes(`![그림](attachments/${digest.slice(0, 16)}.png)`), `${name}: task 사본 경로`);
-            await until(`${name} 첨부 thread 보고`, () => aaa("thread", "show", "images", started.id).report_hash);
+            await imageAwait("until(`${name} 첨부 thread 보고`, () => aaa(\"thread\", \"show\", \"images\", started.id).report_hash)", async () => (until(`${name} 첨부 thread 보고`, () => aaa("thread", "show", "images", started.id).report_hash)));
             const brief = fs.readFileSync(`${thread.work_dir}/brief.md`, "utf8");
             assert.ok(brief.includes(`![그림](attachments/${digest.slice(0, 16)}.png)`), `${name}: brief 사본 경로`);
             aaa("thread", "resolve", "images", started.id);
           }
         }
         // 삭제와 거부도 같은 입력 경계에서: 저장된 그림의 mention은 삭제되고 형식 오류 때 초안은 남는다.
-        await fileEvent(box, "paste", png);
-        await domIs(p, "삭제할 첨부 완료", () => document.querySelector(".composer-attachment")?.classList.contains("is-ready"));
-        await p.reload();
-        await openChat(p);
-        await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+        await imageAwait("fileEvent(box, \"paste\", png)", async () => (fileEvent(box, "paste", png)));
+        await imageAwait("domIs(p, \"삭제할 첨부 완료\", () => document.querySelector(\".composer-attachment\")?.classList.contains(\"is-r", async () => (domIs(p, "삭제할 첨부 완료", () => document.querySelector(".composer-attachment")?.classList.contains("is-ready"))));
+        await imageAwait("p.reload()", async () => (p.reload()));
+        await imageAwait("openChat(p)", async () => (openChat(p)));
+        await imageAwait("composer.locator(\".composer-attachment img\").evaluate((img) => img.decode())", async () => (composer.locator(".composer-attachment img").evaluate((img) => img.decode())));
         // 복원한 그림 뒤에 새 그림을 붙여도 ID가 겹치지 않고 하나씩 지워진다.
-        await fileEvent(box, "paste", Buffer.concat([png, Buffer.from([0])]));
-        await domIs(p, "복원 뒤 새 첨부 완료", () => document.querySelectorAll(".composer-attachment.is-ready").length === 2);
-        await composer.getByRole("button", { name: `${digest.slice(0, 16)}.png 첨부 삭제`, exact: true }).click();
-        assert.equal(await composer.locator(".composer-attachment").count(), 1, `${name}: 복원한 그림만 삭제`);
-        assert.ok(!(await box.inputValue()).includes(`${digest.slice(0, 16)}.png`), `${name}: 삭제한 경로 제거`);
-        await composer.getByRole("button", { name: "clipboard.png 첨부 삭제" }).click();
-        if ((await box.inputValue()) !== "") throw new Error("삭제한 그림의 경로가 남았다");
-        await p.reload();
-        await openChat(p);
-        assert.equal(await composer.locator(".composer-attachment").count(), 0, `${name}: 지운 미리보기가 돌아오지 않음`);
-        await box.fill("실패해도 남을 글");
-        await fileEvent(box, "paste", Buffer.from("invalid-image"));
-        await composer.getByRole("alert").waitFor();
-        if (!(await composer.getByRole("alert").innerText()).includes("PNG·JPEG·GIF·WebP") || (await box.inputValue()) !== "실패해도 남을 글") throw new Error("형식 거부가 초안을 지웠다");
+        await imageAwait("fileEvent(box, \"paste\", Buffer.concat([png, Buffer.from([0])]))", async () => (fileEvent(box, "paste", Buffer.concat([png, Buffer.from([0])]))));
+        await imageAwait("domIs(p, \"복원 뒤 새 첨부 완료\", () => document.querySelectorAll(\".composer-attachment.is-ready\").length ===", async () => (domIs(p, "복원 뒤 새 첨부 완료", () => document.querySelectorAll(".composer-attachment.is-ready").length === 2)));
+        await imageAwait("composer.getByRole(\"button\", { name: `${digest.slice(0, 16)}.png 첨부 삭제`, exact: true }).click()", async () => (composer.getByRole("button", { name: `${digest.slice(0, 16)}.png 첨부 삭제`, exact: true }).click()));
+        assert.equal(await imageAwait("composer.locator(\".composer-attachment\").count()", async () => (composer.locator(".composer-attachment").count())), 1, `${name}: 복원한 그림만 삭제`);
+        assert.ok(!(await imageAwait("box.inputValue()", async () => (box.inputValue()))).includes(`${digest.slice(0, 16)}.png`), `${name}: 삭제한 경로 제거`);
+        await imageAwait("composer.getByRole(\"button\", { name: \"clipboard.png 첨부 삭제\" }).click()", async () => (composer.getByRole("button", { name: "clipboard.png 첨부 삭제" }).click()));
+        if ((await imageAwait("box.inputValue()", async () => (box.inputValue()))) !== "") throw new Error("삭제한 그림의 경로가 남았다");
+        await imageAwait("p.reload()", async () => (p.reload()));
+        await imageAwait("openChat(p)", async () => (openChat(p)));
+        assert.equal(await imageAwait("composer.locator(\".composer-attachment\").count()", async () => (composer.locator(".composer-attachment").count())), 0, `${name}: 지운 미리보기가 돌아오지 않음`);
+        await imageAwait("box.fill(\"실패해도 남을 글\")", async () => (box.fill("실패해도 남을 글")));
+        await imageAwait("fileEvent(box, \"paste\", Buffer.from(\"invalid-image\"))", async () => (fileEvent(box, "paste", Buffer.from("invalid-image"))));
+        await imageAwait("composer.getByRole(\"alert\").waitFor()", async () => (composer.getByRole("alert").waitFor()));
+        if (!(await imageAwait("composer.getByRole(\"alert\").innerText()", async () => (composer.getByRole("alert").innerText()))).includes("PNG·JPEG·GIF·WebP") || (await imageAwait("box.inputValue()", async () => (box.inputValue()))) !== "실패해도 남을 글") throw new Error("형식 거부가 초안을 지웠다");
         if (client.errors.length) throw new Error(client.errors.join("; "));
-        await p.context().close();
+        await imageAwait("p.context().close()", async () => (p.context().close()));
       }
-    } finally { await wk.close(); }
+    } finally { await imageAwait("wk.close()", async () => (wk.close())); }
     // 새 HTTP 경계의 권한·Origin. 본문을 읽기 전 거부한다.
-    const rd = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
+    const rd = await imageAwait("pairPage(browser, aaa(\"web\", \"pair\", \"--reader\").code, { width: 390, height: 844 })", async () => (pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 })));
     const pane = aaa("pane", "list").panes.find((p) => p.name === "composer").id;
-    const status = await rd.page.evaluate(async (pane) => (await fetch(`/api/v1/panes/${pane}/image`, { method: "POST", body: new Uint8Array([137,80,78,71,13,10,26,10]) })).status, pane);
+    const status = await imageAwait("rd.page.evaluate(async (pane) => (await fetch(`/api/v1/panes/${pane}/image`, { method: \"POST\", body:", async () => (rd.page.evaluate(async (pane) => (await fetch(`/api/v1/panes/${pane}/image`, { method: "POST", body: new Uint8Array([137,80,78,71,13,10,26,10]) })).status, pane)));
     if (status !== 403) throw new Error(`reader upload ${status}`);
     const origin = new URL(rd.page.url()).origin;
-    const wrongOrigin = await rd.page.context().request.post(`${origin}/api/v1/panes/${pane}/image`, { headers: { Origin: "https://example.ts.net" }, data: "image" });
+    const wrongOrigin = await imageAwait("rd.page.context().request.post(`${origin}/api/v1/panes/${pane}/image`, { headers: { Origin: \"https:/", async () => (rd.page.context().request.post(`${origin}/api/v1/panes/${pane}/image`, { headers: { Origin: "https://example.ts.net" }, data: "image" })));
     if (wrongOrigin.status() !== 403) throw new Error(`다른 Origin upload ${wrongOrigin.status()}`);
-    const anonymous = await browser.newContext();
-    const noCookie = await anonymous.request.post(`${origin}/api/v1/panes/${pane}/image`, { headers: { Origin: origin }, data: "image" });
+    const anonymous = await imageAwait("browser.newContext()", async () => (browser.newContext()));
+    const noCookie = await imageAwait("anonymous.request.post(`${origin}/api/v1/panes/${pane}/image`, { headers: { Origin: origin }, data: ", async () => (anonymous.request.post(`${origin}/api/v1/panes/${pane}/image`, { headers: { Origin: origin }, data: "image" })));
     if (noCookie.status() !== 401) throw new Error(`미인증 upload ${noCookie.status()}`);
-    await anonymous.close();
-    await rd.page.context().close();
+    await imageAwait("anonymous.close()", async () => (anonymous.close()));
+    await imageAwait("rd.page.context().close()", async () => (rd.page.context().close()));
     // 프로젝트 밖의 대화 첨부는 agent에 조각으로 쓰는 별도 저장 경계다(512KiB 넘는 그림).
     const other = aaa("tab", "create", "--machine", "labA", "--label", "composer-other", "--cwd", root, "--", "/bin/sh", "-c",
       '"$0" hook --agent claude \'{"hook_event_name":"SessionStart","session_id":"composer-other","source":"startup"}\'; stty raw -echo; printf "composer-other-ready\\n"; exec cat', AA).tabs.at(-1).root.pane;
-    await waitOutput(other, "composer-other-ready");
-    const generic = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
-    const box = await openChat(generic.page, "composer-other");
+    await imageAwait("waitOutput(other, \"composer-other-ready\")", async () => (waitOutput(other, "composer-other-ready")));
+    const generic = await imageAwait("pairPage(browser, aaa(\"web\", \"pair\").code, { width: 1280, height: 800 })", async () => (pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })));
+    const box = await imageAwait("openChat(generic.page, \"composer-other\")", async () => (openChat(generic.page, "composer-other")));
     const large = Buffer.concat([png, Buffer.alloc(1_200_000, 7)]);
-    await fileEvent(box, "paste", large);
-    await domIs(generic.page, "agent 첨부 응답", () => document.querySelector(".composer-attachment:is(.is-ready, .is-error)") !== null);
-    const path = /^@([^\s]+) /.exec(await box.inputValue())?.[1];
+    await imageAwait("fileEvent(box, \"paste\", large)", async () => (fileEvent(box, "paste", large)));
+    await imageAwait("domIs(generic.page, \"agent 첨부 응답\", () => document.querySelector(\".composer-attachment:is(.is-ready, ", async () => (domIs(generic.page, "agent 첨부 응답", () => document.querySelector(".composer-attachment:is(.is-ready, .is-error)") !== null)));
+    const path = /^@([^\s]+) /.exec(await imageAwait("box.inputValue()", async () => (box.inputValue())))?.[1];
     if (!path?.startsWith(`${root}/s/agent/sessions/`) || !fs.readFileSync(path).equals(large)) throw new Error("agent에 저장한 여러 조각 그림이 다르다");
-    await generic.page.context().close();
+    await imageAwait("generic.page.context().close()", async () => (generic.page.context().close()));
   });
 
   await step("옛 대화 첨부: 원본을 보존하며 안내하고 다시 올린 새 링크로 시작하면 같은 바이트가 전달된다", async () => {
