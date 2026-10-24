@@ -260,6 +260,104 @@ async fn an_expired_or_refused_sign_in_is_expired_and_never_refreshed() {
     fake.route("/api/oauth/usage", 500, serde_json::json!({}));
     lab.advance(RETRY_MS);
     assert_eq!(svc.report(false).await.providers[0].problem, Some(UsageProblem::Failed));
+    fake.route("/api/oauth/usage", 403, serde_json::json!({}));
+    lab.advance(RETRY_MS);
+    assert_eq!(svc.report(false).await.providers[0].problem, Some(UsageProblem::Denied), "403은 만료 증거가 아니다");
+}
+
+#[tokio::test]
+async fn sidebar_uses_registered_claude_statusline_instead_of_unrelated_expired_oauth() {
+    use aaa_proto::{QuotaSnapshot, QuotaSource};
+    let (fake, origin) = Fake::start().await;
+    let lab = Lab::new("registered-sidebar");
+    claude_lab(&lab, NOW - 1);
+    let mut host = crate::Host::open(aaa_config::HostConfig::default(), lab.home.join("host")).unwrap();
+    Arc::get_mut(&mut host).unwrap().usage = UsageService::new(lab.ctx(&origin, false));
+    host.accounts.import("work", "claude", "fixture-claude-oauth-token-0123456789").unwrap();
+    let now = aaa_common::util::now_ms();
+    let snapshot = QuotaSnapshot {
+        generation: host.accounts.generation("work").unwrap(),
+        source: QuotaSource::ClaudeStatusline,
+        sampled_at_ms: now,
+        windows: aaa_common::quota::claude(
+            &serde_json::json!({"rate_limits": {
+                "five_hour": {"used_percentage": 2, "resets_at": now / 1000 + 3600},
+                "seven_day": {"used_percentage": 94, "resets_at": now / 1000 + 86400}
+            }}),
+            now,
+            &[],
+        ),
+        problem: None,
+        retry_at_ms: None,
+    };
+    host.db
+        .set_meta(
+            "account-quota-v1/work",
+            &serde_json::json!({
+                "generation": snapshot.generation, "attempted_ms": now, "next_ms": now + 60000,
+                "readings": {"pane": {"snapshot": snapshot, "machine": "mac-a", "received_at_ms": now}}
+            })
+            .to_string(),
+        )
+        .unwrap();
+    let local = host.usage.report(false).await;
+    assert_eq!(local.providers[0].problem, Some(UsageProblem::Expired));
+    let report = host.sidebar_usage(false).await;
+    assert_eq!(report.providers.len(), 1, "무관한 기본 Claude 로그인은 중복 표시하지 않는다");
+    let usage = &report.providers[0];
+    assert_eq!(usage.account.as_deref(), Some("work"));
+    assert_eq!(usage.key, "claude:registered:work");
+    assert_eq!(usage.problem, None);
+    assert_eq!(usage.windows.iter().map(|w| 100. - w.used_percent).collect::<Vec<_>>(), vec![98., 6.]);
+    assert_eq!(usage.checked_at, Some(utc_iso(now)));
+    assert_eq!(fake.hits("/api/oauth/usage"), 0, "기본 인증을 갱신하거나 모델 작업을 만들지 않는다");
+    assert_eq!(host.usage.cached().await, local, "자동화의 로컬 캐시 의미는 바꾸지 않는다");
+    // 같은 별칭에 다시 로그인하면 이전 세대의 숫자가 새 인증에 붙지 않는다.
+    host.accounts.import("work", "claude", "fixture-new-claude-token-0123456789").unwrap();
+    let report = host.sidebar_usage(false).await;
+    assert_eq!(report.providers[0].problem, Some(UsageProblem::Unobserved));
+    assert!(report.providers[0].windows.is_empty());
+}
+
+#[test]
+fn registered_sidebar_keeps_observation_age_and_failure_without_borrowing_another_account() {
+    use aaa_proto::*;
+    let window = AccountQuotaWindow {
+        window: QuotaWindow {
+            limit_id: "claude".into(),
+            window_id: "five_hour".into(),
+            scope: None,
+            duration_mins: Some(300),
+            used_percent: 2.,
+            observed_at_ms: NOW,
+            resets_at_ms: Some(NOW + 3600000),
+        },
+        machine: "mac-a".into(),
+        source: QuotaSource::ClaudeStatusline,
+        received_at_ms: NOW + 600000,
+        freshness: QuotaFreshness::Unknown,
+        problem: None,
+        conflict: false,
+    };
+    let mut quota = AccountQuota {
+        account: "work".into(),
+        harness: "claude".into(),
+        windows: vec![window],
+        problem: Some(QuotaProblem::Unknown),
+        retry_at_ms: None,
+    };
+    let usage = registered_claude_usage("work", None, Some(&quota));
+    assert_eq!(usage.problem, Some(UsageProblem::Stale));
+    assert_eq!(usage.checked_at, Some(utc_iso(NOW)), "수신 시각으로 관측을 새것으로 만들지 않는다");
+    assert_eq!(usage.windows[0].used_percent, 2.);
+    quota.problem = Some(QuotaProblem::Disconnected);
+    assert_eq!(registered_claude_usage("work", None, Some(&quota)).problem, Some(UsageProblem::Disconnected));
+    assert!(registered_claude_usage("spare", None, Some(&quota)).windows.is_empty());
+    quota.windows[0].conflict = true;
+    assert!(registered_claude_usage("work", None, Some(&quota)).windows.is_empty());
+    quota.windows[0].conflict = false;
+    quota.windows[0].window.scope = Some("Sonnet".into());
+    assert!(registered_claude_usage("work", None, Some(&quota)).windows.is_empty());
 }
 
 #[tokio::test]

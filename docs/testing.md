@@ -1,5 +1,13 @@
 # 시험 쓰는 법
 
+## 하단 Claude의 등록 계정 자료원(t-0999)
+
+- 운영에서 기본 키체인의 끝난 OAuth와 정상 동작하는 등록 계정의 상태줄은 서로 다른 인증이었다. 하단은 등록 Claude 계정이 있으면 기존 A2 수집의 계정·로그인 세대별 관측을 쓰고, 없으면 기존 기본 홈 수집을 유지한다. Codex와 자동화의 로컬 사용량 캐시는 그대로다.
+- `cargo test -p aaa-host --lib usage::tests`는 기본 OAuth 만료와 등록 계정의 5시간 98%·주간 6%가 공존하는 실제 Host·DB를 검사한다. 재등록 뒤 이전 세대 배제, 다른 계정·모델 몫·충돌 배제, 옛 관측 시각 보존, 403과 만료 구별을 확인한다. 인증 갱신·실제 계정·외부 구독 요청은 없다.
+- E2E65는 가짜 Claude가 실제 상태줄 hook으로 보낸 98%·6%를 agent→host→하단 칩·팝업까지 확인한다. 기본 홈 OAuth는 만료시킨다. Chromium 1280·390px에서 같은 계정 한 개와 Codex의 기존 27%를 확인하며, 관측 전에는 「관측 대기」를 보인다. 기존 계정 카드·401/429·잠김·단절·세대 교체·원문 비노출 검사를 유지한다. DOM·상태줄 사건으로 기다리며 sleep·재시도·시한 확대는 없다.
+- 웹 유닛은 수집 실패 사유의 빈 값·재로그인 단정 방지를 확인한다. proto TypeScript 생성 계약, 웹 유닛·타입·빌드, host 전체 유닛, 의존 경계·clippy·공개 검사를 수행한다. 운영 배포와 실기 UI 확인은 포함하지 않는다.
+- 먼저 [CodexBar의 Claude 자료원](https://github.com/steipete/CodexBar/blob/main/docs/claude.md)([MIT](https://github.com/steipete/CodexBar/blob/main/LICENSE))과 [OpenUsage의 인증 자료원](https://github.com/robinebers/openusage/blob/main/docs/providers/claude.md)([MIT](https://github.com/robinebers/openusage/blob/main/LICENSE))을 대조했다. 모델 실행 인증과 사용량 조회 인증의 차이·계정 귀속을 참고하고, 구현은 기존 A2 상태줄 수집을 재사용한다. 외부 코드·의존성은 추가하지 않는다.
+
 ## E2E93 터치 뒤 반대 방향 관성(t-0996)
 
 - t-0995의 Chromium 390px·Claude 직접 실행 실패는 터치 중 0→197px, 손을 뗀 뒤 197→0px의 native scroll이다. 해당 구간의 JS 위치 쓰기와 안내 높이 변화는 없었다. t-0851의 다른 history 위치 누수, t-0886의 1px 앵커 오분류, t-0905의 프로그램 reset 뒤 ±1px, t-0927·t-0932의 구독/종료 경합과 구별한다. 원본에는 touchmove 시각·compositor trace가 없어 당시 속도 표본까지 소급 확정하지 않는다.
