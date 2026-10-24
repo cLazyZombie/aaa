@@ -43,6 +43,18 @@ async function resumed(engine, width, harness) {
   shellDiagnostics = diagnostics;
   diagnostics.page = page;
   diagnostics.watch(page.context());
+  // 표시 사본과 실제 xterm의 복귀 경합을 관측한다. 휠·준비 순서를 바꾸지 않는다.
+  await page.evaluate(() => {
+    window.shellTerminalWheels = [];
+    document.addEventListener('wheel', event => {
+      const box = document.querySelector('[data-testid="terminal"]');
+      if (!box?.contains(event.target)) return;
+      window.shellTerminalWheels.push({ at: performance.now(), target: event.target.className,
+        readonly: box.dataset.readonly, preview: Boolean(box.querySelector('.terminal-preview')),
+        terminals: [...box.querySelectorAll('.xterm')].map(el => ({ preview: el.classList.contains('terminal-preview'), visibility: getComputedStyle(el).visibility })),
+        focus: document.activeElement?.className });
+    }, { capture: true, passive: true });
+  });
   page.on("request", (request) => {
     if (request.url().endsWith("/api/v1/call")) diagnostics.request(request, request.postDataJSON());
   });
@@ -189,6 +201,8 @@ async function resumed(engine, width, harness) {
       terminal: { ...document.querySelector('[data-testid="terminal"]')?.dataset },
       screen: document.querySelector(".xterm-rows")?.textContent,
       viewport: [...document.querySelectorAll(".xterm-viewport")].map((el) => ({ top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight })),
+      wheels: window.shellTerminalWheels,
+      log: window.__aaaTermLog?.slice(-80),
       chat: document.querySelector('[data-testid="chat"]')?.textContent?.slice(0, 2000),
     })), 5000, "재개 실패 화면 수집").catch((error) => ({ captureError: String(error) }));
     fs.writeFileSync(`${root}/diagnostics/${name}.json`, JSON.stringify({ phase, width, engine: engine.browserType().name(), view }, null, 2));

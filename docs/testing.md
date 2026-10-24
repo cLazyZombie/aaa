@@ -1,5 +1,21 @@
 # 시험 쓰는 법
 
+## coordinator 복귀의 연결 준비·본문 보존(t-0998)
+
+- 57회차 후속: 기존 후보의 E2E93 1280px 재개 복귀에서 첫 휠이 사라졌다. 다른 E2E와 worker 6개로 병렬 실행해 9·13·15단계가 실패했고, 관측 실행은 snapshot 수신 8731ms → 파싱 ACK 8732ms → wheel 8737.4ms를 보였다. 당시 readonly=false인데 실제 xterm은 visibility:hidden, 사본은 pointer-events:none이어서 event.target은 term-box였고 입력 프로그램에는 두 번째 휠이 도착하지 않았다. 부하 시간 초과가 아닌 입력 대상 제거 회귀다.
+- opacity만 고친 대조에서도 snapshot보다 약 5ms 먼저 온 휠은 새 xterm의 아직 빈 모드에서 사라졌다. 표시 사본이 있는 복귀 동안만 휠을 최대 64개 보관하고, snapshot 파싱·그리기 뒤 기존 xterm 휠 경로로 한 번 전달한다. 화면 이탈·실제 readonly에는 버린다. 텍스트·클릭 입력을 자동 보관/재전송하지 않는다. E2E109는 snapshot gate 중 송신 0회→해제 뒤 정확히 1회, 중간 이탈 뒤 0회를 검증한다. opacity 단독판에서 이 단언도 RED다.
+- 첫 render도 스크롤 준비 완료와 같지 않다. 재전달 관측에서 권한·VT200/SGR·cell 치수는 정상인데 Viewport 줄 높이가 0이었다. RIS 뒤 두 frame에 걸친 치수 동기화 전에는 기존 NaN 방지 패치가 픽셀 휠을 버린다. 새 snapshot의 render에서 `syncScrollArea(true)`로 치수를 동기화한 뒤 사본 제거·휠 전달을 한다. 고정 frame/시간 대기나 NaN 보호 해제는 없다.
+- WebKit의 재전달은 치수 동기화 후에도 옛 연결의 `adopted=true`가 남은 순간에는 막혔다. 새 front/state가 React 상태에 반영되어 화면 점유가 풀리는 사건에서도 보관한 휠을 전달한다. 그 전에는 꺼내 버리지 않으며, 이탈 시에는 그대로 폐기한다.
+- 새 xterm은 opacity=0으로 글자만 가려 휠·focus 대상에서 빠지지 않게 한다. viewport와 앞 기록 덮개도 사본이 섞인 바깥 칸이 아닌 해당 xterm 인스턴스에서 찾는다. E2E109에 실제 보이는 영역의 elementFromPoint가 새 xterm 안인지 단언을 더해 구판의 RED를 확인했다. E2E93에는 휠 대상·readonly·사본/실제 visibility·focus·WS 시각을 실패 진단에 추가하며, 기존 입력·완료 조건·20초 상한은 그대로 둔다.
+
+- 후속 최종 검증: worker 10개로 E2E93 전 16단계·109·105와 E2E02·03·07·13·43·47·52·84·104를 한 번 병렬 실행해 12개 파일·27개 작업 전부 통과했다. 웹 유닛 548개·타입/번들/host 빌드·공개 검사도 통과했다. 원래 시한·기대값은 유지했으며, 실패한 수정안은 원인 관측 후 코드 변경으로만 진행했다.
+
+- E2E109는 실제 host·agent·coordinator와 2,400행 합성 Claude 기록을 준비한다. WebSocket open은 통과시키고 실제 수신 메시지만 gate에 보류해 snapshot 전을 검사한다. thread·할 일·보고서에서 일반 이동/standalone Ctrl+Tab 각각 두 번씩 돌아오며, MutationObserver와 매 frame에서 거짓 「읽기 전용」이 없는지, 이전 터미널 본문이 첫 화면부터 남는지 확인한다. gate를 풀면 표시 사본이 없어지고 실제 입력이 PTY 화면에 나타나야 한다. Chromium 1280px·WebKit 390px, 합계 24회다. OS가 예약한 Ctrl+Tab의 네이티브 전달 시험은 아니다.
+- 수정 전 Chromium의 12회 모두 거짓 띠와 빈 본문이 재현됐다. 연결 완료를 socket open에서 snapshot 수신으로 옮기고, 이탈 시 xterm을 정리하면서 표시 전용 DOM 사본만 남긴다. active 조건으로 term-stack도 사라지므로 복귀 layout effect에서 새 칸으로 옮기고, 새 snapshot의 파싱·render 완료 뒤 사본을 제거한다. 소켓·xterm을 숨은 동안 살려 두거나 기록을 별도 저장하지 않는다.
+- E2E109의 Reader 복귀는 「보기 권한」 안내와 입력 송신 0회를 확인한다. 기존 E2E02는 다른 controller가 크기를 점유해도 동시 입력이 가능한 제품 정책을 유지하고, E2E13은 실제 agent 끊김/복구·host 재시작의 안내를 검사한다. E2E84의 499/500ms 연결 안내, E2E104의 보관·숨김 송신·DOM/관측기 수명, E2E105의 전환 키 경계도 유지한다. 고정 sleep·시한 연장·실패 재시도는 없다.
+- 검증: 웹 유닛 548개·타입 검사·번들/host 빌드, E2E02·07·09·13·30(chat-reading/thread-preparation)·84·97·103·104·105·109 총 12개 파일과 공개 검사를 통과했다. 새 fixture의 입력 방식/단추 선택자를 실제 UI에 맞추고, Reader 휴대폰 기본 대화 보기에서는 터미널로 전환한 뒤 입력 차단을 검사했다. 제품 시한·기대값은 바꾸지 않았다. 운영 배포·실기 확인은 이 검증에 포함하지 않는다.
+- 참고 후보는 [herdr-web-ui의 PaneTerminal](https://github.com/devswha/ovis/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/PaneTerminal.tsx)([MIT](https://github.com/devswha/ovis/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))와 [herdr의 wire protocol](https://github.com/herdrdev/herdr/blob/v0.9.5/src/protocol/wire.rs)([Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.9.5/LICENSE))이다. 전자의 presented/connected/inputReady/outputReady 분리와 후자의 연결 handshake·pane 표시 메시지 구분을 대조했다. 기존 aaa snapshot·권한 경로에만 적용하며 코드 복사·외부 의존성·API 변경은 없다.
+
 ## E2E93 터치 뒤 반대 방향 관성(t-0996)
 
 - t-0995의 Chromium 390px·Claude 직접 실행 실패는 터치 중 0→197px, 손을 뗀 뒤 197→0px의 native scroll이다. 해당 구간의 JS 위치 쓰기와 안내 높이 변화는 없었다. t-0851의 다른 history 위치 누수, t-0886의 1px 앵커 오분류, t-0905의 프로그램 reset 뒤 ±1px, t-0927·t-0932의 구독/종료 경합과 구별한다. 원본에는 touchmove 시각·compositor trace가 없어 당시 속도 표본까지 소급 확정하지 않는다.
