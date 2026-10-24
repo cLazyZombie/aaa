@@ -147,6 +147,14 @@
 - `cargo test -p aaa-host automation::`로 기존 자동화 회귀를, `cargo test -p aaa-host ticker_refreshes_usage_without_a_browser_and_releases_pending_input`로 브라우저 없는 갱신·구독 응답 지연·입력 보존 회귀를 검사한다. UI·wire 형식은 바꾸지 않아 새 브라우저 E2E를 추가하지 않는다. 운영 자동화 파일·승인·문턱은 시험에서 변경하지 않는다.
 - [CodexBar의 Codex 자료원](https://github.com/steipete/CodexBar/blob/main/docs/codex.md)([MIT](https://github.com/steipete/CodexBar/blob/main/LICENSE))의 계정별 구독 창·CLI RPC와 [ccusage의 Codex 로그 집계](https://github.com/ccusage/ccusage/blob/main/docs/guide/codex/index.md)([MIT](https://github.com/ccusage/ccusage/blob/main/apps/ccusage/LICENSE))를 비교했다. 구독 문턱은 기존 계정 RPC 캐시를 재사용하고, 토큰·비용 추정으로 대신하지 않는다. 외부 코드·의존성은 추가하지 않는다.
 
+## E2E108 보고서 필터의 첫 화면 복원(t-0997)
+
+- 57회차의 새로고침 뒤 `data-repo` 빈 값 실패를 조사했다. 원래 단언만 둔 현재 후보의 E2E108·105·91·109 병렬 3회는 통과했다. 이후 MutationObserver로 첫 카드 DOM을 관측하니 현재 후보·t-0999/t-1001 통합 조합 각각 3/3회, 변경 전 기준 main `04dd0417`에서도 저장값 `aaa`·주소 `#reports`인 채 필터 빈 값/카드 3개 → 필터 `aaa`/카드 1개의 순서가 나왔다. 강화한 첫 DOM 단언은 모두 RED다. 원본 착지의 정확한 사건 시각을 소급한 것은 아니며 동일한 잘못된 중간 상태를 직접 확인했다.
+- 원인은 공통 `useRepoFilter`가 프로젝트 key 변경 뒤 `useEffect`에서 기억을 읽는 것이다. 보고서 목록 응답이 처음 프로젝트를 정하므로 카드가 먼저 전체로 commit된다. 기준 main에도 같은 경합이 있어 Ctrl+Tab의 hash 복원 변경과 독립이다. hook 초기화와 key 변경 render에서 기억을 읽고, 같은 key의 재렌더·선택에는 메모리 상태를 유지한다. 저장 거부·전체 선택·정하지 않음·보고서/할 일/다른 프로젝트 key 분리는 유지한다.
+- E2E108의 원래 카드 대기와 즉시 `data-repo === aaa` 단언은 유지한다. 새로고침 전에 관측기를 설치해 첫 카드부터 필터 `aaa`·카드 1개인지 추가 검사하고 실패 시 시각·필터·개수·저장값·hash를 남긴다. 필터가 맞을 때까지 기다리는 우회·시한 확대·실패 재시도는 없다. Chromium·WebKit의 1280/820/390px와 Reader, 세 탭·읽음 범위·선택 초기화 검사를 그대로 돈다.
+- 수정 후보에서 E2E108·105·91·109와 공통 칩을 쓰는 E2E76·77을 worker 10개로 3회씩 실행해 18개 작업 전부 통과했다. 웹 유닛 549개·타입/번들/host 빌드·공개 검사도 통과했다. 반복은 미리 정한 부하 표본이며 실패를 성공으로 대체하지 않는다.
+- [React의 key 변경 시 render 안 상태 조정](https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)과 [useLayoutEffect](https://react.dev/reference/react/useLayoutEffect)를 대조했다(React 구현 MIT). DOM 치수 측정이 아닌 기기 기억 초기화이므로 전자를 따랐다. 기존 App의 render 시 보관 목록 조정과 같은 공개 React 동작이며 외부 코드·의존성을 추가하지 않는다.
+
 ## E2E105 앱 화면 방문과 coordinator 구별(t-0997)
 
 - 57회차 통합 후속: t-0998 `0e2db847`과 합친 상태에서 E2E91의 기존 20초 단언 실패를 재현했다. 종료된 pane의 목록 줄은 0개지만 `[data-origin="coordinator"]`에는 보이는 `SECTION.term` 1개가 남았다. `.terminal-preview`는 0개였으므로 표시 사본을 원인으로 볼 수 없고, 종료 기록 본문의 역할 표시와 목록 줄 판정이 같은 속성을 쓰는 충돌이다. 본문·최근 화면의 표시 속성을 `data-screen-role`로 분리하고 Sidebar의 `data-origin` 및 E2E91의 원래 종료 단언은 그대로 둔다. 실패 때 목록 줄 수·일치 DOM·사본 수를 남겨 재진단할 수 있게 했다.
