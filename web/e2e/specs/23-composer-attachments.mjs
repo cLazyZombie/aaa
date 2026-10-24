@@ -826,7 +826,13 @@ draw();
           if (method === "paste") {
             const turn = p.locator(".chat-turn-user").filter({ hasText: `그림 확인 ${name} ${method}` });
             const thumb = turn.getByRole("button", { name: "첨부 그림 확대", exact: true });
-            await imageAwait("thumb.locator(\"img\").evaluate((img) => img.decode())", async () => (thumb.locator("img").evaluate((img) => img.decode())));
+            await imageAwait("record thumbnail decode", async () => thumb.locator("img").evaluate((img) => {
+              const decode = window.__imageDecode = { img, state: "pending", before: {
+                connected: img.isConnected, complete: img.complete, naturalWidth: img.naturalWidth,
+                pendingMessage: !!img.closest(".chat-turn-user")?.querySelector(".is-pending"),
+              } };
+              return img.decode().then(() => { decode.state = "resolved"; }, (error) => { decode.state = "rejected"; throw error; });
+            }));
             if (await imageAwait("thumb.evaluate((el) => el.querySelector(\"img\").getBoundingClientRect().bottom > el.getBoundingClient", async () => (thumb.evaluate((el) => el.querySelector("img").getBoundingClientRect().bottom > el.getBoundingClientRect().bottom + 1)))) throw new Error(`${name} 기록 썸네일 잘림`);
             await imageAwait("thumb.scrollIntoViewIfNeeded()", async () => (thumb.scrollIntoViewIfNeeded()));
             await imageAwait("shot(p, `chat-image-${name}`)", async () => (shot(p, `chat-image-${name}`)));
@@ -916,6 +922,11 @@ draw();
   }, { diagnose: async () => {
     if (!imageDiagnosticPage || imageDiagnosticPage.isClosed()) return;
     const state = await imageDiagnosticPage.evaluate(() => ({
+      decode: window.__imageDecode && {
+        state: window.__imageDecode.state, before: window.__imageDecode.before,
+        connected: window.__imageDecode.img.isConnected, complete: window.__imageDecode.img.complete,
+        naturalWidth: window.__imageDecode.img.naturalWidth,
+      },
       images: [...document.querySelectorAll(".chat-user-image img")].map((img) => ({
         complete: img.complete, naturalWidth: img.naturalWidth, loading: img.loading,
         top: img.getBoundingClientRect().top, bottom: img.getBoundingClientRect().bottom,
