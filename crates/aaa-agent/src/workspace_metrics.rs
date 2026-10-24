@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::Path, time::UNIX_EPOCH};
 
 mod lines;
+mod mainline;
 const MAX_INPUT: u64 = 8 * 1024 * 1024;
 thread_local! {
     static READ_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -517,13 +518,25 @@ fn ensure_engine_header(header: &str) -> Result<()> {
 pub fn collect(
     state: &Path,
     cwd: &Path,
-    workspace_key: &str,
+    _workspace_key: &str,
     known_code_commits: &[String],
 ) -> Result<WorkspaceCollected> {
     READ_BYTES.with(|read| read.set(0));
     BUDGET_EXHAUSTED.with(|flag| flag.set(false));
-    let key = hex::encode(Sha256::digest(cwd.to_string_lossy().as_bytes()));
-    let store = state.join("workspace-metrics").join(key);
+    let remote_id = lines::text(cwd, &["remote", "get-url", "origin"]).ok().and_then(|url| mainline::remote_id(&url));
+    let main = match mainline::Mainline::read(cwd) {
+        Ok(main) => main,
+        Err(error) => {
+            tracing::debug!(%error, "workspace main 수집 대기");
+            return Ok(WorkspaceCollected {
+                remote_id,
+                notes: vec![format!("main 기록 대기: {error}")],
+                ..Default::default()
+            });
+        }
+    };
+    let key = hex::encode(Sha256::digest(format!("{}:{}", main.remote, cwd.display()).as_bytes()));
+    let store = state.join("workspace-metrics-v2").join(key);
     fs::create_dir_all(&store)?;
     let _lock = CollectionLock(aaa_common::private_file::lock(&store.join("collect.lock"))?);
     let cache_path = store.join("runs.json");
@@ -559,7 +572,7 @@ pub fn collect(
         inputs.push((engine, v, at, "engine"));
     }
     inputs.sort_by_key(|x| std::cmp::Reverse(x.2));
-    let mut result = WorkspaceCollected::default();
+    let mut result = WorkspaceCollected { remote_id: Some(main.remote.clone()), ..Default::default() };
     if inputs.len() > 32 {
         result.notes.push("최근 32개 종료 입력까지만 회수함".into());
     }
@@ -569,6 +582,14 @@ pub fn collect(
             continue;
         }
         let id = hex::encode(Sha256::digest(format!("{}:{rel}:{v}", cwd.display()).as_bytes()));
+        let start = match kind {
+            "ci" => read(&path)
+                .ok()
+                .and_then(|text| text.lines().next()?.split('|').nth(1)?.parse::<u64>().ok())
+                .map(|s| s.saturating_mul(1000)),
+            "rc" => version(&path.parent().unwrap().join("gates/.started")).map(|(_, at)| at),
+            _ => None,
+        };
         let parsed = match kind {
             "ci" => ci_run(path.parent().unwrap(), at, id.clone()),
             "engine" => engine_run(&path, at, id.clone()),
@@ -583,6 +604,15 @@ pub fn collect(
                 if exhausted {
                     run.notes.push("읽기 비용 상한으로 부속 결과 일부 미수집".into());
                 }
+                let start = start.or_else(|| {
+                    (kind == "engine").then(|| run.verification_ms.map(|ms| at.saturating_sub(ms))).flatten()
+                });
+                if !start.is_some_and(|start| main.accepts(start, at)) {
+                    cache.errors.insert(rel.clone(), "main 변경 전 또는 출처 미확인 실행 제외".into());
+                    cache.versions.insert(rel, v);
+                    continue;
+                }
+                run.commit = main.commit.clone();
                 cache.runs.insert(id, run);
                 cache.errors.remove(&rel);
                 cache.versions.insert(rel, v);
@@ -601,6 +631,12 @@ pub fn collect(
         let Some(id) = cache.runs.values().min_by_key(|r| r.observed_at_ms).map(|r| r.run_id.clone()) else { break };
         cache.runs.remove(&id);
     }
+    // 수집 도중 checkout/merge/push가 바뀌었으면 이번 결과를 저장하지 않는다.
+    let after = mainline::Mainline::read(cwd)?;
+    anyhow::ensure!(
+        after.commit == main.commit && after.stable_since_ms == main.stable_since_ms && after.remote == main.remote,
+        "수집 중 main 변경"
+    );
     result.notes.extend(cache.errors.values().cloned());
     result.notes.sort();
     result.notes.dedup();
@@ -619,7 +655,7 @@ pub fn collect(
         }
     }
     {
-        let lines_store = state.join("workspace-metrics").join(hex::encode(Sha256::digest(workspace_key.as_bytes())));
+        let lines_store = state.join("workspace-metrics-v2").join(hex::encode(Sha256::digest(main.remote.as_bytes())));
         fs::create_dir_all(&lines_store)?;
         let _lines_lock = CollectionLock(aaa_common::private_file::lock(&lines_store.join("lines.lock"))?);
         match lines::collect(cwd, &lines_store, known_code_commits) {
@@ -630,6 +666,11 @@ pub fn collect(
             }
         }
     }
+    let after = mainline::Mainline::read(cwd)?;
+    anyhow::ensure!(
+        after.commit == main.commit && after.stable_since_ms == main.stable_since_ms && after.remote == main.remote,
+        "코드 수집 중 main 변경"
+    );
     Ok(result)
 }
 

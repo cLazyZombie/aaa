@@ -17,11 +17,11 @@ export type MetricTiming = { name: string, duration_ms: number, start_ms: number
 
 export type MetricRanking = { items: Array<MetricTiming>, unit: string, complete: boolean, missing_reason: string | null, };
 
-export type MetricRun = { run_id: string, observed_at_ms: number, machine: string, profile: string | null, source: string, outcome: string, verification_ms: number | null, build_ms: number | null, tests: MetricCounts | null, e2e_files: number | null, e2e_unit: string | null, e2e_jobs: number | null, slow_tests: MetricRanking, slow_e2e: MetricRanking, stages: Array<MetricTiming>, artifact_bytes: number | null, artifact_name: string | null, notes: Array<string>, };
+export type MetricRun = { commit: string, run_id: string, observed_at_ms: number, machine: string, profile: string | null, source: string, outcome: string, verification_ms: number | null, build_ms: number | null, tests: MetricCounts | null, e2e_files: number | null, e2e_unit: string | null, e2e_jobs: number | null, slow_tests: MetricRanking, slow_e2e: MetricRanking, stages: Array<MetricTiming>, artifact_bytes: number | null, artifact_name: string | null, notes: Array<string>, };
 
 export type CodeLines = { commit: string, tree: string, committed_at_ms: number, observed_at_ms: number, branch: string, rules_version: number, counting_unit: string, total_lines: number, by_language: { [key in string]: number }, breakdown: { [key in string]: number } | null, split_status: string, scanned_files: number, changed_files: number, source: string, };
 
-export type WorkspaceCollected = { runs: Array<MetricRun>, code_lines: CodeLines | null, notes: Array<string>, };
+export type WorkspaceCollected = { remote_id: string | null, runs: Array<MetricRun>, code_lines: CodeLines | null, notes: Array<string>, };
 
 export type WorkspaceMachine = { name: string, connected: boolean, supported: boolean, };
 
@@ -31,11 +31,11 @@ export type WorkspaceQuery = { workspace_id: string | null, machine: string | nu
 /**
  * run 또는 day. 날짜는 UTC offset 기준이며 일광절약 변경은 별도 조건이다.
  */
-granularity: string | null, utc_offset_minutes: number | null, code_axis: string | null, code_branch: string | null, };
+granularity: string | null, utc_offset_minutes: number | null, code_axis: string | null, };
 
 export type MetricPoint = { at_ms: number, machine: string, profile: string | null, run_id: string, value: number, samples: number, outcome: string, };
 
-export type WorkspaceDashboard = { workspaces: Array<RepoWorkspace>, workspace_id: string | null, runs: Array<MetricRun>, code_lines: Array<CodeLines>, code_branches: Array<string>, code_branch: string | null, verification_trend: Array<MetricPoint>, build_trend: Array<MetricPoint>, artifact_trend: Array<MetricPoint>, profiles: Array<string>, queried_at_ms: number, truncated: boolean, };
+export type WorkspaceDashboard = { workspaces: Array<RepoWorkspace>, workspace_id: string | null, runs: Array<MetricRun>, counts_run: MetricRun | null, code_lines: Array<CodeLines>, verification_trend: Array<MetricPoint>, build_trend: Array<MetricPoint>, artifact_trend: Array<MetricPoint>, profiles: Array<string>, queried_at_ms: number, truncated: boolean, };
 
 export type SecretText = string;
 

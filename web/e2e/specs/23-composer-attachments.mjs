@@ -470,6 +470,10 @@ while True:
       && !document.querySelector('[data-testid="chat-pending"]').textContent.includes("읽습니다")
       && document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
     await shot(p, "chat-send-pending");
+    // 낙관적 대기 말은 harness 대기열 관측의 증거가 아니다. enqueue를 읽기 전에
+    // remove를 쓰면 다음 읽기는 흡수된 본문만 보고 QueueOperation 진단을 건너뛴다.
+    await until("대기열 수신 진단", () => aaa("debug", "input", "--pane", "composer", "--since", "1h").events
+      .some((event) => event.event === "ui" && event.detail.includes("QueueOperation")));
     fs.appendFileSync(transcript, [
       { type: "queue-operation", operation: "remove", content: '<pasted_content id="local_408">\n작업 중 추가\n두 번째 줄\n</pasted_content id="local_408">', reason: "absorbed_mid_turn" },
       { type: "attachment", attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: '<pasted_content id="local_408">\n작업 중 추가\n두 번째 줄\n</pasted_content id="local_408">' } },
@@ -790,11 +794,16 @@ draw();
           const got = await submit(p);
           if (got.images.length !== 1 || got.images[0].path !== path || got.images[0].sha256 !== digest || !got.text.includes(`그림 확인 ${name} ${method}`)) throw new Error(`coordinator가 읽은 그림/글 ${JSON.stringify(got)}`);
           if (method === "paste") {
-            const turn = p.locator(".chat-turn-user").filter({ hasText: `그림 확인 ${name} ${method}` });
+            // 제출 ACK 뒤의 낙관적 말은 기록 수신 때 교체된다. 그 임시 그림의
+            // decode/스크롤이 교체와 경합하지 않게 실제 기록 말만 선택한다.
+            const turn = p.locator(".chat-turn-user").filter({ hasText: `그림 확인 ${name} ${method}` })
+              .filter({ has: p.locator(".chat-msg.user:not(.is-pending)") });
             const thumb = turn.getByRole("button", { name: "첨부 그림 확대", exact: true });
+            // 기록 그림은 loading=lazy다. 좁은 화면에서 화면 밖 그림을 decode부터
+            // 기다리면 요청 자체가 시작되지 않는다. 사용자가 보는 위치로 먼저 옮긴다.
+            await thumb.scrollIntoViewIfNeeded();
             await thumb.locator("img").evaluate((img) => img.decode());
             if (await thumb.evaluate((el) => el.querySelector("img").getBoundingClientRect().bottom > el.getBoundingClientRect().bottom + 1)) throw new Error(`${name} 기록 썸네일 잘림`);
-            await thumb.scrollIntoViewIfNeeded();
             await shot(p, `chat-image-${name}`);
           }
           await composer.locator(".composer-attachment").waitFor({ state: "detached" });

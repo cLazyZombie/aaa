@@ -246,7 +246,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.117: WorkspaceAccess·WorkspaceAccessSet와 시작 미리보기의 머신별 자동 배정 허용.
 // 1.118: coordinator auto mode 상태·자동 답 원장·재판단 요청. harness 권한은 바꾸지 않는다.
 // 1.119: LibraryMarkRead로 확인한 보고서 목록을 한 번에 읽음 처리한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 119 };
+// 1.120: 원격 저장소별 main 지표·workspace 공통 개수, branch 선택 제거. agent 기능 workspace_metrics.v2.
+pub const FRONT_API: Version = Version { major: 1, minor: 120 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

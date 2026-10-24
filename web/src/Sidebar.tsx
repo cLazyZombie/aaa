@@ -327,7 +327,7 @@ export function Sidebar(props: SidebarProps) {
       <div {...panelProps("asks", props.panel)} className="sidebar-panel asks-sidebar">
         {props.panel === "asks" && props.asks}
       </div>
-      <div {...panelProps("workspace", props.panel)} className="sidebar-panel">{props.workspaces}</div>
+      <div {...panelProps("workspace", props.panel)} className="sidebar-panel ws-sidebar">{props.workspaces}</div>
       <div {...panelProps("work", props.panel)} className="list-body machine-list sidebar-panel">
         <Roster {...props} />
       </div>

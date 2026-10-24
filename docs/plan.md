@@ -7793,3 +7793,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 본문·받은 앞 쪽·읽던 row/offset·접힘·초안은 그대로 복원한 뒤 기존 최신 쪽 읽기 한 번으로 확인한다. 같은 history의 merge/gap fill을 재사용하고, 확인된 session/history 교체·표시 옵션 변경·pane 삭제·로그인/권한 문맥 변경에는 기존 초기화 경계를 적용한다.
 - 참고는 herdr-web-ui aa624cb의 paneTabCache(개수 제한)와 t3code c8c9ccf의 threadRetention(5분), 둘 다 MIT다. 코드·의존성은 복사하지 않는다. FRONT_API·AGENT_LINK·Rust crate 경계는 변경하지 않는다.
 - 검증은 보관 순수 규칙, E2E103의 Chromium/WebKit 1280·390px 전후 계측과 80ms 지연 대조, E2E104의 제어한 시계·응답 gate·수명/입력 경계, 기존 읽기·검색·송신·재연결 회귀 및 전체 ci-local·Linux strict cross·공개 검사다. 운영 Codex 기록과 실제 iPhone 검증 여부는 합성 기록·headless 결과와 구분한다. 절·새 E2E 번호는 착지 시 main과 대조한다.
+
+### 8.484 workspace main 통계와 공통 사용량 바닥 줄(t-0961)
+
+- §8.455의 등록별 통계·branch 선택을 대체한다. origin의 host와 저장소 경로를 정규화한 SHA256으로 머신·프로젝트에 관계없이 묶는다. SSH scp/SSH URL/HTTPS 표기를 합치고 저장소 경로의 대소문자·fork는 구별한다. URL 인증 정보·원문은 host로 보내지 않는다. 원격 신원을 모르는 등록은 수집 전 상태이며 이름만으로 합치지 않는다.
+- 보고 회수의 수집 대상은 thread cwd가 아닌 등록 repo의 main checkout이다. HEAD=origin/main이고 실행 시작부터 HEAD reflog 변경이 없음을 확인한 결과만 저장한다. ci-local의 시작 시각, rc의 시작 marker, 엔진의 종료 시각−전체 경과를 사용한다. main 전환 이전·미push·출처 불명 실행은 제외한다. reflog의 초 경계는 보수적으로 제외하며 수집 전후 HEAD·remote를 대조한다. 별도 검증이나 fetch는 실행하지 않는다. main 반영 후 보고 회수에서 원장에 확정하며 화면 조회는 원장만 읽는다.
+- host 통계 전용 marker `workspace-metrics-schema=2` 전환은 repo_metrics·repo_workspaces·workspace-collection 메타만 한 transaction으로 초기화한다. thread·task·보고서·다른 메타는 유지한다. agent는 workspace-metrics-v2 캐시를 사용하여 구형 캐시를 재수입하지 않는다. 이후 재시작은 v2 원장을 보존한다.
+- 한 그래프에서 머신별 색·원/사각 점·실선/점선을 표시한다. 머신 필터로 하나만 볼 수 있고 profile별 시계열은 서로 연결하지 않는다. 테스트·E2E 수는 머신 필터와 독립된 workspace 최신 기록을 쓴다. 코드 줄 수는 main 커밋별 한 번만 보관한다. branch 선택 UI·URL 질의·응답 목록을 제거한다.
+- workspace 패널에 기존 list-body와 같은 남은 높이 배분을 적용하고 공통 list-foot를 바닥에 붙인다. 짧은 목록·긴 목록 모두 사용량은 설정 톱니와 같은 바닥에 남고 목록만 스크롤한다. 답할 것·작업·할 일 화면에서도 같은 바닥 줄을 쓴다.
+- FRONT_API 1.120, Agent link 1.11 선택 기능 workspace_metrics.v2다. 기존 E2E90을 두 agent·두 clone fixture, Chromium/WebKit 1280·820·390·320px와 사용량 위치 검사로 확장한다. 절·API 판은 착지 때 main과 대조한다.
