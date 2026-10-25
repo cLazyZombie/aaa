@@ -1,3 +1,11 @@
+## 보관 화면 도입 뒤 착지 회귀(t-1010 후속)
+
+- t-1012 착지의 E2E11·25·29는 보관 xterm도 DOM에 남는데 전역 `.xterm-rows`·`.xterm-helper-textarea`·`.term-scroll`을 찾았다. E2E11의 공통 화면 읽기는 strict 오류를 기다림에서 삼켰고, 진단은 첫 보관 pane(chat1)을 읽었다. E2E29는 숨긴 hold1에서 hold2의 prompt를 찾았다. 제품은 활성 `.term`만 `hidden`·`inert`를 해제하고 그 안의 term-box에만 `data-testid="terminal"`을 부여한다. 화면 읽기·IME·Ctrl+Enter는 이 표지 아래로, 표지 바깥의 스크롤 칸·입력창 측정은 `.term:not([hidden])` 아래로 범위를 좁힌다. 첫 요소 선택이나 force click으로 모호성을 숨기지 않는다. 실패 진단에는 활성 pane과 보관 pane/숨김 여부를 함께 남긴다.
+- E2E37의 기존 복귀 gate는 매번 새 WebSocket의 제어 응답이 온다고 가정했다. 먼저 보관 복귀의 같은 DOM·추가 연결 없음·읽던 줄 1px 이내를 검사한다. 이어 숨긴 대상 연결을 실제로 닫고 readonly 사건 뒤 돌아와 새 연결 한 번과 snapshot 도착을 확인한다. 그 응답은 기존처럼 붙잡아 연결 안내 전후 읽던 줄의 1px 계약을 검사한다. Chromium/WebKit × 1280/390/820px × Claude/Codex 12조합을 모두 유지한다.
+- t-1012 원본 로그와 pane 상태를 대조하고, 수정 후 관련 15작업에서 E2E11의 첨부 칸 측정도 같은 전역 선택자 문제임을 확인해 함께 고쳤다. 시간 상한·재시도 정책·기존 입력/위치 기대값은 바꾸지 않는다. 보관 연결의 실제 수명·숨김 입력 차단과 E2E109 휠 정확히 한 번은 기존 강화된 검사를 그대로 실행한다.
+- 최신 `origin/main` `b44e35bd` 기준 `ci-local.sh --only web,e2e,public`에서 웹 유닛 559개·빌드, 웹 E2E 111파일/137작업(worker 10, 243.3초), 공개 검사가 통과했다. 본 후속은 시험·문서만 바꾸며 제품 코드는 기존 보관 연결 후보 그대로다.
+- 참고: [Playwright locator 범위](https://playwright.dev/docs/locators), [WebSocketRoute 연결/종료](https://playwright.dev/docs/api/class-websocketroute)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)). 명시적인 활성 표지와 실제 연결 종료 사건을 이용했으며 외부 코드·의존성을 추가하지 않았다.
+
 ## 보관 대화의 연결 수명(t-1010)
 
 - 보관 DOM·xterm·pane WS는 같은 수명을 쓴다. 일반 3개와 coordinator 1개를 각각 LRU로 제한하며 숨긴 지 5분이 지나면 함께 제거한다. coordinator도 기존 대화 본문 8MiB 공통 예산에서 예외가 아니다. 일반 셸을 보는 동안은 그 연결도 일반 세 자리 안에 둔다.

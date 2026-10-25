@@ -41,16 +41,18 @@ export default async function () {
     const paneId = aaa("pane", "list").panes.find(p => p.name === label).id;
     let gate = null;
     let controlGate = null;
+    let paneSocket, paneConnections = 0;
     const ph = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, {
       serviceWorkers: "block",
-      // 대화 복원과 제어권 응답은 독립이다. 돌아올 때 실제 WS 응답을 DOM 검사 뒤에 전달한다.
+      // 보관 복귀의 연결 유지와, 실제 단절 뒤 늦은 제어 응답을 각각 검사한다.
       wsRoute: [/\/api\/v1\/panes\/[^/]+\/ws/, socket => {
         const server = socket.connectToServer();
+        if (socket.url().includes(paneId)) { paneSocket = socket; paneConnections++; }
         socket.onMessage(raw => server.send(raw));
         server.onMessage(raw => {
           if (controlGate && socket.url().includes(paneId)) {
             controlGate.messages.push(() => socket.send(raw));
-            controlGate.arrive();
+            if (typeof raw === "string" && JSON.parse(raw).t === "snapshot") controlGate.arrive();
           } else socket.send(raw);
         });
       }],
@@ -177,6 +179,20 @@ export default async function () {
     const restoreY = beforePosition.rowY;
     diagnostics.remember([{ at: Date.now(), phase: "before pane switch", restoreId, restoreY,
       layout: beforePosition }]);
+    const retainedConnections = paneConnections;
+    const terminalNode = await controlled.elementHandle();
+    await inList(page, "pane-t1");
+    await inList(page, `pane-${label}`);
+    await controlled.waitFor({ state: 'attached' });
+    await page.getByTestId('readonly-banner').waitFor({ state: 'hidden' });
+    await frame(page, diagnostics);
+    const retainedPosition = await position(restoreRow);
+    if (paneConnections !== retainedConnections) throw new Error(`${label}: 보관 복귀에서 새 연결`);
+    if (!await controlled.evaluate((el, previous) => el === previous, terminalNode)) throw new Error(`${label}: 보관 터미널 교체`);
+    await terminalNode.dispose();
+    if (Math.abs(retainedPosition.rowY - restoreY) > 1) throw new Error(`${label}: 보관 복귀 row40 위치 ${restoreY} → ${retainedPosition.rowY}`);
+    diagnostics.remember([{ at: Date.now(), phase: 'retained return', layout: retainedPosition }]);
+    // 실제로 끊긴 경우도 기존의 제어 응답 전/후 위치 계약을 유지한다.
     await inList(page, "pane-t1");
     let arriveControl;
     const controlArrived = new Promise(resolve => { arriveControl = resolve; });
@@ -187,9 +203,12 @@ export default async function () {
       for (const send of held?.messages ?? []) send();
     };
     releases.add(releaseControl);
+    paneSocket.close();
+    await page.locator(`.term[data-pane="${paneId}"][hidden] .term-box[data-readonly="true"]`).waitFor({ state: 'attached' });
     await inList(page, `pane-${label}`);
     phase("row40 복원");
     await inTime(controlArrived, 20_000, `${label} 복귀 제어 응답`);
+    if (paneConnections !== retainedConnections + 1) throw new Error(`${label}: 단절 뒤 새 연결 한 번이 아님`);
     await page.getByTestId('readonly-banner').waitFor();
     await page.getByTestId("chat").and(page.locator('[aria-busy="false"]')).waitFor();
     await page.getByTestId("chat").locator(`[data-chat-id="${restoreId}"] .markdown`).waitFor();

@@ -179,7 +179,8 @@ function freePort() {
 /** session host와 파일을 쓰는 자손이 모두 끝난 뒤 돌아온다. */
 const killSessionHosts = () => terminateSessionHosts(`${root}/s/agent/sessions`);
 
-const screenText = (page) => page.locator(".xterm-rows").innerText();
+// 보관 pane의 xterm도 DOM에 남는다. terminal 표지는 활성 화면 한 곳에만 있다.
+const screenText = (page) => page.getByTestId("terminal").locator(".xterm-rows").innerText();
 /**
  * CI에서만 터미널 글이 비어 보인 실패(10-17 dbacbfe·372e85d·69224fd·e784eac: snapshot은 왔는데 줄이 비었다)를 가리는 기록:
  * 그때 줄·칸 자리·가림을 남기고, 다시 그리기를 한 번 재촉한 뒤 글이 생기는지도 본다(생기면 그리기가 멈춰 있던 것이다).
@@ -197,11 +198,14 @@ const sentText = (frames) => frames.filter((f) => f.t === "input" || f.t === "bi
 async function termDiag(page) {
   const now = () =>
     page.evaluate(() => {
-      const rows = document.querySelector(".xterm-rows");
-      const screen = document.querySelector(".xterm-screen")?.getBoundingClientRect();
-      const scroll = document.querySelector(".term-scroll");
-      const vp = document.querySelector(".xterm-viewport");
+      const term = document.querySelector(".term:not([hidden])");
+      const rows = term?.querySelector(".xterm-rows");
+      const screen = term?.querySelector(".xterm-screen")?.getBoundingClientRect();
+      const scroll = term?.querySelector(".term-scroll");
+      const vp = term?.querySelector(".xterm-viewport");
       return {
+        pane: term?.dataset.pane ?? null,
+        retained: [...document.querySelectorAll(".term")].map(el => ({ pane: el.dataset.pane, hidden: el.hidden })),
         text: rows?.innerText.replace(/\s+/g, " ").trim().slice(-200),
         rows: rows?.childElementCount,
         font: rows ? getComputedStyle(rows).fontSize : null,
@@ -211,15 +215,15 @@ async function termDiag(page) {
         viewport: vp ? [vp.scrollTop, vp.scrollHeight, vp.clientHeight] : null,
         fontFamily: rows ? getComputedStyle(rows).fontFamily : null,
         log: (window.__aaaTermLog ?? []).slice(-40).map((x) => (x.kind ? `${x.at} bin×${x.bins} ${x.bytes}B ack×${x.acks} ${x.acked}` : `${x.at} ${x.e}`)),
-        stackHidden: document.querySelector(".term-stack")?.hidden,
+        stackHidden: term?.querySelector(".term-stack")?.hidden,
         vis: document.visibilityState,
         focus: document.hasFocus(),
-        banners: [...document.querySelectorAll(".banner")].map((b) => b.textContent),
+        banners: [...(term?.querySelectorAll(".banner") ?? [])].map((b) => b.textContent),
       };
     });
   const before = await now();
   await page.evaluate(() => {
-    document.querySelector(".xterm-screen")?.scrollIntoView();
+    document.querySelector('.term:not([hidden]) .xterm-screen')?.scrollIntoView();
     window.dispatchEvent(new Event("resize"));
   });
   await sleep(600);
@@ -291,7 +295,7 @@ async function fontOk(page, cols) {
  */
 /** 같은 task에 keydown(229)·조합 사건이 오는 순서(Chromium·WebKit 데스크톱)로 「상태」를 친다 */
 async function imeType(page) {
-  await page.locator("textarea.xterm-helper-textarea").evaluate(async (el) => {
+  await page.getByTestId("terminal").locator("textarea.xterm-helper-textarea").evaluate(async (el) => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const key = (type) => el.dispatchEvent(new KeyboardEvent(type, { key: "Process", keyCode: 229, which: 229, bubbles: true, cancelable: true }));
     const input = (d) => el.dispatchEvent(new InputEvent("input", { data: d, inputType: "insertCompositionText", isComposing: true, bubbles: true }));
@@ -317,7 +321,7 @@ async function imeType(page) {
 
 /** macOS Safari 26.6.2(#432): 조합 사건 없이 DOM을 먼저 고치고 keydown(229)은 그 뒤에 온다. beforeinput 선택이 바꿀 범위다. */
 async function safariEdit(page, type, data, start, end = start, keyCode = 229, order = "after") {
-  await page.locator("textarea.xterm-helper-textarea").evaluate(
+  await page.getByTestId("terminal").locator("textarea.xterm-helper-textarea").evaluate(
     async (box, { type, data, start, end, keyCode, order }) => {
       const key = keyCode === 8 ? "Backspace" : keyCode === 46 ? "Delete" : data;
       const keydown = () => box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, keyCode, isComposing: false }));
@@ -344,7 +348,7 @@ async function safariSyllable(page, parts, at = 0) {
  * code "Unidentified", keyCode 0, isComposing false) → keypress(keyCode·charCode는 자모 코드) → 편집기가 새 음절은 insertText,
  * 바뀐 음절은 deleteContentBackward 뒤 insertText로 고친다 → keyup. 조합 사건은 없다(iPad 하드웨어 키보드와 같은 꼴). */
 async function iphoneKey(page, jamo, edits) {
-  return page.locator("textarea.xterm-helper-textarea").evaluate(
+  return page.getByTestId("terminal").locator("textarea.xterm-helper-textarea").evaluate(
     async (box, { jamo, edits }) => {
       const down = box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: jamo, code: "Unidentified", keyCode: 0, isComposing: false }));
       const press = down && box.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: jamo, code: "Unidentified", keyCode: jamo.charCodeAt(0), charCode: jamo.charCodeAt(0) }));
@@ -372,7 +376,7 @@ async function iphoneKey(page, jamo, edits) {
 
 const IPAD_KEYCODES = { "ㅎ": 71, "ㅏ": 75, "ㄴ": 83, "ㄱ": 82, "ㅡ": 77, "ㄹ": 70, "ㅇ": 68, "ㅁ": 65 };
 async function ipadKey(page, jamo, edits) {
-  return page.locator("textarea.xterm-helper-textarea").evaluate(
+  return page.getByTestId("terminal").locator("textarea.xterm-helper-textarea").evaluate(
     async (box, { jamo, keyCode, edits }) => {
       const down = box.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: jamo, code: "", keyCode, isComposing: false }));
       const press = down && box.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: jamo, keyCode: jamo.charCodeAt(0), charCode: jamo.charCodeAt(0) }));

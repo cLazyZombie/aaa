@@ -463,7 +463,7 @@ export default async function ({ ctl, page }) {
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("$"));
     // 띠는 터미널 위에 뜬다(herdr-web-ui .terminal-banners): 흐름에 있으면 띠가 날 때 칸이 줄어 PTY 크기가 바뀐다
-    const termBox = () => page.locator(".term-scroll").evaluate((el) => `${el.clientWidth}x${el.clientHeight}`);
+    const termBox = () => page.locator('.term:not([hidden]) .term-scroll').evaluate((el) => `${el.clientWidth}x${el.clientHeight}`);
     const boxBefore = await termBox();
     await pasteFile(page, png, "image/png");
     await until("셸 경로 배너", async () => (await banner.innerText()).includes("경로를 넣었다"));
