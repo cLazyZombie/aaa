@@ -126,6 +126,7 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
   const [profiles, setProfiles] = useState<string[]>([]);
   const [rowError, setRowError] = useState<string | null>(null);
   const [ask, setAsk] = useState<null | { title: string; body: string; action: string; run: () => Promise<void> }>(null);
+  const [linkRevision, setLinkRevision] = useState(0);
   const [sweep, setSweep] = useState<string[] | null>(null);
   const [prune, setPrune] = useState<LibraryPrunePlan | null>(null);
   const [cleanBusy, setCleanBusy] = useState<string | null>(null);
@@ -374,8 +375,8 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
       {canEdit && (
         <SettingsGroup title="공유 링크">
           <div className="settings-item">
-            <LinkList />
-            <KeyRotate />
+            <LinkList revision={linkRevision} />
+            <KeyRotate onChanged={() => setLinkRevision(n => n + 1)} />
           </div>
         </SettingsGroup>
       )}
@@ -384,10 +385,7 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
           title={ask.title}
           body={ask.body}
           confirmLabel={ask.action}
-          onConfirm={async () => {
-            await ask.run();
-            setAsk(null);
-          }}
+          onConfirm={ask.run}
           onClose={() => setAsk(null)}
         />
       )}

@@ -5,7 +5,7 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 // 「답할 것」이 다루므로(plan §8.345) post 탭과 알림함 탭 모두 수만 보이고 그리로 보낸다(같은 자료를 두 곳에 두지 않는다). post 목록은 조작 기기만 읽는다.
 import "./InboxPanel.css";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FlowEvent, InboxItem, PostEnvelope } from "./gen/proto";
 import { ApiError, call, me, onInboxChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -57,15 +57,17 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
   const [busy, setBusy] = useState<string | null>(null);
   // 「모두 끝내기」 창을 연 때 보인 항목(창이 떠 있는 동안 새로 온 항목은 끝내지 않는다)
   const [askAll, setAskAll] = useState<string[] | null>(null);
+  const loadId = useRef(0);
   const load = useCallback(() => {
-    call({ op: "inbox", all, peek: true })
+    const id = ++loadId.current;
+    return call({ op: "inbox", all, peek: true })
       .then((r) => {
-        if (r.kind !== "inbox") return;
+        if (id !== loadId.current || r.kind !== "inbox") return;
         setItems(r.items);
         setOmitted(r.omitted_open + (all ? r.omitted_done : 0));
         setError(null);
       })
-      .catch((e: unknown) => setError(say(e)));
+      .catch((e: unknown) => { if (id === loadId.current) setError(say(e)); });
   }, [all]);
   useEffect(() => {
     load();
@@ -163,8 +165,10 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
           onConfirm={async () => {
             // 본 것만 끝낸다(`all`은 그 사이 온, 보지 않은 항목까지 끝내 coordinator 묶음 알림에서 빠진다)
             await call({ op: "inbox_done", ids: askAll, all: false });
-            setAskAll(null);
-            load();
+            ++loadId.current;
+            const finished = new Set(askAll);
+            setItems(rows => rows?.map(i => finished.has(i.id) ? { ...i, done: true } : i) ?? null);
+            void load();
           }}
           onClose={() => setAskAll(null)}
         />

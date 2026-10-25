@@ -7883,3 +7883,23 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **있는 프로젝트.** `aaa doctor files --fix`가 표지 있는 AGENTS.md를 새 안내로 다시 쓴다(§8.184). 도는 coordinator는 새 대화나 다시 띄운 뒤 읽는다.
 - **시험.** `guide` 단위 시험(주제 이름·AGENTS.md 목록·글이 가리키는 `aaa guide <주제>`가 모두 있음, 크기 상한), m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`(AGENTS.md 핵심 문구와 주제별로 옮긴 문구를 실제 CLI `aaa guide <주제>`로, 목록·`--all`·없는 주제 오류). 웹 E2E74·88은 AGENTS.md의 질문 post 규칙(볼 자료 링크는 질문 안)과 `aaa guide questions` 가리킴, 그 주제의 `## Questions`·영상 문법을 실제 프로젝트 파일과 CLI로 본다(63회차 착지에서 옛 AGENTS.md 문구를 찾다 실패해 새 구조에 맞췄다. 질문 post 규칙 한 줄은 매 턴 필요해 AGENTS.md에 되돌렸다). FRONT_API·DB·E2E 번호는 바꾸지 않는다.
 - **참고.** [herdr-projects v0.2.35 `src/project.rs`](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/project.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE))의 `agents_md`는 4줄 AGENTS.md가 `skill`·`context` 명령 출력을 가리킨다(main은 규칙 전문을 AGENTS.md에 다시 쓴다). [herdr `skills/herdr/SKILL.md`](https://github.com/herdrdev/herdr/blob/master/skills/herdr/SKILL.md)([Apache-2.0](https://github.com/herdrdev/herdr/blob/master/LICENSE))는 명령 문법을 실행 파일 `--help`에 맡긴다. [Claude Code 메모리 문서](https://code.claude.com/docs/en/memory)는 CLAUDE.md를 200줄 미만으로, 여러 단계 절차는 skill로 옮기라고 하고 [skill](https://code.claude.com/docs/en/skills)은 설명만 늘 싣고 본문은 쓸 때 싣는다. [Codex `agents_md.rs`](https://github.com/openai/codex/blob/main/codex-rs/core/src/agents_md.rs)([Apache-2.0](https://github.com/openai/codex/blob/main/LICENSE))는 합친 크기가 `project_doc_max_bytes`(기본 32 KiB)를 넘으면 남은 바이트에서 자르고 로그에만 남긴다. 구성만 참고하며 코드·의존성을 가져오지 않는다.
+
+### 8.492 웹 일괄 변경의 완료·진행 표시(t-1031)
+
+- 답한 것 삭제, 보고서 삭제·모두 읽음·보관, 사본 정리·자리 정리·공유 링크 키 교체, 여러 파일 올리기, 숨겨진 inbox의 모두 끝내기, 자동화 남은 입력 버리기·계속 보내기·이전 형식 일괄 변환을 조사한다. 알림 Droplet에는 일괄 삭제 목록이 없고 할 일 지우기·보관 복원은 단건이다. 배포는 기존 host 작업 원장/진행 화면을 쓰는 별도 작업 흐름이다.
+- `ConfirmDialog`가 성공 뒤 닫기를 책임진다. `useAsyncAction`으로 진행 표시·동일 틱 중복 실행 차단·오류 뒤 조작 복구를 공유한다. 성공하지 않은 요청을 자동 재전송하지 않는다.
+- 답한 것은 확인 창을 열 때의 ID를 고정하고 이후 생긴 답을 보존한다. 기록 목록은 50개씩 더 보며 같은 행을 재사용한다. 서버의 원문·그림 보존/삭제 계약은 유지한다.
+- 보고서 삭제·보관은 `runBatches`로 host 한도 500개씩 순차 요청한다. 완료 수를 표시하고 실패하면 완료 수와 원인을 남긴다. 성공한 묶음은 목록·선택에서 먼저 빼므로 사람이 다시 실행해도 재전송하지 않는다. 모두 읽음은 기존 현재 탭·저장소 범위의 단일 요청이다. 작업 보고에는 안 봄 상태가 없어 버튼이 비활성이다.
+- 변경 전 조회가 늦게 와서 목록을 되돌리지 않게 보고서·inbox의 조회 순서를 검사한다. 공유 키 교체 뒤 이미 열린 링크 목록도 다시 읽는다. 웹 요청·crate 경계를 바꾸지 않으며 FRONT_API 증가는 없다.
+- E2E113·114: Chromium/WebKit × 1280/390px에서 답/사본/링크/inbox/업로드/자리 기록 각 500개, 보고서 601개의 실제 host 처리·원문/파일·진행 중 frame/키 사건·완료 창 제거·목록·오류/부분 실패를 확인한다.
+- 참고: [react-admin BulkDeleteWithConfirmButton](https://github.com/marmelab/react-admin/blob/master/packages/ra-ui-materialui/src/button/BulkDeleteWithConfirmButton.tsx)([MIT](https://github.com/marmelab/react-admin/blob/master/LICENSE.md))의 완료 후 닫기, [TanStack Query 변경 뒤 갱신](https://tanstack.com/query/latest/docs/framework/react/guides/invalidations-from-mutations)([MIT](https://github.com/TanStack/query/blob/main/LICENSE)), [p-map](https://github.com/sindresorhus/p-map)([MIT](https://github.com/sindresorhus/p-map/blob/main/license))의 동시 실행 제한을 비교했다. 기존 host 묶음 API를 순차 사용하며 외부 코드·의존성을 추가하지 않는다.
+
+- 자동화 변환도 공통 실행 helper로 중복 입력을 막고 진행을 표시한다. 성공 뒤 창을 닫고 목록에 원본 보존 위치를 남긴다. 막힌 입력 버리기·계속 보내기는 공통 확인 창과 기존 host 큐 원장을 쓴다.
+- 삭제된 보고 판 이력이 쌓일 때 원본별 조회가 프로젝트 전체를 반복 탐색하지 않도록 `report_ids(project,source,ready,deleted,seq DESC)` 색인을 추가한다. 기존 DB에도 기동 시 한 번 생성하며 저장값·조회 순서는 바꾸지 않는다.
+
+- 전체 gate 부하에서 자리 정리 500개의 20초 응답이 실패한 후 agent/저장 구간을 계측했다. 단독 재현 세 조합에서 전체 8.8~9.3초 중 agent 왕복이 8.3~8.8초였다. 이미 없는 자리에 반복하던 Git 조회·정리 journal 기록을 줄인다.
+- 선택 기능 `cleanup_probe.v1`을 광고한 agent에는 같은 머신·repo의 자리/branch 부재를 최대 500개씩 읽기 전용으로 확인한다. Git 등록·파일·branch가 모두 없고 미완료 재잠금 journal도 없는 대상만 기존 정리 호출을 생략한다. 실제 자리·등록·branch·잠금이 남으면 기존 안전 정리를 수행한다. 경로/root 검사를 유지하며 옛 agent나 확인 실패에는 기존 개별 정리를 쓴다. FRONT_API/AGENT_LINK 기본 버전은 유지한다.
+- host는 agent 응답 전후 최신 thread 상태·대상을 확인해 도중에 다시 열린 thread 표지를 덮지 않는다. DB 저장 실패를 성공 건수로 세지 않고 원인을 남긴다. 완료 로그에 대상/부재 수와 부재 확인·agent·저장·전체 시간을 남기며 E2E 응답 시간도 기록한다. 시간 제한·재시도·성공 조건은 바꾸지 않는다.
+- 후속 참고: [Git worktree porcelain](https://git-scm.com/docs/git-worktree)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))의 등록과 실제 경로 구분, [SQLite transaction 비용](https://www.sqlite.org/faq.html)([public domain](https://www.sqlite.org/copyright.html)), [rusqlite Transaction](https://docs.rs/rusqlite/latest/rusqlite/struct.Transaction.html)([MIT](https://github.com/rusqlite/rusqlite/blob/master/LICENSE))을 비교했다. 계측상 agent 반복이 병목이므로 DB transaction 확장 대신 부재 조회를 묶는다. 외부 코드는 복사하지 않는다.
+
+- 휴대폰 확인 창을 취소/완료한 내부 history 복귀는 사용자 Back과 구분해 열린 목록을 유지한다. 내부 사건만 표지하므로 실제 뒤로/앞으로의 목록 닫기 동작은 유지한다.

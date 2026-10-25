@@ -3,10 +3,11 @@
 // 변환은 프로젝트 단위다(host가 옛 파일 전부를 한 번에 검증·변환하고 실패하면 이번 파일만 되돌린다).
 import { useEffect, useState } from "react";
 import { call } from "./api";
+import { useAsyncAction } from "./useAsyncAction";
 import { AutomationSheet } from "./AutomationSheet";
-import { archiveDirs, convertGroups } from "./automationModel";
+import { convertGroups } from "./automationModel";
 
-type Phase = { kind: "loading" } | { kind: "plan"; files: string[]; sha: string } | { kind: "running"; files: string[]; sha: string } | { kind: "done"; files: string[] } | { kind: "error"; message: string; files?: string[]; sha?: string };
+type Phase = { kind: "loading" } | { kind: "plan"; files: string[]; sha: string } | { kind: "running"; files: string[]; sha: string } | { kind: "error"; message: string; files?: string[]; sha?: string };
 
 function Plan({ files }: { files: string[] }) {
   return <>{convertGroups(files).map((g) => <section key={g.key} className="automation-section" aria-label={g.title} data-group={g.key}>
@@ -15,8 +16,9 @@ function Plan({ files }: { files: string[] }) {
   </section>)}</>;
 }
 
-export function ConvertSheet({ project, canControl, onClose, onDone }: { project: string; canControl: boolean; onClose: () => void; onDone: () => Promise<void> }) {
+export function ConvertSheet({ project, canControl, onClose, onDone }: { project: string; canControl: boolean; onClose: () => void; onDone: (files: string[]) => Promise<void> }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
+  const action = useAsyncAction();
   const [preview, setPreview] = useState(0);
   useEffect(() => {
     let live = true;
@@ -30,24 +32,25 @@ export function ConvertSheet({ project, canControl, onClose, onDone }: { project
       .catch((e: unknown) => live && setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
     return () => { live = false; };
   }, [project, preview]);
-  const run = async (files: string[], sha: string) => {
+  const run = (files: string[], sha: string) => action.run(async () => {
     setPhase({ kind: "running", files, sha });
     try {
       const r = await call({ op: "automation_convert", project, plan_sha256: sha });
       if (r.kind !== "automation_converted") throw new Error("변환 응답이 아니다");
-      setPhase({ kind: "done", files: r.files });
-      await onDone();
+      await onDone(r.files);
+      onClose();
     } catch (e) {
       setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e), files, sha });
     }
-  };
-  const busy = phase.kind === "running";
+  });
+  const busy = action.pending;
   const footer = phase.kind === "plan" && phase.files.length > 0 && canControl
     ? <><button type="button" className="btn" onClick={onClose}>취소</button><button type="button" className="btn btn-primary" onClick={() => void run(phase.files, phase.sha)}>변환</button></>
     : phase.kind === "running" ? <button type="button" className="btn btn-primary" disabled>변환 중…</button>
     : phase.kind === "error" ? <><button type="button" className="btn" onClick={onClose}>닫기</button><button type="button" className="btn btn-primary" onClick={() => setPreview((value) => value + 1)}>미리보기 다시 읽기</button></>
     : <button type="button" className="btn" onClick={onClose}>닫기</button>;
-  return <AutomationSheet title={phase.kind === "done" ? "새 형식으로 바꿨습니다" : phase.kind === "error" ? "새 형식으로 바꾸지 못했습니다" : "새 형식으로 바꾸기"} subtitle={<span className="automation-dim">{project}</span>} onClose={onClose} busy={busy} footer={footer} testid="automation-convert">
+  return <AutomationSheet title={phase.kind === "error" ? "새 형식으로 바꾸지 못했습니다" : "새 형식으로 바꾸기"} subtitle={<span className="automation-dim">{project}</span>} onClose={onClose} busy={busy} footer={footer} testid="automation-convert">
+    {busy && <p role="status" data-testid="action-progress">변환 중… 끝나면 이 창이 닫힙니다.</p>}
     {phase.kind === "loading" && <p role="status">변환 계획을 짜는 중…</p>}
     {phase.kind === "error" && <div role="alert"><p>{phase.message}</p><p>원인을 확인한 뒤 미리보기를 다시 읽어 변환할 파일을 확인하세요.</p></div>}
     {(phase.kind === "plan" || phase.kind === "running") && (phase.files.length === 0
@@ -58,10 +61,5 @@ export function ConvertSheet({ project, canControl, onClose, onDone }: { project
         <Plan files={phase.files} />
       </>)}
     {phase.kind === "error" && phase.files && <Plan files={phase.files} />}
-    {phase.kind === "done" && (phase.files.length === 0 ? <p>바꿀 옛 파일이 없었습니다.</p> : <>
-      <p data-testid="convert-archived">옛 파일 보존 위치: {archiveDirs(phase.files).map((d) => <code key={d}>{d} </code>)}</p>
-      <p className="automation-dim">새 파일과 보존 사본을 coordinator 폴더 git에 한 커밋으로 남기세요.</p>
-      <Plan files={phase.files} />
-    </>)}
   </AutomationSheet>;
 }

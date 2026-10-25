@@ -39,6 +39,21 @@ export function withRecommended(q: ThreadQuestions, picks: (number | null)[]): n
 const KIND_ICON = { question: CircleQuestionMark, request: Bot, task: ListChecks } as const;
 const KIND_LABEL = { question: "질문", request: "확인 필요", task: "할 일 확인 필요" } as const;
 
+const AskRow = ({ k, kind, title, meta, ids = [], isDone, selected, onPick }: { selected: string | null; onPick: (key: string) => void; k: string; kind: keyof typeof KIND_ICON; title: string; meta: string; ids?: string[]; isDone?: boolean }) => {
+  const Icon = isDone ? Check : KIND_ICON[kind];
+  return (
+    <button type="button" className={`ask-row is-${kind}${isDone ? " is-done" : ""}${selected === k ? " is-selected" : ""}`} data-testid="ask-row" data-key={k}
+      aria-current={selected === k ? "true" : undefined} onClick={() => onPick(k)}>
+      <span className="ask-row-mark" aria-hidden="true"><Icon /></span>
+      <span className="ask-row-text">
+        {ids.length > 0 && <span className="ask-row-ids list-id-line">{[...new Set(ids)].map((id) => <ListId key={id} id={id} testId="ask-short-id" />)}</span>}
+        <span className="ask-row-title">{title}</span>
+        <span className="ask-row-meta">{meta}</span>
+      </span>
+    </button>
+  );
+};
+
 // ───────────── 사이드바 목록 ─────────────
 
 export function AsksPanel({
@@ -56,12 +71,13 @@ export function AsksPanel({
   selected: string | null;
   canControl: boolean;
   onPick: (key: string) => void;
-  onForgetAll: () => Promise<void>;
+  onForgetAll: (ids: string[]) => Promise<void>;
   onMoreAuto: () => Promise<void>;
 }) {
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState<string[] | null>(null);
   const [moreBusy, setMoreBusy] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
+  const [visible, setVisible] = useState(50);
   const now = Date.now();
   const auto = data?.autoDecisions ?? [];
   const autoIds = new Set(auto.filter(d => d.outcome === "answered").map(d => d.question.id));
@@ -69,31 +85,17 @@ export function AsksPanel({
   const autoRow = (d: AutoDecision) => <button type="button" className={`ask-row is-auto${selected === `a:${d.id}` ? " is-selected" : ""}`} key={d.id} data-testid="auto-decision-row" data-key={`a:${d.id}`} onClick={() => onPick(`a:${d.id}`)}>
     <span className="ask-row-mark"><Zap /></span><span className="ask-row-text"><span className="ask-row-title">{d.question.id} {d.question.text} → {d.choice}</span><span className="ask-row-meta">{d.outcome === "answered" ? (d.reviewed ? "확인함" : "자동 결정") : "전달 확인 필요"} · {when(d.at_ms)}</span></span>
   </button>;
-  const Row = ({ k, kind, title, meta, ids = [], isDone }: { k: string; kind: keyof typeof KIND_ICON; title: string; meta: string; ids?: string[]; isDone?: boolean }) => {
-    const Icon = isDone ? Check : KIND_ICON[kind];
-    return (
-      <button type="button" className={`ask-row is-${kind}${isDone ? " is-done" : ""}${selected === k ? " is-selected" : ""}`} data-testid="ask-row" data-key={k}
-        aria-current={selected === k ? "true" : undefined} onClick={() => onPick(k)}>
-        <span className="ask-row-mark" aria-hidden="true"><Icon /></span>
-        <span className="ask-row-text">
-          {ids.length > 0 && <span className="ask-row-ids list-id-line">{[...new Set(ids)].map((id) => <ListId key={id} id={id} testId="ask-short-id" />)}</span>}
-          <span className="ask-row-title">{title}</span>
-          <span className="ask-row-meta">{meta}</span>
-        </span>
-      </button>
-    );
-  };
   return (
     <div className="asks-panel" data-testid="asks-panel">
       <h3 className="asks-panel-head">답할 것 <span className={open.length > 0 ? "is-ask" : undefined} data-testid="asks-open-count">{open.length}</span></h3>
       {open.length === 0 && <p className="asks-panel-empty">답할 것이 없다</p>}
       {open.map((a) =>
         a.kind === "question" ? (
-          <Row key={a.key} k={a.key} kind="question" ids={a.thread.questions.items.flatMap((q) => q.id ? [q.id] : [])} title={`${a.thread.id} · ${a.thread.title || a.thread.id}`} meta={openMeta(a, now)} />
+          <AskRow selected={selected} onPick={onPick} key={a.key} k={a.key} kind="question" ids={a.thread.questions.items.flatMap((q) => q.id ? [q.id] : [])} title={`${a.thread.id} · ${a.thread.title || a.thread.id}`} meta={openMeta(a, now)} />
         ) : a.kind === "request" ? (
-          <Row key={a.key} k={a.key} kind="request" ids={[...(a.request.question_id ? [a.request.question_id] : []), ...(a.request.questions?.items ?? []).flatMap((q) => q.id ? [q.id] : [])]} title={a.request.title} meta={openMeta(a, now)} />
+          <AskRow selected={selected} onPick={onPick} key={a.key} k={a.key} kind="request" ids={[...(a.request.question_id ? [a.request.question_id] : []), ...(a.request.questions?.items ?? []).flatMap((q) => q.id ? [q.id] : [])]} title={a.request.title} meta={openMeta(a, now)} />
         ) : (
-          <Row key={a.key} k={a.key} kind="task" ids={a.task.short_id ? [a.task.short_id] : []} title={a.task.title} meta={openMeta(a, now)} />
+          <AskRow selected={selected} onPick={onPick} key={a.key} k={a.key} kind="task" ids={a.task.short_id ? [a.task.short_id] : []} title={a.task.title} meta={openMeta(a, now)} />
         ),
       )}
       <h3 className="asks-panel-head">자동으로 정한 것 <span data-testid="asks-auto-count">{auto.length}</span></h3>
@@ -103,22 +105,23 @@ export function AsksPanel({
       <h3 className="asks-panel-head">
         답한 것 <span data-testid="asks-done-count">{done.length}</span>
         {canControl && done.length > 0 && (
-          <button type="button" className="ghost small asks-forget-all" data-testid="asks-forget-all" onClick={() => setConfirm(true)}>
+          <button type="button" className="ghost small asks-forget-all" data-testid="asks-forget-all" onClick={() => setConfirm(done.map(r => r.id))}>
             <Trash2 aria-hidden="true" /> 모두 지우기
           </button>
         )}
       </h3>
-      {done.map((r) => (
-        <Row key={r.id} k={`d:${r.id}`} kind={r.kind} ids={[...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]} title={doneTitle(r)} meta={doneMeta(r, now)} isDone />
+      {done.slice(0, visible).map((r) => (
+        <AskRow selected={selected} onPick={onPick} key={r.id} k={`d:${r.id}`} kind={r.kind} ids={[...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]} title={doneTitle(r)} meta={doneMeta(r, now)} isDone />
       ))}
+      {done.length > visible && <button type="button" onClick={() => setVisible(n => n + 50)}>답한 것 더 보기</button>}
       {data && <p className="asks-panel-note">답한 것은 {data.keepDays}일 지나면 자동으로 지운다. 지우면 모든 기기에서 사라진다</p>}
       {confirm && (
         <ConfirmDialog
           title="답한 것 모두 지우기"
-          body={`답한 것 ${done.length}개와 보존한 원문·그림을 모든 기기에서 지운다. 되돌릴 수 없다.`}
+          body={`답한 것 ${confirm.length}개와 보존한 원문·그림을 모든 기기에서 지운다. 되돌릴 수 없다.`}
           confirmLabel="모두 지우기"
-          onConfirm={onForgetAll}
-          onClose={() => setConfirm(false)}
+          onConfirm={() => onForgetAll(confirm)}
+          onClose={() => setConfirm(null)}
         />
       )}
     </div>

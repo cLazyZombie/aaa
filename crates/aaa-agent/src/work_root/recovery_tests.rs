@@ -83,6 +83,82 @@ async fn git(repo: &Path, args: &[&str]) -> String {
 }
 
 #[tokio::test]
+async fn cleanup_probe_is_read_only_and_keeps_registered_locked_or_recreated_places() {
+    use aaa_proto::CleanupTarget;
+    let lab = Lab::new().await;
+    let present = lab.prepare("t-0001").await;
+    let registered = lab.prepare("t-0002").await;
+    std::fs::remove_dir_all(&registered.cwd).unwrap();
+    let gone = lab.dir.join("A/gone");
+    let target = |path: &Path, branch: Option<&str>| CleanupTarget {
+        cwd: path.display().to_string(),
+        branch: branch.map(str::to_owned),
+    };
+    let targets = [
+        target(&gone, None),
+        target(Path::new(&present.cwd), None),
+        target(Path::new(&registered.cwd), None),
+        target(&gone, Some("main")),
+        target(&gone, Some("missing-branch")),
+    ];
+    let result = threads::cleanup_absent(&lab.cfg, &lab.state, lab.repo.to_str().unwrap(), &targets).await.unwrap();
+    assert_eq!(result, [true, false, false, false, true]);
+    assert!(!lab.state.join("thread-cleanup").exists(), "부재 확인은 정리 journal을 만들지 않는다");
+    assert!(Path::new(&present.cwd).is_dir());
+    assert!(git(&lab.repo, &["worktree", "list", "--porcelain"]).await.contains(&registered.cwd));
+    std::fs::create_dir(&gone).unwrap();
+    assert_eq!(
+        threads::cleanup_absent(&lab.cfg, &lab.state, lab.repo.to_str().unwrap(), &targets[..1]).await.unwrap(),
+        [false]
+    );
+}
+
+#[tokio::test]
+async fn cleanup_probe_rejects_missing_volume_symlink_and_pending_lock_without_writing() {
+    use aaa_proto::CleanupTarget;
+    use sha2::{Digest, Sha256};
+    let lab = Lab::new().await;
+    lab.prepare("t-0001").await;
+    let gone = lab.dir.join("A/gone");
+    let target = CleanupTarget { cwd: gone.display().to_string(), branch: None };
+    let journal =
+        lab.state.join("thread-cleanup").join(format!("{}.json", hex::encode(Sha256::digest(target.cwd.as_bytes()))));
+    std::fs::create_dir_all(journal.parent().unwrap()).unwrap();
+    let pending = serde_json::json!({ "input": { "repo": lab.repo, "cwd": target.cwd, "branch": null,
+        "merged_head": null, "keep_worktree": false, "uncopied": false }, "result": null, "relock": "aaa:pending" })
+    .to_string();
+    std::fs::write(&journal, &pending).unwrap();
+    assert_eq!(
+        threads::cleanup_absent(&lab.cfg, &lab.state, lab.repo.to_str().unwrap(), std::slice::from_ref(&target))
+            .await
+            .unwrap(),
+        [false]
+    );
+    assert_eq!(std::fs::read_to_string(&journal).unwrap(), pending);
+    let cfg = ThreadsConfig {
+        work_root: lab.dir.join("A"),
+        work_mount: Some(lab.dir.join("missing-volume")),
+        ..Default::default()
+    };
+    assert!(
+        threads::cleanup_absent(&cfg, &lab.state, lab.repo.to_str().unwrap(), std::slice::from_ref(&target))
+            .await
+            .is_err()
+    );
+    std::os::unix::fs::symlink(lab.dir.join("missing"), &gone).unwrap();
+    assert!(
+        threads::cleanup_absent(&lab.cfg, &lab.state, lab.repo.to_str().unwrap(), std::slice::from_ref(&target))
+            .await
+            .is_err()
+    );
+    assert!(threads::cleanup_absent(&lab.cfg, &lab.state, lab.repo.to_str().unwrap(), &[]).await.is_err());
+    assert!(
+        threads::cleanup_absent(&lab.cfg, &lab.state, lab.repo.to_str().unwrap(), &vec![target; 501]).await.is_err()
+    );
+    assert_eq!(std::fs::read_to_string(&journal).unwrap(), pending);
+}
+
+#[tokio::test]
 async fn root_switch_imports_legacy_once_and_recovers_the_original_worktree() {
     let mut lab = Lab::new().await;
     // 구판 root에 있던 실제 준비 기록을 새 agent가 가져오는 저장 형식 계약이다.

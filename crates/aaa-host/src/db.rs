@@ -369,6 +369,7 @@ impl Db {
                project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, source TEXT NOT NULL, revision TEXT NOT NULL,
                ready INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
                PRIMARY KEY(project,id), UNIQUE(project,seq));
+             CREATE INDEX IF NOT EXISTS report_ids_source ON report_ids(project,source,ready,deleted,seq DESC);
              CREATE TABLE IF NOT EXISTS library_archives(
                project TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(project,name));
              CREATE TABLE IF NOT EXISTS library_completion(

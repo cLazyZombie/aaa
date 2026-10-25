@@ -1,3 +1,4 @@
+import { useAsyncAction } from "./useAsyncAction";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 // 관리 GUI W5b(plan §8.355): 설정 「머신」(등록 창·대기·승인·폐기), 「폰 및 기기」의 웹 공개 켜기·끄기, 보고서 「올리기」 창,
 // 「이 aaa」의 공유 링크 키 교체. host가 판정한다(웹 조작 기기만, 마지막 조작 기기·host 머신 폐기 거부, 등록 코드 3번 틀리면 버림).
@@ -572,16 +573,15 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [toUser, setToUser] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const action = useAsyncAction();
+  const busy = action.pending;
   const [done, setDone] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const error = action.error;
   const upload = useRef(newUploadId());
   const plan = uploadPlan(files.map((f) => ({ name: f.name, relative: f.webkitRelativePath, size: f.size })));
   const hasIndex = plan.paths.some((p) => p.path === "index.html");
   const problem = files.length === 0 ? null : (plan.error ?? (toUser && !hasIndex ? "사용자 보고서는 맨 위에 index.html이 있어야 한다" : null));
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
+  const submit = () => action.run(async () => {
     try {
       let n = done;
       for (const p of plan.paths.slice(done)) {
@@ -605,11 +605,9 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
         upload.current = newUploadId();
         setDone(0);
       }
-      setError(say(e));
-    } finally {
-      setBusy(false);
+      throw e;
     }
-  };
+  });
   const pick = (list: FileList | null) => {
     setFiles(list ? Array.from(list) : []);
     // 새로 고른 파일은 새 올리기다(앞 것과 섞이지 않게)
@@ -691,18 +689,21 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
 }
 
 /** 「이 aaa」의 공유 링크 목록(`aaa library list`, 관리 GUI W8): 낸 링크마다 만료·마지막 열람·상태, 살아 있는 링크는 폐기 */
-export function LinkList() {
+export function LinkList({ revision = 0 }: { revision?: number }) {
   const admin = useAdmin();
   const [links, setLinks] = useState<LinkView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  if (!admin) return null;
-  const load = () => {
+  const loadId = useRef(0);
+  const load = useCallback(() => {
+    const id = ++loadId.current;
     setError(null);
     call({ op: "library_links", project: null })
-      .then((r) => setLinks(r.kind === "library_links" ? [...r.links].sort((a, b) => b.created_at_ms - a.created_at_ms) : []))
-      .catch((e: unknown) => setError(say(e)));
-  };
+      .then((r) => { if (id === loadId.current) setLinks(r.kind === "library_links" ? [...r.links].sort((a, b) => b.created_at_ms - a.created_at_ms) : []); })
+      .catch((e: unknown) => { if (id === loadId.current) setError(say(e)); });
+  }, []);
+  useEffect(() => { if (admin && revision > 0) load(); }, [admin, revision, load]);
+  if (!admin) return null;
   const revoke = async (id: string) => {
     setBusy(id);
     setError(null);
@@ -754,7 +755,7 @@ export function LinkList() {
 }
 
 /** 「이 aaa」의 공유 링크 키 교체(사용자 답 5A): 지금 살아 있는 링크 수를 보이고 모두 끊긴다고 알린다 */
-export function KeyRotate() {
+export function KeyRotate({ onChanged }: { onChanged: () => void }) {
   const admin = useAdmin();
   const [links, setLinks] = useState<LinkView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -787,8 +788,8 @@ export function KeyRotate() {
           confirmLabel="키 교체"
           onConfirm={async () => {
             await call({ op: "library_rotate" });
-            setLinks(null);
             setDone(true);
+            onChanged();
           }}
           onClose={() => setLinks(null)}
         />
