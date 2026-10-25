@@ -1526,7 +1526,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               canControl={canControl}
               onPick={(k) => goSel(`ask:${k}`)}
               onMoreAuto={moreAuto}
-              onForgetAll={async () => putAsks(await call({ op: "ask_forget", ids: [], all: true }))}
+              onForgetAll={async (ids) => putAsks(await call({ op: "ask_forget", ids, all: false }))}
             />
           }
           banners={

@@ -9,7 +9,7 @@ import type { AutomationTrashEntry, ThreadView } from "./gen/proto";
 import { ConvertSheet } from "./AutomationConvert";
 import { canEditAutomations } from "./automationForm";
 import { openThreads, type Automations } from "./automationData";
-import { canPreviewConvert, cardTone, cardWord, legacyFiles, legacyRule, shortTrigger } from "./automationModel";
+import { archiveDirs, canPreviewConvert, cardTone, cardWord, legacyFiles, legacyRule, shortTrigger } from "./automationModel";
 import "./AutomationPanel.css";
 
 const time = (at: number) => new Date(at).toLocaleString();
@@ -26,6 +26,7 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
 }) {
   const { rows, error, loading, frontApi, load, setError } = data;
   const [busy, setBusy] = useState<string | null>(null);
+  const [converted, setConverted] = useState<string[] | null>(null);
   const [convert, setConvert] = useState<string | null>(null);
   const restore = async (project: string, t: AutomationTrashEntry) => {
     setBusy(`${project}/${t.id}`);
@@ -38,6 +39,7 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
   const editable = canControl && canEditAutomations(frontApi);
   return <section className="automations" aria-label="자동화 목록" data-testid="automations">
     <div className="automation-tools"><button type="button" className="ghost small" onClick={() => void load()}>다시 읽기</button></div>
+    {converted && <p role="status" data-testid="convert-archived">새 형식으로 바꿨습니다. 옛 파일 보존 위치: {archiveDirs(converted).join(", ")}</p>}
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">읽는 중…</p>}
     {!loading && rows.every((p) => p.rules.length === 0) && <p className="automation-dim">자동화가 없습니다.</p>}
@@ -83,6 +85,6 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
         </details>}
       </section>;
     })}
-    {convert && <ConvertSheet project={convert} canControl={canControl} onClose={() => setConvert(null)} onDone={load} />}
+    {convert && <ConvertSheet project={convert} canControl={canControl} onClose={() => setConvert(null)} onDone={async files => { setConverted(files); await load(); }} />}
   </section>;
 }

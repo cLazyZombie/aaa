@@ -3,7 +3,9 @@
 // 시스템 「뒤로」도 닫는다. 일은 여기서 하므로 실패는 창 안에 보인다. 다른 곳: 참고의 escalation(「그래도 지우기」)은 쓰는 곳이 없어 뺐다.
 import "./herdr/ConfirmDialog.css";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import type { ActionProgress } from "./bulkAction";
+import { useAsyncAction } from "./useAsyncAction";
 import { createPortal } from "react-dom";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
@@ -20,8 +22,8 @@ export function ConfirmDialog({
   title: string;
   body: string;
   confirmLabel: string;
-  /** 일이 끝나면 resolve한다. 그 뒤 창을 내리는 것은 부른 쪽이다 */
-  onConfirm: () => Promise<void>;
+  /** 성공하면 이 창이 onClose를 부른다. 실패는 창에 남기고 다시 조작할 수 있게 한다. */
+  onConfirm: (progress: ActionProgress) => Promise<void>;
   onClose: () => void;
   children?: ReactNode | ((pending: boolean) => ReactNode);
 }) {
@@ -29,13 +31,13 @@ export function ConfirmDialog({
   const cancel = useRef<HTMLButtonElement>(null);
   const done = useRef(false);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: cancel, shouldRestore: () => !done.current });
-  const [pending, setPending] = useState(false);
+  const { pending, error, progress, run } = useAsyncAction();
   useSheetSwipe(surface, pending ? null : onClose);
   usePhoneSheetBack(() => {
     if (pending) return false;
     onClose();
   });
-  const [error, setError] = useState<string | null>(null);
+
 
   // 일하는 동안 두 단추가 꺼지면 focus가 페이지로 떨어진다: 창이 쥔다
   useEffect(() => {
@@ -53,17 +55,11 @@ export function ConfirmDialog({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose, pending]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const confirm = async (): Promise<void> => {
-    setPending(true);
-    setError(null);
-    try {
-      await onConfirm();
-      done.current = true;
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-      setPending(false);
-    }
-  };
+  const confirm = () => run(async (reportProgress) => {
+    await onConfirm(reportProgress);
+    done.current = true;
+    onClose();
+  });
 
   return createPortal(
     <div
@@ -72,7 +68,7 @@ export function ConfirmDialog({
         if (event.target === event.currentTarget && !pending) onClose();
       }}
     >
-      <div ref={surface} className="modal confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-body`} tabIndex={-1}>
+      <div ref={surface} className="modal confirm-dialog" role="alertdialog" aria-modal="true" aria-busy={pending} aria-labelledby={`${id}-title`} aria-describedby={`${id}-body`} tabIndex={-1}>
         <header className="modal-header">
           <h2 className="modal-title" id={`${id}-title`}>
             {title}
@@ -83,6 +79,7 @@ export function ConfirmDialog({
             {body}
           </p>
           {typeof children === "function" ? children(pending) : children}
+          {pending && <p role="status" data-testid="action-progress">{progress ?? "처리 중… 끝나면 이 창이 닫힙니다."}</p>}
           {error && (
             <p className="confirm-error" role="alert">
               {error}

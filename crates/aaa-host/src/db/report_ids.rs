@@ -91,3 +91,46 @@ impl Db {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_index_upgrades_history_without_changing_visible_versions() {
+        let root = std::env::temp_dir().join(format!("aaa-report-index-{}", aaa_common::util::new_id()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("host.db");
+        {
+            let db = Db::open(&path).unwrap();
+            let c = db.conn.lock().unwrap();
+            // 색인이 없던 기존 DB: 삭제 판·미완성 판·다른 프로젝트는 조회에서 제외한다.
+            c.execute_batch(
+                "DROP INDEX report_ids_source;
+                INSERT INTO report_ids VALUES('demo',1,'r-0001','same','deleted',1,1);
+                INSERT INTO report_ids VALUES('demo',2,'r-0002','same','pending',0,0);
+                INSERT INTO report_ids VALUES('demo',3,'r-0003','same','first',1,0);
+                INSERT INTO report_ids VALUES('demo',4,'r-0004','same','last',1,0);
+                INSERT INTO report_ids VALUES('other',1,'r-0001','same','other',1,0);",
+            )
+            .unwrap();
+        }
+        for _ in 0..2 {
+            let db = Db::open(&path).unwrap();
+            let versions = db.report_ids("demo", "same").unwrap();
+            assert_eq!(versions.iter().map(|v| v.id.as_str()).collect::<Vec<_>>(), ["r-0004", "r-0003"]);
+            assert_eq!(db.report_ids("other", "same").unwrap()[0].revision, "other");
+            let c = db.conn.lock().unwrap();
+            let plan: String = c.query_row(
+                "EXPLAIN QUERY PLAN SELECT id,source,revision FROM report_ids WHERE project=?1 AND source=?2 AND ready=1 AND deleted=0 ORDER BY seq DESC",
+                params!["demo", "same"], |r| r.get(3),
+            ).unwrap();
+            assert!(
+                plan.contains("report_ids_source") && plan.contains("source=?"),
+                "프로젝트 전체를 훑지 않는다: {plan}"
+            );
+            assert_eq!(c.query_row("SELECT count(*) FROM report_ids", [], |r| r.get::<_, i64>(0)).unwrap(), 5);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

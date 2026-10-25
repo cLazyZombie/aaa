@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Trash2 } from "lucide-react";
 import type { DeviceRole, FrontResponse, LibraryReport } from "./gen/proto";
 import { call } from "./api";
+import { runBatches, type ActionProgress } from "./bulkAction";
+import { useAsyncAction } from "./useAsyncAction";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { UploadReportDialog, useAdmin } from "./AdminPages";
 import { ReportLink } from "./LibraryLink";
@@ -58,7 +60,8 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const [usage, setUsage] = useState<Extract<FrontResponse, { kind: "library_usage" }> | null>(null);
   const [problem, setProblem] = useState("");
   const [tab, setTab] = useState<Tab>("mine");
-  const [saving, setSaving] = useState(false);
+  const archiving = useAsyncAction();
+  const saving = archiving.pending;
   const [versions, setVersions] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState<string | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -101,14 +104,19 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
       onView(r);
     }
   }}>{r.title ?? keyOf(r)}</a></span>;
-  const remove = async (rows: LibraryReport[]) => {
-    const r = await call({ op: "library_delete", reports: rows.map((x) => ({ project: x.project, name: x.name })) });
-    if (r.kind !== "library_pruned") throw new Error("host가 지우기에 다른 답을 했다");
-    const gone = new Set(r.removed);
-    setReports((all) => all?.filter((x) => !gone.has(keyOf(x))) ?? null);
-    setPicked((p) => new Set([...p].filter((k) => !gone.has(k))));
-    setDoomed(null);
-    void load();
+  const remove = async (rows: LibraryReport[], progress: ActionProgress) => {
+    try {
+      await runBatches(rows, async (batch) => {
+        const r = await call({ op: "library_delete", reports: batch.map((x) => ({ project: x.project, name: x.name })) });
+        if (r.kind !== "library_pruned") throw new Error("host가 지우기에 다른 답을 했다");
+        ++loadId.current;
+        const gone = new Set(r.removed);
+        setReports((all) => all?.filter((x) => !gone.has(keyOf(x))) ?? null);
+        setPicked((p) => new Set([...p].filter((k) => !gone.has(k))));
+        // 일부 묶음 실패 뒤 다시 누르면 이미 지운 대상을 보내지 않는다.
+        setDoomed((all) => all?.filter((x) => !gone.has(keyOf(x))) ?? null);
+      }, progress);
+    } finally { void load(); }
   };
   const canEdit = role !== "reader";
   const startUpload = () => {
@@ -138,16 +146,18 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const pickedRows = work.filter((r) => picked.has(keyOf(r)));
   const setLink = (r: LibraryReport, link: LibraryReport["link"]) =>
     setReports((rows) => rows?.map((row) => row.project === r.project && row.name === r.name ? { ...row, link } : row) ?? null);
-  const archiveReports = async (rows: LibraryReport[], archived: boolean) => {
-    setSaving(true);
-    setProblem("");
+  const archiveReports = (rows: LibraryReport[], archived: boolean) => archiving.run(async (progress) => {
     try {
-      await call({ op: "library_archive", reports: rows.map((r) => ({ project: r.project, name: versions[keyOf(r)] ?? r.report_id ?? r.name })), archived });
-      setPicked(new Set());
-      await load();
-    } catch (e) { setProblem(e instanceof Error ? e.message : String(e)); }
-    finally { setSaving(false); }
-  };
+      await runBatches(rows, async (batch) => {
+        const r = await call({ op: "library_archive", reports: batch.map((r) => ({ project: r.project, name: versions[keyOf(r)] ?? r.report_id ?? r.name })), archived });
+        if (r.kind !== "library_reports") throw new Error("host가 보관 처리에 다른 답을 했다");
+        ++loadId.current;
+        setReports(r.reports);
+        const saved = new Set(batch.map(keyOf));
+        setPicked(p => new Set([...p].filter(k => !saved.has(k))));
+      }, progress);
+    } finally { void load(); }
+  });
   const archiveAction = (r: LibraryReport) => canEdit && <>
     {!r.archived && r.versions.length > 1 && <select aria-label={`${keyOf(r)} 보관할 판`} value={versions[keyOf(r)] ?? r.report_id ?? r.name}
       onChange={(e) => setVersions((v) => ({ ...v, [keyOf(r)]: e.target.value }))}>
@@ -173,13 +183,15 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
       <button className="ghost small" onClick={() => void load()}>새로고침</button>
       <span className="reports-toolbar-actions">
         {canEdit && admin && <button className="ghost small" onClick={startUpload} data-testid="reports-upload">보고서 올리기</button>}
-        {canEdit && <button className="ghost small" data-testid="reports-mark-read" disabled={reports === null || unreadRows.length === 0}
+        {canEdit && <button className="ghost small" data-testid="reports-mark-read" disabled={saving || reports === null || unreadRows.length === 0}
           onClick={() => setReading({ tab, rows: unreadRows })}>모두 읽음</button>}
       </span>
     </div>
     {uploading && <UploadReportDialog project={uploading} onClose={() => setUploading(null)} onDone={() => void load()} />}
     {usage && <p className="muted" data-testid="reports-usage">합계 {storageSize(usage.size)} / {usage.max_size ? storageSize(usage.max_size) : "상한 꺼짐"}, 기한 {usage.max_days ? `${usage.max_days}일` : "꺼짐"} · 보관함 {storageSize(usage.archived_size)} (상한 제외)</p>}
     {usage && usage.max_size > 0 && usage.protected_size > usage.max_size && <p role="alert">보호 사본만으로 상한을 넘었다. 자동 삭제하지 않는다</p>}
+    {saving && <p role="status" data-testid="action-progress">{archiving.progress ?? "보관 상태를 바꾸는 중…"}</p>}
+    {archiving.error && <p role="alert">{archiving.error}</p>}
     {problem && <p role="alert">{problem}</p>}
     <div id="reports-tabpanel" role="tabpanel" aria-labelledby={`reports-tab-${tab}`}>
     {reports === null ? <p>보고서를 읽고 있다…</p> : repoOn !== null && (tab === "work" ? work : cards).length === 0 ? <p className="muted">이 저장소의 보고서가 없다</p> : tab !== "work" ? (
@@ -209,7 +221,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
           <button className="ghost small" data-testid="reports-pick-done" disabled={!work.some((r) => !r.busy)}
             onClick={() => setPicked(new Set(work.filter((r) => !r.busy).map(keyOf)))}>끝난 것 모두 고르기</button>
           <button className="ghost small" disabled={saving || pickedRows.length === 0} onClick={() => void archiveReports(pickedRows, true)}>보관함에 넣기</button>
-          <button className="small danger" data-testid="reports-delete" disabled={pickedRows.length === 0} onClick={() => setDoomed(pickedRows)}>
+          <button className="small danger" data-testid="reports-delete" disabled={saving || pickedRows.length === 0} onClick={() => setDoomed(pickedRows)}>
             <Trash2 className="i" aria-hidden="true" />지우기
           </button>
         </div>}
@@ -255,7 +267,6 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
         if (r.kind !== "library_reports") throw new Error("host가 읽음 처리에 다른 답을 했다");
         ++loadId.current;
         setReports(r.reports);
-        setReading(null);
       }}
       onClose={() => setReading(null)}
     />}
@@ -263,7 +274,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
       title={doomed.length === 1 ? "보고서를 지울까?" : `보고서 ${doomed.length}개를 지울까?`}
       body={`${doomed.length === 1 ? keyOf(doomed[0]) : `${doomed.slice(0, 3).map(keyOf).join(", ")}${doomed.length > 3 ? ` 외 ${doomed.length - 3}개` : ""}`}를 모든 보고 판의 host 사본·공유 링크·목록에서 영구히 지운다.${doomed.some((r) => r.name.startsWith("t-")) ? " thread 사본은 회수한 보고 글도 함께 지운다." : ""} 되돌릴 수 없다.`}
       confirmLabel="영구히 지우기"
-      onConfirm={() => remove(doomed)}
+      onConfirm={(progress) => remove(doomed, progress)}
       onClose={() => setDoomed(null)}
     />}
   </div>;

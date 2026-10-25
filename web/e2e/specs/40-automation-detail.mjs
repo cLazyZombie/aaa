@@ -122,16 +122,15 @@ export default async function ({ page }) {
     await sheet.getByRole("button", { name: "미리보기 다시 읽기", exact: true }).click();
     await sheet.locator('[data-group="rules"]').waitFor();
     await sheet.getByRole("button", { name: "변환", exact: true }).click();
-    await sheet.getByTestId("convert-archived").waitFor();
-    if (!(await sheet.getByTestId("convert-archived").textContent()).includes("routines/.converted/")) throw new Error("보존 위치");
+    await sheet.waitFor({ state: "detached" });
+    await page.getByTestId("convert-archived").waitFor();
+    if (!(await page.getByTestId("convert-archived").textContent()).includes("routines/.converted/")) throw new Error("보존 위치");
     await shot(page, "automation-convert-done");
     if (fs.readFileSync(`${dir()}/routines/.converted/check.md`, "utf8") !== before.check || fs.readFileSync(`${dir()}/missions/.converted/watch.md`, "utf8") !== before.watch) throw new Error("보존 사본이 원본과 다르다");
     if (fs.readFileSync(`${dir()}/routines/.converted/pr-followup.md`, "utf8") !== oldFollowup || fs.readFileSync(`${dir()}/routines/.converted/pr-followup.1.md`, "utf8") !== followup) throw new Error("PR 규칙의 두 판 보존");
     aaa("doctor", "files", "--fix");
     if (fs.existsSync(`${dir()}/routines/pr-followup.md`)) throw new Error("doctor가 변환한 PR 규칙을 되살렸다");
     if (!fs.existsSync(`${dir()}/automations/check.toml`) || fs.existsSync(`${dir()}/routines/check.md`)) throw new Error("변환 결과 파일");
-    await sheet.getByRole("button", { name: "닫기", exact: true }).first().click();
-    await sheet.waitFor({ state: "detached" });
     await domIs(page, "이전 형식 줄이 사라진다", () => !document.querySelector('[data-testid="automation-legacy-auto-detail"]') && !document.querySelector('[data-testid="automation-auto-detail-check"]')?.textContent.includes("이전 형식"));
   });
 

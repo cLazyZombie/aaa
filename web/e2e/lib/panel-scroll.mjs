@@ -100,6 +100,8 @@ export async function longPanelLists() {
             await inList(p, "activity-asks");
             await drawerSettled(p);
             await domIs(p, "답한 것 79", () => document.querySelector('[data-testid="asks-done-count"]')?.textContent === "79");
+            await p.getByRole("button", { name: "답한 것 더 보기", exact: true }).click();
+            await domIs(p, "답한 것 79개 표시", () => document.querySelectorAll('[data-testid="asks-panel"] .ask-row.is-done').length === 79);
             const ask = await reachEnd(p, '[data-testid="asks-panel"]', '.ask-row', !touch);
             await shot(p, `panel-scroll-${engine}-${name}-asks`);
             await ask.click();
