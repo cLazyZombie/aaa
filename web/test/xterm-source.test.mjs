@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { applyPatch } from "../xterm-source.mjs";
+import { scrollHistoryWhenReady } from "../e2e/lib/history-scroll.mjs";
 import ts from "typescript-api";
 
 // checkout의 패치(CRLF)와 npm 소스(LF)가 달라도 같은 결과여야 한다.
@@ -43,6 +45,62 @@ function viewportProbes(t) {
   };
   return { patched: compile(readFileSync(file, "utf8")), upstream: compile(original) };
 }
+
+test("앞 기록 fixture는 xterm 본문 뒤 늦은 viewport frame과 크기 맞춤을 기다려 한 번만 굴린다", (t) => {
+  const { patched } = viewportProbes(t);
+  const run = (waitForViewport) => {
+    const frames = [], requests = [];
+    const scrollArea = { style: {} };
+    let nativeTop = 0, scrollWrites = 0;
+    const viewport = {
+      clientHeight: 608, offsetHeight: 608, offsetParent: {},
+      get scrollHeight() { return Math.max(this.clientHeight, Number.parseFloat(scrollArea.style.height) || 0); },
+      get scrollTop() { return nativeTop; },
+      set scrollTop(value) { scrollWrites++; nativeTop = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); },
+    };
+    const box = {
+      // 본문은 이미 그려졌지만 viewport의 예약 frame은 아직 실행되지 않았다.
+      dataset: { readonly: 'false', fit: 'same', historyMore: '1', historyWaiting: '0', viewBase: '2000', viewTop: '2000' },
+      querySelector: selector => selector === '.xterm-viewport' ? viewport : { getBoundingClientRect: () => ({ height: 19 }) },
+    };
+    const scrollWhenReady = () => runInNewContext(`(${scrollHistoryWhenReady})('terminal')`, { document: { querySelector: () => box } });
+    const state = Object.assign(Object.create(patched.prototype), {
+      _viewportElement: viewport, _scrollArea: scrollArea,
+      _charSizeService: { height: 13 }, _currentRowHeight: 0,
+      _renderDimensions: { device: { cell: { height: 19 } }, css: { canvas: { height: 608 } } },
+      _coreBrowserService: { dpr: 1, window: { requestAnimationFrame: callback => { frames.push(callback); return frames.length; } } },
+      _bufferService: { buffer: { ydisp: 2000, lines: { length: 2032 } } },
+      _lastRecordedBufferLength: 0, _lastScrollTop: 0, _refreshAnimationFrame: null,
+      _onRequestScrollLines: { fire: request => requests.push(request) },
+    });
+    state._activeBuffer = state._bufferService.buffer;
+    state._renderService = { dimensions: state._renderDimensions };
+    state.syncScrollArea();
+    assert.equal(frames.length, 1, '실제 xterm 메서드가 viewport 반영을 예약했다');
+    if (waitForViewport) {
+      assert.equal(scrollWhenReady(), false);
+      assert.equal(scrollWrites, 0, '준비 전에는 scrollTop을 쓰지 않는다');
+    } else viewport.scrollTop = 0;
+    frames.shift()();
+    assert.equal(viewport.scrollTop, 38000, '늦은 viewport 반영은 맨 아래로 동기화한다');
+    if (waitForViewport) {
+      box.dataset.fit = 'sent';
+      assert.equal(scrollWhenReady(), false, '크기 응답도 기다린다');
+      assert.equal(scrollWrites, 1, 'xterm의 자체 동기화 한 번뿐이다');
+      box.dataset.fit = 'same';
+      const before = scrollWhenReady();
+      assert.equal(before.top, 38000);
+      assert.equal(viewport.scrollTop, 0);
+      assert.equal(scrollWrites, 2, 'fixture의 이동은 정확히 한 번이다');
+      assert.equal(scrollWhenReady(), false, '같은 이동을 반복하지 않는다');
+      assert.equal(scrollWrites, 2);
+    }
+    state._handleScroll(new Event('scroll'));
+    return requests.map(request => request.amount);
+  };
+  assert.deepEqual(run(false), [0], '구판의 이른 0 쓰기는 기록 요청 없이 맨 아래에 남는다');
+  assert.deepEqual(run(true), [-2000], '준비 뒤 이동은 실제 xterm scroll 경로로 맨 위에 도달한다');
+});
 
 test("xterm 자체 동기화 뒤 합쳐진 사용자 scroll은 다른 줄이면 버리지 않는다", (t) => {
   const { patched, upstream } = viewportProbes(t);
