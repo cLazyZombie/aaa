@@ -90,7 +90,7 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--launcher", type=Path)
     args = parser.parse_args()
-    assert re.fullmatch(r"aaa-test-\d{4}-[a-z]", args.instance), "시험 전용 이름만 허용한다"
+    assert re.fullmatch(r"aaa-test-[0-9]{4,}-[a-z]", args.instance), "시험 전용 이름만 허용한다"
     assert args.root.is_absolute() and args.root.name.startswith("aaa-test-"), "별도 시험 폴더가 필요하다"
     assert not args.root.exists(), "기존 시험 폴더를 덮어쓰지 않는다"
     if args.kind == "launchd":

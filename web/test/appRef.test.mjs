@@ -10,7 +10,7 @@ const r = (target) => ({ kind: "report", target });
 describe("앱 안 참조", () => {
   it("글 속의 참조를 보통 글과 나눈다", () => {
     assert.deepEqual(splitAppRefs("t-0512 질문 2개 · 추천: 1A 2A aaa:question/t-0512"), ["t-0512 질문 2개 · 추천: 1A 2A ", q("t-0512")]);
-    assert.deepEqual(splitAppRefs("보고서 aaa:report/ui-v2.html와 aaa:question/t-1."), ["보고서 ", r("ui-v2.html"), "와 ", q("t-1"), "."]);
+    assert.deepEqual(splitAppRefs("보고서 aaa:report/ui-v2.html와 aaa:question/t-1."), ["보고서 ", r("ui-v2.html"), "와 ", q("t-0001"), "."]);
     assert.deepEqual(splitAppRefs("(aaa:report/demo_1)에"), ["(", r("demo_1"), ")에"]);
     assert.deepEqual(splitAppRefs("aaa:question/t-0001에 답한다"), [q("t-0001"), "에 답한다"]);
   });
@@ -19,7 +19,7 @@ describe("앱 안 참조", () => {
       assert.deepEqual(splitAppRefs(text), [text], text);
   });
   it("글 전체가 참조 하나일 때만(backtick·링크 주소)", () => {
-    assert.deepEqual(appRefOf(" aaa:question/t-9 "), q("t-9"));
+    assert.deepEqual(appRefOf(" aaa:question/t-9 "), q("t-0009"));
     assert.equal(appRefOf("aaa:question/t-9 보기"), null);
     assert.equal(appRefOf("https://example.ts.net/"), null);
   });
@@ -27,8 +27,8 @@ describe("앱 안 참조", () => {
     const o = "https://mac-a.example.ts.net:8443";
     assert.deepEqual(appLinkOf(`${o}/#question=t-0540`, o), q("t-0540"));
     assert.deepEqual(appLinkOf(`${o}/#report=ui-v2`, o), r("ui-v2"));
-    assert.deepEqual(appLinkOf("/#report=demo%2Fui-v2", o), r("ui-v2"), "앱 자신의 프로젝트/이름 꼴");
-    assert.deepEqual(appLinkOf("#question=t-1", o), q("t-1"));
+    assert.deepEqual(appLinkOf("/#report=demo%2Fui-v2", o), r("demo/ui-v2"), "앱 자신의 프로젝트/이름 꼴");
+    assert.deepEqual(appLinkOf("#question=t-1", o), q("t-0001"));
     for (const href of [`https://other.example.ts.net/#question=t-1`, `${o}/v/abc/#question=t-1`, `${o}/?x=1#question=t-1`, `${o}/#pane=p1`, `${o}/#question=한글`, "aaa:question/t-1", "::"])
       assert.equal(appLinkOf(href, o), null, href);
   });

@@ -68,7 +68,7 @@ fn same_failure_ignores_ids_and_merge_owners_require_suffix() {
     assert_eq!(failure_set(std::slice::from_ref(&a)), failure_set(std::slice::from_ref(&b)));
     b.steps = vec!["build".into()];
     assert_ne!(failure_set(&[a]), failure_set(&[b]));
-    for bad in ["이슈 (t-0042)", "병합: x (t-0042) extra", "병합: x (t-004)", "병합: x\n(t-0042)"] {
+    for bad in ["이슈 (t-0042)", "병합: x (t-0042) extra", "병합: x (t-004x)", "병합: x\n(t-0042)"] {
         assert!(owners(bad).is_empty());
     }
 }
@@ -109,4 +109,20 @@ fn failed_tests_split_same_job_and_step_and_survive_tail_cut() {
     let mut scan = FailureScan::default();
     scan.feed(b"test result: FAILED. 1 passed\nfailures:\n    a::b\n");
     assert!(scan.finish().is_empty());
+}
+
+#[test]
+fn merge_owners_cross_four_and_five_digits_and_accept_numeric_aliases() {
+    for (input, canonical) in [
+        ("t-9999", "t-9999"),
+        ("t-10000", "t-10000"),
+        ("t-100000", "t-100000"),
+        ("t-965", "t-0965"),
+        ("t-00965", "t-0965"),
+    ] {
+        assert_eq!(owners(&format!("병합: 번호 경계 ({input})\n다른 글")), vec![canonical]);
+    }
+    for id in ["t-0", "t-10000x", "other/t-10000", "t-9223372036854775808"] {
+        assert!(owners(&format!("병합: 번호 경계 ({id})")).is_empty());
+    }
 }

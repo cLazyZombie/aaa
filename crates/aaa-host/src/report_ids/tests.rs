@@ -478,3 +478,74 @@ fn archive_batch_and_completion_ledgers_follow_project_export_and_rename() {
     lab.h.db.library_archive_set(&[("renamed".into(), first), ("renamed".into(), second.clone())], false).unwrap();
     assert!(!lab.h.db.library_archived("renamed", &second).unwrap());
 }
+
+#[tokio::test]
+async fn report_versions_and_alias_requests_cross_9999_without_reordering_files() {
+    let lab = Lab::new();
+    let h = &lab.h;
+    h.db.report_reserve("demo", "seed", "seed", 9997).unwrap();
+    let mut ids = Vec::new();
+    for n in [9999, 10000, 10001] {
+        let id = lab.publish("week", &format!("판 {n}"), false);
+        assert_eq!(id, format!("r-{n}"));
+        ids.push(id);
+    }
+    assert_eq!(h.report_version_names("demo", "week"), ["r-10001", "r-10000", "r-9999"]);
+    for id in ["r-10000", "r-010000", "r-0010000"] {
+        let r = h
+            .call(DeviceRole::Reader, "device:r", FrontRequest::LibraryOpen { project: "demo".into(), name: id.into() })
+            .await
+            .unwrap();
+        assert!(matches!(r, FrontResponse::Library(_)));
+    }
+    assert_eq!(lab.file("r-10000", "index.html").await, "판 10000".as_bytes());
+    assert_eq!(lab.file("r-9999", "index.html").await, "판 9999".as_bytes());
+    // 번호 별칭은 기존 권한과 프로젝트 경계를 넘지 않는다.
+    assert!(
+        h.call(
+            DeviceRole::Reader,
+            "device:r",
+            FrontRequest::LibraryDelete {
+                reports: vec![LibraryRef { project: "demo".into(), name: "r-010000".into() }]
+            }
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        h.call(
+            DeviceRole::Reader,
+            "device:r",
+            FrontRequest::LibraryOpen { project: "other".into(), name: "r-010000".into() }
+        )
+        .await
+        .is_err()
+    );
+    let reopened = Host::open(h.cfg.clone(), lab.root.join("state")).unwrap();
+    assert_eq!(reopened.report_version_names("demo", "week"), ["r-10001", "r-10000", "r-9999"]);
+    let preview = reopened.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    let versions: Vec<_> =
+        preview.candidates.iter().filter(|r| r.name.starts_with("r-")).map(|r| r.name.as_str()).collect();
+    assert_eq!(versions, ["r-9999", "r-10000", "r-10001"]);
+    // 최신 별칭과 판은 함께 지우고 원장 순번은 재사용하지 않는다.
+    let expected: Vec<_> = preview.candidates.iter().map(|r| format!("{}/{}", r.project, r.name)).collect();
+    reopened.library_prune_apply(None, Some(1), &expected, u64::MAX, "test").unwrap();
+    assert_eq!(lab.publish("next", "다음", false), "r-10002");
+}
+
+#[test]
+fn report_numeric_aliases_do_not_shadow_existing_legacy_names() {
+    let lab = Lab::new();
+    for name in ["r-0965", "r-00965"] {
+        lab.h
+            .db
+            .library_report_put(&LibraryReportRow { project: "demo".into(), name: name.into(), ..Default::default() })
+            .unwrap();
+    }
+    let mut request = FrontRequest::LibraryOpen { project: "demo".into(), name: "r-00965".into() };
+    assert!(lab.h.normalize_short_ids(&mut request).is_err());
+    assert!(
+        lab.h.library_publish("demo", "r-1", lab.root.to_str().unwrap(), false, None, None, "test").is_err(),
+        "새 보고서가 짧은 번호 별칭을 이름으로 가리지 못한다"
+    );
+}

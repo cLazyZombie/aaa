@@ -3,6 +3,7 @@ import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 한 목록에 모으고, 답한 것은 host 기록(답할 때의 원문)이다. 주소 `#ask=<열쇠>`가 고른 것 하나를 본문 카드로 연다. 열쇠는 종류 글자와
 // 대상이다: `q:<thread>` 열린 질문, `r:<inbox 항목>` 확인 필요 post, `t:<task 제목>` 할 일, `d:<기록>` 답한 것.
 import type { AutoMode, AutoDecision, AskRecord, TaskView, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
+import { normalizeAppTarget } from "./appIds.ts";
 import { appRefOf } from "./appRef.ts";
 import type { AppRefLook } from "./AppRefChip";
 import { isVideoPath } from "./reportMedia.ts";
@@ -25,7 +26,7 @@ export function openAsks(threads: ThreadView[], data: AsksData | null, tasks: Ta
   const questionCards = new Set([
     ...threads.filter((t) => t.questions).flatMap((t) => [t.id, ...t.questions!.items.flatMap((q) => q.id ? [q.id] : [])]),
     ...(data?.done ?? []).filter((r) => r.kind === "question").flatMap((r) => [r.subject, ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
-  ]);
+  ].map(id => normalizeAppTarget(id, "qt")));
   const rs: OpenAsk[] = (data?.requests ?? []).filter((r) => !r.title.split(/\s+/).some((word) => {
     const ref = appRefOf(word);
     return ref?.kind === "question" && questionCards.has(ref.target);

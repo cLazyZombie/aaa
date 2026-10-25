@@ -5,6 +5,11 @@ use aaa_proto::{ErrorBody, TaskAnchor, TaskOp, TaskView};
 impl Host {
     pub(crate) fn fill_task_ids(&self, project: &str, tasks: &mut [TaskView]) -> Result<(), ErrorBody> {
         for t in tasks {
+            if let Some(thread) = t.thread.as_mut()
+                && let Some(id) = aaa_proto::canonical_short_id(thread, 't')
+            {
+                *thread = id;
+            }
             if let Some(id) = &t.id {
                 t.short_id = Some(self.db.task_short_id(project, id).map_err(internal)?);
             }
@@ -23,6 +28,11 @@ impl Host {
             Ok(())
         };
         for op in ops {
+            if let TaskOp::Add { thread: Some(thread), .. } | TaskOp::Update { thread: Some(thread), .. } = op
+                && let Some(id) = aaa_proto::canonical_short_id(thread, 't')
+            {
+                *thread = id;
+            }
             match op {
                 TaskOp::Update { at, .. } | TaskOp::Delete { at } => resolve(at)?,
                 TaskOp::Move { at, before, parent, .. } => {

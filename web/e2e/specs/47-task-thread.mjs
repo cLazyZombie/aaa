@@ -38,7 +38,7 @@ const stateIs = (p, title, want) =>
 const gone = (p, title) => domIs(p, `「${title}」 없음`, (t) => document.querySelector(`.task-row[data-title="${t}"]`) === null && document.querySelector('[data-testid="tasks-view"]') !== null, title);
 const pick = (p, title) => row(p, title).locator(".task-pick").click();
 /** 줄 끝 thread 번호(` · t-NNNN`)를 파일에서 */
-const linked = (title) => new RegExp(`^\\s*- \\[ \\] ${title}.* · (t-\\d{4})(?: <!-- aaa-task:[A-Z0-9]{26} -->)?$`, "m").exec(read())?.[1] ?? null;
+const linked = (title) => new RegExp(`^\\s*- \\[ \\] ${title}.* · (t-\\d{4,})(?: <!-- aaa-task:[A-Z0-9]{26} -->)?$`, "m").exec(read())?.[1] ?? null;
 
 /** 상세 「바로 시작」 → 확인창이 host 값으로 채워지면 시작. 시작한 thread 번호 */
 async function startFromDetail(p, title, shotName) {

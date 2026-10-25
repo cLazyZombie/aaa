@@ -14,7 +14,11 @@ impl Db {
         let c = self.conn.lock().unwrap();
         let mut st =
             c.prepare("SELECT project,name FROM library_reports UNION SELECT project,id FROM threads ORDER BY 1,2")?;
-        Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?)
+        let mut sources = st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        sources.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| aaa_proto::cmp_short_ids(&a.1, &b.1)));
+        Ok(sources)
     }
     pub(crate) fn report_reserve(&self, project: &str, source: &str, revision: &str, floor: u64) -> Result<String> {
         let mut c = self.conn.lock().unwrap();

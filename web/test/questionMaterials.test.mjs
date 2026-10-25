@@ -28,3 +28,9 @@ test("library HTML의 장면 조각을 보존한다", () => {
   const got = material('[비교](library/preview/index.html#A)', { base: '/v/cap/' });
   assert.equal(got[0].url, '/v/cap/library/preview/index.html#A');
 });
+
+
+test("다른 프로젝트의 같은 보고서 번호는 같은 자료로 합치지 않는다", () => {
+  const got = material('[다른 보고](https://example.ts.net/#report=other%2Fr-010000)', { project: "demo", reportId: "r-10000" });
+  assert.deepEqual(got.map(r => [r.project, r.name]), [["demo", "r-10000"], ["other", "r-10000"]]);
+});

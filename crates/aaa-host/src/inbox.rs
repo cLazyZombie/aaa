@@ -41,7 +41,16 @@ pub(crate) struct InboxPage {
 /// 크기 한도(`budget`, JSON bytes) 안에 드는 항목만 싣는다. 끝내지 않은 항목이 먼저 자리를 받고 오래된 것부터 싣는다
 /// (처리할 차례다). 끝낸 항목은 최근 것부터 싣는다. 한 번 넘치면 그 뒤는 싣지 않아, 실은 것은 늘 이어진 앞(또는 뒤)이다.
 /// 실은 항목은 원래 차례(만든 때)로 돌려준다.
-pub(crate) fn fit_inbox(items: Vec<InboxItem>, budget: usize) -> InboxPage {
+pub(crate) fn order(a: &InboxItem, b: &InboxItem) -> std::cmp::Ordering {
+    a.created_at_ms
+        .cmp(&b.created_at_ms)
+        .then_with(|| a.project.cmp(&b.project))
+        .then_with(|| aaa_proto::cmp_short_ids(&a.subject, &b.subject))
+        .then_with(|| a.id.cmp(&b.id))
+}
+
+pub(crate) fn fit_inbox(mut items: Vec<InboxItem>, budget: usize) -> InboxPage {
+    items.sort_by(order);
     let (open, done): (Vec<_>, Vec<_>) = items.into_iter().partition(|i| !i.done);
     let mut used = 0usize;
     let mut take = |list: Vec<InboxItem>| {
@@ -60,7 +69,7 @@ pub(crate) fn fit_inbox(items: Vec<InboxItem>, budget: usize) -> InboxPage {
     let (mut items, omitted_open) = take(open);
     let (recent, omitted_done) = take(done.into_iter().rev().collect());
     items.extend(recent);
-    items.sort_by(|a, b| (a.created_at_ms, &a.id).cmp(&(b.created_at_ms, &b.id)));
+    items.sort_by(order);
     InboxPage { items, omitted_open, omitted_done }
 }
 

@@ -142,7 +142,7 @@ export default async function ({ page }) {
     await shot(page, "repo-desktop-start");
     await page.getByTestId("task-start-go").click();
     await page.getByTestId("task-started").waitFor();
-    const id = await until("이은 thread", () => /저장소 일 .* · (t-\d{4})$/m.exec(taskContent(read()))?.[1]);
+    const id = await until("이은 thread", () => /저장소 일 .* · (t-\d{4,})$/m.exec(taskContent(read()))?.[1]);
     const t = aaa("thread", "show", "demo", id);
     // project.toml에는 실제 경로로 적힌다(/tmp → /private/tmp)
     if (t.thread_kind !== "worktree" || t.repo !== fs.realpathSync(repo) || t.machine !== "labA") throw new Error(`저장소로 띄우지 않았다: ${t.thread_kind} ${t.repo} ${t.machine}`);
@@ -164,7 +164,7 @@ export default async function ({ page }) {
     await p.getByTestId("task-start-repo").selectOption("app");
     await p.getByTestId("task-start-go").click();
     await p.getByTestId("task-started").waitFor();
-    const id = await until("이은 thread", () => /빈 칸 일 \(fake@labA\) · (t-\d{4})$/m.exec(taskContent(read()))?.[1]);
+    const id = await until("이은 thread", () => /빈 칸 일 \(fake@labA\) · (t-\d{4,})$/m.exec(taskContent(read()))?.[1]);
     const t = aaa("thread", "show", "demo", id);
     if (t.thread_kind !== "worktree" || t.repo !== fs.realpathSync(repo)) throw new Error(`고른 저장소로 띄우지 않았다: ${t.thread_kind} ${t.repo}`);
     if (taskContent(read()).includes("빈 칸 일 (fake@labA) [")) throw new Error("고른 값을 task 줄에 적었다");

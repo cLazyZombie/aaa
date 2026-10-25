@@ -535,6 +535,7 @@ pub(crate) fn owner_misread(t: &TaskView) -> bool {
 /// 제목이 같은(대소문자 무시) task
 pub(crate) fn find<'a>(tasks: &'a [TaskView], title: &str) -> Option<&'a TaskView> {
     let want = title.trim().to_lowercase();
+    let want = aaa_proto::canonical_short_id(&want, 'd').unwrap_or(want);
     tasks
         .iter()
         .find(|t| t.short_id.as_deref() == Some(want.as_str()) || t.id.as_deref() == Some(title.trim()))

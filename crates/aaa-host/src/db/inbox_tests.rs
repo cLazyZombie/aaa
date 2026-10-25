@@ -81,3 +81,18 @@ fn notice_failure_rolls_back_the_request_completion() {
         .unwrap();
     assert!(!done && at.is_none());
 }
+
+#[test]
+fn same_time_thread_numbers_use_numeric_order_before_the_reply_budget() {
+    let db = Db::open(Path::new(":memory:")).unwrap();
+    for id in ["t-10000", "t-9999", "t-10001"] {
+        let mut record = item(&format!("20261025-thread-state-{id}"), "demo", "new report");
+        record.subject = id.into();
+        db.inbox_insert(&record).unwrap();
+    }
+    let all = db.inbox_list(Some("demo"), false).unwrap();
+    assert_eq!(all.iter().map(|i| i.subject.as_str()).collect::<Vec<_>>(), ["t-9999", "t-10000", "t-10001"]);
+    let budget = serde_json::to_vec(&all[0]).unwrap().len();
+    let page = crate::inbox::fit_inbox(all, budget);
+    assert_eq!(page.items.iter().map(|i| i.subject.as_str()).collect::<Vec<_>>(), ["t-9999"]);
+}

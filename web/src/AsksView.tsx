@@ -614,7 +614,7 @@ export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRe
     const answered = key ? doneOf(key, done) : null;
     if (answered) return { kind: "done", record: answered };
     // 영속 ID 링크가 닫혔거나 지워졌어도 다른 질문을 그 ID의 카드처럼 열지 않는다.
-    if (/^q:q-\d{4,}$/.test(key ?? "")) return { kind: "missing", id: key!.slice(2) };
+    if (/^q:(?:[a-z0-9_][a-z0-9_-]{0,47}\/)?[qt]-\d+$/.test(key ?? "")) return { kind: "missing", id: key!.slice(2) };
     return open[0] ? { kind: "open", ask: open[0] } : { kind: "none" };
   }, [key, open, done, auto]);
 }

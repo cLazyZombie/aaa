@@ -210,6 +210,7 @@ impl Host {
                 .await
                 .map(FrontResponse::Question);
         };
+        let id = target.id.as_str();
         if target.kind == "harness" {
             return self.answer(&target.subject, choice.or(text.as_deref()).unwrap_or_default(), actor).await.map(
                 |mut q| {

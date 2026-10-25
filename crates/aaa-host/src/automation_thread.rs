@@ -227,7 +227,9 @@ impl Host {
         records.retain(|r| {
             r.automation.as_deref() == Some(name) && matches!(r.status, ThreadStatus::Starting | ThreadStatus::Open)
         });
-        Ok(records.into_iter().max_by(|a, b| (a.created_at_ms, &a.id).cmp(&(b.created_at_ms, &b.id))))
+        Ok(records
+            .into_iter()
+            .max_by(|a, b| a.created_at_ms.cmp(&b.created_at_ms).then_with(|| aaa_proto::cmp_short_ids(&a.id, &b.id))))
     }
     pub(crate) async fn automation_prepare(self: &Arc<Self>, r: &ThreadRec) -> Result<(), ErrorBody> {
         let Some(run) = &r.automation_run else { return Ok(()) };

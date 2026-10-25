@@ -2,6 +2,19 @@
 use super::*;
 
 impl Db {
+    pub(crate) fn automation_long_id(&self, project: &str, number: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT name FROM automation_ids WHERE project=?1 AND number=?2",
+                params![project, number],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     pub(crate) fn automation_short_id(&self, project: &str, name: &str) -> Result<String> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;

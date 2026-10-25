@@ -90,9 +90,12 @@ impl Host {
         for family in &mut families {
             family.sort_by_key(|r| r.name != r.family);
         }
-        families.sort_by_cached_key(|family| {
-            let r = &family[0];
-            (r.updated_at_ms, r.project.clone(), r.family.clone())
+        families.sort_by(|a, b| {
+            let (a, b) = (&a[0], &b[0]);
+            a.updated_at_ms
+                .cmp(&b.updated_at_ms)
+                .then_with(|| a.project.cmp(&b.project))
+                .then_with(|| aaa_proto::cmp_short_ids(&a.family, &b.family))
         });
         let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
         let mut capacity = Vec::new();

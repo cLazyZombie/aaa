@@ -65,7 +65,7 @@ import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts"
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { inAppLink } from "./reportLinks.ts";
 import type { AppRef } from "./appRef";
-import type { AppId } from "./appIds";
+import { normalizeAppTarget, uniqueAppTargets, type AppId } from "./appIds";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
@@ -306,7 +306,9 @@ function selectedFromHash(): string | null {
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
   const m = /^#(pane|thread|task|question|ask|automation|workspace|machine)=(.+)$/.exec(location.hash);
-  return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
+  if (!m) return null;
+  const prefixes: Record<string, string> = { thread: "t", task: "d", question: "qt", automation: "a" };
+  return `${m[1]}:${normalizeAppTarget(decodeURIComponent(m[2]), prefixes[m[1]!] ?? "")}`;
 }
 
 /** 고른 것의 주소(selectedFromHash의 반대). thread는 프로젝트 없이 `thread=<id>` */
@@ -447,6 +449,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
   const [automationBadge, setAutomationBadge] = useState(0);
+  const [automationIds, setAutomationIds] = useState<Map<string, { project: string; name: string; short_id: string }>>(new Map());
   const automationLoading = useRef(false);
   const automationReload = useRef(false);
   const automationActive = useRef(true);
@@ -457,7 +460,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     call({ op: "projects" }).then(async (r) => {
       if (!automationActive.current || r.kind !== "projects") return;
       const lists = await Promise.all(r.projects.map((p) => call({ op: "routines", project: p.name })));
-      if (automationActive.current) setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
+      if (automationActive.current) {
+        setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
+        setAutomationIds(uniqueAppTargets(lists.flatMap((list, i) => list.kind === "routines" ? list.routines.flatMap(rule => rule.short_id ? [{ project: r.projects[i]!.name, name: rule.name, short_id: rule.short_id }] : []) : []), r => r.project, r => r.short_id));
+      }
     }).catch(ignoredFailure("App.tsx:449", () => {
       // WebKit은 reload 때 pagehide 전에 요청을 취소할 수 있다. 실패한 읽기의 예약을 재실행하지 않는다.
       automationReload.current = false;
@@ -895,7 +901,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => {
     if (!sel?.startsWith("thread:") || sel.includes("/")) return;
     const id = sel.slice("thread:".length);
-    const t = [...threads.values()].find((x) => x.id === id && x.project_status !== "archived");
+    const t = uniqueAppTargets([...threads.values()].filter(x => x.project_status !== "archived"), x => x.project, x => x.id).get(id);
     if (t) setSel(`thread:${threadKey(t)}`);
   }, [sel, threads]);
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
@@ -1174,6 +1180,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const allThreads = [...threads.values()].filter((t) => t.project_status !== "archived");
   /** thread 번호로 연다(자동화 패널의 「열림」 칩·기록 번호, plan t-0475 A1): 목록 줄과 같게 agent pane이 돌면 그 pane, 아니면 보고 */
   const openThreadId = (project: string, id: string) => {
+    id = normalizeAppTarget(id, "t");
     const t = allThreads.find((x) => x.project === project && x.id === id);
     if (!t) return;
     const pane = t.pane ? panes.find((p) => p.id === t.pane && p.state === "running") : undefined;
@@ -1236,7 +1243,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [automationShown]); // eslint-disable-line react-hooks/exhaustive-deps
   // 카드 목록과 본문 설정 화면이 같은 사본을 본다. 둘 중 하나가 보일 때만 읽는다
   const automations = useAutomations(panel === "automations" || automationShown, shownThreads);
-  const automationOpen = automationTarget(automationAt);
+  const automationRaw = automationAt?.slice("automation:".length);
+  const automationId = automationRaw ? automationIds.get(automationRaw) : undefined;
+  const automationOpen = automationId ? { project: automationId.project, name: automationId.name } : automationTarget(automationAt);
   // 넓은 창에서 막대 「답할 것」으로 그 패널을 펼치면 본문도 「답할 것」(마지막으로 본 카드)
   const workspaceData = useWorkspaceData(panel === "workspace" || workspaceShown, up, workspaceShown ? sel : "workspace:", threadsSync);
   useEffect(() => { if (workspaceShown) setPanel("workspace"); }, [workspaceShown]);
@@ -1263,7 +1272,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     let live = true;
     call({ op: "library_reports", project: null })
       .then((r) => {
-        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.flatMap((x) => [[x.name, x] as const, ...(x.versions ?? []).map((id) => [id, { ...x, name: id, report_id: id }] as const)])));
+        if (live && r.kind === "library_reports") setReportNames(uniqueAppTargets(r.reports.flatMap((x) => [x, ...(x.versions ?? []).map((id) => ({ ...x, name: id, report_id: id }))]), x => x.project, x => x.name));
       })
       .catch(ignoredFailure("App.tsx:1204", () => {}));
     return () => {
@@ -1273,17 +1282,21 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 프로젝트 없는 보고서 주소(`#report=<이름>`, coordinator가 채팅에 쓰는 링크)는 보고서 목록을 받으면 채운다
   useEffect(() => {
     if (!sel?.startsWith("reports:") || sel === "reports:" || sel.includes("/")) return;
-    const r = reportNames.get(sel.slice("reports:".length));
+    const raw = sel.slice("reports:".length);
+    const r = reportNames.get(raw) ?? reportNames.get(normalizeAppTarget(raw, "rt"));
+    const canonical = reportNames.get(normalizeAppTarget(raw, "rt"));
+    if (r && canonical && r.project === canonical.project && r.name !== canonical.name) return;
     if (r) setSel(`reports:${r.project}/${r.name}`);
   }, [sel, reportNames]); // eslint-disable-line react-hooks/exhaustive-deps
   const knownIds = useMemo(() => new Set([
-    ...allThreads.map((t) => t.id),
+    ...uniqueAppTargets(allThreads, t => t.project, t => t.id).keys(),
+    ...automationIds.keys(),
     ...(taskBoard.board?.tasks ?? []).flatMap((t) => t.short_id ? [t.short_id] : []),
-    ...[...reportNames.values()].flatMap((r) => r.report_id ? [r.report_id] : []),
+    ...[...reportNames.keys()].filter(id => /^r-/.test(id)),
     ...askList.flatMap((a) => a.kind === "question" ? a.thread.questions.items.map((q) => q.id) : []),
     ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
     ...asksDone.flatMap((r) => [r.question_id, ...r.items.map((q) => q.id)]),
-  ]), [threads, taskBoard.board, reportNames, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]), [threads, taskBoard.board, reportNames, asksData, automationIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const questionLooks = useMemo(() => new Map([...new Set([
     ...shownThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...(asksData?.requests ?? []).flatMap((r) => [...(r.question_id ? [r.question_id] : []), ...(r.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
@@ -1299,19 +1312,26 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   openRefRef.current = (ref) => {
     if (ref.kind === "thread") {
       // 내부 project/id로 고른다. 짧은 주소의 hashchange와 정규화가 선택을 덮지 않게 한다.
-      const t = allThreads.find((t) => t.id === ref.target);
+      const t = uniqueAppTargets(allThreads, t => t.project, t => t.id).get(ref.target);
       if (t) chooseThread(t);
       return;
     }
+    if (ref.kind === "automation") return goSel(`automation:${ref.target}`);
     if (ref.kind === "task") return goSel(`task:${ref.target}`);
     if (ref.kind === "question") return goSel(`question:${ref.target}`);
-    const r = reportNames.get(ref.target);
+    const raw = "rawTarget" in ref ? ref.rawTarget : "label" in ref ? ref.label : undefined;
+    const r = reportNames.get(raw ?? ref.target) ?? reportNames.get(ref.target);
+    const canonical = reportNames.get(ref.target);
+    if (r && canonical && (r.project !== canonical.project || r.name !== canonical.name)) {
+      setHeadNote("보고서 이름과 번호 별칭이 겹친다. 정본 번호를 지정한다");
+      return;
+    }
     goSel(r ? `reports:${r.project}/${r.name}` : "reports:");
     if (!r) setHeadNote(`보고서 ${ref.target}을(를) 찾지 못했다`);
   };
   const appRefs = useMemo<AppRefs>(() => {
     return {
-      exists: (id) => knownIds.has(id.target),
+      exists: (id) => knownIds.has(id.target) && !(id.kind === "report" && id.label && reportNames.has(id.label) && reportNames.get(id.label)?.name !== id.target),
       openId: (id) => openRefRef.current(id),
       look: (ref): AppRefLook => {
         if (ref.kind === "report") {

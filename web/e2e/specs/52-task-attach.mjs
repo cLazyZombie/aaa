@@ -281,7 +281,7 @@ export default async function ({ page }) {
     await shot(page, "attach-desktop-start");
     await page.getByTestId("task-start-go").click();
     await page.getByTestId("task-started").waitFor();
-    const id = await until("이은 thread", () => / · (t-\d{4})$/m.exec(taskContent(read()))?.[1]);
+    const id = await until("이은 thread", () => / · (t-\d{4,})$/m.exec(taskContent(read()))?.[1]);
     started = id;
     const t = aaa("thread", "show", "demo", id);
     const task = fs.readFileSync(`${dir()}/threads/${id}.task.md`, "utf8");
