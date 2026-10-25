@@ -49,20 +49,19 @@ test("단계 선택의 정규식은 이름의 문장 부호를 문자 그대로 
   assert.ok(!pattern.test(`다른 단계 ${name}`));
 });
 
-test("셸 대화 직접 실행·재개의 모든 조합을 독립 실험실에서 한 번씩 실행한다", () => {
+test("셸 대화의 두 harness 수명은 서로 격리하고 직접 실행부터 재개까지 이어 간다", () => {
   const body = fs.readFileSync(new URL("../e2e/specs/93-shell-chat.mjs", import.meta.url), "utf8");
   const names = [...body.matchAll(/^ {2}await step\("((?:[^"\\]|\\.)*)"/gm)].map((m) => JSON.parse(`"${m[1]}"`));
   const shell = { name: "93-shell-chat", steps: names };
   const cases = [...body.matchAll(/await harnessCase\("(codex|claude)", "(chromium|webkit)", (1280|390)(, check)?\)/g)]
-    .map((m) => [m[4] ? "direct" : "resume", ...m.slice(1, 4)].join(":"));
-  const expected = ["direct", "resume"].flatMap((mode) => ["codex", "claude"].flatMap((harness) => ["chromium", "webkit"]
-    .flatMap((engine) => [1280, 390].map((width) => `${mode}:${harness}:${engine}:${width}`))));
+    .map((m) => m.slice(1, 4).join(":"));
+  const expected = ["codex:chromium:390", "claude:webkit:390"];
   assert.deepEqual(cases.sort(), expected.sort());
-  assert.equal(names.length, 16);
+  assert.equal(names.length, 2);
   const jobs = planJobs([shell], { ...options, repeat: 1 });
-  assert.equal(jobs.length, 16);
+  assert.equal(jobs.length, 2);
   for (const name of names) assert.equal(jobs.filter((j) => new RegExp(j.filter).test(name)).length, 1, name);
-  const selected = planJobs([shell], { ...options, repeat: 1, only: /^Claude.*WebKit 390$/ });
+  const selected = planJobs([shell], { ...options, repeat: 1, only: /Claude.*WebKit 390$/ });
   assert.equal(selected.length, 1);
   assert.match(selected[0].filter, /Claude/);
   const sequential = planJobs([shell], { ...options, repeat: 1, workers: 1 });

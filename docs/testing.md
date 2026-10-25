@@ -5,6 +5,38 @@
 - 부분 검사는 E2E107과 기존 할 일 E2E43·46·47·52·54·67·70·75·76을 사용한다. 전체 ci-local은 coordinator가 준 차례에 한 번 실행한다. 작업 폴더의 Playwright 1.64.1 패키지와 내부 공용 브라우저만 쓰고 시스템 설정을 바꾸지 않는다. FRONT_API 1.125·기존 E2E 번호를 유지한다.
 - OSS 후보는 [herdr-web-ui Sidebar.css](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)의 축소 가능한 제목과 후행 칩([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)), [herdr-projects popup.rs](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/popup.rs)의 제목·담당·thread·메모 순서([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE))다. 구성만 참고하고 외부 코드·의존성은 추가하지 않는다.
 
+## E2E93 고유 계약과 중복 작업 축소(t-1050)
+
+- E2E93의 직접 실행·재개 × Codex/Claude × Chromium/WebKit × 1280/390은 같은 backend 감지와 공통 웹 동작을 16개 독립 실험실에서 반복했다. 아래 두 수명 작업으로 줄인다. 같은 pane/기록을 직접 실행→교체→재개로 이어 중복 pane·기기·기록 준비도 없앤다. 일반 웹 조합은 기존 E2E07/30/37/103/104/109가 계속 검사하며 E2E 번호·제품 코드·공통 runner는 바꾸지 않는다.
+
+| 남긴 독립 작업 | 고유 계약 |
+| --- | --- |
+| Codex 수명 · Chromium 390 | inline 기록·사본 → 열린 FD/같은 ID 백업·늦은 첫 기록 → 실제 터치/1px 앵커 → 보는 중 파일 교체 → resume·프로그램 입력/클릭 → PID 재발견·새 cursor |
+| Claude 수명 · WebKit 390 | inline 기록·사본 → PID 등록·늦은 첫 기록 → native 1px 앵커 → 떠난 동안 300→360개 새 파일 → resume/continue·입력/클릭 → PID 재발견·새 cursor |
+
+| 기존 단계의 계약 | 남긴 검사·대신 맡는 기존 시험 |
+| --- | --- |
+| 파일 전 연결 추측 금지·늦은 파일 자동 연결 | 두 수명 안의 직접 실행. agent `shell_chat`의 FD/중복/하위 agent/root 밖 기록·PID/시작 시각/interactive 판정도 유지 |
+| 같은 UUID 백업 대신 실제 파일 읽기 | Codex 수명, agent `chat_paths_tests::codex_chat_uses_the_exact_bound_file_even_when_the_id_has_a_backup_copy` |
+| 처음까지 페이지 읽기·갱신에도 읽던 자리 유지 | 두 수명의 360개 전부, E2E37의 2400개+400개 갱신, agent `chat_pages::pages_reach_the_first_block_while_the_file_grows` |
+| 안내 1px 성장 때 맨 위 0·native 1px 입력 뒤 줄 고정 | 두 수명의 실제 DOM 단언, `chatScroll.test.mjs`의 안내 높이·앵커 유닛 |
+| Chromium 실제 터치 뒤 맨 위 복귀·append | Codex 390에서 touch/scrollend와 정확히 0 유지. WebKit 390은 기존 DOM scroll 경로 |
+| 같은 프로세스의 세션 교체 때 옛 본문·위치 제거 | 보는 중 FD 교체는 Codex 한 번, 숨김 중 PID 등록 교체·부분 파일 복귀는 Claude 한 번. 같은 웹 초기화 계약의 중복 전환만 제거 |
+| 연결 전 alternate 화면 복귀 | 최초 inline 기록/사본 복귀와 통합. 일반 alternate 사본·복귀는 E2E07/109가 유지 |
+| pane 왕복 보기 선택·읽던 첫 메시지·입력창 고정 | 재개에서 각 수명의 재시작 뒤 한 번. 일반 위치/초안/보관 DOM 복귀는 E2E30/37/103/104 |
+| inline DECSTBM 기록·사본 복원 | 최초 직접 실행의 inline 검사, aaa-vt의 스크롤 영역/재생 유닛과 E2E07 |
+| 재개 프로그램 스크롤·footer 고정·복귀 | 세 mode 각각 휠/복귀 두 번을 한 번으로 축소. 반복 복귀·실제 PTY 휠은 E2E109, 양 엔진·휴대폰 입력은 E2E07 |
+| 클릭 누름·뗌 뒤 quit·종료 출력·정리 | 세 mode 모두 실제 클릭과 입력 trace의 M/m·quit·exited를 유지. agent `link::resume_tests::requests_read_before_host_publication_keep_session_replies_and_exit_output`은 등록 전 구독/종료 응답 유실도 검사 |
+| 저장 연결 삭제 뒤 재시작·PID 재발견 | Codex resume 한 번, Claude continue 한 번. 같은 registry/FD 경로의 Claude resume 중복 재시작만 제거 |
+| 재시작 뒤 새 history commit·cursor로 처음까지 재독 | 각 harness에서 재시작 전 옛 「처음이다」를 보관한 뒤 새 history commit을 확인하고 다시 처음까지 읽는다. 일반 페이지 재독의 mode별 반복만 제거 |
+| 셸 복귀 때 연결·대화 단추 제거 | 두 수명. agent `shell_return_cannot_restart_released_harness_for_either_poll_order`, host `shell_harness_replacement_clears_the_previous_chat_identity`도 유지 |
+| 가로 넘침 없음 | 두 수명과 기존 여러 화면 E2E |
+
+- 고정 sleep은 없었다. 주 비용은 실험실 16개와 같은 감지 주기·전체 기록·왕복·재시작의 반복이다. 꼭 필요한 실제 셸/agent 기동은 남기고, 독립 실험실은 두 개, 각 실험실은 pane/기기 한 개와 직접 실행에서 만든 360개 기록을 재개에서도 사용한다. 재시작은 각 harness 한 번씩이다. 기존 360개 기록·정확한 좌표/위치·DOM 20초·locator 30초·단계 120초·완료/오류 단언을 유지하며 실패 재시도·시한 연장·기대값 완화는 없다.
+- 전후 비교는 같은 e2e 실행 파일·웹 번들·Playwright 1.64.1·공용 브라우저 캐시·`nice -n 15`·worker 4개로 `node web/e2e/web.e2e.mjs --spec 93 --workers 4`를 실행한다. runner의 파일별 독립 작업 합계(준비/정리 포함)와 전체 wall time을 구별한다. `--write-durations`는 성공한 최종 후보의 합계를 기록한다. 전체 ci-local은 coordinator가 부여한 순서에 한 번씩 실행한다.
+- 같은 조건의 단독 비교에서 기존 16/16은 독립 작업 합계 254.708초·wall 74.447초, 두 수명 2/2는 합계 52.796초·wall 28.418초였다(합계 79.3% 감소). 모든 준비/정리 시간을 포함하며 기동 중 다른 전체 CI 부하는 별도로 통제하지 않았다. 335초 과거 화면과 이번 단축률을 섞지 않는다.
+- 참고 후보는 [Playwright의 사용자 동작·fixture 격리](https://playwright.dev/docs/best-practices)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [Cypress의 명시 조건/응답 대기](https://docs.cypress.io/app/core-concepts/best-practices#Unnecessary-Waiting)([MIT](https://github.com/cypress-io/cypress/blob/develop/LICENSE)), [xterm.js MouseTracking 시험](https://github.com/xtermjs/xterm.js/blob/5.5.0/test/playwright/MouseTracking.test.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))이다. 격리와 입력/출력 계약별 시험 구성을 참고하며 외부 코드·제품 의존성은 추가하지 않는다.
+
 ## 영구 삭제의 공개 경로 분리와 배경 제거(t-1042 후속)
 
 - 67회차 착지 t-1043의 전체 부하에서 기존 후보는 WebKit 1280px의 500개 삭제 HTTP 12.508초로 10초 목표에 실패했다. host 계측은 파일 제거 11.870초·잠금 0.211초·DB 약 7ms였다. 앞선 회차의 7.738초는 충분한 여유가 아니었으며 아래 초기 DB 개선의 통과 결과를 착지 성공으로 보지 않는다.
