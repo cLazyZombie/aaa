@@ -724,8 +724,11 @@ impl crate::Host {
         let bad = |e: String| crate::err(aaa_proto::ErrorCode::Internal, e);
         let key = format!("automation_migration:{p}");
         let Some(raw) = self.db.meta(&key).map_err(|e| bad(e.to_string()))? else { return Ok(vec![]) };
+        let mut timing = convert::Timing::new("recover");
         let plan: convert::Plan = serde_json::from_str(&raw).map_err(|e| bad(e.to_string()))?;
-        let files = convert::resume(&self.project_dir(p)?, &plan).map_err(bad)?;
+        let root = self.project_dir(p)?;
+        let files = timing.measure("files", "", || convert::resume(&root, &plan)).map_err(bad)?;
+        let state_started = std::time::Instant::now();
         self.legacy_mission_recover(p)?;
         for name in self.db.meta_suffixes(&format!("automation:{p}:")).map_err(|e| bad(e.to_string()))? {
             self.db
@@ -739,6 +742,7 @@ impl crate::Host {
             self.db.automation_import_observations(p, &name, &history.runs).map_err(|e| bad(e.to_string()))?;
         }
         self.db.del_meta(&key).map_err(|e| bad(e.to_string()))?;
+        timing.record("db_and_state", state_started);
         Ok(files)
     }
     /// `dry_run`이면 계획만 답한다(쓰기·임무 seed·audit 없음). `expected`가 있으면 그 계획일 때만 변환한다.
@@ -749,13 +753,19 @@ impl crate::Host {
         expected: Option<&str>,
         actor: &str,
     ) -> Result<(Vec<String>, String), aaa_proto::ErrorBody> {
+        let mut timing = convert::Timing::new(if dry_run { "preview" } else { "convert" });
+        let lock_started = std::time::Instant::now();
         let _guard = self.automation_sources.lock().await;
         let dispatch = self.automation_dispatch_lock(p);
         let _dispatch = dispatch.lock().await;
+        timing.record("locks", lock_started);
         let root = self.project_dir(p)?;
-        let mut plan = convert::prepare(&root, &self.resolve_machine(None).unwrap_or_default())
+        let mut plan = timing
+            .measure("prepare", "", || convert::prepare(&root, &self.resolve_machine(None).unwrap_or_default()))
             .map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
+        let state_started = std::time::Instant::now();
         let journal = plan.include_state(self, p).await?;
+        timing.record("include_state", state_started);
         if dry_run {
             return Ok((plan.listing(), plan.sha256()));
         }
@@ -766,6 +776,7 @@ impl crate::Host {
                 "미리보기 뒤 옛 파일이나 변환 계획이 바뀌었다. 미리보기를 다시 연다",
             ));
         }
+        let journal_started = std::time::Instant::now();
         self.db
             .set_meta(
                 &format!("mission_conversion:{p}"),
@@ -779,6 +790,7 @@ impl crate::Host {
                 &serde_json::to_string(&plan).map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?,
             )
             .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?;
+        timing.record("journal_db", journal_started);
         let files = self.automation_recover(p)?;
         self.legacy_mission_recover(p)?;
         self.db.audit(actor, "automation_convert", &format!("{p}: {} files", files.len()));

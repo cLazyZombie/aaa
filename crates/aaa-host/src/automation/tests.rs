@@ -1,4 +1,6 @@
 use super::*;
+#[path = "convert_batch_tests.rs"]
+mod convert_batch_tests;
 use std::path::PathBuf;
 struct Project(PathBuf);
 impl Project {

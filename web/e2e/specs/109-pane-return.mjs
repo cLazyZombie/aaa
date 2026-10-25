@@ -116,6 +116,12 @@ process.stdin.on('data', bytes => {
     const results = [];
     try {
       await ready();
+      // 앞 기록 재구성이 마우스 추적뿐 아니라 SGR 좌표 인코딩도 보존해야 한다.
+      // 실제 history 응답을 먼저 붙여야 다음 첫 휠이 재구성 뒤 상태를 결정적으로 검사한다.
+      await terminal.locator('.xterm-viewport').evaluate(el => { el.scrollTop = 0; });
+      await page.waitForFunction(() => Number(document.querySelector('[data-testid="terminal"]')?.dataset.historyApplied) > 0);
+      await page.getByTestId('jump-bottom').click();
+      await until('기록 재구성 뒤 맨 아래', () => terminal.evaluate(el => el.dataset.viewTop === el.dataset.viewBase));
       await page.clock.install();
       await page.clock.resume();
       for (const destination of ['thread', 'tasks', 'reports']) {

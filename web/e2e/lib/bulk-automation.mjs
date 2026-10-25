@@ -54,6 +54,7 @@ export async function automationQueueScenario(engine, label, width) {
 
 export async function automationConvertScenario(engine, label, width) {
   console.log(`bulk convert ${label} ${width}`);
+  const hostOffset = fs.statSync(`${root}/host.log`).size;
   const dir = `${root}/projects/demo`;
   const prefix = `legacy-${label}-${width}-`;
   const source = '+++\nschedule="every 1h"\nenabled=false\n+++\n보존할 원문\n';
@@ -87,5 +88,11 @@ export async function automationConvertScenario(engine, label, width) {
     }
     assert.deepEqual(paired.errors, []);
   } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
-  finally { await page.context().close(); }
+  finally {
+    // 성공한 실험실도 정리 전에 제품의 단계별 비용을 전체 gate 로그에 보존한다.
+    for (const line of fs.readFileSync(`${root}/host.log`).subarray(hostOffset).toString().split("\n")) {
+      if (line.includes("자동화 변환 단계 비용")) console.log(`[bulk-conversion ${label} ${width}] ${line}`);
+    }
+    await page.context().close();
+  }
 }

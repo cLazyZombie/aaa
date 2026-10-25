@@ -1263,8 +1263,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   const [taskFocus, setTaskFocus] = useState<TaskFocusRequest>({ seq: 0, title: null });
   const answerThread = async (t: ThreadView, picks: (number | null)[], text: string | null) => {
-    const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text });
-    if (r.kind === "thread") putThread(r);
+    const reply = threadReload.current.beginReply(t);
+    try {
+      const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text });
+      if (r.kind === "thread") putThread(reply.finish(r));
+    } finally { reply.cancel(); }
   };
   // `aaa:report/<이름>`의 제목·프로젝트: 보고서 목록이 바뀔 때(host `reports` 사건) 다시 읽는다. 못 읽으면 이름 그대로다
   const [reportNames, setReportNames] = useState<Map<string, LibraryReport>>(new Map());

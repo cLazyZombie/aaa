@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { root, aaa, until, step, browser, webkit, pairPage, inList, showPanel, waitOutput, shot, coordinatorPost, AA } from "../lib/harness.mjs";
 
 import { pairDevice } from "../lib/devices.mjs";
+import { questionReplyScenario } from "../lib/question-reply.mjs";
 
 const LABEL = "cq1";
 
@@ -421,7 +422,9 @@ export default async function ({ page }) {
       // 선택지를 전부 못 읽어도 질문 제목과 경고 카드가 남는다.
       const empty = await write("[결정 필요] 질문 1개: 누락\n## Questions\n### 1. 진행\n- **A 진행\n");
       if (empty.questions.items.length !== 1 || empty.questions.items[0].text !== "진행" || !empty.questions.format_warning) throw new Error("못 읽은 질문 제목과 경고가 없다");
-      await until("비어도 경고 카드", async () => (await card.locator('[role="radio"]').count()) === 0 && (await card.getByTestId("thread-ask-send").isDisabled()));
+      await until("비어도 해당 보고의 경고 카드", () => card.evaluate((node, id) =>
+        node.querySelector("h3 code")?.textContent === id && node.querySelectorAll('[role="radio"]').length === 0
+          && node.querySelector('[data-testid="thread-ask-send"]').disabled, empty.questions.items[0].id));
       await card.getByTestId("thread-ask-text").fill("선택지가 없어도 진행");
       await card.getByTestId("thread-ask-send").click();
       await waitOutput(t.pane, "직접 쓴 답: 선택지가 없어도 진행");
@@ -461,6 +464,13 @@ export default async function ({ page }) {
       await wk.close(); wk = null;
       aaa("thread", "resolve", t.id);
     }
+  });
+
+  await step("늦은 답 응답: 새 보고의 직접 답·카드·보내기 활성을 보존하고 각 보고에 한 번씩 전달한다", async () => {
+    wk = await webkit.launch();
+    try {
+      for (const engine of [browser, wk]) for (const width of [1280, 390]) await questionReplyScenario(engine, width);
+    } finally { await wk.close(); wk = null; }
   });
 
   await step("t-0621 원문: 선택지 뒤 E·F 설명·그림과 A~D 선택지 그림을 보존하고 두 질문·4/3개 선택지를 답한다", async () => {
