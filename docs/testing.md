@@ -1,3 +1,20 @@
+## E2E114 자동화 fixture의 외부 writer 경합(t-1038 후속)
+
+- 같은 `231d7e3b` CI의 macOS web-e2e에서 E2E114가 60.5초 뒤 `대량 자동화 입력` 단계의 `database is locked`로 실패했다. `bulk-automation.mjs`는 실행 중 host의 DB에 Node `DatabaseSync`로 자동화 meta를 직접 썼으며, 자리 fixture에 적용했던 host 종료·transaction 준비가 없었다.
+- 자리 fixture의 종료·준비·재연결 절차를 `bulk-fixture.mjs`의 `seedHost`로 공유한다. host 종료 사건을 기다린 뒤 `BEGIN IMMEDIATE` 안에서 버리기/계속 보내기 두 규칙과 상태를 함께 준비하고 DB를 닫는다. 다시 띄운 host의 `웹 listen`·`agent 연결` 사건 뒤 실제 UI를 실행한다. 결과 확인 연결은 읽기 전용이다. 준비 실패에는 DB 경로·하위 원인을 남기며 미완성 fixture로 재시작하지 않는다.
+- `bulk-fixture.test.mjs`는 실제 SQLite 쓰기 잠금으로 종료를 기다리지 않는 경로의 `database is locked`를 결정적으로 확인한다. 별도 task의 종료 사건에서 잠금을 풀면 같은 helper의 준비·확정·재연결이 끝나야 한다. callback 오류의 부분 쓰기 rollback·잠금 해제·원인 보존과 재시작 host 조기 종료 전파도 검사한다. 세 시험은 Mac과 Windows Node 24에서 모두 통과했다. 고정 sleep·재시도·busy_timeout·시한 증가는 없다.
+- E2E114의 Chromium/WebKit × 1280/390px × 버리기/계속 보내기에서 기존 500개 pending·500개 결과 불명, inflight 제거, 남은 입력 0/500, 요청 정확히 한 번과 창·목록 갱신 단언을 유지한다. 같은 helper의 실제 worktree 1개·잔여 500개 정리와 500개 자동화 변환·원문 보존도 그대로 실행한다.
+- Mac 웹 유닛 576개·타입/번들·내부 실행 파일 빌드가 통과했다. `NODE_PATH`는 작업 폴더의 Playwright 1.64.1 패키지로만 지정하고 기존 내부 공용 Chromium/WebKit 캐시를 썼다. E2E40·113·114를 worker 3개로 함께 실행해 세 파일 모두 94.1초에 통과했다. E2E114의 자동화 입력 단계는 15.9초였고 네 조합·두 동작의 실제 요청과 상태 단언을 모두 확인했다. 운영 host·브라우저·시스템 설정은 바꾸지 않았다.
+- 참고 후보는 [SQLite WAL](https://www.sqlite.org/wal.html)([public domain](https://www.sqlite.org/copyright.html))과 [Playwright web server 수명](https://playwright.dev/docs/test-webserver)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))이다. SQLite의 단일 writer 제약과 서버 종료·준비 사건에 따른 fixture 수명 분리를 따른다. 외부 코드·의존성은 추가하지 않는다.
+
+## Windows sweep fixture의 종료 순서(t-1038)
+
+- `231d7e3b`의 `lifecycle::sweep_tests`를 Windows 격리 worktree에서 실행하면 재개 보존·저장 실패 보존 시험이 결과 단언 뒤 `Lab::drop`의 폴더 삭제에서 공유 위반(OS 오류 32)으로 실패한다. 구형 agent·probe 실패 시험도 같은 정리 오류가 겹쳐 unwind 중 두 번째 panic으로 시험 실행 파일이 중단됐다. 같은 기준의 macOS에서는 4개 모두 통과했다.
+- fixture는 `close().await`로 가짜 agent를 취소하고 실제 종료를 기다린 뒤 Host·SQLite 연결을 해제하고 임시 폴더를 삭제한다. 저장 실패를 주입한 별도 SQLite 연결도 먼저 닫는다. 삭제 실패에는 경로와 하위 OS 오류를 남기며 정상 정리 실패는 계속 시험 실패다.
+- 기존 601개 묶음/개별 정리·dry-run·구형 agent·probe 오류·확인 중 재개·DB 저장 실패의 결과와 원인 보존 단언을 그대로 실행한다. 제품 코드·시간 상한·기대값·OS별 시험 범위를 바꾸지 않으며 sleep·재시도를 추가하지 않는다. Windows는 `cargo test --profile verify --locked -p aaa-host --lib`, macOS는 `ci-local.sh`의 관련 fmt·clippy·test·public 단계로 검증한다.
+- 최종 Windows host lib는 648개 통과·기존 ignored 3개다. macOS는 Rust 1,342개 통과·기존 ignored 6개, Python 56개 중 기존 skip 2개, strict all-targets clippy·fmt·공개 검사가 통과했다. Windows 첫 전체 검사의 별도 실패 4개는 전역 `autocrlf=true`가 바꾼 스키마·예제 CRLF 입력 때문이었다. 격리 worktree의 해당 세 파일만 CI와 같은 LF로 재생성하고 바이트를 확인했다. 시스템 설정·스키마·예제·시험 기대값은 바꾸지 않았다.
+- OSS 후보는 [Tokio JoinHandle](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))과 [tempfile TempDir](https://docs.rs/tempfile/latest/tempfile/struct.TempDir.html)([MIT](https://github.com/Stebalien/tempfile/blob/master/LICENSE-MIT))이다. 전자의 취소 후 join으로 자원 해제를 확인하는 방식과 후자의 디렉터리 삭제 전 파일 handle 해제 원칙을 따른다. 외부 코드·의존성은 추가하지 않는다.
+
 ## 보관 화면 도입 뒤 착지 회귀(t-1010 후속)
 
 - t-1012 착지의 E2E11·25·29는 보관 xterm도 DOM에 남는데 전역 `.xterm-rows`·`.xterm-helper-textarea`·`.term-scroll`을 찾았다. E2E11의 공통 화면 읽기는 strict 오류를 기다림에서 삼켰고, 진단은 첫 보관 pane(chat1)을 읽었다. E2E29는 숨긴 hold1에서 hold2의 prompt를 찾았다. 제품은 활성 `.term`만 `hidden`·`inert`를 해제하고 그 안의 term-box에만 `data-testid="terminal"`을 부여한다. 화면 읽기·IME·Ctrl+Enter는 이 표지 아래로, 표지 바깥의 스크롤 칸·입력창 측정은 `.term:not([hidden])` 아래로 범위를 좁힌다. 첫 요소 선택이나 force click으로 모호성을 숨기지 않는다. 실패 진단에는 활성 pane과 보관 pane/숨김 여부를 함께 남긴다.

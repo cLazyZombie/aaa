@@ -95,11 +95,17 @@ impl Lab {
         };
         r.notes.join("\n")
     }
-}
-impl Drop for Lab {
-    fn drop(&mut self) {
-        self.worker.abort();
-        std::fs::remove_dir_all(&self.root).unwrap();
+
+    async fn close(self) {
+        let Self { h, root, worker, .. } = self;
+        // abort는 종료 요청뿐이다. 가짜 agent가 가진 Host도 놓은 뒤 DB 파일을 지운다.
+        worker.abort();
+        if let Err(error) = worker.await {
+            assert!(error.is_cancelled(), "가짜 agent 종료 실패: {error}");
+        }
+        drop(h);
+        std::fs::remove_dir_all(&root)
+            .unwrap_or_else(|error| panic!("시험 폴더 삭제 실패({}): {error}", root.display()));
     }
 }
 
@@ -114,6 +120,7 @@ async fn sweep_batches_absence_but_keeps_real_cleanup_and_dry_run() {
     for json in lab.h.db.threads(Some("demo")).unwrap() {
         assert_eq!(serde_json::from_str::<ThreadRec>(&json).unwrap().leftover, Some(Leftover::default()));
     }
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -122,10 +129,12 @@ async fn sweep_does_not_send_new_request_to_old_agent_or_hide_probe_failure() {
     let notes = old.sweep().await;
     assert!(notes.contains("2개 치움, 0개 남김"), "{notes}");
     assert_eq!(*old.requests.lock().unwrap(), [0, 0]);
+    old.close().await;
     let failed = Lab::new(2, true, false, true);
     let notes = failed.sweep().await;
     assert!(notes.contains("2개 치움, 0개 남김"), "{notes}");
     assert_eq!(*failed.requests.lock().unwrap(), [2, 0, 0]);
+    failed.close().await;
 }
 
 #[tokio::test]
@@ -137,6 +146,7 @@ async fn sweep_preserves_a_thread_reopened_during_probe() {
     assert_eq!(reopened.status, ThreadStatus::Open);
     assert!(reopened.leftover.unwrap().worktree);
     assert_eq!(*lab.requests.lock().unwrap(), [2, 0]);
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -153,4 +163,6 @@ async fn sweep_reports_marker_save_failure_and_preserves_the_record() {
     for id in ["t-0001", "t-0002"] {
         assert!(lab.h.load("demo", id).unwrap().leftover.unwrap().worktree);
     }
+    drop(db);
+    lab.close().await;
 }
