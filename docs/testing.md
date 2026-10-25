@@ -1,3 +1,12 @@
+## E2E109 첫 앞 기록 요청의 준비 사건(t-1044)
+
+- t-1043의 초기 단계 실패는 `historyApplied=0`, `historyMore=1`, `historyWaiting=0`, `viewTop=viewBase=1992`였고 송신은 resize 한 건뿐이었다. 당시 스크롤 전 DOM 치수는 없어 세부 순서를 소급 확정하지 않는다. 수정 전 E2E109는 worker 10의 일반 부하 20회와 Chromium CPU 4배 감속 20회에서 모두 통과했다. 통과 반복을 원인 확인으로 대신하지 않는다.
+- xterm 5.5.0의 실제 `Viewport.syncScrollArea`·예약 frame·`_innerRefresh`·`_handleScroll`을 실행하는 회귀 시험은 본문 표지가 있어도 아직 DOM 스크롤 영역은 0인 순서를 제어한다. 기존 fixture처럼 먼저 `scrollTop=0`을 쓰면 사건이 없고, 늦은 frame은 맨 아래로 동기화해 이동량이 0이다. 새 helper는 준비 전 쓰기 0회, frame 반영과 크기 맞춤 뒤 쓰기 정확히 1회, 실제 xterm의 맨 위 이동을 확인한다. 같은 패치 소스의 별도 headless Chromium·WebKit 실험에서도 본문 표시/스크롤 높이 0 → 초기 0 쓰기 → 맨 아래 유지가 재현됐다.
+- E2E109는 `data-fit=same`·맞추기 대기 없음·기록 있음과 실제 행 높이/스크롤 높이/버퍼의 맨 아래 위치가 일치할 때만 한 번 맨 위로 옮긴다. 본문 표시만으로 DOM 입력 준비를 간주하지 않는다. 기다림은 기존 Playwright rAF 조건 대기이고, 준비 전에는 입력하지 않는다. 고정 sleep·입력 재시도·시한 증가·기대값 완화는 없다. 제품·프로토콜·E2E 번호를 바꾸지 않는다.
+- 숨김 앞 기록 검사도 같은 준비를 쓰고, 숨기기 직전의 적용 횟수보다 새 응답 적용 횟수가 증가해야 다음 단계로 간다. 이전 응답의 `historyApplied>0`만으로 통과하지 않는다. 기존 두 브라우저·24회 복귀·동일 xterm/연결/snapshot·첫 SGR 휠과 실제 PTY 정확히 한 번·만료·Reader 단언은 유지한다. 실패 자료에는 준비/요청 단계, 이동 전후 치수, 기록 요청 목록과 최근 scroll 사건을 더 남긴다.
+- 실행: `node --test web/test/xterm-source.test.mjs`, `node web/e2e/web.e2e.mjs --spec 109 --repeat 20 --workers 10`, `AAA_E2E_THROTTLE=4 node web/e2e/web.e2e.mjs --spec 109 --repeat 20 --workers 10`, `AAA_E2E_WORKERS=10 nice -n 15 bash scripts/ci-local.sh`. Playwright npm 1.64.1만 작업 폴더에 두고 내부 공용 브라우저 캐시를 쓴다.
+- OSS 후보는 [xterm.js 5.5.0 Viewport](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Viewport.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))와 [Playwright 조건 대기](https://playwright.dev/docs/api/class-page#page-wait-for-function)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))다. 비동기 viewport 반영과 DOM 준비 조건을 참고하며 외부 코드·의존성을 추가하지 않는다.
+
 ## E2E114 자동화 fixture의 외부 writer 경합(t-1038 후속)
 
 - 같은 `231d7e3b` CI의 macOS web-e2e에서 E2E114가 60.5초 뒤 `대량 자동화 입력` 단계의 `database is locked`로 실패했다. `bulk-automation.mjs`는 실행 중 host의 DB에 Node `DatabaseSync`로 자동화 meta를 직접 썼으며, 자리 fixture에 적용했던 host 종료·transaction 준비가 없었다.

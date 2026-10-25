@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { aaa, step, browser, webkit, pairPage, until, inList, shot, root, sentCount, sentFrames, waitOutput, inTime } from "../lib/harness.mjs";
 import { prepare, go, frames } from "../lib/chat-retention.mjs";
+import { scrollHistoryWhenReady } from "../lib/history-scroll.mjs";
 
 function instrument() {
   const media = window.matchMedia.bind(window);
@@ -15,6 +16,16 @@ function instrument() {
   window.returnFrames = [];
   window.returnConnections = {};
   window.returnSnapshots = {};
+  window.returnScrolls = [];
+  window.returnHistoryRequests = [];
+  document.addEventListener('scroll', event => {
+    const viewport = event.target;
+    if (!viewport.matches?.('.xterm-viewport')) return;
+    const box = viewport.closest('.term-box');
+    window.returnScrolls.push({ at: performance.now(), top: viewport.scrollTop, height: viewport.scrollHeight,
+      client: viewport.clientHeight, dataset: { ...box?.dataset } });
+    if (window.returnScrolls.length > 100) window.returnScrolls.shift();
+  }, true);
   window.holdReturn = false;
   window.WebSocket = class extends Native {
     constructor(url, protocols) {
@@ -34,6 +45,11 @@ function instrument() {
         window.holdReturn = false;
         for (const event of queued.splice(0)) this.dispatchEvent(event);
       };
+    }
+    send(raw) {
+      if (this.returnPane && typeof raw === 'string' && JSON.parse(raw).t === 'history')
+        window.returnHistoryRequests.push({ at: performance.now(), pane: this.returnPane, request: JSON.parse(raw) });
+      super.send(raw);
     }
   };
   const sample = () => {
@@ -118,7 +134,10 @@ process.stdin.on('data', bytes => {
       await ready();
       // 앞 기록 재구성이 마우스 추적뿐 아니라 SGR 좌표 인코딩도 보존해야 한다.
       // 실제 history 응답을 먼저 붙여야 다음 첫 휠이 재구성 뒤 상태를 결정적으로 검사한다.
-      await terminal.locator('.xterm-viewport').evaluate(el => { el.scrollTop = 0; });
+      phase = { stage: 'initial-history-ready', pane: fixture.coordinator };
+      const initialScroll = await page.waitForFunction(scrollHistoryWhenReady, '[data-testid="terminal"]');
+      phase = { stage: 'initial-history', pane: fixture.coordinator, before: await initialScroll.jsonValue() };
+      await initialScroll.dispose();
       await page.waitForFunction(() => Number(document.querySelector('[data-testid="terminal"]')?.dataset.historyApplied) > 0);
       await page.getByTestId('jump-bottom').click();
       await until('기록 재구성 뒤 맨 아래', () => terminal.evaluate(el => el.dataset.viewTop === el.dataset.viewBase));
@@ -181,12 +200,15 @@ process.stdin.on('data', bytes => {
       // 앞 기록 요청 뒤 숨긴다. 숨은 xterm의 render를 기다리면 이후 출력도 ACK도 멈춘다.
       phase = { stage: "hidden-history", pane: fixture.coordinator };
       gateHistory = true;
-      await terminal.locator('.xterm-viewport').evaluate(el => { el.scrollTop = 0; });
+      const hiddenScroll = await page.waitForFunction(scrollHistoryWhenReady, '[data-testid="terminal"]');
+      const appliedBeforeHide = Number((await hiddenScroll.jsonValue()).dataset.historyApplied);
+      await hiddenScroll.dispose();
       await inTime(historyArrival, 20_000, '터미널 앞 기록 요청 도착');
       await go(page, 'tasks');
       await terminal.waitFor({ state: 'detached' });
       releaseHistory();
-      await page.waitForFunction(id => Number(document.querySelector(`.term[data-pane="${id}"] .term-box`)?.dataset.historyApplied) > 0, fixture.coordinator);
+      await page.waitForFunction(({ id, applied }) => Number(document.querySelector(`.term[data-pane="${id}"] .term-box`)?.dataset.historyApplied) > applied,
+        { id: fixture.coordinator, applied: appliedBeforeHide });
       await until('숨긴 coordinator 크기 점유 해제', () => aaa('pane', 'list').panes.find(p => p.id === fixture.coordinator)?.lease === null);
       const hiddenConnections = await page.evaluate(id => window.returnConnections[id], fixture.coordinator);
       const marker = `hidden-output-${width}`;
@@ -243,7 +265,13 @@ process.stdin.on('data', bytes => {
         assert.deepEqual(reader.errors, []);
       } finally { await reader.page.context().close(); }
     } catch (error) {
-      fs.writeFileSync(`${root}/return-failure-${width}.json`, JSON.stringify({ phase, receivedWheels: receivedWheels(), sent: await sentFrames(page, phase.sentFrom ?? 0), screen: await page.evaluate(() => ({ pane: document.querySelector(".term:not([hidden])")?.dataset.pane, dataset: {...document.querySelector('[data-testid="terminal"]')?.dataset}, frames: window.returnFrames, log: window.__aaaTermLog })) }, null, 2));
+      fs.writeFileSync(`${root}/return-failure-${width}.json`, JSON.stringify({ phase, receivedWheels: receivedWheels(), sent: await sentFrames(page, phase.sentFrom ?? 0), screen: await page.evaluate(() => {
+        const box = document.querySelector('[data-testid="terminal"]');
+        const viewport = box?.querySelector('.xterm-viewport');
+        return { pane: document.querySelector(".term:not([hidden])")?.dataset.pane, dataset: { ...box?.dataset },
+          viewport: viewport && { top: viewport.scrollTop, height: viewport.scrollHeight, client: viewport.clientHeight },
+          historyRequests: window.returnHistoryRequests, scrolls: window.returnScrolls, frames: window.returnFrames, log: window.__aaaTermLog };
+      }) }, null, 2));
       throw error;
     } finally { await page.context().close(); }
   };
