@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, browser, pairPage, shot, openSettings, inTime, drawerSettled } from "./harness.mjs";
+import { seedHost } from "./bulk-fixture.mjs";
 
 export const count = 500;
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=", "base64");
@@ -135,11 +136,12 @@ export async function askScenario(engine, label, width) {
   finally { await page.context().close(); db.close(); }
 }
 
-export function seedReports(db, amount, prefix, old = false, versions = false) {
+export function seedReports(db, amount, prefix, old = false, versions = false, { manifest = true } = {}) {
   const put = db.prepare("INSERT INTO library_reports(project,name,updated,to_user,title,sent_at) VALUES('demo',?,?,0,?,1)");
   const version = db.prepare("INSERT INTO report_ids(project,seq,id,source,revision,ready) VALUES('demo',?,?,?,'fixture',1)");
   const first = db.prepare("SELECT coalesce(max(seq),10000)+1 AS n FROM report_ids").get().n;
-  db.exec("BEGIN IMMEDIATE");
+  // seedHost의 준비 transaction 안에서도 같은 원자적 fixture를 쓴다.
+  db.exec("SAVEPOINT report_fixture");
   try {
     for (let i = 0; i < amount; i++) {
       const name = `${prefix}-${i}`;
@@ -147,13 +149,13 @@ export function seedReports(db, amount, prefix, old = false, versions = false) {
       for (const n of names) {
         fs.mkdirSync(`${dir()}/library/${n}`, { recursive: true });
         fs.writeFileSync(`${dir()}/library/${n}/index.html`, `<h1>${name}</h1>`);
-        fs.writeFileSync(`${dir()}/threads/${n}.files.json`, "[]");
+        if (manifest) fs.writeFileSync(`${dir()}/threads/${n}.files.json`, "[]");
         put.run(n, old ? 1 : Date.now(), name);
       }
       if (versions) version.run(first + i, names[1], name);
     }
-    db.exec("COMMIT");
-  } catch (e) { db.exec("ROLLBACK"); throw e; }
+    db.exec("RELEASE report_fixture");
+  } catch (e) { db.exec("ROLLBACK TO report_fixture; RELEASE report_fixture"); throw e; }
 }
 
 export async function reportScenario(engine, label, width) {
@@ -234,10 +236,14 @@ export async function reportScenario(engine, label, width) {
 
 export async function maintenanceScenario(engine, label, width) {
   console.log(`bulk ${label} ${width}`);
-  const db = new DatabaseSync(`${root}/s/host/host.db`);
-  seedReports(db, count, "prune", true);
-  const putLink = db.prepare("INSERT INTO library_links(id,project,thread,created,expires) VALUES(?,'demo',?,?,?)");
-  for (let i = 0; i < count; i++) putLink.run(`bulk-link-${i}`, `prune-${i}`, Date.now(), Date.now() + 86400000);
+  await seedHost(db => {
+    // 기동의 구형 보고 마이그레이션이 별도 r 사본을 만들지 않게 빈 manifest는 재연결 뒤 둔다.
+    seedReports(db, count, "prune", true, false, { manifest: false });
+    const putLink = db.prepare("INSERT INTO library_links(id,project,thread,created,expires) VALUES(?,'demo',?,?,?)");
+    for (let i = 0; i < count; i++) putLink.run(`bulk-link-${i}`, `prune-${i}`, Date.now(), Date.now() + 86400000);
+  });
+  for (let i = 0; i < count; i++) fs.writeFileSync(`${dir()}/threads/prune-${i}.files.json`, "[]");
+  const db = new DatabaseSync(`${root}/s/host/host.db`, { readOnly: true });
   const gate = responseGate();
   const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: gate.setup });
   const page = paired.page;
@@ -270,7 +276,7 @@ export async function maintenanceScenario(engine, label, width) {
     assert.equal(fs.readdirSync(`${dir()}/library`).length, 0);
     await settings.getByTestId("prune-preview").click();
     await settings.getByText("지울 사본이 없다", { exact: true }).waitFor();
-    db.exec("DELETE FROM library_links");
+    await seedHost(db => db.exec("DELETE FROM library_links"));
     assert.deepEqual(paired.errors, []);
   } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
   finally { await page.context().close(); db.close(); }
