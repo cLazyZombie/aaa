@@ -28,6 +28,9 @@ describe("앱 안 참조", () => {
     assert.deepEqual(appLinkOf(`${o}/#question=t-0540`, o), q("t-0540"));
     assert.deepEqual(appLinkOf(`${o}/#report=ui-v2`, o), r("ui-v2"));
     assert.deepEqual(appLinkOf("/#report=demo%2Fui-v2", o), r("demo/ui-v2"), "앱 자신의 프로젝트/이름 꼴");
+    assert.deepEqual(appLinkOf("#report=chatrep", o), r("chatrep"));
+    assert.deepEqual(appLinkOf("#report=demo/chatrep", o), r("demo/chatrep"));
+    assert.deepEqual(appLinkOf("#report=other%2Fchatrep", o), r("other/chatrep"));
     assert.deepEqual(appLinkOf("#question=t-1", o), q("t-0001"));
     for (const href of [`https://other.example.ts.net/#question=t-1`, `${o}/v/abc/#question=t-1`, `${o}/?x=1#question=t-1`, `${o}/#pane=p1`, `${o}/#question=한글`, "aaa:question/t-1", "::"])
       assert.equal(appLinkOf(href, o), null, href);

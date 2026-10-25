@@ -5,6 +5,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 38-chat-report-close(새 실험실).
 
 import fs from "node:fs";
+import assert from "node:assert/strict";
 import { aaa, until, step, browser, webkit, pairPage, inList, domIs, shot, root, AA, base, paneHash } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
@@ -121,7 +122,7 @@ export default async function () {
       code: { text: `주소는 \`${url}\` 이다`, link: (chat) => chat.locator("a.markdown-code-link").first() },
       file: { text: `보고 사본: ${root}/files/report-copy.md`, link: (chat) => chat.getByRole("button", { name: "report-copy.md", exact: false }).first() },
     };
-    chatPane([...Object.values(links).map((l) => l.text), `[앱 보고서 화면](${base}#report=demo/chatrep)`]);
+    chatPane([...Object.values(links).map((l) => l.text), `[앱 보고서 화면](${base}#report=demo/chatrep)`, "같은 보고서 aaa:report/chatrep"]);
   });
 
   await step("대화에서 연 보고서: iPhone 390·430 Safari 탭·홈 화면 앱(WebKit)에서 닫기·뒤로가 같은 pane·같은 굴림 자리로 돌아온다", async () => {
@@ -139,15 +140,26 @@ export default async function () {
           for (const [kind, l] of Object.entries(links))
             for (const how of ["close", "back"])
               await openAndClose(p, l.link(chat), `${tag} ${kind}`, how, how === "close" && (kind === "bare" || kind === "file") ? `chat-report-${tag}-${kind}` : null);
-          // 같은 host 앱 보고서 주소는 칩: 보고서 화면을 열고 뒤로가 같은 pane이다(새 창·파일 보기가 아니다)
-          const chip = chat.locator('[data-testid="app-ref"][data-kind="report"][data-target="chatrep"]');
-          await chip.evaluate((el) => el.scrollIntoView({ block: "center" }));
-          await chip.click();
-          await until(`${tag} 앱 보고서 화면`, async () =>
-            (await p.getByTestId("report-detail").count()) === 1 && (await p.evaluate(() => location.hash)) === "#report=demo%2Fchatrep" && p.context().pages().length === 1);
-          await p.evaluate(() => history.back());
-          await until(`${tag} 칩 뒤로`, async () => (await p.evaluate(() => location.hash)) === pane && (await p.getByTestId("chat").count()) === 1);
-          await domIs(p, "대화 그대로", () => document.querySelector('[data-testid="chat"]') !== null);
+          // 명시한 프로젝트는 대상에 남긴다. 맨 이름 참조도 같은 보고서를 열며, 표시 이름·복귀 동작은 같다.
+          for (const target of ["demo/chatrep", "chatrep"]) {
+            // 뒤로 온 대화는 읽던 줄을 복원한다. URL만 돌아온 중간 상태에서 다음 링크로 굴리지 않는다.
+            await p.locator('[data-testid="chat"][aria-busy="false"]').waitFor();
+            const chip = chat.locator(`[data-testid="app-ref"][data-kind="report"][data-target="${target}"]`);
+            await chip.evaluate((el) => el.scrollIntoView({ block: "center" }));
+            assert.equal(await chip.innerText(), "chatrep", `${tag} ${target}: 프로젝트 접두사는 표시 이름에 붙이지 않는다`);
+            const before = await where(p);
+            await chip.click();
+            await until(`${tag} ${target} 앱 보고서 화면`, async () =>
+              (await p.getByTestId("report-detail").count()) === 1 && (await p.evaluate(() => location.hash)) === "#report=demo%2Fchatrep" && p.context().pages().length === 1);
+            await p.frameLocator('[data-testid="report-frame"]').getByRole("heading", { name: "대화 보고서", exact: true }).waitFor();
+            await p.evaluate(() => history.back());
+            await until(`${tag} ${target} 칩 뒤로`, async () => (await p.evaluate(() => location.hash)) === pane && (await p.getByTestId("chat").count()) === 1);
+            await domIs(p, "대화 그대로", () => document.querySelector('[data-testid="chat"]') !== null);
+            await p.locator('[data-testid="chat"][aria-busy="false"]').waitFor();
+            const after = await where(p);
+            assert.equal(after.hash, before.hash, `${tag} ${target}: 원래 pane으로 복귀`);
+            assert.ok(Math.abs(after.top - before.top) <= 1, `${tag} ${target}: 읽던 자리 ${JSON.stringify({ before, after })}`);
+          }
         } finally {
           await p.context().close();
         }

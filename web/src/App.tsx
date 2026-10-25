@@ -1336,7 +1336,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       look: (ref): AppRefLook => {
         if (ref.kind === "report") {
           const r = reportNames.get(ref.target);
-          return { label: r?.title ?? ref.target, tone: "report", state: r?.from_thread && r.from_thread !== ref.target ? r.from_thread : null };
+          return { label: r?.title ?? ref.target.slice(ref.target.indexOf("/") + 1), tone: "report", state: r?.from_thread && r.from_thread !== ref.target ? r.from_thread : null };
         }
         return questionLooks.get(ref.target) ?? { label: `${ref.target} 질문`, tone: "plain", state: null };
       },
