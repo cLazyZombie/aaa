@@ -571,12 +571,14 @@ pub fn collect(
     }
     let rc = cwd.join("target/verification/summary.json");
     if legacy.is_some()
+        && !cwd.join("target/verification/workspace-source.json").exists()
         && let Some((v, at)) = version(&rc)
     {
         inputs.push((rc, v, at, "rc"));
     }
     let engine = cwd.join("target/verify-timing.txt");
     if legacy.is_some()
+        && !cwd.join("target/verification/workspace-source.json").exists()
         && cwd.join("scripts/verify_engine.sh").is_file()
         && let Some((v, at)) = version(&engine)
     {

@@ -187,3 +187,76 @@ async fn reader_queries_only_the_host_ledger_with_filters_missing_values_and_dis
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn report_without_repo_collects_all_registrations_on_its_machine_and_continues_after_failure() {
+    use aaa_common::conn::{FrameRx, spawn_writer};
+    let l = Lab::new();
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.projects.root = l.0.join("projects").to_string_lossy().into();
+    cfg.notify.web_push = false;
+    let h = Host::open(cfg, l.0.join("host")).unwrap();
+    h.project_create("p", Default::default(), "test").unwrap();
+    let (a, b) = tokio::io::duplex(MAX_FRAME * 2);
+    let (_, aw) = tokio::io::split(a);
+    let conn = crate::AgentConn::new(spawn_writer(aw, MAX_FRAME), 1);
+    let pending = conn.pending.clone();
+    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let worker = tokio::spawn(async move {
+        let mut rx = FrameRx::new(b, MAX_FRAME);
+        while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
+            let AgentRequest::WorkspaceMetrics { cwd, .. } = body else { panic!("지표 조회만 허용") };
+            let response = if cwd == "/work/broken" {
+                Outcome::Err(err(ErrorCode::Internal, "fixture source error"))
+            } else {
+                Outcome::Ok(AgentResponse::WorkspaceMetrics(WorkspaceCollected {
+                    remote_id: Some("b".repeat(64)),
+                    runs: vec![run("main-check", 10, "ignored", "verify", 100, "succeeded")],
+                    ..Default::default()
+                }))
+            };
+            sent.send(cwd).unwrap();
+            if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                let _ = tx.send(response);
+            }
+        }
+    });
+    h.agent_connected(
+        &AgentHello {
+            proto: AGENT_LINK,
+            machine_id: "m-a".into(),
+            machine_name: "mac-a".into(),
+            boot_id: "boot".into(),
+            os: "test".into(),
+            arch: "test".into(),
+            software: "test".into(),
+            sha256: None,
+            features: vec!["workspace_metrics.v2".into()],
+            dev_mode: true,
+            selfcheck: None,
+            sessions: vec![],
+            identity: None,
+            harness: vec![],
+        },
+        false,
+        conn,
+    );
+    std::fs::write(
+        h.project_dir("p").unwrap().join("project.toml"),
+        "[[repos]]\npath='/work/broken'\nmachine='mac-a'\n[[repos]]\npath='/work/engine'\nmachine='mac-a'\n",
+    )
+    .unwrap();
+    let mut rec = crate::orch::ThreadRec::starting("p", "t-0001", "m-a", "fake", Role::Worker, ThreadKind::Dir, 1);
+    rec.status = ThreadStatus::Open;
+    assert!(rec.repo.is_none());
+    h.db.thread_import("p", "t-0001", "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+    h.collect_workspace_metrics("p", "t-0001").await;
+    assert_eq!(received.try_recv().unwrap(), "/work/broken");
+    assert_eq!(received.try_recv().unwrap(), "/work/engine");
+    assert!(received.try_recv().is_err());
+    let rows = h.db.workspace_records("", &format!("ws-{}", "b".repeat(64)), 0).unwrap().0;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].machine, "mac-a");
+    worker.abort();
+    let _ = worker.await;
+}

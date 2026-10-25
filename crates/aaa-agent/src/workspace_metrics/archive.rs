@@ -13,6 +13,14 @@ struct Provenance {
     ended_at_ms: u64,
     #[serde(default)]
     artifact_bytes: Option<u64>,
+    #[serde(default)]
+    runner: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    profile: Option<String>,
 }
 
 pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> Result<(Vec<MetricRun>, Vec<String>)> {
@@ -80,8 +88,32 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
                 "CI 실행 tree 불일치"
             );
             let mut run = ci_run(dir, source.ended_at_ms, id.clone())?;
+            let runner = source.runner.as_deref().unwrap_or("ci-local");
+            let names: &[&str] = match runner {
+                "ci-local" | "pt" => &[],
+                "rc" => &["default-tests", "workspace-tests"],
+                "engine" => &["workspace-tests", "automation-tests", "2d-tests", "3d-tests"],
+                _ => bail!("검증 runner 미지원: {runner}"),
+            };
+            if !names.is_empty() {
+                runtime_reports(
+                    &mut run,
+                    &dir.join("verification"),
+                    source.started_at_ms,
+                    source.ended_at_ms,
+                    names,
+                    &dir.join("e2e.json"),
+                );
+            }
             run.commit = source.commit;
-            run.source = "ci-local 종료 원장 (main 반영 확인)".into();
+            run.source = format!("{runner} 종료 원장 (main 반영 확인)");
+            run.profile = source.profile;
+            if let Some(mode) = source.mode {
+                run.notes.push(format!("검증 모드 {mode} · Cargo profile과 별도"));
+            }
+            if let Some(scope) = source.scope {
+                run.notes.push(format!("검증 범위 {scope}"));
+            }
             run.artifact_bytes = source.artifact_bytes;
             run.artifact_name = source.artifact_bytes.map(|_| "aaa".into());
             Ok(Some(run))
