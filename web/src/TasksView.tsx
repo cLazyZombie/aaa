@@ -1145,7 +1145,6 @@ function TaskRow({ t, row, compact, stage, overLimit, depth, state, selected, gr
           onStep(e.key === "ArrowUp" ? "up" : "down");
         }}
       >
-        <span className="task-stage-cell">{!compact && <><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></>}</span>
         {reserved ? <span className={`task-reserved-dot${check ? " is-check" : ""}`} role="img" aria-label={check ? "예약 · 확인 필요" : "예약됨"} title={check ? "예약 · 확인 필요(상세에 까닭)" : "예약됨 · 자리 나면 시작"} /> : <StateIcon state={state} />}
         <span className="task-id-cell">{t.short_id && <ListId id={t.short_id} testId="task-short-id" />}</span>
         <span className="task-title">
@@ -1156,7 +1155,7 @@ function TaskRow({ t, row, compact, stage, overLimit, depth, state, selected, gr
         {compact && withoutAttachments(t.notes.join("\n")) !== "" && <span className="task-notes-mobile" role="img" aria-label="메모 있음" title="메모 있음">≡</span>}
       </button>
       <div className="task-row-chips">
-        {compact && <span className="task-stage-mobile"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></span>}
+        <span className="task-stage-chips"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></span>
         {reserved && row.missing && <span className="task-chip task-problem">task 없음</span>}
         {row.kind === "task" && row.reservedKids > 0 && <span className="task-chip task-kids-reserved">하위 {row.reservedKids} 예약됨</span>}
         {flash && <span className="task-flash-note" data-testid="task-flash">↩ 원래 자리로 돌아옴</span>}

@@ -28,18 +28,30 @@ export default async function () {
     const errors = [];
     const wk = await webkit.launch({ headless: true });
     try {
-      for (const [engine, name, width, height] of [[wk, "ipad-landscape", 1366, 1024], [wk, "ipad-portrait", 1024, 1366], [browser, "desktop-1280", 1280, 900], [browser, "desktop-1920", 1920, 1080], [wk, "phone", 390, 844], [wk, "phone-320", 320, 740], [browser, "phone-chromium", 390, 844], [browser, "phone-320-chromium", 320, 740]]) {
+      for (const [engine, name, width, height] of [[wk, "ipad-landscape", 1366, 1024], [wk, "ipad-portrait", 1024, 1366], [browser, "desktop-1280", 1280, 900], [browser, "desktop-2000", 2000, 1080], [wk, "phone", 390, 844], [wk, "phone-320", 320, 740], [browser, "phone-chromium", 390, 844], [browser, "phone-320-chromium", 320, 740]]) {
         const { page: p } = await pairPage(engine, aaa("web", "pair").code, { width, height }, { hash: "#tasks", touch: engine === wk });
         await domIs(p, "할 일과 단계 준비", () => document.querySelectorAll('.task-row[data-kind]').length === 6 && document.querySelector('.task-row [data-stage="merge_ready"]'));
         await p.evaluate(() => document.fonts.ready);
         assert.equal(await p.locator(".task-row .task-attach-mark").count(), 3, "첨부 표지가 빠졌다");
+        if (engine === browser) await p.locator('.task-row').filter({ hasText: titles[0] }).hover();
         await shot(p, `task-layout-${name}`);
         const problems = await p.evaluate(() => {
           const problems = [];
           const rows = [...document.querySelectorAll('.task-row[data-kind]')];
           const columns = new Map();
+          const titleStart = row => {
+            const title = row.querySelector('.task-title');
+            return title.getBoundingClientRect().left + parseFloat(getComputedStyle(title).paddingLeft);
+          };
           for (const row of rows) {
             const r = row.getBoundingClientRect();
+            const grip = row.querySelector('.task-grip')?.getBoundingClientRect();
+            const stateBox = row.querySelector('.task-state, .task-reserved-dot').getBoundingClientRect();
+            if (grip && (stateBox.left - grip.right > 16 || stateBox.left < grip.right)) problems.push(`${row.dataset.title}: 손잡이와 완료 원 사이 빈 열 ${stateBox.left - grip.right}px`);
+            const titleX = titleStart(row);
+            const chips = row.querySelector('.task-row-chips');
+            const firstChip = [...chips.children].find(e => e.getBoundingClientRect().width > 0);
+            if (firstChip && Math.abs(firstChip.getBoundingClientRect().left - titleX) > 1) problems.push(`${row.dataset.title}: 제목/칩 시작점 ${titleX}/${firstChip.getBoundingClientRect().left}px`);
             if (innerWidth <= 480) {
               const state = row.querySelector('.task-state, .task-reserved-dot').getBoundingClientRect();
               const title = row.querySelector('.task-title').getBoundingClientRect();
@@ -75,6 +87,9 @@ export default async function () {
               else columns.set(selector, x);
             }
           }
+          const child = rows.find(row => row.dataset.title === '하위 할 일');
+          const parent = rows.find(row => row.dataset.title === '연결된 할 일의 충분히 긴 제목');
+          if (!child || !parent || titleStart(child) - titleStart(parent) < 8) problems.push('하위 제목 들여쓰기 소실');
           const scroll = document.querySelector('.tasks-scroll');
           if (scroll.scrollWidth > scroll.clientWidth + 1) problems.push('목록 가로 넘침');
           return problems;
@@ -83,12 +98,12 @@ export default async function () {
         // 제목과 메뉴는 바뀐 배치에서도 누를 수 있다.
         await p.locator('.task-row').filter({ hasText: titles[0] }).locator('.task-pick').click();
         await p.getByTestId('task-detail').waitFor();
+        assert.equal(await p.locator('.task-row.is-selected').getAttribute('data-title'), titles[0]);
         await p.getByTestId('task-detail-close').click();
         if (width === 320) {
           for (const resized of [820, 320]) {
             await p.setViewportSize({ width: resized, height });
-            const cell = resized <= 480 ? '.task-stage-mobile' : '.task-stage-cell';
-            await p.locator('.task-row').filter({ hasText: titles[1] }).locator(`${cell} [data-stage="merge_ready"]`).waitFor();
+            await p.locator('.task-row').filter({ hasText: titles[1] }).locator('[data-stage="merge_ready"]').waitFor();
             assert.equal(await p.locator('.task-row').filter({ hasText: titles[1] }).locator('[data-stage="merge_ready"]').count(), 1, '폭 변경 뒤 단계 표지 중복');
           }
         }
