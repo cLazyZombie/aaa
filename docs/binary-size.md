@@ -137,3 +137,36 @@ Cargo 링크 성공, 산출물 형식·심볼 확인, native 실행 판정은 �
 LLVM 22 symbolizer의 Mach-O dSYM hint 조회는 도구 자체가 crash했다. macOS 줄 해석은 Apple dwarfdump와
 실제 backtrace reader가 실행된 panic 출력으로 확인했다. 최종 단독 실행 사본은 함수 이름을, dSYM 동반 사본은
 저장소 상대 파일·줄 19곳을 출력했다.
+
+## 2026-10-25 native 장애 진단 재확인
+
+기준 `04dd0417`, Rust 1.99.0의 임시 panic 계측 사본으로 기존 release 설정을 재확인했다.
+웹 산출물 370개를 고정해 macOS aarch64, Windows x86_64 MSVC와 Linux aarch64 musl에서 실제 실행했다.
+이 절의 크기는 앞 절과 소스·CPU·도구가 달라 앞 절의 회귀 비교로 쓰지 않는다. 임시 panic 코드는 제품에 넣지 않는다.
+Windows만 설치된 Rust 1.99.1을 사용했다.
+
+| native 대상 | 실행 파일 바이트 | 기호 보관 | 실행 검증 |
+| --- | ---: | --- | --- |
+| macOS aarch64 | 73,939,224 | 같은 UUID의 독립 dSYM | JSON hook·기본 backtrace의 내부 47행/호출자 41행 |
+| Windows x86_64 MSVC | 52,358,656 | PDB 127,488,000바이트 | 같은 두 스택 줄, PE/PDB GUID·age 일치 |
+| Linux aarch64 musl | 88,092,136 | 실행 파일 안의 zlib DWARF | 같은 두 스택 줄, 정적 링크·ELF interpreter 없음 |
+
+원래 Cargo target을 숨기고 실행 파일과 macOS dSYM/Windows PDB 사본으로 실행했다.
+Windows PDB를 치우면 스택의 파일·줄이 사라지고 module 상대 주소는 남았다. 같은 판 PDB를 복원한 뒤
+LLVM symbolizer 19.1.5가 실제 상대 주소 `0x198461`/`0x198470`을 각각 `crates/aaa/src/main.rs:47`/`:41`로 해석했다.
+panic 머리의 파일 위치만을 스택 줄 정보로 세지 않았다. Linux는 격리된 native VM에서 실제 musl 바이너리를 실행했다.
+이 결과는 Rust panic과 사후 심볼 조회 증거이며 모든 OS signal/crash dump 수집 경로를 실행했다는 뜻은 아니다.
+
+macOS 동일 설정 기준 반복은 nice 15·Cargo 기본 병렬도, 시작 load1<5·외부 빌드 없음,
+에이전트 갱신 관측 전후 185초 제외, 조건별 3회 중앙값이다. shared kache·OS page cache는 유지했다.
+clean은 해당 작업의 target만 비우고, 수정 뒤 빌드는 고유한 함수 본문 상수를 바꿨다.
+
+| 동일한 release 설정의 두 반복 묶음 | clean·kache 끔 | clean·kache 켬 | 본문 수정 뒤·kache 켬 |
+| --- | ---: | ---: | ---: |
+| 기준1 | 273.206초 | 146.461초 | 141.339초 |
+| 기준2 | 274.068초 | 146.309초 | 141.970초 |
+
+이는 설정 개선 비교가 아니다. 차이는 모두 0.5% 이내였다. 기존 release의 `debug="line-tables-only"`,
+`strip="none"`, `panic="unwind"`와 dev를 유지한다. 별도 Cargo profile인 `deploy-build`는 없고
+`scripts/deploy-build.sh`가 release를 빌드한다. `bench`는 release, `test`는 dev의 줄 정보를 상속한다.
+release workflow와 deploy-build의 기존 dSYM/PDB 보관, Linux의 압축 DWARF를 유지한다.
