@@ -81,6 +81,7 @@ export default async function () {
       const firstElapsed = await openHeld();
       await page.clock.runFor(499 - firstElapsed);
       assert.equal(await banner.count(), 0, "499ms까지 연결 띠 없음");
+      assert.equal(await page.getByLabel("메시지", { exact: true }).getAttribute("placeholder"), "Claude에게 메시지…");
       await page.evaluate(() => window.releasePaneOpen());
       await page.clock.runFor(1);
       await domIs(page, "빠른 연결 입력 가능", () => document.querySelector('[data-testid="terminal"]')?.getAttribute("data-readonly") === "false");
@@ -89,11 +90,14 @@ export default async function () {
 
       const shell = aaa("pane", "list").panes.find((p) => p.name === "t1");
       await select(shell.id);
+      await page.clock.runFor(5 * 60_000);
+      await page.locator(`.term[data-pane="${pane.id}"]`).waitFor({ state: "detached" });
       const secondElapsed = await openHeld();
       await page.clock.runFor(499 - secondElapsed);
       assert.equal(await banner.count(), 0, "새 연결도 지연을 새로 셈");
       await page.clock.runFor(1);
       await banner.getByText("연결하는 중", { exact: true }).waitFor();
+      assert.match(await page.getByLabel("메시지", { exact: true }).getAttribute("placeholder"), /^연결 중…/);
       await shot(page, `84-banner-${width}-slow`);
       await page.evaluate(() => window.releasePaneOpen());
       await banner.waitFor({ state: "detached" });
@@ -107,6 +111,7 @@ export default async function () {
       await page.clock.runFor(1);
       await banner.waitFor();
       assert.match(await banner.innerText(), /연결하는 중/);
+      assert.match(await page.getByLabel("메시지", { exact: true }).getAttribute("placeholder"), /^재연결 중…/);
       await waitOpen();
       assert.equal(await banner.count(), 1, "재시도로 connecting이 되어도 표시 유지");
       await shot(page, `84-banner-${width}-reconnect`);

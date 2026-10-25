@@ -75,7 +75,7 @@ draw();
     }, name);
     const toggle = pg.getByTestId("chat-toggle");
     if (await toggle.getAttribute("aria-pressed") === "true") await toggle.click();
-    await domIs(pg, "터미널에 현재 pane 출력", () => document.querySelector('.xterm-rows')?.textContent.includes('received'));
+    await domIs(pg, "터미널에 현재 pane 출력", () => document.querySelector('[data-testid="terminal"] .xterm-rows')?.textContent.includes('received'));
     await pg.getByTestId("terminal").click();
   };
   const expectKey = async (pg, name, act, expected) => {
@@ -118,7 +118,7 @@ draw();
     await open(page, "ce-codex");
     await expectKey(page, "ce-codex", () => page.keyboard.press("Control+Enter"), "\x1b");
     const sent = await sentCount(page);
-    await page.locator('.xterm-helper-textarea').evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, ctrlKey: true, repeat: true, bubbles: true })));
+    await page.getByTestId('terminal').locator('.xterm-helper-textarea').evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, ctrlKey: true, repeat: true, bubbles: true })));
     assert.equal((await sentFrames(page, sent)).filter(f => ['input', 'ctrl_enter'].includes(f.t)).length, 0);
     await open(page, "ce-codex-away");
     await expectNothing(page, "ce-codex-away", () => page.keyboard.press("Control+Enter"));

@@ -171,15 +171,13 @@ export function TermView({
   openFileRef.current = onOpenFile;
   const scrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  // 보관된 pane의 마지막 화면만 남긴다. 입력·소켓·xterm 인스턴스는 이탈 때 기존대로 정리한다.
-  const previewRef = useRef<HTMLElement | null>(null);
-  const previewWheelsRef = useRef<WheelEvent[]>([]);
-  const flushPreviewWheelsRef = useRef(() => {});
+  const finishHiddenHistoryRef = useRef(() => {});
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   /** 출력이 멈춘 연결을 다시 붙인다(「다시 연결」 단추) */
   const reattachRef = useRef<() => void>(() => {});
   const readonlyRef = useRef(true);
+  const connectedBefore = useRef(false);
   const [link, setLink] = useState<Link>("connecting");
   // 짧은 연결 안내는 깜빡이지 않게 한다. 재시도 중 closed ↔ connecting은 같은 기다림이다.
   const linking = link === "connecting" || link === "closed";
@@ -476,31 +474,13 @@ export function TermView({
   const presentRef = useRef(true);
   useLayoutEffect(() => {
     presentRef.current = active;
-    if (!active) { readonlyRef.current = true; setReadonly(true); setLink("closed"); }
-    // term-stack은 활성 화면에서만 mount된다. 새 칸에도 첫 paint 전에 이전 본문을 옮긴다.
-    else if (previewRef.current) box.current?.append(previewRef.current);
-    const el = box.current;
-    // 본문이 먼저 보이는 동안의 휠은 아직 없는 xterm·마우스 모드로 보내지 않는다.
-    // 현재 복귀에만 붙잡고, 새 snapshot을 그린 뒤 원래 xterm 경로로 한 번 전달한다.
-    const holdWheel = (event: WheelEvent) => {
-      if ((!previewRef.current && previewWheelsRef.current.length === 0) || !canControlRef.current) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const count = event.isTrusted && !event.ctrlKey ? getTerminalWheelSpeed() : 1;
-      for (let i = 0; i < count && previewWheelsRef.current.length < 64; i++) {
-        previewWheelsRef.current.push(new WheelEvent("wheel", {
-          bubbles: true, cancelable: true, deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode,
-          clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey, altKey: event.altKey,
-          shiftKey: event.shiftKey, metaKey: event.metaKey,
-        }));
-      }
-    };
-    if (active) el?.addEventListener("wheel", holdWheel, { capture: true, passive: false });
-    return () => {
-      presentRef.current = false;
-      el?.removeEventListener("wheel", holdWheel, true);
-      previewWheelsRef.current = [];
-    };
+    if (!active) {
+      finishHiddenHistoryRef.current();
+      // 숨긴 연결은 출력만 받는다. send()는 비활성 송신을 막으므로 release만 직접 보낸다.
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "release" } satisfies TermClientMsg));
+    }
+    return () => { presentRef.current = false; };
   }, [active, pane.id]);
 
   // 커서 위치 보고(ESC[r;cR)는 session host가 이미 답했다. xterm.js의 자동 답은 보내지 않는다.
@@ -585,32 +565,11 @@ export function TermView({
   }, [active, steer, pendingCount, compacting]);
   const steerOpen = steerKnown && canControl && !readonly ? steerAvailability(paneAgentStatus(pane), composerBusy, compacting) : "hidden";
 
-  const attachedBefore = useRef(false);
+  // App의 보관 수명(일반 3 + coordinator 1, 숨김 5분) 동안 DOM·xterm·WS를 함께 둔다.
+  useEffect(() => attachTerminal(), [pane.id]);
   useEffect(() => {
-    if (!active) return;
-    readonlyRef.current = true;
-    setReadonly(true);
-    setReason(null);
-    setLink("connecting");
-    // 복귀의 첫 본문을 먼저 그린다. 입력 연결은 별도로 준비하며, 빠른 전환은 예약도 취소한다.
-    if (!attachedBefore.current) {
-      attachedBefore.current = true;
-      return attachTerminal();
-    }
-    let frame = 0;
-    let timer: number | undefined;
-    let cleanup: (() => void) | undefined;
-    let paints = 0;
-    const painted = () => {
-      if (++paints < 3) frame = requestAnimationFrame(painted);
-      else timer = window.setTimeout(() => { cleanup = attachTerminal(); }, 0);
-    };
-    frame = requestAnimationFrame(painted);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-      cleanup?.();
-    };
+    if (active && !chatViewRef.current && !inputLineRef.current && !autoSelectedRef.current
+      && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) termRef.current?.focus();
   }, [active, pane.id]);
 
   function attachTerminal() {
@@ -667,11 +626,7 @@ export function TermView({
     // 이모지 묶음(ZWJ·피부색·국기·⚠️)도 두 칸이다. vt100은 묶음을 글자마다 세어 다시 그릴 때만 다를 수 있다(plan §8.53).
     matchHerdrWidths(term);
     term.open(box.current!);
-    // 새 snapshot을 그릴 때까지 글자만 가린다. visibility:hidden은 파싱 뒤 첫 render 전의
-    // 휠을 바깥 칸으로 흘리고 focus도 막는다. 표시 사본은 pointer-events:none이므로 입력은 새 xterm이 받는다.
-    if (previewRef.current && term.element) term.element.style.opacity = "0";
     let snapshotPaintPending = false;
-    let outputPainted = false;
     // FitAddon은 scrollback이 있으면 세로 scrollbar 자리를 빼고 칸을 정한다. overlay scrollbar(휴대폰·트랙패드 Mac)는 폭이 0이라
     // 기본값 15px을 빼서 오른쪽 두 칸쯤이 늘 비었다. 참고는 scrollback 0이라 빼지 않는다(PaneTerminal 542~546줄). aaa xterm은
     // 기록을 가지므로(plan §8.67) scrollback을 두고, 그 자리를 0으로 둔다(scrollbar는 그리지 않는다: style.css, plan §8.124).
@@ -773,7 +728,7 @@ export function TermView({
     // 화면 키보드가 grid를 붙잡은 동안 새 출력이 오면 커서 줄을 따라간다(herdr-web-ui PaneTerminal 1133줄)
     const parsedSub = term.onWriteParsed(() => {
       if (document.activeElement === term.textarea) trace("write");
-      followCursor.current();
+      if (activeRef.current) followCursor.current();
       // 받은 출력을 다 읽은 뒤의 버퍼 자리(맨 위 줄·baseY). 올려 둔 동안 아래에 줄이 붙으면 그리기(onRender, data-view-*)는 오지 않아,
       // 시험이 「출력이 와도 올려 둔 자리」를 이 표지 뒤에 본다(웹 E2E 07 「터미널 스크롤」)
       const buf = term.buffer.active;
@@ -1266,7 +1221,7 @@ export function TermView({
       fromTerminal(remap(data), modifiedEnter);
     });
     const binSub = term.onBinary((s) => {
-      if (readonlyRef.current) return;
+      if (!activeRef.current || readonlyRef.current) return;
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) ws.send(Uint8Array.from(s, (c) => c.charCodeAt(0)));
     });
@@ -1335,7 +1290,7 @@ export function TermView({
     const wantHistory = () => {
       const ws = wsRef.current;
       const buf = term.buffer.active;
-      if (!historyMore || historyWait || holding || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!activeRef.current || !historyMore || historyWait || holding || !ws || ws.readyState !== WebSocket.OPEN) return;
       // 보통 화면에서 위로 굴려, 받은 기록 맨 위에서 한 화면 안에 들어왔을 때
       if (buf.type !== "normal" || buf.viewportY >= buf.baseY || buf.viewportY > term.rows) return;
       const anchor = [0, 1, 2].map((i) => buf.getLine(i)?.translateToString(true) ?? "");
@@ -1346,30 +1301,14 @@ export function TermView({
     };
     // xterm 5.5 onScroll은 새 줄로 버퍼가 밀릴 때만 온다: 사용자가 굴린 것은 viewport의 scroll로 본다(xterm 처리 뒤라 viewportY가 새 자리다)
     const scrollSub = term.onScroll(() => wantHistory());
-    const flushPreviewWheels = () => {
-      if (previewRef.current) return;
-      if (readonlyRef.current) { previewWheelsRef.current = []; return; }
-      // 새 front·state의 React effect보다 render가 먼저 올 수 있다. 옛 연결의 adopted 상태로
-      // 휠을 버리지 않고, 화면 점유 갱신 사건에서도 준비를 확인한다.
-      if (adoptedRef.current) return;
-      const wheels = previewWheelsRef.current.splice(0);
-      if (presentRef.current) for (const event of wheels) term.element?.dispatchEvent(event);
-    };
-    flushPreviewWheelsRef.current = flushPreviewWheels;
     // 그린 화면의 맨 위 버퍼 줄과 맨 아래 화면의 맨 위 줄(baseY). 시험이 「이 자리가 그려졌다」를 사건으로 안다: 굴린 뒤 frame 수를 어림하지 않는다
     const renderSub = term.onRender(() => {
       const el = box.current;
       if (!el) return;
       if (snapshotPaintPending) {
         snapshotPaintPending = false;
-        // RIS 뒤 Viewport 줄 높이는 두 frame 동안 0일 수 있다. 그 사이 픽셀 휠은 기존 NaN 방지 패치가
-        // 버린다. 새 화면의 치수가 나온 지금 동기화하고 사본·붙잡은 휠을 넘긴다(임의 frame 대기 없음).
-        if (previewRef.current) viewportOf?.syncScrollArea(true);
-        outputPainted = true;
-        previewRef.current?.remove();
-        previewRef.current = null;
-        if (term.element) term.element.style.opacity = "";
-        flushPreviewWheels();
+        // RIS 뒤 첫 그리기에서 줄 높이를 동기화해 첫 픽셀 휠이 0 높이로 버려지지 않게 한다.
+        viewportOf?.syncScrollArea(true);
       }
       el.dataset.viewTop = String(term.buffer.active.viewportY);
       el.dataset.viewBase = String(term.buffer.active.baseY);
@@ -1416,6 +1355,13 @@ export function TermView({
           // 참고도 그린 뒤 시점을 onRender로 잡는다(herdr-web-ui TerminalViewportTools.tsx 216줄 `terminal.onRender(paintHits)`).
           // 그 그림이 보던 줄 자리여야 한다: viewport 요소의 scroll 사건(xterm Viewport._handleScroll)이 그 사이 자리를 옮겼으면
           // 다시 맞추고 다음 그림을 기다린다(버퍼 끝을 넘는 자리는 끝으로 본다). 붙잡은 출력은 그 뒤에 쓴다.
+          const finish = () => {
+            drawn.dispose();
+            finishHiddenHistoryRef.current = () => {};
+            cover?.remove();
+            trace("history-applied", { lines, more });
+            done();
+          };
           const drawn = term.onRender(() => {
             const b = term.buffer.active;
             const at = Math.min(want, b.baseY);
@@ -1425,12 +1371,12 @@ export function TermView({
               term.scrollToLine(at);
               return;
             }
-            drawn.dispose();
-            cover?.remove();
-            trace("history-applied", { lines, more });
-            done();
+            finish();
           });
-          term.refresh(0, term.rows - 1);
+          // 숨은 xterm은 render를 멈춘다. 파싱이 끝났으면 그리기를 기다리며 출력/ACK를 붙잡지 않는다.
+          finishHiddenHistoryRef.current = finish;
+          if (!activeRef.current) finish();
+          else term.refresh(0, term.rows - 1);
         });
       });
     };
@@ -1488,6 +1434,7 @@ export function TermView({
             readonlyRef.current = msg.readonly;
             setReadonly(msg.readonly);
             // WebSocket open은 전송로만 열렸다는 뜻이다. host의 첫 화면·권한을 받은 뒤 입력 준비가 된다.
+            connectedBefore.current = true;
             setLink("open");
             setError(null);
             break;
@@ -1549,7 +1496,7 @@ export function TermView({
                 : `그림을 저장했다: ${msg.path}${msg.note ? ` · ${msg.note}` : ""}`,
               ok: true,
             });
-            if (!inputLineRef.current) termRef.current?.focus();
+            if (activeRef.current && !inputLineRef.current) termRef.current?.focus();
             attachDone();
             break;
           case "submitted": {
@@ -1711,26 +1658,18 @@ export function TermView({
       binSub.dispose();
       scrollSub.dispose();
       renderSub.dispose();
-      flushPreviewWheelsRef.current = () => {};
       viewport?.removeEventListener("scroll", wantHistory);
       offTheme();
       termRef.current = null;
       fitRef.current = null;
-      if (outputPainted && term.element) {
-        const preview = term.element.cloneNode(true) as HTMLElement;
-        preview.classList.add("terminal-preview");
-        preview.inert = true;
-        preview.setAttribute("aria-hidden", "true");
-        preview.querySelectorAll(".xterm-helpers, [id]").forEach(node => node.remove());
-        previewRef.current = preview;
-      }
-      el.replaceChildren(...(previewRef.current ? [previewRef.current] : []));
+      el.replaceChildren();
       // 앞 기록을 붙이는 중에 붙잡은 출력은 버린다: 이 터미널에 더 쓰지 않는다
       holding = null;
+      finishHiddenHistoryRef.current = () => {};
       // xterm이 걸어 둔 frame·task가 돈 뒤에 치운다(PaneTerminal 1982줄 `disposeAfterPendingFrame`): snapshot의 RIS로 Viewport.reset이
       // 다음 frame에 renderer 크기를 읽는데, 단축키로 pane을 잇달아 넘기면 그 frame 전에 내려가 TypeError가 났다.
       // 받은 출력을 xterm이 다 읽은 뒤에 기다리기 시작한다: 참고는 같은 탭 안 pane 전환에서 터미널을 내리지 않지만(terminalDispose.ts
-      // 머리 설명) aaa는 pane을 넘길 때마다 내린다. 막 온 snapshot을 아직 읽지 않은 채(WriteBuffer task가 남음) 내려가면, 그 task가 기다림
+      // 머리 설명) aaa는 보관 수명이 끝날 때 내린다. 막 온 snapshot을 아직 읽지 않은 채(WriteBuffer task가 남음) 내려가면, 그 task가 기다림
       // frame 뒤에 RIS를 읽어 reset frame이 치운 뒤에 돌았다(CI 6번 중 1번, t-0332 재현).
       term.write("", () => disposeAfterPendingFrame(term));
     };
@@ -1752,7 +1691,6 @@ export function TermView({
   useEffect(() => {
     if (adopted && !adoptedRef.current) kbRef.current.panned = false;
     adoptedRef.current = adopted;
-    flushPreviewWheelsRef.current();
     if (adopted) followCursor.current();
   }, [adopted]);
   const followCursor = useRef(() => {});
@@ -1761,7 +1699,7 @@ export function TermView({
     const term = termRef.current;
     const k = kbRef.current;
     const screen = term?.element?.querySelector<HTMLElement>(".xterm-screen");
-    if (!host || !term || !screen || !(k.held || adoptedRef.current) || k.panned) return;
+    if (!activeRef.current || !host || !term || !screen || !(k.held || adoptedRef.current) || k.panned) return;
     const row = screen.offsetHeight / term.rows;
     const top = screen.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop;
     const cursorBottom = top + (term.buffer.active.cursorY + 1) * row;
@@ -1820,7 +1758,7 @@ export function TermView({
     fitted();
     mark(change ? "sent" : "same");
   };
-  useEffect(() => autoFit.current(), [link, me, lease, readonly, chatView, size, fontGen]);
+  useEffect(() => autoFit.current(), [active, link, me, lease, readonly, chatView, size, fontGen]);
   // 대화 보기는 grid를 가린다: 이 화면이 건 크기를 놓아 터미널을 보는 다른 화면이 되찾게 한다(PaneTerminal 2049~2056줄)
   useEffect(() => {
     if (chatView && chatable && leaseMineRef.current) send({ t: "release" });
@@ -2246,7 +2184,7 @@ export function TermView({
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
-      {active && <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
+      <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
         <div className="term-scroll" ref={scrollRef} data-direct-typing={inputLine ? undefined : ""} data-adopted-grid={adopted ? "" : undefined}>
           {/* 시험이 「이 pane이 입력을 받는다」를 기다리는 표지: 그 전에 친 글은 붙잡힌다(draft 띠) */}
           <div className="term-box" ref={box} data-testid={active ? "terminal" : undefined} data-pane-name={pane.name} data-readonly={readonly ? "true" : "false"} />
@@ -2322,7 +2260,7 @@ export function TermView({
         {active && scrolledUp && !chatView && (
           <JumpToBottom stack={stackRef} onJump={() => termRef.current?.scrollToBottom()} />
         )}
-      </div>}
+      </div>
       <span ref={pinchBadgeRef} className="pinch-badge" data-testid={active ? "pinch-badge" : undefined} aria-live="polite" hidden />
       {dock}
       {/* 입력줄은 그리드 마지막 줄 위에 뜬다. 흐름에는 한 줄 높이만 두어 자라도 PTY 크기를 바꾸지 않는다(PaneTerminal 3008~3016줄) */}
@@ -2375,6 +2313,7 @@ export function TermView({
           pending={pendingSends}
           setPending={setPendingSends}
           connected={active && link === "open" && !pane.readonly && !locked}
+          connectionNotice={showLink && linking ? `${connectedBefore.current ? "재연결 중" : "연결 중"}… 메시지는 여기에 보관되고 대기열에 넣지 않습니다` : null}
           pane={pane.id}
           touch={coarse}
           working={paneAgentStatus(pane) === "working"}

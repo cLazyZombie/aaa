@@ -172,6 +172,7 @@ export interface ChatComposerProps {
   /** 「{agent}에게 메시지…」 */
   agentLabel: string;
   connected: boolean;
+  connectionNotice?: string | null;
   /** agent가 작업 중(참고 `composerDelivery`의 queue 자리) */
   working: boolean;
   /** agent가 대화를 정리하는 중(작업 중일 때만, plan §8.309): 보낸 글을 붙잡았다가 끝나면 보낸다 */
@@ -212,6 +213,7 @@ export function ChatComposer({
   touch,
   agentLabel,
   connected,
+  connectionNotice = null,
   working,
   compacting = false,
   harness,
@@ -823,9 +825,7 @@ export function ChatComposer({
     return () => { live = false; };
   }, [active, visible, compacting, connected, asking, flight, queued, working, autoSendQueued]);
 
-  const placeholder = connected
-    ? (autoOn ? "coordinator에게 지시하기" : `${agentLabel}에게 메시지…`)
-    : "재연결 중… 메시지는 여기에 보관되고 대기열에 넣지 않습니다";
+  const placeholder = connectionNotice ?? (autoOn ? "coordinator에게 지시하기" : `${agentLabel}에게 메시지…`);
   return (
     <>
       {queued.length > 0 && (

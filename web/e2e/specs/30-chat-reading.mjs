@@ -80,14 +80,15 @@ async function openChat(p, label, count = 60) {
 }
 
 async function lateAck(page, label, session) {
-  // host가 받은 뒤 ACK만 늦어진 보내기: 화면을 숨겨 연결이 끝나도 결과 정리·초안 복구는 남고 재전송하지 않는다.
+  // host가 받은 뒤 ACK만 늦어진 보내기: 숨긴 보관 연결이 실제로 끊겨도 초안을 복구하고 재전송하지 않는다.
   readingPane(label, session);
   await waitOutput(label, "received 0");
   const target = aaa("pane", "list").panes.find(p => p.name === label);
-  let ack, arrive;
+  let ack, arrive, disconnect;
   const arrived = new Promise(resolve => { arrive = resolve; });
   await page.context().routeWebSocket(new RegExp(`/api/v1/panes/${target.id}/ws`), socket => {
     const server = socket.connectToServer();
+    disconnect = () => socket.close();
     server.onMessage(raw => {
       if (typeof raw === "string") {
         const message = JSON.parse(raw);
@@ -107,6 +108,8 @@ async function lateAck(page, label, session) {
   assert.equal(ack.ok, true);
   await waitOutput(label, `received ${Buffer.byteLength(`${late}\r`)}`);
   await page.evaluate(() => { location.hash = "tasks"; });
+  await page.locator(`.term[data-pane="${target.id}"][hidden]`).waitFor({ state: "attached" });
+  disconnect();
   await domIs(page, "숨긴 송신의 초안 복구", id => document.querySelector(`.term[data-pane="${id}"] textarea[aria-label="메시지"]`)?.value === "전환 직전 한 번 보내기", target.id);
   await openChat(page, label);
   await page.locator('[data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });

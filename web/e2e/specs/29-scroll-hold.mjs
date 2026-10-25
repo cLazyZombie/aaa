@@ -29,9 +29,10 @@ const view = (p) =>
 /** 웹 터미널 칸과 입력줄: 겹친 높이, 입력줄 높이, prompt 줄이 칸 안(입력줄 위)에 보이는가 */
 const termView = (p) =>
   p.evaluate(() => {
-    const scroll = document.querySelector(".term-scroll").getBoundingClientRect();
-    const input = document.querySelector(".terminal-input").getBoundingClientRect();
-    const prompt = [...document.querySelectorAll(".xterm-rows > div")].find((r) => r.textContent.includes("prompt>"))?.getBoundingClientRect();
+    const term = document.querySelector(".term:not([hidden])");
+    const scroll = term.querySelector(".term-scroll").getBoundingClientRect();
+    const input = term.querySelector(".terminal-input").getBoundingClientRect();
+    const prompt = [...term.querySelectorAll(".xterm-rows > div")].find((r) => r.textContent.includes("prompt>"))?.getBoundingClientRect();
     return {
       overlap: Math.max(0, Math.round(scroll.bottom - input.top)),
       inputHeight: Math.round(input.height),
@@ -96,7 +97,7 @@ export default async function ({ page }) {
     aaa("tab", "create", "--machine", "labA", "--label", "hold2", "--", "/bin/sh", "-c", "i=1; while [ $i -le 80 ]; do echo line-$i; i=$((i+1)); done; printf 'prompt> '; exec cat");
     await waitOutput("hold2", "prompt>");
     await inList(page, "pane-hold2");
-    await domIs(page, "터미널에 prompt", () => document.querySelector(".xterm-rows")?.textContent.includes("prompt>"));
+    await domIs(page, "터미널에 prompt", () => document.querySelector('[data-testid="terminal"] .xterm-rows')?.textContent.includes("prompt>"));
     const size = () => {
       const p = aaa("pane", "list").panes.find((x) => x.name === "hold2");
       return `${p.cols}x${p.rows}`;
@@ -148,7 +149,7 @@ export default async function ({ page }) {
     if (chat.overlap > 0) throw new Error(`휴대폰 대화 입력창이 대화를 덮는다: ${JSON.stringify(chat)}`);
     await shot(mobile, "scroll-hold-chat-phone");
     await inList(mobile, "pane-hold4");
-    await domIs(mobile, "휴대폰 터미널에 prompt", () => document.querySelector(".xterm-rows")?.textContent.includes("prompt>"));
+    await domIs(mobile, "휴대폰 터미널에 prompt", () => document.querySelector('[data-testid="terminal"] .xterm-rows')?.textContent.includes("prompt>"));
     const one = await termView(mobile);
     await mobile.getByLabel("보낼 글").fill("한 줄\n두 줄\n세 줄\n네 줄");
     await until("휴대폰 입력줄이 커짐", async () => (await termView(mobile)).inputHeight > one.inputHeight + 20);
