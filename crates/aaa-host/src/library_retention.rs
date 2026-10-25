@@ -217,32 +217,17 @@ impl Host {
         Ok(removed)
     }
 
-    /// 보고서 하나의 host 사본을 지운다. 정리(prune)는 report.md 사본·thread 기록을 남기고(§8.212), 사용자 지우기는
-    /// `with_report`로 thread 보고 사본(`threads/<id>.md`)까지 지운다(§8.256). 실시간 등록 원본은 건드리지 않는다.
-    pub(crate) fn remove_report(
-        &self,
-        project: &str,
-        name: &str,
-        with_report: bool,
-        actor: &str,
-        action: &str,
-    ) -> Result<(), ErrorBody> {
-        let versions = self.report_version_names(project, name);
-        for id in versions {
-            self.remove_report_copy(project, &id, true)?;
-            self.db.report_deleted(project, &id).map_err(crate::orch::internal)?;
-        }
-        self.remove_report_copy(project, name, with_report)?;
-        self.db.audit(actor, action, &format!("{project}/{name}"));
-        Ok(())
-    }
-
     fn remove_report_copy(&self, project: &str, name: &str, with_report: bool) -> Result<(), ErrorBody> {
-        let dir = self.project_dir(project)?;
-        let dest = dir.join("library").join(name);
         // 먼저 링크를 끝낸다. 파일 삭제 실패로 반쯤 남아도 공유 링크로 읽지 못한다.
         self.db.library_report_remove(project, name).map_err(crate::orch::internal)?;
         self.view_caps.lock().unwrap().retain(|_, c| c.project != project || c.thread != name);
+        self.remove_report_files(project, name, with_report)
+    }
+
+    /// 호출자가 링크 폐기를 먼저 확정한다. 이 함수 안에서는 DB를 잠그거나 쓰지 않는다.
+    pub(crate) fn remove_report_files(&self, project: &str, name: &str, with_report: bool) -> Result<(), ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let dest = dir.join("library").join(name);
         if dest.exists() {
             let remove = if dest.is_dir() { std::fs::remove_dir_all(&dest) } else { std::fs::remove_file(&dest) };
             remove.map_err(|e| {

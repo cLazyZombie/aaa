@@ -11,6 +11,7 @@ pub(crate) mod automation_runs;
 #[cfg(test)]
 mod inbox_tests;
 mod library_catalog;
+mod library_delete;
 mod machine_rename;
 mod question_ids;
 mod report_ids;
@@ -20,6 +21,8 @@ mod task_ids;
 mod task_queue;
 mod web_publication;
 mod workspace_metrics;
+
+pub(crate) use library_catalog::LibraryCatalog;
 
 pub const SCHEMA_VERSION: i64 = 1;
 

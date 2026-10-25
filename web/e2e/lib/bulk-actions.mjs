@@ -43,12 +43,21 @@ export function responseGate() {
     try {
       const started = performance.now();
       const response = await route.fetch();
-      console.log("bulk-response", JSON.stringify({ op: req.op, ms: Math.round(performance.now() - started), count: req.reports?.length ?? req.ids?.length }));
+      const elapsed = performance.now() - started;
+      if (req.op === "library_delete") {
+        const latest = fs.readFileSync(`${root}/host.log`, "utf8").split("\n").filter(l => l.includes("보고서 영구 삭제 계측")).at(-1);
+        if (!latest) throw new Error("보고서 삭제의 DB·파일 계측이 없다");
+        console.log("bulk-delete-profile", latest);
+      }
+      console.log("bulk-response", JSON.stringify({ op: req.op, ms: Math.round(elapsed), count: req.reports?.length ?? req.ids?.length }));
+      if (req.op === "library_delete" && req.reports.length === 500) {
+        assert.ok(elapsed < 10_000, `보고서 500개 삭제 ${Math.round(elapsed)}ms: 20초 상한의 절반 미만이어야 한다`);
+      }
       gate.arrive();
       await gate.wait;
       await route.fulfill({ response });
     } catch (e) {
-      gate.reject(new Error(`일괄 응답 전달 실패: ${req.op} (${e.name})`));
+      gate.reject(new Error(`일괄 응답 전달 실패: ${req.op} (${e.name}): ${e.message}`, { cause: e }));
     }
   });
   const arm = (match, fail = false) => {

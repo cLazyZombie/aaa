@@ -52,6 +52,7 @@ mod legacy_mission;
 mod library;
 mod library_archive;
 mod library_catalog;
+mod library_delete;
 mod library_inventory;
 mod library_links;
 mod library_publish;

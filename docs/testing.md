@@ -1,3 +1,13 @@
+## 보고서 500개 영구 삭제의 묶음 DB 처리(t-1042)
+
+- 기준은 t-1038·t-1041이 포함된 757a8110이다. 격리 Chromium 두 폭의 기존 500개 요청은 HTTP 646/342ms, 삭제 실행 248/249ms였다. 1,000개 사본의 파일 작업 합계는 130/130ms, 사본별 DB 제거는 57/58ms였다. 나머지 실행 시간은 판 삭제 표시·감사 기록 등이며 HTTP와 실행의 차이에는 반복 검증/조회도 포함된다. 이는 부하 없는 원인 분리 표본이며 이전 전체 gate의 12.2~16.5초나 개선 뒤 전체 gate 결과를 대신하지 않는다.
+- 프로젝트별 catalogue·보관 참조 조회 뒤 전체 검증을 끝낸다. 링크 폐기와 파일 제거 후 결과 확정을 각각 한 transaction으로 묶고 prepared statement를 재사용한다. 파일 삭제 동안 DB transaction을 유지하지 않으며 실시간 원본·미완료 사본·번호 원장과 다른 프로젝트를 보존한다. 공유 링크·앱 열람 권한은 파일에 도달하기 전에 무효화한다.
+- DB 유닛은 두 번째 링크 폐기와 두 번째 감사 기록에 SQLite trigger 오류를 주입해 두 transaction의 전체 rollback·원인 보존·프로젝트 분리를 검사한다. host 유닛은 원본/r 별칭 중복 제거, 누락 대상을 포함한 전체 선검증, 실제 파일 오류 때 완료 원본/완료 판만 확정·뒤 대상 파일 보존·공유 링크 선폐기·남은 대상 처리, 폐기 DB 실패의 파일 보존·결과 DB 실패 뒤 재처리와 감사 기록 중복 방지를 확인한다. 기존 진행 중 thread·완료 보관 참조 보호 시험도 유지한다.
+- 새 host 시험의 첫 전체 실행은 다중 프로젝트 fixture를 신규 생성 API로 준비해 단일 프로젝트 정책에 막혔다(671개 통과·새 시험 하나 실패). fixture만 옛 다중 프로젝트 폴더 형태로 직접 준비한다. 제품 정책·기대값을 바꾸지 않는다.
+- `AAA_E2E_WORKERS=10 NODE_PATH=<작업 폴더의 Playwright 1.64.1> nice -n 15 bash scripts/ci-local.sh`로 전체 검증한다. E2E113·114의 기존 실제 500개/601개·네 화면·부분 실패/남은 101개 요청·최종 DB/파일/화면 단언을 유지한다. E2E113은 삭제의 성공 실험실 로그도 회수하고 500개 HTTP 응답이 10초 미만인지 검사한다. 기존 응답 20초·단계 시한·재시도 정책을 늘리지 않는다. 브라우저는 내부 공용 캐시만 사용한다.
+- 최종 전체 gate는 359초에 web·fmt·build·strict clippy·test·e2e·public 모두 통과했다. 웹 유닛 581개, Rust 1,351개(기존 ignored 6), Python 56개(기존 skip 2), 웹 E2E 114파일/140작업(10 worker, 297.6초)이 통과했다. E2E113/114는 각각 108.8/124.1초였다. 500개 삭제 HTTP는 Chromium 1280/390px 1,013/2,087ms, WebKit 1280/390px 7,738/4,856ms로 모두 10초 미만이었다. 최댓값의 링크 폐기/결과 확정 DB는 0.669/10.413ms, 파일은 7,228.357ms, 조회/보호는 7.723ms, library 잠금 대기는 486.106ms였다. 같은 회차의 관측값이며 운영 성능 보장은 아니다.
+- 참고: [SQLite transaction 비용](https://www.sqlite.org/faq.html#q19)([public domain](https://www.sqlite.org/copyright.html)), [rusqlite Transaction](https://docs.rs/rusqlite/0.37.0/rusqlite/struct.Transaction.html)([MIT](https://github.com/rusqlite/rusqlite/blob/master/LICENSE)). 명시적 commit과 실패 rollback을 따르며 외부 코드·의존성을 추가하지 않는다.
+
 ## E2E114 자동화 fixture의 외부 writer 경합(t-1038 후속)
 
 - 같은 `231d7e3b` CI의 macOS web-e2e에서 E2E114가 60.5초 뒤 `대량 자동화 입력` 단계의 `database is locked`로 실패했다. `bulk-automation.mjs`는 실행 중 host의 DB에 Node `DatabaseSync`로 자동화 meta를 직접 썼으며, 자리 fixture에 적용했던 host 종료·transaction 준비가 없었다.
