@@ -158,12 +158,14 @@ impl Host {
         if machines.is_empty() {
             return;
         }
-        let Ok(registrations) = self
+        let Ok(mut registrations) = self
             .metric_registrations()
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
         else {
             return;
         };
+        // 새 저장소의 첫 기록이 이미 확인한 여러 checkout 뒤에서 밀리지 않게 한다.
+        registrations.sort_by_key(|r| !r.view.id.is_empty());
         for reg in registrations.into_iter().filter(|r| machines.contains(&r.machine)) {
             self.collect_metric_registration(reg).await;
         }
