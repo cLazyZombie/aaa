@@ -25,7 +25,7 @@
 
 | 실제 경로 | 선택 |
 | --- | --- |
-| scripts/ci-local.sh build·웹 E2E / web/e2e 기본 binary | e2e production binary만 / target/e2e/aaa; test·clippy가 verify에서 모든 target 검사 |
+| scripts/ci-local.sh build·웹 E2E / web/e2e 기본 binary | build는 e2e 실행 파일 + verify unit 사전 컴파일; 웹 E2E는 target/e2e/aaa, test·clippy는 verify |
 | ci-local unit(rust_tests.py)·doctest·clippy | verify |
 | .github/workflows/ci.yml | ci-local에 위임: 웹 E2E/build는 e2e, unit/clippy는 verify |
 | Windows ci-local 선검사 | release check만 실행(LLVM·LTO·실행 파일 생성 없음); release 전용 cfg 누락 검출 유지 |
