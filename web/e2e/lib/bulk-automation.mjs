@@ -3,21 +3,29 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, pairPage } from "./harness.mjs";
 import { responseGate, responsive, count } from "./bulk-actions.mjs";
+import { seedHost } from "./bulk-fixture.mjs";
 
 export async function automationQueueScenario(engine, label, width) {
   console.log(`bulk queue ${label} ${width}`);
-  const db = new DatabaseSync(`${root}/s/host/host.db`);
   const dir = `${root}/projects/demo`;
-  for (const discard of [false, true]) {
+  const event = id => ({ id, at_ms: 1000, owner: "t-9000", body: "{}", action: { message: { thread: "owner", text: "확인" } }, source: "events" });
+  await seedHost(db => {
+    const put = db.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)");
+    for (const discard of [false, true]) {
+      const name = `queue-${label}-${width}-${discard}`;
+      // 꺼진 규칙은 사람이 푼 뒤에도 ticker가 남은 입력을 소비하지 않는다.
+      fs.writeFileSync(`${dir}/automations/${name}.toml`, 'schema=2\nenabled=false\n[trigger]\nkind="event"\nsource="thread"\n[condition]\nevents=["thread_failed"]\n[action]\nkind="message"\nthread="owner"\ntext="확인"\n');
+      put.run(`automation:demo:${name}`, JSON.stringify({
+        pending: Array.from({ length: count }, (_, i) => event(`pending-${i}`)),
+        inflight: { id: "seen-batch", events: Array.from({ length: count }, (_, i) => event(`unknown-${i}`)), day: 0, unknown: true },
+      }));
+    }
+  });
+  // 실제 동작 뒤 상태 확인에는 읽기 전용 연결만 쓴다.
+  const db = new DatabaseSync(`${root}/s/host/host.db`, { readOnly: true });
+  try { for (const discard of [false, true]) {
     const name = `queue-${label}-${width}-${discard}`;
-    // 꺼진 규칙은 사람이 푼 뒤에도 ticker가 남은 입력을 소비하지 않는다.
-    fs.writeFileSync(`${dir}/automations/${name}.toml`, 'schema=2\nenabled=false\n[trigger]\nkind="event"\nsource="thread"\n[condition]\nevents=["thread_failed"]\n[action]\nkind="message"\nthread="owner"\ntext="확인"\n');
-    const event = id => ({ id, at_ms: 1000, owner: "t-9000", body: "{}", action: { message: { thread: "owner", text: "확인" } }, source: "events" });
     const stateKey = `automation:demo:${name}`;
-    db.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)").run(stateKey, JSON.stringify({
-      pending: Array.from({ length: count }, (_, i) => event(`pending-${i}`)),
-      inflight: { id: "seen-batch", events: Array.from({ length: count }, (_, i) => event(`unknown-${i}`)), day: 0, unknown: true },
-    }));
     const gate = responseGate();
     const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: gate.setup });
     const page = paired.page;
@@ -41,8 +49,7 @@ export async function automationQueueScenario(engine, label, width) {
       assert.equal(stored.pending.length, discard ? 0 : count);
       assert.deepEqual(paired.errors, []);
     } finally { await page.context().close(); }
-  }
-  db.close();
+  } } finally { db.close(); }
 }
 
 export async function automationConvertScenario(engine, label, width) {

@@ -1,3 +1,12 @@
+## E2E114 자동화 fixture의 외부 writer 경합(t-1038 후속)
+
+- 같은 `231d7e3b` CI의 macOS web-e2e에서 E2E114가 60.5초 뒤 `대량 자동화 입력` 단계의 `database is locked`로 실패했다. `bulk-automation.mjs`는 실행 중 host의 DB에 Node `DatabaseSync`로 자동화 meta를 직접 썼으며, 자리 fixture에 적용했던 host 종료·transaction 준비가 없었다.
+- 자리 fixture의 종료·준비·재연결 절차를 `bulk-fixture.mjs`의 `seedHost`로 공유한다. host 종료 사건을 기다린 뒤 `BEGIN IMMEDIATE` 안에서 버리기/계속 보내기 두 규칙과 상태를 함께 준비하고 DB를 닫는다. 다시 띄운 host의 `웹 listen`·`agent 연결` 사건 뒤 실제 UI를 실행한다. 결과 확인 연결은 읽기 전용이다. 준비 실패에는 DB 경로·하위 원인을 남기며 미완성 fixture로 재시작하지 않는다.
+- `bulk-fixture.test.mjs`는 실제 SQLite 쓰기 잠금으로 종료를 기다리지 않는 경로의 `database is locked`를 결정적으로 확인한다. 별도 task의 종료 사건에서 잠금을 풀면 같은 helper의 준비·확정·재연결이 끝나야 한다. callback 오류의 부분 쓰기 rollback·잠금 해제·원인 보존과 재시작 host 조기 종료 전파도 검사한다. 세 시험은 Mac과 Windows Node 24에서 모두 통과했다. 고정 sleep·재시도·busy_timeout·시한 증가는 없다.
+- E2E114의 Chromium/WebKit × 1280/390px × 버리기/계속 보내기에서 기존 500개 pending·500개 결과 불명, inflight 제거, 남은 입력 0/500, 요청 정확히 한 번과 창·목록 갱신 단언을 유지한다. 같은 helper의 실제 worktree 1개·잔여 500개 정리와 500개 자동화 변환·원문 보존도 그대로 실행한다.
+- Mac 웹 유닛 576개·타입/번들·내부 실행 파일 빌드가 통과했다. `NODE_PATH`는 작업 폴더의 Playwright 1.64.1 패키지로만 지정하고 기존 내부 공용 Chromium/WebKit 캐시를 썼다. E2E40·113·114를 worker 3개로 함께 실행해 세 파일 모두 94.1초에 통과했다. E2E114의 자동화 입력 단계는 15.9초였고 네 조합·두 동작의 실제 요청과 상태 단언을 모두 확인했다. 운영 host·브라우저·시스템 설정은 바꾸지 않았다.
+- 참고 후보는 [SQLite WAL](https://www.sqlite.org/wal.html)([public domain](https://www.sqlite.org/copyright.html))과 [Playwright web server 수명](https://playwright.dev/docs/test-webserver)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))이다. SQLite의 단일 writer 제약과 서버 종료·준비 사건에 따른 fixture 수명 분리를 따른다. 외부 코드·의존성은 추가하지 않는다.
+
 ## Windows sweep fixture의 종료 순서(t-1038)
 
 - `231d7e3b`의 `lifecycle::sweep_tests`를 Windows 격리 worktree에서 실행하면 재개 보존·저장 실패 보존 시험이 결과 단언 뒤 `Lab::drop`의 폴더 삭제에서 공유 위반(OS 오류 32)으로 실패한다. 구형 agent·probe 실패 시험도 같은 정리 오류가 겹쳐 unwind 중 두 번째 panic으로 시험 실행 파일이 중단됐다. 같은 기준의 macOS에서는 4개 모두 통과했다.
