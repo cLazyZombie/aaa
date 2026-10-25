@@ -2,6 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+mod moves;
 mod queue;
 pub(crate) use queue::Reaper;
 use std::time::Instant;
@@ -127,6 +128,8 @@ impl Host {
         let mut removed = Vec::new();
         let mut batches = HashMap::new();
         let mut copy_index = 0;
+        let mut moves = moves::Moves::new()
+            .map_err(|error| err(ErrorCode::Unavailable, format!("보고서 경로 이동 작업자 시작 실패: {error}")))?;
         let files_result: Result<(), ErrorBody> = (|| {
             for family in &families {
                 let batch = match batches.entry(family.project.clone()) {
@@ -135,11 +138,8 @@ impl Host {
                         entry.insert(self.report_delete_batch(&family.dir)?)
                     }
                 };
-                for copy in &family.copies {
-                    detach_copy(&family.dir, copy, batch, copy_index)?;
-                    copy_index += 1;
-                    completed_copies.push(copy.clone());
-                }
+                detach_family(family, batch, copy_index, &mut moves, &mut completed_copies)?;
+                copy_index += family.copies.len();
                 removed.push(format!("{}/{}", family.project, family.name));
             }
             Ok(())
@@ -189,40 +189,71 @@ impl Host {
 }
 
 /// 각 rename은 같은 볼륨에서 원자적이다. EXDEV 등의 실패를 copy/remove로 우회하지 않는다.
-fn detach_copy(dir: &Path, copy: &LibraryRef, batch: &Path, index: usize) -> Result<(), ErrorBody> {
-    let paths = [
-        (dir.join("library").join(&copy.name), "files", false, "사본"),
-        (manifest_path(dir, &copy.name), "manifest", true, "목록"),
-        (dir.join("threads").join(format!("{}.md", copy.name)), "report", true, "본문"),
-    ];
-    for (source, kind, file_only, label) in paths {
-        if kind == "report" && !copy.name.starts_with("t-") && crate::report_ids::number(&copy.name).is_none() {
-            continue;
+fn detach_family(
+    family: &DeleteFamily,
+    batch: &Path,
+    first: usize,
+    moves: &mut moves::Moves,
+    completed: &mut Vec<LibraryRef>,
+) -> Result<(), ErrorBody> {
+    let mut paths = Vec::new();
+    for (offset, copy) in family.copies.iter().enumerate() {
+        let index = first + offset;
+        paths.push((
+            offset,
+            family.dir.join("library").join(&copy.name),
+            batch.join(format!("{index}-files")),
+            false,
+            "사본",
+        ));
+        paths.push((
+            offset,
+            manifest_path(&family.dir, &copy.name),
+            batch.join(format!("{index}-manifest")),
+            true,
+            "목록",
+        ));
+        if copy.name.starts_with("t-") || crate::report_ids::number(&copy.name).is_some() {
+            paths.push((
+                offset,
+                family.dir.join("threads").join(format!("{}.md", copy.name)),
+                batch.join(format!("{index}-report")),
+                true,
+                "본문",
+            ));
         }
-        let detach = || -> std::io::Result<()> {
-            let meta = match std::fs::symlink_metadata(&source) {
-                Ok(meta) => meta,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => return Err(error),
-            };
-            if file_only && meta.is_dir() {
-                return Err(std::io::Error::other("일반 파일 자리가 디렉터리다"));
-            }
-            std::fs::rename(&source, batch.join(format!("{index}-{kind}")))
-        };
-        detach().map_err(|error| {
-            err(
+    }
+    let tasks: Vec<_> =
+        paths.iter().map(|(_, source, dest, file_only, _)| (source.clone(), dest.clone(), *file_only)).collect();
+    let results = moves
+        .run(&tasks)
+        .map_err(|error| err(ErrorCode::Unavailable, format!("보고서 경로 이동 응답 실패: {error}")))?;
+    let mut failed = HashSet::new();
+    let mut first_error = None;
+    for ((offset, source, dest, _, label), result) in paths.into_iter().zip(results) {
+        if let Err(error) = result {
+            failed.insert(offset);
+            let copy = &family.copies[offset];
+            let error = err(
                 ErrorCode::Unavailable,
                 format!(
                     "보고서 {}/{} {label} 삭제 실패: {} → {}: {error} (OS {:?})",
                     copy.project,
                     copy.name,
                     source.display(),
-                    batch.display(),
+                    dest.display(),
                     error.raw_os_error()
                 ),
-            )
-        })?;
+            );
+            if first_error.is_none() {
+                first_error = Some(error);
+            } else {
+                tracing::warn!("보고서 경로 이동 추가 실패: {}", error.message);
+            }
+        }
     }
-    Ok(())
+    completed.extend(
+        family.copies.iter().enumerate().filter(|(index, _)| !failed.contains(index)).map(|(_, copy)| copy.clone()),
+    );
+    first_error.map_or(Ok(()), Err)
 }
