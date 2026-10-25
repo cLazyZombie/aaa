@@ -51,9 +51,11 @@ async function check(engine, width, fixture) {
       const req = route.request().postDataJSON();
       if (req?.op !== 'pane_chat') return route.continue();
       requests.push(req);
-      const response = await route.fetch();
+      // 이전 요청의 늦은 응답이 다음 활성화의 gate를 가져가지 않게 요청 진입 때 고정한다.
       const gate = hold?.pane === req.pane && !req.before ? hold : null;
-      if (gate) { hold = null; gate.arrive(); await gate.release; }
+      if (gate) hold = null;
+      const response = await route.fetch();
+      if (gate) { gate.arrive(); await gate.release; }
       const body = await response.json();
       if (body.ok?.messages?.length) body.ok.messages.at(-1).text = `${req.pane} ${body.ok.messages.at(-1).text}`;
       if (sizes.has(req.pane)) {
@@ -111,7 +113,7 @@ async function check(engine, width, fixture) {
     await term(page, ids[0]).locator('.chat-row:last-child').getByText('기록 2399 ·', { exact: false }).waitFor();
     assert.ok(await page.evaluate(() => window.originalChat === document.querySelector('.term:not([hidden]) .chat')));
     assert.equal(await term(page, ids[0]).locator('textarea[aria-label="메시지"]').inputValue(), '초안 유지');
-    assert.equal(requests.slice(from).filter(r => r.pane === ids[0] && !r.before).length, 1);
+    assert.equal(requests.slice(from).filter(r => r.pane === ids[0] && !r.before).length, 1, '이번 활성화의 재검증 요청 한 개');
     // gate의 늦은 응답은 숨은 화면에 commit하지 않는다. 다음 활성화가 최신을 읽는다.
     await go(page, 'tasks'); await frames(page);
   } finally { release(); }
