@@ -674,6 +674,7 @@ async fn library_upload(
     Query(q): Query<LibraryUploadQuery>,
     req: Request,
 ) -> Response {
+    let started = std::time::Instant::now();
     let Some((_, role)) = device(&host, req.headers()) else { return unauthorized() };
     if !role.can_control() {
         return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 보고서를 올릴 수 없다"));
@@ -688,7 +689,16 @@ async fn library_upload(
         )
             .into_response();
     };
-    match host.library_upload_put(role, &project, &upload, &q.path, &bytes) {
+    let body_us = started.elapsed().as_micros() as u64;
+    // 동시 요청이 파일 I/O·업로드 잠금으로 async 실행기를 막지 않게 한다.
+    let result = tokio::task::spawn_blocking(move || host.library_upload_put(role, &project, &upload, &q.path, &bytes))
+        .await
+        .map_err(crate::orch::internal)
+        .and_then(|result| result);
+    tracing::debug!(target: "aaa_upload", body_us,
+        request_us = started.elapsed().as_micros() as u64, ok = result.is_ok(),
+        "보고서 파일 요청");
+    match result {
         Ok((files, total)) => Json(Outcome::Ok(serde_json::json!({ "files": files, "total": total }))).into_response(),
         Err(e) => error_response(e),
     }

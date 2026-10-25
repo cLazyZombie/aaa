@@ -7903,3 +7903,6 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 후속 참고: [Git worktree porcelain](https://git-scm.com/docs/git-worktree)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))의 등록과 실제 경로 구분, [SQLite transaction 비용](https://www.sqlite.org/faq.html)([public domain](https://www.sqlite.org/copyright.html)), [rusqlite Transaction](https://docs.rs/rusqlite/latest/rusqlite/struct.Transaction.html)([MIT](https://github.com/rusqlite/rusqlite/blob/master/LICENSE))을 비교했다. 계측상 agent 반복이 병목이므로 DB transaction 확장 대신 부재 조회를 묶는다. 외부 코드는 복사하지 않는다.
 
 - 휴대폰 확인 창을 취소/완료한 내부 history 복귀는 사용자 Back과 구분해 열린 목록을 유지한다. 내부 사건만 표지하므로 실제 뒤로/앞으로의 목록 닫기 동작은 유지한다.
+
+- 보고서 파일 올리기(t-1045)는 기존 단일 파일 API를 최대 네 요청까지 함께 사용한다. 완료 개수가 아닌 성공 경로를 보관하고 실패 뒤 새 요청을 멈춰 진행 중 요청까지 끝낸 뒤 원인·성공 수를 표시한다. 사용자가 다시 올리면 성공한 경로를 건너뛰며 모든 파일이 성공한 뒤 한 번 게시한다. 파일 선택·게시 수 불일치 때 새 업로드로 초기화한다. 업로드 계획은 파일 선택 때만 다시 계산한다.
+- host는 마지막 업로드 하나의 파일 수·용량을 쓰기 잠금 안에서 갱신해 파일마다 폴더 전체를 스캔하지 않는다. 쓰기 실패·다른 업로드·재시작은 디스크를 다시 읽고, 게시 전 실제 파일 수·권한·경로·크기·사용자 보고서 조건은 유지한다. 파일 I/O·잠금은 HTTP 비동기 실행기 밖에서 처리한다. FRONT_API·저장 형식·E2E 번호는 바꾸지 않으며 E2E114의 500개·20초 전송+게시 계약과 부분 실패/명시적 재개를 검사한다.
