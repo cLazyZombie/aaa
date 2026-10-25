@@ -59,12 +59,15 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
     let mut pending = 0;
     let mut collected = 0;
     for (dir, v, _) in &dirs {
+        // 구형 parser가 새 runner를 CI로 오인했거나 format 2를 거부한 캐시도 재해석한다.
+        // runs는 그대로 두어 이미 원본이 지워진 확정 기록을 잃지 않는다.
+        let v = format!("parser-2:{v}");
         if BUDGET_EXHAUSTED.with(|flag| flag.get()) {
             notes.push("읽기 비용 상한으로 CI 일부 미수집".into());
             break;
         }
         let id = dir.file_name().unwrap().to_string_lossy().into_owned();
-        if cache.versions.get(&id) == Some(v) {
+        if cache.versions.get(&id) == Some(&v) {
             continue;
         }
         if collected == 32 {
@@ -73,7 +76,10 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
         }
         let parsed = (|| -> Result<Option<MetricRun>> {
             let source: Provenance = serde_json::from_str(&read(&dir.join("provenance.json"))?)?;
-            anyhow::ensure!(source.format == 1 && source.clean && source.remote == remote, "CI 실행 출처 불일치");
+            anyhow::ensure!(
+                matches!(source.format, 1 | 2) && source.clean && source.remote == remote,
+                "CI 실행 출처 불일치"
+            );
             anyhow::ensure!(
                 source.commit.len() == 40
                     && source.commit.bytes().all(|b| b.is_ascii_hexdigit())

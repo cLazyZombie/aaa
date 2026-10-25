@@ -472,6 +472,7 @@ fn verification_archive_supports_game_runners_on_unchanged_main_with_fresh_runti
             let dir = format!(".git/aaa-workspace-runs/run-{name}");
             let path = l.0.join(&dir).join("provenance.json");
             let mut source: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            source["format"] = serde_json::json!(2);
             source["runner"] = serde_json::json!(runner);
             source["mode"] = serde_json::json!("coverage");
             source["scope"] = serde_json::json!("full");
@@ -505,4 +506,36 @@ fn verification_archive_supports_game_runners_on_unchanged_main_with_fresh_runti
         }
     }
     assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, got.runs);
+}
+
+#[test]
+fn upgraded_archive_parser_revisits_old_errors_and_preserves_records_with_deleted_sources() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    let commit = git(&l, &["rev-parse", "HEAD"]);
+    archive_fixture(&l, "typed", &commit, "succeeded");
+    let source = l.0.join(".git/aaa-workspace-runs/run-typed/provenance.json");
+    let mut provenance: serde_json::Value = serde_json::from_str(&fs::read_to_string(&source).unwrap()).unwrap();
+    provenance["format"] = serde_json::json!(2);
+    provenance["runner"] = serde_json::json!("pt");
+    fs::write(&source, provenance.to_string()).unwrap();
+    let (old_version, _) = version(&source).unwrap();
+    let remote = mainline::remote_id("https://example.com/team/app.git").unwrap();
+    let common = git(&l, &["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let key = hex::encode(Sha256::digest(format!("{remote}:{common}:archive").as_bytes()));
+    let store = state.0.join("workspace-metrics-v2").join(key);
+    fs::create_dir_all(&store).unwrap();
+    let cached = MetricRun { commit, run_id: "deleted-source".into(), ..Default::default() };
+    let cache = Cache {
+        versions: BTreeMap::from([("run-typed".into(), old_version)]),
+        errors: BTreeMap::from([("run-typed".into(), "CI 실행 출처 불일치".into())]),
+        runs: BTreeMap::from([("deleted-source".into(), cached)]),
+    };
+    fs::write(store.join("runs.json"), serde_json::to_vec(&cache).unwrap()).unwrap();
+    let result = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(result.runs.len(), 2);
+    assert!(result.runs.iter().any(|r| r.source.starts_with("pt 종료 원장")));
+    assert!(result.runs.iter().any(|r| r.run_id == "deleted-source"));
+    assert!(!result.notes.iter().any(|n| n.contains("출처 불일치")));
 }

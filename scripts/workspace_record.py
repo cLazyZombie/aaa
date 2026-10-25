@@ -129,7 +129,7 @@ def finish(token, code):
     after = snapshot()
     if not before["clean"] or not after["clean"] or any(before[k] != after[k] for k in after):
         raise ValueError("verification source changed or contains uncommitted changes")
-    before.update(format=1, ended_at_ms=time.time_ns() // 1_000_000)
+    before.update(format=2, ended_at_ms=time.time_ns() // 1_000_000)
     common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir"))
     store = common / "aaa-workspace-runs"
     store.mkdir(exist_ok=True)

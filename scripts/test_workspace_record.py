@@ -41,7 +41,7 @@ class WorkspaceRecord(unittest.TestCase):
     def archives(self):
         return list((self.repo / ".git/aaa-workspace-runs").glob("run-*"))
 
-    def test_all_runners_keep_repeated_main_runs_failures_and_only_fresh_compact_results(self):
+    def test_finish_when_main_repeats_then_keeps_failures_and_only_fresh_compact_results(self):
         for runner in ("rc", "engine", "pt"):
             for code in ("0", "7"):
                 start = self.helper("start", runner, "coverage", "full")
@@ -77,7 +77,7 @@ class WorkspaceRecord(unittest.TestCase):
             self.assertEqual(source["commit"], self.git("rev-parse", "HEAD"))
             self.assertIn("|2", (path / "workspace-summary.tsv").read_text())
 
-    def test_source_changes_are_rejected_and_exit_hook_keeps_original_failure(self):
+    def test_finish_when_source_changes_then_rejects_without_changing_original_failure(self):
         token = self.helper("start", "rc", "default", "desktop").stdout.strip()
         (self.repo / "scripts/workspace_record.py").write_text("# changed\n")
         # helper 자체가 바뀌어도 원래 구현으로 출처를 검증한다.
