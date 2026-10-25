@@ -157,3 +157,24 @@ fn an_upload_under_a_thread_numbered_state_path_has_no_origin_thread() {
     assert_eq!(row.from_thread, None);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
+    let lab = lab();
+    let h = &lab.h;
+    let put = |path: &str, bytes: &[u8]| h.library_upload_put(DeviceRole::Controller, "demo", UP, path, bytes);
+    assert_eq!(put("empty", b"").unwrap(), (1, 0));
+    assert_eq!(put("empty", b"changed").unwrap(), (1, 7), "0바이트도 기존 파일이다");
+    // 실패 뒤 디스크 기준으로 재계산하고 완료된 다른 파일은 보존한다.
+    assert_eq!(put("empty/child", b"x").unwrap_err().code, ErrorCode::Internal);
+    assert_eq!(put("next", b"ok").unwrap(), (2, 9));
+    const OTHER: &str = "dc3a9f2b7e5081d4c6a3b9f1e5d70286";
+    assert_eq!(h.library_upload_put(DeviceRole::Controller, "demo", OTHER, "x", b"z").unwrap(), (1, 1));
+    assert_eq!(put("empty", b"").unwrap(), (2, 2), "다른 올리기 뒤 다시 디스크를 센다");
+    for i in 2..FILES_MAX {
+        assert_eq!(put(&format!("file-{i}"), b"").unwrap(), (i + 1, 2));
+    }
+    assert_eq!(put("extra", b"").unwrap_err().code, ErrorCode::TooLarge);
+    assert_eq!(put("file-2", b"replace").unwrap(), (FILES_MAX, 9), "상한에서 빈 파일 교체 가능");
+    assert_eq!(put("large", &vec![0; FILE_MAX as usize + 1]).unwrap_err().code, ErrorCode::TooLarge);
+}

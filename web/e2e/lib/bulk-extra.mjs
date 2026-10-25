@@ -73,9 +73,12 @@ export async function inboxScenario(engine, label, width) {
 export async function uploadScenario(engine, label, width) {
   const gate = responseGate();
   let uploads = 0;
+  const requests = new Map(), durations = [];
+  const hostStart = fs.readFileSync(`${root}/host.log`, "utf8").length;
   const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: async ctx => {
     await gate.setup(ctx);
-    ctx.on("request", req => { if (req.method() === "POST" && req.url().includes("/library-uploads/")) uploads++; });
+    ctx.on("request", req => { if (req.method() === "POST" && req.url().includes("/library-uploads/")) { uploads++; requests.set(req, performance.now()); } });
+    ctx.on("requestfinished", req => { if (requests.has(req)) { durations.push(performance.now() - requests.get(req)); requests.delete(req); } });
   } });
   const page = paired.page;
   try {
@@ -86,10 +89,18 @@ export async function uploadScenario(engine, label, width) {
     const files = Array.from({ length: count }, (_, i) => ({ name: i ? `part-${i}.txt` : "index.html", mimeType: i ? "text/plain" : "text/html", buffer: Buffer.from(i ? `본문 ${i}` : "<h1>대량 업로드</h1>") }));
     await dialog.getByTestId("upload-files").setInputFiles(files);
     await dialog.getByTestId("upload-name").fill(`upload-${label}-${width}`);
+    const started = performance.now();
     const held = gate.arm("library_upload_publish");
     await dialog.getByTestId("upload-submit").click();
     try {
       await held.arrived;
+      const log = fs.readFileSync(`${root}/host.log`, "utf8").slice(hostStart).replace(/\x1b\[[0-9;]*m/g, "");
+      const totals = {};
+      for (const line of log.split("\n").filter(line => line.includes("보고서 파일"))) {
+        for (const [, key, value] of line.matchAll(/(validated_us|lock_us|scan_us|write_us|elapsed_us|body_us|request_us)=(\d+)/g)) totals[key] = (totals[key] || 0) + Number(value);
+      }
+      totals.cache_hits = (log.match(/cache_hit=true/g) || []).length;
+      console.log("bulk-upload", JSON.stringify({ label, width, total_ms: Math.round(performance.now() - started), requests: uploads, request_sum_ms: Math.round(durations.reduce((a, b) => a + b, 0)), request_max_ms: Math.round(Math.max(...durations)), host_us: totals }));
       await dialog.getByRole("status").getByText("올리는 중 500/500", { exact: true }).waitFor();
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       assert.equal(await dialog.getByRole("button", { name: "닫기", exact: true }).isDisabled(), true);
@@ -150,4 +161,61 @@ export async function sweepScenario(engine, label, width) {
     assert.deepEqual(paired.errors, []);
   } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
   finally { await page.context().close(); db.close(); }
+}
+
+// 실패 응답과 이미 시작한 성공 요청의 순서를 제어하되 성공 파일은 실제 host에 쓴다.
+export async function uploadFailureScenario(engine, label, width) {
+  const firstFour = Promise.withResolvers(), release = Promise.withResolvers();
+  let failing = true;
+  const sent = [];
+  let published = 0;
+  const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: async ctx => {
+    ctx.on("request", req => { if (req.url().endsWith("/api/v1/call") && req.postDataJSON()?.op === "library_upload_publish") published++; });
+    await ctx.route("**/library-uploads/**", async route => {
+      const name = new URL(route.request().url()).searchParams.get("path");
+      sent.push(name);
+      if (!failing) return route.fallback();
+      if (sent.length === 4) firstFour.resolve();
+      await firstFour.promise;
+      if (name === "file-1.txt") return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ err: { code: "unavailable", message: "실험실 파일 쓰기 실패" } }) });
+      // WebKit File 본문을 Node route.fetch로 재전송하면 비어 버린다.
+      // 원래 브라우저 요청을 잠시 보류했다가 그대로 host로 보낸다.
+      await release.promise;
+      await route.fallback();
+    });
+  } });
+  const page = paired.page;
+  try {
+    await page.getByTestId("terminal").waitFor();
+    await inList(page, "activity-reports");
+    await inList(page, "reports-upload");
+    const dialog = page.getByRole("dialog", { name: "보고서 올리기", exact: true });
+    const files = Array.from({ length: 9 }, (_, i) => ({ name: `file-${i}.txt`, mimeType: "text/plain", buffer: Buffer.from(`본문 ${i}`) }));
+    await dialog.getByTestId("upload-files").setInputFiles(files);
+    const name = `upload-failure-${label}-${width}`;
+    await dialog.getByTestId("upload-name").fill(name);
+    const failed = page.waitForResponse(response => response.status() === 503 && response.url().includes("/library-uploads/"));
+    await dialog.getByTestId("upload-submit").click();
+    await firstFour.promise;
+    await failed;
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    assert.equal(sent.length, 4, "네 요청까지만 보내고 실패 뒤 멈춘다");
+    assert.equal(await dialog.getByTestId("upload-submit").isDisabled(), true, "전송 중 성공 응답을 기다린다");
+    assert.equal(published, 0);
+    release.resolve();
+    await dialog.getByRole("alert").getByText(/file-1.txt: 실험실 파일 쓰기 실패/).waitFor();
+    await dialog.getByRole("status").getByText("올린 파일 3/9개는 보관했다.", { exact: true }).waitFor();
+    assert.equal(sent.length, 4, "자동 재시도하지 않는다");
+    failing = false;
+    await dialog.getByTestId("upload-submit").click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal(published, 1);
+    assert.equal(sent.length, 10);
+    for (const file of files) {
+      assert.equal(sent.filter(value => value === file.name).length, file.name === "file-1.txt" ? 2 : 1);
+      assert.deepEqual(fs.readFileSync(`${root}/projects/demo/library/${name}/${file.name}`), file.buffer);
+    }
+    assert.deepEqual(paired.errors, []);
+    aaa("library", "delete", "--project", "demo", name);
+  } finally { release.resolve(); await page.context().close(); }
 }

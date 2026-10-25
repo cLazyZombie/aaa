@@ -13,7 +13,14 @@ pub(crate) const TOTAL_MAX: u64 = 64 << 20;
 const FILES_MAX: usize = 1000;
 const STALE_MS: u64 = 24 * 3600 * 1000;
 /// 올리기 쓰기·등록은 하나씩(합계 상한을 셀 때 겹치지 않게, 등록이 읽는 동안 다른 쓰기의 치우기가 지우지 않게)
-static PUTTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// 마지막 올리기 하나만 캐시한다. 다른 올리기·host·재시작에서는 디스크를 다시 읽는다.
+// 이 폴더의 writer는 아래 잠금을 공유한다. 게시 때는 캐시 대신 실제 파일 수를 확인한다.
+static PUTTING: std::sync::Mutex<Option<UploadUsage>> = std::sync::Mutex::new(None);
+struct UploadUsage {
+    dir: PathBuf,
+    files: usize,
+    total: u64,
+}
 
 /// 웹이 만든 올리기 이름: 소문자 hex 32자
 pub(crate) fn valid_upload(id: &str) -> bool {
@@ -125,8 +132,12 @@ impl Host {
         path: &str,
         bytes: &[u8],
     ) -> Result<(usize, u64), ErrorBody> {
+        let started = std::time::Instant::now();
         if !role.can_control() {
             return Err(err(ErrorCode::Forbidden, "보기 권한으로는 보고서를 올릴 수 없다"));
+        }
+        if bytes.len() as u64 > FILE_MAX {
+            return Err(err(ErrorCode::TooLarge, "파일 하나는 16MiB까지 올린다"));
         }
         self.project_dir(project)?;
         if !valid_upload(upload) {
@@ -135,25 +146,35 @@ impl Host {
         if !crate::library::safe_rel(path) {
             return Err(err(ErrorCode::BadRequest, format!("숨은 이름이나 안전하지 않은 경로다: {path}")));
         }
-        let _one = PUTTING.lock().unwrap();
+        let validated_us = started.elapsed().as_micros() as u64;
+        let waiting = std::time::Instant::now();
+        let mut one = PUTTING.lock().unwrap();
+        let lock_us = waiting.elapsed().as_micros() as u64;
+        let scanning = std::time::Instant::now();
         self.sweep_uploads(upload, aaa_common::util::now_ms());
         let root = self.uploads_root();
         let dir = root.join(upload);
         let target = dir.join(path);
-        let (files, total) = usage(&dir);
+        let cached = one.as_ref().filter(|u| u.dir == dir && dir.is_dir());
+        let cache_hit = cached.is_some();
+        let (files, total) = cached.map_or_else(|| usage(&dir), |u| (u.files, u.total));
         let replaced = target
             .symlink_metadata()
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
             .ok()
             .filter(|m| m.is_file())
-            .map_or(0, |m| m.len());
-        if files >= FILES_MAX && replaced == 0 {
+            .map(|m| m.len());
+        if files >= FILES_MAX && replaced.is_none() {
             return Err(err(ErrorCode::TooLarge, format!("한 보고서에 파일은 {FILES_MAX}개까지 올린다")));
         }
-        let total = total - replaced + bytes.len() as u64;
+        let total = total - replaced.unwrap_or(0) + bytes.len() as u64;
         if total > TOTAL_MAX {
             return Err(err(ErrorCode::TooLarge, "한 보고서는 합계 64MiB까지 올린다"));
         }
+        let scan_us = scanning.elapsed().as_micros() as u64;
+        let writing = std::time::Instant::now();
+        // 디렉터리 생성·rename·표지 쓰기 중 어느 단계가 실패해도 다음 요청은 다시 스캔한다.
+        *one = None;
         let parent = target.parent().ok_or_else(|| err(ErrorCode::BadRequest, "경로가 없다"))?;
         for d in [&root, &dir] {
             aaa_common::util::ensure_private_dir(d).map_err(crate::orch::internal)?;
@@ -166,7 +187,14 @@ impl Host {
         })?;
         // 치우기가 보는 시각을 지금으로. 못 쓰면 이 올리기가 하루 뒤 치워질 수 있어 실패로 알린다
         std::fs::write(mark(&root, upload), aaa_common::util::now_ms().to_string()).map_err(crate::orch::internal)?;
-        Ok((files + usize::from(replaced == 0), total))
+        let files = files + usize::from(replaced.is_none());
+        *one = Some(UploadUsage { dir, files, total });
+        tracing::debug!(target: "aaa_upload", validated_us, lock_us, scan_us, cache_hit,
+            write_us = writing.elapsed().as_micros() as u64,
+            elapsed_us = started.elapsed().as_micros() as u64,
+            bytes = bytes.len(), files,
+            "보고서 파일 올리기");
+        Ok((files, total))
     }
 
     /// 올린 파일 묶음을 보고서 하나로 등록하고 올리기 폴더를 지운다. 실패하면 폴더를 두어 고쳐 다시 등록할 수 있다
@@ -187,7 +215,8 @@ impl Host {
         if files == 0 {
             return Err(err(ErrorCode::BadRequest, "올린 파일이 없다"));
         }
-        let _one = PUTTING.lock().unwrap();
+        let mut one = PUTTING.lock().unwrap();
+        *one = None;
         let dir = self.uploads_root().join(upload);
         let have = usage(&dir).0;
         // 하나도 없어도(통째로 치워짐) 같은 답: 웹은 새 자리에 처음부터 올린다

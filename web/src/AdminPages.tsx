@@ -7,10 +7,11 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 import "./ThreadActions.css";
 import "./AdminPages.css";
 
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { DeviceRole, EnrollGuide, LinkView, MachineView, PendingEnroll, PublishState } from "./gen/proto";
 import { ApiError, call, me, onEnrollChanged, uploadReportFile } from "./api";
+import { uploadReportFiles } from "./reportUpload.ts";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
@@ -567,7 +568,7 @@ export function PublishControls({ publish, onChanged }: { publish: PublishState 
   );
 }
 
-/** 보고서 「올리기」 창(사용자 답 4A): 파일 여러 개나 폴더 하나 → 하나씩 올린 뒤 보고서 하나로 등록 */
+/** 보고서 「올리기」 창(사용자 답 4A): 파일 여러 개나 폴더 하나 → 동시 네 개까지 올린 뒤 보고서 하나로 등록 */
 export function UploadReportDialog({ project, onClose, onDone }: { project: string; onClose: () => void; onDone: () => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const [name, setName] = useState("");
@@ -576,18 +577,16 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
   const action = useAsyncAction();
   const busy = action.pending;
   const [done, setDone] = useState(0);
+  const completed = useRef(new Set<string>());
   const error = action.error;
   const upload = useRef(newUploadId());
-  const plan = uploadPlan(files.map((f) => ({ name: f.name, relative: f.webkitRelativePath, size: f.size })));
+  const plan = useMemo(() => uploadPlan(files.map((f) => ({ name: f.name, relative: f.webkitRelativePath, size: f.size }))), [files]);
   const hasIndex = plan.paths.some((p) => p.path === "index.html");
   const problem = files.length === 0 ? null : (plan.error ?? (toUser && !hasIndex ? "사용자 보고서는 맨 위에 index.html이 있어야 한다" : null));
   const submit = () => action.run(async () => {
     try {
-      let n = done;
-      for (const p of plan.paths.slice(done)) {
-        await uploadReportFile(project, upload.current, p.path, files[p.index]!);
-        setDone(++n);
-      }
+      await uploadReportFiles(plan.paths, completed.current,
+        p => uploadReportFile(project, upload.current, p.path, files[p.index]!), setDone);
       await call({
         op: "library_upload_publish",
         project,
@@ -603,6 +602,7 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
       // 올린 자리가 오래돼 치워졌다(host가 수를 맞춰 본다): 다음 「올리기」는 새 자리에 처음부터
       if (e instanceof ApiError && e.body.code === "conflict") {
         upload.current = newUploadId();
+        completed.current.clear();
         setDone(0);
       }
       throw e;
@@ -612,6 +612,7 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
     setFiles(list ? Array.from(list) : []);
     // 새로 고른 파일은 새 올리기다(앞 것과 섞이지 않게)
     upload.current = newUploadId();
+    completed.current.clear();
     setDone(0);
   };
   return (
@@ -664,6 +665,7 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
               올리는 중 {done}/{plan.paths.length}
             </p>
           )}
+          {!busy && error && done > 0 && <p role="status">올린 파일 {done}/{plan.paths.length}개는 보관했다.</p>}
           {(problem || error) && (
             <p className="op-warn" role="alert">
               {error ?? problem}
