@@ -176,7 +176,7 @@ fn rust_counts(dir: &Path) -> Result<Option<MetricCounts>> {
     }
     Ok(Some(all))
 }
-fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
+fn summary_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
     let text = read(&dir.join("workspace-summary.tsv"))?;
     let mut rows = text.lines();
     let head: Vec<_> = rows.next().context("요약 머리 없음")?.split('|').collect();
@@ -223,6 +223,10 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
             outcome: fields[1].into(),
         });
     }
+    Ok(run)
+}
+fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
+    let mut run = summary_run(dir, at, run_id)?;
     if let Ok(value) = rust_counts(dir) {
         run.tests = value;
     }
@@ -571,12 +575,14 @@ pub fn collect(
     }
     let rc = cwd.join("target/verification/summary.json");
     if legacy.is_some()
+        && !cwd.join("target/verification/workspace-source.json").exists()
         && let Some((v, at)) = version(&rc)
     {
         inputs.push((rc, v, at, "rc"));
     }
     let engine = cwd.join("target/verify-timing.txt");
     if legacy.is_some()
+        && !cwd.join("target/verification/workspace-source.json").exists()
         && cwd.join("scripts/verify_engine.sh").is_file()
         && let Some((v, at)) = version(&engine)
     {

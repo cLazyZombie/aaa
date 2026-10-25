@@ -141,37 +141,46 @@ impl Host {
         dashboard.truncated = truncated;
         Ok(dashboard)
     }
-    /// 실패해도 보고·검증의 성공 여부를 바꾸지 않는다.원문 로그·경로는 웹에 전달하지 않는다.
+    /// 보고가 여러 저장소의 검증을 다뤄도 같은 머신의 등록 저장소를 모두 회수한다.
+    /// 실패해도 보고·검증의 성공 여부를 바꾸지 않는다. 원문 로그·경로는 웹에 전달하지 않는다.
     pub(crate) async fn collect_workspace_metrics(self: &Arc<Self>, project: &str, thread: &str) {
-        let _gate = self.metrics_gate.lock().await;
         let Ok(rec) = self
             .load(project, thread)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
         else {
             return;
         };
-        let Some(repo) = rec.repo.as_deref() else { return };
-        let Ok(registrations) = self
+        self.metrics_pending.lock().unwrap().insert(rec.machine_id);
+        let _gate = self.metrics_gate.lock().await;
+        // 겹친 보고는 머신별 한 차례로 모은다. 회수 중 새 보고가 오면 다음 대기자가
+        // 한 번 더 처리하므로 마지막 결과를 놓치지 않으며 주기·지연 타이머는 없다.
+        let machines = std::mem::take(&mut *self.metrics_pending.lock().unwrap());
+        if machines.is_empty() {
+            return;
+        }
+        let Ok(mut registrations) = self
             .metric_registrations()
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
         else {
             return;
         };
-        let Some(reg) =
-            registrations.into_iter().find(|r| r.project == project && r.machine == rec.machine_id && r.path == repo)
-        else {
-            return;
-        };
+        // 새 저장소의 첫 기록이 이미 확인한 여러 checkout 뒤에서 밀리지 않게 한다.
+        registrations.sort_by_key(|r| !r.view.id.is_empty());
+        for reg in registrations.into_iter().filter(|r| machines.contains(&r.machine)) {
+            self.collect_metric_registration(reg).await;
+        }
+    }
+    async fn collect_metric_registration(&self, reg: Registration) {
         if !reg.view.machines[0].supported {
             return;
         }
         let Ok(conn) = self
-            .live_conn(&rec.machine_id)
+            .live_conn(&reg.machine)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
         else {
             return;
         };
-        let cwd = repo.to_string();
+        let cwd = reg.path.clone();
         let id = &reg.view.id;
         let mut value = match conn
             .request(AgentRequest::WorkspaceMetrics {
@@ -200,7 +209,7 @@ impl Host {
             }
         };
         let Some(remote) = value.remote_id.as_deref() else { return };
-        let id = match self.db.repo_workspace_id(project, &reg.registration, Some(remote)) {
+        let id = match self.db.repo_workspace_id(&reg.project, &reg.registration, Some(remote)) {
             Ok(id) => id,
             Err(error) => {
                 tracing::warn!(%error, "workspace 원격 신원 저장 실패");

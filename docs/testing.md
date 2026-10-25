@@ -3892,3 +3892,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 참고 후보는 [Uppy XHR](https://uppy.io/docs/xhr-upload/)([MIT](https://github.com/transloadit/uppy/blob/main/LICENSE))의 동시 전송 상한/파일별 결과와 [p-limit](https://github.com/sindresorhus/p-limit)([MIT](https://github.com/sindresorhus/p-limit/blob/main/license))의 유한 worker다. 방식만 참고하며 외부 코드·의존성·자동 재시도는 추가하지 않는다.
 - 서버 캐시까지 적용한 단일 E2E114 업로드/부분 실패 실행은 네 조합을 통과했고, WebKit 390px 전송+게시는 1046ms·스캔 합계 30930µs였다. 각 조합은 500개 중 499개 요청에서 용량 캐시가 적중했다. 실행별 외부 부하가 같지 않으므로 이 수치는 원인·개선 계측이며 전체 gate의 통과 근거로 대신 쓰지 않는다.
 - 최종 `a36bd156` 전체 `AAA_E2E_WORKERS=10` ci-local은 358초에 모든 단계가 통과했다. 시작 load1/5/15는 6.70/16.30/18.21, 실행 중 표본 load1 최대는 35.03이었다. 웹 유닛 583개, Rust 1,347개(기존 ignored 6), Python 56개(기존 skip 2), 웹 E2E 114파일/140작업(295초)이 통과했다. 전체 gate의 500개 전송+게시는 Chromium 1280/390px 1265/1800ms, WebKit 1280/390px 1242/2889ms였고 각 조합에서 요청 500회·캐시 적중 499회를 확인했다. 원래 20초 상한과 모든 완료·실패·재개 단언을 유지했다. Linux x86_64 strict cross clippy도 통과했다.
+
+## 프로젝트 공통 검증 원장 (t-1051)
+
+- `python3 -m unittest scripts.test_workspace_record scripts.test_workspace_metrics`는 실제 Git으로 rc·엔진·pt의 동일 main 반복 실행, 성공/실패, full·coverage 모드, 오래된 부속 결과 제외, 집계 필드만 보관, tracked 변경 거부와 종료 코드 보존을 확인한다. game 저장소에도 같은 writer 회귀를 두고 공식 검증에 포함한다.
+- rc의 `node --test scripts/verify.test.mjs`, 엔진의 `node --test scripts/verify_engine.test.mjs`는 기존 gate stub과 실제 Git·writer로 실제 검증 셸의 성공/실패 종료 원장을 확인한다. gate·시간 상한·성공 기대값은 바꾸지 않는다.
+- `nice -n 15 cargo test --profile verify --locked -p aaa-agent -p aaa-host --lib workspace_metrics`는 세 runner의 반복 main 기록·기존 CI 호환·runtime 개수/시간·원본 정리 후 보존·출처 거부와 repo 없는 보고의 머신별 전체 회수 및 일부 실패 후 진행을 확인한다.
+- E2E90은 실제 공용 writer를 별도 worktree에서 rc·엔진·pt runner로 두 번 실행하고 worktree/target을 삭제한다. 전용 thread 없이 기존 두 머신 보고만 바꿔 실제 agent→host 원장→workspace 웹 표에 각 두 행과 테스트/E2E 수가 보이는지 검사한다. 이는 검증 실행 자체를 대체하지 않는 collector fixture이며 실제 게임 전체 검증 결과와 구분한다. 기존 두 브라우저·여러 화면·CI 출처 회귀는 유지한다. 고정 sleep·재시도·시한 증가는 없다.

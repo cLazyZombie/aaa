@@ -542,6 +542,7 @@ pub struct Host {
     machine_rename_gate: Mutex<()>,
     machine_label_gate: tokio::sync::Mutex<()>,
     metrics_gate: tokio::sync::Mutex<()>,
+    metrics_pending: Mutex<HashSet<String>>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
@@ -818,6 +819,7 @@ impl Host {
             machine_rename_gate: Mutex::new(()),
             machine_label_gate: tokio::sync::Mutex::new(()),
             metrics_gate: tokio::sync::Mutex::new(()),
+            metrics_pending: Mutex::new(HashSet::new()),
             account_meta_gate: Mutex::new(()),
             device_gate: Mutex::new(()),
             publish_gate: tokio::sync::Mutex::new(()),

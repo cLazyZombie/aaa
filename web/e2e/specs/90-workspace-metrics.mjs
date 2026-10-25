@@ -23,7 +23,7 @@ async function theme(page, value) {
   await domIs(page, "테마 적용", (value) => document.documentElement.dataset.theme === value && !new URL(location.href).searchParams.has("settings"), value);
 }
 export default async function ({ page }) {
-  let thread, cwd, work, workspace, link, repo;
+  let thread, cwd, work, workspace, link, repo, secondThread;
   try {
   await step("workspace A: 등록 저장소와 미수집, 실제 보고 회수로 검증 시간·개수·E2E TOP 5·커밋 줄 수를 보존한다", async () => {
     repo = `${root}/app`;
@@ -81,7 +81,7 @@ export default async function ({ page }) {
     execFileSync("git", ["clone", "--quiet", repo, repoB]);
     execFileSync("git", ["-C", repoB, "remote", "remove", "origin"]);
     aaa("project", "set", "demo", "repos.add", `${repoB}@labB`);
-    const second = aaa("thread", "start", "demo", "--title", "다른 머신 main", "--machine", "labB", "--repo", repoB, "--profile", "fake", "--task-file", `${root}/metrics-task.md`);
+    const second = secondThread = aaa("thread", "start", "demo", "--title", "다른 머신 main", "--machine", "labB", "--repo", repoB, "--profile", "fake", "--task-file", `${root}/metrics-task.md`);
     await until("두 번째 보고", () => aaa("thread", "show", "demo", second.id).report_hash);
     execFileSync("git", ["-C", repoB, "remote", "add", "origin", "git@example.com:team/app.git"]);
     execFileSync("git", ["-C", repoB, "update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -253,6 +253,49 @@ export default async function ({ page }) {
       return value.workspaces.find(w => w.id === workspace).last_collected_ms > collected && value.runs.length === 6;
     });
     await shot(page, "workspace-ci-after-push");
+  });
+  await step("rc·엔진·pt의 동일 main 반복 검증을 다른 머신과 기존 저장소의 후속 보고에서 함께 회수한다", async () => {
+    const fixtures = [];
+    for (const [name, runner, machine] of [["rc","rc","labA"],["no2-engine","engine","labB"],["pt","pt","labA"]]) {
+      const repo = `${root}/games/${name}`;
+      fs.mkdirSync(`${repo}/scripts`, {recursive:true});
+      fs.copyFileSync(new URL("../../../scripts/workspace_record.py",import.meta.url), `${repo}/scripts/workspace_record.py`);
+      put(`${repo}/.gitignore`, "target/\n");
+      const git = (...args) => execFileSync("git",["-C",repo,"-c","user.name=Test","-c","user.email=test@example.com",...args],{encoding:"utf8",stdio:"pipe"}).trim();
+      git("init","-qb","main"); git("add","."); git("commit","-qm","verification fixture");
+      git("remote","add","origin",`https://example.com/team/${name}.git`);
+      git("update-ref","refs/remotes/origin/main","HEAD");
+      const commit = git("rev-parse","HEAD");
+      const checkout = `${root}/verify-${name}`;
+      git("worktree","add","-qb","verification",checkout,"main");
+      for (const [mode, code] of [["coverage","0"],["default","7"]]) {
+        const py = (...args) => execFileSync("python3",["scripts/workspace_record.py",...args],{cwd:checkout,env,encoding:"utf8",stdio:"pipe"}).trim();
+        const token = py("start",runner,mode,"full");
+        const names = runner === "rc" ? ["default-tests","workspace-tests"] : runner === "engine" ? ["workspace-tests","automation-tests","2d-tests","3d-tests"] : [];
+        for (const suite of names) put(`${checkout}/target/verification/${suite}/report.json`,JSON.stringify([{target:"game",exit:0,tests:[{name:"unit",event:"ok",exec_time:0.25}],suites:[{passed:1,failed:0,ignored:0}]}]));
+        if (runner === "rc") put(`${checkout}/target/verification/summary.json`,JSON.stringify({gates:[{name:"runtime",status:"passed",seconds:2}]}));
+        if (runner === "engine") put(`${checkout}/target/verification/gates/runtime.status`,"runtime\truntime tests\t0\t2\n");
+        if (runner === "pt") put(`${checkout}/${token.replace(/\.json$/,".stages")}`,"build|ok|0|0|2\n");
+        if (runner !== "pt") put(`${checkout}/target/${runner === "rc" ? "rc-e2e/report.json" : "no2-e2e/all-headless.json"}`,JSON.stringify({status:"passed",reports:[{scenario:"smoke",status:"passed",duration_ms:30}]}));
+        py("finish",token,code);
+      }
+      git("worktree","remove","--force",checkout);
+      aaa("project","set","demo","repos.add",`${repo}@${machine}`);
+      fixtures.push({name,machine,commit});
+    }
+    fs.appendFileSync(`${work}/report.md`,"\n여러 저장소 검증 종료\n");
+    fs.appendFileSync(`${aaa("thread","show","demo",secondThread.id).work_dir}/report.md`,"\n엔진 검증 종료\n");
+    await until("모든 등록 저장소의 원격 신원 회수", async () => (await api(page)).workspaces.filter(w => fixtures.some(f => f.name === w.name)).length === 3);
+    for (const fixture of fixtures) {
+      const ws = (await api(page)).workspaces.find(w => w.name === fixture.name);
+      const got = await api(page,{workspace_id:ws.id,days:30});
+      if (got.runs.length !== 2 || got.runs.some(r => r.commit !== fixture.commit || r.machine !== fixture.machine) || !got.runs.some(r => r.outcome === "failed")) throw new Error(`game 원장 ${fixture.name}: ${JSON.stringify(got)}`);
+      if (fixture.name !== "pt" && got.runs.some(r => r.tests?.passed !== (fixture.name === "rc" ? 2 : 4) || r.e2e_files !== 1)) throw new Error(`game 개수 ${JSON.stringify(got)}`);
+      await page.getByTestId("workspace-repo").filter({has:page.locator("strong",{hasText:new RegExp(`^${fixture.name}$`)})}).click();
+      await page.getByRole("tab",{name:"실행 기록",exact:true}).click();
+      await domIs(page,"선택한 game 원장의 성공·실패 두 행",({name,machine}) => document.querySelector('.ws-heading h1')?.textContent.startsWith(name) && document.querySelectorAll('.ws-table-scroll tbody tr').length === 2 && [...document.querySelectorAll('.ws-table-scroll tbody tr')].every(r => r.children[1].textContent.startsWith(machine + " /")) && document.querySelector('.ws-table-scroll [data-outcome="failed"]'),fixture);
+      await shot(page,`workspace-${fixture.name}-recorded`);
+    }
   });
   } finally {
     await stop("metrics-agentB");

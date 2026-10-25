@@ -7914,3 +7914,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 공개 경로 이동의 여유도 확보한다. 요청당 이동 작업자를 네 개로 제한하고, 한 보고서 family 안의 사본 디렉터리 이동과 manifest·본문 제거만 함께 처리한다. 이동 목적지를 batch 아래 네 칸으로 나눠 목적지 잠금 경합을 줄이며 메타 파일에 rename을 추가하지 않는다. 모든 이동 결과를 모아 사본별 성공을 확정하며 첫 오류와 추가 오류의 원인을 보존한다. 다음 family는 현재 family가 모두 끝나고 성공했을 때만 시작한다. 실제 제거 작업자는 별도로 한 개를 유지한다.
 - 보고서 파일 올리기(t-1045)는 기존 단일 파일 API를 최대 네 요청까지 함께 사용한다. 완료 개수가 아닌 성공 경로를 보관하고 실패 뒤 새 요청을 멈춰 진행 중 요청까지 끝낸 뒤 원인·성공 수를 표시한다. 사용자가 다시 올리면 성공한 경로를 건너뛰며 모든 파일이 성공한 뒤 한 번 게시한다. 파일 선택·게시 수 불일치 때 새 업로드로 초기화한다. 업로드 계획은 파일 선택 때만 다시 계산한다.
 - host는 마지막 업로드 하나의 파일 수·용량을 쓰기 잠금 안에서 갱신해 파일마다 폴더 전체를 스캔하지 않는다. 쓰기 실패·다른 업로드·재시작은 디스크를 다시 읽고, 게시 전 실제 파일 수·권한·경로·크기·사용자 보고서 조건은 유지한다. 파일 I/O·잠금은 HTTP 비동기 실행기 밖에서 처리한다. FRONT_API·저장 형식·E2E 번호는 바꾸지 않으며 E2E114의 500개·20초 전송+게시 계약과 부분 실패/명시적 재개를 검사한다.
+
+## 모든 저장소의 검증 종료 원장 (t-1051)
+
+보고 회수 끝에서 보고 머신의 모든 등록 저장소를 확인한다. thread의 repo가 하나거나 없어도 새벽의 복수 저장소 검증이 빠지지 않는다. 조회는 host 원장만 읽으며 수집 실패가 보고 회수·검증 종료 결과를 바꾸지 않는다. 지표 회수는 보고 사본 완료 뒤 비동기로 시작하고 겹친 보고는 머신별 한 차례로 모은다. 회수 도중 새 요청은 후속 차례에서 처리하며 주기 작업·타이머는 추가하지 않는다.
+rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 실행마다 Git 공용 디렉터리에 작은 원장을 원자적으로 남긴다. 새 writer는 format 2 provenance에 runner/mode/scope/profile을 기록한다. runner 없는 기존 format 1 CI 원장도 그대로 읽는다. parser 판을 캐시 식별자에 포함해 구형 parser의 오인·거부를 다시 해석하고, 원본이 지워진 확정 캐시는 보존한다. 같은 main 커밋에서 반복한 default·full·coverage·실패도 각각 누적하며, 후보 실행은 origin/main 첫 부모 계보와 commit tree 확인 뒤에 확정한다. worktree 정리·등록 checkout 지연·다른 머신 실행과 독립이다.
+부속 자료는 실행 시작/종료 범위 안의 기존 결과에서 target 이름·테스트 결과/시간·suite 개수·시나리오 시간만 골라 보관한다. 로그·명령·원격 URL·환경은 복사하지 않는다. 새 출처 marker가 있으면 구형 시각 추정으로 중복 저장하거나 출처 실패를 우회하지 않는다. 과거 출처 없는 실행에 새 provenance를 소급 만들지 않는다. pt는 실행 시간과 단계만 제공하며 테스트 수나 E2E 수를 추정하지 않는다.
+참고 후보: [Cargo 구조화 출력](https://doc.rust-lang.org/cargo/reference/external-tools.html#json-messages)([MIT](https://github.com/rust-lang/cargo/blob/master/LICENSE-MIT)/Apache-2.0), [pytest JUnit 결과 보관](https://docs.pytest.org/en/stable/how-to/output.html#creating-junitxml-format-files)([MIT](https://github.com/pytest-dev/pytest/blob/main/LICENSE)). 판을 명시한 출력과 실행별 결과 보관을 참고했다. 외부 코드·의존성은 추가하지 않는다.
