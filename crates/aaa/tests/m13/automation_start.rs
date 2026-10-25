@@ -410,11 +410,22 @@ fn memory_reentry(harness: &str) {
         include_str!("../../../aaa-host/tests/fixtures/prompt_box/codex-empty.ansi")
     };
     let script = r#"#!/usr/bin/env python3
-import json, os, pathlib, subprocess, sys
+import json, os, pathlib, subprocess, sys, tempfile
 harness = HARNESS
 idle = IDLE
 work = pathlib.Path('.aaa') / (os.environ['AAA_PROJECT'] + '-' + os.environ['AAA_THREAD'])
 sid = '019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0'
+def publish_probe(source, value):
+    # 같은 폴더에서 원자 교체하여 읽는 쪽에는 완성된 JSON만 보인다.
+    target = work / ('probe-' + source + '.json')
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=work,
+                                     prefix=target.name + '.', suffix='.tmp', delete=False) as pending:
+        json.dump(value, pending)
+        pending.flush()
+    try:
+        os.replace(pending.name, target)
+    finally:
+        pathlib.Path(pending.name).unlink(missing_ok=True)
 def hook(source, **extra):
     event = dict(hook_event_name='SessionStart', session_id=sid, source=source, **extra)
     result = subprocess.run([os.environ['AA'], 'hook', '--agent', harness, json.dumps(event)],
@@ -434,7 +445,7 @@ def hook(source, **extra):
         assert '4KiB' in context and 'processed.txt' in context, context
     else:
         memory = None
-    (work / ('probe-' + source + '.json')).write_text(json.dumps(dict(memory=memory, context=context)))
+    publish_probe(source, dict(memory=memory, context=context))
 hook('startup')
 print('\x1b[2J\x1b[H' + idle, end='', flush=True)
 for line in sys.stdin:
@@ -445,7 +456,7 @@ for line in sys.stdin:
         hook('resume')
     elif line == 'probe-child':
         hook('compact', agent_id='child')
-        (work / 'probe-child.json').write_text('{}')
+        publish_probe('child', {})
     print('\x1b[2J\x1b[Hgot: ' + line + '\n' + idle, end='', flush=True)
 "#
     .replace("HARNESS", &serde_json::to_string(harness).unwrap())

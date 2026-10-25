@@ -3719,3 +3719,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 웹 `machineIdentity.test.mjs`는 두 터미널 초안의 이름 기반 키를 고유 pane ID로 찾아 ID 기반 키로 옮긴다. 다른 pane·새 키·모호한 옛 키는 보존한다. E2E47의 저장 키 단언도 머신 ID 기준으로 바꾸며 글 보존 기대값은 유지한다. E2E13의 단절 초안과 E2E99의 Chromium/WebKit × 1280/390px workspace 허용도 함께 확인한다.
 - 실행: host 전체 유닛 655개 통과(기존 ignored 2개 유지), agent 전체 167개, 웹 유닛 566개·타입/번들, proto TypeScript 계약 2개, crate 의존 경계 2개, host/agent/proto/CLI all-targets clippy·공개 검사. 관련 E2E13·47·60·61·72·98·99 총 7파일이 통과했다. Playwright npm 1.64.1은 자기 폴더에 두고 내부 공용 브라우저 캐시를 사용했다. 브라우저 설치·고정 sleep·시한 확대·기대값 완화·실패 자동 재시도는 없다.
 - 초기 새 fixture는 ULID/자동화 schema와 CLI 응답 형식을 잘못 가정해 실패했다. 정본 parser·응답에 맞춰 고쳤다. E2E60에서 추가 Controller 기기의 `/me` 응답을 `ok` 없이 읽어 정리가 빠지자 기존 마지막 Controller 검사가 실패했으며, 기기 ID의 존재 단언과 명시적 폐기를 추가했다. clippy의 중첩 if 지적도 고쳤다. 이름 변경 자체의 연결·초안·참조 이전 기대값은 유지한다. 운영 머신 이름 변경·배포·실기 UI 확인은 이 검증에 포함하지 않는다.
+
+
+## 자동화 기억 probe의 원자 게시(t-1028)
+
+- `automation_start::automation_memory_reentry_codex_after_compact_and_resume`의 fake harness가 probe JSON을 직접 쓰는 동안 Rust가 빈 파일을 읽어 파싱에 실패했다. startup·compact·resume·child를 공통 게시 함수로 바꿔 같은 폴더의 고유 임시 파일에 JSON을 쓰고 flush·close 뒤 `os.replace`한다. Rust의 기존 파일 대기·엄격한 JSON 파싱·기억 내용 단언과 시한은 그대로 둔다.
+- m13의 다른 probe도 점검했다. image·rollout·thread_park·thread_stages는 명령 출력 완료 표지를 기다리고, web_publication·accounts의 교체형 JSON fixture는 임시 파일 교체를 사용한다. 이번 기억 probe와 같은 직접 JSON 게시 지점 두 곳을 함께 수리했으며 다른 시험의 입력 fixture는 바꾸지 않는다.
+- 단독 Codex 시험 5회와 공통 Claude 시험 1회를 미리 정한 표본으로 실행한다. 한 번이라도 실패하면 중단한다. 이어 전체 `nice -n 15 bash scripts/ci-local.sh --tee`, 별도 공개 검사, Linux/Windows strict cross clippy와 dev 의존성 없는 Windows release 빌드를 수행한다. 고정 sleep·실패 재시도·시한 연장·기대값 완화는 없다.
+- [Python `os.replace`](https://docs.python.org/3/library/os.html#os.replace)와 [`tempfile.NamedTemporaryFile`](https://docs.python.org/3/library/tempfile.html#tempfile.NamedTemporaryFile), 기존 m13 web_publication의 임시 파일 교체를 참고했다. Python 구현은 PSF License다. 외부 코드를 복사하거나 의존성을 추가하지 않았다.
