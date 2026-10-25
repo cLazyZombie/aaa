@@ -1485,6 +1485,11 @@ enum MachineCmd {
         #[arg(long)]
         code: String,
     },
+    /// 등록·열린 pane을 유지하고 머신 이름을 바꾼다(host 자신은 제외).
+    Rename {
+        name: String,
+        to: String,
+    },
     Revoke {
         name: String,
     },
@@ -2624,6 +2629,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 MachineCmd::Enroll { open, .. } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
                 MachineCmd::Pending => FrontRequest::EnrollPending,
                 MachineCmd::Approve { name, code } => FrontRequest::EnrollApprove { name, code },
+                MachineCmd::Rename { name, to } => FrontRequest::MachineRename { name, to },
                 MachineCmd::Revoke { name } => FrontRequest::MachineRevoke { name },
             },
         ),
@@ -3297,7 +3303,7 @@ fn agent_controlled(
         };
         aaa_agent::threads::protect_recorded_worktrees(&threads).await?;
         agent.configure_threads(threads);
-        tracing::info!(machine = %agent.name, id = %agent.machine_id, %target, "agent 시작");
+        tracing::info!(machine = %agent.name.lock().unwrap(), id = %agent.machine_id, %target, "agent 시작");
         aaa_agent::threads::recover_cleanup_locks(&state).await?;
         agent.recover().await?;
         agent.start_hooks()?;

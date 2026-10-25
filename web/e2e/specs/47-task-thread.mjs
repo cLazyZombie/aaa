@@ -205,7 +205,7 @@ export default async function ({ page }) {
     await detail.getByTestId("task-attention-again").click();
     await domIs(page, "coordinator pane", (id) => location.hash === `#pane=${encodeURIComponent(id)}`, opened.pane.id);
     const drafts = await page.evaluate(
-      ([m, mid, id]) => [localStorage.getItem(`herdr-web-ui:terminal-line:${m}:${id}`), localStorage.getItem(`herdr-web-ui:composer-draft:${mid}:${id}`)],
+      ([m, mid, id]) => [localStorage.getItem(`herdr-web-ui:terminal-line:${mid}:${id}`), localStorage.getItem(`herdr-web-ui:composer-draft:${mid}:${id}`)],
       [opened.pane.machine, opened.pane.machine_id, opened.pane.id],
     );
     const taskId = aaa("task", "list").tasks.find(t => t.title === "원격 일").short_id;

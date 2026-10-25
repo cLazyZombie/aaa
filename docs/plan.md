@@ -7862,3 +7862,14 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **경계.** ASCII 양의 십진수와 SQLite i64 범위만 순번으로 읽는다. 웹도 Number 변환 없이 정밀도를 유지한다. 프로젝트를 붙인 주소는 그 프로젝트를 유지하며 여러 프로젝트의 같은 맨 번호는 임의로 고르지 않는다. 주소·경로·파일명·다른 낱말 안 번호와 코드 블록은 자동 링크하지 않는다. m·옛 확인창 q의 무작위 ID, ULID·해시·자동화 이름은 순번과 구별한다. 이관한 보고서 이름·자동화 이름·옛 확인창 ID와 번호 별칭이 충돌하면 거부한다.
 - **구현·점검.** [번호 처리 점검](short-ids.md). Rust 공통 parser와 host의 요청별 선택자에서 정규화하고, task·question·post·automation은 프로젝트 원장으로 찾는다. 웹의 대화·보고서 링크, 명시 앱 참조와 깊은 주소에 적용한다. 기존 시각·seq·ULID 정렬은 유지하고 번호가 동률 기준이던 목록·정리·가져오기 순서만 숫자로 대조한다. API 필드·판 번호는 그대로다.
 - **검증.** 실제 생성기의 9999→10000→10001·재시작·삭제 뒤 비재사용, p의 99999999→100000000, 보고서 과거 파일·판 목록·정리·프로젝트/권한 경계, CI 병합 소유자, 웹 단위 시험과 E2E112(Chromium·WebKit)를 둔다. 관련 E2E21·52·54·55·76·77·80의 기존 계약도 유지한다.
+
+### 8.490 등록을 유지하는 머신 이름 변경(t-1016)
+
+- FRONT_API 1.125 `machine_rename {name,to}`. CLI `aaa machine rename <옛> <새>`와 설정 → 머신의 「이름 바꾸기」는 같은 host 경로를 쓴다. 기존 머신 관리 권한(웹 Controller·세션 밖 Local CLI)만 허용하고 Reader·coordinator/thread/worker 호출은 거부한다. 공개 웹에서는 기존 passkey UV를 적용한다. 별도 Owner 역할은 만들지 않는다.
+- 등록 ID·TLS 키·pane/세션/thread ID·연결 generation·lease를 유지하고 이름표만 변경한다. host 자신은 로컬 agent 설정·실행 신원이 함께 있어 거부한다. 기존 등록 이름 규칙, 다른 이름·ID·폐기 기록의 예약 이름·등록 대기·진행 중 설치 작업과 충돌하면 거부한다.
+- host 등록 ID가 이름 정본이다. `machine_label.v1` agent에 이름표를 보내 상태 폴더에 영속화하며 실행 옵션/agent.toml의 초기 이름보다 우선한다. 연결을 끊거나 재시작하지 않는다. 오프라인·구판 agent도 TLS ID의 등록 이름을 사용하므로 재연결의 옛 hello가 이름을 되돌리지 않는다. 영속화 실패는 하위 오류를 로그에 남기고 다음 연결에서 동기화한다.
+- ID를 저장한 thread·pane·세션·workspace 허용·배포 신원은 그대로 두고 표시를 새 이름으로 만든다. 이름을 저장한 구조화 DB 칸과 프로젝트 aaa.toml/project.toml repos/workspaces, TASKS.md 모델@머신, 예약 승인/선택/블록 hash, 완료 복원 블록, 자동화/routine/mission·CI 조회 머신을 함께 옮긴다. 같은 명령·같은 장치에 대한 자동화 승인도 유지한다. 설정 주석·명령·메모·경로·task ID·CRLF는 보존한다. 기존 감사/입력/할 일 변경 로그, 보고서·brief·외부 스크립트·OS/Tailscale 이름은 당시 원문으로 유지한다.
+- 예약 기동·자동화 dispatch·workspace 지표 회수 중에는 충돌로 거부한다. 파일 잠금·기대 원문을 검사하고 journal → 파일 → DB 트랜잭션(감사 포함) → 실행 이름표 → 사건 순서로 확정한다. DB 실패면 파일을 원복하고, 중단 journal은 시작 때 DB 이름을 보고 완료 또는 원복한다. 직접 고친 파일은 덮지 않으며 나머지 복구를 마치고 구체적 경로를 알린다.
+- 참고: [herdr](https://github.com/herdrdev/herdr)([Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.9.5/LICENSE))의 세션과 연결 분리, [herdr-web-ui/ovis](https://github.com/devswha/ovis)([MIT](https://github.com/devswha/ovis/blob/main/LICENSE))의 pane ID 중심 표시, [Tailscale 머신 이름](https://tailscale.com/docs/concepts/machine-names)의 OS hostname과 관리 이름 분리를 대조했다. 구성만 참고하며 코드·의존성을 가져오지 않는다. 지정한 herdr-projects 공개 주소는 404라 원문·라이선스를 확인하지 못했다.
+
+- 웹의 두 터미널 초안도 머신 ID+pane ID로 보관한다. 옛 이름 기반 키는 고유 pane ID로 찾아 한 번 옮기며 모호한 키는 고르거나 지우지 않는다. 기존 enroll 사건으로 열린 자동화의 머신 칸도 다시 읽는다.

@@ -59,17 +59,17 @@ export function AdminDialog({ label, busy, onClose, children }: { label: string;
 }
 
 /** 1.80 이상 host인가(모르면 null) */
-export function useAdmin(): boolean | null {
+export function useAdmin(minor = 80): boolean | null {
   const [ok, setOk] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
     me()
-      .then((m) => live && setOk(canAdmin(m?.front_api)))
+      .then((m) => live && setOk(canAdmin(m?.front_api, minor)))
       .catch(ignoredFailure("AdminPages.tsx:68", () => live && setOk(false)));
     return () => {
       live = false;
     };
-  }, []);
+  }, [minor]);
   return ok;
 }
 
@@ -83,12 +83,14 @@ export function MachinesPage({
   onOpenPane?: (id: string) => void;
 }) {
   const admin = useAdmin();
+  const renameSupported = useAdmin(125);
   const [pending, setPending] = useState<PendingEnroll[]>([]);
   const [openUntil, setOpenUntil] = useState<number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [minutes, setMinutes] = useState("10");
   const [approving, setApproving] = useState<PendingEnroll | null>(null);
+  const [renaming, setRenaming] = useState<MachineView | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [, tick] = useState(0);
@@ -220,6 +222,11 @@ export function MachinesPage({
                     >
                       자세히
                     </button>
+                    {canEdit && renameSupported && !m.local && (
+                      <button type="button" className="btn small" disabled={busy} onClick={() => setRenaming(m)} aria-label={`${m.name} 이름 바꾸기`}>
+                        이름 바꾸기
+                      </button>
+                    )}
                     {canEdit && !m.local && (
                       <button type="button" className="btn small" disabled={busy} onClick={() => setRevoking(m.name)} aria-label={`${m.name} 폐기`}>
                         폐기
@@ -235,6 +242,7 @@ export function MachinesPage({
       </SettingsGroup>
       <MachineSetup role={role} machines={machines} />
       {approving && <ApproveDialog p={approving} onClose={() => setApproving(null)} onDone={load} />}
+      {renaming && <MachineRenameDialog machine={renaming} onClose={() => setRenaming(null)} />}
       {revoking && (
         <ConfirmDialog
           title={`${revoking}의 등록을 폐기할까요?`}
@@ -339,6 +347,47 @@ function InstallGuide({ machines }: { machines: MachineView[] }) {
         ))}
       </ol>
     </details>
+  );
+}
+
+/** 등록·열린 대화의 신원을 유지하며 host의 머신 이름표를 바꾼다. */
+function MachineRenameDialog({ machine, onClose }: { machine: MachineView; onClose: () => void }) {
+  const [name, setName] = useState(machine.name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <AdminDialog label={`${machine.name} 이름 바꾸기`} busy={busy} onClose={onClose}>
+      <form onSubmit={async (event) => {
+        event.preventDefault();
+        if (busy || !machineNameOk(name) || name === machine.name) return;
+        setBusy(true);
+        setError(null);
+        try {
+          await call({ op: "machine_rename", name: machine.name, to: name });
+          onClose();
+        } catch (e) {
+          setError(say(e));
+        } finally {
+          setBusy(false);
+        }
+      }}>
+        <div className="modal-body">
+          <p>열린 대화와 등록은 유지하고, 할 일·프로젝트·자동화의 머신 이름도 함께 바꾼다.</p>
+          <label className="op-field">
+            <span>새 머신 이름</span>
+            <input autoFocus value={name} onChange={(e) => { setName(e.target.value); setError(null); }} disabled={busy} maxLength={64} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+          </label>
+          <p className="op-muted">영문·숫자·마침표·밑줄·하이픈, 1~64자</p>
+          {error && <p className="op-warn" role="alert">{error}</p>}
+        </div>
+        <footer className="modal-footer">
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>취소</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !machineNameOk(name) || name === machine.name}>
+            {busy ? "바꾸는 중…" : "이름 바꾸기"}
+          </button>
+        </footer>
+      </form>
+    </AdminDialog>
   );
 }
 

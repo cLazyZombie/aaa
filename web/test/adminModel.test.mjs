@@ -12,6 +12,10 @@ describe("관리 W5b", () => {
     for (const v of [undefined, null, "1.79", "2.80"]) assert.equal(canAdmin(v), false, String(v));
     for (const v of ["1.80", "1.91"]) assert.equal(canAdmin(v), true, v);
   });
+  it("머신 이름 변경은 1.125부터 보인다", () => {
+    for (const version of [null, undefined, "1.124", "2.125"]) assert.equal(canAdmin(version, 125), false);
+    for (const version of ["1.125", "1.126"]) assert.equal(canAdmin(version, 125), true);
+  });
   it("확인 코드는 숫자 6자리(사이 공백·하이픈은 뺀다)", () => {
     assert.equal(enrollCode("123 456"), "123456");
     assert.equal(enrollCode("123-456"), "123456");

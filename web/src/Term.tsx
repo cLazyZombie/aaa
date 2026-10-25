@@ -68,6 +68,7 @@ import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } fro
 import { isAppShortcut, modKeyLabel } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import { pasteText } from "./pasteText.ts";
+import { migrateMachineDrafts } from "./machineIdentity.ts";
 import { readTerminalDraft } from "./herdr/terminalDraft.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
@@ -271,9 +272,10 @@ export function TermView({
   // 끊긴 동안 친 글(herdr-web-ui PaneTerminal 363~379·1356~1424줄, lib/draft.ts): 줄을 세워 몰래 다시 보내지 않고 붙잡아 두었다가
   // 다시 붙으면 사람이 「보내기」·「버리기」를 고른다. Enter·줄바꿈은 붙잡지 않는다(보내기는 Enter를 누르지 않는다).
   // 이 기기에 머신·pane마다 24시간 남는다(끊긴 동안 다시 열어도 잃지 않는다).
-  const draftKey = `herdr-web-ui:terminal-draft:${pane.machine}:${pane.id}`;
+  const draftKey = `herdr-web-ui:terminal-draft:${pane.machine_id}:${pane.id}`;
   const [draft, setDraftState] = useState<InputDraft>(() => {
     try {
+      migrateMachineDrafts(pane.machine_id, pane.id, localStorage);
       return restoreDraft(localStorage.getItem(draftKey), Date.now());
     } catch (ignoredError) { logIgnoredFailure(ignoredError, "Term.tsx:267");
       return EMPTY_DRAFT;
@@ -517,7 +519,7 @@ export function TermView({
       setInputError(HELD_FIRST);
       return HELD_FIRST;
     }
-    if (!chat && inputLineRef.current && readTerminalDraft(`${pane.machine}:${pane.id}`).length > 0) { blocked("held_draft"); return false; }
+    if (!chat && inputLineRef.current && readTerminalDraft(`${pane.machine_id}:${pane.id}`).length > 0) { blocked("held_draft"); return false; }
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     autoFit.current(true);
@@ -2268,7 +2270,7 @@ export function TermView({
         <div ref={setInputSlot} className="terminal-input-slot">
           <TerminalInput
             key={pane.id}
-            owner={`${pane.machine}:${pane.id}`}
+            owner={`${pane.machine_id}:${pane.id}`}
             connected={active && link === "open" && !pane.readonly && !locked}
             onComposing={setLineComposing}
             onSend={sendTerminalLine}

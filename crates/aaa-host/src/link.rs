@@ -295,7 +295,7 @@ async fn serve_connection(
     } else {
         first
     };
-    let hello = match first {
+    let mut hello = match first {
         LinkMsg::Hello(hello) => hello,
         // 이미 등록된 장치 키로 `aaa agent enroll`을 다시 했다(QA t-0337 Q17): 무엇이 문제이고 어떻게 하는지 알린다
         LinkMsg::Enroll(req) if known.is_some() => {
@@ -330,6 +330,9 @@ async fn serve_connection(
     }
     if local {
         register_local(&host, &hello, &tx).await?;
+    } else {
+        // TLS로 확인한 ID의 host 이름표가 정본이다. 구판 agent의 옛 hello 이름으로 되돌리지 않는다.
+        hello.machine_name = host.db.machine_by_id(&hello.machine_id)?.context("등록된 머신 이름표가 없다")?.name;
     }
     if local {
         // 시작 중이면 웹을 연 뒤에 보낸다(`Host::web_gate`)

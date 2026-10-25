@@ -150,7 +150,8 @@ impl Host {
         let mut source_repos = BTreeSet::new();
         let query_machine = match &r.trigger {
             Trigger::Ci(c) => {
-                let mid = self.resolve_machine(r.machine.as_deref().or(self.cfg.projects.ci_machine.as_deref()))?;
+                let mid = self
+                    .resolve_machine(r.machine.as_deref().or(self.profile_config()?.projects.ci_machine.as_deref()))?;
                 source_repos
                     .extend(registered.iter().filter(|(m, path)| m == &mid && matches_repo(path, &c.repo)).cloned());
                 if source_repos.len() != 1 {

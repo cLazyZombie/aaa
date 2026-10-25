@@ -52,6 +52,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 |---|---|
 | `aaa --instance <이름> <명령>` · `aaa --instance <이름> init` | 같은 Mac의 둘째 aaa를 쓰기(env `AAA_INSTANCE`도 같다, pane 안에서는 물려받는다) · 만들기(폴더·겹치지 않는 포트·홈, 사람이 터미널에서). 이름이 없으면 지금 aaa다([절차](install-runbook.md#12-같은-mac의-둘째-aaa8294)) |
 | `aaa machine list` | 머신 연결·디스크·이상 |
+| `aaa machine rename <옛 이름> <새 이름>` · 설정 → 머신 → 이름 바꾸기 | 등록·열린 대화를 유지하며 이름과 참조를 함께 옮긴다. host 자신은 제외, 세션 밖 CLI·웹 조작 기기만 가능 |
 | 웹 → 머신 → 배포 카드 | 최신 배포의 전송·단계·실패·복구를 Reader도 봅니다. 단절이면 마지막 수신 상태이며 재연결 뒤 최신 기록을 받습니다. 검증 정보에서 전체 ID/SHA를 봅니다. 카드에서는 배포를 시작하지 않습니다. |
 | `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`). restart는 아래 coordinator 배포 허용도 가능 |
 | `aaa deploy start --file <머신>:<후보폴더>/aaa --sha256 <SHA> [--commit <40자리>] [--machines all 또는 쉼표 목록]` · `aaa deploy status <ID> --wait` | coordinator safety 아래 빌드 후보를 Agent link로 전송하고 여러 Mac을 host부터 배포합니다. source/모든 대상에 deploy_stage.v1, 모든 대상에 rollout_recovery.v1이 필요합니다. 전체 전송·SHA/self-check 뒤 첫 교체를 하며 같은 ID로 재개합니다. 기존 미리 복사 경로는 --from입니다. 실패 머신만 배포 전 SHA로 자동 복구하며 recovering 뒤 stopped_rolled_back 또는 recovery_failed를 남깁니다. 앞 머신은 유지합니다. |
@@ -191,3 +192,13 @@ PR 병합·보고 [완료]의 좁은 완료 판정을 유지하면서 결과는 
 거르기 칩 「예약」과 「저장소」 고르기(이 기기에 기억)는 함께 걸리며, 거른 채 옮겨도 숨은 할 일의 차례는 그대로다.
 휴대폰은 끌기 대신 ⋯ 시트와 「순서」의 ▲▼를 쓴다. 파일의 옛 `## 목록` 머리는 그대로 읽고 쓰며 웹에서는 나누어 보이지 않는다.
 앞 할 일 하나를 기다리는 예약(위 `--after`) 밖의 일반 의존성과 저장소별 착지 gate는 아직 제공하지 않는다.
+
+### 머신 이름 바꾸기
+
+`aaa machine rename mac-b mac-c` 또는 설정 → 머신의 「이름 바꾸기」를 쓴다. 재등록·승인·서비스 재설치·재시작은 필요 없다. 열린 pane·thread·세션 ID와 장치 키는 그대로다. 다른 머신·등록 대기 이름·host 이름과 겹치거나 이름 규칙(영문·숫자·`._-`, 1~64자)을 벗어나면 거부한다. host 자신의 이름은 로컬 agent 실행 설정과 묶여 있어 이 기능으로 바꾸지 않는다.
+
+프로젝트 설정의 repos/workspaces, TASKS.md의 모델@머신, 예약의 승인판·선택 고정, 완료 보관의 복원 블록, 자동화와 예전 routine/mission의 머신 칸, workspace 허용·배포·thread 기록의 표시도 따라 바뀐다. 예약 기동·자동화 실행·workspace 지표 회수 중이면 충돌을 알린다. 끝난 뒤 다시 요청한다. 당시 증거인 감사 로그·명령 출력·설치 계획/영수증·보고서·brief·사용자가 쓴 메모·경로·OS/Tailscale 이름은 바꾸지 않는다. 예전 이름으로 만든 외부 셸 스크립트나 따로 보관한 설정은 사용자가 고친다.
+
+host의 등록 ID가 이름의 정본이다. `machine_label.v1` agent는 변경 이름을 상태 폴더의 `machine-label`에 저장하고 즉시 적용한다. 이 값은 실행 옵션·agent.toml의 초기 이름보다 우선하며 세션과 독립적이다. 끊긴 agent는 다음 연결에서 동기화한다. 구판 agent는 자기 초기 이름을 계속 보고해도 host가 TLS 장치 ID로 현재 이름을 고르므로 옛 이름이 부활하거나 다른 머신과 충돌하지 않는다. 동기화 실패는 경로·하위 오류와 함께 로그에 남긴다.
+
+변경은 파일별 잠금·원문 대조와 SQLite 트랜잭션으로 처리한다. 파일과 DB 사이에서 host가 종료돼도 시작할 때 journal을 복구한다. 복구 중 직접 편집을 발견하면 그 글을 덮지 않고 경로를 알리며 멈춘다.

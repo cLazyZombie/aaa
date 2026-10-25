@@ -11,6 +11,7 @@ pub(crate) mod automation_runs;
 #[cfg(test)]
 mod inbox_tests;
 mod library_catalog;
+mod machine_rename;
 mod question_ids;
 mod report_ids;
 #[cfg(test)]

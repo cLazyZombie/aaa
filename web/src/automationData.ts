@@ -2,7 +2,7 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 // 자동화 목록 자료(정본은 host): 사이드바 카드 목록(AutomationPanel)과 본문 설정 화면(AutomationView)이 같은 사본을 본다(t-0628).
 // 패널이나 설정 화면이 보일 때만 읽는다: 열 때·포커스를 되찾을 때·보이는 동안 30초마다, 그리고 thread 사건(보고·Idle·입력)마다.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { call, me } from "./api";
+import { call, me, onEnrollChanged } from "./api";
 import type { AutomationTrashEntry, RoutineView, ThreadView } from "./gen/proto";
 
 export type AutomationRow = { project: string; rules: RoutineView[]; trash: AutomationTrashEntry[] };
@@ -51,6 +51,8 @@ export function useAutomations(active: boolean, threads: ThreadView[]): Automati
     return () => { ++generation.current; clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, [active, load]); // eslint-disable-line react-hooks/exhaustive-deps
   // 보고·Idle·입력 처리 사건으로 남은 시간·열린 thread를 다시 읽는다
+  // 머신 이름 변경은 기존 enroll 사건으로 받는다. 열린 자동화의 머신 칸도 즉시 다시 읽는다.
+  useEffect(() => active ? onEnrollChanged(() => { void load(); }) : undefined, [active, load]);
   const threadStamp = threads.map((t) => `${t.id}:${t.updated_at_ms}:${t.report_hash}:${t.group}:${t.agent?.activity}`).join("|");
   const seen = useRef(threadStamp);
   useEffect(() => {
