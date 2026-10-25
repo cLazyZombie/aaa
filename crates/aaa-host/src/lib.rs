@@ -39,6 +39,7 @@ mod file_rev;
 mod files;
 pub mod front;
 mod git_watch;
+pub mod guide;
 mod harness;
 mod health;
 mod http;

@@ -316,6 +316,14 @@ enum Cmd {
         #[arg(long)]
         peek: bool,
     },
+    /// 필요할 때 읽는 세부 안내(AGENTS.md·brief에는 매 턴 규칙만 둔다, plan §8.491). 주제 없이 부르면 목록을 보인다
+    Guide {
+        /// 주제 이름(`aaa guide`가 목록을 보인다)
+        topic: Option<String>,
+        /// 모든 주제를 차례로 보인다
+        #[arg(long, conflicts_with = "topic")]
+        all: bool,
+    },
     /// TASKS.md owner로 쓸 수 있는 profile·머신. --check로 owner 하나를 확인한다.
     Assignable {
         /// (옛 꼴의 프로젝트, 생략한다)
@@ -2024,6 +2032,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             "`aaa decision`은 없어졌다. 뒤 thread가 알아야 할 결정은 coordinator가 프로젝트 memory(MEMORY.md 색인과 \
              memory/ 파일)에 적는다. memory는 모든 thread brief에 들어간다"
         ),
+        Cmd::Guide { topic, all } => guide(json, topic.as_deref(), all),
         Cmd::Context { project, peek } => {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
@@ -4361,6 +4370,54 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             }
         }
     }
+}
+
+/// `aaa guide [주제]`: host에 묻지 않고 이 실행 파일에 든 안내를 보인다(`aaa automation schema`처럼)
+fn guide(json: bool, topic: Option<&str>, all: bool) -> Result<ExitCode> {
+    use aaa_host::guide::{Audience, TOPICS};
+    let who = |a: Audience| match a {
+        Audience::Coordinator => "coordinator",
+        Audience::Thread => "thread",
+    };
+    let picked: Vec<_> = match (topic, all) {
+        (Some(name), _) => match aaa_host::guide::topic(name) {
+            Some(t) => vec![t],
+            None => {
+                let names: Vec<&str> = TOPICS.iter().map(|t| t.name).collect();
+                anyhow::bail!("없는 주제다: {name}. 주제: {}", names.join(", "));
+            }
+        },
+        (None, true) => TOPICS.iter().collect(),
+        (None, false) => {
+            if json {
+                let list: Vec<_> = TOPICS
+                    .iter()
+                    .map(|t| serde_json::json!({ "name": t.name, "audience": who(t.audience), "when": t.when }))
+                    .collect();
+                println!("{}", serde_json::json!({ "topics": list }));
+            } else {
+                println!("aaa guide <주제>: 그 일을 할 때 읽는 세부 안내(AGENTS.md·brief에는 매 턴 규칙만 있다)\n");
+                for a in [Audience::Coordinator, Audience::Thread] {
+                    println!("{}", who(a));
+                    for t in TOPICS.iter().filter(|t| t.audience == a) {
+                        println!("  {:<12} {}", t.name, t.when);
+                    }
+                }
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+    };
+    if json {
+        let list: Vec<_> = picked
+            .iter()
+            .map(|t| serde_json::json!({ "name": t.name, "audience": who(t.audience), "when": t.when, "text": t.text }))
+            .collect();
+        println!("{}", serde_json::json!({ "topics": list }));
+    } else {
+        let texts: Vec<&str> = picked.iter().map(|t| t.text).collect();
+        print!("{}", texts.join("\n"));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `aaa task log`: `#id 언제 누가 동작 [목록] 제목`, 되살린 삭제는 표시한다

@@ -71,6 +71,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
 | `aaa project rename <새 이름>` · `aaa project delete` · `aaa project sweep` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
 | `aaa doctor files [--fix]` | 모든 프로젝트의 coordinator 안내(AGENTS.md)·uploads/·pr-followup 규칙 보기(TOML 변환본이 있으면 옛 routine을 다시 만들지 않음) · 낡은 안내를 지금 aaa 것으로 다시 쓰기(사람이 쓴 파일은 `.before-aaa`로 옮겨 둠) |
+| `aaa guide [주제]` · `aaa guide --all` | coordinator·thread가 그 일을 할 때 읽는 세부 안내(질문 post 문법·보고서·thread 한도·작업 요약·확인창·TASKS.md 형식·CI·배포 절차·자동화·auto mode·웹 보고서 sandbox). host에 묻지 않고 이 실행 파일의 글을 보인다. 주제 없이 부르면 목록. AGENTS.md는 매 턴 규칙만 두고 이 주제를 가리킨다(§8.491) |
 | `aaa task add "…" --profile codex --machine mac-b --repo '작업 폴더'` → `aaa thread start --from-task d-0001 --link-task` | 새 작업은 할 일을 먼저 기록하고 thread로 시작한다. `--from-task`는 연결 옵션을 생략해도 자동 연결한다. 옛 `--title … --task-file …` 직접 시작도 host가 할 일을 먼저 만든다. 자동화 do.start는 예외다 |
 | `aaa thread adopt --pane <ID> --title "…"` | 이미 띄운 Claude·Codex pane(셸에서 친 것은 감지된 뒤)을 thread로 데려오기(pane은 그대로, 다시 시작·resolve가 pane을 끝내지 않음) |
 | `aaa thread list` · `aaa thread show <id>` | thread 목록 · 보고·Next 보기 |
