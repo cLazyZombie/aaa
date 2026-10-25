@@ -199,7 +199,7 @@ thread를 띄우거나, 말을 보내거나, 화면을 읽거나, 키를 누를 
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다.
 - 사용자에게 묻거나 사람 전용 단계를 남기고 멈추기 전에 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한
   행동과 까닭을 파일에 쓴 뒤 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를
-  보낸다. 본문은 `## Questions` 형식이며 볼 보고서·시안 링크는 그 질문 안에 둔다.
+  보낸다. 본문은 `## Questions` 형식으로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다(질문·선택지·그림·영상 문법은 `aaa guide questions`).
 - 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고 `aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를
   한 번 보낸다.
 - post 제목은 외부 알림에 실린다: 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다. post 본문에도 비밀값을 쓰지 않는다.
@@ -641,6 +641,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 질문 post의 규칙은 AGENTS.md에, 문법은 그가 가리키는 `questions`에 있다(웹 E2E74·88이 실제 파일·CLI로 같은 글을 본다).
+    /// 문법 예시는 host가 읽는 카드 꼴 그대로다.
+    #[test]
+    fn question_post_guidance_is_reachable() {
+        let guide = coordinator_guide("demo");
+        assert!(guide.contains("볼 보고서·시안·음원 링크는 질문 안에 둔다"), "{guide}");
+        assert!(guide.contains("그림·영상 문법은 `aaa guide questions`"), "{guide}");
+        let text = topic("questions").unwrap().text;
+        assert!(text.contains("![시안 영상](library/preview/a.mp4)"), "{text}");
+        assert!(
+            text.contains("## Questions\n### 1. 진행할 안")
+                && text.contains("- A 진행한다 (추천) — 검증한 안을 적용한다")
+        );
+        let fence = text.split("```markdown\n").nth(1).and_then(|rest| rest.split("```").next()).unwrap();
+        let qs = aaa_proto::report_questions(fence);
+        assert_eq!((qs.len(), qs[0].choices.len(), qs[0].choices[0].recommended), (1, 2, true), "{fence}");
+        assert!(qs[0].body.as_deref().unwrap_or_default().contains("![시안 영상](library/preview/a.mp4)"), "{fence}");
     }
 
     /// AGENTS.md는 매 턴 문맥이다: Codex 기본 한도(32 KiB)보다 한참 작고 Claude Code 권장(200줄 미만) 안이다.

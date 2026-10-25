@@ -58,6 +58,9 @@ export default async function ({ page }) {
     }
     const guide = fs.readFileSync(`${root}/projects/demo/AGENTS.md`, "utf8");
     if (!guide.includes("볼 보고서·시안·음원 링크는 질문 안에 둔다")) throw new Error("coordinator Questions 안내 누락");
+    // Questions 문법 예시는 AGENTS.md가 가리키는 `aaa guide questions`에 있다(plan §8.491)
+    const questions = aaa("guide", "questions").topics[0].text;
+    if (!guide.includes("`aaa guide questions`") || !questions.includes("## Questions\n### 1. 진행할 안") || !questions.includes("- A 진행한다 (추천) — 검증한 안을 적용한다")) throw new Error("coordinator Questions 문법 안내 누락");
   });
   await step("Questions 없는 검수 대기는 기본 A/B 카드, 고칠 점은 글로 받고 해당 r 보고를 카드에서 본다", async () => {
     fs.writeFileSync(`${root}/task-review.md`, "검수 카드 시험\n");
