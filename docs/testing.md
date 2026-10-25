@@ -28,6 +28,14 @@
 - `cargo test --locked -p aaa --test m13 accounts::authenticated_terminal_echo_does_not_wait_for_the_next_ascii_key -- --exact`는 합성 인증을 가진 실제 host/agent/session/PTY에 실기 send와 같은 글자를 한 번에 하나씩 넣는다. 그 글자의 화면 반영을 확인하기 전에는 다음 글자를 보내지 않는다. 출력 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
 - 기존 `accounts::account_credentials_parallel_refresh_and_all_records_are_redacted`도 실행해 로컬·TLS 원격 계정/갱신/출력/기록의 원문·8바이트 조각 비노출을 확인한다. 브라우저 입력 코드는 바꾸지 않는다. 실제 iPhone·운영 Claude 확인은 새 session-host 적용 후 사용자가 한다.
 
+## 할 일 제목·칩 시작점 정렬(t-1021)
+
+- E2E107은 손잡이와 완료 원 사이가 16px 이내이고, 첫 칩과 제목 글의 시작점이 하위 들여쓰기를 포함해 1px 이내인지 검사한다. 기존 열 정렬·겹침·잘림·휴대폰 제목 폭·행 높이·첨부·메모·선택·폭 변경 뒤 표지 한 개 검사를 유지하며, Chromium 1280/2000/390/320px와 WebKit 1366/1024/390/320px를 쓴다. 화면은 실제 격리 host·agent에서 headless로 찍고 DOM·글꼴 준비 사건을 기다린다.
+- 원인은 `9a506f8b`(main 반영 `ae97a6ea`)의 고정 `5em` 단계 열과 별도 칩 들여쓰기다. 그 부모에는 빈 단계 열이 없다. 최근 ID 자릿수·머신 이름 변경에서 생긴 회귀가 아니다. 기존 판 대조에서 데스크톱 손잡이/완료 원 사이 81px, 제목/칩 시작점 약 150px 차이로 새 검사가 실패한다.
+- 단계 표지를 모든 폭에서 메타정보 줄에 두고 상태·ID 열 너비와 하위 들여쓰기를 칩에도 공유한다. 둘째 줄은 메뉴 아래 공간까지 쓴다. 첫 수정안에서 320px의 칩 줄이 불필요하게 접혀 기존 76px 행 높이 검사가 실패했으며, 메뉴 아래의 빈 공간을 사용하도록 고쳤다. 시한·기대값·검사 범위는 완화하지 않는다.
+- 실행: `npm test --prefix web`, `npm run build --prefix web`, `cargo test --locked -p aaa --test deps`, `node web/e2e/web.e2e.mjs --spec 43,46,47,52,54,67,70,75,76,107 --workers 4`. Playwright npm 1.64.1만 작업 폴더에 두고 기존 공용 브라우저 캐시를 쓴다. 브라우저·시스템 설정은 변경하지 않는다.
+- 참고: [herdr-web-ui Sidebar.css](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)의 공통 행 열·제목/보조 정보 배치와 [herdr-projects popup.rs](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/popup.rs)의 제목·담당·thread·메모 순서를 대조했다. 두 저장소의 고정 판 LICENSE는 MIT이며 구성만 참고하고 외부 코드·의존성을 추가하지 않았다.
+
 # 시험 쓰는 법
 
 ## coordinator 복귀의 연결 준비·본문 보존(t-0998)
