@@ -83,6 +83,15 @@
 
 # 시험 쓰는 법
 
+## E2E105 대화 focus·입력 위치 복원(t-1049)
+
+- 기존 E2E105에 Chromium·WebKit × 1280/390px 대화 전환을 추가한다. 첫 진입의 메시지 입력 기본 focus, 서로 다른 초안·중간 커서·역방향 선택의 Ctrl+Tab 왕복, 복귀 직후 실제 삽입/선택 교체, 선택 창에 focus가 옮겨진 뒤 Esc 취소, 본문 복사 버튼 복귀, 사라진 찾기 입력의 기본 입력 복귀, 일반 대화 3개 보관을 넘긴 뒤 초안·선택 복원을 검사한다. 전환 키·초안의 PTY 전송 0회와 숨은 pane의 inert도 확인한다.
+- 390px 터치 조건에서는 첫 진입과 실제 목록을 통한 왕복 중 composer/xterm focus 사건이 없어야 한다. 화면 자판을 열 원인이 되는 자동 focus 경계를 검사하는 headless 시험이며 실제 iPhone 화면 자판 검증으로 세지 않는다. 기존 PWA 주입·일반 탭·설정·MRU·앱 화면 조합도 유지한다.
+- 첫 부분 시험은 커서 6이 글 끝 12로 바뀌었다. 사건 기록에서 hidden 반영 뒤 focusout(선택 6)이 먼저 오고 select는 다음 화면이 열린 뒤 도착했다. 비활성이라는 이유로 focusout까지 버리던 경로를 마지막 대상의 이탈 사건에 한해 받도록 고친다. 고정 sleep·시한 연장·기대값 완화 없이 같은 중간 커서 단언으로 확인한다. 긴 입력창은 display:none 뒤 scrollTop이 0으로 보이므로 숨기기 전 키/scroll 사건의 값을 유지한다. 같은 37px 왕복 단언으로 확인하며 실패 진단은 focus/select/input/scroll 사건·대상 pane·숨김·선택 범위를 남긴다.
+- WebKit은 focusin에서 임시 커서 0을 보이고 같은 범위를 다시 설정해도 select 사건이 없을 수 있다. 복원 중 사건은 기억을 덮지 않고 복원 완료 위치를 직접 확정한다. 선택 창의 취소도 명시적으로 범위·방향·입력 스크롤을 복원한다. 패널 복귀 직후와 이어지는 두 대화 왕복, 실제 focus가 선택 창으로 옮겨진 뒤 Esc 취소를 각각 단언한다.
+- 실행은 `NODE_PATH=<작업 폴더의 Playwright 1.64.1> node web/e2e/web.e2e.mjs --spec 105 --workers 1`과 전체 ci-local이다. 내부 공용 브라우저 캐시를 쓰며 전체 gate는 머신의 차례를 받은 뒤 실행한다.
+- 참고 후보는 [VS Code FocusTracker](https://github.com/microsoft/vscode/blob/main/src/vs/base/browser/dom.ts)([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))와 [ReactInputSelection](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/client/ReactInputSelection.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))다. 영역별 focus 추적과 살아 있는 대상의 선택 복원·스크롤 보존을 참고한다. 외부 코드·의존성 추가는 없다.
+
 ## coordinator 복귀의 연결 준비·본문 보존(t-0998)
 
 - 57회차 후속: 기존 후보의 E2E93 1280px 재개 복귀에서 첫 휠이 사라졌다. 다른 E2E와 worker 6개로 병렬 실행해 9·13·15단계가 실패했고, 관측 실행은 snapshot 수신 8731ms → 파싱 ACK 8732ms → wheel 8737.4ms를 보였다. 당시 readonly=false인데 실제 xterm은 visibility:hidden, 사본은 pointer-events:none이어서 event.target은 term-box였고 입력 프로그램에는 두 번째 휠이 도착하지 않았다. 부하 시간 초과가 아닌 입력 대상 제거 회귀다.

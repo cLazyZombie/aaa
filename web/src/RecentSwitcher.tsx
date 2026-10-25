@@ -26,7 +26,7 @@ export function RecentSwitcher({ standalone, blocked, targets, selected, onOpen 
   const active = useRef<RecentCycle | null>(null);
   const origin = useRef<string | null>(null);
   const restore = useRef(true);
-  const surface = useFocusTrap<HTMLElement>(cycle !== null, { shouldRestore: () => restore.current });
+  const surface = useFocusTrap<HTMLElement>(cycle !== null, { shouldRestore: () => restore.current, preserveInputSelection: true });
   const latest = useRef({ standalone, enabled, blocked, live, selected, currentKey, onOpen });
   latest.current = { standalone, enabled, blocked, live, selected, currentKey, onOpen };
   const finishRef = useRef<(commit: boolean) => void>(() => {});

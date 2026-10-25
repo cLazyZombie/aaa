@@ -2,9 +2,135 @@
 // Playwright 입력(Chromium CDP·WebKit protocol)으로 실제 앱·host·PTY의 경계를 검사한다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { root, aaa, step, browser, webkit, pairPage, inList, openSettings, until, screenText, paneHash, sentCount, sentFrames, sentText, shot, waitOutput } from "../lib/harness.mjs";
+import { root, AA, aaa, step, browser, webkit, pairPage, inList, openSettings, until, screenText, paneHash, sentCount, sentFrames, sentText, shot, waitOutput } from "../lib/harness.mjs";
 
 export default async function () {
+  await step("PWA 대화 focus: 기본 입력·왕복 커서·선택·초안·취소·다른 대상·보관 만료·터치 자판 (Chromium·WebKit)", async () => {
+    const dir = `${root}/claude/projects/-lab-focus`;
+    fs.mkdirSync(dir, { recursive: true });
+    const transcript = `${dir}/focus.jsonl`;
+    fs.writeFileSync(transcript, JSON.stringify({ type: "user", message: { content: "focus 복원 시험" } }) + "\n");
+    const hook = JSON.stringify({ hook_event_name: "SessionStart", session_id: "7f6e5d4c-3b2a-4918-87f6-e5d4c3b2a190", source: "startup", transcript_path: transcript });
+    const names = ["a", "b", "c", "d"].map(s => `focus-${s}`);
+    for (const name of names) aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA, hook);
+    const ids = await until("focus 대화 pane 준비", () => {
+      const panes = aaa("pane", "list").panes;
+      const found = names.map(name => panes.find(p => p.name === name && p.agent?.harness === "claude")?.id);
+      return found.every(Boolean) && found;
+    });
+    const wk = await webkit.launch({ headless: true });
+    try {
+      for (const engine of [browser, wk]) for (const width of [1280, 390]) {
+        const label = `${engine.browserType().name()}-${width}`;
+        const { page: p, errors } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, {
+          hash: `#pane=${ids[0]}`,
+          init: () => {
+            localStorage.setItem("aaa:default-view", "chat");
+            const media = window.matchMedia.bind(window);
+            window.matchMedia = query => { const value = media(query); if (query === "(display-mode: standalone)") Object.defineProperty(value, "matches", { value: true }); return value; };
+            window.chatFocusLog = [];
+            for (const type of ["focusin", "focusout", "select", "input", "keydown", "keyup", "pointerup", "scroll"]) document.addEventListener(type, e => {
+              if (e.target.matches?.(".composer-text, .xterm-helper-textarea")) window.chatFocusLog.push({ type, pane: e.target.closest(".term")?.dataset.pane, kind: e.target.className, hidden: e.target.closest(".term").hidden, start: e.target.selectionStart, end: e.target.selectionEnd, top: e.target.scrollTop });
+            }, true);
+          },
+        });
+        try {
+          const modal = p.getByTestId("recent-switcher");
+          const input = () => p.locator('.term:not([hidden]) textarea.composer-text');
+          const opened = async index => {
+            await p.locator(`.term[data-pane="${ids[index]}"]:not([hidden]) [data-testid="chat"]`).waitFor();
+            await p.locator('.term:not([hidden]) [data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
+          };
+          const focused = async selector => p.waitForFunction(selector => document.activeElement?.matches(selector), selector);
+          const go = async index => { await p.evaluate(id => { location.hash = `pane=${id}`; }, ids[index]); await opened(index); };
+          const cycle = async () => { await p.keyboard.press("Control+Tab"); await modal.waitFor({ state: "detached" }); };
+          const state = () => input().evaluate(el => ({ text: el.value, start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection }));
+          const select = async (start, end = start, direction = "forward") => input().evaluate((el, s) => { el.focus(); el.setSelectionRange(...s); }, [start, end, direction]);
+          await opened(0);
+          if (width === 1280) await focused(".composer-text");
+          else assert.deepEqual(await p.evaluate(() => window.chatFocusLog), [], `${label}: 처음 대화를 열 때 자동 자판 focus`);
+          await input().fill("첫 대화의 앞 중간 뒤"); await select(6);
+          const first = await state();
+          await go(1);
+          if (width === 1280) await focused(".composer-text");
+          await input().fill("둘째 대화의 선택 범위"); await select(3, 8, "backward");
+          const second = await state();
+          const from = await sentCount(p);
+          await cycle(); await opened(0);
+          assert.deepEqual(await state(), first, `${label}: 첫 대화의 초안·중간 커서`);
+          if (width === 1280) {
+            await focused(".composer-text");
+            await p.keyboard.insertText("삽입");
+            assert.equal(await input().inputValue(), first.text.slice(0, 6) + "삽입" + first.text.slice(6), "복귀 직후 커서 위치에서 입력");
+          }
+          await cycle(); await opened(1);
+          assert.deepEqual(await state(), second, `${label}: 둘째 대화의 역방향 선택`);
+          if (width === 1280) {
+            await focused(".composer-text");
+            await p.keyboard.insertText("교체");
+            assert.equal(await input().inputValue(), second.text.slice(0, 3) + "교체" + second.text.slice(8), "복귀 직후 선택한 범위 교체");
+            const edited = await state();
+            // 같은 pane을 뒤에 둔 패널에서 복귀해도 active 변화 없이 focus를 돌린다.
+            await inList(p, "activity-automations");
+            await p.locator('#sidebar-panel-automations:not([hidden])').waitFor();
+            await cycle(); await opened(1); await focused(".composer-text");
+            assert.deepEqual(await state(), edited, "패널에서 같은 대화로 focus 복귀");
+            // 패널 방문도 MRU에 들어간다. 뒤의 두 대화 왕복은 방문 순서를 다시 준비한다.
+            await go(0); await go(1);
+            assert.deepEqual(await state(), edited, "패널을 다녀온 뒤 연속 복귀 커서");
+            // 입력칸 밖을 누른 사건을 마지막 focus 대상으로 잘못 기록하지 않는다.
+            await p.getByTestId("chat").dispatchEvent("pointerup");
+            await p.keyboard.down("Control"); await p.keyboard.press("Tab"); await modal.waitFor();
+            // 선택 창이 실제 focus를 얻은 뒤 취소한다(빠른 keyup만 검사하지 않는다).
+            await focused('[role="listbox"]');
+            await p.keyboard.press("Escape"); await p.keyboard.up("Control");
+            await modal.waitFor({ state: "detached" }); await focused(".composer-text");
+            assert.deepEqual(await state(), edited, "Esc 취소 뒤 같은 커서");
+            // 본문의 버튼을 마지막으로 썼다면 그 대상으로 돌아간다.
+            const copy = p.locator('.term:not([hidden]) [aria-label="메시지 복사"]');
+            await copy.focus();
+            await cycle(); await opened(0); await cycle(); await opened(1);
+            await focused('[aria-label="메시지 복사"]');
+            // 마지막 대상이 사라지면 기본 입력으로 간다.
+            await p.getByTestId("chat-find-open").click();
+            await p.getByRole("searchbox", { name: "대화에서 찾기" }).waitFor();
+            await focused(".chat-find-input");
+            await cycle(); await opened(0); await cycle(); await opened(1);
+            await focused(".composer-text");
+            // 대화 DOM이 LRU에서 사라진 뒤에도 초안과 커서 숫자는 복원한다.
+            await select(2, 5, "backward");
+            const beforeEviction = await state();
+            await go(0); await go(2); await go(3);
+            await p.locator(`.term[data-pane="${ids[1]}"]`).waitFor({ state: "detached" });
+            await go(1); await focused(".composer-text");
+            assert.deepEqual(await state(), beforeEviction, "DOM 보관 종료 뒤 초안·선택 복원");
+            await input().fill(Array.from({ length: 40 }, (_, i) => `${i}번째 작성 중인 줄`).join("\n"));
+            await select(35, 50, "backward");
+            await input().evaluate(el => { el.scrollTop = 37; });
+            const longDraft = await state(), scroll = await input().evaluate(el => el.scrollTop);
+            assert.ok(scroll > 0, "넘치는 입력창 스크롤 fixture");
+            await cycle(); await opened(3); await cycle(); await opened(1); await focused(".composer-text");
+            assert.deepEqual(await state(), longDraft, "긴 초안의 선택 복원");
+            assert.equal(await input().evaluate(el => el.scrollTop), scroll, "입력창 내부 스크롤 복원");
+          } else {
+            // 터치로 다른 대화를 열고 돌아올 때 focus 사건이 없어야 한다.
+            await input().blur();
+            await p.evaluate(() => { window.chatFocusLog = []; });
+            await inList(p, `pane-${names[0]}`); await opened(0);
+            await inList(p, `pane-${names[1]}`); await opened(1);
+            assert.deepEqual(await p.evaluate(() => window.chatFocusLog), [], `${label}: 터치 전환이 화면 자판 입력에 focus`);
+          }
+          assert.equal(sentText(await sentFrames(p, from)), "", `${label}: 전환 키·작성 중 글이 PTY로 전달됨`);
+          assert.equal(await p.locator('.term[hidden]:not([inert])').count(), 0);
+          if (errors.length) throw new Error(errors.join("; "));
+        } catch (error) {
+          console.log("대화 focus 실패", label, await p.evaluate(() => ({ hash: location.hash, active: document.activeElement?.outerHTML, focus: window.chatFocusLog })));
+          throw error;
+        } finally { await p.context().close(); }
+      }
+    } finally { await wk.close(); }
+    for (const name of names) aaa("pane", "kill", name);
+  });
   await step("PWA 최근 화면: 고정 MRU·역방향·확정·Esc·blur·종료·팔레트 공유·설정 끄기·터미널 입력 경계 (Chromium·WebKit)", async () => {
     const wk = await webkit.launch({ headless: true });
     try {
