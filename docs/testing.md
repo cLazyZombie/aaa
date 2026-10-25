@@ -251,8 +251,23 @@
 - 첫 추가 전체 부하의 한 회는 새 회귀의 첫 답 응답 시한에서 진단 전에 종료됐다. 응답 gate의 시한을 입력 준비 뒤에 걸고 누름·응답을 `Promise.all`로 함께 관측해, 기다리는 누름보다 먼저 거부돼도 진단·정리를 마친다. 기존 20초 응답·30초 누름 상한은 유지하며 실패 자료에 실제 사건·요청·입력 상태를 보존한다.
 - 수정본 첫 전체 gate의 E2E53은 통과했지만 E2E113의 사본/링크 fixture가 SQLite 잠금으로 실패했다. 보존 DB에는 사본 500개·링크 356개가 있어 개별 링크 INSERT 구간의 외부 writer 경합을 확인했다. 사본·링크 준비와 링크 정리는 host 종료 뒤 transaction으로 실행하고 UI 결과는 읽기 전용 연결로 본다. 내부 보고서 준비는 바깥 transaction과 함께 쓸 수 있는 savepoint를 쓴다. `bulk-fixture.mjs`·그 시험은 t-1038 후보의 동일 파일을 재사용하며, 기존 실제 500개 정리·키 교체·DB/파일/UI 단언은 유지한다. [SQLite의 단일 writer·savepoint](https://www.sqlite.org/lang_transaction.html)([public domain](https://www.sqlite.org/copyright.html))를 대조했으며 busy 재시도·시한 증가는 없다.
 - 첫 host 재시작 대조는 빈 manifest를 구형 보고로 읽는 `backfill_report_ids`가 판 사본을 추가해 1,000개 정리로 실패했다. fixture의 빈 manifest는 기동 마이그레이션이 끝난 뒤 두고, 원래 500개 사본·링크·최종 파일/DB 단언을 유지한다.
-- 최종 전체 실행은 웹 유닛 581개·fmt·build·clippy·Rust 1,342개(기존 ignored 6)·Python 56개(기존 skip 2)·public이 통과했다. E2E 114파일/140작업 중 E2E53·113을 포함한 139작업은 통과했고, E2E114의 500개 변환 한 작업이 기존 20초 응답 상한을 넘었다. 보존 파일의 원문 이동 12.0초·규칙 478개 작성 9.3초와 해당 load1 22.9~27.8을 기록했다. 같은 코드·시한의 분리 E2E114는 네 조합 전체가 88.9초에 통과했고 실제 변환 응답은 10.6~11.5초였다. 부하 실패의 분리 확인 규칙을 적용하며 전체 gate가 전부 통과했다고 기록하지 않는다.
+- 최종 전체 실행은 웹 유닛 581개·fmt·build·clippy·Rust 1,342개(기존 ignored 6)·Python 56개(기존 skip 2)·public이 통과했다. E2E 114파일/140작업 중 E2E53·113을 포함한 139작업은 통과했고, E2E114의 500개 변환 한 작업이 기존 20초 응답 상한을 넘었다. 보존 파일의 원문 이동 12.0초·규칙 478개 작성 9.3초와 해당 load1 22.9~27.8을 기록했다. 같은 코드·시한의 분리 E2E114는 네 조합 전체가 88.9초에 통과했고 실제 변환 응답은 10.6~11.5초였다. 이 분리 통과는 착지 근거로 쓰지 않는다. 아래 제품 동기화 수리 뒤 E2E53·113·114를 포함한 전체 10 worker gate 통과가 필요하다.
 - 같은 전체 gate와 함께 CPU 4배 감속·E2E53 전체 세 회(worker 3)를 실행해 3/3 통과했다(98.9초). 원래 형식/직접 답 시나리오와 새 네 화면 응답 역전 검사를 모두 유지했다. 추가 실행 동안 load1은 10.3~48.7이었고 전체 gate와 실행 파일 바이트가 같았다. 묶음 착지에서는 t-1038과 함께 전체 gate를 다시 확인한다.
+
+## 이전 자동화 500개 변환의 동기화 비용과 복구(t-1041)
+
+- `aaa_conversion` 로그의 info는 미리보기·실행·재개 단계별 횟수/합계/최대 시간과 경과 시간을, debug는 파일별 쓰기·파일 fsync·원자적 공개·디렉터리 fsync·원본 제거 비용을 기록한다. 실행에는 잠금·계획 준비(디렉터리 읽기/파싱/검증)·기존 상태/DB 조회·journal 저장을, 재개에는 경로/내용 검증·파일 작업·DB/상태 반영을 구분한다. 원문 내용은 기록하지 않는다. E2E114는 성공한 실험실도 삭제 전에 단계 합계를 전체 gate 로그에 남긴다.
+- 실제 host의 같은 500개 시나리오에서 수정 전 HTTP 9,026ms, 파일 재개 8,844ms였다. 파일 fsync 1,001회 합계 3,930ms와 디렉터리 fsync 1,001회 합계 3,947ms가 재개의 약 89%였다. 계획 58ms·상태 포함 31ms·journal DB 6ms·재개 검증 10ms로 DB/스캔은 주 병목이 아니었다. macOS Rust의 `sync_all`은 `F_FULLFSYNC`를 사용한다.
+- 파일마다 `sync_all`을 유지하면서 파일 핸들과 동기화 작업을 최대 8개로 제한해 함께 실행한다. 모든 파일 동기화가 성공한 묶음만 hard link(보존 사본)/rename(출력)으로 공개한다. 같은 폴더의 생성은 한 번만 하며 변경 폴더와 조상을 각 단계 끝에 중복 없이 자식부터 동기화한다. 보존 사본의 데이터·이름 → 출력 데이터·이름 → 원본 제거·폴더 동기화 순서이며, 결과 파일이 모두 내구화되기 전에는 원본을 제거하지 않는다. 원문 제거 직전과 출력 공개 직전에 다른 편집을 재확인한다.
+- 첫 개선 계측은 HTTP 2,437ms, 재개 2,271ms였다. 파일 fsync는 1,001회 그대로이며 디렉터리 fsync는 보존 3회·출력 2회·제거 2회로 줄었다. 병렬 파일 fsync 합계는 worker별 경과의 합으로 전체 경과와 구별한다. 이 좁은 계측은 원인/개선 확인용이고 착지는 전체 `AAA_E2E_WORKERS=10 nice -n 15 bash scripts/ci-local.sh`에서 판단한다. 500개·응답 20초·최종 파일/DB/UI 단언을 유지한다.
+- `cargo test --profile verify --locked -p aaa-host --lib automation::tests::`는 기존 계획 hash·Reader·경로/심볼릭 링크·두 판 원문 보존과 새 묶음 회귀를 함께 검사한다. 새 회귀는 17개로 여러 묶음을 넘겨 보존/출력 내구화 순서, 보존 폴더 동기화 전·9번째 출력 공개·출력 폴더 동기화 전·첫 원본 제거에서의 중단, 실제 DB journal 유지와 host 재개·완료 뒤 멱등성을 확인한다. 실제 hard link 충돌 때 기존 사본·원문을 보존하며 자기 임시 파일만 정리한다. 검증 뒤 생긴 다른 편집을 출력이나 제거가 덮지 않아야 한다. 오류에는 원인과 보존/출력/제거 확인 개수를 남긴다.
+- 먼저 [atomicwrites의 파일/상위 폴더 동기화와 macOS flush](https://github.com/untitaker/python-atomicwrites/blob/master/atomicwrites/__init__.py)([MIT](https://github.com/untitaker/python-atomicwrites/blob/master/LICENSE))와 [tempfile의 persist 내구성 경계](https://docs.rs/tempfile/latest/src/tempfile/file/mod.rs.html)([MIT](https://github.com/Stebalien/tempfile/blob/master/LICENSE-MIT))를 조사했다. 데이터와 이름의 내구성을 별도로 보장하는 순서를 참고하며 외부 코드나 의존성은 추가하지 않았다.
+
+## 앞 기록 재구성 뒤 마우스 좌표 인코딩(t-1041)
+
+- 변환 수리 뒤 첫 전체 10 worker gate는 E2E53·113·114가 통과했으나 E2E109 WebKit 390px 복귀 첫 휠에서 실패했다. 실제 수신 자료는 휠 무전송이 아니라 `bin`의 옛 `ESC[M` 보고 한 건이었다. 앞 기록 적용 뒤 `addon-serialize` 0.13이 마우스 추적만 직렬화하고 SGR 좌표 인코딩을 빠뜨려, `term.reset()` 뒤 보고 형식이 바뀌었다.
+- E2E109는 실제 앞 기록의 `historyApplied` 사건과 맨 아래 복귀를 먼저 기다린 뒤 같은 12회 이동·첫 SGR 휠/실제 PTY 정확히 한 번·동일 xterm·연결·snapshot·입력·Reader·만료 단언을 검사한다. 고정 sleep이나 시한 변경 없이 원래 제품의 첫 이동에서 결정적으로 실패한다. 제품은 재구성 전에 xterm의 현재 좌표 인코딩을 읽어 SGR/SGR-pixels 모드도 직렬화 본문에 붙인다. 옛 기본 인코딩에는 모드를 추가하지 않는다.
+- [xterm serialize addon의 `_serializeModes`](https://github.com/xtermjs/xterm.js/blob/5.5.0/addons/addon-serialize/src/SerializeAddon.ts)와 [CoreMouseService](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/common/services/CoreMouseService.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)) 및 설치된 같은 판의 소스를 대조했다. xterm 내부 접근은 기존 viewport 보정처럼 고정 판에 한정하며 실제 브라우저/PTY 회귀가 판 변경 때도 보존을 검사한다.
 
 ## 질문 형식 경고와 답 전송(t-0956)
 

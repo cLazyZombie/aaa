@@ -1334,7 +1334,11 @@ export function TermView({
         if (buf.type !== "normal" || lines === 0) return done();
         const top = buf.viewportY;
         const keys = otherKeysRef.current;
-        const body = new TextEncoder().encode(serializer.serialize({ excludeAltBuffer: true }));
+        // addon-serialize 0.13은 추적 모드만 보존한다. reset이 지우는 좌표 인코딩도 붙여
+        // 앞 기록을 받은 뒤 휠이 SGR에서 옛 바이너리 보고로 바뀌지 않게 한다(xterm 5.5).
+        const encoding = (term as unknown as { _core: { coreMouseService: { activeEncoding: string } } })._core.coreMouseService.activeEncoding;
+        const mouseEncoding = encoding === "SGR" ? "\x1b[?1006h" : encoding === "SGR_PIXELS" ? "\x1b[?1016h" : "";
+        const body = new TextEncoder().encode(serializer.serialize({ excludeAltBuffer: true }) + mouseEncoding);
         // 다시 쓰는 동안의 화면: 지금 모습을 그대로 덮어 둔다(DOM renderer의 줄 요소 사본)
         const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
         const cover = screen?.cloneNode(true) as HTMLElement | undefined;

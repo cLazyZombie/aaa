@@ -1,6 +1,13 @@
 //! 변환 계획을 먼저 검증하고, 실패하면 이번 변환의 파일만 되돌린다.
 use super::*;
-use std::{collections::BTreeMap, io::Write, path::Path};
+#[cfg(test)]
+use std::io::Write;
+use std::{collections::BTreeMap, path::Path};
+#[path = "convert_timing.rs"]
+mod timing;
+pub(super) use timing::Timing;
+#[path = "convert_files.rs"]
+mod files;
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Plan {
     writes: BTreeMap<String, String>,
@@ -594,66 +601,103 @@ impl Plan {
 
 /// DB journal에서 재개한다. 알려진 원본/목적 bytes 외의 파일은 덮지 않는다.
 pub(super) fn resume(root: &Path, plan: &Plan) -> Result<Vec<String>, String> {
-    for file in plan.originals.keys().chain(plan.writes.keys()) {
-        parent(root, file)?;
-        if root.join(file).symlink_metadata().is_ok() {
-            let current = project_text(root, file)?;
-            if plan.originals.get(file) != Some(&current) && plan.writes.get(file) != Some(&current) {
-                return Err(format!("{file}: 이관 도중 다른 편집 발견 · journal 보존"));
+    resume_at(root, plan, |_, _| Ok(()))
+}
+
+#[cfg(test)]
+pub(super) fn resume_with(
+    root: &Path,
+    plan: &Plan,
+    at: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
+    resume_at(root, plan, at)
+}
+
+fn resume_at(
+    root: &Path,
+    plan: &Plan,
+    mut at: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
+    let mut timing = Timing::new("resume");
+    let (mut saved, mut written, mut removed) = (0, 0, 0);
+    let result = (|| {
+        let validation_started = std::time::Instant::now();
+        for file in plan.originals.keys().chain(plan.writes.keys()) {
+            parent(root, file)?;
+            if root.join(file).symlink_metadata().is_ok() {
+                let current = project_text(root, file)?;
+                if plan.originals.get(file) != Some(&current) && plan.writes.get(file) != Some(&current) {
+                    return Err(format!("{file}: 이관 도중 다른 편집 발견"));
+                }
             }
         }
-    }
-    for (file, archive) in &plan.archives {
-        parent(root, &archive.path)?;
-        let original = &plan.originals[file];
-        if root.join(&archive.path).symlink_metadata().is_ok() {
-            if project_text(root, &archive.path)? != *original {
-                return Err(format!("{}: 보존 사본 충돌", archive.path));
-            }
-        } else {
-            std::fs::create_dir_all(root.join(&archive.path).parent().unwrap()).map_err(|e| e.to_string())?;
+        timing.record("validation", validation_started);
+        let mut backups = files::Batch::new(root, true);
+        for (file, archive) in &plan.archives {
+            parent(root, &archive.path)?;
+            let original = &plan.originals[file];
             let dest = root.join(&archive.path);
-            let temp = dest.parent().unwrap().join(format!(".aaa-backup-{}.tmp", aaa_common::util::new_id()));
-            let result = (|| -> std::io::Result<()> {
-                let mut f = std::fs::OpenOptions::new().create_new(true).write(true).open(&temp)?;
-                f.write_all(original.as_bytes())?;
-                f.sync_all()?;
-                std::fs::hard_link(&temp, &dest)?;
-                #[cfg(unix)]
-                std::fs::File::open(dest.parent().unwrap())?.sync_all()?;
-                Ok(())
-            })();
-            let _ = std::fs::remove_file(&temp);
-            result.map_err(|e| e.to_string())?;
+            if dest.symlink_metadata().is_ok() {
+                if project_text(root, &archive.path)? != *original {
+                    return Err(format!("{}: 보존 사본 충돌", archive.path));
+                }
+                backups.touch(dest.parent().unwrap());
+                saved += 1;
+            } else if backups.stage(&archive.path, original, None, &mut timing)? {
+                backups.flush(&mut timing, &mut |name| {
+                    saved += 1;
+                    at("backup_published", name)
+                })?;
+            }
         }
-    }
-    for (file, text) in &plan.writes {
-        if root.join(file).exists() && project_text(root, file)? == *text {
-            continue;
+        backups.flush(&mut timing, &mut |name| {
+            saved += 1;
+            at("backup_published", name)
+        })?;
+        at("backup_sync", "")?;
+        backups.sync_directories(&mut timing, "backup_directory_sync")?;
+        // 사본의 bytes와 이름이 모두 내구화되기 전에는 원본 자리에 새 파일을 쓰지 않는다.
+        at("backups_durable", "")?;
+        let mut outputs = files::Batch::new(root, false);
+        for (file, text) in &plan.writes {
+            if root.join(file).exists() && project_text(root, file)? == *text {
+                outputs.touch(root.join(file).parent().unwrap());
+                written += 1;
+            } else if outputs.stage(file, text, plan.originals.get(file).map(String::as_str), &mut timing)? {
+                outputs.flush(&mut timing, &mut |name| {
+                    written += 1;
+                    at("output_published", name)
+                })?;
+            }
         }
-        let dest = root.join(file);
-        std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-        let temp = dest.parent().unwrap().join(format!(".aaa-migrate-{}.tmp", aaa_common::util::new_id()));
-        let result = (|| -> std::io::Result<()> {
-            let mut f = std::fs::OpenOptions::new().create_new(true).write(true).open(&temp)?;
-            f.write_all(text.as_bytes())?;
-            f.sync_all()?;
-            std::fs::rename(&temp, &dest)?;
-            #[cfg(unix)]
-            std::fs::File::open(dest.parent().unwrap())?.sync_all()?;
-            Ok(())
-        })();
-        if let Err(e) = result {
-            let _ = std::fs::remove_file(&temp);
-            return Err(e.to_string());
+        outputs.flush(&mut timing, &mut |name| {
+            written += 1;
+            at("output_published", name)
+        })?;
+        at("output_sync", "")?;
+        outputs.sync_directories(&mut timing, "output_directory_sync")?;
+        at("outputs_durable", "")?;
+        // 결과의 bytes와 이름도 확정한 뒤 원문을 제거한다. 실패하면 사본과 journal로 재개한다.
+        let mut sources = files::Batch::new(root, false);
+        for file in plan.originals.keys().filter(|f| !plan.writes.contains_key(*f)) {
+            if root.join(file).symlink_metadata().is_ok() && project_text(root, file)? != plan.originals[file] {
+                return Err(format!("{file}: 원본 제거 전 다른 편집 발견"));
+            }
+            match timing.measure("source_remove", file, || std::fs::remove_file(root.join(file))) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{file}: 원본 제거: {e}")),
+            }
+            sources.touch(root.join(file).parent().unwrap());
+            removed += 1;
+            at("source_removed", file)?;
         }
-    }
-    for file in plan.originals.keys().filter(|f| !plan.writes.contains_key(*f)) {
-        match std::fs::remove_file(root.join(file)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-    Ok(plan.listing())
+        sources.sync_directories(&mut timing, "source_directory_sync")?;
+        at("sources_durable", "")?;
+        Ok(plan.listing())
+    })();
+    result.map_err(|error| format!(
+        "변환 실패: {error} · 원문 보존 확인 {saved}/{}개, 출력 확인 {written}/{}개, 원본 제거 확인 {removed}개 · journal 보존",
+        plan.archives.len(), plan.writes.len(),
+    ))
 }
