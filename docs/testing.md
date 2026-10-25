@@ -1,3 +1,10 @@
+## 할 일 한 줄 배치(t-1048)
+
+- 기존 E2E107을 확장한다. Chromium 1280/2000/390/320px·WebKit 1366/1024/390/320px에서 실제 host의 일반·예약·하위·병합 대기 행을 표시한다. 목록의 실제 너비가 640px 이상이면 모든 표시 칩과 제목·메뉴 중심이 1px 이내이고 행 높이는 40px 이하여야 한다. 좁은 목록은 제목 아래 칩 시작점, 휴대폰 제목 100px·행 높이 76px·메모만 있는 행 40px 계약을 유지한다.
+- 기존 겹침·잘림·공통 열·하위 들여쓰기·첨부·가로 넘침·상세 열기/닫기·폭 전환 뒤 표지 한 개 검사에 실제 TASKS.md의 긴 제목 갱신 뒤 말줄임·겹침, 상세를 열어 목록이 좁아진 뒤의 배치, 제목 원문 tooltip과 메뉴 열기를 더한다. 변경 전후 1280px·390px 화면은 같은 실제 fixture로 headless 촬영한다. 긴 제목의 파일 갱신은 기존 ticker tick으로 알리고 DOM·글꼴·host 사건으로 끝낸다. 고정 sleep·재시도·시한 확대는 없다.
+- 부분 검사는 E2E107과 기존 할 일 E2E43·46·47·52·54·67·70·75·76을 사용한다. 전체 ci-local은 coordinator가 준 차례에 한 번 실행한다. 작업 폴더의 Playwright 1.64.1 패키지와 내부 공용 브라우저만 쓰고 시스템 설정을 바꾸지 않는다. FRONT_API 1.125·기존 E2E 번호를 유지한다.
+- OSS 후보는 [herdr-web-ui Sidebar.css](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.css)의 축소 가능한 제목과 후행 칩([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE)), [herdr-projects popup.rs](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/popup.rs)의 제목·담당·thread·메모 순서([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE))다. 구성만 참고하고 외부 코드·의존성은 추가하지 않는다.
+
 ## 영구 삭제의 공개 경로 분리와 배경 제거(t-1042 후속)
 
 - 67회차 착지 t-1043의 전체 부하에서 기존 후보는 WebKit 1280px의 500개 삭제 HTTP 12.508초로 10초 목표에 실패했다. host 계측은 파일 제거 11.870초·잠금 0.211초·DB 약 7ms였다. 앞선 회차의 7.738초는 충분한 여유가 아니었으며 아래 초기 DB 개선의 통과 결과를 착지 성공으로 보지 않는다.
