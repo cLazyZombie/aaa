@@ -3727,3 +3727,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - m13의 다른 probe도 점검했다. image·rollout·thread_park·thread_stages는 명령 출력 완료 표지를 기다리고, web_publication·accounts의 교체형 JSON fixture는 임시 파일 교체를 사용한다. 이번 기억 probe와 같은 직접 JSON 게시 지점 두 곳을 함께 수리했으며 다른 시험의 입력 fixture는 바꾸지 않는다.
 - 단독 Codex 시험 5회와 공통 Claude 시험 1회를 미리 정한 표본으로 실행한다. 한 번이라도 실패하면 중단한다. 이어 전체 `nice -n 15 bash scripts/ci-local.sh --tee`, 별도 공개 검사, Linux/Windows strict cross clippy와 dev 의존성 없는 Windows release 빌드를 수행한다. 고정 sleep·실패 재시도·시한 연장·기대값 완화는 없다.
 - [Python `os.replace`](https://docs.python.org/3/library/os.html#os.replace)와 [`tempfile.NamedTemporaryFile`](https://docs.python.org/3/library/tempfile.html#tempfile.NamedTemporaryFile), 기존 m13 web_publication의 임시 파일 교체를 참고했다. Python 구현은 PSF License다. 외부 코드를 복사하거나 의존성을 추가하지 않았다.
+
+
+## E2E104의 정상 단발 예약과 타이머 누수 구분(t-1028)
+
+- 기준 main과 t-1021+probe 수리 조합에서 Chromium 1280/390px를 같은 진단 계측·단독 worker로 각각 사전 고정 3회 실행했고 모두 통과했다. 전체 gate의 pending timer 1→3은 단순 총수 스냅샷이었다. 왕복 단계별 등록 stack을 남기니 20번째 복귀에도 ChatFind.useDebounced 100ms, Term ResizeObserver 120ms, ConversationRefresh.drain 약 1.97초가 함께 남는 순간이 있었다. 세 번째는 검색어 debounce이며, 제품 타이머 누수의 증거는 아니었다.
+- E2E104는 관측한 100/120ms 단발 예약이 실행·취소되는 사건 뒤 수량을 잰다. setTimeout 계측은 생성 stack과 callback을 남기고, queueMicrotask에서 취소→같은 사건의 재등록까지 확인한다. 다른 타이머는 기다려 숨기지 않고 즉시 스냅샷에 남긴다. 기존 timer 증가 허용치·listener/term 수·숨김 HTTP/입력·LRU·TTL·용량 단언과 단계 시한은 유지한다.
+- `web/test/retentionTimers.test.mjs`는 수동 callback 사건으로 정상 3→1, callback/취소 뒤 단발 재등록, 남은 타이머 2개의 기존 증가 단언 실패, 단발 지연값으로 끝없이 재예약하는 경우의 미정착을 확인한다. 고정 sleep·시한/기대값 완화·실패 재시도는 없다. 공통 계측은 E2E104의 Chromium/WebKit 두 폭으로 확인한다.

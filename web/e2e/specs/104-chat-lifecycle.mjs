@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { root, AA, aaa, step, browser, webkit, pairPage, domIs, until, waitOutput } from "../lib/harness.mjs";
 import { frames, shown, go, prepare, line } from "../lib/chat-retention.mjs";
+import { installRetentionTimers } from "../lib/retention-timers.mjs";
 function instrument() {
-  const timers = new Set(), listeners = new Map();
+  const listeners = new Map();
   window.retainedSockets = [];
   window.retainedSocketPeak = 0;
   const Native = window.WebSocket;
@@ -18,16 +19,6 @@ function instrument() {
       });
     }
   };
-  window.installRetentionTimers = () => {
-    timers.clear();
-    const timeout = window.setTimeout.bind(window), clear = window.clearTimeout.bind(window);
-    window.setTimeout = (fn, ms, ...args) => {
-      let id;
-      id = timeout(() => { timers.delete(id); fn(...args); }, ms);
-      timers.add(id); return id;
-    };
-    window.clearTimeout = id => { timers.delete(id); clear(id); };
-  };
   const add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
   const lane = (target, type, options) => `${target === window ? 'window' : 'document'}:${type}:${Boolean(typeof options === 'boolean' ? options : options?.capture)}`;
   EventTarget.prototype.addEventListener = function(type, fn, options) {
@@ -38,14 +29,14 @@ function instrument() {
     if (this === window || this === document) listeners.get(lane(this, type, options))?.delete(fn);
     return remove.call(this, type, fn, options);
   };
-  window.retentionMetrics = () => ({ timers: timers.size, listeners: [...listeners.values()].reduce((n, v) => n + v.size, 0), listenerTypes: Object.fromEntries([...listeners].map(([k, v]) => [k, v.size])), terms: document.querySelectorAll('.term').length, nodes: document.querySelectorAll('*').length });
+  window.retentionMetrics = () => ({ ...window.retentionTimerMetrics(), listeners: [...listeners.values()].reduce((n, v) => n + v.size, 0), listenerTypes: Object.fromEntries([...listeners].map(([k, v]) => [k, v.size])), terms: document.querySelectorAll('.term').length, nodes: document.querySelectorAll('*').length });
 }
 const term = (page, pane) => page.locator(`.term[data-pane="${pane}"]`);
 const call = (page, req) => page.evaluate(async req => (await fetch('/api/v1/call', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) })).json(), req);
 async function check(engine, width, fixture) {
   const requests = [], sizes = new Map();
   let hold = null;
-  const ph = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { serviceWorkers: "block", hash: "#tasks", init: instrument, setup: async context => {
+  const ph = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { serviceWorkers: "block", hash: "#tasks", init: { content: `(${installRetentionTimers})();(${instrument})();` }, setup: async context => {
     await context.addInitScript(keys => { for (const key of keys) localStorage.setItem(`aaa:view:${key}`, 'chat'); }, fixture.keys);
     await context.route('**/api/v1/call', async route => {
       const req = route.request().postDataJSON();
@@ -150,7 +141,8 @@ async function check(engine, width, fixture) {
     await go(page, 'tasks'); await frames(page); await open(ids[0]);
     if (n === 9 || n === 19) {
       if (cdp) await cdp.send('HeapProfiler.collectGarbage');
-      const sample = await page.evaluate(() => window.retentionMetrics());
+      // 정상 단발 예약이 완료·취소되는 사건을 기다린다. 전체 타이머 수가 맞을 때까지 기다리지는 않는다.
+      const sample = await page.evaluate(async () => { await window.retentionTimersSettled(); return window.retentionMetrics(); });
       sample.heap = cdp ? await cdp.send('Runtime.getHeapUsage') : null;
       metrics.push(sample);
     }
