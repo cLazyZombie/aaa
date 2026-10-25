@@ -5,7 +5,7 @@ import { apiAtLeast } from "./automationModel.ts";
 import type { DeviceView, LinkView, PublishState } from "./gen/proto";
 
 /** 웹의 머신 등록·공개 바꾸기·보고서 올리기·키 교체는 1.80 이상 host만 안다 */
-export const canAdmin = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 80);
+export const canAdmin = (frontApi: string | null | undefined, minor = 80): boolean => apiAtLeast(frontApi, 1, minor);
 
 /** 새 머신 화면의 확인 코드: 숫자만 6자리(사이 공백·하이픈은 host도 뺀다) */
 export function enrollCode(text: string): string | null {

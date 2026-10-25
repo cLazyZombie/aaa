@@ -95,7 +95,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
     AgentHello {
         proto: AGENT_LINK,
         machine_id: agent.machine_id.clone(),
-        machine_name: agent.name.clone(),
+        machine_name: agent.name.lock().unwrap().clone(),
         boot_id: agent.boot_id.clone(),
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
@@ -147,6 +147,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "workspace_metrics.v2".into(),
             "git_merged.v1".into(),
             "rename.v1".into(),
+            "machine_label.v1".into(),
             "history.v1".into(),
             "profiles.v2".into(),
             // host의 ResolvedProfile과 설치 harness 조회(Harnesses)를 받는다.

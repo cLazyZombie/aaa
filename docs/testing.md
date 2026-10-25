@@ -3702,3 +3702,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 같은 가정을 전 E2E에서 찾았다. E2E53의 login-v2는 프로젝트 없는 명시 참조이고 E2E69는 질문 ID, E2E77·112는 맨 순번 ID, E2E52의 library 경로는 첨부 대상이다. 이들은 프로젝트를 버린 보고서 주소를 전제하지 않으므로 바꾸지 않는다. 단위 시험에 맨 이름·명시 프로젝트·다른 프로젝트의 같은 이름을 구별하는 사례를 둔다.
 - 새 맨 이름 링크를 추가한 첫 전체 실행은 137/138 작업이 통과하고 E2E38의 연속 복귀에서 멈췄다. 관측상 URL·대화 DOM은 먼저 돌아오고 `aria-busy="true"` 동안 줄 복원이 계속된다. 이 중간에 다음 링크로 굴리면 이전 복원이 그 이동을 덮는다. 다음 입력·위치 측정은 제품의 기존 `aria-busy="false"` 완료 사건 뒤에 한다. 위치 오차·클릭·시한 기대값은 유지한다.
 - 최신 origin/main을 포함한 후보에서 `ci-local.sh --only web,e2e,public`로 웹 E2E 전체를 검증한다. 시간 상한·재시도·force click·기존 입력/복귀 기대값을 바꾸지 않는다. 브라우저는 저장소의 Chromium launcher·내부 공용 캐시와 Playwright 1.64.1을 사용한다.
+
+## 등록을 유지하는 머신 이름 변경(t-1016, plan §8.490)
+
+- host `machine_rename::tests` 6개는 같은 TLS 등록 ID·키와 연결 generation 유지, 열린/끝난 thread 표시, 실제 예약 테이블의 승인판·선택 고정·task 원문, 프로젝트 repos·CI 조회 머신·자동화/routine·명령 승인·workspace 허용 이전을 검사한다. 지표를 이름 변경 뒤 재회수해 중복이 생기지 않는지도 확인한다. 제목·메모·명령·env·경로·ULID·CRLF를 보존하고 이름 충돌·host 자신·Reader·세션 호출·기동/dispatch 중 변경을 거부한다.
+- 같은 시험은 JSON/설정 오류 뒤 파일·DB 원복과 두 방향의 중단 journal 복구, 직접 편집 보존, 구판 agent의 옛 hello가 이름을 되돌리지 않음을 확인한다. agent `machine_label_tests`는 재시작 없이 이름표를 저장하고 원래 실행 이름으로 재시작해도 이름과 장치 ID가 유지됨을 검사한다.
+- E2E60은 loopback TLS의 별도 agent와 살아 있는 셸을 만든다. CLI 변경, Chromium 1280/390px의 웹 변경·이름 규칙·충돌, 파일 참조·workspace 허용 이전, 브라우저 pane WebSocket 정확히 같은 하나 유지·미전송 입력 보존·새로고침 복원·실제 PTY 입력을 검사한다. agent를 의도적으로 종료해 연결 종료 사건을 본 뒤 옛 실행 이름으로 다시 띄워 같은 pane/ID와 새 이름이 돌아오는지 확인한다. 추가 웹 기기·원격 session-host도 시험 안에서 정리해 기존 마지막 조작 기기 단언을 유지한다.
+- 웹 `machineIdentity.test.mjs`는 두 터미널 초안의 이름 기반 키를 고유 pane ID로 찾아 ID 기반 키로 옮긴다. 다른 pane·새 키·모호한 옛 키는 보존한다. E2E47의 저장 키 단언도 머신 ID 기준으로 바꾸며 글 보존 기대값은 유지한다. E2E13의 단절 초안과 E2E99의 Chromium/WebKit × 1280/390px workspace 허용도 함께 확인한다.
+- 실행: host 전체 유닛 655개 통과(기존 ignored 2개 유지), agent 전체 167개, 웹 유닛 566개·타입/번들, proto TypeScript 계약 2개, crate 의존 경계 2개, host/agent/proto/CLI all-targets clippy·공개 검사. 관련 E2E13·47·60·61·72·98·99 총 7파일이 통과했다. Playwright npm 1.64.1은 자기 폴더에 두고 내부 공용 브라우저 캐시를 사용했다. 브라우저 설치·고정 sleep·시한 확대·기대값 완화·실패 자동 재시도는 없다.
+- 초기 새 fixture는 ULID/자동화 schema와 CLI 응답 형식을 잘못 가정해 실패했다. 정본 parser·응답에 맞춰 고쳤다. E2E60에서 추가 Controller 기기의 `/me` 응답을 `ok` 없이 읽어 정리가 빠지자 기존 마지막 Controller 검사가 실패했으며, 기기 ID의 존재 단언과 명시적 폐기를 추가했다. clippy의 중첩 if 지적도 고쳤다. 이름 변경 자체의 연결·초안·참조 이전 기대값은 유지한다. 운영 머신 이름 변경·배포·실기 UI 확인은 이 검증에 포함하지 않는다.

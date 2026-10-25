@@ -105,6 +105,7 @@ pub(crate) fn needs_uv(req: &FrontRequest, device: &str) -> bool {
         | R::EnrollOpen { .. }
         | R::EnrollApprove { .. }
         | R::MachineRevoke { .. }
+        | R::MachineRename { .. }
         | R::MachineSetupStart { .. }
         | R::MachineSetupTrust { .. }
         | R::WebPublish
@@ -427,6 +428,7 @@ fn req_op(req: &FrontRequest) -> &'static str {
         R::EnrollOpen { .. } => "enroll_open",
         R::EnrollApprove { .. } => "enroll_approve",
         R::MachineRevoke { .. } => "machine_revoke",
+        R::MachineRename { .. } => "machine_rename",
         R::MachineSetupStart { .. } => "machine_setup_start",
         R::MachineSetupTrust { .. } => "machine_setup_trust",
         R::WebPublish => "web_publish",

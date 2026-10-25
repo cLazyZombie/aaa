@@ -6,11 +6,13 @@
 // (살아 있는 링크 수, 옛 링크 끊김), 보기 전용 기기, 휴대폰 390.
 // host는 PATH 앞의 가짜 `tailscale`을 부른다(실제 tailscale을 건드리지 않는다): serve 상태는 실험실 파일 하나다. 새 머신은 같은 Mac에서
 // 다른 설정·상태 폴더로 띄운 agent다(host agent_listen을 loopback에 연다).
+import { terminateSessionHosts } from "../lib/session-cleanup.mjs";
+import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
-import { root, AA, env, procs, aaa, step, browser, pairPage, domIs, shot, openSettings, inList, inTime, start, stop, until, base } from "../lib/harness.mjs";
+import { root, AA, env, procs, aaa, step, browser, pairPage, domIs, shot, openSettings, inList, inTime, start, stop, until, waitOutput, base } from "../lib/harness.mjs";
 
 const bin = `${root}/fakebin`;
 fs.mkdirSync(bin, { recursive: true });
@@ -123,6 +125,99 @@ export default async function ({ page }) {
     await mp.getByRole("button", { name: "창 닫기" }).click();
     await mp.getByTestId("enroll-open-button").waitFor();
     await shot(page, "60-machines-desktop");
+  });
+
+  await step("머신 이름 변경: CLI·웹 1280/390, 충돌·참조 이전·열린 pane·재연결", async () => {
+    fs.mkdirSync(`${root}/b/work/app`, { recursive: true });
+    aaa("project", "set", "demo", "repos.add", `${root}/b/work/app@labB`);
+    fs.writeFileSync(`${root}/projects/demo/TASKS.md`, "## 일\n- [ ] 이름 시험 (fake@labB) [app]\n  labB는 메모에 남긴다\n");
+    fs.mkdirSync(`${root}/projects/demo/automations`, { recursive: true });
+    fs.writeFileSync(`${root}/projects/demo/automations/rename-check.toml`, "schema=2\nenabled=false\n[trigger]\nkind='schedule'\nevery='1h'\n[action]\nkind='command'\ncommand='echo labB'\nmachine='labB'\n");
+    aaa("machine", "workspaces", "labB", "--project", "demo", "--allow", "app");
+    let pane;
+    let viewing;
+    let viewerDevice;
+    const sockets = [];
+    try {
+      aaa("tab", "create", "--machine", "labB", "--label", "rename-live", "--", "/bin/sh");
+      pane = aaa("pane", "list").panes.find(p => p.machine === "labB");
+      assert.ok(pane);
+      viewing = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 844 }, {
+        hash: `#pane=${pane.id}`, line: true,
+        onPage: p => p.on("websocket", ws => { if (ws.url().includes(`/panes/${pane.id}/ws`)) sockets.push(ws); }),
+      })).page;
+      viewerDevice = (await viewing.evaluate(async () => (await fetch("/api/v1/me")).json())).ok.device;
+      assert.ok(viewerDevice);
+      await viewing.getByLabel("보낼 글").fill("아직 보내지 않은 글");
+      const terminal = viewing.getByTestId("terminal");
+      await terminal.waitFor();
+      await until("원격 pane 소켓", () => sockets.length === 1);
+      const firstSocket = sockets[0];
+      assert.ok(firstSocket);
+      aaa("pane", "run", pane.id, "printf 'browser-%s\n' 'ready'");
+      await terminal.locator(".xterm-rows").filter({ hasText: "browser-ready" }).waitFor();
+      const machine = aaa("machine", "list").machines.find(m => m.name === "labB");
+      aaa("machine", "rename", "labB", "labC");
+      assert.equal(aaa("machine", "list").machines.find(m => m.name === "labC").id, machine.id);
+      assert.equal(aaa("pane", "get", pane.id).machine, "labC");
+      assert.equal(aaa("pane", "get", pane.id).connection, "connected");
+      assert.match(fs.readFileSync(`${root}/projects/demo/TASKS.md`, "utf8"), /fake@labC/);
+      assert.match(fs.readFileSync(`${root}/projects/demo/TASKS.md`, "utf8"), /labB는 메모/);
+      assert.match(fs.readFileSync(`${root}/projects/demo/project.toml`, "utf8"), /machine = "labC"/);
+      assert.equal(aaa("machine", "workspaces", "labC", "--project", "demo").workspaces.find(w => w.workspace === "app").enabled, true);
+      assert.match(fs.readFileSync(`${root}/projects/demo/automations/rename-check.toml`, "utf8"), /machine="labC"/);
+      assert.throws(() => aaa("machine", "rename", "labC", "labA"), /name_taken/);
+      assert.throws(() => aaa("machine", "rename", "labA", "new-host"), /forbidden/);
+      await mp.getByRole("button", { name: "labC 이름 바꾸기", exact: true }).waitFor();
+      assert.equal(await mp.getByRole("button", { name: "labA 이름 바꾸기", exact: true }).count(), 0);
+      let current = "labC";
+      for (const [width, next] of [[1280, "labD"], [390, "labE"]]) {
+        await page.setViewportSize({ width, height: 844 });
+        await inList(page, mp.getByRole("button", { name: `${current} 이름 바꾸기`, exact: true }));
+        const rename = page.getByRole("dialog", { name: `${current} 이름 바꾸기`, exact: true });
+        await rename.getByRole("textbox", { name: "새 머신 이름" }).fill("bad name");
+        assert.equal(await rename.getByRole("button", { name: "이름 바꾸기", exact: true }).isDisabled(), true);
+        await rename.getByRole("textbox", { name: "새 머신 이름" }).fill("labA");
+        await rename.getByRole("button", { name: "이름 바꾸기", exact: true }).click();
+        await rename.getByRole("alert").filter({ hasText: "이미" }).waitFor();
+        await rename.getByRole("textbox", { name: "새 머신 이름" }).fill(next);
+        assert.equal(await rename.evaluate(el => el.scrollWidth <= el.clientWidth && document.documentElement.scrollWidth <= innerWidth), true);
+        await shot(page, `60-machine-rename-${width}`);
+        await rename.getByRole("button", { name: "이름 바꾸기", exact: true }).click();
+        await rename.waitFor({ state: "detached" });
+        await mp.getByTestId("machine-list").locator(`[data-name="${next}"]`).filter({ hasText: "연결됨" }).waitFor();
+        assert.equal(aaa("pane", "get", pane.id).id, pane.id);
+        assert.equal(sockets.length, 1, "이름 변경이 브라우저 pane 연결을 새로 만들면 안 된다");
+        assert.equal(firstSocket.isClosed(), false);
+        assert.equal(await viewing.getByLabel("보낼 글").inputValue(), "아직 보내지 않은 글");
+        aaa("pane", "run", pane.id, `printf 'rename-%s\n' '${width}'`);
+        await waitOutput(pane.id, `rename-${width}`);
+        current = next;
+      }
+      await viewing.reload();
+      await viewing.getByLabel("보낼 글").waitFor();
+      assert.equal(await viewing.getByLabel("보낼 글").inputValue(), "아직 보내지 않은 글");
+      await page.setViewportSize({ width: 1280, height: 844 });
+      await until("agent 이름표 영속 저장", () => fs.existsSync(`${root}/b/s/agent/machine-label`) && fs.readFileSync(`${root}/b/s/agent/machine-label`, "utf8") === "labE");
+      // 실행 옵션은 원래 이름이다. sidecar와 TLS ID의 host 이름표가 재연결의 되돌림을 막는다.
+      await stop("agentB");
+      await until("원격 연결 종료 사건", () => aaa("machine", "list").machines.find(m => m.id === machine.id).connection !== "connected");
+      start("agentB", nodeB, "agent", "--host", aaa("status").agent_listen, "--name", "labB");
+      await until("같은 pane 재연결", () => aaa("pane", "get", pane.id).connection === "connected");
+      assert.equal(aaa("pane", "get", pane.id).machine_id, machine.id);
+      assert.equal(aaa("machine", "list").machines.find(m => m.id === machine.id).name, "labE");
+      aaa("pane", "run", pane.id, "printf 'reconnected-%s\n' 'rename'");
+      await waitOutput(pane.id, "reconnected-rename");
+      // 뒤의 기존 등록 관리 시험은 원래 이름으로 이어 간다.
+      aaa("machine", "rename", "labE", "labB");
+      await mp.getByRole("button", { name: "labB 자세히", exact: true }).waitFor();
+      fs.unlinkSync(`${root}/projects/demo/automations/rename-check.toml`);
+    } finally {
+      if (viewing) await viewing.context().close();
+      if (viewerDevice) aaa("web", "revoke", viewerDevice);
+      if (pane) { try { aaa("pane", "kill", pane.id); } catch (e) { console.error("이름 시험 pane 정리:", e.message); } }
+      await terminateSessionHosts(`${root}/b/s/agent/sessions`);
+    }
   });
 
   await step("머신 상세(M0): 줄에 OS·CPU·판, 「자세히」에 연결·판·실행 파일 SHA-256·agent 기능", async () => {

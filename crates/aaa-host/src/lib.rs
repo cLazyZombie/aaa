@@ -58,6 +58,7 @@ mod library_retention;
 mod library_upload;
 mod lifecycle;
 pub mod link;
+mod machine_rename;
 mod machine_setup;
 pub mod migrate;
 mod notice;
@@ -536,6 +537,8 @@ pub struct Host {
     pub enroll_changed: tokio_watch::Sender<u64>,
     /// SSH 머신 추가 작업을 읽고 바꾸는 한 차례(machine_setup.rs)
     setup_gate: Mutex<()>,
+    machine_rename_gate: Mutex<()>,
+    machine_label_gate: tokio::sync::Mutex<()>,
     metrics_gate: tokio::sync::Mutex<()>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
@@ -718,6 +721,7 @@ impl Host {
         util::ensure_private_dir(&state)?;
         let accounts = accounts::Accounts::new(&state).map_err(|e| anyhow::anyhow!(e.message))?;
         let db = db::Db::open(&state.join("host.db")).context("host DB")?;
+        machine_rename::recover(&db)?;
         let library_signing = library_links::SigningKey::open(&state)?;
         let host_id = match db.meta("host_id")? {
             Some(v) => v,
@@ -808,6 +812,8 @@ impl Host {
             accounts_changed: tokio_watch::channel(0).0,
             enroll_changed: tokio_watch::channel(0).0,
             setup_gate: Mutex::new(()),
+            machine_rename_gate: Mutex::new(()),
+            machine_label_gate: tokio::sync::Mutex::new(()),
             metrics_gate: tokio::sync::Mutex::new(()),
             account_meta_gate: Mutex::new(()),
             device_gate: Mutex::new(()),
@@ -934,6 +940,12 @@ impl Host {
 
     /// hello를 받아들였다: 머신·pane 목록을 갱신하고 모든 세션을 구독한다.
     pub fn agent_connected(self: &Arc<Self>, hello: &aaa_proto::AgentHello, local: bool, conn: AgentConn) {
+        let mut hello = hello.clone();
+        if let Ok(Some(machine)) = self.db.machine_by_id(&hello.machine_id) {
+            hello.machine_name = machine.name;
+        }
+        let hello = &hello;
+        self.sync_machine_label(&hello.machine_id, &conn, &hello.features);
         aaa_common::diagnostic::ignored(self.db.touch_machine(hello), "보조 작업 실패 뒤 기존 처리를 계속한다");
         let generation = conn.generation;
         // 연결을 공개하기 전에 상태 복원 울타리를 친다. host 재시작 뒤에는 실행 중인 pane도 아직 agent=None이다.
@@ -1528,6 +1540,7 @@ impl Host {
                 | FrontRequest::EnrollClose
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
+                | FrontRequest::MachineRename { .. }
                 | FrontRequest::MachineSetupStart { .. }
                 | FrontRequest::MachineSetupTrust { .. }
                 | FrontRequest::MachineSetupChoose { .. }
@@ -2534,6 +2547,7 @@ impl Host {
                 Ok(FrontResponse::Pending { pending, open_until_ms })
             }
             FrontRequest::EnrollApprove { name, code } => self.approve(&name, &code, actor),
+            FrontRequest::MachineRename { name, to } => self.machine_rename(&name, &to, actor),
             FrontRequest::MachineRevoke { name } => {
                 // 웹에서는 host 머신 자신을 폐기하지 않는다(그 머신의 agent·화면이 함께 끊긴다: host 터미널에서 한다)
                 if actor.starts_with("device:")

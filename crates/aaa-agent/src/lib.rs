@@ -168,7 +168,7 @@ type DrawnPage = (String, u64, std::time::SystemTime, Arc<Vec<u8>>);
 pub struct Agent {
     pub state: PathBuf,
     pub machine_id: String,
-    pub name: String,
+    pub name: Mutex<String>,
     pub boot_id: String,
     pub dev_mode: bool,
     pub default_cwd: Option<String>,
@@ -239,13 +239,19 @@ impl Agent {
         util::ensure_private_dir(&state)?;
         util::ensure_private_dir(&state.join("sessions"))?;
         util::ensure_private_dir(&state.join("run"))?;
+        let name = match std::fs::read_to_string(state.join("machine-label")) {
+            Ok(label) if util::machine_name_ok(label.trim()) => label.trim().to_string(),
+            Ok(_) => anyhow::bail!("agent machine-label 이름 형식 오류"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => name,
+            Err(e) => return Err(e.into()),
+        };
         let deployments = deploy::Manager::new(&state, &std::env::current_exe()?)?;
         Ok(Arc::new(Agent {
             deployments,
             guard_gate: tokio::sync::Mutex::new(()),
             state,
             machine_id,
-            name,
+            name: Mutex::new(name),
             boot_id: util::boot_id(),
             dev_mode,
             default_cwd,
@@ -1627,6 +1633,7 @@ impl Agent {
                 self.post_ack(&post_id, result);
                 return;
             }
+            AgentRequest::MachineLabel { name } => self.machine_label(&name),
             AgentRequest::AccountQuota { session, generation } => self
                 .quota_snapshot(&session, &generation)
                 .map(|snapshot| AgentResponse::AccountQuota { snapshot })
@@ -2035,6 +2042,22 @@ impl Agent {
     const FORGET_WAIT: Duration = Duration::from_secs(5);
 
     /// 사람이 붙인 이름을 `spec.json`에 적고(지우면 뺀다) 바뀐 정보를 host에 알린다. 끝난 세션에도 붙인다(다시 열면 그 이름).
+    fn machine_label(&self, name: &str) -> Result<AgentResponse, ErrorBody> {
+        if !util::machine_name_ok(name) {
+            return Err(ErrorBody::new(ErrorCode::BadRequest, "머신 이름 형식 오류"));
+        }
+        let mut label = self.name.lock().unwrap();
+        let path = self.state.join("machine-label");
+        if *label != name || !path.exists() {
+            let temp = self.state.join("machine-label.tmp");
+            std::fs::write(&temp, name).and_then(|_| std::fs::rename(&temp, &path)).map_err(|e| {
+                ErrorBody::new(ErrorCode::Internal, format!("agent 이름표 저장 {}: {e}", path.display()))
+            })?;
+            *label = name.into();
+        }
+        Ok(AgentResponse::Done)
+    }
+
     async fn rename(&self, session: &str, label: Option<String>) -> Result<AgentResponse, ErrorBody> {
         if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "세션 ID 형식이 아니다"));
@@ -2856,6 +2879,28 @@ mod mission_feature_tests {
         assert!(
             matches!(rx.control::<LinkMsg>().await.unwrap(),LinkMsg::Res{id,result:aaa_proto::Outcome::Ok(AgentResponse::MissionFiles{files})} if id=="new" && files.is_empty())
         );
+        std::fs::remove_dir_all(state).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod machine_label_tests {
+    use super::*;
+    #[tokio::test]
+    async fn machine_label_is_persistent_without_restarting_or_touching_sessions() {
+        let state = std::env::temp_dir().join(format!("aaa-label-{}", util::new_id()));
+        let a = Agent::new(state.clone(), "m-label".into(), "mac-b".into(), false, None).unwrap();
+        assert_eq!(a.name.lock().unwrap().as_str(), "mac-b");
+        assert!(matches!(a.machine_label("mac-c").unwrap(), AgentResponse::Done));
+        assert_eq!(a.name.lock().unwrap().as_str(), "mac-c");
+        assert_eq!(a.machine_id, "m-label");
+        assert!(a.sessions.lock().unwrap().is_empty());
+        assert!(a.machine_label("bad name").is_err());
+        drop(a);
+        let a = Agent::new(state.clone(), "m-label".into(), "mac-b".into(), false, None).unwrap();
+        assert_eq!(a.name.lock().unwrap().as_str(), "mac-c", "설정의 옛 이름보다 host 이름표가 우선한다");
+        assert_eq!(a.machine_id, "m-label");
+        drop(a);
         std::fs::remove_dir_all(state).unwrap();
     }
 }

@@ -120,7 +120,8 @@ impl Host {
     }
     /// repo 이름·경로와 조회 머신을 함께 맞춘다. 임무 머신은 이 선택에 관여하지 않는다.
     fn ci_target(&self, dir: &Path, r: &Routine, c: &CiTrigger) -> Result<(AgentConn, String, String), ErrorBody> {
-        let mid = self.resolve_machine(r.machine.as_deref().or(self.cfg.projects.ci_machine.as_deref()))?;
+        let mid =
+            self.resolve_machine(r.machine.as_deref().or(self.profile_config()?.projects.ci_machine.as_deref()))?;
         if !self.machine_feature(&mid, "ci.v1") {
             return Err(internal("조회 머신 agent에 ci.v1이 필요하다"));
         }

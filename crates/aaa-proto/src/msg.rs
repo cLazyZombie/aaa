@@ -738,6 +738,10 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// machine_label.v1: host의 이름표를 agent 상태에 보관한다(세션은 유지).
+    MachineLabel {
+        name: String,
+    },
     /// account_quota.v1: 해당 pane이 관측한 비밀 없는 창만 읽는다.
     AccountQuota {
         session: String,
@@ -2502,6 +2506,11 @@ pub enum FrontRequest {
     EnrollApprove {
         name: String,
         code: String,
+    },
+    /// 등록 신원·연결을 유지하고 머신 이름과 참조를 함께 옮긴다.
+    MachineRename {
+        name: String,
+        to: String,
     },
     MachineRevoke {
         name: String,
