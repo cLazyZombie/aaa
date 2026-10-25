@@ -1147,7 +1147,7 @@ function TaskRow({ t, row, compact, stage, overLimit, depth, state, selected, gr
       >
         {reserved ? <span className={`task-reserved-dot${check ? " is-check" : ""}`} role="img" aria-label={check ? "예약 · 확인 필요" : "예약됨"} title={check ? "예약 · 확인 필요(상세에 까닭)" : "예약됨 · 자리 나면 시작"} /> : <StateIcon state={state} />}
         <span className="task-id-cell">{t.short_id && <ListId id={t.short_id} testId="task-short-id" />}</span>
-        <span className="task-title">
+        <span className="task-title" title={t.title}>
           <span className="sr-only">{reserved ? (check ? "예약 · 확인 필요" : "예약") : TASK_STATE_LABEL[state]}: </span>
           {reserved && row.crumb && <span className="task-crumb" data-testid="task-crumb">{row.crumb.short_id ?? ""} {row.crumb.title} › </span>}
           {t.title}

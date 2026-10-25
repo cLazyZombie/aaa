@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { root, aaa, until, step, browser, webkit, pairPage, domIs, shot } from "../lib/harness.mjs";
 
 export default async function () {
-  await step("할 일 열 정렬: iPad 양 방향·데스크톱·휴대폰에서 표지와 칩이 겹치거나 잘리지 않는다", async () => {
+  await step("할 일 한 줄 배치: 넓은 목록의 제목·칩과 좁은 목록의 접힘·들여쓰기·메뉴를 유지한다", async () => {
     aaa("project", "create", "demo");
     aaa("project", "set", "demo", "thread_profile", "fake");
     aaa("project", "set", "demo", "max_parallel_threads", "1");
@@ -35,9 +35,11 @@ export default async function () {
         assert.equal(await p.locator(".task-row .task-attach-mark").count(), 3, "첨부 표지가 빠졌다");
         if (engine === browser) await p.locator('.task-row').filter({ hasText: titles[0] }).hover();
         await shot(p, `task-layout-${name}`);
-        const problems = await p.evaluate(() => {
+        const layoutProblems = () => {
           const problems = [];
           const rows = [...document.querySelectorAll('.task-row[data-kind]')];
+          const scroll = document.querySelector('.tasks-scroll');
+          const wide = scroll.clientWidth - parseFloat(getComputedStyle(scroll).paddingLeft) - parseFloat(getComputedStyle(scroll).paddingRight) >= 640;
           const columns = new Map();
           const titleStart = row => {
             const title = row.querySelector('.task-title');
@@ -51,7 +53,16 @@ export default async function () {
             const titleX = titleStart(row);
             const chips = row.querySelector('.task-row-chips');
             const firstChip = [...chips.children].find(e => e.getBoundingClientRect().width > 0);
-            if (firstChip && Math.abs(firstChip.getBoundingClientRect().left - titleX) > 1) problems.push(`${row.dataset.title}: 제목/칩 시작점 ${titleX}/${firstChip.getBoundingClientRect().left}px`);
+            if (wide) {
+              const pick = row.querySelector('.task-pick').getBoundingClientRect();
+              const menu = row.querySelector('.task-menu-button').getBoundingClientRect();
+              const center = b => b.top + b.height / 2;
+              for (const chip of chips.querySelectorAll('.task-chip, .thread-stage, .task-notes-mark, .task-attach-mark')) {
+                const b = chip.getBoundingClientRect();
+                if (b.width > 0 && Math.abs(center(b) - center(pick)) > 1) problems.push(`${row.dataset.title}: 넓은 목록의 칩이 별도 줄`);
+              }
+              if (Math.abs(center(menu) - center(pick)) > 1 || r.height > 40) problems.push(`${row.dataset.title}: 넓은 목록이 한 줄이 아님`);
+            } else if (firstChip && Math.abs(firstChip.getBoundingClientRect().left - titleX) > 1) problems.push(`${row.dataset.title}: 제목/칩 시작점 ${titleX}/${firstChip.getBoundingClientRect().left}px`);
             if (innerWidth <= 480) {
               const state = row.querySelector('.task-state, .task-reserved-dot').getBoundingClientRect();
               const title = row.querySelector('.task-title').getBoundingClientRect();
@@ -90,16 +101,34 @@ export default async function () {
           const child = rows.find(row => row.dataset.title === '하위 할 일');
           const parent = rows.find(row => row.dataset.title === '연결된 할 일의 충분히 긴 제목');
           if (!child || !parent || titleStart(child) - titleStart(parent) < 8) problems.push('하위 제목 들여쓰기 소실');
-          const scroll = document.querySelector('.tasks-scroll');
           if (scroll.scrollWidth > scroll.clientWidth + 1) problems.push('목록 가로 넘침');
           return problems;
-        });
-        errors.push(...problems.map(s => `${name}: ${s}`));
+        };
+        errors.push(...(await p.evaluate(layoutProblems)).map(s => `${name}: ${s}`));
+        if (name === 'desktop-1280') {
+          const file = `${root}/projects/demo/TASKS.md`;
+          const original = fs.readFileSync(file, 'utf8');
+          const long = `${titles[0]} ${'긴 제목의 원문을 상세에서 읽는다 '.repeat(20)}`;
+          aaa('ticker', 'tick');
+          fs.writeFileSync(file, original.replace(titles[0], long));
+          aaa('ticker', 'tick');
+          await p.locator('.task-title').filter({ hasText: long }).waitFor();
+          assert.equal(await p.locator('.task-row').filter({ hasText: long }).locator('.task-title').evaluate(e => e.scrollWidth > e.clientWidth), true, '긴 제목 말줄임');
+          errors.push(...(await p.evaluate(layoutProblems)).map(s => `${name}-long: ${s}`));
+          fs.writeFileSync(file, original);
+          aaa('ticker', 'tick');
+          await p.locator(`.task-row[data-title="${titles[0]}"]`).waitFor();
+        }
         // 제목과 메뉴는 바뀐 배치에서도 누를 수 있다.
         await p.locator('.task-row').filter({ hasText: titles[0] }).locator('.task-pick').click();
         await p.getByTestId('task-detail').waitFor();
         assert.equal(await p.locator('.task-row.is-selected').getAttribute('data-title'), titles[0]);
+        assert.equal(await p.locator('.task-row.is-selected .task-title').getAttribute('title'), titles[0], '말줄임 제목의 원문');
+        errors.push(...(await p.evaluate(layoutProblems)).map(s => `${name}-detail: ${s}`));
         await p.getByTestId('task-detail-close').click();
+        await p.locator('.task-row').filter({ hasText: titles[0] }).locator('.task-menu-button').click();
+        await p.getByRole(width <= 640 ? 'dialog' : 'menu', { name: titles[0], exact: true }).waitFor();
+        await p.keyboard.press('Escape');
         if (width === 320) {
           for (const resized of [820, 320]) {
             await p.setViewportSize({ width: resized, height });
