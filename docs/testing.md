@@ -1,3 +1,11 @@
+## Windows sweep fixture의 종료 순서(t-1038)
+
+- `231d7e3b`의 `lifecycle::sweep_tests`를 Windows 격리 worktree에서 실행하면 재개 보존·저장 실패 보존 시험이 결과 단언 뒤 `Lab::drop`의 폴더 삭제에서 공유 위반(OS 오류 32)으로 실패한다. 구형 agent·probe 실패 시험도 같은 정리 오류가 겹쳐 unwind 중 두 번째 panic으로 시험 실행 파일이 중단됐다. 같은 기준의 macOS에서는 4개 모두 통과했다.
+- fixture는 `close().await`로 가짜 agent를 취소하고 실제 종료를 기다린 뒤 Host·SQLite 연결을 해제하고 임시 폴더를 삭제한다. 저장 실패를 주입한 별도 SQLite 연결도 먼저 닫는다. 삭제 실패에는 경로와 하위 OS 오류를 남기며 정상 정리 실패는 계속 시험 실패다.
+- 기존 601개 묶음/개별 정리·dry-run·구형 agent·probe 오류·확인 중 재개·DB 저장 실패의 결과와 원인 보존 단언을 그대로 실행한다. 제품 코드·시간 상한·기대값·OS별 시험 범위를 바꾸지 않으며 sleep·재시도를 추가하지 않는다. Windows는 `cargo test --profile verify --locked -p aaa-host --lib`, macOS는 `ci-local.sh`의 관련 fmt·clippy·test·public 단계로 검증한다.
+- 최종 Windows host lib는 648개 통과·기존 ignored 3개다. macOS는 Rust 1,342개 통과·기존 ignored 6개, Python 56개 중 기존 skip 2개, strict all-targets clippy·fmt·공개 검사가 통과했다. Windows 첫 전체 검사의 별도 실패 4개는 전역 `autocrlf=true`가 바꾼 스키마·예제 CRLF 입력 때문이었다. 격리 worktree의 해당 세 파일만 CI와 같은 LF로 재생성하고 바이트를 확인했다. 시스템 설정·스키마·예제·시험 기대값은 바꾸지 않았다.
+- OSS 후보는 [Tokio JoinHandle](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))과 [tempfile TempDir](https://docs.rs/tempfile/latest/tempfile/struct.TempDir.html)([MIT](https://github.com/Stebalien/tempfile/blob/master/LICENSE-MIT))이다. 전자의 취소 후 join으로 자원 해제를 확인하는 방식과 후자의 디렉터리 삭제 전 파일 handle 해제 원칙을 따른다. 외부 코드·의존성은 추가하지 않는다.
+
 ## 보관 화면 도입 뒤 착지 회귀(t-1010 후속)
 
 - t-1012 착지의 E2E11·25·29는 보관 xterm도 DOM에 남는데 전역 `.xterm-rows`·`.xterm-helper-textarea`·`.term-scroll`을 찾았다. E2E11의 공통 화면 읽기는 strict 오류를 기다림에서 삼켰고, 진단은 첫 보관 pane(chat1)을 읽었다. E2E29는 숨긴 hold1에서 hold2의 prompt를 찾았다. 제품은 활성 `.term`만 `hidden`·`inert`를 해제하고 그 안의 term-box에만 `data-testid="terminal"`을 부여한다. 화면 읽기·IME·Ctrl+Enter는 이 표지 아래로, 표지 바깥의 스크롤 칸·입력창 측정은 `.term:not([hidden])` 아래로 범위를 좁힌다. 첫 요소 선택이나 force click으로 모호성을 숨기지 않는다. 실패 진단에는 활성 pane과 보관 pane/숨김 여부를 함께 남긴다.
