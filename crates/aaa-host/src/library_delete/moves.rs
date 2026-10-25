@@ -1,4 +1,4 @@
-//! 요청마다 작업자 네 개만 쓴다. 한 보고서 family의 독립 경로를 함께 옮기며 다음 family는 모두 끝난 뒤 시작한다.
+//! 요청마다 작업자 네 개만 쓴다. 한 보고서 family의 독립 경로를 함께 정리하며 다음 family는 모두 끝난 뒤 시작한다.
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
@@ -24,7 +24,7 @@ impl Moves {
             if file_only && meta.is_dir() {
                 return Err(io::Error::other("일반 파일 자리가 디렉터리다"));
             }
-            std::fs::rename(source, dest)
+            if file_only { std::fs::remove_file(source) } else { std::fs::rename(source, dest) }
         }))
     }
 

@@ -202,7 +202,7 @@ fn detach_family(
         paths.push((
             offset,
             family.dir.join("library").join(&copy.name),
-            batch.join(format!("{index}-files")),
+            batch.join(format!("{}/{index}-files", (index * 2) % 4)),
             false,
             "사본",
         ));
@@ -230,18 +230,21 @@ fn detach_family(
         .map_err(|error| err(ErrorCode::Unavailable, format!("보고서 경로 이동 응답 실패: {error}")))?;
     let mut failed = HashSet::new();
     let mut first_error = None;
-    for ((offset, source, dest, _, label), result) in paths.into_iter().zip(results) {
+    for ((offset, source, dest, file_only, label), result) in paths.into_iter().zip(results) {
         if let Err(error) = result {
             failed.insert(offset);
             let copy = &family.copies[offset];
+            let path = if file_only {
+                source.display().to_string()
+            } else {
+                format!("{} → {}", source.display(), dest.display())
+            };
             let error = err(
                 ErrorCode::Unavailable,
                 format!(
-                    "보고서 {}/{} {label} 삭제 실패: {} → {}: {error} (OS {:?})",
+                    "보고서 {}/{} {label} 삭제 실패: {path}: {error} (OS {:?})",
                     copy.project,
                     copy.name,
-                    source.display(),
-                    dest.display(),
                     error.raw_os_error()
                 ),
             );

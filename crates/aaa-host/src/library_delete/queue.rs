@@ -113,6 +113,14 @@ impl Host {
         directory(&root).map_err(|error| queue_error(&root, error))?;
         let batch = root.join(hex::encode(rand::random::<[u8; 16]>()));
         std::fs::create_dir(&batch).map_err(|error| queue_error(&batch, error))?;
+        // 함께 rename하는 경로가 같은 목적지 디렉터리 잠금을 다투지 않게 나눈다.
+        for slot in 0..4 {
+            let dest = batch.join(slot.to_string());
+            if let Err(error) = std::fs::create_dir(&dest) {
+                self.report_delete_reaper()?.submit(batch);
+                return Err(queue_error(&dest, error));
+            }
+        }
         Ok(batch)
     }
 

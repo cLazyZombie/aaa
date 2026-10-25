@@ -753,7 +753,7 @@ fn batch_cleanup_failure_is_retained_for_startup_without_touching_new_files() {
     let dir = lab.h.project_dir("demo").unwrap();
     let root = lab.h.report_delete_root(&dir);
     let pending = std::fs::read_dir(&root).unwrap().next().unwrap().unwrap().path();
-    assert!(pending.join("0-files/index.html").is_file());
+    assert!(pending.join("0/0-files/index.html").is_file());
     let new = lab.publish("week", "new", false);
     let unknown = root.join("unowned");
     std::fs::create_dir(&unknown).unwrap();
