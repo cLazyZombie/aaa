@@ -293,7 +293,7 @@ export default async function ({ page }) {
       if (fixture.name !== "pt" && got.runs.some(r => r.tests?.passed !== (fixture.name === "rc" ? 2 : 4) || r.e2e_files !== 1)) throw new Error(`game 개수 ${JSON.stringify(got)}`);
       await page.getByTestId("workspace-repo").filter({has:page.locator("strong",{hasText:new RegExp(`^${fixture.name}$`)})}).click();
       await page.getByRole("tab",{name:"실행 기록",exact:true}).click();
-      await domIs(page,"game 원장의 실행 두 행",() => document.querySelectorAll('.ws-table-scroll tbody tr').length === 2);
+      await domIs(page,"선택한 game 원장의 성공·실패 두 행",({name,machine}) => document.querySelector('.ws-heading h1')?.textContent.startsWith(name) && document.querySelectorAll('.ws-table-scroll tbody tr').length === 2 && [...document.querySelectorAll('.ws-table-scroll tbody tr')].every(r => r.children[1].textContent.startsWith(machine + " /")) && document.querySelector('.ws-table-scroll [data-outcome="failed"]'),fixture);
       await shot(page,`workspace-${fixture.name}-recorded`);
     }
   });

@@ -93,13 +93,17 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
                 lines::text(cwd, &["rev-parse", &format!("{}^{{tree}}", source.commit)])? == source.tree,
                 "CI 실행 tree 불일치"
             );
-            let mut run = ci_run(dir, source.ended_at_ms, id.clone())?;
             let runner = source.runner.as_deref().unwrap_or("ci-local");
             let names: &[&str] = match runner {
                 "ci-local" | "pt" => &[],
                 "rc" => &["default-tests", "workspace-tests"],
                 "engine" => &["workspace-tests", "automation-tests", "2d-tests", "3d-tests"],
                 _ => bail!("검증 runner 미지원: {runner}"),
+            };
+            let mut run = if runner == "ci-local" {
+                ci_run(dir, source.ended_at_ms, id.clone())?
+            } else {
+                summary_run(dir, source.ended_at_ms, id.clone())?
             };
             if !names.is_empty() {
                 runtime_reports(

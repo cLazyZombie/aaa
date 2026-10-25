@@ -250,9 +250,16 @@ async fn report_without_repo_collects_all_registrations_on_its_machine_and_conti
     rec.status = ThreadStatus::Open;
     assert!(rec.repo.is_none());
     h.db.thread_import("p", "t-0001", "open", &serde_json::to_string(&rec).unwrap()).unwrap();
-    h.collect_workspace_metrics("p", "t-0001").await;
-    assert_eq!(received.try_recv().unwrap(), "/work/broken");
-    assert_eq!(received.try_recv().unwrap(), "/work/engine");
+    tokio::join!(
+        h.collect_workspace_metrics("p", "t-0001"),
+        h.collect_workspace_metrics("p", "t-0001"),
+        h.collect_workspace_metrics("p", "t-0001"),
+    );
+    // 첫 회수와 진행 중 요청을 모은 후속 회수 두 차례다.
+    for _ in 0..2 {
+        assert_eq!(received.try_recv().unwrap(), "/work/broken");
+        assert_eq!(received.try_recv().unwrap(), "/work/engine");
+    }
     assert!(received.try_recv().is_err());
     let rows = h.db.workspace_records("", &format!("ws-{}", "b".repeat(64)), 0).unwrap().0;
     assert_eq!(rows.len(), 1);

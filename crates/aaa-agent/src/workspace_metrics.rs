@@ -176,7 +176,7 @@ fn rust_counts(dir: &Path) -> Result<Option<MetricCounts>> {
     }
     Ok(Some(all))
 }
-fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
+fn summary_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
     let text = read(&dir.join("workspace-summary.tsv"))?;
     let mut rows = text.lines();
     let head: Vec<_> = rows.next().context("요약 머리 없음")?.split('|').collect();
@@ -223,6 +223,10 @@ fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
             outcome: fields[1].into(),
         });
     }
+    Ok(run)
+}
+fn ci_run(dir: &Path, at: u64, run_id: String) -> Result<MetricRun> {
+    let mut run = summary_run(dir, at, run_id)?;
     if let Ok(value) = rust_counts(dir) {
         run.tests = value;
     }

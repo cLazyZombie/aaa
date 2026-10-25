@@ -2351,7 +2351,11 @@ impl Host {
         // FileRead뿐 아니라 manifest·보고 사본을 host에 저장하다 실패해도 같은 재수집 경로를 쓴다.
         match self.collect_snapshot(project, id, last).await {
             Ok(()) => {
-                self.collect_workspace_metrics(project, id).await;
+                // 지표 회수의 저장소 수가 보고 사본·resolve 응답 시간을 늘리지 않는다.
+                let host = self.clone();
+                let project = project.to_owned();
+                let id = id.to_owned();
+                tokio::spawn(async move { host.collect_workspace_metrics(&project, &id).await });
                 Ok(())
             }
             Err(e) => {
