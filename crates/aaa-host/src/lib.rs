@@ -52,6 +52,7 @@ mod legacy_mission;
 mod library;
 mod library_archive;
 mod library_catalog;
+mod library_delete;
 mod library_inventory;
 mod library_links;
 mod library_publish;
@@ -649,6 +650,7 @@ pub struct Host {
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
     library_signing: std::sync::RwLock<library_links::SigningKey>,
     library_ops: std::sync::Mutex<()>,
+    library_reaper: std::sync::OnceLock<library_delete::Reaper>,
     /// 파일 보기 읽기 경로(`/f/<cap>/`, plan §8.125)
     file_caps: Mutex<HashMap<String, files::FileCap>>,
     /// Web Push 서명 키(설정이 켜져 있을 때)
@@ -879,6 +881,7 @@ impl Host {
             view_caps: Mutex::new(HashMap::new()),
             library_signing: std::sync::RwLock::new(library_signing),
             library_ops: std::sync::Mutex::new(()),
+            library_reaper: std::sync::OnceLock::new(),
             file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
@@ -907,6 +910,7 @@ impl Host {
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
         host.setup_recover();
         host.image_recover()?;
+        host.library_delete_recover();
         Ok(host)
     }
 

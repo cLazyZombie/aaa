@@ -3,8 +3,7 @@
 use std::path::Path;
 
 use aaa_proto::{
-    ErrorBody, ErrorCode, FileKind, FrontResponse, LibraryFile, LibraryRef, LibraryReport, LibrarySkip, PostInput,
-    PostType,
+    ErrorBody, ErrorCode, FileKind, FrontResponse, LibraryFile, LibraryReport, LibrarySkip, PostInput, PostType,
 };
 
 use crate::db::LibraryReportRow;
@@ -283,62 +282,6 @@ impl Host {
             }
         }
         Ok(FrontResponse::LibraryLink(link))
-    }
-
-    /// 보고서를 모든 곳에서 지운다(plan §8.256): 목록 행·공유 링크(DB에서 폐기)·앱 안 보기 경로·host 사본·파일 목록, thread 사본이면
-    /// 보고 사본(`threads/<id>.md`)까지. 실시간 등록은 등록만 지우고 원본 폴더는 건드리지 않는다. 끝나지 않은 thread의 사본이
-    /// 하나라도 있으면 아무것도 지우지 않는다(thread가 다음 보고 때 다시 만든다).
-    pub(crate) fn library_delete(&self, reports: &[LibraryRef], actor: &str) -> Result<FrontResponse, ErrorBody> {
-        if reports.is_empty() || reports.len() > 500 {
-            return Err(err(ErrorCode::BadRequest, "지울 보고서는 1~500개다"));
-        }
-        let _lock = self.library_ops.lock().unwrap();
-        // 지우기는 기존 명령과 같이 보고서 전체다. r 번호로 지정해도 그 이름의 보존 판까지 함께 지운다.
-        let reports = reports
-            .iter()
-            .map(|r| {
-                Ok(LibraryRef {
-                    project: r.project.clone(),
-                    name: self
-                        .db
-                        .report_target(&r.project, &r.name)
-                        .map_err(super::orch::internal)?
-                        .map(|v| v.source)
-                        .unwrap_or_else(|| r.name.clone()),
-                })
-            })
-            .collect::<Result<Vec<_>, ErrorBody>>()?;
-        let mut views = Vec::new();
-        for r in &reports {
-            let dir = self.project_dir(&r.project)?;
-            if !safe_rel(&r.name)
-                || r.name.contains('/')
-                || (!manifest_path(&dir, &r.name).exists()
-                    && self.db.library_report(&r.project, &r.name).map_err(super::orch::internal)?.is_none()
-                    && self.report_version_names(&r.project, &r.name).is_empty())
-            {
-                return Err(err(ErrorCode::NotFound, format!("보고서가 없다: {}/{}", r.project, r.name)));
-            }
-            let v = self.report_view(&r.project, &r.name, false)?;
-            if v.busy {
-                return Err(err(
-                    ErrorCode::BadRequest,
-                    format!(
-                        "끝나지 않은(resolve 전) thread 또는 완료 보관이 참조하는 보고는 지울 수 없다: {}/{}",
-                        r.project, r.name
-                    ),
-                ));
-            }
-            views.push(v);
-        }
-        let mut removed = Vec::new();
-        let result = views.iter().try_for_each(|v| {
-            self.remove_report(&v.project, &v.name, true, actor, "library_delete")?;
-            removed.push(format!("{}/{}", v.project, v.name));
-            Ok(())
-        });
-        self.reports_bump();
-        result.map(|()| FrontResponse::LibraryPruned { removed })
     }
 
     /// 보고서를 낸 thread(사용자 요청 10-20): 준 번호(그 프로젝트에 있어야 한다), 없으면 이름과 원본 경로의 뒤 성분부터

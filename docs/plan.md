@@ -7903,3 +7903,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 후속 참고: [Git worktree porcelain](https://git-scm.com/docs/git-worktree)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))의 등록과 실제 경로 구분, [SQLite transaction 비용](https://www.sqlite.org/faq.html)([public domain](https://www.sqlite.org/copyright.html)), [rusqlite Transaction](https://docs.rs/rusqlite/latest/rusqlite/struct.Transaction.html)([MIT](https://github.com/rusqlite/rusqlite/blob/master/LICENSE))을 비교했다. 계측상 agent 반복이 병목이므로 DB transaction 확장 대신 부재 조회를 묶는다. 외부 코드는 복사하지 않는다.
 
 - 휴대폰 확인 창을 취소/완료한 내부 history 복귀는 사용자 Back과 구분해 열린 목록을 유지한다. 내부 사건만 표지하므로 실제 뒤로/앞으로의 목록 닫기 동작은 유지한다.
+
+- 보고서 500개 영구 삭제(t-1042)는 프로젝트별 원장·완료 보관 참조를 한 번 읽고, 같은 원본의 이름/r 판 중복을 제거한 뒤 전체 보호 판정을 끝낸다. 링크 폐기를 한 transaction으로 먼저 확정하고 앱 열람 권한도 무효화한다. 파일 I/O 중에는 DB 잠금·transaction을 잡지 않으며, 성공한 사본의 행·보관 표시·판 삭제 표시와 완료한 원본의 감사 기록을 두 번째 transaction으로 확정한다. 실시간 원본·번호 원장은 보존한다. 실패하면 원인과 완료/남은 개수를 남기고 미완료 사본은 재처리할 수 있게 유지한다. 기존 500개 요청 한도·성공 묶음 재전송 금지·FRONT_API는 그대로다.
+- 삭제 로그는 잠금 대기·조회/보호 판정·링크 폐기 DB·파일 제거·결과 DB 확정 시간을 구분한다. E2E113은 같은 601개/네 화면 시나리오에서 500개 요청 응답이 기존 20초 상한의 절반 미만인지도 검사하고 성공한 실험실의 단계 계측을 남긴다. SQLite(public domain)의 transaction 묶음과 rusqlite(MIT)의 실패 rollback을 참고하며 코드·의존성을 추가로 가져오지 않는다.
+
+- t-1042 후속: 67회차의 파일 제거 11.87초를 응답에서 분리한다. 링크 폐기 뒤 사본 디렉터리를 프로젝트 안의 host별 삭제 대기 batch로 rename하고 작은 manifest·t/r 본문을 직접 제거한 뒤 성공 사본의 원장을 확정한다. 실제 제거는 Host를 소유하지 않는 전용 작업자 하나가 처리한다. 공개 경로 분리 실패·DB 확정 실패에는 기존 완료/남은 대상·원인을 남기며 성공한 요청 묶음은 다시 보내지 않는다. 다른 볼륨 이동 실패를 복사/삭제로 우회하지 않는다. 기동 시 자기 host의 남은 batch만 회수하고, 오류 batch와 불명한 항목은 남긴다. 공유/API·FRONT_API는 바꾸지 않으며 E2E113의 네 화면 10초 미만과 실제 대기 제거를 전체 10 worker gate에서 확인한다.
+- 공개 경로 이동의 여유도 확보한다. 요청당 이동 작업자를 네 개로 제한하고, 한 보고서 family 안의 사본 디렉터리 이동과 manifest·본문 제거만 함께 처리한다. 이동 목적지를 batch 아래 네 칸으로 나눠 목적지 잠금 경합을 줄이며 메타 파일에 rename을 추가하지 않는다. 모든 이동 결과를 모아 사본별 성공을 확정하며 첫 오류와 추가 오류의 원인을 보존한다. 다음 family는 현재 family가 모두 끝나고 성공했을 때만 시작한다. 실제 제거 작업자는 별도로 한 개를 유지한다.

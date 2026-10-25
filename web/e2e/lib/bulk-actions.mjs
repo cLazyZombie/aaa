@@ -43,12 +43,21 @@ export function responseGate() {
     try {
       const started = performance.now();
       const response = await route.fetch();
-      console.log("bulk-response", JSON.stringify({ op: req.op, ms: Math.round(performance.now() - started), count: req.reports?.length ?? req.ids?.length }));
+      const elapsed = performance.now() - started;
+      if (req.op === "library_delete") {
+        const latest = fs.readFileSync(`${root}/host.log`, "utf8").split("\n").filter(l => l.includes("보고서 영구 삭제 계측")).at(-1);
+        if (!latest) throw new Error("보고서 삭제의 DB·파일 계측이 없다");
+        console.log("bulk-delete-profile", latest);
+      }
+      console.log("bulk-response", JSON.stringify({ op: req.op, ms: Math.round(elapsed), count: req.reports?.length ?? req.ids?.length }));
+      if (req.op === "library_delete" && req.reports.length === 500) {
+        assert.ok(elapsed < 10_000, `보고서 500개 삭제 ${Math.round(elapsed)}ms: 20초 상한의 절반 미만이어야 한다`);
+      }
       gate.arrive();
       await gate.wait;
       await route.fulfill({ response });
     } catch (e) {
-      gate.reject(new Error(`일괄 응답 전달 실패: ${req.op} (${e.name})`));
+      gate.reject(new Error(`일괄 응답 전달 실패: ${req.op} (${e.name}): ${e.message}`, { cause: e }));
     }
   });
   const arm = (match, fail = false) => {
@@ -158,6 +167,20 @@ export function seedReports(db, amount, prefix, old = false, versions = false, {
   } catch (e) { db.exec("ROLLBACK TO report_fixture; RELEASE report_fixture"); throw e; }
 }
 
+// 삭제 대기의 실제 제거도 폴더 사건으로 확인한다. 응답 성능 상한과 구별한다.
+async function pendingDeletionCleared(pending) {
+  let watcher;
+  const cleared = () => fs.readdirSync(pending).length === 0;
+  try {
+    await inTime(new Promise((resolve, reject) => {
+      const check = () => { try { if (cleared()) resolve(); } catch (error) { reject(error); } };
+      watcher = fs.watch(pending, check);
+      watcher.on("error", reject);
+      check();
+    }), 20_000, "삭제 대기 사본의 실제 제거");
+  } finally { watcher?.close(); }
+}
+
 export async function reportScenario(engine, label, width) {
   console.log(`bulk ${label} ${width}`);
   const db = new DatabaseSync(`${root}/s/host/host.db`);
@@ -229,6 +252,10 @@ export async function reportScenario(engine, label, width) {
     assert.deepEqual(gate.calls.map(c => c.reports.length), [101]);
     assert.equal(db.prepare("SELECT count(*) AS n FROM library_reports").get().n, 0);
     assert.equal(fs.readdirSync(`${dir()}/library`).length, 0);
+    const hostId = db.prepare("SELECT value FROM meta WHERE key='host_id'").get().value;
+    const pending = `${dir()}/.library-delete-${Buffer.from(hostId).toString("hex")}`;
+    await pendingDeletionCleared(pending);
+    console.log("bulk-delete-cleanup", JSON.stringify({ label, width, pending: fs.readdirSync(pending).length }));
     assert.deepEqual(paired.errors, []);
   } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
   finally { await page.context().close(); db.close(); }

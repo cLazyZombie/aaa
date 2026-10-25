@@ -39,6 +39,9 @@ impl Lab {
 }
 impl Drop for Lab {
     fn drop(&mut self) {
+        if let Some(reaper) = self.h.library_reaper.get() {
+            reaper.flush();
+        }
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
@@ -548,4 +551,240 @@ fn report_numeric_aliases_do_not_shadow_existing_legacy_names() {
         lab.h.library_publish("demo", "r-1", lab.root.to_str().unwrap(), false, None, None, "test").is_err(),
         "새 보고서가 짧은 번호 별칭을 이름으로 가리지 못한다"
     );
+}
+
+#[test]
+fn batch_delete_validates_every_family_before_revoking_or_removing_any_copy() {
+    let lab = Lab::new();
+    let id = lab.publish("week", "keep", false);
+    let link = lab.h.library_link("demo", &id, None, "test").unwrap();
+    let reports = ["week", "missing"].map(|name| LibraryRef { project: "demo".into(), name: name.into() });
+    assert_eq!(lab.h.library_delete(&reports, "test").unwrap_err().code, aaa_proto::ErrorCode::NotFound);
+    assert!(lab.h.db.library_report("demo", "week").unwrap().is_some());
+    assert!(lab.h.project_dir("demo").unwrap().join("library/week/index.html").is_file());
+    assert!(
+        lab.h
+            .signed_library_at(link.base.trim_start_matches("/v/").trim_end_matches('/'), aaa_common::util::now_ms())
+            .is_ok()
+    );
+}
+
+#[test]
+fn batch_delete_deduplicates_aliases_keeps_live_source_and_other_project() {
+    let lab = Lab::new();
+    let first = lab.publish("week", "first", false);
+    let second = lab.publish("week", "second", false);
+    lab.publish("live", "live", true);
+    // 신규 host는 단일 프로젝트이므로 옛 다중 프로젝트 폴더를 fixture로 직접 준비한다.
+    let other = lab.h.projects_root().join("other");
+    std::fs::create_dir_all(other.join("threads")).unwrap();
+    std::fs::create_dir(other.join("library")).unwrap();
+    std::fs::write(other.join("PROJECT.md"), "# other\n").unwrap();
+    lab.h
+        .library_publish("other", "week", lab.root.join("source").to_str().unwrap(), false, None, None, "test")
+        .unwrap();
+    let reports = [first.as_str(), "week", second.as_str(), "live"]
+        .map(|name| LibraryRef { project: "demo".into(), name: name.into() });
+    let FrontResponse::LibraryPruned { removed } = lab.h.library_delete(&reports, "test").unwrap() else { panic!() };
+    assert_eq!(removed, ["demo/week", "demo/live"]);
+    assert!(lab.h.db.report_target("demo", &first).unwrap().is_none());
+    assert!(lab.h.db.report_target("demo", &second).unwrap().is_none());
+    assert!(lab.h.db.report_target("other", &first).unwrap().is_some());
+    assert!(lab.h.db.library_report("other", "week").unwrap().is_some());
+    assert!(lab.root.join("source/index.html").is_file(), "실시간 원본은 남긴다");
+    let dir = lab.h.project_dir("demo").unwrap();
+    assert_eq!(std::fs::read_dir(dir.join("library")).unwrap().count(), 0);
+    assert_eq!(lab.h.db.audit_actions().iter().filter(|(_, action)| action == "library_delete").count(), 2);
+}
+
+#[test]
+fn batch_file_failure_revokes_all_links_and_finishes_only_completed_copies() {
+    let lab = Lab::new();
+    let done = lab.publish("done", "done", false);
+    let old = lab.publish("broken", "old", false);
+    let broken = lab.publish("broken", "broken", false);
+    let later = lab.publish("later", "later", false);
+    let ids = [&done, &old, &broken, &later];
+    let links: Vec<_> = ids.iter().map(|id| lab.h.library_link("demo", id, None, "test").unwrap()).collect();
+    let cap = lab.h.report_library("demo", &broken, None, false).unwrap().base;
+    let dir = lab.h.project_dir("demo").unwrap();
+    // 목록 자리에 폴더를 둬 remove_file이 모든 OS에서 실제 오류를 내게 한다.
+    let blocked = manifest_path(&dir, &old);
+    std::fs::remove_file(&blocked).unwrap();
+    std::fs::create_dir(&blocked).unwrap();
+    let reports = ["done", "broken", "later"].map(|name| LibraryRef { project: "demo".into(), name: name.into() });
+    let error = lab.h.library_delete(&reports, "test").unwrap_err();
+    assert!(error.message.contains("목록 삭제 실패") && error.message.contains("3개 중 1개 완료, 2개 남음"), "{error}");
+    for link in links {
+        assert!(
+            lab.h
+                .signed_library_at(
+                    link.base.trim_start_matches("/v/").trim_end_matches('/'),
+                    aaa_common::util::now_ms()
+                )
+                .is_err()
+        );
+    }
+    assert!(!lab.h.view_caps.lock().unwrap().contains_key(cap.trim_start_matches("/v/").trim_end_matches('/')));
+    assert!(lab.h.db.report_target("demo", &done).unwrap().is_none());
+    assert!(lab.h.db.library_report("demo", "done").unwrap().is_none());
+    assert!(lab.h.db.report_target("demo", &broken).unwrap().is_none(), "먼저 지운 새 판만 확정한다");
+    for id in [&old, &later] {
+        assert!(lab.h.db.report_target("demo", id).unwrap().is_some());
+    }
+    assert!(dir.join("library/later/index.html").is_file(), "뒤의 파일에는 도달하지 않는다");
+    std::fs::remove_dir(&blocked).unwrap();
+    let FrontResponse::LibraryPruned { removed } = lab.h.library_delete(&reports[1..], "test").unwrap() else {
+        panic!()
+    };
+    assert_eq!(removed, ["demo/broken", "demo/later"]);
+    assert!(lab.h.library_reports(None, false).unwrap().is_empty());
+    assert_eq!(
+        lab.h.db.audit_actions().iter().filter(|(_, action)| action == "library_delete").count(),
+        3,
+        "성공한 보고의 감사 기록은 중복하지 않는다"
+    );
+}
+
+#[test]
+fn batch_db_failures_keep_revoke_before_files_and_allow_finalization_recovery() {
+    let lab = Lab::new();
+    let id = lab.publish("week", "body", false);
+    let link = lab.h.library_link("demo", &id, None, "test").unwrap();
+    let db = rusqlite::Connection::open(lab.root.join("state/host.db")).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_delete_revoke BEFORE UPDATE ON library_links BEGIN SELECT RAISE(ABORT,'revoke denied'); END;").unwrap();
+    let reports = [LibraryRef { project: "demo".into(), name: "week".into() }];
+    assert!(lab.h.library_delete(&reports, "test").unwrap_err().message.contains("revoke denied"));
+    let dir = lab.h.project_dir("demo").unwrap();
+    assert!(dir.join("library/week/index.html").is_file());
+    assert!(
+        lab.h
+            .signed_library_at(link.base.trim_start_matches("/v/").trim_end_matches('/'), aaa_common::util::now_ms())
+            .is_ok()
+    );
+    db.execute_batch("DROP TRIGGER fail_delete_revoke;
+        CREATE TRIGGER fail_delete_finish BEFORE INSERT ON audit WHEN NEW.action='library_delete' BEGIN SELECT RAISE(ABORT,'finish denied'); END;").unwrap();
+    assert!(lab.h.library_delete(&reports, "test").unwrap_err().message.contains("finish denied"));
+    assert!(!dir.join("library/week").exists(), "링크 폐기가 확정된 다음에만 파일을 지운다");
+    assert!(
+        lab.h
+            .signed_library_at(link.base.trim_start_matches("/v/").trim_end_matches('/'), aaa_common::util::now_ms())
+            .is_err()
+    );
+    assert!(lab.h.db.library_report("demo", "week").unwrap().is_some());
+    assert!(lab.h.db.report_target("demo", &id).unwrap().is_some());
+    db.execute_batch("DROP TRIGGER fail_delete_finish").unwrap();
+    lab.h.library_delete(&reports, "test").unwrap();
+    assert!(lab.h.db.report_target("demo", &id).unwrap().is_none());
+    assert_eq!(lab.h.db.audit_actions().iter().filter(|(_, action)| action == "library_delete").count(), 1);
+}
+
+#[test]
+fn batch_delete_returns_while_cleanup_is_blocked_and_republish_is_independent() {
+    use std::sync::mpsc;
+    struct Release(Option<mpsc::Sender<()>>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+    let lab = Lab::new();
+    let old = lab.publish("week", "old", false);
+    let link = lab.h.library_link("demo", &old, None, "test").unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut release = Release(Some(release_tx));
+    let worker = crate::library_delete::Reaper::with_remove(move |path| {
+        started_tx.send(path.to_path_buf()).unwrap();
+        release_rx.recv().unwrap();
+        std::fs::remove_dir_all(path)
+    })
+    .unwrap();
+    assert!(lab.h.library_reaper.set(worker).is_ok());
+    // 삭제 작업자를 막은 상태에서 요청의 완료 사건을 별도로 확인한다.
+    let reports = [LibraryRef { project: "demo".into(), name: "week".into() }];
+    let h = lab.h.clone();
+    let (done_tx, done_rx) = mpsc::channel();
+    let request = std::thread::spawn(move || {
+        done_tx.send(h.library_delete(&reports, "test")).unwrap();
+    });
+    let result = done_rx.recv_timeout(std::time::Duration::from_secs(10));
+    if result.is_err() {
+        release.0.take().unwrap().send(()).unwrap();
+    }
+    request.join().unwrap();
+    result.expect("파일 제거를 기다리지 않고 요청을 완료한다").unwrap();
+    let pending = started_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("삭제 작업자가 대기를 받는다");
+    assert!(pending.is_dir());
+    assert!(!lab.h.project_dir("demo").unwrap().join("library/week").exists());
+    assert!(lab.h.db.report_target("demo", &old).unwrap().is_none());
+    assert!(
+        lab.h
+            .signed_library_at(link.base.trim_start_matches("/v/").trim_end_matches('/'), aaa_common::util::now_ms())
+            .is_err()
+    );
+    let new = lab.publish("week", "new", false);
+    release.0.take().unwrap().send(()).unwrap();
+    lab.h.library_reaper.get().unwrap().flush();
+    assert!(!pending.exists());
+    let dir = lab.h.project_dir("demo").unwrap();
+    assert_eq!(std::fs::read(dir.join("library/week/index.html")).unwrap(), b"new");
+    assert!(lab.h.db.report_target("demo", &new).unwrap().is_some());
+}
+
+#[test]
+fn batch_cleanup_failure_is_retained_for_startup_without_touching_new_files() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let lab = Lab::new();
+    lab.publish("week", "old", false);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let worker_calls = calls.clone();
+    let worker = crate::library_delete::Reaper::with_remove(move |_| {
+        worker_calls.fetch_add(1, Ordering::SeqCst);
+        Err(std::io::Error::other("실험실 배경 제거 거부"))
+    })
+    .unwrap();
+    assert!(lab.h.library_reaper.set(worker).is_ok());
+    lab.h.library_delete(&[LibraryRef { project: "demo".into(), name: "week".into() }], "test").unwrap();
+    lab.h.library_reaper.get().unwrap().flush();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "실패한 배경 작업을 즉시 반복하지 않는다");
+    let dir = lab.h.project_dir("demo").unwrap();
+    let root = lab.h.report_delete_root(&dir);
+    let pending = std::fs::read_dir(&root).unwrap().next().unwrap().unwrap().path();
+    assert!(pending.join("0/0-files/index.html").is_file());
+    let new = lab.publish("week", "new", false);
+    let unknown = root.join("unowned");
+    std::fs::create_dir(&unknown).unwrap();
+    std::fs::write(unknown.join("keep"), b"keep").unwrap();
+    let foreign = Host::open(lab.h.cfg.clone(), lab.root.join("foreign-state")).unwrap();
+    assert!(foreign.library_reaper.get().is_none(), "다른 host DB의 삭제 대기는 건드리지 않는다");
+    assert!(pending.exists());
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("state")).unwrap();
+    reopened.library_reaper.get().unwrap().flush();
+    assert!(!pending.exists(), "기동 시 남은 삭제 대기를 회수한다");
+    assert_eq!(std::fs::read(unknown.join("keep")).unwrap(), b"keep");
+    assert_eq!(std::fs::read(dir.join("library/week/index.html")).unwrap(), b"new");
+    assert!(reopened.db.report_target("demo", &new).unwrap().is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn batch_pending_symlink_cannot_move_or_remove_external_files() {
+    let lab = Lab::new();
+    let id = lab.publish("week", "keep", false);
+    let dir = lab.h.project_dir("demo").unwrap();
+    let outside = lab.root.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep"), b"keep").unwrap();
+    std::os::unix::fs::symlink(&outside, lab.h.report_delete_root(&dir)).unwrap();
+    let error =
+        lab.h.library_delete(&[LibraryRef { project: "demo".into(), name: "week".into() }], "test").unwrap_err();
+    assert!(error.message.contains("일반 디렉터리가 아니다") && error.message.contains("1개 중 0개 완료"), "{error}");
+    assert!(dir.join("library/week/index.html").is_file());
+    assert!(lab.h.db.report_target("demo", &id).unwrap().is_some());
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("state")).unwrap();
+    assert!(reopened.library_reaper.get().is_none());
+    assert_eq!(std::fs::read(outside.join("keep")).unwrap(), b"keep");
 }

@@ -1,3 +1,23 @@
+## 영구 삭제의 공개 경로 분리와 배경 제거(t-1042 후속)
+
+- 67회차 착지 t-1043의 전체 부하에서 기존 후보는 WebKit 1280px의 500개 삭제 HTTP 12.508초로 10초 목표에 실패했다. host 계측은 파일 제거 11.870초·잠금 0.211초·DB 약 7ms였다. 앞선 회차의 7.738초는 충분한 여유가 아니었으며 아래 초기 DB 개선의 통과 결과를 착지 성공으로 보지 않는다.
+- 보호 판정과 공유 링크 폐기를 먼저 끝내고, 호스트 사본 디렉터리를 같은 프로젝트 볼륨의 숨은 삭제 대기 batch로 rename하고 작은 manifest·t/r 본문은 직접 제거한다. 다른 볼륨 오류는 복사/삭제로 우회하지 않는다. 공개 경로에서 분리한 사본만 원장에 확정하고 실제 제거는 전용 작업자 한 개에 넘긴다. 파일 이동·DB·잠금 대기와 배경 정리 경과를 별도로 기록한다. 목록·사용량 조회는 삭제 대기를 재귀 스캔하지 않는다.
+- 대기 폴더는 host DB 식별자로 구분한다. 기동 시 이 host가 소유한 batch만 회수하며 다른 state의 대기·불명한 이름·symlink/junction은 지우지 않는다. 배경 오류에는 경로·OS 번호·원인을 남기고 batch를 다음 기동에 보존한다. 살아 있는 worker가 실패를 자동 반복하지 않는다. Host 해제는 자신의 작업자 종료를 확인한다.
+- 공개 경로 이동도 순차일 때 단독 전체 gate에서 최댓값이 8.458초여서 여유가 부족했다. 요청당 작업자 네 개로 한 원본과 보존 판의 독립 경로를 함께 정리한다. 사본 디렉터리의 목적지는 batch 아래 네 칸으로 나누고 작은 메타 파일에는 rename을 추가하지 않아 목적지 잠금 경합과 파일시스템 작업 수를 줄인다. 그 보고서의 모든 작업이 끝난 뒤 성공 사본만 확정하며 오류 순서는 입력 순서로 유지한다. 다음 보고서는 앞 보고서가 모두 끝나야 시작하므로 실패 뒤의 보고서 파일은 건드리지 않는다. 채널 회귀는 두 이동의 동시 시작과 한 경로가 실패해도 다른 경로의 종료를 기다리는 계약을 고정 시간 대기 없이 검사한다.
+- host 회귀는 채널 사건으로 실제 제거를 막고도 요청이 완료되는지 확인하고, 같은 이름으로 재발행한 새 파일이 옛 batch 정리의 영향을 받지 않는지 검사한다. 배경 제거 오류·재기동 회수·다른 host state 분리·불명한 폴더 보존·대기 root symlink 거부를 검사한다. 기존 링크 폐기 rollback·파일 중간 오류·완료 사본만 확정·결과 DB 실패 후 복구·진행 중/보관 참조 보호와 성공 묶음 재전송 방지 단언은 유지한다.
+- E2E113은 기존 네 화면의 500개 HTTP 10초 미만 단언을 그대로 실행한다. 각 화면 끝에는 fs.watch의 폴더 사건으로 실제 대기 batch가 모두 제거되는지 추가 확인한다. 실제 제거 확인도 기존 20초 응답 확인과 같은 상한을 쓰며 고정 sleep·재시도·시한/대상 수/기대값 완화는 없다. E2E114와 함께 전체 ci-local 10 worker 부하로 검증한다.
+- 참고 후보는 [libuv의 파일 작업과 rename](https://github.com/libuv/libuv/blob/v1.x/src/unix/fs.c)([MIT](https://github.com/libuv/libuv/blob/v1.x/LICENSE))과 [tempfile persist의 동일 파일시스템·실패 반환](https://docs.rs/tempfile/latest/tempfile/struct.TempPath.html#method.persist)([MIT](https://github.com/Stebalien/tempfile/blob/master/LICENSE-MIT))이다. 빠른 이름 변경과 느린 물리 제거의 수명을 나누고 실패 시 원본/대기를 보존하는 원칙을 참고하며 외부 코드·의존성을 추가하지 않는다.
+
+## 보고서 500개 영구 삭제의 묶음 DB 처리(t-1042)
+
+- 기준은 t-1038·t-1041이 포함된 757a8110이다. 격리 Chromium 두 폭의 기존 500개 요청은 HTTP 646/342ms, 삭제 실행 248/249ms였다. 1,000개 사본의 파일 작업 합계는 130/130ms, 사본별 DB 제거는 57/58ms였다. 나머지 실행 시간은 판 삭제 표시·감사 기록 등이며 HTTP와 실행의 차이에는 반복 검증/조회도 포함된다. 이는 부하 없는 원인 분리 표본이며 이전 전체 gate의 12.2~16.5초나 개선 뒤 전체 gate 결과를 대신하지 않는다.
+- 프로젝트별 catalogue·보관 참조 조회 뒤 전체 검증을 끝낸다. 링크 폐기와 파일 제거 후 결과 확정을 각각 한 transaction으로 묶고 prepared statement를 재사용한다. 파일 삭제 동안 DB transaction을 유지하지 않으며 실시간 원본·미완료 사본·번호 원장과 다른 프로젝트를 보존한다. 공유 링크·앱 열람 권한은 파일에 도달하기 전에 무효화한다.
+- DB 유닛은 두 번째 링크 폐기와 두 번째 감사 기록에 SQLite trigger 오류를 주입해 두 transaction의 전체 rollback·원인 보존·프로젝트 분리를 검사한다. host 유닛은 원본/r 별칭 중복 제거, 누락 대상을 포함한 전체 선검증, 실제 파일 오류 때 완료 원본/완료 판만 확정·뒤 대상 파일 보존·공유 링크 선폐기·남은 대상 처리, 폐기 DB 실패의 파일 보존·결과 DB 실패 뒤 재처리와 감사 기록 중복 방지를 확인한다. 기존 진행 중 thread·완료 보관 참조 보호 시험도 유지한다.
+- 새 host 시험의 첫 전체 실행은 다중 프로젝트 fixture를 신규 생성 API로 준비해 단일 프로젝트 정책에 막혔다(671개 통과·새 시험 하나 실패). fixture만 옛 다중 프로젝트 폴더 형태로 직접 준비한다. 제품 정책·기대값을 바꾸지 않는다.
+- `AAA_E2E_WORKERS=10 NODE_PATH=<작업 폴더의 Playwright 1.64.1> nice -n 15 bash scripts/ci-local.sh`로 전체 검증한다. E2E113·114의 기존 실제 500개/601개·네 화면·부분 실패/남은 101개 요청·최종 DB/파일/화면 단언을 유지한다. E2E113은 삭제의 성공 실험실 로그도 회수하고 500개 HTTP 응답이 10초 미만인지 검사한다. 기존 응답 20초·단계 시한·재시도 정책을 늘리지 않는다. 브라우저는 내부 공용 캐시만 사용한다.
+- 최종 전체 gate는 359초에 web·fmt·build·strict clippy·test·e2e·public 모두 통과했다. 웹 유닛 581개, Rust 1,351개(기존 ignored 6), Python 56개(기존 skip 2), 웹 E2E 114파일/140작업(10 worker, 297.6초)이 통과했다. E2E113/114는 각각 108.8/124.1초였다. 500개 삭제 HTTP는 Chromium 1280/390px 1,013/2,087ms, WebKit 1280/390px 7,738/4,856ms로 모두 10초 미만이었다. 최댓값의 링크 폐기/결과 확정 DB는 0.669/10.413ms, 파일은 7,228.357ms, 조회/보호는 7.723ms, library 잠금 대기는 486.106ms였다. 같은 회차의 관측값이며 운영 성능 보장은 아니다.
+- 참고: [SQLite transaction 비용](https://www.sqlite.org/faq.html#q19)([public domain](https://www.sqlite.org/copyright.html)), [rusqlite Transaction](https://docs.rs/rusqlite/0.37.0/rusqlite/struct.Transaction.html)([MIT](https://github.com/rusqlite/rusqlite/blob/master/LICENSE)). 명시적 commit과 실패 rollback을 따르며 외부 코드·의존성을 추가하지 않는다.
+
 ## E2E114 자동화 fixture의 외부 writer 경합(t-1038 후속)
 
 - 같은 `231d7e3b` CI의 macOS web-e2e에서 E2E114가 60.5초 뒤 `대량 자동화 입력` 단계의 `database is locked`로 실패했다. `bulk-automation.mjs`는 실행 중 host의 DB에 Node `DatabaseSync`로 자동화 meta를 직접 썼으며, 자리 fixture에 적용했던 host 종료·transaction 준비가 없었다.
