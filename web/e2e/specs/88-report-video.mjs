@@ -49,7 +49,9 @@ export default async function ({ page }) {
     const anonymous = await page.context().browser().newContext(); contexts.push(anonymous);
     const response = await anonymous.request.get(`${base}api/v1/projects/demo/requests/${request.id}/${request.questions.report_hash}/library/${report}/a.mp4`);
     if (response.status() !== 401 || response.headers()["content-type"] !== "application/json; charset=utf-8" || (await response.json()).err.message !== "pairing이 필요하다") throw new Error("옛 주소의 인증/한글 오류 계약");
-    if (!fs.readFileSync(`${root}/projects/demo/AGENTS.md`, "utf8").includes("![시안 영상](library/preview/a.mp4)")) throw new Error("coordinator 영상 안내 누락");
+    // coordinator 영상 안내(plan §8.491): 매 턴 AGENTS.md가 질문 post의 문법을 `aaa guide questions`로 가리키고, 그 주제가 영상 넣는 꼴을 보인다
+    if (!fs.readFileSync(`${root}/projects/demo/AGENTS.md`, "utf8").includes("그림·영상 문법은 `aaa guide questions`")) throw new Error("coordinator 안내가 질문·영상 문법 주제를 가리키지 않는다");
+    if (!aaa("guide", "questions").topics[0].text.includes("![시안 영상](library/preview/a.mp4)")) throw new Error("coordinator 영상 안내 누락");
     fs.writeFileSync(`${root}/video-task.md`, "영상 보고 시험");
     thread = aaa("thread", "start", "demo", "--title", "영상 보고", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/video-task.md`);
     await until("thread 첫 보고", () => aaa("thread", "show", thread.id).report_id);

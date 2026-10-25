@@ -2322,7 +2322,7 @@ fn restart_spawn_failure_keeps_the_old_pane_until_a_successful_replacement() {
     assert!(w.h.json(&["pane", "get", old]).is_err());
 }
 
-/// 시작이 실패한 thread도 `thread restart`로 다시 띄운다(herdr-projects threads.rs `restart_plan`, COORDINATOR_GUIDE,
+/// 시작이 실패한 thread도 `thread restart`로 다시 띄운다(herdr-projects threads.rs `restart_plan`, `aaa guide threads`,
 /// 차이 목록 E8). repo가 아직 git이 아니라 자리를 만들지 못했다(a): 시작 오류는 thread ID와 다시 하는 법을 말하고
 /// thread는 failed다. repo를 고친 뒤 restart는 자리부터 다시 만들고 앞선 시도 안내를 넣은 brief를 준다. 실패 글은 지운다.
 /// 기록된 worktree 없이 branch만 있으면 반쯤 만든 것이라 거부한다(b). 끝낸 thread는 `--reopen`이 먼저다.
@@ -4754,7 +4754,7 @@ fn coordinator_flow() {
             && guide.contains("`aaa project pause|resume`")
             && !guide.contains("aaa project sweep demo")
             && guide.contains("--from-task")
-            && guide.contains("`aaa task add|edit --profile <모델>")
+            && guide.contains("`aaa task add|edit|move|rm|restore|log`")
             // thread의 시작 질문을 받는 쪽(plan §8.328): 채팅으로 묻고 턴을 끝낸다. harness 질문 창은 턴을 막아 쓰지 않는다
             && guide.contains("시작할 때 모아 묻는 질문")
             && guide.contains("턴을 끝내고 다른 일을 이어 간다")
@@ -5206,8 +5206,12 @@ const GUIDE_SECTIONS: &[&str] = &[
     "일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다",
     "앞(foreground)에서 오래 기다리는 명령을 돌리지 않는다",
     "기다릴 일은 aaa inbox 알림에 맡기거나, 수 초 안에 한 번만 확인하고 끝낸다",
+    "## 세부 안내(`aaa guide <주제>`)",
+    "이 파일의 금지·승인 규칙이 늘 먼저다",
     "## 첫 턴",
     "--to-user --title",
+    "볼 보고서·시안·음원 링크는 질문 안에 둔다",
+    "그림·영상 문법은 `aaa guide questions`",
     "지시는 사용자만, 채팅으로 한다",
     "## 메시지마다 세 가지 중 하나",
     "새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다",
@@ -5215,25 +5219,43 @@ const GUIDE_SECTIONS: &[&str] = &[
     "사용자가 모델·머신 변경을 지시하면 `aaa task edit",
     "--user-request '사용자 지시 근거'",
     "`aaa task reserve <task ID>`",
-    "가능한 예약 중 앞 것을 host가 시작한다",
-    "resolve 정리가 실제로 끝나야 반환한다",
-    "`aaa task archive --restore <task ID>`",
-    "아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다",
     "바로 진행하는 일도 같다",
     "「할 일에 넣어」는 기록 요청이며 시작 승인이 아니다",
     "자동화(`automations/*.toml`의 do.start, ci-watch·검증 감시 등)는 예외다",
-    "coordinator는 이 호환 경로 대신 할 일부터 만든다",
     "## 이어지는 말",
     "**thread 결과 요약은 언제나 이 모양이다**",
-    "- 더하기: 사용자가 맡긴 새 일은 지금 시작할 일도 먼저 더한다",
-    "- 목록(`##` 머리): 사용자가 요청하면",
-    "- 끝남:",
-    "- 보이기: 사용자가 task를 보자고 하면",
     "`aaa task add|edit|move|rm|restore|log`",
     "## 무엇이 누구 것인가",
     "## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)",
-    "## 작업 요약(웹 카드)",
+    "`coordinator_deploy`가 on일 때만",
     "사용자가 일정 작업이나 감시를 요청하면 `automations/<이름>.toml`에 `schema = 2`를 쓴다",
+    "`aaa context`의 「auto 예외」와",
+    "병합, force push, branch 지우기, worktree 지우기, thread 끝내기",
+];
+
+/// AGENTS.md에서 `aaa guide <주제>`로 옮긴 세부(plan §8.491): (주제, 그 출력에 있어야 할 글)
+const GUIDE_TOPIC_SECTIONS: &[(&str, &str)] = &[
+    ("tasks", "가능한 예약 중 앞 것을 host가 시작한다"),
+    ("tasks", "`aaa task archive --restore <task ID>`"),
+    ("tasks", "- 더하기: 사용자가 맡긴 새 일은 지금 시작할 일도 먼저 더한다"),
+    ("tasks", "- 목록(`##` 머리): 사용자가 요청하면"),
+    ("tasks", "- 끝남:"),
+    ("tasks", "- 보이기: 사용자가 task를 보자고 하면"),
+    ("tasks", "`aaa task add|edit --profile <모델>"),
+    ("threads", "resolve 정리가 실제로 끝나야 반환한다"),
+    ("threads", "coordinator는 이 호환 경로 대신 할 일부터 만든다"),
+    ("threads", "--over-limit --user-request '<사용자 지시 근거>'"),
+    ("threads", "`aaa thread unpark <id> [--machine <머신>]`"),
+    ("summary", "# 작업 요약(웹 카드)"),
+    ("questions", "aaa:question/<thread>"),
+    ("questions", "![시안 영상](library/preview/a.mp4)"),
+    ("reports", "#task=<project>/d-NNNN"),
+    ("prompts", "「항상 허용」은 고르지 않는다(권한은 사용자만 넓힌다)"),
+    ("deploy", "`aaa deploy status <rollout ID> --wait`"),
+    ("automation", "`aaa automation approve --capability command <이름> <hash>`"),
+    ("auto-mode", "`aaa question answer q-NNNN B --auto --reason-file <까닭 파일>`"),
+    ("ci", "`ci_fixed`면 이미 회복한 것이므로 간헐 여부만 확인한다"),
+    ("web-report", "fetch → decodeAudioData → GainNode"),
 ];
 
 /// `aaa doctor files`의 프로젝트 한 줄
@@ -5254,6 +5276,32 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     for s in GUIDE_SECTIONS {
         assert!(guide.contains(s), "새 프로젝트 안내에 「{s}」가 없다:\n{guide}");
     }
+    // 매 턴 문맥에 실리는 안내라 작게 둔다(Codex AGENTS.md 기본 한도 32 KiB, Claude Code 권장 200줄 미만)
+    assert!(
+        guide.len() < 20 * 1024 && guide.lines().count() < 200,
+        "{}바이트 {}줄",
+        guide.len(),
+        guide.lines().count()
+    );
+    // 옮긴 세부는 host 없이 `aaa guide <주제>`가 보인다. 안내의 「세부 안내」는 coordinator 주제를 모두 가리킨다
+    for (topic, s) in GUIDE_TOPIC_SECTIONS {
+        let o = w.h.run(&["guide", *topic]);
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(o.status.success() && text.contains(s), "`aaa guide {topic}`에 「{s}」가 없다:\n{text}");
+        assert!(
+            *topic == "web-report" || guide.contains(&format!("- `{topic}`: ")),
+            "안내가 {topic}을 가리키지 않는다"
+        );
+    }
+    let list = String::from_utf8_lossy(&w.h.run(&["guide"]).stdout).to_string();
+    assert!(
+        list.contains("coordinator\n") && list.contains("\n  web-report ") && list.contains("\n  deploy "),
+        "{list}"
+    );
+    let all = w.h.ok(&["guide", "--all"]);
+    assert_eq!(all["topics"].as_array().map(Vec::len), Some(11), "{all}");
+    let o = w.h.run(&["guide", "없음"]);
+    assert!(!o.status.success() && String::from_utf8_lossy(&o.stderr).contains("주제: questions, reports"), "{o:?}");
     assert!(guide.contains("`aaa project sweep`") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
     assert_entries(
         &fresh,
@@ -5318,7 +5366,10 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     for guide in [&guide, &now] {
         assert!(guide.contains("thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만"), "{guide}");
         assert!(guide.contains("[q-NNNN 질문](<웹 주소>/#question=q-NNNN)"), "{guide}");
-        assert!(guide.contains("#task=<project>/d-NNNN"), "{guide}");
+        assert!(
+            guide.contains("- `reports`: ") && !guide.contains("#task=<project>/d-NNNN"),
+            "주소 세부는 주제로: {guide}"
+        );
         assert!(!guide.contains("채팅에서 thread 질문·보고서를 가리킬 때는"), "{guide}");
     }
     assert!(old.join("uploads").is_dir() && old.join("automations/pr-followup.toml").is_file());

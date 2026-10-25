@@ -862,7 +862,7 @@ E2E11·52·89와 아래 m13 세 경로는 각각 최소 1회 실패를 확인했
 
 - `nice -n 15 cargo test --locked -p aaa-host --lib web::`: 기존 인증 경로를 cookie 없이 열었을 때 세 종류 모두 401·UTF-8 JSON·한글 원문인지 확인한다. 새 첨부 cap의 재사용·만료·기기 폐기·보고서 주소 변환 거부와 리소스 CSP의 정확한 폴더 제한을 검사한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 88-report-video --workers 1`: 실제 host·agent·publish·coordinator post·thread 보고를 쓴다. 외부 자료 없는 2초 H.264 High/yuv420p/faststart 영상은 `web/e2e/fixtures/report-video.mp4`다. Chromium·WebKit 각각 1280×800·390×844에서 본문과 선택지의 첫 재생 단추·metadata 수신·재생 뒤 실제 decode·시간 전진·seeked·소리 없음·인라인·자동 재생 없음·답 선택 보존·가로 넘침을 검사한다.
-- 같은 질문의 HTML 링크는 `/v/…/library/…/index.html#A`다. iframe과 새 탭의 실제 영상 decode, cookie 없는 직접 MP4·206 Range·MIME·Accept-Ranges, HTML의 자기 파일 GET·cookie/API/다른 cap 차단, 보고 Markdown의 재생, 새 보고 뒤 답한 영상 원본 bytes를 확인한다. coordinator AGENTS.md와 thread brief에 영상 문법도 확인한다. 앱 API 인증·sandbox를 풀거나 영상 객체·play를 가짜로 만들지 않는다.
+- 같은 질문의 HTML 링크는 `/v/…/library/…/index.html#A`다. iframe과 새 탭의 실제 영상 decode, cookie 없는 직접 MP4·206 Range·MIME·Accept-Ranges, HTML의 자기 파일 GET·cookie/API/다른 cap 차단, 보고 Markdown의 재생, 새 보고 뒤 답한 영상 원본 bytes를 확인한다. coordinator AGENTS.md가 질문 문법을 `aaa guide questions`로 가리키는지, 그 주제와 thread brief에 영상 문법이 있는지도 확인한다(§8.491). 앱 API 인증·sandbox를 풀거나 영상 객체·play를 가짜로 만들지 않는다.
 - E2E53의 웹 `files_base`는 `/v/<48자리 hex>/`여야 한다. 답 내용·원문·사본 보존 검사를 유지하고, cookie 없는 읽기의 MIME·전체 바이트가 원본 그림과 같은지도 확인한다.
 - 완료 사건은 host 보고 hash·DOM·loadedmetadata/timeupdate/seeked다. 실패 뒤 시한 연장·재시도 없이 원인을 조사한다. 관련 E2E21·59·69·74와 전체 `nice -n 15 bash scripts/ci-local.sh`·공개 검사로 회귀를 확인한다. headless WebKit은 실제 macOS Safari·iPhone의 출력 장치·UI를 보증하지 않는다.
 
