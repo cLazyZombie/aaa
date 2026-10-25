@@ -167,6 +167,20 @@ export function seedReports(db, amount, prefix, old = false, versions = false, {
   } catch (e) { db.exec("ROLLBACK TO report_fixture; RELEASE report_fixture"); throw e; }
 }
 
+// 삭제 대기의 실제 제거도 폴더 사건으로 확인한다. 응답 성능 상한과 구별한다.
+async function pendingDeletionCleared(pending) {
+  let watcher;
+  const cleared = () => fs.readdirSync(pending).length === 0;
+  try {
+    await inTime(new Promise((resolve, reject) => {
+      const check = () => { try { if (cleared()) resolve(); } catch (error) { reject(error); } };
+      watcher = fs.watch(pending, check);
+      watcher.on("error", reject);
+      check();
+    }), 20_000, "삭제 대기 사본의 실제 제거");
+  } finally { watcher?.close(); }
+}
+
 export async function reportScenario(engine, label, width) {
   console.log(`bulk ${label} ${width}`);
   const db = new DatabaseSync(`${root}/s/host/host.db`);
@@ -238,6 +252,10 @@ export async function reportScenario(engine, label, width) {
     assert.deepEqual(gate.calls.map(c => c.reports.length), [101]);
     assert.equal(db.prepare("SELECT count(*) AS n FROM library_reports").get().n, 0);
     assert.equal(fs.readdirSync(`${dir()}/library`).length, 0);
+    const hostId = db.prepare("SELECT value FROM meta WHERE key='host_id'").get().value;
+    const pending = `${dir()}/.library-delete-${Buffer.from(hostId).toString("hex")}`;
+    await pendingDeletionCleared(pending);
+    console.log("bulk-delete-cleanup", JSON.stringify({ label, width, pending: fs.readdirSync(pending).length }));
     assert.deepEqual(paired.errors, []);
   } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
   finally { await page.context().close(); db.close(); }

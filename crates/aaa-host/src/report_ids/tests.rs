@@ -39,6 +39,9 @@ impl Lab {
 }
 impl Drop for Lab {
     fn drop(&mut self) {
+        if let Some(reaper) = self.h.library_reaper.get() {
+            reaper.flush();
+        }
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
@@ -674,4 +677,114 @@ fn batch_db_failures_keep_revoke_before_files_and_allow_finalization_recovery() 
     lab.h.library_delete(&reports, "test").unwrap();
     assert!(lab.h.db.report_target("demo", &id).unwrap().is_none());
     assert_eq!(lab.h.db.audit_actions().iter().filter(|(_, action)| action == "library_delete").count(), 1);
+}
+
+#[test]
+fn batch_delete_returns_while_cleanup_is_blocked_and_republish_is_independent() {
+    use std::sync::mpsc;
+    struct Release(Option<mpsc::Sender<()>>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+    let lab = Lab::new();
+    let old = lab.publish("week", "old", false);
+    let link = lab.h.library_link("demo", &old, None, "test").unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut release = Release(Some(release_tx));
+    let worker = crate::library_delete::Reaper::with_remove(move |path| {
+        started_tx.send(path.to_path_buf()).unwrap();
+        release_rx.recv().unwrap();
+        std::fs::remove_dir_all(path)
+    })
+    .unwrap();
+    assert!(lab.h.library_reaper.set(worker).is_ok());
+    // 삭제 작업자를 막은 상태에서 요청의 완료 사건을 별도로 확인한다.
+    let reports = [LibraryRef { project: "demo".into(), name: "week".into() }];
+    let h = lab.h.clone();
+    let (done_tx, done_rx) = mpsc::channel();
+    let request = std::thread::spawn(move || {
+        done_tx.send(h.library_delete(&reports, "test")).unwrap();
+    });
+    let result = done_rx.recv_timeout(std::time::Duration::from_secs(10));
+    if result.is_err() {
+        release.0.take().unwrap().send(()).unwrap();
+    }
+    request.join().unwrap();
+    result.expect("파일 제거를 기다리지 않고 요청을 완료한다").unwrap();
+    let pending = started_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("삭제 작업자가 대기를 받는다");
+    assert!(pending.is_dir());
+    assert!(!lab.h.project_dir("demo").unwrap().join("library/week").exists());
+    assert!(lab.h.db.report_target("demo", &old).unwrap().is_none());
+    assert!(
+        lab.h
+            .signed_library_at(link.base.trim_start_matches("/v/").trim_end_matches('/'), aaa_common::util::now_ms())
+            .is_err()
+    );
+    let new = lab.publish("week", "new", false);
+    release.0.take().unwrap().send(()).unwrap();
+    lab.h.library_reaper.get().unwrap().flush();
+    assert!(!pending.exists());
+    let dir = lab.h.project_dir("demo").unwrap();
+    assert_eq!(std::fs::read(dir.join("library/week/index.html")).unwrap(), b"new");
+    assert!(lab.h.db.report_target("demo", &new).unwrap().is_some());
+}
+
+#[test]
+fn batch_cleanup_failure_is_retained_for_startup_without_touching_new_files() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let lab = Lab::new();
+    lab.publish("week", "old", false);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let worker_calls = calls.clone();
+    let worker = crate::library_delete::Reaper::with_remove(move |_| {
+        worker_calls.fetch_add(1, Ordering::SeqCst);
+        Err(std::io::Error::other("실험실 배경 제거 거부"))
+    })
+    .unwrap();
+    assert!(lab.h.library_reaper.set(worker).is_ok());
+    lab.h.library_delete(&[LibraryRef { project: "demo".into(), name: "week".into() }], "test").unwrap();
+    lab.h.library_reaper.get().unwrap().flush();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "실패한 배경 작업을 즉시 반복하지 않는다");
+    let dir = lab.h.project_dir("demo").unwrap();
+    let root = lab.h.report_delete_root(&dir);
+    let pending = std::fs::read_dir(&root).unwrap().next().unwrap().unwrap().path();
+    assert!(pending.join("0-files/index.html").is_file());
+    let new = lab.publish("week", "new", false);
+    let unknown = root.join("unowned");
+    std::fs::create_dir(&unknown).unwrap();
+    std::fs::write(unknown.join("keep"), b"keep").unwrap();
+    let foreign = Host::open(lab.h.cfg.clone(), lab.root.join("foreign-state")).unwrap();
+    assert!(foreign.library_reaper.get().is_none(), "다른 host DB의 삭제 대기는 건드리지 않는다");
+    assert!(pending.exists());
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("state")).unwrap();
+    reopened.library_reaper.get().unwrap().flush();
+    assert!(!pending.exists(), "기동 시 남은 삭제 대기를 회수한다");
+    assert_eq!(std::fs::read(unknown.join("keep")).unwrap(), b"keep");
+    assert_eq!(std::fs::read(dir.join("library/week/index.html")).unwrap(), b"new");
+    assert!(reopened.db.report_target("demo", &new).unwrap().is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn batch_pending_symlink_cannot_move_or_remove_external_files() {
+    let lab = Lab::new();
+    let id = lab.publish("week", "keep", false);
+    let dir = lab.h.project_dir("demo").unwrap();
+    let outside = lab.root.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep"), b"keep").unwrap();
+    std::os::unix::fs::symlink(&outside, lab.h.report_delete_root(&dir)).unwrap();
+    let error =
+        lab.h.library_delete(&[LibraryRef { project: "demo".into(), name: "week".into() }], "test").unwrap_err();
+    assert!(error.message.contains("일반 디렉터리가 아니다") && error.message.contains("1개 중 0개 완료"), "{error}");
+    assert!(dir.join("library/week/index.html").is_file());
+    assert!(lab.h.db.report_target("demo", &id).unwrap().is_some());
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("state")).unwrap();
+    assert!(reopened.library_reaper.get().is_none());
+    assert_eq!(std::fs::read(outside.join("keep")).unwrap(), b"keep");
 }

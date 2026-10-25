@@ -1,6 +1,9 @@
-//! 영구 삭제는 보호 판정을 먼저 끝내고 링크 폐기 → 파일 삭제 → 성공 원장 확정 순서로 한다.
+//! 영구 삭제는 링크 폐기 → 공개 경로 분리 → 원장 확정을 응답하고 실제 제거는 배경에서 한다.
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+mod queue;
+pub(crate) use queue::Reaper;
 use std::time::Instant;
 
 use aaa_proto::{ErrorBody, ErrorCode, FrontResponse, LibraryRef, ThreadStatus};
@@ -20,6 +23,7 @@ struct DeleteFamily {
     project: String,
     name: String,
     copies: Vec<LibraryRef>,
+    dir: PathBuf,
 }
 
 impl Host {
@@ -84,7 +88,12 @@ impl Host {
                 .chain(std::iter::once(name.clone()))
                 .map(|name| LibraryRef { project: report.project.clone(), name })
                 .collect();
-            families.push(DeleteFamily { project: report.project.clone(), name: name.clone(), copies });
+            families.push(DeleteFamily {
+                project: report.project.clone(),
+                name: name.clone(),
+                copies,
+                dir: project.dir.clone(),
+            });
         }
         Ok(families)
     }
@@ -101,6 +110,7 @@ impl Host {
         let families = self.library_delete_plan(reports)?;
         let prepare_us = prepare_started.elapsed().as_micros() as u64;
         let copies: Vec<_> = families.iter().flat_map(|f| f.copies.iter().cloned()).collect();
+        let reaper = self.report_delete_reaper()?;
         let revoke_started = Instant::now();
         // 폐기 commit에 실패하면 파일 삭제를 시작하지 않는다.
         self.db.library_delete_revoke(&copies).map_err(internal)?;
@@ -115,21 +125,34 @@ impl Host {
         let files_started = Instant::now();
         let mut completed_copies = Vec::new();
         let mut removed = Vec::new();
+        let mut batches = HashMap::new();
+        let mut copy_index = 0;
         let files_result: Result<(), ErrorBody> = (|| {
             for family in &families {
+                let batch = match batches.entry(family.project.clone()) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(self.report_delete_batch(&family.dir)?)
+                    }
+                };
                 for copy in &family.copies {
-                    self.remove_report_files(&copy.project, &copy.name, true)?;
+                    detach_copy(&family.dir, copy, batch, copy_index)?;
+                    copy_index += 1;
                     completed_copies.push(copy.clone());
                 }
                 removed.push(format!("{}/{}", family.project, family.name));
             }
             Ok(())
         })();
-        let files_us = files_started.elapsed().as_micros() as u64;
+        let detach_us = files_started.elapsed().as_micros() as u64;
         let finish_started = Instant::now();
         // 파일 중간 실패도 이미 끝난 사본만 반영한다. 남은 행·판 번호는 다시 고를 수 있게 남긴다.
         let finish_result = self.db.library_delete_finish(&completed_copies, &removed, actor).map_err(internal);
         let finish_us = finish_started.elapsed().as_micros() as u64;
+        let queued_batches = batches.len();
+        for batch in batches.into_values() {
+            reaper.submit(batch);
+        }
         self.reports_bump();
         tracing::info!(
             requested = reports.len(),
@@ -140,8 +163,9 @@ impl Host {
             lock_us,
             prepare_us,
             revoke_us,
-            files_us,
+            detach_us,
             finish_us,
+            queued_batches,
             elapsed_us = started.elapsed().as_micros() as u64,
             success = files_result.is_ok() && finish_result.is_ok(),
             "보고서 영구 삭제 계측"
@@ -162,4 +186,43 @@ impl Host {
         finish_result?;
         Ok(FrontResponse::LibraryPruned { removed })
     }
+}
+
+/// 각 rename은 같은 볼륨에서 원자적이다. EXDEV 등의 실패를 copy/remove로 우회하지 않는다.
+fn detach_copy(dir: &Path, copy: &LibraryRef, batch: &Path, index: usize) -> Result<(), ErrorBody> {
+    let paths = [
+        (dir.join("library").join(&copy.name), "files", false, "사본"),
+        (manifest_path(dir, &copy.name), "manifest", true, "목록"),
+        (dir.join("threads").join(format!("{}.md", copy.name)), "report", true, "본문"),
+    ];
+    for (source, kind, file_only, label) in paths {
+        if kind == "report" && !copy.name.starts_with("t-") && crate::report_ids::number(&copy.name).is_none() {
+            continue;
+        }
+        let detach = || -> std::io::Result<()> {
+            let meta = match std::fs::symlink_metadata(&source) {
+                Ok(meta) => meta,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            if file_only && meta.is_dir() {
+                return Err(std::io::Error::other("일반 파일 자리가 디렉터리다"));
+            }
+            std::fs::rename(&source, batch.join(format!("{index}-{kind}")))
+        };
+        detach().map_err(|error| {
+            err(
+                ErrorCode::Unavailable,
+                format!(
+                    "보고서 {}/{} {label} 삭제 실패: {} → {}: {error} (OS {:?})",
+                    copy.project,
+                    copy.name,
+                    source.display(),
+                    batch.display(),
+                    error.raw_os_error()
+                ),
+            )
+        })?;
+    }
+    Ok(())
 }
