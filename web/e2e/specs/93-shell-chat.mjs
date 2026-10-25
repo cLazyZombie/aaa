@@ -1,4 +1,5 @@
-// 시험용 일반 셸 → hook 없는 harness → 실제 프로세스/기록 연결 → host → 대화 페이지/스크롤.
+// 시험용 셸 → hook 없는 harness → PID/기록 → host → 웹의 고유 연결 계약.
+// 같은 pane의 직접 실행→재개는 한 수명으로 잇고, 일반 화면·왕복은 E2E07/30/37/103/104/109가 맡는다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -32,134 +33,79 @@ async function firstMessage(page, id) {
   await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
 }
 
-async function resumed(engine, width, harness) {
-  const name = `resume-${harness}-${++serial}`, id = sid(serial * 3);
-  const page = (await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, { touch: width < 500 })).page;
-  const pane = aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh").tabs.at(-1).root.pane;
+async function resumed(engine, width, harness, { page, pane, id, name, mark }) {
   const state = () => aaa("pane", "list").panes.find((p) => p.id === pane);
   const toggle = page.getByTestId("chat-toggle"), chat = page.getByTestId("chat");
-  const diagnostics = new ChatDiagnostics(root, name);
-  diagnostics.pane = pane;
-  shellDiagnostics = diagnostics;
-  diagnostics.page = page;
-  diagnostics.watch(page.context());
-  // 표시 사본과 실제 xterm의 복귀 경합을 관측한다. 휠·준비 순서를 바꾸지 않는다.
-  await page.evaluate(() => {
-    window.shellTerminalWheels = [];
-    document.addEventListener('wheel', event => {
-      const box = document.querySelector('[data-testid="terminal"]');
-      if (!box?.contains(event.target)) return;
-      window.shellTerminalWheels.push({ at: performance.now(), target: event.target.className,
-        readonly: box.dataset.readonly, preview: Boolean(box.querySelector('.terminal-preview')),
-        terminals: [...box.querySelectorAll('.xterm')].map(el => ({ preview: el.classList.contains('terminal-preview'), visibility: getComputedStyle(el).visibility })),
-        focus: document.activeElement?.className });
-    }, { capture: true, passive: true });
-  });
-  page.on("request", (request) => {
-    if (request.url().endsWith("/api/v1/call")) diagnostics.request(request, request.postDataJSON());
-  });
-  const connection = [];
-  page.on("websocket", (ws) => {
-    if (!ws.url().includes("/panes/")) return;
-    const entry = { pane: new URL(ws.url()).pathname.split("/").at(-2), at: Date.now() };
-    connection.push(entry);
-    diagnostics.remember([{ connection: entry }]);
-    ws.on("close", () => { entry.closed = Date.now(); });
-  });
-  let phase;
-  const mark = (next) => {
-    phase = next;
-    diagnostics.remember([{ at: Date.now(), phase, width, engine: engine.browserType().name(), harness }]);
-  };
-  mark("inline");
   const terminal = async () => {
     await toggle.waitFor();
     if (await toggle.getAttribute("aria-pressed") === "true") await toggle.click();
-    await until("inline 화면 그리기", async () => (await screenText(page)).includes("foreground-harness-ready"));
+    await until("재개 화면 그리기", async () => (await screenText(page)).includes("foreground-harness-ready"));
   };
   const quit = async () => {
     aaa("pane", "run", pane, "quit");
     await waitOutput(pane, "foreground-harness-exited");
     await until("재개 전 셸 복귀", () => !state().agent);
   };
-  try {
-    await inList(page, `pane-${name}`);
-    aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${id} --inline`);
+  const modes = harness === "codex" ? ["resume"] : ["--resume", "--continue"];
+  for (const mode of modes) {
+    mark(`${mode}:terminal`);
+    aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${mode}${mode === "--continue" ? "" : ` ${id}`} --mouse`);
     await waitOutput(pane, "foreground-harness-ready");
+    await until(`${mode}로 같은 대화 연결`, () => state().agent?.harness_session === id);
     await terminal();
-    const read = () => aaa("pane", "read", pane, "--source", "recent", "--lines", "1000").text;
-    assert.ok(read().includes("terminal-history-0"), "서버 VT가 입력줄 위에서 밀린 기록을 잃었다");
-    await inList(page, "pane-t1");
-    await inList(page, `pane-${name}`);
-    await terminal();
-    await domIs(page, "inline 사본의 기록·화면 읽기 완료", () => Number(document.querySelector('[data-testid="terminal"]')?.dataset.viewBase) > 0);
-    await page.getByTestId("terminal").evaluate((el) => el.querySelector(".xterm").dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -10000, deltaMode: WheelEvent.DOM_DELTA_LINE })));
-    await until("연결 전 inline 기록 복원", async () => (await screenText(page)).includes("terminal-history-0"));
-    aaa("pane", "run", pane, "open");
-    await until("재개 전 원래 기록 연결", () => state().agent?.harness_session === id);
-    await quit();
-    for (const mode of harness === "codex" ? ["resume"] : ["--resume", "--continue"]) {
-      mark(`${mode}:terminal`);
-      aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${mode}${mode === "--continue" ? "" : ` ${id}`} --mouse`);
-      await waitOutput(pane, "foreground-harness-ready");
-      await until(`${mode}로 같은 대화 연결`, () => state().agent?.harness_session === id);
-      await terminal();
-      const footer = page.locator(".xterm-rows > div").filter({ hasText: "fixed-composer>" });
-      const fixed = await footer.boundingBox();
-      for (let turn = 0; turn < 2; turn++) {
-        const previous = await screenText(page);
-        const area = await page.getByTestId("terminal").boundingBox();
-        if (width < 500 && engine === browser) {
-          const cdp = await page.context().newCDPSession(page);
-          const x = Math.round(area.x + area.width / 2), y = Math.round(area.y + area.height / 2);
-          await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
-          await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + 100, id: 1 }] });
-          await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-          await cdp.detach();
-        } else if (width < 500) {
-          // WebKit의 Playwright는 이동 touch API가 없어 TermView 사건 경로만 확인한다.
-          await page.getByTestId("terminal").evaluate((el) => {
-            const rect = el.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
-            const dispatch = (type, at, end = false) => {
-              const touch = document.createTouch(window, el, 1, x, at, x, at);
-              const touches = document.createTouchList(...(end ? [] : [touch]));
-              el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches, targetTouches: touches, changedTouches: document.createTouchList(touch) }));
-            };
-            dispatch("touchstart", y);
-            dispatch("touchmove", y + 100);
-            dispatch("touchend", y + 100, true);
-          });
-        } else {
-          await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2);
-          await page.mouse.wheel(0, -100);
-        }
-        await until("프로그램 자체 대화 스크롤", async () => (await screenText(page)) !== previous);
-        assert.deepEqual(await footer.boundingBox(), fixed, "프로그램 휠이 입력줄까지 움직였다");
-        mark(`${mode}:terminal:return-${turn + 1}`);
-        await inList(page, "pane-t1");
-        await inList(page, `pane-${name}`);
-        await terminal();
-        await until("alternate 화면 사본 복원", async () => (await screenText(page)).includes("app-history-") && (await screenText(page)).includes("fixed-composer>"));
+    const footer = page.locator(".xterm-rows > div").filter({ hasText: "fixed-composer>" });
+    const fixed = await footer.boundingBox();
+    // 복귀 반복은 E2E109가 맡고, 여기서는 실제 셸 프로그램의 입력을 한 번 확인한다.
+    {
+      const previous = await screenText(page);
+      const area = await page.getByTestId("terminal").boundingBox();
+      if (width < 500 && engine === browser) {
+        const cdp = await page.context().newCDPSession(page);
+        const x = Math.round(area.x + area.width / 2), y = Math.round(area.y + area.height / 2);
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y + 100, id: 1 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await cdp.detach();
+      } else if (width < 500) {
+        // WebKit의 Playwright는 이동 touch API가 없어 TermView 사건 경로만 확인한다.
+        await page.getByTestId("terminal").evaluate((el) => {
+          const rect = el.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+          const dispatch = (type, at, end = false) => {
+            const touch = document.createTouch(window, el, 1, x, at, x, at);
+            const touches = document.createTouchList(...(end ? [] : [touch]));
+            el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches, targetTouches: touches, changedTouches: document.createTouchList(touch) }));
+          };
+          dispatch("touchstart", y);
+          dispatch("touchmove", y + 100);
+          dispatch("touchend", y + 100, true);
+        });
+      } else {
+        await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2);
+        await page.mouse.wheel(0, -100);
       }
-      // VT200은 휠뿐 아니라 클릭 누름·뗌도 보낸다. 복귀한 터미널을 실제로 누른 뒤
-      // 대화·agent 재시작을 거쳐 quit해도 시험 harness의 입력 해석이 막히면 안 된다.
-      mark(`${mode}:terminal:click`);
-      await page.locator(".xterm-screen").click();
-      await toggle.waitFor();
-      const newest = page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "pane_chat" && !r.request().postDataJSON()?.before);
-      if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
-      mark(`${mode}:chat`);
-      const reply = await (await newest).json();
-      assert.ok(reply.ok?.messages?.some((message) => message.text.startsWith(`${id} 기록 359 ·`)), "재개한 최신 기록이 없다");
-      // continue는 같은 기록의 읽던 맨 위를 복원한다. 화면 밖 최신 본문은 가상화되어 mount되지 않을 수 있다.
-      await chat.locator("[data-chat-id]").first().waitFor({ state: "attached" });
-      const composer = page.getByTestId("chat-composer"), before = await composer.boundingBox();
-      await firstMessage(page, id);
-      assert.deepEqual(await composer.boundingBox(), before, "재개한 이전 대화를 굴리며 입력창이 움직였다");
+      await until("프로그램 자체 대화 스크롤", async () => (await screenText(page)) !== previous);
+      assert.deepEqual(await footer.boundingBox(), fixed, "프로그램 휠이 입력줄까지 움직였다");
+      mark(`${mode}:terminal:return`);
       await inList(page, "pane-t1");
       await inList(page, `pane-${name}`);
-      assert.equal(await toggle.getAttribute("aria-pressed"), "true", "재개 뒤 보기 선택 소실");
-      await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
+      await terminal();
+      await until("alternate 화면 사본 복원", async () => (await screenText(page)).includes("app-history-") && (await screenText(page)).includes("fixed-composer>"));
+    }
+    // VT200은 휠뿐 아니라 클릭 누름·뗌도 보낸다. 복귀한 터미널을 실제로 누른 뒤
+    // 대화·agent 재시작을 거쳐 quit해도 시험 harness의 입력 해석이 막히면 안 된다.
+    mark(`${mode}:terminal:click`);
+    await page.locator(".xterm-screen").click();
+    await toggle.waitFor();
+    const newest = page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "pane_chat" && !r.request().postDataJSON()?.before);
+    if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+    mark(`${mode}:chat`);
+    const reply = await (await newest).json();
+    assert.ok(reply.ok?.messages?.some((message) => message.text.startsWith(`${id} 기록 359 ·`)), "재개한 최신 기록이 없다");
+    // 같은 pane의 일반 위치·보기 복귀는 E2E30/37/103/104가 검사한다.
+    // 새 cursor의 전체 재독은 harness마다 마지막 mode에서 한 번만 검사한다.
+    if (mode === modes.at(-1)) {
+      // 보관된 옛 「처음이다」가 재시작 뒤 새 cursor 검사를 건너뛰게 해서는 안 된다.
+      await firstMessage(page, id);
       // 자기 실험실 agent만 재시작한다. 저장된 연결을 없애 PID 증거로 다시 찾는지 확인한다.
       await stop("agent");
       mark(`${mode}:restart`);
@@ -178,46 +124,26 @@ async function resumed(engine, width, harness) {
       const latestHistory = (await (await revalidated).json()).ok.history;
       await domIs(page, "재시작 재검증 commit", history => document.querySelector('[data-testid="chat"] [data-chat-id]')?.getAttribute("data-chat-id")?.startsWith(`${history}:`), latestHistory);
       // 재시작은 기존 byte cursor를 무효화한다(chat_pages). 새 cursor로 이전 대화 전체를 다시 읽을 수 있어야 한다.
+      const composer = page.getByTestId("chat-composer"), before = await composer.boundingBox();
       await firstMessage(page, id);
+      assert.deepEqual(await composer.boundingBox(), before, "재개한 이전 대화를 굴리며 입력창이 움직였다");
       await inList(page, "pane-t1");
       await inList(page, `pane-${name}`);
+      assert.equal(await toggle.getAttribute("aria-pressed"), "true", "재개 뒤 보기 선택 소실");
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
-      await shot(page, `${name}-${mode}-${width}`);
-      mark(`${mode}:quit`);
-      await quit();
-      const trace = fs.readdirSync(`${root}/shell-input`).map((file) => JSON.parse(fs.readFileSync(`${root}/shell-input/${file}`, "utf8")))
-        .find((trace) => trace.session === id && trace.harness === harness && trace.mode === mode);
-      for (const final of ["M", "m"]) {
-        assert.ok(trace?.events.some((event) => event.kind === "control" && event.button === 0 && event.final === final), "실제 클릭 보고를 받지 않았다");
-      }
-      assert.ok(trace.events.some((event) => event.kind === "command" && event.command === "quit"), "quit을 명령으로 읽지 않았다");
-      assert.equal(trace.events.at(-1).kind, "exited", "시험 harness의 출력·정리가 끝나지 않았다");
     }
-    mark("done");
-  } catch (error) {
-    await diagnoseShell(error);
-    fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
-    const view = await inTime(page.evaluate(() => ({
-      terminal: { ...document.querySelector('[data-testid="terminal"]')?.dataset },
-      screen: document.querySelector(".xterm-rows")?.textContent,
-      viewport: [...document.querySelectorAll(".xterm-viewport")].map((el) => ({ top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight })),
-      wheels: window.shellTerminalWheels,
-      log: window.__aaaTermLog?.slice(-80),
-      chat: document.querySelector('[data-testid="chat"]')?.textContent?.slice(0, 2000),
-    })), 5000, "재개 실패 화면 수집").catch((error) => ({ captureError: String(error) }));
-    fs.writeFileSync(`${root}/diagnostics/${name}.json`, JSON.stringify({ phase, width, engine: engine.browserType().name(), view }, null, 2));
-    throw error;
-  } finally {
-    const phases = diagnostics.states.filter((state) => state.phase);
-    const closes1006 = await page.evaluate(() => window.__aaaTermLog.filter((entry) => entry.e === "ws close 1006").length).catch(() => null);
-    console.log("재개 진행", JSON.stringify({ name, width, engine: engine.browserType().name(), phase,
-      phases: phases.map((state) => [state.phase, state.at - diagnostics.started]),
-      connections: connection.length, closes1006,
-      samePaneReconnects: connection.filter((entry, i) => i > 0 && entry.pane === connection[i - 1].pane).length }));
-    diagnostics.stop();
-    shellDiagnostics = null;
-    await page.context().close();
+    await shot(page, `${name}-${mode}-${width}`);
+    mark(`${mode}:quit`);
+    await quit();
+    const trace = fs.readdirSync(`${root}/shell-input`).map((file) => JSON.parse(fs.readFileSync(`${root}/shell-input/${file}`, "utf8")))
+      .find((trace) => trace.session === id && trace.harness === harness && trace.mode === mode);
+    for (const final of ["M", "m"]) {
+      assert.ok(trace?.events.some((event) => event.kind === "control" && event.button === 0 && event.final === final), "실제 클릭 보고를 받지 않았다");
+    }
+    assert.ok(trace.events.some((event) => event.kind === "command" && event.command === "quit"), "quit을 명령으로 읽지 않았다");
+    assert.equal(trace.events.at(-1).kind, "exited", "시험 harness의 출력·정리가 끝나지 않았다");
   }
+  mark("done");
 }
 
 function diagnoseShell(error) {
@@ -247,7 +173,7 @@ function diagnoseShell(error) {
   return diagnostics.saving;
 }
 
-async function harnessCase(harness, kind, width, run = resumed) {
+async function harnessCase(harness, kind, width, run) {
   const engine = kind === "chromium" ? browser : await webkit.launch({ headless: true });
   try { await run(engine, width, harness); }
   finally { if (engine !== browser) await engine.close(); }
@@ -265,6 +191,26 @@ export default async function () {
     diagnostics.watch(page.context());
     page.on("request", (request) => {
       if (request.url().endsWith("/api/v1/call")) diagnostics.request(request, request.postDataJSON());
+    });
+    // 표시 사본과 실제 xterm의 복귀 경합을 관측한다. 휠·준비 순서를 바꾸지 않는다.
+    await page.evaluate(() => {
+      window.shellTerminalWheels = [];
+      document.addEventListener('wheel', event => {
+        const box = document.querySelector('[data-testid="terminal"]');
+        if (!box?.contains(event.target)) return;
+        window.shellTerminalWheels.push({ at: performance.now(), target: event.target.className,
+          readonly: box.dataset.readonly, preview: Boolean(box.querySelector('.terminal-preview')),
+          terminals: [...box.querySelectorAll('.xterm')].map(el => ({ preview: el.classList.contains('terminal-preview'), visibility: getComputedStyle(el).visibility })),
+          focus: document.activeElement?.className });
+      }, { capture: true, passive: true });
+    });
+    const connection = [];
+    page.on("websocket", (ws) => {
+      if (!ws.url().includes("/panes/")) return;
+      const entry = { pane: new URL(ws.url()).pathname.split("/").at(-2), at: Date.now() };
+      connection.push(entry);
+      diagnostics.remember([{ connection: entry }]);
+      ws.on("close", () => { entry.closed = Date.now(); });
     });
     let phase;
     const mark = (next) => {
@@ -285,7 +231,7 @@ export default async function () {
       const pane = aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh").tabs.at(-1).root.pane;
       diagnostics.pane = pane;
       await inList(page, `pane-${name}`);
-      aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${id}`);
+      aaa("pane", "run", pane, `${root}/shellbin/${harness} ${root} ${id} --inline`);
       await waitOutput(pane, "foreground-harness-ready");
       await until("직접 실행한 harness 감지", () => aaa("pane", "list").panes.find((p) => p.id === pane)?.agent?.harness === harness);
       const state = () => aaa("pane", "list").panes.find((p) => p.id === pane);
@@ -294,9 +240,14 @@ export default async function () {
       await toggle.waitFor();
       if ((await toggle.getAttribute("aria-pressed")) === "true") await toggle.click();
       await until("연결 전 터미널 화면", async () => (await screenText(page)).includes("foreground-harness-ready"));
+      const read = () => aaa("pane", "read", pane, "--source", "recent", "--lines", "1000").text;
+      assert.ok(read().includes("terminal-history-0"), "서버 VT가 입력줄 위에서 밀린 기록을 잃었다");
       await inList(page, "pane-t1");
       await inList(page, `pane-${name}`);
-      await until("다른 대화 복귀 때 연결 전 화면 복원", async () => (await screenText(page)).includes("foreground-harness-ready"));
+      await until("inline 복귀 화면", async () => (await screenText(page)).includes("foreground-harness-ready"));
+      await domIs(page, "inline 사본의 기록·화면 읽기 완료", () => Number(document.querySelector('[data-testid="terminal"]')?.dataset.viewBase) > 0);
+      await page.getByTestId("terminal").evaluate((el) => el.querySelector(".xterm").dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -10000, deltaMode: WheelEvent.DOM_DELTA_LINE })));
+      await until("연결 전 inline 기록 복원", async () => (await screenText(page)).includes("terminal-history-0"));
       if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
       const chat = page.getByTestId("chat");
       await chat.locator(".banner.warn").waitFor();
@@ -431,101 +382,66 @@ export default async function () {
       // 화면 밖 본문은 가상화된다. 새 row의 commit으로 갱신을 확인한다.
       await chat.locator(`[data-chat-id="${added}"]`).waitFor({ state: "attached" });
       assert.equal(await chat.evaluate((c) => c.scrollTop), 0, "갱신이 읽던 위치를 옮겼다");
-      await inList(page, "pane-t1");
-      await inList(page, `pane-${name}`);
-      assert.equal(await toggle.getAttribute("aria-pressed"), "true", "돌아오며 대화 보기 선택이 바뀌었다");
-      await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
-      mark("switch");
-      // 옛 파일의 맨 위를 읽던 상태를 확정한다. 새 파일은 이 위치를 이어받으면 안 된다.
-      await chat.evaluate((c) => { c.scrollTop = 0; c.dispatchEvent(new Event("scroll", { bubbles: true })); });
-      diagnostics.remember([{ phase, top: await chat.evaluate((c) => c.scrollTop) }]);
-      aaa("pane", "run", pane, `switch ${next}`);
-      await until("같은 프로세스의 새 대화 연결", () => state().agent?.harness_session === next);
-      await chat.getByText(`${next} 기록 359 ·`, { exact: false }).first().waitFor();
-      // 본문이 mount돼도 화면 밖일 수 있다. 새 대화에서는 최신 끝이 실제로 보여야 한다.
       const atEnd = () => {
         const c = document.querySelector('[data-testid="chat"]');
         return c && Math.abs(c.scrollHeight - c.clientHeight - c.scrollTop) <= 1;
       };
-      await domIs(page, "새 대화의 최신 끝 표시", atEnd);
-      assert.equal(await chat.getByText(`${id} 기록`, { exact: false }).count(), 0, "이전 세션을 섞었다");
-      if (width < 500) {
+      // 파일 교체의 웹 위치 규칙은 공통이다. Codex는 보는 중 FD 교체,
+      // Claude는 떠난 동안 PID 등록 교체·쓰는 중 파일 복귀를 한 번씩 지킨다.
+      if (harness === "codex") {
+        mark("switch");
+        aaa("pane", "run", pane, `switch ${next}`);
+        await until("같은 프로세스의 새 대화 연결", () => state().agent?.harness_session === next);
+      } else {
         mark("switch-away");
-        await firstMessage(page, next);
         await inList(page, "pane-t1");
-        // 기록 파일이 쓰이는 중 감지되는 순서도 고정한다. 첫 300줄 뒤 실제 명령으로 나머지를 쓴다.
-        aaa("pane", "run", pane, `switch-paused ${decoy}`);
-        await until("떠난 동안 새 대화 연결", () => state().agent?.harness_session === decoy);
+        aaa("pane", "run", pane, `switch-paused ${next}`);
+        await until("떠난 동안 새 대화 연결", () => state().agent?.harness_session === next);
         await inList(page, `pane-${name}`);
-        await chat.getByText(`${decoy} 기록 299 ·`, { exact: false }).first().waitFor();
+        assert.equal(await toggle.getAttribute("aria-pressed"), "true", "돌아오며 대화 보기 선택이 바뀌었다");
+        await chat.getByText(`${next} 기록 299 ·`, { exact: false }).first().waitFor();
         await domIs(page, "쓰는 중 새 파일 복귀의 최신 끝 표시", atEnd);
         aaa("pane", "run", pane, "finish-history");
-        await chat.getByText(`${decoy} 기록 359 ·`, { exact: false }).first().waitFor();
-        await domIs(page, "새 파일 복귀의 최신 끝 표시", atEnd);
-        assert.equal(await chat.getByText(`${next} 기록`, { exact: false }).count(), 0, "옛 파일의 복귀 위치를 섞었다");
       }
+      await chat.getByText(`${next} 기록 359 ·`, { exact: false }).first().waitFor();
+      await domIs(page, "새 대화의 최신 끝 표시", atEnd);
+      assert.equal(await chat.getByText(`${id} 기록`, { exact: false }).count(), 0, "이전 세션을 섞었다");
       aaa("pane", "run", pane, "quit");
       await waitOutput(pane, "foreground-harness-exited");
       await until("셸 복귀 때 연결 해제", () => !state().agent);
       await page.getByTestId("chat-toggle").waitFor({ state: "detached" });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await resumed(engine, width, harness, { page, pane, id: next, name, mark });
     } catch (error) {
       await diagnoseShell(error);
+      fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+      const view = await inTime(page.evaluate(() => ({
+        terminal: { ...document.querySelector('[data-testid="terminal"]')?.dataset },
+        screen: document.querySelector(".xterm-rows")?.textContent,
+        viewport: [...document.querySelectorAll(".xterm-viewport")].map((el) => ({ top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight })),
+        wheels: window.shellTerminalWheels,
+        log: window.__aaaTermLog?.slice(-80),
+        chat: document.querySelector('[data-testid="chat"]')?.textContent?.slice(0, 2000),
+      })), 5000, "재개 실패 화면 수집").catch((error) => ({ captureError: String(error) }));
+      fs.writeFileSync(`${root}/diagnostics/${name}.json`, JSON.stringify({ phase, width, engine: engine.browserType().name(), view }, null, 2));
       throw error;
     } finally {
+      const phases = diagnostics.states.filter((state) => state.phase);
+      const closes1006 = await page.evaluate(() => window.__aaaTermLog.filter((entry) => entry.e === "ws close 1006").length).catch(() => null);
+      console.log("셸 진행", JSON.stringify({ name, width, engine: engine.browserType().name(), phase,
+        phases: phases.map((state) => [state.phase, state.at - diagnostics.started]),
+        connections: connection.length, closes1006,
+        samePaneReconnects: connection.filter((entry, i) => i > 0 && entry.pane === connection[i - 1].pane).length }));
       diagnostics.stop();
       shellDiagnostics = null;
       await page.context().close();
     }
   };
-  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 Chromium 1280", async () => {
-    await harnessCase("codex", "chromium", 1280, check);
-  }, { diagnose: diagnoseShell });
-  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 Chromium 390", async () => {
+  // 두 harness는 별도 실험실이다. 각 수명 안에서는 같은 pane/기록을 직접 실행→재개로 잇는다.
+  await step("셸 Codex 직접 연결·교체·resume·PID 복구 Chromium 390", async () => {
     await harnessCase("codex", "chromium", 390, check);
   }, { diagnose: diagnoseShell });
-  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 WebKit 1280", async () => {
-    await harnessCase("codex", "webkit", 1280, check);
-  }, { diagnose: diagnoseShell });
-  await step("셸에서 직접 연 Codex의 대화 연결·스크롤 WebKit 390", async () => {
-    await harnessCase("codex", "webkit", 390, check);
-  }, { diagnose: diagnoseShell });
-  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 Chromium 1280", async () => {
-    await harnessCase("claude", "chromium", 1280, check);
-  }, { diagnose: diagnoseShell });
-  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 Chromium 390", async () => {
-    await harnessCase("claude", "chromium", 390, check);
-  }, { diagnose: diagnoseShell });
-  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 WebKit 1280", async () => {
-    await harnessCase("claude", "webkit", 1280, check);
-  }, { diagnose: diagnoseShell });
-  await step("셸에서 직접 연 Claude의 대화 연결·스크롤 WebKit 390", async () => {
+  await step("셸 Claude 직접 연결·숨김 교체·resume·continue·PID 복구 WebKit 390", async () => {
     await harnessCase("claude", "webkit", 390, check);
-  }, { diagnose: diagnoseShell });
-  // 조합마다 새 pane·대화·기기를 만들며 앞 조합의 상태를 쓰지 않는다.
-  // agent 재시작이 다른 조합에 영향을 주지 않게 병렬 입구는 각 단계를 별도 실험실에 둔다.
-  await step("Codex resume 이전 대화·inline 복원·재시작 Chromium 1280", async () => {
-    await harnessCase("codex", "chromium", 1280);
-  }, { diagnose: diagnoseShell });
-  await step("Codex resume 이전 대화·inline 복원·재시작 Chromium 390", async () => {
-    await harnessCase("codex", "chromium", 390);
-  }, { diagnose: diagnoseShell });
-  await step("Codex resume 이전 대화·inline 복원·재시작 WebKit 1280", async () => {
-    await harnessCase("codex", "webkit", 1280);
-  }, { diagnose: diagnoseShell });
-  await step("Codex resume 이전 대화·inline 복원·재시작 WebKit 390", async () => {
-    await harnessCase("codex", "webkit", 390);
-  }, { diagnose: diagnoseShell });
-  await step("Claude resume·continue 이전 대화·복귀·재시작 Chromium 1280", async () => {
-    await harnessCase("claude", "chromium", 1280);
-  }, { diagnose: diagnoseShell });
-  await step("Claude resume·continue 이전 대화·복귀·재시작 Chromium 390", async () => {
-    await harnessCase("claude", "chromium", 390);
-  }, { diagnose: diagnoseShell });
-  await step("Claude resume·continue 이전 대화·복귀·재시작 WebKit 1280", async () => {
-    await harnessCase("claude", "webkit", 1280);
-  }, { diagnose: diagnoseShell });
-  await step("Claude resume·continue 이전 대화·복귀·재시작 WebKit 390", async () => {
-    await harnessCase("claude", "webkit", 390);
   }, { diagnose: diagnoseShell });
 }
