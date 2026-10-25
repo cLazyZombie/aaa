@@ -31,7 +31,7 @@ if tool == "python3":
 elif tool == "cargo":
     stage = args[0]
     if stage == "build":
-        binary = root / "target/debug/aaa"
+        binary = root / "target/e2e/aaa"
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("fixture binary")
     if stage != "clippy":

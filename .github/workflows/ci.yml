@@ -59,7 +59,7 @@ jobs:
       # 단계 명령은 scripts/ci-local.sh에만 있다(로컬 검증과 같은 명령)
       - name: Playwright(Chromium·WebKit)
         run: npm install -g --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION" && npx -y "playwright@$PLAYWRIGHT_VERSION" install chromium webkit
-      # e2e는 target/debug/aaa만 쓴다: build 단계(--all-targets, 시험 binary 포함) 대신 e2e 단계가 그 binary만 빌드한다.
+      # e2e는 target/e2e/aaa만 쓴다. 이 job은 e2e 단계에서 내부 실행 파일을 빌드한다.
       # 단계를 나눠 두면 GitHub step 시간에 웹 빌드와 E2E가 따로 보인다.
       - name: 웹 빌드
         run: bash scripts/ci-local.sh --only web --logs . --tee

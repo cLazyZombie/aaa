@@ -168,5 +168,9 @@ clean은 해당 작업의 target만 비우고, 수정 뒤 빌드는 고유한 �
 
 이는 설정 개선 비교가 아니다. 차이는 모두 0.5% 이내였다. 기존 release의 `debug="line-tables-only"`,
 `strip="none"`, `panic="unwind"`와 dev를 유지한다. 별도 Cargo profile인 `deploy-build`는 없고
-`scripts/deploy-build.sh`가 release를 빌드한다. `bench`는 release, `test`는 dev의 줄 정보를 상속한다.
+`scripts/deploy-build.sh`와 bench는 release를 쓴다. 현재 test/verify/e2e의 상속·줄 정보는 아래 profile 역할 표를 따른다.
 release workflow와 deploy-build의 기존 dSYM/PDB 보관, Linux의 압축 DWARF를 유지한다.
+
+## 배포와 내부 빌드
+
+[현재 profile 역할·경로](build-profiles.md)를 따른다. 실제 배포 release의 opt-level=s·thin LTO·CGU1·line tables는 유지한다. ci-local의 E2E 실행 파일과 P0 모의는 debug=0의 e2e를, unit·실패 재현은 verify/test를 쓴다. 앞의 native release 기호 확인은 배포 설정의 근거이며 내부 e2e의 스택 파일·줄 보장을 뜻하지 않는다.

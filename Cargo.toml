@@ -66,29 +66,67 @@ webpki-roots = "1"
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_SystemInformation"] }
 dunce = "1.0.5"
 
-[profile.dev]
+# release는 사용자·기기에 전달하는 배포 산출물에만 쓴다. 내부 도구는 verify로 빌드한다.
+# 실행 성능·크기는 배포 조건에서 비교하며 macOS/Windows 기호는 배포 스크립트가 별도 보관한다.
+[profile.release]
+opt-level = "s"
 debug = "line-tables-only"
+lto = "thin"
+codegen-units = 1
+incremental = false
+strip = "none"
+panic = "unwind"
 
-# `aaa update`가 실행 파일(디버그 빌드 100MB 넘음)을 sha256으로 비교한다: 최적화 없는 sha2는 한 번에 3초 걸렸다
+# 직접 개발은 빠른 재컴파일을, 반복 자동화는 kache 재사용을 우선한다.
+[profile.dev]
+opt-level = 0
+debug = true
+lto = false
+incremental = true
+
+# 실패 스택의 파일·줄을 재현하는 최소 정보다. 변수·타입 정보는 기존 dev/debugging에 둔다.
+[profile.test]
+inherits = "dev"
+debug = "line-tables-only"
+lto = "off"
+codegen-units = 16
+incremental = false
+
+# 내부 CLI·일상 검증은 전역 LTO 없이 최소 최적화한다. 긴 시나리오의 기존 hot-path override는 유지한다.
+[profile.verify]
+inherits = "test"
+opt-level = 0
+debug = "line-tables-only"
+lto = "off"
+codegen-units = 16
+incremental = false
+
+# headless 자동화는 빌드+실행 합계를 우선한다. panic 위치는 남고 상세 스택은 verify/test로 재현한다.
+[profile.e2e]
+inherits = "verify"
+opt-level = 0
+debug = 0
+
+# 기존 명령의 호환 별칭이다. 새 자동화는 verify/e2e를 명시한다.
+[profile.dev-fast]
+inherits = "verify"
+
+# 변수·타입이 필요한 명시적인 디버거 조사에만 쓴다.
+[profile.debugging]
+inherits = "dev"
+debug = true
+
 [profile.dev.package.sha2]
 opt-level = 3
 
 # 배포 keeper는 실제 실행 파일을 base64 JSON 조각으로 왕복한다. 두 의존성의 처리 비용만 줄이고
 # dev/test의 debug assertions·실제 실행 파일 전송·검증 경계는 유지한다.
+
 [profile.dev.package.base64]
 opt-level = 3
 
 [profile.dev.package.serde_json]
 opt-level = 3
-
-[profile.release]
-debug = "line-tables-only"
-# 웹 자산 압축과 함께 실측한다(docs/binary-size.md). 심볼·unwind는 장애 진단/복구에 필요하다.
-opt-level = "s"
-lto = "thin"
-codegen-units = 1
-strip = "none"
-panic = "unwind"
 
 # session host 화면이 웹과 같은 칸을 쓰도록 글자 폭을 고친 vt100(plan §8.167)
 [patch.crates-io]

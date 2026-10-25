@@ -2,7 +2,7 @@
 // 단계는 기능별 파일(web/e2e/specs/번호-기능.mjs, 번호는 두 자리 이상)에 있고, 파일마다 새 실험실(host·agent·Chromium, /tmp/aaw-<pid>)에서 돈다.
 // 파일은 worker 여러 개가 함께 돈다(실험실끼리 나누는 것이 없다). 긴 파일부터 넣는다(durations.json, 기록한 초).
 //
-// 실행(저장소 루트): cargo build -p aaa && (cd web && npm run build) && cargo build -p aaa
+// 실행(저장소 루트): cargo build --profile e2e -p aaa && (cd web && npm run build) && cargo build --profile e2e -p aaa
 //   NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs [스크린샷 폴더]   모든 파일을
 //     --workers 1                    함께 도는 작업 수(기본: 10 CPU 이상은 5/8 내림·최대10개, 그 밖은 core 둘마다 하나).
 //                                    AAA_E2E_WORKERS와 같다.

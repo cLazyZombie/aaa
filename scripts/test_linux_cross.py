@@ -52,6 +52,6 @@ class LinuxCross(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             output = (Path(directory) / "logs/linux-clippy.log").read_text().splitlines()
             self.assertEqual(output[:3], [str(compiler), "/custom/old-zig-cc", "/custom/linker"])
-            self.assertEqual(output[3:], ["clippy", "--workspace", "--all-targets", "--locked",
+            self.assertEqual(output[3:], ["clippy", "--profile", "verify", "--workspace", "--all-targets", "--locked",
                                          "--keep-going", "--target", "x86_64-unknown-linux-gnu",
                                          "--", "-D", "warnings"])
