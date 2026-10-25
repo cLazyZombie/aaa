@@ -34,6 +34,15 @@ pub(crate) struct Leftover {
     pub branch: bool,
 }
 
+fn same_sweep_target(current: &ThreadRec, expected: &ThreadRec) -> bool {
+    current.status == ThreadStatus::Resolved
+        && current.machine_id == expected.machine_id
+        && current.repo == expected.repo
+        && current.cwd == expected.cwd
+        && current.branch == expected.branch
+        && current.leftover == expected.leftover
+}
+
 fn status_key(project: &str) -> String {
     format!("project_status:{project}")
 }
@@ -522,6 +531,48 @@ impl Host {
         FrontResponse::ProjectFiles { checks }
     }
 
+    /// 같은 저장소의 없는 자리·branch를 한 번에 확인한다. 구판 agent에는 모르는 요청을 보내지 않는다.
+    async fn sweep_absent(&self, found: &[ThreadRec]) -> std::collections::HashSet<String> {
+        let mut groups = std::collections::BTreeMap::<_, Vec<_>>::new();
+        for r in found {
+            if let (Some(repo), Some(_)) = (&r.repo, &r.cwd) {
+                groups.entry((&r.machine_id, repo)).or_default().push(r);
+            }
+        }
+        let mut missing = std::collections::HashSet::new();
+        for ((machine, repo), rows) in groups {
+            let supported = self
+                .inner
+                .lock()
+                .unwrap()
+                .machines
+                .get(machine)
+                .is_some_and(|m| m.features.iter().any(|f| f == "cleanup_probe.v1"));
+            if !supported {
+                continue;
+            }
+            let Ok(conn) = self.live_conn(machine) else {
+                continue;
+            };
+            for chunk in rows.chunks(500) {
+                let targets = chunk
+                    .iter()
+                    .map(|r| aaa_proto::CleanupTarget {
+                        cwd: r.cwd.clone().unwrap_or_default(),
+                        branch: r.branch.clone(),
+                    })
+                    .collect();
+                match conn.request(AgentRequest::ThreadCleanupProbe { repo: repo.clone(), targets }).await {
+                    Ok(AgentResponse::CleanupAbsent { absent }) if absent.len() == chunk.len() => {
+                        missing.extend(chunk.iter().zip(absent).filter(|(_, gone)| *gone).map(|(r, _)| r.id.clone()));
+                    }
+                    result => tracing::warn!(?result, "자리 부재 묶음 확인을 못 해 기존 개별 정리로 넘긴다"),
+                }
+            }
+        }
+        missing
+    }
+
     /// 끝난 thread가 resolve 때 남긴 worktree·branch를 다시 정리한다(참고 `sweep`)
     pub(crate) async fn project_sweep(
         self: &Arc<Self>,
@@ -564,34 +615,79 @@ impl Host {
         }
         let mut notes = Vec::new();
         let (mut done, mut kept) = (0, 0);
+        let started = std::time::Instant::now();
+        let absent = self.sweep_absent(&found).await;
+        let probe_ms = started.elapsed().as_millis();
+        let mut agent_time = std::time::Duration::ZERO;
+        let mut save_time = std::time::Duration::ZERO;
         for r in &found {
+            let agent_started = std::time::Instant::now();
             let before = describe(r);
-            let res = match self.live_conn(&r.machine_id) {
-                Ok(conn) => conn
-                    .request(AgentRequest::ThreadCleanup {
-                        repo: r.repo.clone(),
-                        cwd: r.cwd.clone().unwrap_or_default(),
-                        branch: r.branch.clone(),
-                        // branch는 PR이 병합됐고 로컬 끝이 병합된 head일 때만 지운다(참고 sweep `Orphan::Branch`, resolve와 같다)
-                        merged_head: if r.repo.is_some() { self.merged_head(project, r, &conn).await } else { None },
-                        keep_worktree: false,
-                        uncopied: false,
-                    })
-                    .await
-                    .and_then(|res| match res {
-                        AgentResponse::Cleanup(c) => Ok(c),
-                        other => Err(internal(format!("예상하지 못한 응답: {other:?}"))),
-                    }),
-                Err(e) => Err(e),
+            match self.load(project, &r.id) {
+                Ok(current) if same_sweep_target(&current, r) => {}
+                result => {
+                    kept += 1;
+                    let reason = match result {
+                        Err(e) => format!("thread 기록을 읽지 못했다: {}", e.message),
+                        Ok(_) => "정리 중 thread 기록이 바뀌었다".into(),
+                    };
+                    notes.push(format!("남겼다: {before}({reason})"));
+                    continue;
+                }
+            }
+            let res = if absent.contains(&r.id) {
+                Ok(aaa_proto::Cleanup {
+                    worktree_removed: true,
+                    branch_deleted: true,
+                    notes: vec!["자리와 branch는 이미 없다".into()],
+                })
+            } else {
+                match self.live_conn(&r.machine_id) {
+                    Ok(conn) => conn
+                        .request(AgentRequest::ThreadCleanup {
+                            repo: r.repo.clone(),
+                            cwd: r.cwd.clone().unwrap_or_default(),
+                            branch: r.branch.clone(),
+                            // branch는 PR이 병합됐고 로컬 끝이 병합된 head일 때만 지운다(참고 sweep `Orphan::Branch`, resolve와 같다)
+                            merged_head: if r.repo.is_some() {
+                                self.merged_head(project, r, &conn).await
+                            } else {
+                                None
+                            },
+                            keep_worktree: false,
+                            uncopied: false,
+                        })
+                        .await
+                        .and_then(|res| match res {
+                            AgentResponse::Cleanup(c) => Ok(c),
+                            other => Err(internal(format!("예상하지 못한 응답: {other:?}"))),
+                        }),
+                    Err(e) => Err(e),
+                }
             };
+            agent_time += agent_started.elapsed();
+            let save_started = std::time::Instant::now();
             match res {
                 Ok(c) => {
                     let l = Leftover { worktree: !c.worktree_removed, branch: r.branch.is_some() && !c.branch_deleted };
                     let clean = !l.worktree && !l.branch;
-                    aaa_common::diagnostic::ignored(
-                        self.update_rec(project, &r.id, |x| x.leftover = Some(l)),
-                        "보조 작업 실패 뒤 기존 처리를 계속한다",
-                    );
+                    let mut unchanged = false;
+                    let saved = self.update_rec(project, &r.id, |x| {
+                        unchanged = same_sweep_target(x, r);
+                        if unchanged {
+                            x.leftover = Some(l);
+                        }
+                    });
+                    if let Err(e) = saved {
+                        kept += 1;
+                        notes.push(format!("남겼다: {before}(정리 표지 저장 실패: {})", e.message));
+                        continue;
+                    }
+                    if !unchanged {
+                        kept += 1;
+                        notes.push(format!("남겼다: {before}(정리 중 thread 기록이 바뀌었다)"));
+                        continue;
+                    }
                     if clean {
                         done += 1;
                         notes.push(format!("치웠다: {before}"));
@@ -605,7 +701,17 @@ impl Host {
                     notes.push(format!("남겼다: {before}({})", e.message));
                 }
             }
+            save_time += save_started.elapsed();
         }
+        tracing::info!(
+            total = found.len(),
+            absent = absent.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            probe_ms,
+            agent_ms = agent_time.as_millis(),
+            save_ms = save_time.as_millis(),
+            "프로젝트 자리 정리 완료"
+        );
         notes.push(format!("`{project}` 청소: {done}개 치움, {kept}개 남김"));
         self.db.audit(actor, "project_sweep", &format!("{project} {done}/{}", found.len()));
         Ok(self.change(project, &dir, notes))
@@ -729,3 +835,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "lifecycle/sweep_tests.rs"]
+mod sweep_tests;

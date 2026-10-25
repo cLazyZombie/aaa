@@ -3753,3 +3753,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 자동화 완료 안내는 `inList`에 안내 항목 자체를 넘겨 본다. 휴대폰에서는 확인 창 history 복귀로 닫힌 서랍을 다시 열고, 데스크톱에서는 이미 보이는 활동 단추를 다시 눌러 목록을 접지 않는다. 완료 안내의 실제 표시 단언은 유지한다.
 
 - 검증 결과: 웹 유닛 573개·타입/번들, host 유닛 659개(기존 ignored 2개)·all-targets clippy, crate 의존 경계 2개·fmt·공개 검사 통과. 색인 수리 뒤 전체 웹 E2E 114파일/140작업이 통과했다. 이후 자동화 변환의 최종 UI와 추가 대량 시나리오는 최종 빌드로 E2E40·114 전체를 실행해 통과했다.
+
+- t-1035 전체 gate 실패 후 자리 정리는 실제 500개·실제 worktree 삭제·20초 host 응답 단언을 유지하고 계측만 추가한다. agent 실제 Git 시험은 부재/존재/등록된 없는 자리/남은 branch/재생성/외장 root 단절/symlink/미완료 재잠금 journal을 검사한다. host 시험은 601개의 500/101 묶음과 실제 대상 개별 정리, 구형 agent·probe 오류의 기존 경로, 확인 중 재개된 thread 보존, DB 저장 실패의 원인·미완료 건수를 확인한다.
+- 첫 후속 전체 부하에서 정리 응답은 1.3/2.7초였으나 다음 WebKit fixture의 외부 DB writer가 267개 입력 뒤 잠금 충돌했다. 자리 fixture만 격리 host 종료 사건 뒤 한 transaction으로 넣고, host 로그의 listen·agent 연결 사건 뒤 실제 UI 정리를 실행한다. host 처리 시한과 정리 결과 단언은 유지하며 DB busy 재시도/시한 증가는 없다.
+- 같은 부하에서 확인 창 취소의 지연된 popstate가 휴대폰 목록을 닫아 다음 누름과 경합했다. 구 UI에서 실제 popstate와 drawer transition 완료 사건 뒤 목록 표시 단언 실패를 재현했다. 내부 sheet 복귀를 구분한 제품 수리 뒤 같은 단언을 유지하며 실제 Back 회귀도 전체 E2E에 포함한다.
+
+- 후속 최종 검증은 `ci-local` 전체를 기본 E2E 10 worker·Rust 시험·clippy 동시 실행으로 수행했다. 361초에 전 단계 통과: 웹 유닛 573개, Rust 1,342개(기존 ignored 6개), Python 56개(기존 skip 2개), E2E 114파일/140작업. Linux 대상 strict all-targets clippy도 통과했다. 전체 load1은 4.1~34.5, 자리 정리 완료 근처는 21.2~26.5였다.
+- 같은 실행에서 자리 500개 응답은 Chromium 1280/390px 4.1/4.4초, WebKit 1280/390px 2.8/6.0초였다. 각 요청은 부재 499개를 묶음 확인하고 실제 worktree 1개는 기존 안전 정리로 삭제했다. 다른 일괄 요청도 통과했다: 보고서 500개 삭제 최대 11.2초, 500개 자동화 변환 최대 12.9초. 이는 해당 전체 gate의 관측값이며 시한·대상 수·최종 DB/파일/화면 단언은 유지했다.

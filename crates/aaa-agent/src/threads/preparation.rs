@@ -457,6 +457,56 @@ struct CleanupRecord {
     relock: Option<String>,
 }
 
+/// 부재 확인은 읽기만 한다. Git 등록·branch·디스크·복구할 잠금 중 하나라도 남으면 단건 정리로 넘긴다.
+/// 이미 사라진 자리마다 Git 프로세스와 내구 journal 두 번을 만들지 않는다.
+pub async fn cleanup_absent(
+    cfg: &ThreadsConfig,
+    state: &Path,
+    repo: &str,
+    targets: &[aaa_proto::CleanupTarget],
+) -> Result<Vec<bool>> {
+    if targets.is_empty() || targets.len() > 500 {
+        bail!("자리 부재 확인은 1~500개씩 요청한다");
+    }
+    let _lease = crate::work_root::shared(state)?;
+    let repo = Path::new(repo);
+    cfg.check_path(repo)?;
+    let list = git(repo, &["worktree", "list", "--porcelain", "-z"], GIT_T).await?;
+    let registered = list
+        .split("\0\0")
+        .filter_map(|r| r.split('\0').next()?.strip_prefix("worktree "))
+        .map(|p| crate::work_root::real_location(Path::new(p)))
+        .collect::<Result<std::collections::HashSet<_>>>()?;
+    let branches = if targets.iter().any(|t| t.branch.as_deref().is_some_and(|b| !b.is_empty())) {
+        git(repo, &["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"], GIT_T).await?
+    } else {
+        String::new()
+    };
+    let branches: std::collections::HashSet<_> = branches.lines().collect();
+    let mut absent = Vec::with_capacity(targets.len());
+    for t in targets {
+        let cwd = Path::new(&t.cwd);
+        cfg.check_path(cwd)?;
+        let journal =
+            state.join("thread-cleanup").join(format!("{}.json", hex::encode(Sha256::digest(t.cwd.as_bytes()))));
+        let lock = lock(&journal);
+        let _guard = lock.lock().await;
+        let pending_lock = read::<CleanupRecord>(&journal)?.is_some_and(|r| r.relock.is_some());
+        let missing = match cwd.symlink_metadata() {
+            Ok(_) => false, // dangling symlink도 '없음'이 아니다.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+            Err(e) => return Err(e.into()),
+        };
+        absent.push(
+            missing
+                && !pending_lock
+                && !registered.contains(&crate::work_root::real_location(cwd)?)
+                && !t.branch.as_deref().is_some_and(|b| branches.contains(b)),
+        );
+    }
+    Ok(absent)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cleanup_recorded(
     state: &Path,

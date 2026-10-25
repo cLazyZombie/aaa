@@ -1060,6 +1060,11 @@ pub enum AgentRequest {
         path: String,
         data: B64,
     },
+    /// cleanup_probe.v1 기능을 알린 agent에만 보낸다. 삭제하지 않고 입력 순서대로 부재를 확인한다(최대 500개).
+    ThreadCleanupProbe {
+        repo: String,
+        targets: Vec<crate::CleanupTarget>,
+    },
     /// thread 정리: worktree를 force 없이 지우고, PR이 병합됐고 worktree가 지워졌고 branch 끝이 병합된 PR head와
     /// 같을 때만 branch를 지운다(herdr-projects threads.rs `clean`·`delete_branch`, plan §8.113).
     /// `merged_head`: PR이 병합됐으면 그 head commit(모르면 빈 값), 병합되지 않았으면 None. 옛 host가 보낸
@@ -1237,6 +1242,9 @@ pub enum AgentResponse {
         eof: bool,
     },
     Cleanup(Cleanup),
+    CleanupAbsent {
+        absent: Vec<bool>,
+    },
     Relaunch(Launch),
     CommandRan(CommandRan),
     /// 첨부를 다 썼다(절대 경로와 sha256)

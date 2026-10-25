@@ -381,6 +381,13 @@ pub struct Cleanup {
     pub notes: Vec<String>,
 }
 
+/// cleanup_probe.v1: 같은 저장소에서 정리할 자리·branch의 부재를 묶어 확인한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanupTarget {
+    pub cwd: String,
+    pub branch: Option<String>,
+}
+
 // ───────────────────────── harness 상태 사건(M1-3b, §8.3) ─────────────────────────
 
 /// agent harness가 지금 하는 일(hook·notify·`aaa report`로 안다. polling하지 않는다)

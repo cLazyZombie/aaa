@@ -1946,6 +1946,13 @@ impl Agent {
                 self.set_term_colors(c).await;
                 Ok(AgentResponse::Done)
             }
+            AgentRequest::ThreadCleanupProbe { repo, targets } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                threads::cleanup_absent(&cfg, &self.state, &repo, &targets)
+                    .await
+                    .map(|absent| AgentResponse::CleanupAbsent { absent })
+                    .map_err(|e| ErrorBody::new(ErrorCode::Unavailable, format!("자리 부재 확인: {e:#}")))
+            }
             AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree, uncopied } => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
                 match cfg.check_path(Path::new(&cwd)) {

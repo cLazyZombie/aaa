@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { root, aaa, inList, domIs, browser, pairPage, shot, openSettings, inTime } from "./harness.mjs";
+import { root, aaa, inList, domIs, browser, pairPage, shot, openSettings, inTime, drawerSettled } from "./harness.mjs";
 
 export const count = 500;
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=", "base64");
@@ -40,7 +40,9 @@ export function responseGate() {
       return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ err: { code: "unavailable", message: "실험실 일괄 저장 실패" } }) });
     }
     try {
+      const started = performance.now();
       const response = await route.fetch();
+      console.log("bulk-response", JSON.stringify({ op: req.op, ms: Math.round(performance.now() - started), count: req.reports?.length ?? req.ids?.length }));
       gate.arrive();
       await gate.wait;
       await route.fulfill({ response });
@@ -89,7 +91,15 @@ export async function askScenario(engine, label, width) {
     assert.equal(await page.locator('.ask-row.is-done').count(), 50, "대량 기록은 첫 50개만 그린다");
     await inList(page, "asks-forget-all");
     const dialog = page.getByRole("alertdialog");
+    if (width < 769) await page.evaluate(() => {
+      window.bulkCancelBack = new Promise(resolve => addEventListener("popstate", resolve, { once: true }));
+    });
     await dialog.getByRole("button", { name: "취소", exact: true }).click();
+    if (width < 769) {
+      await inTime(page.evaluate(() => window.bulkCancelBack.then(() => true)), 20_000, "취소한 확인 창의 내부 복귀");
+      await drawerSettled(page);
+      assert.equal(await page.getByTestId("asks-forget-all").isVisible(), true, "확인 창 취소가 답 목록을 닫지 않는다");
+    }
     assert.equal(db.prepare("SELECT count(*) AS n FROM asks").get().n, count);
     await inList(page, "asks-forget-all");
     gate.arm("ask_forget", true);

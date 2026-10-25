@@ -71,6 +71,7 @@ import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
 import { useAutomations } from "./automationData";
 import { openAsks, questionKey, questionRefLook } from "./asksModel";
+import { isSheetRewind } from "./herdr/sheetHistory.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { DrawerDiagnostics } from "./DrawerDiagnostics";
@@ -377,13 +378,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (wideScreen) setDrawerOpen(false);
   }, [wideScreen]);
   // 화면 안쪽에서 오른쪽으로 쓸면 열고 왼쪽으로 쓸면 닫는다. 왼쪽 끝은 브라우저 뒤로 몫이다(herdr/edgeSwipe.ts)
-  // 이동은 진행 중인 손가락도 정리한다. 설정 닫기의 내부 복귀만 사용자 이동에서 뺀다.
+  // 이동은 진행 중인 손가락도 정리한다. 설정·확인 창 닫기의 내부 복귀는 사용자 이동에서 뺀다.
   const drawerSwipe = useRef<ReturnType<typeof watchDrawerSwipe> | null>(null);
   useEffect(() => {
     const stop = watchDrawerSwipe(() => drawerOpenRef.current, (open) => {
       drawerOpenRef.current = open;
       setDrawerOpen(open);
-    }, isSettingsRewind);
+    }, (event) => isSettingsRewind(event) || isSheetRewind(event));
     drawerSwipe.current = stop;
     return () => { drawerSwipe.current = null; stop(); };
   }, []);

@@ -27,6 +27,9 @@ let pushing = false;
  * so its popstate comes and clears this; the next step starts a set of its own.
  */
 let stepping: Set<string> | null = null;
+// 닫기 단추가 만든 내부 복귀는 목록 이동이 아니다. 실제 브라우저 Back과 사건별로 구분한다.
+const internalRewinds = new WeakSet<PopStateEvent>();
+export const isSheetRewind = (event: PopStateEvent): boolean => internalRewinds.has(event);
 
 function sheetOf(state: unknown): string | null {
   if (state === null || typeof state !== "object") return null;
@@ -115,6 +118,7 @@ if (typeof window !== "undefined") {
     const landed = sheetOf(event.state);
     // the step off a closed sheet's entry: not a Back for the sheets that opened while it was on its way
     const step = stepping;
+    if (step !== null) internalRewinds.add(event);
     stepping = null;
     // the sheets that stay: their entries are made again over where the history landed
     const again: Array<[string, () => boolean | void]> = [];

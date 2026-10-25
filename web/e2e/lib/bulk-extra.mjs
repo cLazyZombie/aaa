@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { root, aaa, inList, domIs, pairPage, openSettings, shot, base } from "./harness.mjs";
+import { root, aaa, inList, domIs, pairPage, openSettings, shot, base, stop, start, inTime } from "./harness.mjs";
 import { responseGate, responsive, count } from "./bulk-actions.mjs";
 
 let inboxAssets;
@@ -105,6 +105,35 @@ export async function uploadScenario(engine, label, width) {
   } finally { await page.context().close(); }
 }
 
+// 시험 데이터의 외부 writer와 실행 중인 host가 같은 DB에 쓰지 않는다.
+// 시험 준비만 격리하며, 실제 버튼/정리는 재연결된 host·agent에서 실행한다.
+async function seedSweep(write) {
+  await stop("host");
+  const db = new DatabaseSync(`${root}/s/host/host.db`);
+  try {
+    db.exec("BEGIN");
+    write(db);
+    db.exec("COMMIT");
+  } finally { db.close(); }
+  const host = start("host", "host");
+  let watch, exited;
+  try {
+    await inTime(new Promise((resolve, reject) => {
+      const check = () => {
+        const log = fs.readFileSync(`${root}/host.log`, "utf8");
+        if (log.includes("웹 listen") && log.includes("agent 연결")) resolve();
+      };
+      watch = fs.watch(`${root}/host.log`, check);
+      exited = (code, signal) => reject(new Error(`fixture host 종료: ${code}/${signal}`));
+      host.once("exit", exited);
+      check();
+    }), 20_000, "fixture 뒤 host·agent 재연결");
+  } finally {
+    watch?.close();
+    if (exited) host.off("exit", exited);
+  }
+}
+
 export async function sweepScenario(engine, label, width) {
   const db = new DatabaseSync(`${root}/s/host/host.db`);
   const repo = `${root}/sweep-${label}-${width}`;
@@ -114,13 +143,16 @@ export async function sweepScenario(engine, label, width) {
   const real = `${repo}-worktree`;
   git("worktree", "add", "--detach", real);
   const machine = aaa("machine", "list").machines.find(m => m.name === "labA").id;
-  const put = db.prepare("INSERT INTO threads(project,id,status,data,updated_at) VALUES('demo',?,'resolved',?,?)");
-  for (let i = 0; i < count; i++) {
-    const id = `t-${20000 + i}`;
-    const rec = { project: "demo", id, title: "끝난 자리", machine_id: machine, profile: "fake", kind: "worktree", repo, base: null, branch: null, cwd: i ? `${repo}-gone-${i}` : real,
-      status: "resolved", brief: "delivered", leftover: { worktree: true, branch: false }, created_at_ms: Date.now(), updated_at_ms: Date.now() };
-    put.run(id, JSON.stringify(rec), rec.updated_at_ms);
-  }
+  await seedSweep(db => {
+    db.exec("DELETE FROM threads WHERE id >= 't-20000' AND id <= 't-20499'");
+    const put = db.prepare("INSERT INTO threads(project,id,status,data,updated_at) VALUES('demo',?,'resolved',?,?)");
+    for (let i = 0; i < count; i++) {
+      const id = `t-${20000 + i}`;
+      const rec = { project: "demo", id, title: "끝난 자리", machine_id: machine, profile: "fake", kind: "worktree", repo, base: null, branch: null, cwd: i ? `${repo}-gone-${i}` : real,
+        status: "resolved", brief: "delivered", leftover: { worktree: true, branch: false }, created_at_ms: Date.now(), updated_at_ms: Date.now() };
+      put.run(id, JSON.stringify(rec), rec.updated_at_ms);
+    }
+  });
   const gate = responseGate();
   const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: gate.setup });
   const page = paired.page;
@@ -139,11 +171,11 @@ export async function sweepScenario(engine, label, width) {
     await dialog.waitFor({ state: "hidden" });
     await settings.getByTestId("clean-note").getByText(/500개 치움, 0개 남김/).waitFor();
     assert.equal(fs.existsSync(real), false);
+    console.log("sweep-host", fs.readFileSync(`${root}/host.log`, "utf8").split("\n").filter(line => line.includes("프로젝트 자리 정리 완료")).at(-1));
     assert.equal(db.prepare("SELECT count(*) AS n FROM threads WHERE json_extract(data,'$.leftover.worktree')=1").get().n, 0);
     await settings.getByTestId("sweep-preview").click();
     await settings.getByTestId("sweep-notes").getByText(/치울 것이 없다/).waitFor();
     assert.deepEqual(paired.errors, []);
-    db.exec("DELETE FROM threads WHERE id >= 't-20000' AND id <= 't-20499'");
   } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
   finally { await page.context().close(); db.close(); }
 }
