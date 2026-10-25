@@ -7,6 +7,7 @@
  * when it can hold the focus itself (a dialog whose controls are all disabled while it works).
  */
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from "react";
+import { focusWithSelection, inputSelection } from "../focusPosition";
 
 /** Tab stops in DOM order; what a user reaches with Tab inside the surface. */
 const FOCUSABLE = [
@@ -29,6 +30,8 @@ export interface FocusTrapOptions {
   initialFocus?: RefObject<HTMLElement | null>;
   /** the focus returns to the opener unless this says otherwise when the surface goes */
   shouldRestore?: () => boolean;
+  /** 전환 창 취소처럼 원래 입력을 잇는 경우 커서·선택·입력 스크롤도 돌린다. */
+  preserveInputSelection?: boolean;
 }
 
 /** The tab stops a user can actually land on, in order: rendered, and not disabled or skipped. */
@@ -71,6 +74,7 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
   useLayoutEffect(() => {
     if (!open) return;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const selection = latest.current.preserveInputSelection && opener ? inputSelection(opener) : null;
     const frame = window.requestAnimationFrame(() => {
       const node = surface.current;
       if (!node || nativeModalOver(node)) return;
@@ -84,7 +88,7 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
     return () => {
       window.cancelAnimationFrame(frame);
       // a dialog the owner unmounts on its own deed (ConfirmDialog's "done") has nowhere to go back to
-      if (latest.current.shouldRestore?.() !== false && opener?.isConnected && !nativeModalOver(surface.current)) opener.focus({ preventScroll: true });
+      if (latest.current.shouldRestore?.() !== false && opener?.isConnected && !nativeModalOver(surface.current)) focusWithSelection(opener, selection);
     };
   }, [open]);
 

@@ -1027,6 +1027,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const openSettings = useCallback(() => { setDrawerOpen(false); setCollapsed(false); setSettingsOpen(true); }, []);
   const paneControls = useRef<PaneControls | null>(null);
+  const [recentFocusRequest, setRecentFocusRequest] = useState(0);
   const actions = useMemo<AppActions>(() => {
     const none = () => {};
     return {
@@ -1657,6 +1658,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           return (<TermView
             key={key}
             active={activePane === chatKey(p)}
+            focusRequest={recentFocusRequest}
             onChatBytes={onChatBytes}
             controls={paneControls}
             pane={p}
@@ -1807,6 +1809,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       )}
       <RecentSwitcher standalone={homeScreenApp} blocked={!loaded || paletteOpen || fileViewing !== null || newPaneOn !== null}
         targets={recentScreenTargets} selected={settingsOpen ? "settings:" : recentPanel && panel === recentPanel && !collapsed && (wideScreen || drawerOpen) ? `${recentPanel}:` : sel} onOpen={(screen) => {
+          if (screen.startsWith("pane:") || screen.startsWith("thread:")) setRecentFocusRequest((value) => value + 1);
           if (screen === "settings:") openSettings();
           else if (screen === "automations:") {
             goSel(sel);

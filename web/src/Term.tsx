@@ -19,6 +19,7 @@ import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { inputTraceId } from "./inputReceipt";
 import { ChatComposer, type PendingSend } from "./ChatComposer";
+import { useChatFocus } from "./useChatFocus";
 import { paneAgentStatus } from "./sidebarModel";
 import { refusalText, steerAvailability, steerSettled, STEER_IDLE, STEER_SLOW_MS, type SteerState } from "./steerQueued";
 import { onThemeChange, token } from "./theme";
@@ -142,6 +143,7 @@ export function TermView({
   onOpenFile,
   onOpenLink,
   autoSelected = false,
+  focusRequest = 0,
 }: {
   pane: PaneView;
   active?: boolean;
@@ -163,6 +165,8 @@ export function TermView({
   onOpenLink?: (href: string) => boolean;
   /** App이 스스로 고른 pane(주소의 pane이 없어 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected) */
   autoSelected?: boolean;
+  /** 최근 화면 전환에서 같은 pane으로 돌아오는 경우에도 focus를 복원한다. */
+  focusRequest?: number;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -245,7 +249,7 @@ export function TermView({
   useEffect(() => {
     const wasAuto = autoSelectedRef.current;
     autoSelectedRef.current = autoSelected;
-    if (active && wasAuto && !autoSelected && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) termRef.current?.focus();
+    if (active && wasAuto && !autoSelected && !chatViewRef.current && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) termRef.current?.focus();
   }, [active, autoSelected]);
   inputLineRef.current = inputLine;
   // 글자 크기(설정, 이 기기). 핀치 중에는 손가락을 따르는 크기다(herdr-web-ui PaneTerminal `baseFontRef`).
@@ -700,7 +704,7 @@ export function TermView({
     });
     // 데스크톱은 pane을 열면 바로 친다(PaneTerminal 2072줄). 터치 기기는 키보드를 올리지 않게, 모달 중에는 그것을 두고 하지 않는다.
     // App이 스스로 고른 pane도 사용자가 고를 때까지 두고(참고 autoSelected) 아래 effect가 받는다
-    if (!autoSelectedRef.current && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) term.focus();
+    if (!autoSelectedRef.current && !chatViewRef.current && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) term.focus();
     // herdr-web-ui PaneTerminal(aa624cb) 588~605줄: xterm textarea의 확정이 이 bubbling 처리보다 먼저 줄을 선다.
     // 그 확정은 글로 두고(유지 키 없음), 새 조합이 시작되면 이 표시는 지운다.
     let compositionEndTimer: number | null = null;
@@ -1818,6 +1822,7 @@ export function TermView({
   const leaseMineRef = useRef(leaseMine);
   leaseMineRef.current = leaseMine;
   const sectionRef = useRef<HTMLElement>(null);
+  useChatFocus(sectionRef, lensKey, active && chatView && chatable, !coarse && !autoSelected, focusRequest);
   const stackRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!active) return;
@@ -2076,8 +2081,10 @@ export function TermView({
     const current: PaneControls = {
       focusInput: () => {
         if (modalOpen() || !canControl) return;
-        // 대화 보기에는 입력창이 없다(읽기 전용)
-        if (chatView && chatable) return;
+        if (chatView && chatable) {
+          sectionRef.current?.querySelector<HTMLTextAreaElement>(".composer-text")?.focus({ preventScroll: true });
+          return;
+        }
         const line = sectionRef.current?.querySelector<HTMLTextAreaElement>(".terminal-input-text");
         if (line) line.focus({ preventScroll: true });
         else if (!ended) termRef.current?.focus();
