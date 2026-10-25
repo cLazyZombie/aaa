@@ -173,6 +173,7 @@ impl Host {
             .question_target(Some(project), id)
             .map_err(internal)?
             .ok_or_else(|| err(ErrorCode::NotFound, "자동 답은 현재 질문 ID(q-NNNN)에만 보낸다"))?;
+        let id = t.id.as_str();
         if t.kind == "harness" {
             return Err(err(ErrorCode::Forbidden, "확인창·권한·신뢰 질문은 사용자만 답한다"));
         }

@@ -185,3 +185,21 @@ fn two_devices_submit_one_answer_and_plain_chat_handling_keeps_the_alias() {
         Some("q-1002")
     );
 }
+
+#[tokio::test]
+async fn numeric_question_aliases_share_drafts_and_the_completed_record() {
+    let lab = Lab::new();
+    let (_, request) =
+        lab.post(1, "## Questions\n### 1. 첫째\n- A 진행 (추천)\n- B 보류\n### 2. 둘째\n- A 진행 (추천)\n- B 보류\n");
+    let questions = request.questions.unwrap();
+    assert_eq!(questions.items[0].id.as_deref(), Some("q-1000"));
+    lab.h.reply_by_id("demo", "q-01000", Some("A"), None, "device:c").await.unwrap();
+    let target = lab.h.db.question_target(Some("demo"), "q-001000").unwrap().unwrap();
+    assert_eq!(target.id, "q-1000");
+    assert!(target.draft.is_some());
+    assert!(lab.h.reply_by_id("demo", "q-1000", Some("B"), None, "device:c").await.is_err());
+    lab.h.reply_by_id("demo", "q-01001", Some("B"), None, "device:c").await.unwrap();
+    let records = lab.h.db.ask_list("demo").unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].items.iter().map(|q| q.id.as_deref().unwrap()).collect::<Vec<_>>(), ["q-1000", "q-1001"]);
+}

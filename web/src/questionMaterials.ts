@@ -14,6 +14,8 @@ export function questionMaterials({ items, body, reportId, project, base, origin
 }): QuestionMaterial[] {
   const found = new Map<string, QuestionMaterial>();
   const report = (name: string, at: string | undefined, label: string) => {
+    const slash = name.indexOf("/");
+    if (slash > 0) { at = name.slice(0, slash); name = name.slice(slash + 1); }
     at ??= project;
     const key = `${at ?? ""}/${name}`;
     if (!found.has(key)) found.set(key, { key, label, kind: "report", name, project: at });

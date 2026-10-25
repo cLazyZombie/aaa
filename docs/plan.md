@@ -7854,3 +7854,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 보고 회수 때 같은 머신의 공용 종료 요약을 읽고 실행 커밋이 origin/main의 첫 부모 계보에 반영된 경우에만 확정한다. 미push는 대기로 두어 ref가 갱신되면 같은 입력을 회수한다. 후보 브랜치 자체의 검증은 병합 후에도 main 검증으로 섞지 않는다. 등록 checkout HEAD는 옛 main이어도 되고 코드 줄 수도 origin/main 객체에서 읽는다. fetch·추가 빌드·검증은 실행하지 않는다. 구형 ci-local/rc/엔진 입력은 기존 main checkout·시작 시각·reflog 확인을 유지한다. 새 출처 파일이 있는 CI는 구형 경로로 이중 기록하거나 출처 검사를 우회하지 않는다.
 - 직접 실행한 cargo·E2E·release 성능 실험과 push 자체는 검증 실행 기록을 만들지 않는다. ci-local 선택 단계도 기록 대상이며 성공·실패를 모두 보존한다. 새로 확인한 입력은 회수당 32개, agent의 확정 실행 보관·전송은 최근 256개다. 웹의 기간·머신·profile·p50 조건은 유지한다. 기존 원장은 초기화하지 않고 과거 출처 불명 실행도 소급 귀속하지 않는다. 프로토콜·DB 스키마·E2E 번호는 바꾸지 않는다.
 - 참고: [Cargo timings](https://doc.rust-lang.org/cargo/reference/timings.html)(Cargo MIT/Apache-2.0)의 실행별 결과 보존, [herdr-projects threads](https://github.com/eliasstravik/herdr-projects/blob/main/src/threads.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/main/LICENSE))의 종료 보고 회수, [Ovis Sidebar](https://github.com/devswha/ovis/blob/main/src/components/Sidebar.tsx)([MIT](https://github.com/devswha/ovis/blob/main/LICENSE))의 workspace 구분을 대조했다. [herdr](https://github.com/herdrdev/herdr)([Apache-2.0](https://github.com/herdrdev/herdr/blob/master/LICENSE))도 확인했으나 범용 빌드 지표 수집 모듈을 재사용하지는 않았다. 기존 Rust parser와 보고 회수 경로를 유지하며 외부 코드·의존성은 추가하지 않는다.
+
+
+### 8.489 짧은 번호의 자릿수 확장과 숫자 동치(t-1013)
+
+- **목적.** 보고·thread 번호가 9999를 넘어도 생성·조회·CI 소유자·정렬·파일 접근·정리가 이어진다. t·d·r·q·a는 최소 네 자리, p는 기존 최소 여덟 자리 0채움이며 상위 자리를 자르지 않는다. `t-965`·`t-0965`·`t-00965`, `q-1295`·`q-01295`를 같은 번호로 읽는다. 원장·파일명·본문은 이행하지 않는다.
+- **경계.** ASCII 양의 십진수와 SQLite i64 범위만 순번으로 읽는다. 웹도 Number 변환 없이 정밀도를 유지한다. 프로젝트를 붙인 주소는 그 프로젝트를 유지하며 여러 프로젝트의 같은 맨 번호는 임의로 고르지 않는다. 주소·경로·파일명·다른 낱말 안 번호와 코드 블록은 자동 링크하지 않는다. m·옛 확인창 q의 무작위 ID, ULID·해시·자동화 이름은 순번과 구별한다. 이관한 보고서 이름·자동화 이름·옛 확인창 ID와 번호 별칭이 충돌하면 거부한다.
+- **구현·점검.** [번호 처리 점검](short-ids.md). Rust 공통 parser와 host의 요청별 선택자에서 정규화하고, task·question·post·automation은 프로젝트 원장으로 찾는다. 웹의 대화·보고서 링크, 명시 앱 참조와 깊은 주소에 적용한다. 기존 시각·seq·ULID 정렬은 유지하고 번호가 동률 기준이던 목록·정리·가져오기 순서만 숫자로 대조한다. API 필드·판 번호는 그대로다.
+- **검증.** 실제 생성기의 9999→10000→10001·재시작·삭제 뒤 비재사용, p의 99999999→100000000, 보고서 과거 파일·판 목록·정리·프로젝트/권한 경계, CI 병합 소유자, 웹 단위 시험과 E2E112(Chromium·WebKit)를 둔다. 관련 E2E21·52·54·55·76·77·80의 기존 계약도 유지한다.

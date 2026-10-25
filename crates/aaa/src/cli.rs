@@ -2484,8 +2484,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 ThreadCmd::Answer { thread, mut answers, text } => {
                     let (project, thread) = shift_project(thread, &mut answers)?;
-                    if thread.strip_prefix("q-").is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit()))
-                    {
+                    if aaa_proto::canonical_short_id(&thread, 'q').is_some() {
                         return front(
                             json,
                             FrontRequest::QuestionReply {
@@ -2581,10 +2580,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                             text,
                             reason: std::fs::read_to_string(reason_file.expect("clap requires reason_file"))?,
                         }
-                    } else if id
-                        .strip_prefix("q-")
-                        .is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit()))
-                    {
+                    } else if aaa_proto::canonical_short_id(&id, 'q').is_some() {
                         FrontRequest::QuestionReply { project: project_or_here(None)?, id, choice, text }
                     } else {
                         FrontRequest::QuestionAnswer {

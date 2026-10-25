@@ -9,17 +9,7 @@ use aaa_proto::{ErrorBody, LibraryFile};
 use std::path::Path;
 
 pub(crate) fn number(name: &str) -> Option<u64> {
-    let digits = name.strip_prefix("r-")?;
-    (digits.len() >= 4 && digits.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| {
-            digits
-                .parse()
-                .inspect_err(|error| {
-                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                })
-                .ok()
-        })
-        .flatten()
+    aaa_proto::short_id_number(name, 'r').map(|n| n as u64)
 }
 
 impl Host {

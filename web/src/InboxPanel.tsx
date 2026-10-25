@@ -1,3 +1,4 @@
+import { splitAppIds } from "./appIds";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 // 활동 막대 「알림함」 패널(관리 GUI W4, plan §8.343): coordinator 알림함(inbox)·흐름 사건·post. 알림함은 늘 `peek`로 읽는다:
 // 화면이 읽어도 「봤다」가 되지 않아 coordinator 묶음 알림(nudge)이 그대로 간다. 끝내기는 조작 기기만. 사용자가 답할 요청 post는
@@ -118,8 +119,10 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
         <p className="inbox-empty" data-testid="inbox-empty">알림함이 비었다</p>
       ) : (
         <ul className="inbox-list" data-testid="inbox-list">
-          {shown.map((i) => (
-            <li key={i.id} className={i.done ? "is-done" : undefined} data-testid="inbox-item">
+          {shown.map((i) => {
+            const report = ["new report", "report needs user"].includes(i.event)
+              ? splitAppIds(i.summary, id => id.kind === "report").find(id => typeof id !== "string")?.target : undefined;
+            return <li key={i.id} className={i.done ? "is-done" : undefined} data-testid="inbox-item">
               <div className="inbox-line">
                 <span className="inbox-kind">{i.item_kind}</span>
                 {THREAD_ID.test(i.subject) && onThread ? (
@@ -130,7 +133,7 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
                   <span className="inbox-subject">{i.subject}</span>
                 )}
                 <span className="inbox-event">{i.event}</span>
-                {(["new report", "report needs user"].includes(i.event)) && /\br-\d{4,}\b/.exec(i.summary)?.[0] && <a href={`#report=${encodeURIComponent(`${i.project}/${/\br-\d{4,}\b/.exec(i.summary)![0]}`)}`}>{/\br-\d{4,}\b/.exec(i.summary)![0]}</a>}
+                {report && <a href={`#report=${encodeURIComponent(`${i.project}/${report}`)}`}>{report}</a>}
                 <time className="inbox-time">{when(i.created_at_ms)}</time>
               </div>
               <p className="inbox-summary">{i.summary}</p>
@@ -147,8 +150,8 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
                   </button>
                 </div>
               )}
-            </li>
-          ))}
+            </li>;
+          })}
         </ul>
       )}
       {omitted > 0 && <p className="inbox-empty">응답 크기 한도로 {omitted}개를 싣지 못했다(`aaa inbox list`)</p>}

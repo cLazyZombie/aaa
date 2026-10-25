@@ -97,7 +97,7 @@ assert stat.S_IMODE((home/'auth.json').stat().st_mode)==0o600
 assert 'cli_auth_credentials_store = "file"' in (home/'config.toml').read_text()
 assert os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') is None
 url=os.environ['CODEX_REFRESH_TOKEN_URL_OVERRIDE']
-sid='019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8'+tid[-4:]
+sid='019a4c5e-1f2b-7c3d-8e4f-'+hashlib.sha256(tid.encode()).hexdigest()[:12]
 hook_sid=sid.replace('019a4c5e','019a4c5f')
 roll=home/'sessions'/'2026'/'01'/'01'/('rollout-test-'+sid+'.jsonl')
 if 'resume' in sys.argv:

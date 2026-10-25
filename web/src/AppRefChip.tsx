@@ -51,5 +51,5 @@ export function AppRefChip({ at, refs }: { at: AppRef; refs?: AppRefs }) {
 export function AppIdLink({ at, refs }: { at: AppId; refs: AppRefs }) {
   if (at.kind === "question") return <AppRefChip at={{ kind: "question", target: at.target }} refs={refs} />;
   return <a className="app-id" data-testid="app-id" data-kind={at.kind} data-target={at.target} href={appIdHash(at)}
-    onClick={(e) => { if (!browserClick(e)) { e.preventDefault(); e.stopPropagation(); refs.openId(at); } }}>{at.target}</a>;
+    onClick={(e) => { if (!browserClick(e)) { e.preventDefault(); e.stopPropagation(); refs.openId(at); } }}>{at.label ?? at.target}</a>;
 }

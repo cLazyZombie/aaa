@@ -3684,3 +3684,21 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `nice -n 15 cargo test --locked -p aaa-agent -p aaa-host --lib workspace_metrics`는 push 전 대기→같은 입력의 push 후 확정, 옛 등록 checkout에서도 origin/main 객체 집계, 후보 브랜치 시간의 main 혼입 방지, tree 불일치 진단, 실패 실행·크기 보존, 원본 삭제 후 재회수와 기존 host 중복/필터를 검사한다. 기존 구형 요약의 시작/reflog·수집 전후 checkout 검사는 유지한다. 예전 「현재 checkout이 branch면 이미 확정한 main 기록도 숨긴다」 단언만 origin/main 객체 기준으로 바꾼다.
 - E2E90 마지막 단계는 제품 CI 셸과 종료 보관 스크립트를 실제 별도 worktree에서 실행한다. 검사 단계만 격리된 public 성공/실패 명령으로 준비한다. agent→host→열린 실행 표의 갱신은 실제 제품 경로다. 미push 동안 실행 수가 늘지 않고, origin/main ref 갱신 뒤 worktree·외부 원본 로그를 먼저 지워도 성공/실패 두 건과 실행 커밋·머신·새 main 코드 줄 수가 보이는지 확인한다. 보고 재회수 뒤 중복도 검사한다. 기존 Chromium/WebKit·모든 화면 폭·밝음/어두움 단언은 유지한다. ref 갱신은 외부 Git 서버 없이 push 완료 상태를 나타내며 실제 운영 UI 확인은 배포 뒤 한다.
 - Playwright는 저장소 요구 판 1.64.1의 npm 패키지만 작업 폴더에 두고 기존 내부 공용 Chromium/WebKit 캐시를 사용한다. 브라우저 설치·시한 연장·실패 재시도·고정 sleep은 추가하지 않는다.
+
+
+## 짧은 ID의 다섯 자리와 숫자 동치(t-1013)
+
+- `cargo test --locked -p aaa-proto -p aaa-common -p aaa-host --lib`는 실제 t·d·r·q·a 생성기를 9999→10000→10001까지 진행하고 재시작·프로젝트별 원장·별칭·판 순서·과거 파일·정리를 확인한다. p는 기존 8자리와 9자리 경계까지 확인한다. CI 소유자 parser도 짧은 입력과 다섯/여섯 자리를 받는다. 순번을 문자열로 정렬하는 회귀를 별도 검사한다.
+- 웹 유닛은 짧은 입력·0 추가·큰 정수 정밀도·존재 확인·프로젝트 중복·낱말/경로 경계·명시 링크를 확인한다. E2E112는 격리 DB의 이전 번호를 준비하고 실제 CLI로 thread·task·질문·보고·자동화를 만든다. Chromium·WebKit에서 대화 별칭 링크와 깊은 주소·새로고침·다른 프로젝트/없는 질문의 비선택을 확인한다. E2E21·52·54·55·76·77·80으로 판·할 일·자동화·원문/주소 분리의 기존 동작을 검증한다.
+- 새 fixture는 질문 없는 기준 기록을 만들어야 한다. 기준 thread의 질문·작업 경로를 복제하면 조회 때 가짜 기준 기록에도 q 번호가 발급된다. 가짜 harness에 질문 보고를 명시하고 기록의 questions·보고 hash·pane·작업 경로를 비운다. DOM·CLI 응답·보고 회수 사건으로 끝내며 시한을 늘리거나 실패한 호출을 재시도하지 않는다. CI parser의 `t-004`는 새 숫자 동치 계약의 정상 입력으로 옮기고 잘못된 꼬리 `t-004x` 거부는 유지한다.
+- `python3 -m unittest scripts.test_short_ids`는 host에서 읽는 시험 instance/경로의 4·5·6자리와 번호 불일치·경로 이탈 거부를 검사한다. 운영 서비스·Windows native 경로 I/O·시스템 설정을 실행하는 시험이 아니다.
+
+
+## 명시 프로젝트 보고서 링크와 대화 복귀(t-1013 후속)
+
+- t-1014의 61회차 E2E38은 `#report=demo/chatrep`에서 프로젝트를 유지한 실제 칩(`data-target="demo/chatrep"`)을 맨 이름 `chatrep`으로 찾았다. 원본 실패는 선택자 불일치이며 공용 실패 화면은 실제 rep1 대화의 증거로 쓰지 않는다.
+- 제품 수정 전 별도 관측에서 WebKit 390·430px × Safari/standalone 네 조합의 실제 대상·표시·보고서 본문·뒤로 전후 pane/스크롤을 확인했다. 대상은 `demo/chatrep`, 맨 이름 선택자는 0개이며 같은 보고서 본문과 원래 위치로 돌아왔다. 파일 보기의 네 링크 방식 × 닫기/뒤로와 데스크톱 새 탭도 유지됐다.
+- 제목 없는 보고서 칩의 fallback 표시까지 `demo/chatrep`으로 바뀐 것은 의도하지 않은 표시 변경이다. 프로젝트는 내부 대상에 유지하고 표시 이름은 기존 `chatrep`으로 돌린다. E2E38은 명시 프로젝트와 맨 이름 참조 모두에 정확한 대상·표시 이름·같은 보고서 HTML 제목·같은 URL·새 창 없음·뒤로의 원래 pane/읽던 줄 1px 이내를 검사한다. 기존 파일 보기 닫기/뒤로·44px 단추·내용 면적·데스크톱 새 탭 단언도 유지한다.
+- 같은 가정을 전 E2E에서 찾았다. E2E53의 login-v2는 프로젝트 없는 명시 참조이고 E2E69는 질문 ID, E2E77·112는 맨 순번 ID, E2E52의 library 경로는 첨부 대상이다. 이들은 프로젝트를 버린 보고서 주소를 전제하지 않으므로 바꾸지 않는다. 단위 시험에 맨 이름·명시 프로젝트·다른 프로젝트의 같은 이름을 구별하는 사례를 둔다.
+- 새 맨 이름 링크를 추가한 첫 전체 실행은 137/138 작업이 통과하고 E2E38의 연속 복귀에서 멈췄다. 관측상 URL·대화 DOM은 먼저 돌아오고 `aria-busy="true"` 동안 줄 복원이 계속된다. 이 중간에 다음 링크로 굴리면 이전 복원이 그 이동을 덮는다. 다음 입력·위치 측정은 제품의 기존 `aria-busy="false"` 완료 사건 뒤에 한다. 위치 오차·클릭·시한 기대값은 유지한다.
+- 최신 origin/main을 포함한 후보에서 `ci-local.sh --only web,e2e,public`로 웹 E2E 전체를 검증한다. 시간 상한·재시도·force click·기존 입력/복귀 기대값을 바꾸지 않는다. 브라우저는 저장소의 Chromium launcher·내부 공용 캐시와 Playwright 1.64.1을 사용한다.

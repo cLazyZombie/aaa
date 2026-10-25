@@ -19,6 +19,14 @@ import tarfile
 import time
 
 
+def validate_test_target(instance, windows_root):
+    """host에서 읽는 시험 태그·경로의 번호를 자릿수 제한 없이 대조한다."""
+    tag = re.fullmatch(r"aaa-test-([0-9]{4,})-[a-z]", instance)
+    root = re.fullmatch(r"C:\\aaa-test\\t-([0-9]{4,})", windows_root)
+    assert tag and root, "시험 전용 이름·경로만 허용한다"
+    assert tag[1] == root[1], "instance와 시험 폴더의 번호가 다르다"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ssh", required=True)
@@ -30,9 +38,7 @@ def main():
     parser.add_argument("--commit", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    assert re.fullmatch(r"aaa-test-\d{4}-[a-z]", args.instance)
-    assert re.fullmatch(r"C:\\aaa-test\\t-\d{4}", args.windows_root)
-    assert args.instance.split("-")[2] == args.windows_root[-4:]
+    validate_test_target(args.instance, args.windows_root)
     assert re.fullmatch(r"[0-9a-f]{40}", args.commit)
     assert args.windows_binary.startswith(args.windows_root + "\\")
     binary = args.binary.resolve()

@@ -16,11 +16,7 @@ pub fn owners(message: &str) -> Vec<String> {
         return vec![];
     }
     let Some(id) = line.strip_suffix(')').and_then(|s| s.rsplit_once('(').map(|(_, id)| id)) else { return vec![] };
-    if id.len() == 6 && id.starts_with("t-") && id[2..].bytes().all(|c| c.is_ascii_digit()) {
-        vec![id.into()]
-    } else {
-        vec![]
-    }
+    if let Some(id) = aaa_proto::canonical_short_id(id, 't') { vec![id] } else { vec![] }
 }
 fn text(v: &Value, key: &str) -> String {
     sanitize(v[key].as_str().unwrap_or(""))

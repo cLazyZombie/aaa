@@ -31,6 +31,9 @@ impl Db {
     }
 
     pub(crate) fn question_target(&self, project: Option<&str>, id: &str) -> Result<Option<Target>> {
+        let original = id;
+        let canonical = aaa_proto::canonical_short_id(id, 'q');
+        let id = canonical.as_deref().unwrap_or(id);
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare("SELECT project,id,kind,subject,revision,position,draft FROM question_ids WHERE (?1 IS NULL OR project=?1) AND id=?2")?;
         let mut rows = st.query(params![project, id])?;
@@ -46,6 +49,11 @@ impl Db {
             draft: draft.as_deref().map(serde_json::from_str).transpose()?,
         };
         anyhow::ensure!(rows.next()?.is_none(), "같은 질문 ID가 여러 프로젝트에 있다. 프로젝트를 지정한다");
+        let legacy = c.query_row("SELECT 1 FROM questions WHERE id=?1", [original], |_| Ok(())).optional()?.is_some();
+        anyhow::ensure!(
+            !legacy || target.kind == "harness" && target.subject == original,
+            "옛 확인창 ID와 질문 번호가 겹친다. 현재 표시한 질문 번호를 지정한다"
+        );
         Ok(Some(target))
     }
 

@@ -13,6 +13,8 @@ mod inbox_tests;
 mod library_catalog;
 mod question_ids;
 mod report_ids;
+#[cfg(test)]
+mod short_ids_tests;
 mod task_ids;
 mod task_queue;
 mod web_publication;
@@ -175,6 +177,8 @@ impl Db {
         if !id.starts_with("p-") {
             return self.post_row(id);
         }
+        let canonical = aaa_proto::canonical_short_id(id, 'p');
+        let id = canonical.as_deref().unwrap_or(id);
         let key: Option<String> = self
             .conn
             .lock()
@@ -1082,7 +1086,8 @@ impl Db {
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
                 r.get(0)
             })?;
-        let id = format!("t-{:04}", max.unwrap_or(0) + 1);
+        let next = max.unwrap_or(0).checked_add(1).ok_or_else(|| anyhow::anyhow!("thread 번호를 다 썼다"))?;
+        let id = format!("t-{next:04}");
         let text = make(&tx, &id)?;
         if let Some(limit) = limit
             && serde_json::from_str::<crate::orch::ThreadRec>(&text)?.automation.is_none()
@@ -1434,6 +1439,7 @@ impl Db {
         for r in rows {
             out.push(serde_json::from_str(&r?)?);
         }
+        out.sort_by(crate::inbox::order);
         Ok(out)
     }
 
@@ -1983,7 +1989,7 @@ impl Db {
     /// 프로젝트의 기록, 최신부터
     pub(crate) fn ask_list(&self, project: &str) -> Result<Vec<aaa_proto::AskRecord>> {
         let c = self.conn.lock().unwrap();
-        let mut st = c.prepare("SELECT data FROM asks WHERE project=?1 ORDER BY done_ms DESC, id DESC")?;
+        let mut st = c.prepare("SELECT data FROM asks WHERE project=?1 ORDER BY done_ms DESC, rowid DESC")?;
         let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         rows.iter().map(|d| Ok(serde_json::from_str(d)?)).collect()
     }

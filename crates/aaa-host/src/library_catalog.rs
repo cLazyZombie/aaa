@@ -163,7 +163,10 @@ impl Host {
             }
         }
         reports.sort_by(|a, b| {
-            b.updated_at_ms.cmp(&a.updated_at_ms).then_with(|| (&a.project, &a.name).cmp(&(&b.project, &b.name)))
+            b.updated_at_ms
+                .cmp(&a.updated_at_ms)
+                .then_with(|| a.project.cmp(&b.project))
+                .then_with(|| aaa_proto::cmp_short_ids(&a.name, &b.name))
         });
         Ok(reports)
     }

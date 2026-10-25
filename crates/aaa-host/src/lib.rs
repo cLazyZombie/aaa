@@ -87,6 +87,7 @@ mod routine_runs;
 pub mod safe_mode;
 mod seen;
 mod settings_admin;
+mod short_ids;
 mod summary;
 mod supervisor;
 pub mod tailscale;
@@ -1618,6 +1619,7 @@ impl Host {
                 }
             }
         }
+        self.normalize_short_ids(&mut req)?;
         // 보호 판정도 생략한 프로젝트를 채운 뒤에 한다(일괄 변환은 프로젝트 파일을 읽는다).
         if role != DeviceRole::Local {
             automation::check_web_mutation(self, &req)?;

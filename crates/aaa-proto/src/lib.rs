@@ -26,6 +26,8 @@ pub mod input;
 pub use deploy::*;
 pub use input::*;
 pub mod frame;
+mod short_id;
+pub use short_id::{canonical_short_id, cmp_short_ids, short_id_number};
 pub mod layout;
 pub mod legacy_special;
 pub mod msg;

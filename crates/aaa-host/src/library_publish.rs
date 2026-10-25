@@ -22,7 +22,7 @@ fn name_ok(name: &str) -> bool {
             && matches!(name.as_bytes()[3], b'1'..=b'9'))
 }
 
-/// 글에 든 thread 번호(`t-0448`·`t0448`, 숫자 4자리 이상)를 `t-0448` 꼴로. 앞뒤가 영숫자면 낱말 안이라 세지 않는다
+/// 글에 든 thread 번호(`t-0448`·`t0448`, 숫자)를 `t-0448` 꼴로. 앞뒤가 영숫자면 낱말 안이라 세지 않는다
 /// (`projects-t-0448`·`old-t-0001`·`t0441-report`는 센다, `art-0448`·`t-0448a`는 세지 않는다).
 pub(crate) fn thread_numbers(s: &str) -> Vec<String> {
     let b = s.as_bytes();
@@ -32,8 +32,10 @@ pub(crate) fn thread_numbers(s: &str) -> Vec<String> {
         if b[i] == b't' && (i == 0 || !b[i - 1].is_ascii_alphanumeric()) {
             let start = i + 1 + usize::from(b.get(i + 1) == Some(&b'-'));
             let end = start + b[start..].iter().take_while(|c| c.is_ascii_digit()).count();
-            if end - start >= 4 && b.get(end).is_none_or(|c| !c.is_ascii_alphanumeric()) {
-                out.push(format!("t-{}", &s[start..end]));
+            if end > start && b.get(end).is_none_or(|c| !c.is_ascii_alphanumeric()) {
+                if let Some(id) = aaa_proto::canonical_short_id(&format!("t-{}", &s[start..end]), 't') {
+                    out.push(id);
+                }
                 i = end;
                 continue;
             }
@@ -636,7 +638,9 @@ impl Host {
         }
         let mut entries =
             std::fs::read_dir(root).map_err(io_error)?.collect::<Result<Vec<_>, _>>().map_err(io_error)?;
-        entries.sort_by_key(|e| e.file_name());
+        entries.sort_by(|a, b| {
+            aaa_proto::cmp_short_ids(&a.file_name().to_string_lossy(), &b.file_name().to_string_lossy())
+        });
         let mut reports = Vec::new();
         let mut skipped = Vec::new();
         for e in entries {

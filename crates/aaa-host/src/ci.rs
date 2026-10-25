@@ -335,14 +335,15 @@ impl Host {
                         }
                     }
                 }
-                let mut owners: BTreeSet<_> = runs
+                let owners: BTreeSet<_> = runs
                     .iter()
                     .flat_map(|run| run.owners.clone())
                     .chain(commits.iter().flat_map(|commit| commit.owners.clone()))
                     .collect();
-                owners
-                    .retain(|id| id.len() == 6 && id.starts_with("t-") && id[2..].bytes().all(|b| b.is_ascii_digit()));
-                let owners: Vec<_> = owners.into_iter().collect();
+                let mut owners: Vec<_> =
+                    owners.into_iter().filter_map(|id| aaa_proto::canonical_short_id(&id, 't')).collect();
+                owners.sort_by(|a, b| aaa_proto::cmp_short_ids(a, b));
+                owners.dedup();
                 let failures = ci::failure_set(&jobs);
                 let failed_tests = ci::failed_tests(&jobs);
                 let same = kind == "failed"
