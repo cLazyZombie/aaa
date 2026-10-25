@@ -18,7 +18,7 @@ const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), 
 const { chromium, webkit } = require("playwright");
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const AA = process.env.AAA_BIN ?? path.join(repo, "target/debug/aaa");
+const AA = process.env.AAA_BIN ?? path.join(repo, "target/e2e/aaa");
 // 스크린샷 폴더: 입구(web.e2e.mjs [폴더])가 넘긴다
 const shots = process.env.AAA_E2E_SHOTS || null;
 const root = `/tmp/aaw-${process.pid}`;

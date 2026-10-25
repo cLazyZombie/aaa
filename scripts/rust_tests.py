@@ -44,7 +44,7 @@ def partitions(names, count):
 
 
 def prepare(logs):
-    command = ["cargo", "test", "--workspace", "--locked", "--no-fail-fast", "--no-run", "--message-format=json-render-diagnostics"]
+    command = ["cargo", "test", "--profile", "verify", "--workspace", "--locked", "--no-fail-fast", "--no-run", "--message-format=json-render-diagnostics"]
     artifacts = []
     malformed = False
     with (logs / "build.jsonl").open("w") as record:
@@ -167,7 +167,7 @@ def main():
     durations = json.loads(Path(__file__).with_name("rust-test-durations.json").read_text())
     jobs = plan(artifacts, args.workers, durations)
     # doctest를 binary 실행으로 대신하지 않는다. 기존 Cargo의 전체 workspace doc 범위를 그대로 실행한다.
-    jobs.append(Job("doctests", ["cargo", "test", "--workspace", "--doc", "--locked", "--no-fail-fast"], Path.cwd()))
+    jobs.append(Job("doctests", ["cargo", "test", "--profile", "verify", "--workspace", "--doc", "--locked", "--no-fail-fast"], Path.cwd()))
     # 여섯 m13 프로세스는 1+1+1+4+4+4=15자리다(16 CPU). 나머지는 CPU 예산 안에서 들어온다.
     threads = int(os.environ.get("RUST_TEST_THREADS", max(1, (os.cpu_count() or 1) // min(args.workers, 4))))
     if threads < 1:

@@ -13,8 +13,8 @@
 # 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee도 같은 병렬 경로에서 단계별 로그를 읽어 출력한다.
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
-#   build      Windows는 dev 없는 배포 release build를 먼저 확인하고 workspace/all-targets build
-#   clippy     cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
+#   build      내부 e2e 실행 파일과 verify unit 사전 컴파일(Windows release cfg도 check)
+#   clippy     cargo clippy --profile verify --workspace --all-targets --locked --keep-going -- -D warnings
 #   test       Python 검사와 전체 Rust 시험을 함께 실행한다. binary·m13 분할과 doctest도 모두 유지한다
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
@@ -34,6 +34,8 @@ ALL="web fmt build clippy test e2e public"
 KNOWN="$ALL linux-clippy"
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
+# 고정 binary 입력 경로와 Cargo 출력을 맞춰 외부 target의 낡은 파일을 쓰지 않는다.
+export CARGO_TARGET_DIR="$ROOT/target"
 
 ONLY=""
 SKIP=""
@@ -80,20 +82,24 @@ wanted() {
 # ── 단계 명령(여기가 유일한 정의다) ──
 step_web() { (cd web && npm ci --no-audit --no-fund && npm run build && npm test); }
 step_fmt() { cargo fmt --all --check; }
-# Windows 배포와 같은 호출로 dev feature 합치기가 production 누락을 가리지 못하게 한다.
+# Windows release 전용 cfg는 check로 확인하고 내부 실행 파일은 e2e로 빌드한다.
+# 실제 배포 최적화·PDB 검증은 release workflow가 담당한다.
 step_build() {
   if [ "$OS" = windows ]; then
-    cargo build --release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc || return $?
+    cargo check --profile release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc || return $?
   fi
-  cargo build --workspace --all-targets --locked
+  # test·clippy가 verify에서 모든 target을 검사하므로 e2e에서는 실제 실행 파일만 만든다.
+  cargo build --profile e2e --locked -p aaa --bin aaa || return $?
+  # cold unit codegen을 headless와 겹치지 않는다. test 단계의 같은 no-run 호출은 산출물 목록만 다시 모은다.
+  cargo test --profile verify --workspace --locked --no-fail-fast --no-run
 }
 # 한 crate가 실패해도 나머지를 모두 본다: 아니면 cargo가 새 unit을 띄우지 않아 뒤 crate의 오류가 로그에 없다(10-18 windows: process.rs
 # unused import가 9eeced3 뒤 main CI에서 clip.rs dead code를 가렸다)
-step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
+step_clippy() { cargo clippy --profile verify --workspace --all-targets --locked --keep-going -- -D warnings; }
 step_linux_clippy() { bash scripts/ci-linux-clippy.sh; }
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
-  if [ "$OS" = windows ]; then cargo test --workspace --locked --no-fail-fast; return $?; fi
+  if [ "$OS" = windows ]; then cargo test --profile verify --workspace --locked --no-fail-fast; return $?; fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
   python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_linux_cross scripts.test_short_ids >"$LOGS/python.log" 2>&1 &
@@ -117,12 +123,12 @@ cleanup_e2e_bin() {
 }
 trap cleanup_e2e_bin EXIT
 prepare_e2e_bin() {
-  # Cargo는 fresh test 빌드에서도 target/debug/aaa를 지우고 다시 연결한다. 병렬 단계보다 먼저 사본을 만든다.
-  if [ "$(result_of build)" != ok ]; then cargo build --locked -p aaa --bin aaa || return 1; fi
-  E2E_BIN_DIR=$(mktemp -d /tmp/aaa-ci-e2e.XXXXXX) || return 1
+  # 병렬 검증의 작업 파일과 분리해 이번 E2E가 실행할 바이트를 고정한다.
+  if [ "$(result_of build)" != ok ]; then cargo build --locked --profile e2e -p aaa --bin aaa || return 1; fi
+  E2E_BIN_DIR=$(mktemp -d "$ROOT/target/aaa-ci-e2e.XXXXXX") || return 1
   E2E_BIN="$E2E_BIN_DIR/aaa"
-  cp "$ROOT/target/debug/aaa" "$E2E_BIN" || return 1
-  cmp "$ROOT/target/debug/aaa" "$E2E_BIN" || return 1
+  cp "$ROOT/target/e2e/aaa" "$E2E_BIN" || return 1
+  cmp "$ROOT/target/e2e/aaa" "$E2E_BIN" || return 1
   echo "이번 빌드의 웹 E2E 실행 사본: $E2E_BIN"
 }
 step_e2e() {

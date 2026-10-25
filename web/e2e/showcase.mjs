@@ -21,7 +21,7 @@ const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), 
 const { chromium } = require("playwright");
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const AA = process.env.AAA_BIN ?? path.join(repo, "target/debug/aaa");
+const AA = process.env.AAA_BIN ?? path.join(repo, "target/e2e/aaa");
 const readme = process.argv[2] === "--readme";
 const [out, extra] = process.argv.slice(readme ? 3 : 2);
 const prefix = readme ? "" : (extra ?? "aaa");

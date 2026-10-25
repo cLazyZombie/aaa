@@ -31,7 +31,7 @@ if tool == "python3":
 elif tool == "cargo":
     stage = args[0]
     if stage == "build":
-        binary = root / "target/debug/aaa"
+        binary = root / "target/e2e/aaa"
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("fixture binary")
     if stage != "clippy":
@@ -222,14 +222,16 @@ class CiLocal(unittest.TestCase):
         self.assertFalse((self.root / "e2e.finished").exists())
 
     def test_build_failure_skips_dependents_but_runs_public(self):
-        self.env["FAIL_STAGE"] = "build"
-        result = self.run_ci("--tee")
-        self.assertEqual(result.returncode, 1, result.stdout)
-        summary = (self.root / "logs/workspace-summary.tsv").read_text()
-        for stage in ("test", "e2e", "clippy"):
-            self.assertIn(f"{stage}|건너뜀:", summary)
-            self.assertFalse((self.root / f"{stage}.finished").exists())
-        self.assertIn("public|ok|", summary)
+        for failing in ("build", "test"):
+            with self.subTest(failing=failing):
+                self.env["FAIL_STAGE"] = failing
+                result = self.run_ci("--tee")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                summary = (self.root / "logs/workspace-summary.tsv").read_text()
+                for stage in ("test", "e2e", "clippy"):
+                    self.assertIn(f"{stage}|건너뜀:", summary)
+                    self.assertFalse((self.root / f"{stage}.finished").exists())
+                self.assertIn("public|ok|", summary)
 
     def test_without_tee_keeps_logs_and_summary(self):
         self.env["EXPECT_STAGES"] = "test e2e clippy"

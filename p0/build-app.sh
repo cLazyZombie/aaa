@@ -30,15 +30,15 @@ done
 [ -n "$IDENTITY" ] || { echo "--identity가 필요하다(adhoc은 -)" >&2; exit 64; }
 
 cd "$ROOT"
-echo "== 빌드(release, AAA_BUILD_SALT=${SALT:-없음})"
-AAA_BUILD_SALT="$SALT" nice -n 15 cargo build --release -p aaa --bin aaa
+echo "== 빌드(e2e, AAA_BUILD_SALT=${SALT:-없음})"
+AAA_BUILD_SALT="$SALT" CARGO_TARGET_DIR="$ROOT/target" nice -n 15 cargo build --profile e2e -p aaa --bin aaa
 
 APP="$OUT/$NAME.app"
 mkdir -p "$OUT"
 STAGE="$OUT/.$NAME.app.building"
 rm -rf "${STAGE:?}"
 mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
-cp "$ROOT/target/release/aaa" "$STAGE/Contents/MacOS/aaa"
+cp "$ROOT/target/e2e/aaa" "$STAGE/Contents/MacOS/aaa"
 # 앱 아이콘: launcher와 같은 것(web/public/icon.svg에서 p0/launcher/make-icon.mjs로 만듦)
 cp "$ROOT/p0/launcher/AppIcon.icns" "$STAGE/Contents/Resources/AppIcon.icns"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)
