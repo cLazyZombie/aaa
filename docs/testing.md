@@ -1,3 +1,11 @@
+## E2E103 보관 본문과 복귀 조회 사건(t-1134)
+
+- 보관 본문·과거 위치의 복원은 `ConversationRefresh`의 최신 읽기 lane과 독립적이다. 변경 알림으로 시작한 실제 `pane_chat` 응답을 `route.fetch` 뒤 보류하고 tasks 왕복을 수행하면, 본문은 82ms에 복원되지만 복귀 요청은 0회다. 이전 응답을 놓으면 복귀 요청이 정확히 1회 시작한다. 본문 준비 뒤 즉시 요청 수를 잘라 검사하던 기존 단언은 이 정상 순서에서 실패한다. 이 결정적 대조는 시험의 경합을 확정하며, 원본 t-1131 실패 당시의 개별 HTTP 순서를 소급 증명하지는 않는다.
+- 기존 E2E103에서 복귀 전에 해당 pane의 최신 요청 사건을 구독하고, 본문 계측과 `Promise.all`로 함께 관측한다. 본문 준비·읽던 위치·동일 DOM·초안·과거 재요청 0회·복귀 최신 1회 계약을 유지한다. 응답 수는 요청 사건을 기다리기 전의 본문 완료 시점에 기록한다. 요청이 없는 경우 원래 사건 대기와 같은 20초에 실패한다. 고정 sleep·재시도·시한 확대·기대값 완화는 없다.
+- Chromium 1280px·WebKit 390px의 coordinator 첫 시도에 실제 이전 응답 보류를 더한다. 응답을 놓기 전에 본문·과거 위치가 복원되고 복귀 요청은 아직 0회인지 검사한 뒤, 보류 해제 후 최신 요청이 정확히 1회인지 검사한다. 필요한 이유: 보관 화면의 즉시 복원과 직렬 읽기의 지연을 동시에 지켜 같은 거짓 실패가 돌아오지 않게 한다. 파일 감시는 내용 없는 빈 줄 추가로 일으키고 실제 host 응답을 사용한다. route는 보류 해제·전달 완료·해제 순서로 정리한다. 기존 조합과 시도 수는 유지한다.
+- t-1127의 별도 `locator.evaluate` 30초 lookup/adoption 정지는 이 수리의 해결 범위로 세지 않는다. 원본의 DOM/Runtime 원문이 없으므로 정확한 정지 호출·원인은 미확정이다. 기존 수동적 protocol·함수 진입/반환 관측을 유지하며 원인 없이 locator를 우회하거나 시험을 지우지 않는다.
+- 참고: [Playwright 요청 사건을 동작 전에 구독](https://playwright.dev/docs/events#waiting-for-event)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [React effect 정리와 늦은 응답](https://react.dev/reference/react/useEffect#fetching-data-with-effects)([MIT](https://github.com/facebook/react/blob/main/LICENSE)). 사건의 소유권과 이전 읽기 수명 원칙을 참고하며 외부 코드·의존성을 가져오지 않는다.
+
 ## 큰 agent 응답과 보고 hash 확인(t-1131, §8.505)
 
 - 공통 `response_parts`의 사고 회귀는 원본 9,820바이트·빈 파일35개·건너뛴 파일14,746개를 합쳐 운영 사고와 정확히 같은 2,232,861바이트 frame을 만든다. 실제 duplex/writer/FrameRx에서 6조각의 원문 동일성과 구판의 `too_large`, 잘못된 큰 제어 frame 거부 뒤 같은 연결의 pong·다음 요청을 검사한다. 필요한 이유: 한 큰 응답이 모든 agent 요청과 재연결을 끊던 회귀를 실제 포장/전송 경계에서 막는다.

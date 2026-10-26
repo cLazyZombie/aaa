@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { root, AA, aaa, step, browser, webkit, pairPage, waitOutput, until, domIs, shot, inTime } from "../lib/harness.mjs";
-import { frames, shown, go, prepare } from "../lib/chat-retention.mjs";
+import { frames, shown, go, prepare, holdLatest } from "../lib/chat-retention.mjs";
 import { retentionFailure } from "../lib/retention-failure.mjs";
 import { retentionProtocol } from "../lib/retention-protocol.mjs";
 const baseline = process.env.AAA_CHAT_BASELINE === "1";
@@ -105,15 +105,39 @@ async function check(engine, width, panes, delayed = false) {
       });
       await frames(page);
       const anchor = await shown(page).locator(`[data-chat-id="${row}"]`).evaluate(el => ({ id: el.dataset.chatId, offset: el.getBoundingClientRect().top - el.closest('.chat').getBoundingClientRect().top }));
-      await go(page, "tasks"); await frames(page);
-      const from = requests.length, responseFrom = replies.length;
-      const old = await measure(page, pane, anchor);
+      // 이전 읽기가 남아 있으면 복귀 읽기는 그 응답 뒤에 시작한다. 보관 본문은 그 전에 보여야 한다.
+      const controlled = !baseline && !delayed && role === "coordinator" && trial === 0
+        && (engine.browserType().name() === "chromium" && width === 1280 || engine.browserType().name() === "webkit" && width === 390);
+      const held = controlled ? await holdLatest(page, pane, panes.transcript) : null;
+      let old, responsesBeforeBody, from;
+      try {
+        await go(page, "tasks"); await frames(page);
+        from = requests.length;
+        const responseFrom = replies.length;
+        // 동작 전에 구독한다. DOM/rAF 완료는 별도 전송 lane·Network 사건의 완료가 아니다.
+        const newest = page.waitForRequest(r => r.url().endsWith("/api/v1/call")
+          && r.postDataJSON()?.op === "pane_chat" && r.postDataJSON()?.pane === pane && !r.postDataJSON()?.before,
+        { timeout: 20_000 });
+        [old] = await Promise.all([
+          (async () => {
+            const result = await measure(page, pane, anchor);
+            responsesBeforeBody = replies.length - responseFrom;
+            if (held) assert.equal(requests.slice(from).filter(r => r.pane === pane).length, 0, "이전 응답 전 본문·과거 위치 복원");
+            retentionLog({ event: "return-body", engine: engine.browserType().name(), width, role, trial, delayed,
+              controlled, bodyMs: result.bodyMs, requests: requests.slice(from).filter(r => r.pane === pane), responsesBeforeBody });
+            held?.release();
+            return result;
+          })(),
+          newest,
+        ]);
+      } finally { await held?.dispose(); }
       const counts = requests.slice(from).filter(r => r.pane === pane);
       if (!baseline) {
         assert.equal(counts.filter(r => r.before).length, 0, "과거 위치 복원 재요청 0회");
         assert.equal(counts.filter(r => !r.before).length, 1, "복귀 최신 확인 1회");
       }
-      measurements.push({ engine: engine.browserType().name(), width, role, trial, delayed, first: first.bodyMs, latest: latest.bodyMs, older: old.bodyMs, inputMs, olderRequests: counts.filter(r => r.before).length, latestRequests: counts.filter(r => !r.before).length, responsesBeforeBody: replies.length - responseFrom });
+      retentionLog({ event: "return-requests", engine: engine.browserType().name(), width, role, trial, delayed, controlled, requests: counts });
+      measurements.push({ engine: engine.browserType().name(), width, role, trial, delayed, first: first.bodyMs, latest: latest.bodyMs, older: old.bodyMs, inputMs, olderRequests: counts.filter(r => r.before).length, latestRequests: counts.filter(r => !r.before).length, responsesBeforeBody });
       if (!baseline && trial === 0 && !delayed) {
         const label = `retention-${engine.browserType().name()}-${width}-${role}`;
         await shot(page, label);
