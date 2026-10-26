@@ -4,6 +4,7 @@
 - 기존 E2E53에 연결 없는 평문 확인 필요 post를 더한다. 필요한 이유: 실제 CLI → host → Chromium/WebKit의 「답할 것」이 한 카드·한 배지를 유지하고 카드 답 뒤 자동 연결 post도 한 번만 닫히는지 확인해야 한다. 기존 명시 연결 post 두 개와 원문/그림 보존·권한·답 기록 단언은 유지한다.
 - 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`의 안내 계약에 연결 접미사와 새 질문/선택지 금지를 더해 신규 생성·doctor 갱신에서 규칙이 빠지지 않게 한다. 새 실험실이나 시험 수를 추가하지 않는다.
 - 고정 sleep·시한 확대·재시도·기대값 완화가 없다. Playwright 1.64.1 패키지만 자기 작업 폴더에 두고 내부 공용 브라우저를 사용한다. 전체 ci-local은 coordinator가 부여한 차례에 실행한다.
+- 첫 전체 gate는 396초에 웹 유닛 584개·fmt·build·clippy·전체 E2E·public이 통과했지만 기존 `task_board_reads_tasks_and_follows_file_edits`가 실패했다. `std::fs::write`의 truncate→write 사이에 ticker가 빈 파일 SHA를 먼저 내보낸 것이 원인이다. 해당 fixture의 두 직접 쓰기를 인접 `task_edit_keeps_bytes_conflicts_and_logs`와 같은 pending 파일 작성→tick→rename으로 바꾼다. 빈 파일 사건을 건너뛰거나 SHA 기대값·시한을 바꾸지 않고, 완성 파일의 첫 관측 사건이라는 기존 계약을 유지한다.
 - OSS 참고: [Gitea 알림 원장](https://github.com/go-gitea/gitea/blob/main/models/activities/notification.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 같은 이슈 대상 알림 갱신, [Zulip 주제](https://docs.zulip.com/help/introduction-to-topics)([Apache-2.0](https://github.com/zulip/zulip/blob/main/docs/contributing/licensing.md))의 대화 주제 묶기를 비교했다. 기존 질문 카드를 정본으로 삼는 방식을 따르며 외부 코드·의존성은 추가하지 않는다.
 
 ## 할 일 한 줄 배치(t-1048)

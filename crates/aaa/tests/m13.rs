@@ -4776,6 +4776,13 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     use sha2::Digest as _;
     let w = world();
     let pdir = w.projects.join("demo");
+    // ticker는 완성된 파일 판만 관측한다. 쓰는 도중 tick도 끝내고 rename으로 한 번에 공개한다.
+    let write = |text: &str| {
+        let pending = pdir.join("TASKS.md.pending");
+        std::fs::write(&pending, text).unwrap();
+        w.h.ticks(1);
+        std::fs::rename(pending, pdir.join("TASKS.md")).unwrap();
+    };
     let task = w.task("tb.txt", "x");
     let linked = w.start(&["--title", "이은 일", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
     let other = w.start(&["--title", "따로 도는 일", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
@@ -4788,7 +4795,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     // 먼저 원본을 기억시킨다. 연결 뒤 md의 첫 관측 사건이 오는 순서를 부하 없이도 검증한다.
     w.h.ok(&["task", "list"]);
     let mut ev = Events::connect(&w.h);
-    std::fs::write(pdir.join("TASKS.md"), &md).unwrap();
+    write(&md);
     let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
     w.h.ok(&["ticker", "tick"]);
     let (baseline, ()) = ev.wait_from(0, "초기 할 일 관측", T, |e| match e {
@@ -4837,7 +4844,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     // 고치지 않은 tick은 사건을 내지 않는다: 다음에 고친 뒤 오는 첫 `tasks` 사건이 고친 sha다
     w.h.ok(&["ticker", "tick"]);
     let md2 = identified_tasks(&md.replace("## 빈 목록\n", "## 빈 목록\n- [ ] 새로 더한 일\n"));
-    std::fs::write(pdir.join("TASKS.md"), &md2).unwrap();
+    write(&md2);
     w.h.ok(&["ticker", "tick"]);
     let (at, got) = ev.wait_from(baseline + 1, "tasks 사건", T, |e| match e {
         aaa_proto::FrontEvent::Tasks { project, sha256 } if project == "demo" => Some(sha256.clone()),
