@@ -42,6 +42,8 @@ impl std::fmt::Display for Version {
 // 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
 // 같은 1.11의 선택 기능 imagegen.v1: 세션 peer·token 확인 뒤 자기 이미지 요청/결과만 양쪽에서 보낸다.
 // 같은 1.11의 선택 기능 terminal_payload.zstd.v1: 원격 snapshot/history만 압축한다(t-0876). IPC는 원시다.
+// 같은 1.11의 선택 기능 report_hash.v1: library 없이 보고 hash만 조회한다.
+// response_parts.v1: 양쪽 협상 뒤 agent의 큰 Res JSON을 ResPart로 나눈다. 구판 host에는 too_large로 답한다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),

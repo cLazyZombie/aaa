@@ -17,6 +17,7 @@ pub mod process;
 pub mod quota;
 pub mod redact;
 pub mod resource;
+pub mod response_parts;
 pub mod tls;
 pub mod util;
 

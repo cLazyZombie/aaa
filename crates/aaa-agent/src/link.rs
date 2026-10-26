@@ -122,6 +122,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "terminal.v1".into(),
             aaa_proto::TERMINAL_ZSTD_FEATURE.into(),
             "report_copy.v2".into(),
+            "report_hash.v1".into(),
+            aaa_common::response_parts::FEATURE.into(),
             "deployment.v1".into(),
             #[cfg(any(target_os = "macos", windows))]
             "rollout.v1".into(),
@@ -206,6 +208,7 @@ async fn session_state_mode(
         tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("welcome 대기")??;
     let (health, replay, host_identity) = match first {
         LinkMsg::Welcome(w) => {
+            tx.set_response_parts(w.features.iter().any(|f| f == aaa_common::response_parts::FEATURE));
             tx.set_terminal_zstd(remote && w.features.iter().any(|f| f == aaa_proto::TERMINAL_ZSTD_FEATURE));
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));

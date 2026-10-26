@@ -2391,6 +2391,20 @@ impl Host {
     }
 
     /// agent에 지금 report.md hash를 묻고(library는 읽지 않는다) 받은 것과 다르거나 앞 회수가 실패했으면 받는다
+    async fn current_report_hash(&self, rec: &ThreadRec, conn: &crate::AgentConn) -> Result<String, ErrorBody> {
+        let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
+        let response = if self.machine_feature(&rec.machine_id, "report_hash.v1") {
+            conn.request(AgentRequest::ReportHash { work_dir }).await?
+        } else {
+            conn.request(AgentRequest::ReportCollect { work_dir, max_library_bytes: 0 }).await?
+        };
+        match response {
+            AgentResponse::ReportHash { hash } => Ok(hash),
+            AgentResponse::Report(s) => Ok(s.hash),
+            _ => Err(internal("보고 hash 응답이 아니다")),
+        }
+    }
+
     async fn collect_if_changed(self: &Arc<Self>, project: &str, id: &str) {
         let Ok(rec) = self
             .load(project, id)
@@ -2398,16 +2412,16 @@ impl Host {
         else {
             return;
         };
-        let (Some(work_dir), Ok(conn)) = (rec.work_dir.clone(), self.live_conn(&rec.machine_id)) else { return };
+        let (Some(_), Ok(conn)) = (rec.work_dir.as_ref(), self.live_conn(&rec.machine_id)) else { return };
         if let Some(warning) = &rec.question_warning {
             self.warn_question_format(&rec, warning).await;
         }
         if rec.status != ThreadStatus::Open {
             return;
         }
-        let probe = conn.request(AgentRequest::ReportCollect { work_dir, max_library_bytes: 0 }).await;
+        let probe = self.current_report_hash(&rec, &conn).await;
         if rec.copy.as_deref() != Some("failed")
-            && !matches!(&probe, Ok(AgentResponse::Report(s)) if Some(&s.hash) != rec.report_hash.as_ref())
+            && !matches!(&probe, Ok(hash) if Some(hash) != rec.report_hash.as_ref())
         {
             return;
         }
@@ -2843,14 +2857,8 @@ impl Host {
                 other => return Err(internal(format!("준비 자리 응답이 아니다: {other:?}"))),
             }
         }
-        if rec.status != ThreadStatus::Resolved
-            && !opts.skip_copy
-            && let Some(w) = &rec.work_dir
-        {
-            let has_report = matches!(
-                conn.request(AgentRequest::ReportCollect { work_dir: w.clone(), max_library_bytes: 0 }).await,
-                Ok(AgentResponse::Report(_))
-            );
+        if rec.status != ThreadStatus::Resolved && !opts.skip_copy && rec.work_dir.is_some() {
+            let has_report = self.current_report_hash(&rec, &conn).await.is_ok();
             if has_report {
                 let lock = self.report_collect_lock(project, id);
                 let _guard = lock.lock().await;
