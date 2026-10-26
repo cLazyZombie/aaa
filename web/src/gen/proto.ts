@@ -1197,7 +1197,7 @@ task?: string, search?: TaskHistorySearch, } | { "op": "task_log_prune", project
  */
 open?: boolean, status?: ThreadStatus, limit?: number, after?: string,
 /**
- * 웹의 질문·보류 상세가 필요할 때만 켠다. 기본 목록은 큰 본문을 싣지 않는다.
+ * 웹의 질문 상세가 필요할 때만 켠다. 기본 목록도 CLI가 표시하는 필드는 보존한다.
  */
 details?: boolean, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
@@ -1699,7 +1699,7 @@ export type ThreadListQuery = {
  */
 open?: boolean, status?: ThreadStatus, limit?: number, after?: string,
 /**
- * 웹의 질문·보류 상세가 필요할 때만 켠다. 기본 목록은 큰 본문을 싣지 않는다.
+ * 웹의 질문 상세가 필요할 때만 켠다. 기본 목록도 CLI가 표시하는 필드는 보존한다.
  */
 details?: boolean, };
 

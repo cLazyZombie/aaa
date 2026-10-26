@@ -18,11 +18,21 @@ impl Lab {
         std::fs::create_dir_all(root.join("projects/z")).unwrap();
         Self { host, root }
     }
-    fn insert(&self, project: &str, n: u32, status: ThreadStatus, role: Role, next: Vec<String>) {
+    fn insert(&self, project: &str, n: u32, status: ThreadStatus, role: Role, question_body: Option<String>) {
         let mut r = ThreadRec::starting(project, "목록 회귀", "m", "codex", role, ThreadKind::Dir, 0);
         r.id = format!("t-{n:04}");
         r.status = status;
-        r.next = next;
+        r.next = vec!["보고를 검토한다".into()];
+        if let Some(body) = question_body {
+            r.report_hash = Some("fixture-report".into());
+            r.questions = vec![aaa_proto::ThreadQuestion {
+                id: None,
+                text: "다음 단계".into(),
+                choices: vec![],
+                body: Some(body),
+                after: None,
+            }];
+        }
         self.host.db.thread_import(project, &r.id, status.as_str(), &serde_json::to_string(&r).unwrap()).unwrap();
     }
     fn page(
@@ -52,29 +62,24 @@ async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_liv
     let lab = Lab::new();
     for n in 1..=2500 {
         // 상세 100건만으로도 frame 한도를 넘는다. 목록은 이 본문을 읽어 보내지 않는다.
-        let next = if n <= 60 { vec!["상세 다음 작업".repeat(1500)] } else { vec![] };
-        lab.insert("p", n, ThreadStatus::Resolved, Role::Worker, next);
+        let body = (n <= 60).then(|| "상세 질문 본문".repeat(1500));
+        lab.insert("p", n, ThreadStatus::Resolved, Role::Worker, body);
     }
     for (i, status) in
         [ThreadStatus::Starting, ThreadStatus::Open, ThreadStatus::Failed, ThreadStatus::Parked].into_iter().enumerate()
     {
-        lab.insert("p", 2501 + i as u32, status, Role::Worker, vec![]);
+        lab.insert("p", 2501 + i as u32, status, Role::Worker, None);
     }
     for n in [9999, 10000, 10001] {
-        lab.insert(
-            "z",
-            n,
-            ThreadStatus::Resolved,
-            if n == 10001 { Role::Evaluator } else { Role::Coordinator },
-            vec![],
-        );
+        lab.insert("z", n, ThreadStatus::Resolved, if n == 10001 { Role::Evaluator } else { Role::Coordinator }, None);
     }
     let mut query = ThreadListQuery { limit: Some(u32::MAX), ..Default::default() };
     let mut all = Vec::new();
     loop {
         let (threads, next) = lab.page(None, None, &query);
         assert!(threads.len() <= 200);
-        assert!(threads.iter().all(|t| t.next.is_empty() && t.questions.is_none()));
+        assert!(threads.iter().all(|t| t.questions.is_none()));
+        assert!(threads.iter().all(|t| t.next == ["보고를 검토한다"]));
         all.extend(threads.into_iter().map(|t| (t.project, t.id)));
         if next.is_none() {
             break;
@@ -102,7 +107,9 @@ async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_liv
     let (detailed, next) = lab.page(Some("p"), None, &ThreadListQuery { details: true, ..Default::default() });
     assert!(detailed.len() < 60 && !detailed.is_empty());
     assert!(next.is_some());
-    assert_eq!(detailed[0].next, lab.host.thread_show("p", "t-0001").unwrap().next);
+    let full = lab.host.thread_show("p", "t-0001").unwrap();
+    assert_eq!(detailed[0].next, full.next);
+    assert_eq!(detailed[0].questions, full.questions);
     let (continued, _) = lab.page(
         Some("p"),
         None,

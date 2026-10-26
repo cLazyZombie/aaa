@@ -1160,11 +1160,6 @@ impl Host {
             if !query.details {
                 r.questions.clear();
                 r.question_warning = None;
-                r.next.clear();
-                r.park = None;
-                r.over_limit = None;
-                r.account_allocation = None;
-                r.automation_run = None;
             }
             let view = self.thread_view(&r);
             let size = serde_json::to_vec(&view).map_err(internal)?.len() + 1;

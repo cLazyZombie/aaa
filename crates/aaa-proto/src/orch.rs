@@ -1001,7 +1001,7 @@ pub struct ThreadListQuery {
     #[serde(default)]
     #[ts(optional)]
     pub after: Option<String>,
-    /// 웹의 질문·보류 상세가 필요할 때만 켠다. 기본 목록은 큰 본문을 싣지 않는다.
+    /// 웹의 질문 상세가 필요할 때만 켠다. 기본 목록도 CLI가 표시하는 필드는 보존한다.
     #[serde(default)]
     #[ts(optional, as = "Option<bool>")]
     pub details: bool,
