@@ -56,38 +56,47 @@ export async function threadPages() {
       const holding = new Promise(resolve => { release = resolve; });
       const arrived = new Promise(resolve => { arrive = resolve; });
       const restarted = new Promise(resolve => { restart = resolve; });
-      const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, {
-        init: traceThreadRequests, onPage: trace.onPage,
-        // WebKit에서도 실제 HTTP 전달을 가로채도록 이 목록 전용 context는 SW를 거치지 않는다.
-        serviceWorkers: "block",
-        wsRoute: ["**/api/v1/events", ws => { socket = ws; server = ws.connectToServer(); }],
-        setup: context => context.route("**/api/v1/call", async route => {
-          const request = route.request().postDataJSON();
-          if (request?.op !== "threads") return route.fallback();
-          if (held && !request.after) restart();
-          const response = await route.fetch();
-          const body = (await response.json()).ok;
-          if (armed && !held && body?.kind === "threads" && !body.next_after) {
-            held = true;
-            arrive();
-            await holding;
-          }
-          await route.fulfill({ response });
-        }),
-      });
+      let context, primary, phase = "pairing";
       try {
+        const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+          init: traceThreadRequests, onPage: trace.onPage,
+          // WebKit에서도 실제 HTTP 전달을 가로채도록 이 목록 전용 context는 SW를 거치지 않는다.
+          serviceWorkers: "block",
+          wsRoute: ["**/api/v1/events", ws => { socket = ws; server = ws.connectToServer(); }],
+          setup: async ctx => {
+            // pairing 자체가 실패해도 이 context의 route부터 마친 뒤 닫는다.
+            context = ctx;
+            await context.route("**/api/v1/call", async route => {
+              const request = route.request().postDataJSON();
+              if (request?.op !== "threads") return route.fallback();
+              if (held && !request.after) restart();
+              const response = await route.fetch();
+              const body = (await response.json()).ok;
+              if (armed && !held && body?.kind === "threads" && !body.next_after) {
+                held = true;
+                arrive();
+                await holding;
+              }
+              await route.fulfill({ response });
+            });
+          },
+        });
+        phase = "initial-list";
         await page.evaluate(() => { location.hash = "threads"; });
         await domIs(page, "초기 목록의 마지막 thread", () => !!document.querySelector('[data-testid="all-threads"] [data-testid="project-thread-t-12499"]'));
         armed = true;
+        phase = "reload-last-response";
         await page.reload();
         await inTime(arrived, 20000, "reload 목록의 마지막 실제 응답");
         // host 응답은 바꾸지 않는다. 마지막 응답 전달 전에 실제 events 연결을 한 번 바꿔 두 읽기를 겹친다.
         await socket.close({ code: 1012, reason: "E2E12 재연결 경계" });
         await server.close();
+        phase = "reconnected-list";
         await inTime(restarted, 20000, "새 events 연결의 첫 목록 요청");
         release();
         await domIs(page, "마지막 페이지의 끝난 thread", () => !!document.querySelector('[data-testid="all-threads"] [data-testid="project-thread-t-12499"]'));
         const expected = all.map(t => `${t.project}/${t.id}`);
+        phase = "trace-and-dom";
         const reads = await trace.reads(expected);
         const doc = await page.evaluate(() => String(performance.timeOrigin));
         // 초기 문서는 따로 검사하며 reload 문서의 두 독립 읽기는 각각 전체 목록이어야 한다.
@@ -97,7 +106,26 @@ export async function threadPages() {
         assert.equal(new Set(rendered).size, all.length);
         assert.deepEqual(rendered.sort(), all.map(t => `project-thread-${t.id}`).sort());
         assert.deepEqual(errors, []);
-      } finally { release(); await page.context().close(); }
+      } catch (error) {
+        primary = error;
+        // 추가 진단과 정리보다 먼저 남긴다. 닫는 중 생긴 오류가 최초 단계를 가리지 않는다.
+        trace.record({ event: "failure", phase, original: { message: error.message, stack: error.stack } });
+        throw error;
+      } finally {
+        release();
+        let cleanupError;
+        if (context) for (const [part, close] of [
+          ["routes", () => context.unrouteAll({ behavior: "wait" })],
+          ["context", () => context.close()],
+        ]) {
+          try { await close(); trace.record({ event: "cleanup", part }); }
+          catch (error) {
+            trace.record({ event: "cleanup-failure", part, error: String(error) });
+            cleanupError ??= error;
+          }
+        }
+        if (!primary && cleanupError) throw cleanupError;
+      }
     }
   } finally { await safari.close(); }
 }

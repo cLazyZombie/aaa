@@ -107,5 +107,5 @@ export function threadPageTrace(directory, engine) {
     log({ event: "reads", reads: reads.map(({ seen, ids, ...r }) => ({ ...r, count: ids.length, unique: new Set(ids).size })) });
     return reads;
   };
-  return { onPage, reads };
+  return { onPage, reads, record: log };
 }
