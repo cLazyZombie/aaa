@@ -15,6 +15,14 @@
 - 첫 전체 gate는 396초에 웹 유닛 584개·fmt·build·clippy·전체 E2E·public이 통과했지만 기존 `task_board_reads_tasks_and_follows_file_edits`가 실패했다. `std::fs::write`의 truncate→write 사이에 ticker가 빈 파일 SHA를 먼저 내보낸 것이 원인이다. 해당 fixture의 두 직접 쓰기를 인접 `task_edit_keeps_bytes_conflicts_and_logs`와 같은 pending 파일 작성→tick→rename으로 바꾼다. 빈 파일 사건을 건너뛰거나 SHA 기대값·시한을 바꾸지 않고, 완성 파일의 첫 관측 사건이라는 기존 계약을 유지한다.
 - OSS 참고: [Gitea 알림 원장](https://github.com/go-gitea/gitea/blob/main/models/activities/notification.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 같은 이슈 대상 알림 갱신, [Zulip 주제](https://docs.zulip.com/help/introduction-to-topics)([Apache-2.0](https://github.com/zulip/zulip/blob/main/docs/contributing/licensing.md))의 대화 주제 묶기를 비교했다. 기존 질문 카드를 정본으로 삼는 방식을 따르며 외부 코드·의존성은 추가하지 않는다.
 
+## 상태 줄 출력 중 한글 조합 위치(t-1064, §8.493)
+
+- 실제 xterm 소스에 배포와 같은 패치를 붙이는 `composition-anchor.test.mjs`의 첫 유닛은 구판의 상태 줄 이동과 수정판의 시작 칸 유지, 확정 한 번·다음 조합의 새 위치·reset 해제를 대조한다. 둘째 유닛은 스크롤·열 축소·다른 버퍼·삭제된 줄의 위치와 숨김/해제를 검사한다. 입력 큐/모바일 시험에도 새 패치를 적용한다. 두 유닛은 위치 고정 회귀와 marker 수명 누수를 각각 막는 데 필요하다.
+- 기존 E2E09에 실제 pane의 한 묶음/분리된 상태 줄 갱신을 추가한다. 브라우저 rAF마다 미리보기의 text/active/display/visibility/opacity·화면 좌표와 textarea 좌표를 기록하고 시작 위치 1px 이내, 확정 전 PTY 전송 0회·확정 뒤 `한` 한 번 수신을 단언한다. 출력/그리기 사건을 확인한 뒤 다음 묶음을 보내며 고정 sleep·시한 확대·재시도는 없다. 이 E2E는 실제 host/PTY/브라우저의 분리 출력 경계와 aaa의 행 보정이 유닛 밖에서 회귀하지 않도록 필요하다.
+- Chromium은 CDP `Input.imeSetComposition`으로 ㅎ→하→한을 유지한다. macOS에서는 화면에 올리지 않는 WKWebView의 NSTextInputClient `setMarkedText`로 같은 실제 조합을 만들고, compositionstart/update의 trusted 값을 확인한다. Playwright WebKit은 기존 방식의 DOM 사건 재생으로 별도 검사한다. Linux에서는 macOS native 실행만 없으며 이를 실제 WebKit IME 확인으로 세지 않는다. OS 입력기 설정·입력 장치·사용자 창은 바꾸지 않는다.
+- `AAA_IME_CAPTURE=<폴더> NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs --spec 09 --grep '한글 조합 위치'`는 단계별 화면과 frame/사건 JSON을 남긴다. 수정 전 Chromium·WebKit 실제 조합에서 상태 줄로 이동하는 RED, 수정 후 같은 출력·위치 기준의 GREEN을 확인했다. 비교 영상은 실제 브라우저의 단계별 캡처를 0.5초씩 확대 재생한 것으로 실제 입력 속도 영상과 구분한다.
+- 부분 검사는 E2E02·07·09·15와 웹 유닛이다. 전체 ci-local은 머신의 차례를 받은 뒤 한 번 수행한다. xterm.js/VS Code/Ghostty(MIT) 비교와 제품 결정은 plan §8.493에 있다.
+
 ## 할 일 한 줄 배치(t-1048)
 
 - 기존 E2E107을 확장한다. Chromium 1280/2000/390/320px·WebKit 1366/1024/390/320px에서 실제 host의 일반·예약·하위·병합 대기 행을 표시한다. 목록의 실제 너비가 640px 이상이면 모든 표시 칩과 제목·메뉴 중심이 1px 이내이고 행 높이는 40px 이하여야 한다. 좁은 목록은 제목 아래 칩 시작점, 휴대폰 제목 100px·행 높이 76px·메모만 있는 행 40px 계약을 유지한다.
