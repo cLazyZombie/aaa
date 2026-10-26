@@ -4200,6 +4200,8 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 ## 인증 fixture의 공통 opaque 토큰(t-1127)
 
+- 80회차 통합에서 새 main의 `large_report_and_bad_parts_keep_requests_on_one_link`에 남은 직접 인증 fixture를 공통 `CANARY`로 옮긴다. 생성기를 통과한96바이트 토큰도 기존 길이 기준 계산으로 조각 경계를 가로지르며 원본 hash 보존·재조립 뒤 가림·다음 요청 단언과5초 상한을 유지한다.
+
 - [시험 인증 fixture](test-secrets.md)의 공통 생성기·벡터를 Rust·Python·Node E2E가 함께 쓴다. 계정/업무 이름은 seed나 별도 대응표에만 두고 본문에는 넣지 않는다. 제품 가림 규칙은 바꾸지 않는다.
 - `scripts.test_fixture_secrets`와 웹 `fixture-secret.test.mjs`, `aaa-test-support` 유닛은 언어별 공통 벡터·업무 단어 즉시 거부를 검사한다. 정적 검사는 ci-local 시험 진입 전에 실행하고 정확한 경로·값·사유 예외만 허용한다. 필요한 이유는 같은 실행의 다른 owner까지 망가뜨리는 평문 인증 fixture 재유입을 막기 위해서다.
 - 기존 aaa-common 가림 owner에 `opaque_credentials_do_not_redact_business_fields_in_the_same_process`를 더한다. 실제 전역 가림 등록 뒤 토큰은 가려지고 automation/owner/인증 JSON 필드는 보존되어야 한다. 필요한 이유는 생성기 형식 검사만으로 실제 제품 serializer의 필드 보존을 대신할 수 없기 때문이다.

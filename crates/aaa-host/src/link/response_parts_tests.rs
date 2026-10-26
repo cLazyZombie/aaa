@@ -12,7 +12,7 @@ async fn large_report_and_bad_parts_keep_requests_on_one_link() {
         cfg.projects.root = path.join("projects").display().to_string();
         cfg.notify.web_push = false;
         let host = Host::open(cfg, path.join("host")).unwrap();
-        let secret = "fixture-parts-auth-marker-1131";
+        let secret = aaa_test_support::CANARY;
         aaa_common::redact::remember(secret);
         let snapshot = ReportSnapshot {
             hash: hex::encode(Sha256::digest(secret.as_bytes())),
