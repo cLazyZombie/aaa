@@ -34,11 +34,30 @@ export function traceThreadRequests() {
 export function threadPageTrace(directory, engine) {
   fs.mkdirSync(directory, { recursive: true });
   const file = `${directory}/thread-pages-${engine}.jsonl`;
-  const pending = [], requests = new WeakMap();
+  const pending = [], requests = new WeakMap(), active = new Set(), bodies = new Set();
+  const retired = new Set();
   const endings = new Map(), completion = new Set();
   let next = 0;
   const log = row => fs.appendFileSync(file, JSON.stringify({ at: Date.now(), engine, ...row }) + "\n");
+  const settle = (record, result) => {
+    if (!active.delete(record)) return;
+    record.resolve(result);
+  };
   const onPage = page => {
+    page.on("framenavigated", frame => {
+      if (frame !== page.mainFrame()) return;
+      // hash 이동은 같은 문서다. 실제 timeOrigin이 바뀐 경우만 옛 요청을 끝낸다.
+      void frame.evaluate(() => String(performance.timeOrigin)).then(doc => {
+        for (const record of [...active]) if (!record.reading && record.data.doc !== doc) {
+          retired.add(record.data.doc);
+          log({ ...record.data, event: "navigation-aborted" });
+          settle(record, { ...record.data, cancelled: "navigation" });
+        }
+      }).catch(error => log({ event: "navigation-observer-closed", error: error.message.split("\n")[0] }));
+    });
+    page.on("close", () => {
+      for (const record of [...active]) settle(record, { ...record.data, error: "본문 완료 전 page.close" });
+    });
     page.on("console", msg => {
       if (msg.text().startsWith("THREAD_TRACE ")) log(JSON.parse(msg.text().slice(13)));
     });
@@ -47,12 +66,23 @@ export function threadPageTrace(directory, engine) {
       const headers = request.headers();
       const record = { id: ++next, doc: headers["x-e2e-document"], connection: headers["x-e2e-connection"],
         fetch: headers["x-e2e-request"], after: request.postDataJSON().after ?? null };
-      requests.set(request, record);
+      const entry = { data: record, response: null, reading: false };
+      pending.push(new Promise(resolve => { entry.resolve = resolve; }));
+      requests.set(request, entry);
+      active.add(entry);
       log({ ...record, event: "request" });
     });
     page.on("response", response => {
-      const record = requests.get(response.request());
-      if (!record) return;
+      const entry = requests.get(response.request());
+      if (entry) entry.response = response;
+    });
+    page.on("requestfinished", request => {
+      const entry = requests.get(request);
+      if (!entry || !active.has(entry)) return;
+      const record = entry.data, response = entry.response;
+      entry.reading = true;
+      // response는 헤더 사건이다. 실제 다운로드 완료 전 body()를 시작하면
+      // navigation으로 중단된 요청의 protocol Promise가 browser.close까지 남는다.
       const body = response.body().then(bytes => {
         const result = { ...record, status: response.status(), bytes: bytes.length, body: JSON.parse(bytes).ok };
         log({ ...record, event: "response", status: result.status, bytes: result.bytes,
@@ -67,11 +97,15 @@ export function threadPageTrace(directory, engine) {
         log({ ...record, event: "body-error", error: String(error) });
         return { ...record, error: String(error) };
       });
-      pending.push(body);
+      bodies.add(body);
+      void body.then(result => { bodies.delete(body); settle(entry, result); });
     });
     page.on("requestfailed", request => {
-      const record = requests.get(request);
-      if (record) log({ ...record, event: "request-failed", error: request.failure() });
+      const entry = requests.get(request);
+      if (!entry || !active.has(entry)) return;
+      const error = request.failure()?.errorText ?? String(request.failure());
+      log({ ...entry.data, event: "request-failed", error });
+      settle(entry, { ...entry.data, error });
     });
   };
   const reads = async expected => {
@@ -80,16 +114,12 @@ export function threadPageTrace(directory, engine) {
     for (const record of records) {
       assert.equal(record.error, undefined, `HTTP 본문 읽기 실패: ${record.error}`);
       assert.ok(record.doc && record.connection, "요청의 문서·연결 표지가 있어야 한다");
-      assert.equal(record.status, 200);
-      assert.ok(record.bytes < 1024 * 1024);
-      assert.equal(record.body?.kind, "threads");
-      assert.ok(record.body.threads.length <= 200);
       let read;
       if (record.after === null) {
         const start = `${record.doc}/${record.connection}`;
         assert.ok(!starts.has(start), `같은 events 연결의 중복 첫 요청: ${start}`);
         starts.add(start);
-        read = { first: record.id, doc: record.doc, connection: record.connection, ids: [], next: null, pages: 0, seen: new Set() };
+        read = { first: record.id, doc: record.doc, connection: record.connection, ids: [], next: "aborted-before-body", pages: 0, seen: new Set() };
         reads.push(read);
       } else {
         // 이 고정 fixture의 겹친 읽기는 같은 목록 접두사를 갖는다. 먼저 기다리는 읽기에 잇되 응답을 버리지 않는다.
@@ -98,6 +128,18 @@ export function threadPageTrace(directory, engine) {
       }
       assert.ok(!read.seen.has(record.after), `한 읽기 안의 반복 커서: ${record.after}`);
       read.seen.add(record.after);
+      if (record.cancelled) {
+        assert.equal(record.cancelled, "navigation");
+        assert.ok(retired.has(record.doc), "실제 문서 교체로 끝난 꼬리만 취소로 분류한다");
+        assert.deepEqual(read.ids, expected.slice(0, read.ids.length));
+        if (record.after !== null) read.next = "navigation-aborted";
+        log({ event: "cancelled-tail", request: record.id, read: read.first, doc: read.doc, after: record.after });
+        continue;
+      }
+      assert.equal(record.status, 200);
+      assert.ok(record.bytes < 1024 * 1024);
+      assert.equal(record.body?.kind, "threads");
+      assert.ok(record.body.threads.length <= 200);
       read.ids.push(...record.body.threads.map(t => `${t.project}/${t.id}`));
       read.next = record.body.next_after ?? null;
       read.pages++;
@@ -122,5 +164,7 @@ export function threadPageTrace(directory, engine) {
     completion.add(check);
     check();
   });
-  return { onPage, reads, completed, record: log };
+  // 문서를 바꾸기 전에 이미 완료한 응답의 protocol body 작업을 먼저 마친다.
+  const drain = async () => { while (bodies.size) await Promise.all([...bodies]); };
+  return { onPage, reads, completed, drain, record: log };
 }

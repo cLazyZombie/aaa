@@ -9,7 +9,8 @@ import {
   step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, coordinatorPost, inList, showPanel, drawerSettled,
 } from "../lib/harness.mjs";
 
-import { threadPages } from "../lib/thread-pages.mjs";
+import { prepareThreadPages, threadPages } from "../lib/thread-pages.mjs";
+import { threadBodyLifetime, threadFailureLifetime } from "../lib/thread-lifetime.mjs";
 
 /**
  * 목록 줄의 오른쪽 끝(보이는 ⋯, 없으면 상태 칸)과 목록 오른쪽 끝의 거리가 목록 여백(--side-gutter)과 경계선 안이다(t-0370:
@@ -1198,6 +1199,11 @@ export default async function ({ page }) {
     await ph.page.context().close();
   });
 
-  await step("thread 목록 규모: 끝난 2500건·CLI 거르기와 개수·커서·두 브라우저 전체 페이지", threadPages);
+  await step("thread 관측 수명: 헤더 뒤 문서 교체가 browser.close 없이 끝남", threadBodyLifetime);
+  await step("thread 실패 수명: 떨어진 작업의 WebKit 자식도 자연 종료", threadFailureLifetime);
+  let threadPageRecords;
+  await step("thread 목록 규모: 끝난 2500건·CLI 거르기와 개수·커서", async () => { threadPageRecords = await prepareThreadPages(); });
+  await step("thread 목록 규모: Chromium 전체 페이지·재연결·실제 DOM", () => threadPages(threadPageRecords, "chromium"));
+  await step("thread 목록 규모: WebKit 전체 페이지·재연결·실제 DOM", () => threadPages(threadPageRecords, "webkit"));
 
 }

@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.mjs";
 import { launchChromium } from "./chromium-launch.mjs";
+import { cleanupScope } from "./cleanup-scope.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -1072,6 +1073,7 @@ process.stdin.on("data", (d) => {
 `,
 );
 const browser = await launchChromium(chromium);
+const specCleanup = cleanupScope();
 
 /** push 서명 키(「Web Push: 구독 검사」 단계·pushLab이 /api/v1/push에서 받는다). spec은 import한 이름에 쓸 수 없어 이걸로 둔다 */
 const setPushKey = (key) => {
@@ -1172,6 +1174,8 @@ async function runSpec(spec, labEnv = {}) {
     failed = true;
     if (!steps.some((s) => s.startsWith("FAIL"))) steps.push(`FAIL ${e.message}`);
   } finally {
+    try { await specCleanup.close(); }
+    catch (error) { failed = true; steps.push(`FAIL 실험실 자원 정리: ${error}`); }
     await browser.close();
     pushServer.close();
     usageServer.close();
@@ -1207,6 +1211,6 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, setInUse, pushInUse, pushWho, pushLab, coordinatorPost, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
+  usageHits, usageRoutes, usageServer, browser, specCleanup, setPushKey, setInUse, pushInUse, pushWho, pushLab, coordinatorPost, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
   claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, askClaude,
 };
