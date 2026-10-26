@@ -1,0 +1,65 @@
+name: diagnostic-t-1072-windows-m4
+on:
+  push:
+    branches: [diagnostic/t-1072-windows-m4]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: pwsh
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: '1'
+jobs:
+  windows-m4:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: 웹 번들
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 비특권 실제 자식 회귀
+        run: ./scripts/test-windows-sshd-command.ps1
+      - name: e2e binary와 verify owner 빌드
+        run: |
+          $env:CARGO_TARGET_DIR = Join-Path $env:GITHUB_WORKSPACE 'target'
+          cargo build --profile e2e --locked -p aaa --bin aaa
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --profile verify --locked -p aaa-host --lib --no-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path -LiteralPath 'target/debug') { throw 'M4 진단: debug 산출물이 생겼다' }
+          $binary = (Resolve-Path -LiteralPath 'target/e2e/aaa.exe').Path
+          $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+          Write-Host "M4 fresh binary=target/e2e/aaa.exe sha256=$hash debug_absent=true"
+      - name: SYSTEM SSH·사용자 SCM·등록·보호 입력·정리
+        run: |
+          $beforeUsers = @(Get-LocalUser | Select-Object -ExpandProperty Name)
+          $beforeServices = @(Get-Service | Select-Object -ExpandProperty Name)
+          $beforeLab = @(Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Directory -Filter 'aaa-ssh-*' | Select-Object -ExpandProperty FullName)
+          $binary = (Resolve-Path -LiteralPath 'target/e2e/aaa.exe').Path
+          $beforeHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+          $ownerError = $null
+          try { & ./scripts/ci-windows-sshd.ps1 } catch { $ownerError = $_ }
+          $users = @(Get-LocalUser | Where-Object { $_.Name -like 'aaa-ci-*' -and $_.Name -notin $beforeUsers })
+          $services = @(Get-Service | Where-Object { ($_.Name -like 'aaa-ssh-*' -or $_.Name -eq 'aaa-agent') -and $_.Name -notin $beforeServices })
+          if ($users.Count -or $services.Count) { throw "M4 cleanup failed: users=$($users.Count) services=$($services.Count)" }
+          $afterHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+          if ($afterHash -ne $beforeHash) { throw 'M4 시험 중 binary가 바뀌었다' }
+          if (Test-Path -LiteralPath 'target/debug') { throw 'M4 시험이 debug 산출물에 의존한다' }
+          $labs = @(Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Directory -Filter 'aaa-ssh-*' | Where-Object { $_.FullName -notin $beforeLab })
+          # 계정·서비스는 부모가 정리한다. 일회성 runner의 진단 폴더 중 이번 실행 것만 제거한다.
+          foreach ($lab in $labs) { Remove-Item -LiteralPath $lab.FullName -Recurse -Force }
+          Write-Host "M4 cleanup ok: users=0 services=0 labs_removed=$($labs.Count) binary_sha256=$afterHash debug_absent=true"
+          if ($ownerError) { throw $ownerError }
