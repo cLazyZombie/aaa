@@ -499,9 +499,9 @@ async fn account_wait_does_not_hide_the_next_reservations_actual_reason() {
             .await
             .unwrap();
     }
-    // 실제 풀의 빈 후보 거부를 통과시킨다. 계정 배정 정책·사용량 상태에는 의존하지 않는다.
-    let pool = lab.h.account_pool().unwrap();
-    lab.h.pool_project_set(&pool.revision, "demo", true, "local:cli").unwrap();
+    // 실제 풀의 만료 인증 거부를 쓴다. 사용량 판단 불가도 시작하는 새 정책을 우회하지 않는다.
+    lab.h.register_account("blocked", "claude", "fixture-queue-token-01234567890123456789").unwrap();
+    lab.h.db.set_meta("account-meta:blocked", r#"{"expires_ms":1}"#).unwrap();
     let (tx, mut rx) = aaa_common::conn::frame_channel();
     let conn = crate::AgentConn::new(tx, 1);
     let pending = conn.pending.clone();
