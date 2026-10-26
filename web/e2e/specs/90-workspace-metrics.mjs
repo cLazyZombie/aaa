@@ -254,7 +254,7 @@ export default async function ({ page }) {
     });
     await shot(page, "workspace-ci-after-push");
   });
-  await step("rc·엔진·pt의 동일 main 반복 검증을 다른 머신과 기존 저장소의 후속 보고에서 함께 회수한다", async () => {
+  await step("rc·엔진·pt의 같은 tree 착지 병합을 회수하고 두 브라우저의 실행 기록에 경과를 표시한다", async () => {
     const fixtures = [];
     for (const [name, runner, machine] of [["rc","rc","labA"],["no2-engine","engine","labB"],["pt","pt","labA"]]) {
       const repo = `${root}/games/${name}`;
@@ -265,9 +265,12 @@ export default async function ({ page }) {
       git("init","-qb","main"); git("add","."); git("commit","-qm","verification fixture");
       git("remote","add","origin",`https://example.com/team/${name}.git`);
       git("update-ref","refs/remotes/origin/main","HEAD");
-      const commit = git("rev-parse","HEAD");
       const checkout = `${root}/verify-${name}`;
       git("worktree","add","-qb","verification",checkout,"main");
+      put(`${checkout}/src/product.ts`, "export const verified = true;\n");
+      git("-C",checkout,"add","src");
+      git("-C",checkout,"commit","-qm","verified candidate");
+      const verified = git("-C",checkout,"rev-parse","HEAD");
       for (const [mode, code] of [["coverage","0"],["default","7"]]) {
         const py = (...args) => execFileSync("python3",["scripts/workspace_record.py",...args],{cwd:checkout,env,encoding:"utf8",stdio:"pipe"}).trim();
         const token = py("start",runner,mode,"full");
@@ -279,9 +282,13 @@ export default async function ({ page }) {
         if (runner !== "pt") put(`${checkout}/target/${runner === "rc" ? "rc-e2e/report.json" : "no2-e2e/all-headless.json"}`,JSON.stringify({status:"passed",reports:[{scenario:"smoke",status:"passed",duration_ms:30}]}));
         py("finish",token,code);
       }
+      git("merge","--no-ff","-qm","landing verified candidate","verification");
+      const commit = git("rev-parse","HEAD");
+      if (git("rev-parse","HEAD^2") !== verified || git("rev-parse","HEAD^{tree}") !== git("rev-parse",`${verified}^{tree}`)) throw new Error("착지 tree fixture 불일치");
+      git("update-ref","refs/remotes/origin/main",commit);
       git("worktree","remove","--force",checkout);
       aaa("project","set","demo","repos.add",`${repo}@${machine}`);
-      fixtures.push({name,machine,commit});
+      fixtures.push({name,machine,commit,verified});
     }
     fs.appendFileSync(`${work}/report.md`,"\n여러 저장소 검증 종료\n");
     fs.appendFileSync(`${aaa("thread","show","demo",secondThread.id).work_dir}/report.md`,"\n엔진 검증 종료\n");
@@ -290,12 +297,33 @@ export default async function ({ page }) {
       const ws = (await api(page)).workspaces.find(w => w.name === fixture.name);
       const got = await api(page,{workspace_id:ws.id,days:30});
       if (got.runs.length !== 2 || got.runs.some(r => r.commit !== fixture.commit || r.machine !== fixture.machine) || !got.runs.some(r => r.outcome === "failed")) throw new Error(`game 원장 ${fixture.name}: ${JSON.stringify(got)}`);
+      if (got.runs.some(r => r.verification_ms == null || !r.notes.some(n => n.includes(fixture.verified) && n.includes(fixture.commit)))) throw new Error(`착지 검증 출처·경과 유실: ${JSON.stringify(got)}`);
       if (fixture.name !== "pt" && got.runs.some(r => r.tests?.passed !== (fixture.name === "rc" ? 2 : 4) || r.e2e_files !== 1)) throw new Error(`game 개수 ${JSON.stringify(got)}`);
       await page.getByTestId("workspace-repo").filter({has:page.locator("strong",{hasText:new RegExp(`^${fixture.name}$`)})}).click();
       await page.getByRole("tab",{name:"실행 기록",exact:true}).click();
       await domIs(page,"선택한 game 원장의 성공·실패 두 행",({name,machine}) => document.querySelector('.ws-heading h1')?.textContent.startsWith(name) && document.querySelectorAll('.ws-table-scroll tbody tr').length === 2 && [...document.querySelectorAll('.ws-table-scroll tbody tr')].every(r => r.children[1].textContent.startsWith(machine + " /")) && document.querySelector('.ws-table-scroll [data-outcome="failed"]'),fixture);
       await shot(page,`workspace-${fixture.name}-recorded`);
     }
+    const safari = await webkit.launch({headless:true});
+    try {
+      for (const fixture of fixtures.filter(f => f.name === "rc" || f.name === "pt")) {
+        await page.getByTestId("workspace-repo").filter({has:page.locator("strong",{hasText:new RegExp(`^${fixture.name}$`)})}).click();
+        await page.getByRole("tab",{name:"실행 기록",exact:true}).click();
+        for (const [engine, launch] of [["chromium",browser],["webkit",safari]]) for (const width of [1280,390]) {
+          const device = await pairPage(launch, aaa("web","pair","--reader").code, {width,height:844}, {hash:new URL(page.url()).hash,touch:width<1280});
+          try {
+            const p = device.page;
+            await domIs(p,"착지 실행 두 행과 실제 경과",name => document.querySelector('.ws-heading h1')?.textContent.startsWith(name) && document.querySelectorAll('.ws-table-scroll tbody tr').length === 2 && [...document.querySelectorAll('.ws-table-scroll tbody tr')].every(row => row.children[3].textContent !== "미수집"),fixture.name);
+            await p.getByRole("region",{name:"실행 기록 표",exact:true}).evaluate(table => { table.scrollLeft = table.scrollWidth; });
+            await shot(p,`workspace-landing-${fixture.name}-${engine}-${width}`);
+            await p.locator(".ws-table-scroll tbody button").first().click();
+            await p.getByRole("dialog").waitFor();
+            if (!(await p.getByRole("dialog").textContent()).includes(fixture.verified)) throw new Error("웹 상세의 검증 커밋 유실");
+            if (device.errors.length) throw new Error(device.errors.join(";"));
+          } finally { await device.page.context().close(); }
+        }
+      }
+    } finally { await safari.close(); }
   });
   } finally {
     await stop("metrics-agentB");

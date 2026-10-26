@@ -1,6 +1,35 @@
-//! CI가 보존한 작은 종료 요약. 실행한 커밋이 push된 main 본선에 올라온 뒤에만 확정한다.
+//! 종료 원장을 push된 main에 귀속한다. 같은 tree의 두 부모 병합은 검증한 둘째 부모도 인정한다.
 use super::*;
-use std::collections::BTreeSet;
+
+struct MainHistory {
+    direct: BTreeMap<String, String>,
+    landings: BTreeMap<(String, String), String>,
+}
+impl MainHistory {
+    fn read(cwd: &Path, commit: &str) -> Result<Self> {
+        // tree·부모를 한 번에 읽는다. 다른 조상·같은 tree의 무관한 커밋은 인정하지 않는다.
+        let text = lines::text(cwd, &["log", "--first-parent", "--max-count=4096", "--format=%H %T %P", commit])?;
+        let mut history = Self { direct: BTreeMap::new(), landings: BTreeMap::new() };
+        // 후보를 여러 번 병합했으면 처음 본선에 반영한 병합에 고정한다.
+        for row in text.lines().rev() {
+            let fields: Vec<_> = row.split_whitespace().collect();
+            anyhow::ensure!(fields.len() >= 2, "main 커밋·tree 목록 형식 오류");
+            history.direct.insert(fields[0].into(), fields[1].into());
+            if fields.len() == 4 {
+                history.landings.entry((fields[3].into(), fields[1].into())).or_insert_with(|| fields[0].into());
+            }
+        }
+        Ok(history)
+    }
+
+    fn resolve(&self, source: &Provenance) -> Result<Option<&str>> {
+        if let Some((commit, tree)) = self.direct.get_key_value(&source.commit) {
+            anyhow::ensure!(*tree == source.tree, "CI 실행 tree 불일치");
+            return Ok(Some(commit));
+        }
+        Ok(self.landings.get(&(source.commit.clone(), source.tree.clone())).map(String::as_str))
+    }
+}
 
 #[derive(Deserialize)]
 struct Provenance {
@@ -39,11 +68,7 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Cache::default(),
         Err(e) => return Err(e.into()),
     };
-    // 후보 브랜치의 조상이라는 이유만으로 main 검증으로 섞지 않는다.
-    let history: BTreeSet<_> = lines::text(cwd, &["rev-list", "--first-parent", "--max-count=4096", commit])?
-        .lines()
-        .map(str::to_string)
-        .collect();
+    let history = MainHistory::read(cwd, commit)?;
     let mut dirs = Vec::new();
     for entry in fs::read_dir(root)?.take(4096) {
         let entry = entry?;
@@ -61,7 +86,7 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
     for (dir, v, _) in &dirs {
         // 구형 parser가 새 runner를 CI로 오인했거나 format 2를 거부한 캐시도 재해석한다.
         // runs는 그대로 두어 이미 원본이 지워진 확정 기록을 잃지 않는다.
-        let v = format!("parser-2:{v}");
+        let v = format!("parser-3:{v}");
         if BUDGET_EXHAUSTED.with(|flag| flag.get()) {
             notes.push("읽기 비용 상한으로 CI 일부 미수집".into());
             break;
@@ -86,9 +111,9 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
                     && source.started_at_ms <= source.ended_at_ms,
                 "CI 커밋·시각 형식 오류"
             );
-            if !history.contains(&source.commit) {
+            let Some(main_commit) = history.resolve(&source)? else {
                 return Ok(None);
-            }
+            };
             anyhow::ensure!(
                 lines::text(cwd, &["rev-parse", &format!("{}^{{tree}}", source.commit)])? == source.tree,
                 "CI 실행 tree 불일치"
@@ -115,8 +140,14 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
                     &dir.join("e2e.json"),
                 );
             }
-            run.commit = source.commit;
+            run.commit = main_commit.to_string();
             run.source = format!("{runner} 종료 원장 (main 반영 확인)");
+            if main_commit != source.commit {
+                run.notes.push(format!(
+                    "검증 커밋 {} · tree {} · 같은 tree의 둘째 부모를 main 병합 {}에 귀속",
+                    source.commit, source.tree, main_commit
+                ));
+            }
             run.profile = source.profile;
             if let Some(mode) = source.mode {
                 run.notes.push(format!("검증 모드 {mode} · Cargo profile과 별도"));

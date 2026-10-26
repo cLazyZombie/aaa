@@ -3899,3 +3899,9 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - rc의 `node --test scripts/verify.test.mjs`, 엔진의 `node --test scripts/verify_engine.test.mjs`는 기존 gate stub과 실제 Git·writer로 실제 검증 셸의 성공/실패 종료 원장을 확인한다. gate·시간 상한·성공 기대값은 바꾸지 않는다.
 - `nice -n 15 cargo test --profile verify --locked -p aaa-agent -p aaa-host --lib workspace_metrics`는 세 runner의 반복 main 기록·기존 CI 호환·runtime 개수/시간·원본 정리 후 보존·출처 거부와 repo 없는 보고의 머신별 전체 회수 및 일부 실패 후 진행을 확인한다.
 - E2E90은 실제 공용 writer를 별도 worktree에서 rc·엔진·pt runner로 두 번 실행하고 worktree/target을 삭제한다. 전용 thread 없이 기존 두 머신 보고만 바꿔 실제 agent→host 원장→workspace 웹 표에 각 두 행과 테스트/E2E 수가 보이는지 검사한다. 이는 검증 실행 자체를 대체하지 않는 collector fixture이며 실제 게임 전체 검증 결과와 구분한다. 기존 두 브라우저·여러 화면·CI 출처 회귀는 유지한다. 고정 sleep·재시도·시한 증가는 없다.
+
+## 같은 tree 착지 병합의 검증 귀속 (t-1065)
+
+- 원인은 후보를 검증하고 같은 tree로 `--no-ff` 착지해도, 종료 원장의 커밋이 main 첫 부모 계보에 없어 회수를 기다린 데 있다. `cargo test --profile verify --locked -p aaa-agent --lib workspace_metrics`의 새 회귀 하나가 네 runner의 성공·실패를 같은 tree의 직접 둘째 부모에서 main 병합으로 귀속하는 계약을 지킨다. 미push 병합, 같은 tree의 무관한 커밋·둘째 부모의 조상은 제외하며 재회수·원본 정리 뒤 같은 ID/시간/출처를 보존한다. 기존 다른 tree 병합·잘못된 provenance 거부와 parser 캐시 이행 시험을 확장한다. 새 시험은 이 누락과 과도한 귀속을 함께 막기 위해 필요하다.
+- E2E90의 기존 게임 fixture를 후보 커밋 검증→같은 tree 병합→push 참조 갱신→worktree 삭제로 바꾼다. 기존 보고 회수와 두 머신을 통해 세 runner의 성공·실패 두 행, 실제 경과, 원래 검증 커밋의 웹 상세를 확인한다. rc·pt는 Chromium/WebKit 각각 1280/390px 실행 기록 표를 headless 촬영한다. DOM·보고 회수 사건으로 완료하며 고정 sleep·재시도·시한 확대 없이 기존 전체 조합도 유지한다. 기존 main 반복 검증 계약은 agent 회귀가 계속 검사한다.
+- 참고 후보: [Git commit/tree 비교](https://git-scm.com/docs/git-diff-tree)([GPL-2.0](https://github.com/git/git/blob/master/COPYING)), [libgit2 이력 순회 예제](https://github.com/libgit2/libgit2/blob/main/examples/log.c)(예제 CC0, 라이브러리 [GPL-2.0+linking exception](https://github.com/libgit2/libgit2/blob/main/COPYING)). tree와 직접 부모를 실제 객체로 확인하는 원칙을 참고했고 외부 코드·의존성은 추가하지 않는다.
