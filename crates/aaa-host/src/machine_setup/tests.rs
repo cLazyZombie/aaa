@@ -1362,6 +1362,13 @@ fn the_check_script_reports_the_work_folder_git_harnesses_and_path() {
     std::fs::create_dir_all(&dir).unwrap();
     let argv = check::check_argv();
     let out = std::process::Command::new(&argv[0]).args(&argv[1..]).current_dir(&dir).output().unwrap();
+    assert!(
+        out.status.success(),
+        "끝 확인 스크립트: {:?}, stderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).lines().any(|l| l == check::CHECK_END));
     let lines = check::check_lines(&String::from_utf8_lossy(&out.stdout)).unwrap();
     let real = dir.canonicalize().unwrap();
     assert!(
@@ -1386,6 +1393,11 @@ fn the_check_script_reports_the_work_folder_git_harnesses_and_path() {
 /// 로그인은 `codex login` pane. 끝나지 않은 작업·보기 기기·연결 안 된 머신은 거부한다
 #[test]
 fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
+    installed_machine_check_and_login(None);
+    installed_machine_check_and_login(Some("windows"));
+}
+
+fn installed_machine_check_and_login(os: Option<&str>) {
     use aaa_common::conn::{FrameRx, spawn_writer};
     use aaa_proto::{AgentRequest, AgentResponse, LinkMsg, MachineSetupInstall, SessionInfo, SessionState};
     let root = std::env::temp_dir().join(format!("aaa-ssh-check-{}", aaa_common::util::new_id()));
@@ -1405,7 +1417,15 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
                 ssh: None,
                 host_keys: vec![],
                 host_key_state: Some("known".into()),
-                detected: None,
+                detected: os.map(|os| aaa_proto::MachineDetected {
+                    os: os.into(),
+                    arch: "x86_64".into(),
+                    raw: "".into(),
+                    chosen: false,
+                    home: None,
+                    shell: None,
+                    aaa: None,
+                }),
                 error: None,
                 created_ms: 1,
                 updated_ms: 1,
@@ -1509,25 +1529,46 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
             let specs = spawned.lock().unwrap();
             assert_eq!(
                 (specs[0].argv.clone(), specs[0].cwd.clone()),
-                (check::check_argv(), Some(work.to_string_lossy().into()))
+                (
+                    if os == Some("windows") { check::windows_check_argv() } else { check::check_argv() },
+                    Some(work.to_string_lossy().into()),
+                )
             );
         }
-        // agent가 보낼 화면: 이 머신에서 그 스크립트를 실제로 돌린 출력
-        let argv = check::check_argv();
-        let out = std::process::Command::new(&argv[0]).args(&argv[1..]).current_dir(&work).output().unwrap();
-        let screen = String::from_utf8_lossy(&out.stdout).replace('\n', "\r\n");
+        // agent도 출력도 가짜다. 원격 OS의 셸을 host에서 실행하지 않는다.
+        // 실제 POSIX 스크립트 실행은 the_check_script_reports_*가 따로 검사한다.
+        let expected = vec![
+            format!("작업 폴더 {}", work.display()),
+            "git version 2.0.0".into(),
+            "claude 없음".into(),
+            "codex 없음".into(),
+            "PATH fixture-bin".into(),
+        ];
+        let screen = format!("{}\r\n{}\r\n", check::CHECK, expected.join("\r\n"));
+        let offset = screen.len() as u64;
         h.on_subscribed(
             &pane,
             Some(aaa_proto::Snapshot {
                 compression: None,
                 session: pane.clone(),
-                offset: 0,
+                offset,
                 cols: 160,
                 rows: 40,
                 replay: aaa_proto::B64(screen.into_bytes()),
                 history_more: false,
             }),
             0,
+        );
+        // 끝 표지가 뒤 청크로 올 때까지는 끝 확인을 확정하지 않는다.
+        tokio::task::yield_now().await;
+        assert!(h.setup_load("done").unwrap().view.install.unwrap().checks.is_empty());
+        h.on_chunk(
+            "m1",
+            aaa_proto::TerminalChunk {
+                session: pane.clone(),
+                offset,
+                data: format!("{}\r\n", check::CHECK_END).into_bytes(),
+            },
         );
         let mut rx = h.enroll_changed.subscribe();
         let checks = tokio::time::timeout(Duration::from_secs(30), async {
@@ -1542,7 +1583,7 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
         })
         .await
         .expect("끝 확인 줄");
-        assert!(checks[0].starts_with("작업 폴더 ") && checks.iter().any(|l| l.starts_with("PATH ")), "{checks:?}");
+        assert_eq!(checks, expected);
         // harness 로그인 pane
         let login =
             |h: aaa_proto::install::InstallHarness| FrontRequest::MachineSetupLogin { job: "done".into(), harness: h };
