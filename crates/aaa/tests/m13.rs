@@ -493,14 +493,6 @@ fn world() -> World {
     world_with("")
 }
 
-/// brief 화면 멈춤을 제품 기본값(3초)으로 두는 실험실. 가짜 agent는 brief를 읽자마자 보고를 써서, 멈춤을 줄이면 agent가
-/// 1초마다 보는 보고가 host의 받음 확인(Enter 뒤 화면 보기)보다 먼저 올 수 있다. 그러면 받음 확인 때의 보고 hash가 그 보고라
-/// 「brief 뒤 새 보고 없음」(orch.rs 6번 줄 `just_delivered`)이 되어, 확인한 뒤에도 창 동안 작업 중이다. 확인 뒤 바로 쉼을
-/// 보는 시험은 이 실험실을 쓴다(제품 모서리, t-0327 report)
-fn world_product_settle() -> World {
-    world_build("", false, None, |_| Vec::new())
-}
-
 fn world_with(extra: &str) -> World {
     world_opts(extra, false)
 }
@@ -705,7 +697,7 @@ fn assert_entries(dir: &Path, expected: &[&str]) {
 /// worktree thread 한 바퀴: 시작 → brief 안내 → 보고·library 사본 → ack → resolve(PR이 없으니 branch는 남긴다)
 #[test]
 fn worktree_thread_round_trip() {
-    let w = world_product_settle();
+    let w = world();
     let task = w.task("task1.txt", "보고에 X-42를 적는다 link");
     let v = w.start(&[
         "--title",
@@ -791,7 +783,11 @@ fn worktree_thread_round_trip() {
     );
     assert!(resolved["detail"].as_str().unwrap().contains("pane을 닫았다"), "{resolved}");
     // 마지막 사본은 받은 파일이 그대로라 따로 알리지 않는다(사본 상태만 complete로 바뀐다)
-    assert_eq!(w.kinds(0), ["thread_started", "brief_delivered", "report_ready", "review_acked", "thread_resolved"]);
+    // 보고 회수와 brief 받음 확인은 독립 경로다. 둘은 시작 뒤·ack 전에 정확히 한 번씩 와야 한다.
+    let mut kinds = w.kinds(0);
+    assert_eq!(kinds.len(), 5, "{kinds:?}");
+    kinds[1..3].sort();
+    assert_eq!(kinds, ["thread_started", "brief_delivered", "report_ready", "review_acked", "thread_resolved"]);
     // cursor 뒤만 읽는다
     assert_eq!(w.kinds(3), ["review_acked", "thread_resolved"]);
 }

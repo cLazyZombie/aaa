@@ -1,3 +1,11 @@
+## brief 확인보다 먼저 회수한 완료 보고(t-1066)
+
+- 보존된 실패 DB의 사건은 `report_ready` → `brief_delivered` → `review_acked`였다. 전달 확인 때 이미 도착한 새 보고 hash를 `delivered_report`에 다시 넣어, ack 뒤에도 15초 working 유예가 남았다. 화면 멈춤을 3초로 두는 기존 우회는 이 순서를 보장하지 못한다.
+- 비교 기준은 첫 전송 직전 DB 갱신에서 잡고, 재전송·Enter 재전송·늦은 받음 확인은 바꾸지 않는다. 전송 전에 거부돼 시도 수가 0으로 돌아간 경우와 새 brief의 첫 시도는 그때의 보고로 새 기준을 잡는다. 전달 확인 시각·제품 유예 길이·ack 계약은 유지한다.
+- 꼭 필요한 새 회귀 `orch::report_tests::brief_confirmation_preserves_reports_collected_after_enter`는 실제 Host DB·보고 수집·brief 제출·ack 경계를 사용한다. fake Agent link가 Enter 처리 뒤 응답만 보류하고, 실제 보고 수집을 응답 전/후로 제어한다. 최초 시작/기존 보고가 있는 재시작 × 보고 먼저/확인 먼저/Enter 응답 유실 뒤 화면 수동 재확인 여섯 조합에서 새 보고의 검토 대기·ack 뒤 idle·hash·정확한 사건 순서를 확인한다. 옛 보고 ack만으로 새 brief 유예가 끝나지 않는 반대 조건도 지킨다. Tokio 가상 시각을 써서 유예가 저절로 지난 통과를 막는다.
+- 수정 전 새 회귀는 `report_first=true, previous=None`에서 `Working` / `Idle`로 실패했다. 기존 m13의 `worktree_thread_round_trip`은 300ms 공통 실험실로 돌리고 idle 단언을 그대로 유지한다. 독립 경로인 보고·brief 두 사건만 순서를 정렬하며, 전체 사건 수·시작/ack/resolve의 순서는 정확히 검사한다. `memory_and_restart`는 이미 공통 실험실과 pane 종료 뒤 idle을 검사하므로 제품 수리를 함께 검증한다.
+- 참고는 [Tokio Notify](https://docs.rs/tokio/latest/tokio/sync/struct.Notify.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))의 사건 신호와 [Loom의 순서 제어](https://github.com/tokio-rs/loom)([MIT](https://github.com/tokio-rs/loom/blob/master/LICENSE))다. 순서를 제어해 경쟁을 증명하는 원칙을 따르며 코드·의존성은 추가하지 않는다. 시한 연장·고정 sleep·실패 재시도·idle 기대값 완화는 없다.
+
 ## 할 일 한 줄 배치(t-1048)
 
 - 기존 E2E107을 확장한다. Chromium 1280/2000/390/320px·WebKit 1366/1024/390/320px에서 실제 host의 일반·예약·하위·병합 대기 행을 표시한다. 목록의 실제 너비가 640px 이상이면 모든 표시 칩과 제목·메뉴 중심이 1px 이내이고 행 높이는 40px 이하여야 한다. 좁은 목록은 제목 아래 칩 시작점, 휴대폰 제목 100px·행 높이 76px·메모만 있는 행 40px 계약을 유지한다.
