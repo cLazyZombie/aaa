@@ -55,7 +55,7 @@ macOS Rust std는 `pipe()` 뒤 각 FD에 `fcntl(FD_CLOEXEC)`를 호출한다. �
 
 macOS 전용 회귀 하나가 실험실 자식에만 dyld interpose를 넣어 실제 Rust std의 `pipe()` 반환 직전을 붙잡는다. FD의 CLOEXEC가 아직 없음을 확인하고, 수정 전 조합은 그 창 안에서 입력을 기다리는 무관한 자식을 exec한다. 해당 자식의 FD 상속과 캡처 대상의 실제 종료를 kqueue NOTE_EXIT로 확인한 뒤에도 output은 미완료다. 무관한 자식을 종료하면 반환한다.
 
-수정 조합은 같은 창에서 공통 생성 잠금을 확인하고 다른 자식 실행을 시작한다. pipe 창을 풀면 동기 수집·Tokio 수집·실제 `harness_version::observe` 모두 무관한 자식에 FD가 없고 그 자식이 살아 있는 동안 반환한다. stdout/stderr와 실패 종료 코드 7도 보존한다. 사건으로 순서를 정하며 30초는 실패 상한이다. 고정 sleep·반복 성공 확률·재시도는 없다. DYLD 환경과 hook은 별도 시험 프로세스에만 있고 제품에는 들어가지 않는다.
+수정 조합은 같은 창에서 공통 생성 잠금을 확인하고 다른 자식 실행을 시작한다. pipe 창을 풀면 동기 수집·Tokio 수집·실제 `harness_version::observe` 모두 무관한 자식에 FD가 없고 그 자식이 살아 있는 동안 반환한다. stdout/stderr와 실패 종료 코드 7도 보존한다. 사건으로 순서를 정하며 현재 내부2초·worker5초는 실패 상한이다. 고정 sleep·반복 성공 확률·재시도는 없다. DYLD 환경과 hook은 별도 시험 worker에만 있고 제품에는 들어가지 않는다.
 
 별도 일회성 제품 실험은 실제 `UsageContext::system().run`과 `threads::adopt`의 git 수집을 호출했다. host의 로그인·네트워크 함수는 호출하지 않고 명령 runner만 썼으며, agent에는 격리 폴더의 가짜 git만 제공했다. 상속자 쪽을 원래의 직접 spawn으로 두면 두 제품 경로 모두 캡처 자식 종료 후까지 막히고 상속자 종료 뒤에만 반환했다. 양쪽이 공통 경계를 쓰면 상속자가 살아 있는 동안 반환했다. 이 대조는 실행 중인 운영 host·agent에서 결함을 관측했다는 뜻이 아니다.
 
@@ -71,6 +71,18 @@ Windows에는 macOS의 `pipe()` 후 `fcntl()` 창이 없다. Rust std는 `CREATE
 - [portable-pty Unix](https://github.com/wez/wezterm/blob/main/pty/src/unix.rs)·[MIT](https://github.com/wez/wezterm/blob/main/pty/Cargo.toml): fork 뒤 FD 정리와 PTY CLOEXEC 창을 구분한다.
 
 외부 코드를 복사하거나 의존성을 추가하지 않았다. 전체 ci-local·착지·push는 coordinator가 배정한 묶음 착지에서 수행한다.
+
+## macOS CI의 capture 연결 Timeout 재발(t-1137)
+
+main `c115d41a`·`3db8bcc7`의 macOS job 전체 로그에서 최초 오류는 capture 출력 수집 스레드의 `status.code() == None`이었다. 이어 worker가 capture socket 연결 Timeout으로 실패했다. raw holder가 pipe를 상속하고 창을 풀었다는 기록은 있으나 capture 역할 시작은 없었다. 제품 생성 잠금의 재발을 뜻하는 증거는 아니었다.
+
+원래 로그는 capture의 실제 signal·stderr를 버렸다. 같은 기준에 반환 status·stdout·stderr만 기록한 진단 `ca93fea6`의 [macOS15 실행](https://github.com/cLazyZombie/aaa/actions/runs/40418222799)에서 capture `/bin/sh`가 SIGABRT(6)로 끝났고, dyld는 `arm64` 시험 dylib를 `arm64e` 실행 파일에 넣을 수 없다고 명시했다. worker2485→holder2486 상속 확인/pipe 해제→capture2487 loader 실패→worker exit101·stdout/stderr EOF 순서다. 최초 두 실행의 capture PID·signal 번호·holder 종료 기록은 없으므로 그 값까지 소급 확정하지 않는다. 별도 artifact 대신 job에 실린 aaa_common 전체 구간과 trace를 추출해 비교했다.
+
+시험의 `DYLD_INSERT_LIBRARIES`가 worker에서 capture shell까지 전해진 것이 원인이다. 보호된 시스템 shell이 DYLD를 지우는 일반 Mac에서는 이 결함이 가려졌다. 자기 target에 `/bin/sh`를 별도 자식으로 복사하고 사본만 ad-hoc 서명해 보호에 기대지 않게 하면 같은 시험에서 loader SIGABRT·capture 미시작·`None != Some(7)`·Timeout이 재현된다. 시스템 파일·SIP·설정은 건드리지 않는다.
+
+주입은 hook을 arm하는 worker에만 두고 capture와 holder에서는 제거한다. 같은 사본/pipe 창에서 raw FD 상속과 holder 종료 뒤 출력 완료, std/Tokio/실제 harness의 FD 비상속·holder 생존 중 출력 완료, exit7·stdout/stderr 보존을 그대로 검사한다. 기존 owner를 강화하며 시험 수를 늘리지 않는다. 실패 반환의 status·stdout·stderr 기록도 남겨 다음 loader 오류를 연결 Timeout으로 뭉뚱그리지 않는다.
+
+[Apple dyld의 환경 처리](https://github.com/apple-oss-distributions/dyld/blob/main/dyld/DyldProcessConfig.cpp)([APSL-2.0](https://github.com/apple-oss-distributions/dyld/blob/main/APPLE_LICENSE))와 [GitHub runner의 arm64e 주입 이슈](https://github.com/actions/runner-images/issues/9461)를 기존 Rust std·Duct 비교에 더했다. 환경 제거/loader 경계의 근거로만 읽었으며 코드를 복사하거나 라이선스가 다른 의존성을 추가하지 않았다.
 
 ## 74회차 lab 통합
 
