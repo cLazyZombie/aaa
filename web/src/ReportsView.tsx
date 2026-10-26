@@ -15,6 +15,7 @@ import { markdownImages, reportMarkdownImage } from "./reportImages";
 import { ReportThread, ReportsPanel, openReportWindow } from "./ReportsPanel";
 import { formatBytes } from "./formatBytes";
 import { reportDocLink } from "./tasksModel";
+import { LibraryCopyNotice } from "./LibraryCopyNotice";
 
 export type ReportRef = { project: string; name: string };
 
@@ -161,6 +162,7 @@ function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportR
         <HeadMore />
       </header>
       {problem && <div className="banner err" role="alert">{problem}</div>}
+      {lib && <LibraryCopyNotice files={lib.files} />}
       {lib && index ? (
         <iframe ref={frame} className="report-frame" data-testid="report-frame" title={`${report.project}/${report.name} index.html`} sandbox={LIBRARY_SANDBOX} src={page ?? undefined} />
       ) : lib ? (
@@ -184,6 +186,7 @@ function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportR
                       {f.path}
                     </a>
                     <span className="size">{formatBytes(f.size)}</span>
+                    {f.on_agent && <span className="tag">사본에 없음</span>}
                     {onAddDoc && isDoc(report.name, f) && <TaskAddButton path={f.path} onAdd={onAddDoc} />}
                   </li>
                 ))}

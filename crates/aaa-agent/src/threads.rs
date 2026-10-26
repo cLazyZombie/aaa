@@ -22,6 +22,8 @@ pub const MAX_REPORT_BYTES: u64 = 4 << 20;
 
 #[path = "threads/preparation.rs"]
 mod preparation;
+#[path = "threads/report_copy.rs"]
+mod report_copy;
 
 #[derive(Debug, Clone, Default)]
 pub struct ThreadsConfig {
@@ -510,50 +512,30 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
     }
     let report = std::fs::read(&path)?;
     let hash = hex::encode(Sha256::digest(&report));
+    let (candidates, mut skipped) = report_copy::select(&dir.join("library"), &report, max_library_bytes)?;
     let mut files = Vec::new();
-    let mut skipped = Vec::new();
-    let mut total = 0u64;
-    let lib = dir.join("library");
-    if std::fs::symlink_metadata(&lib)
-        .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
-        .is_ok_and(|m| m.is_dir())
-    {
-        walk(&lib, &lib, &mut |rel, meta, abs| {
-            if meta.file_type().is_symlink() {
-                skipped
-                    .push(Skipped { path: rel, reason: "symlink는 따라가지 않는다".into(), lazy_size: None });
-            } else if !meta.is_file() {
-                skipped.push(Skipped { path: rel, reason: "일반 파일이 아니다".into(), lazy_size: None });
-            } else if total + meta.len() > max_library_bytes {
-                skipped.push(Skipped {
-                    path: rel,
-                    reason: format!("복사 상한({} MB)을 넘는다. agent에 남는다", max_library_bytes >> 20),
-                    lazy_size: Some(meta.len()),
-                });
-            } else {
-                // 계속 쓰는 로그도 manifest의 size와 같은 prefix를 해시한다.
-                let hash = (|| -> Result<String> {
-                    use std::io::Read;
-                    let mut file = std::fs::File::open(abs)?.take(meta.len());
-                    let mut digest = Sha256::new();
-                    if std::io::copy(&mut file, &mut digest)? != meta.len() {
-                        bail!("해시하는 동안 파일이 줄었다");
-                    }
-                    Ok(hex::encode(digest.finalize()))
-                })();
-                match hash {
-                    Ok(sha256) => {
-                        total += meta.len();
-                        files.push(LibFile { path: rel, size: meta.len(), sha256 });
-                    }
-                    Err(e) => {
-                        skipped.push(Skipped { path: rel, reason: format!("읽기 실패: {e}"), lazy_size: None })
-                    }
-                }
+    for candidate in candidates {
+        let report_copy::Candidate { path: rel, size, absolute } = candidate;
+        // 계속 쓰는 로그도 manifest의 size와 같은 prefix를 해시한다.
+        let hash = (|| -> Result<String> {
+            use std::io::Read;
+            let mut file = std::fs::File::open(absolute)?.take(size);
+            let mut digest = Sha256::new();
+            if std::io::copy(&mut file, &mut digest)? != size {
+                bail!("해시하는 동안 파일이 줄었다");
             }
-        })?;
+            Ok(hex::encode(digest.finalize()))
+        })();
+        match hash {
+            Ok(sha256) => {
+                files.push(LibFile { path: rel, size, sha256 });
+            }
+            Err(e) => {
+                skipped.push(Skipped { path: rel, reason: format!("읽기 실패: {e:#}"), lazy_size: Some(size) })
+            }
+        }
     }
-    files.sort_by(|a, b| a.path.cmp(&b.path));
+    // 이 순서로 host가 받는다. 표시용 manifest만 host에서 이름순으로 정렬한다.
     Ok(ReportSnapshot { hash, report: aaa_proto::B64(report), files, skipped })
 }
 

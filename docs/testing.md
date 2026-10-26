@@ -4184,3 +4184,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - 두 번째 전체 gate는 Rust 전체가 통과하고 E2E53의 수정 M3 카드에서 `thread-ask-pick-2B`를 기다리다 실패했다. 보존 DB에는 broken M3의 두 질문 직접 답이 이미 asks에 기록되고 수정 보고에는 원문1번만 남아 있었다. 답한2번을 새 중복 방지가 정상 제외한 것이다. 기존 owner는 전달 전 claim인 `questions.answer`만 보고 다음 보고를 써 실제 원문 보존 순서에 따라 결과가 갈렸다.
 - E2E53의 해당 owner에서 이전 답의 시각·질문ID가 실제 asks 원문에 보존된 사건 뒤 다음 보고를 쓴다. 같은 원문을 복구하면 답한2번이 제외됨을 먼저 확인하고, 다시 판단할2번은 질문 제목으로 새 판단임을 명시해 원래 두 질문·3/2개 선택지·정확한 `1C 2B` 전달 단언을 유지한다. 원본 M3 fixture·제품 중복 방지·시한은 바꾸지 않는다. 필요한 이유는 전송 전 claim과 실제 답 보존을 구별하며 새 질문과 답한 질문의 기존 두 계약을 모두 지키기 위해서다. 해당 파일 전체의 부분 검증은82.1초에 통과했고 최종 추가 단언은 전체 gate에서 확인한다.
+
+## 보고 사본 핵심 근거 우선 선택(t-1132, §8.505)
+
+- `nice -n 15 cargo test --profile verify --locked -p aaa-agent --lib report_copy`의 `real_size_budget_preserves_report_links_and_small_evidence_before_images`는 실제 2,399개 sparse 파일(metadata 크기: 중간 PNG 2,390×224KiB·요약 6×1KiB·연결 JSON 2KiB·그림 2MiB·영상 201MiB)에서 200MiB 상한과 근거 보존·선택 순서·누락 크기/이유를 확인한다. 필요한 이유: 이름순 그림이 작은 근거를 밀어내던 실제 규모 회귀를 막는다. 큰 본문을 읽지 않는 제품 선택 함수를 직접 호출해 불필요한 수백 MiB 해시 없이 검증한다.
+- `collect_keeps_priority_hashes_and_skips_without_following_symlinks`는 작은 실제 collect로 Markdown·참조 정의·percent 주소·공백·HTML·본문 경로의 선택 순서와 원문 hash/파일 SHA-256·상한 0 probe·symlink 거부를 확인한다. 필요한 이유: 선택 단위 시험이 대신할 수 없는 실제 전송 manifest와 원문 보존을 지킨다. 새 회귀 두 개는 합계 0.46초로 확인했다.
+- 기존 E2E12의 실제 부분 사본 thread에서 배너·누락 경로·파일 행 표시를 확인한다. 기존 E2E73은 실제 thread의 HTML/Markdown 보존 판에 누락이 남는지 Chromium/WebKit ×1280/390px에서 각각 확인한다. 필요한 이유: HTML iframe을 보거나 원래 thread가 정리된 뒤 r 판을 읽을 때도 누락이 숨지 않아야 한다. 응답·DOM 사건으로 끝내며 고정 sleep·재시도·시한 확대는 없다.
+- 전체 gate는 coordinator에게 준비됨을 알리고 받은 차례에 실행한다. 후보를 push하지 않고 병합 준비 보고를 남기며 운영 DB·설정과 원래 worktree는 건드리지 않는다.

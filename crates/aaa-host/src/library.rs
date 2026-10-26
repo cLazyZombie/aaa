@@ -475,7 +475,7 @@ fn library_listing(files: &[LibraryFile]) -> Vec<u8> {
         let path = f.path.split('/').map(crate::files::pct).collect::<Vec<_>>().join("/");
         s.push_str(&format!(
             "<li><a href=\"./{path}\">{name}</a>{}</li>",
-            if f.on_agent { " · 앱에서 열기" } else { "" }
+            if f.on_agent { " · 사본에 없음" } else { "" }
         ));
     }
     s.push_str("</ul></html>");

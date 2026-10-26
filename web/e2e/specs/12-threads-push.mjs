@@ -169,8 +169,12 @@ export default async function ({ page }) {
     await domIs(page, "없는 파일 알림", () => document.querySelector('[data-testid="file-viewer"] [role="alert"]')?.textContent === "이 경로에 읽을 수 있는 파일이 없습니다.");
     await page.goBack();
     await domIs(page, "없는 파일 보기 닫힘", () => !document.querySelector('[data-testid="file-viewer"]'));
+    await page.getByTestId("report-copy-partial").waitFor();
+    const missing = page.getByTestId("library-copy-missing");
+    await missing.locator("summary").click();
+    await missing.getByText("big.bin", { exact: true }).waitFor();
     const big = page.getByTestId("files").locator("li", { hasText: "big.bin" });
-    if (!(await big.innerText()).includes("agent에서 읽음")) throw new Error(await big.innerText());
+    if (!(await big.innerText()).includes("사본에 없음 · agent에서 읽음")) throw new Error(await big.innerText());
     await shot(page, "desktop-thread-library");
     // 결과물 파일은 새 탭 대신 앱 안 파일 보기로 연다(차이 목록 R1): 같은 보기 경로(/v/)로 읽고, 문서 안 그림·링크는 결과물 안에서 푼다
     const viewer = page.getByTestId("file-viewer");

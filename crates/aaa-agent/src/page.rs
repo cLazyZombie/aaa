@@ -94,7 +94,7 @@ fn page_file(reference: &str, folder: &Path, roots: &Roots) -> Option<PathBuf> {
 }
 
 /// `decodeURIComponent`: 잘못된 `%`나 UTF-8이 아니면 None
-fn percent_decode(s: &str) -> Option<String> {
+pub(crate) fn percent_decode(s: &str) -> Option<String> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

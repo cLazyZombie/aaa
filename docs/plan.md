@@ -8079,3 +8079,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 같은 thread의 전달 완료된 답 보존 기록에서 질문 제목·본문·선택지·뒤 설명과 참조 library 파일의 실제 바이트가 같은 것을 찾는다. 질문 밖의 보고 변경이나 일부 질문만 재기재한 경우에는 원래 q-ID·답을 잇고 새 카드·답 기록·사용자 답 전달을 만들지 않는다. thread에는 답한 질문을 보고에서 빼라고 알린다. 다른 thread·post·전달 중 claim과 변경/누락된 자료는 근거가 아니다. 기본 검수 카드는 새 보고의 검수를 계속 물을 수 있다.
 - 답한 질문과 새 질문이 섞이면 새 질문만 카드에 남기고 `ThreadQuestion.source_number`로 원문의 번호를 유지한다. 카드의 2번은 웹·CLI·thread 전달 모두 2번이다. 기존 `aaa:question` 참조와 보존한 답 목록은 같은 q-ID로 열린다. 재시작의 질문 재해석에도 같은 규칙을 적용한다. 운영 host·DB 대신 격리 실험실에서 확인한다.
 - 참고: [Enquirer ArrayPrompt](https://github.com/enquirer/enquirer/blob/master/lib/types/array.js)([MIT](https://github.com/enquirer/enquirer/blob/master/LICENSE))의 값/표시/위치 구분과 [prompt-toolkit dialogs](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/src/prompt_toolkit/shortcuts/dialogs.py)([BSD-3-Clause](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/LICENSE))의 표시문과 반환값 분리를 따른다. 외부 코드·의존성은 추가하지 않는다.
+
+### 8.505 보고 사본의 핵심 근거 우선 복사(t-1132)
+
+- library 복사 상한은 기존 설정(기본 200MiB)을 유지한다. metadata를 먼저 모은 뒤 작은 보고 참조(1MiB 이하), 작은 요약·측정·로그·JSON/JSONL·CSV 등, 큰 보고 참조, 나머지 순으로 고른다. 같은 순위에서는 크기·경로순이다. 큰 참조 하나가 작은 원장 전부를 밀어내지 않게 하며 남은 상한에 들어가지 않는 파일 뒤에도 계속 고른다.
+- 보고 본문의 Markdown 링크·참조 정의·HTML 속성·본문 library 경로를 선택 힌트로 읽는다. 상대 주소·percent encoding·각괄호 안 공백을 받으며 실제 파일 열기의 symlink/경로 검증은 기존대로다. 보고 원문·hash·상한·FRONT_API는 바꾸지 않는다. manifest의 선택 순서를 host 전송에도 유지하며 표시용 목록만 이름순으로 정렬한다.
+- 빠진 파일은 기존 skipped·copy_notes·on_agent 원장에 경로·크기·이유를 남긴다. thread는 부분 사본 배너, 보고서 상세는 HTML iframe 위에도 누락 개수와 펼칠 수 있는 경로 목록을 보인다. 파일 행과 공유 목록에는 사본이 없음을 명시한다. 보존 r 판은 계속 최신 agent 바이트로 대체하지 않는다.
+- 참고: [rclone 전송 순서](https://rclone.org/docs/#order-by-string)([MIT](https://github.com/rclone/rclone/blob/master/COPYING))의 전체 목록 수집·크기순 선택과 [restic 파일 선택](https://restic.readthedocs.io/en/stable/040_backup.html#including-files)([BSD-2-Clause](https://github.com/restic/restic/blob/master/LICENSE))의 명시적 경로 목록을 참고했다. 외부 코드·의존성을 추가하지 않는다.

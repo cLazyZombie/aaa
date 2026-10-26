@@ -11,6 +11,7 @@ import { OpenFileContext } from "./herdr/filePaths.ts";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { LibraryLink } from "./LibraryLink";
+import { LibraryCopyNotice } from "./LibraryCopyNotice";
 import { ReportMarkdown, TaskAddButton, isDoc } from "./ReportsView";
 import { useFrameImages, useLightbox } from "./Lightbox";
 import { SummaryButton } from "./ThreadSummary";
@@ -158,6 +159,8 @@ export function ThreadPanel({
       <ResponsibilityBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       <ParkBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       {t.copy === "failed" && <div className="banner" data-testid="report-copy-failed">보고·결과물 사본을 다시 받는 중이다. 마지막으로 받은 내용과 작업 상태를 유지한다.</div>}
+      {t.copy === "partial" && <div className="banner" data-testid="report-copy-partial">보고·결과물 사본에 빠진 파일이 있다.</div>}
+      {lib && <LibraryCopyNotice files={lib.files} />}
       <div className={`thread-split${diffPanel.target && !sheet ? " with-diff" : ""}`}>
       <div className="thread-body">
         <div className="thread-col">
@@ -231,7 +234,7 @@ export function ThreadPanel({
                     >
                       {f.path}
                     </a>
-                    {f.on_agent && <span className="tag">agent에서 읽음</span>}
+                    {f.on_agent && <span className="tag">사본에 없음 · agent에서 읽음</span>}
                     <span className="size">{fmtSize(f.size)}</span>
                     {onAddDoc && isDoc(t.id, f) && <TaskAddButton path={f.path} onAdd={onAddDoc} />}
                   </li>
