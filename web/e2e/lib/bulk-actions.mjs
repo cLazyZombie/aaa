@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, browser, pairPage, shot, openSettings, inTime, drawerSettled } from "./harness.mjs";
@@ -9,7 +10,7 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const dir = () => `${root}/projects/demo`;
 export function seedAsks(db, amount = count, prefix = "bulk") {
   const put = db.prepare("INSERT INTO asks(project,id,kind,subject,done_ms,data) VALUES('demo',?,'question',?,?,?)");
-  db.exec("BEGIN IMMEDIATE");
+  db.exec("SAVEPOINT asks_fixture");
   try {
     for (let i = 0; i < amount; i++) {
       const id = `${prefix}-${i}`;
@@ -23,8 +24,8 @@ export function seedAsks(db, amount = count, prefix = "bulk") {
       fs.writeFileSync(`${folder}/library/pixel.png`, png);
       put.run(id, record.subject, record.done_ms, JSON.stringify(record));
     }
-    db.exec("COMMIT");
-  } catch (e) { db.exec("ROLLBACK"); throw e; }
+    db.exec("RELEASE asks_fixture");
+  } catch (e) { db.exec("ROLLBACK TO asks_fixture; RELEASE asks_fixture"); throw e; }
 }
 
 // 서버 응답을 만든 뒤 전달만 보류한다. 실제 변경·파일 제거는 host가 수행한다.
@@ -87,10 +88,43 @@ export async function responsive(page, dialog = page.getByRole("alertdialog")) {
   await domIs(page, "일괄 처리 중 키 사건", () => window.bulkKeyHandled);
 }
 
+// 확인창 뒤 생긴 답도 host가 기록한다. 실행 중 host DB에 별도 writer를 열지 않는다.
+async function answeredAfterDialog(page, label, width) {
+  const call = async request => {
+    const reply = await page.evaluate(async body => (await fetch("/api/v1/call", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    })).json(), request);
+    assert.equal(reply.err, undefined, JSON.stringify(reply));
+    return reply.ok;
+  };
+  const title = `늦은 답 ${label} ${width}`;
+  const body = "## Questions\n### 1. 늦게 생긴 답\n확인창 뒤에 생성한 원문이다.\n![그림](library/later-pixel.png)\n- A 확인 (추천)\n";
+  fs.mkdirSync(`${dir()}/library`, { recursive: true });
+  fs.writeFileSync(`${dir()}/library/later-pixel.png`, png);
+  const posted = await call({ op: "post", project: "demo", input: {
+    post_id: crypto.randomBytes(16).toString("hex"), to: "user", post_type: "request",
+    topic: "user-action", title, body, needs_user: true, refs: [],
+  }});
+  assert.equal(posted.kind, "post");
+  assert.equal(posted.result.state, "accepted");
+  const asks = await call({ op: "asks", project: "demo" });
+  assert.equal(asks.kind, "asks");
+  const request = asks.requests.find(r => r.title === title);
+  assert.ok(request?.questions, "새 요청에 실제 질문이 있어야 한다");
+  const answered = await call({ op: "ask_answer", project: "demo", item: request.id,
+    body_hash: request.questions.report_hash, picks: [0], text: null });
+  assert.equal(answered.kind, "asks");
+  const late = answered.done.find(r => r.subject === request.id);
+  assert.ok(late?.files_base, "host가 답과 원문 사본을 보존해야 한다");
+  // API가 사본을 확정했으므로 시험용 원본은 남기지 않는다. 뒤의 보고서 폴더 빈 값 단언도 유지한다.
+  fs.unlinkSync(`${dir()}/library/later-pixel.png`);
+  return { id: late.id, body };
+}
+
 export async function askScenario(engine, label, width) {
   console.log(`bulk ${label} ${width}`);
-  const db = new DatabaseSync(`${root}/s/host/host.db`);
-  seedAsks(db);
+  await seedHost(db => seedAsks(db));
+  const db = new DatabaseSync(`${root}/s/host/host.db`, { readOnly: true });
   const gate = responseGate();
   const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: gate.setup });
   const page = paired.page;
@@ -117,9 +151,10 @@ export async function askScenario(engine, label, width) {
     await dialog.getByRole("alert").filter({ hasText: "실험실 일괄 저장 실패" }).waitFor();
     assert.equal(await dialog.getByRole("button", { name: "취소", exact: true }).isEnabled(), true);
     assert.equal(db.prepare("SELECT count(*) AS n FROM asks").get().n, count);
+    // 창을 연 뒤 생긴 답은 실제 host API로 만들며 삭제 대상에는 넣지 않는다.
+    const late = await answeredAfterDialog(page, label, width);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM asks").get().n, count + 1);
     const held = gate.arm("ask_forget");
-    // 창을 연 뒤 생긴 답은 제외한다.
-    seedAsks(db, 1, "later");
     await dialog.getByRole("button", { name: "모두 지우기", exact: true }).click();
     try {
       await held.arrived;
@@ -130,7 +165,9 @@ export async function askScenario(engine, label, width) {
       assert.equal(gate.calls[0].ids.length, count);
       assert.equal(gate.calls[0].all, false);
       assert.equal(db.prepare("SELECT count(*) AS n FROM asks").get().n, 1);
-      assert.deepEqual(fs.readdirSync(`${dir()}/asks`), ["later-0"]);
+      assert.deepEqual(fs.readdirSync(`${dir()}/asks`), [late.id]);
+      assert.equal(fs.readFileSync(`${dir()}/asks/${late.id}/report.md`, "utf8"), late.body);
+      assert.deepEqual(fs.readFileSync(`${dir()}/asks/${late.id}/library/later-pixel.png`), png);
     } finally { held.release(); }
     await dialog.waitFor({ state: "hidden" });
     await domIs(page, "늦게 온 한 답만 남음", () => document.querySelector('[data-testid="asks-done-count"]')?.textContent === "1");
@@ -183,9 +220,12 @@ async function pendingDeletionCleared(pending) {
 
 export async function reportScenario(engine, label, width) {
   console.log(`bulk ${label} ${width}`);
-  const db = new DatabaseSync(`${root}/s/host/host.db`);
   const total = 601; // host 한도 500개를 넘는다.
-  seedReports(db, total, "batch", false, true);
+  await seedHost(db => seedReports(db, total, "batch", false, true, { manifest: false }));
+  const db = new DatabaseSync(`${root}/s/host/host.db`, { readOnly: true });
+  // 마이그레이션이 별도 사본을 만들지 않게 manifest는 host 재연결 뒤 둔다.
+  for (const { name } of db.prepare("SELECT name FROM library_reports WHERE project='demo'").all())
+    fs.writeFileSync(`${dir()}/threads/${name}.files.json`, "[]");
   const gate = responseGate();
   const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: gate.setup });
   const page = paired.page;
@@ -197,11 +237,11 @@ export async function reportScenario(engine, label, width) {
     assert.equal(await page.getByTestId("reports-mark-read").isDisabled(), true, "작업 보고는 안 봄 대상이 아니다");
     for (const tab of ["mine", "archive"]) {
       if (tab === "mine") {
-        db.exec("UPDATE library_reports SET to_user=1, seen_at=NULL");
+        await seedHost(db => db.exec("UPDATE library_reports SET to_user=1, seen_at=NULL"));
         await page.getByTestId("reports-panel").getByRole("button", { name: "새로고침", exact: true }).click();
       }
       if (tab === "archive") {
-        db.exec("UPDATE library_reports SET to_user=CASE WHEN name LIKE 'r-%' THEN 1 ELSE 0 END, seen_at=NULL");
+        await seedHost(db => db.exec("UPDATE library_reports SET to_user=CASE WHEN name LIKE 'r-%' THEN 1 ELSE 0 END, seen_at=NULL"));
         await page.getByTestId("reports-panel").getByRole("button", { name: "새로고침", exact: true }).click();
         await inList(page, "reports-tab-work");
         await inList(page, "reports-pick-done");
