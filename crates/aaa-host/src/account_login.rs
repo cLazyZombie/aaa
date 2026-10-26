@@ -171,14 +171,13 @@ impl Host {
             command.env("CLAUDE_CONFIG_DIR", &home);
             command.arg("setup-token");
         }
-        let pair = native_pty_system()
-            .openpty(PtySize { rows: 32, cols: 512, pixel_width: 0, pixel_height: 0 })
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        let pair = aaa_common::child_process::with_spawn_lock(|| {
+            native_pty_system().openpty(PtySize { rows: 32, cols: 512, pixel_width: 0, pixel_height: 0 })
+        })
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         #[cfg(unix)]
         let output_fd = pair.master.as_raw_fd().ok_or_else(fail)?;
-        let mut child = pair
-            .slave
-            .spawn_command(command)
+        let mut child = aaa_common::child_process::with_spawn_lock(|| pair.slave.spawn_command(command))
             .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         let pid = child.process_id();
         let mut killer = child.clone_killer();

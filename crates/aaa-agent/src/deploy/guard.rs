@@ -1,5 +1,6 @@
 //! agent/host 교체와 별개인 옛 이미지 프로세스. 실행 허가는 agent가 띄운 PID에만 한 번 보낸다.
 use super::*;
+use aaa_common::child_process::StdCommandExt as _;
 use aaa_common::{
     conn::{FrameRx, spawn_writer},
     ipc::LocalListener,
@@ -285,7 +286,7 @@ impl Agent {
             // 서비스 종료·부모 Job 수명과 분리한다. breakaway가 금지되면 세우기 단계에서 실패하며 교체하지 않는다.
             command.creation_flags(CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
         }
-        let mut child = command.spawn().context("독립 복구 감시 실행")?;
+        let mut child = command.spawn_guarded().context("독립 복구 감시 실행")?;
         let child_pid = child.id();
         std::thread::spawn(move || {
             aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");

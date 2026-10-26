@@ -13,6 +13,7 @@
 //!
 //! 원격 명령은 고정 글이다: 원격 폴더는 `binary::safe_dir`를 통과한 것, SHA는 hex, 설치 ID는 ULID만 들어간다. 원격 상태 폴더는 원격 셸의
 //! `$HOME`으로 쓴다. choices에는 감지한 HOME으로 같은 경로를 적는다(install이 둘이 같은지 본다).
+use aaa_common::child_process::TokioCommandExt as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -381,7 +382,7 @@ impl Ssh {
         let mut c = self.trusted(target, command);
         c.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         let fail = |e: String| (Ran { ok: false, stdout: String::new(), stderr: e }, None);
-        let mut child = match c.spawn() {
+        let mut child = match c.spawn_guarded() {
             Ok(c) => c,
             Err(e) => return fail(format!("ssh를 실행하지 못했다: {e}")),
         };
@@ -428,7 +429,7 @@ impl Ssh {
         let mut c = self.trusted(target, command);
         c.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         let fail = |e: String| (Ran { ok: false, stdout: String::new(), stderr: e }, None);
-        let mut child = match c.spawn() {
+        let mut child = match c.spawn_guarded() {
             Ok(c) => c,
             Err(e) => return fail(format!("ssh를 실행하지 못했다: {e}")),
         };

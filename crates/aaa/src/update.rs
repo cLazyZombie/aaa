@@ -17,6 +17,7 @@
 //!   herdr처럼 최신 release가 같거나 옛 version이면 받지 않는다. --version은 명시한 판(같으면 무동작),
 //!   --from은 같은 version의 로컬 빌드도 sha256이 다르면 교체한다.
 
+use aaa_common::child_process::StdCommandExt as _;
 mod release;
 
 use std::path::{Path, PathBuf};
@@ -138,7 +139,7 @@ pub(crate) fn run_limited(bin: &Path, args: &[&str]) -> Result<(bool, String)> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_guarded()
         .with_context(|| format!("{}를 실행하지 못했다(이 Mac에서 도는 실행 파일인가?)", bin.display()))?;
     let (mut out, mut err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
     let (tx, rx) = std::sync::mpsc::channel();

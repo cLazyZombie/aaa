@@ -5,6 +5,7 @@
 //! - host의 세션 요청은 세션별 pump task가 session host로 중계한다. 응답과 출력이 같은 task를 지나므로 순서가 지켜진다.
 //! - Claude·Codex 세션은 pump가 화면을 300ms마다 읽어 상태(작업 중·idle·질문)를 정한다(herdr 0.9.5 감지, plan §8.110).
 
+use aaa_common::child_process::StdCommandExt as _;
 mod account_spawn;
 mod attach;
 mod chat;
@@ -1539,7 +1540,7 @@ impl Agent {
             const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
             cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
         }
-        let mut child = cmd.spawn().context("session host 실행")?;
+        let mut child = cmd.spawn_guarded().context("session host 실행")?;
         {
             use std::io::Write;
             let startup = aaa_session::files::Startup { spec: file.spec.clone(), credential };

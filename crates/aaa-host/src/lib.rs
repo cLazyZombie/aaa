@@ -3,6 +3,7 @@
 //! - host의 자식 실행은 tailscale CLI, 개발 모드 로컬 agent(§4.2), 세션 밖 CLI가 요청한 격리 공식 로그인뿐이다.
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
+use aaa_common::child_process::StdCommandExt as _;
 mod adopt;
 mod answer;
 mod app_badge;
@@ -3820,7 +3821,7 @@ fn spawn_local_agent(state_root: &std::path::Path) -> Result<()> {
             Ok(())
         });
     }
-    let mut child = cmd.spawn()?;
+    let mut child = cmd.spawn_guarded()?;
     tracing::info!(pid = child.id(), "개발 모드: 로컬 agent를 띄웠다");
     std::thread::spawn(move || {
         aaa_common::diagnostic::ignored(child.wait(), "정리 실패가 본 작업의 결과를 덮지 않게 한다");

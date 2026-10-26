@@ -7995,6 +7995,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 
 - **73회차 gate 실패 수리(t-1075).** 첫 전체 ci-local은 E2E76 활성 정렬의 reload 요청이 휴대폰 상세 닫기의 뒤늦은 history.back에 취소되어 멈췄다. 실제 브라우저 CPU 지연으로 같은 오류와 사건 순서를 확인하고, 시험 두 곳에서 닫기 전 popstate 대기를 건 뒤 기록 복귀가 끝나면 reload한다. 정렬 기억·원문·예약·두 엔진/휴대폰 단언은 유지하며 제품·시한·기대값을 바꾸지 않는다. 같은 지연에서 수정 전 두 번째 반복 실패, 수정 후 100회 통과와 E2E76 전체 통과를 확인했다. 별도 수리 커밋으로 남기고 전체 gate 차례를 다시 요청한다. 실제 OS 두벌식은 이후 q-1374 사용자 답 A로 Chrome·Safari 모두 정상 확인을 받았다.
 
+### macOS 자식 생성과 pipe 상속(t-1104)
+
+- host·agent·session·CLI의 pipe 생성과 모든 자식 실행은 `aaa-common::child_process`의 macOS 공통 생성 잠금을 사용한다. PTY 생성/실행·직접 posix_spawn·worker exec도 포함하고, 기다리기·출력 읽기·stdin 전달 전에 잠금을 푼다. 입력/출력의 상한·시한·종료 코드·로그·취소 의미를 유지한다.
+- 실제 pipe 창을 제어하는 macOS 회귀로 수정 전 EOF 막힘과 수정 후 무관한 자식 생존 중 반환을 비교한다. Windows/Linux 잠금은 비활성이고 API·프로토콜은 바꾸지 않는다. 경로 전수 표와 OSS·라이선스 근거는 [자식 실행 조사](process-capture.md)를 따른다. 운영 host·agent·설정은 건드리지 않으며 전체 gate는 묶음 착지 차례에서 수행한다.
+
 ### 미답변 coordinator 질문의 수명(t-1090, §8.345 보완)
 
 - 독립 coordinator 요청은 사용자 답, 웹의 명시적 처리 또는 `aaa post handled <q-ID|p-ID>`까지 열린다. 일반 `inbox done --all`은 사용자 요청을 제외한다. 독립 요청의 inbox ID를 직접 끝내려 하면 처리 명령을 안내하고 거절한다. 열린 thread 카드에 붙은 알림만 개별 `inbox done`으로 정리할 수 있으며 카드 답은 만들지 않는다.

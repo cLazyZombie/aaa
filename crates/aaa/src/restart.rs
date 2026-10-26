@@ -137,7 +137,9 @@ mod mac {
         }
         use std::os::unix::process::CommandExt;
         let error = match std::env::current_exe() {
-            Ok(exe) => std::process::Command::new(exe).args(std::env::args_os().skip(1)).exec(),
+            Ok(exe) => aaa_common::child_process::with_spawn_lock(|| {
+                std::process::Command::new(exe).args(std::env::args_os().skip(1)).exec()
+            }),
             Err(error) => error,
         };
         eprintln!("aaa: 새 worker 실행 실패: {error}");

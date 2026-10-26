@@ -399,9 +399,10 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
     let mut refreshes = HashMap::<String, crate::account::BrokerRequest>::new();
 
     let pty = portable_pty::native_pty_system();
-    let pair = pty
-        .openpty(PtySize { rows: s.rows.max(1), cols: s.cols.max(1), pixel_width: 0, pixel_height: 0 })
-        .with_context(|| format!("pane PTY 열기: {}", paths.dir.display()))?;
+    let pair = aaa_common::child_process::with_spawn_lock(|| {
+        pty.openpty(PtySize { rows: s.rows.max(1), cols: s.cols.max(1), pixel_width: 0, pixel_height: 0 })
+    })
+    .with_context(|| format!("pane PTY 열기: {}", paths.dir.display()))?;
     let mut cmd = if s.argv.is_empty() {
         CommandBuilder::new_default_prog()
     } else {
@@ -446,9 +447,14 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
             cmd.args(["-c", "cli_auth_credentials_store=\"file\""]);
         }
     }
-    let mut child = pair.slave.spawn_command(cmd).with_context(|| {
-        format!("pane 자식 실행: 프로그램 {}, 작업 폴더 {:?}", s.argv.first().map_or("기본 셸", String::as_str), s.cwd)
-    })?;
+    let mut child =
+        aaa_common::child_process::with_spawn_lock(|| pair.slave.spawn_command(cmd)).with_context(|| {
+            format!(
+                "pane 자식 실행: 프로그램 {}, 작업 폴더 {:?}",
+                s.argv.first().map_or("기본 셸", String::as_str),
+                s.cwd
+            )
+        })?;
     drop(pair.slave);
     let child_pid = child.process_id();
     let killer = Killer::new(child.clone_killer(), child_pid);

@@ -1,4 +1,5 @@
 //! Harness 판은 진단 자료다. 값·종료 코드·조회 실패가 실행 허용 여부를 정하지 않는다.
+use crate::child_process::TokioCommandExt as _;
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
@@ -13,7 +14,7 @@ pub async fn observe(mut command: Command, harness: &str) -> String {
 
 async fn probe(command: &mut Command) -> String {
     command.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    let mut child = match command.spawn() {
+    let mut child = match command.spawn_guarded() {
         Ok(child) => child,
         Err(error) => return format!("조회 실행 실패: {error}"),
     };

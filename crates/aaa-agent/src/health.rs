@@ -5,6 +5,7 @@
 //! - 주의(warnings)는 보이기만 한다: 배터리 전원.
 //! - 시계는 host가 보고의 `at_ms`와 자기 시계를 비교해 본다.
 
+use aaa_common::child_process::TokioCommandExt as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -283,7 +284,7 @@ async fn on_ac() -> Option<bool> {
 async fn run(argv: &[String]) -> Result<String, String> {
     let mut c = tokio::process::Command::new(&argv[0]);
     c.args(&argv[1..]).stdin(std::process::Stdio::null()).kill_on_drop(true);
-    let out = tokio::time::timeout(TOOL_TIMEOUT, c.output())
+    let out = tokio::time::timeout(TOOL_TIMEOUT, c.output_guarded())
         .await
         .map_err(|_| format!("{}초 안에 끝나지 않았다", TOOL_TIMEOUT.as_secs()))?
         .map_err(|e| format!("실행하지 못했다: {e}"))?;

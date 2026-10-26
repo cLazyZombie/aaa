@@ -1,4 +1,5 @@
 //! host 머신(또는 설정한 머신)의 gh 로그인으로 읽기만 한다. host에는 줄인 응답만 보낸다.
+use aaa_common::child_process::TokioCommandExt as _;
 use aaa_common::{ci, pr};
 use aaa_proto::{CiAnswer, CiQuery};
 use anyhow::{Context, Result, bail};
@@ -44,7 +45,7 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
-        .spawn()
+        .spawn_guarded()
         .context("CI gh 실행 실패(PATH와 host 머신 로그인을 확인한다)")?;
     let mut stdout = child.stdout.take().unwrap();
     let cap = if log { ci::LOG_JOB_CAP } else { 4 * 1024 * 1024 };

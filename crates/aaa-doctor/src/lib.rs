@@ -8,6 +8,8 @@
 //!
 //! 판정은 도구가 한다(손으로 계산하지 않는다). gate는 기획서 §10.6의 제안값이다.
 
+#[cfg(unix)]
+use aaa_common::child_process::StdCommandExt as _;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
@@ -350,7 +352,7 @@ pub fn throughput() -> Throughput {
         let mut times = Vec::with_capacity(n);
         for _ in 0..n {
             let start = Instant::now();
-            let ok = std::process::Command::new("/usr/bin/true").status().map(|s| s.success()).unwrap_or(false);
+            let ok = std::process::Command::new("/usr/bin/true").status_guarded().map(|s| s.success()).unwrap_or(false);
             if ok {
                 times.push(start.elapsed().as_secs_f64() * 1000.0);
             }

@@ -12,6 +12,7 @@
 //!   Windows x86_64)이 아닌 조합은 「지원 안 함」.
 //! - **작업.** host DB `machine_setups`에 JSON으로 남고 바뀔 때마다 웹 `enroll` 사건을 보낸다. host가 진행 중에 다시 시작하면
 //!   그 작업은 「멈췄다」로 끝난다(다시 시작은 새 작업).
+use aaa_common::child_process::TokioCommandExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -300,7 +301,7 @@ impl Ssh {
     }
 
     async fn run(mut c: tokio::process::Command, timeout: Duration) -> Ran {
-        match tokio::time::timeout(timeout, c.output()).await {
+        match tokio::time::timeout(timeout, c.output_guarded()).await {
             Ok(Ok(o)) => Ran {
                 ok: o.status.success(),
                 stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
