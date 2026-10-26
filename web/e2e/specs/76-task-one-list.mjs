@@ -2,7 +2,7 @@
 // 실제 host 예약 기록을 정본으로 데스크톱 끌기(예약 차례·일반 → 예약·예약 → 풀기), 「예약」 칩·저장소 거르기(기기 기억), 휴대폰 「순서」 ▲▼와
 // ⋯ 시트를 확인한다. 자리 한도를 채워 예약이 기동하지 않게 하고, DOM·host 기록으로 끝낸다(고정 sleep 없음).
 import fs from "node:fs";
-import { root, aaa, step, browser, webkit, domIs, shot } from "../lib/harness.mjs";
+import { root, aaa, step, browser, webkit, domIs, inTime, shot } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const MD = `# Tasks
@@ -43,6 +43,15 @@ const restOf = (p) => p.getByTestId("tasks-rest").locator(".task-row").evaluateA
 const dragTo = async (p, from, target, side) => {
   const box = await target.boundingBox();
   await row(p, from).locator(".task-grip").dragTo(target, { targetPosition: { x: 60, y: side === "before" ? 3 : box.height - 3 } });
+};
+
+/** 휴대폰 상세의 닫기는 비동기 history.back이다. 기록 복귀 전에 reload하면 새 문서 요청이 취소된다. */
+const closeBeforeReload = async (p, device) => {
+  // 주소는 양쪽 모두 #tasks여서 waitForURL은 복귀 전에 끝난다. 닫기 전에 실제 popstate를 듣는다.
+  const rewound = device === "iphone"
+    ? inTime(p.evaluate(() => new Promise(done => addEventListener("popstate", () => done(), { once: true }))), 20_000, "상세 닫기의 기록 복귀")
+    : Promise.resolve();
+  await Promise.all([rewound, p.getByTestId("task-detail-close").click()]);
 };
 
 export default async function ({ page }) {
@@ -125,7 +134,7 @@ export default async function ({ page }) {
             await pick(p, "첫 예약");
             await p.getByTestId("task-queue-home").waitFor();
             if (await p.locator(".task-queue-move").count()) throw new Error("상세에 예약 위치 이동 도구");
-            await p.getByTestId("task-detail-close").click();
+            await closeBeforeReload(p, device);
             await p.reload();
             await domIs(p, "정렬 기억", () => document.querySelector('[data-testid="tasks-list"]')?.dataset.sort === "machine");
             await topIs(p, "새로고침 뒤 실제 예약 차례", top);
@@ -157,7 +166,7 @@ export default async function ({ page }) {
             else await p.getByRole("menuitem", { name: /^할 일로 옮기기/ }).click();
             await p.getByTestId("task-field-title").waitFor();
             if (await p.getByTestId("task-field-title").inputValue() !== "가 항목") throw new Error("나중 메뉴의 옮길 제목이 다름");
-            await p.getByTestId("task-detail-close").click();
+            await closeBeforeReload(p, device);
             await p.reload();
             await p.getByTestId("tasks-list").waitFor();
             if (await p.getByTestId("tasks-list").getAttribute("data-sort") !== "manual") throw new Error("나중 정렬이 활성 정렬을 바꿈");
@@ -167,6 +176,8 @@ export default async function ({ page }) {
             await shot(p, `later-sort-${name}-${device}`);
             await select("원문 차례", "tasks-later-sort");
             if (!(await file.locator(".task-notes-item").first().textContent()).startsWith("하 항목")) throw new Error("나중 원문 차례 복구");
+          } catch (error) {
+            throw new Error(`${name}/${device}: ${error.message}`, { cause: error });
           } finally { await p.context().close(); }
         }
       }

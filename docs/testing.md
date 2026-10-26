@@ -5,6 +5,9 @@
 - 필요한 이유: 유닛으로 확인할 수 없는 실제 키보드/메뉴/휴대폰 시트 경계와 host가 바뀌지 않는다는 계약을 기존 실험실 하나에서 확인한다. 첫 브라우저 검증은 백틱이 나중 제목 순서에 끼어드는 결함을 찾았다. 기존 Markdown 파서의 표시 글로 비교하도록 수정하고 해당 유닛에도 코드·강조·링크 제목을 넣는다. 고정 sleep·재시도·시한 확대·기대값 완화는 없다.
 - 부분 실행은 `NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs <캡처 폴더> --spec 76,43,46,67,86,107 --workers 2`다. 내부 공용 브라우저 캐시만 사용한다. 전체 ci-local은 coordinator에게 「준비됨」을 알리고 실행 차례를 받은 뒤 한 번 수행한다.
 
+- 73회차 gate 수리(t-1075): 이 owner의 두 상세 닫기→reload가 휴대폰 시트의 비동기 `history.back()`과 경쟁했다. 보존 로그와 같은 `ERR_ABORTED`를 실제 host·agent·Chromium 휴대폰에서 4배 CPU 지연 조건의 두 번째 반복에 재현했다. 순서는 reload 요청→history.back→요청 취소→popstate다. 정렬 값은 동기 localStorage 저장이라 저장 완료 문제가 아니다. 두 닫기 전에 popstate 대기를 걸고 그 사건 뒤에만 기존 reload·정렬 기억 단언을 실행한다. 같은 `#tasks` 주소 안의 기록 복귀이므로 waitForURL로 대체하지 않는다. 실패에는 엔진·기기를 붙인다. 기존 20초 사건 상한·30초 reload 상한·단계 상한과 모든 단언은 유지한다.
+- 검증: 제품 탐색·HTTP 응답을 바꾸지 않은 같은 4배 CPU 지연에서 수정 전 2회째 실패, 수정 후 100/100회 통과하고 매번 popstate가 reload보다 앞섰다. 반복은 임시 조사 도구에만 두고 영구 시험 수는 늘리지 않는다. 실제 두 엔진×데스크톱/휴대폰을 포함한 E2E76 전체도 35.2초에 통과했다(관측 load 26.61→42.05). 사건 대기는 기존 E2E39의 popstate 원칙과 [Playwright navigation 안내](https://playwright.dev/docs/navigations#waiting-for-navigation)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))를 참고했으며 외부 코드는 가져오지 않는다.
+
 ## workspace 기준 실행의 시간 추이 표시(t-1082, §8.496)
 
 - `node --test web/test/workspaceSelection.test.mjs` 두 유닛은 시각별 ID와 날짜별 p50 묶음(대표 ID가 다른 표본 포함), UTC/KST 자정 경계·머신/profile 분리·실패 제외, 필터 밖·결측과 실제 0초의 구분을 확인한다. 꼭 필요한 이유: p50을 기준 실행의 실제 시간으로 오해하게 하거나 미수집을 0으로 그리는 회귀를 막는다.
