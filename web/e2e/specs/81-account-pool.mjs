@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { root, aaa, step, browser, webkit, pairPage, openSettings, waitOutput, until, domIs, shot, start, stop } from "../lib/harness.mjs";
+import { root, aaa, step, browser, webkit, pairPage, openSettings, waitOutput, until, domIs, inTime, shot, start, stop } from "../lib/harness.mjs";
 
 const modes = `${root}/pool-modes.json`;
 const fake = `${root}/pool-claude.mjs`;
@@ -66,6 +66,48 @@ const sampleAll = async (page, values) => {
 };
 const enabled = name => aaa("account", "pool", "list").pool.members.some(m => m.account === name);
 
+// 실제 응답의 전달 순서만 제어한다. Service Worker 여부와 관계없이 원래 fetch를 그대로 쓴다.
+function switchProbe() {
+  const trace = [];
+  const held = new Map(), waiting = new Map();
+  const probe = window.__poolSwitch = { trace, reads: false, count: 0, beforeMember: false,
+    wait: id => held.has(id) ? Promise.resolve() : new Promise(done => waiting.set(id, done)),
+    release: id => { const done = held.get(id); held.delete(id); done(); } };
+  const hold = id => new Promise(done => { held.set(id, done); waiting.get(id)?.(); waiting.delete(id); });
+  const record = kind => {
+    const e = document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]');
+    trace.push({ at: performance.now(), kind, checked: e?.checked, disabled: e?.disabled });
+  };
+  for (const kind of ["click", "input", "change"]) for (const capture of [true, false])
+    document.addEventListener(kind, e => { if (e.target.dataset?.testid === "account-auto-assign") record(`${kind}/${capture}`); }, capture);
+  let previous;
+  new MutationObserver(() => {
+    const e = document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]');
+    const value = JSON.stringify([e?.checked, e?.disabled]);
+    if (value !== previous) { previous = value; record("DOM"); }
+  }).observe(document, { subtree: true, childList: true, attributes: true });
+  const original = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const body = typeof args[1]?.body === "string" ? JSON.parse(args[1].body) : null;
+    if (!["account_pool", "account_pool_member"].includes(body?.op)) return original(...args);
+    const id = probe.reads ? body.op === "account_pool_member" ? "member" : `read${++probe.count}` : null;
+    trace.push({ at: performance.now(), kind: "request", ...body });
+    if (probe.beforeMember && body.op === "account_pool_member") { probe.beforeMember = false; await hold("request"); }
+    const response = await original(...args);
+    if (id) await hold(id);
+    const data = await response.clone().json();
+    trace.push({ at: performance.now(), kind: "response", op: body.op, id, revision: data.ok?.pool?.revision,
+      members: data.ok?.pool?.members.map(m => m.account), error: data.err?.code });
+    return response;
+  };
+}
+const switchState = (p, checked) => domIs(p, "저장한 스위치와 다음 조작 준비", want => {
+  const input = document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]');
+  return input && input.checked === want && !input.disabled;
+}, checked);
+const heldSwitch = (p, id) => inTime(p.evaluate(id => window.__poolSwitch.wait(id), id), 20_000, `계정 ${id} 응답 도착`);
+const releaseSwitch = (p, id) => p.evaluate(id => window.__poolSwitch.release(id), id);
+
 export default async function ({ page }) {
   let panel, pinnedA, pinnedB, chosen, count, resumed;
   await step("계정 등록만으로 참여·기존 기본과 명시 시작·다른 harness 기본 fallback", async () => {
@@ -94,7 +136,7 @@ export default async function ({ page }) {
     const engine = await webkit.launch({ headless: true });
     try {
       for (const [name, b] of [["chromium", browser], ["webkit", engine]]) for (const width of [1280, 390]) {
-        const { page: p } = await pairPage(b, aaa("web", "pair").code, { width, height: 900 });
+        const { page: p } = await pairPage(b, aaa("web", "pair").code, { width, height: 900 }, { init: switchProbe });
         try {
           const d = await openSettings(p, "계정");
           const rows = d.getByTestId("accounts-claude");
@@ -103,12 +145,62 @@ export default async function ({ page }) {
           assert.equal(await d.getByTestId("pool-models").count(), 0);
           assert.equal(await d.getByTestId("pool-project-enabled").count(), 0);
           const toggle = rows.locator('[data-account="cold"]').getByTestId("account-auto-assign");
+          await switchState(p, true);
+          const orderReads = name === "chromium" && width === 1280;
+          if (orderReads) await p.evaluate(() => { window.__poolSwitch.reads = true; });
           await toggle.uncheck(); await until("계정 사용 해제", () => !enabled("cold"));
-          await domIs(p, "스위치 저장 뒤 활성", () => !document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]').disabled);
+          if (orderReads) {
+            // 사건 읽기1, 저장 뒤 읽기2, 실제 accounts 사건의 읽기3을 순서대로 붙잡는다.
+            await heldSwitch(p, "read1"); await releaseSwitch(p, "member");
+            await heldSwitch(p, "read2");
+            aaa("account", "default", "claude", "a");
+            await heldSwitch(p, "read3"); await releaseSwitch(p, "read2");
+            await p.evaluate(() => new Promise(requestAnimationFrame));
+            assert.equal(await toggle.isDisabled(), true, "버려진 읽기2가 끝나도 최신 읽기3까지 저장 중이다");
+            assert.equal(await toggle.isChecked(), false, "최신 읽기 전에도 사용자의 해제를 보존한다");
+            await releaseSwitch(p, "read3"); await switchState(p, false);
+            await releaseSwitch(p, "read1");
+            await p.evaluate(() => { window.__poolSwitch.reads = false; });
+          }
+          await switchState(p, false);
+          // root capture/bubble 사이의 실제 부모 갱신. 체크 값·응답은 직접 바꾸지 않는다.
+          await p.evaluate(() => {
+            const input = document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]');
+            const interleave = event => {
+              if (event.target !== input) return;
+              document.getElementById("root").removeEventListener("click", interleave, true);
+              const refresh = [...document.querySelectorAll('[data-testid="settings-accounts"] button')].find(b => b.textContent === "사용량 다시 읽기");
+              refresh.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+              window.__poolSwitch.trace.push({ kind: "parent-refresh", same: input === document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]') });
+            };
+            document.getElementById("root").addEventListener("click", interleave, true);
+          });
           await toggle.check(); await until("계정 사용", () => enabled("cold"));
+          await switchState(p, true);
+          const writes = await p.evaluate(() => window.__poolSwitch.trace.filter(e => e.kind === "request" && e.op === "account_pool_member"));
+          assert.deepEqual(writes.map(w => !!w.member), [false, true], "실제 누름마다 한 번만 저장한다");
+          assert.deepEqual(await p.evaluate(() => window.__poolSwitch.trace.filter(e => e.kind === "parent-refresh").map(e => e.same)), [true]);
+          if (name === "webkit" && width === 390) {
+            await p.evaluate(() => { window.__poolSwitch.beforeMember = true; });
+            // 거절을 기대하는 실제 클릭: uncheck의 성공 후 조건으로 거절을 덮지 않는다.
+            await toggle.click(); await heldSwitch(p, "request");
+            aaa("account", "pool", "remove", "a");
+            await releaseSwitch(p, "request");
+            await d.getByRole("alert").filter({ hasText: "설정이 바뀌었다" }).waitFor();
+            await switchState(p, true); assert.ok(enabled("cold"), "거절된 변경은 원래 사용 설정으로 돌아간다");
+            assert.equal((await p.evaluate(() => window.__poolSwitch.trace.filter(e => e.kind === "response" && e.op === "account_pool_member"))).at(-1).error, "conflict");
+            aaa("account", "pool", "add", "a");
+          }
+          assert.equal(threads().find(t => t.id === pinnedA.id).account, "a");
+          assert.equal(threads().find(t => t.id === pinnedB.id).account, "b");
           assert.equal(await d.getByTestId("accounts-codex").getByTestId("account-auto-assign").isChecked(), false);
           assert.equal(await d.evaluate(e => e.scrollWidth > e.clientWidth), false);
           await shot(p, `81-account-pool-${name}-${width}`);
+        } catch (error) {
+          const trace = await p.evaluate(() => window.__poolSwitch.trace).catch(e => [{ diagnostic: String(e) }]);
+          fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+          fs.writeFileSync(`${root}/diagnostics/account-switch-${name}-${width}.json`, JSON.stringify(trace, null, 2));
+          throw new Error(`${name}/${width}: ${error.message}`, { cause: error });
         } finally { await p.context().close(); }
       }
     } finally { await engine.close(); }

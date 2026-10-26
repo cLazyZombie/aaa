@@ -10,10 +10,15 @@ export function useAccountPool(enabled: boolean) {
   const [pending, setPending] = useState<{ account: string; enabled: boolean } | null>(null);
   const [error, setError] = useState("");
   const seq = useRef(0);
-  const load = useCallback(async () => {
+  const reading = useRef<Promise<void>>(Promise.resolve());
+  const changing = useRef(false);
+  const load = useCallback(() => {
     const mine = ++seq.current;
-    const r = await call({ op: "account_pool" });
-    if (mine === seq.current && r.kind === "account_pool") setPool(r.pool);
+    const result = call({ op: "account_pool" }).then((r) => {
+      if (mine === seq.current && r.kind === "account_pool") setPool(r.pool);
+    });
+    reading.current = result;
+    return result;
   }, []);
   useEffect(() => {
     if (!enabled) return;
@@ -24,13 +29,25 @@ export function useAccountPool(enabled: boolean) {
     return () => { active = false; ++seq.current; off(); };
   }, [enabled, load]);
   const change = async (request: FrontRequest) => {
+    if (changing.current) return;
+    changing.current = true;
     setBusy(true); setError("");
-    try { await call(request); await load(); }
+    try {
+      await call(request);
+      // accounts 사건이 저장 뒤 읽기를 앞질렀으면 그 최신 읽기까지 기다린다.
+      // 버려진 응답 하나가 끝났다고 pending을 풀면 옛 설정·revision으로 다음 클릭을 받는다.
+      let current = load();
+      for (;;) {
+        await current;
+        if (current === reading.current) break;
+        current = reading.current;
+      }
+    }
     catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+    finally { changing.current = false; setBusy(false); }
   };
   const toggle = (account: string, enabled: boolean) => {
-    if (!pool || busy) return;
+    if (!pool || changing.current) return;
     setPending({ account, enabled });
     void change({ op: "account_pool_member", revision: pool.revision, account,
       member: enabled ? { account, group: account, models: [] } : null }).finally(() => setPending(null));
@@ -42,7 +59,11 @@ type PoolState = ReturnType<typeof useAccountPool>;
 export function AccountAutoAssign({ account, state, canEdit }: { account: string; state: PoolState; canEdit: boolean }) {
   return <label className="acct-auto">
     <input type="checkbox" checked={state.pending?.account === account ? state.pending.enabled : state.pool?.members.some((m) => m.account === account) ?? false}
-      disabled={!canEdit || state.busy || !state.pool} onChange={(e) => state.toggle(account, e.target.checked)}
+      disabled={!canEdit || state.busy || !state.pool}
+      // root의 capture/bubble 사이에 부모가 갱신되어도 실제 클릭 의도를 먼저 보존한다.
+      // 같은 클릭의 onChange는 change의 동기 잠금으로 중복 저장하지 않는다.
+      onClickCapture={(e) => { if (!e.currentTarget.disabled) state.toggle(account, e.currentTarget.checked); }}
+      onChange={(e) => state.toggle(account, e.target.checked)}
       aria-label={`${account} 자동 배정에 사용`} data-testid="account-auto-assign" />
     자동 배정에 사용
   </label>;
