@@ -19,7 +19,7 @@ import { b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./a
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { inputTraceId } from "./inputReceipt";
-import { ChatComposer, type PendingSend } from "./ChatComposer";
+import { ChatComposer, delivered, restorePending, savePending, type PendingSend } from "./ChatComposer";
 import { useChatFocus } from "./useChatFocus";
 import { paneAgentStatus } from "./sidebarModel";
 import { refusalText, steerAvailability, steerSettled, STEER_IDLE, STEER_SLOW_MS, type SteerState } from "./steerQueued";
@@ -219,14 +219,16 @@ export function TermView({
   // 대화 안 찾기를 여는 요청(머리 돋보기·팔레트, plan §8.308). ⌘F는 ChatPanel이 직접 받는다
   const [findRequest, setFindRequest] = useState(0);
   const [chatMessages, setChatMessages] = useState<ChatMessage[] | null>(null);
-  // 작업 중에 보내 harness 대기열에 들어간 글(대화 보기 끝의 대기 말). 터미널 보기로 갔다 와도 남게 이 pane 화면이 갖는다
-  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  // 보냈지만 아직 기록에 없는 글(대화 보기 끝의 대기 말, t-1069). 터미널 보기로 갔다 와도, 이 탭을 새로고침해도 남는다
+  const pendingOwner = `${pane.machine_id}:${pane.id}`;
+  const [pendingSends, setPendingSends] = useState<PendingSend[]>(() => restorePending(pendingOwner));
+  useEffect(() => savePending(pendingOwner, pendingSends), [pendingOwner, pendingSends]);
   // 대기 메시지 「지금 보내기」(plan §8.271): host가 안다고 알렸나(front.steer_queued, 1.45), 단추 상태, 대화 입력창이 보내는 중인가
   const [steerKnown, setSteerKnown] = useState(false);
   const [steer, setSteer] = useState<SteerState>(STEER_IDLE);
   const [composerBusy, setComposerBusy] = useState(false);
   // 대기 말 수(기록의 Claude 대기열 + 이 화면이 붙든 것, 기록에 없는 것 빼고): 보낸 뒤 줄면 끼워 넣어진 것이다
-  const pendingCount = (chatMessages?.filter((m) => m.pending).length ?? 0) + pendingSends.filter((p) => !p.stale).length;
+  const pendingCount = (chatMessages?.filter((m) => m.pending).length ?? 0) + pendingSends.filter(delivered).length;
   const pendingCountRef = useRef(pendingCount);
   pendingCountRef.current = pendingCount;
   const agentNameRef = useRef("Claude");
