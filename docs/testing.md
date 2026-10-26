@@ -3893,6 +3893,14 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 서버 캐시까지 적용한 단일 E2E114 업로드/부분 실패 실행은 네 조합을 통과했고, WebKit 390px 전송+게시는 1046ms·스캔 합계 30930µs였다. 각 조합은 500개 중 499개 요청에서 용량 캐시가 적중했다. 실행별 외부 부하가 같지 않으므로 이 수치는 원인·개선 계측이며 전체 gate의 통과 근거로 대신 쓰지 않는다.
 - 최종 `a36bd156` 전체 `AAA_E2E_WORKERS=10` ci-local은 358초에 모든 단계가 통과했다. 시작 load1/5/15는 6.70/16.30/18.21, 실행 중 표본 load1 최대는 35.03이었다. 웹 유닛 583개, Rust 1,347개(기존 ignored 6), Python 56개(기존 skip 2), 웹 E2E 114파일/140작업(295초)이 통과했다. 전체 gate의 500개 전송+게시는 Chromium 1280/390px 1265/1800ms, WebKit 1280/390px 1242/2889ms였고 각 조합에서 요청 500회·캐시 적중 499회를 확인했다. 원래 20초 상한과 모든 완료·실패·재개 단언을 유지했다. Linux x86_64 strict cross clippy도 통과했다.
 
+## E2E114 inbox 전용 진입과 초기 앱 분리(t-1056)
+
+- CI 원문은 WebKit 390px의 초기 앱 `terminalInflate.worker` 접근 제어 오류다. 앞선 세 조합의 500개 완료는 통과했으며 전용 inbox 번들에는 해당 Worker가 없다. 기존 macOS·worker 2 대조는 통과했고 과거 오류의 정확한 발생 시각은 기록되지 않아 문서 전환과의 인과는 미확정이다.
+- inbox fixture는 실제 GUI pairing을 기존 `#tasks`에서 수행해 떠날 초기 문서의 터미널 기동을 없앤다. 초기 앱과 전용 문서의 오류를 각각 검사하고 터미널 Worker 요청·기동이 없다는 단언을 추가한다. Chromium/WebKit × 1280/390px의 500개 완료·새 항목 하나 보존·단일 요청·DB/화면 검사와 나머지 대량 동작은 유지한다. 제품 코드는 바꾸지 않는다.
+- `BulkInboxDiagnostics`는 pairing 전에 관측을 시작하고 문서 전환·자산 응답/실패·Worker·전체 pageerror stack에 단계와 시각을 붙인다. 실패 시 context를 닫기 전에 JSON·본문·PNG를 `diagnostics/bulk-inbox`에 저장한다. 공통 harness가 이를 기존 CI artifact로 복사한다. 요청 본문·cookie·짝짓기 code·URL query는 수집하지 않는다.
+- `node --test web/test/bulk-inbox-diagnostics.test.mjs web/test/bulk-fixture.test.mjs`는 두 문서의 오류·전체 stack·자산 실패·화면 보존과 기존 DB fixture 계약을 검사한다. 관련 브라우저 회귀는 `node web/e2e/web.e2e.mjs --spec 97,113,114 --workers 2`다. 고정 sleep·자동 재시도·시한 증가·기대값 완화는 없다.
+- 먼저 [Playwright pageerror](https://playwright.dev/docs/api/class-page#page-event-page-error)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [Vite library mode](https://vite.dev/guide/build.html#library-mode)([MIT](https://github.com/vitejs/vite/blob/main/LICENSE)), [WebKit Worker loader](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/workers/Worker.cpp)(해당 파일 BSD-2-Clause)를 대조했다. 진입 격리와 사건 기록만 참고하고 외부 코드·의존성은 추가하지 않았다.
+
 ## 프로젝트 공통 검증 원장 (t-1051)
 
 - `python3 -m unittest scripts.test_workspace_record scripts.test_workspace_metrics`는 실제 Git으로 rc·엔진·pt의 동일 main 반복 실행, 성공/실패, full·coverage 모드, 오래된 부속 결과 제외, 집계 필드만 보관, tracked 변경 거부와 종료 코드 보존을 확인한다. game 저장소에도 같은 writer 회귀를 두고 공식 검증에 포함한다.

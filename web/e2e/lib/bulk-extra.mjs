@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, pairPage, openSettings, shot, base } from "./harness.mjs";
 import { responseGate, responsive, count } from "./bulk-actions.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
+import { BulkInboxDiagnostics } from "./bulk-inbox-diagnostics.mjs";
 
 let inboxAssets;
 async function buildInbox() {
@@ -38,19 +39,25 @@ export async function inboxScenario(engine, label, width) {
   db.exec("DELETE FROM inbox");
   seedInbox(db, count, "bulk-inbox");
   const gate = responseGate();
-  const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: async ctx => {
-    await gate.setup(ctx);
-    await ctx.route("**/__bulk-inbox/**", route => {
-      const name = path.basename(new URL(route.request().url()).pathname);
-      const type = name.endsWith(".js") ? "application/javascript" : name.endsWith(".css") ? "text/css" : "text/html";
-      return route.fulfill({ body: fs.readFileSync(`${assets}/${name}`), contentType: type });
-    });
-  } });
-  const page = paired.page;
+  const diagnostic = new BulkInboxDiagnostics(root, label, width);
   try {
+    // 인증 뒤 곧 떠날 문서에서 터미널·압축 Worker를 기동하지 않는다. 실제 pairing과 host API는 그대로 쓴다.
+    const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { hash: "#tasks", serviceWorkers: "block", onPage: page => diagnostic.watch(page), setup: async ctx => {
+      await gate.setup(ctx);
+      await ctx.route("**/__bulk-inbox/**", route => {
+        const name = path.basename(new URL(route.request().url()).pathname);
+        const type = name.endsWith(".js") ? "application/javascript" : name.endsWith(".css") ? "text/css" : "text/html";
+        return route.fulfill({ body: fs.readFileSync(`${assets}/${name}`), contentType: type });
+      });
+    } });
+    const page = paired.page;
+    assert.deepEqual(paired.errors, [], "inbox 인증용 초기 앱 로드");
+    diagnostic.phase = "inbox 진입";
     await page.goto(`${base}/__bulk-inbox/index.html`);
     assert.deepEqual(paired.errors, [], "inbox 전용 진입 번들 로드");
     await page.getByTestId("inbox-done-all").click();
+    assert.deepEqual(diagnostic.terminalWorkers, [], "inbox 전용 시험은 터미널 Worker를 열지 않는다");
+    diagnostic.phase = "500개 완료";
     const dialog = page.getByRole("alertdialog");
     await dialog.getByText(/500개를 끝낸다/).waitFor();
     seedInbox(db, 1, "late-inbox");
@@ -66,8 +73,11 @@ export async function inboxScenario(engine, label, width) {
     assert.equal(db.prepare("SELECT count(*) AS n FROM inbox WHERE done=1").get().n, count);
     assert.equal(db.prepare("SELECT count(*) AS n FROM inbox WHERE done=0").get().n, 1);
     assert.deepEqual(paired.errors, []);
-  } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
-  finally { await page.context().close(); db.close(); }
+  } catch (e) {
+    try { await diagnostic.save(e); }
+    catch (captureError) { console.error("inbox 실패 진단 저장 오류", String(captureError)); }
+    throw e;
+  } finally { await diagnostic.page?.context().close(); db.close(); }
 }
 
 export async function uploadScenario(engine, label, width) {
