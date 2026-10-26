@@ -38,7 +38,7 @@ fn kill_login(killer: &mut dyn portable_pty::ChildKiller, pid: Option<u32>) {
 }
 
 pub(crate) struct LoginJob {
-    view: Arc<Mutex<AccountLoginView>>,
+    pub(super) view: Arc<Mutex<AccountLoginView>>,
     cancel: Option<oneshot::Sender<()>>,
     finished: watch::Receiver<bool>,
     /// 다시 로그인에 다른 메일이 들어온 새 인증(`mismatch`). 금고에 넣지 않고 메모리에만 두며, 고르거나 시한이 지나면 버린다
@@ -322,7 +322,7 @@ impl Host {
                         }
                     });
                 } else {
-                    result = host.accounts.import(&v.account, &v.harness, &secret).map(|_| false);
+                    result = host.register_account(&v.account, &v.harness, &secret).map(|_| false);
                     if result
                         .as_ref()
                         .inspect_err(|error| {
@@ -417,7 +417,7 @@ impl Host {
         let mut slot = pending.lock().unwrap();
         let p = slot.as_ref().ok_or_else(fail)?;
         if switch {
-            self.accounts.import(&v.account, &v.harness, &p.secret)?;
+            self.register_account(&v.account, &v.harness, &p.secret)?;
             self.account_logged_in(&v.account, &p.identity, true);
             v.state = "succeeded".into();
         } else {

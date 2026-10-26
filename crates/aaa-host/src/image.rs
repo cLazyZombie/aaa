@@ -33,7 +33,6 @@ pub(crate) struct Job {
 pub(crate) struct Reservation {
     pub account: String,
     pub allocation: Allocation,
-    pub launched: bool,
 }
 pub(crate) fn pool_reservations(tx: &Connection) -> anyhow::Result<Vec<Reservation>> {
     let mut st = tx.prepare("SELECT value FROM meta WHERE substr(key,1,10)='image-job:'")?;
@@ -42,7 +41,7 @@ pub(crate) fn pool_reservations(tx: &Connection) -> anyhow::Result<Vec<Reservati
     for text in rows {
         let j: Job = serde_json::from_str(&text)?;
         if let (Some(account), Some(allocation)) = (j.view.account, j.allocation) {
-            out.push(Reservation { account, allocation, launched: j.launched });
+            out.push(Reservation { account, allocation });
         }
     }
     Ok(out)
@@ -141,6 +140,7 @@ impl Host {
         session: &str,
         request: ImageRequest,
     ) -> Result<ImageResponse, ErrorBody> {
+        let _account_read = self.account_rename_gate.read().await;
         let (project, owner) = self.image_owner(machine, session)?;
         if matches!(request, ImageRequest::List) {
             let jobs = self
@@ -394,9 +394,9 @@ impl Host {
         }
         Ok(ImageResponse::Job(job.view))
     }
-    fn image_account_allowed(&self, project: &str, requested: Option<&str>) -> Result<(), ErrorBody> {
+    fn image_account_allowed(&self, _project: &str, requested: Option<&str>) -> Result<(), ErrorBody> {
         let pool = self.account_pool()?;
-        if pool.projects.iter().any(|p| p == project) {
+        if self.pool_harness_enabled("codex")? {
             if requested.is_some_and(|a| !pool.members.iter().any(|m| m.account == a)) {
                 return Err(err(ErrorCode::Forbidden, "이 프로젝트에 허용한 host 계정 풀에서 고른다"));
             }
@@ -412,6 +412,7 @@ impl Host {
     }
 
     async fn image_run(self: Arc<Self>, id: &str) {
+        let _account_read = self.account_rename_gate.read().await;
         let guard = self.thread_op_lock("image", id).lock_owned().await;
         let Ok(mut job) = self
             .image_load(id)
@@ -442,6 +443,8 @@ impl Host {
         {
             return;
         }
+        // 실행 표지를 확정한 뒤에는 계정별 running 검사로 이름 변경을 거부한다. 다른 계정 변경은 막지 않는다.
+        drop(_account_read);
         let result = crate::image_rpc::generate(&self, &job).await;
         match result {
             Ok((outputs, tokens)) => {
@@ -481,7 +484,7 @@ impl Host {
             return Err(err(ErrorCode::Conflict, "이미지 profile이 바뀌었다. 새 작업 ID로 요청한다"));
         }
         self.image_account_allowed(&job.project, job.begin.account.as_deref())?;
-        let auto = self.pool_project_enabled(&job.project)?;
+        let auto = self.pool_harness_enabled("codex")?;
         let selection = if auto {
             let profile = ResolvedProfile {
                 harness: "codex".into(),

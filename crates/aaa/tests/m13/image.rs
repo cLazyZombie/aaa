@@ -119,6 +119,8 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
         std::fs::write(&path, serde_json::json!({"tokens":{"access_token":token,"refresh_token":refresh}}).to_string())
             .unwrap();
         w.h.ok(&["account", "import", alias, "--harness", "codex", "--file", path_str(&path)]);
+        // 기본 이미지 계정의 권한 경로를 자동 배정과 분리한다.
+        w.h.ok(&["account", "pool", "remove", alias]);
         std::fs::remove_file(path).unwrap();
     }
     w.h.ok(&["account", "default", "codex", "work-codex"]);

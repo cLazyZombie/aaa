@@ -2041,6 +2041,11 @@ pub enum FrontRequest {
         id: String,
         switch: bool,
     },
+    /// 재로그인 없이 같은 harness의 별칭과 참조를 옮긴다. 사람 전용(FRONT_API 1.128).
+    AccountRename {
+        name: String,
+        to: String,
+    },
     AccountRemove {
         name: String,
     },

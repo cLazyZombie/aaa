@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { root, aaa, step, browser, pairPage, domIs, shot, openSettings, inTime } from "../lib/harness.mjs";
+import { root, aaa, step, browser, webkit, pairPage, domIs, shot, openSettings, inTime } from "../lib/harness.mjs";
 
 const bin = `${root}/fakebin`;
 fs.mkdirSync(bin, { recursive: true });
@@ -30,7 +30,17 @@ for (const kind of ["claude", "codex"]) {
   const version = execFileSync(`${bin}/${kind}`, ["--version"], { timeout: 10_000, encoding: "utf8" }).trim();
   if (version !== `${kind} fixture-version`) throw new Error(`가짜 CLI 판 조회: ${version}`);
 }
-export const labEnv = { PATH: `${bin}:${process.env.PATH}` };
+// 계정 화면의 자동 사용량 수집도 공식 RPC 자리의 가짜 자식만 쓴다. 로그인 FIFO와 경합하지 않는다.
+const quotaExe = `${bin}/quota-rpc`;
+fs.writeFileSync(quotaExe, `#!${process.execPath}
+import readline from 'node:readline';
+for await (const line of readline.createInterface({input:process.stdin})) {
+ const v=JSON.parse(line);
+ if(v.method==='initialize') console.log(JSON.stringify({id:v.id,result:{}}));
+ else if(v.method==='account/rateLimits/read') console.log(JSON.stringify({id:v.id,result:{rateLimitsByLimitId:{codex:{primary:{usedPercent:37,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600}}}}}));
+}
+`, { mode: 0o755 });
+export const labEnv = { PATH: `${bin}:${process.env.PATH}`, AAA_TEST_QUOTA_CODEX: quotaExe };
 
 const b64u = (s) => Buffer.from(s).toString("base64url");
 /** 공식 Codex 로그인이 남기는 auth.json 꼴(id_token 본문에 메일·plan, 서명은 가짜) */
@@ -127,6 +137,79 @@ export default async function ({ page }) {
     await pane.getByTestId("account-login").getByRole("button", { name: "닫기" }).click();
   });
 
+  await step("이름 바꾸기: 두 엔진 × 1280/390에서 입력 검증·충돌·성공·기본과 인증 기록 유지", async () => {
+    const wk = await webkit.launch({ headless: true });
+    try {
+      let index = 0;
+      for (const [engine, label] of [[browser, "chromium"], [wk, "webkit"]]) {
+        for (const width of [1280, 390]) {
+          const { page: view } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 });
+          try {
+            const settings = await openSettings(view, "계정");
+            const p = settings.getByTestId("settings-accounts");
+            await row(p, "work").getByTestId("account-email").waitFor();
+            aaa("account", "default", "codex", "work");
+            const before = account("work");
+            await row(p, "work").getByRole("button", { name: "work 이름 바꾸기", exact: true }).click();
+            const input = row(p, "work").getByRole("textbox", { name: "work 새 이름", exact: true });
+            const save = row(p, "work").getByRole("button", { name: "이름 저장", exact: true });
+            await input.fill("bad/name");
+            if (!(await save.isDisabled())) throw new Error("잘못된 이름 저장 가능");
+            await row(p, "work").getByText("영문·숫자·-·_ 1~64자를 입력하세요.", { exact: true }).waitFor();
+            await input.fill("ci");
+            if (!(await save.isDisabled())) throw new Error("중복 이름 저장 가능");
+            await row(p, "work").getByText("이미 쓰는 계정 이름입니다.", { exact: true }).waitFor();
+            // 화면을 연 뒤 다른 기기에서 생긴 중복은 host가 거부하고 폼·인증은 그대로 남는다.
+            const next = `renamed-${++index}`;
+            await input.fill(next);
+            const formFits = await p.getByTestId("account-rename").evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && el.getBoundingClientRect().right <= innerWidth + 1);
+            if (!formFits) throw new Error(`${label} ${width} 이름 입력 가로 넘침`);
+            await shot(view, `58-account-rename-form-${label}-${width}`);
+            const collision = view.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "account_rename");
+            // WebKit의 Service Worker가 있는 요청도 같은 경계를 거치게 원래 fetch 직전만 붙잡는다.
+            // 실제 URL·본문·헤더·응답은 원래 fetch에 그대로 넘긴다.
+            await view.exposeFunction("beforeAccountRename", (body) => {
+              if (body.to !== next) throw new Error(`저장할 별칭: ${body.to}`);
+              aaa("account", "import", next, "--harness", "codex", "--file", `${bin}/codex-auth.json`);
+            });
+            await view.evaluate(() => {
+              const fetch = window.fetch.bind(window);
+              let armed = true;
+              window.fetch = async (input, init) => {
+                const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+                if (armed && body?.op === "account_rename") {
+                  armed = false;
+                  await window.beforeAccountRename(body);
+                }
+                return fetch(input, init);
+              };
+            });
+            await save.click();
+            const result = await (await collision).json();
+            if (result.err?.code !== "name_taken") throw new Error(`이름 충돌 응답: ${JSON.stringify(result)}`);
+            await p.getByRole("alert").filter({ hasText: "이미 쓰는 계정 이름" }).waitFor();
+            if (!account("work") || account("work").version !== before.version) throw new Error("실패 뒤 원본 변경");
+            aaa("account", "remove", next);
+            await input.fill(`${next}-ok`);
+            await save.click();
+            await row(p, `${next}-ok`).getByTestId("account-email").waitFor();
+            await p.getByTestId("account-renamed").filter({ hasText: `work → ${next}-ok` }).waitFor();
+            const after = account(`${next}-ok`);
+            for (const key of ["harness", "version", "email", "plan", "first_auth_ms", "last_auth_ms"]) {
+              if (after[key] !== before[key]) throw new Error(`이름 변경 뒤 ${key} 변경`);
+            }
+            if (account("work") || aaa("account", "default", "codex").defaults.find((d) => d.harness === "codex")?.account !== `${next}-ok`) throw new Error("옛 별칭·기본 참조");
+            const fits = await p.evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && el.getBoundingClientRect().right <= innerWidth + 1);
+            if (!fits) throw new Error(`${label} ${width} 이름 변경 가로 넘침`);
+            await shot(view, `58-account-rename-${label}-${width}`);
+            // 실제 CLI 경로로 되돌려 다음 화면도 같은 fixture로 검사한다.
+            aaa("account", "rename", `${next}-ok`, "work");
+          } finally { await view.context().close(); }
+        }
+      }
+    } finally { await wk.close(); }
+  });
+
   await step("보기 전용 기기: 별칭·상태만, 메일·로그인 단추 없음", async () => {
     const { page: rd } = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 });
     const d = await openSettings(rd, "계정");
@@ -134,7 +217,9 @@ export default async function ({ page }) {
     await row(p, "ci").getByTestId("account-health").waitFor();
     const text = await p.innerText();
     if (text.includes("@example.com") || (await p.getByTestId("account-email").count()) !== 0) throw new Error("보기 기기에 메일");
-    if ((await p.getByRole("button", { name: /다시 로그인|기본으로|^로그인$/ }).count()) !== 0) throw new Error("보기 기기에 로그인 단추");
+    if ((await p.getByRole("button", { name: /이름 바꾸기|다시 로그인|기본으로|^로그인$/ }).count()) !== 0) throw new Error("보기 기기에 로그인 단추");
+    const denied = await rd.evaluate(async () => (await fetch('/api/v1/call', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({op:'account_rename',name:'work',to:'denied'}) })).json());
+    if (denied.err?.code !== "forbidden") throw new Error(`보기 기기 이름 변경: ${JSON.stringify(denied)}`);
     await rd.context().close();
   });
 

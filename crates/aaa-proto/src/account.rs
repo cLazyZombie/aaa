@@ -102,13 +102,15 @@ pub struct AccountDefault {
     pub account: String,
 }
 
-/// 자동 배정은 사람이 넣은 host 공통 풀과 참여 프로젝트 안에서만 한다.
+/// harness별 자동 배정에 사용하는 계정. 그룹·모델은 구판 자료 호환용이다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AccountPoolMember {
     pub account: String,
-    /// 같은 실제 한도를 쓰는 별칭에는 같은 그룹을 지정한다.
+    /// 구판 호환용. 새 host는 계정 이름으로 정규화한다.
+    #[serde(default)]
     pub group: String,
-    /// 빈 목록은 해당 harness의 모든 모델이다.
+    /// 구판 호환용. 새 host는 모든 모델을 허용한다.
+    #[serde(default)]
     pub models: Vec<String>,
 }
 
@@ -116,6 +118,8 @@ pub struct AccountPoolMember {
 pub struct AccountPoolView {
     pub revision: String,
     pub members: Vec<AccountPoolMember>,
+    /// 구판 호환용 빈 목록. 프로젝트별 참여 설정은 사용하지 않는다.
+    #[serde(default)]
     pub projects: Vec<String>,
 }
 

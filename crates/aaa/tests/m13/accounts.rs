@@ -306,6 +306,10 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let claude_file = w.scripts.join("import.token");
     std::fs::write(&claude_file, &claude).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&claude_file)]);
+    // 기본·profile 인증 경로를 격리한다. 자동 배정은 E2E81이 검사한다.
+    for account in ["work", "token"] {
+        w.h.ok(&["account", "pool", "remove", account]);
+    }
     w.h.ok(&["account", "default", "codex", "work"]);
     let task = w.task("task.txt", "인증 실험실에서 기다린다");
     let mut jobs = vec![];
@@ -560,6 +564,8 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
         responses.push(start.clone());
         responses.push(login_result(&w, id, "succeeded"));
         assert!(!home.exists(), "성공 상태 전에 임시 인증 정리");
+        // 이 owner는 자동 배정과 분리해 기본 계정 고정·거부를 검사한다.
+        w.h.ok(&["account", "pool", "remove", name]);
         w.h.ok(&["account", "default", harness, name]);
         assert!(w.h.json(&["account", "remove", name]).is_err(), "기본 계정 삭제 거부");
     }
@@ -654,6 +660,7 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     let other = w.scripts.join("other.token");
     std::fs::write(&other, &legacy).unwrap();
     w.h.ok(&["account", "import", "broken", "--harness", "claude", "--file", path_str(&other)]);
+    w.h.ok(&["account", "pool", "remove", "broken"]);
     w.h.ok(&["account", "default", "claude", "broken"]);
     std::fs::remove_file(w.h.state.join("host/accounts/broken.json")).unwrap();
     assert!(
@@ -1341,4 +1348,34 @@ while True:
         }
         client.call(FrontRequest::PaneInput { pane, data: B64(vec![3]) }).await.unwrap().unwrap();
     });
+}
+
+/// 별칭 변경 뒤 다시 로그인 없이 같은 인증이 실제 agent/session 자식까지 가야 한다.
+#[test]
+fn renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_running() {
+    let (token, _) = canary("rename-access");
+    let (refresh, _) = canary("rename-refresh");
+    let gate = Gate::new();
+    let w = world("http://127.0.0.1:1", &gate, "fixture-local-token", POLICY_HARNESS);
+    let auth = w.scripts.join("rename-auth.json");
+    std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":token,"refresh_token":refresh}}).to_string())
+        .unwrap();
+    w.h.ok(&["account", "import", "before", "--harness", "codex", "--file", path_str(&auth)]);
+    w.h.ok(&["account", "default", "codex", "before"]);
+    w.h.ok(&["account", "rename", "before", "after"]);
+    assert_eq!(w.h.ok(&["account", "default", "codex"])["defaults"][0]["account"], "after");
+    assert!(!w.h.state.join("host/accounts/before.json").exists());
+    let task = w.task("rename-task.txt", "바뀐 계정으로 시작한다");
+    let started = w.start(&["--title", "바뀐 별칭", "--profile", "file", "--task-file", &task]);
+    assert_eq!(started["account"], "after");
+    let first = gate.take(1, 0);
+    assert_eq!(first[0].1["token"], sha(&token));
+    let e = w.h.json(&["account", "rename", "after", "again"]).expect_err("실행 중 별칭 변경");
+    assert!(e.contains("열린 thread") || e.contains("처리 중"), "{e}");
+    assert!(w.h.state.join("host/accounts/after.json").exists());
+    Gate::release(first, b'1');
+    let last = gate.take(1, 1);
+    assert_eq!(last[0].1["token"], sha(&token));
+    Gate::release(last, b'X');
+    w.wait_show("변경 계정 작업 종료", started["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
 }

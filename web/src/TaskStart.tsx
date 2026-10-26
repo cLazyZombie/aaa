@@ -5,7 +5,7 @@
 // 그 task 줄 끝에 thread를 잇는다(`link_task`, 화면이 본 블록 hash로).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import type { AccountStartView, AccountTaskSize, FrontRequest, OwnerChoice, TaskBoard, TaskThread, TaskView, ThreadStartPreview, ThreadView } from "./gen/proto";
+import type { AccountStartView, FrontRequest, OwnerChoice, TaskBoard, TaskThread, TaskView, ThreadStartPreview, ThreadView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { apiAtLeast } from "./automationModel";
 import { Markdown } from "./Markdown";
@@ -19,14 +19,16 @@ const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e
 export function StartDialog({ project, task, owners, allowOverLimit, onStarted, onClose }: { project: string; task: TaskView; allowOverLimit: boolean; owners: OwnerChoice[] | null; onStarted: (v: ThreadView) => void; onClose: () => void }) {
   const requestId = useRef(crypto.randomUUID());
   const [poolEnabled, setPoolEnabled] = useState(false);
-  const [size, setSize] = useState<AccountTaskSize>("medium");
   const [waiting, setWaiting] = useState<AccountStartView | null>(null);
   const [preview, setPreview] = useState<ThreadStartPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    void me().then((m) => apiAtLeast(m?.front_api, 1, 102) ? call({ op: "account_pool" }) : null)
-      .then((r) => { if (active && r?.kind === "account_pool") setPoolEnabled(r.pool.projects.includes(project)); })
+    void me().then(async (m) => {
+      if (!apiAtLeast(m?.front_api, 1, 102)) return;
+      const r = await call({ op: "account_pool" });
+      if (active && r.kind === "account_pool") setPoolEnabled(apiAtLeast(m?.front_api, 1, 129) ? r.pool.members.length > 0 : r.pool.projects.includes(project));
+    })
       .catch((e) => active && setError(errText(e)));
     return () => { active = false; };
   }, [project]);
@@ -107,7 +109,7 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
         link_task: true,
         task_block: preview.task_block,
       };
-      const r = await call(poolEnabled ? { op: "thread_start_pool", id: requestId.current, size, start: request } : request);
+      const r = await call(poolEnabled ? { op: "thread_start_pool", id: requestId.current, size: "medium", start: request } : request);
       if (r.kind === "account_start") { setWaiting(r.start); setBusy(false); return; }
       if (r.kind !== "thread") throw new Error(`예상하지 못한 응답: ${r.kind}`);
       const { kind: _kind, ...view } = r;
@@ -136,7 +138,6 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
             <WhoChips t={task} labeled />
           </p>
           {!preview && !error && <p className="muted">시작할 값을 읽는 중</p>}
-          {poolEnabled && <label className="task-field">계정 자동 배정 · 예상 작업 크기<select value={size} disabled={busy || !!waiting} onChange={(e) => setSize(e.target.value as AccountTaskSize)} data-testid="task-account-size"><option value="small">작음 · 5%p</option><option value="medium">보통 · 15%p</option><option value="large">큼 · 30%p</option></select></label>}
           {waiting && <div role="status" data-testid="task-account-wait"><p>{waiting.reason}</p><p>배정 요청 {waiting.id} · 설정 → 계정에서 상태를 확인할 수 있습니다.</p>{waiting.state === "queued" && <button type="button" className="btn" disabled={busy} onClick={async () => {
             setBusy(true);
             try { await call({ op: "account_start_cancel", project, id: waiting.id }); onClose(); }

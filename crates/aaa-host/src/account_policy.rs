@@ -150,6 +150,7 @@ impl Host {
         mut spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
+        let _account_read = self.account_rename_gate.read().await;
         let Some(binding) = self.pane_account(id)? else {
             return self.spawn_on(mid, spec, actor).await;
         };

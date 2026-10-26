@@ -339,6 +339,19 @@ impl Accounts {
     pub fn credential(&self, name: &str) -> Result<AccountCredential, ErrorBody> {
         self.store.lock().unwrap().read(name)
     }
+    /// 옛 AAD로 열고 새 AAD로 봉투 전체를 재암호화한다. 인증 판·세대는 그대로다.
+    /// 새 파일을 먼저 내구 저장하고 DB 확정 뒤 옛 파일을 치운다(복구 journal은 host 소유).
+    pub(crate) fn stage_rename(&self, from: &str, to: &str) -> Result<(), ErrorBody> {
+        let s = self.store.lock().unwrap();
+        let path = s.path(to)?;
+        if path.symlink_metadata().is_ok() {
+            return Err(ErrorBody::new(aaa_proto::ErrorCode::NameTaken, "이미 쓰는 계정 이름이다"));
+        }
+        let old = s.record(from)?;
+        let credential = s.read(from)?;
+        s.write(to, &old.harness, old.version, &credential.secret.0, old.generation)?;
+        Ok(())
+    }
     pub fn remove(&self, name: &str) -> Result<(), ErrorBody> {
         let s = self.store.lock().unwrap();
         let p = s.path(name)?;
@@ -521,6 +534,7 @@ impl crate::Host {
         }
     }
     pub(crate) async fn account_refresh(self: Arc<Self>, mid: String, request: aaa_proto::AccountRefresh) {
+        let _account_read = self.account_rename_gate.read().await;
         let bound = self
             .account_run(&request.run)
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))

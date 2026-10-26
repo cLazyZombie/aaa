@@ -956,7 +956,7 @@ mod tests {
                             .iter()
                             .filter(|i| i.event == "usage unavailable")
                             .count(),
-                        1
+                        2, "서로 다른 입력은 각각 알리고 같은 입력의 반복 drain은 추가하지 않는다"
                     );
                     assert!(
                         items

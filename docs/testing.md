@@ -1,3 +1,20 @@
+## E2E83 다시 열기의 웹 교체 완료와 실패 처리(t-1100)
+
+- 첫 전체 gate의 유일한 실패는 E2E83의 모든 thread 메뉴 이동이었다. `hashIs(#threads)`는 20초 뒤 새 `#pane=…`에 남았고, 먼저 시작한 대기 Promise가 click 대기보다 먼저 거절되어 Node unhandled rejection으로 child를 끝냈다. 알려진 m13 계정의 labA 연결 실패는 이 실행에서는 없었다.
+- 기준 main `1f58f884`와 후보의 App/원래 E2E83/harness는 같았다. 실제 host/agent에서 새 pane이 running인 뒤 replacement WS state만 메뉴를 연 직후까지 보류했다가 전달하면 둘 모두 옛 pane의 열린 메뉴→새 pane으로 교체/메뉴 소실이 나왔다. 첫 단계가 host 기록만 보고 끝난 것이 다음 단계와 경쟁한 원인이다. 제품의 정상 pane 교체를 바꾸거나 부하 탓으로 단정하지 않는다.
+- 기존 E2E83 한 실험실에서 reload 뒤 실제 state를 가로채 같은 지연을 만든다. host의 새 pane running과 state 수신 뒤에도 화면이 옛 pane임을 단언하고, state를 놓은 뒤 새 주소와 실제 `.term` 교체까지 사건으로 기다려 첫 단계를 끝낸다. 주소 교체는 replaceState이므로 hashchange만 기다리지 않는다. 모든 thread 메뉴 이동의 hash/click Promise는 생성과 동시에 Promise.all로 묶어 실패가 단계 진단/정리를 건너뛰지 않게 한다.
+- 필요한 이유는 host 성공과 웹 적용 완료의 차이를 결정적으로 만들고, 같은 메뉴 소실이 다음 단계에 새지 않도록 하기 위해서다. 원래 20초/locator/단계 상한과 나머지 CLI 0회 계약을 유지한다. 고정 sleep·실패 재시도·시한 확대·시험 제외는 없다. 기준 main과 후보 실행 파일에 같은 수정 owner를 적용해 E2E83 단독을 확인하고 커밋한 SHA로 다음 전체 gate를 수행한다.
+- 기존 E2E109의 실제 WS gate와 [Playwright WebSocket routing](https://playwright.dev/docs/network#websocket-mocking)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [WPT WebSocket event 검사](https://github.com/web-platform-tests/wpt/tree/master/websockets)([BSD-3-Clause](https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md))의 사건 순서 원칙을 참고한다. 외부 코드를 가져오지 않는다.
+
+## 계정 이름 변경과 재로그인 없는 시작(t-1100)
+
+- `cargo test --profile verify --locked -p aaa-host --lib account_rename` 세 저장 회귀는 실제 암호화 금고/SQLite/프로젝트 설정으로 인증·판·세대/metadata/기본/풀/대기 시작/보류 thread/binding 유지, agent·Reader·중복·준비 중 실행 거부, DB 실패 뒤 원문 복구와 양쪽 확정점의 Host::open 복구를 검사한다. 필요한 이유는 인증 AAD 변경·참조 누락·부분 이전이 계정 사용을 끊거나 다른 신원으로 시작하게 하는 회귀를 막기 위해서다.
+- `cargo test --profile verify --locked -p aaa-host --lib rename_during_quota_collection`은 수집기가 cache를 잡은 경계에서 이전을 끝내고, 옛 cache가 남아도 새 이름의 저장 관측·남은 양을 유지하고 옛 키를 재저장하지 않는지 검사한다. 필요한 이유는 웹 자동 사용량 조회가 이름 변경을 막거나 관측을 잃는 경합을 막기 위해서다.
+- 기존 m13 accounts에 `renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_running`을 더한다. 가짜 인증을 import→기본 지정→CLI rename한 뒤 실제 host→agent→session→PTY 자식이 같은 인증 hash를 받아야 한다. 실행 중 재변경은 거부하고 그 자식은 같은 인증으로 끝난다. 필요한 이유는 금고 단위 시험이 실제 시작 전달을 대신할 수 없기 때문이다.
+- 기존 E2E58에 Chromium/WebKit × 1280/390px의 행별 폼·잘못된 이름/중복·저장 직전 다른 기기의 중복 생성·서버 거부 후 원본 유지·성공 결과·기본/메일/인증일/판 유지·CLI 역변경을 더한다. Reader는 단추가 없고 직접 변경 요청도 거부한다. 필요한 이유는 실제 웹 권한·응답·휴대폰 레이아웃을 함께 지키기 위해서다. 사건/응답/DOM으로 끝내고 고정 sleep·실패 재시도·시한 확대는 없다.
+- 이전 gate의 중첩 read·writer 깨움 시험 하나는 시작 경로 중첩 중 이름 변경이 교착하지 않는 계약을 지킨다.
+- 부분 확인은 위 owner와 E2E58·65·81, proto TypeScript·의존 경계·웹 타입/유닛·strict clippy·공개 검사다. 전체 ci-local은 coordinator의 실행 차례를 받은 뒤 수행한다. Playwright npm 1.64.1은 작업 폴더에 두고 내부 공용 브라우저만 사용한다. 운영 DB/실제 계정은 쓰지 않는다.
+
 ## 미답변 coordinator 질문의 자동 종료 방지(t-1090)
 
 - 새 host 회귀 두 개는 실제 SQLite·post·질문 목록을 쓴다. `orphan_thread_reference_stays_a_coordinator_question_across_reports_and_reconcile`는 과거 답이 있지만 현재 카드가 없는 thread 접미사로 만든 요청이 독립 q-ID와 링크를 유지하고, 이후 질문 있음/없음 보고·정리에도 열려 있는지 검사한다. 꼭 필요한 이유: q-1372처럼 생성 직후 과거 답에 흡수되는 요청 유실을 막는다.
@@ -4011,3 +4028,13 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 질문 입력도 대화 입력과 같이 window native input capture에서 새 글을 먼저 state에 보관한다. 기존 bubble onChange·보고별 카드 교체·늦은 답 응답 처리는 유지한다. 숨김·해제·보기 권한·전송 중에는 listener를 해제하며 자기 입력칸 사건만 받는다. 이는 native input과 bubble 사이 부모 commit으로 사용자 글이 사라지는 제품 결함을 막는다.
 - 새 시험 파일을 만들지 않고 기존 E2E53의 Chromium/WebKit × 1280/390px에 위 순서를 고정한다. 처음 채운 입력·보내기 활성·같은 DOM·부모 갱신 정확히 한 번을 즉시 확인한 뒤 원래 이전 답 응답 보류→새 보고 입력→늦은 응답→각 보고 정확히 한 번 전달 단언을 실행한다. 이 검사는 실패의 실제 경계인 사용자 입력 유실을 막기 위해 필요하다. 실패 자료는 보고 hash·질문 ID·입력/갱신 순서를 함께 보존한다. 재시도·시한 확대·기대값 완화·입력 재주입은 없다.
 - OSS 후보는 [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)·[UpdateBatching](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/ReactDOMUpdateBatching.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))와 [Playwright fill의 입력 경계](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/dom.ts)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))다. 기존 저장소의 ChatComposer 보호 방식을 참고하며 외부 코드·의존성을 추가하지 않는다.
+
+
+## harness별 계정 자동 배정과 사용량 불명 실행(t-1107, §8.500)
+
+- `account_pool::tests`는 미관측·오래됨·조회 실패·리셋·누락·잘못된 값·충돌에서도 반복 시작, 5시간 누락+주간10%, 단독 창100% 제외, 실제 진행 수/최근 배정과 옛 그룹·모델 무시, 동시 여덟 시작의 4/4 분산·영수증 재전송을 확인한다. 필요 이유는 원래 사용량 부족을 모르는 상태가 시작을 막는 회귀와 동시 요청 편향을 막기 위해서다. 이전 원문 보존·한 번 이전·꺼 둔 계정 보존·진행 중 계정 불변도 확인한다.
+- 같은 owner에서 이미지 crash 복구/중복 실행 금지·인증 정리와 종료 이력·대기 취소·Reader·설정 revision 계약을 유지한다. 옛 예상 %·공유 그룹/허용 모델·프로젝트 참여·미관측 첫 실행 한 번 제한을 요구하던 시험은 새 사용자 정책으로 대체한다. 시한이나 기대값을 완화해 실패를 숨기는 변경이 아니다.
+- 자동화 `pooled_automation_starts_with_unknown_or_week_only_usage_and_retains_real_low_usage`는 실제 host/DB/frame owner에서 사용량 조회 잠금을 쥔 채 미관측/주간 단독 관측으로 실제 시작 한 번·입력 회수·영수증 중복 방지를 검사한다. 알려진 문턱 미달은 입력을 보존하고 회복 뒤 한 번 시작한다. 선택 transaction의 문턱은 pool owner에서도 확인한다. 필요한 이유는 배정 전 계정 미확정으로 rc-verify가 영구 대기한 실제 경로를 지키기 위해서다.
+- `repeated_usage_waits_survive_inbox_cleanup_and_restart_until_reason_or_input_changes`는 실제 자동화 대기 네 번과 매번 inbox 처리를 수행한다. 안내 한 건과 입력 보존·host 재기동 뒤 재안내 없음, 이유/입력 변화·해제/재차단을 확인한다. 필요 이유는 ticker마다 같은 안내가 다시 쌓이는 회귀를 막기 위해서다.
+- 기존 E2E81에서 Chromium/WebKit × 1280/390px 실제 계정 행 스위치·그룹/모델/프로젝트 제거·가로 넘침을 검사한다. 실제 host/agent/PTY의 같은 harness 분산·미관측 반복 시작·5시간 누락+주간10%/100%·다른 harness 기본 계정 fallback·영수증·재기동·할 일 대기/취소·Reader와 인증 비노출도 확인한다. E2E58은 t-1100의 이름 변경 UI를 유지하며 host 회귀에서 v2 사용 설정 동반 이전도 확인한다.
+- 부분 명령은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib`와 `NODE_PATH=<작업 폴더 Playwright 1.64.1> nice -n 15 node web/e2e/web.e2e.mjs --spec 58,65,78,81 --workers 1`이다. 웹 빌드·유닛, proto 생성 일치·의존 규칙도 검사한다. 공용 브라우저 캐시만 쓰며 고정 sleep·재시도·시한 확대는 없다. 전체 ci-local은 coordinator가 준 우선 차례에 실행한다.

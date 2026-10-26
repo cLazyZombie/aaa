@@ -34,8 +34,9 @@
 .acct-quota-title { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; font-size: var(--fs-sm); }
 .acct-quota meter { width: 100%; height: 10px; accent-color: var(--accent); }
 .acct-pool { overflow-wrap: anywhere; }
-.acct-pool-form, .acct-pool-project { display: grid; gap: 12px; margin-top: 16px; }
-.acct-pool-form label, .acct-pool-project label { display: grid; gap: 6px; min-width: 0; }
-.acct-pool-form input, .acct-pool-form select, .acct-pool-project select { width: 100%; min-width: 0; box-sizing: border-box; }
-.acct-pool-project label:has(input[type="checkbox"]) { display: flex; align-items: center; }
+.acct-auto { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .acct-pool .acct-list li { display: grid; gap: 8px; }
+
+.acct-rename { display: grid; gap: 8px; margin-top: 12px; min-width: 0; }
+.acct-rename input { width: 100%; min-width: 0; box-sizing: border-box; }
+.acct-rename p { margin: 0; overflow-wrap: anywhere; }

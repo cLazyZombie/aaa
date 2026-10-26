@@ -130,6 +130,15 @@ fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot,
     entry.readings.insert(key, Reading { snapshot: s, machine, received_at_ms: now });
 }
 
+impl Cache {
+    pub(crate) fn rename(&mut self, from: &str, to: &str) {
+        self.entries.remove(to);
+        if let Some(entry) = self.entries.remove(from) {
+            self.entries.insert(to.into(), entry);
+        }
+    }
+}
+
 impl crate::Host {
     /// 마지막 완료된 웹 계정 사용량을 읽는다. 조회 중인 RPC의 잠금·응답을 기다리지 않는다.
     /// 재로그인 전 세대와 삭제된 계정은 판정에 쓰지 않는다.
@@ -149,11 +158,9 @@ impl crate::Host {
         Ok(merge(&entry, name, harness, util::now_ms()))
     }
 
-    pub(crate) async fn quota_generation(&self, name: &str) -> Option<String> {
-        self.account_quota.lock().await.entries.get(name).map(|e| e.generation.clone())
-    }
     pub(crate) async fn quota_report(self: &Arc<Self>, refresh: bool) -> Result<AccountQuotaReport, ErrorBody> {
         let mut cache = self.account_quota.lock().await;
+        let account_read = self.account_rename_gate.read().await;
         let accounts = self.accounts.list()?;
         for a in &accounts {
             if !cache.entries.contains_key(&a.name)
@@ -179,100 +186,108 @@ impl crate::Host {
                     .flatten()
             })
             .collect();
-        let jobs = accounts.iter().map(|a| {
-            let name = a.name.clone();
-            let harness = a.harness.clone();
-            let generation = self.accounts.generation(&name).unwrap_or_default();
-            let mut entry = cache.entries.get(&name).cloned().unwrap_or_default();
-            if entry.generation != generation {
-                entry = Entry { generation: generation.clone(), ..Default::default() };
-            }
-            let mine: Vec<_> = bindings.iter().filter(|b| b.account == name && b.harness == harness).cloned().collect();
-            let forced = refresh && now.saturating_sub(entry.attempted_ms) >= crate::usage::min_refresh_ms();
-            let due = !generation.is_empty() && (entry.next_ms <= now || forced);
-            if due {
-                entry.attempted_ms = now;
-                entry.next_ms = now.saturating_add(60_000);
-            }
-            // HTTP 요청이 취소돼도 시도 하한·이미 아는 backoff를 잊지 않는다.
-            cache.entries.insert(name.clone(), entry.clone());
-            async move {
+        let jobs: Vec<_> = accounts
+            .iter()
+            .map(|a| {
+                let name = a.name.clone();
+                let harness = a.harness.clone();
+                let generation = self.accounts.generation(&name).unwrap_or_default();
+                let mut entry = cache.entries.get(&name).cloned().unwrap_or_default();
+                if entry.generation != generation {
+                    entry = Entry { generation: generation.clone(), ..Default::default() };
+                }
+                let mine: Vec<_> =
+                    bindings.iter().filter(|b| b.account == name && b.harness == harness).cloned().collect();
+                let forced = refresh && now.saturating_sub(entry.attempted_ms) >= crate::usage::min_refresh_ms();
+                let due = !generation.is_empty() && (entry.next_ms <= now || forced);
                 if due {
-                    if harness == "codex" {
-                        let retry = entry.readings.get("host").and_then(|r| r.snapshot.retry_at_ms);
-                        if retry.is_none_or(|t| now >= t) {
-                            let snapshot = match self.accounts.credential(&name) {
-                                Ok(c) if c.auth_generation.as_deref() == Some(&generation) => {
-                                    crate::quota_rpc::read(&self.state, generation.clone(), &c.secret.0, now).await
-                                }
-                                _ => empty(&generation, QuotaSource::CodexRpc, QuotaProblem::Locked, now),
-                            };
-                            accept(&mut entry, "host".into(), "host".into(), snapshot, util::now_ms());
+                    entry.attempted_ms = now;
+                    entry.next_ms = now.saturating_add(60_000);
+                }
+                // HTTP 요청이 취소돼도 시도 하한·이미 아는 backoff를 잊지 않는다.
+                cache.entries.insert(name.clone(), entry.clone());
+                async move {
+                    if due {
+                        if harness == "codex" {
+                            let retry = entry.readings.get("host").and_then(|r| r.snapshot.retry_at_ms);
+                            if retry.is_none_or(|t| now >= t) {
+                                let snapshot = match self.accounts.credential(&name) {
+                                    Ok(c) if c.auth_generation.as_deref() == Some(&generation) => {
+                                        crate::quota_rpc::read(&self.state, generation.clone(), &c.secret.0, now).await
+                                    }
+                                    _ => empty(&generation, QuotaSource::CodexRpc, QuotaProblem::Locked, now),
+                                };
+                                accept(&mut entry, "host".into(), "host".into(), snapshot, util::now_ms());
+                            }
                         }
-                    }
-                    let reads =
-                        mine.into_iter().filter_map(|b| b.pane.map(|pane| (b.machine, pane))).map(|(machine, pane)| {
-                            let generation = generation.clone();
-                            async move {
-                                let label = self
-                                    .inner
-                                    .lock()
-                                    .unwrap()
-                                    .machines
-                                    .get(&machine)
-                                    .map(|m| m.name.clone())
-                                    .unwrap_or_else(|| machine.clone());
-                                let snapshot = if !self.machine_feature(&machine, "account_quota.v1") {
-                                    empty(
-                                        &generation,
-                                        QuotaSource::ClaudeStatusline,
-                                        QuotaProblem::Unsupported,
-                                        util::now_ms(),
-                                    )
-                                } else if let Ok(conn) = self.live_conn(&machine) {
-                                    match conn
-                                        .request_timeout(
-                                            AgentRequest::AccountQuota {
-                                                session: pane.clone(),
-                                                generation: generation.clone(),
-                                            },
-                                            Duration::from_secs(5),
-                                        )
-                                        .await
-                                    {
-                                        Ok(AgentResponse::AccountQuota { snapshot: Some(s) }) => s,
-                                        Ok(AgentResponse::AccountQuota { snapshot: None }) => empty(
+                        let reads = mine.into_iter().filter_map(|b| b.pane.map(|pane| (b.machine, pane))).map(
+                            |(machine, pane)| {
+                                let generation = generation.clone();
+                                async move {
+                                    let label = self
+                                        .inner
+                                        .lock()
+                                        .unwrap()
+                                        .machines
+                                        .get(&machine)
+                                        .map(|m| m.name.clone())
+                                        .unwrap_or_else(|| machine.clone());
+                                    let snapshot = if !self.machine_feature(&machine, "account_quota.v1") {
+                                        empty(
                                             &generation,
                                             QuotaSource::ClaudeStatusline,
-                                            QuotaProblem::Unknown,
+                                            QuotaProblem::Unsupported,
                                             util::now_ms(),
-                                        ),
-                                        _ => empty(
+                                        )
+                                    } else if let Ok(conn) = self.live_conn(&machine) {
+                                        match conn
+                                            .request_timeout(
+                                                AgentRequest::AccountQuota {
+                                                    session: pane.clone(),
+                                                    generation: generation.clone(),
+                                                },
+                                                Duration::from_secs(5),
+                                            )
+                                            .await
+                                        {
+                                            Ok(AgentResponse::AccountQuota { snapshot: Some(s) }) => s,
+                                            Ok(AgentResponse::AccountQuota { snapshot: None }) => empty(
+                                                &generation,
+                                                QuotaSource::ClaudeStatusline,
+                                                QuotaProblem::Unknown,
+                                                util::now_ms(),
+                                            ),
+                                            _ => empty(
+                                                &generation,
+                                                QuotaSource::ClaudeStatusline,
+                                                QuotaProblem::Disconnected,
+                                                util::now_ms(),
+                                            ),
+                                        }
+                                    } else {
+                                        empty(
                                             &generation,
                                             QuotaSource::ClaudeStatusline,
                                             QuotaProblem::Disconnected,
                                             util::now_ms(),
-                                        ),
-                                    }
-                                } else {
-                                    empty(
-                                        &generation,
-                                        QuotaSource::ClaudeStatusline,
-                                        QuotaProblem::Disconnected,
-                                        util::now_ms(),
-                                    )
-                                };
-                                (pane, label, snapshot)
-                            }
-                        });
-                    for (pane, machine, snapshot) in futures_util::future::join_all(reads).await {
-                        accept(&mut entry, pane, machine, snapshot, util::now_ms());
+                                        )
+                                    };
+                                    (pane, label, snapshot)
+                                }
+                            },
+                        );
+                        for (pane, machine, snapshot) in futures_util::future::join_all(reads).await {
+                            accept(&mut entry, pane, machine, snapshot, util::now_ms());
+                        }
                     }
+                    (name, entry)
                 }
-                (name, entry)
-            }
-        });
+            })
+            .collect();
+        // 네트워크 응답을 기다리는 동안 별칭 변경을 허용한다. 옛 이름의 늦은 결과는 아래 세대 검사에서 버린다.
+        drop(account_read);
         let finished = futures_util::future::join_all(jobs).await;
+        let _account_read = self.account_rename_gate.read().await;
         for (name, entry) in finished {
             // 느린 조회 중 다시 로그인·삭제·재등록했다면 그 결과를 새 신원에 붙이지 않는다.
             match self
@@ -296,6 +311,16 @@ impl crate::Host {
         }
         let now = util::now_ms();
         let accounts = self.accounts.list()?;
+        cache.entries.retain(|name, _| accounts.iter().any(|a| &a.name == name));
+        // 조회 중 바뀐 별칭은 원자 이전한 DB 관측에서 다시 읽는다. 옛 별칭으로 재저장하지 않는다.
+        for a in &accounts {
+            if !cache.entries.contains_key(&a.name)
+                && let Some(text) =
+                    self.db.meta(&format!("account-quota-v1/{}", a.name)).map_err(crate::orch::internal)?
+            {
+                cache.entries.insert(a.name.clone(), serde_json::from_str(&text).map_err(crate::orch::internal)?);
+            }
+        }
         for (name, entry) in &cache.entries {
             self.db
                 .set_meta(
@@ -348,6 +373,43 @@ mod tests {
             problem: None,
             retry_at_ms: None,
         }
+    }
+    #[tokio::test]
+    async fn rename_during_quota_collection_keeps_saved_observations_and_drops_old_alias_cache() {
+        let root = std::env::temp_dir().join(format!("aaa-quota-rename-{}", util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.projects.root = root.join("projects").display().to_string();
+        let h = crate::Host::open(cfg, root.join("host")).unwrap();
+        h.accounts.import("work", "claude", "fixture-quota-rename-0123456789").unwrap();
+        let generation = h.accounts.generation("work").unwrap();
+        let now = util::now_ms();
+        let mut snapshot = good(now, 37.);
+        snapshot.generation = generation.clone();
+        snapshot.windows[0].resets_at_ms = Some(now + 3_600_000);
+        let mut entry = Entry { generation, attempted_ms: now, next_ms: now + 60_000, ..Default::default() };
+        accept(&mut entry, "pane-a".into(), "mac-a".into(), snapshot, now);
+        h.db.set_meta("account-quota-v1/work", &serde_json::to_string(&entry).unwrap()).unwrap();
+        // collector가 cache를 잡고 외부 응답을 기다리는 경계. 이름 변경은 기다림 없이 끝나야 한다.
+        let mut collecting = h.account_quota.lock().await;
+        h.call(
+            DeviceRole::Controller,
+            "device:phone",
+            FrontRequest::AccountRename { name: "work".into(), to: "renamed".into() },
+        )
+        .await
+        .unwrap();
+        // 이름 변경 전 요청의 늦은 cache가 남더라도 다음 보고는 DB의 새 별칭을 읽는다.
+        collecting.entries.insert("work".into(), entry);
+        drop(collecting);
+        let report = h.quota_report(false).await.unwrap();
+        assert_eq!(report.accounts.len(), 1);
+        assert_eq!(report.accounts[0].account, "renamed");
+        assert_eq!(report.accounts[0].windows[0].window.used_percent, 37.);
+        assert!(h.db.meta("account-quota-v1/work").unwrap().is_none());
+        assert!(!h.account_quota.lock().await.entries.contains_key("work"));
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn merges_same_account_conservatively_and_drops_old_login_generation() {

@@ -62,6 +62,7 @@ impl Host {
         new: bool,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
+        let _account_read = self.account_rename_gate.read().await;
         let dir = self.project_dir(project)?;
         if self.project_status(project) == ProjectStatus::Archived {
             return Err(bad(format!("`{project}`는 보관돼 있다: 먼저 `aaa project unarchive {project}`")));

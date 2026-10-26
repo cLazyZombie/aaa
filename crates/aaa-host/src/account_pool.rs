@@ -1,4 +1,4 @@
-//! host 공통 허용 풀(A3). 선택·예상량 예약·시작 영수증은 같은 SQLite transaction이다.
+//! harness별 계정 자동 배정. 선택·작업 수·시작 영수증은 같은 SQLite transaction에서 확정한다.
 use crate::{
     Host, err,
     orch::{StartArgs, ThreadRec, internal},
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // 전역 key는 project_meta의 `<종류>:<프로젝트>` 이름 공간과 겹치지 않는다.
-const CONFIG: &str = "account-pool-v1";
+const CONFIG: &str = "account-pool-v2";
 const JOB: &str = "account-job:";
 
 #[cfg(test)]
@@ -25,19 +25,13 @@ pub(crate) struct PoolRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Allocation {
     pub selection: AccountSelection,
-    /// 이미지 생성은 medium(15)의 다섯 배인 75%p를 보수적으로 예약한다.
+    /// 구판 예상 소비량. 이력 읽기용이며 배정 차단에 쓰지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_percent: Option<u8>,
     pub generation: String,
     pub ended_at_ms: Option<u64>,
     pub released: bool,
 }
-impl Allocation {
-    pub(crate) fn percent(&self) -> u8 {
-        self.reserve_percent.unwrap_or(self.selection.size.percent())
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 struct Job {
     view: AccountStartView,
@@ -55,13 +49,13 @@ pub(crate) struct Candidate {
 
 pub(crate) struct SelectionInput {
     pool: AccountPoolView,
-    project: String,
     model: Option<String>,
     auto: bool,
     size: AccountTaskSize,
     candidates: Vec<Candidate>,
     excluded: Vec<String>,
     required_account: Option<String>,
+    pub(crate) minimum: [Option<f64>; 2],
 }
 
 fn bad(s: impl Into<String>) -> ErrorBody {
@@ -77,20 +71,8 @@ fn decode_pool(text: Option<String>) -> anyhow::Result<AccountPoolView> {
     text.map(|s| serde_json::from_str(&s)).transpose().map(|p| p.unwrap_or_default()).map_err(Into::into)
 }
 
-/// 프로젝트 삭제·이름 변경과 참여 설정을 같은 transaction에서 옮긴다.
-pub(crate) fn project_transition(tx: &Connection, from: &str, to: Option<&str>) -> anyhow::Result<()> {
-    let text = tx.query_row("SELECT value FROM meta WHERE key=?1", [CONFIG], |r| r.get(0)).optional()?;
-    let mut pool = decode_pool(text)?;
-    if pool.projects.iter().any(|p| p == from) {
-        pool.projects.retain(|p| p != from);
-        if let Some(to) = to {
-            pool.projects.push(to.into());
-        }
-        pool.projects.sort();
-        pool.projects.dedup();
-        pool.revision = util::new_id();
-        tx.execute("UPDATE meta SET value=?2 WHERE key=?1", [CONFIG, &serde_json::to_string(&pool)?])?;
-    }
+// v1의 참여 프로젝트는 이전 자료로만 보존한다. 새 정책은 host 전체에 적용한다.
+pub(crate) fn project_transition(_tx: &Connection, _from: &str, _to: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -106,8 +88,69 @@ impl Host {
         decode_pool(self.db.meta(CONFIG).map_err(internal)?).map_err(internal)
     }
 
-    pub(crate) fn pool_project_enabled(&self, project: &str) -> Result<bool, ErrorBody> {
-        Ok(self.account_pool()?.projects.iter().any(|p| p == project))
+    /// v1 원문은 그대로 두고 별도 key에 한 번만 이전한다. 꺼 둔 옛 계정은 켜지 않는다.
+    pub(crate) fn pool_migrate(&self) -> Result<(), ErrorBody> {
+        let legacy = self.db.meta("account-pool-v1").map_err(internal)?;
+        let accounts = self.accounts.list()?;
+        self.db
+            .update_meta(CONFIG, |old| {
+                if let Some(old) = old {
+                    return Ok(old);
+                }
+                let mut pool = decode_pool(legacy.clone())?;
+                if legacy.is_none() {
+                    pool.members = accounts
+                        .iter()
+                        .map(|a| AccountPoolMember { account: a.name.clone(), group: a.name.clone(), models: vec![] })
+                        .collect();
+                }
+                for member in &mut pool.members {
+                    member.group = member.account.clone();
+                    member.models.clear();
+                }
+                pool.projects.clear();
+                Ok(serde_json::to_string(&pool)?)
+            })
+            .map_err(internal)
+    }
+
+    /// 새 로그인만 기본으로 참여시킨다. 다시 로그인해도 사람이 끈 설정을 되살리지 않는다.
+    pub(crate) fn register_account(&self, name: &str, harness: &str, secret: &str) -> Result<AccountView, ErrorBody> {
+        let new = !self.accounts.list()?.iter().any(|a| a.name == name);
+        let view = self.accounts.import(name, harness, secret)?;
+        if new {
+            self.db
+                .update_meta(CONFIG, |old| {
+                    let mut pool = decode_pool(old)?;
+                    if !pool.members.iter().any(|m| m.account == name) {
+                        pool.members.push(AccountPoolMember {
+                            account: name.into(),
+                            group: name.into(),
+                            models: vec![],
+                        });
+                        pool.members.sort_by(|a, b| a.account.cmp(&b.account));
+                        pool.revision = util::new_id();
+                    }
+                    Ok(serde_json::to_string(&pool)?)
+                })
+                .map_err(internal)?;
+            self.accounts_bump();
+            self.tick_wake.notify_one();
+        }
+        Ok(view)
+    }
+
+    pub(crate) fn pool_project_enabled(&self, _project: &str) -> Result<bool, ErrorBody> {
+        Ok(!self.account_pool()?.members.is_empty())
+    }
+
+    pub(crate) fn pool_harness_enabled(&self, harness: &str) -> Result<bool, ErrorBody> {
+        let accounts = self.accounts.list()?;
+        Ok(self
+            .account_pool()?
+            .members
+            .iter()
+            .any(|m| accounts.iter().any(|a| a.name == m.account && a.harness == harness)))
     }
 
     fn change_pool(
@@ -145,30 +188,17 @@ impl Host {
             return Err(bad("계정 별칭을 확인한다"));
         }
         if let Some(m) = &member {
-            if m.account != account
-                || !crate::accounts::valid_name(&m.group)
-                || m.models.len() > 64
-                || m.models
-                    .iter()
-                    .any(|s| s.is_empty() || s.len() > 128 || s.chars().any(|c| c.is_whitespace() || c.is_control()))
-            {
-                return Err(bad("풀의 계정·한도 그룹·모델 목록을 확인한다"));
+            if m.account != account {
+                return Err(bad("자동 배정 계정 이름을 확인한다"));
             }
-            let credential = self.accounts.credential(account)?;
-            for other in self.account_pool()?.members {
-                if other.account != account
-                    && other.group == m.group
-                    && self.accounts.credential(&other.account)?.harness != credential.harness
-                {
-                    return Err(bad("같은 한도 그룹에는 같은 harness 계정만 넣는다"));
-                }
-            }
+            self.accounts.credential(account)?;
         }
         let pool = self.change_pool(revision, |pool| {
             pool.members.retain(|m| m.account != account);
             if let Some(mut m) = member {
-                m.models.sort();
-                m.models.dedup();
+                // 옛 client의 그룹·모델 필드는 받아도 배정 조건으로 쓰지 않는다.
+                m.group = m.account.clone();
+                m.models.clear();
                 pool.members.push(m);
             }
             anyhow::ensure!(pool.members.len() <= 256, "풀은 계정 256개까지다");
@@ -185,16 +215,8 @@ impl Host {
         enabled: bool,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.project_dir(project)?;
-        let pool = self.change_pool(revision, |pool| {
-            pool.projects.retain(|p| p != project);
-            if enabled {
-                pool.projects.push(project.into());
-            }
-            Ok(())
-        })?;
-        self.db.audit(actor, "account_pool_project", &format!("{project} {enabled}"));
-        Ok(FrontResponse::AccountPool { pool })
+        let _ = (revision, project, enabled, actor);
+        Err(bad("프로젝트 참여 설정은 없어졌다. account pool add/remove로 계정별 자동 배정을 켜고 끈다"))
     }
 
     pub(crate) fn pool_forget(&self, account: &str) -> Result<(), ErrorBody> {
@@ -207,32 +229,42 @@ impl Host {
 
     pub(crate) async fn account_selection_input(
         self: &Arc<Self>,
-        project: &str,
+        _project: &str,
         profile: &ResolvedProfile,
         account: Option<&str>,
         size: AccountTaskSize,
     ) -> Result<Option<SelectionInput>, ErrorBody> {
         let pool = self.account_pool()?;
         let auto = account.is_none();
-        if auto && !pool.projects.iter().any(|p| p == project) {
-            return Err(bad("이 프로젝트는 host 공통 계정 풀에 참여하지 않는다"));
+        if auto && !self.pool_harness_enabled(&profile.harness)? {
+            return Ok(None);
         }
         if !auto && !pool.members.iter().any(|m| Some(m.account.as_str()) == account) {
             return Ok(None);
         }
-        let report = if auto { self.quota_report(true).await? } else { AccountQuotaReport::default() };
+        // 사용량 조회·RPC 잠금은 기동의 선행 조건이 아니다. 완료된 같은 인증 세대의 캐시만 읽는다.
+        let report = AccountQuotaReport {
+            accounts: if auto {
+                pool.members.iter().filter_map(|m| match self.cached_account_quota(&m.account, &profile.harness) {
+                Ok(q) => Some(q),
+                Err(e) => { tracing::debug!(account = %m.account, code = ?e.code, "배정용 사용량 캐시를 읽지 못했다: {}", e.message); None }
+            }).collect()
+            } else {
+                vec![]
+            },
+        };
         if auto {
             self.pool_reconcile(&report)?;
         }
         let mut input = SelectionInput {
             pool: pool.clone(),
-            project: project.into(),
             model: (!profile.model.is_empty()).then(|| profile.model.clone()),
             auto,
             size,
             candidates: vec![],
             excluded: vec![],
             required_account: None,
+            minimum: [None, None],
         };
         for member in pool.members {
             if !auto && Some(member.account.as_str()) != account {
@@ -249,19 +281,11 @@ impl Host {
             if credential.harness != profile.harness {
                 continue;
             }
-            if auto && !member.models.is_empty() && !member.models.contains(&profile.model) {
-                input.excluded.push(format!("{name}: 허용 모델이 아님"));
-                continue;
-            }
             if auto && crate::account_meta::health(&self.account_meta(&name), util::now_ms()).broken() {
                 input.excluded.push(format!("{name}: 인증 끊김"));
                 continue;
             }
             let generation = credential.auth_generation.ok_or_else(|| bad("계정 인증 세대를 확인하지 못했다"))?;
-            if auto && self.quota_generation(&name).await.as_deref() != Some(&generation) {
-                input.excluded.push(format!("{name}: 인증 세대 변경 · 새 관측 대기"));
-                continue;
-            }
             input.candidates.push(Candidate {
                 member,
                 generation,
@@ -287,7 +311,13 @@ impl Host {
                     if !matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) {
                         continue;
                     }
-                    let generation = self.accounts.generation(&member.account)?;
+                    let generation = match self.accounts.generation(&member.account) {
+                        Ok(generation) => generation,
+                        Err(e) => {
+                            tracing::warn!(account = %member.account, code = ?e.code, "기존 배정의 인증을 읽지 못해 해당 계정을 건너뛴다: {}", e.message);
+                            continue;
+                        }
+                    };
                     Allocation {
                         reserve_percent: None,
                         generation,
@@ -367,9 +397,6 @@ impl Host {
             return Err(bad("시작 ID는 영문·숫자·-·_ 64자 이하다"));
         }
         self.check_active(&args.project)?;
-        if !self.pool_project_enabled(&args.project)? {
-            return Err(bad("이 프로젝트는 host 공통 계정 풀에 참여하지 않는다"));
-        }
         if args.profile.is_empty() {
             args.profile = self.default_thread_profile(&args.project);
         }
@@ -414,6 +441,7 @@ impl Host {
     }
 
     async fn pool_run(self: &Arc<Self>, project: &str, id: &str, background: bool) -> Result<FrontResponse, ErrorBody> {
+        let _account_read = self.account_rename_gate.read().await;
         let _guard = match self.claim_thread(project, &format!("account-{id}")) {
             Ok(g) => g,
             Err(_) => return Ok(FrontResponse::AccountStart { start: self.pool_job(project, id)?.view }),
@@ -561,15 +589,13 @@ pub(crate) fn fresh_windows<'a>(
     }
     if windows.iter().any(|w| {
         w.problem.is_some()
+            || w.conflict
             || w.freshness != QuotaFreshness::Fresh
             || aaa_common::quota::freshness(&w.window, now) != QuotaFreshness::Fresh
             || w.window.resets_at_ms.is_none()
             || w.window.duration_mins.is_none()
     }) {
         return Err("오래된 관측·리셋 뒤 미확인·창 정보 부족");
-    }
-    if ![300, 10080].iter().all(|d| windows.iter().any(|w| w.window.duration_mins == Some(*d))) {
-        return Err("필수 5시간·주간 관측 누락");
     }
     Ok(windows)
 }
@@ -591,9 +617,6 @@ impl SelectionInput {
         let current =
             decode_pool(tx.query_row("SELECT value FROM meta WHERE key=?1", [CONFIG], |r| r.get(0)).optional()?)?;
         anyhow::ensure!(current.revision == self.pool.revision, "start_wait: 계정 풀 설정 변경 · 다시 판정 대기");
-        if self.auto {
-            anyhow::ensure!(current.projects.contains(&self.project), "start_wait: 프로젝트의 풀 참여가 꺼짐");
-        }
         let mut st = tx.prepare("SELECT data FROM threads")?;
         let records = st
             .query_map([], |r| r.get::<_, String>(0))?
@@ -603,45 +626,50 @@ impl SelectionInput {
             .collect::<serde_json::Result<Vec<_>>>()?;
         let mut rejected = self.excluded.clone();
         let images = crate::image::pool_reservations(tx)?;
-        let mut known = Vec::new();
-        let mut unknown = Vec::new();
+        let mut candidates = Vec::new();
         for c in &self.candidates {
             if self.required_account.as_ref().is_some_and(|a| a != &c.member.account) {
                 continue;
             }
-            let mine: Vec<_> = records
+            if !self.auto {
+                return Ok(self.allocate(c, false, now, percent, "명시한 계정"));
+            }
+            let quota = c.quota.as_ref();
+            if quota.is_some_and(|q| matches!(q.problem, Some(QuotaProblem::Expired | QuotaProblem::Locked))) {
+                rejected.push(format!("{}: 인증 끊김", c.member.account));
+                continue;
+            }
+            if quota.is_some_and(|q| known_limit(q, self.model.as_deref(), now)) {
+                rejected.push(format!("{}: 사용 한도 도달", c.member.account));
+                continue;
+            }
+            if quota.is_some_and(|q| below_usage_threshold(q, self.minimum, now)) {
+                rejected.push(format!("{}: 자동화 사용량 문턱", c.member.account));
+                continue;
+            }
+            // 옛 그룹·예상 %는 작업 이력으로만 남긴다. 종료된 작업의 관측 지연은 새 시작을 막지 않는다.
+            let active = records
                 .iter()
                 .filter(|r| {
-                    if let Some(a) = &r.account_allocation {
-                        !a.released
-                            && (a.selection.group == c.member.group
-                                || r.account.as_ref().is_some_and(|account| {
-                                    self.pool.members.iter().any(|m| &m.account == account && m.group == c.member.group)
-                                }))
-                    } else {
-                        r.account.as_ref().is_some_and(|account| {
-                            self.pool.members.iter().any(|m| &m.account == account && m.group == c.member.group)
-                        }) && matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting)
-                    }
+                    r.account.as_deref() == Some(&c.member.account)
+                        && (matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting)
+                            || (r.status == ThreadStatus::Failed
+                                && r.launch_sent
+                                && r.account_allocation
+                                    .as_ref()
+                                    .is_some_and(|a| !a.released && a.ended_at_ms.is_none())))
                 })
-                .collect();
-            let image_mine: Vec<_> = images
-                .iter()
-                .filter(|r| {
-                    !r.allocation.released
-                        && (r.allocation.selection.group == c.member.group
-                            || self.pool.members.iter().any(|m| m.account == r.account && m.group == c.member.group))
-                })
-                .collect();
-            let reserved: f64 = mine
-                .iter()
-                .map(|r| f64::from(r.account_allocation.as_ref().map_or(15, Allocation::percent)))
-                .sum::<f64>()
-                + image_mine.iter().map(|r| f64::from(r.allocation.percent())).sum::<f64>();
+                .count()
+                + images
+                    .iter()
+                    .filter(|r| {
+                        r.account == c.member.account && !r.allocation.released && r.allocation.ended_at_ms.is_none()
+                    })
+                    .count();
             let last = records
                 .iter()
                 .filter(|r| r.account.as_deref() == Some(&c.member.account))
-                .filter_map(|r| r.account_allocation.as_ref().map(|a| a.selection.selected_at_ms))
+                .map(|r| r.account_allocation.as_ref().map_or(r.created_at_ms, |a| a.selection.selected_at_ms))
                 .chain(
                     images
                         .iter()
@@ -650,89 +678,20 @@ impl SelectionInput {
                 )
                 .max()
                 .unwrap_or(0);
-            if !self.auto {
-                return Ok(self.allocate(c, false, now, percent, "명시한 계정 · 공유 한도 예약"));
-            }
-            let quota = c.quota.as_ref();
-            if let Some(q) = quota {
-                match fresh_windows(q, self.model.as_deref(), now) {
-                    Ok(mut windows) => {
-                        // 같은 한도라고 연결한 다른 별칭의 숫자도 제약이다. 별칭을 늘려 용량을 더하지 않는다.
-                        for other in &self.candidates {
-                            if other.member.account != c.member.account
-                                && other.member.group == c.member.group
-                                && let Some(q) = &other.quota
-                                && let Ok(shared) = fresh_windows(q, self.model.as_deref(), now)
-                            {
-                                windows.extend(shared);
-                            }
-                        }
-                        let headroom = windows
-                            .iter()
-                            .map(|w| 100.0 - w.window.used_percent - reserved - 10.0 - f64::from(percent))
-                            .fold(f64::INFINITY, f64::min);
-                        if headroom >= 0.0 {
-                            let reset = windows.iter().filter_map(|w| w.window.resets_at_ms).min().unwrap_or(u64::MAX);
-                            known.push((c, headroom, reset, mine.len() + image_mine.len(), last));
-                        } else {
-                            rejected.push(format!("{}: 예약·안전 여유를 빼면 잔량 부족", c.member.account));
-                        }
-                        continue;
-                    }
-                    Err(reason) if !q.windows.is_empty() || q.problem != Some(QuotaProblem::Unknown) => {
-                        rejected.push(format!("{}: {reason}", c.member.account));
-                        continue;
-                    }
-                    Err(_) => {}
-                }
-            }
-            // 미관측은 한 번의 첫 실행만 허용한다. 공유 그룹의 알려진 제한을 우회하지 않는다.
-            let bootstrapped = records.iter().any(|r| {
-                r.account.as_deref() == Some(&c.member.account)
-                    && r.account_allocation
-                        .as_ref()
-                        .is_some_and(|a| a.generation == c.generation && a.selection.unobserved)
-                    && (r.launch_sent || r.status != ThreadStatus::Failed)
-            });
-            let bootstrapped = bootstrapped
-                || images.iter().any(|r| {
-                    r.account == c.member.account
-                        && r.allocation.generation == c.generation
-                        && r.allocation.selection.unobserved
-                        && r.launched
-                });
-            let observed_group = self.candidates.iter().any(|other| {
-                other.member.group == c.member.group
-                    && other
-                        .quota
-                        .as_ref()
-                        .is_some_and(|q| !q.windows.is_empty() || q.problem != Some(QuotaProblem::Unknown))
-            });
-            if bootstrapped || !mine.is_empty() || !image_mine.is_empty() || observed_group {
-                rejected.push(format!("{}: 첫 실행 관측 대기·공유 한도 미확인", c.member.account));
+            let unobserved = quota.is_none_or(|q| fresh_windows(q, self.model.as_deref(), now).is_err());
+            candidates.push((c, active, last, unobserved));
+        }
+        candidates.sort_by(|a, b| (a.1, a.2, &a.0.member.account).cmp(&(b.1, b.2, &b.0.member.account)));
+        if let Some((c, active, _, unobserved)) = candidates.first() {
+            let reason = if *unobserved {
+                "사용량 판단 불가 · 그대로 시작"
             } else {
-                unknown.push((c, last));
-            }
-        }
-        if !known.is_empty() {
-            let best = known.iter().map(|v| v.1).fold(f64::NEG_INFINITY, f64::max);
-            known.retain(|v| v.1 >= best - 5.0);
-            known.sort_by(|a, b| (a.2, a.3, a.4, &a.0.member.account).cmp(&(b.2, b.3, b.4, &b.0.member.account)));
-            let (candidate, headroom, _, _, _) = known[0];
-            return Ok(self.allocate(
-                candidate,
-                false,
-                now,
-                percent,
-                &format!("최신 잔량 · 예약·안전 여유 뒤 최소 {headroom:.1}%p"),
-            ));
-        }
-        unknown.sort_by(|a, b| (a.1, &a.0.member.account).cmp(&(b.1, &b.0.member.account)));
-        if let Some((c, _)) = unknown.first() {
-            return Ok(self.allocate(c, true, now, percent, "사용량 미관측 · 자동 첫 실행"));
+                "진행 중 작업·최근 배정 순서"
+            };
+            return Ok(self.allocate(c, *unobserved, now, percent, &format!("{reason} · 진행 중 {active}개")));
         }
         if rejected.is_empty() {
-            rejected.push("이 harness·모델에 허용한 계정이 없음".into());
+            rejected.push("이 harness에서 사용할 수 있는 자동 배정 계정이 없음".into());
         }
         anyhow::bail!("start_wait: 계정 배정 대기 · {}", rejected.join("; "))
     }
@@ -747,7 +706,7 @@ impl SelectionInput {
                 released: false,
                 selection: AccountSelection {
                     size: self.size,
-                    group: c.member.group.clone(),
+                    group: c.member.account.clone(),
                     unobserved,
                     reason: reason.into(),
                     selected_at_ms: now,
@@ -755,4 +714,41 @@ impl SelectionInput {
             },
         )
     }
+}
+
+/// 확실하게 관측한 현재 한도만 제외한다. 일부 창이 없어도 알려진 고갈은 존중한다.
+fn known_limit(q: &AccountQuota, model: Option<&str>, now: u64) -> bool {
+    if q.problem == Some(QuotaProblem::RateLimited) && q.retry_at_ms.is_some_and(|t| t > now) {
+        return true;
+    }
+    q.problem.is_none()
+        && q.windows.iter().any(|w| {
+            w.window.scope.as_deref().is_none_or(|s| model == Some(s))
+                && w.problem.is_none()
+                && !w.conflict
+                && w.freshness == QuotaFreshness::Fresh
+                && aaa_common::quota::freshness(&w.window, now) == QuotaFreshness::Fresh
+                && w.window.resets_at_ms.is_some_and(|t| t > now)
+                && w.window.used_percent >= 100.0
+        })
+}
+
+/// 자동화에 정한 잔량 문턱은 실제 들어온 최신 공용 창에만 적용한다.
+pub(crate) fn below_usage_threshold(q: &AccountQuota, minimum: [Option<f64>; 2], now: u64) -> bool {
+    q.problem.is_none()
+        && q.windows.iter().any(|w| {
+            let threshold = match w.window.duration_mins {
+                Some(300) => minimum[0],
+                Some(10080) => minimum[1],
+                _ => None,
+            };
+            threshold.is_some_and(|threshold| {
+                w.window.scope.is_none()
+                    && w.problem.is_none()
+                    && !w.conflict
+                    && w.freshness == QuotaFreshness::Fresh
+                    && aaa_common::quota::freshness(&w.window, now) == QuotaFreshness::Fresh
+                    && 100.0 - w.window.used_percent < threshold
+            })
+        })
 }

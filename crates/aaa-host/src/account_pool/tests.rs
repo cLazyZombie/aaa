@@ -28,7 +28,7 @@ impl Lab {
     fn configure(&self, candidates: &[Candidate]) -> AccountPoolView {
         let pool = AccountPoolView {
             revision: "revision-a".into(),
-            projects: vec!["demo".into()],
+            projects: vec![],
             members: candidates.iter().map(|c| c.member.clone()).collect(),
         };
         self.h.db.set_meta(CONFIG, &serde_json::to_string(&pool).unwrap()).unwrap();
@@ -93,13 +93,13 @@ fn unknown(name: &str) -> Candidate {
 fn input(lab: &Lab, candidates: Vec<Candidate>) -> SelectionInput {
     SelectionInput {
         pool: lab.configure(&candidates),
-        project: "demo".into(),
         model: Some("model-a".into()),
         auto: true,
         size: AccountTaskSize::Medium,
         candidates,
         excluded: vec![],
         required_account: None,
+        minimum: [None, None],
     }
 }
 
@@ -132,109 +132,303 @@ fn image_job(account: String, allocation: Allocation, id: &str) -> crate::image:
     }
 }
 
-// 잔량 51%에서 새 관측 없이 4~8장을 연속 요청하는 실제 사용 경계다.
+fn choose(lab: &Lab, input: &SelectionInput) -> anyhow::Result<(String, Allocation)> {
+    input.select(&lab.h.db.conn_for_pool_test(), NOW)
+}
+
+// 필요: 관측 수집과 무관하게 시작한다는 사용자 계약과 알려진 한도의 경계를 지킨다.
 #[test]
-fn image_burst_at_fifty_one_percent_preserves_the_shared_budget() {
-    for count in [4, 8] {
+fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_first_run() {
+    for mode in [
+        "unknown",
+        "missing",
+        "stale",
+        "failed",
+        "reset",
+        "partial",
+        "nan",
+        "clock",
+        "no-reset",
+        "conflict",
+        "rate-unknown",
+    ] {
         let l = Lab::new();
-        let selected = input(&l, vec![candidate("work", 0.0, 49.0)]);
-        for _ in 0..count {
-            claim_image(&l, &selected).unwrap();
+        let mut c = candidate("work", 20.0, 20.0);
+        if mode == "missing" {
+            c.quota = None;
         }
-        assert_eq!(
-            choose(&l, &selected).is_ok(),
-            count == 4,
-            "4장 뒤 medium 배정 가능, 8장 예약이 모두 남으면 medium은 대기"
-        );
-        assert!(
-            l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_ok()
-                == (count == 4),
-            "관측 전 8장 40 + 안전 여유 10 뒤 9번째는 대기"
-        );
+        if let Some(q) = &mut c.quota {
+            match mode {
+                "unknown" => {
+                    q.windows.clear();
+                    q.problem = Some(QuotaProblem::Unknown);
+                }
+                "stale" => q.windows[0].window.observed_at_ms = NOW - 120001,
+                "failed" => q.problem = Some(QuotaProblem::Failed),
+                "reset" => q.windows[0].window.resets_at_ms = Some(NOW),
+                "partial" => {
+                    q.windows.remove(0);
+                    q.windows[0].window.used_percent = 10.0;
+                }
+                "nan" => q.windows[0].window.used_percent = f64::NAN,
+                "clock" => q.windows[0].window.observed_at_ms = NOW + 30001,
+                "no-reset" => q.windows[0].window.resets_at_ms = None,
+                "conflict" => q.windows[0].conflict = true,
+                "rate-unknown" => q.problem = Some(QuotaProblem::RateLimited),
+                _ => {}
+            }
+        }
+        let p = input(&l, vec![c]);
+        let (name, allocation) = choose(&l, &p).unwrap();
+        assert_eq!(allocation.selection.unobserved, mode != "partial", "{mode}: 들어온 주간 창만으로 판단한다");
+        if mode != "partial" {
+            assert!(allocation.selection.reason.contains("판단"));
+        }
+        let id = l.seed(&name, allocation, ThreadStatus::Starting, true);
+        assert_eq!(choose(&l, &p).unwrap().0, "work", "{mode}: 두 번째도 시작한다");
+        l.h.update_rec("demo", &id, |r| r.status = ThreadStatus::Resolved).unwrap();
+        assert!(choose(&l, &p).is_ok(), "{mode}: 종료 뒤 관측이 없어도 시작한다");
     }
-    let l = Lab::new();
-    let selected = input(&l, vec![candidate("work", 0.0, 49.0)]);
-    let (account, allocation) = choose(&l, &selected).unwrap();
-    l.seed(&account, allocation, ThreadStatus::Open, true);
-    for _ in 0..5 {
-        claim_image(&l, &selected).unwrap();
-    }
-    assert!(claim_image(&l, &selected).is_err(), "medium 15 + 이미지 5건 25 + 여유 10, 6번째 대기");
-
-    let l = Lab::new();
-    let selected = input(&l, vec![candidate("work", 86.0, 49.0)]);
-    assert!(claim_image(&l, &selected).is_err(), "주간 51이어도 5시간 잔량 14면 대기");
-}
-
-fn claim_image(l: &Lab, selected: &SelectionInput) -> anyhow::Result<()> {
-    l.h.db.image_transaction(|tx| {
-        let (account, allocation) = selected.select_with_percent(tx, NOW, crate::image::RESERVE)?;
-        assert_eq!(allocation.percent(), 5);
-        let id = util::new_id();
-        let mut job = image_job(account, allocation, &id);
-        job.view.state = ImageState::Succeeded;
-        job.allocation.as_mut().unwrap().ended_at_ms = Some(NOW);
-        tx.execute(
-            "INSERT INTO meta(key,value) VALUES(?1,?2)",
-            [format!("image-job:{id}"), serde_json::to_string(&job)?],
-        )?;
-        Ok(())
-    })
 }
 
 #[test]
-fn image_and_thread_reservations_share_the_same_budget_and_unknown_first_run() {
+fn only_confirmed_limits_and_broken_auth_exclude_an_account() {
     let l = Lab::new();
-    let selected = input(&l, vec![candidate("work", 70.0, 70.0)]);
-    let id = util::new_id();
-    l.h.db
-        .image_transaction(|tx| {
-            let (account, allocation) = selected.select_with_percent(tx, NOW, crate::image::RESERVE)?;
-            assert_eq!(allocation.percent(), AccountTaskSize::Small.percent());
-            tx.execute(
-                "INSERT INTO meta(key,value) VALUES(?1,?2)",
-                [format!("image-job:{id}"), serde_json::to_string(&image_job(account, allocation, &id))?],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-    let (account, allocation) = choose(&l, &selected).unwrap();
-    l.seed(&account, allocation, ThreadStatus::Open, true);
-    assert!(choose(&l, &selected).is_err(), "사용 70 + 이미지 5 + thread 15 + 여유 10 뒤 추가 배정 금지");
-    assert!(l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err());
-    let mut shared = candidate("alias", 70.0, 70.0);
-    shared.member.group = "work".into();
-    let mut selected = input(&l, vec![candidate("work", 70.0, 70.0), shared]);
-    selected.only("alias");
-    assert!(choose(&l, &selected).is_err(), "다른 별칭도 같은 이미지 예약을 센다");
+    let mut full = candidate("full", 100.0, 20.0);
+    full.quota.as_mut().unwrap().windows.pop(); // 필수 창 누락으로 알려진 고갈을 지우지 않는다.
+    let mut p = input(&l, vec![full, candidate("almost", 99.0, 99.0)]);
+    assert_eq!(choose(&l, &p).unwrap().0, "almost", "예상 %와 안전 여유로 차단하지 않는다");
+    p.candidates[1].quota.as_mut().unwrap().windows[0].window.used_percent = 100.0;
+    assert!(choose(&l, &p).unwrap_err().to_string().contains("사용 한도 도달"));
+    p.candidates[0].quota.as_mut().unwrap().windows[0].window.scope = Some("other-model".into());
+    assert_eq!(choose(&l, &p).unwrap().0, "full");
+    p.candidates[0].quota.as_mut().unwrap().windows[0].window.scope = None;
+    p.candidates[0].quota.as_mut().unwrap().windows[0].window.observed_at_ms = NOW - 120001;
+    assert_eq!(choose(&l, &p).unwrap().0, "full", "오래된 100%는 현재 한도로 단정하지 않는다");
+    for problem in [QuotaProblem::Expired, QuotaProblem::Locked, QuotaProblem::RateLimited] {
+        let mut c = unknown("broken");
+        let q = c.quota.as_mut().unwrap();
+        q.problem = Some(problem);
+        q.retry_at_ms = Some(NOW + 1000);
+        let p = input(&l, vec![c]);
+        assert!(choose(&l, &p).is_err(), "{problem:?}");
+    }
+}
 
-    let u = Lab::new();
-    let selected = input(&u, vec![unknown("work")]);
-    let (account, allocation) =
-        u.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).unwrap();
-    assert!(allocation.selection.unobserved);
-    let mut j = image_job(account, allocation, &util::new_id());
-    j.view.state = ImageState::Unknown;
-    u.h.image_save(&j).unwrap();
-    assert!(choose(&u, &selected).is_err(), "불명 이미지 뒤 미관측 첫 실행 중복 금지");
+#[test]
+fn active_jobs_then_recent_assignment_balance_accounts_without_legacy_groups_or_models() {
+    let l = Lab::new();
+    let mut a = unknown("a");
+    a.member.group = "shared".into();
+    a.member.models = vec!["unused".into()];
+    let mut b = candidate("b", 99.0, 99.0);
+    b.member.group = "shared".into();
+    let p = input(&l, vec![b, a]);
+    let (name, mut allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "a", "미관측과 작은 잔량도 같은 차례로 분산한다");
+    allocation.selection.selected_at_ms = NOW - 20;
+    let a = l.seed(&name, allocation, ThreadStatus::Open, true);
+    let (name, mut allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "b");
+    allocation.selection.selected_at_ms = NOW - 10;
+    let b = l.seed(&name, allocation, ThreadStatus::Open, true);
+    assert_eq!(choose(&l, &p).unwrap().0, "a", "작업 수가 같으면 오래전에 배정한 계정");
+    l.h.update_rec("demo", &b, |r| r.status = ThreadStatus::Resolved).unwrap();
+    assert_eq!(choose(&l, &p).unwrap().0, "b", "종료 후 관측 지연은 진행 중 작업이 아니다");
+    let (name, allocation) = choose(&l, &p).unwrap();
+    let id = util::new_id();
+    l.h.image_save(&image_job(name, allocation, &id)).unwrap();
+    assert_eq!(choose(&l, &p).unwrap().0, "a", "진행 중 이미지는 같은 계정 작업 수에 포함한다");
+    l.h.update_rec("demo", &a, |r| r.account_allocation.as_mut().unwrap().released = true).unwrap();
+    assert_eq!(choose(&l, &p).unwrap().0, "a", "예약 해제 여부와 실제 진행 상태는 다르다");
+}
+
+#[test]
+fn concurrent_selection_and_receipts_are_atomic_across_projects() {
+    let l = Lab::new();
+    let p = Arc::new(input(&l, vec![unknown("a"), unknown("b")]));
+    let gate = Arc::new(Barrier::new(8));
+    let jobs: Vec<_> = (0..8)
+        .map(|n| {
+            let h = l.h.clone();
+            let gate = gate.clone();
+            let p = p.clone();
+            std::thread::spawn(move || {
+                gate.wait();
+                let project = if n % 2 == 0 { "demo" } else { "other" };
+                h.db.thread_insert_transaction(project, Some(&format!("once-{n}")), None, None, None, |tx, id| {
+                    let (name, allocation) = p.select(tx, NOW)?;
+                    let mut r = ThreadRec::starting(project, "job", "m", "claude", Role::Worker, ThreadKind::Dir, NOW);
+                    r.id = id.into();
+                    r.account = Some(name);
+                    r.account_allocation = Some(allocation);
+                    r.launch_sent = true;
+                    Ok(serde_json::to_string(&r)?)
+                })
+                .unwrap()
+            })
+        })
+        .collect();
+    for job in jobs {
+        job.join().unwrap();
+    }
+    let records: Vec<ThreadRec> =
+        l.h.db.threads(None).unwrap().iter().map(|s| serde_json::from_str(s).unwrap()).collect();
+    assert_eq!(records.len(), 8);
+    assert_eq!(records.iter().filter(|r| r.account.as_deref() == Some("a")).count(), 4);
+    assert!(
+        !l.h.db
+            .thread_insert_transaction("demo", Some("once-0"), None, None, None, |_, _| {
+                panic!("같은 영수증은 다시 선택하지 않는다")
+            })
+            .unwrap()
+            .1
+    );
+    assert_eq!(l.h.db.threads(None).unwrap().len(), 8);
 }
 
 #[tokio::test]
-async fn pinned_image_account_still_obeys_shared_alias_observations() {
+async fn pool_changes_require_human_control_compare_revisions_and_ignore_legacy_fields() {
     let l = Lab::new();
-    let work = candidate("work", 0.0, 0.0);
-    let mut alias = candidate("alias", 90.0, 90.0);
-    alias.member.group = "work".into();
-    let mut selected = input(&l, vec![work, alias]);
-    selected.only("work");
+    l.h.accounts.import("work", "claude", "fixture-pool-token-01234567890123456789").unwrap();
+    let request = FrontRequest::AccountPoolMember {
+        revision: l.h.account_pool().unwrap().revision,
+        account: "work".into(),
+        member: Some(AccountPoolMember {
+            account: "work".into(),
+            group: "shared".into(),
+            models: vec!["model-a".into()],
+        }),
+    };
+    for (role, actor) in [
+        (DeviceRole::Reader, "device:reader"),
+        (DeviceRole::Local, "local:cli@pane"),
+        (DeviceRole::Local, "worker:demo/t-0001"),
+        (DeviceRole::Local, "detached:cli"),
+    ] {
+        assert_eq!(l.h.call(role, actor, request.clone()).await.unwrap_err().code, ErrorCode::Forbidden);
+    }
+    l.h.call(DeviceRole::Controller, "device:control", request.clone()).await.unwrap();
+    assert_eq!(
+        l.h.call(DeviceRole::Controller, "device:control", request).await.unwrap_err().code,
+        ErrorCode::Conflict
+    );
+    let pool = l.h.account_pool().unwrap();
+    assert_eq!(pool.members[0].group, "work");
+    assert!(pool.members[0].models.is_empty());
+    assert!(pool.projects.is_empty());
     assert!(
-        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err(),
-        "명시 계정도 공유 별칭의 90% 사용을 무시하지 않는다"
+        l.h.pool_project_set(&pool.revision, "demo", true, "local:cli")
+            .unwrap_err()
+            .message
+            .contains("프로젝트 참여 설정은 없어졌다")
+    );
+    l.h.pool_forget("work").unwrap();
+    assert!(l.h.account_pool().unwrap().members.is_empty());
+}
+
+#[tokio::test]
+async fn host_uses_only_same_harness_and_never_waits_for_usage_refresh() {
+    let l = Lab::new();
+    l.h.register_account("one", "claude", "fixture-model-one-01234567890123456789").unwrap();
+    // 옛 실행의 인증 파일이 없어져도 다른 정상 계정의 시작을 막지 않는다.
+    let mut pool = l.h.account_pool().unwrap();
+    pool.members.push(AccountPoolMember { account: "missing".into(), group: "legacy".into(), models: vec![] });
+    l.h.db.set_meta(CONFIG, &serde_json::to_string(&pool).unwrap()).unwrap();
+    l.h.db
+        .thread_insert_next("demo", |id| {
+            let mut rec = ThreadRec::starting("demo", "옛 실행", "m", "claude", Role::Worker, ThreadKind::Dir, NOW);
+            rec.id = id.into();
+            rec.account = Some("missing".into());
+            rec.status = ThreadStatus::Open;
+            serde_json::to_string(&rec).unwrap()
+        })
+        .unwrap();
+
+    let profile = ResolvedProfile {
+        harness: "claude".into(),
+        model: "any-model".into(),
+        effort: "high".into(),
+        args: vec![],
+        command: vec![],
+        env: Default::default(),
+    };
+    let lock = l.h.account_quota.lock().await;
+    let prepared = l.h.account_selection_input("demo", &profile, None, AccountTaskSize::Medium);
+    tokio::pin!(prepared);
+    let std::task::Poll::Ready(result) = futures_util::poll!(&mut prepared) else {
+        panic!("관측 RPC 잠금을 기다리지 않는다");
+    };
+    let p = result.unwrap().unwrap();
+    assert_eq!(choose(&l, &p).unwrap().0, "one");
+    drop(lock);
+    l.h.pool_forget("missing").unwrap();
+    let profile = ResolvedProfile { harness: "codex".into(), ..profile.clone() };
+    assert!(
+        l.h.account_selection_input("demo", &profile, None, AccountTaskSize::Medium).await.unwrap().is_none(),
+        "다른 harness만 등록돼도 기본 시작으로 돌아간다"
+    );
+    let revision = l.h.account_pool().unwrap().revision;
+    l.h.pool_member_set(&revision, "one", None, "local:cli").unwrap();
+    l.h.register_account("one", "claude", "fixture-renewed-one-01234567890123456789").unwrap();
+    assert!(l.h.account_pool().unwrap().members.is_empty(), "다시 로그인은 사용 해제를 되돌리지 않는다");
+}
+
+#[test]
+fn migration_preserves_the_original_and_membership_without_rewriting_running_threads() {
+    let l = Lab::new();
+    let p = input(&l, vec![unknown("work")]);
+    let (name, allocation) = choose(&l, &p).unwrap();
+    let id = l.seed(&name, allocation, ThreadStatus::Open, true);
+    let before = l.h.load("demo", &id).unwrap();
+    let original = r#"{"revision":"legacy","members":[{"account":"work","group":"claude","models":["old-model"]}],"projects":["old-project"]}"#;
+    l.h.db.set_meta("account-pool-v1", original).unwrap();
+    l.h.db.conn_for_pool_test().execute("DELETE FROM meta WHERE key=?1", [CONFIG]).unwrap();
+    l.h.pool_migrate().unwrap();
+    let pool = l.h.account_pool().unwrap();
+    assert_eq!(pool.members[0].account, "work");
+    assert_eq!(pool.members[0].group, "work");
+    assert!(pool.members[0].models.is_empty());
+    assert!(pool.projects.is_empty());
+    assert_eq!(l.h.db.meta("account-pool-v1").unwrap().as_deref(), Some(original));
+    assert_eq!(serde_json::to_value(l.h.load("demo", &id).unwrap()).unwrap(), serde_json::to_value(before).unwrap());
+    l.h.pool_member_set(&pool.revision, "work", None, "local:cli").unwrap();
+    l.h.pool_migrate().unwrap();
+    assert!(l.h.account_pool().unwrap().members.is_empty(), "이전을 다시 실행해 사용 해제를 되돌리지 않는다");
+}
+#[test]
+fn ended_reservations_wait_for_observations_after_exit_and_survive_relogin() {
+    let l = Lab::new();
+    l.h.accounts.import("work", "claude", "fixture-end-canary-01234567890123456789").unwrap();
+    let mut p = input(&l, vec![candidate("work", 60.0, 60.0)]);
+    p.candidates[0].generation = l.h.accounts.generation("work").unwrap();
+    let (name, mut allocation) = choose(&l, &p).unwrap();
+    let now = util::now_ms();
+    allocation.ended_at_ms = Some(now - 1);
+    let id = l.seed(&name, allocation, ThreadStatus::Resolved, true);
+    let mut q = p.candidates[0].quota.clone().unwrap();
+    for w in &mut q.windows {
+        w.window.observed_at_ms = now - 2;
+        w.window.resets_at_ms = Some(now + 3_600_000);
+    }
+    l.h.pool_reconcile(&AccountQuotaReport { accounts: vec![q.clone()] }).unwrap();
+    assert!(
+        !l.h.load("demo", &id).unwrap().account_allocation.unwrap().released,
+        "종료 전 관측은 예약을 대체하지 않는다"
+    );
+    l.h.accounts.import("work", "claude", "fixture-end-renewed-01234567890123456789").unwrap();
+    for w in &mut q.windows {
+        w.window.observed_at_ms = now;
+    }
+    l.h.pool_reconcile(&AccountQuotaReport { accounts: vec![q] }).unwrap();
+    assert!(
+        l.h.load("demo", &id).unwrap().account_allocation.unwrap().released,
+        "끝난 실행의 예약은 다시 로그인 뒤에도 종료 이후의 관측으로 교체한다"
     );
 }
 
 #[test]
-fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_budget() {
+fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_history() {
     let l = Lab::new();
     let selected = input(&l, vec![candidate("work", 85.0, 85.0)]);
     let (account, allocation) =
@@ -267,13 +461,13 @@ fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_budget() {
     assert_eq!(read(&id).view.state, ImageState::Unknown);
     // 잔량 15%p에서 불명 이미지 5%p와 안전 여유 10%p를 유지한다.
     assert!(
-        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_err(),
-        "불명 실행의 예약이 재시작 뒤에도 남는다"
+        l.h.db.image_transaction(|tx| selected.select_with_percent(tx, NOW, crate::image::RESERVE)).is_ok(),
+        "불명 실행 이력은 보존하되 예상 소비량으로 새 시작을 막지 않는다"
     );
 }
 
 #[test]
-fn concurrent_image_claims_reserve_once_and_end_only_after_new_observations() {
+fn concurrent_image_claims_keep_distinct_history_and_end_after_new_observations() {
     let l = Lab::new();
     let selected = input(&l, vec![candidate("work", 85.0, 85.0)]);
     let barrier = Barrier::new(2);
@@ -297,7 +491,7 @@ fn concurrent_image_claims_reserve_once_and_end_only_after_new_observations() {
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
     });
-    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 2);
     let id = results.into_iter().find_map(Result::ok).unwrap();
     let mut job: crate::image::Job =
         serde_json::from_str(&l.h.db.meta(&format!("image-job:{id}")).unwrap().unwrap()).unwrap();
@@ -322,288 +516,6 @@ fn concurrent_image_claims_reserve_once_and_end_only_after_new_observations() {
     }
     l.h.image_reconcile(&report).unwrap();
     assert!(read().allocation.unwrap().released);
-}
-fn choose(lab: &Lab, input: &SelectionInput) -> anyhow::Result<(String, Allocation)> {
-    input.select(&lab.h.db.conn_for_pool_test(), NOW)
-}
-
-#[test]
-fn bottleneck_reservations_ties_and_model_windows_choose_explainable_accounts() {
-    let l = Lab::new();
-    let p = input(&l, vec![candidate("a", 30.0, 60.0), candidate("b", 50.0, 40.0)]);
-    let (account, allocation) = choose(&l, &p).unwrap();
-    assert_eq!(account, "b");
-    assert!(!allocation.selection.unobserved);
-    l.seed(&account, allocation, ThreadStatus::Open, true);
-    assert_eq!(choose(&l, &p).unwrap().0, "a", "예약을 가장 작은 여유 창에서도 뺀다");
-    let mut p = input(&l, vec![candidate("b", 50.0, 50.0), candidate("a", 50.0, 50.0)]);
-    // 다른 모델 전용 숫자를 더 큰 공용 잔량으로 합치지 않는다.
-    for w in &mut p.candidates[1].quota.as_mut().unwrap().windows {
-        w.window.scope = Some("other-model".into());
-    }
-    assert_eq!(choose(&l, &p).unwrap().0, "b");
-}
-
-#[test]
-fn fresh_candidates_precede_blind_first_runs_and_first_runs_are_not_repeated() {
-    let l = Lab::new();
-    let mut p = input(&l, vec![unknown("cold"), candidate("known", 20.0, 30.0)]);
-    assert_eq!(choose(&l, &p).unwrap().0, "known");
-    for w in &mut p.candidates[1].quota.as_mut().unwrap().windows {
-        w.window.used_percent = 99.0;
-    }
-    let (name, allocation) = choose(&l, &p).unwrap();
-    assert_eq!(name, "cold");
-    assert!(allocation.selection.unobserved);
-    let id = l.seed(&name, allocation, ThreadStatus::Starting, true);
-    assert!(choose(&l, &p).unwrap_err().to_string().contains("첫 실행 관측 대기"));
-    // host 재시작처럼 cache가 없어도 영속 실행 기록으로 첫 실행을 중복하지 않는다.
-    let stored = l.h.load("demo", &id).unwrap();
-    assert!(stored.account_allocation.unwrap().selection.unobserved);
-    l.h.update_rec("demo", &id, |r| r.status = ThreadStatus::Resolved).unwrap();
-    assert!(choose(&l, &p).is_err(), "관측 없는 첫 실행을 종료로 되풀이하지 않는다");
-}
-
-#[test]
-fn stale_failed_reset_missing_and_invalid_readings_do_not_become_blind_capacity() {
-    for mode in ["stale", "failed", "reset", "partial", "nan", "clock", "no-reset"] {
-        let l = Lab::new();
-        let mut c = candidate("work", 20.0, 20.0);
-        let q = c.quota.as_mut().unwrap();
-        match mode {
-            "stale" => q.windows[0].window.observed_at_ms = NOW - 120001,
-            "failed" => q.problem = Some(QuotaProblem::Failed),
-            "reset" => q.windows[0].window.resets_at_ms = Some(NOW),
-            "partial" => {
-                q.windows.pop();
-            }
-            "nan" => q.windows[0].window.used_percent = f64::NAN,
-            "clock" => q.windows[0].window.observed_at_ms = NOW + 30001,
-            "no-reset" => q.windows[0].window.resets_at_ms = None,
-            _ => unreachable!(),
-        }
-        let p = input(&l, vec![c]);
-        assert!(choose(&l, &p).is_err(), "{mode}");
-    }
-    let l = Lab::new();
-    let mut c = unknown("work");
-    c.quota.as_mut().unwrap().problem = Some(QuotaProblem::RateLimited);
-    let p = input(&l, vec![c]);
-    assert!(choose(&l, &p).is_err());
-}
-
-#[test]
-fn shared_groups_cannot_bootstrap_around_observed_limits() {
-    let l = Lab::new();
-    let mut cold = unknown("cold");
-    cold.member.group = "shared".into();
-    let mut full = candidate("full", 95.0, 20.0);
-    full.member.group = "shared".into();
-    let p = input(&l, vec![cold, full]);
-    assert!(choose(&l, &p).is_err());
-    let mut loose = candidate("loose", 10.0, 10.0);
-    loose.member.group = "shared".into();
-    let mut tight = candidate("tight", 95.0, 20.0);
-    tight.member.group = "shared".into();
-    let p = input(&l, vec![loose, tight]);
-    assert!(choose(&l, &p).is_err(), "같은 그룹의 다른 별칭 숫자도 제약");
-}
-
-#[test]
-fn concurrent_shared_budget_and_receipt_are_atomic_across_projects() {
-    // 지금 host는 프로젝트 하나만 연다. 옛 프로젝트의 DB 기록도 잔량 셈에서 빠지면 안 된다.
-    let l = Lab::new();
-    let mut a = candidate("a", 50.0, 50.0);
-    a.member.group = "shared".into();
-    let mut b = candidate("b", 50.0, 50.0);
-    b.member.group = "shared".into();
-    let mut p = input(&l, vec![a, b]);
-    p.pool.projects.push("other".into());
-    l.h.db.set_meta(CONFIG, &serde_json::to_string(&p.pool).unwrap()).unwrap();
-    let p = Arc::new(p);
-    let gate = Arc::new(Barrier::new(4));
-    let jobs: Vec<_> = (0..4)
-        .map(|n| {
-            let h = l.h.clone();
-            let gate = gate.clone();
-            let p = p.clone();
-            std::thread::spawn(move || {
-                gate.wait();
-                let project = if n % 2 == 0 { "demo" } else { "other" };
-                h.db.thread_insert_transaction(project, Some(&format!("once-{n}")), None, None, None, |tx, id| {
-                    let (name, allocation) = p.select(tx, NOW)?;
-                    let mut r = ThreadRec::starting(project, "job", "m", "claude", Role::Worker, ThreadKind::Dir, NOW);
-                    r.id = id.into();
-                    r.account = Some(name);
-                    r.account_allocation = Some(allocation);
-                    r.launch_sent = true;
-                    Ok(serde_json::to_string(&r)?)
-                })
-            })
-        })
-        .collect();
-    let results: Vec<_> = jobs.into_iter().map(|j| j.join().unwrap()).collect();
-    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 2, "공유 잔량 50 - 안전 여유10에 예약15 두 개만 허용");
-    assert_eq!(l.h.db.threads(None).unwrap().len(), 2);
-    let (n, _) = results.iter().enumerate().find(|(_, r)| r.is_ok()).unwrap();
-    let key = format!("once-{n}");
-    let project = if n % 2 == 0 { "demo" } else { "other" };
-    let replay =
-        l.h.db
-            .thread_insert_transaction(project, Some(&key), None, None, None, |_, _| {
-                panic!("같은 영수증에서 재선택하면 안 됨")
-            })
-            .unwrap();
-    assert!(!replay.1);
-    assert_eq!(l.h.db.threads(None).unwrap().len(), 2);
-}
-
-#[test]
-fn definite_preparation_failure_releases_but_unknown_spawn_keeps_budget() {
-    let l = Lab::new();
-    let p = input(&l, vec![candidate("a", 60.0, 60.0)]);
-    let (name, a) = choose(&l, &p).unwrap();
-    let id = l.seed(&name, a.clone(), ThreadStatus::Failed, false);
-    assert!(choose(&l, &p).is_ok(), "headroom 0 경계의 두 번째 예약은 허용한다");
-    let other = l.seed(&name, a, ThreadStatus::Failed, false);
-    assert!(choose(&l, &p).is_err());
-    l.h.pool_reconcile(&AccountQuotaReport::default()).unwrap();
-    assert!(choose(&l, &p).is_ok(), "spawn 전 실패는 즉시 해제");
-    for id in [id, other] {
-        l.h.update_rec("demo", &id, |r| {
-            r.status = ThreadStatus::Starting;
-            r.launch_sent = true;
-            r.account_allocation.as_mut().unwrap().released = false;
-        })
-        .unwrap();
-    }
-    l.h.pool_reconcile(&AccountQuotaReport::default()).unwrap();
-    assert!(choose(&l, &p).is_err(), "응답 유실은 해제하지 않음");
-}
-
-#[tokio::test]
-async fn pool_changes_require_human_control_and_compare_revisions() {
-    let l = Lab::new();
-    l.h.accounts.import("work", "claude", "fixture-pool-token-01234567890123456789").unwrap();
-    let request = FrontRequest::AccountPoolMember {
-        revision: "".into(),
-        account: "work".into(),
-        member: Some(AccountPoolMember {
-            account: "work".into(),
-            group: "shared".into(),
-            models: vec!["model-a".into()],
-        }),
-    };
-    for (role, actor) in [
-        (DeviceRole::Reader, "device:reader"),
-        (DeviceRole::Local, "local:cli@pane"),
-        (DeviceRole::Local, "worker:demo/t-0001"),
-        (DeviceRole::Local, "detached:cli"),
-    ] {
-        assert_eq!(l.h.call(role, actor, request.clone()).await.unwrap_err().code, ErrorCode::Forbidden);
-    }
-    l.h.call(DeviceRole::Controller, "device:control", request.clone()).await.unwrap();
-    assert_eq!(
-        l.h.call(DeviceRole::Controller, "device:control", request).await.unwrap_err().code,
-        ErrorCode::Conflict
-    );
-    let pool = l.h.account_pool().unwrap();
-    l.h.pool_project_set(&pool.revision, "demo", true, "local:cli").unwrap();
-    assert!(l.h.pool_project_enabled("demo").unwrap());
-    l.h.pool_forget("work").unwrap();
-    assert!(l.h.account_pool().unwrap().members.is_empty());
-}
-
-#[test]
-fn ended_reservations_wait_for_observations_after_exit_and_survive_relogin() {
-    let l = Lab::new();
-    l.h.accounts.import("work", "claude", "fixture-end-canary-01234567890123456789").unwrap();
-    let mut p = input(&l, vec![candidate("work", 60.0, 60.0)]);
-    p.candidates[0].generation = l.h.accounts.generation("work").unwrap();
-    let (name, mut allocation) = choose(&l, &p).unwrap();
-    let now = util::now_ms();
-    allocation.ended_at_ms = Some(now - 1);
-    let id = l.seed(&name, allocation, ThreadStatus::Resolved, true);
-    let mut q = p.candidates[0].quota.clone().unwrap();
-    for w in &mut q.windows {
-        w.window.observed_at_ms = now - 2;
-        w.window.resets_at_ms = Some(now + 3_600_000);
-    }
-    l.h.pool_reconcile(&AccountQuotaReport { accounts: vec![q.clone()] }).unwrap();
-    assert!(
-        !l.h.load("demo", &id).unwrap().account_allocation.unwrap().released,
-        "종료 전 관측은 예약을 대체하지 않는다"
-    );
-    l.h.accounts.import("work", "claude", "fixture-end-renewed-01234567890123456789").unwrap();
-    for w in &mut q.windows {
-        w.window.observed_at_ms = now;
-    }
-    l.h.pool_reconcile(&AccountQuotaReport { accounts: vec![q] }).unwrap();
-    assert!(
-        l.h.load("demo", &id).unwrap().account_allocation.unwrap().released,
-        "끝난 실행의 예약은 다시 로그인 뒤에도 종료 이후의 관측으로 교체한다"
-    );
-}
-
-#[tokio::test]
-async fn host_filters_permitted_models_before_allowing_an_unobserved_first_run() {
-    let l = Lab::new();
-    for name in ["one", "two"] {
-        l.h.accounts.import(name, "claude", &format!("fixture-model-{name}-01234567890123456789")).unwrap();
-    }
-    let mut one = unknown("one");
-    one.member.models = vec!["model-a".into()];
-    let mut two = unknown("two");
-    two.member.models = vec!["model-b".into()];
-    l.configure(&[one, two]);
-    let profile = ResolvedProfile {
-        harness: "claude".into(),
-        model: "model-a".into(),
-        effort: "high".into(),
-        args: vec![],
-        command: vec![],
-        env: Default::default(),
-    };
-    let prepared = l.h.account_selection_input("demo", &profile, None, AccountTaskSize::Medium).await.unwrap().unwrap();
-    assert_eq!(choose(&l, &prepared).unwrap().0, "one");
-    assert!(prepared.excluded.iter().any(|s| s.contains("two: 허용 모델")));
-}
-
-#[test]
-fn project_rename_and_delete_move_jobs_without_touching_global_pool_or_observations() {
-    let l = Lab::new();
-    l.configure(&[unknown("demo")]);
-    queued_job(&l, "pending");
-    l.h.db.set_meta(&receipt("demo", "pending"), "t-0001").unwrap();
-    l.h.db.set_meta("account-quota-v1/demo", "observation").unwrap();
-    l.h.db.project_rename("demo", "v1", str::to_string).unwrap();
-    assert_eq!(l.h.account_pool().unwrap().projects, ["v1"]);
-    let moved = l.h.pool_job("v1", "pending").unwrap();
-    assert_eq!(moved.args.project, "v1");
-    assert_eq!(moved.view.project, "v1");
-    assert_eq!(l.h.db.meta(&receipt("v1", "pending")).unwrap().as_deref(), Some("t-0001"));
-    l.h.db.project_forget("v1").unwrap();
-    assert!(l.h.account_pool().unwrap().projects.is_empty());
-    assert_eq!(l.h.account_pool().unwrap().members.len(), 1);
-    assert!(l.h.pool_job("v1", "pending").is_err());
-    assert!(l.h.db.meta(&receipt("v1", "pending")).unwrap().is_none());
-    assert_eq!(l.h.db.meta("account-quota-v1/demo").unwrap().as_deref(), Some("observation"));
-}
-
-#[test]
-fn regrouping_an_alias_does_not_erase_its_existing_reservation() {
-    let l = Lab::new();
-    let p = input(&l, vec![candidate("a", 60.0, 60.0)]);
-    let (name, allocation) = choose(&l, &p).unwrap();
-    l.seed(&name, allocation, ThreadStatus::Open, true);
-    let mut a = candidate("a", 60.0, 60.0);
-    a.member.group = "shared".into();
-    let mut b = candidate("b", 60.0, 60.0);
-    b.member.group = "shared".into();
-    let p = input(&l, vec![a, b]);
-    let (name, allocation) = choose(&l, &p).unwrap();
-    l.seed(&name, allocation, ThreadStatus::Open, true);
-    assert!(choose(&l, &p).is_err(), "기존 그룹에서 새 그룹으로 옮겨도 두 예약이 함께 남는다");
 }
 
 // 통신 조회가 없는 가짜 연결이다. 기동 전에 이미 해석한 profile·머신을 다시 RPC로 묻지 않아야 한다.
@@ -636,7 +548,11 @@ fn waiting_direct_start_keeps_one_task_across_passes_and_request_replays() {
     // 연결 때 예약한 rewatch도 Host를 쥔다. runtime을 Lab보다 먼저 닫아 DB 수명을 끝낸다.
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     runtime.block_on(async {
-        l.configure(&[]);
+        l.h.accounts.import("blocked", "claude", "fixture-blocked-01234567890123456789").unwrap();
+        let mut meta = l.h.account_meta("blocked");
+        meta.rejected_ms = Some(util::now_ms());
+        l.h.db.set_meta("account-meta:blocked", &serde_json::to_string(&meta).unwrap()).unwrap();
+        l.configure(&[unknown("blocked")]);
         connect_pool_machine(&l);
         let mut job = queued_job(&l, "one-task");
         job.profile_revision = l.h.profile_revision(&job.args).unwrap();
@@ -658,48 +574,6 @@ fn waiting_direct_start_keeps_one_task_across_passes_and_request_replays() {
         let reopened = Host::open(l.h.cfg.clone(), l._root.0.join("host")).unwrap();
         assert_eq!(reopened.pool_job("demo", &job.view.id).unwrap().args.start_task.unwrap().id, id);
         assert!(reopened.db.threads(None).unwrap().is_empty());
-    });
-    drop(runtime);
-}
-
-// 사용량 조회의 실제 await를 보류해 pool_run·웹 요청 owner의 겹침을 고정한다.
-#[test]
-fn cancel_waits_for_allocation_and_cannot_be_overwritten_or_restarted() {
-    let l = Lab::new();
-    // 연결 때 예약한 rewatch도 Host를 쥔다. runtime을 Lab보다 먼저 닫아 DB 수명을 끝낸다.
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    runtime.block_on(async {
-        l.configure(&[]);
-        connect_pool_machine(&l);
-        let mut job = queued_job(&l, "cancel-during-pass");
-        job.profile_revision = l.h.profile_revision(&job.args).unwrap();
-        l.h.db.set_meta(&job_key("demo", &job.view.id), &serde_json::to_string(&job).unwrap()).unwrap();
-        let quota = l.h.account_quota.lock().await;
-        let pass = l.h.pool_run("demo", &job.view.id, true);
-        tokio::pin!(pass);
-        assert!(futures_util::poll!(&mut pass).is_pending());
-        assert!(l.h.claim_thread("demo", "account-cancel-during-pass").is_err(), "실제 배정 경로가 잠금을 잡았다");
-        let cancel = l.h.call(
-            DeviceRole::Controller,
-            "device:control",
-            FrontRequest::AccountStartCancel { project: "demo".into(), id: job.view.id.clone() },
-        );
-        tokio::pin!(cancel);
-        let first = futures_util::poll!(&mut cancel);
-        assert!(first.is_pending(), "배정 중 취소는 잠금을 기다려야 한다: {first:?}");
-        drop(quota);
-        // 실제 pool_run이 취소보다 먼저 읽은 사본으로 Queued를 저장한다.
-        let result = pass.await.unwrap();
-        assert!(matches!(result, FrontResponse::AccountStart { start } if start.state == AccountStartState::Queued));
-        let result = cancel.await.unwrap();
-        assert!(matches!(result, FrontResponse::AccountStart { start } if start.state == AccountStartState::Cancelled));
-        l.h.pool_pass("demo").await.unwrap();
-        let replay = l.h.pool_run("demo", &job.view.id, true).await.unwrap();
-        assert!(matches!(replay, FrontResponse::AccountStart { start } if start.state == AccountStartState::Cancelled));
-        assert!(l.h.db.threads(None).unwrap().is_empty());
-        // cache가 아닌 DB를 다시 열어 취소의 내구성도 확인한다.
-        let reopened = Host::open(l.h.cfg.clone(), l._root.0.join("host")).unwrap();
-        assert_eq!(reopened.pool_job("demo", &job.view.id).unwrap().view.state, AccountStartState::Cancelled);
     });
     drop(runtime);
 }
@@ -777,4 +651,16 @@ async fn cancel_preserves_reader_denial_missing_jobs_and_repeated_cancellation()
         let result = l.h.call(DeviceRole::Controller, "device:control", request.clone()).await.unwrap();
         assert!(matches!(result, FrontResponse::AccountStart { start } if start.state == AccountStartState::Cancelled));
     }
+}
+
+#[test]
+fn automation_thresholds_filter_the_selected_account_and_ignore_missing_windows() {
+    let l = Lab::new();
+    let mut p = input(&l, vec![candidate("a", 96.0, 20.0), candidate("b", 20.0, 20.0)]);
+    p.minimum = [Some(5.0), Some(10.0)];
+    assert_eq!(choose(&l, &p).unwrap().0, "b", "작업 수 동률이어도 문턱 아래 계정은 고르지 않는다");
+    p.candidates[1].quota.as_mut().unwrap().windows[1].window.used_percent = 91.0;
+    assert!(choose(&l, &p).unwrap_err().to_string().contains("자동화 사용량 문턱"));
+    p.candidates[0].quota.as_mut().unwrap().windows.remove(0);
+    assert_eq!(choose(&l, &p).unwrap().0, "a", "5시간 창이 없으면 들어온 주간 창만 판정한다");
 }

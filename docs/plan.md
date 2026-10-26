@@ -8001,3 +8001,20 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - `aaa:question/<thread>`에 현재 카드가 없으면 독립 post 질문을 만든다. 질문 원장의 `kind=post, subject=<inbox-ID>`가 소유권을 고정한다. 알림·카드 링크는 그 요청의 q-ID로 보내고 이후 thread 보고·과거 답·같은 thread의 새 질문으로 닫지 않는다. 기존 연결 알림은 현재 질문·답 기록을 따라 정리한다.
 - `gone`은 pane 확인창 소실·pane 종료, thread의 새 보고가 기존 질문을 제거한 경우, 또는 명시적으로 끝낸 답 없는 요청에 사용한다. pane이 없는 독립 coordinator 요청은 화면 소실이나 일반 inbox 정리로 `gone`이 되지 않는다. 이미 끝난 운영 요청을 추정으로 되살리지 않는다.
 - 감사 기록에 inbox 처리 방식(`all`), 보존한 사용자 요청 수, 지정 ID를 남겨 일괄 정리와 명시 처리를 구분한다. proto·FRONT_API 형식은 바꾸지 않는다.
+
+### 8.499 계정 별칭 변경과 인증 유지(t-1100)
+
+- CLI `aaa account rename <옛> <새>`와 설정 「계정」의 행별 「이름 바꾸기」를 제공한다. 웹은 새 이름 입력·형식/중복 검증·실패 원인·완료 결과를 보이며 Chromium/WebKit × 1280/390px에서 확인한다. FRONT_API 1.128 `AccountRename{name,to}`이며 1.128 미만 host에는 단추를 그리지 않는다. AGENT_LINK는 유지한다.
+- 사람의 host 세션 밖 CLI·웹 조작 기기만 허용한다. 같은 harness에서만 이전하고 기존 별칭은 거부한다. 열린 thread·실행/준비 중 pane·로그인/메일 확인 중에는 이유를 보이고 거부한다. 제공자 재로그인은 하지 않는다.
+- 옛 AAD로 복호화하고 새 별칭 AAD·새 DEK/nonce로 봉투를 재암호화한다. 인증 판/세대는 유지한다. 기본 계정·풀·대기 시작·보류/종료 thread·실행 binding·이미지 요청·metadata·사용량을 DB transaction으로 옮긴다. 한도 그룹·profile 이름·본문·명령·env·과거 감사는 유지하고 이전 감사 사건을 추가한다.
+- 새 금고와 설정은 fsync·원자 rename, DB journal 확정 표지로 실패/중단을 복구한다. 금고 원문/암호문은 journal·감사에 넣지 않는다. 느린 사용량 조회 중에도 이전을 허용하고 옛 별칭 결과로 관측을 되돌리지 않는다. 세부 계약은 `docs/accounts.md`다. E2E58과 기존 m13 accounts owner를 확장한다.
+
+
+### 8.500 harness별 계정 자동 배정 단순화(t-1107)
+
+- 계정 등록 후 같은 harness 안에서 자동으로 사용한다. 웹은 기존 harness별 계정 행에 「자동 배정에 사용」만 둔다. 그룹·허용 모델·프로젝트 참여와 예상 작업 크기 선택을 없앤다. 기존 미참여 계정의 선택은 보존하고 새 등록만 기본으로 켠다. 다시 로그인과 진행 중 thread의 계정은 바꾸지 않는다.
+- 선택은 진행 중 작업 수 → 마지막 배정 → 이름 순이다. 모든 프로젝트의 실제 진행 중 thread와 끝나지 않은 이미지 요청을 함께 센다. 옛 그룹·예상 %·고정 안전 여유는 배정 차단에서 제외한다. 미래 소비 예측과 오래 남은 예약이 시작을 막는 문제를 없애기 위한 결정이며 기존 원장/중복 방지 영수증은 유지한다.
+- 같은 인증 세대의 완료된 사용량 캐시만 읽고 조회 RPC를 기다리지 않는다. 들어온 최신 창이 100%이거나 유효한 제공자 한도 시각이면 제외한다. 5시간 누락+주간10%는 주간만으로 시작하고, 주간100%는 제외한다. 미관측·오래됨·누락·조회 실패는 반복 시작도 허용한다. 인증 끊김/잠김은 제외한다. 해당 harness에 사용 계정이 없으면 기존 기본/로컬 로그인으로 돌아간다.
+- 자동화 문턱도 들어온 창만 판정하고 판단 불가면 실행한다. 후보를 고르는 transaction에도 같은 문턱을 적용한다. 자동화·입력·이유별 알림 상태를 내구 큐에 두어 inbox 처리/host 재기동 뒤 반복 안내를 막고 변화·해제를 알린다.
+- 기존 v1 설정 원문을 보존하고 v2 key로 한 번 이전한다. 계정 사용 여부와 진행 중 계정/원장은 유지하고 그룹·모델·참여 조건만 제거한다. t-1100의 이름 변경은 v1 호환 자료와 v2 사용 설정을 함께 옮긴다. FRONT_API 1.129이며 AGENT_LINK와 E2E 번호는 유지한다.
+- OSS는 [LiteLLM router](https://docs.litellm.ai/docs/routing)([MIT, enterprise 별도](https://github.com/BerriAI/litellm/blob/main/LICENSE))의 동종 후보 분리와 [Envoy least request](https://github.com/envoyproxy/envoy/blob/main/source/extensions/load_balancing_policies/least_request/least_request_lb.cc)([Apache-2.0](https://github.com/envoyproxy/envoy/blob/main/LICENSE))의 진행 중 요청 수를 비교했다. 후보 분리·작업 수 기준 분산 원칙만 참고하며 코드·의존성을 추가하지 않는다.
