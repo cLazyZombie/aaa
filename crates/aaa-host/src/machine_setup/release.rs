@@ -3,6 +3,7 @@
 //! SHA-256이 manifest와 같아야 쓴다. curl은 개인 설정·token 없이 HTTPS redirect만 따른다. 받은 파일은 host 상태 폴더
 //! `ssh/release/v<판>/<os>-<arch>/aaa`(0700 폴더)에 두고 다음 작업에 SHA를 다시 맞춰 쓴다. macOS launcher package(manifest `launchers`,
 //! install I3)도 같은 규칙으로 그 옆 `aaa-launcher-<os>-<arch>.json`에 둔다.
+use aaa_common::child_process::TokioCommandExt as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -120,7 +121,7 @@ fn curl(url: &str, limit: &str) -> tokio::process::Command {
 }
 
 async fn run(mut c: tokio::process::Command, limit: Duration) -> Result<Vec<u8>, String> {
-    match tokio::time::timeout(limit, c.output()).await {
+    match tokio::time::timeout(limit, c.output_guarded()).await {
         Ok(Ok(o)) if o.status.success() => Ok(o.stdout),
         Ok(Ok(o)) => Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(200).collect()),
         Ok(Err(e)) => Err(format!("curl을 실행하지 못했다: {e}")),

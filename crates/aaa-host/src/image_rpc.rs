@@ -3,6 +3,7 @@ use crate::{
     Host,
     image::{Job, descriptor, image_extension},
 };
+use aaa_common::child_process::TokioCommandExt as _;
 use aaa_common::util;
 use aaa_proto::{IMAGE_MAX_BYTES, IMAGE_MAX_COUNT, ImageFile, SecretText};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -300,7 +301,7 @@ pub(crate) async fn generate(h: &Arc<Host>, job: &Job) -> Result<(Vec<ImageFile>
         .env("CODEX_REFRESH_TOKEN_URL_OVERRIDE", refresh_url)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
+        .spawn_guarded()
         .map_err(|e| aaa_common::diagnostic::context(e, FAILED.to_string()))?;
     let mut sent = false;
     let mut terminal = false;

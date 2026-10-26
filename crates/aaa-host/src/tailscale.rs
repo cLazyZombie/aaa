@@ -8,6 +8,7 @@
 //!
 //! 차이: 입장은 aaa pairing만 쓰고 `Tailscale-User-Login` 헤더는 보지 않는다(정할 것 4).
 
+use aaa_common::child_process::TokioCommandExt as _;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -221,7 +222,7 @@ async fn run(bin: &str, args: &[&str], timeout: Duration) -> Result<(bool, Strin
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
-        .output();
+        .output_guarded();
     match tokio::time::timeout(timeout, child).await {
         Ok(Ok(o)) => {
             let mut text = String::from_utf8_lossy(&o.stdout).to_string();

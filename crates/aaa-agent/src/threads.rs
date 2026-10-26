@@ -4,6 +4,7 @@
 //! - report.md는 regular file만 본다(symlink는 무시). library는 symlink를 따라가지 않고 상한을 넘는 파일은 건너뛴다.
 //! - 정리는 force 없이 한다: 고치지 않은 worktree만 지워지고, 기준에 병합된 branch만 지운다.
 
+use aaa_common::child_process::TokioCommandExt as _;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -242,7 +243,7 @@ pub(crate) async fn git(dir: &Path, args: &[&str], timeout: Duration) -> Result<
             .args(args)
             .stdin(std::process::Stdio::null())
             .kill_on_drop(true)
-            .output(),
+            .output_guarded(),
     )
     .await
     .with_context(|| format!("git {} 시간 초과", args.join(" ")))?

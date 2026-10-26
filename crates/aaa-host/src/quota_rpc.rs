@@ -1,5 +1,6 @@
 //! 별도 Codex helper: initialize → initialized → account/rateLimits/read만 보낸다.
 //! 인증 갱신은 host의 기존 중계 소유다. helper의 갱신 URL은 자기 거부 서버에만 연결된다.
+use aaa_common::child_process::TokioCommandExt as _;
 use aaa_common::{quota, util};
 use aaa_proto::{QuotaProblem, QuotaSnapshot, QuotaSource};
 use serde_json::{Value, json};
@@ -233,7 +234,7 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
         .env("CODEX_REFRESH_TOKEN_URL_OVERRIDE", format!("http://{addr}/refuse"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn();
+        .spawn_guarded();
     let Ok(child) =
         child.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
     else {

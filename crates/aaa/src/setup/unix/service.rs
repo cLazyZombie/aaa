@@ -3,6 +3,7 @@ use super::super::{
     ServiceKind,
     flow::{Layout, ServiceInfo},
 };
+use aaa_common::child_process::StdCommandExt as _;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -240,8 +241,10 @@ impl Manager {
     pub fn authorize(&self) -> Result<()> {
         if self.spec.kind == ServiceKind::SystemdSystem {
             println!("시스템 서비스 등록 권한을 확인합니다. 암호가 필요하면 sudo가 이 터미널에서 직접 받습니다.");
-            let status =
-                std::process::Command::new("/usr/bin/sudo").arg("-v").status().context("sudo 권한 확인 실행")?;
+            let status = std::process::Command::new("/usr/bin/sudo")
+                .arg("-v")
+                .status_guarded()
+                .context("sudo 권한 확인 실행")?;
             ensure!(status.success(), "sudo 권한 확인 실패: {status}");
         }
         Ok(())

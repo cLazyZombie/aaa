@@ -1,4 +1,5 @@
 //! 현지 읽기 adapter. init/probe/lock/journal/enroll/service 적용 함수를 부르지 않는다.
+use aaa_common::child_process::TokioCommandExt as _;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -588,7 +589,7 @@ fn repo_check(path: &Path) -> Result<()> {
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(std::process::Stdio::null())
             .kill_on_drop(true);
-        match tokio::time::timeout(Duration::from_secs(10), cmd.output()).await {
+        match tokio::time::timeout(Duration::from_secs(10), cmd.output_guarded()).await {
             Ok(Ok(out)) if out.status.success() => Ok(()),
             _ => Err(error("repo_unavailable", 2)),
         }

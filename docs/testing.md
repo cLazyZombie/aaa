@@ -15,6 +15,12 @@
 - 이전 gate의 중첩 read·writer 깨움 시험 하나는 시작 경로 중첩 중 이름 변경이 교착하지 않는 계약을 지킨다.
 - 부분 확인은 위 owner와 E2E58·65·81, proto TypeScript·의존 경계·웹 타입/유닛·strict clippy·공개 검사다. 전체 ci-local은 coordinator의 실행 차례를 받은 뒤 수행한다. Playwright npm 1.64.1은 작업 폴더에 두고 내부 공용 브라우저만 사용한다. 운영 DB/실제 계정은 쓰지 않는다.
 
+## macOS pipe 상속과 출력 대기(t-1104)
+
+- `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib child_process::tests::pipe_window -- --nocapture`는 실제 std `pipe()` 반환 직전 창을 실험실 자식의 dyld interpose로 제어한다. 수정 전의 FD 상속·캡처 자식 종료 뒤 output 미완료·상속자 종료 뒤 반환과, 수정 후 std/Tokio/실제 harness 판 조회가 상속자 생존 중 반환하는 것을 함께 검사한다. stdout/stderr·실패 종료 코드도 보존한다. 꼭 필요한 이유: 가짜 지연이나 일반 병렬 spawn만으로는 macOS pipe 창을 확정할 수 없고, 잠금을 wait까지 잡는 새 직렬화 결함도 막아야 한다.
+- 시험 C 코드는 실행 전에 저장소에서 검토하고 `cc -dynamiclib`로 자기 worktree target에만 만든다. 운영 실행 파일·설정에는 주입하지 않는다. socket·stdin·kqueue NOTE_EXIT 사건으로 끝내고 30초는 실패 상한으로만 쓴다. 고정 sleep·재시도·시한 연장은 없다. ignored `subprocess_fixture`는 이 회귀가 격리 자식으로 호출하는 보조 진입점이다.
+- 관련 검사는 aaa-common/aaa-agent 유닛, host 사용량·machine_setup·quota/image RPC, session·CLI 업데이트와 의존 규칙을 사용한다. 전수 경로 표·OSS 비교·OS별 범위는 [자식 실행 조사](process-capture.md)에 있다. 새 E2E 번호·API는 없으며 전체 gate는 coordinator 차례에서 실행한다.
+
 ## 미답변 coordinator 질문의 자동 종료 방지(t-1090)
 
 - 새 host 회귀 두 개는 실제 SQLite·post·질문 목록을 쓴다. `orphan_thread_reference_stays_a_coordinator_question_across_reports_and_reconcile`는 과거 답이 있지만 현재 카드가 없는 thread 접미사로 만든 요청이 독립 q-ID와 링크를 유지하고, 이후 질문 있음/없음 보고·정리에도 열려 있는지 검사한다. 꼭 필요한 이유: q-1372처럼 생성 직후 과거 답에 흡수되는 요청 유실을 막는다.

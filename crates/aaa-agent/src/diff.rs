@@ -2,6 +2,7 @@
 //!
 //! t3code 4b1024da `GitVcsDriverCore.ts:2639-3005`처럼 index를 임시 파일로 복사하고 그 사본에만 새 파일을
 //! intent-to-add로 담아(`GIT_INDEX_FILE`) 커밋·미커밋·새 파일을 한 비교로 읽는다. 저장소의 index·작업 파일은 그대로다.
+use aaa_common::child_process::TokioCommandExt as _;
 use aaa_common::diff as d;
 use aaa_proto::{DiffQuery, DiffScope, DiffView};
 use anyhow::{Context, Result, bail};
@@ -50,7 +51,7 @@ impl Git<'_> {
                 .env("GIT_OBJECT_DIRECTORY", t.0.join("objects"))
                 .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &t.1);
         }
-        let mut child = cmd.spawn().context("git 실행 실패")?;
+        let mut child = cmd.spawn_guarded().context("git 실행 실패")?;
         if let Some(input) = stdin {
             let mut w = child.stdin.take().unwrap();
             w.write_all(input).await?;

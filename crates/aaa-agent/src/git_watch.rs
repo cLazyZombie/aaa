@@ -1,4 +1,5 @@
 //! Git 감시. checkout의 작업 파일·ref·FETCH_HEAD를 바꾸지 않고 객체만 받는다.
+use aaa_common::child_process::TokioCommandExt as _;
 use aaa_common::{git_watch as git, pr};
 use aaa_proto::{GitAnswer, GitChange, GitCommit, GitQuery};
 use anyhow::{Context, Result, bail};
@@ -20,7 +21,7 @@ async fn run(dir: &Path, args: &[String]) -> Result<Output> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
-        .spawn()
+        .spawn_guarded()
         .context("Git 감시 명령 실행 실패")?;
     let mut stdout = child.stdout.take().unwrap().take(4 * 1024 * 1024 + 1);
     let mut bytes = Vec::new();

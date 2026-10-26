@@ -1,4 +1,5 @@
 //! Git 객체 기준의 증분 집계. dirty 파일은 읽지 않는다. 한 수집의 소스 bytes·파일 수·경과를 제한한다.
+use aaa_common::child_process::StdCommandExt as _;
 use aaa_proto::CodeLines;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -35,7 +36,7 @@ fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
-        .spawn()?;
+        .spawn_guarded()?;
     let mut bytes = Vec::new();
     let read = child.stdout.take().unwrap().take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes);
     if read
@@ -198,7 +199,7 @@ fn collect_revision(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()?;
+        .spawn_guarded()?;
     let answer = (|| -> Result<()> {
         let mut input = child.stdin.take().unwrap();
         let mut output = BufReader::new(child.stdout.take().unwrap());

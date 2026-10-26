@@ -1,6 +1,7 @@
 //! 고정 worker. 승인/EOF·현재 실행 SHA를 확인하며 구독자 연결은 쓰기 권한이 아니다.
 use super::*;
 use crate::install::output::{Progress, Reporter};
+use aaa_common::child_process::StdCommandExt as _;
 use aaa_common::{conn::FrameRx, ipc::LocalListener};
 use aaa_proto::frame::{FrameKind, write_frame};
 use authorization::Authority;
@@ -113,7 +114,7 @@ fn spawn(state: &Path, id: &str, sha: &str, resume: bool) -> Result<Child> {
         command.arg("--resume");
     }
     detach(&mut command);
-    command.spawn().map_err(|error| {
+    command.spawn_guarded().map_err(|error| {
         #[cfg(windows)]
         {
             use windows_sys::Win32::System::{JobObjects::*, Threading::*};

@@ -1,6 +1,7 @@
 //! herdr `update.rs`의 manifest → OS/arch 선택 → curl → SHA-256 → staging.
 //! 외부 주소를 받는 CLI·환경 변수는 없다. 운영 manifest/asset은 공개 GitHub release만 허용한다.
 
+use aaa_common::child_process::StdCommandExt as _;
 use std::collections::BTreeMap;
 use std::process::Command;
 
@@ -109,7 +110,7 @@ fn curl(url: &str, limit: &str) -> Command {
 }
 
 pub(super) fn fetch_manifest(url: &str) -> Result<Manifest> {
-    let output = curl(url, "20").output().context("manifest용 curl을 실행하지 못했다")?;
+    let output = curl(url, "20").capture_output().context("manifest용 curl을 실행하지 못했다")?;
     if !output.status.success() {
         bail!("manifest 내려받기 실패: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
@@ -124,8 +125,11 @@ impl Selected {
 
 fn download(url: &str, expected: &str, place: &Place) -> Result<Staged> {
     let staged = Staged::new(place)?;
-    let output =
-        curl(url, "120").arg("--output").arg(staged.path()).output().context("실행 파일용 curl을 실행하지 못했다")?;
+    let output = curl(url, "120")
+        .arg("--output")
+        .arg(staged.path())
+        .capture_output()
+        .context("실행 파일용 curl을 실행하지 못했다")?;
     if !output.status.success() {
         bail!("실행 파일 내려받기 실패: {}", String::from_utf8_lossy(&output.stderr).trim());
     }

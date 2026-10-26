@@ -1,5 +1,6 @@
 //! macOS 계보·키체인·첫 실행 측정. 비공개 API는 dlsym으로 찾고 없으면 None으로 둔다.
 
+use aaa_common::child_process::StdCommandExt as _;
 use std::ffi::{CString, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -164,7 +165,7 @@ fn read_item(service: &str) -> String {
 }
 
 pub fn codesign_summary(exe: &str) -> Vec<String> {
-    let out = Command::new("/usr/bin/codesign").args(["-dv", "--verbose=2", exe]).output();
+    let out = Command::new("/usr/bin/codesign").args(["-dv", "--verbose=2", exe]).capture_output();
     let Ok(out) =
         out.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
     else {
@@ -191,7 +192,8 @@ pub fn first_exec_samples(n: usize) -> Result<Vec<Sample>> {
         let mut pair = [0f64; 2];
         for slot in &mut pair {
             let start = Instant::now();
-            let st = Command::new(&exe).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
+            let st =
+                Command::new(&exe).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status_guarded()?;
             *slot = start.elapsed().as_secs_f64() * 1000.0;
             if !st.success() {
                 bail!("표본 {i} 실행 실패: {st}");
@@ -230,7 +232,7 @@ fn make_fresh(path: &Path) -> Result<()> {
         .arg(path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()?;
+        .status_guarded()?;
     if !st.success() {
         bail!("codesign 실패: {st}");
     }
@@ -239,7 +241,7 @@ fn make_fresh(path: &Path) -> Result<()> {
 
 /// pane 밖에서 agent 일을 하는 장수 daemon의 계보(E6). ps로 찾고 책임 프로세스를 붙인다.
 pub fn daemons(patterns: &[String]) -> Vec<(i32, String, Option<i32>, Option<String>)> {
-    let out = Command::new("/bin/ps").args(["-axo", "pid=,command="]).output();
+    let out = Command::new("/bin/ps").args(["-axo", "pid=,command="]).capture_output();
     let Ok(out) =
         out.inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
     else {
@@ -300,7 +302,9 @@ pub fn rerun_disclaimed(args: &[String]) -> Result<i32> {
             bail!("disclaim 설정 실패: {e}");
         }
         let mut pid: libc::pid_t = 0;
-        let e = libc::posix_spawn(&mut pid, exe.as_ptr(), std::ptr::null(), &attr, argv.as_ptr(), environ);
+        let e = aaa_common::child_process::with_spawn_lock(|| {
+            libc::posix_spawn(&mut pid, exe.as_ptr(), std::ptr::null(), &attr, argv.as_ptr(), environ)
+        });
         libc::posix_spawnattr_destroy(&mut attr);
         if e != 0 {
             bail!("spawn 실패: {}", std::io::Error::from_raw_os_error(e));

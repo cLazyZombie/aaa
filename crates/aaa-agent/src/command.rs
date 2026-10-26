@@ -4,6 +4,7 @@
 //! - unix에서는 자식을 새 process group으로 띄운다. 시간이 넘으면 **그 group만**(자기가 만든 pgid) 끝낸다.
 //! - 출력은 상한까지만 모으고 나머지는 읽어서 버린다(파이프가 막혀 자식이 멈추지 않게).
 
+use aaa_common::child_process::TokioCommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -61,7 +62,7 @@ pub async fn run(
         c
     };
     cmd.current_dir(&dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    let mut child = cmd.spawn().context("명령 실행")?;
+    let mut child = cmd.spawn_guarded().context("명령 실행")?;
     let out = tokio::spawn(capture(child.stdout.take()));
     let err = tokio::spawn(capture(child.stderr.take()));
     let (status, timed_out) = match tokio::time::timeout(timeout, child.wait()).await {

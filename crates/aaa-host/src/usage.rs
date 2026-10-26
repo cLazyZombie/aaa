@@ -21,6 +21,7 @@
 //!   `AAA_USAGE_ORIGIN`(`http://127.0.0.1:<port>`)이 있으면 모든 구독 주소의 scheme·host를 그것으로 바꾼다(가짜 서버).
 //!   웹 E2E가 개발자의 실제 로그인·keychain을 건드리지 않게 한다.
 
+use aaa_common::child_process::StdCommandExt as _;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -136,7 +137,7 @@ fn spawn_capped(argv: &[&str]) -> Option<(Option<i32>, Option<String>, bool)> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_guarded()
         .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()?;
     let mut out = child.stdout.take()?;

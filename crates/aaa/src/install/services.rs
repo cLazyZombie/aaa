@@ -1,4 +1,6 @@
 //! 감독자 읽기만. 등록·reload·시작·권한 상승을 호출하지 않는다.
+#[cfg(target_os = "linux")]
+use aaa_common::child_process::TokioCommandExt as _;
 use aaa_proto::install::{InstallCheckState, InstallService};
 use std::path::{Path, PathBuf};
 
@@ -112,7 +114,7 @@ fn native(service: InstallService, roles: &[&str], instance: Option<&str>, home:
                         .env("SYSTEMD_COLORS", "0")
                         .stdin(std::process::Stdio::null())
                         .kill_on_drop(true);
-                    let out = tokio::time::timeout(std::time::Duration::from_millis(2500), cmd.output())
+                    let out = tokio::time::timeout(std::time::Duration::from_millis(2500), cmd.output_guarded())
                         .await
                         .inspect_err(|error| {
                             aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")

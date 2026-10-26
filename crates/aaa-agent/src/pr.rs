@@ -4,6 +4,7 @@
 //! - `gh` 인자는 `aaa_common::pr`가 만든다(주소는 늘 `--` 뒤, `github.com` 밖이면 이 호출에만 `GH_HOST`).
 //! - 사람에게 묻는 창을 띄우지 않고(`GH_PROMPT_DISABLED`), 10초가 넘으면 끝낸다(herdr-projects `GH_TIMEOUT`).
 
+use aaa_common::child_process::TokioCommandExt as _;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -64,7 +65,7 @@ async fn published(dir: &Path, branch: &str) -> bool {
         tokio::process::Command::new("git")
             .arg("-C").arg(dir).args(["show-ref", "--verify", "--quiet", &reference])
             .env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::null()).stderr(Stdio::null())
-            .kill_on_drop(true).status(),
+            .kill_on_drop(true).status_guarded(),
     ).await, Ok(Ok(status)) if status.success())
 }
 
@@ -78,7 +79,7 @@ pub(crate) async fn origin(dir: &Path) -> String {
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::null())
             .kill_on_drop(true)
-            .output(),
+            .output_guarded(),
     )
     .await;
     match out {
@@ -94,7 +95,7 @@ async fn gh(call: &GhCall) -> Result<String> {
         cmd.env("GH_HOST", host);
     }
     let what = call.args.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
-    let out = tokio::time::timeout(GH_TIMEOUT, cmd.output())
+    let out = tokio::time::timeout(GH_TIMEOUT, cmd.output_guarded())
         .await
         .with_context(|| format!("gh {what}: {}초가 지나 멈췄다", GH_TIMEOUT.as_secs()))?
         .map_err(|e| {
