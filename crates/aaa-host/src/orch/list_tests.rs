@@ -4,7 +4,8 @@ use aaa_proto::{MAX_FRAME, ThreadListQuery};
 
 struct Lab {
     host: Arc<Host>,
-    root: PathBuf,
+    // 필드는 선언 순서로 해제된다. 동기 SQLite 연결을 가진 Host를 먼저 닫는다.
+    _root: Root,
 }
 impl Lab {
     fn new() -> Self {
@@ -16,7 +17,7 @@ impl Lab {
         host.project_create("p", Default::default(), "test").unwrap();
         // 다중 프로젝트는 옛 DB 호환 경로다. 신규 생성은 host당 하나만 허용한다.
         std::fs::create_dir_all(root.join("projects/z")).unwrap();
-        Self { host, root }
+        Self { host, _root: Root(root) }
     }
     fn insert(&self, project: &str, n: u32, status: ThreadStatus, role: Role, question_body: Option<String>) {
         let mut r = ThreadRec::starting(project, "목록 회귀", "m", "codex", role, ThreadKind::Dir, 0);
@@ -51,15 +52,19 @@ impl Lab {
         }
     }
 }
-impl Drop for Lab {
+struct Root(PathBuf);
+impl Drop for Root {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.root).unwrap();
+        std::fs::remove_dir_all(&self.0)
+            .unwrap_or_else(|error| panic!("목록 시험 폴더 삭제 실패({}): {error}", self.0.display()));
     }
 }
 
 #[tokio::test]
 async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_live_states() {
     let lab = Lab::new();
+    // 원장 읽기가 계약이다. 2,507번 디스크 commit 대신 준비만 한 transaction에 묶는다.
+    lab.host.db.conn_for_pool_test().execute_batch("BEGIN").unwrap();
     for n in 1..=2500 {
         // 상세 100건만으로도 frame 한도를 넘는다. 목록은 이 본문을 읽어 보내지 않는다.
         let body = (n <= 60).then(|| "상세 질문 본문".repeat(1500));
@@ -73,6 +78,7 @@ async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_liv
     for n in [9999, 10000, 10001] {
         lab.insert("z", n, ThreadStatus::Resolved, if n == 10001 { Role::Evaluator } else { Role::Coordinator }, None);
     }
+    lab.host.db.conn_for_pool_test().execute_batch("COMMIT").unwrap();
     let mut query = ThreadListQuery { limit: Some(u32::MAX), ..Default::default() };
     let mut all = Vec::new();
     loop {
