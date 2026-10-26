@@ -3,6 +3,83 @@
 use super::*;
 use aaa_proto::{AgentRequest, AgentResponse, HostWelcome, Outcome, SessionMsg, SessionRequest, TerminalChunk};
 
+/// 실제 Welcome 협상이 handler의 큰 보고 응답을 분할하고, 구판에는 오류 뒤 다음 요청도 받아야 한다.
+#[tokio::test]
+async fn large_report_handler_negotiates_parts_and_keeps_legacy_links() {
+    use aaa_common::response_parts::{FEATURE, ResponseParts};
+    use aaa_proto::{B64, ErrorCode};
+    use sha2::{Digest, Sha256};
+    let root = std::env::temp_dir().join(format!("aaa-large-report-{}", aaa_common::util::new_id()));
+    let work = root.join(".aaa/p-t-0001");
+    std::fs::create_dir_all(&work).unwrap();
+    let body = vec![b'x'; 2 << 20];
+    std::fs::write(work.join("report.md"), &body).unwrap();
+    let expected_hash = hex::encode(Sha256::digest(&body));
+    for negotiated in [true, false] {
+        let agent =
+            Agent::new(root.join(if negotiated { "new" } else { "old" }), "m".into(), "mac-a".into(), true, None)
+                .unwrap();
+        let (stream, peer) = tokio::io::duplex(65536);
+        let running = tokio::spawn(async move {
+            session_state(&agent, Box::new(stream), None, &mut Duration::from_millis(250)).await
+        });
+        let (r, w) = tokio::io::split(peer);
+        let tx = spawn_writer(w, MAX_FRAME);
+        let mut rx = FrameRx::new(r, MAX_FRAME);
+        let LinkMsg::Hello(hello) = rx.control().await.unwrap() else { panic!("hello가 없다") };
+        assert!(hello.features.iter().any(|f| f == FEATURE));
+        assert!(hello.features.iter().any(|f| f == "report_hash.v1"));
+        tx.json(&LinkMsg::Welcome(HostWelcome {
+            identity: None,
+            proto: AGENT_LINK,
+            host_id: "host".into(),
+            features: if negotiated { vec![FEATURE.into()] } else { vec![] },
+        }))
+        .await
+        .unwrap();
+        let mut parts = ResponseParts::default();
+        for (id, request) in [
+            ("hash", AgentRequest::ReportHash { work_dir: work.display().to_string() }),
+            ("large", AgentRequest::ReportTransfer { work_dir: work.display().to_string(), max_library_bytes: 0 }),
+            ("after", AgentRequest::ReportHash { work_dir: work.display().to_string() }),
+        ] {
+            tx.json(&LinkMsg::Req { id: id.into(), deadline_ms: None, body: request }).await.unwrap();
+            let response = loop {
+                match rx.control::<LinkMsg>().await.unwrap() {
+                    LinkMsg::ResPart { id, offset, total, data } => {
+                        assert!(negotiated);
+                        if let Some(response) = parts.push(&id, offset, total, data.0).unwrap() {
+                            break response;
+                        }
+                    }
+                    response => break response,
+                }
+            };
+            let LinkMsg::Res { id: got, result } = response else { panic!("응답이 아니다") };
+            assert_eq!(got, id);
+            if id == "large" {
+                if negotiated {
+                    let Outcome::Ok(AgentResponse::ReportTransfer(snapshot)) = result else {
+                        panic!("보고 사본이 아니다")
+                    };
+                    assert_eq!(snapshot.report, B64(body.clone()));
+                    assert_eq!(snapshot.hash, expected_hash);
+                } else {
+                    assert!(matches!(result, Outcome::Err(e) if e.code == ErrorCode::TooLarge));
+                }
+            } else {
+                assert_eq!(result, Outcome::Ok(AgentResponse::ReportHash { hash: expected_hash.clone() }));
+            }
+        }
+        tx.json(&LinkMsg::Ping { seq: 1131 }).await.unwrap();
+        assert_eq!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Pong { seq: 1131 });
+        drop(tx);
+        drop(rx);
+        running.await.unwrap().unwrap();
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn requests_read_before_host_publication_keep_session_replies_and_exit_output() {
     let path = std::env::temp_dir().join(format!("aap-resume-{}", aaa_common::util::new_id()));

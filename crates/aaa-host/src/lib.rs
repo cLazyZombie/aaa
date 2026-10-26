@@ -177,6 +177,7 @@ impl AgentConn {
             AgentRequest::ThreadCleanup { .. } => Duration::from_secs(self.timeouts.thread_cleanup_timeout_secs),
             AgentRequest::FileRead { .. }
             | AgentRequest::ReportCollect { .. }
+            | AgentRequest::ReportHash { .. }
             | AgentRequest::ReportFileRead { .. }
             | AgentRequest::ReportTransfer { .. } => Duration::from_secs(self.timeouts.file_request_timeout_secs),
             _ => REQUEST_TIMEOUT,

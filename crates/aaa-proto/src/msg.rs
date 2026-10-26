@@ -726,6 +726,13 @@ pub enum LinkMsg {
         id: String,
         result: Outcome<AgentResponse>,
     },
+    /// response_parts.v1: 큰 응답 JSON을 순서대로 나눈다. 조립 후에도 Res와 같은 ID여야 한다.
+    ResPart {
+        id: String,
+        offset: u32,
+        total: u32,
+        data: B64,
+    },
     Event(AgentEvent),
     Ping {
         seq: u64,
@@ -946,6 +953,10 @@ pub enum AgentRequest {
         transcript: Option<String>,
         harness_session: Option<String>,
         enabled: bool,
+    },
+    /// report_hash.v1: library를 걷지 않고 report.md hash만 읽는다.
+    ReportHash {
+        work_dir: String,
     },
     /// report.md 본문과 library 목록. symlink는 따라가지 않고, 상한을 넘는 파일은 건너뛴다.
     ReportCollect {
@@ -1231,6 +1242,9 @@ pub enum AgentResponse {
     },
     ThreadAdopted(ThreadAdopted),
     Report(ReportSnapshot),
+    ReportHash {
+        hash: String,
+    },
     /// report_copy.v2 전용 전송 응답. 표시용 FileChunk와 구별한다.
     ReportTransfer(ReportSnapshot),
     ReportFileChunk {

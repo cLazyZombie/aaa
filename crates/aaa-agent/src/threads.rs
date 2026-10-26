@@ -498,6 +498,17 @@ pub(crate) fn check_work_dir(work_dir: &str) -> Result<PathBuf> {
     Ok(p)
 }
 
+/// library의 파일 수·권한·읽기 비용과 관계없이 보고 변경만 확인한다.
+pub fn collect_hash(work_dir: &str) -> Result<String> {
+    let dir = check_work_dir(work_dir)?;
+    let path = dir.join("report.md");
+    let meta = std::fs::symlink_metadata(&path).context("report.md가 없다")?;
+    if !meta.is_file() || meta.len() > MAX_REPORT_BYTES {
+        bail!("report.md가 일반 파일이 아니거나 상한을 넘는다({} bytes)", meta.len());
+    }
+    sha256_file(&path).context("report.md hash 읽기 실패")
+}
+
 pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot> {
     let dir = check_work_dir(work_dir)?;
     let path = dir.join("report.md");
@@ -732,6 +743,22 @@ async fn delete_branch(repo: &Path, branch: &str, head: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// hash 조회는 library 전체를 읽는 옛 probe와 달리, 열 수 없는 library에도 독립적이어야 한다.
+    #[test]
+    fn report_hash_probe_never_walks_the_library() {
+        let root = std::env::temp_dir().join(format!("aaa-hash-{}", aaa_common::util::new_id()));
+        let work = root.join(".aaa/p-t-0001");
+        std::fs::create_dir_all(&work).unwrap();
+        let report = "[완료]\n\n## Next\n".as_bytes();
+        std::fs::write(work.join("report.md"), report).unwrap();
+        // library가 디렉터리조차 아니어도 보고 hash에는 영향이 없다.
+        std::fs::write(work.join("library"), b"not a directory").unwrap();
+        assert_eq!(collect_hash(work.to_str().unwrap()).unwrap(), hex::encode(Sha256::digest(report)));
+        std::fs::remove_file(work.join("report.md")).unwrap();
+        assert!(collect_hash(work.to_str().unwrap()).unwrap_err().to_string().contains("report.md"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn profile(harness: &str) -> Profile {
         Profile {

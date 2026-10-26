@@ -21,6 +21,9 @@ use aaa_common::tls;
 use aaa_common::util;
 use aaa_proto::{LINK_DEAD_AFTER as DEAD_AFTER, LINK_PING_EVERY as PING_EVERY};
 
+#[cfg(test)]
+mod response_parts_tests;
+
 /// 인증 전 동시 연결 상한
 const PREAUTH_LIMIT: usize = 16;
 
@@ -364,6 +367,7 @@ async fn serve_connection(
             "imagegen.v1".into(),
             "mission.v1".into(), // N-1 agent의 파일 전송
             "work_files.v1".into(),
+            aaa_common::response_parts::FEATURE.into(),
             "rollout_recovery.v1".into(),
             // compacting.v1: 화면 감지 사건 `compacting`(정리 중, plan §8.309)을 읽는다. 옛 host에는 agent가 `working`으로 보낸다
             "compacting.v1".into(),
@@ -404,6 +408,8 @@ async fn serve_connection(
     tracing::info!(machine = %hello.machine_name, generation, sessions = hello.sessions.len(), local, pid = ?pid, "agent 연결");
 
     host.task_progress(Task::AgentLink);
+    let response_parts = hello.features.iter().any(|f| f == aaa_common::response_parts::FEATURE);
+    let mut parts = aaa_common::response_parts::ResponseParts::default();
     let result: Result<()> = async {
         loop {
             let next = tokio::time::timeout(DEAD_AFTER, rx.next()).await;
@@ -412,7 +418,34 @@ async fn serve_connection(
                 Ok(Err(e)) => return Err(e.into()),
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(c)))) => host.on_chunk(&mid, c),
-                Ok(Ok(Some(Incoming::Control(b)))) => match match aaa_common::terminal_payload::decode_link_async(serde_json::from_slice::<LinkMsg>(&b)?, terminal_zstd).await? {
+                Ok(Ok(Some(Incoming::Control(b)))) => {
+                    // 요청 시한·취소가 끝난 응답은 보관하거나 적용하지 않는다. 새 연결에는 조립 상태가 없다.
+                    parts.retain(|id| pending.lock().unwrap().contains_key(id));
+                    let msg = match serde_json::from_slice::<LinkMsg>(&b)? {
+                        LinkMsg::ResPart { id, offset, total, data } => {
+                            if !pending.lock().unwrap().contains_key(&id) { continue; }
+                            let assembled = if response_parts {
+                                parts.push(&id, offset, total, data.0)
+                            } else {
+                                Err(anyhow::anyhow!("response_parts.v1 협상 없는 응답 조각"))
+                            };
+                            match assembled {
+                                Ok(Some(msg)) => msg,
+                                Ok(None) => continue,
+                                Err(e) => {
+                                    tracing::warn!(%id, offset, total, error = %e, "분할 응답 거부(연결 유지)");
+                                    if let Some(waiter) = pending.lock().unwrap().remove(&id) {
+                                        aaa_common::diagnostic::ignored(waiter.send(Outcome::Err(ErrorBody::new(
+                                            ErrorCode::BadRequest, format!("agent 분할 응답 거부: {e:#}"),
+                                        ))), "분할 응답 오류 전달 실패");
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        msg => msg,
+                    };
+                    match match aaa_common::terminal_payload::decode_link_async(msg, terminal_zstd).await? {
                     // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
                     msg @ LinkMsg::Event(AgentEvent::Image { .. }) => msg,
@@ -435,6 +468,7 @@ async fn serve_connection(
                         let h=host.clone();let m=mid.clone();tokio::spawn(async move {h.account_refresh(m,request).await;});
                     }
                     LinkMsg::Res { id, result } => {
+                        parts.remove(&id);
                         // 구독 응답은 이어지는 출력보다 먼저 mirror에 반영한다(같은 reader 순서).
                         if let Outcome::Ok(AgentResponse::Subscribed { session, snapshot, offset }) = &result {
                             host.on_subscribed(session, snapshot.clone(), *offset);
@@ -478,6 +512,7 @@ async fn serve_connection(
                     }
                     LinkMsg::Pong { .. } => {}
                     other => tracing::debug!("무시한 agent 메시지: {other:?}"),
+                    }
                 },
             }
             host.task_progress(Task::AgentLink);

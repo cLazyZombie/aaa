@@ -16,6 +16,7 @@ struct Lab {
     h: Arc<Host>,
     root: PathBuf,
     requests: Arc<AtomicUsize>,
+    hash_requests: Arc<AtomicUsize>,
     fake: tokio::task::JoinHandle<()>,
 }
 impl Drop for Lab {
@@ -88,6 +89,8 @@ impl Lab {
         );
         let requests = Arc::new(AtomicUsize::new(0));
         let seen = requests.clone();
+        let hash_requests = Arc::new(AtomicUsize::new(0));
+        let hash_seen = hash_requests.clone();
         let fake = tokio::spawn(async move {
             let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
             while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
@@ -129,6 +132,12 @@ impl Lab {
                             continue;
                         }
                         Outcome::Ok(AgentResponse::Done)
+                    }
+                    AgentRequest::ReportHash { .. } => {
+                        hash_seen.fetch_add(1, Ordering::SeqCst);
+                        Outcome::Ok(AgentResponse::ReportHash {
+                            hash: hex::encode(sha2::Sha256::digest(report.as_bytes())),
+                        })
                     }
                     AgentRequest::ReportCollect { max_library_bytes, .. } => {
                         if max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures {
@@ -175,8 +184,23 @@ impl Lab {
                 }
             }
         });
-        Self { h, root, requests, fake }
+        Self { h, root, requests, hash_requests, fake }
     }
+}
+
+/// 변경 확인과 resolve의 probe가 새 agent에는 hash만 요청하며, 구판 경로도 유지해야 한다.
+#[tokio::test]
+async fn current_report_hash_uses_the_negotiated_probe_and_legacy_fallback() {
+    let lab = Lab::new(0, b"");
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    let conn = lab.h.live_conn("m").unwrap();
+    let expected = hex::encode(sha2::Sha256::digest("[진행 중] 시험 중\n".as_bytes()));
+    assert_eq!(lab.h.current_report_hash(&rec, &conn).await.unwrap(), expected);
+    assert_eq!(lab.hash_requests.load(Ordering::SeqCst), 0);
+    lab.h.inner.lock().unwrap().machines.get_mut("m").unwrap().features.push("report_hash.v1".into());
+    assert_eq!(lab.h.current_report_hash(&rec, &conn).await.unwrap(), expected);
+    assert_eq!(lab.hash_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(lab.requests.load(Ordering::SeqCst), 0, "probe는 library 복사를 시작하지 않는다");
 }
 
 /// 실제 보고 회수와 brief 확인의 순서를 뒤집어도 ack 뒤 묶음은 같아야 한다.

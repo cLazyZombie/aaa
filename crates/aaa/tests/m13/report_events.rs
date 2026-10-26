@@ -49,8 +49,11 @@ fn report_state_precedes_completion_event() {
     let mut events = w.lab.follow("live-flow", &w.h, "demo");
     let routines = w.projects.join("demo/routines");
     std::fs::create_dir_all(&routines).unwrap();
-    std::fs::write(routines.join("hold.md"), "+++\non = \"pr\"\nevents = [\"merged\"]\nenabled = false\n+++\n본문\n")
-        .unwrap();
+    // 감시 폴더에 바로 쓰면 생성 직후 빈 파일을 읽은 routine_broken이 seq 사이에 끼어든다.
+    // 완성한 fixture를 같은 파일시스템에서 원자적으로 공개한 뒤 toggle을 시작한다.
+    let staged = w.lab.root.join("hold-fixture.md");
+    std::fs::write(&staged, "+++\non = \"pr\"\nevents = [\"merged\"]\nenabled = false\n+++\n본문\n").unwrap();
+    std::fs::rename(staged, routines.join("hold.md")).unwrap();
     w.lab.spawn("toggle", &w.h, &["routine", "toggle", "demo", "hold", "--on"]);
     let (mut gate, line) = signal(&listener, &rt);
     assert_eq!(line, "Hhold: 켬\n");

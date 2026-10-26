@@ -8079,3 +8079,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 같은 thread의 전달 완료된 답 보존 기록에서 질문 제목·본문·선택지·뒤 설명과 참조 library 파일의 실제 바이트가 같은 것을 찾는다. 질문 밖의 보고 변경이나 일부 질문만 재기재한 경우에는 원래 q-ID·답을 잇고 새 카드·답 기록·사용자 답 전달을 만들지 않는다. thread에는 답한 질문을 보고에서 빼라고 알린다. 다른 thread·post·전달 중 claim과 변경/누락된 자료는 근거가 아니다. 기본 검수 카드는 새 보고의 검수를 계속 물을 수 있다.
 - 답한 질문과 새 질문이 섞이면 새 질문만 카드에 남기고 `ThreadQuestion.source_number`로 원문의 번호를 유지한다. 카드의 2번은 웹·CLI·thread 전달 모두 2번이다. 기존 `aaa:question` 참조와 보존한 답 목록은 같은 q-ID로 열린다. 재시작의 질문 재해석에도 같은 규칙을 적용한다. 운영 host·DB 대신 격리 실험실에서 확인한다.
 - 참고: [Enquirer ArrayPrompt](https://github.com/enquirer/enquirer/blob/master/lib/types/array.js)([MIT](https://github.com/enquirer/enquirer/blob/master/LICENSE))의 값/표시/위치 구분과 [prompt-toolkit dialogs](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/src/prompt_toolkit/shortcuts/dialogs.py)([BSD-3-Clause](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/LICENSE))의 표시문과 반환값 분리를 따른다. 외부 코드·의존성은 추가하지 않는다.
+
+
+### 8.505 agent의 큰 응답 분할과 보고 hash 전용 조회(t-1131)
+
+- **문제와 원인.** 보고 변경 확인의 `ReportCollect(max_library_bytes=0)`는 library를 전부 걷고 건너뛴 파일마다 경로·사유를 붙였다. 재연결 뒤 첫 c0 요청이 같은 보고를 다시 읽어, 14,781개 자료의 2,232,861바이트 응답이 1MiB frame 상한을 넘고 writer가 연결 전체를 닫는 순환이 생겼다. 0은 library를 읽지 않는다는 뜻이 아니었다.
+- **줄인 조회.** agent의 선택 기능 `report_hash.v1`과 `ReportHash` 요청/응답을 더한다. host의 변경 확인과 resolve 전 확인은 기능을 알린 agent에 hash만 묻고, 구판 agent에는 기존 요청을 보낸다. 본문 상한·regular file 검사·기존 사본 hash 의미는 유지한다.
+- **분할과 호환.** AGENT_LINK 1.11·FRONT_API는 유지한다. 양쪽이 `response_parts.v1`을 알린 연결에서만 agent의 1MiB 이상 비터미널 `Res` JSON을 최대 384KiB 원문 조각의 `ResPart(id, offset, total, data)`로 보낸다. 각 조각의 base64·JSON·종류 byte까지 기존 1MiB 이하여야 한다. 전체 응답과 연결의 미완성 응답 합계는 각각 16MiB까지다. 구판 host 또는 전체 상한 초과에는 같은 요청 ID의 `too_large` 오류를 보낸다. 자동 분할 재전송은 없다.
+- **받는 경계.** host는 살아 있는 요청 ID만 조립하고 offset·전체 길이·중복 시작·조각 크기·합계 상한·최종 JSON의 Res 종류/ID를 확인한다. 시한이 지나거나 취소된 자료는 다음 수신 사건에 버리고, 연결 종료 때 전부 버린다. 순서가 잘못된 조각은 그 요청만 실패시키며 연결과 다른 요청은 계속한다. 조립한 응답은 기존 decode·가림·적용 경계를 그대로 거친다. `report_copy.v2`는 원본 전체 hash를 먼저 확인한 뒤 저장 전에 가리는 순서를 유지한다.
+- **실패 격리.** 공통 송신부는 종류 byte까지 검사해 wire 쓰기 전에 크기 오류를 호출자에 돌린다. writer의 방어 검사도 길이 초과 frame을 소비하고 다음 frame으로 진행한다. I/O 실패와 잘못된 터미널 codec/대기열 처리는 기존 연결 복구 정책을 유지한다. 큰 응답 진단에는 요청 ID·종류·바이트·상한을 남기며 본문은 남기지 않는다. 분할 JSON 해석 실패도 원문 대신 오류 종류·위치를 기록한다.
+- **참고.** [Tokio LengthDelimitedCodec](https://github.com/tokio-rs/tokio/blob/master/tokio-util/src/codec/length_delimited.rs)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))의 쓰기 전 길이 검사와 [nats.go](https://github.com/nats-io/nats.go/blob/main/nats.go)([Apache-2.0](https://github.com/nats-io/nats.go/blob/main/LICENSE))의 최대 payload 사전 거부를 참고했다. 외부 코드·의존성은 추가하지 않는다.
