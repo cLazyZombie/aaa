@@ -180,6 +180,8 @@ thread를 띄우거나, 말을 보내거나, 화면을 읽거나, 키를 누를 
   다음 지시는 `aaa thread next <id> --line N`으로 Next 줄을 보낸다. Next 줄을 coordinator가 직접 하지 않는다.
 - 보류(`aaa thread park`)는 사용자가 보류하라고 했을 때만, 끝내기(`aaa thread resolve`)는 사용자가 끝내라고 할 때만 한다.
 - thread가 시작할 때 모아 묻는 질문(보고 첫 줄 `[결정 필요]`, `## Questions`)은 웹 「답할 것」에 카드로 뜬다.
+  별도 질문 카드를 만들지 않는다. 확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙여 기존 카드에 묶고,
+  post 본문에 새 `## Questions`·선택지를 쓰지 않는다.
   memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 요약과 추천, `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)`을 적고,
   아래 「사용자 알림」의 확인 필요 post를 보낸 뒤 턴을 끝내고 다른 일을 이어 간다. 카드로 답하면 host가 thread에 바로 보내고
   inbox에 `question answered`를 남긴다: 다시 묻거나 전하지 않는다. 채팅으로 답하면(예: 「1A 2B」) `aaa thread answer <id> 1A 2B`로 보낸다(카드도 「답함」이 된다).
@@ -199,7 +201,8 @@ thread를 띄우거나, 말을 보내거나, 화면을 읽거나, 키를 누를 
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다.
 - 사용자에게 묻거나 사람 전용 단계를 남기고 멈추기 전에 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한
   행동과 까닭을 파일에 쓴 뒤 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를
-  보낸다. 본문은 `## Questions` 형식으로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다(질문·선택지·그림·영상 문법은 `aaa guide questions`).
+  보낸다. thread 질문 카드가 있으면 제목 끝에 `aaa:question/<thread>`를 붙이고 본문에 새 `## Questions`·선택지를 쓰지 않는다.
+  별개 질문만 본문을 `## Questions` 형식으로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다(질문·선택지·그림·영상 문법은 `aaa guide questions`).
 - 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고 `aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를
   한 번 보낸다.
 - post 제목은 외부 알림에 실린다: 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다. post 본문에도 비밀값을 쓰지 않는다.
@@ -312,6 +315,9 @@ thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림�
 
 ## thread 질문
 열린 질문을 가리키는 post는 「답할 것」에서 카드 한 줄로 묶인다. 카드에서 답하면 연결 post도 자동으로 끝난다.
+별도 질문 카드를 만들지 않는다. 확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙이고 본문에 새 `## Questions`·선택지를 쓰지 않는다.
+연결을 빠뜨린 평문 post가 같은 프로젝트의 미답변 thread 질문 하나를 제목·본문의 t-ID나 현재 q-ID로 가리키면 host가 자동 연결한다.
+여러 thread 질문을 가리키면 거부하므로 제목 끝에 연결 대상을 명시한다. 정당한 별개 질문은 본문에 새 `## Questions`로 쓴다.
 질문 선택지·추천은 thread 보고의 카드를 정본으로 삼는다. post에만 새 C안을 만들어 선택지가 갈라지게 하지 않는다.
 새 안을 제안하려면 thread 보고를 먼저 고친다. 사용자가 채팅으로 답하면 카드에 있는 선택은 `aaa thread answer <thread> 1A`처럼
 기록하고, 카드에 없는 C나 직접 쓴 답은 `aaa thread answer <thread> --text '1 C: 사용자 답 원문'`으로 그대로 전한다.

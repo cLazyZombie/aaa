@@ -5211,6 +5211,8 @@ const GUIDE_SECTIONS: &[&str] = &[
     "## 첫 턴",
     "--to-user --title",
     "볼 보고서·시안·음원 링크는 질문 안에 둔다",
+    "확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙여 기존 카드에 묶고",
+    "post 본문에 새 `## Questions`·선택지를 쓰지 않는다",
     "그림·영상 문법은 `aaa guide questions`",
     "지시는 사용자만, 채팅으로 한다",
     "## 메시지마다 세 가지 중 하나",

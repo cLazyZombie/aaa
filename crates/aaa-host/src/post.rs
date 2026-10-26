@@ -88,6 +88,71 @@ pub(crate) fn body(e: &PostEnvelope) -> String {
 
 /// 임무 파일도 출처 봉투와 자료 표시를 함께 받는다. DB의 pending은 파일 쓰기 응답 뒤 확정한다.
 impl Host {
+    /// 평문 알림의 명시적인 ID만 현재 카드에 연결한다. 새 구조화 질문은 별개의 요청이다.
+    fn link_thread_question(&self, project: &str, input: &mut PostInput) -> anyhow::Result<()> {
+        if input.to != "user"
+            || input.post_type != PostType::Request
+            || !input.needs_user
+            || input
+                .title
+                .split_whitespace()
+                .any(|w| crate::notify::app_ref(w).is_some_and(|(kind, _)| kind == "question"))
+            || !aaa_proto::report_questions(&input.body).is_empty()
+        {
+            return Ok(());
+        }
+        let refs: std::collections::BTreeSet<_> = input
+            .title
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+            .chain(input.body.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_'))
+            .filter_map(|word| {
+                aaa_proto::canonical_short_id(word, 't').or_else(|| aaa_proto::canonical_short_id(word, 'q'))
+            })
+            .collect();
+        if refs.is_empty() {
+            return Ok(());
+        }
+        let targets = refs
+            .iter()
+            .filter(|id| id.starts_with("q-"))
+            .map(|id| self.db.question_target(Some(project), id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let mut matches = Vec::new();
+        for row in self.db.threads(Some(project))? {
+            let rec: crate::orch::ThreadRec = serde_json::from_str(&row)?;
+            if rec.status == aaa_proto::ThreadStatus::Resolved
+                || rec.report_hash.is_none()
+                || rec.questions.is_empty()
+                || rec.question_answer.is_some()
+            {
+                continue;
+            }
+            if aaa_proto::canonical_short_id(&rec.id, 't').is_some_and(|id| refs.contains(&id))
+                || targets.iter().flatten().any(|t| {
+                    t.kind == "thread"
+                        && t.subject == rec.id
+                        && Some(&t.revision) == rec.report_hash.as_ref()
+                        && t.position < rec.questions.len()
+                })
+            {
+                matches.push(rec.id);
+            }
+        }
+        anyhow::ensure!(
+            matches.len() <= 1,
+            "여러 미답변 thread 질문을 가리킨다. aaa post user --request --needs-user --topic user-action --title '<제목> aaa:question/<thread>' --body-file <파일>로 대상을 명시한다. 별개 질문은 본문에 새 ## Questions로 쓴다"
+        );
+        if let Some(thread) = matches.first() {
+            let title = format!("{} aaa:question/{thread}", input.title);
+            anyhow::ensure!(
+                title.chars().count() <= 120,
+                "thread 질문 자동 연결 뒤 제목이 120자를 넘는다. 제목을 줄이고 끝에 aaa:question/{thread}를 붙인다"
+            );
+            input.title = title;
+        }
+        Ok(())
+    }
+
     pub(crate) fn receive_post(&self, mid: &str, session: &str, input: PostInput) -> PostResult {
         // 접수 뒤 Ack가 유실되고 thread가 끝나도, 검증했던 원장의 결과가 정본이다.
         let previous = match self.db.post_row(&input.post_id) {
@@ -378,6 +443,11 @@ impl Host {
                     });
                 }
             }
+        }
+        if result.is_none()
+            && let Err(error) = self.link_thread_question(project, &mut input)
+        {
+            result = Some(refused(format!("thread 질문 연결 실패: {error:#}")));
         }
         let id = match self.db.post_next_id() {
             Ok(id) => id,
@@ -693,6 +763,88 @@ mod tests {
     }
     fn put(h: &Host, n: u32, now: u64) -> PostResult {
         h.store_post("demo", sender(), input(n), "post:t-0001@mac-a", None, now)
+    }
+
+    /// 실제 post 접수에서 카드 연결·재전송과 별개 질문/옛 질문/다른 프로젝트의 경계를 함께 지킨다.
+    #[test]
+    fn plain_user_requests_link_only_one_current_thread_question() {
+        let (h, _lab) = host();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let mut rec =
+            crate::orch::ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, aaa_proto::ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.report_hash = Some("current".into());
+        rec.questions = aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 아래\n- B 위\n");
+        let save = |r: &crate::orch::ThreadRec| {
+            let json = serde_json::to_string(r).unwrap();
+            if !h.db.thread_import(&r.project, &r.id, r.status.as_str(), &json).unwrap() {
+                h.db.thread_save(&r.project, &r.id, r.status.as_str(), &json).unwrap();
+            }
+        };
+        save(&rec);
+        let q = h.db.question_id("demo", "thread", &rec.id, "current", 0).unwrap();
+        let stale = h.db.question_id("demo", "thread", &rec.id, "old", 0).unwrap();
+        let request = |n, title: &str, body: &str| PostInput {
+            to: "user".into(),
+            topic: "user-action".into(),
+            title: title.into(),
+            body: body.into(),
+            ..input(n)
+        };
+        let send = |i| h.front_post("demo", i, "local:cli@coord").unwrap();
+        let stored = |id: &str| h.db.post_list("demo").unwrap().into_iter().find(|p| p.id == id).unwrap();
+        for (n, title, body) in [
+            (1, "t-1 질문 확인", "카드에서 답한다".to_string()),
+            (2, "질문 알림", format!("[{q} 질문](#question={q})에서 답한다")),
+            (3, "본문 참조", "t-00001의 질문에 답한다".to_string()),
+        ] {
+            let i = request(n, title, &body);
+            let result = send(i.clone());
+            let PostResult::Accepted { id } = &result else { panic!("{result:?}") };
+            assert_eq!(send(i), result, "자동 연결 뒤에도 원래 입력의 재전송은 같은 결과다");
+            let envelope = stored(id);
+            assert_eq!(envelope.input.title, format!("{title} aaa:question/t-0001"));
+            assert_eq!(envelope.input.body, body, "본문과 선택지는 바꾸지 않는다");
+        }
+        assert_eq!(h.question_requests("demo", &rec.id).unwrap().len(), 3);
+        let other = crate::orch::ThreadRec { project: "other".into(), id: "t-0003".into(), ..rec.clone() };
+        save(&other);
+        for (n, title, body) in [
+            (4, "옛 질문", stale.as_str()),
+            (5, "다른 프로젝트 t-0003", "별개 확인"),
+            (6, "부분 문자열 xt-1 t-1-extra t-10", "별개 확인"),
+            (7, "t-1 관련 별개 질문", "## Questions\n### 1. 일정\n- A 오늘\n- B 내일\n"),
+            (8, "명시 연결 aaa:question/t-9999", "t-1을 참고한다"),
+        ] {
+            let PostResult::Accepted { id } = send(request(n, title, body)) else { panic!("독립 요청 {n}") };
+            assert_eq!(stored(&id).input.title, title);
+        }
+        let second = crate::orch::ThreadRec { id: "t-0002".into(), ..rec.clone() };
+        save(&second);
+        let count = h.user_requests("demo").unwrap().len();
+        assert!(matches!(send(request(9, "t-1 t-2 확인", "카드에서 답한다")),
+            PostResult::Refused { reason, .. } if reason.contains("여러 미답변") && reason.contains("--title")));
+        assert!(matches!(send(request(10, &format!("t-1 {}", "가".repeat(115)), "카드에서 답한다")),
+            PostResult::Refused { reason, .. } if reason.contains("120자")));
+        assert_eq!(h.user_requests("demo").unwrap().len(), count, "거부된 요청은 카드를 만들지 않는다");
+        rec.question_answer = Some(aaa_proto::QuestionAnswerView {
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1A".into(),
+            by: "웹".into(),
+            at_ms: 5,
+        });
+        save(&rec);
+        let PostResult::Accepted { id } = send(request(11, "t-1 답한 뒤 별개 확인", "새 요청")) else {
+            panic!("답한 뒤")
+        };
+        assert!(!stored(&id).input.title.contains("aaa:question/"));
+        let resolved = crate::orch::ThreadRec { status: aaa_proto::ThreadStatus::Resolved, ..second };
+        save(&resolved);
+        let PostResult::Accepted { id } = send(request(12, "t-2 닫힌 뒤 별개 확인", "새 요청")) else {
+            panic!("닫힌 뒤")
+        };
+        assert!(!stored(&id).input.title.contains("aaa:question/"));
     }
 
     /// 기본 한도로 짧은 핑퐁·모든 창 경계·20번째 rate 거부의 음소거를 실제 원장에서 본다.
