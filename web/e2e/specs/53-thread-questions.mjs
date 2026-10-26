@@ -406,6 +406,13 @@ export default async function ({ page }) {
     await until("첫 보고 회수", () => aaa("thread", "show", t.id).report_hash);
     const source = "[결정 필요] 질문 2개: M3 원문\n\n" + fs.readFileSync(fileURLToPath(new URL("../../../crates/aaa-proto/tests/fixtures/m3-questions.md", import.meta.url)), "utf8");
     const write = async (body) => {
+      const previous = aaa("thread", "show", t.id).questions;
+      if (previous?.answer) {
+        // question_answer는 전달 전 claim이다. 실제 답 원문 보존 뒤 다음 보고를 쓴다.
+        await until("이전 질문 답 원문 보존", async () => (await asksOf(page)).ok.done.some(r =>
+          r.subject === t.id && r.answer?.at_ms === previous.answer.at_ms
+            && previous.items.every(q => r.items.some(old => old.id === q.id))));
+      }
       fs.writeFileSync(`${t.work_dir}/report.md`, body);
       const hash = createHash("sha256").update(body).digest("hex");
       return await until("해당 보고의 질문", () => { const v = aaa("thread", "show", t.id); return v.report_hash === hash && v.questions && v; });
@@ -468,7 +475,11 @@ export default async function ({ page }) {
       await write("[결정 필요] 질문 1개: thread CLI\n## Questions\n### 1. 새 진행\n- A 진행\n");
       aaa("thread", "answer", t.id, "1A");
       await until("경고 카드 thread CLI 답 저장", () => aaa("thread", "show", t.id).questions.answer?.summary === "1A");
-      const repaired = await write(source + "\n");
+      const repeated = await write(source + "\n");
+      if (repeated.questions.items.length !== 1 || repeated.questions.items[0].source_number !== 1)
+        throw new Error("직접 답한 2번 질문을 수정 보고에서 다시 열었다");
+      // 앞 직접 답으로 2번도 답했다. 수정 뒤 새 판단은 제목으로 구별하고 같은 두 글자를 전달한다.
+      const repaired = await write(source.replace("M3 끝까지 시험할 곳", "M3 수정 뒤 끝까지 시험할 곳") + "\n");
       if (repaired.questions.format_warning) throw new Error("수정 뒤 경고가 남았다");
       await card.getByTestId("thread-ask-pick-1C").click();
       await card.getByTestId("thread-ask-pick-2B").click();
