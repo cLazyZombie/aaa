@@ -145,7 +145,10 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
 }) {
   canControl = canControl && !rule.web_read_only_reason;
   const { runs, executions, next, moreBusy, loadMore, source, error, loading, load } = useRuns(project, rule.name, rule.last_result?.at_ms);
-  const [unblock, setUnblock] = useState<{ batch: string; discard: boolean } | null>(null);
+  const [unblock, setUnblock] = useState<{
+    batch: string; discard: boolean;
+    submitted?: { thread: string | null; events: number; pending: number };
+  } | null>(null);
   // 지금 실행·지우기·명령 승인·자동 시작 승인 확인창. 지금 실행 key는 창을 열 때 한 번 정한다(같은 누름은 host가 한 번만 받는다)
   const [ask, setAsk] = useState<{ kind: "run"; key: string } | { kind: "delete" } | { kind: "command" } | { kind: "start" } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -159,8 +162,10 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
   const legacy = legacyRule(rule);
   const queue = rule.queue;
   const failed = rule.last_result?.status === "failed" ? rule.last_result : null;
-  // 확인창은 고른 그 묶음이 아직 막혀 있을 때만 뜬다(다른 기기·CLI가 먼저 풀면 닫힌다)
-  const asked = unblock && stuck?.id === unblock.batch ? unblock : null;
+  // 실행 전에는 다른 기기·CLI가 먼저 풀면 닫는다. 이 창이 보낸 뒤에는 목록이 먼저 바뀌어도
+  // HTTP 결과·오류를 받을 때까지 같은 확인창과 진행 상태를 유지한다.
+  const asked = unblock && (unblock.submitted || stuck?.id === unblock.batch) ? unblock : null;
+  const askedQueue = asked?.submitted ?? { thread: stuck?.thread ?? null, events: stuck?.events ?? 0, pending: queue?.pending ?? 0 };
   const editable = canControl && canEdit && !legacy && !rule.file.startsWith("missions/");
   const runnable = editable && rule.enabled && !rule.error && rule.action !== "배포 제안";
   const toggle = async () => {
@@ -317,10 +322,11 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
     />}
     {asked && <ConfirmDialog
       title={asked.discard ? "남은 입력 버리기" : "남은 입력 계속 보내기"}
-      body={`${stuck?.thread ?? "대상 thread"}에 보내던 묶음 ${stuck?.events}건은 다시 보내지 않습니다.\n${asked.discard ? `뒤에 쌓인 입력 ${queue?.pending ?? 0}건도 버립니다. 되돌릴 수 없습니다.` : `뒤에 쌓인 입력 ${queue?.pending ?? 0}건은 다음 차례에 보냅니다.`}`}
+      body={`${askedQueue.thread ?? "대상 thread"}에 보내던 묶음 ${askedQueue.events}건은 다시 보내지 않습니다.\n${asked.discard ? `뒤에 쌓인 입력 ${askedQueue.pending}건도 버립니다. 되돌릴 수 없습니다.` : `뒤에 쌓인 입력 ${askedQueue.pending}건은 다음 차례에 보냅니다.`}`}
       confirmLabel={asked.discard ? "버리기" : "계속 보내기"}
       onClose={() => setUnblock(null)}
       onConfirm={async () => {
+        setUnblock({ ...asked, submitted: askedQueue });
         await call({ op: "automation_unblock", project, name: rule.name, batch: asked.batch, discard: asked.discard });
         setUnblock(null);
         await onChanged();
