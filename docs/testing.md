@@ -6,6 +6,15 @@
 - 수정 전 새 회귀는 `report_first=true, previous=None`에서 `Working` / `Idle`로 실패했다. 기존 m13의 `worktree_thread_round_trip`은 300ms 공통 실험실로 돌리고 idle 단언을 그대로 유지한다. 독립 경로인 보고·brief 두 사건만 순서를 정렬하며, 전체 사건 수·시작/ack/resolve의 순서는 정확히 검사한다. `memory_and_restart`는 이미 공통 실험실과 pane 종료 뒤 idle을 검사하므로 제품 수리를 함께 검증한다.
 - 참고는 [Tokio Notify](https://docs.rs/tokio/latest/tokio/sync/struct.Notify.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))의 사건 신호와 [Loom의 순서 제어](https://github.com/tokio-rs/loom)([MIT](https://github.com/tokio-rs/loom/blob/master/LICENSE))다. 순서를 제어해 경쟁을 증명하는 원칙을 따르며 코드·의존성은 추가하지 않는다. 시한 연장·고정 sleep·실패 재시도·idle 기대값 완화는 없다.
 
+## thread 질문 중복 카드 방어(t-1063)
+
+- 새 host 유닛 `post::tests::plain_user_requests_link_only_one_current_thread_question`은 실제 post 접수·DB에서 제목 t-ID/본문 q-ID/0채움 별칭의 자동 연결과 원래 입력 재전송을 검사한다. 필요한 이유: 같은 질문의 알림이 새 카드가 되는 회귀와 잘못된 질문에 연결되는 데이터 손실을 함께 막는다. 별개 구조화 질문·명시 연결·다른 프로젝트·옛 q-ID·답한/닫힌 카드·부분 문자열 보존, 여러 카드/제목 한도 거부도 검사한다.
+- 기존 E2E53에 연결 없는 평문 확인 필요 post를 더한다. 필요한 이유: 실제 CLI → host → Chromium/WebKit의 「답할 것」이 한 카드·한 배지를 유지하고 카드 답 뒤 자동 연결 post도 한 번만 닫히는지 확인해야 한다. 기존 명시 연결 post 두 개와 원문/그림 보존·권한·답 기록 단언은 유지한다.
+- 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`의 안내 계약에 연결 접미사와 새 질문/선택지 금지를 더해 신규 생성·doctor 갱신에서 규칙이 빠지지 않게 한다. 새 실험실이나 시험 수를 추가하지 않는다.
+- 고정 sleep·시한 확대·재시도·기대값 완화가 없다. Playwright 1.64.1 패키지만 자기 작업 폴더에 두고 내부 공용 브라우저를 사용한다. 전체 ci-local은 coordinator가 부여한 차례에 실행한다.
+- 첫 전체 gate는 396초에 웹 유닛 584개·fmt·build·clippy·전체 E2E·public이 통과했지만 기존 `task_board_reads_tasks_and_follows_file_edits`가 실패했다. `std::fs::write`의 truncate→write 사이에 ticker가 빈 파일 SHA를 먼저 내보낸 것이 원인이다. 해당 fixture의 두 직접 쓰기를 인접 `task_edit_keeps_bytes_conflicts_and_logs`와 같은 pending 파일 작성→tick→rename으로 바꾼다. 빈 파일 사건을 건너뛰거나 SHA 기대값·시한을 바꾸지 않고, 완성 파일의 첫 관측 사건이라는 기존 계약을 유지한다.
+- OSS 참고: [Gitea 알림 원장](https://github.com/go-gitea/gitea/blob/main/models/activities/notification.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 같은 이슈 대상 알림 갱신, [Zulip 주제](https://docs.zulip.com/help/introduction-to-topics)([Apache-2.0](https://github.com/zulip/zulip/blob/main/docs/contributing/licensing.md))의 대화 주제 묶기를 비교했다. 기존 질문 카드를 정본으로 삼는 방식을 따르며 외부 코드·의존성은 추가하지 않는다.
+
 ## 할 일 한 줄 배치(t-1048)
 
 - 기존 E2E107을 확장한다. Chromium 1280/2000/390/320px·WebKit 1366/1024/390/320px에서 실제 host의 일반·예약·하위·병합 대기 행을 표시한다. 목록의 실제 너비가 640px 이상이면 모든 표시 칩과 제목·메뉴 중심이 1px 이내이고 행 높이는 40px 이하여야 한다. 좁은 목록은 제목 아래 칩 시작점, 휴대폰 제목 100px·행 높이 76px·메모만 있는 행 40px 계약을 유지한다.

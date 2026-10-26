@@ -118,11 +118,15 @@ export default async function ({ page }) {
     // coordinator가 같은 질문에 두 번 알림을 보내도 카드 하나다. API 수신 전에 옛 배지를 보지 않도록 새로 연다.
     const linkedBody = `${root}/question-request.md`;
     fs.writeFileSync(linkedBody, "질문 카드에서 선택해 답한다.");
+    // 연결 없는 평문 알림도 기존 thread 카드로 이어야 한다(중복 「답할 것」 회귀).
+    aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", `${t.id} 확인 필요`, "--body-file", linkedBody);
+    const automatic = (await asksOf(page)).ok.requests;
+    if (automatic.length !== 1 || !automatic[0].title.endsWith(`aaa:question/${t.id}`) || automatic[0].question_id !== q1.id) throw new Error(`평문 post 자동 연결: ${JSON.stringify(automatic)}`);
     for (const title of ["질문 요약", "질문 알림 보충"]) {
       aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", `${title} aaa:question/${t.id}`, "--body-file", linkedBody);
     }
     const linked = (await asksOf(page)).ok.requests;
-    if (linked.length !== 2) throw new Error(`연결 post 준비: ${JSON.stringify(linked)}`);
+    if (linked.length !== 3) throw new Error(`연결 post 준비: ${JSON.stringify(linked)}`);
     await page.reload();
 
     // 답할 것은 활동 막대 「답할 것」의 빨강 수다(3A). 보고서 단추는 안 본 보고서 수만 단다
@@ -213,7 +217,7 @@ export default async function ({ page }) {
       return (await r.json()).err;
     }, linked[0].id);
     if (guarded?.code !== "bad_request" || !guarded.message.includes("질문 카드")) throw new Error(`연결 post 처리: ${JSON.stringify(guarded)}`);
-    if ((await asksOf(pp)).ok.requests.length !== 2 || aaa("thread", "show", "demo", t.id).questions.answer !== null) throw new Error("post 처리 거부 뒤 질문·알림이 바뀌었다");
+    if ((await asksOf(pp)).ok.requests.length !== linked.length || aaa("thread", "show", "demo", t.id).questions.answer !== null) throw new Error("post 처리 거부 뒤 질문·알림이 바뀌었다");
 
     // 휴대폰에서 1B만 고르고 「추천대로 보내기」: 2번은 추천(A)으로 채워 thread에 한 번 간다
     await pp.getByTestId("thread-ask-pick-1B").click();
@@ -234,7 +238,7 @@ export default async function ({ page }) {
     if (completed.requests.length !== 0 || completed.done.length !== 1 || completed.done[0].kind !== "question") throw new Error(`카드 답 뒤 중복 기록: ${JSON.stringify(completed)}`);
     const linkedInbox = aaa("inbox", "list", "demo", "--all", "--peek").items;
     for (const r of linked) if (!linkedInbox.some((i) => i.id === r.id && i.done)) throw new Error(`끝나지 않은 연결 post: ${r.id}`);
-    if (linkedInbox.filter((i) => i.event === "request handled").length !== 2) throw new Error("연결 post마다 request handled가 남지 않았다");
+    if (linkedInbox.filter((i) => i.event === "request handled").length !== linked.length) throw new Error("연결 post마다 request handled가 남지 않았다");
     for (const r of linked) {
       const original = linkedInbox.find((i) => i.id === r.id);
       const handled = linkedInbox.filter((i) => i.event === "request handled" && i.summary.includes(original.summary));
