@@ -1045,13 +1045,25 @@ enum ThreadCmd {
         #[arg(long)]
         add: Option<String>,
     },
-    /// thread 목록. 끝난 thread도 늘 보인다(group 「끝남」, herdr-projects `thread list`처럼 `--all`이 없다)
+    /// thread 목록. 기본은 전체를 작은 페이지로 이어 읽는다. --open은 끝난 thread를 뺀다.
     List {
         /// 프로젝트(생략하면 모든 프로젝트)
         project: Option<String>,
-        /// 이 역할만(기본은 사후 평가자를 뺀 목록)
+        /// 이 역할만(생략하면 모든 역할)
         #[arg(long, value_parser = ["coordinator", "worker", "evaluator"])]
         role: Option<String>,
+        /// 끝난 thread를 뺀다(준비·실패·보류 포함)
+        #[arg(long, conflicts_with = "status")]
+        open: bool,
+        /// 이 상태만
+        #[arg(long, value_parser = ["starting", "open", "failed", "parked", "resolved"])]
+        status: Option<String>,
+        /// 출력할 최대 개수. 남은 목록은 응답의 커서를 --after에 주어 읽는다
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        limit: Option<u32>,
+        /// 앞 응답의 next_after 커서
+        #[arg(long)]
+        after: Option<String>,
     },
     /// 보고서와 결과물 목록, 웹에서 볼 읽기 전용 경로(2시간)
     Library {
@@ -2443,8 +2455,19 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadNext { project, thread, line, add }
                 }
-                ThreadCmd::List { project, role } => {
-                    FrontRequest::Threads { project, role: role.as_deref().and_then(aaa_proto::Role::parse) }
+                ThreadCmd::List { project, role, open, status, limit, after } => {
+                    return threads_cli(
+                        json,
+                        project,
+                        role.as_deref().and_then(aaa_proto::Role::parse),
+                        aaa_proto::ThreadListQuery {
+                            open,
+                            status: status.as_deref().and_then(aaa_proto::ThreadStatus::parse),
+                            limit,
+                            after,
+                            details: false,
+                        },
+                    );
                 }
                 ThreadCmd::Show { thread, legacy } => {
                     let (project, thread) = on_target(thread, legacy)?;
@@ -3549,6 +3572,31 @@ fn task_archive_cli(json: bool, project: String, mut restore: Option<String>) ->
     }
 }
 
+/// IPC의 작은 페이지를 로컬에서 합쳐 기존 JSON 목록 모양을 유지한다.
+fn threads_cli(
+    json: bool,
+    project: Option<String>,
+    role: Option<aaa_proto::Role>,
+    mut query: aaa_proto::ThreadListQuery,
+) -> Result<ExitCode> {
+    let mut all = Vec::new();
+    let max = query.limit;
+    loop {
+        query.limit = max.map(|n| n - all.len() as u32);
+        let response = front_call(FrontRequest::Threads { project: project.clone(), role, query: query.clone() })?;
+        let (threads, next_after) = match response {
+            Ok(FrontResponse::Threads { threads, next_after }) => (threads, next_after),
+            other => return front_print(json, other),
+        };
+        all.extend(threads);
+        if next_after.is_none() || max.is_some_and(|n| all.len() >= n as usize) {
+            return front_print(json, Ok(FrontResponse::Threads { threads: all, next_after }));
+        }
+        anyhow::ensure!(next_after != query.after, "thread 목록 페이지 커서가 나아가지 않았다");
+        query.after = next_after;
+    }
+}
+
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
 }
@@ -3638,6 +3686,12 @@ fn shift_project(first: String, rest: &mut Vec<String>) -> Result<(String, Strin
 pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
     runtime()?.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+        if let FrontRequest::Threads { query, .. } = &req
+            && c.proto.minor < 130
+            && (query.open || query.status.is_some() || query.limit.is_some() || query.after.is_some())
+        {
+            anyhow::bail!("thread 목록의 거르기·페이지는 Front API 1.130 이상 host가 필요하다");
+        }
         if matches!(&req, FrontRequest::TaskLog { task: Some(_), .. }) && c.proto.minor < 89 {
             anyhow::bail!("ID로 기록을 찾으려면 Front API 1.89 이상 host가 필요하다");
         }
@@ -4921,12 +4975,15 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{line}");
             }
         }
-        FrontResponse::Threads { threads } => {
+        FrontResponse::Threads { threads, next_after } => {
             if threads.is_empty() {
                 let _ = writeln!(s, "thread가 없다");
             }
             for t in threads {
                 render_thread(&mut s, t);
+            }
+            if let Some(cursor) = next_after {
+                let _ = writeln!(s, "다음 페이지 커서: {cursor} (--after로 이어 읽기)");
             }
         }
         FrontResponse::Thread(t) => render_thread(&mut s, t),

@@ -2,7 +2,7 @@
 // `scrollAnchor.ts` resolveWorkGroupScrollAnchor, `timelineScrollAnchoring.ts` rememberTimelinePosition을 aaa 기록으로.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "../src/chatScroll.ts";
+import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "../src/chatScroll.ts";
 
 const msg = (role, text) => ({ role, text });
 
@@ -63,4 +63,17 @@ describe("안내 높이와 맨 위", () => {
     assert.equal(chatAnchorTop(1000, false, at), 952);
     assert.equal(chatAnchorTop(1000, true, { offsetWithinRow: 12, scrollOffset: 1012 }), 1012);
   });
+});
+
+// 과거 페이지가 쌓여도 보던 줄 하나를 찾으려고 모든 DOM 줄의 높이를 재지 않는다.
+it("긴 기록도 필요한 높이만 읽고 기준 줄과 앞 안내 경계를 보존한다", () => {
+  const ids = Array.from({ length: 4096 }, (_, n) => `row-${n}`);
+  for (const scroll of [-5, 0, 145, 400005, 999999]) {
+    let reads = 0;
+    const at = chatScrollAnchorAt(ids, n => { reads++; return 40 + n * 100; }, scroll);
+    const offset = Math.max(0, scroll);
+    const index = Math.max(0, Math.min(4095, Math.floor((offset - 40) / 100)));
+    assert.deepEqual(at, { rowId: ids[index], offsetWithinRow: Math.max(0, offset - (40 + index * 100)), scrollOffset: offset });
+    assert.ok(reads <= Math.ceil(Math.log2(ids.length)) + 2, `${reads}회 높이를 읽었다`);
+  }
 });

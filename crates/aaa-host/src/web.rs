@@ -958,7 +958,7 @@ fn attachment_views(host: &Host, device: &str, response: &mut aaa_proto::FrontRe
     use aaa_proto::FrontResponse;
     match response {
         FrontResponse::Thread(t) => attachment_thread(host, device, t),
-        FrontResponse::Threads { threads } => {
+        FrontResponse::Threads { threads, .. } => {
             for t in threads {
                 attachment_thread(host, device, t);
             }

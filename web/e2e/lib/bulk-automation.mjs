@@ -37,9 +37,20 @@ export async function automationQueueScenario(engine, label, width) {
       await detail.getByText("뒤에 쌓인 입력 500건", { exact: true }).waitFor();
       await detail.getByRole("button", { name: discard ? "확인함 · 남은 입력 버리기" : "확인함 · 남은 입력 계속 보내기", exact: true }).click();
       const dialog = page.getByRole("alertdialog");
+      const summary = await dialog.locator(".confirm-body").textContent();
       const held = gate.arm("automation_unblock");
       await dialog.getByRole("button", { name: discard ? "버리기" : "계속 보내기", exact: true }).click();
-      try { await held.arrived; await responsive(page, dialog); }
+      try {
+        await held.arrived;
+        // host는 반영했지만 HTTP 응답은 아직 보류 중이다. 포커스 복귀가 실제 목록을 먼저 갱신하게 한다.
+        // 목록의 막힘이 사라져도 이 요청의 확인창·진행 표시·처음 고른 묶음은 응답까지 남아야 한다.
+        const refreshed = page.waitForResponse(response => response.url().endsWith("/api/v1/call") && response.request().postDataJSON()?.op === "routines");
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await refreshed;
+        await detail.getByTestId("automation-stuck").waitFor({ state: "hidden" });
+        await responsive(page, dialog);
+        assert.equal(await dialog.locator(".confirm-body").textContent(), summary);
+      }
       finally { held.release(); }
       await dialog.waitFor({ state: "hidden" });
       await detail.getByTestId("automation-stuck").waitFor({ state: "hidden" });

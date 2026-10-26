@@ -26,7 +26,8 @@ import { imagePaths } from "./herdr/composerImages";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import { delivered, type PendingSend } from "./ChatComposer";
-import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
+import { receiptSeen } from "./inputReceipt";
+import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
 import { ChatRow } from "./ChatRow";
 import { usePageVisible } from "./pageVisible";
@@ -434,7 +435,7 @@ export function ChatPanel({
   onOpenFile,
   onOpenLink,
   onMessages,
-  pending = [],
+  pending: pendingSends = [],
   harness = "claude",
   onDismissPending,
   steer,
@@ -469,6 +470,9 @@ export function ChatPanel({
   const readingRef = useRef(reading);
   readingRef.current = reading;
   const [chat, setChat] = useState<ChatView | null>(null);
+  // 기록을 그리는 commit에서 이미 수신된 낙관적 말을 뺀다. Composer의 상태 정리 effect까지
+  // 기다리면 기록 말과 낙관적 말이 한 frame 함께 나타난다. 수신 추적·저장은 Composer가 계속 맡는다.
+  const pending = useMemo(() => pendingSends.filter(p => !receiptSeen(p, chat?.messages ?? null)), [pendingSends, chat]);
   const [error, setError] = useState<string | null>(null);
   const chatRef = useRef<ChatView | null>(null);
   const epoch = useRef(0);
@@ -727,13 +731,16 @@ export function ChatPanel({
     const ids = rowIdsRef.current;
     if (rows.length !== ids.length) return;
     const base = el.getBoundingClientRect().top - el.scrollTop;
-    const tops = Array.from(rows, (row) => row.getBoundingClientRect().top - base);
-    const at = chatScrollAnchor(ids, tops, el.scrollTop);
+    const topAt = (index: number) => rows[index]!.getBoundingClientRect().top - base;
+    const at = chatScrollAnchorAt(ids, topAt, el.scrollTop);
     // 맨 위 안내를 읽을 때 첫 메시지까지의 빈 거리도 보존한다.
-    if (at && at.rowId === ids[0] && el.scrollTop < tops[0]!) at.offsetWithinRow = el.scrollTop - tops[0]!;
+    if (at && at.rowId === ids[0] && el.scrollTop < topAt(0)) at.offsetWithinRow = el.scrollTop - topAt(0);
     anchor.current = at ?? null;
     if (at) rememberChatPosition(pane, { ...at, atEnd: atBottom.current || (chatIsAtEnd(el) && !el.style.getPropertyValue("--chat-tail-space")) }, atBottom.current);
   };
+  // 같은 commit의 행별 초기 실측은 같은 shell 목록을 쓴다. 본문 mount/가림은 shell을 바꾸지 않는다.
+  // prepend·기록 교체·대기 말 변경 때 rowIds가 바뀌므로 DOM mutation 뒤 처음 한 번만 다시 조회한다.
+  const anchorRows = useRef<{ ids: readonly string[]; el: HTMLDivElement; rows: NodeListOf<HTMLElement> } | null>(null);
   const holdAnchor = (el: HTMLDivElement) => {
     const at = anchor.current;
     if (at === null || restoring.current) return;
@@ -741,7 +748,9 @@ export function ChatPanel({
     // scroll 사건보다 먼저 ResizeObserver가 와도 아직 반영 안 된 손의 이동을 지킨다.
     if (el.scrollTop !== lastScrollTop.current) return;
     const index = rowAtRef.current.get(at.rowId) ?? -1;
-    const row = index < 0 ? undefined : chatRows(el)[index];
+    if (anchorRows.current?.ids !== rowIdsRef.current || anchorRows.current.el !== el)
+      anchorRows.current = { ids: rowIdsRef.current, el, rows: chatRows(el) };
+    const row = index < 0 ? undefined : anchorRows.current.rows[index];
     if (row === undefined) return;
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
     const target = chatAnchorTop(top, index === 0, at);
@@ -761,7 +770,29 @@ export function ChatPanel({
     if (atBottom.current) scrollToEnd(false);
     else holdAnchor(el);
   };
-  const onRowResize = useCallback(() => resizeRow.current(), []);
+  // 한 페이지의 행 높이는 같은 ResizeObserver 묶음에서 모두 잰 뒤 보던 줄을 한 번 맞춘다.
+  // 행마다 전체 목록을 찾고 scrollTop을 쓰면 앞 페이지 commit 중 layout을 반복 강제한다.
+  const rowSizes = useRef(new Map<Element, () => void>());
+  const rowObserver = useRef<ResizeObserver | null>(null);
+  const observeRowSize = useCallback((el: HTMLDivElement, measure: () => void) => {
+    const observer = rowObserver.current ??= new ResizeObserver(entries => {
+      for (const entry of entries) rowSizes.current.get(entry.target)?.();
+      resizeRow.current();
+    });
+    rowSizes.current.set(el, measure);
+    observer.observe(el);
+    // mount·가상 본문 복귀 직후의 실측은 같은 layout 단계에서 보정해야 한다.
+    // 첫 observer 통지까지 미루면 그 사이 scroll 사건이 중간 위치를 새 기준으로 기억한다.
+    resizeRow.current();
+    return () => {
+      rowSizes.current.delete(el);
+      observer.unobserve(el);
+      if (rowSizes.current.size === 0) {
+        observer.disconnect();
+        rowObserver.current = null;
+      }
+    };
+  }, []);
   const layoutActive = useRef(false);
   useLayoutEffect(() => {
     const el = list.current;
@@ -818,7 +849,9 @@ export function ChatPanel({
     cancelRestore.current = finish;
     const index = rowAtRef.current.get(restoreFrom.rowId) ?? -1;
     const target = () => {
-      const row = index < 0 ? undefined : chatRows(el)[index];
+      if (anchorRows.current?.ids !== rowIdsRef.current || anchorRows.current.el !== el)
+        anchorRows.current = { ids: rowIdsRef.current, el, rows: chatRows(el) };
+      const row = index < 0 ? undefined : anchorRows.current.rows[index];
       if (row === undefined) return restoreFrom.scrollOffset;
       const top = el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top;
       const offset = chatAnchorTop(top, index === 0, restoreFrom);
@@ -1008,7 +1041,7 @@ export function ChatPanel({
               );
             };
             return (
-              <ChatRow active={active} key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={virtual} onResize={onRowResize}>
+              <ChatRow active={active} key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={virtual} observeSize={observeRowSize}>
                 {row.kind === "tools" ? (
                   <ToolGroup messages={row.indices.map((i) => chat.messages[i]!)} expanded={groupExpanded(row, expandedGroups)}
                     live={status === "working" && n === displayRows.length - 1} onToggle={() => toggleGroup(row)}>

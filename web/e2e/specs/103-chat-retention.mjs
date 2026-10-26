@@ -3,8 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { root, AA, aaa, step, browser, webkit, pairPage, waitOutput, until, domIs, shot, inTime } from "../lib/harness.mjs";
 import { frames, shown, go, prepare } from "../lib/chat-retention.mjs";
+import { retentionFailure } from "../lib/retention-failure.mjs";
 const baseline = process.env.AAA_CHAT_BASELINE === "1";
 const measurements = [];
+const diagnosticDir = `${root}/diagnostics`;
+fs.mkdirSync(diagnosticDir, { recursive: true });
+const retentionLog = event => {
+  const line = JSON.stringify({ at: Date.now(), ...event });
+  fs.appendFileSync(`${diagnosticDir}/retention-pages.jsonl`, line + "\n");
+  console.log("retention-page", line);
+};
 async function measure(page, pane, row = null) {
   return page.evaluate(({ pane, row }) => new Promise((resolve, reject) => {
     const start = performance.now();
@@ -53,13 +61,28 @@ async function check(engine, width, panes, delayed = false) {
       // 최신 150행 외에 여섯 쪽을 받아 둔 과거 위치를 사용한다.
       for (let n = 0; n < 6; n++) {
         const before = await shown(page).locator('.chat-row').count();
-        await shown(page).evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
+        const beforeState = await shown(page).evaluate(el => {
+          const state = { top: el.scrollTop, busy: el.getAttribute("aria-busy"), rows: el.querySelectorAll(".chat-row").length,
+            older: el.querySelector(".chat-older")?.textContent, error: el.querySelector(".banner")?.textContent,
+            nodes: el.querySelectorAll("*").length, height: el.clientHeight };
+          el.scrollTop = 0;
+          el.dispatchEvent(new Event("scroll", { bubbles: true }));
+          return state;
+        });
+        const context = { engine: engine.browserType().name(), width, role, trial, pageNo: n, before, pane, beforeState };
+        retentionLog({ event: "start", ...context });
         try {
           await domIs(page, "앞 쪽 commit", before => document.querySelector('.term:not([hidden]) [data-testid="chat"]').querySelectorAll('.chat-row').length > before, before);
+          retentionLog({ event: "commit", ...context });
         } catch (error) {
-          const state = await inTime(shown(page).evaluate(el => ({ top: el.scrollTop, busy: el.getAttribute('aria-busy'), rows: el.querySelectorAll('.chat-row').length, older: el.querySelector('.chat-older')?.textContent, error: el.querySelector('.banner')?.textContent })), 5000, '앞 쪽 실패 진단');
-          console.log('retention-page-failure', JSON.stringify({ role, trial, pageNo: n, before, state, requests: requests.slice(-10) }), error.stack);
-          throw error;
+          // 최초 오류와 시작 상태는 페이지에 다시 묻기 전에 남긴다. 추가 진단이 실패해도 원래 오류를 던진다.
+          await retentionFailure(error, context, requests.slice(-10), retentionLog, () =>
+            inTime(page.evaluate(() => {
+              const el = document.querySelector('.term:not([hidden]) [data-testid="chat"]');
+              return el ? { top: el.scrollTop, busy: el.getAttribute("aria-busy"), rows: el.querySelectorAll(".chat-row").length,
+                older: el.querySelector(".chat-older")?.textContent, error: el.querySelector(".banner")?.textContent,
+                nodes: el.querySelectorAll("*").length, height: el.clientHeight } : { absent: true, hash: location.hash };
+            }), 5000, "앞 쪽 실패 진단"));
         }
       }
       const row = await shown(page).locator('.chat-row').nth(40).evaluate(el => {

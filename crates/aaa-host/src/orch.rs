@@ -1120,6 +1120,69 @@ impl Host {
             .collect())
     }
 
+    /// 목록은 개수와 직렬화 바이트를 함께 제한한다. 다음 커서는 마지막으로 실은 행을 가리킨다.
+    pub(crate) fn threads_page(
+        &self,
+        project: Option<&str>,
+        role: Option<Role>,
+        query: &aaa_proto::ThreadListQuery,
+    ) -> Result<FrontResponse, ErrorBody> {
+        if query.open && query.status.is_some() {
+            return Err(err(ErrorCode::BadRequest, "open과 status는 함께 쓸 수 없다"));
+        }
+        let limit = query.limit.unwrap_or(100).min(200);
+        if limit == 0 {
+            return Err(err(ErrorCode::BadRequest, "thread 목록 limit은 1 이상이어야 한다"));
+        }
+        let after: Option<(String, String)> = query
+            .after
+            .as_deref()
+            .map(|value| {
+                let bytes = hex::decode(value)
+                    .map_err(|e| err(ErrorCode::BadRequest, format!("thread 목록 커서 hex 읽기 실패: {e}")))?;
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| err(ErrorCode::BadRequest, format!("thread 목록 커서 JSON 읽기 실패: {e}")))
+            })
+            .transpose()?;
+        if after.as_ref().is_some_and(|(p, _)| project.is_some_and(|want| want != p)) {
+            return Err(err(ErrorCode::BadRequest, "thread 목록 커서의 프로젝트가 다르다"));
+        }
+        let rows = self
+            .db
+            .thread_page(project, role.map(|r| r.as_str()), query, after.as_ref(), limit + 1)
+            .map_err(internal)?;
+        let mut threads: Vec<ThreadView> = Vec::new();
+        let mut bytes = 0;
+        let mut next_after = None;
+        // frame 포장·커서·웹 첨부 주소를 위해 여유를 둔다. MAX_FRAME 자체는 바꾸지 않는다.
+        let budget = aaa_proto::MAX_FRAME / 2;
+        for row in rows {
+            let mut r: ThreadRec = serde_json::from_str(&row).map_err(internal)?;
+            if !query.details {
+                r.questions.clear();
+                r.question_warning = None;
+            }
+            let view = self.thread_view(&r);
+            let size = serde_json::to_vec(&view).map_err(internal)?.len() + 1;
+            if threads.len() == limit as usize || bytes + size > budget {
+                let Some(last) = threads.last() else {
+                    return Err(err(
+                        ErrorCode::TooLarge,
+                        format!(
+                            "thread 목록의 {}/{} 한 항목이 {}바이트로 페이지 한도를 넘는다. thread show로 상세를 읽는다",
+                            view.project, view.id, size
+                        ),
+                    ));
+                };
+                next_after = Some(hex::encode(serde_json::to_vec(&(&last.project, &last.id)).map_err(internal)?));
+                break;
+            }
+            bytes += size;
+            threads.push(view);
+        }
+        Ok(FrontResponse::Threads { threads, next_after })
+    }
+
     pub(crate) fn thread_show(&self, project: &str, id: &str) -> Result<ThreadView, ErrorBody> {
         if let Some(v) = self.db.report_target(project, id).map_err(internal)? {
             let mut view = self.thread_view(&self.load(project, &v.source)?);
@@ -3435,3 +3498,6 @@ mod tests {
 #[cfg(test)]
 #[path = "orch/report_tests.rs"]
 mod report_tests;
+
+#[cfg(test)]
+mod list_tests;

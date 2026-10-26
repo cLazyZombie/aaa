@@ -49,7 +49,7 @@ import { holdPageRef } from "./pageHold";
 import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
 import { useAppearance } from "./theme";
-import { receiptMethod, receiptHash, inputTraceId, slashCommand } from "./inputReceipt";
+import { receiptMethod, receiptSeen, receiptHash, inputTraceId, slashCommand } from "./inputReceipt";
 import { heldSend } from "./steerQueued";
 import { usePageVisible } from "./pageVisible";
 
@@ -446,7 +446,7 @@ export function ChatComposer({
     (list ?? []).filter((m) => receiptMethod(text, m, hash) !== null).length;
   /** 기록에 이 글의 새 사람 글이 보인다(같은 글의 출현 횟수가 늘었다, t-0387) */
   const seen = (item: { text: string; hash?: string; before: number | null }, list = messagesRef.current) =>
-    item.before !== null && occurrences(item.text, list, item.hash) > item.before;
+    receiptSeen(item, list);
   const queued = useSyncExternalStore(messageQueues.subscribe, () =>
     messageQueues.read(owner),
   );

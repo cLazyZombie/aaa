@@ -1991,9 +1991,7 @@ impl Host {
                 };
                 Ok(FrontResponse::Assignable { owners, valid })
             }
-            FrontRequest::Threads { project, role: want } => {
-                self.threads_of(project.as_deref(), want).map(|threads| FrontResponse::Threads { threads })
-            }
+            FrontRequest::Threads { project, role: want, query } => self.threads_page(project.as_deref(), want, &query),
             FrontRequest::ThreadShow { project, thread } => {
                 self.thread_show(&project, &thread).map(Box::new).map(FrontResponse::Thread)
             }
