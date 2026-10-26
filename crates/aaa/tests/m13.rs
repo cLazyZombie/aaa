@@ -2781,6 +2781,8 @@ fn thread_state_items_follow_groups() {
     // B: pane이 닫히면 확인 필요
     w.h.ok(&["pane", "kill", &b_pane]);
     wait_item(&w, &b, "pane closed");
+    // 공통 진행 fixture의 완료 Next를 확인했다. 묶음 전이와 자동 보관은 후속 처리 뒤 검사한다.
+    w.finish_fixture_followups(&a);
     // A: 확인하면 쉼, 끝내면 resolved
     w.h.ok(&["thread", "ack", "demo", &a]);
     wait_item(&w, &a, "idle");

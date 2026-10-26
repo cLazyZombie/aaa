@@ -210,6 +210,11 @@ export default async function ({ page }) {
     const completed = aaa("thread", "start", "demo", "--title", "보관할 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/archive-task.md`);
     aaa("task", "edit", other, "--thread", completed.id);
     await until("보관할 완료 보고", () => aaa("thread", "show", completed.id).report_hash);
+    // 이 단계는 보관된 ID 링크를 검사하므로 공통 fake가 남긴 결과 확인을 먼저 기록한다.
+    fs.writeFileSync(`${root}/id-followup-reason.txt`, "보관할 결과 확인과 다음 단계 검토 완료\n");
+    for (const f of aaa("thread", "show", completed.id).followups ?? []) {
+      if (f.handled_ms === null) aaa("thread", "followup", "demo", completed.id, "--id", f.id, "--reason-file", `${root}/id-followup-reason.txt`);
+    }
     aaa("thread", "resolve", completed.id); aaa("ticker", "tick");
     assert.ok(aaa("task", "archive").entries.some(e => e.task.short_id === other));
     await go(page, `task=${other}`); await page.getByTestId("task-missing").waitFor();

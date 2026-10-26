@@ -14,6 +14,8 @@ fn main_ancestor_archives_landing_without_asking_but_keeps_unmerged_and_missing_
         let started = w.start(&["--from-task", title, "--link-task", "--profile", "fake", "--repo", path_str(&w.repo)]);
         let id = started["id"].as_str().unwrap().to_string();
         events.kind("report_ready", &id, T);
+        // 공통 fake의 완료 Next는 확인하고, 아래에서는 실제 [착지] 보고의 Git 판정만 검사한다.
+        w.finish_fixture_followups(&id);
         let rec = w.show(&id);
         let cwd = PathBuf::from(rec["cwd"].as_str().unwrap());
         let work = PathBuf::from(rec["work_dir"].as_str().unwrap());

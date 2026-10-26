@@ -8064,7 +8064,7 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 ### 8.503 완료 보고의 후속 유실 방지(t-1112)
 
 - 완료 보고의 Next가 남으면 완료 근거(표지·PR 병합·main 조상)와 별개로 후속 원장을 유지한다. 보고 회수와 마지막 resolve에서 원본 판·줄을 기록하며 같은 사본/같은 미처리 줄은 중복하지 않는다. 새 보고가 Next를 비우거나 thread를 다시 열어도 이전 미처리 후속을 버리지 않는다. 연결 task가 없어도 thread 원장과 coordinator inbox에 남긴다.
-- 기존 확인 필요 흐름을 넓힌다. inbox 종류 `task-followup`, 사건 `task needs check`, 제목 「후속 남음」으로 보이고 연결 task는 활성 목록의 확인 필요로 남는다. 미처리 후속이 있으면 자동 보관·명시 완료·삭제·연결 해제·원문 우회를 거부한다. 일반 inbox done(개별/전체)으로 닫지 않는다. thread 자체는 resolve할 수 있어 실행 자리와 후속 책임을 분리한다.
+- 열린 thread는 기존 새 보고 알림을 유지하고, 끝낼 때부터 미처리 후속 알림을 만든다. 다시 열어도 이미 만든 후속 알림은 없애지 않는다. 기존 확인 필요 흐름을 넓힌다. inbox 종류 `task-followup`, 사건 `task needs check`, 제목 「후속 남음」으로 보이고 연결 task는 활성 목록의 확인 필요로 남는다. 미처리 후속이 있으면 자동 보관·명시 완료·삭제·연결 해제·원문 우회를 거부한다. 일반 inbox done(개별/전체)으로 닫지 않는다. thread 자체는 resolve할 수 있어 실행 자리와 후속 책임을 분리한다.
 - FRONT_API **1.131**: `ThreadView.followups`와 `thread_followup {project,thread,id,task,reason}`. `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`는 같은 프로젝트의 실제 활성/완료 할 일 ID에 연결한다. 원래 맡은 task로 자기 연결하지 않는다. `--reason-file`은 버림·정리 완료 사유를 비지 않은 한 줄로 남긴다. 한 번 처리하면 actor·시각·연결/사유를 보존하며 두 기기가 동시에 덮어쓰지 않는다. Reader·thread 내부 agent는 변경할 수 없다.
 - `정리:`는 thread가 정리만 남은 Next를 구분하는 명시적 표기다. 자연어 추측으로 자동 면제하지 않는다. 정리가 끝나면 완료 사실을 사유로 기록하고 새 task는 만들지 않아도 된다. 시안/조사는 맡은 시안만 완료한 경우 Next에 구현 할 일을 명확히 쓴다. coordinator AGENTS와 tasks/threads 안내는 resolve 전에 후속 등록·연결 또는 명시적 버림을 요구한다. 후속 등록 자체는 실행·병합 승인이 아니다.
 - 짧은 thread 주소의 hashchange는 이미 고른 thread를 같은 내부 열쇠로 바로 해석한다. 폼을 잠깐 내렸다 다시 만드는 경로가 입력을 잃게 하므로 주소 사건 전 입력을 사건 뒤에도 유지한다.

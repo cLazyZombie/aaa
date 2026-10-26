@@ -40,6 +40,10 @@ pub(crate) fn capture(rec: &mut ThreadRec, revision: &str, report: &str) {
 
 impl Host {
     pub(crate) fn followup_notice(&self, rec: &ThreadRec) {
+        if pending(rec) && rec.status != aaa_proto::ThreadStatus::Resolved {
+            // 열린 thread의 새 보고 알림은 유지한다. 다시 열어도 이미 남은 후속 알림은 닫지 않는다.
+            return;
+        }
         if pending(rec) {
             self.inbox_once(&rec.project, "task-followup", &rec.id, "task needs check",
                 &format!("{} 후속 남음: 완료 보고의 Next를 후속 할 일에 잇거나 버림·정리 완료 사유를 기록한다. aaa thread show {}", rec.id, rec.id));
@@ -297,7 +301,20 @@ mod tests {
         let lab = Lab::new();
         let h = &lab.h;
         std::fs::write(h.project_dir("demo").unwrap().join("TASKS.md"), "## Backlog\n").unwrap();
+        h.update_rec("demo", &lab.thread, |r| r.status = ThreadStatus::Open).unwrap();
         let rec = lab.report("[완료] 시안\n## Next\n- 정리: worktree와 branch를 지운다\n");
+        assert!(
+            h.db.inbox_list(Some("demo"), false).unwrap().iter().all(|i| i.item_kind != "task-followup"),
+            "열린 thread에는 기존 새 보고 알림만 둔다"
+        );
+        let ended = h.update_rec("demo", &lab.thread, |r| r.status = ThreadStatus::Resolved).unwrap();
+        h.followup_notice(&ended);
+        let reopened = h.update_rec("demo", &lab.thread, |r| r.status = ThreadStatus::Open).unwrap();
+        h.followup_notice(&reopened);
+        assert!(
+            h.db.inbox_list(Some("demo"), false).unwrap().iter().any(|i| i.item_kind == "task-followup"),
+            "다시 열기는 후속 알림을 처리한 근거가 아니다"
+        );
         lab.report("[진행 중] 다시 작업\n## Next\n");
         lab.report("[완료] 새 보고\n## Next\n");
         assert!(pending(&h.load("demo", &lab.thread).unwrap()), "새 보고로 이전 후속을 지우지 않는다");

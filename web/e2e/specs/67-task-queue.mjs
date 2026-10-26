@@ -98,6 +98,11 @@ export default async function ({ page }) {
     await until("예약의 보고 수신",()=>aaa("thread","show","demo",tid).report_hash);
     const task=aaa("task","list").tasks.find(t=>t.id===one);
     if(task?.thread!==tid)throw new Error("실제 기동과 task 연결이 다르다");
+    // 공통 fake의 결과 확인과 위 완료 보고의 착지 대기를 끝냈음을 명시한다.
+    fs.writeFileSync(`${root}/queue-followup-reason.txt`, "예약 결과 확인을 마쳤고 착지 대기가 끝났다\n");
+    for (const f of aaa("thread", "show", "demo", tid).followups ?? []) {
+      if (f.handled_ms === null) aaa("thread", "followup", "demo", tid, "--id", f.id, "--reason-file", `${root}/queue-followup-reason.txt`);
+    }
     aaa("thread","resolve","demo",tid);aaa("ticker","tick");
     await row(page,"웹 예약").waitFor({state:"detached"});
     // 활성 task가 사라지면 손대지 않은 상세도 닫힌다. 닫힌 상세의 단추를 누르지 않는다.

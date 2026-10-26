@@ -4179,14 +4179,6 @@ fn render_automation_origin(s: &mut String, t: &aaa_proto::ThreadView) {
 
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     use std::fmt::Write as _;
-    for f in &t.followups {
-        let state = match (&f.task, &f.reason) {
-            (Some(task), _) => format!("할 일 {task}"),
-            (_, Some(reason)) => format!("사유: {reason}"),
-            _ => "후속 남음".into(),
-        };
-        let _ = writeln!(s, "후속 {} [{state}] {}", f.id, f.line);
-    }
     if t.status == aaa_proto::ThreadStatus::Starting {
         let _ = writeln!(s, "준비 중: {} (thread show·events에서 결과를 확인한다)", t.id);
     }
@@ -4221,6 +4213,14 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         t.machine,
         t.brief.as_str()
     );
+    for f in &t.followups {
+        let state = match (&f.task, &f.reason) {
+            (Some(task), _) => format!("할 일 {task}"),
+            (_, Some(reason)) => format!("사유: {reason}"),
+            _ => "후속 남음".into(),
+        };
+        let _ = writeln!(s, "후속 {} [{state}] {}", f.id, f.line);
+    }
     if let Some(id) = &t.report_id {
         let _ = writeln!(s, "보고: {id}");
     }

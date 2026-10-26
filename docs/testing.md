@@ -4124,3 +4124,9 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 기존 E2E47은 짧은 thread 주소의 hashchange를 capture listener로 보류하고 초기 폼 입력 뒤 전달해 실제 노드/입력이 유지되는지 확인한다. 첫 브라우저 시험이 주소 사건에서 화면 전체를 내렸다 다시 만들어 입력을 비우는 결함을 찾아 App에서 바로 같은 thread로 해석하도록 고쳤다.
 - 기존 E2E47에 실제 host·agent·CLI·웹의 완료→resolve→후속 경고→실재 후속 생성→없는 ID 거부→웹 연결→보관/복원 흐름을 덧붙인다. Chromium/WebKit × 1280/390px에서는 정리 사유와 영수증·새로고침·동시 읽기 기기 갱신·Reader 직접 요청 거부·가로 넘침을 검사한다. 필요한 이유: 실제 권한/사건 갱신과 두 웹 엔진의 폼은 host 유닛으로 대체할 수 없다. 공용 fake 보고의 Next를 쓰던 기존 m13 완료 보관 owner들은 그 Next 확인을 명시적으로 기록한 뒤 원래 보관 계약을 검사한다.
 - 실행: `cargo test --profile verify --locked -p aaa-host --lib`, `cargo test --profile verify --locked -p aaa --test m13 <owner>`, 기존 E2E47. Playwright 1.64.1 모듈은 자기 작업 폴더에 두고 브라우저는 내부 공용 캐시와 launchChromium을 쓴다. 고정 sleep·실패 재시도·시한 확대는 없다. 전체 ci-local은 묶음 착지 차례에 coordinator가 수행한다.
+
+### 75회차 착지 회귀 수리(t-1112)
+
+- 첫 전체 gate에서 m13 여섯 회귀를 확인했다. 후속 출력을 CLI 머리 앞에 넣어 worktree/reopen의 기존 첫 줄 계약을 깬 두 건은 후속을 머리 뒤로 옮겨 고친다. 완료 보고가 왔지만 열린 thread에 새 inbox를 미리 만들어 새 보고/nudge 묶음을 바꾼 두 건은 원장 기록과 종료 알림을 분리해 고친다. 다시 열기는 이미 생긴 후속 알림을 지우지 않는다. 기존 상한·문자열·개수 기대는 유지한다.
+- main 조상/묶음 전이 owner 두 건은 공통 fake가 먼저 남긴 완료 Next가 안전망에 걸렸다. 기존 helper로 그 결과 확인을 명시적으로 기록하고, 원래 Git 판정/묶음 전이/보관 단언을 유지한다. 새 host 회귀 안에서 열린 보고→resolve→다시 열기의 알림 수명도 검증한다. 실패 원문과30초 load 기록은 착지 보고에 보존한다.
+- 같은 gate의 E2E67·77도 보관 fixture의 결과 확인/착지 대기 Next를 남긴 채 보관을 기대했다. 두 owner 안에서 실제 완료 회수 뒤 명시적 사유를 기록한 다음 원래 행 제거/복원/ID 단언을 유지한다. 공통 harness의 보고나 제품 판정·시한은 바꾸지 않는다.
