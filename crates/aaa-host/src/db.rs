@@ -2215,7 +2215,7 @@ mod audit_env_tests {
         aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&root), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&copy).unwrap();
-        let (value, gone) = ("aaa-canary-audit-5f29deba74dd23fe", "aaa-canary-deleted-0c827dbcceed4341");
+        let (value, gone) = (&*aaa_test_support::token("audit-env"), &*aaa_test_support::token("deleted-env"));
         let spec = |v: &str| aaa_proto::SpawnSpec {
             name: "demo/t-0001".into(),
             argv: vec!["/bin/sh".into()],

@@ -2173,7 +2173,7 @@ mod tests {
     /// env를 담는 형의 Debug(로그·오류 문구)는 이름만 찍고 값은 찍지 않는다. 이 형을 품은 메시지(AgentRequest·ThreadPrepare 등)도 같다.
     #[test]
     fn debug_shows_env_names_without_values() {
-        let value = "aaa-canary-debug-0123456789abcdef";
+        let value = &*aaa_test_support::token("aaa-canary-debug-0123456789abcdef");
         let env = vec![("GH_TOKEN".to_string(), value.to_string()), ("LANG".to_string(), value.to_string())];
         let resolved = ResolvedProfile {
             harness: "claude".into(),

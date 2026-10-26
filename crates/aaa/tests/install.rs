@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_aaa");
-const CANARY: &str = "install-secret-canary-DO-NOT-PRINT";
+use aaa_test_support::CANARY;
 static SEQ: AtomicU32 = AtomicU32::new(0);
 #[cfg(windows)]
 #[path = "install/job.rs"]

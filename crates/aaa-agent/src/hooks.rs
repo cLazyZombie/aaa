@@ -328,9 +328,9 @@ mod tests {
     fn image_reply_preserves_encoded_collisions_and_masks_actual_secret_bytes() {
         use aaa_proto::{B64, IMAGE_CHUNK, ImageResponse, Outcome};
         use base64::Engine as _;
-        let secret = "cG5nMDkx-image-canary-0918";
+        let secret = &*aaa_test_support::token("image-collision");
         aaa_common::redact::remember(secret);
-        let collision = base64::engine::general_purpose::STANDARD.decode("AAAcG5nMDkxA").unwrap();
+        let collision = base64::engine::general_purpose::STANDARD.decode(format!("AAA{}A", &secret[..8])).unwrap();
         for size in [IMAGE_CHUNK - 1, IMAGE_CHUNK, IMAGE_CHUNK + 1] {
             let mut raw = vec![0; size];
             raw[2838..2838 + collision.len()].copy_from_slice(&collision);
@@ -417,7 +417,7 @@ mod tests {
         }
         let msg = HookMsg {
             session: "s1".into(),
-            token: "test-hook-secret".into(),
+            token: aaa_test_support::token("test-hook-secret"),
             harness: "claude".into(),
             payload: json!({"hook_event_name":"UserPromptSubmit"}),
         };
@@ -450,7 +450,7 @@ mod tests {
         let payload = json!({"body": "한글\"\\\n".repeat(20)});
         let valid = serde_json::to_vec(&HookMsg {
             session: "s1".into(),
-            token: "test-hook-secret".into(),
+            token: aaa_test_support::token("test-hook-secret"),
             harness: "post".into(),
             payload: payload.clone(),
         })

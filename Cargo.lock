@@ -13,6 +13,7 @@ dependencies = [
  "aaa-host",
  "aaa-proto",
  "aaa-session",
+ "aaa-test-support",
  "aaa-vt",
  "anyhow",
  "base64 0.22.1",
@@ -46,6 +47,7 @@ dependencies = [
  "aaa-doctor",
  "aaa-proto",
  "aaa-session",
+ "aaa-test-support",
  "anyhow",
  "base64 0.22.1",
  "hex",
@@ -69,6 +71,7 @@ name = "aaa-common"
 version = "0.1.6"
 dependencies = [
  "aaa-proto",
+ "aaa-test-support",
  "anyhow",
  "backtrace",
  "base64 0.22.1",
@@ -97,6 +100,7 @@ name = "aaa-config"
 version = "0.1.6"
 dependencies = [
  "aaa-proto",
+ "aaa-test-support",
  "hex",
  "serde",
  "serde_ignored",
@@ -130,6 +134,7 @@ dependencies = [
  "aaa-common",
  "aaa-config",
  "aaa-proto",
+ "aaa-test-support",
  "aaa-vt",
  "anyhow",
  "axum",
@@ -164,6 +169,7 @@ dependencies = [
 name = "aaa-proto"
 version = "0.1.6"
 dependencies = [
+ "aaa-test-support",
  "base64 0.22.1",
  "schemars",
  "serde",
@@ -179,6 +185,7 @@ version = "0.1.6"
 dependencies = [
  "aaa-common",
  "aaa-proto",
+ "aaa-test-support",
  "aaa-vt",
  "anyhow",
  "dunce",
@@ -192,6 +199,15 @@ dependencies = [
  "toml",
  "tracing",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "aaa-test-support"
+version = "0.1.6"
+dependencies = [
+ "rand",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

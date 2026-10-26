@@ -99,13 +99,13 @@ mod terminal_queries;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aaa_test_support::CANARY;
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
     use std::{
         io::{Read, Write},
         sync::mpsc,
         time::{Duration, Instant},
     };
-    const CANARY: &str = "password-console-canary-DO-NOT-LOG";
     enum Event {
         Output(Vec<u8>),
         ReaderDone,

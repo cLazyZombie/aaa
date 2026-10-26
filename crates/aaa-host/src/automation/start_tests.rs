@@ -312,9 +312,9 @@ async fn quota_gate_codex_uses_bound_account_and_only_observed_windows() {
         .insert("builder".into(), aaa_config::Profile { harness: "codex".into(), ..Default::default() });
     let _a = l.fake(vec![]).await;
     let agent = l.fake_on("b", "mac-b", vec!["work_files.v1".into()]).await;
-    let auth = r#"{"tokens":{"access_token":"fixture-access-only","refresh_token":"fixture-refresh-only"}}"#;
+    let auth = serde_json::json!({"tokens":{"access_token":aaa_test_support::token("access"),"refresh_token":aaa_test_support::token("refresh")}}).to_string();
     for account in ["work", "other"] {
-        l.h.accounts.import(account, "codex", auth).unwrap();
+        l.h.accounts.import(account, "codex", &auth).unwrap();
     }
     l.h.set_default_account("codex", Some("work")).unwrap();
     let mut r = rule(&l, "reuse='open'");
@@ -1221,7 +1221,8 @@ async fn pooled_automation_starts_with_unknown_or_week_only_usage_and_retains_re
         let agent = l.fake(vec!["account_auth.v1".into()]).await;
         let other = l.fake_on("b", "mac-b", vec!["account_auth.v1".into()]).await;
         // 인증 조각 가림은 프로세스 공용이다. JSON 필드와 겹치는 업무 단어를 가짜 토큰에 넣지 않는다.
-        l.h.register_account("work", "claude", "fixture-P8Xq4VfZ2nM6cT9bR3kS7hY5dL1wA0eJ").unwrap();
+        l.h.register_account("work", "claude", &aaa_test_support::token("fixture-P8Xq4VfZ2nM6cT9bR3kS7hY5dL1wA0eJ"))
+            .unwrap();
         let mut r = rule(&l, "");
         r.limits.usage_session_below = Some(5.0);
         r.limits.usage_week_below = Some(10.0);

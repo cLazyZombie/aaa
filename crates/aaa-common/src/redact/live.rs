@@ -98,7 +98,8 @@ mod tests {
 
     #[test]
     fn overlapping_secret_windows_are_masked_without_waiting_or_forgetting_raw_context() {
-        let secret = b"live-output-canary-1002";
+        let value = aaa_test_support::token("live-output");
+        let secret = value.as_bytes();
         remember(std::str::from_utf8(secret).unwrap());
         let expected = [secret[..7].to_vec(), vec![b'*'; secret.len() - 7]].concat();
         // chunk 경계와 무관한 결과. 이전의 완성된 자료 가림은 앞 7바이트도 가린다.
@@ -118,7 +119,8 @@ mod tests {
     #[test]
     fn encoded_forms_and_non_csi_escape_keep_eight_byte_protection() {
         use base64::Engine;
-        let secret = "live-\"canary/1002?value";
+        let value = format!("{}\"/?", aaa_test_support::token("live-encoded"));
+        let secret = value.as_str();
         remember(secret);
         let json = serde_json::to_string(secret).unwrap();
         let url: String = secret
@@ -152,16 +154,18 @@ mod tests {
             }
         }
         // CSI가 아닌 ESC도 원문의 일부다. 앞서 내보낸 ESC를 다음 청크에서 잊지 않는다.
-        let secret = b"abcdefg\x1bXYZ12345";
-        remember(std::str::from_utf8(secret).unwrap());
+        let value = aaa_test_support::token("live-escape");
+        let secret = [&value.as_bytes()[..7], b"\x1b", &value.as_bytes()[7..]].concat();
+        remember(std::str::from_utf8(&secret).unwrap());
         let mut live = LiveStream::default();
-        assert_eq!(live.push(&secret[..8]), b"abcdefg*");
+        assert_eq!(live.push(&secret[..8]), [secret[..7].to_vec(), b"*".to_vec()].concat());
         assert_eq!(live.push(&secret[8..]), vec![b'*'; secret.len() - 8]);
     }
 
     #[test]
     fn ansi_and_newlines_do_not_split_secret_detection_or_hold_terminal_controls() {
-        let secret = b"vWxYzKpQmNrS1002";
+        let value = aaa_test_support::token("live-ansi");
+        let secret = value.as_bytes();
         remember(std::str::from_utf8(secret).unwrap());
         let mut input = Vec::new();
         let mut expected = Vec::new();
