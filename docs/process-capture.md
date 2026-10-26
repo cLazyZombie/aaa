@@ -71,3 +71,7 @@ Windows에는 macOS의 `pipe()` 후 `fcntl()` 창이 없다. Rust std는 `CREATE
 - [portable-pty Unix](https://github.com/wez/wezterm/blob/main/pty/src/unix.rs)·[MIT](https://github.com/wez/wezterm/blob/main/pty/Cargo.toml): fork 뒤 FD 정리와 PTY CLOEXEC 창을 구분한다.
 
 외부 코드를 복사하거나 의존성을 추가하지 않았다. 전체 ci-local·착지·push는 coordinator가 배정한 묶음 착지에서 수행한다.
+
+## 74회차 lab 통합
+
+t-1097의 captured는 출력 파일 정책으로 유지하되 status_guarded와 lab의 나머지 spawn/status/capture도 같은 aaa-common 경계를 사용한다. 제품과 시험이 서로 다른 생성 잠금을 갖지 않는다. lab 회귀는 자식이 의도적으로 출력을 손자에게 물려주는 경우를 검사하므로 공통 잠금만 적용한 pipe output으로 바꾸면 의미가 달라진다. 파일 수집은 이 시험 정책만 담당하고 제품 RPC·NDJSON의 출력을 파일로 바꾸지 않는다. 기존 두 회귀와 출력·종료 단언을 모두 전체 gate에서 검증한다.

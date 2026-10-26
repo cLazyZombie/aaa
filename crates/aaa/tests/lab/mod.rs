@@ -12,6 +12,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use aaa_common::child_process::StdCommandExt;
 use serde_json::Value;
 
 pub mod watch;
@@ -24,6 +25,7 @@ static SEQ: AtomicU32 = AtomicU32::new(0);
 static CAPTURE_SEQ: AtomicU32 = AtomicU32::new(0);
 
 /// `Command::output()` 대신 쓴다: 표준 출력·오류를 pipe가 아니라 파일로 받고, 자식이 끝나면 바로 돌아온다.
+/// 생성은 제품과 같은 aaa-common 잠금을 쓰고 기다리기는 잠금 밖이다. 파일 출력 정책은 아래 손자 보존 회귀도 지킨다.
 /// macOS std는 pipe를 만든 뒤 CLOEXEC를 따로 건다(`pipe2`가 없다). 그 틈에 같은 시험 프로세스의 다른 thread가 띄운 자식
 /// (host·agent처럼 오래 사는 것)이 쓰기 끝을 물려받으면, 이 명령이 끝나도 EOF가 오지 않아 `output()`이 그 자식이 끝날 때까지
 /// 막힌다(t-1097: m13 accounts 「labA 연결」 30초 실패, host는 1초 안에 연결했다). 파일은 `O_CLOEXEC`로 원자적으로 열린다.
@@ -36,7 +38,7 @@ pub fn captured(cmd: &mut Command) -> std::io::Result<Output> {
             .stdin(Stdio::null())
             .stdout(std::fs::File::create(&out)?)
             .stderr(std::fs::File::create(&err)?)
-            .status()?;
+            .status_guarded()?;
         Ok(Output { status, stdout: std::fs::read(&out)?, stderr: std::fs::read(&err)? })
     })();
     for path in [&out, &err] {
@@ -49,10 +51,10 @@ pub fn captured(cmd: &mut Command) -> std::io::Result<Output> {
 /// 실행 파일을 쓰는 FD가 병렬 시험의 fork에 물려가지 않도록 복사·수정은 자식 프로세스에서 한다.
 #[cfg(unix)]
 pub fn variant_binary(source: &Path, target: &Path, variant: &str) {
-    assert!(Command::new("cp").args([source, target]).status().unwrap().success());
+    assert!(Command::new("cp").args([source, target]).status_guarded().unwrap().success());
     #[cfg(target_os = "macos")]
     for args in [vec!["--force", "--sign", "-", "--identifier", variant], vec!["--verify", "--strict"]] {
-        let out = Command::new("codesign").args(args).arg(target).output().unwrap();
+        let out = Command::new("codesign").args(args).arg(target).capture_output().unwrap();
         assert!(out.status.success(), "시험 실행 파일 서명: {}", String::from_utf8_lossy(&out.stderr));
     }
     #[cfg(not(target_os = "macos"))]
@@ -60,7 +62,7 @@ pub fn variant_binary(source: &Path, target: &Path, variant: &str) {
         Command::new("/bin/sh")
             .args(["-c", r#"printf '%s' "$1" >> "$2""#, "fixture", variant])
             .arg(target)
-            .status()
+            .status_guarded()
             .unwrap()
             .success()
     );
@@ -375,7 +377,7 @@ impl Lab {
     }
     pub fn spawn_command(&mut self, tag: &str, mut cmd: Command) -> u32 {
         let log = std::fs::File::create(self.root.join(format!("{tag}.log"))).unwrap();
-        let child = cmd.stdout(log.try_clone().unwrap()).stderr(log).spawn().expect("spawn");
+        let child = cmd.stdout(log.try_clone().unwrap()).stderr(log).spawn_guarded().expect("spawn");
         let pid = child.id();
         self.procs.push((tag.to_string(), child));
         pid
@@ -389,7 +391,7 @@ impl Lab {
         args: &[&str],
     ) -> (u32, BufReader<std::process::ChildStdout>) {
         let log = std::fs::File::create(self.root.join(format!("{tag}.log"))).unwrap();
-        let mut child = node.cmd(args).stdout(Stdio::piped()).stderr(log).spawn().expect("spawn");
+        let mut child = node.cmd(args).stdout(Stdio::piped()).stderr(log).spawn_guarded().expect("spawn");
         let out = BufReader::new(child.stdout.take().unwrap());
         let pid = child.id();
         self.procs.push((tag.to_string(), child));
@@ -437,7 +439,7 @@ impl Lab {
                 libc::kill(*pid as i32, libc::SIGKILL)
             };
             #[cfg(windows)]
-            let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
+            let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).capture_output();
         }
         pids.len()
     }
@@ -475,7 +477,7 @@ fn command_of(pid: u32) -> Option<String> {
 #[cfg(windows)]
 fn command_of(pid: u32) -> Option<String> {
     let filter = format!("PID eq {pid}");
-    let o = Command::new("tasklist").args(["/FI", &filter, "/FO", "CSV", "/NH"]).output().ok()?;
+    let o = Command::new("tasklist").args(["/FI", &filter, "/FO", "CSV", "/NH"]).capture_output().ok()?;
     let s = String::from_utf8_lossy(&o.stdout).to_string();
     s.to_ascii_lowercase().contains("\"aaa.exe\"").then_some(s)
 }
@@ -512,7 +514,7 @@ impl Drop for Lab {
                 libc::kill(pid as i32, libc::SIGKILL)
             };
             #[cfg(windows)]
-            let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
+            let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).capture_output();
         }
         if !std::thread::panicking() {
             let _ = std::fs::remove_dir_all(&self.root);
