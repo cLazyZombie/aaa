@@ -272,6 +272,21 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
             snapshot.retry_at_ms = retry;
         } else if let Some(v) = v.get("result") {
             snapshot.windows = quota::codex(v, now);
+            // 인증·원문 대신 창의 존재와 정규화 수만 남긴다. 단일 창 응답과 파싱 탈락을 구별한다.
+            let buckets: Vec<_> = v
+                .get("rateLimitsByLimitId")
+                .and_then(Value::as_object)
+                .filter(|m| !m.is_empty())
+                .map(|m| m.values().collect())
+                .unwrap_or_else(|| v.get("rateLimits").into_iter().collect());
+            let count = |key: &str| buckets.iter().filter(|b| b.get(key).is_some_and(|w| !w.is_null())).count();
+            tracing::debug!(
+                primary = count("primary"),
+                secondary = count("secondary"),
+                normalized_windows = snapshot.windows.len(),
+                durations_mins = ?snapshot.windows.iter().map(|w| w.duration_mins).collect::<Vec<_>>(),
+                "Codex 사용량 창 수집"
+            );
             snapshot.windows.retain(|w| {
                 aaa_common::redact::text(&w.limit_id) == w.limit_id
                     && w.scope.as_ref().is_none_or(|s| aaa_common::redact::text(s) == *s)
@@ -365,6 +380,8 @@ for line in sys.stdin:
         elif mode=='broken': print('bad-json',flush=True)
         elif mode=='missing': send({{'id':v['id'],'result':{{'rateLimits':{{'primary':None}}}}}})
         elif mode=='invalid': send({{'id':v['id'],'result':{{'rateLimits':{{'primary':{{'usedPercent':None}}}}}}}})
+        elif mode=='weekly-only':
+            send({{'id':v['id'],'result':{{'rateLimitsByLimitId':{{'codex':{{'primary':{{'usedPercent':10,'windowDurationMins':10080,'resetsAt':19999}},'secondary':None}}}}}}}})
         else:
             buckets={{'codex':{{'primary':{{'usedPercent':25,'windowDurationMins':300,'resetsAt':9999}},'secondary':{{'usedPercent':50,'windowDurationMins':10080,'resetsAt':19999}}}}}}
             buckets[auth['tokens']['access_token']]={{'primary':{{'usedPercent':99,'windowDurationMins':300,'resetsAt':9999}}}}
@@ -382,7 +399,7 @@ for line in sys.stdin:
         let root = Home(std::env::temp_dir().join(format!("aaa-quota-{}", util::new_id())));
         util::ensure_private_dir(&root.0).unwrap();
         let auth = r#"{"tokens":{"access_token":"fake-access-canary-0123456789","refresh_token":"fake-refresh-canary-9876543210"}}"#;
-        let futures = ["ok", "refresh", "401", "429", "broken", "missing", "invalid"].map(|mode| {
+        let futures = ["ok", "weekly-only", "refresh", "401", "429", "broken", "missing", "invalid"].map(|mode| {
             let exe = fake(&root.0, mode);
             let state = root.0.clone();
             async move { (mode, read_with(&exe, &state, format!("generation-{mode}"), auth, 1000).await) }
@@ -398,6 +415,14 @@ for line in sys.stdin:
                 "ok" | "refresh" => {
                     assert_eq!(snapshot.problem, None, "{diagnostic}");
                     assert_eq!(snapshot.windows.len(), 2, "{diagnostic}");
+                }
+                "weekly-only" => {
+                    assert_eq!(snapshot.problem, None, "{diagnostic}");
+                    assert_eq!(snapshot.windows.len(), 1, "{diagnostic}: 없는 5시간 창을 만들지 않는다");
+                    let window = &snapshot.windows[0];
+                    assert_eq!(window.window_id, "primary");
+                    assert_eq!(window.duration_mins, Some(10080));
+                    assert_eq!(window.used_percent, 10.0);
                 }
                 "401" => assert_eq!(snapshot.problem, Some(QuotaProblem::Expired), "{diagnostic}"),
                 "429" => {

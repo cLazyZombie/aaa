@@ -443,6 +443,140 @@ async fn one_reservation(lab: &Lab) -> TaskReservation {
 }
 
 #[tokio::test]
+async fn queue_query_preserves_approval_order_reason_and_history() {
+    let lab = Lab::new();
+    one_reservation(&lab).await;
+    lab.h
+        .db
+        .queue_change("demo", "host", |rows| {
+            rows[0].reason = "계정 배정 대기 · 허용한 계정이 없음".into();
+            Ok(())
+        })
+        .unwrap();
+    let before = lab.h.db.queue_list("demo").unwrap();
+    let text = lab.text();
+    let db = rusqlite::Connection::open(lab.h.state.join("host.db")).unwrap();
+    let history = || db.query_row("SELECT COUNT(*) FROM task_queue_log", [], |r| r.get::<_, u64>(0)).unwrap();
+    let count = history();
+    for _ in 0..2 {
+        let FrontResponse::TaskQueue { entries } = lab
+            .h
+            .call(
+                aaa_proto::DeviceRole::Reader,
+                "device:reader",
+                aaa_proto::FrontRequest::TaskQueue { project: "demo".into(), action: QueueOp::List },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("예약 조회 응답")
+        };
+        assert_eq!(entries, before, "조회는 승인·차례·대기 이유·시각을 바꾸지 않는다");
+    }
+    assert_eq!(history(), count, "조회는 예약 변경 이력을 만들지 않는다");
+    assert_eq!(lab.h.db.queue_list("demo").unwrap(), before);
+    assert_eq!(lab.text(), text);
+}
+
+#[tokio::test]
+async fn account_wait_does_not_hide_the_next_reservations_actual_reason() {
+    use aaa_proto::{AGENT_LINK, AgentHello, AgentRequest, AgentResponse, LinkMsg, Outcome};
+    let lab = Lab::new();
+    lab.write("## Backlog\n- [ ] 계정 대기 (claude@mac-a) [작업 폴더]\n  독립 설명과 완료 범위\n- [ ] 머신 대기 (claude@mac-offline) [작업 폴더]\n  독립 설명과 완료 범위\n");
+    for t in lab.h.task_board("demo").unwrap().tasks {
+        lab.h
+            .task_queue(
+                "demo",
+                QueueOp::Reserve {
+                    task: t.title,
+                    block: t.block_sha256,
+                    profile: "claude".into(),
+                    profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                    after: None,
+                },
+                "device:user",
+            )
+            .await
+            .unwrap();
+    }
+    // 실제 풀의 빈 후보 거부를 통과시킨다. 계정 배정 정책·사용량 상태에는 의존하지 않는다.
+    let pool = lab.h.account_pool().unwrap();
+    lab.h.pool_project_set(&pool.revision, "demo", true, "local:cli").unwrap();
+    let (tx, mut rx) = aaa_common::conn::frame_channel();
+    let conn = crate::AgentConn::new(tx, 1);
+    let pending = conn.pending.clone();
+    let agent = tokio::spawn(async move {
+        while let Some((_, bytes)) = rx.recv().await {
+            if let LinkMsg::Req { id, body, .. } = serde_json::from_slice::<LinkMsg>(&bytes).unwrap() {
+                assert!(matches!(body, AgentRequest::Harnesses), "기동을 보내면 안 된다: {body:?}");
+                let profiles = vec![aaa_proto::ProfileView {
+                    name: "claude".into(),
+                    harness: "claude".into(),
+                    model: None,
+                    effort: None,
+                    args: vec![],
+                    description: String::new(),
+                    builtin: true,
+                }];
+                if let Some(reply) = pending.lock().unwrap().remove(&id) {
+                    reply.send(Outcome::Ok(AgentResponse::Profiles { profiles })).unwrap();
+                }
+            }
+        }
+    });
+    lab.h.agent_connected(
+        &AgentHello {
+            proto: AGENT_LINK,
+            machine_id: "m".into(),
+            machine_name: "mac-a".into(),
+            boot_id: "boot".into(),
+            os: "test".into(),
+            arch: "test".into(),
+            software: "test".into(),
+            features: vec!["host_profiles.v1".into(), "account_auth.v1".into()],
+            dev_mode: true,
+            sha256: None,
+            selfcheck: None,
+            sessions: vec![],
+            identity: None,
+            harness: vec![],
+        },
+        true,
+        conn,
+    );
+    // 운영에서 같이 열려 있던 병합 대기·착지·보류는 작업 자리를 막지 않는다.
+    for (status, stage) in [
+        (ThreadStatus::Open, Some(aaa_proto::ThreadStage::MergeReady)),
+        (ThreadStatus::Open, Some(aaa_proto::ThreadStage::Landing)),
+        (ThreadStatus::Parked, None),
+    ] {
+        lab.h
+            .db
+            .thread_insert_next("demo", |id| {
+                let mut r = Lab::rec();
+                r.id = id.into();
+                r.status = status;
+                r.brief = aaa_proto::BriefState::Delivered;
+                r.report_hash = stage.map(|_| "fixture-report".into());
+                r.report_stage = stage;
+                serde_json::to_string(&r).unwrap()
+            })
+            .unwrap();
+    }
+    assert_eq!(lab.h.open_worker_threads("demo"), 0);
+    tokio::time::timeout(std::time::Duration::from_secs(5), lab.h.queue_pass("demo"))
+        .await
+        .expect("예약 판정 응답")
+        .unwrap();
+    let rows = lab.h.db.queue_list("demo").unwrap();
+    agent.abort();
+    assert!(agent.await.unwrap_err().is_cancelled());
+    assert!(rows[0].reason.contains("계정 배정 대기"), "{rows:#?}");
+    assert!(rows[1].reason.contains("머신 연결"), "뒤 예약도 실제 조건을 판정해야 한다: {rows:#?}");
+    assert!(rows.iter().all(|r| r.state == S::Queued && r.thread.is_none()));
+}
+
+#[tokio::test]
 async fn slot_released_during_queue_scan_does_not_bypass_the_moved_front() {
     // t-0584의 순회 울타리는 자동화 thread가 열린 상태에서도 사용자 자리만 세며 유지한다.
     for automatic in [false, true] {
