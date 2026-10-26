@@ -158,9 +158,6 @@ impl crate::Host {
         Ok(merge(&entry, name, harness, util::now_ms()))
     }
 
-    pub(crate) async fn quota_generation(&self, name: &str) -> Option<String> {
-        self.account_quota.lock().await.entries.get(name).map(|e| e.generation.clone())
-    }
     pub(crate) async fn quota_report(self: &Arc<Self>, refresh: bool) -> Result<AccountQuotaReport, ErrorBody> {
         let mut cache = self.account_quota.lock().await;
         let account_read = self.account_rename_gate.read().await;

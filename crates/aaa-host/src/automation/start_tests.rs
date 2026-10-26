@@ -184,7 +184,7 @@ impl Lab {
                         output: "같은 결과".into(),
                         truncated: false,
                     }),
-                    AgentRequest::Spawn(spec) => {
+                    AgentRequest::Spawn(spec) | AgentRequest::SpawnAccount { spec, .. } => {
                         spawns += 1;
                         let mut s = info(&if machine == "m" {
                             format!("new{spawns}")
@@ -303,7 +303,7 @@ fn starts(f: &Fake) -> usize {
 
 /// 브라우저·실제 로그인·구독 요청 없이 웹과 같은 내구 캐시로 원격 Codex 자동화를 판정한다.
 #[tokio::test]
-async fn quota_gate_codex_uses_bound_account_and_preserves_pending_until_each_window_recovers() {
+async fn quota_gate_codex_uses_bound_account_and_only_observed_windows() {
     let mut l = auto_lab();
     Arc::get_mut(&mut l.h)
         .unwrap()
@@ -357,30 +357,25 @@ async fn quota_gate_codex_uses_bound_account_and_preserves_pending_until_each_wi
     .unwrap();
     // 기본 계정의 다른 신원·빈 사용량으로 기존 thread를 막거나 통과시키지 않는다.
     l.h.set_default_account("codex", Some("other")).unwrap();
-    assert!(matches!(
-        l.h.automation_start_usage("demo", &ready, &r.limits).await.unwrap(),
-        automation::usage::Check::Unknown(_)
-    ));
+    assert_eq!(l.h.automation_start_usage("demo", &ready, &r.limits).await.unwrap(), automation::usage::Check::Allowed);
     l.h.automation_submit("demo", &r, "input-quota", "보존할 입력".into(), None).unwrap();
-    cache(&generation, None, 19.0);
+    cache(&generation, Some(96.0), 19.0);
     l.h.automation_drain("demo", &r).await.unwrap();
     assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 1);
-    assert!(l.h.routine_runs("demo", "check").unwrap().iter().any(|r| r.detail.contains("세션(5시간) 창 없음")));
+    assert!(l.h.routine_runs("demo", "check").unwrap().iter().any(|r| r.detail == "사용량 문턱"));
     cache("previous-login", Some(0.0), 0.0);
     assert!(
-        matches!(
-            l.h.automation_start_usage("demo", &crate::auto_start::Decision::Reuse(rec.id.clone()), &r.limits)
-                .await
-                .unwrap(),
-            automation::usage::Check::Unknown(_)
-        ),
-        "이전 로그인 세대는 배제"
+        l.h.automation_start_usage("demo", &crate::auto_start::Decision::Reuse(rec.id.clone()), &r.limits)
+            .await
+            .unwrap()
+            == automation::usage::Check::Allowed,
+        "이전 로그인 세대는 배제하고 판단 불가면 시작한다"
     );
     cache(&generation, Some(96.0), 19.0);
     l.h.automation_drain("demo", &r).await.unwrap();
     assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 1);
     assert!(l.h.routine_runs("demo", "check").unwrap().iter().any(|r| r.detail == "사용량 문턱"));
-    cache(&generation, Some(50.0), 19.0);
+    cache(&generation, None, 10.0);
     l.h.automation_drain("demo", &r).await.unwrap();
     assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 0);
     l.h.automation_submit("demo", &r, "input-quota", "보존할 입력".into(), None).unwrap();
@@ -391,18 +386,14 @@ async fn quota_gate_codex_uses_bound_account_and_preserves_pending_until_each_wi
     assert_eq!(writes, 1, "보존한 입력은 열린 thread에 한 번만 전달");
     l.h.accounts.remove("work").unwrap();
     assert!(
-        matches!(
-            l.h.automation_start_usage("demo", &crate::auto_start::Decision::Reuse(rec.id.clone()), &r.limits)
-                .await.unwrap(),
-            automation::usage::Check::Unknown(s) if s.contains("캐시 조회 실패")
-        ),
-        "삭제한 계정의 캐시는 실행 근거가 되지 않는다"
+        l.h.automation_start_usage("demo", &crate::auto_start::Decision::Reuse(rec.id.clone()), &r.limits)
+            .await
+            .unwrap()
+            == automation::usage::Check::Allowed,
+        "삭제한 계정의 캐시를 쓰지 않으며 판단 불가로 막지 않는다"
     );
     l.h.set_default_account("codex", None).unwrap();
-    assert!(matches!(
-        l.h.automation_start_usage("demo", &ready, &r.limits).await.unwrap(),
-        automation::usage::Check::Unknown(s) if s.contains("등록 계정 없음")
-    ));
+    assert_eq!(l.h.automation_start_usage("demo", &ready, &r.limits).await.unwrap(), automation::usage::Check::Allowed);
     assert_eq!(
         l.h.automation_start_usage("demo", &ready, &automation::Limits::default()).await.unwrap(),
         automation::usage::Check::Allowed
@@ -1220,4 +1211,64 @@ async fn toggle_waits_for_dispatch_and_preserves_new_definition() {
     drop(guard);
     let views = future.await.unwrap();
     assert!(!views.iter().find(|v| v.name == r.name).unwrap().enabled);
+}
+
+// 필요: 풀 배정 전 사용량 미확정이 실제 자동화 입력을 영구 대기로 남기던 경로를 막는다.
+#[tokio::test]
+async fn pooled_automation_starts_with_unknown_or_week_only_usage_and_retains_real_low_usage() {
+    for mode in ["unknown", "week-only", "below"] {
+        let l = auto_lab();
+        let agent = l.fake(vec!["account_auth.v1".into()]).await;
+        let other = l.fake_on("b", "mac-b", vec!["account_auth.v1".into()]).await;
+        // 인증 조각 가림은 프로세스 공용이다. JSON 필드와 겹치는 업무 단어를 가짜 토큰에 넣지 않는다.
+        l.h.register_account("work", "claude", "fixture-P8Xq4VfZ2nM6cT9bR3kS7hY5dL1wA0eJ").unwrap();
+        let mut r = rule(&l, "");
+        r.limits.usage_session_below = Some(5.0);
+        r.limits.usage_week_below = Some(10.0);
+        std::fs::write(
+            l.h.project_dir("demo").unwrap().join("automations/check.toml"),
+            toml::to_string(&automation::File::from_routine(&r)).unwrap(),
+        )
+        .unwrap();
+        approve(&l, &r);
+        let generation = l.h.accounts.generation("work").unwrap();
+        let cache = |used: f64| {
+            let now = util::now_ms();
+            let entry = serde_json::json!({"generation":generation,"attempted_ms":now,"next_ms":now+60000,"readings":{"pane":{"machine":"m","received_at_ms":now,"snapshot":{"generation":generation,"source":"claude_statusline","sampled_at_ms":now,"problem":null,"retry_at_ms":null,"windows":[{"limit_id":"claude","window_id":"week","scope":null,"duration_mins":10080,"used_percent":used,"observed_at_ms":now,"resets_at_ms":now+3600000}]}}}});
+            l.h.db.set_meta("account-quota-v1/work", &entry.to_string()).unwrap();
+        };
+        if mode != "unknown" {
+            cache(if mode == "below" { 95.0 } else { 10.0 });
+        }
+        let mut events = l.h.thread_events.subscribe();
+        l.h.automation_submit("demo", &r, "input-pool", "보존할 입력".into(), None).unwrap();
+        let updating = l.h.account_quota.lock().await;
+        tokio::time::timeout(std::time::Duration::from_secs(20), l.h.automation_drain("demo", &r))
+            .await
+            .expect("사용량 조회를 기다리지 않고 자동화를 판정한다")
+            .unwrap();
+        drop(updating);
+        if mode == "below" {
+            assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 1);
+            assert_eq!(starts(&agent), 0);
+            cache(10.0);
+            l.h.automation_drain("demo", &r).await.unwrap();
+        }
+        let id = l.h.db.meta(&crate::auto_start::start_key("demo", "check", "input-pool")).unwrap().unwrap();
+        launched(&l, &mut events, &id).await;
+        assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 0, "{mode}");
+        assert_eq!(
+            starts(&agent) + starts(&other),
+            1,
+            "{mode}: 실제 기동 경로가 한 번 실행된다: {:?}",
+            l.h.routine_runs("demo", "check").unwrap()
+        );
+        let records = l.h.db.threads(Some("demo")).unwrap();
+        let rec: ThreadRec = serde_json::from_str(&records[0]).unwrap();
+        assert_eq!(rec.account.as_deref(), Some("work"));
+        assert_eq!(rec.account_allocation.unwrap().selection.unobserved, mode == "unknown");
+        l.h.automation_submit("demo", &r, "input-pool", "보존할 입력".into(), None).unwrap();
+        l.h.automation_drain("demo", &r).await.unwrap();
+        assert_eq!(starts(&agent) + starts(&other), 1, "같은 입력은 중복 기동하지 않는다");
+    }
 }

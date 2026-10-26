@@ -103,15 +103,19 @@ export type AccountDefault = { harness: string, account: string, };
 
 export type AccountPoolMember = { account: string,
 /**
- * 같은 실제 한도를 쓰는 별칭에는 같은 그룹을 지정한다.
+ * 구판 호환용. 새 host는 계정 이름으로 정규화한다.
  */
 group: string,
 /**
- * 빈 목록은 해당 harness의 모든 모델이다.
+ * 구판 호환용. 새 host는 모든 모델을 허용한다.
  */
 models: Array<string>, };
 
-export type AccountPoolView = { revision: string, members: Array<AccountPoolMember>, projects: Array<string>, };
+export type AccountPoolView = { revision: string, members: Array<AccountPoolMember>,
+/**
+ * 구판 호환용 빈 목록. 프로젝트별 참여 설정은 사용하지 않는다.
+ */
+projects: Array<string>, };
 
 export type AccountTaskSize = "small" | "medium" | "large";
 

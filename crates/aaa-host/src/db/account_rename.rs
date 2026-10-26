@@ -62,14 +62,20 @@ impl Db {
             let mut next = text.clone();
             if key.starts_with("default-account:") && text == from {
                 next = to.into();
-            } else if key == "account-pool-v1"
+            } else if matches!(key.as_str(), "account-pool-v1" | "account-pool-v2")
                 || ["account-run:", "account-job:", "image-job:"].iter().any(|p| key.starts_with(p))
             {
                 let mut value: serde_json::Value = serde_json::from_str(&text)?;
                 crate::account_rename::json(&mut value, from, to);
-                if key == "account-pool-v1" {
-                    // 한도 그룹은 신원이다. 이름이 옛 별칭과 같아도 옮기지 않는다.
+                if matches!(key.as_str(), "account-pool-v1" | "account-pool-v2") {
                     value["revision"] = aaa_common::util::new_id().into();
+                    if key == "account-pool-v2"
+                        && let Some(members) = value["members"].as_array_mut()
+                    {
+                        for member in members {
+                            member["group"] = member["account"].clone();
+                        }
+                    }
                 }
                 next = value.to_string();
             }

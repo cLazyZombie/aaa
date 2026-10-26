@@ -44,6 +44,11 @@ async fn rename_reencrypts_preserves_identity_and_moves_only_account_references(
     h.db.set_meta("account-quota-v1/work", quota).unwrap();
     h.db.set_meta("account-pool-v1",r#"{"revision":"before","projects":["demo"],"members":[{"account":"work","group":"work","enabled":true,"models":[] }]}"#).unwrap();
     h.db.set_meta(
+        "account-pool-v2",
+        r#"{"revision":"before","projects":[],"members":[{"account":"work","group":"work","models":[]}]}"#,
+    )
+    .unwrap();
+    h.db.set_meta(
         "account-job:demo:fixture",
         r#"{"args":{"account":"work","profile":"work","task":"work"},"view":{"reason":"work"}}"#,
     )
@@ -96,7 +101,9 @@ async fn rename_reencrypts_preserves_identity_and_moves_only_account_references(
     assert_eq!(h.db.inbox_list(Some("demo"), true).unwrap()[0].subject, "renamed");
     let pool = h.account_pool().unwrap();
     assert_eq!(pool.members[0].account, "renamed");
-    assert_eq!(pool.members[0].group, "work");
+    assert_eq!(pool.members[0].group, "renamed");
+    let legacy: serde_json::Value = serde_json::from_str(&h.db.meta("account-pool-v1").unwrap().unwrap()).unwrap();
+    assert_eq!(legacy["members"][0]["group"], "work");
     assert_ne!(pool.revision, "before");
     let rec = h.load("demo", "t-0001").unwrap();
     assert_eq!(rec.account.as_deref(), Some("renamed"));

@@ -63,7 +63,14 @@ struct State {
     cursor: Option<u64>,
     source_hashes: std::collections::BTreeMap<String, String>,
     schedule_cursor: Option<u64>,
+    usage_notice: Option<UsageNotice>,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct UsageNotice {
+    input: String,
+    reason: String,
+}
+
 /// 한 사건도 묶음 한도를 넘겨 보내지 않는다. source는 접수 실패 시 원본/커서를 보존한다.
 fn check_input_size(event: &Event) -> Result<(), ErrorBody> {
     if matches!(&event.action,Action::Start(a) if a.reuse==super::Reuse::Open)
@@ -1045,18 +1052,12 @@ impl Host {
                 reason.into()
             };
             self.record_routine(p, &r.name, &id, "waiting", &reason, None);
-            if reason.starts_with("사용량 확인 불가") {
-                // routine 차례로 세면 일정 source가 회복 뒤에도 미처리 안내로 보고 멈춘다.
-                self.inbox_once(
-                    p,
-                    "usage",
-                    &r.name,
-                    "usage unavailable",
-                    &format!(
-                        "{reason}: 구독 로그인 또는 조회 상태를 확인한다. 입력은 보존하며 ticker가 다시 읽으면 판정한다"
-                    ),
-                );
+            if reason.starts_with("사용량") {
+                self.automation_usage_notice(p, &r.name, &id, Some(&reason))?;
             }
+        }
+        if !usage_blocked {
+            self.automation_usage_notice(p, &r.name, "", None)?;
         }
         let Some(mut batch) = selected else { return Ok(()) };
         if let Some(command) = batch.events[0].observe.clone().or_else(|| match &batch.events[0].action {
@@ -1645,5 +1646,95 @@ mod input_names_tests {
             let restarted: Batch = serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
             assert_eq!(restarted.input_file_name(), expected);
         }
+    }
+}
+
+impl Host {
+    /// 처리된 inbox와 무관하게 같은 입력·이유는 한 번만 알린다. 재기동에도 기억한다.
+    pub(crate) fn automation_usage_notice(
+        &self,
+        project: &str,
+        name: &str,
+        input: &str,
+        reason: Option<&str>,
+    ) -> Result<(), ErrorBody> {
+        let mut notice = None;
+        self.db
+            .update_meta(&key(project, name), |old| {
+                let mut s = state(old)?;
+                let next = reason.map(|reason| UsageNotice { input: input.into(), reason: reason.into() });
+                if s.usage_notice != next {
+                    notice = match &next {
+                        Some(next) => Some((
+                            if next.reason.starts_with("사용량 확인 불가") {
+                                "usage unavailable"
+                            } else {
+                                "usage below threshold"
+                            },
+                            format!("{} · 입력 {}: {}. 입력은 보존한다", name, next.input, next.reason),
+                        )),
+                        None => s
+                            .usage_notice
+                            .as_ref()
+                            .map(|old| ("usage available", format!("{} · 입력 {}: 사용량 차단 해제", name, old.input))),
+                    };
+                    s.usage_notice = next;
+                }
+                Ok(serde_json::to_string(&s)?)
+            })
+            .map_err(internal)?;
+        if let Some((event, summary)) = notice {
+            self.inbox_add(project, "usage", name, event, &summary);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod usage_notice_tests {
+    use super::*;
+    #[tokio::test]
+    async fn repeated_usage_waits_survive_inbox_cleanup_and_restart_until_reason_or_input_changes() {
+        let root = std::env::temp_dir().join(format!("aaa-usage-notice-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg.clone(), root.join("host")).unwrap();
+        h.project_create("demo", Default::default(), "local:cli").unwrap();
+        let dir = h.project_dir("demo").unwrap();
+        let text = "[on.schedule]\nevery='10m'\n[do.inbox]\ntext='알린다'\n[limits]\nusage_session_below=5\nusage_week_below=10\n";
+        std::fs::create_dir_all(dir.join("automations")).unwrap();
+        std::fs::write(dir.join("automations/check.toml"), text).unwrap();
+        let r = crate::automation::parse(&dir, "check", text).unwrap();
+        h.automation_submit("demo", &r, "input-1", "보존할 입력".into(), None).unwrap();
+        for _ in 0..4 {
+            h.automation_drain("demo", &r).await.unwrap();
+            h.inbox_done("demo", &[], true, "local:cli").unwrap();
+        }
+        let count = |h: &Host, event: &str| {
+            h.db.inbox_list(Some("demo"), true)
+                .unwrap()
+                .iter()
+                .filter(|i| i.item_kind == "usage" && i.event == event)
+                .count()
+        };
+        assert_eq!(count(&h, "usage unavailable"), 1);
+        assert_eq!(h.automation_queue("demo", "check").unwrap().pending, 1);
+        drop(h);
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.automation_drain("demo", &r).await.unwrap();
+        assert_eq!(count(&h, "usage unavailable"), 1, "재기동과 처리 뒤에도 같은 알림을 만들지 않는다");
+        h.automation_usage_notice("demo", "check", "input-1", Some("사용량 확인 불가: 조회 실패")).unwrap();
+        h.automation_usage_notice("demo", "check", "input-1", Some("사용량 확인 불가: 조회 실패")).unwrap();
+        assert_eq!(count(&h, "usage unavailable"), 2, "이유 변화만 한 번 알린다");
+        h.automation_usage_notice("demo", "check", "input-2", Some("사용량 확인 불가: 조회 실패")).unwrap();
+        assert_eq!(count(&h, "usage unavailable"), 3, "다른 입력은 별도 안내한다");
+        h.automation_usage_notice("demo", "check", "", None).unwrap();
+        h.automation_usage_notice("demo", "check", "", None).unwrap();
+        assert_eq!(count(&h, "usage available"), 1, "해제도 한 번 알린다");
+        h.automation_usage_notice("demo", "check", "input-2", Some("사용량 확인 불가: 조회 실패")).unwrap();
+        assert_eq!(count(&h, "usage unavailable"), 4, "풀린 뒤 다시 막히면 새로 알린다");
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

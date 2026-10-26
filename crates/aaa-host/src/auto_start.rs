@@ -566,6 +566,7 @@ impl Host {
             });
         }
         let origin = crate::orch::StartOrigin {
+            usage_minimum: [r.limits.usage_session_below, r.limits.usage_week_below],
             key: start_key(p, &r.name, &event.id),
             rule: r.name.clone(),
             run: crate::automation_thread::Run {

@@ -4028,3 +4028,13 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 질문 입력도 대화 입력과 같이 window native input capture에서 새 글을 먼저 state에 보관한다. 기존 bubble onChange·보고별 카드 교체·늦은 답 응답 처리는 유지한다. 숨김·해제·보기 권한·전송 중에는 listener를 해제하며 자기 입력칸 사건만 받는다. 이는 native input과 bubble 사이 부모 commit으로 사용자 글이 사라지는 제품 결함을 막는다.
 - 새 시험 파일을 만들지 않고 기존 E2E53의 Chromium/WebKit × 1280/390px에 위 순서를 고정한다. 처음 채운 입력·보내기 활성·같은 DOM·부모 갱신 정확히 한 번을 즉시 확인한 뒤 원래 이전 답 응답 보류→새 보고 입력→늦은 응답→각 보고 정확히 한 번 전달 단언을 실행한다. 이 검사는 실패의 실제 경계인 사용자 입력 유실을 막기 위해 필요하다. 실패 자료는 보고 hash·질문 ID·입력/갱신 순서를 함께 보존한다. 재시도·시한 확대·기대값 완화·입력 재주입은 없다.
 - OSS 후보는 [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)·[UpdateBatching](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/ReactDOMUpdateBatching.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))와 [Playwright fill의 입력 경계](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/dom.ts)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))다. 기존 저장소의 ChatComposer 보호 방식을 참고하며 외부 코드·의존성을 추가하지 않는다.
+
+
+## harness별 계정 자동 배정과 사용량 불명 실행(t-1107, §8.500)
+
+- `account_pool::tests`는 미관측·오래됨·조회 실패·리셋·누락·잘못된 값·충돌에서도 반복 시작, 5시간 누락+주간10%, 단독 창100% 제외, 실제 진행 수/최근 배정과 옛 그룹·모델 무시, 동시 여덟 시작의 4/4 분산·영수증 재전송을 확인한다. 필요 이유는 원래 사용량 부족을 모르는 상태가 시작을 막는 회귀와 동시 요청 편향을 막기 위해서다. 이전 원문 보존·한 번 이전·꺼 둔 계정 보존·진행 중 계정 불변도 확인한다.
+- 같은 owner에서 이미지 crash 복구/중복 실행 금지·인증 정리와 종료 이력·대기 취소·Reader·설정 revision 계약을 유지한다. 옛 예상 %·공유 그룹/허용 모델·프로젝트 참여·미관측 첫 실행 한 번 제한을 요구하던 시험은 새 사용자 정책으로 대체한다. 시한이나 기대값을 완화해 실패를 숨기는 변경이 아니다.
+- 자동화 `pooled_automation_starts_with_unknown_or_week_only_usage_and_retains_real_low_usage`는 실제 host/DB/frame owner에서 사용량 조회 잠금을 쥔 채 미관측/주간 단독 관측으로 실제 시작 한 번·입력 회수·영수증 중복 방지를 검사한다. 알려진 문턱 미달은 입력을 보존하고 회복 뒤 한 번 시작한다. 선택 transaction의 문턱은 pool owner에서도 확인한다. 필요한 이유는 배정 전 계정 미확정으로 rc-verify가 영구 대기한 실제 경로를 지키기 위해서다.
+- `repeated_usage_waits_survive_inbox_cleanup_and_restart_until_reason_or_input_changes`는 실제 자동화 대기 네 번과 매번 inbox 처리를 수행한다. 안내 한 건과 입력 보존·host 재기동 뒤 재안내 없음, 이유/입력 변화·해제/재차단을 확인한다. 필요 이유는 ticker마다 같은 안내가 다시 쌓이는 회귀를 막기 위해서다.
+- 기존 E2E81에서 Chromium/WebKit × 1280/390px 실제 계정 행 스위치·그룹/모델/프로젝트 제거·가로 넘침을 검사한다. 실제 host/agent/PTY의 같은 harness 분산·미관측 반복 시작·5시간 누락+주간10%/100%·다른 harness 기본 계정 fallback·영수증·재기동·할 일 대기/취소·Reader와 인증 비노출도 확인한다. E2E58은 t-1100의 이름 변경 UI를 유지하며 host 회귀에서 v2 사용 설정 동반 이전도 확인한다.
+- 부분 명령은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib`와 `NODE_PATH=<작업 폴더 Playwright 1.64.1> nice -n 15 node web/e2e/web.e2e.mjs --spec 58,65,78,81 --workers 1`이다. 웹 빌드·유닛, proto 생성 일치·의존 규칙도 검사한다. 공용 브라우저 캐시만 쓰며 고정 sleep·재시도·시한 확대는 없다. 전체 ci-local은 coordinator가 준 우선 차례에 실행한다.

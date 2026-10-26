@@ -1,7 +1,7 @@
 //! 실행할 profile·고정 계정의 구독 창만 판정한다. 외부 조회는 ticker가 맡는다.
 use super::Limits;
 use crate::{Host, auto_start::Decision};
-use aaa_proto::{AccountQuota, ErrorBody, QuotaFreshness, UsageProviderId, UsageReport, UsageWindowKind};
+use aaa_proto::{AccountQuota, ErrorBody, UsageProviderId, UsageReport, UsageWindowKind};
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Check {
@@ -20,37 +20,11 @@ fn thresholds(limits: &Limits) -> [(u32, Option<f64>); 2] {
 }
 
 fn registered(limits: &Limits, quota: &AccountQuota, now: u64) -> Check {
-    let mut low = false;
-    for (duration, threshold) in thresholds(limits) {
-        let Some(threshold) = threshold else { continue };
-        // 모델별 별도 몫으로 전체 구독 창의 누락을 채우지 않는다.
-        let windows: Vec<_> = quota
-            .windows
-            .iter()
-            .filter(|w| w.window.scope.is_none() && w.window.duration_mins == Some(duration))
-            .collect();
-        let label = if duration == 300 { "세션(5시간)" } else { "주간" };
-        if windows.is_empty() {
-            return Check::Unknown(format!("등록 계정 {} · {label} 창 없음 · 상태 {:?}", quota.harness, quota.problem));
-        }
-        for w in windows {
-            if w.problem.is_some()
-                || w.conflict
-                || w.freshness != QuotaFreshness::Fresh
-                || aaa_common::quota::freshness(&w.window, now) != QuotaFreshness::Fresh
-            {
-                return Check::Unknown(format!(
-                    "등록 계정 {} · {label} · 상태 {:?} · 신선도 {:?} · 충돌 {}",
-                    quota.harness,
-                    w.problem,
-                    aaa_common::quota::freshness(&w.window, now),
-                    w.conflict
-                ));
-            }
-            low |= 100.0 - w.window.used_percent < threshold;
-        }
+    if crate::account_pool::below_usage_threshold(quota, [limits.usage_session_below, limits.usage_week_below], now) {
+        Check::Low
+    } else {
+        Check::Allowed
     }
-    if low { Check::Low } else { Check::Allowed }
 }
 
 /// 계정 미지정의 로컬 실행만 기존 로그인 캐시를 쓴다. 다른 공급자·다중 계정은 대입하지 않는다.
@@ -89,11 +63,29 @@ impl Host {
         }
         let (harness, account, local_machine) = match decision {
             Decision::Ready(choice) => {
-                // 풀의 배정 전에는 기본 계정으로 대신 판정하지 않는다.
-                if self.pool_project_enabled(project)? {
-                    return Ok(Check::Unknown("계정 풀 배정 전 · 사용량을 판정할 계정 미확정".into()));
-                }
                 let profile = self.resolved_profile(Some(project), &choice.machine, &choice.profile)?;
+                if self.pool_harness_enabled(&profile.harness)? {
+                    let accounts = self.accounts.list()?;
+                    let mut low = false;
+                    for m in self.account_pool()?.members {
+                        if !accounts.iter().any(|a| a.name == m.account && a.harness == profile.harness) {
+                            continue;
+                        }
+                        if crate::account_meta::health(&self.account_meta(&m.account), aaa_common::util::now_ms())
+                            .broken()
+                        {
+                            continue;
+                        }
+                        let Ok(quota) = self.cached_account_quota(&m.account, &profile.harness) else {
+                            return Ok(Check::Allowed);
+                        };
+                        if registered(limits, &quota, aaa_common::util::now_ms()) != Check::Low {
+                            return Ok(Check::Allowed);
+                        }
+                        low = true;
+                    }
+                    return Ok(if low { Check::Low } else { Check::Allowed });
+                }
                 let account = self.default_account(&profile.harness)?;
                 (profile.harness, account, self.machine_is_local(&choice.machine))
             }
@@ -111,18 +103,19 @@ impl Host {
             let quota = match self.cached_account_quota(&account, &harness) {
                 Ok(quota) => quota,
                 Err(error) => {
-                    return Ok(Check::Unknown(format!(
-                        "등록 계정 {harness} 캐시 조회 실패 · {:?}: {}",
-                        error.code, error.message
-                    )));
+                    tracing::debug!(%harness, code = ?error.code, "자동화 사용량 판단 불가, 시작 허용: {}", error.message);
+                    return Ok(Check::Allowed);
                 }
             };
             return Ok(registered(limits, &quota, aaa_common::util::now_ms()));
         }
         if !local_machine {
-            return Ok(Check::Unknown(format!("원격 {harness} 실행의 등록 계정 없음")));
+            return Ok(Check::Allowed);
         }
-        Ok(local(limits, &self.usage.cached().await, &harness))
+        Ok(match local(limits, &self.usage.cached().await, &harness) {
+            Check::Unknown(_) => Check::Allowed,
+            check => check,
+        })
     }
 }
 
@@ -163,13 +156,13 @@ mod tests {
         Limits { usage_session_below: Some(5.0), usage_week_below: Some(10.0), ..Default::default() }
     }
     #[test]
-    fn quota_gate_uses_remaining_percent_and_requires_each_configured_window() {
+    fn quota_gate_uses_remaining_percent_of_observed_windows() {
         let mut q = quota();
         assert_eq!(registered(&limits(), &q, NOW), Check::Allowed, "문턱과 같으면 실행");
         q.windows[1].window.used_percent = 90.1;
         assert_eq!(registered(&limits(), &q, NOW), Check::Low);
         q.windows.remove(0);
-        assert!(matches!(registered(&limits(), &q, NOW), Check::Unknown(s) if s.contains("세션(5시간) 창 없음")));
+        assert_eq!(registered(&limits(), &q, NOW), Check::Low, "5시간이 없어도 주간 문턱은 적용한다");
         q.windows[0].window.used_percent = 19.0;
         assert_eq!(registered(&Limits { usage_week_below: Some(10.0), ..Default::default() }, &q, NOW), Check::Allowed);
     }
@@ -187,7 +180,7 @@ mod tests {
                 5 => w.window.scope = Some("spark".into()),
                 _ => w.freshness = QuotaFreshness::Unknown,
             }
-            assert!(matches!(registered(&limits(), &q, NOW), Check::Unknown(_)), "case {case}");
+            assert_eq!(registered(&limits(), &q, NOW), Check::Allowed, "case {case}: 판단 불가는 실행");
         }
     }
     #[test]

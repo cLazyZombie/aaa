@@ -331,6 +331,7 @@ pub(crate) struct ResolveOpts {
 
 /// thread 시작 인자
 pub(crate) struct StartOrigin {
+    pub usage_minimum: [Option<f64>; 2],
     pub key: String,
     pub rule: String,
     pub run: crate::automation_thread::Run,
@@ -1640,7 +1641,7 @@ impl Host {
             ));
         }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
-        let auto_account = a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&a.project)?);
+        let auto_account = a.account.is_none() && self.pool_harness_enabled(&profile.harness)?;
         if a.account.is_none() && !auto_account {
             a.account = self.default_account(&profile.harness)?;
         }
@@ -1656,7 +1657,7 @@ impl Host {
                 return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
             }
         }
-        let selection = if auto_account || a.account.is_some() {
+        let mut selection = if auto_account || a.account.is_some() {
             self.account_selection_input(
                 &a.project,
                 &profile,
@@ -1667,6 +1668,11 @@ impl Host {
         } else {
             None
         };
+        if let Some(input) = &mut selection
+            && let Some(origin) = origin
+        {
+            input.minimum = origin.usage_minimum;
+        }
         // 자동화 do.start는 자체 실행 기록으로 관리한다. 사용자·coordinator 기동은 할 일을 먼저 남긴다.
         if origin.is_none() && a.start_task.is_none() {
             a.machine = Some(self.machine_name(&mid));

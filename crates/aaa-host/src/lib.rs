@@ -913,6 +913,7 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.migrate_workspace_access()?;
+        host.pool_migrate().map_err(|e| anyhow::anyhow!("계정 자동 배정 이전: {}", e.message))?;
         host.account_meta_backfill();
         host.backfill_report_stages()?;
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
@@ -1689,7 +1690,7 @@ impl Host {
             }
             FrontRequest::AccountImport { name, harness, secret } => {
                 let secret = secret.0.trim();
-                self.accounts.import(&name, &harness, secret)?;
+                self.register_account(&name, &harness, secret)?;
                 // 가져온 인증은 로그인으로 기록한다(Codex는 인증의 계정 정보로 메일·plan을 읽는다)
                 let identity = if harness == "codex" {
                     account_meta::codex_identity(secret)

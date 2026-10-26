@@ -35,7 +35,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum AccountCmd {
-    /// host 공통 자동 배정 풀. 변경은 세션 밖 사람·웹 조작 기기만 한다.
+    /// harness별 계정 자동 배정. add/remove로 계정마다 켜고 끈다.
     Pool {
         #[command(subcommand)]
         cmd: AccountPoolCmd,
@@ -101,15 +101,16 @@ enum AccountPoolCmd {
     List,
     Add {
         account: String,
-        /// 실제 한도를 공유하는 별칭끼리는 같은 그룹을 쓴다. 기본은 별칭이다.
-        #[arg(long)]
+        /// 구판 호환 인자. 그룹은 사용하지 않는다.
+        #[arg(long, hide = true)]
         group: Option<String>,
-        #[arg(long = "model")]
+        #[arg(long = "model", hide = true)]
         models: Vec<String>,
     },
     Remove {
         account: String,
     },
+    #[command(hide = true)]
     Project {
         project: String,
         #[arg(long, conflicts_with = "off", required_unless_present = "off")]
@@ -978,10 +979,10 @@ struct ThreadStartArgs {
     /// host에 등록한 계정 이름(profile과 별개)
     #[arg(long, conflicts_with = "account_pool")]
     account: Option<String>,
-    /// 프로젝트가 참여한 host 공통 허용 풀에서 계정을 고른다.
+    /// 같은 harness의 자동 배정 계정에서 고른다. 없으면 기본 계정을 쓴다.
     #[arg(long)]
     account_pool: bool,
-    #[arg(long, requires="account_pool", value_parser=["small","medium","large"])]
+    #[arg(long, hide = true, requires="account_pool", value_parser=["small","medium","large"])]
     account_size: Option<String>,
     /// 재전송할 때 같은 시작 ID를 준다. 생략하면 새 ID다.
     #[arg(long, requires = "account_pool")]
@@ -5434,15 +5435,9 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::AccountPool { pool } => {
-            let _ = writeln!(s, "참여 프로젝트: {}", pool.projects.join(", "));
+            let _ = writeln!(s, "자동 배정에 사용하는 계정 (같은 harness 안에서 분산)");
             for m in &pool.members {
-                let _ = writeln!(
-                    s,
-                    "{}\t한도 그룹 {}\t모델 {}",
-                    m.account,
-                    m.group,
-                    if m.models.is_empty() { "전체".into() } else { m.models.join(", ") }
-                );
+                let _ = writeln!(s, "{}\t사용", m.account);
             }
         }
         FrontResponse::AccountStarts { starts } => {

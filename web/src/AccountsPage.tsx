@@ -6,7 +6,7 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 import "./ThreadActions.css";
 import "./AccountsPage.css";
 import { AccountQuotaCard, useAccountQuota } from "./AccountQuota";
-import { AccountPoolPanel } from "./AccountPoolPanel";
+import { AccountAutoAssign, AccountPoolPanel, useAccountPool } from "./AccountPoolPanel";
 import { apiAtLeast } from "./automationModel";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -46,7 +46,7 @@ function useAccounts(loginId: string | null) {
         defaults: defaults.kind === "account_defaults" ? defaults.defaults : [],
         full,
         quota: apiAtLeast(m?.front_api, 1, 83),
-        pool: apiAtLeast(m?.front_api, 1, 102),
+        pool: apiAtLeast(m?.front_api, 1, 129),
         rename: apiAtLeast(m?.front_api, 1, 128),
       });
       if (status === "lost") setLogin((prev) => (prev ? { ...prev, state: "lost" } : prev));
@@ -74,6 +74,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
   const [renamed, setRenamed] = useState<{ from: string; to: string } | null>(null);
   const [harness, setHarness] = useState<string>("claude");
   const usage = useAccountQuota(data?.quota ?? false);
+  const pool = useAccountPool(data?.pool ?? false);
   const now = Date.now();
   if (!data) return error ? <p className="op-warn">{error}</p> : <p className="op-muted">읽는 중…</p>;
   const canEdit = role !== "reader" && data.full;
@@ -114,7 +115,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
         </p>
       )}
       {data.quota && <div className="op-buttons"><button className="btn small" type="button" onClick={usage.refresh} disabled={usage.busy}>사용량 다시 읽기</button><span className="op-muted">관측이 없으면 사용량 모름</span></div>}
-      {data.pool && <AccountPoolPanel accounts={data.accounts} canEdit={canEdit} />}
+      {data.pool && <AccountPoolPanel state={pool} canEdit={canEdit} />}
       {groups.map((g) => (
         <SettingsGroup key={g.harness} title={HARNESS_LABEL[g.harness]} section={`accounts-${g.harness}`}>
           <div className="settings-item">
@@ -153,6 +154,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                           )}
                         </dl>
                       )}
+                      {data.pool && <AccountAutoAssign account={a.name} state={pool} canEdit={canEdit} />}
                       {data.quota && <AccountQuotaCard quota={usage.report?.accounts.find((q) => q.account === a.name && q.harness === a.harness)} now={usage.now} failed={usage.error} />}
                       {canEdit && (
                         <div className="op-buttons acct-actions">
