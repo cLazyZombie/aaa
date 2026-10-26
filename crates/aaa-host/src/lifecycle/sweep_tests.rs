@@ -17,6 +17,8 @@ impl Lab {
         cfg.notify.web_push = false;
         let h = Host::open(cfg, root.join("host")).unwrap();
         h.project_create("demo", Default::default(), "test").unwrap();
+        // 이력 준비는 한 번 확정한다. 아래 실제 sweep의 저장·경합·실패 경계는 그대로 둔다.
+        h.db.conn_for_test().execute_batch("BEGIN").unwrap();
         for i in 0..count {
             let id = format!("t-{:04}", i + 1);
             let mut r = ThreadRec::starting("demo", &id, "m", "fake", aaa_proto::Role::Worker, ThreadKind::Worktree, 1);
@@ -27,6 +29,7 @@ impl Lab {
             r.leftover = Some(Leftover { worktree: true, branch: false });
             h.db.thread_import("demo", &id, "resolved", &serde_json::to_string(&r).unwrap()).unwrap();
         }
+        h.db.conn_for_test().execute_batch("COMMIT").unwrap();
         let (a, b) = tokio::io::duplex(2 << 20);
         let (ar, aw) = tokio::io::split(a);
         drop(ar);

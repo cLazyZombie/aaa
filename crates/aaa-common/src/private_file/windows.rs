@@ -66,7 +66,10 @@ pub(crate) fn protect(path: &Path, directory: bool) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::{
         Security::Authorization::SetSecurityInfo,
-        Security::{GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, PROTECTED_DACL_SECURITY_INFORMATION},
+        Security::{
+            GetSecurityDescriptorControl, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
+            PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+        },
         Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, READ_CONTROL, WRITE_DAC, WRITE_OWNER},
     };
     let current = super::account().ok_or_else(denied)?;
@@ -83,16 +86,17 @@ pub(crate) fn protect(path: &Path, directory: bool) -> io::Result<File> {
     let file = OpenOptions::new().access_mode(access).custom_flags(flags).open(path)?;
     verify_kind(&file, directory)?;
     let mut owner = std::ptr::null_mut();
+    let mut old_dacl = std::ptr::null_mut();
     let mut old = std::ptr::null_mut();
     // SAFETY: 실제 handle의 소유권을 읽어 타 사용자 파일의 ACL을 바꾸지 않는다.
     let code = unsafe {
         GetSecurityInfo(
             file.as_raw_handle(),
             SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             &mut owner,
             std::ptr::null_mut(),
-            std::ptr::null_mut(),
+            &mut old_dacl,
             std::ptr::null_mut(),
             &mut old,
         )
@@ -119,6 +123,24 @@ pub(crate) fn protect(path: &Path, directory: bool) -> io::Result<File> {
     }
     if present == 0 || dacl.is_null() {
         return Err(denied());
+    }
+    let mut control = 0;
+    let mut revision = 0;
+    // SAFETY: old와 두 ACL은 이 함수가 소유한 descriptor 안에 있고 호출 동안 살아 있다.
+    if unsafe { GetSecurityDescriptorControl(old, &mut control, &mut revision) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // 같은 protected DACL을 다시 적용하면 Windows가 모든 자식에 상속을 재전파한다.
+    // 경로 캐시 대신 매번 실제 handle의 소유권·종류·보호 비트·ACL 전체를 확인한다.
+    if !normalize_owner && control & SE_DACL_PROTECTED != 0 && !old_dacl.is_null() {
+        let unchanged = unsafe {
+            let current = std::slice::from_raw_parts(old_dacl.cast::<u8>(), (*old_dacl).AclSize as usize);
+            let desired = std::slice::from_raw_parts(dacl.cast::<u8>(), (*dacl).AclSize as usize);
+            current == desired
+        };
+        if unchanged {
+            return Ok(file);
+        }
     }
     let mut new_owner = std::ptr::null_mut();
     if normalize_owner
