@@ -8096,3 +8096,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 보고 본문의 Markdown 링크·참조 정의·HTML 속성·본문 library 경로를 선택 힌트로 읽는다. 상대 주소·percent encoding·각괄호 안 공백을 받으며 실제 파일 열기의 symlink/경로 검증은 기존대로다. 보고 원문·hash·상한·FRONT_API는 바꾸지 않는다. manifest의 선택 순서를 host 전송에도 유지하며 표시용 목록만 이름순으로 정렬한다.
 - 빠진 파일은 기존 skipped·copy_notes·on_agent 원장에 경로·크기·이유를 남긴다. thread는 본문 스크롤 안의 부분 사본 배너(옆 diff 높이 보존), 보고서 상세는 HTML iframe 위에도 누락 개수와 펼칠 수 있는 경로 목록을 보인다. 파일 행과 공유 목록에는 사본이 없음을 명시한다. 보존 r 판은 계속 최신 agent 바이트로 대체하지 않는다.
 - 참고: [rclone 전송 순서](https://rclone.org/docs/#order-by-string)([MIT](https://github.com/rclone/rclone/blob/master/COPYING))의 전체 목록 수집·크기순 선택과 [restic 파일 선택](https://restic.readthedocs.io/en/stable/040_backup.html#including-files)([BSD-2-Clause](https://github.com/restic/restic/blob/master/LICENSE))의 명시적 경로 목록을 참고했다. 외부 코드·의존성을 추가하지 않는다.
+
+### 8.507 자동화 시작 thread의 Next 책임(t-1133)
+
+- 자동화 `do.start`가 시작 때 저장한 `ThreadRec.automation`을 근거로 완료 Next를 후속 원장 수집에서 제외한다. 보고와 `ThreadView.next`는 유지한다. 자동화 파일의 현재 존재·켜짐, thread 제목·감시 문구는 판정에 쓰지 않는다. 시작 출처 없는 옛 기록과 사람이 시작한 thread는 기존 후속 보호를 유지한다.
+- 구판이 수집한 자동화의 미처리 항목은 보고 회수·마지막 resolve 또는 끝난 thread의 기존 정리 순회에서 host가 다음 자동 실행의 책임으로 인계한다. 원본 줄·판·ID는 보존하고 자동화 이름을 담은 사유·host actor·시각을 남긴다. 이미 처리한 task 연결·사유 영수증은 바꾸지 않는다. 판정이 끝났거나 연결 task가 없는 기록도 회수하며 기존 후속 inbox를 닫는다. 인계 저장 실패는 원인과 thread를 경고하고 다음 정상 순회에 남긴다.
+- 일반 thread의 Next 교체·inbox 정리·완료/삭제/연결 해제 차단과 명시적 처리 규칙은 유지한다. 새 FRONT_API·AGENT_LINK·웹 E2E 번호·의존성은 없다. 운영 DB·설정은 수정하지 않는다.
+- 참고: [Temporal Workflow ID와 Run ID](https://docs.temporal.io/workflow-execution/workflowid-runid)([MIT](https://github.com/temporalio/temporal/blob/main/LICENSE))의 반복 작업과 개별 실행 구분, [Actions 실행 context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)([runner MIT](https://github.com/actions/runner/blob/main/LICENSE))의 workflow/event 출처를 비교했다. 문구 대신 영속 출처로 책임을 정하는 원칙만 적용하며 외부 코드는 복사하지 않는다.

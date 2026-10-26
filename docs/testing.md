@@ -4218,3 +4218,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 전체 gate는 coordinator에게 준비됨을 알리고 받은 차례에 실행한다. 후보를 push하지 않고 병합 준비 보고를 남기며 운영 DB·설정과 원래 worktree는 건드리지 않는다.
 
 - 첫 전체 gate(4dc867f5, 418초)는 E2E42 하나만 실패했다. 같은 실행 파일·실제 thread에서 경고 띠만 숨긴 대조는 diff 본문 높이360.5→433.5px·파일 머리4→6개를 보였다. 새 경고가 가상화 경계 밖으로 두 머리를 밀어낸 원인이다. thread 안내를 `.thread-col` 스크롤 안으로 옮겨 옆 diff 높이를 보존한다. E2E42의 원래 6개·선택 파일·20초 단언을 그대로 검증하며 진단용 DOM 숨김은 제품·정규 시험에 넣지 않는다. 수리 후 전체 gate는 새 차례를 받아 실행한다.
+
+## 자동화 시작 thread의 Next 제외(t-1133, §8.507)
+
+- `followups::tests::automation_origin_skips_next_but_same_named_human_thread_keeps_protection`은 실제 SQLite·보고·TASKS·inbox·Host 재열기로 자동화의 Next 미수집과, 같은 이름/감시 문구인 일반 thread의 원장·보관 차단 유지를 검사한다. 필요한 이유: 문구 추측이나 자동화 설정 조회로 사람의 후속을 없애는 회귀를 막는다.
+- `followups::tests::legacy_automation_next_handoff_is_durable_and_preserves_explicit_receipts`은 이미 판정한 구판 미처리 항목을 정상 정리 순회로 인계하고 원본 ID/판/줄·자동화 이름/host/시각·기존 명시 영수증·inbox 종료·보관·재기동/재순회 불변을 검사한다. 필요한 이유: 새 보고가 없는 종료 감시 thread의 후속 경고도 수동 사유 입력 없이 해소하고 이전 처리 근거를 보존해야 한다.
+- 기존 m13 `automation_thread_reports_do_not_wake_their_own_rule`에 실제 do.start 출처의 완료 Next 표시 유지·후속 미수집·일반 시작의 수집 대조를 추가한다. 새 프로세스 실험실·E2E 번호를 늘리지 않는다. 기존 자동화 보고 사건의 순서/자기 재실행 방지 단언은 유지한다.
+- 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib followups::tests`와 `nice -n 15 cargo test --profile verify --locked -p aaa --test m13 automation_thread_reports_do_not_wake_their_own_rule`다. 개별 새 시험은 보통 부하에서 5초 이하로 유지하고 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 전체 gate는 coordinator가 정한 같은 머신의 실행 차례를 받아 실행한다.

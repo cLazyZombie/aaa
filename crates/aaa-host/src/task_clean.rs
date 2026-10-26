@@ -100,10 +100,27 @@ impl Host {
                     .ok()
             })
             .filter(|r| r.status == ThreadStatus::Resolved && r.resolve_pending.is_none() && r.role != Role::Evaluator)
-            .filter(|r| r.task_clean.why.is_some() && r.task_clean.judged_ms.is_none())
+            .filter(|r| {
+                (r.task_clean.why.is_some() && r.task_clean.judged_ms.is_none())
+                    || (r.automation.is_some() && crate::followups::pending(r))
+            })
             .collect();
         for rec in due {
+            let rec = if rec.automation.is_some() && crate::followups::pending(&rec) {
+                match self.update_rec(project, &rec.id, crate::followups::handoff_automation) {
+                    Ok(rec) => rec,
+                    Err(e) => {
+                        tracing::warn!(project, thread = %rec.id, "자동화 후속 인계를 기록하지 못했다: {}", e.message);
+                        continue;
+                    }
+                }
+            } else {
+                rec
+            };
             self.followup_notice(&rec);
+            if rec.task_clean.why.is_none() {
+                continue;
+            }
             if let Err(e) = self.task_clean_one(project, dir, &rec) {
                 tracing::warn!(project, thread = %rec.id, "할 일 자동 정리를 다음 셈으로 미룬다: {}", e.message);
             }
