@@ -1,20 +1,11 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript-api";
-import { applyPatch } from "../xterm-source.mjs";
 
 // 모사 구현 대신 배포와 같은 upstream 소스·패치를 실행한다.
-function helper(t, patched = true, platform = { isSafari: true, isIphone: true }, screenReaderMode = false) {
-  const root = mkdtempSync(join(tmpdir(), "aaa-mobile-ime-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  cpSync(new URL("../node_modules/@xterm/xterm/src", import.meta.url), join(root, "src"), { recursive: true });
-  for (const patch of ["xterm-5.5.0.patch", ...(patched ? ["xterm-5.5.0-mobile-input.patch", "xterm-5.5.0-composition-anchor.patch"] : [])]) {
-    applyPatch(root, readFileSync(new URL(`../patches/${patch}`, import.meta.url), "utf8"));
-  }
-  const source = readFileSync(join(root, "src/browser/input/CompositionHelper.ts"), "utf8");
+function helper(t, platform = { isSafari: true, isIphone: true }, screenReaderMode = false) {
+  const source = readFileSync(new URL('../xterm/CompositionHelper.ts', import.meta.url), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, experimentalDecorators: true } }).outputText;
   const exports = {};
   new Function("require", "exports", code)(id => {
@@ -37,10 +28,10 @@ function helper(t, patched = true, platform = { isSafari: true, isIphone: true }
   return { h, box, sent, edit };
 }
 
-test("iPhone 다음 키가 끝내는 영어 조합: 구판 statu, 수정판 status", t => {
+test("iPhone 영어 조합은 마지막 글자까지 바로 보내고 확정은 중복하지 않는다", t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  for (const patched of [false, true]) {
-    const { h, box, sent, edit } = helper(t, patched);
+  {
+    const { h, box, sent, edit } = helper(t);
     for (const ch of "status") {
       if (box.value) h.compositionend();
       h.compositionstart();
@@ -48,7 +39,7 @@ test("iPhone 다음 키가 끝내는 영어 조합: 구판 statu, 수정판 stat
       edit(ch, "insertCompositionText", box.value + ch);
       t.mock.timers.runAll();
     }
-    assert.equal(sent.join(""), patched ? "status" : "statu");
+    assert.equal(sent.join(""), "status");
     h.compositionend(); t.mock.timers.runAll();
     assert.equal(sent.join(""), "status", "끝 사건이 이미 보낸 마지막 글자를 중복하지 않는다");
   }
@@ -85,7 +76,7 @@ test("한글은 확정까지 보류하고 영문→한글 전환은 보낸 영�
 test("데스크톱·화면 읽기 모드·한글 replacement는 기존 보류 경로를 쓴다", t => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   for (const [platform, reader] of [[{ isSafari: true, isMac: true }, false], [{ isSafari: true, isIphone: true }, true]]) {
-    const { h, sent, edit } = helper(t, true, platform, reader);
+    const { h, sent, edit } = helper(t, platform, reader);
     h.compositionstart(); edit("status");
     assert.equal(sent.join(""), "");
     h.compositionend(); t.mock.timers.runAll();
@@ -94,7 +85,7 @@ test("데스크톱·화면 읽기 모드·한글 replacement는 기존 보류 �
   const { h, sent, edit } = helper(t);
   edit("ㅎ", "insertText"); edit("한", "insertReplacementText");
   assert.equal(sent.join(""), "");
-  h.finishReplacement();
+  h.finishInput();
   assert.equal(sent.join(""), "한");
 });
 
@@ -106,6 +97,14 @@ test("같은 task의 한글 확정→영문 시작도 PTY 순서를 지킨다", 
   assert.equal(sent.join(""), "한s");
   t.mock.timers.runAll();
   assert.equal(sent.join(""), "한s");
+  h.reset(); sent.length = 0;
+  h.compositionstart(); edit("한"); h.compositionend();
+  // native WebKit은 조합 확정 직후, 같은 timer 차례 전에 일반 insertText를 낼 수 있다.
+  h.beforeinput({ data: 'abc', inputType: 'insertText', isComposing: false });
+  assert.equal(sent.join(''), '한', '새 DOM 삽입 전에 앞 확정을 먼저 보낸다');
+  box.value += 'abc';
+  t.mock.timers.runAll();
+  assert.equal(sent.join(''), '한', '일반 삽입은 Terminal의 경계에서 한 번만 보낸다');
 });
 
 test("확정 뒤 교정의 keydown 229 fallback은 같은 교정을 다시 보내지 않는다", t => {

@@ -17,6 +17,9 @@ impl Lab {
         Self { h, path }
     }
     fn post(&self, n: u32, body: &str) -> (String, aaa_proto::UserRequestView) {
+        self.post_title(n, &format!("진행 안 {n}"), body)
+    }
+    fn post_title(&self, n: u32, title: &str, body: &str) -> (String, aaa_proto::UserRequestView) {
         let result = self
             .h
             .front_post(
@@ -26,7 +29,7 @@ impl Lab {
                     to: "user".into(),
                     post_type: PostType::Request,
                     topic: "user-action".into(),
-                    title: format!("진행 안 {n}"),
+                    title: title.into(),
                     body: body.into(),
                     needs_user: true,
                     refs: vec![],
@@ -46,6 +49,87 @@ impl Drop for Lab {
     }
 }
 const BODY: &str = "## Questions\n### 1. 자리\n![시안](library/preview/a.png)\n\n| 안 | 위치 |\n| --- | --- |\n| A | 아래 |\n\n- A 아래 (추천) — 손에 닿음\n- B 위 — 지금과 같음\n### 2. 색\n- A 파랑 (추천)\n- B 회색\n";
+
+/// q-1372: 과거 답만 있고 열린 thread 카드가 없는 접미사는 독립 요청으로 남아야 한다.
+#[test]
+fn orphan_thread_reference_stays_a_coordinator_question_across_reports_and_reconcile() {
+    use aaa_proto::{QuestionState, Role, ThreadKind};
+    let lab = Lab::new();
+    let h = &lab.h;
+    let mut rec = crate::orch::ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+    rec.id = "t-0001".into();
+    rec.report_hash = Some("old".into());
+    rec.questions = aaa_proto::report_questions(BODY);
+    let answer = QuestionAnswerView {
+        picks: vec![Some(0), Some(1)],
+        text: None,
+        summary: "1A 2B".into(),
+        by: "웹".into(),
+        at_ms: 2,
+    };
+    h.record_answer(&rec, &answer);
+    rec.questions.clear();
+    rec.report_hash = Some("no-questions".into());
+    rec.report_changed_ms = Some(3);
+    h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
+    let (post, request) = lab.post_title(1, "실제 확인 aaa:question/t-0001", BODY);
+    let ids: Vec<_> = request.questions.as_ref().unwrap().items.iter().map(|q| q.id.clone().unwrap()).collect();
+    h.reconcile_question_requests("demo").unwrap();
+    assert!(!h.db.post_inbox("demo", &post).unwrap().unwrap().done, "과거 답이 새 요청을 닫으면 안 된다");
+    assert!(request.title.contains(&format!("aaa:question/{}", ids[0])), "카드·알림 링크도 독립 질문을 연다");
+    assert!(h.db.post_inbox("demo", &post).unwrap().unwrap().summary.contains(&format!("aaa:question/{}", ids[0])));
+    for questions in [aaa_proto::report_questions(BODY), Vec::new()] {
+        rec.questions = questions;
+        rec.report_hash = Some("next".into());
+        rec.report_changed_ms = Some(request.created_ms + 1);
+        h.save(&mut rec);
+        h.reconcile_question_requests("demo").unwrap();
+        let current = h.user_requests("demo").unwrap().remove(0);
+        assert_eq!(current.question_id, Some(ids[0].clone()));
+        assert!(current.questions.is_some(), "나중에 생긴 thread 카드에 독립 요청이 흡수되면 안 된다");
+        for id in &ids {
+            let q = h.question_catalog(false).unwrap().into_iter().find(|q| &q.id == id).unwrap();
+            assert!(q.pane.is_empty());
+            assert_eq!((q.state, q.answer), (QuestionState::Open, None));
+        }
+    }
+    h.post_handled("demo", &ids[0], "local:cli").unwrap();
+    assert!(h.db.post_inbox("demo", &post).unwrap().unwrap().done, "명시적 처리는 유지한다");
+}
+
+/// q-1373: 일반 inbox 정리는 사용자에게 묻고 있는 post의 답이나 철회가 아니다.
+#[test]
+fn inbox_cleanup_preserves_unanswered_coordinator_questions_until_explicit_handling() {
+    use aaa_proto::QuestionState;
+    let lab = Lab::new();
+    let h = &lab.h;
+    let (structured_post, structured) = lab.post(1, BODY);
+    let (plain_post, plain) = lab.post(2, "직접 확인해 주세요");
+    h.inbox_add("demo", "thread-state", "t-0001", "new report", "새 보고");
+    let (n, remaining) = h.inbox_done("demo", &[], true, "local:cli").unwrap();
+    assert_eq!(n, 1, "일반 알림만 정리한다");
+    assert_eq!(remaining.items.len(), 2);
+    assert!(h.db.ask_list("demo").unwrap().is_empty(), "정리가 답 기록을 만들면 안 된다");
+    assert!(h.inbox_done("demo", std::slice::from_ref(&structured.id), false, "local:cli").is_err());
+    assert_eq!(h.user_requests("demo").unwrap().len(), 2);
+    for q in h.question_catalog(false).unwrap() {
+        assert_eq!((q.state, q.answer), (QuestionState::Open, None));
+    }
+    h.ask_answer(
+        "demo",
+        &structured.id,
+        &structured.questions.unwrap().report_hash,
+        vec![Some(0), Some(1)],
+        None,
+        "device:phone",
+    )
+    .unwrap();
+    assert!(h.db.post_inbox("demo", &structured_post).unwrap().unwrap().done);
+    assert!(!h.db.post_inbox("demo", &plain_post).unwrap().unwrap().done);
+    h.post_handled("demo", &plain.question_id.unwrap(), "local:cli").unwrap();
+    assert!(h.user_requests("demo").unwrap().is_empty());
+    assert!(h.db.post_inbox("demo", &plain_post).unwrap().unwrap().done);
+}
 
 #[test]
 fn ids_are_project_local_persistent_and_not_reused_after_history_deletion() {

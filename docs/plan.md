@@ -7982,6 +7982,26 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **72회차 착지 통합(t-1082).** 기준 main `bc0be2fa`에 t-1082 `d95a65ea`와 t-1081 `69a3e8bb`를 각각 --no-ff로 통합한다. 준비되지 않은 t-1075는 제외한다. workspace는 §8.496, 활성 할 일 정렬은 겹친 번호를 §8.497로 옮긴다. FRONT_API 1.127·AGENT_LINK 1.11·기존 E2E01~115를 유지하고 E2E76·90 확장을 함께 검사한다. 저장소 launchChromium helper와 공용 캐시 Playwright 1.64.1 양 엔진 사전 확인 뒤 전체 nice 15 ci-local·별도 공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows production release 빌드·추가 개인정보 검사를 한 번 수행한다. 실패 시 원문·부하를 보존하고 push하지 않는다. 로컬 검증 통과 뒤 fast-forward push와 원격 SHA를 확인하며 GitHub CI를 기다리지 않는다. push 뒤 착지 SHA salt의 Windows 설치기를 전용 시험 폴더로 전달해 SHA-256·판만 확인한다. 설치 실행·배포·tag·release는 하지 않는다.
 
 
+### 8.498 웹 터미널 IME 상태·표시 소유자 통합(t-1075)
+
+- 사용자 q-1353 1A: 조합 상태와 표시 경로를 통합한다. xterm 5.5.0·터미널 parser·backend/API는 유지한다. upstream Terminal bridge와 하나의 `web/xterm/CompositionHelper.ts`, 하나의 `compositionView.ts` 표시 adapter로 정리한다. Safari replacement·iOS ASCII 교정의 기존 계약은 보존한다.
+- t-1064가 새 음절 시작 때 이전 확정의 에코 전 커서를 marker로 고정한 것이 연속 음절 겹침 원인이다. 69회차는 에코 뒤 제자리로 갔고 71회차는 이전 열에 남았다. 연속 입력의 첫 marker·DOM offset과 실제 확정 범위의 Unicode 폭으로 다음 열을 계산한다. WebKit이 앞 NBSP를 SPACE로 바꿔도 offset은 같다. marker는 단어 안 한 개이고 일반 키·paste·blur·취소·reset·버퍼 삭제에서 해제한다.
+- `Term.tsx`의 별도 compositionend timer와 조합 상자의 두 MutationObserver를 제거한다. 앱 입력 보호는 같은 active/pending/sending을 읽고, 표시 adapter가 글꼴·자간·여백·실제 DOM 행 높이·색과 textarea 위치를 함께 적용한다. 줄 글꼴 보정과 별도 입력창·passive 진단은 유지한다.
+- 앞 확정과 일반 insertText가 같은 차례면 beforeinput의 DOM 변경 전에 확정 큐를 비운다. native 조합 Backspace는 현재 preedit를 편집하고 PTY 확정/DEL로 바꾸지 않는다. paste·blur는 한 finishInput 경계로 확정/대기 송신을 처리한다. 확정 전에 CJK 바이트를 보내거나 같은 확정을 두 번 보내지 않는다.
+- 기존 E2E09에 실제 PTY의 에코 전 다음 조합·연속 가나다라+space·각→가가·그 사이의 분리 상태 줄 출력을 추가한다. Chromium CDP, macOS 화면 밖 WKWebView의 native text client와 Playwright WebKit 재생을 구분한다. 사용자 화면·입력기·시스템 설정은 바꾸지 않고 격리 iPhone simulator와 native 입력 경계도 별도로 확인한다. 실제 OS 입력기 키 사건과 client 호출을 같은 증거로 세지 않는다.
+- OSS 비교와 라이선스는 web/patches/README에 있다. 새 외부 코드·의존성·API·E2E 번호는 추가하지 않는다. 전체 gate는 coordinator가 부여한 차례에 실행하고 후보만 push한다.
+
+- **73회차 착지 통합(t-1075).** 기준 main `622aaf3a`에 t-1075 `85c9ff78`과 t-1090 `c3418b75`를 각각 --no-ff로 통합한다. t-1075 통합 뒤 E2E76 원인 수리 `446852ca`를 별도 커밋으로 넣었다. t-1088은 회귀 수정 중이라 제외한다. 그 밖의 준비된 정식 후보는 이미 main에 포함되어 추가하지 않는다. IME 절을 §8.498로 옮기고 FRONT_API 1.127·AGENT_LINK 1.11·기존 E2E01~115를 유지한다. 사용자 지시에 따라 실제 OS 두벌식 직접 확인(q-1373)을 기다리지 않고 착지하며, 이를 자동화 통과로 세지 않는다. 저장소 launchChromium helper의 브라우저 사전 확인 뒤 전체 nice 15 ci-local·별도 공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows production release 빌드·추가 개인정보 검사를 한 번 수행한다. 실패하면 원문·부하를 보존하고 push하지 않는다. 로컬 검증을 모두 통과하면 fast-forward push와 원격 SHA를 확인하고, 착지 SHA salt의 Windows 설치기를 전용 시험 폴더로 전달해 SHA-256·판만 확인한다. GitHub CI 대기·설치 실행·배포·tag·release는 하지 않는다.
+
+- **73회차 gate 실패 수리(t-1075).** 첫 전체 ci-local은 E2E76 활성 정렬의 reload 요청이 휴대폰 상세 닫기의 뒤늦은 history.back에 취소되어 멈췄다. 실제 브라우저 CPU 지연으로 같은 오류와 사건 순서를 확인하고, 시험 두 곳에서 닫기 전 popstate 대기를 건 뒤 기록 복귀가 끝나면 reload한다. 정렬 기억·원문·예약·두 엔진/휴대폰 단언은 유지하며 제품·시한·기대값을 바꾸지 않는다. 같은 지연에서 수정 전 두 번째 반복 실패, 수정 후 100회 통과와 E2E76 전체 통과를 확인했다. 별도 수리 커밋으로 남기고 전체 gate 차례를 다시 요청한다. 실제 OS 두벌식은 이후 q-1374 사용자 답 A로 Chrome·Safari 모두 정상 확인을 받았다.
+
+### 미답변 coordinator 질문의 수명(t-1090, §8.345 보완)
+
+- 독립 coordinator 요청은 사용자 답, 웹의 명시적 처리 또는 `aaa post handled <q-ID|p-ID>`까지 열린다. 일반 `inbox done --all`은 사용자 요청을 제외한다. 독립 요청의 inbox ID를 직접 끝내려 하면 처리 명령을 안내하고 거절한다. 열린 thread 카드에 붙은 알림만 개별 `inbox done`으로 정리할 수 있으며 카드 답은 만들지 않는다.
+- `aaa:question/<thread>`에 현재 카드가 없으면 독립 post 질문을 만든다. 질문 원장의 `kind=post, subject=<inbox-ID>`가 소유권을 고정한다. 알림·카드 링크는 그 요청의 q-ID로 보내고 이후 thread 보고·과거 답·같은 thread의 새 질문으로 닫지 않는다. 기존 연결 알림은 현재 질문·답 기록을 따라 정리한다.
+- `gone`은 pane 확인창 소실·pane 종료, thread의 새 보고가 기존 질문을 제거한 경우, 또는 명시적으로 끝낸 답 없는 요청에 사용한다. pane이 없는 독립 coordinator 요청은 화면 소실이나 일반 inbox 정리로 `gone`이 되지 않는다. 이미 끝난 운영 요청을 추정으로 되살리지 않는다.
+- 감사 기록에 inbox 처리 방식(`all`), 보존한 사용자 요청 수, 지정 ID를 남겨 일괄 정리와 명시 처리를 구분한다. proto·FRONT_API 형식은 바꾸지 않는다.
+
 ### 8.499 thread 목록의 거르기와 제한된 페이지(t-1088)
 
 - **원인과 계약.** `threads`가 끝난 thread까지 모든 `ThreadView`를 한 IPC frame에 모아, 원장이 커질수록 1 MiB 한도를 넘었다. FRONT_API 1.128의 `ThreadListQuery`를 요청에 펼치고 응답에 선택 `next_after`를 더한다. 기본 페이지 100건·최대 200건, 직렬화 항목 합계는 `MAX_FRAME / 2` 이하다. frame 상한 자체는 바꾸지 않는다. 한 항목만으로 페이지를 넘으면 프로젝트·thread·바이트를 넣은 오류를 반환한다.

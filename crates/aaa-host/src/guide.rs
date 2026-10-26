@@ -318,6 +318,7 @@ thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림�
 별도 질문 카드를 만들지 않는다. 확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙이고 본문에 새 `## Questions`·선택지를 쓰지 않는다.
 연결을 빠뜨린 평문 post가 같은 프로젝트의 미답변 thread 질문 하나를 제목·본문의 t-ID나 현재 q-ID로 가리키면 host가 자동 연결한다.
 여러 thread 질문을 가리키면 거부하므로 제목 끝에 연결 대상을 명시한다. 정당한 별개 질문은 본문에 새 `## Questions`로 쓴다.
+현재 thread 카드가 없으면 독립 q-ID의 요청으로 남긴다. 과거 답이나 이후 thread 보고로 닫지 않는다.
 질문 선택지·추천은 thread 보고의 카드를 정본으로 삼는다. post에만 새 C안을 만들어 선택지가 갈라지게 하지 않는다.
 새 안을 제안하려면 thread 보고를 먼저 고친다. 사용자가 채팅으로 답하면 카드에 있는 선택은 `aaa thread answer <thread> 1A`처럼
 기록하고, 카드에 없는 C나 직접 쓴 답은 `aaa thread answer <thread> --text '1 C: 사용자 답 원문'`으로 그대로 전한다.
@@ -336,12 +337,14 @@ thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림�
 확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 질문의 답은 카드가 정본이다: 카드로 답하면 host가 thread에 전하고
 연결 post도 함께 끝내 `request handled`를 남긴다. coordinator의 구조화 post는 카드에서 답하면 `question answered`가 온다. 평문 post는 「답함으로 표시」로 끝내며 `request handled`가 온다.
 연결 post를 CLI `inbox done`으로 먼저 끝내도 질문에 답한 것으로 보지 않는다. 같은 것을 다시 묻지 않는다.
+`inbox done --all`은 사용자 요청을 남긴다. 독립 요청은 일반 inbox 정리로 닫을 수 없다.
+사용자 답을 받았거나 요청을 명시적으로 거둘 때만 `aaa post handled <q-ID|p-ID>`로 처리한다.
 
 ## 완료 알림과 처리
 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고
 `aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
-해당 post를 `aaa post handled <p-번호>`로 끝낸다(`inbox done <inbox ID>`도 처리 상태에 반영된다).
+해당 post를 `aaa post handled <p-번호>`로 명시적으로 끝낸다. 일반 inbox 정리는 사용자 답을 대신하지 않는다.
 `post status <p-번호>`는 전송 결과와 처리 상태를 함께 보인다. 확인창·세션 사라짐·머신 이상은 앱 안 알림과 coordinator inbox에만 남는다. 사람이 필요하면 coordinator가 위 「확인 필요」 post로 알린다.
 "#;
 

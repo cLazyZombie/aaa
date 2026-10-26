@@ -3,6 +3,15 @@ use super::*;
 use crate::question_ids::Target;
 
 impl Db {
+    /// 독립 post로 한 번 식별한 요청은 나중의 thread 카드에 다시 붙이지 않는다.
+    pub(crate) fn has_post_questions(&self, project: &str, subject: &str) -> Result<bool> {
+        Ok(self.conn.lock().unwrap().query_row(
+            "SELECT EXISTS(SELECT 1 FROM question_ids WHERE project=?1 AND kind='post' AND subject=?2)",
+            params![project, subject],
+            |r| r.get(0),
+        )?)
+    }
+
     pub(crate) fn question_id(
         &self,
         project: &str,

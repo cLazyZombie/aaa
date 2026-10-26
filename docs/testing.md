@@ -1,3 +1,11 @@
+## 미답변 coordinator 질문의 자동 종료 방지(t-1090)
+
+- 새 host 회귀 두 개는 실제 SQLite·post·질문 목록을 쓴다. `orphan_thread_reference_stays_a_coordinator_question_across_reports_and_reconcile`는 과거 답이 있지만 현재 카드가 없는 thread 접미사로 만든 요청이 독립 q-ID와 링크를 유지하고, 이후 질문 있음/없음 보고·정리에도 열려 있는지 검사한다. 꼭 필요한 이유: q-1372처럼 생성 직후 과거 답에 흡수되는 요청 유실을 막는다.
+- `inbox_cleanup_preserves_unanswered_coordinator_questions_until_explicit_handling`은 구조화·평문 사용자 요청과 일반 알림을 섞어 `inbox done --all`이 일반 알림만 끝내는지, 독립 요청 ID를 직접 정리해도 거절하는지, 실제 답과 명시적 `post handled`는 끝내는지 검사한다. 꼭 필요한 이유: q-1373의 coordinator 정리가 사용자 답 없는 카드를 `gone`으로 만드는 경로를 막는다.
+- 기존 E2E53의 닫힌 thread 후속 post를 독립 요청으로 남기는 계약으로 바꾼다. 실제 CLI·host·웹에서 카드와 q 링크, 일반 inbox 정리 뒤 유지, 명시적 처리 뒤 종료를 Chromium 1280px·WebKit 390/430px로 확인한다. 기존 열린 thread 카드의 알림 묶기·답 뒤 처리·보고로 닫힌 원래 카드와 늦은 응답의 두 엔진 × 1280/390px 계약은 유지한다.
+- 부분 실행: `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib question_ids::tests`, `--lib asks::tests`, 기존 E2E53. 전체 ci-local은 coordinator의 차례를 받은 뒤 수행한다. 고정 sleep·재시도·시한 연장·단언 완화는 없다.
+- 참고는 [Gitea 알림](https://github.com/go-gitea/gitea/blob/main/models/activities/notification.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 원래 대상 ID·읽음 상태 분리와 [Zulip 메시지 표시](https://github.com/zulip/zulip/blob/main/zerver/actions/message_flags.py)([Apache-2.0](https://github.com/zulip/zulip/blob/main/LICENSE))의 명시 대상별 상태 변경이다. 식별자와 알림 정리·답을 구분하는 원칙만 참고하며 외부 코드·의존성은 추가하지 않는다.
+
 ## thread 목록 frame 상한과 페이지(t-1088, §8.499)
 
 - host `orch::list_tests`는 실제 DB에 끝난 2,500건·준비/열림/실패/보류·다른 프로젝트의 9999/10000/10001을 넣는다. 모든 페이지의 실제 IPC 포장이 상한 안이고 2,507건이 중복·유실 없이 나오는지, 최대 200건·역할/상태/open 거르기·본문 축소·바이트로 먼저 나뉘는 상세 페이지·다음 행을 확인한다. 잘못된 커서·다른 프로젝트 커서·0 limit·상충 필터도 거부한다. 필요한 이유: 원장 증가에 따른 이번 frame 실패와 커서 경계 유실을 실제 저장/직렬화 경계에서 막는다.
@@ -19,12 +27,23 @@
 - 필요한 이유: 유닛으로 확인할 수 없는 실제 키보드/메뉴/휴대폰 시트 경계와 host가 바뀌지 않는다는 계약을 기존 실험실 하나에서 확인한다. 첫 브라우저 검증은 백틱이 나중 제목 순서에 끼어드는 결함을 찾았다. 기존 Markdown 파서의 표시 글로 비교하도록 수정하고 해당 유닛에도 코드·강조·링크 제목을 넣는다. 고정 sleep·재시도·시한 확대·기대값 완화는 없다.
 - 부분 실행은 `NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs <캡처 폴더> --spec 76,43,46,67,86,107 --workers 2`다. 내부 공용 브라우저 캐시만 사용한다. 전체 ci-local은 coordinator에게 「준비됨」을 알리고 실행 차례를 받은 뒤 한 번 수행한다.
 
+- 73회차 gate 수리(t-1075): 이 owner의 두 상세 닫기→reload가 휴대폰 시트의 비동기 `history.back()`과 경쟁했다. 보존 로그와 같은 `ERR_ABORTED`를 실제 host·agent·Chromium 휴대폰에서 4배 CPU 지연 조건의 두 번째 반복에 재현했다. 순서는 reload 요청→history.back→요청 취소→popstate다. 정렬 값은 동기 localStorage 저장이라 저장 완료 문제가 아니다. 두 닫기 전에 popstate 대기를 걸고 그 사건 뒤에만 기존 reload·정렬 기억 단언을 실행한다. 같은 `#tasks` 주소 안의 기록 복귀이므로 waitForURL로 대체하지 않는다. 실패에는 엔진·기기를 붙인다. 기존 20초 사건 상한·30초 reload 상한·단계 상한과 모든 단언은 유지한다.
+- 검증: 제품 탐색·HTTP 응답을 바꾸지 않은 같은 4배 CPU 지연에서 수정 전 2회째 실패, 수정 후 100/100회 통과하고 매번 popstate가 reload보다 앞섰다. 반복은 임시 조사 도구에만 두고 영구 시험 수는 늘리지 않는다. 실제 두 엔진×데스크톱/휴대폰을 포함한 E2E76 전체도 35.2초에 통과했다(관측 load 26.61→42.05). 사건 대기는 기존 E2E39의 popstate 원칙과 [Playwright navigation 안내](https://playwright.dev/docs/navigations#waiting-for-navigation)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))를 참고했으며 외부 코드는 가져오지 않는다.
+
 ## workspace 기준 실행의 시간 추이 표시(t-1082, §8.496)
 
 - `node --test web/test/workspaceSelection.test.mjs` 두 유닛은 시각별 ID와 날짜별 p50 묶음(대표 ID가 다른 표본 포함), UTC/KST 자정 경계·머신/profile 분리·실패 제외, 필터 밖·결측과 실제 0초의 구분을 확인한다. 꼭 필요한 이유: p50을 기준 실행의 실제 시간으로 오해하게 하거나 미수집을 0으로 그리는 회귀를 막는다.
 - 기존 host `reader_queries_only_the_host_ledger_with_filters_missing_values_and_disconnected_agents`에 40일 전 실행의 조회를 더했다. 기간·profile·머신 밖 기준 실행은 원장에서 찾되 runs/추이에 섞지 않고, 다른 workspace의 ID는 반환하지 않아야 한다. 필요한 이유: 웹 캐시로 유지하면 새로고침·기간 밖 조회가 깨지고 다른 저장소 자료를 섞을 수 있기 때문이다. 별도 실험실·시험 개수를 늘리지 않는다.
 - 기존 E2E90의 실제 보고→agent 수집→host 원장 fixture 네 실행을 성공/실패, 빌드 0초/미수집, 이틀 전 실행으로 구성한다. 기존 밝음/어두움·1280/820/390/320px·Chromium/WebKit 매트릭스를 유지하며 밝음 1280/390px 네 조합에 기준 실행 검사를 덧붙인다. 실행 두 개 선택 뒤 안내선·강조점·원본 점의 좌표 일치와 이동, 검증/빌드 전환, 실제 0초·미수집, 오늘 밖/7일 복귀, 실패 p50 제외와 비대표 실행의 p50 포함, UTC/KST 전환, 머신 밖·새로고침 유지, 키보드 상세와 가로 넘침을 확인한다. 꼭 필요한 이유: 실제 필터 응답과 URL 복원·두 SVG 엔진의 표시를 유닛으로 대신할 수 없다.
 - 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1 모듈> nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 90 --workers 1`. 브라우저는 내부 공용 캐시와 저장소 `launchChromium` helper를 쓴다. 고정 sleep·실패 재시도·시한 연장·기대값 완화는 없다. 전체 ci-local은 coordinator가 준 차례에 한 번 수행한다.
+
+## IME 연속 조합과 한 controller(t-1075, §8.498)
+
+- `composition-anchor.test.mjs`는 빌드에 복사하는 실제 controller를 실행한다. 기존 두 시험은 분리 출력의 시작 위치와 줄 marker 수명을 유지한다. 새 시험 하나는 이전 확정 에코 전 다음 음절 시작, timer 전/후의 가나다라, 받침 이동 각→가가와 WebKit의 NBSP→SPACE 정규화를 함께 검사한다. 꼭 필요한 이유: 이전 시험은 다음 조합 전에 커서를 직접 새 칸으로 옮겨 이번 회귀 경계를 만들지 못했다.
+- 기존 모바일 시험은 같은 controller의 iOS 영어 마지막 글자·자동수정·한글 보류·화면 읽기·지연 Backspace를 유지한다. 확정 직후 일반 insertText의 beforeinput이 먼저 오면 DOM 편집 전 앞 큐를 비우는 순서를 기존 순서 시험에 더한다. native Backspace·finishInput의 확정 한 번/marker 해제도 기존 controller owner에서 검사한다.
+- E2E09의 「한글 조합 위치」 owner를 확장한다. 같은 실제 host·agent·raw PTY에서 확정 바이트를 기록하고 명시적인 flush 사건 전까지 echo를 보관한다. 가나다라+space와 각→가가에서 다음 조합을 먼저 시작하고, echo 전/후·상태 줄로 이동한 분리 출력 모두의 위치를 검사한다. 시작 좌표·실제 빈 커서 칸 폭을 비교하며 확정 문자열·순서·중복 없음도 검사한다. native WebKit은 한 NSTextInputClient 명령 안에서 commit→setMarkedText를 호출한다. Chromium은 CDP, Playwright WebKit은 기록 재생이다.
+- `AAA_IME_CAPTURE=<폴더> NODE_PATH=<Playwright 1.64.1 경로> node web/e2e/web.e2e.mjs --spec 09 --grep '한글 조합 위치' --workers 1`은 단계 PNG와 사건/rAF JSON을 보존한다. 실패도 해당 엔진 trace를 남긴다. 고정 sleep·재시도·시한 확대가 없다. 부분 확인은 기존 E2E02·07·09·15다.
+- 사용자 추가 지시의 실기 확대는 임시 fixture로 macOS native 키·OS input context의 현재 source, 실제 PTY의 취소·space/Enter·영문·paste·pane 전환·resize와 격리 iPhone native WebKit을 확인하고, 결과·불가능한 경계를 작업 보고에 남긴다. 외부 OS 입력기를 거치지 않는 marked text 교체와 일반 키 주입을 실제 한국어 2벌식 키 사건이라고 쓰지 않는다. 영구 E2E 번호/대형 실험실을 늘리지 않는다.
 
 ## 대화 보낸 말의 즉시 표시(t-1069)
 

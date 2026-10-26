@@ -1,12 +1,47 @@
-# xterm.js 5.5.0 IME 패치
+# xterm.js 5.5.0 확장
 
-`xterm-5.5.0.patch`는 [herdr-web-ui](https://github.com/devswha/herdr-web-ui) `patches/` 아래 xterm 5.5.0 patch([고정 commit `aa624cb`](https://github.com/devswha/herdr-web-ui/tree/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741))를 그대로 옮긴 것이다. 첫 hunk(bun이 붙이는 빈 표지 파일)를 빼고, iPhone 조건(아래)만 더했다.
+## IME 입력·표시의 한 소유자(t-1075)
 
-- 하는 일: 끝난 조합의 보내기를 줄 세우고 이미 보낸 위치(watermark)를 기억한다(조합이 겹쳐도 자모가 따로 나가지 않는다). macOS Safari가 조합 사건 없이 편집기에서 한글을 바꿔 넣는 것과, iPadOS Safari 하드웨어 키보드가 자모마다 keydown을 보내고 편집기에서 조합하는 것을 확정 전까지 보내지 않는다. Backspace 뒤 편집기 비우기, 붙여 넣기·blur·reset 전 확정.
-- 빌드: `xterm-source.mjs`가 `node_modules/@xterm/xterm/src`를 cache로 복사하고 이 patch를 붙인 뒤(문맥이 정확히 한 번 맞을 때만) TypeScript로 빌드한다. `vite.config.ts`가 `@xterm/xterm`을 그 결과로 바꾼다. herdr-web-ui `scripts/build-xterm.ts`·`vite.config.ts`와 같은 방식이다.
-- **aaa가 바꾼 곳(참고와 다름):** `passHangulKey`와 `beforeinput`의 플랫폼 조건에 `isIphone`을 더했다(`isMac || isIpad || isIphone`). iPhone 화면 키보드도 자모마다 keydown(keyCode 0)을 보내고 편집기에서 조합하는데(사용자 기록 10-17), 참고는 iPhone을 빼서 자모가 따로 나갔다. 사용자 확인으로 참고에도 같은 결함이 있어 aaa에서 직접 고쳤다(plan §8.41).
-- xterm 판을 바꾸면 빌드가 멈춘다. patch를 다시 확인한 뒤 바꾼다.
-- 시험: `e2e/specs/09-ime.mjs`의 「터미널 한글 IME」 단계가 herdr-web-ui `scripts/terminal-safari-ime-regression.ts`·`scripts/terminal-ipad-ime-regression.ts`의 기록된 사건 순서를 재생한다.
+`web/xterm/CompositionHelper.ts`가 조합 범위·확정 FIFO·watermark·Safari replacement·iOS ASCII
+교정·입력 연속성·송신 중 상태를 소유한다. 기존 세 겹의 IME 패치(§8.36·t-1001·t-1064)를
+이 모듈로 통합했다. `xterm-5.5.0.patch`는 upstream Terminal의 사건·수명 경계를 controller에
+연결하고 interface만 확장한다. `xterm-source.mjs`는 npm 소스에 이 bridge를 엄격히 붙이고
+controller를 한 번 복사해 빌드한다. xterm 버전과 parser·renderer는 5.5.0 그대로다.
+
+controller는 단어 안 연속 조합의 첫 줄 marker·열과 DOM 시작 offset을 기억한다. 다음 음절의
+열은 실제 DOM 확정 범위를 UnicodeService로 세어 정한다. 출력 커서·PTY 에코 시점으로 새
+음절 시작점을 잡지 않는다. WebKit의 NBSP→SPACE 정규화도 DOM offset을 바꾸지 않는다.
+marker는 단어 안에 한 개뿐이며 일반 키·붙여넣기·blur·취소·reset·삭제된 버퍼에서 해제한다.
+현재 조합의 분리된 상태 줄 출력은 위치에 영향을 주지 않는다. 폭 축소 때 시작 열을 clamp하고
+연속 확정분의 줄 넘김을 계산한다. marker만으로 모든 임의 reflow의 문자 위치를 복구한다고
+가정하지 않는다.
+
+`src/compositionView.ts`만 선택된 상태를 화면에 적용한다. 미리보기와 textarea 좌표·실제 DOM
+행 높이·색·글꼴·자간·여백을 같은 호출에서 정한다. 과거 `terminalGlyphs.ts`의 조합 상자
+fitView observer와 `compositionView.ts`의 별도 보정 observer는 없앴다. 줄 자체의 글꼴 보정은
+유지한다. `Term.tsx`는 controller의 active/pending/sending을 구독해 키 막대·유지 키·CtrlEnter를
+판정하며 DOM compositionend 뒤 0ms 타이머로 확정 송신 여부를 따로 추정하지 않는다.
+
+일반 입력이 확정 timer보다 먼저 오면 beforeinput의 DOM 변경 전에 FIFO를 비운다. native
+Backspace(isComposing=true)는 preedit 편집에 맡긴다. paste/blur의 finishInput은 native·Safari
+replacement 양쪽의 현재 조합과 앞 확정을 먼저 처리한다. 0ms task는 브라우저 DOM 전파와
+확정 큐에만 남기며 표시를 다시 덮어쓰는 task는 없다. reset/dispose는 세대와 큐를 버린다.
+
+기존 Safari 무조합 사건 경로, iPhone 하드웨어/화면 키보드와 iOS 영어 실시간 교정 계약은
+유지한다. 별도 아래 입력창(TerminalInput)·passive 진단(inputTrace)은 독립 기능이다.
+
+출처는 [herdr-web-ui aa624cb](https://github.com/devswha/herdr-web-ui/tree/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741)의
+xterm patch와 terminalGlyphs(MIT), [xterm CompositionHelper](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/input/CompositionHelper.ts)(MIT)다.
+queue의 계보는 [xterm PR6090](https://github.com/xtermjs/xterm.js/pull/6090)이다. 초기 aaa의 iPhone
+조건은 t-0304 `466069d9`, 영어 교정은 t-1001, 위치 고정은 t-1064에서 왔다. 신규 외부 코드를
+가져오지 않고 이 구현을 한 상태·표시 경계로 정리했다. 아래 MIT 고지와 src/herdr/README의
+고지는 이동한 코드에도 적용된다.
+
+비교한 [VS Code xterm 연결](https://github.com/microsoft/vscode/blob/4cd688bc6ed94e1859ad89b6f84245675e2e1c22/src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts)(MIT),
+[Ghostty preedit](https://github.com/ghostty-org/ghostty/blob/0fe113a35370667d8c4d6970ee5c1704825dce6b/src/Surface.zig#L2660)(MIT),
+[Alacritty Ime 분기](https://github.com/alacritty/alacritty/blob/542147067dd016fc5f49120ef0ba605a98a4e3a7/alacritty/src/event.rs#L2018)(Apache-2.0)의
+플랫폼 입력→preedit/commit 상태→표시 경계를 참고한다. 해당 프로젝트의 코드를 복사하지 않았다.
+Hyper·Tabby·WezTerm·kitty·ttyd·GoTTY까지의 감사와 라이선스 비교는 작업 보고에 보존한다.
 
 ## `xterm-5.5.0-viewport.patch`(aaa, 참고에 없음)
 
@@ -68,36 +103,3 @@ Disposable에 등록하는 한 줄이다. upstream 5.5.0은 이 monitor를 해�
 터미널을 다시 만들 때마다 window resize와 media query listener를 하나씩 남긴다.
 실제 upstream 모듈의 20회 생성/해제 대조와 E2E104의 전역 listener 수로 확인한다.
 xterm의 기존 MIT 저작권·라이선스 고지를 유지한다.
-
-## iOS 영어 예측 조합(t-1001)
-
-`xterm-5.5.0-mobile-input.patch`는 기존 IME 패치 뒤에 적용한다. iPhone/iPad Safari의
-실제 composition 범위가 인쇄 가능한 ASCII일 때 `input`에서 바로 보내고, 기존 watermark로
-`compositionend`의 중복 전송을 막는다. 한글·다른 비 ASCII 조합과 데스크톱·화면 읽기 모드는
-기존 확정 경로를 쓴다. 영어에서 비 ASCII로 바뀌면 먼저 보낸 ASCII 꼬리만 되돌린다.
-
-이미 보낸 편집기 값과 일치하는 `beforeinput`의 replacement/삭제는 공통 접두 뒤의 ASCII를
-DEL로 지우고 새 꼬리를 보낸다. 다른 키·새 조합·붙여넣기·blur·reset은 이 교정용 기억을
-버린다. 커서를 옮긴 뒤의 알 수 없는 과거 입력이나 비 ASCII의 삭제 폭을 추측하지 않는다.
-같은 차례의 이전 한글 확정은 먼저 보내며, 이미 처리한 편집은 keydown 229 fallback이
-중복 전송하지 않는다. 소스 대조 유닛과 E2E09의 실제 PTY 수신으로 검사한다.
-
-참고는 기존 [xterm CompositionHelper](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/input/CompositionHelper.ts)
-(MIT)와 [herdr-web-ui PaneTerminal](https://github.com/devswha/herdr-web-ui/blob/main/src/components/PaneTerminal.tsx)
-([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE))다. 기존 queue/watermark 경계를
-따르며 새 외부 코드·의존성을 가져오지 않았다. 이 추가 패치는 aaa 자체 수정이다.
-
-## 상태 줄 출력 중 조합 위치 유지(t-1064)
-
-`xterm-5.5.0-composition-anchor.patch`는 실제 조합과 Safari replacement 조합을
-시작한 칸에 미리보기와 입력기 textarea를 함께 둔다. 상태 줄 갱신과 커서 복귀가
-서로 다른 PTY 출력 묶음이면 upstream은 매 render마다 조합 글자를 상태 줄로
-옮겼다가 되돌린다. 줄 marker는 scrollback 이동·삭제를 따르고 확정·취소·reset에서
-해제한다. 다른 버퍼나 화면 밖에서는 미리보기를 숨긴다. aaa의 실제 행 높이/색 보정도
-출력 커서 대신 이 미리보기의 행을 기준으로 한다(`compositionView.ts`).
-
-새 외부 코드는 복사하지 않았다. 비교한 xterm.js CompositionHelper·VS Code의 xterm
-연결·Ghostty renderer의 별도 preedit 상태는 모두 MIT이며 기존 라이선스 고지는 유지한다.
-실제 patched helper 유닛과 E2E09의 분리 출력 frame 회귀가 검사한다. macOS에서는
-화면에 올리지 않는 WKWebView의 NSTextInputClient로 trusted 조합 사건을 만들며,
-Playwright WebKit의 DOM 재생과 구분한다. Chromium은 CDP IME를 쓴다.

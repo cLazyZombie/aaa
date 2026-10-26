@@ -32,6 +32,24 @@ pub(crate) fn is_user_request(i: &InboxItem) -> bool {
     i.item_kind == "post" && i.event == "post request for user"
 }
 
+/// 카드 없는 thread 참조로 접수한 독립 요청은 자기 q-ID로 연다. 원래 post 제목은 보존한다.
+pub(crate) fn standalone_question_title(title: &str, id: &str) -> String {
+    if !title.split_whitespace().any(|w| crate::notify::app_ref(w).is_some_and(|(kind, _)| kind == "question")) {
+        return title.into();
+    }
+    title
+        .split_whitespace()
+        .map(|w| {
+            if crate::notify::app_ref(w).is_some_and(|(kind, _)| kind == "question") {
+                format!("aaa:question/{id}")
+            } else {
+                w.into()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// 열린 질문 본문 그림의 주소 앞부분. 그 보고 hash일 때만 열린다
 pub(crate) fn question_files_base(project: &str, thread: &str, hash: &str) -> String {
     format!("/api/v1/projects/{project}/questions/{thread}/{hash}/")
@@ -87,6 +105,18 @@ fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
 impl Host {
     pub(crate) fn request_question_thread(&self, item: &InboxItem) -> Option<String> {
         let id = crate::notify::request_question(item)?;
+        // 질문 원장이 이미 독립 post로 식별했으면 제목의 옛 thread 링크는 종료 근거가 아니다.
+        // 조회 실패도 자동 처리의 허가로 삼지 않는다.
+        if self
+            .db
+            .has_post_questions(&item.project, &item.id)
+            .inspect_err(|error| {
+                aaa_common::diagnostic::observe(error, "post 질문 소유권을 읽지 못해 자동 연결하지 않는다")
+            })
+            .unwrap_or(true)
+        {
+            return None;
+        }
         match self
             .db
             .question_target(Some(&item.project), &id)
@@ -105,16 +135,22 @@ impl Host {
         item: &InboxItem,
         post: &aaa_proto::PostEnvelope,
     ) -> Result<Vec<String>, ErrorBody> {
-        if let Some(thread) = self.request_question_thread(item)
-            && let Ok(rec) = self.load(&item.project, &thread)
-            && let Some(hash) = rec.report_hash.as_ref()
-            && !rec.questions.is_empty()
-        {
-            return Ok(self
-                .identify_questions(&item.project, "thread", &thread, hash, &rec.questions)?
-                .into_iter()
-                .filter_map(|q| q.id)
-                .collect());
+        if let Some(thread) = self.request_question_thread(item) {
+            if let Ok(rec) = self.load(&item.project, &thread)
+                && let Some(hash) = rec.report_hash.as_ref()
+                && !rec.questions.is_empty()
+            {
+                return Ok(self
+                    .identify_questions(&item.project, "thread", &thread, hash, &rec.questions)?
+                    .into_iter()
+                    .filter_map(|q| q.id)
+                    .collect());
+            }
+            // 접수 때 연결된 알림은 카드가 닫힌 뒤 조회해도 독립 질문으로 바꾸지 않는다.
+            // 최초 접수(아직 post가 없음)에서만 카드 없는 참조를 독립 요청으로 식별한다.
+            if self.db.post_of_item(&item.project, &item.id).map_err(internal)?.is_some() {
+                return Ok(Vec::new());
+            }
         }
         let items = aaa_proto::report_questions(&post.input.body);
         if items.is_empty() {
@@ -246,7 +282,7 @@ impl Host {
                 .map(|p| self.post_question_ids(&i, p))
                 .transpose()?
                 .and_then(|ids| ids.into_iter().next());
-            let questions = if let Some(p) = post.as_ref().filter(|_| !self.request_has_open_question(&i)) {
+            let questions = if let Some(p) = post.as_ref().filter(|_| self.request_question_thread(&i).is_none()) {
                 let parsed = aaa_proto::parse_report_questions(&p.input.body);
                 let items = self.identify_questions(project, "post", &i.id, &p.body_sha256, &parsed.items)?;
                 (!items.is_empty() || parsed.warning.is_some()).then(|| aaa_proto::ThreadQuestions {
@@ -262,8 +298,14 @@ impl Host {
                 None
             };
             out.push(UserRequestView {
+                title: match (post.as_ref(), question_id.as_deref()) {
+                    (Some(p), Some(id)) if self.request_question_thread(&i).is_none() => {
+                        standalone_question_title(&p.input.title, id)
+                    }
+                    (Some(p), _) => p.input.title.clone(),
+                    _ => i.summary.clone(),
+                },
                 question_id,
-                title: post.as_ref().map(|p| p.input.title.clone()).unwrap_or_else(|| i.summary.clone()),
                 body: post.map(|p| p.input.body).unwrap_or_else(|| i.summary.clone()),
                 created_ms: i.created_at_ms,
                 id: i.id,
@@ -907,6 +949,8 @@ mod tests {
         let mut rec = ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
         rec.id = "t-0001".into();
         rec.report_hash = Some("new".into());
+        rec.questions = aaa_proto::report_questions("## Questions\n1. 자리\n- A 아래 (추천)\n- B 위\n");
+        h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
         let result = h
             .front_post(
                 "demo",
@@ -924,20 +968,24 @@ mod tests {
             )
             .unwrap();
         let PostResult::Accepted { id } = result else { panic!() };
-        // 보고 뒤에 온, 카드가 없는 요청은 남긴다. 그 뒤 새 보고가 질문을 닫으면 정리한다.
+        // 열린 카드에 붙은 알림은 그 카드의 새 보고가 질문을 닫을 때만 정리한다.
         let created = h.db.post_inbox("demo", &id).unwrap().unwrap().created_at_ms;
         rec.report_changed_ms = Some(created - 1);
-        h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
+        h.save(&mut rec);
         h.reconcile_question_requests("demo").unwrap();
         assert!(!h.db.post_inbox("demo", &id).unwrap().unwrap().done);
+        rec.questions.clear();
         rec.report_changed_ms = Some(created + 1);
         h.save(&mut rec);
+        h.user_requests("demo").unwrap(); // 조회가 연결 알림의 소유권을 바꾸면 안 된다.
         h.reconcile_question_requests("demo").unwrap();
         assert!(h.db.post_inbox("demo", &id).unwrap().unwrap().done);
         assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
         assert!(h.db.ask_list("demo").unwrap().is_empty());
 
         // 구판의 카드 답 뒤 남은 알림: 임시 전송 자리는 성공으로 보지 않고, 성공 기록이 있을 때만 닫는다.
+        rec.questions = aaa_proto::report_questions("## Questions\n1. 색\n- A 파랑 (추천)\n- B 회색\n");
+        h.save(&mut rec);
         let result = h
             .front_post(
                 "demo",
