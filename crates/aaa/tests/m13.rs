@@ -493,14 +493,6 @@ fn world() -> World {
     world_with("")
 }
 
-/// brief 화면 멈춤을 제품 기본값(3초)으로 두는 실험실. 가짜 agent는 brief를 읽자마자 보고를 써서, 멈춤을 줄이면 agent가
-/// 1초마다 보는 보고가 host의 받음 확인(Enter 뒤 화면 보기)보다 먼저 올 수 있다. 그러면 받음 확인 때의 보고 hash가 그 보고라
-/// 「brief 뒤 새 보고 없음」(orch.rs 6번 줄 `just_delivered`)이 되어, 확인한 뒤에도 창 동안 작업 중이다. 확인 뒤 바로 쉼을
-/// 보는 시험은 이 실험실을 쓴다(제품 모서리, t-0327 report)
-fn world_product_settle() -> World {
-    world_build("", false, None, |_| Vec::new())
-}
-
 fn world_with(extra: &str) -> World {
     world_opts(extra, false)
 }
@@ -705,7 +697,7 @@ fn assert_entries(dir: &Path, expected: &[&str]) {
 /// worktree thread 한 바퀴: 시작 → brief 안내 → 보고·library 사본 → ack → resolve(PR이 없으니 branch는 남긴다)
 #[test]
 fn worktree_thread_round_trip() {
-    let w = world_product_settle();
+    let w = world();
     let task = w.task("task1.txt", "보고에 X-42를 적는다 link");
     let v = w.start(&[
         "--title",
@@ -791,7 +783,11 @@ fn worktree_thread_round_trip() {
     );
     assert!(resolved["detail"].as_str().unwrap().contains("pane을 닫았다"), "{resolved}");
     // 마지막 사본은 받은 파일이 그대로라 따로 알리지 않는다(사본 상태만 complete로 바뀐다)
-    assert_eq!(w.kinds(0), ["thread_started", "brief_delivered", "report_ready", "review_acked", "thread_resolved"]);
+    // 보고 회수와 brief 받음 확인은 독립 경로다. 둘은 시작 뒤·ack 전에 정확히 한 번씩 와야 한다.
+    let mut kinds = w.kinds(0);
+    assert_eq!(kinds.len(), 5, "{kinds:?}");
+    kinds[1..3].sort();
+    assert_eq!(kinds, ["thread_started", "brief_delivered", "report_ready", "review_acked", "thread_resolved"]);
     // cursor 뒤만 읽는다
     assert_eq!(w.kinds(3), ["review_acked", "thread_resolved"]);
 }
@@ -4776,6 +4772,13 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     use sha2::Digest as _;
     let w = world();
     let pdir = w.projects.join("demo");
+    // ticker는 완성된 파일 판만 관측한다. 쓰는 도중 tick도 끝내고 rename으로 한 번에 공개한다.
+    let write = |text: &str| {
+        let pending = pdir.join("TASKS.md.pending");
+        std::fs::write(&pending, text).unwrap();
+        w.h.ticks(1);
+        std::fs::rename(pending, pdir.join("TASKS.md")).unwrap();
+    };
     let task = w.task("tb.txt", "x");
     let linked = w.start(&["--title", "이은 일", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
     let other = w.start(&["--title", "따로 도는 일", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
@@ -4788,7 +4791,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     // 먼저 원본을 기억시킨다. 연결 뒤 md의 첫 관측 사건이 오는 순서를 부하 없이도 검증한다.
     w.h.ok(&["task", "list"]);
     let mut ev = Events::connect(&w.h);
-    std::fs::write(pdir.join("TASKS.md"), &md).unwrap();
+    write(&md);
     let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
     w.h.ok(&["ticker", "tick"]);
     let (baseline, ()) = ev.wait_from(0, "초기 할 일 관측", T, |e| match e {
@@ -4837,7 +4840,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     // 고치지 않은 tick은 사건을 내지 않는다: 다음에 고친 뒤 오는 첫 `tasks` 사건이 고친 sha다
     w.h.ok(&["ticker", "tick"]);
     let md2 = identified_tasks(&md.replace("## 빈 목록\n", "## 빈 목록\n- [ ] 새로 더한 일\n"));
-    std::fs::write(pdir.join("TASKS.md"), &md2).unwrap();
+    write(&md2);
     w.h.ok(&["ticker", "tick"]);
     let (at, got) = ev.wait_from(baseline + 1, "tasks 사건", T, |e| match e {
         aaa_proto::FrontEvent::Tasks { project, sha256 } if project == "demo" => Some(sha256.clone()),
@@ -5211,6 +5214,8 @@ const GUIDE_SECTIONS: &[&str] = &[
     "## 첫 턴",
     "--to-user --title",
     "볼 보고서·시안·음원 링크는 질문 안에 둔다",
+    "확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙여 기존 카드에 묶고",
+    "post 본문에 새 `## Questions`·선택지를 쓰지 않는다",
     "그림·영상 문법은 `aaa guide questions`",
     "지시는 사용자만, 채팅으로 한다",
     "## 메시지마다 세 가지 중 하나",

@@ -4,6 +4,14 @@ use aaa_common::conn::{FrameRx, spawn_writer};
 use aaa_proto::{B64, LibFile, LinkMsg, Outcome, ReportSnapshot};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[derive(Default)]
+struct BriefGate {
+    entered: tokio::sync::Notify,
+    confirm: tokio::sync::Notify,
+    has_enter: std::sync::atomic::AtomicBool,
+    hide_received: std::sync::atomic::AtomicBool,
+}
+
 struct Lab {
     h: Arc<Host>,
     root: PathBuf,
@@ -31,6 +39,17 @@ impl Lab {
         name: &'static str,
         manifest: &'static [u8],
         report: &'static str,
+    ) -> Self {
+        Self::with_brief_gate(failures, file_bytes, name, manifest, report, None)
+    }
+
+    fn with_brief_gate(
+        failures: usize,
+        file_bytes: &'static [u8],
+        name: &'static str,
+        manifest: &'static [u8],
+        report: &'static str,
+        brief: Option<Arc<BriefGate>>,
     ) -> Self {
         let root = std::env::temp_dir().join(format!("aaa-copy-{}", aaa_common::util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
@@ -73,6 +92,44 @@ impl Lab {
             let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
             while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
                 let reply = match body {
+                    AgentRequest::Screen { session } if brief.is_some() => {
+                        let gate = brief.as_ref().unwrap();
+                        let text =
+                            if gate.has_enter.load(Ordering::SeqCst) && !gate.hide_received.load(Ordering::SeqCst) {
+                                ".aaa/p-t-0001/brief.md 받음"
+                            } else {
+                                "fake> "
+                            };
+                        Outcome::Ok(AgentResponse::Screen(aaa_proto::ScreenText {
+                            session,
+                            cols: 80,
+                            rows: 24,
+                            lines: vec![text.into()],
+                            ansi: text.into(),
+                            cursor_row: 0,
+                            cursor_col: 0,
+                        }))
+                    }
+                    AgentRequest::Input { data, .. } if brief.is_some() => {
+                        let gate = brief.as_ref().unwrap();
+                        if data.0 == b"\r" {
+                            gate.has_enter.store(true, Ordering::SeqCst);
+                            let tx = conn.pending.lock().unwrap().remove(&id).unwrap();
+                            let gate = gate.clone();
+                            tokio::spawn(async move {
+                                gate.entered.notify_one();
+                                gate.confirm.notified().await;
+                                let reply = if gate.hide_received.load(Ordering::SeqCst) {
+                                    Outcome::Err(internal("Enter 응답 유실"))
+                                } else {
+                                    Outcome::Ok(AgentResponse::Done)
+                                };
+                                let _ = tx.send(reply);
+                            });
+                            continue;
+                        }
+                        Outcome::Ok(AgentResponse::Done)
+                    }
                     AgentRequest::ReportCollect { max_library_bytes, .. } => {
                         if max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures {
                             Outcome::Err(internal("시험 agent 복사 실패"))
@@ -119,6 +176,86 @@ impl Lab {
             }
         });
         Self { h, root, requests, fake }
+    }
+}
+
+/// 실제 보고 회수와 brief 확인의 순서를 뒤집어도 ack 뒤 묶음은 같아야 한다.
+/// Enter 처리는 끝났지만 응답만 늦는 Agent link를 사건으로 제어한다. 가상 시각이라 15초 유예를 기다리지 않는다.
+#[tokio::test(start_paused = true)]
+async fn brief_confirmation_preserves_reports_collected_after_enter() {
+    for previous in [None, Some("previous")] {
+        for (report_first, late_screen) in [(true, false), (false, false), (true, true)] {
+            let gate = Arc::new(BriefGate::default());
+            gate.hide_received.store(late_screen, Ordering::SeqCst);
+            let lab = Lab::with_brief_gate(0, b"", "unused", b"", "[완료] 끝\n", Some(gate.clone()));
+            let h = &lab.h;
+            h.on_session(
+                "m",
+                aaa_proto::SessionInfo {
+                    responsibility: None,
+                    id: "s".into(),
+                    name: "fake".into(),
+                    argv: vec!["fake".into()],
+                    cwd: None,
+                    pid: None,
+                    started_at_ms: 0,
+                    boot_id: "b".into(),
+                    cols: 80,
+                    rows: 24,
+                    state: aaa_proto::SessionState::Running,
+                    role: None,
+                    label: None,
+                    harness: None,
+                },
+                false,
+            );
+            h.update_rec("p", "t-0001", |r| {
+                r.pane = Some("s".into());
+                r.brief = BriefState::Pending;
+                r.report_hash = previous.map(str::to_string);
+                r.acked_hash = r.report_hash.clone();
+            })
+            .unwrap();
+            let collect_before_confirmation = async {
+                gate.entered.notified().await;
+                if report_first {
+                    h.collect("p", "t-0001", false).await.unwrap();
+                    assert_eq!(h.load("p", "t-0001").unwrap().brief, BriefState::Pending);
+                }
+                gate.confirm.notify_one();
+            };
+            let (delivered, ()) = tokio::join!(h.thread_brief("p", "t-0001", "test"), collect_before_confirmation);
+            // Enter 응답 유실 뒤 화면으로 재확인해도 첫 전송의 보고 기준을 보존해야 한다.
+            let delivered = if late_screen {
+                assert!(delivered.unwrap_err().message.contains("Enter 응답 유실"));
+                gate.hide_received.store(false, Ordering::SeqCst);
+                h.thread_brief("p", "t-0001", "test").await
+            } else {
+                delivered
+            };
+            let delivered = delivered.unwrap();
+            if !report_first {
+                assert_eq!(delivered.group, ThreadGroup::Working, "옛 보고 ack는 새 brief 유예를 끝내지 않는다");
+                h.collect("p", "t-0001", false).await.unwrap();
+            }
+            assert_eq!(h.thread_show("p", "t-0001").unwrap().group, ThreadGroup::ReadyForReview);
+            let acked = h.thread_ack("p", "t-0001", "test").unwrap();
+            let kinds: Vec<_> = h.events(Some("p"), 0, None, false).unwrap().into_iter().map(|e| e.kind).collect();
+            assert_eq!(
+                acked.group,
+                ThreadGroup::Idle,
+                "report_first={report_first}, late_screen={late_screen}, previous={previous:?}, events={kinds:?}"
+            );
+            let rec = h.load("p", "t-0001").unwrap();
+            assert_eq!(rec.delivered_report.as_deref(), previous);
+            assert_eq!(rec.acked_hash, rec.report_hash);
+            let expected = if report_first {
+                ["report_ready", "brief_delivered", "review_acked"]
+            } else {
+                ["brief_delivered", "report_ready", "review_acked"]
+            };
+            assert_eq!(kinds, expected);
+        }
     }
 }
 

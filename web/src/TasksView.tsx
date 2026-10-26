@@ -16,7 +16,7 @@ import { ThreadStageBadge } from "./ThreadStageBadge";
 // 행·목록 머리의 ⋯ 메뉴는 herdr-web-ui RowMenu(휴대폰은 아래 시트), 끌기는 herdr-web-ui Sidebar.tsx 483–491의 HTML 끌어 놓기와
 // Alt+↑↓(580–584), 휴대폰은 끌기 대신 메뉴의 위로·아래로·맨 위로(t-0469 §3.3). 지운 뒤 「되살리기」 줄은 t3code
 // showThreadUndoNotice.ts(되살리기 한 번만)를 따르되 시간으로 사라지지 않는다.
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -195,6 +195,10 @@ export function useSeenMine(board: TaskBoard | null): { seen: ReadonlySet<string
 }
 
 type Key = { title: string; line: number };
+type CapabilityListPosition = {
+  element: HTMLDivElement; top: number;
+  anchor: { row: HTMLElement; offset: number } | null;
+};
 
 /** ⋯ 메뉴(행·목록 머리·「나중」 항목) */
 type Menu = { key: string; anchor: HTMLElement; title: string; items: RowMenuItem[] };
@@ -274,6 +278,9 @@ export function TasksView({
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [undo, setUndo] = useState<{ title: string; logId: number } | null>(null);
   const [frontApi, setFrontApi] = useState<string | null>(null);
+  const listScroll = useRef<HTMLDivElement>(null);
+  const positionBeforeCapabilities = useRef<CapabilityListPosition | null>(null);
+  const cancelListAdjustment = () => { positionBeforeCapabilities.current = null; };
   const [owners, setOwners] = useState<OwnerChoice[] | null>(null);
   const [log, setLog] = useState<TaskLogEntry[]>([]);
   // 끄는 행: 예약 행이면 `qid`(host 예약 task ID). `over`는 놓을 자리(`q:<id>` 예약 행·`t:<줄>` 일반 행·`res-end` 예약 맨 뒤·`rest` 예약 풀기)
@@ -303,10 +310,40 @@ export function TasksView({
   }, []);
   useEffect(() => {
     if (!shown || frontApi !== null) return;
+    const apply = (version: string) => {
+      const el = listScroll.current;
+      // /me보다 목록이 먼저 온다. 편집 도구가 뒤늦게 나타나 보기 높이를 줄이기 전에 끝 여부를 읽는다.
+      let before: CapabilityListPosition | null = null;
+      if (el && el.clientHeight > 0) {
+        if (el.scrollHeight - el.clientHeight - el.scrollTop <= 1) before = { element: el, top: el.scrollTop, anchor: null };
+        else {
+          const box = el.getBoundingClientRect();
+          const row = [...el.querySelectorAll<HTMLElement>(".task-row")].find(row => {
+            const top = row.getBoundingClientRect().top;
+            return top >= box.top && top < box.bottom;
+          });
+          if (row) before = { element: el, top: el.scrollTop, anchor: { row, offset: row.getBoundingClientRect().top - box.top } };
+        }
+      }
+      positionBeforeCapabilities.current = before;
+      setFrontApi(version);
+    };
     me()
-      .then((m) => setFrontApi(m?.front_api ?? ""))
-      .catch(ignoredFailure("TasksView.tsx:334", () => setFrontApi("")));
+      .then((m) => apply(m?.front_api ?? ""))
+      .catch(ignoredFailure("TasksView.tsx:334", () => apply("")));
   }, [shown, frontApi]);
+  useLayoutEffect(() => {
+    const before = positionBeforeCapabilities.current;
+    positionBeforeCapabilities.current = null;
+    const el = listScroll.current;
+    if (!before || el !== before.element || el.clientHeight === 0 || el.scrollTop < before.top) return;
+    if (before.anchor === null) {
+      if (el.scrollHeight - el.clientHeight - el.scrollTop > 1) el.scrollTop = el.scrollHeight;
+    } else if (before.anchor.row.isConnected && el.contains(before.anchor.row)) {
+      // 휴대폰의 편집 메뉴는 행 높이도 바꾼다. 중간을 읽던 사람은 첫 온전한 행의 상대 위치를 유지한다.
+      el.scrollTop += before.anchor.row.getBoundingClientRect().top - el.getBoundingClientRect().top - before.anchor.offset;
+    }
+  }, [frontApi]);
   const ownersSeq = useRef(0);
   const loadOwners = useCallback(() => {
     if (!shown || !canEdit) return;
@@ -812,7 +849,9 @@ export function TasksView({
         </div>
       ) : (
         <div className={`tasks-main${detailOpen ? " has-detail" : ""}`}>
-          <div className="tasks-scroll" data-testid="tasks-list">
+          <div className="tasks-scroll" data-testid="tasks-list" ref={listScroll}
+            onWheelCapture={cancelListAdjustment} onPointerDownCapture={cancelListAdjustment}
+            onTouchMoveCapture={cancelListAdjustment} onKeyDownCapture={cancelListAdjustment}>
             {target !== null && board !== null && !linkedTask && <p className="tasks-empty" role="status" data-testid="task-missing">할 일 {target}: 없음</p>}
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
             {board && total === 0 && <p className="tasks-empty">{canEdit ? "할 일이 없다. 「+ 할 일」로 더한다" : "할 일이 없다"}</p>}

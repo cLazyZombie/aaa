@@ -37,7 +37,7 @@ const OUTPUT_STALLED_REASON: &str = "terminal output consumer stalled";
 pub const DEVICE_REVOKED_CLOSE_CODE: u16 = 4401;
 const DEVICE_REVOKED_REASON: &str = "device revoked";
 
-const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
+const CSP: &str = "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
                    connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub async fn start(host: &Arc<Host>) -> Result<()> {
