@@ -1,3 +1,4 @@
+import { token as fixtureToken } from "../../../scripts/fixture-secret.mjs";
 // 계정별 실제 CODEX_HOME → agent → host → 웹. hook ID 불일치·아직 없는 기록·앞 쪽·감시를 함께 본다.
 import fs from "node:fs";
 import assert from "node:assert/strict";
@@ -46,7 +47,7 @@ export default async function () {
   const threads = [];
   for (const name of ["work", "spare"]) {
     const auth = `${root}/${name}-auth.json`;
-    fs.writeFileSync(auth, JSON.stringify({ tokens: { access_token: `${name}-fixture-access-0123456789`, refresh_token: `${name}-fixture-refresh-0123456789` } }));
+    fs.writeFileSync(auth, JSON.stringify({ tokens: { access_token: fixtureToken(`${name}-chat-access`), refresh_token: fixtureToken(`${name}-chat-refresh`) } }));
     aaa("account", "import", name, "--harness", "codex", "--file", auth);
     const thread = aaa("thread", "start", "demo", "--machine", "labA", "--profile", "fake", "--account", name, "--kind", "dir", "--title", `${name} 기록`, "--task-file", `${root}/task.md`);
     await waitOutput(thread.pane, "CHAT-READY");

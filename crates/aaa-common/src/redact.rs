@@ -274,26 +274,43 @@ mod tests {
     // c3137ed8의 운영 회귀를 실제 protocol B64 타입으로 검사한다.
     #[test]
     fn json_keeps_b64_bytes_when_only_the_encoded_text_matches() {
-        remember("QkxPQ0tTRUNSRVQ5redact0525");
-        let raw = base64::engine::general_purpose::STANDARD.decode("QkxPQ0tTRUNSRVQ5AAAA").unwrap();
-        let out = std::panic::catch_unwind(|| {
-            json(Msg { text: "key QkxPQ0tTRUNSRVQ5redact0525".into(), raw: B64(raw.clone()) })
-        });
+        let encoded_secret = aaa_test_support::token("redact-b64");
+        remember(&encoded_secret);
+        let raw = base64::engine::general_purpose::STANDARD.decode(format!("{}AAAA", &encoded_secret[..16])).unwrap();
+        let out =
+            std::panic::catch_unwind(|| json(Msg { text: format!("key {encoded_secret}"), raw: B64(raw.clone()) }));
         assert!(out.is_ok(), "B64 가림이 panic했다");
         let out = out.unwrap().unwrap();
         assert_eq!(out.raw.0, raw);
-        assert!(!out.text.contains("QkxPQ0tT"));
+        assert!(!out.text.contains(&encoded_secret[..8]));
         // 모든 B64처럼 보이는 글을 건너뛰면 원문 비밀이 유출된다. 실제 B64만 예외다.
-        let secret = "QkxPQ0tTRUNSRVQ5AAAA";
+        let secret = &*aaa_test_support::token("redact-b64-actual");
         remember(secret);
         let out = json(Msg { text: secret.into(), raw: B64(raw.clone()) }).unwrap();
         assert_eq!(out.raw.0, raw);
-        assert!(!out.text.contains("QkxPQ0tT"));
+        assert!(!out.text.contains(&secret[..8]));
+    }
+
+    #[test]
+    fn opaque_credentials_do_not_redact_business_fields_in_the_same_process() {
+        let values: Vec<_> =
+            ["automation", "owner", "access_token", "refresh_token"].map(aaa_test_support::token).into();
+        for value in &values {
+            remember(value);
+        }
+        let input =
+            serde_json::json!({"automation":{"owner":"owner","access_token":values[0],"refresh_token":values[1]}});
+        let output = json(input).unwrap();
+        assert_eq!(output["automation"]["owner"], "owner");
+        for field in ["access_token", "refresh_token"] {
+            let masked = output["automation"][field].as_str().expect("필드 이름 보존");
+            assert!(masked.bytes().all(|b| b == b'*'));
+        }
     }
 
     #[test]
     fn json_masks_actual_binary_secrets_including_short_fragments() {
-        let secret = "binary-fixture-secret-0525";
+        let secret = &*aaa_test_support::token("binary-fixture-secret-0525");
         remember(secret);
         for raw in [secret.as_bytes(), &secret.as_bytes()[..8]] {
             let out = json(B64(raw.to_vec())).unwrap();
@@ -319,7 +336,7 @@ mod tests {
         }
         #[derive(serde::Serialize, serde::Deserialize)]
         struct Strict(#[serde(deserialize_with = "strict")] String);
-        let secret = "reject-fixture-secret-0525";
+        let secret = &*aaa_test_support::token("reject-fixture-secret-0525");
         remember(secret);
         let result = std::panic::catch_unwind(|| json(Strict(secret.into())));
         assert!(result.is_ok(), "가림 실패가 panic했다");
@@ -329,7 +346,7 @@ mod tests {
         struct BadSerialize;
         impl serde::Serialize for BadSerialize {
             fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-                Err(serde::ser::Error::custom("reject-fixture-secret-0525"))
+                Err(serde::ser::Error::custom(aaa_test_support::token("reject-fixture-secret-0525")))
             }
         }
         assert!(matches!(json(BadSerialize), Err(Error::Serialize)));
@@ -338,16 +355,17 @@ mod tests {
         let record = root.join("record.json");
         std::fs::write(&record, b"previous safe record").unwrap();
         let error = crate::util::write_json(&record, &BadSerialize).unwrap_err();
-        assert!(!error.to_string().contains("reject-fixture"));
+        assert!(!error.to_string().contains(secret));
         assert_eq!(std::fs::read(&record).unwrap(), b"previous safe record");
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn stream_keeps_no_secret_across_any_ansi_or_chunk_boundary_and_flushes_the_tail() {
-        let secret = "redaction-stream-secret0525";
+        let secret = &*aaa_test_support::token("redaction-stream");
         remember(secret);
-        let input = b"before redaction-\x1b[31mstream-secret0525\x1b[0m after-prefix";
+        let input = format!("before {}\x1b[31m{}\x1b[0m after-prefix", &secret[..10], &secret[10..]);
+        let input = input.as_bytes();
         let expected = bytes(input);
         for cut in 0..=input.len() {
             let mut stream = Stream::default();
@@ -357,6 +375,6 @@ mod tests {
             assert_eq!(out, expected, "chunk cut {cut}");
             assert!(out.ends_with(b" after-prefix"));
         }
-        assert!(!String::from_utf8_lossy(&expected).contains("stream-secret0525"));
+        assert!(!String::from_utf8_lossy(&expected).contains(&secret[10..]));
     }
 }

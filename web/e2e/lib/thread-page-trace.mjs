@@ -44,29 +44,36 @@ export function threadPageTrace(directory, engine) {
     record.resolve(result);
   };
   const onPage = page => {
+    const retire = doc => {
+      for (const record of [...active]) if (record.page === page && record.data.doc !== doc) {
+        retired.add(record.data.doc);
+        if (record.reading) continue;
+        log({ ...record.data, event: "navigation-aborted" });
+        settle(record, { ...record.data, cancelled: "navigation" });
+      }
+    };
     page.on("framenavigated", frame => {
       if (frame !== page.mainFrame()) return;
       // hash 이동은 같은 문서다. 실제 timeOrigin이 바뀐 경우만 옛 요청을 끝낸다.
-      void frame.evaluate(() => String(performance.timeOrigin)).then(doc => {
-        for (const record of [...active]) if (!record.reading && record.data.doc !== doc) {
-          retired.add(record.data.doc);
-          log({ ...record.data, event: "navigation-aborted" });
-          settle(record, { ...record.data, cancelled: "navigation" });
-        }
-      }).catch(error => log({ event: "navigation-observer-closed", error: error.message.split("\n")[0] }));
+      void frame.evaluate(() => String(performance.timeOrigin)).then(retire)
+        .catch(error => log({ event: "navigation-observer-closed", error: error.message.split("\n")[0] }));
     });
     page.on("close", () => {
-      for (const record of [...active]) settle(record, { ...record.data, error: "본문 완료 전 page.close" });
+      for (const record of [...active]) if (record.page === page)
+        settle(record, { ...record.data, error: "본문 완료 전 page.close" });
     });
     page.on("console", msg => {
-      if (msg.text().startsWith("THREAD_TRACE ")) log(JSON.parse(msg.text().slice(13)));
+      if (!msg.text().startsWith("THREAD_TRACE ")) return;
+      const row = JSON.parse(msg.text().slice(13));
+      log(row);
+      if (row.event === "document") retire(row.doc);
     });
     page.on("request", request => {
       if (!request.url().endsWith("/api/v1/call") || request.postDataJSON()?.op !== "threads") return;
       const headers = request.headers();
       const record = { id: ++next, doc: headers["x-e2e-document"], connection: headers["x-e2e-connection"],
         fetch: headers["x-e2e-request"], after: request.postDataJSON().after ?? null };
-      const entry = { data: record, response: null, reading: false };
+      const entry = { data: record, page, response: null, reading: false };
       pending.push(new Promise(resolve => { entry.resolve = resolve; }));
       requests.set(request, entry);
       active.add(entry);
@@ -83,7 +90,9 @@ export function threadPageTrace(directory, engine) {
       entry.reading = true;
       // response는 헤더 사건이다. 실제 다운로드 완료 전 body()를 시작하면
       // navigation으로 중단된 요청의 protocol Promise가 browser.close까지 남는다.
+      let bodyReceived = false;
       const body = response.body().then(bytes => {
+        bodyReceived = true;
         const result = { ...record, status: response.status(), bytes: bytes.length, body: JSON.parse(bytes).ok };
         log({ ...record, event: "response", status: result.status, bytes: result.bytes,
           count: result.body?.threads?.length, next: result.body?.next_after ?? null,
@@ -93,8 +102,18 @@ export function threadPageTrace(directory, engine) {
           for (const check of completion) check();
         }
         return result;
-      }).catch(error => {
+      }).catch(async error => {
         log({ ...record, event: "body-error", error: String(error) });
+        // requestfinished 뒤에도 body protocol 호출과 navigation은 경쟁한다.
+        // 오류 문구로 성공 처리하지 않고 실제 timeOrigin 교체로만 꼬리를 구별한다.
+        if (!bodyReceived && !retired.has(record.doc)) {
+          try { retire(await page.evaluate(() => String(performance.timeOrigin))); }
+          catch { /* page.close는 기존 오류로 남긴다. */ }
+        }
+        if (!bodyReceived && retired.has(record.doc)) {
+          log({ ...record, event: "body-unavailable-after-navigation", error: String(error) });
+          return { ...record, cancelled: "navigation" };
+        }
         return { ...record, error: String(error) };
       });
       bodies.add(body);

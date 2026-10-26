@@ -12,6 +12,7 @@ import sys
 import tomllib
 import urllib.request
 import zlib
+from fixture_secret import token
 
 root = Path(__file__).resolve().parent
 control = json.loads((root / "image-control.json").read_text())
@@ -88,7 +89,8 @@ for line in sys.stdin:
         header = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 887, 1774, 8, 6, 0, 0, 0))
         pixels = chunk(b"IDAT", zlib.compress((b"\0" + b"\x20\x80\x40\xff" * 887) * 1774))
         padding = bytearray(544 * 1024 - len(header) - len(pixels) - 24)
-        collision = base64.b64decode("AAAcG5nMDkxA")
+        secret = token("image-collision")
+        collision = base64.b64decode("AAA" + secret[:8] + "A")
         for offset in (2838, 65520, 65539, 8 * 65536 + 2838):
             start = offset - len(header) - 8
             padding[start:start + len(collision)] = collision
@@ -97,7 +99,7 @@ for line in sys.stdin:
         # 각 전송 조각은 base64 정렬을 다시 시작한다. 경계 양쪽과 마지막
         # 조각에 의도한 충돌이 실제로 있는지 준비 단계에서 확인한다.
         for offset in (0, 65536, 8 * 65536):
-            assert b"cG5nMDkx" in base64.b64encode(data[offset:offset + 65536])
+            assert secret[:8].encode() in base64.b64encode(data[offset:offset + 65536])
         images = home / "generated_images"
         images.mkdir()
         output = images / "result.png"

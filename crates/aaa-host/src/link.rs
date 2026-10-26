@@ -625,7 +625,7 @@ mod post_tests {
         cfg.notify.web_push = false;
         let host = Host::open(cfg, path.clone()).unwrap();
         host.project_create("p", Default::default(), "test").unwrap();
-        let secret = "fixture-report-auth-value-0638";
+        let secret = &*aaa_test_support::token("fixture-report-auth-value-0638");
         aaa_common::redact::remember(secret);
         let mut bytes = vec![b'x'; 1024 * 1024 + 3176];
         // 조각 경계의 인증 조각까지 포함해 원본 전체 hash를 먼저 대조한다.
@@ -753,7 +753,7 @@ mod post_tests {
         cfg.projects.root = path.join("projects").to_string_lossy().into();
         cfg.notify.web_push = false;
         let host = Host::open(cfg, path.clone()).unwrap();
-        let secret = "fixture-deployment-auth-value-0525";
+        let secret = &*aaa_test_support::token("fixture-deployment-auth-value-0525");
         aaa_common::redact::remember_auth("codex", &serde_json::json!({"access_token":secret}).to_string());
         let encoded = base64::engine::general_purpose::STANDARD.encode(secret);
         let mut bytes: Vec<u8> = (0..DEPLOY_CHUNK * 2 + 3176).map(|i| (i % 251) as u8).collect();
@@ -849,8 +849,10 @@ mod post_tests {
             "파일 보기에서 인증이 노출됐다"
         );
         // host 일반 응답의 B64 글자만 겹쳐도 reader가 살아 있어야 한다.
-        aaa_common::redact::remember("QkxPQ0tTRUNSRVQ5host-fixture0525");
-        let snapshot = base64::engine::general_purpose::STANDARD.decode("QkxPQ0tTRUNSRVQ5AAAA").unwrap();
+        let encoded_secret = aaa_test_support::token("host-b64");
+        aaa_common::redact::remember(&encoded_secret);
+        let snapshot =
+            base64::engine::general_purpose::STANDARD.decode(format!("{}AAAA", &encoded_secret[..16])).unwrap();
         let (visible, ()) = tokio::join!(
             conn.request(AgentRequest::FileView {
                 path: "/build/snapshot.bin".into(),

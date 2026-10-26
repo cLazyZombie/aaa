@@ -381,7 +381,7 @@ mod tests {
         cfg.notify.web_push = false;
         cfg.projects.root = root.join("projects").display().to_string();
         let h = crate::Host::open(cfg, root.join("host")).unwrap();
-        h.accounts.import("work", "claude", "fixture-quota-rename-0123456789").unwrap();
+        h.accounts.import("work", "claude", &aaa_test_support::token("fixture-quota-rename-0123456789")).unwrap();
         let generation = h.accounts.generation("work").unwrap();
         let now = util::now_ms();
         let mut snapshot = good(now, 37.);

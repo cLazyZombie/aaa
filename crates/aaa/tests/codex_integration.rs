@@ -306,7 +306,7 @@ fn foreign_or_incomplete_session_hooks_are_silent() {
                 .args(&args)
                 .env("AAA_SESSION_ID", "s1")
                 .env("AAA_HOOK_SOCK", "unused")
-                .env("AAA_HOOK_TOKEN", "unused")
+                .env("AAA_HOOK_TOKEN", aaa_test_support::token("unused-hook"))
                 .env_remove(missing)
                 .output()
                 .unwrap();
@@ -320,7 +320,7 @@ fn foreign_or_incomplete_session_hooks_are_silent() {
             .args(["hook", "--agent", "codex", r#"{"hook_event_name":"SessionStart","diagnostic":"payload-marker"}"#])
             .env("AAA_SESSION_ID", "s1")
             .env("AAA_HOOK_SOCK", h.0.join("missing.sock"))
-            .env("AAA_HOOK_TOKEN", "token-marker")
+            .env("AAA_HOOK_TOKEN", aaa_test_support::token("token-marker").as_str())
             .env_remove("AAA_LOG");
         if debug {
             command.env("AAA_LOG", "debug");
@@ -330,7 +330,11 @@ fn foreign_or_incomplete_session_hooks_are_silent() {
         let stderr = String::from_utf8(out.stderr).unwrap();
         if debug {
             assert!(stderr.contains("hook 전송 실패") && stderr.contains("os error"), "{stderr}");
-            assert!(!stderr.contains("token-marker") && !stderr.contains("payload-marker"), "{stderr}");
+            assert!(
+                !stderr.contains(aaa_test_support::token("token-marker").as_str())
+                    && !stderr.contains("payload-marker"),
+                "{stderr}"
+            );
         } else {
             assert!(stderr.is_empty(), "{stderr}");
         }
@@ -407,7 +411,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         util::ensure_private_dir(&paths.dir).unwrap();
         let spec = SpecFile {
             id: sid.into(),
-            token: "test-session-secret".into(),
+            token: aaa_test_support::token("test-session-secret"),
             boot_id: util::boot_id(),
             created_at_ms: util::now_ms(),
             label: None,
@@ -572,7 +576,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
             .unwrap()
         }
     };
-    let token = aaa_agent::hooks::hook_token("test-session-secret");
+    let token = aaa_agent::hooks::hook_token(aaa_test_support::token("test-session-secret").as_str());
     let id = "019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8e9f0";
     let event = |name: &str, source: &str| {
         vec![

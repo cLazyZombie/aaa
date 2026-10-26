@@ -1,10 +1,10 @@
+import { freshToken } from "../../../scripts/fixture-secret.mjs";
 // Windows 화면 자료만 fixture다. 입력·취소·요청·권한 거부는 실제 웹과 host를 쓴다. 가짜 암호는 실행 중에만 만든다.
-import crypto from "node:crypto";
 import fs from "node:fs";
 import { root, aaa, pairPage, browser, webkit, openSettings } from "./harness.mjs";
 
 export async function machinePassword() {
-  const password = crypto.randomBytes(32).toString("hex") + "한글 '\\";
+  const password = freshToken() + "한글 '\\";
   const job = {
     job: "01ARZ3NDEKTSV4RRFFQ69G5FAV", target: "pc-b", phase: "review", ssh: null, host_keys: [],
     host_key_state: "known", detected: { os: "windows", arch: "x86_64", raw: "Windows AMD64", chosen: false, home: "C:/Users/me/", shell: null, aaa: null },

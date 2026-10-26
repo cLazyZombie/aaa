@@ -592,7 +592,7 @@ mod tests {
         let state = Temp(std::env::temp_dir().join(format!("aaa-legacy-vault-{}", util::new_id())));
         util::ensure_private_dir(&state.0).unwrap();
         let accounts = Accounts::new(&state.0).unwrap();
-        let value = "fake-legacy-auth-fixture";
+        let value = &*aaa_test_support::token("legacy-auth");
         {
             let s = accounts.store.lock().unwrap();
             util::ensure_private_dir(&s.root).unwrap();
@@ -634,7 +634,7 @@ mod tests {
         util::ensure_private_dir(&state.0).unwrap();
         let accounts = Accounts::new(&state.0).unwrap();
         // 경로용 시간 ID와 무관한 엔트로피를 쓴다. 공통 ID 접두부는 비밀 조각이 아니다.
-        let value = format!("test-oauth-{}", hex::encode(random::<32>().unwrap()));
+        let value = aaa_test_support::fresh_token();
         let first = accounts.import("work", "claude", &value).unwrap();
         assert_eq!(first.version, 1);
         let generation = accounts.generation("work").unwrap();
@@ -671,7 +671,7 @@ mod tests {
         assert!(locked.import("new", "claude", &value).is_err(), "새 키로 기존 금고를 덮지 않는다");
         std::fs::rename(state.0.join("held.key"), state.0.join("secrets.key")).unwrap();
         assert!(locked.credential("work").unwrap().secret.0 == value, "키 복구 뒤 인증 왕복");
-        assert_eq!(locked.import("work", "claude", &format!("{value}-next")).unwrap().version, 2);
+        assert_eq!(locked.import("work", "claude", &aaa_test_support::fresh_token()).unwrap().version, 2);
         assert_ne!(locked.generation("work").unwrap(), generation, "다시 로그인은 새 세대");
         locked.remove("work").unwrap();
         assert!(locked.credential("work").is_err());

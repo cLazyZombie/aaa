@@ -92,7 +92,10 @@ fn restart_host(w: &mut World, tag: &str, exe: &Path, upstream: &str) {
 fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_or_duplicates() {
     // 원시 PNG와 무관한 인증 조각이 base64 offset 3787에서만 겹친다.
     // 로컬·원격 agent 양쪽의 실제 가림 규칙에 등록한다.
-    let mut w = world_with("[profiles.fake.env]\nOPENAI_API_KEY = \"cG5nMDkx-image-canary-0918\"\n");
+    let mut w = world_with(&format!(
+        "[profiles.fake.env]\nOPENAI_API_KEY = {:?}\n",
+        aaa_test_support::token("image-collision")
+    ));
     w.lab.kill("host");
     let cfg = w.h.cfg.join("host.toml");
     let text = std::fs::read_to_string(&cfg).unwrap().replace("allow_profiles = [", "allow_profiles = [\"image\", ");
@@ -100,6 +103,7 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
         .unwrap();
     let exe = w.scripts.join("fake-image-codex");
     std::fs::write(&exe, include_str!("../../../../scripts/fixtures/image-codex.py")).unwrap();
+    std::fs::write(w.scripts.join("fixture_secret.py"), include_str!("../../../../scripts/fixture_secret.py")).unwrap();
     std::fs::set_permissions(&exe, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     let (access, access_hex) = canary("a");
     let (refresh, refresh_hex) = canary("r");

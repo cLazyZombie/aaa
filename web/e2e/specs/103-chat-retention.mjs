@@ -4,9 +4,10 @@ import fs from "node:fs";
 import { root, AA, aaa, step, browser, webkit, pairPage, waitOutput, until, domIs, shot, inTime } from "../lib/harness.mjs";
 import { frames, shown, go, prepare } from "../lib/chat-retention.mjs";
 import { retentionFailure } from "../lib/retention-failure.mjs";
+import { retentionProtocol } from "../lib/retention-protocol.mjs";
 const baseline = process.env.AAA_CHAT_BASELINE === "1";
 const measurements = [];
-const diagnosticDir = `${root}/diagnostics`;
+const diagnosticDir = process.env.AAA_CHAT_DIAGNOSTICS || `${root}/diagnostics`;
 fs.mkdirSync(diagnosticDir, { recursive: true });
 const retentionLog = event => {
   const line = JSON.stringify({ at: Date.now(), ...event });
@@ -40,6 +41,7 @@ async function check(engine, width, panes, delayed = false) {
         context.on("response", r => { if (r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "pane_chat") replies.push(r); });
       } });
       const { page } = ph;
+      const protocol = engine.browserType().name() === "chromium" ? retentionProtocol(page, diagnosticDir) : null;
       const pane = panes[role];
       const first = await measure(page, pane);
       await page.locator('.term:not([hidden]) [data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
@@ -60,18 +62,26 @@ async function check(engine, width, panes, delayed = false) {
       assert.equal(await composer.inputValue(), `남길 초안 ${role}`);
       // 최신 150행 외에 여섯 쪽을 받아 둔 과거 위치를 사용한다.
       for (let n = 0; n < 6; n++) {
-        const before = await shown(page).locator('.chat-row').count();
-        const beforeState = await shown(page).evaluate(el => {
-          const state = { top: el.scrollTop, busy: el.getAttribute("aria-busy"), rows: el.querySelectorAll(".chat-row").length,
-            older: el.querySelector(".chat-older")?.textContent, error: el.querySelector(".banner")?.textContent,
-            nodes: el.querySelectorAll("*").length, height: el.clientHeight };
-          el.scrollTop = 0;
-          el.dispatchEvent(new Event("scroll", { bubbles: true }));
-          return state;
-        });
-        const context = { engine: engine.browserType().name(), width, role, trial, pageNo: n, before, pane, beforeState };
+        const context = { engine: engine.browserType().name(), width, role, trial, pageNo: n, pane,
+          phase: "count", before: null, beforeState: null };
+        protocol?.at(context);
         retentionLog({ event: "start", ...context });
         try {
+          const before = await shown(page).locator('.chat-row').count();
+          Object.assign(context, { phase: "lookup-before-state", before });
+          retentionLog({ event: "phase", ...context });
+          const beforeState = await shown(page).evaluate((el, label) => {
+            window.__aaaRetentionEvaluation = { ...label, phase: "entered", at: performance.now() };
+            const state = { top: el.scrollTop, busy: el.getAttribute("aria-busy"), rows: el.querySelectorAll(".chat-row").length,
+              older: el.querySelector(".chat-older")?.textContent, error: el.querySelector(".banner")?.textContent,
+              nodes: el.querySelectorAll("*").length, height: el.clientHeight };
+            el.scrollTop = 0;
+            el.dispatchEvent(new Event("scroll", { bubbles: true }));
+            window.__aaaRetentionEvaluation = { ...label, phase: "returned", at: performance.now() };
+            return state;
+          }, { role, trial, pageNo: n });
+          Object.assign(context, { phase: "commit", beforeState });
+          retentionLog({ event: "phase", ...context });
           await domIs(page, "앞 쪽 commit", before => document.querySelector('.term:not([hidden]) [data-testid="chat"]').querySelectorAll('.chat-row').length > before, before);
           retentionLog({ event: "commit", ...context });
         } catch (error) {
@@ -79,10 +89,12 @@ async function check(engine, width, panes, delayed = false) {
           await retentionFailure(error, context, requests.slice(-10), retentionLog, () =>
             inTime(page.evaluate(() => {
               const el = document.querySelector('.term:not([hidden]) [data-testid="chat"]');
-              return el ? { top: el.scrollTop, busy: el.getAttribute("aria-busy"), rows: el.querySelectorAll(".chat-row").length,
+              return el ? { evaluation: window.__aaaRetentionEvaluation ?? null, top: el.scrollTop, busy: el.getAttribute("aria-busy"), rows: el.querySelectorAll(".chat-row").length,
                 older: el.querySelector(".chat-older")?.textContent, error: el.querySelector(".banner")?.textContent,
                 nodes: el.querySelectorAll("*").length, height: el.clientHeight } : { absent: true, hash: location.hash };
             }), 5000, "앞 쪽 실패 진단"));
+        } finally {
+          protocol?.at(null);
         }
       }
       const row = await shown(page).locator('.chat-row').nth(40).evaluate(el => {

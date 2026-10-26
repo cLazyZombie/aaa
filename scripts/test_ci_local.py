@@ -1,6 +1,7 @@
 """실제 CI 셸의 병렬 진입·실시간 로그·실패 전파·선행 조건을 사건으로 검사한다."""
 
 import os
+import json
 import queue
 import shutil
 import socket
@@ -75,10 +76,12 @@ class CiLocal(unittest.TestCase):
         (self.root / "web/dist").mkdir(parents=True)
         # e2e의 기존 번들 최신성 검사도 그대로 실행한다.
         (self.root / "web/dist/index.html").touch()
-        for name in ("ci-local.sh", "ci_stream.py", "workspace_metrics.py"):
+        for name in ("ci-local.sh", "ci_stream.py", "workspace_metrics.py", "check_fixture_secrets.py"):
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
         for name in ("cargo", "npm", "node", "python3", "public"):
             self.write_tool(self.root / "tools" / name)
+        (self.root / "scripts/fixtures").mkdir()
+        (self.root / "scripts/fixtures/secret-exceptions.json").write_text("[]")
         (self.root / "scripts/check-public.sh").write_text('exec "$FIXTURE_ROOT/tools/public"\n')
         self.env = dict(os.environ, FIXTURE_ROOT=str(self.root),
                         PATH=str(self.root / "tools") + os.pathsep + os.environ["PATH"])
@@ -154,6 +157,17 @@ class CiLocal(unittest.TestCase):
         self.assertIn("TAIL-python", (self.root / "logs/python.log").read_text())
         if failure:
             self.assertIn(f"FAIL {failure}", log)
+
+    def test_auth_fixture_guard_fails_before_python_and_rust_execution(self):
+        source = "let {} = {};".format("secret", json.dumps("automation"))
+        (self.root / "scripts/unsafe.rs").write_text(source, encoding="utf-8")
+        result = self.run_ci("--only", "test")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        log = (self.root / "logs/test.log").read_text()
+        self.assertIn("scripts/unsafe.rs:1:", log)
+        self.assertNotIn("automation", log)
+        for stage in ("python", "test"):
+            self.assertFalse((self.root / f"{stage}.finished").exists())
 
     def test_python_and_rust_start_together(self):
         self.assert_python_and_rust()

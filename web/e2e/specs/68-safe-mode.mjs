@@ -1,3 +1,4 @@
+import { token as fixtureToken } from "../../../scripts/fixture-secret.mjs";
 // 안전 모드 W6b(plan §8.370): 정상 시작이 그 설정을 「마지막 정상 설정」으로 보관한다. host.toml을 깨고 host를 다시 띄우면 끝나지 않고
 // 같은 주소에 안전 모드 웹만 연다: 조작 기기는 오류 줄 표시와 가린 원문(env 값 없음), 보기 전용 기기는 안내만 본다. API는 503
 // unavailable이고, 열려 있던 앱은 그 글을 보인다. 「마지막 정상 설정으로 되돌리기」는 지금 파일을 옆에 남기고 정상 설정으로 바꿔, 같은 프로세스가 정상 host로 이어 간다.
@@ -9,7 +10,7 @@ import { SafeModeDiagnostics } from "../lib/safe-mode-diagnostics.mjs";
 
 const toml = `${root}/c/host.toml`;
 const kept = `${root}/c/last-good/host.toml`;
-const secret = "e2e-safe-secret-value";
+const secret = fixtureToken("safe-mode");
 
 export default async function ({ page }) {
   const diag = new SafeModeDiagnostics(root, procs);

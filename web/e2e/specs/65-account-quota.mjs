@@ -1,7 +1,7 @@
+import { freshToken } from "../../../scripts/fixture-secret.mjs";
 // A2: 실제 host·agent, 가짜 공식 RPC와 상태줄. 실제 로그인·인증 파일·모델 작업은 없다.
 import fs from "node:fs";
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
 import { root, AA, aaa, step, browser, pairPage, openSettings, domIs, waitOutput, shot, stop, until, usageHome, inList } from "../lib/harness.mjs";
 
 // 운영 결함과 같은 조건: 기본 홈의 OAuth는 끝났고 등록 계정의 Claude 상태줄은 정상이다.
@@ -19,7 +19,7 @@ if sys.argv[1:]==['--version']:
  print('codex-cli 0.163.0');sys.exit(0)
 assert sys.argv[1:]==['app-server']
 auth=json.load(open(os.environ['CODEX_HOME']+'/auth.json'))
-who=auth['tokens']['access_token'].split('-')[0]
+who=json.load(open(${JSON.stringify(`${root}/quota-identities.json`)}))[auth['tokens']['access_token']]
 for line in sys.stdin:
  v=json.loads(line)
  with open(${JSON.stringify(`${root}/quota-rpc.methods`)},'a') as f:f.write(who+' '+v['method']+'\\n')
@@ -52,12 +52,21 @@ host = host.replace('[profiles.fake]\nagent = "custom"', '[profiles.fake]\nagent
 fs.writeFileSync(`${root}/c/host.toml`, host);
 export const labEnv = { AAA_TEST_QUOTA_CODEX: fake, AAA_TEST_USAGE_REFRESH_MS: "0" };
 
+const canaries = [];
+const identities = `${root}/quota-identities.json`;
+fs.writeFileSync(identities, "{}");
+const hasCanary = text => canaries.some(value => text.includes(value));
 const row = (p, name) => p.locator(`[data-testid="account-row"][data-account="${name}"]`);
 const quota = (p, name) => row(p, name).getByTestId("account-quota");
 function register(name, harness = "codex") {
   const file = `${root}/${name}-auth.json`;
   const claims = Buffer.from(JSON.stringify({ email: `${name}@example.com`, "https://api.openai.com/auth": { chatgpt_plan_type: "plus" } })).toString("base64url");
-  fs.writeFileSync(file, harness === "codex" ? JSON.stringify({ tokens: { id_token: `e30.${claims}.c2ln`, access_token: `${name}-canary-access-0123456789`, refresh_token: `${name}-canary-refresh-0123456789` } }) : `fixture-oauth-${randomBytes(24).toString("hex")}`);
+  const access = freshToken(), refresh = freshToken();
+  canaries.push(access, refresh);
+  const names = JSON.parse(fs.readFileSync(identities, "utf8"));
+  names[access] = name;
+  fs.writeFileSync(identities, JSON.stringify(names));
+  fs.writeFileSync(file, harness === "codex" ? JSON.stringify({ tokens: { id_token: `e30.${claims}.c2ln`, access_token: access, refresh_token: refresh } }) : access);
   aaa("account", "import", name, "--harness", harness, "--file", file);
 }
 async function refresh(page) {
@@ -81,7 +90,7 @@ export default async function ({ page }) {
     await page.getByTestId("usage-strip").locator('[data-provider="claude"] .usage-chip-value').getByText("관측 대기", { exact: true }).waitFor();
     const data = await page.evaluate(() => fetch('/api/v1/account-usage').then(r=>r.json()));
     assert.equal(data.ok.accounts.length, 3);
-    assert.ok(!JSON.stringify(data).includes("canary") && !JSON.stringify(data).includes("@example.com"));
+    assert.ok(!hasCanary(JSON.stringify(data)) && !JSON.stringify(data).includes("@example.com"));
     const methods = fs.readFileSync(`${root}/quota-rpc.methods`, "utf8").trim().split("\n").map((s) => s.split(" ")[1]);
     assert.ok(methods.length >= 6);
     assert.ok(methods.every((m) => ["initialize", "initialized", "account/rateLimits/read"].includes(m)), methods.join(","));
@@ -139,7 +148,7 @@ export default async function ({ page }) {
       await quota(p, "work").getByText("마지막 75% 남음", { exact: true }).waitFor();
       const over = await p.getByTestId("account-quota").evaluateAll((cards) => cards.some((c) => c.scrollWidth > c.clientWidth || c.getBoundingClientRect().right > innerWidth));
       assert.equal(over, false, `${width} 카드 폭`);
-      assert.ok(!(await p.innerText()).includes("canary") && !(await p.innerText()).includes("@example.com"));
+      assert.ok(!hasCanary(await p.innerText()) && !(await p.innerText()).includes("@example.com"));
       await shot(mobile, `65-account-quota-${width}`); await mobile.context().close();
     }
   });
@@ -168,12 +177,12 @@ export default async function ({ page }) {
     fs.writeFileSync(modeFile, "{}"); register("work");
     await quota(panel, "work").getByText("75% 남음", { exact: true }).waitFor();
     const dump = await page.evaluate(() => fetch('/api/v1/account-usage').then(r=>r.text()));
-    assert.ok(!dump.includes("canary") && !dump.includes("discard-this-raw-response"));
+    assert.ok(!hasCanary(dump) && !dump.includes("discard-this-raw-response"));
     assert.equal(fs.readdirSync(`${root}/s/host/quota-probes`).length, 0);
     const scan = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const path = `${dir}/${e.name}`;
       if (e.isDirectory()) scan(path);
-      else if (e.isFile()) { const bytes = fs.readFileSync(path); assert.ok(!bytes.includes(Buffer.from("canary-access")) && !bytes.includes(Buffer.from("canary-refresh")) && !bytes.includes(Buffer.from("discard-this-raw-response")), `원문이 상태·DB·로그에 남음: ${e.name}`); }
+      else if (e.isFile()) { const bytes = fs.readFileSync(path); assert.ok(!canaries.some(value => bytes.includes(Buffer.from(value))) && !bytes.includes(Buffer.from("discard-this-raw-response")), `원문이 상태·DB·로그에 남음: ${e.name}`); }
     } };
     scan(`${root}/s`);
   });

@@ -1,0 +1,15 @@
+[package]
+name = "aaa-test-support"
+description = "시험 전용 opaque 인증 fixture; 제품 crate에서는 dev-dependency로만 사용"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+sha2.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

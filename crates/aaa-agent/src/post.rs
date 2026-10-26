@@ -227,7 +227,7 @@ mod tests {
         for (sid, pid) in [("s1", std::process::id()), ("s2", 0)] {
             let spec = SpecFile {
                 id: sid.into(),
-                token: "test-session-secret".into(),
+                token: aaa_test_support::token("test-session-secret"),
                 boot_id: "b".into(),
                 created_at_ms: 1,
                 label: None,
@@ -297,7 +297,7 @@ mod tests {
         s
     }
     fn token() -> String {
-        crate::hooks::hook_token("test-session-secret")
+        crate::hooks::hook_token(aaa_test_support::token("test-session-secret").as_str())
     }
     async fn next(rx: &mut FrameRx<tokio::io::DuplexStream>) -> LinkMsg {
         tokio::time::timeout(Duration::from_secs(3), rx.control()).await.unwrap().unwrap()

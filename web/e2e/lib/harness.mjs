@@ -1,3 +1,4 @@
+import { token as fixtureToken } from "../../../scripts/fixture-secret.mjs";
 // 웹 E2E 공통 준비: 실험실(host·agent·가짜 push·구독 서버·시험 프로그램)과 Chromium, 단계·기다림·화면·IME·push 도우미.
 // spec(web/e2e/specs/*.mjs) 하나를 한 프로세스에서 돈다(lib/child.mjs). 이 파일을 불러오면 실험실을 만든다: 입구(web.e2e.mjs)는
 // 불러오지 않는다. 실행·고르기는 web.e2e.mjs 머리, 쓰는 법은 docs/testing.md 「웹 E2E」.
@@ -795,7 +796,7 @@ fs.mkdirSync(`${usageHome}/.codex`, { recursive: true });
 fs.mkdirSync(`${usageHome}/.local/share/opencode`, { recursive: true });
 fs.writeFileSync(
   `${usageHome}/.claude/.credentials.json`,
-  JSON.stringify({ claudeAiOauth: { accessToken: "tok-claude", expiresAt: Date.now() + 86_400_000, subscriptionType: "max" } }),
+  JSON.stringify({ claudeAiOauth: { accessToken: fixtureToken("usage-claude"), expiresAt: Date.now() + 86_400_000, subscriptionType: "max" } }),
 );
 fs.writeFileSync(`${usageHome}/.claude.json`, JSON.stringify({ oauthAccount: { accountUuid: "acct-1", emailAddress: "me@example.com" } }));
 fs.writeFileSync(
@@ -811,7 +812,7 @@ fs.writeFileSync(
     },
   }),
 );
-fs.writeFileSync(`${usageHome}/.local/share/opencode/auth.json`, JSON.stringify({ "opencode-go": { type: "api", key: "tok-oc" } }));
+fs.writeFileSync(`${usageHome}/.local/share/opencode/auth.json`, JSON.stringify({ "opencode-go": { type: "api", key: fixtureToken("usage-opencode") } }));
 const usageHits = new Map();
 const usageRoutes = {
   "/api/oauth/usage": () => [200, {}, { five_hour: { utilization: 20, resets_at: inHours(3) }, seven_day: { utilization: 95, resets_at: inHours(50) }, seven_day_sonnet: { utilization: 40, resets_at: inHours(50) } }],

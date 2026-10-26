@@ -1,6 +1,6 @@
 //! owner: 실제 CLI→host→로컬/원격 agent→session→PTY의 인증 전달·회전·비노출 계약.
 //! 기존 K0는 전달 비밀·PTY 가림·refresh를 다루지 않는다. 임의 sleep·운영 인증은 쓰지 않는다.
-use super::secret_k0::{canary as hex_canary, hits, needles, sha};
+use super::secret_k0::{canary, hits, needles, sha};
 use super::*;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -9,39 +9,15 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-// 8자 부분 누출 검사는 유지한다. nonce를 hex digest와 겹치지 않는 문자로 일대일 변환한다.
-// 16자 알파벳·32자리(128 bit)는 그대로이며 hash/시각 같은 정상 기록과 우연 일치를 피한다.
-fn canary(tag: &str) -> (String, String) {
-    let (_, random) = hex_canary(tag);
-    let random = credential_nonce(&random);
-    (format!("aaa-canary-{tag}-{random}"), random)
-}
-
-fn credential_nonce(hex: &str) -> String {
-    hex.bytes()
-        .map(|byte| match byte {
-            b'0'..=b'9' => (b'g' + byte - b'0') as char,
-            b'a'..=b'f' => (b'q' + byte - b'a') as char,
-            _ => panic!("nonce는 hex여야 한다"),
-        })
-        .collect()
-}
-
+// 모든 언어가 공유하는 opaque 본문으로 기존 8바이트 부분 누출 검사를 유지한다.
 #[test]
 fn credential_canary_distinguishes_hex_metadata_and_detects_every_eight_byte_fragment() {
     let lab = Lab::new();
-    let random = "0123456789abcdef0123456789abcdef";
-    let value = format!("aaa-canary-proof-{random}");
+    let (value, nonce) = canary("proof");
     let file = lab.root.join("record");
-    // 정상 64자리 digest 하나가 nonce의 8자와 겹치면 기존 scanner는 누출로 판정한다.
-    std::fs::write(&file, format!("sha256={}{}", &random[14..22], "a".repeat(56))).unwrap();
-    assert!(!hits(std::slice::from_ref(&file), &needles(&value, random), &|_| false).is_empty());
-    let nonce = credential_nonce(random);
-    let value = format!("aaa-canary-proof-{nonce}");
+    std::fs::write(&file, format!("sha256={}", "0123456789abcdef".repeat(4))).unwrap();
     let find = needles(&value, &nonce);
     assert!(hits(std::slice::from_ref(&file), &find, &|_| false).is_empty());
-    assert_eq!(nonce.len(), 32);
-    assert_eq!(nonce.chars().collect::<std::collections::HashSet<_>>().len(), 16);
     for start in 0..=nonce.len() - 8 {
         std::fs::write(&file, &nonce.as_bytes()[start..start + 8]).unwrap();
         assert!(!hits(std::slice::from_ref(&file), &find, &|_| false).is_empty(), "8자 조각 {start}");
@@ -989,10 +965,10 @@ assert s.recv(1)==b'X'
 #[test]
 fn fresh_account_claude_initializes_only_authorized_bypass_consent() {
     let gate = Gate::new();
-    let mut w = world("http://127.0.0.1:1", &gate, "fake-local-token", TRUST_HARNESS);
+    let mut w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), TRUST_HARNESS);
     w.add_remote();
     let token = w.scripts.join("fake-token");
-    std::fs::write(&token, "fake-claude-token").unwrap();
+    std::fs::write(&token, aaa_test_support::token("local-claude")).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&token)]);
     w.h.ok(&["account", "default", "claude", "token"]);
     let task = w.task("onboarding.md", "가짜 첫 실행 검증");
@@ -1001,10 +977,12 @@ fn fresh_account_claude_initializes_only_authorized_bypass_consent() {
     // 실제 사용자 홈 대신 가짜 원본 홈을 가리켜도 첫 실행 키 외의 설정·인증은 복사하지 않는다.
     let source = w.scripts.join("source-claude");
     std::fs::create_dir(&source).unwrap();
-    let source_config = r#"{"oauthAccount":{"accessToken":"fake-source-secret"},"theme":"light"}"#;
-    let source_settings = r#"{"env":{"ANTHROPIC_API_KEY":"fake-source-secret"},"skipAutoPermissionPrompt":true}"#;
-    std::fs::write(source.join(".claude.json"), source_config).unwrap();
-    std::fs::write(source.join("settings.json"), source_settings).unwrap();
+    let source_config =
+        serde_json::json!({"oauthAccount":{"accessToken":aaa_test_support::token("source")},"theme":"light"})
+            .to_string();
+    let source_settings = serde_json::json!({"env":{"ANTHROPIC_API_KEY":aaa_test_support::token("source")},"skipAutoPermissionPrompt":true}).to_string();
+    std::fs::write(source.join(".claude.json"), &source_config).unwrap();
+    std::fs::write(source.join("settings.json"), &source_settings).unwrap();
     let original = original.replace("env={ACCOUNT_GATE=", &format!("env={{CLAUDE_CONFIG_DIR={source:?},ACCOUNT_GATE="));
     for (yolo, args, accepted) in [
         (false, "[]", false),
@@ -1056,14 +1034,14 @@ fn fresh_account_claude_initializes_only_authorized_bypass_consent() {
 #[test]
 fn account_threads_trust_only_their_cwd_when_coordinator_answers() {
     let gate = Gate::new();
-    let mut w = world("http://127.0.0.1:1", &gate, "fake-local-token", TRUST_HARNESS);
+    let mut w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), TRUST_HARNESS);
     w.add_remote();
     let file = w.scripts.join("fake-auth.json");
-    std::fs::write(&file, r#"{"tokens":{"access_token":"fake-access-token","refresh_token":"fake-refresh-token"}}"#)
+    std::fs::write(&file, serde_json::json!({"tokens":{"access_token":aaa_test_support::token("access"),"refresh_token":aaa_test_support::token("refresh")}}).to_string())
         .unwrap();
     w.h.ok(&["account", "import", "file", "--harness", "codex", "--file", path_str(&file)]);
     let token = w.scripts.join("fake-token");
-    std::fs::write(&token, "fake-claude-token").unwrap();
+    std::fs::write(&token, aaa_test_support::token("local-claude")).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&token)]);
     w.h.ok(&["account", "default", "codex", "file"]);
     w.h.ok(&["account", "default", "claude", "token"]);
@@ -1145,7 +1123,7 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
     let upstream = Upstream::new(vec![]);
     let gate = Gate::new();
     let w = world(&format!("http://{}", upstream.addr), &gate, &legacy, POLICY_HARNESS);
-    let codex = |email: &str, plan: &str, n: u32| serde_json::json!({"tokens":{"access_token":format!("test-access-{n}-0123456789"),"refresh_token":format!("test-refresh-{n}-0123456789"),"id_token":id_token(email, plan)}});
+    let codex = |email: &str, plan: &str, n: u32| serde_json::json!({"tokens":{"access_token":aaa_test_support::token(&format!("access-{n}")),"refresh_token":aaa_test_support::token(&format!("refresh-{n}")),"id_token":id_token(email, plan)}});
     let mut values = serde_json::json!({
         "claude": format!("Your OAuth token (valid for 3 days):\nsk-ant-oat01-{raw}"),
         "claude_json": {"oauthAccount": {"emailAddress": "ci@example.com"}},
@@ -1250,9 +1228,9 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
 #[test]
 fn account_spawn_failure_keeps_session_host_pid_and_underlying_error() {
     let gate = Gate::new();
-    let w = world("http://127.0.0.1:1", &gate, "fake-local-token", "#!/missing-account-harness\n");
+    let w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), "#!/missing-account-harness\n");
     let auth = w.scripts.join("fake-auth.json");
-    std::fs::write(&auth, r#"{"tokens":{"access_token":"fake-access-token","refresh_token":"fake-refresh-token"}}"#)
+    std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":aaa_test_support::token("access"),"refresh_token":aaa_test_support::token("refresh")}}).to_string())
         .unwrap();
     w.h.ok(&["account", "import", "work", "--harness", "codex", "--file", path_str(&auth)]);
     let account_dir = w.h.state.join("agent/account-runs/demo/t-0001");
@@ -1289,7 +1267,9 @@ fn account_spawn_failure_keeps_session_host_pid_and_underlying_error() {
     ] {
         assert!(message.contains(expected), "{expected}: {message}");
     }
-    assert!(!message.contains("fake-access-token") && !message.contains("fake-refresh-token"));
+    assert!(
+        !message.contains(&aaa_test_support::token("access")) && !message.contains(&aaa_test_support::token("refresh"))
+    );
 }
 
 /// 실기 send와 같은 한 바이트 입력 → 실제 host/agent/PTY/VT를 거쳐 다음 키 전에 보인다.
@@ -1356,7 +1336,7 @@ fn renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_run
     let (token, _) = canary("rename-access");
     let (refresh, _) = canary("rename-refresh");
     let gate = Gate::new();
-    let w = world("http://127.0.0.1:1", &gate, "fixture-local-token", POLICY_HARNESS);
+    let w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), POLICY_HARNESS);
     let auth = w.scripts.join("rename-auth.json");
     std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":token,"refresh_token":refresh}}).to_string())
         .unwrap();

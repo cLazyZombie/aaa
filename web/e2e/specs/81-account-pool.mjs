@@ -1,7 +1,7 @@
+import { token as fixtureToken, freshToken } from "../../../scripts/fixture-secret.mjs";
 // A3: 실제 host·agent·session·PTY, 가짜 Claude 상태줄. 운영 로그인·인증·모델 작업은 없다.
 import fs from "node:fs";
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
 import { root, aaa, step, browser, webkit, pairPage, openSettings, waitOutput, until, domIs, inTime, shot, start, stop } from "../lib/harness.mjs";
 
 const modes = `${root}/pool-modes.json`;
@@ -13,8 +13,8 @@ fs.writeFileSync(fake, `#!${process.execPath}
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 const token=process.env.CLAUDE_CODE_OAUTH_TOKEN;
-if(!token?.startsWith('fixture-pool-'))throw new Error('계정 인증 전달 실패');
-const who=token.split('-')[2];
+const who=JSON.parse(fs.readFileSync(${JSON.stringify(`${root}/pool-identities.json`)},'utf8'))[token];
+if(!who)throw new Error('계정 인증 전달 실패');
 const settings=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--settings')+1],'utf8'));
 let n=0;
 function sample(){
@@ -43,10 +43,15 @@ host += `\n[profiles.unpooled]\nagent = "codex"\ncommand = [${JSON.stringify(cod
 fs.writeFileSync(`${root}/c/host.toml`, host);
 export const labEnv = { AAA_TEST_USAGE_REFRESH_MS: "0", AAA_TEST_QUOTA_CODEX: rpc };
 const canaries = [];
+const identities = `${root}/pool-identities.json`;
+fs.writeFileSync(identities, "{}");
 function register(name) {
   const file = `${root}/${name}.token`;
-  // 비밀의 8바이트 조각과 별칭이 같으면 기존 금고가 별칭을 거부한다. 새 계정의 canary는 별칭을 담지 않는다.
-  const value = `fixture-pool-${name === "new-account" ? "n" : name}-${randomBytes(24).toString("hex")}`;
+  // 계정명은 토큰 밖의 시험 전용 대응표에 둔다.
+  const value = freshToken();
+  const names = JSON.parse(fs.readFileSync(identities, "utf8"));
+  names[value] = name === "new-account" ? "n" : name;
+  fs.writeFileSync(identities, JSON.stringify(names));
   canaries.push(value); fs.writeFileSync(file, value);
   aaa("account", "import", name, "--harness", "claude", "--file", file);
 }
@@ -122,8 +127,9 @@ export default async function ({ page }) {
     assert.equal(pinnedB.account, "b"); await waitOutput(pinnedB.pane, "POOL-READY b");
     for (const name of ["a", "b", "cold"]) aaa("account", "pool", "add", name);
     const auth = `${root}/codex.token`;
-    const value = JSON.stringify({tokens:{access_token:"fixture-codex-access-01234567890123456789",refresh_token:"fixture-codex-refresh-01234567890123456789",id_token:"e30.e30.c2ln"}});
-    canaries.push(value); fs.writeFileSync(auth, value);
+    const accessToken = fixtureToken("pool-codex-access"), refreshToken = fixtureToken("pool-codex-refresh");
+    const value = JSON.stringify({tokens:{access_token:accessToken,refresh_token:refreshToken,id_token:"e30.e30.c2ln"}});
+    canaries.push(value, accessToken, refreshToken); fs.writeFileSync(auth, value);
     aaa("account", "import", "codex-default", "--harness", "codex", "--file", auth);
     aaa("account", "default", "codex", "codex-default"); aaa("account", "pool", "remove", "codex-default");
     const fallback = aaa("thread", "start", "demo", "--title", "다른 harness 기본", "--machine", "labA", "--profile", "unpooled", "--task-file", task);

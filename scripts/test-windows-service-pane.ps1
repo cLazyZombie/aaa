@@ -157,7 +157,7 @@ work_root = '$work'
                 $claims='{"sub":"fixture-user","exp":4102444800,"https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account","chatgpt_plan_type":"plus"}}'
                 $payload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($claims)).TrimEnd('=').Replace('+','-').Replace('/','_')
                 $jwt='eyJhbGciOiJub25lIn0.'+$payload+'.fixture'
-                $fixtureAuth=@{auth_mode='apikey';OPENAI_API_KEY='fake-service-api-key';tokens=@{id_token=$jwt;access_token='fake-service-access-token';refresh_token='fake-service-refresh-token';account_id='fixture-account'}} | ConvertTo-Json -Depth 4
+                $fixtureAuth=@{auth_mode='apikey';OPENAI_API_KEY=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/secret-canary.txt')));tokens=@{id_token=$jwt;access_token=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/secret-canary.txt')));refresh_token=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/secret-canary.txt')));account_id='fixture-account'}} | ConvertTo-Json -Depth 4
                 [IO.File]::WriteAllText($auth,$fixtureAuth,[Text.UTF8Encoding]::new($false))
                 $null=Invoke-Aaa @('account','import','fixture','--harness','codex','--file',$auth)
                 $codexThread=Invoke-Aaa @('thread','start','probe','--title','codex-account-pane','--profile','codex-probe','--account','fixture','--machine','mac-a','--kind','dir','--task-file',$task)
