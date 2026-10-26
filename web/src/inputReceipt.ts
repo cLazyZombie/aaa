@@ -23,6 +23,11 @@ export function receiptMethod(text: string, message: ChatMessage, hash?: string)
   return message.pending ? "queue_operation" : message.text.trim() === text.trim() ? "normal" : "pasted_content";
 }
 
+/** 보낼 때보다 같은 사람 글의 수신 기록이 늘었다. 낙관적 말 표시와 상태 정리가 같은 증거를 쓴다. */
+export function receiptSeen(item: { text: string; hash?: string; before: number | null }, messages: readonly ChatMessage[] | null): boolean {
+  return item.before !== null && (messages ?? []).filter(m => receiptMethod(item.text, m, item.hash) !== null).length > item.before;
+}
+
 /** harness 명령 한 줄(`/compact`, `/model opus`). Claude는 `<command-name>` 줄로, Codex는 기록하지 않아 사람 글 증거가 오지 않는다.
  * 경로(`/Users/…`)는 명령이 아니다 */
 export function slashCommand(text: string): boolean {

@@ -26,6 +26,7 @@ import { imagePaths } from "./herdr/composerImages";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import { delivered, type PendingSend } from "./ChatComposer";
+import { receiptSeen } from "./inputReceipt";
 import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
 import { ChatRow } from "./ChatRow";
@@ -434,7 +435,7 @@ export function ChatPanel({
   onOpenFile,
   onOpenLink,
   onMessages,
-  pending = [],
+  pending: pendingSends = [],
   harness = "claude",
   onDismissPending,
   steer,
@@ -469,6 +470,9 @@ export function ChatPanel({
   const readingRef = useRef(reading);
   readingRef.current = reading;
   const [chat, setChat] = useState<ChatView | null>(null);
+  // 기록을 그리는 commit에서 이미 수신된 낙관적 말을 뺀다. Composer의 상태 정리 effect까지
+  // 기다리면 기록 말과 낙관적 말이 한 frame 함께 나타난다. 수신 추적·저장은 Composer가 계속 맡는다.
+  const pending = useMemo(() => pendingSends.filter(p => !receiptSeen(p, chat?.messages ?? null)), [pendingSends, chat]);
   const [error, setError] = useState<string | null>(null);
   const chatRef = useRef<ChatView | null>(null);
   const epoch = useRef(0);
@@ -734,6 +738,9 @@ export function ChatPanel({
     anchor.current = at ?? null;
     if (at) rememberChatPosition(pane, { ...at, atEnd: atBottom.current || (chatIsAtEnd(el) && !el.style.getPropertyValue("--chat-tail-space")) }, atBottom.current);
   };
+  // 같은 commit의 행별 초기 실측은 같은 shell 목록을 쓴다. 본문 mount/가림은 shell을 바꾸지 않는다.
+  // prepend·기록 교체·대기 말 변경 때 rowIds가 바뀌므로 DOM mutation 뒤 처음 한 번만 다시 조회한다.
+  const anchorRows = useRef<{ ids: readonly string[]; el: HTMLDivElement; rows: NodeListOf<HTMLElement> } | null>(null);
   const holdAnchor = (el: HTMLDivElement) => {
     const at = anchor.current;
     if (at === null || restoring.current) return;
@@ -741,7 +748,9 @@ export function ChatPanel({
     // scroll 사건보다 먼저 ResizeObserver가 와도 아직 반영 안 된 손의 이동을 지킨다.
     if (el.scrollTop !== lastScrollTop.current) return;
     const index = rowAtRef.current.get(at.rowId) ?? -1;
-    const row = index < 0 ? undefined : chatRows(el)[index];
+    if (anchorRows.current?.ids !== rowIdsRef.current || anchorRows.current.el !== el)
+      anchorRows.current = { ids: rowIdsRef.current, el, rows: chatRows(el) };
+    const row = index < 0 ? undefined : anchorRows.current.rows[index];
     if (row === undefined) return;
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
     const target = chatAnchorTop(top, index === 0, at);
@@ -772,6 +781,9 @@ export function ChatPanel({
     });
     rowSizes.current.set(el, measure);
     observer.observe(el);
+    // mount·가상 본문 복귀 직후의 실측은 같은 layout 단계에서 보정해야 한다.
+    // 첫 observer 통지까지 미루면 그 사이 scroll 사건이 중간 위치를 새 기준으로 기억한다.
+    resizeRow.current();
     return () => {
       rowSizes.current.delete(el);
       observer.unobserve(el);
@@ -837,7 +849,9 @@ export function ChatPanel({
     cancelRestore.current = finish;
     const index = rowAtRef.current.get(restoreFrom.rowId) ?? -1;
     const target = () => {
-      const row = index < 0 ? undefined : chatRows(el)[index];
+      if (anchorRows.current?.ids !== rowIdsRef.current || anchorRows.current.el !== el)
+        anchorRows.current = { ids: rowIdsRef.current, el, rows: chatRows(el) };
+      const row = index < 0 ? undefined : anchorRows.current.rows[index];
       if (row === undefined) return restoreFrom.scrollOffset;
       const top = el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top;
       const offset = chatAnchorTop(top, index === 0, restoreFrom);

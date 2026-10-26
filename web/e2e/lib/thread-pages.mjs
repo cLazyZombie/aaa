@@ -54,6 +54,8 @@ export async function threadPages() {
       const replies = [];
       try {
         await page.evaluate(() => { location.hash = "threads"; });
+        // pairPage는 머신 목록까지만 기다린다. 초기 문서의 목록 읽기가 끝난 뒤 reload 응답만 관측한다.
+        await domIs(page, "초기 목록의 마지막 thread", () => !!document.querySelector('[data-testid="all-threads"] [data-testid="project-thread-t-12499"]'));
         page.on("response", response => {
           if (response.url().endsWith("/api/v1/call") && response.request().postDataJSON()?.op === "threads") {
             replies.push(response.body().then(bytes => {
@@ -71,6 +73,9 @@ export async function threadPages() {
         assert.ok(pages.length > 1);
         assert.equal(pages.flatMap(p => p.threads).length, all.length);
         assert.equal(pages.at(-1).next_after, undefined);
+        const received = pages.flatMap(p => p.threads).map(t => `${t.project}/${t.id}`);
+        assert.equal(new Set(received).size, all.length);
+        assert.deepEqual(received, all.map(t => `${t.project}/${t.id}`));
         assert.deepEqual(errors, []);
       } finally { await page.context().close(); }
     }
