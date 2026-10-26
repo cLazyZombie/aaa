@@ -7980,3 +7980,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - UX 참고: [Linear 표시 순서](https://linear.app/docs/display-options), [Todoist 절 안 정렬과 이동 제한](https://www.todoist.com/help/todoist/features/sort-or-group-tasks-in-todoist-WFWD0hrb), [Things 원하는 자리로 옮기기](https://culturedcode.com/things/support/articles/2803582/), [GitHub Projects 속성 정렬과 해제](https://docs.github.com/en/issues/planning-and-tracking-with-projects/customizing-views-in-your-project/customizing-the-table-layout). OSS 후보는 [Vikunja TaskCollection](https://github.com/go-vikunja/vikunja/blob/main/pkg/models/task_collection.go)([AGPL-3.0](https://github.com/go-vikunja/vikunja/blob/main/LICENSE))의 위치/속성 분리와 [Super Productivity TaskList](https://github.com/super-productivity/super-productivity/blob/master/src/app/features/tasks/task-list/task-list.component.ts)([MIT](https://github.com/super-productivity/super-productivity/blob/master/LICENSE))의 상하위 목록과 이동 제한이다. 동작 원칙만 참고하며 외부 코드·의존성은 추가하지 않는다.
 
 - **72회차 착지 통합(t-1082).** 기준 main `bc0be2fa`에 t-1082 `d95a65ea`와 t-1081 `69a3e8bb`를 각각 --no-ff로 통합한다. 준비되지 않은 t-1075는 제외한다. workspace는 §8.496, 활성 할 일 정렬은 겹친 번호를 §8.497로 옮긴다. FRONT_API 1.127·AGENT_LINK 1.11·기존 E2E01~115를 유지하고 E2E76·90 확장을 함께 검사한다. 저장소 launchChromium helper와 공용 캐시 Playwright 1.64.1 양 엔진 사전 확인 뒤 전체 nice 15 ci-local·별도 공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows production release 빌드·추가 개인정보 검사를 한 번 수행한다. 실패 시 원문·부하를 보존하고 push하지 않는다. 로컬 검증 통과 뒤 fast-forward push와 원격 SHA를 확인하며 GitHub CI를 기다리지 않는다. push 뒤 착지 SHA salt의 Windows 설치기를 전용 시험 폴더로 전달해 SHA-256·판만 확인한다. 설치 실행·배포·tag·release는 하지 않는다.
+
+
+### 미답변 coordinator 질문의 수명(t-1090, §8.345 보완)
+
+- 독립 coordinator 요청은 사용자 답, 웹의 명시적 처리 또는 `aaa post handled <q-ID|p-ID>`까지 열린다. 일반 `inbox done --all`은 사용자 요청을 제외한다. 독립 요청의 inbox ID를 직접 끝내려 하면 처리 명령을 안내하고 거절한다. 열린 thread 카드에 붙은 알림만 개별 `inbox done`으로 정리할 수 있으며 카드 답은 만들지 않는다.
+- `aaa:question/<thread>`에 현재 카드가 없으면 독립 post 질문을 만든다. 질문 원장의 `kind=post, subject=<inbox-ID>`가 소유권을 고정한다. 알림·카드 링크는 그 요청의 q-ID로 보내고 이후 thread 보고·과거 답·같은 thread의 새 질문으로 닫지 않는다. 기존 연결 알림은 현재 질문·답 기록을 따라 정리한다.
+- `gone`은 pane 확인창 소실·pane 종료, thread의 새 보고가 기존 질문을 제거한 경우, 또는 명시적으로 끝낸 답 없는 요청에 사용한다. pane이 없는 독립 coordinator 요청은 화면 소실이나 일반 inbox 정리로 `gone`이 되지 않는다. 이미 끝난 운영 요청을 추정으로 되살리지 않는다.
+- 감사 기록에 inbox 처리 방식(`all`), 보존한 사용자 요청 수, 지정 ID를 남겨 일괄 정리와 명시 처리를 구분한다. proto·FRONT_API 형식은 바꾸지 않는다.

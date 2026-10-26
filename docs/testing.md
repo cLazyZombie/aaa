@@ -1,3 +1,11 @@
+## 미답변 coordinator 질문의 자동 종료 방지(t-1090)
+
+- 새 host 회귀 두 개는 실제 SQLite·post·질문 목록을 쓴다. `orphan_thread_reference_stays_a_coordinator_question_across_reports_and_reconcile`는 과거 답이 있지만 현재 카드가 없는 thread 접미사로 만든 요청이 독립 q-ID와 링크를 유지하고, 이후 질문 있음/없음 보고·정리에도 열려 있는지 검사한다. 꼭 필요한 이유: q-1372처럼 생성 직후 과거 답에 흡수되는 요청 유실을 막는다.
+- `inbox_cleanup_preserves_unanswered_coordinator_questions_until_explicit_handling`은 구조화·평문 사용자 요청과 일반 알림을 섞어 `inbox done --all`이 일반 알림만 끝내는지, 독립 요청 ID를 직접 정리해도 거절하는지, 실제 답과 명시적 `post handled`는 끝내는지 검사한다. 꼭 필요한 이유: q-1373의 coordinator 정리가 사용자 답 없는 카드를 `gone`으로 만드는 경로를 막는다.
+- 기존 E2E53의 닫힌 thread 후속 post를 독립 요청으로 남기는 계약으로 바꾼다. 실제 CLI·host·웹에서 카드와 q 링크, 일반 inbox 정리 뒤 유지, 명시적 처리 뒤 종료를 Chromium 1280px·WebKit 390/430px로 확인한다. 기존 열린 thread 카드의 알림 묶기·답 뒤 처리·보고로 닫힌 원래 카드와 늦은 응답의 두 엔진 × 1280/390px 계약은 유지한다.
+- 부분 실행: `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib question_ids::tests`, `--lib asks::tests`, 기존 E2E53. 전체 ci-local은 coordinator의 차례를 받은 뒤 수행한다. 고정 sleep·재시도·시한 연장·단언 완화는 없다.
+- 참고는 [Gitea 알림](https://github.com/go-gitea/gitea/blob/main/models/activities/notification.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 원래 대상 ID·읽음 상태 분리와 [Zulip 메시지 표시](https://github.com/zulip/zulip/blob/main/zerver/actions/message_flags.py)([Apache-2.0](https://github.com/zulip/zulip/blob/main/LICENSE))의 명시 대상별 상태 변경이다. 식별자와 알림 정리·답을 구분하는 원칙만 참고하며 외부 코드·의존성은 추가하지 않는다.
+
 ## 활성 할 일 표시 정렬(t-1081, §8.497)
 
 - `taskSortModel.test.mjs` 네 유닛은 각각 속성별 정렬·빈 값·0채움 번호·안정된 동률, 실제 예약/숨은 예약과 상하위/거르기 보존, 나중의 Markdown 표시 제목·메모·원문 위치 보존, 탭별 기억 분리·잘못된 저장값 복구를 검사한다. 필요한 이유는 실행 차례 훼손, 부모·하위 분리, 다른 항목을 옮기는 데이터 손실, 다른 탭의 보기 설정 훼손을 막기 위해서다. 정렬 상수만 복사하는 시험은 두지 않는다.

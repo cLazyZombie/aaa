@@ -532,6 +532,13 @@ impl Host {
         if let Some(i) = item.as_mut().filter(|i| crate::asks::is_user_request(i)) {
             match self.post_question_ids(i, &env) {
                 Ok(ids) => {
+                    let title = if self.request_question_thread(i).is_none() {
+                        ids.first()
+                            .map(|id| crate::asks::standalone_question_title(&env.input.title, id))
+                            .unwrap_or_else(|| env.input.title.clone())
+                    } else {
+                        env.input.title.clone()
+                    };
                     let link = if crate::notify::request_question(i).is_none()
                         && !aaa_proto::report_questions(&env.input.body).is_empty()
                     {
@@ -539,8 +546,7 @@ impl Host {
                     } else {
                         String::new()
                     };
-                    i.summary =
-                        format!("{who} {}: 「{} {}{link}」", kind(&env.input.post_type), ids.join(" "), env.input.title)
+                    i.summary = format!("{who} {}: 「{} {}{link}」", kind(&env.input.post_type), ids.join(" "), title)
                 }
                 Err(source_error) => {
                     return refused(aaa_common::diagnostic::context(
