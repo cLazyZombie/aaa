@@ -4176,3 +4176,8 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - OSS 후보·라이선스와 채택한 원칙은 plan §8.504에 있다. 외부 코드·의존성을 추가하지 않는다.
 
 - 첫 host 전체 유닛은 직접 알림의 큰 비동기 호출을 collect 경로에 인라인으로 넣어 기존 idle-audit 시험의 스택이 넘쳤다. 알림의 thread_message future를 Box::pin으로 두어 호출자 크기를 줄인 뒤 해당 회귀와 host 전체 695개가 통과했다. 새 E2E의 첫 실패는 HTTP의 ok 포장을 빠뜨린 시험 코드였고, 다음 개수 대조 실패(5→6)는 답 전송 전 claim을 완료로 읽은 관측 경계였다. 보존 DB에는 해당 q-ID 답이 정확히 한 건이었다. 정규 검사는 실제 asks 원문 기록이 생긴 사건을 기다린 뒤 재보고 전후 개수가 같음을 단언한다. 시한·개수 기대·재시도 정책은 바꾸지 않는다.
+
+### 77회차 기본값 시험의 완료 후속 경계(t-1126)
+
+- 첫 전체 gate의 `start_defaults_profile_kind_and_task`는 공통 fake의 완료 보고·Next를 먼저 회수한 경우 기존 t-1112 후속 보호에 막혔다. 원문은 `t-0005를 task에 잇지 못했다(t-0002 후속 남음)`이며 실패 실험실에 보존된 완료 보고의 Next 두 줄과 TASKS 연결을 확인했다. 후보가 바꾸지 않은 기존 main의 fixture/가드 경합이다.
+- 해당 owner에서 완료 보고 회수를 사건으로 기다리고 기존 `finish_fixture_followups`로 가짜 결과 확인·다음 단계 검토 사실을 기록한 다음 task 연결을 바꾼다. 제품 보호·공통 fake·성공과 정확한 경고 문구·시한은 그대로다. 새 시험이나 sleep·실패 재시도는 추가하지 않는다. 필요한 이유는 완료 보고 수집 속도가 기본 profile/kind와 열린 task 시작 경고 시험의 성공 여부를 결정하지 않게 하기 위해서다.

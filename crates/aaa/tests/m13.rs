@@ -2068,6 +2068,10 @@ fn start_defaults_profile_kind_and_task() {
     assert!(b["branch"].as_str().is_some_and(|s| s.starts_with("aaa/demo/")), "{b}");
     // 미할당 task는 thread_profile, 이미 열린 thread가 맡은 task는 경고만 한다(CLI는 `경고:` 줄)
     let aid = a["id"].as_str().unwrap();
+    // 공통 fake의 완료 Next를 먼저 확인한다. 회수 시각에 따라 task 연결 변경이
+    // 후속 보호에 막히는 경합을 없애고, 이 owner의 기본값·열린 thread 경고 계약을 검사한다.
+    w.wait_show("기본값 fixture의 완료 보고", aid, |v| v["report_hash"].is_string());
+    w.finish_fixture_followups(aid);
     std::fs::write(dir.join("TASKS.md"), format!("# Tasks\n\n## Backlog\n- [ ] 새 일\n- [ ] 맡긴 일 · {aid}\n"))
         .unwrap();
     let c = w.start(&["--from-task", "새 일"]);
