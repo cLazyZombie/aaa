@@ -1,3 +1,13 @@
+## E2E76 마지막 시트 복귀·E2E81 실제 클릭과 최신 조회(t-1126)
+
+- main e3bcc847의 E2E76 `closeBeforeReload`는 이미 닫기 전에 popstate를 듣지만 앞서 닫은 ⋯ 메뉴의 늦은 사건도 완료로 받았다. 실제 Chromium 390px trace에서 메뉴 popstate 때 상세 DOM이 남았고, helper가 돌아온 뒤에도 상세의 `aaa:sheet` 기록이 남은 채 첫 reload가 시작됐다. 이번 자연 관측에서는 reload 자체는 성공했다. 원래 CI의 두 reload 중 어느 것이 실패했는지는 잘린 입력에 없어 확정하지 않는다.
+- 격리한 실제 host·브라우저에서 메뉴 back과 상세 back의 전달만 사건으로 제어했다. 수정 전 순서는 `back1 → pop1 → back2 → helper 반환 → pop2`로 실패했고, 수정 후 `back1 → pop1 → back2 → pop2 → helper 반환`으로 468ms에 통과했다. helper는 상세 DOM과 마지막 시트 기록이 모두 없는 popstate까지만 완료로 받는다. 제품 history·정렬 저장·요청은 바꾸지 않는다. 기존 E2E76의 두 reload, 양 엔진 ×1280/390px와 320px, 예약 차례·TASKS/나중 원문 불변·기기 기억·이동 도구 계약을 유지한다.
+- E2E81은 두 제품 경합을 별도로 재현했다. 실제 사용량 다시 읽기 클릭을 root capture/bubble 사이에 끼우면 기존 controlled checkbox의 클릭 의도가 유실되어 `locator.check: Clicking the checkbox did not change its state`가 난다. 저장 뒤 조회2를 실제 accounts 사건의 조회3이 앞지르게 하면, 조회2가 버려졌는데 busy/pending이 먼저 풀려 host에서는 해제한 스위치가 화면에서는 checked=true/disabled=false로 돌아왔다.
+- `AccountAutoAssign`은 click capture에서 실제 선택을 먼저 보존하고 기존 onChange도 유지한다. `useAccountPool`의 동기 잠금이 같은 클릭의 중복 저장을 막는다. 저장 뒤 읽기가 새 읽기에 밀리면 이미 시작한 최신 Promise가 끝날 때까지 기다린다. 요청을 재시도하거나 추가 조회로 성공을 만들지 않는다. host 설정·revision과 최신 읽기만 정본이며 다음 조작은 그 결과와 함께 활성화한다.
+- 기존 E2E81의 같은 네 화면에서 실제 해제→재사용, capture/bubble 사이 부모 갱신과 각각 정확히 한 번의 저장을 검사한다. Chromium 1280px에서 실제 mutation 응답과 세 조회의 전달을 제어해 최신 조회 전 busy/선택 유지·옛 응답 무시를 확인한다. WebKit 390px에서는 실제 요청을 보내기 직전에 다른 CLI 변경을 확정해 revision 충돌을 만들고 원래 사용 상태 복귀·오류 표시·진행 중 계정 불변을 확인한다. native click/input/change·DOM checked/disabled와 비밀 없는 pool 요청/revision/응답은 실패 시 `diagnostics/account-switch-<engine>-<width>.json`에 보존한다. 이 회귀는 실제 클릭 유실과 저장 미완료 상태의 다음 입력을 각각 막기 위해 필요하며 새 실험실·E2E 번호는 늘리지 않는다.
+- 확인: Playwright 1.64.1·내부 공용 브라우저·nice 15·worker 1의 E2E76/81 전체가 각각25.19/13.06초, wall38.25초에 통과했다. 개별 계정 스위치 단계는3.96초, E2E76 정렬 단계는19.96초다. 후자의 기존5초 초과 비용은 별도 d-0385/t-1117 경량화 범위에 남긴다. 웹606유닛·타입 검사·번들도 통과했다. 원래20초 사건/30초 locator·reload/120초 단계 상한과 기존 단언은 유지하며 고정 sleep·중복 클릭·입력값 직접 변경·실패 재시도·시한 확대는 없다. 전체 ci-local·착지는 coordinator의 순서를 기다린다.
+- OSS 후보는 [Playwright 탐색](https://playwright.dev/docs/navigations#waiting-for-navigation)·[checkbox 상태 검증](https://playwright.dev/docs/api/class-locator#locator-check)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [React effect의 응답 순서와 정리](https://react.dev/reference/react/useEffect#fetching-data-with-effects)([MIT](https://github.com/facebook/react/blob/main/LICENSE))다. 사건 소유권·최신 응답·실제 입력 원칙을 참고했으며 외부 코드·의존성은 가져오지 않는다.
+
 ## E2E83 다시 열기의 웹 교체 완료와 실패 처리(t-1100)
 
 - 첫 전체 gate의 유일한 실패는 E2E83의 모든 thread 메뉴 이동이었다. `hashIs(#threads)`는 20초 뒤 새 `#pane=…`에 남았고, 먼저 시작한 대기 Promise가 click 대기보다 먼저 거절되어 Node unhandled rejection으로 child를 끝냈다. 알려진 m13 계정의 labA 연결 실패는 이 실행에서는 없었다.

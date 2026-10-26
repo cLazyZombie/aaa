@@ -47,9 +47,17 @@ const dragTo = async (p, from, target, side) => {
 
 /** 휴대폰 상세의 닫기는 비동기 history.back이다. 기록 복귀 전에 reload하면 새 문서 요청이 취소된다. */
 const closeBeforeReload = async (p, device) => {
-  // 주소는 양쪽 모두 #tasks여서 waitForURL은 복귀 전에 끝난다. 닫기 전에 실제 popstate를 듣는다.
+  // 주소는 양쪽 모두 #tasks다. 앞서 닫은 ⋯ 메뉴의 늦은 popstate는 상세의 복귀가 아니다.
+  // 상세 DOM과 마지막 시트 기록이 모두 사라진 popstate까지 듣는다.
   const rewound = device === "iphone"
-    ? inTime(p.evaluate(() => new Promise(done => addEventListener("popstate", () => done(), { once: true }))), 20_000, "상세 닫기의 기록 복귀")
+    ? inTime(p.evaluate(() => new Promise(done => {
+      const on = () => {
+        if (document.querySelector('[data-testid="task-detail-close"]') || history.state?.["aaa:sheet"]) return;
+        removeEventListener("popstate", on);
+        done();
+      };
+      addEventListener("popstate", on);
+    })), 20_000, "상세 닫기의 마지막 시트 기록 복귀")
     : Promise.resolve();
   await Promise.all([rewound, p.getByTestId("task-detail-close").click()]);
 };
