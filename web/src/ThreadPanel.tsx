@@ -11,6 +11,7 @@ import { OpenFileContext } from "./herdr/filePaths.ts";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { LibraryLink } from "./LibraryLink";
+import { LibraryCopyNotice } from "./LibraryCopyNotice";
 import { ReportMarkdown, TaskAddButton, isDoc } from "./ReportsView";
 import { useFrameImages, useLightbox } from "./Lightbox";
 import { SummaryButton } from "./ThreadSummary";
@@ -161,6 +162,9 @@ export function ThreadPanel({
       <div className={`thread-split${diffPanel.target && !sheet ? " with-diff" : ""}`}>
       <div className="thread-body">
         <div className="thread-col">
+          {t.copy === "partial" && <div className="banner" data-testid="report-copy-partial">보고·결과물 사본에 빠진 파일이 있다.</div>}
+          {lib && <LibraryCopyNotice files={lib.files} />}
+
           <div className="t-hero">
             <h1><ResponsibilityBadge value={t.responsibility} /><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
             {t.over_limit && <p className="muted" data-testid="thread-over-limit-origin">{t.over_limit.actor} · {new Date(t.over_limit.at_ms).toLocaleString()}{t.over_limit.user_request && ` · 사용자 지시: ${t.over_limit.user_request}`}</p>}
@@ -231,7 +235,7 @@ export function ThreadPanel({
                     >
                       {f.path}
                     </a>
-                    {f.on_agent && <span className="tag">agent에서 읽음</span>}
+                    {f.on_agent && <span className="tag">사본에 없음 · agent에서 읽음</span>}
                     <span className="size">{fmtSize(f.size)}</span>
                     {onAddDoc && isDoc(t.id, f) && <TaskAddButton path={f.path} onAdd={onAddDoc} />}
                   </li>

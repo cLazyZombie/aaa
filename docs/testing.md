@@ -4207,3 +4207,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - Windows 두 실기 스크립트는 공통 const 산출물을 읽는다. 격리 폴더에서 두 전체 스크립트의 PowerShell 구문과 실제 인증 JSON의 세 필드를 검증한다. 서비스·예약 작업·Run·사용자 PATH·방화벽 목록의 전후 동일과 시험 폴더 삭제를 확인하며 설치·서비스 시작은 실행하지 않는다.
 - `test_auth_fixture_guard_fails_before_python_and_rust_execution`은 격리한 실제 ci-local에 업무 단어 토큰을 넣어 Python·Rust owner 실행 전 실패와 원문 없는 경로·줄 진단을 확인한다. 필요한 이유는 검사 함수를 호출하는 유닛만으로 CI 진입 연결을 대신할 수 없기 때문이다.
 - 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 부분 검증 뒤 전체 gate와 묶음 착지는 coordinator의 순서를 기다린다. OSS 후보·라이선스·채택한 원칙은 위 문서에 있다.
+
+## 보고 사본 핵심 근거 우선 선택(t-1132, §8.506)
+
+- `nice -n 15 cargo test --profile verify --locked -p aaa-agent --lib report_copy`의 `real_size_budget_preserves_report_links_and_small_evidence_before_images`는 실제 2,399개 sparse 파일(metadata 크기: 중간 PNG 2,390×224KiB·요약 6×1KiB·연결 JSON 2KiB·그림 2MiB·영상 201MiB)에서 200MiB 상한과 근거 보존·선택 순서·누락 크기/이유를 확인한다. 필요한 이유: 이름순 그림이 작은 근거를 밀어내던 실제 규모 회귀를 막는다. 큰 본문을 읽지 않는 제품 선택 함수를 직접 호출해 불필요한 수백 MiB 해시 없이 검증한다.
+- `collect_keeps_priority_hashes_and_skips_without_following_symlinks`는 작은 실제 collect로 Markdown·참조 정의·percent 주소·공백·HTML·본문 경로의 선택 순서와 원문 hash/파일 SHA-256·상한 0 probe·symlink 거부를 확인한다. 필요한 이유: 선택 단위 시험이 대신할 수 없는 실제 전송 manifest와 원문 보존을 지킨다. 새 회귀 두 개는 합계 0.46초로 확인했다.
+- 기존 E2E12의 실제 부분 사본 thread에서 배너·누락 경로·파일 행 표시를 확인한다. 기존 E2E73은 실제 thread의 HTML/Markdown 보존 판에 누락이 남는지 Chromium/WebKit ×1280/390px에서 각각 확인한다. 필요한 이유: HTML iframe을 보거나 원래 thread가 정리된 뒤 r 판을 읽을 때도 누락이 숨지 않아야 한다. 응답·DOM 사건으로 끝내며 고정 sleep·재시도·시한 확대는 없다.
+- 전체 gate는 coordinator에게 준비됨을 알리고 받은 차례에 실행한다. 후보를 push하지 않고 병합 준비 보고를 남기며 운영 DB·설정과 원래 worktree는 건드리지 않는다.
+
+- 첫 전체 gate(4dc867f5, 418초)는 E2E42 하나만 실패했다. 같은 실행 파일·실제 thread에서 경고 띠만 숨긴 대조는 diff 본문 높이360.5→433.5px·파일 머리4→6개를 보였다. 새 경고가 가상화 경계 밖으로 두 머리를 밀어낸 원인이다. thread 안내를 `.thread-col` 스크롤 안으로 옮겨 옆 diff 높이를 보존한다. E2E42의 원래 6개·선택 파일·20초 단언을 그대로 검증하며 진단용 DOM 숨김은 제품·정규 시험에 넣지 않는다. 수리 후 전체 gate는 새 차례를 받아 실행한다.
