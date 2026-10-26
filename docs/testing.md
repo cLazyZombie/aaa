@@ -4091,3 +4091,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 제품 확인: 마우스 보고 중 제자리 클릭은 `Term.tsx` `forwardClick`이 합성 누름·뗌을 한 처리 안에서 연달아 보낸다. 같은 spec에 마우스 사건·WebSocket 전송 기록을 잠시 넣어 돌린 실행에서 WebKit 390도 두 보고를 같은 ms(15633)에 보냈다. 따라서 실패 때 누름 뒤 약 120ms 늦은 뗌은 보기 전환 중의 뗌 처리 결함이 아니라, 부하 중 전달 경로에서 생긴 간격으로 본다. 그 간격에 다른 경로의 quit이 끼어들었다. 실패 run의 브라우저 전송 시각은 기록에 없어 직접 관측하지는 못했다.
 - 수리: `quit()` 전에 harness가 입력마다 새로 쓰는 `shell-input` 기록에서 button 0의 `M`·`m` 수신을 사건으로 기다린다(기존 `until` 20초 한도). 기존 단언·시한은 바꾸지 않았다. 경합이라 수리 전 RED는 결정적으로 재현하지 않았다.
 - 확인: `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 93 --workers 2` 통과(2/2).
+
+## 예약의 실제 대기 이유와 읽기 전용 조회(t-1106)
+
+- 운영의 `account-quota-v1/<계정>`에는 `CodexRpc`의 성공한 primary 주간 창(10080분)이 있었다. 수집 자체의 부재와 5시간·주간 두 창을 강제하는 배정 정책을 구별한다. 등록 Codex는 host `quota_report` → 격리 `codex app-server` → `account/rateLimits/read` → 공통 정규화 → 로그인 세대별 SQLite 관측 경로다. ticker의 `refresh_usage`도 수집하므로 계정 화면이 없어도 갱신한다. agent의 `quota.json` 상태줄 경로는 Claude용이다.
+- [공식 App Server 문서](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)와 [Codex RateLimitSnapshot](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/RateLimitSnapshot.ts)([Apache-2.0](https://github.com/openai/codex/blob/main/LICENSE))은 primary·secondary를 각각 nullable로 정의한다. [BullMQ QueueGetters](https://github.com/taskforcesh/bullmq/blob/master/src/classes/queue-getters.ts)([MIT](https://github.com/taskforcesh/bullmq/blob/master/LICENSE))의 상태 조회와 변경 분리를 참고했다. 외부 코드·의존성은 가져오지 않는다.
+- `account_wait_does_not_hide_the_next_reservations_actual_reason`은 실제 Host·SQLite·가짜 agent 조회로 병합 대기·착지·보류·계정 풀의 만료 인증을 함께 만든다. 앞 예약의 계정 대기 뒤 예약도 자기 머신 조건을 판정해야 한다. 필요 이유: 모든 `start_wait`를 자리 부족으로 취급하여 뒤 예약이 「자리 대기」로 가려진 회귀를 막는다. t-1107의 사용량 판단 불가 실행 정책은 그대로 두고 확실한 인증 오류를 fixture로 쓴다. 실제 자리 부족의 차례 보존은 기존 `slot_released_during_queue_scan_does_not_bypass_the_moved_front`가 계속 지킨다.
+- `queue_query_preserves_approval_order_reason_and_history`는 Reader의 `QueueOp::List` 반복 조회 전후 승인판·차례·원인·시각·TASKS.md·변경 이력이 같음을 확인한다. 필요 이유: 조회를 위해 reserve를 다시 호출하여 기존 원인과 승인판을 덮는 운영 실수를 예방하고 읽기 계약을 지킨다. CLI는 기존 `aaa task queue --json`을 쓴다.
+- 기존 `fake_rpc_reads_without_threads_turns_or_raw_credentials_and_cleans_each_home`에 primary가 주간이고 secondary가 null인 응답을 추가한다. 필요 이유: 단일 주간 관측이 수집 성공으로 보존되고 없는 5시간 창을 합성하지 않음을 실제 helper 교환으로 확인한다. 인증 canary 제외·무작업 RPC·임시 홈 정리 단언을 유지한다. 새 debug 진단은 원문의 창 개수와 정규화된 기간만 기록해 제공자 부재와 파싱 탈락을 구별하며 인증·원문은 기록하지 않는다.
+- 배정 정책은 별도 t-1107 범위다. 이 시험은 해당 선택 함수를 바꾸지 않는다. 관련 검사만 자기 worktree에서 실행하고, 전체 gate·병합·push는 coordinator의 묶음 착지 차례에 맡긴다.

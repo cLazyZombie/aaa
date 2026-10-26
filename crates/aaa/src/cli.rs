@@ -620,7 +620,7 @@ enum InboxCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
-    /// 예약과 실행 연결을 읽는다
+    /// 예약 차례·실제 대기 이유·실행 연결만 읽는다(예약을 바꾸지 않음)
     Queue,
     /// 현재 내용으로 실행을 승인하고 자리 대기에 넣는다(같은 예약의 내용 갱신도 이 명령)
     Reserve {

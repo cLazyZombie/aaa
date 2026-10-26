@@ -139,6 +139,8 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 할 일을 자리 나면 시작하려면 설명·완료 범위 메모와 저장소(또는 `작업 폴더`)를 저장한 뒤
 `aaa task reserve d-0001`로 그 내용의 실행을 승인한다. 기본 모델도 예약 시점에 고정한다.
 `aaa task queue`는 차례·모델/effort·머신·대기 사유·실제 thread를 읽는다.
+`aaa task queue --json`도 같은 읽기 전용 조회이며 승인판·차례·대기 이유·변경 시각을 바꾸지 않는다.
+목록만 보려고 `reserve`를 다시 부르지 않는다. `reserve`는 지금 내용으로 실행 승인을 갱신하는 변경이다.
 `aaa task unreserve <task ID>`는 예약을 취소하며 실행 중인 thread는 그대로 둔다.
 `aaa task queue-move <task ID> <순번>`으로 차례를 바꾼다(1부터, 0은 맨 앞).
 내용을 고쳤으면 확인 후 같은 `reserve` 명령으로 승인판을 갱신한다. 파일 직접 수정도 이전 승인으로 시작하지 않는다.

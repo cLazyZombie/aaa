@@ -490,6 +490,7 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
   자리가 났을 때 다시 묻지 않는다. 병합 승인은 별개다. `start_threads=propose`에서는 사용자에게 맡긴 범위만 예약한다.
 - `aaa task queue`로 host의 차례·대기 사유·연결 thread를 읽는다. `aaa task unreserve <task ID>`는 미기동 예약만 취소하며,
   `aaa task queue-move <task ID> <순번>`은 차례 변경(0은 맨 앞)이다. 가능한 예약 중 앞 것을 host가 시작한다.
+  조회만 할 때는 `aaa task queue --json`을 쓴다. `reserve` 재호출은 실행 승인·대기 이유를 갱신하는 변경이다.
   앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 사용자 지시 없이 고정 모델·머신은 바꾸지 않는다.
 - 사용자가 채팅에서 모델·머신 변경을 지시하면 coordinator도 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 바꾼다.
   바꿀 칸만 주고 근거 한 줄을 남긴다. 다른 칸은 따로 고친다. 미기동 예약은 취소하지 않고 순서 그대로 새 선택으로 시작한다.
