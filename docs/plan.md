@@ -8089,3 +8089,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **받는 경계.** host는 살아 있는 요청 ID만 조립하고 offset·전체 길이·중복 시작·조각 크기·합계 상한·최종 JSON의 Res 종류/ID를 확인한다. 시한이 지나거나 취소된 자료는 다음 수신 사건에 버리고, 연결 종료 때 전부 버린다. 순서가 잘못된 조각은 그 요청만 실패시키며 연결과 다른 요청은 계속한다. 조립한 응답은 기존 decode·가림·적용 경계를 그대로 거친다. `report_copy.v2`는 원본 전체 hash를 먼저 확인한 뒤 저장 전에 가리는 순서를 유지한다.
 - **실패 격리.** 공통 송신부는 종류 byte까지 검사해 wire 쓰기 전에 크기 오류를 호출자에 돌린다. writer의 방어 검사도 길이 초과 frame을 소비하고 다음 frame으로 진행한다. I/O 실패와 잘못된 터미널 codec/대기열 처리는 기존 연결 복구 정책을 유지한다. 큰 응답 진단에는 요청 ID·종류·바이트·상한을 남기며 본문은 남기지 않는다. 분할 JSON 해석 실패도 원문 대신 오류 종류·위치를 기록한다.
 - **참고.** [Tokio LengthDelimitedCodec](https://github.com/tokio-rs/tokio/blob/master/tokio-util/src/codec/length_delimited.rs)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))의 쓰기 전 길이 검사와 [nats.go](https://github.com/nats-io/nats.go/blob/main/nats.go)([Apache-2.0](https://github.com/nats-io/nats.go/blob/main/LICENSE))의 최대 payload 사전 거부를 참고했다. 외부 코드·의존성은 추가하지 않는다.
+
+### 8.506 자동화 시작 thread의 Next 책임(t-1133)
+
+- 자동화 `do.start`가 시작 때 저장한 `ThreadRec.automation`을 근거로 완료 Next를 후속 원장 수집에서 제외한다. 보고와 `ThreadView.next`는 유지한다. 자동화 파일의 현재 존재·켜짐, thread 제목·감시 문구는 판정에 쓰지 않는다. 시작 출처 없는 옛 기록과 사람이 시작한 thread는 기존 후속 보호를 유지한다.
+- 구판이 수집한 자동화의 미처리 항목은 보고 회수·마지막 resolve 또는 끝난 thread의 기존 정리 순회에서 host가 다음 자동 실행의 책임으로 인계한다. 원본 줄·판·ID는 보존하고 자동화 이름을 담은 사유·host actor·시각을 남긴다. 이미 처리한 task 연결·사유 영수증은 바꾸지 않는다. 판정이 끝났거나 연결 task가 없는 기록도 회수하며 기존 후속 inbox를 닫는다. 인계 저장 실패는 원인과 thread를 경고하고 다음 정상 순회에 남긴다.
+- 일반 thread의 Next 교체·inbox 정리·완료/삭제/연결 해제 차단과 명시적 처리 규칙은 유지한다. 새 FRONT_API·AGENT_LINK·웹 E2E 번호·의존성은 없다. 운영 DB·설정은 수정하지 않는다.
+- 참고: [Temporal Workflow ID와 Run ID](https://docs.temporal.io/workflow-execution/workflowid-runid)([MIT](https://github.com/temporalio/temporal/blob/main/LICENSE))의 반복 작업과 개별 실행 구분, [Actions 실행 context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)([runner MIT](https://github.com/actions/runner/blob/main/LICENSE))의 workflow/event 출처를 비교했다. 문구 대신 영속 출처로 책임을 정하는 원칙만 적용하며 외부 코드는 복사하지 않는다.

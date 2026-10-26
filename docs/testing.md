@@ -4194,3 +4194,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - 두 번째 전체 gate는 Rust 전체가 통과하고 E2E53의 수정 M3 카드에서 `thread-ask-pick-2B`를 기다리다 실패했다. 보존 DB에는 broken M3의 두 질문 직접 답이 이미 asks에 기록되고 수정 보고에는 원문1번만 남아 있었다. 답한2번을 새 중복 방지가 정상 제외한 것이다. 기존 owner는 전달 전 claim인 `questions.answer`만 보고 다음 보고를 써 실제 원문 보존 순서에 따라 결과가 갈렸다.
 - E2E53의 해당 owner에서 이전 답의 시각·질문ID가 실제 asks 원문에 보존된 사건 뒤 다음 보고를 쓴다. 같은 원문을 복구하면 답한2번이 제외됨을 먼저 확인하고, 다시 판단할2번은 질문 제목으로 새 판단임을 명시해 원래 두 질문·3/2개 선택지·정확한 `1C 2B` 전달 단언을 유지한다. 원본 M3 fixture·제품 중복 방지·시한은 바꾸지 않는다. 필요한 이유는 전송 전 claim과 실제 답 보존을 구별하며 새 질문과 답한 질문의 기존 두 계약을 모두 지키기 위해서다. 해당 파일 전체의 부분 검증은82.1초에 통과했고 최종 추가 단언은 전체 gate에서 확인한다.
+
+## 자동화 시작 thread의 Next 제외(t-1133, §8.506)
+
+- `followups::tests::automation_origin_skips_next_but_same_named_human_thread_keeps_protection`은 실제 SQLite·보고·TASKS·inbox·Host 재열기로 자동화의 Next 미수집과, 같은 이름/감시 문구인 일반 thread의 원장·보관 차단 유지를 검사한다. 필요한 이유: 문구 추측이나 자동화 설정 조회로 사람의 후속을 없애는 회귀를 막는다.
+- `followups::tests::legacy_automation_next_handoff_is_durable_and_preserves_explicit_receipts`은 이미 판정한 구판 미처리 항목을 정상 정리 순회로 인계하고 원본 ID/판/줄·자동화 이름/host/시각·기존 명시 영수증·inbox 종료·보관·재기동/재순회 불변을 검사한다. 필요한 이유: 새 보고가 없는 종료 감시 thread의 후속 경고도 수동 사유 입력 없이 해소하고 이전 처리 근거를 보존해야 한다.
+- 기존 m13 `automation_thread_reports_do_not_wake_their_own_rule`에 실제 do.start 출처의 완료 Next 표시 유지·후속 미수집·일반 시작의 수집 대조를 추가한다. 새 프로세스 실험실·E2E 번호를 늘리지 않는다. 기존 자동화 보고 사건의 순서/자기 재실행 방지 단언은 유지한다.
+- 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib followups::tests`와 `nice -n 15 cargo test --profile verify --locked -p aaa --test m13 automation_thread_reports_do_not_wake_their_own_rule`다. 개별 새 시험은 보통 부하에서 5초 이하로 유지하고 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 전체 gate는 coordinator가 정한 같은 머신의 실행 차례를 받아 실행한다.

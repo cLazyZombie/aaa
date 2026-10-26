@@ -134,7 +134,7 @@ const CORE_BODY: &str = "
    기억한 것이 아니라 context가 보인 것으로 일한다. context가 보인 inbox 항목은 「봤다」가 되어 다음 알림에 다시 나오지 않는다.
 2. inbox 항목을 처리하고, 처리한 항목은 `aaa inbox done <id…>`로 끝낸다. `[aaa inbox] …` 알림을 받으면
    `aaa inbox list`로 읽는다.
-3. 완료 thread를 resolve하기 전 보고·요약의 Next를 확인한다. 후속 할 일에 잇거나 명시적 버림·정리 완료 사유를 기록한다(`aaa guide tasks`의 후속 규칙).
+3. 완료 thread를 resolve하기 전 보고·요약의 Next를 확인한다. 후속 할 일에 잇거나 명시적 버림·정리 완료 사유를 기록한다(`aaa guide tasks`의 후속 규칙). 자동화 시작 출처가 있는 thread의 Next는 그 자동화의 다음 실행이 맡으므로 제외한다.
 4. 사용자에게 답한다.
 
 ## 첫 턴
@@ -233,6 +233,8 @@ thread의 [완료] 보고와 resolve한 마지막 보고는 aaa가 「내 보고
   후속 등록은 시작·병합 승인과 별개다. 승인 대기 일도 기록하며 임의로 실행하지 않는다.
   정리만 남으면 Next에 `정리: worktree와 branch를 지운다`처럼 쓴다. 문구로 자동 제외하지 않으며 정리 후 완료 사실을 사유로 기록한다.
   일반 inbox done·완료 체크·연결 해제로 후속을 닫지 않는다. 후속은 새 보고·resolve 뒤에도 남는다.
+  단, 시작 출처에 자동화가 기록된 thread의 Next는 그 자동화의 다음 실행이 맡아 수집하지 않는다. 이름·문구로 제외하지 않는다.
+  구판의 자동화 미처리 항목은 host가 자동화 이름·시각·인계 사유를 기록하며, 이미 처리한 영수증은 보존한다.
 - 끝난 thread의 task는 host가 정리한다. 「확인 필요」(inbox `task needs check`)로 남은 task만 끝났는지·다시 맡길지·연결만 풀지
   묻는다(이미 물었으면 묻지 않는다). thread가 끝난 턴에 미할당이나 agent에게 맡긴 task가 기다리면 한 번 말하고 맡길지 묻는다.
 
@@ -430,6 +432,7 @@ const THREADS: &str = r#"# thread 다루기
 - 끝난 thread의 보고·요약에 Next가 남으면 resolve 전에 후속 할 일을 만들고 원장에 연결하거나, 일부러 버림을 사유로 기록한다.
   `aaa thread show <id>`의 후속 ID로 `aaa thread followup <id> --id <후속 ID> --task <d-ID>` 또는 `--reason-file <파일>`을 쓴다.
   정리만 남으면 정리 후 완료 사실을 사유로 기록한다. [완료]만 보고 후속을 생략하거나 inbox 정리로 닫지 않는다.
+  자동화 시작 출처가 있는 thread의 Next는 다음 자동 실행의 책임이므로 제외한다. 사람이 같은 이름·문구로 시작하면 보호한다.
 - 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
   `aaa thread resolve <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
 - aaa가 thread의 PR을 따라간다. 열리고 승인되면 묶음이 「병합 중」이고, 병합되면 agent가 끝낸 뒤(진행 보고 `Done`, 아니면 병합 뒤
