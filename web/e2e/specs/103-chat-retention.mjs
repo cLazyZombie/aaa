@@ -4,9 +4,10 @@ import fs from "node:fs";
 import { root, AA, aaa, step, browser, webkit, pairPage, waitOutput, until, domIs, shot, inTime } from "../lib/harness.mjs";
 import { frames, shown, go, prepare } from "../lib/chat-retention.mjs";
 import { retentionFailure } from "../lib/retention-failure.mjs";
+import { retentionProtocol } from "../lib/retention-protocol.mjs";
 const baseline = process.env.AAA_CHAT_BASELINE === "1";
 const measurements = [];
-const diagnosticDir = `${root}/diagnostics`;
+const diagnosticDir = process.env.AAA_CHAT_DIAGNOSTICS || `${root}/diagnostics`;
 fs.mkdirSync(diagnosticDir, { recursive: true });
 const retentionLog = event => {
   const line = JSON.stringify({ at: Date.now(), ...event });
@@ -40,6 +41,7 @@ async function check(engine, width, panes, delayed = false) {
         context.on("response", r => { if (r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "pane_chat") replies.push(r); });
       } });
       const { page } = ph;
+      const protocol = engine.browserType().name() === "chromium" ? retentionProtocol(page, diagnosticDir) : null;
       const pane = panes[role];
       const first = await measure(page, pane);
       await page.locator('.term:not([hidden]) [data-testid="terminal"][data-readonly="false"]').waitFor({ state: "attached" });
@@ -62,6 +64,7 @@ async function check(engine, width, panes, delayed = false) {
       for (let n = 0; n < 6; n++) {
         const context = { engine: engine.browserType().name(), width, role, trial, pageNo: n, pane,
           phase: "count", before: null, beforeState: null };
+        protocol?.at(context);
         retentionLog({ event: "start", ...context });
         try {
           const before = await shown(page).locator('.chat-row').count();
@@ -90,6 +93,8 @@ async function check(engine, width, panes, delayed = false) {
                 older: el.querySelector(".chat-older")?.textContent, error: el.querySelector(".banner")?.textContent,
                 nodes: el.querySelectorAll("*").length, height: el.clientHeight } : { absent: true, hash: location.hash };
             }), 5000, "앞 쪽 실패 진단"));
+        } finally {
+          protocol?.at(null);
         }
       }
       const row = await shown(page).locator('.chat-row').nth(40).evaluate(el => {
