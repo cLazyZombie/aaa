@@ -4191,3 +4191,5 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `collect_keeps_priority_hashes_and_skips_without_following_symlinks`는 작은 실제 collect로 Markdown·참조 정의·percent 주소·공백·HTML·본문 경로의 선택 순서와 원문 hash/파일 SHA-256·상한 0 probe·symlink 거부를 확인한다. 필요한 이유: 선택 단위 시험이 대신할 수 없는 실제 전송 manifest와 원문 보존을 지킨다. 새 회귀 두 개는 합계 0.46초로 확인했다.
 - 기존 E2E12의 실제 부분 사본 thread에서 배너·누락 경로·파일 행 표시를 확인한다. 기존 E2E73은 실제 thread의 HTML/Markdown 보존 판에 누락이 남는지 Chromium/WebKit ×1280/390px에서 각각 확인한다. 필요한 이유: HTML iframe을 보거나 원래 thread가 정리된 뒤 r 판을 읽을 때도 누락이 숨지 않아야 한다. 응답·DOM 사건으로 끝내며 고정 sleep·재시도·시한 확대는 없다.
 - 전체 gate는 coordinator에게 준비됨을 알리고 받은 차례에 실행한다. 후보를 push하지 않고 병합 준비 보고를 남기며 운영 DB·설정과 원래 worktree는 건드리지 않는다.
+
+- 첫 전체 gate(4dc867f5, 418초)는 E2E42 하나만 실패했다. 같은 실행 파일·실제 thread에서 경고 띠만 숨긴 대조는 diff 본문 높이360.5→433.5px·파일 머리4→6개를 보였다. 새 경고가 가상화 경계 밖으로 두 머리를 밀어낸 원인이다. thread 안내를 `.thread-col` 스크롤 안으로 옮겨 옆 diff 높이를 보존한다. E2E42의 원래 6개·선택 파일·20초 단언을 그대로 검증하며 진단용 DOM 숨김은 제품·정규 시험에 넣지 않는다. 수리 후 전체 gate는 새 차례를 받아 실행한다.

@@ -159,11 +159,12 @@ export function ThreadPanel({
       <ResponsibilityBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       <ParkBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       {t.copy === "failed" && <div className="banner" data-testid="report-copy-failed">보고·결과물 사본을 다시 받는 중이다. 마지막으로 받은 내용과 작업 상태를 유지한다.</div>}
-      {t.copy === "partial" && <div className="banner" data-testid="report-copy-partial">보고·결과물 사본에 빠진 파일이 있다.</div>}
-      {lib && <LibraryCopyNotice files={lib.files} />}
       <div className={`thread-split${diffPanel.target && !sheet ? " with-diff" : ""}`}>
       <div className="thread-body">
         <div className="thread-col">
+          {t.copy === "partial" && <div className="banner" data-testid="report-copy-partial">보고·결과물 사본에 빠진 파일이 있다.</div>}
+          {lib && <LibraryCopyNotice files={lib.files} />}
+
           <div className="t-hero">
             <h1><ResponsibilityBadge value={t.responsibility} /><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
             {t.over_limit && <p className="muted" data-testid="thread-over-limit-origin">{t.over_limit.actor} · {new Date(t.over_limit.at_ms).toLocaleString()}{t.over_limit.user_request && ` · 사용자 지시: ${t.over_limit.user_request}`}</p>}
