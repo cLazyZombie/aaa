@@ -83,10 +83,10 @@ function routeWire(stats, bps = 1e9, rtt = 1) {
   };
 }
 
-export default async function ({ page: initialPage }) {
+export default async function ({ page }) {
   let corpusFixture;
   await step("압축 Worker 로드: Chromium·WebKit 두 폭에서 외부 자산 없이 기동·실패 복구·입력", async () => {
-    const response = await initialPage.request.get(base);
+    const response = await page.request.get(base);
     const policy = response.headers()["content-security-policy"].split(";").map(directive => directive.trim());
     assert.ok(policy.includes("worker-src 'self' blob:"));
     assert.ok(policy.includes("script-src 'self'"), "앱 스크립트 정책은 그대로 유지한다");
