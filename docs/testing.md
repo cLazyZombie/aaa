@@ -4156,6 +4156,7 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 ## E2E12 본문 관측과 실패 자식의 소유권(t-1123, 76회차)
 
+- 78회차의 추가 경계: 다운로드 완료(`requestfinished`) 뒤에도 Node의 `response.body()` protocol 호출이 문서 교체보다 늦게 도착할 수 있다. 실제 Chrome에서 본문 호출만 사건 gate로 보류→문서 교체→gate 해제로 `No resource with given identifier found`를 재현한다. 읽는 중인 요청도 같은 page의 실제 timeOrigin 교체를 기록하며, 이때 잃은 본문만 취소 꼬리로 구분한다. 본문을 받은 뒤의 JSON/내용 오류와 현재 문서의 body 오류는 계속 실패한다. 기존 수명 회귀에 이 경계와 현재 문서 오류 대조를 더했으며 새 단계·시한·번호는 없다. 필요한 이유: 헤더만 온 요청과 다운로드까지 끝난 요청은 서로 다른 protocol 수명을 갖는다. 수리 후 전체 E2E12 50.5초, 새 경계 포함 수명 회귀0.120초였다.
 - 앞선 `5d088c34`는 route handler 해제→context 닫기, `df399e30`은 두 완전 목록의 실제 body 수집과 재연결 제품 상태, `e3bcc847`은 복제한 후속 원장 제거와 route 오류 회수를 고쳤다. 이번도 같은 비동기 수명 경계 계열이지만, 완료 전 HTTP 본문 Promise와 단계에서 분리된 WebKit 생성의 소유권은 그 수리에 포함되지 않았다. 세 수리의 기존 단언은 유지한다.
 - 첫 76회차 gate는 Chromium 초기 문서의 요청32가 헤더 뒤 미완료였고 reload 뒤에도 `response.body()`가 남아 `reads()`의 `Promise.all`이 끝나지 않았다. 기존120초 단계 제한이 browser.close를 시작한 뒤에야 body 오류가 나왔다. 작은 실제 HTTP 서버에서 헤더/부분 본문→문서 교체→서버 본문 종료까지도 기존 body Promise가 pending이고 browser.close 뒤에만 거절되는 것을 사건으로 재현했다. route.fetch·fulfill 완료만 기다리는 것으로는 이 브라우저 protocol 수명을 끝낼 수 없다.
 - 이제 `response`에는 객체만 보관하고 `requestfinished` 뒤 본문을 수집한다. 초기 문서의 이미 완료한 body 작업은 reload 전 회수한다. 실제 main frame의 timeOrigin 교체로 중단된 꼬리는 `navigation-aborted`/`cancelled-tail`로 기록하고, 앞 커서·중복·정확한 목록 접두사를 검사한다. 취소 꼬리는 완전 페이지로 세지 않는다. 정상 응답은 여전히 상태200·frame/페이지 상한·ID 순서·고유값·전체 개수와 두 완전 reload 읽기를 모두 검사하며 현재 문서의 네트워크/본문 오류는 실패다. 알려진 미완료 요청을 성공 페이지로 바꾸거나 버리지 않는다.
