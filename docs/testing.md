@@ -1,3 +1,12 @@
+## 큰 응답 회귀의 단계 계측과 평문 가림 비용(t-1141)
+
+- 기존 `large_report_and_bad_parts_keep_requests_on_one_link`의 5초 상한 안에서 Host::open·manifest 준비·Welcome/pong·hash·큰 보고·분할 경계 가림·손상 조각·다음 요청·fake 종료·host reader 종료·파일 정리의 단계/전체 경과를 남긴다. 상한에 걸리면 마지막 단계와 전체 경과를 panic에 남겨 전송 비용과 종료 정지를 구별한다. 14,781개 manifest와 2MiB 초과 보고, 원본/hash 보존, 경계 가림, 오류 요청 격리와 같은 generation의 다음 입력 단언은 그대로다.
+- 가림의 원문 창과 ANSI/CR/LF를 뺀 글의 창은 평문에서 같다. 평문은 원문 검사를 한 번만 하고 위치 배열과 두 번째 글 배열/검사를 만들지 않는다. ANSI/개행이나 이전 청크의 미완성 ESC가 있으면 기존 두 경로를 유지한다. 원문·겹친 8바이트 창·접두부 보류·끝 flush 의미를 바꾸지 않는다.
+- 기존 `stream_keeps_no_secret_across_any_ansi_or_chunk_boundary_and_flushes_the_tail`에 평문·CR/LF를 더하고 CSI와 함께 모든 두 청크 경계를 검사한다. 전체 인증 문자열이 별표로 바뀌고 앞뒤 비밀 아닌 글과 ANSI가 보존되는 독립 기대값도 확인한다. 필요한 이유: 빠른 평문 경로와 ANSI/개행 경로를 오갈 때 접두부가 새거나 원문을 놓치는 회귀를 막기 위해서다. 시험 삭제·새 E2E 번호·고정 sleep·재시도·시한 확대·기대값 완화는 없다.
+- 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib redact`, host의 `--lib large_report_and_bad_parts`와 `--lib`, 두 crate의 strict clippy다. Windows는 전용 시험 폴더에서 같은 owner와 host 전체를 실행하며 서비스·예약 작업·Run 키·사용자 PATH·방화벽 규칙의 전후 목록을 대조한다. 전체 ci-local과 착지는 coordinator가 준 차례에 실행한다.
+- 같은 기본 병렬 host 전체 실행에서 대상은 macOS 3.166→1.241초, Windows 5.251초 상한 실패→2.230초 완료였다. 가림 단계는 각각 1.060→0.371초·4.708→1.499초다. Windows 수정 전은 가림을 마친 뒤 다음 손상 조각 대기에서 이미 지난 5초 상한이 보고됐다. 단독은 macOS 1.293→0.868초·Windows 0.873→0.719초다. 각 전후 한 번의 관측이며 원래 macOS CI 실패를 재현했다는 뜻은 아니다. Windows의 별도 `an_installed_machine_gets_a_check_pane_and_a_login_pane`는 수정 전부터 끝 확인 줄 대기에 실패하여 이 후보의 수리 범위와 분리한다.
+- 참고 후보는 [Tokio duplex/역압](https://docs.rs/tokio/latest/tokio/io/fn.duplex.html)·[task 종료](https://docs.rs/tokio/latest/tokio/task/struct.JoinSet.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))와 [Hyper 연결 종료 정리](https://github.com/hyperium/hyper/blob/master/src/proto/h1/dispatch.rs)([MIT](https://github.com/hyperium/hyper/blob/master/LICENSE))다. 종료 사건과 소유권을 대조했고 외부 코드·의존성은 추가하지 않는다.
+
 ## 큰 agent 응답과 보고 hash 확인(t-1131, §8.505)
 
 - 공통 `response_parts`의 사고 회귀는 원본 9,820바이트·빈 파일35개·건너뛴 파일14,746개를 합쳐 운영 사고와 정확히 같은 2,232,861바이트 frame을 만든다. 실제 duplex/writer/FrameRx에서 6조각의 원문 동일성과 구판의 `too_large`, 잘못된 큰 제어 frame 거부 뒤 같은 연결의 pong·다음 요청을 검사한다. 필요한 이유: 한 큰 응답이 모든 agent 요청과 재연결을 끊던 회귀를 실제 포장/전송 경계에서 막는다.

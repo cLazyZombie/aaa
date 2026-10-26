@@ -138,43 +138,47 @@ impl Stream {
             }
         }
         let mut visible = Vec::new();
-        let mut i = 0;
         let mut incomplete = None;
-        while i < self.pending.len() {
-            if self.pending[i] == 27 && self.pending.get(i + 1).is_none() {
-                incomplete = Some(i);
-                break;
-            }
-            if self.pending[i] == 27 && self.pending.get(i + 1) == Some(&b'[') {
-                let start = i;
-                i += 2;
-                while i < self.pending.len() && !(0x40..=0x7e).contains(&self.pending[i]) {
-                    i += 1;
-                }
-                if i == self.pending.len() {
-                    incomplete = Some(start);
+        // 평문은 원문 창과 보이는 글의 창이 같다. 중복 검색과 바이트별 위치 배열을 만들지 않는다.
+        // 이전 청크의 미완성 CSI가 남았다면 ESC가 포함돼 기존 경로로 이어진다.
+        if self.pending.iter().any(|byte| matches!(byte, 27 | b'\r' | b'\n')) {
+            let mut i = 0;
+            while i < self.pending.len() {
+                if self.pending[i] == 27 && self.pending.get(i + 1).is_none() {
+                    incomplete = Some(i);
                     break;
                 }
+                if self.pending[i] == 27 && self.pending.get(i + 1) == Some(&b'[') {
+                    let start = i;
+                    i += 2;
+                    while i < self.pending.len() && !(0x40..=0x7e).contains(&self.pending[i]) {
+                        i += 1;
+                    }
+                    if i == self.pending.len() {
+                        incomplete = Some(start);
+                        break;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if !matches!(self.pending[i], b'\r' | b'\n') {
+                    visible.push((i, self.pending[i]));
+                }
                 i += 1;
-                continue;
             }
-            if !matches!(self.pending[i], b'\r' | b'\n') {
-                visible.push((i, self.pending[i]));
-            }
-            i += 1;
-        }
-        let text: Vec<u8> = visible.iter().map(|x| x.1).collect();
-        for (at, n) in text.windows(8).enumerate() {
-            if rules.needles.contains(<&[u8; 8]>::try_from(n).unwrap()) {
-                for (raw, _) in &visible[at..at + 8] {
-                    self.masked[*raw] = true;
+            let text: Vec<u8> = visible.iter().map(|x| x.1).collect();
+            for (at, n) in text.windows(8).enumerate() {
+                if rules.needles.contains(<&[u8; 8]>::try_from(n).unwrap()) {
+                    for (raw, _) in &visible[at..at + 8] {
+                        self.masked[*raw] = true;
+                    }
                 }
             }
         }
         let mut cut = self.pending.len();
         if !end {
-            for n in 1..=7.min(text.len()) {
-                let start = text.len() - n;
+            for n in 1..=7.min(visible.len()) {
+                let start = visible.len() - n;
                 let suffix: Vec<u8> = visible[start..].iter().map(|(_, byte)| *byte).collect();
                 if rules.prefixes.contains(&suffix) {
                     cut = cut.min(visible[start].0);
@@ -364,17 +368,26 @@ mod tests {
     fn stream_keeps_no_secret_across_any_ansi_or_chunk_boundary_and_flushes_the_tail() {
         let secret = &*aaa_test_support::token("redaction-stream");
         remember(secret);
-        let input = format!("before {}\x1b[31m{}\x1b[0m after-prefix", &secret[..10], &secret[10..]);
-        let input = input.as_bytes();
-        let expected = bytes(input);
-        for cut in 0..=input.len() {
-            let mut stream = Stream::default();
-            let mut out = stream.push(&input[..cut], false);
-            out.extend(stream.push(&input[cut..], false));
-            out.extend(stream.push(&[], true));
-            assert_eq!(out, expected, "chunk cut {cut}");
-            assert!(out.ends_with(b" after-prefix"));
+        for input in [
+            format!("before {secret} after-prefix"),
+            format!("before {}\x1b[31m{}\x1b[0m after-prefix", &secret[..10], &secret[10..]),
+            format!("before {}\r\n{} after-prefix", &secret[..10], &secret[10..]),
+        ] {
+            let input = input.as_bytes();
+            let expected = bytes(input);
+            let visible = String::from_utf8_lossy(&expected)
+                .replace("\x1b[31m", "")
+                .replace("\x1b[0m", "")
+                .replace(['\r', '\n'], "");
+            assert_eq!(visible, format!("before {} after-prefix", "*".repeat(secret.len())));
+            for cut in 0..=input.len() {
+                let mut stream = Stream::default();
+                let mut out = stream.push(&input[..cut], false);
+                out.extend(stream.push(&input[cut..], false));
+                out.extend(stream.push(&[], true));
+                assert_eq!(out, expected, "chunk cut {cut}");
+                assert!(out.ends_with(b" after-prefix"));
+            }
         }
-        assert!(!String::from_utf8_lossy(&expected).contains(&secret[10..]));
     }
 }
