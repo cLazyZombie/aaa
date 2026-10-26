@@ -1,3 +1,12 @@
+## macOS pipe 창의 worker 한정 주입(t-1137)
+
+- main `c115d41a`·`3db8bcc7`의 macOS job 원문에서 최초 오류는 capture 스레드의 `status.code(): None != Some(7)`였다. raw holder 상속 확인과 pipe 해제는 성공했고 capture 역할은 시작하지 않았다. 뒤의 연결 Timeout을 시작 지연으로 취급하지 않는다. 원래 별도 `21-aaa_common.log`·`raw.trace` artifact는 없었고 job에 출력된 전체 aaa_common 구간과 trace를 추출했다.
+- 같은 기준에 capture 반환의 status·stdout·stderr만 기록한 진단 `ca93fea6`을 사용자 허용 아래 일회용 branch에서 실행했다([run 40418222799](https://github.com/cLazyZombie/aaa/actions/runs/40418222799)). 실제 `/bin/sh`가 물려받은 `arm64` window.dylib를 `arm64e`에 넣지 못해 fixture 시작 전에 SIGABRT(6)로 종료했다. worker2485·holder2486의 상속/해제 뒤 capture2487의 dyld 오류와 worker exit101·양쪽 EOF가 남았다. 원래 두 실행의 capture PID·signal 번호·holder 종료 상태는 기록되지 않아 소급해 만들어 쓰지 않는다.
+- `DYLD_INSERT_LIBRARIES`는 실제 pipe 창을 붙잡는 worker에만 넘기고 capture shell·holder에서는 제거한다. 제품 생성 잠금과 std/Tokio/실제 harness 판 조회의 동작은 그대로다. raw 상속·exit7·stdout/stderr·NOTE_EXIT·holder 생존 중 반환 단언과 내부2초·worker5초 상한도 유지한다.
+- 기존 `pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime` 안에서 `/bin/sh`를 자기 target에 자식 프로세스로 복사하고 사본만 ad-hoc 서명한다. 보호된 시스템 shell이 DYLD를 지워 회귀를 숨기던 일반 Mac에서도 같은 loader 경계를 검사하기 위해 필요하다. 시스템 실행 파일·설정·SIP는 바꾸지 않으며 새 시험·E2E 번호는 없다. 주입 제거 전에는 같은 owner가 SIGABRT→Timeout으로2.11초에 실패했고 제거 뒤 네 모드가0.13초에 통과했다.
+- 부분 검사는 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib child_process::tests::pipe_window -- --nocapture`, 같은 owner의 `--test-threads=1`, `RUST_TEST_THREADS=8`의 aaa-common 전체와 `cargo clippy --profile verify --locked -p aaa-common --all-targets -- -D warnings`, fmt·공개 검사다. 최종 owner0.14초·병렬 전체59통과/보조1ignored1.04초와 나머지 부분 검사가 통과했다. 고정 sleep·실패 재시도·시한 확대·기대값 완화는 없다. 전체 ci-local과 착지는 coordinator 차례에서 수행한다.
+- OSS는 [Rust std](https://github.com/rust-lang/rust/blob/main/library/std/src/sys/process/unix/unix.rs)(MIT OR Apache-2.0)의 spawn/output 경계, [Duct](https://github.com/oconnor663/duct.rs/blob/master/src/lib.rs)(MIT)의 생성 잠금/수집 분리, [dyld 환경 처리](https://github.com/apple-oss-distributions/dyld/blob/main/dyld/DyldProcessConfig.cpp)(APSL-2.0)의 보호 여부별 DYLD 처리와 [runner arm64e 주입 이슈](https://github.com/actions/runner-images/issues/9461)를 대조했다. 주입을 필요한 프로세스에 한정하는 원칙만 따르며 외부 코드·의존성은 가져오지 않는다.
+
 ## 큰 agent 응답과 보고 hash 확인(t-1131, §8.505)
 
 - 공통 `response_parts`의 사고 회귀는 원본 9,820바이트·빈 파일35개·건너뛴 파일14,746개를 합쳐 운영 사고와 정확히 같은 2,232,861바이트 frame을 만든다. 실제 duplex/writer/FrameRx에서 6조각의 원문 동일성과 구판의 `too_large`, 잘못된 큰 제어 frame 거부 뒤 같은 연결의 pong·다음 요청을 검사한다. 필요한 이유: 한 큰 응답이 모든 agent 요청과 재연결을 끊던 회귀를 실제 포장/전송 경계에서 막는다.

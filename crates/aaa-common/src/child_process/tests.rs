@@ -52,6 +52,14 @@ async fn pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime() {
             .join(format!("pipe-window-{}", crate::util::new_id())),
     );
     std::fs::create_dir_all(&root.0).unwrap();
+    // SIP가 켜진 Mac에서도 보호된 /bin/sh가 DYLD 변수를 지워 결함을 숨기지 않게 한다.
+    // 자기 실험실 사본만 ad-hoc 서명하며 시스템 실행 파일·설정은 건드리지 않는다.
+    let shell = root.0.join("sh");
+    // 병렬 spawn이 쓰는 중인 실행 파일 FD를 상속하지 않도록 복사도 자식이 한다.
+    let copied = Command::new("/bin/cp").arg("/bin/sh").arg(&shell).capture_output().unwrap();
+    assert!(copied.status.success(), "cp: {}", String::from_utf8_lossy(&copied.stderr));
+    let signed = Command::new("codesign").args(["--force", "--sign", "-"]).arg(&shell).capture_output().unwrap();
+    assert!(signed.status.success(), "codesign: {}", String::from_utf8_lossy(&signed.stderr));
     let dylib = root.0.join("window.dylib");
     let built = Command::new("cc")
         .args(["-dynamiclib", "-std=c11"])
@@ -69,6 +77,7 @@ async fn pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime() {
             .env("AAA_PIPE_ROLE", "worker")
             .env("AAA_PIPE_MODE", mode)
             .env("AAA_PIPE_TRACE", &trace_path)
+            .env("AAA_PIPE_SHELL", &shell)
             .env("DYLD_INSERT_LIBRARIES", &dylib)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -129,17 +138,23 @@ fn trace(stage: &str) {
 
 fn fixture_command(role: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
-    command.args(["--exact", FIXTURE, "--ignored", "--nocapture", "--test-threads=1"]).env("AAA_PIPE_ROLE", role);
+    command
+        .args(["--exact", FIXTURE, "--ignored", "--nocapture", "--test-threads=1"])
+        .env("AAA_PIPE_ROLE", role)
+        .env_remove("DYLD_INSERT_LIBRARIES");
     command
 }
 
 fn capture_command(socket: &std::path::Path) -> Command {
-    let mut command = Command::new("/bin/sh");
+    let mut command = Command::new(std::env::var_os("AAA_PIPE_SHELL").expect("실험실 shell 사본"));
     command
         .args(["-c", "exec \"$AAA_PIPE_EXE\" --exact child_process::tests::subprocess_fixture --ignored --nocapture"])
         .env("AAA_PIPE_EXE", std::env::current_exe().unwrap())
         .env("AAA_PIPE_ROLE", "capture")
-        .env("AAA_PIPE_SOCKET", socket);
+        .env("AAA_PIPE_SOCKET", socket)
+        // hook은 worker의 pipe 창에만 필요하다. arm64e shell에 arm64 dylib를 물려주면
+        // SIP가 DYLD를 지우지 않는 환경에서 fixture 시작 전에 dyld가 SIGABRT를 낸다.
+        .env_remove("DYLD_INSERT_LIBRARIES");
     command
 }
 
@@ -228,6 +243,12 @@ fn run_worker() {
         let text = match capture_mode.as_str() {
             "raw" | "std" => {
                 let output = if capture_mode == "raw" { command.output() } else { command.capture_output() }.unwrap();
+                trace(&format!(
+                    "capture 반환 status={} stdout={:?} stderr={:?}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                ));
                 assert_eq!(output.status.code(), Some(7));
                 assert!(output.stdout.ends_with(b"capture-out\n"));
                 assert_eq!(output.stderr, b"capture-err\n");
