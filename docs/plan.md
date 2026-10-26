@@ -7915,6 +7915,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 보고서 파일 올리기(t-1045)는 기존 단일 파일 API를 최대 네 요청까지 함께 사용한다. 완료 개수가 아닌 성공 경로를 보관하고 실패 뒤 새 요청을 멈춰 진행 중 요청까지 끝낸 뒤 원인·성공 수를 표시한다. 사용자가 다시 올리면 성공한 경로를 건너뛰며 모든 파일이 성공한 뒤 한 번 게시한다. 파일 선택·게시 수 불일치 때 새 업로드로 초기화한다. 업로드 계획은 파일 선택 때만 다시 계산한다.
 - host는 마지막 업로드 하나의 파일 수·용량을 쓰기 잠금 안에서 갱신해 파일마다 폴더 전체를 스캔하지 않는다. 쓰기 실패·다른 업로드·재시작은 디스크를 다시 읽고, 게시 전 실제 파일 수·권한·경로·크기·사용자 보고서 조건은 유지한다. 파일 I/O·잠금은 HTTP 비동기 실행기 밖에서 처리한다. FRONT_API·저장 형식·E2E 번호는 바꾸지 않으며 E2E114의 500개·20초 전송+게시 계약과 부분 실패/명시적 재개를 검사한다.
 
+### 8.493 상태 줄 출력 중 한글 조합 위치 유지(t-1064)
+
+- 웹 터미널에서 상태 줄을 다시 쓰는 커서 이동과 입력 줄 복귀가 서로 다른 출력 묶음이어도, 확정 전 글자와 입력기 textarea는 조합을 시작한 칸에 남는다. xterm helper가 조합마다 버퍼의 줄 marker와 열을 보관하고, aaa의 행 높이/색 보정도 그 위치를 쓴다. 확정·취소·reset·해제 시 marker를 놓고 화면 밖/다른 버퍼에는 미리보기를 남기지 않는다. 입력 확정/전송 순서·wire·FRONT_API·E2E 번호는 유지한다.
+- E2E09는 실제 pane에 숨김 커서·상태 줄 갱신·입력 줄 복귀를 한 묶음/분리된 묶음으로 보내고, rAF마다 미리보기/textarea 위치·표시와 확정 전 전송 없음·완성 글자 한 번 수신을 확인한다. Chromium CDP와 macOS offscreen WKWebView NSTextInputClient는 실제 조합 사건을 쓰며, Playwright WebKit의 기록 재생은 별도로 구분한다. OS 입력기 설정·사용자 화면을 건드리지 않는다.
+- 참고 후보: [xterm.js CompositionHelper](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/input/CompositionHelper.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)), [VS Code xterm 연결](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts)([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt)), [Ghostty preedit 상태](https://github.com/ghostty-org/ghostty/blob/main/src/renderer/State.zig)([MIT](https://github.com/ghostty-org/ghostty/blob/main/LICENSE)). 현재 입력기 경로를 유지하고 preedit 위치를 출력 커서와 분리하는 원칙을 따른다. 외부 코드·의존성은 추가하지 않는다.
+
+
 ## 모든 저장소의 검증 종료 원장 (t-1051)
 
 보고 회수 끝에서 보고 머신의 모든 등록 저장소를 확인한다. thread의 repo가 하나거나 없어도 새벽의 복수 저장소 검증이 빠지지 않는다. 조회는 host 원장만 읽으며 수집 실패가 보고 회수·검증 종료 결과를 바꾸지 않는다. 지표 회수는 보고 사본 완료 뒤 비동기로 시작하고 겹친 보고는 머신별 한 차례로 모은다. 회수 도중 새 요청은 후속 차례에서 처리하며 주기 작업·타이머는 추가하지 않는다.

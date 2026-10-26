@@ -46,13 +46,17 @@ function cellColors(term: Terminal, view: HTMLElement): { bg: string; fg: string
   return { bg, fg };
 }
 
-/** 커서가 있는 줄 요소의 화면(.xterm-screen) 안 top·높이. 커서가 화면 밖이면 없다. */
-function cursorRow(term: Terminal): { top: number; height: number } | null {
+/** 조합을 시작한 줄의 실제 top·높이. 상태 줄 갱신 중인 출력 커서를 따라가지 않는다. */
+function compositionRow(term: Terminal, view: HTMLElement): { top: number; height: number } | null {
   const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
   const rows = term.element?.querySelector<HTMLElement>(".xterm-rows");
-  const b = term.buffer.active;
-  const row = rows?.children[b.cursorY + b.baseY - b.viewportY];
-  if (!screen || !(row instanceof HTMLElement)) return null;
+  if (!screen || !rows) return null;
+  const center = screen.getBoundingClientRect().top + Number.parseFloat(view.style.top) + Number.parseFloat(view.style.height) / 2;
+  const row = [...rows.children].find((e) => {
+    const r = e.getBoundingClientRect();
+    return r.top <= center && center < r.bottom;
+  });
+  if (!(row instanceof HTMLElement)) return null;
   const r = row.getBoundingClientRect();
   return { top: r.top - screen.getBoundingClientRect().top, height: r.height };
 }
@@ -70,7 +74,7 @@ export function matchCompositionView(term: Terminal): () => void {
   };
   const fit = () => {
     if (!view.classList.contains("active")) return;
-    const row = cursorRow(term);
+    const row = compositionRow(term, view);
     if (row) {
       set("top", `${row.top}px`);
       set("height", `${row.height}px`);

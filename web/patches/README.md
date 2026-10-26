@@ -86,3 +86,18 @@ DEL로 지우고 새 꼬리를 보낸다. 다른 키·새 조합·붙여넣기·
 (MIT)와 [herdr-web-ui PaneTerminal](https://github.com/devswha/herdr-web-ui/blob/main/src/components/PaneTerminal.tsx)
 ([MIT](https://github.com/devswha/herdr-web-ui/blob/main/LICENSE))다. 기존 queue/watermark 경계를
 따르며 새 외부 코드·의존성을 가져오지 않았다. 이 추가 패치는 aaa 자체 수정이다.
+
+## 상태 줄 출력 중 조합 위치 유지(t-1064)
+
+`xterm-5.5.0-composition-anchor.patch`는 실제 조합과 Safari replacement 조합을
+시작한 칸에 미리보기와 입력기 textarea를 함께 둔다. 상태 줄 갱신과 커서 복귀가
+서로 다른 PTY 출력 묶음이면 upstream은 매 render마다 조합 글자를 상태 줄로
+옮겼다가 되돌린다. 줄 marker는 scrollback 이동·삭제를 따르고 확정·취소·reset에서
+해제한다. 다른 버퍼나 화면 밖에서는 미리보기를 숨긴다. aaa의 실제 행 높이/색 보정도
+출력 커서 대신 이 미리보기의 행을 기준으로 한다(`compositionView.ts`).
+
+새 외부 코드는 복사하지 않았다. 비교한 xterm.js CompositionHelper·VS Code의 xterm
+연결·Ghostty renderer의 별도 preedit 상태는 모두 MIT이며 기존 라이선스 고지는 유지한다.
+실제 patched helper 유닛과 E2E09의 분리 출력 frame 회귀가 검사한다. macOS에서는
+화면에 올리지 않는 WKWebView의 NSTextInputClient로 trusted 조합 사건을 만들며,
+Playwright WebKit의 DOM 재생과 구분한다. Chromium은 CDP IME를 쓴다.

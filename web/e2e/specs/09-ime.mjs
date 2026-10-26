@@ -8,8 +8,11 @@ import {
   iphoneKey, ipadKey, ipadFresh, fakeViewport, softKeyboard, ipadReplace, pairPage, base, step, browser,
   openSettings, inList, sentFrames, sentCount, sentText, domIs,
 } from "../lib/harness.mjs";
+import { compositionOutput } from "../lib/composition-output.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("한글 조합 위치 유지: Chromium·WebKit 실제 IME와 분리된 상태 줄 출력 frame", compositionOutput);
+
   await step("터미널 한글 IME(herdr-web-ui xterm 패치): 데스크톱 조합 사건·CDP 실제 IME, macOS Safari·iPad 기록 재생 → pane에는 완성된 글만", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "imeapp", "--", process.execPath, `${root}/paste.js`);
     aaa("tab", "create", "--machine", "labA", "--label", "imespin", "--", process.execPath, `${root}/spin.js`);

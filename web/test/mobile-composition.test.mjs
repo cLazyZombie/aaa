@@ -11,7 +11,7 @@ function helper(t, patched = true, platform = { isSafari: true, isIphone: true }
   const root = mkdtempSync(join(tmpdir(), "aaa-mobile-ime-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   cpSync(new URL("../node_modules/@xterm/xterm/src", import.meta.url), join(root, "src"), { recursive: true });
-  for (const patch of ["xterm-5.5.0.patch", ...(patched ? ["xterm-5.5.0-mobile-input.patch"] : [])]) {
+  for (const patch of ["xterm-5.5.0.patch", ...(patched ? ["xterm-5.5.0-mobile-input.patch", "xterm-5.5.0-composition-anchor.patch"] : [])]) {
     applyPatch(root, readFileSync(new URL(`../patches/${patch}`, import.meta.url), "utf8"));
   }
   const source = readFileSync(join(root, "src/browser/input/CompositionHelper.ts"), "utf8");
@@ -25,7 +25,8 @@ function helper(t, patched = true, platform = { isSafari: true, isIphone: true }
   const box = { value: "", selectionEnd: 0 };
   const view = { textContent: "", classList: { add() {}, remove() {} } };
   const sent = [];
-  const h = new exports.CompositionHelper(box, view, {}, { rawOptions: { screenReaderMode } }, { triggerDataEvent: data => sent.push(data) }, {});
+  const buffer = { x: 0, y: 0, ybase: 0, addMarker: () => ({ dispose() {} }) };
+  const h = new exports.CompositionHelper(box, view, { buffer }, { rawOptions: { screenReaderMode } }, { triggerDataEvent: data => sent.push(data) }, {});
   h.updateCompositionElements = () => {}; // 배치만 제외, input/queue/watermark는 실제 코드
   const edit = (data, type = "insertCompositionText", value = data) => {
     const ev = { data, inputType: type, isComposing: type === "insertCompositionText" };
