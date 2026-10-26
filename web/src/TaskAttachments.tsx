@@ -235,7 +235,7 @@ export function TaskAttachments({
               onFiles(filesOf(e.dataTransfer));
             }}
           />
-          <button type="button" className="btn" disabled={busy} data-testid="task-attach-pick" onClick={() => picker.current?.click()}>
+          <button type="button" className="btn" disabled={busy} title="그림(PNG·JPEG·GIF·WebP)·md·html, 한 개 16MiB까지. 상세가 열린 동안 어디서든 붙여 넣거나 끌어다 놓아도 붙는다" data-testid="task-attach-pick" onClick={() => picker.current?.click()}>
             <ImagePlus aria-hidden="true" />
             사진·파일
           </button>
@@ -292,7 +292,6 @@ export function TaskAttachments({
           }}
         />
       )}
-      {canEdit && <p className="muted task-attach-help">그림(PNG·JPEG·GIF·WebP)·md·html, 한 개 16MiB까지. 상세가 열린 동안 어디서든 붙여 넣거나 끌어다 놓아도 이 task에 붙는다.</p>}
       {note && (
         <p className="task-form-error" role="alert" data-testid="task-attach-note">
           {note}

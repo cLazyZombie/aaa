@@ -4011,3 +4011,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 질문 입력도 대화 입력과 같이 window native input capture에서 새 글을 먼저 state에 보관한다. 기존 bubble onChange·보고별 카드 교체·늦은 답 응답 처리는 유지한다. 숨김·해제·보기 권한·전송 중에는 listener를 해제하며 자기 입력칸 사건만 받는다. 이는 native input과 bubble 사이 부모 commit으로 사용자 글이 사라지는 제품 결함을 막는다.
 - 새 시험 파일을 만들지 않고 기존 E2E53의 Chromium/WebKit × 1280/390px에 위 순서를 고정한다. 처음 채운 입력·보내기 활성·같은 DOM·부모 갱신 정확히 한 번을 즉시 확인한 뒤 원래 이전 답 응답 보류→새 보고 입력→늦은 응답→각 보고 정확히 한 번 전달 단언을 실행한다. 이 검사는 실패의 실제 경계인 사용자 입력 유실을 막기 위해 필요하다. 실패 자료는 보고 hash·질문 ID·입력/갱신 순서를 함께 보존한다. 재시도·시한 확대·기대값 완화·입력 재주입은 없다.
 - OSS 후보는 [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)·[UpdateBatching](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/ReactDOMUpdateBatching.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))와 [Playwright fill의 입력 경계](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/dom.ts)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))다. 기존 저장소의 ChatComposer 보호 방식을 참고하며 외부 코드·의존성을 추가하지 않는다.
+
+## 할 일 상세 창 정리 (t-1097)
+
+- 기존 E2E 43·46·47·52·54·67·70·75·76·92·107을 새 배치에 맞췄다. 지우기·예약 맨 앞으로는 ⋯ 메뉴(휴대폰 시트)로, 속성 칸은 「저장」 없이 파일에 쓰이는지로, 예약 확인은 맡길 글 대신 모델·저장소 요약으로 본다.
+- E2E46에 「속성은 바로 저장, 고치던 제목은 남아 이어 저장해도 충돌 없음」 단계를 더했다. 저장 흐름이 두 갈래가 되며 생기는 낡은 블록 hash 충돌을 막는 회귀라 필요하다.
+- E2E92 「후속 문서」 메모를 화면보다 길게 하고, 예약 확인에서 「이 내용으로 예약」이 화면 안에 있고 그 자리에서 눌리는지(elementFromPoint) 본다. 사용자가 겪은 「스크롤에 가린 예약 단추」의 회귀라 필요하다.
+- 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs <캡처 폴더> --spec 43,46,47,52,54,67,70,75,76,92,107 --workers 6`, 웹 유닛·typecheck·빌드. 공용 브라우저 캐시를 쓰고 고정 sleep·재시도·시한 연장은 없다. 전체 gate는 coordinator 차례에 한다.

@@ -133,7 +133,11 @@ export default async function ({ page }) {
             await p.keyboard.press("Escape");
             await pick(p, "첫 예약");
             await p.getByTestId("task-queue-home").waitFor();
-            if (await p.locator(".task-queue-move").count()) throw new Error("상세에 예약 위치 이동 도구");
+            await p.getByTestId("task-detail-more").click();
+            const more = device === "iphone" ? p.locator(".row-sheet") : p.getByRole("menu");
+            if (/예약 위로|예약 아래로|예약 맨 앞으로/.test(await more.textContent())) throw new Error("상세에 예약 위치 이동 도구");
+            await p.keyboard.press("Escape");
+            await more.waitFor({ state: "detached" });
             await closeBeforeReload(p, device);
             await p.reload();
             await domIs(p, "정렬 기억", () => document.querySelector('[data-testid="tasks-list"]')?.dataset.sort === "machine");
@@ -196,7 +200,7 @@ export default async function ({ page }) {
     await dragTo(page, "끌어 예약", row(page, "상위 일"), "before");
     const confirm = page.getByTestId("task-reserve-confirm");
     await confirm.waitFor();
-    if (!(await confirm.textContent()).includes("끌어서 예약한다") || !(await confirm.textContent()).includes("예약 3번째 자리에")) throw new Error(await confirm.textContent());
+    if (!(await confirm.textContent()).includes("예약 3번째 자리에")) throw new Error(await confirm.textContent());
     await shot(page, "one-list-drag-confirm");
     await page.getByTestId("task-reserve-go").click();
     await topIs(page, "끌어 예약", "reserved:둘째 예약|reserved:첫 예약|reserved:끌어 예약|reserved:상위 일|under:하위 일|reserved:rc 일");

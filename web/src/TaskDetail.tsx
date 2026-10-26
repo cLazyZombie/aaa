@@ -11,10 +11,15 @@
 // 한 번으로 그 task에 붙는다). 고치는 중인 폼(손댄 폼·새 task)은 초안 메모에 더하고 「저장」 때 함께 쓴다:
 // 그사이 바로 저장하면 편집을 시작한 판의 블록 hash가 낡아 폼 저장이 충돌로 돌아온다. 메모 입력칸은 첨부 줄을 빼고 보이며(첨부 칸이
 // 보인다) 첨부 줄은 메모 끝에 둔다.
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
-import { Bot, Check, ChevronLeft, Circle, CircleDot, CirclePause, Monitor, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
+//
+// 상세 정리(t-1097, 사용자 10-26 q-1380 1A·q-1381 2A·q-1382 3B): 제목·예약 상태·속성·메모가 위, 시작시키는 단추(맡기기·바로 시작·
+// 예약)는 상세 아래 고정 줄 한곳이다. 예약 확인도 그 줄 자리에서 열려 스크롤에 가리지 않는다. 속성은 Plane 옆 패널
+// (`issue-properties.tsx`, AGPL-3.0, 모양만 참고)처럼 이름·값 한 줄이고 고르면 바로 저장한다. 제목·메모는 모아서 「저장」한다.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
+import { ArrowDown, ArrowUp, ArrowUpToLine, Bot, Check, ChevronLeft, Circle, CircleDot, CirclePause, Clock, Ellipsis, Monitor, Play, Trash2, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
-import { QueueControls, type ReserveRequest } from "./TaskQueue";
+import { QueueStatus, ReservePanel, useQueue, type Queue, type ReserveRequest } from "./TaskQueue";
+import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { Markdown } from "./Markdown";
 import { uploadTaskFile } from "./api";
 import { TaskAttachments, dragHasFiles, filesOf, resolveReportLink, type PendingUpload } from "./TaskAttachments";
@@ -169,6 +174,8 @@ export interface DetailProps {
   onPick: (t: TaskView) => void;
   onClose: () => void;
   onSave: (ops: TaskOp[], mine: MyEdit | null) => Promise<SaveResult>;
+  /** 속성 칸 바로 저장(상세를 다시 열지 않는다): 새 board와 그 안의 이 task, 충돌이면 null(창은 부른 쪽이 띄운다) */
+  onSaveProps?: (ops: TaskOp[], mine: MyEdit | null) => Promise<{ board: TaskBoard; task: TaskView | null } | null>;
   onDelete: (t: TaskView) => Promise<void>;
   /** 고치던 task가 파일에서 빠졌다(다른 곳이 지웠거나 제목을 바꿨다). 손댄 폼은 닫지 않고 그대로 둔다 */
   gone?: boolean;
@@ -198,7 +205,7 @@ export interface DetailProps {
 
 export function TaskDetail(props: DetailProps) {
   const { t, onClose } = props;
-  // 휴대폰은 전체 화면 시트: 시스템 Back이 닫는다(herdr-web-ui, sheetHistory.ts). 위에 크게 보기·파일 보기가 뜬 동안은 그 창이
+  // 휴대폰은 전체 화면 시트: 시스템 Back이 닫는다(herdr-web-ui, sheetHistory.ts). 위에 크게 보기·파일 보기·⋯ 시트가 뜬 동안은 그 창이
   // 기록을 갖는다(시트 칸을 파일 보기가 차지한 채 두면 파일 보기를 닫은 뒤의 뒤로·화면 이동이 시트 칸과 어긋난다)
   const [covered, setCovered] = useState(false);
   usePhoneSheetBack(() => onClose(), !props.linked && !covered && !props.fileOpen);
@@ -212,40 +219,44 @@ export function TaskDetail(props: DetailProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  const queue = useQueue({ task: t, board: props.board, canEdit: props.canEdit && !!props.queueApi, afterApi: props.afterApi, request: props.reserveRequest, onUnreserved: props.onUnreserved });
   const state = t ? taskState(t, props.groups) : "wait";
   const label = t ? `할 일 ${t.title}` : props.gone ? "파일에서 빠진 할 일" : "새 할 일";
   return (
     <aside className="task-detail" role="dialog" aria-label={label} data-testid="task-detail" data-task-state={t ? state : props.gone ? "gone" : "new"}>
       <header className="task-detail-head">
-        {/* 휴대폰은 「‹ 할 일」(전체 화면 시트의 뒤로), 넓은 화면은 닫기 X */}
+        {/* 휴대폰은 「‹ 할 일」(전체 화면 시트의 뒤로), 넓은 화면은 닫기 X(오른쪽 끝) */}
         <button type="button" className="task-detail-close" aria-label="할 일 목록으로" title="할 일 목록으로" data-testid="task-detail-close" onClick={onClose}>
           <X className="task-close-x" aria-hidden="true" />
           <ChevronLeft className="task-close-back" aria-hidden="true" />
           <span className="task-close-back">할 일</span>
         </button>
-        <span className="task-detail-list">{t ? `${t.short_id ? `${t.short_id} · ` : ""}${t.line}줄` : props.gone ? "파일에서 빠짐" : "새 할 일"}</span>
+        {t ? (
+          <span className="task-detail-list">
+            <StateIcon state={state} />
+            {t.short_id && <span className="task-short-id" data-testid="task-detail-id">{t.short_id}</span>}
+            <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
+            {t.thread && <ThreadChip id={t.thread} groups={props.groups} onThread={props.onThread} />}
+            {t.done && <span className="task-chip is-dim">[x] 완료 표시</span>}
+          </span>
+        ) : (
+          <span className="task-detail-list">{props.gone ? "파일에서 빠짐" : "새 할 일"}</span>
+        )}
       </header>
-      {t && props.queueApi && <QueueControls task={t} board={props.board} canEdit={props.canEdit} afterApi={props.afterApi} request={props.reserveRequest} onStep={props.onQueueStep && ((dir) => props.onQueueStep!(t, dir))} onUnreserved={props.onUnreserved} />}
-      {props.canEdit ? <TaskForm {...props} onCover={setCovered} /> : t && <ReadOnly {...props} onCover={setCovered} t={t} />}
+      {props.canEdit ? <TaskForm {...props} queue={queue} onCover={setCovered} /> : t && <ReadOnly {...props} queue={queue} onCover={setCovered} t={t} />}
     </aside>
   );
 }
 
-/** 보기 권한: T1 상세 그대로(제목·owner·형식 어긋남·메모·원문 줄·상위·하위) */
-function ReadOnly({ t, board, byLine, groups, onThread, onPick, onOpenAttachment, onCover }: DetailProps & { t: TaskView }) {
-  const state = taskState(t, groups);
+/** 보기 권한: 같은 차례(제목·예약·맡은 쪽·형식 어긋남·메모·첨부·하위·자세히)를 읽기만 한다 */
+function ReadOnly({ t, board, byLine, groups, onPick, onOpenAttachment, onCover, queue }: DetailProps & { t: TaskView; queue: Queue }) {
   return (
     <div className="task-detail-body">
-      <h2 className="task-detail-title">
-        <StateIcon state={state} />
-        <span>{t.short_id && <span className="task-short-id">{t.short_id}</span>}{t.title}</span>
-      </h2>
+      <h2 className="task-detail-title">{t.title}</h2>
+      <QueueStatus task={t} board={board} queue={queue} />
       <div className="task-detail-chips">
-        <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
         <WhoChips t={t} labeled />
         {t.repo && <span className="task-chip task-repo">저장소 · {t.repo}</span>}
-        {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
-        {t.done && <span className="task-chip is-dim">[x] 완료 표시</span>}
       </div>
       {t.problems.length > 0 && <Problems t={t} />}
       {t.attention && <Attention t={t} />}
@@ -254,13 +265,16 @@ function ReadOnly({ t, board, byLine, groups, onThread, onPick, onOpenAttachment
         {withoutAttachments(t.notes.join("\n")) ? <Markdown className="task-notes">{withoutAttachments(t.notes.join("\n"))}</Markdown> : <p className="muted">메모 없음</p>}
       </section>
       <TaskAttachments project={board.project} notes={t.notes.join("\n")} canEdit={false} onOpen={onOpenAttachment} onCover={onCover} />
-      <section className="task-detail-section">
-        <h3>원문 줄</h3>
-        <pre className="task-raw" data-testid="task-raw">
-          <code>{t.raw}</code>
-        </pre>
-      </section>
       <Related t={t} byLine={byLine} groups={groups} onPick={onPick} />
+      <details className="task-more">
+        <summary>자세히</summary>
+        <section className="task-detail-section">
+          <h3>원문 줄</h3>
+          <pre className="task-raw" data-testid="task-raw">
+            <code>{t.raw}</code>
+          </pre>
+        </section>
+      </details>
     </div>
   );
 }
@@ -275,14 +289,15 @@ function Problems({ t }: { t: TaskView }) {
         ))}
       </ul>
       <p className="muted">
-        owner·thread로 읽지 않고 원문 그대로 보인다. 정해진 꼴은 <code>- [ ] 제목 (owner) · t-번호</code>다.
+        정해진 꼴은 <code>- [ ] 제목 (owner) · t-번호</code>다.
       </p>
     </section>
   );
 }
 
-function Related({ t, byLine, groups, onPick }: { t: TaskView; byLine: ReadonlyMap<number, TaskView>; groups: ThreadGroups; onPick: (t: TaskView) => void }) {
-  const parent = t.parent !== null ? byLine.get(t.parent) : undefined;
+/** 상위·하위 task로 가기. 편집 폼은 상위를 속성 줄에서 고르므로 하위만 그린다(`parent={false}`) */
+function Related({ t, byLine, groups, onPick, parent: withParent = true }: { t: TaskView; byLine: ReadonlyMap<number, TaskView>; groups: ThreadGroups; onPick: (t: TaskView) => void; parent?: boolean }) {
+  const parent = withParent && t.parent !== null ? byLine.get(t.parent) : undefined;
   const children = [...byLine.values()].filter((c) => c.parent === t.line);
   if (!parent && children.length === 0) return null;
   return (
@@ -332,8 +347,8 @@ function Attention({ t, actions }: { t: TaskView; actions?: ReactNode }) {
   );
 }
 
-function TaskForm(props: DetailProps) {
-  const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete, linkApi, onHandOff, onStart, attachApi, repoApi, onOpenAttachment, onChangeNotes } = props;
+function TaskForm(props: DetailProps & { queue: Queue }) {
+  const { t, board, byLine, groups, owners, log, onPick, onSave, onSaveProps, onDelete, linkApi, onHandOff, onStart, attachApi, repoApi, onOpenAttachment, onChangeNotes, queue } = props;
   const agents = useMemo(() => agentNames(owners), [owners]);
   // 편집을 시작한 판: 이 판의 블록 hash로 저장한다. 상위 task도 그 판의 고정점으로 든다(줄 번호는 그사이 밀릴 수 있다)
   const [base, setBase] = useState<TaskView | null>(t);
@@ -347,13 +362,26 @@ function TaskForm(props: DetailProps) {
     if (!preview && editNotes.current) notesInput.current?.focus();
     editNotes.current = false;
   }, [preview]);
+  // 제목은 여러 줄로 감싸 다 보인다(줄바꿈은 받지 않는다)
+  const titleInput = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = titleInput.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft.title]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
+  // 속성(저장소·담당·모델·머신·상위)은 고르면 바로 저장하고(사용자 10-26 q-1382 3B), 제목·메모·사람 이름은 모아서 「저장」한다.
+  // `saved`는 편집을 시작한 판의 값이고, 고쳤는지는 글 칸만 그 판에 얹어 본다. 사람을 고르고 이름을 아직 쓰지 않은 담당도 글 칸이다
+  const saved = useMemo(() => (base ? draftOf(base, agents, baseParent) : null), [base, agents, baseParent]);
+  const withText = (s: TaskDraft, d: TaskDraft): TaskDraft => (d.who === "person" ? { ...s, title: d.title, notes: d.notes, who: "person", person: d.person } : { ...s, title: d.title, notes: d.notes });
   // 고쳤는지는 보낼 동작이 있는지로 본다: owner 목록이 늦게 와 agent·사람 구분만 달라진 폼은 손대지 않은 폼이다
   // 사람을 고른 직후에는 아직 저장할 owner가 없어도 편집 중이다. 늦은 목록이 이름 칸을 지우지 않게 한다.
   const emptyPerson = draft.who === "person" && draft.person.trim() === "";
-  const dirty = base ? emptyPerson || draftOps(base, draft, baseParent).length > 0 : draft.title.trim() !== "";
+  const textDraft = saved ? withText(saved, draft) : draft;
+  const dirty = base ? emptyPerson || draftOps(base, textDraft, baseParent).length > 0 : draft.title.trim() !== "";
   const rebase = (x: TaskView) => {
     const p = parentAnchor(board, x);
     setBase(x);
@@ -391,7 +419,6 @@ function TaskForm(props: DetailProps) {
     const { owner } = draftOwner(d);
     return { title: d.title.trim(), owner: owner || null, repo: d.repo || null, thread: base?.thread ?? null, notes: noteLines(d.notes) };
   };
-  const mine = () => mineOf(draft);
   const run = async (ops: TaskOp[], edit: MyEdit | null) => {
     if (submitting.current || ops.length === 0) return;
     submitting.current = true;
@@ -410,7 +437,47 @@ function TaskForm(props: DetailProps) {
   const submit = (e?: SyntheticEvent) => {
     e?.preventDefault();
     if (!dirty || draft.title.trim() === "" || (draft.who === "person" && draft.person.trim() === "")) return;
-    void run(draftOps(base, draft, baseParent), mine());
+    void run(draftOps(base, textDraft, baseParent), mineOf(textDraft));
+  };
+  /**
+   * 속성 칸 고르기. 새 task는 초안에만 둔다. 있는 task는 그 칸만 편집을 시작한 판에 얹어 바로 저장하고, 고치던 제목·메모는 그대로 둔 채
+   * 저장한 새 판으로 옮겨 탄다(다음 「저장」이 낡은 블록 hash로 충돌하지 않게). 충돌·실패면 칸을 그 판 값으로 되돌린다
+   */
+  const setProp = (patch: Partial<TaskDraft>) => {
+    const next = { ...draft, ...patch };
+    set(patch);
+    if (!base || !saved || submitting.current) return;
+    // 사람은 이름을 쓴 뒤 「저장」한다: 그동안 담당 칸은 그 판 값으로 보낸다
+    const who = next.who === "person" ? { who: saved.who, person: saved.person, profile: saved.profile, machine: saved.machine } : { who: next.who, profile: next.profile, machine: next.machine };
+    const want: TaskDraft = { ...saved, ...who, repo: next.repo, parent: next.parent };
+    const ops = draftOps(base, want, baseParent);
+    if (ops.length === 0) return;
+    const revert = () => setDraft((d) => withText(saved, d));
+    submitting.current = true;
+    setBusy(true);
+    setError(null);
+    const save = onSaveProps ? onSaveProps(ops, mineOf(want)) : onSave(ops, mineOf(want)).then(() => null);
+    void save.then(
+      (r) => {
+        if (!mounted.current) return;
+        if (!r?.task) {
+          if (onSaveProps) revert();
+          return;
+        }
+        const p = parentAnchor(r.board, r.task);
+        setBase(r.task);
+        setBaseParent(p);
+        setDraft((d) => withText(draftOf(r.task!, agents, p), d));
+      },
+      (e: unknown) => {
+        if (!mounted.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+        revert();
+      },
+    ).finally(() => {
+      submitting.current = false;
+      if (mounted.current) setBusy(false);
+    });
   };
   // 첨부(§8.327). 올리는 동안 폼이 바뀔 수 있어 붙일 때의 값을 ref로 본다
   const [pending, setPending] = useState<PendingUpload[]>([]);
@@ -526,11 +593,33 @@ function TaskForm(props: DetailProps) {
     if (!base) return;
     void run([linkOp(base, "")], { title: base.title, owner: base.owner === "agent" ? null : base.owner, thread: null, notes: base.notes });
   };
+  const remove = () => {
+    if (!base) return;
+    setBusy(true);
+    setError(null);
+    void onDelete(base).then(
+      () => setBusy(false),
+      (e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+      },
+    );
+  };
+  // ⋯: 예약 차례 옮기기와 지우기(자주 쓰지 않는 것). 휴대폰은 아래 시트이고 그동안 뒤로 기록은 시트 것이다
+  const [more, setMore] = useState<HTMLElement | null>(null);
+  const { onCover } = props;
+  useEffect(() => onCover?.(more !== null), [more, onCover]);
+  const moreItems: RowMenuItem[] = [
+    ...(queue.pending && props.onQueueStep && t
+      ? ([["up", "예약 위로", ArrowUp], ["down", "예약 아래로", ArrowDown], ["top", "예약 맨 앞으로", ArrowUpToLine]] as const).map(([dir, label, icon]) => ({ id: `queue-${dir}`, label, icon, run: () => props.onQueueStep!(t, dir) }))
+      : []),
+    ...(base && !t?.attention ? [{ id: "delete", label: children.size > 0 ? `하위 ${children.size}개와 함께 지우기` : "끝남으로 지우기", title: "기록에 남아 되살릴 수 있다", icon: Trash2, danger: true, divider: queue.pending && !!props.onQueueStep, run: remove }] : []),
+  ];
   const history = t ? log.filter((e) => e.title === t.title || e.title === base?.title) : [];
   const pastThreads = [...new Set(history.flatMap((e) => (e.thread && e.thread !== t?.thread ? [e.thread] : [])))];
-  const state = t ? taskState(t, groups) : "wait";
+  const quiet = busy || handing || queue.busy;
   return (
-    <form className={`task-detail-body task-form${dropping ? " is-dropping" : ""}`} onSubmit={submit} onKeyDown={(e) => {
+    <form className={`task-form${dropping ? " is-dropping" : ""}`} onSubmit={submit} onKeyDown={(e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e);
     }}
       onDragOver={(e) => {
@@ -549,276 +638,298 @@ function TaskForm(props: DetailProps) {
         void attachFiles(filesOf(e.dataTransfer));
       }}
       aria-busy={busy} data-task-saving={busy ? "true" : "false"} data-testid="task-form">
-      {t && (
-        <div className="task-detail-chips">
-          <StateIcon state={state} />
-          {t.short_id && <span className="task-short-id" data-testid="task-detail-id">{t.short_id}</span>}
-          <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
-          {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
-          {pastThreads.map((id) => (
-            <span key={id} className="task-chip is-dim" title="지난 thread(기록)">
-              지난 {id}
-            </span>
-          ))}
-          {t.done && <span className="task-chip is-dim">[x] 완료 표시</span>}
-        </div>
-      )}
-      {changedOnDisk && (
-        <div className="banner task-form-stale" role="status" data-testid="task-form-stale">
-          {t ? "이 task가 파일에서 바뀌었다. 저장하면 충돌로 돌아온다." : "이 task가 파일에서 빠졌다(지워졌거나 제목이 바뀜). 고친 것은 여기 남아 있다."}{" "}
-          {t && (
-            <button type="button" className="linkish" onClick={reopen}>
-              최신으로 다시 열기
-            </button>
-          )}
-        </div>
-      )}
-      {base && base.problems.length > 0 && <Problems t={base} />}
-      {t?.attention && (
-        <Attention
-          t={t}
-          actions={
-            linkApi ? (
-              <>
-                <button type="button" className="btn btn-danger" disabled={busy || dirty} data-testid="task-attention-delete" onClick={() => base && void onDelete(base).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
-                  끝남으로 지우기
-                </button>
-                <button type="button" className="btn" disabled={busy || dirty || handing || !onHandOff} data-testid="task-attention-again" onClick={() => handOff(true)}>
-                  <Bot aria-hidden="true" />
-                  다시 맡기기
-                </button>
-                <button type="button" className="btn btn-ghost" disabled={busy || dirty} data-testid="task-attention-unlink" onClick={unlink}>
-                  <Unlink aria-hidden="true" />
-                  연결만 풀기
-                </button>
-                {canStart && onStart && (
-                  <button type="button" className="linkish" disabled={busy} data-testid="task-attention-start" onClick={() => onStart(t)}>
-                    바로 다시 시작
-                  </button>
-                )}
-              </>
-            ) : undefined
-          }
-        />
-      )}
-      {canStart && !t?.attention && (onHandOff || onStart) && (
-        <section className="task-detail-section task-handoff" data-testid="task-handoff">
-          <h3>thread로 맡기기</h3>
-          <div className="task-handoff-actions">
-            {onHandOff && (
-              <button type="button" className="btn btn-primary" disabled={busy || handing} data-testid="task-handoff-coordinator" onClick={() => handOff(false)}>
-                <Bot aria-hidden="true" />
-                coordinator에게 맡기기
-              </button>
-            )}
-            {onStart && (
-              <button type="button" className="btn" disabled={busy || handing} data-testid="task-handoff-start" onClick={() => t && onStart(t)}>
-                <Play aria-hidden="true" />
-                바로 시작
+      <div className="task-detail-body">
+        {changedOnDisk && (
+          <div className="banner task-form-stale" role="status" data-testid="task-form-stale">
+            {t ? "이 task가 파일에서 바뀌었다. 저장하면 충돌로 돌아온다." : "이 task가 파일에서 빠졌다(지워졌거나 제목이 바뀜). 고친 것은 여기 남아 있다."}{" "}
+            {t && (
+              <button type="button" className="linkish" onClick={reopen}>
+                최신으로 다시 열기
               </button>
             )}
           </div>
-          <p className="muted">coordinator 입력칸에 맡기는 글을 채워 연다(보내기는 직접 누른다). 「바로 시작」은 확인창에서 모델·머신·저장소를 고른다.</p>
-        </section>
-      )}
-      {!t && draft.thread && (
-        <div className="task-detail-chips" data-testid="task-new-thread">
-          <span className="task-chip task-thread is-working">이을 thread · {draft.thread}</span>
-        </div>
-      )}
-      {s && (
-        <section className="task-detail-section task-suggestion" data-testid="task-suggestion">
-          <h3>정리 제안</h3>
-          <ul>
-            {s.changes.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
-          <pre className="task-raw">
-            <code>{[s.line, ...s.notes.map((n) => `  ${n}`)].join("\n")}</code>
-          </pre>
-          <button type="button" className="btn" disabled={busy || dirty} onClick={applySuggestion} data-testid="task-suggestion-apply">
-            이대로 저장
-          </button>
-          {dirty && <p className="muted">폼을 고치는 중에는 제안을 쓰지 않는다(되돌리기 뒤 쓴다)</p>}
-        </section>
-      )}
-      <label className="task-field">
-        <span>제목</span>
-        <input className="input" value={draft.title} disabled={busy} required maxLength={400} onChange={(e) => set({ title: e.target.value })} data-testid="task-field-title" autoFocus={!t} />
-      </label>
-      <div className="task-field-row">
-        {repoApi && (
-          <label className="task-field">
-            <span>저장소</span>
-            <select className="input" value={draft.repo} disabled={busy} onChange={(e) => set({ repo: e.target.value })} data-testid="task-field-repo">
-              <option value="">정하지 않음</option>
-              {(board.repos ?? []).map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
+        )}
+        {base && base.problems.length > 0 && <Problems t={base} />}
+        {t?.attention && (
+          <Attention
+            t={t}
+            actions={
+              linkApi ? (
+                <>
+                  <button type="button" className="btn btn-danger" disabled={busy || dirty} data-testid="task-attention-delete" onClick={() => base && void onDelete(base).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
+                    끝남으로 지우기
+                  </button>
+                  <button type="button" className="btn" disabled={busy || dirty || handing || !onHandOff} data-testid="task-attention-again" onClick={() => handOff(true)}>
+                    <Bot aria-hidden="true" />
+                    다시 맡기기
+                  </button>
+                  <button type="button" className="btn btn-ghost" disabled={busy || dirty} data-testid="task-attention-unlink" onClick={unlink}>
+                    <Unlink aria-hidden="true" />
+                    연결만 풀기
+                  </button>
+                  {canStart && onStart && (
+                    <button type="button" className="linkish" disabled={busy} data-testid="task-attention-start" onClick={() => onStart(t)}>
+                      바로 다시 시작
+                    </button>
+                  )}
+                </>
+              ) : undefined
+            }
+          />
+        )}
+        {!t && draft.thread && (
+          <div className="task-detail-chips" data-testid="task-new-thread">
+            <span className="task-chip task-thread is-working">이을 thread · {draft.thread}</span>
+          </div>
+        )}
+        {s && (
+          <section className="task-detail-section task-suggestion" data-testid="task-suggestion">
+            <h3>정리 제안</h3>
+            <ul>
+              {s.changes.map((c) => (
+                <li key={c}>{c}</li>
               ))}
-              <option value={REPO_DIR}>작업 폴더(저장소 없음)</option>
-              {draft.repo && draft.repo !== REPO_DIR && !(board.repos ?? []).includes(draft.repo) && <option value={draft.repo}>{draft.repo}(project.toml에 없음)</option>}
+            </ul>
+            <pre className="task-raw">
+              <code>{[s.line, ...s.notes.map((n) => `  ${n}`)].join("\n")}</code>
+            </pre>
+            <button type="button" className="btn" disabled={busy || dirty} onClick={applySuggestion} data-testid="task-suggestion-apply">
+              이대로 저장
+            </button>
+          </section>
+        )}
+        <label className="task-title-field">
+          <span className="sr-only">제목</span>
+          <textarea
+            ref={titleInput}
+            className="input task-title-input"
+            rows={1}
+            value={draft.title}
+            disabled={busy}
+            required
+            maxLength={400}
+            placeholder="제목"
+            onChange={(e) => set({ title: e.target.value.replace(/\n/g, " ") })}
+            onKeyDown={(e) => {
+              // 한 줄 입력칸처럼 Enter가 저장이다(한글 조합 중 Enter는 조합 확정)
+              if (e.key !== "Enter" || e.nativeEvent.isComposing || e.metaKey || e.ctrlKey) return;
+              e.preventDefault();
+              submit(e);
+            }}
+            data-testid="task-field-title"
+            autoFocus={!t}
+          />
+        </label>
+        {t && <QueueStatus task={t} board={board} queue={queue} />}
+        <div className="task-props">
+          {repoApi && (
+            <label className="task-prop">
+              <span>저장소</span>
+              <select className="input" value={draft.repo} disabled={busy} onChange={(e) => setProp({ repo: e.target.value })} data-testid="task-field-repo">
+                <option value="">정하지 않음</option>
+                {(board.repos ?? []).map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+                <option value={REPO_DIR}>작업 폴더(저장소 없음)</option>
+                {draft.repo && draft.repo !== REPO_DIR && !(board.repos ?? []).includes(draft.repo) && <option value={draft.repo}>{draft.repo}(project.toml에 없음)</option>}
+              </select>
+            </label>
+          )}
+          <label className="task-prop">
+            <span>담당</span>
+            <select className="input" value={draft.who} disabled={busy} onChange={(e) => setProp({ who: e.target.value as DraftWho })} data-testid="task-field-owner">
+              <option value="agent">agent</option>
+              <option value="me">나(me)</option>
+              <option value="person">사람…</option>
             </select>
           </label>
-        )}
-      </div>
-      <div className="task-field-row task-who-row">
-        <label className="task-field">
-          <span>담당</span>
-          <select className="input" value={draft.who} disabled={busy} onChange={(e) => set({ who: e.target.value as DraftWho })} data-testid="task-field-owner">
-            <option value="agent">agent</option>
-            <option value="me">나(me)</option>
-            <option value="person">사람…</option>
-          </select>
-        </label>
-        {draft.who === "agent" && (
+          {draft.who === "agent" && (
+            <>
+              <label className="task-prop">
+                <span>모델</span>
+                <select className="input" value={draft.profile} disabled={busy} title="자동: 시작할 때 프로젝트 기본 profile" onFocus={props.onRefreshOwners} onChange={(e) => setProp({ profile: e.target.value })} data-testid="task-field-profile">
+                  <option value="">자동</option>
+                  {models.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                  {owners === null && <option disabled>모델 목록 읽는 중</option>}
+                </select>
+              </label>
+              <label className="task-prop">
+                <span>머신</span>
+                <select className="input" value={draft.machine} disabled={busy} title="자동: 시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳" onFocus={props.onRefreshOwners} onChange={(e) => setProp({ machine: e.target.value })} data-testid="task-field-machine">
+                  <option value="">자동</option>
+                  {machines.map((m) => (
+                    <option key={m.value} value={m.value} disabled={m.disabled}>
+                      {m.label}
+                    </option>
+                  ))}
+                  {owners === null && <option disabled>머신 목록 읽는 중</option>}
+                </select>
+              </label>
+            </>
+          )}
+          {draft.who === "person" && (
+            <label className="task-prop">
+              <span>사람 이름</span>
+              <input className="input" value={draft.person} disabled={busy} onChange={(e) => set({ person: e.target.value })} data-testid="task-field-person" />
+            </label>
+          )}
+          <label className="task-prop">
+            <span>상위</span>
+            <select
+              className="input"
+              value={draft.parent?.block_sha256 ?? ""}
+              disabled={busy}
+              onChange={(e) => {
+                const p = parentChoices.find((x) => x.block_sha256 === e.target.value);
+                setProp({ parent: p ? anchorOf(p) : null });
+              }}
+              data-testid="task-field-parent"
+            >
+              <option value="">없음</option>
+              {draft.parent && !parentChoices.some((x) => x.block_sha256 === draft.parent?.block_sha256) && <option value={draft.parent.block_sha256}>{draft.parent.title}</option>}
+              {parentChoices.map((x) => (
+                <option key={x.line} value={x.block_sha256}>
+                  {"— ".repeat(taskDepth(x, byLine))}
+                  {x.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <section className="task-detail-section task-memo">
+          <h3 className="task-field-head">
+            <span>메모</span>
+            <button
+              type="button"
+              className="linkish"
+              aria-pressed={preview}
+              data-testid="task-notes-toggle"
+              onClick={() => {
+                editNotes.current = preview;
+                setPreview((p) => !p);
+              }}
+            >
+              {preview ? "고치기" : "미리보기"}
+            </button>
+          </h3>
+          {preview ? (
+            <div className="task-notes-preview" data-testid="task-notes-preview">{withoutAttachments(draft.notes) ? <Markdown className="task-notes">{withoutAttachments(draft.notes)}</Markdown> : <p className="muted">메모 없음</p>}</div>
+          ) : (
+            <textarea ref={notesInput} className="input task-notes-input" value={memoText(draft.notes)} disabled={busy} rows={5} onChange={(e) => { const text = e.target.value; setDraft((d) => ({ ...d, notes: withMemoText(d.notes, text) })); }} onPaste={pasteIntoNotes} aria-label="메모" data-testid="task-field-notes" placeholder="Markdown" />
+          )}
+        </section>
+        <TaskAttachments
+          project={board.project}
+          notes={draft.notes}
+          saved={base ? base.notes.join("\n") : ""}
+          canEdit={canAttach}
+          busy={busy}
+          pending={pending}
+          onFiles={(files) => void attachFiles(files)}
+          onLink={canAttach ? (a) => void attachLink(a) : undefined}
+          onRemove={(a) => removeFile(a.target)}
+          onOpen={onOpenAttachment}
+          onCover={props.onCover}
+        />
+        {t && (
           <>
-            <label className="task-field">
-              <span>모델</span>
-              <select className="input" value={draft.profile} disabled={busy} title="자동: 시작할 때 프로젝트 기본 profile" onFocus={props.onRefreshOwners} onChange={(e) => set({ profile: e.target.value })} data-testid="task-field-profile">
-                <option value="">자동</option>
-                {models.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-                {owners === null && <option disabled>모델 목록 읽는 중</option>}
-              </select>
-            </label>
-            <label className="task-field">
-              <span>머신</span>
-              <select className="input" value={draft.machine} disabled={busy} title="자동: 시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳" onFocus={props.onRefreshOwners} onChange={(e) => set({ machine: e.target.value })} data-testid="task-field-machine">
-                <option value="">자동</option>
-                {machines.map((m) => (
-                  <option key={m.value} value={m.value} disabled={m.disabled}>
-                    {m.label}
-                  </option>
-                ))}
-                {owners === null && <option disabled>머신 목록 읽는 중</option>}
-              </select>
-            </label>
+            <Related t={t} byLine={byLine} groups={groups} onPick={onPick} parent={false} />
+            <details className="task-more">
+              <summary>자세히</summary>
+              {pastThreads.length > 0 && (
+                <div className="task-detail-chips">
+                  {pastThreads.map((id) => (
+                    <span key={id} className="task-chip is-dim" title="지난 thread(기록)">
+                      지난 {id}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <section className="task-detail-section">
+                <h3>원문 줄</h3>
+                <pre className="task-raw" data-testid="task-raw">
+                  <code>{t.raw}</code>
+                </pre>
+                {dirty && (
+                  <p className="muted task-form-preview">
+                    저장하면: <code>{canonicalLine(textDraft.title.trim(), draftOwner(textDraft).owner || null, textDraft.repo || null, t.thread)}</code>
+                  </p>
+                )}
+              </section>
+            </details>
           </>
         )}
-        {draft.who === "person" && (
-          <label className="task-field">
-            <span>사람 이름(사람으로 저장)</span>
-            <input className="input" value={draft.person} disabled={busy} onChange={(e) => set({ person: e.target.value })} data-testid="task-field-person" />
-          </label>
-        )}
       </div>
-      <label className="task-field">
-        <span>상위 task</span>
-        <select
-          className="input"
-          value={draft.parent?.block_sha256 ?? ""}
-          disabled={busy}
-          onChange={(e) => {
-            const p = parentChoices.find((x) => x.block_sha256 === e.target.value);
-            set({ parent: p ? anchorOf(p) : null });
-          }}
-          data-testid="task-field-parent"
-        >
-          <option value="">없음(맨 위 단계)</option>
-          {draft.parent && !parentChoices.some((x) => x.block_sha256 === draft.parent?.block_sha256) && <option value={draft.parent.block_sha256}>{draft.parent.title}</option>}
-          {parentChoices.map((x) => (
-            <option key={x.line} value={x.block_sha256}>
-              {"— ".repeat(taskDepth(x, byLine))}
-              {x.title}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="task-field">
-        <span className="task-field-head">
-          <span>메모</span>
-          <button
-            type="button"
-            className="linkish"
-            aria-pressed={preview}
-            data-testid="task-notes-toggle"
-            onClick={() => {
-              editNotes.current = preview;
-              setPreview((p) => !p);
-            }}
-          >
-            {preview ? "고치기" : "미리보기"}
-          </button>
-        </span>
-        {preview ? (
-          <div className="task-notes-preview" data-testid="task-notes-preview">{withoutAttachments(draft.notes) ? <Markdown className="task-notes">{withoutAttachments(draft.notes)}</Markdown> : <p className="muted">메모 없음</p>}</div>
-        ) : (
-          <textarea ref={notesInput} className="input task-notes-input" value={memoText(draft.notes)} disabled={busy} rows={5} onChange={(e) => { const text = e.target.value; setDraft((d) => ({ ...d, notes: withMemoText(d.notes, text) })); }} onPaste={pasteIntoNotes} aria-label="메모" data-testid="task-field-notes" placeholder={canAttach ? "여러 줄 Markdown. 그림·문서를 붙여 넣으면 아래 첨부에 붙는다" : "여러 줄 Markdown. thread로 맡길 때 할 일 끝에 붙는다"} />
+      {/* 아래 고정 줄(사용자 10-26 q-1380 1A): 고치는 중이면 저장·되돌리기, 아니면 맡기기·바로 시작·예약. 예약 확인도 이 자리에서 연다 */}
+      <footer className="task-detail-foot" data-testid="task-detail-foot">
+        {error && (
+          <p className="task-form-error" role="alert" data-testid="task-form-error">
+            {error}
+          </p>
         )}
-      </div>
-      {error && (
-        <p className="task-form-error" role="alert" data-testid="task-form-error">
-          {error}
-        </p>
-      )}
-      <div className="task-form-actions">
-        <button className="btn btn-primary" disabled={busy || !dirty || draft.title.trim() === ""} data-testid="task-save">
-          {base ? "저장" : "더하기"}
-        </button>
-        {base && dirty && (
-          <button type="button" className="btn" disabled={busy} onClick={reopen}>
-            되돌리기
-          </button>
+        {queue.error && (
+          <p className="task-form-error" role="alert">
+            {queue.error}
+          </p>
         )}
-        <span className="spacer" />
-        {base && !t?.attention && (
-          <button
-            type="button"
-            className="btn btn-danger"
-            disabled={busy || dirty}
-            title={dirty ? "고친 것을 저장하거나 되돌린 뒤 지운다" : "기록에 남아 되살릴 수 있다"}
-            data-testid="task-delete"
-            onClick={() => {
-              setBusy(true);
-              setError(null);
-              void onDelete(base).then(
-                () => setBusy(false),
-                (e: unknown) => {
-                  setError(e instanceof Error ? e.message : String(e));
-                  setBusy(false);
-                },
-              );
-            }}
-          >
-            {children.size > 0 ? `하위 ${children.size}개와 함께 지우기` : "끝남으로 지우기"}
-          </button>
-        )}
-      </div>
-      <TaskAttachments
-        project={board.project}
-        notes={draft.notes}
-        saved={base ? base.notes.join("\n") : ""}
-        canEdit={canAttach}
-        busy={busy}
-        pending={pending}
-        onFiles={(files) => void attachFiles(files)}
-        onLink={canAttach ? (a) => void attachLink(a) : undefined}
-        onRemove={(a) => removeFile(a.target)}
-        onOpen={onOpenAttachment}
-        onCover={props.onCover}
-      />
-      {t && (
-        <>
-          <section className="task-detail-section">
-            <h3>원문 줄</h3>
-            <pre className="task-raw" data-testid="task-raw">
-              <code>{t.raw}</code>
-            </pre>
-            {dirty && (
-              <p className="muted task-form-preview">
-                저장하면: <code>{canonicalLine(draft.title.trim(), draftOwner(draft).owner || null, draft.repo || null, t.thread)}</code>
-              </p>
+        {t && queue.preview ? (
+          <ReservePanel task={t} board={board} afterApi={props.afterApi} queue={queue} />
+        ) : !base || dirty ? (
+          <div className="task-detail-actions">
+            <button className="btn btn-primary" disabled={busy || !dirty || draft.title.trim() === ""} data-testid="task-save">
+              {base ? "저장" : "더하기"}
+            </button>
+            {base && (
+              <button type="button" className="btn" disabled={busy} onClick={reopen}>
+                되돌리기
+              </button>
             )}
-          </section>
-          <Related t={t} byLine={byLine} groups={groups} onPick={onPick} />
-        </>
-      )}
+          </div>
+        ) : (
+          <div className="task-detail-actions">
+            {canStart && !t?.attention && (onHandOff || onStart) && (
+              <span className="task-handoff" data-testid="task-handoff">
+                {onHandOff && (
+                  <button type="button" className="btn btn-primary" disabled={quiet} data-testid="task-handoff-coordinator" onClick={() => handOff(false)}>
+                    <Bot aria-hidden="true" />
+                    coordinator에게 맡기기
+                  </button>
+                )}
+                {onStart && (
+                  <button type="button" className="btn" disabled={quiet} title="모델·머신·저장소를 확인하고 바로 시작" data-testid="task-handoff-start" onClick={() => t && onStart(t)}>
+                    <Play aria-hidden="true" />
+                    바로 시작
+                  </button>
+                )}
+              </span>
+            )}
+            {queue.canReserve && (
+              <button type="button" className="btn" disabled={quiet} title={queue.pending ? "예약 내용 갱신" : "자리 나면 시작 예약"} data-testid="task-reserve-preview" onClick={queue.inspect}>
+                <Clock aria-hidden="true" />
+                {queue.pending ? "예약 갱신" : "예약"}
+              </button>
+            )}
+            {queue.pending && (
+              <button type="button" className="btn task-queue-cancel" disabled={quiet} data-testid="task-reserve-cancel" onClick={queue.cancel}>
+                예약 풀기
+              </button>
+            )}
+            <span className="spacer" />
+            {moreItems.length > 0 && (
+              <button type="button" className="btn task-detail-more" aria-label="더 보기" aria-haspopup="menu" aria-expanded={more !== null} disabled={quiet} data-testid="task-detail-more" onClick={(e) => { const el = e.currentTarget; setMore((m) => (m ? null : el)); }}>
+                <Ellipsis aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        )}
+      </footer>
+      {more && <RowMenu anchor={more} title={t ? `${t.short_id ?? t.title} 더 보기` : "더 보기"} items={moreItems} onClose={() => setMore(null)} />}
     </form>
   );
 }

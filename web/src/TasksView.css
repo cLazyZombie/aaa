@@ -194,10 +194,10 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-detail-close svg { width: 18px; height: 18px; }
 .task-detail-close .task-close-back { display: none; }
 @media (hover: hover) { .task-detail-close:hover { background: var(--bg-hover); } }
-.task-detail-list { min-width: 0; overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.task-detail-list { display: flex; flex: 1 1 auto; align-items: center; gap: var(--space-2); min-width: 0; overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.task-detail-list .task-short-id { font-family: var(--font-mono); }
 .task-detail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-3) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom)); overflow-wrap: anywhere; }
-.task-detail-title { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-strong); }
-.task-detail-title .task-state { margin-top: 3px; }
+.task-detail-title { margin: 0 0 var(--space-3); font-size: var(--fs-xl); font-weight: var(--fw-semibold); line-height: 1.4; color: var(--text-strong); }
 .task-detail-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-3); }
 .task-detail-section { margin-top: var(--space-4); }
 .task-detail-section h3 { margin: 0 0 var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
@@ -327,9 +327,35 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 }
 .tasks-fab svg { width: 24px; height: 24px; }
 
-/* 편집 폼(t3code ScheduledTaskEditorForm 칸 차례) */
-.task-form { display: flex; flex-direction: column; gap: var(--space-3); }
+/* 편집 폼(t3code ScheduledTaskEditorForm 칸 차례). 상세 정리(t-1097): 본문만 굴리고 아래 고정 줄은 늘 보인다 */
+.task-form { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.task-form > .task-detail-body { display: flex; flex-direction: column; gap: var(--space-4); padding-bottom: var(--space-4); }
 .task-form .task-detail-chips { align-items: center; margin-bottom: 0; }
+/* 제목: 글처럼 보이고 누르면 고친다(여러 줄로 감싼다) */
+.task-title-field { display: block; margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-2)) 0; }
+.task-detail .task-title-field textarea.task-title-input { display: block; width: 100%; height: auto; padding: var(--space-1) var(--space-2); overflow: hidden; resize: none; border-color: transparent; background: transparent; color: var(--text-strong); font-size: max(var(--fs-input), var(--fs-xl)); font-weight: var(--fw-semibold); line-height: 1.4; }
+@media (hover: hover) { .task-title-input:hover:not(:focus) { border-color: var(--border); } }
+.task-title-input:focus { background: var(--bg-input); }
+/* 속성: 이름·값 한 줄(Plane issue-properties 모양). 값은 테두리 없는 고르기이고 고르면 바로 저장한다 */
+.task-props { display: flex; flex-direction: column; gap: 2px; }
+.task-prop { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: 32px; }
+.task-prop > span { flex: 0 0 72px; color: var(--text-dim); font-size: var(--fs-xs); }
+.task-prop > .input { flex: 0 1 auto; min-width: 0; max-width: calc(100% - 72px - var(--space-2)); height: 30px; margin-left: calc(-1 * var(--space-2)); padding: 0 var(--space-2); border-color: transparent; background-color: transparent; color: var(--text); font-size: var(--fs-sm); text-overflow: ellipsis; cursor: pointer; }
+@media (hover: hover) { .task-prop > .input:hover:not(:disabled) { background-color: var(--bg-hover); } }
+.task-prop > .input:focus { border-color: var(--accent); }
+.task-prop > input.input { flex: 1 1 auto; border-color: var(--border); background-color: var(--bg-input); cursor: text; }
+.task-memo .task-field-head { margin-bottom: var(--space-2); }
+.task-memo .task-notes-input { display: block; width: 100%; color: var(--text); }
+.task-memo .task-field-head .linkish { font-size: var(--fs-xs); }
+.task-more > summary { padding-top: var(--space-3); border-top: var(--hairline) solid var(--border); color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer; }
+.task-more[open] > summary { margin-bottom: var(--space-2); }
+.task-more .task-detail-section { margin-top: var(--space-2); }
+/* 아래 고정 줄: 저장·되돌리기 또는 맡기기·바로 시작·예약, 예약 확인도 이 자리 */
+.task-detail-foot { display: flex; flex: 0 0 auto; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom)); border-top: var(--hairline) solid var(--border); background: var(--bg-panel); }
+.task-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.task-detail-actions .spacer { flex: 1 1 auto; }
+.task-detail-actions .btn svg { width: 14px; height: 14px; }
+.task-detail-more { width: var(--control-h); padding: 0; }
 .task-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; font-size: var(--fs-xs); color: var(--text-dim); }
 .task-field > .input, .task-field select.input { width: 100%; color: var(--text); font-size: var(--fs-sm); }
 .task-field-head { display: flex; align-items: center; justify-content: space-between; }
@@ -339,7 +365,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-form .task-field-row > .task-field { flex-basis: 140px; }
 .task-form .task-who-row > .task-field { flex-basis: 88px; }
 .task-notes-input { min-height: 7.5em; resize: vertical; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; }
-.task-notes-preview { min-height: 7.5em; padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); color: var(--text); }
+.task-notes-preview { color: var(--text); }
 .task-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .task-form-actions .spacer { flex: 1 1 auto; }
 .task-form-error { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--danger-tint); color: var(--danger-text); font-size: var(--fs-sm); }
@@ -399,10 +425,9 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-attention h3 { display: flex; align-items: center; gap: var(--space-1); color: var(--notice); }
 .task-attention h3 svg { width: 14px; height: 14px; }
 .task-attention p { margin: 0 0 var(--space-2); font-size: var(--fs-sm); overflow-wrap: anywhere; }
-.task-attention-actions, .task-handoff-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.task-attention-actions .btn svg, .task-handoff-actions .btn svg, .task-unlinked-action svg { width: 14px; height: 14px; }
-.task-handoff { padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); }
-.task-handoff p { margin: var(--space-2) 0 0; font-size: var(--fs-xs); }
+.task-attention-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.task-attention-actions .btn svg, .task-unlinked-action svg { width: 14px; height: 14px; }
+.task-handoff { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .task-unlinked-actions { display: flex; flex: 0 0 auto; gap: var(--space-1); margin-right: var(--space-1); }
 .task-unlinked-action { gap: var(--space-1); font-size: var(--fs-xs); }
 .task-started { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-2) var(--space-4) 0; font-size: var(--fs-sm); }
@@ -431,7 +456,10 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 @media (max-width: 640px) {
   .tasks-actions .tasks-add { display: none; }
   .task-unlinked-action span { display: none; }
-  .task-attention-actions .btn, .task-handoff-actions .btn { min-height: var(--touch-target); }
+  .task-attention-actions .btn, .task-detail-actions .btn { min-height: var(--touch-target); }
+  .task-detail-actions .task-handoff { flex: 1 1 100%; }
+  .task-detail-actions .task-handoff > .btn-primary { flex: 1 1 auto; }
+  .task-detail-more { width: var(--touch-target); }
   .tasks-fab { display: inline-flex; }
   .task-conflict-sides { grid-template-columns: 1fr; }
   .task-form-actions .btn { min-height: var(--touch-target); }
@@ -482,7 +510,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 }
 .task-attach-paste:empty::before { content: attr(data-placeholder); color: var(--text-dim); pointer-events: none; }
 .task-attach-paste:focus { border-color: var(--accent); background: var(--accent-tint); outline: none; }
-.task-attach-help { margin: var(--space-1) 0 0; font-size: var(--fs-xs); }
 .task-form.is-dropping { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-tint); }
 
 .task-attach-file { width: 28px; height: 28px; margin: auto; color: var(--text-dim); position: absolute; inset: 0; }
@@ -510,18 +537,24 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   }
 }
 
-.task-queue-controls { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-start; gap: var(--space-2); max-height: 40vh; overflow: auto; padding: var(--space-3); border-bottom: var(--hairline) solid var(--border); font-size: var(--fs-sm); }
+.task-queue-controls { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); font-size: var(--fs-sm); }
 .task-queue-controls > p { margin: 0; }
 .task-queue-status { display: flex; align-items: center; gap: var(--space-2); }
 .task-queue-controls.is-reserved .task-queue-word { color: var(--reserved); }
 .task-queue-meta, .task-queue-home { color: var(--text-dim); font-size: var(--fs-xs); }
-.task-reserve-after { display: flex; flex-direction: column; gap: var(--space-1); margin-block: var(--space-2); font-size: var(--fs-sm); }
-.task-reserve-after select { width: 100%; min-width: 0; color: var(--text); }
-.task-reserve-after span { color: var(--text-dim); font-size: var(--fs-xs); }
+.task-reserve { display: flex; flex-direction: column; gap: var(--space-2); }
+.task-reserve-head { display: flex; align-items: center; gap: var(--space-2); color: var(--text-strong); font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+.task-reserve-head > svg { width: 16px; height: 16px; }
+.task-reserve-x { display: grid; place-items: center; width: 28px; height: 28px; margin-left: auto; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-dim); cursor: pointer; }
+.task-reserve-x svg { width: 16px; height: 16px; }
+@media (hover: hover) { .task-reserve-x:hover { background: var(--bg-hover); } }
+.task-reserve-sum, .task-reserve-need { margin: 0; color: var(--text-dim); font-size: var(--fs-xs); }
+.task-reserve-need { color: var(--notice); }
+.task-reserve-after { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-xs); color: var(--text-dim); }
+.task-reserve-after > span { flex: 0 0 72px; }
+.task-reserve-after select { flex: 1 1 auto; min-width: 0; color: var(--text); }
 .task-queue-why { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--notice); border-radius: var(--radius-md); background: color-mix(in srgb, var(--notice) 10%, transparent); font-size: var(--fs-xs); }
 .task-queue-why b { color: var(--notice); }
-.task-queue-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.task-queue-move { border-color: var(--reserved-line); color: var(--reserved); }
 .task-queue-cancel { border-color: var(--status-blocked); color: var(--status-blocked); }
 
 /* 한 목록(§8.393): 예약 색은 Primer done(보라). 테마 token에 없는 색이라 여기서 정한다 */
