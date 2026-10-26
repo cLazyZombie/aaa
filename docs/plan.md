@@ -7937,3 +7937,15 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 ## 질문 직접 답의 native input 보존 (t-1065)
 
 질문 카드의 직접 답도 대화 입력창처럼 window native input capture에서 새 글을 먼저 보관한다. React root capture 뒤 부모 화면 갱신이 먼저 commit돼도 bubble onChange 전에 controlled 값이 빈 글로 덮이지 않게 한다. 자기 입력칸의 사건만 처리하며 숨김·해제·보기 권한·전송 중에는 listener를 해제한다. 보고별 카드 신원·부분 답 초안·이전 답의 늦은 응답 처리는 유지한다. E2E53의 기존 Chromium/WebKit 1280/390px에 native input→실제 부모 갱신→bubble 순서를 넣어 입력·활성·동일 DOM과 보고별 정확히 한 번 전달을 함께 확인한다. API·E2E 번호는 바꾸지 않는다.
+
+### 8.494 할 일 완료 목록의 정렬과 날짜 묶음(t-1067)
+
+- 사용자 10-26: 완료 목록이 끝난 날짜순이 아니고 모양도 별로다. 번호·시작 날짜·끝난 날짜로 고르게 한다(「무조건 내림차순?」). 운영 DB 확인: 보관 311건 모두 `completed_ms`가 있고, 307건은 이력에 thread를 이은 기록이 있다. 4건(완료 체크 [x])은 thread 없이 끝나 시작 기록이 없다. 이전 목록은 보관 ULID 순서였고, 식별 이주로 같은 ms에 받은 ULID는 번호와도 맞지 않았다.
+- host가 페이지를 자르기 전에 정렬한다(FRONT_API 1.126 `TaskArchiveQuery.sort`: `completed` 기본·`started`·`number`). 모두 내림차순이고 같은 값은 큰 번호가 위다. 시작 날짜는 저장값이 아니라 응답 때 이력에서 처음 thread를 이은 시각(`ArchivedTask.started_ms`)이며 다시 맡긴 일도 처음 시작이다. 시작 기록이 없는 일은 시작 날짜순의 끝이다. 페이지 커서 `next`는 `정렬값:번호` host 커서다(같은 값 사이도 건너뛰거나 되풀이하지 않는다). 옛 커서는 bad_request로 거부해 처음부터 다시 읽게 한다. CLI `aaa task archive`도 끝난 날짜 최신순이 된다.
+- 오름차순은 두지 않는다. Things Logbook과 Gitea `recentclose`처럼 완료 기록은 최근 것을 찾는 화면이고, 오래된 일은 기간·검색 거르기로 좁힌다. 방향 단추는 선택지만 늘린다(Todoist는 방향을 고르지만 활성 목록의 기본 차례를 바꾸는 용도다).
+- 웹: 거르기 줄 끝(휴대폰은 맨 앞)의 정렬 칩과 공통 RowMenu(휴대폰 시트). 고른 정렬은 기기 localStorage에 기억한다. 날짜순은 기기 시간대 날짜 머리(오늘·어제·10월 24일 토요일, 다른 해는 연도) 밑에 묶고, 머리는 목록 위에 붙는다. 번호순은 묶지 않고 행 시각에 날짜를 붙인다. 시각은 24시간제로 브라우저마다 같게 쓴다.
+- 행: 꺾쇠·번호·제목(한 줄 말줄임), 저장소·thread·완료 근거 칩, 시각. 목록 640px 이상은 t-1048 활성 행처럼 한 줄(행 35px), 좁으면 칩을 제목 밑 한 줄로 접는다(390px 행 약 56px, 이전 약 90~110px). 비어 있는 저장소·모델·머신은 쓰지 않는다. 모델·머신·시작/끝 전체 시각·걸린 시간·완료 근거 원문은 펼친 상세에 둔다. 펼침은 details 대신 aria-expanded 단추라 thread 칩을 같은 줄에 둘 수 있다.
+- 활성 「할 일」 탭의 차례는 바꾸지 않는다: 예약 차례와 끌어 놓은 우선순위가 그 목록의 뜻이다(Linear·Todoist도 다른 정렬을 고르면 손 차례 끌기를 끈다).
+- 참고: [Todoist 정렬](https://todoist.com/help/articles/sort-or-group-tasks-in-todoist-WFWD0hrb)(정렬·묶음 분리, 방향), [Linear 보기 차례](https://linear.app/changelog/2022-08-18-board-ordering)(손 차례와 속성 차례), [Gitea recentclose](https://github.com/go-gitea/gitea/pull/34525)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE)), Things Logbook(날짜 묶음). 구성만 참고하고 외부 코드·의존성은 추가하지 않는다.
+
+- **70회차 착지 통합(t-1070).** 원격 main `ab7204fb`에 t-1064 `207b1add`·t-1065 `a8de7a9b`·t-1067 `a3fa935f`를 각각 --no-ff로 통합한다. 한글 조합은 §8.493, 완료 목록은 겹친 번호를 §8.494로 옮기며 FRONT_API 1.126·AGENT_LINK 1.11·기존 E2E01~114를 유지한다. 시험 문서는 각 후보와 main의 설명을 모두 보존한다. t-1069는 다음 차례로 제외한다. 저장소 launchChromium helper·공용 캐시의 Playwright 1.64.1 양 엔진 사전 확인 뒤 전체 ci-local·별도 공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows production release 빌드를 한 번 수행한다. 실패는 원문·부하를 보존해 재시도 없이 멈춘다. 전체 검증에는 salt를 넣지 않고 push 뒤 착지 SHA salt로 Windows 설치기를 만들어 전용 시험 폴더에 전달·해시·판만 확인한다. GitHub CI 대기·설치 실행·배포·tag·release는 하지 않는다.

@@ -1412,6 +1412,7 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
                     committed: true,
                     removed_sha256: String::new(),
                     history: vec![],
+                    started_ms: None,
                 },
             )
             .unwrap();
@@ -1444,7 +1445,8 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
         after = next;
     }
     assert_eq!(ids.len(), 120);
-    assert!(ids.windows(2).all(|w| w[0] < w[1]));
+    // 기본은 끝난 날짜 내림차순이다(이 fixture는 ID 순서로 끝났다).
+    assert!(ids.windows(2).all(|w| w[0] > w[1]));
     // 첫 페이지 밖까지 모든 조건을 적용하고 기간의 양 끝을 정확하게 구분한다.
     let FrontResponse::TaskArchive { entries, profiles, machines, next, .. } = lab
         .h
@@ -1465,7 +1467,7 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
     else {
         panic!("보관 응답")
     };
-    assert_eq!(entries.iter().map(|r| r.completed_ms).collect::<Vec<_>>(), vec![100, 106]);
+    assert_eq!(entries.iter().map(|r| r.completed_ms).collect::<Vec<_>>(), vec![106, 100]);
     assert_eq!(profiles, vec!["model-0", "model-1", "model-2"]);
     assert_eq!(machines, vec!["mac-0", "mac-1"]);
     assert!(next.is_none());
@@ -1532,6 +1534,90 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
     };
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].task_id, picked.task_id);
+}
+
+#[tokio::test]
+async fn archive_sorts_newest_first_and_pages_across_equal_values() {
+    use aaa_proto::{ArchivedTask, TaskArchiveQuery, TaskArchiveSort as S, TaskLogEntry};
+    let lab = Lab::new();
+    lab.write("## Backlog\n");
+    // (끝난 시각, thread 이은 시각들). 번호는 보관 ID 순서로 d-0001부터 매긴다.
+    let rows: [(u64, &[u64]); 5] = [(50, &[10]), (50, &[30, 5]), (70, &[]), (60, &[20]), (40, &[30])];
+    for (i, (completed_ms, linked)) in rows.into_iter().enumerate() {
+        let id = format!("{:026}", i + 1);
+        let body = format!("- [x] 정렬 {i} (me) <!-- aaa-task:{id} -->\n");
+        let task = tasks::parse(&body).remove(0);
+        let history = linked
+            .iter()
+            .map(|&at_ms| TaskLogEntry {
+                id: at_ms as i64,
+                at_ms,
+                actor: "host".into(),
+                by: "host".into(),
+                action: TaskAction::Update,
+                list: "Backlog".into(),
+                from_list: None,
+                title: task.title.clone(),
+                before: None,
+                after: None,
+                thread: Some(format!("t-{at_ms:04}")),
+                restored_by: None,
+            })
+            .collect();
+        let row = ArchivedTask {
+            task_id: id,
+            task,
+            body,
+            reason: "보고 [완료]".into(),
+            report: None,
+            completed_ms,
+            restored: false,
+            committed: true,
+            removed_sha256: String::new(),
+            history,
+            started_ms: None,
+        };
+        lab.h.db.archive_save("demo", &row).unwrap();
+    }
+    // 한 건씩 넘겨 같은 끝난 시각(50)도 커서가 건너뛰거나 되풀이하지 않는지 본다.
+    let lab = &lab;
+    let pages = |sort| async move {
+        let (mut after, mut seen) = (None, Vec::new());
+        loop {
+            let view = TaskArchiveQuery { sort, after: after.clone(), limit: Some(1), ..Default::default() };
+            let FrontResponse::TaskArchive { entries, next, .. } =
+                lab.h.task_archive("demo", None, Some(view), "device:user").await.unwrap()
+            else {
+                panic!("보관 응답")
+            };
+            seen.extend(entries.into_iter().map(|a| (a.task.short_id.unwrap(), a.started_ms)));
+            if next.is_none() {
+                return seen;
+            }
+            after = next;
+        }
+    };
+    let ids = |v: Vec<(String, Option<u64>)>| v.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    assert_eq!(ids(pages(None).await), ["d-0003", "d-0004", "d-0002", "d-0001", "d-0005"]);
+    let started = pages(Some(S::Started)).await;
+    assert_eq!(
+        started,
+        [
+            ("d-0005".into(), Some(30)),
+            ("d-0004".into(), Some(20)),
+            ("d-0001".into(), Some(10)),
+            ("d-0002".into(), Some(5)),
+            ("d-0003".into(), None)
+        ]
+    );
+    assert_eq!(ids(pages(Some(S::Number)).await), ["d-0005", "d-0004", "d-0003", "d-0002", "d-0001"]);
+    let bad = TaskArchiveQuery { after: Some("01ULID".into()), ..Default::default() };
+    assert_eq!(
+        lab.h.task_archive("demo", None, Some(bad), "device:user").await.unwrap_err().code,
+        ErrorCode::BadRequest
+    );
+    // 시작 시각은 응답 때만 채우고 내구 보관은 바꾸지 않는다.
+    assert!(lab.h.db.archive_list("demo").unwrap().iter().all(|a| a.started_ms.is_none()));
 }
 
 #[tokio::test]

@@ -66,6 +66,8 @@ export default async function ({ page }) {
       const title = `보관 ${String(i).padStart(3, "0")}`;
       const body = `- [x] ${title} (me)${repo ? ` [${repo}]` : ""} <!-- aaa-task:${id} -->\n  needle-${i} 결과 메모\n`;
       const history = [{ id: i, at_ms: i, actor: "file", by: "파일 직접", action: "raw", list: "Backlog", from_list: null, title, before: "자료".repeat(6000), after: null, thread: null, restored_by: null }];
+      // 넷 중 셋은 thread를 이었다: 시작 시각 차례가 번호·끝난 차례와 다르고, 나머지는 「시작 기록 없음」이다.
+      if (i % 4) history.push({ id: 1000 + i, at_ms: (i * 7) % 131 + 1, actor: "file", by: "파일 직접", action: "update", list: "Backlog", from_list: null, title, before: null, after: null, thread: `t-${String(i).padStart(4, "0")}`, restored_by: null });
       const row = { task_id: id, task: { id, list: "Backlog", title, owner: i === 100 ? "fake@mac-a" : "me", thread: null, notes: [`needle-${i} 결과 메모`], done: true, repo }, body, reason: ["PR 병합", "origin/main 병합", "보고 [완료]"][(i - 1) % 3], report: null, completed_ms: i === 100 ? Date.now() - 86400000 : i, restored: i > 128, committed: true, removed_sha256: "", history };
       const data = JSON.stringify(row); storedBytes += Buffer.byteLength(data); put.run(id, data);
     }
@@ -121,8 +123,12 @@ export default async function ({ page }) {
     await choose(page, "period", "최근 7일");
     await domIs(page, "완료 여섯 조건", () => {
       const list = document.querySelector('[data-testid="task-archive-list"]');
-      return list?.getAttribute("aria-busy") === "false" && list.querySelectorAll('[data-testid^="archive-"]').length === 1 && list.textContent.includes("모델: fake") && list.textContent.includes("머신: mac-a");
+      return list?.getAttribute("aria-busy") === "false" && list.querySelectorAll('[data-testid^="archive-"]').length === 1 && list.textContent.includes("보관 100");
     });
+    // 모델·머신은 행 칩이 아니라 펼친 상세에 있다.
+    await rows(page).locator(".task-completed-pick").click();
+    assert.match(await rows(page).locator(".task-completed-facts").textContent(), /모델fake.*머신mac-a/);
+    await rows(page).locator(".task-completed-pick").click();
     assert.equal(await page.getByRole("tab", { name: "기록", exact: true }).count(), 0);
     await shot(page, "completed-desktop-dark");
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
@@ -145,7 +151,7 @@ export default async function ({ page }) {
       await release;
       await route.fulfill({ response });
     });
-    await rows(page).locator("summary").click();
+    await rows(page).locator(".task-completed-pick").click();
     await rows(page).getByRole("button", { name: "되살리기", exact: true }).click();
     await reached;
     await page.getByTestId("task-completed-search").fill("needle-102");
@@ -199,7 +205,7 @@ export default async function ({ page }) {
           assert.equal(await p.getByRole("button", { name: "되살리기" }).count(), 0);
           const denied = await request(p, { op: "task_archive", restore: restoredId });
           assert.equal(denied.err?.code, "forbidden");
-          await rows(p).locator("summary").click();
+          await rows(p).locator(".task-completed-pick").click();
           assert.equal(await p.getByText("기록 보기", { exact: true }).count(), 0);
           await shot(p, `completed-${width}-dark`);
           await p.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
@@ -238,7 +244,7 @@ export default async function ({ page }) {
       const request = response.request().postDataJSON();
       return request?.op === "task_archive" && request.restore === item.task_id;
     });
-    await rows(page).filter({ hasText: "완료 상위" }).locator("summary").click();
+    await rows(page).filter({ hasText: "완료 상위" }).locator(".task-completed-pick").click();
     await rows(page).filter({ hasText: "완료 상위" }).getByRole("button", { name: "되살리기", exact: true }).click();
     const response = await (await restoreResponse).json();
     assert.equal(response.ok?.kind, "task_archive", JSON.stringify(response.err));
@@ -250,6 +256,69 @@ export default async function ({ page }) {
     assert.ok(restored && !restored.done && restored.thread === null);
     assert.equal(restored.owner, "fake");
     assert.equal(aaa("task", "queue").entries.length, 0);
+  });
+
+  await step("정렬: 끝난·시작 날짜·번호 모두 최근이 위이고, host 페이지 차례·날짜 묶음과 기기 기억을 지킨다", async () => {
+    await page.getByTestId("task-completed-search").fill("");
+    await choose(page, "reason", "전체");
+    const shown = (sort, n) => domIs(page, `${sort} 정렬 ${n}개`, ({ sort, n }) => {
+      const list = document.querySelector('[data-testid="task-archive-list"]');
+      return list?.getAttribute("aria-busy") === "false" && list.dataset.sort === sort && list.querySelectorAll('[data-testid^="archive-"]').length === n;
+    }, { sort, n });
+    const ids = () => page.evaluate(() => [...document.querySelectorAll('[data-testid^="archive-"]')].map((e) => e.dataset.testid.slice("archive-".length)));
+    const days = () => page.locator(".task-completed-day").allTextContents();
+    // 화면 차례는 host 응답 차례 그대로다. host 응답은 정렬 값 내림차순, 같은 값은 큰 번호가 위다.
+    const hostOrder = async (sort, value) => {
+      const all = [];
+      let after = null;
+      do {
+        const r = await archive(page, { search: { query: "", repo: null }, filter: null, after, limit: 50, sort, profile: null, machine: null, since_ms: null, until_ms: null });
+        assert.ok(r.ok, JSON.stringify(r.err));
+        all.push(...r.ok.entries); after = r.ok.next;
+      } while (after);
+      const key = (e) => [value(e) ?? -1, Number(e.task.short_id.slice(2))];
+      for (let i = 1; i < all.length; i++) {
+        const [a, b] = [key(all[i - 1]), key(all[i])];
+        assert.ok(a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]), `${sort} ${i}번째 차례`);
+      }
+      return all;
+    };
+    await shown("completed", 50);
+    const byCompleted = await hostOrder("completed", (e) => e.completed_ms);
+    assert.deepEqual(await ids(), byCompleted.slice(0, 50).map((e) => e.task_id));
+    // 앞 단계의 체크 보관은 오늘, fixture는 1970년 초(시간대에 따라 1969년 말)의 날짜 묶음이다.
+    const [today, old] = await days();
+    assert.match(today, /^오늘 · \d+월 \d+일 [일월화수목금토]요일$/);
+    assert.match(old, /^19(70|69)년 /);
+
+    await choose(page, "sort", "시작 날짜");
+    await shown("started", 50);
+    const byStarted = await hostOrder("started", (e) => e.started_ms);
+    assert.deepEqual(await ids(), byStarted.slice(0, 50).map((e) => e.task_id));
+    assert.equal(byStarted.length, byCompleted.length);
+    // 시작 기록 없는 일은 끝 묶음이다. 「더 보기」의 host 커서가 같은 정렬로 이어지는지 함께 본다.
+    await page.getByTestId("task-archive-more").click();
+    await shown("started", 100);
+    await page.getByTestId("task-archive-more").click();
+    await shown("started", byStarted.length);
+    assert.deepEqual(await ids(), byStarted.map((e) => e.task_id));
+    assert.equal((await days()).at(-1), "시작 기록 없음");
+    const none = byStarted.filter((e) => e.started_ms === undefined).length;
+    assert.ok(none > 0);
+    assert.equal(await page.locator(".task-completed-group").last().locator('[data-testid^="archive-"]').count(), none);
+    await shot(page, "completed-sort-started");
+
+    await choose(page, "sort", "번호");
+    await shown("number", 50);
+    const byNumber = await hostOrder("number", (e) => Number(e.task.short_id.slice(2)));
+    assert.deepEqual(await ids(), byNumber.slice(0, 50).map((e) => e.task_id));
+    assert.equal(await page.locator(".task-completed-day").count(), 0, "번호순은 날짜로 묶지 않는다");
+    // 탭을 떠났다 돌아와 다시 그려도 이 기기가 고른 정렬이다.
+    await page.getByTestId("tasks-tab-tasks").click();
+    await page.getByTestId("tasks-tab-completed").click();
+    await shown("number", 50);
+    await choose(page, "sort", "끝난 날짜");
+    await shown("completed", 50);
   });
 
 }

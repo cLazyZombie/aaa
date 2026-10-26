@@ -121,7 +121,7 @@ export default async function ({ page }) {
     const archived=page.getByTestId(`archive-${stored.task_id}`);
     await archived.waitFor();
     await shot(page,"thread-desktop-archive");
-    await archived.locator("summary").click();
+    await archived.locator(".task-completed-pick").click();
     await archived.getByText("테스트 먼저 쓴다", { exact: true }).waitFor();
     await archived.locator(".task-completed-report .list-id").filter({ hasText: /^r-\d+$/ }).waitFor();
     await archived.getByRole("button",{name:"되살리기"}).click();

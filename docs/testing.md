@@ -1,3 +1,9 @@
+## 할 일 완료 목록 정렬(t-1067)
+
+- host 유닛 `archive_sorts_newest_first_and_pages_across_equal_values`: 끝난 날짜 기본·시작 날짜(처음 이은 thread, 기록 없음은 끝)·번호의 내림차순, 같은 끝난 시각을 한 건 페이지로 넘겨도 건너뛰거나 되풀이하지 않는 커서, 옛 ULID 커서 거부, 시작 시각을 내구 보관에 쓰지 않음을 검사한다. 기존 `archive_search_pages…`는 기본 차례 기대만 최신순으로 바꿨다.
+- 웹 유닛 `taskArchiveModel.test.mjs`: 기기 시간대 자정 경계의 날짜 묶음·「시작 기록 없음」 끝 묶음·번호순 무묶음과 24시간제 시각. fixture 날짜가 1970년 초인 E2E가 대신 볼 수 없는 오늘/어제/다른 해 머리를 고정한다.
+- 기존 E2E86에 정렬 단계를 더한다: 실제 host 130건 fixture의 넷 중 셋에 thread 이력을 넣어 세 정렬의 차례가 서로 다르다. 화면 차례가 host 응답 차례와 같고 host 응답이 정렬 값 내림차순(같은 값은 큰 번호)인지, 「더 보기」 두 번으로 전체가 같은 정렬로 이어지고 마지막 묶음이 「시작 기록 없음」인지, 번호순에 날짜 머리가 없는지, 탭을 다시 그려도 기기에 고른 정렬이 남는지 본다. 행 구조 변경으로 E2E86·47·67과 E2E26(panel-scroll)의 펼침을 `summary` 대신 펼침 단추로 누르고 모델·머신 확인을 펼친 상세에서 한다. 320·390px 가로 넘침 검사는 그대로다.
+- 전후 화면은 같은 40건 fixture(10일에 걸친 끝·시작 시각, 저장소·thread·근거)로 Chromium·WebKit × 1280/390px headless 촬영했다(커밋하지 않은 임시 spec). FRONT_API 1.126, E2E 번호 추가 없음.
 ## brief 확인보다 먼저 회수한 완료 보고(t-1066)
 
 - 보존된 실패 DB의 사건은 `report_ready` → `brief_delivered` → `review_acked`였다. 전달 확인 때 이미 도착한 새 보고 hash를 `delivered_report`에 다시 넣어, ack 뒤에도 15초 working 유예가 남았다. 화면 멈춤을 3초로 두는 기존 우회는 이 순서를 보장하지 못한다.

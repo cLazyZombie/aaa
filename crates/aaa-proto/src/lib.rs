@@ -144,6 +144,7 @@ pub fn typescript_bindings() -> String {
         ArchivedTask::decl(&cfg),
         TaskHistorySearch::decl(&cfg),
         TaskArchiveFilter::decl(&cfg),
+        TaskArchiveSort::decl(&cfg),
         TaskHistoryRepo::decl(&cfg),
         TaskArchiveQuery::decl(&cfg),
         TaskView::decl(&cfg),

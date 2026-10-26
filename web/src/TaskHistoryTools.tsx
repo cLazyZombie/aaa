@@ -21,8 +21,9 @@ export function TaskChoiceChip({ label, value, choices, onChange, testId }: {
   </>;
 }
 
-export function TaskFilterChips({ repo, label, children }: { repo: ReactNode; label: string; children: ReactNode }) {
-  return <div className="tasks-chips">{repo}<div className="tasks-filters" role="group" aria-label={label}>{children}</div></div>;
+/** 정렬은 거르기 칩 밖에 둔다: 넓으면 줄 끝, 휴대폰은 맨 앞이라 칩을 굴리지 않아도 보인다. */
+export function TaskFilterChips({ repo, sort, label, children }: { repo: ReactNode; sort?: ReactNode; label: string; children: ReactNode }) {
+  return <div className="tasks-chips">{sort}{repo}<div className="tasks-filters" role="group" aria-label={label}>{children}</div></div>;
 }
 
 /** 설정에서 빠진 옛 저장소도 완료 보관에 있으면 고를 수 있다. */
