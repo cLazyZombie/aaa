@@ -82,6 +82,36 @@ Claude 입력은 `claude setup-token`으로 발급한 OAuth 토큰 한 줄이다
 pane 안 agent·worker·evaluator·detached와 보기 전용 기기는 거부한다. 등록(`import`)·삭제는 host의 aaa 세션 밖 로컬 CLI에서만 가능하다.
 thread에는 별칭만 표시한다. 기본 설정 조회에는 인증값이 없다.
 
+## 다시 로그인 없이 이름 바꾸기
+
+웹 설정 「계정」의 계정 행에서 「이름 바꾸기」를 누르고 새 이름을 저장한다. 390px 휴대폰에서도 같은 입력과 결과를 제공한다.
+조작 기기 또는 host의 aaa 세션 밖 CLI만 바꿀 수 있다. 보기 전용 기기·pane 안 agent·worker·coordinator는 거부한다.
+
+```sh
+aaa account rename work-codex team-codex
+```
+
+새 별칭은 영문·숫자·`-`·`_` 1~64자이며, 이미 쓰는 별칭(다른 harness 포함)은 거부한다. harness는 바꾸지 않는다.
+인증 원문·판·로그인 세대·메일·plan·최초/최근 인증일·남은 사용량 관측은 유지한다. 금고를 옛 별칭 AAD로 복호화하고,
+새 별칭 AAD와 새 DEK·nonce로 재암호화해 fsync·원자 rename으로 저장한다. 다시 로그인하거나 제공자에게 인증을 요청하지 않는다.
+
+harness별 기본 계정·자동 배정 풀의 계정·대기 시작·보류/종료 thread·pane 실행 인증 참조·이미지 요청의 계정 칸을 함께 옮긴다.
+같은 한도를 공유하는 **풀의 한도 그룹 이름은 유지**한다. profile·모델 이름이 계정 별칭과 같아도 바꾸지 않는다.
+현재 할 일/예약/자동화의 profile 칸은 계정 별칭이 아니다. 구조화된 `account` 칸이 있는 저장 기록·설정만 이전하고,
+제목·메모·작업 본문·명령·env·과거 감사 원문은 치환하지 않는다. 감사에는 옛 이름과 새 이름만 담은 `account_rename` 사건을 남긴다.
+
+이 계정을 쓰는 열린 thread·실행/준비 중 pane·로그인/메일 확인이 있으면 이유를 보이고 거부한다.
+thread를 보류하거나 완료하고 실행 중인 pane을 종료한 뒤 바꾼다. 계정 시작·복원·중앙 갱신과 이전은 겹치지 않는다.
+느린 사용량 조회는 이름 변경을 막지 않는다. 늦게 끝난 옛 별칭 조회는 버리고 새 별칭에 이전한 관측을 다시 읽는다.
+
+새 금고·설정을 준비한 뒤 DB 참조와 확정 표지를 한 트랜잭션으로 옮기고 옛 금고를 치운다. `account-rename:pending` journal에는
+인증 원문이나 금고 암호문을 넣지 않는다. 저장 실패는 원래 파일·참조로 복구한다. host가 중단되면 다음 시작에서
+DB 확정 전에는 원래 상태로, 확정 뒤에는 새 상태로 복구한 뒤 인증을 읽는다. 복구 중 직접 편집을 발견하면 덮어쓰지 않고 경로와 원인을 알린다.
+
+재암호화는 [SOPS rotate](https://github.com/getsops/sops/blob/main/cmd/sops/rotate.go)([MPL-2.0](https://github.com/getsops/sops/blob/main/LICENSE))의
+인증된 복호화→새 데이터 키→재암호화 순서와 [age](https://github.com/FiloSottile/age/blob/main/age.go)([BSD-3-Clause](https://github.com/FiloSottile/age/blob/main/LICENSE))의
+인증된 암호문 처리 원칙을 참고했다. 외부 코드·의존성은 추가하지 않는다. 파일/DB의 중단 복구는 저장소의 머신 이름 이전 journal 방식을 따른다.
+
 ## 메일·인증일·상태(관리 GUI W5a)
 
 `aaa account list`와 웹 설정 「계정」은 계정마다 별칭·harness·판에 더해 메일·plan·최초 인증일·최근 인증된 날·상태를 보인다:

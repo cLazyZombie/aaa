@@ -18,6 +18,7 @@ mod account_login;
 mod account_meta;
 mod account_policy;
 mod account_pool;
+mod account_rename;
 mod accounts;
 mod auto_start;
 mod automation;
@@ -545,6 +546,8 @@ pub struct Host {
     metrics_pending: Mutex<HashSet<String>>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
+    account_rename_gate: account_rename::Gate,
+    account_rename_recovery: Mutex<()>,
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
     device_gate: Mutex<()>,
     publish_gate: tokio::sync::Mutex<()>,
@@ -723,8 +726,9 @@ pub fn validate_thread_summary(text: &str) -> std::result::Result<(), ErrorBody>
 impl Host {
     pub fn open(cfg: HostConfig, state: PathBuf) -> Result<Arc<Host>> {
         util::ensure_private_dir(&state)?;
-        let accounts = accounts::Accounts::new(&state).map_err(|e| anyhow::anyhow!(e.message))?;
         let db = db::Db::open(&state.join("host.db")).context("host DB")?;
+        account_rename::recover(&db, &state)?;
+        let accounts = accounts::Accounts::new(&state).map_err(|e| anyhow::anyhow!(e.message))?;
         machine_rename::recover(&db)?;
         let library_signing = library_links::SigningKey::open(&state)?;
         let host_id = match db.meta("host_id")? {
@@ -821,6 +825,8 @@ impl Host {
             metrics_gate: tokio::sync::Mutex::new(()),
             metrics_pending: Mutex::new(HashSet::new()),
             account_meta_gate: Mutex::new(()),
+            account_rename_gate: Default::default(),
+            account_rename_recovery: Mutex::new(()),
             device_gate: Mutex::new(()),
             publish_gate: tokio::sync::Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
@@ -1507,7 +1513,8 @@ impl Host {
         // evaluator·detached는 Local이어도 거부한다
         if matches!(
             &req,
-            FrontRequest::AccountDefault { .. }
+            FrontRequest::AccountRename { .. }
+                | FrontRequest::AccountDefault { .. }
                 | FrontRequest::AccountPoolMember { .. }
                 | FrontRequest::AccountPoolProject { .. }
                 | FrontRequest::AccountLogin { .. }
@@ -1520,6 +1527,34 @@ impl Host {
                 ErrorCode::Forbidden,
                 "계정 로그인·기본 변경은 사람이 host의 aaa 세션 밖 터미널이나 웹(조작 기기)에서 한다",
             ));
+        }
+        // 계정 관리의 짧은 저장/조회만 이름 이전과 배타 처리한다. 긴 터미널 대기는 이름 변경을 막지 않는다.
+        // 백그라운드 시작·복원·refresh는 각 입구에서 같은 read 잠금을 잡는다.
+        let _account_read = if matches!(
+            &req,
+            FrontRequest::AccountImport { .. }
+                | FrontRequest::AccountRemove { .. }
+                | FrontRequest::AccountList
+                | FrontRequest::AccountDefaults
+                | FrontRequest::AccountPool
+                | FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountPoolMember { .. }
+                | FrontRequest::AccountPoolProject { .. }
+                | FrontRequest::AccountStarts { .. }
+                | FrontRequest::AccountStartCancel { .. }
+                | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginStatus { .. }
+                | FrontRequest::AccountLoginCancel { .. }
+                | FrontRequest::AccountLoginConfirm { .. }
+        ) {
+            Some(self.account_rename_gate.read().await)
+        } else {
+            None
+        };
+        if _account_read.is_some() {
+            let _recovery = self.account_rename_recovery.lock().unwrap();
+            account_rename::recover(&self.db, &self.state)
+                .map_err(|e| err(ErrorCode::Internal, format!("계정 이름 이전 복구: {e:#}")))?;
         }
         let shows_email = account_meta::shows_email(role, actor);
         // 서비스 암호는 웹 조작 기기의 전용 입력만 받는다. Local CLI·coordinator/thread·worker는 만들 수도 읽을 수도 없다.
@@ -1688,6 +1723,7 @@ impl Host {
             FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
             FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id).await,
             FrontRequest::AccountLoginConfirm { id, switch } => self.account_login_confirm(&id, switch, actor),
+            FrontRequest::AccountRename { name, to } => self.account_rename(&name, &to, actor).await,
             FrontRequest::AccountRemove { name } => {
                 if self.account_defaults()?.iter().any(|d| d.account == name) {
                     return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));

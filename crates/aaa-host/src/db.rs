@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod account_rename;
 mod automation_ids;
 pub(crate) mod automation_runs;
 #[cfg(test)]

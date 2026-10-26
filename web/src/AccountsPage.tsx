@@ -17,7 +17,7 @@ import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, 
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean };
+type Loaded = { accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -47,6 +47,7 @@ function useAccounts(loginId: string | null) {
         full,
         quota: apiAtLeast(m?.front_api, 1, 83),
         pool: apiAtLeast(m?.front_api, 1, 102),
+        rename: apiAtLeast(m?.front_api, 1, 128),
       });
       if (status === "lost") setLogin((prev) => (prev ? { ...prev, state: "lost" } : prev));
       else if (status?.kind === "account_login") setLogin(status.login);
@@ -64,10 +65,13 @@ function useAccounts(loginId: string | null) {
 
 export function AccountsPage({ role }: { role: DeviceRole }) {
   const [loginId, setLoginId] = useState<string | null>(null);
-  const { data, login, setLogin, error } = useAccounts(loginId);
+  const { data, login, setLogin, error, reload } = useAccounts(loginId);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [alias, setAlias] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [renamed, setRenamed] = useState<{ from: string; to: string } | null>(null);
   const [harness, setHarness] = useState<string>("claude");
   const usage = useAccountQuota(data?.quota ?? false);
   const now = Date.now();
@@ -152,6 +156,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                       {data.quota && <AccountQuotaCard quota={usage.report?.accounts.find((q) => q.account === a.name && q.harness === a.harness)} now={usage.now} failed={usage.error} />}
                       {canEdit && (
                         <div className="op-buttons acct-actions">
+                          {data.rename && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 이름 바꾸기`} onClick={() => { setRenaming(a.name); setNewName(a.name); setMsg(null); setRenamed(null); }}>이름 바꾸기</button>}
                           <button type="button" className="btn small" disabled={busy || !!active} onClick={() => void start(a.name, a.harness)} aria-label={`${a.name} 다시 로그인`}>
                             다시 로그인
                           </button>
@@ -165,6 +170,32 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                             {a.isDefault ? "기본 해제" : "기본으로"}
                           </button>
                         </div>
+                      )}
+                      {renamed?.to === a.name && <p role="status" data-testid="account-renamed">{renamed.from} → {renamed.to}: 이름을 바꿨습니다. 인증은 그대로 사용합니다.</p>}
+                      {canEdit && renaming === a.name && (
+                        <form className="acct-rename" data-testid="account-rename" onSubmit={(e) => {
+                          e.preventDefault();
+                          const to = newName.trim();
+                          if (!validAlias(to) || to === a.name || data.accounts.some((x) => x.name === to)) return;
+                          void run(async () => {
+                            await call({ op: "account_rename", name: a.name, to });
+                            setRenaming(null);
+                            setRenamed({ from: a.name, to });
+                            reload();
+                          });
+                        }}>
+                          <label className="op-field">
+                            <span>새 이름</span>
+                            <input aria-label={`${a.name} 새 이름`} value={newName} onChange={(e) => setNewName(e.target.value)} disabled={busy} maxLength={64} autoComplete="off" spellCheck={false} aria-describedby="account-rename-note" />
+                          </label>
+                          <p id="account-rename-note" className="op-muted">
+                            {!validAlias(newName.trim()) ? "영문·숫자·-·_ 1~64자를 입력하세요." : data.accounts.some((x) => x.name === newName.trim() && x.name !== a.name) ? "이미 쓰는 계정 이름입니다." : "다시 로그인하지 않습니다. 실행 중인 계정은 작업을 보류하거나 끝낸 뒤 바꾸세요."}
+                          </p>
+                          <div className="op-buttons">
+                            <button type="submit" className="btn btn-primary" disabled={busy || !validAlias(newName.trim()) || newName.trim() === a.name || data.accounts.some((x) => x.name === newName.trim())}>이름 저장</button>
+                            <button type="button" className="btn" disabled={busy} onClick={() => { setRenaming(null); setMsg(null); }}>취소</button>
+                          </div>
+                        </form>
                       )}
                     </li>
                   );

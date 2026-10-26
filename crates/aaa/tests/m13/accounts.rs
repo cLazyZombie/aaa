@@ -1342,3 +1342,33 @@ while True:
         client.call(FrontRequest::PaneInput { pane, data: B64(vec![3]) }).await.unwrap().unwrap();
     });
 }
+
+/// 별칭 변경 뒤 다시 로그인 없이 같은 인증이 실제 agent/session 자식까지 가야 한다.
+#[test]
+fn renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_running() {
+    let (token, _) = canary("rename-access");
+    let (refresh, _) = canary("rename-refresh");
+    let gate = Gate::new();
+    let w = world("http://127.0.0.1:1", &gate, "fixture-local-token", POLICY_HARNESS);
+    let auth = w.scripts.join("rename-auth.json");
+    std::fs::write(&auth, serde_json::json!({"tokens":{"access_token":token,"refresh_token":refresh}}).to_string())
+        .unwrap();
+    w.h.ok(&["account", "import", "before", "--harness", "codex", "--file", path_str(&auth)]);
+    w.h.ok(&["account", "default", "codex", "before"]);
+    w.h.ok(&["account", "rename", "before", "after"]);
+    assert_eq!(w.h.ok(&["account", "default", "codex"])["defaults"][0]["account"], "after");
+    assert!(!w.h.state.join("host/accounts/before.json").exists());
+    let task = w.task("rename-task.txt", "바뀐 계정으로 시작한다");
+    let started = w.start(&["--title", "바뀐 별칭", "--profile", "file", "--task-file", &task]);
+    assert_eq!(started["account"], "after");
+    let first = gate.take(1, 0);
+    assert_eq!(first[0].1["token"], sha(&token));
+    let e = w.h.json(&["account", "rename", "after", "again"]).expect_err("실행 중 별칭 변경");
+    assert!(e.contains("열린 thread") || e.contains("처리 중"), "{e}");
+    assert!(w.h.state.join("host/accounts/after.json").exists());
+    Gate::release(first, b'1');
+    let last = gate.take(1, 1);
+    assert_eq!(last[0].1["token"], sha(&token));
+    Gate::release(last, b'X');
+    w.wait_show("변경 계정 작업 종료", started["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
+}

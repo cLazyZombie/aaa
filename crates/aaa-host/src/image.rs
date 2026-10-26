@@ -141,6 +141,7 @@ impl Host {
         session: &str,
         request: ImageRequest,
     ) -> Result<ImageResponse, ErrorBody> {
+        let _account_read = self.account_rename_gate.read().await;
         let (project, owner) = self.image_owner(machine, session)?;
         if matches!(request, ImageRequest::List) {
             let jobs = self
@@ -412,6 +413,7 @@ impl Host {
     }
 
     async fn image_run(self: Arc<Self>, id: &str) {
+        let _account_read = self.account_rename_gate.read().await;
         let guard = self.thread_op_lock("image", id).lock_owned().await;
         let Ok(mut job) = self
             .image_load(id)
@@ -442,6 +444,8 @@ impl Host {
         {
             return;
         }
+        // 실행 표지를 확정한 뒤에는 계정별 running 검사로 이름 변경을 거부한다. 다른 계정 변경은 막지 않는다.
+        drop(_account_read);
         let result = crate::image_rpc::generate(&self, &job).await;
         match result {
             Ok((outputs, tokens)) => {

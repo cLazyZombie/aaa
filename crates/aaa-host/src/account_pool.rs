@@ -414,6 +414,7 @@ impl Host {
     }
 
     async fn pool_run(self: &Arc<Self>, project: &str, id: &str, background: bool) -> Result<FrontResponse, ErrorBody> {
+        let _account_read = self.account_rename_gate.read().await;
         let _guard = match self.claim_thread(project, &format!("account-{id}")) {
             Ok(g) => g,
             Err(_) => return Ok(FrontResponse::AccountStart { start: self.pool_job(project, id)?.view }),

@@ -1,3 +1,12 @@
+## 계정 이름 변경과 재로그인 없는 시작(t-1100)
+
+- `cargo test --profile verify --locked -p aaa-host --lib account_rename` 세 저장 회귀는 실제 암호화 금고/SQLite/프로젝트 설정으로 인증·판·세대/metadata/기본/풀/대기 시작/보류 thread/binding 유지, agent·Reader·중복·준비 중 실행 거부, DB 실패 뒤 원문 복구와 양쪽 확정점의 Host::open 복구를 검사한다. 필요한 이유는 인증 AAD 변경·참조 누락·부분 이전이 계정 사용을 끊거나 다른 신원으로 시작하게 하는 회귀를 막기 위해서다.
+- `cargo test --profile verify --locked -p aaa-host --lib rename_during_quota_collection`은 수집기가 cache를 잡은 경계에서 이전을 끝내고, 옛 cache가 남아도 새 이름의 저장 관측·남은 양을 유지하고 옛 키를 재저장하지 않는지 검사한다. 필요한 이유는 웹 자동 사용량 조회가 이름 변경을 막거나 관측을 잃는 경합을 막기 위해서다.
+- 기존 m13 accounts에 `renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_running`을 더한다. 가짜 인증을 import→기본 지정→CLI rename한 뒤 실제 host→agent→session→PTY 자식이 같은 인증 hash를 받아야 한다. 실행 중 재변경은 거부하고 그 자식은 같은 인증으로 끝난다. 필요한 이유는 금고 단위 시험이 실제 시작 전달을 대신할 수 없기 때문이다.
+- 기존 E2E58에 Chromium/WebKit × 1280/390px의 행별 폼·잘못된 이름/중복·저장 직전 다른 기기의 중복 생성·서버 거부 후 원본 유지·성공 결과·기본/메일/인증일/판 유지·CLI 역변경을 더한다. Reader는 단추가 없고 직접 변경 요청도 거부한다. 필요한 이유는 실제 웹 권한·응답·휴대폰 레이아웃을 함께 지키기 위해서다. 사건/응답/DOM으로 끝내고 고정 sleep·실패 재시도·시한 확대는 없다.
+- 이전 gate의 중첩 read·writer 깨움 시험 하나는 시작 경로 중첩 중 이름 변경이 교착하지 않는 계약을 지킨다.
+- 부분 확인은 위 owner와 E2E58·65·81, proto TypeScript·의존 경계·웹 타입/유닛·strict clippy·공개 검사다. 전체 ci-local은 coordinator의 실행 차례를 받은 뒤 수행한다. Playwright npm 1.64.1은 작업 폴더에 두고 내부 공용 브라우저만 사용한다. 운영 DB/실제 계정은 쓰지 않는다.
+
 ## 미답변 coordinator 질문의 자동 종료 방지(t-1090)
 
 - 새 host 회귀 두 개는 실제 SQLite·post·질문 목록을 쓴다. `orphan_thread_reference_stays_a_coordinator_question_across_reports_and_reconcile`는 과거 답이 있지만 현재 카드가 없는 thread 접미사로 만든 요청이 독립 q-ID와 링크를 유지하고, 이후 질문 있음/없음 보고·정리에도 열려 있는지 검사한다. 꼭 필요한 이유: q-1372처럼 생성 직후 과거 답에 흡수되는 요청 유실을 막는다.

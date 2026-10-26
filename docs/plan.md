@@ -8001,3 +8001,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - `aaa:question/<thread>`에 현재 카드가 없으면 독립 post 질문을 만든다. 질문 원장의 `kind=post, subject=<inbox-ID>`가 소유권을 고정한다. 알림·카드 링크는 그 요청의 q-ID로 보내고 이후 thread 보고·과거 답·같은 thread의 새 질문으로 닫지 않는다. 기존 연결 알림은 현재 질문·답 기록을 따라 정리한다.
 - `gone`은 pane 확인창 소실·pane 종료, thread의 새 보고가 기존 질문을 제거한 경우, 또는 명시적으로 끝낸 답 없는 요청에 사용한다. pane이 없는 독립 coordinator 요청은 화면 소실이나 일반 inbox 정리로 `gone`이 되지 않는다. 이미 끝난 운영 요청을 추정으로 되살리지 않는다.
 - 감사 기록에 inbox 처리 방식(`all`), 보존한 사용자 요청 수, 지정 ID를 남겨 일괄 정리와 명시 처리를 구분한다. proto·FRONT_API 형식은 바꾸지 않는다.
+
+### 8.499 계정 별칭 변경과 인증 유지(t-1100)
+
+- CLI `aaa account rename <옛> <새>`와 설정 「계정」의 행별 「이름 바꾸기」를 제공한다. 웹은 새 이름 입력·형식/중복 검증·실패 원인·완료 결과를 보이며 Chromium/WebKit × 1280/390px에서 확인한다. FRONT_API 1.128 `AccountRename{name,to}`이며 1.128 미만 host에는 단추를 그리지 않는다. AGENT_LINK는 유지한다.
+- 사람의 host 세션 밖 CLI·웹 조작 기기만 허용한다. 같은 harness에서만 이전하고 기존 별칭은 거부한다. 열린 thread·실행/준비 중 pane·로그인/메일 확인 중에는 이유를 보이고 거부한다. 제공자 재로그인은 하지 않는다.
+- 옛 AAD로 복호화하고 새 별칭 AAD·새 DEK/nonce로 봉투를 재암호화한다. 인증 판/세대는 유지한다. 기본 계정·풀·대기 시작·보류/종료 thread·실행 binding·이미지 요청·metadata·사용량을 DB transaction으로 옮긴다. 한도 그룹·profile 이름·본문·명령·env·과거 감사는 유지하고 이전 감사 사건을 추가한다.
+- 새 금고와 설정은 fsync·원자 rename, DB journal 확정 표지로 실패/중단을 복구한다. 금고 원문/암호문은 journal·감사에 넣지 않는다. 느린 사용량 조회 중에도 이전을 허용하고 옛 별칭 결과로 관측을 되돌리지 않는다. 세부 계약은 `docs/accounts.md`다. E2E58과 기존 m13 accounts owner를 확장한다.

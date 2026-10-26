@@ -86,6 +86,11 @@ enum AccountCmd {
         file: PathBuf,
     },
     List,
+    /// 다시 로그인 없이 계정 별칭을 바꾼다. aaa 세션 밖에서만 쓴다.
+    Rename {
+        name: String,
+        to: String,
+    },
     Remove {
         name: String,
     },
@@ -1998,6 +2003,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             }
             AccountCmd::List => front(json, FrontRequest::AccountList),
+            AccountCmd::Rename { name, to } => front(json, FrontRequest::AccountRename { name, to }),
             AccountCmd::Remove { name } => front(json, FrontRequest::AccountRemove { name }),
             AccountCmd::Import { name, harness, file } => {
                 aaa_common::resource::disable_core_dump("account import");

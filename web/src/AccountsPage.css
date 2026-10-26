@@ -39,3 +39,7 @@
 .acct-pool-form input, .acct-pool-form select, .acct-pool-project select { width: 100%; min-width: 0; box-sizing: border-box; }
 .acct-pool-project label:has(input[type="checkbox"]) { display: flex; align-items: center; }
 .acct-pool .acct-list li { display: grid; gap: 8px; }
+
+.acct-rename { display: grid; gap: 8px; margin-top: 12px; min-width: 0; }
+.acct-rename input { width: 100%; min-width: 0; box-sizing: border-box; }
+.acct-rename p { margin: 0; overflow-wrap: anywhere; }

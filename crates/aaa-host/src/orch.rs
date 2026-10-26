@@ -1579,6 +1579,7 @@ impl Host {
         background: bool,
         origin: Option<&StartOrigin>,
     ) -> Result<ThreadView, ErrorBody> {
+        let _account_read = self.account_rename_gate.read().await;
         let pool_key = a.pool.as_ref().map(|p| crate::account_pool::receipt(&a.project, &p.id));
         if let Some(key) = &pool_key
             && let Some(id) = self.db.meta(key).map_err(internal)?
