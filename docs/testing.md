@@ -29,6 +29,12 @@
 - 부분 실행: `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib question_ids::tests`, `--lib asks::tests`, 기존 E2E53. 전체 ci-local은 coordinator의 차례를 받은 뒤 수행한다. 고정 sleep·재시도·시한 연장·단언 완화는 없다.
 - 참고는 [Gitea 알림](https://github.com/go-gitea/gitea/blob/main/models/activities/notification.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 원래 대상 ID·읽음 상태 분리와 [Zulip 메시지 표시](https://github.com/zulip/zulip/blob/main/zerver/actions/message_flags.py)([Apache-2.0](https://github.com/zulip/zulip/blob/main/LICENSE))의 명시 대상별 상태 변경이다. 식별자와 알림 정리·답을 구분하는 원칙만 참고하며 외부 코드·의존성은 추가하지 않는다.
 
+## 계정 이름 입력 중 부모 갱신(t-1088, §8.499 보완)
+
+- 74회차5d088c34 gate의 E58 WebKit1280은 `renamed-3-ok` 행의 메일을30초 기다리다 실패했다. 남은 실험실에는 `renamed-3`가 실제로 저장돼 있었다. 별도 main a832f97a와 통합 실행 파일의 같은 E58·HTTP/native input 대조는 각각8.209/7.469초에 통과했다. 추가 관측에서 main WebKit1280도 같은30초 오류로 실패했고, native input의 `renamed-3-ok` → 입력 완료 뒤 `renamed-3` → 실제 account_rename의 옛 이름 전송/성공 → CLI/DOM의 옛 이름 순서를 기록했다. 이는 UI 표시 지연이 아니라 새 입력 유실이다.
+- 계정 삭제의 accounts 사건과 계정/사용량 HTTP 갱신이 겹치는 기존 controlled 복원 경로다. 실제 「사용량 다시 읽기」 클릭을 input root capture에서 발생시키는 결정적 대조에서는 main과 통합 원판 모두 입력이 옛 값으로 돌아가 같은 잘못된 이름을 저장했다. 값을 재입력하거나 React state/host 응답을 조작하지 않는다. [React controlled input 안내](https://react.dev/reference/react-dom/components/input#controlling-an-input-with-a-state-variable)와 [ReactDOMUpdateBatching의 controlled 복원](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/ReactDOMUpdateBatching.js)([MIT](https://github.com/facebook/react/blob/main/LICENSE))을 비교했고, 저장소 ChatComposer·AsksView의 window native capture 방식을 적용한다. 외부 코드·의존성은 추가하지 않는다.
+- 기존 E58의 Chromium/WebKit×1280/390 네 조합에 같은 부모 갱신을 넣고, 실제 사용량 요청·새 별칭 유지·같은 input DOM·한 번의 개입을 확인한 뒤 기존 충돌/성공·인증일/판/메일/plan·기본 참조·CLI 역변경·Reader 단언을 실행한다. 필요한 이유는 실제 계정 별칭이 사용자가 친 값과 다르게 저장되는 회귀를 막기 위해서다. 실패에는 엔진/폭·최초 오류/stack·실제 rename 요청 별칭을 추가 진단보다 먼저 파일에 남기고 입력/계정행/안내·개입 기록을 따로 붙인다. 기존30초 locator·20초 사건 한도와 이름/개수 단언은 그대로다. 순수 규칙을 바꾸지 않아 유닛을 더 늘리지 않고 기존 웹604개와 이 E2E를 확인한다.
+
 ## thread 목록 frame 상한과 페이지(t-1088, §8.502)
 
 - host `orch::list_tests`는 실제 DB에 끝난 2,500건·준비/열림/실패/보류·다른 프로젝트의 9999/10000/10001을 넣는다. 모든 페이지의 실제 IPC 포장이 상한 안이고 2,507건이 중복·유실 없이 나오는지, 최대 200건·역할/상태/open 거르기·본문 축소·바이트로 먼저 나뉘는 상세 페이지·다음 행을 확인한다. 잘못된 커서·다른 프로젝트 커서·0 limit·상충 필터도 거부한다. 필요한 이유: 원장 증가에 따른 이번 frame 실패와 커서 경계 유실을 실제 저장/직렬화 경계에서 막는다.

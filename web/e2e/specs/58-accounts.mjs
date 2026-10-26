@@ -144,6 +144,12 @@ export default async function ({ page }) {
       for (const [engine, label] of [[browser, "chromium"], [wk, "webkit"]]) {
         for (const width of [1280, 390]) {
           const { page: view } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 });
+          const requests = [];
+          view.on("request", request => {
+            if (!request.url().endsWith("/api/v1/call")) return;
+            const body = request.postDataJSON();
+            if (body?.op === "account_rename") requests.push({ at: Date.now(), name: body.name, to: body.to });
+          });
           try {
             const settings = await openSettings(view, "계정");
             const p = settings.getByTestId("settings-accounts");
@@ -190,7 +196,26 @@ export default async function ({ page }) {
             await p.getByRole("alert").filter({ hasText: "이미 쓰는 계정 이름" }).waitFor();
             if (!account("work") || account("work").version !== before.version) throw new Error("실패 뒤 원본 변경");
             aaa("account", "remove", next);
-            await input.fill(`${next}-ok`);
+            await domIs(view, "사용량 다시 읽기 사용 가능", () => [...document.querySelectorAll('[data-testid="settings-accounts"] button')].some(b => b.textContent === "사용량 다시 읽기" && !b.disabled));
+            await view.evaluate(() => {
+              const element = document.querySelector('[data-testid="account-rename"] input');
+              window.__renameInputInterleave = [];
+              const interleave = event => {
+                if (event.target !== element) return;
+                document.getElementById("root").removeEventListener("input", interleave, true);
+                const refresh = [...document.querySelectorAll('[data-testid="settings-accounts"] button')].find(b => b.textContent === "사용량 다시 읽기");
+                const before = element.value;
+                // 실제 부모 갱신을 native input의 capture/bubble 사이에 넣는다. 값·응답을 직접 고치지 않는다.
+                refresh.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                window.__renameInputInterleave.push({ before, same: element === document.querySelector('[data-testid="account-rename"] input') });
+              };
+              document.getElementById("root").addEventListener("input", interleave, true);
+            });
+            const refreshed = view.waitForResponse(r => r.url().endsWith("/api/v1/account-usage?refresh=1"));
+            await Promise.all([input.fill(`${next}-ok`), refreshed]);
+            if (await input.inputValue() !== `${next}-ok`) throw new Error(`${label} ${width} 부모 갱신 중 새 별칭 유실`);
+            const interleaved = await view.evaluate(() => window.__renameInputInterleave);
+            if (interleaved.length !== 1 || interleaved[0].before !== `${next}-ok` || !interleaved[0].same) throw new Error(`이름 입력 경합: ${JSON.stringify(interleaved)}`);
             await save.click();
             await row(p, `${next}-ok`).getByTestId("account-email").waitFor();
             await p.getByTestId("account-renamed").filter({ hasText: `work → ${next}-ok` }).waitFor();
@@ -204,6 +229,23 @@ export default async function ({ page }) {
             await shot(view, `58-account-rename-${label}-${width}`);
             // 실제 CLI 경로로 되돌려 다음 화면도 같은 fixture로 검사한다.
             aaa("account", "rename", `${next}-ok`, "work");
+          } catch (error) {
+            const dir = `${root}/diagnostics`;
+            fs.mkdirSync(dir, { recursive: true });
+            const file = `${dir}/account-rename-${label}-${width}.json`;
+            const failure = { engine: label, width, original: { message: error.message, stack: error.stack }, requests };
+            fs.writeFileSync(file, JSON.stringify(failure, null, 2));
+            try {
+              failure.dom = await inTime(view.evaluate(() => ({
+                input: document.querySelector('[data-testid="account-rename"] input')?.value,
+                accounts: [...document.querySelectorAll('[data-testid="account-row"]')].map(el => el.dataset.account),
+                alerts: [...document.querySelectorAll('[data-testid="settings-accounts"] [role="alert"]')].map(el => el.textContent),
+                interleaving: window.__renameInputInterleave,
+              })), 5000, "계정 이름 변경 진단");
+            } catch (diagnosticError) { failure.diagnosticError = String(diagnosticError); }
+            fs.writeFileSync(file, JSON.stringify(failure, null, 2));
+            console.log("account-rename-failure", JSON.stringify(failure));
+            throw error;
           } finally { await view.context().close(); }
         }
       }

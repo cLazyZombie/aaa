@@ -9,7 +9,7 @@ import { AccountQuotaCard, useAccountQuota } from "./AccountQuota";
 import { AccountAutoAssign, AccountPoolPanel, useAccountPool } from "./AccountPoolPanel";
 import { apiAtLeast } from "./automationModel";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AccountDefault, AccountLoginView, AccountView, DeviceRole } from "./gen/proto";
 import { ApiError, call, me, onAccountsChanged } from "./api";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
@@ -71,8 +71,20 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
   const [alias, setAlias] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const renameInput = useRef<HTMLInputElement>(null);
   const [renamed, setRenamed] = useState<{ from: string; to: string } | null>(null);
   const [harness, setHarness] = useState<string>("claude");
+  useLayoutEffect(() => {
+    if (!renaming || busy || role === "reader") return;
+    const element = renameInput.current;
+    const view = element?.ownerDocument.defaultView;
+    if (!element || !view) return;
+    // 계정·사용량 갱신이 root capture와 bubble 사이에 commit해도 새 별칭을 잃지 않는다.
+    // 대화·직접 답과 같은 경계이며 기존 onChange도 유지한다.
+    const input = (event: Event) => { if (event.target === element) setNewName(element.value); };
+    view.addEventListener("input", input, true);
+    return () => view.removeEventListener("input", input, true);
+  }, [renaming, busy, role, data?.accounts]);
   const usage = useAccountQuota(data?.quota ?? false);
   const pool = useAccountPool(data?.pool ?? false);
   const now = Date.now();
@@ -188,7 +200,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                         }}>
                           <label className="op-field">
                             <span>새 이름</span>
-                            <input aria-label={`${a.name} 새 이름`} value={newName} onChange={(e) => setNewName(e.target.value)} disabled={busy} maxLength={64} autoComplete="off" spellCheck={false} aria-describedby="account-rename-note" />
+                            <input ref={renameInput} aria-label={`${a.name} 새 이름`} value={newName} onChange={(e) => setNewName(e.target.value)} disabled={busy} maxLength={64} autoComplete="off" spellCheck={false} aria-describedby="account-rename-note" />
                           </label>
                           <p id="account-rename-note" className="op-muted">
                             {!validAlias(newName.trim()) ? "영문·숫자·-·_ 1~64자를 입력하세요." : data.accounts.some((x) => x.name === newName.trim() && x.name !== a.name) ? "이미 쓰는 계정 이름입니다." : "다시 로그인하지 않습니다. 실행 중인 계정은 작업을 보류하거나 끝낸 뒤 바꾸세요."}
