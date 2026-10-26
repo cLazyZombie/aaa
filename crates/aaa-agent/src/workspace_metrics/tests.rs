@@ -421,6 +421,9 @@ fn ci_archive_excludes_side_branch_even_after_merge_and_reports_bad_provenance()
     let candidate = git(&l, &["rev-parse", "HEAD"]);
     archive_fixture(&l, "candidate", &candidate, "succeeded");
     git(&l, &["checkout", "-q", "main"]);
+    l.put("src/main.ts", "export const main = 1;\n");
+    git(&l, &["add", "src"]);
+    git(&l, &["commit", "-qm", "main changed since candidate verification"]);
     git(&l, &["merge", "--no-ff", "-qm", "landing", "candidate"]);
     let main = git(&l, &["rev-parse", "HEAD"]);
     git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -435,6 +438,59 @@ fn ci_archive_excludes_side_branch_even_after_merge_and_reports_bad_provenance()
     assert_eq!(got.runs[0].commit, main);
     assert!(got.notes.iter().any(|n| n.contains("tree 불일치")));
     assert!(got.notes.iter().any(|n| n.contains("반영 대기 CI 실행 1개")));
+}
+
+#[test]
+fn verified_second_parent_is_attributed_to_same_tree_main_merge_for_every_runner() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    git(&l, &["checkout", "-qb", "candidate"]);
+    l.put("src/new.ts", "export const candidate = 1;\n");
+    git(&l, &["add", "src"]);
+    git(&l, &["commit", "-qm", "verified candidate"]);
+    let candidate = git(&l, &["rev-parse", "HEAD"]);
+    let tree = git(&l, &["rev-parse", "HEAD^{tree}"]);
+    for runner in ["ci-local", "rc", "engine", "pt"] {
+        for outcome in ["succeeded", "failed"] {
+            let name = format!("{runner}-{outcome}");
+            archive_fixture(&l, &name, &candidate, outcome);
+            let path = l.0.join(format!(".git/aaa-workspace-runs/run-{name}/provenance.json"));
+            let mut source: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            if runner != "ci-local" {
+                source["format"] = serde_json::json!(2);
+                source["runner"] = serde_json::json!(runner);
+            }
+            fs::write(path, source.to_string()).unwrap();
+        }
+    }
+    // 같은 tree의 후보 조상과 관계없는 형제 커밋까지 확대하지 않는다.
+    let unrelated = git(&l, &["commit-tree", &tree, "-m", "unrelated same tree"]);
+    archive_fixture(&l, "unrelated", &unrelated, "succeeded");
+    git(&l, &["commit", "--allow-empty", "-qm", "unverified candidate tip"]);
+    let tip = git(&l, &["rev-parse", "HEAD"]);
+    git(&l, &["checkout", "-q", "main"]);
+    git(&l, &["merge", "--no-ff", "-qm", "pending merge", "candidate"]);
+    assert!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs.is_empty(), "미push 병합은 대기한다");
+    git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    assert!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs.is_empty(), "검증한 조상은 직접 둘째 부모가 아니다");
+    // 실제 두 부모 병합을 구성한다. 등록 checkout은 앞 병합에 그대로 둔다.
+    let base = git(&l, &["rev-parse", "main^1"]);
+    let landing = git(&l, &["commit-tree", &tree, "-p", &base, "-p", &candidate, "-m", "landing verified tip"]);
+    git(&l, &["update-ref", "refs/remotes/origin/main", &landing]);
+    let got = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(got.runs.len(), 8);
+    assert!(got.runs.iter().all(|r| r.commit == landing && r.verification_ms == Some(1000)));
+    for run in &got.runs {
+        assert!(run.notes.iter().any(|n| n.contains(&candidate) && n.contains(&tree) && n.contains(&landing)));
+    }
+    assert!(got.notes.iter().any(|n| n.contains("반영 대기 CI 실행 1개")));
+    assert_ne!(tip, candidate);
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, got.runs, "같은 run ID로 재회수한다");
+    fs::remove_dir_all(l.0.join(".git/aaa-workspace-runs")).unwrap();
+    // archive root 자체가 남아 있으면 원본 정리 뒤에도 확정 캐시를 읽는다.
+    fs::create_dir(l.0.join(".git/aaa-workspace-runs")).unwrap();
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, got.runs);
 }
 
 #[test]
@@ -528,7 +584,7 @@ fn upgraded_archive_parser_revisits_old_errors_and_preserves_records_with_delete
     fs::create_dir_all(&store).unwrap();
     let cached = MetricRun { commit, run_id: "deleted-source".into(), ..Default::default() };
     let cache = Cache {
-        versions: BTreeMap::from([("run-typed".into(), old_version)]),
+        versions: BTreeMap::from([("run-typed".into(), format!("parser-2:{old_version}"))]),
         errors: BTreeMap::from([("run-typed".into(), "CI 실행 출처 불일치".into())]),
         runs: BTreeMap::from([("deleted-source".into(), cached)]),
     };
