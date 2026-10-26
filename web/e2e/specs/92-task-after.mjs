@@ -14,7 +14,7 @@ const MD = `# Tasks
   승인된 시안대로 만든다
 - [ ] 후속 문서 (fake@labA) [작업 폴더]
   구현 뒤 문서를 쓴다
-`;
+${Array.from({ length: 30 }, (_, i) => `  - 문서 항목 ${i + 1}: 설명이 길어 상세가 화면보다 길다\n`).join("")}`;
 const row = (p, title) => p.locator(`.task-row[data-title="${title}"]`);
 const pick = (p, title) => row(p, title).locator(".task-pick").click();
 const queued = (title) => aaa("task", "queue").entries.find((q) => q.task.title === title);
@@ -27,6 +27,13 @@ async function reserveAfter(p, title, after, shotName) {
   const confirm = p.getByTestId("task-reserve-confirm");
   await confirm.waitFor();
   await confirm.getByTestId("task-reserve-after").selectOption({ label: `${shortOf(after)} · ${after}` });
+  // 예약 확인은 상세 아래 고정 줄 자리에서 열린다: 메모가 화면보다 길어도 굴리지 않고 「이 내용으로 예약」이 보이고 눌린다(t-1097)
+  await domIs(p, "예약 단추가 화면 안", () => {
+    const go = document.querySelector('[data-testid="task-reserve-go"]');
+    const r = go?.getBoundingClientRect();
+    if (!r || r.top < 0 || r.bottom > innerHeight) return false;
+    return go.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+  });
   if (shotName) await shot(p, shotName);
   await confirm.getByTestId("task-reserve-go").click();
   await confirm.waitFor({ state: "detached" });
@@ -59,7 +66,7 @@ export default async function ({ page }) {
     await page.getByTestId("task-reserve-preview").click();
     const kept = await page.getByTestId("task-reserve-after").inputValue();
     if (kept !== q.after) throw new Error(`갱신 확인의 앞 할 일 ${kept}`);
-    await page.getByTestId("task-reserve-confirm").getByRole("button", { name: "닫기" }).click();
+    await page.getByTestId("task-reserve-confirm").getByRole("button", { name: "취소", exact: true }).click();
     // 앞 할 일이 이 할 일을 기다리게 하면 서로 영영 시작하지 않는다
     let refused = "";
     try {

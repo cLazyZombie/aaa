@@ -17,7 +17,10 @@ export default async function ({ page }) {
     await page.getByTestId("activity-tasks").click();
     await pick(page,"웹 예약");await page.getByTestId("task-reserve-preview").click();
     await page.getByTestId("task-reserve-confirm").waitFor();
-    if(!(await page.getByTestId("task-reserve-confirm").textContent()).includes("독립 작업을 끝내고 결과를 쓴다"))throw new Error("예약할 내용을 보여 주지 않았다");
+    // 확인은 상세 아래 고정 줄 자리에서 열리고 모델·저장소 한 줄만 보인다(메모는 본문에 이미 있다, t-1097)
+    const sum=await page.getByTestId("task-reserve-confirm").textContent();
+    if(!sum.includes("fake")||!sum.includes("작업 폴더")||sum.includes("독립 작업을 끝내고 결과를 쓴다"))throw new Error(`예약 확인 요약 ${sum}`);
+    if(!(await page.getByTestId("task-detail-foot").getByTestId("task-reserve-go").isVisible()))throw new Error("예약 단추가 아래 고정 줄에 보이지 않는다");
     await page.getByTestId("task-reserve-go").click();
     await domIs(page,"예약 저장",()=>document.querySelector('[data-testid="task-queue-controls"]')?.dataset.state==="queued");
     one=queued().find(q=>q.task.title==="웹 예약").task_id;
@@ -33,7 +36,7 @@ export default async function ({ page }) {
     await shot(phone,"queue-phone-confirmed");
   });
   await step("휴대폰 예약 순서와 취소: 맨 앞으로 이동한 차례가 새로고침·다른 기기에도 유지된다",async()=>{
-    await phone.getByRole("button",{name:"예약 맨 앞으로"}).click();
+    await phone.getByTestId("task-detail-more").click();await phone.locator(".row-sheet").getByRole("button",{name:"예약 맨 앞으로"}).click();
     await domIs(phone,"순번 저장",reservedOrder,"다음 예약|웹 예약");
     if(queued().filter(q=>q.state==="queued")[0].task_id!==two)throw new Error("host 예약 순서가 바뀌지 않았다");
     await phone.reload();await domIs(phone,"새로고침 뒤 차례",reservedOrder,"다음 예약|웹 예약");await pick(phone,"다음 예약");await phone.getByTestId("task-queue-status").waitFor();

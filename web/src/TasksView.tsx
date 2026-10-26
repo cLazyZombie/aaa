@@ -525,6 +525,12 @@ export function TasksView({
     }
     return { kind: "saved", title };
   };
+  /** 상세의 속성 칸 바로 저장: 상세를 다시 열지 않는다(고치던 제목·메모가 남는다). 상세는 돌려준 판의 이 task로 옮겨 탄다 */
+  const saveProps = async (ops: TaskOp[], mine: MyEdit | null) => {
+    const r = await edit(ops, mine);
+    if (!r) return null;
+    return { board: r.board, task: r.board.tasks.find((x) => x.title === mine?.title) ?? null };
+  };
   const remove = async (t: TaskView) => {
     const r = await edit([{ op: "delete", at: anchorOf(t) }], null);
     if (!r || r.log_ids.length === 0) return;
@@ -953,6 +959,7 @@ export function TasksView({
               onPick={pick}
               onClose={closeDetail}
               onSave={onSave}
+              onSaveProps={saveProps}
               onDelete={remove}
               linkApi={linkApi}
               attachApi={attachApi}

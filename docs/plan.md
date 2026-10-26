@@ -8018,3 +8018,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 자동화 문턱도 들어온 창만 판정하고 판단 불가면 실행한다. 후보를 고르는 transaction에도 같은 문턱을 적용한다. 자동화·입력·이유별 알림 상태를 내구 큐에 두어 inbox 처리/host 재기동 뒤 반복 안내를 막고 변화·해제를 알린다.
 - 기존 v1 설정 원문을 보존하고 v2 key로 한 번 이전한다. 계정 사용 여부와 진행 중 계정/원장은 유지하고 그룹·모델·참여 조건만 제거한다. t-1100의 이름 변경은 v1 호환 자료와 v2 사용 설정을 함께 옮긴다. FRONT_API 1.129이며 AGENT_LINK와 E2E 번호는 유지한다.
 - OSS는 [LiteLLM router](https://docs.litellm.ai/docs/routing)([MIT, enterprise 별도](https://github.com/BerriAI/litellm/blob/main/LICENSE))의 동종 후보 분리와 [Envoy least request](https://github.com/envoyproxy/envoy/blob/main/source/extensions/load_balancing_policies/least_request/least_request_lb.cc)([Apache-2.0](https://github.com/envoyproxy/envoy/blob/main/LICENSE))의 진행 중 요청 수를 비교했다. 후보 분리·작업 수 기준 분산 원칙만 참고하며 코드·의존성을 추가하지 않는다.
+
+### 8.501 할 일 상세 창 정리(t-1097)
+
+- 사용자 10-26 요청: 예약을 누르면 위쪽 예약 칸이 펼쳐지며 그 칸 안에서 스크롤이 생겨 「이 내용으로 예약」이 가렸다. 맡기기·바로 시작과 예약 단추가 흩어져 있었고, 메모가 위(예약 확인)와 아래(폼)에 두 번 나왔으며 설명 글이 많았다.
+- 시안(지금·A 고정 줄·B 「시작 ▾」·C 끝 카드, 1280·390px) 뒤 사용자 답 q-1380 1A·q-1381 2A·q-1382 3B로 정했다.
+- 차례: 머리(상태·ID·thread 칩·닫기) → 제목(감싸는 글 칸) → 예약 상태 → 속성(이름·값 한 줄) → 메모(한 곳, 「고치기」) → 첨부 → 하위 → 접힌 「자세히」(지난 thread·원문 줄·저장 미리보기).
+- 아래 고정 줄: 고치는 중이면 「저장·되돌리기」, 아니면 「coordinator에게 맡기기·바로 시작·예약(갱신)·예약 풀기」와 ⋯(예약 위로·아래로·맨 앞으로, 지우기, 휴대폰은 아래 시트). 예약 확인(모델·머신·저장소 한 줄, 앞 할 일, 예약·취소)은 이 줄 자리에서 열린다. 맡길 글 전체는 다시 그리지 않는다.
+- 속성 칸은 고르면 그 칸만 편집을 시작한 판에 얹어 바로 저장한다. 고치던 제목·메모는 남기고 저장한 새 판으로 옮겨 타서 다음 「저장」이 충돌하지 않는다. 충돌·실패면 칸을 그 판 값으로 되돌리고 기존 충돌 창을 띄운다. 사람 담당은 이름을 쓴 뒤 「저장」한다. 새 할 일은 모두 「더하기」로 쓴다.
+- 지운 글: 맡기기 설명, 앞 할 일 설명, 첨부 형식 설명(사진·파일 단추 title로), 형식 어긋남 설명 앞 문장, 머리의 「N줄」, 예약 풀면 자리의 「차례는 host가…」.
+- 참고: Plane(AGPL-3.0) `side-peek-view.tsx`·`issue-properties.tsx`의 차례와 이름·값 줄 모양만 따랐고 코드는 가져오지 않았다. Linear·GitHub Projects·Todoist·Things는 화면만 보았다. ⋯는 앱의 RowMenu를 쓴다. FRONT_API·proto는 바꾸지 않는다.

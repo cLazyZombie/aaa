@@ -21,6 +21,29 @@ pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 /// 사건이 오면 즉시 끝난다. 일반 대기·제품의 복구/성능 시한에는 쓰지 않는다(docs/testing.md).
 pub const LOAD_TIMEOUT: Duration = Duration::from_secs(60);
 static SEQ: AtomicU32 = AtomicU32::new(0);
+static CAPTURE_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// `Command::output()` 대신 쓴다: 표준 출력·오류를 pipe가 아니라 파일로 받고, 자식이 끝나면 바로 돌아온다.
+/// macOS std는 pipe를 만든 뒤 CLOEXEC를 따로 건다(`pipe2`가 없다). 그 틈에 같은 시험 프로세스의 다른 thread가 띄운 자식
+/// (host·agent처럼 오래 사는 것)이 쓰기 끝을 물려받으면, 이 명령이 끝나도 EOF가 오지 않아 `output()`이 그 자식이 끝날 때까지
+/// 막힌다(t-1097: m13 accounts 「labA 연결」 30초 실패, host는 1초 안에 연결했다). 파일은 `O_CLOEXEC`로 원자적으로 열린다.
+pub fn captured(cmd: &mut Command) -> std::io::Result<Output> {
+    let stem = format!("aaa-lab-out-{}-{}", std::process::id(), CAPTURE_SEQ.fetch_add(1, Ordering::SeqCst));
+    let (out, err) =
+        (std::env::temp_dir().join(format!("{stem}.out")), std::env::temp_dir().join(format!("{stem}.err")));
+    let result = (|| {
+        let status = cmd
+            .stdin(Stdio::null())
+            .stdout(std::fs::File::create(&out)?)
+            .stderr(std::fs::File::create(&err)?)
+            .status()?;
+        Ok(Output { status, stdout: std::fs::read(&out)?, stderr: std::fs::read(&err)? })
+    })();
+    for path in [&out, &err] {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
 
 /// 같은 프로그램·version이면서 SHA가 다른 시험 실행 파일. macOS는 서명 식별자로 구분한다.
 /// 실행 파일을 쓰는 FD가 병렬 시험의 fork에 물려가지 않도록 복사·수정은 자식 프로세스에서 한다.
@@ -96,7 +119,7 @@ impl Node {
     }
 
     pub fn run(&self, args: &[&str]) -> Output {
-        self.cmd(args).output().expect("aaa 실행")
+        captured(&mut self.cmd(args)).expect("aaa 실행")
     }
 
     /// `--json`을 붙여 실행하고 JSON을 돌려준다. 실패하면 Err(표준 오류의 `{"error":…}` JSON, 아니면 출력 전부).
@@ -248,6 +271,39 @@ impl Node {
 
     pub fn connected(&self, name: &str) -> bool {
         self.machine(name).is_some_and(|m| m["connection"] == "connected")
+    }
+
+    /// `name` 머신이 연결될 때까지 `machine list`로 기다린다. 시간이 지나면 시도마다의 시각·걸린 시간·종료·그 머신 상태·
+    /// 오류 첫 줄을 남긴다(CLI 오류를 None으로 버리면 host 연결과 판정이 어긋난 까닭을 가를 수 없다, t-1097)
+    pub fn wait_connected(&self, name: &str, timeout: Duration) {
+        let tries = std::cell::RefCell::new(Vec::<String>::new());
+        let start = Instant::now();
+        wait_for_diag(
+            &format!("{name} 연결"),
+            timeout,
+            || {
+                let at = start.elapsed();
+                let o = self.run(&["--json", "machine", "list"]);
+                let v: Option<Value> = serde_json::from_slice(&o.stdout).ok();
+                let state = v.as_ref().and_then(|v| {
+                    v["machines"].as_array()?.iter().find(|m| m["name"] == name).map(|m| m["connection"].to_string())
+                });
+                let err = String::from_utf8_lossy(&o.stderr);
+                tries.borrow_mut().push(format!(
+                    "+{}ms {}ms exit={:?} {name}={} {}",
+                    at.as_millis(),
+                    start.elapsed().saturating_sub(at).as_millis(),
+                    o.status.code(),
+                    state.as_deref().unwrap_or("없음"),
+                    err.lines().next().unwrap_or("")
+                ));
+                (o.status.success() && state.as_deref() == Some("\"connected\"")).then_some(())
+            },
+            || {
+                let t = tries.borrow();
+                format!("machine list 시도 {}번(마지막 10번):\n{}", t.len(), t[t.len().saturating_sub(10)..].join("\n"))
+            },
+        )
     }
 
     /// host ticker를 `n`번 돌리고(`aaa ticker tick`: 이 명령 뒤에 시작한 tick이 끝나면 돌아온다) 끝난 tick 수를 돌려준다.
@@ -410,7 +466,7 @@ impl Lab {
 
 #[cfg(unix)]
 fn command_of(pid: u32) -> Option<String> {
-    let o = Command::new("ps").args(["-o", "command=", "-p", &pid.to_string()]).output().ok()?;
+    let o = captured(Command::new("ps").args(["-o", "command=", "-p", &pid.to_string()])).ok()?;
     let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
 }

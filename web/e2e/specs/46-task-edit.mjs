@@ -250,10 +250,30 @@ export default async function ({ page }) {
     md = sha(text);
   });
 
+  await step("속성 칸은 고르면 바로 저장하고(q-1382 3B), 고치던 제목은 남아 이어서 「저장」해도 충돌하지 않는다", async () => {
+    await pickRow(page, "문서 정리");
+    const detail = page.getByTestId("task-detail");
+    await detail.getByTestId("task-field-title").fill("문서 정리하기");
+    let before = await shaOf(page);
+    await detail.getByTestId("task-field-owner").selectOption("me");
+    let text = await saved(page, before);
+    if (!taskContent(text).includes("- [ ] 문서 정리 (me)\n")) throw new Error(`담당만 바로 저장: ${text}`);
+    if ((await detail.getByTestId("task-field-title").inputValue()) !== "문서 정리하기") throw new Error("바로 저장이 고치던 제목을 지웠다");
+    if ((await page.getByTestId("task-form-stale").count()) !== 0) throw new Error("내 바로 저장을 「파일에서 바뀌었다」로 보였다");
+    before = await shaOf(page);
+    await detail.getByTestId("task-save").click();
+    text = await saved(page, before);
+    if (!taskContent(text).includes("- [ ] 문서 정리하기 (me)\n")) throw new Error(`이어 저장: ${text}`);
+    if ((await page.getByTestId("task-conflict").count()) !== 0) throw new Error("바로 저장 뒤 제목 저장이 충돌했다");
+    md = sha(text);
+  });
+
   await step("지우기·되살리기: 끝남으로 지우면 줄이 빠지고 「되살리기」 줄에서 되살리기", async () => {
     let before = await shaOf(page);
     await pickRow(page, "원격 일");
-    await page.getByTestId("task-delete").click();
+    // 지우기는 상세 아래 고정 줄의 ⋯에 있다(t-1097)
+    await page.getByTestId("task-detail-more").click();
+    await page.getByRole("menuitem", { name: "끝남으로 지우기", exact: true }).click();
     let text = await saved(page, before);
     if (text.includes("원격 일")) throw new Error(text);
     await page.getByTestId("task-undo").waitFor();

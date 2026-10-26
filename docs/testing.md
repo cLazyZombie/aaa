@@ -4038,3 +4038,26 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `repeated_usage_waits_survive_inbox_cleanup_and_restart_until_reason_or_input_changes`는 실제 자동화 대기 네 번과 매번 inbox 처리를 수행한다. 안내 한 건과 입력 보존·host 재기동 뒤 재안내 없음, 이유/입력 변화·해제/재차단을 확인한다. 필요 이유는 ticker마다 같은 안내가 다시 쌓이는 회귀를 막기 위해서다.
 - 기존 E2E81에서 Chromium/WebKit × 1280/390px 실제 계정 행 스위치·그룹/모델/프로젝트 제거·가로 넘침을 검사한다. 실제 host/agent/PTY의 같은 harness 분산·미관측 반복 시작·5시간 누락+주간10%/100%·다른 harness 기본 계정 fallback·영수증·재기동·할 일 대기/취소·Reader와 인증 비노출도 확인한다. E2E58은 t-1100의 이름 변경 UI를 유지하며 host 회귀에서 v2 사용 설정 동반 이전도 확인한다.
 - 부분 명령은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib`와 `NODE_PATH=<작업 폴더 Playwright 1.64.1> nice -n 15 node web/e2e/web.e2e.mjs --spec 58,65,78,81 --workers 1`이다. 웹 빌드·유닛, proto 생성 일치·의존 규칙도 검사한다. 공용 브라우저 캐시만 쓰며 고정 sleep·재시도·시한 확대는 없다. 전체 ci-local은 coordinator가 준 우선 차례에 실행한다.
+
+## 할 일 상세 창 정리 (t-1097)
+
+- 기존 E2E 43·46·47·52·54·67·70·75·76·92·107을 새 배치에 맞췄다. 지우기·예약 맨 앞으로는 ⋯ 메뉴(휴대폰 시트)로, 속성 칸은 「저장」 없이 파일에 쓰이는지로, 예약 확인은 맡길 글 대신 모델·저장소 요약으로 본다.
+- E2E46에 「속성은 바로 저장, 고치던 제목은 남아 이어 저장해도 충돌 없음」 단계를 더했다. 저장 흐름이 두 갈래가 되며 생기는 낡은 블록 hash 충돌을 막는 회귀라 필요하다.
+- E2E92 「후속 문서」 메모를 화면보다 길게 하고, 예약 확인에서 「이 내용으로 예약」이 화면 안에 있고 그 자리에서 눌리는지(elementFromPoint) 본다. 사용자가 겪은 「스크롤에 가린 예약 단추」의 회귀라 필요하다.
+- 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs <캡처 폴더> --spec 43,46,47,52,54,67,70,75,76,92,107 --workers 6`, 웹 유닛·typecheck·빌드. 공용 브라우저 캐시를 쓰고 고정 sleep·재시도·시한 연장은 없다. 전체 gate는 coordinator 차례에 한다.
+
+## lab CLI 출력의 macOS pipe 상속 막힘 (t-1097)
+
+- 74회차 후보 gate의 m13-4에서 `accounts::host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials`가 `30s 안에 labA 연결이 되지 않았다`로 실패했다. 같은 실험실 host trace에는 첫 `machine list`(49.923~49.979, 빈 목록) 뒤 30초 동안 front 연결이 없었다. host는 50.79에 labA를 연결했다. 시험 thread가 첫 호출의 `Command::output()`에서 돌아오지 못한 것이다(t-0787의 `ci.rs` 같은 실패와 같은 모양).
+- 원인: macOS Rust std는 `pipe()` 뒤에 CLOEXEC를 따로 건다(`std/src/sys/pipe/unix.rs`, `pipe2` 없음). 그 틈에 같은 시험 프로세스의 다른 thread가 띄운 오래 사는 자식(다른 시험의 host·agent)이 쓰기 끝을 물려받으면, CLI가 끝나도 EOF가 오지 않는다. 최소 재현(한 thread가 `output()` 반복, 세 thread가 `sleep 3` 자식을 계속 띄움)에서 20초 2,622번 중 2번이 3.01초 막혔다. 출력을 파일로 받으면 2,643번 중 최대 0.15초였다.
+- 수리: lab `captured()`가 표준 출력·오류를 `O_CLOEXEC`로 원자적으로 연 임시 파일로 받는다. `Node::run`(모든 `json`/`ok`)과 `command_of`가 이를 쓴다. `Node::wait_connected`는 시도마다 시각·걸린 시간·종료 코드·머신 상태·오류 첫 줄을 남긴다. accounts world가 이를 쓴다. 30초 상한과 기존 단언은 그대로다.
+- 회귀 `cargo test -p aaa --test m13 lab_capture_returns_while_another_process_holds_the_output`: 출력을 든 채 남는 손자(`sleep 600 &`)로 다른 프로세스가 쓰기 끝을 든 상황을 결정적으로 만들고, 돌아온 때 그 손자가 살아 있는지(`kill -0`)로 본다. 옛 pipe 방식에서는 20초 경보로 끊겼고(RED), 수리 뒤 0.01초에 통과한다. 병렬 시험이 다른 시험의 host 수명만큼 막히는 실제 실패를 막는 회귀라 필요하다.
+- 제품 host·agent에서도 `Command::output()`과 오래 사는 자식 spawn이 다른 thread에서 겹치면 같은 경합이 생길 수 있다. 이번에는 확인하지 않았다(coordinator에 별도로 알림).
+
+## E2E93 클릭 보고와 quit의 경로 간 순서 (t-1097)
+
+- 후보 `35ea8138` gate에서 E2E93 Claude WebKit 390 `--resume`이 「실제 클릭 보고를 받지 않았다」로 실패했다. session host 수신 순서는 누름 11바이트(51.0738) → `quit` 5바이트(51.192377, `aaa pane run`) → 뗌 11바이트(51.192869)였다. harness는 누름·quit만 받고 끝났고, 뗌 `\e[<0;24;19m`은 셸에 찍혔다. 이 spec·가짜 harness는 main과 같아 main에도 있는 시험 결함이다.
+- 시험은 클릭(브라우저 WebSocket → host → agent → session)과 quit(CLI → host API → agent → session)을 서로 다른 경로로 보내고, 뗌이 닿았는지 보지 않고 quit을 보냈다. 서로 다른 입력 출처 사이의 PTY 도착 순서는 보장하지 않는다.
+- 제품 확인: 마우스 보고 중 제자리 클릭은 `Term.tsx` `forwardClick`이 합성 누름·뗌을 한 처리 안에서 연달아 보낸다. 같은 spec에 마우스 사건·WebSocket 전송 기록을 잠시 넣어 돌린 실행에서 WebKit 390도 두 보고를 같은 ms(15633)에 보냈다. 따라서 실패 때 누름 뒤 약 120ms 늦은 뗌은 보기 전환 중의 뗌 처리 결함이 아니라, 부하 중 전달 경로에서 생긴 간격으로 본다. 그 간격에 다른 경로의 quit이 끼어들었다. 실패 run의 브라우저 전송 시각은 기록에 없어 직접 관측하지는 못했다.
+- 수리: `quit()` 전에 harness가 입력마다 새로 쓰는 `shell-input` 기록에서 button 0의 `M`·`m` 수신을 사건으로 기다린다(기존 `until` 20초 한도). 기존 단언·시한은 바꾸지 않았다. 경합이라 수리 전 RED는 결정적으로 재현하지 않았다.
+- 확인: `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 93 --workers 2` 통과(2/2).

@@ -82,13 +82,12 @@ export default async function ({ page }) {
       await domIs(page, "owner 목록을 그린 직후 저장소 선택", () => document.querySelector('[data-testid="task-field-repo"]')?.dataset.ownerBoundary === "selected");
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       if (await form.getByTestId("task-field-repo").inputValue() !== "app") throw new Error("owner 응답이 고른 저장소를 초기화했다");
-      if (await form.getByTestId("task-save").isDisabled()) throw new Error("owner 응답 뒤 저장 단추가 비활성이다");
     } finally {
       releaseOwners();
       await page.unroute("**/api/v1/call", holdOwners);
     }
     await shot(page, "repo-desktop-form");
-    await form.getByTestId("task-save").click();
+    // 속성 칸은 고르면 바로 저장한다(사용자 10-26 q-1382 3B): 「저장」 없이 파일에 쓰인다
     await until("저장소 칸", () => taskContent(read()).includes("- [ ] 저장소 일 (fake@labA) [app]\n"));
     await shaIs(page, sha(read()));
     const chip = await row(page, "저장소 일").locator(".task-repo").textContent();
@@ -102,11 +101,12 @@ export default async function ({ page }) {
     if ((await value("task-field-owner")) !== "agent" || (await value("task-field-profile")) !== "" || (await value("task-field-machine")) !== "") throw new Error("미할당 task는 agent에 두 칸이 비어야 한다");
     await domIs(page, "모델 목록", () => [...document.querySelectorAll('[data-testid="task-field-profile"] option')].some((o) => o.value === "fake"));
     await shot(page, "who-desktop-unassigned");
+    // 속성 칸은 고르면 바로 저장한다(q-1382 3B). 저장 뒤 폼은 손대지 않은 폼이라 「저장」 단추가 없다
     const save = async (want) => {
       const before = sha(read());
-      await form.getByTestId("task-save").click();
       await until(want, () => taskContent(read()).includes(`- [ ] ${want}\n`));
-      await domIs(page, "새 판", (b) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha !== b, before);
+      await domIs(page, "새 판", (b) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha !== b && document.querySelector('[data-task-saving="true"]') === null, before);
+      if (await form.getByTestId("task-save").count()) throw new Error("바로 저장한 뒤에도 저장 단추가 남았다");
     };
     await form.getByTestId("task-field-machine").selectOption("labA");
     await save("모델 일 (@labA)");

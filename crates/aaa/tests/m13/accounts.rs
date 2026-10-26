@@ -282,7 +282,7 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) 
         cmd.env_remove(key);
     }
     w.lab.spawn_command("agentA", cmd);
-    wait_for("labA 연결", T, || w.h.connected("labA").then_some(()));
+    w.h.wait_connected("labA", T);
     w.h.ok(&["project", "create", "demo"]);
     w
 }
