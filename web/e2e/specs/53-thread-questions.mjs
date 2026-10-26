@@ -335,8 +335,22 @@ export default async function ({ page }) {
     await until("새 보고로 post도 처리됨", () => aaa("post", "status", "demo", closing.id).handled === true);
     const closed = await until("닫힌 질문 기록", async () => (await asksOf(pp)).ok.done.find((r) => r.summary === "새 보고로 질문 닫힘"));
     if (closed.answer !== undefined || closed.items[0].text !== "간격") throw new Error(`닫힌 질문에 답이 생겼다: ${JSON.stringify(closed)}`);
-    const closedLate = await coordinatorPost({ request: true, title: `닫힌 간격 질문 aaa:question/${t.id}` });
-    if (aaa("post", "status", "demo", closedLate.id).handled !== true) throw new Error("닫힌 질문의 늦은 post가 남았다");
+    // 현재 카드가 없는 thread 링크는 새 독립 질문이다. 과거 답·inbox 정리가 사용자 확인을 대신하지 않는다.
+    const closedLate = await coordinatorPost({ request: true, title: `직접 확인 aaa:question/${t.id}`,
+      body: "## Questions\n### 1. 직접 확인했나요\n- A 확인함 (추천)\n- B 아직 확인 못 함\n" });
+    if (aaa("post", "status", "demo", closedLate.id).handled !== false) throw new Error("카드 없는 thread 링크의 새 요청을 닫았다");
+    const standalone = (await asksOf(pp)).ok.requests.find((r) => r.title.startsWith("직접 확인"));
+    if (!standalone?.question_id || !standalone.title.endsWith(`aaa:question/${standalone.question_id}`)) throw new Error(`독립 질문 링크: ${JSON.stringify(standalone)}`);
+    aaa("inbox", "done", "demo", "--all");
+    if (aaa("post", "status", "demo", closedLate.id).handled !== false) throw new Error("일반 inbox 정리가 미답변 질문을 닫았다");
+    for (const p of [page, pp, phoneApp.page]) {
+      await p.evaluate((id) => { location.hash = `question=${id}`; }, standalone.question_id);
+      await until("독립 질문 한 줄", async () => (await p.getByTestId("asks-open-count").textContent()) === "1");
+      await p.getByTestId(`request-ask-${standalone.id}`).getByRole("radiogroup", { name: "1. 직접 확인했나요", exact: true }).waitFor();
+    }
+    await shot(page, "53-orphan-question-preserved-desktop");
+    await shot(phoneApp.page, "53-orphan-question-preserved-phone-app");
+    aaa("post", "handled", "demo", standalone.question_id);
     for (const p of [pp, phoneApp.page]) await until("새 보고 뒤 답할 것 없음", async () => (await p.getByTestId("asks-open-count").textContent()) === "0");
     await shot(phoneApp.page, "53-closed-question-phone-app");
     // 독립 post의 기존 회귀도 열린 카드와 나란히 검사한다.
@@ -348,6 +362,7 @@ export default async function ({ page }) {
     const body = `${root}/request-body.md`;
     fs.writeFileSync(body, "배포 전에 **승인**이 필요하다.\n\n- 바뀐 것: 로그인 화면\n");
     aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "배포 승인", "--body-file", body);
+    aaa("inbox", "done", "demo", "--all");
     await until("빨강 배지 둘", async () => (await badge(page)).startsWith("ask 2 "));
     // coordinator 알림함은 숨겨도 사용자 확인 필요 post는 「답할 것」에 그대로 보인다(t-0590).
     if (await page.locator('[data-testid="activity-inbox"], [data-testid="activity-badge-inbox"]').count()) throw new Error("알림함 단추·배지가 남았다");

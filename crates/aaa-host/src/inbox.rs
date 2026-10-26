@@ -296,9 +296,29 @@ impl Host {
         if let Some(miss) = ids.iter().find(|id| !open.iter().any(|i| &&i.id == id)) {
             return Err(err(ErrorCode::NotFound, format!("끝내지 않은 항목이 없다: {miss}")));
         }
-        let pick: Vec<InboxItem> = open.into_iter().filter(|i| all || ids.contains(&i.id)).collect();
+        if let Some(item) = open
+            .iter()
+            .find(|i| ids.contains(&i.id) && crate::asks::is_user_request(i) && !self.request_has_open_question(i))
+        {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!(
+                    "미답변 사용자 요청은 inbox 정리로 닫지 않는다: {}. 카드에서 답하거나 aaa post handled <q-ID|p-ID>로 명시적으로 처리한다",
+                    item.id
+                ),
+            ));
+        }
+        let preserved = open.iter().filter(|i| all && crate::asks::is_user_request(i)).count();
+        let pick: Vec<InboxItem> = open
+            .into_iter()
+            .filter(|i| if all { !crate::asks::is_user_request(i) } else { ids.contains(&i.id) })
+            .collect();
         let n = self.inbox_finish(project, pick, &self.answered_by(actor), true).map_err(internal)?;
-        self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
+        self.db.audit(
+            actor,
+            "inbox_done",
+            &format!("{project} {n} all={all} preserved_user_requests={preserved} ids={}", ids.join(" ")),
+        );
         Ok((n, fit_inbox(self.db.inbox_list(Some(project), false).map_err(internal)?, INBOX_REPLY_BYTES)))
     }
 
