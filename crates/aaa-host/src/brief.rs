@@ -236,10 +236,10 @@ impl Host {
         let rec = self.load(project, id)?;
         match &out {
             Ok(Done::Delivered(how)) => {
+                // 보고가 받음 확인보다 먼저 올 수 있다. bump_brief가 보존한 전송 전 기준은 바꾸지 않는다.
                 let rec = self.update_rec(project, id, |r| {
                     r.brief = BriefState::Delivered;
                     r.delivered_at_ms = Some(aaa_common::util::now_ms());
-                    r.delivered_report = r.report_hash.clone();
                 })?;
                 let evidence = rec.work_dir.as_ref().map(|w| format!("{w}/brief.md"));
                 self.flow(&rec, "brief_delivered", evidence, format!("{how}(시도 {}번)", rec.brief_attempts));
@@ -350,7 +350,13 @@ impl Host {
     }
 
     fn bump_brief(&self, project: &str, id: &str, by: i32) -> Result<(), ErrorBody> {
-        self.update_rec(project, id, |r| r.brief_attempts = r.brief_attempts.saturating_add_signed(by)).map(|_| ())
+        self.update_rec(project, id, |r| {
+            if by > 0 && r.brief_attempts == 0 {
+                r.delivered_report = r.report_hash.clone();
+            }
+            r.brief_attempts = r.brief_attempts.saturating_add_signed(by);
+        })
+        .map(|_| ())
     }
 
     /// `aaa thread brief`: 배경 task의 다음 확인을 기다리지 않고 지금 한 번 보낸다(두 번 보내지 않는다,
