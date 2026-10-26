@@ -755,9 +755,11 @@ fn worktree_thread_round_trip() {
     std::fs::remove_file(work.join("library/link")).unwrap();
     let v = w.h.ok(&["thread", "resolve", "demo", "t-0001"]);
     assert_eq!((v["status"].as_str(), v["copy"].as_str()), (Some("resolved"), Some("complete")), "{v}");
-    // 끝난 thread도 목록에 남는다(herdr-projects `thread list <slug>`, `--all` 없음). 프로젝트는 위치 인자다.
+    // 기본 목록은 끝난 thread도 보존하며 --open은 끝난 항목을 거른다. 프로젝트는 위치 인자다.
     let listed = w.h.ok(&["thread", "list", "demo"]);
     assert_eq!(listed["threads"][0]["group"], "resolved", "{listed}");
+    assert!(w.h.ok(&["thread", "list", "--open"])["threads"].as_array().unwrap().is_empty());
+    assert_eq!(w.h.ok(&["thread", "list", "--status", "resolved"])["threads"][0]["id"], "t-0001");
     let text = String::from_utf8_lossy(&w.h.run(&["thread", "list", "demo"]).stdout).to_string();
     assert!(text.starts_with("demo/t-0001\t끝남\t"), "{text}");
     assert!(!cwd.exists(), "고치지 않은 worktree는 지워져야 한다");

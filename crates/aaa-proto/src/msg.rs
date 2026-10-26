@@ -2791,11 +2791,13 @@ pub enum FrontRequest {
         #[ts(type = "number")]
         before_ms: u64,
     },
-    /// thread 목록. 기본은 사후 평가자를 빼고, `role`을 주면 그 역할만 보인다(§8.13).
+    /// thread 목록. role 생략은 모든 역할. FRONT_API 1.128부터 커서·개수·바이트 상한을 둔다.
     Threads {
         project: Option<String>,
         #[serde(default)]
         role: Option<Role>,
+        #[serde(flatten)]
+        query: crate::ThreadListQuery,
     },
     ThreadShow {
         #[serde(default)]
@@ -3864,6 +3866,10 @@ pub enum FrontResponse {
     },
     Threads {
         threads: Vec<ThreadView>,
+        /// 다음 페이지가 있으면 이 커서를 after로 보낸다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        next_after: Option<String>,
     },
     Thread(Box<ThreadView>),
     /// FRONT_API 1.44. thread 작업 요약
@@ -4494,7 +4500,7 @@ mod tests {
         let apply =
             FrontRequest::MachineSetupApply { job: "j".into(), plan_sha256: "0".repeat(64), service_password: None };
         assert!(apply.needs_control() && !apply.local_only());
-        assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
+        assert!(!FrontRequest::Threads { project: None, role: None, query: Default::default() }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)
         assert!(!FrontRequest::EvaluatorStatus { project: None }.needs_control());
         assert!(!FrontRequest::Evaluations { project: "p".into(), all: false }.needs_control());
@@ -4550,7 +4556,7 @@ mod tests {
         // 1.2 front의 threads(role 없음)와 hello(session 없음)
         assert_eq!(
             serde_json::from_value::<FrontRequest>(json!({"op":"threads","project":null})).unwrap(),
-            FrontRequest::Threads { project: None, role: None }
+            FrontRequest::Threads { project: None, role: None, query: Default::default() }
         );
         let v = json!({"t":"hello","proto":{"major":1,"minor":2},"client":"cli"});
         assert!(matches!(serde_json::from_value::<FrontMsg>(v), Ok(FrontMsg::Hello { session: None, .. })));

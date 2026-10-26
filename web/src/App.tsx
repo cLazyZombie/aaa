@@ -33,7 +33,7 @@ import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { CHAT_IDLE_MS, chatExpiry, chatKey, hasChat, retainChats, type RetainedChat } from "./retainedChats";
 import { QuestionReload } from "./questionReload";
-import { ThreadReload } from "./threadReload";
+import { ThreadReload, readThreadPages } from "./threadReload";
 import { SummaryButton } from "./ThreadSummary";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
@@ -715,10 +715,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           if (on) { loadAutomations(); }
           if (on) {
             const read = threadReload.current.begin();
-            call({ op: "threads", project: null, role: null })
-              .then((r) => {
-                if (r.kind !== "threads") return threadReload.current.failed(read);
-                const next = threadReload.current.finish(read, r.threads);
+            readThreadPages(call)
+              .then((threads) => {
+                const next = threadReload.current.finish(read, threads);
                 if (next === null) return;
                 // 위 질문과 같다: 다시 붙을 때는 끊긴 동안 검토 대기가 된 새 보고를 알린다(처음 보는 thread는 새 소식이 아니다)
                 // 끊긴 동안 새로 생긴 thread도 처음 붙을 때 목록에 없었으니 새 소식이다

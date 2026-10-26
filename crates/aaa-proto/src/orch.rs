@@ -985,6 +985,28 @@ pub enum ReportAttention {
     NeedsUser,
 }
 
+/// 목록은 100건(최대 200건)씩 읽는다. after는 응답의 next_after를 그대로 돌려준다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadListQuery {
+    /// 끝난 thread를 뺀다(준비·실패·보류는 포함).
+    #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
+    pub open: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub status: Option<ThreadStatus>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub after: Option<String>,
+    /// 웹의 질문·보류 상세가 필요할 때만 켠다. 기본 목록은 큰 본문을 싣지 않는다.
+    #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
+    pub details: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
     /// 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.

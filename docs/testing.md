@@ -1,3 +1,12 @@
+## thread 목록 frame 상한과 페이지(t-1088, §8.499)
+
+- host `orch::list_tests`는 실제 DB에 끝난 2,500건·준비/열림/실패/보류·다른 프로젝트의 9999/10000/10001을 넣는다. 모든 페이지의 실제 IPC 포장이 상한 안이고 2,507건이 중복·유실 없이 나오는지, 최대 200건·역할/상태/open 거르기·본문 축소·바이트로 먼저 나뉘는 상세 페이지·다음 행을 확인한다. 잘못된 커서·다른 프로젝트 커서·0 limit·상충 필터도 거부한다. 필요한 이유: 원장 증가에 따른 이번 frame 실패와 커서 경계 유실을 실제 저장/직렬화 경계에서 막는다.
+- `front::tests::thread_pages_require_a_client_that_reads_cursors`는 실제 duplex 전송으로 1.127 IPC CLI에 갱신 오류가 오는지 본다. 필요한 이유: 커서를 버리는 구판이 첫 페이지만 전체로 오해하는 조용한 누락을 막는다. 기존 m13 `worktree_thread_round_trip`에는 resolve 뒤 기본 목록 보존·open 제외·resolved 선택만 더한다.
+- 웹 `threadReload.test.mjs` 두 시험은 페이지 간 커서 전달·질문 상세 유지·같은 번호의 다른 프로젝트·수신 중 새 보고 보존, 뒤 페이지 오류·반복 커서·잘못된 응답을 검사한다. 필요한 이유: 전체 읽기를 페이지로 바꿔도 새 보고가 되돌아가거나 부분 목록을 성공으로 표시해서는 안 된다.
+- 기존 E2E12 끝에 실제 끝난 thread 2,500건을 더한다. host 종료→DB transaction→재시작/agent 연결 사건을 기다리는 `seedHost`로 fixture를 쓴다. 1 MiB보다 큰 전체 목록을 실제 CLI·IPC에서 읽고 프로젝트 인자 유무·worker·open·resolved·limit/after를 확인한다. Chromium·WebKit을 headless로 열어 HTTP 각 페이지의 frame 크기·개수와 마지막 커서, 마지막 항목의 실제 표시를 확인한다. 필요한 이유: host 유닛이 대신할 수 없는 CLI의 페이지 합치기와 브라우저 초기/새로고침 경계를 검사한다. 새 E2E 번호는 만들지 않는다.
+- 첫 대량 E2E는 제품 오류가 아니라 공용 `aaa()`의 Node `execFileSync` 기본 stdout 버퍼(1 MiB)에 걸려 자식이 끝 코드 null로 종료됐다. 이 시나리오 전용 CLI helper는 `spawn` stdout을 파일로 받아 종료 사건·코드와 전체 JSON을 확인한다. 버퍼/시한/기대값을 늘리지 않고 전체 결과가 1 MiB보다 크다는 단언도 유지한다.
+- 부분 실행은 `cargo test --profile verify --locked -p aaa-host --lib orch::list_tests`, 같은 crate의 `thread_pages_require_a_client_that_reads_cursors`, `cargo test --profile verify --locked -p aaa --test m13 worktree_thread_round_trip`, `node --test web/test/threadReload.test.mjs`, `NODE_PATH=<자기 작업 폴더 Playwright 1.64.1> nice -n 15 node web/e2e/web.e2e.mjs --spec 12-threads-push --workers 1`이다. 공용 내부 브라우저 캐시와 저장소 launchChromium을 쓰며 고정 sleep·재시도·시한 확대는 없다. 전체 gate는 coordinator에게 준비됨을 알리고 받은 차례에 실행한다.
+
 ## 활성 할 일 표시 정렬(t-1081, §8.497)
 
 - `taskSortModel.test.mjs` 네 유닛은 각각 속성별 정렬·빈 값·0채움 번호·안정된 동률, 실제 예약/숨은 예약과 상하위/거르기 보존, 나중의 Markdown 표시 제목·메모·원문 위치 보존, 탭별 기억 분리·잘못된 저장값 복구를 검사한다. 필요한 이유는 실행 차례 훼손, 부모·하위 분리, 다른 항목을 옮기는 데이터 손실, 다른 탭의 보기 설정 훼손을 막기 위해서다. 정렬 상수만 복사하는 시험은 두지 않는다.

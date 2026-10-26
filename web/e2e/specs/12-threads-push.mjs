@@ -9,6 +9,8 @@ import {
   step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, coordinatorPost, inList, showPanel, drawerSettled,
 } from "../lib/harness.mjs";
 
+import { threadPages } from "../lib/thread-pages.mjs";
+
 /**
  * 목록 줄의 오른쪽 끝(보이는 ⋯, 없으면 상태 칸)과 목록 오른쪽 끝의 거리가 목록 여백(--side-gutter)과 경계선 안이다(t-0370:
  * 휴대폰 ⋯ 뒤 빈 상태 칸). 고정 카드 안 줄은 카드 안쪽 여백만큼 더 들어간다. ⋯은 손가락 크기(--touch-target 40px)를 지킨다
@@ -1195,5 +1197,7 @@ export default async function ({ page }) {
     await shot(ph.page, "phone-workspace-folders");
     await ph.page.context().close();
   });
+
+  await step("thread 목록 규모: 끝난 2500건·CLI 거르기와 개수·커서·두 브라우저 전체 페이지", threadPages);
 
 }

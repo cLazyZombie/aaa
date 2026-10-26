@@ -391,6 +391,14 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                 ReqFrame::Other => continue,
             };
             match body {
+                FrontRequest::Threads { .. } if proto.minor < 128 => {
+                    // 구판은 next_after를 버려 첫 페이지만 전체 목록으로 오해한다.
+                    let error = ErrorBody::new(
+                        ErrorCode::UnsupportedVersion,
+                        "thread 목록은 페이지를 이어 읽는 Front API 1.128 이상 CLI가 필요하다. aaa를 갱신한다",
+                    );
+                    tx.control(res_frame(id, Err(error))).await?;
+                }
                 body @ FrontRequest::PaneWaitOutput { .. } => {
                     let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
                     waits.retain(|t| !t.is_finished());
@@ -565,6 +573,49 @@ mod tests {
             "N-1 CLI가 모르는 웹 알림을 받았다: {msg:?}"
         );
         drop(rx);
+        task.await.unwrap().unwrap();
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn thread_pages_require_a_client_that_reads_cursors() {
+        let root = std::env::temp_dir().join(format!("aaa-thread-wire-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        let (client, server) = tokio::io::duplex(MAX_FRAME);
+        let (sr, sw) = tokio::io::split(server);
+        let (cr, cw) = tokio::io::split(client);
+        let task = tokio::spawn(serve_conn(
+            h.clone(),
+            spawn_writer(sw, MAX_FRAME),
+            FrameRx::new(sr, MAX_FRAME),
+            Conn {
+                role: DeviceRole::Local,
+                actor: "local:cli".into(),
+                front: h.new_front("cli".into()),
+                proto: aaa_proto::Version { major: 1, minor: 127 },
+            },
+        ));
+        let tx = spawn_writer(cw, MAX_FRAME);
+        tx.json(&FrontMsg::Req {
+            id: "list".into(),
+            body: FrontRequest::Threads { project: None, role: None, query: Default::default() },
+        })
+        .await
+        .unwrap();
+        let mut rx = FrameRx::new(cr, MAX_FRAME);
+        loop {
+            let msg = tokio::time::timeout(Duration::from_secs(2), rx.control::<FrontMsg>()).await.unwrap().unwrap();
+            if let FrontMsg::Res { result, .. } = msg {
+                assert_eq!(result.into_result().unwrap_err().code, ErrorCode::UnsupportedVersion);
+                break;
+            }
+        }
+        drop(rx);
+        drop(tx);
         task.await.unwrap().unwrap();
         drop(h);
         std::fs::remove_dir_all(root).unwrap();

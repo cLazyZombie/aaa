@@ -1152,6 +1152,42 @@ impl Db {
         Ok(rows)
     }
 
+    /// 필터와 커서를 DB에서 적용해 끝난 thread 전문을 매 페이지 모두 읽지 않는다.
+    pub fn thread_page(
+        &self,
+        project: Option<&str>,
+        role: Option<&str>,
+        query: &aaa_proto::ThreadListQuery,
+        after: Option<&(String, String)>,
+        limit: u32,
+    ) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT data FROM threads
+             WHERE (?1 IS NULL OR project=?1)
+               AND (?2 IS NULL OR COALESCE(json_extract(data, '$.role'), 'worker')=?2)
+               AND (NOT ?3 OR status != 'resolved')
+               AND (?4 IS NULL OR status=?4)
+               AND (?5 IS NULL OR (project, CAST(SUBSTR(id, 3) AS INTEGER), id)
+                    > (?5, CAST(SUBSTR(?6, 3) AS INTEGER), ?6))
+             ORDER BY project, CAST(SUBSTR(id, 3) AS INTEGER), id LIMIT ?7",
+        )?;
+        Ok(st
+            .query_map(
+                params![
+                    project,
+                    role,
+                    query.open,
+                    query.status.map(|s| s.as_str()),
+                    after.map(|a| &a.0),
+                    after.map(|a| &a.1),
+                    limit
+                ],
+                |r| r.get(0),
+            )?
+            .collect::<rusqlite::Result<Vec<String>>>()?)
+    }
+
     /// 흐름 사건을 프로젝트 순번으로 넣고 그 순번을 돌려준다
     pub fn flow_insert(&self, e: &aaa_proto::FlowEvent) -> Result<u64> {
         let mut c = self.conn.lock().unwrap();
