@@ -6,6 +6,7 @@
 - agent의 `large_report_handler_negotiates_parts_and_keeps_legacy_links`는 실제 Agent/Welcome/요청 handler와 2MiB 보고 파일을 사용한다. 협상한 host의 분할 원문·hash와 구판의 명시 오류, 오류 뒤 hash·ping이 같은 연결에서 오는지 검사한다. 필요한 이유: 공통 codec 시험이 대신할 수 없는 Welcome 기능 설정과 실제 응답 진입점을 지킨다.
 - host의 `large_report_and_bad_parts_keep_requests_on_one_link`는 실제 Host/SQLite/link reader와 14,781개 manifest를 사용한다. 원본 report 전송과 분할 경계를 가로지르는 가짜 인증 문자열의 CI 가림, 잘못된 조각의 요청 오류 뒤 같은 generation의 다음 입력을 검사한다. 필요한 이유: 재조립이 원본 hash 확인과 저장 가림의 순서를 바꾸거나 agent 연결을 닫지 못하게 한다.
 - 부분 실행은 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib response_parts`, agent의 `--lib report_hash_probe`·`--lib large_report_handler`, host의 `--lib current_report_hash`·`--lib large_report_and_bad_parts`다. 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 새 E2E 번호는 추가하지 않으며 전체 gate는 coordinator에게 준비됨을 요청한 뒤 받은 차례에 실행한다. 운영 상태·설정은 읽기만 하며 재시작·설치·배포하지 않는다.
+- 첫 전체 gate의 m13 `report_state_precedes_completion_event`는 보고 사건 전에 `routine_toggled`를 발견해 실패했다. 보존 DB에는 최초3건 뒤 fixture의 빈 파일 읽기로 생긴 `routine_broken(seq4, +++ 줄로 시작해야 한다)`와 `routine_toggled(seq5)`가 있었다. 감시 폴더 밖에서 완성한 fixture를 같은 파일시스템의 rename으로 공개한다. 상태/사건 단언·시한·기대값은 유지한다. E2E103의 복귀 최신 확인0회는 기존 main 간헐 정지의 별도 조사 범위이며 이 후보에서 시험·웹을 바꾸지 않는다.
 
 ## E2E76 마지막 시트 복귀·E2E81 실제 클릭과 최신 조회(t-1126)
 
