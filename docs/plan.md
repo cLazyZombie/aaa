@@ -7960,3 +7960,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - E2E115: Chromium/WebKit × 1280/390px에서 ACK를 붙잡은 채 `보내는 중` 말풍선과 빈 입력창, ACK 뒤 `대기 중`, 새로고침 뒤 유지, 기록 반영 뒤 보통 말, 붙잡지 않은 흐름의 Claude 대기열 말과 같은 글 말풍선 하나를 검사한다. E2E23 막힘 단계는 말풍선의 막힘 표지와 멈춘 뒤 거둠을 더한다.
 
 - **71회차 착지 통합(t-1073).** 기준 main `f9324103`에 t-1069와 t-1072를 각각 --no-ff로 통합한다. §8.495·FRONT_API 1.126·AGENT_LINK 1.11을 유지하고 기존 E2E01~114에 E2E115를 더한다. testing 문서 충돌은 양쪽 설명을 모두 보존한다. 전체 ci-local·별도 공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows production release를 한 번 수행하며 실패하면 원문과 부하를 남기고 멈춘다. push 뒤 착지 SHA salt의 Windows 설치기를 전용 시험 폴더로 전달해 해시·판만 확인한다.
+
+### 8.496 활성 할 일의 표시 정렬(t-1081)
+
+- 기본은 「손 차례」다. 예약은 host의 실제 시작 차례대로 맨 위, 일반 작업은 TASKS.md의 원래 차례다. 「번호」는 큰 번호 먼저(0채움은 같은 번호), 「제목」은 가나다순, 「상태」는 확인 필요(형식 어긋남 포함) → 진행 중 → 대기 → 보류 → 완료, 「모델」·「머신」은 이름순이다. 같은 값은 원문 차례, 없는 번호·모델·머신은 끝이다.
+- 속성 정렬은 일반 작업의 형제끼리 적용한다. 하위는 상위와 함께 움직이며, 검색·거르기로 상위가 숨겨져도 묶음 차례를 지킨다. 예약과 따라 올라온 하위·숨은 예약 안내는 원래 차례 그대로다. TASKS.md의 기존 Later 등 목록에도 같은 규칙이다.
+- 속성 정렬에서는 끌기·Alt+↑↓·메뉴 위치 이동·상세 예약 차례 이동·휴대폰 「순서」 도구를 끈다. 예약 추가·풀기와 내용 편집은 가능하다. 안내에 실제 예약 차례 유지와 「원래 차례」 단추를 둔다. 원래 차례로 돌아가면 기존 이동 도구를 다시 쓴다.
+- 「나중」 문서는 파일·절을 유지하고 절 안 항목만 「원문 차례」·「제목」으로 고른다. 제목은 기존 Markdown 파서로 읽은 표시 글이며 메모와 메뉴 대상이 함께 움직인다. 항목별 시각·번호·상태·모델·머신이 없으므로 그런 정렬은 제공하지 않는다. 활성 작업도 정확한 생성·변경 시각이 없어 파일 mtime·일부 편집 로그를 대신 쓰지 않는다.
+- 완료와 같은 정렬 칩·체크 메뉴/휴대폰 시트를 사용하고, 휴대폰은 거르기 줄 맨 앞에 둔다. 할 일·나중·완료 선택은 기기마다 독립하여 기억한다. 정렬은 받은 전체 목록의 표시 규칙일 뿐 host 원문·예약을 쓰지 않으며 FRONT_API 1.126·AGENT_LINK 1.11을 유지한다.
+- UX 참고: [Linear 표시 순서](https://linear.app/docs/display-options), [Todoist 절 안 정렬과 이동 제한](https://www.todoist.com/help/todoist/features/sort-or-group-tasks-in-todoist-WFWD0hrb), [Things 원하는 자리로 옮기기](https://culturedcode.com/things/support/articles/2803582/), [GitHub Projects 속성 정렬과 해제](https://docs.github.com/en/issues/planning-and-tracking-with-projects/customizing-views-in-your-project/customizing-the-table-layout). OSS 후보는 [Vikunja TaskCollection](https://github.com/go-vikunja/vikunja/blob/main/pkg/models/task_collection.go)([AGPL-3.0](https://github.com/go-vikunja/vikunja/blob/main/LICENSE))의 위치/속성 분리와 [Super Productivity TaskList](https://github.com/super-productivity/super-productivity/blob/master/src/app/features/tasks/task-list/task-list.component.ts)([MIT](https://github.com/super-productivity/super-productivity/blob/master/LICENSE))의 상하위 목록과 이동 제한이다. 동작 원칙만 참고하며 외부 코드·의존성은 추가하지 않는다.

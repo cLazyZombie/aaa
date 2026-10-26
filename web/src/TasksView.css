@@ -658,6 +658,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 /* 정렬 칩: 넓으면 거르기 줄 끝, 휴대폰은 맨 앞(굴리지 않아도 보인다) */
 .tasks-sort { order: 3; gap: 2px; }
 .tasks-sort svg { width: 12px; height: 12px; margin: 0 2px 0 0; }
+.tasks-sort-note { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
 @media (max-width: 640px) { .tasks-sort { order: -1; } }
 @container task-list (min-width: 640px) {
   .task-completed-row { grid-template-columns: minmax(0, 1fr) fit-content(50%) max-content; }

@@ -84,6 +84,98 @@ export default async function ({ page }) {
     await page.getByTestId("task-detail-close").click();
   });
 
+  await step("활성 정렬: 예약 차례·원문 보존, 속성 정렬 중 이동 차단, 기기 기억과 원래 차례, 두 엔진과 휴대폰", async () => {
+    const beforeFile = fs.readFileSync(`${root}/projects/demo/TASKS.md`, "utf8");
+    const beforeQueue = JSON.stringify(queue());
+    const notes = "# 나중\n\n## UI\n- `하 항목`\n  하 메모\n- 가 항목\n  가 메모\n\n## 엔진\n- 나 항목\n";
+    fs.writeFileSync(`${root}/projects/demo/later.md`, notes);
+    aaa("project", "set", "demo", "task_notes.add", "later.md");
+    aaa("ticker", "tick");
+    const top = "reserved:첫 예약|reserved:둘째 예약|reserved:상위 일|under:하위 일|reserved:rc 일";
+    const wk = await webkit.launch();
+    try {
+      for (const [name, engine] of [["chromium", browser], ["webkit", wk]]) {
+        for (const device of ["desktop", "iphone"]) {
+          const { page: p } = await pairDevice(engine, aaa("web", "pair").code, device, { hash: "#tasks" });
+          const select = async (label, testId = "tasks-sort") => {
+            await p.getByTestId(testId).click();
+            if (device === "iphone") await p.locator(".row-sheet").getByRole("button", { name: new RegExp(`^${label}`) }).click();
+            else await p.getByRole("menuitemcheckbox", { name: new RegExp(`^${label}`) }).click();
+          };
+          try {
+            await topIs(p, "기본 손 차례", top);
+            await shot(p, `active-sort-before-${name}-${device}`);
+            // 휴대폰 순서 모드에서 속성 정렬을 골라도 이동 도구가 남지 않는다.
+            if (device === "iphone") await p.getByTestId("tasks-order").click();
+            for (const [label, value, rest] of [["번호", "number", "나중 일|끌어 예약"], ["제목", "title", "끌어 예약|나중 일"], ["상태", "state", "끌어 예약|나중 일"], ["모델", "profile", "끌어 예약|나중 일"], ["머신", "machine", "끌어 예약|나중 일"]]) {
+              await select(label);
+              await domIs(p, "속성 정렬", key => document.querySelector('[data-testid="tasks-list"]')?.dataset.sort === key, value);
+              await topIs(p, "정렬 중 실제 예약 차례", top);
+              if ((await restOf(p)).join("|") !== rest) throw new Error(`${label} 차례 ${await restOf(p)}`);
+              if (await p.locator('.task-grip, [data-testid^="task-step-"], [data-testid="tasks-order"]').count()) throw new Error("속성 정렬에 이동 도구가 남음");
+            }
+            await row(p, "둘째 예약").locator(".task-pick").focus();
+            await p.keyboard.press("Alt+ArrowUp");
+            await topIs(p, "Alt 이동 차단", top);
+            await row(p, "둘째 예약").locator('[data-testid^="task-qmenu-"]').click();
+            const menu = device === "iphone" ? p.locator(".row-sheet") : p.getByRole("menu");
+            if (/예약 위로|예약 아래로|예약 맨 앞으로/.test(await menu.textContent())) throw new Error("속성 정렬에 예약 이동 메뉴");
+            if (!(await menu.textContent()).includes("예약 풀기")) throw new Error("예약 풀기 메뉴가 사라짐");
+            await p.keyboard.press("Escape");
+            await pick(p, "첫 예약");
+            await p.getByTestId("task-queue-home").waitFor();
+            if (await p.locator(".task-queue-move").count()) throw new Error("상세에 예약 위치 이동 도구");
+            await p.getByTestId("task-detail-close").click();
+            await p.reload();
+            await domIs(p, "정렬 기억", () => document.querySelector('[data-testid="tasks-list"]')?.dataset.sort === "machine");
+            await topIs(p, "새로고침 뒤 실제 예약 차례", top);
+            for (const width of device === "iphone" ? [390, 320] : [1280]) {
+              await p.setViewportSize({ width, height: 844 });
+              const layout = await p.evaluate(() => {
+                const sort = document.querySelector('[data-testid="tasks-sort"]').getBoundingClientRect();
+                const filters = document.querySelector('.tasks-filters').getBoundingClientRect();
+                return { left: sort.left, right: sort.right, filters: filters.left, wide: document.documentElement.scrollWidth > innerWidth + 1, width: innerWidth };
+              });
+              if (layout.wide || layout.left < 0 || layout.right > width || (width <= 640 && layout.left > layout.filters)) throw new Error(`정렬 칩 배치 ${JSON.stringify(layout)}`);
+              await shot(p, `active-sort-after-${name}-${width}`);
+            }
+            await p.getByTestId("tasks-sort-reset").click();
+            await domIs(p, "손 차례 복구", () => document.querySelector('[data-testid="tasks-list"]')?.dataset.sort === "manual");
+            if ((await restOf(p)).join("|") !== "끌어 예약|나중 일") throw new Error("손 차례가 바뀜");
+            if (device === "iphone") await p.getByTestId("tasks-order").waitFor();
+            else await p.locator(".task-grip").first().waitFor();
+            await p.getByTestId("tasks-tab-later").click();
+            const file = p.getByTestId("tasks-notes-later.md");
+            await file.locator("summary", { hasText: "UI" }).click();
+            await select("제목", "tasks-later-sort");
+            if ((await file.locator("summary .task-list-name").allTextContents()).join("|") !== "UI|엔진") throw new Error("나중 정렬이 절 순서를 바꿈");
+            const firstItem = file.locator(".task-notes-item").first();
+            if (!(await firstItem.textContent()).startsWith("가 항목")) throw new Error("나중 제목순");
+            // 정렬 뒤에도 첫 행 메뉴는 같은 제목·메모를 옮긴다(원문 위치 index 보존).
+            await firstItem.locator(".task-menu-button").click();
+            if (device === "iphone") await p.locator(".row-sheet").getByRole("button", { name: /^할 일로 옮기기/ }).click();
+            else await p.getByRole("menuitem", { name: /^할 일로 옮기기/ }).click();
+            await p.getByTestId("task-field-title").waitFor();
+            if (await p.getByTestId("task-field-title").inputValue() !== "가 항목") throw new Error("나중 메뉴의 옮길 제목이 다름");
+            await p.getByTestId("task-detail-close").click();
+            await p.reload();
+            await p.getByTestId("tasks-list").waitFor();
+            if (await p.getByTestId("tasks-list").getAttribute("data-sort") !== "manual") throw new Error("나중 정렬이 활성 정렬을 바꿈");
+            await p.getByTestId("tasks-tab-later").click();
+            if (await p.getByTestId("tasks-later").getAttribute("data-sort") !== "title") throw new Error("나중 정렬 기억");
+            await file.locator("summary", { hasText: "UI" }).click();
+            await shot(p, `later-sort-${name}-${device}`);
+            await select("원문 차례", "tasks-later-sort");
+            if (!(await file.locator(".task-notes-item").first().textContent()).startsWith("하 항목")) throw new Error("나중 원문 차례 복구");
+          } finally { await p.context().close(); }
+        }
+      }
+      if (fs.readFileSync(`${root}/projects/demo/TASKS.md`, "utf8") !== beforeFile || JSON.stringify(queue()) !== beforeQueue) throw new Error("보기 정렬이 host 원문/예약을 바꿈");
+      if (fs.readFileSync(`${root}/projects/demo/later.md`, "utf8") !== notes) throw new Error("나중 정렬이 원문을 바꿈");
+      aaa("project", "set", "demo", "task_notes.remove", "later.md");
+    } finally { await wk.close(); }
+  });
+
   await step("끌기: 예약끼리 차례, 일반 → 예약(내용 확인 뒤 그 자리), 예약 → 아래 영역(풀면 원래 자리)", async () => {
     // 둘째 예약을 첫 예약 위에
     await dragTo(page, "둘째 예약", row(page, "첫 예약"), "before");

@@ -54,6 +54,8 @@ import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
 import { type ReserveRequest } from "./TaskQueue";
 import { TaskArchiveView } from "./TaskArchiveView";
 import { TaskFilterChips, TaskSearchInput } from "./TaskHistoryTools";
+import { TaskSortChip } from "./TaskSortChip";
+import { ACTIVE_TASK_SORTS, LATER_SORTS, readTaskSort, writeTaskSort, sortActiveTasks, sortedNoteItems, type ActiveTaskSort, type LaterSort } from "./taskSortModel";
 import {
   TASK_FILTERS,
   TASK_STATE_LABEL,
@@ -265,6 +267,13 @@ export function TasksView({
   fileOpen?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
+  const [sort, setSort] = useState<ActiveTaskSort>(() => readTaskSort("active"));
+  const [laterSort, setLaterSort] = useState<LaterSort>(() => readTaskSort("later"));
+  const manual = sort === "manual";
+  const pickSort = (next: ActiveTaskSort) => {
+    setSort(next); writeTaskSort("active", next);
+    setDrag(null); setOrdering(false); setMenu(null);
+  };
   const [toolbar, setToolbar] = useState<HTMLDivElement | null>(null);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [query, setQuery] = useState("");
@@ -430,7 +439,7 @@ export function TasksView({
   const choices = useMemo(() => repoChoices(board), [board]);
   // 기억한 저장소가 목록에서 빠졌으면 전체로 본다
   const repoOn = repo !== null && choices.some((c) => c.key === repo) ? repo : null;
-  const model = useMemo(() => (board ? taskList(board, filter, query, repoOn, groups) : null), [board, filter, query, repoOn, groups]);
+  const model = useMemo(() => (board ? sortActiveTasks(taskList(board, filter, query, repoOn, groups), board, sort, groups) : null), [board, filter, query, repoOn, groups, sort]);
   const order = useMemo(() => pendingQueue(board).map((q) => q.task_id), [board]);
   const found = findTask(board, picked);
   // 손댄 폼(상세가 알린다): 그 task가 파일에서 빠져도 닫지 않는다(다른 기기·coordinator가 지우거나 제목을 바꿈)
@@ -546,13 +555,13 @@ export function TasksView({
     );
   };
   /** 예약 위로·아래로·맨 앞으로: 거른 채면 보이는 예약과 자리를 바꾸고 숨은 예약은 그대로 둔다 */
-  const reservedStep = (id: string, dir: MoveDir): number | null => queueStep(order, id, dir, (x) => shownReserved.has(x));
+  const reservedStep = (id: string, dir: MoveDir): number | null => manual ? queueStep(order, id, dir, (x) => shownReserved.has(x)) : null;
   const stepReserved = (id: string, dir: MoveDir) => {
     const position = reservedStep(id, dir);
     if (position !== null) queueAct({ op: "move", task_id: id, position });
   };
   /** 일반 할 일 위로·아래로·맨 위로: 거른 채면 보이는 이웃과 자리를 바꾼다(예약한 task는 맨 위에 있어 이웃이 아니다) */
-  const taskStep = (t: TaskView, dir: MoveDir): TaskOp | null => (board ? moveOp(board, t, dir, (x) => shownLines.has(x.line) || x.parent !== null) : null);
+  const taskStep = (t: TaskView, dir: MoveDir): TaskOp | null => (manual && board ? moveOp(board, t, dir, (x) => shownLines.has(x.line) || x.parent !== null) : null);
   /** 예약 내용 확인을 열고, 예약한 뒤 `position`(없으면 맨 뒤) 차례로 */
   const startReserve = (t: TaskView, position: number | null) => {
     setCreating(null);
@@ -588,7 +597,7 @@ export function TasksView({
   };
 
   // 끌어 놓기(넓은 화면·마우스): 행 위 절반이면 앞, 아래 절반이면 뒤. 놓은 영역이 값이다: 예약 영역은 예약(차례), 아래 영역은 일반 순서·예약 풀기
-  const dragged = drag ? byLine.get(drag.line) : undefined;
+  const dragged = manual && drag ? byLine.get(drag.line) : undefined;
   const sideOf = (e: DragEvent<HTMLElement>): "before" | "after" => {
     const r = e.currentTarget.getBoundingClientRect();
     return e.clientY < r.top + r.height / 2 ? "before" : "after";
@@ -682,6 +691,7 @@ export function TasksView({
       ? { up: reservedStep(qid, "up") !== null, down: reservedStep(qid, "down") !== null }
       : { up: taskStep(t, "up") !== null, down: taskStep(t, "down") !== null };
     const step = (dir: "up" | "down") => {
+      if (!manual) return;
       if (qid) return stepReserved(qid, dir);
       const op = taskStep(t, dir);
       if (op) act([op]);
@@ -697,10 +707,10 @@ export function TasksView({
       selected: !(reserved && r.missing) && current?.line === t.line,
       groups,
       canEdit,
-      ordering: canEdit && ordering,
+      ordering: canEdit && manual && ordering,
       steps,
       onStep: step,
-      draggable: canEdit && !coarse && r.kind !== "under" && !(reserved && r.missing),
+      draggable: canEdit && manual && !coarse && r.kind !== "under" && !(reserved && r.missing),
       dragging: drag !== null && (qid ? drag.qid === qid : drag.qid === null && drag.line === t.line),
       drop: drag?.over === key ? drag.side : undefined,
       flash: r.kind === "task" && flash !== null && t.id === flash,
@@ -709,6 +719,7 @@ export function TasksView({
       onThread,
       onMenu: (a: HTMLElement) => openMenu(menuKey, a, t.title, reserved ? reservedItems(r) : rowItems(t)),
       onDragStart: (e: DragEvent<HTMLElement>) => {
+        if (!manual) { e.preventDefault(); return; }
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", t.title);
         setDrag({ line: t.line, qid, over: null, side: "before" });
@@ -757,7 +768,7 @@ export function TasksView({
         {tab === "tasks" && (
           <>
             <TaskSearchInput value={query} onChange={setQuery} label="할 일 검색" testId="tasks-search" />
-            <TaskFilterChips label="거르기" repo={
+            <TaskFilterChips label="거르기" sort={<TaskSortChip value={sort} choices={ACTIVE_TASK_SORTS} onChange={pickSort} testId="tasks-sort" subtitle="예약은 시작 차례 유지 · 하위는 상위와 함께" />} repo={
               <RepoFilter value={repoOn} choices={choices} total={total} onChange={setRepo} testId="tasks-repo" />
             }>
                 {TASK_FILTERS.filter((f) => (f.id !== "reserved" || queueApi) && (f.id !== "parked" || parkApi)).map((f) => (
@@ -770,9 +781,10 @@ export function TasksView({
             </TaskFilterChips>
           </>
         )}
+        {tab === "later" && <TaskFilterChips label="나중 보기" repo={null} sort={<TaskSortChip value={laterSort} choices={LATER_SORTS} onChange={next => { setLaterSort(next); writeTaskSort("later", next); setMenu(null); }} testId="tasks-later-sort" subtitle="파일과 절은 유지 · 절 안 항목만 정렬" />}>{null}</TaskFilterChips>}
         {canEdit && tab === "tasks" && (
           <div className="tasks-actions">
-            {coarse && (
+            {coarse && manual && (
               <button type="button" className={`btn btn-ghost tasks-order${ordering ? " is-on" : ""}`} aria-pressed={ordering} data-testid="tasks-order" onClick={() => setOrdering((o) => !o)}>
                 <ArrowUpDown aria-hidden="true" />
                 {ordering ? "순서 끝" : "순서"}
@@ -824,11 +836,12 @@ export function TasksView({
       {tab === "completed" ? (
         <TaskArchiveView key={project} toolbar={toolbar} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} extendedFilters={apiAtLeast(frontApi, [1, 110])} sortable={apiAtLeast(frontApi, [1, 126])} onOpenAttachment={onOpenAttachment} />
       ) : tab === "later" ? (
-        <div className="tasks-scroll" data-testid="tasks-later">
+        <div className="tasks-scroll" data-testid="tasks-later" data-sort={laterSort}>
           {notesFiles.map((f) => (
             <NotesFile
               key={f.path}
               file={f}
+              sort={laterSort}
               canEdit={canEdit}
               menuKey={menu?.key ?? null}
               onMenu={(key, anchor, item, section) =>
@@ -849,15 +862,19 @@ export function TasksView({
         </div>
       ) : (
         <div className={`tasks-main${detailOpen ? " has-detail" : ""}`}>
-          <div className="tasks-scroll" data-testid="tasks-list" ref={listScroll}
+          <div className="tasks-scroll" data-testid="tasks-list" data-sort={sort} ref={listScroll}
             onWheelCapture={cancelListAdjustment} onPointerDownCapture={cancelListAdjustment}
             onTouchMoveCapture={cancelListAdjustment} onKeyDownCapture={cancelListAdjustment}>
+            {!manual && <p className="tasks-tip tasks-sort-note" data-testid="tasks-sort-note">
+              예약은 위에서부터 시작 · 나머지는 {ACTIVE_TASK_SORTS.find(s => s.key === sort)!.label}순 · 위치 이동은 손 차례에서
+              <button type="button" className="linkish" data-testid="tasks-sort-reset" onClick={() => pickSort("manual")}>원래 차례</button>
+            </p>}
             {target !== null && board !== null && !linkedTask && <p className="tasks-empty" role="status" data-testid="task-missing">할 일 {target}: 없음</p>}
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
             {board && total === 0 && <p className="tasks-empty">{canEdit ? "할 일이 없다. 「+ 할 일」로 더한다" : "할 일이 없다"}</p>}
             {board && total > 0 && shownCount === 0 && filter !== "reserved" && <p className="tasks-empty">맞는 할 일이 없다</p>}
             {board && model && filter === "reserved" && model.counts.reserved === 0 && (
-              <p className="tasks-empty">예약이 없다{canEdit ? ". 할 일을 맨 위로 끌거나 ⋯ 「자리 나면 시작 예약」으로 예약한다" : ""}</p>
+              <p className="tasks-empty">예약이 없다{canEdit ? manual ? ". 할 일을 맨 위로 끌거나 ⋯ 「자리 나면 시작 예약」으로 예약한다" : ". ⋯ 「자리 나면 시작 예약」으로 예약한다" : ""}</p>
             )}
             {model && model.top.length > 0 && (
               <ul className="task-rows task-reserved-rows" aria-label="예약(위에서부터 차례로 시작)" data-testid="tasks-reserved">
@@ -874,7 +891,7 @@ export function TasksView({
             )}
             {/* 예약과 일반 할 일 사이 점선: 일반 행을 여기 놓으면 예약 맨 뒤(끄는 동안 자리를 늘리지 않는다: 놓을 곳이 밀리지 않게).
                 예약이 없으면 맨 위에 같은 줄을 두어 첫 예약을 끌어 넣는다 */}
-            {model && model.rest.length > 0 && (model.top.length > 0 || (canEdit && queueApi && !coarse && filter === "all")) && (
+            {model && model.rest.length > 0 && (model.top.length > 0 || (manual && canEdit && queueApi && !coarse && filter === "all")) && (
               <div
                 className={`task-sep${model.top.length === 0 ? " is-empty" : ""}${drag?.over === "res-end" ? " is-over" : ""}`}
                 role="separator"
@@ -895,11 +912,11 @@ export function TasksView({
               </div>
             )}
             {model && filter === "reserved" && model.counts.reserved > 0 && (
-              <p className="tasks-tip">예약만 보는 중 · 위에서부터 차례로 시작한다. {coarse ? "⋯ 또는 「순서」로" : "끌어서"} 예약 차례를 바꾼다. 「전체」로 돌아가면 같은 차례 그대로 맨 위에 있다.</p>
+              <p className="tasks-tip">예약만 보는 중 · 위에서부터 차례로 시작한다. {manual ? `${coarse ? "⋯ 또는 「순서」로" : "끌어서"} 예약 차례를 바꾼다. ` : ""}「전체」로 돌아가면 같은 차례 그대로 맨 위에 있다.</p>
             )}
             {repoOn !== null && (
               <p className="tasks-tip" data-testid="tasks-repo-tip">
-                {repoLabel}만 보는 중 · 옮기면 보이는 행 바로 위·아래로 들어간다. 숨은 다른 저장소 할 일의 차례는 그대로다.
+                {repoLabel}만 보는 중 · {manual ? "옮기면 보이는 행 바로 위·아래로 들어간다. 숨은 다른 저장소 할 일의 차례는 그대로다." : "예약 차례는 그대로다. 위치 이동은 손 차례에서 할 수 있다."}
               </p>
             )}
             {board && board.unlinked_threads.length > 0 && (
@@ -943,7 +960,7 @@ export function TasksView({
               queueApi={queueApi}
               afterApi={afterApi}
               reserveRequest={reserveReq}
-              onQueueStep={(t, dir) => t.id && stepReserved(t.id, dir)}
+              onQueueStep={manual ? (t, dir) => t.id && stepReserved(t.id, dir) : undefined}
               onUnreserved={(t) => t.id && setFlash(t.id)}
               onChangeNotes={changeTaskNotes}
               onOpenAttachment={
@@ -1274,7 +1291,7 @@ function Unlinked({ overLimits, threads, canLink, onThread, onLink, onMake }: { 
 }
 
 /** 「나중」 파일 하나: `##` 절을 접는 묶음, 절 안은 항목마다(Markdown 그대로) ⋯ 메뉴 「할 일로 옮기기」·「복사」(t-0469 §3.6) */
-function NotesFile({ file, canEdit, menuKey, onMenu }: { file: TaskNotesFile; canEdit: boolean; menuKey: string | null; onMenu: (key: string, anchor: HTMLElement, item: string[], section: string) => void }) {
+function NotesFile({ file, sort, canEdit, menuKey, onMenu }: { file: TaskNotesFile; sort: LaterSort; canEdit: boolean; menuKey: string | null; onMenu: (key: string, anchor: HTMLElement, item: string[], section: string) => void }) {
   return (
     <section className="task-notes-file" aria-label={file.path} data-testid={`tasks-notes-${file.path}`}>
       <h3 className="task-list-head">
@@ -1296,7 +1313,7 @@ function NotesFile({ file, canEdit, menuKey, onMenu }: { file: TaskNotesFile; ca
               </summary>
               {items.length > 0 ? (
                 <ul className="task-notes-items">
-                  {items.map((item, k) => {
+                  {sortedNoteItems(items, sort).map(({ item, index: k }) => {
                     const key = `later:${file.path}:${i}:${k}`;
                     return (
                       <li key={k} className="task-notes-item" data-testid={`tasks-notes-item-${i}-${k}`}>
