@@ -582,20 +582,88 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   white-space: nowrap;
 }
 
-/* 완료 목록: 제목 아래 완료 근거와 실행 배정을 함께 보인다. */
+/* 완료 목록(plan §8.493): 날짜 머리 밑에 행을 묶는다(Things Logbook). 행은 번호·제목, 저장소·thread·완료 근거 칩, 시각이다.
+   넓은 목록(640px 이상)은 활성 행과 같이 한 줄, 좁으면 칩을 제목 밑에 접는다. 모델·머신·시작/끝 전체 시각은 펼친 상세에 둔다. */
+.task-completed-group + .task-completed-group { margin-top: var(--space-2); }
+.task-completed-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  border-bottom: var(--hairline) solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
 .task-completed-rows { list-style: none; padding: 0; margin: 0; }
-.task-completed-row { padding: var(--space-2) 0; border-bottom: var(--hairline) solid var(--border); }
-.task-archive-detail { min-width: 0; overflow-wrap: anywhere; }
-.task-archive-detail summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; min-height: var(--control-h); padding: var(--space-1); border-radius: var(--radius-md); }
-.task-archive-detail summary::before { content: "›"; color: var(--text-dim); }
-.task-archive-detail[open] summary::before { transform: rotate(90deg); }
-.task-archive-detail summary:hover { background: var(--bg-hover); }
-.task-completed-title { min-width: 0; flex: 1; overflow-wrap: anywhere; }
-.task-completed-detail { padding: var(--space-2) var(--space-3); background: var(--bg-input); border-radius: var(--radius-md); }
+.task-completed-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  column-gap: var(--space-2);
+  padding-inline-end: var(--space-2);
+  border-bottom: var(--hairline) solid var(--border);
+}
+.task-completed-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: var(--control-h);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) { .task-completed-pick:hover { background: var(--bg-hover); } }
+.task-completed-caret { flex: 0 0 auto; width: 14px; height: 14px; color: var(--text-dim); transition: transform 0.12s; }
+.task-completed-row.is-open .task-completed-caret { transform: rotate(90deg); }
+.task-completed-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.task-completed-time { grid-column: 2; grid-row: 1; color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 좁은 목록: 칩은 제목 시작(꺾쇠 뒤)에 맞춰 둘째 줄 */
+.task-completed-chips {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0 0 var(--space-1) calc(var(--space-1) * 2 + 14px);
+}
+.task-completed-chips > .task-chip { min-width: 0; max-width: 100%; }
+.task-completed-repo { max-width: 12em; }
+.task-completed-detail {
+  grid-column: 1 / -1;
+  margin: 0 0 var(--space-2) calc(var(--space-1) * 2 + 14px);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+}
 .task-completed-detail .md { overflow-wrap: anywhere; }
-.task-completed-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
+.task-completed-facts { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0 0 var(--space-2); font-size: var(--fs-xs); }
+.task-completed-facts > div { display: flex; gap: var(--space-1); }
+.task-completed-facts dt { color: var(--text-dim); }
+.task-completed-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
 .task-completed-report { display: inline-flex; align-items: center; gap: var(--space-2); margin: var(--space-2); }
-.task-completed-more { margin-top: var(--space-3); }
+.task-completed-more { margin: var(--space-3) var(--space-2); }
+/* 정렬 칩: 넓으면 거르기 줄 끝, 휴대폰은 맨 앞(굴리지 않아도 보인다) */
+.tasks-sort { order: 3; gap: 2px; }
+.tasks-sort svg { width: 12px; height: 12px; margin: 0 2px 0 0; }
+@media (max-width: 640px) { .tasks-sort { order: -1; } }
+@container task-list (min-width: 640px) {
+  .task-completed-row { grid-template-columns: minmax(0, 1fr) fit-content(50%) max-content; }
+  .task-completed-chips { grid-column: 2; grid-row: 1; flex-wrap: nowrap; justify-content: flex-end; padding: 0; overflow: hidden; }
+  .task-completed-time { grid-column: 3; }
+}
 
 /* 상태·ID·제목은 공통 열을 쓴다. 좁은 목록은 제목 폭을 확보하고 칩을 아래로 접는다.
    상세를 열어 실제 목록이 좁아진 경우에도 같은 규칙을 쓴다. */

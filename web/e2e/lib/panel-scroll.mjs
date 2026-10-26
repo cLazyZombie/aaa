@@ -144,7 +144,7 @@ export async function longPanelLists() {
               await reachEnd(p, '[data-testid="task-archive-list"]', '.task-completed-row', !touch);
             }
             const last = p.locator(".task-completed-row").last();
-            await last.locator("summary").click();
+            await last.locator(".task-completed-pick").click();
             await last.getByText("완료 메모 79", { exact: true }).waitFor();
             await shot(p, `panel-scroll-${engine}-${name}-completed`);
             assert.deepEqual(errors, []);

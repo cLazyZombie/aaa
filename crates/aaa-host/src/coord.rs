@@ -762,6 +762,7 @@ impl Host {
                                         committed: false,
                                         removed_sha256: tasks::sha256(&a.text),
                                         history,
+                                        started_ms: None,
                                     },
                                 )
                                 .map_err(internal)?;

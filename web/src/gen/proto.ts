@@ -394,11 +394,17 @@ committed: boolean, removed_sha256: string,
 /**
  * 내구 보관의 전체 이력. 목록 응답에서는 비워 중복 스냅샷이 frame을 채우지 않게 한다.
  */
-history: Array<TaskLogEntry>, };
+history: Array<TaskLogEntry>,
+/**
+ * 처음 thread를 이은 시각(FRONT_API 1.126). 저장값이 아니라 host가 목록 응답 때 이력으로 채운다. thread 없이 끝난 일은 없다.
+ */
+started_ms?: number, };
 
 export type TaskHistorySearch = { query: string, repo: string | null, };
 
 export type TaskArchiveFilter = "pr_merged" | "main_merged" | "report_done" | "restored";
+
+export type TaskArchiveSort = "completed" | "started" | "number";
 
 export type TaskHistoryRepo = { key: string, label: string, n: number, };
 
@@ -410,7 +416,15 @@ profile: string | null, machine: string | null,
 /**
  * 완료 시각 범위: 시작 포함, 끝 제외(밀리초).
  */
-since_ms: number | null, until_ms: number | null, after: string | null, limit: number | null, };
+since_ms: number | null, until_ms: number | null,
+/**
+ * 생략하면 끝난 날짜순이다. 옛 host는 모르는 칸을 버리고 보관 ID 순서로 준다.
+ */
+sort?: TaskArchiveSort,
+/**
+ * 앞 페이지 응답의 `next` 그대로. 정렬 값을 담은 host 커서라 정렬을 바꾸면 처음부터 다시 읽는다.
+ */
+after: string | null, limit: number | null, };
 
 export type TaskView = {
 /**

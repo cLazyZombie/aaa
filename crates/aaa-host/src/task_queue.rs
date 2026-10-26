@@ -944,11 +944,17 @@ impl Host {
             .collect();
         let repos = history_repos(rows.iter().map(|r| &r.task));
         let limit = view.limit.unwrap_or(50).clamp(1, 100) as usize;
+        let sort = view.sort.unwrap_or_default();
+        for row in &mut rows {
+            row.started_ms = archive_started_ms(row);
+        }
+        rows.sort_by_key(|row| std::cmp::Reverse(archive_sort_key(row, sort)));
+        let after = view.after.as_deref().map(archive_cursor).transpose()?;
         let mut entries = Vec::new();
         let mut bytes = 0;
         let mut next = None;
         for mut row in rows {
-            if view.after.as_ref().is_some_and(|id| &row.task_id <= id) {
+            if after.is_some_and(|cursor| archive_sort_key(&row, sort) >= cursor) {
                 continue;
             }
             let restored = row.restored || active.iter().any(|t| t.id.as_deref() == Some(&row.task_id));
@@ -973,7 +979,10 @@ impl Host {
             row.history.clear();
             let size = serde_json::to_vec(&row).map_err(internal)?.len();
             if !entries.is_empty() && (entries.len() >= limit || bytes + size > HISTORY_PAGE_BYTES) {
-                next = entries.last().map(|r: &aaa_proto::ArchivedTask| r.task_id.clone());
+                next = entries.last().map(|r: &aaa_proto::ArchivedTask| {
+                    let (at, number) = archive_sort_key(r, sort);
+                    format!("{at}:{number}")
+                });
                 break;
             }
             if size > HISTORY_PAGE_BYTES {
@@ -990,6 +999,27 @@ impl Host {
         }
         Ok(FrontResponse::TaskArchive { entries, next, repos, profiles, machines })
     }
+}
+
+/// 처음 thread를 이은 이력의 시각. 다시 맡긴 일도 처음 시작한 때가 시작 날짜다.
+fn archive_started_ms(row: &aaa_proto::ArchivedTask) -> Option<u64> {
+    row.history.iter().filter(|h| h.thread.as_deref().is_some_and(|t| !t.is_empty())).map(|h| h.at_ms).min()
+}
+
+/// 정렬 값과 할 일 번호. 번호가 프로젝트 안에서 유일하므로 이 쌍이 곧 페이지 커서다. 시작 기록이 없으면 0으로 맨 끝이다.
+fn archive_sort_key(row: &aaa_proto::ArchivedTask, sort: aaa_proto::TaskArchiveSort) -> (u64, u64) {
+    let number = row.task.short_id.as_deref().and_then(|s| aaa_proto::short_id_number(s, 'd')).unwrap_or(0) as u64;
+    match sort {
+        aaa_proto::TaskArchiveSort::Completed => (row.completed_ms, number),
+        aaa_proto::TaskArchiveSort::Started => (row.started_ms.unwrap_or(0), number),
+        aaa_proto::TaskArchiveSort::Number => (number, number),
+    }
+}
+
+fn archive_cursor(text: &str) -> Result<(u64, u64), ErrorBody> {
+    text.split_once(':')
+        .and_then(|(at, number)| Some((at.parse().ok()?, number.parse().ok()?)))
+        .ok_or_else(|| err(ErrorCode::BadRequest, format!("완료 목록 커서가 아니다: {text}. 처음부터 다시 읽는다")))
 }
 
 /// frame 봉투와 저장소 선택지를 위한 여백을 둔다. 개수뿐 아니라 직렬화 바이트로 자른다.

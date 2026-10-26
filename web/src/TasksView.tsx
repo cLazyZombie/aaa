@@ -785,7 +785,7 @@ export function TasksView({
         </div>
       )}
       {tab === "completed" ? (
-        <TaskArchiveView key={project} toolbar={toolbar} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} extendedFilters={apiAtLeast(frontApi, [1, 110])} onOpenAttachment={onOpenAttachment} />
+        <TaskArchiveView key={project} toolbar={toolbar} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} extendedFilters={apiAtLeast(frontApi, [1, 110])} sortable={apiAtLeast(frontApi, [1, 126])} onOpenAttachment={onOpenAttachment} />
       ) : tab === "later" ? (
         <div className="tasks-scroll" data-testid="tasks-later">
           {notesFiles.map((f) => (

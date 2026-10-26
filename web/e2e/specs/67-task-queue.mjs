@@ -101,7 +101,7 @@ export default async function ({ page }) {
     await page.getByTestId("task-detail").waitFor({state:"detached"});
     await phone.getByTestId("task-detail-close").click();await phone.getByTestId("tasks-tab-completed").click();
     const stored=phone.getByTestId(`archive-${one}`);await stored.waitFor();await shot(phone,"queue-phone-archive");
-    await stored.locator("summary").click();
+    await stored.locator(".task-completed-pick").click();
     await stored.getByRole("button",{name:"되살리기"}).click();
     await stored.waitFor({state:"detached"});
     // 완료 보관은 완료 탭에서 연다. 복원한 활성 행은 할 일 탭에서 확인한다.

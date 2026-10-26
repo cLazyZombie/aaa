@@ -101,6 +101,10 @@ pub struct ArchivedTask {
     pub removed_sha256: String,
     /// 내구 보관의 전체 이력. 목록 응답에서는 비워 중복 스냅샷이 frame을 채우지 않게 한다.
     pub history: Vec<crate::TaskLogEntry>,
+    /// 처음 thread를 이은 시각(FRONT_API 1.126). 저장값이 아니라 host가 목록 응답 때 이력으로 채운다. thread 없이 끝난 일은 없다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub started_ms: Option<u64>,
 }
 
 /// 기록 검색은 활성 할 일과 같은 ID·제목·메모·담당 범위다. repo의 빈 글은 정하지 않음이다.
@@ -118,6 +122,16 @@ pub enum TaskArchiveFilter {
     MainMerged,
     ReportDone,
     Restored,
+}
+
+/// 완료 목록의 정렬(FRONT_API 1.126). 모두 내림차순이며 같은 값은 큰 번호가 위다. 시작 기록이 없는 일은 시작 날짜순의 끝이다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskArchiveSort {
+    #[default]
+    Completed,
+    Started,
+    Number,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -139,6 +153,11 @@ pub struct TaskArchiveQuery {
     pub since_ms: Option<u64>,
     #[ts(type = "number | null")]
     pub until_ms: Option<u64>,
+    /// 생략하면 끝난 날짜순이다. 옛 host는 모르는 칸을 버리고 보관 ID 순서로 준다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sort: Option<TaskArchiveSort>,
+    /// 앞 페이지 응답의 `next` 그대로. 정렬 값을 담은 host 커서라 정렬을 바꾸면 처음부터 다시 읽는다.
     pub after: Option<String>,
     pub limit: Option<u32>,
 }
