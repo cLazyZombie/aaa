@@ -12,6 +12,14 @@
 - 기존 E2E90의 실제 보고→agent 수집→host 원장 fixture 네 실행을 성공/실패, 빌드 0초/미수집, 이틀 전 실행으로 구성한다. 기존 밝음/어두움·1280/820/390/320px·Chromium/WebKit 매트릭스를 유지하며 밝음 1280/390px 네 조합에 기준 실행 검사를 덧붙인다. 실행 두 개 선택 뒤 안내선·강조점·원본 점의 좌표 일치와 이동, 검증/빌드 전환, 실제 0초·미수집, 오늘 밖/7일 복귀, 실패 p50 제외와 비대표 실행의 p50 포함, UTC/KST 전환, 머신 밖·새로고침 유지, 키보드 상세와 가로 넘침을 확인한다. 꼭 필요한 이유: 실제 필터 응답과 URL 복원·두 SVG 엔진의 표시를 유닛으로 대신할 수 없다.
 - 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1 모듈> nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 90 --workers 1`. 브라우저는 내부 공용 캐시와 저장소 `launchChromium` helper를 쓴다. 고정 sleep·실패 재시도·시한 연장·기대값 완화는 없다. 전체 ci-local은 coordinator가 준 차례에 한 번 수행한다.
 
+## IME 연속 조합과 한 controller(t-1075, §8.498)
+
+- `composition-anchor.test.mjs`는 빌드에 복사하는 실제 controller를 실행한다. 기존 두 시험은 분리 출력의 시작 위치와 줄 marker 수명을 유지한다. 새 시험 하나는 이전 확정 에코 전 다음 음절 시작, timer 전/후의 가나다라, 받침 이동 각→가가와 WebKit의 NBSP→SPACE 정규화를 함께 검사한다. 꼭 필요한 이유: 이전 시험은 다음 조합 전에 커서를 직접 새 칸으로 옮겨 이번 회귀 경계를 만들지 못했다.
+- 기존 모바일 시험은 같은 controller의 iOS 영어 마지막 글자·자동수정·한글 보류·화면 읽기·지연 Backspace를 유지한다. 확정 직후 일반 insertText의 beforeinput이 먼저 오면 DOM 편집 전 앞 큐를 비우는 순서를 기존 순서 시험에 더한다. native Backspace·finishInput의 확정 한 번/marker 해제도 기존 controller owner에서 검사한다.
+- E2E09의 「한글 조합 위치」 owner를 확장한다. 같은 실제 host·agent·raw PTY에서 확정 바이트를 기록하고 명시적인 flush 사건 전까지 echo를 보관한다. 가나다라+space와 각→가가에서 다음 조합을 먼저 시작하고, echo 전/후·상태 줄로 이동한 분리 출력 모두의 위치를 검사한다. 시작 좌표·실제 빈 커서 칸 폭을 비교하며 확정 문자열·순서·중복 없음도 검사한다. native WebKit은 한 NSTextInputClient 명령 안에서 commit→setMarkedText를 호출한다. Chromium은 CDP, Playwright WebKit은 기록 재생이다.
+- `AAA_IME_CAPTURE=<폴더> NODE_PATH=<Playwright 1.64.1 경로> node web/e2e/web.e2e.mjs --spec 09 --grep '한글 조합 위치' --workers 1`은 단계 PNG와 사건/rAF JSON을 보존한다. 실패도 해당 엔진 trace를 남긴다. 고정 sleep·재시도·시한 확대가 없다. 부분 확인은 기존 E2E02·07·09·15다.
+- 사용자 추가 지시의 실기 확대는 임시 fixture로 macOS native 키·OS input context의 현재 source, 실제 PTY의 취소·space/Enter·영문·paste·pane 전환·resize와 격리 iPhone native WebKit을 확인하고, 결과·불가능한 경계를 작업 보고에 남긴다. 외부 OS 입력기를 거치지 않는 marked text 교체와 일반 키 주입을 실제 한국어 2벌식 키 사건이라고 쓰지 않는다. 영구 E2E 번호/대형 실험실을 늘리지 않는다.
+
 ## 대화 보낸 말의 즉시 표시(t-1069)
 
 - E2E115는 실제 host·agent·PTY와 Claude 감지기의 가짜 harness(작업 중 화면, `.queue` 표지가 있으면 기록 대기열 줄)를 쓴다. Chromium/WebKit × 1280/390px마다 첫 말은 submit ACK를 Playwright WebSocket route에서 붙잡아 ACK 전 `보내는 중` 말풍선·빈 입력창을 사건으로 확인하고, 풀면 `대기 중`, 같은 탭 새로고침 뒤 유지, 기록 줄 뒤 보통 말을 본다. 둘째 말은 붙잡지 않고 MutationObserver 기록으로 Enter부터 각 단계까지의 ms와 같은 글 말풍선이 하나뿐인지 확인한다.

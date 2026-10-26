@@ -45,6 +45,11 @@ export function nativeWebkit(root) {
       });` }),
     mark: text => send('mark', { text }),
     commit: text => send('commit', { text }),
+    transition: (commit, mark) => send('transition', { commit, mark }),
+    key: (text, code, flags = 0) => send('key', { text, code, flags }),
+    keyboard: () => send('keyboard'),
+    interpret: (text, code, flags = 0) => send('interpret', { text, code, flags }),
+    resize: (width, height) => send('resize', { width, height }),
     screenshot: ({ path }) => send('shot', { path }),
     close: async () => {
       if (child.exitCode !== null || child.signalCode) { lines.close(); return; }

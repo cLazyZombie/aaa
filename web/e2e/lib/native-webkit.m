@@ -37,6 +37,28 @@ static void reply(NSDictionary *value) {
   reply(@{@"id":ident,@"result":@YES});
  } else if([op isEqual:@"commit"]) {
   [self.view insertText:c[@"text"] replacementRange:NSMakeRange(NSNotFound,0)]; reply(@{@"id":ident,@"result":@YES});
+ } else if([op isEqual:@"transition"]) {
+  // 한 키가 앞 음절을 확정하면서 다음 조합을 시작하는 NSTextInputClient 순서다.
+  [self.view insertText:c[@"commit"] replacementRange:NSMakeRange(NSNotFound,0)];
+  NSString *text=c[@"mark"];
+  [self.view setMarkedText:text selectedRange:NSMakeRange(text.length,0) replacementRange:NSMakeRange(NSNotFound,0)];
+  reply(@{@"id":ident,@"result":@YES});
+ } else if([op isEqual:@"keyboard"]) {
+  [self replyKeyboard:ident];
+ } else if([op isEqual:@"resize"]) {
+  [self.window setContentSize:NSMakeSize([c[@"width"] doubleValue],[c[@"height"] doubleValue])];
+  reply(@{@"id":ident,@"result":@YES});
+ } else if([op isEqual:@"key"] || [op isEqual:@"interpret"]) {
+  // 대상 view로만 보내며 전역 CGEvent·사용자 focus·입력기 선택을 바꾸지 않는다.
+  NSString *chars=c[@"text"];
+  NSEvent *event=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:[c[@"flags"] unsignedIntegerValue] timestamp:0 windowNumber:self.window.windowNumber context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:[c[@"code"] unsignedShortValue]];
+  if([op isEqual:@"interpret"]) [self.view interpretKeyEvents:@[event]];
+  else {
+   [self.view keyDown:event];
+   NSEvent *up=[NSEvent keyEventWithType:NSEventTypeKeyUp location:NSZeroPoint modifierFlags:[c[@"flags"] unsignedIntegerValue] timestamp:0 windowNumber:self.window.windowNumber context:nil characters:chars charactersIgnoringModifiers:chars isARepeat:NO keyCode:[c[@"code"] unsignedShortValue]];
+   [self.view keyUp:up];
+  }
+  reply(@{@"id":ident,@"result":@YES});
  } else if([op isEqual:@"shot"]) {
   [self.view takeSnapshotWithConfiguration:nil completionHandler:^(NSImage *image,NSError *error){
    if(error){reply(@{@"id":ident,@"error":error.localizedDescription});return;}
@@ -45,6 +67,9 @@ static void reply(NSDictionary *value) {
    BOOL ok=[png writeToFile:c[@"path"] atomically:YES]; reply(@{@"id":ident,@"result":@(ok)});
   }];
  } else if([op isEqual:@"quit"]) { reply(@{@"id":ident,@"result":@YES});[NSApp terminate:nil]; }
+}
+- (void)replyKeyboard:(NSNumber *)ident {
+ reply(@{@"id":ident,@"result":@{@"source":self.view.inputContext.selectedKeyboardInputSource?:@"unavailable"}});
 }
 @end
 int main(void) { @autoreleasepool {
@@ -55,6 +80,7 @@ int main(void) { @autoreleasepool {
  [config.userContentController addScriptMessageHandler:driver name:@"reply"];
  driver.view=[[WKWebView alloc] initWithFrame:NSMakeRect(0,0,1280,800) configuration:config];
  driver.view.navigationDelegate=driver;
+ driver.view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
  [driver.view _setWindowOcclusionDetectionEnabled:NO];
  driver.window=[[OffscreenWindow alloc] initWithContentRect:NSMakeRect(0,0,1280,800) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
  driver.window.contentView=driver.view;
