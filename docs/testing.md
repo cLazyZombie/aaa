@@ -1,3 +1,11 @@
+## E2E83 다시 열기의 웹 교체 완료와 실패 처리(t-1100)
+
+- 첫 전체 gate의 유일한 실패는 E2E83의 모든 thread 메뉴 이동이었다. `hashIs(#threads)`는 20초 뒤 새 `#pane=…`에 남았고, 먼저 시작한 대기 Promise가 click 대기보다 먼저 거절되어 Node unhandled rejection으로 child를 끝냈다. 알려진 m13 계정의 labA 연결 실패는 이 실행에서는 없었다.
+- 기준 main `1f58f884`와 후보의 App/원래 E2E83/harness는 같았다. 실제 host/agent에서 새 pane이 running인 뒤 replacement WS state만 메뉴를 연 직후까지 보류했다가 전달하면 둘 모두 옛 pane의 열린 메뉴→새 pane으로 교체/메뉴 소실이 나왔다. 첫 단계가 host 기록만 보고 끝난 것이 다음 단계와 경쟁한 원인이다. 제품의 정상 pane 교체를 바꾸거나 부하 탓으로 단정하지 않는다.
+- 기존 E2E83 한 실험실에서 reload 뒤 실제 state를 가로채 같은 지연을 만든다. host의 새 pane running과 state 수신 뒤에도 화면이 옛 pane임을 단언하고, state를 놓은 뒤 새 주소와 실제 `.term` 교체까지 사건으로 기다려 첫 단계를 끝낸다. 주소 교체는 replaceState이므로 hashchange만 기다리지 않는다. 모든 thread 메뉴 이동의 hash/click Promise는 생성과 동시에 Promise.all로 묶어 실패가 단계 진단/정리를 건너뛰지 않게 한다.
+- 필요한 이유는 host 성공과 웹 적용 완료의 차이를 결정적으로 만들고, 같은 메뉴 소실이 다음 단계에 새지 않도록 하기 위해서다. 원래 20초/locator/단계 상한과 나머지 CLI 0회 계약을 유지한다. 고정 sleep·실패 재시도·시한 확대·시험 제외는 없다. 기준 main과 후보 실행 파일에 같은 수정 owner를 적용해 E2E83 단독을 확인하고 커밋한 SHA로 다음 전체 gate를 수행한다.
+- 기존 E2E109의 실제 WS gate와 [Playwright WebSocket routing](https://playwright.dev/docs/network#websocket-mocking)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [WPT WebSocket event 검사](https://github.com/web-platform-tests/wpt/tree/master/websockets)([BSD-3-Clause](https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md))의 사건 순서 원칙을 참고한다. 외부 코드를 가져오지 않는다.
+
 ## 계정 이름 변경과 재로그인 없는 시작(t-1100)
 
 - `cargo test --profile verify --locked -p aaa-host --lib account_rename` 세 저장 회귀는 실제 암호화 금고/SQLite/프로젝트 설정으로 인증·판·세대/metadata/기본/풀/대기 시작/보류 thread/binding 유지, agent·Reader·중복·준비 중 실행 거부, DB 실패 뒤 원문 복구와 양쪽 확정점의 Host::open 복구를 검사한다. 필요한 이유는 인증 AAD 변경·참조 누락·부분 이전이 계정 사용을 끊거나 다른 신원으로 시작하게 하는 회귀를 막기 위해서다.

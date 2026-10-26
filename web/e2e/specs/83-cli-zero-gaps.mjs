@@ -3,7 +3,7 @@
 // 「낸 링크」 목록과 폐기(`library list`·`revoke`), 새 링크 수명(`library link --days`), 할 일 「나중」 파일(`project set task_notes.add|remove`).
 // 결과는 host 기록(CLI 보기)으로 확인한다.
 import fs from "node:fs";
-import { root, aaa, step, until, domIs, hashIs, openSettings, screenText } from "../lib/harness.mjs";
+import { root, aaa, step, until, domIs, hashIs, openSettings, screenText, inTime } from "../lib/harness.mjs";
 
 const DAY_MS = 86_400_000;
 const dir = () => `${root}/projects/demo`;
@@ -17,6 +17,27 @@ const links = (p, id) =>
   }, id);
 
 export default async function ({ page }) {
+  // host의 running 응답과 웹의 pane 교체는 다른 완료 사건이다. 실제 replacement state만 보류한다.
+  const old = pane("t1").id;
+  const held = [];
+  let holding = false;
+  let releaseState;
+  let replacementArrived;
+  const replacement = new Promise((resolve) => { replacementArrived = resolve; });
+  await page.context().routeWebSocket(/\/api\/v1\/events$/, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((raw) => server.send(raw));
+    server.onMessage((raw) => {
+      const event = JSON.parse(String(raw));
+      if (holding && event.ev === "state" && event.panes.some((p) => p.replaced?.includes(old))) {
+        held.push(raw);
+        replacementArrived();
+      } else socket.send(raw);
+    });
+    releaseState = () => { holding = false; for (const raw of held.splice(0)) socket.send(raw); };
+  });
+  await page.reload();
+  await domIs(page, "교체 전 터미널", (id) => document.querySelector('.term:not([hidden])')?.dataset.pane === id, old);
   await step("pane 「세션 끝내기」: 확인 창 → 세션만 끝나고 자리는 남아 「다시 열기」로 다시 뜬다", async () => {
     await page.getByTestId("pane-t1").click({ button: "right" });
     await page.getByRole("menuitem", { name: "세션 끝내기" }).click();
@@ -25,17 +46,29 @@ export default async function ({ page }) {
     await ask.waitFor({ state: "detached" });
     await until("t1 세션 끝남", () => pane("t1")?.state !== "running");
     await page.getByTestId("pane-t1").click({ button: "right" });
+    holding = true;
     await page.getByRole("menuitem", { name: "다시 열기" }).click();
-    await until("t1 다시 뜸", () => pane("t1")?.state === "running");
+    const reopened = await until("t1 다시 뜸", () => {
+      const p = pane("t1");
+      return p?.state === "running" && p.id !== old ? p : null;
+    });
+    await inTime(replacement, 20_000, "새 pane의 실제 state 수신");
+    // 이전 종료 조건에서는 이 시점에 다음 단계가 옛 header의 메뉴를 열었다. 실제 state 적용이 그 메뉴를 없앴다.
+    const stillOld = await page.locator(".term:not([hidden])").getAttribute("data-pane");
+    if (stillOld !== old) throw new Error(`state 보류 전 pane이 바뀜: ${stillOld}`);
+    const visible = domIs(page, "웹의 새 pane 교체 완료", (id) =>
+      location.hash === `#pane=${id}` && document.querySelector('.term:not([hidden])')?.dataset.pane === id,
+      reopened.id);
+    // 완료 대기는 시작과 함께 handler를 붙인다. 주소는 replaceState이므로 hashchange만 기다리지 않는다.
+    await Promise.all([visible, Promise.resolve().then(() => releaseState())]);
   });
 
   await step("coordinator 「하나 더 띄우기」: 돌고 있어도 새 coordinator가 뜬다", async () => {
     aaa("project", "create", "demo");
     aaa("project", "set", "demo", "coordinator_profile", "fake");
     await page.getByTestId("more").click();
-    const toThreads = hashIs(page, "#threads");
-    await page.getByTestId("threads-item").click();
-    await toThreads;
+    // 둘 중 먼저 실패한 대기를 즉시 처리해 단계 진단·실험실 정리를 건너뛰지 않는다.
+    await Promise.all([hashIs(page, "#threads"), page.getByTestId("threads-item").click()]);
     const button = page.getByTestId("project-coordinator");
     await button.click();
     await page.getByRole("menuitem", { name: /^fake/ }).click();
