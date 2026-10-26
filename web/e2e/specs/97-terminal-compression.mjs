@@ -4,14 +4,14 @@ import fs from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { performance } from "node:perf_hooks";
 import { RateLimitedWire } from "../lib/rate-limited-wire.mjs";
-import { aaa, root, step, browser, webkit, pairPage, inList, waitOutput, domIs, screenText, shot, termDiag } from "../lib/harness.mjs";
+import { aaa, root, base, step, browser, webkit, pairPage, inList, waitOutput, domIs, screenText, shot, termDiag } from "../lib/harness.mjs";
 
 function observeWorker() {
   window.__inflateHeld = false;
   window.__inflateReleased = false;
   const Native = window.Worker;
   window.Worker = class extends Native {
-    constructor(url, options) { super(url, options); this.terminalPayload = String(url).includes("terminalInflate"); }
+    constructor(url, options) { super(url, options); this.terminalPayload = options?.name === "aaa-terminal-inflate"; }
     postMessage(message, ...rest) {
       if (this.terminalPayload && !window.__inflateReleased) {
         window.__inflateHeld = true;
@@ -83,8 +83,69 @@ function routeWire(stats, bps = 1e9, rtt = 1) {
   };
 }
 
-export default async function () {
+export default async function ({ page: initialPage }) {
   let corpusFixture;
+  await step("압축 Worker 로드: Chromium·WebKit 두 폭에서 외부 자산 없이 기동·실패 복구·입력", async () => {
+    const response = await initialPage.request.get(base);
+    const policy = response.headers()["content-security-policy"].split(";").map(directive => directive.trim());
+    assert.ok(policy.includes("worker-src 'self' blob:"));
+    assert.ok(policy.includes("script-src 'self'"), "앱 스크립트 정책은 그대로 유지한다");
+    const wk = await webkit.launch({ headless: true });
+    try {
+      for (const [label, engine] of [["webkit", wk], ["chromium", browser]]) {
+        for (const width of [1280, 390]) {
+          for (const failure of ["access", "constructor", "runtime"]) {
+            const sockets = [], workerRequests = [], diagnostics = [], messages = [];
+            const dev = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, {
+              serviceWorkers: "block",
+              init: { content: `(${function (failure) {
+                const Native = window.Worker;
+                window.Worker = class extends Native {
+                  constructor(url, options) {
+                    if (failure === "constructor") throw new DOMException("fixture Worker creation denied", "SecurityError");
+                    if (failure === "runtime") {
+                      const bad = URL.createObjectURL(new Blob(['throw new Error("fixture worker startup failure");'], { type: "text/javascript" }));
+                      super(bad, options);
+                      this.addEventListener("error", () => URL.revokeObjectURL(bad), { once: true });
+                    } else super(url, options);
+                  }
+                };
+              }} )(${JSON.stringify(failure)})` },
+              onPage: page => {
+                page.on("websocket", socket => { if (socket.url().includes("/panes/")) sockets.push(socket.url()); });
+                page.on("console", message => { messages.push(message.text()); if (message.text().startsWith("터미널 압축 Worker 실패")) diagnostics.push(message.text()); });
+              },
+              setup: async context => context.route("**/assets/terminalInflate.worker-*.js", route => {
+                workerRequests.push(route.request().url());
+                return route.abort("accessdenied");
+              }),
+            });
+            try {
+              await dev.page.getByTestId("terminal").waitFor();
+              // visible 출력의 행 경계를 넘지 않는 고유 표지로 실제 셸 계산 결과를 기다린다.
+              const marker = `wf-${label[0]}-${width}-${failure[0]}`;
+              aaa("pane", "run", "t1", `echo ${marker}`);
+              await domIs(dev.page, "Worker 실패 뒤 실제 터미널 출력", text => document.querySelector(".xterm-rows")?.textContent.includes(text), marker);
+              await dev.page.getByTestId("terminal").click();
+              await dev.page.keyboard.type(`echo input-$((40+2))-${marker}`);
+              await dev.page.keyboard.press("Enter");
+              await waitOutput("t1", `input-42-${marker}`);
+              await domIs(dev.page, "Worker 실패 뒤 키 입력 출력", text => document.querySelector(".xterm-rows")?.textContent.includes(text), `input-42-${marker}`);
+              assert.equal(workerRequests.length, 0, "접근 거부·404가 가능한 외부 Worker 자산을 요청하지 않는다");
+              assert.equal(sockets.length, 1, "연결을 한 번만 연다");
+              assert.equal(new URL(sockets[0]).searchParams.has("compression"), failure === "access");
+              assert.equal(diagnostics.length, failure === "access" ? 0 : 1, "Worker 실패 원인을 진단 로그에 남긴다");
+              assert.deepEqual(dev.errors, [], `${label}/${width}/${failure}: Worker 오류를 처리한다`);
+              console.log("terminal-worker-load", JSON.stringify({ label, width, failure, workerRequests: workerRequests.length, sockets: sockets.length, gzip: failure === "access", diagnostics: diagnostics.length }));
+            } catch (error) {
+              console.error("terminal-worker-failure", JSON.stringify({ label, width, failure, workerRequests, sockets, diagnostics, messages, errors: dev.errors }));
+              throw error;
+            } finally { await dev.page.context().close(); }
+          }
+        }
+      }
+    } finally { await wk.close(); }
+  });
   await step("압축 기록: 실제 Worker gate·ACK 원시 길이·색상/한글·입력·재연결·두 쪽 prepend와 위치 보존", async () => {
     const fixture = `${root}/compression.cjs`;
     corpusFixture = fixture;
