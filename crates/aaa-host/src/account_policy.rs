@@ -243,7 +243,7 @@ mod tests {
             account: binding.account.clone(),
             harness: binding.harness.clone(),
             version: 1,
-            secret: SecretText("fixture-only".into()),
+            secret: SecretText(aaa_test_support::token("account-policy")),
             trust_cwd: None,
             auth_generation: None,
         };

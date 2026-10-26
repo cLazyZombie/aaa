@@ -2,6 +2,7 @@
 resolver = "3"
 # 역할별 crate(결정 13). 의존 규칙은 crates/aaa/tests/deps.rs가 검사한다.
 members = [
+    "crates/aaa-test-support",
     "crates/aaa-proto",
     "crates/aaa-config",
     "crates/aaa-common",
@@ -15,6 +16,7 @@ members = [
 # 들여온 vt100(글자 폭을 웹과 같게 고친 판, vendor/vt100/README.md). workspace 시험·lint 대상이 아니다
 exclude = ["vendor/vt100"]
 default-members = [
+    "crates/aaa-test-support",
     "crates/aaa-proto",
     "crates/aaa-config",
     "crates/aaa-common",
@@ -33,6 +35,7 @@ license = "MIT"
 rust-version = "1.90"
 
 [workspace.dependencies]
+aaa-test-support = { path = "crates/aaa-test-support" }
 aaa-proto = { path = "crates/aaa-proto" }
 aaa-config = { path = "crates/aaa-config" }
 aaa-common = { path = "crates/aaa-common" }

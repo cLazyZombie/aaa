@@ -10,11 +10,9 @@ use super::*;
 use base64::Engine;
 use sha2::Digest;
 
-pub(super) fn canary(tag: &str) -> (String, String) {
-    let mut b = [0u8; 16];
-    std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom").unwrap(), &mut b).unwrap();
-    let hex = hex::encode(b);
-    (format!("aaa-canary-{tag}-{hex}"), hex)
+pub(super) fn canary(_tag: &str) -> (String, String) {
+    let value = aaa_test_support::fresh_token();
+    (value.clone(), value)
 }
 
 /// 찾는 꼴: 원문, 무작위 부분의 8자 조각, base64(표준·URL, 앞 0~2바이트 정렬마다 끝 4자를 뺀 가운데), URL 인코딩, JSON escape
@@ -87,7 +85,7 @@ fn env_values_stay_out_of_audit_db_logs_and_export() {
     let (a, a_hex) = canary("a");
     let (b, b_hex) = canary("b");
     let (c_hex, _) = canary("c");
-    let c = format!("k0/c\"+ &{}", &c_hex[c_hex.len() - 32..]);
+    let c = format!("/\"+ &{c_hex}");
     let scripts = lab.root.join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::write(scripts.join("recv.sh"), RECEIVER).unwrap();
@@ -192,7 +190,7 @@ fn env_values_stay_out_of_audit_db_logs_and_export() {
         let s = p.to_string_lossy();
         s.contains("/agent/sessions/") || s.contains("/agent/thread-preparations/") || s.contains("/host/host.db")
     };
-    let (na, nb, nc) = (needles(&a, &a_hex), needles(&b, &b_hex), needles(&c, &c_hex[c_hex.len() - 32..]));
+    let (na, nb, nc) = (needles(&a, &a_hex), needles(&b, &b_hex), needles(&c, &c_hex));
     let mut found = Vec::new();
     for (name, n) in [("A", &na), ("C", &nc)] {
         found.extend(hits(&host_db, n, &|_| false).into_iter().map(|h| format!("{name} {h}")));

@@ -201,7 +201,7 @@ work_root = '$work'
     $auth=Join-Path $run 'fake-auth.json'
     $claims='{"sub":"fixture-user","exp":4102444800,"https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account","chatgpt_plan_type":"plus"}}'
     $payload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($claims)).TrimEnd('=').Replace('+','-').Replace('/','_')
-    $fakeAuth=@{auth_mode='apikey';OPENAI_API_KEY='test-api-key-0123456789';tokens=@{id_token=('eyJhbGciOiJub25lIn0.'+$payload+'.fixture');access_token='test-access-0123456789abcdef';refresh_token='test-refresh-fedcba9876543210';account_id='fixture-account'}}
+    $fakeAuth=@{auth_mode='apikey';OPENAI_API_KEY=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/secret-canary.txt')));tokens=@{id_token=('eyJhbGciOiJub25lIn0.'+$payload+'.fixture');access_token=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/secret-canary.txt')));refresh_token=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/secret-canary.txt')));account_id='fixture-account'}}
     [IO.File]::WriteAllText($auth,($fakeAuth | ConvertTo-Json -Depth 4 -Compress))
     $null=Invoke-Aaa @('account','import','fixture','--harness','codex','--file',$auth)
     $task=Join-Path $run 'task.md';[IO.File]::WriteAllText($task,'격리된 seed.txt를 읽고 완료한다.')

@@ -89,7 +89,7 @@ fn missing_conflicting_and_unsafe_inputs_fail_without_echoing_values() {
                 harness_env: vec![InstallHarnessEnv {
                     harness: InstallHarness::Codex,
                     key: "API_TOKEN".into(),
-                    value: "fake-secret-do-not-echo".into(),
+                    value: aaa_test_support::token("fake-secret-do-not-echo"),
                 }],
                 ..base.clone()
             },
@@ -102,7 +102,10 @@ fn missing_conflicting_and_unsafe_inputs_fail_without_echoing_values() {
         let e = plan(c, x.clone()).err().unwrap();
         assert_eq!(e.code, expected);
         let rendered = format!("{e:?} {e} {}", serde_json::to_string(&e).unwrap());
-        assert!(!rendered.contains("fake-secret") && !rendered.contains("sensitive-example"));
+        assert!(
+            !rendered.contains(&aaa_test_support::token("fake-secret-do-not-echo"))
+                && !rendered.contains("sensitive-example")
+        );
     }
 }
 

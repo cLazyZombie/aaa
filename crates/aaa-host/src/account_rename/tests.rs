@@ -14,7 +14,7 @@ impl Lab {
         cfg.notify.web_push = false;
         let h = Host::open(cfg, root.join("host")).unwrap();
         h.project_create("demo", Default::default(), "local:cli").unwrap();
-        h.accounts.import("work", "codex", AUTH).unwrap();
+        h.accounts.import("work", "codex", &auth()).unwrap();
         Self { root, h }
     }
     fn conn(&self) -> rusqlite::Connection {
@@ -26,8 +26,9 @@ impl Drop for Lab {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
-const AUTH: &str =
-    r#"{"tokens":{"access_token":"fixture-access-0123456789","refresh_token":"fixture-refresh-0123456789"}}"#;
+fn auth() -> String {
+    serde_json::json!({"tokens":{"access_token":aaa_test_support::token("rename-access"),"refresh_token":aaa_test_support::token("rename-refresh")}}).to_string()
+}
 fn request(to: &str) -> FrontRequest {
     FrontRequest::AccountRename { name: "work".into(), to: to.into() }
 }
@@ -160,7 +161,7 @@ async fn rename_rejects_agents_collisions_and_running_bindings_without_changes()
             ErrorCode::BadRequest
         );
     }
-    h.accounts.import("taken", "claude", "fixture-token-0123456789").unwrap();
+    h.accounts.import("taken", "claude", &aaa_test_support::token("fixture-token-0123456789")).unwrap();
     assert_eq!(h.call(DeviceRole::Local, "local:cli", request("taken")).await.unwrap_err().code, ErrorCode::NameTaken);
     // 준비 중 binding은 아직 pane이 없어도 중계·시작 경합으로 거부한다.
     let binding = crate::account_policy::PaneAccount {

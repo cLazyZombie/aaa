@@ -75,7 +75,8 @@ fn prepare(lab: &Lab) -> (Job, InstallPlan, String) {
     (job, plan, id)
 }
 fn password() -> Password {
-    Password::new("fake-service-password-never-record".encode_utf16().collect()).unwrap()
+    Password::new(aaa_test_support::token("fake-service-password-never-record").as_str().encode_utf16().collect())
+        .unwrap()
 }
 
 #[test]
@@ -96,8 +97,15 @@ fn interrupted_registration_reconciles_actual_manager_without_creating_twice_or_
     assert_eq!(job.start(&mut os).unwrap_err().code, "service_ready_unverified");
     assert!(job.record.phase == ServicePhase::Starting, "SCM RUNNING만으로 ready가 아니다");
     for (_, (bytes, _, _)) in tree(&lab.0) {
-        assert!(!String::from_utf8_lossy(&bytes).contains("fake-service-password-never-record"));
-        let utf16: Vec<_> = "fake-service-password-never-record".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert!(
+            !String::from_utf8_lossy(&bytes)
+                .contains(aaa_test_support::token("fake-service-password-never-record").as_str())
+        );
+        let utf16: Vec<_> = aaa_test_support::token("fake-service-password-never-record")
+            .as_str()
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
         assert!(!bytes.windows(utf16.len()).any(|slice| slice == utf16));
     }
     drop(job);

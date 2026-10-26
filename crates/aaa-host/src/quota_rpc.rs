@@ -357,7 +357,7 @@ assert sys.argv[1:] == ['app-server']
 home=os.environ['CODEX_HOME']
 assert 'OPENAI_API_KEY' not in os.environ and 'CLAUDE_CODE_OAUTH_TOKEN' not in os.environ
 auth=json.load(open(home+'/auth.json'))
-assert auth['tokens']['access_token'] == 'fake-access-canary-0123456789'
+assert auth['tokens']['access_token'] == {access:?}
 mode={mode:?}
 log={log:?}
 def failure(kind,error,tb):
@@ -374,7 +374,7 @@ for line in sys.stdin:
     elif v['method']=='account/rateLimits/read':
         sys.stderr.write(auth['tokens']['access_token']);sys.stderr.flush()
         if mode=='refresh':
-            try: urllib.request.urlopen(urllib.request.Request(os.environ['CODEX_REFRESH_TOKEN_URL_OVERRIDE'],data=b'fake-refresh-canary-9876543210'))
+            try: urllib.request.urlopen(urllib.request.Request(os.environ['CODEX_REFRESH_TOKEN_URL_OVERRIDE'],data={refresh:?}.encode()))
             except urllib.error.HTTPError as e: assert e.code==401
         if mode in ['401','429']:
             send({{'id':v['id'],'error':{{'code':-32603,'message':auth['tokens']['access_token'],'data':{{'status':int(mode),'retryAfterSeconds':123}}}}}})
@@ -389,7 +389,9 @@ for line in sys.stdin:
             send({{'id':v['id'],'result':{{'token':auth['tokens']['access_token'],'rateLimitsByLimitId':buckets}}}})
     else: assert v['method']=='initialized'
 "##,
-            log = log.to_string_lossy()
+            log = log.to_string_lossy(),
+            access = aaa_test_support::token("quota-access"),
+            refresh = aaa_test_support::token("quota-refresh")
         );
         std::fs::write(&exe, script).unwrap();
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -399,7 +401,8 @@ for line in sys.stdin:
     async fn fake_rpc_reads_without_threads_turns_or_raw_credentials_and_cleans_each_home() {
         let root = Home(std::env::temp_dir().join(format!("aaa-quota-{}", util::new_id())));
         util::ensure_private_dir(&root.0).unwrap();
-        let auth = r#"{"tokens":{"access_token":"fake-access-canary-0123456789","refresh_token":"fake-refresh-canary-9876543210"}}"#;
+        let auth = serde_json::json!({"tokens":{"access_token":aaa_test_support::token("quota-access"),"refresh_token":aaa_test_support::token("quota-refresh")}}).to_string();
+        let auth = auth.as_str();
         let futures = ["ok", "weekly-only", "refresh", "401", "429", "broken", "missing", "invalid"].map(|mode| {
             let exe = fake(&root.0, mode);
             let state = root.0.clone();
@@ -434,7 +437,11 @@ for line in sys.stdin:
                 _ => assert_eq!(snapshot.problem, Some(QuotaProblem::Failed), "{diagnostic}"),
             }
             let out = serde_json::to_string(&snapshot).unwrap();
-            assert!(!out.contains("canary"), "원문 응답·stderr가 정규화 결과에 없다");
+            assert!(
+                !out.contains(&aaa_test_support::token("quota-access"))
+                    && !out.contains(&aaa_test_support::token("quota-refresh")),
+                "원문 응답·stderr가 정규화 결과에 없다"
+            );
         }
         assert_eq!(std::fs::read_dir(root.0.join("quota-probes")).unwrap().count(), 0, "종료 뒤 인증·log 홈 정리");
     }

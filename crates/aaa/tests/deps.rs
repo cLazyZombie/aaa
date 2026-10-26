@@ -24,6 +24,7 @@ fn forbidden() -> Vec<(&'static str, Vec<&'static str>)> {
         ("aaa-proto", common.clone()),
         ("aaa-config", common.clone()),
         ("aaa-common", common.clone()),
+        ("aaa-test-support", common.clone()),
         ("aaa-vt", common.clone()),
         ("aaa-doctor", common),
     ]
@@ -44,6 +45,14 @@ fn workspace_graph() -> BTreeMap<String, BTreeSet<String>> {
     packages
         .iter()
         .map(|p| {
+            assert!(
+                p["dependencies"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|d| { d["name"] != "aaa-test-support" || d["kind"] == "dev" }),
+                "aaa-test-support는 dev-dependency로만 쓴다"
+            );
             let deps = p["dependencies"]
                 .as_array()
                 .unwrap()

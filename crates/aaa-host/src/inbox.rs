@@ -872,7 +872,7 @@ mod tests {
             let clock = Arc::new(AtomicU64::new(now));
             std::fs::write(
                 home.join(".claude/.credentials.json"),
-                serde_json::json!({"claudeAiOauth":{"accessToken":"test-only","expiresAt":now+86400000}}).to_string(),
+                serde_json::json!({"claudeAiOauth":{"accessToken":&aaa_test_support::token("test-only"),"expiresAt":now+86400000}}).to_string(),
             )
             .unwrap();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

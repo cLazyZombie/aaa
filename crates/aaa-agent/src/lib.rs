@@ -2363,8 +2363,10 @@ mod tests {
         }
         // agent의 일반 전달도 B64 글자 충돌로 panic하거나 응답을 잃지 않아야 한다.
         use base64::Engine;
-        aaa_common::redact::remember("QkxPQ0tTRUNSRVQ5agent-fixture0525");
-        let snapshot = base64::engine::general_purpose::STANDARD.decode("QkxPQ0tTRUNSRVQ5AAAA").unwrap();
+        let encoded_secret = aaa_test_support::token("agent-b64");
+        aaa_common::redact::remember(&encoded_secret);
+        let snapshot =
+            base64::engine::general_purpose::STANDARD.decode(format!("{}AAAA", &encoded_secret[..16])).unwrap();
         let message = LinkMsg::Res {
             id: "snapshot-request".into(),
             result: Outcome::Ok(AgentResponse::Subscribed {
@@ -2521,7 +2523,7 @@ mod tests {
         (
             SpecFile {
                 id: "s".into(),
-                token: "t".into(),
+                token: aaa_test_support::token("session-hydrate"),
                 boot_id: "b".into(),
                 created_at_ms: 1,
                 spec,

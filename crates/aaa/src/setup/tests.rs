@@ -103,7 +103,7 @@ impl FakeSys {
         FakeSys {
             windows: layout.kind == super::ServiceKind::WindowsScm,
             status: layout.status(),
-            password: "correct horse",
+            password: aaa_test_support::CANARY,
             right: Right::Missing,
             services: BTreeMap::new(),
             enroll: VecDeque::new(),
@@ -296,7 +296,7 @@ fn setup_records_the_current_short_build_version() {
     let lab = Lab::new();
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     let version = aaa_common::util::software();
     Setup::new(&mut sys, &mut ui, layout.clone(), version.clone()).install(&Args::default()).unwrap();
     assert!(ui.printed(&version));
@@ -312,7 +312,7 @@ fn fresh_install_asks_three_questions_and_a_password_then_connects() {
     let lab = Lab::new();
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap();
 
     assert_eq!(
@@ -372,7 +372,7 @@ fn failure_after_registration_rolls_back_everything_but_the_registration() {
     let mut sys = FakeSys::new(&layout);
     sys.fail_start = true;
     let before_path = sys.path.clone();
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     let error =
         Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap_err();
     assert!(format!("{error:#}").contains("1069"), "{error:#}");
@@ -396,7 +396,7 @@ fn failure_after_registration_rolls_back_everything_but_the_registration() {
 
     // 다시 실행: 등록은 건너뛰고 끝까지 간다
     sys.fail_start = false;
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap();
     assert_eq!(sys.enrolled_as, ["win-a"], "두 번째 실행은 다시 승인받지 않는다");
     assert!(ui.printed("이미 이 host에 등록돼 있습니다"));
@@ -413,7 +413,7 @@ fn cancelling_before_changes_leaves_nothing() {
     let lab = Lab::new();
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
-    let mut ui = Script::new(&["studio.example.ts.net", "", "", "n"], &["correct horse"]);
+    let mut ui = Script::new(&["studio.example.ts.net", "", "", "n"], &[aaa_test_support::CANARY]);
     let error = Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap_err();
     assert!(error.downcast_ref::<Cancelled>().is_some());
     assert_eq!(sys.ops, ["reach studio.example.ts.net:7430", "logon network"]);
@@ -432,7 +432,7 @@ fn wrong_passwords_are_asked_again_and_three_misses_stop_before_changes() {
     let lab = Lab::new();
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
-    let mut ui = Script::new(&DEFAULTS, &["nope", "", "correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &["nope", "", aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     assert!(ui.printed("암호가 맞지 않습니다. 다시 넣어 주세요(2번 남음)."));
     assert!(ui.printed("빈 암호로는 서비스를 띄울 수 없습니다"));
@@ -454,7 +454,8 @@ fn unreachable_host_is_asked_again_and_port_defaults_to_7430() {
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
     sys.unreachable.push("wrong.example:7430".into());
-    let mut ui = Script::new(&["wrong.example", "https://studio.example.ts.net:7431/", "", "", ""], &["correct horse"]);
+    let mut ui =
+        Script::new(&["wrong.example", "https://studio.example.ts.net:7431/", "", "", ""], &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     assert_eq!(sys.ops[..2], ["reach wrong.example:7430", "reach studio.example.ts.net:7431"]);
     assert!(ui.printed("wrong.example:7430에 연결하지 못했습니다"));
@@ -468,7 +469,7 @@ fn closed_window_and_taken_name_are_fixed_in_the_same_run() {
     let mut sys = FakeSys::new(&layout);
     sys.enroll = [Some(ErrorCode::EnrollClosed), Some(ErrorCode::NameTaken), None].into();
     // 질문 4개 → 등록 창 Enter → 새 이름
-    let mut ui = Script::new(&["studio.example.ts.net", "", "", "", "", "win-a-2"], &["correct horse"]);
+    let mut ui = Script::new(&["studio.example.ts.net", "", "", "", "", "win-a-2"], &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     assert!(ui.printed("host의 등록 창이 닫혀 있습니다."));
     assert!(ui.printed("이름 「win-a」는 host에서 다른 등록이 쓰고 있습니다."));
@@ -484,7 +485,7 @@ fn enrollment_that_never_succeeds_removes_the_new_device_key() {
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
     sys.enroll = [Some(ErrorCode::UnsupportedVersion)].into();
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap_err();
     assert!(ui.printed("host와 판이 맞지 않습니다"));
     assert!(!layout.state.join("agent").exists(), "등록 전 만든 장치 키는 지운다");
@@ -498,7 +499,7 @@ fn rerun_updates_the_binary_and_restarts_without_asking_again() {
     let lab = Lab::new();
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap();
 
     let mut ui = Script::new(&[], &[]);
@@ -523,7 +524,7 @@ fn update_partial_start_stops_new_process_restores_binary_and_restarts_previous(
         let mut layout = lab.layout();
         layout.kind = kind;
         let mut sys = FakeSys::new(&layout);
-        let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+        let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
         Setup::new(&mut sys, &mut ui, layout.clone(), "old".into()).install(&Args::default()).unwrap();
         std::fs::write(&layout.source, b"newer-binary").unwrap();
         sys.ops.clear();
@@ -545,7 +546,7 @@ fn uninstall_reverts_only_what_the_receipt_records() {
     let mut sys = FakeSys::new(&layout);
     sys.right = Right::Granted;
     sys.path = Some(format!(r"C:\tools;{}", layout.exe.parent().unwrap().display()));
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     let receipt = Receipt::read(&layout.receipt()).unwrap();
     assert!(!receipt.logon_right_added && receipt.path_added.is_none(), "이미 있던 권한·PATH는 기록하지 않는다");
@@ -562,7 +563,7 @@ fn uninstall_reverts_only_what_the_receipt_records() {
     // 다시 설치 → 권한·PATH를 넣은 설치의 제거는 그것들도 뺀다
     sys.right = Right::Missing;
     sys.path = None;
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     sys.ops.clear();
     let mut ui = Script::new(&[""], &[]);
@@ -619,7 +620,7 @@ fn other_aaa_services_and_sibling_config_shape_the_defaults() {
             command: String::new(),
         },
     );
-    let mut ui = Script::new(&["", "", "", ""], &["correct horse"]);
+    let mut ui = Script::new(&["", "", "", ""], &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     assert_eq!(sys.ops[0], "reach studio.example.ts.net:7430", "다른 인스턴스의 host를 기본값으로 쓴다");
     assert!(ui.printed("다른 aaa 서비스 aaa-install-check-agent(정지)"));
@@ -719,7 +720,7 @@ fn plan_columns_line_up_with_korean_labels() {
     let lab = Lab::new();
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
-    let mut ui = Script::new(&["studio.example.ts.net", "", "", "n"], &["correct horse"]);
+    let mut ui = Script::new(&["studio.example.ts.net", "", "", "n"], &[aaa_test_support::CANARY]);
     let _ = Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default());
     let columns = |text: &str| text.chars().map(|c| if ('가'..='힣').contains(&c) { 2 } else { 1 }).sum::<usize>();
     let exe = layout.exe.display().to_string();
@@ -785,7 +786,7 @@ fn status_shows_service_and_connection() {
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).status().unwrap();
     assert!(ui.printed("등록돼 있지 않습니다"));
 
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "aaa 0.1.5".into()).install(&Args::default()).unwrap();
     let mut ui = Script::new(&[], &[]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).status().unwrap();
@@ -799,7 +800,7 @@ fn uninstall_keeps_the_logon_right_while_another_service_uses_the_account() {
     let lab = Lab::new();
     let layout = lab.layout();
     let mut sys = FakeSys::new(&layout);
-    let mut ui = Script::new(&DEFAULTS, &["correct horse"]);
+    let mut ui = Script::new(&DEFAULTS, &[aaa_test_support::CANARY]);
     Setup::new(&mut sys, &mut ui, layout.clone(), "v".into()).install(&Args::default()).unwrap();
     assert!(Receipt::read(&layout.receipt()).unwrap().logon_right_added);
     let other =

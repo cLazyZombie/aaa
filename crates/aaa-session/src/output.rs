@@ -80,7 +80,7 @@ mod tests {
     }
     impl Fixture {
         fn new(rows: u16, cols: u16, colors: Option<TermColors>) -> Self {
-            aaa_common::redact::remember("qzb-lab-output-cursor0910");
+            aaa_common::redact::remember(&aaa_test_support::token("qzb-lab-output-cursor0910"));
             Self { output: Output::new(rows, cols, colors), screen: aaa_vt::Vt::new(rows, cols) }
         }
         fn feed(&mut self, bytes: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn conpty_cursor_query_replies_before_any_further_output_despite_auth_suffix() {
-        aaa_common::redact::remember("fixture-native-conpty-canary0910");
+        aaa_common::redact::remember(&format!("{}n", aaa_test_support::token("conpty")));
         let mut old = aaa_common::redact::Stream::default();
         assert_ne!(old.push(b"\x1b[6n", false), b"\x1b[6n", "원본 교착의 n 보류를 재현한다");
         for split in 0..=4 {
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn live_secret_masks_from_eighth_byte_and_keeps_query_cursor_correct() {
-        let secret = "fixture-native-conpty-canary0910";
+        let secret = &*format!("{}n", aaa_test_support::token("conpty"));
         aaa_common::redact::remember(secret);
         let mut output = Fixture::new(32, 120, None);
         let (mut clean, replies) = output.feed(&secret.as_bytes()[..7]);
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(output.feed(b"\x1b[6n").1, [b"\x1b[1;7R".to_vec()]);
         let (_, replies) = output.feed(b"\x1b]10;#aabbcc\x07\x1b]10;?\x07\x1b]110\x07\x1b]10;?\x07");
         assert_eq!(replies, [b"\x1b]10;rgb:aaaa/bbbb/cccc\x07".to_vec(), b"\x1b]10;rgb:0101/0202/0303\x1b\\".to_vec()]);
-        let secret = "partial-query-record-secret0910";
+        let secret = &*aaa_test_support::token("partial-query-record-secret0910");
         aaa_common::redact::remember(secret);
         let mut output = Fixture::new(4, 8, None);
         let (mut clean, _) = output.feed(secret.as_bytes());

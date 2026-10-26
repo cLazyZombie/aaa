@@ -4184,3 +4184,13 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - 두 번째 전체 gate는 Rust 전체가 통과하고 E2E53의 수정 M3 카드에서 `thread-ask-pick-2B`를 기다리다 실패했다. 보존 DB에는 broken M3의 두 질문 직접 답이 이미 asks에 기록되고 수정 보고에는 원문1번만 남아 있었다. 답한2번을 새 중복 방지가 정상 제외한 것이다. 기존 owner는 전달 전 claim인 `questions.answer`만 보고 다음 보고를 써 실제 원문 보존 순서에 따라 결과가 갈렸다.
 - E2E53의 해당 owner에서 이전 답의 시각·질문ID가 실제 asks 원문에 보존된 사건 뒤 다음 보고를 쓴다. 같은 원문을 복구하면 답한2번이 제외됨을 먼저 확인하고, 다시 판단할2번은 질문 제목으로 새 판단임을 명시해 원래 두 질문·3/2개 선택지·정확한 `1C 2B` 전달 단언을 유지한다. 원본 M3 fixture·제품 중복 방지·시한은 바꾸지 않는다. 필요한 이유는 전송 전 claim과 실제 답 보존을 구별하며 새 질문과 답한 질문의 기존 두 계약을 모두 지키기 위해서다. 해당 파일 전체의 부분 검증은82.1초에 통과했고 최종 추가 단언은 전체 gate에서 확인한다.
+
+## 인증 fixture의 공통 opaque 토큰(t-1127)
+
+- [시험 인증 fixture](test-secrets.md)의 공통 생성기·벡터를 Rust·Python·Node E2E가 함께 쓴다. 계정/업무 이름은 seed나 별도 대응표에만 두고 본문에는 넣지 않는다. 제품 가림 규칙은 바꾸지 않는다.
+- `scripts.test_fixture_secrets`와 웹 `fixture-secret.test.mjs`, `aaa-test-support` 유닛은 언어별 공통 벡터·업무 단어 즉시 거부를 검사한다. 정적 검사는 ci-local 시험 진입 전에 실행하고 정확한 경로·값·사유 예외만 허용한다. 필요한 이유는 같은 실행의 다른 owner까지 망가뜨리는 평문 인증 fixture 재유입을 막기 위해서다.
+- 기존 aaa-common 가림 owner에 `opaque_credentials_do_not_redact_business_fields_in_the_same_process`를 더한다. 실제 전역 가림 등록 뒤 토큰은 가려지고 automation/owner/인증 JSON 필드는 보존되어야 한다. 필요한 이유는 생성기 형식 검사만으로 실제 제품 serializer의 필드 보존을 대신할 수 없기 때문이다.
+- 기존 계정·금고·이름 변경·자동화·사용량·세션·hook·설치 암호·K0·이미지의 인증 fixture를 옮기고, 바이너리 base64 충돌과 모든 8바이트 부분 누출·변환·권한/오류 계약을 유지한다. E2E58/65/68/78/81과 M4 보호 암호 입력을 사용하며 E2E 번호는 늘리지 않는다. JWT metadata와 로그인 파서의 필수 접두사·escape·ANSI만 해당 owner에서 유지한다.
+- Windows 두 실기 스크립트는 공통 const 산출물을 읽는다. 격리 폴더에서 두 전체 스크립트의 PowerShell 구문과 실제 인증 JSON의 세 필드를 검증한다. 서비스·예약 작업·Run·사용자 PATH·방화벽 목록의 전후 동일과 시험 폴더 삭제를 확인하며 설치·서비스 시작은 실행하지 않는다.
+- `test_auth_fixture_guard_fails_before_python_and_rust_execution`은 격리한 실제 ci-local에 업무 단어 토큰을 넣어 Python·Rust owner 실행 전 실패와 원문 없는 경로·줄 진단을 확인한다. 필요한 이유는 검사 함수를 호출하는 유닛만으로 CI 진입 연결을 대신할 수 없기 때문이다.
+- 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 부분 검증 뒤 전체 gate와 묶음 착지는 coordinator의 순서를 기다린다. OSS 후보·라이선스·채택한 원칙은 위 문서에 있다.
