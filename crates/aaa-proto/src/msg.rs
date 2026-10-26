@@ -2715,6 +2715,16 @@ pub enum FrontRequest {
         line: Option<u32>,
         add: Option<String>,
     },
+    /// 완료 보고의 후속을 같은 프로젝트의 할 일에 잇거나 사유를 남겨 버린다.
+    ThreadFollowup {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+        id: String,
+        task: Option<String>,
+        reason: Option<String>,
+    },
     /// coordinator용 프로젝트 요약. 보인 inbox 항목은 「봤다」가 된다(`peek`이면 그대로).
     Context {
         #[serde(default)]
@@ -3470,6 +3480,7 @@ impl FrontRequest {
             | FrontRequest::ThreadStart { project, .. }
             | FrontRequest::ThreadAdopt { project, .. }
             | FrontRequest::ThreadNext { project, .. }
+            | FrontRequest::ThreadFollowup { project, .. }
             | FrontRequest::Context { project, .. }
             | FrontRequest::Assignable { project, .. }
             | FrontRequest::Tasks { project }

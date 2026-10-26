@@ -563,6 +563,24 @@ fn world_build(
 }
 
 impl World {
+    /// 공통 fake 보고의 두 Next는 해당 시험에서 확인을 마친 뒤 명시적으로 기록한다.
+    fn finish_fixture_followups(&self, id: &str) {
+        let reason = self.task("fixture-followup-reason.txt", "시험 결과 확인과 다음 단계 검토 완료");
+        for entry in self.show(id)["followups"].as_array().unwrap() {
+            if entry["handled_ms"].is_null() {
+                self.h.ok(&[
+                    "thread",
+                    "followup",
+                    "demo",
+                    id,
+                    "--id",
+                    entry["id"].as_str().unwrap(),
+                    "--reason-file",
+                    &reason,
+                ]);
+            }
+        }
+    }
     fn spawn_host(&mut self, tag: &str) {
         spawn_host(&mut self.lab, tag, &self.h, self.settle_ms);
     }
@@ -4602,6 +4620,7 @@ fn manual_threads_always_have_tasks_and_archive_the_result() {
     assert!(row["notes"].as_array().unwrap().iter().any(|n| n == "> # 작업 범위"), "{row}");
     assert!(row["notes"].as_array().unwrap().iter().any(|n| n == "> - [ ] 중첩 검사"), "{row}");
     w.wait_show("완료 보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+    w.finish_fixture_followups(id);
     w.h.ok(&["thread", "resolve", "demo", id]);
     // resolve는 thread 종료까지다. 연결된 task의 완료 보관은 다음 ticker 판정 뒤에 읽는다.
     w.h.ticks(1);
@@ -5119,6 +5138,10 @@ fn task_thread_link_and_auto_clean() {
         w.wait_show("보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     }
     w.wait_show("brief 전달", &quiet, |v| v["brief"] == "delivered");
+    // 공통 fake 보고의 결과 확인·다음 단계는 이 owner에서 확인했다. 후속 처리 없이 자동 보관하지 않는다.
+    for id in [&done, &decide, &child] {
+        w.finish_fixture_followups(id);
+    }
     // 결정 일은 마지막 보고를 `[결정 필요]`로 바꾼다: host가 새 보고를 받은 뒤 끝낸다
     let first = w.show(&decide);
     let work = PathBuf::from(first["work_dir"].as_str().unwrap());
@@ -5810,6 +5833,7 @@ fn merged_thread_cleans_its_task() {
     );
     f.kind("report_ready", &id, T);
     let t = w.show(&id);
+    w.finish_fixture_followups(&id);
     let branch = t["branch"].as_str().unwrap().to_string();
     std::fs::write(stub.join("view-8.json"), pr_view_json(&branch, "MERGED", "APPROVED", &"0".repeat(40))).unwrap();
     std::fs::write(
@@ -7108,6 +7132,7 @@ fn task_display_ids_survive_rename_move_restart_delete_and_archive() {
     assert_eq!(renamed["title"], "이름을 바꾼 일");
     assert_eq!(renamed["id"], first["id"]);
     w.wait_show("완료 보고", tid, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+    w.finish_fixture_followups(tid);
     w.h.ok(&["thread", "resolve", tid]);
     w.h.ok(&["ticker", "tick"]);
     let archive = w.h.ok(&["task", "archive"]);

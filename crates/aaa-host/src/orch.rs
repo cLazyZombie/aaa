@@ -317,6 +317,11 @@ pub(crate) struct TaskClean {
     /// 하위 task가 모두 끝나 이 thread를 이어 「확인 필요」로 올린 상위 task 제목
     #[serde(default)]
     pub parents: Vec<String>,
+    #[serde(default)]
+    pub followups: Vec<aaa_proto::ThreadFollowup>,
+    /// 같은 줄을 이전 미처리 항목과 합친 판도 재수집 때 다시 만들지 않는다.
+    #[serde(default)]
+    pub followup_revisions: Vec<String>,
 }
 
 /// `thread resolve`의 고르기(herdr-projects `ResolveArgs`). 저절로 끝낼 때는 모두 끈 것이다(`resolve_after_copy`)
@@ -1043,6 +1048,7 @@ impl Host {
             stage: r.execution_stage(),
             acked_hash: r.acked_hash.clone(),
             next: r.next.clone(),
+            followups: r.task_clean.followups.clone(),
             agent: agent.map(Box::new),
             copy: r.copy.clone(),
             error: r.error.clone(),
@@ -2682,6 +2688,7 @@ impl Host {
                     let rec = self.update_rec(project, id, |r| {
                         r.report_copy_hash = Some(hex::encode(sha2::Sha256::digest(&report)));
                         r.report_stage = crate::report_mark::stage(&String::from_utf8_lossy(&report));
+                        crate::followups::capture(r, &hash, &String::from_utf8_lossy(&report));
                         r.copy = Some(copy.clone());
                         if failures.is_empty() {
                             r.copy_failures = 0;
@@ -2689,6 +2696,7 @@ impl Host {
                         }
                         r.copy_notes = skipped.clone();
                     })?;
+                    self.followup_notice(&rec);
                     if !changed {
                         return failures.first().map_or(Ok(()), |e| Err(internal(e.clone())));
                     }
@@ -2711,6 +2719,7 @@ impl Host {
                 let previous = rec;
                 let rec = self.update_rec(project, id, |r| {
                     r.report_stage = crate::report_mark::stage(&text);
+                    crate::followups::capture(r, &hash, &text);
                     r.report_hash = Some(hash);
                     r.report_copy_hash = Some(hex::encode(sha2::Sha256::digest(&report)));
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
@@ -2726,6 +2735,7 @@ impl Host {
                     }
                     r.copy_notes = skipped.clone();
                 })?;
+                self.followup_notice(&rec);
                 if let Some(warning) = &rec.question_warning {
                     self.warn_question_format(&rec, warning).await;
                 }
@@ -2842,7 +2852,11 @@ impl Host {
                     })?;
             }
         }
+        let last_report = self.verified_report(&rec);
         let rec = self.update_rec(project, id, |r| {
+            if let (Some(revision), Some(body)) = (r.report_hash.clone(), last_report.as_deref()) {
+                crate::followups::capture(r, &revision, body);
+            }
             r.status = ThreadStatus::Resolved;
             r.resolve_pending = Some(opts);
             // 이어진 task 판정의 까닭은 처음 끝낸 까닭이다: 정리가 끊겨 `aaa thread resolve`로 이어 끝내도 병합은 병합이다
@@ -2862,6 +2876,7 @@ impl Host {
                 Err(e) => return Err(crate::library_publish::io_error(e)),
             }
         }
+        self.followup_notice(&rec);
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
         // 그 사본이 「진행 중」(지울 수 없음)에서 풀린다: 보고서 화면이 다시 읽는다(plan §8.256)
         self.reports_bump();
@@ -3053,7 +3068,11 @@ impl Host {
             r.last_group = None;
             r.merged_seen_ms = None;
             // 이어진 task는 다음 끝남에서 다시 판정한다(아직 판정 전이면 하지 않는다)
-            r.task_clean = TaskClean::default();
+            r.task_clean = TaskClean {
+                followups: r.task_clean.followups.clone(),
+                followup_revisions: r.task_clean.followup_revisions.clone(),
+                ..Default::default()
+            };
         })?;
         self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
         self.reports_bump();

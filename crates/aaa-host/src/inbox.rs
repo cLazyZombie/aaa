@@ -308,10 +308,25 @@ impl Host {
                 ),
             ));
         }
-        let preserved = open.iter().filter(|i| all && crate::asks::is_user_request(i)).count();
+        if let Some(item) = open.iter().find(|i| ids.contains(&i.id) && self.unresolved_followup_inbox(i)) {
+            return Err(err(
+                ErrorCode::BadRequest,
+                format!("{} 후속 남음: 후속 할 일 연결이나 사유 기록 전에는 inbox를 닫지 않는다", item.subject),
+            ));
+        }
+        let preserved = open
+            .iter()
+            .filter(|i| all && (crate::asks::is_user_request(i) || self.unresolved_followup_inbox(i)))
+            .count();
         let pick: Vec<InboxItem> = open
             .into_iter()
-            .filter(|i| if all { !crate::asks::is_user_request(i) } else { ids.contains(&i.id) })
+            .filter(|i| {
+                if all {
+                    !crate::asks::is_user_request(i) && !self.unresolved_followup_inbox(i)
+                } else {
+                    ids.contains(&i.id)
+                }
+            })
             .collect();
         let n = self.inbox_finish(project, pick, &self.answered_by(actor), true).map_err(internal)?;
         self.db.audit(
@@ -363,6 +378,9 @@ impl Host {
         let now = aaa_common::util::now_ms();
         let mut finished = 0;
         for i in items {
+            if self.unresolved_followup_inbox(&i) {
+                continue;
+            }
             let notice = summary(&i).map(|summary| InboxItem {
                 id: format!("{}-handled", i.id),
                 project: project.into(),

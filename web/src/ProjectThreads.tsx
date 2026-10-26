@@ -27,6 +27,8 @@ function threadFacts(t: ThreadView, now: number): string {
   if (t.profile) parts.push(t.profile);
   // 보류(plan §8.426): 보류한 까닭
   if (t.group === "parked" && t.park?.note) parts.push(t.park.note);
+  const followups = t.followups?.filter(f => f.handled_ms === null).length ?? 0;
+  if (followups) parts.push(`후속 남음 ${followups}`);
   if (!ended && t.next.length > 0) parts.push(`next ${t.next.length}`);
   return parts.join(" · ");
 }

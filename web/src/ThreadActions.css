@@ -70,3 +70,11 @@
 .responsibility-banner > div { min-width: 0; }
 .responsibility-banner p { margin: 4px 0; }
 .responsibility-path { overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--fs-xs); }
+
+.thread-followups { margin: 12px; overflow-wrap: anywhere; }
+.thread-followups ul { padding-left: 20px; }
+.thread-followups li + li { margin-top: 16px; }
+.followup-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.followup-actions label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.followup-actions input { max-width: 100%; width: 200px; min-height: 36px; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: inherit; font: inherit; }
+.thread-followups [data-testid="followup-receipt"] > span { display: block; margin-top: 4px; }

@@ -825,7 +825,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       openedHash.current = null;
       const own = location.hash === ownHash.current;
       ownHash.current = null;
-      const next = selectedFromHash();
+      let next = selectedFromHash();
+      // chooseThread가 이미 연 폼을 짧은 주소의 hashchange가 잠깐 내렸다 다시 만들지 않는다.
+      if (next?.startsWith("thread:") && !next.includes("/")) {
+        const id = next.slice("thread:".length);
+        const target = uniqueAppTargets([...now.current.threads.values()].filter(t => t.project_status !== "archived"), t => t.project, t => t.id).get(id);
+        if (target) next = `thread:${threadKey(target)}`;
+      }
       if (!settingsEntry(history.state)) setSettingsOpen(false);
       if (!own) {
         setRecentPanel(null);

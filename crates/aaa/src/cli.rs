@@ -1045,6 +1045,19 @@ enum ThreadCmd {
         #[arg(long)]
         add: Option<String>,
     },
+    /// 완료 보고의 후속을 할 일에 잇거나 사유를 기록한다. 목록/ID는 thread show로 읽는다.
+    Followup {
+        thread: String,
+        #[arg(hide = true)]
+        legacy: Option<String>,
+        #[arg(long)]
+        id: String,
+        #[arg(long, conflicts_with = "reason_file", required_unless_present = "reason_file")]
+        task: Option<String>,
+        /// 버림·정리 완료 사유 파일(`-`면 표준 입력)
+        #[arg(long, conflicts_with = "task")]
+        reason_file: Option<String>,
+    },
     /// thread 목록. 기본은 전체를 작은 페이지로 이어 읽는다. --open은 끝난 thread를 뺀다.
     List {
         /// 프로젝트(생략하면 모든 프로젝트)
@@ -2454,6 +2467,20 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Next { thread, legacy, line, add } => {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadNext { project, thread, line, add }
+                }
+                ThreadCmd::Followup { thread, legacy, id, task, reason_file } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadFollowup {
+                        project,
+                        thread,
+                        id,
+                        task,
+                        reason: reason_file
+                            .as_deref()
+                            .map(|p| task_text(Some(p)))
+                            .transpose()?
+                            .map(|s| s.trim().to_string()),
+                    }
                 }
                 ThreadCmd::List { project, role, open, status, limit, after } => {
                     return threads_cli(
@@ -4151,11 +4178,19 @@ fn render_automation_origin(s: &mut String, t: &aaa_proto::ThreadView) {
 }
 
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
+    use std::fmt::Write as _;
+    for f in &t.followups {
+        let state = match (&f.task, &f.reason) {
+            (Some(task), _) => format!("할 일 {task}"),
+            (_, Some(reason)) => format!("사유: {reason}"),
+            _ => "후속 남음".into(),
+        };
+        let _ = writeln!(s, "후속 {} [{state}] {}", f.id, f.line);
+    }
     if t.status == aaa_proto::ThreadStatus::Starting {
         let _ = writeln!(s, "준비 중: {} (thread show·events에서 결과를 확인한다)", t.id);
     }
 
-    use std::fmt::Write as _;
     for w in &t.warnings {
         let _ = writeln!(s, "경고: {w}");
     }

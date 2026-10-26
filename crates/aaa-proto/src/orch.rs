@@ -1080,6 +1080,10 @@ pub struct ThreadView {
     pub acked_hash: Option<String>,
     /// report.md `## Next` 줄
     pub next: Vec<String>,
+    /// 완료 보고에서 남긴 후속과 명시적 처리 기록(FRONT_API 1.131).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<ThreadFollowup>>")]
+    pub followups: Vec<ThreadFollowup>,
     /// 마지막 사본 결과: complete·partial·failed
     pub copy: Option<String>,
     pub error: Option<String>,
@@ -1651,6 +1655,21 @@ pub struct FlowEvent {
     pub evidence: Option<String>,
     /// 사람이 읽는 한 줄
     pub detail: String,
+}
+
+/// 완료 보고의 후속 한 줄. 원래 판과 처리 기록은 다음 보고로 지우지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadFollowup {
+    pub id: String,
+    pub revision: String,
+    pub line: String,
+    /// 같은 프로젝트의 후속 할 일 표시 ID. 버림일 때는 없다.
+    pub task: Option<String>,
+    /// 버림·정리 완료의 명시적 사유.
+    pub reason: Option<String>,
+    pub actor: Option<String>,
+    #[ts(type = "number | null")]
+    pub handled_ms: Option<u64>,
 }
 
 /// report.md `## Next` 절의 줄: 한 줄에 권하는 행동 하나, 목록 표시는 빼고 빈 줄은 버린다

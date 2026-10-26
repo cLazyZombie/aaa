@@ -1,3 +1,4 @@
+import { ThreadFollowups } from "./ThreadFollowups";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
@@ -153,6 +154,7 @@ export function ThreadPanel({
         <HeadMore />
       </header>
       {msg && <div className="banner err">{msg}</div>}
+      <ThreadFollowups key={t.id} t={t} canAct={role !== "reader"} />
       <ResponsibilityBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       <ParkBanner t={t} canAct={role !== "reader"} running={!!onOpenPane} />
       {t.copy === "failed" && <div className="banner" data-testid="report-copy-failed">보고·결과물 사본을 다시 받는 중이다. 마지막으로 받은 내용과 작업 상태를 유지한다.</div>}
