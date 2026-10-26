@@ -1814,6 +1814,10 @@ draft?: QuestionAnswerView, };
 
 export type ThreadQuestion = {
 /**
+ * 답한 질문을 제외한 카드도 원문의 질문 번호로 답한다(FRONT_API 1.132).
+ */
+source_number?: number,
+/**
  * 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
  */
 after?: string,
@@ -1826,7 +1830,11 @@ id?: string, text: string, choices: Array<QuestionChoice>,
  */
 body?: string, };
 
-export type QuestionChoice = { label: string,
+export type QuestionChoice = {
+/**
+ * 보고에 쓴 선택지 글자(FRONT_API 1.132). 옛 자료는 배열 위치의 A부터 읽는다.
+ */
+letter?: string, label: string,
 /**
  * 「 — 」 뒤의 까닭 한 줄
  */

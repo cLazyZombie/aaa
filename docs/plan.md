@@ -8070,3 +8070,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 짧은 thread 주소의 hashchange는 이미 고른 thread를 같은 내부 열쇠로 바로 해석한다. 폼을 잠깐 내렸다 다시 만드는 경로가 입력을 잃게 하므로 주소 사건 전 입력을 사건 뒤에도 유지한다.
 - 웹 thread는 미처리 줄·후속 ID 입력·사유 기록과 처리 영수증을 보이며, 목록 요약에도 남은 개수를 표시한다. 할 일 상세는 후속 경고에서 thread로 이동하고 기존 종료/연결 해제 단추를 숨긴다. 운영 host·DB·설정은 바꾸지 않고 실험실로 확인한다.
 - 참고: [Gitea issue dependency](https://github.com/go-gitea/gitea/blob/main/models/issues/dependency.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 실재 대상 ID·중복 거부·남은 의존 구분과 [Zulip message flags](https://github.com/zulip/zulip/blob/main/zerver/actions/message_flags.py)([Apache-2.0](https://github.com/zulip/zulip/blob/main/LICENSE))의 알림 읽음과 원래 대상 상태 분리를 따른다. 외부 코드·의존성을 추가하지 않는다.
+
+### 8.504 질문 선택지 글자와 답한 질문 재보고(t-1124)
+
+- FRONT_API **1.132**: `QuestionChoice.letter`는 보고 원문의 글자다. `picks`는 기존처럼 배열 위치이며 카드·답 요약·CLI·자동 결정은 위치를 원문 글자로 변환한다. B·A·C처럼 순서가 달라도 글자가 빠짐없이 유일하면 그대로 보여 준다. 옛 자료에 글자가 없으면 위치의 A·B·C를 쓴다. 원문 순서·번호를 모르는 구판 CLI의 비정형 `thread answer`는 갱신 오류로 거절한다. 일반 A·B 카드와 q-ID 글자 답은 호환한다.
+- 중복·누락·선택지 수 상한·잘못된 질문 번호는 「형식 오류」로 표시한다. 중복 글자는 선택 단추를 비우고 원문을 남겨 직접 답을 받는다. 읽힌 선택지의 글자를 다른 글자로 바꾸지 않는다. thread 안내는 A부터 순서대로 작성하고 추천은 `(추천)` 표시로만 정한다.
+- 보고를 받으면 형식 오류를 작성한 thread의 inbox와 기존 메시지 대기열로 직접 돌려준다. 보고 hash마다 전송 자리를 먼저 잡아 중복 경고를 막으며 coordinator inbox도 남긴다. 실패한 단계·하위 오류는 coordinator 경고에 남기고 보고 복사 성공을 취소하지 않는다.
+- 같은 thread의 전달 완료된 답 보존 기록에서 질문 제목·본문·선택지·뒤 설명과 참조 library 파일의 실제 바이트가 같은 것을 찾는다. 질문 밖의 보고 변경이나 일부 질문만 재기재한 경우에는 원래 q-ID·답을 잇고 새 카드·답 기록·사용자 답 전달을 만들지 않는다. thread에는 답한 질문을 보고에서 빼라고 알린다. 다른 thread·post·전달 중 claim과 변경/누락된 자료는 근거가 아니다. 기본 검수 카드는 새 보고의 검수를 계속 물을 수 있다.
+- 답한 질문과 새 질문이 섞이면 새 질문만 카드에 남기고 `ThreadQuestion.source_number`로 원문의 번호를 유지한다. 카드의 2번은 웹·CLI·thread 전달 모두 2번이다. 기존 `aaa:question` 참조와 보존한 답 목록은 같은 q-ID로 열린다. 재시작의 질문 재해석에도 같은 규칙을 적용한다. 운영 host·DB 대신 격리 실험실에서 확인한다.
+- 참고: [Enquirer ArrayPrompt](https://github.com/enquirer/enquirer/blob/master/lib/types/array.js)([MIT](https://github.com/enquirer/enquirer/blob/master/LICENSE))의 값/표시/위치 구분과 [prompt-toolkit dialogs](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/src/prompt_toolkit/shortcuts/dialogs.py)([BSD-3-Clause](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/LICENSE))의 표시문과 반환값 분리를 따른다. 외부 코드·의존성은 추가하지 않는다.

@@ -2575,7 +2575,37 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         Err(e) => anyhow::bail!("{}", e.message),
                     };
                     let Some(q) = view.questions else { anyhow::bail!("{thread}에는 답할 질문이 없다") };
-                    let picks = answer_picks(&answers.join(" "), q.items.len())?;
+                    let count = q
+                        .items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, q)| q.source_number.unwrap_or(i as u32 + 1) as usize)
+                        .max()
+                        .unwrap_or(0);
+                    let letters = answer_picks(&answers.join(" "), count)?;
+                    let mut picks = Vec::new();
+                    for (i, item) in q.items.iter().enumerate() {
+                        let number = item.source_number.unwrap_or(i as u32 + 1) as usize;
+                        picks.push(
+                            letters[number - 1]
+                                .map(|n| {
+                                    let letter = char::from(b'A' + n as u8).to_string();
+                                    item.choice_index(&letter).ok_or_else(|| anyhow::anyhow!("없는 선택지다: {letter}"))
+                                })
+                                .transpose()?,
+                        );
+                    }
+                    for (i, pick) in letters.iter().enumerate() {
+                        if pick.is_some()
+                            && !q
+                                .items
+                                .iter()
+                                .enumerate()
+                                .any(|(n, q)| q.source_number.unwrap_or(n as u32 + 1) as usize == i + 1)
+                        {
+                            anyhow::bail!("{}번 질문은 이미 답했거나 없다", i + 1);
+                        }
+                    }
                     FrontRequest::ThreadAnswer { project, thread, report_hash: q.report_hash, picks, text }
                 }
                 ThreadCmd::Message { thread, legacy, interrupt, text_file, text, summary_file } => {

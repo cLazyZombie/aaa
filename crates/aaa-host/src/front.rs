@@ -391,6 +391,17 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                 ReqFrame::Other => continue,
             };
             match body {
+                body @ FrontRequest::ThreadAnswer { .. } if proto.minor < 132 => {
+                    let FrontRequest::ThreadAnswer { project, thread, .. } = &body else { unreachable!() };
+                    let needs_letters = host.load(project, thread).is_ok_and(|rec| rec.questions.iter().enumerate().any(|(n, q)| {
+                        q.source_number.is_some_and(|number| number != n as u32 + 1)
+                            || q.choices.iter().enumerate().any(|(i, c)| c.letter_at(i) != char::from(b'A' + i as u8).to_string())
+                    }));
+                    let result = if needs_letters {
+                        Err(ErrorBody::new(ErrorCode::UnsupportedVersion, "보고의 질문 번호·선택지 글자로 답하려면 Front API 1.132 이상 CLI가 필요하다. aaa를 갱신한다"))
+                    } else { host.call_from(role, &actor, Some(&front), body).await };
+                    tx.control(res_frame(id, result)).await?;
+                }
                 FrontRequest::Threads { .. } if proto.minor < 130 => {
                     // 구판은 next_after를 버려 첫 페이지만 전체 목록으로 오해한다.
                     let error = ErrorBody::new(
@@ -617,6 +628,85 @@ mod tests {
         drop(rx);
         drop(tx);
         task.await.unwrap().unwrap();
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 구판 CLI가 B/A 원문을 위치의 A/B로 오해해 다른 답을 보내지 않게 한다.
+    #[tokio::test]
+    async fn legacy_cli_answers_require_source_letters_only_for_noncanonical_cards() {
+        let root = std::env::temp_dir().join(format!("aaa-question-wire-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.project_create("p", Default::default(), "test").unwrap();
+        for (id, choices, code) in [
+            ("t-0001", "- B 새 안\n- A 원래\n", ErrorCode::UnsupportedVersion),
+            ("t-0002", "- A 원래\n- B 새 안\n", ErrorCode::BadRequest),
+        ] {
+            let mut rec = crate::orch::ThreadRec::starting(
+                "p",
+                "질문",
+                "m",
+                "fake",
+                aaa_proto::Role::Worker,
+                aaa_proto::ThreadKind::Dir,
+                0,
+            );
+            rec.id = id.into();
+            rec.status = aaa_proto::ThreadStatus::Open;
+            rec.brief = aaa_proto::BriefState::Delivered;
+            rec.report_hash = Some("v".into());
+            rec.questions = aaa_proto::report_questions(&format!("## Questions\n### 1. 진행\n{choices}"));
+            h.db.thread_import("p", id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+            let (client, server) = tokio::io::duplex(MAX_FRAME);
+            let (sr, sw) = tokio::io::split(server);
+            let (cr, cw) = tokio::io::split(client);
+            let task = tokio::spawn(serve_conn(
+                h.clone(),
+                spawn_writer(sw, MAX_FRAME),
+                FrameRx::new(sr, MAX_FRAME),
+                Conn {
+                    role: DeviceRole::Local,
+                    actor: "local:cli".into(),
+                    front: h.new_front("cli".into()),
+                    proto: aaa_proto::Version { major: 1, minor: 131 },
+                },
+            ));
+            let tx = spawn_writer(cw, MAX_FRAME);
+            tx.json(&FrontMsg::Req {
+                id: "answer".into(),
+                body: FrontRequest::ThreadAnswer {
+                    project: "p".into(),
+                    thread: id.into(),
+                    report_hash: "v".into(),
+                    picks: vec![Some(0)],
+                    text: None,
+                },
+            })
+            .await
+            .unwrap();
+            let mut rx = FrameRx::new(cr, MAX_FRAME);
+            loop {
+                if let FrontMsg::Res { result, .. } =
+                    tokio::time::timeout(Duration::from_secs(2), rx.control::<FrontMsg>()).await.unwrap().unwrap()
+                {
+                    let error = result.into_result().unwrap_err();
+                    assert_eq!(error.code, code);
+                    assert!(error.message.contains(if code == ErrorCode::UnsupportedVersion {
+                        "1.132"
+                    } else {
+                        "thread 세션이 없다"
+                    }));
+                    break;
+                }
+            }
+            drop(rx);
+            drop(tx);
+            task.await.unwrap().unwrap();
+            assert!(h.load("p", id).unwrap().question_answer.is_none());
+        }
         drop(h);
         std::fs::remove_dir_all(root).unwrap();
     }

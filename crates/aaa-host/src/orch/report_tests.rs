@@ -340,7 +340,8 @@ async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_o
         let err = lab.h.thread_answer("p", "t-0001", &q.report_hash, vec![Some(0)], None, "test").await.unwrap_err();
         assert_eq!(err.message, "thread 세션이 없다");
         if let Some(id) = q.items.first().and_then(|q| q.id.as_deref()) {
-            let err = lab.h.reply_by_id("p", id, Some("A"), None, "test").await.unwrap_err();
+            let err =
+                lab.h.reply_by_id("p", id, Some(&q.items[0].choices[0].letter_at(0)), None, "test").await.unwrap_err();
             assert_eq!(err.message, "thread 세션이 없다");
             assert!(lab.h.db.question_target(Some("p"), id).unwrap().unwrap().draft.is_none());
         }
@@ -348,8 +349,57 @@ async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_o
         let items = lab.h.inbox("p", true, true).unwrap().items;
         let warnings: Vec<_> = items.iter().filter(|i| i.item_kind == "question-format-warning").collect();
         assert_eq!(warnings.len(), 1, "{items:?}");
-        assert!(!warnings[0].body.contains("전달 실패"));
+        assert!(warnings[0].body.contains("pane 알림 전달 실패: thread 세션이 없다"));
         assert!(lab.h.load("p", "t-0001").unwrap().question_answer.is_none());
+    }
+}
+
+/// 보고 밖의 진행 글이 바뀌거나 질문 일부만 남아도 답을 되묻지 않는다.
+/// 새 질문이 섞이면 그 질문만 원문 번호로 열어 답 전달 번호를 바꾸지 않는다.
+#[tokio::test]
+async fn answered_reports_reuse_ids_and_mixed_reports_open_only_new_questions() {
+    const OLD: &str = "## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n";
+    for (report, changed) in [
+        (
+            "[결정 필요] 질문 1개: 재보고\n## Report\n진행 글 변경\n## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n",
+            false,
+        ),
+        (
+            "[결정 필요] 질문 2개: 섞임\n## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n### 2. 색\n- A 파랑\n- B 회색\n",
+            true,
+        ),
+    ] {
+        let lab = Lab::with_report(0, b"", "unused", b"", report);
+        let mut old = lab.h.load("p", "t-0001").unwrap();
+        old.questions =
+            lab.h.identify_questions("p", "thread", &old.id, "previous", &aaa_proto::report_questions(OLD)).unwrap();
+        let id = old.questions[0].id.clone();
+        let answer = aaa_proto::QuestionAnswerView {
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1B".into(),
+            by: "CLI".into(),
+            at_ms: 10,
+        };
+        lab.h.record_answer(&old, &answer);
+        lab.h.collect("p", "t-0001", true).await.unwrap();
+        let q = lab.h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+        assert_eq!(q.items.len(), 1);
+        if changed {
+            assert!(q.answer.is_none());
+            assert_ne!(q.items[0].id, id);
+            assert_eq!(q.items[0].source_number, Some(2));
+            assert_eq!(crate::answer::compose(&q.items, &[Some(1)], None).unwrap().1, "2B");
+        } else {
+            assert_eq!(q.items[0].id, id);
+            assert_eq!(q.answer.unwrap(), answer);
+            assert!(lab.h.question_catalog(false).unwrap().is_empty());
+        }
+        let records = lab.h.db.ask_list("p").unwrap();
+        assert_eq!(records.len(), 1, "재보고로 답 기록도 복제하지 않는다");
+        lab.h.backfill_review_questions().unwrap();
+        let after = lab.h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+        assert_eq!(after.items, q.items, "재시작의 재해석에서도 중복을 만들지 않는다");
     }
 }
 

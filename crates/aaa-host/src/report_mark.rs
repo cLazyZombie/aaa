@@ -2,6 +2,7 @@
 use crate::{Host, orch::ThreadRec};
 use aaa_proto::ReportAttention;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 pub(crate) fn marker(report: &str) -> Option<&'static str> {
     let first = report.trim_start_matches('\u{feff}').lines().next()?;
@@ -64,13 +65,27 @@ pub(crate) fn question_warning(report: &str) -> Option<String> {
 
 impl Host {
     /// 보고 hash별 한 번: coordinator 알림과 thread 작업 폴더 inbox에 같은 자료를 남긴다.
-    pub(crate) async fn warn_question_format(&self, rec: &ThreadRec, warning: &str) {
+    pub(crate) async fn warn_question_format(self: &Arc<Self>, rec: &ThreadRec, warning: &str) {
         if rec.question_warning_sent == rec.report_hash {
             return;
         }
+        let mut claimed = false;
+        if let Err(e) = self.update_rec(&rec.project, &rec.id, |r| {
+            if r.report_hash == rec.report_hash && r.question_warning_sent != rec.report_hash {
+                r.question_warning_sent = rec.report_hash.clone();
+                claimed = true;
+            }
+        }) {
+            tracing::warn!("질문 형식 경고 전달 기록 실패: {}", e.message);
+            return;
+        }
+        if !claimed {
+            return;
+        }
         let mut body = format!(
-            "{warning}\n보고: threads/{}.md\n사용자는 읽힌 선택지나 직접 입력으로 답할 수 있다. 보고 형식도 고친다.",
-            rec.id
+            "형식 오류: {warning}\n보고: threads/{}.md\n보고 판: {}\n보고의 Questions를 고쳐 다시 쓴다. 선택지는 A부터 순서대로 쓰고 추천은 (추천)으로만 표시한다.",
+            rec.id,
+            rec.report_hash.as_deref().unwrap_or_default().chars().take(12).collect::<String>()
         );
         if let Some(work) = &rec.work_dir {
             let result = async {
@@ -98,10 +113,18 @@ impl Host {
                 body.push_str(&format!("\nthread inbox 전달 실패: {}", e.message));
             }
         }
-        // 연결 실패도 coordinator 경고에 남긴다. 보고 복사 성공을 실패로 바꾸지 않는다.
-        if let Err(e) = self.update_rec(&rec.project, &rec.id, |r| r.question_warning_sent = rec.report_hash.clone()) {
-            tracing::warn!("질문 형식 경고 전달 기록 실패: {}", e.message);
+        if let Err(e) = Box::pin(self.thread_message(
+            &rec.project,
+            &rec.id,
+            format!("[aaa 질문 형식 오류]\n{body}"),
+            aaa_proto::MessageMode::Queue,
+            "host",
+        ))
+        .await
+        {
+            body.push_str(&format!("\npane 알림 전달 실패: {}", e.message));
         }
+        // 연결 실패도 coordinator 경고에 남긴다. 보고 복사 성공을 실패로 바꾸지 않는다.
         self.inbox_add_body(
             &rec.project,
             "question-format-warning",
@@ -110,6 +133,25 @@ impl Host {
             &format!("{}: {warning}", rec.id),
             &body,
         );
+    }
+
+    pub(crate) async fn warn_answered_questions(self: &Arc<Self>, rec: &ThreadRec, ids: &[String]) {
+        let ids = ids.join(" ");
+        let body = format!(
+            "[aaa 이미 답한 질문]\n{ids}: 같은 질문의 답과 ID를 유지했다. 답한 질문의 새 카드는 만들지 않았다. 보고의 Questions에서 답한 질문을 빼고 진행한다."
+        );
+        if let Err(e) =
+            Box::pin(self.thread_message(&rec.project, &rec.id, body, aaa_proto::MessageMode::Queue, "host")).await
+        {
+            self.inbox_add_body(
+                &rec.project,
+                "question-repeat-warning",
+                &rec.id,
+                "답한 질문 재보고",
+                &format!("{}: 답한 질문을 보고에서 뺀다", rec.id),
+                &format!("pane 알림 전달 실패: {}", e.message),
+            );
+        }
     }
 
     pub(crate) fn backfill_review_questions(&self) -> Result<(), aaa_proto::ErrorBody> {
@@ -121,17 +163,27 @@ impl Host {
             let Some(report) = self.verified_report(&rec).filter(|r| needs_user(r)) else {
                 continue;
             };
+            let parsed = questions(&report);
+            let repeated = if question_warning(&report).is_none() && !default_review(&report) {
+                self.repeated_answer(&rec, &parsed)?
+            } else {
+                None
+            };
+            let answer = repeated.as_ref().and_then(|r| r.answer.clone());
             let items = self.identify_questions(
                 &rec.project,
                 "thread",
                 &rec.id,
                 rec.report_hash.as_deref().unwrap_or_default(),
-                &questions(&report),
+                &repeated.map(|r| r.items).unwrap_or(parsed),
             )?;
             let mut old_items = rec.questions.clone();
             let mut new_items = items.clone();
             for q in old_items.iter_mut().chain(new_items.iter_mut()) {
                 q.id = None;
+                for (i, c) in q.choices.iter_mut().enumerate() {
+                    c.letter = Some(c.letter_at(i));
+                }
             }
             let changed = old_items != new_items && !default_review(&report);
             let warning = question_warning(&report).or_else(|| {
@@ -149,6 +201,7 @@ impl Host {
             }
             self.update_rec(&rec.project, &rec.id, |r| {
                 r.questions = items;
+                r.question_answer = answer;
                 r.question_warning = warning;
             })?;
         }

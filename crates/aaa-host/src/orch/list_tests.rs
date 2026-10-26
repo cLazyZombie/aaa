@@ -27,6 +27,7 @@ impl Lab {
         if let Some(body) = question_body {
             r.report_hash = Some("fixture-report".into());
             r.questions = vec![aaa_proto::ThreadQuestion {
+                source_number: None,
                 id: None,
                 text: "다음 단계".into(),
                 choices: vec![],

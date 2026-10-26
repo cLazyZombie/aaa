@@ -201,6 +201,7 @@ impl Host {
             } else {
                 (
                     vec![ThreadQuestion {
+                        source_number: None,
                         id: Some(id.into()),
                         text: request.title,
                         body: Some(request.body),
@@ -218,7 +219,8 @@ impl Host {
         let value = choice.as_deref().or(text.as_deref()).unwrap_or_default().trim();
         nonempty(value, "답")?;
         let pick = (value.len() == 1 && value.as_bytes()[0].is_ascii_alphabetic())
-            .then(|| u32::from(value.as_bytes()[0].to_ascii_uppercase() - b'A'));
+            .then(|| question.choice_index(value).ok_or_else(|| err(ErrorCode::BadRequest, "없는 선택지다")))
+            .transpose()?;
         if pick.is_some_and(|n| n as usize >= question.choices.len()) {
             return Err(err(ErrorCode::BadRequest, "없는 선택지다"));
         }
@@ -333,6 +335,7 @@ impl Host {
                 }
             } else {
                 add(&ThreadQuestion {
+                    source_number: None,
                     id: r.question_id,
                     text: r.title,
                     body: Some(r.body),
@@ -358,7 +361,14 @@ impl Host {
         {
             nonempty(value, name)?;
         }
-        let question = ThreadQuestion { id: None, text: note.question, body: None, after: None, choices: vec![] };
+        let question = ThreadQuestion {
+            source_number: None,
+            id: None,
+            text: note.question,
+            body: None,
+            after: None,
+            choices: vec![],
+        };
         if aaa_proto::auto_question_exception(&question) {
             return Err(err(ErrorCode::Forbidden, "사용자 전용 질문은 auto-decision으로 대신할 수 없다"));
         }

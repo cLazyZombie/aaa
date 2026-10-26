@@ -14,6 +14,7 @@ import { root, aaa, until, step, browser, webkit, pairPage, inList, showPanel, w
 
 import { pairDevice } from "../lib/devices.mjs";
 import { questionReplyScenario } from "../lib/question-reply.mjs";
+import { questionLettersScenario } from "../lib/question-letters.mjs";
 
 const LABEL = "cq1";
 
@@ -427,7 +428,8 @@ export default async function ({ page }) {
       // 일부 선택지를 못 읽어도 보이는 선택지와 직접 답을 쓸 수 있다.
       const broken = await write(source.replace("**A(추천)**", "**A(추천)"));
       await card.getByTestId("question-format-warning").waitFor();
-      if (await card.getByTestId("thread-ask-pick-1A").isDisabled()) throw new Error("경고가 선택을 막았다");
+      if (await card.getByTestId("thread-ask-pick-1A").count()) throw new Error("빠진 A를 다른 선택지에 붙였다");
+      if (!(await card.getByTestId("thread-ask-pick-1B").textContent()).includes(broken.questions.items[0].choices[0].label)) throw new Error("원문 B를 보존하지 않았다");
       await card.getByTestId("thread-ask-text").fill("누락 원문의 첫 선택지로 진행");
       await card.getByTestId("thread-ask-send").click();
       await waitOutput(t.pane, "직접 쓴 답: 누락 원문의 첫 선택지로 진행");
@@ -463,7 +465,7 @@ export default async function ({ page }) {
       aaa("question", "answer", cli.questions.items[0].id, "A");
       await until("경고 카드 CLI 답 저장", () => aaa("thread", "show", t.id).questions.answer?.summary === "1A");
       await waitOutput(t.pane, "사용자 답(1A)");
-      await write("[결정 필요] 질문 1개: thread CLI\n## Questions\n### 1. 진행\n- A 진행\n");
+      await write("[결정 필요] 질문 1개: thread CLI\n## Questions\n### 1. 새 진행\n- A 진행\n");
       aaa("thread", "answer", t.id, "1A");
       await until("경고 카드 thread CLI 답 저장", () => aaa("thread", "show", t.id).questions.answer?.summary === "1A");
       const repaired = await write(source + "\n");
@@ -477,6 +479,8 @@ export default async function ({ page }) {
       if (answer?.summary !== "1C 2B") throw new Error(`글자가 달라졌다: ${JSON.stringify(answer)}`);
       const warnings = aaa("inbox", "list", "demo", "--all", "--peek").items.filter((i) => i.item_kind === "question-format-warning" && i.subject === t.id);
       if (warnings.length !== 4) throw new Error(`보고별 경고 중복: ${JSON.stringify(warnings)}`);
+      await questionLettersScenario(page, t, write, "chromium-1280");
+      await questionLettersScenario(phone.page, t, write, "webkit-390");
       if (phone.errors.length) throw new Error(phone.errors.join("; "));
     } finally {
       await phone.page.context().close();

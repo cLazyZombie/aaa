@@ -80,6 +80,7 @@ mod project;
 mod prompt;
 mod prompt_box;
 mod push;
+mod question_repeat;
 mod quota;
 mod quota_rpc;
 mod report_ids;

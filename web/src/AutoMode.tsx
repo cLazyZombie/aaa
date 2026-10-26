@@ -111,7 +111,7 @@ export function AutoDecisionCard({ decision: d }: { decision: AutoDecision }) {
     <h3>{d.question.id} {d.question.text}</h3>
     {d.question.body && <AskMarkdown base={d.files_base}>{d.question.body}</AskMarkdown>}
     <div className="auto-choices">{d.question.choices.map((c, n) => <div key={n} className={n === d.pick ? "is-chosen" : ""}>
-      <span>{String.fromCharCode(65 + n)}</span><span>{c.label}{c.description && <small>{c.description}</small>}{c.body && <AskMarkdown base={d.files_base}>{c.body}</AskMarkdown>}</span>
+      <span>{c.letter ?? String.fromCharCode(65 + n)}</span><span>{c.label}{c.description && <small>{c.description}</small>}{c.body && <AskMarkdown base={d.files_base}>{c.body}</AskMarkdown>}</span>
       {c.recommended && <span className="badge">추천</span>}{n === d.pick && <strong>coordinator가 고름</strong>}
     </div>)}</div>
     {d.pick === null && <p><strong>고른 답:</strong> {d.choice}</p>}
