@@ -306,6 +306,10 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let claude_file = w.scripts.join("import.token");
     std::fs::write(&claude_file, &claude).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&claude_file)]);
+    // 기본·profile 인증 경로를 격리한다. 자동 배정은 E2E81이 검사한다.
+    for account in ["work", "token"] {
+        w.h.ok(&["account", "pool", "remove", account]);
+    }
     w.h.ok(&["account", "default", "codex", "work"]);
     let task = w.task("task.txt", "인증 실험실에서 기다린다");
     let mut jobs = vec![];
@@ -560,6 +564,8 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
         responses.push(start.clone());
         responses.push(login_result(&w, id, "succeeded"));
         assert!(!home.exists(), "성공 상태 전에 임시 인증 정리");
+        // 이 owner는 자동 배정과 분리해 기본 계정 고정·거부를 검사한다.
+        w.h.ok(&["account", "pool", "remove", name]);
         w.h.ok(&["account", "default", harness, name]);
         assert!(w.h.json(&["account", "remove", name]).is_err(), "기본 계정 삭제 거부");
     }
@@ -654,6 +660,7 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     let other = w.scripts.join("other.token");
     std::fs::write(&other, &legacy).unwrap();
     w.h.ok(&["account", "import", "broken", "--harness", "claude", "--file", path_str(&other)]);
+    w.h.ok(&["account", "pool", "remove", "broken"]);
     w.h.ok(&["account", "default", "claude", "broken"]);
     std::fs::remove_file(w.h.state.join("host/accounts/broken.json")).unwrap();
     assert!(
