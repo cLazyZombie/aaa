@@ -4,6 +4,14 @@
 - 꼭 필요한 이유: 사용자가 보낸 것을 바로 보는 계약(ACK 전 표시)과 중복·새로고침 유지는 단위 시험으로 실제 WebSocket·기록 경로를 대신할 수 없다. E2E23 막힘 단계에는 말풍선의 막힘 표지와 멈춘 뒤 거둠 단언만 더했다.
 - 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs <캡처 폴더> --spec 115 --workers 1`, 관련 `--spec 23,35,102,45,22,25,11,66`. 고정 sleep·재시도·시한 연장은 없다.
 
+## Windows M4의 내부 profile 연결(t-1072)
+
+- `scripts/ci-windows-sshd.ps1`은 workflow의 성공한 ci-local build가 만든 `target/e2e/aaa.exe`를 사용자·서비스·보호 입력 생성 전에 확인한다. `windows-sshd-test-command.ps1`의 같은 준비 함수가 절대 binary 경로·worktree target·작업 폴더와 `cargo test --profile verify`를 정한다. 다른 target이나 debug 캐시로 대체하지 않으며 preflight SHA와 profile·산출물 경로·시험 종료 코드를 기록한다.
+- 꼭 필요한 새 회귀 `pwsh -NoProfile -File scripts/test-windows-sshd-command.ps1`은 Windows ci-local test에서 실행한다. 임시 폴더의 native cargo fixture를 rustc로 만들고 실제 Process.Start로 argv·환경·공백 포함 작업 폴더·fresh e2e bytes를 검사한다. 첫 실행에는 debug 폴더 자체가 없다. 이어서 e2e 파일을 없애고 옛 debug 파일만 두면 준비 단계에서 거부해야 한다. 서비스·사용자·SSH·설치는 실행하지 않는다. 이 회귀는 이번의 빌드/시험 연결 누락과 캐시가 누락을 가리는 회귀를 함께 막기 위해 필요하다.
+- 전체 SYSTEM SSH·사용자 SCM 설치/등록·틀린 암호/보호 입력·TLS 연결·영속 원문 부재·정리는 기존 ignored Rust owner가 그대로 맡는다. 운영 머신에서 GitHub 전용 guard를 우회하지 않는다. 비특권 회귀 통과를 전체 M4 통과로 세지 않는다.
+- macOS 실제 LaunchAgent와 root SSH의 ignored owner도 `--profile verify`로 사전 컴파일과 맞춘다. `CARGO_BIN_EXE_aaa`가 해당 profile 산출물을 선택한다. 관측하지 않은 macOS CI 실패를 이번 원인으로 확정하지 않는다. 실패 재시도·시한 확대·기대값 변경은 없다.
+- OSS 참고는 [uv의 내부 fast-build profile](https://github.com/astral-sh/uv/blob/main/Cargo.toml)(MIT OR Apache-2.0)과 [Helix의 integration profile](https://github.com/helix-editor/helix/blob/master/Cargo.toml)·[명시적 integration-test alias](https://github.com/helix-editor/helix/blob/master/.cargo/config.toml)(MPL-2.0)다. 내부/배포 profile 분리와 실제 시험 호출의 profile 명시를 따르며 외부 코드·의존성을 추가하지 않는다.
+
 ## 할 일 완료 목록 정렬(t-1067)
 
 - host 유닛 `archive_sorts_newest_first_and_pages_across_equal_values`: 끝난 날짜 기본·시작 날짜(처음 이은 thread, 기록 없음은 끝)·번호의 내림차순, 같은 끝난 시각을 한 건 페이지로 넘겨도 건너뛰거나 되풀이하지 않는 커서, 옛 ULID 커서 거부, 시작 시각을 내구 보관에 쓰지 않음을 검사한다. 기존 `archive_search_pages…`는 기본 차례 기대만 최신순으로 바꿨다.

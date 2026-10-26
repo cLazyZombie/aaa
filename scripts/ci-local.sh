@@ -99,7 +99,10 @@ step_clippy() { cargo clippy --profile verify --workspace --all-targets --locked
 step_linux_clippy() { bash scripts/ci-linux-clippy.sh; }
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
-  if [ "$OS" = windows ]; then cargo test --profile verify --workspace --locked --no-fail-fast; return $?; fi
+  if [ "$OS" = windows ]; then
+    pwsh -NoProfile -File scripts/test-windows-sshd-command.ps1 || return $?
+    cargo test --profile verify --workspace --locked --no-fail-fast; return $?
+  fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
   python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids >"$LOGS/python.log" 2>&1 &
