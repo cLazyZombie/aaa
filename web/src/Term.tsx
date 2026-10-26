@@ -26,6 +26,7 @@ import { refusalText, steerAvailability, steerSettled, STEER_IDLE, STEER_SLOW_MS
 import { onThemeChange, token } from "./theme";
 import { resolveTerminalTheme, terminalThemeColors, terminalThemeStyle } from "./terminalTheme";
 import { matchCompositionView } from "./compositionView";
+import { terminalComposition, type TerminalComposition } from "./terminalComposition";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
 import { keyboardHoldsGrid, keyboardUp } from "./herdr/keyboard.ts";
 import { attachTrace, trace } from "./inputTrace";
@@ -474,8 +475,7 @@ export function TermView({
 
   // 터미널 조합 상태(herdr-web-ui PaneTerminal과 같다): 조합 중이거나 방금 끝난 조합의 확정 글에는 유지 키를 붙이지 않는다.
   // 조합 중에는 키 막대를 회색으로 둔다(PaneTerminal 3017줄).
-  const composingTermRef = useRef(false);
-  const commitPendingRef = useRef(false);
+  const compositionRef = useRef<TerminalComposition | null>(null);
   const [composing, setComposing] = useState(false);
 
   // 이 터미널이 화면에 있다. 다른 pane으로 바꾸면 화면에서 지우기 전에(layout effect 정리) 내린다: 지워지는 textarea의
@@ -498,7 +498,7 @@ export function TermView({
     if (/^\x1b\[\d+;\d+R$/.test(data)) return;
     // 화면 키보드는 keydown 없이 글을 넣는다: 한 글자 키에는 유지 키 chord를 붙인다(PaneTerminal 1360~1363줄)
     const m = modifiersRef.current;
-    if (hasModifiers(m) && !pastingRef.current && !composingTermRef.current && !commitPendingRef.current) {
+    if (hasModifiers(m) && !pastingRef.current && !compositionRef.current?.state.active && !(compositionRef.current?.state.pending || compositionRef.current?.state.sending)) {
       const key = keyFromData(data);
       const chord = key !== null ? terminalChord(key, m) : null;
       if (chord === "ctrl+enter") return void pressCtrlEnter();
@@ -520,7 +520,7 @@ export function TermView({
     const traceId = inputTraceId();
     const blocked = blockedCtrlEnter;
     if (!canControlRef.current || readonlyRef.current) { blocked("readonly"); return false; }
-    if (composingTermRef.current || commitPendingRef.current || lineComposingRef.current) { blocked("composing"); return false; }
+    if (compositionRef.current?.state.active || (compositionRef.current?.state.pending || compositionRef.current?.state.sending) || lineComposingRef.current) { blocked("composing"); return false; }
     if (!draftIsEmpty(draftRef.current)) {
       blocked("held_draft");
       setInputError(HELD_FIRST);
@@ -708,29 +708,12 @@ export function TermView({
     // 데스크톱은 pane을 열면 바로 친다(PaneTerminal 2072줄). 터치 기기는 키보드를 올리지 않게, 모달 중에는 그것을 두고 하지 않는다.
     // App이 스스로 고른 pane도 사용자가 고를 때까지 두고(참고 autoSelected) 아래 effect가 받는다
     if (!autoSelectedRef.current && !chatViewRef.current && !window.matchMedia("(pointer: coarse)").matches && !document.querySelector('[aria-modal="true"]')) term.focus();
-    // herdr-web-ui PaneTerminal(aa624cb) 588~605줄: xterm textarea의 확정이 이 bubbling 처리보다 먼저 줄을 선다.
-    // 그 확정은 글로 두고(유지 키 없음), 새 조합이 시작되면 이 표시는 지운다.
-    let compositionEndTimer: number | null = null;
-    commitPendingRef.current = false;
-    const compositionStart = () => {
-      if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
-      compositionEndTimer = null;
-      commitPendingRef.current = false;
-      composingTermRef.current = true;
-      setComposing(true);
-    };
-    const compositionEnd = () => {
-      if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
-      commitPendingRef.current = true;
-      composingTermRef.current = false;
-      setComposing(false);
-      compositionEndTimer = window.setTimeout(() => {
-        compositionEndTimer = null;
-        commitPendingRef.current = false;
-      }, 0);
-    };
-    box.current!.addEventListener("compositionstart", compositionStart);
-    box.current!.addEventListener("compositionend", compositionEnd);
+    const composition = terminalComposition(term);
+    compositionRef.current = composition;
+    const compositionSub = composition.observeState(() => {
+      const { active, pending, sending } = composition.state;
+      setComposing(active || pending || sending);
+    });
     // herdr-web-ui terminalGlyphs.ts 그대로(PaneTerminal.tsx 609줄): 칸보다 좁은 글자를 키우고 가운데 두며,
     // 조합 상자의 크기·자간을 그 줄에 맞춘다. 조합 상자 색과 세로 자리는 aaa가 그 칸에 맞춘다(compositionView.ts).
     const stopGlyphs = adjustTerminalGlyphs(term);
@@ -877,8 +860,8 @@ export function TermView({
       if (
         hasModifiers(held) &&
         !readonlyRef.current &&
-        !composingTermRef.current &&
-        !commitPendingRef.current &&
+        !compositionRef.current?.state.active &&
+        !(compositionRef.current?.state.pending || compositionRef.current?.state.sending) &&
         !event.isComposing &&
         event.keyCode !== 229 &&
         !event.metaKey
@@ -980,7 +963,7 @@ export function TermView({
     };
     // xterm은 Cmd+화살표를 무시한다: 줄 처음(Ctrl+A)·끝(Ctrl+E). textarea keydown 뒤(bubble)에 IME 글이 먼저 간다.
     const onCommandArrow = (event: KeyboardEvent) => {
-      if (!isMac || event.target !== term.textarea || event.defaultPrevented || composingTermRef.current) return;
+      if (!isMac || event.target !== term.textarea || event.defaultPrevented || compositionRef.current?.state.active) return;
       if (event.isComposing || event.keyCode === 229 || !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       const seq = event.key === "ArrowLeft" ? "\x01" : event.key === "ArrowRight" ? "\x05" : null;
       if (seq === null) return;
@@ -1212,7 +1195,7 @@ export function TermView({
     const onReclaimKey = (event: KeyboardEvent) => {
       if (!(event.target instanceof Node) || !term.element?.contains(event.target)) return;
       // IME 첫 키는 compositionstart보다 먼저, isComposing 없이 온다(keyCode 229)
-      if (event.repeat || event.isComposing || event.keyCode === 229 || composingTermRef.current || commitPendingRef.current) return;
+      if (event.repeat || event.isComposing || event.keyCode === 229 || compositionRef.current?.state.active || (compositionRef.current?.state.pending || compositionRef.current?.state.sending)) return;
       autoFit.current(true);
     };
     window.addEventListener("keydown", onReclaimKey, { capture: true });
@@ -1652,10 +1635,9 @@ export function TermView({
       el.removeEventListener("touchcancel", onTouchEnd, true);
       el.removeEventListener("gesturestart", onGesture);
       el.removeEventListener("gesturechange", onGesture);
-      el.removeEventListener("compositionstart", compositionStart);
-      el.removeEventListener("compositionend", compositionEnd);
+      compositionSub.dispose();
+      if (compositionRef.current === composition) compositionRef.current = null;
       el.removeEventListener("keydown", onCommandArrow);
-      if (compositionEndTimer !== null) window.clearTimeout(compositionEndTimer);
       stopGlyphs();
       stopCompositionView();
       dataSub.dispose();
@@ -1912,7 +1894,7 @@ export function TermView({
   const barItems = useKeyBarItems();
   const pressKey = (item: KeyBarKeyItem) => {
     const term = termRef.current;
-    if (!term || composingTermRef.current || commitPendingRef.current) return;
+    if (!term || compositionRef.current?.state.active || (compositionRef.current?.state.pending || compositionRef.current?.state.sending)) return;
     // 저장된 조합은 그대로, 보통 키는 유지 키를 이어받는다. 내장 ^C 키는 늘 ^C다.
     const active = item.modifiers ?? modifiersRef.current;
     const modified = (item.key !== "ctrl-c" || item.modifiers !== undefined) && (hasModifiers(active) || item.modifiers !== undefined);
@@ -1933,14 +1915,14 @@ export function TermView({
   // 잇지 않고(눌러 둔 Ctrl이 Esc를 다른 키로 바꾸지 않게) 입력창에 있는 focus를 터미널로 옮기지 않는다
   const interruptAgent = () => {
     const term = termRef.current;
-    if (!term || composingTermRef.current || commitPendingRef.current) return;
+    if (!term || compositionRef.current?.state.active || (compositionRef.current?.state.pending || compositionRef.current?.state.sending)) return;
     const seq = keyBarInputSequence("Escape", term.modes.applicationCursorKeysMode);
     if (seq === null) return;
     autoFit.current(true);
     deliver(seq);
   };
   const toggleModifier = (modifier: keyof StickyModifiers) => {
-    if (composingTermRef.current) return;
+    if (compositionRef.current?.state.active) return;
     setModifiers((m) => ({ ...m, [modifier]: !m[modifier] }));
     if (!inputLineRef.current) termRef.current?.focus();
   };
@@ -2026,7 +2008,7 @@ export function TermView({
     return true;
   };
   const toggleDirect = () => {
-    if (composingTermRef.current || lineComposingRef.current) return;
+    if (compositionRef.current?.state.active || lineComposingRef.current) return;
     setTerminalInputMode(directTyping ? "line" : "direct");
   };
   // 입력줄은 터미널을 눌러도 키보드를 올리지 않게 한다. 바로 입력으로 돌리면 키보드를 돌려준다.
@@ -2112,7 +2094,7 @@ export function TermView({
         }
         // 기록이 없으면(alternate screen 프로그램) 그 프로그램의 PageUp·PageDown. 지금 받을 수 있을 때만 보내고 미뤄 두지 않는다
         if (!canControl || readonlyRef.current || endedRef.current || releasedRef.current || !draftIsEmpty(draftRef.current)) return;
-        if (composingTermRef.current || commitPendingRef.current) return;
+        if (compositionRef.current?.state.active || (compositionRef.current?.state.pending || compositionRef.current?.state.sending)) return;
         input(direction < 0 ? "\x1b[5~" : "\x1b[6~");
       },
       toggleView: () => {

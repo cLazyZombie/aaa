@@ -128,3 +128,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+
+## t-1075 조합 표시 책임 이동
+
+`terminalGlyphs.ts`의 줄 글꼴·상자 보정은 유지한다. 조합 상자의 `fitView` 계산은
+`../compositionView.ts`로 이동했고 그 MutationObserver는 제거했다. 미리보기와 textarea의
+위치·높이·색·글꼴을 같은 adapter가 적용해 서로 덮어쓰지 않게 한다. 이 부분은 위의
+“바꾸지 않고 옮긴 파일”에서 예외다. 이동한 계산의 MIT 고지를 유지한다.

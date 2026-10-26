@@ -7960,3 +7960,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - E2E115: Chromium/WebKit × 1280/390px에서 ACK를 붙잡은 채 `보내는 중` 말풍선과 빈 입력창, ACK 뒤 `대기 중`, 새로고침 뒤 유지, 기록 반영 뒤 보통 말, 붙잡지 않은 흐름의 Claude 대기열 말과 같은 글 말풍선 하나를 검사한다. E2E23 막힘 단계는 말풍선의 막힘 표지와 멈춘 뒤 거둠을 더한다.
 
 - **71회차 착지 통합(t-1073).** 기준 main `f9324103`에 t-1069와 t-1072를 각각 --no-ff로 통합한다. §8.495·FRONT_API 1.126·AGENT_LINK 1.11을 유지하고 기존 E2E01~114에 E2E115를 더한다. testing 문서 충돌은 양쪽 설명을 모두 보존한다. 전체 ci-local·별도 공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows production release를 한 번 수행하며 실패하면 원문과 부하를 남기고 멈춘다. push 뒤 착지 SHA salt의 Windows 설치기를 전용 시험 폴더로 전달해 해시·판만 확인한다.
+
+
+### 8.496 웹 터미널 IME 상태·표시 소유자 통합(t-1075)
+
+- 사용자 q-1353 1A: 조합 상태와 표시 경로를 통합한다. xterm 5.5.0·터미널 parser·backend/API는 유지한다. upstream Terminal bridge와 하나의 `web/xterm/CompositionHelper.ts`, 하나의 `compositionView.ts` 표시 adapter로 정리한다. Safari replacement·iOS ASCII 교정의 기존 계약은 보존한다.
+- t-1064가 새 음절 시작 때 이전 확정의 에코 전 커서를 marker로 고정한 것이 연속 음절 겹침 원인이다. 69회차는 에코 뒤 제자리로 갔고 71회차는 이전 열에 남았다. 연속 입력의 첫 marker·DOM offset과 실제 확정 범위의 Unicode 폭으로 다음 열을 계산한다. WebKit이 앞 NBSP를 SPACE로 바꿔도 offset은 같다. marker는 단어 안 한 개이고 일반 키·paste·blur·취소·reset·버퍼 삭제에서 해제한다.
+- `Term.tsx`의 별도 compositionend timer와 조합 상자의 두 MutationObserver를 제거한다. 앱 입력 보호는 같은 active/pending/sending을 읽고, 표시 adapter가 글꼴·자간·여백·실제 DOM 행 높이·색과 textarea 위치를 함께 적용한다. 줄 글꼴 보정과 별도 입력창·passive 진단은 유지한다.
+- 앞 확정과 일반 insertText가 같은 차례면 beforeinput의 DOM 변경 전에 확정 큐를 비운다. native 조합 Backspace는 현재 preedit를 편집하고 PTY 확정/DEL로 바꾸지 않는다. paste·blur는 한 finishInput 경계로 확정/대기 송신을 처리한다. 확정 전에 CJK 바이트를 보내거나 같은 확정을 두 번 보내지 않는다.
+- 기존 E2E09에 실제 PTY의 에코 전 다음 조합·연속 가나다라+space·각→가가·그 사이의 분리 상태 줄 출력을 추가한다. Chromium CDP, macOS 화면 밖 WKWebView의 native text client와 Playwright WebKit 재생을 구분한다. 사용자 화면·입력기·시스템 설정은 바꾸지 않고 격리 iPhone simulator와 native 입력 경계도 별도로 확인한다. 실제 OS 입력기 키 사건과 client 호출을 같은 증거로 세지 않는다.
+- OSS 비교와 라이선스는 web/patches/README에 있다. 새 외부 코드·의존성·API·E2E 번호는 추가하지 않는다. 전체 gate는 coordinator가 부여한 차례에 실행하고 후보만 push한다.
