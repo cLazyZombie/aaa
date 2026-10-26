@@ -21,40 +21,54 @@ export class TerminalReceiver {
   private failed: () => void;
 
   constructor(consume: (item: ReceivedTerminal) => void, failed: () => void,
-    makeWorker = () => new Worker(new URL("./terminalInflate.worker.ts", import.meta.url), { type: "module" }), verifiedGzip = false) {
+    makeWorker: () => Worker, verifiedGzip = false) {
     this.consume = consume;
     this.failed = failed;
     this.gzip = verifiedGzip;
     this.ready = new Promise((resolve) => { this.settleReady = resolve; });
     try {
-      const worker = makeWorker();
-      this.worker = worker;
-      worker.onmessage = (event) => {
-        if (this.closed) return;
-        const reply = event.data;
-        if (typeof reply.ready === "boolean" && this.settleReady) {
-          this.gzip = reply.ready;
-          this.settleReady(reply.ready);
-          this.settleReady = null;
-          if (!reply.ready) { worker.terminate(); this.worker = null; }
-          return;
-        }
-        const result = this.result;
-        if (!result || reply.id !== result.id) { this.fail(); return; }
-        this.result = null;
-        if (reply.error || !(reply.bytes instanceof Uint8Array)) result.reject();
-        else result.resolve(reply.bytes);
-      };
-      worker.onerror = () => {
-        if (this.settleReady) {
-          this.settleReady(false);
-          this.settleReady = null;
-          worker.terminate(); this.worker = null;
-        } else this.fail();
-      };
-    } catch (ignoredError) { logIgnoredFailure(ignoredError, "terminalReceive.ts:55");
+      this.attachWorker(makeWorker());
+    } catch (error) {
+      console.warn("터미널 압축 Worker 실패", { phase: "constructor: identity로 연결", message: error instanceof Error ? error.message : String(error) });
       this.settleReady?.(false); this.settleReady = null;
     }
+  }
+
+  private attachWorker(worker: Worker): void {
+    this.worker = worker;
+    worker.onmessage = (event) => {
+      if (this.closed) return;
+      const reply = event.data;
+      if (typeof reply.ready === "boolean" && this.settleReady) {
+        this.gzip = reply.ready;
+        this.settleReady(reply.ready);
+        this.settleReady = null;
+        if (!reply.ready) { worker.terminate(); this.worker = null; }
+        return;
+      }
+      const result = this.result;
+      if (!result || reply.id !== result.id) { this.fail(); return; }
+      this.result = null;
+      if (reply.error || !(reply.bytes instanceof Uint8Array)) result.reject();
+      else result.resolve(reply.bytes);
+    };
+    worker.onerror = (event) => {
+      // 처리한 Worker 오류를 페이지의 미처리 오류로 다시 전파하지 않는다(Safari도 동일).
+      // 준비 전에는 identity 협상, 준비 뒤에는 기존대로 연결을 중단한다.
+      event.preventDefault();
+      if (this.closed) return;
+      console.warn("터미널 압축 Worker 실패", {
+        phase: this.settleReady ? "startup: identity로 연결" : "running: 연결 중단",
+        message: event.message || "브라우저가 Worker 로드 오류의 상세를 제공하지 않음",
+        asset: event.filename?.startsWith("blob:") ? "terminalInflate.worker (blob)" : event.filename?.split(/[?#]/)[0].replace(/^\w+:\/\/[^/]+/, ""),
+        line: event.lineno, column: event.colno,
+      });
+      if (this.settleReady) {
+        this.settleReady(false);
+        this.settleReady = null;
+        worker.terminate(); this.worker = null;
+      } else this.fail();
+    };
   }
 
   push(wire: string | ArrayBuffer): void {
