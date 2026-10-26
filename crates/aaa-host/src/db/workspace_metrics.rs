@@ -80,6 +80,17 @@ impl Db {
         let mut st=db.prepare("SELECT id FROM repo_metrics WHERE project=?1 AND workspace=?2 AND kind='lines' ORDER BY at_ms DESC LIMIT 4096")?;
         Ok(st.query_map(params![project, workspace], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
+    pub(crate) fn workspace_run(&self, project: &str, workspace: &str, id: &str) -> Result<Option<MetricRun>> {
+        let db = self.conn.lock().unwrap();
+        let data: Option<String> = db
+            .query_row(
+                "SELECT data FROM repo_metrics WHERE project=?1 AND workspace=?2 AND kind='run' AND id=?3",
+                params![project, workspace, id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        data.map(|data| serde_json::from_str(&data).map_err(Into::into)).transpose()
+    }
     pub(crate) fn workspace_records(
         &self,
         project: &str,

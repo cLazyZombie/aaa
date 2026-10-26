@@ -22,6 +22,73 @@ async function theme(page, value) {
   await settings.getByRole("button", { name: "설정 닫기" }).click();
   await domIs(page, "테마 적용", (value) => document.documentElement.dataset.theme === value && !new URL(location.href).searchParams.has("settings"), value);
 }
+async function checkReference(page, engine, width) {
+  await page.getByLabel("시간 집계").selectOption("run");
+  await page.getByLabel("시간 지표").selectOption("verify");
+  const data = await api(page, { days:30 });
+  const success = data.runs.filter(r => r.machine === "labB" && r.outcome === "succeeded");
+  const failure = data.runs.find(r => r.outcome === "failed");
+  if (success.length !== 2 || !failure) throw new Error("기준점 fixture 부족");
+  const reference = page.getByTestId("workspace-reference");
+  const chart = page.getByRole("group", { name:/경과 초 추이/ });
+  const select = async id => {
+    await page.getByLabel("기준 실행", {exact:true}).selectOption(id);
+    await domIs(page, "기준 실행 원장 응답", id => document.querySelector('[aria-label="기준 실행"]')?.value === id && new URLSearchParams(decodeURIComponent(location.hash.slice(11))).get("run") === id, id);
+  };
+  const position = async id => {
+    await domIs(page, "기준점과 안내선이 같은 실행 좌표", id => {
+      const chart = document.querySelector('.ws-reference-marker')?.closest('svg');
+      const marker = chart?.querySelector('.ws-reference-marker');
+      const point = [...(chart?.querySelectorAll('g[role=button]') ?? [])].find(p => p.dataset.runId === id);
+      const shape = point?.querySelector('circle,rect');
+      const x = shape?.hasAttribute('cx') ? Number(shape.getAttribute('cx')) : Number(shape?.getAttribute('x')) + 4.5;
+      const y = shape?.hasAttribute('cy') ? Number(shape.getAttribute('cy')) : Number(shape?.getAttribute('y')) + 4.5;
+      const ring = chart?.querySelector('.ws-reference-ring');
+      return marker?.dataset.runId === id && Number(marker.querySelector('line').getAttribute('x1')) === x && Number(ring?.getAttribute('cx')) === x && Number(ring?.getAttribute('cy')) === y && point?.getAttribute('aria-label').startsWith('기준 실행 ·');
+    }, id);
+    return Number(await chart.locator('.ws-reference-ring').getAttribute('cx'));
+  };
+  await select(success[0].run_id); const x1 = await position(success[0].run_id);
+  await chart.scrollIntoViewIfNeeded(); await shot(page, `reference-${engine}-${width}-first`);
+  await select(success[1].run_id); const x2 = await position(success[1].run_id);
+  if (x1 === x2) throw new Error("기준 실행을 바꿔도 강조점이 이동하지 않는다");
+  await chart.scrollIntoViewIfNeeded(); await shot(page, `reference-${engine}-${width}-second`);
+  // 실제 원장의 0초는 결측과 구분해 표시한다.
+  await page.getByLabel("시간 지표").selectOption("build");
+  await position(success[1].run_id);
+  if (!(await reference.innerText()).includes("0초")) throw new Error("실제 0초가 사라졌다");
+  await select(failure.run_id);
+  await reference.getByText(/빌드 시간이 미수집/).waitFor();
+  if (await chart.locator('.ws-reference-marker').count()) throw new Error("미수집 값을 강조했다");
+  await page.getByLabel("시간 지표").selectOption("verify");
+  await position(failure.run_id);
+  await page.getByRole("button", {name:"오늘",exact:true}).click();
+  await reference.getByText(/현재 그래프 범위 밖/).waitFor();
+  if (await page.getByLabel("기준 실행",{exact:true}).inputValue() !== failure.run_id || await chart.locator('.ws-reference-marker').count()) throw new Error("기간 밖 기준 실행을 바꾸거나 잘못 강조했다");
+  await shot(page, `reference-${engine}-${width}-outside`);
+  await page.getByRole("button", {name:"7일",exact:true}).click();
+  await position(failure.run_id);
+  await page.getByLabel("시간 집계").selectOption("day");
+  await reference.getByText(/p50에서 제외/).waitFor();
+  await select(success[0].run_id);
+  for (const tz of ["utc","kst"]) {
+    await page.getByLabel("시간대").selectOption(tz);
+    await domIs(page, "날짜별 p50에 기준 실행이 포함됨", id => document.querySelector('.ws-reference-marker')?.dataset.runId === id && document.querySelector('.ws-reference-marker text')?.textContent === '기준 실행 포함' && [...document.querySelectorAll('g[role=button]')].some(p => p.getAttribute('aria-label').startsWith('기준 실행 포함 ·') && p.getAttribute('aria-label').includes('p50 n=2')), success[0].run_id);
+  }
+  await chart.scrollIntoViewIfNeeded(); await shot(page, `reference-${engine}-${width}-daily`);
+  await page.getByTestId("workspace-view").getByLabel("머신",{exact:true}).selectOption("labA");
+  await reference.getByText(/현재 그래프 범위 밖/).waitFor();
+  await page.reload();
+  await reference.getByText(/현재 그래프 범위 밖/).waitFor();
+  if (await page.getByLabel("기준 실행",{exact:true}).inputValue() !== success[0].run_id) throw new Error("새로고침 뒤 기준 실행 유실");
+  await page.getByTestId("workspace-view").getByLabel("머신",{exact:true}).selectOption("");
+  await page.getByLabel("시간 집계").selectOption("run");
+  await position(success[0].run_id);
+  await chart.getByRole("button",{name:/^기준 실행 ·/}).focus(); await page.keyboard.press("Enter");
+  await page.getByRole("dialog").waitFor(); await page.getByLabel("상세 닫기").click();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.querySelector('.ws-content').scrollWidth > document.querySelector('.ws-content').clientWidth + 1);
+  if (overflow) throw new Error("기준 실행 안내가 가로로 넘친다");
+}
 export default async function ({ page }) {
   let thread, cwd, work, workspace, link, repo, secondThread;
   try {
@@ -94,11 +161,13 @@ export default async function ({ page }) {
     put(`${dir}/workspace-summary.tsv`, `v1|${now-100}|164|succeeded\nbuild|ok|00:00|00:01|24|unused\n`);
     const nextA = `${repo}/target/ci-local/main-next`;
     fs.cpSync(`${repo}/target/ci-local/run-fixture`, nextA, { recursive:true });
-    put(`${nextA}/workspace-summary.tsv`, "v1|1000000000|180|succeeded\nbuild|ok|00:00|00:01|18|unused\n");
+    put(`${nextA}/workspace-summary.tsv`, "v1|1000000000|180|failed\n");
+    // 기준 실행이 오늘 범위 밖인 경우도 실제 수집 시각으로 만든다.
+    fs.utimesSync(`${nextA}/workspace-summary.tsv`, now - 2 * 86400, now - 2 * 86400);
     fs.appendFileSync(`${work}/report.md`, "\n다음 main 결과\n");
     const nextB = `${repoB}/target/ci-local/main-next`;
     fs.cpSync(dir, nextB, { recursive:true });
-    put(`${nextB}/workspace-summary.tsv`, `v1|${now-90}|164|succeeded\nbuild|ok|00:00|00:01|20|unused\n`);
+    put(`${nextB}/workspace-summary.tsv`, `v1|${now-90}|164|succeeded\nbuild|ok|00:00|00:01|0|unused\n`);
     const rec = aaa("thread", "show", "demo", second.id);
     fs.appendFileSync(`${rec.work_dir}/report.md`, "\nmain 결과 준비\n");
     await domIs(page, "두 머신의 실행 네 개 회수", () => document.querySelectorAll('.ws-chart polyline[data-machine]').length === 2 && document.querySelectorAll('.ws-chart g[role=button][data-machine]').length === 4);
@@ -188,6 +257,7 @@ export default async function ({ page }) {
           if (overflow.document || overflow.view || overflow.theme !== scheme) throw new Error(JSON.stringify(overflow));
           if (device.errors.length) throw new Error(device.errors.join(";"));
           await shot(p, `workspace-${engine}-${width}-${scheme}`);
+          if (scheme === "light" && [1280,390].includes(width)) await checkReference(p, engine, width);
           for (const panel of ["workspace", "asks", "work", "tasks"]) {
             const activity = p.getByTestId(`activity-${panel}`);
             if (panel === "tasks" || await activity.getAttribute("aria-selected") !== "true") await inList(p, activity);

@@ -7,7 +7,7 @@ export function workspaceParams(route: string | null): URLSearchParams {
 }
 export function workspaceQuery(params: URLSearchParams): WorkspaceQuery {
   return {
-    workspace_id: params.get("ws"), machine: params.get("machine"), profile: params.get("profile"),
+    selected_run_id: params.get("run"), workspace_id: params.get("ws"), machine: params.get("machine"), profile: params.get("profile"),
     days: [1, 7, 30].includes(Number(params.get("days"))) ? Number(params.get("days")) : 7,
     granularity: params.get("by") === "day" ? "day" : "run",
     utc_offset_minutes: params.get("tz") === "utc" ? 0 : 540,

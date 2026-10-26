@@ -27,7 +27,11 @@ export type WorkspaceMachine = { name: string, connected: boolean, supported: bo
 
 export type RepoWorkspace = { id: string, project: string, name: string, machines: Array<WorkspaceMachine>, last_collected_ms: number | null, collection_notes: Array<string>, };
 
-export type WorkspaceQuery = { workspace_id: string | null, machine: string | null, profile: string | null, days: number | null,
+export type WorkspaceQuery = {
+/**
+ * 필터 밖 기준 실행도 같은 workspace 원장에서 조회한다.
+ */
+selected_run_id: string | null, workspace_id: string | null, machine: string | null, profile: string | null, days: number | null,
 /**
  * run 또는 day. 날짜는 UTC offset 기준이며 일광절약 변경은 별도 조건이다.
  */
@@ -35,7 +39,7 @@ granularity: string | null, utc_offset_minutes: number | null, code_axis: string
 
 export type MetricPoint = { at_ms: number, machine: string, profile: string | null, run_id: string, value: number, samples: number, outcome: string, };
 
-export type WorkspaceDashboard = { workspaces: Array<RepoWorkspace>, workspace_id: string | null, runs: Array<MetricRun>, counts_run: MetricRun | null, code_lines: Array<CodeLines>, verification_trend: Array<MetricPoint>, build_trend: Array<MetricPoint>, artifact_trend: Array<MetricPoint>, profiles: Array<string>, queried_at_ms: number, truncated: boolean, };
+export type WorkspaceDashboard = { workspaces: Array<RepoWorkspace>, workspace_id: string | null, runs: Array<MetricRun>, counts_run: MetricRun | null, selected_run: MetricRun | null, code_lines: Array<CodeLines>, verification_trend: Array<MetricPoint>, build_trend: Array<MetricPoint>, artifact_trend: Array<MetricPoint>, profiles: Array<string>, queried_at_ms: number, truncated: boolean, };
 
 export type SecretText = string;
 

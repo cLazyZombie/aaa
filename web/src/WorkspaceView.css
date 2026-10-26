@@ -93,3 +93,13 @@ button.ws-repo[aria-pressed=true] { border-color:var(--border); background:var(-
 .ws-chart [role=button]:focus-visible { outline:2px solid var(--accent); }
 
 .ws-sidebar { display:flex; flex:1 1 0; min-height:0; flex-direction:column; overflow:hidden; }
+
+/* 기준 실행은 머신 색을 보존하고 이중 테두리·안내선·문자로 구분한다. */
+.ws-reference { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 12px; border-left:3px solid var(--accent); background:var(--accent-tint); padding:10px 12px; margin:12px 0; font-size:var(--fs-xs); line-height:1.7; overflow-wrap:anywhere; }
+.ws-reference strong { color:var(--text-strong); flex-shrink:0; }
+.ws-reference > span { color:var(--text-dim); }
+.ws-reference .ws-reference-notice { flex-basis:100%; color:var(--text); }
+.ws-chart .ws-reference-marker { pointer-events:none; }
+.ws-chart .ws-reference-marker line { stroke:var(--accent); stroke-width:2; stroke-dasharray:4 4; }
+.ws-chart .ws-reference-marker text { fill:var(--text-strong); font-weight:600; paint-order:stroke; stroke:var(--bg-panel); stroke-width:4px; stroke-linejoin:round; }
+.ws-chart .ws-reference-ring { fill:none; stroke:var(--accent); stroke-width:3; pointer-events:none; }
