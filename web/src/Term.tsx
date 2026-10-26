@@ -2,6 +2,7 @@ import { recentScreenChord, standaloneWindow } from "./recentScreens.ts";
 import { AutoModeChip } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { TerminalReceiver } from "./terminalReceive";
+import { createTerminalWorker } from "./terminalWorkerFactory";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 // pane 하나의 터미널 보기. WebSocket 하나가 대화형 front 하나다. 조작 권한이 있으면 언제나 입력된다(herdr-web-ui와 같다, §8.33).
 // PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. 이 탭이 보이고 focus가 있을 때만 크기를 건다:
@@ -1540,7 +1541,7 @@ export function TermView({
       }, () => {
         setError("터미널 기록을 해제하지 못했다. 다시 연결해 주세요.");
         ws?.close(4002, "terminal payload rejected");
-      }, undefined, gzipSupport === true);
+      }, createTerminalWorker, gzipSupport === true);
       receive = receiver;
       // online/pageshow는 기존처럼 그 사건 안에서 새 WS를 연다. 지원 확인은 같은 브라우저에서 재사용한다.
       const gzip = gzipSupport === undefined ? await receiver.ready : gzipSupport;

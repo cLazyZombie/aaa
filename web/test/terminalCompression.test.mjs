@@ -95,7 +95,53 @@ test("구 host identity·지원 없는 브라우저·Worker 실패와 협상 없
   assert.equal(f.failures(), 1); assert.equal(f.consumed.length, 0);
   const worker = new WorkerStub();
   const receiver = new TerminalReceiver(() => {}, () => assert.fail("연결 전 지원 실패는 identity"), () => worker);
-  worker.onerror(); assert.equal(await receiver.ready, false); receiver.close();
+  worker.onerror(new Event("error", { cancelable: true })); assert.equal(await receiver.ready, false); receiver.close();
+});
+
+test("Worker 오류는 진단을 남기고 전파를 막으며 준비 전 identity·준비 뒤 중단을 구분한다", async t => {
+  const warnings = [];
+  t.mock.method(console, "warn", (...args) => warnings.push(args));
+  for (const ready of [false, true]) {
+    const worker = new WorkerStub(); const consumed = []; let failures = 0;
+    const receiver = new TerminalReceiver(item => consumed.push(item), () => failures++, () => worker);
+    if (ready) {
+      worker.answer({ ready: true }); await receiver.ready;
+      receiver.push(packed(Buffer.alloc(8192)));
+    }
+    const event = new Event("error", { cancelable: true });
+    Object.assign(event, { message: "worker execution failure", filename: "https://example.ts.net/assets/worker.js", lineno: 7, colno: 9 });
+    worker.onerror(event);
+    assert.equal(event.defaultPrevented, true, "수습한 오류를 페이지 오류로 전파하지 않는다");
+    assert.equal(worker.terminated, true);
+    assert.equal(failures, ready ? 1 : 0);
+    if (ready) { await turn(); assert.equal(consumed.length, 0, "해제 중 오류의 출력을 소비하지 않는다"); }
+    if (!ready) {
+      assert.equal(await receiver.ready, false);
+      receiver.push(identity(Buffer.from("identity 출력")));
+      assert.equal(Buffer.from(consumed[0].payload).toString(), "identity 출력");
+    }
+    receiver.close();
+    const late = new Event("error", { cancelable: true });
+    worker.onerror(late);
+    assert.equal(late.defaultPrevented, true);
+    assert.equal(failures, ready ? 1 : 0, "늦은 오류로 다시 실패하지 않는다");
+  }
+  assert.deepEqual(warnings.map(([, diagnostic]) => diagnostic.phase), ["startup: identity로 연결", "running: 연결 중단"]);
+  assert.equal(warnings[0][1].asset, "/assets/worker.js");
+  assert.equal(warnings[0][1].message, "worker execution failure");
+});
+
+test("Worker 생성이 거부돼도 identity 출력과 준비 완료를 유지한다", async t => {
+  const warnings = [], consumed = [];
+  t.mock.method(console, "warn", (...args) => warnings.push(args));
+  const receiver = new TerminalReceiver(item => consumed.push(item), () => assert.fail("생성 실패는 연결 전 복구"),
+    () => { throw new DOMException("Worker creation denied", "SecurityError"); });
+  assert.equal(await receiver.ready, false);
+  receiver.push(identity(Buffer.from("기록")));
+  assert.equal(Buffer.from(consumed[0].payload).toString(), "기록");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][1].phase, "constructor: identity로 연결");
+  receiver.close();
 });
 
 test("재연결의 확인된 gzip은 새 Worker 준비 사건 뒤에만 해제를 시작한다", async () => {

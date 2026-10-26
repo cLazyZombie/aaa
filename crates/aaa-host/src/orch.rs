@@ -91,9 +91,11 @@ pub(crate) struct ThreadRec {
     /// 다시 보내기 전에 화면을 본다(brief.rs).
     #[serde(default)]
     pub brief_attempts: u32,
-    /// brief를 보냈다고 확인한 때와 그때의 보고 hash. 그 뒤 잠시(host.toml `[projects] delivered_working_secs`) 새 보고가 오기 전까지 작업 중이다
+    /// brief를 보냈다고 확인한 때. 그 뒤 잠시(host.toml `[projects] delivered_working_secs`) 새 보고가 오기 전까지 작업 중이다
     #[serde(default)]
     pub delivered_at_ms: Option<u64>,
+    /// 첫 brief 전송 직전의 보고 hash. 받음 확인보다 먼저 회수한 새 보고도 유예를 끝낸다.
+    /// 재전송·늦은 화면 확인은 이 기준을 바꾸지 않는다.
     #[serde(default)]
     pub delivered_report: Option<String>,
     #[serde(default)]
@@ -486,7 +488,7 @@ pub(crate) fn thread_group_with(
     if (new_report || (has_report && pr_open)) && !prompt_pending && state != Some(A::Working) && !unfinished {
         return ThreadGroup::ReadyForReview;
     }
-    // 6: harness나 진행 보고로 작업 중. 방금 brief를 받았고 아직 새 보고가 없어도 작업 중(`delivered_ms`)
+    // 6: harness나 진행 보고로 작업 중. brief 전송 뒤 새 보고가 없으면 받음 확인 뒤 유예 동안 작업 중이다.
     let just_delivered = pane_exists
         && r.delivered_at_ms.is_some_and(|t| now_ms.saturating_sub(t) < delivered_ms)
         && r.report_hash == r.delivered_report;
@@ -3377,7 +3379,7 @@ mod tests {
         assert_eq!(thread_group(&t, false, None, NOW), ThreadGroup::ReadyForReview);
         let acked = ThreadRec { acked_hash: Some("h".into()), ..t };
         assert_eq!(thread_group(&acked, false, None, NOW), ThreadGroup::Idle);
-        // 보고가 brief 받음보다 먼저 도착해도 종료된 pane은 유예 창 동안 일하지 않는다.
+        // 전송 전 보고밖에 없어도 종료된 pane은 유예 창 동안 일하지 않는다.
         let recent = ThreadRec { delivered_at_ms: Some(NOW), delivered_report: Some("h".into()), ..acked };
         assert_eq!(thread_group(&recent, true, None, NOW), ThreadGroup::Working);
         assert_eq!(thread_group(&recent, false, None, NOW), ThreadGroup::Idle);

@@ -1,3 +1,20 @@
+## brief 확인보다 먼저 회수한 완료 보고(t-1066)
+
+- 보존된 실패 DB의 사건은 `report_ready` → `brief_delivered` → `review_acked`였다. 전달 확인 때 이미 도착한 새 보고 hash를 `delivered_report`에 다시 넣어, ack 뒤에도 15초 working 유예가 남았다. 화면 멈춤을 3초로 두는 기존 우회는 이 순서를 보장하지 못한다.
+- 비교 기준은 첫 전송 직전 DB 갱신에서 잡고, 재전송·Enter 재전송·늦은 받음 확인은 바꾸지 않는다. 전송 전에 거부돼 시도 수가 0으로 돌아간 경우와 새 brief의 첫 시도는 그때의 보고로 새 기준을 잡는다. 전달 확인 시각·제품 유예 길이·ack 계약은 유지한다.
+- 꼭 필요한 새 회귀 `orch::report_tests::brief_confirmation_preserves_reports_collected_after_enter`는 실제 Host DB·보고 수집·brief 제출·ack 경계를 사용한다. fake Agent link가 Enter 처리 뒤 응답만 보류하고, 실제 보고 수집을 응답 전/후로 제어한다. 최초 시작/기존 보고가 있는 재시작 × 보고 먼저/확인 먼저/Enter 응답 유실 뒤 화면 수동 재확인 여섯 조합에서 새 보고의 검토 대기·ack 뒤 idle·hash·정확한 사건 순서를 확인한다. 옛 보고 ack만으로 새 brief 유예가 끝나지 않는 반대 조건도 지킨다. Tokio 가상 시각을 써서 유예가 저절로 지난 통과를 막는다.
+- 수정 전 새 회귀는 `report_first=true, previous=None`에서 `Working` / `Idle`로 실패했다. 기존 m13의 `worktree_thread_round_trip`은 300ms 공통 실험실로 돌리고 idle 단언을 그대로 유지한다. 독립 경로인 보고·brief 두 사건만 순서를 정렬하며, 전체 사건 수·시작/ack/resolve의 순서는 정확히 검사한다. `memory_and_restart`는 이미 공통 실험실과 pane 종료 뒤 idle을 검사하므로 제품 수리를 함께 검증한다.
+- 참고는 [Tokio Notify](https://docs.rs/tokio/latest/tokio/sync/struct.Notify.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))의 사건 신호와 [Loom의 순서 제어](https://github.com/tokio-rs/loom)([MIT](https://github.com/tokio-rs/loom/blob/master/LICENSE))다. 순서를 제어해 경쟁을 증명하는 원칙을 따르며 코드·의존성은 추가하지 않는다. 시한 연장·고정 sleep·실패 재시도·idle 기대값 완화는 없다.
+
+## thread 질문 중복 카드 방어(t-1063)
+
+- 새 host 유닛 `post::tests::plain_user_requests_link_only_one_current_thread_question`은 실제 post 접수·DB에서 제목 t-ID/본문 q-ID/0채움 별칭의 자동 연결과 원래 입력 재전송을 검사한다. 필요한 이유: 같은 질문의 알림이 새 카드가 되는 회귀와 잘못된 질문에 연결되는 데이터 손실을 함께 막는다. 별개 구조화 질문·명시 연결·다른 프로젝트·옛 q-ID·답한/닫힌 카드·부분 문자열 보존, 여러 카드/제목 한도 거부도 검사한다.
+- 기존 E2E53에 연결 없는 평문 확인 필요 post를 더한다. 필요한 이유: 실제 CLI → host → Chromium/WebKit의 「답할 것」이 한 카드·한 배지를 유지하고 카드 답 뒤 자동 연결 post도 한 번만 닫히는지 확인해야 한다. 기존 명시 연결 post 두 개와 원문/그림 보존·권한·답 기록 단언은 유지한다.
+- 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`의 안내 계약에 연결 접미사와 새 질문/선택지 금지를 더해 신규 생성·doctor 갱신에서 규칙이 빠지지 않게 한다. 새 실험실이나 시험 수를 추가하지 않는다.
+- 고정 sleep·시한 확대·재시도·기대값 완화가 없다. Playwright 1.64.1 패키지만 자기 작업 폴더에 두고 내부 공용 브라우저를 사용한다. 전체 ci-local은 coordinator가 부여한 차례에 실행한다.
+- 첫 전체 gate는 396초에 웹 유닛 584개·fmt·build·clippy·전체 E2E·public이 통과했지만 기존 `task_board_reads_tasks_and_follows_file_edits`가 실패했다. `std::fs::write`의 truncate→write 사이에 ticker가 빈 파일 SHA를 먼저 내보낸 것이 원인이다. 해당 fixture의 두 직접 쓰기를 인접 `task_edit_keeps_bytes_conflicts_and_logs`와 같은 pending 파일 작성→tick→rename으로 바꾼다. 빈 파일 사건을 건너뛰거나 SHA 기대값·시한을 바꾸지 않고, 완성 파일의 첫 관측 사건이라는 기존 계약을 유지한다.
+- OSS 참고: [Gitea 알림 원장](https://github.com/go-gitea/gitea/blob/main/models/activities/notification.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 같은 이슈 대상 알림 갱신, [Zulip 주제](https://docs.zulip.com/help/introduction-to-topics)([Apache-2.0](https://github.com/zulip/zulip/blob/main/docs/contributing/licensing.md))의 대화 주제 묶기를 비교했다. 기존 질문 카드를 정본으로 삼는 방식을 따르며 외부 코드·의존성은 추가하지 않는다.
+
 ## 할 일 한 줄 배치(t-1048)
 
 - 기존 E2E107을 확장한다. Chromium 1280/2000/390/320px·WebKit 1366/1024/390/320px에서 실제 host의 일반·예약·하위·병합 대기 행을 표시한다. 목록의 실제 너비가 640px 이상이면 모든 표시 칩과 제목·메뉴 중심이 1px 이내이고 행 높이는 40px 이하여야 한다. 좁은 목록은 제목 아래 칩 시작점, 휴대폰 제목 100px·행 높이 76px·메모만 있는 행 40px 계약을 유지한다.
@@ -3892,6 +3909,26 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 참고 후보는 [Uppy XHR](https://uppy.io/docs/xhr-upload/)([MIT](https://github.com/transloadit/uppy/blob/main/LICENSE))의 동시 전송 상한/파일별 결과와 [p-limit](https://github.com/sindresorhus/p-limit)([MIT](https://github.com/sindresorhus/p-limit/blob/main/license))의 유한 worker다. 방식만 참고하며 외부 코드·의존성·자동 재시도는 추가하지 않는다.
 - 서버 캐시까지 적용한 단일 E2E114 업로드/부분 실패 실행은 네 조합을 통과했고, WebKit 390px 전송+게시는 1046ms·스캔 합계 30930µs였다. 각 조합은 500개 중 499개 요청에서 용량 캐시가 적중했다. 실행별 외부 부하가 같지 않으므로 이 수치는 원인·개선 계측이며 전체 gate의 통과 근거로 대신 쓰지 않는다.
 - 최종 `a36bd156` 전체 `AAA_E2E_WORKERS=10` ci-local은 358초에 모든 단계가 통과했다. 시작 load1/5/15는 6.70/16.30/18.21, 실행 중 표본 load1 최대는 35.03이었다. 웹 유닛 583개, Rust 1,347개(기존 ignored 6), Python 56개(기존 skip 2), 웹 E2E 114파일/140작업(295초)이 통과했다. 전체 gate의 500개 전송+게시는 Chromium 1280/390px 1265/1800ms, WebKit 1280/390px 1242/2889ms였고 각 조합에서 요청 500회·캐시 적중 499회를 확인했다. 원래 20초 상한과 모든 완료·실패·재개 단언을 유지했다. Linux x86_64 strict cross clippy도 통과했다.
+
+## E2E114 inbox 전용 진입과 초기 앱 분리(t-1056)
+
+- CI 원문은 WebKit 390px의 초기 앱 `terminalInflate.worker` 접근 제어 오류다. 앞선 세 조합의 500개 완료는 통과했으며 전용 inbox 번들에는 해당 Worker가 없다. 기존 macOS·worker 2 대조는 통과했고 과거 오류의 정확한 발생 시각은 기록되지 않아 문서 전환과의 인과는 미확정이다.
+- 초기 앱과 Worker는 실제 host가 자산을 응답하므로 fixture 전용 원인이라고 단정하지 않는다. WebKit의 실제 host 터미널에 접근 거부를 주입해 CI와 같은 접근 제어 pageerror 문구를 재현했다. 이는 Worker error의 기본 전파를 취소해도 발생했고 fetch 접근 거부도 같은 보안 오류를 남겼다. 제품은 Vite의 `?worker&inline`으로 작은 Worker를 앱에 함께 넣어 별도 HTTP 로드를 없앤다. 생성 실패는 identity로 복구하고 실행 오류는 기본 전파를 취소하며, 준비 뒤 실패는 기존대로 연결을 중단한다. 실패 단계·원인·자산 경로·줄/칸을 진단 로그에 남기고 종료 뒤 늦은 오류도 전파하지 않는다.
+- inbox fixture는 실제 GUI pairing을 기존 `#tasks`에서 수행해 떠날 초기 문서의 터미널 기동을 없앤다. 초기 앱과 전용 문서의 오류를 각각 검사하고 터미널 Worker 요청·기동이 없다는 단언을 추가한다. Chromium/WebKit × 1280/390px의 500개 완료·새 항목 하나 보존·단일 요청·DB/화면 검사와 나머지 대량 동작은 유지한다.
+- `BulkInboxDiagnostics`는 pairing 전에 관측을 시작하고 문서 전환·자산 응답/실패·Worker·전체 pageerror stack에 단계와 시각을 붙인다. 실패 시 context를 닫기 전에 JSON·본문·PNG를 `diagnostics/bulk-inbox`에 저장한다. 공통 harness가 이를 기존 CI artifact로 복사한다. 요청 본문·cookie·짝짓기 code·URL query는 수집하지 않는다.
+- `node --test web/test/bulk-inbox-diagnostics.test.mjs web/test/bulk-fixture.test.mjs`는 두 문서의 오류·전체 stack·자산 실패·화면 보존과 기존 DB fixture 계약을 검사한다. 관련 브라우저 회귀는 `node web/e2e/web.e2e.mjs --spec 97,113,114 --workers 2`다. 고정 sleep·자동 재시도·시한 증가·기대값 완화는 없다.
+- E2E97에는 Chromium/WebKit × 1280/390px에서 별도 Worker 자산 요청을 접근 거부하도록 두어도 정상 gzip 협상이 되는지 검사한다. 생성 거부·Worker 실행 실패도 각각 주입해 identity 연결을 확인한다. 세 경우 모두 실제 host 터미널 표시·실제 PTY 입력/출력·WS 한 번·외부 Worker 요청 0회·실패 진단·pageerror 없음을 검사한다. 기존 성공 Worker의 gzip·ACK·history·재연결 경로도 그대로 남긴다. `terminalCompression.test.mjs`는 준비 전 복구, 해제 중 실패의 출력 폐기/중단, 종료 뒤 늦은 오류의 전파 차단을 검사한다. 이는 headless WebKit 회귀이며 실제 iPhone Safari 실기를 뜻하지 않는다.
+- 앱의 실제 응답에서 `worker-src 'self' blob:`과 기존 `script-src 'self'`를 함께 확인한다. 보고서의 별도 sandbox CSP는 바꾸지 않는다. 입력 검사는 명령 원문에는 없는 셸 계산 결과를 짧은 고유 표지와 함께 기다려 휴대폰의 visible 출력 행 경계에 걸리지 않게 한다.
+- 먼저 [Playwright pageerror](https://playwright.dev/docs/api/class-page#page-event-page-error)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [Vite inline Worker](https://vite.dev/guide/features.html#web-workers)([MIT](https://github.com/vitejs/vite/blob/main/LICENSE)), [WebKit Worker loader](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/workers/Worker.cpp)(해당 파일 BSD-2-Clause)를 대조했다. 기존 Vite의 Worker 내장 기능과 사건 기록 방식을 쓰며 외부 코드·의존성을 추가하지 않았다.
+
+## E2E26 권한 응답 뒤 목록 끝 유지(t-1056)
+
+- 기준 main e58aa62f와 Worker inline/CSP 후보 3085d4f7에 같은 실제 host·Playwright 1.64.1·WebKit desktop·worker 10을 적용했다. `/api/v1/me`의 실제 Response 전달을 끝 스크롤 대입 사건까지 붙잡았다가 놓으면 양쪽 10/10 모두 원래 `20000ms 안에 목록 끝 도착` 오류를 냈다. 응답 본문·헤더·CSP·Service Worker는 유지한다. 원래 실패의 selector/좌표는 없지만 격리 DB의 마지막 WebKit 보고서 열람은 할 일/완료 구간까지 도달했음을 보인다. 이 재현은 Worker 변경과 독립적인 기존 제품 결함이다.
+- 권한 전 목록은 scrollTop 2021/clientHeight 701/scrollHeight 2722로 끝이었다. 편집 도구 반영 뒤 콘텐츠가 22px 늘면서 anchoring은 scrollTop 2043으로 따라가지만, 보기 높이가 659px로 줄어 끝에 42px가 남는다. `TasksView`는 /me를 적용하기 직전 끝 여부를 기억하고 `useLayoutEffect`에서 도구 줄을 그린 뒤 실제 끝을 보정한다. 중간은 첫 온전한 행의 상대 위치를 보존하고, 숨은 목록·교체된 요소는 보정하지 않는다. 보정 전 목록의 새 사용자 입력은 예약을 취소한다.
+- 기존 E2E26의 79행 준비·native wheel·끝 좌표·마지막 행 hit test·선택·완료 다음 페이지·두 엔진/두 폭과 시한을 유지한다. fixture가 권한 응답까지 먼저 기다려 제품 경합을 피하지 않는다. 추가 회귀는 Chromium/WebKit × 1280/390px × 끝/중간의 8조합이다. `deferTaskCapabilities`는 pending인 TasksView가 요청한 실제 /me Response의 전달만 붙잡고, 끝 스크롤 뒤 또는 중간의 행·offset을 읽은 뒤 사건으로 전달을 놓는다. 끝은 새 끝에 남고 중간은 같은 행/offset을 유지해야 한다. 수리 전 binary에 새 전체 E2E26을 적용하면 첫 권한 지연 desktop 단계부터 42px 차이로 실패한다.
+- `PanelScrollDiagnostics`는 실패할 때 context 종료 전에 대상 selector·scrollTop/clientHeight/scrollHeight·휠/scroll/scrollend·초기 geometry·요소 ID·행 수·폰트·숨김·PNG를 남긴다. 정상 시험의 evaluate 왕복을 늘리거나 스크롤 대입 뒤 레이아웃을 추가로 강제하지 않는다. `AAA_E2E_PANEL_TRACE=1`이면 성공 경로도 별도 artifact에 남겨 대조한다. helper만 고른 부분 실행은 앞 spec의 프로젝트 fixture가 없어 실행할 수 있으므로 새 회귀의 red/green은 전체 E2E26으로 검사한다.
+- 관련 확인은 `node web/e2e/web.e2e.mjs --spec 26,97,114 --workers 2`다. 고정 sleep·실패 재시도·시한 증가·기대값 완화·시험 제외는 없다. 전체 ci-local은 이 회귀 뒤 별도 차례를 받아 처음부터 실행한다.
+- [TanStack Virtual end anchor](https://github.com/TanStack/virtual/blob/main/docs/api/virtualizer.md)([MIT](https://github.com/TanStack/virtual/blob/main/LICENSE))의 변경 전 끝 여부/변경 후 보정, 기존 Chat의 끝/중간 위치 분리를 참고했다. [Playwright wheel](https://playwright.dev/docs/api/class-mouse#mouse-wheel)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))과 [WPT scroll_support](https://github.com/web-platform-tests/wpt/blob/master/dom/events/scrolling/scroll_support.js)([BSD-3-Clause](https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md))도 조사했으나 재현하지 못한 native wheel 겹침은 수리 근거로 쓰지 않았다. 외부 코드·의존성을 추가하지 않는다.
 
 ## 프로젝트 공통 검증 원장 (t-1051)
 
