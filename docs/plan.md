@@ -8018,3 +8018,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 자동화 문턱도 들어온 창만 판정하고 판단 불가면 실행한다. 후보를 고르는 transaction에도 같은 문턱을 적용한다. 자동화·입력·이유별 알림 상태를 내구 큐에 두어 inbox 처리/host 재기동 뒤 반복 안내를 막고 변화·해제를 알린다.
 - 기존 v1 설정 원문을 보존하고 v2 key로 한 번 이전한다. 계정 사용 여부와 진행 중 계정/원장은 유지하고 그룹·모델·참여 조건만 제거한다. t-1100의 이름 변경은 v1 호환 자료와 v2 사용 설정을 함께 옮긴다. FRONT_API 1.129이며 AGENT_LINK와 E2E 번호는 유지한다.
 - OSS는 [LiteLLM router](https://docs.litellm.ai/docs/routing)([MIT, enterprise 별도](https://github.com/BerriAI/litellm/blob/main/LICENSE))의 동종 후보 분리와 [Envoy least request](https://github.com/envoyproxy/envoy/blob/main/source/extensions/load_balancing_policies/least_request/least_request_lb.cc)([Apache-2.0](https://github.com/envoyproxy/envoy/blob/main/LICENSE))의 진행 중 요청 수를 비교했다. 후보 분리·작업 수 기준 분산 원칙만 참고하며 코드·의존성을 추가하지 않는다.
+
+### 8.501 완료 보고의 후속 유실 방지(t-1112)
+
+- 완료 보고의 Next가 남으면 완료 근거(표지·PR 병합·main 조상)와 별개로 후속 원장을 유지한다. 보고 회수와 마지막 resolve에서 원본 판·줄을 기록하며 같은 사본/같은 미처리 줄은 중복하지 않는다. 새 보고가 Next를 비우거나 thread를 다시 열어도 이전 미처리 후속을 버리지 않는다. 연결 task가 없어도 thread 원장과 coordinator inbox에 남긴다.
+- 기존 확인 필요 흐름을 넓힌다. inbox 종류 `task-followup`, 사건 `task needs check`, 제목 「후속 남음」으로 보이고 연결 task는 활성 목록의 확인 필요로 남는다. 미처리 후속이 있으면 자동 보관·명시 완료·삭제·연결 해제·원문 우회를 거부한다. 일반 inbox done(개별/전체)으로 닫지 않는다. thread 자체는 resolve할 수 있어 실행 자리와 후속 책임을 분리한다.
+- FRONT_API **1.130**: `ThreadView.followups`와 `thread_followup {project,thread,id,task,reason}`. `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`는 같은 프로젝트의 실제 활성/완료 할 일 ID에 연결한다. 원래 맡은 task로 자기 연결하지 않는다. `--reason-file`은 버림·정리 완료 사유를 비지 않은 한 줄로 남긴다. 한 번 처리하면 actor·시각·연결/사유를 보존하며 두 기기가 동시에 덮어쓰지 않는다. Reader·thread 내부 agent는 변경할 수 없다.
+- `정리:`는 thread가 정리만 남은 Next를 구분하는 명시적 표기다. 자연어 추측으로 자동 면제하지 않는다. 정리가 끝나면 완료 사실을 사유로 기록하고 새 task는 만들지 않아도 된다. 시안/조사는 맡은 시안만 완료한 경우 Next에 구현 할 일을 명확히 쓴다. coordinator AGENTS와 tasks/threads 안내는 resolve 전에 후속 등록·연결 또는 명시적 버림을 요구한다. 후속 등록 자체는 실행·병합 승인이 아니다.
+- 짧은 thread 주소의 hashchange는 이미 고른 thread를 같은 내부 열쇠로 바로 해석한다. 폼을 잠깐 내렸다 다시 만드는 경로가 입력을 잃게 하므로 주소 사건 전 입력을 사건 뒤에도 유지한다.
+- 웹 thread는 미처리 줄·후속 ID 입력·사유 기록과 처리 영수증을 보이며, 목록 요약에도 남은 개수를 표시한다. 할 일 상세는 후속 경고에서 thread로 이동하고 기존 종료/연결 해제 단추를 숨긴다. 운영 host·DB·설정은 바꾸지 않고 실험실로 확인한다.
+- 참고: [Gitea issue dependency](https://github.com/go-gitea/gitea/blob/main/models/issues/dependency.go)([MIT](https://github.com/go-gitea/gitea/blob/main/LICENSE))의 실재 대상 ID·중복 거부·남은 의존 구분과 [Zulip message flags](https://github.com/zulip/zulip/blob/main/zerver/actions/message_flags.py)([Apache-2.0](https://github.com/zulip/zulip/blob/main/LICENSE))의 알림 읽음과 원래 대상 상태 분리를 따른다. 외부 코드·의존성을 추가하지 않는다.

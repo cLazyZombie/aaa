@@ -38,6 +38,7 @@ mod diff;
 mod enroll_guide;
 mod file_rev;
 mod files;
+mod followups;
 pub mod front;
 mod git_watch;
 pub mod guide;
@@ -1957,6 +1958,10 @@ impl Host {
             FrontRequest::ThreadAdopt { project, pane, title, task } => {
                 self.thread_adopt(&project, &pane, &title, &task, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
+            FrontRequest::ThreadFollowup { project, thread, id, task, reason } => self
+                .thread_followup(&project, &thread, &id, task.as_deref(), reason.as_deref(), actor)
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
             }

@@ -7,7 +7,7 @@ import { editTaskContent } from "../lib/task-content.mjs";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { root, aaa, until, step, browser, domIs, shot, openSettings } from "../lib/harness.mjs";
+import { root, aaa, until, step, browser, webkit, pairPage, domIs, shot, openSettings } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const file = () => `${root}/projects/demo/TASKS.md`;
@@ -110,6 +110,41 @@ export default async function ({ page }) {
     await until(`${done} 보고`, () => aaa("thread", "show", "demo", done).report_hash);
     aaa("thread", "resolve", "demo", done);
     aaa("ticker", "tick");
+    // 완료 보고에 남은 Next는 병합·resolve로 사라지지 않는다. 실재 후속을 만든 뒤 웹에서 연결한다.
+    await stateIs(page, "로그인 고치기", "check");
+    await pick(page, "로그인 고치기");
+    await page.getByTestId("task-attention").getByText(/후속 남음/).waitFor();
+    if (await page.getByTestId("task-attention-delete").count()) throw new Error("후속을 삭제 단추로 숨길 수 있다");
+    aaa("task", "add", "결과 확인 후속");
+    const followTask = aaa("task", "list").tasks.find(t => t.title === "결과 확인 후속");
+    aaa("inbox", "done", "demo", "--all");
+    if (!aaa("inbox", "list", "demo", "--peek").items.some(i => i.item_kind === "task-followup" && i.subject === done)) throw new Error("후속 inbox가 일반 정리로 사라졌다");
+    // 원래 hashchange를 잡아, chooseThread가 연 폼에 입력한 뒤 주소 사건을 전달한다.
+    await page.evaluate(() => {
+      window.__followupHash = null;
+      const hold = e => {
+        if (!location.hash.startsWith("#thread=")) return;
+        e.stopImmediatePropagation();
+        window.removeEventListener("hashchange", hold, true);
+        window.__followupHash = { oldURL: e.oldURL, newURL: e.newURL };
+      };
+      window.addEventListener("hashchange", hold, true);
+    });
+    await page.getByTestId("task-detail").getByTestId(`task-thread-${done}`).click();
+    const followups = page.getByTestId("thread-followups");
+    await followups.getByText(/후속 남음/).waitFor();
+    await followups.getByLabel("후속 할 일 ID").fill("d-9999");
+    await domIs(page, "후속 주소 사건 보류", () => window.__followupHash !== null);
+    await page.evaluate(() => window.dispatchEvent(new HashChangeEvent("hashchange", window.__followupHash)));
+    await domIs(page, "주소 적용 뒤 후속 입력 보존", () => document.querySelector('[aria-label="후속 할 일 ID"]')?.value === "d-9999");
+    await followups.getByRole("button", { name: "할 일 연결", exact: true }).click();
+    await followups.getByRole("alert").waitFor();
+    await followups.getByLabel("후속 할 일 ID").fill(followTask.short_id);
+    await followups.getByRole("button", { name: "할 일 연결", exact: true }).click();
+    await followups.getByTestId("followup-receipt").waitFor();
+    aaa("ticker", "tick");
+    await page.getByTestId("activity-tasks").click();
+    await pick(page, "결과 확인 후속");
     if (read().includes("로그인 고치기")) throw new Error(`완료 보관하지 않았다:\n${read()}`);
     const log=aaa("task","log","--limit","5").entries;
     const completed=log.find(e=>e.action==="completed"&&e.title==="로그인 고치기");
@@ -160,6 +195,10 @@ export default async function ({ page }) {
   await step("하위가 모두 끝난 상위: 하위 task를 자동 정리하면 상위에 그 thread를 이어 「확인 필요」로 올린다(상위는 지우지 않는다)", async () => {
     const id = await startFromDetail(page, "W1 화면", null);
     await until(`${id} 보고`, () => aaa("thread", "show", "demo", id).report_hash);
+    fs.writeFileSync(`${root}/fixture-followup-reason.txt`, "상위 판정 시험의 결과 확인 완료\n");
+    for (const f of aaa("thread", "show", "demo", id).followups ?? []) {
+      aaa("thread", "followup", "demo", id, "--id", f.id, "--reason-file", `${root}/fixture-followup-reason.txt`);
+    }
     aaa("thread", "resolve", "demo", id);
     aaa("ticker", "tick");
     if (read().includes("W1 화면") || linked("큰 일 W1~W3") !== id) throw new Error(`상위를 올리지 않았다:\n${read()}`);
@@ -319,4 +358,44 @@ export default async function ({ page }) {
     await shot(page, "thread-direct-merge-asks");
     await page.getByTestId("activity-tasks").click();
   });
+  await step("후속 사유: 두 엔진과 휴대폰에서 완료 기록·읽기 권한·새로고침을 지킨다", async () => {
+    const wk = await webkit.launch({ headless: true });
+    try {
+      for (const engine of [browser, wk]) for (const width of [1280, 390]) {
+        fs.writeFileSync(`${root}/followup-task.md`, "사람을 기다림\n");
+        const t = aaa("thread", "start", "demo", "--title", `후속 정리 ${width}`, "--profile", "fake", "--kind", "dir", "--machine", "labA", "--task-file", `${root}/followup-task.md`);
+        await until(`${t.id} brief`, () => aaa("thread", "show", "demo", t.id).brief === "delivered");
+        fs.writeFileSync(`${t.work_dir}/report.md`, "[완료] 시안\n\n## Next\n- 정리: worktree와 branch를 지운다\n");
+        await until(`${t.id} 후속`, () => aaa("thread", "show", "demo", t.id).followups?.length === 1);
+        aaa("thread", "resolve", "demo", t.id);
+        const { page: p } = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 });
+        const { page: reader } = await pairPage(engine, aaa("web", "pair", "--reader").code, { width, height: 844 });
+        try {
+          const url = `#thread=demo/${t.id}`;
+          await p.goto(new URL(url, p.url()).href);
+          const panel = p.getByTestId("thread-followups");
+          await panel.getByText("정리: worktree와 branch를 지운다", { exact: true }).waitFor();
+          await reader.goto(new URL(url, reader.url()).href);
+          await reader.getByTestId("thread-followups").waitFor();
+          if (await reader.getByLabel("버림·정리 완료 사유").count()) throw new Error("읽기 기기에 후속 처리 폼이 있다");
+          const source = aaa("thread", "show", "demo", t.id).followups[0];
+          const denied = await reader.evaluate(async ({ thread, id }) => {
+            const r = await fetch("/api/v1/call", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "thread_followup", project: "demo", thread, id, task: null, reason: "권한 우회" }) });
+            return { status: r.status, result: await r.json() };
+          }, { thread: t.id, id: source.id });
+          if (denied.result.err?.code !== "forbidden") throw new Error(`읽기 기기 변경 응답: ${JSON.stringify(denied)}`);
+          await shot(p, `followups-${engine === browser ? "chromium" : "webkit"}-${width}`);
+          await panel.getByLabel("버림·정리 완료 사유").fill("정리 완료: 남은 작업 폴더가 없다");
+          await panel.getByRole("button", { name: "사유 기록", exact: true }).click();
+          await panel.getByTestId("followup-receipt").waitFor();
+          await p.reload();
+          await p.getByTestId("followup-receipt").getByText(/정리 완료/).waitFor();
+          await reader.getByTestId("followup-receipt").getByText(/정리 완료/).waitFor();
+          const overflow = await p.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+          if (overflow) throw new Error(`후속 화면 가로 넘침 ${width}`);
+        } finally { await p.context().close(); await reader.context().close(); }
+      }
+    } finally { await wk.close(); }
+  });
+
 }

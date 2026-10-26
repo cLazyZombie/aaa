@@ -578,7 +578,7 @@ function TaskForm(props: DetailProps) {
         <Attention
           t={t}
           actions={
-            linkApi ? (
+            linkApi && !t.attention?.includes("후속 남음") ? (
               <>
                 <button type="button" className="btn btn-danger" disabled={busy || dirty} data-testid="task-attention-delete" onClick={() => base && void onDelete(base).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
                   끝남으로 지우기

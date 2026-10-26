@@ -54,6 +54,9 @@ pub(crate) fn attention(t: &TaskView, rec: &ThreadRec, marker: Option<&str>, chi
     if rec.status != ThreadStatus::Resolved || rec.resolve_pending.is_some() {
         return None;
     }
+    if crate::followups::pending(rec) {
+        return Some(format!("{} 후속 남음: thread에서 후속 할 일 연결이나 버림·정리 완료 사유를 기록한다", rec.id));
+    }
     let id = &rec.id;
     let c = &rec.task_clean;
     let Some(why) = c.why.as_deref() else {
@@ -100,6 +103,7 @@ impl Host {
             .filter(|r| r.task_clean.why.is_some() && r.task_clean.judged_ms.is_none())
             .collect();
         for rec in due {
+            self.followup_notice(&rec);
             if let Err(e) = self.task_clean_one(project, dir, &rec) {
                 tracing::warn!(project, thread = %rec.id, "할 일 자동 정리를 다음 셈으로 미룬다: {}", e.message);
             }
@@ -115,11 +119,18 @@ impl Host {
             let text = std::fs::read_to_string(dir.join("TASKS.md"))
                 .map_err(|e| err(ErrorCode::Internal, format!("TASKS.md: {e}")))?;
             let all = tasks::parse(&text);
-            let ops: Vec<TaskOp> = all
-                .iter()
-                .filter(|t| t.done && !all.iter().any(|c| c.parent == Some(t.line)))
-                .map(|t| TaskOp::Delete { at: anchor(t) })
-                .collect();
+            let mut ops = Vec::new();
+            for task in all.iter().filter(|t| t.done && !all.iter().any(|c| c.parent == Some(t.line))) {
+                if let Some(id) = task.thread.as_deref() {
+                    match self.load(project, id) {
+                        Ok(rec) if crate::followups::pending(&rec) => continue,
+                        Ok(_) => {}
+                        Err(e) if e.code == ErrorCode::NotFound => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+                ops.push(TaskOp::Delete { at: anchor(task) });
+            }
             if ops.is_empty() {
                 return Ok(());
             }
@@ -184,6 +195,13 @@ impl Host {
         let mut check: Vec<(String, String)> = Vec::new();
         for t in all.iter().filter(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
             let children = all.iter().any(|x| x.parent == Some(t.line));
+            if crate::followups::pending(rec) {
+                check.push((
+                    t.title.clone(),
+                    "후속 남음: thread에서 후속 할 일 연결이나 버림·정리 완료 사유를 기록한다".into(),
+                ));
+                continue;
+            }
             match judge(
                 if c.merged_main.is_some() { Some("main_merged") } else { c.why.as_deref() },
                 c.discard,
@@ -217,7 +235,8 @@ impl Host {
             parents = self.raise_parents(project, dir, rec, &all, &clean);
         }
         // 확인 필요 알림은 지우기가 쓰인 뒤에 낸다: 쓰기가 실패하면 다음 tick이 다시 판정해 알림이 겹친다
-        for (title, r) in &check {
+        self.followup_notice(rec);
+        for (title, r) in check.iter().filter(|_| !crate::followups::pending(rec)) {
             self.inbox_add(
                 project,
                 "task",

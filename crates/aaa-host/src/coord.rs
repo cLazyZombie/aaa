@@ -675,6 +675,7 @@ impl Host {
                             )?;
                         }
                     }
+                    self.protect_task_followups(project, &rev.text, &a.text)?;
                     // 완료 보관은 CLI 기록과 별도로 완료 근거·모델·머신을 보존한다.
                     if auto {
                         for r in a.records.iter_mut().filter(|r| r.action == TaskAction::Delete) {

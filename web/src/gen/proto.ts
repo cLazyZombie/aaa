@@ -1179,7 +1179,7 @@ task_block?: string, } | { "op": "thread_start_preview", project?: string, from_
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_queue", project?: string, action: QueueOp, } | { "op": "task_archive", project?: string,
+task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "thread_followup", project?: string, thread: string, id: string, task: string | null, reason: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_queue", project?: string, action: QueueOp, } | { "op": "task_archive", project?: string,
 /**
  * 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
  */
@@ -1594,6 +1594,16 @@ export type ReportAttention = "completed" | "needs_user";
 
 export type ThreadStage = "merge_ready" | "landing";
 
+export type ThreadFollowup = { id: string, revision: string, line: string,
+/**
+ * 같은 프로젝트의 후속 할 일 표시 ID. 버림일 때는 없다.
+ */
+task: string | null,
+/**
+ * 버림·정리 완료의 명시적 사유.
+ */
+reason: string | null, actor: string | null, handled_ms: number | null, };
+
 export type ThreadView = {
 /**
  * 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.
@@ -1648,6 +1658,10 @@ stage?: ThreadStage, acked_hash: string | null,
  * report.md `## Next` 줄
  */
 next: Array<string>,
+/**
+ * 완료 보고에서 남긴 후속과 명시적 처리 기록(FRONT_API 1.130).
+ */
+followups?: Array<ThreadFollowup>,
 /**
  * 마지막 사본 결과: complete·partial·failed
  */

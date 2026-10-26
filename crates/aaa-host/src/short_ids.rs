@@ -52,6 +52,7 @@ impl Host {
                 }
             }
             R::ThreadNext { project, thread, .. }
+            | R::ThreadFollowup { project, thread, .. }
             | R::ThreadFile { project, thread, .. }
             | R::ThreadDiff { project, thread, .. }
             | R::ThreadSummary { project, thread, .. }

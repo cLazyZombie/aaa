@@ -251,6 +251,7 @@ pub fn typescript_bindings() -> String {
         ThreadGroup::decl(&cfg),
         ReportAttention::decl(&cfg),
         ThreadStage::decl(&cfg),
+        ThreadFollowup::decl(&cfg),
         ThreadView::decl(&cfg),
         ThreadLimitOverride::decl(&cfg),
         ThreadPark::decl(&cfg),

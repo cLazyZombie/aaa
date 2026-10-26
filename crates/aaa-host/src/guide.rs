@@ -134,7 +134,8 @@ const CORE_BODY: &str = "
    기억한 것이 아니라 context가 보인 것으로 일한다. context가 보인 inbox 항목은 「봤다」가 되어 다음 알림에 다시 나오지 않는다.
 2. inbox 항목을 처리하고, 처리한 항목은 `aaa inbox done <id…>`로 끝낸다. `[aaa inbox] …` 알림을 받으면
    `aaa inbox list`로 읽는다.
-3. 사용자에게 답한다.
+3. 완료 thread를 resolve하기 전 보고·요약의 Next를 확인한다. 후속 할 일에 잇거나 명시적 버림·정리 완료 사유를 기록한다(`aaa guide tasks`의 후속 규칙).
+4. 사용자에게 답한다.
 
 ## 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
@@ -226,6 +227,12 @@ thread의 [완료] 보고와 resolve한 마지막 보고는 aaa가 「내 보고
 - 사용자가 자리가 나면 시작하라고 맡긴 일은 `aaa task reserve <task ID>`로 예약한다. 채팅의 약속만 남기지 않는다. 명시 예약은
   그 내용의 시작 승인이고, 병합 승인은 별개다.
 - 사용자가 웹 할 일 화면에서 고친 것은 `aaa context`에 이미 들어 있다. 따로 묻지 않고 되돌리지 않는다.
+- 끝난 thread를 resolve하기 전에는 보고와 요약의 Next를 읽는다. Next가 남으면 후속 할 일을 만들고
+  `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`로 잇거나, 일부러 버리는 사유를 파일에 써
+  `aaa thread followup <thread> --id <후속 ID> --reason-file <파일>`로 기록한다. 원장/ID는 `aaa thread show <thread>`로 읽는다.
+  후속 등록은 시작·병합 승인과 별개다. 승인 대기 일도 기록하며 임의로 실행하지 않는다.
+  정리만 남으면 Next에 `정리: worktree와 branch를 지운다`처럼 쓴다. 문구로 자동 제외하지 않으며 정리 후 완료 사실을 사유로 기록한다.
+  일반 inbox done·완료 체크·연결 해제로 후속을 닫지 않는다. 후속은 새 보고·resolve 뒤에도 남는다.
 - 끝난 thread의 task는 host가 정리한다. 「확인 필요」(inbox `task needs check`)로 남은 task만 끝났는지·다시 맡길지·연결만 풀지
   묻는다(이미 물었으면 묻지 않는다). thread가 끝난 턴에 미할당이나 agent에게 맡긴 task가 기다리면 한 번 말하고 맡길지 묻는다.
 
@@ -419,6 +426,9 @@ const THREADS: &str = r#"# thread 다루기
   도는 thread의 model은 harness의 `/model`로 바꾼다.
 
 ## 끝내기
+- 끝난 thread의 보고·요약에 Next가 남으면 resolve 전에 후속 할 일을 만들고 원장에 연결하거나, 일부러 버림을 사유로 기록한다.
+  `aaa thread show <id>`의 후속 ID로 `aaa thread followup <id> --id <후속 ID> --task <d-ID>` 또는 `--reason-file <파일>`을 쓴다.
+  정리만 남으면 정리 후 완료 사실을 사유로 기록한다. [완료]만 보고 후속을 생략하거나 inbox 정리로 닫지 않는다.
 - 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
   `aaa thread resolve <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
 - aaa가 thread의 PR을 따라간다. 열리고 승인되면 묶음이 「병합 중」이고, 병합되면 agent가 끝낸 뒤(진행 보고 `Done`, 아니면 병합 뒤
@@ -530,7 +540,7 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 맡은 쪽(모델·머신, `me`·사람, 없으면 「미할당」), 메모가 있으면 짧은 한 줄,
   맡긴 task는 `aaa context`의 열린 thread에서 그 thread의 지금 묶음을 보인다. task 줄이 없는 열린 thread는 따로 머리를 두어
   보인다. 사용자를 기다리는 task를 말한다. 파일을 그대로 붙이지 않는다.
-- thread가 끝나면: host가 그 thread에 이어진 task를 정리한다. PR이 병합됐거나 마지막 보고 첫 줄이 `[완료]`면 줄을 지우고
+- thread가 끝나면: 먼저 보고·요약의 Next를 확인해 후속 할 일 연결이나 명시적 버림·정리 완료 사유를 기록한다(위 TASKS.md 규칙). 후속이 남으면 host는 완료 보관을 막고 `task needs check`의 「후속 남음」을 남긴다. host가 그 thread에 이어진 task를 정리한다. PR이 병합됐거나 마지막 보고 첫 줄이 `[완료]`면 줄을 지우고
   inbox에 `task auto-cleaned`로 알린다(되살리기 `aaa task restore <기록 id>`). 그 밖이면 줄을 남기고 「확인 필요」로 둔다
   (`aaa task list`의 ⚠, inbox `task needs check`). 확인 필요로 남은 task만 사용자에게 끝났는지·다시 맡길지·연결만 풀지 묻는다
   (그 task를 이미 물었으면 묻지 않는다). 하위 task가 남은 task는 지우지 않고, 하위가 모두 끝난 상위는 확인 필요로 올라온다.

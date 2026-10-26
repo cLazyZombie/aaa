@@ -4038,3 +4038,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `repeated_usage_waits_survive_inbox_cleanup_and_restart_until_reason_or_input_changes`는 실제 자동화 대기 네 번과 매번 inbox 처리를 수행한다. 안내 한 건과 입력 보존·host 재기동 뒤 재안내 없음, 이유/입력 변화·해제/재차단을 확인한다. 필요 이유는 ticker마다 같은 안내가 다시 쌓이는 회귀를 막기 위해서다.
 - 기존 E2E81에서 Chromium/WebKit × 1280/390px 실제 계정 행 스위치·그룹/모델/프로젝트 제거·가로 넘침을 검사한다. 실제 host/agent/PTY의 같은 harness 분산·미관측 반복 시작·5시간 누락+주간10%/100%·다른 harness 기본 계정 fallback·영수증·재기동·할 일 대기/취소·Reader와 인증 비노출도 확인한다. E2E58은 t-1100의 이름 변경 UI를 유지하며 host 회귀에서 v2 사용 설정 동반 이전도 확인한다.
 - 부분 명령은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib`와 `NODE_PATH=<작업 폴더 Playwright 1.64.1> nice -n 15 node web/e2e/web.e2e.mjs --spec 58,65,78,81 --workers 1`이다. 웹 빌드·유닛, proto 생성 일치·의존 규칙도 검사한다. 공용 브라우저 캐시만 쓰며 고정 sleep·재시도·시한 확대는 없다. 전체 ci-local은 coordinator가 준 우선 차례에 실행한다.
+
+## 완료 보고의 후속 원장(t-1112, §8.501)
+
+- host 회귀 `completed_next_survives_merge_inbox_cleanup_and_task_mutations_until_linked`는 실제 SQLite·TASKS·완료 보관·inbox를 써 병합된 결과의 자동 보관 차단, 삭제/완료 체크/원문 연결 해제 거부, inbox 개별·일괄 정리 보존, 자기 연결·없는 ID·빈 사유·처리 덮어쓰기 거부, thread 내부 actor 거부와 두 writer의 barrier 동시 처리 한 번 확정, 실재 후속 연결 뒤 자동 보관을 검사한다. 필요한 이유: 이번 유실 경로와 종료 우회 경로를 같은 원장으로 막아야 한다.
+- `no_linked_task_and_replaced_reports_keep_pending_with_durable_cleanup_reason`은 연결 task 부재·새 보고의 Next 삭제·같은 사본 재회수·명시적 정리 사유·Host 재기동을 확인한다. 필요한 이유: 파일이나 임시 알림만 남기면 보고 수정/재시작에서 후속을 잃는다.
+- 기존 E2E47은 짧은 thread 주소의 hashchange를 capture listener로 보류하고 초기 폼 입력 뒤 전달해 실제 노드/입력이 유지되는지 확인한다. 첫 브라우저 시험이 주소 사건에서 화면 전체를 내렸다 다시 만들어 입력을 비우는 결함을 찾아 App에서 바로 같은 thread로 해석하도록 고쳤다.
+- 기존 E2E47에 실제 host·agent·CLI·웹의 완료→resolve→후속 경고→실재 후속 생성→없는 ID 거부→웹 연결→보관/복원 흐름을 덧붙인다. Chromium/WebKit × 1280/390px에서는 정리 사유와 영수증·새로고침·동시 읽기 기기 갱신·Reader 직접 요청 거부·가로 넘침을 검사한다. 필요한 이유: 실제 권한/사건 갱신과 두 웹 엔진의 폼은 host 유닛으로 대체할 수 없다. 공용 fake 보고의 Next를 쓰던 기존 m13 완료 보관 owner들은 그 Next 확인을 명시적으로 기록한 뒤 원래 보관 계약을 검사한다.
+- 실행: `cargo test --profile verify --locked -p aaa-host --lib`, `cargo test --profile verify --locked -p aaa --test m13 <owner>`, 기존 E2E47. Playwright 1.64.1 모듈은 자기 작업 폴더에 두고 브라우저는 내부 공용 캐시와 launchChromium을 쓴다. 고정 sleep·실패 재시도·시한 확대는 없다. 전체 ci-local은 묶음 착지 차례에 coordinator가 수행한다.
