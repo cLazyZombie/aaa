@@ -7,7 +7,7 @@ import { ListId } from "./ListId";
 // 선택지에 그림이 있으면 선택지마다 큰 그림 카드(데스크톱 2열, 2B)다. 답한 것은 답할 때의 원문(질문·본문·선택지 전체와 까닭·
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
 import { QuestionReports } from "./QuestionReports";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X, Zap } from "lucide-react";
 import type { AutoDecision, AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
@@ -204,12 +204,12 @@ export function AsksView({
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
             <QuestionCard key={`${selection.ask.thread.id} ${selection.ask.thread.questions.report_hash} ${JSON.stringify(selection.ask.thread.questions.draft ?? null)}`} t={selection.ask.thread} q={selection.ask.thread.questions}
-              canControl={canControl} onAnswer={(p, text) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text)} onZoom={setZoom} onThread={onThread} />
+              active={shown} canControl={canControl} onAnswer={(p, text) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text)} onZoom={setZoom} onThread={onThread} />
           )}
           {selection.kind === "open" && selection.ask.kind === "request" && (
             selection.ask.request.questions ? (
               <QuestionCard key={`${selection.ask.key} ${JSON.stringify(selection.ask.request.questions.draft ?? null)}`} request={selection.ask.request} q={selection.ask.request.questions}
-                canControl={canControl} onAnswer={(p, text) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text)} onZoom={setZoom} onThread={onThread} />
+                active={shown} canControl={canControl} onAnswer={(p, text) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text)} onZoom={setZoom} onThread={onThread} />
             ) : <RequestCard key={selection.ask.key} questionId={selection.ask.request.question_id} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
           )}
@@ -319,6 +319,7 @@ function QuestionCard({
   t,
   request,
   q,
+  active,
   canControl,
   onAnswer,
   onZoom,
@@ -327,6 +328,7 @@ function QuestionCard({
   t?: ThreadView;
   request?: UserRequestView;
   q: ThreadQuestions;
+  active: boolean;
   canControl: boolean;
   onAnswer: (picks: (number | null)[], text: string | null) => Promise<void>;
   onZoom: (z: { src: string; alt: string }) => void;
@@ -334,6 +336,7 @@ function QuestionCard({
 }) {
   const [picks, setPicks] = useState<(number | null)[]>(() => q.draft?.picks ?? q.items.map(() => null));
   const [custom, setCustom] = useState(q.draft?.text ?? "");
+  const customInput = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const shown = useRef(false);
@@ -345,6 +348,17 @@ function QuestionCard({
   }, []);
   const customId = useId();
   const off = pending || !canControl;
+  useLayoutEffect(() => {
+    if (!active || off) return;
+    const element = customInput.current;
+    const view = element?.ownerDocument.defaultView;
+    if (!element || !view) return;
+    // 대화 입력창과 같은 경계: root capture의 앞선 commit이 controlled 값을
+    // 복원하기 전에 새 글을 받는다. bubble onChange도 기존대로 유지한다.
+    const input = (event: Event) => { if (event.target === element) setCustom(element.value); };
+    view.addEventListener("input", input, true);
+    return () => view.removeEventListener("input", input, true);
+  }, [active, off]);
   const text = custom.trim();
   const got = picks.filter((p) => p !== null).length;
   const all = got === q.items.length;
@@ -412,7 +426,7 @@ function QuestionCard({
       <div className="prompt-card-custom">
         <span className="prompt-card-custom-label" id={customId}>또는 직접 답을 입력(고르지 않은 질문을 대신한다)</span>
         <div className="prompt-card-custom-row">
-          <input className="input" value={custom} disabled={off} placeholder="예: 2 둘 다 보이게" aria-labelledby={customId} data-testid="thread-ask-text"
+          <input ref={customInput} className="input" value={custom} disabled={off} placeholder="예: 2 둘 다 보이게" aria-labelledby={customId} data-testid="thread-ask-text"
             onChange={(e) => setCustom(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && text.length > 0) submit();
