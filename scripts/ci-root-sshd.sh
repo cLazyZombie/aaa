@@ -61,7 +61,7 @@ echo "root sshd pid $(cat "$LAB/sshd.pid") port $PORT"
 ssh -F "$LAB/ssh_config" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR ci \
   'p=$$; while [ "${p:-0}" -gt 0 ]; do ps -o pid=,ppid=,user=,comm= -p "$p"; [ "$p" -eq 1 ] && break; p=$(ps -o ppid= -p "$p" | tr -d " "); done' || true
 
-if ! AAA_ROOT_SSHD_LAB="$LAB" cargo test -p aaa --test m13 --locked \
+if ! AAA_ROOT_SSHD_LAB="$LAB" cargo test --profile verify -p aaa --test m13 --locked \
   ssh_install::ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_checks \
   -- --ignored --exact --nocapture; then
   echo "── sshd.log ──" >&2

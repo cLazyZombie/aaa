@@ -29,6 +29,8 @@
 | ci-local unit(rust_tests.py)·doctest·clippy | verify |
 | .github/workflows/ci.yml | ci-local에 위임: 웹 E2E/build는 e2e, unit/clippy는 verify |
 | Windows ci-local 선검사 | release check만 실행(LLVM·LTO·실행 파일 생성 없음); release 전용 cfg 누락 검출 유지 |
+| Windows SYSTEM SSH owner | build의 target/e2e/aaa.exe를 자원 생성 전에 확인해 절대 경로로 전달; cargo test는 verify |
+| macOS 실제 LaunchAgent·root SSH owner | cargo test는 verify; 시험용 aaa는 해당 profile의 Cargo 산출물 |
 | scripts/deploy-build.sh / .github/workflows/release.yml | release; 기존 실제 배포 설정·기호 보관 유지 |
 | p0/build-app.sh 서명·업그레이드 모의 | e2e; 실제 배포 성능을 주장하지 않는 내부 후보 |
 

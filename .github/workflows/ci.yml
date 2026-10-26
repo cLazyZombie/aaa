@@ -160,7 +160,7 @@ jobs:
       - name: macOS LaunchAgent 실제 등록·ready·instance 보존
         if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
         timeout-minutes: 15
-        run: cargo test -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture 2>&1 | tee launchd-registration.log
+        run: cargo test --profile verify -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture 2>&1 | tee launchd-registration.log
       # 「SSH로 추가」 실제 경로(plan §8.420): install 검증 SSH 입구가 믿는 root sshd를 이 일회성 계정에만 띄운다. 원격 HOME은 실험실이고
       # 시험이 runner 실제 HOME이 그대로인지 본다. 운영 Mac에서는 돌리지 않는다(스크립트가 GITHUB_ACTIONS가 아니면 멈춘다).
       - name: SSH로 설치·등록 실제 root sshd·LaunchAgent

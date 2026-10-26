@@ -3,6 +3,11 @@
 # 가짜 계정 암호는 부모 메모리 → 시험 자식 anonymous stdin으로만 전달한다. argv/env/파일/로그 금지.
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:OS -ne 'Windows_NT') { throw '일회성 Windows CI 전용이다' }
+. (Join-Path $PSScriptRoot 'windows-sshd-test-command.ps1')
+# 사용자·서비스·보호 입력을 만들기 전에 이번 build의 실행 파일과 cargo를 확인한다.
+$test = New-WindowsSshTestProcess (Join-Path $PSScriptRoot '..')
+$binaryHash = (Get-FileHash -LiteralPath $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_BINARY'] -Algorithm SHA256).Hash
+Write-Host "M4 stage=preflight binary_profile=e2e test_profile=verify binary=target/e2e/aaa.exe sha256=$binaryHash"
 $sshd = Join-Path $env:SystemRoot 'System32\OpenSSH\sshd.exe'
 if (-not (Test-Path -LiteralPath $sshd)) { throw '시스템 sshd.exe가 없다: M4 실제 owner를 수행할 수 없다' }
 if (Get-Service -Name 'aaa-agent' -ErrorAction SilentlyContinue) { throw '기존 aaa-agent 서비스가 있어 시험하지 않는다' }
@@ -126,30 +131,25 @@ Host ci
         throw
     }
     Write-Host 'M4 SYSTEM OpenSSH 실제 owner 시작'
-    $test = New-Object Diagnostics.Process
-    $test.StartInfo.FileName = (Get-Command cargo.exe).Source
-    $test.StartInfo.Arguments = 'test --locked -p aaa-host --lib machine_setup::tests_windows::system_sshd_installs_a_current_user_scm_agent_and_registers_it -- --ignored --exact --nocapture'
-    $test.StartInfo.UseShellExecute = $false
-    $test.StartInfo.RedirectStandardInput = $true
-    $test.StartInfo.RedirectStandardOutput = $true
-    $test.StartInfo.RedirectStandardError = $true
     $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_LAB'] = $lab
     $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_SERVICE'] = $service
-    $test.StartInfo.EnvironmentVariables['AAA_WINDOWS_SSH_BINARY'] = (Resolve-Path 'target/debug/aaa.exe').Path
-    foreach ($name in @('AAA_SESSION_ID', 'AAA_HOOK_SOCK')) { $test.StartInfo.EnvironmentVariables.Remove($name) }
-    [void]$test.Start()
+    Write-Host 'M4 stage=test binary_profile=e2e test_profile=verify binary=target/e2e/aaa.exe'
+    try { [void]$test.Start() } catch {
+        throw ('M4 stage=test-start profile=verify binary=target/e2e/aaa.exe exit=not-started: ' + $_.Exception.Message)
+    }
     $out = $test.StandardOutput.ReadToEndAsync()
     $err = $test.StandardError.ReadToEndAsync()
     $test.StandardInput.Write($password)
     $test.StandardInput.Close()
-    if (-not $test.WaitForExit(900000)) { $test.Kill(); $test.WaitForExit(); throw 'M4 실제 owner 시한 초과' }
+    if (-not $test.WaitForExit(900000)) { $test.Kill(); $test.WaitForExit(); throw 'M4 stage=test profile=verify binary=target/e2e/aaa.exe exit=timeout: 실제 owner 시한 초과' }
     # 결함이 있어도 가짜 암호를 CI 로그/대화로 내보내지 않는다.
     $stdout = $out.GetAwaiter().GetResult()
     $stderr = $err.GetAwaiter().GetResult()
     if ($stdout.Contains($password) -or $stderr.Contains($password)) { throw 'M4 owner 출력에 보호 입력 누출' }
     [Console]::Out.Write($stdout)
     [Console]::Error.Write($stderr)
-    if ($test.ExitCode -ne 0) { throw 'M4 SYSTEM sshd·SCM owner 실패' }
+    Write-Host ('M4 stage=test profile=verify binary=target/e2e/aaa.exe exit=' + $test.ExitCode)
+    if ($test.ExitCode -ne 0) { throw ('M4 SYSTEM sshd·SCM owner 실패: profile=verify binary=target/e2e/aaa.exe exit=' + $test.ExitCode) }
 } finally {
     # 이 시험 전에는 없었고 일회 계정 소유인 서비스만 정리한다.
     $agent = Get-CimInstance Win32_Service -Filter "Name='aaa-agent'" -ErrorAction SilentlyContinue
