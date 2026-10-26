@@ -36,15 +36,22 @@ export function chatRowIds(messages: readonly Pick<ChatMessage, "role" | "text" 
 /** 굴림 위치에 걸친 줄(위가 굴림 위치보다 위인 마지막 줄)과 그 줄 안 거리. `tops`는 줄 위 끝(내용 기준), 오름차순 */
 export function chatScrollAnchor(ids: readonly string[], tops: readonly number[], scroll: number):
   { rowId: string; offsetWithinRow: number; scrollOffset: number } | undefined {
-  if (ids.length === 0 || tops.length !== ids.length || !Number.isFinite(scroll)) return undefined;
+  if (tops.length !== ids.length) return undefined;
+  return chatScrollAnchorAt(ids, index => tops[index]!, scroll);
+}
+
+/** DOM 줄은 이진 탐색에 필요한 높이만 읽는다. 모든 줄의 layout을 먼저 강제하지 않는다. */
+export function chatScrollAnchorAt(ids: readonly string[], topAt: (index: number) => number, scroll: number):
+  { rowId: string; offsetWithinRow: number; scrollOffset: number } | undefined {
+  if (ids.length === 0 || !Number.isFinite(scroll)) return undefined;
   const scrollOffset = Math.max(0, scroll);
   let low = 0;
   let high = ids.length - 1;
   let index = 0;
-  let rowTop = tops[0]!;
+  let rowTop = topAt(0);
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
-    const top = tops[middle]!;
+    const top = topAt(middle);
     if (top <= scrollOffset) {
       index = middle;
       rowTop = top;

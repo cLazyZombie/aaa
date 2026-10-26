@@ -7,6 +7,11 @@
 - 첫 대량 E2E는 제품 오류가 아니라 공용 `aaa()`의 Node `execFileSync` 기본 stdout 버퍼(1 MiB)에 걸려 자식이 끝 코드 null로 종료됐다. 이 시나리오 전용 CLI helper는 `spawn` stdout을 파일로 받아 종료 사건·코드와 전체 JSON을 확인한다. 버퍼/시한/기대값을 늘리지 않고 전체 결과가 1 MiB보다 크다는 단언도 유지한다.
 - 부분 실행은 `cargo test --profile verify --locked -p aaa-host --lib orch::list_tests`, 같은 crate의 `thread_pages_require_a_client_that_reads_cursors`, `cargo test --profile verify --locked -p aaa --test m13 worktree_thread_round_trip`, `node --test web/test/threadReload.test.mjs`, `NODE_PATH=<자기 작업 폴더 Playwright 1.64.1> nice -n 15 node web/e2e/web.e2e.mjs --spec 12-threads-push --workers 1`이다. 공용 내부 브라우저 캐시와 저장소 launchChromium을 쓰며 고정 sleep·재시도·시한 확대는 없다. 전체 gate는 coordinator에게 준비됨을 알리고 받은 차례에 실행한다.
 
+- 첫 전체 gate의 실제 m13-4 `automation_threads_leave_user_capacity_and_queue_slots_available`·E2E48은 목록에서 자동화 출처를 뺀 회귀였다. 원래 출처 단언을 그대로 유지해 고친 계약을 확인한다. 대량 fixture의 큰 자료는 질문 본문으로 옮기고 Next는 상세와 같은 값으로 보존해야 한다. 기대값을 줄여 출처 검사를 없애지 않는다.
+- E2E103 fixture의 threads가 빈 한 페이지임을 요청/응답으로 확인했다. 본문 로딩·커서는 별도 pane_chat 경로다. 과거 페이지의 행마다 observer·기준 줄 보정을 반복하는 비용을 프로파일과 native resize/scroll 계측으로 조사하고 공유 observer·높이의 지연 이진 탐색으로 수리한다. 기존 E2E103의 Chromium/WebKit ×1280/390px·coordinator/일반 pane·각 3회·80ms 회선 지연·20초 대기와 픽셀 위치/요청 수 단언은 바꾸지 않는다. E2E29·41·104·109로 append·도구 묶음·숨김 수명·복귀 위치도 확인한다.
+- 진단 계측은 실제 native ResizeObserver와 chat.scrollTop 쓰기를 세며 같은 150행 페이지에서 150 callback/304 writes가 1/5로, 가상화 후 36/76이 2~3/6~7로 줄었다. CPU 프로파일의 `holdAnchor` 반복과 함께 높이를 모두 읽은 뒤 이진 탐색하던 경로를 확인했다. thread 목록이 빈 fixture의 750→900행 commit 한 번만 CDP CPU 256배로 제한한 대조에서 기존 코드와 resize 묶음만 수리한 중간판은 원래 20초 `앞 쪽 commit` 오류로 실패했고, 높이의 지연 이진 탐색까지 수리한 판은 같은 코드·조건·대기 상한으로 통과했다. 256배는 실패 경계를 고정하는 진단용 극한 조건이며 원본 gate 당시 CPU 배분을 소급 확정하는 수치는 아니다. 시험 재시도·시한 확대·기대값 완화로 통과시키지 않는다. 이 느린 진단 조건은 정규 CI에 넣지 않는다.
+- `chatScroll.test.mjs`에 4,096행을 실제 높이 accessor로 읽는 한 시험을 더한다. 앞 안내·중간·끝 밖에서도 원래 기준 줄/거리를 유지하고 높이 읽기 수가 전체 행에 비례하지 않아야 한다. 필요한 이유: 과거 기록이 쌓일 때 매 scroll마다 모든 줄의 layout을 강제하는 비용 회귀를 막는다. 기존 배열/잘림/빈 값/기억 시험은 그대로 둔다.
+
 ## 활성 할 일 표시 정렬(t-1081, §8.497)
 
 - `taskSortModel.test.mjs` 네 유닛은 각각 속성별 정렬·빈 값·0채움 번호·안정된 동률, 실제 예약/숨은 예약과 상하위/거르기 보존, 나중의 Markdown 표시 제목·메모·원문 위치 보존, 탭별 기억 분리·잘못된 저장값 복구를 검사한다. 필요한 이유는 실행 차례 훼손, 부모·하위 분리, 다른 항목을 옮기는 데이터 손실, 다른 탭의 보기 설정 훼손을 막기 위해서다. 정렬 상수만 복사하는 시험은 두지 않는다.

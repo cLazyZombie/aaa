@@ -26,7 +26,7 @@ import { imagePaths } from "./herdr/composerImages";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import { delivered, type PendingSend } from "./ChatComposer";
-import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
+import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchorAt, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
 import { ChatRow } from "./ChatRow";
 import { usePageVisible } from "./pageVisible";
@@ -727,10 +727,10 @@ export function ChatPanel({
     const ids = rowIdsRef.current;
     if (rows.length !== ids.length) return;
     const base = el.getBoundingClientRect().top - el.scrollTop;
-    const tops = Array.from(rows, (row) => row.getBoundingClientRect().top - base);
-    const at = chatScrollAnchor(ids, tops, el.scrollTop);
+    const topAt = (index: number) => rows[index]!.getBoundingClientRect().top - base;
+    const at = chatScrollAnchorAt(ids, topAt, el.scrollTop);
     // 맨 위 안내를 읽을 때 첫 메시지까지의 빈 거리도 보존한다.
-    if (at && at.rowId === ids[0] && el.scrollTop < tops[0]!) at.offsetWithinRow = el.scrollTop - tops[0]!;
+    if (at && at.rowId === ids[0] && el.scrollTop < topAt(0)) at.offsetWithinRow = el.scrollTop - topAt(0);
     anchor.current = at ?? null;
     if (at) rememberChatPosition(pane, { ...at, atEnd: atBottom.current || (chatIsAtEnd(el) && !el.style.getPropertyValue("--chat-tail-space")) }, atBottom.current);
   };
@@ -761,7 +761,26 @@ export function ChatPanel({
     if (atBottom.current) scrollToEnd(false);
     else holdAnchor(el);
   };
-  const onRowResize = useCallback(() => resizeRow.current(), []);
+  // 한 페이지의 행 높이는 같은 ResizeObserver 묶음에서 모두 잰 뒤 보던 줄을 한 번 맞춘다.
+  // 행마다 전체 목록을 찾고 scrollTop을 쓰면 앞 페이지 commit 중 layout을 반복 강제한다.
+  const rowSizes = useRef(new Map<Element, () => void>());
+  const rowObserver = useRef<ResizeObserver | null>(null);
+  const observeRowSize = useCallback((el: HTMLDivElement, measure: () => void) => {
+    const observer = rowObserver.current ??= new ResizeObserver(entries => {
+      for (const entry of entries) rowSizes.current.get(entry.target)?.();
+      resizeRow.current();
+    });
+    rowSizes.current.set(el, measure);
+    observer.observe(el);
+    return () => {
+      rowSizes.current.delete(el);
+      observer.unobserve(el);
+      if (rowSizes.current.size === 0) {
+        observer.disconnect();
+        rowObserver.current = null;
+      }
+    };
+  }, []);
   const layoutActive = useRef(false);
   useLayoutEffect(() => {
     const el = list.current;
@@ -1008,7 +1027,7 @@ export function ChatPanel({
               );
             };
             return (
-              <ChatRow active={active} key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={virtual} onResize={onRowResize}>
+              <ChatRow active={active} key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={virtual} observeSize={observeRowSize}>
                 {row.kind === "tools" ? (
                   <ToolGroup messages={row.indices.map((i) => chat.messages[i]!)} expanded={groupExpanded(row, expandedGroups)}
                     live={status === "working" && n === displayRows.length - 1} onToggle={() => toggleGroup(row)}>
