@@ -673,6 +673,20 @@ impl World {
     }
 }
 
+/// lab의 CLI 실행은 다른 프로세스가 출력 쓰기 끝을 들고 있어도 자식이 끝나면 돌아온다(t-1097). 병렬 시험의 다른 thread가 띄운
+/// host·agent가 macOS pipe의 쓰기 끝을 물려받은 경우와 같은 모양을, 출력을 든 채 남는 손자로 결정적으로 만든다.
+#[cfg(unix)]
+#[test]
+fn lab_capture_returns_while_another_process_holds_the_output() {
+    let o = lab::captured(Command::new("/bin/sh").args(["-c", "sleep 600 & echo $!"])).expect("sh 실행");
+    assert!(o.status.success(), "{o:?}");
+    let holder = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    // 돌아온 때 손자가 아직 출력을 들고 있었다(pipe였다면 이 손자가 끝날 때까지 돌아오지 않는다)
+    let alive = Command::new("kill").args(["-0", &holder]).status().expect("kill -0").success();
+    let _ = Command::new("kill").arg(&holder).status();
+    assert!(alive, "출력을 든 손자 {holder}가 돌아오기 전에 끝났다");
+}
+
 /// 준비 대기는 구독 전의 현재 목록과 구독 뒤의 연결 변화를 모두 받아야 한다.
 #[test]
 fn agent_readiness_uses_initial_state_and_reconnection_events() {

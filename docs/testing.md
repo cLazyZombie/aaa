@@ -4018,3 +4018,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - E2E46에 「속성은 바로 저장, 고치던 제목은 남아 이어 저장해도 충돌 없음」 단계를 더했다. 저장 흐름이 두 갈래가 되며 생기는 낡은 블록 hash 충돌을 막는 회귀라 필요하다.
 - E2E92 「후속 문서」 메모를 화면보다 길게 하고, 예약 확인에서 「이 내용으로 예약」이 화면 안에 있고 그 자리에서 눌리는지(elementFromPoint) 본다. 사용자가 겪은 「스크롤에 가린 예약 단추」의 회귀라 필요하다.
 - 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs <캡처 폴더> --spec 43,46,47,52,54,67,70,75,76,92,107 --workers 6`, 웹 유닛·typecheck·빌드. 공용 브라우저 캐시를 쓰고 고정 sleep·재시도·시한 연장은 없다. 전체 gate는 coordinator 차례에 한다.
+
+## lab CLI 출력의 macOS pipe 상속 막힘 (t-1097)
+
+- 74회차 후보 gate의 m13-4에서 `accounts::host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials`가 `30s 안에 labA 연결이 되지 않았다`로 실패했다. 같은 실험실 host trace에는 첫 `machine list`(49.923~49.979, 빈 목록) 뒤 30초 동안 front 연결이 없었다. host는 50.79에 labA를 연결했다. 시험 thread가 첫 호출의 `Command::output()`에서 돌아오지 못한 것이다(t-0787의 `ci.rs` 같은 실패와 같은 모양).
+- 원인: macOS Rust std는 `pipe()` 뒤에 CLOEXEC를 따로 건다(`std/src/sys/pipe/unix.rs`, `pipe2` 없음). 그 틈에 같은 시험 프로세스의 다른 thread가 띄운 오래 사는 자식(다른 시험의 host·agent)이 쓰기 끝을 물려받으면, CLI가 끝나도 EOF가 오지 않는다. 최소 재현(한 thread가 `output()` 반복, 세 thread가 `sleep 3` 자식을 계속 띄움)에서 20초 2,622번 중 2번이 3.01초 막혔다. 출력을 파일로 받으면 2,643번 중 최대 0.15초였다.
+- 수리: lab `captured()`가 표준 출력·오류를 `O_CLOEXEC`로 원자적으로 연 임시 파일로 받는다. `Node::run`(모든 `json`/`ok`)과 `command_of`가 이를 쓴다. `Node::wait_connected`는 시도마다 시각·걸린 시간·종료 코드·머신 상태·오류 첫 줄을 남긴다. accounts world가 이를 쓴다. 30초 상한과 기존 단언은 그대로다.
+- 회귀 `cargo test -p aaa --test m13 lab_capture_returns_while_another_process_holds_the_output`: 출력을 든 채 남는 손자(`sleep 600 &`)로 다른 프로세스가 쓰기 끝을 든 상황을 결정적으로 만들고, 돌아온 때 그 손자가 살아 있는지(`kill -0`)로 본다. 옛 pipe 방식에서는 20초 경보로 끊겼고(RED), 수리 뒤 0.01초에 통과한다. 병렬 시험이 다른 시험의 host 수명만큼 막히는 실제 실패를 막는 회귀라 필요하다.
+- 제품 host·agent에서도 `Command::output()`과 오래 사는 자식 spawn이 다른 thread에서 겹치면 같은 경합이 생길 수 있다. 이번에는 확인하지 않았다(coordinator에 별도로 알림).
