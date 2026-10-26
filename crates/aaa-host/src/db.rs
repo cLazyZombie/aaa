@@ -174,7 +174,7 @@ pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
     #[cfg(test)]
-    pub(crate) fn conn_for_pool_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn conn_for_test(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
     /// 발신자의 32자리 ID와 화면의 p-번호를 모두 받는다. 중복 전송 판정은 원래 post_row만 쓴다.
@@ -352,6 +352,15 @@ impl Db {
         let mut conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // DDL마다 별도 내구 쓰기를 하지 않는다. 실패한 이행도 일부만 남기지 않는다.
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        Self::initialize_schema(&tx)?;
+        tx.commit()?;
+        scrub_audit_env(&mut conn)?;
+        Ok(Db { conn: Mutex::new(conn) })
+    }
+
+    fn initialize_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS repo_workspaces(project TEXT NOT NULL, registration TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(project,registration));
@@ -495,7 +504,6 @@ impl Db {
         if !has_from_thread {
             conn.execute("ALTER TABLE library_reports ADD COLUMN from_thread TEXT", [])?;
         }
-        scrub_audit_env(&mut conn)?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
         match v.as_deref().map(str::parse::<i64>) {
@@ -521,13 +529,11 @@ impl Db {
             .query_row("SELECT value FROM meta WHERE key='workspace-metrics-schema'", [], |r| r.get(0))
             .optional()?;
         if metrics_version.as_deref() != Some("2") {
-            let tx = conn.transaction()?;
-            tx.execute_batch("DELETE FROM repo_metrics; DELETE FROM repo_workspaces;
+            conn.execute_batch("DELETE FROM repo_metrics; DELETE FROM repo_workspaces;
                 DELETE FROM meta WHERE key LIKE 'workspace-collection:%';
                 INSERT INTO meta(key,value) VALUES('workspace-metrics-schema','2') ON CONFLICT(key) DO UPDATE SET value='2';")?;
-            tx.commit()?;
         }
-        Ok(Db { conn: Mutex::new(conn) })
+        Ok(())
     }
 
     pub fn workspaces(&self) -> Result<Vec<(String, String)>> {
@@ -2087,6 +2093,48 @@ impl Db {
 }
 
 impl Db {}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    // 필요: 묶음 DDL이 실패한 이행을 남기거나 내구 설정을 바꾸지 않게 한다.
+    #[test]
+    fn schema_upgrade_commits_once_and_rolls_back_on_failure() {
+        let root = std::env::temp_dir().join(format!("aaa-db-schema-{}", aaa_common::util::new_id()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("host.db");
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+            INSERT INTO meta VALUES('schema','999');",
+        )
+        .unwrap();
+        assert!(Db::open(&path).is_err(), "모르는 schema는 거부한다");
+        assert_eq!(
+            old.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='threads'", [], |r| r
+                .get::<_, u32>(0))
+                .unwrap(),
+            0,
+            "실패 전의 DDL도 되돌린다"
+        );
+        old.execute("UPDATE meta SET value=?1 WHERE key='schema'", [SCHEMA_VERSION.to_string()]).unwrap();
+        drop(old);
+        let db = Db::open(&path).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            assert!(conn.is_autocommit(), "schema transaction은 open 안에서 끝낸다");
+            assert_eq!(conn.pragma_query_value(None, "synchronous", |r| r.get::<_, u32>(0)).unwrap(), 2);
+            assert_eq!(conn.pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0)).unwrap(), "wal");
+        }
+        db.set_meta("after-open", "durable").unwrap();
+        drop(db);
+        let reopened = Db::open(&path).unwrap();
+        assert_eq!(reopened.meta("after-open").unwrap().as_deref(), Some("durable"));
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
 
 #[cfg(test)]
 mod input_tests {

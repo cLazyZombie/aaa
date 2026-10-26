@@ -245,6 +245,42 @@ fn state_and_tls_are_private_on_creation_and_legacy_reload() {
 }
 
 #[test]
+fn private_acl_recheck_avoids_security_writes_but_repairs_external_changes() {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandleEx};
+    fn changed_at(path: &Path, directory: bool) -> i64 {
+        let mut info: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+        assert_ne!(
+            unsafe {
+                GetFileInformationByHandleEx(
+                    open(path, directory).as_raw_handle(),
+                    FileBasicInfo,
+                    (&mut info as *mut FILE_BASIC_INFO).cast(),
+                    std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+                )
+            },
+            0
+        );
+        info.ChangeTime
+    }
+    let lab = Lab::new();
+    let dir = lab.0.join("private");
+    crate::util::ensure_private_dir(&dir).unwrap();
+    let file = dir.join("record");
+    crate::util::write_private(&file, b"unchanged").unwrap();
+    for (path, directory) in [(&dir, true), (&file, false)] {
+        let before = changed_at(path, directory);
+        for _ in 0..3 {
+            drop(crate::private_file::protect(path, directory).unwrap());
+        }
+        assert_eq!(changed_at(path, directory), before, "같은 보안 descriptor를 다시 쓰지 않는다");
+        public_acl(path, directory);
+        drop(crate::private_file::protect(path, directory).unwrap());
+        assert_private(open(path, directory).as_raw_handle(), true);
+    }
+    assert_eq!(std::fs::read(file).unwrap(), b"unchanged");
+}
+
+#[test]
 fn inherited_thread_journal_directory_is_normalized_without_changing_parent() {
     let lab = Lab::new();
     let state = lab.0.join("state");

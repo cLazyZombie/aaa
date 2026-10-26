@@ -133,7 +133,7 @@ fn image_job(account: String, allocation: Allocation, id: &str) -> crate::image:
 }
 
 fn choose(lab: &Lab, input: &SelectionInput) -> anyhow::Result<(String, Allocation)> {
-    input.select(&lab.h.db.conn_for_pool_test(), NOW)
+    input.select(&lab.h.db.conn_for_test(), NOW)
 }
 
 // 필요: 관측 수집과 무관하게 시작한다는 사용자 계약과 알려진 한도의 경계를 지킨다.
@@ -383,7 +383,7 @@ fn migration_preserves_the_original_and_membership_without_rewriting_running_thr
     let before = l.h.load("demo", &id).unwrap();
     let original = r#"{"revision":"legacy","members":[{"account":"work","group":"claude","models":["old-model"]}],"projects":["old-project"]}"#;
     l.h.db.set_meta("account-pool-v1", original).unwrap();
-    l.h.db.conn_for_pool_test().execute("DELETE FROM meta WHERE key=?1", [CONFIG]).unwrap();
+    l.h.db.conn_for_test().execute("DELETE FROM meta WHERE key=?1", [CONFIG]).unwrap();
     l.h.pool_migrate().unwrap();
     let pool = l.h.account_pool().unwrap();
     assert_eq!(pool.members[0].account, "work");
