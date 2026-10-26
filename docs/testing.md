@@ -1,3 +1,9 @@
+## 대화 보낸 말의 즉시 표시(t-1069)
+
+- E2E115는 실제 host·agent·PTY와 Claude 감지기의 가짜 harness(작업 중 화면, `.queue` 표지가 있으면 기록 대기열 줄)를 쓴다. Chromium/WebKit × 1280/390px마다 첫 말은 submit ACK를 Playwright WebSocket route에서 붙잡아 ACK 전 `보내는 중` 말풍선·빈 입력창을 사건으로 확인하고, 풀면 `대기 중`, 같은 탭 새로고침 뒤 유지, 기록 줄 뒤 보통 말을 본다. 둘째 말은 붙잡지 않고 MutationObserver 기록으로 Enter부터 각 단계까지의 ms와 같은 글 말풍선이 하나뿐인지 확인한다.
+- 꼭 필요한 이유: 사용자가 보낸 것을 바로 보는 계약(ACK 전 표시)과 중복·새로고침 유지는 단위 시험으로 실제 WebSocket·기록 경로를 대신할 수 없다. E2E23 막힘 단계에는 말풍선의 막힘 표지와 멈춘 뒤 거둠 단언만 더했다.
+- 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1> node web/e2e/web.e2e.mjs <캡처 폴더> --spec 115 --workers 1`, 관련 `--spec 23,35,102,45,22,25,11,66`. 고정 sleep·재시도·시한 연장은 없다.
+
 ## 할 일 완료 목록 정렬(t-1067)
 
 - host 유닛 `archive_sorts_newest_first_and_pages_across_equal_values`: 끝난 날짜 기본·시작 날짜(처음 이은 thread, 기록 없음은 끝)·번호의 내림차순, 같은 끝난 시각을 한 건 페이지로 넘겨도 건너뛰거나 되풀이하지 않는 커서, 옛 ULID 커서 거부, 시작 시각을 내구 보관에 쓰지 않음을 검사한다. 기존 `archive_search_pages…`는 기본 차례 기대만 최신순으로 바꿨다.

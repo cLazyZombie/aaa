@@ -1174,8 +1174,11 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .composer-note.is-slow { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .composer-note.is-slow .composer-note-icon { color: var(--warn); }
 .composer-note-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-left: auto; }
-/* 대기 말: 작업 중에 보내 harness 대기열에 있는 글. 점선 카드와 밑줄 */
+/* 대기 말: 보냈지만 기록에 아직 없는 글(t-1069). 점선 카드와 밑줄 표지. 보내는 중(host 답 전)은 더 흐리다(Rocket.Chat 보내는 중 흐림) */
 .chat-msg.user.is-pending { border: var(--hairline) dashed var(--border-strong); background: transparent; color: var(--text-dim); }
+.chat-msg.user.is-sending { opacity: .72; }
+.chat-pending-spin { animation: composer-send-spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .chat-pending-spin { animation: none; } }
 .chat-pending-tag { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); }
 .chat-pending-tag svg { width: 12px; height: 12px; flex: none; }
 .chat-pending-tag.is-stale { color: var(--warn); }

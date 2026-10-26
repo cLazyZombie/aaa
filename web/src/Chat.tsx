@@ -25,7 +25,7 @@ import { copyText } from "./herdr/clipboard.ts";
 import { imagePaths } from "./herdr/composerImages";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
-import type { PendingSend } from "./ChatComposer";
+import { delivered, type PendingSend } from "./ChatComposer";
 import { chatAnchorTop, chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
 import { ChatRow } from "./ChatRow";
@@ -225,7 +225,7 @@ function useCopyResult() {
 }
 
 /** 참고 `UserMessage`: 긴 말은 몇 줄만 보이고 「전체 메시지 보기」로 펼친다. 잘린 곳은 흐리게 */
-function UserMessage({ active, text, pending = false }: { active: boolean; text: string; pending?: boolean }) {
+function UserMessage({ active, text, pending = false, sending = false }: { active: boolean; text: string; pending?: boolean; sending?: boolean }) {
   const canFold = useMemo(() => shouldFoldUserMessage(text), [text]);
   const [open, setOpen] = useState(false);
   const capped = canFold && !open;
@@ -267,7 +267,7 @@ function UserMessage({ active, text, pending = false }: { active: boolean; text:
     if (node && view && node.getBoundingClientRect().top < view.getBoundingClientRect().top) node.scrollIntoView({ block: "start" });
   }, [open]);
   return (
-    <div ref={card} className={`chat-msg user chat-bubble${capped ? " is-capped" : ""}${clipped ? " is-folded" : ""}${pending ? " is-pending" : ""}`} data-role="user">
+    <div ref={card} className={`chat-msg user chat-bubble${capped ? " is-capped" : ""}${clipped ? " is-folded" : ""}${pending ? " is-pending" : ""}${sending ? " is-sending" : ""}`} data-role="user">
       <div ref={body} className="chat-bubble-body" data-chat-find-text="" data-chat-find-fold={capped ? "" : undefined}>
         <Markdown>{text}</Markdown>
       </div>
@@ -282,9 +282,13 @@ function UserMessage({ active, text, pending = false }: { active: boolean; text:
   );
 }
 
-/** 대기 말(작업 중에 보내 harness 대기열에 있는 글, plan §8.247)의 밑줄: 언제 읽히는지, 기록에 없으면 터미널을 보라고 */
+/** 대기 말(보냈지만 기록에 사람 글로 오르지 않은 글, plan §8.247·t-1069)의 밑줄: 어디까지 갔는지, 기록에 없으면 터미널을 보라고.
+ * `stage`는 이 화면이 띄운 말의 단계이고(ChatComposer `PendingSend`), `queued`는 기록의 harness 대기열 말(Claude)이다 */
 interface Pending {
   harness: "claude" | "codex";
+  stage: PendingSend["stage"] | "queued";
+  /** agent가 작업 중: 전달된 말은 지금 턴 뒤에 들어간다 */
+  working: boolean;
   stale?: boolean;
   onDismiss?: () => void;
   /** 대기 묶음 맨 끝 말에만: 「지금 보내기」(plan §8.271) */
@@ -306,14 +310,25 @@ export interface SteerView {
 
 const STEER_CUTS = { claude: "Claude가 하던 일을 끊을 수 있습니다", codex: "Codex가 하던 도구 호출을 끊습니다" };
 
-function PendingTag({ harness, stale, onDismiss, steer }: Pending) {
+/** 말풍선 밑 표지: 아이콘·글·경고 여부. 참고 Telegram·WhatsApp의 시계(보내는 중) → 체크(서버 받음), Slack의 흐린 보내는 중 */
+function pendingLook({ stage, working, stale }: Pick<Pending, "stage" | "working" | "stale">): { icon: ReactNode; text: string; warn?: boolean } {
+  if (stale) return { icon: <TriangleAlert aria-hidden="true" />, text: "대화 기록에 없습니다 · 터미널 입력창을 확인하세요", warn: true };
+  if (stage === "sending") return { icon: <LoaderCircle className="chat-pending-spin" aria-hidden="true" />, text: "보내는 중" };
+  if (stage === "stuck") return { icon: <TriangleAlert aria-hidden="true" />, text: "전달 확인이 늦습니다 · 입력창의 ×로 멈출 수 있습니다", warn: true };
+  if (stage === "unknown") return { icon: <Clock aria-hidden="true" />, text: "새로고침 전에 보낸 글 · 기록을 기다립니다" };
+  if (stage === "queued" || working) return { icon: <Clock aria-hidden="true" />, text: "대기 중 · 지금 작업이 끝나면 들어갑니다" };
+  return { icon: <Check aria-hidden="true" />, text: "전달됨 · 기록을 기다립니다" };
+}
+
+function PendingTag({ harness, stage, working, stale, onDismiss, steer }: Pending) {
   const busy = steer !== undefined && (steer.state.phase === "sending" || steer.state.phase === "sent");
   const failed = steer?.state.phase === "failed" ? steer.state : null;
+  const look = pendingLook({ stage, working, stale });
   return (
     <>
-      <div className={`chat-pending-tag${stale ? " is-stale" : ""}`} data-testid="chat-pending" data-stale={stale || undefined}>
-        {stale ? <TriangleAlert aria-hidden="true" /> : <Clock aria-hidden="true" />}
-        <span>{stale ? "대화 기록에 없습니다 · 터미널 입력창을 확인하세요" : "대기 중"}</span>
+      <div className={`chat-pending-tag${look.warn ? " is-stale" : ""}`} data-testid="chat-pending" data-stage={stage} data-stale={stale || undefined} role="status">
+        {look.icon}
+        <span>{look.text}</span>
         {stale && onDismiss && <button type="button" className="chat-pending-dismiss" onClick={onDismiss}>지우기</button>}
         {steer && (
           // 글을 다시 보내지 않고 host가 고른 키만 보낸다(Claude sendNow, Codex Esc). 그 키는 대기열 전부를 보낸다
@@ -345,7 +360,7 @@ function UserTurn({ active, text, pane, onOpenFile, pending }: { active: boolean
       {text.trimStart().startsWith("[aaa inbox] ") && <div className="chat-inbox-label" data-testid="chat-inbox-label">aaa inbox 안내</div>}
       {onOpenFile && <UserImages pane={pane} text={text} onOpenFile={onOpenFile} />}
       <div className="chat-user-row">
-        <UserMessage active={active} text={text} pending={pending !== undefined} />
+        <UserMessage active={active} text={text} pending={pending !== undefined} sending={pending?.stage === "sending" || pending?.stage === "stuck"} />
         <div className="chat-turn-meta">
           <CopyButton active={active} text={text} label="메시지 복사" onResult={onResult} />
         </div>
@@ -680,7 +695,7 @@ export function ChatPanel({
   // 「지금 보내기」는 대기 묶음 맨 끝 말 하나에 단다(키가 대기열 전부를 보낸다). 기록의 대기 말(Claude) 뒤에 이 화면이 붙든
   // 대기 말이 온다. 기록에 없는(stale) 말은 대기열에 있는지 모르므로 세지 않는다
   const steerTarget = useMemo(() => {
-    const fresh = pending.filter((p) => !p.stale);
+    const fresh = pending.filter(delivered);
     const messages = chat?.messages ?? [];
     let lastQueued = -1;
     messages.forEach((m, i) => { if (m.pending) lastQueued = i; });
@@ -983,7 +998,7 @@ export function ChatPanel({
               ) : m.role === "command_output" ? (
                 <CommandOutputRow key={key} text={m.text} />
               ) : m.role === "user" ? (
-                <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
+                <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (
                 <AgentTurn active={active} key={key} text={m.text} />
               ) : (
@@ -1006,7 +1021,7 @@ export function ChatPanel({
           {coordinator && <AutoDecisionLines />}
           {pending.map((p) => (
             <UserTurn active={active} key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
-              pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
+              pending={{ harness, stage: p.stage, working: status === "working", stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
           ))}
           {chat && chat.messages.length === 0 && pending.length === 0 && !error && !compacting && <p className="chat-note">아직 대화가 없다.</p>}
           {compacting && <CompactingRow />}

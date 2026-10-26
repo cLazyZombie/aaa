@@ -434,10 +434,14 @@ while True:
       if (await p.getByRole("button", { name: "멈추고 글 돌려받기", exact: true }).count() !== 0) throw new Error("3초 전에 탈출구가 보였다");
       await p.clock.runFor(STUCK_MS + 1);
       await phase("stuck");
+      // Enter 즉시 띄운 말풍선(t-1069)도 막힘을 말한다
+      await domIs(p, "막힌 말풍선", () => [...document.querySelectorAll(".chat-turn-user")].some((t) => t.textContent.includes("막힌 글") && t.querySelector('[data-testid="chat-pending"]')?.dataset.stage === "stuck"));
       await box.fill("다음 글"); // ACK가 막혀도 편집 가능. 실패한 글이 이 초안을 덮으면 안 된다.
       await shot(p, "chat-send-stuck");
       await p.getByRole("button", { name: "멈추고 글 돌려받기", exact: true }).click();
       await phase("none");
+      // 멈춘 글은 대화 끝에서 거두고 보관함으로 돌아간다(같은 글이 두 곳에 보이지 않는다)
+      await domIs(p, "멈춘 말풍선 거둠", () => ![...document.querySelectorAll(".chat-turn-user")].some((t) => t.textContent.includes("막힌 글")));
     } finally {
       process.kill(agent.pid, "SIGCONT");
     }
