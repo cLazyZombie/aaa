@@ -133,13 +133,16 @@ async function resumed(engine, width, harness, { page, pane, id, name, mark }) {
       await chat.getByText(`${id} 기록 0 ·`, { exact: false }).first().waitFor();
     }
     await shot(page, `${name}-${mode}-${width}`);
+    const traceOf = () => fs.readdirSync(`${root}/shell-input`).map((file) => JSON.parse(fs.readFileSync(`${root}/shell-input/${file}`, "utf8")))
+      .find((trace) => trace.session === id && trace.harness === harness && trace.mode === mode);
+    const clicked = (trace) => ["M", "m"].every((final) => trace?.events.some((event) => event.kind === "control" && event.button === 0 && event.final === final));
+    // 클릭 보고(웹 WebSocket)와 quit(`aaa pane run`)은 다른 경로라 PTY에 닿는 순서가 정해지지 않는다. 부하에서는 뗌이 quit 뒤에
+    // 닿아 셸에 찍혔다(t-1097). harness가 누름·뗌을 다 받은 사건(입력마다 새로 쓰는 shell-input 기록) 뒤에 끝낸다
+    await until("harness의 실제 클릭 누름·뗌 수신", () => clicked(traceOf()));
     mark(`${mode}:quit`);
     await quit();
-    const trace = fs.readdirSync(`${root}/shell-input`).map((file) => JSON.parse(fs.readFileSync(`${root}/shell-input/${file}`, "utf8")))
-      .find((trace) => trace.session === id && trace.harness === harness && trace.mode === mode);
-    for (const final of ["M", "m"]) {
-      assert.ok(trace?.events.some((event) => event.kind === "control" && event.button === 0 && event.final === final), "실제 클릭 보고를 받지 않았다");
-    }
+    const trace = traceOf();
+    assert.ok(clicked(trace), "실제 클릭 보고를 받지 않았다");
     assert.ok(trace.events.some((event) => event.kind === "command" && event.command === "quit"), "quit을 명령으로 읽지 않았다");
     assert.equal(trace.events.at(-1).kind, "exited", "시험 harness의 출력·정리가 끝나지 않았다");
   }

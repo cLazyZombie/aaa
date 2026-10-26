@@ -4026,3 +4026,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 수리: lab `captured()`가 표준 출력·오류를 `O_CLOEXEC`로 원자적으로 연 임시 파일로 받는다. `Node::run`(모든 `json`/`ok`)과 `command_of`가 이를 쓴다. `Node::wait_connected`는 시도마다 시각·걸린 시간·종료 코드·머신 상태·오류 첫 줄을 남긴다. accounts world가 이를 쓴다. 30초 상한과 기존 단언은 그대로다.
 - 회귀 `cargo test -p aaa --test m13 lab_capture_returns_while_another_process_holds_the_output`: 출력을 든 채 남는 손자(`sleep 600 &`)로 다른 프로세스가 쓰기 끝을 든 상황을 결정적으로 만들고, 돌아온 때 그 손자가 살아 있는지(`kill -0`)로 본다. 옛 pipe 방식에서는 20초 경보로 끊겼고(RED), 수리 뒤 0.01초에 통과한다. 병렬 시험이 다른 시험의 host 수명만큼 막히는 실제 실패를 막는 회귀라 필요하다.
 - 제품 host·agent에서도 `Command::output()`과 오래 사는 자식 spawn이 다른 thread에서 겹치면 같은 경합이 생길 수 있다. 이번에는 확인하지 않았다(coordinator에 별도로 알림).
+
+## E2E93 클릭 보고와 quit의 경로 간 순서 (t-1097)
+
+- 후보 `35ea8138` gate에서 E2E93 Claude WebKit 390 `--resume`이 「실제 클릭 보고를 받지 않았다」로 실패했다. session host 수신 순서는 누름 11바이트(51.0738) → `quit` 5바이트(51.192377, `aaa pane run`) → 뗌 11바이트(51.192869)였다. harness는 누름·quit만 받고 끝났고, 뗌 `\e[<0;24;19m`은 셸에 찍혔다. 이 spec·가짜 harness는 main과 같아 main에도 있는 시험 결함이다.
+- 시험은 클릭(브라우저 WebSocket → host → agent → session)과 quit(CLI → host API → agent → session)을 서로 다른 경로로 보내고, 뗌이 닿았는지 보지 않고 quit을 보냈다. 서로 다른 입력 출처 사이의 PTY 도착 순서는 보장하지 않는다.
+- 제품 확인: 마우스 보고 중 제자리 클릭은 `Term.tsx` `forwardClick`이 합성 누름·뗌을 한 처리 안에서 연달아 보낸다. 같은 spec에 마우스 사건·WebSocket 전송 기록을 잠시 넣어 돌린 실행에서 WebKit 390도 두 보고를 같은 ms(15633)에 보냈다. 따라서 실패 때 누름 뒤 약 120ms 늦은 뗌은 보기 전환 중의 뗌 처리 결함이 아니라, 부하 중 전달 경로에서 생긴 간격으로 본다. 그 간격에 다른 경로의 quit이 끼어들었다. 실패 run의 브라우저 전송 시각은 기록에 없어 직접 관측하지는 못했다.
+- 수리: `quit()` 전에 harness가 입력마다 새로 쓰는 `shell-input` 기록에서 button 0의 `M`·`m` 수신을 사건으로 기다린다(기존 `until` 20초 한도). 기존 단언·시한은 바꾸지 않았다. 경합이라 수리 전 RED는 결정적으로 재현하지 않았다.
+- 확인: `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 93 --workers 2` 통과(2/2).
