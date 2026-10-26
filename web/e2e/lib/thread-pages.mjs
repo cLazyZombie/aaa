@@ -31,7 +31,9 @@ export async function threadPages() {
       const record = { ...original, id, title: `규모 회귀 ${i}`, status: "resolved", role: "worker",
         pane: null, work_dir: null, cwd: null, launch: null, resolve_pending: null, park: null,
         questions: [], question_warning: null, report_hash: null, report_copy_hash: null, acked_hash: null,
-        next: [], error: null, automation: null, automation_run: null };
+        next: [], error: null, automation: null, automation_run: null,
+        // 보고/Next 없는 독립 기록에 원본 thread의 후속 원장을 복제하지 않는다.
+        task_clean: { ...original.task_clean, followups: [], followup_revisions: [] } };
       put.run(id, JSON.stringify(record));
     }
   });
@@ -57,7 +59,7 @@ export async function threadPages() {
       const arrived = new Promise(resolve => { arrive = resolve; });
       const restarted = new Promise(resolve => { restart = resolve; });
       const newHolding = new Promise(resolve => { releaseNew = resolve; });
-      let context, primary, phase = "pairing";
+      let context, primary, routeError, cleaning = false, phase = "pairing";
       try {
         const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, {
           init: traceThreadRequests, onPage: trace.onPage,
@@ -68,25 +70,31 @@ export async function threadPages() {
             // pairing 자체가 실패해도 이 context의 route부터 마친 뒤 닫는다.
             context = ctx;
             await context.route("**/api/v1/call", async route => {
-              const request = route.request().postDataJSON();
-              if (request?.op !== "threads") return route.fallback();
-              if (held && !request.after) {
-                trace.record({ event: "new-first-held", after: request.after ?? null });
-                restart();
-                await newHolding;
-              }
-              const response = await route.fetch();
-              const body = (await response.json()).ok;
-              const oldFinal = armed && !held && body?.kind === "threads" && !body.next_after;
-              if (oldFinal) {
-                held = true;
-                trace.record({ event: "old-final-held" });
-                arrive();
-                await holding;
-              }
-              await route.fulfill({ response });
-              if (held && !oldFinal && body?.kind === "threads" && !body.next_after) {
-                trace.record({ event: "new-final-delivered" });
+              try {
+                const request = route.request().postDataJSON();
+                if (request?.op !== "threads") return await route.fallback();
+                if (held && !request.after) {
+                  trace.record({ event: "new-first-held", after: request.after ?? null });
+                  restart();
+                  await newHolding;
+                }
+                const response = await route.fetch();
+                const body = (await response.json()).ok;
+                const oldFinal = armed && !held && body?.kind === "threads" && !body.next_after;
+                if (oldFinal) {
+                  held = true;
+                  trace.record({ event: "old-final-held" });
+                  arrive();
+                  await holding;
+                }
+                await route.fulfill({ response });
+                if (held && !oldFinal && body?.kind === "threads" && !body.next_after) {
+                  trace.record({ event: "new-final-delivered" });
+                }
+              } catch (error) {
+                // route 해제 중의 늦은 fulfill 실패가 원래 단계 오류와 실험실 정리를 가리지 않는다.
+                trace.record({ event: "route-failure", phase, cleaning, error: { message: error.message, stack: error.stack } });
+                if (!cleaning) routeError ??= error;
               }
             });
           },
@@ -123,11 +131,12 @@ export async function threadPages() {
         assert.deepEqual(rendered.sort(), all.map(t => `project-thread-${t.id}`).sort());
         assert.deepEqual(errors, []);
       } catch (error) {
-        primary = error;
+        primary = routeError ?? error;
         // 추가 진단과 정리보다 먼저 남긴다. 닫는 중 생긴 오류가 최초 단계를 가리지 않는다.
         trace.record({ event: "failure", phase, original: { message: error.message, stack: error.stack } });
-        throw error;
+        throw primary;
       } finally {
+        cleaning = true;
         release();
         releaseNew();
         let cleanupError;
@@ -141,6 +150,7 @@ export async function threadPages() {
             cleanupError ??= error;
           }
         }
+        if (!primary && routeError) throw routeError;
         if (!primary && cleanupError) throw cleanupError;
       }
     }

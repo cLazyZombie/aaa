@@ -4128,5 +4128,8 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 ### 75회차 착지 회귀 수리(t-1112)
 
 - 첫 전체 gate에서 m13 여섯 회귀를 확인했다. 후속 출력을 CLI 머리 앞에 넣어 worktree/reopen의 기존 첫 줄 계약을 깬 두 건은 후속을 머리 뒤로 옮겨 고친다. 완료 보고가 왔지만 열린 thread에 새 inbox를 미리 만들어 새 보고/nudge 묶음을 바꾼 두 건은 원장 기록과 종료 알림을 분리해 고친다. 다시 열기는 이미 생긴 후속 알림을 지우지 않는다. 기존 상한·문자열·개수 기대는 유지한다.
-- main 조상/묶음 전이 owner 두 건은 공통 fake가 먼저 남긴 완료 Next가 안전망에 걸렸다. 기존 helper로 그 결과 확인을 명시적으로 기록하고, 원래 Git 판정/묶음 전이/보관 단언을 유지한다. 새 host 회귀 안에서 열린 보고→resolve→다시 열기의 알림 수명도 검증한다. 실패 원문과30초 load 기록은 착지 보고에 보존한다.
+- main 조상/묶음 전이 owner 두 건은 공통 fake가 먼저 남긴 완료 Next가 안전망에 걸렸다. 기존 helper로 그 결과 확인을 명시적으로 기록하고, 원래 Git 판정/묶음 전이/보관 단언을 유지한다. 새 host 회귀 안에서 열린 보고→resolve→다시 열기의 알림 수명도 검증한다. 실패 원문과 30초 load 기록은 착지 보고에 보존한다.
 - 같은 gate의 E2E67·77도 보관 fixture의 결과 확인/착지 대기 Next를 남긴 채 보관을 기대했다. 두 owner 안에서 실제 완료 회수 뒤 명시적 사유를 기록한 다음 원래 행 제거/복원/ID 단언을 유지한다. 공통 harness의 보고나 제품 판정·시한은 바꾸지 않는다.
+
+- 수리본 전체 gate는 Rust 전체/나머지 단계가 통과하고 E2E12 하나가 실패했다. 원문 trace의 최초 오류는 initial-list의 20초 미완료이며, 이후 unroute 정리에서 발생한 늦은 fulfill 거절이 Node unhandled rejection으로 최초 오류와 실험실 정리를 가렸다. route handler의 오류를 해당 단계/정리 기록에 보존하고 기존 단계 오류를 먼저 돌려준다. 예상하지 않은 실행 중 route 오류도 성공으로 넘기지 않는다.
+- E2E12의 보고·Next 없는 2500개 복제 기록이 첫 thread의 후속 원장을 상속한 것을 확인했다. 독립 기록의 후속/판 원장을 비우고, 원래 대량 stdout>1MiB·2,505개·페이지 크기·차례·고유성·두 완전 읽기·DOM·20초 대기는 그대로 유지한다. [Playwright unrouteAll](https://playwright.dev/docs/api/class-browsercontext#browser-context-unroute-all)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))의 실행 중 handler 대기와 오류 수명을 참고했고 외부 코드는 복사하지 않았다.
