@@ -34,3 +34,26 @@ it("뒤 페이지 오류와 반복 커서는 부분 목록을 성공으로 바�
   await assert.rejects(readThreadPages(async () => ({ kind: "threads", threads: [old], next_after: "same" })), /커서가 나아가지/);
   await assert.rejects(readThreadPages(async () => ({ kind: "done" })), /목록 응답이 아니다/);
 });
+
+
+it("재연결의 미완료 읽기가 옛 완료 목록을 가리지 않고 모든 읽기에 사건을 보존한다", () => {
+  const reload = new ThreadReload();
+  const first = reload.begin();
+  const second = reload.begin();
+  const third = reload.begin();
+  const updated = { ...old, title: "재연결 뒤 새 보고" };
+  reload.note(updated);
+  assert.deepEqual([...reload.finish(first, [old]).values()], [updated]);
+  const latest = { ...old, title: "더 새 보고" };
+  reload.note(latest);
+  assert.deepEqual([...reload.finish(third, [old]).values()], [latest]);
+  assert.equal(reload.finish(second, [old]), null, "더 새 완전 목록 뒤 옛 목록으로 돌아가지 않는다");
+});
+
+it("재연결 읽기가 실패해도 진행 중인 옛 완전 목록을 반영한다", () => {
+  const reload = new ThreadReload();
+  const first = reload.begin(), second = reload.begin();
+  reload.failed(second);
+  assert.deepEqual([...reload.finish(first, [old]).values()], [old]);
+  assert.equal(reload.finish(second, [old]), null);
+});

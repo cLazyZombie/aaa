@@ -3,28 +3,30 @@ import type { FrontRequest, FrontResponse, ThreadView } from "./gen/proto";
 import { threadKey } from "./sidebarModel.ts";
 import { ThreadReplies } from "./threadReplies.ts";
 
-type Read = { updates: Map<string, ThreadView> };
+type Read = { sequence: number; updates: Map<string, ThreadView> };
 
 export class ThreadReload {
-  private latest: Read | null = null;
+  private sequence = 0;
+  private pending = new Set<Read>();
   private replies = new ThreadReplies();
 
   beginReply(t: ThreadView) { return this.replies.begin(t); }
 
   begin(): Read {
-    const read = { updates: new Map<string, ThreadView>() };
-    this.latest = read;
+    const read = { sequence: ++this.sequence, updates: new Map<string, ThreadView>() };
+    this.pending.add(read);
     return read;
   }
 
   note(t: ThreadView): void {
     this.replies.note(t);
-    this.latest?.updates.set(threadKey(t), t);
+    for (const read of this.pending) read.updates.set(threadKey(t), t);
   }
 
   finish(read: Read, snapshot: ThreadView[]): Map<string, ThreadView> | null {
-    if (this.latest !== read) return null;
-    this.latest = null;
+    // 새 연결이 아직 덜 읽었으면 먼저 끝난 완전 목록을 보여 준다. 더 새 완전 목록 뒤에는 되돌아가지 않는다.
+    if (!this.pending.delete(read)) return null;
+    for (const older of this.pending) if (older.sequence < read.sequence) this.pending.delete(older);
     const next = new Map(snapshot.map((t) => [threadKey(t), t]));
     for (const [key, t] of read.updates) next.set(key, t);
     for (const t of next.values()) this.replies.note(t);
@@ -32,7 +34,7 @@ export class ThreadReload {
   }
 
   failed(read: Read): void {
-    if (this.latest === read) this.latest = null;
+    this.pending.delete(read);
   }
 }
 

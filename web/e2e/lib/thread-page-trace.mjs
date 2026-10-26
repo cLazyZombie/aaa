@@ -35,6 +35,7 @@ export function threadPageTrace(directory, engine) {
   fs.mkdirSync(directory, { recursive: true });
   const file = `${directory}/thread-pages-${engine}.jsonl`;
   const pending = [], requests = new WeakMap();
+  const endings = new Map(), completion = new Set();
   let next = 0;
   const log = row => fs.appendFileSync(file, JSON.stringify({ at: Date.now(), engine, ...row }) + "\n");
   const onPage = page => {
@@ -57,6 +58,10 @@ export function threadPageTrace(directory, engine) {
         log({ ...record, event: "response", status: result.status, bytes: result.bytes,
           count: result.body?.threads?.length, next: result.body?.next_after ?? null,
           ids: result.body?.threads?.map(t => `${t.project}/${t.id}`) });
+        if (result.body?.kind === "threads" && !result.body.next_after) {
+          endings.set(record.doc, (endings.get(record.doc) ?? 0) + 1);
+          for (const check of completion) check();
+        }
         return result;
       }).catch(error => {
         log({ ...record, event: "body-error", error: String(error) });
@@ -107,5 +112,15 @@ export function threadPageTrace(directory, engine) {
     log({ event: "reads", reads: reads.map(({ seen, ids, ...r }) => ({ ...r, count: ids.length, unique: new Set(ids).size })) });
     return reads;
   };
-  return { onPage, reads, record: log };
+  // route.fulfill의 완료는 브라우저 response.body 수집 완료가 아니다. 실제 본문까지 받은 목록을 센다.
+  const completed = (doc, count) => new Promise(resolve => {
+    const check = () => {
+      if ((endings.get(doc) ?? 0) < count) return;
+      completion.delete(check);
+      resolve();
+    };
+    completion.add(check);
+    check();
+  });
+  return { onPage, reads, completed, record: log };
 }

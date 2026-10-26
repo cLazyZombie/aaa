@@ -652,7 +652,14 @@ draw();
       await domIs(p, "대기 말과 입력창 풀림", ([n]) => document.querySelectorAll(".chat-msg.user.is-pending").length === n && !document.querySelector('[aria-label="메시지"]').readOnly, [i + 1]);
     }
     // 키가 대기열 전부를 보내므로 단추는 맨 끝 말 하나다
-    await domIs(p, "단추 하나", () => document.querySelectorAll('[data-testid="chat-pending-steer"]').length === 1);
+    // 입력창은 ACK 전에도 다음 초안을 편집한다. optimistic 말풍선 수/readonly=false는 두 글의 전달 증거가 아니다.
+    // 마지막 말의 단추·묶음 수·label·phase를 같은 DOM 상태에서 모두 기다린다.
+    await domIs(p, "전달된 대기 두 말의 마지막 단추", () => {
+      const buttons = [...document.querySelectorAll('[data-testid="chat-pending-steer"]')];
+      const pending = [...document.querySelectorAll(".chat-turn-user")].filter(t => t.querySelector(".chat-msg.user.is-pending"));
+      return pending.length === 2 && buttons.length === 1 && pending.at(-1).contains(buttons[0])
+        && buttons[0].textContent === "2개 지금 보내기" && buttons[0].dataset.phase === "idle";
+    });
     assert.deepEqual(await steerButtons(p), { count: 1, onLast: true, label: "2개 지금 보내기", phase: "idle", pending: 2 });
     await shot(p, "steer-queued-claude");
     // 휴대폰: 손가락 크기 단추

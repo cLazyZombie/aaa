@@ -52,10 +52,11 @@ export async function threadPages() {
   try {
     for (const engine of [browser, safari]) {
       const trace = threadPageTrace(`${root}/diagnostics`, engine.browserType().name());
-      let armed = false, held = false, socket, server, release, arrive, restart;
+      let armed = false, held = false, socket, server, release, arrive, restart, releaseNew;
       const holding = new Promise(resolve => { release = resolve; });
       const arrived = new Promise(resolve => { arrive = resolve; });
       const restarted = new Promise(resolve => { restart = resolve; });
+      const newHolding = new Promise(resolve => { releaseNew = resolve; });
       let context, primary, phase = "pairing";
       try {
         const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 1280, height: 800 }, {
@@ -69,15 +70,24 @@ export async function threadPages() {
             await context.route("**/api/v1/call", async route => {
               const request = route.request().postDataJSON();
               if (request?.op !== "threads") return route.fallback();
-              if (held && !request.after) restart();
+              if (held && !request.after) {
+                trace.record({ event: "new-first-held", after: request.after ?? null });
+                restart();
+                await newHolding;
+              }
               const response = await route.fetch();
               const body = (await response.json()).ok;
-              if (armed && !held && body?.kind === "threads" && !body.next_after) {
+              const oldFinal = armed && !held && body?.kind === "threads" && !body.next_after;
+              if (oldFinal) {
                 held = true;
+                trace.record({ event: "old-final-held" });
                 arrive();
                 await holding;
               }
               await route.fulfill({ response });
+              if (held && !oldFinal && body?.kind === "threads" && !body.next_after) {
+                trace.record({ event: "new-final-delivered" });
+              }
             });
           },
         });
@@ -93,12 +103,18 @@ export async function threadPages() {
         await server.close();
         phase = "reconnected-list";
         await inTime(restarted, 20000, "새 events 연결의 첫 목록 요청");
+        trace.record({ event: "old-final-released" });
         release();
         await domIs(page, "마지막 페이지의 끝난 thread", () => !!document.querySelector('[data-testid="all-threads"] [data-testid="project-thread-t-12499"]'));
+        // 새 연결의 첫 응답이 아직 없더라도 옛 연결의 완전한 목록은 보여야 한다.
+        trace.record({ event: "old-complete-visible-before-new-response" });
+        trace.record({ event: "new-first-released" });
+        const doc = await page.evaluate(() => String(performance.timeOrigin));
+        releaseNew();
+        await inTime(trace.completed(doc, 2), 20000, "재연결 HTTP 두 완전 목록의 본문 수집");
         const expected = all.map(t => `${t.project}/${t.id}`);
         phase = "trace-and-dom";
         const reads = await trace.reads(expected);
-        const doc = await page.evaluate(() => String(performance.timeOrigin));
         // 초기 문서는 따로 검사하며 reload 문서의 두 독립 읽기는 각각 전체 목록이어야 한다.
         assert.ok(reads.filter(r => r.doc === doc && r.next === null).length >= 2);
         const rendered = await page.locator('[data-testid="all-threads"] [data-testid^="project-thread-"]').evaluateAll(rows => rows.map(row => row.dataset.testid));
@@ -113,6 +129,7 @@ export async function threadPages() {
         throw error;
       } finally {
         release();
+        releaseNew();
         let cleanupError;
         if (context) for (const [part, close] of [
           ["routes", () => context.unrouteAll({ behavior: "wait" })],
