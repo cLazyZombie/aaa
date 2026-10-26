@@ -2711,7 +2711,16 @@ impl Host {
                 let next = next_lines(&text);
                 let question_warning = crate::report_mark::question_warning(&text);
                 let questions = crate::report_mark::questions(&text);
-                let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
+                let repeated = if question_warning.is_none() && !crate::report_mark::default_review(&text) {
+                    self.repeated_answer(&rec, &questions)?
+                } else {
+                    None
+                };
+                let repeated_ids = repeated.as_ref().map(|r| r.ids.clone()).unwrap_or_default();
+                let (questions, answer) = match repeated {
+                    Some(r) => (self.identify_questions(project, "thread", id, &hash, &r.items)?, r.answer),
+                    None => (self.identify_questions(project, "thread", id, &hash, &questions)?, None),
+                };
                 let closed_question = questions.is_empty()
                     && question_warning.is_none()
                     && !rec.questions.is_empty()
@@ -2727,7 +2736,7 @@ impl Host {
                     r.questions = questions;
                     r.question_warning = question_warning;
                     r.question_warning_sent = None;
-                    r.question_answer = None;
+                    r.question_answer = answer;
                     r.copy = Some(copy.clone());
                     if failures.is_empty() {
                         r.copy_failures = 0;
@@ -2736,6 +2745,9 @@ impl Host {
                     r.copy_notes = skipped.clone();
                 })?;
                 self.followup_notice(&rec);
+                if !repeated_ids.is_empty() {
+                    self.warn_answered_questions(&rec, &repeated_ids).await;
+                }
                 if let Some(warning) = &rec.question_warning {
                     self.warn_question_format(&rec, warning).await;
                 }

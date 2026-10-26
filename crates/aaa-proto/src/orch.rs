@@ -1153,6 +1153,10 @@ pub struct ThreadQuestions {
 /// 질문 하나: 글과 선택지(앞에서부터 A·B·C…)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestion {
+    /// 답한 질문을 제외한 카드도 원문의 질문 번호로 답한다(FRONT_API 1.132).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_number: Option<u32>,
     /// 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1171,6 +1175,10 @@ pub struct ThreadQuestion {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuestionChoice {
+    /// 보고에 쓴 선택지 글자(FRONT_API 1.132). 옛 자료는 배열 위치의 A부터 읽는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub letter: Option<String>,
     pub label: String,
     /// 「 — 」 뒤의 까닭 한 줄
     pub description: Option<String>,
@@ -1180,6 +1188,22 @@ pub struct QuestionChoice {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub body: Option<String>,
+}
+
+impl QuestionChoice {
+    pub fn letter_at(&self, index: usize) -> String {
+        self.letter.clone().unwrap_or_else(|| char::from(b'A' + index as u8).to_string())
+    }
+}
+
+impl ThreadQuestion {
+    /// 표시 글자를 배열 위치로 바꾼다. picks의 기존 위치 계약은 유지한다.
+    pub fn choice_index(&self, letter: &str) -> Option<u32> {
+        self.choices
+            .iter()
+            .enumerate()
+            .find_map(|(i, c)| c.letter_at(i).eq_ignore_ascii_case(letter).then_some(i as u32))
+    }
 }
 
 /// 받은 답. `summary`는 「1A 2B」 꼴(직접 쓴 답이 있으면 「직접」)
@@ -1327,7 +1351,13 @@ fn choice_line(text: &str) -> Option<QuestionChoice> {
         }
     }
     let label = unmark_leading(&label).split_whitespace().collect::<Vec<_>>().join(" ");
-    (!label.is_empty()).then_some(QuestionChoice { label, description, recommended, body: None })
+    (!label.is_empty()).then_some(QuestionChoice {
+        letter: Some(letter.to_ascii_uppercase().to_string()),
+        label,
+        description,
+        recommended,
+        body: None,
+    })
 }
 
 /// 앞뒤 빈 줄을 뗀 본문(없으면 None). `max`를 넘으면 글자 경계에서 자르고, 열린 code fence를 닫은 뒤 잘랐다고 적는다
@@ -1403,6 +1433,7 @@ fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
     }
     choices.truncate(QUESTION_MAX);
     ThreadQuestion {
+        source_number: None,
         id: None,
         text,
         choices,
@@ -1419,7 +1450,7 @@ pub struct ParsedReportQuestions {
 }
 
 /// `### N. 질문`과 `N. **질문**` 모두 본문과 끝의 선택지 목록을 읽는다.
-/// 후보 줄은 별도로 세어 누락·상한 초과·A부터 이어지지 않는 글자를 경고한다.
+/// 후보 줄은 별도로 세어 누락·상한 초과·A부터 빠짐없이 유일하지 않은 글자를 경고한다.
 pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
     let mut out = ParsedReportQuestions::default();
     let mut inside = false;
@@ -1447,7 +1478,10 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
             })
             .collect();
         *source_choices += letters.len();
-        *bad_order |= letters.iter().enumerate().any(|(i, c)| *c as usize != 'A' as usize + i);
+        // 추천을 앞에 쓴 B/A/C도 글자가 빠짐없이 유일하면 뜻이 명확하다.
+        let mut ordered = letters.clone();
+        ordered.sort_unstable();
+        *bad_order |= ordered.iter().enumerate().any(|(i, c)| *c as usize != 'A' as usize + i);
         // 옛 번호 목록은 들여쓴 선택지도 지원한다.
         let block = if rich {
             block
@@ -1457,7 +1491,29 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
                 .map(|l| if choice_letter(&l).is_some() { l.trim_start().to_string() } else { l })
                 .collect()
         };
-        let q = rich_question(unmark_leading(&text), &block);
+        let mut q = rich_question(unmark_leading(&text), &block);
+        let mut seen_choice = false;
+        let mut code = false;
+        for line in &block {
+            if fence_line(line) {
+                code = !code;
+                continue;
+            }
+            if code {
+                continue;
+            }
+            if choice_line(line).is_some() {
+                seen_choice = true;
+            } else if seen_choice && (line.starts_with("- ") || line.starts_with("* ")) {
+                *bad_order = true;
+            }
+        }
+        // 같은 글자 둘은 답 대상을 정할 수 없다. 직접 답 카드에 원문과 진단을 남긴다.
+        if q.choices.iter().enumerate().any(|(i, c)| q.choices[..i].iter().any(|p| p.letter == c.letter)) {
+            q.choices.clear();
+            q.body = body_of(&block, QUESTION_BODY_MAX);
+            q.after = None;
+        }
         *bad_order |= q.choices.len() < 2;
         if out.items.len() < QUESTION_MAX {
             *card_choices += q.choices.len();
@@ -1529,6 +1585,7 @@ pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
     }
     if out.warning.is_some() && out.items.is_empty() {
         out.items.push(ThreadQuestion {
+            source_number: None,
             id: None,
             text: "직접 답".into(),
             choices: Vec::new(),
@@ -2339,6 +2396,26 @@ mod tests {
         assert!(parse_report_questions(code).warning.is_none());
         assert!(parse_report_questions("## Report\n- A 본문\n- B 본문\n").warning.is_none());
         assert!(parse_report_questions(include_str!("../tests/fixtures/m3-questions.md")).warning.is_none());
+    }
+
+    #[test]
+    fn reordered_choices_keep_source_letters_and_ambiguous_letters_are_diagnosed() {
+        let report = "## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n- C 보류\n";
+        let parsed = parse_report_questions(report);
+        assert!(parsed.warning.is_none(), "{parsed:?}");
+        let q = &parsed.items[0];
+        assert_eq!(q.choices.iter().enumerate().map(|(i, c)| c.letter_at(i)).collect::<Vec<_>>(), ["B", "A", "C"]);
+        assert_eq!(q.choice_index("b"), Some(0));
+        assert_eq!(q.choice_index("A"), Some(1));
+        assert_eq!(q.choice_index("D"), None);
+        for broken in [report.replace("- C 보류", "- B 보류"), report.replace("- C 보류", "- 보류")] {
+            assert!(parse_report_questions(&broken).warning.is_some());
+        }
+        let duplicate = parse_report_questions(&report.replace("- C 보류", "- B 보류"));
+        assert!(duplicate.items[0].choices.is_empty());
+        let legacy: QuestionChoice =
+            serde_json::from_str(r#"{"label":"옛 자료","description":null,"recommended":false}"#).unwrap();
+        assert_eq!(legacy.letter_at(1), "B");
     }
 
     #[test]

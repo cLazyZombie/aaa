@@ -146,6 +146,21 @@ async fn only_humans_toggle_and_only_the_projects_coordinator_answers() {
     assert_eq!(h.auto_decisions("demo").unwrap().len(), 1);
     assert!(h.inbox("demo", true, true).unwrap().items.iter().any(|i| i.event == "auto-mode off"));
 }
+
+/// 자동 답도 글자 B를 위치 1로 가정하지 않고 원문의 B를 고른다.
+#[tokio::test]
+async fn automatic_reply_keeps_the_source_letter_on_reordered_choices() {
+    let (h, _lab) = coordinator_host();
+    h.auto_mode_set("demo", true, "local:cli").unwrap();
+    let id = question(&h, 1, "## Questions\n### 1. 배치\n- B 위 (추천)\n- A 아래\n").remove(0);
+    answer(&h, &id, COORD).await.unwrap();
+    let records = h.auto_decisions("demo").unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].pick, Some(0));
+    assert_eq!(records[0].choice, "B");
+    assert_eq!(records[0].question.choices[0].letter.as_deref(), Some("B"));
+    assert_eq!(records[0].outcome, "answered");
+}
 #[tokio::test]
 async fn mixed_questions_keep_human_exceptions_open_and_harness_aliases_cannot_be_auto_answered() {
     let (h, _lab) = coordinator_host();
@@ -241,6 +256,7 @@ async fn long_running_mode_pages_records_and_can_review_an_older_decision() {
                 run: 1,
                 subject: "coordinator".into(),
                 question: ThreadQuestion {
+                    source_number: None,
                     id: Some(format!("q-{n:04}")),
                     text: "질문".into(),
                     body: Some("자료".repeat(4000)),

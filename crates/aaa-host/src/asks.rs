@@ -390,6 +390,7 @@ impl Host {
         let mut parsed = parsed.items;
         if parsed.is_empty() {
             parsed.push(aaa_proto::ThreadQuestion {
+                source_number: None,
                 after: None,
                 id: None,
                 text: post.input.title.clone(),
@@ -1185,12 +1186,14 @@ mod tests {
         std::fs::write(dir.join("library/t-0001/other.png"), b"x").unwrap();
         std::fs::write(dir.join("library/t-0001/after.png"), b"after").unwrap();
         let choice = |label: &str, body: Option<&str>| QuestionChoice {
+            letter: None,
             label: label.into(),
             description: None,
             recommended: false,
             body: body.map(str::to_string),
         };
         rec.questions = vec![ThreadQuestion {
+            source_number: None,
             after: Some("![뒤 설명](library/after.png)".into()),
             id: None,
             text: "시안".into(),

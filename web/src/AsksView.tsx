@@ -21,7 +21,7 @@ import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, openMeta, type 
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 
-const letter = (i: number) => String.fromCharCode(65 + i);
+const letter = (c: { letter?: string }, i: number) => c.letter ?? String.fromCharCode(65 + i);
 const when = (ms: number) =>
   new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
@@ -309,7 +309,7 @@ function choiceRest(body: string | null | undefined): string | null {
 function QuestionText({ n, item, base }: { n: number; item: ThreadQuestion; base: string | null | undefined }) {
   return (
     <>
-      <h3 className="prompt-card-question ask-question"><span className="thread-ask-qno">{n + 1}</span>{item.id && <code>{item.id}</code>} {item.text}</h3>
+      <h3 className="prompt-card-question ask-question"><span className="thread-ask-qno">{item.source_number ?? n + 1}</span>{item.id && <code>{item.id}</code>} {item.text}</h3>
       {item.body && <AskMarkdown base={base}>{item.body}</AskMarkdown>}
     </>
   );
@@ -385,13 +385,13 @@ function QuestionCard({
         {t ? <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
           : <span className="prompt-card-where">coordinator · {when(request!.created_ms)}</span>}
       </header>
-      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">{q.format_warning} 아래에 보이는 선택지를 고르거나 직접 답을 입력할 수 있다.</p>}
+      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">형식 오류: {q.format_warning} 아래에 보이는 선택지를 고르거나 직접 답을 입력할 수 있다.</p>}
       <QuestionReports items={q.items} body={request?.body} reportId={t?.report_id} project={t?.project} base={base} />
       {request && <h2 className="ask-card-title">{request.title}</h2>}
       {q.items.map((item, n) => {
         const pictures = item.choices.some((c) => choicePicture(c.body) !== null);
         return (
-          <div className="thread-ask-q" key={n} role="radiogroup" aria-label={`${n + 1}. ${item.text}`}>
+          <div className="thread-ask-q" key={n} role="radiogroup" aria-label={`${item.source_number ?? n + 1}. ${item.text}`}>
             <QuestionText n={n} item={item} base={base} />
             <div className={`prompt-card-options${pictures ? " ask-choices has-pictures" : " ask-choices"}`}>
               {item.choices.map((c, i) => {
@@ -399,12 +399,12 @@ function QuestionCard({
                 const rest = choiceRest(c.body) ?? "";
                 const video = /\.(mp4|webm)(?:[?#\s)]|$)/i.test(rest);
                 const option = (
-                  <button key={i} type="button" role="radio" aria-checked={checked} data-testid={`thread-ask-pick-${n + 1}${letter(i)}`}
+                  <button key={i} type="button" role="radio" aria-checked={checked} data-testid={`thread-ask-pick-${item.source_number ?? n + 1}${letter(c, i)}`}
                     className={`prompt-card-option ask-choice${c.description || rest ? " has-description" : ""}${checked ? " is-checked" : ""}`} disabled={off}
                     onClick={() => setPicks((ps) => ps.map((p, k) => (k === n ? (p === i ? null : i) : p)))}>
                     {pictures && <ChoicePicture base={base} body={c.body ?? ""} onZoom={onZoom} />}
                     <span className="ask-choice-line">
-                      <span className="prompt-card-number"><span aria-hidden="true">{letter(i)}</span><span className="visually-hidden">{letter(i)}.</span></span>{" "}
+                      <span className="prompt-card-number"><span aria-hidden="true">{letter(c, i)}</span><span className="visually-hidden">{letter(c, i)}.</span></span>{" "}
                       <span className="prompt-card-option-text">
                         <span className="prompt-card-option-label">
                           {c.label}
@@ -529,7 +529,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
                   <div key={i} className={`prompt-card-option ask-choice is-static${picked ? " is-picked" : " is-other"}`} data-testid={picked ? "ask-done-picked" : undefined}>
                     {pictures && <ChoicePicture base={base} body={c.body ?? ""} onZoom={onZoom} />}
                     <span className="ask-choice-line">
-                      <span className="prompt-card-number"><span>{letter(i)}</span></span>{" "}
+                      <span className="prompt-card-number"><span>{letter(c, i)}</span></span>{" "}
                       <span className="prompt-card-option-text">
                         <span className="prompt-card-option-label">
                           {c.label}

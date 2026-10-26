@@ -1,6 +1,6 @@
 //! thread 질문 카드의 답(plan §8.329). thread가 보고 `## Questions`에 남긴 질문에 웹 카드·`aaa thread answer`로 답한다.
 //!
-//! - 답은 그 보고(hash)의 질문에만 맞는다. 새 보고가 오면 질문을 다시 읽고 답을 비운다(orch.rs 사본).
+//! - 답은 그 보고(hash)의 질문에만 맞는다. 새 보고에서 질문을 다시 읽는다. 전달을 마친 같은 질문은 원래 ID와 답을 잇고, 새 질문은 답을 비운다(orch.rs 사본).
 //! - 한 번만 받는다: 기록에 먼저 자리를 잡고(`question_answer`) 보낸다. 다른 기기가 늦게 누르면 「이미 답함」이다. 보내지
 //!   못하면 자리를 풀어 다시 답할 수 있다.
 //! - 보내는 길은 `thread message`와 같다(확인창·입력창 글·brief 전 거부, task 기록). coordinator를 거치지 않는다.
@@ -11,11 +11,6 @@ use std::sync::Arc;
 use aaa_proto::{ErrorBody, ErrorCode, MessageMode, QuestionAnswerView, ThreadQuestion, ThreadView};
 
 use crate::{Host, err};
-
-/// 답 글자(A·B·C…)
-fn letter(i: u32) -> char {
-    char::from(b'A' + i as u8)
-}
 
 /// 고른 것을 확인하고 thread에 보낼 글과 짧은 꼴(「1A 2B」)을 짓는다. 모든 질문은 고르거나 직접 쓴 답으로 대신한다
 pub(crate) fn compose(
@@ -29,25 +24,26 @@ pub(crate) fn compose(
     let text = text.map(str::trim).filter(|t| !t.is_empty());
     let mut short = Vec::new();
     let mut lines = Vec::new();
-    for (n, (q, pick)) in items.iter().zip(picks).enumerate() {
+    for (index, (q, pick)) in items.iter().zip(picks).enumerate() {
+        let number = q.source_number.unwrap_or(index as u32 + 1);
         match pick {
             Some(i) => {
                 let c = q
                     .choices
                     .get(*i as usize)
-                    .ok_or_else(|| format!("{}번 질문에 {}번 선택지가 없다", n + 1, i + 1))?;
-                short.push(format!("{}{}", n + 1, letter(*i)));
+                    .ok_or_else(|| format!("{}번 질문에 {}번 선택지가 없다", number, i + 1))?;
+                short.push(format!("{}{}", number, c.letter_at(*i as usize)));
                 lines.push(format!(
                     "{}{}. {}{} — {}",
-                    n + 1,
-                    letter(*i),
+                    number,
+                    c.letter_at(*i as usize),
                     q.id.as_ref().map(|id| format!("{id} ")).unwrap_or_default(),
                     q.text,
                     c.label
                 ));
             }
             None if text.is_some() => {}
-            None => return Err(format!("{}번 질문에 답이 없다(고르거나 직접 쓴다)", n + 1)),
+            None => return Err(format!("{}번 질문에 답이 없다(고르거나 직접 쓴다)", number)),
         }
     }
     if let Some(t) = text {
@@ -178,6 +174,15 @@ mod tests {
         assert_eq!(short, "1C 2B");
         assert!(message.contains("install 순서를 바꿔"));
         assert!(message.contains("이 Mac의 「원격 로그인」을 사용자가 직접 켜고"));
+    }
+
+    #[test]
+    fn reordered_report_composes_the_source_letter_instead_of_the_position() {
+        let q = report_questions("## Questions\n### 1. 진행\n- B 새 안 (추천)\n- A 원래\n- C 보류\n");
+        let (message, summary) = compose(&q, &[Some(0)], None).unwrap();
+        assert_eq!(summary, "1B");
+        assert!(message.ends_with("1B. 진행 — 새 안"));
+        assert_eq!(compose(&q, &[Some(1)], None).unwrap().1, "1A");
     }
 
     /// 고른 것은 「1A 2B」와 질문·선택지 글로, 직접 쓴 답은 고르지 않은 질문을 대신한다. 빠진 답·없는 선택지·수가 다른 답은 거절한다

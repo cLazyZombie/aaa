@@ -27,7 +27,9 @@ impl Host {
             .enumerate()
             .map(|(position, q)| {
                 let mut q = q.clone();
-                q.id = Some(self.db.question_id(project, kind, subject, revision, position).map_err(internal)?);
+                if q.id.is_none() {
+                    q.id = Some(self.db.question_id(project, kind, subject, revision, position).map_err(internal)?);
+                }
                 Ok(q)
             })
             .collect()
@@ -57,7 +59,9 @@ impl Host {
         let text = answers
             .iter()
             .enumerate()
-            .filter_map(|(n, a)| a.as_ref()?.text.as_ref().map(|t| format!("{} {t}", n + 1)))
+            .filter_map(|(n, a)| {
+                a.as_ref()?.text.as_ref().map(|t| format!("{} {t}", items[n].source_number.unwrap_or(n as u32 + 1)))
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let last = answers.iter().flatten().max_by_key(|a| a.at_ms)?;
@@ -117,7 +121,14 @@ impl Host {
                         &project,
                         "coordinator",
                         "",
-                        &ThreadQuestion { after: None, id: Some(id), text: r.title, body: None, choices: Vec::new() },
+                        &ThreadQuestion {
+                            source_number: None,
+                            after: None,
+                            id: Some(id),
+                            text: r.title,
+                            body: None,
+                            choices: Vec::new(),
+                        },
                         None,
                         0,
                         r.created_ms,
@@ -135,6 +146,7 @@ impl Host {
                             "coordinator",
                             "",
                             &ThreadQuestion {
+                                source_number: None,
                                 after: None,
                                 id: Some(id.clone()),
                                 text: r.title.clone(),
@@ -241,6 +253,7 @@ impl Host {
                 Some(_) => return Err(err(ErrorCode::BadRequest, "질문이 바뀌었다")),
                 None => (
                     vec![ThreadQuestion {
+                        source_number: None,
                         after: None,
                         id: Some(id.into()),
                         text: r.title,
@@ -255,7 +268,8 @@ impl Host {
         let choice = choice.map(str::trim).filter(|s| !s.is_empty());
         let pick = choice
             .filter(|s| s.len() == 1 && s.as_bytes()[0].is_ascii_alphabetic())
-            .map(|s| u32::from(s.as_bytes()[0].to_ascii_uppercase() - b'A'));
+            .map(|s| item.choice_index(s).ok_or_else(|| err(ErrorCode::BadRequest, "없는 선택지다")))
+            .transpose()?;
         if pick.is_some_and(|p| p as usize >= item.choices.len()) {
             return Err(err(ErrorCode::BadRequest, "없는 선택지다"));
         }
@@ -343,18 +357,13 @@ fn catalog_item(
         thread: (!thread.is_empty()).then(|| thread.into()),
         question_kind: kind.into(),
         text: item.text.clone(),
-        options: item
-            .choices
-            .iter()
-            .enumerate()
-            .map(|(i, c)| format!("{} {}", char::from(b'A' + i as u8), c.label))
-            .collect(),
+        options: item.choices.iter().enumerate().map(|(i, c)| format!("{} {}", c.letter_at(i), c.label)).collect(),
         state: if pick.is_some() || answer.is_some_and(|a| a.summary != "일부 답함") {
             QuestionState::Answered
         } else {
             QuestionState::Open
         },
-        answer: pick.map(|p| char::from(b'A' + p as u8).to_string()),
+        answer: pick.and_then(|p| item.choices.get(p as usize).map(|c| c.letter_at(p as usize))),
         created_at_ms: at,
         menu: None,
     }
