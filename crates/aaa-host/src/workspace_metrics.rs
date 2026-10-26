@@ -107,6 +107,14 @@ impl Host {
         let days = query.days.unwrap_or(7).clamp(1, 30);
         let since = period_start(now, days, query.utc_offset_minutes.unwrap_or(0));
         let id = &workspace.id;
+        dashboard.selected_run = query
+            .selected_run_id
+            .as_deref()
+            .map(|run| self.db.workspace_run("", id, run))
+            .transpose()
+            .map_err(internal)?
+            .flatten()
+            .map(Box::new);
         let (mut runs, mut lines, truncated) = self.db.workspace_records("", id, since).map_err(internal)?;
         dashboard.profiles =
             runs.iter().filter_map(|r| r.profile.clone()).collect::<BTreeSet<_>>().into_iter().collect();

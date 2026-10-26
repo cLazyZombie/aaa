@@ -1,3 +1,10 @@
+## workspace 기준 실행의 시간 추이 표시(t-1082, §8.496)
+
+- `node --test web/test/workspaceSelection.test.mjs` 두 유닛은 시각별 ID와 날짜별 p50 묶음(대표 ID가 다른 표본 포함), UTC/KST 자정 경계·머신/profile 분리·실패 제외, 필터 밖·결측과 실제 0초의 구분을 확인한다. 꼭 필요한 이유: p50을 기준 실행의 실제 시간으로 오해하게 하거나 미수집을 0으로 그리는 회귀를 막는다.
+- 기존 host `reader_queries_only_the_host_ledger_with_filters_missing_values_and_disconnected_agents`에 40일 전 실행의 조회를 더했다. 기간·profile·머신 밖 기준 실행은 원장에서 찾되 runs/추이에 섞지 않고, 다른 workspace의 ID는 반환하지 않아야 한다. 필요한 이유: 웹 캐시로 유지하면 새로고침·기간 밖 조회가 깨지고 다른 저장소 자료를 섞을 수 있기 때문이다. 별도 실험실·시험 개수를 늘리지 않는다.
+- 기존 E2E90의 실제 보고→agent 수집→host 원장 fixture 네 실행을 성공/실패, 빌드 0초/미수집, 이틀 전 실행으로 구성한다. 기존 밝음/어두움·1280/820/390/320px·Chromium/WebKit 매트릭스를 유지하며 밝음 1280/390px 네 조합에 기준 실행 검사를 덧붙인다. 실행 두 개 선택 뒤 안내선·강조점·원본 점의 좌표 일치와 이동, 검증/빌드 전환, 실제 0초·미수집, 오늘 밖/7일 복귀, 실패 p50 제외와 비대표 실행의 p50 포함, UTC/KST 전환, 머신 밖·새로고침 유지, 키보드 상세와 가로 넘침을 확인한다. 꼭 필요한 이유: 실제 필터 응답과 URL 복원·두 SVG 엔진의 표시를 유닛으로 대신할 수 없다.
+- 실행: `NODE_PATH=<작업 폴더 Playwright 1.64.1 모듈> nice -n 15 node web/e2e/web.e2e.mjs <캡처 폴더> --spec 90 --workers 1`. 브라우저는 내부 공용 캐시와 저장소 `launchChromium` helper를 쓴다. 고정 sleep·실패 재시도·시한 연장·기대값 완화는 없다. 전체 ci-local은 coordinator가 준 차례에 한 번 수행한다.
+
 ## 대화 보낸 말의 즉시 표시(t-1069)
 
 - E2E115는 실제 host·agent·PTY와 Claude 감지기의 가짜 harness(작업 중 화면, `.queue` 표지가 있으면 기록 대기열 줄)를 쓴다. Chromium/WebKit × 1280/390px마다 첫 말은 submit ACK를 Playwright WebSocket route에서 붙잡아 ACK 전 `보내는 중` 말풍선·빈 입력창을 사건으로 확인하고, 풀면 `대기 중`, 같은 탭 새로고침 뒤 유지, 기록 줄 뒤 보통 말을 본다. 둘째 말은 붙잡지 않고 MutationObserver 기록으로 Enter부터 각 단계까지의 ms와 같은 글 말풍선이 하나뿐인지 확인한다.

@@ -99,6 +99,8 @@ pub struct RepoWorkspace {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct WorkspaceQuery {
+    /// 필터 밖 기준 실행도 같은 workspace 원장에서 조회한다.
+    pub selected_run_id: Option<String>,
     pub workspace_id: Option<String>,
     pub machine: Option<String>,
     pub profile: Option<String>,
@@ -126,6 +128,8 @@ pub struct WorkspaceDashboard {
     pub workspace_id: Option<String>,
     pub runs: Vec<MetricRun>,
     pub counts_run: Option<Box<MetricRun>>,
+    #[serde(default)]
+    pub selected_run: Option<Box<MetricRun>>,
     pub code_lines: Vec<CodeLines>,
     pub verification_trend: Vec<MetricPoint>,
     pub build_trend: Vec<MetricPoint>,

@@ -7960,3 +7960,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - E2E115: Chromium/WebKit × 1280/390px에서 ACK를 붙잡은 채 `보내는 중` 말풍선과 빈 입력창, ACK 뒤 `대기 중`, 새로고침 뒤 유지, 기록 반영 뒤 보통 말, 붙잡지 않은 흐름의 Claude 대기열 말과 같은 글 말풍선 하나를 검사한다. E2E23 막힘 단계는 말풍선의 막힘 표지와 멈춘 뒤 거둠을 더한다.
 
 - **71회차 착지 통합(t-1073).** 기준 main `f9324103`에 t-1069와 t-1072를 각각 --no-ff로 통합한다. §8.495·FRONT_API 1.126·AGENT_LINK 1.11을 유지하고 기존 E2E01~114에 E2E115를 더한다. testing 문서 충돌은 양쪽 설명을 모두 보존한다. 전체 ci-local·별도 공개 검사·Linux/Windows strict cross clippy·dev 없는 Windows production release를 한 번 수행하며 실패하면 원문과 부하를 남기고 멈춘다. push 뒤 착지 SHA salt의 Windows 설치기를 전용 시험 폴더로 전달해 해시·판만 확인한다.
+
+### 8.496 workspace 기준 실행의 시간 추이 표시(t-1082)
+
+- 기준 실행을 고르면 검증·빌드 시간 추이의 같은 실행에 강조 테두리·세로 점선·「기준 실행」 글자를 붙인다. 머신 색과 원/사각 모양은 보존하며 색만으로 구분하지 않는다. 그래프 위에는 시각·머신·profile·성공 여부·선택한 시간 지표를 다시 써 390px에서도 읽게 한다. 점 선택·Enter/Space는 기존 원본 실행 상세를 연다.
+- 날짜별은 개별 실행의 값이 아닌 같은 날짜·머신·profile의 성공 p50이다. p50 대표 표본 ID와 기준 실행 ID가 달라도 같은 묶음이면 「기준 실행 포함」으로 표시한다. 기준 실행의 시간은 위 띠에 따로 남긴다. UTC/KST 날짜 경계를 따르며 실패·부분 기록은 성공 p50에서 제외된 이유를 알린다.
+- 기간(오늘/7일/30일)·머신·profile을 바꿔도 명시적으로 고른 기준 실행을 유지한다. 필터 밖·해당 지표 미수집·p50 제외·원장에 없는 ID를 구분해서 안내하며 다른 실행으로 몰래 바꾸지 않는다. 필터 밖 실행의 시간으로 그래프 축을 늘리거나 0초 점을 만들지 않는다. 실제 원장의 0초는 그대로 보존한다.
+- FRONT_API 1.127: `WorkspaceQuery.selected_run_id`로 기준 실행을 함께 요청하고 `WorkspaceDashboard.selected_run`에 반환한다. host가 같은 workspace 원장에서 ID로 직접 찾으므로 30일·최근 400개 상한 밖도 확인할 수 있다. 원본 로그·agent를 조회하거나 조회를 위해 검증을 실행하지 않는다. 다른 workspace의 같은 ID는 반환하지 않는다. 기존 runs·counts_run·추이의 필터·집계 계약은 유지한다.
+- 두 시안을 Chromium/WebKit × 1280/390px headless PNG·비교 영상으로 먼저 보고한 뒤 사용자 지시대로 답을 기다리지 않고 A(세로 안내선+강조점+라벨)를 택했다. B(강조점+상단 띠)보다 많은 기록에서 위치를 찾기 쉽다. [Grafana annotations](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/annotate-visualizations/)(기본 AGPL-3.0-only, 일부 package Apache-2.0), [Observable Plot ruleX](https://observablehq.github.io/plot/marks/rule)([ISC](https://github.com/observablehq/plot/blob/main/LICENSE)), [ECharts MarkPoint](https://github.com/apache/echarts/blob/master/src/component/marker/MarkPointModel.ts)([Apache-2.0](https://github.com/apache/echarts/blob/master/LICENSE))의 표시 원칙을 참고했다. 외부 코드·의존성을 추가하지 않는다.
+- 톱니 조사: 운영 원장의 ci-local 40개 중 검증 경과 0초 13개는 모두 linux-clippy 단독 부분 실행이었다. writer가 초 단위 시작/끝 차이를 보관한 실제 0이며, build_ms는 그 실행에서 미수집이다. host는 null을 점으로 만들지 않는다. 부분 실행의 기록 의미를 바꾸거나 실제 0을 숨기지 않는다. 테스트 TOP 5는 기존 Rust 로그가 binary 단위 시간·개수만 담고 개별 테스트 시간을 담지 않아 미수집이다. 이번에는 수집 형식·추가 시험 실행을 바꾸지 않는다.

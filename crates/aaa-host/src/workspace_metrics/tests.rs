@@ -159,13 +159,44 @@ async fn reader_queries_only_the_host_ledger_with_filters_missing_values_and_dis
         ..Default::default()
     };
     h.db.save_workspace_metrics("", &id, "mac-a", &data).unwrap();
-    let q = WorkspaceQuery { workspace_id: Some(id.clone()), profile: Some("verify".into()), ..Default::default() };
+    let old = WorkspaceCollected {
+        runs: vec![run("old", now - 40 * 86_400_000, "x", "dev", 100, "succeeded")],
+        ..Default::default()
+    };
+    h.db.save_workspace_metrics("", &id, "mac-a", &old).unwrap();
+    let q = WorkspaceQuery {
+        workspace_id: Some(id.clone()),
+        profile: Some("verify".into()),
+        selected_run_id: Some("mac-a:old".into()),
+        ..Default::default()
+    };
     let FrontResponse::WorkspaceDashboard(view) =
         h.call(DeviceRole::Reader, "reader:test", FrontRequest::WorkspaceDashboard { query: q }).await.unwrap()
     else {
         panic!()
     };
     assert_eq!(view.runs.len(), 1);
+    assert_eq!(view.selected_run.as_ref().unwrap().run_id, "mac-a:old");
+    // 기준 실행은 기간·머신·profile·400개 표시 상한 밖에서도 원장으로 찾되 다른 workspace 것은 가져오지 않는다.
+    let outside = h
+        .workspace_dashboard(WorkspaceQuery {
+            workspace_id: Some(id.clone()),
+            machine: Some("absent".into()),
+            selected_run_id: Some("mac-a:old".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(outside.runs.is_empty());
+    assert!(outside.verification_trend.is_empty());
+    assert_eq!(outside.selected_run.unwrap().verification_ms, Some(100));
+    let foreign = h
+        .workspace_dashboard(WorkspaceQuery {
+            workspace_id: Some(format!("ws-{}", "b".repeat(64))),
+            selected_run_id: Some("mac-a:old".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(foreign.selected_run.is_none());
     assert_eq!(view.runs[0].verification_ms, Some(42));
     assert!(view.runs[0].tests.is_none());
     assert!(view.runs[0].artifact_bytes.is_none());
