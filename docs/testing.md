@@ -1,3 +1,59 @@
+## E42 맥락 단추의 재그리기와 키 focus(t-1208 착지 수리)
+
+- main `165797c0`와 후보 `762c39fc`의 원래 E42 전체를 각각 한 번 단독 실행했고 모두 약13.1초에 통과했다.
+  병렬 최초 실패의 원문에는 HTTP/키 사건 trace가 없어 그 순간의 순서를 소급 단정하지 않는다.
+  별도 사건 gate에서 단추 focus와 Enter 사이에 실제 focus 재조회 응답을 놓아 같은 f60 대기를 재현했다.
+  DOM 교체 → focus가 BODY → Enter가 BODY → full_context 요청0회다. agent 읽기·host 중계 전에 입력이 사라졌다.
+  부하나 시한으로 닫지 않고 실제 재그리기 경계를 수리한다.
+- `labelContextButtons`는 같은 파일·hunk·방향 단추가 같은 render에서 제거·생성된 경우에만 focus를 복구한다.
+  연결된 옛 단추에서 다른 곳으로 이동한 focus·unmount·다른 창은 복구하지 않는다. 새 입력을 보내거나 원문을 선행 읽지 않는다.
+  기존 한글 이름·Enter/Space·20줄/전체·한 줄/나란히·가상화·44px 계약은 유지한다.
+- E42의 새 keeper `데스크톱 맥락: 재조회 중 단추 focus와 다른 조작의 focus를 지킨다`는 실제 HTTP 응답과
+  다음 렌더 frame을 사건 gate로 사용한다. 다시 focus하는 locator.press 대신 native keyboard 입력을 보낸다.
+  수리 전 focus 소실로 실패했고 수리 후 full_context1회·HTTP200/full_context=true·20줄/전체/끝 줄까지 확인한다.
+  필요성: 기존 단독 성공만으로 가상 DOM 교체 사이의 다음 키 유실을 막을 수 없다. 개별 keeper는5초 미만이다.
+  실패 진단에는 full_context 요청 수·query도 남긴다. 기존 단언·시한·시험을 완화/삭제하지 않는다.
+- 휴대폰의 visible 확인과 boundingBox 사이에 단추가 교체돼 null이 된 원문도 보존했다. 크기는 같은 DOM 호출에서
+  getBoundingClientRect로 읽고 기존44px 단언·실제 tap을 유지한다. 실패 재시도·고정 sleep·시한 확대는 없다.
+- 참고는 고정 [Pierre FileDiff](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/components/FileDiff.ts)와
+  [CodeView React wrapper](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/react/CodeView.tsx)(Apache-2.0),
+  [VS Code diff view model](https://github.com/microsoft/vscode/blob/main/src/vs/editor/browser/widget/diffEditor/diffEditorViewModel.ts)
+  ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))다. 실제 DOM 수명과 맥락 표시/입력 상태 분리를 대조했다.
+  외부 코드·의존성을 추가하지 않는다.
+
+## Windows idle-audit의 스택 사용과 실패 수집(t-1208)
+
+- [원본 Windows job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985312)
+  (main `3ee2b329`)의 idle-audit owner가 `has overflowed its stack` 뒤
+  `0xc00000fd, STATUS_STACK_OVERFLOW`로 끝났다. 같은 코드의 Windows 격리 실행에서도 재현했다.
+  직접 만든 외부 디버거가 소유한 자식의 Windows debug event·DbgHelp stack walk를 읽었다.
+  시험 poll → `Host::call` → `Host::call_from` → 요청 가림 직렬화 → 할당 순서이며 재귀는 관측되지 않았다.
+  원본의 인접 stack pointer 차이는 시험 poll 757,008바이트·call 48,016바이트·call_from 1,115,312바이트다.
+  예외의 마지막 할당 함수 하나를 원인으로 단정하지 않는다.
+- 같은 Windows verify profile의 `-Zprint-type-sizes` 관측에서 시험 body future는
+  27,440→6,384바이트다. call future 23,456바이트·call_from future 23,152바이트는 그대로다.
+  future의 저장 크기와 poll의 실제 stack frame 크기는 다르다. 이 긴 owner의 요청별 future만
+  `Box::pin`으로 heap에 두어 await의 큰 상태·임시값 중첩을 줄인다. 기본 thread stack·runtime·
+  profile 최적화·제품 Front API는 바꾸지 않는다. 웹 Forbidden·오류 문구·매 요청 snapshot 불변,
+  Reader/Controller 읽기·다른 자동화 쓰기·Local 저장/토글/실행/삭제/복원·구형 변환 보호 단언은 유지한다.
+- `ci::tests::stack_overflow_keeps_the_thread_and_exit_kind_from_real_windows_output`은 원본 일곱 줄
+  fixture를 7바이트 조각으로 읽고 원문/gh 앞머리·긴 꼬리·annotation 중복·끝 개행 누락·다른 FAILED와의
+  공존을 검사한다. 필요한 이유: abort는 일반 FAILED를 내지 않으며, 다른 실패가 있어도 이 증거를 잃으면 안 된다.
+  `stack_overflow_exit_fallback_and_successful_or_quoted_output_are_distinct`는 PID 없는 Rust 표지,
+  이름 없는 Cargo 종료의 hex/unsigned/signed 코드와 성공 Python fixture·인용·잘못된 PID·일반 exit101을
+  구별한다. 필요한 이유: 이름을 추측하거나 상태 문자열 인용을 실제 스택 초과로 기록하는 오탐을 막는다.
+  두 keeper는 수리 전 실패했고 수리 뒤 통과한다. 기존 시험 삭제·시한/기대값 완화·고정 sleep은 없다.
+- 부분 확인은 macOS common 전체 67통과/보조1ignored·자동화 82통과·의존 경계2통과,
+  두 crate all-targets strict clippy와 fmt·공개 검사다. Windows는 같은 verify profile·기본 스택에서
+  자동화80개가2.66초에, CI 수집기13개가0.00초에 통과했다. OS별 cfg로 macOS 두 owner가 Windows 목록에서 빠진다.
+  Windows 서비스·예약 작업·Run·사용자 PATH·방화벽 기준이 모두 같고 시험 자식0개를 확인한 뒤 격리 폴더를 지웠다.
+  새 두 keeper는 개별5초 미만이며 새 E2E 번호는 없다. 전체 ci-local·cross·main 병합/push는 정규 착지 차례에 수행한다.
+- 참고 후보는 [Tokio test macro의 stack pinning](https://github.com/tokio-rs/tokio/blob/tokio-macros-2.7.2/tokio-macros/src/entry.rs)
+  ([MIT](https://github.com/tokio-rs/tokio/blob/tokio-macros-2.7.2/LICENSE))와
+  [Rust Windows stack overflow handler](https://github.com/rust-lang/rust/blob/master/library/std/src/sys/pal/windows/stack_overflow.rs)
+  ([MIT/Apache-2.0](https://github.com/rust-lang/rust/blob/master/COPYRIGHT))다.
+  macro의 저장 방식과 표준 런타임의 thread/PID 진단을 대조했고 외부 코드·의존성을 가져오지 않았다.
+
 ## 고른 글 인용(t-1204)
 
 - 웹 유닛 `selectionQuote.test.mjs` 셋은 출처 머리·터미널 줄 범위·backtick 울타리, 대화 화자·`>` 줄, 쓰던 초안 뒤 붙이기·넘침 거부를 지킨다.

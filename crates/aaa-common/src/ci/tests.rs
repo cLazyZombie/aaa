@@ -234,3 +234,46 @@ fn web_suite_summary_is_a_fallback_and_successful_fixture_output_stays_successfu
     scan.feed(log.as_bytes());
     assert!(scan.finish().is_empty());
 }
+
+#[test]
+fn stack_overflow_keeps_the_thread_and_exit_kind_from_real_windows_output() {
+    let raw = include_str!("fixtures/windows-stack-overflow.txt");
+    let expected = ["stack overflow: automation::tests::idle_audit_is_read_only_on_web_and_local_cli_keeps_control"];
+    for log in [raw.to_owned(), raw.lines().map(|line| format!("windows-2025\ttest\t{line}\n")).collect()] {
+        let mut scan = FailureScan::default();
+        for chunk in log.as_bytes().chunks(7) {
+            scan.feed(chunk);
+        }
+        assert_eq!(scan.finish(), expected);
+    }
+    // 다른 시험의 FAILED도 함께 남고, 긴 꼬리·annotation 중복·개행 없는 끝에 지워지지 않는다.
+    let mut scan = FailureScan::default();
+    scan.feed(raw.as_bytes());
+    scan.feed(format!("{}\ntest other::owner ... FAILED\n", "x".repeat(LOG_JOB_CAP * 2)).as_bytes());
+    scan.feed(b"##[error]thread 'automation::tests::idle_audit_is_read_only_on_web_and_local_cli_keeps_control' (3528) has overflowed its stack");
+    assert_eq!(scan.finish(), ["other::owner", expected[0]]);
+}
+
+#[test]
+fn stack_overflow_exit_fallback_and_successful_or_quoted_output_are_distinct() {
+    for exit in ["0xc00000fd, STATUS_STACK_OVERFLOW", "0xc00000fd", "3221225725", "-1073741571"] {
+        let mut scan = FailureScan::default();
+        scan.feed(
+            format!("[test]   process didn't exit successfully: `target\\verify\\deps\\test.exe` (exit code: {exit})")
+                .as_bytes(),
+        );
+        assert_eq!(scan.finish(), ["exit: STATUS_STACK_OVERFLOW"]);
+    }
+    let mut scan = FailureScan::default();
+    scan.feed(b"thread 'old::owner' has overflowed its stack\n");
+    assert_eq!(scan.finish(), ["stack overflow: old::owner"]);
+    let mut scan = FailureScan::default();
+    scan.feed(b"[python exit=0] thread 'fake::owner' (12) has overflowed its stack\n");
+    scan.feed(b"[test] [python exit=0] process didn't exit successfully: `fake.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)\n");
+    scan.feed(b"fixture: thread 'fake::owner' has overflowed its stack\n");
+    scan.feed(b"test successful::owner ... ok\nSTATUS_STACK_OVERFLOW\n");
+    scan.feed(b"quoted: process didn't exit successfully: `fake.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)\n");
+    scan.feed(b"thread 'fake::owner' (not-a-pid) has overflowed its stack\n");
+    scan.feed(b"process didn't exit successfully: `test.exe` (exit code: 101)\n");
+    assert!(scan.finish().is_empty());
+}
