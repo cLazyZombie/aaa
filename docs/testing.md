@@ -1,3 +1,22 @@
+## 머신 끝 확인 시험의 원격 셸 격리(t-1142)
+
+- `an_installed_machine_gets_a_check_pane_and_a_login_pane`는 실제 host·DB와 duplex 가짜 agent를 사용한다.
+  host OS와 무관하게 POSIX·Windows 원격 머신의 argv·작업 폴더, 등록/연결/권한 거부와 로그인 pane을 검사한다.
+  가짜 agent의 화면은 고정한 다섯 줄을 snapshot으로 주고 끝 표지를 다음 출력 청크로 보낸다.
+  끝 표지 전에는 결과가 비어 있고, 뒤에는 다섯 줄이 정확히 저장되어야 한다.
+  필요한 이유: 원격 머신 검사에 host의 `sh`·git·PATH를 실행하면 Windows의 깨진 셸 shim 출력이
+  정상 화면처럼 들어가 실제 원인 대신 30초 뒤 「끝 확인 줄」로 실패한다.
+- 실제 POSIX 셸 출력은 기존 Unix 전용 `the_check_script_reports_the_work_folder_git_harnesses_and_path`에서
+  계속 검사하며 종료 코드와 끝 표지도 확인한다. 셸 실패에는 종료 코드·stderr를 즉시 남긴다.
+  두 시험은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib machine_setup::tests::`로 확인한다.
+  시험 삭제·제외·재시도·시한 확대·기대값 완화 없이 기존 host 요청 계약을 유지한다.
+- 참고 후보는 [Rust Command의 출력·종료 상태](https://github.com/rust-lang/rust/blob/main/library/std/src/process.rs)
+  ([MIT/Apache-2.0](https://github.com/rust-lang/rust/blob/main/LICENSE-MIT))와
+  [Tokio watch의 구독·변경 통지](https://docs.rs/tokio/latest/tokio/sync/watch/index.html)
+  ([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))다.
+  실행 성공과 출력 도착을 구별하고 현재 상태를 먼저 읽은 뒤 사건을 기다리는 원칙을 참고했다.
+  외부 코드·의존성은 추가하지 않는다.
+
 ## macOS pipe 창의 worker 한정 주입(t-1137)
 
 - main `c115d41a`·`3db8bcc7`의 macOS job 원문에서 최초 오류는 capture 스레드의 `status.code(): None != Some(7)`였다. raw holder 상속 확인과 pipe 해제는 성공했고 capture 역할은 시작하지 않았다. 뒤의 연결 Timeout을 시작 지연으로 취급하지 않는다. 원래 별도 `21-aaa_common.log`·`raw.trace` artifact는 없었고 job에 출력된 전체 aaa_common 구간과 trace를 추출했다.
