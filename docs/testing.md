@@ -4773,3 +4773,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - pr_environment의 네 기존 owner는 FAKE_AGENT만 쓴다. 이 파일의 전용 World에서만 TUI 없는 brief 안정·paste 간격을0으로 한다. 일반 World와 Claude/paste owner, 제품 기본 간격은 유지한다. agent의 gh/PATH/인증 환경과 host 환경을 분리하고 같은 host 설정을 재시작에도 보존한다.
 - 실제1초 PR 조회·ticker·outage 설정, 여러 pass 완료 울타리, 공개/미공개 branch와 실제 git 참조, 인증/회복·없는 실행 파일·stderr 가림·폴더 이주/오류·모든 원래 단언은 유지한다. 이름 추가/삭제·단계 분리는 없다. 단일 통과나 낮은 load 결과로 정규 원장을 줄이지 않고 다음 전체 차례에서 같은 조건 전후를 비교한다.
+
+## 업로드 쓰기 잠금의 상태 폴더 범위(t-1117 후속)
+
+- 전역 올리기 잠금은 서로 다른 상태 폴더의 Host도 직렬화했다. usage cache owner는98회차 평소병렬5.449초·단독0.480초였다. 단독 결과만으로 원장을 줄이지 않는다. 같은 상태 폴더의 쓰기/등록 잠금·마지막 올리기 cache를 Host 수명 동안 함께 소유하고, 독립 상태 폴더는 기다리지 않게 한다.
+- registry는 Host::open에서만 canonical 상태 경로를 키로 잠금을 찾고 Weak로 보관한다. `.`·symlink 별칭도 같은 잠금을 쓴다. canonical 경로는 키에만 쓰며 기존 파일 경로/외부 인자는 바꾸지 않는다. 죽은 Host의 항목은 다음 등록 때 제거하고 cache는 Host 수명이 끝나면 버린다. 같은 폴더의 쓰기/게시·합계/파일 수 상한·교체·실패 뒤 재계산·게시 직전 실제 파일 수 확인을 유지한다.
+- `independent_upload_states_do_not_block_each_other`는 한 상태의 잠금을 잡은 채 다른 상태의 실제 쓰기와 bytes 확인이 완료되는 사건을 기다린다. 전역 잠금 판에서는2초 경계에서 실패함을 확인했다. 실패에도 잠금을 먼저 풀고 직접 만든 writer를 회수한다. `upload_state_aliases_share_cached_counts`는 같은 상태를 다른 경로로 연 두 Host의 실제 세 파일/합계가 섞이지 않고3/6이 되는지 검사한다. 필요한 이유: 독립 Host의 경합을 없애면서 같은 폴더의 cache 갱신/상한을 깨뜨리지 않아야 한다.
+- [Rust Weak](https://doc.rust-lang.org/std/sync/struct.Weak.html)·[Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html)·[canonicalize](https://doc.rust-lang.org/std/fs/fn.canonicalize.html)(MIT/Apache-2.0)와 기존 collect_locks의 자원별 잠금 소유를 대조했다. 소유권/경로 정규화 원칙을 참고하며 외부 코드나 의존성을 추가하지 않는다. 새 두 unit은 각각 실제로 한 번 실행됐는지 확인하고, 성능은 다음 전체 차례의 같은 조건 전후로 판정한다.

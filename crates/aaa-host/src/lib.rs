@@ -557,6 +557,7 @@ pub struct Host {
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
     device_gate: Mutex<()>,
     publish_gate: tokio::sync::Mutex<()>,
+    upload_gate: Arc<library_upload::UploadGate>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -806,6 +807,7 @@ impl Host {
             })
             .unwrap_or(0);
         let dev_mode = cfg.local_agent.mode == LocalAgentMode::Child;
+        let upload_gate = library_upload::upload_gate(&state).context("업로드 쓰기 잠금 경로")?;
         let host = Arc::new(Host {
             health: Mutex::new(supervisor::Health::load(&db)),
             health_wake: Default::default(),
@@ -835,6 +837,7 @@ impl Host {
             account_rename_recovery: Mutex::new(()),
             device_gate: Mutex::new(()),
             publish_gate: tokio::sync::Mutex::new(()),
+            upload_gate,
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             install_probes: Mutex::new(HashMap::new()),
