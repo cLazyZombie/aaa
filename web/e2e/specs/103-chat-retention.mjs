@@ -92,7 +92,7 @@ async function check(engine, width, panes, delayed = false) {
               return el ? { evaluation: window.__aaaRetentionEvaluation ?? null, top: el.scrollTop, busy: el.getAttribute("aria-busy"), rows: el.querySelectorAll(".chat-row").length,
                 older: el.querySelector(".chat-older")?.textContent, error: el.querySelector(".banner")?.textContent,
                 nodes: el.querySelectorAll("*").length, height: el.clientHeight } : { absent: true, hash: location.hash };
-            }), 5000, "앞 쪽 실패 진단"));
+            }), 5000, "앞 쪽 실패 진단"), () => protocol?.failed());
         } finally {
           protocol?.at(null);
         }

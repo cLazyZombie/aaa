@@ -1,3 +1,12 @@
+## E2E103 lookup 정지의 protocol 원문 보존(t-1147)
+
+- `retention-protocol.mjs`는 기존 Chromium 주 frame session의 DOM/Runtime 호출 요약에 `protocol` 원문 객체를 더한다. 요청 params, 응답 result/error, context 생성·소멸의 원문으로 objectId·backendNodeId·executionContextId와 호출 ID를 연결한다. 기록은 합성 E103의 count/lookup/commit·실패 진단으로 한정하고 Network·console 사건과 관측 밖 새 호출은 제외한다. 운영 페이지나 임의 evaluate를 기록하는 도구로 사용하지 않는다. 알려진 합성 DOM/함수만 읽는 이 범위와 달리 임의 Runtime 호출은 비밀값을 반환할 수 있다.
+- 최초 오류를 기록한 다음 추가 evaluate 전에 `failure-boundary`와 `pending-at-failure`를 즉시 저장한다. 페이지 종료의 `pending-at-close`와 별개이며, 늦은 응답이 와도 최초 경계를 덮어쓰지 않는다. 원문은 독립 snapshot으로 메모리에 쌓고 단계 해제/실패/종료에서 파일로 쓴다. 원문 저장 실패도 `protocol-failure`로 남기며 최초 API 오류를 유지한다. 호출·Promise·응답과 기존 locator30초/commit20초/추가 진단5초는 바꾸지 않는다.
+- `nice -n 15 node --test web/test/retentionProtocol.test.mjs web/test/retentionFailure.test.mjs`는 원문/오류 보존·실패 당시 pending·늦은 응답·페이지별 격리·공유 logger 복구·추가 진단 전 snapshot·저장 실패에도 최초 오류 보존을 검사한다. 필요한 이유: 종료 뒤의 pending만 보면 최초 정지와 추가 진단을 구분할 수 없고, 요약만으로 handle/context 연결을 복원할 수 없다.
+- `NODE_PATH=<격리 node_modules> nice -n 15 node --test web/e2e/retention-protocol.test.mjs`는 저장소 고정 Playwright1.64.1과 공용 캐시의 실제 headless Chromium에서 정상 locator/adoption 및 lookup-element/DOM.resolveNode 응답 보류를 확인한다. 각 시험의 실패 상한은5초다. host·운영 페이지·고정 sleep 없이 실제 응답 도착과 page close 사건으로 끝난다. `AAA_CHAT_DIAGNOSTICS=<폴더>`를 주면 각 대조의 원문을 보존한다. 필요한 이유: 유닛만으로 확인할 수 없는 Playwright 내부 logger와 실제 Chromium 핸들 전달 경계를 검증한다.
+- 응답 보류는 관측기를 검증하는 통제 대조이며 원래78회차의 원인 재현이 아니다. 원본 로그에는 visible locator 뒤30초 오류와 Chromium1280/coordinator/trial2/page3 commit까지 있지만 실패 당시 DOM/Runtime 원문은 없다. 정확한 정지 호출과 원인은 여전히 재발 원자료로 확인해야 한다. locator 우회·시한 연장·시험 삭제는 하지 않는다.
+- OSS 후보는 [Playwright CRConnection](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/chromium/crConnection.ts)와 [Puppeteer Connection](https://github.com/puppeteer/puppeteer/blob/main/packages/puppeteer-core/src/cdp/Connection.ts)(각 Apache-2.0)이다. 송수신 ID/session 매칭·callback 전달 전 관측 원칙을 참고하며 외부 코드·의존성은 추가하지 않는다. 실제 경계는 격리 설치한1.64.1의 `coreBundle.js`로 대조한다. 전역 Playwright나 브라우저 설치는 변경하지 않는다.
+
 ## E2E103 보관 본문과 복귀 조회 사건(t-1134)
 
 - 보관 본문·과거 위치의 복원은 `ConversationRefresh`의 최신 읽기 lane과 독립적이다. 변경 알림으로 시작한 실제 `pane_chat` 응답을 `route.fetch` 뒤 보류하고 tasks 왕복을 수행하면, 본문은 82ms에 복원되지만 복귀 요청은 0회다. 이전 응답을 놓으면 복귀 요청이 정확히 1회 시작한다. 본문 준비 뒤 즉시 요청 수를 잘라 검사하던 기존 단언은 이 정상 순서에서 실패한다. 이 결정적 대조는 시험의 경합을 확정하며, 원본 t-1131 실패 당시의 개별 HTTP 순서를 소급 증명하지는 않는다.
