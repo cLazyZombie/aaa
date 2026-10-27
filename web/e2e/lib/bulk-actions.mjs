@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, browser, pairPage, shot, openSettings, inTime, drawerSettled } from "./harness.mjs";
 import { clickDialogButton } from "./menu.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
+import { pendingDeletionCleared } from "./bulk-delete-ready.mjs";
 
 export const count = 500;
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=", "base64");
@@ -205,20 +206,6 @@ export function seedReports(db, amount, prefix, old = false, versions = false, {
   } catch (e) { db.exec("ROLLBACK TO report_fixture; RELEASE report_fixture"); throw e; }
 }
 
-// 삭제 대기의 실제 제거도 폴더 사건으로 확인한다. 응답 성능 상한과 구별한다.
-async function pendingDeletionCleared(pending) {
-  let watcher;
-  const cleared = () => fs.readdirSync(pending).length === 0;
-  try {
-    await inTime(new Promise((resolve, reject) => {
-      const check = () => { try { if (cleared()) resolve(); } catch (error) { reject(error); } };
-      watcher = fs.watch(pending, check);
-      watcher.on("error", reject);
-      check();
-    }), 20_000, "삭제 대기 사본의 실제 제거");
-  } finally { watcher?.close(); }
-}
-
 export async function reportScenario(engine, label, width) {
   console.log(`bulk ${label} ${width}`);
   const total = 601; // host 한도 500개를 넘는다.
@@ -295,7 +282,7 @@ export async function reportScenario(engine, label, width) {
     assert.equal(fs.readdirSync(`${dir()}/library`).length, 0);
     const hostId = db.prepare("SELECT value FROM meta WHERE key='host_id'").get().value;
     const pending = `${dir()}/.library-delete-${Buffer.from(hostId).toString("hex")}`;
-    await pendingDeletionCleared(pending);
+    await pendingDeletionCleared(pending, `${root}/host.log`, inTime);
     console.log("bulk-delete-cleanup", JSON.stringify({ label, width, pending: fs.readdirSync(pending).length }));
     assert.deepEqual(paired.errors, []);
   } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }

@@ -4817,3 +4817,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - pr_environment의 네 기존 owner는 FAKE_AGENT만 쓴다. 이 파일의 전용 World에서만 TUI 없는 brief 안정·paste 간격을0으로 한다. 일반 World와 Claude/paste owner, 제품 기본 간격은 유지한다. agent의 gh/PATH/인증 환경과 host 환경을 분리하고 같은 host 설정을 재시작에도 보존한다.
 - 실제1초 PR 조회·ticker·outage 설정, 여러 pass 완료 울타리, 공개/미공개 branch와 실제 git 참조, 인증/회복·없는 실행 파일·stderr 가림·폴더 이주/오류·모든 원래 단언은 유지한다. 이름 추가/삭제·단계 분리는 없다. 단일 통과나 낮은 load 결과로 정규 원장을 줄이지 않고 다음 전체 차례에서 같은 조건 전후를 비교한다.
+
+## 대량 보고서 실제 제거의 완료 관측(t-1117 후속)
+
+- E113은 DB·공개 경로의 제거와 비동기 사본 정리를 각각 확인한다. 폴더 사건만 기다리던 관측은 실제 정리 완료·빈 폴더인데도20초 시한을 소모했다. Reaper가 remove_dir_all 성공 뒤 쓰는 기존 host 로그 파일도 깨움으로 관측한다. 성공 조건은 매번 실제 pending 폴더가 비어 있음이며, 로그 문자열이나 응답만으로 성공하지 않는다.
+- `bulk-delete-ready.mjs`는 폴더/로그 감시를 모두 등록한 뒤 처음 상태를 확인하고, 성공·오류·원래20초 실패 시한 뒤 두 감시를 닫는다. 고정 sleep·주기 점검·재시도·시한/기대 변경·제품 코드 변경은 없다. 기존601개·500/101 묶음·부분 실패/수동 재개·원본/보관/사본 제거·권한과 UI 응답 계약을 유지한다.
+- `bulk-delete-ready.test.mjs`의 새 unit은 실제 파일을 두고 제거 전 폴더 사건과 무관한 host 로그가 성공하지 않음을 검사한다. 마지막 폴더 사건은 보내지 않고, 실제 제거 뒤 완료 로그 사건만 보낸다. 이 한 시험은 관측 유실 회귀를 결정적으로 잡는 데 필요하다. 원래 E113 owner 이름/개수는 그대로이며 새 unit1개·삭제0개다.
+- [Node fs.watch 주의사항](https://nodejs.org/api/fs.html#caveats)([MIT](https://github.com/nodejs/node/blob/main/LICENSE))·[libuv FS event](https://docs.libuv.org/en/v1.x/fs_event.html)([MIT](https://github.com/libuv/libuv/blob/v1.x/LICENSE))와 기존 seedHost의 로그 사건 관측을 대조했다. macOS의 파일/폴더 감시 경로가 다름을 참고하되, 이번 실패의 정확한 callback 통합/누락 순서는 미관측으로 구별한다. 외부 코드/새 의존성은 가져오지 않는다.
