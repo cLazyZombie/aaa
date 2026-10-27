@@ -36,7 +36,6 @@ export function MachineWorkspaceAccess({ machineId, role }: { machineId: string;
   return (
 <section aria-label="workspace 자동 배정" className="machine-workspaces" aria-busy={saving}>
         <h3>자동 배정할 workspace</h3>
-        <p>켜진 workspace의 할 일만 이 머신에 자동 배정합니다. 실행 중인 작업과 고정 머신 지정은 유지됩니다.</p>
         {role === "reader" && <p>보기 권한 · 변경은 Owner만 가능합니다.</p>}
         {!access && !error && <p role="status">허용 설정 읽는 중</p>}
         {access?.workspaces.map(row => <label key={row.workspace} className="machine-workspace-row">
@@ -44,7 +43,6 @@ export function MachineWorkspaceAccess({ machineId, role }: { machineId: string;
           <span><strong>{row.workspace}</strong><small>{row.workspace === "작업 폴더" ? "저장소 없는 일 · 이 머신의 작업 root" : row.paths.length ? row.paths.join(" · ") : "이 머신에 등록된 저장소 경로 없음"}</small></span>
           <span>{row.enabled ? "켜짐" : "꺼짐"}</span>
         </label>)}
-        <p>새 머신·workspace는 꺼짐으로 시작합니다.</p>
         {error && <p role="alert">{error}</p>}
       </section>
   );

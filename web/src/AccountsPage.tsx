@@ -202,9 +202,11 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                             <span>새 이름</span>
                             <input ref={renameInput} aria-label={`${a.name} 새 이름`} value={newName} onChange={(e) => setNewName(e.target.value)} disabled={busy} maxLength={64} autoComplete="off" spellCheck={false} aria-describedby="account-rename-note" />
                           </label>
-                          <p id="account-rename-note" className="op-muted">
-                            {!validAlias(newName.trim()) ? "영문·숫자·-·_ 1~64자를 입력하세요." : data.accounts.some((x) => x.name === newName.trim() && x.name !== a.name) ? "이미 쓰는 계정 이름입니다." : "다시 로그인하지 않습니다. 실행 중인 계정은 작업을 보류하거나 끝낸 뒤 바꾸세요."}
-                          </p>
+                          {(!validAlias(newName.trim()) || data.accounts.some((x) => x.name === newName.trim() && x.name !== a.name)) && (
+                            <p id="account-rename-note" className="op-muted">
+                              {!validAlias(newName.trim()) ? "영문·숫자·-·_ 1~64자를 입력하세요." : "이미 쓰는 계정 이름입니다."}
+                            </p>
+                          )}
                           <div className="op-buttons">
                             <button type="submit" className="btn btn-primary" disabled={busy || !validAlias(newName.trim()) || newName.trim() === a.name || data.accounts.some((x) => x.name === newName.trim())}>이름 저장</button>
                             <button type="button" className="btn" disabled={busy} onClick={() => { setRenaming(null); setMsg(null); }}>취소</button>
@@ -220,7 +222,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
         </SettingsGroup>
       ))}
       {canEdit && (
-        <SettingsGroup title="새 계정 로그인" note="host의 공식 CLI가 host Mac 브라우저를 엽니다. 그 브라우저에서 인증을 마치면 이 목록에 생깁니다.">
+        <SettingsGroup title="새 계정 로그인">
           <form
             className="settings-item acct-new"
             onSubmit={(e) => {

@@ -49,7 +49,7 @@ function Timing({ form, update }: { form: Form; update: (f: Form) => void }) {
     </fieldset>
     {daily ? <Text label="시각(host 지역 시간)" value={c.daily} onChange={(v) => set("daily", v)} placeholder="09:00" testid="automation-form-daily" />
       : <Text label="간격" value={c.every} onChange={(v) => set("every", v)} placeholder="30m · 2h · 1d" testid="automation-form-every" />}
-    <Text label="열린 일반 thread 최소 개수" value={c.min_open_threads} onChange={(v) => set("min_open_threads", v === "" ? null : Number(v))} placeholder="비우면 제한 없음" testid="automation-form-min-open-threads" hint="자동화·완료·보류 thread는 제외한다. 부족한 차례는 기록하고 넘긴다" />
+    <Text label="열린 일반 thread 최소 개수" value={c.min_open_threads} onChange={(v) => set("min_open_threads", v === "" ? null : Number(v))} placeholder="비우면 제한 없음" testid="automation-form-min-open-threads" />
     <Field label="놓친 차례"><select className="input" value={c.catch_up === "skip" ? "skip" : "once"} onChange={(e) => set("catch_up", e.target.value)}><option value="once">한 번으로 모아 돈다</option><option value="skip">기록하고 넘긴다</option></select></Field>
   </>;
 }
@@ -62,7 +62,7 @@ function ConditionFields({ form, update }: { form: Form; update: (f: Form) => vo
     case "schedule": return <Timing form={form} update={update} />;
     case "command": return <>
       <Timing form={form} update={update} />
-      <Text label="명령" value={c.command} onChange={(v) => set("command", v)} mono testid="automation-form-command" hint="출력이 바뀌면 동작이 돈다. 명령·머신은 승인한 것만 돈다" />
+      <Text label="명령" value={c.command} onChange={(v) => set("command", v)} mono testid="automation-form-command" />
       <Text label="명령 머신" value={c.machine} onChange={(v) => set("machine", v)} placeholder="비우면 host 머신" />
     </>;
     case "thread": return <>
@@ -102,7 +102,7 @@ function ActionFields({ form, update }: { form: Form; update: (f: Form) => void 
       </>}
       <Toggle label="사건 thread의 보고를 붙인다" value={a.reports} onChange={(v) => set("reports", v)} />
     </>;
-    case "deploy": return <p className="automation-dim">main push가 쌓이면 coordinator inbox에 배포 제안을 남긴다. 빌드·배포는 하지 않는다.</p>;
+    case "deploy": return null;
     default: return <p role="alert">이 동작은 폼으로 고치지 못한다. TOML에서 고친다.</p>;
   }
 }
@@ -112,18 +112,15 @@ function Limits({ form, update }: { form: Form; update: (f: Form) => void }) {
   const set = (key: string, value: unknown) => update(setField(form, "limits", key, value));
   const percent = (key: string) => (v: string) => { const n = parsePercent(v); if (n !== "bad") set(key, n); };
   const number = (key: string) => (v: string) => { const n = Number(v); set(key, v.trim() === "" || !Number.isFinite(n) ? null : Math.max(0, Math.floor(n))); };
-  return <>
-    <div className="automation-grid">
-      <Text label="5시간 창 남은 % 아래면 쉼" value={l.usage_session_below} onChange={percent("usage_session_below")} testid="automation-form-usage-session" />
-      <Text label="주간 남은 % 아래면 쉼" value={l.usage_week_below} onChange={percent("usage_week_below")} testid="automation-form-usage-week" />
-      <Text label="입력 묶는 시간" value={l.batch} onChange={(v) => set("batch", v)} placeholder="없음" />
-      <Text label="실행 사이 최소 간격" value={l.min_gap} onChange={(v) => set("min_gap", v)} placeholder="없음" />
-      {actionKind(form) === "start" && <Text label="자동화 thread 동시 상한" value={l.max_running} onChange={number("max_running")} placeholder="1" />}
-      <Text label="하루 상한" value={l.max_per_day} onChange={number("max_per_day")} placeholder="없음" />
-      {actionKind(form) === "deploy" && <Text label="새 커밋 수" value={l.min_commits} onChange={number("min_commits")} placeholder="1" />}
-    </div>
-    <p className="automation-dim">자동화 thread는 규칙당 기본 1개이며 동시 상한의 빈칸·0도 1개다. 횟수·간격에는 기본 제한이 없다. 사용량 문턱만 기본으로 채운다(5시간 5%·주간 10%).</p>
-  </>;
+  return <div className="automation-grid">
+    <Text label="5시간 창 남은 % 아래면 쉼" value={l.usage_session_below} onChange={percent("usage_session_below")} testid="automation-form-usage-session" />
+    <Text label="주간 남은 % 아래면 쉼" value={l.usage_week_below} onChange={percent("usage_week_below")} testid="automation-form-usage-week" />
+    <Text label="입력 묶는 시간" value={l.batch} onChange={(v) => set("batch", v)} placeholder="없음" />
+    <Text label="실행 사이 최소 간격" value={l.min_gap} onChange={(v) => set("min_gap", v)} placeholder="없음" />
+    {actionKind(form) === "start" && <Text label="자동화 thread 동시 상한" value={l.max_running} onChange={number("max_running")} placeholder="1" />}
+    <Text label="하루 상한" value={l.max_per_day} onChange={number("max_per_day")} placeholder="없음" />
+    {actionKind(form) === "deploy" && <Text label="새 커밋 수" value={l.min_commits} onChange={number("min_commits")} placeholder="1" />}
+  </div>;
 }
 
 function Review({ check, form }: { check: AutomationCheck | null; form: Form }) {
@@ -362,7 +359,6 @@ export function AutomationEditor({ canV2 = false, project, name: openName, onClo
       </>}
       {mode === "toml" && <section className="automation-section" aria-label="TOML">
         <textarea className="input automation-textarea automation-mono" value={text} onChange={(e) => updateText(e.target.value)} aria-label="TOML 원문" data-testid="automation-toml" spellCheck={false} rows={18} />
-        <p className="automation-dim">주석·칸 순서는 그대로 저장한다. 폼으로 돌아가면 host가 읽은 값으로 폼을 다시 그린다.</p>
       </section>}
       {mode === "review" && <section className="automation-section" aria-label="검토"><Review check={check} form={form} /></section>}
       </fieldset>

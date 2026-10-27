@@ -105,7 +105,6 @@ export function CoordinatorOpen({
           header={
             <span className="coordinator-menu-head">
               <span className="row-sheet-title">coordinator 열기</span>
-              <span className="row-sheet-subtitle">도는 것이 있으면 그 pane을, 없으면 띄운다</span>
             </span>
           }
           items={items}

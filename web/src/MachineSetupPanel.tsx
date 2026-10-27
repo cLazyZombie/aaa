@@ -102,14 +102,7 @@ export function MachineSetupPanel({
   };
   const problem = target === "" ? null : targetProblem(target);
   return (
-    <SettingsGroup
-      title="SSH로 추가"
-      note={
-        install
-          ? "host에서 이미 ssh로 로그인되는 머신을 넣는다. SSH 접속은 host의 키·ssh-agent·설정을 쓴다. Windows 서비스 암호는 설치 확인 창의 전용 칸에서만 한 번 받는다."
-          : "host Mac에서 이미 ssh로 로그인되는 머신을 넣는다. host의 SSH 키·ssh-agent·~/.ssh/config만 쓰고 비밀번호는 받지 않는다. 지금은 접속·host key 확인·OS 감지까지이고 원격에는 쓰지 않는다."
-      }
-    >
+    <SettingsGroup title="SSH로 추가">
       <div className="settings-item" data-testid="machine-setup">
         {error && (
           <p className="op-warn" role="alert">
@@ -509,7 +502,6 @@ function SettingsForm({
         <button type="submit" className="btn btn-primary" disabled={sending || problem !== null} data-testid="machine-setup-plan-start">
           계획 보기
         </button>
-        <span className="op-muted">같은 판 aaa를 그 머신 임시 폴더에 보내고, 그 머신의 install이 계획만 낸다(아직 설치하지 않는다)</span>
       </div>
     </form>
   );

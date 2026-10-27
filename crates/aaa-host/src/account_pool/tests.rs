@@ -597,14 +597,13 @@ fn failure_after_waiting_reaches_the_inbox_once() {
             l.h.pool_pass("demo").await.unwrap();
         }
         assert_eq!(l.h.pool_job("demo", &job.view.id).unwrap().view.state, AccountStartState::Failed);
-        let items: Vec<_> = l
-            .h
-            .db
-            .inbox_list(Some("demo"), false)
-            .unwrap()
-            .into_iter()
-            .filter(|i| i.item_kind == "task-start")
-            .collect();
+        let items: Vec<_> =
+            l.h.db
+                .inbox_list(Some("demo"), false)
+                .unwrap()
+                .into_iter()
+                .filter(|i| i.item_kind == "task-start")
+                .collect();
         assert_eq!(items.len(), 1, "끝난 실패를 pass마다 다시 알리지 않는다");
         assert_eq!(items[0].event, "account start failed");
         assert!(items[0].summary.contains("모델·effort 설정이 바뀌었다"), "{}", items[0].summary);

@@ -67,7 +67,7 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
         </p>
       )}
       {canEdit && <NewRollout machines={machines} onStarted={load} />}
-      <SettingsGroup title="배포 기록" note="새것부터. 화면이 끊겨도 같은 rollout ID의 상태를 host에서 다시 읽는다.">
+      <SettingsGroup title="배포 기록">
         <div className="settings-item" data-testid="rollout-history">
           {cards === null ? (
             <p className="op-muted">읽는 중…</p>
@@ -80,16 +80,13 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
                   {new Date(c.created_ms).toLocaleString()} · {c.restart ? `${c.restart} 재시작 · ` : ""}
                   {c.version ? `aaa ${c.version}` : "후보 검사 중"} · {c.id}
                 </summary>
-                <RolloutCard snapshot={{ ok: c }} connected help={false} />
+                <RolloutCard snapshot={{ ok: c }} connected />
               </details>
             ))
           )}
         </div>
       </SettingsGroup>
-      <SettingsGroup
-        title="서비스 재시작"
-        note="그 머신 agent가 감독자(launchd)로 다시 띄우고, 배포와 같은 독립 감시가 새 프로세스(host는 웹 응답까지)를 확인한다. 진행은 「배포 기록」에 남는다. 세션은 이어진다. host를 다시 띄우면 이 화면은 잠시 끊겼다 다시 붙는다."
-      >
+      <SettingsGroup title="서비스 재시작">
         <div className="settings-item">
           {canEdit && canRestartRollout(api) && <Restarts machines={machines} onStarted={load} />}
           {canEdit && !canRestartRollout(api) && <p className="op-muted">재시작 rollout은 FRONT_API 1.100 이상 host에서 한다.</p>}
@@ -156,7 +153,7 @@ function NewRollout({ machines, onStarted }: { machines: MachineView[]; onStarte
   const ready = canStart(plan, input);
   const view = plan?.view;
   return (
-    <SettingsGroup title="새 배포" note="빌드 머신에 이미 있는 후보(scripts/deploy-build.sh의 출력 폴더, 옆에 provenance.json)만 고른다. 웹은 실행 파일을 올리지 않는다.">
+    <SettingsGroup title="새 배포">
       <div className="settings-item" data-testid="new-rollout">
         <div className="admin-line">
           <label className="op-field">

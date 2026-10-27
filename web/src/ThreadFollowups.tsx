@@ -19,7 +19,6 @@ export function ThreadFollowups({ t, canAct }: { t: ThreadView; canAct: boolean 
   const left = entries.filter(f => f.handled_ms === null).length;
   return <section className="card thread-followups" data-testid="thread-followups">
     <h2>{left ? `후속 남음 · ${left}개` : "후속 처리 기록"}</h2>
-    <p>후속 할 일을 만든 뒤 ID를 연결하거나, 버림·정리 완료 사유를 기록합니다.</p>
     <ul>{entries.map(f => <FollowupLine key={f.id} f={f} t={t} canAct={canAct && supported} onSaved={setSaved} />)}</ul>
   </section>;
 }

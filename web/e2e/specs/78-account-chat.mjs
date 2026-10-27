@@ -64,7 +64,6 @@ export default async function () {
           if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
           const chat = page.getByTestId("chat");
           await chat.getByText("Codex 기록 파일을 찾지 못했다", { exact: true }).waitFor();
-          assert.match(await chat.locator(".chat-note").first().innerText(), /^Codex가 남긴/);
           await shot(page, `78-account-chat-${width}-missing`);
           aaa("pane", "send-keys", thread.pane, "F6");
           await chat.getByText(`${thread.id} 기록 300`, { exact: true }).waitFor();

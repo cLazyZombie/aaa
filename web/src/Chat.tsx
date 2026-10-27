@@ -1005,10 +1005,6 @@ export function ChatPanel({
         }}
       >
         <div className="chat-transcript">
-          <p className="chat-note">
-            {harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
-            {chat?.truncated && " 앞부분은 생략했다."}
-          </p>
           <p className="chat-note" data-testid={active ? "chat-history-start" : undefined}>
             {chat?.history && !chat.before ? "처음이다" : chat?.before ? (
               <button type="button" className="chat-older" disabled={olderState === "loading"} onClick={loadOlder}>

@@ -191,8 +191,13 @@ async function check(engine, width, fixture) {
   await domIs(page, '확인된 세션 교체 퇴거', id => !document.querySelector(`.term[data-pane="${id}"]`), ids[0]);
   await open(ids[0]);
   // 표시 옵션 변경은 같은 화면 안의 데이터 초기화 경계를 사용한다.
+  const thinkingFetch = page.waitForRequest(r => {
+    if (!r.url().endsWith('/api/v1/call')) return false;
+    const body = r.postDataJSON();
+    return body?.op === 'pane_chat' && body.pane === ids[0] && body.thinking === true && !body.before;
+  });
   assert.ok((await call(page, { op: 'preferences_set', settings: { showThinking: true }, pins: null })).ok);
-  await domIs(page, '생각 표시 옵션', () => document.querySelector('.term:not([hidden]) .chat-note')?.textContent.includes('도구 결과는'));
+  await thinkingFetch;
   assert.ok((await call(page, { op: 'preferences_set', settings: { showThinking: false }, pins: null })).ok);
   // 삭제된 pane은 보관 목록에서도 즉시 사라진다.
   const label = `retention-delete-${engine.browserType().name()}-${width}`;

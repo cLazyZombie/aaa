@@ -1760,9 +1760,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             <img className="logo big" src="/icon.svg" alt="" />
             {/* 휴대폰(768px 이하)에는 왼쪽 칸이 없고 목록은 drawer다: 목록을 가리키고 여는 단추를 둔다(plan §8.301) */}
             <h2>{open.length > 0 ? `답을 기다리는 질문 ${open.length}개` : wideScreen ? "왼쪽에서 하나를 고른다" : "목록에서 하나를 고른다"}</h2>
-            <p>
-              pane이나 thread를 고르면 터미널을 본다. 질문은 목록에 빨간 ?로 보이고, 그 pane을 열면 답할 수 있다.
-            </p>
             {!wideScreen && (
               <button type="button" className="btn btn-primary empty-open-list" data-testid="empty-open-list" onClick={() => setDrawerOpen(true)}>
                 <Menu aria-hidden="true" />

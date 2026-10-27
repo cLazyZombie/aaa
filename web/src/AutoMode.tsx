@@ -55,7 +55,7 @@ export function AutoModeMenu({ close }: { close: () => void }) {
   if (!auto?.mode || !auto.canControl) return null;
   return <button role="menuitem" data-testid="auto-mode-menu" disabled={auto.busy} onClick={() => { close(); void auto.change(!auto.mode!.on); }}>
     <Zap aria-hidden="true" /><span className="more-label">auto mode {auto.mode.on ? "끄기" : "켜기"}
-      <small>{auto.mode.on ? `${new Date(auto.mode.since_ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}부터 · 자동 결정 ${auto.mode.decisions}` : "질문을 coordinator가 정해 진행 · 예외는 계속 묻는다"}</small>
+      {auto.mode.on && <small>{`${new Date(auto.mode.since_ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}부터 · 자동 결정 ${auto.mode.decisions}`}</small>}
     </span>
   </button>;
 }

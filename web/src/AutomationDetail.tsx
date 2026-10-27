@@ -248,7 +248,6 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
       {rule.start_approved === true && rule.start_scope && <pre className="automation-scope">{rule.start_scope}</pre>}
     </Section>
     {executions.length > 0 && <Section title="실행 원장" testid="automation-executions">
-      <p className="muted">동작의 전달·시작 결과와 후속 작업의 완료를 구분합니다.</p>
       {executions.map(run => <details key={run.id} data-testid="automation-execution">
         <summary>{short(run.updated_at_ms)} · {executionWord(run)} · {run.reason}</summary>
         <Facts rows={[["실행",<code>{run.id}</code>],["원인",<code>{run.source} · {run.input_id}</code>],["설정 판",<code>{run.revision || "옛 입력"}</code>],

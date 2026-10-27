@@ -11,7 +11,6 @@ import { NO_STICKY_MODIFIERS, type StickyModifiers } from "./keys.ts";
 
 /** 참고 i18n.ko.ts의 문구 */
 const KO: Record<string, string> = {
-  "Choose the keys and their order under the terminal. The keyboard mode button stays first.": "터미널 아래에 표시할 키와 순서를 고릅니다. 키보드 모드 버튼은 맨 앞에 유지됩니다.",
   "Key bar keys": "키 바의 키",
   "Held modifier": "고정 보조 키",
   "Saved combination": "저장된 조합",
@@ -23,7 +22,6 @@ const KO: Record<string, string> = {
   "All keys added": "모든 키가 추가됨",
   "Held modifiers": "고정 보조 키",
   "Custom combination": "사용자 키 조합",
-  "Saved combinations use only the selected modifiers. Other keys use held modifiers.": "저장된 조합은 선택한 보조 키만 사용합니다. 나머지 키에는 고정한 보조 키가 적용됩니다.",
   "Base key": "기본 키",
   "Single character": "한 글자",
   Character: "문자",
@@ -80,7 +78,6 @@ export function KeyBarSettings() {
 
   return (
     <div className="key-bar-settings">
-      <p className="settings-hint">{t("Choose the keys and their order under the terminal. The keyboard mode button stays first.")}</p>
       <ol className="key-bar-settings-list" aria-label={t("Key bar keys")}>
         {items.map((item, index) => {
           const name = keyBarItemLabel(item);
@@ -118,7 +115,6 @@ export function KeyBarSettings() {
       </div>
       <div className="key-bar-settings-combo">
         <span className="settings-label">{t("Custom combination")}</span>
-        <p className="settings-hint">{t("Saved combinations use only the selected modifiers. Other keys use held modifiers.")}</p>
         <div className="key-bar-settings-combo-key">
           <label className="key-bar-settings-field">
             <span className="settings-label">{t("Base key")}</span>

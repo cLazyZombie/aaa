@@ -18,12 +18,12 @@ const recovery: Record<DeployGuardPhase, string> = {
   restarting: "이전 판 재시작 중", awaiting_old: "이전 실행 확인 중", restored: "이전 실행 확인 완료",
   failed: "복구 확인 필요", cancelled: "설치 전 중단", verified_new: "새 실행 확인 완료",
 };
-export function RolloutCard({ snapshot, connected, help = true, collapsible = true }: { snapshot: RolloutSnapshot; connected: boolean; help?: boolean; collapsible?: boolean }) {
+export function RolloutCard({ snapshot, connected, collapsible = true }: { snapshot: RolloutSnapshot; connected: boolean; collapsible?: boolean }) {
   const card = snapshot && "ok" in snapshot ? snapshot.ok : null;
   // 접기는 이 화면의 표시 상태뿐이다. 새 배포·상태 전이는 다시 펼치며, 실패·복구는 접기 단추를 두지 않는다.
-  return <RolloutStatus key={`${card?.id}/${card?.state}`} snapshot={snapshot} connected={connected} help={help} collapsible={collapsible} />;
+  return <RolloutStatus key={`${card?.id}/${card?.state}`} snapshot={snapshot} connected={connected} collapsible={collapsible} />;
 }
-function RolloutStatus({ snapshot, connected, help, collapsible }: { snapshot: RolloutSnapshot; connected: boolean; help: boolean; collapsible: boolean }) {
+function RolloutStatus({ snapshot, connected, collapsible }: { snapshot: RolloutSnapshot; connected: boolean; collapsible: boolean }) {
   const card = snapshot && "ok" in snapshot ? snapshot.ok : null;
   const [folded, setFolded] = useState(false);
   const detailsId = useId();
@@ -64,7 +64,6 @@ function RolloutStatus({ snapshot, connected, help, collapsible }: { snapshot: R
         <dt>마지막 변경</dt><dd>{new Date(card.updated_ms).toLocaleString()}</dd>
       </dl></details>
     </>}
-    {help && <p className="rollout-help">배포 시작은 설정 「배포」(조작 기기)나 coordinator에게 요청하세요.</p>}
     </div>
   </section>;
 }

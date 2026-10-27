@@ -138,10 +138,7 @@ function UsageGroups() {
   return (
     <>
       <SettingsGroup>
-        <SettingsRow
-          label="plan 한도 보이기"
-          description="설정 옆에 host 머신의 AI 도구가 각 plan을 얼마나 썼는지 보인다. 켜면 그 로그인을 각 구독의 사용량 주소로 보낸다. 로그인을 새로 받지는 않는다."
-        >
+        <SettingsRow label="plan 한도 보이기">
           <Toggle label="plan 한도 보이기" checked={settings.showUsage} onChange={(showUsage) => updateUsageSettings({ showUsage })} />
         </SettingsRow>
         {settings.showUsage && (
@@ -157,11 +154,7 @@ function UsageGroups() {
                 ]}
               />
             </SettingsRow>
-            <SettingsRow
-              label="보이는 한도"
-              description="칩마다 보이는 한도. 세션은 짧은 것(Claude·Codex는 5시간)이다. 고른 한도가 없는 plan은 바닥에 가장 가까운 것을 보인다."
-              wide
-            >
+            <SettingsRow label="보이는 한도" wide>
               <Segmented
                 label="보이는 한도"
                 value={settings.usageGlance}
@@ -206,7 +199,7 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
           <PhonePanel plan={plan} loading={publish === undefined} onRefresh={loadPublish} />
           {role !== "reader" && <PublishControls publish={publish} onChanged={setPublish} />}
         </div>
-        <SettingsRow label="화면 켜짐 유지" description="터미널이나 채팅 패널을 보는 동안 화면을 켜 둡니다. HTTPS 또는 localhost와 지원 브라우저가 필요합니다.">
+        <SettingsRow label="화면 켜짐 유지">
           <Toggle label="화면 켜짐 유지" checked={keepScreenOn} onChange={setKeepScreenOn} />
         </SettingsRow>
         <SettingsRow label="설치" description={installPrompt.installed ? "설치됨" : installPrompt.canInstall ? undefined : installPrompt.help}>
@@ -221,10 +214,10 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
         <div className="settings-item">
           <DevicesPanel pairUrl={pairUrl} role={role} device={device} />
         </div>
-        <SettingsRow stacked label="이 기기 passkey" description="공개 주소(HTTPS)로 연 조작 기기는 승인할 때마다 passkey로 사용자 확인을 합니다. 짝지은 뒤 10분 안에만 등록합니다.">
+        <SettingsRow stacked label="이 기기 passkey">
           <PasskeyStatus state={passkey} role={role} onChanged={reloadPasskey} />
         </SettingsRow>
-        <SettingsRow label="로그아웃" description="이 브라우저의 로그인을 지웁니다. 다시 들어오려면 페어링 코드가 필요합니다.">
+        <SettingsRow label="로그아웃">
           <button type="button" className="btn" onClick={() => setConfirmSignOut(true)}>
             로그아웃
           </button>
@@ -260,11 +253,7 @@ function ChatPage() {
   return (
     <>
       <SettingsGroup>
-        <SettingsRow
-          label="패널 기본 화면"
-          description="이 기기의 모든 패널에 적용됩니다. 패널에서 화면을 바꾸면 이 설정을 다시 바꿀 때까지 그 화면으로 열립니다. 자동: 터치 화면의 에이전트는 채팅, 그 밖에는 터미널."
-          wide
-        >
+        <SettingsRow label="패널 기본 화면" wide>
           <Segmented
             label="패널 기본 화면"
             value={view}
@@ -281,11 +270,11 @@ function ChatPage() {
             }}
           />
         </SettingsRow>
-        <SettingsRow label="생각 표시" description="에이전트의 추론 블록을 함께 보여줍니다">
+        <SettingsRow label="생각 표시">
           <Toggle label="생각 표시" checked={showThinking} onChange={(on) => updateChatShared({ showThinking: on })} />
         </SettingsRow>
         {/* 참고 「Chat font size」(이 기기, 차이 목록 T4): 고르지 않으면 인터페이스 크기를 따른다 */}
-        <SettingsRow label="채팅 글자 크기" description="채팅 화면의 메시지, 코드, 프롬프트 카드, 입력창">
+        <SettingsRow label="채팅 글자 크기">
           <Stepper
             label="채팅 글자 크기"
             value={chatFontSize(appearance)}
@@ -300,16 +289,16 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title="입력창">
-        <SettingsRow label={touch ? "Return으로 줄바꿈" : "Enter로 보내기"} description={touch ? "켜면 전송 버튼이나 하드웨어 키보드의 Mod+Enter로 전송합니다." : "끄면 Mod+Enter로 보냅니다"}>
+        <SettingsRow label={touch ? "Return으로 줄바꿈" : "Enter로 보내기"}>
           <Toggle label={touch ? "Return으로 줄바꿈" : "Enter로 보내기"} checked={touch ? !enterSends : enterSends} onChange={(checked) => setTerminalToggle("enterSends", touch ? !checked : checked)} />
         </SettingsRow>
-        <SettingsRow label="대기 메시지 자동 전송" description="에이전트가 작업 중일 때 보낸 메시지는 턴이 끝나면 저절로 전송됩니다. 끄면 지금 보내기를 누를 때까지 기다립니다.">
+        <SettingsRow label="대기 메시지 자동 전송">
           <Toggle label="대기 메시지 자동 전송" checked={autoSendQueued} onChange={(on) => updateChatShared({ autoSendQueued: on })} />
         </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title="빠른 답장">
-        <SettingsRow label="입력창 위에 표시" description="메시지 입력창 위에 놓이는 한 번 탭 메시지로, 이 기기에 적용됩니다. 직접 입력한 것처럼 보내므로 에이전트가 작업 중이면 대기열에 들어가고, 질문이 열려 있으면 답으로 쓰입니다.">
+        <SettingsRow label="입력창 위에 표시">
           <Toggle label="입력창 위에 표시" checked={showQuickReplies} onChange={(on) => updateChatShared({ showQuickReplies: on })} />
         </SettingsRow>
         <div className="settings-item">
@@ -392,7 +381,7 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
   return (
     <>
       <SettingsGroup>
-        <SettingsRow label="글자 크기" description="이 기기의 모든 터미널. 터미널을 두 손가락으로 벌리거나 오므려도 바뀐다.">
+        <SettingsRow label="글자 크기">
           <Stepper
             label="글자 크기"
             value={fontSize}
@@ -405,17 +394,17 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
           />
         </SettingsRow>
         {/* 참고 SettingsDialog 398~400줄(문구는 참고 i18n.ko.ts) */}
-        <SettingsRow label="터미널 글꼴" description="쉼표로 구분하며 앞에서부터 차례로 사용합니다. 이 기기에 없는 글꼴은 기본 글꼴로 대체합니다." wide>
+        <SettingsRow label="터미널 글꼴" wide>
           <FontFamilyInput value={fontFamily} label="터미널 글꼴" onCommit={setTerminalFontFamily} />
         </SettingsRow>
-        <SettingsRow label="터미널 색 테마" htmlFor="terminal-color-theme" description="이 기기에만 저장하며 앱 팔레트와 따로 고를 수 있습니다.">
+        <SettingsRow label="터미널 색 테마" htmlFor="terminal-color-theme">
           <select id="terminal-color-theme" className="select settings-select" value={colorTheme}
             onChange={(e) => setTerminalColorTheme(sanitizeTerminalColorTheme(e.target.value))}>
             {TERMINAL_COLOR_THEMES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
           </select>
         </SettingsRow>
         {/* 참고 SettingsDialog 401~403줄(문구는 참고 i18n.ko.ts) */}
-        <SettingsRow label="휠 스크롤 속도" description="휠을 한 번 굴릴 때 터미널이 움직이는 정도">
+        <SettingsRow label="휠 스크롤 속도">
           <Stepper
             label="휠 스크롤 속도"
             value={wheelSpeed}
@@ -440,23 +429,17 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
           </select>
         </SettingsRow>
         {/* 참고 SettingsDialog 410~412줄(문구는 참고 i18n.ko.ts) */}
-        <SettingsRow label="키 바" description="터미널 키와 순서, 사용자 조합을 설정합니다.">
+        <SettingsRow label="키 바">
           <button type="button" ref={keyBarButtonRef} className="btn" onClick={onEditKeyBar}>
             키 바 편집
           </button>
         </SettingsRow>
         {/* 참고 SettingsDialog 413~418줄(문구는 참고 i18n.ko.ts) */}
-        <SettingsRow
-          label="패널에서 클립보드로 복사"
-          description="패널에서 복사하는 프로그램(vim, tmux, Claude Code)은 직접 복사한 것과 같이 이 기기의 클립보드에 텍스트를 넣습니다. 믿을 수 없는 출력을 실행하는 패널이 있다면 끄세요. 다음에 붙여 넣을 내용이 바뀔 수 있습니다."
-        >
+        <SettingsRow label="패널에서 클립보드로 복사">
           <Toggle label="패널에서 클립보드로 복사" checked={paneClipboard} onChange={(on) => setTerminalToggle("paneClipboard", on)} />
         </SettingsRow>
         {/* herdr-web-ui releasePaneAway: 다른 웹 화면이 패널 크기를 유지하게 한다. */}
-        <SettingsRow
-          label="다른 웹 화면과 같이 쓰기"
-          description="같은 패널을 다른 기기나 브라우저 창에서도 쓴다면 켜세요. 다른 창으로 옮기고 1초가 지나면 이 탭은 크기 조절을 놓고 보기만 합니다. 다른 웹 화면이 자기 크기를 유지할 수 있습니다. 다시 조작하려면 패널을 클릭하세요. 보는 동안 패널이 이 창을 다 채우지 않을 수 있습니다."
-        >
+        <SettingsRow label="다른 웹 화면과 같이 쓰기">
           <Toggle label="다른 웹 화면과 같이 쓰기" checked={releasePaneAway} onChange={(on) => setTerminalToggle("releasePaneAway", on)} />
         </SettingsRow>
       </SettingsGroup>
@@ -465,16 +448,16 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
         <SettingsRow
           label="입력 기록"
           description={
-            <>
-              {trace.on
-                ? `${trace.count}개 모았습니다. 문제를 재현한 뒤 보내면 host 상태 폴더 diag/에 남습니다.`
-                : "실기 키보드·한글 입력 문제를 볼 때 켭니다. 터미널 입력 사건과 입력칸 상태를 모읍니다."}
-              {trace.msg && (
-                <span className="settings-status" role="status" data-testid="trace-msg">
-                  {trace.msg}
-                </span>
-              )}
-            </>
+            trace.on || trace.msg ? (
+              <>
+                {trace.on && `${trace.count}개 모았습니다. 문제를 재현한 뒤 보내면 host 상태 폴더 diag/에 남습니다.`}
+                {trace.msg && (
+                  <span className="settings-status" role="status" data-testid="trace-msg">
+                    {trace.msg}
+                  </span>
+                )}
+              </>
+            ) : undefined
           }
         >
           <span className="settings-actions">
@@ -501,19 +484,19 @@ function AlertsPage() {
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(alertSound);
   return (
-    <SettingsGroup note="이 기기에 적용됩니다. 알림은 잠시 모았다가 보내며, 그사이 질문에 답하거나 보고를 확인하면 보내지 않습니다.">
+    <SettingsGroup>
       <PushTestControls onEnable={enableAlerts} />
-      <SettingsRow label="입력 필요" description="에이전트가 답이나 권한을 기다릴 때">
+      <SettingsRow label="입력 필요">
         <Toggle label="입력 필요" checked={alertInput} onChange={(on) => setAlertSetting("alertInput", on)} />
       </SettingsRow>
       {/* 참고는 끄기·긴 작업·매번이다. aaa의 작업 완료는 thread가 낸 새 보고(일 한 단위)라 길이로 거르지 않는다(plan §8.119) */}
-      <SettingsRow label="작업 완료" description="thread가 새 보고를 내고 검토를 기다릴 때">
+      <SettingsRow label="작업 완료">
         <Toggle label="작업 완료" checked={alertDone} onChange={(on) => setAlertSetting("alertDone", on)} />
       </SettingsRow>
-      <SettingsRow label="앱 안에서" description="앱을 열어 둔 동안에는 화면 위에서 바로 내려옵니다. 누르면 그 패널을 엽니다.">
+      <SettingsRow label="앱 안에서">
         <Toggle label="앱 안에서" checked={alertInApp} onChange={(on) => setAlertSetting("alertInApp", on)} />
       </SettingsRow>
-      <SettingsRow label="소리" description="앱 탭을 열어 둔 동안에는 이 알림마다 소리를 냅니다. 집중 모드나 방해 금지 모드로 알림이 꺼져 있어도 들립니다.">
+      <SettingsRow label="소리">
         <Toggle
           label="소리"
           checked={alertSound}
@@ -534,7 +517,7 @@ function AlertsPage() {
       </SettingsRow>
       {/* aaa(plan §8.83): 참고에 없다. 소리 범주를 바꿀 수 있는 브라우저(iPhone·iPad Safari 16.4+)에서만 */}
       {alertSound && canPlayInSilentMode() && (
-        <SettingsRow label="무음 모드에서도" description="iPhone·iPad의 무음 모드에서도 알림 소리를 냅니다. 소리가 나는 동안 음악 같은 다른 앱의 소리가 멈추고, 저절로 다시 재생되지 않습니다.">
+        <SettingsRow label="무음 모드에서도">
           <Toggle
             label="무음 모드에서도"
             checked={alertSilent}
@@ -658,12 +641,12 @@ function ShortcutsPage() {
           일치하는 단축키가 없습니다.
         </p>
       )}
-      {showRecent && <SettingsGroup section="recent-screens" note="설치한 앱에서만 Ctrl+Tab으로 최근 화면을 고릅니다. Ctrl+Shift+Tab은 반대, Ctrl을 놓으면 열기, Esc는 취소입니다. 끄면 앱이 이 키를 가로채지 않습니다.">
+      {showRecent && <SettingsGroup section="recent-screens">
         <SettingsRow label="최근 화면 전환" wide>
           <Toggle label="최근 화면 전환" checked={recentScreens} onChange={(on) => setTerminalToggle("recentScreens", on)} />
         </SettingsRow>
       </SettingsGroup>}
-      <SettingsGroup className="settings-shortcuts" section="shortcuts" note="단축키는 이 브라우저와 기기에 적용됩니다. Mod+Shift 조합은 터미널 키를 그대로 남겨 두며, 기록 기능으로는 Ctrl, Alt 또는 (Mac에서는) ⌘를 쓰는 다른 조합도 누른 그대로 저장할 수 있습니다. 포커스된 입력란의 텍스트 선택은 기본 동작을 따릅니다. 일반 Tab은 UI 안에서만 작동합니다. 설치 앱의 Ctrl+Tab 전환은 위에서 끌 수 있습니다. 모바일 키 바는 앱 동작이 아닌 터미널 키를 보냅니다.">
+      <SettingsGroup className="settings-shortcuts" section="shortcuts">
         {visible.map((id) => {
           const label = SHORTCUT_LABEL[id];
           const displayedKeys = shortcutDisplayKeys(id, overrides);

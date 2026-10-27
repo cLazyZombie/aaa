@@ -221,8 +221,7 @@ export function AsksView({
               </header>
               <h2 className="ask-card-title">{selection.ask.task.title}</h2>
               <p className="ask-card-text">{selection.ask.task.attention}</p>
-              <div className="thread-ask-foot">
-                <span className="muted">끝남으로 지우기·다시 맡기기·연결만 풀기는 할 일 화면에서 정한다</span>
+              <div className="thread-ask-foot is-end">
                 <button type="button" className="btn btn-primary" data-testid="ask-open-task" onClick={() => onOpenTask((selection.ask as { task: { title: string } }).task.title)}>
                   <ChevronRight aria-hidden="true" /> 할 일에서 정하기
                 </button>

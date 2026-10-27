@@ -172,7 +172,6 @@ export default async function () {
     }
     await chat.getByText("처음이다", { exact: true }).waitFor();
     phase("처음 도달");
-    if ((await chat.innerText()).includes("앞부분은 생략했다")) throw new Error("처음에서 생략 안내");
     await frame(page, diagnostics);
     const startBox = await chat.getByText("처음이다", { exact: true }).boundingBox();
     const viewBox = await chat.boundingBox();

@@ -59,20 +59,13 @@ function Plan({ plan, loading, onRefresh }: { plan: PhonePlan; loading: boolean;
   switch (plan.kind) {
     case "here":
     case "served":
-      return (
-        <>
-          <Address url={plan.url} title={plan.kind === "here" ? "폰에서 이 주소를 여세요" : "Tailscale이 이미 이 host 머신을 서빙하고 있습니다"} />
-          <p className="settings-description">열리면 앱을 설치한 뒤 목록 머리의 더 보기 메뉴에서 알림을 누르세요.</p>
-          {plan.kind === "served" && <Sharing />}
-        </>
-      );
+      return <Address url={plan.url} title={plan.kind === "here" ? "폰에서 이 주소를 여세요" : "Tailscale이 이미 이 host 머신을 서빙하고 있습니다"} />;
     case "command":
       return (
         <>
           <p className="settings-description">host 머신의 터미널에서 앱을 테일넷에 공개하세요. 테일넷 안의 기기만 이 주소를 열 수 있습니다.</p>
           <Command command={plan.command} />
           <div className="phone-actions">{checkAgain}</div>
-          <Sharing />
         </>
       );
     case "stopped":
@@ -140,8 +133,4 @@ function Command({ command }: { command: string }) {
       </button>
     </div>
   );
-}
-
-function Sharing() {
-  return <p className="settings-hint">테일넷에 닿는 기기도 들어오려면 한 번 페어링해야 합니다. 아래 기기 항목을 보세요.</p>;
 }

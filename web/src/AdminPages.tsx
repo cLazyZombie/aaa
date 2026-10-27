@@ -145,10 +145,7 @@ export function MachinesPage({
       )}
       {admin === false && role !== "reader" && <p className="op-muted">이 host는 웹 머신 등록을 모른다(host 터미널의 `aaa machine enroll`).</p>}
       {canEdit && (
-        <SettingsGroup
-          title="새 머신 등록"
-          note="등록 창을 연 뒤 새 머신에서 aaa agent enroll <host 주소> --name <이름>을 실행한다(아래 「직접 설치 안내」가 명령을 만든다). 새 머신 화면에 나온 6자리 코드를 여기 넣어 승인한다."
-        >
+        <SettingsGroup title="새 머신 등록">
           <div className="settings-item">
             {left !== null ? (
               <div className="admin-line" data-testid="enroll-open">
@@ -773,7 +770,6 @@ export function KeyRotate({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="op-section" data-testid="key-rotate">
       <h3>공유 링크 키</h3>
-      <p>보고서 공유 링크를 서명하는 키를 새로 만든다. 지금까지 낸 공유 링크는 모두 끊긴다(보고서와 기기 짝짓기는 그대로).</p>
       {done && <p role="status">키를 바꿨다. 옛 공유 링크는 모두 끊겼다.</p>}
       {error && (
         <p className="op-warn" role="alert">
