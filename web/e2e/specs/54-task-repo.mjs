@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { root, aaa, until, step, browser, domIs, shot } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
+import { taskSaveTrace } from "../lib/task-save-trace.mjs";
 
 const file = () => `${root}/projects/demo/TASKS.md`;
 const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
@@ -95,41 +96,61 @@ export default async function ({ page }) {
   });
 
   await step("모델·머신 칸: 담당 agent의 모델과 머신을 따로 고치고 다른 칸은 그대로, 목록 줄에 칩 둘, 바로 시작은 정한 칸만 잠근다", async () => {
-    await pick(page, "모델 일");
-    const form = page.getByTestId("task-form");
-    const value = (id) => form.getByTestId(id).inputValue();
-    if ((await value("task-field-owner")) !== "agent" || (await value("task-field-profile")) !== "" || (await value("task-field-machine")) !== "") throw new Error("미할당 task는 agent에 두 칸이 비어야 한다");
-    await domIs(page, "모델 목록", () => [...document.querySelectorAll('[data-testid="task-field-profile"] option')].some((o) => o.value === "fake"));
-    await shot(page, "who-desktop-unassigned");
-    // 속성 칸은 고르면 바로 저장한다(q-1382 3B). 저장 뒤 폼은 손대지 않은 폼이라 「저장」 단추가 없다
-    const save = async (want) => {
-      const before = sha(read());
-      await until(want, () => taskContent(read()).includes(`- [ ] ${want}\n`));
-      await domIs(page, "새 판", (b) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha !== b && document.querySelector('[data-task-saving="true"]') === null, before);
-      if (await form.getByTestId("task-save").count()) throw new Error("바로 저장한 뒤에도 저장 단추가 남았다");
-    };
-    await form.getByTestId("task-field-machine").selectOption("labA");
-    await save("모델 일 (@labA)");
-    await form.getByTestId("task-field-profile").selectOption("fake");
-    await save("모델 일 (fake@labA)");
-    const r = row(page, "모델 일");
-    const chips = [await r.locator(".task-model").textContent(), await r.locator(".task-machine").textContent(), await r.locator(".task-owner").count()];
-    if (JSON.stringify(chips) !== JSON.stringify(["fake", "labA", 0])) throw new Error(`목록 줄 칩: ${chips}`);
-    await shot(page, "who-desktop-form");
-    // 머신만 비우면 모델은 남는다. 바로 시작은 모델만 잠그고 머신은 덜 붐비는 곳을 기본으로 둔다
-    await form.getByTestId("task-field-machine").selectOption("");
-    await save("모델 일 (fake)");
-    if ((await r.locator(".task-machine").count()) !== 0) throw new Error("비운 머신 칩이 남았다");
-    await page.getByTestId("task-detail").getByTestId("task-handoff-start").click();
-    await ready(page);
-    const profile = page.getByTestId("task-start-profile");
-    if ((await profile.inputValue()) !== "fake" || !(await profile.isDisabled())) throw new Error("task 모델로 잠그지 않았다");
-    await page.getByTestId("task-start").getByRole("button", { name: "취소" }).click();
-    // 사람 할 일로 바꾸면 모델·머신 칸은 숨고 담당 칩 하나다
-    await form.getByTestId("task-field-owner").selectOption("me");
-    if ((await form.getByTestId("task-field-profile").count()) !== 0) throw new Error("나(me)인데 모델 칸이 보인다");
-    await save("모델 일 (me)");
-    if ((await r.locator(".task-owner").textContent())?.trim() !== "나") throw new Error("담당 칩");
+    const trace = await taskSaveTrace(page, file(), process.env.AAA_E2E_ARTIFACTS ?? root);
+    try {
+      await pick(page, "모델 일");
+      const form = page.getByTestId("task-form");
+      const value = (id) => form.getByTestId(id).inputValue();
+      if ((await value("task-field-owner")) !== "agent" || (await value("task-field-profile")) !== "" || (await value("task-field-machine")) !== "") throw new Error("미할당 task는 agent에 두 칸이 비어야 한다");
+      await domIs(page, "모델 목록", () => [...document.querySelectorAll('[data-testid="task-field-profile"] option')].some((o) => o.value === "fake"));
+      await shot(page, "who-desktop-unassigned");
+      // 속성 칸은 고르면 바로 저장한다(q-1382 3B). 저장 뒤 폼은 손대지 않은 폼이라 「저장」 단추가 없다
+      const save = async (want, change) => {
+        // selectOption이 돌아오기 전에 파일·DOM까지 새 판이 될 수 있다.
+        const before = sha(read());
+        await trace.mark("before-select", { oldSha: before, want });
+        await change();
+        await until(want, () => taskContent(read()).includes(`- [ ] ${want}\n`));
+        const expected = sha(read());
+        await trace.mark("file-ready", { oldSha: before, expectedSha: expected, want });
+        await domIs(page, "새 판", ({ before, expected }) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha !== before && document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha === expected && document.querySelector('[data-task-saving="true"]') === null, { before, expected });
+        if (await form.getByTestId("task-save").count()) throw new Error("바로 저장한 뒤에도 저장 단추가 남았다");
+        await trace.mark("saved", { oldSha: before, expectedSha: expected, want });
+      };
+      await save("모델 일 (@labA)", async () => {
+        await form.getByTestId("task-field-machine").selectOption("labA");
+        // 저장 완료가 선택 호출의 반환보다 앞서는 정상 순서를 결정적으로 만든다.
+        // RPC가 늦게 돌아와도 변경 전 기준을 잃지 않아야 한다. 시간은 기다리지 않는다.
+        await until("빠른 머신 저장", () => taskContent(read()).includes("- [ ] 모델 일 (@labA)\n"));
+        const expected = sha(read());
+        await domIs(page, "선택 반환 전 저장 완료", (want) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha === want && document.querySelector('[data-task-saving="true"]') === null, expected);
+        await trace.mark("selection-return", { expectedSha: expected });
+      });
+      await save("모델 일 (fake@labA)", () => form.getByTestId("task-field-profile").selectOption("fake"));
+      const r = row(page, "모델 일");
+      const chips = [await r.locator(".task-model").textContent(), await r.locator(".task-machine").textContent(), await r.locator(".task-owner").count()];
+      if (JSON.stringify(chips) !== JSON.stringify(["fake", "labA", 0])) throw new Error(`목록 줄 칩: ${chips}`);
+      await shot(page, "who-desktop-form");
+      // 머신만 비우면 모델은 남는다. 바로 시작은 모델만 잠그고 머신은 덜 붐비는 곳을 기본으로 둔다
+      await save("모델 일 (fake)", () => form.getByTestId("task-field-machine").selectOption(""));
+      if ((await r.locator(".task-machine").count()) !== 0) throw new Error("비운 머신 칩이 남았다");
+      await page.getByTestId("task-detail").getByTestId("task-handoff-start").click();
+      await ready(page);
+      const profile = page.getByTestId("task-start-profile");
+      if ((await profile.inputValue()) !== "fake" || !(await profile.isDisabled())) throw new Error("task 모델로 잠그지 않았다");
+      await page.getByTestId("task-start").getByRole("button", { name: "취소" }).click();
+      // 사람 할 일로 바꾸면 모델·머신 칸은 숨고 담당 칩 하나다
+      await save("모델 일 (me)", async () => {
+        await form.getByTestId("task-field-owner").selectOption("me");
+        if ((await form.getByTestId("task-field-profile").count()) !== 0) throw new Error("나(me)인데 모델 칸이 보인다");
+      });
+      if ((await r.locator(".task-owner").textContent())?.trim() !== "나") throw new Error("담당 칩");
+    } catch (error) {
+      await trace.mark("failure", { error: String(error) });
+      throw error;
+    } finally {
+      await trace.close();
+    }
   });
 
   await step("바로 시작: task 저장소로 고정하고 그 저장소가 있는 머신으로 worktree를 띄운다", async () => {

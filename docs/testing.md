@@ -26,6 +26,34 @@
   ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))이다.
   resize의 링크 수명과 실제 down/up 사건을 대조하며 외부 코드·제품 의존성은 추가하지 않는다.
 
+## E2E54 속성 저장의 변경 전 기준(t-1168)
+
+- `save(want, change)`가 선택 동작 전에 파일 hash를 읽는다. 네 저장 호출 모두 같은 경계를 사용하며,
+  원하는 원문 줄·변경 전과 다른 판·실제 파일과 같은 DOM hash·saving 해제·저장 단추 없음과
+  모델/머신 독립 변경·칩·바로 시작 잠금·저장소와 iPhone 시작 계약을 유지한다. 제품 코드는 바꾸지 않는다.
+- 기존 머신 선택의 callback 안에서 실제 host 파일과 DOM의 저장 완료를 먼저 관측한 뒤 반환한다.
+  필요한 이유: 선택 RPC의 반환보다 저장이 먼저 끝나는 정상 순서에서 기준을 잃는 회귀를 결정적으로 잡기 위해서다.
+  같은 대조에서 옛 순서는 파일/DOM/응답의 hash가 같고 saving=false인데도 기존20초 「새 판」에서 실패했다.
+  변경 전 기준을 먼저 읽는 수리는 같은 실제 host 대조를 포함한 E54 전체를 통과했다.
+  고정 sleep·재시도·시한 확대·기대값 완화·새 E2E 번호·시험 삭제는 없다.
+- `task-save-trace.mjs`는 E54의 합성 자료만 기록한다. 호출 번호·old/expected/file/DOM hash·saving·폼 객체의 수명,
+  task_edit/tasks 요청·응답 헤더와 JSON 본문 완료·tasks 소켓 사건을 연결한다.
+  시간은 Node 관측 도착 순서이며, DOM에는 브라우저 관측 시각도 남긴다. 파일 감시는 쓰기 발생의 정확한 시각이 아니다.
+  본문·URL·쿠키는 남기지 않으며 제품 요청·응답·사건을 바꾸지 않는다.
+  출력은 `AAA_E2E_ARTIFACTS` 또는 해당 실험실의 `task-save-<pid>.jsonl`이다.
+- 원본 main26c98989의 [CI 로그와 artifact](https://github.com/cLazyZombie/aaa/actions/runs/40450356721/job/122011375425)에는
+  어느 저장 호출인지·파일/DOM hash·saving 기록과 E54 화면이 없다. 이 경쟁의 존재와 결정적 재현은 확정하지만,
+  원래 CI 실패의 개별 호출·직접 원인이나 ws1006과의 인과는 소급 확정하지 않는다.
+- 부분 확인은 저장소 고정 Playwright1.64.1과 공용 브라우저 캐시로
+  `NODE_PATH=<격리 node_modules> nice -n 15 node web/e2e/web.e2e.mjs --spec 54 --workers 1` 및 `cd web && npm test`다.
+  전체 ci-local·cross·공개 검사와 main 착지는 정규 착지 차례에서 수행한다.
+- 참고 후보는 [Playwright 사건을 동작 전에 구독](https://playwright.dev/docs/events#waiting-for-event)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))와
+  [React controlled select의 onChange와 상태 반영](https://react.dev/reference/react-dom/components/select#controlling-a-select-box-with-a-state-variable)
+  ([MIT](https://github.com/facebook/react/blob/main/LICENSE))다. 동작 전 관측과 상태/비동기 저장의 구별을 따르며
+  외부 코드·의존성을 추가하지 않는다.
+
+
 ## E2E12의 문서 식별과 본문 완료(t-1117)
 
 - 관측기는 `timeOrigin`을 반복 환산해 문서 키로 비교하지 않고, 실제 Document에 한 번 붙인
