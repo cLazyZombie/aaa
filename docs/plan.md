@@ -8103,3 +8103,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 구판이 수집한 자동화의 미처리 항목은 보고 회수·마지막 resolve 또는 끝난 thread의 기존 정리 순회에서 host가 다음 자동 실행의 책임으로 인계한다. 원본 줄·판·ID는 보존하고 자동화 이름을 담은 사유·host actor·시각을 남긴다. 이미 처리한 task 연결·사유 영수증은 바꾸지 않는다. 판정이 끝났거나 연결 task가 없는 기록도 회수하며 기존 후속 inbox를 닫는다. 인계 저장 실패는 원인과 thread를 경고하고 다음 정상 순회에 남긴다.
 - 일반 thread의 Next 교체·inbox 정리·완료/삭제/연결 해제 차단과 명시적 처리 규칙은 유지한다. 새 FRONT_API·AGENT_LINK·웹 E2E 번호·의존성은 없다. 운영 DB·설정은 수정하지 않는다.
 - 참고: [Temporal Workflow ID와 Run ID](https://docs.temporal.io/workflow-execution/workflowid-runid)([MIT](https://github.com/temporalio/temporal/blob/main/LICENSE))의 반복 작업과 개별 실행 구분, [Actions 실행 context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)([runner MIT](https://github.com/actions/runner/blob/main/LICENSE))의 workflow/event 출처를 비교했다. 문구 대신 영속 출처로 책임을 정하는 원칙만 적용하며 외부 코드는 복사하지 않는다.
+
+### 8.508 보고서 매체 진단·텍스트 압축·선택 로딩(t-1135)
+
+- 사용자 q-1514의 1A: 회색 이미지의 원인은 미재현으로 남기고, 진단·압축·매체 선택 로딩부터 구현한다. 과거 r 판과 원본 매체·운영 설정·캐시 정책은 보존한다. ETag/유효 cap 재사용과 영상 재인코딩은 별도 범위다.
+- 보고 Markdown의 로딩 상자는 주소 확인/읽기 안내를 보인다. 로딩·실패 이미지와 실패 영상의 상태 확인은 사용자 누름에서 같은 origin의 `/v/` 파일에 무쿠키 HEAD 한 번만 보낸다. HTTP 상태·상대 파일 경로·크기·이미지 완료/디코드 상태를 보이고 cap·query·origin·오류 원문을 진단에 넣지 않는다. 5초 응답 상한·화면/주소 교체 취소가 있으며 자동 재시도는 없다.
+- 보기 만료는 절대 시각과 탭 복귀에서 확인한다. 보고서의 다시 열기는 현재 r 판으로 기존 LibraryOpen을 호출해 새 cap을 받고, 실패는 그대로 표시한다. 만료·host 재시작의 옛 경로를 계속 성공으로 취급하거나 최신 t 판으로 바꾸지 않는다. FRONT_API·proto는 바뀌지 않는다.
+- `/v/`의 1KiB 이상 텍스트만 기존 gzip 협상기를 재사용해 압축한다. 원본 조각마다 gzip 출력을 비워 stream을 유지하고 하위 읽기 오류는 전파·진단한다. HTML의 이미지 bridge까지 함께 압축하며 원본 Content-Length를 제거하고 Content-Encoding/Vary를 준다. HEAD는 빈 본문·같은 협상이다. Range·내려받기·이미지/영상/PDF·오류는 원본을 유지하며 권한·CSP·무쿠키 CORS·no-store는 그대로다.
+- Markdown 영상은 첫 클릭 안에서 src commit→play를 하여 첫 클릭 전 metadata 요청도 없게 한다. 새 src에는 이전 실패/재생 상태를 적용하지 않는다. native controls·muted·playsinline·탐색·질문 선택과 주소·답한 사본의 원본을 유지한다. HTML 새 작성 템플릿에는 그림 크기·lazy와 썸네일/선택 재생을 안내한다.
+- 회귀는 기존 E2E73의 양 엔진×1280/390px 이미지 GET 보류·HEAD 200/401·현재 판 다시 열기, E2E88의 선택 전 무요청과 실제 클릭/탐색/HTML sandbox/직접 파일/답한 사본이다. host HTTP 회귀는 gzip 복원·bridge·협상·HEAD·Range·권한·원본, stream 회귀는 첫 조각 전달과 읽기 실패 전파를 지킨다. 새 E2E 번호·고정 sleep·재시도·시한 확대는 없다.
+- OSS는 조사에서 검토한 tower-http(MIT)·Caddy(Apache-2.0)·nginx(BSD-2-Clause)의 전송 원칙, [React flushSync](https://react.dev/reference/react-dom/flushSync)(MIT)와 [flate2 GzEncoder](https://docs.rs/flate2/latest/flate2/write/struct.GzEncoder.html)(MIT/Apache-2.0)를 참고했다. 기존 flate2·React만 사용하며 외부 코드·의존성은 추가하지 않는다.

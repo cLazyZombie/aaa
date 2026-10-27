@@ -31,6 +31,7 @@ use crate::chatwatch::ChatNote;
 use crate::output::{OUTPUT_HARD_BYTES, OUTPUT_STALLED_CLOSE_CODE, OutputWindow, Verdict, check_unacked};
 
 mod assets;
+mod report_delivery;
 
 const OUTPUT_STALLED_REASON: &str = "terminal output consumer stalled";
 /// 기기를 취소해 닫은 WebSocket. 웹은 다시 붙지 않고 pairing 화면으로 간다(web/src/api.ts `REVOKED_CLOSE_CODE`)
@@ -548,14 +549,29 @@ async fn serve_view(
         return StatusCode::MISDIRECTED_REQUEST.into_response();
     };
     let csp = if kind == "application/pdf" { HeaderValue::from_static(PDF_CSP) } else { view_csp(&origin, &cap) };
+    // Range·내려받기는 원본 bytes/길이를 유지한다. HTML bridge도 같은 stream 안에서 압축한다.
+    let negotiate = !headers.contains_key(header::RANGE)
+        && q.download.is_none()
+        && len + tail.len() as u64 >= 1024
+        && report_delivery::compressible(kind);
+    let gzip = negotiate && assets::accepts_gzip(&headers);
     let mut res = Response::builder()
         .status(if range.is_some() { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
         .header(header::CONTENT_TYPE, kind)
-        .header(header::CONTENT_LENGTH, len + tail.len() as u64)
-        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ACCEPT_RANGES, if gzip { "none" } else { "bytes" })
         .header(header::CACHE_CONTROL, "private, no-store")
         .header(header::CONTENT_SECURITY_POLICY, csp)
         .header(header::X_FRAME_OPTIONS, "SAMEORIGIN");
+    if negotiate {
+        res = res.header(header::VARY, "Accept-Encoding");
+    }
+    let body = if gzip {
+        res = res.header(header::CONTENT_ENCODING, "gzip");
+        report_delivery::gzip(body)
+    } else {
+        res = res.header(header::CONTENT_LENGTH, len + tail.len() as u64);
+        body
+    };
     if opaque {
         // credential 허용·preflight 허용은 주지 않는다. 유효한 cap의 GET/HEAD 성공 응답만 공유한다.
         res = res.header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "null");

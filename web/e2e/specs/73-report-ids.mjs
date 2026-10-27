@@ -7,6 +7,86 @@ const open = async (page, id) => {
   await page.evaluate((id) => { location.hash = `report=${id}`; }, id);
   await domIs(page, "특정 보고 판 준비", (id) => document.querySelector('[data-testid="report-detail"]')?.dataset.status === "ready" && document.querySelector('[data-testid="report-id"]')?.textContent === id, id);
 };
+
+// 실제 파일 GET만 사건으로 보류하고 HEAD 200→401, 새 cap의 실제 decode를 확인한다.
+async function checkMediaDiagnosis(engine, width, id) {
+  const owned = engine === "webkit" ? await webkit.launch() : null;
+  // WebKit의 SW 경유 요청은 page.route에 오지 않는다. 응답을 제어하는 이 fixture만 SW를 막는다.
+  const paired = await pairPage(owned ?? browser, aaa("web", "pair").code, { width, height: 844 }, { hash: "#reports", serviceWorkers: "block" });
+  const p = paired.page;
+  let release;
+  const gate = new Promise(r => { release = r; });
+  let blocked = true, failed = false;
+  const heads = [], opens = [], replies = [];
+  try {
+    await p.route("**/api/v1/call", async route => {
+      const body = route.request().postDataJSON();
+      if (body?.op !== "library_open") return route.continue();
+      opens.push(body.name);
+      if (opens.length === 2) return route.fulfill({ status: 502, json: { err: { code: "unavailable", message: "시험용 보고서 읽기 실패" } } });
+      const response = await route.fetch(); const json = await response.json();
+      if (opens.length === 1) json.ok.expires_at_ms = Date.now() - 1;
+      replies.push({ name: body.name, expired: json.ok.expires_at_ms < Date.now(), deadline: json.ok.expires_at_ms });
+      await route.fulfill({ response, json });
+    });
+    await p.route("**/v/**/revision.svg", async route => {
+      if (route.request().method() === "HEAD") {
+        heads.push({ cookie: !!route.request().headers().cookie });
+        return failed ? route.fulfill({ status: 401, body: "expired" }) : route.continue();
+      }
+      if (blocked) { await gate; await route.fulfill({ status: 401, body: "expired" }); }
+      else await route.continue();
+    });
+    await open(p, id);
+    await p.getByTestId("report-expired").waitFor();
+    const slot = p.locator(".image-slot.is-loading");
+    await slot.getByText("이미지 불러오는 중", { exact: true }).waitFor();
+    const old = await slot.locator("img").getAttribute("src");
+    await slot.getByRole("button", { name: "상태 확인" }).click();
+    await slot.getByText(/HTTP 200/).waitFor();
+    if (engine === "chromium" && width === 1280 || engine === "webkit" && width === 390) await shot(p, `73-media-wait-${engine}-${width}`);
+    failed = true; release();
+    const broken = p.locator(".image-slot.is-failed");
+    await broken.getByText("이미지를 표시할 수 없음", { exact: true }).waitFor();
+    await broken.getByRole("button", { name: "상태 확인" }).click();
+    await broken.getByText(/HTTP 401/).waitFor();
+    if (engine === "chromium" && width === 1280 || engine === "webkit" && width === 390) await shot(p, `73-media-error-${engine}-${width}`);
+    if (!(await broken.innerText()).includes("보기 권한이 끝났습니다") || (await broken.innerText()).includes("/v/")) throw Error("권한 원인 또는 비밀 주소 표시");
+    if (heads.length !== 2 || heads.some(h => h.cookie)) throw Error("진단 HEAD 횟수·쿠키 계약");
+    blocked = false;
+    await p.getByTestId("report-reopen").click();
+    await p.getByRole("alert").filter({ hasText: "시험용 보고서 읽기 실패" }).waitFor();
+    if (await p.locator('.files a[href$="/revision.svg"]').getAttribute("href") !== old) throw Error("실패한 다시 열기가 이전 판을 버렸다");
+    await p.getByTestId("report-expired").waitFor();
+    // 첫 실패를 자동 재요청하지 않는다. 두 번째 사용자 누름에서만 새 권한을 받는다.
+    if (opens.length !== 2) throw Error("다시 열기가 자동 재시도했다");
+    await p.getByTestId("report-reopen").click();
+    await p.getByTestId("report-expired").waitFor({ state: "detached" });
+    await domIs(p, "새 권한의 현재 판 이미지 디코드", old => {
+      const img = document.querySelector('img[alt="시안"]');
+      return img?.complete && img.naturalWidth > 0 && img.getAttribute("src") !== old;
+    }, old);
+    if (opens.length !== 3 || opens.slice(1).some(name => name !== id)) throw Error("다시 열기가 선택한 r 판을 바꿨다");
+    if ((await p.getByTestId("report-id").textContent()) !== id) throw Error("보고 판 변경");
+    if (engine === "chromium" && width === 1280 || engine === "webkit" && width === 390) await shot(p, `73-media-reopened-${engine}-${width}`);
+    await domIs(p, "진단·다시 열기 가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
+    for (const checkWidth of width === 390 ? [390, 320] : [width]) {
+    await p.setViewportSize({ width: checkWidth, height: 844 });
+    await domIs(p, "보고 번호와 동작 단추 겹침 없음", () => {
+      const id = document.querySelector('[data-testid="report-id"]');
+      const next = document.querySelector('[aria-label="보고 판"]') ?? document.querySelector('[data-testid="report-reopen"]');
+      const a = id.getBoundingClientRect(), b = next.getBoundingClientRect();
+      return a.right <= b.left || a.bottom <= b.top || a.left >= b.right || a.top >= b.bottom;
+    });
+    }
+    if (paired.errors.length) throw Error(paired.errors.join("; "));
+  } catch (error) {
+    const state = await p.evaluate(() => ({ now: Date.now(), hash: location.hash, expired: document.querySelector('[data-testid="report-expired"]')?.textContent, status: document.querySelector('[data-testid="report-detail"]')?.dataset.status }));
+    throw new Error(`${error.message} ‖ 진단 요청/시각: ${JSON.stringify({ opens, replies, state })}`, { cause: error });
+  } finally {
+    release(); await p.unrouteAll({ behavior: "wait" }); await p.context().close(); if (owned) await owned.close();
+  }
+}
 export default async function ({ page }) {
   let first, second, thread, threadInitial, threadFirst, threadSecond;
   await step("같은 이름 웹 보고서를 재발행하면 새 r 번호, 기존 이름은 최신 판·r 번호는 원래 그림까지 보존", async () => {
@@ -83,6 +163,10 @@ export default async function ({ page }) {
       }
     }
   } finally { await safari.close(); }
+  await step("Chromium 1280px 이미지 대기·HTTP 진단·만료·현재 판 다시 열기", () => checkMediaDiagnosis("chromium", 1280, threadFirst));
+  await step("Chromium 390px 이미지 대기·HTTP 진단·만료·현재 판 다시 열기", () => checkMediaDiagnosis("chromium", 390, threadFirst));
+  await step("WebKit 1280px 이미지 대기·HTTP 진단·만료·현재 판 다시 열기", () => checkMediaDiagnosis("webkit", 1280, threadFirst));
+  await step("WebKit 390px 이미지 대기·HTTP 진단·만료·현재 판 다시 열기", () => checkMediaDiagnosis("webkit", 390, threadFirst));
   await step("데스크톱·휴대폰 r 번호와 판 선택, Reader 열람과 쓰기 거부", async () => {
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });

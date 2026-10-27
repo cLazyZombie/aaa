@@ -1562,6 +1562,11 @@ summary.chat-compact-head { cursor: pointer; }
 .thread-ask-card .prompt-card-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .term-title .report-short-id { white-space: nowrap; flex-shrink: 0; }
+.report-title-meta { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+@media (max-width: 700px) {
+  .report-title-meta .muted { display: none; }
+  .report-title-meta select { max-width: 100%; }
+}
 
 /* 설정에서 돌아와도 본문 입력·스크롤·터미널 인스턴스는 보존한다. */
 .view-content { display: contents; }

@@ -41,7 +41,7 @@ export default async function ({ page }) {
   await step("영상 자료·agent 안내와 기존 인증 오류 주소·UTF-8 원문", async () => {
     aaa("project", "create", "demo");
     const folder = `${root}/video`; fs.mkdirSync(folder); fs.copyFileSync(fixture, `${folder}/a.mp4`);
-    fs.writeFileSync(`${folder}/index.html`, '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width"><h1 id="A">영상 비교</h1><button onclick="document.querySelector(\'video\').play()">영상 재생</button><video controls muted playsinline preload="metadata" src="a.mp4" style="max-width:100%"></video>');
+    fs.writeFileSync(`${folder}/index.html`, '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width"><h1 id="A">영상 비교</h1><button onclick="const v=document.querySelector(\'video\');if(!v.hasAttribute(\'src\'))v.src=\'a.mp4\';v.play()">영상 재생</button><video controls muted playsinline preload="none" style="max-width:100%"></video>');
     report = aaa("library", "publish", folder, "--name", "video").report_id;
     await coordinatorPost({ request: true, title: "영상 비교 질문", body: `## Questions\n### 1. 동작\n![시안 영상](library/${report}/a.mp4)\n\n[기존 영상 링크](library/${report}/a.mp4)\n\n[비교 HTML](library/${report}/index.html#A)\n\n- A 적용한다\n  ![A 영상](library/${report}/a.mp4)\n- B 고친다\n` });
     request = (await call(page, { op: "asks" })).ok.requests.find((r) => r.title === "영상 비교 질문");
@@ -62,9 +62,7 @@ export default async function ({ page }) {
     current = await until("영상 질문 회수", () => { const t = aaa("thread", "show", thread.id); return t.report_hash === hash && t.questions?.items?.[0]?.id && t; });
     if (!fs.readFileSync(`${thread.work_dir}/brief.md`, "utf8").includes("![시안 영상](library/preview/a.mp4)")) throw new Error("thread 영상 안내 누락");
   });
-  await step("Chromium·WebKit 데스크톱·휴대폰 카드 재생·탐색·HTML sandbox·새 탭·직접 mp4·보고 본문", async () => {
-    wk = await webkit.launch();
-    for (const [engine, browser] of [["chromium", page.context().browser()], ["webkit", wk]]) for (const profile of ["desktop", "iphone"]) {
+  const checkProfile = async (engine, browser, profile) => {
       const paired = await pairDevice(browser, aaa("web", "pair").code, profile, { hash: `#question=${request.question_id}`, init: observeVideo });
       const p = paired.page; contexts.push(p.context());
       console.log(`영상 조합 ${engine}/${profile}`);
@@ -75,8 +73,9 @@ export default async function ({ page }) {
         const card = p.getByTestId(`request-ask-${request.id}`); await card.waitFor();
         const video = card.getByLabel("시안 영상", { exact: true });
         const choice = card.getByLabel("A 영상", { exact: true });
-        // metadata가 바꾼 영상 높이가 pointerdown/up 사이에 선택지를 밀지 않게 실제 로드를 먼저 관측한다.
-        await Promise.all([ready(video), ready(choice), ready(card.getByLabel("기존 영상 링크", { exact: true }))]);
+        // 첫 누름 전에는 src·source와 metadata/영상 네트워크 요청 자체가 없어야 한다.
+        const before = await card.locator("video").evaluateAll(vs => vs.map(v => ({ src: v.getAttribute("src"), children: v.querySelectorAll("source").length, current: v.currentSrc, preload: v.preload, ready: v.readyState })));
+        if (before.length !== 3 || before.some(v => v.src !== null || v.children || v.current || v.preload !== "none" || v.ready)) throw new Error("선택 전 영상 읽기");
         await p.getByTestId("thread-ask-pick-1B").click();
         await domIs(p, "재생 전 B 선택 반영", () => document.querySelector('[data-testid="thread-ask-pick-1B"]')?.getAttribute("aria-checked") === "true");
         const flags = await video.evaluate((v) => ({ muted: v.muted, inline: v.playsInline, controls: v.controls, paused: v.paused, autoplay: v.autoplay }));
@@ -91,14 +90,16 @@ export default async function ({ page }) {
         if (picked !== "true") throw new Error(`재생으로 B 선택이 바뀌었다: ${picked}`);
         const afterHash = await p.evaluate(() => location.hash);
         if (afterHash !== hash) throw new Error(`재생으로 질문 주소가 바뀌었다: ${hash} → ${afterHash}`);
-        await ready(card.getByLabel("기존 영상 링크", { exact: true }));
+        await card.getByRole("button", { name: "기존 영상 링크 재생", exact: true }).click();
+        await ready(card.getByLabel("기존 영상 링크", { exact: true })); await card.getByLabel("기존 영상 링크", { exact: true }).evaluate(v => v.pause());
         const link = card.getByRole("link", { name: "비교 HTML", exact: true });
         const href = await link.getAttribute("href"); if (!href.startsWith("/v/") || !href.endsWith("#A")) throw new Error(`카드 링크 경로/조각 ${href}`);
         phase = "iframe 열기·metadata";
         await card.getByRole("button", { name: "보고서 열기 비교 HTML", exact: true }).click();
         const frame = p.frameLocator('[data-testid="question-report-frame"]');
         await frame.getByRole("heading", { name: "영상 비교" }).waitFor();
-        const embedded = frame.locator("video"); console.log("iframe 영상 확인"); await ready(embedded);
+        const embedded = frame.locator("video"); console.log("iframe 영상 확인");
+        if (await embedded.getAttribute("src") !== null) throw new Error("HTML 템플릿이 선택 전에 영상을 읽었다");
         if ((await p.getByTestId("question-report-frame").getAttribute("sandbox")).includes("allow-same-origin")) throw new Error("sandbox 완화");
         phase = "iframe 재생·시간 전진·탐색";
         await frame.getByRole("button", { name: "영상 재생" }).click(); await moved(embedded); await seek(embedded);
@@ -117,7 +118,7 @@ export default async function ({ page }) {
         note("popup.begin");
         const tab = await clickForPopup(p, link, note);
         phase = "새 탭 재생";
-        console.log("새 탭 영상 확인"); await ready(tab.locator("video")); await tab.getByRole("button", { name: "영상 재생" }).click(); await moved(tab.locator("video"));
+        console.log("새 탭 영상 확인"); await tab.getByRole("button", { name: "영상 재생" }).click(); await ready(tab.locator("video")); await moved(tab.locator("video"));
         note("cleanup.tab.begin"); await tab.close();
         phase = "직접 mp4·Range·재생";
         const anonymous = await browser.newContext({ viewport: profile === "iphone" ? { width: 390, height: 844 } : { width: 1280, height: 800 } }); contexts.push(anonymous);
@@ -128,9 +129,11 @@ export default async function ({ page }) {
         phase = "thread 질문·보고 본문";
         await p.evaluate((id) => { location.hash = `question=${id}`; }, current.questions.items[0].id);
         await p.getByTestId(`thread-ask-${thread.id}`).waitFor();
+        await p.getByTestId(`thread-ask-${thread.id}`).getByRole("button", { name: "thread 영상 재생", exact: true }).click();
         await ready(p.getByTestId(`thread-ask-${thread.id}`).getByLabel("thread 영상", { exact: true }));
         await p.evaluate((id) => { location.hash = `report=demo%2F${id}`; }, current.report_id);
-        const reportVideo = p.getByTestId("report-detail").getByLabel("보고 영상", { exact: true }); await ready(reportVideo);
+        const reportVideo = p.getByTestId("report-detail").getByLabel("보고 영상", { exact: true });
+        if (await reportVideo.getAttribute("src") !== null) throw new Error("보고 본문이 선택 전에 영상을 읽었다");
         await p.getByTestId("report-detail").getByRole("button", { name: "보고 영상 재생", exact: true }).click(); await moved(reportVideo); await seek(reportVideo);
         await domIs(p, "영상 가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
         await shot(p, `88-report-${engine}-${profile}`);
@@ -146,8 +149,12 @@ export default async function ({ page }) {
         })).catch((e) => ({ error: e.message }))));
         throw new Error(`${engine}/${profile} ${phase}: ${error.message} ‖ 영상 상태: ${JSON.stringify(state)}`, { cause: error });
       }
-    }
-  });
+  };
+  wk = await webkit.launch();
+  await step("Chromium 데스크톱 선택 로딩·재생·탐색·sandbox·새 탭·보고 본문", () => checkProfile("chromium", page.context().browser(), "desktop"));
+  await step("Chromium 휴대폰 선택 로딩·재생·탐색·sandbox·새 탭·보고 본문", () => checkProfile("chromium", page.context().browser(), "iphone"));
+  await step("WebKit 데스크톱 선택 로딩·재생·탐색·sandbox·새 탭·보고 본문", () => checkProfile("webkit", wk, "desktop"));
+  await step("WebKit 휴대폰 선택 로딩·재생·탐색·sandbox·새 탭·보고 본문", () => checkProfile("webkit", wk, "iphone"));
   await step("답한 영상은 원래 bytes를 보존하고 새 보고 뒤에도 재생한다", async () => {
     await page.evaluate((id) => { location.hash = `question=${id}`; }, current.questions.items[0].id);
     await page.getByTestId(`thread-ask-${thread.id}`).waitFor();
@@ -156,7 +163,9 @@ export default async function ({ page }) {
     fs.writeFileSync(`${thread.work_dir}/library/a.mp4`, "바뀐 영상"); fs.writeFileSync(`${thread.work_dir}/report.md`, "[완료] 다음 판\n\n## Report\n새 자료\n");
     await until("다음 판", () => aaa("thread", "show", thread.id).report_id !== current.report_id);
     await page.reload(); await page.getByTestId("ask-done-card").waitFor();
-    const video = page.getByTestId("ask-done-card").getByLabel("thread 영상", { exact: true }); await ready(video);
+    const video = page.getByTestId("ask-done-card").getByLabel("thread 영상", { exact: true });
+    if (await video.getAttribute("src") !== null) throw new Error("답한 사본이 선택 전에 영상을 읽었다");
+    await page.getByTestId("ask-done-card").getByRole("button", { name: "thread 영상 재생", exact: true }).click(); await ready(video);
     const bytes = await page.evaluate(async (url) => Array.from(new Uint8Array(await (await fetch(url)).arrayBuffer())), await video.getAttribute("src"));
     if (!Buffer.from(bytes).equals(fs.readFileSync(fixture))) throw new Error("답한 영상이 최신 파일로 바뀌었다");
     aaa("thread", "resolve", thread.id);

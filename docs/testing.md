@@ -52,6 +52,15 @@
 - 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib redact`, host의 `--lib large_report_and_bad_parts`와 `--lib`, 두 crate의 strict clippy다. Windows는 전용 시험 폴더에서 같은 owner와 host 전체를 실행하며 서비스·예약 작업·Run 키·사용자 PATH·방화벽 규칙의 전후 목록을 대조한다. 전체 ci-local과 착지는 coordinator가 준 차례에 실행한다.
 - 같은 기본 병렬 host 전체 실행에서 대상은 macOS 3.166→1.241초, Windows 5.251초 상한 실패→2.230초 완료였다. 가림 단계는 각각 1.060→0.371초·4.708→1.499초다. Windows 수정 전은 가림을 마친 뒤 다음 손상 조각 대기에서 이미 지난 5초 상한이 보고됐다. 단독은 macOS 1.293→0.868초·Windows 0.873→0.719초다. 각 전후 한 번의 관측이며 원래 macOS CI 실패를 재현했다는 뜻은 아니다. Windows의 별도 `an_installed_machine_gets_a_check_pane_and_a_login_pane`는 수정 전부터 끝 확인 줄 대기에 실패하여 이 후보의 수리 범위와 분리한다.
 - 참고 후보는 [Tokio duplex/역압](https://docs.rs/tokio/latest/tokio/io/fn.duplex.html)·[task 종료](https://docs.rs/tokio/latest/tokio/task/struct.JoinSet.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))와 [Hyper 연결 종료 정리](https://github.com/hyperium/hyper/blob/master/src/proto/h1/dispatch.rs)([MIT](https://github.com/hyperium/hyper/blob/master/LICENSE))다. 종료 사건과 소유권을 대조했고 외부 코드·의존성은 추가하지 않는다.
+## 보고서 매체 진단·선택 로딩·압축(t-1135, §8.506)
+
+- host `report_text_gzip_keeps_original_ranges_downloads_and_authorization`은 실제 host/SQLite/publish/router에서 큰 HTML의 여러 조각 gzip을 복원하고 탐색 bridge, Content-Encoding/Vary/길이, HEAD, gzip 거부, 원본 Range·내려받기·영상, 401/403/404/416을 확인한다. 필요한 이유: 압축이 권한·Range 또는 원본 bytes를 바꾸는 회귀를 막는다.
+- `gzip_emits_before_upstream_finishes_and_keeps_read_failure`는 실제 channel의 첫 입력만 주고 종료 전 출력을 받는다. 다음 읽기 오류가 원인 그대로 전달되고 stream이 끝나야 한다. 필요한 이유: 전체 버퍼링으로 되돌아가거나 읽기 실패를 gzip 성공으로 숨기는 회귀를 막는다. 5초는 실패 상한이다.
+- 웹 `reportMediaProbe`는 진단 대상을 같은 host의 보고 파일로 한정하고 표시 결과에서 cap/query/origin/원문 오류를 제외하는지, cookie 없는 HEAD 한 번인지를 확인한다. 필요한 이유: 진단이 비밀 주소를 노출하거나 매체를 재다운로드하지 않게 한다.
+- 기존 E2E73에는 Chromium/WebKit×1280/390px의 실제 GET 보류→HEAD 200→401/명시 오류→다시 열기 502 실패·자동 재요청 없음·두 번째 사용자 누름의 현재 r 판 새 cap 재발급·원본 decode를 더한다. 만료 시각만 응답 fixture에서 과거로 만들며 host 시계·DB를 바꾸지 않는다. route는 사건으로 풀고 unrouteAll(wait) 뒤 context를 닫는다. 필요한 이유: 새 진단·만료 UI와 실제 복구를 유닛만으로 보증할 수 없다.
+- 기존 E2E88은 metadata 선대기 대신 최초 src/source 부재를 검사한 뒤 실제 첫 클릭으로 재생한다. 기존 두 엔진×두 화면·질문 선택/주소·HTML sandbox·새 탭·직접 mp4/Range·보고 본문·답한 사본 보존 계약은 유지하고 조합별 step으로 구분한다. 필요한 이유: preload=none만 바꿔도 브라우저가 요청하는 회귀와 iOS 첫 누름의 source commit/play 경계를 막는다.
+- 첫 E2E73의 Chromium 두 조합은 통과했지만 WebKit의 만료 안내가 없었다. 진단 실행의 `opens=[]/replies=[]`와 실제 ready DOM으로 응답 route가 호출되지 않은 것을 확인했다. WebKit의 service worker가 제어하는 요청은 page.route에서 빠질 수 있다는 Playwright 계약과 기존 E2E101 패턴에 따라, 응답을 제어하는 새 fixture의 context만 `serviceWorkers: block`으로 만든다. 제품 SW·권한·기존 E2E의 SW 계약은 바꾸지 않는다. 시한·기대값은 유지한다.
+- 부분 확인: 웹 유닛·타입/번들, host `--lib gzip`·관련 library HTTP, 의존 경계와 E2E59/73/88, strict clippy·공개 검사다. 내부 검증은 nice 15, 자기 target, Playwright 1.64.1과 기존 내부 공용 브라우저만 쓴다. 전체 ci-local은 coordinator가 준 차례에서 수행한다. 고정 sleep·실패 재시도·시한/기대값 완화는 없다.
 
 ## 큰 agent 응답과 보고 hash 확인(t-1131, §8.505)
 

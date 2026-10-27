@@ -429,6 +429,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn report_text_gzip_keeps_original_ranges_downloads_and_authorization() {
+        use std::io::Read;
+        let lab = Lab::new();
+        let source = lab.state.join("compressed");
+        std::fs::create_dir(&source).unwrap();
+        let original = "<!doctype html><h1>긴 보고</h1>\n".repeat(20_000).into_bytes();
+        std::fs::write(source.join("index.html"), &original).unwrap();
+        std::fs::write(source.join("a.mp4"), vec![7; 2048]).unwrap();
+        let view = publish(&lab, "compressed", &source, false).await;
+        let request = |file: &str, encoding: &str| {
+            Request::builder()
+                .uri(format!("{}{file}", view.base))
+                .header("Host", "127.0.0.1:7000")
+                .header("Accept-Encoding", encoding)
+        };
+        let router = crate::web::router(lab.h.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                request("index.html", "br, gzip;q=0.8")
+                    .header("Sec-Fetch-Mode", "navigate")
+                    .header("Sec-Fetch-Dest", "iframe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-encoding"], "gzip");
+        assert_eq!(response.headers()["vary"], "Accept-Encoding");
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
+        assert!(!response.headers().contains_key("content-length"));
+        assert!(response.headers()["content-security-policy"].to_str().unwrap().starts_with("sandbox allow-scripts"));
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let mut decoded = Vec::new();
+        flate2::read::GzDecoder::new(&bytes[..]).read_to_end(&mut decoded).unwrap();
+        assert_eq!(&decoded[..original.len()], original);
+        assert!(std::str::from_utf8(&decoded[original.len()..]).unwrap().contains("aaa:report-image"));
+        assert!(bytes.len() < original.len() / 2);
+
+        for (file, encoding, range, method, status, expected) in [
+            ("index.html", "gzip;q=0, *;q=1", None, "GET", StatusCode::OK, original.clone()),
+            ("index.html", "gzip", Some("bytes=0-9"), "GET", StatusCode::PARTIAL_CONTENT, original[..10].to_vec()),
+            ("index.html?download=1", "gzip", None, "GET", StatusCode::OK, original.clone()),
+            ("a.mp4", "gzip", None, "GET", StatusCode::OK, vec![7; 2048]),
+            ("index.html", "gzip", Some("bytes=99999999-"), "GET", StatusCode::RANGE_NOT_SATISFIABLE, vec![]),
+        ] {
+            let mut req = request(file, encoding).method(method);
+            if let Some(range) = range {
+                req = req.header("Range", range);
+            }
+            let res = router.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), status);
+            assert!(!res.headers().contains_key("content-encoding"));
+            assert_eq!(to_bytes(res.into_body(), 1024 * 1024).await.unwrap().as_ref(), expected);
+        }
+        let head = router
+            .clone()
+            .oneshot(request("index.html", "gzip").method("HEAD").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(head.headers()["content-encoding"], "gzip");
+        assert!(to_bytes(head.into_body(), 1024).await.unwrap().is_empty());
+        for (path, status, cookie) in [
+            (format!("{}index.html", view.base), StatusCode::FORBIDDEN, true),
+            ("/v/invalid/index.html".into(), StatusCode::UNAUTHORIZED, false),
+            (format!("{}missing.txt", view.base), StatusCode::NOT_FOUND, false),
+        ] {
+            let mut req = Request::builder()
+                .uri(path)
+                .header("Host", "127.0.0.1:7000")
+                .header("Origin", "null")
+                .header("Accept-Encoding", "gzip");
+            if cookie {
+                req = req.header("Cookie", "probe=1");
+            }
+            let res = router.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), status);
+            assert!(!res.headers().contains_key("content-encoding"));
+        }
+    }
+
+    #[tokio::test]
     async fn publish_replaces_the_snapshot_and_preserves_the_link() {
         let lab = Lab::new();
         let source = lab.state.join("input");
