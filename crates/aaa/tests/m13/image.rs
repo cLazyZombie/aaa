@@ -4,24 +4,28 @@ use super::*;
 use aaa_common::child_process::StdCommandExt;
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-fn probe_script(command: &str, out: &Path, done: &Path) -> String {
+fn probe_script(command: &str, out: &Path, done: &Path, marker: &str) -> String {
     let writing = done.with_extension("done.tmp");
     // 셸은 printf 실행 전에 파일을 연다. 같은 폴더에서 쓰기·close 뒤 rename해야
     // 완료 표지를 읽은 쪽이 빈 파일을 보지 않는다. 출력 파일도 이때 이미 닫혔다.
-    format!("{command} > {out:?} 2>&1\nprintf '%s' \"$?\" > {writing:?} && mv {writing:?} {done:?}\n")
+    let marker = lab::shell_word(marker);
+    format!(
+        "{command} > {out:?} 2>&1\nprintf '%s' \"$?\" > {writing:?} && mv {writing:?} {done:?} && command printf '%s\\n' {marker}\n"
+    )
 }
 
 fn probe(w: &World, pane: &str, name: &str, command: &str) -> (i32, String) {
     let out = w.lab.root.join(format!("image-{name}.out"));
     let done = w.lab.root.join(format!("image-{name}.done"));
-    let script = w.task(&format!("image-{name}.sh"), &probe_script(command, &out, &done));
+    let marker = format!("image-probe-{name}-done");
+    let script = w.task(&format!("image-{name}.sh"), &probe_script(command, &out, &done, &marker));
     w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
-    let exit = wait_for_diag(
-        "이미지 CLI 완료 사건",
-        T,
-        || std::fs::read_to_string(&done).ok(),
-        || format!("{}\n{}", w.h.screen(pane), std::fs::read_to_string(&out).unwrap_or_default()),
-    );
+    let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| w.h.wait_output(pane, &marker, T)));
+    if let Err(error) = completed {
+        eprintln!("이미지 CLI 원문:\n{}", std::fs::read_to_string(&out).unwrap_or_default());
+        std::panic::resume_unwind(error);
+    }
+    let exit = std::fs::read_to_string(&done).unwrap();
     let rc = exit.parse().unwrap();
     (rc, std::fs::read_to_string(out).unwrap())
 }
@@ -37,7 +41,7 @@ fn probe_completion_is_published_only_after_exit_code_is_written() {
     let done = lab.root.join("probe.done");
     let script = format!(
         "exec 3>&1\nprintf() {{ command printf 'exit-code-open\\n' >&3; IFS= read -r release; command printf \"$@\"; }}\n{}",
-        probe_script("(echo probe-output; exit 7)", &out, &done)
+        probe_script("(echo probe-output; exit 7)", &out, &done, "probe-done")
     );
     let mut child = Command::new("/bin/sh")
         .args(["-c", &script])
@@ -46,12 +50,16 @@ fn probe_completion_is_published_only_after_exit_code_is_written() {
         .spawn_guarded()
         .unwrap();
     let mut line = String::new();
-    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    output.read_line(&mut line).unwrap();
     let early = std::fs::read_to_string(&done).ok();
     let writing = std::fs::read_to_string(done.with_extension("done.tmp")).ok();
     child.stdin.take().unwrap().write_all(b"release\n").unwrap();
+    let mut completed = String::new();
+    output.read_line(&mut completed).unwrap();
     let status = child.wait().unwrap();
     assert_eq!(line.trim(), "exit-code-open");
+    assert_eq!(completed, "probe-done\n", "rename 뒤 실제 출력으로 완료를 알린다");
     assert!(status.success(), "{status}");
     assert!(early.is_none(), "완료 전에 표지를 공개했다: {early:?}");
     assert_eq!(writing.as_deref(), Some(""), "쓰기 전 경계를 실제로 관측한다");
@@ -75,33 +83,56 @@ fn attempts(w: &World) -> Vec<Value> {
 fn control(w: &World, value: Value) {
     std::fs::write(w.scripts.join("image-control.json"), value.to_string()).unwrap();
 }
-fn restart_host(w: &mut World, tag: &str, exe: &Path, upstream: &str) {
+fn start_image_host(w: &mut World, tag: &str, exe: &Path, upstream: &str) {
     // 실제 원격 agent는 주소를 고정한다. host 재시작에서도 같은 listener를 유지한다.
     let config = w.h.cfg.join("host.toml");
-    let text = std::fs::read_to_string(&config)
-        .unwrap()
-        .replace("agent_listen = \"127.0.0.1:0\"", &format!("agent_listen = {:?}", w.addr));
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    if !w.addr.is_empty() {
+        text = text.replace("agent_listen = \"127.0.0.1:0\"", &format!("agent_listen = {:?}", w.addr));
+    }
     std::fs::write(config, text).unwrap();
-    w.lab.spawn_env(
+    spawn_host_with_env(
+        &mut w.lab,
         tag,
         &w.h,
-        &["host"],
+        w.settle_ms,
         &[("AAA_TEST_IMAGE_CODEX", path_str(exe)), ("AAA_LOG", "trace"), ("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", upstream)],
     );
     let status = wait_for("이미지 host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = status["agent_listen"].as_str().unwrap().into();
+}
+fn restart_host(w: &mut World, tag: &str, exe: &Path, upstream: &str) {
+    start_image_host(w, tag, exe, upstream);
     wait_for("이미지 로컬 agent 재접속", T, || w.h.connected("labA").then_some(()));
 }
 
 #[test]
 fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_or_duplicates() {
+    image_scenario(ImageScenario::Generate);
+}
+
+#[test]
+fn host_and_thread_restart_preserve_generated_images_and_coordinator_scope() {
+    image_scenario(ImageScenario::Restore);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageScenario {
+    Generate,
+    Restore,
+}
+
+fn image_scenario(scenario: ImageScenario) {
     // 원시 PNG와 무관한 인증 조각이 base64 offset 3787에서만 겹친다.
     // 로컬·원격 agent 양쪽의 실제 가림 규칙에 등록한다.
-    let mut w = world_with(&format!(
-        "[profiles.fake.env]\nOPENAI_API_KEY = {:?}\n",
-        aaa_test_support::token("image-collision")
-    ));
-    w.lab.kill("host");
+    // 처음부터 이미지 설정으로 연다. 등록·프로젝트와 실제 재시작은 아래에서 그대로 검사한다.
+    let (mut w, _) = world_files(
+        &format!("[profiles.fake.env]\nOPENAI_API_KEY = {:?}\n", aaa_test_support::token("image-collision")),
+        false,
+        Some("0"),
+        false,
+        |_| Vec::new(),
+    );
     let cfg = w.h.cfg.join("host.toml");
     let text = std::fs::read_to_string(&cfg).unwrap().replace("allow_profiles = [", "allow_profiles = [\"image\", ");
     std::fs::write(&cfg, format!("{text}\n[profiles.image]\nagent=\"codex\"\nmodel=\"model-a\"\neffort=\"high\"\n"))
@@ -121,7 +152,16 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
     ]);
     let origin = format!("http://{}", upstream.addr);
     control(&w, serde_json::json!({"refresh":true}));
-    restart_host(&mut w, "image-host", &exe, &origin);
+    start_image_host(&mut w, "image-host", &exe, &origin);
+    w.lab.spawn_env(
+        "agentA",
+        &w.h,
+        &["agent", "--host", "local", "--name", "labA"],
+        &[("CLAUDE_CODE_CHILD_SESSION", "1"), ("CLAUDECODE", "1")],
+    );
+    w.h.wait_connected("labA", T);
+    w.h.ok(&["project", "create", "demo"]);
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "작업 폴더"]);
     w.add_remote();
     for (alias, token) in [("work-codex", &access), ("other-codex", &other)] {
         let path = w.scripts.join("image-import.json");
@@ -160,28 +200,30 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
         )
     };
     let received = w.lab.root.join("received-a");
-    for (name, command, reason) in [
-        (
-            "profile-denied",
-            generate(&aaa_common::util::new_id(), &received).replace("--profile image", "--profile other"),
-            "허용",
-        ),
-        (
-            "account-denied",
-            format!("{} --account other-codex", generate(&aaa_common::util::new_id(), &received)),
-            "기본 계정",
-        ),
-    ] {
-        let (rc, text) = probe(&w, a, name, &command);
+    if scenario == ImageScenario::Generate {
+        for (name, command, reason) in [
+            (
+                "profile-denied",
+                generate(&aaa_common::util::new_id(), &received).replace("--profile image", "--profile other"),
+                "허용",
+            ),
+            (
+                "account-denied",
+                format!("{} --account other-codex", generate(&aaa_common::util::new_id(), &received)),
+                "기본 계정",
+            ),
+        ] {
+            let (rc, text) = probe(&w, a, name, &command);
+            assert_ne!(rc, 0);
+            assert!(text.contains(reason), "{text}");
+        }
+        assert!(attempts(&w).is_empty(), "허용하지 않은 profile·계정은 helper를 띄우지 않는다");
+        let private_profile =
+            generate(&aaa_common::util::new_id(), &received).replace("--profile image", &format!("--profile {access}"));
+        let (rc, text) = probe(&w, a, "private-error", &private_profile);
         assert_ne!(rc, 0);
-        assert!(text.contains(reason), "{text}");
+        assert!(!text.contains(&access) && text.contains("허용"), "이미지 오류 응답에도 인증 원문이 없어야 한다");
     }
-    assert!(attempts(&w).is_empty(), "허용하지 않은 profile·계정은 helper를 띄우지 않는다");
-    let private_profile =
-        generate(&aaa_common::util::new_id(), &received).replace("--profile image", &format!("--profile {access}"));
-    let (rc, text) = probe(&w, a, "private-error", &private_profile);
-    assert_ne!(rc, 0);
-    assert!(!text.contains(&access) && text.contains("허용"), "이미지 오류 응답에도 인증 원문이 없어야 한다");
     let (rc, text) = probe(&w, a, "first", &generate(&id, &received));
     assert_eq!(rc, 0, "{text}");
     let first = result(&text);
@@ -202,10 +244,12 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
     assert!(!Path::new(attempts(&w)[0]["home"].as_str().unwrap()).exists(), "인증·임시 홈 정리 뒤 성공");
 
     w.h.ok(&["account", "default", "codex", "other-codex"]);
-    let (rc, text) = probe(&w, a, "same", &generate(&id, &received));
-    assert_eq!(rc, 0, "{text}");
-    assert_eq!(result(&text)["job"]["account"], "work-codex");
-    assert_eq!(attempts(&w).len(), 1, "같은 ID는 기본 계정 변경 뒤에도 재생성하지 않는다");
+    if scenario == ImageScenario::Generate {
+        let (rc, text) = probe(&w, a, "same", &generate(&id, &received));
+        assert_eq!(rc, 0, "{text}");
+        assert_eq!(result(&text)["job"]["account"], "work-codex");
+        assert_eq!(attempts(&w).len(), 1, "같은 ID는 기본 계정 변경 뒤에도 재생성하지 않는다");
+    }
     let id_b = aaa_common::util::new_id();
     control(&w, serde_json::json!({}));
     let (rc, text) = probe(&w, b, "remote", &generate(&id_b, &w.lab.root.join("received-b")));
@@ -215,20 +259,23 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
     assert_eq!(attempts(&w).len(), 2);
     assert_eq!(attempts(&w)[1]["access_hash"], sha(&other));
     assert_eq!(std::fs::read(output).unwrap(), std::fs::read(second["files"][0].as_str().unwrap()).unwrap());
-    for (name, command, reason) in [
-        ("foreign", format!("{:?} image status {id}", lab::BIN), "자기 이미지 작업"),
-        ("token", format!("env AAA_HOOK_TOKEN=forged {:?} image status {id_b}", lab::BIN), "token"),
-        ("missing", format!("env -u AAA_SESSION_ID {:?} image status {id_b}", lab::BIN), "세션 안"),
-    ] {
-        let (rc, text) = probe(&w, b, name, &command);
+    if scenario == ImageScenario::Generate {
+        for (name, command, reason) in [
+            ("foreign", format!("{:?} image status {id}", lab::BIN), "자기 이미지 작업"),
+            ("token", format!("env AAA_HOOK_TOKEN=forged {:?} image status {id_b}", lab::BIN), "token"),
+            ("missing", format!("env -u AAA_SESSION_ID {:?} image status {id_b}", lab::BIN), "세션 안"),
+        ] {
+            let (rc, text) = probe(&w, b, name, &command);
+            assert_ne!(rc, 0);
+            assert!(text.contains(reason), "{text}");
+        }
+        let changed = w.scripts.join("changed-prompt.txt");
+        std::fs::write(&changed, "다른 이미지").unwrap();
+        let (rc, text) =
+            probe(&w, a, "changed", &generate(&id, &received).replace(path_str(&prompt), path_str(&changed)));
         assert_ne!(rc, 0);
-        assert!(text.contains(reason), "{text}");
+        assert!(text.contains("다른 요청"), "{text}");
     }
-    let changed = w.scripts.join("changed-prompt.txt");
-    std::fs::write(&changed, "다른 이미지").unwrap();
-    let (rc, text) = probe(&w, a, "changed", &generate(&id, &received).replace(path_str(&prompt), path_str(&changed)));
-    assert_ne!(rc, 0);
-    assert!(text.contains("다른 요청"), "{text}");
     control(&w, serde_json::json!({"version":"codex-cli 0.0.0"}));
     let arbitrary_version = aaa_common::util::new_id();
     let (rc, text) = probe(&w, a, "arbitrary-version", &generate(&arbitrary_version, &received));
@@ -244,57 +291,58 @@ fn host_account_images_transfer_to_local_and_remote_threads_without_credentials_
     assert_ne!(rc, 0);
     assert_eq!(attempts(&w).len(), 4, "실패한 생성은 명시 Start에도 재실행하지 않는다");
 
-    w.lab.kill("image-host");
-    restart_host(&mut w, "image-host2", &exe, &origin);
-    wait_for("이미지 원격 재접속", T, || w.h.connected("labB").then_some(()));
-    let (rc, text) = probe(&w, b, "after-restart", &format!("{:?} --json image status {id_b}", lab::BIN));
-    assert_eq!(rc, 0, "{text}");
-    assert_eq!(result(&text)["job"]["state"], "succeeded");
-    w.h.ok(&["pane", "kill", a]);
-    wait_for("이미지 원래 pane 종료", T, || (w.h.pane(a)["state"] == "exited").then_some(()));
-    w.h.ok(&["thread", "restart", "demo", local["id"].as_str().unwrap()]);
-    let restarted = w.wait_show("이미지 thread 새 pane 안내", local["id"].as_str().unwrap(), |v| {
-        v["pane"].as_str() != Some(a) && v["brief"] == "delivered"
-    });
-    let a = restarted["pane"].as_str().unwrap();
-    let (rc, text) = probe(
-        &w,
-        a,
-        "same-thread-new-pane",
-        &format!("{:?} --json image fetch {id} --output-dir {received:?}", lab::BIN),
-    );
-    assert_eq!(rc, 0, "{text}");
-    assert_eq!(attempts(&w).len(), 4, "같은 thread 재시작은 기존 이미지를 읽는다");
-    let (rc, text) = probe(&w, a, "own-list", &format!("{:?} --json image list", lab::BIN));
-    assert_eq!(rc, 0, "{text}");
-    assert!(
-        !result(&text)["jobs"].as_array().unwrap().iter().any(|j| j["id"] == id_b),
-        "worker는 다른 thread 목록을 보지 않는다"
-    );
-    let text = std::fs::read_to_string(&cfg).unwrap();
-    std::fs::write(
-        &cfg,
-        format!(
-            "{text}\n[profiles.image-coord]\nagent=\"custom\"\ncommand=[\"/bin/sh\",{:?}]\n",
-            w.scripts.join("coord.sh")
-        ),
-    )
-    .unwrap();
-    let opened = w.h.ok(&["project", "open", "demo", "--profile", "image-coord"]);
-    let coord = opened["pane"]["id"].as_str().unwrap();
-    w.wait_screen(coord, "❯");
-    let (rc, text) = probe(&w, coord, "project-list", &format!("{:?} --json image list", lab::BIN));
-    assert_eq!(rc, 0, "{text}");
-    let listed = result(&text);
-    assert!(listed["jobs"].as_array().unwrap().iter().any(|j| j["id"] == id));
-    assert!(listed["jobs"].as_array().unwrap().iter().any(|j| j["id"] == id_b));
-    let (rc, text) = probe(&w, coord, "forget", &format!("{:?} --json image forget {id}", lab::BIN));
-    assert_eq!(rc, 0, "{text}");
-    assert_eq!(result(&text)["job"]["state"], "forgotten");
-    let (rc, _) = probe(&w, a, "forgotten-again", &generate(&id, &received));
-    assert_ne!(rc, 0);
-    assert_eq!(attempts(&w).len(), 4);
-
+    if scenario == ImageScenario::Restore {
+        w.lab.kill("image-host");
+        restart_host(&mut w, "image-host2", &exe, &origin);
+        wait_for("이미지 원격 재접속", T, || w.h.connected("labB").then_some(()));
+        let (rc, text) = probe(&w, b, "after-restart", &format!("{:?} --json image status {id_b}", lab::BIN));
+        assert_eq!(rc, 0, "{text}");
+        assert_eq!(result(&text)["job"]["state"], "succeeded");
+        w.h.ok(&["pane", "kill", a]);
+        wait_for("이미지 원래 pane 종료", T, || (w.h.pane(a)["state"] == "exited").then_some(()));
+        w.h.ok(&["thread", "restart", "demo", local["id"].as_str().unwrap()]);
+        let restarted = w.wait_show("이미지 thread 새 pane 안내", local["id"].as_str().unwrap(), |v| {
+            v["pane"].as_str() != Some(a) && v["brief"] == "delivered"
+        });
+        let a = restarted["pane"].as_str().unwrap();
+        let (rc, text) = probe(
+            &w,
+            a,
+            "same-thread-new-pane",
+            &format!("{:?} --json image fetch {id} --output-dir {received:?}", lab::BIN),
+        );
+        assert_eq!(rc, 0, "{text}");
+        assert_eq!(attempts(&w).len(), 4, "같은 thread 재시작은 기존 이미지를 읽는다");
+        let (rc, text) = probe(&w, a, "own-list", &format!("{:?} --json image list", lab::BIN));
+        assert_eq!(rc, 0, "{text}");
+        assert!(
+            !result(&text)["jobs"].as_array().unwrap().iter().any(|j| j["id"] == id_b),
+            "worker는 다른 thread 목록을 보지 않는다"
+        );
+        let text = std::fs::read_to_string(&cfg).unwrap();
+        std::fs::write(
+            &cfg,
+            format!(
+                "{text}\n[profiles.image-coord]\nagent=\"custom\"\ncommand=[\"/bin/sh\",{:?}]\n",
+                w.scripts.join("coord.sh")
+            ),
+        )
+        .unwrap();
+        let opened = w.h.ok(&["project", "open", "demo", "--profile", "image-coord"]);
+        let coord = opened["pane"]["id"].as_str().unwrap();
+        w.wait_screen(coord, "❯");
+        let (rc, text) = probe(&w, coord, "project-list", &format!("{:?} --json image list", lab::BIN));
+        assert_eq!(rc, 0, "{text}");
+        let listed = result(&text);
+        assert!(listed["jobs"].as_array().unwrap().iter().any(|j| j["id"] == id));
+        assert!(listed["jobs"].as_array().unwrap().iter().any(|j| j["id"] == id_b));
+        let (rc, text) = probe(&w, coord, "forget", &format!("{:?} --json image forget {id}", lab::BIN));
+        assert_eq!(rc, 0, "{text}");
+        assert_eq!(result(&text)["job"]["state"], "forgotten");
+        let (rc, _) = probe(&w, a, "forgotten-again", &generate(&id, &received));
+        assert_ne!(rc, 0);
+        assert_eq!(attempts(&w).len(), 4);
+    }
     let mut find = needles(&access, &access_hex);
     find.extend(needles(&refresh, &refresh_hex));
     find.extend(needles(&other, &other_hex));

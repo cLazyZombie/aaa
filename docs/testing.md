@@ -1,3 +1,53 @@
+## E2E12의 문서 식별과 본문 완료(t-1117)
+
+- 관측기는 `timeOrigin`을 반복 환산해 문서 키로 비교하지 않고, 실제 Document에 한 번 붙인
+  표지를 HTTP 헤더·완료 대기·문서 교체 취소에서 함께 읽는다. hash 이동은 표지를 유지하고,
+  새 Document는 같은 시계 값에서도 다른 표지를 받는다. 완료 대기의 키·목표 개수와
+  수집 키별 완료 개수도 원문에 남긴다.
+- `threadPageTrace.test.mjs`는 직렬화한 실제 init/getter와 HTTP 헤더를 대조하고,
+  같은 문서의 시계 변동·다른 문서의 같은 시계·이전 문서/미완료 본문 배제를 검사한다.
+  필요한 이유는 두 완전 목록의 본문이 모두 있는데도 다른 문서 키를 기다리는 정지를 막기 위해서다.
+- 제품 `threadsSync`·초기 소속 숨김·재연결 중 기존 분류는 유지한다. E12의 실제 host/두 브라우저,
+  두 완전 목록·2505건·차례·중복·실제 DOM, 기존20초 상한과 본문 오류/문서 취소 단언도 유지한다.
+  최초 실패 원문을 남기고 수리 전 같은 E12를 재실행하지 않는다. 전체 확인은 새 착지 차례에서 한다.
+- 참고는 [Playwright init의 문서별 실행](https://playwright.dev/docs/api/class-page#page-add-init-script)과
+  [Puppeteer의 문서 수명 구별](https://github.com/puppeteer/puppeteer/blob/main/packages/puppeteer-core/src/cdp/LifecycleWatcher.ts)
+  (각 Apache-2.0)이다. 문서 수명을 시계 수치와 분리하는 원칙을 따르며 코드·의존성은 복사하지 않는다.
+
+## 누출 검사의 모든 byte 조각 보존(t-1117)
+
+- m13 `secret_k0::hits`는 같은 파일의 byte를 검색어마다 다시 훑는 대신 Aho-Corasick의 겹침 검색을 쓴다.
+  기존 모든 원문·8바이트 조각·base64·URL·JSON 변형과 파일/제외 경로를 유지하고,
+  동일 byte의 별도 라벨 및 각 검색어의 첫 byte 위치를 원래 순서로 보고한다.
+- `byte_scan_preserves_overlaps_duplicate_labels_first_offsets_and_binary_files`는 실제 파일에서
+  겹침·중복 라벨·첫 위치·NUL/비UTF8·제외 경로·빈 검색 목록을 지킨다. 필요한 이유는
+  빠른 검색이 겹친 누출을 버리거나 문자열 변환으로 원문 byte를 바꾸는 회귀를 막기 위해서다.
+  기존 계정 전달/회전/재개·이미지 전송·원장 비노출 owner의 입력과 단언은 그대로 둔다.
+- 후보는 [Aho-Corasick의 Standard 겹침 검색](https://docs.rs/aho-corasick/1.1.5/aho_corasick/enum.MatchKind.html)과
+  [memchr의 단일 검색어 Finder](https://docs.rs/memchr/2.8.3/memchr/memmem/struct.Finder.html)다.
+  두 패키지는 `Unlicense OR MIT`이며 이미 lock에 있던 Aho-Corasick을 시험 의존성으로 직접 연결한다.
+  외부 소스를 복사하지 않고 API를 사용하며 판을 갱신하지 않는다.
+- 부분 확인은 해당 새 m13 byte owner와 기존 계정/이미지 owner를 각각 nice15로 실행한다.
+  검색어/파일 축소·실패 재실행·시한 확대·기대값 완화 없이, 전체 효과는 같은 조건의 전후 계측으로 판단한다.
+
+## 이미지 owner의 준비와 완료 사건(t-1117)
+
+- 이미지 fixture는 처음부터 이미지 설정으로 host를 열고 실제 로컬·원격 agent와 프로젝트를 준비한다.
+  사용하지 않는 Git 저장소와 시작 직후 버릴 host를 만들지 않는다. 실제 중간 host 재시작은 유지한다.
+  `start_image_host`와 `restart_host`는 공통 기동 helper로 같은 fixture 설정을 이어 간다.
+- 정적인 fake 입력창은 실제 준비 사건 뒤 즉시 brief를 받는다. 기본 3초 quiet 정책은 바꾸지 않고
+  해당 정책의 기존 brief owner와 실제 worker 입력/출력 검사를 유지한다.
+- 이미지 CLI의 종료 코드는 파일 close·rename 뒤 고유한 실제 PTY 출력으로 알린다.
+  `probe_completion_is_published_only_after_exit_code_is_written`의 파일 생성/쓰기 사이 gate와
+  원문·종료 코드·원자 rename 단언에 완료 출력 단언을 더한다. 같은 상한 안에서 사건으로 끝낸다.
+- 기존 `host_account_images_transfer_to_local_and_remote_threads_without_credentials_or_duplicates`는
+  생성·권한·계정 선택·같은 ID·실패·가림을 지킨다.
+  `host_and_thread_restart_preserve_generated_images_and_coordinator_scope`는 실제 생성부터 다시 수행한 뒤
+  같은 주소의 host·같은 thread 재시작, 기존 파일 fetch·목록 범위·forget을 지킨다.
+  두 번째 owner도 상태를 미리 넣지 않고 실제 helper 시도 4회를 수행한다.
+  기존 55개 단언 식과 544KiB PNG·모든 canary/변형을 유지한다.
+- 독립 owner를 준비하며 반복되는 실제 생성 비용도 합산해서 보고한다. 이름 분리만으로 속도 개선을 주장하지 않는다.
+
 ## E2E103 lookup 정지의 protocol 원문 보존(t-1147)
 
 - `retention-protocol.mjs`는 기존 Chromium 주 frame session의 DOM/Runtime 호출 요약에 `protocol` 원문 객체를 더한다. 요청 params, 응답 result/error, context 생성·소멸의 원문으로 objectId·backendNodeId·executionContextId와 호출 ID를 연결한다. 기록은 합성 E103의 count/lookup/commit·실패 진단으로 한정하고 Network·console 사건과 관측 밖 새 호출은 제외한다. 운영 페이지나 임의 evaluate를 기록하는 도구로 사용하지 않는다. 알려진 합성 DOM/함수만 읽는 이 범위와 달리 임의 Runtime 호출은 비밀값을 반환할 수 있다.

@@ -15,6 +15,7 @@ dependencies = [
  "aaa-session",
  "aaa-test-support",
  "aaa-vt",
+ "aho-corasick",
  "anyhow",
  "base64 0.22.1",
  "clap",

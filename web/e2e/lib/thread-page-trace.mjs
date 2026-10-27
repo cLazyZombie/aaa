@@ -2,8 +2,14 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
+// page.evaluate로도 독립 직렬화된다. 시계의 반복 환산값 대신 Document 수명을 식별한다.
+export function threadTraceDocument() {
+  return document.__aaaThreadTraceDocument ??= crypto.getRandomValues(new Uint32Array(4)).join("-");
+}
+
 export function traceThreadRequests() {
-  const doc = String(performance.timeOrigin);
+  // init도 독립 직렬화되므로 위 getter와 같은 Document 칸을 처음 만든다.
+  const doc = document.__aaaThreadTraceDocument ??= crypto.getRandomValues(new Uint32Array(4)).join("-");
   let connection = 0, nextConnection = 0, request = 0;
   const log = row => console.debug("THREAD_TRACE " + JSON.stringify({ doc, connection, ...row }));
   const WS = window.WebSocket;
@@ -54,8 +60,8 @@ export function threadPageTrace(directory, engine) {
     };
     page.on("framenavigated", frame => {
       if (frame !== page.mainFrame()) return;
-      // hash 이동은 같은 문서다. 실제 timeOrigin이 바뀐 경우만 옛 요청을 끝낸다.
-      void frame.evaluate(() => String(performance.timeOrigin)).then(retire)
+      // hash 이동은 같은 Document다. 실제 문서 표지가 바뀐 경우만 옛 요청을 끝낸다.
+      void frame.evaluate(threadTraceDocument).then(retire)
         .catch(error => log({ event: "navigation-observer-closed", error: error.message.split("\n")[0] }));
     });
     page.on("close", () => {
@@ -105,9 +111,9 @@ export function threadPageTrace(directory, engine) {
       }).catch(async error => {
         log({ ...record, event: "body-error", error: String(error) });
         // requestfinished 뒤에도 body protocol 호출과 navigation은 경쟁한다.
-        // 오류 문구로 성공 처리하지 않고 실제 timeOrigin 교체로만 꼬리를 구별한다.
+        // 오류 문구로 성공 처리하지 않고 실제 Document 교체로만 꼬리를 구별한다.
         if (!bodyReceived && !retired.has(record.doc)) {
-          try { retire(await page.evaluate(() => String(performance.timeOrigin))); }
+          try { retire(await page.evaluate(threadTraceDocument)); }
           catch { /* page.close는 기존 오류로 남긴다. */ }
         }
         if (!bodyReceived && retired.has(record.doc)) {
@@ -175,9 +181,11 @@ export function threadPageTrace(directory, engine) {
   };
   // route.fulfill의 완료는 브라우저 response.body 수집 완료가 아니다. 실제 본문까지 받은 목록을 센다.
   const completed = (doc, count) => new Promise(resolve => {
+    log({ event: "completion-wait", doc, count, collected: Object.fromEntries(endings) });
     const check = () => {
       if ((endings.get(doc) ?? 0) < count) return;
       completion.delete(check);
+      log({ event: "completion-reached", doc, count, collected: Object.fromEntries(endings) });
       resolve();
     };
     completion.add(check);

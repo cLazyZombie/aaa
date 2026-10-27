@@ -50,6 +50,8 @@ pub(super) fn needles(value: &str, hex: &str) -> Vec<(String, Vec<u8>)> {
 
 /// `files`(폴더면 그 아래 모두, `skip`에 걸린 경로는 뺀다)에서 찾은 곳: 「파일 @바이트 (꼴)」
 pub(super) fn hits(files: &[PathBuf], needles: &[(String, Vec<u8>)], skip: &dyn Fn(&Path) -> bool) -> Vec<String> {
+    // 같은 파일을 조각마다 다시 훑지 않는다. 겹침·동일 byte의 다른 라벨도 모두 찾는다.
+    let matcher = aho_corasick::AhoCorasick::new(needles.iter().map(|(_, n)| n)).unwrap();
     let mut all = Vec::new();
     let mut stack: Vec<PathBuf> = files.to_vec();
     while let Some(p) = stack.pop() {
@@ -61,13 +63,46 @@ pub(super) fn hits(files: &[PathBuf], needles: &[(String, Vec<u8>)], skip: &dyn 
             continue;
         }
         let Ok(bytes) = std::fs::read(&p) else { continue };
-        for (label, n) in needles {
-            if let Some(at) = bytes.windows(n.len()).position(|w| w == n.as_slice()) {
+        // 원래 windows(0)도 이 파일을 읽은 뒤 실패한다. 빈 검색어를 새 허용으로 만들지 않는다.
+        assert!(needles.iter().all(|(_, n)| !n.is_empty()), "누출 검색어가 비었다");
+        let mut first = vec![None; needles.len()];
+        for found in matcher.find_overlapping_iter(&bytes) {
+            let offset = &mut first[found.pattern().as_usize()];
+            if offset.is_none() {
+                *offset = Some(found.start());
+            }
+        }
+        for ((label, _), offset) in needles.iter().zip(first) {
+            if let Some(at) = offset {
                 all.push(format!("{} @{at} ({label})", p.display()));
             }
         }
     }
     all
+}
+
+// 필요: 검색 최적화가 겹친 조각·중복 라벨·첫 byte 위치·비UTF8 누출을 놓치지 않아야 한다.
+#[test]
+fn byte_scan_preserves_overlaps_duplicate_labels_first_offsets_and_binary_files() {
+    let lab = Lab::new();
+    let file = lab.root.join("record.bin");
+    let skipped = lab.root.join("skip.bin");
+    std::fs::write(&file, b"\xffababa\0aba\xfe").unwrap();
+    std::fs::write(&skipped, b"ababa").unwrap();
+    let patterns = [
+        ("앞".into(), b"aba".to_vec()),
+        ("겹침".into(), b"bab".to_vec()),
+        ("같은 값의 다른 라벨".into(), b"aba".to_vec()),
+        ("NUL".into(), b"\0a".to_vec()),
+        ("없음".into(), b"abc".to_vec()),
+        ("긴 값".into(), b"ababa".to_vec()),
+    ];
+    assert_eq!(
+        hits(&[file.clone(), skipped.clone()], &patterns, &|p| p == skipped),
+        [(1, "앞"), (2, "겹침"), (1, "같은 값의 다른 라벨"), (6, "NUL"), (1, "긴 값")]
+            .map(|(at, label)| format!("{} @{at} ({label})", file.display()))
+    );
+    assert!(hits(&[file], &[], &|_| false).is_empty());
 }
 
 pub(super) fn sha(v: &str) -> String {

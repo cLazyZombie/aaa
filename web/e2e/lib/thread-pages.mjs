@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { root, AA, env, aaa, domIs, browser, webkit, pairPage, inTime, specCleanup } from "./harness.mjs";
-import { traceThreadRequests, threadPageTrace } from "./thread-page-trace.mjs";
+import { traceThreadRequests, threadPageTrace, threadTraceDocument } from "./thread-page-trace.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
 
 export async function prepareThreadPages() {
@@ -122,7 +122,7 @@ export async function threadPages(all, name) {
       // 새 연결의 첫 응답이 아직 없더라도 옛 연결의 완전한 목록은 보여야 한다.
       trace.record({ event: "old-complete-visible-before-new-response" });
       trace.record({ event: "new-first-released" });
-      const doc = await page.evaluate(() => String(performance.timeOrigin));
+      const doc = await page.evaluate(threadTraceDocument);
       releaseNew();
       await inTime(trace.completed(doc, 2), 20000, "재연결 HTTP 두 완전 목록의 본문 수집");
       const expected = all.map(t => `${t.project}/${t.id}`);
