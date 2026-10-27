@@ -8089,3 +8089,14 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **받는 경계.** host는 살아 있는 요청 ID만 조립하고 offset·전체 길이·중복 시작·조각 크기·합계 상한·최종 JSON의 Res 종류/ID를 확인한다. 시한이 지나거나 취소된 자료는 다음 수신 사건에 버리고, 연결 종료 때 전부 버린다. 순서가 잘못된 조각은 그 요청만 실패시키며 연결과 다른 요청은 계속한다. 조립한 응답은 기존 decode·가림·적용 경계를 그대로 거친다. `report_copy.v2`는 원본 전체 hash를 먼저 확인한 뒤 저장 전에 가리는 순서를 유지한다.
 - **실패 격리.** 공통 송신부는 종류 byte까지 검사해 wire 쓰기 전에 크기 오류를 호출자에 돌린다. writer의 방어 검사도 길이 초과 frame을 소비하고 다음 frame으로 진행한다. I/O 실패와 잘못된 터미널 codec/대기열 처리는 기존 연결 복구 정책을 유지한다. 큰 응답 진단에는 요청 ID·종류·바이트·상한을 남기며 본문은 남기지 않는다. 분할 JSON 해석 실패도 원문 대신 오류 종류·위치를 기록한다.
 - **참고.** [Tokio LengthDelimitedCodec](https://github.com/tokio-rs/tokio/blob/master/tokio-util/src/codec/length_delimited.rs)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))의 쓰기 전 길이 검사와 [nats.go](https://github.com/nats-io/nats.go/blob/main/nats.go)([Apache-2.0](https://github.com/nats-io/nats.go/blob/main/LICENSE))의 최대 payload 사전 거부를 참고했다. 외부 코드·의존성은 추가하지 않는다.
+
+
+### 8.506 보고서 매체 진단·텍스트 압축·선택 로딩(t-1135)
+
+- 사용자 q-1514의 1A: 회색 이미지의 원인은 미재현으로 남기고, 진단·압축·매체 선택 로딩부터 구현한다. 과거 r 판과 원본 매체·운영 설정·캐시 정책은 보존한다. ETag/유효 cap 재사용과 영상 재인코딩은 별도 범위다.
+- 보고 Markdown의 로딩 상자는 주소 확인/읽기 안내를 보인다. 로딩·실패 이미지와 실패 영상의 상태 확인은 사용자 누름에서 같은 origin의 `/v/` 파일에 무쿠키 HEAD 한 번만 보낸다. HTTP 상태·상대 파일 경로·크기·이미지 완료/디코드 상태를 보이고 cap·query·origin·오류 원문을 진단에 넣지 않는다. 5초 응답 상한·화면/주소 교체 취소가 있으며 자동 재시도는 없다.
+- 보기 만료는 절대 시각과 탭 복귀에서 확인한다. 보고서의 다시 열기는 현재 r 판으로 기존 LibraryOpen을 호출해 새 cap을 받고, 실패는 그대로 표시한다. 만료·host 재시작의 옛 경로를 계속 성공으로 취급하거나 최신 t 판으로 바꾸지 않는다. FRONT_API·proto는 바뀌지 않는다.
+- `/v/`의 1KiB 이상 텍스트만 기존 gzip 협상기를 재사용해 압축한다. 원본 조각마다 gzip 출력을 비워 stream을 유지하고 하위 읽기 오류는 전파·진단한다. HTML의 이미지 bridge까지 함께 압축하며 원본 Content-Length를 제거하고 Content-Encoding/Vary를 준다. HEAD는 빈 본문·같은 협상이다. Range·내려받기·이미지/영상/PDF·오류는 원본을 유지하며 권한·CSP·무쿠키 CORS·no-store는 그대로다.
+- Markdown 영상은 첫 클릭 안에서 src commit→play를 하여 첫 클릭 전 metadata 요청도 없게 한다. 새 src에는 이전 실패/재생 상태를 적용하지 않는다. native controls·muted·playsinline·탐색·질문 선택과 주소·답한 사본의 원본을 유지한다. HTML 새 작성 템플릿에는 그림 크기·lazy와 썸네일/선택 재생을 안내한다.
+- 회귀는 기존 E2E73의 양 엔진×1280/390px 이미지 GET 보류·HEAD 200/401·현재 판 다시 열기, E2E88의 선택 전 무요청과 실제 클릭/탐색/HTML sandbox/직접 파일/답한 사본이다. host HTTP 회귀는 gzip 복원·bridge·협상·HEAD·Range·권한·원본, stream 회귀는 첫 조각 전달과 읽기 실패 전파를 지킨다. 새 E2E 번호·고정 sleep·재시도·시한 확대는 없다.
+- OSS는 조사에서 검토한 tower-http(MIT)·Caddy(Apache-2.0)·nginx(BSD-2-Clause)의 전송 원칙, [React flushSync](https://react.dev/reference/react-dom/flushSync)(MIT)와 [flate2 GzEncoder](https://docs.rs/flate2/latest/flate2/write/struct.GzEncoder.html)(MIT/Apache-2.0)를 참고했다. 기존 flate2·React만 사용하며 외부 코드·의존성은 추가하지 않는다.

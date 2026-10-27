@@ -1,3 +1,13 @@
+## 보고서 매체 진단·선택 로딩·압축(t-1135, §8.506)
+
+- host `report_text_gzip_keeps_original_ranges_downloads_and_authorization`은 실제 host/SQLite/publish/router에서 큰 HTML의 여러 조각 gzip을 복원하고 탐색 bridge, Content-Encoding/Vary/길이, HEAD, gzip 거부, 원본 Range·내려받기·영상, 401/403/404/416을 확인한다. 필요한 이유: 압축이 권한·Range 또는 원본 bytes를 바꾸는 회귀를 막는다.
+- `gzip_emits_before_upstream_finishes_and_keeps_read_failure`는 실제 channel의 첫 입력만 주고 종료 전 출력을 받는다. 다음 읽기 오류가 원인 그대로 전달되고 stream이 끝나야 한다. 필요한 이유: 전체 버퍼링으로 되돌아가거나 읽기 실패를 gzip 성공으로 숨기는 회귀를 막는다. 5초는 실패 상한이다.
+- 웹 `reportMediaProbe`는 진단 대상을 같은 host의 보고 파일로 한정하고 표시 결과에서 cap/query/origin/원문 오류를 제외하는지, cookie 없는 HEAD 한 번인지를 확인한다. 필요한 이유: 진단이 비밀 주소를 노출하거나 매체를 재다운로드하지 않게 한다.
+- 기존 E2E73에는 Chromium/WebKit×1280/390px의 실제 GET 보류→HEAD 200→401/명시 오류→다시 열기 502 실패·자동 재요청 없음·두 번째 사용자 누름의 현재 r 판 새 cap 재발급·원본 decode를 더한다. 만료 시각만 응답 fixture에서 과거로 만들며 host 시계·DB를 바꾸지 않는다. route는 사건으로 풀고 unrouteAll(wait) 뒤 context를 닫는다. 필요한 이유: 새 진단·만료 UI와 실제 복구를 유닛만으로 보증할 수 없다.
+- 기존 E2E88은 metadata 선대기 대신 최초 src/source 부재를 검사한 뒤 실제 첫 클릭으로 재생한다. 기존 두 엔진×두 화면·질문 선택/주소·HTML sandbox·새 탭·직접 mp4/Range·보고 본문·답한 사본 보존 계약은 유지하고 조합별 step으로 구분한다. 필요한 이유: preload=none만 바꿔도 브라우저가 요청하는 회귀와 iOS 첫 누름의 source commit/play 경계를 막는다.
+- 첫 E2E73의 Chromium 두 조합은 통과했지만 WebKit의 만료 안내가 없었다. 진단 실행의 `opens=[]/replies=[]`와 실제 ready DOM으로 응답 route가 호출되지 않은 것을 확인했다. WebKit의 service worker가 제어하는 요청은 page.route에서 빠질 수 있다는 Playwright 계약과 기존 E2E101 패턴에 따라, 응답을 제어하는 새 fixture의 context만 `serviceWorkers: block`으로 만든다. 제품 SW·권한·기존 E2E의 SW 계약은 바꾸지 않는다. 시한·기대값은 유지한다.
+- 부분 확인: 웹 유닛·타입/번들, host `--lib gzip`·관련 library HTTP, 의존 경계와 E2E59/73/88, strict clippy·공개 검사다. 내부 검증은 nice 15, 자기 target, Playwright 1.64.1과 기존 내부 공용 브라우저만 쓴다. 전체 ci-local은 coordinator가 준 차례에서 수행한다. 고정 sleep·실패 재시도·시한/기대값 완화는 없다.
+
 ## 큰 agent 응답과 보고 hash 확인(t-1131, §8.505)
 
 - 공통 `response_parts`의 사고 회귀는 원본 9,820바이트·빈 파일35개·건너뛴 파일14,746개를 합쳐 운영 사고와 정확히 같은 2,232,861바이트 frame을 만든다. 실제 duplex/writer/FrameRx에서 6조각의 원문 동일성과 구판의 `too_large`, 잘못된 큰 제어 frame 거부 뒤 같은 연결의 pong·다음 요청을 검사한다. 필요한 이유: 한 큰 응답이 모든 agent 요청과 재연결을 끊던 회귀를 실제 포장/전송 경계에서 막는다.

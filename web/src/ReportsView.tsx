@@ -3,7 +3,7 @@
 // 그려 둔 채 숨긴다(App): 돌아오면 열어 둔 보고서·굴린 자리가 그대로다. 보고서 HTML은 thread 결과물처럼 sandbox iframe(opaque origin)이다.
 // 보고서 안 그림을 누르면 앱 크게 보기로 연다(plan §8.353: host가 붙인 알림을 그 iframe에서만 받는다).
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ExternalLink, ListPlus } from "lucide-react";
+import { ExternalLink, ListPlus, RefreshCw } from "lucide-react";
 import type { DeviceRole, LibraryFile, LibraryView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
@@ -15,6 +15,7 @@ import { markdownImages, reportMarkdownImage } from "./reportImages";
 import { ReportThread, ReportsPanel, openReportWindow } from "./ReportsPanel";
 import { formatBytes } from "./formatBytes";
 import { reportDocLink } from "./tasksModel";
+import { diagnosticReason } from "./errorDiagnostic";
 
 export type ReportRef = { project: string; name: string };
 
@@ -108,21 +109,47 @@ export function ReportsView({
   );
 }
 
-/** 보고서 하나: 머리(뒤로·이름·새 창)와 index.html(없으면 보고 글·파일 목록). 공유 링크 조작은 목록 카드에 있다 */
+/** 백그라운드 탭의 timer가 늦어져도 복귀 때 절대 만료 시각을 확인한다. 자동 재요청은 하지 않는다. */
+function useReportExpiry(until: number | null): boolean {
+  const [expiredUntil, setExpiredUntil] = useState<number | null>(null);
+  useEffect(() => {
+    if (until === null) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = () => {
+      clearTimeout(timer);
+      const left = until - Date.now();
+      setExpiredUntil(left <= 0 ? until : null);
+      if (left > 0) timer = setTimeout(check, Math.min(left, 2_147_483_647));
+    };
+    check();
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => { clearTimeout(timer); window.removeEventListener("focus", check); document.removeEventListener("visibilitychange", check); };
+  }, [until]);
+  return until !== null && expiredUntil === until;
+}
+
+/** 보고서 하나: 머리(뒤로·이름·다시 열기·새 창)와 index.html(없으면 보고 글·파일 목록). */
 function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportRef; onBack: () => void; onAddDoc?: (path: string) => void; onVersion: (id: string) => void }) {
   const [lib, setLib] = useState<LibraryView | null>(null);
   const [problem, setProblem] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [reload, setReload] = useState(0);
+  const requestedName = useRef(report.name);
+  const expired = useReportExpiry(lib?.expires_at_ms ?? null);
   useEffect(() => {
     let live = true;
-    call({ op: "library_open", project: report.project, name: report.name })
+    setBusy(true); setProblem("");
+    call({ op: "library_open", project: report.project, name: requestedName.current })
       .then((v) => {
         if (live && v.kind === "library") setLib(v);
       })
-      .catch((e: unknown) => live && setProblem(e instanceof ApiError ? e.message : String(e)));
+      .catch((e: unknown) => live && setProblem(e instanceof ApiError ? e.message : diagnosticReason(e)))
+      .finally(() => { if (live) setBusy(false); });
     return () => {
       live = false;
     };
-  }, [report.project, report.name]);
+  }, [report.project, report.name, reload]);
   const index = lib?.files.find((f) => f.path === "index.html" && !f.on_agent);
   const size = lib ? lib.files.reduce((n, f) => n + f.size, 0) : null;
   const lightbox = useLightbox();
@@ -143,24 +170,32 @@ function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportR
             {lib?.report_id && <a className="report-short-id" data-testid="report-id" href={`#report=${encodeURIComponent(`${report.project}/${lib.report_id}`)}`}><code>{lib.report_id}</code></a>}
             {report.name !== lib?.report_id && <strong>{report.project}/{report.name}</strong>}
           </span>
-          {size !== null && <span className="muted">{formatBytes(size)} · 파일 {lib!.files.length}</span>}
+          <span className="report-title-meta">
+            {size !== null && <span className="muted">{formatBytes(size)} · 파일 {lib!.files.length}</span>}
+            {(lib?.versions?.length ?? 0) > 1 && <select aria-label="보고 판" value={lib?.report_id ?? ""} onChange={(e) => onVersion(e.target.value)}>
+              {lib!.versions.map((id) => <option key={id} value={id}>{id}</option>)}
+            </select>}
+          </span>
         </div>
-        {(lib?.versions?.length ?? 0) > 1 && <select aria-label="보고 판" value={lib?.report_id ?? ""} onChange={(e) => onVersion(e.target.value)}>
-          {lib!.versions.map((id) => <option key={id} value={id}>{id}</option>)}
-        </select>}
         {onAddDoc && index && (
           <button className="ghost small report-task-add" data-testid="report-task-add" title="이 보고서를 링크한 task를 만들거나 있는 task에 링크한다" aria-label="할 일에 추가" onClick={() => onAddDoc("index.html")}>
             <ListPlus className="i" aria-hidden="true" />
             <span className="label">할 일에 추가</span>
           </button>
         )}
-        <button className="ghost small" data-testid="report-window" onClick={() => void openReportWindow(report).catch((e: unknown) => setProblem(String(e)))}>
+        <button className="ghost small" data-testid="report-reopen" aria-label="보고서 다시 열기" title="현재 보고 판을 새 보기 권한으로 다시 열기" disabled={busy} onClick={() => {
+          // 최신 t 판이 바뀌어도 지금 선택한 불변 r 판을 유지한다.
+          requestedName.current = lib?.report_id ?? report.name;
+          setReload((n) => n + 1);
+        }}><RefreshCw className="i" aria-hidden="true" /><span className="head-button-label">다시 열기</span></button>
+        <button className="ghost small" data-testid="report-window" aria-label="새 창" title="새 창" onClick={() => void openReportWindow(report).catch((e: unknown) => setProblem(diagnosticReason(e)))}>
           <ExternalLink className="i" aria-hidden="true" />
-          새 창
+          <span className="head-button-label">새 창</span>
         </button>
         <HeadMore />
       </header>
       {problem && <div className="banner err" role="alert">{problem}</div>}
+      {expired && <div className="banner" role="status" data-testid="report-expired">보기 시간이 끝났습니다. 아직 읽지 않은 이미지나 영상은 위의 다시 열기를 눌러 확인해 주세요.</div>}
       {lib && index ? (
         <iframe ref={frame} className="report-frame" data-testid="report-frame" title={`${report.project}/${report.name} index.html`} sandbox={LIBRARY_SANDBOX} src={page ?? undefined} />
       ) : lib ? (

@@ -344,6 +344,8 @@
 }
 
 .image-slot-note > svg { width: 1.25em; height: 1.25em; flex: none; }
+.report-media-status { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); max-width: 100%; }
+.report-media-result { display: flex; flex-direction: column; overflow-wrap: anywhere; font-size: var(--fs-xs); }
 
 /* a standalone Markdown image (a screenshot, a logo on a line of its own) holds a 16:9 slot as wide
    as the lane, up to the bound lib/imageBox.ts puts on it, framed as a code block is */

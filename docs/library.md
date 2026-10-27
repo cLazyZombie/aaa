@@ -20,11 +20,35 @@
 카드·보고 본문에서 영상의 재생 단추를 한 번 누르면 새 탭 없이 바로 재생한다. `mp4`·`webm`의
 `![]()`와 기존 `[시안 영상](library/preview/a.mp4)` 모두 controls·muted·playsinline 재생기로 표시한다.
 멈춤·탐색·음소거 해제는 재생기에서 한다. 기본 자동 재생·반복은 없으며 답을 골라도 영상 재생으로 선택이 바뀌지 않는다.
+Markdown 영상은 첫 재생 누름에서만 주소를 붙인다. 누르기 전에는 metadata 요청도 보내지 않는다.
 H.264 MP4(yuv420p, faststart)를 권장한다. 시안은 5~10초·10 MiB 이하를 목표로 하고, 긴 자료는 장면별로 나누어
 길이·용량·비교할 점을 적는다. WebM은 보조 형식으로 쓸 수 있지만 Safari용 MP4를 우선한다.
 이는 작성 권장 기준이며 업로드·회수의 실제 상한은 별도다. 답한 질문 사본의 합계 상한은 64 MiB다.
 
-HTML 보고서는 `<video controls muted playsinline preload="metadata" src="preview/a.mp4"></video>`로 넣는다.
+HTML 보고서는 아래처럼 썸네일·선택 재생을 기본으로 한다. `preload="none"`만 주는 것보다 첫 누름 전 `src` 자체를
+붙이지 않는 것이 초기 영상 요청을 확실히 막는다. 썸네일도 library에 두고 상대 주소로 쓴다.
+
+```html
+<img src="images/chart.png" alt="비교 그림" width="1280" height="720" loading="lazy" decoding="async" style="max-width:100%;height:auto">
+<video id="preview" controls muted playsinline preload="none" poster="preview/a.jpg" style="max-width:100%"></video>
+<button id="play-preview" type="button">시안 영상 재생</button>
+<p id="preview-state" role="status"></p>
+<script>
+document.querySelector('#play-preview').onclick = async () => {
+  const video = document.querySelector('#preview');
+  if (!video.hasAttribute('src')) video.src = 'preview/a.mp4';
+  try {
+    await video.play(); // 사용자 누름 안에서 시작
+    document.querySelector('#preview-state').textContent = '';
+  } catch {
+    document.querySelector('#preview-state').textContent = '영상을 읽지 못했습니다. 보고서를 다시 열어 주세요.';
+  }
+};
+</script>
+```
+
+그림은 실제 width/height로 자리를 예약하고 화면 근처에서 읽는다. 한꺼번에 비교할 필요가 없는 매체를 처음부터 모두 받지 않는다.
+기존 r 판의 원본은 그대로 보존하며 새 보고서 작성부터 적용한다.
 소리 없는 짧은 시안의 자동 반복은 움직임 비교용 HTML에서만 명시적으로 선택하는 것을 권한다. 이때
 `autoplay loop muted playsinline`과 멈춤 controls를 주고 `prefers-reduced-motion`이면 자동 재생하지 않는다.
 일반 질문 카드는 정지 화면 비교·여러 영상의 다운로드·접근성을 위해 누르면 재생을 기본으로 한다.
@@ -33,6 +57,20 @@ HTML 보고서는 `<video controls muted playsinline preload="metadata" src="pre
 질문 첨부도 인증한 웹 기기에 발급한 2시간 `/v/<권한>/` 경로로 읽는다. 새 탭·sandbox 하위 미디어·Range는
 기기 cookie 없이 그 질문/hash 또는 답한 사본만 읽으며, 기기 폐기·권한 만료·질문 교체 후에는 열리지 않는다.
 앱 API 주소를 영상 주소로 직접 쓰거나 sandbox에 `allow-same-origin`을 더하지 않는다.
+
+## 로딩 상태와 다시 열기
+
+보고 글의 이미지는 주소 확인·읽기 중·실패를 표시한다. 이미지 로딩/실패 또는 영상 실패의 「상태 확인」은
+사용자가 누를 때 같은 host의 `/v/` 파일에 쿠키 없는 HEAD를 한 번 보낸다. HTTP 상태·크기·상대 파일 경로와
+이미지의 완료/디코드 상태만 보이고, cap·query·origin·오류 원문은 진단에 넣지 않는다. 파일 자체를 재다운로드하거나 자동 재시도하지 않는다.
+
+앱 안 보기의 2시간이 지나면 만료 안내를 보인다. host 재시작 뒤에도 옛 보기 주소는 끝날 수 있다.
+보고서 머리의 「다시 열기」는 현재 선택한 r 판에 새 보기 권한을 받아 이미지·영상·HTML을 다시 연다.
+갱신 실패를 성공으로 표시하거나 최신 t 판으로 바꾸지 않는다. 질문 첨부는 그 질문을 다시 열어 권한을 받는다.
+
+보고서의 1KiB 이상 텍스트는 Accept-Encoding이 허용하면 gzip stream으로 보낸다. 이미지·영상·PDF, Range·내려받기와
+오류 응답은 원본 bytes를 유지한다. 압축 응답에는 Content-Encoding/Vary를 주고 원본 Content-Length를 남기지 않는다.
+HEAD는 같은 압축 협상 헤더와 빈 본문이다. `private, no-store`와 권한·sandbox 경계는 유지한다.
 
 ## 웹 보고서 작성과 sandbox
 

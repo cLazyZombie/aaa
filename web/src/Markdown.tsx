@@ -22,6 +22,7 @@ import { AppIdLink, AppRefChip, AppRefContext } from "./AppRefChip.tsx";
 import { splitAppIds } from "./appIds";
 import { isVideoPath } from "./reportMedia";
 import { ReportVideo } from "./ReportVideo";
+import { ReportMediaStatus } from "./ReportMediaStatus";
 import "./herdr/Markdown.css";
 
 /** Stats an image before it can load; null context keeps chat images as links. */
@@ -49,9 +50,11 @@ function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback }
 }) {
   // keyed by address: another one starts from the slot again and never takes the old one's answer
   const [settled, setSettled] = useState<{ src: string; failed: boolean } | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const phase = src !== null && settled?.src === src ? (settled.failed ? "failed" : "decoded") : "loading";
   // a cached image is complete before `onLoad` can fire
   const complete = useCallback((image: HTMLImageElement | null) => {
+    imageRef.current = image;
     if (image !== null && src !== null && image.complete && image.naturalWidth > 0) setSettled({ src, failed: false });
   }, [src]);
   if (phase === "failed" && !slot) return <>{fallback}</>;
@@ -63,11 +66,17 @@ function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback }
   if (phase === "failed") {
     return (
       <span className="image-slot is-failed" style={slotStyle}>
-        <span className="image-slot-note"><ImageOff aria-hidden="true" /><span>이미지를 표시할 수 없음</span>{alt !== "" && <span>{alt}</span>}</span>
+        <span className="image-slot-note"><ImageOff aria-hidden="true" /><span>이미지를 표시할 수 없음</span>{alt !== "" && <span>{alt}</span>}
+          {src !== null && <ReportMediaStatus src={src} image={() => imageRef.current} />}
+        </span>
       </span>
     );
   }
-  if (phase === "loading") return <span className="image-slot is-loading" style={slotStyle} role="status" aria-label="이미지 불러오는 중">{image}</span>;
+  if (phase === "loading") return <span className="image-slot is-loading" style={slotStyle}>
+    {image}<span className="image-slot-note"><span role="status">{src === null ? "이미지 주소 확인 중" : "이미지 불러오는 중"}</span>
+      {src !== null && <ReportMediaStatus src={src} image={() => imageRef.current} />}
+    </span>
+  </span>;
   return <span className="image-slot">{image}</span>;
 }
 
