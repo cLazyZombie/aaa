@@ -4914,3 +4914,8 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - Windows의 부분 통과나 0개 실행을 Mac의 단독/평소병렬 결과로 바꾸지 않는다.
   Mac 전용 worktree에서 같은 기준·동일 조합·nice15·Rust6worker/4thread·웹10worker·빌드별도로
   전후 각1회와 관련 전체 E2E를 확인한다. 무거운 전체 전후는 coordinator의 계측 차례를 받아 실행한다.
+
+## inbox 안내 말풍선의 연한 글색(t-1199)
+
+- E2E102는 주입된 `[aaa inbox]` 말풍선의 계산된 글색이 같은 대화의 사람 말과 다른지 확인한다. 필요한 이유: 표지만 남고 본문이 사람 말과 같아지는 회귀를 실제 host 대화 DOM에서 잡는다. 새 E2E 파일·단계는 없다.
+- `theme.test.mjs`는 12개 팔레트 자료의 `--text-quiet`가 말풍선 바탕(`--bg-elevated`)에서 4.5:1 이상인지 확인한다. 기본 9개 팔레트는 CSS 섞기 값이라 전후 촬영 때 headless Chromium의 계산된 색으로 대비를 쟀다(최저 catppuccin 밝음 5.14:1).

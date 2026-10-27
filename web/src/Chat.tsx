@@ -356,9 +356,10 @@ function PendingTag({ harness, stage, working, stale, onDismiss, steer }: Pendin
 /** 사람 말: 카드와 그 복사(마우스면 카드 옆, 터치면 아래) */
 function UserTurn({ active, text, pane, onOpenFile, pending }: { active: boolean; text: string; pane: string; onOpenFile?: (path: string) => void; pending?: Pending }) {
   const { note, onResult } = useCopyResult();
+  const inbox = text.trimStart().startsWith("[aaa inbox] ");
   return (
-    <article className="chat-turn chat-turn-user">
-      {text.trimStart().startsWith("[aaa inbox] ") && <div className="chat-inbox-label" data-testid="chat-inbox-label">aaa inbox 안내</div>}
+    <article className={`chat-turn chat-turn-user${inbox ? " is-inbox" : ""}`}>
+      {inbox && <div className="chat-inbox-label" data-testid="chat-inbox-label">aaa inbox 안내</div>}
       {onOpenFile && <UserImages pane={pane} text={text} onOpenFile={onOpenFile} />}
       <div className="chat-user-row">
         <UserMessage active={active} text={text} pending={pending !== undefined} sending={pending?.stage === "sending" || pending?.stage === "stuck"} />

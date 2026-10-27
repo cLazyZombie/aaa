@@ -95,6 +95,10 @@ async function check(engineName, engine, width, role, program) {
     await waitOutput(pane, 'INBOX_RECEIVED_1');
     await domIs(p, '주입 알림 기록', () => document.querySelector('[data-testid="chat"]')?.textContent.includes('[aaa inbox]'));
     assert.equal(await p.getByTestId('chat-inbox-label').textContent(), 'aaa inbox 안내');
+    // 안내 본문은 사람 말보다 연한 글색이다(--text-quiet). 보자마자 inbox 안내임을 안다
+    const [human, inbox] = await p.evaluate(() => ['.chat-turn-user:not(.is-inbox) .chat-msg.user', '.chat-turn-user.is-inbox .chat-msg.user']
+      .map(selector => getComputedStyle(document.querySelector(selector)).color));
+    assert.notEqual(inbox, human, '안내 본문이 사람 말과 같은 글색');
     await p.getByTestId('chat-interrupt').waitFor(); // 실제 감지된 working 상태에서 보낸다.
     await box.fill('첫 사람 메시지');
     await p.getByRole('button', { name: '메시지 보내기', exact: true }).click();

@@ -43,6 +43,8 @@
   --bg-active: var(--bg-hover);
   --bg-inset: var(--bg-input);
   --text-faint: color-mix(in srgb, var(--text-dim) 72%, var(--bg));
+  /* 사람이 쓰지 않은 말(inbox 안내)의 본문: 사람 말 글색을 말풍선 바탕 쪽으로 섞는다. 팔레트 자료는 catalogTheme.ts가 대비를 맞춰 덮는다 */
+  --text-quiet: color-mix(in srgb, var(--text-strong) 72%, var(--bg-elevated));
   --accent-strong: var(--primary-hover);
   --accent-bg: var(--accent-tint);
   --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -1574,5 +1576,9 @@ summary.chat-compact-head { cursor: pointer; }
 
 /* harness는 주입 안내도 user로 기록한다. 원문 표지는 유지하며 inbox 안내를 별도로 이름 붙인다. */
 .chat-inbox-label { color: var(--text-dim); font-size: var(--fs-xs); text-align: right; margin-bottom: var(--space-1); }
+/* 본문도 사람 말보다 연하게 해 보자마자 안내임을 안다(사용자 10-27). 링크·코드는 제 색을 둔다 */
+.chat-turn-user.is-inbox .chat-msg.user { color: var(--text-quiet); }
+/* catppuccin 밝음은 글과 바탕의 대비가 낮아 섞으면 4.5:1 아래로 간다: 그 팔레트의 보조 글색(5.1:1)을 쓴다 */
+[data-theme="light"][data-palette="catppuccin"] { --text-quiet: var(--text-dim); }
 /* 보관한 대화는 레이아웃·입력에 참여하지 않는다. .term의 flex보다 우선한다. */
 .term[hidden] { display: none; }
