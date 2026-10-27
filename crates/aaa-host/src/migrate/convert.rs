@@ -206,7 +206,11 @@ impl Copier<'_> {
         let from = self.src.join(rel);
         let dest = self.dst.join(to);
         let res = (|| -> std::io::Result<(u64, String)> {
-            if let Some(d) = dest.parent() {
+            // 같은 inbox 부모에 매 파일마다 mkdir을 하지 않는다.
+            // 현재 폴더를 확인하고, 없으면 기존 생성·오류 경로를 쓴다.
+            if let Some(d) = dest.parent()
+                && !d.is_dir()
+            {
                 std::fs::create_dir_all(d)?;
             }
             // macOS APFS에서 std::fs::copy는 clone(fclonefileat)을 먼저 쓴다

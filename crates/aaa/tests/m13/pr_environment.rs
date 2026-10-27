@@ -2,6 +2,14 @@
 use super::*;
 use aaa_common::child_process::StdCommandExt;
 
+/// 이 파일의 네 owner는 TUI 없는 FAKE_AGENT만 쓴다. 실제 gh pass·인증/회복·
+/// 보고 사건을 기다리며, PR의 1초 주기와 outage 판정은 원래 설정을 유지한다.
+fn pr_world(agent_env: impl FnOnce(&Path) -> Vec<(String, String)>) -> World {
+    let (mut w, env) = world_files("tick_secs=1\npr_poll_secs=1\noutage_secs=0\n", false, Some("0"), true, agent_env);
+    w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
+    world_start(w, env)
+}
+
 fn environment(root: &Path) -> Vec<(String, String)> {
     let mut env = fake_gh(root);
     let source = root.join("gh/source");
@@ -38,7 +46,7 @@ esac
 
 #[test]
 fn pr_environment_failure_is_not_recovered_by_another_thread() {
-    let mut w = world_setup("tick_secs=1\npr_poll_secs=1\noutage_secs=0\n", false, environment);
+    let mut w = pr_world(environment);
     git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
     let task = w.task("pr.md", "PR 조회를 확인한다");
     let mut ids = Vec::new();
@@ -97,7 +105,7 @@ fn pr_environment_failure_is_not_recovered_by_another_thread() {
 /// 공개 전 branch는 조회하지 않고, 공개된 branch만 찾는다. sentinel의 다음 호출은 앞 pass 완료의 울타리다.
 #[test]
 fn pr_unpublished_branch_never_calls_gh() {
-    let w = world_setup("tick_secs=1\npr_poll_secs=1\noutage_secs=0\n", false, environment);
+    let w = pr_world(environment);
     git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
     let mut branches = Vec::new();
     let mut ids = Vec::new();
@@ -129,7 +137,7 @@ fn pr_unpublished_branch_never_calls_gh() {
 
 #[test]
 fn pr_unauthenticated_machine_is_quiet_and_resumes() {
-    let w = world_setup("tick_secs=1\npr_poll_secs=1\noutage_secs=0\n", false, |root| {
+    let w = pr_world(|root| {
         let mut env = environment(root);
         env.push(("GH_FAILURE_CODE".into(), "4".into()));
         env
@@ -170,7 +178,7 @@ fn pr_unauthenticated_machine_is_quiet_and_resumes() {
 
 #[test]
 fn pr_missing_executable_is_quiet() {
-    let w = world_setup("tick_secs=1\npr_poll_secs=1\noutage_secs=0\n", false, |root| {
+    let w = pr_world(|root| {
         let env = environment(root);
         // resolver가 찾은 파일도 interpreter/실행 파일이 사라지면 ENOENT다. 운영 gh·PATH는 건드리지 않는다.
         let source = root.join("gh/source-missing");
