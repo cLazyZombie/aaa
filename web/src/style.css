@@ -555,6 +555,34 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
   pointer-events: none;
 }
+/* 고른 글의 「메시지에 인용」(t-1204, 참고 herdr-web-ui PaneTerminal.css .terminal-quote): 단추인 띠 */
+.terminal-banners .banner.terminal-quote { font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.terminal-banners .banner.terminal-quote:hover { border-color: var(--accent); }
+.terminal-banners .banner.terminal-quote:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.terminal-quote svg, .chat-quote svg { width: 16px; height: 16px; flex: none; }
+/* 대화에서 고른 글 끝에 뜨는 「메시지에 인용」(참고 t3code AssistantSelectionToolbar): 자리는 ChatQuote.tsx가 화면 안으로 당긴다 */
+.chat-quote {
+  position: fixed;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  max-width: calc(100vw - 16px);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.chat-quote:hover { border-color: var(--accent); }
+@media (pointer: coarse) {
+  .chat-quote { height: var(--touch-target); }
+}
 /* 「맨 아래로 이동」(참고 TerminalViewportTools.css): 자리는 grid 오른쪽 아래 끝, 거기서 제 크기만큼 안쪽 */
 .terminal-jump-bottom {
   position: absolute;

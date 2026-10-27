@@ -8180,3 +8180,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - thread Follow-ups·coordinator question answered 본문·답한 카드에 번호별 원문을 보존한다. q-ID별 부분 답도 같은 배열로 합치며, 재보고로 질문 순서가 바뀌어도 선택과 의견을 함께 옮긴다. 직접 지시는 선택보다 우선한다.
 - E53의 기존 두 질문 owner에 선택+의견·직접 답만·여러 줄 원문·Follow-ups·inbox 보존 검사를 더한다. headless 카드 회귀는 모바일/데스크톱·light/dark, 미응답·추천·Reader·초안·거부 뒤 보존을 확인한다. 새 E2E 번호와 고정 sleep은 없다.
 - 참고는 SurveyJS 질문별 comment area와 JSON Forms multiline control(각 MIT)다. 입력을 해당 질문에 붙이는 배치와 여러 줄 글을 따르며 외부 코드·의존성을 가져오지 않는다.
+
+### 8.518 고른 글을 출처와 함께 thread 입력 초안에 인용(t-1204)
+
+- t-1170 레퍼런스 조사 1순위의 첫 범위다. 대화 보기에서 글을 끌어 고르면(누른 채는 띄우지 않고 놓은 뒤) 고른 글 끝 아래에 「메시지에 인용」 단추가 뜨고, 터미널 보기에서 고르면 오른쪽 위 띠에 같은 단추가 뜬다. 누르면 그 pane의 보이는 입력 초안 끝에 붙인다. 쓰던 글은 그대로 두고 빈 줄 뒤에 붙이며 그 아래에 이어 쓰도록 줄을 하나 더 둔다. 보내기는 사람이 누른다.
+- 붙이는 곳: 대화 보기·입력줄 없는 터미널(바로 입력)은 대화 입력창 초안(`herdr-web-ui:composer-draft:<machine>:<pane>`), 입력줄이 보이는 터미널은 입력줄 초안(`herdr-web-ui:terminal-line:`)이다. 보이는 입력창이면 끝으로 focus를 옮기고(터치 기기는 화면 키보드를 올리지 않는다), 안 보이는 대화 초안이면 「메시지 초안에 넣었다」를 띄운다. 넘치면(대화 100,000자·입력줄 32,768자) 붙이지 않고 알린다. 보기 권한·중단 pane·agent 아닌 셸 pane에는 단추가 없다.
+- 글 꼴: 머리 `인용: <출처>`. 출처는 thread pane이면 thread ID, coordinator면 `coordinator`, 그 밖은 `<머신> <pane 이름>`이다. 대화는 `· Claude 답`·`· Codex 답`·`· 사람 글`(명령·명령 출력·생각·도구)을 붙이고 여러 말에 걸치면 붙이지 않으며 줄마다 `> `다. 터미널은 `터미널 a~b줄`(xterm 버퍼 줄, 1부터, 다음 줄 첫 칸에서 끝난 선택은 앞 줄까지)과 글 안 backtick 줄보다 긴 울타리다. 대화 글은 화면 글자이며 단추·접기·대기 표지·기록 안내 줄은 빼고 블록 사이를 줄바꿈한다.
+- 참고: t3code `apps/web/src/components/chat/AssistantSelectionToolbar.tsx`·`lib/assistantTextSelection.ts`·`lib/selectionActions.ts`(MIT, 36d4d711: 놓은 뒤 띄우기·단추가 선택을 풀지 않음·글자 아닌 것 빼기·화면 안 자리), herdr-web-ui `src/lib/terminalQuote.ts`·`src/components/PaneTerminal.tsx` 「Quote in message」(MIT, 166290b: 머리·울타리·초안 끝에 붙이기·넘침 거부). 다른 곳: aaa 입력창은 칩이 없는 글이라 t3code의 링크·`<assistant_citations>` 펼치기 대신 받는 agent가 그대로 읽는 Markdown으로 넣는다. 인용 위치 복원·선택 의견·보고 판·diff 줄 의견은 후속이다.
+- API·저장 형식 변경 없음(FRONT_API 그대로). 웹 유닛 `selectionQuote.test.mjs`, 웹 E2E116 `116-selection-quote`.

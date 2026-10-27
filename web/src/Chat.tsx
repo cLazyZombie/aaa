@@ -35,6 +35,8 @@ import { mergeChatPage } from "./chatPages";
 import { steerLabel, type SteerState } from "./steerQueued";
 import { groupChatRows, groupExpanded, readExpandedGroups, rememberExpandedGroups, rowIndexById, summarizeToolGroup, toggleExpanded, toolGroupKind, type ChatDisplayRow, type ToolGroupKind } from "./toolGroups";
 import { ChatFindBar, useChatFind, type OlderOutcome } from "./ChatFind";
+import { ChatQuoteButton } from "./ChatQuote";
+import type { QuoteSpeaker } from "./selectionQuote.ts";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
@@ -440,6 +442,7 @@ export function ChatPanel({
   onDismissPending,
   steer,
   findRequest = 0,
+  onQuote,
 }: {
   active?: boolean;
   onBytes?: (bytes: number) => void;
@@ -464,6 +467,8 @@ export function ChatPanel({
   steer?: Omit<SteerView, "count">;
   /** 머리 돋보기·팔레트 「대화에서 찾기」가 올린다: 바뀌면 찾기 칸을 연다(plan §8.308) */
   findRequest?: number;
+  /** 고른 글을 이 pane 입력 초안에 인용한다(t-1204). 없으면(보기 권한·입력창 없음) 단추를 띄우지 않는다 */
+  onQuote?: (text: string, speaker: QuoteSpeaker) => boolean;
 }) {
   const visible = usePageVisible();
   const reading = active && visible;
@@ -958,6 +963,7 @@ export function ChatPanel({
       <OpenLinkContext.Provider value={onOpenLink ?? null}>
       <div className="chat-frame">
       <ChatFindBar {...find.bar} />
+      {onQuote && <ChatQuoteButton container={list} active={active} onQuote={onQuote} />}
       <div
         className="chat"
         ref={list}
