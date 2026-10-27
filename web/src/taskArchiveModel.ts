@@ -93,5 +93,5 @@ export function archiveGroups(entries: readonly ArchivedTask[], sort: TaskArchiv
 
 /** 완료 근거를 짧은 칩 글로. 모르는 근거는 원문이다 */
 export function reasonLabel(reason: string): string {
-  return ({ "PR 병합": "PR 병합", "origin/main 병합": "main 병합", "보고 [완료]": "보고 완료", "완료 체크 [x]": "체크 완료" } as Record<string, string>)[reason] ?? reason;
+  return ({ "origin/main 병합": "main 병합", "보고 [완료]": "보고 완료", "완료 체크 [x]": "체크 완료" } as Record<string, string>)[reason] ?? reason;
 }

@@ -972,7 +972,6 @@ impl Host {
             let restored = row.restored || active.iter().any(|t| t.id.as_deref() == Some(&row.task_id));
             let matches = match view.filter {
                 Some(aaa_proto::TaskArchiveFilter::Restored) => restored,
-                Some(aaa_proto::TaskArchiveFilter::PrMerged) => !restored && row.reason == "PR 병합",
                 Some(aaa_proto::TaskArchiveFilter::MainMerged) => !restored && row.reason == "origin/main 병합",
                 Some(aaa_proto::TaskArchiveFilter::ReportDone) => !restored && row.reason == "보고 [완료]",
                 None => !restored,

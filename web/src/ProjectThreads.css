@@ -100,7 +100,6 @@
 
 .project-threads-group.is-waiting_on_you .project-threads-group-head { color: var(--status-blocked); }
 .project-threads-group.is-ready_for_review .project-threads-group-head { color: var(--notice); }
-.project-threads-group.is-landing .project-threads-group-head { color: var(--status-done); }
 
 .project-threads-list {
   list-style: none;

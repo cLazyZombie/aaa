@@ -258,7 +258,6 @@ pub fn typescript_bindings() -> String {
         ThreadPark::decl(&cfg),
         UnparkOption::decl(&cfg),
         UnparkPreview::decl(&cfg),
-        ThreadPr::decl(&cfg),
         SummaryMark::decl(&cfg),
         ThreadQuestions::decl(&cfg),
         ThreadQuestion::decl(&cfg),

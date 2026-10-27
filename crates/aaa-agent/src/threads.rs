@@ -629,7 +629,7 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
 }
 
 pub(crate) use preparation::protect_recorded_worktrees_locked;
-/// thread 정리(herdr-projects threads.rs `clean`). worktree는 force 없이 지운다. branch는 PR이 병합됐고(`merged_head`가
+/// thread 정리(herdr-projects threads.rs `clean`). worktree는 force 없이 지운다. branch는 main에 포함됐고(`merged_head`가
 /// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다. `uncopied`(마지막 사본에 빠진 것이 있다)면 폴더가 남아 있는 한
 /// worktree를 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다. host는 그때
 /// `keep_worktree`도 켜서 보낸다(옛 agent도 지우지 않게).
@@ -687,7 +687,7 @@ async fn cleanup(
             (Some(head), true) => match delete_branch(&repo, branch, head).await {
                 Ok(true) => {
                     c.branch_deleted = true;
-                    c.notes.push(format!("branch {branch}를 지웠다(PR이 병합됐다)"));
+                    c.notes.push(format!("branch {branch}를 지웠다(main에 포함됐다)"));
                 }
                 Ok(false) => {
                     c.branch_deleted = true;
@@ -695,19 +695,20 @@ async fn cleanup(
                 }
                 Err(e) => c.notes.push(format!("branch {branch}를 남겼다: {e:#}")),
             },
-            (None, _) => c.notes.push(format!("branch {branch}를 남겼다: PR이 병합되지 않았다")),
+            (None, _) => {
+                c.notes.push(format!("branch {branch}를 남겼다: 현재 branch 끝의 main 포함을 확인하지 못했다"))
+            }
             (Some(_), false) => c.notes.push(format!("branch {branch}를 남겼다: worktree가 남아 있다")),
         }
     }
     Ok(c)
 }
 
-/// branch 끝이 병합된 PR의 head commit일 때만 지운다(herdr-projects `delete_branch`): 병합 뒤 push하지 않은 commit이
-/// 있으면 남는다. `-D`인 까닭: GitHub가 병합됐다고 하고, squash 병합은 git이 보기에 병합되지 않은 branch를 남긴다.
+/// main 포함을 확인한 현재 branch 끝이 그대로일 때만 지운다. 확인 뒤 추가된 commit은 보존한다.
 /// `false`: 지울 branch가 없었다.
 async fn delete_branch(repo: &Path, branch: &str, head: &str) -> Result<bool> {
     if head.is_empty() {
-        bail!("병합된 PR의 head commit을 모른다");
+        bail!("main에 포함된 branch 끝을 모른다");
     }
     let tip = git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T)
         .await
@@ -717,7 +718,7 @@ async fn delete_branch(repo: &Path, branch: &str, head: &str) -> Result<bool> {
         return Ok(false);
     }
     if tip != head {
-        bail!("병합된 PR에 없는 commit이 있다");
+        bail!("main 포함 확인 뒤 branch 끝이 바뀌었다");
     }
     git(repo, &["branch", "-D", branch], GIT_T).await.map(|_| true)
 }

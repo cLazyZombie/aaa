@@ -38,9 +38,11 @@ async fn idle_automation_drain_does_not_join_dispatch_or_block_the_first_account
     let l = Lab::new();
     let h = &l.h;
     let dir = h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("routines")).unwrap();
+    std::fs::write(dir.join("routines/check-followup.md"), "+++\nschedule=\"every 1h\"\n+++\n확인\n").unwrap();
     let (rules, broken) = crate::routine::load_all(&dir);
     assert!(broken.is_empty());
-    let rule = rules.iter().find(|r| r.name == "pr-followup").unwrap();
+    let rule = rules.iter().find(|r| r.name == "check-followup").unwrap();
     let lock = h.automation_dispatch_lock("demo");
     let held = lock.lock().await;
     let drain = h.automation_drain("demo", rule);

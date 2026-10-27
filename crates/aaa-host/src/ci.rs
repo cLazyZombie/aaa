@@ -110,7 +110,7 @@ impl Host {
         match conn
             .request_timeout(
                 AgentRequest::CiQuery { cwd: cwd.into(), query: q },
-                aaa_common::pr::GH_TIMEOUT * 2 + Duration::from_secs(5),
+                aaa_common::github::GH_TIMEOUT * 2 + Duration::from_secs(5),
             )
             .await?
         {

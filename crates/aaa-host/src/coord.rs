@@ -702,9 +702,7 @@ impl Host {
                                             .ok()
                                     })
                                     .map(|rec| {
-                                        if rec.task_clean.why.as_deref() == Some("merged") {
-                                            "PR 병합"
-                                        } else if rec.task_clean.merged_main.is_some() {
+                                        if rec.task_clean.merged_main.is_some() {
                                             "origin/main 병합"
                                         } else {
                                             "보고 [완료]"

@@ -36,7 +36,7 @@ pub(crate) struct ThreadRec {
     #[serde(default)]
     pub launch_existing_slot: bool,
     /// 제거된 기능의 원본 데이터는 변환 전까지 그대로 보존한다. 실행에는 쓰지 않는다.
-    #[serde(flatten)]
+    #[serde(flatten, deserialize_with = "without_pr_state")]
     pub legacy: std::collections::BTreeMap<String, serde_json::Value>,
     pub project: String,
     pub id: String,
@@ -72,13 +72,6 @@ pub(crate) struct ThreadRec {
     pub base: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
-    /// 추적하는 PR(§8.80): 보고 `PR:` 줄이나 branch로 찾은 주소, 마지막으로 본 상태·리뷰
-    #[serde(default)]
-    pub pr: Option<String>,
-    #[serde(default)]
-    pub pr_state: Option<String>,
-    #[serde(default)]
-    pub pr_review: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
@@ -146,9 +139,6 @@ pub(crate) struct ThreadRec {
     /// 보고 hash가 마지막으로 바뀐 시각(herdr-projects `last_report_change`)
     #[serde(default)]
     pub report_changed_ms: Option<u64>,
-    /// ticker가 PR 병합을 처음 본 때(herdr-projects ticker 상태 `merged_seen`). 끝내거나 다시 열면 지운다
-    #[serde(default)]
-    pub merged_seen_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
     /// resolve 때 남긴 worktree·branch(`project sweep`이 다시 정리한다). None은 모른다(이 필드 전에 끝난 thread)
@@ -232,9 +222,6 @@ impl ThreadRec {
             repo: None,
             base: None,
             branch: None,
-            pr: None,
-            pr_state: None,
-            pr_review: None,
             cwd: None,
             work_dir: None,
             pane: None,
@@ -264,7 +251,6 @@ impl ThreadRec {
             review_item_hash: None,
             group_changed_ms: Some(now),
             report_changed_ms: None,
-            merged_seen_ms: None,
             error: None,
             leftover: None,
             resolve_pending: None,
@@ -277,12 +263,22 @@ impl ThreadRec {
     }
 }
 
-/// 왜 끝내나(herdr-projects `resolved_reason`): 사람이 했거나, 쉼으로 `auto_resolve_days`가 지났거나, PR이 병합됐다
+/// 다른 폐지 기능의 보존 자료는 유지하되 PR의 현재 추적 상태는 다시 저장하지 않는다.
+fn without_pr_state<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>, D::Error> {
+    let mut fields = std::collections::BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    for name in ["pr", "pr_state", "pr_review", "merged_seen_ms"] {
+        fields.remove(name);
+    }
+    Ok(fields)
+}
+
+/// 왜 끝내나: 직접 요청 또는 설정한 쉼 기간이 지났다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolveWhy {
     Manual,
     Auto { days: Option<u32> },
-    Merged,
 }
 
 impl ResolveWhy {
@@ -291,7 +287,6 @@ impl ResolveWhy {
         match self {
             ResolveWhy::Manual => "manual",
             ResolveWhy::Auto { .. } => "auto",
-            ResolveWhy::Merged => "merged",
         }
     }
 }
@@ -481,17 +476,10 @@ pub(crate) fn thread_group_with(
     {
         return group;
     }
-    // 5: PR과 보고. 열리고 승인된 PR은 병합 중이다. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는
-    //    결과가 아니다). 진행을 보고하는 agent는 끝을 스스로 말한다: `Done`(100)만 끝이다(herdr-projects steps.rs
-    //    `merged_thread_may_resolve`). 배경 명령을 기다리며 턴을 끝낸 중간 보고는 검토 대기가 아니다. pane이 닫혔으면
-    //    더 보고할 수 없으니 참고대로 둔다.
-    let pr_open = r.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("open"));
-    if pr_open && r.pr_review.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("approved")) {
-        return ThreadGroup::Landing;
-    }
+    // 5: 새 보고. harness가 작업 중이거나 진행 보고가 미완료이면 중간 보고로 본다.
     let unfinished = pane_exists && reported.is_some_and(|a| a.percent != Some(100));
     let new_report = has_report && r.report_hash != r.acked_hash;
-    if (new_report || (has_report && pr_open)) && !prompt_pending && state != Some(A::Working) && !unfinished {
+    if new_report && !prompt_pending && state != Some(A::Working) && !unfinished {
         return ThreadGroup::ReadyForReview;
     }
     // 6: harness나 진행 보고로 작업 중. brief 전송 뒤 새 보고가 없으면 받음 확인 뒤 유예 동안 작업 중이다.
@@ -567,15 +555,14 @@ pub struct ProjectScaffold {
     pub directories: &'static [&'static str],
     pub files: Vec<(&'static str, String)>,
 }
-pub fn project_scaffold(name: &str, project_md: &str, include_default_pr: bool) -> ProjectScaffold {
+pub fn project_scaffold(name: &str, project_md: &str, include_schema: bool) -> ProjectScaffold {
     let mut files = vec![
         ("MEMORY.md", "# Memory\n".into()),
         ("TASKS.md", "# Tasks\n\n## Backlog\n".into()),
         ("project.toml", "schema = 1\n".into()),
         ("AGENTS.md", coordinator_guide(name)),
     ];
-    if include_default_pr {
-        files.push(("automations/pr-followup.toml", default_followup()));
+    if include_schema {
         files.push(("automations/automation.schema.json", crate::automation_schema()));
     }
     files.push(("PROJECT.md", project_md.into()));
@@ -588,16 +575,23 @@ pub fn project_scaffold(name: &str, project_md: &str, include_default_pr: bool) 
 /// 표지 없는 AGENTS.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
 const KEPT: &str = ".before-aaa";
 
-fn default_followup() -> String {
-    let rule = crate::routine::parse("pr-followup", crate::routine::PR_FOLLOWUP_TEMPLATE).expect("내장 PR 규칙");
-    crate::automation::model::encode(&crate::automation::File::from_routine(&rule)).expect("내장 PR 직렬화")
-}
-
-/// 변환본 또는 보존 사본이 있으면 doctor와 create가 옛 기본 규칙을 되살리지 않는다.
-fn needs_default_followup(dir: &Path) -> bool {
-    !dir.join(crate::routine::PR_FOLLOWUP).exists()
-        && !dir.join("automations/pr-followup.toml").exists()
-        && !dir.join("routines/.converted/pr-followup.md").exists()
+fn retired_pr_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for (folder, suffix) in [("routines", ".md"), ("automations", ".toml")] {
+        for entry in std::fs::read_dir(dir.join(folder)).into_iter().flatten().filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(suffix) {
+                continue;
+            }
+            let relative = format!("{folder}/{name}");
+            if crate::automation::project_text(dir, &relative).is_ok_and(|text| crate::routine::removed_pr_rule(&text))
+            {
+                files.push(dir.join(relative));
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 /// 프로젝트 폴더의 aaa 파일에서 고칠 것(herdr-projects `priming_problems`). 빈 목록이면 맞다.
@@ -619,8 +613,11 @@ pub(crate) fn files_problems(dir: &Path, name: &str) -> Vec<String> {
     if !dir.join("uploads").is_dir() {
         problems.push("uploads/가 없다".into());
     }
-    if needs_default_followup(dir) {
-        problems.push("automations/pr-followup.toml이 없다".into());
+    for path in retired_pr_files(dir) {
+        problems.push(format!(
+            "{}: 폐지된 자동화 원본을 .before-aaa로 보존한다",
+            path.strip_prefix(dir).unwrap_or(&path).display()
+        ));
     }
     problems
 }
@@ -648,13 +645,8 @@ pub(crate) fn write_files(dir: &Path, name: &str) -> std::io::Result<()> {
         Err(e) => return Err(e),
     }
     std::fs::create_dir_all(dir.join("uploads"))?;
-    let followup = dir.join("automations/pr-followup.toml");
-    if needs_default_followup(dir) {
-        write_atomic(&followup, default_followup().as_bytes())?;
-        let schema = dir.join("automations/automation.schema.json");
-        if !schema.exists() {
-            write_atomic(&schema, crate::automation_schema().as_bytes())?;
-        }
+    for path in retired_pr_files(dir) {
+        keep_aside(&path)?;
     }
     Ok(())
 }
@@ -776,12 +768,6 @@ impl Host {
         if let Some(p) = &opts.thread_profile {
             // 새 프로젝트의 thread 허용 목록(host.toml `[safety.default]`·옛 자리)에 있어야 한다(참고 `check_allowed`)
             self.check_profile_allowed(name, p)?;
-        }
-        // 기본 `pr` routine(herdr-projects `write_default_routine`). PROJECT.md가 마지막이 되게 뼈대보다 먼저 쓴다.
-        // 옮기기(`migrate::convert`)는 0.2의 routine을 꺼서 넣으므로 여기서만 쓴다.
-        let followup = dir.join("automations/pr-followup.toml");
-        if needs_default_followup(&dir) {
-            write_atomic(&followup, default_followup().as_bytes()).map_err(internal)?;
         }
         write_atomic(&dir.join("project.toml"), toml.as_bytes()).map_err(internal)?;
         write_skeleton(&dir, name, &format!("# {name}\n\n지침을 여기에 쓴다.\n")).map_err(internal)?;
@@ -1039,9 +1025,6 @@ impl Host {
             cwd: r.cwd.clone(),
             work_dir: r.work_dir.clone(),
             branch: r.branch.clone(),
-            pr: r.pr.clone().map(|url| {
-                Box::new(aaa_proto::ThreadPr { url, state: r.pr_state.clone(), review: r.pr_review.clone() })
-            }),
             report_hash: r.report_hash.clone(),
             report_id: self.thread_report_id(&r.project, &r.id, r.report_hash.as_deref()),
             report_attention: self.report_attention(r),
@@ -2805,8 +2788,6 @@ impl Host {
                     self.new_report_item(project, &self.load(project, id)?);
                 }
                 self.flow(&rec, "report_ready", Some(format!("threads/{id}.md")), detail);
-                // 보고 첫 줄 `PR:`이 생겼을 수 있다: 간격을 기다리지 않고 본다
-                self.pr_soon(project);
                 // 새 보고는 이번 묶음 셈에 바로 든다(herdr-projects ticker `fresh_hash`)
                 self.tick_wake.notify_one();
                 failures.first().map_or(Ok(()), |e| Err(internal(e.clone())))
@@ -2910,7 +2891,6 @@ impl Host {
             r.task_clean.discard |= opts.skip_copy || opts.discard_uncopied;
             r.error = Some("정리 중: 응답을 기록할 때까지 다시 resolve로 이어갈 수 있다".into());
             r.last_group = Some(ThreadGroup::Resolved);
-            r.merged_seen_ms = None;
         })?;
         if let Some(revision) = &rec.report_hash {
             let path = self.project_dir(project)?.join("threads").join(format!("{id}.md"));
@@ -2974,7 +2954,7 @@ impl Host {
         }
         if let Some(cwd) = rec.cwd.as_ref().filter(|_| !adopted) {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
-            let merged_head = if repo.is_some() { self.merged_head(project, &rec, &conn).await } else { None };
+            let merged_head = if repo.is_some() { self.main_branch_head(&rec).await } else { None };
             match conn
                 .request(AgentRequest::ThreadCleanup {
                     repo,
@@ -3069,16 +3049,11 @@ impl Host {
                 "{}: 쉼으로 auto_resolve_days({days}일)가 지나 저절로 끝냈다. `aaa thread resolve {project} {id} --reopen`으로 되돌린다",
                 crate::transitions::label(&rec)
             ),
-            // herdr-projects `resolve_after_copy` 「resolved (merged)」
-            ResolveWhy::Merged => {
-                format!("{}: PR이 병합돼 저절로 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec))
-            }
         };
         if !notes.is_empty() {
             summary.push_str(&format!(": {}", notes.join("; ")));
         }
         self.inbox_add(project, "thread-state", id, "resolved", &summary);
-        // 정리 중 resolve 때 찾은 PR(`last_pr_lookup`)이 기록을 고쳤을 수 있다
         Ok(self.thread_view(&self.load(project, id).unwrap_or(rec)))
     }
 
@@ -3110,7 +3085,6 @@ impl Host {
             r.status = ThreadStatus::Open;
             // 다음 셈은 처음 보는 것으로 친다(전이 항목을 내지 않는다). 병합을 본 때도 다시 잰다
             r.last_group = None;
-            r.merged_seen_ms = None;
             // 이어진 task는 다음 끝남에서 다시 판정한다(아직 판정 전이면 하지 않는다)
             r.task_clean = TaskClean {
                 followups: r.task_clean.followups.clone(),
@@ -3262,7 +3236,7 @@ fn same_tree(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! herdr-projects src/thread.rs `group()` 시험을 옮겼다(Landing·PR 줄은 aaa에 없어 뺐다).
+    //! herdr-projects src/thread.rs `group()` 시험을 옮겼다(현재 보고 상태 판정에 맞췄다).
     use super::*;
 
     const NOW: u64 = 10_000_000;
@@ -3290,9 +3264,6 @@ mod tests {
             repo: None,
             base: None,
             branch: None,
-            pr: None,
-            pr_state: None,
-            pr_review: None,
             cwd: None,
             work_dir: None,
             pane: Some("pane".into()),
@@ -3321,7 +3292,6 @@ mod tests {
             review_item_hash: None,
             group_changed_ms: None,
             report_changed_ms: None,
-            merged_seen_ms: None,
             error: None,
             resolve_pending: None,
             task_clean: TaskClean::default(),
@@ -3331,6 +3301,25 @@ mod tests {
             created_at_ms: NOW - 3_600_000,
             updated_at_ms: NOW,
         }
+    }
+
+    // 옛 저장 자료에 PR 상태가 있어도 현재 분류·출력의 근거가 되지 않는다.
+    #[test]
+    fn legacy_pr_metadata_does_not_override_report_groups() {
+        let mut value = serde_json::to_value(with_report(open_thread())).unwrap();
+        value["pr"] = serde_json::json!("https://github.com/o/app/pull/1");
+        value["pr_state"] = serde_json::json!("OPEN");
+        value["pr_review"] = serde_json::json!("APPROVED");
+        value["last_group"] = serde_json::json!("landing");
+        value["retired_mission"] = serde_json::json!("보존");
+        let mut rec: ThreadRec = serde_json::from_value(value).unwrap();
+        assert_eq!(rec.last_group, Some(ThreadGroup::ReadyForReview));
+        assert_eq!(g(&rec, Some(agent(aaa_proto::AgentActivity::Idle, 0))), ThreadGroup::ReadyForReview);
+        rec.acked_hash = rec.report_hash.clone();
+        assert_eq!(g(&rec, Some(agent(aaa_proto::AgentActivity::Idle, 0))), ThreadGroup::Idle);
+        let saved = serde_json::to_value(rec).unwrap();
+        assert!(saved.get("pr").is_none());
+        assert_eq!(saved["retired_mission"], "보존");
     }
 
     fn agent(activity: AgentActivity, secs: u64) -> AgentStatus {
@@ -3463,30 +3452,6 @@ mod tests {
         let t = with_report(open_thread());
         assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Working);
         // 오래 뜬 확인창이 새 보고를 이긴다
-        assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
-    }
-
-    /// herdr-projects thread.rs `row5_landing_needs_open_and_approved`·`row6_ready_for_review_until_ack_or_while_pr_open`
-    #[test]
-    fn row5_landing_and_an_open_pull_request() {
-        let pr = |t: ThreadRec, state: &str, review: &str| ThreadRec {
-            pr_state: Some(state.into()),
-            pr_review: Some(review.into()),
-            ..t
-        };
-        let t = pr(with_report(open_thread()), "OPEN", "APPROVED");
-        assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::Landing);
-        // 승인된 열린 PR은 일하는 harness보다 먼저다(참고 5번 줄이 6번보다 앞)
-        assert_eq!(g(&t, Some(agent(Working, 0))), ThreadGroup::Landing);
-        let changes = pr(t.clone(), "OPEN", "CHANGES_REQUESTED");
-        assert_eq!(g(&changes, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
-        // 확인한 보고라도 PR이 열려 있으면 검토 대기, 병합되면 쉼
-        let acked = ThreadRec { acked_hash: Some("h".into()), ..pr(t.clone(), "OPEN", "") };
-        assert_eq!(g(&acked, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
-        assert_eq!(g(&pr(acked.clone(), "MERGED", "APPROVED"), Some(agent(Idle, 0))), ThreadGroup::Idle);
-        // 보고 없는 열린 PR은 검토할 것이 없다
-        assert_eq!(g(&pr(open_thread(), "OPEN", ""), Some(agent(Idle, 0))), ThreadGroup::Idle);
-        // 확인 필요(4번 줄)는 병합 중보다 먼저다
         assert_eq!(g(&t, Some(agent(Question, 31))), ThreadGroup::WaitingOnYou);
     }
 

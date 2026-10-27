@@ -70,7 +70,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
 | `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
 | `aaa project rename <새 이름>` · `aaa project delete` · `aaa project sweep` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
-| `aaa doctor files [--fix]` | 모든 프로젝트의 coordinator 안내(AGENTS.md)·uploads/·pr-followup 규칙 보기(TOML 변환본이 있으면 옛 routine을 다시 만들지 않음) · 낡은 안내를 지금 aaa 것으로 다시 쓰기(사람이 쓴 파일은 `.before-aaa`로 옮겨 둠) |
+| `aaa doctor files [--fix]` | 모든 프로젝트의 coordinator 안내(AGENTS.md)·uploads/ 보기·폐지된 자동화 원본 보존 · 낡은 안내를 지금 aaa 것으로 다시 쓰기(사람이 쓴 파일은 `.before-aaa`로 옮겨 둠) |
 | `aaa guide [주제]` · `aaa guide --all` | coordinator·thread가 그 일을 할 때 읽는 세부 안내(질문 post 문법·보고서·thread 한도·작업 요약·확인창·TASKS.md 형식·CI·배포 절차·자동화·auto mode·웹 보고서 sandbox). host에 묻지 않고 이 실행 파일의 글을 보인다. 주제 없이 부르면 목록. AGENTS.md는 매 턴 규칙만 두고 이 주제를 가리킨다(§8.491) |
 | `aaa task add "…" --profile codex --machine mac-b --repo '작업 폴더'` → `aaa thread start --from-task d-0001 --link-task` | 새 작업은 할 일을 먼저 기록하고 thread로 시작한다. `--from-task`는 연결 옵션을 생략해도 자동 연결한다. 옛 `--title … --task-file …` 직접 시작도 host가 할 일을 먼저 만든다. 자동화 do.start는 예외다 |
 | `aaa thread adopt --pane <ID> --title "…"` | 이미 띄운 Claude·Codex pane(셸에서 친 것은 감지된 뒤)을 thread로 데려오기(pane은 그대로, 다시 시작·resolve가 pane을 끝내지 않음) |
@@ -78,7 +78,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa thread ack <id>` · `aaa thread resolve <id>` | 보고 확인 · 끝내기(worktree 정리) |
 | `aaa thread park <id> [--now] [--note "…"]` · `aaa thread unpark <id> [--machine M] [--dry-run]` | 보류: 자리·pane을 돌려주고 worktree·대화·보고는 남긴다(기본은 thread가 커밋·push·`## Handoff`를 쓴 `[보류 준비됨]` 뒤 닫는다, `--now`는 바로, `--cancel`은 거두기). 이어 하기: 같은 머신은 같은 대화, 다른 머신은 push된 branch로 새 worktree와 요약 brief의 새 대화(§8.426). 웹은 thread 화면 「관리 → 보류·이어 하기」 |
 | `aaa inbox list` · `aaa inbox done <id>` | 보고·질문·끊김 같은 놓치면 안 되는 항목 |
-| `aaa routine list` · `aaa routine runs <이름>` · `aaa routine toggle <이름> --off` | 일정 작업과 PR 사건 routine(`on = "pr"`: thread PR의 check 실패·리뷰에 thread로 글을 보낸다) |
+| `aaa routine list` · `aaa routine runs <이름>` · `aaa routine toggle <이름> --off` | 일정·thread·CI·Git 사건 자동화 |
 
 모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. `pane`·`tab`·`workspace`는 늘 JSON 한 줄이고, 실패하면 stderr에 `{"error":…}`를 쓰고 종료 코드 1입니다(herdr와 같다). 셸 완성은 `aaa completion zsh`(bash·fish·elvish·powershell)입니다. 자세한 것은 `aaa <명령> --help`입니다.
 ## 머신별 작업 디스크
@@ -184,7 +184,7 @@ aaa task edit d-0001 --profile codex --machine mac-a --user-request '사용자�
 사용자 지시 없는 변경·하향, 원문 편집 우회, 시작·재시작 옵션으로 다른 모델·머신을 쓰는 동작은 계속 거부한다.
 웹이나 aaa 밖 CLI의 일반 편집은 기존처럼 가능하며, 예약의 선택을 일반 편집으로 바꾸면 내용을 확인해 예약을 갱신한다.
 
-PR 병합·보고 [완료]의 좁은 완료 판정을 유지하면서 결과는 `aaa task archive`에 보관한다.
+원격 main 포함·보고 [완료]의 좁은 완료 판정을 유지하면서 결과는 `aaa task archive`에 보관한다.
 `aaa task archive --restore <task ID>`는 같은 ID·내용·첨부를 활성 목록에 돌리고 실행 연결은 푼다. 자동 재예약·재기동은 하지 않는다.
 옛 삭제 기록의 `aaa task restore <기록 ID>`는 별도다. 보관 저장에 실패하면 활성 task를 지우지 않는다.
 보관의 결과물과 메모가 참조하는 보고서 사본은 기한·용량 정리와 보고서 삭제에서 보호한다. 같은 ID로 복원해도 완료 당시 결과는 남긴다.

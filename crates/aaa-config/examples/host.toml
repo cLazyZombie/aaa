@@ -61,8 +61,6 @@ nudge_idle_secs = 60
 nudge_quiet_secs = 10
 # 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다(`gh`가 이만큼 계속 실패해도 한 번 알린다)
 outage_secs = 600
-# 열린 thread의 PR을 이만큼(초)마다 thread 머신의 `gh`로 본다. 보고가 새로 오면 바로 본다.
-pr_poll_secs = 120
 # brief 안내·메시지를 친 때부터 harness가 받았다고 알리기까지 기다리는 시간(밀리초). 입력 상자를 그리는 harness는 이 안에서
 # 친 글이 보이기를 기다려 Enter한다. 넘으면 전달 불명(다시 보내지 않는다)
 accept_wait_ms = 10000
@@ -85,7 +83,7 @@ format = "json"
 telegram_chat_id = ""
 # 알릴 inbox 항목 종류. thread-state는 확인 필요·새 보고·시작 실패만, pr은 병합·check 실패·리뷰 활동만 보낸다
 # (옛 이름 report·question·delivery·thread도 thread-state로 읽는다)
-kinds = ["thread-state", "session", "outage", "health", "routine-approval", "pr"]
+kinds = ["thread-state", "session", "outage", "health", "routine-approval"]
 # 이 시간(초) 동안 모아 프로젝트마다 한 통으로 보낸다
 debounce_secs = 15
 # 웹에서 「알림 켜기」한 기기에 Web Push로도 보낸다(내용은 암호화돼 push 서비스가 읽지 못한다)

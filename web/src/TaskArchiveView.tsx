@@ -14,7 +14,6 @@ import { RowMenu } from "./RowMenu";
 import { ARCHIVE_SORTS, archiveGroups, archiveTime, fullTime, readArchiveSort, reasonLabel, rowTime, spanText, writeArchiveSort } from "./taskArchiveModel";
 
 const REASONS = [
-  { key: "pr_merged", label: "PR 병합" },
   { key: "main_merged", label: "main 병합" },
   { key: "report_done", label: "보고 완료" },
   { key: "restored", label: "되살린 항목" },

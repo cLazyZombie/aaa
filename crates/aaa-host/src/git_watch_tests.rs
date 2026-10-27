@@ -114,7 +114,7 @@ fn change(subjects: &[&str]) -> GitChange {
             .iter()
             .map(|subject| GitCommit {
                 sha: "b".repeat(40),
-                subject: aaa_common::pr::sanitize(subject),
+                subject: aaa_common::github::sanitize(subject),
                 owners: aaa_common::ci::owners(subject),
             })
             .collect(),

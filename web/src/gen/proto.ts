@@ -276,11 +276,7 @@ export type DeviceRole = "reader" | "controller" | "local";
 
 export type Connection = "connected" | "disconnected";
 
-export type MachineView = {
-/**
- * 마지막 PR 조회의 머신별 사용 상태. 조회 전·옛 host는 생략한다.
- */
-pr_tracking?: string, id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null,
+export type MachineView = { id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null,
 /**
  * 마지막 건강 보고(§8.10). 연결 중이 아니면 오래된 값이다.
  */
@@ -410,7 +406,7 @@ started_ms?: number, };
 
 export type TaskHistorySearch = { query: string, repo: string | null, };
 
-export type TaskArchiveFilter = "pr_merged" | "main_merged" | "report_done" | "restored";
+export type TaskArchiveFilter = "main_merged" | "report_done" | "restored";
 
 export type TaskArchiveSort = "completed" | "started" | "number";
 
@@ -1541,7 +1537,7 @@ export type ProjectChange = { project: ProjectView, notes: Array<string>, };
 
 export type ProjectFilesCheck = { project: string,
 /**
- * 본 때 고칠 것(AGENTS.md·uploads/·routines/pr-followup.md). 비면 맞다
+ * 본 때 고칠 것(AGENTS.md·uploads/). 비면 맞다
  */
 problems: Array<string>,
 /**
@@ -1608,7 +1604,7 @@ export type DeployState = "queued" | "running" | "completed" | "failed" | "inter
 
 export type DeployJob = { id: string, project: string, action: DeployAction, state: DeployState, instance: string, executor_pid: number, expected_sha256: string, result: string | null, created_ms: number, updated_ms: number, };
 
-export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "working" | "idle" | "parked" | "resolved";
+export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "working" | "idle" | "parked" | "resolved";
 
 export type ReportAttention = "completed" | "needs_user";
 
@@ -1665,11 +1661,7 @@ automation_trigger?: string, status: ThreadStatus,
 /**
  * 끝남 기록 뒤 아직 정리 응답을 확정하지 못했다. 같은 resolve로 이어간다.
  */
-cleanup_pending?: boolean, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null,
-/**
- * 추적하는 PR(§8.80)
- */
-pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention,
+cleanup_pending?: boolean, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null, report_hash: string | null, report_attention?: ReportAttention,
 /**
  * 회수한 보고의 작업 단계. 옛 host·표지 없는 보고·끝난 thread는 생략한다.
  */
@@ -1780,8 +1772,6 @@ export type UnparkPreview = { project: string, thread: string, options: Array<Un
  * 지금 자리를 차지한 사용자 thread 수와 한도. 다 찼으면 이어 하기가 거부된다
  */
 open: number, limit: number, };
-
-export type ThreadPr = { url: string, state: string | null, review: string | null, };
 
 export type SummaryMark = {
 /**
@@ -2184,7 +2174,7 @@ export type AutomationTrigger = { "kind": "schedule", every?: string | null, dai
 
 export type AutomationCatchUp = "once" | "skip";
 
-export type AutomationEventSource = "thread" | "pr" | "ci" | "git";
+export type AutomationEventSource = "thread" | "ci" | "git";
 
 export type AutomationObserve = { "kind": "command" } & AutomationCommand;
 
@@ -2528,7 +2518,7 @@ thread_kind: ThreadKind,
  */
 worktree: boolean, branch: string | null,
 /**
- * 기록된 PR 상태가 병합이다(끝낼 때 branch를 지울 수 있다)
+ * branch의 현재 끝이 origin/main에 포함된다
  */
 merged: boolean,
 /**

@@ -44,7 +44,6 @@ fn normalized(mut on: Trigger) -> Trigger {
             sorted(&mut t.events);
             sorted(&mut t.repos);
         }
-        Trigger::Pr(e) => sorted(e),
         Trigger::Ci(c) => {
             sorted(&mut c.branches);
             sorted(&mut c.workflows);
@@ -64,7 +63,6 @@ fn covers_on(old: &Trigger, new: &Trigger) -> bool {
         (Trigger::Thread(a), Trigger::Thread(b)) => {
             subset(&b.events, &a.events, false) && subset(&b.repos, &a.repos, true)
         }
-        (Trigger::Pr(a), Trigger::Pr(b)) => subset(b, a, false),
         (Trigger::Ci(a), Trigger::Ci(b)) => {
             a.repo == b.repo
                 && subset(&b.events, &a.events, false)
@@ -215,7 +213,6 @@ impl Host {
         let condition = match &scope.on {
             Trigger::Schedule(_) => r.schedule_text.clone(),
             Trigger::Thread(t) => format!("thread 사건 {} · 저장소 {}", list(&t.events), list(&t.repos)),
-            Trigger::Pr(events) => format!("PR 사건 {}", list(events)),
             Trigger::Ci(c) => format!(
                 "CI 저장소 {:?} · branch {} · workflow {} · 사건 {}",
                 c.repo,

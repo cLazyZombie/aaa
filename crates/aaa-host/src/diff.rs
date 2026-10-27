@@ -53,7 +53,7 @@ pub(crate) fn diff_count(diff: &aaa_proto::DiffView) -> Result<u32, String> {
 
 impl Host {
     /// 끝내기 전 확인(관리 GUI W4, plan §8.343): 커밋하지 않은 파일·base 대비 바뀐 파일·사본 상태. 기록·inbox를 고치지 않는다:
-    /// PR은 기록된 상태만 본다(`merged_head`는 PR을 다시 찾아 기록을 고친다). 읽지 못한 것은 모름이고, 모르면 남기기가 기본이다.
+    /// branch의 현재 끝이 main에 포함됐는지 agent로 확인한다. 확인하지 못하면 branch를 남긴다.
     pub(crate) async fn thread_resolve_preview(
         &self,
         project: &str,
@@ -61,7 +61,7 @@ impl Host {
     ) -> Result<ResolvePreview, ErrorBody> {
         let rec = self.load(project, thread)?;
         let worktree = rec.kind == ThreadKind::Worktree && rec.cwd.is_some();
-        let merged = rec.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("merged"));
+        let merged = self.main_branch_head(&rec).await.is_some();
         let count = |r: Result<FrontResponse, ErrorBody>| -> Result<u32, String> {
             match r {
                 Ok(FrontResponse::ThreadDiff { diff, .. }) => diff_count(&diff),

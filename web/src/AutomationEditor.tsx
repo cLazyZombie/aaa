@@ -10,7 +10,7 @@ import { Markdown } from "./Markdown";
 import type { AutomationCheck, AutomationDoc } from "./gen/proto";
 import {
   actionKind, actionKinds, action as actionOf, bodyOf, CI_EVENTS, condition as conditionOf, conditionKind, conditionKinds, GIT_EVENTS, lineDiff,
-  listText, newForm, parseList, parsePercent, PR_EVENTS, setAction, setCondition, setField, validName, type ActionKind, type ConditionKind, type Form,
+  listText, newForm, parseList, parsePercent, setAction, setCondition, setField, validName, type ActionKind, type ConditionKind, type Form,
 } from "./automationForm";
 
 type Mode = "form" | "toml" | "review";
@@ -70,7 +70,6 @@ function ConditionFields({ form, update }: { form: Form; update: (f: Form) => vo
       <List label="저장소" value={c.repos} onChange={(v) => set("repos", v)} hint="비우면 모든 저장소" />
       <Toggle label="다른 자동화가 띄운 thread의 사건도 받는다" value={c.include_automation} onChange={(v) => set("include_automation", v || null)} />
     </>;
-    case "pr": return <Checks label="PR 사건" options={PR_EVENTS} value={c.events} onChange={(v) => set("events", v)} />;
     case "ci": case "git": return <>
       <Text label="저장소" value={c.repo} onChange={(v) => set("repo", v)} testid="automation-form-repo" />
       <List label="branch" value={c.branches} onChange={(v) => set("branches", v)} />

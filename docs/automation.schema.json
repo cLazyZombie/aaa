@@ -255,7 +255,6 @@
     "AutomationEventSource": {
       "enum": [
         "thread",
-        "pr",
         "ci",
         "git"
       ],

@@ -176,8 +176,6 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "mission.v1".into(), // N-1 host의 파일 전송
             "work_files.v1".into(),
             "cwd.v1".into(),
-            "pr.v1".into(),
-            "pr.v2".into(),
             "ci.v1".into(),
             "git.v1".into(),
             "workspace_metrics.v2".into(),

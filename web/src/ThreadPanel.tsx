@@ -26,7 +26,6 @@ const DiffPanel = lazy(() => import("./DiffPanel"));
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "확인 필요",
   ready_for_review: "검토 대기",
-  landing: "병합 중",
   working: "작업 중",
   idle: "쉼",
   parked: "보류",

@@ -397,7 +397,7 @@ function ResolveDialog({ t, frontApi, onClose }: { t: ThreadView; frontApi: stri
             <>
               <dt>branch</dt>
               <dd>
-                <span className="mono">{p.branch}</span> · {p.merged ? "PR 병합됨(지운다)" : "병합 안 됨(남긴다)"}
+                <span className="mono">{p.branch}</span> · {p.merged ? "main 포함(지운다)" : "병합 안 됨(남긴다)"}
               </dd>
             </>
           )}

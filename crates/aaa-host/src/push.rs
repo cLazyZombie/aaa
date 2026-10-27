@@ -514,14 +514,13 @@ mod tests {
             created_at_ms: 0,
             done_at_ms: None,
         };
-        let items =
-            [it("thread-state", "new report"), it("thread-state", "blocked on a prompt"), it("pr", "PR merged")];
+        let items = [it("thread-state", "new report"), it("thread-state", "blocked on a prompt"), it("routine", "due")];
         let ids = |a| for_device(a, &items).into_iter().map(|i| i.id).collect::<Vec<_>>();
         use crate::db::Alerts;
         assert_eq!(ids(Alerts::default()).len(), 3);
-        assert_eq!(ids(Alerts { input: false, done: true }), ["new report", "PR merged"]);
-        assert_eq!(ids(Alerts { input: true, done: false }), ["blocked on a prompt", "PR merged"]);
-        assert_eq!(ids(Alerts { input: false, done: false }), ["PR merged"]);
+        assert_eq!(ids(Alerts { input: false, done: true }), ["new report", "due"]);
+        assert_eq!(ids(Alerts { input: true, done: false }), ["blocked on a prompt", "due"]);
+        assert_eq!(ids(Alerts { input: false, done: false }), ["due"]);
     }
 
     fn hosts() -> Vec<String> {

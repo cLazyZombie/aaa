@@ -1,6 +1,6 @@
 //! Git 감시. checkout의 작업 파일·ref·FETCH_HEAD를 바꾸지 않고 객체만 받는다.
 use aaa_common::child_process::TokioCommandExt as _;
-use aaa_common::{git_watch as git, pr};
+use aaa_common::{git_watch as git, github};
 use aaa_proto::{GitAnswer, GitChange, GitCommit, GitQuery};
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -157,7 +157,7 @@ async fn query_inner(dir: &Path, q: &GitQuery) -> Result<GitAnswer> {
                     }
                     commits.push(GitCommit {
                         sha: sha.into(),
-                        subject: pr::sanitize(subject),
+                        subject: github::sanitize(subject),
                         owners: aaa_common::ci::owners(subject),
                     });
                 }

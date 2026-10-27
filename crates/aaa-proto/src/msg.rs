@@ -1076,10 +1076,8 @@ pub enum AgentRequest {
         repo: String,
         targets: Vec<crate::CleanupTarget>,
     },
-    /// thread 정리: worktree를 force 없이 지우고, PR이 병합됐고 worktree가 지워졌고 branch 끝이 병합된 PR head와
-    /// 같을 때만 branch를 지운다(herdr-projects threads.rs `clean`·`delete_branch`, plan §8.113).
-    /// `merged_head`: PR이 병합됐으면 그 head commit(모르면 빈 값), 병합되지 않았으면 None. 옛 host가 보낸
-    /// `base`는 읽지 않는다(branch를 남긴다).
+    /// thread 정리: worktree를 force 없이 지우고 현재 branch 끝이 main에 포함됐음을 확인했을 때 branch를 지운다.
+    /// `merged_head`: 원격 main의 조상인 branch 끝. None이면 branch를 남긴다. 확인 뒤 끝이 바뀌면 지우지 않는다.
     ThreadCleanup {
         repo: Option<String>,
         cwd: String,
@@ -1109,11 +1107,6 @@ pub enum AgentRequest {
         cwd: String,
         query: crate::CiQuery,
     },
-    /// pr.v1을 알린 agent만 thread origin의 PR을 gh로 읽는다.
-    PrQuery {
-        cwd: String,
-        query: PrQuery,
-    },
     /// diff.v1을 알린 agent만 thread worktree(`cwd`)의 바뀐 파일·patch를 읽는다(plan §8.305). `base`는 thread를 시작할 때
     /// 잡은 기준 ref(`origin/main` 등)이고, 없으면 agent가 `origin/HEAD`·`main`·`master`에서 고른다
     ThreadDiff {
@@ -1131,35 +1124,6 @@ pub enum AgentRequest {
         #[serde(default)]
         install: Option<bool>,
     },
-}
-
-/// `AgentRequest::PrQuery`가 묻는 것
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "q", rename_all = "snake_case")]
-pub enum PrQuery {
-    /// `gh pr view --json …` 출력(JSON 그대로)
-    View { url: String },
-    /// head가 이 branch인 PR 주소(없으면 빈 값). origin이 GitHub가 아니면 묻지 않는다.
-    Find { branch: String },
-    /// `gh`가 쓰는 계정 login
-    Login,
-    /// `repo`(`owner/repo`)에서 `gh` 계정이 연 열린 PR 번호들, 쉼표로(herdr-projects `open_own_numbers`).
-    /// agent 기능 `pr.v2`가 있을 때만 보낸다.
-    OpenOwn { repo: String },
-}
-
-/// PR 조회 결과. `out`은 질문마다 view JSON·찾은 주소·login이다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrAnswer {
-    /// `git remote get-url origin`(없으면 빈 값)
-    pub origin: String,
-    pub out: String,
-    /// PR 조회 생략 사유. gh 없음·인증 없음은 오류나 outage가 아니다.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unavailable: Option<String>,
-    /// 원격에 없는 branch·GitHub 밖 저장소여서 gh를 부르지 않았다.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub skipped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1279,7 +1243,6 @@ pub enum AgentResponse {
         info: Option<FileInfo>,
         candidates: Vec<String>,
     },
-    Pr(PrAnswer),
     Ci(crate::CiAnswer),
     Git(crate::GitAnswer),
     History(HistoryChunk),
@@ -1467,10 +1430,6 @@ pub enum Connection {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MachineView {
-    /// 마지막 PR 조회의 머신별 사용 상태. 조회 전·옛 host는 생략한다.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub pr_tracking: Option<String>,
     pub id: String,
     pub name: String,
     pub local: bool,
@@ -2610,7 +2569,7 @@ pub enum FrontRequest {
         action: ProjectAction,
     },
     /// 프로젝트 폴더를 휴지통(`<projects root>/.trash`)으로 옮기고 host 기록을 그 안 `aaa-records.json`으로 뺀다.
-    /// worktree·branch·PR은 건드리지 않는다(herdr-projects `delete`)
+    /// worktree·branch는 건드리지 않는다(herdr-projects `delete`)
     ProjectDelete {
         project: String,
         /// 살아 있는 pane이 있어도
@@ -2630,7 +2589,7 @@ pub enum FrontRequest {
         #[serde(default)]
         dry_run: bool,
     },
-    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·uploads/·routines/pr-followup.md)을 본다.
+    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·uploads/)을 본다.
     /// `fix`면 고친다: 표지 있는 AGENTS.md는 지금 안내로 다시 쓰고, 표지 없는 것은 `.before-aaa`로 옮겨 둔다
     /// (herdr-projects `doctor [--fix]`, FRONT_API 1.34)
     ProjectFiles {

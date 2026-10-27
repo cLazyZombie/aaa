@@ -268,7 +268,6 @@ impl Host {
             r.error = None;
             r.last_group = Some(ThreadGroup::Parked);
             r.group_changed_ms = Some(now);
-            r.merged_seen_ms = None;
         })?;
         let pane_rx = rec.pane.as_deref().and_then(|p| {
             self.pane_events(p)

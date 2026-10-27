@@ -3,7 +3,7 @@
 import type { AutomationDefinition, AutomationCommand, AutomationNotice, AutomationMessage, AutomationThread } from "./gen/proto";
 import { apiAtLeast } from "./automationModel.ts";
 
-export type ConditionKind = "schedule" | "command" | "thread" | "pr" | "ci" | "git";
+export type ConditionKind = "schedule" | "command" | "thread" | "ci" | "git";
 export type ActionKind = "inbox" | "message" | "start" | "command" | "deploy";
 /** 기존 폼의 편집 어댑터. 저장 정본은 생성된 schema 2 계약이다. */
 export type Definition = AutomationDefinition;
@@ -17,7 +17,6 @@ export const conditionKinds: Array<{ kind: ConditionKind; label: string }> = [
   { kind: "schedule", label: "일정" },
   { kind: "command", label: "명령 출력 변화" },
   { kind: "thread", label: "thread 사건" },
-  { kind: "pr", label: "PR 사건" },
   { kind: "ci", label: "CI 결과" },
   { kind: "git", label: "Git push" },
 ];
@@ -28,7 +27,6 @@ export const actionKinds: Array<{ kind: ActionKind; label: string }> = [
   { kind: "deploy", label: "배포 제안" },
   { kind: "command", label: "승인된 명령 실행" },
 ];
-export const PR_EVENTS = ["opened", "checks-failed", "review", "merged"];
 export const CI_EVENTS = ["failed", "stuck", "fixed", "passed"];
 export const GIT_EVENTS = ["pushed", "forced", "deleted"];
 /** 새 규칙의 사용량 문턱 기본값(계획 Q3: 5시간 창 5%·주간 10% 아래면 쉼) */
@@ -70,7 +68,6 @@ export function setCondition(form: Form, kind: ConditionKind): Form {
     schedule: timing,
     command: { ...timing, command: old.command ?? "", ...pick(old, ["machine"]) },
     thread: { events: Array.isArray(old.events) && conditionKind(form) === "thread" ? old.events : ["thread_failed"] },
-    pr: { events: ["checks-failed", "review"] },
     ci: { repo: "", branches: ["main"], ...target, events: ["failed"] },
     git: { repo: "", branches: ["main"], ...target, events: ["pushed"] },
   };

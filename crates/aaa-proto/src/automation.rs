@@ -55,7 +55,6 @@ pub enum AutomationCatchUp {
 #[serde(rename_all = "snake_case")]
 pub enum AutomationEventSource {
     Thread,
-    Pr,
     Ci,
     Git,
 }
