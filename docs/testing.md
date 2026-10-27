@@ -1,3 +1,30 @@
+## macOS pipe 창의 native exec와 실패 원문(t-1146)
+
+- 기존 `pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime`의 시스템 shell 사본을
+  Rust 시험과 같은 아키텍처로 빌드한 일반 exec launcher로 바꾼다. 재서명한 시스템 arm64e 실행 정책을
+  FD 회귀에 섞지 않는다. launcher는 실제 로드한 cputype/cpusubtype·주입 여부·exec를 trace에 남기고,
+  launcher/capture/holder는 DYLD 주입 누출을 거부한다. 판 조회가 덧붙인 `--version`은 이전 `sh -c`의
+  위치 인자와 같이 fixture에 전달하지 않는다. 제품 생성 잠금·판 조회 코드는 바꾸지 않는다.
+- raw의 FD 상속·자식 종료 뒤 EOF 대기와 나머지 모드의 상속 차단·holder 생존 중 반환,
+  NOTE_EXIT·exit7·stdout/stderr 단언, 내부 2초·worker 5초 상한을 유지한다. 새 시험·E2E 번호는 없다.
+  주입 제거를 빼는 변형에서 launcher exit91과 socket 연결 전 실패를 확인한다. 필요한 이유는
+  SIP의 환경 삭제나 shell 아키텍처 때문에 누출 회귀가 숨거나 다른 원인으로 먼저 죽지 않게 하기 위해서다.
+- timeout·읽기 오류에도 전체 worker stdout/stderr·trace를 먼저 기록하고, 실패한 실험실만 보존한다.
+  macOS CI 실패 시 `rust/*-aaa_common.log`와 실험실의 trace/stdout/stderr를 artifact로 7일 보존한다.
+  길이가 제한된 annotation을 전체 원문의 대체로 쓰지 않는다.
+- 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib`와
+  `RUST_TEST_THREADS=8`의 같은 명령, `cargo clippy --profile verify --locked -p aaa-common --all-targets -- -D warnings`,
+  fmt·공개 검사다. 시스템 설정·SIP·boot args는 바꾸지 않는다. 전체 gate·착지는 coordinator 차례에 수행한다.
+- 원래 main과 같은 macOS 15.7.9(24G830)의 [진단 run 40432899481](https://github.com/cLazyZombie/aaa/actions/runs/40432899481)에서
+  시스템 shell·Apple 서명을 유지한 사본은 본문과 exec 뒤 exit7, ad-hoc 재서명 사본은 본문 진입 전 실패였다.
+  arm64e slice 지정은 signal11, 기본 실행은 signal9로 원래 main의 signal4와 같지는 않았다.
+  확정한 수리 경계는 재서명된 시스템 shell의 실행 실패이며, 정확한 trap 명령이나 OS 내부 거부 사유를
+  확보한 것처럼 쓰지 않는다. native arm64 launcher는 exec·socket·NOTE_EXIT를 거쳐 네 모드를 0.29초에 통과했다.
+- 참고 후보는 [XNU exec 정책](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_exec.c)
+  (APSL-2.0), [Rust std spawn](https://github.com/rust-lang/rust/blob/main/library/std/src/sys/process/unix/unix.rs)
+  (MIT/Apache-2.0), [Duct](https://github.com/oconnor663/duct.rs/blob/master/src/lib.rs)(MIT)다.
+  실행 정책·생성과 출력 수집의 경계를 대조했고 외부 코드·의존성을 가져오지 않는다.
+
 ## E2E103 보관 본문과 복귀 조회 사건(t-1134)
 
 - 보관 본문·과거 위치의 복원은 `ConversationRefresh`의 최신 읽기 lane과 독립적이다. 변경 알림으로 시작한 실제 `pane_chat` 응답을 `route.fetch` 뒤 보류하고 tasks 왕복을 수행하면, 본문은 82ms에 복원되지만 복귀 요청은 0회다. 이전 응답을 놓으면 복귀 요청이 정확히 1회 시작한다. 본문 준비 뒤 즉시 요청 수를 잘라 검사하던 기존 단언은 이 정상 순서에서 실패한다. 이 결정적 대조는 시험의 경합을 확정하며, 원본 t-1131 실패 당시의 개별 HTTP 순서를 소급 증명하지는 않는다.
