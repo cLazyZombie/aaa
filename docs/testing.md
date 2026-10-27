@@ -4864,3 +4864,53 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - `report_events::report_state_precedes_completion_event`는 사건 발행 잠금의 계기로 PR routine을 토글했다. 후보는 폐지된 규칙을 목록에서 제외하므로 toggle이 즉시 `BadRequest`로 끝나 Hhold를 내지 못했다. fixture만 명시적인 `every 1h` 일정 규칙으로 이관한다. 원자 공개·H/W/R 사건·상태 저장 선행·실시간/재생 순서의 모든 단언과 원래 시한을 유지한다.
 - 원본 CI의 추가 `(trust, -)`는 brief 화면 관측이 연 질문에 답한 뒤 첫 agent Question 사건이 늦게 와 같은 질문을 다시 열고 Idle에서 닫은 기록이었다. `harness.rs`·`brief.rs`·보고 owner는 main과 실패 후보 383935ff에서 바이트가 같다. 별도 단독 진단에서 main의 실제 Host/DB에 Idle→brief 질문→답→지연 Question→Idle 순서를 재생하자 같은 두 trust 기록이 생겼다. PR 제거 전에도 존재하는 경쟁임을 확인했으며 이 범위에서는 제품의 질문 처리·원래 E2E 기대값을 바꾸지 않는다. 진단 source는 원본으로 복원했고 실패 재현 자료는 thread library에 보존했다.
 - 착지 충돌 해소 때 FRONT_API 문서 주석 사이에 넣은 빈 줄을 제거한다. API·계획 번호와 E30·35 분할은 유지한다. 전체 ci-local·cross·Windows production·push는 계측 종료 후 새 착지 차례에서 수행한다.
+
+## 느린 owner의 선택 단계 계측(t-1206)
+
+- Git/CI source가 진행 중이면 next_due 후보에서 빠진다. 완료 뒤 새 deadline이 생겨도 ticker를
+  깨우지 않으면, 이미 고른 일반 ticker 간격 동안 대기가 남았다. 완료 시 잠금을 푼 뒤 기존
+  tick_wake로 deadline을 다시 계산하게 한다. 조회 간격은 여전히 완료부터 세고 중복 실행을 막는다.
+  깨움은 next_due를 쓰는 CI/Git에만 적용한다. usage/automation은 주기0이므로 공통 완료에서
+  깨우면 ticker→완료→ticker가 반복된다. 이 두 source는 기존 변화/할 일 사건으로만 깨운다.
+  새 `completed_source_rearms_a_sleeping_ticker_without_skipping_the_interval`은 정지 시계에서
+  이 깨움·완료 기준 deadline·즉시 중복 조회 거부와 주기0 무깨움을 함께 검사한다. 수리 전0.57초에 실패했고
+  수리 뒤 기존 시간 경계와 함께0.45초에 통과했다. 오래된 timer를 깨우지 않는 회귀를 막기 위해 필요하다.
+- GitGate의 세 preparation owner는 모두 TUI 없는 FAKE_AGENT를 쓴다. 이 fixture의 화면 안정과
+  paste 준비만0으로 하며 실제 Git 완료·시한·원문/journal·재시작·폴더 보존 단언은 유지한다.
+- `AAA_TEST_PHASES`를 자기 작업 폴더의 새 절대 경로로 지정하면 Rust와 웹은 owner별 JSONL을
+  남긴다. `start/phase/end`의 단조 경과와 실제 사건 시각으로 준비·계약·관측·정리를 구별한다.
+  Rust guard는 실험실보다 먼저 선언해 정상 마지막 cleanup 표지가 실제 Drop까지 포함한다.
+  panic·실패·중단의 부분 원문도 남기며, 계측 I/O 오류는 원래 실패를 바꾸지 않는다.
+- rollout 3개는 사본 생성/서명·host/agent·coordinator 준비와 실제 전이·정리를 나눈다.
+  Git/CI는 실제 poll/304·ticker 울타리를 별도로 표시한다. 새 Rust 경계 3개·cache·이미지 복원은
+  준비/실제 계약/재시작/정리를 기록한다. 상태·호출·상한·원래 단언은 유지한다.
+- 웹 step의 원래 이름/개수는 그대로다. 공통 pairPage·shot·대화 진단 body의 보조 span을 남긴다.
+  E37은 기존 왕복 안에서 읽은 브라우저 두 frame 구간과 Node 왕복을 각각 기록한다.
+  E53의 foreground 준비/답 PTY 수락, E68의 실제 reload gate/TCP/앱·agent·PTY 복귀,
+  E94/E102의 조합별 준비·입력·정리도 구분한다. body 읽기 span은 본문 수신과 protocol 대기까지
+  포함하므로 JSON 순수 CPU 비용이라고 해석하지 않는다.
+- `python3 scripts/case_phases.py <새 계측 폴더>`는 원문을 바꾸지 않고 요약한다.
+  `inclusive_spans`와 `browser_samples`는 phase 안에 겹치는 보조 값이므로 전체에 더하거나 빼지 않는다.
+  helper가 끝나기 전에 닫힌 경우 `unfinished_spans`를 남긴다. 이것만으로 배경 진단의 완료를 주장하지 않는다.
+  개별 wall은 준비·관측·정리를 모두 포함하며, 파일/전체 suite wall과 구별한다.
+- 독립 성능 판정 예:
+  `python3 scripts/case_phases.py <새 계측 폴더> --require usage_cache_keeps_limits_replacements_and_failed_writes_correct --max-seconds 5`.
+  필수 owner 미실행·빈 폴더·실패/미완료·상한 초과는 실패다. 실패 회차와 성공 회차를 같은 폴더로 합치지 않는다.
+  성능 판정을 통과한 뒤에만 별도 정규 ci-local을 시작하며, 정규 gate의 기준은 바꾸지 않는다.
+- E90 Reader는 같은 엔진·폭의 밝음/어두움에서 같은 신원/context를 재사용하는 후보다.
+  2엔진×4폭×2테마의 16조합을 그대로 검사하며, 두 번째 테마는 실제 공유 설정을 바꾸고 media를
+  맞춘 뒤 원래 URL로 문서를 새로 연다. Reader pairing/context 준비는 16회에서 8회가 된다.
+  모든 기존 drawer·필터·URL·가로 넘침·footer·기준 실행·오류·사진 단언을 유지한다.
+  단계 분할은 없다. Mac 단독 전체 E90은 통과했으며, 실제 시간 개선과 느린 원장 수는 같은 조건의 전후 계측으로 판정한다.
+- 새 keeper는 위 재예약 경계와 계측용3개를 합한4개다. Rust의 unwind 원문 보존, Node의 동일 오류·보조 관측/정리 보존,
+  Python의 미실행/부분 결과 거부와 겹치는 span의 이중 계산 방지를 각각 지켜야 하므로 필요하다.
+  시간 경과를 기다리는 시험·삭제·대체·새 E2E 번호는 없다.
+- 참고 후보: [Playwright fixtures](https://playwright.dev/docs/test-fixtures)의 의미별 수명과
+  [media 전환](https://playwright.dev/docs/api/class-page#page-emulate-media)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)),
+  [Rust Instant](https://doc.rust-lang.org/std/time/struct.Instant.html)의 단조 경과
+  ([MIT/Apache-2.0](https://github.com/rust-lang/rust/blob/master/COPYRIGHT))다.
+  fixture 수명과 시각 원칙을 참고했으며 외부 코드/실행 의존성을 추가하지 않는다.
+- Windows의 부분 통과나 0개 실행을 Mac의 단독/평소병렬 결과로 바꾸지 않는다.
+  Mac 전용 worktree에서 같은 기준·동일 조합·nice15·Rust6worker/4thread·웹10worker·빌드별도로
+  전후 각1회와 관련 전체 E2E를 확인한다. 무거운 전체 전후는 coordinator의 계측 차례를 받아 실행한다.

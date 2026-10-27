@@ -53,6 +53,41 @@ mod timing_tests {
         assert!(memory.claim_at("git:demo".into(), completed, every), "다른 source의 차례는 독립이다");
         assert!(memory.claim_at("ci:other".into(), completed, every), "다른 프로젝트도 독립이다");
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn completed_source_rearms_a_sleeping_ticker_without_skipping_the_interval() {
+        let root = std::env::temp_dir().join(format!("aaa-watch-rearm-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        let every = Duration::from_secs(30);
+        h.watch.lock().unwrap().last.insert("git:demo".into(), Instant::now() - every);
+        assert!(h.watch_claim("git", "demo", every));
+        assert!(h.watch_next_due("git", every, |_| true).is_none(), "진행 중 조회는 다음 deadline에 없다");
+        // ticker는 위 None을 보고 긴 일반 간격으로 잠든다. 완료는 그 대기를 깨워
+        // 새 deadline을 다시 계산하게 하되 다음 조회를 즉시 시작해서는 안 된다.
+        let wake = h.tick_wake.notified();
+        let before = Instant::now();
+        h.watch_finished("git", "demo");
+        let after = Instant::now();
+        let rearmed = tokio::time::timeout(Duration::from_secs(1), wake).await;
+        let due = h.watch_next_due("git", every, |_| true).unwrap();
+        let cannot_overlap = !h.watch_claim("git", "demo", every);
+        let mut passive_wakes = Vec::new();
+        for source in ["usage", "automation"] {
+            assert!(h.watch_claim(source, "", Duration::ZERO));
+            let wake = h.tick_wake.notified();
+            h.watch_finished(source, "");
+            passive_wakes.push((source, tokio::time::timeout(Duration::from_millis(1), wake).await.is_ok()));
+        }
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(rearmed.is_ok(), "완료 뒤 ticker가 오래된 일반 간격을 기다린다");
+        assert!(due >= before + every && due <= after + every, "다음 간격은 실제 완료부터 센다");
+        assert!(cannot_overlap, "완료 직후의 깨움은 주기를 앞당기지 않는다");
+        assert_eq!(passive_wakes, [("usage", false), ("automation", false)], "주기0 완료가 ticker를 스스로 반복시켰다");
+    }
 }
 
 /// 실제 조회·중복/복구 계약을 검사하는 실험실은 초마다 같은 가짜 외부 명령을
@@ -158,6 +193,12 @@ impl Host {
     pub(crate) fn watch_finished(&self, source: &str, project: &str) {
         let key = format!("{source}:{project}");
         self.watch.lock().unwrap().finished_at(key, Instant::now());
+        // next_due를 쓰는 CI/Git은 완료로 생긴 deadline을 다시 계산한다.
+        // usage/automation은 주기0이며 각자 변화/할 일 사건으로 깨운다.
+        // 그 완료까지 다시 깨우면 ticker→완료→ticker가 멈추지 않는다.
+        if matches!(source, "ci" | "git") {
+            self.tick_wake.notify_one();
+        }
     }
     pub(crate) fn watch_catchup(&self, key: &str, last: u64, now: u64, every: Duration) -> bool {
         let first = !self.watch.lock().unwrap().seen.contains(key);

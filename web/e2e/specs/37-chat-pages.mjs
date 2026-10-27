@@ -2,26 +2,33 @@
 import fs from "node:fs";
 import { root, aaa, AA, step, inList, until, domIs, shot, pairPage, browser, webkit, inTime } from "../lib/harness.mjs";
 import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
+import { phase as markPhase, measured, sample } from "../lib/phases.mjs";
 export const labEnv = { CODEX_HOME: `${root}/codex` };
 const line = (harness, n) => JSON.stringify(harness === "claude"
   ? { type: n % 2 ? "assistant" : "user", message: { content: [{ type: "text", text: `기록 ${n} · ${"긴 대화 줄 ".repeat(n % 5 + 1)}` }] } }
   : { type: "response_item", payload: { type: "message", role: n % 2 ? "assistant" : "user", content: [{ type: n % 2 ? "output_text" : "input_text", text: `기록 ${n} · ${"긴 대화 줄 ".repeat(n % 5 + 1)}` }] } }) + "\n";
 // 기존 두 frame 대기에서 전이 기록도 가져온다. 진단 때문에 왕복이나 frame을 더 기다리지 않는다.
-const frame = (page, diagnostics) => page.evaluate(() => new Promise((resolve) =>
-  requestAnimationFrame(() => requestAnimationFrame(() => resolve(window.takeChatStates())))))
-  .then((states) => diagnostics.remember(states));
+const frame = (page, diagnostics) => measured("contract", "chat-two-frames", () => page.evaluate(() => new Promise((resolve) => {
+  const started = performance.now();
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve({ states: window.takeChatStates(), frameMs: performance.now() - started })));
+})).then(({ states, frameMs }) => {
+  diagnostics.remember(states);
+  sample("contract", "browser-chat-two-frames", frameMs);
+}));
 // 같은 두 frame 경계에서 행 ID·좌표·진단을 함께 읽는다. 각 쪽마다 이 값을
 // 따로 조회하면 브라우저와 시험 runner의 여러 왕복 사이에도 레이아웃이 진행된다.
 const prependPosition = async (chat, diagnostics, id = null) => {
-  const result = await chat.evaluate((el, id) => new Promise(resolve => {
+  const result = await measured("contract", "prepend-two-frames", () => chat.evaluate((el, id) => new Promise(resolve => {
+    const started = performance.now();
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const row = id ? el.querySelector(`[data-chat-id="${id}"]`)
         : el.querySelector('.chat-transcript > [data-chat-id]');
       resolve({ id: row?.getAttribute('data-chat-id'), y: row?.getBoundingClientRect().y,
-        states: window.takeChatStates() });
+        states: window.takeChatStates(), frameMs: performance.now() - started });
     }));
-  }), id);
+  }), id));
   diagnostics.remember(result.states);
+  sample("contract", "browser-prepend-two-frames", result.frameMs);
   return result;
 };
 const position = row => row.evaluate(row => {
@@ -38,10 +45,14 @@ export default async function () {
   let diagnostics;
   const failure = { diagnose: (error) => diagnostics?.save(error, inTime) };
   const check = async (engine, width, harness) => {
+    markPhase("prepare", "transcript-pane-page");
     const label = `pages-${engine.browserType().name()}-${width}-${harness}`;
     diagnostics = new ChatDiagnostics(root, label);
     const started = Date.now();
-    const phase = (name) => console.log(`${label}: ${name} (${Date.now() - started}ms)`);
+    const phase = (name) => {
+      markPhase("contract", name);
+      console.log(`${label}: ${name} (${Date.now() - started}ms)`);
+    };
     const id = "01900000-0000-7000-8000-00000000a045";
     const dir = harness === "claude" ? `${root}/claude/projects/${label}` : `${root}/codex/sessions/2026/10/20`;
     fs.mkdirSync(dir, { recursive: true });
@@ -120,8 +131,8 @@ export default async function () {
         const entry = diagnostics.request(route.request(), request);
         if (request?.op === "pane_chat" && request.before && gate) {
           const held = gate; gate = null;
-          const response = await route.fetch();
-          const body = await response.json();
+          const response = await measured("contract", "prepend-fetch", () => route.fetch());
+          const body = await measured("contract", "prepend-body", () => response.json());
           diagnostics.reply(entry, body);
           held.arrive(body);
           await held.released;
@@ -265,6 +276,7 @@ export default async function () {
       await page.screenshot({ path: `${root}/${label}-follow-missing.png` });
       throw error;
     }
+    phase("새 기록 반영");
     await domIs(page, "새 기록 따라가기", () => { const e = document.querySelector('[data-testid="chat"]'); return e.scrollHeight - e.scrollTop - e.clientHeight <= 40; });
     // 즉시 끝 이동(End)도 pane별 따라가기 기억에 반영한다. smooth 단추 경로는 기존 E2E30이 소유한다.
     await chat.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
@@ -277,6 +289,7 @@ export default async function () {
     await inList(page, `pane-${label}`);
     await page.getByTestId("chat").and(page.locator('[aria-busy="false"]')).waitFor();
     await domIs(page, "End 뒤 pane 왕복도 끝 따라가기", () => { const e = document.querySelector('[data-testid="chat"]'); return e.scrollHeight - e.scrollTop - e.clientHeight <= 40; });
+    phase("End 왕복 반영");
     if (width === 390 && harness === "claude") {
       // 최신 쪽이 화면보다 짧아 스크롤이 없어도 앞 쪽을 자동으로 채우며 그 줄을 보존한다.
       let arrive, release;
@@ -307,11 +320,14 @@ export default async function () {
         };
         requestAnimationFrame(busy);
       });
+      markPhase("prepare", "replacement-17MiB-transcript");
       fs.writeFileSync(`${tr}.replacement`, Array.from({ length: 300 }, (_, n) => line(harness, n)).join("")
         + JSON.stringify({ type: "blob", data: "x".repeat(17 << 20) }) + "\n" + line(harness, 9000));
       fs.renameSync(tr, `${tr}.old`);
       fs.renameSync(`${tr}.replacement`, tr);
+      phase("짧은 기록 교체 반영 대기");
       await inTime(arrived, 20_000, `${label} 짧은 최신 쪽 자동 채움`);
+      phase("짧은 기록 prepend");
       const short = chat.getByText("기록 9000 ·", { exact: false }).first();
       await short.waitFor();
       await frame(page, diagnostics);
@@ -329,6 +345,7 @@ export default async function () {
       await shot(page, `${label}-short-prepend`);
       await chat.focus();
       await page.keyboard.press("End");
+      phase("짧은 기록 End 반영");
       await domIs(page, "수동 맨 아래는 실제 메시지 끝", () => {
         const el = document.querySelector('[data-testid="chat"]');
         const last = el.querySelector(".chat-row:last-child");
@@ -337,6 +354,7 @@ export default async function () {
       fs.unlinkSync(`${tr}.old`);
     }
     if (ph.errors.length) throw new Error(ph.errors.join("; "));
+    markPhase("cleanup", "context-pane-transcript");
     diagnostics.stop();
     await page.context().close();
     aaa("pane", "kill", label);

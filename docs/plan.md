@@ -8137,3 +8137,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 자동화 schema의 source=pr·on.pr, 웹 선택지·thread/머신 PR 표시·완료 보관의 PR 필터를 제거한다. 옛 PR 규칙은 실행·오류 알림·변환에서 제외하며 doctor가 원본을 `.before-aaa`로 보존한다. 기본 규칙은 만들지 않는다.
 - coordinator 안내·brief·guide는 착지 상태(main SHA·push 여부)를 보고한다. 이 절 이전의 PR 조회·병합 추적 설명은 과거 기록이며 현재 워크플로가 아니다. FRONT_API 1.135, agent link 판은 유지하고 PR 기능 광고를 제거한다.
 - CI 감시는 push Actions run 조회만 사용하므로 유지한다. 외부 구현은 Git merge-base(GPL-2.0)와 GitHub CLI run list(MIT)의 조상 판정·실행 조회 분리를 대조했으며 코드를 복사하지 않는다.
+
+### 8.521 느린 시험의 대기 재예약과 선택 비용 계측(t-1206)
+
+- CI/Git의 진행 중 source는 next_due에서 제외된다. 조회 완료 뒤 기존 tick_wake를 깨워 완료부터 센 다음 deadline을 다시 계산한다. 즉시 중복 조회를 막고, 주기0 usage/automation은 완료에서 깨우지 않아 반복 실행을 만들지 않는다.
+- 선택 시험 계측은 준비·실제 계약·관측·정리를 owner 전체 wall 안에 기록한다. 실패·panic·미완료 원문을 보존하고 보조 span과 브라우저 표본을 전체에서 빼거나 중복 합산하지 않는다. 성능 판정은 정규 gate 앞 독립 단계다.
+- 비TUI FAKE_AGENT preparation은 화면 안정·paste 준비를 생략한다. E90은 엔진/폭별 두 테마의 Reader context만 공유하며 실제 테마·문서 재열기와 기존16조합·drawer·필터·URL·그림 단언을 유지한다. 기존 이름/단계 분할·삭제·시한·기대값 완화는 없다.
+- 새 keeper4개는 재예약/주기0 경계, Rust unwind 원문 보존, Node 원래 오류·미완료 정리, Python 부분/미실행 거부·중복 합산 방지를 지킨다. E30·35의 기존 두 파일 분할을 유지한다. wire/API 형식은 바꾸지 않으므로 main의 FRONT_API 1.135를 유지한다.
+- 참고는 Playwright fixtures·media 전환(Apache-2.0)과 Rust Instant(MIT/Apache-2.0)의 수명·단조 시각 원칙이다. 외부 코드나 실행 의존성은 추가하지 않는다.

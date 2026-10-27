@@ -96,8 +96,10 @@ fn ci_events(w: &World) -> Vec<Value> {
 
 #[test]
 fn ci_conditional_failure_restart_catchup_and_outage() {
+    let mut phases = aaa_test_support::phases::Phases::new("ci_conditional_failure_restart_catchup_and_outage");
     let mut w = world_setup("tick_secs=1\nci_poll_secs=1\noutage_secs=0\n", false, fake_ci);
     w.add_remote();
+    phases.mark("contract", "ci-polls-and-restart");
     // 원격 agent가 재시작 뒤에도 같은 host 주소로 붙는다.
     let config = std::fs::read_to_string(w.h.cfg.join("host.toml")).unwrap().replace("127.0.0.1:0", &w.addr);
     std::fs::write(w.h.cfg.join("host.toml"), config).unwrap();
@@ -122,16 +124,22 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     )
     .unwrap();
     flow.until("CI 기준 판정", T, |e| e["kind"] == "ci_passed");
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "base");
+    phases.mark("contract", "ci-assertions-and-commands");
     assert!(ci_items(&w, true).is_empty());
     let events = ci_events(&w);
     let count = events.len();
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "base");
+    phases.mark("contract", "ci-assertions-and-commands");
     assert_eq!(ci_events(&w).len(), count, "304는 흐름 사건도 만들지 않는다");
     write_runs(&stub, "red", vec![run(2, 'b', "failure"), run(1, 'a', "success")]);
     phase(&stub, "red");
     flow.until("CI 실패 사건", T, |e| e["kind"] == "ci_failed");
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "red");
+    phases.mark("contract", "ci-assertions-and-commands");
     let items = ci_items(&w, true);
     assert_eq!(items.len(), 1);
     let body = items[0]["body"].as_str().unwrap();
@@ -155,7 +163,9 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     w.lab.kill("host");
     w.spawn_host("host2");
     wait_for("재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "red");
+    phases.mark("contract", "ci-assertions-and-commands");
     assert_eq!(ci_items(&w, true).len(), 1);
     assert!(calls(&stub).iter().any(|c| {
         c["args"]
@@ -168,14 +178,18 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     // 같은 실패 집합은 앞 항목에 추가되며 새 wake는 없다.
     write_runs(&stub, "same", vec![run(3, 'c', "failure"), run(2, 'b', "failure")]);
     phase(&stub, "same");
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "same");
+    phases.mark("contract", "ci-assertions-and-commands");
     assert_eq!(ci_items(&w, true).len(), 1);
     assert!(ci_items(&w, true)[0]["body"].as_str().unwrap().contains(&"c".repeat(40)));
     assert_eq!(w.h.ok(&["routine", "runs", "demo", "ci-main"])["runs"][0]["detail"], "같은 실패 집합");
     // 같은 job·단계라도 실패 시험이 바뀌면 같은 항목에 덧붙이고 다시 깨운다(0a8c294f windows).
     write_runs(&stub, "other", vec![run(4, 'd', "failure"), run(3, 'c', "failure")]);
     phase(&stub, "other");
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "other");
+    phases.mark("contract", "ci-assertions-and-commands");
     assert_eq!(ci_items(&w, true).len(), 1);
     assert!(ci_items(&w, true)[0]["body"].as_str().unwrap().contains("a::second"));
     let latest = wait_for("바뀐 실패 시험의 새 자동화 실행 완료", T, || {
@@ -188,7 +202,9 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     phase(&stub, "fixed");
     w.spawn_host("host3");
     wait_for("재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "fixed");
+    phases.mark("contract", "ci-assertions-and-commands");
     assert!(ci_items(&w, false).is_empty());
     assert!(ci_items(&w, true).iter().all(|i| i["event"] == "CI fixed"));
     assert!(ci_events(&w).iter().any(|e| e["kind"] == "ci_fixed"));
@@ -212,7 +228,9 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     );
     // PR의 조용한 생략과 달리 CI 조회 머신의 인증 실패는 계속 알린다.
     phase(&stub, "fixed");
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "fixed");
+    phases.mark("contract", "ci-assertions-and-commands");
     phase(&stub, "auth");
     wait_for("CI 인증 실패 알림", T, || {
         let items = w.h.ok(&["inbox", "list", "demo", "--peek"]);
@@ -228,11 +246,15 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     });
     // CI 작업 때문에 새로운 thread를 만들거나 기존 착지 thread를 되살리지 않는다.
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 0);
+    phases.mark("cleanup", "owned-resources");
 }
 
 /// A2: CI 둘은 첫 inbox 하나, 셋째는 같은 thread에 Queue, 옛 완료는 닫지 않고 새 완료 뒤 기억을 다음 thread로 옮긴다.
 #[test]
 fn automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory() {
+    let mut phases = aaa_test_support::phases::Phases::new(
+        "automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory",
+    );
     let w = world_setup("tick_secs=1\nci_poll_secs=1\n", false, fake_ci);
     let script = format!(
         r#"#!/bin/sh
@@ -279,6 +301,7 @@ done
     let original_memory = format!("이전 판단\n{}\n", "x".repeat(3000));
     std::fs::write(memory_root.join("memory.md"), &original_memory).unwrap();
     std::fs::write(dir.join("check.toml"),"title='CI 분류'\n[on.ci]\nrepo='repo'\nbranches=['main']\nevents=['failed']\n[do.start]\ntitle='자동 분류'\ntext='입력을 분류한다'\nprofiles=['claude']\nmachines=['labA']\nreuse='open'\nmemory=true\nclose_idle='30m'\n[limits]\nbatch='5m'\n").unwrap();
+    phases.mark("contract", "automation-ci-events");
     let rule = wait_for("규칙 승인 범위", T, || {
         w.h.ticks(1);
         w.h.ok(&["routine", "list"])["routines"]
@@ -289,7 +312,9 @@ done
     });
     w.h.in_terminal(&["automation", "approve", "check", rule["start_approval_sha256"].as_str().unwrap()], &[], T);
     let stub = w.lab.root.join("ci");
+    phases.mark("contract", "conditional-poll-fence");
     quiet_barrier(&w, &stub, "base");
+    phases.mark("contract", "ci-assertions-and-commands");
     write_runs(&stub, "a2-one", vec![run(2, 'b', "failure"), run(1, 'a', "success")]);
     phase(&stub, "a2-one");
     wait_for("첫 CI 실패가 batch에 대기", T, || {
@@ -413,4 +438,5 @@ done
     w.h.ticks(3);
     assert_eq!(std::fs::read_to_string(log).unwrap(), before, "모름 묶음을 자동 재전송하지 않는다");
     assert_eq!(super::automation_start::automatic(&w).len(), 2);
+    phases.mark("cleanup", "owned-resources");
 }

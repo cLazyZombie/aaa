@@ -7,6 +7,7 @@ import net from "node:net";
 import { once } from "node:events";
 import { root, aaa, step, start, stop, until, browser, pairPage, shot, base, procs, inTime, domIs } from "../lib/harness.mjs";
 import { SafeModeDiagnostics } from "../lib/safe-mode-diagnostics.mjs";
+import { phase } from "../lib/phases.mjs";
 
 const toml = `${root}/c/host.toml`;
 const kept = `${root}/c/last-good/host.toml`;
@@ -90,6 +91,7 @@ async function safeMode(page, diag, held) {
   }, { diagnose });
 
   await step("되돌리기: 지금 파일은 옆에 남기고 정상 설정으로, 같은 프로세스가 정상 host로 이어 간다", async () => {
+    phase("contract", "restore-click-and-reload-ui");
     await page.getByRole("button", { name: "마지막 정상 설정으로 되돌리기" }).click();
     await page.getByTestId("safe-reloading").waitFor();
     await shot(page, "68-restored-desktop");
@@ -97,6 +99,7 @@ async function safeMode(page, diag, held) {
     const backups = fs.readdirSync(`${root}/c`).filter((n) => n.startsWith("host.toml.broken-"));
     if (backups.length !== 1 || fs.readFileSync(`${root}/c/${backups[0]}`, "utf8") !== bad) throw new Error(`남긴 파일: ${backups}`);
     const { waiting, control } = await inTime(held.promise, 20_000, "정상 host 시작 전 제어 표지");
+    phase("contract", "held-reload-tcp-and-refresh-request");
     if (waiting !== "waiting\n") throw new Error(`복원 제어 표지: ${waiting}`);
     diag.record("reload-held");
     // 정상 host가 아직 시작되지 않아도 같은 주소가 TCP 요청을 받아야 한다.
@@ -118,6 +121,7 @@ async function safeMode(page, diag, held) {
       control.end("R");
     }
     // 안내 화면이 스스로 다시 연다(Refresh): 정상 host의 앱이 뜬다
+    phase("contract", "host-app-agent-and-existing-pty");
     await page.getByTestId("pane-t1").waitFor({ timeout: 20_000 });
     await until("labA 다시 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
     await page.getByTestId("pane-t1").click();
