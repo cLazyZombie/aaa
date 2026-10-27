@@ -134,7 +134,7 @@
 | 무반응 PTY의 한 번 전송·수동 재전송·brief 전 메시지 거부 | `harness::tests::unknown_brief_keeps_the_accept_deadline_and_never_retypes_without_a_person`: 실제 Host/SQLite/AgentConn에서 기본 받음 시한 10초와 자동 재전송 금지를 가상 시계로 지킨다. m13 keeper는 실패 fixture의 `accept_wait_ms=100`을 명시한다. |
 | nudge의 실제 CLI/PTY·draft 보호·대상/중복/권한 | `inbox::tests::nudge_windows_reset_on_changed_observations_and_require_two_empty_checks`와 `nudge_hook_idle_and_started_wait_for_the_exact_configured_window`: 화면·대상 reset, 두 관측, idle/quiet 직전과 정각을 시각 주입으로 지킨다. |
 | CI/Git의 실제 조회·ETag·재시작·복구·중복 방지 | `watch::timing_tests::poll_waits_from_completion_and_never_overlaps_an_inflight_source`: 완료 뒤 간격과 조회 겹침 방지를 시각 주입으로 지킨다. fake 외부 명령 실험실만 `AAA_TEST_ROUTINE_SECONDS=1`과 `AAA_TEST_WATCH_POLL_MS=10`을 함께 준다. 논리 catch-up 주기와 운영 기본값은 유지한다. |
-| routine의 승인·로컬/원격 실제 명령·출력/변환 보존 | 기존 `routine::tests::daily_due_in_local_time`의 직전/정각·일별/시간대와 실제 keeper를 나눈다. keeper의 `every 2s`는 유지하고 기존 `AAA_TEST_AUTOMATION_CLOCK_FILE`의 판정 시각만 원자 교체한 뒤 실제 tick/완료 사건을 기다린다. 일정 cursor도 같은 시계를 쓴다. |
+| routine의 승인·로컬/원격 실제 명령·출력/변환 보존 | 기존 `routine::tests::daily_due_in_local_time`의 직전/정각·일별/시간대와 실제 keeper를 나눈다. keeper의 `every 2s`는 유지하고 기존 `AAA_TEST_AUTOMATION_CLOCK_FILE`의 판정 시각만 원자 교체한 뒤 실제 tick과 각 routine의 `last_run_ms` 확정을 기다린다. tick만 끝나면 dispatch 잠금 때문에 일정 처리를 건너뛰었을 수 있다. 일정 cursor도 같은 시계를 쓴다. |
 | 실제 CPU·메모리 표본의 agent→host→웹 표시 | `health::tests::stats_send_at_fifteen_seconds_without_catchup_or_replacing_the_last_check`: 실제 agent/cache/LinkMsg로 기본 15초 직전/정각·잠든 뒤 한 번·점검 결과 보존을 가상 시계로 지킨다. E2E27만 제품 설정 `health.every_s=1`, 실제 CPU 최소 표본 구간 1초·원래 표시/범위/host 값 단언을 유지한다. |
 | 압축의 실제 Worker·raw ACK·history 정체 중 실제 PTY 입력 | 기존 `rateLimitedWire.test.mjs`의 수동 시계로 1Gbit/1ms·5Mbit/50ms·1Mbit/100ms의 FIFO·반대 방향 독립을 지킨다. E2E97은 실제 세 corpus×두 codec의 최종 xterm ACK와 history 전달 gate를 유지한다. |
 
@@ -4422,3 +4422,33 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `post::tests::question_guard_nudges_the_empty_coordinator_once_without_the_regular_idle_delay`는 실제 nudge/submit과 duplex Agent link 응답을 통과한다. 사용자 초안 동안 Input 0회, 빈 입력창에서 일반 유예 없이 안내+Enter 한 번, 실제 working 사건 뒤 같은 묶음 재입력 0회를 확인한다. 필요한 이유는 경고를 inbox에 저장만 하고 coordinator에게 전달하지 않는 누락과 초안 침범을 막기 위해서다. 전체 사건을 5초 안에 끝내고 가짜 agent의 취소 완료를 확인한 뒤 폴더를 정리한다. 새 고정 sleep·재시도·시한 확대·기대값 완화는 없다.
 - 부분 확인: `nice -n 15 cargo test --profile verify --locked -p aaa-agent --lib`, `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib`, 두 crate와 proto의 strict clippy, `cargo test --profile verify --locked -p aaa --test deps`, fmt·공개 검사다. 새 시험은 개별 5초 이하이며 새 웹 E2E 번호는 없다. 전체 ci-local·착지는 coordinator의 차례를 기다린다.
 - 기존 `link::post_tests::harness_changes_while_waiting_for_welcome_reach_the_host`에도 완료 답을 더한다. Hello/Welcome 사이 완료 답과 idle을 모두 받고, 그 뒤 같은 밀리초의 working도 그대로 전송해야 한다. 기존 idle·진행 보고 계약을 유지하면서 새 답 기억이 상태 칸을 덮어 연결 복구 때 상태를 잃는 회귀를 막기 위해 필요하다.
+
+## routine 차례 확정과 계정 rename의 빈 dispatch 경합(t-1152)
+
+- m13 `routines`의 논리 시계 진행은 tick 완료 뒤 `ping`·`cmd`·`far` 각각의
+  `last_run_ms`가 공개한 시각에 도달할 때까지 기다린다. `routine_pass`는 자동화 dispatch
+  잠금이 사용 중이면 반환하므로, tick의 종료만 보고 다음 2초를 진행하면 서로 다른 두 차례가
+  한 번의 처리로 합쳐질 수 있다. 일반 주기의 처리를 기다리는 동안 논리 시각은 고정한다.
+  일정·건너뜀 횟수·승인·로컬/원격 명령·출력·변환 단언과 원래 실패 상한은 유지한다.
+- 새 host 회귀 `schedule_dispatch_contention_keeps_the_due_turn_until_it_is_processed_once`는
+  실제 Host/SQLite와 dispatch 잠금으로 pass 반환 뒤 미확정 상태, 잠금 해제 뒤 한 번 처리,
+  같은 예정 차례의 중복 방지를 검사한다. 필요한 이유는 tick과 일정 처리의 차이를
+  실행 부하에 의존하지 않고 보존하기 위해서다. 일정·프로토콜은 바꾸지 않는다.
+- 처리할 입력·inflight·이관이 없는 `automation_drain`과 일정형·이관이 없는 `routine_pass`는
+  프로젝트 dispatch 잠금을 생략한다. 빈 주기 조회가 일정 처리와 계정 rename의 `try_lock`을
+  밀어내지 않게 한다. 처리할 일과 복구가 있으면 기존 잠금 아래에서 상태·정의를 다시 읽는다.
+  계정 rename의 실제 충돌 거부 조건은 유지한다. t-1156의 run-5b870199/main d36e7edd도 같은
+  잠금의 취득 실패지만 당시 점유자는 미확정이므로 원본 점유 경로를 소급 확정하지 않는다.
+- `idle_automation_drain_does_not_join_dispatch_or_block_the_first_account_rename`은
+  dispatch를 직접 점유한 뒤 기본 PR 규칙의 빈 drain future를 poll하여 잠금 대기가 없는지 검사하고,
+  해제 뒤 첫 rename과 인증 보존을 확인한다. 수리 전에는 첫 poll이 Pending으로 결정적으로 실패한다.
+  필요한 이유는 부하가 우연히 맞아야 드러나던 빈 조회의 잠금 요구를 재현하기 위해서다.
+- `pending_input_and_migration_still_require_dispatch_and_keep_rename_excluded`는 실제 접수한 입력과
+  실제 변환 계획 journal이 있으면 drain이 잠금을 기다리고, 점유 중 rename이 충돌로 거부되며
+  금고가 그대로인지 검사한다. 필요한 이유는 빈 조회 최적화가 실행·복구의 배타권을 우회하지 않게 하기 위해서다.
+- 참고 후보는 [Tokio 시간 진행](https://docs.rs/tokio/latest/tokio/time/fn.advance.html)·
+  [Mutex](https://docs.rs/tokio/latest/tokio/sync/struct.Mutex.html)
+  ([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))와
+  [robfig/cron의 겹침 건너뛰기](https://github.com/robfig/cron/blob/master/chain.go)
+  ([MIT](https://github.com/robfig/cron/blob/master/LICENSE))다.
+  시간 진행·호출 반환과 실제 완료를 구별하는 원칙을 따른다. 외부 코드·의존성은 가져오지 않는다.

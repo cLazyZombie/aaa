@@ -34,6 +34,28 @@ fn request(to: &str) -> FrontRequest {
 }
 
 #[tokio::test]
+async fn idle_automation_drain_does_not_join_dispatch_or_block_the_first_account_rename() {
+    let l = Lab::new();
+    let h = &l.h;
+    let dir = h.project_dir("demo").unwrap();
+    let (rules, broken) = crate::routine::load_all(&dir);
+    assert!(broken.is_empty());
+    let rule = rules.iter().find(|r| r.name == "pr-followup").unwrap();
+    let lock = h.automation_dispatch_lock("demo");
+    let held = lock.lock().await;
+    let drain = h.automation_drain("demo", rule);
+    tokio::pin!(drain);
+    assert!(
+        matches!(futures_util::poll!(&mut drain), std::task::Poll::Ready(Ok(()))),
+        "입력·진행 중 작업·이관이 없는 조회는 dispatch 잠금을 요구하지 않는다"
+    );
+    drop(held);
+    h.call(DeviceRole::Local, "local:cli", request("renamed")).await.unwrap();
+    assert!(h.accounts.credential("renamed").is_ok());
+    assert!(h.accounts.credential("work").is_err());
+}
+
+#[tokio::test]
 async fn rename_reencrypts_preserves_identity_and_moves_only_account_references() {
     let l = Lab::new();
     let h = &l.h;

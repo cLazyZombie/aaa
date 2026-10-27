@@ -4178,6 +4178,16 @@ fn routines() {
         std::fs::write(&next, clock.get().to_string()).unwrap();
         std::fs::rename(next, &clock_file).unwrap();
         w.h.ticks(1);
+        // tick 완료는 dispatch 잠금 때문에 건너뛴 routine까지 처리했다는 뜻이 아니다.
+        // 논리 시각을 고정한 채 실제 일정 원장의 확정을 기다려야 두 차례가 합쳐지지 않는다.
+        wait_for(&format!("routine 차례 {} 확정", clock.get()), T, || {
+            let list = w.h.ok(&["routine", "list", "demo"]);
+            let views = list["routines"].as_array().unwrap();
+            ["ping", "cmd", "far"]
+                .iter()
+                .all(|name| views.iter().any(|r| r["name"] == *name && r["last_run_ms"].as_u64() >= Some(clock.get())))
+                .then_some(())
+        });
     };
     // coordinator가 없으면 돌지 않고 센다(밀린 실행도 쌓지 않는다)
     advance();
@@ -4209,9 +4219,7 @@ fn routines() {
     assert_eq!(items("routine", "ping").len(), 1);
     // 승인 전에는 실행하지 않고, 같은 명령에는 「승인 필요」를 한 번만 남긴다
     wait_for("승인 필요", T, || items("routine-approval", "cmd").into_iter().next());
-    // 항목을 본 뒤 차례가 한 번 더 돈 것은 지난 실행 시각으로 본다(승인이 없어도 차례마다 옮기고, 항목을 먼저 남긴다). routine.rs
-    // `routine_pass`는 항목을 남긴 뒤 last_run_ms를 저장하므로, 항목을 본 때 읽은 값은 그 차례가 저장하기 전일 수 있다: 두 번
-    // 넘어가기를 기다린다(한 번이면 그 차례 자신의 저장일 수 있어 다음 차례를 보지 못한다)
+    // 승인 대기 중에도 서로 다른 두 일정 차례가 확정되고 승인 항목은 하나만 남는다.
     let mut last = routine("cmd")["last_run_ms"].as_u64();
     for n in 1..=2 {
         advance();

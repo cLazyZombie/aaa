@@ -759,6 +759,14 @@ impl Host {
     }
 
     pub(crate) async fn automation_drain(self: &Arc<Self>, p: &str, r: &Routine) -> Result<(), ErrorBody> {
+        // 빈 큐를 조회하는 매 tick까지 프로젝트 dispatch를 점유하면 실제 일이 없어도
+        // routine 차례와 계정 이름 이전의 try_lock을 밀어낸다. 새 입력은 다음 pass가 보며,
+        // 이관 중이거나 자료를 읽지 못했으면 기존 잠금 안에서 복구·오류 처리를 따른다.
+        if !self.automation_rule_pending(p, &r.name)
+            && self.db.meta(&format!("automation_migration:{p}")).map_err(internal)?.is_none()
+        {
+            return Ok(());
+        }
         let lock = self.automation_dispatch_lock(p);
         let _dispatch = lock.lock().await;
         self.automation_recover(p)?;

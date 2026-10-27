@@ -1368,6 +1368,63 @@ fn scheduled_open_thread_condition_roundtrips_and_rejects_wrong_triggers() {
 }
 
 #[tokio::test]
+async fn pending_input_and_migration_still_require_dispatch_and_keep_rename_excluded() {
+    let p = Project::new();
+    let h = demo_host(&p);
+    let dir = p.0.join("projects/demo");
+    let (rules, _) = crate::routine::load_all(&dir);
+    let rule = rules.iter().find(|r| r.name == "pr-followup").unwrap();
+    h.accounts.import("work", "claude", &aaa_test_support::token("dispatch-auth")).unwrap();
+    let lock = h.automation_dispatch_lock("demo");
+    let held = lock.lock().await;
+    h.automation_submit("demo", rule, "fixture", String::new(), None).unwrap();
+    {
+        let drain = h.automation_drain("demo", rule);
+        tokio::pin!(drain);
+        assert!(futures_util::poll!(&mut drain).is_pending(), "처리할 입력은 기존 배타권을 기다린다");
+    }
+    let e = h.account_rename("work", "renamed", "local:cli").await.unwrap_err();
+    assert_eq!(e.code, aaa_proto::ErrorCode::Conflict);
+    assert!(e.message.contains("자동화 처리 중"), "{}", e.message);
+    assert!(h.accounts.credential("work").is_ok());
+    assert!(h.accounts.credential("renamed").is_err());
+    // 입력이 없는 이관 journal도 복구 전에 같은 배타권을 얻어야 한다.
+    h.db.del_meta("automation:demo:pr-followup").unwrap();
+    let plan = convert::prepare(&dir, "mac-a").unwrap();
+    h.db.set_meta("automation_migration:demo", &serde_json::to_string(&plan).unwrap()).unwrap();
+    let drain = h.automation_drain("demo", rule);
+    tokio::pin!(drain);
+    assert!(futures_util::poll!(&mut drain).is_pending(), "이관 복구는 빈 큐 fast path에서 빠지지 않는다");
+    drop(held);
+}
+
+#[tokio::test]
+async fn schedule_dispatch_contention_keeps_the_due_turn_until_it_is_processed_once() {
+    let p = Project::new();
+    let h = demo_host(&p);
+    let dir = p.0.join("projects/demo");
+    p.write("projects/demo/automations/check.toml", "[on.schedule]\nevery='10m'\n[do.inbox]\ntext='점검'\n");
+    let last = aaa_common::util::now_ms() - 600_000;
+    h.db.set_meta("routine:demo:check", &serde_json::json!({"last_run_ms":last}).to_string()).unwrap();
+    let dispatch = h.automation_dispatch_lock("demo");
+    let held = dispatch.lock().await;
+    h.routine_pass("demo", &dir, false);
+    let blocked = h.routines("demo").unwrap().into_iter().find(|r| r.name == "check").unwrap();
+    assert_eq!(blocked.last_run_ms, Some(last), "pass가 반환해도 일정은 아직 확정되지 않았다");
+    assert_eq!(blocked.no_coordinator, 0);
+    assert!(h.routine_runs("demo", "check").unwrap().is_empty());
+    drop(held);
+    h.routine_pass("demo", &dir, false);
+    let processed = h.routines("demo").unwrap().into_iter().find(|r| r.name == "check").unwrap();
+    assert!(processed.last_run_ms > Some(last));
+    assert_eq!(processed.no_coordinator, 1);
+    h.routine_pass("demo", &dir, false);
+    let runs = h.routine_runs("demo", "check").unwrap();
+    assert_eq!(runs.len(), 1, "같은 예정 차례를 다시 세지 않는다");
+    assert_eq!(runs[0].detail, "coordinator 없음");
+}
+
+#[tokio::test]
 async fn schedule_requires_open_worker_threads_without_catching_up_skips() {
     use aaa_proto::{Role, ThreadStatus};
     let p = Project::new();

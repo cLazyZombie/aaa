@@ -753,6 +753,13 @@ impl Host {
                 self.flow_project(project, "routine_broken", Some(file.clone()), e);
             }
         }
+        // PR 사건형만 있는 프로젝트의 빈 일정 조회는 이름 이전과 경합할 이유가 없다.
+        // 진행 중 이관은 일정이 없어도 기존 잠금 아래에서 복구한다.
+        if !ok.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Schedule(_)))
+            && self.db.meta(&format!("automation_migration:{project}")).is_ok_and(|raw| raw.is_none())
+        {
+            return;
+        }
         let dispatch = self.automation_dispatch_lock(project);
         let Ok(_dispatch) = dispatch.try_lock() else { return };
         if let Err(e) = self.automation_recover(project) {
