@@ -575,6 +575,8 @@ thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. �
    source/대상에 deploy_stage.v1, 모든 대상에 rollout_recovery.v1이 필요하다. 미리 복사한 후보는 --from이다.
 3. `aaa deploy status <rollout ID> --wait`로 확인한다. host 연결이 끊겨도 start를 다시 보내지 않는다.
    같은 ID의 조회가 재연결 뒤 이어진다. 판·SHA·새 프로세스 검증까지 done이어야 완료다.
+   요청 ID 출력은 아직 접수 확인 전이다. 유효한 요청의 연결/기능/후보 검사 실패는 설치 없이 stopped로 남는다.
+   all은 끊긴 등록 머신도 포함한다. 원인을 고치거나 대상을 명시한 새 요청으로 시작하며, 같은 ID는 중단 조회뿐이다.
 4. recovering은 독립 감시가 실패 머신만 baseline SHA로 복구/재시작/옛 실행 판을 확인하는 중이다. 같은 ID만 조회한다.
    stopped_rolled_back은 복구 성공이지만 배포 실패다. 앞 머신은 유지하고 다음 머신으로 가지 않는다.
    recovery_failed는 기록의 머신·단계·까닭/guard를 보존하고 사람에게 runbook의 정확 SHA 터미널 복구를 알린다.

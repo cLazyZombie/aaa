@@ -301,6 +301,28 @@ impl Host {
         }
         Ok(machines)
     }
+    fn rollout_machine_error(&self, mid: &str, kind: &str, error: ErrorBody) -> ErrorBody {
+        err(error.code, format!("{kind} {}: {}", self.machine_name(mid), error.message))
+    }
+    /// Agent link로 보내기 전의 검사. 실패도 같은 ID의 중단 기록으로 남기고 어떤 머신도 건너뛰지 않는다.
+    fn prepare_rollout(&self, spec: &RolloutSpec) -> Result<Vec<RolloutStep>, ErrorBody> {
+        for source in spec.source_machine.iter().chain(spec.artifacts.iter().map(|a| &a.source_machine)) {
+            self.live_conn(source).map_err(|e| self.rollout_machine_error(source, "빌드 머신", e))?;
+            if !self.machine_feature(source, "deploy_stage.v1") {
+                return Err(self.rollout_machine_error(
+                    source,
+                    "빌드 머신",
+                    err(ErrorCode::UnsupportedVersion, "deploy_stage.v1이 필요하다"),
+                ));
+            }
+        }
+        for mid in &spec.machines {
+            if let Some(e) = self.target_problem(mid, spec.source_machine.is_some()) {
+                return Err(self.rollout_machine_error(mid, "배포 대상", e));
+            }
+        }
+        self.pin_artifacts(spec)
+    }
     pub(crate) async fn rollout_start(
         self: &Arc<Self>,
         role: DeviceRole,
@@ -375,27 +397,16 @@ impl Host {
         if self.rollout_busy()? {
             return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
         }
-        // 빌드 머신 연결은 새 시작에만 본다: 같은 ID 재전송은 rollout 중 그 agent가 잠시 끊겨도 기존 기록을 돌려준다
-        if let Some(source) = &spec.source_machine {
-            self.live_conn(source)?;
-            if !self.machine_feature(source, "deploy_stage.v1") {
-                return Err(err(ErrorCode::UnsupportedVersion, "빌드 머신에 deploy_stage.v1이 필요하다"));
+        // 같은 ID는 위에서 기존 기록을 돌려준다. all은 끊긴 머신도 포함한 등록 대상 전체를 고정한다.
+        spec.machines = self.rollout_order(&spec.machines)?;
+        let prepared = self.prepare_rollout(&spec);
+        let (pinned_steps, error) = match prepared {
+            Ok(steps) => (steps, None),
+            Err(e) => {
+                tracing::warn!(rollout = %id, error = %e, "rollout 시작 사전 검사 실패: 설치하지 않음");
+                (steps(&spec.machines, spec.source_machine.is_some()), Some(format!("시작 사전 검사: {e}")))
             }
-        }
-        for artifact in &spec.artifacts {
-            self.live_conn(&artifact.source_machine)?;
-            if !self.machine_feature(&artifact.source_machine, "deploy_stage.v1") {
-                return Err(err(ErrorCode::UnsupportedVersion, "플랫폼 후보 빌드 머신에 deploy_stage.v1이 필요하다"));
-            }
-        }
-        let machines = self.rollout_order(&spec.machines)?;
-        for mid in &machines {
-            if let Some(e) = self.target_problem(mid, spec.source_machine.is_some()) {
-                return Err(e);
-            }
-        }
-        spec.machines = machines;
-        let pinned_steps = self.pin_artifacts(&spec)?;
+        };
         let now = aaa_common::util::now_ms();
         let mut r = RolloutView {
             id,
@@ -403,10 +414,10 @@ impl Host {
             actor: actor.into(),
             steps: pinned_steps,
             spec,
-            state: RolloutState::Running,
+            state: if error.is_some() { RolloutState::Stopped } else { RolloutState::Running },
             cursor: 0,
             version: None,
-            error: None,
+            error,
             finish: None,
             recovery_enabled: true,
             recovery: None,
@@ -417,7 +428,9 @@ impl Host {
         // pointer가 먼저 남아도 복구 가능한 정본을 한 transaction으로 저장한다.
         self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
         self.save_rollout(&mut r)?;
-        self.resume_rollout();
+        if r.state == RolloutState::Running {
+            self.resume_rollout();
+        }
         Ok(if web {
             FrontResponse::RolloutCards { cards: vec![self.card_of(r)] }
         } else {

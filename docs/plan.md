@@ -8132,3 +8132,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 기존 E2E24에 실제 host 응답 보류/해제, 빈 목록의 일반 pane 표시, 첫 조회 오류와 새로고침 복구, Chromium 1280px·WebKit 390px의 이미 열린 thread 첫 분류를 더한다. 기존 adopt의 늦은 목록 회귀도 유지하며 thread 사건 하나가 전체 목록 완료를 뜻하지 않는지 확인한다.
 - 참고 후보는 [React Suspense](https://react.dev/reference/react/Suspense)([MIT](https://github.com/facebook/react/blob/main/LICENSE))와 [TanStack Query의 조회 상태](https://tanstack.com/query/latest/docs/framework/react/guides/queries)([MIT](https://github.com/TanStack/query/blob/main/LICENSE))다. 최초 대기/빈 성공/오류를 구별하고 재조회 때 기존 자료를 보존하는 원칙을 따르며 코드·의존성을 가져오지 않는다.
 - 87회차의 E2E39 준비는 첫 목록 보류 중 pane 행을 기다려 새 표시 계약과 대기 순환을 만들었다. 메뉴는 먼저 열되 전체 목록 반영 뒤 행을 기다리고, 메뉴가 그대로 열려 있는지 확인한 뒤 직접 줄을 누르도록 준비를 맞춘다. 자동 첫 선택이 메뉴를 닫는 회귀·실제 클릭·선택 단언·상한은 유지한다. 다른 thread 응답 gate를 전수 확인했으며 같은 pane 선행 대기는 추가로 없었다. 제품 계약·protocol·E2E 번호는 바꾸지 않는다.
+
+### 8.511 배포 시작 사전 검사 실패의 내구 기록(t-1178)
+
+- 권한·입력 형식·기존 ID 일치·진행 중 작업 검사를 통과한 교체 rollout은 먼저 대상 명단을 고정한다. `all`은 끊긴 등록도 포함하며 자동 제외하지 않는다. 빌드 머신/대상의 연결·기능 또는 플랫폼 후보 고정이 실패하면 같은 ID에 `stopped`·원래 요청·미실행 단계·하위 오류를 저장하고 기존 종료 알림을 한 번 발행한다. Agent link 전송·설치·재시작·복구 감시는 시작하지 않는다. 중단 기록은 다음 새 rollout을 막지 않는다.
+- 같은 ID 재전송은 기존 기록만 반환한다. 상태 조회와 host 재시작에서도 원인·대상·작업 ID를 보존한다. 로그와 coordinator 정본에 빌드/대상 구분·머신 이름·하위 오류를 남기며 웹은 기존 표시용 요약만 받는다. 형식/권한 오류와 busy 거절은 접수 전 오류 그대로다. FRONT_API·AGENT_LINK·저장 형식은 유지한다.
+- CLI는 송신 전의 요청 ID를 접수 전으로 표시하고, 응답 뒤 접수/중단/host 거절을 구분한다. 시작 응답이 중단이면 JSON 정본을 유지하며 종료 코드 1로 끝난다. 응답 유실은 같은 ID로 먼저 조회한다. 중단을 확인하고 원인이나 대상/후보를 고친 뒤 새 ID로 시작하며 자동 재시도하지 않는다.
+- 참고 후보는 [kubectl create](https://github.com/kubernetes/kubectl/blob/master/pkg/cmd/create/create.go)와 [Argo Rollouts controller](https://github.com/argoproj/argo-rollouts/blob/master/rollout/controller.go)(각 Apache-2.0)다. 생성 응답과 성공 출력을 구분하고 실패 상태/원인을 기록하는 원칙을 참고했으며 외부 코드·의존성은 추가하지 않는다.

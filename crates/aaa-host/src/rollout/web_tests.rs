@@ -299,6 +299,107 @@ async fn web_controllers_restart_only_and_session_agents_cannot_plan_body(h: Arc
 fn new_id() -> String {
     aaa_common::util::new_id()
 }
+
+#[test]
+fn disconnected_rollout_source_is_durable_and_same_id_never_restarts_it() {
+    in_lab(|h| async move {
+        let id = new_id();
+        let mut spec = super::tests::record().spec;
+        spec.source_machine = Some("mac-a".into());
+        spec.machines.clear();
+        let start = FrontRequest::RolloutStart { id: id.clone(), spec: spec.clone() };
+        let FrontResponse::Rollout { rollout } = h.call(DeviceRole::Local, "person:1", start).await.unwrap() else {
+            panic!("rollout 정본이 아니다")
+        };
+        assert_eq!(rollout.state, RolloutState::Stopped);
+        assert!(rollout.error.as_deref().unwrap().contains("빌드 머신 mac-a"));
+        assert!(rollout.error.as_deref().unwrap().contains("agent_disconnected"));
+        assert_eq!(rollout.spec.machines, ["m"]);
+        assert!(rollout.steps.iter().all(|s| s.started_ms == 0 && !s.completed));
+        assert!(!h.rollout_busy().unwrap());
+        // 기록을 읽고 진행 루프를 불러도 agent에 보내지 않는다. 재전송은 같은 실패를 조회할 뿐이다.
+        h.drive_rollout().await.unwrap();
+        let status = FrontRequest::RolloutStatus { id: id.clone() };
+        assert_eq!(
+            h.call(DeviceRole::Local, "person:1", status).await.unwrap(),
+            FrontResponse::Rollout { rollout: rollout.clone() }
+        );
+        let again = FrontRequest::RolloutStart { id: id.clone(), spec: spec.clone() };
+        assert_eq!(
+            h.call(DeviceRole::Local, "person:1", again).await.unwrap(),
+            FrontResponse::Rollout { rollout: rollout.clone() }
+        );
+        assert_eq!(h.load_rollout(&id).unwrap(), rollout);
+        spec.sha256 = "b".repeat(64);
+        let changed = FrontRequest::RolloutStart { id, spec };
+        assert_eq!(h.call(DeviceRole::Local, "person:1", changed).await.unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!(h.db.inbox_list(Some(&rollout.project), true).unwrap().len(), 1);
+    });
+}
+
+#[test]
+fn all_targets_keep_disconnected_machine_and_stop_before_any_agent_request() {
+    in_lab_with(Some(live(None, false)), |h| async move {
+        // 소스/host는 연결됨, 등록된 다른 대상만 끊김. all을 연결된 머신으로 축소하면 안 된다.
+        let (writer, _reader) = tokio::io::duplex(65536);
+        let remote = crate::AgentConn::new(aaa_common::conn::spawn_writer(writer, MAX_FRAME), 2);
+        h.agent_connected(
+            &AgentHello {
+                proto: AGENT_LINK,
+                machine_id: "remote".into(),
+                machine_name: "mac-b".into(),
+                boot_id: "boot".into(),
+                os: "test".into(),
+                arch: "test".into(),
+                software: "test".into(),
+                features: vec![],
+                dev_mode: true,
+                sha256: None,
+                selfcheck: None,
+                sessions: vec![],
+                identity: None,
+                harness: vec![],
+            },
+            false,
+            remote,
+        );
+        h.agent_disconnected("remote", 2);
+        let id = new_id();
+        let mut spec = super::tests::record().spec;
+        spec.source_machine = Some("mac-a".into());
+        spec.machines.clear();
+        let start = FrontRequest::RolloutStart { id: id.clone(), spec };
+        let FrontResponse::RolloutCards { cards } = h.call(DeviceRole::Controller, WEB, start).await.unwrap() else {
+            panic!("웹 요약이 아니다")
+        };
+        assert_eq!(cards[0].state, RolloutState::Stopped);
+        let r = h.load_rollout(&id).unwrap();
+        assert_eq!(r.spec.machines, ["m", "remote"]);
+        assert!(r.error.as_deref().unwrap().contains("배포 대상 mac-b"));
+        assert!(r.error.as_deref().unwrap().contains("agent_disconnected"));
+        assert!(!serde_json::to_string(&cards).unwrap().contains("agent_disconnected"), "웹은 원문 진단을 숨긴다");
+        h.drive_rollout().await.unwrap();
+        assert!(r.steps.iter().all(|s| s.started_ms == 0 && !s.completed && s.guard.is_none()));
+        assert!(!h.rollout_busy().unwrap());
+        assert!(h.live_conn("m").unwrap().pending.lock().unwrap().is_empty());
+        // 명시적으로 다른 대상을 고르면 그 요청의 명단만 검사한다. 끊긴 등록은 저절로 지우지 않는다.
+        assert_eq!(h.rollout_order(&["mac-a".into()]).unwrap(), ["m"]);
+        let mut spec = r.spec.clone();
+        spec.machines = vec!["mac-a".into()];
+        let next_id = new_id();
+        let next = FrontRequest::RolloutStart { id: next_id.clone(), spec };
+        let FrontResponse::Rollout { rollout: next } = h.call(DeviceRole::Local, "person:1", next).await.unwrap()
+        else {
+            panic!("rollout 정본이 아니다")
+        };
+        assert_eq!(next.state, RolloutState::Running);
+        assert_eq!(next.spec.machines, ["m"]);
+        assert!(h.rollout_busy().unwrap());
+        assert_eq!(h.load_rollout(&id).unwrap(), r, "다음 시작이 중단 이력을 지우면 안 된다");
+        // 성공 시작도 DB 저장 뒤에만 실행 loop를 예약한다. 이 시험 runtime은 예약 task 실행 전에 끝낸다.
+        assert!(h.live_conn("m").unwrap().pending.lock().unwrap().is_empty());
+    });
+}
 fn restart_spec(machines: &[&str], service: DeployService) -> RolloutSpec {
     RolloutSpec {
         from: String::new(),

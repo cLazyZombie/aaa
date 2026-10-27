@@ -95,16 +95,15 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                 }
                 let id = aaa_common::util::new_id();
                 eprintln!(
-                    "rollout ID: {id}. 응답이 끊겨도 다시 시작하지 말고 `aaa deploy status {id} --wait`로 확인한다"
+                    "rollout 요청 ID: {id} (아직 접수 확인 전). 응답이 끊기면 다시 시작하지 말고 `aaa deploy status {id} --wait`로 접수 여부를 확인한다"
                 );
-                crate::cli::front_print(
-                    json,
-                    c.call(FrontRequest::RolloutStart {
+                let response = c
+                    .call(FrontRequest::RolloutStart {
                         id,
                         spec: RolloutSpec { from, source_machine, sha256, commit, machines, artifacts, restart: None },
                     })
-                    .await?,
-                )
+                    .await?;
+                print_start(json, response)
             }
             DeployCmd::Status { id, wait } => {
                 let mut disconnected = None;
@@ -180,6 +179,26 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
             }
         }
     })
+}
+
+fn print_start(json: bool, response: Result<FrontResponse, aaa_proto::ErrorBody>) -> Result<ExitCode> {
+    let stopped = matches!(&response, Ok(FrontResponse::Rollout { rollout })
+        if !matches!(rollout.state, RolloutState::Running | RolloutState::Recovering | RolloutState::Done));
+    if let Ok(FrontResponse::Rollout { rollout }) = &response {
+        if stopped {
+            eprintln!(
+                "rollout ID: {} · 배포 중단. {}",
+                rollout.id,
+                rollout.error.as_deref().unwrap_or("상태를 확인한다")
+            );
+        } else {
+            eprintln!("rollout ID: {} · 접수됨", rollout.id);
+        }
+    } else if response.is_err() {
+        eprintln!("host가 rollout 시작 요청을 거절했다. 위 요청 ID는 접수 완료를 뜻하지 않는다.");
+    }
+    let code = crate::cli::front_print(json, response)?;
+    Ok(if stopped { ExitCode::from(1) } else { code })
 }
 
 /// host의 wait 전용 handshake가 local agent의 pane 자료를 기다린 뒤 peer PID를 판정한다.
