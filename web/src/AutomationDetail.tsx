@@ -207,7 +207,6 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
       </div> : <p className="automation-dim">보기 권한에서는 풀 수 없습니다.</p>}
     </Callout>}
     {rule.start_approved === false && <Callout tone="notice" title="자동 시작 승인 필요" testid="automation-start-approval">
-      <p>처음·넓힌 조건과 대상에만 승인합니다. 작업 본문과 선택 예산은 승인 범위에 포함하지 않습니다.</p>
       {rule.start_scope && <pre className="automation-scope">{rule.start_scope}</pre>}
       {canControl && <div className="automation-actions"><button type="button" className="btn btn-primary" onClick={() => setAsk({ kind: "start" })}>승인 검토</button></div>}
     </Callout>}
@@ -248,7 +247,6 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
       {rule.start_approved === true && rule.start_scope && <pre className="automation-scope">{rule.start_scope}</pre>}
     </Section>
     {executions.length > 0 && <Section title="실행 원장" testid="automation-executions">
-      <p className="muted">동작의 전달·시작 결과와 후속 작업의 완료를 구분합니다.</p>
       {executions.map(run => <details key={run.id} data-testid="automation-execution">
         <summary>{short(run.updated_at_ms)} · {executionWord(run)} · {run.reason}</summary>
         <Facts rows={[["실행",<code>{run.id}</code>],["원인",<code>{run.source} · {run.input_id}</code>],["설정 판",<code>{run.revision || "옛 입력"}</code>],

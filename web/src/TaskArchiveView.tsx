@@ -106,7 +106,7 @@ export function TaskArchiveView({ project, canEdit, rev, toolbar, repos, extende
         <button type="button" className="task-chip tasks-sort" aria-haspopup="menu" aria-expanded={sortMenu !== null} aria-label={`정렬: ${sorted.label}, ${sorted.hint}`} title={`${sorted.label}순 · ${sorted.hint}`} data-testid="task-completed-sort" onClick={(e) => setSortMenu(e.currentTarget)}>
           <ArrowDownWideNarrow aria-hidden="true" />{sorted.label}
         </button>
-        {sortMenu && <RowMenu anchor={sortMenu} title="정렬" subtitle="늘 최근·큰 번호가 위" onClose={() => setSortMenu(null)} items={ARCHIVE_SORTS.map((s) => ({
+        {sortMenu && <RowMenu anchor={sortMenu} title="정렬" onClose={() => setSortMenu(null)} items={ARCHIVE_SORTS.map((s) => ({
           id: s.key, label: s.label, hint: s.hint, icon: SORT_ICON[s.key], checked: sort === s.key, run: () => pickSort(s.key),
         }))} />}
       </>}>

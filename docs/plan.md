@@ -8189,3 +8189,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - add·명시한 제목 편집은 목록 파서와 같은 형식 문제 검사로 거절한다. thread 번호는 연결 칸, 긴 글·상태는 메모로 옮기라고 알린다. 새로 만든 task 줄도 다시 읽어 모든 문제를 검사한다. 기존 파일의 ▲ 표시는 유지하며, 기존 제목을 바꾸지 않는 메모 편집과 고급 원문 편집은 원문 보존 경로다.
 - FRONT_API 1.134: `AppendNotes`와 선택 `warnings`를 추가한다. 구판 host는 새 동작을 거부하며 구판 응답의 경고 누락은 빈 배열로 읽는다. AGENT_LINK·저장 형식·의존성은 유지한다. 웹은 기존 update로 메모를 저장하므로 구판 host와도 호환된다.
 - 참고는 [Taskwarrior annotate](https://taskwarrior.org/docs/man/task.1/)([MIT](https://taskwarrior.org/docs/license/))의 메모 추가와 수정 구분, [GitHub CLI issue edit](https://cli.github.com/manual/gh_issue_edit)([MIT](https://github.com/cli/cli/blob/trunk/LICENSE))의 `--add-*`와 전체 본문 교체 구분이다. 명령 의미만 참고하고 외부 코드·의존성은 추가하지 않는다.
+
+### 8.519 웹 설명 도움말 제거와 계정 화면 자동 배정 칸 제거(t-1198)
+
+- 사용자 10-27: 설정 「계정」의 「자동 배정」 칸이 필요 없고, 웹 화면에 기능 설명 도움말을 쓰지 않는다. AGENTS.md에 규칙을 적는다: 오류·지금 상태·빈 목록·확인 질문처럼 동작에 필요한 짧은 문구만 두고 설명은 docs에 쓴다.
+- 계정 화면에서 자동 배정 설명 두 문단, 「관측이 없으면 사용량 모름」, 끝난 시작 기록 목록을 뺀다. 계정 행의 「자동 배정에 사용」과 「사용량 다시 읽기」는 남긴다. 풀 설정 저장 오류는 계정 화면 머리의 경고로 옮긴다.
+- 대기 중인 계정 배정 시작은 할 일 화면 「계정 배정 대기」(대기 중일 때만, 취소 단추)에 둔다. 할 일 시작 창의 「설정 → 계정에서 확인」 안내는 뺀다. 대기 뒤 host pass에서 시작하지 못한 일은 inbox `task-start`·`account start failed`로 한 번 알린다(thread가 생긴 실패는 기존 thread 사건). proto·FRONT_API는 바꾸지 않는다.
+- 다른 화면의 설명 문단·행 설명·note·hint·subtitle도 지운다. 상태와 설명이 섞인 문구(빈 목록·「이 host는 ○○를 모른다」·passkey·설치 버튼 이유 등)는 사용자 답(1A)대로 상태·막힌 이유·경고만 남기고 사용법을 지운다. 보안 경고(Windows 설치 암호)와 확인창 본문, 버튼 title은 둔다.

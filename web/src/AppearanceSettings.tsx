@@ -76,7 +76,7 @@ export function AppearanceSettings() {
         </SettingsRow>
         {a.theme === "system" ? (
           <>
-            <SettingsRow label="라이트 색상" description="시스템 모드에서는 두 팔레트를 오갑니다" htmlFor="settings-palette-light" wide>
+            <SettingsRow label="라이트 색상" htmlFor="settings-palette-light" wide>
               <PaletteSelect id="settings-palette-light" value={a.paletteLight} onChange={(paletteLight) => updateAppearance({ paletteLight })} />
             </SettingsRow>
             <SettingsRow label="다크 색상" htmlFor="settings-palette-dark" wide>
@@ -102,7 +102,7 @@ export function AppearanceSettings() {
             ]}
           />
         </SettingsRow>
-        <SettingsRow label="사이드바 행" description="이름만 한 줄로 보여주거나, 하는 일을 위에 두고 자리를 아래에 보여줍니다" wide>
+        <SettingsRow label="사이드바 행" wide>
           <Segmented
             label="사이드바 행"
             value={a.sidebarRows}
@@ -115,7 +115,7 @@ export function AppearanceSettings() {
         </SettingsRow>
         {/* 참고 SettingsDialog 「Agents order」(문구 i18n.ko.ts)를 「작업」 트리의 폴더 안 차례로(plan §8.280). 값 이름(workspace)은
             공유 설정 호환으로 그대로 두고, 그 뜻은 목록 기본 차례(확인 필요 → 검토 → 병합 → 작업 → 쉼, herdr-projects rank)다 */}
-        <SettingsRow label="폴더 안 정렬" description="상태순은 확인 필요·검토 대기·병합 중·작업 중·쉼 차례로 놓습니다. 활동순은 응답을 기다리는 thread를 맨 위에 두고, 그다음 가장 최근에 바뀐 순서로 놓습니다. 폴더의 순서는 바뀌지 않습니다" wide>
+        <SettingsRow label="폴더 안 정렬" wide>
           <Segmented
             label="폴더 안 정렬"
             value={a.agentOrder}
@@ -126,7 +126,7 @@ export function AppearanceSettings() {
             ]}
           />
         </SettingsRow>
-        <SettingsRow label="상태 표시" description="기본은 확인이 필요한 상태만 표시합니다. 점과 기호는 herdr TUI처럼 모든 상태를 표시합니다" wide>
+        <SettingsRow label="상태 표시" wide>
           <Segmented
             label="상태 표시"
             value={a.statusIndicators}
@@ -140,13 +140,13 @@ export function AppearanceSettings() {
         </SettingsRow>
       </SettingsGroup>
       <SettingsGroup title="타이포그래피" section="typography">
-        <SettingsRow label="화면 글꼴" description="메뉴·목록·대화에 적용됩니다. 쉼표로 구분하며 이 기기에 없는 글꼴은 기본 글꼴로 대체합니다. 이 기기에만 저장됩니다." wide>
+        <SettingsRow label="화면 글꼴" wide>
           <FontFamilyInput value={uiFontFamily} label="화면 글꼴" onCommit={setUiFontFamily} monospace={false} />
         </SettingsRow>
-        <SettingsRow label="고정폭 글꼴" description="코드·경로·숫자에 적용됩니다. 이 기기에 없는 글꼴은 기본 글꼴로 대체하고 아이콘 글꼴은 유지합니다. 이 기기에만 저장됩니다." wide>
+        <SettingsRow label="고정폭 글꼴" wide>
           <FontFamilyInput value={monoFontFamily} label="고정폭 글꼴" onCommit={setMonoFontFamily} />
         </SettingsRow>
-        <SettingsRow label="인터페이스 글자 크기" description="메뉴, 목록, 대화 상자, 사이드바에 적용됩니다. 채팅은 별도 크기를 정하기 전까지 이 크기를 따르고, 터미널은 자체 크기를 유지합니다.">
+        <SettingsRow label="인터페이스 글자 크기">
           <Stepper
             label="인터페이스 글자 크기"
             value={uiSize}

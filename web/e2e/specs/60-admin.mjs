@@ -82,7 +82,7 @@ export default async function ({ page }) {
     const steps = guide.getByTestId("enroll-guide-steps");
     const enrollCmd = (await steps.locator("li").nth(1).locator("code").innerText()).trim();
     if (enrollCmd !== `~/.local/bin/aaa agent enroll ${addr} --name labB`) throw new Error(`안내 명령 ${enrollCmd}`);
-    const fpShown = (await steps.locator("li").nth(2).innerText()).match(/fingerprint가 ([0-9a-f]{16})…/)?.[1];
+    const fpShown = (await steps.locator("li").nth(2).innerText()).match(/fingerprint ([0-9a-f]{16})…/)?.[1];
     await shot(page, "60-enroll-guide-desktop");
     // 새 머신 화면: 확인 코드 줄을 읽는다(그 머신 사람이 보는 것). 안내 명령의 실행 파일 자리만 실험실 binary로 바꾼다
     const p = spawn(AA, enrollCmd.split(" ").slice(1), { env: { ...env, ...nodeB }, stdio: ["ignore", "pipe", "pipe"] });
@@ -105,7 +105,7 @@ export default async function ({ page }) {
     await row.waitFor();
     await row.getByRole("button", { name: "승인…" }).click();
     const ap = page.getByRole("dialog", { name: "labB 승인" });
-    await ap.getByText("「labB」인지").waitFor();
+    await ap.getByText("세 번 틀리면 이 등록 요청을 버린다.").waitFor();
     if (!(await ap.getByTestId("enroll-approve").isDisabled())) throw new Error("코드 없이 승인 단추가 열렸다");
     await ap.getByTestId("enroll-code").fill(code === "000000" ? "111 111" : "000 000");
     await ap.getByTestId("enroll-approve").click();

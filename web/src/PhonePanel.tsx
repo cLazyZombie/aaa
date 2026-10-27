@@ -59,35 +59,25 @@ function Plan({ plan, loading, onRefresh }: { plan: PhonePlan; loading: boolean;
   switch (plan.kind) {
     case "here":
     case "served":
-      return (
-        <>
-          <Address url={plan.url} title={plan.kind === "here" ? "폰에서 이 주소를 여세요" : "Tailscale이 이미 이 host 머신을 서빙하고 있습니다"} />
-          <p className="settings-description">열리면 앱을 설치한 뒤 목록 머리의 더 보기 메뉴에서 알림을 누르세요.</p>
-          {plan.kind === "served" && <Sharing />}
-        </>
-      );
+      return <Address url={plan.url} title={plan.kind === "here" ? "폰에서 이 주소를 여세요" : "Tailscale이 이미 이 host 머신을 서빙하고 있습니다"} />;
     case "command":
       return (
         <>
-          <p className="settings-description">host 머신의 터미널에서 앱을 테일넷에 공개하세요. 테일넷 안의 기기만 이 주소를 열 수 있습니다.</p>
           <Command command={plan.command} />
           <div className="phone-actions">{checkAgain}</div>
-          <Sharing />
         </>
       );
     case "stopped":
       return (
         <>
-          <p className="settings-description">host 머신에 Tailscale이 있지만 연결되어 있지 않습니다. 거기서 tailscale up을 실행한 뒤 다시 확인하세요.</p>
+          <p className="settings-description">host 머신에 Tailscale이 있지만 연결되어 있지 않습니다.</p>
           <div className="phone-actions">{checkAgain}</div>
         </>
       );
     case "missing":
       return (
         <>
-          <p className="settings-description">
-            Tailscale이 가장 빠른 길입니다. host 머신에 설치하고 tailscale up을 실행한 뒤 다시 확인하세요. SSH 터널이나 직접 만든 HTTPS 프록시도 됩니다.
-          </p>
+          <p className="settings-description">host 머신에 Tailscale이 없습니다.</p>
           <p className="settings-description">
             <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">
               Tailscale 받기
@@ -140,8 +130,4 @@ function Command({ command }: { command: string }) {
       </button>
     </div>
   );
-}
-
-function Sharing() {
-  return <p className="settings-hint">테일넷에 닿는 기기도 들어오려면 한 번 페어링해야 합니다. 아래 기기 항목을 보세요.</p>;
 }

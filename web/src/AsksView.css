@@ -51,6 +51,7 @@
 .ask-card-title { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-semibold); color: var(--text-strong); overflow-wrap: anywhere; }
 .ask-card-text { margin: 0; font-size: var(--fs-sm); line-height: var(--lh-prose); }
 .ask-card .thread-ask-foot { padding-bottom: var(--space-4); }
+.thread-ask-foot.is-end { justify-content: flex-end; }
 .ask-buttons { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .ask-kind {
   display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px;

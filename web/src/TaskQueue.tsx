@@ -117,7 +117,7 @@ export function QueueStatus({ task, board, queue }: { task: TaskView; board: Tas
   return <section className={`task-queue-controls${pending ? " is-reserved" : ""}`} data-testid="task-queue-controls" data-state={q.state}>
     <p className="task-queue-status" data-testid="task-queue-status">{pending && <span className={`task-reserved-dot${q.state === "check" ? " is-check" : ""}`} aria-hidden="true" />}<ThreadStageBadge stage={q.stage} /><span className="task-queue-word">{afterWait ? "예약됨 · 앞 할 일 완료 뒤 시작" : words[q.state]}</span>{q.thread && ` · ${q.thread}`}</p>
     <p className="task-queue-meta">{q.profile} {q.model} · effort {q.effort || "기본"} · 머신 {q.machine ?? "자동"}{q.after && <span data-testid="task-queue-after"> · {q.after_short_id ?? q.after} 완료 뒤 시작</span>}</p>
-    {why && <div className="task-queue-why" role="note" data-testid="task-queue-why"><b>기다리는 까닭: {why}</b>{q.state === "queued" && <span>{afterWait ? "앞 할 일이 완료 보관되면 자리 차례에 든다." : "다른 머신으로 바꾸지 않고 기다린다."} 그동안 뒤의 예약이 먼저 시작될 수 있다.</span>}</div>}
+    {why && <div className="task-queue-why" role="note" data-testid="task-queue-why"><b>기다리는 까닭: {why}</b></div>}
     {pending && <p className="task-queue-home" data-testid="task-queue-home">풀면 돌아갈 자리: {unreserveHome(board, task)}</p>}
   </section>;
 }

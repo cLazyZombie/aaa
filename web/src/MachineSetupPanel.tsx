@@ -102,14 +102,7 @@ export function MachineSetupPanel({
   };
   const problem = target === "" ? null : targetProblem(target);
   return (
-    <SettingsGroup
-      title="SSH로 추가"
-      note={
-        install
-          ? "host에서 이미 ssh로 로그인되는 머신을 넣는다. SSH 접속은 host의 키·ssh-agent·설정을 쓴다. Windows 서비스 암호는 설치 확인 창의 전용 칸에서만 한 번 받는다."
-          : "host Mac에서 이미 ssh로 로그인되는 머신을 넣는다. host의 SSH 키·ssh-agent·~/.ssh/config만 쓰고 비밀번호는 받지 않는다. 지금은 접속·host key 확인·OS 감지까지이고 원격에는 쓰지 않는다."
-      }
-    >
+    <SettingsGroup title="SSH로 추가">
       <div className="settings-item" data-testid="machine-setup">
         {error && (
           <p className="op-warn" role="alert">
@@ -247,7 +240,7 @@ function InstallDialog({ s, onApplied, onClose }: { s: MachineSetupView; onAppli
           data-lpignore="true" data-1p-ignore="true" disabled={pending} maxLength={1024} data-testid="machine-setup-password" />
       </label>
       <p className="op-muted">암호는 위 전용 칸에만 직접 입력하세요. coordinator 대화창·질문 답·할 일 메모·터미널·agent에게 붙여 넣지 마세요. aaa는 저장하거나 대화에 보내지 않고 신뢰를 확인한 SSH로 Windows 서비스에 한 번 전달합니다.</p>
-      <p className="op-muted">비우면 필요한 경우 설치가 멈춥니다. 그 PC의 aaa 밖 콘솔에서 같은 설치 ID로 재개해 암호를 입력한 뒤 여기서 다시 확인할 수도 있습니다.</p>
+      <p className="op-muted">비우면 필요한 경우 설치가 멈춥니다.</p>
     </>}
   </ConfirmDialog>;
 }
@@ -333,7 +326,6 @@ function SetupBody({
       {s.detected && (
         <p data-testid="machine-setup-detected">
           {detectedLine(s.detected)}
-          {s.phase === "ready" && !install && <span className="op-muted"> — 설치는 다음 단계에서 이어진다</span>}
         </p>
       )}
       {s.phase === "ready" && install && canEdit && s.detected && notInstallable(s.detected, windows) && (
@@ -391,7 +383,7 @@ function SetupBody({
         </p>
       )}
       {s.phase === "needs_user" && r?.service_password && i?.installation_id && <p className="op-muted">
-        그 PC의 aaa 밖 콘솔에서 암호를 넣으려면 <code>aaa install --resume {i.installation_id}</code>로 재개한 뒤 「다시 확인」을 누른다.
+        <code>aaa install --resume {i.installation_id}</code>
       </p>}
       {s.phase === "installed" && i && (
         <div className="setup-review" data-testid="machine-setup-after">
@@ -509,7 +501,6 @@ function SettingsForm({
         <button type="submit" className="btn btn-primary" disabled={sending || problem !== null} data-testid="machine-setup-plan-start">
           계획 보기
         </button>
-        <span className="op-muted">같은 판 aaa를 그 머신 임시 폴더에 보내고, 그 머신의 install이 계획만 낸다(아직 설치하지 않는다)</span>
       </div>
     </form>
   );

@@ -56,10 +56,7 @@ export default async function ({ page }) {
     if (queued("시안대로 구현").reason !== `앞 할 일 ${draft} 완료 대기`) throw new Error(queued("시안대로 구현").reason);
     if (aaa("thread", "list", "demo").threads.length !== 0) throw new Error("앞 할 일이 끝나기 전에 기동했다");
     await domIs(page, "앞 할 일 표시", (d) => document.querySelector('[data-testid="task-queue-after"]')?.textContent.includes(`${d} 완료 뒤 시작`), draft);
-    await domIs(page, "기다리는 까닭", (d) => {
-      const t = document.querySelector('[data-testid="task-queue-why"]')?.textContent ?? "";
-      return t.includes(`앞 할 일 ${d} 완료 대기`) && t.includes("앞 할 일이 완료 보관되면");
-    }, draft);
+    await domIs(page, "기다리는 까닭", (d) => document.querySelector('[data-testid="task-queue-why"]')?.textContent === `기다리는 까닭: 앞 할 일 ${d} 완료 대기`, draft);
     await domIs(page, "예약 상태 글", () => document.querySelector('[data-testid="task-queue-status"]')?.textContent.includes("예약됨 · 앞 할 일 완료 뒤 시작"));
     await shot(page, "task-after-waiting");
     // 예약 내용 갱신은 지금 앞 할 일을 그대로 고른 채 연다

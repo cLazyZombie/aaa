@@ -137,10 +137,6 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
   return (
     <div className="devices-panel">
       <p className="settings-description">{role === "reader" ? "보기만 하는 기기입니다." : "페어링된 기기입니다."}</p>
-      <p className="settings-description">
-        페어링된 기기는 여기서 폐기하기 전까지, 이 host에 닿는 어디서든 스스로 들어옵니다. 코드는 이미 페어링된 기기의 이 화면에서, 또는 host 머신 터미널의{" "}
-        <code>aaa web pair</code>로 받습니다. 보기만 할 기기는 <code>aaa web pair --reader</code>로 받습니다.
-      </p>
       {devices === null ? (
         <p className="settings-hint" role="status">
           불러오는 중…
@@ -251,7 +247,7 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
             <p className="settings-label">다른 기기에서 이 코드를 입력하세요</p>
             <p className="devices-code">{spaced}</p>
             <p className="settings-description">
-              {qrValue !== null ? "또는 QR 코드를 스캔하세요. 코드가 채워진 상태로 앱이 열립니다." : "그 기기에서 앱 주소를 열고 입력하세요."} {left} 뒤 만료됩니다.
+              {left} 뒤 만료됩니다.
             </p>
             {qrValue !== null && (
               <p className="devices-link">

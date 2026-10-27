@@ -72,10 +72,10 @@ export function AutomationPanel({ data, canControl, threads = [], selected = nul
           </button>;
         })}
         {legacy > 0 && <div className="automation-legacy" data-testid={`automation-legacy-${project}`}>
-          <span><span className="automation-badge is-legacy">이전 형식</span> {legacy}개 · 웹은 새 형식(TOML)만 고친다</span>
+          <span><span className="automation-badge is-legacy">이전 형식</span> {legacy}개 · 웹은 TOML만 고친다</span>
           {canPreviewConvert(frontApi)
             ? <button type="button" className="ghost small" disabled={!!convertBlocked} title={convertBlocked ?? undefined} onClick={() => setConvert(project)}>새 형식으로 바꾸기</button>
-            : frontApi !== undefined && <span className="automation-dim">host를 1.58 이상으로 올리면 여기서 바꿀 수 있다</span>}
+            : frontApi !== undefined && <span className="automation-dim">host 판이 낮아 바꿀 수 없다</span>}
         </div>}
         {trash.length > 0 && <details className="automation-trash" data-testid={`automation-trash-${project}`}>
           <summary>지운 자동화 {trash.length}개</summary>

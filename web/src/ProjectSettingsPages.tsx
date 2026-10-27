@@ -61,15 +61,14 @@ function Stale({ error }: { error: string | null }) {
 
 function Unavailable({ state, error }: { state: string; error: string | null }) {
   if (state === "loading") return <p className="op-muted">읽는 중…</p>;
-  if (state === "old") return <p className="op-muted">이 host는 설정 읽기를 모른다. host를 새 판으로 바꾸면 보인다(지금은 `aaa project set`).</p>;
+  if (state === "old") return <p className="op-muted">이 host는 설정 읽기를 모른다.</p>;
   return <p className="op-warn">{error ?? "읽지 못했다"}</p>;
 }
 
 /** 값 하나: 고치면 「저장」이 생긴다. 실패는 그 줄 아래에 */
-function SettingText({ id, label, description, value, canEdit, kind = "text", check, onSave, options }: {
+function SettingText({ id, label, value, canEdit, kind = "text", check, onSave, options }: {
   id: string;
   label: string;
-  description?: string;
   value: string;
   canEdit: boolean;
   kind?: "text" | "number" | "select";
@@ -107,7 +106,7 @@ function SettingText({ id, label, description, value, canEdit, kind = "text", ch
       <input id={id} type={kind} value={draft} disabled={!canEdit || busy} onChange={(e) => setDraft(e.target.value)} data-testid={id} inputMode={kind === "number" ? "numeric" : undefined} />
     );
   return (
-    <SettingsRow label={label} description={error ?? bad ?? description} htmlFor={id} wide>
+    <SettingsRow label={label} description={error ?? bad ?? undefined} htmlFor={id} wide>
       <div className="op-row">
         <div className="op-field">{input}</div>
         {canEdit && changed && (
@@ -198,20 +197,20 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
     <div className="op-page" data-testid="settings-this-aaa">
       <Stale error={error} />
       <SettingsGroup title={view.project} note={`${STATUS_WORD[view.status] ?? view.status} · 설정 파일 ${view.file}`}>
-        <SettingText id="set-goal" label="목표" description="thread brief 머리에 들어간다" value={view.goal} canEdit={canEdit} onSave={(v) => set("goal", v)} />
-        <SettingText id="set-thread-profile" label="thread 기본 profile" description="시작할 때 profile을 고르지 않으면 쓴다(허용 목록 안에서)" kind="select" options={profiles} value={view.thread_profile} canEdit={canEdit} onSave={(v) => set("thread_profile", v)} />
-        <SettingText id="set-coordinator-profile" label="coordinator profile" description="coordinator를 띄울 때 쓴다" kind="select" options={profiles} value={view.coordinator_profile} canEdit={canEdit} onSave={(v) => set("coordinator_profile", v)} />
-        <SettingText id="set-max-parallel" label="동시 thread 한도" description="사용자·coordinator가 띄운 thread를 센다. 자동화·병합 대기와 착지 한 자리는 제외한다. 다음 단계 작업은 다시 센다" kind="number" check={(v) => checkSetting("max_parallel_threads", v)} value={String(view.max_parallel_threads)} canEdit={canEdit} onSave={(v) => set("max_parallel_threads", v)} />
-        <SettingText id="set-auto-resolve" label="쉼 뒤 자동 끝내기(일)" description="쉼으로 이만큼 지난 thread를 마지막 사본 뒤 끝낸다. 0이면 하지 않는다" kind="number" check={(v) => checkSetting("auto_resolve_days", v)} value={String(view.auto_resolve_days)} canEdit={canEdit} onSave={(v) => set("auto_resolve_days", v)} />
-        <SettingsRow label="coordinator에 묶음 알림(nudge)" description="처음 보는 알림함 항목 묶음을 coordinator에 한 줄로 알린다">
+        <SettingText id="set-goal" label="목표" value={view.goal} canEdit={canEdit} onSave={(v) => set("goal", v)} />
+        <SettingText id="set-thread-profile" label="thread 기본 profile" kind="select" options={profiles} value={view.thread_profile} canEdit={canEdit} onSave={(v) => set("thread_profile", v)} />
+        <SettingText id="set-coordinator-profile" label="coordinator profile" kind="select" options={profiles} value={view.coordinator_profile} canEdit={canEdit} onSave={(v) => set("coordinator_profile", v)} />
+        <SettingText id="set-max-parallel" label="동시 thread 한도" kind="number" check={(v) => checkSetting("max_parallel_threads", v)} value={String(view.max_parallel_threads)} canEdit={canEdit} onSave={(v) => set("max_parallel_threads", v)} />
+        <SettingText id="set-auto-resolve" label="쉼 뒤 자동 끝내기(일)" kind="number" check={(v) => checkSetting("auto_resolve_days", v)} value={String(view.auto_resolve_days)} canEdit={canEdit} onSave={(v) => set("auto_resolve_days", v)} />
+        <SettingsRow label="coordinator에 묶음 알림(nudge)">
           <Toggle label="coordinator에 묶음 알림" checked={view.nudge} disabled={!canEdit} onChange={(on) => void toggle("nudge", on)} />
         </SettingsRow>
-        <SettingsRow label="밖으로 가는 알림 끄기(mute)" description="webhook·웹 푸시를 오류·머신 이상만 남기고 끈다. 알림함과 앱 안 알림은 그대로다">
+        <SettingsRow label="밖으로 가는 알림 끄기(mute)">
           <Toggle label="밖으로 가는 알림 끄기" checked={view.mute} disabled={!canEdit} onChange={(on) => void toggle("mute", on)} />
         </SettingsRow>
         {rowError && <p className="op-warn settings-item">{rowError}</p>}
       </SettingsGroup>
-      <SettingsGroup title="할 일 「나중」 파일" note="할 일의 「나중」 탭이 읽기만 하는 Markdown 파일. 프로젝트 폴더 안 상대 경로다.">
+      <SettingsGroup title="할 일 「나중」 파일">
         <div className="settings-item op-section" data-testid="task-notes">
           {view.task_notes.length === 0 ? (
             <p className="op-muted">정한 파일이 없다</p>
@@ -246,7 +245,7 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
           )}
         </div>
       </SettingsGroup>
-      <SettingsGroup title="멈춤" note="멈추면 ticker가 이 프로젝트를 건너뛰고 thread 시작을 거부한다. 도는 agent는 멈추지 않는다.">
+      <SettingsGroup title="멈춤">
         <SettingsRow label={paused ? "멈춰 있다" : "돌고 있다"}>
           {canEdit && view.status !== "archived" && (
             <button
@@ -270,10 +269,9 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
           )}
         </SettingsRow>
       </SettingsGroup>
-      <SettingsGroup title="정리" note="미리 보고, 확인 창에서 실행한다.">
+      <SettingsGroup title="정리">
         <div className="settings-item op-section" data-testid="sweep-section">
           <h3>끝난 thread 자리</h3>
-          <p className="op-muted">끝난 thread가 남긴 worktree·병합된 branch를 그 머신에서 치운다(force 없음).</p>
           <div className="op-buttons">
             <button type="button" className="btn" disabled={cleanBusy !== null} onClick={() => void previewSweep()} data-testid="sweep-preview">
               {cleanBusy === "sweep" ? "보는 중…" : "미리 보기"}
@@ -310,7 +308,6 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
         </div>
         <div className="settings-item op-section" data-testid="prune-section">
           <h3>보고서 사본</h3>
-          <p className="op-muted">기한·용량을 넘은 host 보고서 사본을 지운다. report.md 사본과 thread 기록은 남는다.</p>
           <div className="op-buttons">
             <button type="button" className="btn" disabled={cleanBusy !== null} onClick={() => void previewPrune()} data-testid="prune-preview">
               {cleanBusy === "prune" ? "보는 중…" : "미리 보기"}
@@ -434,7 +431,7 @@ export function ReposPage({ role }: { role: DeviceRole }) {
   return (
     <div className="op-page" data-testid="settings-repos">
       <Stale error={error} />
-      <SettingsGroup title="저장소" note="할 일의 저장소 칸이 고르는 목록이다. 이름(경로의 마지막 폴더)이 같으면 한 저장소의 머신별 자리다.">
+      <SettingsGroup title="저장소">
         <div className="settings-item">
           <ul className="op-repos" data-testid="repo-list">
             {groups.map((g) => (
@@ -484,7 +481,6 @@ export function ReposPage({ role }: { role: DeviceRole }) {
             ))}
             <li data-testid="repo-workdir">
               <span className="op-repo-name">{REPO_DIR}(저장소 없음)</span>
-              <p className="op-muted">할 일의 저장소 칸에서 고르면 저장소 없이 그 머신의 작업 폴더에서 일한다. 고칠 것이 없다.</p>
             </li>
           </ul>
         </div>

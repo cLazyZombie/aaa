@@ -31,7 +31,6 @@ export function PushTestControls({ onEnable }: { onEnable: () => Promise<boolean
       <div className="settings-row">
         <div className="settings-row-text">
           <span className="settings-label">테스트 알림</span>
-          <span className="settings-description">이 기기가 푸시 알림을 받을 수 있는지 확인합니다</span>
           {/* always in the document, empty until there is something to say: a live region */}
           <span className="settings-hint" role="status" data-testid="push-test-result">
             {!supported || result === "unsupported"

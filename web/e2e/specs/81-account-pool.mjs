@@ -114,7 +114,7 @@ const heldSwitch = (p, id) => inTime(p.evaluate(id => window.__poolSwitch.wait(i
 const releaseSwitch = (p, id) => p.evaluate(id => window.__poolSwitch.release(id), id);
 
 export default async function ({ page }) {
-  let panel, pinnedA, pinnedB, chosen, count, resumed;
+  let pinnedA, pinnedB, chosen, count, resumed;
   await step("계정 등록만으로 참여·기존 기본과 명시 시작·다른 harness 기본 fallback", async () => {
     aaa("project", "create", "demo");
     aaa("project", "set", "demo", "max_parallel_threads", "20");
@@ -134,7 +134,14 @@ export default async function ({ page }) {
     aaa("account", "default", "codex", "codex-default"); aaa("account", "pool", "remove", "codex-default");
     const fallback = aaa("thread", "start", "demo", "--title", "다른 harness 기본", "--machine", "labA", "--profile", "unpooled", "--task-file", task);
     assert.equal(fallback.account, "codex-default"); await waitOutput(fallback.pane, "CODEX-DEFAULT-READY");
-    const dialog = await openSettings(page, "계정"); panel = dialog.getByTestId("account-pool");
+    const dialog = await openSettings(page, "계정");
+    await dialog.getByTestId("accounts-claude").waitFor();
+    // 자동 배정 설명 칸과 끝난 시작 기록은 계정 화면에 두지 않는다. 대기는 할 일 화면이 보인다.
+    assert.equal(await dialog.getByTestId("account-pool").count(), 0);
+    for (const help of ["골고루", "관측이 없으면"]) assert.ok(!(await dialog.innerText()).includes(help), help);
+    await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
+    await page.getByRole("region", { name: "설정", exact: true }).waitFor({ state: "hidden" });
+    await page.getByTestId("activity-tasks").click();
     const q = (await refresh(page)).ok;
     assert.equal(q.accounts.find(a => a.account === "a").windows.length, 2);
   });
@@ -241,7 +248,8 @@ export default async function ({ page }) {
     assert.match(pending.start.reason, /사용 한도 도달/);
     count = threads().length; assert.equal(launch("wait-once").start.id, "wait-once");
     assert.equal(jobs().filter(s => s.id === "wait-once").length, 1); assert.equal(threads().length, count);
-    await panel.getByTestId("account-pool-starts").locator('[data-start-id="wait-once"]').waitFor();
+    const row = page.getByTestId("tasks-account-waits").locator('[data-start-id="wait-once"]');
+    await row.waitFor(); assert.match(await row.textContent(), /사용 한도 도달/);
   });
   await step("host 재시작 뒤 설정·대기·영수증 보존과 한도 해제 뒤 한 번 기동", async () => {
     await stop("host"); start("host", "host");
@@ -257,15 +265,15 @@ export default async function ({ page }) {
   await step("할 일 웹 시작의 배정 대기·취소와 예상 소비량 선택 제거", async () => {
     await sampleAll(page, { a: [100, 100], b: [100, 100], cold: [null, 100] });
     fs.writeFileSync(`${root}/projects/demo/TASKS.md`, "## Backlog\n- [ ] 풀 대기 task (fake@labA) [작업 폴더]\n  독립 작업을 끝내고 결과를 쓴다\n"); aaa("ticker", "tick");
-    await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
-    await page.getByRole("region", { name: "설정", exact: true }).waitFor({ state: "hidden" });
-    await page.getByTestId("activity-tasks").click();
+    await page.getByTestId("tasks-account-waits").waitFor({ state: "hidden" });
     await page.locator('.task-row[data-title="풀 대기 task"] .task-pick').click();
     await page.getByTestId("task-handoff-start").click();
     assert.equal(await page.getByTestId("task-account-size").count(), 0);
     await page.getByTestId("task-start-go").click(); await page.getByTestId("task-account-wait").waitFor();
+    await page.getByTestId("tasks-account-waits").getByText("풀 대기 task").waitFor();
     await page.getByTestId("task-account-wait").getByRole("button", { name: "배정 대기 취소" }).click();
     await page.getByTestId("task-start").waitFor({ state: "hidden" });
+    await page.getByTestId("tasks-account-waits").waitFor({ state: "hidden" });
     assert.equal(jobs().find(s => s.title === "풀 대기 task").state, "cancelled");
     aaa("ticker", "tick"); assert.equal(threads().length, count + 1);
   });

@@ -5,7 +5,7 @@
 .rollout-card[data-state="done"] .rollout-heading strong { color: var(--status-done); }
 .rollout-card:is([data-state="stopped"], [data-state="stopped_rolled_back"], [data-state="recovery_failed"]) .rollout-heading strong { color: var(--danger-text); }
 .rollout-card p { margin: 7px 0; }
-.rollout-meta, .rollout-help, .rollout-step-state { color: var(--text-dim); }
+.rollout-meta, .rollout-step-state { color: var(--text-dim); }
 .rollout-offline, .rollout-recovery { color: var(--notice); }
 .rollout-error { color: var(--danger-text); white-space: pre-wrap; }
 .rollout-steps { list-style: none; padding: 0; margin: 10px 0; }

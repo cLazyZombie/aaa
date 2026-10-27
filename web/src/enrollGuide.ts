@@ -34,13 +34,10 @@ export function guideSteps(guide: EnrollGuide | null, address: string, name: str
   return [
     {
       title: `새 머신에 ${guide ? `같은 판(${guide.software})` : "host와 같은 판"}의 aaa를 ${BIN}에 설치한다`,
-      note: "README 「설치」 1·2단계. 판이 다르면 연결이 거부될 수 있다.",
+      note: "판이 다르면 연결이 거부될 수 있다.",
     },
     { title: "새 머신에서 등록을 요청한다", command: `${BIN} agent enroll ${addr} --name ${who}` },
-    {
-      title: "새 머신 화면을 이 화면과 맞춘다",
-      note: `${fp ? `host fingerprint가 ${fp}인지 보고, ` : ""}나온 6자리 코드를 위 「승인을 기다리는 머신」의 「승인…」에 넣는다.`,
-    },
+    { title: "새 머신 화면을 이 화면과 맞춘다", note: fp ? `host fingerprint ${fp}` : undefined },
     {
       title: "새 머신이 host로 계속 붙게 설정한다",
       command: `mkdir -p ~/.config/aaa && ${BIN} config example agent | sed 's/^host = "local"/host = "${addr}"/' > ~/.config/aaa/agent.toml`,
@@ -48,7 +45,7 @@ export function guideSteps(guide: EnrollGuide | null, address: string, name: str
     {
       title: "agent를 서비스로 띄운다(macOS)",
       command: `${BIN} service install --role agent --aaa ${BIN}`,
-      note: "다른 OS는 아직 서비스 등록이 없다: 그 머신에서 aaa agent를 직접 띄운다.",
+      note: "다른 OS는 아직 서비스 등록이 없다.",
     },
   ];
 }

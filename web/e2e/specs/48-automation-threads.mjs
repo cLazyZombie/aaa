@@ -277,7 +277,7 @@ export default async function ({ page }) {
     const origin = page.getByTestId("thread-automation-origin");
     await origin.waitFor();
     const detail = await origin.textContent();
-    if (!detail.includes("CI 실패 분류 (ci-main)") || !detail.includes(auto.automation_trigger) || !detail.includes("프로젝트 실행 한도와 예약 자리에서 제외")) throw new Error(`thread 출처 상세 ${detail}`);
+    if (!detail.includes("CI 실패 분류 (ci-main)") || !detail.includes(auto.automation_trigger)) throw new Error(`thread 출처 상세 ${detail}`);
     await shot(page, "a1-thread-origin-detail");
     await page.evaluate(() => (location.hash = "#threads"));
     await all.waitFor();

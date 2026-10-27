@@ -6,7 +6,7 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 import "./ThreadActions.css";
 import "./AccountsPage.css";
 import { AccountQuotaCard, useAccountQuota } from "./AccountQuota";
-import { AccountAutoAssign, AccountPoolPanel, useAccountPool } from "./AccountPoolPanel";
+import { AccountAutoAssign, useAccountPool } from "./AccountPoolPanel";
 import { apiAtLeast } from "./automationModel";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -118,7 +118,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
           계정을 다시 읽지 못했다(보이는 값이 옛 것일 수 있다): {error}
         </p>
       )}
-      {!data.full && <p className="op-muted">이 host는 웹 계정 관리를 모른다. 목록만 보인다(로그인·기본은 host 터미널의 `aaa account`).</p>}
+      {!data.full && <p className="op-muted">이 host는 웹 계정 관리를 모른다. 목록만 보인다.</p>}
       {role === "reader" && data.full && <p className="op-muted">보기 전용 기기는 별칭·상태만 본다. 메일과 로그인은 조작 기기에서.</p>}
       {login && <LoginCard login={login} busy={busy} run={run} onClose={() => { setLogin(null); setLoginId(null); }} />}
       {msg && (
@@ -126,13 +126,13 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
           {msg}
         </p>
       )}
-      {data.quota && <div className="op-buttons"><button className="btn small" type="button" onClick={usage.refresh} disabled={usage.busy}>사용량 다시 읽기</button><span className="op-muted">관측이 없으면 사용량 모름</span></div>}
-      {data.pool && <AccountPoolPanel state={pool} canEdit={canEdit} />}
+      {data.pool && pool.error && <p className="op-warn" role="alert">{pool.error}</p>}
+      {data.quota && <div className="op-buttons"><button className="btn small" type="button" onClick={usage.refresh} disabled={usage.busy}>사용량 다시 읽기</button></div>}
       {groups.map((g) => (
         <SettingsGroup key={g.harness} title={HARNESS_LABEL[g.harness]} section={`accounts-${g.harness}`}>
           <div className="settings-item">
             {g.rows.length === 0 ? (
-              <p className="op-muted">이 harness의 host 계정이 없다. 없으면 thread는 그 머신의 로컬 로그인을 쓴다.</p>
+              <p className="op-muted">이 harness의 host 계정이 없다.</p>
             ) : (
               <ul className="acct-list" data-testid={`accounts-${g.harness}`}>
                 {g.rows.map((a) => {
@@ -202,9 +202,11 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                             <span>새 이름</span>
                             <input ref={renameInput} aria-label={`${a.name} 새 이름`} value={newName} onChange={(e) => setNewName(e.target.value)} disabled={busy} maxLength={64} autoComplete="off" spellCheck={false} aria-describedby="account-rename-note" />
                           </label>
-                          <p id="account-rename-note" className="op-muted">
-                            {!validAlias(newName.trim()) ? "영문·숫자·-·_ 1~64자를 입력하세요." : data.accounts.some((x) => x.name === newName.trim() && x.name !== a.name) ? "이미 쓰는 계정 이름입니다." : "다시 로그인하지 않습니다. 실행 중인 계정은 작업을 보류하거나 끝낸 뒤 바꾸세요."}
-                          </p>
+                          {(!validAlias(newName.trim()) || data.accounts.some((x) => x.name === newName.trim() && x.name !== a.name)) && (
+                            <p id="account-rename-note" className="op-muted">
+                              {!validAlias(newName.trim()) ? "영문·숫자·-·_ 1~64자를 입력하세요." : "이미 쓰는 계정 이름입니다."}
+                            </p>
+                          )}
                           <div className="op-buttons">
                             <button type="submit" className="btn btn-primary" disabled={busy || !validAlias(newName.trim()) || newName.trim() === a.name || data.accounts.some((x) => x.name === newName.trim())}>이름 저장</button>
                             <button type="button" className="btn" disabled={busy} onClick={() => { setRenaming(null); setMsg(null); }}>취소</button>
@@ -220,7 +222,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
         </SettingsGroup>
       ))}
       {canEdit && (
-        <SettingsGroup title="새 계정 로그인" note="host의 공식 CLI가 host Mac 브라우저를 엽니다. 그 브라우저에서 인증을 마치면 이 목록에 생깁니다.">
+        <SettingsGroup title="새 계정 로그인">
           <form
             className="settings-item acct-new"
             onSubmit={(e) => {

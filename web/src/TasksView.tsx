@@ -52,6 +52,7 @@ import { StateIcon, TaskDetail, ThreadChip, WhoChips, type SaveResult } from "./
 import { ConflictDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
 import { type ReserveRequest } from "./TaskQueue";
+import { AccountWaits } from "./AccountPoolPanel";
 import { TaskArchiveView } from "./TaskArchiveView";
 import { TaskFilterChips, TaskSearchInput } from "./TaskHistoryTools";
 import { TaskSortChip } from "./TaskSortChip";
@@ -777,7 +778,7 @@ export function TasksView({
         {tab === "tasks" && (
           <>
             <TaskSearchInput value={query} onChange={setQuery} label="할 일 검색" testId="tasks-search" />
-            <TaskFilterChips label="거르기" sort={<TaskSortChip value={sort} choices={ACTIVE_TASK_SORTS} onChange={pickSort} testId="tasks-sort" subtitle="예약은 시작 차례 유지 · 하위는 상위와 함께" />} repo={
+            <TaskFilterChips label="거르기" sort={<TaskSortChip value={sort} choices={ACTIVE_TASK_SORTS} onChange={pickSort} testId="tasks-sort" />} repo={
               <RepoFilter value={repoOn} choices={choices} total={total} onChange={setRepo} testId="tasks-repo" />
             }>
                 {TASK_FILTERS.filter((f) => (f.id !== "reserved" || queueApi) && (f.id !== "parked" || parkApi)).map((f) => (
@@ -790,7 +791,7 @@ export function TasksView({
             </TaskFilterChips>
           </>
         )}
-        {tab === "later" && <TaskFilterChips label="나중 보기" repo={null} sort={<TaskSortChip value={laterSort} choices={LATER_SORTS} onChange={next => { setLaterSort(next); writeTaskSort("later", next); setMenu(null); }} testId="tasks-later-sort" subtitle="파일과 절은 유지 · 절 안 항목만 정렬" />}>{null}</TaskFilterChips>}
+        {tab === "later" && <TaskFilterChips label="나중 보기" repo={null} sort={<TaskSortChip value={laterSort} choices={LATER_SORTS} onChange={next => { setLaterSort(next); writeTaskSort("later", next); setMenu(null); }} testId="tasks-later-sort" />}>{null}</TaskFilterChips>}
         {canEdit && tab === "tasks" && (
           <div className="tasks-actions">
             {coarse && manual && (
@@ -881,15 +882,15 @@ export function TasksView({
             onWheelCapture={cancelListAdjustment} onPointerDownCapture={cancelListAdjustment}
             onTouchMoveCapture={cancelListAdjustment} onKeyDownCapture={cancelListAdjustment}>
             {!manual && <p className="tasks-tip tasks-sort-note" data-testid="tasks-sort-note">
-              예약은 위에서부터 시작 · 나머지는 {ACTIVE_TASK_SORTS.find(s => s.key === sort)!.label}순 · 위치 이동은 손 차례에서
+              {ACTIVE_TASK_SORTS.find(s => s.key === sort)!.label}순
               <button type="button" className="linkish" data-testid="tasks-sort-reset" onClick={() => pickSort("manual")}>원래 차례</button>
             </p>}
             {target !== null && board !== null && !linkedTask && <p className="tasks-empty" role="status" data-testid="task-missing">할 일 {target}: 없음</p>}
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
-            {board && total === 0 && <p className="tasks-empty">{canEdit ? "할 일이 없다. 「+ 할 일」로 더한다" : "할 일이 없다"}</p>}
+            {board && total === 0 && <p className="tasks-empty">할 일이 없다</p>}
             {board && total > 0 && shownCount === 0 && filter !== "reserved" && <p className="tasks-empty">맞는 할 일이 없다</p>}
             {board && model && filter === "reserved" && model.counts.reserved === 0 && (
-              <p className="tasks-empty">예약이 없다{canEdit ? manual ? ". 할 일을 맨 위로 끌거나 ⋯ 「자리 나면 시작 예약」으로 예약한다" : ". ⋯ 「자리 나면 시작 예약」으로 예약한다" : ""}</p>
+              <p className="tasks-empty">예약이 없다</p>
             )}
             {model && model.top.length > 0 && (
               <ul className="task-rows task-reserved-rows" aria-label="예약(위에서부터 차례로 시작)" data-testid="tasks-reserved">
@@ -915,7 +916,7 @@ export function TasksView({
                 onDragOver={onResEndDragOver}
                 onDrop={onResEndDrop}
               >
-                {model.top.length === 0 && <span>예약 없음 · 할 일을 여기로 끌면 자리 나면 시작 예약</span>}
+                {model.top.length === 0 && <span>예약 없음</span>}
               </div>
             )}
             {model && model.rest.length > 0 && (
@@ -927,13 +928,12 @@ export function TasksView({
               </div>
             )}
             {model && filter === "reserved" && model.counts.reserved > 0 && (
-              <p className="tasks-tip">예약만 보는 중 · 위에서부터 차례로 시작한다. {manual ? `${coarse ? "⋯ 또는 「순서」로" : "끌어서"} 예약 차례를 바꾼다. ` : ""}「전체」로 돌아가면 같은 차례 그대로 맨 위에 있다.</p>
+              <p className="tasks-tip">예약만 보는 중</p>
             )}
             {repoOn !== null && (
-              <p className="tasks-tip" data-testid="tasks-repo-tip">
-                {repoLabel}만 보는 중 · {manual ? "옮기면 보이는 행 바로 위·아래로 들어간다. 숨은 다른 저장소 할 일의 차례는 그대로다." : "예약 차례는 그대로다. 위치 이동은 손 차례에서 할 수 있다."}
-              </p>
+              <p className="tasks-tip" data-testid="tasks-repo-tip">{repoLabel}만 보는 중</p>
             )}
+            {board && apiAtLeast(frontApi, [1, 102]) && <AccountWaits project={project} canEdit={canEdit} />}
             {board && board.unlinked_threads.length > 0 && (
               <Unlinked
                 overLimits={overLimits}
@@ -948,7 +948,7 @@ export function TasksView({
               />
             )}
           </div>
-          {board && detailOpen ? (
+          {board && detailOpen && (
             <TaskDetail
               key={picked ? `${picked.line}:${picked.title}:${saves}` : `new:${saves}:${creating?.list}:${creating?.parent?.block_sha256}:${creating?.title}`}
               t={current}
@@ -990,10 +990,6 @@ export function TasksView({
               onHandOff={onHandOff ? (t, again) => onHandOff(handOffText(t, again)) : undefined}
               onStart={(t) => setDialog({ kind: "start", task: t })}
             />
-          ) : (
-            <aside className="task-detail is-empty" aria-hidden="true">
-              <p className="tasks-empty">{canEdit ? "task를 고르면 여기서 고친다" : "task를 고르면 메모·원문 줄·형식 어긋남이 여기 보인다"}</p>
-            </aside>
           )}
           {detailOpen && <div className="tasks-scrim" aria-hidden="true" onClick={closeDetail} />}
           {canEdit && !detailOpen && !ordering && (

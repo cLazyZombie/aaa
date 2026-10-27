@@ -143,12 +143,9 @@ export function MachinesPage({
           {error}
         </p>
       )}
-      {admin === false && role !== "reader" && <p className="op-muted">이 host는 웹 머신 등록을 모른다(host 터미널의 `aaa machine enroll`).</p>}
+      {admin === false && role !== "reader" && <p className="op-muted">이 host는 웹 머신 등록을 모른다.</p>}
       {canEdit && (
-        <SettingsGroup
-          title="새 머신 등록"
-          note="등록 창을 연 뒤 새 머신에서 aaa agent enroll <host 주소> --name <이름>을 실행한다(아래 「직접 설치 안내」가 명령을 만든다). 새 머신 화면에 나온 6자리 코드를 여기 넣어 승인한다."
-        >
+        <SettingsGroup title="새 머신 등록">
           <div className="settings-item">
             {left !== null ? (
               <div className="admin-line" data-testid="enroll-open">
@@ -299,7 +296,7 @@ function InstallGuide({ machines }: { machines: MachineView[] }) {
       )}
       {guide && guide.listen === null && (
         <p className="op-warn" data-testid="enroll-guide-closed">
-          host가 agent 연결을 받지 않는다: host.toml [host] agent_listen을 정하고 host를 다시 띄운다.
+          host가 agent 연결을 받지 않는다.
         </p>
       )}
       <div className="admin-line">
@@ -374,7 +371,6 @@ function MachineRenameDialog({ machine, onClose }: { machine: MachineView; onClo
         }
       }}>
         <div className="modal-body">
-          <p>열린 대화와 등록은 유지하고, 할 일·프로젝트·자동화의 머신 이름도 함께 바꾼다.</p>
           <label className="op-field">
             <span>새 머신 이름</span>
             <input autoFocus value={name} onChange={(e) => { setName(e.target.value); setError(null); }} disabled={busy} maxLength={64} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
@@ -441,9 +437,7 @@ function ApproveDialog({ p, onClose, onDone }: { p: PendingEnroll; onClose: () =
         }}
       >
         <div className="modal-body">
-          <p>
-            새 머신 화면에 나온 6자리 코드를 넣는다. 이름이 「<strong>{p.name}</strong>」인지 그 화면과 맞춰 본다. 세 번 틀리면 이 등록 요청을 버린다.
-          </p>
+          <p>세 번 틀리면 이 등록 요청을 버린다.</p>
           <p className="op-muted mono">fingerprint {p.fingerprint_prefix}…</p>
           <label className="op-field">
             <span>확인 코드</span>
@@ -624,7 +618,7 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
         }}
       >
         <div className="modal-body">
-          <p className="op-muted">파일 여러 개나 폴더 하나를 고른다. 파일당 16MB, 합계 64MB까지. 폴더를 고르면 그 안이 보고서가 된다.</p>
+          <p className="op-muted">파일당 16MB, 합계 64MB까지.</p>
           <div className="op-buttons">
             <label className="btn">
               파일 고르기
@@ -773,7 +767,6 @@ export function KeyRotate({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="op-section" data-testid="key-rotate">
       <h3>공유 링크 키</h3>
-      <p>보고서 공유 링크를 서명하는 키를 새로 만든다. 지금까지 낸 공유 링크는 모두 끊긴다(보고서와 기기 짝짓기는 그대로).</p>
       {done && <p role="status">키를 바꿨다. 옛 공유 링크는 모두 끊겼다.</p>}
       {error && (
         <p className="op-warn" role="alert">

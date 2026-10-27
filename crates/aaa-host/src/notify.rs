@@ -198,6 +198,7 @@ fn phrase(i: &InboxItem) -> Option<&'static str> {
         ("thread-state", "pane closed") => "pane 닫힘",
         ("thread-state", "agent gone") => "agent 없음",
         ("thread-state", "not launched") => "시작 못 함",
+        ("task-start", "account start failed") => "계정 배정 뒤 시작 못 함",
         ("outage", "down") => "연결 끊김",
         ("outage", "recovered") => "다시 연결됨",
         ("outage", "failing") => "계속 실패 · PR 추적 멈춤",

@@ -288,9 +288,6 @@ function Problems({ t }: { t: TaskView }) {
           <li key={p}>{p}</li>
         ))}
       </ul>
-      <p className="muted">
-        정해진 꼴은 <code>- [ ] 제목 (owner) · t-번호</code>다.
-      </p>
     </section>
   );
 }

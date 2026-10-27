@@ -13,7 +13,6 @@ button.machine-rollout-status { background: none; border: 0; cursor: pointer; pa
 .rollout-popover-heading { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .rollout-popover-heading h2 { margin: 0; font-size: 14px; }
 .rollout-popover .rollout-card { margin: 0; border: 0; padding: 16px; }
-.rollout-readonly { margin: 0; padding: 0 16px 16px; color: var(--text-dim); font-size: 11px; }
 @media (max-width: 768px) {
   .rollout-popover { left: 0; top: auto; bottom: 0; width: 100%; max-width: 100%; max-height: 84dvh; border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
 }

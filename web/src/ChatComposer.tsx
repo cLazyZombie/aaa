@@ -201,8 +201,7 @@ function measureText(element: HTMLTextAreaElement): { height: number; rows: numb
 function terminalNote(c: SlashCommand, action: "picker" | "screen"): Note {
   const name = c.insert.trim();
   if (action === "screen") return { text: `${name} 결과는 터미널 화면에만 보입니다.`, quiet: true, inspect: true };
-  const shortcut = c.hint?.startsWith("/") ? ` 다음에는 ${c.hint}처럼 인자를 붙이면 선택창 없이 바뀝니다.` : "";
-  return { text: `터미널에 ${name} 선택창이 떴습니다. 터미널에서 고르거나 닫기(Esc) 전에는 다음 글이 선택창으로 갑니다.${shortcut}`, quiet: true, inspect: true };
+  return { text: `터미널에 ${name} 선택창이 떴습니다. 터미널에서 고르거나 닫기(Esc) 전에는 다음 글이 선택창으로 갑니다.`, quiet: true, inspect: true };
 }
 
 export interface ChatComposerProps {

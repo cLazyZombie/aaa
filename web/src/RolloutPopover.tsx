@@ -38,7 +38,6 @@ export function RolloutPopover({ snapshot, connected, anchor, opener, onClose }:
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
     }}>
     <header className="rollout-popover-heading"><h2>최근 배포</h2><button ref={close} type="button" className="icon-button" aria-label="배포 상세 닫기" onClick={onClose}><X aria-hidden="true" /></button></header>
-    <RolloutCard snapshot={snapshot} connected={connected} help={false} collapsible={false} />
-    <p className="rollout-readonly">읽기 전용 · 머신 줄은 확인된 실행 판, 이 창은 배포 대상 판입니다.</p>
+    <RolloutCard snapshot={snapshot} connected={connected} collapsible={false} />
   </dialog>, document.body);
 }

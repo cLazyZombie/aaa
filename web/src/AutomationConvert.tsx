@@ -56,7 +56,7 @@ export function ConvertSheet({ project, canControl, onClose, onDone }: { project
     {(phase.kind === "plan" || phase.kind === "running") && (phase.files.length === 0
       ? <p data-testid="convert-empty">바꿀 옛 파일이 없습니다.</p>
       : <>
-        <p>아래 파일을 새로 만들고 옛 파일은 <code>.converted/</code>에 보존합니다. 같은 내용의 사본은 재사용하고 다른 내용은 번호를 붙여 보존합니다. 값(조건·동작·승인 hash)이 같은지 host가 검증하고, 하나라도 실패하면 이번 파일만 되돌립니다. 이미 있는 파일은 덮어쓰지 않습니다.</p>
+        <p>옛 파일은 <code>.converted/</code>에 보존합니다.</p>
         {!canControl && <p className="automation-dim">보기 권한은 미리보기만 볼 수 있습니다.</p>}
         <Plan files={phase.files} />
       </>)}

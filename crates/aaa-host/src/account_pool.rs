@@ -569,8 +569,22 @@ impl Host {
 
     pub(crate) async fn pool_pass(self: &Arc<Self>, project: &str) -> Result<(), ErrorBody> {
         for id in self.db.meta_suffixes(&format!("{JOB}{project}:")).map_err(internal)? {
-            if self.pool_job(project, &id)?.view.state == AccountStartState::Queued {
-                self.pool_run(project, &id, true).await?;
+            if self.pool_job(project, &id)?.view.state == AccountStartState::Queued
+                && let FrontResponse::AccountStart { start } = self.pool_run(project, &id, true).await?
+                && start.state == AccountStartState::Failed
+                && start.thread.is_none()
+            {
+                // 대기 뒤 실패는 요청한 화면이 닫힌 뒤라 inbox로 한 번 알린다. thread가 생긴 실패는 thread 사건이 알린다.
+                let task = self.pool_job(project, &id)?.args.start_task;
+                let subject = task.as_ref().and_then(|t| t.short_id.clone()).unwrap_or_else(|| id.clone());
+                let title = task.map_or(start.title, |t| t.title);
+                self.inbox_once(
+                    project,
+                    "task-start",
+                    &subject,
+                    "account start failed",
+                    &format!("{title}: 계정 배정 대기 뒤 시작하지 못했다: {}", start.reason),
+                );
             }
         }
         Ok(())

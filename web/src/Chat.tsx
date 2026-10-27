@@ -1005,16 +1005,12 @@ export function ChatPanel({
         }}
       >
         <div className="chat-transcript">
-          <p className="chat-note">
-            {harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
-            {chat?.truncated && " 앞부분은 생략했다."}
-          </p>
           <p className="chat-note" data-testid={active ? "chat-history-start" : undefined}>
             {chat?.history && !chat.before ? "처음이다" : chat?.before ? (
               <button type="button" className="chat-older" disabled={olderState === "loading"} onClick={loadOlder}>
                 {olderState === "loading" ? "앞 기록 불러오는 중…" : olderState === "failed" ? "앞 기록 다시 불러오기" : "앞 기록 더 보기"}
               </button>
-            ) : chat?.truncated ? "앞 기록을 읽으려면 host와 agent를 갱신하세요." : null}
+            ) : chat?.truncated ? "앞 기록을 읽지 못함(host·agent가 옛 판)" : null}
           </p>
           {error && <div className="banner warn">{error}</div>}
           {chat && displayRows.map((row, n) => {

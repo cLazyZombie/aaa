@@ -14,7 +14,7 @@ export function UpdateNotice({ hostBuild }: { hostBuild: string | null }) {
   if (!webUpdated(hostBuild)) return null;
   return (
     <div className="update-notice is-line is-warning" role="status" data-testid="web-update">
-      <span>앱이 업데이트됐다. 다시 열기 전에 보내지 않은 초안을 저장한다.</span>
+      <span>앱이 업데이트됐다.</span>
       <button type="button" className="btn" onClick={() => window.location.reload()}>
         앱 다시 열기
       </button>

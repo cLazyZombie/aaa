@@ -111,7 +111,6 @@ export function ParkBanner({ t, canAct, running }: { t: ThreadView; canAct: bool
     <div className="banner park-banner" data-testid="park-banner">
       <span>
         <strong>{parked ? "보류" : "보류 준비 중"}</strong> · {parkFacts(t)}
-        {!parked && " · thread가 커밋·push·이어 하기 요약을 쓰면 pane을 닫는다"}
       </span>
       {canAct && (
         <button type="button" className="btn small" data-testid={parked ? "park-banner-unpark" : "park-banner-park"} onClick={() => setOpen(parked ? "unpark" : "park")}>
@@ -372,7 +371,7 @@ function ResolveDialog({ t, frontApi, onClose }: { t: ThreadView; frontApi: stri
           그 머신에서 worktree 상태를 읽는 중…
         </p>
       )}
-      {frontApi !== undefined && !preview && <p className="op-muted">이 host는 끝내기 전 확인을 모른다: worktree를 남기는 것이 기본이다.</p>}
+      {frontApi !== undefined && !preview && <p className="op-muted">이 host는 끝내기 전 확인을 모른다.</p>}
       {resuming && (
         <p className="op-warn" data-testid="resolve-resuming">
           정리가 끊긴 thread다: 처음 끝낼 때 고른 대로(남기기·버리기) 이어 간다.
@@ -495,11 +494,11 @@ function RestartDialog({ t, onClose }: { t: ThreadView; onClose: () => void }) {
       <fieldset className="op-options" disabled={busy}>
         <label className="op-check">
           <input type="radio" name="restart-mode" checked={!resume} onChange={() => setResume(false)} />
-          <span>새 대화: task·지침을 다시 읽어 새 brief로 띄운다</span>
+          <span>새 대화</span>
         </label>
         <label className="op-check">
           <input type="radio" name="restart-mode" data-testid="restart-resume" checked={resume} onChange={() => setResume(true)} />
-          <span>이어 가기: 저장된 대화를 잇는다(brief 안내 없음)</span>
+          <span>이어 가기</span>
         </label>
         <label className="op-field">
           <span>profile</span>
@@ -635,7 +634,6 @@ function SummaryDialog({ t, onClose }: { t: ThreadView; onClose: () => void }) {
         </>
       }
     >
-      <p className="op-muted">요약 전체를 다시 쓴다(Markdown, `# 목표` 같은 절).</p>
       <textarea className="op-textarea" aria-label="작업 요약" value={text ?? ""} disabled={text === null || busy} onChange={(e) => setText(e.target.value)} rows={14} data-testid="summary-text" />
       {error && (
         <p className="confirm-error" role="alert">

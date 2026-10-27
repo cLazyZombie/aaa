@@ -107,7 +107,7 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
       {error && <p className="inbox-error" role="alert">{error}</p>}
       {answers > 0 && (
         <p className="inbox-answers" data-testid="inbox-answers">
-          사용자가 답할 요청 {answers}건은 「답할 것」에서 다룬다.
+          답할 요청 {answers}건
           {onAnswers && (
             <button type="button" className="link" onClick={onAnswers}>
               답할 것 열기
@@ -268,7 +268,7 @@ function PostList({ onAnswers }: { onAnswers?: () => void }) {
   return (
     <div className="inbox-body">
       <div className="inbox-tools">
-        <span className="inbox-hint">최근 post(받는 쪽·전달 상태)</span>
+        <span className="inbox-hint">최근 post</span>
         <button type="button" className="btn small" onClick={load}>
           새로 읽기
         </button>
@@ -290,7 +290,7 @@ function PostList({ onAnswers }: { onAnswers?: () => void }) {
       )}
       {answers > 0 && (
         <p className="inbox-answers" data-testid="post-answers">
-          사용자가 답할 요청 {answers}건은 「답할 것」에서 다룬다.
+          답할 요청 {answers}건
           {onAnswers && (
             <button type="button" className="link" onClick={onAnswers}>
               답할 것 열기

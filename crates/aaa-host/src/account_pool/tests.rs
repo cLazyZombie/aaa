@@ -585,6 +585,34 @@ fn waiting_direct_start_keeps_one_task_across_passes_and_request_replays() {
     drop(runtime);
 }
 
+#[test]
+fn failure_after_waiting_reaches_the_inbox_once() {
+    let l = Lab::new();
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    runtime.block_on(async {
+        connect_pool_machine(&l);
+        // 저장한 profile 판과 지금 판이 달라 다음 pass에서 시작하지 못한다.
+        let job = queued_job(&l, "changed-while-waiting");
+        for _ in 0..2 {
+            l.h.pool_pass("demo").await.unwrap();
+        }
+        assert_eq!(l.h.pool_job("demo", &job.view.id).unwrap().view.state, AccountStartState::Failed);
+        let items: Vec<_> =
+            l.h.db
+                .inbox_list(Some("demo"), false)
+                .unwrap()
+                .into_iter()
+                .filter(|i| i.item_kind == "task-start")
+                .collect();
+        assert_eq!(items.len(), 1, "끝난 실패를 pass마다 다시 알리지 않는다");
+        assert_eq!(items[0].event, "account start failed");
+        assert!(items[0].summary.contains("모델·effort 설정이 바뀌었다"), "{}", items[0].summary);
+        let task = l.h.pool_job("demo", &job.view.id).unwrap().args.start_task.unwrap();
+        assert_eq!(Some(items[0].subject.clone()), task.short_id);
+    });
+    drop(runtime);
+}
+
 fn queued_job(l: &Lab, id: &str) -> Job {
     let job = Job {
         args: StartArgs {

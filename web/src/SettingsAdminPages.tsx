@@ -49,7 +49,7 @@ function useSettingsAdmin(): boolean | null {
 
 function Gate({ role, admin, what }: { role: DeviceRole; admin: boolean | null; what: string }) {
   if (role === "reader") return <p className="op-muted">보기 전용 기기에는 {what} 설정을 보이지 않는다(host 설정과 실행 인자가 들어 있다).</p>;
-  if (admin === false) return <p className="op-muted">이 host는 웹 {what} 관리를 모른다. host를 새 판으로 바꾸면 보인다(지금은 host 터미널의 aaa 명령).</p>;
+  if (admin === false) return <p className="op-muted">이 host는 웹 {what} 관리를 모른다.</p>;
   return null;
 }
 
@@ -134,7 +134,7 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
           {error}
         </p>
       )}
-      <SettingsGroup title="safety" note="사람만 바꾼다(agent는 바꾸지 못한다). 웹은 아래 넷만 바꾼다. 인자·명령 목록은 host의 aaa 세션 밖 터미널에서 aaa safety set으로 바꾼다.">
+      <SettingsGroup title="safety">
         <div className="settings-item">
           <ScopePick scope={scope} project={view?.project ?? ""} onChange={setScope} disabled={busy} />
           {view && (
@@ -271,10 +271,7 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
         </p>
       )}
       <Notes items={done} testid="profile-done" />
-      <SettingsGroup
-        title="profile"
-        note="thread·coordinator를 띄우는 harness와 인자. 웹은 claude·codex·shell profile을 더하고 고치고 지운다. custom profile(실행 명령)은 host의 aaa 세션 밖 터미널에서 aaa profile로 한다. env는 이름만 보인다."
-      >
+      <SettingsGroup title="profile">
         <div className="settings-item">
           <ul className="admin-list" data-testid="profile-list">
             {view?.profiles.map((p) => (
@@ -340,7 +337,7 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
           onClose={() => setPlanned(null)}
           onApplied={(message, warnings, next) => {
             setView(next);
-            setDone([message, ...warnings.map((w) => `경고: ${w}`), "host가 다음에 profile을 쓸 때 읽는다. 이미 도는 thread는 다시 띄울 때까지 옛 설정이다."]);
+            setDone([message, ...warnings.map((w) => `경고: ${w}`)]);
             setPlanned(null);
             load();
           }}
@@ -369,7 +366,7 @@ function AllowGroup({
   onPreview: (c: ProfileChangeReq) => void;
 }) {
   return (
-    <SettingsGroup title="허용 목록·기본 profile" note="thread·coordinator가 고를 수 있는 profile과, 정하지 않았을 때 쓰는 profile. 이 목록은 사람만 바꾼다.">
+    <SettingsGroup title="허용 목록·기본 profile">
       <div className="settings-item">
         <ScopePick scope={scope} project={safety.project} onChange={onScope} />
         {(["thread", "coordinator"] as const).map((role) => (
@@ -378,7 +375,6 @@ function AllowGroup({
         {(["thread", "coordinator"] as const).map((role) => (
           <DefaultRow key={role} role={role} current={role === "thread" ? safety.thread_profile : safety.coordinator_profile} names={names} onPreview={onPreview} />
         ))}
-        <p className="op-muted">기본 profile은 host.toml [defaults]다. 프로젝트 설정(aaa.toml)에 따로 적혀 있으면 그것이 앞선다.</p>
       </div>
     </SettingsGroup>
   );
@@ -480,7 +476,7 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
         }}
       >
         <div className="modal-body">
-          {before?.builtin && <p className="op-muted">기본 profile이다. 고치면 같은 이름의 profile을 host.toml에 더해 대신한다(지우면 기본이 돌아온다).</p>}
+          {before?.builtin && <p className="op-muted">기본 profile이다.</p>}
           {!before && (
             <label className="op-field">
               <span>이름</span>
@@ -524,7 +520,6 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
             <span>인자(줄마다 하나)</span>
             <textarea rows={3} value={d.args} onChange={put("args")} disabled={busy} className="mono" data-testid="profile-args" />
           </label>
-          <p className="op-muted">인자는 harness 실행 파일 뒤에 그대로 붙는다. 다음 화면에서 실제 실행 인자를 보고 적용한다.</p>
           {!nameOk && d.name !== "" && <p className="op-warn">이름은 영문·숫자·. _ -로 40자까지 쓴다(-·.로 시작하지 않는다).</p>}
           {error && (
             <p className="op-warn" role="alert">
@@ -629,7 +624,7 @@ export function MachineSetup({ role, machines }: { role: DeviceRole; machines: M
   if (live.length === 0) return null;
   const chosen = live.some((m) => m.name === name) ? name : live[0]!.name;
   return (
-    <SettingsGroup title="작업 폴더·hook" note="머신마다 thread 작업 폴더(worktree가 생기는 곳)와 harness hook 연동. 그 머신의 agent가 바꾼다.">
+    <SettingsGroup title="작업 폴더·hook">
       <div className="settings-item">
         <label className="op-field">
           <span>머신</span>
@@ -796,7 +791,7 @@ function Hook({ machine }: { machine: string }) {
   return (
     <div className="admin-block" data-testid="hook">
       <h4 className="admin-sub">harness hook</h4>
-      <p className="op-muted">Claude: aaa가 실행마다 hook을 넣는다(설치할 것 없음).</p>
+      <p className="op-muted">Claude: 설치할 것 없음</p>
       {error && (
         <p className="op-warn" role="alert">
           {error}
@@ -811,7 +806,6 @@ function Hook({ machine }: { machine: string }) {
         </div>
       )}
       {view?.codex_problem && <p className="op-warn">{view.codex_problem}</p>}
-      {view?.codex_installed && <p className="op-muted">Codex가 hook을 처음 만나면 Codex 화면에서 신뢰를 묻는다. 그 머신에서 사람이 답한다.</p>}
       {asking !== null && (
         <ConfirmDialog
           title={asking ? `${machine}에 Codex hook을 설치할까요?` : `${machine}의 Codex hook을 제거할까요?`}
