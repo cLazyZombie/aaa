@@ -434,25 +434,31 @@ impl Agent {
                 tokio::time::sleep(every).await;
             }
         });
-        // 점검이 표본보다 드물면 사이에 CPU·메모리만 다시 잰다(마지막 점검의 이상·toolchain은 그대로)
-        if every > STATS_EVERY {
-            let me = self.clone();
-            tokio::spawn(async move {
-                let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + STATS_EVERY, STATS_EVERY);
-                // 잠들었다 깬 머신에서 밀린 표본을 몰아 재지 않는다
-                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                loop {
-                    tick.tick().await;
-                    let h = me.health.lock().unwrap().as_mut().map(|h| {
-                        stats.lock().unwrap().fill(h);
-                        h.clone()
-                    });
-                    if let Some(h) = h {
-                        me.send_health(h).await;
-                    }
-                }
-            });
+        let _ = self.spawn_stats(stats, every);
+    }
+
+    /// 점검 사이의 가벼운 표본 task. 기본 15초와 Delay 정책을 실제 전송 경로에서
+    /// 가상 시계로 검사할 수 있게 정기 점검의 명령 실행과 수명을 나눈다.
+    fn spawn_stats(self: &Arc<Self>, stats: Arc<Mutex<Stats>>, every: Duration) -> Option<tokio::task::JoinHandle<()>> {
+        if every <= STATS_EVERY {
+            return None;
         }
+        let me = self.clone();
+        Some(tokio::spawn(async move {
+            let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + STATS_EVERY, STATS_EVERY);
+            // 잠들었다 깬 머신에서 밀린 표본을 몰아 재지 않는다
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let h = me.health.lock().unwrap().as_mut().map(|h| {
+                    stats.lock().unwrap().fill(h);
+                    h.clone()
+                });
+                if let Some(h) = h {
+                    me.send_health(h).await;
+                }
+            }
+        }))
     }
 
     pub(crate) async fn send_health(&self, h: MachineHealth) {
@@ -466,6 +472,109 @@ impl Agent {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// E2E27은 실제 표시를 보되 기본 15초를 기다리지 않는다. 이 시험은 실제
+    /// agent/cache/LinkMsg 경로의 첫 기한·지연 뒤 한 번·점검 결과 보존을 맡는다.
+    #[tokio::test(start_paused = true)]
+    async fn stats_send_at_fifteen_seconds_without_catchup_or_replacing_the_last_check() {
+        use std::future::{Future, poll_fn};
+        use std::task::Poll;
+        async fn pending<T>(future: impl Future<Output = T>) {
+            let mut future = std::pin::pin!(future);
+            assert!(poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx).is_pending())).await, "표본 전송 차례가 아니다");
+        }
+        let period = Duration::from_secs(15);
+        let state = std::env::temp_dir().join(format!("aaa-health-timer-{}", aaa_common::util::new_id()));
+        let agent = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let (tx, mut out) = aaa_common::conn::frame_channel();
+        agent.set_host(Some(tx));
+        agent.host_health.store(true, std::sync::atomic::Ordering::Relaxed);
+        let original = MachineHealth {
+            info: Some(aaa_proto::MachineInfo {
+                at_ms: 1,
+                os_version: None,
+                cpu_model: None,
+                claude: None,
+                codex: None,
+                installation: None,
+                work_root: "/example/work".into(),
+            }),
+            at_ms: 1,
+            disk_free_bytes: Some(17),
+            disk_total_bytes: Some(101),
+            load_x100: None,
+            cpus: 7,
+            cpu_pct: Some(99),
+            mem_used_bytes: None,
+            mem_total_bytes: None,
+            on_ac: Some(false),
+            toolchain: vec![ToolCheck { name: "saved".into(), ok: false, version: "앞 점검 오류".into() }],
+            problems: vec![HealthProblem { code: "saved".into(), text: "앞 점검 이상".into() }],
+            warnings: vec!["앞 점검 주의".into()],
+        };
+        *agent.health.lock().unwrap() = Some(original.clone());
+        assert!(agent.spawn_stats(Arc::new(Mutex::new(Stats::default())), Duration::from_secs(1)).is_none());
+        assert!(agent.spawn_stats(Arc::new(Mutex::new(Stats::default())), period).is_none());
+        let started = tokio::time::Instant::now();
+        let task = agent.spawn_stats(Arc::new(Mutex::new(Stats::default())), Duration::from_secs(60)).unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(period - Duration::from_nanos(1)).await;
+        tokio::task::yield_now().await;
+        pending(out.recv()).await;
+        tokio::time::advance(Duration::from_nanos(1)).await;
+        let (_, bytes) = out.recv().await.unwrap();
+        assert_eq!(tokio::time::Instant::now(), started + period);
+        let LinkMsg::Event(AgentEvent::Health(sample)) = serde_json::from_slice(&bytes).unwrap() else {
+            panic!("실제 Health frame이 아니다")
+        };
+        assert!(sample.at_ms > original.at_ms);
+        assert!(sample.mem_used_bytes.is_some_and(|used| used > 0 && Some(used) <= sample.mem_total_bytes));
+        assert!(sample.mem_total_bytes.is_some_and(|total| total > 0));
+        assert_eq!(sample.cpu_pct, None, "첫 CPU 표본은 아직 구간이 없다");
+        assert_eq!(
+            (
+                sample.info,
+                sample.disk_free_bytes,
+                sample.disk_total_bytes,
+                sample.cpus,
+                sample.on_ac,
+                sample.toolchain,
+                sample.problems,
+                sample.warnings
+            ),
+            (
+                original.info,
+                original.disk_free_bytes,
+                original.disk_total_bytes,
+                original.cpus,
+                original.on_ac,
+                original.toolchain,
+                original.problems,
+                original.warnings
+            ),
+            "가벼운 표본이 앞 점검을 교체했다"
+        );
+        // 잠든 동안 놓친 네 차례를 몰아 보내지 않고, 실제 깬 때부터 다음 15초다.
+        tokio::time::advance(period * 4).await;
+        let _ = out.recv().await.unwrap();
+        assert_eq!(tokio::time::Instant::now(), started + period * 5);
+        tokio::task::yield_now().await;
+        pending(out.recv()).await;
+        tokio::time::advance(period - Duration::from_nanos(1)).await;
+        tokio::task::yield_now().await;
+        pending(out.recv()).await;
+        tokio::time::advance(Duration::from_nanos(1)).await;
+        let _ = out.recv().await.unwrap();
+        assert_eq!(tokio::time::Instant::now(), started + period * 6);
+        // 아직 정기 점검이 없으면 표본만으로 건강 보고를 새로 만들지 않는다.
+        *agent.health.lock().unwrap() = None;
+        tokio::time::advance(period).await;
+        tokio::task::yield_now().await;
+        pending(out.recv()).await;
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        std::fs::remove_dir_all(state).unwrap();
+    }
 
     #[test]
     fn cpu_pct_is_the_busy_share_between_samples() {

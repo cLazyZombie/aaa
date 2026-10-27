@@ -240,6 +240,18 @@ impl Detector {
         if !changed && !(refresh_due && next.visible_blocker && previous.visible_blocker) {
             return None;
         }
+        // host가 첫 감지보다 먼저 화면을 읽어 질문에 답할 수 있다. 그 입력 뒤
+        // 도착한 첫 확인창도 기존 800ms 보호를 따른다. 관측한 상태는 기억하여
+        // 실제로 창이 남아 있으면 입력 때부터 잰 원래 refresh 경계에서 알린다.
+        if previous.state == State::Unknown
+            && next.visible_blocker
+            && self
+                .last_visible_signal_refresh
+                .is_some_and(|input| now.duration_since(input) < STABLE_VISIBLE_SIGNAL_REFRESH)
+        {
+            self.published = next;
+            return None;
+        }
         self.published = next;
         self.last_visible_signal_refresh = (next.visible_blocker || next.visible_working).then_some(now);
         Some(Published {

@@ -3741,7 +3741,9 @@ fn shift_project(first: String, rest: &mut Vec<String>) -> Result<(String, Strin
 }
 
 pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
-    runtime()?.block_on(async {
+    // 한 CLI 요청의 writer·응답 수신은 이 block_on 안에서 끝난다. 요청마다
+    // CPU 수만큼 worker thread를 만들지 않아도 같은 I/O·timer를 구동한다.
+    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
         if let FrontRequest::Threads { query, .. } = &req
             && c.proto.minor < 130

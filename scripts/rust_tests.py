@@ -30,6 +30,16 @@ def panic_summaries(output):
     return summaries
 
 
+def test_times(output):
+    """libtest --report-time의 실제 완료 case만 읽는다. 합계/ignored는 개별 시간으로 세지 않는다."""
+    return [dict(name=match[1], outcome=match[2], seconds=float(match[3]))
+            for match in re.finditer(r"^test (.+?) \.\.\. (ok|FAILED) <([\d.]+)s>$", output, re.MULTILINE)]
+
+
+def load_average():
+    return list(os.getloadavg()) if hasattr(os, "getloadavg") else None
+
+
 def partitions(names, count):
     """긴 rollout은 먼저 시작하고 나머지는 정확한 이름으로 균등 분할한다."""
     if len(set(names)) != len(names):
@@ -92,7 +102,7 @@ def plan(artifacts, workers, durations=None):
     return jobs
 
 
-def execute(jobs, logs, workers, threads, cpu_budget=None):
+def execute(jobs, logs, workers, threads, cpu_budget=None, report_time=False):
     cpu_budget = max(1, os.cpu_count() or 1) if cpu_budget is None else cpu_budget
     if cpu_budget < 1:
         raise ValueError("CPU 예산은 1 이상이어야 한다")
@@ -105,18 +115,31 @@ def execute(jobs, logs, workers, threads, cpu_budget=None):
 
     def run(index, job, slots):
         started = time.monotonic()
+        load_before = load_average()
         log = logs / f"{index:02d}-{job.name}.log"
         env = {**os.environ, "RUST_TEST_THREADS": str(threads)}
+        argv = job.argv
+        if report_time and job.name != "doctests":
+            # 이미 준비한 libtest의 출력만 켠다. Cargo/rustc는 이 환경으로 실행하지 않는다.
+            env["RUSTC_BOOTSTRAP"] = "1"
+            argv = [*argv, "-Z", "unstable-options", "--report-time", "--format", "pretty", "--color", "never"]
         try:
             with log.open("w") as output:
                 try:
-                    code = subprocess.run(job.argv, cwd=job.cwd, env=env, stdout=output, stderr=subprocess.STDOUT).returncode
+                    code = subprocess.run(argv, cwd=job.cwd, env=env, stdout=output, stderr=subprocess.STDOUT).returncode
                 except OSError as error:
                     output.write(f"시험 기동 실패: {error}\n")
                     code = 1
         finally:
             finished = time.monotonic()
         text = log.read_text(errors="replace")
+        times = test_times(text) if report_time else []
+        if report_time and job.name != "doctests":
+            totals = re.search(r"^test result: .*? (\d+) passed; (\d+) failed;", text, re.MULTILINE)
+            if not totals or len(times) != int(totals[1]) + int(totals[2]):
+                text += "\n개별 시험 시간의 수가 libtest 완료 수와 다르다\n"
+                code = code or 1
+                log.write_text(text)
         if job.tests is not None:
             match = re.search(r"^running (\d+) tests?$", text, re.MULTILINE)
             if not match or int(match[1]) != len(job.tests):
@@ -125,7 +148,8 @@ def execute(jobs, logs, workers, threads, cpu_budget=None):
                 log.write_text(text)
         return dict(name=job.name, exit=code, seconds=finished - started,
                     start_seconds=started - epoch, queue_seconds=started - epoch,
-                    cpu_slots=slots, log=log.name, failures=panic_summaries(text), output=text)
+                    cpu_slots=slots, load_before=load_before, load_after=load_average(), test_times=times,
+                    log=log.name, failures=panic_summaries(text), output=text)
 
     results = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -157,6 +181,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--logs", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=int(os.environ.get("AAA_RUST_TEST_WORKERS", "6")))
+    parser.add_argument("--report-time", action="store_true", help="개별 libtest 시간과 시작·끝 load를 summary.json에 보존한다")
     args = parser.parse_args()
     if args.workers < 1:
         parser.error("workers는 1 이상이어야 한다")
@@ -174,7 +199,7 @@ def main():
         raise ValueError("RUST_TEST_THREADS는 1 이상이어야 한다")
     manifest = [dict(name=job.name, argv=job.argv, cwd=str(job.cwd), tests=job.tests) for job in jobs]
     (args.logs / "plan.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-    results = execute(jobs, args.logs, args.workers, threads)
+    results = execute(jobs, args.logs, args.workers, threads, report_time=args.report_time)
     summary = dict(seconds=time.monotonic() - started, workers=args.workers, threads=threads,
                    cpu_budget=max(1, os.cpu_count() or 1), jobs=results)
     (args.logs / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")

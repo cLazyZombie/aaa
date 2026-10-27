@@ -115,6 +115,10 @@ impl MachinePanes {
     }
 }
 
+fn auto_resolve_eligible(r: &ThreadRec) -> bool {
+    r.status == ThreadStatus::Open && r.role != Role::Evaluator && r.last_group == Some(ThreadGroup::Idle)
+}
+
 /// auto-resolve 때가 됐나: 묶음·보고가 마지막으로 바뀐 때와 host가 뜬 때 중 가장 늦은 때부터 `limit_ms`가 지났다
 /// (herdr-projects steps.rs `auto_resolve`). 두 시각이 모두 없는 기록(옛 host)은 잴 수 없어 끝내지 않는다.
 pub(crate) fn auto_resolve_due(r: &ThreadRec, now: u64, started: u64, limit_ms: u64) -> bool {
@@ -321,16 +325,12 @@ impl Host {
                     })
                     .ok()
             })
-            .filter(|r| r.status == ThreadStatus::Open && r.role != Role::Evaluator)
+            .filter(auto_resolve_eligible)
             .filter(|r| {
-                r.last_group == Some(ThreadGroup::Idle)
-                    && self
-                        .live_conn(&r.machine_id)
-                        .as_ref()
-                        .inspect_err(|error| {
-                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
-                        })
-                        .is_ok()
+                self.live_conn(&r.machine_id)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok()
             })
             .filter(|r| auto_resolve_due(r, now, self.started_ms, limit))
             .map(|r| r.id)
@@ -657,6 +657,21 @@ mod tests {
         assert!(!due(&r, 600, 0), "보고가 더 늦게 바뀌었다");
         assert!(!due(&r, 1_000, 950), "host가 방금 떴다: 꺼져 있던 동안은 세지 않는다");
         assert!(due(&r, 1_050, 950));
+
+        // m13 보류 keeper의 2.1초 대기 대신 실제 pass의 자격 판정을 지난 시각에도 검사한다.
+        r.last_group = Some(ThreadGroup::Idle);
+        assert!(auto_resolve_eligible(&r) && due(&r, 1_050, 950));
+        r.status = ThreadStatus::Parked;
+        assert!(due(&r, 1_050, 950));
+        assert!(!auto_resolve_eligible(&r), "기한이 지난 쉼 기록이어도 보류는 자동 종료하지 않는다");
+        r.status = ThreadStatus::Open;
+        r.role = Role::Evaluator;
+        assert!(!auto_resolve_eligible(&r));
+        r.role = Role::Worker;
+        for group in [ThreadGroup::Working, ThreadGroup::WaitingOnYou, ThreadGroup::ReadyForReview] {
+            r.last_group = Some(group);
+            assert!(!auto_resolve_eligible(&r), "{group:?}: 쉼만 자동 종료한다");
+        }
     }
 
     /// herdr-projects scenarios.rs 병합 시험(`a_thread_merged_while_its_agent_works_is_not_resolved` 등)의 판정 부분

@@ -47,6 +47,7 @@ sys.exit(code)
     write_runs(&dir, "base", vec![run(1, 'a', "success"), old]);
     std::fs::write(dir.join("catchup-2.json"), "{\"workflow_runs\":[]}").unwrap();
     vec![
+        ("AAA_TEST_WATCH_POLL_MS".into(), "10".into()),
         ("PATH".into(), format!("{}:{}", dir.join("bin").display(), std::env::var("PATH").unwrap())),
         ("CI_STUB".into(), dir.to_string_lossy().into()),
     ]

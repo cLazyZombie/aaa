@@ -759,7 +759,8 @@ impl Host {
             tracing::error!(%project,error=%e.message,"자동화 이관 복구 대기");
             return;
         }
-        let now = aaa_common::util::now_ms();
+        // 일정도 자동화의 판정 시계를 쓴다. 실제 입력·보고·agent 시각은 바꾸지 않는다.
+        let now = crate::automation_thread::now_ms();
         let off: Offset = &local_offset_secs;
         for r in ok.into_iter().filter(|r| r.enabled) {
             // `pr` routine은 일정이 아니라 PR 사건에 돈다(pr.rs)

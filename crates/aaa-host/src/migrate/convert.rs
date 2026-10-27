@@ -418,6 +418,7 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
         out.threads_skipped.push((t.id.clone(), why.into()));
     }
     // DB: inbox
+    let mut inbox = Vec::with_capacity(p.inbox.len());
     for i in &p.inbox {
         let rel = if i.done { format!("inbox/done/{}.md", i.id) } else { format!("inbox/{}.md", i.id) };
         let created = aaa_common::util::parse_iso(&i.created).unwrap_or(now_ms);
@@ -451,13 +452,14 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
             created_at_ms: created,
             done_at_ms: done_at,
         };
-        db.inbox_put(&item)?;
+        inbox.push(item);
         if i.done {
             out.inbox_done += 1;
         } else {
             out.inbox_open += 1;
         }
     }
+    db.inbox_put_many(&inbox)?;
     let detail = format!(
         "herdr-projects `{}`에서 옮김: thread {}개(끝난 것), inbox {}개, 파일 {}개",
         inv.project,

@@ -1,10 +1,17 @@
 // herdr의 역할별 색·밝기 짝과 실제 host 저장·터미널 색 전송을 확인한다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { browser, webkit, aaa, step, pairPage, openSettings, domIs, shot, sentFrames, until } from "../lib/harness.mjs";
+import { specCleanup, browser, webkit, aaa, step, pairPage, openSettings, domIs, shot, sentFrames, until } from "../lib/harness.mjs";
 import { waitForSettingsExit } from "../lib/settings-closed.mjs";
 
 const themes = JSON.parse(fs.readFileSync(new URL("../../public/theme-catalog/sources.json", import.meta.url))).themes;
+// 모든 원색/ANSI/역할 대비·밝기 짝은 theme.test가 전체 카탈로그로 검사한다.
+// 실제 저장·재연결·DOM token 연결은 밝음/어두움 대표를 두 엔진·두 폭에서 본다.
+const selected = ["tokyo-night-day", "one-dark"].map(id => {
+  const theme = themes.find(theme => theme.id === id);
+  assert.ok(theme, `E2E 대표 팔레트 없음: ${id}`);
+  return theme;
+});
 
 async function check(engine, label, width) {
   const connections = [];
@@ -43,7 +50,7 @@ async function check(engine, label, width) {
     await gallery.getByRole("button", { name: "Rosé Pine Dawn" }).scrollIntoViewIfNeeded();
     await shot(p, `gallery-${label}-${width}-bottom`);
 
-    for (const theme of themes) {
+    for (const theme of selected) {
       const saved = p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set");
       await d.locator("#settings-palette").selectOption(theme.id);
       assert.ok((await saved).ok());
@@ -99,11 +106,12 @@ async function check(engine, label, width) {
 }
 
 export default async function () {
-  await step("테마 갤러리 Chromium 데스크톱: 12종 저장·ANSI·대비·OS 짝", async () => check(browser, "chromium", 1280));
-  await step("테마 갤러리 Chromium 휴대폰: 12종 저장·ANSI·대비·OS 짝", async () => check(browser, "chromium", 390));
-  const wk = await webkit.launch({ headless: true });
+  await step("테마 갤러리 Chromium 데스크톱: 밝음·어두움 저장·ANSI·대비·OS 짝", async () => check(browser, "chromium", 1280));
+  await step("테마 갤러리 Chromium 휴대폰: 밝음·어두움 저장·ANSI·대비·OS 짝", async () => check(browser, "chromium", 390));
+  let safari;
+  const safariBrowser = async () => (safari ??= specCleanup.own(() => webkit.launch({ headless: true }), value => value.close())).value;
   try {
-    await step("테마 갤러리 WebKit 데스크톱: 12종 저장·ANSI·대비·OS 짝", async () => check(wk, "webkit", 1280));
-    await step("테마 갤러리 WebKit 휴대폰: 12종 저장·ANSI·대비·OS 짝", async () => check(wk, "webkit", 390));
-  } finally { await wk.close(); }
+  await step("테마 갤러리 WebKit 데스크톱: 밝음·어두움 저장·ANSI·대비·OS 짝", async () => check(await safariBrowser(), "webkit", 1280));
+  await step("테마 갤러리 WebKit 휴대폰: 밝음·어두움 저장·ANSI·대비·OS 짝", async () => check(await safariBrowser(), "webkit", 390));
+  } finally { await safari?.close(); }
 }

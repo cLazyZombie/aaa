@@ -771,30 +771,36 @@ mod tests {
         h.store_post("demo", sender(), input(n), "post:t-0001@mac-a", None, now)
     }
 
-    /// 본문을 정리한 뒤에도 남는 실제 SQLite 한도 이력. 접수 owner는 창 경계에서 호출한다.
-    fn seed_post_history(h: &Host, sender: &PostSender, rows: impl IntoIterator<Item = (PostInput, u64)>) {
-        let mut conn = h.db.conn_for_test();
-        let tx = conn.transaction().unwrap();
-        let mut seq: u64 = tx.query_row("SELECT COALESCE(MAX(seq),0) FROM posts", [], |r| r.get(0)).unwrap();
-        for (input, at) in rows {
-            seq += 1;
-            let result = PostResult::Accepted { id: format!("p-{seq:08}") };
-            tx.execute(
-                "INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,quota)
-                 VALUES(?1,'demo',?2,?3,?4,?5,?6,?7,'standard')",
-                rusqlite::params![
-                    input.post_id,
-                    sender.thread,
-                    sender.session,
-                    sender.machine,
-                    content_sha(&input),
+    /// 한도 경계 사이의 접수 이력만 같은 원장에 준비한다. 실제 게시·중복·원자 저장·
+    /// 재시작은 경계 요청과 post_rate_duplicate_mute_and_restart가 지킨다.
+    fn seed_accepted_quota(
+        h: &Host,
+        who: &str,
+        quota: &str,
+        rows: impl IntoIterator<Item = (u32, u64)>,
+        make: impl Fn(u32) -> PostInput,
+    ) {
+        let mut db = h.db.conn_for_test();
+        let transaction = db.transaction().unwrap();
+        let mut seq: u64 = transaction.query_row("SELECT COALESCE(MAX(seq),0) FROM posts", [], |r| r.get(0)).unwrap();
+        {
+            let mut put = transaction.prepare("INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,data,quota) VALUES(?1,'demo',?2,'s1','mac-a',?3,?4,?5,NULL,?6)").unwrap();
+            for (n, at) in rows {
+                let item = make(n);
+                seq += 1;
+                let accepted = PostResult::Accepted { id: format!("p-{seq:08}") };
+                put.execute(rusqlite::params![
+                    item.post_id,
+                    who,
+                    content_sha(&item),
                     at,
-                    serde_json::to_string(&result).unwrap()
-                ],
-            )
-            .unwrap();
+                    serde_json::to_string(&accepted).unwrap(),
+                    quota,
+                ])
+                .unwrap();
+            }
         }
-        tx.commit().unwrap();
+        transaction.commit().unwrap();
     }
 
     /// 실제 post 접수에서 카드 연결·재전송과 별개 질문/옛 질문/다른 프로젝트의 경계를 함께 지킨다.
@@ -900,15 +906,22 @@ mod tests {
         let mut hourly_sender = sender();
         hourly_sender.thread = Some("t-0002".into());
         let hourly = |n, at| h.store_post("demo", hourly_sender.clone(), input(n), "hourly", None, at);
-        for n in 0..30 {
-            assert!(matches!(hourly(1000 + n, now + u64::from(n / 30) * 60_000), PostResult::Accepted { .. }));
-        }
+        assert!(matches!(hourly(1000, now), PostResult::Accepted { .. }));
+        seed_accepted_quota(&h, "t-0002", "standard", (1..29).map(|n| (1000 + n, now)), input);
+        assert!(matches!(hourly(1029, now), PostResult::Accepted { .. }), "30번째는 받는다");
         assert!(
             matches!(hourly(9000, now + 59_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:")),
             "60초 직전 31번째는 거부한다"
         );
-        seed_post_history(&h, &hourly_sender, (30..199).map(|n| (input(1000 + n), now + u64::from(n / 30) * 60_000)));
-        assert!(matches!(hourly(1199, now + 6 * 60_000), PostResult::Accepted { .. }), "200번째까지 수락한다");
+        assert!(matches!(hourly(1030, now + 60_000), PostResult::Accepted { .. }), "60초 정각에는 받는다");
+        seed_accepted_quota(
+            &h,
+            "t-0002",
+            "standard",
+            (31..199).map(|n| (1000 + n, now + u64::from(n / 30) * 60_000)),
+            input,
+        );
+        assert!(matches!(hourly(1199, now + 6 * 60_000), PostResult::Accepted { .. }), "시간당 200번째는 받는다");
         assert!(
             matches!(hourly(1200, now + 3_599_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
         );
@@ -920,13 +933,18 @@ mod tests {
         let mut daily_sender = sender();
         daily_sender.thread = Some("t-0003".into());
         let daily = |i, at| h.store_post("demo", daily_sender.clone(), i, "daily", None, at);
-        // 40초 간격이면 burst·hourly에 걸리지 않고 24시간 안에 2,000건을 채운다.
+        // 최초와 한도 직전 요청은 실제 owner로 보낸다. 중간 1,998건은 같은
+        // SQLite 원장에 한 transaction으로 준비한다. 전송/감사/원자 확정은
+        // post_rate_duplicate_mute_and_restart가 따로 지킨다.
         assert!(matches!(daily(input(2000), now), PostResult::Accepted { .. }));
-        seed_post_history(&h, &daily_sender, (1..1999).map(|n| (input(2000 + n), now + u64::from(n) * 40_000)));
-        assert!(
-            matches!(daily(input(3999), now + 1999 * 40_000), PostResult::Accepted { .. }),
-            "2,000번째까지 수락한다"
+        seed_accepted_quota(
+            &h,
+            "t-0003",
+            "standard",
+            (1..1999).map(|n| (2000 + n, now + u64::from(n) * 40_000)),
+            input,
         );
+        assert!(matches!(daily(input(3999), now + 1999 * 40_000), PostResult::Accepted { .. }));
         let mut dupe = input(2000);
         dupe.post_id = format!("{:032x}", 4000);
         assert!(
@@ -1404,17 +1422,26 @@ mod tests {
             h.db.post_list("demo").unwrap().into_iter().find(|p| p.from.verified == "coordinator-pane").unwrap().from;
         let now = util::now_ms() + 60_000;
         // 사용자 한도는 일반 coordinator post와도 별개다. 일반 한도 초과는 그대로 mute된다.
-        for n in 400..450 {
+        let standard = |n: u32| {
             let mut i = make(n);
             i.topic = "other-action".into();
             i.post_type = PostType::Request;
             i.needs_user = true;
-            let result = h.store_post("demo", from.clone(), i, actor, None, now);
-            if n < 430 {
-                assert!(matches!(result, PostResult::Accepted { .. }));
-            } else {
-                assert!(matches!(result, PostResult::Refused { reason, .. } if reason.starts_with("rate:")));
-            }
+            i
+        };
+        assert!(matches!(
+            h.store_post("demo", from.clone(), standard(400), actor, None, now),
+            PostResult::Accepted { .. }
+        ));
+        seed_accepted_quota(&h, actor, "standard", (401..429).map(|n| (n, now)), standard);
+        assert!(matches!(
+            h.store_post("demo", from.clone(), standard(429), actor, None, now),
+            PostResult::Accepted { .. }
+        ));
+        for n in 430..450 {
+            assert!(
+                matches!(h.store_post("demo", from.clone(), standard(n), actor, None, now), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
+            );
         }
         assert!(h.db.meta(&key).unwrap().is_some());
         assert!(
@@ -1422,12 +1449,8 @@ mod tests {
             "기존 음소거와 무관하게 사용자 알림을 받는다"
         );
         // 두 번째 분의 29건으로 시간당 합계 60, 초과 거부 뒤 다음 시간에는 다시 받는다.
-        for n in 501..530 {
-            assert!(matches!(
-                h.store_post("demo", from.clone(), make(n), actor, None, now),
-                PostResult::Accepted { .. }
-            ));
-        }
+        seed_accepted_quota(&h, actor, "user", (501..529).map(|n| (n, now)), make);
+        assert!(matches!(h.store_post("demo", from.clone(), make(529), actor, None, now), PostResult::Accepted { .. }));
         assert!(
             matches!(h.store_post("demo", from.clone(), make(530), actor, None, now+60_000), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
         );

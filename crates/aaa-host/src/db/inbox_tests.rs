@@ -17,6 +17,43 @@ fn item(id: &str, project: &str, event: &str) -> InboxItem {
     }
 }
 
+// 대량 들여오기에서 뒤 항목이 실패해도 앞 항목의 갱신이 남으면 안 된다.
+#[test]
+fn import_batch_commits_together_and_rolls_back_updated_rows_on_failure() {
+    let db = Db::open(Path::new(":memory:")).unwrap();
+    let source = item("request", "demo", "new report");
+    db.inbox_put(&source).unwrap();
+    let mut updated = source.clone();
+    updated.done = true;
+    updated.done_at_ms = Some(3);
+    updated.body = "들여온 본문".into();
+    let next = item("next", "demo", "idle");
+    db.conn
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_import BEFORE INSERT ON inbox WHEN NEW.id='next'
+         BEGIN SELECT RAISE(ABORT, 'inbox import row failure'); END;",
+        )
+        .unwrap();
+    let error = db.inbox_put_many(&[updated.clone(), next.clone()]).unwrap_err();
+    assert!(error.to_string().contains("inbox import row failure"));
+    assert_eq!(db.inbox_list(Some("demo"), true).unwrap(), [source]);
+    let (done, at): (bool, Option<u64>) = db
+        .conn
+        .lock()
+        .unwrap()
+        .query_row("SELECT done,done_at FROM inbox WHERE id='request'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert!(!done && at.is_none(), "실패한 묶음의 SQL 열도 되돌린다");
+    db.conn.lock().unwrap().execute_batch("DROP TRIGGER reject_import").unwrap();
+    db.inbox_put_many(&[updated.clone(), next.clone()]).unwrap();
+    let all = db.inbox_list(Some("demo"), true).unwrap();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all.iter().find(|i| i.id == updated.id), Some(&updated));
+    assert_eq!(all.iter().find(|i| i.id == next.id), Some(&next));
+}
+
 #[test]
 fn finish_and_notice_commit_once_without_overwriting_current_data() {
     let db = Db::open(Path::new(":memory:")).unwrap();

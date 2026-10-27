@@ -354,7 +354,10 @@ impl Host {
                 }
                 let target = tmp.join(path);
                 std::fs::create_dir_all(target.parent().unwrap()).map_err(bad)?;
-                crate::orch::write_atomic(&target, &bytes).map_err(bad)?;
+                // 이 폴더는 전송·병합 검증 뒤 통째로 버리는 비공개 임시 자료다.
+                // 파일마다 다시 임시 파일을 만들고 rename할 필요는 없다.
+                // 최종 기억의 원자 저장·교체는 아래 memory::write와 rename이 맡는다.
+                std::fs::write(&target, &bytes).map_err(bad)?;
             }
             Ok((current, large))
         }

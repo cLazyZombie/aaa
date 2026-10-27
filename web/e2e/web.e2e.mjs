@@ -106,13 +106,13 @@ const record = (event) => {
   console.log(`## 실행 ${JSON.stringify(row)}`);
   if (timingFile) fs.appendFileSync(timingFile, `${JSON.stringify(row)}\n`);
 };
-record({ event: "suite-start", cores, workers, platform: process.platform, arch: process.arch, specs: picked.length, jobs: jobs.length });
+record({ event: "suite-start", cores, workers, load: os.loadavg(), platform: process.platform, arch: process.arch, specs: picked.length, jobs: jobs.length });
 const runOne = ({ s, r, filter, part }, worker) =>
   new Promise((resolve) => {
     const head = `## specs/${s.file}${part ? ` [독립 단계 ${part}]` : ""}${opt.repeat > 1 ? ` (${r}/${opt.repeat})` : ""}`;
     if (workers === 1) console.log(head);
     const started = Date.now();
-    record({ event: "job-start", spec: s.name, repeat: r, part, worker });
+    record({ event: "job-start", spec: s.name, repeat: r, part, worker, load: os.loadavg() });
     const out = [];
     const p = spawn(process.execPath, [path.join(here, "lib/child.mjs"), path.join(specDir, s.file)], {
       env: filter ? { ...env, AAA_E2E_ONLY: filter } : env,
@@ -124,7 +124,7 @@ const runOne = ({ s, r, filter, part }, worker) =>
       if (workers > 1) process.stdout.write(`${head}\n${Buffer.concat(out).toString("utf8")}`);
       const run = { name: s.name, r, ok: !sig && c === 0, ms: Date.now() - started };
       runs.push(run);
-      record({ event: "job-end", spec: s.name, repeat: r, part, worker, ms: run.ms, ok: run.ok, code: c, signal: sig });
+      record({ event: "job-end", spec: s.name, repeat: r, part, worker, ms: run.ms, ok: run.ok, code: c, signal: sig, load: os.loadavg() });
       resolve();
     });
   });
@@ -135,7 +135,7 @@ await Promise.all(
   }),
 );
 
-record({ event: "suite-end", jobs: runs.length, failed: runs.filter((run) => !run.ok).length });
+record({ event: "suite-end", jobs: runs.length, failed: runs.filter((run) => !run.ok).length, load: os.loadavg() });
 const sec = (ms) => `${(ms / 1000).toFixed(1)}초`;
 console.log(`## 요약: 파일 ${picked.length}개 × ${opt.repeat}번, worker ${workers}개, 모두 ${sec(Date.now() - t0)}`);
 console.log(`## 작업: ${runs.length}개(독립 단계 분할 포함, 실패한 작업은 다시 실행하지 않음)`);

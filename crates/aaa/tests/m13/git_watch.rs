@@ -53,7 +53,9 @@ fn failed_queries(trace: &Path) -> usize {
 }
 #[test]
 fn git_push_restart_force_delete_and_outage() {
-    let mut w = world_with("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\noutage_secs=0\n");
+    let mut w = world_setup("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\noutage_secs=0\n", false, |_| {
+        vec![("AAA_TEST_WATCH_POLL_MS".into(), "10".into())]
+    });
     w.add_remote();
     let trace = w.lab.root.join("git-trace.json");
     w.lab.kill("agentB");
@@ -184,7 +186,9 @@ fn git_push_restart_force_delete_and_outage() {
 
 #[test]
 fn deploy_proposals_count_main_commits_across_restart_and_success_without_installing() {
-    let mut w = world_with("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\n");
+    let mut w = world_setup("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\n", false, |_| {
+        vec![("AAA_TEST_WATCH_POLL_MS".into(), "10".into())]
+    });
     w.h.ok(&["project", "set", "demo", "repos.add", path_str(&w.repo)]);
     let project = w.projects.join("demo");
     std::fs::create_dir_all(project.join("automations")).unwrap();

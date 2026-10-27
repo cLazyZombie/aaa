@@ -5,6 +5,7 @@
 // 시간은 기다리지 않는다: host 기록·`ticker tick`·화면 표지를 본다.
 import fs from "node:fs";
 import { root, aaa, until, step, domIs, shot, openSettings, pairPage, webkit } from "../lib/harness.mjs";
+import { clickMenuItem } from "../lib/menu.mjs";
 
 const TASKS = "# Tasks\n\n## Backlog\n- [ ] 조명 검수 (fake@labA) [작업 폴더]\n  검수만 남음\n";
 const show = (id) => aaa("thread", "show", "demo", id);
@@ -15,7 +16,7 @@ async function manage(p, id, item) {
   await p.getByTestId("thread-view").waitFor();
   await domIs(p, `${id} 화면`, (id) => document.querySelector('[data-testid="thread-view"] .term-title strong')?.textContent?.endsWith(id), id);
   await p.getByTestId("thread-manage").click();
-  await p.locator('[role="menuitem"], .row-sheet-item').filter({ hasText: item }).first().click();
+  await clickMenuItem(p.locator('[role="menuitem"], .row-sheet-item').filter({ hasText: item }).first());
 }
 
 /** 창이 화면 폭 안에 있고 옆으로 넘치지 않는다 */

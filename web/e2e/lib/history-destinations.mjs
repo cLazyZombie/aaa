@@ -5,6 +5,14 @@ import { pairDevice } from "./devices.mjs";
 import { observeHistory, assertHistoryUnchanged } from "./history-observer.mjs";
 
 let thread;
+// 부분 실행도 같은 실제 thread와 할 일 자료를 갖는다. 전체 실행에서는 처음 한 번만 준비한다.
+function prepareHistoryThread() {
+  if (!thread) {
+    fs.writeFileSync(`${root}/history-task.md`, "뒤로·앞으로의 목적지 시험\n질문 카드 시험\n");
+    thread = aaa("thread", "start", "demo", "--title", "이동 목적지", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/history-task.md`);
+  }
+}
+
 const drawerIsOpen = (p) => p.locator("#workspace-drawer").evaluate((el) => el.classList.contains("is-open"));
 
 // 제품보다 먼저 설치해 기록 쓰기·실제 브라우저 이동의 순서를 보존한다.
@@ -58,10 +66,7 @@ async function shown(p, { hash, settings, selector }) {
 }
 
 export async function historyDestinations(browser) {
-  if (!thread) {
-    fs.writeFileSync(`${root}/history-task.md`, "뒤로·앞으로의 목적지 시험\n질문 카드 시험\n");
-    thread = aaa("thread", "start", "demo", "--title", "이동 목적지", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/history-task.md`);
-  }
+  prepareHistoryThread();
   const engine = browser.browserType().name();
   const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone", { init: traceHistory });
   const history = await observeHistory(p);
@@ -158,11 +163,11 @@ export async function historyDestinations(browser) {
     await history.close();
     await p.context().close();
   }
-  await taskSheetHistory(browser);
 }
 
 // 상세는 시트 전용 기록을 갖는다. 일반 본문 순회와 별도 페이지에서 그 수명을 확인한다.
-async function taskSheetHistory(browser) {
+export async function taskSheetHistory(browser) {
+  prepareHistoryThread();
   const engine = browser.browserType().name();
   const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone", { hash: "#tasks" });
   try {

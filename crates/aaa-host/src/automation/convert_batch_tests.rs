@@ -82,44 +82,61 @@ fn batch_migration_keeps_originals_until_backup_and_output_barriers_finish() {
     assert_eq!(snapshot(&p.0), before, "완료한 journal의 재개는 같은 bytes");
 }
 
-#[test]
-fn batch_migration_faults_keep_journal_and_original_bytes_and_resume() {
-    for point in ["backup_sync", "output_published", "output_sync", "source_removed"] {
-        let p = Project::new();
-        let h = demo_host(&p);
-        let root = h.project_dir("demo").unwrap();
-        seed(&root);
-        let plan = convert::prepare(&root, "mac-a").unwrap();
-        let raw = serde_json::to_string(&plan).unwrap();
-        h.db.set_meta("automation_migration:demo", &raw).unwrap();
-        let mut seen = 0;
-        let error = convert::resume_with(&root, &plan, |event, _| {
-            if event == point {
-                seen += 1;
-                if point != "output_published" || seen == 9 {
-                    return Err(format!("주입한 I/O 실패: {point}"));
-                }
-            }
-            Ok(())
-        })
-        .unwrap_err();
-        assert!(error.contains(point) && error.contains("journal 보존") && error.contains("출력 확인"), "{error}");
-        assert_eq!(h.db.meta("automation_migration:demo").unwrap().as_deref(), Some(raw.as_str()));
-        assert!(snapshot(&root).keys().all(|p| !p.contains(".aaa-convert-")), "{point}: 임시 파일 정리");
-        backups(&root);
-        if point != "source_removed" {
-            originals(&root);
-        }
-        for i in 0..COUNT {
-            let original = root.join(format!("routines/batch-{i:04}.md"));
-            if original.exists() {
-                assert_eq!(std::fs::read_to_string(original).unwrap(), source(i));
+fn check_batch_migration_fault(point: &str) {
+    let p = Project::new();
+    let h = demo_host(&p);
+    let root = h.project_dir("demo").unwrap();
+    seed(&root);
+    let plan = convert::prepare(&root, "mac-a").unwrap();
+    let raw = serde_json::to_string(&plan).unwrap();
+    h.db.set_meta("automation_migration:demo", &raw).unwrap();
+    let mut seen = 0;
+    let error = convert::resume_with(&root, &plan, |event, _| {
+        if event == point {
+            seen += 1;
+            if point != "output_published" || seen == 9 {
+                return Err(format!("주입한 I/O 실패: {point}"));
             }
         }
-        h.automation_recover("demo").unwrap();
-        assert!(h.db.meta("automation_migration:demo").unwrap().is_none());
-        complete(&root);
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(error.contains(point) && error.contains("journal 보존") && error.contains("출력 확인"), "{error}");
+    assert_eq!(h.db.meta("automation_migration:demo").unwrap().as_deref(), Some(raw.as_str()));
+    assert!(snapshot(&root).keys().all(|p| !p.contains(".aaa-convert-")), "{point}: 임시 파일 정리");
+    backups(&root);
+    if point != "source_removed" {
+        originals(&root);
     }
+    for i in 0..COUNT {
+        let original = root.join(format!("routines/batch-{i:04}.md"));
+        if original.exists() {
+            assert_eq!(std::fs::read_to_string(original).unwrap(), source(i));
+        }
+    }
+    h.automation_recover("demo").unwrap();
+    assert!(h.db.meta("automation_migration:demo").unwrap().is_none());
+    complete(&root);
+}
+
+#[test]
+fn batch_migration_backup_sync_failure_keeps_journal_and_resumes() {
+    check_batch_migration_fault("backup_sync");
+}
+
+#[test]
+fn batch_migration_output_published_failure_keeps_journal_and_resumes() {
+    check_batch_migration_fault("output_published");
+}
+
+#[test]
+fn batch_migration_output_sync_failure_keeps_journal_and_resumes() {
+    check_batch_migration_fault("output_sync");
+}
+
+#[test]
+fn batch_migration_source_removed_failure_keeps_journal_and_resumes() {
+    check_batch_migration_fault("source_removed");
 }
 
 #[test]

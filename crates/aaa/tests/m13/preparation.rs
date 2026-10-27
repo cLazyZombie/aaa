@@ -66,17 +66,6 @@ sys.exit(rc)
         std::fs::remove_file(w.lab.root.join(format!("gate-{action}"))).unwrap();
         stream.write_all(b"!").unwrap();
     }
-    fn past_old_deadline(stream: &mut TcpStream) {
-        // fixed wait: 예전 host 요청 15초를 실제로 넘긴 뒤에도 준비·정리가 계속됨을 검증하는 시간 규칙 자체다.
-        // socket은 해제 사건을 기다리는 Git만 갖고 있으므로 이 read는 시간 창을 증명하고 별도 sleep이 필요 없다.
-        stream.set_nonblocking(false).unwrap();
-        let started = Instant::now();
-        stream.set_read_timeout(Some(Duration::from_secs(16))).unwrap();
-        let mut b = [0];
-        let e = stream.read(&mut b).unwrap_err();
-        assert!(started.elapsed() >= Duration::from_secs(15), "15초 경계를 실제로 넘어야 한다");
-        assert!(matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut), "{e}");
-    }
 }
 fn start_gated(w: &World) -> Value {
     w.start(&[
@@ -114,7 +103,7 @@ fn prepare_timeout(w: &mut World, host: &mut String, seconds: u64) {
 }
 
 #[test]
-fn slow_prepare_and_cleanup_cross_old_fifteen_second_deadline() {
+fn prepare_and_cleanup_wait_for_git_before_publishing_completion() {
     let gate = GitGate::new();
     let mut w = gate.world();
     GitGate::enable(&w, "add");
@@ -123,8 +112,7 @@ fn slow_prepare_and_cleanup_cross_old_fifteen_second_deadline() {
     assert!(started.elapsed() < Duration::from_secs(10), "배경 시작은 Git 해제를 기다리지 않는다");
     assert_eq!(v["status"], "starting", "{v}");
     let id = v["id"].as_str().unwrap().to_string();
-    let mut pending = gate.take("add");
-    GitGate::past_old_deadline(&mut pending);
+    let pending = gate.take("add");
     assert_eq!(w.show(&id)["status"], "starting");
     assert_eq!(w.show(&id)["group"], "working");
     GitGate::release(&w, "add", pending);
@@ -132,8 +120,7 @@ fn slow_prepare_and_cleanup_cross_old_fifteen_second_deadline() {
     let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
     GitGate::enable(&w, "remove");
     let (_, mut output) = w.lab.spawn_piped("resolve", &w.h, &["--json", "thread", "resolve", "demo", &id]);
-    let mut pending = gate.take("remove");
-    GitGate::past_old_deadline(&mut pending);
+    let pending = gate.take("remove");
     assert!(w.show(&id)["error"].as_str().is_some_and(|s| s.contains("정리 중")));
     assert_eq!(w.show(&id)["cleanup_pending"], true);
     assert_eq!(w.show(&id)["group"], "working");

@@ -352,4 +352,48 @@ mod tests {
         w.due(t4).unwrap();
         assert!(w.answer(t4, detect(4, Some(CLAUDE_PERMISSION))).is_none(), "한 번 알린 뒤로는 바뀔 때만");
     }
+
+    /// host가 먼저 화면으로 신뢰 창을 읽고 답할 수 있다. 감지기의 첫 응답이 답보다 늦으면
+    /// 입력 전 창을 새 질문으로 열지 않되, 실제로 남은 창은 원래 800ms 경계에서 다시 묻는다.
+    #[test]
+    fn an_input_before_the_first_observation_keeps_the_original_prompt_refresh_boundary() {
+        for input_before_request in [false, true] {
+            let t0 = Instant::now();
+            let mut w = Watch::new(Harness::Claude, t0 - STARTUP_GRACE, true, t0);
+            assert!(w.due(t0).is_none());
+            let request_at = t0 + POLL;
+            let input_at = if input_before_request { t0 + POLL / 2 } else { request_at + POLL / 2 };
+            if input_before_request {
+                w.input_sent(input_at);
+            }
+            w.due(request_at).unwrap();
+            if !input_before_request {
+                w.input_sent(input_at);
+            }
+            let reply_at = input_at.max(request_at) + Duration::from_millis(1);
+            assert!(
+                w.answer(reply_at, detect(1, Some(CLAUDE_PERMISSION))).is_none(),
+                "첫 감지 전에 답한 창을 다시 열었다: input_before_request={input_before_request}"
+            );
+            let before = input_at + Duration::from_millis(799);
+            w.due(before).unwrap();
+            assert!(w.answer(before, detect(2, Some(CLAUDE_PERMISSION))).is_none());
+            let boundary = input_at + Duration::from_millis(800);
+            w.due(boundary).unwrap();
+            assert_eq!(
+                w.answer(boundary, detect(3, Some(CLAUDE_PERMISSION))).unwrap().kind,
+                "question",
+                "실제로 남은 확인창은 원래 경계에서 다시 묻는다"
+            );
+            let next = boundary + POLL;
+            w.due(next).unwrap();
+            assert!(w.answer(next, detect(4, Some(CLAUDE_PERMISSION))).is_none());
+            let idle = next + POLL;
+            w.due(idle).unwrap();
+            assert_eq!(w.answer(idle, detect(5, Some(CLAUDE_IDLE))).unwrap().kind, "idle");
+            let again = idle + POLL;
+            w.due(again).unwrap();
+            assert_eq!(w.answer(again, detect(6, Some(CLAUDE_PERMISSION))).unwrap().kind, "question");
+        }
+    }
 }

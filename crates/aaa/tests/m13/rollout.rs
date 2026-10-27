@@ -105,23 +105,8 @@ fn rollout_shared_host_agent_recovery_and_inflight_cancel_preserve_baselines() {
 fn rollout_scenario(scenario: Scenario) {
     use sha2::{Digest, Sha256};
     // 웹을 연 host: 새 host 감시가 실행 신원과 함께 웹 응답(`/api/v1/me`)까지 본다(W6c)
-    let mut w = world_opts("", true);
-    w.add_remote();
-    let b = w.lab.node("b", None);
-    // host를 연달아 재시작하는 이 실험실은 로컬과 원격의 재연결 상한을 맞춘다.
-    // 기본 60초 backoff(+jitter)는 짧은 연결이 반복되면 준비 단언의 30초보다 길어진다.
-    // node()가 agent.toml을 다시 쓰므로 그 뒤에 명시한다. 제품의 기본 상한은 유지한다.
-    use std::io::Write;
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(b.cfg.join("agent.toml"))
-        .unwrap()
-        .write_all(b"\n[reconnect]\nmax_backoff_s = 1\n")
-        .unwrap();
-    let proxy = TransferProxy::new(w.addr.clone());
-    if scenario != Scenario::Transfer {
-        proxy.release();
-    }
+    // 이 keeper는 실제 사본으로 시작한다. 곧바로 버릴 원본 host/agent 셋과 쓰지 않는 Git repo는 준비하지 않는다.
+    let (mut w, _) = world_files("", true, Some(BRIEF_SETTLE_MS), false, |_| Vec::new());
     let dir = w.lab.root.join("rollout-bin");
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
@@ -177,22 +162,34 @@ esac
             .env("ROLLOUT_MACHINE", machine);
         c
     };
-    let config = w.h.cfg.join("host.toml");
-    // agent port만 고정한다(웹은 시작마다 OS가 고른다)
-    let pinned = std::fs::read_to_string(&config)
-        .unwrap()
-        .replace("agent_listen = \"127.0.0.1:0\"", &format!("agent_listen = {:?}", w.addr));
-    std::fs::write(&config, pinned).unwrap();
-    w.lab.kill("host");
-    w.lab.kill("agentA");
-    w.lab.kill("agentB");
     let (host_tag, a_tag, b_tag) = match scenario {
         Scenario::Transfer => ("rollout-host", "rollout-a", "rollout-b"),
         Scenario::RemoteRecovery => ("rollout-host-new", "rollout-a-new", "rollout-b-new"),
         Scenario::SharedRecovery => ("rollout-host-recovery-resume", "rollout-a-third", "rollout-b-restored"),
     };
     w.lab.spawn_command(host_tag, w.h.cmd_bin(&a_exe, &["host"]));
-    wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
+    let status = wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
+    w.addr = status["agent_listen"].as_str().unwrap().into();
+    // 처음 실제 사본이 고른 agent port를 뒤의 모든 재시작에도 유지한다.
+    let config = w.h.cfg.join("host.toml");
+    let pinned = std::fs::read_to_string(&config)
+        .unwrap()
+        .replace("agent_listen = \"127.0.0.1:0\"", &format!("agent_listen = {:?}", w.addr));
+    std::fs::write(&config, pinned).unwrap();
+    w.enroll_remote();
+    // 앞선 keeper와 같은 사본 agent 설정이다. 등록 신원은 상태 폴더에 그대로 있다.
+    let b = w.lab.node("b", None);
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(b.cfg.join("agent.toml"))
+        .unwrap()
+        .write_all(b"\n[reconnect]\nmax_backoff_s = 1\n")
+        .unwrap();
+    let proxy = TransferProxy::new(w.addr.clone());
+    if scenario != Scenario::Transfer {
+        proxy.release();
+    }
     w.lab.spawn_command(a_tag, agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
     w.lab.spawn_command(b_tag, agent_cmd(&b, &b_exe, "b", &proxy.addr, "labB"));
     // t-0578 부하 실패의 사본 프로세스 시작만 여유를 둔다. 이후 배포 단계별 30초는 유지한다.
@@ -203,6 +200,8 @@ esac
             && w.h.connected("labB"))
         .then_some(())
     });
+    w.h.ok(&["project", "create", "demo"]);
+    w.h.ok(&["machine", "workspaces", "labA", "--allow", "작업 폴더"]);
     let coordinator = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
     let pane = coordinator["pane"]["id"].as_str().unwrap().to_string();
     w.wait_screen(&pane, "fake>");

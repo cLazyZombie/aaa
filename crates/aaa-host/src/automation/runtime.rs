@@ -279,7 +279,7 @@ impl Host {
                     }
                 }
                 if scheduled {
-                    s.schedule_cursor = Some(aaa_common::util::now_ms());
+                    s.schedule_cursor = Some(crate::automation_thread::now_ms());
                 }
                 Ok((serde_json::to_string(&s)?, vec![]))
             })

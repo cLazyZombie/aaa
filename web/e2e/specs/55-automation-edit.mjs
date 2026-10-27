@@ -364,6 +364,7 @@ export default async function ({ page }) {
   });
 
   await step("초기 검사: 이름 칸은 첫 검사 뒤 열리고 두 번째 자동화도 입력·저장 중 같은 칸을 유지한다", async () => {
+    if (!aaa("project", "list").projects.some(p => p.name === "demo")) aaa("project", "create", "demo");
     const wk = await webkit.launch({ headless: true });
     try {
       for (const engine of [browser, wk]) for (const width of [1280, 390]) {
@@ -378,9 +379,21 @@ export default async function ({ page }) {
         const dev = await pairPage(engine, aaa("web", "pair").code, { width, height: 844 }, {
           serviceWorkers: "block",
           init: () => {
-            // load가 setLoading을 호출한 바로 뒤, React가 그 변경을 그리기 전의 실제 DOM이다.
-            // 관측만 한다. 입력·effect·타이머·host 응답 내용을 바꾸지 않는다.
+            // fetch 관측으로 load가 setLoading을 호출한 직후의 실제 이름 칸 노출을 기록한다.
             window.__automationInitialInputs = [];
+            window.__automationNameInterleavings = [];
+            document.addEventListener("DOMContentLoaded", () => {
+              // 실제 사이드바 상태 갱신이 input capture와 bubble 사이에 끼는
+              // 순서를 고정한다. 입력값·React state·host 응답은 직접 바꾸지 않는다.
+              document.getElementById("root").addEventListener("input", event => {
+                const element = event.target;
+                if (element.dataset?.testid !== "automation-form-name") return;
+                const before = element.value;
+                document.querySelector('[data-testid="activity-automations"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                window.__automationNameInterleavings.push({ before, after: element.value,
+                  same: element === document.querySelector('[data-testid="automation-form-name"]') });
+              }, true);
+            });
             const fetch_ = window.fetch;
             window.fetch = function (url, options) {
               if (typeof options?.body === "string" && JSON.parse(options.body).op === "automation_validate") {
@@ -428,7 +441,10 @@ export default async function ({ page }) {
               await editor.getByTestId("automation-form-body").fill(`입력 보존 ${n}`);
               await tomlHas(p, editor, `text = "입력 보존 ${n}"`);
               if (!(await original.evaluate((el) => el.isConnected && el === document.querySelector('[data-testid="automation-form-name"]')))) throw new Error(`${label}: 입력 중 이름 칸 교체`);
-              if ((await input.inputValue()) !== name) throw new Error(`${label}: 이름 입력 유실`);
+              const actualName = await input.inputValue();
+              const interleavings = await p.evaluate(() => window.__automationNameInterleavings);
+              if (actualName !== name) throw new Error(`${label}: 이름 입력 유실(${JSON.stringify(actualName)}) ${JSON.stringify(interleavings)}`);
+              if (interleavings.length !== n || interleavings.some(item => item.before !== item.after || !item.same)) throw new Error(`${label}: 같은 이름 칸의 부모 갱신 경계 ${JSON.stringify(interleavings)}`);
               await editor.getByTestId("automation-save").click();
               await editor.waitFor({ state: "detached" });
               await p.getByTestId("automation-detail").waitFor();

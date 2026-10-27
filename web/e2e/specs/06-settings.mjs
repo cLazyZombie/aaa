@@ -7,6 +7,159 @@ import {
   shots, root, aaa, domIs, webkit, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
 } from "../lib/harness.mjs";
 
+async function settingsBody(engine, width, theme, name) {
+  const pg = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { colorScheme: theme, serviceWorkers: "block" })).page;
+  try {
+    await pg.getByTestId("terminal").waitFor();
+    const home = pg.url();
+    // 실제 host의 /me 응답에서 passkey 상태만 대체한다. 10분 경과를 자면서 기다리지 않는다.
+    let passkey = { registered: false, rp_id: "example.ts.net", register_until_ms: 0 };
+    await pg.route("**/api/v1/me", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      json.ok.passkey = passkey;
+      // 새 JSON의 길이·인코딩으로 응답한다. 원 응답의 전송 헤더를 재사용하지 않는다.
+      await route.fulfill({ status: response.status(), contentType: "application/json", json });
+    });
+    const appearance = await openSettings(pg, "모양");
+    await appearance.getByRole("group", { name: "테마", exact: true }).getByRole("button", { name: theme === "light" ? "밝게" : "어둡게", exact: true }).click();
+    await until("테마 적용", () => pg.evaluate((want) => document.documentElement.dataset.theme === want, theme));
+    // 메뉴는 앱 왼쪽 패널에, 내용만 main 전체 폭에 놓인다. 조작의 실제 hit target도 검사한다.
+    const layout = await pg.evaluate(() => {
+      const nav = document.querySelector('nav[aria-label="설정"]');
+      const body = document.querySelector(".settings-body");
+      const main = document.querySelector("main").getBoundingClientRect();
+      const bounds = body.getBoundingClientRect();
+      const shell = document.querySelector(".sidebar-shell");
+      const controls = [...body.querySelectorAll('[aria-label="테마"] button, #settings-palette, [aria-label="밀도"] button')];
+      return {
+        sidebar: !!nav?.closest("#sidebar-column"),
+        title: shell.querySelector(".list-title").textContent,
+        color: nav && getComputedStyle(nav).backgroundColor === getComputedStyle(shell).backgroundColor,
+        full: Math.abs(bounds.left - main.left) < 1 && Math.abs(bounds.right - main.right) < 1,
+        controls: controls.length,
+        clipped: controls.some((el) => {
+          const r = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return r.width <= 0 || r.left < main.left || r.right > main.right || !el.contains(hit);
+        }),
+      };
+    });
+    if (!layout.full || layout.controls < 6 || layout.clipped || (width > 768 && (!layout.sidebar || layout.title !== "설정" || !layout.color)))
+      throw new Error(`${name}: 설정 메뉴·조작 배치 ${JSON.stringify(layout)}`);
+    if (width > 768) await panelRows(pg, ".settings-tab");
+    await shot(pg, `settings-appearance-${name}`);
+    await appearance.getByRole("button", { name: "설정 닫기" }).click();
+    await until("테마 설정 닫힘", () => !new URL(pg.url()).searchParams.has("settings"));
+    let screen = await openSettings(pg, "폰 및 기기");
+    const status = screen.getByTestId("passkey-status");
+    const served = await pg.evaluate(async () => (await (await fetch("/api/v1/me")).json()).ok.passkey);
+    if (!served || served.register_until_ms !== 0) throw new Error(`${name}: 시험용 상태 응답 ${JSON.stringify(served)}`);
+    await status.filter({ hasText: "10분이 지나" }).waitFor();
+    await screen.locator(".phone-panel [role=status]").waitFor({ state: "detached" });
+    await screen.locator(".devices-list").waitFor();
+    const fit = async () => screen.evaluate((el) => {
+      const view = el.closest("main").getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const body = el.querySelector(".settings-body");
+      const row = el.querySelector('[data-testid="passkey-status"]')?.closest(".settings-row");
+      const text = row?.querySelector(".settings-row-text").getBoundingClientRect();
+      return {
+        modal: !!el.closest(".modal-scrim") || el.hasAttribute("aria-modal"),
+        fills: Math.abs(r.left - view.left) < 1 && Math.abs(r.right - view.right) < 1 && Math.abs(r.bottom - view.bottom) < 1,
+        overflow: body.scrollWidth > body.clientWidth + 1 || document.documentElement.scrollWidth > innerWidth + 1,
+        textWidth: text?.width,
+        rowWidth: row?.clientWidth,
+        squeezed: [...el.querySelectorAll(".settings-row-text")].some((node) => node.getBoundingClientRect().width < 100),
+      };
+    });
+    const check = async () => {
+      const f = await fit();
+      if (f.modal || !f.fills || f.overflow || f.squeezed || f.textWidth < f.rowWidth * 0.7) throw new Error(`${name}: 설정 배치 ${JSON.stringify(f)}`);
+    };
+    await check();
+    await screen.locator(".settings-body").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await shot(pg, `settings-full-${name}`);
+    const link = pg.url();
+    if (new URL(link).searchParams.get("settings") !== "devices") throw new Error(`${name}: 설정 주소 없음`);
+    // 새로고침에도 같은 쪽. 새 탭의 주소도 설정을 연다.
+    await pg.reload();
+    screen = pg.getByRole("region", { name: "설정", exact: true });
+    await screen.getByTestId("passkey-status").filter({ hasText: "10분이 지나" }).waitFor();
+    await check();
+    const linked = await pg.context().newPage();
+    const shared = new URL(link);
+    shared.hash = "";
+    await linked.goto(shared.href);
+    await linked.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
+    await linked.getByRole("button", { name: "설정 닫기" }).click();
+    await until("공유 주소 닫기", () => !new URL(linked.url()).searchParams.has("settings"));
+    await linked.close();
+    // 확인 모달만 Esc로 닫힌다. 설정은 본문에 남는다.
+    await screen.getByRole("button", { name: "로그아웃", exact: true }).click();
+    const confirm = pg.getByRole("alertdialog", { name: "이 브라우저에서 로그아웃할까요?" });
+    await confirm.waitFor();
+    await pg.keyboard.press("Escape");
+    await confirm.waitFor({ state: "detached" });
+    if (!(await screen.isVisible())) throw new Error(`${name}: 확인 창 Esc가 설정도 닫았다`);
+    await screen.getByRole("button", { name: "설정 닫기" }).click();
+    await until("닫기 주소 복귀", () => pg.url() === home);
+    await pg.goForward();
+    await screen.waitFor();
+    // 앞으로는 휴대폰에서 목록부터 복원될 수 있다.
+    if (await screen.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "폰 및 기기" }).isVisible()) await screen.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "폰 및 기기" }).click();
+    await screen.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
+    await screen.getByRole("button", { name: "설정 닫기" }).click();
+    await until("다시 닫기 주소 복귀", () => pg.url() === home);
+    // 긴 도메인의 등록 상태도 동일한 폭 안에서 접힌다.
+    passkey = { ...passkey, registered: true, rp_id: `${"long-domain-".repeat(18)}example.ts.net` };
+    screen = await openSettings(pg, "폰 및 기기");
+    await screen.getByTestId("passkey-status").filter({ hasText: "등록됨" }).waitFor();
+    await check();
+    if (width === 1280) {
+      // Tab은 본문에 갇히지 않고 앱 목록으로 나간다.
+      await screen.getByRole("button", { name: "설정 닫기" }).focus();
+      await pg.keyboard.press("Shift+Tab");
+      if (!await pg.evaluate(() => document.getElementById("workspace-drawer").contains(document.activeElement))) throw new Error("설정 본문에서 Tab으로 앱 목록에 나가지 못했다");
+      await pg.getByTestId("palette-open").click();
+      const palette = pg.getByRole("dialog", { name: "명령 팔레트" });
+      await palette.getByRole("searchbox").fill("알림");
+      await palette.locator('[data-section="settings-pages"]').getByRole("option", { name: "알림", exact: true }).click();
+      await screen.getByRole("tabpanel", { name: "알림" }).waitFor();
+      await until("열린 설정 팔레트 이동", () => new URL(pg.url()).searchParams.get("settings") === "alerts");
+    }
+    // 설정 밖의 같은 pane 선택으로도 본문 복귀. history가 뒤늦게 덮지 않는다.
+    await inList(pg, "pane-t1");
+    await screen.waitFor({ state: "detached" });
+    await pg.getByTestId("terminal").waitFor();
+    await until("사이드바 이동 주소", () => !new URL(pg.url()).searchParams.has("settings"));
+    // 다른 쪽의 긴 값·조작들도 본문을 넘치지 않는다.
+    for (const name of ["모양", "터미널", "단축키", "알림"]) {
+      screen = await openSettings(pg, name);
+      if (name === "모양") await screen.getByRole("textbox", { name: "화면 글꼴", exact: true }).fill("긴글꼴이름".repeat(40));
+      const f = await fit();
+      if (f.overflow || f.squeezed) throw new Error(`${width}px ${name}: 다른 설정 줄 넘침 ${JSON.stringify(f)}`);
+      await screen.getByRole("button", { name: "설정 닫기" }).click();
+      await until("설정 기록 해제", () => !new URL(pg.url()).searchParams.has("settings"));
+    }
+    if (width === 1280) {
+      screen = await openSettings(pg, "터미널");
+      await screen.getByRole("button", { name: "키 바 편집" }).click();
+      await pg.reload();
+      const editor = pg.getByRole("region", { name: "키 바", exact: true });
+      await editor.waitFor();
+      await pg.goBack();
+      await pg.getByRole("tabpanel", { name: "터미널" }).waitFor();
+      await pg.getByRole("button", { name: "설정 닫기" }).click();
+      await until("키 바 닫기", () => !new URL(pg.url()).searchParams.has("settings"));
+    }
+  } catch (error) {
+    console.log(`설정 실패 ${name}: ${pg.url()} / ${await pg.locator(".settings-dialog").innerText().catch(() => "설정 없음")}`);
+    await shot(pg, `settings-failure-${name}`);
+    throw error;
+  } finally { await pg.context().close(); }
+}
+
 export default async function ({ ctl, page }) {
   await step("터미널 색 테마: ANSI·여백·OSC 색 즉시 반영, 앱 팔레트와 독립·기기별 저장·다른 탭·재열기·기본 복원(Chromium 1280·WebKit 390)", async () => {
     const mobile = await webkit.launch({ headless: true });
@@ -92,168 +245,17 @@ export default async function ({ ctl, page }) {
     } finally { await mobile.close(); aaa("pane", "kill", name); }
   });
 
-  await step("설정 본문·passkey 긴 값: Chromium·WebKit 밝음/어두움·1280/980/390/320px, 넘침 없음·딥링크·새로고침·뒤로/앞으로·사이드바 이동", async () => {
-    const wk = await webkit.launch({ headless: true });
-    try {
-      for (const [engine, width, theme, name] of [
-        [browser, 1280, "light", "desktop-light"], [browser, 1280, "dark", "desktop-dark"],
-        [browser, 980, "light", "narrow-desktop"], [browser, 320, "dark", "phone-small"],
-        [wk, 1280, "light", "webkit-desktop-light"], [wk, 1280, "dark", "webkit-desktop-dark"],
-        [wk, 390, "light", "phone-light"], [wk, 390, "dark", "phone-dark"],
-      ]) {
-        const pg = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { colorScheme: theme, serviceWorkers: "block" })).page;
-        try {
-          await pg.getByTestId("terminal").waitFor();
-          const home = pg.url();
-          // 실제 host의 /me 응답에서 passkey 상태만 대체한다. 10분 경과를 자면서 기다리지 않는다.
-          let passkey = { registered: false, rp_id: "example.ts.net", register_until_ms: 0 };
-          await pg.route("**/api/v1/me", async (route) => {
-            const response = await route.fetch();
-            const json = await response.json();
-            json.ok.passkey = passkey;
-            // 새 JSON의 길이·인코딩으로 응답한다. 원 응답의 전송 헤더를 재사용하지 않는다.
-            await route.fulfill({ status: response.status(), contentType: "application/json", json });
-          });
-          const appearance = await openSettings(pg, "모양");
-          await appearance.getByRole("group", { name: "테마", exact: true }).getByRole("button", { name: theme === "light" ? "밝게" : "어둡게", exact: true }).click();
-          await until("테마 적용", () => pg.evaluate((want) => document.documentElement.dataset.theme === want, theme));
-          // 메뉴는 앱 왼쪽 패널에, 내용만 main 전체 폭에 놓인다. 조작의 실제 hit target도 검사한다.
-          const layout = await pg.evaluate(() => {
-            const nav = document.querySelector('nav[aria-label="설정"]');
-            const body = document.querySelector(".settings-body");
-            const main = document.querySelector("main").getBoundingClientRect();
-            const bounds = body.getBoundingClientRect();
-            const shell = document.querySelector(".sidebar-shell");
-            const controls = [...body.querySelectorAll('[aria-label="테마"] button, #settings-palette, [aria-label="밀도"] button')];
-            return {
-              sidebar: !!nav?.closest("#sidebar-column"),
-              title: shell.querySelector(".list-title").textContent,
-              color: nav && getComputedStyle(nav).backgroundColor === getComputedStyle(shell).backgroundColor,
-              full: Math.abs(bounds.left - main.left) < 1 && Math.abs(bounds.right - main.right) < 1,
-              controls: controls.length,
-              clipped: controls.some((el) => {
-                const r = el.getBoundingClientRect();
-                const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-                return r.width <= 0 || r.left < main.left || r.right > main.right || !el.contains(hit);
-              }),
-            };
-          });
-          if (!layout.full || layout.controls < 6 || layout.clipped || (width > 768 && (!layout.sidebar || layout.title !== "설정" || !layout.color)))
-            throw new Error(`${name}: 설정 메뉴·조작 배치 ${JSON.stringify(layout)}`);
-          if (width > 768) await panelRows(pg, ".settings-tab");
-          await shot(pg, `settings-appearance-${name}`);
-          await appearance.getByRole("button", { name: "설정 닫기" }).click();
-          await until("테마 설정 닫힘", () => !new URL(pg.url()).searchParams.has("settings"));
-          let screen = await openSettings(pg, "폰 및 기기");
-          const status = screen.getByTestId("passkey-status");
-          const served = await pg.evaluate(async () => (await (await fetch("/api/v1/me")).json()).ok.passkey);
-          if (!served || served.register_until_ms !== 0) throw new Error(`${name}: 시험용 상태 응답 ${JSON.stringify(served)}`);
-          await status.filter({ hasText: "10분이 지나" }).waitFor();
-          await screen.locator(".phone-panel [role=status]").waitFor({ state: "detached" });
-          await screen.locator(".devices-list").waitFor();
-          const fit = async () => screen.evaluate((el) => {
-            const view = el.closest("main").getBoundingClientRect();
-            const r = el.getBoundingClientRect();
-            const body = el.querySelector(".settings-body");
-            const row = el.querySelector('[data-testid="passkey-status"]')?.closest(".settings-row");
-            const text = row?.querySelector(".settings-row-text").getBoundingClientRect();
-            return {
-              modal: !!el.closest(".modal-scrim") || el.hasAttribute("aria-modal"),
-              fills: Math.abs(r.left - view.left) < 1 && Math.abs(r.right - view.right) < 1 && Math.abs(r.bottom - view.bottom) < 1,
-              overflow: body.scrollWidth > body.clientWidth + 1 || document.documentElement.scrollWidth > innerWidth + 1,
-              textWidth: text?.width,
-              rowWidth: row?.clientWidth,
-              squeezed: [...el.querySelectorAll(".settings-row-text")].some((node) => node.getBoundingClientRect().width < 100),
-            };
-          });
-          const check = async () => {
-            const f = await fit();
-            if (f.modal || !f.fills || f.overflow || f.squeezed || f.textWidth < f.rowWidth * 0.7) throw new Error(`${name}: 설정 배치 ${JSON.stringify(f)}`);
-          };
-          await check();
-          await screen.locator(".settings-body").evaluate((el) => { el.scrollTop = el.scrollHeight; });
-          await shot(pg, `settings-full-${name}`);
-          const link = pg.url();
-          if (new URL(link).searchParams.get("settings") !== "devices") throw new Error(`${name}: 설정 주소 없음`);
-          // 새로고침에도 같은 쪽. 새 탭의 주소도 설정을 연다.
-          await pg.reload();
-          screen = pg.getByRole("region", { name: "설정", exact: true });
-          await screen.getByTestId("passkey-status").filter({ hasText: "10분이 지나" }).waitFor();
-          await check();
-          const linked = await pg.context().newPage();
-          const shared = new URL(link);
-          shared.hash = "";
-          await linked.goto(shared.href);
-          await linked.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
-          await linked.getByRole("button", { name: "설정 닫기" }).click();
-          await until("공유 주소 닫기", () => !new URL(linked.url()).searchParams.has("settings"));
-          await linked.close();
-          // 확인 모달만 Esc로 닫힌다. 설정은 본문에 남는다.
-          await screen.getByRole("button", { name: "로그아웃", exact: true }).click();
-          const confirm = pg.getByRole("alertdialog", { name: "이 브라우저에서 로그아웃할까요?" });
-          await confirm.waitFor();
-          await pg.keyboard.press("Escape");
-          await confirm.waitFor({ state: "detached" });
-          if (!(await screen.isVisible())) throw new Error(`${name}: 확인 창 Esc가 설정도 닫았다`);
-          await screen.getByRole("button", { name: "설정 닫기" }).click();
-          await until("닫기 주소 복귀", () => pg.url() === home);
-          await pg.goForward();
-          await screen.waitFor();
-          // 앞으로는 휴대폰에서 목록부터 복원될 수 있다.
-          if (await screen.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "폰 및 기기" }).isVisible()) await screen.page().getByRole("navigation", { name: "설정", exact: true }).getByRole("tab", { name: "폰 및 기기" }).click();
-          await screen.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
-          await screen.getByRole("button", { name: "설정 닫기" }).click();
-          await until("다시 닫기 주소 복귀", () => pg.url() === home);
-          // 긴 도메인의 등록 상태도 동일한 폭 안에서 접힌다.
-          passkey = { ...passkey, registered: true, rp_id: `${"long-domain-".repeat(18)}example.ts.net` };
-          screen = await openSettings(pg, "폰 및 기기");
-          await screen.getByTestId("passkey-status").filter({ hasText: "등록됨" }).waitFor();
-          await check();
-          if (width === 1280) {
-            // Tab은 본문에 갇히지 않고 앱 목록으로 나간다.
-            await screen.getByRole("button", { name: "설정 닫기" }).focus();
-            await pg.keyboard.press("Shift+Tab");
-            if (!await pg.evaluate(() => document.getElementById("workspace-drawer").contains(document.activeElement))) throw new Error("설정 본문에서 Tab으로 앱 목록에 나가지 못했다");
-            await pg.getByTestId("palette-open").click();
-            const palette = pg.getByRole("dialog", { name: "명령 팔레트" });
-            await palette.getByRole("searchbox").fill("알림");
-            await palette.locator('[data-section="settings-pages"]').getByRole("option", { name: "알림", exact: true }).click();
-            await screen.getByRole("tabpanel", { name: "알림" }).waitFor();
-            await until("열린 설정 팔레트 이동", () => new URL(pg.url()).searchParams.get("settings") === "alerts");
-          }
-          // 설정 밖의 같은 pane 선택으로도 본문 복귀. history가 뒤늦게 덮지 않는다.
-          await inList(pg, "pane-t1");
-          await screen.waitFor({ state: "detached" });
-          await pg.getByTestId("terminal").waitFor();
-          await until("사이드바 이동 주소", () => !new URL(pg.url()).searchParams.has("settings"));
-          // 다른 쪽의 긴 값·조작들도 본문을 넘치지 않는다.
-          for (const name of ["모양", "터미널", "단축키", "알림"]) {
-            screen = await openSettings(pg, name);
-            if (name === "모양") await screen.getByRole("textbox", { name: "화면 글꼴", exact: true }).fill("긴글꼴이름".repeat(40));
-            const f = await fit();
-            if (f.overflow || f.squeezed) throw new Error(`${width}px ${name}: 다른 설정 줄 넘침 ${JSON.stringify(f)}`);
-            await screen.getByRole("button", { name: "설정 닫기" }).click();
-            await until("설정 기록 해제", () => !new URL(pg.url()).searchParams.has("settings"));
-          }
-          if (width === 1280) {
-            screen = await openSettings(pg, "터미널");
-            await screen.getByRole("button", { name: "키 바 편집" }).click();
-            await pg.reload();
-            const editor = pg.getByRole("region", { name: "키 바", exact: true });
-            await editor.waitFor();
-            await pg.goBack();
-            await pg.getByRole("tabpanel", { name: "터미널" }).waitFor();
-            await pg.getByRole("button", { name: "설정 닫기" }).click();
-            await until("키 바 닫기", () => !new URL(pg.url()).searchParams.has("settings"));
-          }
-        } catch (error) {
-          console.log(`설정 실패 ${name}: ${pg.url()} / ${await pg.locator(".settings-dialog").innerText().catch(() => "설정 없음")}`);
-          await shot(pg, `settings-failure-${name}`);
-          throw error;
-        } finally { await pg.context().close(); }
-      }
-    } finally { await wk.close(); }
-  });
+  const bodyWebkit = await webkit.launch({ headless: true });
+  try {
+  await step("설정 본문·passkey·탐색: desktop-light 1280", () => settingsBody(browser, 1280, "light", "desktop-light"));
+  await step("설정 본문·passkey·탐색: desktop-dark 1280", () => settingsBody(browser, 1280, "dark", "desktop-dark"));
+  await step("설정 본문·passkey·탐색: narrow-desktop 980", () => settingsBody(browser, 980, "light", "narrow-desktop"));
+  await step("설정 본문·passkey·탐색: phone-small 320", () => settingsBody(browser, 320, "dark", "phone-small"));
+  await step("설정 본문·passkey·탐색: webkit-desktop-light 1280", () => settingsBody(bodyWebkit, 1280, "light", "webkit-desktop-light"));
+  await step("설정 본문·passkey·탐색: webkit-desktop-dark 1280", () => settingsBody(bodyWebkit, 1280, "dark", "webkit-desktop-dark"));
+  await step("설정 본문·passkey·탐색: phone-light 390", () => settingsBody(bodyWebkit, 390, "light", "phone-light"));
+  await step("설정 본문·passkey·탐색: phone-dark 390", () => settingsBody(bodyWebkit, 390, "dark", "phone-dark"));
+  } finally { await bodyWebkit.close(); }
 
   await step("화면·고정폭·터미널 글꼴: 즉시 적용·없는 글꼴 대체·아이콘 우선·기기별 저장·새로고침·기본값 복원(Chromium 1280·WebKit 390)", async () => {
     const mobileBrowser = await webkit.launch({ headless: true });

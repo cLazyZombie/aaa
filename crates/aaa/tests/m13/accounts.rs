@@ -239,7 +239,16 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) 
         config.push_str(&format!("[profiles.{profile}]\nagent={harness:?}\ncommand=[{:?}]\nmodel=\"example-model\"\neffort=\"high\"\nenv={{ACCOUNT_GATE={:?},ACCOUNT_PROOF={proof:?},ACCOUNT_KIND={harness:?},ACCOUNT_AAA={:?}{extra}}}\n",executable,gate.address(),lab::BIN));
     }
     let h = lab.node("h", Some(&config));
-    let mut w = World { lab, h, projects, repo: scripts.clone(), scripts, addr: String::new(), settle_ms: None };
+    let mut w = World {
+        lab,
+        h,
+        projects,
+        repo: scripts.clone(),
+        scripts,
+        addr: String::new(),
+        settle_ms: None,
+        host_env: Vec::new(),
+    };
     let path = std::env::join_paths(
         std::iter::once(w.scripts.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
@@ -962,11 +971,12 @@ s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=4,home=str(home),c
 assert s.recv(1)==b'X'
 "#;
 
-#[test]
-fn fresh_account_claude_initializes_only_authorized_bypass_consent() {
+fn account_onboarding_case(yolo: bool, args: &str, accepted: bool, machine: &str) {
     let gate = Gate::new();
     let mut w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), TRUST_HARNESS);
-    w.add_remote();
+    if machine == "labB" {
+        w.add_remote();
+    }
     let token = w.scripts.join("fake-token");
     std::fs::write(&token, aaa_test_support::token("local-claude")).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&token)]);
@@ -984,58 +994,101 @@ fn fresh_account_claude_initializes_only_authorized_bypass_consent() {
     std::fs::write(source.join(".claude.json"), &source_config).unwrap();
     std::fs::write(source.join("settings.json"), &source_settings).unwrap();
     let original = original.replace("env={ACCOUNT_GATE=", &format!("env={{CLAUDE_CONFIG_DIR={source:?},ACCOUNT_GATE="));
-    for (yolo, args, accepted) in [
-        (false, "[]", false),
-        (true, "[]", true),
-        (false, "[\"--permission-mode\",\"bypassPermissions\"]", true),
-        (false, "[\"--permission-mode=bypassPermissions\"]", true),
-        (false, "[\"--permission-mode\",\"default\"]", false),
-    ] {
-        let config = original.replace("[profiles.token]\n", &format!("[profiles.token]\nargs={args}\n"));
-        std::fs::write(&host, format!("{config}\n[safety.demo]\nyolo={yolo}\ntrust_screens=\"coordinator\"\n"))
-            .unwrap();
-        for machine in ["labA", "labB"] {
-            let started = w.start(&[
-                "--title",
-                "계정 첫 실행",
-                "--profile",
-                "token",
-                "--machine",
-                machine,
-                "--kind",
-                "dir",
-                "--task-file",
-                &task,
-            ]);
-            let id = started["id"].as_str().unwrap();
-            let ready = gate.take(1, 4);
-            let proof = &ready[0].1;
-            let expected = if accepted {
-                serde_json::json!({"skipDangerousModePermissionPrompt":true})
-            } else {
-                serde_json::json!({})
-            };
-            assert_eq!(proof["settings"], expected, "{machine}/{yolo}/{args}: {proof}");
-            let config = proof["config"].as_object().unwrap();
-            assert_eq!(config.len(), 2, "인증·다른 사용자 설정을 복사하지 않는다: {proof}");
-            assert_eq!(config["hasCompletedOnboarding"], true);
-            assert!(proof["trusted"].as_bool().unwrap());
-            let pane = w.show(id)["pane"].as_str().unwrap().to_string();
-            let screen = w.h.screen(&pane);
-            assert!(!screen.contains("WARNING: Claude Code running in Bypass Permissions mode"), "{screen}");
-            Gate::release(ready, b'X');
-            w.wait_show("가짜 첫 실행 종료", id, |v| v["agent"]["activity"] == "exited");
-        }
-    }
+    let config = original.replace("[profiles.token]\n", &format!("[profiles.token]\nargs={args}\n"));
+    std::fs::write(&host, format!("{config}\n[safety.demo]\nyolo={yolo}\ntrust_screens=\"coordinator\"\n")).unwrap();
+    let started = w.start(&[
+        "--title",
+        "계정 첫 실행",
+        "--profile",
+        "token",
+        "--machine",
+        machine,
+        "--kind",
+        "dir",
+        "--task-file",
+        &task,
+    ]);
+    let id = started["id"].as_str().unwrap();
+    let ready = gate.take(1, 4);
+    let proof = &ready[0].1;
+    let expected =
+        if accepted { serde_json::json!({"skipDangerousModePermissionPrompt":true}) } else { serde_json::json!({}) };
+    assert_eq!(proof["settings"], expected, "{machine}/{yolo}/{args}: {proof}");
+    let config = proof["config"].as_object().unwrap();
+    assert_eq!(config.len(), 2, "인증·다른 사용자 설정을 복사하지 않는다: {proof}");
+    assert_eq!(config["hasCompletedOnboarding"], true);
+    assert!(proof["trusted"].as_bool().unwrap());
+    let pane = w.show(id)["pane"].as_str().unwrap().to_string();
+    let screen = w.h.screen(&pane);
+    assert!(!screen.contains("WARNING: Claude Code running in Bypass Permissions mode"), "{screen}");
+    Gate::release(ready, b'X');
+    w.wait_show("가짜 첫 실행 종료", id, |v| v["agent"]["activity"] == "exited");
     assert_eq!(std::fs::read_to_string(source.join(".claude.json")).unwrap(), source_config);
     assert_eq!(std::fs::read_to_string(source.join("settings.json")).unwrap(), source_settings);
 }
 
-#[test]
-fn account_threads_trust_only_their_cwd_when_coordinator_answers() {
+// 각 설정과 머신은 서로의 결과를 쓰지 않는 독립 최초 기동이다.
+macro_rules! onboarding_case {
+    ($name:ident, $yolo:literal, $args:literal, $accepted:literal, $machine:literal) => {
+        #[test]
+        fn $name() {
+            account_onboarding_case($yolo, $args, $accepted, $machine);
+        }
+    };
+}
+onboarding_case!(account_onboarding_default_local, false, "[]", false, "labA");
+onboarding_case!(account_onboarding_default_remote, false, "[]", false, "labB");
+onboarding_case!(account_onboarding_yolo_local, true, "[]", true, "labA");
+onboarding_case!(account_onboarding_yolo_remote, true, "[]", true, "labB");
+onboarding_case!(
+    account_onboarding_split_bypass_local,
+    false,
+    "[\"--permission-mode\",\"bypassPermissions\"]",
+    true,
+    "labA"
+);
+onboarding_case!(
+    account_onboarding_split_bypass_remote,
+    false,
+    "[\"--permission-mode\",\"bypassPermissions\"]",
+    true,
+    "labB"
+);
+onboarding_case!(
+    account_onboarding_inline_bypass_local,
+    false,
+    "[\"--permission-mode=bypassPermissions\"]",
+    true,
+    "labA"
+);
+onboarding_case!(
+    account_onboarding_inline_bypass_remote,
+    false,
+    "[\"--permission-mode=bypassPermissions\"]",
+    true,
+    "labB"
+);
+onboarding_case!(
+    account_onboarding_explicit_default_local,
+    false,
+    "[\"--permission-mode\",\"default\"]",
+    false,
+    "labA"
+);
+onboarding_case!(
+    account_onboarding_explicit_default_remote,
+    false,
+    "[\"--permission-mode\",\"default\"]",
+    false,
+    "labB"
+);
+
+fn account_trust_case(policy: &str, profile: &str, machine: &str, kind: &str) {
     let gate = Gate::new();
     let mut w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), TRUST_HARNESS);
-    w.add_remote();
+    if machine == "labB" {
+        w.add_remote();
+    }
     let file = w.scripts.join("fake-auth.json");
     std::fs::write(&file, serde_json::json!({"tokens":{"access_token":aaa_test_support::token("access"),"refresh_token":aaa_test_support::token("refresh")}}).to_string())
         .unwrap();
@@ -1052,60 +1105,74 @@ fn account_threads_trust_only_their_cwd_when_coordinator_answers() {
     git(&w.repo, &["add", "."]);
     git(&w.repo, &["commit", "-m", "fixture"]);
     let task = w.task("trust-task.md", "가짜 신뢰 시작 검증");
-    for policy in ["coordinator", "user"] {
-        std::fs::write(w.projects.join("demo/project.toml"), format!("trust_screens = {policy:?}\n")).unwrap();
-        for profile in ["file", "token"] {
-            for machine in ["labA", "labB"] {
-                for kind in ["worktree", "dir"] {
-                    let mut args = vec![
-                        "--title",
-                        "격리 폴더 신뢰",
-                        "--profile",
-                        profile,
-                        "--machine",
-                        machine,
-                        "--kind",
-                        kind,
-                        "--task-file",
-                        &task,
-                    ];
-                    if kind == "worktree" {
-                        args.extend(["--repo", path_str(&w.repo)]);
-                    }
-                    let started = w.start(&args);
-                    let id = started["id"].as_str().unwrap();
-                    let ready = gate.take(1, 4);
-                    let proof = &ready[0].1;
-                    assert_eq!(
-                        proof["trusted"],
-                        policy == "coordinator",
-                        "{policy}/{profile}/{machine}/{kind}: {proof}"
-                    );
-                    let projects = proof["projects"].as_object().unwrap();
-                    if policy == "coordinator" {
-                        assert_eq!(projects.len(), 1, "{proof}");
-                        assert!(projects.contains_key(proof["cwd"].as_str().unwrap()), "{proof}");
-                    } else {
-                        assert!(projects.is_empty(), "{proof}");
-                        let pane = w.show(id)["pane"].as_str().unwrap().to_string();
-                        w.h.wait_output(&pane, "Trust this folder?", T);
-                    }
-                    if profile == "token" {
-                        let pane = w.show(id)["pane"].as_str().unwrap().to_string();
-                        let chat = w.h.ok(&["pane", "chat", &pane]);
-                        assert!(chat.to_string().contains("isolated-conversation-proof"), "{chat}");
-                        w.wait_show("격리 Claude 계획 조회", id, |v| v["agent"]["plan"]["total"] == 1);
-                    }
-                    Gate::release(ready, b'X');
-                    w.wait_show("가짜 신뢰 harness 종료", id, |v| v["agent"]["activity"] == "exited");
-                    // 2A: harness 종료는 자리를 반환하지 않는다. 각 관찰을 마친 뒤 실제 resolve로 정리한다.
-                    let resolved = w.h.ok(&["thread", "resolve", "demo", id, "--skip-copy", "--keep-worktree"]);
-                    assert_eq!(resolved["status"], "resolved");
-                }
-            }
-        }
+    std::fs::write(w.projects.join("demo/project.toml"), format!("trust_screens = {policy:?}\n")).unwrap();
+    let mut args = vec![
+        "--title",
+        "격리 폴더 신뢰",
+        "--profile",
+        profile,
+        "--machine",
+        machine,
+        "--kind",
+        kind,
+        "--task-file",
+        &task,
+    ];
+    if kind == "worktree" {
+        args.extend(["--repo", path_str(&w.repo)]);
     }
+    let started = w.start(&args);
+    let id = started["id"].as_str().unwrap();
+    let ready = gate.take(1, 4);
+    let proof = &ready[0].1;
+    assert_eq!(proof["trusted"], policy == "coordinator", "{policy}/{profile}/{machine}/{kind}: {proof}");
+    let projects = proof["projects"].as_object().unwrap();
+    if policy == "coordinator" {
+        assert_eq!(projects.len(), 1, "{proof}");
+        assert!(projects.contains_key(proof["cwd"].as_str().unwrap()), "{proof}");
+    } else {
+        assert!(projects.is_empty(), "{proof}");
+        let pane = w.show(id)["pane"].as_str().unwrap().to_string();
+        w.h.wait_output(&pane, "Trust this folder?", T);
+    }
+    if profile == "token" {
+        let pane = w.show(id)["pane"].as_str().unwrap().to_string();
+        let chat = w.h.ok(&["pane", "chat", &pane]);
+        assert!(chat.to_string().contains("isolated-conversation-proof"), "{chat}");
+        w.wait_show("격리 Claude 계획 조회", id, |v| v["agent"]["plan"]["total"] == 1);
+    }
+    Gate::release(ready, b'X');
+    w.wait_show("가짜 신뢰 harness 종료", id, |v| v["agent"]["activity"] == "exited");
+    // 2A: harness 종료는 자리를 반환하지 않는다. 각 관찰을 마친 뒤 실제 resolve로 정리한다.
+    let resolved = w.h.ok(&["thread", "resolve", "demo", id, "--skip-copy", "--keep-worktree"]);
+    assert_eq!(resolved["status"], "resolved");
 }
+
+// 정책·harness·머신·작업 폴더 형태의 기존16조합을 각각 고를 수 있다.
+macro_rules! trust_case {
+    ($name:ident, $policy:literal, $profile:literal, $machine:literal, $kind:literal) => {
+        #[test]
+        fn $name() {
+            account_trust_case($policy, $profile, $machine, $kind);
+        }
+    };
+}
+trust_case!(account_trust_coordinator_codex_local_worktree, "coordinator", "file", "labA", "worktree");
+trust_case!(account_trust_coordinator_codex_local_dir, "coordinator", "file", "labA", "dir");
+trust_case!(account_trust_coordinator_codex_remote_worktree, "coordinator", "file", "labB", "worktree");
+trust_case!(account_trust_coordinator_codex_remote_dir, "coordinator", "file", "labB", "dir");
+trust_case!(account_trust_coordinator_claude_local_worktree, "coordinator", "token", "labA", "worktree");
+trust_case!(account_trust_coordinator_claude_local_dir, "coordinator", "token", "labA", "dir");
+trust_case!(account_trust_coordinator_claude_remote_worktree, "coordinator", "token", "labB", "worktree");
+trust_case!(account_trust_coordinator_claude_remote_dir, "coordinator", "token", "labB", "dir");
+trust_case!(account_trust_user_codex_local_worktree, "user", "file", "labA", "worktree");
+trust_case!(account_trust_user_codex_local_dir, "user", "file", "labA", "dir");
+trust_case!(account_trust_user_codex_remote_worktree, "user", "file", "labB", "worktree");
+trust_case!(account_trust_user_codex_remote_dir, "user", "file", "labB", "dir");
+trust_case!(account_trust_user_claude_local_worktree, "user", "token", "labA", "worktree");
+trust_case!(account_trust_user_claude_local_dir, "user", "token", "labA", "dir");
+trust_case!(account_trust_user_claude_remote_worktree, "user", "token", "labB", "worktree");
+trust_case!(account_trust_user_claude_remote_dir, "user", "token", "labB", "dir");
 
 /// 시험용 Codex id_token(서명은 가짜): 공식 CLI가 로그인 때 남기는 계정 정보 자리
 fn id_token(email: &str, plan: &str) -> String {

@@ -14,6 +14,34 @@ from scripts.rust_tests import Job, execute, partitions, plan
 
 
 class RustTests(unittest.TestCase):
+    def test_individual_times_keep_failures_and_reject_missing_completed_cases(self):
+        with tempfile.TemporaryDirectory(prefix="aaa-rust-times-") as tmp:
+            root = Path(tmp)
+            fixture = root / "child.py"
+            fixture.write_text("""import os, sys
+assert os.environ['RUSTC_BOOTSTRAP'] == '1'
+assert '--report-time' in sys.argv
+print('running 3 tests')
+print('test module::빠른_시험 ... ok <0.125s>')
+print('test module::ignored ... ignored')
+if sys.argv[1] == 'complete':
+    print('test module::failed ... FAILED <5.001s>')
+print('test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.126s')
+sys.exit(7 if sys.argv[1] == 'complete' else 0)
+""")
+            jobs = [Job(mode, [sys.executable, str(fixture), mode], root) for mode in ["complete", "missing"]]
+            results = execute(jobs, root, 1, 1, report_time=True)
+            self.assertEqual(results[0]["exit"], 7)
+            self.assertEqual(results[0]["test_times"], [
+                dict(name="module::빠른_시험", outcome="ok", seconds=0.125),
+                dict(name="module::failed", outcome="FAILED", seconds=5.001),
+            ])
+            self.assertEqual(results[1]["exit"], 1)
+            self.assertIn("개별 시험 시간의 수", (root / results[1]["log"]).read_text())
+            for result in results:
+                for key in ["load_before", "load_after"]:
+                    self.assertTrue(result[key] is None or len(result[key]) == 3)
+
     def test_long_binaries_follow_m13_without_losing_unknown_or_short_jobs(self):
         artifacts = [dict(executable=name, manifest_path=f"/workspace/{name}/Cargo.toml",
                           target=dict(name=name, kind=["test"]))
