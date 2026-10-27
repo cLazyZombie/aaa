@@ -19,6 +19,7 @@ import { ApiError, call } from "./api";
 import { DiffStat, PATH_ORDER as COLLATOR } from "./ChangedFiles";
 import { hasNonZeroStat, summarizeDiffStats } from "./diffTree";
 import { diffContextFiles } from "./diffContext";
+import { labelContextButtons } from "./diffContextButtons";
 import type { DiffFile, DiffScope, DiffView } from "./gen/proto";
 import { DiffWorkerPool } from "./herdr/DiffWorkerPool";
 import { contentKey, SHADOW_CSS, SOURCE_THEME } from "./herdr/sourceTheme";
@@ -149,28 +150,6 @@ function errorText(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
 }
 
-/** 기본 펼치기 UI에 한글 이름과 키보드 조작을 보탠다. 펼치기는 라이브러리가 맡는다. */
-function labelContextButtons(node: HTMLElement) {
-  for (const lines of node.shadowRoot?.querySelectorAll<HTMLElement>("[data-unmodified-lines]") ?? []) {
-    const count = lines.textContent?.match(/^(\d+) unmodified lines?$/)?.[1];
-    if (count) lines.textContent = `변경 없는 ${count}줄`;
-    else if (lines.textContent === "More unchanged context may be available") lines.textContent = "맥락 펼치기";
-  }
-  for (const button of node.shadowRoot?.querySelectorAll<HTMLElement>("[data-expand-button]") ?? []) {
-    const all = button.hasAttribute("data-expand-all-button");
-    const label = all ? "모두 펼치기" : button.hasAttribute("data-expand-up") ? "아래로 20줄 펼치기" : button.hasAttribute("data-expand-down") ? "위로 20줄 펼치기" : "양쪽 20줄 펼치기";
-    if (all && button.textContent !== label) button.textContent = label;
-    button.setAttribute("aria-label", label);
-    button.title = label;
-    button.tabIndex = 0;
-    button.onkeydown = (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        button.click();
-      }
-    };
-  }
-}
 
 export default function DiffPanel({
   project,

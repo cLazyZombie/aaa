@@ -1320,6 +1320,8 @@ export function TermView({
       }
       el.dataset.viewTop = String(term.buffer.active.viewportY);
       el.dataset.viewBase = String(term.buffer.active.baseY);
+      el.dataset.viewCols = String(term.cols);
+      el.dataset.viewRows = String(term.rows);
     });
     viewport?.addEventListener("scroll", wantHistory);
     /** 받은 덩어리를 지금 버퍼 앞에 붙인다(위 설명) */

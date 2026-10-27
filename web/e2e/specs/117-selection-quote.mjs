@@ -47,8 +47,20 @@ const answerBox = (p) => p.evaluate((text) => {
   return { left: r.left, right: r.right, y: r.top + r.height / 2 };
 }, ANSWER);
 
+// 래퍼·snapshot 수신은 행 렌더 완료가 아니다. 초기 replay 뒤 autoFit의 resize도 그려져야
+// 끄는 동안 좌표가 바뀌지 않는다. 기존 onRender 표지와 이 기기가 보낸 마지막 resize로 끝낸다.
+const terminalRowsReady = (p) => domIs(p, "인용할 두 줄이 맞춘 크기로 그려짐", () => {
+  const terminal = document.querySelector('[data-testid="terminal"]');
+  const size = window.__aaaSent.findLast(frame => frame.t === "resize");
+  const rows = [...(terminal?.querySelectorAll('.xterm-rows > div') ?? [])];
+  return terminal?.dataset.fit === "same" && !terminal.dataset.fitPending && size
+    && terminal.dataset.viewCols === String(size.cols) && terminal.dataset.viewRows === String(size.rows)
+    && rows.some(row => row.textContent.startsWith("QUOTE-A")) && rows.some(row => row.textContent.startsWith("QUOTE-B"));
+}, undefined, 5_000);
+
 /** QUOTE-A 줄 처음에서 QUOTE-B 줄 글자 끝까지 끈다(xterm DOM 줄) */
 async function dragTerminal(p) {
+  await terminalRowsReady(p);
   const rows = await p.evaluate(() => {
     const lines = [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')];
     const box = (match) => {
@@ -111,11 +123,30 @@ export default async function () {
   });
 
   await step("인용(t-1204): Chromium 1280 입력줄 터미널에서 끈 두 줄은 입력줄 초안의 쓰던 글 뒤에 붙고 입력줄로 focus가 간다", async () => {
-    const { page: p, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { hash, line: true });
+    // 실제 host snapshot부터 잠근다. 래퍼가 보인 뒤에도 행이 없는 경계를 부하와 무관하게 만든다.
+    // 내용·순서를 바꾸지 않고 준비 대기를 건 뒤 원래 서버 메시지를 한 번만 풀어 준다.
+    let releaseSnapshot;
+    const { page: p, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { hash, line: true,
+      wsRoute: [new RegExp(`/api/v1/panes/${thread.pane}/ws`), socket => {
+        const server = socket.connectToServer();
+        const queued = [];
+        let held = true;
+        server.onMessage(raw => held ? queued.push(raw) : socket.send(raw));
+        releaseSnapshot = () => { held = false; for (const raw of queued.splice(0)) socket.send(raw); };
+      }],
+    });
     try {
       await view(p, false);
       const line = p.locator(".terminal-input-text");
       await line.fill("입력줄 요청");
+      let ready = false;
+      const painted = terminalRowsReady(p).then(() => { ready = true; });
+      // evaluate 왕복은 위 대기의 첫 DOM 관측 뒤라는 사건 울타리다(정한 시간을 자지 않는다).
+      assert.equal(await p.evaluate(() => [...document.querySelectorAll('[data-testid="terminal"] .xterm-rows > div')]
+        .some(row => row.textContent.startsWith("QUOTE-A"))), false);
+      assert.equal(ready, false, "빈 터미널 래퍼를 인용 준비로 셌다");
+      releaseSnapshot();
+      await painted;
       await dragTerminal(p);
       await p.getByTestId("terminal-quote").click();
       await domIs(p, "입력줄 focus·단추 사라짐", () => document.activeElement?.classList.contains("terminal-input-text")
