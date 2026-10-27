@@ -134,6 +134,19 @@
   ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))다. 실제 DOM 수명과 맥락 표시/입력 상태 분리를 대조했다.
   외부 코드·의존성을 추가하지 않는다.
 
+## E42 휴대폰 맥락 단추의 측정·터치 경계(t-1205 착지 수리)
+
+- t-1208의 같은 DOM callback 안 `getBoundingClientRect` 수리는 callback 전에 locator가 잡은 단추의 수명까지 보장하지 않는다.
+  t-1205 첫 전체 회차의 원문은 크기0, 뒤이은 iPhone 진단은44×44다. 원문에는 DOM 교체 trace가 없으므로 당시 정확한 교체 시점은 소급 단정하지 않는다.
+- 고정 Playwright의 locator 해석→handle callback 경계에 실제 focus 재조회 gate를 두었다. 잡은 단추44×44→실제 HTTP 재조회→
+  MutationObserver가 옛 단추 제거 확인→같은 handle의 connected=false·크기0 순서로 동일 오류를 재현했다. DOM·응답을 대역으로 만들지 않았다.
+- 기존 iPhone 맥락 owner가 같은 실제 재조회를 한 번 수행한다. Playwright의 기본 안정된 배치·히트 대상 확인과 실제 tap은 유지하고,
+  shadow DOM의 composedPath로 실제 touchstart·touchend·click이 받은 단추를 측정한다. 세 사건의 연결된 동일 DOM과 각각44px를 단언한다.
+  따라서 자동화가 미리 잡은 옛 handle의 크기를 실제 터치 대상 크기로 해석하지 않는다. 재배치 뒤 실제 입력 사건과 측정이 같은 DOM에서 일어난다.
+- 기존 초기 원문0회·20줄·전체·끝 줄·원문1회·실제 tap 단언과 시한은 유지한다. 새 E2E 번호·단계·제품 변경·재시도·sleep·완화·삭제가 없다.
+  gate는 실제 DOM 제거 사건으로 끝나며 준비 실패 상한5초다. 필요성: 일반 단독 통과만으로 locator 해석 사이 DOM 교체와 실제 터치 크기를 검증할 수 없다.
+  `AAA_E2E_ARTIFACTS`에는 이 owner의 재조회·옛/새 DOM 크기와 실제 터치 사건을 보존한다.
+
 ## Windows idle-audit의 스택 사용과 실패 수집(t-1208)
 
 - [원본 Windows job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985312)
