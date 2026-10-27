@@ -2,6 +2,8 @@
 from pathlib import Path
 import json
 import os
+import queue
+import signal
 import socket
 import sys
 import tempfile
@@ -14,6 +16,126 @@ from scripts.rust_tests import Job, execute, partitions, plan
 
 
 class RustTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "실제 Unix SIGINT/TERM과 shebang runner를 검사한다")
+    def interrupt_runner(self, phase, signum, ignore_term=False):
+        with tempfile.TemporaryDirectory(prefix="aaa-rust-interrupt-") as tmp, socket.socket() as listener:
+            root = Path(tmp)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            listener.settimeout(3)
+            common = f"""import json, os, signal, socket, sys
+from pathlib import Path
+def gate(phase):
+    if phase != {phase!r}: return
+    # TERM을 받은 도구가 정상 종료해도 바깥 runner는 중단을 실패로 보존해야 한다.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN if {ignore_term!r} else lambda *_: sys.exit(0))
+    print('partial-' + phase, flush=True)
+    with socket.create_connection(('127.0.0.1', {listener.getsockname()[1]}), timeout=3) as link:
+        link.sendall(str(os.getpid()).encode())
+        link.settimeout(None)
+        link.recv(1)
+"""
+            artifacts = []
+            for name in (["m13"] if phase == "list" else ["first", "queued"]):
+                binary = root / name
+                binary.write_text(f"#!{sys.executable}\n" + common + """
+if '--list' in sys.argv:
+    gate('list')
+    print('owner: test')
+else:
+    gate('execute')
+    print('running 1 test')
+    print('test owner ... FAILED')
+    sys.exit(7)
+""")
+                binary.chmod(0o755)
+                artifacts.append(dict(reason="compiler-artifact", profile=dict(test=True), executable=str(binary),
+                                      manifest_path=str(root / "Cargo.toml"), target=dict(name=name, kind=["test"])))
+            cargo = root / "cargo"
+            cargo.write_text(f"#!{sys.executable}\n" + common + f"artifacts = {artifacts!r}\n" + """
+if '--no-run' in sys.argv:
+    gate('prepare')
+    for artifact in artifacts: print(json.dumps(artifact))
+elif '--doc' in sys.argv:
+    gate('doctests')
+else: sys.exit(9)
+""")
+            cargo.chmod(0o755)
+            logs = root / "logs"
+            runner = Path(__file__).with_name("rust_tests.py").resolve()
+            # runner의 자식이 아닌 프로세스를 함께 두고 생존을 확인한다.
+            outsider = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+                                        stdin=subprocess.PIPE)
+            process = subprocess.Popen([sys.executable, str(runner), "--logs", str(logs), "--workers", "1"],
+                                       cwd=root, env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                                                      "RUST_TEST_THREADS": "1"},
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            lines = queue.Queue()
+            def read():
+                for line in process.stdout:
+                    lines.put(line)
+                lines.put(None)
+            reader = threading.Thread(target=read)
+            reader.start()
+            try:
+                with listener.accept()[0] as peer:
+                    peer.settimeout(3)
+                    child_pid = int(peer.recv(100))
+                    while True:
+                        line = lines.get(timeout=3)
+                        self.assertIsNotNone(line, "START 전에 runner가 끝났다")
+                        if line.startswith("START ") and f"pid={child_pid} " in line:
+                            break
+                    before = json.loads((logs / "state.json").read_text())
+                    self.assertTrue(any(child["pid"] == child_pid for child in before["active"].values()))
+                    # 시작 사건과 완전한 상태가 자식 종료보다 먼저 디스크에 있어야 한다.
+                    events = [json.loads(line) for line in (logs / "events.jsonl").read_text().splitlines()]
+                    self.assertTrue(any(event["event"] == "child_started" and event["pid"] == child_pid for event in events))
+                    process.send_signal(signum)
+                    self.assertEqual(process.wait(timeout=3), 128 + signum)
+                    self.assertEqual(peer.recv(1), b"", "직접 자식이 실제로 종료되어야 한다")
+                state = json.loads((logs / "state.json").read_text())
+                summary = json.loads((logs / "summary.json").read_text())
+                self.assertEqual(state["status"], "interrupted")
+                self.assertEqual(summary["signal"], signum)
+                self.assertEqual(state["active"], {})
+                self.assertEqual(state["interrupted_waits"][0]["pid"], child_pid)
+                self.assertTrue(any(row["pid"] == child_pid for row in state["interrupted_waits"][0]["processes"]))
+                events = [json.loads(line) for line in (logs / "events.jsonl").read_text().splitlines()]
+                if ignore_term:
+                    finished = next(event for event in events if event["event"] == "child_finished"
+                                    and event["pid"] == child_pid)
+                    self.assertEqual(finished["exit"], -signal.SIGKILL)
+                if phase == "execute":
+                    self.assertEqual([job["status"] for job in state["jobs"]],
+                                     ["interrupted", "not_started", "not_started"])
+                if phase == "doctests":
+                    self.assertEqual([job["exit"] for job in summary["jobs"]], [7, 7, 128 + signum])
+                self.assertIsNone(outsider.poll(), "runner 밖 프로세스는 살아 있어야 한다")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=3)
+                reader.join(timeout=3)
+                process.stdout.close()
+                outsider.stdin.close()
+                outsider.wait(timeout=3)
+
+    def test_sigint_during_prepare_preserves_the_current_child(self):
+        self.interrupt_runner("prepare", signal.SIGINT)
+
+    def test_sigterm_during_listing_preserves_the_current_child(self):
+        self.interrupt_runner("list", signal.SIGTERM)
+
+    def test_sigterm_preserves_running_and_unstarted_shards_without_touching_another_process(self):
+        self.interrupt_runner("execute", signal.SIGTERM)
+
+    def test_sigint_during_doctests_keeps_preceding_binary_failures(self):
+        self.interrupt_runner("doctests", signal.SIGINT)
+
+    def test_sigterm_ignoring_child_is_killed_and_reaped(self):
+        self.interrupt_runner("execute", signal.SIGTERM, ignore_term=True)
+
     def test_individual_times_keep_failures_and_reject_missing_completed_cases(self):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-times-") as tmp:
             root = Path(tmp)

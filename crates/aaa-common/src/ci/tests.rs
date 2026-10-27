@@ -149,6 +149,31 @@ fn failed_or_interrupted_python_suites_keep_their_failure_evidence() {
 }
 
 #[test]
+fn completed_slow_tests_stay_completed_when_annotations_repeat_the_warning() {
+    let line = |text: &str| format!("macos-15\ttest\t2026-10-27T08:22:02Z {text}\n");
+    let mut log = line("test rollout::done has been running for over 60 seconds");
+    // 완료 이름 상한을 먼저 채운 뒤 느린 시험의 완료를 놓쳐서는 안 된다.
+    for index in 0..100 {
+        log.push_str(&line(&format!("test other::{index} ... ok")));
+    }
+    log.push_str(&line("test rollout::done ... ok <101.09s>"));
+    log.push_str(&line("test preparation::done has been running for over 60 seconds"));
+    log.push_str(&line("test preparation::done ... ok"));
+    log.push_str(&line("test waiting::owner has been running for over 60 seconds"));
+    log.push_str("##[error]test rollout::done has been running for over 60 seconds\n");
+    log.push_str("test preparation::done has been running for over 60 seconds\n");
+    let mut scan = FailureScan::default();
+    for chunk in log.as_bytes().chunks(7) {
+        scan.feed(chunk);
+    }
+    assert_eq!(scan.finish(), ["끝나지 않음: waiting::owner"]);
+    let mut scan = FailureScan::default();
+    scan.feed(log.as_bytes());
+    scan.feed(b"test rollout::done ... FAILED <5.001s>\n");
+    assert_eq!(scan.finish(), ["rollout::done"], "완료 증거가 실제 실패를 없애면 안 된다");
+}
+
+#[test]
 fn merge_owners_cross_four_and_five_digits_and_accept_numeric_aliases() {
     for (input, canonical) in [
         ("t-9999", "t-9999"),
