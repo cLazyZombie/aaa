@@ -4827,3 +4827,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 카드 회귀는 1280px·390px의 light/dark에서 두 의견과 선택을 보내고 질문별 답 표시·가로 넘침 없음을 확인한다. root capture 중 부모의 동기 갱신을 끼워 실제 textarea 입력 보존도 검사한다. 별도 시나리오는 단일 질문 Enter·Reader 비활성·다른 미응답 거절·부분 답 초안·coordinator post·전송 거부 뒤 원문/재전송 가능 상태를 검사한다. 각 조건은 DOM·callback 완료 사건으로 끝나고 실패 상한 5초를 쓰며 sleep·재시도·기대값 완화는 없다.
 - 기존 E53의 아이콘 두 질문 owner는 UI 의견 두 개·선택 B·여러 줄 직접 답을 실제 host로 보내고 task Follow-ups·inbox 본문·답한 카드·ThreadView 사본을 대조한다. 기존 추천 전송·옛 --text·늦은 응답 owner와 E2E 번호를 유지한다. 정규 전체 gate와 Chromium/WebKit E53은 Unix 착지 차례에서 수행한다.
 - 참고 후보는 [SurveyJS comment area](https://surveyjs.io/form-library/examples/individual-checkbox-comments/documentation)([MIT](https://github.com/surveyjs/survey-library/blob/master/LICENSE))와 [JSON Forms multiline](https://jsonforms.io/examples/control)([MIT](https://github.com/eclipsesource/jsonforms/blob/master/LICENSE))다. 질문에 붙는 입력 배치만 참고하며 코드나 의존성을 가져오지 않았다.
+
+## 질문별 답 시험 경로와 E02 문자 로케일(t-1194 후속)
+
+- E53의 기존 강조/M3 두 질문 owner는 옛 공통 입력칸 대신 각 질문의 직접 답 칸을 쓴다. 고르지 않은 두 질문에 각각 답하고 여러 줄 의견 원문·두 null pick·comments 사본·thread Follow-ups·coordinator inbox 전체 본문을 대조한다. 같은 두 번째 질문 재보고가 다시 열리지 않는 기존 단언과 형식 경고·선택지 글자·단일 질문/CLI의 옛 text 계약을 유지한다.
+- E69는 휴대폰에서 1B 선택과 2번 직접 답을 전하고 실제 DB 사본의 picks/comments·한 번만 남은 inbox의 선택/원문·post 답함·다른 기기의 같은 답을 확인한다. 원본 그림을 지운 뒤 사본 유지·두 번째 답 거부·q-ID/권한/칩/테마 계약도 그대로다. 새 시험·단계 분할·시험 삭제는 없다. 기존 두 owner가 질문별 입력을 통한 원문 보존·전달 계약을 계속 소유한다.
+- 기준 main f5e3e1dc를 새 worktree에서 worker 1로 E02 전체 단독 실행했다. SSH의 LANG 빈 값·LC_CTYPE=C 환경에서 부하가 낮아도 같은 한글 줄 20초 실패와 ASCII만 남은 실제 화면이 재현됐다. 질문별 답 변경 전후의 E02 소스는 같았다. 원래 실패를 재시도해 통과한 것으로 세지 않는다.
+- 실제 /bin/sh PTY 대조는 C에서 Readline의 convert-meta on·input-meta off와 한글의 meta 키 해석, en_US.UTF-8에서 convert-meta off·input-meta on과 한글 원문 출력을 확인했다. E02의 labEnv만 macOS en_US.UTF-8·Linux C.UTF-8로 정한다. 사용자/OS 로케일·운영 agent 환경은 바꾸지 않고, 원래 한글 문자열·fontOk의 글자 폭·20초 상한을 유지한다. 이 검증은 기존 E02가 맡으며 구현 상수만 확인하는 새 시험은 만들지 않는다.
+- 보강한 E53의 첫 실행에서 여러 줄 문자열을 pane wait-output에 넣은 관측 오류가 드러났다. 이 API의 match_output은 text.lines()에서 맞는 첫 줄을 찾는다. 각 화면 줄은 해당 API로 확인하고 사본·Follow-ups·inbox는 원문 전체를 정확히 대조하도록 고쳤다. 오류 로그를 보존했으며 코드 수정 뒤 E53만 추가 검증한다. E02·E69의 통과를 얻기 위한 재실행·시한 확대·원문 단언 완화는 없다.
+- 참고는 [GNU Bash Readline init의 convert-meta/input-meta와 LC_CTYPE](https://www.gnu.org/software/bash/manual/bash.html#Readline-Init-File-Syntax)(Bash GPL, 문서 GFDL)와 [Python PTY 표준 API](https://docs.python.org/3/library/pty.html)(PSF-2.0)다. 문자 로케일과 실제 PTY 입력을 대조하는 원칙을 참고했으며 외부 코드·새 의존성을 가져오지 않았다.

@@ -491,10 +491,26 @@ export default async function ({ page }) {
       await card.getByTestId("question-format-warning").waitFor();
       if (await card.getByTestId("thread-ask-pick-1A").count()) throw new Error("빠진 A를 다른 선택지에 붙였다");
       if (!(await card.getByTestId("thread-ask-pick-1B").textContent()).includes(broken.questions.items[0].choices[0].label)) throw new Error("원문 B를 보존하지 않았다");
-      await card.getByTestId("thread-ask-text").fill("누락 원문의 첫 선택지로 진행");
+      const direct = ["누락 원문의 첫 선택지로 진행\n원문을 그대로 전달", "두 번째 질문도 직접 답한다"];
+      await card.getByTestId("thread-ask-text-1").fill(direct[0]);
+      await card.getByTestId("thread-ask-text-2").fill(direct[1]);
       await card.getByTestId("thread-ask-send").click();
-      await waitOutput(t.pane, "직접 쓴 답: 누락 원문의 첫 선택지로 진행");
-      await until("경고 카드 직접 답 저장", () => aaa("thread", "show", t.id).questions.answer?.text === "누락 원문의 첫 선택지로 진행");
+      // wait-output은 줄별 일치 API다. 화면은 각 줄을 확인하고, 아래 세 기록은 줄바꿈까지 원문 전체를 대조한다.
+      for (const [n, text] of direct.entries()) {
+        for (const line of `${n + 1}번 직접 쓴 답: ${text}`.split("\n")) await waitOutput(t.pane, line);
+      }
+      await until("경고 카드 직접 답 저장", () => {
+        const answer = aaa("thread", "show", t.id).questions.answer;
+        return answer?.text === null && JSON.stringify(answer.picks) === "[null,null]" && JSON.stringify(answer.comments) === JSON.stringify(direct);
+      });
+      const preserved = await until("경고 카드 답 원문 사본", async () => (await asksOf(page)).ok.done.find(r => r.subject === t.id && r.items[0].id === broken.questions.items[0].id));
+      if (JSON.stringify(preserved.answer.comments) !== JSON.stringify(direct)) throw new Error(`경고 카드 원문 사본: ${JSON.stringify(preserved)}`);
+      const task = fs.readFileSync(`${root}/projects/demo/threads/${t.id}.task.md`, "utf8");
+      const answered = aaa("inbox", "list", "demo", "--all", "--peek").items.find(i => i.event === "question answered" && i.body.includes(direct[0]));
+      for (const [n, text] of direct.entries()) {
+        const line = `${n + 1}번 직접 쓴 답: ${text}`;
+        if (!task.includes(line) || !answered?.body.includes(line)) throw new Error(`경고 카드 ${n + 1}번 원문 전달 누락`);
+      }
       const warning = await until("coordinator 경고", () => aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.item_kind === "question-format-warning" && i.subject === t.id));
       if (warning.body.includes("thread inbox 전달 실패")) throw new Error(warning.body);
       const inboxName = `question-format-${broken.report_hash.slice(0,40)}.json`;
