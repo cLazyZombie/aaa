@@ -1,5 +1,6 @@
 //! 실제 host↔agent↔가짜 gh와 임무 inbox 경계. 고정 sleep 대신 flow·gh 호출 완료를 기다린다.
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 
 fn fake_ci(root: &Path) -> Vec<(String, String)> {
     let dir = root.join("ci");
@@ -39,7 +40,7 @@ else:
 with (root/'calls').open('a') as f: f.write(json.dumps({'phase':phase,'args':args,'result':result})+'\n')
 sys.exit(code)
 "#).unwrap();
-    assert!(Command::new("cp").arg(source).arg(dir.join("bin/gh")).status().unwrap().success());
+    assert!(Command::new("cp").arg(source).arg(dir.join("bin/gh")).status_guarded().unwrap().success());
     std::fs::set_permissions(dir.join("bin/gh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::write(dir.join("phase"), "base").unwrap();
     let mut old = run(9, 'f', "failure");
@@ -107,7 +108,7 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
     assert!(
         Command::new("git")
             .args(["-C", path_str(&w.repo), "remote", "set-url", "origin", "https://github.com/o/app.git"])
-            .status()
+            .status_guarded()
             .unwrap()
             .success()
     );
@@ -267,7 +268,7 @@ done
     assert!(
         Command::new("git")
             .args(["-C", path_str(&w.repo), "remote", "set-url", "origin", "https://github.com/o/app.git"])
-            .status()
+            .status_guarded()
             .unwrap()
             .success()
     );

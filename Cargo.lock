@@ -79,6 +79,7 @@ dependencies = [
  "futures-util",
  "hex",
  "libc",
+ "portable-pty",
  "rcgen",
  "ring",
  "rustls",

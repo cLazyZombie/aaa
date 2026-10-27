@@ -1,5 +1,6 @@
 //! PR 조회 실패의 소유 머신·인증 진단과 프로젝트 전체 회복 경계.
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 
 fn environment(root: &Path) -> Vec<(String, String)> {
     let mut env = fake_gh(root);
@@ -29,7 +30,7 @@ esac
     )
     .unwrap();
     // 부모의 쓰기 fd가 병렬 fork로 넘어가지 않게 별도 복사 프로세스를 쓴다.
-    assert!(Command::new("cp").arg(source).arg(root.join("gh/bin/gh")).status().unwrap().success());
+    assert!(Command::new("cp").arg(source).arg(root.join("gh/bin/gh")).status_guarded().unwrap().success());
     std::fs::set_permissions(root.join("gh/bin/gh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     env.push(("GH_CONFIG_DIR".into(), path_str(&root.join("gh/config")).into()));
     env
@@ -174,7 +175,7 @@ fn pr_missing_executable_is_quiet() {
         // resolver가 찾은 파일도 interpreter/실행 파일이 사라지면 ENOENT다. 운영 gh·PATH는 건드리지 않는다.
         let source = root.join("gh/source-missing");
         std::fs::write(&source, "#!/aaa-missing-interpreter\n").unwrap();
-        assert!(Command::new("cp").arg(source).arg(root.join("gh/bin/gh")).status().unwrap().success());
+        assert!(Command::new("cp").arg(source).arg(root.join("gh/bin/gh")).status_guarded().unwrap().success());
         env
     });
     git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);

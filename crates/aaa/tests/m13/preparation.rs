@@ -1,6 +1,7 @@
 //! 소유 경계: 실제 host·agent·CLI와 실제 Git. Git 응답만 socket으로 붙잡아 old 15초 경계·연결 유실을 재현한다.
 //! 회귀: 공통 15초, journal 누락, resolve의 조기 반환, 변경 파일을 덮는 회수는 각각 아래 관찰에서 실패한다.
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -16,7 +17,7 @@ impl GitGate {
     fn world(&self) -> World {
         let addr = self.listener.local_addr().unwrap().to_string();
         world_setup("", false, |root| {
-            let real = Command::new("which").arg("git").output().unwrap();
+            let real = Command::new("which").arg("git").capture_output().unwrap();
             assert!(real.status.success());
             let real = String::from_utf8(real.stdout).unwrap();
             let bin = root.join("git-bin");
@@ -38,7 +39,7 @@ if rc == 0 and 'worktree' in args:
 sys.exit(rc)
 "#).unwrap();
             // 실행 파일은 별도 복사 자식이 쓴다(docs/testing.md, ETXTBSY 쓰기 fd 상속 경계).
-            assert!(Command::new("cp").arg(&source).arg(bin.join("git")).status().unwrap().success());
+            assert!(Command::new("cp").arg(&source).arg(bin.join("git")).status_guarded().unwrap().success());
             std::fs::set_permissions(bin.join("git"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
             let (host, port) = addr.rsplit_once(':').unwrap();
             vec![
@@ -162,7 +163,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     let next_root = w.lab.root.join("workB");
     std::fs::write(w.h.cfg.join("agent.local.toml"), format!("schema = 1\n[agent]\nwork_root = {next_root:?}\n"))
         .unwrap();
-    let real = Command::new("which").arg("git").output().unwrap();
+    let real = Command::new("which").arg("git").capture_output().unwrap();
     assert!(real.status.success());
     let real = String::from_utf8(real.stdout).unwrap();
     let path = format!("{}:{}", w.lab.root.join("git-bin").display(), std::env::var("PATH").unwrap());

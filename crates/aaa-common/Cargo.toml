@@ -42,3 +42,4 @@ windows-sys = { workspace = true, features = [
 
 [dev-dependencies]
 aaa-test-support.workspace = true
+portable-pty.workspace = true

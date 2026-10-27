@@ -1,6 +1,7 @@
 //! 실제 CLI→hook(peer PID·token)→TLS agent link→host 계정→가짜 Codex→조각 전송.
 use super::secret_k0::{canary, hits, needles, sha};
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 fn probe_script(command: &str, out: &Path, done: &Path) -> String {
@@ -38,8 +39,12 @@ fn probe_completion_is_published_only_after_exit_code_is_written() {
         "exec 3>&1\nprintf() {{ command printf 'exit-code-open\\n' >&3; IFS= read -r release; command printf \"$@\"; }}\n{}",
         probe_script("(echo probe-output; exit 7)", &out, &done)
     );
-    let mut child =
-        Command::new("/bin/sh").args(["-c", &script]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", &script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn_guarded()
+        .unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
     let early = std::fs::read_to_string(&done).ok();

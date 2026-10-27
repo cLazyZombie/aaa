@@ -1,4 +1,4 @@
-//! macOS의 pipe() → fcntl(CLOEXEC) 사이에 다른 자식이 FD를 물려받지 않게 한다.
+//! Unix의 openpty()와 macOS pipe() → fcntl(CLOEXEC) 사이의 FD 상속을 막는다.
 //! 모든 제품 spawn(PTY·직접 posix_spawn 포함)이 같은 잠금을 사용해야 한다.
 //! 잠금 안에서는 생성만 하고, wait·출력 읽기·await는 반드시 밖에서 한다.
 
@@ -7,19 +7,22 @@ use std::{
     process::{Child, Command, ExitStatus, Output, Stdio},
 };
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// macOS에서만 자식 생성 구간을 직렬화한다. Linux의 pipe2·Windows std의 생성 잠금은 그대로 쓴다.
+/// Unix의 자식 생성과 비원자적인 PTY 열기를 직렬화한다. Linux도 openpty는 CLOEXEC를 따로 건다.
 /// fork 뒤 pre_exec 안에서 호출하면 안 된다(부모가 잡은 잠금을 물려받는다).
 pub fn with_spawn_lock<T>(spawn: impl FnOnce() -> T) -> T {
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     let _guard = { SPAWN.lock().unwrap_or_else(std::sync::PoisonError::into_inner) };
     spawn()
 }
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
+
+#[cfg(all(test, target_os = "linux", target_env = "gnu"))]
+mod pty_tests;
 
 pub trait StdCommandExt {
     fn spawn_guarded(&mut self) -> io::Result<Child>;
