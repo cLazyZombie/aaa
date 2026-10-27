@@ -8154,3 +8154,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - thread 보고 회수는 원본 길이·SHA-256 대조 뒤 보고 본문과 텍스트 첨부만 가린다. 알려진 바이너리·압축·그림·음원·영상·PDF와 전체 내용에 NUL·비UTF8·이진 제어 문자가 있는 파일은 바이트 그대로 복사한다. SVG는 텍스트로 검사한다. 최신 사본과 새 불변 r 판 모두 같은 원본을 유지하며, 이미 손상된 과거 판은 덮어쓰지 않는다. 원본 재회수는 새 판을 만든다.
 - 원본 바이너리에 등록된 비밀값의 8바이트 조각이 있으면 파일 이름·공유 전 확인 안내만 `report-secret-warning` inbox에 남긴다. 조각의 오탐 가능성과 서명·압축 구조 손상 때문에 치환·자동 차단은 하지 않는다. 압축 해제·복호화는 하지 않으며 무경고가 비밀값 부재를 뜻하지 않는다. 상세 분류·직접 publish/실시간 등록과 옛 agent의 차이는 `docs/library.md`에 적는다. FRONT_API·AGENT_LINK·저장 형식·기존 접근 권한은 유지한다.
 - 참고는 herdr-projects v0.2.35(MIT) `src/thread.rs`의 rsync 복사, herdr-web-ui `aa624cb`(MIT) `server/file-view.ts`의 종류 구분·바이트 전송, herdr v0.9.5(Apache-2.0) `src/server/clipboard_image.rs`의 이미지 바이트 보존이다. 코드를 복사하거나 의존성을 추가하지 않는다. 전체 내용 판정과 비밀값 조각 경고는 aaa의 가림 경계에 맞춘 차이다.
+
+
+### 8.514 CI 웹 실패의 신원과 비동기 관측(t-1184)
+
+- CI 실패 수집은 Rust 실패 외에 원문·gh 앞머리·annotation의 `FAIL` 단계 이름을 중복 없이 보존한다. 단계가 누락됐어도 웹 `suite-end`의 실패 수를 남긴다. 성공 Python fixture 출처·완료한 느린 시험 경계를 유지한다. 공개 proto·API·저장 형식은 바꾸지 않는다.
+- E03은 재연결 ACK 이후 resize·파싱·렌더·native viewport가 같은 기준을 보인 뒤 PageUp/PageDown 경쟁을 검사한다. E105는 선택 설정의 반환 뒤 native select 전달까지 끝낸 다음 터치 전환을 검사한다. 빈 사건 배열·초안/선택 복원·자동 focus 금지·PTY 입력 차단 계약을 유지한다. 실패 시 페이지를 닫기 전에 상태·PNG·host/agent 로그를 기존 CI 산출물 경로로 보존한다.
+- 참고는 xterm 5.5.0 Viewport·VS Code terminal 키 처리(각 MIT), Playwright focus/scroll 시험(Apache-2.0)이다. 자료와 회귀의 필요성·원본 관측 한계는 `docs/testing.md`에 적는다. 외부 코드·의존성은 추가하지 않는다.

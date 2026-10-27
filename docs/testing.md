@@ -1,3 +1,47 @@
+## E2E03·105 비동기 관측과 CI 웹 실패 수집(t-1184)
+
+- 원본 [macOS web-e2e job](https://github.com/cLazyZombie/aaa/actions/runs/40477028804/job/122097672768)
+  (main `d82e3fee`)의 전체 job 로그·e2e.log·run-timings.jsonl·artifact 목록을 확보했다.
+  원본 artifact에는 두 실패의 PNG·상태 JSON·host 전체 로그가 없다. job 마지막에는 각 실험실의
+  host/agent 로그 꼬리가 있어 별도로 보존했다. 이 꼬리만으로 xterm 내부 호출까지 관측했다고 하지 않는다.
+- E03의 시작은 viewTop/viewBase=169, parsedTop/parsedBase=171, 첫 줄 s-172, 30행,
+  nativeTop/bottom=3249였다. PageUp→142→PageDown→171 뒤 첫 줄과 nativeTop은 그대로 복귀했다.
+  snapshot ACK는 이후 resize state·본문 render·native viewport의 동시 완료를 보장하지 않는다.
+  `pageScrollStart`는 크기 응답·파싱 base·render base·실제 행 높이에 따른 픽셀 위치가 맞는 순간의
+  기준을 한 번에 반환한다. 완료 단언의 옛 base 169를 기대값 171로 바꾸거나 버퍼 검사를 없애지 않는다.
+- E105 chromium-390의 원본 activeElement는 body, 사건은 select(3..8) 한 건이다.
+  같은 사건을 기존 코드의 실제 Chromium에서 재현했다. 시험의 setSelectionRange가 돌아와도 native select는
+  뒤에 올 수 있어 터치 전환용 기록 초기화 뒤 섞였다. `selectInputAndWait`는 선택 전 구독하고 실제 사건까지
+  끝낸다. WebKit의 같은 범위 무사건도 고려한다. 사건 배열의 빈 배열 단언·초안·양방향 선택·복귀 입력·
+  보관 만료·자동 focus 금지·숨은 pane inert·PTY 입력 0회는 모두 유지한다.
+- 기존 focus 단계는 네 엔진/폭 조합을 각 단계로 나눴다(Chromium/WebKit × 1280/390).
+  같은 fixture와 계약을 그대로 검사하며 관련 스크롤 단계 3.2초, focus 각 단계 약 1~2초였다.
+  파일 전체 실행 시간과 개별 계약 시간을 구별한다. 기존 E03 키 막대와 E105 MRU·앱 화면의
+  다른 긴 단계는 이번 수리의 변경 대상이 아니며 전체 5초 감사 대상에 남는다.
+- 새 `e2e-observation.test.mjs` 두 keeper가 필요한 이유는 옛 render와 현재 버퍼가 갈리는 순서,
+  선택 메서드 반환과 뒤따르는 select 전달을 사건 gate로 소유해 같은 준비 경쟁을 막기 위해서다.
+  기존 실제 upstream xterm PageUp/PageDown·사용자 scroll 유닛과 실제 host·PTY E03 계약도 유지한다.
+  새 대기의 실패 상한은 5초이며 고정 sleep·실패 재시도·시한 확대·단언 완화가 없다.
+- t-1182·t-1183의 선행 수집/annotation 변경 위에서 `FailureScan`이 원문·gh job/step/time·
+  단계/annotation 앞머리의 FAIL 줄을 단계 이름으로 수집한다. 오류/DOM은 신원에서 뺀다.
+  이름이 없으면 suite-end의 양수 failed/jobs를 보존한다. 새 Rust keeper 두 개는 7바이트 청크·
+  긴 꼬리·한글·개행 없는 끝·annotation 중복·실제 Rust 실패 공존·요약 fallback을 지킨다.
+  필요한 이유는 실패한 웹 suite가 failures=[]로 분류되거나 성공 fixture가 진짜 실패로 섞이지 않게 하기 위해서다.
+  기존 성공 Python fixture·완료한 느린 시험 회귀도 유지한다. 수리 전 두 keeper가 모두 실패했다.
+- 두 spec은 실패할 때 페이지 닫기/진단용 resize 전에 JSON·PNG·host/agent 로그를 diagnostics에 둔다.
+  기존 harness가 e2e-failures로 복사한다. 임시 의도한 실패 한 번에서 종료 1과 다섯 파일의 실제 복사를 확인했다.
+- 부분 검증: 웹 유닛 626개·타입/빌드, E03/E105 전체, common 유닛·strict clippy,
+  의존 경계·fmt·공개 검사다. 전체 ci-local·cross·main 병합/push는 정규 착지 회차에서 수행한다.
+- 참고 후보는 [xterm 5.5.0 Viewport](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Viewport.ts)
+  ([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE)),
+  [VS Code terminal 키 처리](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts)
+  ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt)),
+  [Playwright focus](https://github.com/microsoft/playwright/blob/main/tests/page/page-focus.spec.ts)와
+  [scroll 시험](https://github.com/microsoft/playwright/blob/main/tests/page/page-click-scroll.spec.ts)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))다.
+  native viewport와 버퍼의 비동기 경계·앱 키 처리의 shell 입력 차단·실제 focus/scroll 사건 검사를 대조했다.
+  외부 코드·의존성을 추가하지 않는다.
+
 ## 바이너리 보고 사본 원본 보존(t-1180)
 
 - `report_copy::` 두 유닛은 비밀값 조각을 넣은 실행 파일·압축·그림·PDF·음원, 텍스트처럼 보이는

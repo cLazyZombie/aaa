@@ -253,6 +253,8 @@ pub struct FailureScan {
     others: BTreeSet<String>,
     slow: BTreeSet<String>,
     completed: BTreeSet<String>,
+    failed_steps: BTreeSet<String>,
+    web_summary: Option<String>,
     line: Vec<u8>,
 }
 impl FailureScan {
@@ -273,6 +275,33 @@ impl FailureScan {
         // 실패·중단된 suite와 표지가 없는 옛 로그는 그대로 수집한다(시험 이름으로 제외하지 않는다).
         if line.starts_with("[python exit=0] ") || line.contains(" [python exit=0] ") {
             return;
+        }
+        // 원문·gh job/step/time·ci-local 단계·annotation 앞머리만 벗긴다.
+        // FAIL 문구를 인용한 성공 fixture·진단 본문까지 검색해 실패로 만들지 않는다.
+        let body = line
+            .splitn(3, '\t')
+            .nth(2)
+            .filter(|body| body.split_once(' ').is_some_and(|(stamp, _)| util::parse_iso(stamp).is_some()))
+            .unwrap_or(&line);
+        let body =
+            body.split_once(' ').filter(|(stamp, _)| util::parse_iso(stamp).is_some()).map_or(body, |(_, rest)| rest);
+        let body = body.strip_prefix("[e2e] ").unwrap_or(body);
+        let body = body.strip_prefix("##[error]").unwrap_or(body);
+        if let Some(rest) = body.strip_prefix("FAIL ") {
+            // harness의 첫 ': ' 앞은 고정된 단계 이름이며 뒤의 오류·DOM·URL은 신원에 넣지 않는다.
+            let name = rest.split_once(": ").map_or(rest, |(name, _)| name).trim();
+            if !name.is_empty() && self.failed_steps.len() < FAILURES_CAP {
+                self.failed_steps.insert(format!("FAIL: {}", clip(name)));
+            }
+        }
+        if let Some(json) = body.strip_prefix("## 실행 ")
+            && let Ok(row) = serde_json::from_str::<Value>(json)
+            && row["event"] == "suite-end"
+            && let (Some(jobs), Some(failed)) = (row["jobs"].as_u64(), row["failed"].as_u64())
+            && failed > 0
+            && failed <= jobs
+        {
+            self.web_summary = Some(format!("web: {failed}/{jobs} 작업 실패"));
         }
         // gh --log-failed 줄은 `job\t단계\t시각 본문`이다. 앞머리 없이 온 줄도 같은 끝 모양으로 읽는다.
         let named = |rest: &str| {
@@ -317,6 +346,18 @@ impl FailureScan {
     }
     pub fn finish(mut self) -> Vec<String> {
         self.end_line();
+        // 단계 이름이 있으면 요약은 중복이다. 이름이 잘려 없어져도 실패 수는 남긴다.
+        if self.failed_steps.is_empty()
+            && let Some(summary) = self.web_summary
+            && self.tests.len() < FAILURES_CAP
+        {
+            self.tests.insert(summary);
+        }
+        for name in self.failed_steps {
+            if self.tests.len() < FAILURES_CAP {
+                self.tests.insert(name);
+            }
+        }
         for name in self.slow.difference(&self.completed) {
             if self.others.len() < FAILURES_CAP {
                 self.others.insert(format!("끝나지 않음: {name}"));

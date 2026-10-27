@@ -6,6 +6,7 @@ import {
 } from "../lib/harness.mjs";
 import { receivedInput } from "../lib/received-input.mjs";
 import { pageScrollRace } from "../lib/terminal-page-scroll.mjs";
+import { saveInputScrollFailure } from "../lib/input-scroll-diagnostics.mjs";
 
 export default async function ({ ctl, page }) {
   await step("키 막대(herdr-web-ui KeyBar): 터치 기기에서만, 유지 키는 다시 누를 때까지(래치)·하드웨어 키와 같은 bytes, DECCKM, 꾹 누르면 반복, 조합 중 회색, focus를 안 가져감", async () => {
@@ -671,6 +672,10 @@ export default async function ({ ctl, page }) {
           });
           await pageScrollRace(p);
           if (errors.length) throw new Error(errors.join("; "));
+        } catch (error) {
+          await saveInputScrollFailure(root, p, `page-scroll-${engine.browserType().name()}`, error, { connections, acknowledged })
+            .catch(cause => console.error("키 스크롤 진단 저장 오류", String(cause)));
+          throw error;
         } finally { await p.context().close(); }
       }
     } finally { await wk.close(); }

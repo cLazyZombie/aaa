@@ -188,3 +188,49 @@ fn merge_owners_cross_four_and_five_digits_and_accept_numeric_aliases() {
         assert!(owners(&format!("병합: 번호 경계 ({id})")).is_empty());
     }
 }
+
+#[test]
+fn web_fail_lines_survive_gh_prefixes_annotations_chunks_and_tail_cut() {
+    let names = ["PWA 대화 focus", "재연결·resize 뒤 연속 PageUp·PageDown"];
+    let mut log = format!("FAIL {}: chromium-390: 선택\t사건\n", names[0]);
+    log.push_str(&"x".repeat(LOG_JOB_CAP * 2));
+    log.push('\n');
+    log.push_str(&format!(
+        "web-e2e (macos-15)\te2e\t2026-10-27T09:23:12.3666940Z [e2e] FAIL {}: page.evaluate: 오류\t원인\n",
+        names[1]
+    ));
+    log.push_str("## 실행 {\"event\":\"suite-end\",\"jobs\":127,\"failed\":2}\n");
+    log.push_str(&format!("2026-10-27T09:36:12Z ##[error]FAIL {}: chromium-390: 선택 사건\n", names[0]));
+    // 마지막 줄에 개행이 없고 같은 이름의 Rust 실패가 함께 있어도 각각 보존한다.
+    log.push_str("test real::owner ... FAILED");
+    let mut scan = FailureScan::default();
+    for chunk in log.as_bytes().chunks(7) {
+        scan.feed(chunk);
+    }
+    assert_eq!(scan.finish(), ["FAIL: PWA 대화 focus", "FAIL: 재연결·resize 뒤 연속 PageUp·PageDown", "real::owner"]);
+}
+
+#[test]
+fn web_suite_summary_is_a_fallback_and_successful_fixture_output_stays_successful() {
+    let summary = "## 실행 {\"event\":\"suite-end\",\"jobs\":127,\"failed\":2}";
+    for prefix in ["", "2026-10-27T09:36:12Z ", "web-e2e\te2e\t2026-10-27T09:36:12Z [e2e] "] {
+        let mut scan = FailureScan::default();
+        scan.feed(format!("{prefix}{summary}").as_bytes());
+        assert_eq!(scan.finish(), ["web: 2/127 작업 실패"]);
+    }
+    let log = [
+        "[python exit=0] FAIL fixture: 가짜 실패",
+        "macos-15\ttest\t2026-10-27T09:36:12Z [test] [python exit=0] ##[error]FAIL fixture: 가짜 실패",
+        "[python exit=0] ## 실행 {\"event\":\"suite-end\",\"jobs\":127,\"failed\":2}",
+        "fixture 출력: FAIL fake: 인용",
+        "ok   성공한 단계 (8ms)",
+        "## 실행 {\"event\":\"job-end\",\"jobs\":127,\"failed\":2}",
+        "## 실행 {\"event\":\"suite-end\",\"jobs\":127,\"failed\":0}",
+        "## 실행 {\"event\":\"suite-end\",\"jobs\":1,\"failed\":2}",
+        "## 실행 {깨진 JSON}",
+    ]
+    .join("\n");
+    let mut scan = FailureScan::default();
+    scan.feed(log.as_bytes());
+    assert!(scan.finish().is_empty());
+}
