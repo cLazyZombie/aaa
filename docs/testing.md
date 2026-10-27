@@ -4754,3 +4754,22 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 기존 E2E28의 desktop 진행 owner는 실제 pane CLI의 진행률을 바꾸고 파일의 report hash·목록 시각·완료 개수가 그대로인지 검사한다. 실제 파일을 고친 뒤 카드 단계가 갱신되는 기존 단언도 유지한다. 브라우저 시계만 진행해 오래된 표시를 확인하며 고정 sleep은 쓰지 않는다. Chromium 320px·WebKit 390px Reader는 같은 갱신 시각 표시와 기존 읽기 전용·긴 이름·권한 계약을 확인한다.
 - 기본 hover 카드의 줄 수는 추가한 갱신 시각 한 줄을 포함해 10개다. 기존 한 줄 표시·높이 280px 상한과 목표/상태/활동 단언은 유지한다. 새 E2E 번호·시험 삭제·재시도·시한 확대는 없다.
 - 부분 확인: 웹 유닛 전체·타입/번들, host `brief_text::tests`와 proto 유닛, 두 crate strict clippy·의존 경계·fmt·공개 검사, 저장소 고정 Playwright 1.64.1과 공용 캐시의 E2E28 전체다. 전체 ci-local과 병합·push는 정규 착지 차례에서 수행한다.
+
+## 이관의 같은 부모 폴더 준비(t-1117 후속)
+
+- 큰 inbox owner의 같은 조건 전후 단계 관측에서 inventory는 0.314→0.325초, import는 2.065→2.904초였다. hash 읽기 수리만으로 병렬 import 개선이 입증되지는 않았다. 원래 4002개 실제 원본·CLI inventory/import·응답 상한·정렬/누락·정리는 유지한다.
+- Copier는 파일마다 현재 부모가 폴더인지 확인하고 없을 때 기존 create_dir_all을 쓴다. 이미 있는 inbox/done에 mkdir을 반복하지 않는다. 폴더 존재를 장기 보관하지 않으며, 생성·복사·사본 SHA 대조 실패는 원래 Outcome.failed에 남긴다. 파일/본문/해시를 건너뛰거나 생성 실패를 재실행하지 않는다.
+- [Rust DirBuilder](https://github.com/rust-lang/rust/blob/master/library/std/src/fs.rs)(MIT/Apache-2.0)의 mkdir/기존 폴더 판정과 [CPython shutil](https://github.com/python/cpython/blob/3.13/Lib/shutil.py)(PSF-2.0)의 _ensure_directory·copytree를 대조했다. 현재 부모를 확인해 준비하는 원칙을 따르며 외부 코드를 복사하거나 의존성을 추가하지 않는다.
+- 기존 migrate::convert::e2e::inventory_then_convert가 새/기존 부모에서 실제 복사·바뀐 원본의 해시·제외·설정·DB·같은 대상 거부를 지킨다. 성능 감소와 5초 초과 여부는 다음 전체 차례의 같은 조건 전후 각1회로 판정한다.
+
+## 질문 답 fixture의 실제 입력 수락(t-1117 후속)
+
+- E53 첫 owner는 기존 fake 프로필로 brief·질문 보고를 받은 뒤, 대화 기록을 연결할 때만 가짜 Claude로 전환한다. SessionStart/UserPromptSubmit은 기록·진행 안내용이며 수락 상태를 대신하지 않는다. 실제 foreground job과 PTY 작업 화면을 기존 감지기가 읽어야 한다. 초기 brief까지 Claude 프로필로 바꾸는 실험은 수락 대기 중 카드 답을 거부해 철회했다.
+- post-probe 셸의 job control로 가짜 Claude를 별도 foreground 그룹에 둔다. 마지막 명령 뒤 종료 상태를 전파해 셸이 exec로 사라지는 최적화를 피한다. 같은 그룹의 단순 exec는 감지기의 그룹 변경 사건이 아니다. 제품의 조사 주기·수락10초·paste300ms는 그대로다.
+- 프로그램은 실제 bracketed paste의 내부 줄바꿈과 바깥 Enter를 구분하고, Enter 뒤 원문 전체를 실제 transcript에 한 번 기록한다. UserPromptSubmit과 작업 화면을 내고, 원래 답 기록 단언 뒤 실제 PTY의 Ctrl+G로 턴을 끝내 입력창으로 돌아간다. 시험용 수락 API·고정 sleep·시계 대역은 없다. 최초 질문/선택/직접 답·사본/권한/동기화·원래 step 이름과 단언을 유지한다. 나머지 E53 owner와 공통 fake 셸은 바꾸지 않는다.
+- 기존 E102 foreground 프로그램·E35 bracketed paste fixture와 [Bash job control](https://www.gnu.org/software/bash/manual/html_node/Job-Control-Basics.html), [monitor 옵션](https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html)을 대조했다(Bash GPL-3.0-or-later, 설명서는 GFDL-1.3-or-later). 문서의 원칙을 참고하며 외부 코드를 복사하거나 의존성을 추가하지 않는다.
+
+## PR 조회 owner의 보고 셸 준비(t-1117 후속)
+
+- pr_environment의 네 기존 owner는 FAKE_AGENT만 쓴다. 이 파일의 전용 World에서만 TUI 없는 brief 안정·paste 간격을0으로 한다. 일반 World와 Claude/paste owner, 제품 기본 간격은 유지한다. agent의 gh/PATH/인증 환경과 host 환경을 분리하고 같은 host 설정을 재시작에도 보존한다.
+- 실제1초 PR 조회·ticker·outage 설정, 여러 pass 완료 울타리, 공개/미공개 branch와 실제 git 참조, 인증/회복·없는 실행 파일·stderr 가림·폴더 이주/오류·모든 원래 단언은 유지한다. 이름 추가/삭제·단계 분리는 없다. 단일 통과나 낮은 load 결과로 정규 원장을 줄이지 않고 다음 전체 차례에서 같은 조건 전후를 비교한다.

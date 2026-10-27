@@ -17,6 +17,50 @@ import { questionReplyScenario } from "../lib/question-reply.mjs";
 import { questionLettersScenario } from "../lib/question-letters.mjs";
 
 const LABEL = "cq1";
+const QUESTION_SESSION = "question-dock-chat";
+
+// brief는 기존 fake가 받는다. 대화 기록을 연결할 때만 실제 foreground 감지 대상인
+// 가짜 Claude로 바꾼다(102와 같은 길). paste 안의 줄바꿈과 실제 제출 Enter를 구분한다.
+const QUESTION_AGENT = `#!/usr/bin/env python3
+import os, sys, json, subprocess, tty
+aa, transcript, session = sys.argv[1:]
+def hook(event):
+    subprocess.run([aa,'hook','--agent','claude',json.dumps({'hook_event_name':event,'session_id':session,'source':'startup','transcript_path':transcript})],check=True,stdout=subprocess.DEVNULL)
+def prompt():
+    print('\\033[2J\\033[HQUESTION_READY\\r\\n────────────────────────────────────────\\r\\n❯ \\r\\n────────────────────────────────────────\\r\\n  ? for shortcuts\\033[2A\\r\\033[2C',end='',flush=True)
+hook('SessionStart')
+tty.setraw(0)
+print('\\033[?2004h',end='',flush=True)
+prompt()
+pending=b''; text=b''; depth=0
+while True:
+    chunk=os.read(0,4096)
+    if not chunk: break
+    pending+=chunk
+    while pending:
+        if pending.startswith(b'\\x1b'):
+            if len(pending)<6: break
+            if pending[:6] in (b'\\x1b[200~',b'\\x1b[201~'):
+                depth += 1 if pending[:6]==b'\\x1b[200~' else -1
+                pending=pending[6:]; continue
+        ch=pending[:1]; pending=pending[1:]
+        if ch==b'\\x07' and depth==0:
+            prompt()
+        elif ch==b'\\r' and depth==0:
+            message=text.decode(); text=b''
+            with open(transcript,'a') as f: f.write(json.dumps({'type':'user','message':{'content':message}},ensure_ascii=False)+'\\n')
+            hook('UserPromptSubmit')
+            print('\\r\\n✻ Working… (1s · esc to interrupt)',flush=True)
+        else:
+            text+=b'\\n' if ch==b'\\r' else ch
+            os.write(1,b'\\r\\n' if ch in (b'\\r',b'\\n') else ch)
+`;
+
+async function finishQuestionTurn(t) {
+  // 답 기록·원래 단언 뒤 실제 PTY 키로 턴을 끝낸다. sleep이나 수락 API 대역은 없다.
+  aaa("pane", "send-keys", t.pane, "ctrl+g");
+  await until("질문 agent 입력 대기", () => aaa("thread", "show", t.id).agent?.activity === "idle");
+}
 
 /** coordinator처럼 질문·보고서 참조를 쓴 Claude 대화(hook으로 기록 자리를 알린다, 38-chat-report-close와 같은 길) */
 function chatPane(lines) {
@@ -95,10 +139,18 @@ export default async function ({ page }) {
     const transcript = `${transcriptDir}/s1.jsonl`;
     fs.writeFileSync(transcript, JSON.stringify({ type: "user", message: { role: "user", content: "질문 확인" } }) + "\n"
       + JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: `aaa:question/${t.id}` }] } }) + "\n");
-    const hook = JSON.stringify({ hook_event_name: "SessionStart", session_id: "question-dock-chat", source: "startup", transcript_path: transcript });
+    const questionAgent = `${root}/question-harness/claude`;
+    fs.mkdirSync(`${root}/question-harness`);
+    fs.writeFileSync(questionAgent, QUESTION_AGENT, { mode: 0o755 });
     const probe = `${root}/question-chat.sh`;
-    fs.writeFileSync(probe, `'${AA}' hook --agent claude '${hook}'\n`);
+    // 비대화형 fake 셸 안에서도 실제 foreground job으로 띄운다. 같은 그룹에서의
+    // exec는 셸 감지기의 그룹 변경 사건이 아니므로 SessionStart만으로는 감지되지 않는다.
+    fs.writeFileSync(probe, `set -m\n'${questionAgent}' '${AA}' '${transcript}' '${QUESTION_SESSION}'\ncode=$?\nexit "$code"\n`);
     aaa("pane", "run", t.pane, `post-probe ${probe}`);
+    await until("질문 agent 실제 foreground 감지", () => {
+      const agent = aaa("thread", "show", t.id).agent;
+      return agent?.harness === "claude" && agent.activity === "idle";
+    });
     const q1 = v.questions.items[0];
     if (q1.text !== "로그인 단추 자리" || q1.choices.length !== 2 || !q1.choices[0].recommended || q1.choices[0].description !== "지금 화면과 같음" || v.questions.answer !== null
       || !q1.body?.includes("![지금 화면](library/pic.png)") || !q1.body.includes("| B | 누르기 쉬움 |") || q1.choices[1].body !== "![B안](library/pic.png)"
@@ -234,6 +286,7 @@ export default async function ({ page }) {
         (await p.evaluate(() => [...document.querySelectorAll('[data-testid="ask-done-card"][data-kind="question"] [data-testid="ask-done-picked"]')].map((x) => x.textContent.slice(0, 1)).join(""))) === "BA");
       await until(`${name} 답한 카드 그림`, async () => (await pictures(p, '[data-testid="ask-done-card"] .ask-choice-picture')) === 2);
     }
+    await finishQuestionTurn(t);
     const rec = await until("답한 것 기록", async () => (await asksOf(pp)).ok?.done?.find((r) => r.kind === "question" && r.subject === t.id));
     const completed = (await asksOf(pp)).ok;
     if (completed.requests.length !== 0 || completed.done.length !== 1 || completed.done[0].kind !== "question") throw new Error(`카드 답 뒤 중복 기록: ${JSON.stringify(completed)}`);
@@ -324,6 +377,7 @@ export default async function ({ page }) {
     await waitOutput(t.pane, "직접 쓴 답: 1 C: 초록");
     const direct = await until("채팅 C의 답 기록", async () => (await asksOf(pp)).ok.done.find((r) => r.kind === "question" && r.answer?.text === "1 C: 초록"));
     if (direct.items[0].choices.length !== 2 || direct.answer.picks[0] !== null) throw new Error(`카드에 없는 C를 선택지로 만들었다: ${JSON.stringify(direct)}`);
+    await finishQuestionTurn(t);
     const late = await coordinatorPost({ request: true, title: `이미 답한 색 질문 aaa:question/${t.id}` });
     if (aaa("post", "status", "demo", late.id).handled !== true) throw new Error("답한 뒤 도착한 post가 다시 답할 것이 됐다");
     // 다음 보고가 질문을 닫는 길도 post를 끝낸다. 답 선택은 만들지 않고 닫힘으로 남긴다.
