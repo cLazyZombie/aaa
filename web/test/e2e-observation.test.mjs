@@ -3,6 +3,31 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { pageScrollStart } from "../e2e/lib/page-scroll-ready.mjs";
 import { selectInputAndWait } from "../e2e/lib/input-selection.mjs";
+import { fittedTerminalGrid } from "../e2e/lib/terminal-grid-ready.mjs";
+
+test("파일 링크 기준은 설정의 옛 fit·ACK·38행을 복귀한 35행 칸으로 기억하지 않는다", () => {
+  // 원본 CI 순서: 설정 112×38 → 복귀 112×35 → 높이 19px 증가 112×36.
+  // ResizeObserver가 아직 pending을 달기 전에는 옛 same·제목·DOM 행 수가 모두 일치한다.
+  const data = { fit: 'same' };
+  const rows = { childElementCount: 38, firstElementChild: { getBoundingClientRect: () => ({ height: 19 }) } };
+  const title = { textContent: 'labA · 112×38' };
+  const xterm = {};
+  const term = {
+    dataset: data, hasAttribute: () => Boolean(data.fitPending),
+    querySelector: (s) => ({ '.xterm-rows': rows, '.xterm': xterm })[s],
+    closest: () => ({ querySelector: () => title }),
+  };
+  const context = { document: { querySelector: () => term }, getComputedStyle: (el) => el === term ? { height: '679px' } : { paddingTop: '0px', paddingBottom: '0px' } };
+  const ready = () => runInNewContext(`(${fittedTerminalGrid})()`, context);
+  assert.equal(Number(/×(\d+)/.exec(title.textContent)[1]), rows.childElementCount, '옛 조건은 통과했다');
+  assert.equal(ready(), false);
+  title.textContent = 'labA · 112×35';
+  assert.equal(ready(), false, 'ACK만 새 크기로 온 때도 거절한다');
+  rows.childElementCount = 35;
+  assert.equal(ready().rows, 35);
+  data.fitPending = '1';
+  assert.equal(ready(), false);
+});
 
 test("키 스크롤 기준은 resize의 옛 바닥 render를 현재 버퍼로 기억하지 않는다", () => {
   // 원본 CI: 본문은 s-172·30행, 파싱은 171, 옛 render 표지는 169.

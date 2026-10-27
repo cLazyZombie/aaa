@@ -1,3 +1,34 @@
+## E2E16 복귀 크기 기준·E2E28 새 hover 진입(t-1209)
+
+- [원본 macOS 웹 job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985055)의
+  전체 E2E 로그·실패 JSON/PNG·실행 시각 artifact를 확보했다. E16은 설정 중 112×38,
+  복귀 요청 112×35와 응답, 창 높이 증가 뒤 112×36과 응답까지 왔다. 실패 뒤에도 같은 링크의
+  up은 파일 창을 열었다. 원본은 `before` 변수와 실패 순간 제목/DOM 행 수를 직접 기록하지 않았다.
+- 설정을 가린 터미널은 더 큰 칸에서 맞춰진다. 복귀 commit 뒤 ResizeObserver 전에는 옛
+  `fit=same`·제목·DOM 행 수가 모두 38로 맞아도 실제 칸은 35행이다. `fittedTerminalGrid`는
+  현재 부모 높이·xterm padding·실제 행 높이까지 대조해 이 기준값을 거절한다. 새 관측 keeper는
+  옛 세 표지의 자체 일치, 늦은 ACK, 실제 행 반영과 pending을 구별한다. 필요한 이유는
+  잘못 읽은 38행에 1을 더한 값을 기다리는 준비 경쟁을 막기 위해서다. 기존 112열·한 행 증가·
+  좌표 불변·실제 PTY 재그림·선택/링크·가상화/줄 참조/설정 기록 계약은 유지한다.
+- 원본 E28은 행 `hover=true`·카드 없음·요약 응답 200이었다. 진행 목록 검사의 reload가
+  DOM 사건 수집기를 지워 당시 닫힘 원인이 resize인지 목록 scroll인지 소급 확정할 수 없다.
+  수집기는 addInitScript로 reload 뒤에도 설치하며 테마 경계·좌표·관련 요소·scroll·응답·표시를 남긴다.
+- 같은 E28 desktop light owner에 실제 테마 변경 → 카드 표시 → native resize 두 번으로 원래
+  창 크기 복귀 → 포인터는 같은 행·카드 없음 순서를 넣었다. 기존 같은 좌표 `hover()`는
+  새 mouseover 없이 원본과 같은 30초 오류로 실패했다. 각 테마 검사는 행 밖 이동 뒤 실제
+  진입을 한 번 수행한다. 동일 재현이 통과하며 light/dark 카드·상세, Chromium320/WebKit390
+  Reader·읽기 전용·실제 모델 관측/재시작 계약도 그대로 검사한다. resize 전달은 미리 구독한
+  native 사건으로 끝낸다. 실패 재시도·시한 확대·기대값 완화·고정 sleep은 추가하지 않는다.
+- E16 실패 관측은 실제 제목·행 수·칸/행 높이·fit과 기존 동기 WebSocket 전송/상태 기록을
+  함께 남긴다. 스크린샷 폴더를 지정하면 성공 경로에도 누름 중 resize와 모델 카드 사건을 저장한다.
+- 참고 후보는 [xterm 5.5.0 FitAddon](https://github.com/xtermjs/xterm.js/blob/5.5.0/addons/addon-fit/src/FitAddon.ts)
+  (MIT)의 실제 칸 치수, [Playwright mouse 시험](https://github.com/microsoft/playwright/blob/main/tests/page/page-mouse.spec.ts)
+  (Apache-2.0)의 실제 포인터 이동, [React EnterLeaveEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/EnterLeaveEventPlugin.js)
+  (MIT)의 진입/이탈 경계다. 외부 코드·의존성·제품 동작은 바꾸지 않는다.
+- 부분 검증은 웹 유닛 전체·타입/번들, 기존 E16/E28 전체와 E03 드래그/제자리 클릭,
+  공개 검사다. Playwright 1.64.1과 공용 브라우저 캐시를 쓴다. 전체 ci-local·cross·병합·push는
+  정규 착지 차례에서 수행한다.
+
 ## E117 터미널 인용의 실제 행 준비(t-1208 착지 수리)
 
 - main `165797c0`·후보 `8d8491b1`의 변경 없는 E117을 각각 한 번 단독 실행했고 모두 통과했다.

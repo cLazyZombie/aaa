@@ -19,23 +19,29 @@ export class SummaryDiagnostics {
     page.on("request", (request) => record("request", request));
     page.on("response", (response) => record("response", response.request(), response.status()));
     page.on("requestfailed", (request) => record("failed", request));
-    await page.evaluate(() => {
+    const install = function install() {
+      if (!document.body) {
+        document.addEventListener('DOMContentLoaded', install, { once: true });
+        return;
+      }
       window.summaryHoverEvents = [];
       const rowOf = (node) => node instanceof Element ? node.closest('.pane-select[data-testid^="thread-"]') : null;
       const nameOf = (node) => node instanceof Element ? node.getAttribute("data-testid") ?? node.className : node === document ? "document" : "window";
-      const record = (event, target) => {
+      const record = (event, target, extra = {}) => {
         const row = rowOf(target) ?? document.querySelector('.pane-select[data-testid^="thread-"]:hover');
         const card = document.querySelector('[data-testid="summary-hover"]');
         window.summaryHoverEvents.push({ at: performance.now(), event, target: nameOf(target),
           row: row?.getAttribute("data-testid"), rect: row?.getBoundingClientRect().toJSON(),
           ancestor: target instanceof Node && row ? target.contains(row) : false,
-          focus: nameOf(document.activeElement), card: Boolean(card), visibility: card?.style.visibility });
+          focus: nameOf(document.activeElement), card: Boolean(card), visibility: card?.style.visibility,
+          theme: document.documentElement.dataset.theme, ...extra });
         if (window.summaryHoverEvents.length > 256) window.summaryHoverEvents.shift();
       };
       for (const event of ["mouseover", "mouseout", "mousedown", "scroll", "resize"]) {
         window.addEventListener(event, (e) => {
           if (event.startsWith("mouse") && (!rowOf(e.target) || rowOf(e.target) === rowOf(e.relatedTarget))) return;
-          record(event, e.target);
+          record(event, e.target, { x: e.clientX, y: e.clientY, related: nameOf(e.relatedTarget),
+            scrollTop: e.target?.scrollTop });
         }, true);
       }
       let state = "";
@@ -44,7 +50,13 @@ export class SummaryDiagnostics {
         const next = `${Boolean(card)}:${card?.style.visibility}`;
         if (state !== next) { state = next; record("card", card); }
       }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
-    });
+      window.summaryHoverRecord = (event) => record(event, null);
+    };
+    await page.addInitScript(install);
+    await page.evaluate(install);
+  }
+  async mark(event) {
+    await this.page.evaluate((event) => window.summaryHoverRecord(event), event);
   }
   async visible(what) {
     try { await this.page.getByTestId("summary-hover").waitFor(); }

@@ -65,7 +65,7 @@ export async function watchVirtualSource(page, line) {
     documentObserver.observe(document.body, { childList: true, subtree: true });
     attach();
     window.__aaaVirtualSource = {
-      snapshot: () => ({ current: read(), events, fileOpen: window.__aaaFileOpen }),
+      snapshot: () => ({ current: read(), events, fileOpen: window.__aaaFileOpen, terminalWire: window.__aaaTermLog }),
       stop: () => { documentObserver.disconnect(); rows.disconnect(); resize.disconnect(); root?.removeEventListener('scroll', onScroll); window.removeEventListener('popstate', onPopState); },
     };
   }, line);
