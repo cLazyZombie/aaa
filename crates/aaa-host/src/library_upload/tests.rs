@@ -176,13 +176,47 @@ fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
     assert_eq!(put("empty", b"").unwrap(), (2, 2), "다른 올리기 뒤 다시 디스크를 센다");
     // 많은 기존 파일은 디스크에 준비하고, 상한을 채우는 마지막 추가는 실제 owner를 통과한다.
     let dir = h.uploads_root().join(UP);
-    for i in 2..FILES_MAX - 1 {
-        std::fs::write(dir.join(format!("file-{i}")), b"").unwrap();
+    // 경계는 실제 1000개 경로다. 빈 준비 파일의 inode를 매번 새로 만들 필요는 없다.
+    let empty = dir.join("file-2");
+    std::fs::write(&empty, b"").unwrap();
+    for i in 3..FILES_MAX - 1 {
+        std::fs::hard_link(&empty, dir.join(format!("file-{i}"))).unwrap();
     }
     h.library_upload_put(DeviceRole::Controller, "demo", OTHER, "x", b"z").unwrap();
     assert_eq!(put(&format!("file-{}", FILES_MAX - 1), b"").unwrap(), (FILES_MAX, 2));
     assert_eq!(put("extra", b"").unwrap_err().code, ErrorCode::TooLarge);
     assert_eq!(put("file-2", b"replace").unwrap(), (FILES_MAX, 9), "상한에서 빈 파일 교체 가능");
     assert_eq!(std::fs::read(dir.join("file-2")).unwrap(), b"replace", "교체한 내용도 실제 저장한다");
+    assert_eq!(std::fs::read(dir.join("file-3")).unwrap(), b"", "교체는 다른 준비 파일을 바꾸지 않는다");
     assert_eq!(put("large", &vec![0; FILE_MAX as usize + 1]).unwrap_err().code, ErrorCode::TooLarge);
+}
+
+#[test]
+fn independent_upload_states_do_not_block_each_other() {
+    let first = lab();
+    let second = lab();
+    let held = first.h.upload_gate.lock().unwrap();
+    let h = second.h.clone();
+    let (sent, received) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        sent.send(h.library_upload_put(DeviceRole::Controller, "demo", UP, "independent.md", b"ok")).unwrap();
+    });
+    let result = received.recv_timeout(std::time::Duration::from_secs(2));
+    // 실패할 때도 먼저 잠금을 풀고 직접 만든 writer를 회수한다.
+    drop(held);
+    writer.join().unwrap();
+    assert_eq!(result.expect("다른 상태 폴더의 쓰기는 이 잠금을 기다리지 않는다").unwrap(), (1, 2));
+    assert_eq!(std::fs::read(second.h.uploads_root().join(UP).join("independent.md")).unwrap(), b"ok");
+    drop(first);
+}
+
+#[test]
+fn upload_state_aliases_share_cached_counts() {
+    let lab = lab();
+    let h = &lab.h;
+    let alias = Host::open(h.cfg.clone(), h.state.join(".")).unwrap();
+    assert_eq!(h.library_upload_put(DeviceRole::Controller, "demo", UP, "first", b"a").unwrap(), (1, 1));
+    assert_eq!(alias.library_upload_put(DeviceRole::Controller, "demo", UP, "second", b"bb").unwrap(), (2, 3));
+    assert_eq!(h.library_upload_put(DeviceRole::Controller, "demo", UP, "third", b"ccc").unwrap(), (3, 6));
+    assert_eq!(usage(&h.uploads_root().join(UP)), (3, 6));
 }

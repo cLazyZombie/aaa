@@ -2,7 +2,9 @@
 //! 올리고(`POST /api/v1/projects/<p>/library-uploads/<올리기>?path=…`), `library_upload_publish`가 그 폴더를 보고서 하나로 등록한 뒤
 //! 지운다. 등록은 CLI `aaa library publish`와 같은 `library_publish`다(이름 규칙·사용자 보고서의 index.html·library 상한·사용자 알림).
 //! 파일당 16MiB(할 일 첨부와 같다), 한 올리기에 합계 64MiB·1000개까지. 끝내지 않은 올리기는 하루 뒤 다음 올리기 때 지운다.
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use aaa_proto::{DeviceRole, ErrorBody, ErrorCode, FrontResponse};
 
@@ -12,11 +14,26 @@ pub(crate) const FILE_MAX: u64 = 16 << 20;
 pub(crate) const TOTAL_MAX: u64 = 64 << 20;
 const FILES_MAX: usize = 1000;
 const STALE_MS: u64 = 24 * 3600 * 1000;
-/// 올리기 쓰기·등록은 하나씩(합계 상한을 셀 때 겹치지 않게, 등록이 읽는 동안 다른 쓰기의 치우기가 지우지 않게)
-// 마지막 올리기 하나만 캐시한다. 다른 올리기·host·재시작에서는 디스크를 다시 읽는다.
-// 이 폴더의 writer는 아래 잠금을 공유한다. 게시 때는 캐시 대신 실제 파일 수를 확인한다.
-static PUTTING: std::sync::Mutex<Option<UploadUsage>> = std::sync::Mutex::new(None);
-struct UploadUsage {
+/// 같은 상태 폴더의 올리기 쓰기·등록은 하나씩. 다른 상태 폴더는 기다리지 않는다.
+/// 마지막 올리기 하나만 캐시하며 게시 때는 실제 파일 수를 확인한다.
+pub(crate) type UploadGate = Mutex<Option<UploadUsage>>;
+static UPLOAD_GATES: LazyLock<Mutex<HashMap<PathBuf, Weak<UploadGate>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub(crate) fn upload_gate(state: &Path) -> std::io::Result<Arc<UploadGate>> {
+    // 같은 폴더를 `.`·symlink로 연 Host도 같은 잠금과 cache를 쓴다.
+    // canonical 경로는 키로만 쓰며 기존 파일 경로·외부 인자는 바꾸지 않는다.
+    let state = state.canonicalize()?;
+    let mut gates = UPLOAD_GATES.lock().unwrap();
+    gates.retain(|_, gate| gate.strong_count() != 0);
+    if let Some(gate) = gates.get(&state).and_then(Weak::upgrade) {
+        return Ok(gate);
+    }
+    let gate = Arc::new(Mutex::new(None));
+    gates.insert(state, Arc::downgrade(&gate));
+    Ok(gate)
+}
+
+pub(crate) struct UploadUsage {
     dir: PathBuf,
     files: usize,
     total: u64,
@@ -148,7 +165,7 @@ impl Host {
         }
         let validated_us = started.elapsed().as_micros() as u64;
         let waiting = std::time::Instant::now();
-        let mut one = PUTTING.lock().unwrap();
+        let mut one = self.upload_gate.lock().unwrap();
         let lock_us = waiting.elapsed().as_micros() as u64;
         let scanning = std::time::Instant::now();
         self.sweep_uploads(upload, aaa_common::util::now_ms());
@@ -215,7 +232,7 @@ impl Host {
         if files == 0 {
             return Err(err(ErrorCode::BadRequest, "올린 파일이 없다"));
         }
-        let mut one = PUTTING.lock().unwrap();
+        let mut one = self.upload_gate.lock().unwrap();
         *one = None;
         let dir = self.uploads_root().join(upload);
         let have = usage(&dir).0;
