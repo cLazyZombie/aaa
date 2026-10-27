@@ -8,7 +8,7 @@
 //!   `sessions/*/spec.json`·`threads/` 준비 기록은 K2(참조만 저장)에서 막으므로 여기서 찾지 않는다(키 관리자 기획 §2.1).
 use super::*;
 use base64::Engine;
-use sha2::Digest;
+use sha2::{Digest, Sha256};
 
 pub(super) fn canary(_tag: &str) -> (String, String) {
     let value = aaa_test_support::fresh_token();
@@ -274,7 +274,7 @@ fn env_values_stay_out_of_audit_db_logs_and_export() {
     assert!(after.is_empty(), "printenv 뒤 host DB: {after:?}");
 }
 
-/// 실제 TCP+TLS agent의 바뀌지 않은 328KiB 로그를 원본 hash로 검증한 뒤 사본만 가린다.
+/// 실제 TCP+TLS agent의 로그는 가리고 바이너리 사본·불변 판의 원본 hash는 보존한다.
 #[test]
 fn remote_report_with_registered_auth_bytes_copies_without_false_hash_failure() {
     let (secret, _) = canary("report0638");
@@ -301,6 +301,9 @@ fn remote_report_with_registered_auth_bytes_copies_without_false_hash_failure() 
     let mut bytes = vec![b'x'; 328 * 1024 + 17];
     bytes[29..29 + secret.len()].copy_from_slice(secret.as_bytes());
     std::fs::write(&source, &bytes).unwrap();
+    let binary = [b"MZ\0\xff".as_slice(), bytes.as_slice()].concat();
+    let binary_hash = hex::encode(Sha256::digest(&binary));
+    std::fs::write(work.join("library/setup.exe"), &binary).unwrap();
     let body = format!("[병합 준비됨] 원격 보고 전송\n{secret}\n\n## Next\n");
     let revision = sha(&body);
     std::fs::write(work.join("report.md.tmp"), &body).unwrap();
@@ -319,6 +322,11 @@ fn remote_report_with_registered_auth_bytes_copies_without_false_hash_failure() 
     assert_eq!(stored, aaa_common::redact::bytes(body.as_bytes()));
     let rid = copied["report_id"].as_str().unwrap();
     assert_eq!(std::fs::read(dir.join("library").join(rid).join("stable.log")).unwrap(), expected);
+    for copy_id in [id, rid] {
+        let copy = std::fs::read(dir.join("library").join(copy_id).join("setup.exe")).unwrap();
+        assert_eq!(hex::encode(Sha256::digest(&copy)), binary_hash);
+        assert_eq!(copy, binary);
+    }
     assert_eq!(std::fs::read(dir.join("threads").join(format!("{rid}.md"))).unwrap(), stored);
     assert!(!w.lab.log("host").contains("받는 동안 바뀌었다"));
     // 재시작도 원격 agent가 pin한 같은 listen 주소를 쓴다(임의 포트를 새로 고르면 접속할 수 없다).

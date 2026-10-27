@@ -2494,7 +2494,7 @@ impl Host {
         let summary_seen = self.summary_report_seen(&dir, id);
         // Ok(None): 이미 받은 보고와 같다
         // (보고 hash, 건너뛴 것, 사본 상태, 보고, library가 앞 사본과 달라졌나)
-        type Got = Option<(String, Vec<String>, String, Vec<u8>, bool, Vec<String>, Vec<String>)>;
+        type Got = Option<(String, Vec<String>, String, Vec<u8>, bool, Vec<String>, Vec<String>, Vec<String>)>;
         let result: Result<Got, ErrorBody> = async {
             let transfer = self.report_transfer_supported(&rec.machine_id);
             let request = if transfer {
@@ -2538,6 +2538,7 @@ impl Host {
             let lib_root = dir.join("library");
             let tmp = lib_root.join(format!(".{id}.tmp-{}", aaa_common::util::new_id()));
             let mut sandbox_notes = Vec::new();
+            let mut secret_notes = Vec::new();
             let mut failed_files = Vec::new();
             let fetch = async {
                 std::fs::create_dir_all(&tmp).map_err(internal)?;
@@ -2580,8 +2581,12 @@ impl Host {
                         if out.len() as u64 != f.size || hex::encode(sha2::Sha256::digest(&out)) != f.sha256 {
                             return Err(internal(format!("{}: 받는 동안 바뀌었다(hash 다름)", f.path)));
                         }
-                        let out = aaa_common::redact::bytes(&out);
+                        // 원본 hash 대조가 끝난 파일 전체로 종류를 판정한다.
+                        let (out, warning) = crate::report_copy::prepare(&f.path, &out);
                         std::fs::write(&target, &out).map_err(internal)?;
+                        if let Some(warning) = warning {
+                            secret_notes.push(warning);
+                        }
                         if let Some(note) = crate::report_sandbox::warning(&f.path, &out) {
                             sandbox_notes.push(note);
                         }
@@ -2674,12 +2679,31 @@ impl Host {
             } else {
                 "partial"
             };
-            Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed, sandbox_notes, failures)))
+            Ok(Some((
+                snap.hash,
+                skipped,
+                copy.to_string(),
+                snap.report.0,
+                changed,
+                sandbox_notes,
+                secret_notes,
+                failures,
+            )))
         }
         .await;
         match result {
             Ok(None) => Ok(()),
-            Ok(Some((hash, skipped, copy, report, changed, sandbox_notes, failures))) => {
+            Ok(Some((hash, skipped, copy, report, changed, sandbox_notes, secret_notes, failures))) => {
+                if !secret_notes.is_empty() && (rec.report_hash.as_ref() != Some(&hash) || changed) {
+                    self.inbox_add_body(
+                        project,
+                        "report-secret-warning",
+                        id,
+                        "바이너리 첨부의 비밀값 확인",
+                        &format!("{id}: 원본 보존한 바이너리 첨부에 비밀값 조각 일치가 있다(오탐 가능)"),
+                        &secret_notes.join("\n"),
+                    );
+                }
                 if !sandbox_notes.is_empty() && (rec.report_hash.as_ref() != Some(&hash) || changed) {
                     self.inbox_add_body(
                         project,

@@ -84,6 +84,7 @@ mod question_guard;
 mod question_repeat;
 mod quota;
 mod quota_rpc;
+mod report_copy;
 mod report_ids;
 mod report_mark;
 mod report_sandbox;

@@ -8139,3 +8139,9 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 같은 ID 재전송은 기존 기록만 반환한다. 상태 조회와 host 재시작에서도 원인·대상·작업 ID를 보존한다. 로그와 coordinator 정본에 빌드/대상 구분·머신 이름·하위 오류를 남기며 웹은 기존 표시용 요약만 받는다. 형식/권한 오류와 busy 거절은 접수 전 오류 그대로다. FRONT_API·AGENT_LINK·저장 형식은 유지한다.
 - CLI는 송신 전의 요청 ID를 접수 전으로 표시하고, 응답 뒤 접수/중단/host 거절을 구분한다. 시작 응답이 중단이면 JSON 정본을 유지하며 종료 코드 1로 끝난다. 응답 유실은 같은 ID로 먼저 조회한다. 중단을 확인하고 원인이나 대상/후보를 고친 뒤 새 ID로 시작하며 자동 재시도하지 않는다.
 - 참고 후보는 [kubectl create](https://github.com/kubernetes/kubectl/blob/master/pkg/cmd/create/create.go)와 [Argo Rollouts controller](https://github.com/argoproj/argo-rollouts/blob/master/rollout/controller.go)(각 Apache-2.0)다. 생성 응답과 성공 출력을 구분하고 실패 상태/원인을 기록하는 원칙을 참고했으며 외부 코드·의존성은 추가하지 않는다.
+
+### 8.512 바이너리 보고 사본의 원본 보존(t-1180)
+
+- thread 보고 회수는 원본 길이·SHA-256 대조 뒤 보고 본문과 텍스트 첨부만 가린다. 알려진 바이너리·압축·그림·음원·영상·PDF와 전체 내용에 NUL·비UTF8·이진 제어 문자가 있는 파일은 바이트 그대로 복사한다. SVG는 텍스트로 검사한다. 최신 사본과 새 불변 r 판 모두 같은 원본을 유지하며, 이미 손상된 과거 판은 덮어쓰지 않는다. 원본 재회수는 새 판을 만든다.
+- 원본 바이너리에 등록된 비밀값의 8바이트 조각이 있으면 파일 이름·공유 전 확인 안내만 `report-secret-warning` inbox에 남긴다. 조각의 오탐 가능성과 서명·압축 구조 손상 때문에 치환·자동 차단은 하지 않는다. 압축 해제·복호화는 하지 않으며 무경고가 비밀값 부재를 뜻하지 않는다. 상세 분류·직접 publish/실시간 등록과 옛 agent의 차이는 `docs/library.md`에 적는다. FRONT_API·AGENT_LINK·저장 형식·기존 접근 권한은 유지한다.
+- 참고는 herdr-projects v0.2.35(MIT) `src/thread.rs`의 rsync 복사, herdr-web-ui `aa624cb`(MIT) `server/file-view.ts`의 종류 구분·바이트 전송, herdr v0.9.5(Apache-2.0) `src/server/clipboard_image.rs`의 이미지 바이트 보존이다. 코드를 복사하거나 의존성을 추가하지 않는다. 전체 내용 판정과 비밀값 조각 경고는 aaa의 가림 경계에 맞춘 차이다.

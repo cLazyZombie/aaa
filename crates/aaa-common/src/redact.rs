@@ -204,6 +204,16 @@ impl Stream {
 pub fn bytes(value: &[u8]) -> Vec<u8> {
     Stream::default().push(value, true)
 }
+
+/// 바이너리를 바꾸지 않고 등록된 원문·인코딩 형태의 8바이트 조각 일치를 알린다.
+/// 우연히 겹친 바이트도 검출하므로 차단 판정이 아닌 파일 단위 경고에만 쓴다.
+/// 압축 해제·복호화·ANSI 해석은 하지 않는다.
+pub fn has_secret_fragment(value: &[u8]) -> bool {
+    let rules = RULES.read().unwrap_or_else(|e| e.into_inner());
+    !rules.needles.is_empty()
+        && value.windows(8).any(|needle| rules.needles.contains(<&[u8; 8]>::try_from(needle).unwrap()))
+}
+
 pub fn text(value: &str) -> String {
     String::from_utf8_lossy(&bytes(value.as_bytes())).into_owned()
 }
