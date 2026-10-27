@@ -1,3 +1,31 @@
+## E2E16 누른 사이 resize의 링크 소실(t-1167)
+
+- [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40450356721/job/122011375425)의
+  전체 로그·artifact 목록·실패 JSON/PNG를 확보했다. 설정 go/popstate 뒤 down이 도착하고,
+  크기 맞춤·행 변경·링크 장식 제거 뒤 같은 좌표에 up이 도착하지만 파일 요청·pushState·viewer mount가 없다.
+  ws1006은 앞선 파일 열기 세 번보다 이전에 복구했다. 원본에는 xterm 내부 호출 기록이 없으므로
+  당시 메서드 호출까지 관측한 것으로 쓰지 않는다.
+- 기존 t-1151 패치는 새 응답 객체와의 동일 대상 비교만 다룬다. 실제 upstream 생성자의 resize listener는
+  현재 링크와 render listener도 지우므로 이후 PTY 재그림으로 복구되지 않는다. 기존 E2E16 wrap 재열기에
+  down → 실제 창 높이 한 줄 증가 → 크기 응답·그리드 반영 → 같은 행 PTY 재그림 → up 순서를 고정하면
+  이전 수리판에서도 같은 viewer=false·preview=false·rows=0·20초 실패가 재현된다.
+- `xterm-5.5.0-link-press.patch`는 누름 중 resize가 있었으면 up의 실제 칸에서 provider를 새로 조회한다.
+  그 사용자 사건 안의 동기 응답에만 기존 provider·대상·전체 범위와 놓은 자리 비교를 적용하며 누름을
+  먼저 소비한다. 늦은 응답으로 열기를 재생하지 않는다. 앱의 왼쪽 단추·선택 없음·현재 버퍼 재검증을 유지한다.
+- 새 `xterm-link-resize.test.mjs`는 실제 upstream 클래스의 생성자·resize·render listener 해제·provider·up을
+  실행해 같은 대상 한 번, 바뀐 대상/범위/provider·범위 밖·mouseleave·늦은 응답·추가 up 거부와 dispose를 검사한다.
+  필요한 이유: up 메서드만 추출하던 기존 유닛은 resize가 링크와 감시를 함께 없애는 경계를 검사하지 못했다.
+  기존 재그리기 유닛과 E2E 번호는 유지한다. 새 유닛과 추가 사건 대기의 실패 상한은 5초 이하다.
+- 기존 E2E16의 설정 기록 gate·wrap/줄 이동/가상화/강조 생략/큰 파일/빈 파일/라이선스·기기 조합을 유지한다.
+  resize 뒤 112열·한 줄 증가·링크 좌표 불변을 확인하며 실제 PTY 재그림 계약도 보존한다.
+  재시도·상한 확대·기대값 완화·고정 sleep·대체 클릭은 없다. 부분 검증은 웹 전체 유닛·타입/번들,
+  고정한 실행본의 E2E16 전체와 E2E03 드래그/복사/제자리 클릭이다. 전체 ci-local·착지는 정규 차례에서 수행한다.
+- 참고 후보는 [xterm 5.5.0 Linkifier](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Linkifier.ts)
+  ([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))와
+  [Playwright 입력](https://playwright.dev/docs/input)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))이다.
+  resize의 링크 수명과 실제 down/up 사건을 대조하며 외부 코드·제품 의존성은 추가하지 않는다.
+
 ## E2E12의 문서 식별과 본문 완료(t-1117)
 
 - 관측기는 `timeOrigin`을 반복 환산해 문서 키로 비교하지 않고, 실제 Document에 한 번 붙인
