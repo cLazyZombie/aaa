@@ -176,14 +176,18 @@ fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
     assert_eq!(put("empty", b"").unwrap(), (2, 2), "다른 올리기 뒤 다시 디스크를 센다");
     // 많은 기존 파일은 디스크에 준비하고, 상한을 채우는 마지막 추가는 실제 owner를 통과한다.
     let dir = h.uploads_root().join(UP);
-    for i in 2..FILES_MAX - 1 {
-        std::fs::write(dir.join(format!("file-{i}")), b"").unwrap();
+    // 경계는 실제 1000개 경로다. 빈 준비 파일의 inode를 매번 새로 만들 필요는 없다.
+    let empty = dir.join("file-2");
+    std::fs::write(&empty, b"").unwrap();
+    for i in 3..FILES_MAX - 1 {
+        std::fs::hard_link(&empty, dir.join(format!("file-{i}"))).unwrap();
     }
     h.library_upload_put(DeviceRole::Controller, "demo", OTHER, "x", b"z").unwrap();
     assert_eq!(put(&format!("file-{}", FILES_MAX - 1), b"").unwrap(), (FILES_MAX, 2));
     assert_eq!(put("extra", b"").unwrap_err().code, ErrorCode::TooLarge);
     assert_eq!(put("file-2", b"replace").unwrap(), (FILES_MAX, 9), "상한에서 빈 파일 교체 가능");
     assert_eq!(std::fs::read(dir.join("file-2")).unwrap(), b"replace", "교체한 내용도 실제 저장한다");
+    assert_eq!(std::fs::read(dir.join("file-3")).unwrap(), b"", "교체는 다른 준비 파일을 바꾸지 않는다");
     assert_eq!(put("large", &vec![0; FILE_MAX as usize + 1]).unwrap_err().code, ErrorCode::TooLarge);
 }
 
