@@ -404,6 +404,28 @@ history: Array<TaskLogEntry>,
  */
 started_ms?: number, };
 
+export type RecordKind = "report" | "question" | "task";
+
+export type RecordSearchQuery = { query: string, project: string | null, kind: RecordKind | null, after: string | null, limit: number | null, };
+
+export type RecordHit = {
+/**
+ * 프로젝트 안에서만 유일한 내용 해시. 원문 열기에는 project도 반드시 보낸다.
+ */
+key: string, project: string, kind: RecordKind, id: string, title: string, source: string, at_ms: number, excerpt: string, report_id: string | null, };
+
+export type RecordDocument = { hit: RecordHit,
+/**
+ * 검색된 판의 본문. 최신 본문으로 대체하지 않는다.
+ */
+body: string,
+/**
+ * 다음 UTF-8 바이트 위치. null이면 본문 끝이다.
+ */
+next: number | null, };
+
+export type RecordSearchPage = { hits: Array<RecordHit>, next: string | null, };
+
 export type TaskHistorySearch = { query: string, repo: string | null, };
 
 export type TaskArchiveFilter = "main_merged" | "report_done" | "restored";
@@ -1227,7 +1249,7 @@ from_thread?: string, } | { "op": "library_archive", reports: Array<LibraryRef>,
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
-prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_prune_preview", project: string | null, older_than_days: number | null, } | { "op": "library_rotate" } | { "op": "library_upload_publish", project?: string, upload: string, name: string, files: number, to_user: boolean, title?: string, } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project?: string, name: string, } | { "op": "library_resolve", project?: string, cap: string, } | { "op": "library_usage" } | { "op": "thread_ack", project?: string, thread: string, } | { "op": "thread_resolve", project?: string, thread: string, keep_worktree: boolean,
+prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_prune_preview", project: string | null, older_than_days: number | null, } | { "op": "library_rotate" } | { "op": "library_upload_publish", project?: string, upload: string, name: string, files: number, to_user: boolean, title?: string, } | { "op": "record_search", query: RecordSearchQuery, } | { "op": "record_open", project: string, key: string, offset?: number, } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project?: string, name: string, } | { "op": "library_resolve", project?: string, cap: string, } | { "op": "library_usage" } | { "op": "thread_ack", project?: string, thread: string, } | { "op": "thread_resolve", project?: string, thread: string, keep_worktree: boolean,
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */
@@ -1438,7 +1460,7 @@ plan_sha256: string, } | { "kind": "automation_executions", runs: Array<Automati
 /**
  * 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
  */
-source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_resolved", project: string, name: string, } | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage",
+source: RoutineSource | null, } | { "kind": "record_search" } & RecordSearchPage | { "kind": "record_document" } & RecordDocument | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_resolved", project: string, name: string, } | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage",
 /**
  * FRONT_API 1.114. size·max_size에서 제외한 보관함 용량.
  */

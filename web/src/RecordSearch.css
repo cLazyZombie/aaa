@@ -1,0 +1,14 @@
+.record-search-form { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; }
+.record-query { display:flex; align-items:center; gap:8px; flex:1 1 240px; }
+.record-query svg { width:18px; height:18px; flex:none; color:var(--text-dim); }
+.record-query input { width:100%; min-width:0; }
+.record-search-form select { width:auto; flex:0 1 auto; }
+.record-results { display:flex; flex-direction:column; gap:10px; }
+.record-hit { height:auto; flex:0 0 auto; white-space:normal; justify-content:flex-start; display:flex; flex-direction:column; align-items:stretch; gap:7px; padding:14px; border:1px solid var(--border); border-radius:8px; background:var(--bg-input); color:var(--text); text-align:left; overflow-wrap:anywhere; cursor:pointer; }
+.record-hit:hover, .record-hit:focus-visible { border-color:var(--accent); }
+.record-meta { font-size:12px; color:var(--text-dim); overflow-wrap:anywhere; }
+.record-excerpt { white-space:pre-wrap; font-size:13px; line-height:1.6; }
+.record-original { min-width:0; overflow-wrap:anywhere; }
+.record-report-link { display:inline-flex; align-items:center; gap:6px; }
+.record-report-link svg { width:14px; height:14px; }
+@media(max-width:480px) { .record-search-form { gap:10px; } .record-query { flex-basis:100%; } .record-hit { padding:12px; } }
