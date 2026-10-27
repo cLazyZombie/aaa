@@ -1,3 +1,10 @@
+## 보고서 화면 버튼 배치(t-1201)
+
+- 기존 E2E21·101·108 전체로 목록·보관·읽음 확인/취소/실패·Reader·저장소 필터를 확인한다. 새 시험·E2E 번호는 추가하지 않는다.
+- 별도 화면 확인은 같은 E2E108 fixture와 실제 host·agent를 쓰며 Chromium/WebKit × 1280/820/390/320px에서 세 탭을 촬영한다. 새로고침의 접근성 이름·툴팁·장식 SVG와 실제 목록/용량 응답, 업로드 창 열기/닫기, 필터와 두 버튼의 같은 줄 정렬·화면 안 클릭 가능·탭과 새로고침의 겹침 없음·가로 넘침 없음을 확인한다. 응답·DOM 사건으로 끝내며 고정 sleep은 쓰지 않는다.
+- 웹 유닛·타입/빌드와 공개 검사를 함께 수행한다. 전체 ci-local·cross·main 병합/push는 정규 착지 차례에 수행한다. 전후 그림은 해당 thread의 library에 둔다.
+- 참고는 [Primer IconButton](https://primer.style/product/components/icon-button/)([MIT](https://github.com/primer/react/blob/main/LICENSE))의 접근성 이름·툴팁과 [MUI Toolbar](https://github.com/mui/material-ui/blob/master/packages/mui-material/src/Toolbar/Toolbar.js)([MIT](https://github.com/mui/material-ui/blob/master/LICENSE))의 가로 정렬이다. 기존 공통 아이콘·버튼을 사용하고 외부 코드나 의존성은 추가하지 않는다.
+
 ## E2E03·105 비동기 관측과 CI 웹 실패 수집(t-1184)
 
 - 원본 [macOS web-e2e job](https://github.com/cLazyZombie/aaa/actions/runs/40477028804/job/122097672768)
