@@ -11,6 +11,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { root, aaa, until, step, browser, webkit, pairPage, inList, showPanel, waitOutput, shot, coordinatorPost, AA } from "../lib/harness.mjs";
+import { phase } from "../lib/phases.mjs";
 
 import { pairDevice } from "../lib/devices.mjs";
 import { questionReplyScenario } from "../lib/question-reply.mjs";
@@ -126,6 +127,7 @@ async function dockLayout(p, state, pane) {
 export default async function ({ page }) {
   let wk;
   await step("「답할 것」과 앱 안 칩(plan §8.329·§8.345): ### 질문은 목록 줄·본문 카드(그림·표·선택지 그림)·빨강 배지, 대화의 aaa: 참조와 같은 host 링크는 앱 안 칩, 입력칸 위 칩 한 줄, 카드 답은 thread에 한 번 가고 원문을 보존(새 보고 뒤에도 칩 답함), 확인 필요 post 답함으로 표시, 답한 것 지우기, 보기 권한은 못 함", async () => {
+    phase("prepare", "question-report-and-foreground-harness");
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-cards.md`, "로그인 화면 다듬기\n질문 카드 시험");
     const t = aaa("thread", "start", "demo", "--title", "로그인 화면 다듬기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-cards.md`);
@@ -198,6 +200,7 @@ export default async function ({ page }) {
     await shot(page, "53-chat-chips");
     // 같은 host 질문 링크: 「답할 것」 화면의 그 카드, 사이드바도 「답할 것」 목록(1B). 본문 그림·선택지 그림이 뜬다(2B)
     await page.locator(`[data-testid="chat"] [data-testid="app-ref"][data-kind="question"]`).nth(1).click();
+    phase("contract", "question-chips-cards-and-layout");
     const card = `[data-testid="thread-ask-${t.id}"]`;
     await until("질문 카드", async () =>
       (await page.evaluate((a) => location.hash === `#question=${a.id}` && document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true"
@@ -276,8 +279,10 @@ export default async function ({ page }) {
     await pp.getByTestId("thread-ask-pick-1B").click();
     await shot(pp, "53-card-phone");
     if ((await pp.getByTestId("thread-ask-send").innerText()).trim() !== "추천대로 보내기") throw new Error(`보내기 단추: ${await pp.getByTestId("thread-ask-send").innerText()}`);
+    phase("contract", "answer-pty-acceptance");
     await pp.getByTestId("thread-ask-send").click();
     await waitOutput(t.pane, "사용자 답(1B 2A)");
+    phase("contract", "answer-state-and-later-reports");
     const answered = aaa("thread", "show", "demo", t.id).questions.answer;
     if (answered?.summary !== "1B 2A" || JSON.stringify(answered.picks) !== "[1,0]") throw new Error(`기록한 답: ${JSON.stringify(answered)}`);
     // 모든 기기가 답함: 휴대폰·보기 권한은 답할 때의 원문(고른 답 표시, 그림 사본)을 보고, 입력칸 위 칩은 사라지고 대화 칩·질문 카드에는 답함이 남는다

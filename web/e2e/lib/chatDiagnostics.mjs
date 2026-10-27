@@ -1,6 +1,7 @@
 // E2E37·93의 대화 요청/실패 상태. 통과 경로에는 파일 쓰기·출력·추가 대기가 없다.
 import fs from "node:fs";
 import path from "node:path";
+import { measured } from "./phases.mjs";
 
 const LIMIT = 256;
 export class ChatDiagnostics {
@@ -45,7 +46,7 @@ export class ChatDiagnostics {
       entry.status = response.status();
       // gate가 이미 읽은 응답은 다시 읽지 않는다. 나머지도 시험 흐름과 따로 관측한다.
       if (entry.reply) return;
-      const read = response.json().then((body) => {
+      const read = measured("observe", "chat-diagnostic-body", () => response.json()).then((body) => {
         if (this.active) this.reply(entry, body);
       }).catch((error) => { if (this.active) entry.readError = String(error); })
         .finally(() => this.pending.delete(read));

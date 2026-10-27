@@ -237,46 +237,56 @@ export default async function ({ page }) {
   await step("workspace: Chromium·WebKit 휴대폰·밝음·어두움 Reader와 drawer·URL, 가로 넘침·조회 오류", async () => {
     const safari = await webkit.launch({ headless: true });
     try {
-      for (const [engine, launch] of [["chromium", browser], ["webkit", safari]]) for (const width of [1280, 820, 390, 320]) for (const scheme of ["light", "dark"]) {
-        await theme(page, scheme);
-        const device = await pairPage(launch, aaa("web", "pair", "--reader").code, { width, height: width === 820 ? 1180 : 844 }, { hash: new URL(link).hash, colorScheme: scheme, touch: width < 1280 });
+      // 같은 엔진/폭의 두 테마는 Reader 신원·원장을 공유한다. 실제 문서는 다시 열어
+      // drawer/필터/굴림을 초기화하며, 16개 조합의 단언은 모두 그대로 실행한다.
+      for (const [engine, launch] of [["chromium", browser], ["webkit", safari]]) for (const width of [1280, 820, 390, 320]) {
+        await theme(page, "light");
+        const device = await pairPage(launch, aaa("web", "pair", "--reader").code, { width, height: width === 820 ? 1180 : 844 }, { hash: new URL(link).hash, colorScheme: "light", touch: width < 1280 });
         const p = device.page;
         try {
-          await p.getByTestId("workspace-view").waitFor();
-          await p.locator(".ws-table-scroll tbody tr").first().waitFor();
-          await inList(p, p.getByTestId("workspace-repo").first());
-          await p.getByRole("tab", { name: "개요", exact: true }).click();
-          await p.locator(".ws-metrics").waitFor();
-          await p.getByTestId("workspace-view").getByLabel("머신", { exact:true }).selectOption("labB");
-          await domIs(p, "선택 머신 선과 사각 점", () => document.querySelectorAll('.ws-chart polyline[data-machine]').length === 1 && document.querySelector('.ws-chart polyline')?.getAttribute('data-machine') === 'labB' && document.querySelector('.ws-chart g[role=button] rect'));
-          await p.getByTestId("workspace-view").getByLabel("머신", { exact:true }).selectOption("");
-          await domIs(p, "전체 머신 선 복원", () => document.querySelectorAll('.ws-chart polyline[data-machine]').length === 2);
-          await domIs(p, "공유 테마 반영", value => document.documentElement.dataset.theme === value, scheme);
-          const overflow = await p.evaluate(() => ({ document: document.documentElement.scrollWidth > innerWidth, view: document.querySelector(".ws-content").scrollWidth > document.querySelector(".ws-content").clientWidth + 1, theme: document.documentElement.dataset.theme }));
-          if (overflow.document || overflow.view || overflow.theme !== scheme) throw new Error(JSON.stringify(overflow));
-          if (device.errors.length) throw new Error(device.errors.join(";"));
-          await shot(p, `workspace-${engine}-${width}-${scheme}`);
-          if (scheme === "light" && [1280,390].includes(width)) await checkReference(p, engine, width);
-          for (const panel of ["workspace", "asks", "work", "tasks"]) {
-            const activity = p.getByTestId(`activity-${panel}`);
-            if (panel === "tasks" || await activity.getAttribute("aria-selected") !== "true") await inList(p, activity);
-            const toggle = p.locator(".view [data-testid=drawer-toggle]:visible");
-            if (width <= 768 && await toggle.isVisible() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
-            if (panel === "workspace") {
-              await domIs(p, "긴 목록만 스크롤", () => {
-                const list = document.querySelector(".ws-list");
-                if (list.scrollHeight <= list.clientHeight) return false;
-                list.scrollTop = list.scrollHeight;
-                return list.scrollTop > 0 && document.querySelector(".sidebar-shell").scrollHeight <= document.querySelector(".sidebar-shell").clientHeight + 1;
+          for (const scheme of ["light", "dark"]) {
+          if (scheme === "dark") {
+            await theme(page, scheme);
+            await p.emulateMedia({ colorScheme: scheme });
+            await p.goto(link);
+            await p.reload(); // hash만 달라도 같은 문서를 잇지 않고 초기 레이아웃부터 검사한다.
+          }
+            await p.getByTestId("workspace-view").waitFor();
+            await p.locator(".ws-table-scroll tbody tr").first().waitFor();
+            await inList(p, p.getByTestId("workspace-repo").first());
+            await p.getByRole("tab", { name: "개요", exact: true }).click();
+            await p.locator(".ws-metrics").waitFor();
+            await p.getByTestId("workspace-view").getByLabel("머신", { exact:true }).selectOption("labB");
+            await domIs(p, "선택 머신 선과 사각 점", () => document.querySelectorAll('.ws-chart polyline[data-machine]').length === 1 && document.querySelector('.ws-chart polyline')?.getAttribute('data-machine') === 'labB' && document.querySelector('.ws-chart g[role=button] rect'));
+            await p.getByTestId("workspace-view").getByLabel("머신", { exact:true }).selectOption("");
+            await domIs(p, "전체 머신 선 복원", () => document.querySelectorAll('.ws-chart polyline[data-machine]').length === 2);
+            await domIs(p, "공유 테마 반영", value => document.documentElement.dataset.theme === value, scheme);
+            const overflow = await p.evaluate(() => ({ document: document.documentElement.scrollWidth > innerWidth, view: document.querySelector(".ws-content").scrollWidth > document.querySelector(".ws-content").clientWidth + 1, theme: document.documentElement.dataset.theme }));
+            if (overflow.document || overflow.view || overflow.theme !== scheme) throw new Error(JSON.stringify(overflow));
+            if (device.errors.length) throw new Error(device.errors.join(";"));
+            await shot(p, `workspace-${engine}-${width}-${scheme}`);
+            if (scheme === "light" && [1280,390].includes(width)) await checkReference(p, engine, width);
+            for (const panel of ["workspace", "asks", "work", "tasks"]) {
+              const activity = p.getByTestId(`activity-${panel}`);
+              if (panel === "tasks" || await activity.getAttribute("aria-selected") !== "true") await inList(p, activity);
+              const toggle = p.locator(".view [data-testid=drawer-toggle]:visible");
+              if (width <= 768 && await toggle.isVisible() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+              if (panel === "workspace") {
+                await domIs(p, "긴 목록만 스크롤", () => {
+                  const list = document.querySelector(".ws-list");
+                  if (list.scrollHeight <= list.clientHeight) return false;
+                  list.scrollTop = list.scrollHeight;
+                  return list.scrollTop > 0 && document.querySelector(".sidebar-shell").scrollHeight <= document.querySelector(".sidebar-shell").clientHeight + 1;
+                });
+              }
+              await domIs(p, "사용량 바닥 고정", () => {
+                const foot = document.querySelector(".list-foot").getBoundingClientRect();
+                const shell = document.querySelector(".sidebar-shell").getBoundingClientRect();
+                const gear = document.querySelector('[data-testid="settings-open"]').getBoundingClientRect();
+                return Math.abs(foot.bottom - shell.bottom) < 2 && Math.abs((foot.top+foot.bottom)/2 - (gear.top+gear.bottom)/2) < 12;
               });
+              if (scheme === "light") await shot(p, `footer-${panel}-${engine}-${width}`);
             }
-            await domIs(p, "사용량 바닥 고정", () => {
-              const foot = document.querySelector(".list-foot").getBoundingClientRect();
-              const shell = document.querySelector(".sidebar-shell").getBoundingClientRect();
-              const gear = document.querySelector('[data-testid="settings-open"]').getBoundingClientRect();
-              return Math.abs(foot.bottom - shell.bottom) < 2 && Math.abs((foot.top+foot.bottom)/2 - (gear.top+gear.bottom)/2) < 12;
-            });
-            if (scheme === "light") await shot(p, `footer-${panel}-${engine}-${width}`);
           }
         } finally { await p.context().close(); }
       }

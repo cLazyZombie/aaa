@@ -56,6 +56,7 @@ fn failed_queries(trace: &Path) -> usize {
 }
 #[test]
 fn git_push_restart_force_delete_and_outage() {
+    let mut phases = aaa_test_support::phases::Phases::new("git_push_restart_force_delete_and_outage");
     let mut w = world_setup("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\noutage_secs=0\n", false, |_| {
         vec![("AAA_TEST_WATCH_POLL_MS".into(), "10".into())]
     });
@@ -83,8 +84,12 @@ fn git_push_restart_force_delete_and_outage() {
     let mid = w.h.machine("labB").unwrap()["id"].as_str().unwrap().to_string();
     let key = format!("git:demo:{}", hex::encode(Sha256::digest(format!("{mid}:{}", w.repo.display()).as_bytes())));
     let db = aaa_host::db::Db::open(&w.h.state.join("host/host.db")).unwrap();
+    phases.mark("contract", "git-push-restart-force-delete-outage");
+    phases.mark("contract", "first-poll");
     poll(&db, &key, 0);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert!(git_events(&w).is_empty(), "첫 등록과 변화 없음은 무음");
     let base = head(&w.repo);
     let fetch_head = std::fs::read(w.repo.join(".git/FETCH_HEAD")).ok();
@@ -97,7 +102,9 @@ fn git_push_restart_force_delete_and_outage() {
     let mut flow = w.lab.follow("git-flow", &w.h, "demo");
     git(&seed, &["push", "-q", path_str(&origin), "HEAD:main"]);
     flow.until("Git 사건", T, |e| e["kind"] == "git_pushed");
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     let events = git_events(&w);
     assert_eq!(events.len(), 1);
     assert_eq!(
@@ -125,7 +132,9 @@ fn git_push_restart_force_delete_and_outage() {
     assert!(tracking.status.success());
     assert_eq!(String::from_utf8(tracking.stdout).unwrap().trim(), base);
     assert_eq!(std::fs::read(w.repo.join(".git/FETCH_HEAD")).ok(), fetch_head);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert_eq!(git_events(&w).len(), 1, "변화 없으면 새 사건 없음");
     let delivery_runs = |w: &World| -> Vec<Value> {
         w.h.ok(&["routine", "runs", "demo", "git-main"])["runs"]
@@ -144,7 +153,9 @@ fn git_push_restart_force_delete_and_outage() {
     w.lab.kill("host");
     w.spawn_host("host2");
     wait_for("재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert_eq!(git_events(&w).len(), 1, "재시작 뒤 같은 SHA는 무음");
     assert_eq!(delivery_runs(&w), history);
     git(&seed, &["reset", "--hard", &base]);
@@ -153,19 +164,27 @@ fn git_push_restart_force_delete_and_outage() {
     git(&seed, &["commit", "-qm", "다른 이력"]);
     git(&seed, &["push", "-q", "--force", path_str(&origin), "HEAD:main"]);
     wait_for("force 사건", T, || git_events(&w).iter().any(|e| e["kind"] == "git_forced").then_some(()));
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     // 같은 B→C force 전이가 다시 와도 새 사건이어야 한다(평생 SHA쌍 dedupe 금지).
     let forced = head(&seed);
     git(&seed, &["push", "-q", "--force", path_str(&origin), &format!("{pushed}:main")]);
     wait_for("되돌린 force", T, || (git_events(&w).len() == 3).then_some(()));
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     git(&seed, &["push", "-q", "--force", path_str(&origin), &format!("{forced}:main")]);
     wait_for("같은 SHA 전이의 새 사건", T, || (git_events(&w).len() == 4).then_some(()));
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     git(&origin, &["config", "receive.denyDeleteCurrent", "ignore"]);
     git(&seed, &["push", "-q", path_str(&origin), ":main"]);
     wait_for("삭제 사건", T, || git_events(&w).iter().any(|e| e["kind"] == "git_deleted").then_some(()));
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert_eq!(git_events(&w).len(), 5);
     // 실제 ls-remote 실패를 만든다. 인증·실제 원격 서버를 건드리지 않는다.
     std::fs::rename(&origin, w.lab.root.join("offline.git")).unwrap();
@@ -189,10 +208,14 @@ fn git_push_restart_force_delete_and_outage() {
             .count(),
         1
     );
+    phases.mark("cleanup", "owned-resources");
 }
 
 #[test]
 fn deploy_proposals_count_main_commits_across_restart_and_success_without_installing() {
+    let mut phases = aaa_test_support::phases::Phases::new(
+        "deploy_proposals_count_main_commits_across_restart_and_success_without_installing",
+    );
     let mut w = world_setup("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\n", false, |_| {
         vec![("AAA_TEST_WATCH_POLL_MS".into(), "10".into())]
     });
@@ -219,8 +242,11 @@ fn deploy_proposals_count_main_commits_across_restart_and_success_without_instal
             .cloned()
             .collect()
     };
+    phases.mark("contract", "first-poll");
     poll(&db, &key, 0);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert!(proposals(&w).is_empty(), "등록 때는 기준만 잡는다");
     let base = head(&w.repo);
     let seed = w.lab.root.join("seed");
@@ -233,7 +259,9 @@ fn deploy_proposals_count_main_commits_across_restart_and_success_without_instal
         head(&seed)
     };
     push(1);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert!(proposals(&w).is_empty(), "두 커밋 전에는 제안하지 않는다");
     w.lab.kill("host");
     w.spawn_host("host2");
@@ -245,7 +273,9 @@ fn deploy_proposals_count_main_commits_across_restart_and_success_without_instal
     assert!(before[0]["body"].as_str().unwrap().contains(&first));
     assert!(before[0]["body"].as_str().unwrap().contains("scripts/deploy-build.sh"));
     assert_eq!(db.meta("rollout:active").unwrap(), None, "제안이 실제 rollout을 만들지 않는다");
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     let inbox = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"]);
     assert!(
         !inbox["items"].as_array().unwrap().iter().any(|i| i["item_kind"] == "git"),
@@ -265,7 +295,9 @@ fn deploy_proposals_count_main_commits_across_restart_and_success_without_instal
     }
     let active = db.meta("rollout:active").unwrap();
     push(3);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert_eq!(proposals(&w), before, "최근 성공 배포 뒤 한 커밋으로는 제안하지 않는다");
     let second = push(4);
     wait_for("다음 성공 기준의 두 커밋", T, || (proposals(&w).len() == 2).then_some(()));
@@ -273,10 +305,14 @@ fn deploy_proposals_count_main_commits_across_restart_and_success_without_instal
     assert_eq!(db.meta("rollout:active").unwrap(), active, "제안이 배포 정본을 바꾸지 않는다");
     // 실험실 bare ref를 직접 되감고 지워 forced/deleted 관측을 만든다. 실제 remote force push는 없다.
     git(&origin, &["update-ref", "refs/heads/main", &base]);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert_eq!(proposals(&w).len(), 2, "강제 이동은 배포 제안이 아니다");
     git(&origin, &["update-ref", "-d", "refs/heads/main"]);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert_eq!(proposals(&w).len(), 2, "삭제는 배포 제안이 아니다");
     // 과거 성공 정본을 남긴 채 다른 history의 origin을 등록한다.
     let other = w.lab.root.join("other");
@@ -291,7 +327,9 @@ fn deploy_proposals_count_main_commits_across_restart_and_success_without_instal
     let other_origin = other.join("origin.git");
     let other_seed = other.join("seed");
     git(&w.repo, &["remote", "set-url", "origin", path_str(&other_origin)]);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     w.lab.kill("host2");
     w.spawn_host("host3");
     wait_for("origin 교체 뒤 재접속", T, || w.h.connected("labA").then_some(()));
@@ -302,9 +340,12 @@ fn deploy_proposals_count_main_commits_across_restart_and_success_without_instal
         git(&other_seed, &["push", "-q", path_str(&other_origin), "HEAD:main"]);
     };
     push_other(1);
+    phases.mark("contract", "poll-and-ticker-fence");
     quiet(&w, &db, &key);
+    phases.mark("contract", "assertions-and-git-commands");
     assert_eq!(proposals(&w).len(), 2, "새 origin도 등록 뒤 한 커밋은 무음");
     push_other(2);
     wait_for("교체 origin의 두 커밋 제안", T, || (proposals(&w).len() == 3).then_some(()));
     assert!(proposals(&w).iter().any(|i| i["body"].as_str().unwrap().contains(&head(&other_seed))));
+    phases.mark("cleanup", "owned-resources");
 }

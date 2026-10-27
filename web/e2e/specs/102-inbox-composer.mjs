@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { aaa, step, browser, webkit, pairPage, domIs, root, AA, waitOutput, shot, shots, sentFrames, paneHash, inTime } from "../lib/harness.mjs";
 import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
+import { phase } from "../lib/phases.mjs";
 
 // coordinator도 실제 Claude 감지기를 쓰게 한다. 이 spec만의 격리 host 설정이다.
 const config = `${root}/c/host.toml`;
@@ -12,6 +13,7 @@ fs.writeFileSync(config, fs.readFileSync(config, 'utf8').replace('[profiles.fake
 
 const line = text => JSON.stringify({ type: 'user', message: { content: text } }) + '\n';
 async function check(engineName, engine, width, role, program) {
+  phase("prepare", "program-pane-and-context");
   const name = `inbox-${engineName}-${width}-${role}`;
   const diagnostics = new ChatDiagnostics(root, name);
   const dir = `${root}/claude/projects/-${name}`;
@@ -88,6 +90,7 @@ async function check(engineName, engine, width, role, program) {
     if (!await p.getByTestId('chat-composer').count()) await p.getByTestId('chat-toggle').click();
     const box = p.getByRole('textbox', { name: '메시지', exact: true });
     await box.waitFor();
+    phase("contract", "inbox-turn-and-first-ack");
     aaa('pane', 'run', pane, '[aaa inbox] t-0001 completed (aaa inbox list demo)');
     await waitOutput(pane, 'INBOX_RECEIVED_1');
     await domIs(p, '주입 알림 기록', () => document.querySelector('[data-testid="chat"]')?.textContent.includes('[aaa inbox]'));
@@ -100,6 +103,7 @@ async function check(engineName, engine, width, role, program) {
     try {
       await Promise.race([ackReady, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('submit ACK가 오지 않았다')), 20_000); })]);
     } finally { clearTimeout(deadline); }
+    phase("contract", "queued-user-input");
     // ACK가 브라우저에 도착하기 전에도 다음 초안을 실제로 쓴다.
 
     await shot(p, `${name}-received`);
@@ -115,11 +119,13 @@ async function check(engineName, engine, width, role, program) {
     await shot(p, `${name}-draft`);
     assert.deepEqual(fs.readFileSync(receipts, 'utf8').trim().split('\n').map(JSON.parse).slice(1), ['첫 사람 메시지', '두 번째 사람 메시지']);
     assert.equal((await sentFrames(p)).filter(f => f.t === 'submit').length, 2);
+    phase("contract", "first-transcript-refresh");
     fs.appendFileSync(transcript, line('첫 사람 메시지') + line('두 번째 사람 메시지'));
     await domIs(p, '늦은 기록은 대기 말만 정리', () => !document.querySelector('.chat-msg.user.is-pending'));
     assert.equal(await box.inputValue(), '아직 보내지 않은 초안');
     assert.equal(await p.evaluate(() => window.inboxSelectionInterleavings), 1, 'input 중 selection commit도 검사했다');
     assert.equal(await box.evaluate(el => document.activeElement === el), true);
+    phase("contract", "duplicate-submissions");
     // 같은 글 두 번도 서로 다른 전송이다. 첫 수신은 첫 대기 말만 정리한다.
     for (let n = 0; n < 2; n++) {
       await box.fill('같은 추가 지시');
@@ -127,10 +133,13 @@ async function check(engineName, engine, width, role, program) {
       await waitOutput(pane, `INBOX_RECEIVED_${n + 4}`);
       await domIs(p, '반복 전송 대기', n => document.querySelectorAll('.chat-msg.user.is-pending').length === n, n + 1);
     }
+    phase("contract", "first-duplicate-transcript-refresh");
     fs.appendFileSync(transcript, line('같은 추가 지시'));
     await domIs(p, '첫 수신은 하나만 정리', () => document.querySelectorAll('.chat-msg.user.is-pending').length === 1);
+    phase("contract", "second-duplicate-transcript-refresh");
     fs.appendFileSync(transcript, line('같은 추가 지시'));
     await domIs(p, '두 번째 수신 뒤 정리', () => !document.querySelector('.chat-msg.user.is-pending'));
+    phase("contract", "final-input-assertions");
     assert.deepEqual(dev.errors, []);
   } catch (error) {
     diagnostics.remember([{ at: Date.now(), receipts: fs.existsSync(receipts) ? fs.readFileSync(receipts, 'utf8') : null,
@@ -138,6 +147,7 @@ async function check(engineName, engine, width, role, program) {
     await diagnostics.save(error, inTime);
     throw error;
   } finally {
+    phase("cleanup", "context-video-and-pane");
     diagnostics.stop();
     await p.context().close();
     if (capture) await p.video().saveAs(`${shots}/${name}.webm`);

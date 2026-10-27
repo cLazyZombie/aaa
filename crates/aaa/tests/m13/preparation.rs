@@ -16,7 +16,9 @@ impl GitGate {
     }
     fn world(&self) -> World {
         let addr = self.listener.local_addr().unwrap().to_string();
-        world_setup("", false, |root| {
+        // 이 gate의 모든 thread는 TUI 없는 FAKE_AGENT의 줄 단위 보고 셸이다.
+        // Git 완료/시한 계약은 그대로 두고 해당되지 않는 입력창 안정·paste 준비만 뺀다.
+        let (mut w, env) = world_files("", false, Some("0"), true, |root| {
             let real = Command::new("which").arg("git").capture_output().unwrap();
             assert!(real.status.success());
             let real = String::from_utf8(real.stdout).unwrap();
@@ -49,7 +51,9 @@ sys.exit(rc)
                 ("GIT_GATE_HOST".into(), host.into()),
                 ("GIT_GATE_PORT".into(), port.into()),
             ]
-        })
+        });
+        w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
+        world_start(w, env)
     }
     fn take(&self, action: &str) -> TcpStream {
         let (mut stream, _) = wait_for("Git 진입 사건", T, || self.listener.accept().ok());
@@ -135,8 +139,11 @@ fn prepare_and_cleanup_wait_for_git_before_publishing_completion() {
 
 #[test]
 fn interrupted_placement_and_resolve_resume_from_agent_records() {
+    let mut phases =
+        aaa_test_support::phases::Phases::new("interrupted_placement_and_resolve_resume_from_agent_records");
     let gate = GitGate::new();
     let mut w = gate.world();
+    phases.mark("contract", "interrupted-placement");
     GitGate::enable(&w, "add");
     let v = start_gated(&w);
     let id = v["id"].as_str().unwrap().to_string();
@@ -158,6 +165,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     assert_eq!(receipt["ready"]["cwd"], path_str(&cwd));
 
     // 같은 상태 폴더로 agent만 B에 다시 시작한다. 기존 세션·host DB의 A 경로는 옮기지 않는다.
+    phases.mark("contract", "agent-restart-and-cleanup-receipt");
     w.lab.kill("agentA");
     wait_for("이전 agent 연결 종료", T, || (!w.h.connected("labA")).then_some(()));
     let next_root = w.lab.root.join("workB");
@@ -215,6 +223,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     let fresh_id = fresh["id"].as_str().unwrap();
     let fresh = w.wait_show("새 thread는 B에 준비", fresh_id, |v| v["status"] == "open");
     assert!(Path::new(fresh["cwd"].as_str().unwrap()).starts_with(next_root), "{fresh}");
+    phases.mark("cleanup", "world-and-gate");
 }
 
 /// 1초 host 설정이 실제 요청·Git deadline까지 전달된다. 응답을 잃은 완성 자리도 변경이 있으면 덮지 않는다.

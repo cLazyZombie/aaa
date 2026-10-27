@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.mjs";
 import { launchChromium } from "./chromium-launch.mjs";
 import { cleanupScope } from "./cleanup-scope.mjs";
+import { phase, measured, withCasePhases } from "./phases.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -255,7 +256,7 @@ async function pasteFile(page, bytes, type, name = "shot.png") {
 /** 배너의 「…: <절대 경로>」에서 경로 */
 const bannerPath = (text) => /(\/\S+\.(png|jpg|gif|webp))/.exec(text)?.[1];
 // 움직이는 중(창 크기를 바꾼 뒤 drawer·sheet가 미끄러지는 중)을 찍지 않는다: 끝나는 움직임은 끝까지 감고 끝없는 것은 처음 모습으로
-const shot = async (page, name) => shots && (await page.screenshot({ path: path.join(shots, `${name}.png`), animations: "disabled" }));
+const shot = async (page, name) => shots && measured("observe", "screenshot", () => page.screenshot({ path: path.join(shots, `${name}.png`), animations: "disabled" }));
 
 /** 터미널 글꼴 측정: xterm cell 너비, 실제 글꼴 목록으로 잰 영문·한글 너비, 넣은 WOFF2만으로 잰 너비 */
 async function termFont(page, cols) {
@@ -531,7 +532,8 @@ async function openSettings(p, pageName) {
 // hash: 처음 여는 주소(`#pane=<id>`: 첫 화면이 그 pane이다, `paneHash`). 없으면 첫 화면은 기억한 것·첫 pane(App.tsx firstPick).
 // onPage(page): 주소를 열기 전에(첫 화면이 여는 WebSocket까지 듣게)
 // at: 실험실 주소 대신 열 주소(끝 `/`까지, 79-passkey의 `http://localhost:<port>/`). 없으면 base
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup, hash, onPage, at } = {}) {
+const pairPage = (...args) => measured("prepare", "pair-page", () => pairPageBody(...args));
+async function pairPageBody(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup, hash, onPage, at } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -748,6 +750,13 @@ const STEP_LIMIT_MS = 120_000;
 
 async function step(name, fn, { always = false, diagnose } = {}) {
   if (only && !always && !only.test(name)) return;
+  return withCasePhases(name, () => {
+    if (always) phase("prepare", "always-fixture");
+    return stepBody(name, fn, diagnose);
+  });
+}
+
+async function stepBody(name, fn, diagnose) {
   const t0 = Date.now();
   let limit;
   try {
@@ -759,6 +768,7 @@ async function step(name, fn, { always = false, diagnose } = {}) {
     ]).finally(() => clearTimeout(limit));
     steps.push(`ok   ${name} (${Date.now() - t0}ms)`);
   } catch (e) {
+    phase("observe", "failure-diagnostics");
     // viewport를 움직이는 기존 termDiag보다 먼저 실패 지점의 산출물을 저장한다.
     try { await diagnose?.(e); }
     catch (error) { console.log(`실패 진단 저장 오류: ${error}`); }
@@ -1224,4 +1234,5 @@ export {
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
   usageHits, usageRoutes, usageServer, browser, specCleanup, setPushKey, setInUse, pushInUse, pushWho, pushLab, coordinatorPost, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
   claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, askClaude,
+  pairPageBody, stepBody,
 };

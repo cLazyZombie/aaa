@@ -131,6 +131,10 @@ enum ImageScenario {
 }
 
 fn image_scenario(scenario: ImageScenario) {
+    let mut phases = aaa_test_support::phases::Phases::new(match scenario {
+        ImageScenario::Generate => "image_generate_scope_and_failures",
+        ImageScenario::Restore => "host_and_thread_restart_preserve_generated_images_and_coordinator_scope",
+    });
     // 원시 PNG와 무관한 인증 조각이 base64 offset 3787에서만 겹친다.
     // 로컬·원격 agent 양쪽의 실제 가림 규칙에 등록한다.
     // 처음부터 이미지 설정으로 연다. 등록·프로젝트와 실제 재시작은 아래에서 그대로 검사한다.
@@ -160,6 +164,7 @@ fn image_scenario(scenario: ImageScenario) {
     ]);
     let origin = format!("http://{}", upstream.addr);
     control(&w, serde_json::json!({"refresh":true}));
+    phases.mark("prepare", "host-agents-accounts-threads");
     start_image_host(&mut w, "image-host", &exe, &origin);
     w.lab.spawn_env(
         "agentA",
@@ -207,6 +212,7 @@ fn image_scenario(scenario: ImageScenario) {
             lab::BIN
         )
     };
+    phases.mark("contract", "generate-and-verify-images");
     let received = w.lab.root.join("received-a");
     if scenario == ImageScenario::Generate {
         for (name, command, reason) in [
@@ -300,6 +306,7 @@ fn image_scenario(scenario: ImageScenario) {
     assert_eq!(attempts(&w).len(), 4, "실패한 생성은 명시 Start에도 재실행하지 않는다");
 
     if scenario == ImageScenario::Restore {
+        phases.mark("contract", "host-and-thread-restart");
         w.lab.kill("image-host");
         restart_host(&mut w, "image-host2", &exe, &origin);
         wait_for("이미지 원격 재접속", T, || w.h.connected("labB").then_some(()));
@@ -371,4 +378,5 @@ fn image_scenario(scenario: ImageScenario) {
         .is_empty(),
         "인증이 원격·기록에 남았다"
     );
+    phases.mark("cleanup", "owned-resources");
 }

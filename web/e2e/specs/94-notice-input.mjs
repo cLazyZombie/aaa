@@ -2,6 +2,7 @@
 // 성능 수치는 진단 자료다. 회귀 판정은 화면 폭으로 커지지 않는 필터 면적·포커스·정확한 입력/출력이다.
 import fs from "node:fs";
 import path from "node:path";
+import { phase } from "../lib/phases.mjs";
 import { specCleanup, aaa, root, AA, step, browser, webkit, pairPage, domIs, inList, sentCount, sentFrames, sentText, shot } from "../lib/harness.mjs";
 
 function monitor({ selector, terminal }) {
@@ -61,6 +62,7 @@ function monitor({ selector, terminal }) {
 }
 
 async function check(engine, name, width, terminalMode, transcript) {
+  phase("prepare", "pane-context-and-ready-output");
   const pane = aaa("tab", "create", "--machine", "labA", "--label", name, "--", "/bin/sh", "-c",
     '"$0" hook --agent claude "$1"; stty -echo -icanon; printf "NOTICE_READY\\n"; exec cat', AA,
     JSON.stringify({ hook_event_name: "SessionStart", session_id: name, source: "startup", transcript_path: transcript }));
@@ -79,6 +81,7 @@ async function check(engine, name, width, terminalMode, transcript) {
     await inList(p, `pane-${name}`);
     if (await p.getByTestId("chat").count()) await p.getByTestId("chat-toggle").click();
     await domIs(p, "알림 시험 PTY 준비", () => document.querySelector(".xterm-rows")?.textContent.includes("NOTICE_READY"));
+    phase("contract", "notice-animation-and-continuous-input");
     const results = [];
     for (const terminal of [terminalMode]) {
       if (!terminal) {
@@ -91,6 +94,7 @@ async function check(engine, name, width, terminalMode, transcript) {
       const mark = await sentCount(p);
       let keys = 0;
       for (let round = 0; round < 3; round++) {
+        phase("contract", `notice-round-${round}`);
         const title = `연속 알림 ${terminal ? "터미널" : "대화"} ${round}`;
         events.send(JSON.stringify({ ev: "notice", kind: "automation", title }));
         // 배지 갱신과 질문/알림함 재조회도 입력 중 같은 연결로 받는다.
@@ -125,6 +129,7 @@ async function check(engine, name, width, terminalMode, transcript) {
         })()]);
         if ((await p.getByTestId("activity-badge-reports").textContent()) !== String(round + 1)) throw new Error("입력 중 보고서 배지가 갱신되지 않음");
       }
+      phase("contract", "input-display-and-close");
       if (terminal) {
         const sent = sentText(await sentFrames(p, mark));
         if (sent !== "x".repeat(keys)) throw new Error(`${name}: 터미널 입력 순서/누락 ${sent.length}/${keys}`);
@@ -144,6 +149,7 @@ async function check(engine, name, width, terminalMode, transcript) {
     console.log(`알림 입력 ${name}: ${JSON.stringify(results)}`);
     if (dev.errors.length) throw new Error(dev.errors.join("; "));
   } finally {
+    phase("cleanup", "context-and-pane");
     await p.context().close();
     aaa("pane", "kill", pane.pane?.id ?? name);
   }
