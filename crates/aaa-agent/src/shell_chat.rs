@@ -102,6 +102,7 @@ impl crate::Agent {
             background: None,
             context: None,
             model_observation: None,
+            turn_reply: None,
         })
         .await;
     }

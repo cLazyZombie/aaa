@@ -166,6 +166,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "term_colors.v1".into(),
             "chat_watch.v1".into(),
             "chat_pages.v1".into(),
+            "turn_reply.v1".into(),
             "diff.v1".into(),
             // task 첨부를 thread 작업 폴더로 받는다(WorkAttachWrite, plan §8.327)
             "work_attach.v1".into(),
@@ -760,6 +761,7 @@ mod post_tests {
                 background: None,
                 context: None,
                 model_observation: None,
+                turn_reply: None,
             };
             let working = event("turn_start", 1);
             let mut report = event("progress", 2);
@@ -777,7 +779,11 @@ mod post_tests {
             let LinkMsg::Hello(h) = rx.control().await.unwrap() else { panic!("hello가 없다") };
             assert_eq!(h.harness, vec![working, report.clone()]);
             // 실제 화면 감지 진입점을 마친 뒤에만 Welcome을 보낸다. 부하나 sleep에 기대지 않는다.
-            let idle = event("idle", 3);
+            let mut reply = event("turn_reply", 3);
+            reply.turn_reply =
+                Some(aaa_proto::TurnReply { started_ms: 1, finished_ms: 3, text: "진행할까요?".into() });
+            agent.harness_event(reply.clone()).await;
+            let idle = event("idle", 4);
             agent.harness_event(idle.clone()).await;
             tx.json(&LinkMsg::Welcome(HostWelcome {
                 identity: None,
@@ -796,10 +802,10 @@ mod post_tests {
                     other => panic!("예상하지 못한 사건: {other:?}"),
                 }
             }
-            let expected = if reads_hello { vec![idle] } else { vec![report, idle] };
+            let expected = if reads_hello { vec![reply, idle] } else { vec![report, reply, idle] };
             assert_eq!(received, expected, "Hello와 Welcome 사이의 idle이 빠졌다(reads_hello={reads_hello})");
             // 연결 뒤 같은 밀리초에 바뀐 상태도 replay보다 뒤에 전달된다.
-            let live = event("working", 3);
+            let live = event("working", 4);
             agent.harness_event(live.clone()).await;
             assert_eq!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Event(AgentEvent::Harness(live)));
             drop(tx);
@@ -841,6 +847,7 @@ mod post_tests {
                 background: None,
                 context: None,
                 model_observation: None,
+                turn_reply: None,
             };
             // 전송 큐보다 많은 기억을 입력 fixture로 둔다. 디스크 저장은 위 회귀·실제 E2E가 맡고,
             // 이 owner는 전송 backpressure와 live hook의 순서만 본다.
