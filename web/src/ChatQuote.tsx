@@ -1,6 +1,6 @@
 // 대화 기록에서 글을 고르면 그 끝에 「인용」 단추를 띄운다(t-1204, 참고 t3code `AssistantSelectionToolbar.tsx`·
 // `selectionActions.ts`, MIT). 누르면 고른 글과 출처를 이 pane 입력 초안 끝에 붙인다(selectionQuote.ts).
-// 끄는 동안(누른 채)은 띄우지 않고 놓은 뒤에 띄운다. 단추를 눌러도 고른 글이 풀리지 않는다(pointerdown 막음).
+// 끄는 동안(누른 채)은 띄우지 않고 놓은 뒤에 띄운다. 단추를 눌러도 고른 글이 풀리지 않는다(마우스 pointerdown 막음).
 import { Quote } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -89,7 +89,8 @@ export function ChatQuoteButton({ container, active, onQuote }: {
       className="chat-quote"
       data-testid="chat-quote"
       style={{ left: shown.x, top: shown.y }}
-      onPointerDown={(event) => event.preventDefault()}
+      // 마우스만 막는다: WebKit은 터치 pointerdown을 막으면 tap의 click을 내지 않는다
+      onPointerDown={(event) => { if (event.pointerType === "mouse") event.preventDefault(); }}
       onClick={() => {
         if (!onQuoteRef.current(shown.text, shown.speaker)) return;
         window.getSelection()?.removeAllRanges();

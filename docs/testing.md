@@ -10,6 +10,9 @@
 - 이 thread는 Windows에서 일해 Unix 전용 E2E 실험실(`/tmp`·UDS)과 Playwright 브라우저가 없었다. E2E116은 쓰기만 했고 실행하지 못했다.
   대신 같은 컴포넌트·xterm 5.5를 scratch 페이지로 묶어 설치된 Chrome(playwright-core 1.64.1 executablePath)으로 끌기·놓기·클릭·터치 탭,
   여러 블록·단추 줄 제외·여러 화자, xterm `getSelectionPosition` 0부터 줄과 다음 줄 첫 칸 끝을 확인했다. 웹 유닛 전체·타입 검사·빌드는 통과했다.
+- 첫 착지 gate에서 이 E2E의 WebKit 390 단계가 실패했다(20초 안에 초안이 비어 있음). 단추가 고른 글을 지키려고 pointerdown을 막았는데,
+  WebKit은 터치 pointerdown을 막으면 tap의 mousedown·click을 내지 않는다(Chrome 터치 탭은 click을 내 scratch 확인에서 드러나지 않았다).
+  같은 fixture의 별도 진단에서 수리 전 pointer/touch 사건 뒤 click 없음을, 마우스 pointer만 막은 수리 뒤 click·초안·focus 없음을 확인했다. 시험·시한은 그대로다.
 
 ## E2E03·105 비동기 관측과 CI 웹 실패 수집(t-1184)
 
