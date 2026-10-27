@@ -141,7 +141,6 @@ export function ActivityBar({
           );
         })}
       </div>
-      {onSearch && <button type="button" className={`activity-item${search ? " is-active" : ""}`} aria-pressed={search} aria-label="기록 검색" title="기록 검색" data-testid="activity-search" onClick={onSearch}><Search aria-hidden="true"/></button>}
       <button
         type="button"
         className={`activity-item${reports ? " is-active" : ""}`}
@@ -174,6 +173,7 @@ export function ActivityBar({
           </span>
         )}
       </button>
+      {onSearch && <button type="button" className={`activity-item${search ? " is-active" : ""}`} aria-pressed={search} aria-label="기록 검색" title="기록 검색" data-testid="activity-search" onClick={onSearch}><Search aria-hidden="true"/></button>}
       <div className="activity-group activity-bottom">{settings}</div>
     </nav>
   );
