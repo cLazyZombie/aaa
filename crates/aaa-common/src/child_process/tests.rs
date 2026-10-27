@@ -36,9 +36,13 @@ impl Drop for OwnedChild {
     }
 }
 
-struct Root(PathBuf);
+struct Root(PathBuf, bool);
 impl Drop for Root {
     fn drop(&mut self) {
+        if self.1 && std::thread::panicking() {
+            eprintln!("pipe 실험실 기록을 남겼다: {}", self.0.display());
+            return;
+        }
         std::fs::remove_dir_all(&self.0).unwrap();
     }
 }
@@ -50,19 +54,28 @@ async fn pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../target")
             .join(format!("pipe-window-{}", crate::util::new_id())),
+        true,
     );
     std::fs::create_dir_all(&root.0).unwrap();
-    // SIP가 켜진 Mac에서도 보호된 /bin/sh가 DYLD 변수를 지워 결함을 숨기지 않게 한다.
-    // 자기 실험실 사본만 ad-hoc 서명하며 시스템 실행 파일·설정은 건드리지 않는다.
-    let shell = root.0.join("sh");
-    // 병렬 spawn이 쓰는 중인 실행 파일 FD를 상속하지 않도록 복사도 자식이 한다.
-    let copied = Command::new("/bin/cp").arg("/bin/sh").arg(&shell).capture_output().unwrap();
-    assert!(copied.status.success(), "cp: {}", String::from_utf8_lossy(&copied.stderr));
-    let signed = Command::new("codesign").args(["--force", "--sign", "-"]).arg(&shell).capture_output().unwrap();
-    assert!(signed.status.success(), "codesign: {}", String::from_utf8_lossy(&signed.stderr));
+    // 시스템 arm64e shell의 재서명은 macOS 판별 실행 정책까지 시험에 섞는다.
+    // 일반 native launcher는 DYLD를 자동 삭제하지 않으며, 잘못 물려받으면 명시적으로 실패한다.
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x86_64",
+        arch => panic!("실험실 아키텍처 미지원: {arch}"),
+    };
+    let launcher = root.0.join("capture-exec");
+    let built = Command::new("cc")
+        .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-arch", arch])
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/child_process/capture_exec.c"))
+        .arg("-o")
+        .arg(&launcher)
+        .capture_output()
+        .unwrap();
+    assert!(built.status.success(), "capture-exec cc: {}", String::from_utf8_lossy(&built.stderr));
     let dylib = root.0.join("window.dylib");
     let built = Command::new("cc")
-        .args(["-dynamiclib", "-std=c11"])
+        .args(["-dynamiclib", "-std=c11", "-arch", arch])
         .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/child_process/pipe_window.c"))
         .arg("-o")
         .arg(&dylib)
@@ -77,7 +90,7 @@ async fn pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime() {
             .env("AAA_PIPE_ROLE", "worker")
             .env("AAA_PIPE_MODE", mode)
             .env("AAA_PIPE_TRACE", &trace_path)
-            .env("AAA_PIPE_SHELL", &shell)
+            .env("AAA_PIPE_LAUNCHER", &launcher)
             .env("DYLD_INSERT_LIBRARIES", &dylib)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -114,7 +127,14 @@ async fn pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime() {
         let progress = format!(
             "mode={mode} worker={pid:?} exit={status:?} stdout_eof={stdout_done} stderr_eof={stderr_done} cleanup={cleanup:?}"
         );
-        eprintln!("{progress} trace={mode}.trace\n{diagnostic}");
+        // timeout·읽기 오류도 성공 반환과 똑같이 전체 출력/trace를 보존한다.
+        std::fs::write(root.0.join(format!("{mode}.stdout")), &out).unwrap();
+        std::fs::write(root.0.join(format!("{mode}.stderr")), &err).unwrap();
+        eprintln!(
+            "{progress} trace={mode}.trace\n{diagnostic}\nworker stdout:\n{}\nworker stderr:\n{}",
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(&err),
+        );
         result
             .unwrap_or_else(|error| panic!("{progress} 종료/출력 대기: {error}\n{diagnostic}"))
             .unwrap_or_else(|error| panic!("{progress} 출력 수집: {error}\n{diagnostic}"));
@@ -146,14 +166,13 @@ fn fixture_command(role: &str) -> Command {
 }
 
 fn capture_command(socket: &std::path::Path) -> Command {
-    let mut command = Command::new(std::env::var_os("AAA_PIPE_SHELL").expect("실험실 shell 사본"));
+    let mut command = Command::new(std::env::var_os("AAA_PIPE_LAUNCHER").expect("실험실 native launcher"));
     command
-        .args(["-c", "exec \"$AAA_PIPE_EXE\" --exact child_process::tests::subprocess_fixture --ignored --nocapture"])
-        .env("AAA_PIPE_EXE", std::env::current_exe().unwrap())
+        .arg(std::env::current_exe().unwrap())
+        .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
         .env("AAA_PIPE_ROLE", "capture")
         .env("AAA_PIPE_SOCKET", socket)
-        // hook은 worker의 pipe 창에만 필요하다. arm64e shell에 arm64 dylib를 물려주면
-        // SIP가 DYLD를 지우지 않는 환경에서 fixture 시작 전에 dyld가 SIGABRT를 낸다.
+        // hook은 worker에만 필요하다. launcher도 누출을 검사하므로 SIP가 회귀를 가리지 않는다.
         .env_remove("DYLD_INSERT_LIBRARIES");
     command
 }
@@ -191,7 +210,10 @@ fn subprocess_fixture() {
     trace(&format!("역할 시작 {}", std::env::var("AAA_PIPE_ROLE").unwrap()));
     match std::env::var("AAA_PIPE_ROLE").unwrap().as_str() {
         "capture" => {
+            assert!(std::env::var_os("DYLD_INSERT_LIBRARIES").is_none(), "capture에 hook을 물려주지 않는다");
+            trace("capture socket connect 시작");
             let mut socket = UnixStream::connect(std::env::var_os("AAA_PIPE_SOCKET").unwrap()).unwrap();
+            trace("capture socket connect 완료");
             socket.set_read_timeout(Some(LIMIT)).unwrap();
             writeln!(socket, "{}", std::process::id()).unwrap();
             trace("capture 해제 대기");
@@ -202,6 +224,7 @@ fn subprocess_fixture() {
             std::process::exit(7);
         }
         "holder" => {
+            assert!(std::env::var_os("DYLD_INSERT_LIBRARIES").is_none(), "holder에 hook을 물려주지 않는다");
             let fd: i32 = std::env::var("AAA_PIPE_FD").unwrap().parse().unwrap();
             let inherited = unsafe { libc::fcntl(fd, libc::F_GETFD) } >= 0;
             // stdin은 부모가 넘긴 양방향 소켓이다. libtest의 stdout 접두사와 신호를 섞지 않는다.
@@ -222,7 +245,7 @@ fn run_worker() {
     let mode = std::env::var("AAA_PIPE_MODE").unwrap();
     trace(&format!("worker mode={mode}"));
     let raw = mode == "raw";
-    let root = Root(PathBuf::from("/tmp").join(format!("aaa-pipe-{}", crate::util::new_id())));
+    let root = Root(PathBuf::from("/tmp").join(format!("aaa-pipe-{}", crate::util::new_id())), false);
     std::fs::create_dir(&root.0).unwrap();
     let socket_path = root.0.join("s");
     let listener = UnixListener::bind(&socket_path).unwrap();
@@ -256,6 +279,12 @@ fn run_worker() {
             }
             "tokio" => runtime.block_on(async {
                 let output = tokio::process::Command::from(command).output_guarded().await.unwrap();
+                trace(&format!(
+                    "capture 반환 status={} stdout={:?} stderr={:?}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                ));
                 assert_eq!(output.status.code(), Some(7));
                 assert!(output.stdout.ends_with(b"capture-out\n"));
                 assert_eq!(output.stderr, b"capture-err\n");
