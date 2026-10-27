@@ -4954,3 +4954,10 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 - E2E102는 주입된 `[aaa inbox]` 말풍선의 계산된 글색이 같은 대화의 사람 말과 다른지 확인한다. 필요한 이유: 표지만 남고 본문이 사람 말과 같아지는 회귀를 실제 host 대화 DOM에서 잡는다. 새 E2E 파일·단계는 없다.
 - `theme.test.mjs`는 12개 팔레트 자료의 `--text-quiet`가 말풍선 바탕(`--bg-elevated`)에서 4.5:1 이상인지 확인한다. 기본 9개 팔레트는 CSS 섞기 값이라 전후 촬영 때 headless Chromium의 계산된 색으로 대비를 쟀다(최저 catppuccin 밝음 5.14:1).
+
+## diff의 접힌 맥락 펼치기(t-1202, plan §8.524)
+
+- `cargo test --profile verify --locked -p aaa-agent --lib diff::tests::`의 새 `full_context_is_file_only_bounded_and_keeps_default_patch_small`은 실제 git rename의 기본 patch가 작게 남고, 전체 맥락에는 첫·마지막 줄이 있으며, 원본 index·ref·파일이 바뀌지 않고 상한 초과/파일 없는 요청은 거부됨을 본다. 필요한 이유: 맥락 펼치기가 기본 표시·읽기 전용·전송 상한을 깨지 않아야 한다.
+- `node --test web/test/diffContext.test.mjs`의 세 keeper는 실제 git patch로 CRLF·마지막 개행 없음, 구판/잘림/기준 변경 거부와 기존 hunk 밖의 새 변경 거부를 검사한다. 필요한 이유: 불완전하거나 서로 다른 시점의 원문을 hydration에 넘겨 변경을 숨기지 않아야 한다. 원문 합성 parser를 따로 만들지 않고 기존 라이브러리를 쓴다.
+- 기존 E2E42의 160줄 파일에서 처음에는 변경 주변만 보이고 전체 맥락 요청은 0회여야 한다. 데스크톱 Chromium과 iPhone WebKit의 새 두 단계에서 실제 기본 UI를 데스크톱 Enter·휴대폰 tap으로 눌러 20줄을 더 보이고, 전체 펼치기로 첫·마지막 줄을 확인한다. 이어지는 펼치기는 추가 요청 없이 같은 원문을 쓴다. 필요한 이유: 가상화·shadow DOM·지연 hydration의 실제 연결과 휴대폰 터치 크기는 순수 유닛만으로 확인할 수 없다. 기존 카드·기기 폭·테마·대량 lazy 계약과 E2E 번호는 유지한다.
+- 고정 sleep·재시도·시한 확대·기대값 완화는 없다. WebKit에서 SVG use가 터치 대상을 가리므로 아이콘은 pointer-events: none으로 하고 단추 자체에 실제 tap을 보낸다. 새 개별 유닛/단계는 보통 부하 5초 이하를 확인하며 전체 suite 시간과 구별한다.

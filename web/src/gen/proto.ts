@@ -1041,7 +1041,11 @@ patch?: boolean,
 /**
  * 이 파일의 patch만(파일 목록은 비운다)
  */
-file?: DiffFileRef, };
+file?: DiffFileRef,
+/**
+ * 파일 하나의 patch에 바뀌지 않은 줄도 모두 담는다(맥락 펼치기 지연 읽기).
+ */
+full_context?: boolean, };
 
 export type DiffStatus = "added" | "deleted" | "modified" | "renamed" | "copied" | "type_changed" | "unmerged" | "untracked";
 
@@ -1079,7 +1083,11 @@ truncated: boolean,
 /**
  * 새 파일이 상한보다 많아 새 파일은 뺐다
  */
-untracked_omitted: boolean, };
+untracked_omitted: boolean,
+/**
+ * 전체 맥락 요청을 처리했고 patch가 잘리지 않았다. 옛 agent는 생략한다.
+ */
+full_context?: boolean, };
 
 export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery, } | { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_rename", name: string, to: string, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
 /**

@@ -142,6 +142,9 @@ async fn temp_index(git: &Git<'_>, head: bool) -> Result<TempIndex> {
 }
 
 async fn inner(dir: &Path, base: Option<&str>, q: &DiffQuery) -> Result<DiffView> {
+    if q.full_context && (!q.patch || q.file.is_none()) {
+        bail!("전체 맥락은 파일 하나의 patch를 지정해야 한다");
+    }
     let plain = Git { top: dir, temp: None };
     let top = plain.ok(&["rev-parse", "--show-toplevel"]).await.context("git 저장소가 아니다")?;
     let top = PathBuf::from(String::from_utf8_lossy(&top).trim());
@@ -194,15 +197,18 @@ async fn inner(dir: &Path, base: Option<&str>, q: &DiffQuery) -> Result<DiffView
         let mut paths = vec![file.path.clone()];
         paths.extend(file.old_path.clone());
         if q.patch {
-            let out = git
-                .run(&d::diff_args("--patch", q.ignore_whitespace, &base_sha, &paths), None, d::FILE_PATCH_MAX_JSON)
-                .await?;
+            let mut args = d::diff_args("--patch", q.ignore_whitespace, &base_sha, &paths);
+            if q.full_context {
+                args.insert(1, "--unified=2147483647".into());
+            }
+            let out = git.run(&args, None, d::FILE_PATCH_MAX_JSON).await?;
             if !out.over && !out.status.is_some_and(|s| s.success()) {
                 bail!("git diff 실패");
             }
             let (patch, cut) =
                 d::cut_patch(String::from_utf8_lossy(&out.bytes).into_owned(), usize::MAX, d::FILE_PATCH_MAX_JSON);
             view.truncated |= cut || out.over;
+            view.full_context = q.full_context && !cut && !out.over;
             view.patch = Some(patch);
         }
         return Ok(view);
@@ -345,6 +351,40 @@ mod tests {
 
     fn q(scope: DiffScope, patch: bool) -> DiffQuery {
         DiffQuery { scope, patch, ..Default::default() }
+    }
+
+    #[tokio::test]
+    async fn full_context_is_file_only_bounded_and_keeps_default_patch_small() {
+        let r = Repo::new();
+        let original: String = (0..90).map(|i| format!("line {i}\n")).collect();
+        r.write("old.txt", &original);
+        r.git(&["add", "."]);
+        r.git(&["commit", "-qm", "base"]);
+        r.git(&["mv", "old.txt", "new.txt"]);
+        r.write("new.txt", &original.replace("line 45\n", "changed\n"));
+        let cwd = r.dir.to_str().unwrap();
+        let before = r.snapshot();
+        let mut ask = DiffQuery {
+            file: Some(DiffFileRef { path: "new.txt".into(), old_path: Some("old.txt".into()) }),
+            ..q(DiffScope::Uncommitted, true)
+        };
+        let compact = query(cwd, Some("main"), &ask).await.unwrap();
+        assert!(!compact.full_context);
+        assert!(!compact.patch.unwrap().contains("line 0\n"));
+        ask.full_context = true;
+        let full = query(cwd, Some("main"), &ask).await.unwrap();
+        assert!(full.full_context && !full.truncated);
+        let patch = full.patch.unwrap();
+        assert!(patch.contains("rename from old.txt") && patch.contains("rename to new.txt"));
+        assert!(patch.contains(" line 0\n") && patch.contains(" line 89\n") && patch.contains("+changed\n"));
+        let after = r.snapshot();
+        assert!(before == after, "원본 저장소를 바꾸면 안 된다");
+
+        r.write("new.txt", &format!("{}changed\n", "context\n".repeat(d::FILE_PATCH_MAX_JSON / 7)));
+        let cut = query(cwd, Some("main"), &ask).await.unwrap();
+        assert!(cut.truncated && !cut.full_context);
+        ask.file = None;
+        assert!(query(cwd, Some("main"), &ask).await.unwrap_err().to_string().contains("파일 하나"));
     }
 
     /// branch 범위는 merge-base 대비 커밋·staged·미커밋·새 파일을 담고, 무시한 파일·`.aaa/`는 빼며, 저장소를 바꾸지 않는다.
