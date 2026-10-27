@@ -5417,24 +5417,6 @@ fn task_thread_link_and_auto_clean() {
     assert_eq!(n, items.len(), "다시 판정하지 않는다");
 }
 
-/// 지운 프로젝트의 TASKS.md 기억은 함께 잊는다(plan §8.311): 같은 이름으로 다시 만든 프로젝트의 첫 tick은 기억만 하고, 옛 글과
-/// 비교해 「파일 직접」 기록을 지어내지 않는다
-#[test]
-fn task_memory_forgets_deleted_project() {
-    let w = world();
-    let file = || w.projects.join("demo").join("TASKS.md");
-    w.h.ok(&["ticker", "tick"]);
-    std::fs::write(file(), "# Tasks\n\n## Backlog\n- [ ] 옛 일\n").unwrap();
-    w.h.ok(&["ticker", "tick"]);
-    assert!(!w.h.ok(&["task", "log"])["entries"].as_array().unwrap().is_empty(), "직접 편집은 기록된다");
-    w.h.ok(&["project", "delete", "demo"]);
-    w.h.ok(&["project", "create", "demo"]);
-    std::fs::write(file(), "# Tasks\n\n## Backlog\n- [ ] 새 일\n").unwrap();
-    w.h.ok(&["ticker", "tick"]);
-    let log = w.h.ok(&["task", "log"]);
-    assert_eq!(log["entries"], serde_json::json!([]), "{log}");
-}
-
 /// coordinator 안내에 옮긴 herdr-projects COORDINATOR.md 절(차이 목록 3장 G2, plan §8.184). 절마다 그 절에만 있는 글 하나
 const GUIDE_SECTIONS: &[&str] = &[
     "일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다",

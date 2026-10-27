@@ -155,6 +155,10 @@ class CiLocal(unittest.TestCase):
             self.assertEqual(log.count(f"LIVE-{stage}-한글"), 1)
             self.assertEqual(log.count(f"TAIL-{stage}"), 1)
         self.assertIn("TAIL-python", (self.root / "logs/python.log").read_text())
+        python_code = 7 if failure == "python" else 0
+        for line in (self.root / "logs/python.log").read_text().splitlines():
+            self.assertIn(f"[python exit={python_code}] {line}\n", log)
+        self.assertNotIn("[python exit=", (self.root / "logs/python.log").read_text())
         if failure:
             self.assertIn(f"FAIL {failure}", log)
 

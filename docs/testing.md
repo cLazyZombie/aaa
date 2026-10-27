@@ -1,3 +1,41 @@
+## 삭제 뒤 TASKS 기억과 CI fixture 출력(t-1172)
+
+- [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40462675441/job/122050697112)은
+  m13 `task_memory_forgets_deleted_project`에서 새 일 하나의 `add / file / id=2`를 남겼다.
+  같은 로그의 Python suite는 `Ran 62 tests`·`OK (skipped=2)`다. 자식 fixture의 `owner`·`module::failed`
+  출력이 성공한 suite 안과 실패 annotation에 반복되므로 실제 Rust 실패와 구분한다.
+- 실제 Host/SQLite/프로젝트 파일로 세 순서를 직접 실행한다. 재생성한 채운 파일의 첫 관측은 기록 없음,
+  재생성한 빈 파일을 먼저 관측한 뒤 편집하면 정상 `add / file` 하나,
+  삭제 뒤 늦은 `tasks_pass`가 도착한 뒤 재생성하면 기록 없음이다. 수리 전 마지막 순서는
+  원본과 같은 `add / file / id=2`로 실패했고 앞의 두 순서는 통과했다.
+  원본에는 개별 tick 순서가 없어 당시 직접 원인을 둘 중 하나로 소급 확정하지 않는다.
+- `tasks_pass`는 TASKS 파일 lock 아래서 PROJECT.md가 살아 있는지 확인한다. 프로젝트 삭제는
+  같은 lock으로 rename·DB forget·기억 제거를 묶고 비동기 agent 정리 전에 놓는다.
+  없는 프로젝트를 빈 파일로 기억하는 재삽입과 삭제 전 관측이 삭제 후 기록되는 경쟁을 막는다.
+- 기존 m13 owner를 `aaa-host`의 `lifecycle::task_memory_tests::task_memory_forgets_deleted_project`로
+  대체했다. CLI·agent·Git 기동 대신 실제 제품 메서드의 관측 순서를 소유해 준비 경쟁을 없앤다.
+  기존 직접 편집 기록·삭제·동일 이름 재생성·첫 관측 무기록을 유지하고 이후 편집 기록도 확인한다.
+  추가 두 keeper가 필요한 이유는 정상 빈 파일 관측과 삭제된 프로젝트의 늦은 관측을 구별하기 위해서다.
+  고정 sleep·재시도·시한 확대·기대값 완화는 없다. 세 시험 합계는 약 0.4초다.
+- ci-local은 Python 종료를 기다린 뒤 모든 출력 줄에 `[python exit=N]`을 붙인다. 원본 python.log는
+  그대로 남긴다. 수집기는 exit=0 표지가 있는 줄만 제외하고, 같은 이름의 실제 Rust 실패·비정상/중단된
+  Python suite·표지가 없는 옛 로그는 보존한다. annotation 재출력도 같은 표지를 유지한다.
+  마지막 개행이 없는 자식 출력도 다음 Rust 실패와 붙지 않게 줄을 끝낸다.
+- 새 `ci::tests` 두 keeper는 gh 앞머리·병렬 단계 표지·7바이트 청크·annotation 중복과 같은 시험 이름의
+  실제 실패 보존, 비정상 종료·마지막 개행 없는 로그를 검사한다. 필요한 이유는 이름 제외나 전체 실패
+  집합 초기화가 실제 회귀를 숨기지 않게 하기 위해서다. 기존 CI 셸 keeper도 성공/실패 suite의 실제
+  종료 코드·원문 로그·마지막 개행 경계를 확인한다. 새 E2E 번호나 제품 의존성은 없다.
+- 참고 후보는 [Tokio Notify의 알림과 완료 구별](https://docs.rs/tokio/latest/tokio/sync/struct.Notify.html)
+  ([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))와
+  [CPython unittest runner의 바깥 결과](https://github.com/python/cpython/blob/3.13/Lib/unittest/runner.py)
+  ([PSF-2.0](https://github.com/python/cpython/blob/3.13/LICENSE))다.
+  완료 순서를 직접 소유하고 자식 출력과 바깥 suite 판정을 구별하는 원칙을 참고했다. 코드는 복사하지 않는다.
+- 부분 검증은 `cargo test --profile verify --locked -p aaa-host --lib -- lifecycle:: task_edit:: file_rev:: tasks::`,
+  `cargo test --profile verify --locked -p aaa-common --lib ci::`, CI Python 전체 suite,
+  두 crate의 all-targets strict clippy, `cargo test --profile verify --locked -p aaa --test deps`,
+  기존 m13의 프로젝트 수명/할 일 편집 keeper와 fmt·공개 검사다.
+  전체 ci-local·cross·main 병합과 push는 정규 착지 차례에서 수행한다.
+
 ## E2E16 누른 사이 resize의 링크 소실(t-1167)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40450356721/job/122011375425)의
@@ -3239,7 +3277,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `cargo test -p aaa-host --lib task_edit::`: 순수 함수 `apply`. 바꾼 블록 밖 바이트(CRLF 포함) 보존, 대상 블록만 충돌(다른 task 변경은 통과, 지운 task 고치기는 충돌), 저장 검사(`)` 끝 제목·`· t-` 끝·task 꼴 메모·중복 제목), 하위 묶음째 지우기·옮기기, 목록 동작, 되살리기, 파일 직접 차이 기록, 한 요청 안 고치고 옮기기(hash 따라가기), 원문 저장 홀로. 대상을 블록 hash 대신 제목으로 찾게 하면 `block_anchor_conflicts_only_on_the_target`·`update_then_move_in_one_request`가 실패한다.
 - `cargo test -p aaa-host --lib file_rev::`·`tasks::tests::suggestions_for_misread_lines`: 공용 저장 helper(판 대조·다시 읽기), 정리 제안 후보.
 - `cargo test -p aaa --test m13 task_edit_keeps_bytes_conflicts_and_logs`: CLI 더하기의 바이트와 `tasks` 사건, `--block` 충돌, 지운 task 고치기 충돌, 쓰기에 묻힐 뻔한 직접 편집 기록, 되살리기 한 번, 저장 검사, 다음 tick의 「파일 직접」 기록, 권한(worker 세션 보기 권한 거부, 확인되지 않은 셸·확인된 사람 셸 pane은 「그 프로젝트 coordinator만」, coordinator pane 허용). 확인된 pane을 허용하게 느슨히 하면 실패한다.
-- `cargo test -p aaa --test m13 task_memory_forgets_deleted_project`: 지운 프로젝트를 같은 이름으로 다시 만들면 첫 tick은 기억만 하고 「파일 직접」 기록을 지어내지 않는다(지울 때 기억을 남기면 실패).
+- `cargo test --profile verify --locked -p aaa-host --lib lifecycle::task_memory_tests`: 지운 프로젝트를 같은 이름으로 다시 만들면 첫 tick은 기억만 하고 「파일 직접」 기록을 지어내지 않는다(지울 때 기억을 남기면 실패).
 - `node --test web/test/tasksModel.test.mjs`: 메뉴·끌기 → host 동작, 폼 → 동작(상위는 고른 판의 블록 고정점, owner 목록 전 폼은 동작 없음), 「나중」 항목, 기록 차이.
 - `node web/e2e/web.e2e.mjs --spec 46-task-edit`: 폼으로 더하기·고치고 옮기기(파일 글 전체를 기대값과 바이트로 비교), 사람 이름 owner 거부, 정리 제안, 행 메뉴·끌기·Alt+↓·목록 이름 바꾸기·빈 목록 지우기·새 목록, 두 브라우저 충돌 창과 「최신으로 다시 열기」, 폼을 고치는 동안 다른 task가 파일에서 바뀌어도 저장됨(대상만 충돌), 지우기·되살리기 줄·기록 거르기·기록에서 되살리기, 저장만으로 thread가 시작되지 않음(`ticker tick` 울타리 뒤 흐름 사건·thread 수), 보기 권한 기기에 편집 UI 없음(host 판 판정이 끝난 `data-can-edit="false"` 뒤에 본다. 판정 전은 `pending`), 명령 팔레트 「할 일 더하기」(할 일 화면을 연 적 없는 기기), 휴대폰 「+」·전체 화면 폼·메뉴 시트, 패드 세로 오른쪽 시트(상자 좌표로 단언), 「나중」 할 일로 옮기기(「나중」 파일 그대로), 원문 편집의 판 대조. 저장이 끝났는지는 시간이 아니라 화면 `data-tasks-sha`가 새 판이 되고 `data-task-saving`이 없어진 뒤 그 판이 파일 sha와 같은지로 본다.
 - 같은 E2E 46의 「터치 입력 글자」는 Chromium·WebKit의 iPhone 세로/가로에서 검색·제목·메모·선택·새 목록·사람 이름·첨부 붙여넣기·원문·목록 이름의 실제 계산 글자가 16px 이상인지 본다(t-0530). 폼의 13px 덮어쓰기를 복원하면 실패한다. headless는 iOS 키보드의 초점 확대를 재현하지 않으므로 실제 iPhone에서 입력·키보드 내림 뒤 배율 유지 확인은 별도다.

@@ -110,7 +110,9 @@ step_test() {
   python_pid=$!
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
   wait "$python_pid" || python_code=$?
-  cat "$LOGS/python.log"
+  # 실패를 흉내 낸 fixture도 출력한다. 바깥 suite의 실제 종료 코드를 각 줄에 붙여
+  # 실패 수집기와 annotation 재출력에서도 성공한 Python 시험의 자식 출력을 구분한다.
+  awk -v code="$python_code" '{ print "[python exit=" code "] " $0 }' "$LOGS/python.log"
   # 긴 다른 쪽의 출력 뒤에도 실패한 검사를 CI annotation에서 찾을 수 있게 남긴다.
   if [ "$python_code" -ne 0 ]; then echo "FAIL python: exit=$python_code, 로그 $LOGS/python.log"; fi
   if [ "$rust_code" -ne 0 ]; then echo "FAIL test: exit=$rust_code, 로그 $LOGS/rust"; fi

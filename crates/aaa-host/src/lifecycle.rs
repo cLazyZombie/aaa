@@ -328,19 +328,25 @@ impl Host {
             .find(|t| !t.exists())
             .expect("빈 이름");
         std::fs::create_dir_all(&trash).map_err(internal)?;
-        std::fs::rename(&dir, &target)
-            .map_err(|e| internal(format!("{}를 휴지통으로 옮기지 못했다: {e}", dir.display())))?;
-        let json = serde_json::to_vec_pretty(&records).map_err(internal)?;
-        crate::orch::write_atomic(&target.join("aaa-records.json"), &json).map_err(internal)?;
-        self.hide_threads(&recs);
-        self.db.project_forget(project).map_err(internal)?;
-        self.accounts_bump();
-        // 같은 이름을 다시 만들어도 옛 앱 보기 경로가 새 thread 번호를 읽지 못한다.
-        self.view_caps.lock().unwrap().retain(|_, cap| cap.project != project);
-        // 작업 요약 표지도: 같은 이름의 새 프로젝트 t-0001이 옛 기억을 쓰지 않게(plan §8.259)
-        self.summary_marks.lock().unwrap().retain(|(p, _), _| p != project);
-        // 할 일 기억도: 같은 이름의 새 프로젝트 TASKS.md를 옛 글과 비교해 「파일 직접」 기록을 지어내지 않게(plan §8.311)
-        self.tasks_seen.lock().unwrap().remove(project);
+        // tasks_pass가 삭제 전 파일을 읽은 채 삭제 뒤 기억·기록을 다시 심지 않게 한다.
+        // 비동기 agent 정리 전에는 반드시 놓는다.
+        let task_lock = self.file_locks.of(&dir.join("TASKS.md"));
+        {
+            let _task_guard = task_lock.lock().unwrap();
+            std::fs::rename(&dir, &target)
+                .map_err(|e| internal(format!("{}를 휴지통으로 옮기지 못했다: {e}", dir.display())))?;
+            let json = serde_json::to_vec_pretty(&records).map_err(internal)?;
+            crate::orch::write_atomic(&target.join("aaa-records.json"), &json).map_err(internal)?;
+            self.hide_threads(&recs);
+            self.db.project_forget(project).map_err(internal)?;
+            self.accounts_bump();
+            // 같은 이름을 다시 만들어도 옛 앱 보기 경로가 새 thread 번호를 읽지 못한다.
+            self.view_caps.lock().unwrap().retain(|_, cap| cap.project != project);
+            // 작업 요약 표지도: 같은 이름의 새 프로젝트 t-0001이 옛 기억을 쓰지 않게(plan §8.259)
+            self.summary_marks.lock().unwrap().retain(|(p, _), _| p != project);
+            // 할 일 기억도: 같은 이름의 새 프로젝트 TASKS.md를 옛 글과 비교해 「파일 직접」 기록을 지어내지 않게(plan §8.311)
+            self.tasks_seen.lock().unwrap().remove(project);
+        }
         self.db.audit(actor, "project_delete", &format!("{project} → {}", target.display()));
         // 끝나지 않은 thread의 감시를 푼다(pane은 그대로, 참고도 닫지 않는다)
         for r in recs.iter().filter(|r| r.status != ThreadStatus::Resolved) {
@@ -839,3 +845,7 @@ mod tests {
 #[cfg(test)]
 #[path = "lifecycle/sweep_tests.rs"]
 mod sweep_tests;
+
+#[cfg(test)]
+#[path = "lifecycle/task_memory_tests.rs"]
+mod task_memory_tests;
