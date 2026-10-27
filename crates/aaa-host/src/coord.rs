@@ -801,6 +801,8 @@ impl Host {
             if auto {
                 self.archive_recover(project)?;
             }
+            // 할 일 사건보다 먼저 예약도 끝낸다. 응답·다른 기기의 다음 board가 같은 상태를 본다.
+            self.retire_task_queue(project, Some(&saved.before.text), &after.text)?;
             let now = aaa_common::util::now_ms();
             // ticker가 아직 못 본 직접 편집이 이 쓰기에 묻히지 않게 먼저 「파일 직접」으로 적는다
             let unseen = self

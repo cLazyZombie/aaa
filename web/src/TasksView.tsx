@@ -455,7 +455,7 @@ export function TasksView({
     if (picked && board && !found && !formDirty) setPicked(null);
   }, [picked, board, found, formDirty]);
   const shownCount = (model?.top.length ?? 0) + (model?.rest.length ?? 0);
-  const total = board?.tasks.length ?? 0;
+  const total = (board?.tasks.length ?? 0) + order.filter((id) => !board?.tasks.some((t) => t.id === id)).length;
   const queueApi = apiAtLeast(frontApi, [1, 85]);
   // 보류(plan §8.426)를 아는 host만 「보류」 칩을 둔다
   const parkApi = apiAtLeast(frontApi, [1, 105]);
@@ -755,7 +755,7 @@ export function TasksView({
         <HeadNote />
         <div className="term-title">
           <strong>할 일</strong>
-          <span className="muted">TASKS.md · {total}개</span>
+          <span className="muted">TASKS.md · {board?.tasks.length ?? 0}개</span>
         </div>
         <HeadMore />
       </header>
@@ -887,7 +887,7 @@ export function TasksView({
             </p>}
             {target !== null && board !== null && !linkedTask && <p className="tasks-empty" role="status" data-testid="task-missing">할 일 {target}: 없음</p>}
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
-            {board && total === 0 && <p className="tasks-empty">할 일이 없다</p>}
+            {board && total === 0 && shownCount === 0 && <p className="tasks-empty">할 일이 없다</p>}
             {board && total > 0 && shownCount === 0 && filter !== "reserved" && <p className="tasks-empty">맞는 할 일이 없다</p>}
             {board && model && filter === "reserved" && model.counts.reserved === 0 && (
               <p className="tasks-empty">예약이 없다</p>
@@ -1224,7 +1224,7 @@ function TaskRow({ t, row, compact, stage, overLimit, depth, state, selected, gr
       </button>
       <div className="task-row-chips">
         <span className="task-stage-chips"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></span>
-        {reserved && row.missing && <span className="task-chip task-problem">task 없음</span>}
+        {reserved && row.missing && <span className="task-chip task-problem">연결된 할 일 없음</span>}
         {row.kind === "task" && row.reservedKids > 0 && <span className="task-chip task-kids-reserved">하위 {row.reservedKids} 예약됨</span>}
         {flash && <span className="task-flash-note" data-testid="task-flash">↩ 원래 자리로 돌아옴</span>}
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}

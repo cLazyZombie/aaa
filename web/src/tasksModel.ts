@@ -156,9 +156,10 @@ export function repoKey(t: Pick<TaskView, "repo">): string {
 /** 저장소 거르기 고르기(전체 다음): project.toml 차례의 저장소, 작업 폴더, 목록에만 있는 이름, 정하지 않음. task 수를 함께 */
 export function repoChoices(board: TaskBoard | null): { key: string; label: string; n: number }[] {
   if (!board) return [];
-  const count = (k: string) => board.tasks.filter((t) => repoKey(t) === k).length;
+  const tasks = [...board.tasks, ...pendingQueue(board).filter((q) => !board.tasks.some((t) => t.id === q.task_id)).map((q) => q.task)];
+  const count = (k: string) => tasks.filter((t) => repoKey(t) === k).length;
   const keys = [...(board.repos ?? [])];
-  for (const k of [REPO_DIR, ...board.tasks.map(repoKey).filter((k) => k !== "")]) if (!keys.includes(k) && (k === REPO_DIR ? count(k) > 0 : true)) keys.push(k);
+  for (const k of [REPO_DIR, ...tasks.map(repoKey).filter((k) => k !== "")]) if (!keys.includes(k) && (k === REPO_DIR ? count(k) > 0 : true)) keys.push(k);
   const out = keys.map((k) => ({ key: k, label: k, n: count(k) }));
   if (count("") > 0) out.push({ key: "", label: "정하지 않음", n: count("") });
   return out;
@@ -217,9 +218,10 @@ export function taskList(board: TaskBoard, filter: TaskFilter, query: string, re
       hidden.push(t);
       continue;
     }
-    if (matches(t)) flush();
+    const show = taskMatches(t, filter, query, groups, true);
+    if (show) flush();
     const parent = live && t.parent !== null ? (byLine.get(t.parent) ?? null) : null;
-    if (matches(t)) top.push({ kind: "reserved", key: `q:${q.task_id}`, t, q, crumb: parent, missing: !live });
+    if (show) top.push({ kind: "reserved", key: `q:${q.task_id}`, t, q, crumb: parent, missing: !live });
     if (!live || filter === "reserved") continue;
     // 하위는 따로 예약한 것이 아니면 상위 밑에 함께(2A). 따로 예약한 하위는 제 차례에 보인다
     const kids = descendants(board, t);
@@ -245,7 +247,11 @@ export function taskList(board: TaskBoard, filter: TaskFilter, query: string, re
     mine: 0, unassigned: 0, waiting: 0, running: 0, parked: 0, reserved: 0, check: 0,
   };
   for (const t of scoped) counts[taskCategory(t, groups, reservedLines.has(t.line))] += 1;
-  return { top, rest, counts, inRepo: scoped.length };
+  // 연결이 실제로 끊긴 예약도 보이는 행이다. 예약 칩에서 숨기거나 0개로 세지 않는다.
+  const missing = pending.filter((q) => !byId.has(q.task_id) && inRepo(q.task));
+  counts.all += missing.length;
+  counts.reserved += missing.length;
+  return { top, rest, counts, inRepo: counts.all };
 }
 
 /**
