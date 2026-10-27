@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { aaa, until, step, webkit, domIs, shot, root, openSettings } from "../lib/harness.mjs";
+import { tapContextButton } from "../lib/diff-context-tap.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 let thread = "";
@@ -77,10 +78,14 @@ async function expandContext(p, name, refreshDuringKey = false) {
     const touch = await p.evaluate(() => matchMedia("(pointer: coarse)").matches);
     const more = diff.getByRole("button", { name: "위로 20줄 펼치기", exact: true }).first();
     if (touch) {
-      // 같은 DOM 호출에서 크기를 읽는다. visible 대기 뒤 교체되면 boundingBox는 null일 수 있다.
-      const box = await more.evaluate((el) => el.getBoundingClientRect().toJSON());
-      if (box.width < 44 || box.height < 44) throw new Error(`맥락 터치 단추 ${JSON.stringify(box)}`);
-      await more.tap();
+      // 실제 재조회로 옛 단추를 제거한 뒤 tap이 받은 최종 DOM에서 44px를 검증한다.
+      await tapContextButton(p, more);
+      const diagnostics = process.env.AAA_E2E_ARTIFACTS ?? root;
+      fs.mkdirSync(diagnostics, { recursive: true });
+      fs.writeFileSync(`${diagnostics}/42-context-tap-${process.pid}.json`, JSON.stringify(await p.evaluate(() => ({
+        touch: window.__contextTap.events,
+        reflow: { before: window.__contextReflow.before, after: window.__contextReflow.after, events: window.__contextReflow.events },
+      })), null, 2));
     } else if (refreshDuringKey) {
       const refresh = async () => {
         const response = p.waitForResponse((r) => {
@@ -127,6 +132,8 @@ async function expandContext(p, name, refreshDuringKey = false) {
   } catch (error) {
     await p.screenshot({ path: `${root}/context-failure.png` });
     fs.writeFileSync(`${root}/context-failure.json`, JSON.stringify({ reads, requests, ...await p.evaluate(() => ({
+      touch: window.__contextTap?.events,
+      reflow: window.__contextReflow,
       alert: document.querySelector('[role="alert"]')?.textContent,
       buttons: [...document.querySelectorAll('diffs-container')].flatMap((host) => [...host.shadowRoot.querySelectorAll('[data-expand-button]')].map((button) => {
         const r = button.getBoundingClientRect();

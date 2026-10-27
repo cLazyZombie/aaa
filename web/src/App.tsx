@@ -19,6 +19,7 @@ import { useWorkspaceData, workspaceRoute } from "./workspaceData";
 import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
+import { RecordSearch } from "./RecordSearch";
 import { ReportsView, type ReportRef } from "./ReportsView";
 import { TasksView, useSeenMine, useTaskBoard, type TaskAddRequest, type TaskFocusRequest } from "./TasksView";
 import { composerDrafts } from "./herdr/composerDraft.ts";
@@ -299,6 +300,7 @@ function storeSelection(sel: string): void {
 function selectedFromHash(): string | null {
   if (location.hash === "#projects" || location.hash.startsWith("#project=")) history.replaceState(history.state, "", "#threads");
   if (location.hash === "#threads") return "threads:";
+  if (location.hash === "#search") return "search:";
   if (location.hash === "#reports") return "reports:";
   if (location.hash === "#tasks") return "tasks:";
   if (location.hash === "#workspace" || location.hash === "#workspace=") return "workspace:";
@@ -315,6 +317,7 @@ function selectedFromHash(): string | null {
 function hashOf(sel: string | null): string {
   if (sel === null) return "";
   if (sel === "threads:") return "threads";
+  if (sel === "search:") return "search";
   if (sel === "reports:") return "reports";
   if (sel === "tasks:") return "tasks";
   if (sel === "asks:") return "asks";
@@ -918,6 +921,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [sel, threads]);
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
+  const searchShown=sel === "search:";
+  const [searchOpened,setSearchOpened]=useState(searchShown);
+  const beforeSearch=useRef<string | null>(null);
+  useEffect(()=>{if(searchShown)setSearchOpened(true);else beforeSearch.current=sel;},[searchShown,sel]);
   const workspaceShown = sel?.startsWith("workspace:") === true;
   const reportsShown = sel?.startsWith("reports:") === true;
   // 안 본 사용자 보고서 수와 목록이 다시 읽을 때(host `reports` 사건: 올림·열어 봄·지움, plan §8.256)
@@ -1482,6 +1489,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           shown={sidebarShown && !settingsOpen}
           onPanel={showPanel}
           badges={badges}
+          search={searchShown && !settingsOpen}
+          onSearch={()=>goSel(searchShown && !settingsOpen ? beforeSearch.current : "search:")}
           reports={reportsShown && !settingsOpen}
           onReports={toggleReports}
           unseenReports={unseenReports}
@@ -1585,8 +1594,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
-        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown, automationShown, workspaceShown]}>
+        <ErrorBoundary area="본문" resetKeys={[sel, searchShown, reportsShown, tasksShown, asksShown, automationShown, workspaceShown]}>
         {machineRoute && selectedMachine && <MachineInfoPanel key={selectedMachine.id} role={role} page machine={selectedMachine} onClose={closeMachineInfo} />}
+        {searchOpened && <RecordSearch shown={searchShown}/>}
         {workspaceShown && <WorkspaceView state={workspaceData} route={sel} onRoute={goSel} up={up} />}
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
@@ -1726,7 +1736,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }
           />);
         })}
-        {machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown ? null : currentThread ? (
+        {searchShown || machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}

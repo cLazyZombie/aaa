@@ -6,6 +6,8 @@ pub mod auto_mode;
 pub use auto_mode::*;
 pub mod workspace_metrics;
 pub use workspace_metrics::*;
+pub mod record_search;
+pub use record_search::*;
 pub mod task_queue;
 pub use task_queue::*;
 pub mod account;
@@ -142,6 +144,11 @@ pub fn typescript_bindings() -> String {
         TaskChoicePin::decl(&cfg),
         TaskReservation::decl(&cfg),
         ArchivedTask::decl(&cfg),
+        RecordKind::decl(&cfg),
+        RecordSearchQuery::decl(&cfg),
+        RecordHit::decl(&cfg),
+        RecordDocument::decl(&cfg),
+        RecordSearchPage::decl(&cfg),
         TaskHistorySearch::decl(&cfg),
         TaskArchiveFilter::decl(&cfg),
         TaskArchiveSort::decl(&cfg),
