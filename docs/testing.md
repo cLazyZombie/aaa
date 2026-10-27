@@ -36,6 +36,12 @@
   기존 m13의 프로젝트 수명/할 일 편집 keeper와 fmt·공개 검사다.
   전체 ci-local·cross·main 병합과 push는 정규 착지 차례에서 수행한다.
 
+## 배포 시작 전 중단 기록(t-1178, plan §8.511)
+
+- `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib rollout::`: 기존 14개 owner와 새 두 회귀를 실행한다. `disconnected_rollout_source_is_durable_and_same_id_never_restarts_it`는 끊긴 빌드 머신의 stopped 정본·status·같은 ID 조회/다른 요청 거부·단일 종료 알림을 지킨다. `all_targets_keep_disconnected_machine_and_stop_before_any_agent_request`는 연결된 소스와 끊긴 다른 대상에서 all 명단·대상별 하위 오류·웹 원문 가림·작업/감시 미실행·다음 시작 가능을 검사한다. 필요한 이유: CLI가 ID를 먼저 표시한 뒤 시작 검사에서 기록 없이 빠지는 회귀와 끊긴 대상을 몰래 제외하는 회귀를 막기 위해서다.
+- `nice -n 15 cargo test --profile verify --locked -p aaa --test deploy_start -- --nocapture`: 실제 격리 host·로컬 agent·사람 PTY CLI를 쓴다. 시험 DB에 끊긴 빌드 머신을 등록하고 존재하지 않는 후보 경로로 요청하므로 설치·서비스 호출을 하지 않는다. 접수 전/중단 안내·JSON 정본·status --wait의 실패 종료·형식 오류의 거절 안내·host 재시작 뒤 같은 정본·원인 로그를 확인한다. 필요한 이유: host 유닛만으로는 CLI 안내·종료와 실제 DB 재개를 확인하지 못한다. 사건과 자식 종료로 끝내며 새 안전 상한은 5초다.
+- 전체 ci-local·cross·착지는 정규 착지 차례에서 수행한다. 재시도·시한 확대·기대값 완화·운영 배포는 없다.
+
 ## E2E16 누른 사이 resize의 링크 소실(t-1167)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40450356721/job/122011375425)의
