@@ -149,6 +149,7 @@ fn drive_terminal_on(
     let started = Instant::now();
     let deadline = started + Duration::from_secs(60);
     let mut terminal = TerminalQueries::new(36, 120);
+    let mut trace = Vec::new();
     let mut seen = Vec::new();
     let mut answered = 0;
     let mut cursor = 0;
@@ -157,12 +158,19 @@ fn drive_terminal_on(
     while status.is_none() || !reader_done {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(TerminalEvent::Output(bytes)) => {
+                trace.push(format!("{:?} output_bytes={}", started.elapsed(), bytes.len()));
                 let visible = if status.is_none() {
                     terminal.feed(&bytes, &mut writer).unwrap()
                 } else {
                     terminal.feed(&bytes, &mut std::io::sink()).unwrap()
                 };
                 seen.extend(visible);
+                for stage in DIAGNOSTIC_STAGES {
+                    if String::from_utf8_lossy(&seen).contains(stage) && !trace.iter().any(|line| line.ends_with(stage))
+                    {
+                        trace.push(format!("{:?} stage={stage}", started.elapsed()));
+                    }
+                }
                 observe(child.child.as_mut(), &String::from_utf8_lossy(&seen));
                 if status.is_none()
                     && let Some((needle, keys)) = steps.get(answered)
@@ -170,14 +178,19 @@ fn drive_terminal_on(
                     let text = String::from_utf8_lossy(&seen[cursor..]);
                     if let Some(at) = text.find(needle) {
                         cursor += at + needle.len();
+                        trace.push(format!("{:?} answer={answered} bytes={}", started.elapsed(), keys.len()));
                         writer.write_all(keys.as_bytes()).unwrap();
                         writer.flush().unwrap();
                         answered += 1;
                     }
                 }
             }
-            Ok(TerminalEvent::ReaderDone) => reader_done = true,
+            Ok(TerminalEvent::ReaderDone) => {
+                trace.push(format!("{:?} reader-done", started.elapsed()));
+                reader_done = true
+            }
             Ok(TerminalEvent::ChildExited(result)) => {
+                trace.push(format!("{:?} child-exited", started.elapsed()));
                 result.expect("소유한 PTY 자식 종료 사건");
                 status = Some(child.child.wait().unwrap());
                 child.finished = true;
@@ -187,11 +200,16 @@ fn drive_terminal_on(
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => panic!("PTY 사건 채널이 종료/출력 완료 전에 닫혔다"),
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                save_diagnostic_trace(pid, &trace);
                 // 직접 띄운 실제 child handle만 종료한다. 다른 PID/이름으로 찾지 않는다.
                 let child_exit = status
                     .as_ref()
                     .map(portable_pty::ExitStatus::exit_code)
                     .or_else(|| child.child.try_wait().unwrap().map(|status| status.exit_code()));
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                if child_exit.is_none() && std::env::var_os("AAA_PTY_NATIVE_STACK").is_some() {
+                    eprintln!("native owned child stack:\n{}", native_stack::capture(child.child.as_ref()));
+                }
                 if child_exit.is_none() {
                     child.child.kill().unwrap();
                     child.child.wait().unwrap();
@@ -219,6 +237,7 @@ fn drive_terminal_on(
             }
         }
     }
+    save_diagnostic_trace(pid, &trace);
     let status = status.unwrap();
     drop(writer);
     reader.join().unwrap();
@@ -788,3 +807,98 @@ fn terminal_answers_cursor_query_before_application_prompt() {
 #[cfg(unix)]
 #[path = "terminal_lifecycle.rs"]
 mod terminal_lifecycle;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+#[ignore = "격리 단독 진단에서만 native debugger를 실행한다"]
+fn diagnostic_conpty_retains_keys_before_the_first_cooked_read() {
+    use windows_sys::Win32::{
+        Foundation::*,
+        System::{Console::*, Threading::*},
+    };
+    if std::env::var_os("AAA_DIAGNOSTIC_INPUT_CHILD").is_some() {
+        let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        let mut original = 0;
+        assert_ne!(unsafe { GetConsoleMode(handle, &mut original) }, 0);
+        let mode = (original | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT)
+            & !(ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT);
+        assert_ne!(unsafe { SetConsoleMode(handle, mode) }, 0);
+        // 합성 자식의 빈 입력 큐에서 시작해 ReadConsoleW 전에 응답을 받는다.
+        assert_ne!(unsafe { FlushConsoleInputBuffer(handle) }, 0);
+        println!("정확히 yes: ");
+        std::io::stdout().flush().unwrap();
+        assert_eq!(unsafe { WaitForSingleObject(handle, 5000) }, WAIT_OBJECT_0);
+        let mut records = [0; 256];
+        let mut count = 0;
+        let control = CONSOLE_READCONSOLE_CONTROL {
+            nLength: std::mem::size_of::<CONSOLE_READCONSOLE_CONTROL>() as u32,
+            nInitialChars: 0,
+            dwCtrlWakeupMask: (1 << 3) | (1 << 26),
+            dwControlKeyState: 0,
+        };
+        assert_ne!(
+            unsafe { ReadConsoleW(handle, records.as_mut_ptr().cast(), records.len() as u32, &mut count, &control) },
+            0
+        );
+        assert_eq!(&records[..count as usize], &[121u16, 101, 115, 13]);
+        println!("early-input-kept");
+        return;
+    }
+    let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
+    command.args([
+        "authorization::diagnostic_conpty_retains_keys_before_the_first_cooked_read",
+        "--exact",
+        "--ignored",
+        "--nocapture",
+    ]);
+    command.env("AAA_DIAGNOSTIC_INPUT_CHILD", "1");
+    let mut captured = false;
+    let (code, text) = drive_terminal(command, &[("정확히 yes", "yes\r")], |child, text| {
+        if !captured && text.contains("정확히 yes") {
+            captured = true;
+        } else {
+            return;
+        }
+        if text.contains("정확히 yes") {
+            let stack = native_stack::capture(child);
+            eprintln!("known gated child stack:\n{stack}");
+            assert!(stack.contains("WaitForSingleObject"), "{stack}");
+        }
+    });
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("early-input-kept"));
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod native_stack;
+
+const DIAGNOSTIC_STAGES: &[&str] = &[
+    "diag-plain-read-enter",
+    "diag-plain-read-exit",
+    "diag-review-stage consent-read",
+    "diag-review-stage outside-checked",
+    "diag-review-stage inspect-enter",
+    "diag-review-stage inspect-exit",
+    "diag-review-stage consent-ready",
+    "diag-issue-stage authority-enter",
+    "diag-issue-stage authority-exit",
+    "diag-issue-stage signed",
+    "diag-issue-stage output-create",
+    "diag-issue-stage output-sync",
+    "diag-issue-stage output-synced",
+    "diag-authority-stage directories",
+    "diag-authority-stage issuer-lock",
+    "diag-authority-stage key-generate",
+    "diag-authority-stage key-write",
+    "diag-authority-stage pin-write",
+    "diag-authority-stage public-key",
+];
+fn save_diagnostic_trace(pid: u32, trace: &[String]) {
+    let Some(dir) = std::env::var_os("AAA_PTY_DIAGNOSTIC_DIR") else { return };
+    let dir = PathBuf::from(dir);
+    if let Err(error) =
+        std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(format!("pty-{pid}.log")), trace.join("\n")))
+    {
+        eprintln!("PTY diagnostic save: kind={:?} os={:?}", error.kind(), error.raw_os_error());
+    }
+}

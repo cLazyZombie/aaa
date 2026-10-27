@@ -95,7 +95,9 @@ mod windows {
         let mut value = vec![0u16; 16384];
         let mut count = 0;
         show(question)?;
+        eprintln!("diag-plain-read-enter mode={mode}");
         let ok = unsafe { ReadConsoleW(handle, value.as_mut_ptr().cast(), value.len() as u32, &mut count, &control) };
+        eprintln!("diag-plain-read-exit ok={ok} count={count}");
         if ok == 0 {
             return Err(if unsafe { GetLastError() } == ERROR_OPERATION_ABORTED {
                 error("installation_cancelled", 130)

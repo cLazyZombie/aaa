@@ -111,8 +111,10 @@ impl Authority {
     pub(super) fn initialize(state: &Path) -> Result<Self> {
         let state = transaction::real_directory(state)?;
         let this = Self::at(&state);
+        eprintln!("diag-authority-stage directories");
         private::directory(&state.join("install")).map_err(Fault::io)?;
         private::directory(&this.root).map_err(Fault::io)?;
+        eprintln!("diag-authority-stage issuer-lock");
         let _lock = private::lock(&this.root.join("issuer.lock")).map_err(lock_fault)?;
         let key = this.root.join("issuer.pk8");
         let pin = this.root.join("issuer.pin");
@@ -120,17 +122,21 @@ impl Authority {
             (Err(a), Err(b))
                 if a.kind() == std::io::ErrorKind::NotFound && b.kind() == std::io::ErrorKind::NotFound =>
             {
+                eprintln!("diag-authority-stage key-generate");
                 let document = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
                     .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
                 let pair = Ed25519KeyPair::from_pkcs8(document.as_ref())
                     .map_err(|source_error| aaa_common::diagnostic::context(source_error, denied()))?;
+                eprintln!("diag-authority-stage key-write");
                 private::write(&key, document.as_ref()).map_err(Fault::io)?;
+                eprintln!("diag-authority-stage pin-write");
                 private::write(&pin, pair.public_key().as_ref()).map_err(Fault::io)?;
             }
             (Ok(_), Ok(_)) => {}
             // 중간 종료/기존 손상은 키 교체나 새 trust로 수리하지 않는다.
             _ => return Err(denied()),
         }
+        eprintln!("diag-authority-stage public-key");
         this.public_key()?;
         Ok(this)
     }
@@ -138,6 +144,7 @@ impl Authority {
     pub(super) fn open(state: &Path) -> Result<Self> {
         let state = transaction::real_directory(state)?;
         let this = Self::at(&state);
+        eprintln!("diag-authority-stage public-key");
         this.public_key()?;
         Ok(this)
     }
@@ -236,6 +243,7 @@ impl Authority {
         }
         let expires_at_ms = now.checked_add(lifetime).ok_or_else(denied)?;
         let pin = self.public_key()?;
+        eprintln!("diag-authority-stage issuer-lock");
         let _lock = private::lock(&self.root.join("issuer.lock")).map_err(lock_fault)?;
         if let Some(id) = id {
             let previous = self.issued(id)?;
@@ -414,6 +422,7 @@ impl Authority {
         }
         private::directory(&state.join("install")).map_err(Fault::io)?;
         private::directory(&this.root).map_err(Fault::io)?;
+        eprintln!("diag-authority-stage issuer-lock");
         let _lock = private::lock(&this.root.join("issuer.lock")).map_err(lock_fault)?;
         let pin_path = this.root.join("issuer.pin");
         match pin_path.symlink_metadata() {

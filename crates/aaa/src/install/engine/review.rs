@@ -51,19 +51,25 @@ pub(in crate::install) fn issue(
         if resume.is_none() && scope::all(plan)? != consent.scope() {
             return Err(Fault::conflict());
         }
+        eprintln!("diag-issue-stage authority-enter");
         let authority = Authority::initialize(Path::new(&plan.context.state_dir))?;
+        eprintln!("diag-issue-stage authority-exit");
         let now = aaa_common::util::now_ms();
         let authorization = match resume {
             Some(id) => authority.refresh(id, now, 5 * 60 * 1000)?,
             None => authority.issue(plan, consent.scope().to_vec(), now, 5 * 60 * 1000)?,
         };
+        eprintln!("diag-issue-stage signed");
         // 기존 out은 덮어쓰지 않는다. 생성 때부터 사용자 전용 ACL/mode를 가진다.
         private::parents(&parent).map_err(Fault::io)?;
+        eprintln!("diag-issue-stage output-create");
         let mut file = private::new_file(&output).map_err(Fault::io)?;
         serde_json::to_writer(&mut file, &authorization)
             .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
         file.flush().map_err(Fault::io)?;
+        eprintln!("diag-issue-stage output-sync");
         file.sync_all().map_err(Fault::io)?;
+        eprintln!("diag-issue-stage output-synced");
         drop(file);
         private::sync_parent(&output).map_err(Fault::io)?;
         let mut result = *crate::install::error("installation_authorized", 0);

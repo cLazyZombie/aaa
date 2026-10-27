@@ -121,7 +121,9 @@ pub(super) fn confirm(args: &Args, plan: &InstallPlan, resume: Option<&str>) -> 
     if answer != "yes" {
         return Err(error("installation_review_cancelled", 3));
     }
+    eprintln!("diag-review-stage consent-read");
     require_outside(state)?;
+    eprintln!("diag-review-stage outside-checked");
     if resume.is_none() {
         let check = InstallInvocation {
             choices: plan.choices.clone(),
@@ -129,11 +131,14 @@ pub(super) fn confirm(args: &Args, plan: &InstallPlan, resume: Option<&str>) -> 
             non_interactive: true,
             ..Default::default()
         };
+        eprintln!("diag-review-stage inspect-enter");
         let current = detect::inspect(&check)?.1;
+        eprintln!("diag-review-stage inspect-exit");
         if current != *plan || engine::preview(&current, None)? != preview {
             return Err(error("installation_content_conflict", 4));
         }
     }
+    eprintln!("diag-review-stage consent-ready");
     Ok(Consent { plan: plan.clone(), resume: resume.map(str::to_owned), scope: preview })
 }
 
