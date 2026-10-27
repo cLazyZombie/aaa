@@ -1,0 +1,7 @@
+2026-10-27T14:37:32.1899218Z
+2026-10-27T14:37:32.1900050Z thread 'automation::tests::idle_audit_is_read_only_on_web_and_local_cli_keeps_control' (3528) has overflowed its stack
+2026-10-27T14:37:32.2370714Z error: test failed, to rerun pass `-p aaa-host --lib`
+2026-10-27T14:37:32.2371348Z
+2026-10-27T14:37:32.2371518Z Caused by:
+2026-10-27T14:37:32.2371960Z   process didn't exit successfully: `D:/a/aaa/aaa/target\verify\deps\aaa_host-ab178c16efc17099.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)
+2026-10-27T14:37:32.2551274Z note: test exited abnormally; to see the full output pass --no-capture to the harness.

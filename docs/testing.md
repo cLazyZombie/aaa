@@ -1,3 +1,36 @@
+## Windows idle-audit의 스택 사용과 실패 수집(t-1208)
+
+- [원본 Windows job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985312)
+  (main `3ee2b329`)의 idle-audit owner가 `has overflowed its stack` 뒤
+  `0xc00000fd, STATUS_STACK_OVERFLOW`로 끝났다. 같은 코드의 Windows 격리 실행에서도 재현했다.
+  직접 만든 외부 디버거가 소유한 자식의 Windows debug event·DbgHelp stack walk를 읽었다.
+  시험 poll → `Host::call` → `Host::call_from` → 요청 가림 직렬화 → 할당 순서이며 재귀는 관측되지 않았다.
+  원본의 인접 stack pointer 차이는 시험 poll 757,008바이트·call 48,016바이트·call_from 1,115,312바이트다.
+  예외의 마지막 할당 함수 하나를 원인으로 단정하지 않는다.
+- 같은 Windows verify profile의 `-Zprint-type-sizes` 관측에서 시험 body future는
+  27,440→6,384바이트다. call future 23,456바이트·call_from future 23,152바이트는 그대로다.
+  future의 저장 크기와 poll의 실제 stack frame 크기는 다르다. 이 긴 owner의 요청별 future만
+  `Box::pin`으로 heap에 두어 await의 큰 상태·임시값 중첩을 줄인다. 기본 thread stack·runtime·
+  profile 최적화·제품 Front API는 바꾸지 않는다. 웹 Forbidden·오류 문구·매 요청 snapshot 불변,
+  Reader/Controller 읽기·다른 자동화 쓰기·Local 저장/토글/실행/삭제/복원·구형 변환 보호 단언은 유지한다.
+- `ci::tests::stack_overflow_keeps_the_thread_and_exit_kind_from_real_windows_output`은 원본 일곱 줄
+  fixture를 7바이트 조각으로 읽고 원문/gh 앞머리·긴 꼬리·annotation 중복·끝 개행 누락·다른 FAILED와의
+  공존을 검사한다. 필요한 이유: abort는 일반 FAILED를 내지 않으며, 다른 실패가 있어도 이 증거를 잃으면 안 된다.
+  `stack_overflow_exit_fallback_and_successful_or_quoted_output_are_distinct`는 PID 없는 Rust 표지,
+  이름 없는 Cargo 종료의 hex/unsigned/signed 코드와 성공 Python fixture·인용·잘못된 PID·일반 exit101을
+  구별한다. 필요한 이유: 이름을 추측하거나 상태 문자열 인용을 실제 스택 초과로 기록하는 오탐을 막는다.
+  두 keeper는 수리 전 실패했고 수리 뒤 통과한다. 기존 시험 삭제·시한/기대값 완화·고정 sleep은 없다.
+- 부분 확인은 macOS common 전체 67통과/보조1ignored·자동화 82통과·의존 경계2통과,
+  두 crate all-targets strict clippy와 fmt·공개 검사다. Windows는 같은 verify profile·기본 스택에서
+  자동화80개가2.66초에, CI 수집기13개가0.00초에 통과했다. OS별 cfg로 macOS 두 owner가 Windows 목록에서 빠진다.
+  Windows 서비스·예약 작업·Run·사용자 PATH·방화벽 기준이 모두 같고 시험 자식0개를 확인한 뒤 격리 폴더를 지웠다.
+  새 두 keeper는 개별5초 미만이며 새 E2E 번호는 없다. 전체 ci-local·cross·main 병합/push는 정규 착지 차례에 수행한다.
+- 참고 후보는 [Tokio test macro의 stack pinning](https://github.com/tokio-rs/tokio/blob/tokio-macros-2.7.2/tokio-macros/src/entry.rs)
+  ([MIT](https://github.com/tokio-rs/tokio/blob/tokio-macros-2.7.2/LICENSE))와
+  [Rust Windows stack overflow handler](https://github.com/rust-lang/rust/blob/master/library/std/src/sys/pal/windows/stack_overflow.rs)
+  ([MIT/Apache-2.0](https://github.com/rust-lang/rust/blob/master/COPYRIGHT))다.
+  macro의 저장 방식과 표준 런타임의 thread/PID 진단을 대조했고 외부 코드·의존성을 가져오지 않았다.
+
 ## E2E03·105 비동기 관측과 CI 웹 실패 수집(t-1184)
 
 - 원본 [macOS web-e2e job](https://github.com/cLazyZombie/aaa/actions/runs/40477028804/job/122097672768)

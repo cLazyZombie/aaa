@@ -255,6 +255,8 @@ pub struct FailureScan {
     completed: BTreeSet<String>,
     failed_steps: BTreeSet<String>,
     web_summary: Option<String>,
+    stack_overflows: BTreeSet<String>,
+    stack_overflow_exit: bool,
     line: Vec<u8>,
 }
 impl FailureScan {
@@ -285,8 +287,33 @@ impl FailureScan {
             .unwrap_or(&line);
         let body =
             body.split_once(' ').filter(|(stamp, _)| util::parse_iso(stamp).is_some()).map_or(body, |(_, rest)| rest);
+        let body = body.strip_prefix("[test] ").unwrap_or(body);
         let body = body.strip_prefix("[e2e] ").unwrap_or(body);
         let body = body.strip_prefix("##[error]").unwrap_or(body);
+        // Rust는 abort 때 FAILED를 출력하지 않는다. thread 표지와 Cargo 종료 유형을
+        // 따로 읽어 이름 없는 종료도 남기되, 인용문·성공한 Python fixture는 받지 않는다.
+        if let Some((name, rest)) = body.strip_prefix("thread '").and_then(|s| s.split_once("' ")) {
+            let rest = if let Some(pid) = rest.strip_prefix('(') {
+                pid.split_once(") ")
+                    .filter(|(pid, _)| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+                    .map(|(_, rest)| rest)
+            } else {
+                Some(rest)
+            };
+            if rest == Some("has overflowed its stack") && !name.is_empty() && self.stack_overflows.len() < FAILURES_CAP
+            {
+                self.stack_overflows.insert(format!("stack overflow: {}", clip(name)));
+            }
+        }
+        if let Some(exit) = body
+            .trim_start()
+            .strip_prefix("process didn't exit successfully: ")
+            .and_then(|s| s.rsplit_once(" (exit code: "))
+            .and_then(|(_, s)| s.strip_suffix(')'))
+        {
+            self.stack_overflow_exit |=
+                matches!(exit, "0xc00000fd, STATUS_STACK_OVERFLOW" | "0xc00000fd" | "3221225725" | "-1073741571");
+        }
         if let Some(rest) = body.strip_prefix("FAIL ") {
             // harness의 첫 ': ' 앞은 고정된 단계 이름이며 뒤의 오류·DOM·URL은 신원에 넣지 않는다.
             let name = rest.split_once(": ").map_or(rest, |(name, _)| name).trim();
@@ -346,6 +373,15 @@ impl FailureScan {
     }
     pub fn finish(mut self) -> Vec<String> {
         self.end_line();
+        if self.stack_overflows.is_empty() && self.stack_overflow_exit {
+            self.stack_overflows.insert("exit: STATUS_STACK_OVERFLOW".into());
+        }
+        // 보통 FAILED가 함께 있어도 abort 증거가 fallback others에 가려지면 안 된다.
+        for failure in self.stack_overflows {
+            if self.tests.len() < FAILURES_CAP {
+                self.tests.insert(failure);
+            }
+        }
         // 단계 이름이 있으면 요약은 중복이다. 이름이 잘려 없어져도 실패 수는 남긴다.
         if self.failed_steps.is_empty()
             && let Some(summary) = self.web_summary

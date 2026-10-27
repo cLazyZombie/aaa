@@ -1138,41 +1138,42 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
     use aaa_proto::{DeviceRole::*, ErrorCode, FrontRequest as R, FrontResponse};
     let p = Project::new();
     let h = demo_host(&p);
+    // Front 전체 dispatcher future를 각 await의 상태·임시값에 직접 넣으면 이 긴
+    // 시나리오의 poll frame과 call_from frame이 겹쳐 Windows 기본 스택을 소진한다.
+    // 요청별 future만 heap에 두고 같은 runtime·API·권한/파일 불변 단언을 유지한다.
+    let call = |role, actor: &'static str, req| Box::pin(h.call(role, actor, req));
     let dir = p.0.join("projects/demo");
     // 구형 프로젝트 fixture를 변환해 웹 읽기 전용 경계를 검사한다.
     legacy_followup(&dir);
     let (files, _) = h.automation_convert("demo", false, None, "local:cli").await.unwrap();
     assert!(files.contains(&"routines/.converted/pr-followup.md".to_string()));
     // 웹 보호는 프로젝트 생략을 채운 뒤 적용한다. 일반 변환의 기존 계약을 유지한다.
-    let converted = h
-        .call(
-            Controller,
-            "device:a",
-            R::AutomationConvert { project: String::new(), dry_run: false, plan_sha256: None },
-        )
-        .await
-        .unwrap();
+    let converted = call(
+        Controller,
+        "device:a",
+        R::AutomationConvert { project: String::new(), dry_run: false, plan_sha256: None },
+    )
+    .await
+    .unwrap();
     assert!(matches!(converted, FrontResponse::AutomationConverted { files, .. } if files.is_empty()));
     let text = "title='운영 점검'\n[on.schedule]\nevery='10m'\n[do.inbox]\ntext='점검한다'\n";
     let read = || R::AutomationRead { project: "demo".into(), name: "idle-audit".into() };
     // 이름은 웹 새 규칙에서도 보호한다. 기존 파일 유무·본문 표지에 기대지 않는다.
     let before = snapshot(&dir);
     assert_eq!(
-        h.call(Controller, "device:a", save("idle-audit", text, None)).await.unwrap_err().code,
+        call(Controller, "device:a", save("idle-audit", text, None)).await.unwrap_err().code,
         ErrorCode::Forbidden
     );
     assert_eq!(snapshot(&dir), before);
-    let doc = doc_of(h.call(Local, "local:cli", save("idle-audit", text, None)).await);
+    let doc = doc_of(call(Local, "local:cli", save("idle-audit", text, None)).await);
     let reason = doc.web_read_only_reason.as_deref().unwrap();
     assert!(reason.contains("시스템 자동화"));
     for role in [Reader, Controller] {
-        assert_eq!(doc_of(h.call(role, "device:a", read()).await).text, text);
+        assert_eq!(doc_of(call(role, "device:a", read()).await).text, text);
         let view = h.routines("demo").unwrap().into_iter().find(|r| r.name == "idle-audit").unwrap();
         assert_eq!(view.web_read_only_reason.as_deref(), Some(reason));
-        let source = h
-            .call(role, "device:a", R::RoutineRuns { project: "demo".into(), name: "idle-audit".into() })
-            .await
-            .unwrap();
+        let source =
+            call(role, "device:a", R::RoutineRuns { project: "demo".into(), name: "idle-audit".into() }).await.unwrap();
         assert!(matches!(source, FrontResponse::RoutineRuns { source: Some(s), .. } if s.text == text));
     }
     let before = snapshot(&dir);
@@ -1187,7 +1188,7 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
         R::AutomationApprove { project: project.clone(), name: name.clone(), approval_sha256: "unseen".into() },
         R::AutomationUnblock { project: project.clone(), name: name.clone(), batch: "unseen".into(), discard: true },
     ] {
-        let error = h.call(Controller, "device:a", req).await.unwrap_err();
+        let error = call(Controller, "device:a", req).await.unwrap_err();
         assert_eq!(error.code, ErrorCode::Forbidden, "{error:?}");
         assert_eq!(error.message, reason);
         assert_eq!(snapshot(&dir), before);
@@ -1195,17 +1196,17 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
     assert!(h.routine_runs("demo", &name).unwrap().is_empty());
     // 다른 운영 자동화로 범위를 넓히지 않는다. Controller의 기존 쓰기는 그대로다.
     for other in ["ci-watch", "rc-verify", "nightly-coverage", "git-backup", "idle-audit-copy"] {
-        let other = doc_of(h.call(Controller, "device:a", save(other, text, None)).await);
+        let other = doc_of(call(Controller, "device:a", save(other, text, None)).await);
         assert!(other.web_read_only_reason.is_none());
     }
-    h.call(Local, "local:cli", R::RoutineToggle { project: project.clone(), name: name.clone(), on: Some(false) })
+    call(Local, "local:cli", R::RoutineToggle { project: project.clone(), name: name.clone(), on: Some(false) })
         .await
         .unwrap();
-    h.call(Local, "local:cli", R::RoutineToggle { project: project.clone(), name: name.clone(), on: Some(true) })
+    call(Local, "local:cli", R::RoutineToggle { project: project.clone(), name: name.clone(), on: Some(true) })
         .await
         .unwrap();
     assert!(matches!(
-        h.call(
+        call(
             Local,
             "local:cli",
             R::AutomationRun { project: project.clone(), name: name.clone(), key: "cli-run".into() }
@@ -1214,8 +1215,8 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
         .unwrap(),
         FrontResponse::AutomationRan { accepted: true, .. }
     ));
-    let current = doc_of(h.call(Local, "local:cli", read()).await);
-    h.call(
+    let current = doc_of(call(Local, "local:cli", read()).await);
+    call(
         Local,
         "local:cli",
         R::AutomationDelete { project: project.clone(), name: name.clone(), expected_sha256: current.sha256 },
@@ -1227,9 +1228,9 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
     assert_eq!(trash[0].web_read_only_reason.as_deref(), Some(reason));
     let restore = R::AutomationRestore { project: project.clone(), id: trash[0].id.clone() };
     let before = snapshot(&dir);
-    assert_eq!(h.call(Controller, "device:a", restore.clone()).await.unwrap_err().code, ErrorCode::Forbidden);
+    assert_eq!(call(Controller, "device:a", restore.clone()).await.unwrap_err().code, ErrorCode::Forbidden);
     assert_eq!(snapshot(&dir), before);
-    h.call(Local, "local:cli", restore).await.unwrap();
+    call(Local, "local:cli", restore).await.unwrap();
     assert!(!h.routines("demo").unwrap().into_iter().find(|r| r.name == name).unwrap().enabled);
     // 파일 오류여도 표지를 보존한다. 옛 규칙 일괄 변환도 웹 쓰기 우회가 되지 않는다.
     p.write("projects/demo/automations/idle-audit.toml", "broken[");
@@ -1237,14 +1238,13 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
     std::fs::remove_file(dir.join("automations/idle-audit.toml")).unwrap();
     p.write("projects/demo/routines/idle-audit.md", "+++\nschedule='every 10m'\n+++\n점검한다\n");
     let before = snapshot(&dir);
-    let error = h
-        .call(
-            Controller,
-            "device:a",
-            R::AutomationConvert { project: String::new(), dry_run: false, plan_sha256: None },
-        )
-        .await
-        .unwrap_err();
+    let error = call(
+        Controller,
+        "device:a",
+        R::AutomationConvert { project: String::new(), dry_run: false, plan_sha256: None },
+    )
+    .await
+    .unwrap_err();
     assert_eq!(error.code, ErrorCode::Forbidden);
     assert_eq!(snapshot(&dir), before);
 }
