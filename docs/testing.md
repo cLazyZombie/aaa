@@ -1,3 +1,5 @@
+E2E12 연결 중 취소·재연결 검증은 [별도 기록](testing-terminal-socket.md)에 둔다.
+
 ## E81 Reader 사용 설정 준비·E109 종료 증거(t-1218)
 
 - [원본 macOS 웹 job](https://github.com/cLazyZombie/aaa/actions/runs/40584602186/job/122472617885)의

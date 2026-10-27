@@ -8,6 +8,29 @@ import { fileURLToPath } from 'node:url';
 import { browser, root, env, inTime } from './harness.mjs';
 import { threadPageTrace, threadTraceDocument } from './thread-page-trace.mjs';
 
+// Term 정리와 같은 CONNECTING → close 순서. 앱의 send는 한 번도 부르지 않는다.
+// Playwright 대체 소켓은 이 순서 뒤 passthrough를 열고 snapshot 수신에서 예외를 냈다.
+export async function threadConnectingPaneLifetime(page, pane) {
+  const failed = Promise.withResolvers();
+  const onError = error => failed.reject(error);
+  page.on('pageerror', onError);
+  try {
+    const result = await inTime(Promise.race([
+      page.evaluate(async pane => {
+        const url = new URL(`/api/v1/panes/${encodeURIComponent(pane)}/ws?flow=ack`, location.href);
+        url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const socket = new WebSocket(url);
+        const before = socket.readyState;
+        const closed = new Promise(resolve => socket.addEventListener('close', () => resolve(socket.readyState), { once: true }));
+        socket.close();
+        return { before, after: await closed };
+      }, pane),
+      failed.promise,
+    ]), 5000, '연결 중 취소한 pane 소켓의 종료');
+    assert.deepEqual(result, { before: 0, after: 3 });
+  } finally { page.off('pageerror', onError); }
+}
+
 export async function threadBodyLifetime() {
   let partial, complete = false;
   const server = http.createServer((req, res) => {

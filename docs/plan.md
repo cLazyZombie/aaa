@@ -8196,3 +8196,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 검색어는 공백으로 나눈 최대 16단어 AND·대소문자 무시·문자 그대로의 부분 일치다. SQL wildcard나 정규식이 아니다. 한글도 같은 규칙이며 짧은 순번 ID는 입력 0채움 차이를 정규화한다. 빈 검색어·1024바이트 초과는 거절한다. 일치 결과를 종류·프로젝트로 거른 뒤 시각/해시/프로젝트 내림차순으로 1~100건씩 준다. 커서는 검색 조건에 묶어 다른 조건에 재사용하지 못한다.
 - SQLite FTS5 trigram은 3글자 이상 검색 후보를 좁히고 `instr`로 모든 단어의 실제 부분 일치를 확인한다. 1~2글자는 같은 본문에서 직접 찾는다. 검색 때 보관 원장과 현재 파일을 대조해 host 내부의 재생성 가능한 색인을 원자 갱신한다. 이미 색인한 불변 보고 판의 파일은 재독하지 않는다. 같은 대상의 같은 본문은 합치되 원래 r 별칭도 검색한다. 질문·기록 정리/보고 판 삭제는 그 출처와 마지막 출처가 없어진 색인을 함께 지우며 프로젝트 rename/delete도 색인을 옮기거나 지운다.
 - 참고: [T3 본문 검색](https://github.com/pingdotgg/t3code/blob/main/docs/user/thread-sidebar.md)·[보관 범위 차이](https://github.com/pingdotgg/t3code/discussions/11819), [Orca 세션 검색](https://www.onorca.dev/docs/cli/reference#session-search). 두 프로젝트는 MIT다. 본문 문맥·명시한 검색 범위·커서/원문 구분을 참고하고 코드·의존성은 가져오지 않는다. aaa는 원문 판과 프로젝트 경계를 보존한다.
+
+### 8.528 E2E12 대체 소켓의 연결 중 취소 경합(t-1211)
+
+- `Term.tsx` 전송 누락 가설을 조사했으나 현재 전송은 모두 OPEN을 검사한다. 원래 events route를 건 실제 host 페이지에서 pane 소켓을 CONNECTING 중 취소하면 전송 없이 Playwright의 snapshot 수신 전달이 예외를 낸다. 실제 Chromium·WebKit 소켓은 같은 순서에서 정상 종료한다. 최초 간헐 실패 원문은 남아 있지 않아 당시 호출 위치까지 확정하지 않는다.
+- E2E12는 `routeWebSocket`을 빼고 관측하는 실제 events 소켓을 닫아 재연결한다. 기존 HTTP 보류·두 독립 완전 목록·실제 DOM 검사는 유지하고, 연결 중 pane 취소 keeper를 두 엔진의 기존 단계에 더한다. 착지 기준 main §8.527·FRONT_API 1.140 다음 §8.528·FRONT_API 1.141을 쓴다. wire·AGENT_LINK·의존성·E2E 번호와 E30·35의 두 파일 분할은 유지한다. 재현과 참고 구현·라이선스는 docs/testing-terminal-socket.md에 적는다.
+
+- 첫 착지의 이전 문서 응답 선행 실패는 gate를 reload 문서에 묶고 그 문서의 events open·close 사건으로 disconnect를 끝내도록 수리한다. 두 사건 순서 keeper가 수리 전 실패/후 통과를 보이며 기존 시한·목록 단언을 유지한다.
