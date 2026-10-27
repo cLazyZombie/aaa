@@ -12,7 +12,7 @@ import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "./herdr/sheets.ts";
 import { useSheetHistory } from "./herdr/sheetHistory.ts";
 import { GROUP_WORD } from "./sidebarModel";
-import { cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryModel, summaryStale, whoWord } from "./summaryCard";
+import { cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryModel, summaryStale, summaryUpdates, whoWord } from "./summaryCard";
 import { useNowSecond } from "./nowClock";
 import "./ThreadSummary.css";
 
@@ -76,14 +76,16 @@ function Status({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   );
 }
 
-function Activity({ t }: { t: ThreadView }) {
+function Activity({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   const now = useNowSecond();
   const { activity, time } = summaryActivity(t, now);
   const model = summaryModel(t);
+  const updates = summaryUpdates(t, v, now);
   return (
     <div className="summary-activity" data-testid="summary-activity">
       <p className="summary-model" data-testid="summary-model" title={model.title}>{model.text}</p>
       <p title={activity}>{activity}</p>
+      <p className="summary-dim" data-testid="summary-updated" title={updates}>{updates}</p>
       <p className="summary-dim" data-testid="summary-time">{time}</p>
     </div>
   );
@@ -146,7 +148,7 @@ export function SummaryCard({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
           )}
         </>
       )}
-      <Activity t={t} />
+      <Activity t={t} v={v} />
       <Status t={t} v={v} />
     </div>
   );
@@ -207,7 +209,7 @@ export function SummaryDetail({ t, v }: { t: ThreadView; v: ThreadSummaryView })
           </ul>
         </section>
       )}
-      <Activity t={t} />
+      <Activity t={t} v={v} />
       <Status t={t} v={v} />
       <div className="summary-folds">
         <Fold icon={<CircleCheck aria-hidden="true" />} title="정한 것" count={decided.length}>

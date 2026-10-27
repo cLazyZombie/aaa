@@ -4650,3 +4650,11 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - E37은 같은 native 목록 click·선택·pane 수명으로 대화 위치를 검사하되 해당 context의 workspace drawer 전환만 즉시 처리한다. 정상 drawer 전환·쓸기·기록/취소 계약은 E39의 기존 `drawerNavigation`이 맡는다. 대화의 실제 두 frame·scroll·모든 HTTP 쪽·2400건·1px·25ms CPU·2초 refresh 정책은 그대로다. 시계 모형이나 단계 분리는 추가하지 않는다.
 - 자료 선택 owner는 같은 부모 폴더 준비만 한 번 수행하고 원래2390개 frame을 각각 별도 실제 파일로 만든다. sparse 크기·실제2399경로·200MiB 선택 상한·링크/근거 우선순위·모든 원래 단언을 유지한다. 본문 hash의 실제 읽기는 기존 collect owner가 계속 검사한다. 이관 hash는1MiB 읽기 용량을 유지하는 BufReader로 EOF까지 실제 바이트를 처리하며 작은 파일마다1MiB Vec를 명시적으로0으로 채우는 작업을 없앤다.
 - [Playwright fixture](https://playwright.dev/docs/test-fixtures)·[context 내 style](https://playwright.dev/docs/api/class-page#page-add-style-tag)(Apache-2.0), [libuv FS event](https://docs.libuv.org/en/v1.x/fs_event.html)(MIT)·[notify kqueue](https://github.com/notify-rs/notify/blob/main/notify/src/kqueue.rs)(crate선언 CC0-1.0)·[Tokio AsyncFd](https://docs.rs/tokio/latest/tokio/io/unix/struct.AsyncFd.html)(MIT), [표준 BufRead](https://doc.rust-lang.org/std/io/trait.BufRead.html)(MIT/Apache-2.0)를 대조했다. 의미별 fixture 수명·파일/부모의 함께 관측·사건 뒤 실제 내용 확인·표준 스트림 경계 원칙을 따르며 외부 코드나 새 의존성을 가져오지 않았다.
+
+## 고비별 진행 목록과 진행 보고 시각(t-1179, §8.512)
+
+- 기존 `brief_text::tests`는 모든 harness용 brief 구성과 공유 진행 보고 안내를 확인한다. 지침 문자열의 모양만 반복 확인하는 별도 시험은 추가하지 않는다.
+- 웹 `summaryCard`의 새 행동 시험은 오래된 요약/최신 진행 보고의 나이 분리, 요약 재갱신, 시각/보고 누락과 음수 시차를 확인한다. 필요한 이유: 활동 보고만 갱신됐는데 작업 목록도 최신으로 오해하거나 없는 시각을 만들어 표시하는 회귀를 막는다.
+- 기존 E2E28의 desktop 진행 owner는 실제 pane CLI의 진행률을 바꾸고 파일의 report hash·목록 시각·완료 개수가 그대로인지 검사한다. 실제 파일을 고친 뒤 카드 단계가 갱신되는 기존 단언도 유지한다. 브라우저 시계만 진행해 오래된 표시를 확인하며 고정 sleep은 쓰지 않는다. Chromium 320px·WebKit 390px Reader는 같은 갱신 시각 표시와 기존 읽기 전용·긴 이름·권한 계약을 확인한다.
+- 기본 hover 카드의 줄 수는 추가한 갱신 시각 한 줄을 포함해 10개다. 기존 한 줄 표시·높이 280px 상한과 목표/상태/활동 단언은 유지한다. 새 E2E 번호·시험 삭제·재시도·시한 확대는 없다.
+- 부분 확인: 웹 유닛 전체·타입/번들, host `brief_text::tests`와 proto 유닛, 두 crate strict clippy·의존 경계·fmt·공개 검사, 저장소 고정 Playwright 1.64.1과 공용 캐시의 E2E28 전체다. 전체 ci-local과 병합·push는 정규 착지 차례에서 수행한다.

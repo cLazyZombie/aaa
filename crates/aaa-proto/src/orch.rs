@@ -1833,6 +1833,7 @@ pub fn progress_guidance(prefix: &str) -> String {
          `{prefix} report --percent 25 --activity '코드 읽기'`\n\
          `{prefix} report --unknown --activity '일 가늠'`\n\n\
          새 일을 시작할 때, 의미 있는 고비를 넘긴 뒤, 활동이 바뀔 때, 막혔을 때, 그리고 내용 있는 답을 하기 전마다 보고한다. 사용자에게 무언가 물으려고 멈출 때는 늘 `--activity 'Waiting for you'`로 보고한다(이 말 그대로). 일하는 동안에는 자연스러운 도구 경계에서 1분에 한 번쯤 보고한다. 알림을 채우려고 진행을 지어내지 않는다. 일이 더 있다는 걸 알게 되면 어림을 낮춘다. 범위가 분명하지 않은 동안은 `--unknown`을 쓴다.\n\n\
+         thread에서는 작업 시작 때 brief가 지정한 report.md에 `## 진행` 목록을 쓰고, 진행 목록 항목을 끝내거나 시작할 때마다 그 절만이라도 다시 쓴다. 턴의 마지막 답변까지 미루지 않고 위 진행 보고 명령도 함께 실행한다. 완료한 항목은 원래 순서에 남기고 표지·Report·Next 등 다른 절은 보존한다. 진행 보고 명령만으로는 작업 요약 카드의 목록이 갱신되지 않는다.\n\n\
          `--percent 100`은 요청받은 결과 전체와 그 확인이 다 끝났을 때만 쓴다. `Done`으로 보인다. 그 뒤 일을 더 받으면 새로 낮은 백분율을 보고한다.\n\n\
          외부 푸시(웹 푸시·webhook)는 host가 그 coordinator pane으로 검증한 사용자 post만 보낸다. thread 보고·확인창·세션·머신 사건은 앱 안 알림과 coordinator inbox에만 남는다. coordinator는 맡긴 일 전체와 확인이 끝났을 때, 또는 사람이 직접 해야 하는 인증·터미널 승인·GUI 조작·사용자 결정이 남았을 때만 보낸다. 중간 착지·진행에는 보내지 않는다. thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 푸시를 보내지 않는다. thread는 report.md 첫 줄에 `[완료]`, `[결정 필요]`·`[검수 대기]`·`[확인 필요]`, `[착지]`·`[진행 중]`으로 이를 구분한다. 자동 검증·다른 agent 검토는 사람 대기가 아니다. coordinator는 사용자에게 질문하며 멈추기 전에 위 Waiting for you 보고와 coordinator 안내의 `post user --request --needs-user --topic user-action`를 함께 남긴다. 전체 완료 알림은 `post user --notice --topic task-complete`로 한 번 보낸다.\n\n\
          이 pane의 맨 위 agent만 보고한다. subagent와 도우미는 보고하지 않는다. report 명령은 끝날 때까지 기다리고 배경으로 돌리지 않는다."

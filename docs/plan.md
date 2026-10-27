@@ -8139,3 +8139,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 같은 ID 재전송은 기존 기록만 반환한다. 상태 조회와 host 재시작에서도 원인·대상·작업 ID를 보존한다. 로그와 coordinator 정본에 빌드/대상 구분·머신 이름·하위 오류를 남기며 웹은 기존 표시용 요약만 받는다. 형식/권한 오류와 busy 거절은 접수 전 오류 그대로다. FRONT_API·AGENT_LINK·저장 형식은 유지한다.
 - CLI는 송신 전의 요청 ID를 접수 전으로 표시하고, 응답 뒤 접수/중단/host 거절을 구분한다. 시작 응답이 중단이면 JSON 정본을 유지하며 종료 코드 1로 끝난다. 응답 유실은 같은 ID로 먼저 조회한다. 중단을 확인하고 원인이나 대상/후보를 고친 뒤 새 ID로 시작하며 자동 재시도하지 않는다.
 - 참고 후보는 [kubectl create](https://github.com/kubernetes/kubectl/blob/master/pkg/cmd/create/create.go)와 [Argo Rollouts controller](https://github.com/argoproj/argo-rollouts/blob/master/rollout/controller.go)(각 Apache-2.0)다. 생성 응답과 성공 출력을 구분하고 실패 상태/원인을 기록하는 원칙을 참고했으며 외부 코드·의존성은 추가하지 않는다.
+
+
+### 8.512 thread 고비별 진행 목록과 진행 보고 표시(t-1179)
+
+- thread brief는 시작 때 `report.md`의 `## 진행`을 쓰고 항목을 시작·완료할 때마다 그 절만이라도 갱신하도록 명시한다. 턴의 마지막 답까지 미루지 않고 `aaa report`도 함께 실행한다. 완료 항목의 순서와 표지·Report·Next 등 다른 절을 보존한다. Claude SessionStart와 모든 harness의 brief가 공유하는 진행 보고 안내에도 같은 규칙을 넣는다. 진행 명령만으로 목록이 갱신되는 것으로 오해하지 않게 한다.
+- 기존 host의 진행 사건과 웹 요약 카드·상세의 활동/퍼센트 실시간 표시는 유지한다. 목록을 오래 갱신하지 않아도 최신 진행 보고가 함께 보이며, `요약 갱신 3분 전 · 진행 보고 5초 전`처럼 각각의 나이를 표시한다. 요약은 기존 `at_ms`, 진행 보고는 host가 받은 `progress_at_ms`를 사용한다. 없는 시각·보고는 없음으로 표시하며 활동만으로 단계 완료를 추측하지 않는다. 목표만 바뀌어도 요약 시각은 바뀌므로 목록 자체의 갱신 시각으로 부르지 않는다. 새 타이머·재조회·프로토콜·저장값은 추가하지 않고 기존 화면 시계를 사용한다.
+- 기존 E2E28에서 실제 pane의 CLI 보고만 바뀔 때 report hash·목록 시각·완료 개수가 그대로인지 검사하고, 이어 실제 report 파일 갱신으로 열린 카드의 단계를 바꾸는 기존 계약을 유지한다. 브라우저 시계로 오래된 표시를 확인하며 Chromium 320px·WebKit 390px Reader에도 갱신 시각을 보인다.
+- 참고: [herdr-projects v0.2.35 progress](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/progress.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE))의 고비별 보고·hook/brief 공유 안내, [herdr v0.9.5 sidebar](https://github.com/herdrdev/herdr/blob/v0.9.5/src/client/shell/sidebar.rs)([Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.9.5/LICENSE))의 세션 상태 표시, [herdr-web-ui Sidebar](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Sidebar.tsx)([MIT](https://github.com/devswha/ovis/blob/main/LICENSE))의 계획 완료 개수 표시를 확인했다. 활동과 계획 상태를 구별하는 기존 구조를 따르며 코드·의존성을 가져오지 않는다. 참고 프로젝트에는 aaa의 report 진행 요약 갱신 지침이 없어 그 부분은 aaa에 맞춰 보강한다.
