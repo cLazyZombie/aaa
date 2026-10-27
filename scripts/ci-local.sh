@@ -219,7 +219,7 @@ collect() {
   fi
   # job 로그는 로그인해야 받지만 annotation은 누구나 읽는다.
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    { grep -E 'FAIL|panicked|^error' "$log" | tail -8; tail -5 "$log"; } |
+    python3 scripts/ci_failure_excerpt.py "$log" |
       awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); gsub(/\r/, "%0D"); print }' |
       sed "s/^/::error title=ci-local $s::/"
     echo
