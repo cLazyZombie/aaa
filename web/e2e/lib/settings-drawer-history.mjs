@@ -57,8 +57,8 @@ function pairSettingsPage(browser, diagnostics, close, options = {}) {
   });
 }
 
-// 실제 threads 응답을 메뉴 열림 뒤까지 보류한다. 자동 첫 선택과 클릭 준비가 겹치던
-// 순서를 매번 만들며, native 클릭·앱의 첫 선택·30초 locator 상한을 그대로 쓴다.
+// 실제 threads 응답을 메뉴 열림 뒤까지 보류한다. 첫 전체 목록 전에는 pane 행이 없으므로
+// 메뉴만 먼저 열고 목록 반영 뒤 실제 줄을 누른다. 자동 첫 선택이 메뉴를 닫는지도 그대로 검사한다.
 export async function settingsPanePreparation(browser, diagnostics) {
   let release, requested, delivered;
   const gate = new Promise((done) => { release = done; });
@@ -78,16 +78,22 @@ export async function settingsPanePreparation(browser, diagnostics) {
   });
   try {
     await inTime(seen, 20_000, "첫 threads 응답 보류");
-    await domIs(p, "threads 없이 받은 pane 행", () => !!document.querySelector('[data-testid="pane-bk1"]'));
-    const choosing = inList(p, "pane-bk1");
-    // 메뉴 열림 관측이 먼저 실패해도 클릭 promise의 늦은 거부를 놓치지 않는다.
-    choosing.catch(() => {});
-    await p.locator("#workspace-drawer.is-open").waitFor();
+    await domIs(p, "첫 전체 목록 전 로딩과 미확정 pane 숨김", () =>
+      Number(document.querySelector(".app")?.dataset.threadsSync) === 0 &&
+      !!document.querySelector('[data-testid="work-list-loading"]') &&
+      !document.querySelector('[data-testid="pane-bk1"]'));
+    await openDrawer(p);
     diagnostics?.phase("메뉴 열림 뒤 첫 threads 응답 전달");
     release();
     await inTime(sent, 20_000, "첫 threads 응답 전달");
-    await choosing;
+    await domIs(p, "첫 전체 목록 반영 뒤 pane 행", () =>
+      Number(document.querySelector(".app")?.dataset.threadsSync) > 0 &&
+      !!document.querySelector('[data-testid="pane-bk1"]'));
     await painted(p);
+    if (!await drawerOpen(p)) throw new Error("첫 threads 목록 반영이 사용자가 연 메뉴를 닫았다");
+    // inList로 메뉴를 다시 열면 자동 첫 선택의 닫기 회귀를 숨긴다. 열린 메뉴의 실제 줄만 누른다.
+    diagnostics?.phase("첫 전체 목록 반영 뒤 bk1 클릭");
+    await p.getByTestId("pane-bk1").click();
     await domIs(p, "늦은 threads 뒤 bk1 선택", () => document.querySelector('[data-testid="pane-bk1"]')?.getAttribute("aria-current") === "true");
     console.log(`설정 준비 ${browser.browserType().name()}: 메뉴 열림 뒤 threads 전달·bk1 클릭 완료`);
   } catch (error) {

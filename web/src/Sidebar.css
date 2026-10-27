@@ -9,6 +9,9 @@
 /* 프로젝트 머리는 herdr-projects처럼 굵게(grouping.rs: 머리 줄은 bold) */
 .project-name { font-weight: var(--fw-semibold); color: var(--text-strong); }
 
+.sidebar-load-state { margin: 0; padding: var(--space-2) var(--side-box); color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.sidebar-load-state.is-error { color: var(--status-blocked); }
+
 /* 끝난 pane: 이름을 흐리게(참고의 오래된 줄처럼 상태는 말하지 않는다) */
 .workspace.is-ended .workspace-name { color: var(--text-dim); }
 

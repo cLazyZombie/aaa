@@ -1,5 +1,5 @@
 import { AutoModeProvider, AutoModeMenu } from "./AutoMode";
-import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
+import { diagnosticReason, ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 import { MachineInfoPanel } from "./MachineInfoPanel";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
@@ -448,6 +448,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   const [threadsSync, setThreadsSync] = useState(0);
+  const [threadsError, setThreadsError] = useState<string | null>(null);
   const threadReload = useRef(new ThreadReload());
   const [automationBadge, setAutomationBadge] = useState(0);
   const [automationIds, setAutomationIds] = useState<Map<string, { project: string; name: string; short_id: string }>>(new Map());
@@ -715,6 +716,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           if (on) { loadAutomations(); }
           if (on) {
             const read = threadReload.current.begin();
+            setThreadsError(null);
             readThreadPages(call)
               .then((threads) => {
                 const next = threadReload.current.finish(read, threads);
@@ -731,8 +733,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                 linkedOnce.current.threads = true;
                 setThreads(next);
                 setThreadsSync((n) => n + 1);
+                setThreadsError(null);
               })
-              .catch(ignoredFailure("App.tsx:717", () => threadReload.current.failed(read)));
+              .catch((error: unknown) => {
+                threadReload.current.failed(read);
+                logIgnoredFailure(error, "thread 전체 목록 읽기");
+                if (!linkedOnce.current.threads) setThreadsError(diagnosticReason(error));
+              });
           }
         },
         (t) => {
@@ -1516,6 +1523,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           connected={up}
           panes={panes}
           threads={shownThreads}
+          threadsLoaded={threadsSync > 0}
+          threadsError={threadsError}
           selected={sel}
           canControl={canControl}
           agentOf={agentOf}

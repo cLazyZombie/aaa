@@ -8122,3 +8122,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 누락은 기존 inbox의 `coordinator-check / question card missing` 한 건과 원인 audit로 남긴다. 해당 coordinator의 쉼·빈 입력창을 확인하면 일반 nudge의 idle/quiet 유예 없이 질문 카드 생성 명령을 안내한다. 사용자 초안·권한 창·작업 중 상태를 보호하며 프로젝트 nudge 설정과 같은 묶음 1회 전송 원칙을 유지한다. 턴을 막거나 카드를 자동 생성하거나 사용자에게 외부 푸시하지 않는다. 같은 완료 사건·역순 재전송은 pane별 영속 표지로 거른다.
 - 판정은 보수적인 문구 규칙으로, 자연어 의도를 완전히 판별하지 않는다. 최종 답은 앞 16,000자, 한 순회의 완료 기록은 최근 32건으로 제한한다. 명시적 완료 기록이 없거나 host 시작 전 끝난 과거 턴은 검사하지 않는다. 검사 실패에는 pane·단계·원문 오류를 로그에 남긴다. FRONT_API와 웹 화면은 바꾸지 않는다.
 - 비교한 OSS 후보는 [Codex의 완료 사건과 별칭](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)([Apache-2.0](https://github.com/openai/codex/blob/main/LICENSE))과 [Goose의 Stop hook 연속 실행 검사](https://github.com/aaif-goose/goose/blob/main/crates/goose/src/agents/agent.rs)([Apache-2.0](https://github.com/aaif-goose/goose/blob/main/LICENSE))다. 완료 사건과 사용자 답변을 구별하고 hook 재진입으로 턴을 막지 않는 원칙을 참고했다. [Claude Stop 공식 계약](https://code.claude.com/docs/en/hooks#stop)도 대조했으며 외부 코드·의존성은 가져오지 않는다.
+
+### 8.510 첫 작업 목록의 thread 소속 대기(t-1153)
+
+- machine/pane state와 thread HTTP 목록은 따로 도착한다. 초기 빈 Map만으로 thread 소속이 없다고 판정하면 실제 thread pane도 경로를 붙인 「기타」 줄로 잠시 나타난다. §8.218의 늦은 목록/새 사건 보존과는 다른, 첫 전체 목록 전의 표시 경계다. 운영 당시 요청 순서를 기록한 자료는 없어 과거 화면의 개별 전송 순서까지 확정하지 않는다.
+- 기존 `threadsSync`가 한 번도 완료되지 않았으면 소속 미확정 pane을 일반/고정 「기타」 줄로 내보내지 않고 「작업 목록을 불러오는 중…」을 표시한다. 이미 아는 coordinator와 thread 사건의 줄은 유지한다. 전체 페이지를 모두 읽은 뒤 실제 빈 목록도 완료로 인정하며 일반 pane을 표시한다. 이름·role·경로로 소속을 추측하지 않는다.
+- 첫 조회 실패는 공개 오류 원인과 함께 표시하고 미확정 pane은 계속 숨긴다. 재연결 조회가 시작하면 오류를 지우며, 한 번 완료한 분류는 재연결/조회 실패 중에도 유지한다. 자동 재시도나 새 서버 상태는 추가하지 않는다. FRONT_API·AGENT_LINK·의존성은 유지한다.
+- 기존 E2E24에 실제 host 응답 보류/해제, 빈 목록의 일반 pane 표시, 첫 조회 오류와 새로고침 복구, Chromium 1280px·WebKit 390px의 이미 열린 thread 첫 분류를 더한다. 기존 adopt의 늦은 목록 회귀도 유지하며 thread 사건 하나가 전체 목록 완료를 뜻하지 않는지 확인한다.
+- 참고 후보는 [React Suspense](https://react.dev/reference/react/Suspense)([MIT](https://github.com/facebook/react/blob/main/LICENSE))와 [TanStack Query의 조회 상태](https://tanstack.com/query/latest/docs/framework/react/guides/queries)([MIT](https://github.com/TanStack/query/blob/main/LICENSE))다. 최초 대기/빈 성공/오류를 구별하고 재조회 때 기존 자료를 보존하는 원칙을 따르며 코드·의존성을 가져오지 않는다.
+- 87회차의 E2E39 준비는 첫 목록 보류 중 pane 행을 기다려 새 표시 계약과 대기 순환을 만들었다. 메뉴는 먼저 열되 전체 목록 반영 뒤 행을 기다리고, 메뉴가 그대로 열려 있는지 확인한 뒤 직접 줄을 누르도록 준비를 맞춘다. 자동 첫 선택이 메뉴를 닫는 회귀·실제 클릭·선택 단언·상한은 유지한다. 다른 thread 응답 gate를 전수 확인했으며 같은 pane 선행 대기는 추가로 없었다. 제품 계약·protocol·E2E 번호는 바꾸지 않는다.
