@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { aaa, step, browser, webkit, pairPage, until, inList, shot, root, sentCount, sentFrames, waitOutput, inTime } from "../lib/harness.mjs";
 import { prepare, go, frames } from "../lib/chat-retention.mjs";
+import { returnDiagnostics } from "../lib/return-diagnostics.mjs";
 import { scrollHistoryWhenReady } from "../lib/history-scroll.mjs";
 
 function instrument() {
@@ -95,6 +96,9 @@ process.stdin.on('data', bytes => {
     await waitOutput(fixture.coordinator, 'coordinator 복귀 시험');
   }, { always: true });
   const check = async (engine, width) => {
+    let phase = { stage: 'pairing', pane: fixture.coordinator };
+    const dir = `${root}/diagnostics`;
+    const diagnostic = returnDiagnostics(engine, dir, width, () => phase);
     let gateHistory = false, historyArrived, releaseHistory;
     const historyArrival = new Promise(resolve => { historyArrived = resolve; });
     const { page, errors } = await pairPage(engine, aaa('web', 'pair').code, { width, height: 900 }, {
@@ -113,11 +117,12 @@ process.stdin.on('data', bytes => {
         server.onMessage(raw => held ? queued.push(raw) : socket.send(raw));
         releaseHistory = () => { held = false; for (const raw of queued.splice(0)) socket.send(raw); };
       }],
+      onPage: page => diagnostic.watch(page, "controller"),
       init: instrument, line: true, hash: `#pane=${fixture.coordinator}`,
       setup: context => context.addInitScript(keys => { for (const key of keys) localStorage.setItem(`aaa:view:${key}`, 'terminal'); }, fixture.keys),
     });
     const terminal = page.getByTestId('terminal');
-    let phase = { stage: 'initial', pane: fixture.coordinator };
+    phase = { stage: 'initial', pane: fixture.coordinator };
     const receivedWheels = () => (fs.readFileSync(`${root}/return-input.bytes`, 'utf8').match(/\x1b\[<64;\d+;\d+M/g) ?? []).length;
     const wheel = () => terminal.evaluate(box => {
       const area = box.getBoundingClientRect();
@@ -248,11 +253,14 @@ process.stdin.on('data', bytes => {
       await until('만료 복귀 휠 PTY 수신', () => receivedWheels() > expiredBefore);
       assert.equal(receivedWheels(), expiredBefore + 1);
       assert.deepEqual(errors, []);
-      const reader = await pairPage(engine, aaa('web', 'pair', '--reader').code, { width, height: 900 }, { hash: `#pane=${fixture.coordinator}` });
+      phase = { stage: "reader", pane: fixture.coordinator };
+      const reader = await pairPage(engine, aaa('web', 'pair', '--reader').code, { width, height: 900 }, { onPage: page => diagnostic.watch(page, "reader"), hash: `#pane=${fixture.coordinator}` });
       try {
         await reader.page.getByTestId('readonly-banner').getByText('보기 권한', { exact: true }).waitFor();
+        phase = { stage: 'reader-hide', pane: fixture.coordinator };
         await go(reader.page, 'tasks');
         await reader.page.getByTestId('terminal').waitFor({ state: 'detached' });
+        phase = { stage: 'reader-return', pane: fixture.coordinator };
         await go(reader.page, `pane=${fixture.coordinator}`);
         await reader.page.getByTestId('readonly-banner').getByText('보기 권한', { exact: true }).waitFor();
         if (await reader.page.getByTestId('chat-toggle').getAttribute('aria-pressed') === 'true') await reader.page.getByTestId('chat-toggle').click();
@@ -263,17 +271,30 @@ process.stdin.on('data', bytes => {
         assert.deepEqual((await sentFrames(reader.page, from)).filter(f => ['input', 'submit', 'bin'].includes(f.t)), []);
         await shot(reader.page, `return-${engine.browserType().name()}-${width}-reader`);
         assert.deepEqual(reader.errors, []);
-      } finally { await reader.page.context().close(); }
+      } catch (error) {
+        diagnostic.failed(error, 'reader');
+        await diagnostic.capture(error, async () => ({
+          sent: await sentFrames(reader.page),
+          screen: await reader.page.evaluate(() => ({ hash: location.hash,
+            terminals: [...document.querySelectorAll('.term')].map(el => ({ pane: el.dataset.pane, hidden: el.hidden })),
+            log: window.__aaaTermLog })),
+        }), 'reader').catch(secondary => diagnostic.record('diagnostic.failure', { role: 'reader', error: String(secondary) }));
+        throw error;
+      } finally { await diagnostic.cleanup('reader', () => reader.page.context().close()); }
     } catch (error) {
-      fs.writeFileSync(`${root}/return-failure-${width}.json`, JSON.stringify({ phase, receivedWheels: receivedWheels(), sent: await sentFrames(page, phase.sentFrom ?? 0), screen: await page.evaluate(() => {
-        const box = document.querySelector('[data-testid="terminal"]');
-        const viewport = box?.querySelector('.xterm-viewport');
-        return { pane: document.querySelector(".term:not([hidden])")?.dataset.pane, dataset: { ...box?.dataset },
-          viewport: viewport && { top: viewport.scrollTop, height: viewport.scrollHeight, client: viewport.clientHeight },
-          historyRequests: window.returnHistoryRequests, scrolls: window.returnScrolls, frames: window.returnFrames, log: window.__aaaTermLog };
-      }) }, null, 2));
+      diagnostic.failed(error);
+      await diagnostic.capture(error, async () => ({
+        receivedWheels: receivedWheels(), sent: await sentFrames(page, phase.sentFrom ?? 0),
+        screen: await page.evaluate(() => {
+          const box = document.querySelector('[data-testid="terminal"]');
+          const viewport = box?.querySelector('.xterm-viewport');
+          return { hash: location.hash, pane: document.querySelector(".term:not([hidden])")?.dataset.pane, dataset: { ...box?.dataset },
+            viewport: viewport && { top: viewport.scrollTop, height: viewport.scrollHeight, client: viewport.clientHeight },
+            historyRequests: window.returnHistoryRequests, scrolls: window.returnScrolls, frames: window.returnFrames, log: window.__aaaTermLog };
+        }),
+      })).catch(secondary => diagnostic.record('diagnostic.failure', { error: { message: secondary.message, stack: secondary.stack } }));
       throw error;
-    } finally { await page.context().close(); }
+    } finally { await diagnostic.cleanup('controller', () => page.context().close()); }
   };
   try {
   await step("화면 복귀: Chromium 1280 일반 이동·Ctrl+Tab 12회와 실제 입력·Reader", async () => check(browser, 1280));
