@@ -266,6 +266,12 @@ impl FailureScan {
     fn end_line(&mut self) {
         let line = String::from_utf8_lossy(&self.line).trim_end().to_string();
         self.line.clear();
+        // ci-local은 Python suite를 기다린 뒤 실제 종료 코드를 모든 출력 줄에 붙인다.
+        // fixture의 가짜 Rust 실패가 annotation에 다시 실려도 성공한 바깥 suite에 속한다.
+        // 실패·중단된 suite와 표지가 없는 옛 로그는 그대로 수집한다(시험 이름으로 제외하지 않는다).
+        if line.starts_with("[python exit=0] ") || line.contains(" [python exit=0] ") {
+            return;
+        }
         // gh --log-failed 줄은 `job\t단계\t시각 본문`이다. 앞머리 없이 온 줄도 같은 끝 모양으로 읽는다.
         let named = |rest: &str| {
             let (before, name) = rest.rsplit_once(' ')?;

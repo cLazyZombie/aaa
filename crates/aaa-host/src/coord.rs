@@ -970,6 +970,11 @@ impl Host {
         let path = dir.join("TASKS.md");
         let lock = self.file_locks.of(&path);
         let _guard = lock.lock().unwrap();
+        // tick이 목록을 받은 뒤 프로젝트가 삭제될 수 있다. 삭제와 같은 파일 lock 아래서
+        // 생존을 확인해, 사라진 폴더를 빈 TASKS.md로 기억하거나 변경 기록을 되살리지 않는다.
+        if !dir.join("PROJECT.md").is_file() {
+            return;
+        }
         let stamp = file_stamp(&path);
         let notes = notes_stamps(dir, &self.settings(project).task_notes);
         let mut seen = self.tasks_seen.lock().unwrap();

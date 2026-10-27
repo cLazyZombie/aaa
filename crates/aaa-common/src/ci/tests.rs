@@ -112,6 +112,43 @@ fn failed_tests_split_same_job_and_step_and_survive_tail_cut() {
 }
 
 #[test]
+fn successful_python_fixture_output_is_not_a_rust_failure_even_in_annotations() {
+    let mut scan = FailureScan::default();
+    let lines = [
+        "test owner ... FAILED\n",
+        "macos-15\ttest\t2026-10-27T07:02:57Z [test] [python exit=0] test owner ... FAILED\n",
+        "macos-15\ttest\t2026-10-27T07:02:57Z [test] [python exit=0] test module::failed ... FAILED <5.001s>\n",
+        "[python exit=0] thread 'owner' panicked at fixture.rs:1:2:\n",
+        "[python exit=0] test module::slow has been running for over 60 seconds\n",
+        "[python exit=0] Ran 62 tests in 91.777s\n",
+        "[python exit=0] OK (skipped=2)\n",
+        // ci-local이 annotation에 복사한 줄도 같은 suite 결과를 보존한다.
+        "[python exit=0] test module::failed ... FAILED\n",
+        "test module::failed ... FAILED\n",
+    ];
+    for chunk in lines.concat().as_bytes().chunks(7) {
+        scan.feed(chunk);
+    }
+    assert_eq!(scan.finish(), ["module::failed", "owner"]);
+    let mut scan = FailureScan::default();
+    scan.feed(lines[1..8].concat().as_bytes());
+    assert!(scan.finish().is_empty(), "성공한 suite만 있으면 panic·느린 시험도 실패가 아니다");
+}
+
+#[test]
+fn failed_or_interrupted_python_suites_keep_their_failure_evidence() {
+    for code in ["1", "7", "137"] {
+        let mut scan = FailureScan::default();
+        scan.feed(format!("[python exit={code}] test owner ... FAILED\n").as_bytes());
+        assert_eq!(scan.finish(), ["owner"]);
+    }
+    // 출처 표지가 없는 옛 로그와 잘린 마지막 줄은 보수적으로 남긴다.
+    let mut scan = FailureScan::default();
+    scan.feed(b"[python exit=0] test owner ... FAILED\ntest owner ... FAILED");
+    assert_eq!(scan.finish(), ["owner"]);
+}
+
+#[test]
 fn merge_owners_cross_four_and_five_digits_and_accept_numeric_aliases() {
     for (input, canonical) in [
         ("t-9999", "t-9999"),
