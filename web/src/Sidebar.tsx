@@ -259,6 +259,9 @@ export interface SidebarProps {
   panes: PaneView[];
   /** 끝난(resolved)·평가자 thread는 뺀 것 */
   threads: ThreadView[];
+  /** 사건 일부만 받은 상태와 빈 전체 목록을 구분한다. 재연결 중에는 기존 분류를 유지한다. */
+  threadsLoaded: boolean;
+  threadsError: string | null;
   /** `pane:<id>` 또는 `thread:<project>/<id>` */
   selected: string | null;
   canControl: boolean;
@@ -512,7 +515,9 @@ function Roster(props: SidebarProps) {
   const { pins } = useRows();
   const twoLine = appearance.sidebarRows === "two";
   const { paneOrder } = useSidebarShared();
-  const { threads, folders, projects, coordinators, panes, machineOf } = roster(props.machines, props.panes, props.threads, paneOrder, appearance.agentOrder === "activity");
+  const { threads, folders, projects, coordinators, panes: loosePanes, machineOf } = roster(props.machines, props.panes, props.threads, paneOrder, appearance.agentOrder === "activity");
+  // 첫 전체 목록 전에는 pane이 thread 소속인지 아직 모른다. 알려진 thread/coordinator는 그대로 그린다.
+  const panes = props.threadsLoaded ? loosePanes : [];
   // 고정한 thread는 맨 앞 카드에(예전 에이전트 패널처럼 thread 줄도 고정한다, 열쇠는 그 agent pane). 폴더에서는 빠진다
   const threadPin = (t: ThreadView) => {
     const p = t.pane ? props.panes.find((x) => x.id === t.pane) : undefined;
@@ -617,7 +622,7 @@ function Roster(props: SidebarProps) {
     const m = machineById(p.machine_id);
     return <PaneRow key={p.id} {...props} online={online(m)} machine={m} pane={p} twoLine={twoLine} move={move} />;
   };
-  if (projects.length === 0 && panes.length === 0) {
+  if (props.threadsLoaded && projects.length === 0 && panes.length === 0) {
     return (
       <div className="machine-workspaces">
         <nav className="sidebar-list" aria-label="목록">
@@ -633,7 +638,12 @@ function Roster(props: SidebarProps) {
   const otherLabel = otherCollapsed ? "기타 pane 펼치기" : "기타 pane 접기";
   return (
     <div className={`machine-workspaces${twoLine ? " is-two-line" : ""}`}>
-      <nav className="sidebar-list" aria-label="목록">
+      <nav className="sidebar-list" aria-label="목록" aria-busy={!props.threadsLoaded && !props.threadsError}>
+        {!props.threadsLoaded && (props.threadsError ? (
+          <p className="sidebar-load-state is-error" role="alert" data-testid="work-list-error">작업 목록을 불러오지 못했습니다: {props.threadsError}</p>
+        ) : (
+          <p className="sidebar-load-state" role="status" data-testid="work-list-loading">작업 목록을 불러오는 중…</p>
+        ))}
         {(pinnedThreads.length > 0 || split.pinned.length > 0) && (
           <ul className="workspace-list workspace-list-pinned sidebar-pinned" aria-label="고정됨">
             {pinnedThreads.map((t) => (

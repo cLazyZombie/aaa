@@ -8113,3 +8113,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - Markdown 영상은 첫 클릭 안에서 src commit→play를 하여 첫 클릭 전 metadata 요청도 없게 한다. 새 src에는 이전 실패/재생 상태를 적용하지 않는다. native controls·muted·playsinline·탐색·질문 선택과 주소·답한 사본의 원본을 유지한다. HTML 새 작성 템플릿에는 그림 크기·lazy와 썸네일/선택 재생을 안내한다.
 - 회귀는 기존 E2E73의 양 엔진×1280/390px 이미지 GET 보류·HEAD 200/401·현재 판 다시 열기, E2E88의 선택 전 무요청과 실제 클릭/탐색/HTML sandbox/직접 파일/답한 사본이다. host HTTP 회귀는 gzip 복원·bridge·협상·HEAD·Range·권한·원본, stream 회귀는 첫 조각 전달과 읽기 실패 전파를 지킨다. 새 E2E 번호·고정 sleep·재시도·시한 확대는 없다.
 - OSS는 조사에서 검토한 tower-http(MIT)·Caddy(Apache-2.0)·nginx(BSD-2-Clause)의 전송 원칙, [React flushSync](https://react.dev/reference/react-dom/flushSync)(MIT)와 [flate2 GzEncoder](https://docs.rs/flate2/latest/flate2/write/struct.GzEncoder.html)(MIT/Apache-2.0)를 참고했다. 기존 flate2·React만 사용하며 외부 코드·의존성은 추가하지 않는다.
+
+### 8.509 첫 작업 목록의 thread 소속 대기(t-1153)
+
+- machine/pane state와 thread HTTP 목록은 따로 도착한다. 초기 빈 Map만으로 thread 소속이 없다고 판정하면 실제 thread pane도 경로를 붙인 「기타」 줄로 잠시 나타난다. §8.218의 늦은 목록/새 사건 보존과는 다른, 첫 전체 목록 전의 표시 경계다. 운영 당시 요청 순서를 기록한 자료는 없어 과거 화면의 개별 전송 순서까지 확정하지 않는다.
+- 기존 `threadsSync`가 한 번도 완료되지 않았으면 소속 미확정 pane을 일반/고정 「기타」 줄로 내보내지 않고 「작업 목록을 불러오는 중…」을 표시한다. 이미 아는 coordinator와 thread 사건의 줄은 유지한다. 전체 페이지를 모두 읽은 뒤 실제 빈 목록도 완료로 인정하며 일반 pane을 표시한다. 이름·role·경로로 소속을 추측하지 않는다.
+- 첫 조회 실패는 공개 오류 원인과 함께 표시하고 미확정 pane은 계속 숨긴다. 재연결 조회가 시작하면 오류를 지우며, 한 번 완료한 분류는 재연결/조회 실패 중에도 유지한다. 자동 재시도나 새 서버 상태는 추가하지 않는다. FRONT_API·AGENT_LINK·의존성은 유지한다.
+- 기존 E2E24에 실제 host 응답 보류/해제, 빈 목록의 일반 pane 표시, 첫 조회 오류와 새로고침 복구, Chromium 1280px·WebKit 390px의 이미 열린 thread 첫 분류를 더한다. 기존 adopt의 늦은 목록 회귀도 유지하며 thread 사건 하나가 전체 목록 완료를 뜻하지 않는지 확인한다.
+- 참고 후보는 [React Suspense](https://react.dev/reference/react/Suspense)([MIT](https://github.com/facebook/react/blob/main/LICENSE))와 [TanStack Query의 조회 상태](https://tanstack.com/query/latest/docs/framework/react/guides/queries)([MIT](https://github.com/TanStack/query/blob/main/LICENSE))다. 최초 대기/빈 성공/오류를 구별하고 재조회 때 기존 자료를 보존하는 원칙을 따르며 코드·의존성을 가져오지 않는다.

@@ -4316,3 +4316,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `followups::tests::legacy_automation_next_handoff_is_durable_and_preserves_explicit_receipts`은 이미 판정한 구판 미처리 항목을 정상 정리 순회로 인계하고 원본 ID/판/줄·자동화 이름/host/시각·기존 명시 영수증·inbox 종료·보관·재기동/재순회 불변을 검사한다. 필요한 이유: 새 보고가 없는 종료 감시 thread의 후속 경고도 수동 사유 입력 없이 해소하고 이전 처리 근거를 보존해야 한다.
 - 기존 m13 `automation_thread_reports_do_not_wake_their_own_rule`에 실제 do.start 출처의 완료 Next 표시 유지·후속 미수집·일반 시작의 수집 대조를 추가한다. 새 프로세스 실험실·E2E 번호를 늘리지 않는다. 기존 자동화 보고 사건의 순서/자기 재실행 방지 단언은 유지한다.
 - 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib followups::tests`와 `nice -n 15 cargo test --profile verify --locked -p aaa --test m13 automation_thread_reports_do_not_wake_their_own_rule`다. 개별 새 시험은 보통 부하에서 5초 이하로 유지하고 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 전체 gate는 coordinator가 정한 같은 머신의 실행 차례를 받아 실행한다.
+
+## 첫 작업 목록의 thread 소속 대기(t-1153, §8.509)
+
+- 기존 E2E24의 실제 host/agent·CLI adopt·WebSocket 사건과 HTTP 목록을 사용한다. 첫 thread HTTP 응답만 `route.fetch` 뒤 사건 gate로 보류하고, 실제 pane state가 DOM에 반영된 뒤 기타/일반 pane 줄 없음·로딩 표시를 확인한다. 빈 전체 목록을 전달하면 일반 pane이 기타에 나타나야 한다. 필요한 이유: 아직 읽지 않은 빈 Map과 읽기를 마친 빈 목록을 구별해야 한다.
+- 첫 목록에 503 공개 오류를 전달하면 원인 표시·로딩 종료·기타 없음, 새로고침 뒤 정상 조회 복구를 확인한다. 필요한 이유: 실패를 확정된 빈 목록이나 끝없는 로딩으로 바꾸지 않아야 한다.
+- 기존 adopt owner는 빈 옛 목록 보류 중 받은 thread 사건의 줄을 즉시 표시하고, 전체 목록 대기 표시는 유지한다. 해제 뒤 동일 thread 줄 한 개·기타 중복 없음과 기존 role 불변을 확인한다. 필요한 이유: 첫 표시 수리가 §8.218의 사건 보존을 막지 않아야 한다.
+- Chromium 1280px·WebKit 390px에서 이미 존재하는 role 없는 adopt thread의 첫 HTTP 응답을 보류한다. 미확정 pane은 기타를 거치지 않고 해제 뒤 thread 줄 하나로 나타나며 일반 셸은 기타에 남아야 한다. 필요한 이유: 초기 응답 순서와 두 엔진의 DOM 적용을 실제로 검사해야 한다. 응답을 가로채는 context는 `serviceWorkers: block`으로 열고 제품 SW는 유지한다.
+- 고정 sleep·실패 재시도·시한 확대·기대값 완화·새 E2E 번호가 없다. 실행은 웹 유닛·타입/번들, `NODE_PATH=<작업 폴더 Playwright 1.64.1> nice -n 15 node web/e2e/web.e2e.mjs --spec 24 --workers 1`과 관련 목록/재연결 E2E, 공개 검사다. 내부 공용 브라우저 캐시와 저장소 Chromium launcher만 사용한다. 전체 gate·병합·push는 정규 착지 차례에서 수행한다.
+- 부분 검증 결과: 웹 유닛 610개·타입/번들·공개 검사와 E2E24 전체(7.0초), E2E04/13/26 전체(worker 2, 46.8초)가 통과했다. E2E24의 다섯 owner는 각각 0.370/0.480/0.626/0.476/1.669초다. 원래 제품은 새 첫 조회 회귀에서 로딩 표시가 없어 실패했고, 첫 수리판의 기존 「pane 없음」 조기 반환도 같은 회귀가 잡아 완료 목록에만 적용하도록 바로잡았다. 검증 중 load1 59.47→45.90을 관측했으며 시험 재시도·상한 변경은 없다.
