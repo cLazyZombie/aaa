@@ -9,9 +9,13 @@ import { browser, root, env, inTime } from './harness.mjs';
 import { threadPageTrace } from './thread-page-trace.mjs';
 
 export async function threadBodyLifetime() {
-  let partial;
+  let partial, complete = false;
   const server = http.createServer((req, res) => {
     if (req.url !== '/api/v1/call') return res.end('<!doctype html><p>fixture</p>');
+    if (complete) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ok:{kind:'threads',threads:[],next_after:null}}));
+    }
     partial = res;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.write('{"ok":'); // 헤더만 관측된 상태에서 문서를 교체한다.
@@ -19,6 +23,7 @@ export async function threadBodyLifetime() {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const context = await browser.newContext();
+  let releaseBody;
   try {
     const page = await context.newPage();
     const trace = threadPageTrace(`${root}/diagnostics`, 'body-lifetime');
@@ -37,7 +42,51 @@ export async function threadBodyLifetime() {
     assert.equal(reads[0].pages, 0, '미완료 본문을 완전 페이지로 세지 않는다');
     assert.equal(reads[0].next, 'aborted-before-body');
     partial.end('{"kind":"threads","threads":[],"next_after":null}}');
+    // 다운로드는 끝났지만 Node의 body protocol 호출이 문서 교체 뒤에 도착하는 경계.
+    // 실제 Chrome의 사라진 resource 오류를 쓰며 오류나 HTTP 응답을 만들어 내지 않는다.
+    complete = true;
+    const finishedPage = await context.newPage();
+    const release = Promise.withResolvers();
+    releaseBody = release.resolve;
+    let bodyFailure;
+    finishedPage.on('response', response => {
+      if (!response.url().endsWith('/api/v1/call')) return;
+      const original = response.body.bind(response);
+      response.body = () => release.promise.then(original).catch(error => { bodyFailure = error; throw error; });
+    });
+    const finishedTrace = threadPageTrace(`${root}/diagnostics`, 'body-finished-navigation');
+    finishedTrace.onPage(finishedPage);
+    await finishedPage.goto(`http://127.0.0.1:${server.address().port}`);
+    const finished = finishedPage.waitForEvent('requestfinished', request => request.url().endsWith('/api/v1/call'));
+    await finishedPage.evaluate(() => {
+      void fetch('/api/v1/call', {method:'POST',headers:{'x-e2e-document':String(performance.timeOrigin),
+        'x-e2e-connection':'1','x-e2e-request':'1'},body:JSON.stringify({op:'threads'})}).then(r=>r.json());
+    });
+    await finished;
+    await finishedPage.goto('about:blank');
+    release.resolve();
+    const finishedReads = await inTime(finishedTrace.reads([]), 20000, '완료한 다운로드의 문서 교체 꼬리 회수');
+    assert.match(String(bodyFailure), /No resource with given identifier found/);
+    assert.equal(finishedReads.length, 1);
+    assert.equal(finishedReads[0].pages, 0, '문서 교체 뒤 잃은 본문을 성공 페이지로 세지 않는다');
+    assert.equal(browser.isConnected(), true);
+    // 같은 문서의 body 오류는 navigation 꼬리로 버리지 않는다.
+    const currentPage = await context.newPage();
+    currentPage.on('response', response => {
+      if (response.url().endsWith('/api/v1/call')) response.body = async () => { throw new Error('current-document-body-failure'); };
+    });
+    const currentTrace = threadPageTrace(`${root}/diagnostics`, 'body-current-document');
+    currentTrace.onPage(currentPage);
+    await currentPage.goto(`http://127.0.0.1:${server.address().port}`);
+    const currentFinished = currentPage.waitForEvent('requestfinished', request => request.url().endsWith('/api/v1/call'));
+    await currentPage.evaluate(() => {
+      void fetch('/api/v1/call', {method:'POST',headers:{'x-e2e-document':String(performance.timeOrigin),
+        'x-e2e-connection':'1','x-e2e-request':'1'},body:JSON.stringify({op:'threads'})}).then(r=>r.json());
+    });
+    await currentFinished;
+    await assert.rejects(currentTrace.reads([]), /current-document-body-failure/);
   } finally {
+    releaseBody?.();
     await context.close();
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));

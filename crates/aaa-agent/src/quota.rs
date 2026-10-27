@@ -75,16 +75,17 @@ mod tests {
     fn per_pane_files_keep_window_times_and_reject_a_different_login() {
         let temp = Temp(std::env::temp_dir().join(format!("aaa-quota-agent-{}", util::new_id())));
         let a = crate::Agent::new(temp.0.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
-        let spec: SpecFile =
-            serde_json::from_value(json!({"id":"pane1","token":"test-token","boot_id":"b","created_at_ms":1,
+        let spec: SpecFile = serde_json::from_value(
+            json!({"id":"pane1","token":aaa_test_support::token("test-token"),"boot_id":"b","created_at_ms":1,
             "spec":{"name":"test","argv":[],"cwd":null,"env":[],"cols":80,"rows":24,"harness":"claude"},
-            "account_run":"demo/t-0001","account_generation":"generation-a"}))
-            .unwrap();
+            "account_run":"demo/t-0001","account_generation":"generation-a"}),
+        )
+        .unwrap();
         let paths = SessionPaths::new(&temp.0, "pane1");
         util::ensure_private_dir(&paths.dir).unwrap();
         util::write_json(&paths.spec(), &spec).unwrap();
         assert!(a.quota_snapshot("pane1", "generation-a").unwrap().is_none());
-        a.record_quota(&spec, &json!({"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":9999999999_u64},"seven_day":{"used_percentage":20,"resets_at":9999999999_u64}},"token":"discard-untrusted-token"})).unwrap();
+        a.record_quota(&spec, &json!({"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":9999999999_u64},"seven_day":{"used_percentage":20,"resets_at":9999999999_u64}},"token":aaa_test_support::token("discard-untrusted-token")})).unwrap();
         let first = a.quota_snapshot("pane1", "generation-a").unwrap().unwrap();
         a.record_quota(&spec, &json!({"rate_limits":{"five_hour":{"used_percentage":70,"resets_at":9999999999_u64}}}))
             .unwrap();

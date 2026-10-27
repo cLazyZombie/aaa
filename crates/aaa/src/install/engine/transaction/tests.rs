@@ -2,7 +2,7 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-const CANARY: &str = "install-secret-canary-DO-NOT-PRINT";
+use aaa_test_support::CANARY;
 static SEQ: AtomicU32 = AtomicU32::new(0);
 pub(in crate::install::engine) struct Lab(pub(in crate::install::engine) PathBuf);
 impl Lab {

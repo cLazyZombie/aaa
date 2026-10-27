@@ -144,7 +144,7 @@ fn jwt(claims: serde_json::Value) -> String {
 }
 
 fn claude_lab(lab: &Lab, expires: u64) {
-    lab.write(".claude/.credentials.json", &serde_json::json!({"claudeAiOauth": {"accessToken": "tok-claude", "expiresAt": expires, "subscriptionType": "max"}}).to_string());
+    lab.write(".claude/.credentials.json", &serde_json::json!({"claudeAiOauth": {"accessToken": &aaa_test_support::token("tok-claude"), "expiresAt": expires, "subscriptionType": "max"}}).to_string());
     lab.write(
         ".claude.json",
         &serde_json::json!({"oauthAccount": {"accountUuid": "acct-1", "emailAddress": "me@example.com"}}).to_string(),
@@ -182,7 +182,10 @@ async fn claude_reads_the_file_sign_in_and_keeps_numbers_fresh_for_five_minutes(
         (u.id, u.key.as_str(), u.account.as_deref(), u.plan.as_deref(), u.problem),
         (UsageProviderId::Claude, "claude:acct-1", Some("me@example.com"), Some("max"), None)
     );
-    assert_eq!(fake.header("/api/oauth/usage", "authorization").as_deref(), Some("Bearer tok-claude"));
+    assert_eq!(
+        fake.header("/api/oauth/usage", "authorization").as_deref(),
+        Some(format!("Bearer {}", aaa_test_support::token("tok-claude")).as_str())
+    );
     let w: Vec<(UsageWindowKind, Option<&str>, f64)> =
         u.windows.iter().map(|w| (w.kind, w.scope.as_deref(), w.used_percent)).collect();
     // 평평한 Sonnet이 limits의 Sonnet을 이긴다. 값이 없는 Opus는 빠진다
@@ -273,7 +276,7 @@ async fn sidebar_uses_registered_claude_statusline_instead_of_unrelated_expired_
     claude_lab(&lab, NOW - 1);
     let mut host = crate::Host::open(aaa_config::HostConfig::default(), lab.home.join("host")).unwrap();
     Arc::get_mut(&mut host).unwrap().usage = UsageService::new(lab.ctx(&origin, false));
-    host.accounts.import("work", "claude", "fixture-claude-oauth-token-0123456789").unwrap();
+    host.accounts.import("work", "claude", &aaa_test_support::token("fixture-claude-oauth-token-0123456789")).unwrap();
     let now = aaa_common::util::now_ms();
     let snapshot = QuotaSnapshot {
         generation: host.accounts.generation("work").unwrap(),
@@ -313,7 +316,7 @@ async fn sidebar_uses_registered_claude_statusline_instead_of_unrelated_expired_
     assert_eq!(fake.hits("/api/oauth/usage"), 0, "기본 인증을 갱신하거나 모델 작업을 만들지 않는다");
     assert_eq!(host.usage.cached().await, local, "자동화의 로컬 캐시 의미는 바꾸지 않는다");
     // 같은 별칭에 다시 로그인하면 이전 세대의 숫자가 새 인증에 붙지 않는다.
-    host.accounts.import("work", "claude", "fixture-new-claude-token-0123456789").unwrap();
+    host.accounts.import("work", "claude", &aaa_test_support::token("fixture-new-claude-token-0123456789")).unwrap();
     let report = host.sidebar_usage(false).await;
     assert_eq!(report.providers[0].problem, Some(UsageProblem::Unobserved));
     assert!(report.providers[0].windows.is_empty());

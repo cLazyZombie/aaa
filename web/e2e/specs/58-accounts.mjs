@@ -1,3 +1,4 @@
+import { token as fixtureToken } from "../../../scripts/fixture-secret.mjs";
 // host 계정 화면(관리 GUI W5a, plan §8.351): 설정 창 「계정」에서 새 로그인·진행·취소, 메일·plan·최초 인증일·최근 인증된 날,
 // 기본 지정·해제, 다시 로그인의 「이 메일로 로그인하세요」, 다른 메일이 들어왔을 때 고르기, 곧 만료 배지와 알림함 확인 필요,
 // 보기 전용 기기(메일 없음), 휴대폰 390. host는 PATH 앞의 가짜 `claude`·`codex`를 공식 CLI 자리로 띄운다(실제 인증·브라우저 없음).
@@ -48,7 +49,7 @@ function codexResult(email, plan, n) {
   const claims = { email, "https://api.openai.com/auth": { chatgpt_plan_type: plan } };
   fs.writeFileSync(
     `${bin}/codex-auth.json`,
-    JSON.stringify({ tokens: { access_token: `e2e-access-${n}-0123456789`, refresh_token: `e2e-refresh-${n}-0123456789`, id_token: `e30.${b64u(JSON.stringify(claims))}.c2ln` } }),
+    JSON.stringify({ tokens: { access_token: fixtureToken(`e2e-access-${n}`), refresh_token: fixtureToken(`e2e-refresh-${n}`), id_token: `e30.${b64u(JSON.stringify(claims))}.c2ln` } }),
   );
 }
 /** 가짜 로그인을 놓아준다. 쓰기는 읽는 쪽이 FIFO를 열 때까지 막히므로 한도를 둔다 */
@@ -104,7 +105,7 @@ export default async function ({ page }) {
 
   await step("Claude 로그인: 유효 기간 3일 → 곧 만료 배지, 알림함에 확인 필요 한 번(메일 없음)", async () => {
     // 공개 저장소 검사가 token 꼴 글을 막는다: 가짜 값도 실행 중에 만든다
-    fs.writeFileSync(`${bin}/claude-out.txt`, `Your OAuth token (valid for 3 days):\nsk-ant-${"oat01"}-e2e-only-0123456789abcdef\n`);
+    fs.writeFileSync(`${bin}/claude-out.txt`, `Your OAuth token (valid for 3 days):\nsk-ant-${"oat01"}-${fixtureToken("claude-login")}\n`);
     fs.writeFileSync(`${bin}/claude.json`, JSON.stringify({ oauthAccount: { emailAddress: "ci@example.com" } }));
     await pane.getByTestId("account-alias").fill("ci");
     await pane.getByTestId("account-harness").selectOption("claude");

@@ -12,7 +12,24 @@ pub(crate) fn pending(rec: &ThreadRec) -> bool {
     rec.task_clean.followups.iter().any(|f| f.handled_ms.is_none())
 }
 
+/// 구판이 수집한 자동화 Next는 지우지 않고 다음 자동 실행의 책임으로 기록한다.
+pub(crate) fn handoff_automation(rec: &mut ThreadRec) {
+    let Some(name) = &rec.automation else { return };
+    let now = aaa_common::util::now_ms();
+    for entry in rec.task_clean.followups.iter_mut().filter(|f| f.handled_ms.is_none()) {
+        entry.reason = Some(format!("자동화 {name}의 다음 실행이 맡는다(시작 출처)"));
+        entry.actor = Some("host".into());
+        entry.handled_ms = Some(now);
+        rec.task_clean.judged_ms = None;
+    }
+}
+
 pub(crate) fn capture(rec: &mut ThreadRec, revision: &str, report: &str) {
+    // 이름·Next 문구·현재 자동화 설정이 아닌, 시작 때 저장한 출처만 본다.
+    if rec.automation.is_some() {
+        handoff_automation(rec);
+        return;
+    }
     if crate::report_mark::marker(report) != Some("[완료]")
         || rec.task_clean.followup_revisions.iter().any(|s| s == revision)
     {
@@ -224,6 +241,70 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn automation_origin_skips_next_but_same_named_human_thread_keeps_protection() {
+        let lab = Lab::new();
+        let body = "[완료] 감시\n## Next\n- 새 입력이 오면 확인한다\n- 기능을 구현한다\n";
+        lab.h
+            .update_rec("demo", &lab.thread, |r| {
+                r.title = "ci-watch".into();
+                r.automation = Some("ci-watch".into());
+            })
+            .unwrap();
+        assert!(lab.report(body).task_clean.followups.is_empty());
+        lab.tick();
+        let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+        let saved = reopened.load("demo", &lab.thread).unwrap();
+        assert_eq!(saved.automation.as_deref(), Some("ci-watch"));
+        assert!(saved.task_clean.followups.is_empty());
+        assert!(!reopened.db.inbox_list(Some("demo"), false).unwrap().iter().any(|i| i.item_kind == "task-followup"));
+
+        let human = Lab::new();
+        human.h.update_rec("demo", &human.thread, |r| r.title = "ci-watch".into()).unwrap();
+        let rec = human.report(body);
+        assert_eq!(rec.task_clean.followups.len(), 2, "같은 이름과 감시 문구도 시작 출처 없이는 제외하지 않는다");
+        human.tick();
+        assert!(
+            human
+                .h
+                .task_board("demo")
+                .unwrap()
+                .tasks
+                .iter()
+                .any(|t| t.attention.as_ref().is_some_and(|s| s.contains("후속 남음")))
+        );
+    }
+
+    #[test]
+    fn legacy_automation_next_handoff_is_durable_and_preserves_explicit_receipts() {
+        let lab = Lab::new();
+        let rec = lab.report("[완료] 감시\n## Next\n- 새 입력을 확인한다\n- 정리: 임시 파일을 지운다\n");
+        let handled = lab
+            .h
+            .thread_followup("demo", &lab.thread, &rec.task_clean.followups[1].id, None, Some("정리 완료"), "local:cli")
+            .unwrap()
+            .followups[1]
+            .clone();
+        lab.tick(); // 구판은 이미 판정과 알림을 끝냈을 수 있다.
+        lab.h.update_rec("demo", &lab.thread, |r| r.automation = Some("rc-verify".into())).unwrap();
+        lab.tick();
+        let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+        let saved = reopened.load("demo", &lab.thread).unwrap();
+        assert!(!pending(&saved));
+        let entry = &saved.task_clean.followups[0];
+        assert_eq!(
+            (&entry.id, &entry.revision, &entry.line),
+            (&rec.task_clean.followups[0].id, &rec.task_clean.followups[0].revision, &rec.task_clean.followups[0].line)
+        );
+        assert_eq!(entry.actor.as_deref(), Some("host"));
+        assert_eq!(entry.reason.as_deref(), Some("자동화 rc-verify의 다음 실행이 맡는다(시작 출처)"));
+        assert_eq!(saved.task_clean.followups[1], handled);
+        assert!(!reopened.db.inbox_list(Some("demo"), false).unwrap().iter().any(|i| i.item_kind == "task-followup"));
+        assert_eq!(reopened.db.archive_list("demo").unwrap()[0].task.title, "시안");
+        lab.tick();
+        assert_eq!(lab.h.load("demo", &lab.thread).unwrap().task_clean.followups, saved.task_clean.followups);
     }
 
     #[tokio::test]

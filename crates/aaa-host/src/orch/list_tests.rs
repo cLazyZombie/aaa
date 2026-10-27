@@ -65,7 +65,7 @@ impl Drop for Root {
 async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_live_states() {
     let lab = Lab::new();
     // 원장 읽기가 계약이다. 2,507번 디스크 commit 대신 준비만 한 transaction에 묶는다.
-    lab.host.db.conn_for_pool_test().execute_batch("BEGIN").unwrap();
+    lab.host.db.conn_for_test().execute_batch("BEGIN").unwrap();
     for n in 1..=2500 {
         // 상세 100건만으로도 frame 한도를 넘는다. 목록은 이 본문을 읽어 보내지 않는다.
         let body = (n <= 60).then(|| "상세 질문 본문".repeat(1500));
@@ -79,7 +79,7 @@ async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_liv
     for n in [9999, 10000, 10001] {
         lab.insert("z", n, ThreadStatus::Resolved, if n == 10001 { Role::Evaluator } else { Role::Coordinator }, None);
     }
-    lab.host.db.conn_for_pool_test().execute_batch("COMMIT").unwrap();
+    lab.host.db.conn_for_test().execute_batch("COMMIT").unwrap();
     let mut query = ThreadListQuery { limit: Some(u32::MAX), ..Default::default() };
     let mut all = Vec::new();
     loop {

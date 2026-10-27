@@ -133,7 +133,7 @@ fn image_job(account: String, allocation: Allocation, id: &str) -> crate::image:
 }
 
 fn choose(lab: &Lab, input: &SelectionInput) -> anyhow::Result<(String, Allocation)> {
-    input.select(&lab.h.db.conn_for_pool_test(), NOW)
+    input.select(&lab.h.db.conn_for_test(), NOW)
 }
 
 // 필요: 관측 수집과 무관하게 시작한다는 사용자 계약과 알려진 한도의 경계를 지킨다.
@@ -290,7 +290,7 @@ fn concurrent_selection_and_receipts_are_atomic_across_projects() {
 #[tokio::test]
 async fn pool_changes_require_human_control_compare_revisions_and_ignore_legacy_fields() {
     let l = Lab::new();
-    l.h.accounts.import("work", "claude", "fixture-pool-token-01234567890123456789").unwrap();
+    l.h.accounts.import("work", "claude", &aaa_test_support::token("fixture-pool-token-01234567890123456789")).unwrap();
     let request = FrontRequest::AccountPoolMember {
         revision: l.h.account_pool().unwrap().revision,
         account: "work".into(),
@@ -330,7 +330,7 @@ async fn pool_changes_require_human_control_compare_revisions_and_ignore_legacy_
 #[tokio::test]
 async fn host_uses_only_same_harness_and_never_waits_for_usage_refresh() {
     let l = Lab::new();
-    l.h.register_account("one", "claude", "fixture-model-one-01234567890123456789").unwrap();
+    l.h.register_account("one", "claude", &aaa_test_support::token("fixture-model-one-01234567890123456789")).unwrap();
     // 옛 실행의 인증 파일이 없어져도 다른 정상 계정의 시작을 막지 않는다.
     let mut pool = l.h.account_pool().unwrap();
     pool.members.push(AccountPoolMember { account: "missing".into(), group: "legacy".into(), models: vec![] });
@@ -370,7 +370,8 @@ async fn host_uses_only_same_harness_and_never_waits_for_usage_refresh() {
     );
     let revision = l.h.account_pool().unwrap().revision;
     l.h.pool_member_set(&revision, "one", None, "local:cli").unwrap();
-    l.h.register_account("one", "claude", "fixture-renewed-one-01234567890123456789").unwrap();
+    l.h.register_account("one", "claude", &aaa_test_support::token("fixture-renewed-one-01234567890123456789"))
+        .unwrap();
     assert!(l.h.account_pool().unwrap().members.is_empty(), "다시 로그인은 사용 해제를 되돌리지 않는다");
 }
 
@@ -383,7 +384,7 @@ fn migration_preserves_the_original_and_membership_without_rewriting_running_thr
     let before = l.h.load("demo", &id).unwrap();
     let original = r#"{"revision":"legacy","members":[{"account":"work","group":"claude","models":["old-model"]}],"projects":["old-project"]}"#;
     l.h.db.set_meta("account-pool-v1", original).unwrap();
-    l.h.db.conn_for_pool_test().execute("DELETE FROM meta WHERE key=?1", [CONFIG]).unwrap();
+    l.h.db.conn_for_test().execute("DELETE FROM meta WHERE key=?1", [CONFIG]).unwrap();
     l.h.pool_migrate().unwrap();
     let pool = l.h.account_pool().unwrap();
     assert_eq!(pool.members[0].account, "work");
@@ -399,7 +400,7 @@ fn migration_preserves_the_original_and_membership_without_rewriting_running_thr
 #[test]
 fn ended_reservations_wait_for_observations_after_exit_and_survive_relogin() {
     let l = Lab::new();
-    l.h.accounts.import("work", "claude", "fixture-end-canary-01234567890123456789").unwrap();
+    l.h.accounts.import("work", "claude", &aaa_test_support::token("fixture-end-canary-01234567890123456789")).unwrap();
     let mut p = input(&l, vec![candidate("work", 60.0, 60.0)]);
     p.candidates[0].generation = l.h.accounts.generation("work").unwrap();
     let (name, mut allocation) = choose(&l, &p).unwrap();
@@ -416,7 +417,9 @@ fn ended_reservations_wait_for_observations_after_exit_and_survive_relogin() {
         !l.h.load("demo", &id).unwrap().account_allocation.unwrap().released,
         "종료 전 관측은 예약을 대체하지 않는다"
     );
-    l.h.accounts.import("work", "claude", "fixture-end-renewed-01234567890123456789").unwrap();
+    l.h.accounts
+        .import("work", "claude", &aaa_test_support::token("fixture-end-renewed-01234567890123456789"))
+        .unwrap();
     for w in &mut q.windows {
         w.window.observed_at_ms = now;
     }
@@ -439,7 +442,7 @@ fn image_restart_recovers_auth_without_replaying_or_releasing_unknown_history() 
     let dir = l.h.image_dir(&id).unwrap();
     let home = dir.join("rpc-home");
     util::ensure_private_dir(&home).unwrap();
-    util::write_private(&home.join("auth.json"), b"fixture-auth-to-recover").unwrap();
+    util::write_private(&home.join("auth.json"), aaa_test_support::token("auth-to-recover").as_bytes()).unwrap();
     util::write_private(&home.join("output.png"), b"preserved-result").unwrap();
     let queued = util::new_id();
     let mut q = image_job(account, allocation, &queued);
@@ -548,7 +551,9 @@ fn waiting_direct_start_keeps_one_task_across_passes_and_request_replays() {
     // 연결 때 예약한 rewatch도 Host를 쥔다. runtime을 Lab보다 먼저 닫아 DB 수명을 끝낸다.
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     runtime.block_on(async {
-        l.h.accounts.import("blocked", "claude", "fixture-blocked-01234567890123456789").unwrap();
+        l.h.accounts
+            .import("blocked", "claude", &aaa_test_support::token("fixture-blocked-01234567890123456789"))
+            .unwrap();
         let mut meta = l.h.account_meta("blocked");
         meta.rejected_ms = Some(util::now_ms());
         l.h.db.set_meta("account-meta:blocked", &serde_json::to_string(&meta).unwrap()).unwrap();

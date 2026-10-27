@@ -6,6 +6,34 @@
 - t-1127의 별도 `locator.evaluate` 30초 lookup/adoption 정지는 이 수리의 해결 범위로 세지 않는다. 원본의 DOM/Runtime 원문이 없으므로 정확한 정지 호출·원인은 미확정이다. 기존 수동적 protocol·함수 진입/반환 관측을 유지하며 원인 없이 locator를 우회하거나 시험을 지우지 않는다.
 - 참고: [Playwright 요청 사건을 동작 전에 구독](https://playwright.dev/docs/events#waiting-for-event)([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)), [React effect 정리와 늦은 응답](https://react.dev/reference/react/useEffect#fetching-data-with-effects)([MIT](https://github.com/facebook/react/blob/main/LICENSE)). 사건의 소유권과 이전 읽기 수명 원칙을 참고하며 외부 코드·의존성을 가져오지 않는다.
 
+## macOS pipe 창의 worker 한정 주입(t-1137)
+
+- main `c115d41a`·`3db8bcc7`의 macOS job 원문에서 최초 오류는 capture 스레드의 `status.code(): None != Some(7)`였다. raw holder 상속 확인과 pipe 해제는 성공했고 capture 역할은 시작하지 않았다. 뒤의 연결 Timeout을 시작 지연으로 취급하지 않는다. 원래 별도 `21-aaa_common.log`·`raw.trace` artifact는 없었고 job에 출력된 전체 aaa_common 구간과 trace를 추출했다.
+- 같은 기준에 capture 반환의 status·stdout·stderr만 기록한 진단 `ca93fea6`을 사용자 허용 아래 일회용 branch에서 실행했다([run 40418222799](https://github.com/cLazyZombie/aaa/actions/runs/40418222799)). 실제 `/bin/sh`가 물려받은 `arm64` window.dylib를 `arm64e`에 넣지 못해 fixture 시작 전에 SIGABRT(6)로 종료했다. worker2485·holder2486의 상속/해제 뒤 capture2487의 dyld 오류와 worker exit101·양쪽 EOF가 남았다. 원래 두 실행의 capture PID·signal 번호·holder 종료 상태는 기록되지 않아 소급해 만들어 쓰지 않는다.
+- `DYLD_INSERT_LIBRARIES`는 실제 pipe 창을 붙잡는 worker에만 넘기고 capture shell·holder에서는 제거한다. 제품 생성 잠금과 std/Tokio/실제 harness 판 조회의 동작은 그대로다. raw 상속·exit7·stdout/stderr·NOTE_EXIT·holder 생존 중 반환 단언과 내부2초·worker5초 상한도 유지한다.
+- 기존 `pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime` 안에서 `/bin/sh`를 자기 target에 자식 프로세스로 복사하고 사본만 ad-hoc 서명한다. 보호된 시스템 shell이 DYLD를 지워 회귀를 숨기던 일반 Mac에서도 같은 loader 경계를 검사하기 위해 필요하다. 시스템 실행 파일·설정·SIP는 바꾸지 않으며 새 시험·E2E 번호는 없다. 주입 제거 전에는 같은 owner가 SIGABRT→Timeout으로2.11초에 실패했고 제거 뒤 네 모드가0.13초에 통과했다.
+- 부분 검사는 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib child_process::tests::pipe_window -- --nocapture`, 같은 owner의 `--test-threads=1`, `RUST_TEST_THREADS=8`의 aaa-common 전체와 `cargo clippy --profile verify --locked -p aaa-common --all-targets -- -D warnings`, fmt·공개 검사다. 최종 owner0.14초·병렬 전체59통과/보조1ignored1.04초와 나머지 부분 검사가 통과했다. 고정 sleep·실패 재시도·시한 확대·기대값 완화는 없다. 전체 ci-local과 착지는 coordinator 차례에서 수행한다.
+- OSS는 [Rust std](https://github.com/rust-lang/rust/blob/main/library/std/src/sys/process/unix/unix.rs)(MIT OR Apache-2.0)의 spawn/output 경계, [Duct](https://github.com/oconnor663/duct.rs/blob/master/src/lib.rs)(MIT)의 생성 잠금/수집 분리, [dyld 환경 처리](https://github.com/apple-oss-distributions/dyld/blob/main/dyld/DyldProcessConfig.cpp)(APSL-2.0)의 보호 여부별 DYLD 처리와 [runner arm64e 주입 이슈](https://github.com/actions/runner-images/issues/9461)를 대조했다. 주입을 필요한 프로세스에 한정하는 원칙만 따르며 외부 코드·의존성은 가져오지 않는다.
+
+## Windows host 저장 경계와 큰 fixture(t-1138)
+
+- 원래 CI의 60초 경고 다섯 건 중 계정·업로드·sweep·brief는 뒤에 완료됐고 post가 단계 상한까지 남았다. 격리 Windows 재현은 시작/완료 시각·owner 단계 로그와 실제 자식의 native stack으로 구분한다. 업로드는 `SetSecurityInfo → private_file::protect`, sweep 준비와 post는 SQLite `FlushFileBuffers`, brief는 실제 thread 저장을 관측했다. 계정 첫 초기화에서는 실행 파일 hash 읽기도 관측했다. 이 결과를 원래 hosted runner의 대기 스택으로 대신 주장하지 않는다.
+- Windows private 객체는 매번 실제 handle의 종류·소유권을 확인하고, protected 비트와 DACL 전체가 원하는 값과 같을 때만 보안 쓰기를 생략한다. `SetSecurityInfo`의 기존 자식 상속 재전파를 피하되 경로/ACL 캐시는 두지 않는다. 새 `windows_acl_tests::private_acl_recheck_avoids_security_writes_but_repairs_external_changes`는 실제 OS ChangeTime 불변·외부 ACL 변경 복구·private 접근을 검사한다. 필요한 이유는 같은 ACL 반복 적용의 비용과 잘못된 기존 권한을 그대로 통과시키는 보안 회귀를 함께 막기 위해서다. 수정 전에는 실제 ChangeTime 변경으로 실패한다.
+- host의 CREATE/ALTER·schema 표지·지표 이행을 한 immediate transaction으로 확정한다. WAL·FULL synchronous는 유지한다. 새 `db::schema_tests::schema_upgrade_commits_once_and_rolls_back_on_failure`는 디스크 DB의 모르는 schema 거부·앞선 DDL rollback·정상 이행·재시작 저장과 내구 설정을 검사한다. 필요한 이유는 묶음 이행이 부분 schema나 열린 transaction을 남기지 않게 하기 위해서다.
+- 기존 post owner의 30건 핑퐁·31번째 거부·19/20회 음소거·60초/시간/24시간 경계와 내용 중복을 유지한다. 시간/하루 창의 중간 이력만 본문 정리 뒤 원장 형태로 한 transaction에 준비하고, 200번째/2,000번째 접수와 초과 거부·경계 뒤 재접수는 실제 owner를 통과한다. 마지막 접수의 원장·inbox가 Host 재시작 뒤에도 남아야 한다.
+- sweep의 601건 준비만 한 transaction으로 묶고 500/101/실제 cleanup·dry-run·재개 경합·저장 실패를 유지한다. 업로드는 999개까지 실제 디스크에 준비하고 다른 업로드로 cache를 비운 뒤 1,000번째 추가·초과 거부·상한에서 교체한 실제 바이트를 검사한다. 앞선 빈 파일/교체/실패 뒤 재계산·다른 업로드의 cache 경계도 유지한다. report fixture는 가짜 agent 취소 완료를 await하고 Host/DB가 닫힌 뒤 폴더를 지운다.
+- 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib`, `-p aaa-common --lib`, 두 crate의 `clippy --all-targets -- -D warnings`다. Windows에서는 같은 명령을 격리 checkout 안에서 실행하고 프로세스 우선순위를 BelowNormal로 둔다. Cargo가 시험 실행 파일을 다시 만들 때 같은 실행 파일의 시험을 함께 돌리지 않는다. 실행 파일을 직접 쓰면 각 package 폴더를 cwd로 하고, build script가 쓰는 실제 Git checkout과 동작하는 Git/sh PATH를 준비한다. 기존 timeout·시험 선택·기대값·실패 재시도는 바꾸지 않는다. 전체 gate와 착지는 coordinator의 차례에서 한다.
+- OSS 후보는 [SQLite transaction 비용](https://www.sqlite.org/faq.html#q18)([public domain](https://www.sqlite.org/copyright.html)), [Tokio task 완료](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE)), [tempfile의 열린 handle과 명시 정리](https://docs.rs/tempfile/latest/tempfile/struct.TempDir.html)([MIT](https://github.com/Stebalien/tempfile/blob/master/LICENSE-MIT))를 비교했다. 묶음 commit·취소 완료·handle 종료 후 정리 원칙을 따르며 코드/의존성은 가져오지 않는다. ACL 재전파는 [Windows SetSecurityInfo 문서](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)의 OS 계약과 실제 stack으로 확인한다.
+
+## 큰 응답 회귀의 단계 계측과 평문 가림 비용(t-1141)
+
+- 기존 `large_report_and_bad_parts_keep_requests_on_one_link`의 5초 상한 안에서 Host::open·manifest 준비·Welcome/pong·hash·큰 보고·분할 경계 가림·손상 조각·다음 요청·fake 종료·host reader 종료·파일 정리의 단계/전체 경과를 남긴다. 상한에 걸리면 마지막 단계와 전체 경과를 panic에 남겨 전송 비용과 종료 정지를 구별한다. 14,781개 manifest와 2MiB 초과 보고, 원본/hash 보존, 경계 가림, 오류 요청 격리와 같은 generation의 다음 입력 단언은 그대로다.
+- 가림의 원문 창과 ANSI/CR/LF를 뺀 글의 창은 평문에서 같다. 평문은 원문 검사를 한 번만 하고 위치 배열과 두 번째 글 배열/검사를 만들지 않는다. ANSI/개행이나 이전 청크의 미완성 ESC가 있으면 기존 두 경로를 유지한다. 원문·겹친 8바이트 창·접두부 보류·끝 flush 의미를 바꾸지 않는다.
+- 기존 `stream_keeps_no_secret_across_any_ansi_or_chunk_boundary_and_flushes_the_tail`에 평문·CR/LF를 더하고 CSI와 함께 모든 두 청크 경계를 검사한다. 전체 인증 문자열이 별표로 바뀌고 앞뒤 비밀 아닌 글과 ANSI가 보존되는 독립 기대값도 확인한다. 필요한 이유: 빠른 평문 경로와 ANSI/개행 경로를 오갈 때 접두부가 새거나 원문을 놓치는 회귀를 막기 위해서다. 시험 삭제·새 E2E 번호·고정 sleep·재시도·시한 확대·기대값 완화는 없다.
+- 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib redact`, host의 `--lib large_report_and_bad_parts`와 `--lib`, 두 crate의 strict clippy다. Windows는 전용 시험 폴더에서 같은 owner와 host 전체를 실행하며 서비스·예약 작업·Run 키·사용자 PATH·방화벽 규칙의 전후 목록을 대조한다. 전체 ci-local과 착지는 coordinator가 준 차례에 실행한다.
+- 같은 기본 병렬 host 전체 실행에서 대상은 macOS 3.166→1.241초, Windows 5.251초 상한 실패→2.230초 완료였다. 가림 단계는 각각 1.060→0.371초·4.708→1.499초다. Windows 수정 전은 가림을 마친 뒤 다음 손상 조각 대기에서 이미 지난 5초 상한이 보고됐다. 단독은 macOS 1.293→0.868초·Windows 0.873→0.719초다. 각 전후 한 번의 관측이며 원래 macOS CI 실패를 재현했다는 뜻은 아니다. Windows의 별도 `an_installed_machine_gets_a_check_pane_and_a_login_pane`는 수정 전부터 끝 확인 줄 대기에 실패하여 이 후보의 수리 범위와 분리한다.
+- 참고 후보는 [Tokio duplex/역압](https://docs.rs/tokio/latest/tokio/io/fn.duplex.html)·[task 종료](https://docs.rs/tokio/latest/tokio/task/struct.JoinSet.html)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))와 [Hyper 연결 종료 정리](https://github.com/hyperium/hyper/blob/master/src/proto/h1/dispatch.rs)([MIT](https://github.com/hyperium/hyper/blob/master/LICENSE))다. 종료 사건과 소유권을 대조했고 외부 코드·의존성은 추가하지 않는다.
+
 ## 큰 agent 응답과 보고 hash 확인(t-1131, §8.505)
 
 - 공통 `response_parts`의 사고 회귀는 원본 9,820바이트·빈 파일35개·건너뛴 파일14,746개를 합쳐 운영 사고와 정확히 같은 2,232,861바이트 frame을 만든다. 실제 duplex/writer/FrameRx에서 6조각의 원문 동일성과 구판의 `too_large`, 잘못된 큰 제어 frame 거부 뒤 같은 연결의 pong·다음 요청을 검사한다. 필요한 이유: 한 큰 응답이 모든 agent 요청과 재연결을 끊던 회귀를 실제 포장/전송 경계에서 막는다.
@@ -4176,6 +4204,7 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 ## E2E12 본문 관측과 실패 자식의 소유권(t-1123, 76회차)
 
+- 78회차의 추가 경계: 다운로드 완료(`requestfinished`) 뒤에도 Node의 `response.body()` protocol 호출이 문서 교체보다 늦게 도착할 수 있다. 실제 Chrome에서 본문 호출만 사건 gate로 보류→문서 교체→gate 해제로 `No resource with given identifier found`를 재현한다. 읽는 중인 요청도 같은 page의 실제 timeOrigin 교체를 기록하며, 이때 잃은 본문만 취소 꼬리로 구분한다. 본문을 받은 뒤의 JSON/내용 오류와 현재 문서의 body 오류는 계속 실패한다. 기존 수명 회귀에 이 경계와 현재 문서 오류 대조를 더했으며 새 단계·시한·번호는 없다. 필요한 이유: 헤더만 온 요청과 다운로드까지 끝난 요청은 서로 다른 protocol 수명을 갖는다. 수리 후 전체 E2E12 50.5초, 새 경계 포함 수명 회귀0.120초였다.
 - 앞선 `5d088c34`는 route handler 해제→context 닫기, `df399e30`은 두 완전 목록의 실제 body 수집과 재연결 제품 상태, `e3bcc847`은 복제한 후속 원장 제거와 route 오류 회수를 고쳤다. 이번도 같은 비동기 수명 경계 계열이지만, 완료 전 HTTP 본문 Promise와 단계에서 분리된 WebKit 생성의 소유권은 그 수리에 포함되지 않았다. 세 수리의 기존 단언은 유지한다.
 - 첫 76회차 gate는 Chromium 초기 문서의 요청32가 헤더 뒤 미완료였고 reload 뒤에도 `response.body()`가 남아 `reads()`의 `Promise.all`이 끝나지 않았다. 기존120초 단계 제한이 browser.close를 시작한 뒤에야 body 오류가 나왔다. 작은 실제 HTTP 서버에서 헤더/부분 본문→문서 교체→서버 본문 종료까지도 기존 body Promise가 pending이고 browser.close 뒤에만 거절되는 것을 사건으로 재현했다. route.fetch·fulfill 완료만 기다리는 것으로는 이 브라우저 protocol 수명을 끝낼 수 없다.
 - 이제 `response`에는 객체만 보관하고 `requestfinished` 뒤 본문을 수집한다. 초기 문서의 이미 완료한 body 작업은 reload 전 회수한다. 실제 main frame의 timeOrigin 교체로 중단된 꼬리는 `navigation-aborted`/`cancelled-tail`로 기록하고, 앞 커서·중복·정확한 목록 접두사를 검사한다. 취소 꼬리는 완전 페이지로 세지 않는다. 정상 응답은 여전히 상태200·frame/페이지 상한·ID 순서·고유값·전체 개수와 두 완전 reload 읽기를 모두 검사하며 현재 문서의 네트워크/본문 오류는 실패다. 알려진 미완료 요청을 성공 페이지로 바꾸거나 버리지 않는다.
@@ -4204,3 +4233,31 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 - 두 번째 전체 gate는 Rust 전체가 통과하고 E2E53의 수정 M3 카드에서 `thread-ask-pick-2B`를 기다리다 실패했다. 보존 DB에는 broken M3의 두 질문 직접 답이 이미 asks에 기록되고 수정 보고에는 원문1번만 남아 있었다. 답한2번을 새 중복 방지가 정상 제외한 것이다. 기존 owner는 전달 전 claim인 `questions.answer`만 보고 다음 보고를 써 실제 원문 보존 순서에 따라 결과가 갈렸다.
 - E2E53의 해당 owner에서 이전 답의 시각·질문ID가 실제 asks 원문에 보존된 사건 뒤 다음 보고를 쓴다. 같은 원문을 복구하면 답한2번이 제외됨을 먼저 확인하고, 다시 판단할2번은 질문 제목으로 새 판단임을 명시해 원래 두 질문·3/2개 선택지·정확한 `1C 2B` 전달 단언을 유지한다. 원본 M3 fixture·제품 중복 방지·시한은 바꾸지 않는다. 필요한 이유는 전송 전 claim과 실제 답 보존을 구별하며 새 질문과 답한 질문의 기존 두 계약을 모두 지키기 위해서다. 해당 파일 전체의 부분 검증은82.1초에 통과했고 최종 추가 단언은 전체 gate에서 확인한다.
+
+## 인증 fixture의 공통 opaque 토큰(t-1127)
+
+- 80회차 통합에서 새 main의 `large_report_and_bad_parts_keep_requests_on_one_link`에 남은 직접 인증 fixture를 공통 `CANARY`로 옮긴다. 생성기를 통과한96바이트 토큰도 기존 길이 기준 계산으로 조각 경계를 가로지르며 원본 hash 보존·재조립 뒤 가림·다음 요청 단언과5초 상한을 유지한다.
+
+- [시험 인증 fixture](test-secrets.md)의 공통 생성기·벡터를 Rust·Python·Node E2E가 함께 쓴다. 계정/업무 이름은 seed나 별도 대응표에만 두고 본문에는 넣지 않는다. 제품 가림 규칙은 바꾸지 않는다.
+- `scripts.test_fixture_secrets`와 웹 `fixture-secret.test.mjs`, `aaa-test-support` 유닛은 언어별 공통 벡터·업무 단어 즉시 거부를 검사한다. 정적 검사는 ci-local 시험 진입 전에 실행하고 정확한 경로·값·사유 예외만 허용한다. 필요한 이유는 같은 실행의 다른 owner까지 망가뜨리는 평문 인증 fixture 재유입을 막기 위해서다.
+- 기존 aaa-common 가림 owner에 `opaque_credentials_do_not_redact_business_fields_in_the_same_process`를 더한다. 실제 전역 가림 등록 뒤 토큰은 가려지고 automation/owner/인증 JSON 필드는 보존되어야 한다. 필요한 이유는 생성기 형식 검사만으로 실제 제품 serializer의 필드 보존을 대신할 수 없기 때문이다.
+- 기존 계정·금고·이름 변경·자동화·사용량·세션·hook·설치 암호·K0·이미지의 인증 fixture를 옮기고, 바이너리 base64 충돌과 모든 8바이트 부분 누출·변환·권한/오류 계약을 유지한다. E2E58/65/68/78/81과 M4 보호 암호 입력을 사용하며 E2E 번호는 늘리지 않는다. JWT metadata와 로그인 파서의 필수 접두사·escape·ANSI만 해당 owner에서 유지한다.
+- Windows 두 실기 스크립트는 공통 const 산출물을 읽는다. 격리 폴더에서 두 전체 스크립트의 PowerShell 구문과 실제 인증 JSON의 세 필드를 검증한다. 서비스·예약 작업·Run·사용자 PATH·방화벽 목록의 전후 동일과 시험 폴더 삭제를 확인하며 설치·서비스 시작은 실행하지 않는다.
+- `test_auth_fixture_guard_fails_before_python_and_rust_execution`은 격리한 실제 ci-local에 업무 단어 토큰을 넣어 Python·Rust owner 실행 전 실패와 원문 없는 경로·줄 진단을 확인한다. 필요한 이유는 검사 함수를 호출하는 유닛만으로 CI 진입 연결을 대신할 수 없기 때문이다.
+- 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 부분 검증 뒤 전체 gate와 묶음 착지는 coordinator의 순서를 기다린다. OSS 후보·라이선스·채택한 원칙은 위 문서에 있다.
+
+## 보고 사본 핵심 근거 우선 선택(t-1132, §8.506)
+
+- `nice -n 15 cargo test --profile verify --locked -p aaa-agent --lib report_copy`의 `real_size_budget_preserves_report_links_and_small_evidence_before_images`는 실제 2,399개 sparse 파일(metadata 크기: 중간 PNG 2,390×224KiB·요약 6×1KiB·연결 JSON 2KiB·그림 2MiB·영상 201MiB)에서 200MiB 상한과 근거 보존·선택 순서·누락 크기/이유를 확인한다. 필요한 이유: 이름순 그림이 작은 근거를 밀어내던 실제 규모 회귀를 막는다. 큰 본문을 읽지 않는 제품 선택 함수를 직접 호출해 불필요한 수백 MiB 해시 없이 검증한다.
+- `collect_keeps_priority_hashes_and_skips_without_following_symlinks`는 작은 실제 collect로 Markdown·참조 정의·percent 주소·공백·HTML·본문 경로의 선택 순서와 원문 hash/파일 SHA-256·상한 0 probe·symlink 거부를 확인한다. 필요한 이유: 선택 단위 시험이 대신할 수 없는 실제 전송 manifest와 원문 보존을 지킨다. 새 회귀 두 개는 합계 0.46초로 확인했다.
+- 기존 E2E12의 실제 부분 사본 thread에서 배너·누락 경로·파일 행 표시를 확인한다. 기존 E2E73은 실제 thread의 HTML/Markdown 보존 판에 누락이 남는지 Chromium/WebKit ×1280/390px에서 각각 확인한다. 필요한 이유: HTML iframe을 보거나 원래 thread가 정리된 뒤 r 판을 읽을 때도 누락이 숨지 않아야 한다. 응답·DOM 사건으로 끝내며 고정 sleep·재시도·시한 확대는 없다.
+- 전체 gate는 coordinator에게 준비됨을 알리고 받은 차례에 실행한다. 후보를 push하지 않고 병합 준비 보고를 남기며 운영 DB·설정과 원래 worktree는 건드리지 않는다.
+
+- 첫 전체 gate(4dc867f5, 418초)는 E2E42 하나만 실패했다. 같은 실행 파일·실제 thread에서 경고 띠만 숨긴 대조는 diff 본문 높이360.5→433.5px·파일 머리4→6개를 보였다. 새 경고가 가상화 경계 밖으로 두 머리를 밀어낸 원인이다. thread 안내를 `.thread-col` 스크롤 안으로 옮겨 옆 diff 높이를 보존한다. E2E42의 원래 6개·선택 파일·20초 단언을 그대로 검증하며 진단용 DOM 숨김은 제품·정규 시험에 넣지 않는다. 수리 후 전체 gate는 새 차례를 받아 실행한다.
+
+## 자동화 시작 thread의 Next 제외(t-1133, §8.507)
+
+- `followups::tests::automation_origin_skips_next_but_same_named_human_thread_keeps_protection`은 실제 SQLite·보고·TASKS·inbox·Host 재열기로 자동화의 Next 미수집과, 같은 이름/감시 문구인 일반 thread의 원장·보관 차단 유지를 검사한다. 필요한 이유: 문구 추측이나 자동화 설정 조회로 사람의 후속을 없애는 회귀를 막는다.
+- `followups::tests::legacy_automation_next_handoff_is_durable_and_preserves_explicit_receipts`은 이미 판정한 구판 미처리 항목을 정상 정리 순회로 인계하고 원본 ID/판/줄·자동화 이름/host/시각·기존 명시 영수증·inbox 종료·보관·재기동/재순회 불변을 검사한다. 필요한 이유: 새 보고가 없는 종료 감시 thread의 후속 경고도 수동 사유 입력 없이 해소하고 이전 처리 근거를 보존해야 한다.
+- 기존 m13 `automation_thread_reports_do_not_wake_their_own_rule`에 실제 do.start 출처의 완료 Next 표시 유지·후속 미수집·일반 시작의 수집 대조를 추가한다. 새 프로세스 실험실·E2E 번호를 늘리지 않는다. 기존 자동화 보고 사건의 순서/자기 재실행 방지 단언은 유지한다.
+- 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib followups::tests`와 `nice -n 15 cargo test --profile verify --locked -p aaa --test m13 automation_thread_reports_do_not_wake_their_own_rule`다. 개별 새 시험은 보통 부하에서 5초 이하로 유지하고 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 전체 gate는 coordinator가 정한 같은 머신의 실행 차례를 받아 실행한다.

@@ -353,7 +353,7 @@ mod tests {
             account: "fixture".into(),
             harness: "claude".into(),
             version: 1,
-            secret: SecretText("fake-test-credential".into()),
+            secret: SecretText(aaa_test_support::token("session-credential")),
             trust_cwd: cwd.map(|p| p.to_string_lossy().into_owned()),
             auth_generation: None,
         }
@@ -372,7 +372,8 @@ mod tests {
         let native = canonical.to_str().unwrap();
         let mut auth = credential(Some(&cwd));
         auth.harness = "codex".into();
-        auth.secret = SecretText(r#"{"OPENAI_API_KEY":"fake-test-credential"}"#.into());
+        auth.secret =
+            SecretText(serde_json::json!({"OPENAI_API_KEY":aaa_test_support::token("session-codex-key")}).to_string());
         let (tx, _) = mpsc::channel(1);
         let argv = ["codex".into(), "--dangerously-bypass-approvals-and-sandbox".into()];
         let prepared = prepare(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
@@ -466,7 +467,7 @@ mod tests {
         assert_eq!(out.env.iter().filter(|(k, _)| k == "CLAUDE_CODE_OAUTH_TOKEN").count(), 1);
         for entry in std::fs::read_dir(&home).unwrap() {
             let bytes = std::fs::read(entry.unwrap().path()).unwrap();
-            assert!(!String::from_utf8_lossy(&bytes).contains("fake-test-credential"));
+            assert!(!String::from_utf8_lossy(&bytes).contains(&aaa_test_support::token("session-credential")));
         }
         #[cfg(unix)]
         {

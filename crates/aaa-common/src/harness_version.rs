@@ -55,7 +55,7 @@ mod tests {
         let exe = root.join("harness");
         std::fs::write(&exe, "#!/bin/sh\nprintf '%s' \"$FIXTURE_VERSION\"\nprintf '%s' \"$OPENAI_API_KEY\" >&2\nexit \"$FIXTURE_EXIT\"\n").unwrap();
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let secret = "qzF09R4sK2nB7vL6fixtureAuth";
+        let secret = &*aaa_test_support::token("qzF09R4sK2nB7vL6fixtureAuth");
         crate::redact::remember_env("OPENAI_API_KEY", secret);
         for harness in ["codex", "claude"] {
             for (version, exit) in [("arbitrary development build\r\n", "0"), ("future-version\n", "7")] {

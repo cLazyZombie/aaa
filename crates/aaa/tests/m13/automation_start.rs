@@ -167,8 +167,15 @@ fn automation_thread_reports_do_not_wake_their_own_rule() {
     });
     let shown = w.wait_show("자동 thread 보고", &auto, |v| v["report_hash"].is_string());
     assert_eq!((shown["automation"].as_str(), shown["automation_title"].as_str()), (Some("check"), Some("보고 점검")));
+    assert!(shown["next"].as_array().is_some_and(|v| !v.is_empty()), "보고의 Next 표시는 유지한다");
+    assert!(shown["followups"].as_array().is_none_or(|v| v.is_empty()), "do.start 출처는 후속 원장에서 제외한다");
+    let human_shown = w.show(&first);
+    assert!(
+        human_shown["followups"].as_array().is_some_and(|v| !v.is_empty()),
+        "일반 시작은 같은 fake 완료 Next도 보호한다"
+    );
     assert_eq!(cause(&auto), std::slice::from_ref(&first));
-    assert!(w.show(&first)["automation"].is_null(), "사람이 띄운 thread에는 출처가 없다");
+    assert!(human_shown["automation"].is_null(), "사람이 띄운 thread에는 출처가 없다");
     let board = w.h.ok(&["task", "list"]);
     let unlinked: Vec<_> =
         board["unlinked_threads"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();

@@ -771,6 +771,32 @@ mod tests {
         h.store_post("demo", sender(), input(n), "post:t-0001@mac-a", None, now)
     }
 
+    /// 본문을 정리한 뒤에도 남는 실제 SQLite 한도 이력. 접수 owner는 창 경계에서 호출한다.
+    fn seed_post_history(h: &Host, sender: &PostSender, rows: impl IntoIterator<Item = (PostInput, u64)>) {
+        let mut conn = h.db.conn_for_test();
+        let tx = conn.transaction().unwrap();
+        let mut seq: u64 = tx.query_row("SELECT COALESCE(MAX(seq),0) FROM posts", [], |r| r.get(0)).unwrap();
+        for (input, at) in rows {
+            seq += 1;
+            let result = PostResult::Accepted { id: format!("p-{seq:08}") };
+            tx.execute(
+                "INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,quota)
+                 VALUES(?1,'demo',?2,?3,?4,?5,?6,?7,'standard')",
+                rusqlite::params![
+                    input.post_id,
+                    sender.thread,
+                    sender.session,
+                    sender.machine,
+                    content_sha(&input),
+                    at,
+                    serde_json::to_string(&result).unwrap()
+                ],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
     /// 실제 post 접수에서 카드 연결·재전송과 별개 질문/옛 질문/다른 프로젝트의 경계를 함께 지킨다.
     #[test]
     fn plain_user_requests_link_only_one_current_thread_question() {
@@ -874,15 +900,15 @@ mod tests {
         let mut hourly_sender = sender();
         hourly_sender.thread = Some("t-0002".into());
         let hourly = |n, at| h.store_post("demo", hourly_sender.clone(), input(n), "hourly", None, at);
-        for n in 0..200 {
-            if n == 30 {
-                assert!(
-                    matches!(hourly(9000, now + 59_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:")),
-                    "60초 직전 31번째는 거부한다"
-                );
-            }
+        for n in 0..30 {
             assert!(matches!(hourly(1000 + n, now + u64::from(n / 30) * 60_000), PostResult::Accepted { .. }));
         }
+        assert!(
+            matches!(hourly(9000, now + 59_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:")),
+            "60초 직전 31번째는 거부한다"
+        );
+        seed_post_history(&h, &hourly_sender, (30..199).map(|n| (input(1000 + n), now + u64::from(n / 30) * 60_000)));
+        assert!(matches!(hourly(1199, now + 6 * 60_000), PostResult::Accepted { .. }), "200번째까지 수락한다");
         assert!(
             matches!(hourly(1200, now + 3_599_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
         );
@@ -895,9 +921,12 @@ mod tests {
         daily_sender.thread = Some("t-0003".into());
         let daily = |i, at| h.store_post("demo", daily_sender.clone(), i, "daily", None, at);
         // 40초 간격이면 burst·hourly에 걸리지 않고 24시간 안에 2,000건을 채운다.
-        for n in 0..2000 {
-            assert!(matches!(daily(input(2000 + n), now + u64::from(n) * 40_000), PostResult::Accepted { .. }));
-        }
+        assert!(matches!(daily(input(2000), now), PostResult::Accepted { .. }));
+        seed_post_history(&h, &daily_sender, (1..1999).map(|n| (input(2000 + n), now + u64::from(n) * 40_000)));
+        assert!(
+            matches!(daily(input(3999), now + 1999 * 40_000), PostResult::Accepted { .. }),
+            "2,000번째까지 수락한다"
+        );
         let mut dupe = input(2000);
         dupe.post_id = format!("{:032x}", 4000);
         assert!(
@@ -913,6 +942,19 @@ mod tests {
             matches!(daily(dupe, now + 86_400_001), PostResult::Accepted { .. }),
             "24시간 뒤 같은 글과 하루 한도가 함께 풀린다"
         );
+        // 묶음 이력은 실제 디스크에 확정됐다. 경계에서 접수한 글의 봉투·inbox도 재시작 뒤 남는다.
+        let last = input(4002);
+        let accepted = h.db.post_row(&last.post_id).unwrap().unwrap().result;
+        let PostResult::Accepted { id } = accepted else { panic!("마지막 접수 결과") };
+        assert!(h.db.post_inbox("demo", &id).unwrap().is_some());
+        let cfg = h.cfg.clone();
+        drop(h);
+        let reopened = Host::open(cfg, _lab.0.clone()).unwrap();
+        assert_eq!(
+            reopened.db.post_row(&last.post_id).unwrap().unwrap().result,
+            PostResult::Accepted { id: id.clone() }
+        );
+        assert!(reopened.db.post_inbox("demo", &id).unwrap().is_some());
     }
 
     /// 한도는 now로 창 경계를 본다. inbox를 만드는 실제 owner와 durable 원장을 함께 검사한다.

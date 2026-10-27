@@ -10,8 +10,8 @@ fn codex_auth(email: &str, plan: &str) -> String {
     let claims = serde_json::json!({"email": email, "https://api.openai.com/auth": {"chatgpt_plan_type": plan}});
     let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
     serde_json::json!({"tokens": {
-        "access_token": "test-access-0123456789",
-        "refresh_token": "test-refresh-0123456789",
+        "access_token": aaa_test_support::token("meta-access"),
+        "refresh_token": aaa_test_support::token("meta-refresh"),
         "id_token": format!("e30.{body}.c2ln"),
     }})
     .to_string()
@@ -167,7 +167,9 @@ fn broken_and_expiring_accounts_raise_one_alert_without_email_and_logging_in_cle
 
     // 알려진 만료가 7일 안이면 「곧 만료」, 지나면 「끊김」으로 바뀐다(옛 항목은 끝낸다)
     // 공개 저장소 검사가 token 꼴 글을 막는다: 가짜 값도 실행 중에 만든다
-    h.accounts.import("ci", "claude", &format!("sk-ant-{}-test-only-0123456789", "oat01")).unwrap();
+    h.accounts
+        .import("ci", "claude", &format!("sk-ant-{}-{}", "oat01", aaa_test_support::token("meta-claude")))
+        .unwrap();
     let soon = util::now_ms() + 3 * DAY;
     h.account_logged_in("ci", &Identity { expires_ms: Some(soon), ..Default::default() }, false);
     let open: Vec<_> = account_items(h).into_iter().filter(|i| !i.done).collect();

@@ -1,8 +1,8 @@
 use super::*;
 use std::process::Command;
 
-const SECRET: &str = "PANIC-PRIVATE-PAYLOAD-7xQm";
-const NAME_SECRET: &str = "PRIVATE-THREAD-NAME-9pRs";
+use aaa_test_support::CANARY as SECRET;
+const NAME_SECRET: &str = SECRET;
 
 // 공개 hook을 실제 자식 프로세스에서 실행한다. 전역 hook·환경을 다른 시험과 공유하지 않는다.
 #[test]

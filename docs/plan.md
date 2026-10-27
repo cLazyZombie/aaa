@@ -8089,3 +8089,17 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **받는 경계.** host는 살아 있는 요청 ID만 조립하고 offset·전체 길이·중복 시작·조각 크기·합계 상한·최종 JSON의 Res 종류/ID를 확인한다. 시한이 지나거나 취소된 자료는 다음 수신 사건에 버리고, 연결 종료 때 전부 버린다. 순서가 잘못된 조각은 그 요청만 실패시키며 연결과 다른 요청은 계속한다. 조립한 응답은 기존 decode·가림·적용 경계를 그대로 거친다. `report_copy.v2`는 원본 전체 hash를 먼저 확인한 뒤 저장 전에 가리는 순서를 유지한다.
 - **실패 격리.** 공통 송신부는 종류 byte까지 검사해 wire 쓰기 전에 크기 오류를 호출자에 돌린다. writer의 방어 검사도 길이 초과 frame을 소비하고 다음 frame으로 진행한다. I/O 실패와 잘못된 터미널 codec/대기열 처리는 기존 연결 복구 정책을 유지한다. 큰 응답 진단에는 요청 ID·종류·바이트·상한을 남기며 본문은 남기지 않는다. 분할 JSON 해석 실패도 원문 대신 오류 종류·위치를 기록한다.
 - **참고.** [Tokio LengthDelimitedCodec](https://github.com/tokio-rs/tokio/blob/master/tokio-util/src/codec/length_delimited.rs)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))의 쓰기 전 길이 검사와 [nats.go](https://github.com/nats-io/nats.go/blob/main/nats.go)([Apache-2.0](https://github.com/nats-io/nats.go/blob/main/LICENSE))의 최대 payload 사전 거부를 참고했다. 외부 코드·의존성은 추가하지 않는다.
+
+### 8.506 보고 사본의 핵심 근거 우선 복사(t-1132)
+
+- library 복사 상한은 기존 설정(기본 200MiB)을 유지한다. metadata를 먼저 모은 뒤 작은 보고 참조(1MiB 이하), 작은 요약·측정·로그·JSON/JSONL·CSV 등, 큰 보고 참조, 나머지 순으로 고른다. 같은 순위에서는 크기·경로순이다. 큰 참조 하나가 작은 원장 전부를 밀어내지 않게 하며 남은 상한에 들어가지 않는 파일 뒤에도 계속 고른다.
+- 보고 본문의 Markdown 링크·참조 정의·HTML 속성·본문 library 경로를 선택 힌트로 읽는다. 상대 주소·percent encoding·각괄호 안 공백을 받으며 실제 파일 열기의 symlink/경로 검증은 기존대로다. 보고 원문·hash·상한·FRONT_API는 바꾸지 않는다. manifest의 선택 순서를 host 전송에도 유지하며 표시용 목록만 이름순으로 정렬한다.
+- 빠진 파일은 기존 skipped·copy_notes·on_agent 원장에 경로·크기·이유를 남긴다. thread는 본문 스크롤 안의 부분 사본 배너(옆 diff 높이 보존), 보고서 상세는 HTML iframe 위에도 누락 개수와 펼칠 수 있는 경로 목록을 보인다. 파일 행과 공유 목록에는 사본이 없음을 명시한다. 보존 r 판은 계속 최신 agent 바이트로 대체하지 않는다.
+- 참고: [rclone 전송 순서](https://rclone.org/docs/#order-by-string)([MIT](https://github.com/rclone/rclone/blob/master/COPYING))의 전체 목록 수집·크기순 선택과 [restic 파일 선택](https://restic.readthedocs.io/en/stable/040_backup.html#including-files)([BSD-2-Clause](https://github.com/restic/restic/blob/master/LICENSE))의 명시적 경로 목록을 참고했다. 외부 코드·의존성을 추가하지 않는다.
+
+### 8.507 자동화 시작 thread의 Next 책임(t-1133)
+
+- 자동화 `do.start`가 시작 때 저장한 `ThreadRec.automation`을 근거로 완료 Next를 후속 원장 수집에서 제외한다. 보고와 `ThreadView.next`는 유지한다. 자동화 파일의 현재 존재·켜짐, thread 제목·감시 문구는 판정에 쓰지 않는다. 시작 출처 없는 옛 기록과 사람이 시작한 thread는 기존 후속 보호를 유지한다.
+- 구판이 수집한 자동화의 미처리 항목은 보고 회수·마지막 resolve 또는 끝난 thread의 기존 정리 순회에서 host가 다음 자동 실행의 책임으로 인계한다. 원본 줄·판·ID는 보존하고 자동화 이름을 담은 사유·host actor·시각을 남긴다. 이미 처리한 task 연결·사유 영수증은 바꾸지 않는다. 판정이 끝났거나 연결 task가 없는 기록도 회수하며 기존 후속 inbox를 닫는다. 인계 저장 실패는 원인과 thread를 경고하고 다음 정상 순회에 남긴다.
+- 일반 thread의 Next 교체·inbox 정리·완료/삭제/연결 해제 차단과 명시적 처리 규칙은 유지한다. 새 FRONT_API·AGENT_LINK·웹 E2E 번호·의존성은 없다. 운영 DB·설정은 수정하지 않는다.
+- 참고: [Temporal Workflow ID와 Run ID](https://docs.temporal.io/workflow-execution/workflowid-runid)([MIT](https://github.com/temporalio/temporal/blob/main/LICENSE))의 반복 작업과 개별 실행 구분, [Actions 실행 context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context)([runner MIT](https://github.com/actions/runner/blob/main/LICENSE))의 workflow/event 출처를 비교했다. 문구 대신 영속 출처로 책임을 정하는 원칙만 적용하며 외부 코드는 복사하지 않는다.

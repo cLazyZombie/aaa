@@ -43,5 +43,6 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+aaa-test-support.workspace = true
 # cwd 시험: pane처럼 PTY 안에서 셸을 띄운다(제어 터미널의 앞 그룹을 읽는 길)
 portable-pty.workspace = true

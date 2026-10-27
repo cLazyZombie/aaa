@@ -52,7 +52,7 @@ fn post_cli_rejects_old_agent_and_preserves_ack_exit_codes() {
         let out = Command::new(env!("CARGO_BIN_EXE_aaa"))
             .args(["post", "coordinator", "--notice", "--topic", "ci-red", "--title", "자료"])
             .env("AAA_SESSION_ID", "s1")
-            .env("AAA_HOOK_TOKEN", "test-hook-secret")
+            .env("AAA_HOOK_TOKEN", aaa_test_support::token("test-hook-secret").as_str())
             .env("AAA_HOOK_SOCK", &sock)
             .env("AAA_STATE_DIR", &path)
             .env("AAA_CONFIG_DIR", &path)

@@ -26,17 +26,21 @@ fn account_unpark(moving: bool) {
     // 계정 선택·금고·실행 인증 원장·격리 홈은 제품 경로를 쓰고 harness만 대체한다.
     let script = RESUMABLE_AGENT.replace(
         "log=''",
-        r#"[ "$CLAUDE_CODE_OAUTH_TOKEN" = 'm8F1xQ7zN2vR9cL4' ] || exit 42
+        &r#"[ "$CLAUDE_CODE_OAUTH_TOKEN" = '__PARK_AUTH__' ] || exit 42
 [ -n "$CLAUDE_CONFIG_DIR" ] || exit 43
 if [ -f "$CLAUDE_CONFIG_DIR/park-history" ]; then history=kept; else history=new; fi
 touch "$CLAUDE_CONFIG_DIR/park-history"
 log="account-original history-$history
-""#,
+""#
+        .replace("__PARK_AUTH__", &aaa_test_support::token("park-original")),
     );
     let script = script.replace("log=\"$1 $2", "log=\"$log$1 $2");
     std::fs::write(w.scripts.join("resumable.sh"), script).unwrap();
-    for (name, token) in [("park-original", "m8F1xQ7zN2vR9cL4"), ("park-other", "b3J6wP8yK1sT5dH9")] {
-        let file = w.task(&format!("{name}.token"), token);
+    for (name, token) in [
+        ("park-original", aaa_test_support::token("park-original")),
+        ("park-other", aaa_test_support::token("park-other")),
+    ] {
+        let file = w.task(&format!("{name}.token"), &token);
         w.h.ok(&["account", "import", name, "--harness", "claude", "--file", &file]);
     }
     w.h.ok(&["account", "default", "claude", "park-original"]);

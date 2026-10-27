@@ -3,12 +3,14 @@ use aaa_proto::FrontRequest;
 use std::sync::Arc;
 
 struct Lab {
-    root: PathBuf,
     h: Arc<Host>,
+    _root: Cleanup,
 }
-impl Drop for Lab {
+struct Cleanup(PathBuf, std::sync::Weak<Host>);
+impl Drop for Cleanup {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
+        assert!(self.1.upgrade().is_none(), "Host와 DB를 닫은 뒤 지운다");
+        std::fs::remove_dir_all(&self.0).unwrap();
     }
 }
 fn lab() -> Lab {
@@ -18,7 +20,8 @@ fn lab() -> Lab {
     cfg.notify.web_push = false;
     let h = Host::open(cfg, root.join("host")).unwrap();
     h.project_create("demo", Default::default(), "local:cli").unwrap();
-    Lab { root, h }
+    let weak = Arc::downgrade(&h);
+    Lab { h, _root: Cleanup(root, weak) }
 }
 // 다른 시험이 등록한 가짜 비밀(`…0123456789`)의 조각과 겹치지 않는 값: 요청 가림(redact::json)이 그 조각을 지운다
 const UP: &str = "a7c3e9b1d5f2084c6e1a9b3d7f5c2e80";
@@ -171,10 +174,15 @@ fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
     const OTHER: &str = "dc3a9f2b7e5081d4c6a3b9f1e5d70286";
     assert_eq!(h.library_upload_put(DeviceRole::Controller, "demo", OTHER, "x", b"z").unwrap(), (1, 1));
     assert_eq!(put("empty", b"").unwrap(), (2, 2), "다른 올리기 뒤 다시 디스크를 센다");
-    for i in 2..FILES_MAX {
-        assert_eq!(put(&format!("file-{i}"), b"").unwrap(), (i + 1, 2));
+    // 많은 기존 파일은 디스크에 준비하고, 상한을 채우는 마지막 추가는 실제 owner를 통과한다.
+    let dir = h.uploads_root().join(UP);
+    for i in 2..FILES_MAX - 1 {
+        std::fs::write(dir.join(format!("file-{i}")), b"").unwrap();
     }
+    h.library_upload_put(DeviceRole::Controller, "demo", OTHER, "x", b"z").unwrap();
+    assert_eq!(put(&format!("file-{}", FILES_MAX - 1), b"").unwrap(), (FILES_MAX, 2));
     assert_eq!(put("extra", b"").unwrap_err().code, ErrorCode::TooLarge);
     assert_eq!(put("file-2", b"replace").unwrap(), (FILES_MAX, 9), "상한에서 빈 파일 교체 가능");
+    assert_eq!(std::fs::read(dir.join("file-2")).unwrap(), b"replace", "교체한 내용도 실제 저장한다");
     assert_eq!(put("large", &vec![0; FILE_MAX as usize + 1]).unwrap_err().code, ErrorCode::TooLarge);
 }

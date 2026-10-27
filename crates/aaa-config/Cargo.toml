@@ -15,3 +15,6 @@ serde_json.workspace = true
 toml_edit = { workspace = true, features = ["serde"] }
 serde_ignored = "0.1"
 thiserror.workspace = true
+
+[dev-dependencies]
+aaa-test-support.workspace = true

@@ -61,7 +61,7 @@ fn examples_are_valid_and_warning_free() {
 /// 값이 없다(plan §8.307)
 #[test]
 fn plaintext_secret_env_warns_by_name_only() {
-    let value = "aaa-canary-config-0123456789abcdef";
+    let value = &*aaa_test_support::token("aaa-canary-config-0123456789abcdef");
     let d = Dir::new("secretenv");
     d.write(
         "host.toml",

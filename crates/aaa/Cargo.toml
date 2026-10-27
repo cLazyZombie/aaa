@@ -48,6 +48,7 @@ objc2-foundation = "0.3"
 objc2-service-management = "0.3"
 
 [dev-dependencies]
+aaa-test-support.workspace = true
 aaa-vt.workspace = true
 libc.workspace = true
 rusqlite = "0.37"

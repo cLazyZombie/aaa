@@ -18,14 +18,27 @@ struct Lab {
     requests: Arc<AtomicUsize>,
     hash_requests: Arc<AtomicUsize>,
     fake: tokio::task::JoinHandle<()>,
+    _cleanup: Cleanup,
 }
 impl Drop for Lab {
     fn drop(&mut self) {
         self.fake.abort();
-        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+struct Cleanup(PathBuf, std::sync::Weak<Host>);
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        assert!(self.1.upgrade().is_none(), "Host와 DB를 닫은 뒤 지운다");
+        std::fs::remove_dir_all(&self.0).unwrap();
     }
 }
 impl Lab {
+    async fn close(mut self) {
+        self.fake.abort();
+        if let Err(error) = (&mut self.fake).await {
+            assert!(error.is_cancelled(), "가짜 agent 종료 실패: {error}");
+        }
+    }
     fn new(failures: usize, file_bytes: &'static [u8]) -> Self {
         Self::with_file(failures, file_bytes, "test.log", b"old")
     }
@@ -184,7 +197,9 @@ impl Lab {
                 }
             }
         });
-        Self { h, root, requests, hash_requests, fake }
+        let weak = Arc::downgrade(&h);
+        let cleanup = Cleanup(root.clone(), weak);
+        Self { h, root, requests, hash_requests, fake, _cleanup: cleanup }
     }
 }
 
@@ -201,6 +216,7 @@ async fn current_report_hash_uses_the_negotiated_probe_and_legacy_fallback() {
     assert_eq!(lab.h.current_report_hash(&rec, &conn).await.unwrap(), expected);
     assert_eq!(lab.hash_requests.load(Ordering::SeqCst), 1);
     assert_eq!(lab.requests.load(Ordering::SeqCst), 0, "probe는 library 복사를 시작하지 않는다");
+    lab.close().await;
 }
 
 /// 실제 보고 회수와 brief 확인의 순서를 뒤집어도 ack 뒤 묶음은 같아야 한다.
@@ -279,6 +295,7 @@ async fn brief_confirmation_preserves_reports_collected_after_enter() {
                 ["brief_delivered", "report_ready", "review_acked"]
             };
             assert_eq!(kinds, expected);
+            lab.close().await;
         }
     }
 }
@@ -346,6 +363,8 @@ async fn reports_update_progress_preserve_goal_and_keep_later_instructions_acros
     assert_eq!(v.goal.as_deref(), Some("바뀐 목표"));
     assert_eq!(v.progress[0].text, "새 작업");
     assert_eq!(v.pending, 0);
+    drop(restarted);
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -375,6 +394,7 @@ async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_o
         assert_eq!(warnings.len(), 1, "{items:?}");
         assert!(warnings[0].body.contains("pane 알림 전달 실패: thread 세션이 없다"));
         assert!(lab.h.load("p", "t-0001").unwrap().question_answer.is_none());
+        lab.close().await;
     }
 }
 
@@ -424,6 +444,7 @@ async fn answered_reports_reuse_ids_and_mixed_reports_open_only_new_questions() 
         lab.h.backfill_review_questions().unwrap();
         let after = lab.h.thread_show("p", "t-0001").unwrap().questions.unwrap();
         assert_eq!(after.items, q.items, "재시작의 재해석에서도 중복을 만들지 않는다");
+        lab.close().await;
     }
 }
 
@@ -447,6 +468,7 @@ async fn report_sandbox_warning_does_not_fail_copy_or_repeat_for_the_same_snapsh
     assert!(items[0].body.contains("index.html") && items[0].body.contains("fetch"), "{items:?}");
     lab.h.collect("p", "t-0001", true).await.unwrap();
     assert_eq!(warnings().len(), 1);
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -473,6 +495,7 @@ async fn copy_failure_retries_without_new_report_and_warns_once() {
             assert!(!items[0].summary.contains("사람"));
             assert!(lab.requests.load(Ordering::SeqCst) > 2);
         }
+        lab.close().await;
     }
 }
 
@@ -483,6 +506,7 @@ async fn appended_library_log_copies_only_the_hashed_prefix() {
     let r = lab.h.load("p", "t-0001").unwrap();
     assert_eq!(r.copy.as_deref(), Some("complete"));
     assert_eq!(std::fs::read(lab.h.project_dir("p").unwrap().join("library/t-0001/test.log")).unwrap(), b"old");
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -500,6 +524,7 @@ async fn forbidden_library_paths_do_not_freeze_the_report_or_create_files() {
         assert_eq!(std::fs::read_dir(dir.join("library/t-0001")).unwrap().count(), 0);
         assert!(!dir.join("library/outside.txt").exists());
         assert!(rec.copy_notes.iter().any(|n| n.contains("허용하지 않는 library 상대 경로")));
+        lab.close().await;
     }
 }
 
@@ -534,6 +559,7 @@ async fn report_version_failure_keeps_the_new_body_stage_and_ack_until_history_r
     assert_eq!(recovered.copy.as_deref(), Some("complete"));
     let revision = lab.h.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).unwrap();
     assert_eq!(std::fs::read(dir.join("library").join(revision).join("good.txt")).unwrap(), b"old");
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -553,6 +579,7 @@ async fn report_version_recovery_notifies_history_without_repeating_sandbox_warn
     lab.h.collect("p", "t-0001", false).await.unwrap();
     assert!(updates.has_changed().unwrap(), "본문·첨부가 같아도 복구된 판을 목록에 알린다");
     assert_eq!(warnings(), 1, "같은 본문·첨부의 sandbox 경고는 반복하지 않는다");
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -564,6 +591,7 @@ async fn rewritten_library_log_keeps_the_previous_verified_copy() {
     lab.h.collect_if_changed("p", "t-0001").await;
     assert_eq!(lab.h.load("p", "t-0001").unwrap().copy.as_deref(), Some("failed"));
     assert_eq!(std::fs::read(dir.join("test.log")).unwrap(), b"verified");
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -582,6 +610,7 @@ async fn host_report_write_failure_is_retried_after_the_storage_recovers() {
     assert_eq!(r.copy_failures, 0);
     assert_eq!(r.copy_retry_at_ms, 0);
     assert!(path.is_file());
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -606,6 +635,7 @@ async fn broken_library_does_not_freeze_the_report_or_its_ack() {
         lab.h.inbox("p", true, true).unwrap().items.iter().filter(|i| i.item_kind == "report-copy-failed").count(),
         1
     );
+    lab.close().await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -688,6 +718,7 @@ async fn disconnected_copy_finishes_without_per_file_timeouts_and_the_next_tick_
     assert_eq!(recovered.acked_hash, ack);
     assert_eq!(std::fs::read(library.join("test.log")).unwrap(), b"old");
     assert!(h.manifest(&dir, "t-0001").iter().all(|f| !f.on_agent));
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -712,6 +743,7 @@ async fn another_thread_collects_while_a_report_transfer_is_held() {
     .await
     .unwrap();
     assert_eq!(lab.h.load("p", "t-0001").unwrap().copy.as_deref(), Some("complete"));
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -734,6 +766,7 @@ async fn same_revision_recovery_repairs_the_body_and_keeps_ack() {
     assert_eq!(rec.report_hash, previous.report_hash);
     assert_eq!(rec.acked_hash, previous.acked_hash);
     assert_eq!(lab.h.verified_report(&rec).as_deref(), Some("[진행 중] 시험 중\n"));
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -757,6 +790,8 @@ async fn completed_report_automatically_uses_the_same_copy_and_does_not_reset_se
     let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
     reopened.backfill_completed_reports().unwrap();
     assert!(!reopened.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
+    drop(reopened);
+    lab.close().await;
 }
 
 #[tokio::test]
@@ -770,4 +805,5 @@ async fn resolved_last_report_and_existing_completed_reports_are_automatically_l
     lab.h.library_opened("p", "t-0001");
     lab.h.complete_thread_report("p", "t-0001", "[진행 중]", rec.report_hash.as_deref().unwrap()).unwrap();
     assert!(!lab.h.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
+    lab.close().await;
 }
