@@ -5184,3 +5184,10 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - `node --test web/test/diffContext.test.mjs`의 세 keeper는 실제 git patch로 CRLF·마지막 개행 없음, 구판/잘림/기준 변경 거부와 기존 hunk 밖의 새 변경 거부를 검사한다. 필요한 이유: 불완전하거나 서로 다른 시점의 원문을 hydration에 넘겨 변경을 숨기지 않아야 한다. 원문 합성 parser를 따로 만들지 않고 기존 라이브러리를 쓴다.
 - 기존 E2E42의 160줄 파일에서 처음에는 변경 주변만 보이고 전체 맥락 요청은 0회여야 한다. 데스크톱 Chromium과 iPhone WebKit의 새 두 단계에서 실제 기본 UI를 데스크톱 Enter·휴대폰 tap으로 눌러 20줄을 더 보이고, 전체 펼치기로 첫·마지막 줄을 확인한다. 이어지는 펼치기는 추가 요청 없이 같은 원문을 쓴다. 필요한 이유: 가상화·shadow DOM·지연 hydration의 실제 연결과 휴대폰 터치 크기는 순수 유닛만으로 확인할 수 없다. 기존 카드·기기 폭·테마·대량 lazy 계약과 E2E 번호는 유지한다.
 - 고정 sleep·재시도·시한 확대·기대값 완화는 없다. WebKit에서 SVG use가 터치 대상을 가리므로 아이콘은 pointer-events: none으로 하고 단추 자체에 실제 tap을 보낸다. 새 개별 유닛/단계는 보통 부하 5초 이하를 확인하며 전체 suite 시간과 구별한다.
+
+## 작업 기록 통합 검색(t-1205, §8.527, E2E118)
+
+- host `record_search::tests` 네 계약은 실제 SQLite·프로젝트 파일·보고 판 보존 API를 사용한다. 필요한 이유는 최신 보고 덮어쓰기 뒤 과거 r 판 열기, 답과 직접 의견 보존, 할 일 current/before/after 중복 제거, 정리·재시작·프로젝트 경계, 거른 뒤 커서 페이지와 한글·문자 그대로 검색을 함께 지켜야 하기 때문이다. 추가로 같은 보고 본문의 여러 r 별칭, 마지막 출처 삭제, 1MiB를 넘는 원문의 UTF-8 조각/응답 상한/완전 복원을 검사한다.
+- E2E118은 실제 host 보관 DB·파일에 보고 34판·답한 질문·할 일 변경 본문을 준비하고 실제 CLI 검색/원문을 대조한다. Chromium desktop과 WebKit 390px Reader가 모든 종류 30+7건, 종류 필터, 과거 보고·선택과 직접 답, 현재와 다른 할 일 메모 원문을 연다. 필요한 이유는 Rust 저장 계약만으로 웹 종류 선택·다음 페이지·원문 전환과 Reader의 실제 HTTP 접근을 확인할 수 없기 때문이다. 준비와 각 브라우저 계약을 나눠 개별 5초 미만을 확인한다.
+- 실행: `cargo test --profile verify --locked -p aaa-host --lib record_search::`, `cargo test --profile verify --locked -p aaa-proto`, `cargo test --profile verify --locked -p aaa --test deps`, 웹 유닛·타입/번들, 고정 Playwright 1.64.1과 공용 브라우저 캐시에서 `node web/e2e/web.e2e.mjs --spec 118-record-search`다. 새 도구 설치는 작업 폴더의 Playwright npm 패키지뿐이며 브라우저·시스템 설정은 바꾸지 않는다.
+- 기존 시험 삭제·단언 완화·재시도·고정 sleep·시한 확대는 없다. 전체 ci-local·cross와 main 병합/push는 착지 창에서 수행한다.

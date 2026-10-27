@@ -8187,3 +8187,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - FailureScan은 gh의 여러 줄 annotation에서 시각 없이 탭 뒤에 놓인 `[python exit=0]`도 성공한 suite의 출력으로 읽는다. 같은 이름의 실제 Rust 실패와 Python 비정상 종료, t-1208 스택 초과 수집·원문 보존을 유지한다. 5초 상한·원본 데이터·단계·기대값을 줄이거나 늘리지 않는다.
 - 기준 main §8.525 다음 §8.526이다. wire·API 변경이 없으므로 FRONT_API 1.139·AGENT_LINK 1.11을 유지한다. 기존 E30·35의 두 파일 분할과 E2E01~117을 보존한다. 전체 ci-local·공개 검사·Linux/Windows strict cross·Windows production과 개인정보 검사를 검증용 macOS 전용 worktree에서 수행한다. 성공 뒤 ff push/원격 SHA와 salt 설치기의 Windows SHA·판만 확인하며 설치·웹 기기 페어링·GitHub CI 대기를 하지 않는다.
 - 첫 착지 E103에서 재구독의 같은 기록 signature가 복귀 read 중 다시 invalidate되는 경로를 수리한다. 같은 pane의 마지막 signature를 유지해 동일 값 재전달만 거르고, 다른 기록·다른 pane의 알림은 유지한다. 실제 lane의 응답 gate로 수리 전 중복 read를 재현하며 기존 복귀1회·시한·조합을 유지한다. 별도 커밋 뒤 새 worktree에서 전체 착지 회차를 다시 수행한다.
+
+### 8.527 host 작업 기록 통합 검색(t-1205)
+
+- 사용자 답 1A(q-1668): host에 남은 과거 판까지 검색한다. 완료 보고는 첫 줄이 `[완료]`인 불변 r 판 전체, 질문은 답한 기록의 본문·선택지·선택·직접 답·의견, 할 일은 현재 TASKS·완료 보관 본문·변경 before/after다. 해결·보관 thread도 제외하지 않는다. 원격 agent·PTY·첨부 내용은 읽지 않으며 지워진 원문을 추정 복구하지 않는다.
+- CLI `aaa search '검색어' [--project demo] [--kind report|question|task] [--limit 30] [--after <커서>]`, `aaa record <프로젝트> <해시>`. JSON도 같은 결과다. 웹 왼쪽 「기록 검색」/`#search`에서 종류 선택·본문 검색·더 보기·당시 원문을 연다. Reader도 읽을 수 있다. 기능 설명 문단은 UI에 넣지 않는다.
+- FRONT_API **1.140**: `RecordSearch { query: RecordSearchQuery }` → `RecordSearchPage { hits,next }`, `RecordOpen { project,key,offset? }` → `RecordDocument { hit,body,next }`. 기록 종류는 `report|question|task`. 결과에 프로젝트·ID·제목·출처·시각·일치 문맥·연결 r 판이 있다. 본문 해시는 프로젝트와 함께 써야 하며 최신 원문으로 대체하지 않는다. 큰 본문은 최대 128KiB UTF-8 조각으로 읽고 웹·CLI가 끝까지 합친다. 잘못된 바이트 경계는 거절한다.
+- 검색어는 공백으로 나눈 최대 16단어 AND·대소문자 무시·문자 그대로의 부분 일치다. SQL wildcard나 정규식이 아니다. 한글도 같은 규칙이며 짧은 순번 ID는 입력 0채움 차이를 정규화한다. 빈 검색어·1024바이트 초과는 거절한다. 일치 결과를 종류·프로젝트로 거른 뒤 시각/해시/프로젝트 내림차순으로 1~100건씩 준다. 커서는 검색 조건에 묶어 다른 조건에 재사용하지 못한다.
+- SQLite FTS5 trigram은 3글자 이상 검색 후보를 좁히고 `instr`로 모든 단어의 실제 부분 일치를 확인한다. 1~2글자는 같은 본문에서 직접 찾는다. 검색 때 보관 원장과 현재 파일을 대조해 host 내부의 재생성 가능한 색인을 원자 갱신한다. 이미 색인한 불변 보고 판의 파일은 재독하지 않는다. 같은 대상의 같은 본문은 합치되 원래 r 별칭도 검색한다. 질문·기록 정리/보고 판 삭제는 그 출처와 마지막 출처가 없어진 색인을 함께 지우며 프로젝트 rename/delete도 색인을 옮기거나 지운다.
+- 참고: [T3 본문 검색](https://github.com/pingdotgg/t3code/blob/main/docs/user/thread-sidebar.md)·[보관 범위 차이](https://github.com/pingdotgg/t3code/discussions/11819), [Orca 세션 검색](https://www.onorca.dev/docs/cli/reference#session-search). 두 프로젝트는 MIT다. 본문 문맥·명시한 검색 범위·커서/원문 구분을 참고하고 코드·의존성은 가져오지 않는다. aaa는 원문 판과 프로젝트 경계를 보존한다.
