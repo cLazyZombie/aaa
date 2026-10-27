@@ -29,6 +29,33 @@
   공개 검사다. Playwright 1.64.1과 공용 브라우저 캐시를 쓴다. 전체 ci-local·cross·병합·push는
   정규 착지 차례에서 수행한다.
 
+## E103 재구독의 같은 기록 알림과 복귀 읽기(t-1216 착지 수리)
+
+- 첫 착지의 E103은 지연 회선 Chromium1280/coordinator/trial1에서 최신 요청2회로 실패했다.
+  보존된 return-body는2342.5ms·응답1회다. t-1147의 protocol은 count/lookup/commit의 DOM·Runtime만
+  기록하므로 복귀 구간의 Network 요청·예약 호출 스택은 없다. 이 원문만으로 두 번째 예약자를
+  소급 확정했다고 하지 않는다. t-1147 보고와 t-1134의 이전 read/복귀 경계도 먼저 읽었다.
+- 같은 합성 fixture의 별도 관측에서 복귀 effect의 `refresh()`로 최신 요청이 시작된 뒤,
+  재구독이 기존과 같은 signature의 chat_changed를 재전달하는 순서를 확보했다.
+  api가 signature를 버려 `invalidate()`가2초 trailing read를 남기는 실제 경로가 있다.
+  해당 순서를 실제 ConversationRefresh의 응답 보류 gate와 정지 단조 시계로 고정하면
+  수리 전 처음1회+복귀1회가 아니라3회로 실패한다. 부하·간헐로 결론내지 않는다.
+- API가 이미 받는 signature를 내부 ChatNote로 전달하고, 같은 pane의 마지막 signature를
+  lane에 유지한다. 같은 값의 재전달은 추가 invalidate를 만들지 않는다. 다른 signature는
+  읽는 중에도 다음 확인을 남기며 다른 pane으로 바뀌면 이전 signature를 잊는다.
+  복귀의 강제 최신 확인·2초 변경 경계·10초 backstop·직렬화·숨김 정리와 wire는 유지한다.
+- 새 `conversationRefresh.test.mjs` keeper1개가 필요한 이유는 재구독의 중복 확인을 막으면서
+  실제 변경·다른 pane의 확인을 잃지 않아야 하기 때문이다. 응답 gate의 완료로 끝나고 실제로
+  2초를 자지 않는다. 수리 전 실패 원문과 수리 후 통과를 보존한다. fixture 정리 순서와 다른
+  pane read 시작의 비동기 경계 오류도 원문을 보존한 뒤 사건 대기로 수리했다.
+- 기존 E103의 모든 조합·trial·과거 위치·동일 DOM·초안·과거 요청0회·복귀 최신1회·시한을
+  그대로 확인한다. 시험 집계 창·기대값·시한·데이터·단계는 바꾸지 않는다.
+- 참고는 [VS Code Event.latch](https://github.com/microsoft/vscode/blob/main/src/vs/base/common/event.ts)
+  ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))와
+  [RxJS distinctUntilChanged](https://github.com/ReactiveX/rxjs/blob/7.8.2/src/internal/operators/distinctUntilChanged.ts)
+  ([Apache-2.0](https://github.com/ReactiveX/rxjs/blob/7.8.2/LICENSE.txt))다.
+  같은 키의 연속 알림을 걸러 내는 원칙만 참고하며 외부 코드·실행 의존성을 추가하지 않는다.
+
 ## E117 터미널 인용의 실제 행 준비(t-1208 착지 수리)
 
 - main `165797c0`·후보 `8d8491b1`의 변경 없는 E117을 각각 한 번 단독 실행했고 모두 통과했다.
@@ -121,6 +148,44 @@
 - 첫 착지 gate에서 이 E2E의 WebKit 390 단계가 실패했다(20초 안에 초안이 비어 있음). 단추가 고른 글을 지키려고 pointerdown을 막았는데,
   WebKit은 터치 pointerdown을 막으면 tap의 mousedown·click을 내지 않는다(Chrome 터치 탭은 click을 내 scratch 확인에서 드러나지 않았다).
   같은 fixture의 별도 진단에서 수리 전 pointer/touch 사건 뒤 click 없음을, 마우스 pointer만 막은 수리 뒤 click·초안·focus 없음을 확인했다. 시험·시한은 그대로다.
+
+## 큰 응답 분할의 가림 검색 비용(t-1216)
+
+- 원본 macOS CI의 `aaa_host` 전체 artifact를 확보했다. 응답 분할 owner는 큰 보고 전송까지
+  1.442초, 조각 경계 가림 뒤 5.307초였으며, 잘못된 조각 단계에서 5.311초 상한 오류가 났다.
+  마지막 단계 이름만으로 BadRequest 전달이 5초 걸렸다고 해석하지 않는다.
+- 별도 Mac worktree의 같은 verify profile에서 가림 274ms 중 원문 8바이트 창의 집합 검색이
+  203ms였다. 후보의 앞 두 바이트를 8KiB 비트 표로 거른 뒤 기존 집합으로 정확히 검사하자
+  검색 16ms·가림 83ms였다. 원본 CI에는 검색 내부 계측이 없으므로 이 수치를 CI 내부 시간으로
+  바꾸어 말하지 않는다. 등록·복원과 같은 잠금 안에서 표와 집합을 함께 갱신한다.
+- 기존 `link::response_parts_tests::large_report_and_bad_parts_keep_requests_on_one_link`가
+  Host 준비부터 실제 reader·fake 종료와 파일 정리까지 같은 5초 상한으로 검사한다.
+  2*MAX_FRAME 초과 원본과 협상, hash 확인 전 원본 보존, 조각 경계를 가로지르는 비밀 가림,
+  BadRequest 뒤 같은 generation의 Done, 취소·정리 단언과 데이터 크기를 유지한다.
+  응답 분할·binary hash·ANSI/청크 경계의 기존 common/host owner도 함께 확인한다.
+- 새 `encoded_fragments_and_nonsecret_prefix_candidates_keep_their_redaction_contract`는
+  원문·JSON/URL·두 base64 형식의 각 8바이트 조각과 같은 접두부의 일반 바이너리를 확인한다.
+  필요한 이유는 후보 검사로 비밀 조각을 놓치거나 접두부만 같은 내용을 과하게 가리는 회귀를
+  막기 위해서다. 고정 sleep·재시도·시한 확대·기대값 완화·시험 분할은 없다.
+- 참고 후보는 [Aho-Corasick의 prefilter 설계](https://github.com/BurntSushi/aho-corasick/blob/master/DESIGN.md)
+  와 [memchr](https://github.com/BurntSushi/memchr)다. 둘 다
+  [MIT/Unlicense](https://github.com/BurntSushi/aho-corasick/blob/master/COPYING)이며,
+  후보를 거르고 정확히 확인하는 원칙을 참고했다. 기존 고정 길이 집합을 유지하고 외부 코드나
+  실행 의존성을 추가하지 않는다.
+
+### Python 성공 fixture의 gh annotation 경계
+
+- t-1208이 착지한 main `b3fa9a08` 위에서 기존 `FailureScan`의 성공 suite 제외만 보강한다.
+  gh의 여러 줄 annotation에는 첫 줄 뒤 `job\tstep\t[python exit=0] ...`처럼 시각 없이 탭이
+  바로 표지 앞에 오는 줄이 있다. 성공 표지 앞의 줄 시작·공백 검사에 탭을 더한다.
+  스택 초과 수집·실패 집합 선택·원본 로그 보존은 기존 코드를 그대로 쓴다.
+- 기존 `successful_python_fixture_output_is_not_a_rust_failure_even_in_annotations`에 원본 형식의
+  module::failed·owner·panic·느린 경고·스택 초과 fixture를 보강한다. 7바이트 청크와 마지막
+  개행 누락에서도 성공한 suite만 있으면 실패가 비어야 하며, 같은 이름의 진짜 Rust 실패는 남긴다.
+  기존 `failed_or_interrupted_python_suites_keep_their_failure_evidence`는 같은 gh 앞머리 조합에서
+  Python exit 1/7/130/137/143을 그대로 수집하는지 확인한다.
+  두 owner 보강이 필요한 이유는 성공 여부를 시험 이름으로 판정하거나 annotation 줄을 통째로
+  무시해서 실제 실패를 숨기는 회귀를 막기 위해서다. 새 시험 번호·시한 변경은 없다.
 
 ## 보고서 화면 버튼 배치(t-1201)
 

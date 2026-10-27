@@ -596,12 +596,12 @@ export function ChatPanel({
       } catch (e) {
         if (alive) setError(e instanceof ApiError ? e.message : String(e));
       }
-    });
+    }, pane);
     const unwatch = watchChat(pane, (note) => {
       if ("live" in note) {
         refresh.setPushes(note.live);
         setPushes(note.live);
-      } else if (document.visibilityState !== "hidden") refresh.invalidate();
+      } else if (document.visibilityState !== "hidden") refresh.invalidate(note.signature);
     });
     return () => {
       alive = false;

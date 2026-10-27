@@ -5,11 +5,24 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::sync::{LazyLock, RwLock};
 
-#[derive(Default)]
 struct Rules {
     needles: HashSet<[u8; 8]>,
+    starts: [u64; 1024],
     originals: HashSet<String>,
     prefixes: HashSet<Vec<u8>>,
+}
+impl Default for Rules {
+    fn default() -> Self {
+        Self { needles: HashSet::new(), starts: [0; 1024], originals: HashSet::new(), prefixes: HashSet::new() }
+    }
+}
+impl Rules {
+    fn contains(&self, window: &[u8]) -> bool {
+        // 두 바이트 후보가 없으면 8바이트 해시를 계산하지 않는다. 후보여도 원래 집합으로 정확히 확인한다.
+        let start = u16::from_le_bytes([window[0], window[1]]) as usize;
+        self.starts[start / 64] & (1 << (start % 64)) != 0
+            && self.needles.contains(<&[u8; 8]>::try_from(window).unwrap())
+    }
 }
 static RULES: LazyLock<RwLock<Rules>> = LazyLock::new(Default::default);
 
@@ -53,6 +66,8 @@ pub fn remember(value: &str) {
         for n in form.windows(8) {
             let n: [u8; 8] = n.try_into().unwrap();
             if rules.needles.insert(n) {
+                let start = u16::from_le_bytes([n[0], n[1]]) as usize;
+                rules.starts[start / 64] |= 1 << (start % 64);
                 for i in 1..8 {
                     rules.prefixes.insert(n[..i].to_vec());
                 }
@@ -133,7 +148,7 @@ impl Stream {
         }
         // 원문과 가림 표시를 분리한다. 겹치는 8바이트 창의 끝을 다음 청크에서도 검사해야 한다.
         for (at, needle) in self.pending.windows(8).enumerate() {
-            if rules.needles.contains(<&[u8; 8]>::try_from(needle).unwrap()) {
+            if rules.contains(needle) {
                 self.masked[at..at + 8].fill(true);
             }
         }
@@ -168,7 +183,7 @@ impl Stream {
             }
             let text: Vec<u8> = visible.iter().map(|x| x.1).collect();
             for (at, n) in text.windows(8).enumerate() {
-                if rules.needles.contains(<&[u8; 8]>::try_from(n).unwrap()) {
+                if rules.contains(n) {
                     for (raw, _) in &visible[at..at + 8] {
                         self.masked[*raw] = true;
                     }
@@ -210,8 +225,7 @@ pub fn bytes(value: &[u8]) -> Vec<u8> {
 /// 압축 해제·복호화·ANSI 해석은 하지 않는다.
 pub fn has_secret_fragment(value: &[u8]) -> bool {
     let rules = RULES.read().unwrap_or_else(|e| e.into_inner());
-    !rules.needles.is_empty()
-        && value.windows(8).any(|needle| rules.needles.contains(<&[u8; 8]>::try_from(needle).unwrap()))
+    !rules.needles.is_empty() && value.windows(8).any(|needle| rules.contains(needle))
 }
 
 pub fn text(value: &str) -> String {
@@ -336,6 +350,37 @@ mod tests {
             let clean_text = json(encoded_text).unwrap();
             assert_eq!(base64::engine::general_purpose::STANDARD.decode(clean_text).unwrap(), vec![b'*'; raw.len()]);
         }
+    }
+
+    #[test]
+    fn encoded_fragments_and_nonsecret_prefix_candidates_keep_their_redaction_contract() {
+        let token = aaa_test_support::token("candidate-fragments");
+        let secret = format!("{token}:\"\\한글");
+        remember(&secret);
+        let escaped = serde_json::to_string(&secret).unwrap();
+        // 원문·JSON·URL에서 실제로 달라지는 부분도 8바이트 조각만으로 가려야 한다.
+        let mut forms = vec![
+            secret.as_bytes().to_vec(),
+            escaped.as_bytes()[1..escaped.len() - 1].to_vec(),
+            format!("{token}%3A%22%5C%ED%95%9C%EA%B8%80").into_bytes(),
+        ];
+        for engine in [&base64::engine::general_purpose::STANDARD, &base64::engine::general_purpose::URL_SAFE] {
+            for pad in 0..3 {
+                let raw = [vec![b'#'; pad], secret.as_bytes().to_vec()].concat();
+                let encoded = engine.encode(raw);
+                forms.push(encoded.as_bytes()[4..encoded.len() - 4].to_vec());
+            }
+        }
+        for form in forms {
+            for fragment in form.windows(8) {
+                assert!(has_secret_fragment(fragment));
+                assert_eq!(bytes(fragment), b"********");
+            }
+        }
+        // 앞 두 바이트만 같은 일반 바이너리를 비밀로 바꾸지 않는다.
+        let candidate = [&secret.as_bytes()[..2], &[255; 6]].concat();
+        assert!(!has_secret_fragment(&candidate));
+        assert_eq!(bytes(&candidate), candidate);
     }
 
     #[test]

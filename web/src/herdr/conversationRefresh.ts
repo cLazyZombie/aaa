@@ -18,10 +18,14 @@ export class ConversationRefresh {
   private timer: number | undefined;
   private newestAt = -Infinity;
   private pushes = false;
+  private source: string | undefined;
+  private signature: string | undefined;
   private readonly pages: (() => Promise<void>)[] = [];
 
   /** Replace a cancelled reader without letting its still-pending REST request overlap this one. */
-  setRead(read: () => Promise<void>): void {
+  setRead(read: () => Promise<void>, source?: string): void {
+    if (this.source !== source) this.signature = undefined;
+    this.source = source;
     this.clearTimer();
     this.pending = false;
     this.invalidated = false;
@@ -54,8 +58,14 @@ export class ConversationRefresh {
   }
 
   /** The first push after idle reads immediately; further pushes share a fixed trailing deadline. */
-  invalidate(): void {
-    if (this.read === null || this.invalidated) return;
+  invalidate(signature?: string): void {
+    if (this.read === null) return;
+    // 재구독은 현재 signature를 다시 보낸다. 같은 pane의 복귀 read에 같은 변경을 덧예약하지 않는다.
+    if (signature !== undefined) {
+      if (this.signature === signature) return;
+      this.signature = signature;
+    }
+    if (this.invalidated) return;
     this.invalidated = true;
     this.clearTimer();
     void this.drain();
