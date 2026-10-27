@@ -121,6 +121,29 @@
 - 첫 착지 gate에서 이 E2E의 WebKit 390 단계가 실패했다(20초 안에 초안이 비어 있음). 단추가 고른 글을 지키려고 pointerdown을 막았는데,
   WebKit은 터치 pointerdown을 막으면 tap의 mousedown·click을 내지 않는다(Chrome 터치 탭은 click을 내 scratch 확인에서 드러나지 않았다).
   같은 fixture의 별도 진단에서 수리 전 pointer/touch 사건 뒤 click 없음을, 마우스 pointer만 막은 수리 뒤 click·초안·focus 없음을 확인했다. 시험·시한은 그대로다.
+## 큰 응답 분할의 가림 검색 비용(t-1216)
+
+- 원본 macOS CI의 `aaa_host` 전체 artifact를 확보했다. 응답 분할 owner는 큰 보고 전송까지
+  1.442초, 조각 경계 가림 뒤 5.307초였으며, 잘못된 조각 단계에서 5.311초 상한 오류가 났다.
+  마지막 단계 이름만으로 BadRequest 전달이 5초 걸렸다고 해석하지 않는다.
+- 별도 Mac worktree의 같은 verify profile에서 가림 274ms 중 원문 8바이트 창의 집합 검색이
+  203ms였다. 후보의 앞 두 바이트를 8KiB 비트 표로 거른 뒤 기존 집합으로 정확히 검사하자
+  검색 16ms·가림 83ms였다. 원본 CI에는 검색 내부 계측이 없으므로 이 수치를 CI 내부 시간으로
+  바꾸어 말하지 않는다. 등록·복원과 같은 잠금 안에서 표와 집합을 함께 갱신한다.
+- 기존 `link::response_parts_tests::large_report_and_bad_parts_keep_requests_on_one_link`가
+  Host 준비부터 실제 reader·fake 종료와 파일 정리까지 같은 5초 상한으로 검사한다.
+  2*MAX_FRAME 초과 원본과 협상, hash 확인 전 원본 보존, 조각 경계를 가로지르는 비밀 가림,
+  BadRequest 뒤 같은 generation의 Done, 취소·정리 단언과 데이터 크기를 유지한다.
+  응답 분할·binary hash·ANSI/청크 경계의 기존 common/host owner도 함께 확인한다.
+- 새 `encoded_fragments_and_nonsecret_prefix_candidates_keep_their_redaction_contract`는
+  원문·JSON/URL·두 base64 형식의 각 8바이트 조각과 같은 접두부의 일반 바이너리를 확인한다.
+  필요한 이유는 후보 검사로 비밀 조각을 놓치거나 접두부만 같은 내용을 과하게 가리는 회귀를
+  막기 위해서다. 고정 sleep·재시도·시한 확대·기대값 완화·시험 분할은 없다.
+- 참고 후보는 [Aho-Corasick의 prefilter 설계](https://github.com/BurntSushi/aho-corasick/blob/master/DESIGN.md)
+  와 [memchr](https://github.com/BurntSushi/memchr)다. 둘 다
+  [MIT/Unlicense](https://github.com/BurntSushi/aho-corasick/blob/master/COPYING)이며,
+  후보를 거르고 정확히 확인하는 원칙을 참고했다. 기존 고정 길이 집합을 유지하고 외부 코드나
+  실행 의존성을 추가하지 않는다.
 
 ## 보고서 화면 버튼 배치(t-1201)
 
