@@ -8111,6 +8111,7 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 보기 만료는 절대 시각과 탭 복귀에서 확인한다. 보고서의 다시 열기는 현재 r 판으로 기존 LibraryOpen을 호출해 새 cap을 받고, 실패는 그대로 표시한다. 만료·host 재시작의 옛 경로를 계속 성공으로 취급하거나 최신 t 판으로 바꾸지 않는다. FRONT_API·proto는 바뀌지 않는다.
 - `/v/`의 1KiB 이상 텍스트만 기존 gzip 협상기를 재사용해 압축한다. 원본 조각마다 gzip 출력을 비워 stream을 유지하고 하위 읽기 오류는 전파·진단한다. HTML의 이미지 bridge까지 함께 압축하며 원본 Content-Length를 제거하고 Content-Encoding/Vary를 준다. HEAD는 빈 본문·같은 협상이다. Range·내려받기·이미지/영상/PDF·오류는 원본을 유지하며 권한·CSP·무쿠키 CORS·no-store는 그대로다.
 - Markdown 영상은 첫 클릭 안에서 src commit→play를 하여 첫 클릭 전 metadata 요청도 없게 한다. 새 src에는 이전 실패/재생 상태를 적용하지 않는다. native controls·muted·playsinline·탐색·질문 선택과 주소·답한 사본의 원본을 유지한다. HTML 새 작성 템플릿에는 그림 크기·lazy와 썸네일/선택 재생을 안내한다.
+- 첫 클릭 전에는 주소를 설정하는 재생 단추만 보인다. 주소 없는 native controls는 켜지 않는다. 첫 클릭에서 주소와 controls를 함께 반영하고 재생하며, 일시정지·종료 뒤에도 자체 단추를 다시 겹치지 않는다(t-1155). 이후 재개는 브라우저 기본 컨트롤이 맡는다.
 - 회귀는 기존 E2E73의 양 엔진×1280/390px 이미지 GET 보류·HEAD 200/401·현재 판 다시 열기, E2E88의 선택 전 무요청과 실제 클릭/탐색/HTML sandbox/직접 파일/답한 사본이다. host HTTP 회귀는 gzip 복원·bridge·협상·HEAD·Range·권한·원본, stream 회귀는 첫 조각 전달과 읽기 실패 전파를 지킨다. 새 E2E 번호·고정 sleep·재시도·시한 확대는 없다.
 - OSS는 조사에서 검토한 tower-http(MIT)·Caddy(Apache-2.0)·nginx(BSD-2-Clause)의 전송 원칙, [React flushSync](https://react.dev/reference/react-dom/flushSync)(MIT)와 [flate2 GzEncoder](https://docs.rs/flate2/latest/flate2/write/struct.GzEncoder.html)(MIT/Apache-2.0)를 참고했다. 기존 flate2·React만 사용하며 외부 코드·의존성은 추가하지 않는다.
 

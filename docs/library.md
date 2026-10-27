@@ -21,6 +21,7 @@
 `![]()`와 기존 `[시안 영상](library/preview/a.mp4)` 모두 controls·muted·playsinline 재생기로 표시한다.
 멈춤·탐색·음소거 해제는 재생기에서 한다. 기본 자동 재생·반복은 없으며 답을 골라도 영상 재생으로 선택이 바뀌지 않는다.
 Markdown 영상은 첫 재생 누름에서만 주소를 붙인다. 누르기 전에는 metadata 요청도 보내지 않는다.
+첫 화면은 재생 단추 하나만 표시하고, 주소를 붙인 뒤에는 기본 컨트롤로 전환한다. 일시정지 뒤에도 단추가 겹치지 않는다.
 H.264 MP4(yuv420p, faststart)를 권장한다. 시안은 5~10초·10 MiB 이하를 목표로 하고, 긴 자료는 장면별로 나누어
 길이·용량·비교할 점을 적는다. WebM은 보조 형식으로 쓸 수 있지만 Safari용 MP4를 우선한다.
 이는 작성 권장 기준이며 업로드·회수의 실제 상한은 별도다. 답한 질문 사본의 합계 상한은 64 MiB다.
@@ -30,13 +31,15 @@ HTML 보고서는 아래처럼 썸네일·선택 재생을 기본으로 한다. 
 
 ```html
 <img src="images/chart.png" alt="비교 그림" width="1280" height="720" loading="lazy" decoding="async" style="max-width:100%;height:auto">
-<video id="preview" controls muted playsinline preload="none" poster="preview/a.jpg" style="max-width:100%"></video>
+<video id="preview" muted playsinline preload="none" poster="preview/a.jpg" style="max-width:100%"></video>
 <button id="play-preview" type="button">시안 영상 재생</button>
 <p id="preview-state" role="status"></p>
 <script>
 document.querySelector('#play-preview').onclick = async () => {
   const video = document.querySelector('#preview');
   if (!video.hasAttribute('src')) video.src = 'preview/a.mp4';
+  video.controls = true;
+  document.querySelector('#play-preview').hidden = true;
   try {
     await video.play(); // 사용자 누름 안에서 시작
     document.querySelector('#preview-state').textContent = '';
