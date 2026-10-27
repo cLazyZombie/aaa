@@ -4517,3 +4517,13 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 87회차에서 E2E39의 `settingsPanePreparation`이 첫 응답 보류를 풀기 전에 `pane-bk1`을 기다려 20초에 실패했다. 보존된 e2e.log와 chromium-preparation.json의 초기 phase·두 pane 행 없음으로 대기 순환을 확인했다. 위 E2E39 준비 순서를 새 계약에 맞추며 제품 표시·메뉴 유지·bk1 선택 기대와 시한은 유지한다.
 - 모든 E2E의 thread HTTP route·fetch 교체·응답 gate를 찾아 같은 전제를 감사했다. E2E12의 reader 깊은 주소는 hash 설정으로 gate를 풀고, 대량 목록은 목록 DOM으로 완료를 기다린다. E2E24는 초기 pane 숨김과 목록 반영을 이미 검사한다. 나머지 gate는 다른 op만 보류하거나 응답을 관측하므로 첫 threads 목록을 막고 pane 줄을 기다리는 추가 경로는 없었다. 변경 대상은 E2E39 준비 helper 하나이며 기존 owner와 E2E 번호를 유지한다.
 - 후속 검증: 같은 제품 실행 파일로 E2E12/24/39 전체가 worker 2, 93.0초에 통과했다(파일별 49.1/3.9/93.0초). 수정한 설정 준비 owner는 Chromium·WebKit 합계 1.545초다. 웹 유닛 610개와 공개 검사가 통과했다. 초기 주소만 제거한 별도 대조는 「첫 threads 목록 반영이 사용자가 연 메뉴를 닫았다」로 실패했고 정규 helper를 바이트 그대로 복원했다. 이 실패는 정규 실행 재시도가 아닌 기존 회귀 검출력 대조다. 제품 소스·기존 시한·기대값·전체 gate는 바꾸지 않는다.
+
+
+## 화면·로컬 재접속 대기의 사건 관측(t-1117 후속)
+
+- brief와 입력 수락은 화면 조회 전에 pane 사건을 구독한다. 알림 자체를 수락으로 세지 않고 기존 화면·질문·신뢰 창 판정을 다시 수행한다. 출력 묶음은 한 번에 비우고 화면을 한 번 읽는다. 구독 종료/누락에는 기존 관측 간격으로 돌아간다. 운영의 화면 안정3초·paste300ms·수락10초·brief최대3회는 유지한다. 시험의 settle=0은 첫 관측부터 그 설정 그대로 적용한다.
+- macOS 로컬 agent는 부모 vnode와 실제 UDS의 dev/inode/birth time으로 새 listener를 구별한다. 실제 socket 교체만 재접속 대기를 깨우며 삭제·일반 파일·chmod·무관한 디렉터리 사건은 계기로 삼지 않는다. 지수 backoff·jitter·상한·인증/Welcome/replay 초기화는 그대로다. reactor는 kqueue fd를 READABLE로만 등록하고 감시 fd를 소유한다. 감시 오류는 단계와 OS 원인을 남기고 기존 backoff로 돌아간다. 다른 OS·원격 연결은 기존 경로다.
+- `harness::tests::unhooked_submission_rechecks_output_without_accepting_an_unchanged_screen`은 정지 시계에서 같은 화면 알림의 거부·실제 화면 변화의 즉시 수락·원래300ms 간격을 함께 검사한다. 기존 `unknown_brief_keeps_the_accept_deadline_and_never_retypes_without_a_person`의10초/unknown/수동 재전송 계약도 유지한다.
+- `link::local_socket::tests::socket_replacement_wakes_but_other_directory_changes_do_not`은 실제 vnode·UDS를 써서 무관한 파일/권한 변경과 교체를 구별한다. 기존 `authenticated_short_connections_reset_backoff_but_rejections_preserve_it`가 짧은 인증 성공/거부의 서로 다른 backoff 처리를 소유한다. 새 두 시험은 거짓 수락과 불필요한 재접속을 막는 데 필요하다.
+- rollout의 사본 실행 파일도 공통 `host_command`를 통해 해당 World의 기존 brief·외부 조회 환경을 유지한다. E37은 각 실제 prepend의 두 frame 뒤 행ID·좌표·진단을 함께 읽으며2400건·모든 쪽·원래행±1px·모든 엔진/폭/harness를 유지한다. 삭제/단계 분리는 없다. 전체계측 전 단일5초미만 결과로 미해결 목록을 줄이지 않는다.
+- [Tokio broadcast](https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html)(MIT), [libuv vnode 감시](https://docs.libuv.org/en/v1.x/fs_event.html)(MIT), [notify kqueue의 READABLE 등록](https://github.com/notify-rs/notify/blob/main/notify/src/kqueue.rs)(crate선언 CC0-1.0), [Playwright actionability](https://playwright.dev/docs/actionability)(Apache-2.0)를 대조했다. 사건 뒤 실제 조건을 다시 보는 원칙만 적용하고 외부 코드·새 의존성을 가져오지 않았다.

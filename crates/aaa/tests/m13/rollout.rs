@@ -168,7 +168,7 @@ esac
         Scenario::RemoteRecovery => ("rollout-host-new", "rollout-a-new", "rollout-b-new"),
         Scenario::SharedRecovery => ("rollout-host-recovery-resume", "rollout-a-third", "rollout-b-restored"),
     };
-    w.lab.spawn_command(host_tag, w.h.cmd_bin(&a_exe, &["host"]));
+    w.lab.spawn_command(host_tag, w.host_command(&a_exe));
     let status = wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = status["agent_listen"].as_str().unwrap().into();
     // 처음 실제 사본이 고른 agent port를 뒤의 모든 재시작에도 유지한다.
@@ -411,7 +411,7 @@ esac
         w.lab.kill("rollout-host");
         assert_eq!(std::fs::metadata(&partial).unwrap().len(), offset, "잡아 둔 소켓 사건까지 저장 길이는 고정이다");
         proxy.release();
-        w.lab.spawn_command("rollout-host-transfer-resume", w.h.cmd_bin(&a_exe, &["host"]));
+        w.lab.spawn_command("rollout-host-transfer-resume", w.host_command(&a_exe));
         wait_for("전송 재개 host의 agent 연결", T, || {
             (w.h.connected("labA") && w.h.connected("labB")).then_some(())
         });
@@ -494,7 +494,7 @@ esac
         w.lab.kill("rollout-host-transfer-resume");
         w.lab.kill("rollout-a");
         // 실행 신원은 맞지만 웹이 답하지 않는 새 host(W6c): 감시는 그 웹 주소를 기다리고 rollout은 다음 단계로 가지 않는다
-        let mut silent = w.h.cmd_bin(&a_exe, &["host"]);
+        let mut silent = w.host_command(&a_exe);
         silent.env("AAA_TEST_WEB_HOLD_ME", "1");
         w.lab.spawn_command("rollout-host-web-silent", silent);
         // CLI가 새 host에 먼저 붙어도, peer PID 신원을 local hello 이전에 고정하면 안 된다.
@@ -512,7 +512,7 @@ esac
         assert_eq!(waiting["phase"], "awaiting_new", "웹이 답하지 않는데 새 판 준비로 넘겼다");
         // 웹이 답하는 같은 판으로 다시 띄우면 그 주소를 확인하고 이어 간다(되돌림은 시한 뒤: 유닛 `a_new_host_is_ready_only_after_its_web_answers…`)
         w.lab.kill("rollout-host-web-silent");
-        w.lab.spawn_command("rollout-host-new", w.h.cmd_bin(&a_exe, &["host"]));
+        w.lab.spawn_command("rollout-host-new", w.host_command(&a_exe));
         wait_for("새 host와 agent 둘 재연결", T, || {
             (w.h.connected("labA") && w.h.connected("labB")).then_some(())
         });
@@ -578,7 +578,7 @@ esac
         phase_started(second_id, aaa_proto::RolloutPhase::HostRestart);
         assert!(next_call(3).ends_with("/dev.aaa.host"));
         w.lab.kill("rollout-host-new");
-        w.lab.spawn_command("rollout-host-second", w.h.cmd_bin(&a_exe, &["host"]));
+        w.lab.spawn_command("rollout-host-second", w.host_command(&a_exe));
         local_restart_started(second_id);
         let restart = next_call(4);
         assert!(restart.starts_with("a ") && restart.ends_with("/dev.aaa.agent"), "{restart}");
@@ -637,7 +637,7 @@ esac
         phase_started(third_id, aaa_proto::RolloutPhase::HostRestart);
         assert!(next_call(5).ends_with("/dev.aaa.host"));
         w.lab.kill("rollout-host-second");
-        w.lab.spawn_command("rollout-host-third", w.h.cmd_bin(&a_exe, &["host"]));
+        w.lab.spawn_command("rollout-host-third", w.host_command(&a_exe));
         local_restart_started(third_id);
         assert!(next_call(6).starts_with("a "));
         w.lab.kill("rollout-a-second");
@@ -700,7 +700,7 @@ esac
         assert_eq!(failed["rollout"]["cursor"], 6);
         // 복구 중 host 재시작도 같은 실패 머신/복구 ID에서 재개한다.
         w.lab.kill("rollout-host-third");
-        w.lab.spawn_command("rollout-host-recovery-resume", w.h.cmd_bin(&a_exe, &["host"]));
+        w.lab.spawn_command("rollout-host-recovery-resume", w.host_command(&a_exe));
         wait_for("복구 중 host와 두 agent 재접속", T, || {
             (w.h.connected("labA") && w.h.connected("labB")).then_some(())
         });
@@ -736,7 +736,7 @@ esac
     phase_started(fourth_id, aaa_proto::RolloutPhase::HostRestart);
     assert!(next_call(9).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-recovery-resume");
-    w.lab.spawn_command("rollout-host-wrong", w.h.cmd_bin(&old_a, &["host"]));
+    w.lab.spawn_command("rollout-host-wrong", w.host_command(&old_a));
     let host_guard_id = fourth["rollout"]["steps"][3]["job_id"].as_str().unwrap();
     let host_guard_file = w.h.state.join(format!("agent/deployments/{host_guard_id}.guard.json"));
     restored_file(&host_guard_file);
@@ -749,7 +749,7 @@ esac
     assert_eq!(digest(&a_exe), third_sha);
     assert_eq!(digest(&b_exe), sha);
     w.lab.kill("rollout-host-wrong");
-    w.lab.spawn_command("rollout-host-restored", w.h.cmd_bin(&a_exe, &["host"]));
+    w.lab.spawn_command("rollout-host-restored", w.host_command(&a_exe));
     wait_for("복구 host의 front와 두 agent 준비", T, || {
         (w.h.connected("labA") && w.h.connected("labB")).then_some(())
     });
@@ -773,7 +773,7 @@ esac
     phase_started(fifth_id, aaa_proto::RolloutPhase::HostRestart);
     assert!(next_call(11).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-restored");
-    w.lab.spawn_command("rollout-host-fifth", w.h.cmd_bin(&a_exe, &["host"]));
+    w.lab.spawn_command("rollout-host-fifth", w.host_command(&a_exe));
     local_restart_started(fifth_id);
     assert!(next_call(12).ends_with("/dev.aaa.agent"));
     w.lab.kill("rollout-a-third");
@@ -790,7 +790,7 @@ esac
     assert_eq!(digest(&a_exe), third_sha);
     w.lab.kill("rollout-host-fifth");
     w.lab.kill("rollout-a-wrong");
-    w.lab.spawn_command("rollout-host-local-restored", w.h.cmd_bin(&a_exe, &["host"]));
+    w.lab.spawn_command("rollout-host-local-restored", w.host_command(&a_exe));
     w.lab.spawn_command("rollout-a-local-restored", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
     wait_for("복구 host의 front와 두 agent 준비", T, || {
         (w.h.connected("labA") && w.h.connected("labB")).then_some(())
@@ -860,7 +860,7 @@ else:
     assert!(next_call(15).ends_with("/dev.aaa.host"));
     wait_for("늦은 설치 rename 뒤 baseline 복구 완료", T, || (digest(&a_exe) == third_sha).then_some(()));
     w.lab.kill("rollout-host-local-restored");
-    w.lab.spawn_command("rollout-host-cancel-restored", w.h.cmd_bin(&a_exe, &["host"]));
+    w.lab.spawn_command("rollout-host-cancel-restored", w.host_command(&a_exe));
     wait_for("복구 host의 front와 두 agent 준비", T, || {
         (w.h.connected("labA") && w.h.connected("labB")).then_some(())
     });
@@ -889,7 +889,7 @@ else:
         .join(format!("agent/deployments/{}.guard.json", restart["rollout"]["steps"][0]["job_id"].as_str().unwrap()));
     assert!(next_call(16).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-cancel-restored");
-    w.lab.spawn_command("rollout-host-restart", w.h.cmd_bin(&a_exe, &["host"]));
+    w.lab.spawn_command("rollout-host-restart", w.host_command(&a_exe));
     wait_for("재시작한 host의 front와 두 agent 준비", T, || {
         (w.h.connected("labA") && w.h.connected("labB")).then_some(())
     });

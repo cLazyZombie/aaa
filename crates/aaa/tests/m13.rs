@@ -65,9 +65,16 @@ fn spawn_host(lab: &mut Lab, tag: &str, node: &Node, settle_ms: Option<&str>) {
 }
 
 fn spawn_host_with_env(lab: &mut Lab, tag: &str, node: &Node, settle_ms: Option<&str>, extra: &[(&str, &str)]) {
-    let mut env: Vec<(&str, &str)> = settle_ms.map(|ms| ("AAA_TEST_BRIEF_SETTLE_MS", ms)).into_iter().collect();
-    env.extend_from_slice(extra);
-    lab.spawn_env(tag, node, &["host"], &env);
+    lab.spawn_command(tag, host_command(node, Path::new(lab::BIN), settle_ms, extra));
+}
+
+fn host_command(node: &Node, exe: &Path, settle_ms: Option<&str>, extra: &[(&str, &str)]) -> Command {
+    let mut command = node.cmd_bin(exe, &["host"]);
+    if let Some(ms) = settle_ms {
+        command.env("AAA_TEST_BRIEF_SETTLE_MS", ms);
+    }
+    command.envs(extra.iter().copied());
+    command
 }
 
 /// brief 안내를 받으면 할 일대로 보고를 쓰는 가짜 agent
@@ -638,8 +645,14 @@ impl World {
         }
     }
     fn spawn_host(&mut self, tag: &str) {
+        let command = self.host_command(Path::new(lab::BIN));
+        self.lab.spawn_command(tag, command);
+    }
+
+    /// 배포 사본도 이 World의 화면 안정·외부 조회 설정을 유지한다.
+    fn host_command(&self, exe: &Path) -> Command {
         let env: Vec<_> = self.host_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        spawn_host_with_env(&mut self.lab, tag, &self.h, self.settle_ms, &env);
+        host_command(&self.h, exe, self.settle_ms, &env)
     }
 
     fn task(&self, name: &str, text: &str) -> String {
