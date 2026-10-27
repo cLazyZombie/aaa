@@ -13,6 +13,8 @@ use aaa_common::conn::{FrameRx, Incoming, spawn_writer};
 use aaa_common::ipc::LocalStream;
 use aaa_common::tls;
 
+#[cfg(target_os = "macos")]
+mod local_socket;
 #[cfg(test)]
 mod resume_tests;
 
@@ -64,7 +66,18 @@ pub async fn run_with_state(
     state: Option<tokio::sync::watch::Sender<bool>>,
 ) {
     let mut backoff = Duration::from_millis(250);
+    #[cfg(target_os = "macos")]
+    let mut local_wake = match &target {
+        Target::Local(path) => local_socket::Watch::new(path)
+            .inspect_err(
+                |e| tracing::warn!(path = %path.display(), error = %format!("{e:#}"), "로컬 socket 감시 실패: 기존 backoff 사용"),
+            )
+            .ok(),
+        Target::Remote { .. } => None,
+    };
     loop {
+        #[cfg(target_os = "macos")]
+        let socket_before = local_wake.as_ref().and_then(local_socket::Watch::stamp);
         let started = Instant::now();
         match connect(&target).await {
             Ok(stream) => match session_state_mode(
@@ -86,7 +99,28 @@ pub async fn run_with_state(
             backoff = Duration::from_millis(250);
         }
         let jitter = Duration::from_millis(rand::random_range(0..=(backoff.as_millis() as u64 / 2).max(1)));
-        tokio::time::sleep(backoff + jitter).await;
+        let delay = tokio::time::sleep(backoff + jitter);
+        tokio::pin!(delay);
+        #[cfg(target_os = "macos")]
+        if let Some(watch) = &local_wake {
+            tokio::select! {
+                _ = &mut delay => {}
+                result = watch.replaced(socket_before) => {
+                    match result {
+                        Ok(()) => tracing::debug!("새 로컬 host socket이 생겨 재접속 대기를 깨운다"),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "로컬 socket 감시 종료: 기존 backoff 사용");
+                            local_wake = None;
+                            delay.await;
+                        }
+                    }
+                }
+            }
+        } else {
+            delay.await;
+        }
+        #[cfg(not(target_os = "macos"))]
+        delay.await;
         backoff = (backoff * 2).min(max_backoff);
     }
 }

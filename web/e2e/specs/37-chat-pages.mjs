@@ -10,6 +10,20 @@ const line = (harness, n) => JSON.stringify(harness === "claude"
 const frame = (page, diagnostics) => page.evaluate(() => new Promise((resolve) =>
   requestAnimationFrame(() => requestAnimationFrame(() => resolve(window.takeChatStates())))))
   .then((states) => diagnostics.remember(states));
+// 같은 두 frame 경계에서 행 ID·좌표·진단을 함께 읽는다. 각 쪽마다 이 값을
+// 따로 조회하면 브라우저와 시험 runner의 여러 왕복 사이에도 레이아웃이 진행된다.
+const prependPosition = async (chat, diagnostics, id = null) => {
+  const result = await chat.evaluate((el, id) => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const row = id ? el.querySelector(`[data-chat-id="${id}"]`)
+        : el.querySelector('.chat-transcript > [data-chat-id]');
+      resolve({ id: row?.getAttribute('data-chat-id'), y: row?.getBoundingClientRect().y,
+        states: window.takeChatStates() });
+    }));
+  }), id);
+  diagnostics.remember(result.states);
+  return result;
+};
 const position = row => row.evaluate(row => {
   const el = row.closest('.chat');
   return { rowY: row.getBoundingClientRect().y, y: el.getBoundingClientRect().y,
@@ -135,20 +149,15 @@ export default async function () {
       gate = { arrive, released };
       await chat.evaluate((el) => { el.scrollTop = 0; window.flushChatResize(); el.dispatchEvent(new Event("scroll", { bubbles: true })); });
       const body = await inTime(arrived, 20_000, `${label} 이전 쪽 요청`);
-      await frame(page, diagnostics);
       // 응답은 아직 gate 뒤다. 동작 전의 원래 row와 좌표를 잡는다.
-      const first = chat.locator(".chat-transcript > [data-chat-id]").first();
-      const oldId = await first.getAttribute("data-chat-id");
-      const oldTop = (await first.boundingBox())?.y;
+      const before = await prependPosition(chat, diagnostics);
+      if (!before.id) throw new Error(`${label}: prepend 전 원래 행이 없다`);
       release();
       const added = body.ok?.messages[0]?.id;
       if (!added) throw new Error(`${label}: 메시지 없는 합성 쪽`);
       await chat.locator(`[data-chat-id="${added}"]`).waitFor({ state: "attached" });
-      await frame(page, diagnostics);
-      if (oldId) {
-        const after = await chat.locator(`[data-chat-id="${oldId}"]`).boundingBox();
-        if (!after || Math.abs(after.y - oldTop) > 1) throw new Error(`${label}: prepend 위치 ${oldTop} → ${after?.y}`);
-      }
+      const after = await prependPosition(chat, diagnostics, before.id);
+      if (!after.id || Math.abs(after.y - before.y) > 1) throw new Error(`${label}: prepend 위치 ${before.y} → ${after.y}`);
     }
     await chat.evaluate((el) => { el.scrollTop = 0; });
     try { await chat.getByText("기록 0 ·", { exact: false }).first().waitFor(); }

@@ -211,11 +211,17 @@ impl Host {
                 // 세션이 끝났다: 묶음이 확인 필요로 보이고, `thread restart`가 다시 띄운다
                 return;
             }
+            let mut changes = self.pane_events(&pane).ok();
             match self.brief_step(project, id, Sender::Ticker, &mut seen, &mut asked).await {
                 Ok(Done::Not(_)) | Err(_) => {}
                 Ok(Done::Delivered(_) | Done::Stuck(_)) => return,
             }
-            tokio::time::sleep(LOOK_EVERY).await;
+            let next = Instant::now() + LOOK_EVERY;
+            let next = seen.as_ref().map_or(next, |(_, at)| {
+                let ready = *at + settle();
+                if ready > Instant::now() { next.min(ready) } else { next }
+            });
+            crate::text::pane_change(&mut changes, next).await;
         }
     }
 
@@ -327,7 +333,6 @@ impl Host {
                         Some((have, _)) if *have == k => {}
                         _ => {
                             *seen = Some((k, Instant::now()));
-                            return Ok(Done::Not("화면이 멈추기를 기다린다".into()));
                         }
                     }
                     if seen.as_ref().is_some_and(|(_, at)| at.elapsed() < settle()) {

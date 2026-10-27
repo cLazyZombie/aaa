@@ -855,6 +855,8 @@ impl Host {
         let before = |msg: String| SubmitErr { typed: false, msg };
         let after = |msg: String| SubmitErr { typed: true, msg };
         let conn = self.live_conn(mid).map_err(|e| before(e.message))?;
+        // 화면 조회·입력보다 먼저 구독한다. 응답 처리 중 도착한 출력도 놓치지 않는다.
+        let mut changes = Some(self.pane_events(pane).map_err(|e| before(e.message))?);
         // 친 글에 프로그램이 반응하고 Enter 뒤 harness가 받았다고 알리기까지 기다리는 시간(설정 `accept_wait_ms`, 기본 10초)
         let accept_wait = Duration::from_millis(self.cfg.projects.accept_wait_ms);
         // 선택 창에 글을 치면 Enter가 엉뚱한 선택지를 고른다(Claude 폴더 신뢰 창의 기본은 「No, exit」)
@@ -919,7 +921,11 @@ impl Host {
             if text.is_none() || !hooked || now != shown || tokio::time::Instant::now() >= deadline {
                 break now;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            crate::text::pane_change(
+                &mut changes,
+                deadline.min(tokio::time::Instant::now() + Duration::from_millis(100)),
+            )
+            .await;
         };
         let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
         // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
@@ -963,13 +969,17 @@ impl Host {
         }
         // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
         while tokio::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(250)).await;
             if self.screen_lines(mid, pane).await != typed {
                 if let Some(f) = screen_accept.take() {
                     f();
                 }
                 return Ok(true);
             }
+            crate::text::pane_change(
+                &mut changes,
+                deadline.min(tokio::time::Instant::now() + Duration::from_millis(250)),
+            )
+            .await;
         }
         Ok(false)
     }
@@ -1456,6 +1466,94 @@ mod tests {
             model_observation: None,
             turn_reply: None,
         }
+    }
+
+    /// 출력 알림만으로 수락하지 않고 실제 화면 변화에 반응해야 한다. 정지 시계로
+    /// 250ms 관측 간격을 기다리지 않는 것과 원래 paste 간격을 함께 검사한다.
+    #[tokio::test(start_paused = true)]
+    async fn unhooked_submission_rechecks_output_without_accepting_an_unchanged_screen() {
+        use aaa_proto::{AgentResponse, LinkMsg, Outcome};
+        let (h, _tmp) = host_with_pane();
+        let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+        let conn = crate::AgentConn::new(outgoing, 1);
+        h.inner.lock().unwrap().machines.insert(
+            "m".into(),
+            crate::MachineRt {
+                name: "mac-a".into(),
+                local: true,
+                os: None,
+                boot_id: None,
+                dev_mode: true,
+                conn: Some(conn.clone()),
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features: vec![],
+                identity: None,
+                agent_pid: None,
+                colors: None,
+                build: Default::default(),
+            },
+        );
+        let (observed, mut reads) = tokio::sync::mpsc::unbounded_channel();
+        let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let screen_changed = changed.clone();
+        let fake = tokio::spawn(async move {
+            while let Some((_, bytes)) = frames.recv().await {
+                let LinkMsg::Req { id, body, .. } = serde_json::from_slice(&bytes).unwrap() else { panic!("요청") };
+                let (reply, label) = match body {
+                    AgentRequest::Screen { .. } => {
+                        let screen = if screen_changed.load(std::sync::atomic::Ordering::SeqCst) {
+                            "received"
+                        } else {
+                            "ready>"
+                        };
+                        (
+                            AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: lines(screen),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: screen.into(),
+                            }),
+                            "screen",
+                        )
+                    }
+                    AgentRequest::Input { data, .. } => {
+                        (AgentResponse::Done, if data.0 == b"\r" { "enter" } else { "text" })
+                    }
+                    _ => panic!("입력과 무관한 요청"),
+                };
+                conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(reply)).unwrap();
+                observed.send((label, tokio::time::Instant::now())).unwrap();
+            }
+        });
+        let submitter = h.clone();
+        let submit = tokio::spawn(async move { submitter.submit_checked("m", "s", Some("hello"), None).await });
+        let mut typed_at = None;
+        let enter_at = loop {
+            let (label, at) = reads.recv().await.unwrap();
+            if label == "text" {
+                typed_at = Some(at);
+            }
+            if label == "enter" {
+                break at;
+            }
+        };
+        assert_eq!(enter_at - typed_at.unwrap(), Duration::from_millis(300));
+        let sender = h.inner.lock().unwrap().panes["s"].events.clone();
+        // 앞서 읽은 typed 화면 다음에는 Enter 뒤의 동일 화면도 확인한다.
+        while reads.recv().await.unwrap().0 != "screen" {}
+        sender.send(crate::PaneEvent::State).unwrap();
+        assert_eq!(reads.recv().await.unwrap().0, "screen");
+        assert!(!submit.is_finished(), "화면이 그대로인 알림을 수락으로 셌다");
+        changed.store(true, std::sync::atomic::Ordering::SeqCst);
+        sender.send(crate::PaneEvent::Output(0, Arc::new(b"received".to_vec()))).unwrap();
+        assert!(submit.await.unwrap().unwrap());
+        assert_eq!(tokio::time::Instant::now(), enter_at, "출력 뒤 관측 간격을 기다렸다");
+        fake.abort();
     }
 
     /// m13의 무반응 PTY는 두 번의 실제 10초 시한을 반복했다. 같은 Host/DB/AgentConn

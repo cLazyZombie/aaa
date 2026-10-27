@@ -35,6 +35,28 @@ pub(crate) async fn submission_gap() {
     tokio::time::sleep(Duration::from_millis(ms)).await;
 }
 
+/// 사건은 다시 읽을 계기일 뿐 받음 판정이 아니다. 옛 agent의 누락·구독 종료에는
+/// 기존 관측 간격을 유지하고, 출력 묶음은 화면을 한 번 읽어 확인한다.
+pub(crate) async fn pane_change(
+    events: &mut Option<broadcast::Receiver<crate::PaneEvent>>,
+    deadline: tokio::time::Instant,
+) {
+    if let Some(rx) = events {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => return,
+            event = rx.recv() => {
+                if matches!(event, Err(RecvError::Closed)) {
+                    *events = None;
+                } else {
+                    while matches!(rx.try_recv(), Ok(_) | Err(broadcast::error::TryRecvError::Lagged(_))) {}
+                    return;
+                }
+            }
+        }
+    }
+    tokio::time::sleep_until(deadline).await;
+}
+
 /// herdr `match_output`(src/api/subscriptions.rs): 맞은 첫 줄
 fn match_output(text: &str, matcher: &OutputMatch, regex: Option<&regex::Regex>) -> Option<String> {
     match matcher {
