@@ -57,6 +57,8 @@ impl Host {
         let mut matched = Vec::new();
         let mut pending = Vec::new();
         let mut picks = Vec::new();
+        let mut comments = Vec::new();
+        let mut legacy_texts = Vec::new();
         let mut answer = None;
         let mut ids = Vec::new();
         for (index, item) in items.iter().enumerate() {
@@ -79,7 +81,15 @@ impl Host {
                 let previous = old.answer.as_ref().unwrap();
                 answer.get_or_insert_with(|| previous.clone());
                 picks.push(previous.picks.get(n).copied().flatten());
-                matched.push(q.clone());
+                comments.push(previous.comments.get(n).cloned().flatten());
+                if let Some(text) = &previous.text
+                    && !legacy_texts.contains(text)
+                {
+                    legacy_texts.push(text.clone());
+                }
+                let mut matched_question = q.clone();
+                matched_question.source_number.get_or_insert(n as u32 + 1);
+                matched.push(matched_question);
                 if let Some(id) = &q.id {
                     ids.push(id.clone());
                 }
@@ -95,6 +105,13 @@ impl Host {
         if pending.is_empty() {
             if let Some(a) = &mut answer {
                 a.picks = picks;
+                a.text = (!legacy_texts.is_empty()).then(|| legacy_texts.join("\n"));
+                a.comments = if comments.iter().any(Option::is_some) { comments } else { Vec::new() };
+                if !a.comments.is_empty() {
+                    a.summary = crate::answer::compose(&matched, &a.picks, a.text.as_deref(), &a.comments)
+                        .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e))?
+                        .1;
+                }
             }
             Ok(Some(RepeatedQuestions { items: matched, answer, ids }))
         } else {
@@ -127,8 +144,14 @@ mod tests {
         let items =
             aaa_proto::report_questions("## Questions\n### 1. 시안\n![시안](library/a.png)\n- A 적용\n- B 보류\n");
         rec.questions = h.identify_questions("p", "thread", &rec.id, "old", &items).unwrap();
-        let answer =
-            QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "CLI".into(), at_ms: 10 };
+        let answer = QuestionAnswerView {
+            comments: Vec::new(),
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1A".into(),
+            by: "CLI".into(),
+            at_ms: 10,
+        };
         rec.question_answer = Some(answer.clone());
         assert!(h.repeated_answer(&rec, &items).unwrap().is_none(), "전달 중 claim은 답함이 아니다");
         h.record_answer(&rec, &answer);
@@ -144,6 +167,58 @@ mod tests {
         assert!(h.repeated_answer(&rec, &items).unwrap().is_none());
         rec.id = "t-0002".into();
         assert!(h.repeated_answer(&rec, &items).unwrap().is_none());
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 재보고가 질문을 재배열해도 의견이 다른 질문으로 옮겨 붙으면 안 된다.
+    #[test]
+    fn repeated_question_reorders_comments_with_their_original_questions() {
+        let root = std::env::temp_dir().join(format!("aaa-comment-repeat-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.project_create("p", Default::default(), "test").unwrap();
+        let mut rec = ThreadRec::starting("p", "질문", "m", "fake", Role::Worker, ThreadKind::Dir, 0);
+        rec.id = "t-0001".into();
+        rec.report_hash = Some("old".into());
+        let items =
+            aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 유지\n### 2. 색\n- A 단색\n- B 두 색\n");
+        rec.questions = h.identify_questions("p", "thread", &rec.id, "old", &items).unwrap();
+        let answer = QuestionAnswerView {
+            comments: vec![Some("첫째 원문".into()), Some("둘째 의견".into())],
+            picks: vec![None, Some(1)],
+            text: None,
+            summary: "1직접 2B+의견".into(),
+            by: "CLI".into(),
+            at_ms: 10,
+        };
+        h.record_answer(&rec, &answer);
+        let repeated = h.repeated_answer(&rec, &[items[1].clone(), items[0].clone()]).unwrap().unwrap();
+        let answer = repeated.answer.unwrap();
+        assert_eq!(answer.picks, vec![Some(1), None]);
+        assert_eq!(answer.comments, vec![Some("둘째 의견".into()), Some("첫째 원문".into())]);
+        assert_eq!(answer.summary, "2B+의견 1직접");
+        // 새 의견 기록과 옛 공통 직접 답 기록이 함께 재보고돼도 원문을 버리거나 재검증으로 거부하지 않는다.
+        rec.report_hash = Some("legacy".into());
+        let mut legacy_question = rec.questions[1].clone();
+        legacy_question.source_number = Some(2);
+        rec.questions = vec![legacy_question];
+        h.record_answer(
+            &rec,
+            &QuestionAnswerView {
+                comments: Vec::new(),
+                picks: vec![None],
+                text: Some("옛 공통 답 원문".into()),
+                summary: "직접".into(),
+                by: "CLI".into(),
+                at_ms: 20,
+            },
+        );
+        let repeated = h.repeated_answer(&rec, &items).unwrap().unwrap();
+        let answer = repeated.answer.unwrap();
+        assert_eq!(answer.text.as_deref(), Some("옛 공통 답 원문"));
+        assert_eq!(answer.comments, vec![Some("첫째 원문".into()), None]);
         drop(h);
         std::fs::remove_dir_all(root).unwrap();
     }

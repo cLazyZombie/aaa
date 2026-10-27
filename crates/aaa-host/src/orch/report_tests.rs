@@ -380,7 +380,11 @@ async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_o
         assert!(q.format_warning.as_deref().unwrap().contains("형식 확인 필요"));
         assert!(!q.review, "명시한 질문이 깨지면 기본 검수 카드로 대신하지 않는다");
         assert_eq!(view.copy.as_deref(), Some("complete"));
-        let err = lab.h.thread_answer("p", "t-0001", &q.report_hash, vec![Some(0)], None, "test").await.unwrap_err();
+        let err = lab
+            .h
+            .thread_answer("p", "t-0001", &q.report_hash, vec![Some(0)], None, Vec::new(), "test")
+            .await
+            .unwrap_err();
         assert_eq!(err.message, "thread 세션이 없다");
         if let Some(id) = q.items.first().and_then(|q| q.id.as_deref()) {
             let err =
@@ -419,6 +423,7 @@ async fn answered_reports_reuse_ids_and_mixed_reports_open_only_new_questions() 
             lab.h.identify_questions("p", "thread", &old.id, "previous", &aaa_proto::report_questions(OLD)).unwrap();
         let id = old.questions[0].id.clone();
         let answer = aaa_proto::QuestionAnswerView {
+            comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
             summary: "1B".into(),
@@ -433,7 +438,7 @@ async fn answered_reports_reuse_ids_and_mixed_reports_open_only_new_questions() 
             assert!(q.answer.is_none());
             assert_ne!(q.items[0].id, id);
             assert_eq!(q.items[0].source_number, Some(2));
-            assert_eq!(crate::answer::compose(&q.items, &[Some(1)], None).unwrap().1, "2B");
+            assert_eq!(crate::answer::compose(&q.items, &[Some(1)], None, &[]).unwrap().1, "2B");
         } else {
             assert_eq!(q.items[0].id, id);
             assert_eq!(q.answer.unwrap(), answer);

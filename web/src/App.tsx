@@ -1275,10 +1275,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (next === "asks" && wideScreen && opening && !asksShown) goSel(asksAt.current);
   };
   const [taskFocus, setTaskFocus] = useState<TaskFocusRequest>({ seq: 0, title: null });
-  const answerThread = async (t: ThreadView, picks: (number | null)[], text: string | null) => {
+  const answerThread = async (t: ThreadView, picks: (number | null)[], text: string | null, comments: (string | null)[]) => {
     const reply = threadReload.current.beginReply(t);
     try {
-      const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text });
+      const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text, comments });
       if (r.kind === "thread") putThread(reply.finish(r));
     } finally { reply.cancel(); }
   };
@@ -1607,7 +1607,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             selection={askSelection}
             canControl={canControl}
             onAnswer={answerThread}
-            onRequestAnswer={async (r, picks, text) => putAsks(await call({ op: "ask_answer", item: r.id, body_hash: r.questions!.report_hash, picks, text }))}
+            onRequestAnswer={async (r, picks, text, comments) => putAsks(await call({ op: "ask_answer", item: r.id, body_hash: r.questions!.report_hash, picks, text, comments }))}
             onHandle={async (item) => putAsks(await call({ op: "ask_handle", item }))}
             onReply={(title) => handOff(`「${title}」에 대한 답: `)}
             onForget={async (id) => putAsks(await call({ op: "ask_forget", ids: [id], all: false }))}

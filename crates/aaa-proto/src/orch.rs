@@ -1224,6 +1224,10 @@ pub struct QuestionAnswerView {
     pub picks: Vec<Option<u32>>,
     /// 직접 쓴 답(질문 번호를 붙여 쓴다, 예: 「2 둘 다 보이게」)
     pub text: Option<String>,
+    /// 질문 배열 순서의 직접 답·의견. 빈 배열은 옛 공통 text만 쓰는 답이다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<Option<String>>>")]
+    pub comments: Vec<Option<String>>,
     pub summary: String,
     /// 답한 곳(웹 기기 이름·`CLI`)
     pub by: String,

@@ -1089,7 +1089,11 @@ export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery,
 /**
  * 비었으면 등록된 모든 머신
  */
-machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null, } | { "op": "auto_decisions", project: string, before: string | null, id: string | null, } | { "op": "auto_mode_get", project: string, } | { "op": "auto_mode_set", project: string, on: boolean, } | { "op": "question_auto_answer", project: string, id: string, choice: string | null, text: string | null, reason: string, } | { "op": "auto_decision_review", project: string, id: string, answer: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null,
+/**
+ * 질문 배열 순서의 직접 답·의견. text는 옛 공통 답으로 유지한다.
+ */
+comments?: Array<string | null>, } | { "op": "auto_decisions", project: string, before: string | null, id: string | null, } | { "op": "auto_mode_get", project: string, } | { "op": "auto_mode_set", project: string, on: boolean, } | { "op": "question_auto_answer", project: string, id: string, choice: string | null, text: string | null, reason: string, } | { "op": "auto_decision_review", project: string, id: string, answer: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -1247,7 +1251,11 @@ report_hash: string,
 /**
  * 질문마다 고른 선택지(0부터). 직접 쓴 답으로 대신하는 질문은 null
  */
-picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, dry_run?: boolean, plan_sha256?: string, } | { "op": "automation_unblock", project?: string, name: string, batch: string, discard: boolean, } | { "op": "automation_read", project?: string, name: string, } | { "op": "automation_validate", project?: string, name: string, text: string, form?: Record<string, unknown>, body?: string, } | { "op": "automation_save", project?: string, name: string, text: string, expected_sha256?: string, body?: string,
+picks: Array<number | null>, text: string | null,
+/**
+ * 질문 배열 순서의 직접 답·의견. 고르지 않은 질문은 자기 의견이 필요하다.
+ */
+comments?: Array<string | null>, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, dry_run?: boolean, plan_sha256?: string, } | { "op": "automation_unblock", project?: string, name: string, batch: string, discard: boolean, } | { "op": "automation_read", project?: string, name: string, } | { "op": "automation_validate", project?: string, name: string, text: string, form?: Record<string, unknown>, body?: string, } | { "op": "automation_save", project?: string, name: string, text: string, expected_sha256?: string, body?: string,
 /**
  * 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
  */
@@ -1914,7 +1922,11 @@ picks: Array<number | null>,
 /**
  * 직접 쓴 답(질문 번호를 붙여 쓴다, 예: 「2 둘 다 보이게」)
  */
-text: string | null, summary: string,
+text: string | null,
+/**
+ * 질문 배열 순서의 직접 답·의견. 빈 배열은 옛 공통 text만 쓰는 답이다.
+ */
+comments?: Array<string | null>, summary: string,
 /**
  * 답한 곳(웹 기기 이름·`CLI`)
  */

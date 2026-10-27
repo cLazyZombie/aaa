@@ -20,21 +20,12 @@ import { markdownImages } from "./reportImages";
 import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
+import { withRecommended } from "./questionAnswer";
+export { withRecommended } from "./questionAnswer";
 
 const letter = (c: { letter?: string }, i: number) => c.letter ?? String.fromCharCode(65 + i);
 const when = (ms: number) =>
   new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-
-/** 고르지 않은 질문을 추천으로 채운다. 추천이 없는 질문이 남으면 null */
-export function withRecommended(q: ThreadQuestions, picks: (number | null)[]): number[] | null {
-  const out: number[] = [];
-  for (const [n, item] of q.items.entries()) {
-    const pick = picks[n] ?? item.choices.findIndex((c) => c.recommended);
-    if (pick === null || pick < 0) return null;
-    out.push(pick);
-  }
-  return out;
-}
 
 const KIND_ICON = { question: CircleQuestionMark, request: Bot, task: ListChecks } as const;
 const KIND_LABEL = { question: "질문", request: "확인 필요", task: "할 일 확인 필요" } as const;
@@ -149,8 +140,8 @@ export function AsksView({
   onClose: () => void;
   selection: AskSelection;
   canControl: boolean;
-  onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null) => Promise<void>;
-  onRequestAnswer: (r: UserRequestView, picks: (number | null)[], text: string | null) => Promise<void>;
+  onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
+  onRequestAnswer: (r: UserRequestView, picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
   /** 확인 필요 post 「답함으로 표시」 */
   onHandle: (item: string) => Promise<void>;
   /** 「대화에서 답하기」: coordinator 입력칸에 머리글을 채우고 그 pane을 연다 */
@@ -204,12 +195,12 @@ export function AsksView({
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
             <QuestionCard key={`${selection.ask.thread.id} ${selection.ask.thread.questions.report_hash} ${JSON.stringify(selection.ask.thread.questions.draft ?? null)}`} t={selection.ask.thread} q={selection.ask.thread.questions}
-              active={shown} canControl={canControl} onAnswer={(p, text) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text)} onZoom={setZoom} onThread={onThread} />
+              active={shown} canControl={canControl} onAnswer={(p, text, comments) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text, comments)} onZoom={setZoom} onThread={onThread} />
           )}
           {selection.kind === "open" && selection.ask.kind === "request" && (
             selection.ask.request.questions ? (
               <QuestionCard key={`${selection.ask.key} ${JSON.stringify(selection.ask.request.questions.draft ?? null)}`} request={selection.ask.request} q={selection.ask.request.questions}
-                active={shown} canControl={canControl} onAnswer={(p, text) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text)} onZoom={setZoom} onThread={onThread} />
+                active={shown} canControl={canControl} onAnswer={(p, text, comments) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text, comments)} onZoom={setZoom} onThread={onThread} />
             ) : <RequestCard key={selection.ask.key} questionId={selection.ask.request.question_id} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
           )}
@@ -330,12 +321,15 @@ function QuestionCard({
   q: ThreadQuestions;
   active: boolean;
   canControl: boolean;
-  onAnswer: (picks: (number | null)[], text: string | null) => Promise<void>;
+  onAnswer: (picks: (number | null)[], text: string | null, comments: (string | null)[]) => Promise<void>;
   onZoom: (z: { src: string; alt: string }) => void;
   onThread: (id: string) => void;
 }) {
   const [picks, setPicks] = useState<(number | null)[]>(() => q.draft?.picks ?? q.items.map(() => null));
-  const [custom, setCustom] = useState(q.draft?.text ?? "");
+  const multiple = q.items.length > 1;
+  const [custom, setCustom] = useState(q.draft?.text ?? (!multiple ? q.draft?.comments?.[0] : null) ?? "");
+  const [comments, setComments] = useState<(string | null)[]>(() => q.items.map((_, n) => q.draft?.comments?.[n] ?? null));
+  const commentInputs = useRef<(HTMLTextAreaElement | null)[]>([]);
   const customInput = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -350,25 +344,31 @@ function QuestionCard({
   const off = pending || !canControl;
   useLayoutEffect(() => {
     if (!active || off) return;
-    const element = customInput.current;
-    const view = element?.ownerDocument.defaultView;
-    if (!element || !view) return;
+    const view = (customInput.current ?? commentInputs.current.find(Boolean))?.ownerDocument.defaultView;
+    if (!view) return;
     // 대화 입력창과 같은 경계: root capture의 앞선 commit이 controlled 값을
     // 복원하기 전에 새 글을 받는다. bubble onChange도 기존대로 유지한다.
-    const input = (event: Event) => { if (event.target === element) setCustom(element.value); };
+    const input = (event: Event) => {
+      if (event.target === customInput.current) setCustom(customInput.current!.value);
+      const n = commentInputs.current.findIndex(element => element !== null && element === event.target);
+      if (n >= 0) {
+        const value = commentInputs.current[n]!.value;
+        setComments(values => values.map((old, i) => i === n ? value : old));
+      }
+    };
     view.addEventListener("input", input, true);
     return () => view.removeEventListener("input", input, true);
   }, [active, off]);
   const text = custom.trim();
   const got = picks.filter((p) => p !== null).length;
-  const all = got === q.items.length;
-  const needsReviewText = q.review && picks[0] === 1 && !text;
-  const filled = all ? null : withRecommended(q, picks);
+  const all = q.items.every((_, n) => picks[n] !== null || (multiple && !!comments[n]?.trim()));
+  const needsReviewText = q.review && picks[0] === 1 && !text && !(multiple && comments[0]?.trim());
+  const filled = all ? null : withRecommended(q, picks, multiple ? comments : []);
   const send = async (p: (number | null)[]) => {
     setPending(true);
     setError(null);
     try {
-      await onAnswer(p, text || null);
+      await onAnswer(p, text || null, multiple ? comments.map(c => c?.trim() || null) : []);
     } catch (e) {
       if (shown.current) setError(e instanceof ApiError ? e.message : String(e));
     }
@@ -391,9 +391,9 @@ function QuestionCard({
       {q.items.map((item, n) => {
         const pictures = item.choices.some((c) => choicePicture(c.body) !== null);
         return (
-          <div className="thread-ask-q" key={n} role="radiogroup" aria-label={`${item.source_number ?? n + 1}. ${item.text}`}>
+          <div className="thread-ask-q" key={n}>
             <QuestionText n={n} item={item} base={base} />
-            <div className={`prompt-card-options${pictures ? " ask-choices has-pictures" : " ask-choices"}`}>
+            <div role="radiogroup" aria-label={`${item.source_number ?? n + 1}. ${item.text}`} className={`prompt-card-options${pictures ? " ask-choices has-pictures" : " ask-choices"}`}>
               {item.choices.map((c, i) => {
                 const checked = picks[n] === i;
                 const rest = choiceRest(c.body) ?? "";
@@ -419,11 +419,18 @@ function QuestionCard({
                 return video ? <div key={i} className="ask-choice-video">{option}<AskMarkdown base={base}>{rest}</AskMarkdown></div> : option;
               })}
             </div>
+            {multiple && <div className="prompt-card-custom ask-question-comment">
+              <label className="prompt-card-custom-label" htmlFor={`${customId}-${n}`}>직접 쓴 답</label>
+              <textarea id={`${customId}-${n}`} ref={element => { commentInputs.current[n] = element; }} className="input" rows={2}
+                value={comments[n] ?? ""} disabled={off} aria-label={`${item.source_number ?? n + 1}번 직접 쓴 답`}
+                data-testid={`thread-ask-text-${item.source_number ?? n + 1}`}
+                onChange={e => { const value = e.currentTarget.value; setComments(values => values.map((old, i) => i === n ? value : old)); }} />
+            </div>}
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
           </div>
         );
       })}
-      <div className="prompt-card-custom">
+      {(!multiple || custom) && <div className="prompt-card-custom">
         <span className="prompt-card-custom-label" id={customId}>또는 직접 답을 입력(고르지 않은 질문을 대신한다)</span>
         <div className="prompt-card-custom-row">
           <input ref={customInput} className="input" value={custom} disabled={off} placeholder="예: 2 둘 다 보이게" aria-labelledby={customId} data-testid="thread-ask-text"
@@ -432,7 +439,7 @@ function QuestionCard({
               if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && text.length > 0) submit();
             }} />
         </div>
-      </div>
+      </div>}
       <div className="thread-ask-foot">
         <span className="muted">{got}/{q.items.length} 고름{!all && filled ? " · 고르지 않은 것은 추천대로" : ""}</span>
         <button type="button" className={`btn${all || text ? " btn-primary" : ""}`} data-testid="thread-ask-send" disabled={off || needsReviewText || !(all || text || filled)} onClick={submit}>
@@ -545,7 +552,8 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
               })}
             </div>
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
-            {pick === null && <p className="ask-done-text">직접 쓴 답으로 대신함</p>}
+            {r.answer?.comments?.[n] ? <p className="ask-done-text" data-testid={`ask-done-text-${item.source_number ?? n + 1}`}><span className="muted">직접 쓴 답</span> <strong>{r.answer.comments[n]}</strong></p>
+              : pick === null && <p className="ask-done-text">직접 쓴 답으로 대신함</p>}
           </div>
         );
       })}

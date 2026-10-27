@@ -34,6 +34,29 @@ thread는 파일을 library 안에 먼저 두고 보고를 마지막에 쓴다. 
 자료를 올린 뒤 `library/preview/…`를 쓴다. 특정 판을 고르게 할 때는 발행한 r-ID와 `library/r-NNNN/…`를 쓴다.
 로컬 절대 경로·앱 API·외부 그림/영상 주소는 카드 자료로 쓰지 않는다. HTML은 origin 없는 sandbox에서 자기 파일만 읽는다.
 
+## 질문별 직접 답과 의견
+
+질문이 여럿인 웹 카드는 각 질문의 선택지 바로 아래에 「직접 쓴 답」 칸을 둔다. 선택과 함께 의견을 남기거나
+선택 없이 직접 답할 수 있다. 한 질문의 의견은 그 질문만 대신하며, 나머지는 기존 추천을 채우거나 답을 기다린다.
+질문이 하나면 기존 카드 끝의 입력칸·Enter 전송을 유지한다. 여러 줄 의견은 Enter로 줄을 바꾸고 보내기 단추로 전송한다.
+「답한 것」에서도 의견을 해당 질문 아래에 표시한다. 직접 쓴 지시는 고른 선택지보다 우선한다.
+
+```sh
+aaa thread answer t-1000 1A --comment '1=오른쪽 간격을 넓혀' --comment '2=둘 다 보이게'
+```
+
+`--comment 번호=의견`은 반복할 수 있고 보고의 원래 질문 번호를 쓴다. 없는 번호·중복·빈 의견은 거절한다.
+기존 `--text '2 둘 다 보이게'`는 카드 전체 공통 답으로 계속 받으며 고르지 않은 질문 전체를 대신한다.
+`aaa question answer q-1000 A --text '간격을 넓혀'`는 해당 질문 하나의 선택과 의견이다.
+
+Front API 1.133의 `thread_answer`·`ask_answer`와 답 사본 `QuestionAnswerView`는 선택적
+`comments: (string | null)[]`를 받는다. 배열은 `items` 순서이며 비어 있거나 질문 수와 같아야 한다.
+글이 없는 위치는 null이고 앞뒤 공백만 정리하며 내부 줄바꿈은 보존한다. 생략하면 옛 `text` 동작이다.
+옛 답 기록의 `text`는 옮겨 해석하지 않고 그대로 카드 끝에 보인다. CLI는 의견을 모르는 옛 host로 전송하지 않는다.
+thread의 Follow-ups와 coordinator의 `question answered` 본문은 질문 번호·선택·의견 원문을 함께 남긴다.
+요약은 `1A+의견 2직접`, 본문은 `1번 직접 쓴 답(의견): …`·`2번 직접 쓴 답: …` 꼴이다.
+inbox 요약에도 `1A + 의견: …`·`2 직접: …` 원문을 붙인다. 기존 300자 상한을 넘는 글은 본문에서 끝까지 읽는다.
+
 ## coordinator auto mode
 
 coordinator 머리의 ⋯ 메뉴에서 `auto mode 켜기`를 누른다. CLI는 `aaa project auto-mode on|off`이며,

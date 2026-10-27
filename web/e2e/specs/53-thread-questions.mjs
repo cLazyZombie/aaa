@@ -585,12 +585,24 @@ export default async function ({ page }) {
     await card.locator(".ask-after").scrollIntoViewIfNeeded();
     await shot(page, "53-t0621-after-options");
     await card.getByTestId("thread-ask-pick-2B").click();
-    await card.getByTestId("thread-ask-text").fill("1 E: TowerControl");
+    await card.getByTestId("thread-ask-text-1").fill("E: TowerControl\n원래 픽셀 밀도 유지");
+    await card.getByTestId("thread-ask-text-2").fill("선택한 B에 색만 더한다");
     await card.getByTestId("thread-ask-send").click();
-    await waitOutput(t.pane, "직접 쓴 답: 1 E: TowerControl");
+    await waitOutput(t.pane, "1번 직접 쓴 답: E: TowerControl");
+    await waitOutput(t.pane, "2번 직접 쓴 답(의견): 선택한 B에 색만 더한다");
     await until("답한 아이콘 카드", async () => (await page.getByTestId("ask-done-card").count()) === 1 && (await pictures(page, '[data-testid="ask-done-card"] .ask-after')) === 2);
     const answered = aaa("thread", "show", t.id).questions.answer;
-    if (answered.picks[0] !== null || answered.picks[1] !== 1 || answered.text !== "1 E: TowerControl") throw new Error(`E 직접 답: ${JSON.stringify(answered)}`);
+    if (answered.picks[0] !== null || answered.picks[1] !== 1 || answered.text !== null
+      || JSON.stringify(answered.comments) !== JSON.stringify(["E: TowerControl\n원래 픽셀 밀도 유지", "선택한 B에 색만 더한다"])) throw new Error(`E 직접 답: ${JSON.stringify(answered)}`);
+    if (!(await page.getByTestId("ask-done-text-1").innerText()).includes("원래 픽셀 밀도 유지")
+      || !(await page.getByTestId("ask-done-text-2").innerText()).includes("선택한 B에 색만 더한다")) throw new Error("질문별 직접 답이 답한 카드에 없다");
+    const followups = fs.readFileSync(`${root}/projects/demo/threads/${t.id}.task.md`, "utf8");
+    if (!followups.includes("1번 직접 쓴 답: E: TowerControl\n원래 픽셀 밀도 유지")
+      || !followups.includes("2번 직접 쓴 답(의견): 선택한 B에 색만 더한다")) throw new Error("질문별 원문이 Follow-ups에 없다");
+    const notice = aaa("inbox", "list", "demo", "--all", "--peek").items.find(i => i.event === "question answered" && i.subject === t.id);
+    if (!notice?.summary.includes("1직접 2B+의견") || !notice.summary.includes("1 직접: E: TowerControl")
+      || !notice.summary.includes("2B + 의견: 선택한 B에 색만 더한다") || !notice.body.includes("원래 픽셀 밀도 유지")
+      || !notice.body.includes("2번 직접 쓴 답(의견): 선택한 B에 색만 더한다")) throw new Error(`질문별 inbox 원문: ${JSON.stringify(notice)}`);
     await shot(page, "53-t0621-answered-notes");
     aaa("thread", "resolve", t.id);
   });

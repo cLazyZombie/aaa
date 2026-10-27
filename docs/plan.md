@@ -8161,3 +8161,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - CI 실패 수집은 Rust 실패 외에 원문·gh 앞머리·annotation의 `FAIL` 단계 이름을 중복 없이 보존한다. 단계가 누락됐어도 웹 `suite-end`의 실패 수를 남긴다. 성공 Python fixture 출처·완료한 느린 시험 경계를 유지한다. 공개 proto·API·저장 형식은 바꾸지 않는다.
 - E03은 재연결 ACK 이후 resize·파싱·렌더·native viewport가 같은 기준을 보인 뒤 PageUp/PageDown 경쟁을 검사한다. E105는 선택 설정의 반환 뒤 native select 전달까지 끝낸 다음 터치 전환을 검사한다. 빈 사건 배열·초안/선택 복원·자동 focus 금지·PTY 입력 차단 계약을 유지한다. 실패 시 페이지를 닫기 전에 상태·PNG·host/agent 로그를 기존 CI 산출물 경로로 보존한다.
 - 참고는 xterm 5.5.0 Viewport·VS Code terminal 키 처리(각 MIT), Playwright focus/scroll 시험(Apache-2.0)이다. 자료와 회귀의 필요성·원본 관측 한계는 `docs/testing.md`에 적는다. 외부 코드·의존성은 추가하지 않는다.
+
+### 8.515 질문마다 직접 쓴 답과 의견(t-1194)
+
+- 여러 질문의 웹 카드에는 각 선택지 바로 아래에 여러 줄 직접 답 칸을 둔다. 선택과 의견을 함께 또는 직접 답만 보낼 수 있고, 한 질문의 글이 다른 미응답을 덮지 않는다. 단일 질문은 기존 끝 입력칸과 Enter 전송을 유지한다. 새 기능 설명 문구는 넣지 않는다. Reader·전송 중 비활성과 전송 실패 뒤 원문 보존을 유지한다.
+- Front API 1.133의 ThreadAnswer·AskAnswer·QuestionAnswerView에 선택적 comments 배열을 더한다. items 배열 순서로 고정하고 원래 source_number로 전달·표시한다. 배열 생략은 옛 text 계약이며 과거 공통 text는 그대로 남긴다. CLI는 --comment '번호=의견'을 반복해 보내고 옛 host에 의견을 누락시킬 요청을 거절한다.
+- thread Follow-ups·coordinator question answered 본문·답한 카드에 번호별 원문을 보존한다. q-ID별 부분 답도 같은 배열로 합치며, 재보고로 질문 순서가 바뀌어도 선택과 의견을 함께 옮긴다. 직접 지시는 선택보다 우선한다.
+- E53의 기존 두 질문 owner에 선택+의견·직접 답만·여러 줄 원문·Follow-ups·inbox 보존 검사를 더한다. headless 카드 회귀는 모바일/데스크톱·light/dark, 미응답·추천·Reader·초안·거부 뒤 보존을 확인한다. 새 E2E 번호와 고정 sleep은 없다.
+- 참고는 SurveyJS 질문별 comment area와 JSON Forms multiline control(각 MIT)다. 입력을 해당 질문에 붙이는 배치와 여러 줄 글을 따르며 외부 코드·의존성을 가져오지 않는다.

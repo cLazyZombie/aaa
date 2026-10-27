@@ -2149,6 +2149,10 @@ pub enum FrontRequest {
         body_hash: String,
         picks: Vec<Option<u32>>,
         text: Option<String>,
+        /// 질문 배열 순서의 직접 답·의견. text는 옛 공통 답으로 유지한다.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<Option<String>>>")]
+        comments: Vec<Option<String>>,
     },
     /// coordinator 모드 상태. 읽기는 모든 front, 변경은 사람만.
     AutoDecisions {
@@ -3111,6 +3115,10 @@ pub enum FrontRequest {
         picks: Vec<Option<u32>>,
         #[serde(default)]
         text: Option<String>,
+        /// 질문 배열 순서의 직접 답·의견. 고르지 않은 질문은 자기 의견이 필요하다.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<Option<String>>>")]
+        comments: Vec<Option<String>>,
     },
     /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
     Preferences,
@@ -4404,7 +4412,25 @@ impl AgentRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::QuestionAnswerView;
     use serde_json::json;
+
+    /// 옛 공통 답 요청·기록을 계속 읽고 새 의견의 null 위치와 줄바꿈을 보존한다.
+    #[test]
+    fn question_comments_keep_legacy_requests_and_answer_records_readable() {
+        let old = json!({"op":"thread_answer","thread":"t-0001","report_hash":"h","picks":[0,null],"text":"2 원문"});
+        let FrontRequest::ThreadAnswer { comments, text, .. } = serde_json::from_value(old).unwrap() else { panic!() };
+        assert!(comments.is_empty());
+        assert_eq!(text.as_deref(), Some("2 원문"));
+        let legacy = json!({"picks":[0,null],"text":"옛 공통 답","summary":"1A 직접","by":"CLI","at_ms":1});
+        let mut answer: QuestionAnswerView = serde_json::from_value(legacy).unwrap();
+        assert!(answer.comments.is_empty());
+        answer.comments = vec![Some("선택과 의견\n다음 줄".into()), None];
+        assert_eq!(
+            serde_json::from_value::<QuestionAnswerView>(serde_json::to_value(&answer).unwrap()).unwrap(),
+            answer
+        );
+    }
 
     #[test]
     fn link_wire_shape_is_stable() {

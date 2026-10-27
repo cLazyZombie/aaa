@@ -683,6 +683,7 @@ mod tests {
                     report_hash: "v".into(),
                     picks: vec![Some(0)],
                     text: None,
+                    comments: Vec::new(),
                 },
             })
             .await

@@ -361,6 +361,7 @@ impl Host {
     }
 
     /// 같은 질문 검증·답 조합 규칙을 쓰되 coordinator inbox로 전한다. 한 트랜잭션으로 답 기록과 요청 종료를 묶는다.
+    #[allow(clippy::too_many_arguments)] // thread와 같은 Front API 답 입력을 받는다.
     pub(crate) fn ask_answer(
         &self,
         project: &str,
@@ -368,6 +369,7 @@ impl Host {
         body_hash: &str,
         picks: Vec<Option<u32>>,
         text: Option<String>,
+        comments: Vec<Option<String>>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
         let open = self.db.inbox_list(Some(project), false).map_err(internal)?;
@@ -399,8 +401,8 @@ impl Host {
             });
         }
         let items = self.identify_questions(project, "post", item, &post.body_sha256, &parsed)?;
-        let (message, summary) =
-            crate::answer::compose(&items, &picks, text.as_deref()).map_err(|e| err(ErrorCode::BadRequest, e))?;
+        let (message, summary) = crate::answer::compose(&items, &picks, text.as_deref(), &comments)
+            .map_err(|e| err(ErrorCode::BadRequest, e))?;
         let by = self.answered_by(actor);
         let now = aaa_common::util::now_ms();
         let id = aaa_common::util::new_id();
@@ -426,6 +428,7 @@ impl Host {
             summary: summary.clone(),
             items,
             answer: Some(QuestionAnswerView {
+                comments: crate::answer::normalize_comments(comments),
                 picks,
                 text: text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
                 summary,
@@ -446,7 +449,11 @@ impl Host {
                 record.items.iter().filter_map(|q| q.id.as_deref()).collect::<Vec<_>>().join(" "),
                 post.id,
                 post.input.title,
-                record.summary
+                record
+                    .answer
+                    .as_ref()
+                    .map(|answer| crate::answer::preview(&record.items, answer))
+                    .unwrap_or_else(|| record.summary.clone())
             )
             .chars()
             .take(300)
@@ -836,8 +843,14 @@ mod tests {
         rec.id = "t-0001".into();
         rec.report_hash = Some("hash".into());
         rec.questions = aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 아래 (추천)\n- B 위\n");
-        let answer =
-            QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "웹".into(), at_ms: 5 };
+        let answer = QuestionAnswerView {
+            comments: Vec::new(),
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1A".into(),
+            by: "웹".into(),
+            at_ms: 5,
+        };
         rec.question_answer = Some(answer.clone());
         h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
         for n in 1..=2 {
@@ -1007,6 +1020,7 @@ mod tests {
         let created = h.db.post_inbox("demo", &id).unwrap().unwrap().created_at_ms;
         rec.questions = aaa_proto::report_questions("## Questions\n1. 색\n- A 파랑 (추천)\n- B 회색\n");
         let answer = QuestionAnswerView {
+            comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
             summary: "1A".into(),
@@ -1030,8 +1044,14 @@ mod tests {
         rec.id = "t-0001".into();
         rec.report_hash = Some("old".into());
         rec.questions = aaa_proto::report_questions("## Questions\n1. 색\n- A 파랑 (추천)\n- B 회색\n");
-        let answer =
-            QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "웹".into(), at_ms: 1 };
+        let answer = QuestionAnswerView {
+            comments: Vec::new(),
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1A".into(),
+            by: "웹".into(),
+            at_ms: 1,
+        };
         rec.question_answer = Some(answer.clone());
         h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
         h.record_answer(&rec, &answer);
@@ -1096,7 +1116,9 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert!(h.ask_handle("demo", &requests[0].id, "device:phone").unwrap_err().message.contains("질문 카드"));
         // pane이 없으므로 실제 전달 경로가 실패한다. post와 질문은 다시 답할 수 있어야 한다.
-        assert!(h.thread_answer("demo", &rec.id, "hash", vec![Some(0)], None, "device:phone").await.is_err());
+        assert!(
+            h.thread_answer("demo", &rec.id, "hash", vec![Some(0)], None, Vec::new(), "device:phone").await.is_err()
+        );
         assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
         assert_eq!(h.question_requests("demo", &rec.id).unwrap().len(), 2);
         assert!(h.db.ask_list("demo").unwrap().is_empty());
@@ -1105,8 +1127,14 @@ mod tests {
         post(&h, 4, "아침 정리 aaa:question/t-9999");
         let (other, _other_lab) = host();
         post(&other, 5, "다른 host aaa:question/t-0001");
-        let answer =
-            QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "웹".into(), at_ms: 5 };
+        let answer = QuestionAnswerView {
+            comments: Vec::new(),
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1A".into(),
+            by: "웹".into(),
+            at_ms: 5,
+        };
         h.record_answer(&rec, &answer);
         h.handle_question_requests("demo", requests.clone(), "웹", "질문 카드로 답해").unwrap();
         let done = h.db.ask_list("demo").unwrap();
@@ -1201,6 +1229,7 @@ mod tests {
             choices: vec![choice("A", Some("![A](library/mock/a.png)")), choice("B", None)],
         }];
         let answer = QuestionAnswerView {
+            comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
             summary: "1A".into(),
