@@ -1,3 +1,27 @@
+## Windows host의 원격 후보 경로(t-1183)
+
+- [원본 Windows job](https://github.com/cLazyZombie/aaa/actions/runs/40472958256/job/122084226189)의
+  두 rollout 시험은 모두 `BadRequest`·`ID·절대 경로·SHA-256·커밋 형식을 확인한다`로 실패했다.
+  같은 경로와 단언의 수정 전 Windows 실기에서 두 오류를 재현했다. 새 경로 owner도 `/candidate/aaa`에서
+  실패했다. 입력을 다른 경로로 바꾸거나 시험의 단언·시한을 완화하지 않는다.
+- `cargo test --profile verify --locked -p aaa-host --lib rollout::`는 기존 rollout 16개와 새
+  `candidate_paths_use_remote_syntax_and_keep_local_host_rules`를 실행한다. 새 시험이 필요한 이유는
+  Windows host에서 원격 POSIX 절대 경로를 받아야 하고, 드라이브 절대 경로·~/ 지원과
+  상대 경로·C:relative 거절 및 host 로컬 경로 규칙이 함께 유지되어야 하기 때문이다.
+  로컬 기대값은 OS별 계약을 명시하며 같은 Path 함수에서 만들지 않는다.
+- `python3 -m unittest -v scripts.test_ci_local`은 실제 CI 셸의 annotation과 순수 발췌 owner를 검사한다.
+  새 두 시험이 필요한 이유는 긴 역추적 뒤에도 panic과 첫 ErrorBody code/message가 함께 남고,
+  runner 환경의 인증값이 가려지며 기존 퍼센트 escape·원본 로그·실패 종료를 보존해야 하기 때문이다.
+  annotation의 최근 8개 실패 묶음·꼬리 5줄 상한을 유지한다. 실패 시험 이름/집합 판정은 바꾸지 않는다.
+- 부분 검증은 macOS rollout·경로 owner·aaa-host strict clippy·의존성 경계·fmt·공개 검사와
+  Windows 격리 폴더에서의 rollout·최종 경로 owner·Python 순수 owner다.
+  Windows 서비스·예약 작업·Run·사용자 PATH·방화벽 기준을 시험 뒤 대조하고 시험 폴더를 정리한다.
+  전체 ci-local·cross·main 통합과 push는 정규 착지 차례에서 수행한다.
+- 참고는 [std::path의 OS별 절대 경로](https://doc.rust-lang.org/std/path/struct.Path.html#method.is_absolute),
+  [camino의 같은 OS 규칙](https://docs.rs/camino/latest/camino/struct.Utf8Path.html#method.is_absolute),
+  [typed-path의 명시적 Unix/Windows 문법](https://github.com/chipsenkbeil/typed-path/blob/main/src/typed/non_utf8/path.rs)이다.
+  두 crate는 MIT OR Apache-2.0다. 문법을 분리하는 원칙을 참고하고 코드·의존성은 추가하지 않는다.
+
 ## 삭제 뒤 TASKS 기억과 CI fixture 출력(t-1172)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40462675441/job/122050697112)은

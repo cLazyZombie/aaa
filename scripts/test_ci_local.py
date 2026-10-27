@@ -12,6 +12,9 @@ import threading
 import unittest
 from pathlib import Path
 
+from scripts.ci_failure_excerpt import excerpt
+from scripts.fixture_secret import token
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -54,6 +57,12 @@ else:
     sys.exit(0)
 print(f"LIVE-{stage}-한글", end="", flush=True)
 print(f"stderr-{stage}", file=sys.stderr, flush=True)
+if os.environ.get("PANIC_FIXTURE"):
+    print("test rollout::owner ... FAILED")
+    print("thread 'rollout::owner' (3140) panicked at crates/aaa-host/src/rollout/web_tests.rs:372:102:")
+    print('called `Result::unwrap()` on an `Err` value: ErrorBody { code: BadRequest, message: "경로% 검사 ' + os.environ['CI_EXCERPT_TOKEN'] + '" }')
+    for frame in range(30):
+        print(f"   {frame}: stack frame")
 if os.environ.get("GATE"):
     with socket.create_connection(("127.0.0.1", int(os.environ["GATE"])), timeout=10) as link:
         link.sendall(stage.encode())
@@ -63,6 +72,24 @@ print(f"TAIL-{stage}", end="", flush=True)
 (root / (stage + ".finished")).touch()
 sys.exit(7 if os.environ.get("FAIL_STAGE") == stage else 0)
 '''
+
+
+class CiFailureExcerpt(unittest.TestCase):
+    def test_panic_message_stays_with_marker_across_long_backtrace_and_masks_auth(self):
+        secret = token("ci-excerpt")
+        lines = [f"test other::{n} ... FAILED\n" for n in range(20)]
+        lines += ["thread 'rollout::owner' (3140) panicked at src/rollout.rs:372:102:\n",
+                  'called `Result::unwrap()` on an `Err` value: ErrorBody { code: BadRequest, message: "경로 ' + secret + '" }\n']
+        lines += [f"   {n}: backtrace\n" for n in range(40)]
+        lines += ["error: test failed, to rerun pass `-p aaa-host --lib`"]
+        result = excerpt(iter(lines), {"GH_TOKEN": secret})
+        self.assertIn('ErrorBody { code: BadRequest, message: "경로 <redacted>" }', result)
+        self.assertNotIn(secret, result)
+        self.assertNotIn("other::0 ", result)
+        self.assertIn("other::19 ", result)
+        self.assertIn("   39: backtrace", result)
+        self.assertIn("error: test failed", result)
+        self.assertIn("panicked at build.rs:1:1:", excerpt(["thread 'main' panicked at build.rs:1:1:"], {}))
 
 
 @unittest.skipUnless(os.name == "posix", "Unix shebang 도구와 Unix CI 단계 분기를 검사한다")
@@ -76,7 +103,7 @@ class CiLocal(unittest.TestCase):
         (self.root / "web/dist").mkdir(parents=True)
         # e2e의 기존 번들 최신성 검사도 그대로 실행한다.
         (self.root / "web/dist/index.html").touch()
-        for name in ("ci-local.sh", "ci_stream.py", "workspace_metrics.py", "check_fixture_secrets.py"):
+        for name in ("ci-local.sh", "ci_stream.py", "ci_failure_excerpt.py", "workspace_metrics.py", "check_fixture_secrets.py"):
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
         for name in ("cargo", "npm", "node", "python3", "public"):
             self.write_tool(self.root / "tools" / name)
@@ -208,6 +235,17 @@ class CiLocal(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("TAIL-clippy", result.stdout)
         self.assertNotIn("── 함께:", result.stdout)
+
+    def test_annotation_keeps_masked_error_body_after_panic_and_escapes_percent(self):
+        secret = token("ci-annotation")
+        self.env.update(FAIL_STAGE="clippy", GITHUB_ACTIONS="true", PANIC_FIXTURE="1", CI_EXCERPT_TOKEN=secret)
+        result = self.run_ci("--only", "clippy", "--tee")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        annotation = next(line for line in result.stdout.splitlines() if line.startswith("::error "))
+        self.assertIn('ErrorBody { code: BadRequest, message: "경로%25 검사 <redacted>" }', annotation)
+        self.assertIn("panicked at crates/aaa-host/src/rollout/web_tests.rs:372:102:%0Acalled", annotation)
+        self.assertNotIn(secret, annotation)
+        self.assertIn(secret, (self.root / "logs/clippy.log").read_text(), "원본 로그를 바꾸지 않는다")
 
     def test_unchanged_dist_uses_successful_web_build_time(self):
         source = self.root / "web/src/main.ts"

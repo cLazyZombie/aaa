@@ -105,12 +105,15 @@ fn machine_spec(r: &RolloutView, machine: &str) -> RolloutSpec {
     spec
 }
 fn candidate_path(path: &str, remote: bool) -> bool {
-    Path::new(path).is_absolute()
-        || (remote
-            && (path.starts_with("~/")
-                || (path.as_bytes().get(1) == Some(&b':')
-                    && path.as_bytes()[0].is_ascii_alphabetic()
-                    && matches!(path.as_bytes().get(2), Some(b'\\' | b'/')))))
+    if !remote {
+        return Path::new(path).is_absolute();
+    }
+    // 빌드 머신에서 해석할 경로다. Windows host에서도 POSIX 절대 경로를 받는다.
+    path.starts_with('/')
+        || path.starts_with("~/")
+        || (path.as_bytes().get(1) == Some(&b':')
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && matches!(path.as_bytes().get(2), Some(b'\\' | b'/')))
 }
 /// 완료 영수증은 요청·소속·ID와 일치해야 한다. 재시작은 설치 파일과 실행 이미지를 구별한다.
 fn assess(
@@ -1057,6 +1060,30 @@ fn stage_receipt(r: &RolloutView, expected: &str, stage: &DeployStageView) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn candidate_paths_use_remote_syntax_and_keep_local_host_rules() {
+        // 빌드 머신의 문법은 host OS와 무관하다. 같은 표를 Windows에서도 실행한다.
+        for path in ["/candidate/aaa", "~/candidate/aaa", r"C:\candidate\aaa.exe", "c:/candidate/aaa.exe"] {
+            assert!(candidate_path(path, true), "원격 후보: {path}");
+        }
+        for path in
+            ["", "aaa", "candidate/aaa", "./aaa", "../aaa", "C:relative", "C:", r"\candidate\aaa", "~", "~user/aaa"]
+        {
+            assert!(!candidate_path(path, true), "원격 상대 경로: {path}");
+        }
+        // 로컬 파일은 host에서 직접 연다. ~/와 다른 OS의 드라이브 문법을 추가하지 않는다.
+        for (path, absolute) in [
+            ("/candidate/aaa", cfg!(unix)),
+            ("~/candidate/aaa", false),
+            (r"C:\candidate\aaa.exe", cfg!(windows)),
+            ("c:/candidate/aaa.exe", cfg!(windows)),
+            ("C:relative", false),
+            (r"\\server\share\aaa.exe", cfg!(windows)),
+            ("aaa", false),
+        ] {
+            assert_eq!(candidate_path(path, false), absolute, "로컬 후보: {path}");
+        }
+    }
     pub(super) fn record() -> RolloutView {
         RolloutView {
             id: aaa_common::util::new_id(),
