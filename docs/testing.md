@@ -1,3 +1,37 @@
+## E81 Reader 사용 설정 준비·E109 종료 증거(t-1218)
+
+- [원본 macOS 웹 job](https://github.com/cLazyZombie/aaa/actions/runs/40584602186/job/122472617885)의
+  전체 로그와 artifact 목록을 확보했다. E81 원문은 `false !== true`이며 stack·Reader 실패 화면은 없다.
+  E109는 `getByTestId('terminal')`의 detached 대기 중 page/context/browser closed다. 원본 artifact에는
+  `return-failure-390.json`·브라우저 stderr/종료 신호·page crash/close/disconnected 기록이 없다.
+  원래 E109의 JSON은 실험실 루트에만 썼으며 공통 수집기는 diagnostics 폴더만 복사했다.
+- E81의 같은 Reader owner에서 실제 account_pool 응답 전달만 gate로 보류한다. 서버 members에 cold가
+  있는데 목록 checkbox는 checked=false/disabled=true인 경계에서 기존 단언이 실패했다. 목록 생성은
+  설정 반영 완료가 아니다. 응답 도착을 확인하고 gate를 풀어 checked/disabled DOM 사건을 기다린 뒤
+  기존 checked=true·disabled=true 단언을 그대로 수행한다. forbidden·응답/host 파일의 인증 비노출·
+  Reader 메일 비노출도 유지한다. gate는 원래 fetch·응답을 쓰며 Service Worker 경유도 같은 경계를 지난다.
+  새 대기의 상한은5초다. 실패 때 원래 stack·응답 종류/상태/비밀 없는 계정 별칭·DOM·그림을 저장한다.
+- E109의 `returnDiagnostics`는 renderer에 다시 묻기 전에 최초 오류/stack을 기록한다. page crash/close,
+  context close, browser disconnected, 명시적 정리 시작/끝/실패, Playwright 소유 launcher의 stderr와
+  종료 코드/신호를 diagnostics에 둔다. launcher는 macOS pw_run.sh이므로 그 신호를 별도 WebProcess의
+  신호로 단정하지 않는다. 조회·정리 오류가 최초 오류를 덮지 않으며 실패 JSON도 공통 artifact 수집에 들어간다.
+  기존12회 왕복·같은 xterm/연결·휠 한 번·실제 입력·숨김/만료·Reader 비전송 단언과 시한은 바꾸지 않는다.
+- `NODE_PATH=<격리 node_modules> nice -n 15 node --test web/e2e/return-diagnostics.test.mjs`의 두 keeper는
+  저장소 고정 Playwright1.64.1과 공용 WebKit을 쓴다. 실제 DOM 분리의 성공 뒤 명시적 정리와 정상 exit를
+  구별하고, 실제 selector가 기다리기 시작한 뒤 공개 browser.close를 호출해 최초 locator 오류·다음 조회 오류·
+  정리 오류의 독립 보존을 확인한다. 필요성: 페이지 종료 뒤 진단도 실패하면 최초 오류와 산출물을 잃는다.
+  구 수집 순서는 두 번째 keeper에서 page.evaluate 오류로 실패했고 수리 뒤 두 keeper는 각각1초 미만이다.
+  이 제어된 종료는 원본 CI의 종료 주체/원인을 재현했다는 뜻이 아니다.
+- E109 원본과 수명 계측판은 로컬 단독에서 모두 통과했다. 이 결과를 원본 CI 종료의 회복이나
+  부하/환경 원인으로 판정하지 않는다. E109 종료 원인은 미확정이며 다음 실패의 위 증거가 필요하다.
+  E81 수리와 E109 증거 수집을 구별해 보고하고 전체 수리 완료로 표시하지 않는다.
+- 참고 후보는 [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)
+  ([MIT](https://github.com/facebook/react/blob/main/LICENSE))의 controlled checkbox commit과
+  [Playwright page events](https://playwright.dev/docs/api/class-page#page-event-crash)·
+  [browser disconnected](https://playwright.dev/docs/api/class-browser#browser-event-disconnected)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))의 수명 구분이다.
+  외부 코드·의존성은 가져오지 않는다. 고정 sleep·재시도·시한 연장·기대값 완화·시험 삭제·새 E2E 번호는 없다.
+
 ## E2E16 복귀 크기 기준·E2E28 새 hover 진입(t-1209)
 
 - [원본 macOS 웹 job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985055)의

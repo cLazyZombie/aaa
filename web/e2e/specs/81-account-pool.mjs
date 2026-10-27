@@ -113,6 +113,28 @@ const switchState = (p, checked) => domIs(p, "저장한 스위치와 다음 조�
 const heldSwitch = (p, id) => inTime(p.evaluate(id => window.__poolSwitch.wait(id), id), 20_000, `계정 ${id} 응답 도착`);
 const releaseSwitch = (p, id) => p.evaluate(id => window.__poolSwitch.release(id), id);
 
+// Reader도 목록 생성과 사용 설정 응답은 별개다. 실제 응답만 보류해 그 경계를 지킨다.
+function readerPoolProbe() {
+  let arrive, release;
+  const arrived = new Promise(done => { arrive = done; });
+  const gate = new Promise(done => { release = done; });
+  const trace = [];
+  window.__readerPool = { arrived, release, trace };
+  const original = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const body = typeof args[1]?.body === "string" ? JSON.parse(args[1].body) : null;
+    if (!["account_pool", "account_pool_member"].includes(body?.op)) return original(...args);
+    trace.push({ kind: "request", op: body.op });
+    const response = await original(...args);
+    const data = await response.clone().json();
+    trace.push({ kind: "response", op: body.op, status: response.status,
+      members: data.ok?.pool?.members.map(m => m.account), error: data.err?.code });
+    if (body.op === "account_pool") { arrive(); await gate; }
+    trace.push({ kind: "delivered", op: body.op });
+    return response;
+  };
+}
+
 export default async function ({ page }) {
   let pinnedA, pinnedB, chosen, count, resumed;
   await step("계정 등록만으로 참여·기존 기본과 명시 시작·다른 harness 기본 fallback", async () => {
@@ -278,16 +300,34 @@ export default async function ({ page }) {
     aaa("ticker", "tick"); assert.equal(threads().length, count + 1);
   });
   await step("Reader 사용 설정 조회·쓰기 거부·비밀 비노출", async () => {
-    const { page: reader } = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 });
+    const { page: reader } = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 }, { init: readerPoolProbe });
     try {
       const d = await openSettings(reader, "계정");
       const toggle = d.getByTestId("accounts-claude").locator('[data-account="cold"]').getByTestId("account-auto-assign");
-      await toggle.waitFor(); assert.equal(await toggle.isChecked(), true); assert.equal(await toggle.isDisabled(), true);
+      await toggle.waitFor();
+      await inTime(reader.evaluate(() => window.__readerPool.arrived), 5_000, "Reader 실제 사용 설정 응답");
+      assert.equal(await toggle.isDisabled(), true, "설정을 읽는 동안도 Reader는 쓸 수 없다");
+      await reader.evaluate(() => window.__readerPool.release());
+      await domIs(reader, "Reader 사용 설정 DOM 반영", () => {
+        const input = document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]');
+        return input?.checked === true && input.disabled === true;
+      }, null, 5_000);
+      assert.equal(await toggle.isChecked(), true); assert.equal(await toggle.isDisabled(), true);
       const denied = await reader.evaluate(async () => (await fetch('/api/v1/call', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({op:'account_pool_member',revision:'',account:'a',member:null}) })).json());
       assert.equal(denied.err.code, "forbidden");
       const dump = await reader.evaluate(async () => JSON.stringify(await (await fetch('/api/v1/call', { method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({op:'account_pool'}) })).json()));
       for (const token of canaries) assert.ok(!dump.includes(token));
       assert.ok(!(await d.innerText()).includes("@example.com"));
+      await shot(reader, "81-reader-pool");
+    } catch (error) {
+      fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+      const state = await reader.evaluate(() => {
+        const input = document.querySelector('[data-account="cold"] [data-testid="account-auto-assign"]');
+        return { trace: window.__readerPool.trace, checked: input?.checked, disabled: input?.disabled };
+      }).catch(diagnostic => ({ diagnostic: String(diagnostic) }));
+      fs.writeFileSync(`${root}/diagnostics/reader-pool.json`, JSON.stringify({ error: { message: error.message, stack: error.stack }, state }, null, 2));
+      await reader.screenshot({ path: `${root}/diagnostics/reader-pool.png` }).catch(() => {});
+      throw error;
     } finally { await reader.context().close(); }
     const scan = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const path = `${dir}/${e.name}`; if (e.isDirectory()) scan(path);
