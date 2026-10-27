@@ -1,3 +1,14 @@
+## E2E16 링크 재그리기와 E2E09 PTY 기록 ACK(t-1151)
+
+- [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40429411549/job/121943161404)의 로그와 artifact 목록·원본 자료를 확보했다. E2E16 JSON에는 설정의 go/popstate가 끝난 뒤 같은 좌표에 down/up이 도착하고, 그 뒤 파일 요청·pushState·viewer mount가 없는 순서가 남았다. 가상화 행의 중앙/측정 전에 클릭 자체가 빠진 경우다. 원본에는 Linkifier의 각 재그리기 호출이 기록되지 않아 당시 호출의 정확한 출처를 소급 확정하지 않는다.
+- xterm 5.5.0은 viewport render에서 provider 응답을 재생성하면서 누름/놓음을 객체 동일성으로 판정한다. 실제 PTY가 누른 링크 행을 같은 대상·범위로 다시 그리게 하면 수정 전 실행본은 원본과 같은 viewer=false/preview=false/rows=0·20초 실패다. 이 대조의 JSON·PNG·trace를 보존했다. `xterm-5.5.0-link-press.patch`는 provider 순번·대상·전체 범위와 놓은 자리로 같은 링크를 판정하고 누름을 한 번 소비한다. 기존 앱의 왼쪽 단추·선택 없음 검사와 파일 링크의 현재 버퍼 재검증은 유지한다. 설정 복귀 대기는 그대로다.
+- 기존 E2E16의 wrap 재열기에만 이 실제 PTY 재그리기를 넣었다. `clickLink`는 콜백 실패에도 눌린 마우스를 finally에서 놓는다. 클릭/요청/기록/선택·중앙·강조·줄 바꿈 계약과 휴대폰/iPad 조합·기존 상한을 유지한다. 진단은 활성 terminal 교체 뒤에도 실제 행 변경·링크 장식·포커스·누름 대상을 관측한다. 필요한 이유: 단순 정상 클릭만으로는 down/up 사이 render의 클릭 유실을 재현할 수 없다.
+- E2E09는 원본과 로컬 첫 실행 모두 기대·실제가 같은 문자열인 상태에서 통지 대기가 만료됐다. `receivedIs`는 초기 읽기와 fs.watch callback에서만 비교하고 timeout의 최종 읽기는 실패 문구에만 쓴다. 따라서 파일의 최종 가시성을 마지막 유효 재검사로 보지 못한 상태다. 별도 관측판은 owner별 initial/notice/close의 원문 bytes·offset·시각을 보존했으나 그 실행에서는 누락을 재현하지 못했다. 원래 실패 당시의 kernel 통지 누락·미완성 UTF-8·watcher close 순서를 추측해 확정하지 않는다.
+- `composition-pty.mjs`의 fixture는 실제 PTY stdin bytes를 파일에 동기 기록한 뒤 한 TCP 연결로 누적 byte ACK를 보낸다. 부모는 먼저 연결을 소유하고 ACK의 현재 상태도 검사해 대기 전 도착을 놓치지 않는다. 입력은 ACK된 Buffer 범위로 정확히 비교하며 UTF-8 중간 청크를 문자열로 바꾸지 않는다. 출력/flush/reset 제어도 같은 연결의 JSON 줄로 전달해 별도 control 파일 감시를 없앤다. echo 보관도 Buffer로 유지한다. 입력 bytes·조합 위치·확정 순서·중복 없음·실제 Chromium/native WebKit 및 WebKit replay 계약은 그대로이며 새 대기의 실패 상한은 5초다. 실패·종료에서 대기자·연결·listener를 정리하고 누적 ACK·파일 가시성·오류를 진단에 남긴다.
+- 필요한 유닛은 세 경계다: 실제 upstream에 패치를 붙인 클릭 유닛(같은 대상 한 번·대상/범위/provider 변경·범위 밖·추가 놓음 거부), PTY ACK 유닛(대기 전 도착·UTF-8 중간 청크·합쳐진 ACK·다음 입력·byte 불일치·연결 종료), 기록보다 이른 ACK 거부/대기자 정리다. 모두 5초 미만이며 구현 모양을 확인하는 시험은 추가하지 않는다.
+- 부분 검사는 웹 전체 유닛·타입/번들, 빌드 완료 뒤 고정한 e2e 실행본의 E2E09/16 전체와 E2E03 「그냥 끌어 고르기」, 공개 검사다. 수정 전 E2E16 대조는 실패하고 수정 후 같은 가상화 단계 단독은 4.19초에 통과했다. Chromium·WebKit·native WebKit의 조합 위치 단계도 4.35초에 통과했다. 캡처/trace를 켠 병렬 전체 결과와 일반 실행의 비용은 구별한다. 다른 기존 단계의 5초 감축은 별도 전체 시험 정리 범위다. 전체 ci-local·착지 검증은 coordinator의 착지 차례에 수행한다. 실패 재시도·고정 sleep·시한 확대·기대값 완화는 없다.
+- OSS 후보는 [Node fs.watch 주의점](https://nodejs.org/api/fs.html#caveats)([MIT](https://github.com/nodejs/node/blob/main/LICENSE)), [libuv 파일 통지](https://docs.libuv.org/en/v1.x/fs_event.html)([MIT](https://github.com/libuv/libuv/blob/v1.x/LICENSE)), [xterm Linkifier](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Linkifier.ts)([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))다. 통지와 기록 완료를 구별하고 실제 provider/포인터 경계를 대조했다. Playwright 입력/사건 지침(Apache-2.0)도 참고했으며 외부 코드·제품 의존성은 가져오지 않는다.
+
 ## macOS pipe 창의 native exec와 실패 원문(t-1146)
 
 - 기존 `pipe_window_cannot_leak_to_another_child_or_serialize_its_lifetime`의 시스템 shell 사본을

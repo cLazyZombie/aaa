@@ -223,3 +223,45 @@ test("xterm 배율 monitor는 terminal 해제 때 resize·media listener도 해�
     }
   }
 });
+
+// 같은 대상의 새 provider 응답은 열고, 다른 대상·위치·provider와 놓기만 한 사건은 열지 않는다.
+test("링크를 누른 뒤 재그려도 같은 대상만 한 번 연다", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aaa-xterm-link-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, "src/browser"), { recursive: true });
+  const file = join(root, "src/browser/Linkifier.ts");
+  const original = readFileSync(new URL("../node_modules/@xterm/xterm/src/browser/Linkifier.ts", import.meta.url), "utf8");
+  writeFileSync(file, original);
+  writeFileSync(join(root, "src/browser/Types.d.ts"), readFileSync(new URL("../node_modules/@xterm/xterm/src/browser/Types.d.ts", import.meta.url)));
+  applyPatch(root, readFileSync(new URL("../patches/xterm-5.5.0-link-press.patch", import.meta.url), "utf8"));
+  const compile = text => {
+    const source = ts.createSourceFile("Linkifier.ts", text, ts.ScriptTarget.Latest, true);
+    const cls = source.statements.find(ts.isClassDeclaration);
+    const methods = cls.members.filter(m => ['_handleMouseDown', '_handleMouseUp', '_linkAtPosition'].includes(m.name?.getText(source)));
+    const code = ts.transpileModule(`export class Probe { ${methods.map(m => m.getText(source)).join('\n')} }`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+    const module = {}; new Function('exports', code)(module); return module.Probe;
+  };
+  const run = (implementation, change = () => {}, position = { x: 8, y: 1 }) => {
+    let opened = 0;
+    const link = () => ({ provider: 2, link: { text: 'src/big.ts:2500', range: { start: { x: 3, y: 1 }, end: { x: 17, y: 1 } }, activate: () => opened++ } });
+    const state = Object.assign(new implementation(), {
+      _currentLink: link(), _bufferService: { cols: 80 }, _positionFromMouseEvent: () => position,
+    });
+    state._handleMouseDown();
+    state._currentLink = link(); // upstream onRenderedViewportChange의 새 응답
+    change(state._currentLink);
+    state._handleMouseUp({ button: 0 });
+    const once = opened;
+    state._handleMouseUp({ button: 0 });
+    return { once, total: opened };
+  };
+  assert.equal(run(compile(original)).once, 0, 'upstream은 같은 링크 재그리기에도 클릭을 버린다');
+  const patched = compile(readFileSync(file, 'utf8'));
+  assert.deepEqual(run(patched), { once: 1, total: 1 });
+  for (const change of [
+    current => { current.link.text = 'src/else.ts:25'; },
+    current => { current.provider = 1; },
+    ...['start', 'end'].flatMap(edge => ['x', 'y'].map(axis => current => { current.link.range[edge][axis]++; })),
+  ]) assert.deepEqual(run(patched, change), { once: 0, total: 0 }, '대상·provider·전체 범위 변경은 거부');
+  assert.equal(run(patched, () => {}, { x: 30, y: 1 }).once, 0, '밖에서 놓은 누름은 거부');
+});

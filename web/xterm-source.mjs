@@ -65,6 +65,8 @@ export function buildXtermSource(webRoot) {
   applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0-viewport.patch"), "utf8"));
   // 배율 monitor도 terminal 수명에 묶는다. 해제한 terminal의 resize/media listener를 남기지 않는다.
   applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0-lifecycle.patch"), "utf8"));
+  // viewport 재그리기 사이에도 같은 링크의 누름·놓음을 잇는다.
+  applyPatch(cache, readFileSync(join(webRoot, "patches/xterm-5.5.0-link-press.patch"), "utf8"));
   // xterm 소스는 .d.ts의 const enum을 쓴다: TypeScript가 먼저 풀어 줘야 vite가 읽는다
   const program = ts.createProgram(ts.sys.readDirectory(source, [".ts"], undefined, ["**/*"]), {
     target: ts.ScriptTarget.ES2022,
