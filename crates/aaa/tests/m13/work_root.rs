@@ -5,7 +5,7 @@ use super::*;
 #[cfg(target_os = "macos")]
 fn agent_restart_preserves_threads_after_branch_changes_and_isolates_invalid_preparations() {
     use std::os::unix::ffi::OsStrExt;
-    let mut w = world();
+    let mut w = report_shell_world();
     let root = w.lab.root.join("portable");
     let path = std::ffi::CString::new(w.lab.root.as_os_str().as_bytes()).unwrap();
     let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
@@ -28,8 +28,12 @@ fn agent_restart_preserves_threads_after_branch_changes_and_isolates_invalid_pre
             "--task-file",
             &w.task(&format!("{title}.txt"), "noreport"),
         ]);
-        w.wait_show("brief 전달", thread["id"].as_str().unwrap(), |v| v["brief"] == "delivered");
         threads.push(thread);
+    }
+    // 세 실제 worktree의 준비는 독립적이다. 생성 순서와 brief 확인은 유지하되
+    // 앞 thread의 보고 셸 준비가 다음 thread의 기동을 막지 않게 한다.
+    for thread in &threads {
+        w.wait_show("brief 전달", thread["id"].as_str().unwrap(), |v| v["brief"] == "delivered");
     }
     let cwd = Path::new(threads[0]["cwd"].as_str().unwrap());
     git(cwd, &["switch", "-qc", "next-stage"]);

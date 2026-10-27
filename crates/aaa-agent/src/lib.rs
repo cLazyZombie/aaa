@@ -31,6 +31,8 @@ mod plan;
 pub mod post;
 mod pr;
 mod quota;
+#[cfg(target_os = "macos")]
+mod report_watch;
 mod responsibility;
 mod selfcheck;
 mod settings_jobs;
@@ -690,13 +692,18 @@ impl Agent {
         }
     }
 
-    /// report.md hash를 1초마다 보고 바뀌면 host에 알린다. 등록하면 지금 값을 한 번 보낸다.
+    /// report.md 변경을 host에 알린다. macOS vnode 사건과 기존 1초 점검을 함께 쓰며 등록 즉시 한 번 보낸다.
     fn watch_report(self: &Arc<Self>, thread: String, work_dir: PathBuf) {
         let me = self.clone();
         let t = thread.clone();
         let task = tokio::spawn(async move {
+            #[cfg(target_os = "macos")]
+            let mut wake = report_watch::Wake::new(&work_dir);
             let mut last: Option<Option<String>> = None;
             loop {
+                // hash 읽기 전에 등록한다. 원자적 rename과 제자리 쓰기를 모두 관측한다.
+                #[cfg(target_os = "macos")]
+                wake.prepare();
                 let wd = work_dir.clone();
                 let hash = tokio::task::spawn_blocking(move || threads::report_hash(&wd))
                     .await
@@ -709,6 +716,9 @@ impl Agent {
                         .await;
                     last = Some(hash);
                 }
+                #[cfg(target_os = "macos")]
+                wake.wait().await;
+                #[cfg(not(target_os = "macos"))]
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         });
