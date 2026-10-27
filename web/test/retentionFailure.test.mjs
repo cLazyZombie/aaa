@@ -20,3 +20,22 @@ it("추가 진단 실패에도 최초 오류·페이지·직전 상태를 먼저
     assert.equal(records[1].pageNo, 4);
   }
 });
+
+it("protocol snapshot은 추가 evaluate보다 먼저 실행하고 저장 오류도 최초 오류를 바꾸지 않는다", async () => {
+  const original = new Error("lookup 실패");
+  for (const snapshotFails of [false, true]) {
+    const records = [];
+    let snapshotted = false;
+    await assert.rejects(retentionFailure(original, { phase: "lookup-before-state" }, [], row => records.push(row), async () => {
+      assert.equal(snapshotted, true);
+      assert.equal(records[0].original.stack, original.stack);
+      if (snapshotFails) assert.match(records[1].protocolError, /write failed/);
+      return { responsive: true };
+    }, () => {
+      assert.equal(records[0].event, "failure");
+      snapshotted = true;
+      if (snapshotFails) throw new Error("write failed");
+    }), error => error === original);
+    assert.equal(records.at(-1).event, "diagnostic");
+  }
+});
