@@ -84,6 +84,7 @@ mod question_guard;
 mod question_repeat;
 mod quota;
 mod quota_rpc;
+mod record_search;
 mod report_copy;
 mod report_ids;
 mod report_mark;
@@ -1981,6 +1982,16 @@ impl Host {
             }),
             FrontRequest::WorkspaceDashboard { query } => {
                 self.workspace_dashboard(query).map(FrontResponse::WorkspaceDashboard)
+            }
+            FrontRequest::RecordSearch { query } => {
+                let host = self.clone();
+                tokio::task::spawn_blocking(move || host.records_search(query))
+                    .await
+                    .map_err(orch::internal)?
+                    .map(FrontResponse::RecordSearch)
+            }
+            FrontRequest::RecordOpen { project, key, offset } => {
+                self.records_chunk(&project, &key, offset).map(FrontResponse::RecordDocument)
             }
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
             FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,

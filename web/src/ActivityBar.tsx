@@ -6,7 +6,7 @@
 // Accounts·Manage 자리). 맨 위 「coordinator」(사용자 요청 10-21 「왼쪽 제일 위로 (버튼 중에 제일 위)」, t-0621)는 로고 밑, 패널 단추 위의 보통
 // 단추다(tablist 밖): 도는 coordinator pane을 연다. pane이 하나라 배지는 수 대신 점이다(새 답은 강조색, 질문·확인창은 빨강, 사용자 결정 10-21).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Bot, LoaderCircle, Eye, FileText, FolderKanban, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
+import { Search, Bot, LoaderCircle, Eye, FileText, FolderKanban, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
 import { AutomationIcon, TasksIcon, WorkspaceIcon } from "./activityIcons";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
@@ -25,6 +25,8 @@ export function ActivityBar({
   shown,
   onPanel,
   badges,
+  search = false,
+  onSearch,
   reports,
   onReports,
   unseenReports,
@@ -44,6 +46,8 @@ export function ActivityBar({
   /** 단추 위 작은 수(VS Code 배지): 볼 일이 있는 thread·agent 수. `ask`면 빨강(답할 것) */
   badges: Partial<Record<SidebarPanel, { count: number; label: string; ask?: boolean }>>;
   /** 본문이 보고서 화면인가 */
+  search?: boolean;
+  onSearch?: () => void;
   reports: boolean;
   onReports: () => void;
   /** 열어 보지 않은 사용자 보고서 수(host `reports` 사건, plan §8.256) */
@@ -137,6 +141,7 @@ export function ActivityBar({
           );
         })}
       </div>
+      {onSearch && <button type="button" className={`activity-item${search ? " is-active" : ""}`} aria-pressed={search} aria-label="기록 검색" title="기록 검색" data-testid="activity-search" onClick={onSearch}><Search aria-hidden="true"/></button>}
       <button
         type="button"
         className={`activity-item${reports ? " is-active" : ""}`}

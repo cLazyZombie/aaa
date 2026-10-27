@@ -4844,3 +4844,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 카드 회귀는 1280px·390px의 light/dark에서 두 의견과 선택을 보내고 질문별 답 표시·가로 넘침 없음을 확인한다. root capture 중 부모의 동기 갱신을 끼워 실제 textarea 입력 보존도 검사한다. 별도 시나리오는 단일 질문 Enter·Reader 비활성·다른 미응답 거절·부분 답 초안·coordinator post·전송 거부 뒤 원문/재전송 가능 상태를 검사한다. 각 조건은 DOM·callback 완료 사건으로 끝나고 실패 상한 5초를 쓰며 sleep·재시도·기대값 완화는 없다.
 - 기존 E53의 아이콘 두 질문 owner는 UI 의견 두 개·선택 B·여러 줄 직접 답을 실제 host로 보내고 task Follow-ups·inbox 본문·답한 카드·ThreadView 사본을 대조한다. 기존 추천 전송·옛 --text·늦은 응답 owner와 E2E 번호를 유지한다. 정규 전체 gate와 Chromium/WebKit E53은 Unix 착지 차례에서 수행한다.
 - 참고 후보는 [SurveyJS comment area](https://surveyjs.io/form-library/examples/individual-checkbox-comments/documentation)([MIT](https://github.com/surveyjs/survey-library/blob/master/LICENSE))와 [JSON Forms multiline](https://jsonforms.io/examples/control)([MIT](https://github.com/eclipsesource/jsonforms/blob/master/LICENSE))다. 질문에 붙는 입력 배치만 참고하며 코드나 의존성을 가져오지 않았다.
+
+## 작업 기록 통합 검색(t-1205, §8.518, E2E116)
+
+- host `record_search::tests` 네 계약은 실제 SQLite·프로젝트 파일·보고 판 보존 API를 사용한다. 필요한 이유는 최신 보고 덮어쓰기 뒤 과거 r 판 열기, 답과 직접 의견 보존, 할 일 current/before/after 중복 제거, 정리·재시작·프로젝트 경계, 거른 뒤 커서 페이지와 한글·문자 그대로 검색을 함께 지켜야 하기 때문이다. 추가로 같은 보고 본문의 여러 r 별칭, 마지막 출처 삭제, 1MiB를 넘는 원문의 UTF-8 조각/응답 상한/완전 복원을 검사한다.
+- E2E116은 실제 host 보관 DB·파일에 보고 34판·답한 질문·할 일 변경 본문을 준비하고 실제 CLI 검색/원문을 대조한다. Chromium desktop과 WebKit 390px Reader가 모든 종류 30+7건, 종류 필터, 과거 보고·선택과 직접 답, 현재와 다른 할 일 메모 원문을 연다. 필요한 이유는 Rust 저장 계약만으로 웹 종류 선택·다음 페이지·원문 전환과 Reader의 실제 HTTP 접근을 확인할 수 없기 때문이다. 준비와 각 브라우저 계약을 나눠 개별 5초 미만을 확인한다.
+- 실행: `cargo test --profile verify --locked -p aaa-host --lib record_search::`, `cargo test --profile verify --locked -p aaa-proto`, `cargo test --profile verify --locked -p aaa --test deps`, 웹 유닛·타입/번들, 고정 Playwright 1.64.1과 공용 브라우저 캐시에서 `node web/e2e/web.e2e.mjs --spec 116-record-search`다. 새 도구 설치는 작업 폴더의 Playwright npm 패키지뿐이며 브라우저·시스템 설정은 바꾸지 않는다.
+- 기존 시험 삭제·단언 완화·재시도·고정 sleep·시한 확대는 없다. 전체 ci-local·cross와 main 병합/push는 착지 창에서 수행한다.
