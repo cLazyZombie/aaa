@@ -326,7 +326,8 @@ async fn archive_write_failure_preserves_active_then_restore_keeps_id_without_qu
             let mut r = Lab::rec();
             r.id = id.into();
             r.status = ThreadStatus::Resolved;
-            r.task_clean.why = Some("merged".into());
+            r.task_clean.why = Some("manual".into());
+            r.task_clean.merged_main = Some("a".repeat(40));
             serde_json::to_string(&r).unwrap()
         })
         .unwrap();
@@ -343,7 +344,7 @@ async fn archive_write_failure_preserves_active_then_restore_keeps_id_without_qu
     let a = lab.h.db.archive_list("demo").unwrap().remove(0);
     assert_eq!(a.task_id, t.id.unwrap());
     assert!(a.body.contains("uploads/example.md"));
-    assert_eq!(a.reason, "PR 병합");
+    assert_eq!(a.reason, "origin/main 병합");
     assert_eq!(a.report.as_deref(), Some("threads/t-0001.md"));
     // 완료 결과와 메모가 참조한 보고서의 실제 파일은 정리/삭제에서 보호한다.
     let dir = lab.h.project_dir("demo").unwrap();
@@ -393,7 +394,8 @@ async fn archive_recompletion_preserves_old_result_after_history_prune() {
                 let mut r = Lab::rec();
                 r.id = id.into();
                 r.status = ThreadStatus::Resolved;
-                r.task_clean.why = Some("merged".into());
+                r.task_clean.why = Some("manual".into());
+                r.task_clean.merged_main = Some("a".repeat(40));
                 serde_json::to_string(&r).unwrap()
             })
             .unwrap()
@@ -926,7 +928,8 @@ async fn archive_recovers_the_file_removed_before_final_db_receipt() {
             let mut r = Lab::rec();
             r.id = id.into();
             r.status = ThreadStatus::Resolved;
-            r.task_clean.why = Some("merged".into());
+            r.task_clean.why = Some("manual".into());
+            r.task_clean.merged_main = Some("a".repeat(40));
             serde_json::to_string(&r).unwrap()
         })
         .unwrap();
@@ -1541,7 +1544,7 @@ async fn archive_search_pages_bound_bytes_keep_all_matches_and_restore_without_q
                     task_id: id,
                     task,
                     body,
-                    reason: ["PR 병합", "origin/main 병합", "보고 [완료]"][i % 3].into(),
+                    reason: ["완료 판정", "origin/main 병합", "보고 [완료]"][i % 3].into(),
                     report: None,
                     completed_ms: i as u64,
                     restored: false,
@@ -1763,7 +1766,8 @@ async fn archive_list_omits_oversized_duplicate_history_without_changing_durable
     let mut rec = Lab::rec();
     rec.id = "t-0001".into();
     rec.status = ThreadStatus::Resolved;
-    rec.task_clean.why = Some("merged".into());
+    rec.task_clean.why = Some("manual".into());
+    rec.task_clean.merged_main = Some("a".repeat(40));
     lab.h.db.thread_import("demo", &rec.id, "resolved", &serde_json::to_string(&rec).unwrap()).unwrap();
     lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
     let mut row = lab.h.db.archive_list("demo").unwrap().remove(0);

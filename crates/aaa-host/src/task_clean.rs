@@ -2,7 +2,7 @@
 //!
 //! - thread가 끝나면(resolve) host가 끝난 까닭과 버림을 thread 기록(`TaskClean`)에 적고, ticker가 한 번 판정한다. 이 칸 전에 끝난
 //!   thread는 까닭이 없어 판정하지 않는다(올린 직후 옛 thread에 이어진 task를 지우지 않는다). 다시 열면 지워 다음 끝남을 판정한다.
-//! - 완료는 좁게 본다: PR 병합으로 끝났거나 origin/main 조상을 확인했거나 마지막 보고 첫 줄이 `[완료]`다. 그러면 줄을 지우고 기록에 「자동 정리」로 남겨 되살릴 수
+//! - 완료는 좁게 본다: origin/main 조상을 확인했거나 마지막 보고 첫 줄이 `[완료]`다. 그러면 줄을 지우고 기록에 「자동 정리」로 남겨 되살릴 수
 //!   있게 하고 coordinator inbox에 알린다. 하위 task가 남은 task는 지우지 않는다(지우기는 하위 묶음과 함께 간다).
 //! - 그 밖(보고 표지 `[결정 필요]`·`[착지]` 등, 보고 없음, 사본 없이 버림)은 줄을 남기고 「확인 필요」다. 표지는 따로 적지 않고 할 일
 //!   화면을 읽을 때 이어진 thread가 끝났는지로 정한다(`attention`). 사람이 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」로 정한다.
@@ -31,9 +31,6 @@ pub(crate) enum Verdict {
 pub(crate) fn judge(why: Option<&str>, discard: bool, marker: Option<&str>, children: bool) -> Verdict {
     if children {
         return Verdict::Check("하위 task가 남아 있다".into());
-    }
-    if why == Some("merged") {
-        return Verdict::Clean("PR 병합".into());
     }
     if discard {
         return Verdict::Check("마지막 사본 없이 끝냈다".into());
@@ -160,9 +157,38 @@ impl Host {
         }
     }
 
+    /// 현재 branch 끝만 main에 포함됐을 때 정리 근거로 쓴다. 보고의 SHA는 삭제 근거가 아니다.
+    pub(crate) async fn main_branch_head(&self, rec: &ThreadRec) -> Option<String> {
+        if !self.machine_feature(&rec.machine_id, "git_merged.v1") {
+            return None;
+        }
+        let repo = rec.repo.as_deref()?;
+        let branch = rec.branch.as_ref().filter(|b| !b.is_empty())?;
+        let conn = self.live_conn(&rec.machine_id).ok()?;
+        let query = aaa_proto::GitQuery::MergedIntoMain { branch: Some(branch.clone()), commits: vec![] };
+        match conn
+            .request_timeout(
+                aaa_proto::AgentRequest::GitQuery { cwd: repo.into(), query },
+                aaa_common::git_watch::QUERY_TIMEOUT + std::time::Duration::from_secs(5),
+            )
+            .await
+        {
+            Ok(aaa_proto::AgentResponse::Git(answer)) => {
+                answer.merged_commit.filter(|sha| aaa_common::git_watch::valid_sha(sha))
+            }
+            Ok(other) => {
+                tracing::warn!(thread = %rec.id, "main 포함 조회 응답이 아니다: {other:?}");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(thread = %rec.id, "main 포함 조회 실패: {}", e.message);
+                None
+            }
+        }
+    }
+
     pub(crate) async fn task_main_merge(&self, rec: &ThreadRec) -> Option<String> {
         if rec.task_clean.discard
-            || rec.task_clean.why.as_deref() == Some("merged")
             || self.report_marker(rec) == Some("[완료]")
             || !self.machine_feature(&rec.machine_id, "git_merged.v1")
         {
@@ -196,7 +222,14 @@ impl Host {
             Ok(aaa_proto::AgentResponse::Git(answer)) => {
                 answer.merged_commit.filter(|sha| aaa_common::git_watch::valid_sha(sha))
             }
-            _ => None, // 조회 불가·옛 agent는 완료를 추측하지 않는다.
+            Ok(other) => {
+                tracing::warn!(thread = %rec.id, "main 포함 조회 응답이 아니다: {other:?}");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(thread = %rec.id, "main 포함 조회 실패: {}", e.message);
+                None
+            }
         }
     }
 
@@ -421,10 +454,6 @@ mod tests {
         let clean = |r: &str| Verdict::Clean(r.into());
         let check = |r: &str| Verdict::Check(r.into());
         for (why, discard, marker, children, want) in [
-            // PR 병합은 보고 표지와 무관하게 완료(병합은 사본을 버리고 끝내지 않는다)
-            (Some("merged"), false, None, false, clean("PR 병합")),
-            (Some("merged"), false, Some("[착지]"), false, clean("PR 병합")),
-            (Some("merged"), true, None, false, clean("PR 병합")),
             (Some("main_merged"), false, Some("[착지]"), false, clean("origin/main 병합")),
             (Some("main_merged"), true, Some("[착지]"), false, check("마지막 사본 없이 끝냈다")),
             (Some("main_merged"), false, Some("[착지]"), true, check("하위 task가 남아 있다")),
@@ -440,7 +469,7 @@ mod tests {
             (Some("manual"), false, None, false, check("보고가 없다")),
             (Some("manual"), true, Some("[완료]"), false, check("마지막 사본 없이 끝냈다")),
             // 하위 task가 남은 상위는 병합·[완료]여도 지우지 않는다
-            (Some("merged"), false, Some("[완료]"), true, check("하위 task가 남아 있다")),
+            (Some("main_merged"), false, Some("[완료]"), true, check("하위 task가 남아 있다")),
             (Some("manual"), false, Some("[완료]"), true, check("하위 task가 남아 있다")),
         ] {
             assert_eq!(judge(why, discard, marker, children), want, "{why:?} {discard} {marker:?} {children}");
@@ -481,7 +510,7 @@ mod tests {
         h.task_identify("demo").unwrap();
         let id =
             h.db.thread_insert_next("demo", |id| {
-                let mut r = rec(Some("merged"), false);
+                let mut r = rec(Some("main_merged"), false);
                 r.project = "demo".into();
                 r.id = id.into();
                 serde_json::to_string(&r).unwrap()
@@ -530,7 +559,7 @@ mod tests {
         let mut open = rec(Some("manual"), false);
         open.status = ThreadStatus::Open;
         assert_eq!(attention(&t, &open, Some("[결정 필요]"), false), None);
-        assert_eq!(attention(&t, &rec(Some("merged"), false), None, false), None, "곧 지운다");
+        assert_eq!(attention(&t, &rec(Some("main_merged"), false), None, false), None, "곧 지운다");
         assert_eq!(
             attention(&t, &rec(None, false), Some("[완료]"), false).unwrap(),
             "t-0007가 끝났다. 끝났는지 정한다"
@@ -542,7 +571,7 @@ mod tests {
         let mut restored = rec(Some("manual"), true);
         restored.task_clean.cleaned = vec!["일".into()];
         assert!(attention(&t, &restored, Some("[완료]"), false).unwrap().contains("되살렸다"));
-        let mut parent = rec(Some("merged"), true);
+        let mut parent = rec(Some("main_merged"), true);
         parent.task_clean.parents = vec!["일".into()];
         assert_eq!(attention(&t, &parent, None, false).unwrap(), "하위 task가 모두 끝났다(마지막 t-0007)");
     }

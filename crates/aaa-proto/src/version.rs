@@ -263,7 +263,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.132: QuestionChoice.letter·ThreadQuestion.source_number — 보고의 글자·번호 보존과 답한 질문 재보고 연결. picks는 배열 위치다.
 // 1.133: ThreadAnswer·AskAnswer·QuestionAnswerView.comments — 질문별 직접 답과 의견. text는 옛 공통 답을 유지한다.
 // 1.134: TaskOp::AppendNotes·TaskEdited.warnings — 메모 추가와 교체 경고.
-pub const FRONT_API: Version = Version { major: 1, minor: 134 };
+// 1.135: PR 조회·자동화 source·상태를 제거한다. branch 정리는 원격 main 포함 판정을 쓴다(t-1203).
+pub const FRONT_API: Version = Version { major: 1, minor: 135 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

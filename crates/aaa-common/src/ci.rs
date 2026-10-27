@@ -1,5 +1,5 @@
 //! GitHub Actions 조건부 조회 규칙. 참고: t3code gitHubConditionalChecks.ts의 validator·쪽 넘김.
-use crate::{pr::sanitize, util};
+use crate::{github::sanitize, util};
 use aaa_proto::{CiAnswer, CiCommit, CiJob, CiQuery, CiRun};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;

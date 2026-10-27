@@ -69,7 +69,7 @@ export default async function ({ page }) {
       const history = [{ id: i, at_ms: i, actor: "file", by: "파일 직접", action: "raw", list: "Backlog", from_list: null, title, before: "자료".repeat(6000), after: null, thread: null, restored_by: null }];
       // 넷 중 셋은 thread를 이었다: 시작 시각 차례가 번호·끝난 차례와 다르고, 나머지는 「시작 기록 없음」이다.
       if (i % 4) history.push({ id: 1000 + i, at_ms: (i * 7) % 131 + 1, actor: "file", by: "파일 직접", action: "update", list: "Backlog", from_list: null, title, before: null, after: null, thread: `t-${String(i).padStart(4, "0")}`, restored_by: null });
-      const row = { task_id: id, task: { id, list: "Backlog", title, owner: i === 100 ? "fake@mac-a" : "me", thread: null, notes: [`needle-${i} 결과 메모`], done: true, repo }, body, reason: ["PR 병합", "origin/main 병합", "보고 [완료]"][(i - 1) % 3], report: null, completed_ms: i === 100 ? Date.now() - 86400000 : i, restored: i > 128, committed: true, removed_sha256: "", history };
+      const row = { task_id: id, task: { id, list: "Backlog", title, owner: i === 100 ? "fake@mac-a" : "me", thread: null, notes: [`needle-${i} 결과 메모`], done: true, repo }, body, reason: ["origin/main 병합", "완료 판정", "보고 [완료]"][(i - 1) % 3], report: null, completed_ms: i === 100 ? Date.now() - 86400000 : i, restored: i > 128, committed: true, removed_sha256: "", history };
       const data = JSON.stringify(row); storedBytes += Buffer.byteLength(data); put.run(id, data);
     }
     db.exec("COMMIT"); db.close();
@@ -90,9 +90,9 @@ export default async function ({ page }) {
       seen.push(...r.ok.entries.map((e) => e.task_id)); after = r.ok.next;
     } while (after);
     assert.equal(seen.length, 128); assert.equal(new Set(seen).size, 128);
-    const filtered = await archive(page, { search: { query: "  NEEDLE-100  ", repo: "rc" }, filter: "pr_merged", after: null, limit: 50 });
+    const filtered = await archive(page, { search: { query: "  NEEDLE-100  ", repo: "rc" }, filter: "main_merged", after: null, limit: 50 });
     assert.deepEqual(filtered.ok.entries.map((e) => e.task.title), ["보관 100"]);
-    const none = await archive(page, { search: { query: "needle-100", repo: "engine" }, filter: "pr_merged", after: null, limit: 50 });
+    const none = await archive(page, { search: { query: "needle-100", repo: "engine" }, filter: "main_merged", after: null, limit: 50 });
     assert.equal(none.ok.entries.length, 0);
     console.log(`기록 규모 ${JSON.stringify({ storedBytes, pageBytes, cli: cli.entries.length })}`);
   });
@@ -115,7 +115,7 @@ export default async function ({ page }) {
     await page.getByTestId("task-archive-more").click();
     await domIs(page, "보관 다음 50개", () => document.querySelectorAll('[data-testid^="archive-"]').length === 100);
     await page.getByTestId("task-completed-search").fill("needle-100");
-    await choose(page, "reason", "PR 병합");
+    await choose(page, "reason", "main 병합");
     await page.getByTestId("task-completed-repo").click();
     await page.getByRole("menuitemcheckbox").filter({ has: page.locator(".menu-item-main").filter({ hasText: /^rc$/ }) }).click();
     await domIs(page, "세 조건 한 건", () => document.querySelectorAll('[data-testid^="archive-"]').length === 1 && document.querySelector('[data-testid^="archive-"]')?.textContent.includes("보관 100"));

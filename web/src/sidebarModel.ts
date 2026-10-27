@@ -6,8 +6,8 @@ import { sidebarPinKey } from "./herdr/sidebarPins.ts";
 import { threadRepo, workFolders } from "./workFolders.ts";
 import type { AgentStatus } from "./herdr/status.ts";
 
-/** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 보류 6 → 끝남 7. 모르는 묶음은 작업과 쉼 사이 */
-const RANK: Record<string, number> = { waiting_on_you: 1, ready_for_review: 2, landing: 3, working: 4, idle: 5, parked: 6, resolved: 7 };
+/** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 작업 4 → 쉼 5 → 보류 6 → 끝남 7. 모르는 묶음은 작업과 쉼 사이 */
+const RANK: Record<string, number> = { waiting_on_you: 1, ready_for_review: 2, working: 4, idle: 5, parked: 6, resolved: 7 };
 export const groupRank = (g: ThreadGroup | string): number => RANK[g] ?? 4.5;
 
 /** 목록(sidebar)에 보이는 thread: 끝낸 것과 보류한 것(plan §8.426, pane이 없고 자리를 돌려줬다)은 「모든 thread」·할 일에만 있다 */
@@ -17,7 +17,6 @@ export const inSidebar = (t: Pick<ThreadView, "group">): boolean => t.group !== 
 export const GROUP_WORD: Record<string, string> = {
   waiting_on_you: "확인 필요",
   ready_for_review: "검토 대기",
-  landing: "병합 중",
   working: "작업 중",
   idle: "쉼",
   parked: "보류",
@@ -30,15 +29,9 @@ export const needsYou = (g: ThreadGroup | string) => g === "waiting_on_you" || g
 /** 5분 넘게 진행 보고가 없으면 작업 중 줄이 「n분 조용」(herdr-projects `QUIET_SECS`) */
 export const QUIET_MS = 300_000;
 
-/** PR 주소 끝의 번호(herdr-projects `pr_number`) */
-export function prNumber(url: string | null | undefined): string | null {
-  const n = url?.split("/").pop() ?? "";
-  return /^[0-9]+$/.test(n) ? n : null;
-}
-
 /**
  * thread 줄 상태 말: 묶음 말과 사실 하나(herdr-projects `state_line`). 진행률은 100 미만만 「~n%」.
- * 검토·병합 중의 사실은 따라가는 PR이 있으면 「PR #n」, 없으면 「보고」다.
+ * 검토는 보고로 판단한다.
  */
 export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string {
   if (t.status === "starting") return "준비 중";
@@ -53,10 +46,8 @@ export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string
       else if (a?.activity === "question") fact = "확인창";
       else fact = pct;
       break;
-    case "ready_for_review":
-    case "landing": {
-      const n = prNumber(t.pr?.url);
-      fact = n ? `PR #${n}` : "보고";
+    case "ready_for_review": {
+      fact = "보고";
       break;
     }
     case "working": {
@@ -86,7 +77,6 @@ export function projectLine(groups: readonly string[], paused = false): string {
     ["waiting_on_you", GROUP_WORD.waiting_on_you],
     ["ready_for_review", GROUP_WORD.ready_for_review],
     ["working", "작업 중"],
-    ["landing", "병합 중"],
   ] as const) {
     const n = groups.filter((x) => x === g).length;
     if (n > 0) parts.push(`${label} ${n}`);
@@ -260,7 +250,7 @@ export function stateTone(t: ThreadView, pane: PaneView | undefined, now = Date.
   if (t.status === "failed") return "failed";
   if (t.limited_until_ms != null && t.limited_until_ms > now) return "limited";
   if (t.group === "waiting_on_you") return "attention";
-  if (t.group === "ready_for_review" || t.group === "landing") return "review";
+  if (t.group === "ready_for_review") return "review";
   if (status === "done") return "unseen";
   return "idle";
 }

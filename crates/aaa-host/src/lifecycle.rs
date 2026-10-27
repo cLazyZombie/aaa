@@ -6,7 +6,7 @@
 //! - paused·archived: ticker가 건너뛰고 `thread start`를 거부한다. archived는 목록에서 숨고 `project open`을 거부하며, 보관할 때
 //!   그 프로젝트의 살아 있는 pane(coordinator·끝나지 않은 thread)을 닫는다(참고 `close_workspaces`).
 //! - 삭제는 폴더를 `<projects root>/.trash/<이름>-<UTC>`로 옮기고 host 기록을 그 안 `aaa-records.json`으로 뺀 뒤 지운다(같은 이름으로
-//!   다시 만든 프로젝트가 옛 thread를 물려받지 않게). worktree·branch·PR은 건드리지 않는다.
+//!   다시 만든 프로젝트가 옛 thread를 물려받지 않게). worktree·branch는 건드리지 않는다.
 //! - 이름 바꾸기는 끝나지 않은 thread가 있거나 coordinator가 돌면 거부한다(참고는 coordinator가 쉴 때 ticker가 닫고 바꾼 뒤 다시
 //!   연다). DB의 project 열·thread 기록·meta와 폴더, aaa 표지가 있는 AGENTS.md를 바꾼다.
 //! - 청소는 끝난 worktree thread가 resolve 때 남긴 worktree·branch(`ThreadRec.leftover`)를 그 머신 agent에 다시 정리하게 한다
@@ -14,7 +14,7 @@
 //! - 한 host는 프로젝트 하나(plan §8.283, 프로젝트 단계 없애기 S0): 보관하지 않은 프로젝트가 둘 이상이면 host가 시작하지 않고
 //!   보관·삭제할 목록을 말한다. 남은 하나의 이름이 이 host의 내부 이름이다(DB·폴더·branch의 `projects` 같은 이름을 옮기지 않는다).
 //! - 파일 점검(`aaa doctor files [--fix]`, 참고 `doctor`의 `files <slug>`)은 모든 프로젝트의 AGENTS.md(coordinator 안내)·
-//!   uploads/·routines/pr-followup.md를 보고, `--fix`면 고친다(`orch::write_files`). 있는 프로젝트에 새 안내가 닿는 길이다.
+//!   uploads/를 보고, `--fix`면 고친다(`orch::write_files`). 있는 프로젝트에 새 안내가 닿는 길이다.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -654,12 +654,8 @@ impl Host {
                             repo: r.repo.clone(),
                             cwd: r.cwd.clone().unwrap_or_default(),
                             branch: r.branch.clone(),
-                            // branch는 PR이 병합됐고 로컬 끝이 병합된 head일 때만 지운다(참고 sweep `Orphan::Branch`, resolve와 같다)
-                            merged_head: if r.repo.is_some() {
-                                self.merged_head(project, r, &conn).await
-                            } else {
-                                None
-                            },
+                            // 현재 branch 끝이 원격 main에 포함됐을 때만 지운다(resolve와 같다)
+                            merged_head: if r.repo.is_some() { self.main_branch_head(r).await } else { None },
                             keep_worktree: false,
                             uncopied: false,
                         })

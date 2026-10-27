@@ -12,7 +12,7 @@ aaa routine toggle demo ci-main --off
 
 `routine runs`는 최근 순서로 최대 50건을 읽는다. 정의를 지운 뒤에도 이름을 알면 그 기록을 읽을 수 있다. `--json` 결과는 `runs` 배열이며 항목은 id·at_ms·status·detail·선택 thread다. status는 done(처리됨)·skipped(건너뜀)·waiting(대기)·failed(실패)다. L3 이전 실행을 역으로 채우지는 않는다.
 
-일정의 coordinator 없음·처리하지 않은 안내·명령 승인 필요·routine_commands 꺼짐·지난 명령 실행 중을 기록한다. 명령의 종료/시간 초과·출력 바뀜/같음, PR 글 전달, CI/Git 사건 전달·같은 실패 집합·앞선 결과 따라잡기, 조회 outage 시작/회복도 기록한다. 변화 없는 감시 poll은 기록하지 않는다. 사건 자료나 명령 출력 본문을 기록에 복제하지 않으며 detail은 2,000자로 제한한다.
+일정의 coordinator 없음·처리하지 않은 안내·명령 승인 필요·routine_commands 꺼짐·지난 명령 실행 중을 기록한다. 명령의 종료/시간 초과·출력 바뀜/같음, CI/Git 사건 전달·같은 실패 집합·앞선 결과 따라잡기, 조회 outage 시작/회복도 기록한다. 변화 없는 감시 poll은 기록하지 않는다. 사건 자료나 명령 출력 본문을 기록에 복제하지 않으며 detail은 2,000자로 제한한다.
 
 기록은 host DB meta의 `routine_runs:<프로젝트>:<이름>` 한 값에 저장한다. 최근 50건, 마지막 결과/건너뜀, host 지역 날짜의 오늘 처리 횟수를 하나의 transaction으로 갱신한다. 오늘 횟수는 최근 50건 밖의 처리도 포함하며 같은 내구 전달 id를 다시 받으면 기록을 갱신하고 중복 집계하지 않는다. 일반 routine의 오늘 횟수는 done 결과 수다(조회 회복 등도 포함). 규칙의 오늘/상한은 관측 고리와 독립인 내구 실행 예산이다. 관측 기록 저장 오류는 host 로그에 남기며 원래 실행/전달을 다시 시도시키지 않는다.
 
@@ -56,7 +56,7 @@ FRONT_API 1.58. 카드를 누르면 본문에 설정 화면이 열린다(t-0628�
 
 FRONT_API 1.76. 자동화 패널의 프로젝트 머리 「새 자동화」, 설정 화면의 「고치기」·「지금 실행」·「지우기」, 목록 아래 「지운 자동화」. 편집은 설정과 같은 본문 자리에서 한다(t-0628): 저장하거나 닫으면 그 규칙 설정으로 돌아오고, 새 자동화는 저장하면 그 규칙 설정이 열린다. 조작 기기(Controller)만 쓰고 Reader는 보기만 한다. 웹은 TOML 규칙만 고치며 옛 `.md`는 먼저 「새 형식으로 바꾸기」를 한다.
 
-- **편집 화면.** 폼(조건 6종: 일정·명령 출력 변화·thread 사건·PR·CI·Git, 동작 4종: coordinator 안내·thread에 글·새 thread 시작·배포 제안)과 TOML 탭이 한 초안을 쓴다. 폼을 고치면 host(`automation_validate`)가 정본 타입으로 읽은 값과 원문을 비교해 **바뀐 칸만** 원문에 고친다. 주석·칸 순서·안 바꾼 칸은 그대로이고, 새로 생긴 칸 가운데 기본값과 같은 것은 쓰지 않는다. TOML을 고치면 host가 읽은 값으로 폼을 다시 그린다. 본문은 Markdown으로 고치고 미리 본다. 본문이 `text_file`·`brief_file`이면 그 파일을 고친다(새 본문 파일은 `automations/` 안에만 만든다). 새 규칙은 사용량 문턱 기본값(5시간 창 5%·주간 10% 아래면 쉼)을 채우고 횟수·간격 제한은 두지 않는다.
+- **편집 화면.** 폼(조건 5종: 일정·명령 출력 변화·thread 사건·CI·Git, 동작 4종: coordinator 안내·thread에 글·새 thread 시작·배포 제안)과 TOML 탭이 한 초안을 쓴다. 폼을 고치면 host(`automation_validate`)가 정본 타입으로 읽은 값과 원문을 비교해 **바뀐 칸만** 원문에 고친다. 주석·칸 순서·안 바꾼 칸은 그대로이고, 새로 생긴 칸 가운데 기본값과 같은 것은 쓰지 않는다. TOML을 고치면 host가 읽은 값으로 폼을 다시 그린다. 본문은 Markdown으로 고치고 미리 본다. 본문이 `text_file`·`brief_file`이면 그 파일을 고친다(새 본문 파일은 `automations/` 안에만 만든다). 새 규칙은 사용량 문턱 기본값(5시간 창 5%·주간 10% 아래면 쉼)을 채우고 횟수·간격 제한은 두지 않는다.
 - **검토 탭.** 저장하면 켜진 채인지, 조건 → 동작, 시작 동작이면 지금 safety `start_threads`로 「바로 시작」인지 「제안만」인지, 자동 시작 범위 승인 여부, 명령 조건이면 명령·머신·승인·`routine_commands`, 사용량 문턱. 저장만으로는 돌지 않는다(일정은 다음 차례, 사건은 저장 뒤 사건부터).
 - **저장.** 본 판(sha256)일 때만 쓴다. 새로 만들기는 그 이름 파일이 없을 때만, 고치기는 그 파일이 본 판 그대로일 때만이다. 다른 화면이 먼저 저장했거나 파일을 직접 고쳤으면 아무것도 쓰지 않고 `conflict`로 거부한다: 창은 내 초안과 지금 파일의 줄 차이를 보이고 「지금 파일로 다시 열기」나 「차이를 봤다 · 내 초안으로 저장」을 고르게 한다(자동 병합 없음). 그 사이 지운 규칙은 저장으로 되살아나지 않는다(NotFound). 본문 파일을 먼저, 규칙 파일을 마지막에 쓴다. 쓰기는 공용 저장 helper(파일마다 lock, rename 직전 다시 읽기)로 한다.
 - **지우기·되살리기.** 지우기는 먼저 끈 뒤(`enabled = false`) `automations/.trash/<이름>-<시각>.toml`로 옮긴다. 기다리던 입력은 「보내지 않음」으로 닫고, 처리 중 묶음·기록·본문 파일·기억 폴더는 둔다. 「지운 자동화」의 「꺼진 채로 되살리기」는 같은 이름이 없을 때만 되돌리며 늘 꺼진 채다.
@@ -103,7 +103,7 @@ text = "바뀐 범위를 검토한다."
 batch = "1m"
 ```
 
-조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다. 자동화(`do.start`)가 띄운 thread의 사건도 기본으로 받지 않는다: 그 thread의 보고가 규칙을 깨워 다시 thread를 띄우는 고리를 막는다. 다른 규칙이 띄운 thread의 사건까지 받으려면 `include_automation = true`를 적는다. 그래도 그 규칙 자신이 띄운 thread의 사건은 늘 뺀다. 변환된 규칙은 include_automation을 명시해 기존 사건 범위를 유지한다.
+조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다. 자동화(`do.start`)가 띄운 thread의 사건도 기본으로 받지 않는다: 그 thread의 보고가 규칙을 깨워 다시 thread를 띄우는 고리를 막는다. 다른 규칙이 띄운 thread의 사건까지 받으려면 `include_automation = true`를 적는다. 그래도 그 규칙 자신이 띄운 thread의 사건은 늘 뺀다. 변환된 규칙은 include_automation을 명시해 기존 사건 범위를 유지한다.
 
 `on.git` + `do.start`도 자기 착지로 다시 thread를 띄우는 고리를 기본으로 막는다. `pushed`의 새 커밋 목록에서
 `병합:`으로 시작하는 첫 줄들을 보고, 끝의 `(t-NNNN)`에 해당하는 thread의 저장된 자동화 출처가 모두
@@ -145,17 +145,6 @@ CI/Git 사건 자체의 이력·inbox와 규칙 동작은 다른 경계다. 이�
 미리보기는 파일·DB를 쓰지 않으며 원본·기억·큐가 바뀌면 본 계획 hash로 실행할 수 없다. 변환 도중 중단되면 journal과 원본 DB로 큐 이전을 마친다.
 
 `.converted/`에 같은 바이트의 사본이 있으면 재사용한다. 내용이 다르면 `<이름>.1.<확장자>`, `.2.` 순으로 첫 빈 번호에 보존하며 기존 사본은 덮지 않는다. 보존 위치와 재사용 여부도 미리보기 hash에 포함한다. 새 TOML과 기존 TOML의 이름 충돌은 계속 거부한다. 웹은 미리보기·실행 실패를 창 제목과 오류 본문으로 알리고, 「미리보기 다시 읽기」로 현재 계획을 다시 확인할 수 있다.
-
-옛 `on = "pr"` routine의 새 정본은 `automations/<이름>.toml`의 `[on.pr]`와 `[do.message] thread = "owner"`다. events·enabled·본문과 실행 제한을 그대로 옮기며 PR 주인 thread에 보낸다. 예를 들어 기본 규칙은 다음 모양이다(본문은 현재 routine의 글을 유지한다).
-
-```toml
-enabled = true
-[on.pr]
-events = ["checks-failed", "review"]
-[do.message]
-thread = "owner"
-text = "PR의 실패한 check를 고치고 새 리뷰 댓글에 답한다."
-```
 
 기존 보존 사본 때문에 변환이 막혔던 프로젝트는 수리한 판을 배포한 뒤 웹의 「새 형식으로 바꾸기」에서 새 계획을 확인해 변환한다. CLI는 `aaa automation convert <프로젝트>`를 쓴다. 기존 영문 사본과 현재 한글 본문이 다르면 두 판을 모두 남긴다. 완료 후 `aaa doctor files --fix`가 옛 규칙을 만들지 않는지 확인하고, 새 TOML과 보존 사본을 프로젝트 저장소에 함께 기록한다.
 
@@ -224,7 +213,7 @@ max_per_day = 2
 
 임계값은 source가 새 head를 받을 때 판정한다. 이미 내구 큐에 받은 제안 자료는 이후 임계값 편집으로 ACK 재개가 막히지 않는다. batch/하루/사용량 실행 예산은 기존 공통 queue 규칙을 따른다.
 
-`automations/pr-followup.toml` 또는 `routines/.converted/pr-followup.md`가 있으면 `project create`와 `doctor files --fix`는 `routines/pr-followup.md`를 다시 만들지 않는다. 변환 후 TOML을 지운 경우에도 옛 기본 규칙을 되살리지 않는다. 이미 새 TOML과 옛 routine이 겹친 경우에는 기존 충돌 진단을 유지한다.
+PR 사건 조회와 자동화는 폐지됐다. 기존 PR 규칙은 목록·실행·오류 알림에서 제외한다. `doctor files --fix`는 원본을 `.before-aaa`로 보존하며 기본 규칙을 다시 만들지 않는다. 기존 보존 파일과 충돌하면 덮지 않고 경로·오류를 알린다.
 
 ## 열린 thread에 이어 보내기·기억·짧은 끝내기(A2)
 

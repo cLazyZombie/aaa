@@ -153,11 +153,10 @@ impl Place {
     }
 }
 
-/// 머신 하나의 사건인가(연결 `outage`·점검 `health`·세션 끝남). 같은 사건을 프로젝트마다 쓴다. `gh` 실패는 프로젝트마다
-/// 따로 재고(pr.rs), 세션 복원 실패는 thread 하나의 일이다
+/// 머신 사건(연결·점검·세션 끝남)은 프로젝트마다 쓴다. 세션 복원 실패는 thread 하나의 일이다
 pub(crate) fn machine_item(i: &InboxItem) -> bool {
     match i.item_kind.as_str() {
-        "outage" => i.subject != "gh",
+        "outage" => true,
         "health" => true,
         "session" => i.event == "sessions ended",
         _ => false,
@@ -201,14 +200,9 @@ fn phrase(i: &InboxItem) -> Option<&'static str> {
         ("task-start", "account start failed") => "계정 배정 뒤 시작 못 함",
         ("outage", "down") => "연결 끊김",
         ("outage", "recovered") => "다시 연결됨",
-        ("outage", "failing") => "계속 실패 · PR 추적 멈춤",
-        ("outage", "working again") => "다시 됨 · PR 추적 이어 감",
         ("health", "ok") => "점검 정상",
         ("health", "problem") => "점검 이상 · 새 세션 거부",
         ("session", "sessions ended") => "thread 세션 모두 끝남",
-        ("pr", "PR merged") => "PR 병합됨",
-        ("pr", "PR checks failing") => "PR check 실패",
-        ("pr", "PR review activity") => "PR 리뷰 활동",
         ("post", "post request for user") => "사용자 결정 요청",
         ("post", "post completed") => "맡긴 일 완료",
         ("thread-state", "report needs user") => "확인 필요",
@@ -240,7 +234,7 @@ pub(crate) fn alert_line(i: &InboxItem, who: bool, titles: &HashMap<String, Stri
         return p.to_string();
     }
     let mut s = format!("{} {p}", alert_who(i));
-    if matches!(i.item_kind.as_str(), "thread-state" | "pr")
+    if i.item_kind == "thread-state"
         && let Some(t) = titles.get(&i.subject).map(|t| t.trim()).filter(|t| !t.is_empty())
     {
         s.push_str(" · ");
@@ -521,11 +515,11 @@ impl Host {
         keep
     }
 
-    /// 알림 줄에 쓰는 thread 제목(thread·PR 항목의 대상). 읽지 못한 thread는 ID로 남는다
+    /// 알림 줄에 쓰는 thread 제목(thread 항목의 대상). 읽지 못한 thread는 ID로 남는다
     pub(crate) fn alert_titles(&self, place: &Place, items: &[InboxItem]) -> HashMap<String, String> {
         let Place::Project(project) = place else { return HashMap::new() };
         let mut out = HashMap::new();
-        for i in items.iter().filter(|i| matches!(i.item_kind.as_str(), "thread-state" | "pr")) {
+        for i in items.iter().filter(|i| matches!(i.item_kind.as_str(), "thread-state")) {
             if !out.contains_key(&i.subject)
                 && let Ok(r) = self.load(project, &i.subject)
             {
@@ -877,9 +871,7 @@ mod tests {
             (("thread-state", "t-0013", "pane closed"), "t-0013 pane 닫힘", "pane 닫힘"),
             (("outage", "mac-1", "recovered"), "mac-1 다시 연결됨", "다시 연결됨"),
             (("outage", "mac-1", "down"), "mac-1 연결 끊김", "연결 끊김"),
-            (("outage", "gh", "failing"), "gh 계속 실패 · PR 추적 멈춤", "계속 실패 · PR 추적 멈춤"),
             (("session", "mac-a", "sessions ended"), "mac-a thread 세션 모두 끝남", "thread 세션 모두 끝남"),
-            (("pr", "t-0012", "PR merged"), "t-0012 PR 병합됨 · 휴대폰 알림", "PR 병합됨"),
             (("routine", "nightly", "due"), "routine nightly 차례", "차례"),
             (("post", "t-0012", "post request for user"), "t-0012 사용자 결정 요청", "사용자 결정 요청"),
             (("thread-state", "t-0012", "idle"), "사본 complete", "사본 complete"),
@@ -895,7 +887,7 @@ mod tests {
     }
 
     /// 머신 사건은 그 머신에 thread가 열린 프로젝트마다 항목이 생기지만 밖으로는 한 번이다. 프로젝트 항목은 그대로 남고,
-    /// `gh` 실패(프로젝트마다 따로 잰다)와 세션 복원 실패(thread 하나의 일)는 머신 사건이 아니다
+    /// 세션 복원 실패(thread 하나의 일)는 머신 사건이 아니다
     #[test]
     fn machine_items_go_out_once() {
         let it = |project: &str, kind: &str, subject: &str, event: &str| {
@@ -910,7 +902,6 @@ mod tests {
                     it("demo", "thread-state", "t-0001", "new report"),
                     it("demo", "outage", "mac-a", "recovered"),
                     it("demo", "outage", "mac-b", "recovered"),
-                    it("demo", "outage", "gh", "failing"),
                 ],
             ),
             (
@@ -925,10 +916,7 @@ mod tests {
         let (rest, machine) = split_machine(batch);
         let ids = |v: &[InboxItem]| v.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
         assert_eq!(rest.len(), 2);
-        assert_eq!(
-            (rest[0].0.as_str(), ids(&rest[0].1)),
-            ("demo", vec!["demo-t-0001-new report".into(), "demo-gh-failing".into()])
-        );
+        assert_eq!((rest[0].0.as_str(), ids(&rest[0].1)), ("demo", vec!["demo-t-0001-new report".into()]));
         assert_eq!((rest[1].0.as_str(), ids(&rest[1].1)), ("third", vec!["third-mac-a-restore failed".to_string()]));
         let (place, items) = machine.unwrap();
         assert_eq!(place, Place::Machines(vec!["demo".into(), "side".into(), "third".into()]));

@@ -96,7 +96,7 @@ fn ci_events(w: &World) -> Vec<Value> {
 
 #[test]
 fn ci_conditional_failure_restart_catchup_and_outage() {
-    let mut w = world_setup("tick_secs=1\nci_poll_secs=1\npr_poll_secs=3600\noutage_secs=0\n", false, fake_ci);
+    let mut w = world_setup("tick_secs=1\nci_poll_secs=1\noutage_secs=0\n", false, fake_ci);
     w.add_remote();
     // 원격 agent가 재시작 뒤에도 같은 host 주소로 붙는다.
     let config = std::fs::read_to_string(w.h.cfg.join("host.toml")).unwrap().replace("127.0.0.1:0", &w.addr);
@@ -233,7 +233,7 @@ fn ci_conditional_failure_restart_catchup_and_outage() {
 /// A2: CI 둘은 첫 inbox 하나, 셋째는 같은 thread에 Queue, 옛 완료는 닫지 않고 새 완료 뒤 기억을 다음 thread로 옮긴다.
 #[test]
 fn automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory() {
-    let w = world_setup("tick_secs=1\nci_poll_secs=1\npr_poll_secs=3600\n", false, fake_ci);
+    let w = world_setup("tick_secs=1\nci_poll_secs=1\n", false, fake_ci);
     let script = format!(
         r#"#!/bin/sh
 AA={:?}

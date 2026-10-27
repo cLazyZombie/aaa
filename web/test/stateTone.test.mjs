@@ -19,7 +19,6 @@ describe("상태 말 색의 차례(참고 resolveThreadStatusPill)", () => {
     assert.equal(stateTone(thread("waiting_on_you", "failed"), idle), "failed");
     assert.equal(stateTone(thread("waiting_on_you"), idle), "attention");
     assert.equal(stateTone(thread("ready_for_review"), pane(agent("idle", { seen: false }))), "review");
-    assert.equal(stateTone(thread("landing"), undefined), "review");
     assert.equal(stateTone(thread("idle"), pane(agent("idle", { seen: false }))), "unseen");
     assert.equal(stateTone(thread("idle"), idle), "idle");
     assert.equal(stateTone(thread("resolved"), undefined), "idle");

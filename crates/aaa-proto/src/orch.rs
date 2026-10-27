@@ -752,7 +752,7 @@ pub struct ProjectChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectFilesCheck {
     pub project: String,
-    /// 본 때 고칠 것(AGENTS.md·uploads/·routines/pr-followup.md). 비면 맞다
+    /// 본 때 고칠 것(AGENTS.md·uploads/). 비면 맞다
     pub problems: Vec<String>,
     /// `fix`로 고쳤다
     pub fixed: bool,
@@ -847,10 +847,9 @@ pub enum ThreadGroup {
     /// 사람이나 coordinator가 할 일이 있다(시작 실패·5분 넘은 시작, 닫힌 pane, brief 전달 불명, 30초 넘은 확인창,
     /// `Waiting for you` 진행 보고). 보고 내용으로는 정하지 않는다(herdr-projects `group`, plan §8.78).
     WaitingOnYou,
-    /// 아직 확인(ack)하지 않은 새 보고, 또는 보고가 있고 PR이 열려 있다
+    /// 아직 확인(ack)하지 않은 새 보고. 옛 PR 병합 묶음은 검토로 읽는다.
+    #[serde(alias = "landing")]
     ReadyForReview,
-    /// PR이 열려 있고 승인됐다(herdr-projects `Group::Landing`). thread가 자기 도구로 병합한다(D11)
-    Landing,
     Working,
     /// 열려 있지만 harness가 쉬고 있고 새 보고도 진행 보고도 없다(herdr-projects `Group::Idle`)
     Idle,
@@ -865,7 +864,6 @@ impl ThreadGroup {
         match self {
             ThreadGroup::WaitingOnYou => "확인 필요",
             ThreadGroup::ReadyForReview => "검토 대기",
-            ThreadGroup::Landing => "병합 중",
             ThreadGroup::Working => "작업 중",
             ThreadGroup::Idle => "쉼",
             ThreadGroup::Parked => "보류",
@@ -873,13 +871,12 @@ impl ThreadGroup {
         }
     }
 
-    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 보류 6 → 끝남 7.
+    /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 확인 필요 1 → 검토 2 → 작업 4 → 쉼 5 → 보류 6 → 끝남 7.
     /// 목록(웹)·popup·overview가 같은 차례다. 묶음을 정하는 우선순위(host `group`)와는 따로다.
     pub fn rank(self) -> u8 {
         match self {
             ThreadGroup::WaitingOnYou => 1,
             ThreadGroup::ReadyForReview => 2,
-            ThreadGroup::Landing => 3,
             ThreadGroup::Working => 4,
             ThreadGroup::Idle => 5,
             ThreadGroup::Parked => 6,
@@ -1078,8 +1075,6 @@ pub struct ThreadView {
     pub cwd: Option<String>,
     pub work_dir: Option<String>,
     pub branch: Option<String>,
-    /// 추적하는 PR(§8.80)
-    pub pr: Option<Box<ThreadPr>>,
     pub report_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1695,14 +1690,6 @@ pub struct ThreadSummaryView {
     pub task: Option<String>,
 }
 
-/// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.80)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct ThreadPr {
-    pub url: String,
-    pub state: Option<String>,
-    pub review: Option<String>,
-}
-
 /// 흐름 사건(host가 낸다, §8.3). 프로젝트별 순번과 host 시각·boot ID를 가진다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct FlowEvent {
@@ -2106,7 +2093,7 @@ pub struct ResolvePreview {
     /// 끝내면 지울 수 있는 worktree가 있다(worktree thread이고 작업 폴더 기록이 있다)
     pub worktree: bool,
     pub branch: Option<String>,
-    /// 기록된 PR 상태가 병합이다(끝낼 때 branch를 지울 수 있다)
+    /// branch의 현재 끝이 origin/main에 포함된다
     pub merged: bool,
     /// 마지막 사본 상태(`complete`·`partial`, 없으면 아직 사본 없음)
     pub copy: Option<String>,
@@ -2298,8 +2285,8 @@ mod tests {
     /// herdr-projects `next_lines_come_from_the_next_section_only`를 옮겼다
     #[test]
     fn next_lines_come_from_the_next_section_only() {
-        let report = "PR: https://github.com/o/r/pull/1\n## Report\n- not this\n## Next\n- Merge the PR\n* Fix CI\n3. Confirm assumption X\n\n## Remember\n- nor this\n";
-        assert_eq!(next_lines(report), ["Merge the PR", "Fix CI", "Confirm assumption X"]);
+        let report = "[완료] 착지\n## Report\n- not this\n## Next\n- 확인한다\n* Fix CI\n3. Confirm assumption X\n\n## Remember\n- nor this\n";
+        assert_eq!(next_lines(report), ["확인한다", "Fix CI", "Confirm assumption X"]);
         assert!(next_lines("## Report\nnothing\n").is_empty());
         assert!(next_lines("## Next\n").is_empty());
         // `#` 머리가 오면 Next가 끝난다

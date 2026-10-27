@@ -1,6 +1,6 @@
 //! host 머신(또는 설정한 머신)의 gh 로그인으로 읽기만 한다. host에는 줄인 응답만 보낸다.
 use aaa_common::child_process::TokioCommandExt as _;
-use aaa_common::{ci, pr};
+use aaa_common::{ci, github};
 use aaa_proto::{CiAnswer, CiQuery};
 use anyhow::{Context, Result, bail};
 use std::{path::Path, process::Stdio};
@@ -11,11 +11,11 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
     if !dir.is_absolute() || !dir.is_dir() {
         bail!("CI 조회 저장소 폴더가 없다");
     }
-    let origin = crate::pr::origin(dir).await;
-    if pr::host_of(&origin) != "github.com" {
+    let origin = crate::github::origin(dir).await;
+    if github::host_of(&origin) != "github.com" {
         bail!("CI origin은 github.com이어야 한다");
     }
-    let repo = pr::normalize_origin(&origin).context("CI 조회 origin이 github.com 저장소가 아니다")?;
+    let repo = github::normalize_origin(&origin).context("CI 조회 origin이 github.com 저장소가 아니다")?;
     let (args, log) = match q {
         CiQuery::Log { run, job } => {
             if *run == 0 || *job == 0 {
@@ -50,7 +50,7 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
     let mut stdout = child.stdout.take().unwrap();
     let cap = if log { ci::LOG_JOB_CAP } else { 4 * 1024 * 1024 };
     let mut scan = ci::FailureScan::default();
-    let (bytes, truncated, status) = tokio::time::timeout(pr::GH_TIMEOUT, async {
+    let (bytes, truncated, status) = tokio::time::timeout(github::GH_TIMEOUT, async {
         let mut bytes = Vec::new();
         let mut truncated = false;
         let mut buf = [0u8; 8192];

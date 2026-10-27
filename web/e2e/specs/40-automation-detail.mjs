@@ -6,7 +6,7 @@ export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1" };
 
 const dir = () => `${root}/projects/auto-detail`;
 const CHECK = '+++\n# 보존할 주석\nschedule = "every 1s"\nenabled = true\n+++\n자료를 확인한다.\n';
-const FOLLOWUP = '+++\non="pr"\nevents=["checks-failed","review"]\nenabled=true\n+++\n\nPR의 실패와 검토를 확인한다.\n';
+const FOLLOWUP = '+++\nschedule="every 1h"\nenabled=true\n+++\n\n일정 작업을 확인한다.\n';
 const WATCH = '+++\nprofile="fake"\nevents=["git_pushed"]\nrepos=["app"]\nwithdrawal="none"\n+++\n자료를 분류한다.\n';
 const call = (p, req) => p.evaluate(async (body) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json(), req);
 /** 본문 설정 화면이 화면 폭 안에 있고 옆으로 넘치지 않는다(떠 있는 창이 아니다, t-0628) */
@@ -27,8 +27,7 @@ const closeDetail = async (p) => {
 export default async function ({ page }) {
   await step("자동화 설정: 카드를 누르면 본문에 요약·설정(조건·동작·대상·큐)·승인 범위·마지막 건너뜀·기록·파일 원문이 열린다", async () => {
     aaa("project", "create", "auto-detail");
-    fs.unlinkSync(`${dir()}/automations/pr-followup.toml`);
-    fs.writeFileSync(`${dir()}/routines/pr-followup.md`, FOLLOWUP);
+    fs.writeFileSync(`${dir()}/routines/check-followup.md`, FOLLOWUP);
     fs.writeFileSync(`${dir()}/routines/check.md`, CHECK);
     fs.mkdirSync(`${dir()}/missions`, { recursive: true });
     fs.writeFileSync(`${dir()}/missions/watch.md`, WATCH);
@@ -74,10 +73,10 @@ export default async function ({ page }) {
   await step("새 형식으로 바꾸기: 미리보기는 쓰지 않고 생기는 규칙·보존 위치를 보이며, 실행은 본 계획만 바꾼다. Reader는 미리보기만", async () => {
     const before = { check: fs.readFileSync(`${dir()}/routines/check.md`, "utf8"), watch: fs.readFileSync(`${dir()}/missions/watch.md`, "utf8") };
     const followup = FOLLOWUP;
-    const oldFollowup = followup.replace(/PR의[\s\S]*/, "Old English copy\n");
+    const oldFollowup = followup.replace("일정 작업을 확인한다.", "Old English copy");
     fs.mkdirSync(`${dir()}/routines/.converted`, { recursive: true });
     fs.writeFileSync(`${dir()}/routines/.converted/check.md`, before.check);
-    fs.writeFileSync(`${dir()}/routines/.converted/pr-followup.md`, oldFollowup);
+    fs.writeFileSync(`${dir()}/routines/.converted/check-followup.md`, oldFollowup);
     const dev = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-automations").click();
@@ -106,7 +105,7 @@ export default async function ({ page }) {
     await sheet.locator('[data-group="rules"]').waitFor();
     const group = async (key) => (await sheet.locator(`[data-group="${key}"] li`).allTextContents());
     if (!(await group("rules")).includes("automations/watch.toml")) throw new Error(`생기는 규칙 ${await group("rules")}`);
-    for (const f of ["routines/.converted/check.md", "routines/.converted/pr-followup.1.md", "missions/.converted/watch.md"]) if (!(await group("archived")).includes(f)) throw new Error(`보존 ${f}: ${await group("archived")}`);
+    for (const f of ["routines/.converted/check.md", "routines/.converted/check-followup.1.md", "missions/.converted/watch.md"]) if (!(await group("archived")).includes(f)) throw new Error(`보존 ${f}: ${await group("archived")}`);
     if (!(await group("rules")).includes("automations/check.toml")) throw new Error("새 규칙 파일");
     // 미리보기는 쓰지 않는다
     if (fs.readFileSync(`${dir()}/routines/check.md`, "utf8") !== before.check || fs.existsSync(`${dir()}/automations/check.toml`)) throw new Error("미리보기가 파일을 바꿨다");
@@ -127,9 +126,9 @@ export default async function ({ page }) {
     if (!(await page.getByTestId("convert-archived").textContent()).includes("routines/.converted/")) throw new Error("보존 위치");
     await shot(page, "automation-convert-done");
     if (fs.readFileSync(`${dir()}/routines/.converted/check.md`, "utf8") !== before.check || fs.readFileSync(`${dir()}/missions/.converted/watch.md`, "utf8") !== before.watch) throw new Error("보존 사본이 원본과 다르다");
-    if (fs.readFileSync(`${dir()}/routines/.converted/pr-followup.md`, "utf8") !== oldFollowup || fs.readFileSync(`${dir()}/routines/.converted/pr-followup.1.md`, "utf8") !== followup) throw new Error("PR 규칙의 두 판 보존");
+    if (fs.readFileSync(`${dir()}/routines/.converted/check-followup.md`, "utf8") !== oldFollowup || fs.readFileSync(`${dir()}/routines/.converted/check-followup.1.md`, "utf8") !== followup) throw new Error("일정 규칙의 두 판 보존");
     aaa("doctor", "files", "--fix");
-    if (fs.existsSync(`${dir()}/routines/pr-followup.md`)) throw new Error("doctor가 변환한 PR 규칙을 되살렸다");
+    if (fs.existsSync(`${dir()}/routines/check-followup.md`)) throw new Error("doctor가 변환한 일정 규칙을 되살렸다");
     if (!fs.existsSync(`${dir()}/automations/check.toml`) || fs.existsSync(`${dir()}/routines/check.md`)) throw new Error("변환 결과 파일");
     await domIs(page, "이전 형식 줄이 사라진다", () => !document.querySelector('[data-testid="automation-legacy-auto-detail"]') && !document.querySelector('[data-testid="automation-auto-detail-check"]')?.textContent.includes("이전 형식"));
   });

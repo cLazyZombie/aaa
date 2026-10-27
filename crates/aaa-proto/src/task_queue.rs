@@ -118,7 +118,6 @@ pub struct TaskHistorySearch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskArchiveFilter {
-    PrMerged,
     MainMerged,
     ReportDone,
     Restored,

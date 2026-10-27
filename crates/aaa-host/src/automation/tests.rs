@@ -205,17 +205,16 @@ fn convert(root: &std::path::Path) -> Result<Vec<String>, String> {
 fn converter_reuses_identical_backups_and_numbers_different_followup_sources() {
     for identical in [true, false] {
         let p = Project::new();
-        let source = crate::routine::PR_FOLLOWUP_TEMPLATE;
-        let old =
-            if identical { source } else { "+++\non='pr'\nevents=['review']\nenabled=false\n+++\nOld English copy\n" };
-        p.write(crate::routine::PR_FOLLOWUP, source);
-        p.write("routines/.converted/pr-followup.md", old);
+        let source = "+++\nschedule=\"every 1h\"\nenabled=true\n+++\n확인한다.\n";
+        let old = if identical { source } else { "+++\nschedule='every 2h'\nenabled=false\n+++\nOld English copy\n" };
+        p.write("routines/check-followup.md", source);
+        p.write("routines/.converted/check-followup.md", old);
         // 번호가 이미 쓰였으면 그 다음 이름을 고른다.
-        p.write("routines/.converted/pr-followup.1.md", "earlier copy\n");
+        p.write("routines/.converted/check-followup.1.md", "earlier copy\n");
         let before = snapshot(&p.0);
         let plan = super::convert::prepare(&p.0, "mac-a").unwrap();
         let backup =
-            if identical { "routines/.converted/pr-followup.md" } else { "routines/.converted/pr-followup.2.md" };
+            if identical { "routines/.converted/check-followup.md" } else { "routines/.converted/check-followup.2.md" };
         assert!(plan.listing().contains(&backup.to_string()), "{:?}", plan.listing());
         assert_eq!(snapshot(&p.0), before, "미리보기가 썼다");
         assert_eq!(
@@ -226,17 +225,17 @@ fn converter_reuses_identical_backups_and_numbers_different_followup_sources() {
                 .collect::<Vec<_>>(),
             vec![&backup.to_string()]
         );
-        assert_eq!(std::fs::read_to_string(p.0.join("routines/.converted/pr-followup.md")).unwrap(), old);
+        assert_eq!(std::fs::read_to_string(p.0.join("routines/.converted/check-followup.md")).unwrap(), old);
         assert_eq!(
-            std::fs::read_to_string(p.0.join("routines/.converted/pr-followup.1.md")).unwrap(),
+            std::fs::read_to_string(p.0.join("routines/.converted/check-followup.1.md")).unwrap(),
             "earlier copy\n"
         );
         assert_eq!(std::fs::read_to_string(p.0.join(backup)).unwrap(), source);
-        let expected = crate::routine::parse("pr-followup", source).unwrap();
+        let expected = crate::routine::parse("check-followup", source).unwrap();
         let (rules, errors) = crate::routine::load_all(&p.0);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].file, "automations/pr-followup.toml");
+        assert_eq!(rules[0].file, "automations/check-followup.toml");
         assert_eq!(rules[0].trigger, expected.trigger);
         assert_eq!(rules[0].prompt, expected.prompt);
         assert_eq!(rules[0].action, expected.action);
@@ -248,12 +247,12 @@ fn converter_reuses_identical_backups_and_numbers_different_followup_sources() {
 #[test]
 fn converter_rollback_preserves_reused_backup_and_restores_source() {
     let p = Project::new();
-    let source = crate::routine::PR_FOLLOWUP_TEMPLATE;
-    p.write(crate::routine::PR_FOLLOWUP, source);
-    p.write("routines/.converted/pr-followup.md", source);
+    let source = "+++\nschedule=\"every 1h\"\nenabled=true\n+++\n확인한다.\n";
+    p.write("routines/check-followup.md", source);
+    p.write("routines/.converted/check-followup.md", source);
     let plan = super::convert::prepare(&p.0, "mac-a").unwrap();
     // 계획 뒤 출력 자리가 차면 기존 파일과 재사용한 보존 사본을 모두 지킨다.
-    p.write("automations/pr-followup.toml", "occupied\n");
+    p.write("automations/check-followup.toml", "occupied\n");
     let before = snapshot(&p.0);
     let error = super::convert::apply(&p.0, plan).unwrap_err();
     assert!(error.contains("원본 복구 완료"), "{error}");
@@ -264,21 +263,21 @@ fn converter_rollback_preserves_reused_backup_and_restores_source() {
 fn converter_revalidates_archive_choices_and_keeps_toml_collisions_read_only() {
     for reuse in [true, false] {
         let p = Project::new();
-        let source = crate::routine::PR_FOLLOWUP_TEMPLATE;
-        p.write(crate::routine::PR_FOLLOWUP, source);
+        let source = "+++\nschedule=\"every 1h\"\nenabled=true\n+++\n확인한다.\n";
+        p.write("routines/check-followup.md", source);
         if reuse {
-            p.write("routines/.converted/pr-followup.md", source);
+            p.write("routines/.converted/check-followup.md", source);
         }
         let plan = super::convert::prepare(&p.0, "mac-a").unwrap();
         let hash = plan.sha256();
-        p.write("routines/.converted/pr-followup.md", "changed backup\n");
+        p.write("routines/.converted/check-followup.md", "changed backup\n");
         let before = snapshot(&p.0);
         let next = super::convert::prepare(&p.0, "mac-a").unwrap();
         assert_ne!(hash, next.sha256(), "보존 위치 변경도 본 계획에 포함한다");
         let error = super::convert::apply(&p.0, plan).unwrap_err();
         assert!(error.contains("계획 뒤 사본"), "{error}");
         assert_eq!(snapshot(&p.0), before);
-        p.write("automations/pr-followup.toml", "existing rule\n");
+        p.write("automations/check-followup.toml", "existing rule\n");
         let before = snapshot(&p.0);
         assert!(convert(&p.0).unwrap_err().contains("이미 있는 파일"));
         assert_eq!(snapshot(&p.0), before);
@@ -290,22 +289,22 @@ fn converter_revalidates_archive_choices_and_keeps_toml_collisions_read_only() {
 fn converter_never_reuses_a_symlink_as_an_archive() {
     for folder in [true, false] {
         let p = Project::new();
-        p.write(crate::routine::PR_FOLLOWUP, crate::routine::PR_FOLLOWUP_TEMPLATE);
-        p.write("saved/pr-followup.md", crate::routine::PR_FOLLOWUP_TEMPLATE);
+        p.write("routines/check-followup.md", "+++\nschedule=\"every 1h\"\nenabled=true\n+++\n확인한다.\n");
+        p.write("saved/check-followup.md", "+++\nschedule=\"every 1h\"\nenabled=true\n+++\n확인한다.\n");
         if folder {
             std::os::unix::fs::symlink(p.0.join("saved"), p.0.join("routines/.converted")).unwrap();
         } else {
             std::fs::create_dir_all(p.0.join("routines/.converted")).unwrap();
             std::os::unix::fs::symlink(
-                p.0.join("saved/pr-followup.md"),
-                p.0.join("routines/.converted/pr-followup.md"),
+                p.0.join("saved/check-followup.md"),
+                p.0.join("routines/.converted/check-followup.md"),
             )
             .unwrap();
         }
         let before = snapshot(&p.0);
         assert!(convert(&p.0).is_err());
         assert_eq!(snapshot(&p.0), before);
-        assert!(p.0.join(crate::routine::PR_FOLLOWUP).is_file());
+        assert!(p.0.join("routines/check-followup.md").is_file());
     }
 }
 
@@ -470,18 +469,18 @@ async fn converted_followup_survives_doctor_and_project_create() {
     let dir = p.0.join("projects/demo");
     legacy_followup(&dir);
     convert(&dir).unwrap();
-    let converted = std::fs::read(dir.join("automations/pr-followup.toml")).unwrap();
+    let converted = std::fs::read(dir.join("automations/check-followup.toml")).unwrap();
     let response = h.project_files(true, "local:cli");
-    assert!(!dir.join("routines/pr-followup.md").exists(), "doctor가 옛 routine을 되살렸다: {response:?}");
+    assert!(!dir.join("routines/check-followup.md").exists(), "doctor가 옛 routine을 되살렸다: {response:?}");
     assert!(crate::orch::files_problems(&dir, "demo").is_empty());
     // PROJECT.md 없는 기존 폴더에서 create를 이어가는 경로도 변환본을 지킨다.
     std::fs::remove_file(dir.join("PROJECT.md")).unwrap();
     h.project_create("demo", Default::default(), "local:cli").unwrap();
-    assert!(!dir.join("routines/pr-followup.md").exists());
-    assert_eq!(std::fs::read(dir.join("automations/pr-followup.toml")).unwrap(), converted);
+    assert!(!dir.join("routines/check-followup.md").exists());
+    assert_eq!(std::fs::read(dir.join("automations/check-followup.toml")).unwrap(), converted);
     let (rules, errors) = crate::routine::load_all(&dir);
     assert!(errors.is_empty(), "{errors:?}");
-    assert_eq!(rules.iter().filter(|r| r.name == "pr-followup").count(), 1);
+    assert_eq!(rules.iter().filter(|r| r.name == "check-followup").count(), 1);
 }
 
 #[tokio::test]
@@ -491,7 +490,7 @@ async fn archived_followup_without_toml_is_not_revived_by_doctor_or_create() {
     let dir = p.0.join("projects/demo");
     legacy_followup(&dir);
     convert(&dir).unwrap();
-    std::fs::remove_file(dir.join("automations/pr-followup.toml")).unwrap();
+    std::fs::remove_file(dir.join("automations/check-followup.toml")).unwrap();
     let before = snapshot(&dir);
     assert!(crate::orch::files_problems(&dir, "demo").is_empty());
     h.project_files(true, "local:cli");
@@ -503,9 +502,13 @@ async fn archived_followup_without_toml_is_not_revived_by_doctor_or_create() {
 
 fn legacy_followup(root: &std::path::Path) {
     // 이관 시험의 실제 구형 파일. 새 프로젝트 기본값(v2)과 구별한다.
-    std::fs::remove_file(root.join("automations/pr-followup.toml")).unwrap();
+    let _ = std::fs::remove_file(root.join("automations/check-followup.toml"));
     std::fs::create_dir_all(root.join("routines")).unwrap();
-    std::fs::write(root.join(crate::routine::PR_FOLLOWUP), crate::routine::PR_FOLLOWUP_TEMPLATE).unwrap();
+    std::fs::write(
+        root.join("routines/check-followup.md"),
+        "+++\nschedule=\"every 1h\"\nenabled=true\n+++\n확인한다.\n",
+    )
+    .unwrap();
 }
 
 fn demo_host(p: &Project) -> std::sync::Arc<crate::Host> {
@@ -1142,7 +1145,7 @@ async fn idle_audit_is_read_only_on_web_and_local_cli_keeps_control() {
     // 구형 프로젝트 fixture를 변환해 웹 읽기 전용 경계를 검사한다.
     legacy_followup(&dir);
     let (files, _) = h.automation_convert("demo", false, None, "local:cli").await.unwrap();
-    assert!(files.contains(&"routines/.converted/pr-followup.md".to_string()));
+    assert!(files.contains(&"routines/.converted/check-followup.md".to_string()));
     // 웹 보호는 프로젝트 생략을 채운 뒤 적용한다. 일반 변환의 기존 계약을 유지한다.
     let converted = h
         .call(
@@ -1255,7 +1258,6 @@ fn v2_preserves_scope_profile_timing_and_command_approval() {
     let rules = [
         "[on.schedule]\nevery='10m'\n[do.inbox]\ntext='안내'",
         "[on.command]\nevery='10m'\ncommand='git status --porcelain'\nmachine='mac-a'\n[do.inbox]\n",
-        "[on.pr]\nevents=['review']\n[do.message]\nthread='owner'\ntext='확인'",
         "[on.ci]\nrepo='aaa'\nbranches=['main']\nevents=['failed']\n[do.start]\ntitle='CI'\nrepo='aaa'\nprofiles=['migration-time-profile']\nmachines=['mac-a']\ntext='분류'\nreuse='open'\nmemory=true\nreports=true\nclose_idle='30m'\n[limits]\nbatch='2m'\nusage_week_below=10",
         "[on.thread]\nevents=['report_ready']\nrepos=['rc']\n[do.start]\ntitle='검증'\nrepo='rc'\nprofiles=['another-current-profile']\nmachines=['mac-a']\ntext='검증'\nreuse='open'\nmemory=true",
         "enabled=false\n[on.schedule]\ndaily='04:00'\ncatch_up='skip'\n[do.start]\ntitle='예약'\nprofiles=['reviewer']\nmachines=['mac-a']\ntext='예약'",
@@ -1372,8 +1374,10 @@ async fn pending_input_and_migration_still_require_dispatch_and_keep_rename_excl
     let p = Project::new();
     let h = demo_host(&p);
     let dir = p.0.join("projects/demo");
+    std::fs::create_dir_all(dir.join("routines")).unwrap();
+    std::fs::write(dir.join("routines/check-followup.md"), "+++\nschedule=\"every 1h\"\n+++\n확인\n").unwrap();
     let (rules, _) = crate::routine::load_all(&dir);
-    let rule = rules.iter().find(|r| r.name == "pr-followup").unwrap();
+    let rule = rules.iter().find(|r| r.name == "check-followup").unwrap();
     h.accounts.import("work", "claude", &aaa_test_support::token("dispatch-auth")).unwrap();
     let lock = h.automation_dispatch_lock("demo");
     let held = lock.lock().await;
@@ -1389,7 +1393,7 @@ async fn pending_input_and_migration_still_require_dispatch_and_keep_rename_excl
     assert!(h.accounts.credential("work").is_ok());
     assert!(h.accounts.credential("renamed").is_err());
     // 입력이 없는 이관 journal도 복구 전에 같은 배타권을 얻어야 한다.
-    h.db.del_meta("automation:demo:pr-followup").unwrap();
+    h.db.del_meta("automation:demo:check-followup").unwrap();
     let plan = convert::prepare(&dir, "mac-a").unwrap();
     h.db.set_meta("automation_migration:demo", &serde_json::to_string(&plan).unwrap()).unwrap();
     let drain = h.automation_drain("demo", rule);
@@ -1479,4 +1483,45 @@ async fn schedule_requires_open_worker_threads_without_catching_up_skips() {
         h.automation_queue("demo", "check"),
         h.routine_runs("demo", "check")
     );
+}
+
+#[test]
+fn retired_pr_sources_are_inert_and_doctor_preserves_their_original_bytes() {
+    let p = Project::new();
+    crate::orch::write_files(&p.0, "demo").unwrap();
+    let definitions = [
+        ("routines/pr-followup.md", "+++\non='pr'\nevents=['checks-failed','review']\n+++\n원본\n"),
+        ("automations/custom.toml", "[on.pr]\nevents=['review']\n[do.message]\nthread='owner'\ntext='원본'\n"),
+        (
+            "automations/event.toml",
+            "schema=2\n[trigger]\nkind='event'\nsource='pr'\n[action]\nkind='notice'\ntext='원본'\n",
+        ),
+    ];
+    for (file, text) in definitions {
+        p.write(file, text);
+    }
+    p.write(
+        "automations/ci.toml",
+        "[on.ci]\nrepo='app'\nbranches=['main']\nevents=['failed']\n[do.inbox]\ntext='확인'\n",
+    );
+    let (rules, broken) = crate::routine::load_all(&p.0);
+    assert!(broken.is_empty(), "{broken:?}");
+    assert_eq!(rules.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["ci"]);
+    assert!(parse(&p.0, "new", definitions[1].1).is_err());
+    assert!(parse(&p.0, "new", definitions[2].1).is_err());
+    assert!(crate::routine::parse("new", definitions[0].1).is_err());
+    assert!(super::convert::prepare(&p.0, "mac-a").is_ok(), "폐지 규칙이 다른 규칙의 변환을 막지 않는다");
+    assert_eq!(crate::orch::files_problems(&p.0, "demo").len(), 3);
+    crate::orch::write_files(&p.0, "demo").unwrap();
+    for (file, text) in definitions {
+        assert!(!p.0.join(file).exists());
+        assert_eq!(std::fs::read(p.0.join(format!("{file}.before-aaa"))).unwrap(), text.as_bytes());
+    }
+    let before = snapshot(&p.0);
+    crate::orch::write_files(&p.0, "demo").unwrap();
+    assert_eq!(snapshot(&p.0), before);
+    assert!(crate::orch::files_problems(&p.0, "demo").is_empty());
+    let guide = std::fs::read_to_string(p.0.join("AGENTS.md")).unwrap();
+    assert!(guide.contains("착지 상태(main SHA·push 여부)"));
+    assert!(!guide.contains("PR:"));
 }

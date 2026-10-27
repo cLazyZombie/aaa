@@ -50,7 +50,7 @@ pub struct AutoDecisionNote {
     pub reversible: bool,
 }
 
-pub const AUTO_MODE_EXCEPTIONS: &str = "비밀값·암호·토큰 입력; 로그인·OAuth·키체인 해제·GUI·실기 확인·청취; 폴더 신뢰·도구 권한 확인창; 되돌릴 수 없는 삭제(미병합 branch·사용자 파일·uploads·미push 작업); force push·main 기록 수정·check-public 우회; safety·profile·권한·시스템 설정·~/.config/aaa·자동화 승인; 결제·구독·유료 한도; release 게시·외부 PR/이슈 글·메일; host 재시작·사용자 기기 서비스 설치; [사람] 표지·사용자가 직접 정한다고 지정한 질문";
+pub const AUTO_MODE_EXCEPTIONS: &str = "비밀값·암호·토큰 입력; 로그인·OAuth·키체인 해제·GUI·실기 확인·청취; 폴더 신뢰·도구 권한 확인창; 되돌릴 수 없는 삭제(미병합 branch·사용자 파일·uploads·미push 작업); force push·main 기록 수정·check-public 우회; safety·profile·권한·시스템 설정·~/.config/aaa·자동화 승인; 결제·구독·유료 한도; release 게시·외부 이슈 글·메일; host 재시작·사용자 기기 서비스 설치; [사람] 표지·사용자가 직접 정한다고 지정한 질문";
 
 /// 구조화 질문의 사용자 전용 표지. 비밀값은 이 API에 넣지 않고 전용 가림 입력칸을 쓴다.
 pub fn auto_question_exception(q: &crate::ThreadQuestion) -> bool {
