@@ -58,7 +58,9 @@ async function terminateTree(root) {
     for (const p of frozen.reverse()) signal(p, "SIGKILL");
     await waitFor("session host와 자손 종료", () => {
       const table = processes();
-      return frozen.every((p) => !live(table.find((row) => row.pid === p.pid)) || commandOf(p.pid) !== p.command);
+      // 신원 확인은 신호를 보내기 전에 했다. 종료 중 argv가 달라져도 PID가 살아 있으면
+      // 폴더를 지울 수 없다. 여기서는 신호를 더 보내지 않고 실제 종료만 기다린다.
+      return frozen.every((p) => !live(table.find((row) => row.pid === p.pid)));
     });
   }
 }

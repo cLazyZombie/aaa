@@ -584,6 +584,52 @@ impl Host {
         Ok(())
     }
 
+    /// 대기 예약의 수명은 승인 당시 사본이 아니라 현재 할 일·완료 보관을 따른다.
+    /// 명시적으로 지운 일만 취소한다. 파일에서 근거 없이 사라진 일은 확인 경고를 남긴다.
+    pub(crate) fn retire_task_queue(&self, project: &str, before: Option<&str>, after: &str) -> Result<(), ErrorBody> {
+        if !self.db.queue_list(project).map_err(internal)?.iter().any(|r| matches!(r.state, S::Queued | S::Check)) {
+            return Ok(());
+        }
+        let active = tasks::parse(after);
+        let removed: std::collections::HashSet<_> = before
+            .map(tasks::parse)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|t| t.id)
+            .filter(|id| !active.iter().any(|t| t.id.as_ref() == Some(id)))
+            .collect();
+        let archived = self.db.archive_list(project).map_err(internal)?;
+        let changed = self
+            .db
+            .queue_change(project, "host", |rows| {
+                let mut changed = false;
+                for row in rows.iter_mut().filter(|r| matches!(r.state, S::Queued | S::Check)) {
+                    let task = active.iter().find(|t| t.id.as_deref() == Some(&row.task_id));
+                    let completed = task.is_some_and(|t| t.done)
+                        || (task.is_none()
+                            && archived.iter().any(|a| a.task_id == row.task_id && a.committed && !a.restored));
+                    let (state, reason) = if completed {
+                        (S::Finished, "할 일 완료 · 예약 종료")
+                    } else if removed.contains(&row.task_id) {
+                        (S::Cancelled, "할 일 삭제 · 예약 취소")
+                    } else {
+                        continue;
+                    };
+                    row.state = state;
+                    row.reason = reason.into();
+                    row.updated_ms = aaa_common::util::now_ms();
+                    changed = true;
+                }
+                Ok(changed)
+            })
+            .map_err(internal)?;
+        if changed {
+            tracing::info!(project, "완료·삭제한 할 일의 대기 예약 종료");
+            self.queue_changed(project);
+        }
+        Ok(())
+    }
+
     /// 예약 외 직접 시작도 같은 재연결 대조를 쓴다. 호출자가 thread 작업 잠금을 소유한다.
     pub(crate) fn recover_thread_start(
         &self,
@@ -652,6 +698,8 @@ impl Host {
 
     pub(crate) async fn queue_pass(self: &Arc<Self>, project: &str) -> Result<(), ErrorBody> {
         let _gate = self.queue_gate.lock().await;
+        // 구판의 보관 완료 예약과 파일 제거 직후 중단된 완료 영수증도 먼저 회수한다.
+        self.archive_recover(project)?;
         let rows = self.db.queue_list(project).map_err(internal)?;
         if rows.is_empty() {
             return Ok(());
@@ -660,7 +708,7 @@ impl Host {
             if rows.iter().any(|r| r.state == S::Queued) { self.assignable(project).await } else { Vec::new() };
         let mut capacity_exhausted = false;
         for row in rows {
-            if row.state == S::Cancelled {
+            if matches!(row.state, S::Cancelled | S::Finished) {
                 continue;
             }
             if let Some(tid) = &row.thread {
@@ -712,7 +760,12 @@ impl Host {
             }
             let board = self.task_board(project)?;
             let Some(t) = board.tasks.iter().find(|t| t.id.as_deref() == Some(&row.task_id)) else {
-                self.queue_status(project, &row.task_id, S::Check, "task가 없어졌다")?;
+                self.queue_status(
+                    project,
+                    &row.task_id,
+                    S::Check,
+                    "연결된 할 일이 없다 · 예약을 풀거나 할 일을 복원한다",
+                )?;
                 continue;
             };
             if board.tasks.iter().filter(|t| t.id.as_deref() == Some(&row.task_id)).count() != 1
@@ -861,6 +914,7 @@ impl Host {
                 self.db.archive_save(project, &row).map_err(internal)?;
             }
         }
+        self.retire_task_queue(project, None, &rev.text)?;
         Ok(())
     }
 

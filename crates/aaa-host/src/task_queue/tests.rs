@@ -443,6 +443,73 @@ async fn one_reservation(lab: &Lab) -> TaskReservation {
 }
 
 #[tokio::test]
+async fn completed_or_deleted_tasks_retire_pending_reservations_before_the_board_event() {
+    for done in [true, false] {
+        let lab = Lab::new();
+        let row = one_reservation(&lab).await;
+        // 예약 내용을 손으로 고친 뒤 다른 경로에서 완료/삭제한 경우도 같은 종료 경계를 쓴다.
+        lab.h.queue_status("demo", &row.task_id, S::Check, "예약 내용이 바뀌었다").unwrap();
+        let task = lab.h.task_board("demo").unwrap().tasks.remove(0);
+        let op = if done {
+            TaskOp::Update {
+                at: at(&task),
+                title: None,
+                owner: None,
+                person: false,
+                profile: None,
+                machine: None,
+                notes: None,
+                thread: None,
+                done: Some(true),
+                repo: None,
+            }
+        } else {
+            TaskOp::Delete { at: at(&task) }
+        };
+        let FrontResponse::TaskEdited { board, conflict: None, .. } =
+            lab.h.task_edit("demo", vec![op], None, None, "device:user").await.unwrap()
+        else {
+            panic!("할 일 편집 응답")
+        };
+        assert_eq!(board.queue[0].state, if done { S::Finished } else { S::Cancelled });
+        if done {
+            lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+            lab.h.task_archive("demo", Some(&row.task_id), None, "device:user").await.unwrap();
+        }
+        let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+        reopened.queue_pass("demo").await.unwrap();
+        assert_eq!(reopened.db.queue_list("demo").unwrap()[0].state, if done { S::Finished } else { S::Cancelled });
+        assert!(reopened.db.threads(Some("demo")).unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn old_archived_reservation_is_repaired_but_unknown_missing_task_keeps_its_warning() {
+    let lab = Lab::new();
+    let row = one_reservation(&lab).await;
+    lab.write(&lab.text().replace("- [ ]", "- [x]"));
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    assert!(lab.h.task_board("demo").unwrap().tasks.is_empty());
+    // 구판이 남긴 확인 필요 예약을 복원한다. 완료 보관이 있고 thread 연결은 없다.
+    lab.h.queue_status("demo", &row.task_id, S::Check, "task가 없어졌다").unwrap();
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    reopened.queue_pass("demo").await.unwrap();
+    assert_eq!(reopened.db.queue_list("demo").unwrap()[0].state, S::Finished);
+    reopened.task_archive("demo", Some(&row.task_id), None, "device:user").await.unwrap();
+    assert_eq!(reopened.task_board("demo").unwrap().queue[0].state, S::Finished);
+
+    let missing = Lab::new();
+    let row = one_reservation(&missing).await;
+    missing.write("## Backlog\n");
+    missing.h.queue_pass("demo").await.unwrap();
+    let warning = missing.h.db.queue_list("demo").unwrap().remove(0);
+    assert_eq!(warning.task_id, row.task_id);
+    assert_eq!(warning.state, S::Check);
+    assert_eq!(warning.reason, "연결된 할 일이 없다 · 예약을 풀거나 할 일을 복원한다");
+    assert!(missing.h.db.threads(Some("demo")).unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn queue_query_preserves_approval_order_reason_and_history() {
     let lab = Lab::new();
     one_reservation(&lab).await;

@@ -1,3 +1,31 @@
+## 완료·보관한 할 일의 예약 잔상(t-1200)
+
+- 맨 위 점선 위 행은 host의 queued/check 예약이다. 원래 할 일이 완료·보관됐는데 예약이 남으면
+  승인 당시 사본을 그리며 `task 없음`이 붙었다. 선택·주소·기기 저장의 잔상이 아니다.
+- `task_queue::tests::completed_or_deleted_tasks_retire_pending_reservations_before_the_board_event`는
+  완료 체크/명시 삭제 응답부터 예약이 finished/cancelled이고, 재시작·복원 뒤에도 재기동하지 않음을 확인한다.
+  `old_archived_reservation_is_repaired_but_unknown_missing_task_keeps_its_warning`는 구판 보관 완료 예약의
+  회수와 완료 근거 없는 파일 유실의 check 보존을 같은 실제 SQLite/Host 경계에서 확인한다.
+  필요한 이유: UI에서만 숨기면 다른 기기·재시작·복원 때 승인한 옛 예약이 다시 나타나거나 기동할 수 있다.
+  두 keeper는 수리 전 모두 Check/Finished 불일치로 실패했다.
+- `tasksModel.test.mjs`의 끊긴 예약 keeper는 전체/예약 칩·검색·저장소 거르기·칩 합을 확인한다.
+  필요한 이유: 진짜 연결 끊김은 경고 행을 남겨야 하며 예약 0개로 표시하거나 예약 필터에서 숨기면 안 된다.
+  완료/취소 예약은 계속 제외한다. 수리 전 예약 개수가 0으로 실패했다.
+- E2E116 `116-task-queue-retirement.mjs`는 격리 DB에 구판의 check 예약 두 개(완료 보관/진짜 끊김)를
+  넣고 host를 다시 띄운다. 데스크톱과 별도 휴대폰 context에서 제거·경고·예약 칩·reload·완료 탭·복원을
+  확인한다. 필요한 이유: host 수리와 tasks 사건이 두 기기에 전달되고 복원이 재예약하지 않는 계약을
+  실제 웹 경계에서 확인해야 한다. 수리 전후 화면은 같은 fixture에서 촬영한다.
+- 기존 시험·기대값·시한을 완화하거나 삭제하지 않는다. 새 검사는 사건·DOM 변경·프로세스 종료로 끝낸다.
+- 전체 웹 유닛의 마지막 확인에서 기존 session-cleanup keeper가 살아 있는 session host를 보고 실패했다.
+  종료 대기가 argv 변경만으로 끝날 수 있는 경계를 제거하고, 신호를 보낸 PID가 실제로 끝날 때까지 기다린다.
+  추가 신호·시한 변경은 없다. 원본 실패에서 argv 변경 자체는 수집하지 못했으며 해당 분기를 특정했다고 주장하지 않는다.
+  기존 keeper의 부모·분리된 writer 종료와 무관한 PID 보존 단언을 그대로 유지한다.
+- 참고 후보는 [TanStack Query의 invalidate/refetch](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryClient.ts)
+  ([MIT](https://github.com/TanStack/query/blob/main/LICENSE))와
+  [react-admin 목록 선택 정리](https://github.com/marmelab/react-admin/blob/master/packages/ra-core/src/controller/list/useListController.ts)
+  ([MIT](https://github.com/marmelab/react-admin/blob/master/LICENSE.md))다.
+  host 정본 갱신 후 목록이 따라가는 원칙을 대조했다. 외부 코드·의존성을 추가하지 않는다.
+
 ## E2E03·105 비동기 관측과 CI 웹 실패 수집(t-1184)
 
 - 원본 [macOS web-e2e job](https://github.com/cLazyZombie/aaa/actions/runs/40477028804/job/122097672768)
