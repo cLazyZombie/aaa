@@ -628,6 +628,7 @@ mod post_tests {
         let secret = &*aaa_test_support::token("fixture-report-auth-value-0638");
         aaa_common::redact::remember(secret);
         let mut bytes = vec![b'x'; 1024 * 1024 + 3176];
+        bytes[..4].copy_from_slice(b"MZ\0\xff");
         // 조각 경계의 인증 조각까지 포함해 원본 전체 hash를 먼저 대조한다.
         for at in [23, 512 * 1024 - 4, 1024 * 1024 + 17] {
             bytes[at..at + secret.len()].copy_from_slice(secret.as_bytes());
@@ -724,7 +725,9 @@ mod post_tests {
         let rec = host.load("p", "t-0001").unwrap();
         assert_eq!(rec.copy.as_deref(), Some("complete"));
         let dir = host.project_dir("p").unwrap();
-        assert_eq!(std::fs::read(dir.join("library/t-0001/stable.bin")).unwrap(), clean);
+        let copied = std::fs::read(dir.join("library/t-0001/stable.bin")).unwrap();
+        assert_eq!(Sha256::digest(&copied), Sha256::digest(&expected), "바이너리 사본은 원본 hash를 유지한다");
+        assert_eq!(copied, expected);
         assert_ne!(expected, clean);
         let stored = host.verified_report(&rec).unwrap();
         assert!(!stored.contains(secret));
@@ -732,8 +735,13 @@ mod post_tests {
         host.backfill_report_stages().unwrap();
         assert_eq!(host.load("p", "t-0001").unwrap().report_stage, rec.report_stage);
         let rid = host.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).unwrap();
-        assert_eq!(std::fs::read(dir.join("library").join(&rid).join("stable.bin")).unwrap(), clean);
+        assert_eq!(std::fs::read(dir.join("library").join(&rid).join("stable.bin")).unwrap(), expected);
         assert_eq!(std::fs::read_to_string(dir.join("threads").join(format!("{rid}.md"))).unwrap(), stored);
+        let warnings = host.db.inbox_list(Some("p"), true).unwrap();
+        let warnings: Vec<_> = warnings.iter().filter(|i| i.item_kind == "report-secret-warning").collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].body.contains("stable.bin"));
+        assert!(!warnings[0].body.contains(secret));
         fake.abort();
         // 취소 완료로 peer를 닫고 연결 정리까지 기다려야 Windows에서도 DB 핸들이 풀린다.
         assert!(fake.await.unwrap_err().is_cancelled());

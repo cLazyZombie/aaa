@@ -963,7 +963,7 @@ pub enum AgentRequest {
         work_dir: String,
         max_library_bytes: u64,
     },
-    /// report_copy.v2: 인증한 link에서 원본 무결성을 확인한 뒤 host 저장 경계에서 가린다.
+    /// report_copy.v2: 인증한 link에서 원본 무결성을 확인한 뒤 host 저장 경계에서 텍스트만 가린다.
     ReportTransfer {
         work_dir: String,
         max_library_bytes: u64,

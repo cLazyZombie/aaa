@@ -1,3 +1,26 @@
+## 바이너리 보고 사본 원본 보존(t-1180)
+
+- `report_copy::` 두 유닛은 비밀값 조각을 넣은 실행 파일·압축·그림·PDF·음원, 텍스트처럼 보이는
+  바이너리 확장자, 확장자가 틀리거나 없는 NUL/비UTF8 파일의 SHA-256·바이트 보존과 내용 없는 경고를
+  확인한다. 파일 앞 8KiB 뒤의 이진 내용도 검사한다. Markdown·로그·HTML·JSON·SVG·확장자 없는
+  한글/ANSI 텍스트의 가림도 지킨다. 필요한 이유: 파일 형식이나 prefix만으로 판정해 첨부가 다시
+  손상되거나 텍스트 가림이 사라지는 회귀를 막는다.
+- 기존 `link::post_tests::stable_report_transfer_verifies_before_masking_and_keeps_a_verified_copy`는
+  실제 host·agent link의 조각 경계 비밀값과 원본 검증을 유지하며 최신 사본·불변 r 판의 바이너리 hash를
+  비교한다. 보고 본문 가림·단계와 파일 단위 inbox 경고의 원문 비노출도 확인한다. 수리 전 같은 입력의
+  hash 불일치 실패를 확인했다. 기존 m13
+  `secret_k0::remote_report_with_registered_auth_bytes_copies_without_false_hash_failure`에도
+  실제 TCP+TLS로 전송한 실행 파일의 최신/불변 사본 hash 비교를 더하고 로그 가림·재시작 계약을 유지한다.
+  새 E2E 번호·고정 sleep·재시도·시한 확대·기대값 완화는 없다.
+- 참고는 고정 소스의 herdr-projects v0.2.35 `src/thread.rs`(MIT)의 rsync 원본 복사,
+  herdr-web-ui `aa624cb` `server/file-view.ts`(MIT)의 종류 판정과 `Bun.file` 바이트 전송,
+  herdr v0.9.5 `src/server/clipboard_image.rs`(Apache-2.0)의 이미지 바이트 보존이다.
+  별도 코드·의존성을 들여오지 않는다. 전체 내용 판정과 조각 일치 경고는 aaa의 가림 경계에 맞춘 차이다.
+- 부분 검증: `cargo test --profile verify --locked -p aaa-host --lib -- report_copy:: link::post_tests::`,
+  `cargo test --profile verify --locked -p aaa-common --lib redact::`, 위 m13 owner와
+  `cargo test --profile verify --locked -p aaa --test deps`, 두 crate strict clippy·fmt·공개 검사다.
+  전체 ci-local·cross·main 병합·push는 정규 착지 차례에서 수행한다.
+
 ## 삭제 뒤 TASKS 기억과 CI fixture 출력(t-1172)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40462675441/job/122050697112)은
