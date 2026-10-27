@@ -4317,7 +4317,7 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 기존 m13 `automation_thread_reports_do_not_wake_their_own_rule`에 실제 do.start 출처의 완료 Next 표시 유지·후속 미수집·일반 시작의 수집 대조를 추가한다. 새 프로세스 실험실·E2E 번호를 늘리지 않는다. 기존 자동화 보고 사건의 순서/자기 재실행 방지 단언은 유지한다.
 - 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib followups::tests`와 `nice -n 15 cargo test --profile verify --locked -p aaa --test m13 automation_thread_reports_do_not_wake_their_own_rule`다. 개별 새 시험은 보통 부하에서 5초 이하로 유지하고 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 전체 gate는 coordinator가 정한 같은 머신의 실행 차례를 받아 실행한다.
 
-## 첫 작업 목록의 thread 소속 대기(t-1153, §8.509)
+## 첫 작업 목록의 thread 소속 대기(t-1153, §8.510)
 
 - 기존 E2E24의 실제 host/agent·CLI adopt·WebSocket 사건과 HTTP 목록을 사용한다. 첫 thread HTTP 응답만 `route.fetch` 뒤 사건 gate로 보류하고, 실제 pane state가 DOM에 반영된 뒤 기타/일반 pane 줄 없음·로딩 표시를 확인한다. 빈 전체 목록을 전달하면 일반 pane이 기타에 나타나야 한다. 필요한 이유: 아직 읽지 않은 빈 Map과 읽기를 마친 빈 목록을 구별해야 한다.
 - 첫 목록에 503 공개 오류를 전달하면 원인 표시·로딩 종료·기타 없음, 새로고침 뒤 정상 조회 복구를 확인한다. 필요한 이유: 실패를 확정된 빈 목록이나 끝없는 로딩으로 바꾸지 않아야 한다.

@@ -8114,7 +8114,7 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 회귀는 기존 E2E73의 양 엔진×1280/390px 이미지 GET 보류·HEAD 200/401·현재 판 다시 열기, E2E88의 선택 전 무요청과 실제 클릭/탐색/HTML sandbox/직접 파일/답한 사본이다. host HTTP 회귀는 gzip 복원·bridge·협상·HEAD·Range·권한·원본, stream 회귀는 첫 조각 전달과 읽기 실패 전파를 지킨다. 새 E2E 번호·고정 sleep·재시도·시한 확대는 없다.
 - OSS는 조사에서 검토한 tower-http(MIT)·Caddy(Apache-2.0)·nginx(BSD-2-Clause)의 전송 원칙, [React flushSync](https://react.dev/reference/react-dom/flushSync)(MIT)와 [flate2 GzEncoder](https://docs.rs/flate2/latest/flate2/write/struct.GzEncoder.html)(MIT/Apache-2.0)를 참고했다. 기존 flate2·React만 사용하며 외부 코드·의존성은 추가하지 않는다.
 
-### 8.509 첫 작업 목록의 thread 소속 대기(t-1153)
+### 8.510 첫 작업 목록의 thread 소속 대기(t-1153)
 
 - machine/pane state와 thread HTTP 목록은 따로 도착한다. 초기 빈 Map만으로 thread 소속이 없다고 판정하면 실제 thread pane도 경로를 붙인 「기타」 줄로 잠시 나타난다. §8.218의 늦은 목록/새 사건 보존과는 다른, 첫 전체 목록 전의 표시 경계다. 운영 당시 요청 순서를 기록한 자료는 없어 과거 화면의 개별 전송 순서까지 확정하지 않는다.
 - 기존 `threadsSync`가 한 번도 완료되지 않았으면 소속 미확정 pane을 일반/고정 「기타」 줄로 내보내지 않고 「작업 목록을 불러오는 중…」을 표시한다. 이미 아는 coordinator와 thread 사건의 줄은 유지한다. 전체 페이지를 모두 읽은 뒤 실제 빈 목록도 완료로 인정하며 일반 pane을 표시한다. 이름·role·경로로 소속을 추측하지 않는다.
