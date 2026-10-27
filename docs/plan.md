@@ -8161,3 +8161,14 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - CI 실패 수집은 Rust 실패 외에 원문·gh 앞머리·annotation의 `FAIL` 단계 이름을 중복 없이 보존한다. 단계가 누락됐어도 웹 `suite-end`의 실패 수를 남긴다. 성공 Python fixture 출처·완료한 느린 시험 경계를 유지한다. 공개 proto·API·저장 형식은 바꾸지 않는다.
 - E03은 재연결 ACK 이후 resize·파싱·렌더·native viewport가 같은 기준을 보인 뒤 PageUp/PageDown 경쟁을 검사한다. E105는 선택 설정의 반환 뒤 native select 전달까지 끝낸 다음 터치 전환을 검사한다. 빈 사건 배열·초안/선택 복원·자동 focus 금지·PTY 입력 차단 계약을 유지한다. 실패 시 페이지를 닫기 전에 상태·PNG·host/agent 로그를 기존 CI 산출물 경로로 보존한다.
 - 참고는 xterm 5.5.0 Viewport·VS Code terminal 키 처리(각 MIT), Playwright focus/scroll 시험(Apache-2.0)이다. 자료와 회귀의 필요성·원본 관측 한계는 `docs/testing.md`에 적는다. 외부 코드·의존성은 추가하지 않는다.
+
+### 8.515 시안·연구·조사 일의 확정 뒤 결정(t-1193)
+
+- 시안·연구·조사 일은 `[검수 대기]` 보고와 피드백 수정을 확정까지 반복하고, 확정 뒤 보고 `## Questions`로 지금 구현(같은 thread)·할 일로 만들기·폐기를 묻는다. 답 전에는 구현하거나 끝내지 않는다.
+- coordinator는 그 답 전에 resolve하지 않는다. 할 일로 만들기는 보고의 정리대로 할 일을 만들어 후속 원장에 잇고, 폐기는 사유를 기록한다.
+- 프롬프트(thread brief·AGENTS.md·`aaa guide threads`)만 바꾼다. 새 상태·칸·카드·host 강제는 두지 않는다(사용자 10-27). 쉼 `auto_resolve_days` 자동 끝내기는 그대로다.
+
+### 8.516 웹 E2E 실험실의 macOS 책임 경로 격리(t-1193)
+
+- 웹 E2E 실험실의 agent가 실행기를 띄운 경로의 실제 macOS 책임 경로를 관찰해, ssh에서 돈 ci-local은 pane마다 「느린 빌드」 배너(137px)를 띄웠다. 1280×800 E2E42에서 옆 칸 diff의 CodeView가 297px로 줄어 가상화가 파일 머리 2개만 그려 「src/lib.rs만 펼침」(머리 6개)이 실패했다. aaa pane(launcher)에서 돈 회차는 Launcher라 배너가 없었다.
+- agent는 `AAA_TEST_RESPONSIBILITY=none`이면 관찰하지 않는다(Linux와 같은 없음). 웹 E2E harness가 이것을 실험실 환경에 넣는다. 배너·뱃지 시험(89)은 지금처럼 웹 경계에서 관측값을 주입한다. 제품 기본 동작과 E2E 기대값은 바꾸지 않는다.

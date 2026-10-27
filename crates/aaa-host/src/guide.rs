@@ -180,6 +180,7 @@ thread를 띄우거나, 말을 보내거나, 화면을 읽거나, 키를 누를 
 - 보고 확인: `aaa thread show <id>`, `aaa thread library <id>`, 다 봤으면 `aaa thread ack <id>`.
   다음 지시는 `aaa thread next <id> --line N`으로 Next 줄을 보낸다. Next 줄을 coordinator가 직접 하지 않는다.
 - 보류(`aaa thread park`)는 사용자가 보류하라고 했을 때만, 끝내기(`aaa thread resolve`)는 사용자가 끝내라고 할 때만 한다.
+- 시안·연구·조사 thread는 「지금 구현·할 일로 만들기·폐기」 답 전에 resolve하지 않는다. 피드백은 같은 thread에 전한다. 할 일로 만들기면 보고대로 할 일을 만들어 후속에 잇고, 폐기면 사유를 기록하고 resolve한다.
 - thread가 시작할 때 모아 묻는 질문(보고 첫 줄 `[결정 필요]`, `## Questions`)은 웹 「답할 것」에 카드로 뜬다.
   별도 질문 카드를 만들지 않는다. 확인 필요 post 제목 끝에 `aaa:question/<thread>`를 붙여 기존 카드에 묶고,
   post 본문에 새 `## Questions`·선택지를 쓰지 않는다.
@@ -438,6 +439,7 @@ const THREADS: &str = r#"# thread 다루기
 - aaa가 thread의 PR을 따라간다. 열리고 승인되면 묶음이 「병합 중」이고, 병합되면 agent가 끝낸 뒤(진행 보고 `Done`, 아니면 병합 뒤
   새 보고나 10분) 저절로 끝낸다. 보고가 이름 붙인 내 다른 PR이 열려 있으면 기다린다. worktree는 force 없이 지우고, branch는
   병합된 PR head일 때만 지운다.
+- 시안·연구·조사 thread는 「지금 구현·할 일로 만들기·폐기」 답 전에 resolve하지 않는다.
 - 그 밖의 resolve는 사용자가 채팅에서 끝내라고 할 때만 한다.
 "#;
 

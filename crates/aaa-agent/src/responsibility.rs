@@ -6,6 +6,10 @@ pub(super) fn observe(paths: &SessionPaths, info: &SessionInfo) -> Option<Respon
     if !cfg!(target_os = "macos") || !info.state.is_running() {
         return None;
     }
+    // 시험은 실행기를 띄운 경로(aaa pane·ssh·CI 러너)와 상관없이 정한다(`AAA_TEST_RESPONSIBILITY=none`: 관찰하지 않음)
+    if std::env::var_os("AAA_TEST_RESPONSIBILITY").is_some_and(|v| v == "none") {
+        return None;
+    }
     let observed = aaa_common::util::read_json::<aaa_session::files::MetaFile>(&paths.meta())
         .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
         .ok()

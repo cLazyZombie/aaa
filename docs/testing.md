@@ -2652,6 +2652,7 @@ t-0578 첫 착지의 동시 검증에서 m13 다섯 시험과 웹 E2E 63의 아�
 | 구독 사용량 억지 다시 읽기 간격(30초) | `AAA_TEST_USAGE_REFRESH_MS`(시험에서만, 웹 E2E 32 0: 가짜 구독 숫자를 바꾼 뒤 `?refresh=1`로 바로 읽는다) |
 | harness 화면 감지 시작 유예(3초, 시작 화면을 상태로 읽지 않는다) | `AAA_TEST_DETECT_GRACE_MS`(agent, 시험에서만, 공통 Rust Lab·웹 E2E 0. 기본 3초는 `detect::state::tests::startup_grace_and_skipped_viewer_screens` 시각 주입 owner) |
 | 긴 턴(60초, 웹 앱 안 알림은 그보다 긴 턴의 끝남만 띄운다, plan §8.185) | `AAA_TEST_LONG_TURN_MS`(host, 시험에서만, 웹 E2E 19 3000. 기본값 길은 m13 `turn_end_notices_follow_reports`) |
+| pane의 macOS 책임 경로 관찰(실행기를 띄운 경로를 물려받는다) | `AAA_TEST_RESPONSIBILITY=none`(agent, 시험에서만, 웹 E2E 전체: ssh·CI 러너에서 돈 실험실에 「느린 빌드」 배너가 떠 화면 높이가 바뀌지 않게. 배너·뱃지는 89가 관측값을 주입해 본다) |
 
 ## 웹 E2E
 
