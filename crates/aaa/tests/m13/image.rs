@@ -96,7 +96,15 @@ fn start_image_host(w: &mut World, tag: &str, exe: &Path, upstream: &str) {
         tag,
         &w.h,
         w.settle_ms,
-        &[("AAA_TEST_IMAGE_CODEX", path_str(exe)), ("AAA_LOG", "trace"), ("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", upstream)],
+        &[
+            ("AAA_TEST_IMAGE_CODEX", path_str(exe)),
+            ("AAA_LOG", "trace"),
+            ("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", upstream),
+            // 이 host의 PTY는 줄 단위 custom 보고 셸뿐이다. paste를 해석하는
+            // TUI가 없고 이미지 helper는 별도 headless 프로세스다. 운영300ms
+            // paste 간격은 harness 단위 owner가 지키며 여기서는 사건만 기다린다.
+            ("AAA_TEST_SUBMIT_GAP_MS", "0"),
+        ],
     );
     let status = wait_for("이미지 host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = status["agent_listen"].as_str().unwrap().into();

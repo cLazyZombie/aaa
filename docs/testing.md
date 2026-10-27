@@ -4583,3 +4583,15 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `link::local_socket::tests::socket_replacement_wakes_but_other_directory_changes_do_not`은 실제 vnode·UDS를 써서 무관한 파일/권한 변경과 교체를 구별한다. 기존 `authenticated_short_connections_reset_backoff_but_rejections_preserve_it`가 짧은 인증 성공/거부의 서로 다른 backoff 처리를 소유한다. 새 두 시험은 거짓 수락과 불필요한 재접속을 막는 데 필요하다.
 - rollout의 사본 실행 파일도 공통 `host_command`를 통해 해당 World의 기존 brief·외부 조회 환경을 유지한다. E37은 각 실제 prepend의 두 frame 뒤 행ID·좌표·진단을 함께 읽으며2400건·모든 쪽·원래행±1px·모든 엔진/폭/harness를 유지한다. 삭제/단계 분리는 없다. 전체계측 전 단일5초미만 결과로 미해결 목록을 줄이지 않는다.
 - [Tokio broadcast](https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html)(MIT), [libuv vnode 감시](https://docs.libuv.org/en/v1.x/fs_event.html)(MIT), [notify kqueue의 READABLE 등록](https://github.com/notify-rs/notify/blob/main/notify/src/kqueue.rs)(crate선언 CC0-1.0), [Playwright actionability](https://playwright.dev/docs/actionability)(Apache-2.0)를 대조했다. 사건 뒤 실제 조건을 다시 보는 원칙만 적용하고 외부 코드·새 의존성을 가져오지 않았다.
+
+
+## adopt 가짜 Claude의 입력 표시(t-1117 후속)
+
+- `m13::ADOPT_AGENT`는 입력창을 그린 뒤 커서를 그 안으로 돌리고 canonical tty echo로 Enter 전의 글을 표시한다. 공통 `CLAUDE_AGENT::prompt`와 같은 방식이다. canonical/noecho로 줄 전체만 읽으면 실제 대화형 프로그램과 달리 친 글을 Enter 전에 전혀 표시하지 못해, 제품의 선택 창 재확인 경로가10초 시한을 소모했다. 이어 입력창의 남은 줄 판정이 Enter를 다시 확인하며 같은10초를 소모했다.
+- 제품의300ms paste 간격·10초 수락 시한·신뢰/질문 거부·최대시도·동일한 실제 CLI/TLS/PTY/화면 감지를 유지한다. adopt 세 owner의 대화ID·권한거부·보고·재부팅/복원·resolve·폴더/branch 보존 단언과 이름도 유지한다. 시험 삭제·대체 owner 추가는 없다.
+- [Rustyline tty](https://github.com/kkawakam/rustyline/blob/master/src/tty/unix.rs)([MIT](https://github.com/kkawakam/rustyline/blob/master/LICENSE))와 [prompt_toolkit renderer](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/main/src/prompt_toolkit/renderer.py)([BSD-3-Clause](https://github.com/prompt-toolkit/python-prompt-toolkit/blob/main/LICENSE))의 입력 중 화면 갱신 원칙을 대조했다. 외부 코드나 의존성을 가져오지 않고 기존 공통 fixture의 tty/커서 배치를 따른다.
+
+
+- 이미지 보존 owner의 PTY는 `FAKE_AGENT`/`COORD_AGENT`의 줄 단위 custom 보고 셸이며 bracketed paste를 켜지 않는다. Codex 이미지 helper는 그 PTY가 아닌 별도 headless 프로세스다. 이 전용 host의 초기/재시작 명령에만 `AAA_TEST_SUBMIT_GAP_MS=0`을 주어 해당되지 않는 TUI paste 대기를 제거한다. 제품 기본300ms와 실제 paste/수락 경계의 기존 harness owner는 그대로 유지한다. 기존10초 수락 시한·실제2머신/4provider시도·544KiB PNG·모든 canary/권한/재시작/목록/forget/누출 단언은 바꾸지 않는다.
+
+- resolve owner의 dir/worktree/adopted는 원래 생성 순서로 실제 기동한 뒤 각각의 보고·brief와 exit1·resolve를 같은 순서로 검사한다. 기본 한도10 안의 독립된3thread를 준비하며, 보고 대기를 겹쳐도 원래 CLI 호출·단언·ID 생성 순서와 pane/layout/폴더 보존은 그대로다.

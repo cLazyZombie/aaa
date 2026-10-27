@@ -3091,6 +3091,9 @@ fn resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted() {
     let claude = w.scripts.join("claude");
     std::fs::write(&claude, ADOPT_AGENT.replace("@BIN@", lab::BIN)).unwrap();
     std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // 서로 다른 세 thread를 원래 차례로 만든 뒤 각각의 실제 보고를 기다린다.
+    // 앞 thread의 brief·보고 대기에 다음 thread의 독립된 준비를 묶지 않는다.
+    let mut threads = Vec::new();
     for kind in ["dir", "worktree", "adopted"] {
         let v = if kind == "adopted" {
             let pane = w.h.new_pane(None, "labA", Some("adopt"), &[path_str(&claude)], Some(path_str(&w.repo)));
@@ -3108,6 +3111,9 @@ fn resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted() {
             }
             w.start(&args)
         };
+        threads.push((kind, v));
+    }
+    for (kind, v) in threads {
         let (id, pane) = (v["id"].as_str().unwrap(), v["pane"].as_str().unwrap());
         w.wait_show("보고와 brief 전달", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
         // 신호 없이 자기 fixture를 정상 입력으로 종료한다. 종료 상태를 확인한 뒤에만 resolve한다.
@@ -3847,13 +3853,15 @@ fn project_open_follows_coordinator_safety() {
 /// 그 턴은 실제 Claude처럼 입력 상자 위에 「Working… esc to interrupt」를 다음 입력까지 그린다: hook이 없는 pane은 화면
 /// 감지의 작업 중이 받았다는 사건이다(없으면 host가 `accept_wait_ms`를 다 기다린다). `@BIN@`은 aaa 실행 파일이다.
 const ADOPT_AGENT: &str = r#"#!/bin/sh
-stty icanon -echo
+stty icanon echo
 R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
 log="args: $*
 "
 "@BIN@" hook --agent claude '{"hook_event_name":"SessionStart","session_id":"5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d","source":"startup"}'
 buf=''; st=''
-draw() { printf '\033[2J\033[H%s%s%s\n\342\235\257 %s\n%s\n' "$log" "$st" "$R" "$buf" "$R"; }
+# 입력은 Enter 전부터 상자 안에 보여야 한다. 공통 Claude fixture의 prompt처럼
+# 커서를 상자 안으로 돌려 tty echo가 실제 친 글을 그리게 한다.
+draw() { printf '\033[2J\033[H%s%s%s\n\342\235\257 %s\n%s\n\033[2A\r\033[2C' "$log" "$st" "$R" "$buf" "$R"; }
 draw
 while IFS= read -r buf; do
     st=''
