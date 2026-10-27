@@ -1,3 +1,24 @@
+## E117 터미널 인용의 실제 행 준비(t-1208 착지 수리)
+
+- main `165797c0`·후보 `8d8491b1`의 변경 없는 E117을 각각 한 번 단독 실행했고 모두 통과했다.
+  병렬 실패 원문은 `selectNodeContents(undefined)`이며, 대상 검색과 Range 설정은 한 동기 호출이다.
+  그 사이 DOM이 교체됐다고 단정하지 않는다. 실제 host snapshot을 gate로 붙잡으면 래퍼·빈 xterm 행만
+  있는 상태에서 같은 TypeError가 결정적으로 재현된다. agent 출력 완료와 브라우저 행 준비는 다르다.
+- gate를 푼 첫 snapshot 그림 직후에는 autoFit resize가 다시 그려 좌표가 한 줄 밀리는 추가 실패도 관측했다.
+  `Term`의 기존 onRender 관측 표지에 그린 cols/rows를 더한다. E117은 마지막 송신 resize와 그린 크기,
+  fit 완료와 두 원문 행을 DOM 사건으로 확인한 뒤 좌표를 읽는다. 제품의 입력·인용 계약은 바꾸지 않는다.
+- 기존 입력줄 owner에 실제 WebSocket 중계 gate를 둔다. 빈 래퍼를 준비로 세지 않음을 확인한 뒤 서버의
+  원래 메시지를 같은 순서로 한 번만 풀고, 기존 실제 마우스 드래그·두 줄 원문·출처·연속 줄 번호·focus·
+  PTY 미전송·오류 없음 단언을 모두 유지한다. 새 E2E 번호/단계·고정 sleep·재시도는 없다.
+  행 준비의 실패 상한은5초이며 기존 시험의 시한·단언을 늘리거나 완화하지 않는다.
+- 최초 병렬 실패에는 해당 페이지가 finally에서 닫히기 전의 행 진단이 없다. 남은 공통 페이지의 t1 터미널
+  진단을 실패 페이지의 pane으로 해석하지 않는다. gate의 같은 오류와 제품 render 수명으로 원인을 판정한다.
+- 참고 후보는 [xterm 5.5 DOM renderer](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/renderer/dom/DomRenderer.ts)
+  ([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))와
+  [Playwright WebSocketRoute](https://playwright.dev/docs/api/class-websocketroute)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))다.
+  xterm의 행 자식 교체·비동기 렌더 수명과 실제 서버 중계 gate를 대조했으며 외부 코드·의존성을 가져오지 않았다.
+
 ## E42 맥락 단추의 재그리기와 키 focus(t-1208 착지 수리)
 
 - main `165797c0`와 후보 `762c39fc`의 원래 E42 전체를 각각 한 번 단독 실행했고 모두 약13.1초에 통과했다.
