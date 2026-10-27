@@ -4834,3 +4834,8 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - [Rust Weak](https://doc.rust-lang.org/std/sync/struct.Weak.html)·[Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html)·[canonicalize](https://doc.rust-lang.org/std/fs/fn.canonicalize.html)(MIT/Apache-2.0)와 기존 collect_locks의 자원별 잠금 소유를 대조했다. 소유권/경로 정규화 원칙을 참고하며 외부 코드나 의존성을 추가하지 않는다. 새 두 unit은 각각 실제로 한 번 실행됐는지 확인하고, 성능은 다음 전체 차례의 같은 조건 전후로 판정한다.
 - 후속 같은조건 병렬에서는 cache owner가0.914→6.704초여서 성능 개선을 입증하지 못했다. 실제1000개 파일 경계는 그대로 두고, 준비용 빈 파일997개는 한 빈 파일과 같은 폴더의 hard link로 만든다. 파일 경로/개수/0바이트·실제 owner의 마지막 추가/초과 거부·교체/실패 재계산은 유지한다. 교체 뒤 다른 빈 파일도 그대로인지 실제 bytes를 검사한다. 원래 단언/상한·기존 owner 이름을 바꾸거나 준비를 시간 밖으로 옮기지 않는다.
 - [Rust hard_link](https://doc.rust-lang.org/std/fs/fn.hard_link.html)(MIT/Apache-2.0)와 [CPython os.link](https://docs.python.org/3/library/os.html#os.link)(PSF-2.0)의 같은 filesystem 내 실제 파일 경로 공유를 대조했다. symlink·파일 수 축소·합성 usage는 쓰지 않으며, 테스트의 실제 디렉터리 항목을 유지해 inode 준비 작업만 줄인다. 새 시험·삭제·대체는 없고, 단독 통과로 보통 병렬5초 기준을 통과했다고 판정하지 않는다.
+
+## inbox 안내 말풍선의 연한 글색(t-1199)
+
+- E2E102는 주입된 `[aaa inbox]` 말풍선의 계산된 글색이 같은 대화의 사람 말과 다른지 확인한다. 필요한 이유: 표지만 남고 본문이 사람 말과 같아지는 회귀를 실제 host 대화 DOM에서 잡는다. 새 E2E 파일·단계는 없다.
+- `theme.test.mjs`는 12개 팔레트 자료의 `--text-quiet`가 말풍선 바탕(`--bg-elevated`)에서 4.5:1 이상인지 확인한다. 기본 9개 팔레트는 CSS 섞기 값이라 전후 촬영 때 headless Chromium의 계산된 색으로 대비를 쟀다(최저 catppuccin 밝음 5.14:1).
