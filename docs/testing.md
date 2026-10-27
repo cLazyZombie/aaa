@@ -4857,3 +4857,10 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - PR-only m13 `pr_followup`, `merged_pr_resolves_the_thread`, `merged_thread_cleans_its_task`, `merged_resolve_waits_for_the_routine_prompt`, `resolve_looks_up_the_pull_request_once_more`, `pr_environment_failure_is_not_recovered_by_another_thread`, `pr_unpublished_branch_never_calls_gh`, `pr_unauthenticated_machine_is_quiet_and_resumes`, `pr_missing_executable_is_quiet`를 제거한다. 삭제된 common/host PR 모듈 unit도 폐지 기능의 계약이므로 제거한다. 대체는 위 no_pr owner이며, 기존 `task_main_merge`의 원격 main·미병합·보고 누락 계약을 유지한다.
 - 변환·사본 충돌·계정 rename·dispatch·E2E40 fixture는 PR 규칙 대신 명시적인 일정 규칙을 쓴다. 완료 보관·E2E86은 main/보고/기존 완료 근거를 쓴다. sidebar unit은 과거 PR 필드가 섞여도 보고 상태만 표시한다. 기존 상태·보존·승인·권한 단언을 유지하며 시한·재시도·기대값 완화는 없다.
 - 외부 참고: [Git merge-base 소스](https://github.com/git/git/blob/master/builtin/merge-base.c)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))의 조상 판정과 [GitHub CLI run list](https://github.com/cli/cli/blob/trunk/pkg/cmd/run/list/list.go)([MIT](https://github.com/cli/cli/blob/trunk/LICENSE))의 Actions 실행 조회를 대조했다. 기존 Git/CI 경계를 재사용하며 외부 코드나 의존성을 추가하지 않는다.
+
+## PR 제거 착지 실패의 단독 대조와 fixture 수리(t-1203)
+
+- main `5211848d`와 PR 제거 후보 `383935ff`의 원본 m13 두 owner를 nice15로 하나씩 실행했다. 신뢰 질문 owner는 두 판 모두 통과했고 보고 상태 owner는 main 통과·후보의 원래 시한 실패였다. 재시도로 통과를 채택하지 않고 각 판의 첫 결과를 보존했다.
+- `report_events::report_state_precedes_completion_event`는 사건 발행 잠금의 계기로 PR routine을 토글했다. 후보는 폐지된 규칙을 목록에서 제외하므로 toggle이 즉시 `BadRequest`로 끝나 Hhold를 내지 못했다. fixture만 명시적인 `every 1h` 일정 규칙으로 이관한다. 원자 공개·H/W/R 사건·상태 저장 선행·실시간/재생 순서의 모든 단언과 원래 시한을 유지한다.
+- 원본 CI의 추가 `(trust, -)`는 brief 화면 관측이 연 질문에 답한 뒤 첫 agent Question 사건이 늦게 와 같은 질문을 다시 열고 Idle에서 닫은 기록이었다. `harness.rs`·`brief.rs`·보고 owner는 main과 실패 후보 383935ff에서 바이트가 같다. 별도 단독 진단에서 main의 실제 Host/DB에 Idle→brief 질문→답→지연 Question→Idle 순서를 재생하자 같은 두 trust 기록이 생겼다. PR 제거 전에도 존재하는 경쟁임을 확인했으며 이 범위에서는 제품의 질문 처리·원래 E2E 기대값을 바꾸지 않는다. 진단 source는 원본으로 복원했고 실패 재현 자료는 thread library에 보존했다.
+- 착지 충돌 해소 때 FRONT_API 문서 주석 사이에 넣은 빈 줄을 제거한다. API·계획 번호와 E30·35 분할은 유지한다. 전체 ci-local·cross·Windows production·push는 계측 종료 후 새 착지 차례에서 수행한다.
