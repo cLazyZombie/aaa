@@ -589,7 +589,17 @@ impl Host {
             reason,
             latest: (!title.is_empty()).then(|| tasks::find(&board.tasks, &title).cloned().map(Box::new)).flatten(),
         });
-        Ok(FrontResponse::TaskEdited { board, conflict, log_ids })
+        let mut warnings = Vec::new();
+        for id in &log_ids {
+            if let Some(entry) = self.db.task_log_get(project, *id).map_err(internal)?
+                && entry.action == TaskAction::Update
+                && let (Some(before), Some(after)) = (&entry.before, &entry.after)
+                && let Some((old, new)) = task_edit::note_loss(before, after)
+            {
+                warnings.push(format!("「{}」 메모 {old}줄→{new}줄: 기존 줄이 빠지거나 바뀌었다. 변경 전 원문: aaa --json task log (기록 #{id}, before)", entry.title));
+            }
+        }
+        Ok(FrontResponse::TaskEdited { board, conflict, log_ids, warnings })
     }
 
     /// 할 일 쓰기(편집 `task_edit`과 끝난 thread의 자동 정리가 함께 쓴다): 동작을 최신 파일에 차례로 적용해 한 번에 쓰고, 기록·ticker

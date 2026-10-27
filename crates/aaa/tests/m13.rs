@@ -5113,6 +5113,59 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     assert_eq!(files[2]["error"].as_str(), Some("없음"), "{files}");
 }
 
+/// 메모 추가·전체 교체 경고·원문 기록과 잘못된 제목의 저장 거부를 실제 CLI/host에서 지킨다.
+#[test]
+fn task_note_append_warning_and_title_validation() {
+    let w = world();
+    let file = w.projects.join("demo/TASKS.md");
+    let added = w.h.ok(&["task", "add", "메모 일", "--note", "첫째", "--note", "![그림](uploads/example.png)"]);
+    let task = &added["board"]["tasks"][0];
+    let id = task["short_id"].as_str().unwrap();
+    let block = task["block_sha256"].as_str().unwrap();
+    let appended = w.h.ok(&[
+        "task",
+        "edit",
+        id,
+        "--block",
+        block,
+        "--add-note",
+        "셋째",
+        "--add-note",
+        "넷째",
+        "--title",
+        "메모 추가됨",
+    ]);
+    assert_eq!(
+        appended["board"]["tasks"][0]["notes"],
+        serde_json::json!(["첫째", "![그림](uploads/example.png)", "셋째", "넷째"])
+    );
+    assert_eq!(appended["warnings"], serde_json::json!([]));
+    let saved = std::fs::read_to_string(&file).unwrap();
+    let stale = w.h.json(&["task", "edit", id, "--block", block, "--add-note", "경합"]).unwrap_err();
+    assert!(stale.contains("revision_conflict") || stale.contains("그사이"), "{stale}");
+    for args in [
+        vec!["task", "edit", id, "--note", "교체", "--add-note", "추가"],
+        vec!["task", "edit", id, "--clear-notes", "--add-note", "추가"],
+        vec!["task", "edit", id, "--note", "교체", "--clear-notes"],
+        vec!["task", "add", "제목 t-1182 속 번호"],
+        vec!["task", "edit", id, "--title", "제목 t-1182 속 번호"],
+        vec!["task", "edit", id, "--add-note", "거부될 추가", "--title", "제목 t-1182 속 번호"],
+    ] {
+        assert!(w.h.json(&args).is_err(), "{args:?}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
+    }
+    let replaced = w.h.run(&["task", "edit", id, "--note", "교체"]);
+    assert!(replaced.status.success());
+    let text = String::from_utf8_lossy(&replaced.stdout);
+    assert!(text.contains("메모 4줄→1줄") && text.contains("기록 #") && text.contains("--json task log"), "{text}");
+    let log = w.h.ok(&["task", "log"]);
+    let entry = &log["entries"][0];
+    assert!(entry["before"].as_str().unwrap().contains("![그림](uploads/example.png)\n  셋째\n  넷째"), "{log}");
+    assert!(entry["after"].as_str().unwrap().ends_with("\n  교체"), "{entry}");
+    let cleared = w.h.ok(&["task", "edit", id, "--clear-notes"]);
+    assert!(cleared["warnings"][0].as_str().unwrap().contains("메모 1줄→0줄"));
+}
+
 /// 할 일 편집(T2, plan §8.311): `aaa task add`는 그 블록만 붙이고 나머지 바이트를 그대로 두며 기록·`tasks` 사건을 남긴다. 읽은 뒤
 /// 파일을 직접 고치면 같은 블록 저장은 `revision_conflict`(쓰지 않음), 다른 블록 저장은 성공이고, 지운 task는 고쳐도 되살아나지
 /// 않는다. 쓰기에 묻힐 뻔한 직접 편집과 tick이 본 직접 편집은 「파일 직접」으로 적힌다. 되살리기는 한 번만. thread(보기 권한)·

@@ -372,6 +372,10 @@ pub(crate) fn check_title(title: &str) -> Result<String, String> {
     if is_task(t) {
         return Err("제목이 `[ ]`로 시작하면 안 된다".into());
     }
+    let parsed = split_line(t);
+    if !parsed.problems.is_empty() {
+        return Err(format!("{}: thread 번호는 연결 칸에, 상태·긴 글은 메모로 옮긴다", parsed.problems.join("; ")));
+    }
     Ok(t.to_string())
 }
 
@@ -425,8 +429,8 @@ pub(crate) fn reads_back(line: &str, title: &str, f: Fields) -> Result<(), Strin
     {
         return Err(format!("`{t}`가 다른 값으로 다시 읽힌다(제목 `{rt}`)"));
     }
-    if let Some(p) = problems.iter().find(|p| p.starts_with(OWNER_SHAPE)) {
-        return Err(format!("`{t}`: {p}"));
+    if !problems.is_empty() {
+        return Err(format!("`{t}`: {}. thread 번호는 연결 칸에, 상태·긴 글은 메모로 옮긴다", problems.join("; ")));
     }
     Ok(())
 }

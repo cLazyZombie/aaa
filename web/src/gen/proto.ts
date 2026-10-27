@@ -605,7 +605,7 @@ machine: string | null, notes: Array<string> | null, thread: string | null, done
 /**
  * 저장소 칸(FRONT_API 1.73, Add의 `repo`와 같은 값)
  */
-repo: string | null, } | { "op": "delete", at: TaskAnchor, } | { "op": "move", at: TaskAnchor, to_list: string, before: TaskAnchor | null, parent: TaskAnchor | null, } | { "op": "list_add", name: string, after: string | null, } | { "op": "list_rename", name: string, to: string, } | { "op": "list_merge", name: string, into: string, } | { "op": "list_delete", name: string, } | { "op": "list_move", name: string, before: string | null, } | { "op": "restore", log_id: number, list: string | null, } | { "op": "raw_save", expected_sha256: string, text: string, };
+repo: string | null, } | { "op": "append_notes", at: TaskAnchor, notes: Array<string>, } | { "op": "delete", at: TaskAnchor, } | { "op": "move", at: TaskAnchor, to_list: string, before: TaskAnchor | null, parent: TaskAnchor | null, } | { "op": "list_add", name: string, after: string | null, } | { "op": "list_rename", name: string, to: string, } | { "op": "list_merge", name: string, into: string, } | { "op": "list_delete", name: string, } | { "op": "list_move", name: string, before: string | null, } | { "op": "restore", log_id: number, list: string | null, } | { "op": "raw_save", expected_sha256: string, text: string, };
 
 export type TaskConflict = {
 /**
@@ -1386,7 +1386,11 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, repos?: Array<TaskHistoryRepo>, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+/**
+ * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.133)
+ */
+warnings?: Array<string>, } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, repos?: Array<TaskHistoryRepo>, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
 /**
  * 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
  */

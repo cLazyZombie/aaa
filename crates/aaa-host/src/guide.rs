@@ -531,8 +531,12 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
 - 사용자는 웹 할 일 화면에서 고친다. 그 결과는 `aaa context`의 task 목록에 이미 들어 있다. 따로 묻지 않고 되돌리지 않는다.
 - 모델·머신은 `aaa assignable`이 보인 것을 쓴다(`aaa task`가 같은 판정을 하고, 한 값은 `aaa assignable --check <모델@머신>`).
 - 메모의 첨부 줄(`![그림](uploads/…)`·`[제목](uploads/….md)`·`[제목](library/<보고서>/<경로>)`·`[제목](https://…)`)은 사용자가
-  웹에서 붙인 그림·문서다. `aaa task edit --notes`는 메모 전체를 바꾸니 그 줄을 함께 남긴다. `--from-task`가 그 파일을 thread에 넘긴다.
-- 형식 어긋남(괄호 칸의 상태 메모 등)은 `aaa task list`가 ▲로 보인다. 고칠지는 사용자에게 묻는다.
+  웹에서 붙인 그림·문서다. 메모 추가는 `aaa task edit <ID> --add-note "한 줄"`(여러 번)로 한다.
+  `--note`는 메모 전체 교체, `--clear-notes`는 전체 삭제다(서로 함께 쓰지 않는다). 교체할 때 첨부 줄도 함께 남긴다.
+  기존 줄이 빠지거나 바뀌면 저장 결과의 「메모 N줄→M줄」과 기록 번호를 확인한다. `aaa --json task log`의 `before`에 변경 전 원문이 있다.
+  `--from-task`가 그 파일을 thread에 넘긴다.
+- 제목 속 thread 번호·긴 제목 등 목록의 형식 어긋남은 add·edit와 웹 저장에서 미리 거부한다. thread 번호는 `--thread` 연결 칸,
+  상태·긴 글은 `--add-note` 메모로 옮긴다. 기존 형식 어긋남은 `aaa task list`의 ▲ 표시를 유지한다. 고칠지는 사용자에게 묻는다.
 - task를 thread에 맡길 때는 `aaa thread start --from-task <task ID> --link-task …`로 시작한다. host가 줄 끝에 ` · <thread id>`를
   붙인다(따로 시작했으면 `aaa task edit <task ID> --thread <id>`). 사용자가 그만둔다고 하면 줄을 지운다(메모도 함께).
 - 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 새 작업을 맡긴 요청에는 할 일 기록도 포함된다. 끝난 thread의 task 정리는 host가 한다(아래 「thread가 끝나면」).

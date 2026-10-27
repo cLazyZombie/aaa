@@ -2693,6 +2693,11 @@ pub enum TaskOp {
         #[serde(default)]
         repo: Option<String>,
     },
+    /// 기존 메모 원문 끝에 줄을 더한다(FRONT_API 1.133). 블록 hash 충돌·기록은 Update와 같다.
+    AppendNotes {
+        at: TaskAnchor,
+        notes: Vec<String>,
+    },
     /// task 블록을 하위 task와 함께 지운다(기록에 남아 되살릴 수 있다)
     Delete {
         at: TaskAnchor,

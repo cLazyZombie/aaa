@@ -1,3 +1,11 @@
+## 할 일 메모 추가·교체 경고·저장 전 형식 검사(t-1197)
+
+- host `task_edit::tests::append_notes_keeps_raw_block_and_conflicts`는 CRLF·공백·첨부와 같은 기존 메모 원문·하위 task·개행 없는 끝을 보존하고, 같은 요청의 추가 뒤 제목 변경·오래된 블록 거부·메모 문법 거부를 검사한다. 필요한 이유: 전체 메모 재구성으로 원문이 손상되거나 경합 변경을 덮는 것을 막는다.
+- `note_loss_detects_removed_and_replaced_lines`는 정상 추가·순서 이동 무경고·줄 감소·같은 줄 수 교체·중복 줄 감소·전체 삭제를 검사한다. 필요한 이유: 줄 수 비교만으로 놓치는 기존 내용 유실을 막는다. 기존 `save_checks`에 제목 속 thread 번호와 120자를 넘는 제목 거부를 추가한다.
+- 실제 CLI·host m13 `task_note_append_warning_and_title_validation`은 짧은 d-ID와 hash로 여러 번 추가·제목 변경을 함께 저장하고, 오래된 hash·옵션 충돌·add/edit의 잘못된 제목이 파일을 바꾸지 않는지 본다. 교체의 사람이 읽는 경고와 JSON task log의 before/after·삭제 경고도 본다. 필요한 이유: clap·ID 해석·직렬화·원자 저장·DB 기록·화면 출력까지의 연결 계약을 유닛만으로 지킬 수 없기 때문이다.
+- 기존 E2E46에 실제 웹 메모 추가·첨부 보존·유실 무경고, 제목 저장 거부·원문 보존, 교체 뒤 줄 수 경고와 task log 원문, 저장 거부 때 추가 입력 보존을 네 단계로 더한다. 필요한 이유: 저장 응답 경고가 화면에서 사라지거나 추가 입력이 기존 메모를 교체하는 회귀를 막는다. 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 새 E2E 번호는 만들지 않는다.
+- 검증 범위: 관련 host 유닛과 m13, proto 생성 일치, 웹 유닛·타입/빌드·E2E46, 의존 경계·strict clippy·fmt·공개 검사. 전체 ci-local·cross와 main 병합/push는 정규 착지 차례에서 수행한다. 참고 후보와 호환은 plan §8.517에 적는다.
+
 ## E2E03·105 비동기 관측과 CI 웹 실패 수집(t-1184)
 
 - 원본 [macOS web-e2e job](https://github.com/cLazyZombie/aaa/actions/runs/40477028804/job/122097672768)

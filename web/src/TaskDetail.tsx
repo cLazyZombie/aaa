@@ -357,6 +357,8 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
   // 메모가 있는 task는 그린 메모부터 보인다(보기 기기와 같다). 「고치기」가 입력 칸으로 바꾼다
   const [preview, setPreview] = useState(() => (t?.notes.length ?? 0) > 0);
   const notesInput = useRef<HTMLTextAreaElement>(null);
+  const [noteToAdd, setNoteToAdd] = useState("");
+  const [addingNote, setAddingNote] = useState(false);
   const editNotes = useRef(false);
   useEffect(() => {
     if (!preview && editNotes.current) notesInput.current?.focus();
@@ -823,6 +825,26 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
           ) : (
             <textarea ref={notesInput} className="input task-notes-input" value={memoText(draft.notes)} disabled={busy} rows={5} onChange={(e) => { const text = e.target.value; setDraft((d) => ({ ...d, notes: withMemoText(d.notes, text) })); }} onPaste={pasteIntoNotes} aria-label="메모" data-testid="task-field-notes" placeholder="Markdown" />
           )}
+          <div className="task-note-add">
+            <input className="input" value={noteToAdd} disabled={busy || addingNote} aria-label="추가할 메모" data-testid="task-note-add-input" onChange={(e) => setNoteToAdd(e.target.value)} />
+            <button type="button" className="btn" disabled={busy || addingNote || !noteToAdd.trim()} data-testid="task-note-add" onClick={() => {
+              const line = noteToAdd.trim();
+              if (!line) return;
+              const add = (notes: string) => notes ? `${notes}\n${line}` : line;
+              const now = latest.current;
+              if (!now.base || now.dirty || !onChangeNotes) {
+                setDraft((d) => ({ ...d, notes: add(d.notes) }));
+                setNoteToAdd("");
+                return;
+              }
+              setAddingNote(true);
+              setError(null);
+              void onChangeNotes(now.base, add).then(
+                () => { if (mounted.current) setNoteToAdd(""); },
+                (e: unknown) => { if (mounted.current) setError(e instanceof Error ? e.message : String(e)); },
+              ).finally(() => { if (mounted.current) setAddingNote(false); });
+            }}>메모 추가</button>
+          </div>
         </section>
         <TaskAttachments
           project={board.project}

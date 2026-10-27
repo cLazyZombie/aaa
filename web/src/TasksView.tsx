@@ -472,10 +472,12 @@ export function TasksView({
   }, [target, onTarget]);
 
   /** host에 동작을 보내고 새 board를 넣는다. 충돌이면 창을 띄우고 null */
+  const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
   const edit = async (ops: TaskOp[], mine: MyEdit | null) => {
     const r = await call({ op: "task_edit", ops, base_sha256: null });
     if (r.kind !== "task_edited") throw new Error(`예상하지 못한 응답: ${r.kind}`);
     onBoard(r.board);
+    setSaveWarnings(r.conflict ? [] : (r.warnings ?? []));
     if (r.conflict) {
       setDialog({ kind: "conflict", conflict: r.conflict, mine });
       return null;
@@ -506,7 +508,8 @@ export function TasksView({
       if (after.join("\n") === before.join("\n")) return;
       const owner = cur.owner === "agent" ? null : cur.owner;
       const r = await edit([{ op: "update", at: anchorOf(cur), title: null, owner: null, person: false, profile: null, machine: null, notes: after, thread: null, done: null, repo: null }], { title: cur.title, owner, thread: cur.thread, notes: after });
-      if (r) boardRef.current = r.board;
+      if (!r) throw new Error("메모를 저장하지 않았다. 충돌 화면에서 최신 내용을 확인한다");
+      boardRef.current = r.board;
     });
     notesChain.current = next.catch(ignoredFailure("TasksView.tsx:491", () => undefined));
     return next;
@@ -829,6 +832,12 @@ export function TasksView({
           <button type="button" className="linkish" onClick={() => setStarted(null)}>
             닫기
           </button>
+        </div>
+      )}
+      {saveWarnings.length > 0 && (
+        <div className="banner" role="status" data-testid="tasks-note-warning">
+          {saveWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+          <button type="button" className="linkish" onClick={() => setSaveWarnings([])}>닫기</button>
         </div>
       )}
       {opError && (
