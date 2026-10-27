@@ -8200,4 +8200,6 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 ### 8.520 E2E12 대체 소켓의 연결 중 취소 경합(t-1211)
 
 - `Term.tsx` 전송 누락 가설을 조사했으나 현재 전송은 모두 OPEN을 검사한다. 원래 events route를 건 실제 host 페이지에서 pane 소켓을 CONNECTING 중 취소하면 전송 없이 Playwright의 snapshot 수신 전달이 예외를 낸다. 실제 Chromium·WebKit 소켓은 같은 순서에서 정상 종료한다. 최초 간헐 실패 원문은 남아 있지 않아 당시 호출 위치까지 확정하지 않는다.
-- E2E12는 `routeWebSocket`을 빼고 관측하는 실제 events 소켓을 닫아 재연결한다. 기존 HTTP 보류·두 독립 완전 목록·실제 DOM 검사는 유지하고, 연결 중 pane 취소 keeper를 두 엔진의 기존 단계에 더한다. 제품·FRONT_API·AGENT_LINK·의존성·E2E 번호는 바꾸지 않으며 배포가 필요 없다. 재현과 참고 구현·라이선스는 docs/testing.md에 적는다.
+- E2E12는 `routeWebSocket`을 빼고 관측하는 실제 events 소켓을 닫아 재연결한다. 기존 HTTP 보류·두 독립 완전 목록·실제 DOM 검사는 유지하고, 연결 중 pane 취소 keeper를 두 엔진의 기존 단계에 더한다. 제품·FRONT_API·AGENT_LINK·의존성·E2E 번호는 바꾸지 않으며 배포가 필요 없다. 재현과 참고 구현·라이선스는 docs/testing-terminal-socket.md에 적는다.
+
+- 첫 착지의 이전 문서 응답 선행 실패는 gate를 reload 문서에 묶고 그 문서의 events open·close 사건으로 disconnect를 끝내도록 수리한다. 두 사건 순서 keeper가 수리 전 실패/후 통과를 보이며 기존 시한·목록 단언을 유지한다.

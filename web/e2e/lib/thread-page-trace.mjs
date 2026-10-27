@@ -8,12 +8,22 @@ export function threadTraceDocument() {
 }
 
 // 실제 브라우저 연결을 닫는다. routeWebSocket은 대상 밖 pane 연결까지 대체하므로 쓰지 않는다.
-export function disconnectThreadEvents() {
-  const socket = document.__aaaThreadEventsSocket;
-  if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("끊을 events 연결이 열려 있지 않다");
-  const closed = new Promise(resolve => socket.addEventListener("close", resolve, { once: true }));
-  socket.close(4012, "E2E12 재연결 경계");
-  return closed.then(() => {});
+export function disconnectThreadEvents(expectedDocument) {
+  if (document.__aaaThreadTraceDocument !== expectedDocument) throw new Error("끊을 events 연결의 문서가 바뀌었다");
+  return new Promise((resolve, reject) => {
+    const onOpen = () => queueMicrotask(closeReady);
+    const closeReady = () => {
+      const socket = document.__aaaThreadEventsSocket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      document.removeEventListener("aaa-thread-events-open", onOpen);
+      // open listener가 모두 끝난 뒤 닫는다. 앱의 onopen보다 먼저 close하지 않는다.
+      socket.addEventListener("close", () => resolve(), { once: true });
+      try { socket.close(4012, "E2E12 재연결 경계"); }
+      catch (error) { reject(error); }
+    };
+    document.addEventListener("aaa-thread-events-open", onOpen);
+    closeReady();
+  });
 }
 
 export function traceThreadRequests() {
@@ -28,7 +38,11 @@ export function traceThreadRequests() {
       if (!String(args[0]).endsWith("/api/v1/events")) return;
       document.__aaaThreadEventsSocket = this;
       const link = ++nextConnection;
-      this.addEventListener("open", () => { connection = link; log({ event: "ws-open", link }); });
+      this.addEventListener("open", () => {
+        connection = link;
+        log({ event: "ws-open", link });
+        document.dispatchEvent(new Event("aaa-thread-events-open"));
+      });
       this.addEventListener("close", e => log({ event: "ws-close", link, code: e.code }));
     }
   };
