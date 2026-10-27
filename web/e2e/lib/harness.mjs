@@ -40,6 +40,8 @@ const env = {
   AAA_TEST_DETECT_GRACE_MS: "0",
   // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게
   AAA_TEST_BUILTINS: "",
+  // macOS 책임 경로를 실행기에서 물려받지 않게(ssh에서 돌리면 「느린 빌드」 배너가 화면 높이를 바꾼다. 관측값은 89가 주입한다)
+  AAA_TEST_RESPONSIBILITY: "none",
   // 「SSH로 추가」가 같은 판 release launcher를 찾을 때 실제 GitHub에 가지 않는다(닫힌 loopback 포트, 개발 빌드 host만 읽는다)
   AAA_TEST_RELEASE_BASE: "http://127.0.0.1:9/releases",
 };
