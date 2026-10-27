@@ -1,3 +1,9 @@
+## 답보다 늦은 첫 신뢰 질문 관측(t-1212, plan §8.521)
+
+- `harness::tests::a_late_first_trust_observation_keeps_the_answered_brief_question`은 실제 Host·SQLite·`thread_brief`·`answer`를 쓰고 가짜 agent 연결의 Screen/Input 응답만 소유한다. Idle → brief 화면 질문 → yes 저장 → 같은 첫 Question → Idle 순서를 직접 실행해 기록 하나의 Answered·yes와 열린 중복 없음·Gone 기록 없음, 막힘이 끝난 뒤 같은 질문 재등장과 `ask_anew.v1`/옛 agent의 재질문 차이를 확인한다. 필요한 이유: 첫 Question을 먼저 주입하는 기존 늦은 사건 회귀만으로는 brief가 앞선 경쟁을 지킬 수 없기 때문이다. 수리 전 같은 회귀는 첫 관측의 중복 열기로 실패했다.
+- `a_different_first_observation_is_not_an_answered_screen_question`은 답한 신뢰 창과 종류가 다른 권한 창, 같은 종류지만 본문이 다른 신뢰 창을 즉시 열고 답 전 반복 관측은 한 질문에 묶는지 검사한다. 필요한 이유: 첫 관측을 무조건 버리거나 옛 답 표지가 새 질문을 가리는 수리를 막아야 하기 때문이다.
+- 부분 검증은 Windows에서 BelowNormal 우선순위로 `cargo test --profile verify --locked -p aaa-host --lib -- harness::tests:: brief::tests::`, host strict clippy, 의존 경계·fmt·공개 검사다. 원래 m13 `claude_thread_states_questions_and_messages`는 Unix 전용이므로 전체 ci-local·cross와 함께 정규 착지 차례에서 확인한다. 원래 m13 기대값·시한, agent의 800ms 경계는 바꾸지 않으며 고정 sleep·재시도·시한 확대·새 E2E 번호는 없다.
+
 ## 할 일 메모 추가·교체 경고·저장 전 형식 검사(t-1197)
 
 - host `task_edit::tests::append_notes_keeps_raw_block_and_conflicts`는 CRLF·공백·첨부와 같은 기존 메모 원문·하위 task·개행 없는 끝을 보존하고, 같은 요청의 추가 뒤 제목 변경·오래된 블록 거부·메모 문법 거부를 검사한다. 필요한 이유: 전체 메모 재구성으로 원문이 손상되거나 경합 변경을 덮는 것을 막는다.

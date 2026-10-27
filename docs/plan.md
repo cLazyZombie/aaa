@@ -8137,3 +8137,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 자동화 schema의 source=pr·on.pr, 웹 선택지·thread/머신 PR 표시·완료 보관의 PR 필터를 제거한다. 옛 PR 규칙은 실행·오류 알림·변환에서 제외하며 doctor가 원본을 `.before-aaa`로 보존한다. 기본 규칙은 만들지 않는다.
 - coordinator 안내·brief·guide는 착지 상태(main SHA·push 여부)를 보고한다. 이 절 이전의 PR 조회·병합 추적 설명은 과거 기록이며 현재 워크플로가 아니다. FRONT_API 1.135, agent link 판은 유지하고 PR 기능 광고를 제거한다.
 - CI 감시는 push Actions run 조회만 사용하므로 유지한다. 외부 구현은 Git merge-base(GPL-2.0)와 GitHub CLI run list(MIT)의 조상 판정·실행 조회 분리를 대조했으며 코드를 복사하지 않는다.
+
+### 8.521 답보다 늦은 첫 신뢰 질문 관측(t-1212)
+
+- brief 화면 읽기가 먼저 연 신뢰 질문에 답하면, host의 harness 상태가 아직 시작·쉼이어도 같은 종류·본문의 첫 Question 사건은 이미 답한 질문에 묶는다. Idle에서 Gone으로 닫히는 중복 기록도 만들지 않는다.
+- 답한 질문의 종류·본문은 pane 안에서만 기억한다. agent 시각과 host 시각을 비교하거나 기다림을 늘리지 않는다. 다른 질문은 바로 열고, 막힘을 벗어난 뒤 같은 질문이 다시 나타나도 새 질문으로 연다. 이미 관측한 막힘의 `ask_anew.v1` 재질문과 옛 agent의 중복 사건 처리도 유지한다. 저장·프로토콜·웹 API는 바꾸지 않는다.
+- 회귀는 실제 Host·SQLite·brief 처리·답 저장을 사용해 Idle → brief 질문 → yes → 첫 Question → Idle을 직접 순서대로 실행한다. 질문 하나의 Answered·yes 보존과 새 확인창 허용을 함께 검사한다. 원래 m13의 기대값·시한과 agent 감지기의 800ms 경계는 유지한다.
+- 참고 후보는 [Tokio watch의 관측과 변경 알림 구분](https://docs.rs/tokio/latest/tokio/sync/watch/index.html#borrow_and_update-versus-borrow)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))과 [Temporal의 명령·사건 대응 및 재생](https://docs.temporal.io/encyclopedia/event-history/event-history-go)([MIT](https://github.com/temporalio/sdk-rust/blob/main/LICENSE.txt))이다. 같은 관측과 새 사건을 구별하는 원칙만 참고하며 외부 코드·의존성은 가져오지 않는다.
