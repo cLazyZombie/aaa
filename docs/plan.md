@@ -8179,3 +8179,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 글 꼴: 머리 `인용: <출처>`. 출처는 thread pane이면 thread ID, coordinator면 `coordinator`, 그 밖은 `<머신> <pane 이름>`이다. 대화는 `· Claude 답`·`· Codex 답`·`· 사람 글`(명령·명령 출력·생각·도구)을 붙이고 여러 말에 걸치면 붙이지 않으며 줄마다 `> `다. 터미널은 `터미널 a~b줄`(xterm 버퍼 줄, 1부터, 다음 줄 첫 칸에서 끝난 선택은 앞 줄까지)과 글 안 backtick 줄보다 긴 울타리다. 대화 글은 화면 글자이며 단추·접기·대기 표지·기록 안내 줄은 빼고 블록 사이를 줄바꿈한다.
 - 참고: t3code `apps/web/src/components/chat/AssistantSelectionToolbar.tsx`·`lib/assistantTextSelection.ts`·`lib/selectionActions.ts`(MIT, 36d4d711: 놓은 뒤 띄우기·단추가 선택을 풀지 않음·글자 아닌 것 빼기·화면 안 자리), herdr-web-ui `src/lib/terminalQuote.ts`·`src/components/PaneTerminal.tsx` 「Quote in message」(MIT, 166290b: 머리·울타리·초안 끝에 붙이기·넘침 거부). 다른 곳: aaa 입력창은 칩이 없는 글이라 t3code의 링크·`<assistant_citations>` 펼치기 대신 받는 agent가 그대로 읽는 Markdown으로 넣는다. 인용 위치 복원·선택 의견·보고 판·diff 줄 의견은 후속이다.
 - 착지 기준 main §8.524·FRONT_API 1.138 다음 §8.525·FRONT_API 1.139를 쓴다. wire·저장 형식·AGENT_LINK는 그대로다. E30·35의 기존 두 파일 분할을 보존한다. 웹 유닛 `selectionQuote.test.mjs`, 웹 E2E117 `117-selection-quote`(main의 E2E116 다음 번호).
+
+
+### 8.526 큰 응답 가림 검색과 Python 성공 fixture 분류 수리(t-1216)
+
+- 원본 macOS CI의 단계별 누적 시간과 전체 aaa_host 로그를 먼저 확보했다. 등록 비밀의 앞 두 바이트 후보가 없는 창은 해시 검색을 건너뛰고, 후보는 기존 8바이트 집합으로 정확히 검사한다. 등록·복원과 같은 잠금 안에서 후보 표를 갱신하며 ANSI/청크·분할 경계와 원본 hash 전 가림 금지 계약을 유지한다.
+- FailureScan은 gh의 여러 줄 annotation에서 시각 없이 탭 뒤에 놓인 `[python exit=0]`도 성공한 suite의 출력으로 읽는다. 같은 이름의 실제 Rust 실패와 Python 비정상 종료, t-1208 스택 초과 수집·원문 보존을 유지한다. 5초 상한·원본 데이터·단계·기대값을 줄이거나 늘리지 않는다.
+- 기준 main §8.525 다음 §8.526이다. wire·API 변경이 없으므로 FRONT_API 1.139·AGENT_LINK 1.11을 유지한다. 기존 E30·35의 두 파일 분할과 E2E01~117을 보존한다. 전체 ci-local·공개 검사·Linux/Windows strict cross·Windows production과 개인정보 검사를 검증용 macOS 전용 worktree에서 수행한다. 성공 뒤 ff push/원격 SHA와 salt 설치기의 Windows SHA·판만 확인하며 설치·웹 기기 페어링·GitHub CI 대기를 하지 않는다.
+- 첫 착지 E103에서 재구독의 같은 기록 signature가 복귀 read 중 다시 invalidate되는 경로를 수리한다. 같은 pane의 마지막 signature를 유지해 동일 값 재전달만 거르고, 다른 기록·다른 pane의 알림은 유지한다. 실제 lane의 응답 gate로 수리 전 중복 read를 재현하며 기존 복귀1회·시한·조합을 유지한다. 별도 커밋 뒤 새 worktree에서 전체 착지 회차를 다시 수행한다.

@@ -278,7 +278,7 @@ export function tellAlert(m: Omit<Extract<EventsClientMsg, { t: "alert" }>, "t">
 }
 
 /** 대화 보기가 청한 pane의 알림: 기록이 바뀌었다(`changed`), 또는 host가 그 pane의 바뀜을 지금 알릴 수 있는가(`live`) */
-export type ChatNote = { changed: true } | { live: boolean };
+export type ChatNote = { changed: true; signature: string } | { live: boolean };
 /** pane마다 대화를 보는 화면의 받는 곳(차이 목록 C3, herdr-web-ui ws.ts `conversationWanted`). 연결이 열리면 모두 다시 청한다 */
 const chatWanted = new Map<string, Set<(note: ChatNote) => void>>();
 
@@ -493,7 +493,7 @@ export function watchEvents(
         onRollout(ev.result);
         for (const listener of rolloutListeners) listener();
       }
-      else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });
+      else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true, signature: ev.signature });
       else if (ev.ev === "chat_watching") tellChat(ev.pane, { live: ev.live });
       else if (ev.ev === "pong" && probeIds.has(ev.id)) {
         probeDrops = 0;

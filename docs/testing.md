@@ -29,6 +29,33 @@
   공개 검사다. Playwright 1.64.1과 공용 브라우저 캐시를 쓴다. 전체 ci-local·cross·병합·push는
   정규 착지 차례에서 수행한다.
 
+## E103 재구독의 같은 기록 알림과 복귀 읽기(t-1216 착지 수리)
+
+- 첫 착지의 E103은 지연 회선 Chromium1280/coordinator/trial1에서 최신 요청2회로 실패했다.
+  보존된 return-body는2342.5ms·응답1회다. t-1147의 protocol은 count/lookup/commit의 DOM·Runtime만
+  기록하므로 복귀 구간의 Network 요청·예약 호출 스택은 없다. 이 원문만으로 두 번째 예약자를
+  소급 확정했다고 하지 않는다. t-1147 보고와 t-1134의 이전 read/복귀 경계도 먼저 읽었다.
+- 같은 합성 fixture의 별도 관측에서 복귀 effect의 `refresh()`로 최신 요청이 시작된 뒤,
+  재구독이 기존과 같은 signature의 chat_changed를 재전달하는 순서를 확보했다.
+  api가 signature를 버려 `invalidate()`가2초 trailing read를 남기는 실제 경로가 있다.
+  해당 순서를 실제 ConversationRefresh의 응답 보류 gate와 정지 단조 시계로 고정하면
+  수리 전 처음1회+복귀1회가 아니라3회로 실패한다. 부하·간헐로 결론내지 않는다.
+- API가 이미 받는 signature를 내부 ChatNote로 전달하고, 같은 pane의 마지막 signature를
+  lane에 유지한다. 같은 값의 재전달은 추가 invalidate를 만들지 않는다. 다른 signature는
+  읽는 중에도 다음 확인을 남기며 다른 pane으로 바뀌면 이전 signature를 잊는다.
+  복귀의 강제 최신 확인·2초 변경 경계·10초 backstop·직렬화·숨김 정리와 wire는 유지한다.
+- 새 `conversationRefresh.test.mjs` keeper1개가 필요한 이유는 재구독의 중복 확인을 막으면서
+  실제 변경·다른 pane의 확인을 잃지 않아야 하기 때문이다. 응답 gate의 완료로 끝나고 실제로
+  2초를 자지 않는다. 수리 전 실패 원문과 수리 후 통과를 보존한다. fixture 정리 순서와 다른
+  pane read 시작의 비동기 경계 오류도 원문을 보존한 뒤 사건 대기로 수리했다.
+- 기존 E103의 모든 조합·trial·과거 위치·동일 DOM·초안·과거 요청0회·복귀 최신1회·시한을
+  그대로 확인한다. 시험 집계 창·기대값·시한·데이터·단계는 바꾸지 않는다.
+- 참고는 [VS Code Event.latch](https://github.com/microsoft/vscode/blob/main/src/vs/base/common/event.ts)
+  ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))와
+  [RxJS distinctUntilChanged](https://github.com/ReactiveX/rxjs/blob/7.8.2/src/internal/operators/distinctUntilChanged.ts)
+  ([Apache-2.0](https://github.com/ReactiveX/rxjs/blob/7.8.2/LICENSE.txt))다.
+  같은 키의 연속 알림을 걸러 내는 원칙만 참고하며 외부 코드·실행 의존성을 추가하지 않는다.
+
 ## E117 터미널 인용의 실제 행 준비(t-1208 착지 수리)
 
 - main `165797c0`·후보 `8d8491b1`의 변경 없는 E117을 각각 한 번 단독 실행했고 모두 통과했다.
