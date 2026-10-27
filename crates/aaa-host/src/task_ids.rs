@@ -34,7 +34,7 @@ impl Host {
                 *thread = id;
             }
             match op {
-                TaskOp::Update { at, .. } | TaskOp::Delete { at } => resolve(at)?,
+                TaskOp::Update { at, .. } | TaskOp::AppendNotes { at, .. } | TaskOp::Delete { at } => resolve(at)?,
                 TaskOp::Move { at, before, parent, .. } => {
                     resolve(at)?;
                     for a in before.iter_mut().chain(parent.iter_mut()) {

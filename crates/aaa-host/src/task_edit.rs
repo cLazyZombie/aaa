@@ -49,6 +49,27 @@ pub(crate) enum Fail {
     Bad(String),
 }
 
+/// 교체 결과에서 기존 메모 줄이 빠졌는가. 순서 이동은 허용하고 중복 줄 수는 비교한다.
+pub(crate) fn note_loss(before: &str, after: &str) -> Option<(usize, usize)> {
+    let old = tasks::parse(before).into_iter().next()?.notes;
+    let new = tasks::parse(after).into_iter().next()?.notes;
+    let mut counts = std::collections::HashMap::new();
+    for line in &new {
+        *counts.entry(line).or_insert(0usize) += 1;
+    }
+    old.iter()
+        .any(|line| {
+            let count = counts.entry(line).or_default();
+            if *count == 0 {
+                true
+            } else {
+                *count -= 1;
+                false
+            }
+        })
+        .then_some((old.len(), new.len()))
+}
+
 /// 기록에서 되살릴 항목(삭제 기록의 목록·블록 원문)
 pub(crate) struct Removed {
     pub list: String,
@@ -417,7 +438,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                 let s = spans[find(&spans, at, i)?].clone();
                 let v = &s.view;
                 let new_title = match title {
-                    Some(t) if t.trim() != v.title => tasks::check_title(t).map_err(&bad)?,
+                    Some(t) => tasks::check_title(t).map_err(&bad)?,
                     _ => v.title.clone(),
                 };
                 let edited = tasks::edited_owner(
@@ -515,6 +536,33 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     renames.push((v.block_sha256.clone(), new));
                 }
                 records.push(r);
+            }
+            TaskOp::AppendNotes { at, notes } => {
+                let spans = d.spans();
+                let s = spans[find(&spans, at, i)?].clone();
+                let notes = check_notes(notes).map_err(&bad)?;
+                if notes.is_empty() {
+                    continue;
+                }
+                let mut r = Record::new(TaskAction::Update, &s.view.list, &s.view.title);
+                r.before = Some(d.plain_text(s.idx, s.block_end));
+                r.thread = s.view.thread.clone();
+                let ws = s.ws(&d).to_string();
+                let had_eol = d.lines[s.block_end].ends_with('\n');
+                let block = notes
+                    .iter()
+                    .map(|l| if l.is_empty() { d.eol.to_string() } else { format!("{ws}  {l}{}", d.eol) })
+                    .collect();
+                d.insert(s.block_end + 1, block);
+                let end = s.block_end + notes.len();
+                if !had_eol {
+                    d.lines[end] = plain(&d.lines[end]).to_string();
+                }
+                r.after = Some(d.plain_text(s.idx, end));
+                records.push(r);
+                if let Some(new) = sha_at(&d, s.idx) {
+                    renames.push((s.view.block_sha256.clone(), new));
+                }
             }
             TaskOp::Delete { at } => {
                 let spans = d.spans();
@@ -752,6 +800,7 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
             done: *done,
             repo: repo.clone(),
         },
+        TaskOp::AppendNotes { at, notes } => TaskOp::AppendNotes { at: r(at), notes: notes.clone() },
         TaskOp::Delete { at } => TaskOp::Delete { at: r(at) },
         TaskOp::Move { at, to_list, before, parent } => {
             TaskOp::Move { at: r(at), to_list: to_list.clone(), before: ro(before), parent: ro(parent) }
@@ -1120,6 +1169,45 @@ mod tests {
         assert!(run(MD, vec![TaskOp::Delete { at: by_title }]).is_ok());
     }
 
+    /// 추가는 원문·줄 끝·하위를 보존하고, 앞 동작 뒤에도 같은 블록을 찾는다.
+    #[test]
+    fn append_notes_keeps_raw_block_and_conflicts() {
+        let md =
+            "## A\r\n- [ ] 상위 (me)  \r\n  원래  \r\n\r\n    들여씀\r\n  - [ ] 하위\r\n    자식 메모\r\n- [ ] 마지막";
+        let at = anchor(md, "상위");
+        let append = |at| TaskOp::AppendNotes { at, notes: vec!["새 줄".into(), "둘째".into()] };
+        let mut rename = update(at.clone());
+        if let TaskOp::Update { title, .. } = &mut rename {
+            *title = Some("바뀐 제목".into());
+        }
+        let a = run(md, vec![append(at.clone()), rename]).unwrap();
+        assert_eq!(
+            a.text,
+            md.replace("상위 (me)", "바뀐 제목 (me)")
+                .replace("  - [ ] 하위", "  새 줄\r\n  둘째\r\n  - [ ] 하위")
+                .replace("(me)  ", "(me)")
+        );
+        assert_eq!(a.records[0].before.as_deref(), Some("- [ ] 상위 (me)  \n  원래  \n\n    들여씀"));
+        assert_eq!(a.records[0].after.as_deref(), Some("- [ ] 상위 (me)  \n  원래  \n\n    들여씀\n  새 줄\n  둘째"));
+        assert!(matches!(run(&md.replace("원래", "경합"), vec![append(at)]), Err(Fail::Conflict { .. })));
+        let tail = run(md, vec![append(anchor(md, "마지막"))]).unwrap();
+        assert!(tail.text.ends_with("- [ ] 마지막\r\n  새 줄\r\n  둘째"));
+        let invalid = TaskOp::AppendNotes { at: anchor(md, "상위"), notes: vec!["- [ ] 오독".into()] };
+        assert!(matches!(run(md, vec![invalid]), Err(Fail::Bad(_))));
+    }
+
+    /// 교체 경고는 같은 줄 수의 유실·중복 감소도 잡고 정상 추가엔 뜨지 않는다.
+    #[test]
+    fn note_loss_detects_removed_and_replaced_lines() {
+        let block = |notes: &str| format!("- [ ] 일\n{notes}");
+        let before = block("  첫째\n  둘째\n  둘째");
+        assert_eq!(note_loss(&before, &block("  첫째\n  둘째\n  둘째\n  추가")), None);
+        assert_eq!(note_loss(&before, &block("  둘째\n  첫째\n  둘째")), None);
+        assert_eq!(note_loss(&before, &block("  첫째\n  둘째")), Some((3, 2)));
+        assert_eq!(note_loss(&before, &block("  첫째\n  둘째\n  교체")), Some((3, 3)));
+        assert_eq!(note_loss(&before, &block("")), Some((3, 0)));
+    }
+
     /// 저장 검사: `)` 끝 제목, ` · t-` 제목, 중복 제목(대소문자 무시), 사람 owner 표시, task 꼴 메모
     #[test]
     fn save_checks() {
@@ -1139,6 +1227,8 @@ mod tests {
         for (op, why) in [
             (add("상태 메모 (S4 뒤)", None, false, vec![]), "`)`로 끝나면"),
             (add("웹 화면 · t-0002", None, false, vec![]), "thread로 읽힌다"),
+            (add("번호 t-1182가 묻힌 일", None, false, vec![]), "연결 칸"),
+            (add(&"긴".repeat(121), None, false, vec![]), "메모로 옮긴다"),
             (add("상위", None, false, vec![]), "같은 제목"),
             (add("새 일", Some("Priya"), false, vec![]), "사람 이름으로 읽힌다"),
             (add("새 일", Some("t-0001 뒤, 지시 시"), true, vec![]), "owner 꼴"),

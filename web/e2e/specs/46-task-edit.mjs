@@ -459,4 +459,54 @@ export default async function ({ page }) {
     await editor.waitFor({ state: "detached" });
     expectFile(await saved(page, before), `${direct}- [ ] 원문으로 더함\n`, "원문 편집");
   });
+  await step("메모 추가: 기존 메모와 첨부를 보존해 바로 저장한다", async () => {
+    aaa("task", "add", "입력 보강 확인", "--note", "원래 메모", "--note", "[자료](https://example.com)");
+    aaa("ticker", "tick");
+    await shaIs(page, sha(read()));
+    await pickRow(page, "입력 보강 확인");
+    await page.getByTestId("task-note-add-input").fill("추가 메모");
+    const before = await shaOf(page);
+    await page.getByTestId("task-note-add").click();
+    const text = await saved(page, before);
+    if (!taskContent(text).includes("  원래 메모\n  [자료](https://example.com)\n  추가 메모")) throw new Error(text);
+    if (await page.getByTestId("tasks-note-warning").count()) throw new Error("추가에는 유실 경고가 없어야 한다");
+  });
+
+  await step("저장 전 제목 검사: 묻힌 thread 번호는 거절하고 원문을 보존한다", async () => {
+    const before = read();
+    await page.getByTestId("task-field-title").fill("입력 보강 t-1182 확인");
+    await page.getByTestId("task-save").click();
+    const error = page.getByTestId("task-form-error");
+    await error.waitFor();
+    if (!(await error.textContent()).includes("연결 칸")) throw new Error(await error.textContent());
+    expectFile(read(), before, "제목 저장 거부");
+    await page.getByTestId("task-field-title").fill("입력 보강 확인");
+  });
+
+  await step("메모 교체: 줄 감소 경고와 변경 전 원문 기록을 보인다", async () => {
+    await page.getByTestId("task-notes-toggle").click();
+    await page.getByTestId("task-field-notes").fill("교체 메모");
+    const before = await shaOf(page);
+    await page.getByTestId("task-save").click();
+    await saved(page, before);
+    const warning = page.getByTestId("tasks-note-warning");
+    await warning.waitFor();
+    if (!(await warning.textContent()).includes("메모 3줄→2줄")) throw new Error(await warning.textContent());
+    const log = aaa("task", "log");
+    const entry = log.entries.find((e) => e.title === "입력 보강 확인" && e.before?.includes("추가 메모"));
+    if (!entry?.before.includes("[자료](https://example.com)") || !entry.after.includes("교체 메모")) throw new Error(JSON.stringify(log));
+  });
+
+  await step("메모 추가 거부: 저장 전 문법 검사에 걸리면 입력과 원문을 보존한다", async () => {
+    const before = read();
+    const input = page.getByTestId("task-note-add-input");
+    await input.fill("# 잘못된 머리");
+    await page.getByTestId("task-note-add").click();
+    const error = page.getByTestId("task-form-error");
+    await error.waitFor();
+    if (!(await error.textContent()).includes("목록 머리")) throw new Error(await error.textContent());
+    if ((await input.inputValue()) !== "# 잘못된 머리") throw new Error("실패한 입력 유실");
+    expectFile(read(), before, "메모 추가 저장 거부");
+  });
+
 }

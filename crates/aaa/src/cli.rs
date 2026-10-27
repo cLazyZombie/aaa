@@ -701,9 +701,12 @@ enum TaskCmd {
         owner: Option<String>,
         #[arg(long)]
         person: bool,
-        /// 메모 전체를 이 줄들로(여러 번)
-        #[arg(long = "note")]
+        /// 메모 전체를 이 줄들로 교체(여러 번). 추가는 --add-note
+        #[arg(long = "note", conflicts_with_all = ["add_notes", "clear_notes"])]
         notes: Vec<String>,
+        /// 기존 메모 끝에 한 줄 추가(여러 번)
+        #[arg(long = "add-note", conflicts_with = "clear_notes")]
+        add_notes: Vec<String>,
         /// 메모를 지운다
         #[arg(long)]
         clear_notes: bool,
@@ -2126,6 +2129,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Task { cmd } => {
             use aaa_proto::TaskOp;
             let mut user_request = None;
+            let mut ops = Vec::new();
             let op = match cmd {
                 TaskCmd::List
                 | TaskCmd::Log { .. }
@@ -2159,6 +2163,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     owner,
                     person,
                     notes,
+                    add_notes,
                     clear_notes,
                     thread,
                     repo,
@@ -2166,8 +2171,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     undone,
                 } => {
                     user_request = reason;
+                    let at = task_at_block(&task, block);
+                    if !add_notes.is_empty() {
+                        ops.push(TaskOp::AppendNotes { at: at.clone(), notes: add_notes });
+                    }
                     TaskOp::Update {
-                        at: task_at_block(&task, block),
+                        at,
                         title,
                         owner,
                         person,
@@ -2229,7 +2238,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 TaskCmd::ListRm { name } => TaskOp::ListDelete { name },
                 TaskCmd::ListMove { name, before } => TaskOp::ListMove { name, before },
             };
-            task_edit_cmd(json, vec![op], user_request)
+            ops.push(op);
+            task_edit_cmd(json, ops, user_request)
         }
         Cmd::Assignable { project, check } => {
             front(json, FrontRequest::Assignable { project: project_or_here(project)?, check })
@@ -5656,7 +5666,10 @@ fn render_front(r: &FrontResponse) -> String {
             }
             let _ = writeln!(s, "\n{}", p.task.trim_end());
         }
-        FrontResponse::TaskEdited { board, log_ids, .. } => {
+        FrontResponse::TaskEdited { board, log_ids, warnings, .. } => {
+            for warning in warnings {
+                let _ = writeln!(s, "경고: {warning}");
+            }
             if log_ids.is_empty() {
                 let _ = writeln!(s, "바뀐 것이 없다(TASKS.md sha256 {})", board.sha256);
             } else {

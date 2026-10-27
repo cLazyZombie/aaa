@@ -8180,3 +8180,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - thread Follow-ups·coordinator question answered 본문·답한 카드에 번호별 원문을 보존한다. q-ID별 부분 답도 같은 배열로 합치며, 재보고로 질문 순서가 바뀌어도 선택과 의견을 함께 옮긴다. 직접 지시는 선택보다 우선한다.
 - E53의 기존 두 질문 owner에 선택+의견·직접 답만·여러 줄 원문·Follow-ups·inbox 보존 검사를 더한다. headless 카드 회귀는 모바일/데스크톱·light/dark, 미응답·추천·Reader·초안·거부 뒤 보존을 확인한다. 새 E2E 번호와 고정 sleep은 없다.
 - 참고는 SurveyJS 질문별 comment area와 JSON Forms multiline control(각 MIT)다. 입력을 해당 질문에 붙이는 배치와 여러 줄 글을 따르며 외부 코드·의존성을 가져오지 않는다.
+
+### 8.518 할 일 메모 추가와 저장 전 형식 검사(t-1197)
+
+- `task edit --add-note`는 여러 번 받아 메모 원문 끝에 더한다. `--note` 전체 교체·`--clear-notes` 전체 삭제와 상호 배타적이다. host의 새 `TaskOp::AppendNotes`가 최신 파일 lock 안에서 적용하며, 블록 hash·권한·원자 저장·변경 전후 원문 기록은 기존 편집과 같다. 같은 호출의 제목 변경도 함께 원자 적용한다.
+- 전체 교체·삭제에서 기존 줄이 빠지거나 바뀌면 `TaskEdited.warnings`로 제목·메모 N줄→M줄·task log 번호를 돌려준다. 같은 줄 수의 교체·중복 줄 감소도 잡는다. 원문은 `aaa --json task log`의 `before`에 남는다. CLI·웹은 저장 뒤 경고를 보인다.
+- 웹 상세의 「메모 추가」는 기존 첨부와 메모를 보존한다. 손대지 않은 기존 일은 바로 저장하고, 새 일·편집 중인 일은 초안에 더한다. 실패한 추가 입력은 남긴다. 설명 문단은 더하지 않는다.
+- add·명시한 제목 편집은 목록 파서와 같은 형식 문제 검사로 거절한다. thread 번호는 연결 칸, 긴 글·상태는 메모로 옮기라고 알린다. 새로 만든 task 줄도 다시 읽어 모든 문제를 검사한다. 기존 파일의 ▲ 표시는 유지하며, 기존 제목을 바꾸지 않는 메모 편집과 고급 원문 편집은 원문 보존 경로다.
+- FRONT_API 1.134: `AppendNotes`와 선택 `warnings`를 추가한다. 구판 host는 새 동작을 거부하며 구판 응답의 경고 누락은 빈 배열로 읽는다. AGENT_LINK·저장 형식·의존성은 유지한다. 웹은 기존 update로 메모를 저장하므로 구판 host와도 호환된다.
+- 참고는 [Taskwarrior annotate](https://taskwarrior.org/docs/man/task.1/)([MIT](https://taskwarrior.org/docs/license/))의 메모 추가와 수정 구분, [GitHub CLI issue edit](https://cli.github.com/manual/gh_issue_edit)([MIT](https://github.com/cli/cli/blob/trunk/LICENSE))의 `--add-*`와 전체 본문 교체 구분이다. 명령 의미만 참고하고 외부 코드·의존성은 추가하지 않는다.

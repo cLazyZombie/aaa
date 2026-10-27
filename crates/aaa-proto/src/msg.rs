@@ -3812,6 +3812,10 @@ pub enum FrontResponse {
         conflict: Option<TaskConflict>,
         #[ts(type = "number[]")]
         log_ids: Vec<i64>,
+        /// 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
+        #[serde(default)]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        warnings: Vec<String>,
     },
     /// `thread_start_preview`의 답(FRONT_API 1.63)
     ThreadStartPreview(ThreadStartPreview),
