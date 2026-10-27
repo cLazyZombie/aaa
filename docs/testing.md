@@ -21,6 +21,55 @@
   `cargo test --profile verify --locked -p aaa --test deps`, 두 crate strict clippy·fmt·공개 검사다.
   전체 ci-local·cross·main 병합·push는 정규 착지 차례에서 수행한다.
 
+## Rust shard 중단 기록과 완료 경고 구별(t-1182)
+
+- [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40470706270/job/122076871066)의
+  다섯 60초 경고는 모두 같은 test 단계에서 `... ok`로 끝났다. rollout 세 shard는 각각
+  101.11/115.73/133.77초에 exit=0, coordinator 배포와 configured preparation은
+  m13-5의 50개 완료에 포함된다. 여섯 m13 shard는 08:23:22 UTC까지 모두 exit=0이다.
+  이 다섯 시험이 15분 중단 시점에도 정지해 있었다는 분류는 원문과 다르다.
+- test 단계는 08:12:27 시작, Cargo 준비가 08:16:36 완료(4분06초), 마지막 binary가
+  08:26:13 완료, 08:27:40에 15분 제한으로 중단됐다. 준비한 25개 binary를 m13 여섯 개로
+  나눈 30개 실행은 전부 exit=0이다. 원본 runner 순서상 결과 없는 Rust job은 마지막 doctest다.
+  m13-4 이후 완료 간격은 다음 binary 실행시간과 거의 같아 사실상 직렬이었다.
+  원본에는 CPU/load·shard plan/summary·doctest 출력·진행 중 PID·host/agent 로그가 없다.
+  artifact 하나는 성공한 aaa_common 원문뿐이다. doctest의 컴파일/실행/자식 종료 중 어느 대기인지,
+  또는 Python suite 대기가 함께 남았는지는 소급 확정하지 않는다. 재시도나 제한 확대는 하지 않는다.
+- `scripts/rust_tests.py`는 준비 Cargo, m13 목록, 각 binary, doctest의 기동 직후
+  `START`와 PID·로그를 출력하고 `events.jsonl`에 시작/종료 사건을 쓴다.
+  `state.json`은 준비/목록/실행 단계, queued/running/completed/interrupted/not_started,
+  실행 중 직접 자식의 PID·명령·cwd·로그·종료 대기와 완료 결과를 같은 폴더 rename으로 저장한다.
+  `summary.json`도 시작부터 매 사건마다 갱신하므로 정상 종료까지 기다리지 않는다.
+  libtest 원문은 자식이 직접 파일에 쓰고, Cargo 준비의 JSON과 stderr는 별도 보존한다.
+- SIGINT/TERM handler는 신호 번호만 기록한다. worker는 중단 당시 직접 자식과 그 자손의
+  PID/PPID·실행 파일·OS 상태/대기 채널을 기록하고, Popen으로 직접 소유한 자식 하나만
+  terminate→종료 대기→필요한 kill/wait로 회수한다. 자손 목록은 진단용이며 종료 대상이 아니다.
+  인자·환경은 process snapshot에 넣지 않는다. 중단 뒤 대기 shard는 시작하지 않고,
+  도구가 신호를 받아 0으로 끝나도 runner는 130/143으로 실패한다. SIGKILL은 마지막 원자 상태와
+  이미 쓴 원문/사건만 남길 수 있다. 자손/독립 lab 정리와 host/agent 파일 수집까지 완료했다고 주장하지 않는다.
+- CI는 test 직후 성공/실패/취소에도 `test.log`, `python.log`, `rust/`를 OS별 artifact로 보존한다.
+  뒤의 설치 시험보다 먼저 업로드하며, 단계의 기존 15분 제한과 실패 판정은 그대로다.
+- `FailureScan`은 60초 경고 뒤 완료한 이름을 기억해 annotation의 경고 재출력을 정지 시험에서
+  제외한다. 완료는 경고만 없애고 같은 이름의 실제 FAILED·panic은 유지한다. 개별 시간 표지가 붙은
+  FAILED도 실제 실패다. 완료 원문이 없는 경고는 보수적으로 남긴다.
+- 새 Python keeper 다섯 개는 socket 사건으로 실제 자식을 붙잡고 준비/목록/실행/doctest에서
+  SIGINT/TERM을 보낸다. 필요한 이유: 시작 기록의 선행, 현재 PID·중단 snapshot·130/143,
+  미시작 shard·기존 실패 보존·TERM 무시 자식 회수와 runner 밖 프로세스 생존은 모의 Popen으로 확인할 수 없기 때문이다.
+  새 Rust keeper는 7바이트 청크·100개 선행 완료·annotation 반복·남은 대기·같은 이름의 실제 실패를
+  지킨다. 필요한 이유: 완료 이름 수집의 상한이나 완료 처리로 실제 실패를 숨기는 회귀를 막기 위해서다.
+  모두 고정 sleep 없이 사건·자식 종료로 끝나고 개별 5초 미만이다. 기존 시험 삭제/시한 변경은 없다.
+- 부분 검증은 `python3 -m unittest scripts.test_rust_tests scripts.test_ci_local -v`,
+  CI Python 전체 suite, `cargo test --profile verify --locked -p aaa-common --lib ci::`,
+  같은 crate의 all-targets strict clippy, fmt와 공개 검사다. 전체 ci-local·cross는 정규 착지 때 수행한다.
+- 설계 전 후보는 [cargo-nextest의 현재 실행과 완료 상태 구분](https://nexte.st/docs/reporting/)
+  ([MIT](https://github.com/nextest-rs/nextest/blob/main/LICENSE-MIT)),
+  [libtest-mimic의 실행/결과 처리](https://github.com/LukasKalbertodt/libtest-mimic/blob/master/src/lib.rs)
+  ([MIT](https://github.com/LukasKalbertodt/libtest-mimic/blob/master/LICENSE-MIT)),
+  [pytest의 setup/call/teardown 보고](https://github.com/pytest-dev/pytest/blob/main/src/_pytest/runner.py)
+  ([MIT](https://github.com/pytest-dev/pytest/blob/main/LICENSE))다. 시작·완료 사건과 단계/최종 결과 구분을
+  참고하며 코드를 복사하거나 runner 의존성을 바꾸지 않는다. CPU admission/분할 정책은 유지한다.
+
+
 ## 삭제 뒤 TASKS 기억과 CI fixture 출력(t-1172)
 
 - [원본 macOS job](https://github.com/cLazyZombie/aaa/actions/runs/40462675441/job/122050697112)은

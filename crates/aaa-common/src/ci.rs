@@ -251,6 +251,8 @@ const LINE_CAP: usize = 4096;
 pub struct FailureScan {
     tests: BTreeSet<String>,
     others: BTreeSet<String>,
+    slow: BTreeSet<String>,
+    completed: BTreeSet<String>,
     line: Vec<u8>,
 }
 impl FailureScan {
@@ -277,10 +279,24 @@ impl FailureScan {
             let (before, name) = rest.rsplit_once(' ')?;
             (before == "test" || before.ends_with(" test")).then(|| clip(name)).filter(|n| !n.is_empty())
         };
-        let (set, item) = if let Some(name) = line.strip_suffix(" ... FAILED").and_then(named) {
+        // annotation이 뒤에서 같은 60초 경고를 다시 실어도 완료한 시험을 정지로 세지 않는다.
+        // 완료는 경고만 없앤다. 같은 이름의 실제 FAILED/panic 증거는 지우지 않는다.
+        let outcome = line.split_once(" ... ").and_then(|(rest, outcome)| {
+            let status = outcome.split_whitespace().next()?;
+            matches!(status, "ok" | "FAILED" | "ignored").then(|| (rest, status))
+        });
+        if let Some((rest, _)) = outcome
+            && let Some(name) = named(rest)
+            && self.slow.contains(&name)
+        {
+            self.completed.insert(name);
+        }
+        let (set, item) = if let Some(name) =
+            outcome.filter(|(_, status)| *status == "FAILED").and_then(|(rest, _)| named(rest))
+        {
             (&mut self.tests, name)
         } else if let Some(name) = line.split_once(" has been running for over ").and_then(|(r, _)| named(r)) {
-            (&mut self.others, format!("끝나지 않음: {name}"))
+            (&mut self.slow, name)
         } else if let Some((_, at)) = line.split_once("panicked at ") {
             let at = at.split_whitespace().next().unwrap_or("").trim_end_matches([':', ',']).replace('\\', "/");
             // 열 번호는 버린다: 같은 줄의 다른 식이 같은 실패다.
@@ -301,6 +317,11 @@ impl FailureScan {
     }
     pub fn finish(mut self) -> Vec<String> {
         self.end_line();
+        for name in self.slow.difference(&self.completed) {
+            if self.others.len() < FAILURES_CAP {
+                self.others.insert(format!("끝나지 않음: {name}"));
+            }
+        }
         let set = if self.tests.is_empty() { self.others } else { self.tests };
         set.into_iter().collect()
     }

@@ -146,16 +146,29 @@ jobs:
         run: bash scripts/ci-local.sh --only clippy --logs . --tee
       # 유닛·프로토콜 계약 테스트와 PTY smoke(Windows는 ConPTY + Named Pipe). e2e는 Unix에서만 돈다.
       - name: test
+        id: test
         # clippy가 실패해도 build가 됐으면 테스트 결과를 본다
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # 끝나지 않는 시험은 job 한도(40분)에 취소되면 실패 요약이 돌지 않는다. 단계 한도로 실패로 끝내 요약을 남긴다
-        # (지금 가장 긴 test 단계는 macOS 2분 안팎이다)
         timeout-minutes: 15
         # 시험 binary 안의 동시 수(결정 D2). 기본은 러너 코어 수(3~4)인데 m13 등은 대부분 host·agent 사건을 기다리는
         # 시험이라 코어보다 많이 돌려도 된다(개발 Mac m13: 3개 72.6초, 8개 39.0초). 시간 단언은 사건·기록 기준으로 바꿨다.
         env:
           RUST_TEST_THREADS: "8"
         run: bash scripts/ci-local.sh --only test --logs . --tee
+      # 완료를 기다려 출력하던 shard는 단계 중단 시 사라졌다. 준비/목록/실행 중 원문과
+      # 원자 상태·사건 기록을 후속 설치 시험보다 먼저 보존한다. 중단을 성공으로 바꾸지 않는다.
+      - name: Rust 시험 원문·중단 진단
+        if: ${{ always() && steps.test.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-tests-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test.log
+            python.log
+            rust/
+          if-no-files-found: ignore
+          retention-days: 7
       # 운영 Mac에는 등록하지 않는다. 기존 일회성 CI 계정에서만 필수 실제 등록 owner를 돈다.
       - name: macOS LaunchAgent 실제 등록·ready·instance 보존
         if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
