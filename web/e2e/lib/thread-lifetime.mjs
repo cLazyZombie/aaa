@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { browser, root, env, inTime } from './harness.mjs';
-import { threadPageTrace } from './thread-page-trace.mjs';
+import { threadPageTrace, threadTraceDocument } from './thread-page-trace.mjs';
 
 export async function threadBodyLifetime() {
   let partial, complete = false;
@@ -25,13 +25,14 @@ export async function threadBodyLifetime() {
   const context = await browser.newContext();
   let releaseBody;
   try {
+    await context.addInitScript(threadTraceDocument);
     const page = await context.newPage();
     const trace = threadPageTrace(`${root}/diagnostics`, 'body-lifetime');
     trace.onPage(page);
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const response = page.waitForEvent('response', r => r.url().endsWith('/api/v1/call'));
     await page.evaluate(() => {
-      void fetch('/api/v1/call', { method: 'POST', headers: { 'x-e2e-document': String(performance.timeOrigin),
+      void fetch('/api/v1/call', { method: 'POST', headers: { 'x-e2e-document': document.__aaaThreadTraceDocument,
         'x-e2e-connection': '1', 'x-e2e-request': '1' }, body: JSON.stringify({ op: 'threads' }) }).then(r => r.json()).catch(() => {});
     });
     await response;
@@ -59,7 +60,7 @@ export async function threadBodyLifetime() {
     await finishedPage.goto(`http://127.0.0.1:${server.address().port}`);
     const finished = finishedPage.waitForEvent('requestfinished', request => request.url().endsWith('/api/v1/call'));
     await finishedPage.evaluate(() => {
-      void fetch('/api/v1/call', {method:'POST',headers:{'x-e2e-document':String(performance.timeOrigin),
+      void fetch('/api/v1/call', {method:'POST',headers:{'x-e2e-document':document.__aaaThreadTraceDocument,
         'x-e2e-connection':'1','x-e2e-request':'1'},body:JSON.stringify({op:'threads'})}).then(r=>r.json());
     });
     await finished;
@@ -80,7 +81,7 @@ export async function threadBodyLifetime() {
     await currentPage.goto(`http://127.0.0.1:${server.address().port}`);
     const currentFinished = currentPage.waitForEvent('requestfinished', request => request.url().endsWith('/api/v1/call'));
     await currentPage.evaluate(() => {
-      void fetch('/api/v1/call', {method:'POST',headers:{'x-e2e-document':String(performance.timeOrigin),
+      void fetch('/api/v1/call', {method:'POST',headers:{'x-e2e-document':document.__aaaThreadTraceDocument,
         'x-e2e-connection':'1','x-e2e-request':'1'},body:JSON.stringify({op:'threads'})}).then(r=>r.json());
     });
     await currentFinished;

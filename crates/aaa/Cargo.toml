@@ -50,6 +50,7 @@ objc2-service-management = "0.3"
 [dev-dependencies]
 aaa-test-support.workspace = true
 aaa-vt.workspace = true
+aho-corasick.workspace = true
 libc.workspace = true
 rusqlite = "0.37"
 portable-pty.workspace = true
