@@ -22,6 +22,21 @@ const seek = (video) => video.evaluate((v) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error(`탐색이 끝나지 않았다: ${JSON.stringify({time:v.currentTime,ready:v.readyState,seeking:v.seeking,error:v.error?.message})}`)), 15000);
   v.pause(); v.addEventListener("seeked", () => { clearTimeout(timer); resolve(); }, { once: true }); v.currentTime = 1.2;
 }));
+// play()나 가짜 클릭 없이 공용 캐시 브라우저의 기본 재생 아이콘을 누른다.
+// native shadow DOM은 locator로 조회할 수 없다. Chromium의 막대 재생,
+// WebKit의 중앙 재생 영역을 쓴다(좁은 막대는 되감기와 재생 위치가 달라진다).
+const nativeResume = async (video, engine) => {
+  const before = await video.evaluate(v => v.currentTime);
+  const box = await video.boundingBox();
+  await video.click(engine === "chromium" ? { position: { x: 24, y: box.height - 48 } } : {});
+  await video.evaluate((v, before) => new Promise((resolve, reject) => {
+    const cleanup = () => { clearTimeout(timer); v.removeEventListener("timeupdate", on); v.removeEventListener("error", error); };
+    const on = () => { if (!v.paused && v.currentTime > before && v.readyState >= 2) { cleanup(); resolve(); } };
+    const error = () => { cleanup(); reject(new Error(`기본 재생 오류: ${v.error?.code} ${v.error?.message}`)); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`기본 재생 시간이 전진하지 않았다: ${JSON.stringify({ time: v.currentTime, before, paused: v.paused, ready: v.readyState })}`)); }, 5000);
+    v.addEventListener("timeupdate", on); v.addEventListener("error", error); on();
+  }), before);
+};
 function observeVideo() {
   const events = [];
   window.__aaaVideoEvents = events;
@@ -41,7 +56,7 @@ export default async function ({ page }) {
   await step("영상 자료·agent 안내와 기존 인증 오류 주소·UTF-8 원문", async () => {
     aaa("project", "create", "demo");
     const folder = `${root}/video`; fs.mkdirSync(folder); fs.copyFileSync(fixture, `${folder}/a.mp4`);
-    fs.writeFileSync(`${folder}/index.html`, '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width"><h1 id="A">영상 비교</h1><button onclick="const v=document.querySelector(\'video\');if(!v.hasAttribute(\'src\'))v.src=\'a.mp4\';v.play()">영상 재생</button><video controls muted playsinline preload="none" style="max-width:100%"></video>');
+    fs.writeFileSync(`${folder}/index.html`, '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width"><h1 id="A">영상 비교</h1><button onclick="const v=document.querySelector(\'video\');if(!v.hasAttribute(\'src\'))v.src=\'a.mp4\';v.controls=true;this.hidden=true;v.play()">영상 재생</button><video muted playsinline preload="none" style="max-width:100%"></video>');
     report = aaa("library", "publish", folder, "--name", "video").report_id;
     await coordinatorPost({ request: true, title: "영상 비교 질문", body: `## Questions\n### 1. 동작\n![시안 영상](library/${report}/a.mp4)\n\n[기존 영상 링크](library/${report}/a.mp4)\n\n[비교 HTML](library/${report}/index.html#A)\n\n- A 적용한다\n  ![A 영상](library/${report}/a.mp4)\n- B 고친다\n` });
     request = (await call(page, { op: "asks" })).ok.requests.find((r) => r.title === "영상 비교 질문");
@@ -79,10 +94,14 @@ export default async function ({ page }) {
         await p.getByTestId("thread-ask-pick-1B").click();
         await domIs(p, "재생 전 B 선택 반영", () => document.querySelector('[data-testid="thread-ask-pick-1B"]')?.getAttribute("aria-checked") === "true");
         const flags = await video.evaluate((v) => ({ muted: v.muted, inline: v.playsInline, controls: v.controls, paused: v.paused, autoplay: v.autoplay }));
-        if (!flags.muted || !flags.inline || !flags.controls || !flags.paused || flags.autoplay) throw new Error(JSON.stringify(flags));
+        if (!flags.muted || !flags.inline || flags.controls || !flags.paused || flags.autoplay) throw new Error(`주소 없는 기본 컨트롤 노출: ${JSON.stringify(flags)}`);
         const hash = await p.evaluate(() => location.hash);
         phase = "본문 재생·시간 전진·탐색";
         await card.getByRole("button", { name: "시안 영상 재생", exact: true }).click(); await moved(video); await seek(video);
+        phase = "기본 컨트롤로 재개·겹친 단추 없음";
+        if (!await video.evaluate(v => v.controls) || await card.getByRole("button", { name: "시안 영상 재생", exact: true }).count()) throw new Error("첫 재생 뒤 컨트롤이 하나로 전환되지 않았다");
+        await shot(p, `88-native-paused-${engine}-${profile}`);
+        await nativeResume(video, engine); await video.evaluate(v => v.pause());
         phase = "선택지 재생·시간 전진";
         await card.getByRole("button", { name: "A 영상 재생", exact: true }).click(); await moved(choice); await choice.evaluate((v) => v.pause());
         phase = "선택·주소 보존";
@@ -99,10 +118,11 @@ export default async function ({ page }) {
         const frame = p.frameLocator('[data-testid="question-report-frame"]');
         await frame.getByRole("heading", { name: "영상 비교" }).waitFor();
         const embedded = frame.locator("video"); console.log("iframe 영상 확인");
-        if (await embedded.getAttribute("src") !== null) throw new Error("HTML 템플릿이 선택 전에 영상을 읽었다");
+        if (await embedded.getAttribute("src") !== null || await embedded.evaluate(v => v.controls)) throw new Error("HTML 템플릿의 선택 전 요청 또는 주소 없는 기본 컨트롤");
         if ((await p.getByTestId("question-report-frame").getAttribute("sandbox")).includes("allow-same-origin")) throw new Error("sandbox 완화");
         phase = "iframe 재생·시간 전진·탐색";
         await frame.getByRole("button", { name: "영상 재생" }).click(); await moved(embedded); await seek(embedded);
+        if (!await embedded.evaluate(v => v.controls) || await frame.getByRole("button", { name: "영상 재생" }).count()) throw new Error("HTML 템플릿의 겹친 재생 단추");
         phase = "sandbox 경계";
         const boundary = await embedded.evaluate(async () => {
           let cookie = false; try { document.cookie; cookie = true; } catch {}
@@ -124,7 +144,8 @@ export default async function ({ page }) {
         const anonymous = await browser.newContext({ viewport: profile === "iphone" ? { width: 390, height: 844 } : { width: 1280, height: 800 } }); contexts.push(anonymous);
         const src = await video.getAttribute("src");
         const response = await anonymous.request.get(new URL(src, base).href, { headers: { Range: "bytes=0-1" } });
-        if (response.status() !== 206 || response.headers()["content-type"] !== "video/mp4" || response.headers()["accept-ranges"] !== "bytes" || (await response.body()).length !== 2) throw new Error("cookie 없는 Range");
+        const headers = response.headers();
+        if (response.status() !== 206 || headers["content-type"] !== "video/mp4" || headers["accept-ranges"] !== "bytes" || headers["content-range"] !== `bytes 0-1/${fs.statSync(fixture).size}` || headers["content-length"] !== "2" || headers["content-encoding"] || !(await response.body()).equals(fs.readFileSync(fixture).subarray(0, 2))) throw new Error(`cookie 없는 Range: ${response.status()} ${JSON.stringify(headers)}`);
         const direct = await anonymous.newPage(); await direct.goto(new URL(src, base).href); console.log("직접 영상 확인"); await ready(direct.locator("video")); await direct.locator("video").evaluate((v) => { v.muted = true; return v.play(); }); await moved(direct.locator("video"));
         phase = "thread 질문·보고 본문";
         await p.evaluate((id) => { location.hash = `question=${id}`; }, current.questions.items[0].id);

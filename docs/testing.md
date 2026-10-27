@@ -1290,6 +1290,8 @@ E2E11·52·89와 아래 m13 세 경로는 각각 최소 1회 실패를 확인했
 
 ## 질문·보고 영상 재생(t-0767, plan §8.448)
 
+- t-1155 회귀는 기존 E2E88의 네 조합을 확장한다. 주소 없는 첫 화면은 기본 controls가 꺼져 있고 첫 재생 단추만 있어야 한다. 첫 클릭·decode·탐색 뒤에는 controls가 켜지고 자체 단추가 사라져야 하며, Chromium 기본 아이콘·WebKit 중앙 재생 영역의 실제 포인터 클릭으로 일시정지 위치보다 시간이 전진해야 한다. `play()`를 대신 호출하거나 가짜 media를 쓰지 않는다. 새 대기는 timeupdate/error로 끝나며 실패 상한은 5초다. 필요한 이유: 기존 시험은 자체 단추만 눌러 주소 없는 기본 재생과 일시정지 때 겹치는 단추를 잡지 못했다.
+- 같은 네 조합의 실제 host Range 응답은 206·video/mp4·Accept-Ranges뿐 아니라 Content-Range·Content-Length·무압축·원본 두 바이트 일치까지 확인한다. 수정 전 실행본은 controls=true·src 없음·readyState=0에서 새 단언에 실패했다. 수정 후 캡처 포함 네 조합은 단계당 2.1~3.1초에 통과했다. WebKit의 Space 키는 기본 재생을 시작하지 않고, 좁은 컨트롤 막대의 좌표는 되감기를 누를 수 있어 실제 재생 영역을 사용한다. Safari 앱·실제 iPhone 검증과 headless WebKit 검증은 구별한다.
 - `nice -n 15 cargo test --locked -p aaa-host --lib web::`: 기존 인증 경로를 cookie 없이 열었을 때 세 종류 모두 401·UTF-8 JSON·한글 원문인지 확인한다. 새 첨부 cap의 재사용·만료·기기 폐기·보고서 주소 변환 거부와 리소스 CSP의 정확한 폴더 제한을 검사한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 88-report-video --workers 1`: 실제 host·agent·publish·coordinator post·thread 보고를 쓴다. 외부 자료 없는 2초 H.264 High/yuv420p/faststart 영상은 `web/e2e/fixtures/report-video.mp4`다. Chromium·WebKit 각각 1280×800·390×844에서 본문과 선택지의 첫 재생 단추·metadata 수신·재생 뒤 실제 decode·시간 전진·seeked·소리 없음·인라인·자동 재생 없음·답 선택 보존·가로 넘침을 검사한다.
 - 같은 질문의 HTML 링크는 `/v/…/library/…/index.html#A`다. iframe과 새 탭의 실제 영상 decode, cookie 없는 직접 MP4·206 Range·MIME·Accept-Ranges, HTML의 자기 파일 GET·cookie/API/다른 cap 차단, 보고 Markdown의 재생, 새 보고 뒤 답한 영상 원본 bytes를 확인한다. coordinator AGENTS.md가 질문 문법을 `aaa guide questions`로 가리키는지, 그 주제와 thread brief에 영상 문법이 있는지도 확인한다(§8.491). 앱 API 인증·sandbox를 풀거나 영상 객체·play를 가짜로 만들지 않는다.
