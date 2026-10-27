@@ -1,3 +1,19 @@
+## 고른 글 인용(t-1204)
+
+- 웹 유닛 `selectionQuote.test.mjs` 셋은 출처 머리·터미널 줄 범위·backtick 울타리, 대화 화자·`>` 줄, 쓰던 초안 뒤 붙이기·넘침 거부를 지킨다.
+  필요한 이유: 받는 agent가 읽는 글 꼴과 「쓰던 글을 지우지 않는다」는 계약이 바뀌는 회귀를 막는다.
+- 웹 E2E117 `117-selection-quote`(새 번호)는 실제 host·agent·PTY의 thread pane에서 세 단계를 본다.
+  Chromium 1280 바로 입력: 대화 답을 마우스로 끄는 동안 단추 없음 → 놓으면 단추 → 쓰던 초안 뒤 `인용: t-NNNN 대화 · Claude 답`,
+  입력창 focus, 터미널 두 줄 끌기 → 대화 입력창 초안에 `터미널 a~b줄`(b=a+1)·울타리, 알림, PTY로 보낸 것 없음.
+  Chromium 1280 입력줄: 끈 두 줄이 입력줄 초안의 쓰던 글 뒤에 붙고 입력줄 focus. WebKit 390: 고른 글 단추를 눌러 빈 초안에 붙고 입력창 focus 없음.
+  필요한 이유: 선택 사건·xterm 줄 번호·두 초안 저장소·터치 focus는 브라우저와 실제 pane에서만 드러난다. 완료는 DOM 사건·PTY 출력이며 고정 sleep이 없다.
+- 이 thread는 Windows에서 일해 Unix 전용 E2E 실험실(`/tmp`·UDS)과 Playwright 브라우저가 없었다. E2E117은 쓰기만 했고 실행하지 못했다.
+  대신 같은 컴포넌트·xterm 5.5를 scratch 페이지로 묶어 설치된 Chrome(playwright-core 1.64.1 executablePath)으로 끌기·놓기·클릭·터치 탭,
+  여러 블록·단추 줄 제외·여러 화자, xterm `getSelectionPosition` 0부터 줄과 다음 줄 첫 칸 끝을 확인했다. 웹 유닛 전체·타입 검사·빌드는 통과했다.
+- 첫 착지 gate에서 이 E2E의 WebKit 390 단계가 실패했다(20초 안에 초안이 비어 있음). 단추가 고른 글을 지키려고 pointerdown을 막았는데,
+  WebKit은 터치 pointerdown을 막으면 tap의 mousedown·click을 내지 않는다(Chrome 터치 탭은 click을 내 scratch 확인에서 드러나지 않았다).
+  같은 fixture의 별도 진단에서 수리 전 pointer/touch 사건 뒤 click 없음을, 마우스 pointer만 막은 수리 뒤 click·초안·focus 없음을 확인했다. 시험·시한은 그대로다.
+
 ## 보고서 화면 버튼 배치(t-1201)
 
 - 기존 E2E21·101·108 전체로 목록·보관·읽음 확인/취소/실패·Reader·저장소 필터를 확인한다. 새 시험·E2E 번호는 추가하지 않는다.

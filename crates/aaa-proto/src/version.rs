@@ -267,7 +267,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.136: 완료·보관·삭제한 할 일의 대기 예약 종료와 구판 예약 회수(t-1200). wire 형식은 그대로다.
 // 1.137: 보고서 탭 줄 새로고침과 저장소 줄 버튼 배치(t-1201). wire 형식은 그대로다.
 // 1.138: DiffQuery.full_context·DiffView.full_context — 파일별 전체 맥락 지연 읽기와 미지원/잘림 구별.
-pub const FRONT_API: Version = Version { major: 1, minor: 138 };
+// 1.139: 대화·터미널에서 고른 글을 출처와 함께 입력 초안에 인용(t-1204). wire 형식은 그대로다.
+pub const FRONT_API: Version = Version { major: 1, minor: 139 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

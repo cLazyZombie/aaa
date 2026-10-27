@@ -19,7 +19,7 @@ import { b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./a
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
 import { inputTraceId } from "./inputReceipt";
-import { ChatComposer, delivered, restorePending, savePending, type PendingSend } from "./ChatComposer";
+import { ChatComposer, delivered, MAX_COMPOSER_CHARS, restorePending, savePending, type PendingSend } from "./ChatComposer";
 import { useChatFocus } from "./useChatFocus";
 import { paneAgentStatus } from "./sidebarModel";
 import { refusalText, steerAvailability, steerSettled, STEER_IDLE, STEER_SLOW_MS, type SteerState } from "./steerQueued";
@@ -72,11 +72,13 @@ import { isAppShortcut, modKeyLabel } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import { pasteText } from "./pasteText.ts";
 import { migrateMachineDrafts } from "./machineIdentity.ts";
-import { readTerminalDraft } from "./herdr/terminalDraft.ts";
+import { readTerminalDraft, writeTerminalDraft, TERMINAL_LINE_LIMIT } from "./herdr/terminalDraft.ts";
+import { composerDrafts } from "./herdr/composerDraft.ts";
+import { appendQuote, formatChatQuote, formatTerminalQuote, quotedText, type QuoteSpeaker } from "./selectionQuote.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ArrowDown, RotateCcw, Search, TriangleAlert } from "lucide-react";
+import { ArrowDown, Quote, RotateCcw, Search, TriangleAlert } from "lucide-react";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
@@ -146,6 +148,7 @@ export function TermView({
   onOpenLink,
   autoSelected = false,
   focusRequest = 0,
+  quoteSource,
 }: {
   pane: PaneView;
   active?: boolean;
@@ -169,6 +172,8 @@ export function TermView({
   autoSelected?: boolean;
   /** 최근 화면 전환에서 같은 pane으로 돌아오는 경우에도 focus를 복원한다. */
   focusRequest?: number;
+  /** 고른 글을 인용할 때 쓰는 출처 이름(thread ID·coordinator·머신과 pane 이름, t-1204) */
+  quoteSource?: string;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -314,6 +319,8 @@ export function TermView({
     if (!active) { window.clearTimeout(clipTimerRef.current); setClipNote(null); }
     return () => window.clearTimeout(clipTimerRef.current);
   }, [active]);
+  /** 터미널에서 고른 글(인용 단추가 쓴다) */
+  const [termQuote, setTermQuote] = useState<{ text: string; range: { start: number; end: number } } | null>(null);
   /** 보내지 못한 입력의 까닭(참고 `inputError`). 닫기로 지운다 */
   const [inputError, setInputError] = useState<string | null>(null);
   const ended = pane.state !== "running";
@@ -621,6 +628,15 @@ export function TermView({
       },
     });
     const linkPressed = (event: MouseEvent): boolean => event.button === 0 && !term.hasSelection();
+    // 고른 글이 있는 동안 「메시지에 인용」 단추(t-1204, 참고 herdr-web-ui useTerminalMount 766~803줄 setSelectionQuote).
+    // 줄은 xterm 버퍼 줄(0부터)이고, 다음 줄 첫 칸에서 끝난 선택은 그 앞 줄까지다
+    const selectionSub = term.onSelectionChange(() => {
+      const position = term.hasSelection() ? term.getSelectionPosition() : undefined;
+      const text = position ? term.getSelection() : "";
+      if (!position || quotedText(text) === null) { setTermQuote(null); return; }
+      const end = position.end.x === 0 && position.end.y > position.start.y ? position.end.y - 1 : position.end.y;
+      setTermQuote({ text, range: { start: position.start.y, end } });
+    });
     const offTheme = onThemeChange(() => {
       term.options.theme = termTheme();
       send({ t: "colors", ...termColors() });
@@ -1620,6 +1636,7 @@ export function TermView({
       viewport?.removeEventListener("scroll", markScrolled);
       scrolledSub.dispose();
       bufferSub.dispose();
+      selectionSub.dispose();
       el.removeEventListener("dragover", onDragOver);
       el.removeEventListener("drop", onDrop);
       el.removeEventListener("pointerdown", onPointer);
@@ -2048,6 +2065,42 @@ export function TermView({
     return () => observer.disconnect();
   }, [active, inputSlot]);
 
+  // 고른 글의 인용(t-1204): 이 pane의 보이는 입력 초안 끝에 붙인다. 대화 보기·입력줄이 없는 터미널은 대화 입력창 초안,
+  // 입력줄이 보이는 터미널은 입력줄 초안이다. 쓰던 글은 그대로 두고 그 뒤에 붙인다(참고 appendQuote). 보내기는 사람이 누른다
+  const owner = `${pane.machine_id}:${pane.id}`;
+  const quoteName = quoteSource ?? (pane.name || pane.id);
+  const quoteTarget: "line" | "composer" | null = !canControl || stopped || !(chatable || agent) ? null
+    : chatView && chatable ? "composer" : inputLine ? "line" : chatable ? "composer" : null;
+  const addQuote = (block: string | null): boolean => {
+    if (block === null || quoteTarget === null) return false;
+    if (quoteTarget === "line") {
+      const next = appendQuote(readTerminalDraft(owner), block, TERMINAL_LINE_LIMIT);
+      if (next === null) { setAttach({ text: "입력줄 초안에 넣기에 너무 길다", ok: false }); return false; }
+      writeTerminalDraft(owner, next);
+    } else {
+      const key = `herdr-web-ui:composer-draft:${owner}`;
+      const next = appendQuote(composerDrafts.read(key).text, block, MAX_COMPOSER_CHARS);
+      if (next === null) { setAttach({ text: "메시지 초안에 넣기에 너무 길다", ok: false }); return false; }
+      composerDrafts.set(key, next);
+    }
+    // 보이는 입력창이면 끝으로 가 이어 쓴다(터치 기기는 키보드를 올리지 않는다). 안 보이는 대화 입력창 초안이면 알린다
+    const box = quoteTarget === "line" || chatViewRef.current
+      ? sectionRef.current?.querySelector<HTMLTextAreaElement>(quoteTarget === "line" ? ".terminal-input-text" : ".composer-text")
+      : null;
+    if (!box) noteClipboard("메시지 초안에 넣었다");
+    else if (!coarse) requestAnimationFrame(() => {
+      box.focus({ preventScroll: true });
+      box.setSelectionRange(box.value.length, box.value.length);
+    });
+    return true;
+  };
+  const quoteChat = (text: string, speaker: QuoteSpeaker) =>
+    addQuote(formatChatQuote({ source: quoteName, speaker, harness: pane.agent?.harness === "codex" ? "codex" : "claude", text }));
+  const quoteTerminal = () => {
+    if (!termQuote || !addQuote(formatTerminalQuote({ source: quoteName, range: termQuote.range, text: termQuote.text }))) return;
+    termRef.current?.clearSelection();
+  };
+
   let banner: string | null = null;
   // 출력이 멈춘 것은 아래 띠가 단추와 함께 말한다. 중단된 pane(재부팅 뒤 다시 뜨지 않음)은 터미널 칸의 자리 표시가 까닭과
   // 「다시 열기」를 말한다(아래 `restore-error`, 참고는 그 pane에 붙지 않아 연결 띠도 없다)
@@ -2178,6 +2231,7 @@ export function TermView({
       </header>}
       {flowNotices && notices}
       {chatView && chatable && <ChatPanel active={active} onBytes={reportChatBytes} coordinator={pane.role === "coordinator"} pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
+        onQuote={quoteTarget === "composer" ? quoteChat : undefined}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
@@ -2247,6 +2301,13 @@ export function TermView({
                 <Icon name="close" />
               </button>
             </div>
+          )}
+          {active && termQuote && quoteTarget && !(chatView && chatable) && (
+            <button type="button" className="banner terminal-quote" data-testid="terminal-quote"
+              onMouseDown={(event) => event.preventDefault()} onClick={quoteTerminal}>
+              <Quote aria-hidden="true" />
+              메시지에 인용
+            </button>
           )}
           {clipNote && (
             <div className="banner" role="status" data-testid={active ? "clipboard-note" : undefined}>

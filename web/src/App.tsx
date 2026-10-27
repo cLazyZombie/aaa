@@ -1680,6 +1680,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: p.id }) : undefined}
             onOpenLink={openLink}
             title={paneTitle(p)}
+            quoteSource={threadOfPane.get(p.id)?.id ?? (p.coordinator_project ? "coordinator" : `${p.machine} ${p.name || p.id}`)}
             agent={agentOf(p, threadOfPane.get(p.id))}
             crumb={`${p.machine} › ${paneSub(p)}`}
             status={activePane === chatKey(p) ? (
