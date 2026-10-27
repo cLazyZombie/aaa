@@ -1246,6 +1246,9 @@ enum ThreadCmd {
         /// 직접 쓴 답(질문 번호를 붙여 쓴다, 예: "2 둘 다 보이게")
         #[arg(long)]
         text: Option<String>,
+        /// 질문별 직접 답·의견(예: --comment '1=오른쪽에 둬' --comment '2=둘 다 보이게')
+        #[arg(long = "comment", value_name = "번호=의견")]
+        comments: Vec<String>,
     },
 }
 
@@ -2553,9 +2556,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadUnpark { project, thread, machine, repo, dry_run }
                 }
-                ThreadCmd::Answer { thread, mut answers, text } => {
+                ThreadCmd::Answer { thread, mut answers, text, comments } => {
                     let (project, thread) = shift_project(thread, &mut answers)?;
                     if aaa_proto::canonical_short_id(&thread, 'q').is_some() {
+                        if !comments.is_empty() {
+                            anyhow::bail!("q- 질문에는 --text를 쓴다. --comment는 t- 카드의 질문 번호별 의견이다");
+                        }
                         return front(
                             json,
                             FrontRequest::QuestionReply {
@@ -2606,7 +2612,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                             anyhow::bail!("{}번 질문은 이미 답했거나 없다", i + 1);
                         }
                     }
-                    FrontRequest::ThreadAnswer { project, thread, report_hash: q.report_hash, picks, text }
+                    let comments = answer_comments(&comments, &q.items)?;
+                    FrontRequest::ThreadAnswer { project, thread, report_hash: q.report_hash, picks, text, comments }
                 }
                 ThreadCmd::Message { thread, legacy, interrupt, text_file, text, summary_file } => {
                     let (project, thread) = on_target(thread, legacy)?;
@@ -3724,6 +3731,28 @@ fn answer_picks(text: &str, questions: usize) -> Result<Vec<Option<u32>>> {
     Ok(picks)
 }
 
+fn answer_comments(values: &[String], items: &[aaa_proto::ThreadQuestion]) -> Result<Vec<Option<String>>> {
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut comments = vec![None; items.len()];
+    for value in values {
+        let (number, text) = value.split_once('=').ok_or_else(|| anyhow::anyhow!("의견은 번호=글 꼴이다: {value}"))?;
+        let number: u32 = number.trim().parse().context("의견의 질문 번호를 읽지 못했다")?;
+        let index = items
+            .iter()
+            .enumerate()
+            .position(|(i, q)| q.source_number.unwrap_or(i as u32 + 1) == number)
+            .ok_or_else(|| anyhow::anyhow!("{number}번 질문은 이미 답했거나 없다"))?;
+        let text = text.trim();
+        if text.is_empty() || comments[index].is_some() {
+            anyhow::bail!("{number}번 의견이 비었거나 중복됐다");
+        }
+        comments[index] = Some(text.to_string());
+    }
+    Ok(comments)
+}
+
 fn on_target(first: String, second: Option<String>) -> Result<(String, String)> {
     match second {
         Some(target) => Ok((project_or_here(Some(first))?, target)),
@@ -3745,6 +3774,9 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
     // CPU 수만큼 worker thread를 만들지 않아도 같은 I/O·timer를 구동한다.
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+        if matches!(&req, FrontRequest::ThreadAnswer { comments, .. } | FrontRequest::AskAnswer { comments, .. } if !comments.is_empty()) && c.proto.minor < 133 {
+            anyhow::bail!("질문별 의견은 Front API 1.133 이상 host가 필요하다. host를 갱신한다");
+        }
         if let FrontRequest::Threads { query, .. } = &req
             && c.proto.minor < 130
             && (query.open || query.status.is_some() || query.limit.is_some() || query.after.is_some())
@@ -5998,5 +6030,38 @@ mod tests {
         assert!(answer_picks("3A", 2).unwrap_err().to_string().contains("3번 질문이 없다"));
         assert!(answer_picks("A1", 2).is_err());
         assert!(answer_picks("1", 2).is_err());
+    }
+
+    /// 이미 답한 번호가 빠진 카드에도 원래 번호로 의견을 붙이고 잘못된 입력은 거절한다.
+    #[test]
+    fn answer_comments_keep_source_numbers_and_multiline_text() {
+        assert!(
+            Cli::try_parse_from([
+                "aaa",
+                "thread",
+                "answer",
+                "t-1000",
+                "3A",
+                "--comment",
+                "3=간격 유지",
+                "--comment",
+                "7=둘 다"
+            ])
+            .is_ok()
+        );
+        let mut items = aaa_proto::report_questions("## Questions\n### 1. 자리\n- A 유지\n### 2. 색\n- A 유지\n");
+        items[0].source_number = Some(3);
+        items[1].source_number = Some(7);
+        let values = vec!["7=둘 다\n보이게=좋다".into(), "3=간격 유지".into()];
+        assert_eq!(
+            super::answer_comments(&values, &items).unwrap(),
+            vec![Some("간격 유지".into()), Some("둘 다\n보이게=좋다".into())]
+        );
+        for bad in
+            [vec!["1=없음".into()], vec!["3=".into()], vec!["3=첫째".into(), "3=둘째".into()], vec!["형식 없음".into()]]
+        {
+            assert!(super::answer_comments(&bad, &items).is_err());
+        }
+        assert!(super::answer_comments(&[], &items).unwrap().is_empty());
     }
 }

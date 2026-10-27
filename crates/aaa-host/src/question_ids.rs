@@ -56,18 +56,12 @@ impl Host {
             return None;
         }
         let picks = answers.iter().map(|a| a.as_ref().and_then(|a| a.picks.first().copied().flatten())).collect();
-        let text = answers
-            .iter()
-            .enumerate()
-            .filter_map(|(n, a)| {
-                a.as_ref()?.text.as_ref().map(|t| format!("{} {t}", items[n].source_number.unwrap_or(n as u32 + 1)))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let comments = answers.iter().map(|a| a.as_ref().and_then(|a| a.text.clone())).collect();
         let last = answers.iter().flatten().max_by_key(|a| a.at_ms)?;
         Some(QuestionAnswerView {
             picks,
-            text: (!text.is_empty()).then_some(text),
+            text: None,
+            comments,
             summary: "일부 답함".into(),
             by: last.by.clone(),
             at_ms: last.at_ms,
@@ -279,6 +273,7 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "선택지 글자나 직접 답이 필요하다"));
         }
         let answer = QuestionAnswerView {
+            comments: Vec::new(),
             picks: vec![pick],
             text,
             summary: choice.unwrap_or("직접").to_string(),
@@ -320,12 +315,12 @@ impl Host {
         }
         let draft = self.question_draft(project, &items).ok_or_else(|| err(ErrorCode::Internal, "답 기록이 없다"))?;
         let result = if target.kind == "thread" {
-            self.thread_answer(project, &target.subject, &hash, draft.picks, draft.text, actor)
+            self.thread_answer(project, &target.subject, &hash, draft.picks, draft.text, draft.comments, actor)
                 .await
                 .map(Box::new)
                 .map(FrontResponse::Thread)
         } else {
-            self.ask_answer(project, &target.subject, &hash, draft.picks, draft.text, actor)
+            self.ask_answer(project, &target.subject, &hash, draft.picks, draft.text, draft.comments, actor)
         };
         if result
             .as_ref()
@@ -348,6 +343,8 @@ fn catalog_item(
     at: u64,
 ) -> QuestionView {
     let pick = answer.and_then(|a| a.picks.get(n)).copied().flatten();
+    let comment = answer.and_then(|a| a.comments.get(n)).and_then(|c| c.as_deref());
+    let letter = pick.and_then(|p| item.choices.get(p as usize).map(|c| c.letter_at(p as usize)));
     QuestionView {
         short_id: item.id.clone(),
         id: item.id.clone().unwrap_or_default(),
@@ -358,12 +355,16 @@ fn catalog_item(
         question_kind: kind.into(),
         text: item.text.clone(),
         options: item.choices.iter().enumerate().map(|(i, c)| format!("{} {}", c.letter_at(i), c.label)).collect(),
-        state: if pick.is_some() || answer.is_some_and(|a| a.summary != "일부 답함") {
+        state: if pick.is_some() || comment.is_some() || answer.is_some_and(|a| a.summary != "일부 답함") {
             QuestionState::Answered
         } else {
             QuestionState::Open
         },
-        answer: pick.and_then(|p| item.choices.get(p as usize).map(|c| c.letter_at(p as usize))),
+        answer: match (letter, comment) {
+            (Some(letter), Some(text)) => Some(format!("{letter} + 의견: {text}")),
+            (None, Some(text)) => Some(format!("직접: {text}")),
+            (letter, None) => letter,
+        },
         created_at_ms: at,
         menu: None,
     }

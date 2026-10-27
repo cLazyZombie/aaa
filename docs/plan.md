@@ -8172,3 +8172,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 
 - 웹 E2E 실험실의 agent가 실행기를 띄운 경로의 실제 macOS 책임 경로를 관찰해, ssh에서 돈 ci-local은 pane마다 「느린 빌드」 배너(137px)를 띄웠다. 1280×800 E2E42에서 옆 칸 diff의 CodeView가 297px로 줄어 가상화가 파일 머리 2개만 그려 「src/lib.rs만 펼침」(머리 6개)이 실패했다. aaa pane(launcher)에서 돈 회차는 Launcher라 배너가 없었다.
 - agent는 `AAA_TEST_RESPONSIBILITY=none`이면 관찰하지 않는다(Linux와 같은 없음). 웹 E2E harness가 이것을 실험실 환경에 넣는다. 배너·뱃지 시험(89)은 지금처럼 웹 경계에서 관측값을 주입한다. 제품 기본 동작과 E2E 기대값은 바꾸지 않는다.
+
+### 8.517 질문마다 직접 쓴 답과 의견(t-1194)
+
+- 여러 질문의 웹 카드에는 각 선택지 바로 아래에 여러 줄 직접 답 칸을 둔다. 선택과 의견을 함께 또는 직접 답만 보낼 수 있고, 한 질문의 글이 다른 미응답을 덮지 않는다. 단일 질문은 기존 끝 입력칸과 Enter 전송을 유지한다. 새 기능 설명 문구는 넣지 않는다. Reader·전송 중 비활성과 전송 실패 뒤 원문 보존을 유지한다.
+- Front API 1.133의 ThreadAnswer·AskAnswer·QuestionAnswerView에 선택적 comments 배열을 더한다. items 배열 순서로 고정하고 원래 source_number로 전달·표시한다. 배열 생략은 옛 text 계약이며 과거 공통 text는 그대로 남긴다. CLI는 --comment '번호=의견'을 반복해 보내고 옛 host에 의견을 누락시킬 요청을 거절한다.
+- thread Follow-ups·coordinator question answered 본문·답한 카드에 번호별 원문을 보존한다. q-ID별 부분 답도 같은 배열로 합치며, 재보고로 질문 순서가 바뀌어도 선택과 의견을 함께 옮긴다. 직접 지시는 선택보다 우선한다.
+- E53의 기존 두 질문 owner에 선택+의견·직접 답만·여러 줄 원문·Follow-ups·inbox 보존 검사를 더한다. headless 카드 회귀는 모바일/데스크톱·light/dark, 미응답·추천·Reader·초안·거부 뒤 보존을 확인한다. 새 E2E 번호와 고정 sleep은 없다.
+- 참고는 SurveyJS 질문별 comment area와 JSON Forms multiline control(각 MIT)다. 입력을 해당 질문에 붙이는 배치와 여러 줄 글을 따르며 외부 코드·의존성을 가져오지 않는다.

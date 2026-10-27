@@ -515,6 +515,7 @@ mod tests {
         let ids: Vec<_> = questions.items.iter().map(|q| q.id.clone().unwrap()).collect();
         let target = h.db.question_target(Some("demo"), &ids[0]).unwrap().unwrap();
         let answer = aaa_proto::QuestionAnswerView {
+            comments: Vec::new(),
             picks: vec![Some(0)],
             text: None,
             summary: "1A".into(),

@@ -333,6 +333,8 @@ thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림�
 질문 선택지·추천은 thread 보고의 카드를 정본으로 삼는다. post에만 새 C안을 만들어 선택지가 갈라지게 하지 않는다.
 새 안을 제안하려면 thread 보고를 먼저 고친다. 사용자가 채팅으로 답하면 카드에 있는 선택은 `aaa thread answer <thread> 1A`처럼
 기록하고, 카드에 없는 C나 직접 쓴 답은 `aaa thread answer <thread> --text '1 C: 사용자 답 원문'`으로 그대로 전한다.
+질문별 의견은 `aaa thread answer <thread> 1A --comment '1=간격을 넓혀' --comment '2=둘 다 보이게'`로 붙인다.
+웹은 여러 질문의 선택지 아래에서 각각 직접 답을 쓰며, 선택과 의견을 함께 또는 직접 답만 전한다. 직접 지시는 선택보다 우선한다.
 방향이 바뀌면 `aaa thread summary <id> --file`로 작업 요약도 고친다(`aaa guide summary`).
 
 ## 답 받기와 기록

@@ -6,6 +6,10 @@ import {
   repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount, inList, domIs,
 } from "../lib/harness.mjs";
 
+// 한글을 입력받는 실제 셸의 문자 로케일을 고정한다. SSH의 C 로케일을 물려받으면
+// Bash/Readline이 UTF-8 바이트를 meta 키로 해석한다. 이 spec의 자식 프로세스에만 적용한다.
+export const labEnv = { LC_ALL: process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8" };
+
 export default async function ({ ctl, page }) {
   await step("넓은 창: PTY가 터미널 칸을 채우고 창 크기를 따라간다(조작 중일 때)", async () => {
     // 터미널 글자 영역이 칸(안쪽 여백 뺀 크기)을 한 cell 안쪽까지 채우는지, header 크기·host PTY 크기가 같은지

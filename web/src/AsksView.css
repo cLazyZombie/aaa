@@ -63,7 +63,8 @@
 .ask-kind.is-done { background: var(--status-done-tint); color: var(--status-done); }
 .ask-question { font-size: var(--fs-md); }
 .ask-done-when { margin: 0; font-size: var(--fs-xs); color: var(--text-dim); }
-.ask-done-text { margin: 0; font-size: var(--fs-sm); }
+.ask-done-text { margin: 0; font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-question-comment textarea.input { width: 100%; min-height: calc(var(--touch-target) * 1.5); padding-block: var(--space-2); resize: vertical; font: inherit; font-size: var(--fs-input); line-height: var(--lh-base); }
 
 /* 질문 본문(웹페이지처럼): 그림은 칸 너비까지, 누르면 크게 */
 .ask-markdown { font-size: var(--fs-sm); line-height: var(--lh-prose); color: var(--text); min-width: 0; overflow-wrap: anywhere; }

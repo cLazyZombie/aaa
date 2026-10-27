@@ -6,6 +6,27 @@ struct Lab {
     h: Arc<Host>,
     path: PathBuf,
 }
+
+/// 웹의 묶음 답도 질문별 원문을 DB 사본·질문 목록·coordinator inbox에 같은 번호로 남겨야 한다.
+#[test]
+fn structured_post_comments_are_persisted_and_delivered_per_question() {
+    let lab = Lab::new();
+    let (_, request) = lab.post(1, "## Questions\n### 1. 자리\n- A 오른쪽\n### 2. 색\n- A 단색\n");
+    let hash = &request.questions.as_ref().unwrap().report_hash;
+    let comments = vec![Some("간격 유지\n색만 변경".into()), Some("두 색 사용".into())];
+    lab.h.ask_answer("demo", &request.id, hash, vec![Some(0), None], None, comments.clone(), "device:phone").unwrap();
+    let records = lab.h.db.ask_list("demo").unwrap();
+    assert_eq!(records[0].answer.as_ref().unwrap().comments, comments);
+    assert_eq!(records[0].answer.as_ref().unwrap().summary, "1A+의견 2직접");
+    let inbox = lab.h.db.inbox_list(Some("demo"), false).unwrap();
+    let notice = inbox.iter().find(|i| i.event == "question answered").unwrap();
+    assert!(notice.summary.contains("1A + 의견: 간격 유지\n색만 변경"));
+    assert!(notice.summary.contains("2 직접: 두 색 사용"));
+    assert!(notice.body.contains("1번 직접 쓴 답(의견): 간격 유지\n색만 변경\n2번 직접 쓴 답: 두 색 사용"));
+    let catalog = lab.h.question_catalog(true).unwrap();
+    assert!(catalog.iter().any(|q| q.answer.as_deref() == Some("A + 의견: 간격 유지\n색만 변경")));
+    assert!(catalog.iter().any(|q| q.answer.as_deref() == Some("직접: 두 색 사용")));
+}
 impl Lab {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!("aaa-qids-{}", aaa_common::util::new_id()));
@@ -61,6 +82,7 @@ fn orphan_thread_reference_stays_a_coordinator_question_across_reports_and_recon
     rec.report_hash = Some("old".into());
     rec.questions = aaa_proto::report_questions(BODY);
     let answer = QuestionAnswerView {
+        comments: Vec::new(),
         picks: vec![Some(0), Some(1)],
         text: None,
         summary: "1A 2B".into(),
@@ -121,6 +143,7 @@ fn inbox_cleanup_preserves_unanswered_coordinator_questions_until_explicit_handl
         &structured.questions.unwrap().report_hash,
         vec![Some(0), Some(1)],
         None,
+        Vec::new(),
         "device:phone",
     )
     .unwrap();
@@ -176,8 +199,10 @@ async fn structured_post_answers_by_id_keep_each_question_and_close_once_with_fu
     assert_eq!(q.items[0].id.as_deref(), Some("q-1000"));
     assert_eq!(q.items[1].id.as_deref(), Some("q-1001"));
     assert_eq!(q.items[0].choices[0].description.as_deref(), Some("손에 닿음"));
-    assert!(h.ask_answer("demo", &r.id, "stale", vec![Some(0), Some(1)], None, "device:phone").is_err());
-    assert!(h.ask_answer("demo", &r.id, &q.report_hash, vec![Some(99), Some(1)], None, "device:phone").is_err());
+    assert!(h.ask_answer("demo", &r.id, "stale", vec![Some(0), Some(1)], None, Vec::new(), "device:phone").is_err());
+    assert!(
+        h.ask_answer("demo", &r.id, &q.report_hash, vec![Some(99), Some(1)], None, Vec::new(), "device:phone").is_err()
+    );
     assert!(h.request_file("demo", &r.id, &q.report_hash, "library/preview/a.png").is_ok());
     std::fs::create_dir_all(dir.join("library/unrelated")).unwrap();
     std::fs::write(dir.join("library/unrelated/a.mp4"), b"private report").unwrap();
@@ -201,7 +226,8 @@ async fn structured_post_answers_by_id_keep_each_question_and_close_once_with_fu
     let done = h.db.ask_list("demo").unwrap();
     assert_eq!(done.len(), 1);
     assert_eq!(done[0].answer.as_ref().unwrap().picks, vec![Some(1), None]);
-    assert!(done[0].answer.as_ref().unwrap().text.as_ref().unwrap().contains(text.trim()));
+    assert_eq!(done[0].answer.as_ref().unwrap().comments, vec![None, Some(text.trim().to_string())]);
+    assert!(done[0].answer.as_ref().unwrap().text.is_none());
     assert_eq!(done[0].items, q.items);
     assert!(h.db.question_target(Some("demo"), "q-1000").unwrap().unwrap().draft.is_none());
     assert!(h.db.question_target(Some("demo"), "q-1001").unwrap().unwrap().draft.is_none());
@@ -234,7 +260,7 @@ fn two_devices_submit_one_answer_and_plain_chat_handling_keeps_the_alias() {
             let gate = gate.clone();
             std::thread::spawn(move || {
                 gate.wait();
-                h.ask_answer("demo", &id, &hash, vec![Some(n), Some(0)], None, "device:phone").is_ok()
+                h.ask_answer("demo", &id, &hash, vec![Some(n), Some(0)], None, Vec::new(), "device:phone").is_ok()
             })
         })
         .collect();

@@ -170,18 +170,22 @@ export default async function ({ page }) {
   await step("카드 답은 coordinator inbox에 선택·원문과 한 번 남고 post는 답함, 다른 기기도 보존한 같은 카드를 본다", async () => {
     await chipState(page, req.questions.items.map((q) => q.id), "ask");
     await phone.page.getByTestId("thread-ask-pick-1B").click();
-    await phone.page.getByTestId("thread-ask-text").fill("2 눈 아이콘은 항상 보이게");
+    const direct = "눈 아이콘은 항상 보이게\n원래 색은 유지";
+    await phone.page.getByTestId("thread-ask-text-2").fill(direct);
     await phone.page.getByTestId("thread-ask-send").click();
     await domIs(phone.page, "답한 post 카드", () => document.querySelector('[data-testid="ask-done-card"]')?.dataset.kind === "request");
     const data = (await call(page, { op: "asks" })).ok;
     const done = data.done.find((r) => r.subject === req.id);
-    if (done?.summary !== "1B 직접" || done.answer.text !== "2 눈 아이콘은 항상 보이게" || done.items[0].id !== req.question_id) throw new Error(`답 사본: ${JSON.stringify(done)}`);
+    if (done?.summary !== "1B 2직접" || done.answer.text !== null || JSON.stringify(done.answer.picks) !== "[1,null]" || JSON.stringify(done.answer.comments) !== JSON.stringify([null, direct]) || done.items[0].id !== req.question_id) throw new Error(`답 사본: ${JSON.stringify(done)}`);
     const inbox = aaa("inbox", "list", "demo", "--peek").items.filter((i) => i.event === "question answered" && i.summary.includes(req.question_id));
-    if (inbox.length !== 1 || !inbox[0].body.includes("가운데 큰 단추") || !inbox[0].body.includes(done.answer.text)) throw new Error(`inbox 답: ${JSON.stringify(inbox)}`);
+    if (inbox.length !== 1 || !inbox[0].body.includes("가운데 큰 단추") || !inbox[0].body.includes(`2번 직접 쓴 답: ${direct}`) || !inbox[0].summary.includes("2 직접: 눈 아이콘은 항상 보이게")) throw new Error(`inbox 답: ${JSON.stringify(inbox)}`);
     if (!aaa("post", "status", "demo", post.id).handled) throw new Error("post가 답함이 아니다");
     await chipState(page, req.questions.items.map((q) => q.id), "done");
     await open(page, req.question_id, '[data-testid="ask-done-card"]');
-    await domIs(page, "다른 기기의 같은 답", () => !!document.querySelector('[data-testid="ask-done-text"]'));
+    await domIs(page, "다른 기기의 같은 답", (direct) => {
+      const text = document.querySelector('[data-testid="ask-done-text-2"]');
+      return text?.textContent === `직접 쓴 답 ${direct}`;
+    }, direct);
     const again = await call(page, { op: "ask_answer", item: req.id, body_hash: req.questions.report_hash, picks: [0,0], text: null });
     if (!again.err) throw new Error("두 번째 답을 받았다");
     fs.rmSync(`${previewPath()}/card.svg`); // publish 사본도 바꿔 원본과 보존본을 구별한다

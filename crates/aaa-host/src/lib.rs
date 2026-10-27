@@ -1788,8 +1788,8 @@ impl Host {
             FrontRequest::QuestionReply { project, id, choice, text } => {
                 self.reply_by_id(&project, &id, choice.as_deref(), text, actor).await
             }
-            FrontRequest::AskAnswer { project, item, body_hash, picks, text } => {
-                self.ask_answer(&project, &item, &body_hash, picks, text, actor)
+            FrontRequest::AskAnswer { project, item, body_hash, picks, text, comments } => {
+                self.ask_answer(&project, &item, &body_hash, picks, text, comments, actor)
             }
             FrontRequest::AskForget { project, ids, all } => self.ask_forget(&project, &ids, all, actor),
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
@@ -2131,8 +2131,8 @@ impl Host {
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
-            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => self
-                .thread_answer(&project, &thread, &report_hash, picks, text, actor)
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text, comments } => self
+                .thread_answer(&project, &thread, &report_hash, picks, text, comments, actor)
                 .await
                 .map(Box::new)
                 .map(FrontResponse::Thread),

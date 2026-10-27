@@ -4834,3 +4834,13 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - [Rust Weak](https://doc.rust-lang.org/std/sync/struct.Weak.html)·[Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html)·[canonicalize](https://doc.rust-lang.org/std/fs/fn.canonicalize.html)(MIT/Apache-2.0)와 기존 collect_locks의 자원별 잠금 소유를 대조했다. 소유권/경로 정규화 원칙을 참고하며 외부 코드나 의존성을 추가하지 않는다. 새 두 unit은 각각 실제로 한 번 실행됐는지 확인하고, 성능은 다음 전체 차례의 같은 조건 전후로 판정한다.
 - 후속 같은조건 병렬에서는 cache owner가0.914→6.704초여서 성능 개선을 입증하지 못했다. 실제1000개 파일 경계는 그대로 두고, 준비용 빈 파일997개는 한 빈 파일과 같은 폴더의 hard link로 만든다. 파일 경로/개수/0바이트·실제 owner의 마지막 추가/초과 거부·교체/실패 재계산은 유지한다. 교체 뒤 다른 빈 파일도 그대로인지 실제 bytes를 검사한다. 원래 단언/상한·기존 owner 이름을 바꾸거나 준비를 시간 밖으로 옮기지 않는다.
 - [Rust hard_link](https://doc.rust-lang.org/std/fs/fn.hard_link.html)(MIT/Apache-2.0)와 [CPython os.link](https://docs.python.org/3/library/os.html#os.link)(PSF-2.0)의 같은 filesystem 내 실제 파일 경로 공유를 대조했다. symlink·파일 수 축소·합성 usage는 쓰지 않으며, 테스트의 실제 디렉터리 항목을 유지해 inode 준비 작업만 줄인다. 새 시험·삭제·대체는 없고, 단독 통과로 보통 병렬5초 기준을 통과했다고 판정하지 않는다.
+
+## 질문별 직접 답과 의견(t-1194, §8.517)
+
+- host compose keeper는 선택+의견·직접 답만·원래 질문 번호·여러 줄 원문과 무관한 미응답 거절을 검사한다. 필요성: 한 의견이 다른 질문까지 대신하거나 선택을 덮는 회귀를 막는다.
+- proto keeper는 comments 없는 옛 요청·사본을 읽고 null 위치와 줄바꿈을 왕복한다. CLI keeper는 원래 번호·반복 --comment·글 안의 =·빈/중복/없는 번호 거절을 검사한다. 필요성: 이전 공통 text 호환과 질문별 매핑을 지킨다.
+- post keeper는 실제 host DB 사본·질문 목록·inbox 본문을 확인하고, repeat keeper는 재배열된 질문에 선택·의견·원래 번호가 함께 따라가는지 검사한다. 기존 q-ID별 부분 답 keeper도 의견 배열과 전체 원문을 확인한다. 필요성: 화면만 바뀌고 기록·전달이 손실되는 회귀를 막는다.
+- 웹 유닛 keeper는 직접 답이 자기 질문만 채우며 나머지 미응답을 추천 또는 미완료로 남기는지 확인한다. 실제 React 카드 headless 회귀는 `node web/e2e/question-comments.browser.mjs [그림 폴더]`다. 전후 촬영은 `--before-ref=<기준 git ref>`를 사용한다. Playwright는 기존 NODE_PATH의 고정판이며 설치하지 않는다. 기본 Chromium launcher 옵션을 쓴다. 공용 브라우저가 없는 환경에서는 이미 설치된 headless Chrome을 `AAA_BROWSER_CHANNEL=chrome`으로 명시할 수 있으며 정규 Chromium/WebKit E53 확인을 대신했다고 하지 않는다.
+- 카드 회귀는 1280px·390px의 light/dark에서 두 의견과 선택을 보내고 질문별 답 표시·가로 넘침 없음을 확인한다. root capture 중 부모의 동기 갱신을 끼워 실제 textarea 입력 보존도 검사한다. 별도 시나리오는 단일 질문 Enter·Reader 비활성·다른 미응답 거절·부분 답 초안·coordinator post·전송 거부 뒤 원문/재전송 가능 상태를 검사한다. 각 조건은 DOM·callback 완료 사건으로 끝나고 실패 상한 5초를 쓰며 sleep·재시도·기대값 완화는 없다.
+- 기존 E53의 아이콘 두 질문 owner는 UI 의견 두 개·선택 B·여러 줄 직접 답을 실제 host로 보내고 task Follow-ups·inbox 본문·답한 카드·ThreadView 사본을 대조한다. 기존 추천 전송·옛 --text·늦은 응답 owner와 E2E 번호를 유지한다. 정규 전체 gate와 Chromium/WebKit E53은 Unix 착지 차례에서 수행한다.
+- 참고 후보는 [SurveyJS comment area](https://surveyjs.io/form-library/examples/individual-checkbox-comments/documentation)([MIT](https://github.com/surveyjs/survey-library/blob/master/LICENSE))와 [JSON Forms multiline](https://jsonforms.io/examples/control)([MIT](https://github.com/eclipsesource/jsonforms/blob/master/LICENSE))다. 질문에 붙는 입력 배치만 참고하며 코드나 의존성을 가져오지 않았다.
