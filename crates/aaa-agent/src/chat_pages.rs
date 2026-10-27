@@ -403,7 +403,9 @@ mod tests {
     fn sparse_and_large_records_keep_advancing_with_bounded_wire_pages() {
         let root = super::super::tests::dir("page-budget");
         let path = root.join("s.jsonl");
-        let mut file = std::fs::File::create(&path).unwrap();
+        // JSON Display는 escape 조각마다 write를 부른다. 원래 모든 크기·내용을
+        // 유지하면서 fixture의 작은 파일 쓰기를 모으고 flush 오류도 검사한다.
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
         writeln!(file, "{}", json!({"type":"user","message":{"content":[{"type":"text","text":"처음"},{"type":"image","source":{"data":"x".repeat(17 << 20)}},{"type":"tool_result","content":"x".repeat(17 << 20)},{"type":"tool_result","content":[{"type":"text","text":"x".repeat(17 << 20)}]}]}})).unwrap();
         // 예전 16MiB 탐색 상한 너머에도 첫 글이 있다. 한 줄 자체가 큰 도구 결과도 건넌다.
         writeln!(file, "{}", json!({"type":"blob","data":"x".repeat(17 << 20)})).unwrap();
@@ -415,6 +417,7 @@ mod tests {
             )
             .unwrap();
         }
+        file.flush().unwrap();
         drop(file);
         let mut cursor = None;
         let mut count = 0;

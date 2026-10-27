@@ -26,6 +26,30 @@ use crate::{Host, err};
 /// nudge 문구에 나열하는 대상 수
 const NUDGE_SUBJECTS: usize = 5;
 
+/// 같은 관측이 정해진 창을 채웠는지 본다. 입력창은 0초 설정이어도 두 관측이 필요하다.
+/// 시각을 받으므로 실제 nudge 경계와 시험이 같은 판정을 쓰며 벽시계를 기다리지 않는다.
+fn steady_observation(
+    observations: &mut HashMap<String, (String, Instant)>,
+    key: &str,
+    value: &str,
+    now: Instant,
+    window: Duration,
+    repeated: bool,
+) -> bool {
+    match observations.get_mut(key) {
+        Some((previous, since)) if previous.as_str() == value => now.duration_since(*since) >= window,
+        _ => {
+            observations.insert(key.to_string(), (value.to_string(), now));
+            !repeated && window.is_zero()
+        }
+    }
+}
+
+fn idle_long_enough(activity: &AgentActivity, since_ms: u64, now_ms: u64, window: Duration) -> bool {
+    matches!(activity, AgentActivity::Idle | AgentActivity::Started)
+        && now_ms.saturating_sub(since_ms) >= window.as_millis() as u64
+}
+
 /// `inbox`·`context` 한 응답에 싣는 inbox 항목 크기 한도(JSON bytes). front 연결 frame 상한(1 MiB)의 절반이라
 /// 응답의 나머지 자리가 남는다. 참고는 파일을 바로 읽어(`context`의 Inbox 절) 이런 한도가 없다.
 pub(crate) const INBOX_REPLY_BYTES: usize = aaa_proto::MAX_FRAME / 2;
@@ -765,18 +789,11 @@ impl Host {
         // 입력 대기: hook 상태가 있으면 그것으로, 없으면 화면이 그만큼 그대로인지로 본다
         let lines = self.screen_lines(&coord.machine_id, &coord.id).await.unwrap_or_default();
         let ready = match &coord.agent {
-            Some(a) => {
-                matches!(a.activity, AgentActivity::Idle | AgentActivity::Started)
-                    && aaa_common::util::now_ms().saturating_sub(a.since_ms) >= idle_for.as_millis() as u64
-            }
+            Some(a) => idle_long_enough(&a.activity, a.since_ms, aaa_common::util::now_ms(), idle_for),
             None => {
                 let h = hex::encode(sha2::Sha256::digest(lines.join("\n").as_bytes()));
                 let mut seen = self.nudge_screens.lock().unwrap();
-                let e = seen.entry(coord.id.clone()).or_insert((h.clone(), Instant::now()));
-                if e.0 != h {
-                    *e = (h, Instant::now());
-                }
-                e.1.elapsed() >= idle_for
+                steady_observation(&mut seen, &coord.id, &h, Instant::now(), idle_for, false)
             }
         };
         if !ready || !prompt_empty(&lines) {
@@ -787,16 +804,15 @@ impl Host {
         // (herdr-projects steps.rs `box_quiet`: 마지막 키 입력 시각을 알 수 없어 입력창으로 본다).
         {
             let mut boxes = self.nudge_box.lock().unwrap();
-            match boxes.get(project) {
-                Some((pane, since)) if *pane == coord.id => {
-                    if since.elapsed() < Duration::from_secs(self.cfg.projects.nudge_quiet_secs) {
-                        return;
-                    }
-                }
-                _ => {
-                    boxes.insert(project.to_string(), (coord.id.clone(), Instant::now()));
-                    return;
-                }
+            if !steady_observation(
+                &mut boxes,
+                project,
+                &coord.id,
+                Instant::now(),
+                Duration::from_secs(self.cfg.projects.nudge_quiet_secs),
+                true,
+            ) {
+                return;
             }
         }
         let text = nudge_text(project, &unseen);
@@ -858,6 +874,42 @@ impl Outage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nudge_windows_reset_on_changed_observations_and_require_two_empty_checks() {
+        let t0 = Instant::now();
+        let mut seen = HashMap::new();
+        let idle = Duration::from_secs(2);
+        assert!(!steady_observation(&mut seen, "pane-a", "screen-1", t0, idle, false));
+        assert!(!steady_observation(&mut seen, "pane-a", "screen-1", t0 + idle - Duration::from_nanos(1), idle, false));
+        assert!(steady_observation(&mut seen, "pane-a", "screen-1", t0 + idle, idle, false));
+        assert!(!steady_observation(&mut seen, "pane-a", "screen-2", t0 + idle, idle, false));
+        assert!(!steady_observation(&mut seen, "pane-b", "screen-2", t0 + idle, idle, false));
+
+        let quiet = Duration::from_secs(1);
+        let mut boxes = HashMap::new();
+        assert!(!steady_observation(&mut boxes, "demo", "pane-a", t0, quiet, true));
+        assert!(!steady_observation(&mut boxes, "demo", "pane-a", t0 + quiet - Duration::from_nanos(1), quiet, true));
+        assert!(steady_observation(&mut boxes, "demo", "pane-a", t0 + quiet, quiet, true));
+        assert!(!steady_observation(&mut boxes, "demo", "pane-b", t0 + quiet, quiet, true));
+        assert!(!steady_observation(&mut boxes, "other", "pane-b", t0 + quiet, quiet, true));
+        boxes.remove("demo");
+        assert!(!steady_observation(&mut boxes, "demo", "pane-b", t0 + quiet, Duration::ZERO, true));
+        assert!(steady_observation(&mut boxes, "demo", "pane-b", t0 + quiet, Duration::ZERO, true));
+    }
+
+    #[test]
+    fn nudge_hook_idle_and_started_wait_for_the_exact_configured_window() {
+        let window = Duration::from_secs(2);
+        for activity in [AgentActivity::Idle, AgentActivity::Started] {
+            assert!(!idle_long_enough(&activity, 1_000, 999, window));
+            assert!(!idle_long_enough(&activity, 1_000, 2_999, window));
+            assert!(idle_long_enough(&activity, 1_000, 3_000, window));
+        }
+        for activity in [AgentActivity::Working, AgentActivity::Question, AgentActivity::Error, AgentActivity::Exited] {
+            assert!(!idle_long_enough(&activity, 0, u64::MAX, window));
+        }
+    }
 
     #[test]
     fn ticker_refreshes_usage_without_a_browser_and_releases_pending_input() {

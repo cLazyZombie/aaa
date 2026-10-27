@@ -5,23 +5,17 @@ export default async function () {
   aaa("project", "create", "demo");
   const safari = await webkit.launch({ headless: true });
   try {
-  await step("대량 답 삭제: Chromium 데스크톱·휴대폰의 500개 원문·그림·실패 복구", async () => {
-    for (const width of [1280, 390]) await askScenario(browser, "chromium", width);
-  });
-  await step("대량 답 삭제: WebKit 데스크톱·휴대폰의 500개 원문·그림·실패 복구", async () => {
-    for (const width of [1280, 390]) await askScenario(safari, "webkit", width);
-  });
-  await step("대량 보고서: Chromium 601개 보관·세 탭 모두 읽음·삭제", async () => {
-    for (const width of [1280, 390]) await reportScenario(browser, "chromium", width);
-  });
-  await step("대량 보고서: WebKit 601개 보관·세 탭 모두 읽음·삭제", async () => {
-    for (const width of [1280, 390]) await reportScenario(safari, "webkit", width);
-  });
-  await step("대량 사본·공유 링크: Chromium 500개 정리·무효화", async () => {
-    for (const width of [1280, 390]) await maintenanceScenario(browser, "chromium", width);
-  });
-  await step("대량 사본·공유 링크: WebKit 500개 정리·무효화", async () => {
-    for (const width of [1280, 390]) await maintenanceScenario(safari, "webkit", width);
-  });
+  await step("대량 답 삭제: chromium 1280", () => askScenario(browser, "chromium", 1280));
+  await step("대량 답 삭제: chromium 390", () => askScenario(browser, "chromium", 390));
+  await step("대량 답 삭제: webkit 1280", () => askScenario(safari, "webkit", 1280));
+  await step("대량 답 삭제: webkit 390", () => askScenario(safari, "webkit", 390));
+  await step("대량 보고서: chromium 1280", () => reportScenario(browser, "chromium", 1280));
+  await step("대량 보고서: chromium 390", () => reportScenario(browser, "chromium", 390));
+  await step("대량 보고서: webkit 1280", () => reportScenario(safari, "webkit", 1280));
+  await step("대량 보고서: webkit 390", () => reportScenario(safari, "webkit", 390));
+  await step("대량 사본·공유 링크: chromium 1280", () => maintenanceScenario(browser, "chromium", 1280));
+  await step("대량 사본·공유 링크: chromium 390", () => maintenanceScenario(browser, "chromium", 390));
+  await step("대량 사본·공유 링크: webkit 1280", () => maintenanceScenario(safari, "webkit", 1280));
+  await step("대량 사본·공유 링크: webkit 390", () => maintenanceScenario(safari, "webkit", 390));
   } finally { await safari.close(); }
 }

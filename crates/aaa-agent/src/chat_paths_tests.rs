@@ -32,7 +32,7 @@ impl Fixture {
         let dir = self.root.join("2026/10/21");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("rollout-test-{id}.jsonl"));
-        let mut f = std::fs::File::create(&path).unwrap();
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
         writeln!(
             f,
             "{}",
@@ -51,6 +51,7 @@ impl Fixture {
             )
             .unwrap();
         }
+        f.flush().unwrap();
         path
     }
     fn path(&self, id: &str) -> Result<PathBuf, String> {

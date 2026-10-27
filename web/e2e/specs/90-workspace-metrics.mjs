@@ -211,27 +211,26 @@ export default async function ({ page }) {
     await shot(page, "workspace-filtered");
   });
   await step("긴 workspace 목록 fixture를 실제 등록·원장에 추가한다", async () => {
-    // host DB에는 host만 쓴다. 고유 origin을 가진 실제 checkout을 등록하고,
-    // 보고 회수 → agent 신원 수집 → host 원장 저장이 끝난 뒤 목록을 검사한다.
-    // 기존 thread 두 개와 합쳐 기본 동시 한도(10) 안에서 여섯 개씩 수집한다.
-    for (let batch=0; batch<24; batch+=6) {
-      const fixtures = [];
-      for (let i=batch; i<batch+6; i++) {
-        const name = `sample-${String(i).padStart(2,"0")}`;
-        const path = `${root}/${name}`;
-        execFileSync("git", ["clone", "--quiet", "--shared", repo, path]);
-        execFileSync("git", ["-C", path, "remote", "set-url", "origin", `https://example.com/team/${name}.git`]);
-        aaa("project", "set", "demo", "repos.add", `${path}@labA`);
-        const fixture = aaa("thread", "start", "demo", "--title", name, "--machine", "labA", "--repo", path, "--profile", "fake", "--task-file", `${root}/metrics-task.md`);
-        fixtures.push({ name, id: fixture.id });
-      }
-      await until(`workspace 묶음 ${batch/6+1}의 실제 수집`, async () => {
-        const listed = (await api(page)).workspaces;
-        return fixtures.every(f => listed.some(w => w.name === f.name && w.id));
+    // 수집 단위는 보고 thread의 머신에 등록된 모든 checkout이다. 기존 thread의
+    // 보고 한 번으로 24개를 실제 agent→host 원장에 회수하고, 목록용 thread 24개는 띄우지 않는다.
+    // Git clone 자체는 이 UI 계약이 아니다. 독립 .git 사본과 고유 origin은 그대로 남긴다.
+    const fixtures = [];
+    for (let i=0; i<24; i++) {
+      const name = `sample-${String(i).padStart(2,"0")}`;
+      const path = `${root}/${name}`;
+      fs.cpSync(repo, path, {
+        recursive:true,
+        filter: source => source !== `${repo}/target` && source !== `${repo}/.git/worktrees`,
       });
-      // 다음 묶음이 동시 thread 한도를 차지하지 않게 끝낸다. dirty 산출물은 실험실과 함께 지운다.
-      for (const fixture of fixtures) aaa("thread", "resolve", "demo", fixture.id, "--keep-worktree");
+      execFileSync("git", ["-C", path, "remote", "set-url", "origin", `https://example.com/team/${name}.git`]);
+      aaa("project", "set", "demo", "repos.add", `${path}@labA`);
+      fixtures.push({ name });
     }
+    fs.appendFileSync(`${work}/report.md`, "\n긴 workspace 목록의 등록 저장소를 모두 회수한다.\n");
+    await until("workspace 24개의 실제 수집", async () => {
+      const listed = (await api(page)).workspaces;
+      return fixtures.every(f => listed.some(w => w.name === f.name && w.id));
+    });
     const listed = (await api(page)).workspaces;
     if (listed.length !== 25 || listed.filter(w => w.name.startsWith("sample-")).length !== 24) throw new Error(`긴 workspace 목록 수집 실패: ${JSON.stringify(listed)}`);
   });

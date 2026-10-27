@@ -139,6 +139,7 @@ fn choose(lab: &Lab, input: &SelectionInput) -> anyhow::Result<(String, Allocati
 // 필요: 관측 수집과 무관하게 시작한다는 사용자 계약과 알려진 한도의 경계를 지킨다.
 #[test]
 fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_first_run() {
+    let l = Lab::new();
     for mode in [
         "unknown",
         "missing",
@@ -152,8 +153,9 @@ fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_firs
         "conflict",
         "rate-unknown",
     ] {
-        let l = Lab::new();
-        let mut c = candidate("work", 20.0, 20.0);
+        // Host/DB 준비만 공유한다. 각 입력은 이력 없는 새 계정으로 처음·두 번째·종료 뒤를 모두 검사한다.
+        let account = format!("work-{mode}");
+        let mut c = candidate(&account, 20.0, 20.0);
         if mode == "missing" {
             c.quota = None;
         }
@@ -185,7 +187,7 @@ fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_firs
             assert!(allocation.selection.reason.contains("판단"));
         }
         let id = l.seed(&name, allocation, ThreadStatus::Starting, true);
-        assert_eq!(choose(&l, &p).unwrap().0, "work", "{mode}: 두 번째도 시작한다");
+        assert_eq!(choose(&l, &p).unwrap().0, account, "{mode}: 두 번째도 시작한다");
         l.h.update_rec("demo", &id, |r| r.status = ThreadStatus::Resolved).unwrap();
         assert!(choose(&l, &p).is_ok(), "{mode}: 종료 뒤 관측이 없어도 시작한다");
     }

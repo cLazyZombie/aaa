@@ -1357,24 +1357,46 @@ impl Db {
         Ok(rows)
     }
 
+    const INBOX_UPSERT: &str =
+        "INSERT INTO inbox(id,project,kind,subject,event,done,done_at,created_at,data) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+         ON CONFLICT(id) DO UPDATE SET done=excluded.done, done_at=excluded.done_at, data=excluded.data";
+
+    fn inbox_write(statement: &mut rusqlite::Statement<'_>, i: &aaa_proto::InboxItem) -> Result<()> {
+        statement.execute(params![
+            i.id,
+            i.project,
+            i.item_kind,
+            i.subject,
+            i.event,
+            i.done,
+            i.done_at_ms.map(|v| v as i64),
+            i.created_at_ms as i64,
+            serde_json::to_string(i)?
+        ])?;
+        Ok(())
+    }
+
     /// inbox 항목(JSON)을 넣거나 바꾼다
     pub fn inbox_put(&self, i: &aaa_proto::InboxItem) -> Result<()> {
         let c = self.conn.lock().unwrap();
-        c.execute(
-            "INSERT INTO inbox(id,project,kind,subject,event,done,done_at,created_at,data) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
-             ON CONFLICT(id) DO UPDATE SET done=excluded.done, done_at=excluded.done_at, data=excluded.data",
-            params![
-                i.id,
-                i.project,
-                i.item_kind,
-                i.subject,
-                i.event,
-                i.done,
-                i.done_at_ms.map(|v| v as i64),
-                i.created_at_ms as i64,
-                serde_json::to_string(i)?
-            ],
-        )?;
+        let mut statement = c.prepare(Self::INBOX_UPSERT)?;
+        Self::inbox_write(&mut statement, i)
+    }
+
+    /// 멈춘 host에 옛 기록을 들여올 때 한 묶음을 함께 확정한다. 중간 실패는 모두 되돌린다.
+    pub(crate) fn inbox_put_many(&self, items: &[aaa_proto::InboxItem]) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        {
+            let mut statement = tx.prepare(Self::INBOX_UPSERT)?;
+            for item in items {
+                Self::inbox_write(&mut statement, item)?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -2133,6 +2155,71 @@ mod schema_tests {
         assert_eq!(reopened.meta("after-open").unwrap().as_deref(), Some("durable"));
         drop(reopened);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn schema(conn: &Connection) -> Vec<(String, String, String)> {
+        conn.prepare("SELECT type,name,COALESCE(sql,'') FROM sqlite_schema ORDER BY type,name")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    // 필요: 실제 index/ALTER 실패 뒤 기존 스키마·행·정상 재열기를 지킨다.
+    #[test]
+    fn schema_failure_rolls_back_create_and_alter_then_preserves_rows_on_reopen() {
+        for fault in ["index", "alter"] {
+            let root = std::env::temp_dir().join(format!("aaa-schema-{}", aaa_common::util::new_id()));
+            std::fs::create_dir(&root).unwrap();
+            let path = root.join("host.db");
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+                 INSERT INTO meta VALUES('keep','사용자 원문');",
+            )
+            .unwrap();
+            if fault == "index" {
+                // 앞선 CREATE 뒤 실제 index SQL이 실패한다. 기존 행은 그 실패와 무관하다.
+                conn.execute_batch(
+                    "CREATE TABLE posts(seq INTEGER PRIMARY KEY,post_id TEXT,sender TEXT,created_ms INTEGER);
+                     INSERT INTO posts VALUES(1,'original','worker',1);",
+                )
+                .unwrap();
+            } else {
+                // CREATE 묶음은 통과하고 앞선 추가 열 뒤 실제 ALTER SQL이 실패한다.
+                conn.execute_batch("CREATE VIEW library_reports AS SELECT '원문' AS live;").unwrap();
+            }
+            let before = schema(&conn);
+            drop(conn);
+            let error = Db::open(&path).err().expect("불완전한 기존 스키마를 정상으로 열 수 없다");
+            assert!(error.to_string().contains(if fault == "index" { "project" } else { "view" }), "{error:#}");
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(schema(&conn), before, "{fault}: 실패한 초기화가 반쪽 스키마를 남겼다");
+            assert_eq!(
+                conn.query_row("SELECT value FROM meta WHERE key='keep'", [], |row| row.get::<_, String>(0)).unwrap(),
+                "사용자 원문"
+            );
+            if fault == "index" {
+                assert_eq!(
+                    conn.query_row("SELECT post_id FROM posts", [], |row| row.get::<_, String>(0)).unwrap(),
+                    "original"
+                );
+                conn.execute("DROP TABLE posts", []).unwrap();
+            } else {
+                conn.execute("DROP VIEW library_reports", []).unwrap();
+            }
+            drop(conn);
+            let db = Db::open(&path).unwrap();
+            assert_eq!(db.meta("keep").unwrap().as_deref(), Some("사용자 원문"));
+            let committed = schema(&db.conn.lock().unwrap());
+            drop(db);
+            let reopened = Db::open(&path).unwrap();
+            assert_eq!(schema(&reopened.conn.lock().unwrap()), committed);
+            assert_eq!(reopened.meta("keep").unwrap().as_deref(), Some("사용자 원문"));
+            drop(reopened);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 }
 

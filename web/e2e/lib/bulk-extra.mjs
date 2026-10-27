@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, pairPage, openSettings, shot, base } from "./harness.mjs";
 import { responseGate, responsive, count } from "./bulk-actions.mjs";
+import { clickDialogButton } from "./menu.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
 import { BulkInboxDiagnostics } from "./bulk-inbox-diagnostics.mjs";
 
@@ -62,7 +63,7 @@ export async function inboxScenario(engine, label, width) {
     await dialog.getByText(/500개를 끝낸다/).waitFor();
     seedInbox(db, 1, "late-inbox");
     const held = gate.arm("inbox_done");
-    await dialog.getByRole("button", { name: "모두 끝내기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "모두 끝내기", exact: true }));
     try { await held.arrived; await responsive(page, dialog); await shot(page, `bulk-inbox-${label}-${width}`); }
     finally { held.release(); }
     await dialog.waitFor({ state: "hidden" });
@@ -158,7 +159,7 @@ export async function sweepScenario(engine, label, width) {
     await settings.getByTestId("sweep-run").click();
     const dialog = page.getByRole("alertdialog");
     const held = gate.arm(req => req.op === "project_sweep" && !req.dry_run);
-    await dialog.getByRole("button", { name: "치우기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "치우기", exact: true }));
     try { await responsive(page, dialog); await held.arrived; }
     finally { held.release(); }
     await dialog.waitFor({ state: "hidden" });

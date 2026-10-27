@@ -238,8 +238,8 @@ fn park_returns_the_slot_and_unpark_resumes_the_same_conversation() {
     let still = w.show(&id);
     assert_eq!(still["status"], "parked", "{still}");
     assert!(still["park"]["parked_at_ms"].is_u64(), "거부가 보류 기록을 지웠다: {still}");
-    // fixed wait: auto_resolve_days(시험 하루 = 1초)를 넘긴다. 쉬는 열린 thread는 끝나도 보류는 남는다
-    std::thread::sleep(Duration::from_millis(2100));
+    // 기한 직전/정각과 기한이 지난 보류의 제외는 transitions의 시각 주입 owner가 검사한다.
+    // 이 keeper는 실제 tick을 끝내도 보류 기록을 유지하고 같은 대화로 이어지는 것을 검사한다.
     w.h.ticks(2);
     assert_eq!(w.show(&id)["status"], "parked", "보류는 auto-resolve하지 않는다");
 

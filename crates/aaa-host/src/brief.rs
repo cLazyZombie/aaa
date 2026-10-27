@@ -17,7 +17,8 @@
 //! - 확인창(`harness::modal_of`)이 보이면 입력하지 않고 질문으로 올린다(aaa 원격 응답, §8.15).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use aaa_proto::{AgentActivity, BriefState, ErrorBody, ErrorCode, ThreadStatus};
 

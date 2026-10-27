@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { root, aaa, step, browser, pairPage, until, domIs, shot, openSettings, inList } from "../lib/harness.mjs";
+import { clickMenuItem } from "../lib/menu.mjs";
 
 const settingsFile = () => `${root}/projects/demo/project.toml`;
 const git = (dir, ...a) => execFileSync("git", ["-C", dir, "-c", "user.name=e2e", "-c", "user.email=e2e@example.com", ...a], { encoding: "utf8" }).trim();
@@ -17,7 +18,7 @@ async function manage(p, id, item) {
   await domIs(p, `${id} 화면`, (id) => document.querySelector('[data-testid="thread-view"] .term-title strong')?.textContent?.endsWith(id), id);
   await p.getByTestId("thread-manage").click();
   // 데스크톱은 popover의 menuitem, 휴대폰은 아래 sheet의 단추(RowMenu)
-  await p.locator('[role="menuitem"], .row-sheet-item').filter({ hasText: item }).first().click();
+  await clickMenuItem(p.locator('[role="menuitem"], .row-sheet-item').filter({ hasText: item }).first());
 }
 /** 창이 휴대폰 폭 안에 있고 옆으로 넘치지 않는다 */
 const fits = (p, selector) => p.evaluate((sel) => {

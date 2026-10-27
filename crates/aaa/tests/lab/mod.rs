@@ -92,6 +92,9 @@ impl Node {
             .env("RUST_LOG", "aaa=info")
             // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게(보는 시험만 채운다)
             .env("AAA_TEST_BUILTINS", "")
+            // 가짜 harness의 출력 준비는 각 시험의 PTY 표지로 확인한다. 시작 화면을
+            // 숨기는 실제 3초 경계는 detect::state의 시각 주입 owner가 검사한다.
+            .env("AAA_TEST_DETECT_GRACE_MS", "0")
             // ticker도 사용량을 읽는다. 실제 CLI 로그인·keychain·외부 구독에 닿지 않는다.
             .env("AAA_USAGE_HOME", self.cfg.join("usage-home"))
             .env_remove("AAA_USAGE_ORIGIN")

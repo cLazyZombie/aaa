@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, pairPage } from "./harness.mjs";
 import { responseGate, responsive, count } from "./bulk-actions.mjs";
+import { clickDialogButton } from "./menu.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
 
 export async function automationQueueScenario(engine, label, width) {
@@ -39,7 +40,7 @@ export async function automationQueueScenario(engine, label, width) {
       const dialog = page.getByRole("alertdialog");
       const summary = await dialog.locator(".confirm-body").textContent();
       const held = gate.arm("automation_unblock");
-      await dialog.getByRole("button", { name: discard ? "버리기" : "계속 보내기", exact: true }).click();
+      await clickDialogButton(dialog.getByRole("button", { name: discard ? "버리기" : "계속 보내기", exact: true }));
       try {
         await held.arrived;
         // host는 반영했지만 HTTP 응답은 아직 보류 중이다. 포커스 복귀가 실제 목록을 먼저 갱신하게 한다.

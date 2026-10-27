@@ -35,6 +35,9 @@ const env = {
   AAA_TEST_EVENTS_PING_MS: "1000",
   // thread brief: 가짜 agent 화면이 이만큼 그대로면 친다(기본 3초. 12-threads-push는 thread를 단계마다 연다)
   AAA_TEST_BRIEF_SETTLE_MS: "300",
+  // 가짜 harness는 화면/PTY 준비 사건을 기다린다. 기본 3초 경계는
+  // detect::state::tests::startup_grace_and_skipped_viewer_screens가 시각 주입으로 지킨다.
+  AAA_TEST_DETECT_GRACE_MS: "0",
   // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게
   AAA_TEST_BUILTINS: "",
   // 「SSH로 추가」가 같은 판 release launcher를 찾을 때 실제 GitHub에 가지 않는다(닫힌 loopback 포트, 개발 빌드 host만 읽는다)
@@ -445,6 +448,7 @@ const ipadReplace = (page, jamo, result) => ipadKey(page, jamo, [["delete"], ["i
  */
 async function inList(p, target) {
   const item = typeof target === "string" ? p.getByTestId(target) : target;
+  let clickDeadline;
   await item.waitFor({ state: "attached" });
   // 닫히는 중인 drawer의 항목은 움직임이 끝날 때까지 보인다: 끝난 뒤에 본다(transition의 finished)
   await drawerSettled(p);
@@ -453,6 +457,10 @@ async function inList(p, target) {
   if (!(await item.isVisible()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
     await p.locator("#workspace-drawer.is-open").waitFor();
+    // 열린 직후 항목은 아직 움직인다. native click의 안정성 재검사 간격을
+    // 기다리지 않고 원래 transition의 실제 종료를 본 뒤 누른다.
+    clickDeadline = performance.now() + 30_000;
+    await drawerSettled(p);
   }
   // 활동 막대(plan §8.240): 항목이 고르지 않은 패널이나 접은 사이드바에 있으면 그 패널 단추로 보인다(보이는 패널의 단추를 다시
   // 누르면 접히므로 숨었을 때만 누른다)
@@ -476,7 +484,7 @@ async function inList(p, target) {
     }));
     throw new Error(`목록 항목이 보이지 않는다(${p.viewportSize()?.width}px): ${JSON.stringify(at)}`);
   }
-  await item.click();
+  await item.click(clickDeadline === undefined ? {} : { timeout: Math.max(1, clickDeadline - performance.now()) });
   // 메뉴 닫힘과 목적지 전환은 서로 다른 사건이다. 휴대폰은 닫힌 이전 화면을 그린 뒤
   // 다음 frame에 pane을 고르므로 메뉴가 사라진 것만 보고 다음 조작을 보내지 않는다.
   if (typeof target === "string" && target.startsWith("pane-")) {

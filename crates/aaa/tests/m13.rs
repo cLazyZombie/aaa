@@ -60,7 +60,12 @@ const BRIEF_SETTLE_MS: &str = "300";
 
 /// m13의 host는 모두 여기서 띄운다. `settle_ms`가 `None`이면 제품 기본값(3초)이다
 fn spawn_host(lab: &mut Lab, tag: &str, node: &Node, settle_ms: Option<&str>) {
-    let env: Vec<(&str, &str)> = settle_ms.map(|ms| ("AAA_TEST_BRIEF_SETTLE_MS", ms)).into_iter().collect();
+    spawn_host_with_env(lab, tag, node, settle_ms, &[]);
+}
+
+fn spawn_host_with_env(lab: &mut Lab, tag: &str, node: &Node, settle_ms: Option<&str>, extra: &[(&str, &str)]) {
+    let mut env: Vec<(&str, &str)> = settle_ms.map(|ms| ("AAA_TEST_BRIEF_SETTLE_MS", ms)).into_iter().collect();
+    env.extend_from_slice(extra);
     lab.spawn_env(tag, node, &["host"], &env);
 }
 
@@ -352,7 +357,9 @@ read x < ask.fifo
 
 /// 이어 띄울 수 있는 가짜 Claude(harness claude, hook 없음): 대화 ID 인자를 보이고, STICKY_AGENT처럼 입력창 상자를 그려
 /// Enter마다 받은 줄을 대화에 `got: <줄>`로 남긴다. 처음에는 `--session-id <id>`로, 이어 띄우면 `--resume <id>`로
-/// 뜬다(agent threads.rs `resolve`). `EVIL_SID`가 있으면 줄을 받을 때마다 그 값을 세션 ID로 hook(`UserPromptSubmit`)을
+/// 뜬다(agent threads.rs `resolve`). Enter 뒤에는 실제 감지기가 작업 중을 볼 때까지 그 화면을 유지한다. hook 없이
+/// 입력 받음을 알리는 keeper이며, 시작 유예에 기대어 상태가 아직 없는 동안 화면 변화만으로 받던 경합을 피한다.
+/// `EVIL_SID`가 있으면 줄을 받을 때마다 그 값을 세션 ID로 hook(`UserPromptSubmit`)을
 /// 낸다(보안 시험: pane 프로그램이 세션 ID를 지어낸다). 한 번에 읽은 글 안의 줄 끝도 Enter다(부하 아래 친 글과 Enter가
 /// 한 번에 읽혔다).
 const RESUMABLE_AGENT: &str = r#"#!/bin/sh
@@ -365,9 +372,29 @@ while [ $# -gt 0 ]; do
 " ;; esac
   shift
 done
-buf=''; NL='
+buf=''; work=''; NL='
 '
-draw() { printf '\033[2J\033[H%s%s\n\342\235\257 %s\n%s\n' "$log" "$R" "$buf" "$R"; }
+draw() { printf '\033[2J\033[H%s%s\n\342\235\257 %s\n%s\n%s' "$log" "$R" "$buf" "$R" "$work"; }
+working() {
+  work="$(printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)')
+"
+  draw
+  # hook을 보내지 않는다. 실제 host가 화면 감지의 working 사건을 받은 뒤 쉼으로 돌아간다.
+  # labB는 같은 실험실의 논리상 원격이다. 관측용 CLI는 host의 Front socket을 쓴다.
+  python3 - "$AA" "$AAA_SESSION_ID" "$AA_TEST_HOST_STATE" <<'PY'
+import json, subprocess, sys
+while True:
+    result = subprocess.run([sys.argv[1], '--state-dir', sys.argv[3], '--json', 'pane', 'get', sys.argv[2]], capture_output=True, text=True)
+    if result.returncode:
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        result.check_returncode()
+    if (json.loads(result.stdout).get('agent') or {}).get('activity') == 'working':
+        break
+PY
+  [ "$?" -eq 0 ] || exit 1
+  work=''
+}
 draw
 while :; do
   c=$(dd bs=4096 count=1 2>/dev/null; printf x); c=${c%x}
@@ -379,7 +406,8 @@ while :; do
         log="$log$(printf 'got: %s' "$buf")
 "
         buf=''
-        [ -n "$EVIL_SID" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$EVIL_SID\"}" >/dev/null ;;
+        [ -n "$EVIL_SID" ] && "$AA" hook --agent claude "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$EVIL_SID\"}" >/dev/null
+        working ;;
       *) buf="$buf$c"; break ;;
     esac
   done
@@ -400,7 +428,7 @@ fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
     )
 }
 
-fn fixture_profiles(scripts: &Path) -> String {
+fn fixture_profiles(scripts: &Path, host_state: &Path) -> String {
     format!(
         "[profiles.fake]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.mute]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
@@ -409,8 +437,8 @@ fn fixture_profiles(scripts: &Path) -> String {
          [profiles.prog]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.paste]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
          [profiles.asker]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
-         [profiles.resumable]\nagent = \"claude\"\ncommand = [\"{}\"]\n\
-         [profiles.evil]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", EVIL_SID = \"--dangerously-skip-permissions\" }}\n\
+         [profiles.resumable]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", AA_TEST_HOST_STATE = {host_state:?} }}\n\
+         [profiles.evil]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", AA_TEST_HOST_STATE = {host_state:?}, EVIL_SID = \"--dangerously-skip-permissions\" }}\n\
          [profiles.other]\nagent = \"custom\"\ncommand = [\"/bin/sh\"]\n",
         path_str(&scripts.join("fake.sh")),
         path_str(&scripts.join("mute.sh")),
@@ -425,8 +453,10 @@ fn fixture_profiles(scripts: &Path) -> String {
         path_str(&scripts.join("paste.log")),
         path_str(&scripts.join("asker.sh")),
         path_str(&scripts.join("resumable.sh")),
+        lab::BIN,
         path_str(&scripts.join("resumable.sh")),
         lab::BIN,
+        host_state = path_str(host_state),
     )
 }
 
@@ -469,6 +499,7 @@ struct World {
     addr: String,
     /// host를 띄울 때 주는 brief 화면 멈춤(`spawn_host`). 다시 띄운 host도 같은 값이다
     settle_ms: Option<&'static str>,
+    host_env: Vec<(String, String)>,
 }
 
 // 바이트 보존 keeper는 식별 이주가 끝난 고정 fixture를 쓴다. 이주 자체는 task_display_ids가 검사한다.
@@ -506,12 +537,13 @@ fn world_setup(extra: &str, web: bool, agent_env: impl FnOnce(&Path) -> Vec<(Str
     world_build(extra, web, Some(BRIEF_SETTLE_MS), agent_env)
 }
 
-fn world_build(
+fn world_files(
     extra: &str,
     web: bool,
     settle_ms: Option<&'static str>,
+    with_repo: bool,
     agent_env: impl FnOnce(&Path) -> Vec<(String, String)>,
-) -> World {
+) -> (World, Vec<(String, String)>) {
     let lab = Lab::new();
     let env = agent_env(&lab.root);
     let projects = lab.root.join("projects");
@@ -533,14 +565,37 @@ fn world_build(
     std::fs::write(scripts.join("resumable.sh"), RESUMABLE_AGENT).unwrap();
     std::fs::set_permissions(scripts.join("resumable.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755))
         .unwrap();
-    let repo = make_repo(&lab.root);
-    let h = lab.node("h", Some(&format!("{}\n{}", host_toml(&projects, extra, web), fixture_profiles(&scripts))));
+    let repo = if with_repo {
+        make_repo(&lab.root)
+    } else {
+        let repo = lab.root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        repo
+    };
+    let h = lab.node("h", None);
+    std::fs::write(
+        h.cfg.join("host.toml"),
+        format!("{}\n{}", host_toml(&projects, extra, web), fixture_profiles(&scripts, &h.state)),
+    )
+    .unwrap();
     std::fs::write(
         h.cfg.join("agent.toml"),
         format!("schema = 1\n[agent]\nwork_root = {:?}\n[reconnect]\nmax_backoff_s = 1\n", lab.root.join("workA")),
     )
     .unwrap();
-    let mut w = World { lab, h, projects, repo, scripts, addr: String::new(), settle_ms };
+    // 가짜 외부 조회 주기만 host에 전달한다. PATH·인증 등 agent 환경을 host에 섞지 않는다.
+    let host_env = env.iter().filter(|(key, _)| key == "AAA_TEST_WATCH_POLL_MS").cloned().collect();
+    let w = World { lab, h, projects, repo, scripts, addr: String::new(), settle_ms, host_env };
+    (w, env)
+}
+
+fn world_build(
+    extra: &str,
+    web: bool,
+    settle_ms: Option<&'static str>,
+    agent_env: impl FnOnce(&Path) -> Vec<(String, String)>,
+) -> World {
+    let (mut w, env) = world_files(extra, web, settle_ms, true, agent_env);
     w.spawn_host("host");
     let st = wait_for("host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = st["agent_listen"].as_str().unwrap().to_string();
@@ -582,7 +637,8 @@ impl World {
         }
     }
     fn spawn_host(&mut self, tag: &str) {
-        spawn_host(&mut self.lab, tag, &self.h, self.settle_ms);
+        let env: Vec<_> = self.host_env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        spawn_host_with_env(&mut self.lab, tag, &self.h, self.settle_ms, &env);
     }
 
     fn task(&self, name: &str, text: &str) -> String {
@@ -606,12 +662,22 @@ impl World {
     }
 
     fn wait_show_with_timeout(&self, what: &str, id: &str, timeout: Duration, f: impl Fn(&Value) -> bool) -> Value {
-        wait_for_diag(
-            what,
-            timeout,
-            || Some(self.show(id)).filter(|v| f(v)),
-            || format!("thread: {}\nevents: {}", self.show(id), self.h.ok(&["events", "demo"])),
-        )
+        let began = Instant::now();
+        // 먼저 구독하고 CLI 사본을 읽어 조회와 사건 사이의 틈을 없앤다.
+        // 실제 show 계약은 한 번 읽으며, 이후 관측마다 CLI를 다시 띄우지 않는다.
+        let mut events = Events::connect(&self.h);
+        let initial = self.show(id);
+        if f(&initial) {
+            return initial;
+        }
+        events.wait(what, timeout.saturating_sub(began.elapsed()), |event| {
+            let FrontEvent::Thread(thread) = event else { return None };
+            if thread.project != "demo" || thread.id != id {
+                return None;
+            }
+            let view = serde_json::to_value(thread.as_ref()).unwrap();
+            f(&view).then_some(view)
+        })
     }
 
     fn questions(&self, all: bool) -> Vec<Value> {
@@ -638,24 +704,28 @@ impl World {
     }
 
     fn wait_screen(&self, pane: &str, needle: &str) -> String {
-        wait_for_diag(
-            &format!("화면 {needle:?}"),
-            T,
-            || Some(self.h.screen(pane)).filter(|s| s.contains(needle)),
-            || self.h.screen(pane),
-        )
+        // visible 사본에서 같은 substring을 검사하는 실제 CLI다. host가 출력
+        // 사건으로 완료하므로 100ms마다 read 프로세스를 띄우지 않는다.
+        let matched = self
+            .h
+            .json(&[
+                "pane",
+                "wait-output",
+                pane,
+                &format!("--match={needle}"),
+                "--source",
+                "visible",
+                "--timeout",
+                &T.as_millis().to_string(),
+            ])
+            .unwrap_or_else(|e| panic!("화면 {needle:?}: {e}\n{}", self.h.screen(pane)));
+        matched["read"]["text"].as_str().expect("맞은 visible 화면").to_string()
     }
 
-    /// coordinator nudge의 시간 창이 지난 뒤 tick한다. host는 화면이 `idle` 동안 그대로여야 입력창을 보고, 입력창이
-    /// `quiet` 동안 비어 보여야 보낸다(inbox.rs `nudge`). 창마다 host가 지금 화면·입력창을 본 tick이 끝난 뒤부터 잰다:
-    /// 창보다 일찍 tick하면 결함이 있어도 보내지 않아 「보내지 않았다」 단언이 늘 통과한다.
-    fn nudge_windows(&self, idle: Duration, quiet: Duration) {
-        for window in [idle, quiet] {
-            self.h.ticks(1);
-            // fixed wait: 시간 규칙의 창 자체다(설정 값). 지난 뒤의 tick이 판정한다
-            std::thread::sleep(window);
-        }
-        self.h.ticks(1);
+    /// 시간 경계는 inbox owner가 주입한 시각으로 검사한다. 이 실제 연결 keeper는
+    /// 0초 설정에서도 화면 관측·빈 입력창 재관측·전달의 순서를 모두 거친다.
+    fn nudge_observations(&self) {
+        self.h.ticks(3);
     }
 
     fn wait_for_count(&self, pane: &str, needle: &str, n: usize) {
@@ -674,6 +744,18 @@ impl World {
 
     /// 원격(TLS) agent labB를 등록하고 띄운다
     fn add_remote(&mut self) {
+        let b = self.enroll_remote();
+        let mut watch = HostWatch::new(&self.h, T);
+        self.lab.spawn("agentB", &b, &["agent", "--host", &self.addr, "--name", "labB"]);
+        watch.wait_diag(
+            "labB 연결",
+            |s| s.connected("labB").then_some(()),
+            || format!("host.log:\n{}\nagentB.log:\n{}", self.lab.log("host"), self.lab.log("agentB")),
+        );
+    }
+
+    /// 사본 agent를 직접 띄우는 keeper도 같은 실제 TLS 등록을 먼저 마친다.
+    fn enroll_remote(&mut self) -> Node {
         let b = self.lab.node("b", None);
         std::fs::write(
             b.cfg.join("agent.toml"),
@@ -686,8 +768,7 @@ impl World {
         let code = line.split("--code").nth(1).unwrap().trim().to_string();
         self.h.ok(&["machine", "approve", "labB", "--code", &code]);
         assert!(self.lab.wait_exit("enroll", T).success(), "{}", self.lab.log("enroll"));
-        self.lab.spawn("agentB", &b, &["agent", "--host", &self.addr, "--name", "labB"]);
-        wait_for("labB 연결", T, || self.h.connected("labB").then_some(()));
+        b
     }
 }
 
@@ -1252,7 +1333,9 @@ fn task_repo_field_picks_machine_and_path() {
 /// 시도를 확인할 수 없어 멈춘다(herdr-projects brief.rs `give_up`). 사람이 `thread brief`로 보내면 그때만 한 번 더 간다.
 #[test]
 fn unknown_brief_is_not_resent() {
-    let mut w = world();
+    // 무반응 PTY의 unknown·수동 재전송·선행 메시지 거부는 실제 연결로 본다.
+    // 기본 10초 받음 시한은 harness의 Tokio 시계 owner가 그대로 검사한다.
+    let mut w = world_with("accept_wait_ms = 100\n");
     let mut ev = w.lab.follow("events", &w.h, "demo");
     let v = w.start(&["--title", "mute", "--profile", "mute", "--kind", "dir", "--task-file", &w.task("t4.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
@@ -2466,12 +2549,7 @@ fn auto_resolve_and_reopen() {
 /// 알린다(§8.17)
 #[test]
 fn inbox_and_nudge() {
-    let (idle, quiet) = (Duration::from_secs(2), Duration::from_secs(1));
-    let w = world_with(&format!(
-        "tick_secs = 1\nnudge_idle_secs = {}\nnudge_quiet_secs = {}\n",
-        idle.as_secs(),
-        quiet.as_secs()
-    ));
+    let w = world_with("tick_secs = 1\nnudge_idle_secs = 0\nnudge_quiet_secs = 0\n");
     let nudges = || w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
     let dir = w.projects.join("demo");
     let coord =
@@ -2494,7 +2572,7 @@ fn inbox_and_nudge() {
         (Some("thread-state"), Some("new report"))
     );
     // 쓰던 글이 남아 있으면 nudge 창이 지나도 보내지 않는다
-    w.nudge_windows(idle, quiet);
+    w.nudge_observations();
     assert_eq!(nudges(), 0, "{:?}", w.kinds(0));
     assert!(!w.h.screen(&coord).contains("[aaa inbox]"), "{}", w.h.screen(&coord));
 
@@ -2510,7 +2588,7 @@ fn inbox_and_nudge() {
         || w.h.screen(&coord).trim_end().ends_with('❯').then_some(()),
         || w.h.screen(&coord),
     );
-    w.nudge_windows(idle, quiet);
+    w.nudge_observations();
     assert_eq!(nudges(), 1, "{:?}", w.kinds(0));
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 1, "{}", w.h.screen(&coord));
 
@@ -2581,12 +2659,7 @@ fn inbox_and_nudge() {
 /// 묶음으로 깨우지 않고, 새 항목으로 묶음이 바뀌면 그때 알린다.
 #[test]
 fn nudge_only_marks_the_set_without_a_coordinator_or_when_off() {
-    let (idle, quiet) = (Duration::from_secs(2), Duration::from_secs(1));
-    let w = world_with(&format!(
-        "tick_secs = 1\nnudge_idle_secs = {}\nnudge_quiet_secs = {}\n",
-        idle.as_secs(),
-        quiet.as_secs()
-    ));
+    let w = world_with("tick_secs = 1\nnudge_idle_secs = 0\nnudge_quiet_secs = 0\n");
     let nudges = || w.kinds(0).iter().filter(|k| *k == "nudge_sent").count();
     let dir = w.projects.join("demo");
     // 보고를 쓰는 thread를 하나 띄우고 그 「새 보고」 항목이 생기기를 기다린다
@@ -2616,7 +2689,7 @@ fn nudge_only_marks_the_set_without_a_coordinator_or_when_off() {
         w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));
     w.wait_screen(&coord, "❯");
     // 2) 나중에 생긴 coordinator는 그 묶음으로 깨우지 않는다(옛 aaa는 생기면 알렸다)
-    w.nudge_windows(idle, quiet);
+    w.nudge_observations();
     assert_eq!(nudges(), 0, "{:?}", w.kinds(0));
     assert!(!w.h.screen(&coord).contains("[aaa inbox]"), "{}", w.h.screen(&coord));
     // 3) 새 항목이 생겨 묶음이 바뀌면 알린다: 아직 보지 않은 앞 항목도 함께다
@@ -2633,11 +2706,11 @@ fn nudge_only_marks_the_set_without_a_coordinator_or_when_off() {
     // 4) `nudge = false`: coordinator가 입력을 기다려도 알리지 않고 묶음만 적는다
     std::fs::write(dir.join("project.toml"), "schema = 1\nnudge = false\n").unwrap();
     let c = report("c");
-    w.nudge_windows(idle, quiet);
+    w.nudge_observations();
     assert_eq!(nudges(), 1, "{:?}", w.kinds(0));
     // 5) 다시 켜도 이미 적은 묶음은 알리지 않는다(항목은 context가 보인다)
     std::fs::write(dir.join("project.toml"), "schema = 1\n").unwrap();
-    w.nudge_windows(idle, quiet);
+    w.nudge_observations();
     assert_eq!(nudges(), 1, "{:?}", w.kinds(0));
     assert_eq!(w.h.screen(&coord).matches("got: [aaa inbox]").count(), 1, "{}", w.h.screen(&coord));
     let ctx = w.h.ok(&["context", "demo", "--peek"]);
@@ -2927,6 +3000,39 @@ fn turn_end_notices_follow_reports() {
     assert_eq!(n3.long, ended - started >= 60_000, "긴 턴 판정은 그 길이로(기준 60초): {n3:?}");
     w.h.ticks(1);
     assert_eq!(items(&w), before, "끝남 알림이 inbox 항목을 만들었다");
+}
+
+/// harness 종료 사건과 늦은 연결을 위한 session host의 수명은 별개다.
+#[test]
+fn harness_exit_is_published_while_the_session_host_still_answers() {
+    let w = world_setup("", false, |_| vec![("AAA_TEST_SESSION_LINGER_MS".into(), "8000".into())]);
+    std::fs::write(
+        w.scripts.join("resumable.sh"),
+        "#!/bin/sh\nprintf 'owned-exit-ready\\n'\nwhile IFS= read -r line; do\n  [ \"$line\" != owned-exit-now ] || exit 0\ndone\n",
+    )
+    .unwrap();
+    let started = w.start(&[
+        "--title",
+        "종료 사건",
+        "--profile",
+        "resumable",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("owned-exit.md", "종료 상태 관측"),
+    ]);
+    let id = started["id"].as_str().unwrap();
+    let pane = started["pane"].as_str().unwrap();
+    w.h.wait_output(pane, "owned-exit-ready", T);
+    let pid = w.h.session_host_pid(pane).expect("이 실험실의 session host PID");
+    let mut events = Events::connect(&w.h);
+    w.h.ok(&["pane", "run", pane, "owned-exit-now"]);
+    events.wait("살아 있는 session host의 harness 종료 사건", T, |event| {
+        let FrontEvent::Thread(thread) = event else { return None };
+        (thread.id == id && thread.agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Exited)).then_some(())
+    });
+    assert!(!w.h.session_host_gone(pid, pane), "exited를 알리려고 session host의 유예 종료를 기다렸다");
+    assert!(w.h.screen(pane).contains("owned-exit-ready"), "유예 중에도 마지막 화면은 읽는다");
 }
 
 /// 끝난 세션을 지우는 resolve·`pane close`는 session host가 종료 뒤 더 응답하는 창(늦게 붙는 agent용, 2초)을 기다리지
@@ -4042,7 +4148,31 @@ fn routines() {
             .clone()
     };
 
+    // 다음 논리 차례는 실제 전달/원장 확정 뒤에만 연다. 벽시계 2초가
+    // 우연히 앞 비동기 명령을 끝내 주던 순서를 완료 사건으로 명시한다.
+    let finished = |name: &str| {
+        wait_for(&format!("{name} 앞 명령·전달 확정"), T, || {
+            let view = routine(name);
+            (view["queue"]["pending"].as_u64() == Some(0) && view["queue"]["inflight"].is_null()).then_some(())
+        });
+    };
+    // 일정의 2초 값은 그대로 둔다. 실제 host가 한 차례를 끝낸 뒤 기존 자동화 시험
+    // 시계만 다음 차례로 옮긴다. 2초의 직전/정각 판정은 routine::tests의 일정 owner가 본다.
+    let clock = std::cell::Cell::new(lab::now_ms());
+    let clock_file = w.h.cfg.join("automation-clock");
+    std::fs::write(&clock_file, clock.get().to_string()).unwrap();
+    w.h.ticks(1);
+    let advance = || {
+        clock.set(clock.get() + 2_000);
+        // 읽는 host가 중간 bytes를 보지 않게 새 시각을 한 번에 공개한다.
+        let next = clock_file.with_extension("next");
+        std::fs::write(&next, clock.get().to_string()).unwrap();
+        std::fs::rename(next, &clock_file).unwrap();
+        w.h.ticks(1);
+    };
     // coordinator가 없으면 돌지 않고 센다(밀린 실행도 쌓지 않는다)
+    advance();
+    advance();
     wait_for("coordinator 없음", T, || (routine("ping")["no_coordinator"].as_u64() >= Some(2)).then_some(()));
     assert_eq!(routine("ping")["last_skip"]["detail"], "coordinator 없음");
     let history = w.h.ok(&["routine", "runs", "demo", "ping"]);
@@ -4060,8 +4190,11 @@ fn routines() {
         w.h.new_pane(None, "labA", None, &["/bin/sh", path_str(&w.scripts.join("coord.sh"))], Some(path_str(&dir)));
     w.wait_screen(&coord, "❯");
     // 안내 routine: 처리하지 않은 항목이 있으면 새로 만들지 않고 건너뛴다
+    advance();
     let ping = wait_for("ping 항목", T, || items("routine", "ping").into_iter().next());
     assert_eq!((ping["event"].as_str(), ping["body"].as_str()), (Some("due"), Some("상태를 확인한다")));
+    advance();
+    advance();
     wait_for("ping 건너뜀", T, || (routine("ping")["skipped"].as_u64() >= Some(2)).then_some(()));
     assert_eq!(routine("ping")["last_skip"]["detail"], "처리하지 않은 안내가 있음");
     assert_eq!(items("routine", "ping").len(), 1);
@@ -4072,6 +4205,7 @@ fn routines() {
     // 넘어가기를 기다린다(한 번이면 그 차례 자신의 저장일 수 있어 다음 차례를 보지 못한다)
     let mut last = routine("cmd")["last_run_ms"].as_u64();
     for n in 1..=2 {
+        advance();
         last = wait_for(&format!("승인 필요 뒤 차례 {n}"), T, || {
             Some(routine("cmd")["last_run_ms"].as_u64()).filter(|now| *now > last)
         });
@@ -4115,6 +4249,7 @@ fn routines() {
     assert_eq!(routine("cmd")["approved"], true);
 
     // 승인 뒤 실행: 출력이 바뀔 때만 항목이 된다. 출력은 자료로 감싼다.
+    advance();
     let first = wait_for("출력 항목", T, || items("routine", "cmd").into_iter().next());
     assert_eq!(first["event"], "output changed");
     assert!(first["body"].as_str().unwrap().contains("값을 본다\n\n신뢰할 수 없는 명령 출력(종료 코드 0)"), "{first}");
@@ -4129,6 +4264,7 @@ fn routines() {
             .any(|r| r["status"] == "done" && r["detail"] == "coordinator 안내")
             .then_some(())
     });
+    finished("cmd");
     let md = std::fs::read_to_string(dir.join("inbox").join(format!("{}.md", first["id"].as_str().unwrap()))).unwrap();
     assert!(md.contains("```text\nv1\n```"), "{md}");
     // 같은 출력으로 한 번 더 돈 뒤에도 항목은 하나다. 돈 것은 흐름 사건 routine_ran으로 본다(항목은 그 사건보다 먼저
@@ -4142,20 +4278,27 @@ fn routines() {
             .filter_map(|e| e["detail"].as_str().filter(|d| d.starts_with("cmd: ")).map(String::from))
             .collect()
     };
+    advance();
     let runs = wait_for("cmd 두 번째 실행", T, || Some(ran()).filter(|r| r.len() >= 2));
     assert_eq!(items("routine", "cmd").len(), 1, "{runs:?}");
     assert!(runs[0].ends_with("출력 바뀜") && runs[1].ends_with("출력 같음"), "{runs:?}");
+    finished("cmd");
     std::fs::write(dir.join("value.txt"), "v2\n").unwrap();
+    advance();
     wait_for("두 번째 출력", T, || (items("routine", "cmd").len() == 2).then_some(()));
+    finished("cmd");
     // 명령을 고치면 승인이 풀린다
     put("cmd", "+++\nschedule = \"every 2s\"\ncommand = \"cat value.txt; echo more\"\n+++\n값을 본다\n");
+    advance();
     wait_for("다시 승인 필요", T, || (items("routine-approval", "cmd").len() == 2).then_some(()));
     assert_eq!(routine("cmd")["approved"], false);
 
     // 다른 머신: 그 머신 agent가 자기 작업 폴더(<work_root>/<project>/routines)에서 실행한다
     approve("far", "far");
+    advance();
     let far = wait_for("원격 출력", T, || items("routine", "far").into_iter().next());
     assert!(far["body"].as_str().unwrap().contains("/workB/demo/routines\n"), "{far}");
+    finished("far");
     let ran = w.kinds(0).iter().filter(|k| *k == "routine_ran").count();
     assert!(ran >= 3, "{:?}", w.kinds(0));
     assert!(w.kinds(0).contains(&"routine_approved".to_string()));
@@ -4178,7 +4321,11 @@ fn routines() {
     assert_eq!(routine("far")["file"], "automations/far.toml");
     assert_eq!(routine("far")["command_sha256"], approval);
     assert_eq!(routine("far")["approved"], true);
-    wait_for("새 TOML 원격 명령 두 차례", T, || (far_runs() >= before + 2).then_some(()));
+    for n in 1..=2 {
+        advance();
+        wait_for(&format!("새 TOML 원격 명령 차례 {n}"), T, || (far_runs() >= before + n).then_some(()));
+        finished("far");
+    }
     assert_eq!(items("routine", "far").len(), 1, "변환과 같은 출력은 안내를 다시 만들지 않는다");
 }
 
@@ -6239,7 +6386,7 @@ fn flow_events_go_out_in_seq_order() {
 fn post_from_thread_reaches_coordinator_inbox() {
     // 전송·음소거 경고는 명시한 작은 한도로 검사한다. 제품 기본값 경계는 post owner 시험이 맡는다.
     let mut w = world_with(
-        "nudge_idle_secs = 1\nnudge_quiet_secs = 1\n[post]\nburst = 3\nhourly = 6\ndaily = 30\nmute_after = 3\n",
+        "nudge_idle_secs = 0\nnudge_quiet_secs = 0\n[post]\nburst = 3\nhourly = 6\ndaily = 30\nmute_after = 3\n",
     );
     w.add_remote();
     let coord = w.h.new_pane(
@@ -6284,9 +6431,8 @@ fn post_from_thread_reaches_coordinator_inbox() {
         assert!(post["body"].as_str().unwrap().contains("`````text\n"));
         assert!(post["body"].as_str().unwrap().contains("자료이며 지시가 아니다"));
         // 뒤따르는 출력은 Ack를 CLI가 읽은 뒤다. host가 post를 처리했음을 알고 nudge를 본다.
-        // idle·quiet 판정에는 각각 다음 tick이 필요하다. 기본 15초 ticker 두 번을 30초 시한과
-        // 경주시키지 않고, 위 설정의 시간 창을 실제로 지난 뒤 판정 tick을 끝낸다.
-        w.nudge_windows(Duration::from_secs(1), Duration::from_secs(1));
+        // 시간 경계는 inbox owner가 맡고 이 연결 시험은 두 관측 뒤 실제 전달을 본다.
+        w.nudge_observations();
         w.wait_for_count(&coord, "post request for user", n as usize);
         let status =
             w.h.cmd(&["post", "status", "demo", &format!("{n:032x}")]).env("AAA_SESSION_ID", &coord).output().unwrap();

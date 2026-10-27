@@ -108,7 +108,9 @@ def main():
             records.append({"kind": binary.name, "invocation": invocation, "elapsed_ms": elapsed, "sha256": digest, **item})
     crate = root / "cargo-probe"
     (crate / "src").mkdir(parents=True)
-    (crate / "Cargo.toml").write_text('[package]\nname = "aaa-responsibility-probe"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n')
+    # 내부 진단 fixture는 빌드 속도를 우선한다. 책임자 관측·새 프로그램·build.rs/run
+    # 경계는 디버그 줄 정보나 incremental 산출물에 의존하지 않는다.
+    (crate / "Cargo.toml").write_text('[package]\nname = "aaa-responsibility-probe"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n[profile.dev]\ndebug = 0\nincremental = false\n')
     (crate / "src/main.rs").write_text(rust.read_text())
     (crate / "build.rs").write_text(RUST.replace("NONCE", nonce).replace("PREFIX", "cargo:warning=aaa-probe="))
     # 임시 OS 폴더의 cargo target을 만들지 않는다. caller가 보존하는 출력 폴더 안에 둔다.

@@ -18,6 +18,54 @@ pub(crate) struct Memory {
     outages: HashMap<String, Outage>,
     seen: HashSet<String>,
 }
+
+impl Memory {
+    fn claim_at(&mut self, key: String, now: Instant, every: Duration) -> bool {
+        if self.running.contains(&key) || self.last.get(&key).is_some_and(|at| now.duration_since(*at) < every) {
+            return false;
+        }
+        self.running.insert(key);
+        true
+    }
+
+    fn finished_at(&mut self, key: String, now: Instant) {
+        self.running.remove(&key);
+        self.last.insert(key, now);
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    #[test]
+    fn poll_waits_from_completion_and_never_overlaps_an_inflight_source() {
+        let mut memory = Memory::default();
+        let now = Instant::now();
+        let key = "ci:demo".to_string();
+        let every = Duration::from_secs(30);
+        assert!(memory.claim_at(key.clone(), now, every));
+        assert!(!memory.claim_at(key.clone(), now + every * 10, every), "도는 조회는 겹칠 수 없다");
+        let completed = now + Duration::from_secs(20);
+        memory.finished_at(key.clone(), completed);
+        assert!(!memory.claim_at(key.clone(), completed + every - Duration::from_nanos(1), every));
+        assert!(memory.claim_at(key.clone(), completed + every, every));
+        assert!(memory.claim_at("git:demo".into(), completed, every), "다른 source의 차례는 독립이다");
+        assert!(memory.claim_at("ci:other".into(), completed, every), "다른 프로젝트도 독립이다");
+    }
+}
+
+/// 실제 조회·중복/복구 계약을 검사하는 실험실은 초마다 같은 가짜 외부 명령을
+/// 기다리지 않는다. 운영 간격과 하한은 그대로이며 초 단위 시험을 켠 자식만 줄인다.
+fn poll_interval(every: Duration) -> Duration {
+    if std::env::var(crate::routine::TEST_SECONDS).as_deref() == Ok("1")
+        && let Some(ms) = std::env::var("AAA_TEST_WATCH_POLL_MS").ok().and_then(|v| v.parse::<u64>().ok())
+        && ms > 0
+    {
+        return Duration::from_millis(ms);
+    }
+    every
+}
 /// source 필드는 L0의 최상위 JSON 모양을 유지한다. 저장 key도 source가 정한다.
 #[derive(Default, Serialize)]
 pub(crate) struct State<S: Default> {
@@ -86,6 +134,7 @@ impl Host {
         every: Duration,
         active: impl Fn(&str) -> bool,
     ) -> Option<Instant> {
+        let every = poll_interval(every);
         let prefix = format!("{source}:");
         let candidates: Vec<_> = {
             let m = self.watch.lock().unwrap();
@@ -104,18 +153,11 @@ impl Host {
     }
     pub(crate) fn watch_claim(&self, source: &str, project: &str, every: Duration) -> bool {
         let key = format!("{source}:{project}");
-        let mut m = self.watch.lock().unwrap();
-        if m.running.contains(&key) || m.last.get(&key).is_some_and(|at| at.elapsed() < every) {
-            return false;
-        }
-        m.running.insert(key);
-        true
+        self.watch.lock().unwrap().claim_at(key, Instant::now(), poll_interval(every))
     }
     pub(crate) fn watch_finished(&self, source: &str, project: &str) {
         let key = format!("{source}:{project}");
-        let mut m = self.watch.lock().unwrap();
-        m.running.remove(&key);
-        m.last.insert(key, Instant::now());
+        self.watch.lock().unwrap().finished_at(key, Instant::now());
     }
     pub(crate) fn watch_catchup(&self, key: &str, last: u64, now: u64, every: Duration) -> bool {
         let first = !self.watch.lock().unwrap().seen.contains(key);

@@ -887,7 +887,9 @@ impl Host {
         // 프로그램이 bracketed paste를 켰을 때만 감싸고 Enter도 그 터미널 모드대로 쓴다(herdr `encode_api_submission_parts`,
         // src/app/api_helpers.rs). 켜지 않은 프로그램에 감싸 보내면 `^[[200~`가 글로 남는다.
         let modes = self.key_modes(pane);
-        let deadline = Instant::now() + accept_wait;
+        // 비동기 대기와 같은 시계다. 운영의 단조 시각은 그대로이며, 시험은
+        // 실제 10초 받음 시한을 줄이지 않고 Tokio 시각으로 경계를 넘긴다.
+        let deadline = tokio::time::Instant::now() + accept_wait;
         if let Some(text) = text {
             conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) })
                 .await
@@ -908,12 +910,12 @@ impl Host {
             if self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question) {
                 return Err(after("치는 동안 확인창이 떠 Enter를 보내지 않았다".into()));
             }
-            if text.is_none() || !hooked || now != shown || Instant::now() >= deadline {
+            if text.is_none() || !hooked || now != shown || tokio::time::Instant::now() >= deadline {
                 break now;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         };
-        let left = || deadline.saturating_duration_since(Instant::now());
+        let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
         // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
         // 그 전부터 기다리면 Enter를 보내지 않은 글을 받았다고 적는다
         let accepted = self.wait_kind_then(pane, ACCEPTED, hook_accept);
@@ -954,7 +956,7 @@ impl Host {
                 }));
         }
         // hook이 없는 harness: Enter 뒤 화면이 바뀌면 받았다고 본다
-        while Instant::now() < deadline {
+        while tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(250)).await;
             if self.screen_lines(mid, pane).await != typed {
                 if let Some(f) = screen_accept.take() {
@@ -1446,6 +1448,100 @@ mod tests {
             context: None,
             model_observation: None,
         }
+    }
+
+    /// m13의 무반응 PTY는 두 번의 실제 10초 시한을 반복했다. 같은 Host/DB/AgentConn
+    /// owner에서 원래 시한과 입력·Enter·unknown·수동 재전송·조기 메시지 거부를 검사한다.
+    #[tokio::test(start_paused = true)]
+    async fn unknown_brief_keeps_the_accept_deadline_and_never_retypes_without_a_person() {
+        use aaa_proto::{AgentResponse, LinkMsg, Outcome, Role, ThreadGroup, ThreadKind};
+        let (h, _tmp) = host_with_pane();
+        assert_eq!(h.cfg.projects.accept_wait_ms, 10_000);
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let mut rec = ThreadRec::starting("demo", "mute", "m", "mute", Role::Worker, ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.pane = Some("s".into());
+        rec.status = ThreadStatus::Open;
+        h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+        let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+        let conn = crate::AgentConn::new(outgoing, 1);
+        h.inner.lock().unwrap().machines.insert(
+            "m".into(),
+            crate::MachineRt {
+                name: "mac-a".into(),
+                local: true,
+                os: None,
+                boot_id: None,
+                dev_mode: true,
+                conn: Some(conn.clone()),
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features: vec![],
+                identity: None,
+                agent_pid: None,
+                colors: None,
+                build: Default::default(),
+            },
+        );
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = writes.clone();
+        let (inputs, mut observed) = tokio::sync::mpsc::unbounded_channel();
+        let fake = tokio::spawn(async move {
+            while let Some((_, bytes)) = frames.recv().await {
+                let LinkMsg::Req { id, body, .. } = serde_json::from_slice(&bytes).unwrap() else { panic!("요청") };
+                let reply = match body {
+                    AgentRequest::Screen { .. } => AgentResponse::Screen(aaa_proto::ScreenText {
+                        session: "s".into(),
+                        cols: 80,
+                        rows: 24,
+                        lines: lines("mute>"),
+                        cursor_row: 0,
+                        cursor_col: 5,
+                        ansi: "mute>".into(),
+                    }),
+                    AgentRequest::Input { data, .. } => {
+                        captured.lock().unwrap().push(data.0.clone());
+                        inputs.send((tokio::time::Instant::now(), data.0)).unwrap();
+                        AgentResponse::Done
+                    }
+                    _ => panic!("brief와 무관한 요청"),
+                };
+                conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(reply)).unwrap();
+            }
+        });
+        let mut flow = h.flow_events.subscribe();
+        h.spawn_brief("demo", &rec.id);
+        let (typed_at, text) = observed.recv().await.unwrap();
+        let (_, enter) = observed.recv().await.unwrap();
+        assert_eq!(text, ".aaa/demo-t-0001/brief.md를 읽고 그대로 하라.".as_bytes());
+        assert_eq!(enter, b"\r");
+        let deadline = typed_at + Duration::from_millis(h.cfg.projects.accept_wait_ms);
+        tokio::time::advance(deadline.duration_since(tokio::time::Instant::now()) - Duration::from_nanos(1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(h.load("demo", &rec.id).unwrap().brief, BriefState::Pending, "받음 시한 전에 unknown으로 끝났다");
+        tokio::time::advance(Duration::from_nanos(1)).await;
+        let event = flow.recv().await.unwrap();
+        assert!(
+            tokio::time::Instant::now() <= deadline + Duration::from_millis(500),
+            "받음 시한과 두 관측 간격을 넘겼다"
+        );
+        assert_eq!(event.kind, "brief_unknown");
+        assert!(event.detail.contains("입력창을 읽을 수 없어"));
+        let view = h.thread_show("demo", &rec.id).unwrap();
+        assert_eq!((view.brief, view.group), (BriefState::Unknown, ThreadGroup::WaitingOnYou));
+        tokio::time::advance(Duration::from_secs(60)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(writes.lock().unwrap().as_slice(), &[text.clone(), enter.clone()]);
+        let error = h.thread_brief("demo", &rec.id, "local:cli").await.unwrap_err();
+        assert!(error.message.contains("아직 보내지 못했다"));
+        assert_eq!(writes.lock().unwrap().as_slice(), &[text.clone(), enter.clone(), text, enter]);
+        let error =
+            h.thread_message("demo", &rec.id, "MSG-EARLY-1".into(), MessageMode::Queue, "local:cli").await.unwrap_err();
+        assert!(error.message.contains("아직 brief를 받지 않았다"));
+        assert_eq!(writes.lock().unwrap().len(), 4, "brief 전 메시지가 전송됐다");
+        assert!(matches!(flow.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
+        fake.abort();
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, inList, domIs, browser, pairPage, shot, openSettings, inTime, drawerSettled } from "./harness.mjs";
+import { clickDialogButton } from "./menu.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
 
 export const count = 500;
@@ -138,7 +139,7 @@ export async function askScenario(engine, label, width) {
     if (width < 769) await page.evaluate(() => {
       window.bulkCancelBack = new Promise(resolve => addEventListener("popstate", resolve, { once: true }));
     });
-    await dialog.getByRole("button", { name: "취소", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "취소", exact: true }));
     if (width < 769) {
       await inTime(page.evaluate(() => window.bulkCancelBack.then(() => true)), 20_000, "취소한 확인 창의 내부 복귀");
       await drawerSettled(page);
@@ -147,7 +148,7 @@ export async function askScenario(engine, label, width) {
     assert.equal(db.prepare("SELECT count(*) AS n FROM asks").get().n, count);
     await inList(page, "asks-forget-all");
     gate.arm("ask_forget", true);
-    await dialog.getByRole("button", { name: "모두 지우기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "모두 지우기", exact: true }));
     await dialog.getByRole("alert").filter({ hasText: "실험실 일괄 저장 실패" }).waitFor();
     assert.equal(await dialog.getByRole("button", { name: "취소", exact: true }).isEnabled(), true);
     assert.equal(db.prepare("SELECT count(*) AS n FROM asks").get().n, count);
@@ -155,7 +156,7 @@ export async function askScenario(engine, label, width) {
     const late = await answeredAfterDialog(page, label, width);
     assert.equal(db.prepare("SELECT count(*) AS n FROM asks").get().n, count + 1);
     const held = gate.arm("ask_forget");
-    await dialog.getByRole("button", { name: "모두 지우기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "모두 지우기", exact: true }));
     try {
       await held.arrived;
       await responsive(page, dialog);
@@ -173,7 +174,7 @@ export async function askScenario(engine, label, width) {
     await domIs(page, "늦게 온 한 답만 남음", () => document.querySelector('[data-testid="asks-done-count"]')?.textContent === "1");
     gate.clear();
     await inList(page, "asks-forget-all");
-    await dialog.getByRole("button", { name: "모두 지우기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "모두 지우기", exact: true }));
     await dialog.waitFor({ state: "hidden" });
     await domIs(page, "답 삭제 완료 목록", () => document.querySelector('[data-testid="asks-done-count"]')?.textContent === "0");
     assert.equal(fs.readdirSync(`${dir()}/asks`).length, 0);
@@ -261,7 +262,7 @@ export async function reportScenario(engine, label, width) {
       const dialog = page.getByRole("alertdialog");
       await dialog.getByText(/601개를 읽음/).waitFor();
       const held = gate.arm("library_mark_read");
-      await dialog.getByRole("button", { name: "모두 읽음", exact: true }).click();
+      await clickDialogButton(dialog.getByRole("button", { name: "모두 읽음", exact: true }));
       try { await held.arrived; await responsive(page, dialog); }
       finally { held.release(); }
       await dialog.waitFor({ state: "hidden" });
@@ -277,14 +278,14 @@ export async function reportScenario(engine, label, width) {
     await inList(page, "reports-delete");
     const dialog = page.getByRole("alertdialog");
     const held = gate.arm("library_delete", (_req, calls) => calls.length === 2);
-    await dialog.getByRole("button", { name: "영구히 지우기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "영구히 지우기", exact: true }));
     try { await held.arrived; await responsive(page, dialog); await shot(page, `bulk-delete-${label}-${width}`); }
     finally { held.release(); }
     await dialog.getByRole("alert").getByText(/601개 중 500개 완료 후 중단: 실험실 일괄 저장 실패/).waitFor();
     assert.equal(gate.calls.length, 2, "실패 뒤 자동 재전송 없음");
     assert.equal(db.prepare("SELECT count(*) AS n FROM library_reports").get().n, 202);
     const rest = gate.arm("library_delete");
-    await dialog.getByRole("button", { name: "영구히 지우기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "영구히 지우기", exact: true }));
     try { await rest.arrived; assert.equal(gate.calls[0].reports.length, 101, "성공한 묶음은 다시 보내지 않는다"); }
     finally { rest.release(); }
     await dialog.waitFor({ state: "hidden" });
@@ -323,7 +324,7 @@ export async function maintenanceScenario(engine, label, width) {
     const dialog = page.getByRole("alertdialog");
     await dialog.getByText(/살아 있는 공유 링크 500개/).waitFor();
     const rotated = gate.arm("library_rotate");
-    await dialog.getByRole("button", { name: "키 교체", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "키 교체", exact: true }));
     try { await rotated.arrived; await responsive(page, dialog); }
     finally { rotated.release(); }
     await dialog.waitFor({ state: "hidden" });
@@ -335,7 +336,7 @@ export async function maintenanceScenario(engine, label, width) {
     assert.match(await settings.getByTestId("prune-run").innerText(), /500개/);
     await settings.getByTestId("prune-run").click();
     const pruned = gate.arm("library_prune_apply");
-    await dialog.getByRole("button", { name: "500개 지우기", exact: true }).click();
+    await clickDialogButton(dialog.getByRole("button", { name: "500개 지우기", exact: true }));
     try { await pruned.arrived; await responsive(page, dialog); await shot(page, `bulk-prune-${label}-${width}`); }
     finally { pruned.release(); }
     await dialog.waitFor({ state: "hidden" });

@@ -10,7 +10,7 @@ import {
 } from "../lib/harness.mjs";
 
 // 화면 감지 시작 유예 0(기본 3초, aaa-agent detect/state.rs startup_grace): 가짜 harness 화면은 뜨자마자 그대로다.
-// 기본값 길은 15-ios-rules가 돈다
+// 기본 3초 경계는 detect::state의 시각 주입 owner가 검사한다
 export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0" };
 
 export default async function ({ ctl, page }) {

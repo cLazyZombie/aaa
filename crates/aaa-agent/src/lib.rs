@@ -1274,6 +1274,18 @@ impl Agent {
                             Ok(SessionMsg::Updated(info)) => {
                                 let info = self.labeled(info);
                                 if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) { e.info = info.clone(); }
+                                // 종료 기록과 마지막 화면은 이 Updated 전에 확정됐다.
+                                // session host가 늦은 연결에 더 응답하는 동안에도 harness는
+                                // 끝난 상태다. 감시는 멈추되 pump는 마지막 화면 요청을 잇는다.
+                                if !info.state.is_running() {
+                                    if let Some(ended) = watch.take() {
+                                        self.detected(&id, ended.harness(), detect::Report {
+                                            kind: "exited", message: None, question_kind: None, rule: None,
+                                        }).await;
+                                    }
+                                    front = None;
+                                    shell_chat = None;
+                                }
                                 self.send_host(&LinkMsg::Event(AgentEvent::SessionUpdated(info))).await;
                             }
                             Ok(SessionMsg::Resync) => {

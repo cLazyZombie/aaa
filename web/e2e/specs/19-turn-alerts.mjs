@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import { aaa, until, shot, step, claudeSh, claudeWorking, claudeIdle, root } from "../lib/harness.mjs";
 
-// 화면 감지 시작 유예 0(가짜 harness 화면은 뜨자마자 그대로다, 기본값 길은 15-ios-rules). 긴 턴 기준(herdr-web-ui
+// 화면 감지 시작 유예 0(가짜 harness 화면은 뜨자마자 그대로다, 기본 3초는 detect::state 시각 주입 owner). 긴 턴 기준(herdr-web-ui
 // LONG_TURN_MS 60초)을 3초로 줄인다: 기본값 길은 m13 turn_end_notices_follow_reports가 본다(짧은 턴은 long false)
 const LONG_MS = 3000;
 export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0", AAA_TEST_LONG_TURN_MS: String(LONG_MS), AAA_SESSION_ID: "" };

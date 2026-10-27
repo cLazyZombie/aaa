@@ -3,7 +3,7 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 // 원문에 합쳐 돌려주고(`automation_validate`), TOML을 고치면 host가 읽은 값으로 폼을 다시 그린다. 저장은 본 판(sha256)일 때만
 // 쓰고, 다르면 host가 `conflict`로 거부한다: 그때 지금 파일과 내 초안의 차이를 보이고 사람이 고른다(자동 병합 없음).
 // 틀은 설정 화면과 같은 본문 AutomationPage(t-0628 3A: 떠 있는 창이 아니라 본문에서 고친다), 검토 절은 계획 §2.2 「사건마다 새 thread」.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, call } from "./api";
 import { AutomationPage } from "./AutomationDetail";
 import { Markdown } from "./Markdown";
@@ -174,6 +174,7 @@ export function AutomationEditor({ canV2 = false, project, name: openName, onClo
 }) {
   const creating = !openName;
   const [name, setName] = useState(openName ?? "");
+  const nameInput = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<Mode>("form");
   const [text, setText] = useState("");
   const [form, setForm] = useState<Form>(creating ? newForm() : {});
@@ -198,6 +199,18 @@ export function AutomationEditor({ canV2 = false, project, name: openName, onClo
   const timer = useRef<number | null>(null);
   const [flushing, setFlushing] = useState(false);
   const checkName = creating ? (validName(name) ? name : "new") : openName!;
+
+  useLayoutEffect(() => {
+    if (!creating || loading) return;
+    const element = nameInput.current;
+    const view = element?.ownerDocument.defaultView;
+    if (!element || !view) return;
+    // 부모 갱신이 root capture와 bubble 사이에 commit해도 새 이름을 지킨다.
+    // 대화·직접 답·계정 별칭과 같은 경계이며 기존 onChange도 유지한다.
+    const input = (event: Event) => { if (event.target === element) setName(element.value.trim()); };
+    view.addEventListener("input", input, true);
+    return () => view.removeEventListener("input", input, true);
+  }, [creating, loading]);
 
   /** host 검사. 폼에서 온 것이면 합친 원문을, TOML에서 온 것이면 읽은 폼을 받는다 */
   const validate = useCallback(async (from: "form" | "toml"): Promise<{ text: string; check: AutomationCheck } | null> => {
@@ -316,7 +329,7 @@ export function AutomationEditor({ canV2 = false, project, name: openName, onClo
       void save(over);
     } : null} />}
     {loading ? <p role="status">읽는 중…</p> : !legacy && !readOnlyReason && <>
-      {creating && <Field label="이름(파일 이름)" hint="영문 소문자·숫자·-·_. 만든 뒤에는 바꾸지 않는다"><input className="input" value={name} onChange={(e) => setName(e.target.value.trim())} data-testid="automation-form-name" spellCheck={false} aria-invalid={name !== "" && !validName(name)} /></Field>}
+      {creating && <Field label="이름(파일 이름)" hint="영문 소문자·숫자·-·_. 만든 뒤에는 바꾸지 않는다"><input ref={nameInput} className="input" value={name} onChange={(e) => setName(e.target.value.trim())} data-testid="automation-form-name" spellCheck={false} aria-invalid={name !== "" && !validName(name)} /></Field>}
       <div className="automation-tabs" role="tablist">
         {(["form", "toml", "review"] as Mode[]).map((m) => <button key={m} type="button" role="tab" aria-selected={mode === m} data-testid={`automation-tab-${m}`} disabled={flushing || (m === "form" && !check?.form && !creating && mode === "toml" && errors.length > 0)} onClick={() => void switchMode(m)}>{m === "form" ? "폼" : m === "toml" ? "TOML" : "검토"}</button>)}
       </div>

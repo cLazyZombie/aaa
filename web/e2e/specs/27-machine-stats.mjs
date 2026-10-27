@@ -1,9 +1,14 @@
 // 머신 CPU %·MEM %(사용자 10-19 「웹 UI에 머신에 cpu %, mem % 를 보여줄수 있어? 간략하게」, plan §8.245): 머신 패널 머리줄 오른쪽
 // agent·CPU·MEM 아이콘 + 숫자(CPU·MEM은 2px 막대, 사용자 결정 10-19 「1안」, plan §8.256),
 // 90%부터 빨강과 접힌 활동 막대의 머신 배지, 옛 agent의 「—」, 끊긴 머신은 그리지 않음.
-// 첫 단계는 실제 agent가 기본 주기(점검 60초 사이 15초 표본)로 보낸 값을 기다린다(이 파일이 그 기본값 길이다). 높은 값·옛 agent는
+// 첫 단계는 설정된 1초 점검의 실제 agent 표본·host 전달·표시를 본다. 기본 15초 사이 표본의 기한/전송은
+// health::tests::stats_send_at_fifteen_seconds_without_catchup_or_replacing_the_last_check가 맡는다. 높은 값·옛 agent는
 // 실제 agent가 낼 수 없어 상태 사건 WebSocket의 state에 값을 끼운 화면으로 본다.
-import { aaa, step, browser, pairPage, showPanel, stop, until, shot } from "../lib/harness.mjs";
+import fs from "node:fs";
+import { root, aaa, step, browser, pairPage, showPanel, stop, until, shot } from "../lib/harness.mjs";
+
+// 이 UI keeper만 제품 설정의 점검 간격을 명시한다. CPU의 실제 1초 최소 구간은 유지한다.
+fs.appendFileSync(`${root}/c/agent.toml`, "\n[health]\nevery_s = 1\n");
 
 /** labA의 agent·CPU·MEM 칸: 값·높음·빈 값·막대·아이콘·title */
 const meters = (p) =>
@@ -20,9 +25,9 @@ const meters = (p) =>
 const badge = (p) => p.evaluate(() => document.querySelector('[data-testid="activity-badge-machines"]')?.textContent ?? null);
 
 export default async function ({ page }) {
-  await step("머신 CPU·MEM: 실제 agent가 15초마다 잰 값이 머신 머리줄 오른쪽 아이콘·숫자·막대로 보이고, agent 수는 「작업」 트리의 agent 줄 기준으로 세며 title이 풀이한다", async () => {
+  await step("머신 CPU·MEM: 실제 agent 표본의 값이 머신 머리줄 오른쪽 아이콘·숫자·막대로 보이고, agent 수는 「작업」 트리의 agent 줄 기준으로 세며 title이 풀이한다", async () => {
     await showPanel(page, "machines");
-    // CPU는 두 표본 사이 평균이라 첫 점검에는 없고 15초 표본부터 온다. 값만 바뀐 보고도 처음 생긴 값은 host가 화면에 보낸다
+    // CPU는 두 표본 사이 평균이라 첫 점검에는 없고 실제 1초 구간 뒤부터 온다. 값만 바뀐 보고도 처음 생긴 값은 host가 화면에 보낸다
     const got = await until("CPU·MEM 값", async () => {
       const v = await meters(page);
       return v && /^\d+$/.test(v.c.value) && /^\d+$/.test(v.m.value) ? v : null;

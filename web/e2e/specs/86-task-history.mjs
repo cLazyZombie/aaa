@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { root, aaa, step, shot, domIs, browser, webkit, pairPage, stop, start, until } from "../lib/harness.mjs";
+import { clickMenuItem } from "../lib/menu.mjs";
 
 const request = (page, value) => page.evaluate(async (value) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) })).json(), value);
 const archive = (page, view) => request(page, { op: "task_archive", restore: null, view });
@@ -13,7 +14,7 @@ async function choose(page, field, text) {
   await page.getByTestId(`task-completed-${field}`).click();
   const desktop = page.getByRole("menuitemcheckbox").filter({ has: page.locator(".menu-item-main").filter({ hasText: new RegExp(`^${text}$`) }) });
   if (await desktop.count()) await desktop.click();
-  else await page.getByRole("dialog").getByRole("button").filter({ has: page.locator(".row-sheet-label").filter({ hasText: new RegExp(`^${text}$`) }) }).click();
+  else await clickMenuItem(page.getByRole("dialog").getByRole("button").filter({ has: page.locator(".row-sheet-label").filter({ hasText: new RegExp(`^${text}$`) }) }));
 }
 
 // 탭과 검색이 같은 flex 부모를 쓰고, 탭 전환에도 검색의 시작 위치·높이가 같다.
@@ -196,7 +197,7 @@ export default async function ({ page }) {
           await choose(p, "reason", "되살린 항목");
           await rows(p).filter({ hasText: "보관 100" }).waitFor();
           await p.getByTestId("task-completed-repo").click();
-          await p.getByRole("dialog", { name: "저장소로 거르기" }).getByRole("button").filter({ has: p.locator(".row-sheet-label").filter({ hasText: /^rc$/ }) }).click();
+          await clickMenuItem(p.getByRole("dialog", { name: "저장소로 거르기" }).getByRole("button").filter({ has: p.locator(".row-sheet-label").filter({ hasText: /^rc$/ }) }));
           await p.getByRole("dialog", { name: "저장소로 거르기" }).waitFor({ state: "detached" });
           // 공통 sheet의 퇴장 화면은 닫힌 shadow root에 있다. 바깥 host의 제거 사건 뒤 촬영한다.
           await domIs(p, "저장소 시트 퇴장 완료", () => !document.querySelector('body > [inert][aria-hidden="true"]'));

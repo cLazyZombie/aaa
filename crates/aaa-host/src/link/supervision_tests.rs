@@ -48,6 +48,85 @@ fn host() -> (Lab, Arc<Host>) {
     (Lab(path), h)
 }
 type Reader = FrameRx<tokio::io::ReadHalf<DuplexStream>>;
+
+// 실제 Git 대기는 m13 preparation이 맡는다. 여기서는 제품 요청/직렬화/응답 수명을
+// 그대로 쓰고 Tokio 시계만 넘겨 옛 공통 15초와 설정별 deadline을 모두 검사한다.
+#[tokio::test(start_paused = true)]
+async fn preparation_and_cleanup_keep_their_deadlines_past_the_general_request_limit() {
+    use aaa_proto::{ThreadKind, ThreadPrepare};
+    let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+    let mut conn = AgentConn::new(outgoing, 1);
+    conn.timeouts.thread_prepare_timeout_secs = 41;
+    conn.timeouts.thread_cleanup_timeout_secs = 43;
+    let requests = [
+        (
+            AgentRequest::ThreadPrepare(ThreadPrepare {
+                resolved_profile: None,
+                project: "demo".into(),
+                thread: "t-0001".into(),
+                title: "준비".into(),
+                kind: ThreadKind::Worktree,
+                repo: Some("repo".into()),
+                base: None,
+                profile: "fake".into(),
+                brief: "할 일".into(),
+                safety: None,
+            }),
+            41,
+        ),
+        (
+            AgentRequest::ThreadPlacement {
+                project: "demo".into(),
+                thread: "t-0001".into(),
+                title: "준비".into(),
+                kind: ThreadKind::Worktree,
+                repo: Some("repo".into()),
+            },
+            41,
+        ),
+        (
+            AgentRequest::ThreadCleanup {
+                repo: Some("repo".into()),
+                cwd: "worktree".into(),
+                branch: None,
+                merged_head: None,
+                keep_worktree: false,
+                uncopied: false,
+            },
+            43,
+        ),
+    ];
+    for (body, seconds) in requests {
+        let pending = tokio::spawn({
+            let conn = conn.clone();
+            let body = body.clone();
+            async move { conn.request(body).await }
+        });
+        let (_, bytes) = frames.recv().await.unwrap();
+        let LinkMsg::Req { id, deadline_ms, .. } = serde_json::from_slice(&bytes).unwrap() else {
+            panic!("요청 frame");
+        };
+        assert_eq!(deadline_ms, Some(seconds * 1000));
+        tokio::time::advance(crate::REQUEST_TIMEOUT + Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        assert!(!pending.is_finished(), "일반 15초로 준비·정리를 끊었다");
+        conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(AgentResponse::Done)).unwrap();
+        assert!(matches!(pending.await.unwrap().unwrap(), AgentResponse::Done));
+        assert!(conn.pending.lock().unwrap().is_empty());
+        let pending = tokio::spawn({
+            let conn = conn.clone();
+            async move { conn.request(body).await }
+        });
+        frames.recv().await.unwrap();
+        tokio::time::advance(Duration::from_secs(seconds - 1)).await;
+        tokio::task::yield_now().await;
+        assert!(!pending.is_finished(), "설정 시한 전에 끝났다");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(pending.await.unwrap().unwrap_err().code, ErrorCode::Timeout);
+        assert!(conn.pending.lock().unwrap().is_empty());
+    }
+}
+
 async fn connect(h: Arc<Host>) -> (tokio::task::JoinHandle<Result<()>>, FrameTx, Reader, Arc<AtomicBool>) {
     let (stream, peer) = tokio::io::duplex(65536);
     let fault = Arc::new(AtomicBool::new(false));

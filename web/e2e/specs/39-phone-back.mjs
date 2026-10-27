@@ -8,9 +8,9 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 39-phone-back(새 실험실).
 
 import fs from "node:fs";
-import { aaa, step, browser, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
+import { specCleanup, aaa, step, browser, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
-import { historyDestinations } from "../lib/history-destinations.mjs";
+import { historyDestinations, taskSheetHistory } from "../lib/history-destinations.mjs";
 import { settingsDrawerHistory, settingsPanePreparation } from "../lib/settings-drawer-history.mjs";
 import { SettingsDrawerDiagnostics } from "../lib/settings-drawer-diagnostics.mjs";
 import { drawerNavigation } from "../lib/drawer-navigation.mjs";
@@ -94,6 +94,10 @@ const pageEntry = () => {
 const fmt = (s) => `${s.hash || "(주소 없음)"}${s.viewer ? "+보기" : ""}${s.drawer ? "+목록" : ""}${s.empty ? "+빈 화면" : ""}`;
 
 export default async function () {
+  // 브라우저는 이 파일 수명 동안 재사용하고 기기마다 새 context를 준다.
+  let safari;
+  const safariBrowser = async () => (safari ??= specCleanup.own(() => webkit.launch({ headless: true }), value => value.close())).value;
+  try {
   let url;
   const settingsDiagnostics = new SettingsDrawerDiagnostics(root);
   await step("준비: 보고서 publish, 보고서 링크가 든 대화 pane과 셸 pane 둘", async () => {
@@ -105,24 +109,20 @@ export default async function () {
     chatPane("bk1", `보기: ${url}`);
     chatPane("bk2", "두 번째 대화");
     for (const label of ["bk3", "bk4"]) aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", "exec cat");
-  });
+  }, { always: true });
 
   await step("fragment 기록 직후 popstate와 Back·재선택의 칸 수 불변을 구분한다(Chromium·WebKit)", async () => {
     await fragmentHistory(browser);
-    const wk = await webkit.launch();
-    try { await fragmentHistory(wk); } finally { await wk.close(); }
+    const wk = await safariBrowser();
+    { await fragmentHistory(wk); }
   });
 
-  await step("메뉴로 A→B 선택 뒤 쓸기: 기록 전 메뉴 숨김·취소·늦은 터치·복원·진단(Chromium·WebKit)", async () => {
-    await drawerNavigation(browser);
-    const wk = await webkit.launch();
-    try { await drawerNavigation(wk); } finally { await wk.close(); }
-  });
+  await step("메뉴 A→B 뒤 쓸기 · 기록·취소·늦은 터치·복원: Chromium", async () => { await drawerNavigation(browser); });
+  await step("메뉴 A→B 뒤 쓸기 · 기록·취소·늦은 터치·복원: WebKit", async () => { const wk = await safariBrowser(); await drawerNavigation(wk); });
 
-  await step("휴대폰 뒤로 끝까지: pane → 다른 pane → 보고서 → 뒤로를 거꾸로 지나 첫 pane에서 멈추고 빈 화면이 없다(WebKit 390·430, Safari·홈 화면 앱)", async () => {
-    const wk = await webkit.launch();
-    try {
-      for (const width of [390, 430]) for (const standalone of [false, true]) {
+  async function phoneBackToBottom(width, standalone) {
+    const wk = await safariBrowser();
+
         const tag = `${width}-${standalone ? "app" : "safari"}`;
         const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone, init: pageEntry });
         try {
@@ -158,18 +158,18 @@ export default async function () {
         } finally {
           await p.context().close();
         }
-      }
-    } finally {
-      await wk.close();
-    }
-  });
+
+  }
+  await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 390 Safari", async () => { await phoneBackToBottom(390, false); });
+  await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 390 홈 화면 앱", async () => { await phoneBackToBottom(390, true); });
+  await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 430 Safari", async () => { await phoneBackToBottom(430, false); });
+  await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 430 홈 화면 앱", async () => { await phoneBackToBottom(430, true); });
 
   // t-0780, plan §8.340: 휴대폰 뒤로·앞으로는 메뉴를 항상 닫는다.
-  await step("메뉴를 연 채 뒤로·앞으로: 항상 닫힘(WebKit 390·430, Safari·홈 화면 앱)", async () => {
-    const wk = await webkit.launch();
+  async function phoneMenuHistory(width, standalone) {
+    const wk = await safariBrowser();
     const bad = [];
-    try {
-      for (const width of [390, 430]) for (const standalone of [false, true]) {
+
         const tag = `${width}-${standalone ? "app" : "safari"}`;
         const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone });
         try {
@@ -222,17 +222,17 @@ export default async function () {
         } finally {
           await p.context().close();
         }
-      }
-      if (bad.length) throw new Error(bad.join("; "));
-    } finally {
-      await wk.close();
-    }
-  });
 
-  await step("왼쪽 가장자리에서 오른쪽 끝까지 쓸기는 Safari 뒤로 몫: 목록을 열지 않고, 뒤로와 겹치면 앞 화면에 목록 없이 간다. 안쪽 쓸기는 목록을 연다(plan §8.408)", async () => {
-    const wk = await webkit.launch();
-    try {
-      for (const width of [390, 430]) for (const standalone of [false, true]) {
+    if (bad.length) throw new Error(bad.join("; "));
+  }
+  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 390 Safari", async () => { await phoneMenuHistory(390, false); });
+  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 390 홈 화면 앱", async () => { await phoneMenuHistory(390, true); });
+  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 430 Safari", async () => { await phoneMenuHistory(430, false); });
+  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 430 홈 화면 앱", async () => { await phoneMenuHistory(430, true); });
+
+  async function phoneEdgeHistory(width, standalone) {
+    const wk = await safariBrowser();
+
         const tag = `${width}-${standalone ? "app" : "safari"}`;
         const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone });
         try {
@@ -269,15 +269,16 @@ export default async function () {
         } finally {
           await p.context().close();
         }
-      }
-    } finally {
-      await wk.close();
-    }
-  });
+
+  }
+  await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 390 Safari", async () => { await phoneEdgeHistory(390, false); });
+  await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 390 홈 화면 앱", async () => { await phoneEdgeHistory(390, true); });
+  await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 430 Safari", async () => { await phoneEdgeHistory(430, false); });
+  await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 430 홈 화면 앱", async () => { await phoneEdgeHistory(430, true); });
 
   await step("넓은 화면 뒤로·앞으로: 데스크톱·패드의 사이드바 펼침·접힘 유지(WebKit 1280·820)", async () => {
-    const wk = await webkit.launch();
-    try {
+    const wk = await safariBrowser();
+    {
       for (const profile of ["desktop", "ipad"]) {
         const { page: p } = await pairDevice(wk, aaa("web", "pair").code, profile);
         try {
@@ -303,14 +304,12 @@ export default async function () {
           await p.context().close();
         }
       }
-    } finally {
-      await wk.close();
     }
   });
 
   await step("고른 것이 없는 화면: 휴대폰은 「목록에서 하나를 고른다」와 「목록 열기」 단추, 기록 칸을 더하지 않고 뒤로는 앞 화면, 데스크톱은 「왼쪽에서」 그대로", async () => {
-    const wk = await webkit.launch();
-    try {
+    const wk = await safariBrowser();
+    {
       const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone: false });
       try {
         await domIs(p, "첫 pane", () => /^#pane=/.test(location.hash) && document.querySelector('[data-testid="terminal"], [data-testid="chat"]') !== null);
@@ -363,35 +362,23 @@ export default async function () {
       } finally {
         await d.context().close();
       }
-    } finally {
-      await wk.close();
     }
   });
-  await step("휴대폰 모든 목적지 뒤로·앞으로: thread·보고서·할 일·질문·빈 목록·설정에서 항상 메뉴 닫힘(Chromium·WebKit)", async () => {
-    await historyDestinations(browser);
-    const wk = await webkit.launch();
-    try {
-      await historyDestinations(wk);
-    } finally {
-      await wk.close();
-    }
-  });
+  await step("휴대폰 본문 기록 뒤로·앞으로 · 모든 목적지·메뉴: Chromium", async () => { await historyDestinations(browser); });
+  await step("할 일 상세의 별도 기록 · 메뉴 열림/닫힘·뒤로/앞으로: Chromium", async () => { await taskSheetHistory(browser); });
+  await step("휴대폰 본문 기록 뒤로·앞으로 · 모든 목적지·메뉴: WebKit", async () => { const wk = await safariBrowser(); await historyDestinations(wk); });
+  await step("할 일 상세의 별도 기록 · 메뉴 열림/닫힘·뒤로/앞으로: WebKit", async () => { const wk = await safariBrowser(); await taskSheetHistory(wk); });
 
   await step("설정 준비: 첫 thread 목록이 메뉴 열림 뒤 도착해도 bk1 클릭을 마친다(Chromium·WebKit)", async () => {
     await settingsPanePreparation(browser, settingsDiagnostics);
-    const wk = await webkit.launch();
-    try { await settingsPanePreparation(wk, settingsDiagnostics); }
-    finally { await wk.close(); }
+    const wk = await safariBrowser();
+    { await settingsPanePreparation(wk, settingsDiagnostics); }
   }, { diagnose: (error) => settingsDiagnostics.save(error) });
 
-  await step("설정 닫기의 내부 복귀는 사용자가 연 메뉴를 유지하고 실제 뒤로·앞으로는 닫는다(Chromium·WebKit)", async () => {
-    await settingsDrawerHistory(browser, settingsDiagnostics);
-    const wk = await webkit.launch();
-    try {
-      await settingsDrawerHistory(wk, settingsDiagnostics);
-    } finally {
-      await wk.close();
-    }
-  }, { diagnose: (error) => settingsDiagnostics.save(error) });
+  await step("설정 내부 복귀·실제 기록 이동 · 작업 패널: Chromium", async () => { await settingsDrawerHistory(browser, settingsDiagnostics, "panel"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
+  await step("설정 내부 복귀·실제 기록 이동 · 닫기 버튼: Chromium", async () => { await settingsDrawerHistory(browser, settingsDiagnostics, "x"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
+  await step("설정 내부 복귀·실제 기록 이동 · 작업 패널: WebKit", async () => { const wk = await safariBrowser(); await settingsDrawerHistory(wk, settingsDiagnostics, "panel"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
+  await step("설정 내부 복귀·실제 기록 이동 · 닫기 버튼: WebKit", async () => { const wk = await safariBrowser(); await settingsDrawerHistory(wk, settingsDiagnostics, "x"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
 
+  } finally { await safari?.close(); }
 }
