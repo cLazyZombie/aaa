@@ -121,6 +121,7 @@
 - 첫 착지 gate에서 이 E2E의 WebKit 390 단계가 실패했다(20초 안에 초안이 비어 있음). 단추가 고른 글을 지키려고 pointerdown을 막았는데,
   WebKit은 터치 pointerdown을 막으면 tap의 mousedown·click을 내지 않는다(Chrome 터치 탭은 click을 내 scratch 확인에서 드러나지 않았다).
   같은 fixture의 별도 진단에서 수리 전 pointer/touch 사건 뒤 click 없음을, 마우스 pointer만 막은 수리 뒤 click·초안·focus 없음을 확인했다. 시험·시한은 그대로다.
+
 ## 큰 응답 분할의 가림 검색 비용(t-1216)
 
 - 원본 macOS CI의 `aaa_host` 전체 artifact를 확보했다. 응답 분할 owner는 큰 보고 전송까지
@@ -144,6 +145,20 @@
   [MIT/Unlicense](https://github.com/BurntSushi/aho-corasick/blob/master/COPYING)이며,
   후보를 거르고 정확히 확인하는 원칙을 참고했다. 기존 고정 길이 집합을 유지하고 외부 코드나
   실행 의존성을 추가하지 않는다.
+
+### Python 성공 fixture의 gh annotation 경계
+
+- t-1208이 착지한 main `b3fa9a08` 위에서 기존 `FailureScan`의 성공 suite 제외만 보강한다.
+  gh의 여러 줄 annotation에는 첫 줄 뒤 `job\tstep\t[python exit=0] ...`처럼 시각 없이 탭이
+  바로 표지 앞에 오는 줄이 있다. 성공 표지 앞의 줄 시작·공백 검사에 탭을 더한다.
+  스택 초과 수집·실패 집합 선택·원본 로그 보존은 기존 코드를 그대로 쓴다.
+- 기존 `successful_python_fixture_output_is_not_a_rust_failure_even_in_annotations`에 원본 형식의
+  module::failed·owner·panic·느린 경고·스택 초과 fixture를 보강한다. 7바이트 청크와 마지막
+  개행 누락에서도 성공한 suite만 있으면 실패가 비어야 하며, 같은 이름의 진짜 Rust 실패는 남긴다.
+  기존 `failed_or_interrupted_python_suites_keep_their_failure_evidence`는 같은 gh 앞머리 조합에서
+  Python exit 1/7/130/137/143을 그대로 수집하는지 확인한다.
+  두 owner 보강이 필요한 이유는 성공 여부를 시험 이름으로 판정하거나 annotation 줄을 통째로
+  무시해서 실제 실패를 숨기는 회귀를 막기 위해서다. 새 시험 번호·시한 변경은 없다.
 
 ## 보고서 화면 버튼 배치(t-1201)
 

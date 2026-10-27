@@ -275,7 +275,11 @@ impl FailureScan {
         // ci-local은 Python suite를 기다린 뒤 실제 종료 코드를 모든 출력 줄에 붙인다.
         // fixture의 가짜 Rust 실패가 annotation에 다시 실려도 성공한 바깥 suite에 속한다.
         // 실패·중단된 suite와 표지가 없는 옛 로그는 그대로 수집한다(시험 이름으로 제외하지 않는다).
-        if line.starts_with("[python exit=0] ") || line.contains(" [python exit=0] ") {
+        // gh의 여러 줄 annotation은 시각 없이 job/step 뒤 탭부터 본문이 시작하기도 한다.
+        if line.starts_with("[python exit=0] ")
+            || line.contains(" [python exit=0] ")
+            || line.contains("\t[python exit=0] ")
+        {
             return;
         }
         // 원문·gh job/step/time·ci-local 단계·annotation 앞머리만 벗긴다.
