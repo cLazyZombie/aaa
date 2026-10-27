@@ -8172,3 +8172,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 
 - 웹 E2E 실험실의 agent가 실행기를 띄운 경로의 실제 macOS 책임 경로를 관찰해, ssh에서 돈 ci-local은 pane마다 「느린 빌드」 배너(137px)를 띄웠다. 1280×800 E2E42에서 옆 칸 diff의 CodeView가 297px로 줄어 가상화가 파일 머리 2개만 그려 「src/lib.rs만 펼침」(머리 6개)이 실패했다. aaa pane(launcher)에서 돈 회차는 Launcher라 배너가 없었다.
 - agent는 `AAA_TEST_RESPONSIBILITY=none`이면 관찰하지 않는다(Linux와 같은 없음). 웹 E2E harness가 이것을 실험실 환경에 넣는다. 배너·뱃지 시험(89)은 지금처럼 웹 경계에서 관측값을 주입한다. 제품 기본 동작과 E2E 기대값은 바꾸지 않는다.
+
+### 8.517 diff의 접힌 맥락 펼치기(t-1202)
+
+- 기본은 지금처럼 바뀐 곳 근처만 보인다. `@pierre/diffs` 1.5.2의 기본 구분선과 `loadDiffFiles`를 연결해 20줄씩·해당 접힌 영역 전체를 펼친다. 기존 한 줄/나란히·파일 접기·가상화·공백 무시를 유지한다. 단추 이름은 한글이고 Enter·Space로 누를 수 있으며 터치 구분선은 44px이다. 안내 문단은 넣지 않는다.
+- FRONT_API **1.133**: 파일별 patch 요청에 선택 `DiffQuery.full_context`를 더한다. agent가 같은 범위·공백 설정과 경로를 기존 안전한 git diff에 전달하고 `--unified=2147483647`로 읽는다. 전체 비교 요청에는 허용하지 않으며 기존 파일당 768KiB JSON·20초 상한, 임시 index와 외부 callback 차단을 유지한다. host는 그대로 중계한다. `DiffView.full_context`는 완전한 전체 맥락을 읽었을 때만 참이다. 옛 agent의 생략·잘림은 원문으로 쓰지 않고 오류를 보인다. AGENT_LINK 판과 기존 diff.v1 경계는 유지한다.
+- 전체 맥락은 첫 펼치기에서만 읽고 양쪽 원문을 라이브러리의 hydration에 넘긴다. 기존 hunk의 변경 위치·내용과 기준 SHA를 대조해 읽는 사이 변경을 옛 비교와 섞지 않는다. CRLF·마지막 개행 없음도 보존한다. 다시 읽기·범위 변경은 새 비교로 시작한다.
+- 참고: [고정판 기본 구분선](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/utils/createSeparator.ts), [공식 원문 지연 읽기 문서](https://diffs.com/docs)(Apache-2.0), [react-diff-view의 원문 기반 맥락 확장](https://github.com/otakustay/react-diff-view#readme)(MIT)을 대조했다. 기존 라이브러리 기능을 사용하며 외부 코드·새 의존성은 추가하지 않는다.

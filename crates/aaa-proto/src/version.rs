@@ -261,7 +261,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.130: threads의 상태 거르기·커서 페이지·목록 본문 축소. CLI·웹은 next_after를 끝까지 읽는다.
 // 1.131: 완료 보고의 후속 원장과 thread_followup의 연결·사유 기록.
 // 1.132: QuestionChoice.letter·ThreadQuestion.source_number — 보고의 글자·번호 보존과 답한 질문 재보고 연결. picks는 배열 위치다.
-pub const FRONT_API: Version = Version { major: 1, minor: 132 };
+// 1.133: DiffQuery.full_context·DiffView.full_context — 파일별 전체 맥락 지연 읽기와 미지원/잘림 구별.
+pub const FRONT_API: Version = Version { major: 1, minor: 133 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

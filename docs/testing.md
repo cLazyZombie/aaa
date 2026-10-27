@@ -4834,3 +4834,10 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - [Rust Weak](https://doc.rust-lang.org/std/sync/struct.Weak.html)·[Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html)·[canonicalize](https://doc.rust-lang.org/std/fs/fn.canonicalize.html)(MIT/Apache-2.0)와 기존 collect_locks의 자원별 잠금 소유를 대조했다. 소유권/경로 정규화 원칙을 참고하며 외부 코드나 의존성을 추가하지 않는다. 새 두 unit은 각각 실제로 한 번 실행됐는지 확인하고, 성능은 다음 전체 차례의 같은 조건 전후로 판정한다.
 - 후속 같은조건 병렬에서는 cache owner가0.914→6.704초여서 성능 개선을 입증하지 못했다. 실제1000개 파일 경계는 그대로 두고, 준비용 빈 파일997개는 한 빈 파일과 같은 폴더의 hard link로 만든다. 파일 경로/개수/0바이트·실제 owner의 마지막 추가/초과 거부·교체/실패 재계산은 유지한다. 교체 뒤 다른 빈 파일도 그대로인지 실제 bytes를 검사한다. 원래 단언/상한·기존 owner 이름을 바꾸거나 준비를 시간 밖으로 옮기지 않는다.
 - [Rust hard_link](https://doc.rust-lang.org/std/fs/fn.hard_link.html)(MIT/Apache-2.0)와 [CPython os.link](https://docs.python.org/3/library/os.html#os.link)(PSF-2.0)의 같은 filesystem 내 실제 파일 경로 공유를 대조했다. symlink·파일 수 축소·합성 usage는 쓰지 않으며, 테스트의 실제 디렉터리 항목을 유지해 inode 준비 작업만 줄인다. 새 시험·삭제·대체는 없고, 단독 통과로 보통 병렬5초 기준을 통과했다고 판정하지 않는다.
+
+## diff의 접힌 맥락 펼치기(t-1202, plan §8.517)
+
+- `cargo test --profile verify --locked -p aaa-agent --lib diff::tests::`의 새 `full_context_is_file_only_bounded_and_keeps_default_patch_small`은 실제 git rename의 기본 patch가 작게 남고, 전체 맥락에는 첫·마지막 줄이 있으며, 원본 index·ref·파일이 바뀌지 않고 상한 초과/파일 없는 요청은 거부됨을 본다. 필요한 이유: 맥락 펼치기가 기본 표시·읽기 전용·전송 상한을 깨지 않아야 한다.
+- `node --test web/test/diffContext.test.mjs`의 세 keeper는 실제 git patch로 CRLF·마지막 개행 없음, 구판/잘림/기준 변경 거부와 기존 hunk 밖의 새 변경 거부를 검사한다. 필요한 이유: 불완전하거나 서로 다른 시점의 원문을 hydration에 넘겨 변경을 숨기지 않아야 한다. 원문 합성 parser를 따로 만들지 않고 기존 라이브러리를 쓴다.
+- 기존 E2E42의 160줄 파일에서 처음에는 변경 주변만 보이고 전체 맥락 요청은 0회여야 한다. 데스크톱 Chromium과 iPhone WebKit의 새 두 단계에서 실제 기본 UI를 데스크톱 Enter·휴대폰 tap으로 눌러 20줄을 더 보이고, 전체 펼치기로 첫·마지막 줄을 확인한다. 이어지는 펼치기는 추가 요청 없이 같은 원문을 쓴다. 필요한 이유: 가상화·shadow DOM·지연 hydration의 실제 연결과 휴대폰 터치 크기는 순수 유닛만으로 확인할 수 없다. 기존 카드·기기 폭·테마·대량 lazy 계약과 E2E 번호는 유지한다.
+- 고정 sleep·재시도·시한 확대·기대값 완화는 없다. WebKit에서 SVG use가 터치 대상을 가리므로 아이콘은 pointer-events: none으로 하고 단추 자체에 실제 tap을 보낸다. 새 개별 유닛/단계는 보통 부하 5초 이하를 확인하며 전체 suite 시간과 구별한다.

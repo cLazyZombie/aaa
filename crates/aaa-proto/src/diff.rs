@@ -42,6 +42,10 @@ pub struct DiffQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub file: Option<DiffFileRef>,
+    /// 파일 하나의 patch에 바뀌지 않은 줄도 모두 담는다(맥락 펼치기 지연 읽기).
+    #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
+    pub full_context: bool,
 }
 
 /// git이 보는 파일 상태(`--name-status` 글자). 무시하지 않은 새 파일은 `untracked`
@@ -91,4 +95,8 @@ pub struct DiffView {
     pub truncated: bool,
     /// 새 파일이 상한보다 많아 새 파일은 뺐다
     pub untracked_omitted: bool,
+    /// 전체 맥락 요청을 처리했고 patch가 잘리지 않았다. 옛 agent는 생략한다.
+    #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
+    pub full_context: bool,
 }
