@@ -38,6 +38,14 @@ export function summaryActivity(t: ThreadView, now: number): { activity: string;
   return { activity, time: `시작 후 ${formatWorkingDuration(end - t.created_at_ms)} · ${activityTime}` };
 }
 
+/** 요약과 CLI 보고는 따로 갱신된다. 요약의 목표만 고쳐도 시각은 바뀌므로 목록 자체의 갱신 시각으로 부르지 않는다. */
+export function summaryUpdates(t: ThreadView, v: ThreadSummaryView, now: number): string {
+  const age = (at: number) => `${formatWorkingDuration(now - at)} 전`;
+  const summary = v.at_ms !== null ? age(v.at_ms) : "없음";
+  const report = t.agent?.progress_at_ms;
+  return `요약 갱신 ${summary} · 진행 보고 ${report != null ? age(report) : "없음"}`;
+}
+
 /** hover 카드가 보이는 「지금 할 것」 줄 수. 카드는 훑어보는 것이라 6줄 안팎이다(10-19 사용자) */
 export const CARD_NOW = 3;
 

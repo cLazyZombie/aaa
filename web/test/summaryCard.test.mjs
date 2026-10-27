@@ -2,7 +2,7 @@
 // 모자라면 왼쪽·위로, 단추 점은 요약 뒤 지시가 있을 때.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CARD_NOW, cardLines, decidedLines, hoverPlace, modelName, popoverPlace, summaryActivity, summaryModel, summaryStale } from "../src/summaryCard.ts";
+import { CARD_NOW, cardLines, decidedLines, hoverPlace, modelName, popoverPlace, summaryActivity, summaryModel, summaryStale, summaryUpdates } from "../src/summaryCard.ts";
 
 const entry = (text, extra = {}) => ({ who: null, at: null, text, dropped: false, ...extra });
 const view = (over = {}) => ({
@@ -39,6 +39,16 @@ describe("작업 요약 카드", () => {
     assert.equal(c.moreNow, 1);
     assert.equal(c.goal, "웹 패널 다듬기");
     assert.equal(c.auto, false);
+  });
+
+  it("오래된 요약과 최신 진행 보고의 나이를 따로 보이고 없는 시각을 추측하지 않는다", () => {
+    const t = { agent: { progress_at_ms: 181000 } };
+    const v = view({ at_ms: 1000 });
+    assert.equal(summaryUpdates(t, v, 186000), "요약 갱신 3분 전 · 진행 보고 5초 전");
+    assert.equal(summaryUpdates(t, { ...v, at_ms: 185000 }, 186000), "요약 갱신 1초 전 · 진행 보고 5초 전");
+    assert.equal(summaryUpdates({ agent: null }, { ...v, at_ms: null }, 186000), "요약 갱신 없음 · 진행 보고 없음");
+    assert.equal(summaryUpdates(t, view({ at_ms: null }), 186000), "요약 갱신 없음 · 진행 보고 5초 전");
+    assert.equal(summaryUpdates(t, v, 0), "요약 갱신 0초 전 · 진행 보고 0초 전");
   });
 
   it("최근 바뀐 것은 맨 아래의 그어지지 않은 줄", () => {

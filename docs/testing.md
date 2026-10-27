@@ -4633,3 +4633,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 이미지 보존 owner의 PTY는 `FAKE_AGENT`/`COORD_AGENT`의 줄 단위 custom 보고 셸이며 bracketed paste를 켜지 않는다. Codex 이미지 helper는 그 PTY가 아닌 별도 headless 프로세스다. 이 전용 host의 초기/재시작 명령에만 `AAA_TEST_SUBMIT_GAP_MS=0`을 주어 해당되지 않는 TUI paste 대기를 제거한다. 제품 기본300ms와 실제 paste/수락 경계의 기존 harness owner는 그대로 유지한다. 기존10초 수락 시한·실제2머신/4provider시도·544KiB PNG·모든 canary/권한/재시작/목록/forget/누출 단언은 바꾸지 않는다.
 
 - resolve owner의 dir/worktree/adopted는 원래 생성 순서로 실제 기동한 뒤 각각의 보고·brief와 exit1·resolve를 같은 순서로 검사한다. 기본 한도10 안의 독립된3thread를 준비하며, 보고 대기를 겹쳐도 원래 CLI 호출·단언·ID 생성 순서와 pane/layout/폴더 보존은 그대로다.
+
+
+## 고비별 진행 목록과 진행 보고 시각(t-1179, §8.511)
+
+- 기존 `brief_text::tests`는 모든 harness용 brief 구성과 공유 진행 보고 안내를 확인한다. 지침 문자열의 모양만 반복 확인하는 별도 시험은 추가하지 않는다.
+- 웹 `summaryCard`의 새 행동 시험은 오래된 요약/최신 진행 보고의 나이 분리, 요약 재갱신, 시각/보고 누락과 음수 시차를 확인한다. 필요한 이유: 활동 보고만 갱신됐는데 작업 목록도 최신으로 오해하거나 없는 시각을 만들어 표시하는 회귀를 막는다.
+- 기존 E2E28의 desktop 진행 owner는 실제 pane CLI의 진행률을 바꾸고 파일의 report hash·목록 시각·완료 개수가 그대로인지 검사한다. 실제 파일을 고친 뒤 카드 단계가 갱신되는 기존 단언도 유지한다. 브라우저 시계만 진행해 오래된 표시를 확인하며 고정 sleep은 쓰지 않는다. Chromium 320px·WebKit 390px Reader는 같은 갱신 시각 표시와 기존 읽기 전용·긴 이름·권한 계약을 확인한다.
+- 기본 hover 카드의 줄 수는 추가한 갱신 시각 한 줄을 포함해 10개다. 기존 한 줄 표시·높이 280px 상한과 목표/상태/활동 단언은 유지한다. 새 E2E 번호·시험 삭제·재시도·시한 확대는 없다.
+- 부분 확인: 웹 유닛 전체·타입/번들, host `brief_text::tests`와 proto 유닛, 두 crate strict clippy·의존 경계·fmt·공개 검사, 저장소 고정 Playwright 1.64.1과 공용 캐시의 E2E28 전체다. 전체 ci-local과 병합·push는 정규 착지 차례에서 수행한다.

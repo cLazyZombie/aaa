@@ -250,8 +250,8 @@ export default async function ({ page }) {
     await diagnostics.visible("기본 thread 줄 hover");
     await domIs(page, "카드 자리", () => document.querySelector('[data-testid="summary-hover"]')?.style.visibility !== "hidden");
     const card = await cardOf(page);
-    // 기존 여덟 줄에 모델 한 줄을 더한다. 정한 것·끝남·처음은 상세에서 읽는다.
-    if (card.lines !== 9 || card.wrapped.length > 0 || card.height > 280) throw new Error(`카드 ${JSON.stringify(card)}`);
+    // 기존 아홉 줄에 요약/진행 보고의 갱신 시각 한 줄을 더한다. 정한 것·끝남·처음은 상세에서 읽는다.
+    if (card.lines !== 10 || card.wrapped.length > 0 || card.height > 280) throw new Error(`카드 ${JSON.stringify(card)}`);
     assert.match(card.text, /현재 모델 미확인 · 시작 profile: fake/);
     if (!card.text.includes("지금 활동:") || !card.text.includes("시작 후") || !card.text.includes("활동")) throw new Error(`활동·시간 ${card.text}`);
     for (const word of ["웹 왼쪽 패널 다듬기", "특수 단추 자리 옮기기", "쉬는 중엔 안 보냄"]) {
@@ -377,6 +377,10 @@ export default async function ({ page }) {
       await page.clock.install({ time: agent.progress_since_ms + 10_000 });
       await page.reload();
       report(["x", "~", " ", "x", " "]);
+      const firstReport = await until("첫 진행 목록 보고 수신", () => {
+        const t = aaa("thread", "show", "demo", id);
+        return t.report_hash && t.next.includes("검증을 마친다") ? t : null;
+      });
       await page.getByTestId(`thread-demo-${id}`).hover();
       const hover = page.getByTestId("summary-hover");
       await diagnostics.visible("전체 진행 목록 hover");
@@ -399,10 +403,20 @@ export default async function ({ page }) {
         const before = await time.innerText();
         await page.clock.runFor(2000);
         if ((await time.innerText()) === before) throw new Error("열린 카드의 경과 시간이 멈췄다");
+        // 목록이 오래된 동안에도 실제 pane CLI의 진행 보고는 따로 갱신된다.
+        // host 시각은 그대로 두고 브라우저의 표시 시각만 진행한다.
+        await page.clock.setSystemTime(Date.now() + 180_000);
+        await page.clock.runFor(1000);
+        await domIs(page, "요약과 진행 보고의 갱신 시각", () => document.querySelector('[data-testid="summary-updated"]')?.textContent.includes("요약 갱신 3분 전 · 진행 보고 3분 전"));
       } finally { await page.clock.resume(); }
       activity(70);
       await domIs(page, "같은 활동의 진행률 실시간 갱신", () => document.querySelector('[data-testid="summary-hover"] [data-testid="summary-activity"]')?.textContent.includes("웹 회귀 검증 · ~70%"));
       if (aaa("thread", "show", "demo", id).agent.progress_since_ms !== agent.progress_since_ms) throw new Error("정기 보고가 활동 시간을 초기화했다");
+      const afterActivity = aaa("thread", "show", "demo", id);
+      assert.equal(afterActivity.report_hash, firstReport.report_hash, "진행 명령만으로 보고 파일의 판을 바꾸지 않는다");
+      assert.equal(afterActivity.summary.at_ms, firstReport.summary.at_ms, "진행 명령만으로 요약 시각을 바꾸지 않는다");
+      assert.ok((await progress.innerText()).includes("2/5 완료"), "활동 갱신으로 목록 완료 상태를 추측하지 않는다");
+      assert.match(await hover.getByTestId("summary-updated").innerText(), /요약 갱신 3분 전 · 진행 보고 3분 전/);
 
       // 카드를 열어 둔 채 report.md만 바꾼다. agent 감시→host 사본→카드 캐시·경고 갱신을 함께 본다.
       report(["x", "x", "~", "x", " "]);
@@ -431,6 +445,7 @@ export default async function ({ page }) {
         if (!(await sheet.innerText()).includes("3/5 완료") || !(await sheet.innerText()).includes("요약 뒤 지시")) throw new Error("Reader 완료 개수·새 지시");
         const activity = await sheet.getByTestId("summary-activity").innerText();
         if (!activity.includes("웹 회귀 검증 · ~70%") || !activity.includes("시작 후") || !activity.includes("활동")) throw new Error(`Reader 활동·시간 ${activity}`);
+        assert.match(await sheet.getByTestId("summary-updated").innerText(), /요약 갱신 .* 전 · 진행 보고 .* 전/);
         const box = await sheet.evaluate((el) => ({ width: innerWidth, left: el.getBoundingClientRect().left, right: el.getBoundingClientRect().right, overflow: el.scrollWidth > el.clientWidth + 1, lastHeight: el.querySelector("li:last-child .summary-step-text").getBoundingClientRect().height }));
         if (box.left < 0 || box.right > width + 1 || box.overflow || box.lastHeight <= 20) throw new Error(`휴대폰 줄바꿈·넘침 ${JSON.stringify(box)}`);
         const refusal = await p.evaluate(async ([thread]) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "thread_summary_set", project: "demo", thread, text: "# 목표\n보기 기기 쓰기 금지" }) })).json(), [id]);
