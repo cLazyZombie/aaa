@@ -89,7 +89,7 @@ function ActionFields({ form, update }: { form: Form; update: (f: Form) => void 
   switch (kind) {
     case "command": return <><Text label="실행 명령" value={a.command} onChange={(v) => set("command", v)} mono testid="automation-action-command" /><Text label="실행 머신" value={a.machine} onChange={(v) => set("machine", v)} placeholder="비우면 host 머신" /></>;
     case "inbox": return <Toggle label="휴대폰에도 알린다(앱 안 알림)" value={a.notify} onChange={(v) => set("notify", v)} />;
-    case "message": return <Text label="받는 thread" value={a.thread} onChange={(v) => set("thread", v)} placeholder="owner 또는 t-0123" hint="owner는 사건의 thread다(일정·명령에는 없다)" testid="automation-form-thread" />;
+    case "message": return <Text label="받는 thread" value={a.thread} onChange={(v) => set("thread", v)} placeholder="owner 또는 t-0123" testid="automation-form-thread" />;
     case "start": return <>
       <Text label="thread 제목" value={a.title} onChange={(v) => set("title", v)} hint="{date}·{machine}·{repo_path}를 채운다" testid="automation-form-start-title" />
       <List label="profile 후보" value={a.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />
@@ -326,7 +326,7 @@ export function AutomationEditor({ canV2 = false, project, name: openName, onClo
       void save(over);
     } : null} />}
     {loading ? <p role="status">읽는 중…</p> : !legacy && !readOnlyReason && <>
-      {creating && <Field label="이름(파일 이름)" hint="영문 소문자·숫자·-·_. 만든 뒤에는 바꾸지 않는다"><input ref={nameInput} className="input" value={name} onChange={(e) => setName(e.target.value.trim())} data-testid="automation-form-name" spellCheck={false} aria-invalid={name !== "" && !validName(name)} /></Field>}
+      {creating && <Field label="이름(파일 이름)" hint="영문 소문자·숫자·-·_"><input ref={nameInput} className="input" value={name} onChange={(e) => setName(e.target.value.trim())} data-testid="automation-form-name" spellCheck={false} aria-invalid={name !== "" && !validName(name)} /></Field>}
       <div className="automation-tabs" role="tablist">
         {(["form", "toml", "review"] as Mode[]).map((m) => <button key={m} type="button" role="tab" aria-selected={mode === m} data-testid={`automation-tab-${m}`} disabled={flushing || (m === "form" && !check?.form && !creating && mode === "toml" && errors.length > 0)} onClick={() => void switchMode(m)}>{m === "form" ? "폼" : m === "toml" ? "TOML" : "검토"}</button>)}
       </div>

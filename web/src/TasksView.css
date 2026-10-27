@@ -178,7 +178,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   border-left: var(--hairline) solid var(--border);
   box-shadow: var(--shadow-drawer);
 }
-.task-detail.is-empty { display: none; }
 .tasks-scrim { position: absolute; inset: 0; z-index: 1; background: var(--scrim); }
 .task-detail-head { display: flex; align-items: center; gap: var(--space-2); min-height: var(--header-h); padding: 0 var(--space-3); border-bottom: var(--hairline) solid var(--border); }
 .task-detail-close {
@@ -207,7 +206,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-detail-section ul { margin: 0; padding-left: var(--space-4); }
 .task-problems { padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--status-blocked); border-radius: var(--radius-md); background: var(--status-blocked-tint); }
 .task-problems h3 { color: var(--status-blocked); }
-.task-problems p { margin: var(--space-2) 0 0; font-size: var(--fs-xs); }
 .task-raw { margin: 0; padding: var(--space-2) var(--space-3); overflow-x: auto; border-radius: var(--radius-md); background: var(--bg-input); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-related { list-style: none; padding-left: 0 !important; }
 .task-related li { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; }
@@ -216,7 +214,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 
 /* 넓은 본문: 목록 60%·상세 40% 두 칸, 시트 그늘 없음 */
 @container tasks (min-width: 720px) {
-  .task-detail:not(.is-empty) {
+  .task-detail {
     position: static;
     display: flex;
     flex: 0 0 40%;

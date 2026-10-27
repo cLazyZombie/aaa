@@ -73,11 +73,11 @@ function Lines({ rows, axis, total, change, utc }: { rows: CodeLines[]; axis: st
   return <section className="ws-card ws-lines"><h2>코드 줄 수 <Code2 size={16} aria-hidden /></h2><div className="ws-inline">
     <select aria-label="코드 줄 수 표시" value={total ? "total" : "split"} onChange={(e) => change({ lines: e.target.value })}><option value="split">제품 / 시험 / E2E</option><option value="total">합계</option></select>
     <select aria-label="코드 줄 수 축" value={axis} onChange={(e) => change({ axis: e.target.value })}><option value="date">날짜별</option><option value="commit">커밋별</option></select></div>
-    {latest ? <><strong className="ws-lines-total">{num(latest.total_lines)}<small>줄 · 빈 줄 제외, 주석 포함</small></strong><p>{split ? `제품 ${num(split.product ?? 0)} / 시험 ${num(split.test ?? 0)} / E2E ${num(split.e2e ?? 0)}` : "혼합 시험 코드의 경계가 불명확하면 합계만 표시합니다."}</p>
+    {latest ? <><strong className="ws-lines-total">{num(latest.total_lines)}<small>줄 · 빈 줄 제외, 주석 포함</small></strong>{split && <p>{`제품 ${num(split.product ?? 0)} / 시험 ${num(split.test ?? 0)} / E2E ${num(split.e2e ?? 0)}`}</p>}
       <svg className="ws-chart" viewBox="0 0 680 170" role="img" aria-label={`코드 줄 수 추이 ${rows.length}개 관측`}>
         {[0, 0.5, 1].map((v) => <g key={v}><line x1={65} y1={135 - v * 110} x2={645} y2={135 - v * 110} /><text x={57} y={139 - v * 110} textAnchor="end">{Math.round(v * max).toLocaleString("ko-KR")}</text></g>)}
         {rows.map((r, i) => { const x = 65 + (rows.length === 1 || (axis !== "commit" && firstAt === lastAt) ? 0.5 : axis === "commit" ? i / (rows.length - 1) : (r.observed_at_ms - firstAt) / (lastAt - firstAt)) * 570; return <g key={`${r.commit}:${r.rules_version}`}>{keys.map((key) => { const value = key === "total" ? r.total_lines : r.breakdown?.[key]; return value == null ? null : <circle key={key} data-series={key} cx={x} cy={135 - value / max * 110} r={4}><title>{key} · {r.commit.slice(0, 8)} · {num(value)}줄 · 규칙 {r.rules_version}</title></circle>; })}{(i === 0 || i === rows.length - 1) && <text x={x} y={162} textAnchor={rows.length === 1 ? "middle" : i === 0 ? "start" : "end"}>{axis === "commit" ? r.commit.slice(0, 8) : date(r.observed_at_ms, utc, true)}</text>}</g>; })}
-      </svg><small>규칙 {latest.rules_version} · {latest.scanned_files}파일 · 이번에 {latest.changed_files}파일 읽음 · {latest.source}</small></> : <Empty>코드 줄 수 수집 전입니다. 커밋별로 한 번 집계하고 변경 파일만 갱신합니다.</Empty>}
+      </svg><small>규칙 {latest.rules_version} · {latest.scanned_files}파일 · 이번에 {latest.changed_files}파일 읽음 · {latest.source}</small></> : <Empty>코드 줄 수 수집 전</Empty>}
   </section>;
 }
 function Detail({ run, utc, onClose }: { run: MetricRun; utc: boolean; onClose: () => void }) {
@@ -139,6 +139,6 @@ export function WorkspaceView({ state, route, onRoute, up }: { state: WorkspaceD
   </section>;
 }
 function RunTable({ runs, utc, onRun }: { runs: MetricRun[]; utc: boolean; onRun: (id: string) => void }) {
-  if (!runs.length) return <Empty>선택한 조건의 실행 기록이 없습니다. 기존 결과 수집 후 표시합니다.</Empty>;
+  if (!runs.length) return <Empty>선택한 조건의 실행 기록이 없습니다.</Empty>;
   return <div className="ws-table-scroll" tabIndex={0} role="region" aria-label="실행 기록 표"><table><thead><tr><th>기록 시각 · {utc ? "UTC" : "KST"}</th><th>머신 / profile</th><th>빌드</th><th>검증</th><th>용량</th><th>결과</th></tr></thead><tbody>{[...runs].reverse().map((r) => <tr key={r.run_id}><td><button type="button" onClick={() => onRun(r.run_id)}>{date(r.observed_at_ms, utc)} ↗</button></td><td>{r.machine} / {r.profile ?? "미기록"}</td><td>{time(r.build_ms)}</td><td>{time(r.verification_ms)}</td><td>{r.artifact_bytes == null ? "미수집" : `${(r.artifact_bytes / 1048576).toFixed(2)} MiB`}</td><td data-outcome={r.outcome}>{outcome(r.outcome)}</td></tr>)}</tbody></table></div>;
 }

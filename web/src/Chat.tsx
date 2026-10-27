@@ -1010,7 +1010,7 @@ export function ChatPanel({
               <button type="button" className="chat-older" disabled={olderState === "loading"} onClick={loadOlder}>
                 {olderState === "loading" ? "앞 기록 불러오는 중…" : olderState === "failed" ? "앞 기록 다시 불러오기" : "앞 기록 더 보기"}
               </button>
-            ) : chat?.truncated ? "앞 기록을 읽으려면 host와 agent를 갱신하세요." : null}
+            ) : chat?.truncated ? "앞 기록을 읽지 못함(host·agent가 옛 판)" : null}
           </p>
           {error && <div className="banner warn">{error}</div>}
           {chat && displayRows.map((row, n) => {

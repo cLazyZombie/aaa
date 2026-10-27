@@ -195,7 +195,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     {problem && <p role="alert">{problem}</p>}
     <div id="reports-tabpanel" role="tabpanel" aria-labelledby={`reports-tab-${tab}`}>
     {reports === null ? <p>보고서를 읽고 있다…</p> : repoOn !== null && (tab === "work" ? work : cards).length === 0 ? <p className="muted">이 저장소의 보고서가 없다</p> : tab !== "work" ? (
-      cards.length === 0 ? <p className="muted">{tab === "archive" ? "보관함이 비었다. 보관한 판은 자동 정리되지 않는다" : "아직 내 보고서가 없다. 끝난 작업의 보고서가 자동으로 올라온다"}</p> : cards.slice(0, visible[tab]).map((r) => {
+      cards.length === 0 ? <p className="muted">{tab === "archive" ? "보관함이 비었다" : "아직 내 보고서가 없다"}</p> : cards.slice(0, visible[tab]).map((r) => {
         const key = keyOf(r);
         return <article className={`report-card report-mine${r.unseen ? " is-unseen" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-unseen={r.unseen ? "true" : "false"}>
           <div className="report-heading">

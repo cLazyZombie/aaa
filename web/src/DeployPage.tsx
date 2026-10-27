@@ -58,7 +58,7 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
     load();
     return onRolloutChanged(load);
   }, [load, links]);
-  if (admin === false) return <p className="op-muted">이 host는 웹 배포를 모른다. host를 새 판으로 바꾸면 보인다(지금은 coordinator나 host 터미널의 aaa deploy).</p>;
+  if (admin === false) return <p className="op-muted">이 host는 웹 배포를 모른다.</p>;
   return (
     <div data-testid="settings-deploy">
       {error && (
@@ -243,7 +243,7 @@ function NewRollout({ machines, onStarted }: { machines: MachineView[]; onStarte
         )}
         {started && (
           <p className="op-muted" role="status" data-testid="deploy-started">
-            rollout {started}을 시작했다. 응답이 끊겨도 같은 ID의 상태를 아래 「배포 기록」에서 이어 본다.
+            rollout {started}을 시작했다.
           </p>
         )}
         {asking && plan && (

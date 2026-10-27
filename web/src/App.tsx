@@ -120,14 +120,13 @@ export function App() {
   return <Main key={`${auth.device}:${auth.role}`} role={auth.role} device={auth.device} onSignedOut={check} />;
 }
 
-/** host에 닿지 못한 첫 화면(모양은 연결 화면 카드, 문구는 offline.html과 같다). 네트워크가 돌아오면 App이 다시 묻는다 */
+/** host에 닿지 못한 첫 화면(모양은 연결 화면 카드, 제목은 offline.html과 같다). 네트워크가 돌아오면 App이 다시 묻는다 */
 function Unreachable({ reason, onRetry }: { reason: string; onRetry: () => void }) {
   return (
     <main className="access-gate-screen">
       <div className="access-gate" data-testid="unreachable">
         <img src="/icon.svg" alt="" width="44" height="44" className="access-gate-mark" />
         <h1 className="access-gate-title">host에 연결할 수 없다</h1>
-        <p className="access-gate-copy">네트워크(tailnet) 연결과 host가 떠 있는지 확인한다. 연결이 돌아오면 다시 붙는다.</p>
         <button type="button" className="access-gate-submit" onClick={onRetry}>
           다시 시도
         </button>

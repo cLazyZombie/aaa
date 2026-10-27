@@ -125,7 +125,7 @@ export function AutoDecisionCard({ decision: d }: { decision: AutoDecision }) {
       <button className="btn" disabled={busy} onClick={() => setEditing(!editing)}>다른 답으로 다시 정하기</button>
     </div>}
     {editing && <form className="auto-reconsider" onSubmit={(e) => { e.preventDefault(); void submit(answer.trim()); }}>
-      <p>새 답을 coordinator에 보낸다. 이미 진행한 작업은 자동으로 되돌리지 않는다.</p>
+      <p>이미 진행한 작업은 자동으로 되돌리지 않는다.</p>
       <label>새 답<textarea value={answer} onChange={(e) => setAnswer(e.target.value)} required maxLength={16384} /></label>
       <button className="btn btn-primary" disabled={busy || !answer.trim()}>새 답 보내기</button>
     </form>}

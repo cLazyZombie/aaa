@@ -60,16 +60,16 @@ export interface InstallEnvironment {
   maxTouchPoints: number;
 }
 
-/** How to install when the browser offers no prompt of its own (iOS never does). */
+const NO_PROMPT = "브라우저가 설치 창을 주지 않았다.";
+
+/** Why there is no install button when the browser offers no prompt of its own (iOS never does). */
 export function installHelp(env: InstallEnvironment): string {
   const ua = env.userAgent;
   const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && env.maxTouchPoints > 1);
-  if (ios) return "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.";
-  if (!env.secure) return "설치하려면 이 페이지를 HTTPS(또는 localhost)로 여세요.";
-  if (/Firefox\//.test(ua) && !/Android/.test(ua)) return "데스크톱 Firefox는 웹 앱을 설치할 수 없습니다. Chrome이나 Edge로 여세요.";
-  if (/Android/.test(ua)) return "브라우저 메뉴에서 앱 설치 또는 홈 화면에 추가를 선택하세요.";
-  if (/Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\//.test(ua)) return "파일 메뉴에서 Dock에 추가를 선택하세요.";
-  return "주소창의 설치 아이콘이나 브라우저 메뉴의 설치 항목을 쓰세요.";
+  if (ios) return NO_PROMPT;
+  if (!env.secure) return "HTTPS(또는 localhost)가 아니라 설치할 수 없다.";
+  if (/Firefox\//.test(ua) && !/Android/.test(ua)) return "데스크톱 Firefox는 웹 앱을 설치할 수 없다.";
+  return NO_PROMPT;
 }
 
 function currentInstallHelp(): string {

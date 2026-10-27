@@ -873,15 +873,15 @@ export function TasksView({
             onWheelCapture={cancelListAdjustment} onPointerDownCapture={cancelListAdjustment}
             onTouchMoveCapture={cancelListAdjustment} onKeyDownCapture={cancelListAdjustment}>
             {!manual && <p className="tasks-tip tasks-sort-note" data-testid="tasks-sort-note">
-              예약은 위에서부터 시작 · 나머지는 {ACTIVE_TASK_SORTS.find(s => s.key === sort)!.label}순 · 위치 이동은 손 차례에서
+              {ACTIVE_TASK_SORTS.find(s => s.key === sort)!.label}순
               <button type="button" className="linkish" data-testid="tasks-sort-reset" onClick={() => pickSort("manual")}>원래 차례</button>
             </p>}
             {target !== null && board !== null && !linkedTask && <p className="tasks-empty" role="status" data-testid="task-missing">할 일 {target}: 없음</p>}
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
-            {board && total === 0 && <p className="tasks-empty">{canEdit ? "할 일이 없다. 「+ 할 일」로 더한다" : "할 일이 없다"}</p>}
+            {board && total === 0 && <p className="tasks-empty">할 일이 없다</p>}
             {board && total > 0 && shownCount === 0 && filter !== "reserved" && <p className="tasks-empty">맞는 할 일이 없다</p>}
             {board && model && filter === "reserved" && model.counts.reserved === 0 && (
-              <p className="tasks-empty">예약이 없다{canEdit ? manual ? ". 할 일을 맨 위로 끌거나 ⋯ 「자리 나면 시작 예약」으로 예약한다" : ". ⋯ 「자리 나면 시작 예약」으로 예약한다" : ""}</p>
+              <p className="tasks-empty">예약이 없다</p>
             )}
             {model && model.top.length > 0 && (
               <ul className="task-rows task-reserved-rows" aria-label="예약(위에서부터 차례로 시작)" data-testid="tasks-reserved">
@@ -907,7 +907,7 @@ export function TasksView({
                 onDragOver={onResEndDragOver}
                 onDrop={onResEndDrop}
               >
-                {model.top.length === 0 && <span>예약 없음 · 할 일을 여기로 끌면 자리 나면 시작 예약</span>}
+                {model.top.length === 0 && <span>예약 없음</span>}
               </div>
             )}
             {model && model.rest.length > 0 && (
@@ -939,7 +939,7 @@ export function TasksView({
               />
             )}
           </div>
-          {board && detailOpen ? (
+          {board && detailOpen && (
             <TaskDetail
               key={picked ? `${picked.line}:${picked.title}:${saves}` : `new:${saves}:${creating?.list}:${creating?.parent?.block_sha256}:${creating?.title}`}
               t={current}
@@ -981,10 +981,6 @@ export function TasksView({
               onHandOff={onHandOff ? (t, again) => onHandOff(handOffText(t, again)) : undefined}
               onStart={(t) => setDialog({ kind: "start", task: t })}
             />
-          ) : (
-            <aside className="task-detail is-empty" aria-hidden="true">
-              <p className="tasks-empty">{canEdit ? "task를 고르면 여기서 고친다" : "task를 고르면 메모·원문 줄·형식 어긋남이 여기 보인다"}</p>
-            </aside>
           )}
           {detailOpen && <div className="tasks-scrim" aria-hidden="true" onClick={closeDetail} />}
           {canEdit && !detailOpen && !ordering && (

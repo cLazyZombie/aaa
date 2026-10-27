@@ -108,7 +108,7 @@ export default async function ({ ctl, page }) {
     await wp.context().close();
   });
 
-  await step("앱 설치(herdr-web-ui install.ts·설정 「휴대폰 → 설치」, 차이 목록 M4, 사용자 요청 10-19 「앱 설치는 설정 안으로」): 사이드바에는 설치 단추가 없고, 설정 「폰 및 기기 → 설치」 줄이 신호가 없으면 이 브라우저의 방법을, 신호가 오면 그 창을 띄우는 단추를, 설치되면 「설치됨」을 보인다", async () => {
+  await step("앱 설치(herdr-web-ui install.ts·설정 「휴대폰 → 설치」, 차이 목록 M4, 사용자 요청 10-19 「앱 설치는 설정 안으로」): 사이드바에는 설치 단추가 없고, 설정 「폰 및 기기 → 설치」 줄이 신호가 없으면 단추 없이 「설치 창을 주지 않았다」를, 신호가 오면 그 창을 띄우는 단추를, 설치되면 「설치됨」을 보인다", async () => {
     // 브라우저가 스스로 보내는 beforeinstallprompt는 시험이 보낸 것만 남긴다(headless가 보낼지 말지에 기대지 않는다)
     const init = () => {
       const log = [];
@@ -144,21 +144,21 @@ export default async function ({ ctl, page }) {
     };
     const ip = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init })).page;
     await noSidebarButton(ip, "데스크톱");
-    // 신호 없음(데스크톱 Chromium): 단추 없이 주소창 안내. 창을 열어 둔 채 신호·거절·설치를 보낸다(줄이 그 자리에서 바뀐다)
+    // 신호 없음(데스크톱 Chromium): 단추 없이 「설치 창을 주지 않았다」. 창을 열어 둔 채 신호·거절·설치를 보낸다(줄이 그 자리에서 바뀐다)
     const dialog = await openSettings(ip, "폰 및 기기");
     const row = dialog.locator(".settings-row", { hasText: /^설치/ });
     const btn = row.getByRole("button", { name: "앱 설치" });
     const rowText = async () => (await row.innerText()).replace(/\s+/g, " ");
-    if (!(await rowText()).includes("주소창의 설치 아이콘이나 브라우저 메뉴의 설치 항목을 쓰세요.") || (await btn.count()) !== 0) throw new Error(`설정 줄(신호 없음) ${await rowText()}`);
+    if (!(await rowText()).includes("브라우저가 설치 창을 주지 않았다.") || (await btn.count()) !== 0) throw new Error(`설정 줄(신호 없음) ${await rowText()}`);
     // 신호가 오면 기본 창을 막아 두고(preventDefault), 단추가 그 창을 띄운다
     if (!(await offer(ip))) throw new Error("beforeinstallprompt 기본 동작을 막지 않았다");
     await btn.waitFor();
-    if ((await rowText()).includes("주소창")) throw new Error(`설정 줄(신호 있음) ${await rowText()}`);
+    if ((await rowText()).includes("설치 창을 주지 않았다")) throw new Error(`설정 줄(신호 있음) ${await rowText()}`);
     await shot(ip, "settings-install-row");
     await btn.click();
     await until("설치 창", async () => (await ip.evaluate(() => window.__installLog.join(","))) === "prompt");
-    // 거절하면 그 신호는 다 썼다: 다시 안내로
-    await until("거절 뒤 안내로", async () => (await btn.count()) === 0 && (await rowText()).includes("주소창"));
+    // 거절하면 그 신호는 다 썼다: 다시 신호 없음으로
+    await until("거절 뒤 신호 없음으로", async () => (await btn.count()) === 0 && (await rowText()).includes("설치 창을 주지 않았다"));
     // 설치되면 「설치됨」
     await ip.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
     await until("설치 뒤 「설치됨」", async () => (await btn.count()) === 0 && (await rowText()).includes("설치됨"));
@@ -166,7 +166,7 @@ export default async function ({ ctl, page }) {
     await dialog.waitFor({ state: "detached" });
     await noSidebarButton(ip, "설치 뒤");
     await ip.context().close();
-    // 브라우저마다 안내(참고 installHelp 시험의 기기들). iPadOS는 Mac UA라 터치 점 수로 가린다:
+    // 휴대폰·태블릿(참고 installHelp 시험의 기기들). iPadOS는 Mac UA라 터치 점 수로 가린다:
     // Chromium 터치 흉내는 maxTouchPoints가 1이라 실제 iPad처럼 5로 둔다(참고 시험도 5)
     const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
     const MAC_SAFARI = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
@@ -182,14 +182,14 @@ export default async function ({ ctl, page }) {
       Object.defineProperty(navigator, "maxTouchPoints", { get: () => 5 });
     };
     for (const [name, viewport, userAgent, touch, want, script] of [
-      ["iPhone", { width: 390, height: 844 }, IPHONE, true, "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.", init],
-      ["iPad(Mac UA·터치)", { width: 1024, height: 1366 }, MAC_SAFARI, true, "공유 버튼을 누른 뒤 홈 화면에 추가를 선택하세요.", ipad],
+      ["iPhone", { width: 390, height: 844 }, IPHONE, true, "브라우저가 설치 창을 주지 않았다.", init],
+      ["iPad(Mac UA·터치)", { width: 1024, height: 1366 }, MAC_SAFARI, true, "브라우저가 설치 창을 주지 않았다.", ipad],
     ]) {
       const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { userAgent, touch, init: script })).page;
       await noSidebarButton(p, name);
-      // 설정 「설치」 줄의 설명이 이 브라우저의 방법이다(휴대폰은 drawer 안 톱니로 연다)
+      // 설정 「설치」 줄은 단추 없이 신호 없음을 보인다(휴대폰은 drawer 안 톱니로 연다)
       const got = await dialogRow(p);
-      if (!got.text.includes(want) || got.button !== 0) throw new Error(`${name} 안내: ${JSON.stringify(got)}`);
+      if (!got.text.includes(want) || got.button !== 0) throw new Error(`${name} 설치 줄: ${JSON.stringify(got)}`);
       await p.context().close();
     }
     // 홈 화면 앱(iOS navigator.standalone)으로 열면 설정은 「설치됨」

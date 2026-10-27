@@ -251,7 +251,6 @@ export default async function ({ page }) {
     await box(page).press("Enter");
     await waitOutput(LABEL, "mode picker");
     await domIs(page, "선택창 알림", () => /선택창이 떴습니다/.test(document.querySelector('[data-testid="chat-note"]')?.textContent ?? ""));
-    assert.match(await page.getByTestId("chat-note").textContent(), /\/model sonnet처럼/);
     assert.equal(await page.getByTestId("chat-note").getByRole("button", { name: "터미널 보기" }).count(), 1);
     await shot(page, "51-picker-note-desktop");
     await key("esc", "idle");

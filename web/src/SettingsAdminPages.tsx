@@ -49,7 +49,7 @@ function useSettingsAdmin(): boolean | null {
 
 function Gate({ role, admin, what }: { role: DeviceRole; admin: boolean | null; what: string }) {
   if (role === "reader") return <p className="op-muted">보기 전용 기기에는 {what} 설정을 보이지 않는다(host 설정과 실행 인자가 들어 있다).</p>;
-  if (admin === false) return <p className="op-muted">이 host는 웹 {what} 관리를 모른다. host를 새 판으로 바꾸면 보인다(지금은 host 터미널의 aaa 명령).</p>;
+  if (admin === false) return <p className="op-muted">이 host는 웹 {what} 관리를 모른다.</p>;
   return null;
 }
 
@@ -337,7 +337,7 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
           onClose={() => setPlanned(null)}
           onApplied={(message, warnings, next) => {
             setView(next);
-            setDone([message, ...warnings.map((w) => `경고: ${w}`), "host가 다음에 profile을 쓸 때 읽는다. 이미 도는 thread는 다시 띄울 때까지 옛 설정이다."]);
+            setDone([message, ...warnings.map((w) => `경고: ${w}`)]);
             setPlanned(null);
             load();
           }}
@@ -476,7 +476,7 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
         }}
       >
         <div className="modal-body">
-          {before?.builtin && <p className="op-muted">기본 profile이다. 고치면 같은 이름의 profile을 host.toml에 더해 대신한다(지우면 기본이 돌아온다).</p>}
+          {before?.builtin && <p className="op-muted">기본 profile이다.</p>}
           {!before && (
             <label className="op-field">
               <span>이름</span>
@@ -791,7 +791,7 @@ function Hook({ machine }: { machine: string }) {
   return (
     <div className="admin-block" data-testid="hook">
       <h4 className="admin-sub">harness hook</h4>
-      <p className="op-muted">Claude: aaa가 실행마다 hook을 넣는다(설치할 것 없음).</p>
+      <p className="op-muted">Claude: 설치할 것 없음</p>
       {error && (
         <p className="op-warn" role="alert">
           {error}

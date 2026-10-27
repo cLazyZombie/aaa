@@ -240,7 +240,7 @@ function InstallDialog({ s, onApplied, onClose }: { s: MachineSetupView; onAppli
           data-lpignore="true" data-1p-ignore="true" disabled={pending} maxLength={1024} data-testid="machine-setup-password" />
       </label>
       <p className="op-muted">암호는 위 전용 칸에만 직접 입력하세요. coordinator 대화창·질문 답·할 일 메모·터미널·agent에게 붙여 넣지 마세요. aaa는 저장하거나 대화에 보내지 않고 신뢰를 확인한 SSH로 Windows 서비스에 한 번 전달합니다.</p>
-      <p className="op-muted">비우면 필요한 경우 설치가 멈춥니다. 그 PC의 aaa 밖 콘솔에서 같은 설치 ID로 재개해 암호를 입력한 뒤 여기서 다시 확인할 수도 있습니다.</p>
+      <p className="op-muted">비우면 필요한 경우 설치가 멈춥니다.</p>
     </>}
   </ConfirmDialog>;
 }
@@ -326,7 +326,6 @@ function SetupBody({
       {s.detected && (
         <p data-testid="machine-setup-detected">
           {detectedLine(s.detected)}
-          {s.phase === "ready" && !install && <span className="op-muted"> — 설치는 다음 단계에서 이어진다</span>}
         </p>
       )}
       {s.phase === "ready" && install && canEdit && s.detected && notInstallable(s.detected, windows) && (
@@ -384,7 +383,7 @@ function SetupBody({
         </p>
       )}
       {s.phase === "needs_user" && r?.service_password && i?.installation_id && <p className="op-muted">
-        그 PC의 aaa 밖 콘솔에서 암호를 넣으려면 <code>aaa install --resume {i.installation_id}</code>로 재개한 뒤 「다시 확인」을 누른다.
+        <code>aaa install --resume {i.installation_id}</code>
       </p>}
       {s.phase === "installed" && i && (
         <div className="setup-review" data-testid="machine-setup-after">

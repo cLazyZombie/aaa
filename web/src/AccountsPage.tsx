@@ -118,7 +118,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
           계정을 다시 읽지 못했다(보이는 값이 옛 것일 수 있다): {error}
         </p>
       )}
-      {!data.full && <p className="op-muted">이 host는 웹 계정 관리를 모른다. 목록만 보인다(로그인·기본은 host 터미널의 `aaa account`).</p>}
+      {!data.full && <p className="op-muted">이 host는 웹 계정 관리를 모른다. 목록만 보인다.</p>}
       {role === "reader" && data.full && <p className="op-muted">보기 전용 기기는 별칭·상태만 본다. 메일과 로그인은 조작 기기에서.</p>}
       {login && <LoginCard login={login} busy={busy} run={run} onClose={() => { setLogin(null); setLoginId(null); }} />}
       {msg && (
@@ -132,7 +132,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
         <SettingsGroup key={g.harness} title={HARNESS_LABEL[g.harness]} section={`accounts-${g.harness}`}>
           <div className="settings-item">
             {g.rows.length === 0 ? (
-              <p className="op-muted">이 harness의 host 계정이 없다. 없으면 thread는 그 머신의 로컬 로그인을 쓴다.</p>
+              <p className="op-muted">이 harness의 host 계정이 없다.</p>
             ) : (
               <ul className="acct-list" data-testid={`accounts-${g.harness}`}>
                 {g.rows.map((a) => {

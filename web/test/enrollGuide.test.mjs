@@ -39,6 +39,6 @@ describe("직접 설치 안내 M1", () => {
     const steps = guideSteps(null, "x';rm -rf ~;'", "mac b");
     assert.equal(commands(steps)[0], "~/.local/bin/aaa agent enroll <host 주소> --name <이름>");
     assert.match(steps[0].title, /host와 같은 판/);
-    assert.doesNotMatch(steps[2].note, /fingerprint/);
+    assert.equal(steps[2].note, undefined);
   });
 });

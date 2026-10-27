@@ -468,8 +468,7 @@ function RequestCard({ questionId, title, body, at, canControl, onHandle, onRepl
       </header>
       <h2 className="ask-card-title">{questionId && <code>{questionId} </code>}{title}</h2>
       <AskMarkdown base={null}>{body}</AskMarkdown>
-      <div className="thread-ask-foot">
-        <span className="muted">답은 coordinator 대화로 한다</span>
+      <div className="thread-ask-foot is-end">
         {canControl && (
           <span className="ask-buttons">
             <button type="button" className="btn" disabled={pending} data-testid="ask-handle" onClick={run(onHandle)}>

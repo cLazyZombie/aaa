@@ -207,7 +207,6 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
       </div> : <p className="automation-dim">보기 권한에서는 풀 수 없습니다.</p>}
     </Callout>}
     {rule.start_approved === false && <Callout tone="notice" title="자동 시작 승인 필요" testid="automation-start-approval">
-      <p>처음·넓힌 조건과 대상에만 승인합니다. 작업 본문과 선택 예산은 승인 범위에 포함하지 않습니다.</p>
       {rule.start_scope && <pre className="automation-scope">{rule.start_scope}</pre>}
       {canControl && <div className="automation-actions"><button type="button" className="btn btn-primary" onClick={() => setAsk({ kind: "start" })}>승인 검토</button></div>}
     </Callout>}

@@ -186,7 +186,6 @@ export function ThreadPanel({
             <h2>자동화 thread</h2>
             <p>자동화: {t.automation_title ?? t.automation} ({t.automation})</p>
             <p>무엇이 띄웠는지: {t.automation_trigger ?? "기동 사건 기록 없음(이전 판에서 시작)"}</p>
-            <p className="muted">프로젝트 실행 한도와 예약 자리에서 제외</p>
           </section>}
           <section className="card report" data-testid="report">
             <h2>보고 {t.report_id && <a href={`#report=${encodeURIComponent(`${t.project}/${t.report_id}`)}`}><code>{t.report_id}</code></a>}</h2>

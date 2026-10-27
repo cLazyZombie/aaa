@@ -450,7 +450,7 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
           description={
             trace.on || trace.msg ? (
               <>
-                {trace.on && `${trace.count}개 모았습니다. 문제를 재현한 뒤 보내면 host 상태 폴더 diag/에 남습니다.`}
+                {trace.on && `${trace.count}개 모았습니다.`}
                 {trace.msg && (
                   <span className="settings-status" role="status" data-testid="trace-msg">
                     {trace.msg}

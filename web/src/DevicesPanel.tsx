@@ -247,7 +247,7 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
             <p className="settings-label">다른 기기에서 이 코드를 입력하세요</p>
             <p className="devices-code">{spaced}</p>
             <p className="settings-description">
-              {qrValue !== null ? "또는 QR 코드를 스캔하세요. 코드가 채워진 상태로 앱이 열립니다." : "그 기기에서 앱 주소를 열고 입력하세요."} {left} 뒤 만료됩니다.
+              {left} 뒤 만료됩니다.
             </p>
             {qrValue !== null && (
               <p className="devices-link">

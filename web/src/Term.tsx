@@ -2219,7 +2219,7 @@ export function TermView({
           {/* 참고 i18n.ko 「View only while you use another window · click to type」 */}
           {released && (
             <div className="banner observe" role="status" data-testid={active ? "released-banner" : undefined}>
-              다른 창을 쓰는 동안 보기 전용 · 클릭하면 입력
+              보기 전용
             </div>
           )}
           {!banner && held && !ended && (
@@ -2311,7 +2311,7 @@ export function TermView({
           pending={pendingSends}
           setPending={setPendingSends}
           connected={active && link === "open" && !pane.readonly && !locked}
-          connectionNotice={showLink && linking ? `${connectedBefore.current ? "재연결 중" : "연결 중"}… 메시지는 여기에 보관되고 대기열에 넣지 않습니다` : null}
+          connectionNotice={showLink && linking ? `${connectedBefore.current ? "재연결 중" : "연결 중"}…` : null}
           pane={pane.id}
           touch={coarse}
           working={paneAgentStatus(pane) === "working"}

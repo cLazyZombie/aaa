@@ -61,7 +61,7 @@ function Stale({ error }: { error: string | null }) {
 
 function Unavailable({ state, error }: { state: string; error: string | null }) {
   if (state === "loading") return <p className="op-muted">읽는 중…</p>;
-  if (state === "old") return <p className="op-muted">이 host는 설정 읽기를 모른다. host를 새 판으로 바꾸면 보인다(지금은 `aaa project set`).</p>;
+  if (state === "old") return <p className="op-muted">이 host는 설정 읽기를 모른다.</p>;
   return <p className="op-warn">{error ?? "읽지 못했다"}</p>;
 }
 
