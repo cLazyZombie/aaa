@@ -1171,6 +1171,191 @@ mod tests {
         (h, _lab)
     }
 
+    fn completed_reply(harness: &str, start: u64, end: u64, text: &str) -> aaa_proto::HarnessEvent {
+        aaa_proto::HarnessEvent {
+            session: "coord".into(),
+            harness: harness.into(),
+            kind: "turn_reply".into(),
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            at_ms: end,
+            transcript: None,
+            plan: None,
+            background: None,
+            context: None,
+            model_observation: None,
+            turn_reply: Some(aaa_proto::TurnReply { started_ms: start, finished_ms: end, text: text.into() }),
+        }
+    }
+
+    #[tokio::test]
+    async fn question_guard_nudges_the_empty_coordinator_once_without_the_regular_idle_delay() {
+        use aaa_common::conn::{FrameRx, spawn_writer};
+        use aaa_proto::{AgentRequest, AgentResponse, LinkMsg};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let (h, _lab) = coordinator_host();
+            let now = util::now_ms();
+            let mut idle = completed_reply("codex", now, now, "진행할까요?");
+            idle.kind = "idle".into();
+            idle.turn_reply = None;
+            h.on_harness("m", idle.clone());
+            h.on_harness("m", completed_reply("codex", now, now, "진행할까요?"));
+            let (writer, reader) = tokio::io::duplex(65536);
+            let conn = crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), 2);
+            h.inner.lock().unwrap().machines.get_mut("m").unwrap().conn = Some(conn.clone());
+            let draft = Arc::new(AtomicBool::new(true));
+            let showing_draft = draft.clone();
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let captured = seen.clone();
+            let host = h.clone();
+            let fake = tokio::spawn(async move {
+                let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
+                while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
+                    let mut entered = false;
+                    let reply = match body {
+                        AgentRequest::Screen { .. } => {
+                            let text = if showing_draft.load(Ordering::SeqCst) {
+                                "› 사용자 초안"
+                            } else if captured.lock().unwrap().is_empty() {
+                                "›"
+                            } else {
+                                "› 안내 입력됨"
+                            };
+                            AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "coord".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: vec![text.into()],
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: text.into(),
+                            })
+                        }
+                        AgentRequest::Input { data, session } => {
+                            assert_eq!(session, "coord");
+                            entered = data.0 == b"\r";
+                            captured.lock().unwrap().push(data.0);
+                            AgentResponse::Done
+                        }
+                        other => panic!("예상하지 못한 요청: {other:?}"),
+                    };
+                    if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
+                        tx.send(aaa_proto::Outcome::Ok(reply)).unwrap();
+                    }
+                    if entered {
+                        let mut working = idle.clone();
+                        working.kind = "working".into();
+                        host.on_harness("m", working);
+                    }
+                }
+            });
+            let dir = h.project_dir("demo").unwrap();
+            h.nudge("demo", &dir).await;
+            assert!(seen.lock().unwrap().is_empty(), "사용자 초안이 있으면 안내를 섞지 않는다");
+            draft.store(false, Ordering::SeqCst);
+            h.nudge("demo", &dir).await;
+            {
+                let input = seen.lock().unwrap();
+                assert_eq!(input.len(), 2, "유예 없이 안내와 Enter를 한 번 보낸다");
+                assert!(String::from_utf8_lossy(&input[0]).contains("aaa post user --request --needs-user"));
+            }
+            h.nudge("demo", &dir).await;
+            assert_eq!(seen.lock().unwrap().len(), 2, "같은 묶음은 다시 보내지 않는다");
+            fake.abort();
+            assert!(fake.await.unwrap_err().is_cancelled());
+        })
+        .await
+        .expect("질문 카드 누락 알림은 5초 안에 전달되어야 한다");
+    }
+
+    #[tokio::test]
+    async fn question_guard_warns_once_for_both_coordinators_without_changing_turn_or_pushing() {
+        let began = std::time::Instant::now();
+        let (h, _lab) = coordinator_host();
+        let mut other = h.inner.lock().unwrap().panes["coord"].info.clone();
+        other.id = "coord-other".into();
+        h.on_session("m", other, false);
+        let mut card = input(992);
+        card.to = "user".into();
+        card.topic = "user-action".into();
+        card.body = "## Questions\n### 1. 다른 coordinator 질문\n- A 진행\n- B 보류".into();
+        assert!(matches!(h.front_post("demo", card, "local:cli@coord-other").unwrap(), PostResult::Accepted { .. }));
+        let (tx, mut queue) = tokio::sync::mpsc::unbounded_channel();
+        *h.notify_tx.lock().unwrap() = Some(tx);
+        let before = h.pane_agent("coord");
+        let now = util::now_ms();
+        let count = || {
+            h.db.inbox_list(Some("demo"), true)
+                .unwrap()
+                .iter()
+                .filter(|i| i.event == crate::question_guard::EVENT)
+                .count()
+        };
+        h.inner.lock().unwrap().panes.get_mut("coord").unwrap().info.role = Some(Role::Worker);
+        h.on_harness("m", completed_reply("codex", now, now, "진행할까요?"));
+        assert_eq!(count(), 0, "같은 cwd의 worker를 coordinator로 취급하지 않는다");
+        h.inner.lock().unwrap().panes.get_mut("coord").unwrap().info.role = Some(Role::Coordinator);
+        for (n, harness) in ["claude", "codex"].into_iter().enumerate() {
+            let event = completed_reply(harness, now.saturating_sub(1000), now + n as u64 + 1, "진행할까요?");
+            h.on_harness("other-machine", event.clone());
+            assert_eq!(count(), n);
+            h.on_harness("m", event.clone());
+            assert_eq!(count(), n + 1);
+            h.inbox_finish_where("demo", |i| i.event == crate::question_guard::EVENT);
+            h.on_harness("m", event);
+            assert_eq!(count(), n + 1, "처리 뒤 같은 완료 사건도 다시 알리지 않는다");
+        }
+        assert_eq!(h.pane_agent("coord"), before, "완료 감지는 화면 상태·seen을 바꾸지 않는다");
+        assert!(queue.try_recv().is_err(), "카드 누락 경고는 사용자 외부 푸시가 아니다");
+        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn question_guard_matches_the_turn_and_checks_existing_card_links() {
+        let began = std::time::Instant::now();
+        let (h, _lab) = coordinator_host();
+        let now = util::now_ms();
+        let mut card = input(991);
+        card.to = "user".into();
+        card.topic = "user-action".into();
+        card.body = "## Questions\n### 1. 진행 여부\n- A 진행\n- B 보류".into();
+        assert!(matches!(h.front_post("demo", card, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+        let request = h.user_requests("demo").unwrap().remove(0);
+        let qid = request.question_id.unwrap();
+        let end = util::now_ms() + 100;
+        let count = || {
+            h.db.inbox_list(Some("demo"), true)
+                .unwrap()
+                .iter()
+                .filter(|i| i.event == crate::question_guard::EVENT)
+                .count()
+        };
+        h.on_harness("m", completed_reply("codex", now, end, "진행할까요?"));
+        assert_eq!(count(), 0, "같은 턴에 실제 접수한 열린 카드는 인정한다");
+        let later = request.created_ms + 1;
+        let old = completed_reply("codex", later, end + 1, "진행할까요?");
+        h.on_harness("m", old.clone());
+        assert_eq!(count(), 1, "다른 턴의 카드는 새 질문을 가리지 않는다");
+        h.inbox_finish_where("demo", |i| i.event == crate::question_guard::EVENT);
+        h.on_harness("m", completed_reply("claude", later, end + 2, &format!("{qid}에서 선택해 주세요.")));
+        assert_eq!(count(), 1, "이미 열린 카드 안내는 새 요청 없이도 유효하다");
+        h.on_harness("m", old);
+        assert_eq!(count(), 1, "역순으로 온 과거 완료 사건을 무시한다");
+        h.on_harness(
+            "m",
+            completed_reply("claude", later, end + 3, &format!("{qid}에서 선택해 주세요.\n\n추가로 배포할까요?")),
+        );
+        assert_eq!(count(), 2, "기존 링크 뒤 별개 질문은 경고한다");
+        h.inbox_finish_where("demo", |i| i.event == crate::question_guard::EVENT);
+        h.reply_by_id("demo", &qid, Some("A"), None, "device:test").await.unwrap();
+        h.on_harness("m", completed_reply("claude", later, end + 4, &format!("{qid}에서 선택해 주세요.")));
+        assert_eq!(count(), 3, "답한 카드의 링크로 새 질문을 숨기지 않는다");
+        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+    }
+
     #[tokio::test]
     async fn coordinator_can_request_the_user_without_nudging_itself() {
         let (h, _lab) = coordinator_host();

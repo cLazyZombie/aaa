@@ -35,6 +35,7 @@ mod responsibility;
 mod selfcheck;
 mod settings_jobs;
 mod shell_chat;
+mod turn_reply;
 pub use selfcheck::start_selfcheck;
 mod slash;
 pub mod threads;
@@ -555,6 +556,7 @@ impl Agent {
             background: None,
             context: None,
             model_observation: None,
+            turn_reply: None,
         })
         .await;
     }
@@ -2252,6 +2254,8 @@ enum Slot {
     State,
     /// 계획·배경 작업 수(plan.rs)
     Plan,
+    /// 마지막 완료 답. 연결 복구 때 같은 사건을 재전송하며 host가 중복을 거른다.
+    Reply,
 }
 
 impl Slot {
@@ -2261,6 +2265,7 @@ impl Slot {
             _ if e.harness == "report" => Some(Slot::Report),
             "session_start" | "session" => Some(Slot::Session),
             "plan" => Some(Slot::Plan),
+            "turn_reply" => Some(Slot::Reply),
             "prompt_submit" => None,
             _ => Some(Slot::State),
         }
@@ -2439,6 +2444,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            turn_reply: None,
         };
         let mut sent = async |host_compacting: bool| {
             a.host_compacting.store(host_compacting, std::sync::atomic::Ordering::Relaxed);

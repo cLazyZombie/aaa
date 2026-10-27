@@ -439,6 +439,17 @@ pub struct HarnessEvent {
     /// `kind = "plan"`: 지금 프로세스의 대화 기록에서 마지막으로 확인한 모델. 없으면 아직 모른다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_observation: Option<ModelObservation>,
+    /// `turn_reply`: 기록에서 확인한 완료 답변. 상태·승인 여부를 바꾸지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_reply: Option<TurnReply>,
+}
+
+/// 같은 턴의 질문 카드 접수와 대조할 로컬 harness 기록의 시각과 답변.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnReply {
+    pub started_ms: u64,
+    pub finished_ms: u64,
+    pub text: String,
 }
 
 /// 대화 기록의 모델 선택. 시작 profile의 effort를 관측한 모델에 섞지 않는다.

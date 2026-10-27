@@ -49,6 +49,7 @@ async fn codex_trust_detection_question_and_answer_share_the_front_path() {
             background: None,
             context: None,
             model_observation: None,
+            turn_reply: None,
         };
         let mut questions = host.question_events.subscribe();
         let stream = ipc::connect(&aaa_host::link::local_socket(&host)).await.unwrap();

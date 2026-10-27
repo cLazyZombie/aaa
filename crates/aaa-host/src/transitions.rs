@@ -463,6 +463,7 @@ mod tests {
                     background: None,
                     context: None,
                     model_observation: None,
+                    turn_reply: None,
                 };
                 let sessions = ["first", "s"].map(|id| SessionInfo {
                     responsibility: None,

@@ -84,6 +84,7 @@ pub struct Snapshot {
 
 /// 기록 하나를 따라 읽는 상태
 pub struct Reader {
+    turns: crate::turn_reply::Reader,
     source: Source,
     path: PathBuf,
     file: Option<(u64, u64)>,
@@ -294,6 +295,7 @@ fn result_text(content: Option<&Value>) -> String {
 impl Reader {
     pub fn new(source: Source, path: PathBuf) -> Self {
         Reader {
+            turns: Default::default(),
             source,
             path,
             file: None,
@@ -405,6 +407,7 @@ impl Reader {
             if let Ok(line) = std::str::from_utf8(line)
                 && !line.is_empty()
             {
+                self.turns.line(self.source, line);
                 match self.source {
                     Source::Claude => self.claude_line(line),
                     Source::Codex => self.codex_line(line),
@@ -860,6 +863,24 @@ impl crate::Agent {
             let Some(r) = t.reader.as_mut() else { continue };
             let from = since.get(&session).copied().unwrap_or(running[&session]);
             let Some(snap) = r.poll(&mut budget, from as i64) else { continue };
+            for reply in r.turns.completed.drain(..).filter(|r| r.finished_ms >= from) {
+                out.push(HarnessEvent {
+                    session: session.clone(),
+                    harness: harness.clone(),
+                    kind: "turn_reply".into(),
+                    harness_session: None,
+                    message: None,
+                    question_kind: None,
+                    percent: None,
+                    at_ms: reply.finished_ms,
+                    transcript: None,
+                    plan: None,
+                    background: None,
+                    context: None,
+                    model_observation: None,
+                    turn_reply: Some(reply),
+                });
+            }
             if snap == t.sent {
                 continue;
             }
@@ -878,6 +899,7 @@ impl crate::Agent {
                 background: snap.background,
                 context: snap.context,
                 model_observation: snap.model_observation,
+                turn_reply: None,
             });
         }
         out
@@ -905,6 +927,51 @@ mod tests {
         for l in lines {
             writeln!(f, "{l}").unwrap();
         }
+    }
+
+    #[test]
+    fn turn_replies_follow_complete_appends_without_plan_changes() {
+        use std::io::Write;
+        let began = Instant::now();
+        for (tag, source, start, finish) in [
+            (
+                "reply-codex",
+                Source::Codex,
+                json!({"type":"event_msg","timestamp":T,"payload":{"type":"task_started"}}),
+                json!({"type":"event_msg","timestamp":T,"payload":{"type":"task_complete","last_agent_message":"진행할까요?"}}),
+            ),
+            (
+                "reply-claude",
+                Source::Claude,
+                json!({"type":"user","timestamp":T,"message":{"content":"시작"}}),
+                json!({"type":"assistant","timestamp":T,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"진행할까요?"}]}}),
+            ),
+        ] {
+            let p = file(tag, std::slice::from_ref(&start));
+            let mut r = Reader::new(source, p.clone());
+            assert_eq!(poll(&mut r), Snapshot::default());
+            assert!(r.turns.completed.is_empty());
+            let encoded = finish.to_string();
+            let split = encoded.len() / 2;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+            f.write_all(&encoded.as_bytes()[..split]).unwrap();
+            assert_eq!(poll(&mut r), Snapshot::default());
+            assert!(r.turns.completed.is_empty(), "미완성 JSONL은 완료가 아니다");
+            f.write_all(&encoded.as_bytes()[split..]).unwrap();
+            f.write_all(b"\n").unwrap();
+            assert_eq!(poll(&mut r), Snapshot::default());
+            if source == Source::Claude {
+                assert!(r.turns.completed.is_empty(), "end_turn 뒤 Stop hook이 계속할 수 있다");
+                append(&p, &[json!({"type":"system","timestamp":T,"subtype":"turn_duration"})]);
+                poll(&mut r);
+            }
+            assert_eq!(r.turns.completed.remove(0).text, "진행할까요?");
+            poll(&mut r);
+            assert!(r.turns.completed.is_empty(), "같은 append를 두 번 읽지 않는다");
+            drop(f);
+            std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
+        }
+        assert!(began.elapsed() < Duration::from_secs(5));
     }
 
     const T: &str = "2026-10-18T09:00:00.000Z";

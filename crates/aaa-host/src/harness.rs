@@ -241,6 +241,12 @@ impl Host {
 
     /// agent가 harness 사건을 보냈다
     pub(crate) fn on_harness(self: &Arc<Self>, mid: &str, mut ev: HarnessEvent) {
+        if ev.kind == "turn_reply" {
+            if let Err(error) = self.check_question_card(mid, &ev) {
+                tracing::warn!(pane = %ev.session, "질문 카드 누락 검사 실패: {error:#}");
+            }
+            return;
+        }
         // 옛 agent는 hook의 harness 세션 ID를 거르지 않고 보낸다: host도 UUID 꼴만 받는다(`--resume` 인자가 된다)
         if ev.harness_session.as_deref().is_some_and(|s| !aaa_common::util::harness_session_ok(s)) {
             tracing::warn!(pane = %ev.session, "UUID 꼴이 아닌 harness 세션 ID를 버렸다");
@@ -1371,6 +1377,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            turn_reply: None,
         };
         let idle = AgentStatus {
             activity: AgentActivity::Idle,
@@ -1447,6 +1454,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            turn_reply: None,
         }
     }
 
@@ -1831,6 +1839,7 @@ mod tests {
             background,
             context: None,
             model_observation: None,
+            turn_reply: None,
         };
         h.on_harness("m", ev("working", 1_000, None, None));
         let plan = aaa_proto::PlanSummary { done: 1, total: 3, current: Some("고치는 중".into()) };
@@ -1844,6 +1853,7 @@ mod tests {
             HarnessEvent {
                 context: Some(context.clone()),
                 model_observation: Some(model.clone()),
+                turn_reply: None,
                 ..ev("plan", 2_000, Some(plan.clone()), Some(2))
             },
         );
@@ -1893,6 +1903,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            turn_reply: None,
         };
         h.on_harness("m", ev("question", 1_000));
         let mut q = h.open_question_of("s").expect("질문");

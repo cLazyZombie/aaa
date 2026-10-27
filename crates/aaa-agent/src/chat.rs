@@ -248,7 +248,7 @@ fn injected(t: &str) -> bool {
 
 /// Claude의 역할은 사람이 썼다는 증거가 아니다. 2.1.303은 배경 작업·peer도 user로 기록한다.
 /// 구조 표지가 있으면 글 모양보다 우선한다. 사람이 인용한 XML·붙여넣기 봉투는 그대로 둔다.
-fn claude_human(v: &Value, text: &str) -> bool {
+pub(crate) fn claude_human(v: &Value, text: &str) -> bool {
     if ["isSidechain", "isMeta", "isCompactSummary", "isSynthetic"].iter().any(|key| v[*key] == true) {
         return false;
     }

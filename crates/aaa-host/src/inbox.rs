@@ -161,7 +161,12 @@ pub(crate) fn nudge_text(project: &str, items: &[InboxItem]) -> String {
     if order.len() > NUDGE_SUBJECTS {
         parts.push(format!("{} more", order.len() - NUDGE_SUBJECTS));
     }
-    format!("[aaa inbox] {} (aaa inbox list {project})", parts.join("; "))
+    let reminder = if items.iter().any(|i| i.event == crate::question_guard::EVENT) {
+        format!("\n{}", crate::question_guard::REMINDER)
+    } else {
+        String::new()
+    };
+    format!("[aaa inbox] {} (aaa inbox list {project}){reminder}", parts.join("; "))
 }
 
 /// 입력창이 비어 있는가. 맨 아래 몇 줄에서 마지막 입력 줄(❯·›)을 본다.
@@ -521,7 +526,7 @@ impl Host {
             self.auto_resolve_pass(&p.name).await;
             self.park_pass(&p.name).await;
             let dir = Path::new(&p.path);
-            self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
+            self.routine_pass(&p.name, dir, !self.coordinator_panes(dir).is_empty());
             self.automation_tick(&p.name);
             self.pr_tick(&p.name);
             self.ci_tick(&p.name);
@@ -731,11 +736,6 @@ impl Host {
         );
     }
 
-    /// 프로젝트 폴더를 cwd로 쓰는 host 머신의 실행 중 pane(coordinator)
-    fn coordinator_pane(&self, dir: &Path) -> Option<aaa_proto::PaneView> {
-        self.coordinator_panes(dir).into_iter().next()
-    }
-
     /// 프로젝트 폴더를 cwd로 쓰는 host 머신의 실행 중 pane 모두(herdr-projects 「Any agent whose working directory is `cwd`
     /// is a coordinator」)
     pub(crate) fn coordinator_panes(&self, dir: &Path) -> Vec<aaa_proto::PaneView> {
@@ -751,7 +751,7 @@ impl Host {
             .collect()
     }
 
-    async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) {
+    pub(crate) async fn nudge(self: &Arc<Self>, project: &str, dir: &Path) {
         let unseen: Vec<InboxItem> =
             self.db.inbox_list(Some(project), false).unwrap_or_default().into_iter().filter(|i| !i.seen).collect();
         let forget_box = || {
@@ -779,17 +779,32 @@ impl Host {
         }
         // coordinator가 없거나 nudge를 껐으면 묶음 hash만 남긴다(herdr-projects steps.rs `nudge`): 사람에게는 사건마다
         // 알림이 따로 갔고, 항목은 coordinator의 다음 턴 `context`가 보인다. 나중에 생긴 coordinator를 옛 묶음으로 깨우지 않는다
-        let coord = if self.settings(project).nudge { self.coordinator_pane(dir) } else { None };
+        let coord = if self.settings(project).nudge {
+            let panes = self.coordinator_panes(dir);
+            panes
+                .iter()
+                .find(|p| unseen.iter().any(|i| i.event == crate::question_guard::EVENT && i.subject == p.id))
+                .cloned()
+                .or_else(|| panes.into_iter().next())
+        } else {
+            None
+        };
         let Some(coord) = coord else {
             aaa_common::diagnostic::ignored(self.db.set_meta(&key, &hash), "보조 작업 실패 뒤 기존 처리를 계속한다");
             forget_box();
             return;
         };
         let idle_for = Duration::from_secs(self.cfg.projects.nudge_idle_secs);
+        let question_missing = unseen.iter().any(|i| i.event == crate::question_guard::EVENT && i.subject == coord.id);
         // 입력 대기: hook 상태가 있으면 그것으로, 없으면 화면이 그만큼 그대로인지로 본다
         let lines = self.screen_lines(&coord.machine_id, &coord.id).await.unwrap_or_default();
         let ready = match &coord.agent {
-            Some(a) => idle_long_enough(&a.activity, a.since_ms, aaa_common::util::now_ms(), idle_for),
+            Some(a) => idle_long_enough(
+                &a.activity,
+                a.since_ms,
+                aaa_common::util::now_ms(),
+                if question_missing { Duration::ZERO } else { idle_for },
+            ),
             None => {
                 let h = hex::encode(sha2::Sha256::digest(lines.join("\n").as_bytes()));
                 let mut seen = self.nudge_screens.lock().unwrap();
@@ -802,7 +817,7 @@ impl Host {
         }
         // 입력창이 이번 검사와 nudge_quiet_secs 전 검사에서 모두 비어 보여야 보낸다. 사람이 치는 글과 섞이지 않게 한다
         // (herdr-projects steps.rs `box_quiet`: 마지막 키 입력 시각을 알 수 없어 입력창으로 본다).
-        {
+        if !question_missing {
             let mut boxes = self.nudge_box.lock().unwrap();
             if !steady_observation(
                 &mut boxes,
