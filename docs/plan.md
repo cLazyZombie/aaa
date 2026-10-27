@@ -8196,3 +8196,8 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 계정 화면에서 자동 배정 설명 두 문단, 「관측이 없으면 사용량 모름」, 끝난 시작 기록 목록을 뺀다. 계정 행의 「자동 배정에 사용」과 「사용량 다시 읽기」는 남긴다. 풀 설정 저장 오류는 계정 화면 머리의 경고로 옮긴다.
 - 대기 중인 계정 배정 시작은 할 일 화면 「계정 배정 대기」(대기 중일 때만, 취소 단추)에 둔다. 할 일 시작 창의 「설정 → 계정에서 확인」 안내는 뺀다. 대기 뒤 host pass에서 시작하지 못한 일은 inbox `task-start`·`account start failed`로 한 번 알린다(thread가 생긴 실패는 기존 thread 사건). proto·FRONT_API는 바꾸지 않는다.
 - 다른 화면의 설명 문단·행 설명·note·hint·subtitle도 지운다. 상태와 설명이 섞인 문구(빈 목록·「이 host는 ○○를 모른다」·passkey·설치 버튼 이유 등)는 사용자 답(1A)대로 상태·막힌 이유·경고만 남기고 사용법을 지운다. 보안 경고(Windows 설치 암호)와 확인창 본문, 버튼 title은 둔다.
+
+### 8.520 E2E12 대체 소켓의 연결 중 취소 경합(t-1211)
+
+- `Term.tsx` 전송 누락 가설을 조사했으나 현재 전송은 모두 OPEN을 검사한다. 원래 events route를 건 실제 host 페이지에서 pane 소켓을 CONNECTING 중 취소하면 전송 없이 Playwright의 snapshot 수신 전달이 예외를 낸다. 실제 Chromium·WebKit 소켓은 같은 순서에서 정상 종료한다. 최초 간헐 실패 원문은 남아 있지 않아 당시 호출 위치까지 확정하지 않는다.
+- E2E12는 `routeWebSocket`을 빼고 관측하는 실제 events 소켓을 닫아 재연결한다. 기존 HTTP 보류·두 독립 완전 목록·실제 DOM 검사는 유지하고, 연결 중 pane 취소 keeper를 두 엔진의 기존 단계에 더한다. 제품·FRONT_API·AGENT_LINK·의존성·E2E 번호는 바꾸지 않으며 배포가 필요 없다. 재현과 참고 구현·라이선스는 docs/testing.md에 적는다.

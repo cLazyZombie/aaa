@@ -1,3 +1,28 @@
+## E2E12 연결 중 취소와 네이티브 재연결(t-1211)
+
+- 현재 `Term.tsx`의 모든 전송은 OPEN 상태를 확인한다. 닫힌 네이티브 소켓에 직접 `send`한 대조는
+  Chromium·WebKit에서 예외 없이 버려지지만 Playwright 1.64.1 대체 소켓은 예외를 던진다.
+  이 차이만으로 제품의 닫힌 소켓 전송을 원인으로 단정하지 않는다.
+- 원래 E12의 events `routeWebSocket`을 건 실제 host 페이지에서 pane 소켓을 만들고 같은 task에서
+  `close`하면, 전송 호출 없이 두 엔진 모두 `WebSocket is already in CLOSING or CLOSED state`가 발생했다.
+  WebKit stack은 `_apiSendToPage`다. Playwright는 대상 밖 소켓도 대체하며, 취소된 CONNECTING 소켓을
+  늦은 passthrough가 서버에 연결하고 그 snapshot을 CLOSING 소켓에 전달한다. 같은 네이티브 순서는
+  실제 close 사건으로 끝난다. t-1198의 남은 산출물에는 최초 실패 원문이 없어 당시 stack까지 소급 확정하지 않는다.
+- E12는 관측 중인 실제 events 소켓을 브라우저에서 닫고 close 사건을 기다린다. 클라이언트에서 허용하는
+  시험 코드 4012를 쓴다(이전 route의 서버 코드 1012). 자동 재연결·새 연결의 첫 HTTP 응답 보류·옛 마지막 응답
+  전달 순서와 두 완전 목록의 전체 개수·차례·고유값·커서·본문·실제 DOM 단언은 그대로 검사한다.
+- 기존 Chromium/WebKit 목록 단계에 `threadConnectingPaneLifetime`을 더한다. 필요한 이유는
+  연결 중 취소한 실제 pane 소켓이 전송 없이도 오류를 내거나 종료되지 않는 대체 소켓의 재도입을 막기 위해서다.
+  원래 route를 건 대조에서 이 keeper는 두 엔진 모두 위 수신 예외로 실패했다. close 사건과 pageerror로 끝나며
+  새 실패 상한은 5초다. 기존 시한·재시도·기대값 완화·새 E2E 번호·제품 변경·의존성 추가는 없다.
+- 참고는 [Playwright 1.64.1 WebSocketMock](https://github.com/microsoft/playwright/blob/v1.64.1/packages/injected/src/webSocketMock.ts)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/v1.64.1/LICENSE)),
+  [reconnecting-websocket의 OPEN 검사](https://github.com/pladaria/reconnecting-websocket/blob/master/reconnecting-websocket.ts)
+  ([MIT](https://github.com/pladaria/reconnecting-websocket/blob/master/LICENSE)),
+  [react-use-websocket의 전송 검사](https://github.com/robtaussig/react-use-websocket/blob/master/src/lib/use-websocket.ts)
+  ([MIT](https://github.com/robtaussig/react-use-websocket/blob/master/LICENSE))다.
+  상태 검사와 대체/네이티브 수명 차이를 대조했고 외부 코드는 가져오지 않았다.
+
 ## 할 일 메모 추가·교체 경고·저장 전 형식 검사(t-1197)
 
 - host `task_edit::tests::append_notes_keeps_raw_block_and_conflicts`는 CRLF·공백·첨부와 같은 기존 메모 원문·하위 task·개행 없는 끝을 보존하고, 같은 요청의 추가 뒤 제목 변경·오래된 블록 거부·메모 문법 거부를 검사한다. 필요한 이유: 전체 메모 재구성으로 원문이 손상되거나 경합 변경을 덮는 것을 막는다.

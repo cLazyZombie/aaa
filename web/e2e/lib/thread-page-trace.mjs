@@ -7,6 +7,15 @@ export function threadTraceDocument() {
   return document.__aaaThreadTraceDocument ??= crypto.getRandomValues(new Uint32Array(4)).join("-");
 }
 
+// 실제 브라우저 연결을 닫는다. routeWebSocket은 대상 밖 pane 연결까지 대체하므로 쓰지 않는다.
+export function disconnectThreadEvents() {
+  const socket = document.__aaaThreadEventsSocket;
+  if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("끊을 events 연결이 열려 있지 않다");
+  const closed = new Promise(resolve => socket.addEventListener("close", resolve, { once: true }));
+  socket.close(4012, "E2E12 재연결 경계");
+  return closed.then(() => {});
+}
+
 export function traceThreadRequests() {
   // init도 독립 직렬화되므로 위 getter와 같은 Document 칸을 처음 만든다.
   const doc = document.__aaaThreadTraceDocument ??= crypto.getRandomValues(new Uint32Array(4)).join("-");
@@ -17,6 +26,7 @@ export function traceThreadRequests() {
     constructor(...args) {
       super(...args);
       if (!String(args[0]).endsWith("/api/v1/events")) return;
+      document.__aaaThreadEventsSocket = this;
       const link = ++nextConnection;
       this.addEventListener("open", () => { connection = link; log({ event: "ws-open", link }); });
       this.addEventListener("close", e => log({ event: "ws-close", link, code: e.code }));
