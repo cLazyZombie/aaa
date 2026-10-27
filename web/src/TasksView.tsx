@@ -52,6 +52,7 @@ import { StateIcon, TaskDetail, ThreadChip, WhoChips, type SaveResult } from "./
 import { ConflictDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
 import { type ReserveRequest } from "./TaskQueue";
+import { AccountWaits } from "./AccountPoolPanel";
 import { TaskArchiveView } from "./TaskArchiveView";
 import { TaskFilterChips, TaskSearchInput } from "./TaskHistoryTools";
 import { TaskSortChip } from "./TaskSortChip";
@@ -925,6 +926,7 @@ export function TasksView({
                 {repoLabel}만 보는 중 · {manual ? "옮기면 보이는 행 바로 위·아래로 들어간다. 숨은 다른 저장소 할 일의 차례는 그대로다." : "예약 차례는 그대로다. 위치 이동은 손 차례에서 할 수 있다."}
               </p>
             )}
+            {board && apiAtLeast(frontApi, [1, 102]) && <AccountWaits project={project} canEdit={canEdit} />}
             {board && board.unlinked_threads.length > 0 && (
               <Unlinked
                 overLimits={overLimits}

@@ -6,7 +6,7 @@ import { ignoredFailure } from "./errorDiagnostic.ts";
 import "./ThreadActions.css";
 import "./AccountsPage.css";
 import { AccountQuotaCard, useAccountQuota } from "./AccountQuota";
-import { AccountAutoAssign, AccountPoolPanel, useAccountPool } from "./AccountPoolPanel";
+import { AccountAutoAssign, useAccountPool } from "./AccountPoolPanel";
 import { apiAtLeast } from "./automationModel";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -126,8 +126,8 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
           {msg}
         </p>
       )}
-      {data.quota && <div className="op-buttons"><button className="btn small" type="button" onClick={usage.refresh} disabled={usage.busy}>사용량 다시 읽기</button><span className="op-muted">관측이 없으면 사용량 모름</span></div>}
-      {data.pool && <AccountPoolPanel state={pool} canEdit={canEdit} />}
+      {data.pool && pool.error && <p className="op-warn" role="alert">{pool.error}</p>}
+      {data.quota && <div className="op-buttons"><button className="btn small" type="button" onClick={usage.refresh} disabled={usage.busy}>사용량 다시 읽기</button></div>}
       {groups.map((g) => (
         <SettingsGroup key={g.harness} title={HARNESS_LABEL[g.harness]} section={`accounts-${g.harness}`}>
           <div className="settings-item">

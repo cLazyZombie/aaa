@@ -159,6 +159,9 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-check { border-color: var(--notice); color: var(--notice); }
 .task-notes-mark { flex: 0 0 auto; color: var(--text-dim); font-size: var(--fs-sm); }
 .task-unlinked .task-pick .task-title { color: var(--text); }
+.task-account-wait { padding: var(--space-1) 0 var(--space-1) var(--space-2); }
+.task-account-wait-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.task-account-wait-text .muted { font-size: var(--fs-xs); overflow-wrap: anywhere; }
 
 /* 상세: 기본(좁은 본문)은 오른쪽 시트 */
 .task-detail {

@@ -138,7 +138,7 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
             <WhoChips t={task} labeled />
           </p>
           {!preview && !error && <p className="muted">시작할 값을 읽는 중</p>}
-          {waiting && <div role="status" data-testid="task-account-wait"><p>{waiting.reason}</p><p>배정 요청 {waiting.id} · 설정 → 계정에서 상태를 확인할 수 있습니다.</p>{waiting.state === "queued" && <button type="button" className="btn" disabled={busy} onClick={async () => {
+          {waiting && <div role="status" data-testid="task-account-wait"><p>{waiting.reason}</p><p>배정 요청 {waiting.id}</p>{waiting.state === "queued" && <button type="button" className="btn" disabled={busy} onClick={async () => {
             setBusy(true);
             try { await call({ op: "account_start_cancel", project, id: waiting.id }); onClose(); }
             catch (e) { setError(errText(e)); }

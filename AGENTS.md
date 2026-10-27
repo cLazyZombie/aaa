@@ -4,6 +4,7 @@
 - backend(Rust)와 frontend(웹)를 분리한다. frontend는 상태를 갖지 않고 host backend하고만 통신하며, host backend가 각 머신의 agent backend와 통신한다.
 - 역할마다 crate를 나누고 실행 파일은 하나다. front(web)는 `aaa-proto`로만 host와 통신하고 backend crate에 의존하지 않으며, `aaa-host`는 agent·session 내부에 의존하지 않는다(검사: `cargo test -p aaa --test deps`).
 - 기본 언어는 Rust, 웹 언어는 TypeScript이며 작업과 문서는 한국어로 작성한다.
+- 웹 화면에 기능을 설명하는 도움말·안내 문단(동작 방식·정책·사용법 풀이)을 넣지 않는다. 오류·지금 상태·빈 목록·확인 질문처럼 동작에 필요한 짧은 문구만 둔다. 설명은 docs에 쓴다.
 - 웹 보고서는 `docs/library.md`의 sandbox 규칙을 따른다. 그림·음원·자료는 library 안에 넣고 상대 URL로 쓴다. fetch/XHR은 자기 보고서 폴더의 쿠키 없는 GET/HEAD만 된다. 소리 혼합은 fetch·decodeAudioData·GainNode를 쓰고 사용자 누름에서 AudioContext를 연다. 앱 API·외부 연결·쿠키·저장소는 쓸 수 없다.
 - 다른 작업의 파일·프로세스를 건드리지 않으며, 프로세스 종료는 직접 확인한 PID로만 한다. `pkill`·`killall` 같은 pattern 종료는 금지한다.
 - `rm -rf`는 절대 경로나 `"${VAR:?}"`로 보호한 변수만 대상으로 삼는다.

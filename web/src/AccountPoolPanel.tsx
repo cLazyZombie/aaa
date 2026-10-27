@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountPoolView, AccountStartView, FrontRequest } from "./gen/proto";
 import { call, onAccountsChanged } from "./api";
-import { SettingsGroup } from "./herdr/SettingsControls";
 
 export function useAccountPool(enabled: boolean) {
   const [pool, setPool] = useState<AccountPoolView | null>(null);
@@ -52,7 +51,7 @@ export function useAccountPool(enabled: boolean) {
     void change({ op: "account_pool_member", revision: pool.revision, account,
       member: enabled ? { account, group: account, models: [] } : null }).finally(() => setPending(null));
   };
-  return { pool, busy, pending, error, toggle, change };
+  return { pool, busy, pending, error, toggle };
 }
 type PoolState = ReturnType<typeof useAccountPool>;
 
@@ -69,34 +68,39 @@ export function AccountAutoAssign({ account, state, canEdit }: { account: string
   </label>;
 }
 
-export function AccountPoolPanel({ state, canEdit }: { state: PoolState; canEdit: boolean }) {
+/** 할 일 화면의 계정 배정 대기. 대기 중에만 보이고 끝난 시작 기록은 그리지 않는다(배정 뒤 실패는 host inbox) */
+export function AccountWaits({ project, canEdit }: { project: string; canEdit: boolean }) {
   const [starts, setStarts] = useState<AccountStartView[]>([]);
-  const [startsError, setStartsError] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const seq = useRef(0);
   useEffect(() => {
     let active = true;
     const reload = () => {
       const mine = ++seq.current;
-      void call({ op: "account_starts" }).then((r) => {
-        if (active && mine === seq.current && r.kind === "account_starts") { setStarts(r.starts); setStartsError(""); }
-      }, (e) => { if (active && mine === seq.current) setStartsError(String(e)); });
+      void call({ op: "account_starts", project }).then((r) => {
+        if (active && mine === seq.current && r.kind === "account_starts") { setStarts(r.starts); setError(""); }
+      }, (e) => { if (active && mine === seq.current) setError(String(e)); });
     };
     reload(); const off = onAccountsChanged(reload);
     return () => { active = false; off(); };
-  }, []);
-  return <SettingsGroup title="자동 배정" section="account-pool">
-    <div className="settings-item acct-pool" data-testid="account-pool">
-      <p>같은 harness 안에서 진행 중 작업이 적은 계정부터 골고루 사용합니다. 새 계정은 로그인하면 바로 사용합니다.</p>
-      <p className="op-muted">사용량을 판단할 수 없어도 시작하며, 한도에 도달했거나 인증이 끊긴 계정은 건너뜁니다. 사용할 계정이 없는 harness는 기본 계정으로 시작합니다. 진행 중 작업의 계정은 유지합니다.</p>
-      {startsError && <p className="op-warn" role="alert">배정 상태를 읽지 못했습니다: {startsError}</p>}
-      {state.error && <p className="op-warn" role="alert">{state.error}</p>}
-      <ul className="acct-list" data-testid="account-pool-starts">
-        {starts.filter((s) => s.state === "queued" || s.state === "failed").map((s) => <li key={`${s.project}/${s.id}`} data-start-id={s.id}>
-          <b>{s.title}</b><span>{s.state === "queued" ? "배정 대기" : "시작 실패"} · {s.reason}</span>
-          {canEdit && s.state === "queued" && <button className="btn small" disabled={state.busy}
-            onClick={() => void state.change({ op: "account_start_cancel", project: s.project, id: s.id })}>배정 대기 취소</button>}
-        </li>)}
-      </ul>
-    </div>
-  </SettingsGroup>;
+  }, [project]);
+  const queued = starts.filter((s) => s.state === "queued");
+  if (queued.length === 0 && !error) return null;
+  const cancel = async (id: string) => {
+    setBusy(true); setError("");
+    try { await call({ op: "account_start_cancel", project, id }); }
+    catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  };
+  return <section className="task-list task-account-waits" aria-label="계정 배정 대기" data-testid="tasks-account-waits">
+    <h3 className="task-list-head"><span className="task-list-static">계정 배정 대기 <span className="tasks-count">{queued.length}</span></span></h3>
+    {error && <p className="op-warn" role="alert">배정 대기를 읽지 못했습니다: {error}</p>}
+    <ul className="task-rows">
+      {queued.map((s) => <li key={s.id} className="task-row task-account-wait" data-start-id={s.id}>
+        <span className="task-account-wait-text"><span className="task-title">{s.title}</span><span className="muted">{s.reason}</span></span>
+        {canEdit && <button type="button" className="btn btn-ghost task-unlinked-action" disabled={busy} onClick={() => void cancel(s.id)}>배정 대기 취소</button>}
+      </li>)}
+    </ul>
+  </section>;
 }
