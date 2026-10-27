@@ -103,3 +103,16 @@ Disposable에 등록하는 한 줄이다. upstream 5.5.0은 이 monitor를 해�
 터미널을 다시 만들 때마다 window resize와 media query listener를 하나씩 남긴다.
 실제 upstream 모듈의 20회 생성/해제 대조와 E2E104의 전역 listener 수로 확인한다.
 xterm의 기존 MIT 저작권·라이선스 고지를 유지한다.
+
+## `xterm-5.5.0-link-press.patch`(t-1151)
+
+xterm `Linkifier`는 `onRenderedViewportChange`마다 provider 응답을 새로 만들지만,
+`mouseup`에서는 `mousedown`의 응답 객체와 같은지를 검사한다. 같은 링크 위에서 누른 채
+resize/출력의 그리기가 오면 클릭이 사라진다. provider 순번·대상 문자열·버퍼의 전체 범위가
+같고 놓은 자리도 범위 안이면 현재 응답을 한 번 활성화한다. provider·대상·범위가 바뀌거나
+누름 없는 추가 놓음은 열지 않는다. 앱의 왼쪽 단추·선택 없음 검사도 유지한다.
+
+출처는 [xterm Linkifier 5.5.0](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/Linkifier.ts)(MIT)다.
+외부 코드·의존성을 추가하지 않는다. 기존 실제 소스 패치 유닛은 upstream의 클릭 유실과
+수정판의 동일 대상 열기·변경 거부를 대조한다. E2E16은 설정 복귀 뒤 링크를 누른 채 실제
+PTY 출력으로 같은 행을 굵게 다시 그리고, 놓은 뒤 선택한 소스 행·강조·줄 바꿈을 검사한다.

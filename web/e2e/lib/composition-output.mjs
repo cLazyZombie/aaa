@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { compositionPty } from './composition-pty.mjs';
 import { nativeWebkit } from './native-webkit.mjs';
-import { aaa, root, browser, webkit, pairPage, inList, base, until } from './harness.mjs';
+import { aaa, root, browser, webkit, pairPage, inList, base } from './harness.mjs';
 
 function observeComposition() {
   window.preeditFrames = []; window.preeditEvents = []; window.preeditSampling = true;
@@ -31,35 +32,25 @@ function observeComposition() {
 }
 
 export async function compositionOutput() {
-  const control = `${root}/preedit-output.jsonl`, received = `${root}/preedit-input.bin`;
-  fs.writeFileSync(control, ''); fs.writeFileSync(received, '');
-  fs.writeFileSync(`${root}/preedit.cjs`, `
-    const fs = require('node:fs');
-    process.stdin.setRawMode(true);
-    let offset = 0;
-    fs.watch(${JSON.stringify(control)}, () => {
-      const all = fs.readFileSync(${JSON.stringify(control)}, 'utf8');
-      for (const line of all.slice(offset).trim().split('\\n').filter(Boolean)) {
-        const command = JSON.parse(line);
-        if (command.flush) { process.stdout.write(pending); pending = ''; }
-        else if (command.reset) { pending = ''; process.stdout.write(command.reset); }
-        else process.stdout.write(command);
-      }
-      offset = all.length;
-    });
-    let pending = '';
-    process.stdin.on('data', data => { fs.appendFileSync(${JSON.stringify(received)}, data); pending += data; });
-    process.stdout.write('\\x1b[2J\\x1b[3;1HWorking 42s\\x1b[6;1Hprompt> ');
-  `);
-  aaa('tab', 'create', '--machine', 'labA', '--label', 'preedit', '--', process.execPath, `${root}/preedit.cjs`);
-  const output = data => fs.appendFileSync(control, JSON.stringify(data) + '\n');
+  const received = `${root}/preedit-input.bin`;
+  fs.writeFileSync(received, '');
   const artifacts = process.env.AAA_IME_CAPTURE ? path.resolve(process.env.AAA_IME_CAPTURE) : `${root}/diagnostics/preedit`;
   fs.mkdirSync(artifacts, { recursive: true });
-  const wk = await webkit.launch();
-  const engines = [['chromium', browser], ['webkit-replay', wk]];
-  if (process.platform === 'darwin') engines.push(['webkit-native', null]);
-  const failures = [];
+  fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+  const pty = await compositionPty(received);
+  let wk;
   try {
+    fs.writeFileSync(`${root}/preedit.mjs`, `
+      import { runCompositionPty } from ${JSON.stringify(new URL('./composition-pty.mjs', import.meta.url).href)};
+      await runCompositionPty(${pty.port}, ${JSON.stringify(received)});
+    `);
+    aaa('tab', 'create', '--machine', 'labA', '--label', 'preedit', '--', process.execPath, `${root}/preedit.mjs`);
+    const output = data => pty.output(data);
+    await pty.ready();
+    wk = await webkit.launch();
+    const engines = [['chromium', browser], ['webkit-replay', wk]];
+    if (process.platform === 'darwin') engines.push(['webkit-native', null]);
+    const failures = [];
     for (const [name, engine] of engines) {
       const native = !engine;
       let p, close;
@@ -160,7 +151,7 @@ export async function compositionOutput() {
         if (native) await p.commit('한');
         else if (cdp) await cdp.send('Input.insertText', { text: '한' });
         else await p.evaluate(() => document.querySelector('.xterm-helper-textarea').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '한' })));
-        await until(`${name} 확정 PTY`, () => fs.statSync(received).size > offset);
+        await pty.receivedIs('한', offset);
         assert.equal(fs.readFileSync(received).subarray(offset).toString('utf8'), '한', `${name}: 확정은 한 번만`);
         const events = await p.evaluate(() => window.preeditEvents);
         fs.writeFileSync(`${artifacts}/${name}-events.json`, JSON.stringify(events, null, 2));
@@ -168,13 +159,7 @@ export async function compositionOutput() {
         console.log(`     ${name}: ${pending.length} frames, 위치/표시 실패 ${bad.length}, 실제 IME ${name !== 'webkit-replay'}`);
         if (bad.length) failures.push(`${name}: 조합 위치/표시 ${bad.length}/${pending.length} frame 실패; ${JSON.stringify(bad[0])}`);
         // 같은 host/agent/PTY에서 echo를 사건으로 늦춘다. 앞 확정과 다음 begin 사이에 echo를 허용하지 않는다.
-        const receivedIs = expected => new Promise((resolve, reject) => {
-          const read = () => fs.readFileSync(received).subarray(inputOffset).toString('utf8');
-          const watcher = fs.watch(received, check);
-          const timer = setTimeout(() => { watcher.close(); reject(new Error(`${name}: PTY 기대 ${JSON.stringify(expected)}, 실제 ${JSON.stringify(read())}`)); }, 20_000);
-          function check() { if (read() === expected) { clearTimeout(timer); watcher.close(); resolve(); } }
-          check();
-        });
+        const receivedIs = expected => pty.receivedIs(expected, inputOffset);
         let inputOffset = fs.statSync(received).size;
         // 앞 시험의 단어를 끝낸 뒤 output/echo 보관을 새 fixture로 바꾼다.
         await commit(' '); await receivedIs(' ');
@@ -230,11 +215,14 @@ export async function compositionOutput() {
         if (cdp) await cdp.detach();
       } catch (error) {
         const trace = await p.evaluate(() => ({ frames: window.preeditFrames, events: window.preeditEvents })).catch(() => null);
-        fs.writeFileSync(`${artifacts}/${name}-failure.json`, JSON.stringify({ error: String(error), trace }, null, 2));
+        fs.writeFileSync(`${artifacts}/${name}-failure.json`, JSON.stringify({ error: String(error), pty: pty.snapshot(), trace }, null, 2));
         throw error;
       } finally { await close(); }
     }
-  } finally { await wk.close(); }
-  aaa('pane', 'kill', 'preedit');
-  assert.equal(failures.length, 0, failures.join('\n'));
+    aaa('pane', 'kill', 'preedit');
+    assert.equal(failures.length, 0, failures.join('\n'));
+  } finally {
+    fs.writeFileSync(`${root}/diagnostics/preedit-pty.json`, JSON.stringify(pty.snapshot(), null, 2));
+    try { await wk?.close(); } finally { await pty.close(); }
+  }
 }

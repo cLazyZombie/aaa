@@ -32,7 +32,7 @@ async function textPoint(page, text) {
 
 /** 링크 위에서 누르고 놓는다. 마우스를 올리면 xterm이 링크를 찾아 손가락 커서를 단다. xterm은 칸이 바뀔 때만 다시 찾고
  *  터미널 밖으로 나갔다 와도 마지막 칸을 기억하므로(같은 링크를 닫은 뒤 다시 누를 때) 옆 칸을 거쳐 온다 */
-async function clickLink(page, text) {
+async function clickLink(page, text, whilePressed) {
   // 첫 출력은 초기 snapshot 크기로도 그려진다. 뒤늦은 resize는 xterm의 링크 커서를 지우므로
   // 이 화면의 맞추기와 그리드 적용이 끝난 뒤 좌표를 잰다(시한·링크 단언은 그대로다).
   await domIs(page, `${text} 좌표를 재기 전 크기 맞춤`, () => {
@@ -46,7 +46,8 @@ async function clickLink(page, text) {
   await page.mouse.move(x, y);
   await domIs(page, `${text} 링크`, () => document.querySelector(".xterm-screen").classList.contains("xterm-cursor-pointer"));
   await page.mouse.down();
-  await page.mouse.up();
+  try { await whilePressed?.(); }
+  finally { await page.mouse.up(); }
 }
 
 // 원문·주소·history state 대신 클릭·기록 이동·파일 요청의 단계만 남긴다.
@@ -64,18 +65,40 @@ async function observeFileOpen(page) {
         code: document.querySelector('[data-testid="file-viewer-code"]')?.textContent?.length ?? null,
         fit: term?.dataset.fit, pending: term?.hasAttribute('data-fit-pending'),
         selection: Boolean(getSelection()?.toString()), fonts: document.fonts.status,
+        linkPointer: Boolean(term?.querySelector('.xterm-cursor-pointer')),
+        focused: document.activeElement?.classList.contains('xterm-helper-textarea') ?? false,
       });
       if (window.__aaaFileOpen.length > 200) window.__aaaFileOpen.shift();
     };
     for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'popstate'])
       window.addEventListener(type, (event) => record(type, {
         target: event.target instanceof Element ? event.target.tagName : null,
-        x: event.clientX, y: event.clientY,
+        x: event.clientX, y: event.clientY, button: event.button, trusted: event.isTrusted,
+        terminalTarget: event.target instanceof Element && Boolean(event.target.closest('.xterm-screen')),
       }), true);
     for (const method of ['pushState', 'replaceState', 'go', 'back']) {
       const original = history[method].bind(history);
       history[method] = (...args) => { record(method); return original(...args); };
     }
+    // pane 이동 뒤 활성 terminal이 바뀌어도 실제 행/링크 장식을 계속 관측한다.
+    let rows, screen;
+    const rowObserver = new MutationObserver(() => record('terminal-rows'));
+    const linkObserver = new MutationObserver(() => record('link-decoration'));
+    const attach = () => {
+      const terminal = document.querySelector('[data-testid="terminal"]');
+      const nextRows = terminal?.querySelector('.xterm-rows');
+      const nextScreen = terminal?.querySelector('.xterm-screen');
+      if (rows !== nextRows) {
+        rowObserver.disconnect(); rows = nextRows;
+        if (rows) rowObserver.observe(rows, { childList: true, subtree: true, attributes: true });
+      }
+      if (screen !== nextScreen) {
+        linkObserver.disconnect(); screen = nextScreen;
+        if (screen) linkObserver.observe(screen, { attributes: true, attributeFilter: ['class'] });
+      }
+    };
+    new MutationObserver(attach).observe(document.body, { childList: true, subtree: true });
+    attach();
     window.__aaaFileOpenRecord = record;
   });
   if (!page.__aaaFileOpenListening) {
@@ -794,7 +817,8 @@ export default async function ({ ctl, page }) {
     fs.writeFileSync(`${proj}/src/huge.ts`, huge);
     if (huge.length <= 256 * 1024) throw new Error(`huge.ts가 256KiB 이하 ${huge.length}`);
     fs.writeFileSync(`${proj}/src/empty.ts`, "");
-    const prog = `process.stdout.write(${JSON.stringify(["B src/big.ts:2500", "H src/huge.ts:11000", "E src/empty.ts", "big> "].join("\r\n"))}); process.stdin.resume();`;
+    const repaint = "\x1b7\x1b[1;1HB \x1b[1msrc/big.ts:2500\x1b[0m\x1b8";
+    const prog = `process.stdout.write(${JSON.stringify(["B src/big.ts:2500", "H src/huge.ts:11000", "E src/empty.ts", "big> "].join("\r\n"))}); process.stdin.setRawMode(true); process.stdin.on("data", () => process.stdout.write(${JSON.stringify(repaint)}));`;
     aaa("tab", "create", "--machine", "labA", "--label", "big", "--cwd", proj, "--", process.execPath, "-e", prog);
     await waitOutput("big", "big>");
 
@@ -854,9 +878,9 @@ export default async function ({ ctl, page }) {
         const span = document.querySelector(".virtual-source-file")?.shadowRoot?.querySelector('[data-line="2500"] span');
         return span?.textContent === "export" && span.style.color === "var(--herdr-code-token-keyword)";
       });
-    const openAt = async (p, link, what, line) => {
+    const openAt = async (p, link, what, line, whilePressed) => {
       await watchVirtualSource(p, line);
-      await clickLink(p, link);
+      await clickLink(p, link, whilePressed);
       await centered(p, what, line);
     };
     const closeViewer = async (p, what) => {
@@ -911,7 +935,12 @@ export default async function ({ ctl, page }) {
     await dp.getByRole("region", { name: "설정" }).waitFor({ state: "detached" });
     const exited = inTime(dp.evaluate(waitForSettingsExit), 20_000, "긴 줄 바꿈 설정의 기록 복귀");
     await releaseSettingsExit(dp, exited);
-    await openAt(dp, "src/big.ts:2500", "접은 big.ts 2500번째 줄 가운데", 2500);
+    await openAt(dp, "src/big.ts:2500", "접은 big.ts 2500번째 줄 가운데", 2500, async () => {
+      // 실제 PTY 출력으로 누름과 놓음 사이에 같은 링크를 다시 그린다. 대상·위치는 그대로다.
+      aaa("pane", "send-text", "big", "x");
+      await domIs(dp, "누른 링크를 실제 PTY가 다시 그림", () =>
+        document.querySelector('.xterm-rows > div:first-child .xterm-bold')?.textContent === 'src/big.ts:2500', null, 5000);
+    });
     await paintedIs(dp, "접은 소스의 worker 강조 반영");
     await centered(dp, "재측정한 big.ts 2500번째 줄 가운데", 2500);
     const wrapped = await shape(dp, 2501);
