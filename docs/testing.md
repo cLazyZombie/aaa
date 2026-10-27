@@ -1,3 +1,26 @@
+## E42 맥락 단추의 재그리기와 키 focus(t-1208 착지 수리)
+
+- main `165797c0`와 후보 `762c39fc`의 원래 E42 전체를 각각 한 번 단독 실행했고 모두 약13.1초에 통과했다.
+  병렬 최초 실패의 원문에는 HTTP/키 사건 trace가 없어 그 순간의 순서를 소급 단정하지 않는다.
+  별도 사건 gate에서 단추 focus와 Enter 사이에 실제 focus 재조회 응답을 놓아 같은 f60 대기를 재현했다.
+  DOM 교체 → focus가 BODY → Enter가 BODY → full_context 요청0회다. agent 읽기·host 중계 전에 입력이 사라졌다.
+  부하나 시한으로 닫지 않고 실제 재그리기 경계를 수리한다.
+- `labelContextButtons`는 같은 파일·hunk·방향 단추가 같은 render에서 제거·생성된 경우에만 focus를 복구한다.
+  연결된 옛 단추에서 다른 곳으로 이동한 focus·unmount·다른 창은 복구하지 않는다. 새 입력을 보내거나 원문을 선행 읽지 않는다.
+  기존 한글 이름·Enter/Space·20줄/전체·한 줄/나란히·가상화·44px 계약은 유지한다.
+- E42의 새 keeper `데스크톱 맥락: 재조회 중 단추 focus와 다른 조작의 focus를 지킨다`는 실제 HTTP 응답과
+  다음 렌더 frame을 사건 gate로 사용한다. 다시 focus하는 locator.press 대신 native keyboard 입력을 보낸다.
+  수리 전 focus 소실로 실패했고 수리 후 full_context1회·HTTP200/full_context=true·20줄/전체/끝 줄까지 확인한다.
+  필요성: 기존 단독 성공만으로 가상 DOM 교체 사이의 다음 키 유실을 막을 수 없다. 개별 keeper는5초 미만이다.
+  실패 진단에는 full_context 요청 수·query도 남긴다. 기존 단언·시한·시험을 완화/삭제하지 않는다.
+- 휴대폰의 visible 확인과 boundingBox 사이에 단추가 교체돼 null이 된 원문도 보존했다. 크기는 같은 DOM 호출에서
+  getBoundingClientRect로 읽고 기존44px 단언·실제 tap을 유지한다. 실패 재시도·고정 sleep·시한 확대는 없다.
+- 참고는 고정 [Pierre FileDiff](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/components/FileDiff.ts)와
+  [CodeView React wrapper](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/react/CodeView.tsx)(Apache-2.0),
+  [VS Code diff view model](https://github.com/microsoft/vscode/blob/main/src/vs/editor/browser/widget/diffEditor/diffEditorViewModel.ts)
+  ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))다. 실제 DOM 수명과 맥락 표시/입력 상태 분리를 대조했다.
+  외부 코드·의존성을 추가하지 않는다.
+
 ## Windows idle-audit의 스택 사용과 실패 수집(t-1208)
 
 - [원본 Windows job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985312)

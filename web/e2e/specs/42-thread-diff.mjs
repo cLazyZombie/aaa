@@ -54,11 +54,13 @@ const fileHeads = (p) =>
   );
 
 /** 처음에는 변경 주변만, 사용자가 누르면 네이티브 UI가 원문을 한 번 읽고 맥락을 펼친다. */
-async function expandContext(p, name) {
+async function expandContext(p, name, refreshDuringKey = false) {
   let reads = 0;
+  const requests = [];
   const record = (request) => {
     if (request.method() !== "POST") return;
     const body = request.postDataJSON();
+    if (body?.op === "thread_diff") requests.push({ at: Date.now(), query: body.query });
     if (body?.op === "thread_diff" && body.query?.full_context) reads++;
   };
   p.on("request", record);
@@ -75,9 +77,30 @@ async function expandContext(p, name) {
     const touch = await p.evaluate(() => matchMedia("(pointer: coarse)").matches);
     const more = diff.getByRole("button", { name: "위로 20줄 펼치기", exact: true }).first();
     if (touch) {
-      const box = await more.boundingBox();
+      // 같은 DOM 호출에서 크기를 읽는다. visible 대기 뒤 교체되면 boundingBox는 null일 수 있다.
+      const box = await more.evaluate((el) => el.getBoundingClientRect().toJSON());
       if (box.width < 44 || box.height < 44) throw new Error(`맥락 터치 단추 ${JSON.stringify(box)}`);
       await more.tap();
+    } else if (refreshDuringKey) {
+      const refresh = async () => {
+        const response = p.waitForResponse((r) => {
+          if (r.request().method() !== "POST") return false;
+          const body = r.request().postDataJSON();
+          return body?.op === "thread_diff" && !body.query?.full_context;
+        });
+        await p.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await (await response).finished();
+        // 재조회 뒤 실제 렌더 frame까지 보내고, 새 단추에 다시 focus하지 않은 채 키를 누른다.
+        await p.evaluate(() => new Promise(requestAnimationFrame));
+      };
+      const scope = p.getByLabel("비교 범위");
+      await scope.focus();
+      await refresh();
+      if (!await scope.evaluate((el) => document.activeElement === el)) throw new Error("다른 조작의 focus를 빼앗았다");
+      await more.focus();
+      await refresh();
+      if (!await more.evaluate((el) => el.getRootNode().activeElement === el)) throw new Error("맥락 단추의 키 입력 focus가 재조회에 사라졌다");
+      await p.keyboard.press("Enter");
     } else await more.press("Enter");
     await context(60).waitFor();
     if (await context(0).count()) throw new Error("20줄 대신 전체가 펼쳐졌다");
@@ -103,7 +126,7 @@ async function expandContext(p, name) {
     await domIs(p, "맥락 diff 닫힘", () => !document.querySelector('[data-testid="diff-panel"]'));
   } catch (error) {
     await p.screenshot({ path: `${root}/context-failure.png` });
-    fs.writeFileSync(`${root}/context-failure.json`, JSON.stringify(await p.evaluate(() => ({
+    fs.writeFileSync(`${root}/context-failure.json`, JSON.stringify({ reads, requests, ...await p.evaluate(() => ({
       alert: document.querySelector('[role="alert"]')?.textContent,
       buttons: [...document.querySelectorAll('diffs-container')].flatMap((host) => [...host.shadowRoot.querySelectorAll('[data-expand-button]')].map((button) => {
         const r = button.getBoundingClientRect();
@@ -120,7 +143,7 @@ async function expandContext(p, name) {
         return { label: button.getAttribute('aria-label'), box: r.toJSON(), hit, ancestors };
       })),
       shadow: [...document.querySelectorAll('diffs-container')].map((e) => e.shadowRoot?.innerHTML),
-    })), null, 2));
+    })) }, null, 2));
     throw error;
   } finally {
     p.off("request", record);
@@ -227,6 +250,11 @@ export default async function ({ page }) {
     fs.writeFileSync(`${cwd}/src/lib.rs`, Array.from({ length: 160 }, (_, i) => `fn f${i}() -> u32 { ${i === 80 ? 33 : i} }\n`).join(""));
     await openThread(page, FILES);
     await expandContext(page, "desktop");
+  });
+
+  await step("데스크톱 맥락: 재조회 중 단추 focus와 다른 조작의 focus를 지킨다", async () => {
+    await openThread(page, FILES);
+    await expandContext(page, "desktop-focus-refresh", true);
   });
 
   await step("iPhone 맥락: 기본은 변경 주변, 20줄·전체 펼치기와 원문 한 번 읽기", async () => {
