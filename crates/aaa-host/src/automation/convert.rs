@@ -112,6 +112,9 @@ pub(super) fn prepare(root: &Path, machine: &str) -> Result<Plan, String> {
             }
             let name = entry.path().file_stem().unwrap().to_string_lossy().into_owned();
             let original = project_text(root, &file)?;
+            if crate::routine::removed_pr_rule(&original) {
+                continue;
+            }
             let (mut spec, target, memo, reports) = if folder == "routines" {
                 let rest = original.strip_prefix("+++\n").ok_or("routine front matter가 없다")?;
                 let (front, body) = rest.split_once("\n+++\n").ok_or("닫는 +++가 없다")?;

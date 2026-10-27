@@ -73,12 +73,6 @@ pub(crate) fn from_v2(d: D) -> Result<File, String> {
                         include_automation: c.include_automation,
                     })
                 }
-                S::Pr => {
-                    if repo.is_some() || machine.is_some() {
-                        return Err("PR 사건의 저장소·머신은 소유 thread가 정한다".into());
-                    }
-                    Condition::Pr(Pr { events: c.events.clone() })
-                }
                 S::Ci => {
                     remaining.branches.clear();
                     remaining.workflows.clear();
@@ -152,10 +146,6 @@ pub(crate) fn to_v2(f: &File) -> D {
             c.repos = t.repos.clone();
             c.include_automation = t.include_automation;
             T::Event { source: S::Thread, repo: None, machine: None }
-        }
-        Condition::Pr(t) => {
-            c.events = t.events.clone();
-            T::Event { source: S::Pr, repo: None, machine: None }
         }
         Condition::Ci(t) => {
             c.events = t.events.clone();

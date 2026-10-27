@@ -1808,10 +1808,7 @@ E2E11·52·89와 아래 m13 세 경로는 각각 최소 1회 실패를 확인했
 
 ## PR routine 재변환과 보존 사본(t-0684, plan §8.421)
 
-- `nice -n 15 cargo test -p aaa-host --lib automation::tests:: --locked`: 영문 보존 사본+한글 routine+TOML 없음의 격리 파일로 기존 사본 충돌을 재현한다. 같은 사본 재사용·다른 판의 첫 빈 번호·실행 실패 복구에서 기존 사본 보존·symlink 거부·보존 위치 변경의 hash 및 무쓰기 거부·기존 TOML 충돌을 검사한다. 변환된 PR의 events·enabled·owner 메시지·본문도 원본과 비교한다.
-- `archived_followup_without_toml_is_not_revived_by_doctor_or_create`는 변환 뒤 TOML이 없는 경우 `files_problems`가 옛 규칙을 만들 대상으로 판정하던 RED를 보존한다. 실제 host의 doctor와 create가 보존 사본과 원래 프로젝트 파일을 지키는지 검사한다. 기존 TOML이 있는 keeper도 유지한다.
-- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 40-automation-detail --workers 1`: 실제 host의 미리보기 문법 오류·계획 변경 실행 오류를 화면 제목과 alert에서 확인하고, 원인을 고친 뒤 새 미리보기를 읽어 변환한다. 동일 사본 재사용·PR 두 판 보존·doctor 후 옛 규칙 부재와 Reader 미리보기 전용을 함께 확인한다. 고정 sleep·실패 재시도·시한 연장 없이 응답과 DOM 사건으로 끝낸다.
-- 운영 프로젝트는 수정하지 않는다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixture로 전환했다. 현재 회귀는 아래 t-1203 절을 따른다.
 
 ## install macOS launchd owner(t-0485, plan §8.419)
 
@@ -3497,14 +3494,7 @@ Front 요청이 이미 성공했는지, 연결 전에 실패했는지, 여전히
 
 ## PR 추적 gh 실행·인증·회복(t-0487)
 
-- host는 thread 머신 agent에 `PrQuery`를 보낸다. CI는 별도로 정한 조회 머신 agent에 `CiQuery`를 보낸다. coordinator 셸의 로그인은 다른 머신의 인증을 증명하지 않는다.
-- PR·CI는 agent PATH에서 실행 가능한 gh를 절대 경로로 찾고, macOS에서는 PATH에 없을 때 Homebrew 표준 경로를 본다. 사용자 PATH가 우선이다. URL·`--repo`·API 경로로 대상을 지정하고 gh의 cwd는 실행 파일이 있는 볼륨의 root로 둔다. origin은 계속 원래 저장소에서 읽으며, 이미 사라진 저장소는 별도 폴더 오류다.
-- 인증 파일·토큰은 읽거나 복사하지 않고 gh의 기존 HOME·GH_CONFIG_DIR·XDG_CONFIG_HOME·토큰 환경을 그대로 전달한다. gh 종료 코드 4는 인증 실패로 안내한다. GH_TOKEN은 기존 gh 로그인을 대신할 수 있는 선택지다. 실패 stderr 원문은 inbox·로그로 넘기지 않는다. 운영 설정·서비스·키체인을 자동으로 바꾸지 않는다.
-- PR outage는 한 pass의 모든 thread 조회가 끝난 뒤 한 번 판정한다. 실패가 남아 있으면 다른 thread의 성공으로 회복하지 않으며, 실패 안내에는 thread와 조회 머신을 붙인다. 실제 조회가 하나도 없으면 회복을 만들지 않는다. 재시도·시간 상한 변경은 없다.
-- `cargo test -p aaa --test m13 pr_environment_failure`: 실제 host↔agent↔가짜 gh에서 한 thread 인증 실패와 다른 thread 성공, 실패를 포함한 뒤 pass의 시작을 울타리로 한 회복 없음, 인증 진단·stderr 비노출·설정 경로 전달·gh cwd, 인증 조건 해제 뒤 회복 한 번, worktree가 사라졌을 때 폴더 진단을 확인한다. 고정 sleep 없이 호출 기록·flow로 끝낸다. 기존 PR·CI 시험이 상태 변경·병합·HTTP 응답 처리를 계속 맡는다.
-- `cargo test -p aaa-agent --lib gh::tests::`: 사용자 PATH 우선·짧은 서비스 PATH의 fallback·실행 파일 없음은 실제 임시 파일의 실행 권한으로 판정한다. 별도 실행 프로세스나 운영 gh 로그인은 필요 없다.
-- 수정 전 두 thread 시험에서 실패와 회복이 교대로 기록되는 RED를 보존했다. 거짓 회복·인증 코드 오분류·worktree cwd 의존·fallback 제거를 각각 심어 keeper의 의도한 단언 RED를 확인하고 소스 bytes를 복구했다. 최종 gate는 전체 `bash scripts/ci-local.sh`와 `bash scripts/check-public.sh`다.
-- 과거 세 사건의 저장 오류에는 조회 머신·thread·환경 snapshot이 없었다. 인증 안내/ENOENT까지 구분할 수 있지만 당시 HOME·PATH·삭제 경쟁 중 하나를 확정할 수는 없다. gh 자체의 빈 설정 PR 조회는 종료 코드 4, PATH에서 gh가 없거나 spawn cwd가 사라졌을 때는 ENOENT로 재현했다.
+PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixture로 전환했다. 현재 회귀는 아래 t-1203 절을 따른다.
 
 ## aaa install I0 계약(t-0485, plan §8.312)
 
@@ -3525,12 +3515,7 @@ Front 요청이 이미 성공했는지, 연결 전에 실패했는지, 여전히
 
 ## PR 추적의 선택 실행과 CI 장애 분리(t-0492, plan §8.313)
 
-- `cargo test -p aaa --test m13 pr_environment::`: 실제 host↔agent↔가짜 gh에서 미게시 branch의 호출 0, 게시 branch 탐색, 미게시 branch의 명시한 보고 PR 추적, 미인증의 inbox 0·머신 상태·자동 사용 재개, 실행 파일 ENOENT의 조용한 생략, 일반 API 오류의 장애·회복 경계를 본다. 앞의 미게시 thread가 사용 불가 상태 때문에 뒤의 인증 회복 조회를 막지 않아야 한다. 호출 기록의 뒤 pass 시작, 보고 수신, 머신 상태로 기다리며 고정 sleep은 없다.
-- gh 없는 경계는 `cargo test -p aaa-agent --lib gh::tests::`의 실제 실행 가능 파일 검색(사용자 PATH·서비스 fallback·아무 실행 파일도 없음)과 위 ENOENT 통합 시험이 나누어 맡는다. ENOENT는 시험 gh의 없는 interpreter로 만들며 운영 gh·로그인·시스템 설정에 닿지 않는다.
-- 기존 `project_lifecycle`의 PR 청소·`pr_followup`·`merged_pr_resolves_the_thread`·`merged_resolve_waits_for_the_routine_prompt`·`resolve_looks_up_the_pull_request_once_more`는 가짜 GitHub가 게시된 branch라고 답할 때 그 원격 참조도 fixture에 둔다. 기존 PR 상태·후속 메시지·병합·정리 단언은 유지한다.
-- `cargo test -p aaa --test m13 ci_conditional_failure_restart_catchup_and_outage`: 기존 HTTP 실패·중복 억제·복구에 이어 별도 인증 실패(gh 종료 코드 4)의 CI outage를 확인한다. PR 생략 때문에 CI 실패를 숨기면 안 된다.
-- 수정 전에는 미게시 branch의 불필요 호출과 미인증 PR outage가 각각 실패했다. 게시 조건 제거·사용 불가 오류를 다시 실패로 전달·머신 상태 저장 제거·CI outage 전달 제거를 각각 심어 keeper 실패를 확인하고 원본 bytes로 복원한다. 마지막 검증은 전체 ci-local과 check-public이다.
-
+PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixture로 전환했다. 현재 회귀는 아래 t-1203 절을 따른다.
 
 ## branch 변경 뒤 agent 재시작과 준비 기록 격리(t-0495, plan §8.315)
 
@@ -4827,8 +4812,7 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 
 ## PR 조회 owner의 보고 셸 준비(t-1117 후속)
 
-- pr_environment의 네 기존 owner는 FAKE_AGENT만 쓴다. 이 파일의 전용 World에서만 TUI 없는 brief 안정·paste 간격을0으로 한다. 일반 World와 Claude/paste owner, 제품 기본 간격은 유지한다. agent의 gh/PATH/인증 환경과 host 환경을 분리하고 같은 host 설정을 재시작에도 보존한다.
-- 실제1초 PR 조회·ticker·outage 설정, 여러 pass 완료 울타리, 공개/미공개 branch와 실제 git 참조, 인증/회복·없는 실행 파일·stderr 가림·폴더 이주/오류·모든 원래 단언은 유지한다. 이름 추가/삭제·단계 분리는 없다. 단일 통과나 낮은 load 결과로 정규 원장을 줄이지 않고 다음 전체 차례에서 같은 조건 전후를 비교한다.
+PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixture로 전환했다. 현재 회귀는 아래 t-1203 절을 따른다.
 
 ## 대량 보고서 실제 제거의 완료 관측(t-1117 후속)
 
@@ -4864,3 +4848,12 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 실제 /bin/sh PTY 대조는 C에서 Readline의 convert-meta on·input-meta off와 한글의 meta 키 해석, en_US.UTF-8에서 convert-meta off·input-meta on과 한글 원문 출력을 확인했다. E02의 labEnv만 macOS en_US.UTF-8·Linux C.UTF-8로 정한다. 사용자/OS 로케일·운영 agent 환경은 바꾸지 않고, 원래 한글 문자열·fontOk의 글자 폭·20초 상한을 유지한다. 이 검증은 기존 E02가 맡으며 구현 상수만 확인하는 새 시험은 만들지 않는다.
 - 보강한 E53의 첫 실행에서 여러 줄 문자열을 pane wait-output에 넣은 관측 오류가 드러났다. 이 API의 match_output은 text.lines()에서 맞는 첫 줄을 찾는다. 각 화면 줄은 해당 API로 확인하고 사본·Follow-ups·inbox는 원문 전체를 정확히 대조하도록 고쳤다. 오류 로그를 보존했으며 코드 수정 뒤 E53만 추가 검증한다. E02·E69의 통과를 얻기 위한 재실행·시한 확대·원문 단언 완화는 없다.
 - 참고는 [GNU Bash Readline init의 convert-meta/input-meta와 LC_CTYPE](https://www.gnu.org/software/bash/manual/bash.html#Readline-Init-File-Syntax)(Bash GPL, 문서 GFDL)와 [Python PTY 표준 API](https://docs.python.org/3/library/pty.html)(PSF-2.0)다. 문자 로케일과 실제 PTY 입력을 대조하는 원칙을 참고했으며 외부 코드·새 의존성을 가져오지 않았다.
+
+## PR 워크플로 제거(t-1203, §8.520)
+
+- 새 m13 `no_pr::reports_and_cleanup_never_query_prs_or_resolve_on_main_membership`는 실제 host/agent와 `gh` 호출 함정으로 보고의 PR 줄·ticker·resolve 모두 조회하지 않음을 확인한다. main 조상이어도 수동 resolve 전까지 열린 thread, PR 필드 없는 Front 응답·옛 routine의 무발화/무오류·main 조상 branch 정리를 함께 검사한다. 필요한 이유는 조회 경로 삭제만으로 상태·정리·기존 규칙을 놓치는 회귀를 잡기 위해서다. 고정 지연 없이 보고 회수와 ticker 완료 사건으로 끝낸다.
+- 새 host unit `legacy_pr_metadata_does_not_override_report_groups`는 옛 PR 상태 제거·묶음 호환 읽기와 다른 legacy 자료 보존을 확인한다. 이 검사는 공용 legacy map에 PR 키가 다시 들어가는 회귀를 막는 데 필요하다.
+- 새 host unit `retired_pr_sources_are_inert_and_doctor_preserves_their_original_bytes`는 legacy routine/v1/v2 규칙의 목록 제외·새 저장 거부, CI 유지·다른 규칙 변환 가능, doctor의 바이트 보존·반복 무변경과 기본 안내를 확인한다. 필요한 이유는 기존 프로젝트의 PR 규칙이 config-error를 반복하거나 되살아나는 것을 막기 위해서다.
+- PR-only m13 `pr_followup`, `merged_pr_resolves_the_thread`, `merged_thread_cleans_its_task`, `merged_resolve_waits_for_the_routine_prompt`, `resolve_looks_up_the_pull_request_once_more`, `pr_environment_failure_is_not_recovered_by_another_thread`, `pr_unpublished_branch_never_calls_gh`, `pr_unauthenticated_machine_is_quiet_and_resumes`, `pr_missing_executable_is_quiet`를 제거한다. 삭제된 common/host PR 모듈 unit도 폐지 기능의 계약이므로 제거한다. 대체는 위 no_pr owner이며, 기존 `task_main_merge`의 원격 main·미병합·보고 누락 계약을 유지한다.
+- 변환·사본 충돌·계정 rename·dispatch·E2E40 fixture는 PR 규칙 대신 명시적인 일정 규칙을 쓴다. 완료 보관·E2E86은 main/보고/기존 완료 근거를 쓴다. sidebar unit은 과거 PR 필드가 섞여도 보고 상태만 표시한다. 기존 상태·보존·승인·권한 단언을 유지하며 시한·재시도·기대값 완화는 없다.
+- 외부 참고: [Git merge-base 소스](https://github.com/git/git/blob/master/builtin/merge-base.c)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))의 조상 판정과 [GitHub CLI run list](https://github.com/cli/cli/blob/trunk/pkg/cmd/run/list/list.go)([MIT](https://github.com/cli/cli/blob/trunk/LICENSE))의 Actions 실행 조회를 대조했다. 기존 Git/CI 경계를 재사용하며 외부 코드나 의존성을 추가하지 않는다.

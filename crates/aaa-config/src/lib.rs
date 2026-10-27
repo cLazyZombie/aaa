@@ -239,7 +239,7 @@ impl Default for NotifySection {
             webhook: String::new(),
             format: "json".into(),
             telegram_chat_id: String::new(),
-            kinds: ["thread-state", "session", "outage", "health", "routine-approval", "pr", "post"]
+            kinds: ["thread-state", "session", "outage", "health", "routine-approval", "post"]
                 .map(String::from)
                 .to_vec(),
             debounce_secs: 15,
@@ -313,10 +313,8 @@ pub struct ProjectsSection {
     /// coordinator 입력창이 이만큼(초) 비어 있는 것을 두 번 보아야 nudge를 보낸다. 사람이 치는 글과 섞이지 않게 한다
     /// (herdr-projects `NUDGE_QUIET_SECS`).
     pub nudge_quiet_secs: u64,
-    /// 머신이 이만큼(초) 끊겨 있으면 inbox에 outage 항목을 만든다. `gh`가 이만큼 계속 실패해도 한 번 알린다.
+    /// 머신이 이만큼(초) 끊기거나 CI·Git 조회가 계속 실패하면 inbox에 outage 항목을 만든다.
     pub outage_secs: u64,
-    /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
-    pub pr_poll_secs: u64,
     /// CI 조건부 조회 간격(최소 30초). 조회는 host 머신 agent가 기본이다.
     pub ci_poll_secs: u64,
     /// Git head 조회 주기(기본 60초, 운영 최소 30초).
@@ -337,8 +335,6 @@ pub struct ProjectsSection {
     pub delivered_working_secs: u64,
     /// project.toml `auto_resolve_days`의 하루 길이(초). 시험에서 줄인다.
     pub auto_resolve_day_secs: u64,
-    /// PR이 병합된 뒤 새 보고 없이 쉬는 thread를 끝내기까지(초, herdr-projects `MERGE_GRACE_SECS`). 시험에서 줄인다.
-    pub merge_grace_secs: u64,
     /// inbox에서 끝낸(done) 항목을 지우기까지 날짜
     pub inbox_done_days: u64,
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
@@ -361,7 +357,6 @@ impl Default for ProjectsSection {
             nudge_idle_secs: 60,
             nudge_quiet_secs: 10,
             outage_secs: 600,
-            pr_poll_secs: 120,
             ci_poll_secs: 60,
             git_poll_secs: 60,
             ci_stuck_mins: 60,
@@ -370,7 +365,6 @@ impl Default for ProjectsSection {
             stop_wait_ms: 15_000,
             delivered_working_secs: 15,
             auto_resolve_day_secs: 86_400,
-            merge_grace_secs: 600,
             inbox_done_days: 30,
             routine_commands: Vec::new(),
             max_auto_threads: 0,

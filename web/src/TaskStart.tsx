@@ -222,7 +222,6 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
                   <Markdown className="task-notes">{preview.task}</Markdown>
                 </div>
               </section>
-              <p className="muted task-start-note">시작하면 이 task 줄 끝에 thread 번호를 붙이고 「진행 중」으로 보인다. thread가 끝나면 완료(PR 병합·보고 [완료])일 때 저절로 지운다.</p>
             </>
           )}
           {error && (

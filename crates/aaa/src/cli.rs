@@ -353,7 +353,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TickerCmd,
     },
-    /// 없어졌다: 병합은 thread가 PR로 한다(안내만 하고 끝난다)
+    /// 없어졌다: 착지는 thread의 Next로 진행한다(안내만 하고 끝난다)
     #[command(hide = true)]
     Merge {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -543,7 +543,7 @@ enum ProjectCmd {
     },
     /// 보관을 푼다
     Unarchive { project: String },
-    /// 폴더를 휴지통(projects root의 .trash)으로 옮기고 host 기록을 그 안에 남긴다. worktree·branch·PR은 건드리지 않는다
+    /// 폴더를 휴지통(projects root의 .trash)으로 옮기고 host 기록을 그 안에 남긴다. worktree·branch는 건드리지 않는다
     Delete {
         /// (옛 꼴의 프로젝트, 생략한다)
         #[arg(hide = true)]
@@ -1715,7 +1715,7 @@ enum DoctorCmd {
     },
     /// 결과 JSON 여러 개를 한 표로
     Summary { files: Vec<PathBuf> },
-    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·uploads/·routines/pr-followup.md)을 host에서 본다
+    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·uploads/)을 host에서 본다
     /// (herdr-projects `doctor`). 안내가 낡았으면 `--fix`가 지금 aaa의 것으로 다시 쓴다
     Files {
         /// 고친다: aaa 표지가 있는 AGENTS.md는 다시 쓰고, 표지 없는 AGENTS.md는 `<이름>.before-aaa`로 옮겨 둔다
@@ -2265,7 +2265,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Ticker { cmd: TickerCmd::Tick } => front(json, FrontRequest::TickerTick),
         Cmd::Merge { .. } => anyhow::bail!(
             "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
-             `aaa thread next <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
+             `aaa thread next <id> --line N`으로 보내 착지를 진행한다. 결과는 main SHA와 push 여부로 확인한다"
         ),
         Cmd::Automation {
             cmd: AutomationCmd::Input { cmd: AutomationInputCmd::Complete { run, outcome, report } },
@@ -3158,12 +3158,6 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
                 Err(e) => (false, format!("Codex 전역 hook 점검 실패: {e:#}")),
             };
             let r = doctor::probe(&doctor::ProbeOptions { samples: 3, throughput: false, ..Default::default() });
-            let machines = front_call(FrontRequest::Machines)
-                .inspect_err(|error| {
-                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                })
-                .ok()
-                .and_then(Result::ok);
             let usage = front_call(FrontRequest::LibraryUsage)
                 .inspect_err(|error| {
                     aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
@@ -3172,7 +3166,6 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
                 .and_then(Result::ok);
             if json {
                 let mut value = serde_json::to_value(&r)?;
-                value["pr_tracking"] = serde_json::to_value(&machines)?;
                 value["library"] = serde_json::to_value(&usage)?;
                 value["codex_hooks"] = serde_json::json!({"ok":ok,"detail":detail,"backups":backups});
                 println!("{}", serde_json::to_string_pretty(&value)?);
@@ -3182,11 +3175,6 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
                     print!("{}", render_front(&usage));
                 } else {
                     println!("보고서 용량: host에 연결할 수 없어 확인하지 못했다");
-                }
-                if let Some(FrontResponse::Machines { machines }) = machines {
-                    for m in machines {
-                        println!("PR 추적 {}: {}", m.name, m.pr_tracking.as_deref().unwrap_or("아직 조회하지 않음"));
-                    }
                 }
                 println!("[{}] {detail}", if ok { "ok  " } else { "warn" });
                 for path in backups {
@@ -4324,10 +4312,6 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     if let Some(e) = &t.error {
         let _ = writeln!(s, "  오류: {e}");
     }
-    if let Some(pr) = &t.pr {
-        let review = pr.review.as_deref().map(|r| format!(", 리뷰 {r}")).unwrap_or_default();
-        let _ = writeln!(s, "  PR {} ({}{review})", pr.url, pr.state.as_deref().unwrap_or("아직 보지 않음"));
-    }
     if let Some(m) = &t.summary {
         let _ = writeln!(s, "  {}", summary_note(m));
     }
@@ -5044,10 +5028,7 @@ fn render_front(r: &FrontResponse) -> String {
                     (Some(e), _, _) => format!("[FAIL] files {}: 고치지 못했다({e}): {problems}", c.project),
                     (None, true, _) => format!("[ok  ] files {}: 고쳤다: {problems}", c.project),
                     (None, false, true) => {
-                        format!(
-                            "[ok  ] files {}: AGENTS.md(coordinator 안내)·uploads/·pr-followup routine이 맞다",
-                            c.project
-                        )
+                        format!("[ok  ] files {}: AGENTS.md(coordinator 안내)·uploads/이 맞다", c.project)
                     }
                     (None, false, false) => {
                         format!("[warn] files {}: {problems}; `aaa doctor files --fix`가 고친다", c.project)
@@ -5300,13 +5281,13 @@ fn render_front(r: &FrontResponse) -> String {
             let n = |v: Option<u32>| v.map(|n| n.to_string()).unwrap_or_else(|| "모름".into());
             let _ = writeln!(
                 s,
-                "{}/{}: 커밋하지 않은 파일 {} · base 대비 바뀐 파일 {} · 사본 {} · PR {}",
+                "{}/{}: 커밋하지 않은 파일 {} · base 대비 바뀐 파일 {} · 사본 {} · main 포함 {}",
                 p.project,
                 p.thread,
                 n(p.uncommitted),
                 n(p.changed),
                 p.copy.as_deref().unwrap_or("없음"),
-                if p.merged { "병합됨" } else { "병합 안 됨" }
+                if p.merged { "확인됨" } else { "미확인" }
             );
             for r in &p.risks {
                 let _ = writeln!(s, "위험: {r}");

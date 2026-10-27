@@ -19,6 +19,7 @@ mod diff;
 mod files;
 mod gh;
 mod git_watch;
+mod github;
 mod health;
 pub mod hooks;
 pub mod identity;
@@ -29,7 +30,6 @@ pub mod link;
 mod page;
 mod plan;
 pub mod post;
-mod pr;
 mod quota;
 #[cfg(target_os = "macos")]
 mod report_watch;
@@ -2030,10 +2030,6 @@ impl Agent {
             AgentRequest::CiQuery { cwd, query } => ci::query(&cwd, &query)
                 .await
                 .map(AgentResponse::Ci)
-                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
-            AgentRequest::PrQuery { cwd, query } => pr::query(&cwd, &query)
-                .await
-                .map(AgentResponse::Pr)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
             AgentRequest::ThreadDiff { cwd, base, query } => diff::query(&cwd, base.as_deref(), &query)
                 .await

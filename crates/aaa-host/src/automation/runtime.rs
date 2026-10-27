@@ -166,7 +166,6 @@ fn source(r: &Routine) -> &'static str {
     match r.trigger {
         crate::routine::Trigger::Ci(_) => "ci",
         crate::routine::Trigger::Git(_) => "git",
-        crate::routine::Trigger::Pr(_) => "pr",
         crate::routine::Trigger::Thread(_) => "events",
         crate::routine::Trigger::Schedule(_) => "routine",
     }
@@ -285,56 +284,6 @@ impl Host {
             })
             .map_err(internal)?;
         Ok(added)
-    }
-
-    pub(crate) fn automation_changed_owner(
-        &self,
-        p: &str,
-        r: &Routine,
-        scope: &str,
-        hash: &str,
-        body: String,
-        owner: Option<String>,
-    ) -> Result<bool, ErrorBody> {
-        let previous = if scope == "command" {
-            self.db.meta(&format!("routine_out:{p}:{}", r.name)).map_err(internal)?
-        } else {
-            None
-        };
-        let start_scope =
-            if let Action::Start(a) = &r.action { Some(self.automation_start_scope(p, r, a)?) } else { None };
-        let body = if let Action::Start(a) = &r.action {
-            self.automation_input_reports(p, a, owner.as_deref(), body)?
-        } else {
-            body
-        };
-        let revision =
-            hex::encode(Sha256::digest(serde_json::to_vec(&super::File::from_routine(r)).map_err(internal)?));
-        let mut changed = false;
-        self.db
-            .update_meta(&key(p, &r.name), |old| {
-                let mut s = state(old)?;
-                if s.source_hashes.get(scope).map(String::as_str).or(previous.as_deref()) != Some(hash) {
-                    let event = Event {
-                        id: aaa_common::util::new_id(),
-                        at_ms: aaa_common::util::now_ms(),
-                        owner,
-                        body,
-                        action: r.action.clone(),
-                        source: source(r).into(),
-                        start_scope,
-                        observe: None,
-                        revision,
-                    };
-                    check_input_size(&event).map_err(|e| anyhow::anyhow!(e.message))?;
-                    s.pending.push(event);
-                    s.source_hashes.insert(scope.into(), hash.into());
-                    changed = true;
-                }
-                Ok(serde_json::to_string(&s)?)
-            })
-            .map_err(internal)?;
-        Ok(changed)
     }
 
     pub(crate) fn automation_cancel(
@@ -1340,17 +1289,7 @@ impl Host {
                     self.thread_message(
                         p,
                         target,
-                        if first.source == "pr" && batch.events.len() == 1 {
-                            serde_json::from_str::<serde_json::Value>(&first.body)
-                                .inspect_err(|error| {
-                                    aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다")
-                                })
-                                .ok()
-                                .and_then(|v| v["prompt"].as_str().map(str::to_string))
-                                .unwrap_or_else(|| first.body.clone())
-                        } else {
-                            format!("{}\n\n{}", a.text.as_deref().unwrap_or(""), data)
-                        },
+                        format!("{}\n\n{}", a.text.as_deref().unwrap_or(""), data),
                         MessageMode::Queue,
                         &format!("routine:{}", r.name),
                     )

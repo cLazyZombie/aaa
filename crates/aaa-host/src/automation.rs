@@ -73,7 +73,6 @@ pub(crate) enum Condition {
     Schedule(Scheduled),
     Command(Command),
     Thread(Threads),
-    Pr(Pr),
     Ci(Ci),
     Git(Git),
 }
@@ -127,12 +126,6 @@ pub(crate) struct Threads {
     /// 고리를 막는다. 켜도 이 규칙이 띄운 thread의 사건은 늘 뺀다
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub include_automation: bool,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct Pr {
-    pub events: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -570,10 +563,6 @@ pub(crate) fn parse_with(
                 put("machine", m.clone().into());
             }
         }
-        Condition::Pr(p) => {
-            put("on", "pr".into());
-            put("events", p.events.clone().into());
-        }
         Condition::Thread(t) => {
             if t.events.is_empty()
                 || t.events.iter().any(|e| {
@@ -593,7 +582,6 @@ pub(crate) fn parse_with(
             match spec.on {
                 Condition::Ci(_) => "on.ci",
                 Condition::Git(_) => "on.git",
-                Condition::Pr(_) => "on.pr",
                 Condition::Command(_) => "on.command",
                 _ => "on.schedule",
             },
@@ -700,7 +688,6 @@ impl File {
                 Condition::Schedule(schedule)
             }
             Trigger::Thread(t) => Condition::Thread(t.clone()),
-            Trigger::Pr(events) => Condition::Pr(Pr { events: events.clone() }),
             Trigger::Ci(c) => Condition::Ci(Ci {
                 repo: c.repo.clone(),
                 branches: c.branches.clone(),

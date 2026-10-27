@@ -191,7 +191,7 @@ impl Host {
                         name,
                         &aaa_common::util::new_id(),
                         "failed",
-                        &format!("조회 장애: {}", aaa_common::pr::sanitize(error.unwrap_or(""))),
+                        &format!("조회 장애: {}", aaa_common::github::sanitize(error.unwrap_or(""))),
                         None,
                     );
                 }
@@ -203,7 +203,7 @@ impl Host {
                     &format!(
                         "{} 조회가 계속 실패한다: {}",
                         policy.label,
-                        aaa_common::pr::sanitize(error.unwrap_or(""))
+                        aaa_common::github::sanitize(error.unwrap_or(""))
                     ),
                 );
                 self.flow_project(p, &format!("{}_query_failing", policy.source), None, subject);

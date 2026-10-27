@@ -1,6 +1,6 @@
 # 자동화 정의와 실행
 
-자동화는 `schema = 2` 정의 하나와 실행 원장 하나를 사용한다. 일정·PR·CI·Git·thread 사건·수동 실행이 공통 내구 큐로 들어오며, 명령 조회도 같은 실행 안에서 처리한다. frontend는 aaa-proto에서 생성한 계약만 사용한다. 별도 workflow 서버는 없다.
+자동화는 `schema = 2` 정의 하나와 실행 원장 하나를 사용한다. 일정·CI·Git·thread 사건·수동 실행이 공통 내구 큐로 들어오며, 명령 조회도 같은 실행 안에서 처리한다. frontend는 aaa-proto에서 생성한 계약만 사용한다. 별도 workflow 서버는 없다.
 
 ```toml
 #:schema ./automation.schema.json
@@ -18,7 +18,7 @@ kind = "notice"
 text_file = "automations/nightly-coverage.brief.md"
 ```
 
-`trigger`는 schedule(every/daily 중 하나, host 지역 시각) 또는 event(source=thread/pr/ci/git)다. CI·Git의 저장소와 조회 머신은 trigger에, 사건 종류·저장소/branch/workflow 필터는 condition에 둔다. 기존 명령 출력 감시는 schedule + observe.command + condition.output_changed=true다. 현재 명령 조회는 일정에만 붙이며 한 규칙에 조회 명령과 직접 명령 동작을 함께 쓰지 않는다.
+`trigger`는 schedule(every/daily 중 하나, host 지역 시각) 또는 event(source=thread/ci/git)다. CI·Git의 저장소와 조회 머신은 trigger에, 사건 종류·저장소/branch/workflow 필터는 condition에 둔다. 기존 명령 출력 감시는 schedule + observe.command + condition.output_changed=true다. 현재 명령 조회는 일정에만 붙이며 한 규칙에 조회 명령과 직접 명령 동작을 함께 쓰지 않는다.
 
 | action.kind | 동작 영수증 | 완료의 뜻 |
 | --- | --- | --- |

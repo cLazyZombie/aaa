@@ -134,8 +134,6 @@ fn render_item(i: &InboxItem) -> String {
 /// 사람이 읽는 대상 이름(`machine mac-b`, `t-0001`)
 pub(crate) fn who(i: &InboxItem) -> String {
     match i.item_kind.as_str() {
-        // `gh` 실패(pr.rs)는 머신이 아니다
-        "outage" if i.subject == "gh" => "gh".into(),
         "outage" | "health" | "session" => format!("machine {}", i.subject),
         "routine" | "routine-approval" => format!("routine {}", i.subject),
         _ => i.subject.clone(),
@@ -463,8 +461,8 @@ impl Host {
             async move {
                 let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
                 loop {
-                    // PR 조회 때가 더 이르면 그때까지만 잔다
-                    let sleep = [me.pr_next_due(), me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
+                    // 다음 조회·배경 작업 차례가 더 이르면 그때 깨어난다
+                    let sleep = [me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
                         .into_iter()
                         .flatten()
                         .map(|d| d.saturating_duration_since(std::time::Instant::now()))
@@ -522,13 +520,11 @@ impl Host {
                 self.inbox_once(&p.name, "config-error", "missions", "conversion pending", &e.message);
             }
             self.usage_limit_pass(&p.name).await;
-            self.resolve_merged_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;
             self.park_pass(&p.name).await;
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, !self.coordinator_panes(dir).is_empty());
             self.automation_tick(&p.name);
-            self.pr_tick(&p.name);
             self.ci_tick(&p.name);
             self.git_tick(&p.name);
             self.tasks_pass(&p.name, dir);

@@ -100,12 +100,8 @@ pub fn hp_group(f: &Facts, now_s: i64) -> &'static str {
         return "waiting-on-you";
     }
     // 5
-    let pr_open = f.pr_state.eq_ignore_ascii_case("open");
-    if pr_open && f.pr_review.eq_ignore_ascii_case("approved") {
-        return "landing";
-    }
     let new_report = has_report && f.report_hash != f.acked_hash;
-    if (new_report || (has_report && pr_open)) && !f.prompt_pending && state != Some("working") {
+    if new_report && !f.prompt_pending && state != Some("working") {
         return "ready-for-review";
     }
     // 6
@@ -130,7 +126,6 @@ pub fn token(g: ThreadGroup) -> &'static str {
     match g {
         ThreadGroup::WaitingOnYou => "waiting-on-you",
         ThreadGroup::ReadyForReview => "ready-for-review",
-        ThreadGroup::Landing => "landing",
         ThreadGroup::Working => "working",
         ThreadGroup::Idle => "idle",
         ThreadGroup::Parked => "parked",
@@ -165,9 +160,6 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         repo: None,
         base: None,
         branch: None,
-        pr: None,
-        pr_state: (!f.pr_state.is_empty()).then(|| f.pr_state.clone()),
-        pr_review: (!f.pr_review.is_empty()).then(|| f.pr_review.clone()),
         cwd: None,
         work_dir: None,
         pane: None,
@@ -199,7 +191,6 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         review_item_hash: None,
         group_changed_ms: None,
         report_changed_ms: None,
-        merged_seen_ms: None,
         error: None,
         resolve_pending: None,
         task_clean: Default::default(),
@@ -377,8 +368,6 @@ pub fn analyze_tick(dir: &Path, opts: &Opts) -> Result<Vec<Row>> {
                 pane_exists: true,
                 report_hash: t.report_hash.clone(),
                 acked_hash: t.acked_report_hash.clone(),
-                pr_state: t.pr_state.clone(),
-                pr_review: t.pr_review.clone(),
                 ..Facts::default()
             };
             let live_state = agent.map(|a| a.agent_status.clone());
@@ -700,16 +689,6 @@ mod tests {
         d.agent_state = Some("idle".into());
         d.report_hash = "h".into();
         assert_eq!(both(&d), ("ready-for-review", "ready-for-review"));
-        // PR 승인: 둘 다 병합 중(D11). 확인한 보고라도 PR이 열려 있으면 둘 다 검토 대기
-        let mut l = open();
-        l.agent_state = Some("idle".into());
-        l.pr_state = "OPEN".into();
-        l.pr_review = "APPROVED".into();
-        assert_eq!(both(&l), ("landing", "landing"));
-        l.pr_review.clear();
-        l.report_hash = "h".into();
-        l.acked_hash = "h".into();
-        assert_eq!(both(&l), ("ready-for-review", "ready-for-review"));
     }
 
     #[test]

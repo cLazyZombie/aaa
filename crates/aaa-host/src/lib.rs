@@ -74,7 +74,6 @@ mod output;
 mod park;
 mod passkey;
 mod post;
-mod pr;
 mod prefs;
 mod project;
 mod prompt;
@@ -654,8 +653,6 @@ pub struct Host {
     /// 지금 도는 routine 명령(`<project>/<name>`)
     automation_sources: tokio::sync::Mutex<()>,
     automation_dispatch: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
-    pr: Mutex<pr::PrMemory>,
     watch: Mutex<watch::Memory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
@@ -893,7 +890,6 @@ impl Host {
             usage_limits: Mutex::new(HashMap::new()),
             automation_sources: tokio::sync::Mutex::new(()),
             automation_dispatch: Mutex::new(HashMap::new()),
-            pr: Mutex::new(pr::PrMemory::default()),
             watch: Mutex::new(watch::Memory::default()),
             view_caps: Mutex::new(HashMap::new()),
             library_signing: std::sync::RwLock::new(library_signing),
@@ -1246,15 +1242,22 @@ impl Host {
 
     // ───────────── 보기 ─────────────
 
+    /// 연결된 agent가 hello에서 알린 실행 신원.
+    pub(crate) fn machine_identity(&self, mid: &str) -> Option<aaa_proto::RuntimeIdentity> {
+        let i = self.inner.lock().unwrap();
+        i.machines.get(mid).filter(|m| m.conn.is_some()).and_then(|m| m.identity.clone())
+    }
+    pub(crate) fn machine_feature(&self, mid: &str, feature: &str) -> bool {
+        self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == feature))
+    }
+
     pub fn machine_views(&self) -> Vec<MachineView> {
-        let availability = self.pr.lock().unwrap().availability.clone();
         let host_software = aaa_common::util::software();
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i
             .machines
             .iter()
             .map(|(id, m)| MachineView {
-                pr_tracking: availability.get(id).cloned(),
                 id: id.clone(),
                 name: m.name.clone(),
                 local: m.local,

@@ -693,7 +693,7 @@ export default async function ({ page }) {
     if ((await done.locator("h3").innerText()) !== `끝남 (${ended})`) throw new Error(`끝남 ${ended}: ${await done.innerHTML()}`);
     // 묶음은 popup DISPLAY_ORDER대로, 끝남은 맨 아래
     const order = await view.locator("[data-testid^=project-group-]").evaluateAll((xs) => xs.map((x) => x.dataset.testid.slice("project-group-".length)));
-    const rank = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
+    const rank = ["waiting_on_you", "ready_for_review", "working", "idle", "resolved"];
     if (order.at(-1) !== "resolved" || order.some((g, i) => i > 0 && rank.indexOf(g) < rank.indexOf(order[i - 1]))) throw new Error(order.join(","));
     // 끝난 줄은 흐리다(popup group_color: Resolved는 DarkGrey)
     const r = view.getByTestId("project-thread-t-0001");

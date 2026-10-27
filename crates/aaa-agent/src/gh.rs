@@ -1,8 +1,8 @@
-//! PR·CI가 쓰는 gh 실행 경계. 자격 증명은 gh에 맡기고 파일·토큰을 읽지 않는다.
+//! CI가 쓰는 gh 실행 경계. 자격 증명은 gh에 맡기고 파일·토큰을 읽지 않는다.
 use anyhow::{Context, Result, bail};
 use std::{path::PathBuf, process::ExitStatus};
 
-/// PR만 조용히 생략할 수 있는 실행 환경. CI는 이 오류도 계속 알린다.
+/// CI 실행 환경 오류. 인증 정보 없이 원인을 구분한다.
 #[derive(Debug)]
 pub(crate) enum Unavailable {
     Missing,
