@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn report_stages_release_queue_capacity_and_block_new_work_after_return() {
-    let mut w = world();
+    let mut w = report_shell_world();
     w.h.ok(&["project", "set", "demo", "max_parallel_threads", "1"]);
     w.h.ok(&["project", "set", "demo", "thread_profile", "fake"]);
     let task = w.task("stage-work.md", "noreport");

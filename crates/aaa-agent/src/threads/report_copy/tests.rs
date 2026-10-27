@@ -27,8 +27,12 @@ impl Drop for Lab {
 #[test]
 fn real_size_budget_preserves_report_links_and_small_evidence_before_images() {
     let lab = Lab::new();
+    // 같은 부모의 준비를 2390번 반복하지 않는다. 각 파일은 원래처럼
+    // 서로 다른 실제 inode와 224 KiB sparse 크기를 가진다.
+    let frames = lab.work().join("library/a-frames");
+    std::fs::create_dir(&frames).unwrap();
     for i in 0..2390 {
-        lab.put(&format!("a-frames/{i:04}.png"), 224 * 1024);
+        std::fs::File::create(frames.join(format!("{i:04}.png"))).unwrap().set_len(224 * 1024).unwrap();
     }
     for name in ["summary.md", "metrics.csv", "ledger.json", "run.log", "events.jsonl", "table.tsv"] {
         lab.put(&format!("z-evidence/{name}"), 1024);

@@ -11,7 +11,7 @@ pub mod inventory;
 pub mod shadow;
 pub mod source;
 
-use std::io::Read as _;
+use std::io::BufRead as _;
 use std::path::Path;
 
 use sha2::Digest;
@@ -20,15 +20,18 @@ use sha2::Digest;
 pub const SOURCE_PIN: &str = "herdr-projects 0.2.35 (1f05c00), herdr 0.9.5 (2ecf19a)";
 
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
-    let mut f = std::fs::File::open(path)?;
+    // 작은 inbox 파일마다 1 MiB Vec를 0으로 채우지 않는다. 큰 파일의 읽기
+    // 용량은 유지하고 BufReader가 실제 읽은 바이트만 hash에 넣는다.
+    let mut f = std::io::BufReader::with_capacity(1 << 20, std::fs::File::open(path)?);
     let mut h = sha2::Sha256::new();
-    let mut buf = vec![0u8; 1 << 20];
     loop {
-        let n = f.read(&mut buf)?;
+        let bytes = f.fill_buf()?;
+        let n = bytes.len();
         if n == 0 {
             break;
         }
-        h.update(&buf[..n]);
+        h.update(bytes);
+        f.consume(n);
     }
     Ok(hex::encode(h.finalize()))
 }

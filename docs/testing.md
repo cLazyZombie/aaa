@@ -4639,3 +4639,14 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - 이미지 보존 owner의 PTY는 `FAKE_AGENT`/`COORD_AGENT`의 줄 단위 custom 보고 셸이며 bracketed paste를 켜지 않는다. Codex 이미지 helper는 그 PTY가 아닌 별도 headless 프로세스다. 이 전용 host의 초기/재시작 명령에만 `AAA_TEST_SUBMIT_GAP_MS=0`을 주어 해당되지 않는 TUI paste 대기를 제거한다. 제품 기본300ms와 실제 paste/수락 경계의 기존 harness owner는 그대로 유지한다. 기존10초 수락 시한·실제2머신/4provider시도·544KiB PNG·모든 canary/권한/재시작/목록/forget/누출 단언은 바꾸지 않는다.
 
 - resolve owner의 dir/worktree/adopted는 원래 생성 순서로 실제 기동한 뒤 각각의 보고·brief와 exit1·resolve를 같은 순서로 검사한다. 기본 한도10 안의 독립된3thread를 준비하며, 보고 대기를 겹쳐도 원래 CLI 호출·단언·ID 생성 순서와 pane/layout/폴더 보존은 그대로다.
+
+
+## 보고 변경 사건과 owner별 준비(t-1117 후속)
+
+- macOS agent의 보고 감시는 report.md 파일 vnode(제자리 쓰기)와 그 부모 vnode(생성·원자적 rename·삭제)를 함께 관측한다. 감시 등록/metadata 확인은 hash 읽기 전에 한다. 사건은 기존 report hash를 다시 읽을 계기이며, 실제 hash가 달라졌을 때만 기존 ReportChanged를 보낸다. symlink를 따라가지 않고 library 내부는 감시하지 않는다. 원래 크기/권한/hash·호스트 사본 검증을 유지한다.
+- 무관한 부모 사건은 보고 stamp가 바뀌지 않으면 끝내지 않는다. 기존1초 점검은 항상 남아 사건 누락·감시 준비/갱신/대기 오류에도 hash를 읽는다. 오류는 단계·OS 원인을 남기고1초 경로로 돌아간다. fd는 CLOEXEC·소유권·READABLE 등록을 지키며 감시 task 종료/교체 때 닫는다. Linux/Windows는 기존1초 경로다.
+- `report_writes_and_replacements_wake_without_following_library_or_symlinks`는 실제 vnode·파일로 생성/제자리 쓰기/교체/삭제와 library·symlink 경계를 검사한다. `unrelated_vnode_events_preserve_the_one_second_backstop`은 정지 시계에서 무관한 사건이 원래1초 점검을 앞당기거나 미루지 못하게 한다. 두 시험은 새 사건 관측의 거짓 변경과 점검 유실을 막는 데 필요하다.
+- `report_shell_world`는 TUI 없는 FAKE_AGENT의 줄 단위 보고 셸만 쓰는 work_root 재시작·보고 단계/예약 한도·machine_health 세 owner에 한정한다. 이 전용 host에서만 시험 화면 안정/paste 간격을0으로 하고 실제 brief·보고·한도·거부·건강 사건을 기다린다. 일반 World와 CLAUDE_AGENT/PASTE_AGENT의 원래 간격·300ms paste·10초 수락 및 제품3초 화면 안정 기본값은 바꾸지 않는다. 초기/재시작 host에 같은 전용 설정을 유지한다. work_root의 세 실제 worktree는 원래 순서로 만들고 brief도 같은 순서로 확인하되 독립 준비를 겹친다. 모든 branch/dirty/journal/PID/오류 격리 단언을 유지한다.
+- E37은 같은 native 목록 click·선택·pane 수명으로 대화 위치를 검사하되 해당 context의 workspace drawer 전환만 즉시 처리한다. 정상 drawer 전환·쓸기·기록/취소 계약은 E39의 기존 `drawerNavigation`이 맡는다. 대화의 실제 두 frame·scroll·모든 HTTP 쪽·2400건·1px·25ms CPU·2초 refresh 정책은 그대로다. 시계 모형이나 단계 분리는 추가하지 않는다.
+- 자료 선택 owner는 같은 부모 폴더 준비만 한 번 수행하고 원래2390개 frame을 각각 별도 실제 파일로 만든다. sparse 크기·실제2399경로·200MiB 선택 상한·링크/근거 우선순위·모든 원래 단언을 유지한다. 본문 hash의 실제 읽기는 기존 collect owner가 계속 검사한다. 이관 hash는1MiB 읽기 용량을 유지하는 BufReader로 EOF까지 실제 바이트를 처리하며 작은 파일마다1MiB Vec를 명시적으로0으로 채우는 작업을 없앤다.
+- [Playwright fixture](https://playwright.dev/docs/test-fixtures)·[context 내 style](https://playwright.dev/docs/api/class-page#page-add-style-tag)(Apache-2.0), [libuv FS event](https://docs.libuv.org/en/v1.x/fs_event.html)(MIT)·[notify kqueue](https://github.com/notify-rs/notify/blob/main/notify/src/kqueue.rs)(crate선언 CC0-1.0)·[Tokio AsyncFd](https://docs.rs/tokio/latest/tokio/io/unix/struct.AsyncFd.html)(MIT), [표준 BufRead](https://doc.rust-lang.org/std/io/trait.BufRead.html)(MIT/Apache-2.0)를 대조했다. 의미별 fixture 수명·파일/부모의 함께 관측·사건 뒤 실제 내용 확인·표준 스트림 경계 원칙을 따르며 외부 코드나 새 의존성을 가져오지 않았다.

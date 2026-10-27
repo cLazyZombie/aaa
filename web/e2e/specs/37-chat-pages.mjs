@@ -132,6 +132,10 @@ export default async function () {
     const page = ph.page;
     diagnostics.page = page;
     diagnostics.errors = ph.errors;
+    // 목록 drawer의 실제 전환·쓸기는 E39 drawerNavigation이 소유한다.
+    // 이 owner는 같은 native click·선택·pane 수명으로 대화 위치를 검사한다.
+    // drawer 전환만 즉시 바꾸고 대화의 frame·scroll·refresh 시계는 유지한다.
+    await page.addStyleTag({ content: '#workspace-drawer { transition: none !important; }' });
     await inList(page, `pane-${label}`);
     const toggle = page.getByTestId("chat-toggle");
     await toggle.waitFor();

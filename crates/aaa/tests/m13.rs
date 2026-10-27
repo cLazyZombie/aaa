@@ -603,7 +603,20 @@ fn world_build(
     settle_ms: Option<&'static str>,
     agent_env: impl FnOnce(&Path) -> Vec<(String, String)>,
 ) -> World {
-    let (mut w, env) = world_files(extra, web, settle_ms, true, agent_env);
+    let (w, env) = world_files(extra, web, settle_ms, true, agent_env);
+    world_start(w, env)
+}
+
+/// FAKE_AGENT의 줄 단위 보고 셸만 쓰는 owner. TUI 입력창·paste가 없으므로
+/// 적용되지 않는 화면 안정/paste 간격을 빼고 실제 brief 수신·보고 사건을 기다린다.
+/// CLAUDE_AGENT·PASTE_AGENT와 제품 기본 간격은 기존 world가 그대로 검사한다.
+fn report_shell_world() -> World {
+    let (mut w, env) = world_files("", false, Some("0"), true, |_| Vec::new());
+    w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
+    world_start(w, env)
+}
+
+fn world_start(mut w: World, env: Vec<(String, String)>) -> World {
     w.spawn_host("host");
     let st = wait_for("host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = st["agent_listen"].as_str().unwrap().to_string();
@@ -4653,7 +4666,7 @@ fn notify_webhook() {
 /// 머신 건강(§8.10): 디스크 부족·toolchain 실패면 새 세션을 거부하고 inbox에 남긴다. 고치고 다시 띄우면 풀린다.
 #[test]
 fn machine_health() {
-    let mut w = world();
+    let mut w = report_shell_world();
     let t = w.start(&["--title", "h", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("h.txt", "x")]);
     let id = t["id"].as_str().unwrap().to_string();
     w.wait_show("보고", &id, |v| v["report_hash"].is_string());
