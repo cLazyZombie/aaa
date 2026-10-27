@@ -265,7 +265,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.134: TaskOp::AppendNotes·TaskEdited.warnings — 메모 추가와 교체 경고.
 // 1.135: PR 조회·자동화 source·상태를 제거한다. branch 정리는 원격 main 포함 판정을 쓴다(t-1203).
 // 1.136: 완료·보관·삭제한 할 일의 대기 예약 종료와 구판 예약 회수(t-1200). wire 형식은 그대로다.
-pub const FRONT_API: Version = Version { major: 1, minor: 136 };
+// 1.137: 보고서 탭 줄 새로고침과 저장소 줄 버튼 배치(t-1201). wire 형식은 그대로다.
+pub const FRONT_API: Version = Version { major: 1, minor: 137 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

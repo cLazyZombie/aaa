@@ -1,9 +1,8 @@
 import { RepoFilter, useRepoFilter } from "./RepoFilter";
-import { TaskFilterChips } from "./TaskHistoryTools";
 import { reportRepoChoices, filterReports } from "./reportRepos";
 import { ListId } from "./ListId";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Trash2 } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import type { DeviceRole, FrontResponse, LibraryReport } from "./gen/proto";
 import { call } from "./api";
 import { runBatches, type ActionProgress } from "./bulkAction";
@@ -173,14 +172,18 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     </button>
   );
   return <div className="reports-panel" data-testid="reports-panel" data-status={reports === null ? "loading" : "ready"} data-tab={tab}>
-    <div className="reports-tabs" role="tablist" aria-label="보고서 종류">
-      {tabButton("mine", "내 보고서", unseen > 0 && <span className="reports-count is-new" data-testid="reports-unseen" aria-label={`안 본 보고서 ${unseen}`}>{unseen > 99 ? "99+" : unseen}</span>)}
-      {tabButton("work", "작업 보고", reports !== null && <span className="reports-count">{work.length}</span>)}
-      {tabButton("archive", "보관함", reports !== null && <span className="reports-count">{archive.length}</span>)}
+    <div className="reports-header">
+      <div className="reports-tabs" role="tablist" aria-label="보고서 종류">
+        {tabButton("mine", "내 보고서", unseen > 0 && <span className="reports-count is-new" data-testid="reports-unseen" aria-label={`안 본 보고서 ${unseen}`}>{unseen > 99 ? "99+" : unseen}</span>)}
+        {tabButton("work", "작업 보고", reports !== null && <span className="reports-count">{work.length}</span>)}
+        {tabButton("archive", "보관함", reports !== null && <span className="reports-count">{archive.length}</span>)}
+      </div>
+      <button type="button" className="icon-button" aria-label="새로고침" title="새로고침" data-testid="reports-refresh" onClick={() => void load()}>
+        <RefreshCw aria-hidden="true" />
+      </button>
     </div>
-    <TaskFilterChips label="거르기" repo={<RepoFilter value={repoOn} choices={choices} total={reports?.length ?? 0} onChange={changeRepo} testId="reports-repo" />}>{null}</TaskFilterChips>
     <div className="reports-toolbar">
-      <button className="ghost small" onClick={() => void load()}>새로고침</button>
+      <RepoFilter value={repoOn} choices={choices} total={reports?.length ?? 0} onChange={changeRepo} testId="reports-repo" />
       <span className="reports-toolbar-actions">
         {canEdit && admin && <button className="ghost small" onClick={startUpload} data-testid="reports-upload">보고서 올리기</button>}
         {canEdit && <button className="ghost small" data-testid="reports-mark-read" disabled={saving || reports === null || unreadRows.length === 0}
