@@ -15,6 +15,11 @@
 - 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib`와
   `RUST_TEST_THREADS=8`의 같은 명령, `cargo clippy --profile verify --locked -p aaa-common --all-targets -- -D warnings`,
   fmt·공개 검사다. 시스템 설정·SIP·boot args는 바꾸지 않는다. 전체 gate·착지는 coordinator 차례에 수행한다.
+- 원래 main과 같은 macOS 15.7.9(24G830)의 [진단 run 40432899481](https://github.com/cLazyZombie/aaa/actions/runs/40432899481)에서
+  시스템 shell·Apple 서명을 유지한 사본은 본문과 exec 뒤 exit7, ad-hoc 재서명 사본은 본문 진입 전 실패였다.
+  arm64e slice 지정은 signal11, 기본 실행은 signal9로 원래 main의 signal4와 같지는 않았다.
+  확정한 수리 경계는 재서명된 시스템 shell의 실행 실패이며, 정확한 trap 명령이나 OS 내부 거부 사유를
+  확보한 것처럼 쓰지 않는다. native arm64 launcher는 exec·socket·NOTE_EXIT를 거쳐 네 모드를 0.29초에 통과했다.
 - 참고 후보는 [XNU exec 정책](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_exec.c)
   (APSL-2.0), [Rust std spawn](https://github.com/rust-lang/rust/blob/main/library/std/src/sys/process/unix/unix.rs)
   (MIT/Apache-2.0), [Duct](https://github.com/oconnor663/duct.rs/blob/master/src/lib.rs)(MIT)다.
