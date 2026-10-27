@@ -4289,3 +4289,33 @@ ci-local build는 Windows에서 `cargo build --release --locked -p aaa --bin aaa
 - `followups::tests::legacy_automation_next_handoff_is_durable_and_preserves_explicit_receipts`은 이미 판정한 구판 미처리 항목을 정상 정리 순회로 인계하고 원본 ID/판/줄·자동화 이름/host/시각·기존 명시 영수증·inbox 종료·보관·재기동/재순회 불변을 검사한다. 필요한 이유: 새 보고가 없는 종료 감시 thread의 후속 경고도 수동 사유 입력 없이 해소하고 이전 처리 근거를 보존해야 한다.
 - 기존 m13 `automation_thread_reports_do_not_wake_their_own_rule`에 실제 do.start 출처의 완료 Next 표시 유지·후속 미수집·일반 시작의 수집 대조를 추가한다. 새 프로세스 실험실·E2E 번호를 늘리지 않는다. 기존 자동화 보고 사건의 순서/자기 재실행 방지 단언은 유지한다.
 - 부분 확인은 `nice -n 15 cargo test --profile verify --locked -p aaa-host --lib followups::tests`와 `nice -n 15 cargo test --profile verify --locked -p aaa --test m13 automation_thread_reports_do_not_wake_their_own_rule`다. 개별 새 시험은 보통 부하에서 5초 이하로 유지하고 고정 sleep·재시도·시한 확대·기대값 완화는 없다. 전체 gate는 coordinator가 정한 같은 머신의 실행 차례를 받아 실행한다.
+## Ubuntu 메뉴 시험의 PTY slave 상속(t-1150)
+
+- 원래 두 Ubuntu 실패 로그에는 `Working → ESC-DECODE-GATE → pick:<cancel>`까지 있다.
+  입력 정지가 아니라 그 뒤 EOF 대기 실패다. 원본 순간의 상속 PID/FD는 수집되지 않았다.
+  Linux 격리 진단에서 원래 메뉴의 안내·`stty -icanon` 완료·전송 `1b 0a`·dd 수신 `1b 0a`·
+  취소/exit0·EOF를 나눴다. 별도 자식이 slave를 상속하면 exit0 뒤에도 EOF가 없고,
+  그 자식의 해제 뒤 EOF가 왔다. 상속하지 않으면 같은 자식이 살아 있을 때 EOF가 왔다.
+- portable-pty 0.9.0은 Linux에서도 `openpty` 반환 뒤 별도 `fcntl`로 CLOEXEC를 건다.
+  공통 생성 잠금을 Unix에 적용하고 lab의 PTY 열기·자식 생성 및 같은 m13 프로세스의
+  직접 std Command 호출을 같은 잠금에 넣는다. wait·출력 수집은 잠금 밖이다.
+  메뉴 화면·Working/취소 판정·출력 EOF 수집과 기존 대기 상한은 유지한다.
+  PTY 실패 진단에는 자식 PID/종료 상태와 안내별 전송 바이트 수·정리 결과를 남긴다.
+- Linux GNU의 `child_process::pty_tests::pty_open_window_does_not_leak_slave_or_delay_eof_until_another_child_exits`
+  는 LD_PRELOAD를 자기 worker에만 주고 실제 openpty 반환 직후 창을 사건으로 붙잡는다.
+  raw 대조의 실제 slave 상속·exit7 뒤 EOF 부재·holder 종료 뒤 EOF와,
+  std/Tokio의 상속 없음·holder 생존 중 EOF·전체 출력/exit7 보존을 검사한다.
+  필요한 이유: Linux pipe2만으로 PTY도 안전하다고 가정한 회귀를 실제 FD 경계에서 막는다.
+  기존 macOS pipe 창 회귀도 유지한다. 외부 코드·제품 hook·새 E2E 번호는 추가하지 않는다.
+- 부분 검사는 `nice -n 15 cargo test --profile verify --locked -p aaa-common --lib`,
+  `nice -n 15 cargo test --profile verify --locked -p aaa --test m13`와 두 crate의 strict clippy다.
+  Linux는 자기 격리 VM에서도 같은 명령으로 확인한다. 새 회귀의 내부 사건 상한은 2초,
+  worker 안전 상한은 5초이며 정상 실행은 5초 이하로 확인한다.
+  고정 sleep·실패 재시도·기대값 완화·시한 확대는 없다. 전체 ci-local은 착지 차례에 실행한다.
+- OSS 후보는 [portable-pty의 실제 openpty/CLOEXEC 구현](https://github.com/wezterm/wezterm/blob/main/pty/src/unix.rs)
+  ([MIT](https://github.com/wezterm/wezterm/blob/main/LICENSE.md)),
+  [Pexpect의 터미널 모드와 EOF 구분](https://github.com/pexpect/pexpect/blob/master/pexpect/pty_spawn.py)
+  ([ISC](https://github.com/pexpect/pexpect/blob/master/LICENSE)),
+  [Expectrl의 PTY 수명 관리](https://github.com/zhiburt/expectrl)
+  ([MIT](https://github.com/zhiburt/expectrl/blob/main/LICENSE))다.
+  모드 준비·입력·자식 종료·EOF를 구별하고 생성 중 FD 상속을 막는 원칙을 따른다.

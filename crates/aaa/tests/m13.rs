@@ -42,6 +42,7 @@ mod web_publication;
 #[path = "m13/work_root.rs"]
 mod work_root;
 
+use aaa_common::child_process::StdCommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -436,7 +437,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .arg(dir)
         .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
         .args(args)
-        .output()
+        .capture_output()
         .unwrap();
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
     String::from_utf8_lossy(&o.stdout).trim().to_string()
@@ -700,8 +701,8 @@ fn lab_capture_returns_while_another_process_holds_the_output() {
     assert!(o.status.success(), "{o:?}");
     let holder = String::from_utf8_lossy(&o.stdout).trim().to_string();
     // 돌아온 때 손자가 아직 출력을 들고 있었다(pipe였다면 이 손자가 끝날 때까지 돌아오지 않는다)
-    let alive = Command::new("kill").args(["-0", &holder]).status().expect("kill -0").success();
-    let _ = Command::new("kill").arg(&holder).status();
+    let alive = Command::new("kill").args(["-0", &holder]).status_guarded().expect("kill -0").success();
+    let _ = Command::new("kill").arg(&holder).status_guarded();
     assert!(alive, "출력을 든 손자 {holder}가 돌아오기 전에 끝났다");
 }
 
@@ -1910,7 +1911,11 @@ fn thread_read_and_keys() {
     assert!(e.contains("키나 --text"), "{e}");
     // aaa 세션 안 CLI(coordinator의 셸 도구)는 `question answer`로도 신뢰 창에 답하지 못한다(plan §8.163). 사람(세션 밖)은 된다
     let coord = w.h.new_pane(None, "labA", None, &["/bin/sh"], None);
-    let o = w.h.cmd(&["--json", "question", "answer", &q.id, "yes"]).env("AAA_SESSION_ID", &coord).output().unwrap();
+    let o =
+        w.h.cmd(&["--json", "question", "answer", &q.id, "yes"])
+            .env("AAA_SESSION_ID", &coord)
+            .capture_output()
+            .unwrap();
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success() && err.contains("trust_screens = user"), "{err}");
     assert_eq!(
@@ -2022,7 +2027,7 @@ fn memory_and_restart() {
     std::os::unix::fs::symlink(&outside, dir.join("decisions.md")).unwrap();
     w.h.ticks(2);
     std::fs::remove_file(dir.join("decisions.md")).unwrap();
-    assert!(Command::new("mkfifo").arg(dir.join("decisions.md")).status().unwrap().success());
+    assert!(Command::new("mkfifo").arg(dir.join("decisions.md")).status_guarded().unwrap().success());
     w.h.ticks(2);
     std::fs::remove_file(dir.join("decisions.md")).unwrap();
     // 결정이 적힌 옛 decisions.md: brief에 넣지 않고, memory로 옮기라고 내용당 한 번 알린다(host는 memory를 쓰지 않는다)
@@ -2104,7 +2109,7 @@ fn safety_and_profiles_by_a_person() {
     assert_eq!(row(&s, "yolo"), ("off".into(), "기본값".into()));
     assert_eq!(row(&s, "thread_profiles").1, "host.toml [projects]", "옛 allow_profiles가 아래 층: {s}");
     // 바꾸기는 사람만: 세션 안, 터미널 아님
-    let o = w.h.cmd(&["safety", "yolo", "on"]).env("AAA_SESSION_ID", "x").output().unwrap();
+    let o = w.h.cmd(&["safety", "yolo", "on"]).env("AAA_SESSION_ID", "x").capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
     let o = w.h.run(&["safety", "yolo", "on"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
@@ -3015,7 +3020,7 @@ fn worker_session_cli_is_read_only() {
     let t = w.start(&["--title", "w", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("w.txt", "x")]);
     let (id, pane) = (t["id"].as_str().unwrap(), t["pane"].as_str().unwrap());
     let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
-    let as_session = |s: &str, args: &[&str]| w.h.cmd(args).env("AAA_SESSION_ID", s).output().unwrap();
+    let as_session = |s: &str, args: &[&str]| w.h.cmd(args).env("AAA_SESSION_ID", s).capture_output().unwrap();
     for args in [
         &["thread", "next", "demo", id, "--add", "thread가 더한 줄"][..],
         &["thread", "message", "demo", id, "--text", "x"],
@@ -3349,7 +3354,7 @@ fn project_create_options_and_set() {
     w.h.ok(&["project", "set", "shop", "max_parallel_threads", "3"]);
     // 상대 경로는 친 셸의 cwd 기준
     std::fs::create_dir_all(w.lab.root.join("lib")).unwrap();
-    let o = w.h.cmd(&["project", "set", "shop", "repos.add", "lib"]).current_dir(&w.lab.root).output().unwrap();
+    let o = w.h.cmd(&["project", "set", "shop", "repos.add", "lib"]).current_dir(&w.lab.root).capture_output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     w.h.ok(&["project", "set", "shop", "repos.remove", "/srv/api@labB"]);
     let s = toml("shop");
@@ -3618,7 +3623,7 @@ fn cli_takes_no_project_argument() {
     let id = v["id"].as_str().unwrap().to_string();
     assert_eq!(v["project"], "demo", "{v}");
     let new = w.h.ok(&["thread", "show", &id]);
-    let old = w.h.cmd(&["--json", "thread", "show", "demo", &id]).output().unwrap();
+    let old = w.h.cmd(&["--json", "thread", "show", "demo", &id]).capture_output().unwrap();
     assert!(old.status.success(), "{old:?}");
     assert!(String::from_utf8_lossy(&old.stderr).contains("프로젝트 인자는 이제 생략한다"), "{old:?}");
     let old: Value = serde_json::from_slice(&old.stdout).unwrap();
@@ -3702,7 +3707,7 @@ fn project_open_follows_coordinator_safety() {
     let mut text = std::fs::read_to_string(&host_toml).unwrap();
     text.push_str("\n[safety.demo]\nyolo = true\n");
     std::fs::write(&host_toml, text).unwrap();
-    let o = w.h.cmd(&["profile", "allow", "coordinator", "resumable", "--project", "demo"]).output().unwrap();
+    let o = w.h.cmd(&["profile", "allow", "coordinator", "resumable", "--project", "demo"]).capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
     let out = w.h.in_terminal(&["profile", "allow", "coordinator", "resumable", "--project", "demo"], &[], T);
     assert!(out.contains("coordinator는 `demo`에서 resumable를 쓸 수 있다"), "{out}");
@@ -3976,7 +3981,11 @@ fn project_open_starts_or_shows_the_coordinator() {
     w.h.ok(&["set", "coordinator_profile", "fake"]);
     assert_eq!(profile_of(), Value::from("fake"));
     assert_eq!(w.h.ok(&["coordinator", "open", "--new"])["profile"], "fake");
-    let o = w.h.cmd(&["profile", "default", "coordinator", "resumable"]).env("AAA_SESSION_ID", "x").output().unwrap();
+    let o =
+        w.h.cmd(&["profile", "default", "coordinator", "resumable"])
+            .env("AAA_SESSION_ID", "x")
+            .capture_output()
+            .unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
     let out = w.h.in_terminal(&["profile", "default", "coordinator", "resumable"], &[], T);
     assert!(out.contains("`resumable`을 쓴다"), "{out}");
@@ -4082,9 +4091,9 @@ fn routines() {
 
     // 승인: aaa 세션 안이거나 터미널이 아니면 거부한다
     let mut c = w.h.cmd(&["routine", "approve", "demo", "cmd"]);
-    let o = c.env("AAA_SESSION_ID", "x").output().unwrap();
+    let o = c.env("AAA_SESSION_ID", "x").capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
-    let o = w.h.cmd(&["routine", "approve", "demo", "cmd"]).env_remove("AAA_SESSION_ID").output().unwrap();
+    let o = w.h.cmd(&["routine", "approve", "demo", "cmd"]).env_remove("AAA_SESSION_ID").capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
     // aaa pane 안에서 변수를 지우고 이름까지 쳐도 host가 그 pane을 판정해 거부한다(plan §8.164)
     let shell = w.h.new_pane(None, "labA", Some("sh"), &["/bin/sh"], None);
@@ -4873,9 +4882,10 @@ fn task_board_reads_tasks_and_follows_file_edits() {
 
     // 보기 권한(worker 세션 안 CLI)도 읽는다
     let pane = other["pane"].as_str().unwrap();
-    let o = w.h.cmd(&["--json", "task", "list"]).env("AAA_SESSION_ID", pane).output().unwrap();
+    let o = w.h.cmd(&["--json", "task", "list"]).env("AAA_SESSION_ID", pane).capture_output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    let o = w.h.cmd(&["thread", "next", "demo", oid, "--add", "x"]).env("AAA_SESSION_ID", pane).output().unwrap();
+    let o =
+        w.h.cmd(&["thread", "next", "demo", oid, "--add", "x"]).env("AAA_SESSION_ID", pane).capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "그 세션은 보기 권한이다");
 
     // 고치지 않은 tick은 사건을 내지 않는다: 다음에 고친 뒤 오는 첫 `tasks` 사건이 고친 sha다
@@ -5061,11 +5071,11 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     let o =
         w.h.cmd(&["task", "add", "thread가 더함"])
             .env("AAA_SESSION_ID", worker["pane"].as_str().unwrap())
-            .output()
+            .capture_output()
             .unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "{o:?}");
     let shell = w.h.new_pane(None, "labA", None, &["/bin/sh"], None);
-    let o = w.h.cmd(&["task", "add", "셸이 더함"]).env("AAA_SESSION_ID", &shell).output().unwrap();
+    let o = w.h.cmd(&["task", "add", "셸이 더함"]).env("AAA_SESSION_ID", &shell).capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("그 프로젝트 coordinator만"), "{o:?}");
     assert!(!read().contains("thread가 더함") && !read().contains("셸이 더함"));
     // pane 안에서 `aaa task add`를 돌린다(그 pane의 확인된 세션으로): 끝 코드와 stderr
@@ -6289,7 +6299,10 @@ fn post_from_thread_reaches_coordinator_inbox() {
         w.nudge_windows(Duration::from_secs(1), Duration::from_secs(1));
         w.wait_for_count(&coord, "post request for user", n as usize);
         let status =
-            w.h.cmd(&["post", "status", "demo", &format!("{n:032x}")]).env("AAA_SESSION_ID", &coord).output().unwrap();
+            w.h.cmd(&["post", "status", "demo", &format!("{n:032x}")])
+                .env("AAA_SESSION_ID", &coord)
+                .capture_output()
+                .unwrap();
         assert!(status.status.success(), "{}", String::from_utf8_lossy(&status.stderr));
         assert!(String::from_utf8_lossy(&status.stdout).contains("ok p-"));
         let screen = w.h.screen(&coord);
@@ -6424,7 +6437,7 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     let bin = w.lab.root.join("deploy-bin");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join("aaa");
-    assert!(Command::new("cp").args([Path::new(lab::BIN), &exe]).status().unwrap().success());
+    assert!(Command::new("cp").args([Path::new(lab::BIN), &exe]).status_guarded().unwrap().success());
     let original = std::fs::read(&exe).unwrap();
     let candidate = w.lab.root.join("deploy-candidate");
     lab::variant_binary(Path::new(lab::BIN), &candidate, "aaa-deployment-test");
@@ -6523,7 +6536,7 @@ esac
     let spoof =
         w.h.cmd(&["update", "--machine", "labB", "--from", candidate.to_str().unwrap()])
             .env("AAA_SESSION_ID", &pane)
-            .output()
+            .capture_output()
             .unwrap();
     assert!(!spoof.status.success(), "자기 신고로 배포가 허용됐다: {spoof:?}");
     assert!(String::from_utf8_lossy(&spoof.stderr).contains("coordinator만"), "{spoof:?}");
@@ -6793,7 +6806,7 @@ int main(int argc, char **argv) {
 "#,
     )
     .unwrap();
-    let compiled = Command::new("cc").arg(&source).arg("-o").arg(&bin).output().unwrap();
+    let compiled = Command::new("cc").arg(&source).arg("-o").arg(&bin).capture_output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
     let mut command = lab::terminal_command(&bin);
     command.arg(&closed);

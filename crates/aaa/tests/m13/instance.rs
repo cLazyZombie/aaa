@@ -2,6 +2,7 @@
 //! 운영 `~/.config/aaa`·launchd에는 닿지 않는다(HOME이 실험실이고 감독자는 설치하지 않는다).
 #![cfg(target_os = "macos")]
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 
 /// 실험실 HOME에서 dir env 없이 도는 명령. 빈 값은 「정하지 않음」이다(`aaa_config::paths`)
 fn bare(node: &Node, home: &Path, args: &[&str]) -> Command {
@@ -58,15 +59,15 @@ fn second_instance_has_its_own_folders_host_and_cookie() {
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
     // 실험실 dir env가 남아 있으면 그 폴더를 쓰게 되므로 거부한다
-    let o = node.cmd(&["--instance", "work", "init"]).env("HOME", &home).output().unwrap();
+    let o = node.cmd(&["--instance", "work", "init"]).env("HOME", &home).capture_output().unwrap();
     assert!(!o.status.success());
     assert!(String::from_utf8_lossy(&o.stderr).contains("AAA_CONFIG_DIR가 정해져 있다"), "{o:?}");
     // 이름 규칙
-    let o = bare(&node, &home, &["--instance", "Work", "status"]).output().unwrap();
+    let o = bare(&node, &home, &["--instance", "Work", "status"]).capture_output().unwrap();
     assert_eq!(o.status.code(), Some(2), "{o:?}");
     assert!(String::from_utf8_lossy(&o.stderr).contains("인스턴스 이름 `Work`"), "{o:?}");
     // 사람 터미널이 아니면 만들지 않는다
-    let o = bare(&node, &home, &["--instance", "work", "init"]).output().unwrap();
+    let o = bare(&node, &home, &["--instance", "work", "init"]).capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
     assert!(!home.join(".config/aaa-work").exists());
     // 기본 인스턴스에 같은 이름의 프로젝트가 있으면 branch 내부 이름이 부딪힌다
@@ -99,7 +100,7 @@ fn second_instance_has_its_own_folders_host_and_cookie() {
     wait_for("인스턴스 host front.sock", T, || state.join("host/front.sock").exists().then_some(()));
     lab.spawn_command("work-agent", bare(&node, &home, &["--instance", "work", "agent"]));
     wait_for("인스턴스 로컬 agent 연결", T, || {
-        let o = bare(&node, &home, &["--instance", "work", "--json", "machine", "list"]).output().ok()?;
+        let o = bare(&node, &home, &["--instance", "work", "--json", "machine", "list"]).capture_output().ok()?;
         let v: Value = serde_json::from_slice(&o.stdout).ok()?;
         v["machines"].as_array()?.iter().any(|m| m["connection"] == "connected").then_some(())
     });
@@ -122,7 +123,7 @@ exit 1
     let show = bare(&node, &home, &["--instance", "work", "service", "show", "--role", "host", "--aaa", lab::BIN])
         .args(["--launcher", path_str(&launcher)])
         .env("PATH", &path)
-        .output()
+        .capture_output()
         .unwrap();
     let plist = String::from_utf8_lossy(&show.stdout);
     assert!(show.status.success(), "{show:?}");
@@ -133,23 +134,23 @@ exit 1
     assert!(!home.join("aaa-work").exists());
 
     // 기본 인스턴스(이름 없음)는 같은 HOME에서도 이 host를 보지 않는다
-    let o = bare(&node, &home, &["--json", "status"]).output().unwrap();
+    let o = bare(&node, &home, &["--json", "status"]).capture_output().unwrap();
     assert!(!o.status.success());
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(err.contains("Application Support/aaa/host/front.sock"), "{err}");
     // pane 안처럼 env로만 준 인스턴스도 같은 host로 간다
-    let o = bare(&node, &home, &["--json", "status"]).env("AAA_INSTANCE", "work").output().unwrap();
+    let o = bare(&node, &home, &["--json", "status"]).env("AAA_INSTANCE", "work").capture_output().unwrap();
     assert!(o.status.success(), "{o:?}");
 
     // 프로젝트 이름을 생략하면 인스턴스 이름: worktree·branch 내부 이름이 다른 인스턴스와 겹치지 않는다
-    let o = bare(&node, &home, &["--instance", "work", "--json", "project", "create"]).output().unwrap();
+    let o = bare(&node, &home, &["--instance", "work", "--json", "project", "create"]).capture_output().unwrap();
     assert!(o.status.success(), "{o:?}");
     assert!(home.join(".aaa-work/projects/work/PROJECT.md").is_file());
-    let o = bare(&node, &home, &["--json", "project", "create"]).output().unwrap();
+    let o = bare(&node, &home, &["--json", "project", "create"]).capture_output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("프로젝트 이름이 필요하다"), "{o:?}");
 
     // 웹 장치 cookie 이름에 인스턴스 꼬리: 같은 hostname의 기본 인스턴스 로그인을 덮지 않는다
-    let pair = json_of(&bare(&node, &home, &["--instance", "work", "--json", "web", "pair"]).output().unwrap());
+    let pair = json_of(&bare(&node, &home, &["--instance", "work", "--json", "web", "pair"]).capture_output().unwrap());
     let code = pair["code"].as_str().unwrap_or_else(|| panic!("{pair}"));
     let res = http_post(web, "/api/v1/pair", &format!(r#"{{"code":"{code}","label":"lab"}}"#));
     assert!(res.starts_with("HTTP/1.1 200"), "{res}");

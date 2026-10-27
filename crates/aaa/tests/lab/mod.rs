@@ -735,8 +735,10 @@ pub struct Terminal {
 impl Terminal {
     pub fn spawn(command: portable_pty::CommandBuilder) -> Self {
         use portable_pty::{PtySize, native_pty_system};
-        let pair = native_pty_system().openpty(PtySize::default()).expect("시험 PTY 열기");
-        let child = pair.slave.spawn_command(command).expect("시험 CLI 실행");
+        let pair = aaa_common::child_process::with_spawn_lock(|| native_pty_system().openpty(PtySize::default()))
+            .expect("시험 PTY 열기");
+        let child =
+            aaa_common::child_process::with_spawn_lock(|| pair.slave.spawn_command(command)).expect("시험 CLI 실행");
         // 부모의 slave 사본이 남으면 자식이 끝나도 master에 EOF가 오지 않는다.
         drop(pair.slave);
         Self { master: pair.master, child }
@@ -760,16 +762,23 @@ impl Terminal {
         });
         let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
         let mut stdin = self.master.take_writer().unwrap();
+        let mut sent = Vec::new();
         for (prompt, typed) in answers {
             wait_for_diag(&format!("물음 {prompt:?}"), timeout, || text().contains(prompt).then_some(()), text);
             std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
+            sent.push((*prompt, typed.len() + 1));
         }
         match done_rx.recv_timeout(timeout) {
             Ok(Ok(())) => {}
             failed => {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                panic!("{args:?} PTY 출력이 {timeout:?} 안에 끝나지 않았다: {failed:?}\n{}", text());
+                let status = self.child.try_wait();
+                let cleanup =
+                    if matches!(status, Ok(None)) { Some((self.child.kill(), self.child.wait())) } else { None };
+                panic!(
+                    "{args:?} PTY 출력이 {timeout:?} 안에 끝나지 않았다: {failed:?}, pid={:?}, child={status:?}, prompt/write={sent:?}, cleanup={cleanup:?}\n{}",
+                    self.child.process_id(),
+                    text()
+                );
             }
         }
         let status = self.child.wait().unwrap();

@@ -1,5 +1,6 @@
 //! 로컬 bare 원격의 실제 push·조회 agent·thread 없는 사건 repo 구독 경계.
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 use sha2::{Digest, Sha256};
 fn poll(db: &aaa_host::db::Db, key: &str, after: u64) -> u64 {
     wait_for("Git poll 저장", T, || {
@@ -27,10 +28,12 @@ fn git_events(w: &World) -> Vec<Value> {
         .collect()
 }
 fn head(dir: &Path) -> String {
-    String::from_utf8(Command::new("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout)
-        .unwrap()
-        .trim()
-        .into()
+    String::from_utf8(
+        Command::new("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).capture_output().unwrap().stdout,
+    )
+    .unwrap()
+    .trim()
+    .into()
 }
 fn failed_queries(trace: &Path) -> usize {
     let rows: Vec<Value> = std::fs::read_to_string(trace)
@@ -111,8 +114,12 @@ fn git_push_restart_force_delete_and_outage() {
     assert_eq!(data["change"]["changed_files"], 1);
     assert!(data["change"]["commits"][0]["subject"].as_str().unwrap().contains("t-0042"));
     assert_eq!(head(&w.repo), base, "조회 fetch가 checkout HEAD를 움직이지 않는다");
-    let tracking =
-        Command::new("git").arg("-C").arg(&w.repo).args(["rev-parse", "refs/remotes/origin/main"]).output().unwrap();
+    let tracking = Command::new("git")
+        .arg("-C")
+        .arg(&w.repo)
+        .args(["rev-parse", "refs/remotes/origin/main"])
+        .capture_output()
+        .unwrap();
     assert!(tracking.status.success());
     assert_eq!(String::from_utf8(tracking.stdout).unwrap().trim(), base);
     assert_eq!(std::fs::read(w.repo.join(".git/FETCH_HEAD")).ok(), fetch_head);

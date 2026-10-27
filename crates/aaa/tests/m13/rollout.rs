@@ -1,6 +1,7 @@
 //! L1 실제 CLI·TLS agent·사본 실행 파일. launchctl만 기록하는 모형이며 운영 서비스에 닿지 않는다.
 #![cfg(target_os = "macos")]
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 
 // 실제 TLS agent 앞의 시험 소유 byte proxy. 두 번째 조각 응답을 붙잡고 다른 link/입력을 관찰한다.
 struct TransferProxy {
@@ -140,7 +141,7 @@ fn rollout_scenario(scenario: Scenario) {
         if let Some(variant) = variant {
             lab::variant_binary(Path::new(lab::BIN), path, variant);
         } else {
-            assert!(Command::new("cp").args([lab::BIN, path_str(path)]).status().unwrap().success());
+            assert!(Command::new("cp").args([lab::BIN, path_str(path)]).status_guarded().unwrap().success());
         }
     }
     lab::variant_binary(Path::new(lab::BIN), &candidate, "rollout-candidate");
@@ -320,7 +321,7 @@ esac
     };
     let digest = |p: &Path| hex::encode(Sha256::digest(std::fs::read(p).unwrap()));
     let copy = |from: &Path, to: &Path| {
-        assert!(Command::new("cp").args([path_str(from), path_str(to)]).status().unwrap().success());
+        assert!(Command::new("cp").args([path_str(from), path_str(to)]).status_guarded().unwrap().success());
     };
     let variant = |p: &Path, suffix: &str| lab::variant_binary(Path::new(lab::BIN), p, suffix);
     if scenario == Scenario::Transfer {
@@ -331,7 +332,7 @@ esac
         let spoof =
             w.h.cmd(&["deploy", "start", "--from", path_str(&candidate), "--sha256", &sha])
                 .env("AAA_SESSION_ID", &pane)
-                .output()
+                .capture_output()
                 .unwrap();
         assert!(!spoof.status.success(), "{spoof:?}");
         let cancelled = w.h.in_terminal(
@@ -341,7 +342,8 @@ esac
         );
         assert!(cancelled.contains("취소"), "{cancelled}");
         assert_eq!(db.meta("rollout:active").unwrap(), None, "no 확인으로 배포를 만들지 않는다");
-        let non_tty = w.h.cmd(&["deploy", "start", "--from", path_str(&candidate), "--sha256", &sha]).output().unwrap();
+        let non_tty =
+            w.h.cmd(&["deploy", "start", "--from", path_str(&candidate), "--sha256", &sha]).capture_output().unwrap();
         assert!(!non_tty.status.success(), "터미널 없는 CLI가 시작했다");
         assert!(String::from_utf8_lossy(&non_tty.stderr).contains("표준 입력이 터미널"), "{non_tty:?}");
         let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
@@ -588,7 +590,7 @@ esac
                     "import sys; open(sys.argv[1], 'ab').write(b'changed-after-preflight')",
                     path_str(&candidate)
                 ])
-                .status()
+                .status_guarded()
                 .unwrap()
                 .success()
         );
@@ -672,7 +674,7 @@ esac
             }
         }
         assert_eq!(guard().unwrap()["phase"], "awaiting_new");
-        let direct = b.cmd_bin(&b_exe, &["deployment-guard", "--id", &guard_id]).output().unwrap();
+        let direct = b.cmd_bin(&b_exe, &["deployment-guard", "--id", &guard_id]).capture_output().unwrap();
         assert!(!direct.status.success(), "agent bootstrap 없이 내부 감시 CLI가 실행됐다");
         let recovery_ids = armed["spec"].clone();
         let guard_pid = armed["worker_pid"].clone();

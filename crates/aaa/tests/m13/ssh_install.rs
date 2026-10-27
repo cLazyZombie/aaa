@@ -7,6 +7,7 @@
 //! 확인한다). gui domain 등록(`dev.aaa.agent`)은 계정 전역이라 적용 전에 그 label이 없어야 하고, 끝나면 bootout한다.
 #![cfg(target_os = "macos")]
 use super::*;
+use aaa_common::child_process::StdCommandExt;
 use aaa_common::front::FrontClient;
 use aaa_proto::install::InstallLogin;
 use aaa_proto::{FrontRequest, FrontResponse, MachineSetupPhase, MachineSetupSettings, MachineSetupView};
@@ -20,12 +21,12 @@ const APPLY: Duration = Duration::from_secs(15 * 60);
 struct Booted(String);
 impl Drop for Booted {
     fn drop(&mut self) {
-        let _ = Command::new("/bin/launchctl").args(["bootout", &self.0]).output();
+        let _ = Command::new("/bin/launchctl").args(["bootout", &self.0]).capture_output();
     }
 }
 
 fn gui_target() -> String {
-    let uid = Command::new("id").arg("-u").output().unwrap();
+    let uid = Command::new("id").arg("-u").capture_output().unwrap();
     format!("gui/{}/{LABEL}", String::from_utf8_lossy(&uid.stdout).trim())
 }
 
@@ -40,10 +41,10 @@ fn factory(lab: &Lab) -> PathBuf {
         .arg(repo.join("p0/launcher/install.sh"))
         .arg("--dest")
         .arg(dir.join("bundle"))
-        .output()
+        .capture_output()
         .unwrap();
     assert!(built.status.success(), "launcher build: {}", String::from_utf8_lossy(&built.stderr));
-    let version = String::from_utf8(Command::new(&exe).arg("--version").output().unwrap().stdout).unwrap();
+    let version = String::from_utf8(Command::new(&exe).arg("--version").capture_output().unwrap().stdout).unwrap();
     let version = version.trim().strip_prefix("aaa ").unwrap().to_string();
     let platform = format!("macos-{}", std::env::consts::ARCH);
     let packed = Command::new("python3")
@@ -54,7 +55,7 @@ fn factory(lab: &Lab) -> PathBuf {
         .arg(&exe)
         .args(["--platform", &platform, "--version", &version, "--output"])
         .arg(dir.join(format!("aaa-launcher-{platform}.json")))
-        .output()
+        .capture_output()
         .unwrap();
     assert!(packed.status.success(), "launcher pack: {}", String::from_utf8_lossy(&packed.stderr));
     exe
@@ -159,7 +160,7 @@ fn ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_c
         };
         let v = wait(&mut c, &job, "접속", T, |v| v.phase != MachineSetupPhase::Connecting).await;
         assert_eq!(v.phase, MachineSetupPhase::Trust, "{:?}", v.error);
-        let fp = Command::new("ssh-keygen").arg("-lf").arg(ci.join("hostkey.pub")).output().unwrap();
+        let fp = Command::new("ssh-keygen").arg("-lf").arg(ci.join("hostkey.pub")).capture_output().unwrap();
         let fp = String::from_utf8_lossy(&fp.stdout).split_whitespace().nth(1).unwrap().to_string();
         assert_eq!(v.host_keys.iter().map(|k| k.sha256.as_str()).collect::<Vec<_>>(), vec![fp.as_str()]);
         call(&mut c, FrontRequest::MachineSetupTrust { job: job.clone(), host_key_sha256: fp }).await;
@@ -192,7 +193,7 @@ fn ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_c
 
         // 적용: 계정 전역 label이 비어 있을 때만 등록한다(운영 계정 보호), 끝나면 내린다
         let target = gui_target();
-        let taken = Command::new("/bin/launchctl").args(["print", &target]).output().unwrap().status.success();
+        let taken = Command::new("/bin/launchctl").args(["print", &target]).capture_output().unwrap().status.success();
         assert!(!taken, "{target}가 이미 있다: 이 계정에서 돌리지 않는다");
         let _booted = Booted(target);
         call(
