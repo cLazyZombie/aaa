@@ -936,6 +936,24 @@ export default async function ({ ctl, page }) {
     const exited = inTime(dp.evaluate(waitForSettingsExit), 20_000, "긴 줄 바꿈 설정의 기록 복귀");
     await releaseSettingsExit(dp, exited);
     await openAt(dp, "src/big.ts:2500", "접은 big.ts 2500번째 줄 가운데", 2500, async () => {
+      // 실제 창 높이 변경으로 같은 행의 링크를 누른 사이 terminal.resize를 전달한다.
+      // 열 수와 링크 좌표는 그대로이며, ack·그리드 반영 사건 뒤 PTY를 다시 그린다.
+      const before = await dp.locator('.xterm-rows').evaluate(el => el.childElementCount);
+      const point = await textPoint(dp, 'src/big.ts:2500');
+      await dp.setViewportSize({ width: 1280, height: 819 });
+      await domIs(dp, "누른 사이 크기 변경 반영", (before) => {
+        const term = document.querySelector('[data-testid="terminal"]');
+        const size = /(\d+)×(\d+)/.exec(document.querySelector('.term-title .muted')?.textContent ?? '');
+        return term?.dataset.fit === "same" && !term.hasAttribute("data-fit-pending") &&
+          Number(size?.[1]) === 112 && Number(size?.[2]) === before + 1 &&
+          term.querySelector('.xterm-rows').childElementCount === before + 1;
+      }, before, 5000);
+      const resizedPoint = await textPoint(dp, 'src/big.ts:2500');
+      // MouseEvent.clientX/Y의 정수 좌표를 비교한다. 링크 밑줄 span의 합침은
+      // Range만 1/64px 움직일 수 있지만 실제 down/up 좌표는 바뀌지 않는다.
+      if (Math.trunc(point.x) !== Math.trunc(resizedPoint.x) || Math.trunc(point.y) !== Math.trunc(resizedPoint.y))
+        throw new Error(`resize가 누른 링크 좌표를 옮겼다 ${JSON.stringify({ point, resizedPoint })}`);
+      await dp.evaluate(() => window.__aaaFileOpenRecord?.('resize-while-pressed'));
       // 실제 PTY 출력으로 누름과 놓음 사이에 같은 링크를 다시 그린다. 대상·위치는 그대로다.
       aaa("pane", "send-text", "big", "x");
       await domIs(dp, "누른 링크를 실제 PTY가 다시 그림", () =>

@@ -1,27 +1,51 @@
 diff --git a/src/browser/Types.d.ts b/src/browser/Types.d.ts
 --- a/src/browser/Types.d.ts
 +++ b/src/browser/Types.d.ts
-@@ -121,3 +121,4 @@
+@@ -119,6 +119,7 @@
+   isHovered: boolean;
+ }
  export interface ILinkWithState {
 +  provider: number;
    link: ILink;
    state?: ILinkState;
+ }
 diff --git a/src/browser/Linkifier.ts b/src/browser/Linkifier.ts
 --- a/src/browser/Linkifier.ts
 +++ b/src/browser/Linkifier.ts
-@@ -137,3 +137,3 @@
+@@ -135,7 +135,7 @@
+           if (this._isMouseOut) {
+             return;
            }
 -          const linksWithState: ILinkWithState[] | undefined = links?.map(link  => ({ link }));
 +          const linksWithState: ILinkWithState[] | undefined = links?.map(link  => ({ link, provider: i }));
            this._activeProviderReplies?.set(i, linksWithState);
-@@ -219,3 +219,5 @@
+           linkProvided = this._checkLinkProviderResult(i, position, linkProvided);
+
+@@ -217,16 +217,28 @@
+   }
+
    private _handleMouseUp(event: MouseEvent): void {
+-    if (!this._currentLink) {
+-      return;
+-    }
+-
 +    const down = this._mouseDownLink;
 +    this._mouseDownLink = undefined;
-     if (!this._currentLink) {
+     const position = this._positionFromMouseEvent(event, this._element, this._mouseService);
+     if (!position) {
        return;
-@@ -229,3 +231,9 @@
+     }
+-
 -    if (this._mouseDownLink === this._currentLink && this._linkAtPosition(this._currentLink.link, position)) {
++    // resize는 현재 링크와 render 감시도 지운다. 놓는 자리의 현재 provider 응답을 다시 확인한다.
++    // 동기 응답만 이 사용자 놓음에서 쓴다. 늦은 응답으로 클릭을 재생하지 않는다.
++    if (down && this._wasResized) {
++      this._handleHover(position);
++    }
++    if (!this._currentLink) {
++      return;
++    }
++
 +    // 행을 다시 그리면 같은 대상도 provider 응답 객체가 새로 만들어진다.
 +    // provider·대상·전체 버퍼 범위가 같을 때만 누름을 이어 간다.
 +    const current = this._currentLink;
@@ -31,3 +55,4 @@ diff --git a/src/browser/Linkifier.ts b/src/browser/Linkifier.ts
 +    if (sameLink && this._linkAtPosition(current.link, position)) {
        this._currentLink.link.activate(event, this._currentLink.link.text);
      }
+   }
