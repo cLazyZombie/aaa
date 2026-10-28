@@ -57,6 +57,10 @@ export async function inboxScenario(engine, label, width) {
     await page.goto(`${base}/__bulk-inbox/index.html`);
     assert.deepEqual(paired.errors, [], "inbox 전용 진입 번들 로드");
     await page.getByTestId("inbox-done-all").click();
+    const displayed = await page.getByTestId("inbox-item").locator(".inbox-kind:first-child").allTextContents();
+    assert.equal(displayed.length, count);
+    assert.equal(new Set(displayed).size, count);
+    assert.ok(displayed.every(id => /^i-[0-9]{4,}$/.test(id)), JSON.stringify(displayed));
     assert.deepEqual(diagnostic.terminalWorkers, [], "inbox 전용 시험은 터미널 Worker를 열지 않는다");
     diagnostic.phase = "500개 완료";
     const dialog = page.getByRole("alertdialog");
@@ -70,9 +74,28 @@ export async function inboxScenario(engine, label, width) {
     await domIs(page, "새 inbox 하나만 남음", () => document.querySelectorAll('[data-testid="inbox-item"]').length === 1);
     assert.equal(gate.calls.length, 1);
     assert.equal(gate.calls[0].ids.length, count);
+    assert.deepEqual(new Set(gate.calls[0].ids), new Set(displayed));
     assert.equal(gate.calls[0].all, false);
     assert.equal(db.prepare("SELECT count(*) AS n FROM inbox WHERE done=1").get().n, count);
     assert.equal(db.prepare("SELECT count(*) AS n FROM inbox WHERE done=0").get().n, 1);
+    if (label === "webkit" && width === 390) {
+      // 구형 host의 긴 ID를 받은 새 웹도 같은 원문을 돌려보낸다. 실제 종료는 현재 host가 처리한다.
+      gate.clear();
+      await page.route("**/api/v1/call", async route => {
+        if (route.request().postDataJSON().op !== "inbox") return route.fallback();
+        const response = await route.fetch();
+        const body = await response.json();
+        for (const item of body.ok.items) item.id = "late-inbox-0";
+        await route.fulfill({ response, json: body });
+      });
+      await page.reload();
+      await page.getByTestId("inbox-item").getByText("late-inbox-0", { exact: true }).waitFor();
+      const sent = page.waitForRequest(req => req.url().endsWith("/api/v1/call") && req.postDataJSON()?.op === "inbox_done");
+      await page.getByTestId("inbox-item").getByRole("button", { name: /끝내기$/ }).click();
+      assert.deepEqual((await sent).postDataJSON().ids, ["late-inbox-0"]);
+      await page.getByTestId("inbox-empty").waitFor();
+      assert.equal(db.prepare("SELECT done FROM inbox WHERE id='late-inbox-0'").get().done, 1);
+    }
     assert.deepEqual(paired.errors, []);
   } catch (e) {
     try { await diagnostic.save(e); }

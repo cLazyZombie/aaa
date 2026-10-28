@@ -1838,7 +1838,7 @@ pub fn progress_guidance(prefix: &str) -> String {
 /// inbox 항목(0.2.35 inbox 계승, §8.9). DB가 원본이고 `projects/<p>/inbox/<id>.md`는 투영이다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct InboxItem {
-    /// `<UTC 시각>-<종류>-<대상>-<순번>`
+    /// Front 응답은 프로젝트별 `i-NNNN` 별칭. DB·투영 파일은 기존 긴 ID를 유지한다.
     pub id: String,
     pub project: String,
     /// report·question·delivery·thread·session·outage·health·config-error·routine·routine-approval

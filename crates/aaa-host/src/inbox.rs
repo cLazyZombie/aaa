@@ -144,18 +144,26 @@ pub(crate) fn who(i: &InboxItem) -> String {
 pub(crate) fn nudge_text(project: &str, items: &[InboxItem]) -> String {
     let mut order: Vec<String> = Vec::new();
     let mut events: HashMap<String, Vec<String>> = HashMap::new();
+    let mut ids: HashMap<String, Vec<String>> = HashMap::new();
     for i in items {
         let who = who(i);
         if !events.contains_key(&who) {
             order.push(who.clone());
+        }
+        let item_ids = ids.entry(who.clone()).or_default();
+        if item_ids.len() < NUDGE_SUBJECTS {
+            item_ids.push(i.id.clone());
         }
         let ev = events.entry(who).or_default();
         if !ev.contains(&i.event) {
             ev.push(i.event.clone());
         }
     }
-    let mut parts: Vec<String> =
-        order.iter().take(NUDGE_SUBJECTS).map(|w| format!("{w} {}", events[w].join(", "))).collect();
+    let mut parts: Vec<String> = order
+        .iter()
+        .take(NUDGE_SUBJECTS)
+        .map(|w| format!("{w} {} [{}]", events[w].join(", "), ids[w].join(" ")))
+        .collect();
     if order.len() > NUDGE_SUBJECTS {
         parts.push(format!("{} more", order.len() - NUDGE_SUBJECTS));
     }
@@ -303,6 +311,7 @@ impl Host {
                 self.db.inbox_mark_seen(project, &i.id).map_err(internal)?;
             }
         }
+        self.db.inbox_display_ids(&mut page.items).map_err(internal)?;
         Ok(page)
     }
 
@@ -319,8 +328,18 @@ impl Host {
         if ids.is_empty() && !all {
             return Err(err(ErrorCode::BadRequest, "끝낼 항목 ID나 --all이 필요하다"));
         }
+        let selectors = ids;
+        let ids: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                self.db
+                    .inbox_long_id(project, id)
+                    .map_err(|e| err(ErrorCode::BadRequest, format!("{e:#}")))?
+                    .ok_or_else(|| err(ErrorCode::NotFound, format!("끝내지 않은 항목이 없다: {id}")))
+            })
+            .collect::<Result<_, _>>()?;
         let open = self.db.inbox_list(Some(project), false).map_err(internal)?;
-        if let Some(miss) = ids.iter().find(|id| !open.iter().any(|i| &&i.id == id)) {
+        if let Some((miss, _)) = selectors.iter().zip(&ids).find(|(_, id)| !open.iter().any(|i| &&i.id == id)) {
             return Err(err(ErrorCode::NotFound, format!("끝내지 않은 항목이 없다: {miss}")));
         }
         if let Some(item) = open
@@ -331,7 +350,7 @@ impl Host {
                 ErrorCode::BadRequest,
                 format!(
                     "미답변 사용자 요청은 inbox 정리로 닫지 않는다: {}. 카드에서 답하거나 aaa post handled <q-ID|p-ID>로 명시적으로 처리한다",
-                    item.id
+                    selectors[ids.iter().position(|id| *id == item.id).unwrap()]
                 ),
             ));
         }
@@ -361,7 +380,7 @@ impl Host {
             "inbox_done",
             &format!("{project} {n} all={all} preserved_user_requests={preserved} ids={}", ids.join(" ")),
         );
-        Ok((n, fit_inbox(self.db.inbox_list(Some(project), false).map_err(internal)?, INBOX_REPLY_BYTES)))
+        Ok((n, self.inbox(project, false, true)?))
     }
 
     /// 조건에 맞는 끝내지 않은 항목을 끝낸다
@@ -826,7 +845,12 @@ impl Host {
                 return;
             }
         }
-        let text = nudge_text(project, &unseen);
+        let mut display = unseen.clone();
+        if let Err(e) = self.db.inbox_display_ids(&mut display) {
+            tracing::error!("inbox 알림 별칭 조회 실패: {e:#}");
+            return;
+        }
+        let text = nudge_text(project, &display);
         match self.send_prompt(&coord.machine_id, &coord.id, &text).await {
             Ok(accepted) => {
                 // 받았는지 몰라도 같은 묶음은 다시 보내지 않는다(§8.5 a)
@@ -1185,16 +1209,19 @@ mod tests {
 
     #[test]
     fn nudge_groups_by_subject() {
-        let items = vec![
+        let mut items = vec![
             item("thread-state", "t-0001", "new report"),
             item("thread-state", "t-0001", "blocked on a prompt"),
             item("outage", "mac-b", "down"),
             item("thread-state", "t-0002", "new report"),
             item("session", "mac-c", "sessions ended"),
         ];
+        for (n, i) in items.iter_mut().enumerate() {
+            i.id = format!("i-{:04}", n + 1);
+        }
         assert_eq!(
             nudge_text("demo", &items),
-            "[aaa inbox] t-0001 new report, blocked on a prompt; machine mac-b down; t-0002 new report; machine mac-c sessions ended (aaa inbox list demo)"
+            "[aaa inbox] t-0001 new report, blocked on a prompt [i-0001 i-0002]; machine mac-b down [i-0003]; t-0002 new report [i-0004]; machine mac-c sessions ended [i-0005] (aaa inbox list demo)"
         );
         let many: Vec<_> = (1..=7).map(|n| item("thread-state", &format!("t-000{n}"), "new report")).collect();
         assert!(nudge_text("demo", &many).contains("; 2 more (aaa inbox list demo)"));
@@ -1254,5 +1281,69 @@ mod tests {
         let p = fit_inbox(vec![mk(1, false), big, mk(9, false)], size * 2);
         assert_eq!(ids(&p), ["0001"]);
         assert_eq!(p.omitted_open, 2);
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+    use aaa_proto::{FrontRequest as R, FrontResponse as S};
+
+    // 같은 Front 경계의 목록·읽음·혼합 입력·권한·보호 요청을 함께 검사해야 별칭으로 보호를 우회하지 않는다.
+    #[tokio::test]
+    async fn aliases_keep_front_seen_done_and_request_protection_on_the_stored_item() {
+        let root = std::env::temp_dir().join(format!("aaa-inbox-front-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").to_string_lossy().into();
+        let h = Host::open(cfg, root.join("state")).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        h.inbox_add("demo", "thread-state", "t-0001", "idle", "첫 항목");
+        h.inbox_add("demo", "thread-state", "t-0002", "idle", "둘째 항목");
+        h.inbox_add("demo", "post", "coordinator", "post request for user", "미답변 요청");
+        let stored = h.db.inbox_list(Some("demo"), false).unwrap();
+        let read = |peek| R::Inbox { project: "demo".into(), all: false, peek };
+        let S::Inbox { items, .. } = h.call(DeviceRole::Reader, "device:r", read(true)).await.unwrap() else {
+            panic!()
+        };
+        assert_eq!(items.len(), 3);
+        for (shown, original) in items.iter().zip(&stored) {
+            assert_eq!(h.db.inbox_long_id("demo", &shown.id).unwrap().as_deref(), Some(original.id.as_str()));
+            assert_eq!(shown.summary, original.summary);
+        }
+        let second = stored.iter().find(|i| i.summary == "둘째 항목").unwrap();
+        assert!(!h.db.inbox_list(Some("demo"), false).unwrap()[0].seen);
+        h.call(DeviceRole::Controller, "device:c", read(false)).await.unwrap();
+        assert!(h.db.inbox_list(Some("demo"), false).unwrap().iter().all(|i| i.seen));
+        let done = |ids: Vec<String>| R::InboxDone { project: "demo".into(), ids, all: false };
+        assert!(h.call(DeviceRole::Reader, "device:r", done(vec!["i-1".into()])).await.is_err());
+        assert!(h.call(DeviceRole::Controller, "device:c", done(vec!["i-1".into(), "i-9999".into()])).await.is_err());
+        assert_eq!(h.db.inbox_list(Some("demo"), false).unwrap().len(), 3);
+        let e = h.call(DeviceRole::Controller, "device:c", done(vec!["i-00003".into()])).await.unwrap_err();
+        assert!(e.message.contains("미답변"), "{e:?}");
+        let S::Inbox { done: Some(n), items, .. } =
+            h.call(DeviceRole::Controller, "device:c", done(vec!["i-01".into(), second.id.clone()])).await.unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(n, 2);
+        assert_eq!(items[0].id, "i-0003");
+        for item in stored.iter().filter(|i| i.event == "idle") {
+            assert!(h.inbox_dir("demo").join("done").join(format!("{}.md", item.id)).is_file());
+        }
+        assert!(!h.inbox_dir("demo").join("i-0001.md").exists());
+        let first = stored.iter().find(|i| i.summary == "첫 항목").unwrap();
+        let mut public = vec![first.clone()];
+        h.db.inbox_display_ids(&mut public).unwrap();
+        let body = crate::notify::notify_body(
+            "json",
+            "",
+            &crate::notify::Place::Project("demo".into()),
+            &public,
+            &HashMap::new(),
+        );
+        assert_eq!(body["items"][0]["id"], "i-0001");
+        assert!(!body.to_string().contains(&first.id));
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -2179,7 +2179,7 @@ export type MessageView = { id: string, project: string, thread: string, mode: M
 
 export type InboxItem = {
 /**
- * `<UTC 시각>-<종류>-<대상>-<순번>`
+ * Front 응답은 프로젝트별 `i-NNNN` 별칭. DB·투영 파일은 기존 긴 ID를 유지한다.
  */
 id: string, project: string,
 /**

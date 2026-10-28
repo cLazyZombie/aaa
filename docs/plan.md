@@ -8244,3 +8244,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **대화창.** 같은 원장에서 답을 전달했고 아직 확인하지 않은 결정만 보인다. 접은 한 줄(「자동으로 정함 · 확인 안 함 N」)로 시작하고, 펼친 목록은 높이 상한 안에서 굴러가며 줄마다 질문·답·추천 여부만 한 줄로 보인다(까닭은 카드에서). 줄에서 열기·확인(= 「괜찮음」)·지우기를 한다. 대화 기록 줄에는 시각이 없어 결정한 자리에 끼우지 않고 접기를 택했다.
 - **참고.** 기존 「답한 것」 지우기·모두 지우기(§8.345)와 herdr-web-ui ConfirmDialog를 그대로 쓴다. 새 외부 의존성은 없다.
 - **검증.** host 유닛 `forgetting_decisions_clears_every_list_but_never_reopens_an_auto_resend`, 웹 유닛 `freshAuto`, E2E100 마지막 단계(두 기기 대화창 접힘·펼침 높이·확인·지우기, 카드 지우기, 모두 지우기 뒤 목록·대화창·답한 것, Reader 거부). 상세는 [자동 결정 지우기 검증](testing-auto-decision-forget.md)에 둔다. 착지 기준 main 015ee6f7의 마지막 §8.531·FRONT_API 1.143·E2E120 다음 번호다(새 E2E 번호는 쓰지 않는다).
+
+
+### 8.533 inbox 짧은 별칭(t-1228)
+
+- **목적.** t-1225 조사 후속: coordinator의 목록·명령·맥락에 반복되는 긴 합성 ID를 프로젝트별 `i-NNNN`으로 줄인다. 최소 네 자리 0채움과 10000 이상 표시는 [짧은 번호](short-ids.md)를 따른다.
+- **저장.** 기존 DB ID·JSON·투영 파일명·본문은 유지한다. `inbox_ids(project,item_id,number)`는 구판 항목을 시각·저장 ID 순으로 한 번 채우고 모든 INSERT와 같은 transaction에서 새 번호를 예약한다. 완료·보존 기간 정리로 원장을 지우지 않아 번호를 재사용하지 않는다. 프로젝트 rename·내보내기·삭제는 원장도 함께 처리한다.
+- **표시·입력.** inbox list(일반/JSON)·context·웹 알림함·webhook의 item ID는 별칭이다. `[aaa inbox]`는 기존 대상별 사건 묶음에 별칭을 붙인다(대상별 최대5개, 나머지는 목록에서 읽음). 중복 알림 hash와 파일 이동은 저장 ID를 쓴다. inbox done은 긴 ID와 숫자 별칭을 섞어 받고 먼저 모두 검증한 뒤 처리한다. 프로젝트 범위·읽음·목록 순서·미답변 요청과 후속 보호·보기 권한은 그대로다.
+- **계약.** FRONT_API 1.145: InboxItem.id의 Front 표시가 별칭으로 바뀌며 InboxDone은 두 ID 모두 받는다. 필드 추가·AGENT_LINK 변경은 없다. 옛 웹도 host가 준 id를 그대로 되돌려 쓸 수 있다. 새 웹은 옛 host의 긴 ID도 받아 같은 경로로 처리한다.
+- **참고.** [Taskwarrior ID/UUID](https://taskwarrior.org/docs/ids/)([MIT](https://github.com/GothenburgBitFactory/taskwarrior/blob/develop/LICENSE))의 저장 ID와 짧은 선택자 분리, [GitHub CLI issue lookup](https://github.com/cli/cli/blob/trunk/pkg/cmd/issue/shared/lookup.go)([MIT](https://github.com/cli/cli/blob/trunk/LICENSE))의 번호/원래 참조와 저장소 경계를 대조했다. aaa는 Taskwarrior의 재번호 부여를 따르지 않고 영속 번호를 쓴다. 외부 코드·의존성을 가져오지 않았다.
+- **검증.** [별도 기록](testing-inbox-ids.md)에 새 keeper의 필요성과 기존 m13·E114 검증을 남긴다. t-1225와 inbox·context 변경이 겹치므로 착지 차례에서 함께 맞춘다. 착지 기준의 마지막 §8.532·FRONT_API 1.144 다음 번호이며 새 E2E 번호는 쓰지 않는다.
