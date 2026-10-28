@@ -10,3 +10,9 @@
 ## 자동 검증
 
 - `nice -n 15 cargo test -p aaa-agent --lib model_observation --locked`: `model_observation_takes_claude_effort_from_documented_hook_input`가 PostToolUse·상태줄 꼴 입력의 수준 기억, 같은 값의 시각 유지, 하위 agent·다른 harness 세션 제외, 모델 관측에 붙이기(늦은 시각), 미지원 모델의 칸 없음으로 비우기, 프로세스 시작에서 비우기를 본다. 기존 Codex·Claude 모델 관측 시험과 함께 3개 통과.
+- `bash scripts/ci-local.sh`: web·fmt·build·clippy·test·public 통과(test 107초). e2e는 전역 Playwright 1.58.2라 판 검사에서 멈췄고, 작업 폴더에만 둔 Playwright 1.64.1(브라우저는 공용 캐시 chromium-1248·webkit-2370)로 `--only web,build,e2e`를 다시 돌려 통과(237초).
+- `bash scripts/ci-local.sh --only linux-clippy`: 통과.
+
+## 남은 실기 확인
+
+배포 뒤 Claude thread의 요약 카드에 「최근 확인 모델: opus 5.5 high」처럼 보이는지, `/effort` 변경 뒤 다음 도구 호출(또는 상태줄 갱신)에서 바뀌는지 운영에서 본다.
