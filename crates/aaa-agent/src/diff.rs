@@ -288,6 +288,30 @@ mod tests {
         files: Vec<(String, Vec<u8>)>,
     }
 
+    impl Snapshot {
+        /// 실패 원문에 남길 바뀐 항목(파일은 경로와 길이만)
+        fn changes(&self, after: &Snapshot) -> Vec<String> {
+            let mut out = Vec::new();
+            if self.index != after.index {
+                out.push(format!("index {}→{}바이트", self.index.len(), after.index.len()));
+            }
+            if (&self.head, &self.refs) != (&after.head, &after.refs) {
+                out.push(format!("HEAD·ref {:?}→{:?}", (&self.head, &self.refs), (&after.head, &after.refs)));
+            }
+            let len = |s: &Snapshot, p: &str| s.files.iter().find(|f| f.0 == p).map(|f| f.1.len());
+            let mut paths: Vec<&str> = self.files.iter().chain(&after.files).map(|f| f.0.as_str()).collect();
+            paths.sort();
+            paths.dedup();
+            for p in paths {
+                let (a, b) = (self.files.iter().find(|f| f.0 == p), after.files.iter().find(|f| f.0 == p));
+                if a != b {
+                    out.push(format!("{p}: {:?}→{:?}바이트", len(self, p), len(after, p)));
+                }
+            }
+            out
+        }
+    }
+
     struct Repo {
         root: PathBuf,
         dir: PathBuf,
@@ -309,6 +333,9 @@ mod tests {
         fn git(&self, args: &[&str]) -> String {
             let out = Command::new("git")
                 .args(["-c", "init.templateDir=", "-c", "user.name=Test", "-c", "user.email=test@example.com"])
+                // commit의 자동 maintenance는 분리된 자식이 `objects/maintenance.lock`을 쥔 채 남는다(Git 2.55).
+                // 그 잠금이 비교 전 snapshot에만 잡히면 원본 불변 단언이 틀린다. 제품 `git_prefix`와 같이 끈다.
+                .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
                 .args(args)
                 .current_dir(&self.dir)
                 .env("GIT_CONFIG_GLOBAL", &self.empty)
@@ -378,7 +405,7 @@ mod tests {
         assert!(patch.contains("rename from old.txt") && patch.contains("rename to new.txt"));
         assert!(patch.contains(" line 0\n") && patch.contains(" line 89\n") && patch.contains("+changed\n"));
         let after = r.snapshot();
-        assert!(before == after, "원본 저장소를 바꾸면 안 된다");
+        assert!(before == after, "원본 저장소를 바꾸면 안 된다: {:?}", before.changes(&after));
 
         r.write("new.txt", &format!("{}changed\n", "context\n".repeat(d::FILE_PATCH_MAX_JSON / 7)));
         let cut = query(cwd, Some("main"), &ask).await.unwrap();

@@ -19,6 +19,7 @@
 | install `authorization::external_tty_reviews_the_same_real_plan_and_issues_private_bound_authorization` | CI Windows 1 | 승인 입력 뒤 PTY 정지 60초 | d-0490 |
 | m13 `claude_menu_dismisses_escape_before_waiting_for_its_suffix` | CI Ubuntu 1(10-27, 셸 fixture 30초), macOS 1(10-28, EIO) | 부하 | 이 기록 B |
 | m13 `ssh_install::ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_checks` | CI macOS 1 | 원격 계획 exit 4 | 남김(아래) |
+| agent `diff::tests::full_context_is_file_only_bounded_and_keeps_default_patch_small` | CI Ubuntu 1(4d09d7f3) | 「원본 저장소를 바꾸면 안 된다」 | 이 기록 C |
 | E2E16 긴 소스 가상화 | CI 웹 4 | 20초·5초 상한 | t-1209(b233a489) 뒤 재발 없음 |
 | host `rollout::web_tests` 두 시험 | CI Windows 4(10-27 연속) | Windows 경로 형식 BadRequest(결정적) | t-1183(2988273b, 원격 rollout 경로 문법) 뒤 재발 없음 |
 | common `child_process::tests::pipe_window_*`·`subprocess_fixture` | CI macOS 3 | SIGILL | t-1137·t-1146 수리 뒤 재발 없음 |
@@ -36,7 +37,7 @@
 | E72 machine-add 30초 | 착지 1 | load 132 | [t-1238](testing-machine-plan-boundary.md) |
 | E103 commit 응답 정지 | 착지 1 | load 95 | t-1216 |
 | idle-audit Windows stack overflow | — | — | t-1208 |
-| host `backup::tests::wal_backup_restores_auth_history_and_rotates_only_its_files` | 착지 1 | 백업 중복 실행 잠금 | t-1263이 수리 중 |
+| host `backup::tests::wal_backup_restores_auth_history_and_rotates_only_its_files` | 착지 1 | 백업 중복 실행 잠금 | t-1263(0a206eca, 백업 owner 종료 때 Unix 잠금 해제) 수리 |
 
 60초 넘게 돈 시험(실패 아님): rollout 세 시험(12회), `coordinator_deployment_is_gated_and_survives_backend_restarts`(5),
 accounts 두 시험(5·3), image(2). 개별 시험 5초 기준 작업(t-1117/d-0385)에 넘긴다.
@@ -120,6 +121,48 @@ Python PTY로 같은 fixture를 띄워 Esc를 보내고, Working을 본 뒤 계�
 출력을 읽지 않고 기다리면 재현되지 않는다. macOS는 tty를 마지막으로 닫을 때 읽히지 않은 출력이 빠질 때까지
 기다려 자식이 끝나지 않는다. lab의 reader thread처럼 계속 읽어야 같은 순서가 된다.
 
+## C. diff 시험의 원본 불변 단언과 Git 자동 maintenance 잠금
+
+### 원인
+
+- `diff::tests`의 `Snapshot`은 index 바이트·HEAD·ref와 `.git` 안을 포함한 모든 파일의 경로·내용을 비교 전후로 잡는다.
+  시험 준비의 `Repo::git`은 자동 maintenance를 끄지 않았다. 제품 `git_prefix`는 `gc.auto=0`·`maintenance.auto=false`로 이미 끈다.
+- `git commit`은 끝에 `git maintenance run --auto --quiet --detach`를 띄운다. Git 2.55의
+  [6e95b07e5 「builtin/maintenance: fix locking with "--detach"」](https://github.com/git/git/commit/6e95b07e5)부터
+  `objects/maintenance.lock`의 소유권이 분리된 자식으로 넘어가, 자식이 자동 조건 검사를 마칠 때까지 잠금 파일이 남는다.
+  `git commit`은 이 자식을 기다리지 않는다. 2.54까지는 부모가 끝날 때 이 파일을 지웠다.
+- GitHub Ubuntu 24.04 러너는 Git 2.55다. 자식이 부하로 늦으면 비교 전 snapshot에만 0바이트 잠금 파일이 잡히고,
+  비교 뒤에는 사라져 단언이 틀린다. 검증 Mac의 Apple Git 2.54에서는 같은 순서가 생기지 않는다.
+- 나눈 가설과 판정:
+  - 제품 쓰기: 비교는 임시 index·임시 객체 폴더·`--no-optional-locks`로만 git을 부른다. 아래 재현의 바뀐 항목은 index·HEAD·ref·작업 파일이 아니었다.
+  - Git 읽기의 index stat 갱신: 실제 index 바이트는 바뀌지 않았다.
+  - 병렬 시험 격리: 저장소는 시험마다 새 ID 폴더이고 aaa-agent 시험은 환경 변수·현재 폴더를 바꾸지 않는다. 단독 반복에서도 같은 항목만 바뀐다.
+  - 시험 자신의 commit이 남긴 배경 maintenance 잠금: 확정.
+
+### 수리
+
+- `Repo::git`이 제품과 같이 `-c maintenance.auto=false -c gc.auto=0`을 준다. 배경 작업 자체가 생기지 않으므로 기다릴 사건도 없다.
+- 실패하면 바뀐 항목(index 길이·HEAD/ref·파일 경로와 길이)을 단언 문구에 남긴다. CI 원문에는 바뀐 경로가 없었다.
+- 원본 불변 계약(index·HEAD·ref·`.git` 안 포함 전체 파일), 시한, 다른 단언은 바꾸지 않았다. 같은 helper를 쓰는
+  `branch_and_uncommitted_read_every_change_without_touching_the_repo`도 같은 commit 경로라 함께 보호된다.
+
+### 재현과 확인
+
+같은 소스 판의 Git 2.55.0을 임시 폴더에 빌드해 PATH 앞에 두었다. 시스템 git은 바꾸지 않았다.
+
+| 조건 | 결과 |
+| --- | --- |
+| Git 2.55, commit 직후 잠금 파일 관측(부하 없음) | 30/30 관측, 약 0.1~0.2ms 남음 |
+| 같은 관측, `-c maintenance.auto=false` | 0/30 |
+| Apple Git 2.54, 같은 관측(부하 없음·바쁜 프로세스 30·60개) | 0/40·0/60·0/200 |
+| 수리 전 시험, Git 2.55, 부하 없음 40회 | 40 통과 |
+| 수리 전 시험, Git 2.55, 바쁜 프로세스 60개 아래 8 worker×20회 | 첫 실행 60/160 실패, 다음 세 번 0/160(빌드 직후 첫 실행 지연과 겹친 것으로 보며 단정하지 않는다) |
+| 수리 전 시험, Git 2.55, `GIT_EXEC_PATH` 감싸기로 maintenance만 `nice -n 20`, 같은 부하 | 63/160 실패, 63건 모두 `.git/objects/maintenance.lock: Some(0)→None` |
+| 수리 뒤, 마지막 조건 두 번 | 0/320 |
+
+감싸기는 분리된 자식이 다른 일에 밀려 늦게 끝나는 CI 상황을 우선순위로 흉내 낸 결함 심기다. 원 CI 실행의 실제 지연 원인은 원문이 없어 단정하지 않는다.
+바쁜 프로세스만으로는 이 Mac에서 재현이 들쭉날쭉했다(60/160 뒤 0/160 세 번). 재현 기준은 감싸기 조건이다.
+
 ## 남긴 것
 
 - `ssh_install` exit 4: install의 exit 4 오류는 `binary_target_conflict`, `existing_installation_conflict`,
@@ -128,7 +171,7 @@ Python PTY로 같은 fixture를 띄워 Esc를 보내고, Working을 본 뒤 계�
   1회뿐이고 원격 계획 원문은 CI artifact(로그인 필요)에만 있어 원인을 정하지 않았다.
 - 웹 머신 추가의 원격 install 계획은 `min_free_gb`를 비워 원격 머신에도 기본 20GB를 요구한다. 그 실패(exit 2)는
   `remote_why`가 「실행 인자·사용법이 잘못됐다」로 적는다. 제품 진단 문구라 이 일에서는 바꾸지 않았다.
-- Windows install 승인 PTY 정지(d-0490)와 백업 잠금(t-1263)은 각 owner가 맡는다.
+- Windows install 승인 PTY 정지는 d-0490이 맡는다.
 
 ## 참고
 
@@ -139,6 +182,23 @@ Python PTY로 같은 fixture를 띄워 Esc를 보내고, Working을 본 뒤 계�
   [actions/runner-images](https://github.com/actions/runner-images)([MIT](https://github.com/actions/runner-images/blob/main/LICENSE)):
   러너 저장 공간 보장 값을 확인했다.
 
+- [git/git](https://github.com/git/git)([GPL-2.0](https://github.com/git/git/blob/master/COPYING))의 `builtin/gc.c`·`setup.c`·`tempfile.c`:
+  maintenance 잠금·분리·임시 파일 소유권 순서를 읽었다. 코드를 가져오지 않았고 시험용 실행 파일만 임시로 빌드했다.
+
 ## 검증
 
-- 위 두 재현만 돌렸다. 고친 Rust 시험 실행·clippy·fmt·공개 검사는 검증 Mac의 다른 계측 차례가 끝난 뒤 한다.
+- A: `nice -n 15 cargo test --profile verify --locked -p aaa --test install -- wizard:: worker_lifetime:: install_reads_local_overrides authorization:: recovery::` 18 통과(13.63초, load 3.8~5.6),
+  install 전체 33 통과·기존 ignore 1(14.15초). 결함 심기로 `Lab::args`의 기준을 99999로 두면
+  `private_tty_enrollment…`·`closed_enrollment_window…`가 `work_space_insufficient`로 실패했고 되돌렸다.
+- B: `--test m13 -- claude_menu_` 3 통과를 5번 연속, 같은 실행 파일 10개 동시×3번 30/30 통과.
+- C: `-p aaa-agent --lib` 188 통과(4.75초), 위 재현 표.
+- `cargo clippy --profile verify --locked -p aaa --tests -- -D warnings`, `-p aaa-agent --all-targets -- -D warnings`, `cargo fmt --all --check`,
+  `git diff --check`, `node web/test/fixed-sleeps.mjs`, `bash scripts/check-public.sh` 통과.
+- Windows 실기 PC(SSH 세션, 작업·TEMP는 시험 전용 폴더): 후보 판 install 전체 30개 중 27개 통과.
+  바뀐 시험(wizard 3·worker_lifetime·install_reads_local_overrides·authorization·recovery의 승인 PTY)은 모두 통과했다.
+  실패한 세 시험은 수리 전 main 2b75d22b에서도 같은 환경에서 똑같이 실패했다.
+  - `install_does_not_apply_or_execute_selected_files_and_reads_repos_without_writes`: SSH 세션 PATH에 git이 없어 `git init` 실패. git을 PATH에 넣으면 두 판 모두 통과.
+  - `recovery::one_line_entry_enters_setup_and_cancels_without_installation_changes`(program not found)와
+    `authorization::ssh_environment_and_helper_hash_flags_do_not_bootstrap_a_new_trust_root`(exit 4, 기대 3): 두 판 모두 같은 실패.
+    SSH 세션 안에서 돈 환경 차이로 보며, 이 일의 회귀가 아니다. 원인은 따로 확정하지 않았다.
+  - 시작 전·끝 뒤의 예약 작업·Run 키·사용자 PATH·방화벽 규칙은 같았다. 서비스는 OS가 켜는 gpsvc·wuauserv의 실행 상태만 달랐다. 시험 폴더는 지웠다.

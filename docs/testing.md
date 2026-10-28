@@ -1,4 +1,4 @@
-- t-1266: [자주 깨지는 시험 전수 정리와 install 여유·Claude 메뉴 Esc 수리](testing-flaky-sweep-t-1266.md)
+- t-1266: [자주 깨지는 시험 전수 정리와 install 여유·Claude 메뉴 Esc·diff maintenance 잠금 수리](testing-flaky-sweep-t-1266.md)
 - t-1260: [아이디어 기능 검증](testing-ideas.md)
 - t-1267: [원격 thread의 host 보고·library·검색 읽기 검증](testing-remote-thread-read.md)
 - t-1262: [자동 결정 보존 기간 정리 검증](testing-auto-decision-prune.md)
