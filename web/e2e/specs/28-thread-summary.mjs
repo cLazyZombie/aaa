@@ -346,7 +346,7 @@ export default async function ({ page }) {
   ];
   if (!only || progressNames.some(name => only.test(name))) {
     // 공백 많은 29자는 270px 안에 들어갈 수 있다. 한글 29자로 실제 한 줄 너비를 넘긴다.
-    const names = ["표시 조건 확인", "휴대폰에서만 숨김", "PC·휴대폰 확인", "이전 설정 보존", "작업목록에서긴항목도원래순서대로모두확인하고변경을적용하기"];
+    const names = ["표시 조건 확인", "휴대폰에서만 숨김", "PC·휴대폰 확인", "이전 설정 보존", "검증 기록", "작업목록에서긴항목도원래순서대로모두확인하고변경을적용하기"];
     const file = `${root}/progress-summary.md`;
     const set = (marks) => {
       fs.writeFileSync(file, `# 목표\n휴대폰 채팅 중 context 표시 숨기기\n## 진행\n${names.map((n, i) => `- [${marks[i]}] ${n}`).join("\n")}\n`);
@@ -357,8 +357,8 @@ export default async function ({ page }) {
       fs.writeFileSync(`${t.work_dir}/report.md`, `[진행 중] 웹 확인\n## Report\n실제 보고 감시 시험\n## 진행\n${names.map((n, i) => `- [${marks[i]}] ${n}`).join("\n")}\n## Next\n- 검증을 마친다\n`);
     };
   await step("전체 진행 목록: desktop 순서·실시간 활동·보고·새 지시 보존", async () => {
-      const initial = set(["x", "~", " ", "x", " "]);
-      if (initial.progress.length !== 5) throw new Error("실제 host가 전체 목록을 전달하지 않았다");
+      const initial = set(["x", "~", " ", "x", " ", " "]);
+      if (initial.progress.length !== 6) throw new Error("실제 host가 전체 목록을 전달하지 않았다");
 
       // 실제 pane 안의 CLI 보고다. 같은 활동의 재보고는 host의 활동 시작 시각을 유지해야 한다.
       const activityFile = `${root}/summary-activity.sh`;
@@ -376,7 +376,7 @@ export default async function ({ page }) {
       // clock을 설치하면 부분 실행은 벽시계 tick에 우연히 기대게 된다.
       await page.clock.install({ time: agent.progress_since_ms + 10_000 });
       await page.reload();
-      report(["x", "~", " ", "x", " "]);
+      report(["x", "~", " ", "x", " ", " "]);
       const firstReport = await until("첫 진행 목록 보고 수신", () => {
         const t = aaa("thread", "show", "demo", id);
         return t.report_hash && t.next.includes("검증을 마친다") ? t : null;
@@ -387,10 +387,10 @@ export default async function ({ page }) {
       const progress = hover.getByTestId("summary-progress");
       await progress.waitFor();
       const states = await progress.getByRole("listitem").evaluateAll((ls) => ls.map((l) => l.dataset.state));
-      if (JSON.stringify(states) !== JSON.stringify(["done", "working", "pending", "done", "pending"])) throw new Error(`진행 순서 ${JSON.stringify(states)}`);
+      if (JSON.stringify(states) !== JSON.stringify(["done", "working", "pending", "done", "pending", "pending"])) throw new Error(`진행 순서 ${JSON.stringify(states)}`);
       const labels = await progress.locator(".summary-step-text").allTextContents();
       if (JSON.stringify(labels) !== JSON.stringify(names)) throw new Error(`전체 목록 ${JSON.stringify(labels)}`);
-      if (!(await progress.innerText()).includes("2/5 완료")) throw new Error("완료 개수");
+      if (!(await progress.innerText()).includes("2/6 완료")) throw new Error("완료 개수");
       if (await progress.getByRole("checkbox").count() || await progress.getByRole("button").count()) throw new Error("읽기 전용 목록에 편집 조작");
       const layout = await progress.locator("li").evaluateAll((ls) => ls.map((l) => ({ height: l.getBoundingClientRect().height, clipped: l.querySelector(".summary-step-text").scrollWidth > l.querySelector(".summary-step-text").clientWidth })));
       if (layout.some((l) => l.height > 30) || !layout.at(-1).clipped) throw new Error(`hover의 긴 이름은 한 줄 ${JSON.stringify(layout)}`);
@@ -415,18 +415,18 @@ export default async function ({ page }) {
       const afterActivity = aaa("thread", "show", "demo", id);
       assert.equal(afterActivity.report_hash, firstReport.report_hash, "진행 명령만으로 보고 파일의 판을 바꾸지 않는다");
       assert.equal(afterActivity.summary.at_ms, firstReport.summary.at_ms, "진행 명령만으로 요약 시각을 바꾸지 않는다");
-      assert.ok((await progress.innerText()).includes("2/5 완료"), "활동 갱신으로 목록 완료 상태를 추측하지 않는다");
+      assert.ok((await progress.innerText()).includes("2/6 완료"), "활동 갱신으로 목록 완료 상태를 추측하지 않는다");
       assert.match(await hover.getByTestId("summary-updated").innerText(), /요약 갱신 3분 전 · 진행 보고 3분 전/);
 
       // 카드를 열어 둔 채 report.md만 바꾼다. agent 감시→host 사본→카드 캐시·경고 갱신을 함께 본다.
-      report(["x", "x", "~", "x", " "]);
-      await domIs(page, "열린 카드 진행 갱신", () => document.querySelector('[data-testid="summary-hover"] [data-testid="summary-progress"]')?.textContent.includes("3/5 완료"));
+      report(["x", "x", "~", "x", " ", " "]);
+      await domIs(page, "열린 카드 진행 갱신", () => document.querySelector('[data-testid="summary-hover"] [data-testid="summary-progress"]')?.textContent.includes("3/6 완료"));
       const updated = await progress.getByRole("listitem").evaluateAll((ls) => ls.map((l) => l.dataset.state));
-      if (JSON.stringify(updated) !== JSON.stringify(["done", "done", "working", "done", "pending"])) throw new Error(`갱신 순서 ${JSON.stringify(updated)}`);
+      if (JSON.stringify(updated) !== JSON.stringify(["done", "done", "working", "done", "pending", "pending"])) throw new Error(`갱신 순서 ${JSON.stringify(updated)}`);
       await domIs(page, "새 진행 보고가 이전 지시 반영", () => !document.querySelector('[data-testid="summary-hover"] .summary-warn'));
       aaa("thread", "message", "demo", id, "--text", "태블릿 조건도 확인해 줘");
       await domIs(page, "진행 목록 옆 새 지시 경고", () => document.querySelector('[data-testid="summary-hover"] .summary-warn')?.textContent.includes("요약 뒤 지시 1개"));
-      if (!(await progress.innerText()).includes("3/5 완료")) throw new Error("새 지시로 완료 개수가 바뀌었다");
+      if (!(await progress.innerText()).includes("3/6 완료")) throw new Error("새 지시로 완료 개수가 바뀌었다");
       await shot(page, "summary-progress-pending");
       await page.mouse.move(1000, 600);
       await hover.waitFor({ state: "detached" });
@@ -442,7 +442,7 @@ export default async function ({ page }) {
         await sheet.evaluate((el) => Promise.all(el.closest(".modal-scrim").getAnimations({ subtree: true }).map((a) => a.finished)));
         const lines = await sheet.locator(".summary-step-text").allTextContents();
         if (JSON.stringify(lines) !== JSON.stringify(names)) throw new Error(`Reader 전체 목록 ${JSON.stringify(lines)}`);
-        if (!(await sheet.innerText()).includes("3/5 완료") || !(await sheet.innerText()).includes("요약 뒤 지시")) throw new Error("Reader 완료 개수·새 지시");
+        if (!(await sheet.innerText()).includes("3/6 완료") || !(await sheet.innerText()).includes("요약 뒤 지시")) throw new Error("Reader 완료 개수·새 지시");
         const activity = await sheet.getByTestId("summary-activity").innerText();
         if (!activity.includes("웹 회귀 검증 · ~70%") || !activity.includes("시작 후") || !activity.includes("활동")) throw new Error(`Reader 활동·시간 ${activity}`);
         assert.match(await sheet.getByTestId("summary-updated").innerText(), /요약 갱신 .* 전 · 진행 보고 .* 전/);
@@ -461,17 +461,17 @@ export default async function ({ page }) {
   });
   await step("전체 진행 목록: 모두 완료·지시 반영·목표만 편집", async () => {
       // 모두 완료해도 목록을 없애거나 재정렬하지 않는다. 다음 진행 보고가 이전 지시를 반영한다.
-      report(["x", "x", "x", "x", "x"]);
+      report(["x", "x", "x", "x", "x", "x"]);
       await page.getByTestId("summary-open").click();
       const pop = page.getByTestId("summary-pop");
-      await domIs(page, "모든 단계 완료", () => document.querySelector('[data-testid="summary-pop"] [data-testid="summary-progress"]')?.textContent.includes("5/5 완료"));
-      if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 5 || await pop.locator(".summary-warn").count()) throw new Error("완료 목록 보존·반영한 지시");
+      await domIs(page, "모든 단계 완료", () => document.querySelector('[data-testid="summary-pop"] [data-testid="summary-progress"]')?.textContent.includes("6/6 완료"));
+      if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 6 || await pop.locator(".summary-warn").count()) throw new Error("완료 목록 보존·반영한 지시");
       await shot(page, "summary-progress-done");
       // coordinator는 목표·결정을 고친다. 진행 목록을 생략해도 thread가 보고한 완료 상태를 보존한다.
       fs.writeFileSync(file, "# 목표\n바뀐 목표\n");
       aaa("thread", "summary", "demo", id, "--file", file);
       await domIs(page, "목표만 편집한 요약", () => document.querySelector('[data-testid="summary-pop"] .summary-goal')?.textContent.includes("바뀐 목표"));
-      if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 5) throw new Error("목표 편집이 보고한 완료 목록을 덮었다");
+      if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 6) throw new Error("목표 편집이 보고한 완료 목록을 덮었다");
       await page.keyboard.press("Escape");
       await pop.waitFor({ state: "detached" });
   });
