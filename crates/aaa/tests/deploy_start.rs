@@ -85,8 +85,24 @@ fn disconnected_start_keeps_a_stopped_record_across_host_restart_without_install
     assert!(!refused.contains("· 접수됨"), "{refused}");
     drop(events);
     lab.kill("host");
+    // agent 연결을 보류해 host 준비와 agent 준비가 다른 경계임을 매번 검사한다.
+    lab.kill("agent");
     lab.spawn("host-reopened", &h, &["host"]);
     wait_for("재시작 시험 host 준비", limit, || h.json(&["status"]).ok());
+    // 옛 host의 Connected 사건을 재사용하지 않고 새 host의 상태부터 구독한다.
+    let mut reopened = lab::watch::HostWatch::new(&h, limit);
+    reopened.wait("재시작 뒤 agent 연결 전 상태", |e| {
+        e.machines
+            .iter()
+            .any(|m| m.name == "mac-a" && m.connection == aaa_proto::Connection::Disconnected)
+            .then_some(())
+    });
+    lab.spawn("agent-reopened", &h, &["agent", "--host", "local", "--name", "mac-a"]);
+    reopened.wait_diag(
+        "재시작 뒤 로컬 시험 agent 연결",
+        |e| e.connected("mac-a").then_some(()),
+        || format!("host:\n{}\nagent:\n{}", lab.log("host-reopened"), lab.log("agent-reopened")),
+    );
     status();
     assert!(lab.log("host").contains("rollout 시작 사전 검사 실패: 설치하지 않음"));
     eprintln!("시작 거절·host 재시작 owner: {:?}", began.elapsed());

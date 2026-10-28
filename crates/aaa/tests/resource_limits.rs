@@ -66,9 +66,66 @@ fn setup(hard: libc::rlim_t) -> (Lab, Node, u32, String) {
         "schema=1\n[host]\nagent_listen=\"\"\n[web]\nlisten=\"127.0.0.1:0\"\n[local_agent]\nmode=\"none\"\n[projects]\nroot={:?}\ntick_secs=1\n[notify]\nweb_push=false\n", lab.root.join("projects").display().to_string()
     )));
     let pid = lab.spawn_command("host", limited(node.cmd(&["host"]), hard));
-    let status = wait_for("낮은 한도의 개발 host", T, || node.json(&["status"]).ok());
+    let addr = wait_web_listen(|| node.json(&["status"]));
     node.ok(&["project", "create", "demo"]);
-    (lab, node, pid, status["web_listen"].as_str().unwrap().to_string())
+    (lab, node, pid, addr)
+}
+
+fn wait_web_listen(mut status: impl FnMut() -> Result<serde_json::Value, String>) -> String {
+    let last = std::cell::RefCell::new(String::new());
+    lab::wait_for_diag(
+        "낮은 한도의 개발 host 웹 listen 준비",
+        T,
+        || match status() {
+            Ok(status) => {
+                let addr = status["web_listen"].as_str().map(str::to_owned);
+                *last.borrow_mut() = format!("마지막 status: {status}");
+                addr
+            }
+            Err(error) => {
+                *last.borrow_mut() = format!("마지막 status 오류: {error}");
+                None
+            }
+        },
+        || last.borrow().clone(),
+    )
+}
+
+/// 실제 Front는 열렸지만 웹 bind 전인 순서를 고정한다. 첫 status 뒤에만 웹 시작을 허용한다.
+#[test]
+fn web_readiness_waits_past_a_successful_status_without_a_listener() {
+    let lab = Lab::new();
+    let node = lab.node("host", None);
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.web.listen = "127.0.0.1:0".into();
+    cfg.projects.root = lab.root.join("projects").to_string_lossy().into_owned();
+    cfg.notify.web_push = false;
+    let host = rt.block_on(async {
+        let host = aaa_host::Host::open(cfg, node.state.join("host")).unwrap();
+        aaa_host::front::start(&host).await.unwrap();
+        host
+    });
+    let (start, release) = tokio::sync::oneshot::channel();
+    let web_host = host.clone();
+    let web = rt.spawn(async move {
+        release.await.unwrap();
+        aaa_host::web::start(&web_host).await.unwrap();
+    });
+    let mut start = Some(start);
+    let addr = wait_web_listen(|| {
+        let status = node.json(&["status"])?;
+        if let Some(start) = start.take() {
+            assert!(status["web_listen"].is_null(), "웹 시작 전 status: {status}");
+            eprintln!("웹 bind 전 실제 status: {status}");
+            start.send(()).unwrap();
+        }
+        Ok(status)
+    });
+    rt.block_on(web).unwrap();
+    let mut http = Burst::new(&addr, 1, true);
+    http.ready();
+    http.close();
 }
 
 struct Burst {
