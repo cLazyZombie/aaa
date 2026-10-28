@@ -26,8 +26,14 @@ t-1265, 2026-10-28. macOS arm64에서 실행했다. 제품 규칙은 [머신 배
 
 | 검증 | 결과 |
 |---|---|
-| `nice -n 15 bash scripts/ci-local.sh`(web·fmt·build·clippy·test·e2e·public) | 아래 「마지막 실행」 |
+| `nice -n 15 bash scripts/ci-local.sh`(web·fmt·build·clippy·test·e2e·public) | 마지막 실행: e2e의 `90-workspace-metrics` 한 단계 밖 모두 통과(아래) |
 | `bash scripts/ci-local.sh --only linux-clippy` | 통과 |
 | `AAA_UPDATE_TS=1`·`AAA_UPDATE_AUTOMATION_SCHEMA=1`로 다시 만든 `web/src/gen/proto.ts`·`docs/automation.schema.json` | 생성물 비교 시험 통과 |
 
 Playwright는 저장소 요구 판 1.64.1 npm 패키지만 작업 전용 도구 폴더에 두고, 브라우저는 공용 캐시를 썼다. 웹 E2E는 실제 임시 host·agent를 쓰며 정한 시간을 자지 않는다.
+
+## 마지막 실행과 부하
+
+수리 뒤 전체 `ci-local`은 web·fmt·build·clippy·test(Rust 전체)·public이 통과했다. e2e는 121개 파일 중 `90-workspace-metrics` 하나가 「별도 로그의 실제 ci-local 종료를 … 보존한다」 단계의 20초 시한으로 실패했다. 이 변경 전 같은 브랜치의 첫 전체 실행에서는 이 파일이 통과했다.
+
+부하 근거: 실패 직후 1분 부하 평균이 156~166(10코어)이었고, 같은 머신에서 다른 작업의 E2E CI(`aaa-ci-e2e` 실행 파일 여러 개와 headless Chromium)가 돌고 있었다. 그 상태에서 이 파일만 세 번 단독으로 돌렸다. 첫 번은 다른 단계(「긴 workspace 목록 … 24개 수집」 20초 시한)에서 실패했고, 부하가 내려간 뒤 두 번은 모두 통과했다(139.7초·96.0초, 같은 단계 18~20초). 전체 실행에서 같은 단계는 9~11초였다. 실패한 단계가 실행마다 달라 이 변경의 결함이 아니라 부하로 본다. 이 파일은 머신 예약·비중 경로를 쓰지 않으며 예약이 없을 때 `machine_views`에 더한 일은 머신당 DB meta 읽기 두 번이다. 시한·기대값은 바꾸지 않았다.
