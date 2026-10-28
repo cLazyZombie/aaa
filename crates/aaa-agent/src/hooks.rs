@@ -248,7 +248,7 @@ pub fn output(native: &str, text: &str) -> String {
 }
 
 /// 하위 agent(subagent)가 낸 사건인가: 자기 ID나 `/subagents/` 아래 기록을 가진다(herdr-projects progress.rs `eligible`)
-fn subagent(p: &Value) -> bool {
+pub(crate) fn subagent(p: &Value) -> bool {
     ["agent_id", "subagent_id", "agent_transcript_path"].iter().any(|k| p.get(k).is_some_and(|v| !v.is_null()))
         || s(p, "transcript_path").is_some_and(|t| t.replace('\\', "/").contains("/subagents/"))
 }
