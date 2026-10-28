@@ -70,6 +70,9 @@ impl Lab {
             self.0.join("작업 root").to_str().unwrap(),
             "--work-storage",
             "internal",
+            // 기본 20GB 여유 검사는 러너의 남은 디스크에 따라 work_space_insufficient로 갈린다(10-28 macOS CI).
+            "--min-free-gb",
+            "0",
             "--harness",
             "none",
             "--service",
@@ -81,6 +84,13 @@ impl Lab {
         .into_iter()
         .map(str::to_owned)
         .collect()
+    }
+    /// `args`에서 여유 GB를 뺀다. wizard는 그 물음을 다시 묻고, 기존 agent.toml 값도 계획에 들어간다.
+    fn args_asking_free_space(&self) -> Vec<String> {
+        let mut args = self.args();
+        let at = args.iter().position(|a| a == "--min-free-gb").unwrap();
+        args.drain(at..at + 2);
+        args
     }
     fn run(&self, args: &[String]) -> Output {
         self.cmd(&args.iter().map(String::as_str).collect::<Vec<_>>())
@@ -281,14 +291,15 @@ fn install_reads_local_overrides_and_preserves_existing_installations() {
     let lab = Lab::new();
     let cfg = lab.0.join("config");
     std::fs::create_dir(&cfg).unwrap();
-    std::fs::write(cfg.join("agent.toml"), "schema = 1\n[health]\nmin_free_gb = 7\n").unwrap();
-    let mut args = lab.args();
+    // 여유 GB는 계획 hash가 바뀌는지만 본다. 러너의 남은 디스크로 갈리지 않게 0·1로 둔다.
+    std::fs::write(cfg.join("agent.toml"), "schema = 1\n[health]\nmin_free_gb = 0\n").unwrap();
+    let mut args = lab.args_asking_free_space();
     args.extend(["--json".into(), "--mode".into(), "repair".into()]);
     let a = json(&lab.run(&args));
     assert_eq!(a["status"], "planned");
     std::fs::write(
         cfg.join("agent.local.toml"),
-        format!("schema = 1\n[health]\nmin_free_gb = 9\n[harnesses.codex.env]\nAPI_TOKEN = '{CANARY}'\n"),
+        format!("schema = 1\n[health]\nmin_free_gb = 1\n[harnesses.codex.env]\nAPI_TOKEN = '{CANARY}'\n"),
     )
     .unwrap();
     let b = json(&lab.run(&args));

@@ -22,7 +22,7 @@ fn both_wizards_back_from_host_choices_then_submit_the_same_agent_plan_as_explic
         let lab = Lab::new();
         let before = snapshot(&lab.0);
         let mut args = lab.args();
-        for flag in ["--role", "--name"] {
+        for flag in ["--role", "--name", "--min-free-gb"] {
             let at = args.iter().position(|a| a == flag).unwrap();
             args.drain(at..at + 2);
         }
@@ -42,7 +42,7 @@ fn both_wizards_back_from_host_choices_then_submit_the_same_agent_plan_as_explic
             ("머신 표시 이름", back),
             ("이 머신의 역할", "agent\r"),
             ("머신 표시 이름", "agent-final\r"),
-            ("남겨 둘 여유 GB", "20\r"),
+            ("남겨 둘 여유 GB", "0\r"),
             ("harness 로그인 검사", "require\r"),
             ("사용자 PATH", "preserve\r"),
         ];
@@ -67,7 +67,7 @@ fn explicitly_saved_private_draft_never_overrides_cli_or_silently_fills_an_autom
     for plain in [true, false] {
         let lab = Lab::new();
         let path = lab.0.join("draft.json");
-        let mut args = lab.args();
+        let mut args = lab.args_asking_free_space();
         args.retain(|a| a != "--dry-run");
         if plain {
             args.extend(["--prompt".into(), "plain".into()]);
@@ -91,7 +91,7 @@ fn explicitly_saved_private_draft_never_overrides_cli_or_silently_fills_an_autom
         ]);
         assert_eq!(json(&lab.run(&automated))["error"]["code"], "draft_requires_interactive");
         assert_eq!(snapshot(&lab.0), before);
-        let mut resumed = lab.args();
+        let mut resumed = lab.args_asking_free_space();
         resumed.extend(["--draft".into(), path.to_string_lossy().into_owned(), "--mode".into(), "fresh".into()]);
         let name = resumed.iter().position(|a| a == "--name").unwrap();
         resumed[name + 1] = "explicit-agent".into();
@@ -101,7 +101,7 @@ fn explicitly_saved_private_draft_never_overrides_cli_or_silently_fills_an_autom
         let (code, text) = terminal_steps(
             &lab,
             &resumed,
-            &[("남겨 둘 여유 GB", "20\r"), ("harness 로그인 검사", "require\r"), ("사용자 PATH", "preserve\r")],
+            &[("남겨 둘 여유 GB", "0\r"), ("harness 로그인 검사", "require\r"), ("사용자 PATH", "preserve\r")],
             false,
         );
         assert_eq!(code, 0, "{text}");

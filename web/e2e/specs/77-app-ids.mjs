@@ -209,7 +209,9 @@ export default async function ({ page }) {
     fs.writeFileSync(`${root}/archive-task.md`, "완료 보관 시험");
     const completed = aaa("thread", "start", "demo", "--title", "보관할 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/archive-task.md`);
     aaa("task", "edit", other, "--thread", completed.id);
-    await until("보관할 완료 보고", () => aaa("thread", "show", completed.id).report_hash);
+    // fake는 report.md를 제자리에 쓴다. 쓰는 도중의 빈 판도 hash가 생기므로, 후속(Next)이 담긴 마지막 판을 기다린다.
+    const completedHash = createHash("sha256").update(fs.readFileSync(`${root}/report-fixture.md`)).digest("hex");
+    await until("보관할 완료 보고", () => aaa("thread", "show", completed.id).report_hash === completedHash);
     // 이 단계는 보관된 ID 링크를 검사하므로 공통 fake가 남긴 결과 확인을 먼저 기록한다.
     fs.writeFileSync(`${root}/id-followup-reason.txt`, "보관할 결과 확인과 다음 단계 검토 완료\n");
     for (const f of aaa("thread", "show", completed.id).followups ?? []) {

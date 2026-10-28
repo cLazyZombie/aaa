@@ -556,8 +556,6 @@ fn private_enrollment(edit_pin: bool) {
             "plain".into(),
             "--mode".into(),
             "fresh".into(),
-            "--min-free-gb".into(),
-            "20".into(),
             "--login".into(),
             "defer".into(),
             "--path".into(),

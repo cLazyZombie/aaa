@@ -1650,12 +1650,12 @@ fn claude_menu_dismisses_escape_before_waiting_for_its_suffix() {
     let mut command = lab::terminal_command(Path::new("/bin/sh"));
     command.args(["-c", &script]);
     command.env("CLAUDE_MENU", Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude-menu.py"));
-    let output = lab::Terminal::spawn(command).read_raw(
-        &["fixture escape decode"],
-        &[("Esc to cancel", "\u{1b}"), ("Working… (1s · esc to interrupt)", "x")],
-        T,
-    );
-    let before = format!("{}Working… (1s · esc to interrupt)\n", output.split("Working…").next().unwrap());
+    // suffix 창이 끝나면 fixture가 끝나 PTY가 닫힌다. Working을 본 뒤 키를 더 쓰면 부하 아래 EIO와 경주한다.
+    let output = lab::Terminal::spawn(command).read_raw(&["fixture escape decode"], &[("Esc to cancel", "\u{1b}")], T);
+    let (answered, _) = output
+        .split_once("Working…")
+        .unwrap_or_else(|| panic!("Esc를 읽은 뒤 suffix를 기다리는 동안 Working 표지가 없다: {output:?}"));
+    let before = format!("{answered}Working… (1s · esc to interrupt)\n");
     let mut vt = aaa_vt::Vt::new(36, 120);
     vt.feed(before.as_bytes());
     let screen = vt.text("fixture");
