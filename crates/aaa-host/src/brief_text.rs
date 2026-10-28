@@ -31,6 +31,8 @@ pub(crate) struct BriefInput<'a> {
     pub restart: bool,
     /// coordinator가 쓴 작업 요약(`threads/<id>.summary.md`, 표지 줄 뺀 글). 없으면 빈 글
     pub summary: &'a str,
+    /// 이어진 할 일의 자동 병합(brief를 만들 때의 값, plan §8.521)
+    pub auto_merge: bool,
 }
 
 /// thread 규칙(herdr-projects `skill/THREAD.md`를 옮김). 「aaa에서」 두 줄은 aaa가 보고를 host로 복사하고
@@ -91,6 +93,7 @@ harness의 pane 안 질문 창(예: Claude Code AskUserQuestion)으로 묻지 �
 
 착지 병합 첫 줄은 `병합: <요약> (t-NNNN)`으로 끝낸다. 로컬 필수 검증과 main push 뒤 GitHub CI를 기다리지 않고 바로 보고한다.
 CI 확인은 host의 별도 감시가 맡는다. 실패 입력은 coordinator가 처리하고, 끝난 thread는 되살리지 않는다.
+자동 병합(위 「자동 병합」 값, 사용자가 할 일·thread 화면에서 바꾼다)이 on이면 `[병합 준비됨]` 보고 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다. off면 사용자 승인 뒤에 준다. 어느 쪽이든 병합·push는 착지 창을 받은 뒤에만 하며, 지금 값은 `aaa thread show <thread>`로 본다. thread는 이 값을 바꾸지 않는다.
 
 ## 보고
 
@@ -152,6 +155,11 @@ fn brief_header(input: &BriefInput) -> String {
     out.push_str(&format!("- 사용자가 준 파일(uploads): `{}`{note}\n", input.uploads_path));
     out.push_str(&format!("- 사용자에게 줄 파일(library): `{work}/library`\n"));
     out.push_str(&format!("- 보고: `{work}/report.md`\n"));
+    out.push_str(if input.auto_merge {
+        "- 자동 병합: on(병합 준비되면 사용자에게 묻지 않고 착지 창)\n"
+    } else {
+        "- 자동 병합: off(병합은 사용자 승인 뒤 착지 창)\n"
+    });
     out
 }
 
@@ -239,6 +247,7 @@ mod tests {
             task: "Do the thing.",
             restart: true,
             summary: "# 목표\n지금 목표",
+            auto_merge: true,
         };
         let brief = compose_brief(&input);
         let pos = |needle: &str| brief.find(needle).unwrap_or_else(|| panic!("없다 {needle}"));
@@ -247,6 +256,7 @@ mod tests {
         assert!(pos("/srv/app (`box` 머신)") < pos("/work/lib (host 머신)"));
         assert!(pos("- 사용자가 준 파일(uploads): `/root/demo/uploads`\n") < pos("# thread brief"));
         assert!(pos(&format!("- 보고: `{BRIEF_WORK_DIR}/report.md`")) < pos("# thread brief"));
+        assert!(pos("- 자동 병합: on(") < pos("# thread brief"), "지금 값이 머리에 있다");
         assert!(pos("# thread brief") < pos("앞서 시도한 것"));
         assert!(pos("앞서 시도한 것") < pos("Always run the tests."));
         assert!(pos("Always run the tests.") < pos("# Memory"));
@@ -302,10 +312,12 @@ mod tests {
             task: "t",
             restart: false,
             summary: "",
+            auto_merge: false,
             ..input
         });
         assert!(!fresh.contains("앞서 시도한 것"));
         assert!(!fresh.contains("# 지금 범위"));
+        assert!(fresh.contains("- 자동 병합: off(병합은 사용자 승인 뒤 착지 창)\n"));
         assert!(fresh.starts_with("# aaa\n\n- 이름: `demo`\n- 목표: (정하지 않음)\n- 저장소: (없음)\n"), "{fresh}");
         assert!(fresh.contains("`/root/demo/uploads` (host 머신에만 있다. 네 머신으로 복사되지 않는다)"));
         assert!(!fresh.contains("task 첨부"));

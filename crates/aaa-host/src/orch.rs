@@ -150,6 +150,9 @@ pub(crate) struct ThreadRec {
     /// 끝난 thread의 이어진 task 판정(할 일 T3, task_clean.rs). 이 칸 전에 끝난 thread는 `why`가 없어 판정하지 않는다
     #[serde(default)]
     pub task_clean: TaskClean,
+    /// 이어진 할 일의 ULID(자동 병합 조회, plan §8.521). 이 칸 전에 띄운 thread는 없어 할 일 목록의 연결로 찾는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     /// `--from-task`로 넘길 task 첨부(plan §8.327): 작업 폴더 `attachments/`에 쓸 이름과 host 원본. 세션을 띄울 때마다 쓴다
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<crate::task_attach::TaskFile>,
@@ -255,6 +258,7 @@ impl ThreadRec {
             leftover: None,
             resolve_pending: None,
             task_clean: TaskClean::default(),
+            task_id: None,
             attachments: Vec::new(),
             prepare_started_ms: Some(now),
             created_at_ms: now,
@@ -1005,6 +1009,7 @@ impl Host {
             account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
             over_limit: r.over_limit.clone(),
             park: r.park.clone().map(Box::new),
+            auto_merge: self.thread_auto_merge(r),
             project: r.project.clone(),
             id: r.id.clone(),
             title: r.title.clone(),
@@ -1546,6 +1551,7 @@ impl Host {
             task,
             restart,
             summary: &summary,
+            auto_merge: self.thread_auto_merge(r),
         })
     }
 
@@ -1743,6 +1749,7 @@ impl Host {
             repo: a.repo.clone(),
             base: a.base.clone(),
             attachments: a.attachments.clone(),
+            task_id: a.start_task.as_ref().and_then(|t| t.id.clone()),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         // 내용 승인판 검사와 DB 선점 사이에 host의 파일 쓰기가 끼지 못하게 한다.
@@ -3295,6 +3302,7 @@ mod tests {
             error: None,
             resolve_pending: None,
             task_clean: TaskClean::default(),
+            task_id: None,
             attachments: Vec::new(),
             prepare_started_ms: None,
             leftover: None,

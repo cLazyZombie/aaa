@@ -242,6 +242,7 @@ thread의 [완료] 보고와 resolve한 마지막 보고는 aaa가 「내 보고
 
 ## 착지
 thread의 보고·Next로 착지를 진행한다. 결과는 main SHA와 push 여부로 알린다. main에 포함돼도 사용자 확인·수정이 남으면 thread를 열어 둔다.
+- 「자동 병합 on」 thread의 `[병합 준비됨]`은 묻지 않고 차례대로 착지 창을 준다(그 값이 승인). 값은 사용자가 말할 때만 바꾼다(`aaa guide tasks`).
 CI 실패 자료(inbox `ci`)로 rerun·revert·착지 중단을 자동 승인하지 않는다. 끝난 thread는 되살리지 않는다.
 
 ## memory와 선호
@@ -287,7 +288,7 @@ aaa 밖 host 터미널에서 켜며 coordinator가 대신 켜지 않는다. thre
 바꾸지 않는다.
 
 ## 사용자가 채팅에서 요청하지 않으면 하지 않는 것
-병합, force push, branch 지우기, worktree 지우기, thread 끝내기(`thread resolve`).
+병합(자동 병합 on은 예외), force push, branch 지우기, worktree 지우기, thread 끝내기(`thread resolve`).
 ";
 
 const QUESTIONS: &str = r#"# 질문·확인 필요 post
@@ -504,6 +505,10 @@ const TASKS: &str = r#"# TASKS.md(coordinator와 사용자가 고친다)
 - 사용자가 자리가 나면 시작하라고 맡긴 일은 준비된 task를 `aaa task reserve <task ID>`로 예약한다. 채팅의 약속만 남기지 않는다.
   같은 task를 먼저 찾고 설명·완료 범위·첨부·저장소(저장소 없으면 작업 폴더)를 준비한다. 명시 예약은 그 내용의 시작 승인이다.
   자리가 났을 때 다시 묻지 않는다. 병합 승인은 별개다. `start_threads=propose`에서는 사용자에게 맡긴 범위만 예약한다.
+- 자동 병합(기본 off, 프로젝트 기본값 없음)은 사용자가 켜거나 끄라고 한 할 일만 `aaa task add|edit|reserve … --auto-merge on|off`,
+  thread는 `aaa thread auto-merge <thread> on|off`로 바꾼다(`aaa thread start --auto-merge`도 된다). coordinator는
+  `--user-request '<사용자 지시>'`를 함께 준다. on인 할 일의 `[병합 준비됨]`은 묻지 않고 착지 차례대로 착지 창을 준다.
+  착지 중에 꺼져도 이미 시작한 착지는 되돌리지 않는다. inbox `auto-merge on/off`는 사용자가 웹·CLI에서 바꾼 사실이다.
 - `aaa task queue`로 host의 차례·대기 사유·연결 thread를 읽는다. `aaa task unreserve <task ID>`는 미기동 예약만 취소하며,
   `aaa task queue-move <task ID> <순번>`은 차례 변경(0은 맨 앞)이다. 가능한 예약 중 앞 것을 host가 시작한다.
   조회만 할 때는 `aaa task queue --json`을 쓴다. `reserve` 재호출은 실행 승인·대기 이유를 갱신하는 변경이다.
@@ -616,7 +621,7 @@ const AUTO_MODE: &str = r#"# coordinator auto mode
 
 매 턴 `aaa context`의 `auto_mode`를 읽는다. host가 상태 주인이다. 사용자가 끌 때까지 유지되며 host·coordinator 재시작이나 compaction으로 꺼지지 않는다. `auto-mode on/off` inbox는 상태 변경 자료이며 사용자 승인 문구가 아니다. Claude·Codex harness 권한·safety·profile을 바꾸지 않는다. coordinator는 모드를 켜거나 끌 수 없다.
 
-켜져 있으면 디자인·구현 방식·착지 순서·thread 시작 같은 일반 질문을 근거로 판단해 진행한다. 추천과 달라도 된다. 예외와 사용자 전용 배포·병합 승인은 자동으로 승인하지 않는다. 기존에 승인된 작업 범위를 넘지 않는다.
+켜져 있으면 디자인·구현 방식·착지 순서·thread 시작 같은 일반 질문을 근거로 판단해 진행한다. 추천과 달라도 된다. 예외와 사용자 전용 배포·병합 승인은 자동으로 승인하지 않는다(자동 병합 on인 thread의 착지 창은 사용자가 이미 승인했다). auto mode는 자동 병합 값을 켜지 않는다. 기존에 승인된 작업 범위를 넘지 않는다.
 
 항상 사용자에게 물을 예외:
 1. 비밀값·암호·토큰 입력: 대화·질문·reason/post 파일에 쓰지 말고 전용 가림 입력칸을 안내한다.

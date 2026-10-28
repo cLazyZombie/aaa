@@ -70,6 +70,9 @@ impl Host {
             | R::ThreadMessage { project, thread, .. }
             | R::ThreadAnswer { project, thread, .. }
             | R::PostUnmute { project, thread, .. } => self.thread_selector(project, thread)?,
+            R::AutoMergeSet { project, target, .. } if canonical_short_id(target, 't').is_some() => {
+                self.thread_selector(project, target)?
+            }
             R::LibraryPublish { from_thread: Some(thread), .. } => number(thread, 't'),
             R::DebugInput { thread: Some(thread), .. } => {
                 if let Some((project, id)) = thread.split_once('/') {

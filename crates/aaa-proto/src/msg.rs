@@ -2970,6 +2970,18 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<bool>")]
         cancel: bool,
     },
+    /// FRONT_API 1.136. 할 일(`d-0001`·ULID·제목) 또는 thread(`t-0001`, 이어진 할 일)의 자동 병합을 켜고 끈다. 값이 같으면 바꾸지 않는다.
+    /// 사용자(조작 기기·세션 밖 CLI)와, `user_request`를 인용한 그 프로젝트 coordinator만. 답은 `auto_merge`
+    AutoMergeSet {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        target: String,
+        on: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        user_request: Option<String>,
+    },
     /// FRONT_API 1.105. 보류를 풀고 이어 한다. 같은 머신(기본)은 같은 대화를 잇고, 다른 머신은 push된 branch로 새 worktree를 만들고
     /// 할 일·마지막 보고(Handoff)를 담은 brief로 새 대화를 띄운다. `dry_run`은 머신별 길만 답한다(`UnparkPreview`)
     ThreadUnpark {
@@ -3489,6 +3501,7 @@ impl FrontRequest {
             | FrontRequest::ThreadResolve { project, .. }
             | FrontRequest::ThreadStop { project, .. }
             | FrontRequest::ThreadPark { project, .. }
+            | FrontRequest::AutoMergeSet { project, .. }
             | FrontRequest::ThreadUnpark { project, .. }
             | FrontRequest::ThreadRestart { project, .. }
             | FrontRequest::ThreadBrief { project, .. }
@@ -3709,6 +3722,18 @@ pub enum FrontResponse {
     },
     /// 「답할 것」(FRONT_API 1.78): 열린 확인 필요 post, 답한 것(최신부터), 자동 정리 기간
     AutoMode(crate::AutoMode),
+    /// `auto_merge_set`의 답(FRONT_API 1.136): 할 일 표시 ID·ULID, 이어진 thread, 지금 값, 이번에 바꿨는가
+    AutoMerge {
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        short_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        thread: Option<String>,
+        on: bool,
+        changed: bool,
+    },
     AutoDecisions {
         decisions: Vec<crate::AutoDecision>,
         next: Option<String>,

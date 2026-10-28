@@ -25,6 +25,7 @@ import { uploadTaskFile } from "./api";
 import { TaskAttachments, dragHasFiles, filesOf, resolveReportLink, type PendingUpload } from "./TaskAttachments";
 import { GROUP_WORD } from "./sidebarModel";
 import { usePhoneSheetBack } from "./herdr/sheetHistory";
+import { AutoMergeCheck, AutoMergeSwitch, setAutoMerge } from "./AutoMerge";
 import type { MyEdit } from "./TaskDialogs";
 import {
   addAttachment,
@@ -149,6 +150,8 @@ export interface DetailProps {
   queueApi?: boolean;
   /** host가 예약의 앞 할 일을 안다(FRONT_API 1.113) */
   afterApi?: boolean;
+  /** host가 자동 병합을 안다(FRONT_API 1.136): 상세의 스위치·새 할 일·예약 확인의 칸 */
+  autoMergeApi?: boolean;
   /** 목록이 연 예약(끌어 놓기·⋯): 내용 확인을 바로 연다 */
   reserveRequest?: ReserveRequest | null;
   /** 예약 위로·아래로·맨 앞으로(목록이 거르기에 맞춰 순번을 정한다) */
@@ -219,7 +222,7 @@ export function TaskDetail(props: DetailProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  const queue = useQueue({ task: t, board: props.board, canEdit: props.canEdit && !!props.queueApi, afterApi: props.afterApi, request: props.reserveRequest, onUnreserved: props.onUnreserved });
+  const queue = useQueue({ task: t, board: props.board, canEdit: props.canEdit && !!props.queueApi, afterApi: props.afterApi, autoMergeApi: props.autoMergeApi, request: props.reserveRequest, onUnreserved: props.onUnreserved });
   const state = t ? taskState(t, props.groups) : "wait";
   const label = t ? `할 일 ${t.title}` : props.gone ? "파일에서 빠진 할 일" : "새 할 일";
   return (
@@ -372,6 +375,7 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
+  const [newMerge, setNewMerge] = useState(false);
   // 속성(저장소·담당·모델·머신·상위)은 고르면 바로 저장하고(사용자 10-26 q-1382 3B), 제목·메모·사람 이름은 모아서 「저장」한다.
   // `saved`는 편집을 시작한 판의 값이고, 고쳤는지는 글 칸만 그 판에 얹어 본다. 사람을 고르고 이름을 아직 쓰지 않은 담당도 글 칸이다
   const saved = useMemo(() => (base ? draftOf(base, agents, baseParent) : null), [base, agents, baseParent]);
@@ -425,7 +429,12 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
     setError(null);
     try {
       const r = await onSave(ops, edit);
-      if (r.kind === "saved" && !base) setDraft(emptyDraft(draft.list));
+      // 새 할 일의 자동 병합은 만든 뒤 그 제목으로 정한다(host 값이라 TASKS.md 줄에는 없다)
+      if (r.kind === "saved" && !base && newMerge) await setAutoMerge(board.project, r.title, true);
+      if (r.kind === "saved" && !base) {
+        setDraft(emptyDraft(draft.list));
+        setNewMerge(false);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -800,6 +809,12 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
               ))}
             </select>
           </label>
+          {props.autoMergeApi && props.canEdit && (
+            <div className="task-prop task-prop-merge">
+              {base ? <AutoMergeSwitch project={board.project} target={base.short_id ?? base.title} on={!!t?.auto_merge} disabled={busy} testid="task-field-auto-merge" />
+                : <AutoMergeCheck checked={newMerge} disabled={busy} onChange={setNewMerge} testid="task-field-auto-merge-new" />}
+            </div>
+          )}
         </div>
         <section className="task-detail-section task-memo">
           <h3 className="task-field-head">
@@ -898,7 +913,7 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
           </p>
         )}
         {t && queue.preview ? (
-          <ReservePanel task={t} board={board} afterApi={props.afterApi} queue={queue} />
+          <ReservePanel task={t} board={board} afterApi={props.afterApi} autoMergeApi={props.autoMergeApi} queue={queue} />
         ) : !base || dirty ? (
           <div className="task-detail-actions">
             <button className="btn btn-primary" disabled={busy || !dirty || draft.title.trim() === ""} data-testid="task-save">
