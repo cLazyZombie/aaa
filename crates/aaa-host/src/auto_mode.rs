@@ -9,6 +9,9 @@ use std::sync::Arc;
 struct Document {
     mode: AutoMode,
     decisions: Vec<AutoDecision>,
+    /// 지운 기록 중 답을 전달하지 못했거나 전달 여부를 모르는 ID. 지운 뒤에도 같은 질문에 자동 재전송하지 않는다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    forgotten: Vec<String>,
 }
 fn key(project: &str) -> String {
     format!("auto-mode:{project}")
@@ -124,7 +127,7 @@ impl Host {
                 let mut d = decode(raw)?;
                 anyhow::ensure!(d.mode.on, "auto mode가 꺼져 있다");
                 anyhow::ensure!(
-                    !d.decisions.iter().any(|r| r.id == decision.id),
+                    !d.decisions.iter().any(|r| r.id == decision.id) && !d.forgotten.contains(&decision.id),
                     "이미 자동 답을 시도했다. 전달 기록을 확인하고 자동 재전송하지 않는다"
                 );
                 decision.run = d.mode.run;
@@ -225,7 +228,8 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "없는 선택지다"));
         }
         let decision_id = format!("auto-{id}");
-        if self.auto_decisions(project)?.iter().any(|d| d.id == decision_id) {
+        let doc = self.auto_document(project)?;
+        if doc.decisions.iter().any(|d| d.id == decision_id) || doc.forgotten.contains(&decision_id) {
             return Err(err(ErrorCode::BadRequest, "이미 자동 답을 시도했다. 기록을 확인한다"));
         }
         let dir = self.project_dir(project)?;
@@ -305,6 +309,75 @@ impl Host {
         }
         let (decisions, next) = self.auto_decision_page(project, None, Some(id))?;
         Ok(FrontResponse::AutoDecisions { decisions, next })
+    }
+    /// 자동 결정 기록을 지운다(모든 기기). 질문 사본과, 자동 답만으로 된 「답한 것」 기록도 함께 지워 다른 목록에 다시 나타나지 않게
+    /// 한다. 이미 실행한 일은 되돌리지 않는다.
+    pub(crate) fn auto_decision_forget(
+        &self,
+        project: &str,
+        ids: &[String],
+        all: bool,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        if ids.is_empty() && !all {
+            return Err(err(ErrorCode::BadRequest, "지울 자동 결정 ID나 all이 필요하다"));
+        }
+        let mut gone = Vec::new();
+        let mut kept = std::collections::BTreeSet::new();
+        self.db
+            .update_meta(&key(project), |raw| {
+                let mut d = decode(raw)?;
+                let (out, keep): (Vec<_>, Vec<_>) =
+                    std::mem::take(&mut d.decisions).into_iter().partition(|r| all || ids.contains(&r.id));
+                for r in out.iter().filter(|r| r.outcome != "answered") {
+                    if !d.forgotten.contains(&r.id) {
+                        d.forgotten.push(r.id.clone());
+                    }
+                }
+                kept = keep.iter().filter(|r| r.outcome == "answered").filter_map(|r| r.question.id.clone()).collect();
+                d.decisions = keep;
+                gone = out;
+                Ok(serde_json::to_string(&d)?)
+            })
+            .map_err(internal)?;
+        if gone.is_empty() {
+            return self.asks_view(project);
+        }
+        for r in &gone {
+            aaa_common::diagnostic::ignored(
+                std::fs::remove_dir_all(dir.join("asks").join(&r.id)),
+                "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+            );
+        }
+        // 웹은 질문이 모두 자동 답인 「답한 것」을 자동 결정 줄로만 보인다. 그 결정을 지우면 기록도 지운다.
+        let removed: std::collections::BTreeSet<String> =
+            gone.iter().filter(|r| r.outcome == "answered").filter_map(|r| r.question.id.clone()).collect();
+        let records: Vec<String> = self
+            .db
+            .ask_list(project)
+            .map_err(internal)?
+            .into_iter()
+            .filter(|a| {
+                let qs: Vec<&str> = a.items.iter().filter_map(|q| q.id.as_deref()).collect();
+                !a.items.is_empty()
+                    && qs.len() == a.items.len()
+                    && qs.iter().all(|q| removed.contains(*q) || kept.contains(*q))
+                    && qs.iter().any(|q| removed.contains(*q))
+            })
+            .map(|a| a.id)
+            .collect();
+        if !records.is_empty() {
+            for id in self.db.ask_delete(project, Some(&records)).map_err(internal)? {
+                aaa_common::diagnostic::ignored(
+                    std::fs::remove_dir_all(dir.join("asks").join(id)),
+                    "정리 실패가 본 작업의 결과를 덮지 않게 한다",
+                );
+            }
+        }
+        self.db.audit(actor, "auto_decision_forget", &format!("{project} {}", gone.len()));
+        self.asks_bump();
+        self.asks_view(project)
     }
     pub(crate) fn auto_exception_count(&self, project: &str) -> Result<u32, ErrorBody> {
         let mut ids = std::collections::BTreeSet::new();

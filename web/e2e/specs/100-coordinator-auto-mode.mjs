@@ -103,7 +103,12 @@ export default async function () {
         await domIs(p, "coordinator 입력 연결", () => document.querySelector('.composer-surface.is-coordinator button[aria-label="그림 첨부"]')?.disabled === false);
         assert.equal(await p.getByRole("textbox", { name: "메시지", exact: true }).getAttribute("placeholder"), "coordinator에게 지시하기");
         assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-        assert.equal(await p.locator(".auto-lines").evaluate(el => [...el.querySelectorAll("button")].every(b => b.scrollWidth <= b.clientWidth + 1 && b.scrollHeight <= b.clientHeight + 1)), true, "자동 결정 줄은 휴대폰 폭에서 줄바꿈한다");
+        // 대화창 자동 결정은 접힌 한 줄이다. 펼친 줄은 한 줄씩 말줄임으로 폭을 넘지 않는다.
+        await p.getByTestId("auto-lines-toggle").waitFor();
+        assert.equal(await p.getByTestId("auto-line").count(), 0, "자동 결정 줄은 접혀 시작한다");
+        await p.getByTestId("auto-lines-toggle").click();
+        await p.getByTestId("auto-line").first().waitFor();
+        assert.equal(await p.locator(".auto-lines").evaluate(el => el.scrollWidth <= el.clientWidth + 1 && [...el.querySelectorAll(".auto-line")].every(r => r.getBoundingClientRect().height < 60)), true, "자동 결정 줄은 휴대폰 폭에서 한 줄이다");
         await shot(p, `100-${name}-${width}-on`);
         await p.emulateMedia({ reducedMotion: "reduce" });
         assert.equal(await p.locator(".composer-glow").evaluate(el => getComputedStyle(el).display), "none");
@@ -181,6 +186,52 @@ export default async function () {
     const old = (await call(desktop, { op: "auto_decisions", project: "demo", before: null, id: `auto-${ids[0]}` })).ok.decisions[0];
     assert.equal(old.choice, "B"); assert.equal(old.reviewed, true);
     aaa("project", "auto-mode", "off");
+  });
+  await step("auto mode: 대화창 접은 줄의 확인·지우기와 질문 화면 지우기·모두 지우기가 모든 기기에서 함께 빠진다", async () => {
+    const rows = p => p.evaluate(() => [...document.querySelectorAll('[data-testid="auto-line"]')].map(r => r.dataset.id));
+    const before = (await call(desktop, { op: "asks" })).ok;
+    const autoQ = new Set(before.auto_decisions.map(d => d.question.id).filter(Boolean));
+    for (const p of [desktop, mirror]) {
+      await showCoordinator(p);
+      await p.getByTestId("auto-lines-toggle").waitFor();
+      assert.ok((await p.getByTestId("auto-lines").boundingBox()).height < 60, "접힌 자동 결정은 대화를 덮지 않는 한 줄이다");
+      await shot(p, `100-chat-collapsed-${p === desktop ? 1280 : 390}`);
+      await p.getByTestId("auto-lines-toggle").click();
+      await p.getByTestId("auto-line").first().waitFor();
+    }
+    assert.ok((await desktop.getByTestId("auto-lines").boundingBox()).height < 844 / 2, "펼친 목록도 대화창 절반을 넘지 않고 안에서 굴러간다");
+    // 「괜찮음」으로 확인한 결정(ids[0])은 대화창에 없다
+    assert.ok(!(await rows(desktop)).includes(`auto-${ids[0]}`));
+    await shot(desktop, "100-chat-lines-1280"); await shot(mirror, "100-chat-lines-390");
+    const [checked, gone] = await rows(desktop);
+    await desktop.locator(`[data-testid="auto-line"][data-id="${checked}"] [data-testid="auto-line-review"]`).click();
+    await domIs(mirror, "확인한 결정은 다른 기기 대화창에서도 빠진다", id => !document.querySelector(`[data-testid="auto-line"][data-id="${id}"]`), checked);
+    assert.equal((await call(desktop, { op: "auto_decisions", project: "demo", before: null, id: checked })).ok.decisions[0].reviewed, true);
+    await desktop.locator(`[data-testid="auto-line"][data-id="${gone}"] [data-testid="auto-line-forget"]`).click();
+    await desktop.getByRole("alertdialog").getByRole("button", { name: "지우기", exact: true }).click();
+    await domIs(mirror, "지운 결정은 다른 기기 대화창에서도 빠진다", id => !document.querySelector(`[data-testid="auto-line"][data-id="${id}"]`), gone);
+    assert.equal((await call(desktop, { op: "auto_decisions", project: "demo", before: null, id: gone })).ok.decisions.length, 0);
+    // 질문 화면 카드에서 하나 지우기
+    await desktop.evaluate(id => { location.hash = `question=${id}`; }, ids[0]);
+    await desktop.getByTestId("auto-decision-forget").click();
+    await desktop.getByRole("alertdialog").getByRole("button", { name: "지우기", exact: true }).click();
+    await desktop.getByTestId("auto-decision-card").waitFor({ state: "detached" });
+    assert.equal((await call(desktop, { op: "auto_decisions", project: "demo", before: null, id: `auto-${ids[0]}` })).ok.decisions.length, 0);
+    // 모두 지우기: 질문 화면 목록·대화창·자동 답만으로 된 답한 것이 함께 빠진다
+    await desktop.getByTestId("asks-auto-forget-all").click();
+    await shot(desktop, "100-auto-forget-all-1280");
+    await desktop.getByRole("alertdialog").getByRole("button", { name: "모두 지우기", exact: true }).click();
+    await domIs(desktop, "자동으로 정한 것 0개", () => document.querySelector('[data-testid="asks-auto-count"]')?.textContent === "0");
+    await mirror.getByTestId("auto-lines").waitFor({ state: "detached" });
+    await shot(mirror, "100-chat-cleared-390");
+    const after = (await call(desktop, { op: "asks" })).ok;
+    assert.equal(after.auto_decisions.length, 0); assert.equal(after.auto_next ?? null, null);
+    assert.equal(after.done.filter(r => r.items.length && r.items.every(q => autoQ.has(q.id))).length, 0, "자동 답만으로 된 답한 것은 다시 나타나지 않는다");
+    await desktop.reload(); await showCoordinator(desktop);
+    assert.equal(await desktop.getByTestId("auto-lines").count(), 0);
+    const reader = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 }, { serviceWorkers: "block" })).page;
+    pages.push(reader);
+    assert.ok((await call(reader, { op: "auto_decision_forget", project: "demo", ids: [], all: true })).err);
     for (const p of pages) await p.context().close();
   });
   } finally {

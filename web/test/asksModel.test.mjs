@@ -2,7 +2,7 @@
 // 질문·답할 것 열쇠는 답한 뒤에도 그때 남긴 기록으로 이어진다(새 보고 뒤의 칩·「답함으로 표시」 뒤의 카드).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { askFileUrl, choicePicture, doneOf, openAsks, questionKey, questionRefLook } from "../src/asksModel.ts";
+import { askFileUrl, choicePicture, doneOf, freshAuto, openAsks, questionKey, questionRefLook } from "../src/asksModel.ts";
 
 const BASE = "/api/v1/projects/demo/questions/t-1/abc/";
 const thread = (id, questions) => ({ id, title: id, updated_at_ms: 1, questions });
@@ -96,4 +96,14 @@ it("q ID 링크와 연결 post는 같은 항목 하나로 묶는다", () => {
   assert.equal(questionKey("q-1000", [], [{ ...done, items: [{ id: "q-1000", text: "자리", choices: [] }] }]), "d:answer");
   const history = { ...rec("answered", "question", "t-1", 1), items: [{ id: "q-1000", text: "자리", choices: [] }] };
   assert.deepEqual(openAsks([], { requests: [r], done: [history], keepDays: 14 }, []), []);
+});
+
+it("자동 결정 첫 쪽은 다른 기기에서 지운 결정을 남기지 않고, 더 본 이전 쪽만 이어 둔다", () => {
+  const d = (id, at_ms) => ({ id, at_ms });
+  const loaded = [d("a5", 5), d("a4", 4), d("a3", 3), d("a2", 2), d("a1", 1)];
+  // 첫 쪽(5·3)에서 4가 지워졌다: 4는 빠지고 첫 쪽보다 오래된 이전 쪽(2·1)은 남는다
+  assert.deepEqual(freshAuto([d("a5", 5), d("a3", 3)], "a3", loaded).map(x => x.id), ["a5", "a3", "a2", "a1"]);
+  // 이전 쪽이 없으면(모두 지움 포함) 첫 쪽만 남는다
+  assert.deepEqual(freshAuto([d("a5", 5)], null, loaded).map(x => x.id), ["a5"]);
+  assert.deepEqual(freshAuto([], null, loaded), []);
 });
