@@ -26,3 +26,15 @@
   auto mode 안내는 SessionStart·상태가 바뀐 입력에만(같은 상태의 inbox 알림은 빈 출력). 필요성: 매 입력 hook 글은 compaction 전까지 매 요청에 다시 실린다.
 - `cargo test -p aaa --test codex_integration`: 실제 `aaa hook --agent codex`의 SessionStart·UserPromptSubmit 안내와 자동화 기억 재독.
 - m13(Unix): `doctor_files_brings_the_coordinator_guide_to_existing_projects`(`GUIDE_SECTIONS` 문구·16KiB 상한), brief를 받는 가짜 agent·Claude hook 안내 시험.
+
+## 결과(착지 전)
+
+- macOS(LF 사본, `nice -n 15`): `cargo test -p aaa-proto -p aaa-agent -p aaa-host --lib --no-fail-fast`가 50·186·745개 통과(무시 2).
+  m13 9개 통과: `doctor_files_brings_the_coordinator_guide_to_existing_projects`, `worktree_thread_round_trip`, `task_attachments_reach_a_remote_agent`,
+  `coordinator_flow`, `memory_and_restart`, `claude_thread_states_questions_and_messages`, `auto_merge::coordinator_changes_auto_merge_only_with_user_request`,
+  `automation_start::automation_memory_reentry_claude_after_compact_and_resume`·`…_codex_after_compact_and_resume`.
+- Windows: `codex_integration` 9개, 바꾼 네 crate의 `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `scripts/check-public.sh` 통과.
+  `core.autocrlf=true`인 작업 사본에서는 저장소의 LF 파일이 CRLF로 풀려, 그 파일과 바이트를 비교하는 시험 9개가 실패한다:
+  aaa-agent detect 3개(fixture 줄 위치가 글자 경계에서 멈춤), aaa-host 4개(공개 스키마·ci·git 예시), aaa-proto 2개(설치 스키마·TypeScript 생성물).
+  이 변경은 그 파일·코드를 건드리지 않으며 LF 사본(macOS)에서는 모두 통과한다. 그 사본의 단위 시험 결과는 판정에 쓰지 않았다.
+- 전체 ci-local·Linux strict cross·실제 이름 목록을 포함한 공개 검사는 착지 회차에서 돈다.
