@@ -1,6 +1,83 @@
 //! front.sock 없는 원격 thread의 읽기 CLI와 hook·host 권한 경계를 실제 TLS로 확인한다.
 use super::*;
 
+// Python fixture도 제품 hooks::exchange와 같은 오류 경계를 쓴다.
+// JSON을 읽고 먼저 닫은 peer의 응답은 ENOTCONN 뒤에도 읽을 수 있다.
+const HOOK_EXCHANGE: &str = r#"
+def hook_exchange(s, msg):
+    s.sendall(json.dumps(msg).encode())
+    try:
+        s.shutdown(socket.SHUT_WR)
+    except OSError as error:
+        if error.errno != errno.ENOTCONN:
+            raise
+    data = b''
+    while True:
+        chunk = s.recv(65536)
+        if not chunk: break
+        data += chunk
+    return data.decode()
+"#;
+
+#[test]
+fn python_hook_reads_closed_peer_reply_without_hiding_other_errors() {
+    let script = format!(
+        r#"
+import errno, json, socket, threading
+{HOOK_EXCHANGE}
+for reply in [b'ok\nthread_read.v1 {{}}', b'error: peer pid\n', b'']:
+    client, server = socket.socketpair()
+    closed = threading.Event()
+    request = dict(op='projects', all=True)
+    peer_errors = []
+    def peer():
+        try:
+            with server:
+                expected = json.dumps(request).encode()
+                received = b''
+                while len(received) < len(expected):
+                    chunk = server.recv(len(expected) - len(received))
+                    assert chunk, 'request ended early'
+                    received += chunk
+                assert received == expected
+                server.sendall(reply)
+        except BaseException as error:
+            peer_errors.append(error)
+        finally:
+            closed.set()
+    class AfterPeerClosed:
+        def sendall(self, data):
+            client.sendall(data)
+            assert closed.wait(3), 'peer close not observed'
+        def shutdown(self, how):
+            client.shutdown(how)
+        def recv(self, size):
+            return client.recv(size)
+    worker = threading.Thread(target=peer)
+    worker.start()
+    try:
+        with client:
+            assert hook_exchange(AfterPeerClosed(), request).encode() == reply
+    finally:
+        worker.join(3)
+        assert not worker.is_alive()
+        assert not peer_errors, peer_errors
+class BrokenShutdown:
+    def sendall(self, data): pass
+    def shutdown(self, how): raise OSError(errno.EIO, 'shutdown failure')
+    def recv(self, size): raise AssertionError('must not read after EIO')
+try:
+    hook_exchange(BrokenShutdown(), request)
+except OSError as error:
+    assert error.errno == errno.EIO
+else:
+    raise AssertionError('shutdown failure was hidden')
+"#
+    );
+    let out = lab::captured(Command::new("python3").args(["-c", &script])).unwrap();
+    assert!(out.status.success(), "Python hook 회귀 실패: {}\n{}", out.status, String::from_utf8_lossy(&out.stderr));
+}
+
 #[test]
 fn remote_thread_reads_host_reports_library_and_search_without_write_access() {
     let mut w = report_shell_world();
@@ -57,7 +134,8 @@ fn remote_thread_reads_host_reports_library_and_search_without_write_access() {
         "read-probe.py",
         &format!(
             r#"
-import hashlib, json, os, socket, subprocess
+import errno, hashlib, json, os, socket, subprocess
+{HOOK_EXCHANGE}
 AA = {bin:?}
 def call(*args, ok=True):
     p = subprocess.run([AA, '--json', *args], capture_output=True)
@@ -86,13 +164,7 @@ def hook(session, token, request):
     msg = dict(session=session, token=token, harness='thread_read', payload=request)
     with socket.socket(socket.AF_UNIX) as s:
         s.connect(os.environ['AAA_HOOK_SOCK'])
-        s.sendall(json.dumps(msg).encode()); s.shutdown(socket.SHUT_WR)
-        data = b''
-        while True:
-            chunk = s.recv(65536)
-            if not chunk: break
-            data += chunk
-        return data.decode()
+        return hook_exchange(s, msg)
 session = os.environ['AAA_SESSION_ID']; token = os.environ['AAA_HOOK_TOKEN']
 assert 'token' in hook(session, 'bad', dict(op='projects', all=True))
 with open(os.path.join(os.path.dirname(os.path.dirname(os.environ['AAA_HOOK_SOCK'])), 'sessions', {victim_pane:?}, 'spec.json')) as f:
