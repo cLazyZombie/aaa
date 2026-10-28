@@ -107,6 +107,12 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa routine list` · `aaa routine runs <이름>` · `aaa routine toggle <이름> --off` | 일정·thread·CI·Git 사건 자동화 |
 
 모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. `pane`·`tab`·`workspace`는 늘 JSON 한 줄이고, 실패하면 stderr에 `{"error":…}`를 쓰고 종료 코드 1입니다(herdr와 같다). 셸 완성은 `aaa completion zsh`(bash·fish·elvish·powershell)입니다. 자세한 것은 `aaa <명령> --help`입니다.
+## 머신 배정
+
+머신은 host가 workspace 허용 → 독점 예약 → 착지 중 → 열린 thread÷비중(기본 CPU 수) 차례로 고른다. 머신을 비워 두려면
+웹 기기 정보 「자동 배정」이나 `aaa machine reserve <머신> --holder <d-…|t-…>`로 독점 예약을 건다. 자동화 `machines`를
+비우면 같은 차례로 자동 선택한다. 자세한 규칙: [머신 배정](machine-assignment.md).
+
 ## 머신별 작업 디스크
 
 각 머신의 `agent.toml` 또는 `agent.local.toml`에서 `[agent] work_root`를 정한다. 비우면 기존 `~/aaa-work`를

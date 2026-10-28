@@ -7,7 +7,6 @@ events = ["failed"]
 [do.start]
 title = "CI 실패 분류"
 profiles = ["reviewer"]
-machines = ["mac-a"]
 brief_file = "automations/ci-watch.md"
 reuse = "open"
 memory = true

@@ -92,7 +92,7 @@ function ActionFields({ form, update }: { form: Form; update: (f: Form) => void 
     case "start": return <>
       <Text label="thread 제목" value={a.title} onChange={(v) => set("title", v)} hint="{date}·{machine}·{repo_path}를 채운다" testid="automation-form-start-title" />
       <List label="profile 후보" value={a.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />
-      <List label="머신 후보" value={a.machines} onChange={(v) => set("machines", v)} testid="automation-form-machines" />
+      <List label="머신 후보(비우면 자동)" value={a.machines ?? []} onChange={(v) => set("machines", v)} testid="automation-form-machines" />
       <Text label="저장소" value={a.repo} onChange={(v) => set("repo", v)} placeholder="비우면 저장소 없는 작업 폴더" />
       <Field label="열린 thread"><select className="input" value={a.reuse === "open" ? "open" : "new"} onChange={(e) => update(e.target.value === "open" ? setField(form, "do", "reuse", "open") : setField(setField(setField(form, "do", "reuse", "new"), "do", "memory", null), "do", "close_idle", null))}><option value="new">사건마다 새 thread</option><option value="open">같은 규칙의 열린 thread에 이어 보낸다</option></select></Field>
       {a.reuse === "open" && <>

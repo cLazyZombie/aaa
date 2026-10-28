@@ -379,6 +379,15 @@ const THREADS: &str = r#"# thread 다루기
   시작하라고 명시했을 때만 `aaa thread start --from-task <ID> --link-task --over-limit --user-request '<사용자 지시 근거>'`를
   쓴다. 일반 시작 승인·자리 대기·inbox 요청은 강제 시작 승인이 아니다. 강제 시작도 열린 수에 넣고 예약은 계속 한도를 지킨다.
 
+## 머신 배정
+- 머신은 host가 고른다: workspace 허용 → 독점 예약 → 착지 중(`[착지]` thread의 머신) → 열린 thread÷비중(기본 CPU 수).
+  머신을 말로 미루거나 memory 규칙으로 막지 않는다. 머신 칸·자동화 `machines`는 사용자가 정한 때만 채운다(비우면 자동).
+- 독점 예약: 사용자가 「X는 d-0001 전용」처럼 말하면 `aaa machine reserve <머신> --holder <d-…|t-…> --note … [--for 2h]
+  --user-request '<사용자 지시>'`, 풀 때 `aaa machine release <머신> --user-request …`. 주인 thread가 끝나거나 주인 할 일이
+  목록에서 빠지면 저절로 풀린다. 측정처럼 자기 머신을 비워야 하는 thread는 brief에 `aaa machine reserve <자기 머신>`을 적는다.
+- 예약된 머신을 지정한 시작은 기다린다. 사용자가 그래도 띄우라고 했을 때만 `--ignore-reservation --user-request …`. 상태는
+  `aaa machine list`.
+
 ## 보기
 - `aaa thread list`·`aaa thread show <id>`가 지금 상태와 함께 기록을 보인다(`--json`이면 Next 목록까지). 보고 사본은
   `threads/<id>.md`, 사용자에게 줄 결과물은 `library/<id>/`에 있다.

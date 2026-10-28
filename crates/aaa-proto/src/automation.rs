@@ -151,6 +151,9 @@ pub struct AutomationThread {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     pub profiles: Vec<String>,
+    /// 비우거나 생략하면 자동 머신(workspace 허용·독점 예약·착지 중·비중으로 host가 고른다)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
     pub machines: Vec<String>,
     #[serde(default)]
     pub reuse: AutomationReuse,

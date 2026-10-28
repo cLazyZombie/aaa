@@ -140,6 +140,7 @@ pub fn typescript_bindings() -> String {
         MachineHealth::decl(&cfg),
         MachineInfo::decl(&cfg),
         MachineSelfcheck::decl(&cfg),
+        MachineReservation::decl(&cfg),
         HealthProblem::decl(&cfg),
         QueueState::decl(&cfg),
         QueueOp::decl(&cfg),

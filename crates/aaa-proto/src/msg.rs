@@ -1481,6 +1481,41 @@ pub struct MachineView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub selfcheck: Option<MachineSelfcheck>,
+    /// 지금 걸린 독점 예약(FRONT_API 1.148). 끝났거나 시한이 지난 예약은 싣지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reservation: Option<MachineReservation>,
+    /// 사람이 정한 자동 배정 비중(FRONT_API 1.148). 없으면 건강 보고의 CPU 수를 쓴다. 0이면 자동 배정에서 뺀다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub weight: Option<u32>,
+}
+
+/// 머신 독점 예약(FRONT_API 1.148). 주인이 아닌 시작은 그 머신에 자동 배정하지 않고, 그 머신을 지정한 시작은 풀릴 때까지 기다린다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineReservation {
+    pub project: String,
+    /// 주인: `t-NNNN` thread 또는 `d-NNNN` 할 일
+    pub holder: String,
+    /// 주인이 할 일이면 그 ULID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub note: Option<String>,
+    /// 저절로 풀리는 시각(없으면 주인이 끝나거나 풀 때까지)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub until_ms: Option<u64>,
+    /// 건 쪽: `사용자`·`coordinator`·`t-NNNN`(자기 머신을 건 thread)
+    pub by: String,
+    /// coordinator가 인용한 사용자 지시
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub user_request: Option<String>,
+    #[ts(type = "number")]
+    pub at_ms: u64,
 }
 
 /// agent 시작 자가 점검 요약(hello `selfcheck`에서 host가 읽은 것). 실패 이유는 agent가 쓴 글 그대로다
@@ -2525,6 +2560,36 @@ pub enum FrontRequest {
     MachineRevoke {
         name: String,
     },
+    /// FRONT_API 1.148. 머신 독점 예약을 걸거나(같은 주인이면 고친다) 푼다. 사용자, 또는 `user_request`를 준 그 프로젝트
+    /// coordinator만. thread는 자기 머신을 `aaa machine reserve`(post 길)로 잡는다
+    MachineReserve {
+        machine: String,
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        /// `t-NNNN` thread 또는 할 일(`d-NNNN`·ULID·제목)
+        holder: String,
+        #[serde(default)]
+        #[ts(optional)]
+        note: Option<String>,
+        #[serde(default)]
+        #[ts(optional, type = "number")]
+        until_ms: Option<u64>,
+        #[serde(default)]
+        #[ts(optional)]
+        user_request: Option<String>,
+    },
+    MachineRelease {
+        machine: String,
+        #[serde(default)]
+        #[ts(optional)]
+        user_request: Option<String>,
+    },
+    /// FRONT_API 1.148. 자동 배정 비중(사람만). None은 CPU 수로 되돌린다
+    MachineWeightSet {
+        machine: String,
+        weight: Option<u32>,
+    },
     /// pairing 코드를 만든다. 아직 쓰지 않은 앞 코드는 버린다(herdr-web-ui `startPairing`). 웹 기기는 controller 코드만(D6)
     WebPair {
         role: DeviceRole,
@@ -2648,6 +2713,10 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         user_request: Option<String>,
+        /// FRONT_API 1.148. 다른 일이 독점 예약한 머신에도 시작한다. 사용자, 또는 `user_request`를 준 coordinator만
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        ignore_reservation: bool,
         #[serde(default)]
         holds: Vec<String>,
         /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
@@ -3663,6 +3732,7 @@ impl FrontRequest {
             | FrontRequest::ProjectSettings { project }
             | FrontRequest::WorkspaceAccess { project, .. }
             | FrontRequest::WorkspaceAccessSet { project, .. }
+            | FrontRequest::MachineReserve { project, .. }
             | FrontRequest::ProjectRepoEdit { project, .. }
             | FrontRequest::ThreadResolvePreview { project, .. }
             | FrontRequest::RoutineToggle { project, .. }

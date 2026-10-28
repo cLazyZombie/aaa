@@ -4973,3 +4973,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - t-1263(q-1664) WAL 백업 잠금 첫 실패의 수리 전 재현·owner 수명 수리(t-1266 겹침): [별도 기록](testing-backup-lock-owner.md).
 
 - 느린 시험 후속(t-1261): [선택 비용·대기 변경과 독립 성능 판정](testing-slow-followup.md).
+- t-1265: [머신 독점 예약·착지 제외·비중 배정 검증](testing-machine-reservation.md)

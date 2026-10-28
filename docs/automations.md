@@ -172,7 +172,7 @@ machine_pick = "idlest"
 wait = ["timing"]
 ```
 
-`repo`는 각 후보 머신에 등록한 저장소의 이름 또는 정확한 경로다. 머신마다 하나로 해석돼야 한다. 생략하면 일반 작업 폴더(Dir)를 만든다. `brief_file`·`text_file`·`text` 중 하나로 비지 않은 할 일을 준다. 파일은 프로젝트 폴더 안의 일반 파일이어야 하며 바깥 경로·symlink는 거부한다. 본문/제목의 `{machine}`·`{repo_path}`·`{date}`만 채운다. 조건 자료는 별도 인용 블록으로 붙인다.
+`machines`를 비우거나 생략하면 자동 머신이다: workspace 자동 배정을 허용한 머신에서 독점 예약·착지 중 머신을 빼고 열린 thread÷비중으로 고른다([머신 배정](machine-assignment.md)). 승인 범위는 「자동: <workspace>」이고 후보 집합은 사람만 바꾸는 workspace 허용이 정한다. 고정 목록도 독점 예약·착지 중 머신은 후보에서 뺀다. `repo`는 각 후보 머신에 등록한 저장소의 이름 또는 정확한 경로다. 머신마다 하나로 해석돼야 한다. 생략하면 일반 작업 폴더(Dir)를 만든다. `brief_file`·`text_file`·`text` 중 하나로 비지 않은 할 일을 준다. 파일은 프로젝트 폴더 안의 일반 파일이어야 하며 바깥 경로·symlink는 거부한다. 본문/제목의 `{machine}`·`{repo_path}`·`{date}`만 채운다. 조건 자료는 별도 인용 블록으로 붙인다.
 
 처음과 범위를 넓힐 때만 사람이 승인한다. `aaa routine list --json`의 start_scope와 start_approval_sha256를 검토한 뒤 aaa 세션 밖 터미널에서 `aaa automation approve check <검토한-hash>`를 실행하거나 Controller 웹 「자동화 → 승인 검토」에서 확인한다. 본 뒤 범위가 바뀌었으면 거부하고 다시 검토하라고 알린다. Reader는 읽기만 한다. hash는 정규화한 조건·일정/필터·명령 조회 머신·입력 저장소·해석된 시작 머신/저장소·profile에 묶인다. 주석·순서·본문·제목·선택 예산은 포함하지 않는다. 좁힌 대상/필터와 더 긴 every 주기는 기존 승인 ceiling 안에서 적용한다. 이미 쌓인 차례와 현재 범위가 다르면 그 차례는 취소한다. 본문만 바뀌면 승인 유지·inbox changed/diff 한 번으로 알린다.
 

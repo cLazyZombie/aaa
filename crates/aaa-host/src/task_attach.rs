@@ -507,6 +507,7 @@ mod tests {
             pool: None,
             over_limit: None,
             reservation: None,
+            machine_override: None,
             holds: vec![],
             project: "demo".into(),
             title: "첨부 일".into(),

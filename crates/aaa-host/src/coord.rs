@@ -373,6 +373,7 @@ impl Host {
             pool: None,
             over_limit: None,
             reservation: None,
+            machine_override: None,
             account: None,
             holds: vec![],
             project: project.to_string(),
@@ -394,7 +395,9 @@ impl Host {
         let (model, effort, profile_revision) = crate::task_queue::model_selection(self, &a.profile)?;
         let set = self.settings(project);
         let open_threads = self.open_worker_threads(project);
-        let (machine_order, local_machine) = self.machine_order();
+        // 기본 머신 표시도 실제 자동 배정과 같은 차례다(독점 예약·착지 중 제외)
+        let local_machine = self.machine_order().1;
+        let machine_order = self.auto_machine_order(project, t.id.as_deref()).0;
         Ok(FrontResponse::ThreadStartPreview(aaa_proto::ThreadStartPreview {
             model,
             effort,

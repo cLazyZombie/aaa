@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { DeviceRole, MachineView } from "./gen/proto";
 import { MachineWorkspaceAccess } from "./MachineWorkspaceAccess";
+import { MachineAssignment } from "./MachineAssignment";
 import { machineInfoGroups } from "./machineDetail";
 import { DrawerToggle } from "./drawer";
 import "./MachineInfoPanel.css";
@@ -35,6 +36,7 @@ export function MachineInfoPanel({ machine, role, onClose, page = false }: { mac
     </header>
     <div className="machine-info-body">
       {machine.connection !== "connected" && <p className="machine-info-stale">연결이 끊겼습니다. 마지막으로 받은 정보입니다.</p>}
+      <MachineAssignment machine={machine} role={role} />
       <MachineWorkspaceAccess machineId={machine.id} role={role} />
       {machineInfoGroups(machine).map(({ title, rows }) => <section key={title}>
         <h3>{title}</h3><dl>{rows.map(r => <div key={r.label} data-label={r.label}><dt>{r.label}</dt><dd>{r.value}</dd></div>)}</dl>

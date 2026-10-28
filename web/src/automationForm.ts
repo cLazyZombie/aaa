@@ -83,14 +83,14 @@ export function setAction(form: Form, kind: ActionKind): Form {
     command: { command: "" },
     inbox: { text },
     message: { thread: typeof old.thread === "string" ? old.thread : "owner", text },
-    start: { title: typeof old.title === "string" ? old.title : "", profiles: [], machines: [], text },
+    start: { title: typeof old.title === "string" ? old.title : "", profiles: [], text },
   };
   return { ...form, do: { [kind]: next[kind] } };
 }
 
 /** 칸 하나를 고친다(빈 글·빈 목록은 칸을 지워 host 기본값을 쓴다) */
 export function setField(form: Form, part: "on" | "do" | "limits", key: string, value: unknown): Form {
-  const empty = value === "" || value === null || value === undefined || (Array.isArray(value) && value.length === 0 && key !== "profiles" && key !== "machines" && key !== "branches");
+  const empty = value === "" || value === null || value === undefined || (Array.isArray(value) && value.length === 0 && key !== "profiles" && key !== "branches");
   if (part === "limits") {
     const limits = { ...(form.limits ?? {}) };
     if (empty) delete limits[key];

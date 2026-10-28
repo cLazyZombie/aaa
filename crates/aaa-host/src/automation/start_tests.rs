@@ -360,6 +360,7 @@ async fn quota_gate_codex_uses_bound_account_and_only_observed_windows() {
         machine: "b".into(),
         profile: "builder".into(),
         repo: None,
+        workspace: None,
     });
     assert!(!l.h.machine_is_local("b"), "원격 실행 fixture");
     // 로컬 로그인 캐시는 비어 있지만 원격 머신도 등록 기본 계정으로 판정한다.
@@ -1438,4 +1439,46 @@ async fn pooled_automation_starts_with_unknown_or_week_only_usage_and_retains_re
         l.h.automation_drain("demo", &r).await.unwrap();
         assert_eq!(starts(&agent) + starts(&other), 1, "같은 입력은 중복 기동하지 않는다");
     }
+}
+
+/// 자동 머신 계약(t-1265): machines를 비운 규칙은 workspace 허용 머신 가운데 독점 예약·착지 중을 빼고 열린 thread가 적은
+/// 머신을 고른다. 고정 목록의 승인은 자동 머신 범위를 덮지 않는다
+#[tokio::test]
+async fn start_without_machines_skips_reserved_and_landing_machines() {
+    let l = auto_lab();
+    let _a = l.fake(vec![]).await;
+    let _b = l.fake_on("b", "mac-b", vec![]).await;
+    for m in ["mac-a", "mac-b"] {
+        let rev = l.h.workspace_access_view("demo", m).unwrap().revision;
+        l.h.workspace_access_set("demo", m, crate::tasks::REPO_DIR, true, &rev, "local:cli").unwrap();
+    }
+    approve(&l, &rule(&l, ""));
+    let dir = l.h.project_dir("demo").unwrap();
+    let text = "[on.schedule]\nevery='10m'\n[do.start]\ntitle='점검'\ntext='자료를 확인한다'\nprofiles=['claude']\n[limits]\nmax_running=5\n";
+    std::fs::write(dir.join("automations/check.toml"), text).unwrap();
+    let r = automation::parse(&dir, "check", text).unwrap();
+    assert!(!l.h.automation_start_approval("demo", &r).unwrap().unwrap().1, "고정 목록 승인은 자동 머신을 덮지 않는다");
+    assert!(l.h.automation_start_scope_text("demo", &r).unwrap().unwrap().contains("- 자동: 작업 폴더"));
+    approve(&l, &r);
+    // 열린 thread: mac-a 1개(예약 주인), mac-b 2개. 예약이 없으면 mac-a가 덜 붐빈다
+    let holder = seed(&l, "m", &[]);
+    let landing = seed(&l, "b", &[]);
+    seed(&l, "b", &[]);
+    l.h.machine_reserve("mac-a", "demo", &holder.id, None, None, None, "local:cli").unwrap();
+    let started = |key: &str| l.h.db.meta(&crate::auto_start::start_key("demo", "check", key)).unwrap();
+    l.h.automation_submit("demo", &r, "due:1", "data".into(), None).unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert_eq!(l.h.load("demo", &started("due:1").unwrap()).unwrap().machine_id, "b");
+
+    l.h.update_rec("demo", &landing.id, |t| {
+        t.report_hash = Some("fixture-report".into());
+        t.report_stage = Some(ThreadStage::Landing);
+    })
+    .unwrap();
+    l.h.automation_submit("demo", &r, "due:2", "data".into(), None).unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert!(started("due:2").is_none(), "예약 머신과 착지 중 머신만 남으면 기다린다");
+    l.h.machine_release("mac-a", None, "local:cli").unwrap();
+    l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+    assert_eq!(l.h.load("demo", &started("due:2").unwrap()).unwrap().machine_id, "m");
 }

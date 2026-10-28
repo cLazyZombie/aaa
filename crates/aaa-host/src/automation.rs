@@ -225,6 +225,8 @@ pub(crate) struct Start {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     pub profiles: Vec<String>,
+    /// 비우거나 생략하면 자동 머신: workspace 자동 배정을 허용한 머신 가운데 독점 예약·착지 중을 빼고 열린 thread÷비중으로 고른다.
+    #[serde(default)]
     pub machines: Vec<String>,
     #[serde(default)]
     pub profile_pick: ProfilePick,
@@ -470,10 +472,12 @@ pub(crate) fn parse_with(
         if prompt.is_empty() {
             return Err(bad("do.start.text", "text·text_file·brief_file 중 하나로 할 일을 준다"));
         }
-        for (field, names) in [("profiles", &a.profiles), ("machines", &a.machines)] {
-            if names.is_empty() || names.iter().any(|n| n.trim().is_empty()) {
-                return Err(bad(&format!("do.start.{field}"), "비지 않은 이름 목록을 쓴다"));
-            }
+        if a.profiles.is_empty() || a.profiles.iter().any(|n| n.trim().is_empty()) {
+            return Err(bad("do.start.profiles", "비지 않은 이름 목록을 쓴다"));
+        }
+        // 빈 machines는 자동 머신이다. 적은 이름은 비지 않아야 한다
+        if a.machines.iter().any(|n| n.trim().is_empty()) {
+            return Err(bad("do.start.machines", "빈 이름을 쓰지 않는다(자동 머신은 목록을 비운다)"));
         }
         if a.repo.as_ref().is_some_and(|s| s.trim().is_empty()) {
             return Err(bad("do.start.repo", "repo가 비었다"));

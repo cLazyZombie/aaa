@@ -23,7 +23,7 @@ machine = "mac-b" # 실패 분류 작업 머신
 ## 자동화 규칙 등록
 
 `automations/ci-main.toml`에 조건 `[on.ci]`와 동작 `[do.start]`를 둔다. [규칙 예시](examples/ci/ci-main.toml)와 [brief 예시](examples/ci/ci-watch.md)를 프로젝트 자동화 폴더에 복사한다.
-범위를 검토·승인하고 규칙을 켜면 실패가 올 때 보통 Worker thread를 띄운다. `reuse="open"`은 열린 thread에 이어 보내고, `memory=true`는 앞 판단을 다음 thread에 넘긴다.
+예시 규칙은 `machines`를 두지 않는다: 작업 머신은 host가 [머신 배정](machine-assignment.md) 차례(workspace 허용·독점 예약·착지 중·비중)로 고른다. 범위를 검토·승인하고 규칙을 켜면 실패가 올 때 보통 Worker thread를 띄운다. `reuse="open"`은 열린 thread에 이어 보내고, `memory=true`는 앞 판단을 다음 thread에 넘긴다.
 `close_idle="30m"`은 새 완료·Idle·빈 입력을 함께 확인한 뒤 끝낸다. 기록만 필요하면 동작을 `do.inbox`로 둔다.
 옛 파일은 자동 실행하지 않으며 `aaa automation convert`로 먼저 옮긴다.
 

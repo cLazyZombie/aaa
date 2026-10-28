@@ -342,6 +342,9 @@ fn start_toml_captures_safe_brief_and_rejects_ambiguous_or_outside_files() {
     assert_eq!(action["start"]["repo"], "app");
     assert_eq!(action["start"]["profiles"], serde_json::json!(["reviewer", "helper"]));
     assert_eq!(action["start"]["text"], "대상 {machine}의 {repo_path}를 검사한다.");
+    let auto = parse(&p.0, "nightly", &raw.replace("machines=['mac-a','mac-b']\n", "")).unwrap();
+    let Action::Start(a) = auto.action else { panic!() };
+    assert!(a.machines.is_empty(), "machines를 생략하면 자동 머신이다");
     let zero = parse(&p.0, "nightly", &format!("{raw}wait_max=0\n[limits]\nmax_running=0\n")).unwrap();
     let Action::Start(a) = zero.action else { panic!() };
     assert_eq!(a.wait_max.as_deref(), Some("0m"));
@@ -350,7 +353,8 @@ fn start_toml_captures_safe_brief_and_rejects_ambiguous_or_outside_files() {
         (raw.replace("scratch/nightly.md", "../outside.md"), "do.start.brief_file"),
         (format!("{raw}text='다른 본문'\n"), "do.start.brief_file"),
         (raw.replace("profiles=['reviewer','helper']", "profiles=[]"), "do.start.profiles"),
-        (raw.replace("machines=['mac-a','mac-b']", "machines=[]"), "do.start.machines"),
+        // 빈 목록은 자동 머신이다(t-1265). 빈 이름만 거부한다
+        (raw.replace("machines=['mac-a','mac-b']", "machines=['mac-a','']"), "do.start.machines"),
     ] {
         let why = parse(&p.0, "nightly", &bad).unwrap_err();
         assert!(why.starts_with("automations/nightly.toml:") && why.contains(field), "{why}");
