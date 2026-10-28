@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 export function ChatRow({ active = true, id, role, virtual, children, observeSize }: {
   active?: boolean; id: string; role: string; virtual: boolean; children: ReactNode;
-  observeSize: (el: HTMLDivElement, measure: () => void) => () => void;
+  observeSize: (el: HTMLDivElement, measure: () => boolean, resized: boolean) => () => void;
 }) {
   const node = useRef<HTMLDivElement>(null);
   const height = useRef(100);
@@ -26,10 +26,12 @@ export function ChatRow({ active = true, id, role, virtual, children, observeSiz
     const el = node.current;
     if (!el || !visible) return;
     const measure = () => {
-      height.current = el.getBoundingClientRect().height;
+      const next = el.getBoundingClientRect().height;
+      const resized = next !== height.current;
+      height.current = next;
+      return resized;
     };
-    measure();
-    return observeSize(el, measure);
+    return observeSize(el, measure, measure());
   }, [active, visible, observeSize]);
   return <div ref={node} className={`chat-row chat-row-${role}`} data-chat-id={id}
     style={visible ? undefined : { height: height.current, flexShrink: 0 }}>

@@ -545,55 +545,85 @@ fn private_enrollment(edit_pin: bool) {
     base[at + 1] = address;
     let at = base.iter().position(|a| a == "--enroll").unwrap();
     base[at + 1] = "wait".into();
-    let approval = lab.0.join("approval.json");
-    let mut issue = base.clone();
-    issue.extend([
-        "--prompt".into(),
-        "plain".into(),
-        "authorize".into(),
-        "--out".into(),
-        approval.to_string_lossy().into_owned(),
-    ]);
-    assert_eq!(terminal(&lab, &issue, Some("yes\r"), false).0, 0);
-    let authorization: Value = serde_json::from_slice(&std::fs::read(&approval).unwrap()).unwrap();
-    let id = authorization["claims"]["installation_id"].as_str().unwrap();
-    let mut automated = base.clone();
-    automated.extend([
-        "--authorization-file".into(),
-        approval.to_string_lossy().into_owned(),
-        "--non-interactive".into(),
-        "--yes".into(),
-        "--json-stream".into(),
-    ]);
-    let output = lab.run(&automated);
-    assert_eq!(output.status.code(), Some(3));
-    let public_attempt: Vec<Value> =
-        String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-    let result = &public_attempt.last().unwrap()["result"];
-    assert_eq!(result["installation_id"], id);
-    assert!(
-        result["needs_user"].as_array().unwrap().iter().any(|n| n["code"] == "installation_private_display_required"),
-        "private enrollment result: {}, stderr={}",
-        redact_private(&result.to_string()),
-        redact_private(&String::from_utf8_lossy(&output.stderr))
-    );
-    let aaa_proto::FrontResponse::Pending { pending, .. } =
-        rt.block_on(host.call(DeviceRole::Local, "local:cli", FrontRequest::EnrollPending)).unwrap()
-    else {
-        panic!("pending view")
-    };
-    assert!(pending.is_empty(), "JSON 모드는 SAS/TLS 수동 대기를 시작하지 않는다");
     let event_file = lab.0.join("tty-events.ndjson");
-    let apply = vec![
-        "install".into(),
-        "--resume".into(),
-        id.into(),
-        "--events-file".into(),
-        event_file.to_string_lossy().into_owned(),
-    ];
+    let (apply, steps, id) = if edit_pin && cfg!(unix) {
+        // Unix pin 충돌 owner는 한 실제 대화형 설치에서 동의→TLS/SAS를 지난다.
+        // 별도 승인 파일→공개 표시 거부→resume은 아래 다른 owner가 그대로
+        // 검사하므로 그 세 CLI 준비를 이 pin 충돌에서도 반복하지 않는다.
+        let mut apply = base.clone();
+        apply.extend([
+            "--prompt".into(),
+            "plain".into(),
+            "--mode".into(),
+            "fresh".into(),
+            "--min-free-gb".into(),
+            "20".into(),
+            "--login".into(),
+            "defer".into(),
+            "--path".into(),
+            "preserve".into(),
+            "--events-file".into(),
+            event_file.to_string_lossy().into_owned(),
+        ]);
+        (apply, vec![("검토 후 승인할까요", "review\r"), ("정확히 yes", "yes\r")], String::new())
+    } else {
+        let approval = lab.0.join("approval.json");
+        let mut issue = base.clone();
+        issue.extend([
+            "--prompt".into(),
+            "plain".into(),
+            "authorize".into(),
+            "--out".into(),
+            approval.to_string_lossy().into_owned(),
+        ]);
+        phases.mark("contract", "authorize-private-tty");
+        assert_eq!(terminal(&lab, &issue, Some("yes\r"), false).0, 0);
+        let authorization: Value = serde_json::from_slice(&std::fs::read(&approval).unwrap()).unwrap();
+        let id = authorization["claims"]["installation_id"].as_str().unwrap().to_owned();
+        let mut automated = base.clone();
+        automated.extend([
+            "--authorization-file".into(),
+            approval.to_string_lossy().into_owned(),
+            "--non-interactive".into(),
+            "--yes".into(),
+            "--json-stream".into(),
+        ]);
+        phases.mark("contract", "reject-public-display");
+        let output = lab.run(&automated);
+        assert_eq!(output.status.code(), Some(3));
+        let public_attempt: Vec<Value> =
+            String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let result = &public_attempt.last().unwrap()["result"];
+        assert_eq!(result["installation_id"], id);
+        assert!(
+            result["needs_user"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["code"] == "installation_private_display_required"),
+            "private enrollment result: {}, stderr={}",
+            redact_private(&result.to_string()),
+            redact_private(&String::from_utf8_lossy(&output.stderr))
+        );
+        let aaa_proto::FrontResponse::Pending { pending, .. } =
+            rt.block_on(host.call(DeviceRole::Local, "local:cli", FrontRequest::EnrollPending)).unwrap()
+        else {
+            panic!("pending view")
+        };
+        assert!(pending.is_empty(), "JSON 모드는 SAS/TLS 수동 대기를 시작하지 않는다");
+        let apply = vec![
+            "install".into(),
+            "--resume".into(),
+            id.clone(),
+            "--events-file".into(),
+            event_file.to_string_lossy().into_owned(),
+        ];
+        (apply, Vec::new(), id)
+    };
     let mut approved = false;
     let mut actual_code = String::new();
-    let (code, text) = terminal_observed(&lab, &apply, &[], false, |text| {
+    phases.mark("contract", "tls-sas-and-pin-conflict");
+    let (code, text) = terminal_observed(&lab, &apply, &steps, false, |text| {
         if approved {
             return;
         }
@@ -690,7 +720,7 @@ fn private_enrollment(edit_pin: bool) {
     assert_eq!(repaired["status"], "unchanged", "{repaired}");
     assert_eq!(host.db.machines().unwrap().len(), 1);
     let before = snapshot(&lab.0);
-    let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
+    let observed = json(&lab.cmd(&["install", "--status", &id, "--json"]));
     assert_eq!(observed["exit_code"], 0, "{observed}");
     assert_eq!(snapshot(&lab.0), before);
     phases.mark("cleanup", "owned-resources");

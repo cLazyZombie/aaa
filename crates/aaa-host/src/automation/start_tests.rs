@@ -1181,7 +1181,10 @@ async fn start_reports_are_optional_capped_snapshots_of_source_threads() {
 
 #[tokio::test]
 async fn memory_return_preserves_edits_made_on_host_while_thread_is_open() {
+    let mut phases =
+        aaa_test_support::phases::Phases::new("memory_return_preserves_edits_made_on_host_while_thread_is_open");
     for features in [vec!["mission.v1".into()], vec!["work_files.v1".into()]] {
+        phases.mark("prepare", "protocol-host-and-memory");
         let mut l = auto_lab();
         let _peer = l.fake(features.clone()).await;
         let rule = rule(&l, "reuse='open'\nmemory=true");
@@ -1199,6 +1202,7 @@ async fn memory_return_preserves_edits_made_on_host_while_thread_is_open() {
                 r.automation_run = Some(crate::automation_thread::Run::new(a, util::now_ms()));
             })
             .unwrap();
+        phases.mark("contract", "memory-return-and-conflict");
         l.h.automation_prepare(&rec).await.unwrap();
         std::fs::write(memory.join("memory.md"), "이전 판단\ncoordinator가 남긴 줄\n").unwrap();
         std::fs::write(work.join("memory/memory.md"), "thread의 새 판단\n").unwrap();
@@ -1238,17 +1242,20 @@ async fn memory_return_preserves_edits_made_on_host_while_thread_is_open() {
             1
         );
         // 양쪽은 각각 전송 상한 이하여도 합친 history가 1000개를 넘으면 원문을 교체하지 않는다.
+        phases.mark("prepare", "thousand-history-files");
         for i in 0..500 {
             std::fs::write(memory.join(format!("history/host-{i}.md")), "host").unwrap();
             std::fs::write(work.join(format!("memory/history/thread-{i}.md")), "thread").unwrap();
         }
         let before = std::fs::read(memory.join("memory.md")).unwrap();
+        phases.mark("contract", "merged-limit-rejection");
         let error = l.h.automation_copy_memory(&rec, true).await.unwrap_err();
         assert!(error.message.contains("합친 기억 이동 상한"));
         assert_eq!(std::fs::read(memory.join("memory.md")).unwrap(), before);
         assert!(memory.join("history/host-499.md").is_file());
         assert!(!memory.join("history/thread-0.md").exists());
         assert!(work.join("memory/history/thread-499.md").is_file());
+        phases.mark("cleanup", "protocol-host-and-memory");
     }
 }
 

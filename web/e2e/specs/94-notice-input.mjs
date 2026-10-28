@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { phase } from "../lib/phases.mjs";
-import { specCleanup, aaa, root, AA, step, browser, webkit, pairPage, domIs, inList, sentCount, sentFrames, sentText, shot } from "../lib/harness.mjs";
+import { specCleanup, aaa, root, AA, step, browser, webkit, pairPage, paneHash, domIs, sentCount, sentFrames, sentText, shot } from "../lib/harness.mjs";
 
 function monitor({ selector, terminal }) {
   const input = document.querySelector(selector);
@@ -21,6 +21,9 @@ function monitor({ selector, terminal }) {
   const key = (e) => {
     if (e.key !== "x") return;
     const sample = { queued: performance.now() - e.timeStamp, at: performance.now() };
+    const notice = document.querySelector(".droplet");
+    if (notice?.getAnimations({ subtree: true }).some(a => a.playState === "running"))
+      sample.moving = notice.querySelector(".droplet-title")?.textContent;
     state.keys.push(sample);
     // DOM 반영 뒤 첫 frame. PTY 왕복·xterm의 출력 묶음도 포함한다.
     if (!terminal) requestAnimationFrame(() => sample.display = performance.now() - sample.at);
@@ -57,6 +60,7 @@ function monitor({ selector, terminal }) {
     const percentile = (p) => values.length ? values[Math.floor((values.length - 1) * p)] : null;
     return { keys: state.keys.length, displayed: values.length, displayP50: percentile(.5), displayP95: percentile(.95),
       displayMax: percentile(1), frameMax: Math.max(0, ...state.frames), longTasks: state.tasks,
+      moving: [...new Set(state.keys.map(k => k.moving).filter(Boolean))],
       focus: state.focus, focused: document.activeElement === input, draft: input.value };
   };
 }
@@ -68,6 +72,8 @@ async function check(engine, name, width, terminalMode, transcript) {
     JSON.stringify({ hook_event_name: "SessionStart", session_id: name, source: "startup", transcript_path: transcript }));
   let events;
   const dev = await pairPage(engine, aaa("web", "pair").code, { width, height: width === 3840 ? 2160 : 844 }, {
+    // drawer 전환은 E39가 맡는다. 같은 실제 pane을 처음부터 연다.
+    hash: paneHash(name),
     deviceScaleFactor: width === 3840 ? 2 : 1, serviceWorkers: "block",
     wsRoute: [/\/api\/v1\/events(?:\?|$)/, (socket) => {
       events = socket;
@@ -78,7 +84,6 @@ async function check(engine, name, width, terminalMode, transcript) {
   });
   const p = dev.page;
   try {
-    await inList(p, `pane-${name}`);
     if (await p.getByTestId("chat").count()) await p.getByTestId("chat-toggle").click();
     await domIs(p, "알림 시험 PTY 준비", () => document.querySelector(".xterm-rows")?.textContent.includes("NOTICE_READY"));
     phase("contract", "notice-animation-and-continuous-input");
@@ -96,12 +101,15 @@ async function check(engine, name, width, terminalMode, transcript) {
       for (let round = 0; round < 3; round++) {
         phase("contract", `notice-round-${round}`);
         const title = `연속 알림 ${terminal ? "터미널" : "대화"} ${round}`;
-        events.send(JSON.stringify({ ev: "notice", kind: "automation", title }));
+        // 같은 대상/종류는 400ms 중복 방지가 있다. 서로 다른 두 실제 종류를
+        // 번갈아 보내 등장 중 교체를 검사하며 그 정책이나 시계를 바꾸지 않는다.
+        events.send(JSON.stringify({ ev: "notice", kind: round === 1 ? "post_muted" : "automation", title }));
         // 배지 갱신과 질문/알림함 재조회도 입력 중 같은 연결로 받는다.
         events.send(JSON.stringify({ ev: "reports", unseen: round + 1 }));
         events.send(JSON.stringify({ ev: "asks", requests: 0 }));
         events.send(JSON.stringify({ ev: "inbox" }));
         let ended = false;
+        const typed = Promise.withResolvers();
         const animation = (async () => {
           await domIs(p, title, (title) => document.querySelector(".droplet-title")?.textContent === title, title);
           const bounds = await p.locator(".droplet").evaluate((el) => {
@@ -111,20 +119,29 @@ async function check(engine, name, width, terminalMode, transcript) {
           });
           if (bounds.goo > bounds.card + 1) throw new Error(`${name}: 화면 폭의 알림 필터 ${JSON.stringify(bounds)}`);
           if (bounds.live !== "polite" || bounds.role !== "status") throw new Error(`알림 접근성 ${JSON.stringify(bounds)}`);
-          await p.locator(".droplet").evaluate(async (el) => {
+          if (round < 2) {
+            // 앞 두 알림은 등장 중 실제 키 세 개를 받은 뒤 교체한다. 다음
+            // 제목이 올 때까지 이전 알림의 접힘에도 계속 친다. 마지막 등장은
+            // 끝까지 보므로 같은 전체 등장 대기를 세 번 반복하지 않는다.
+            await typed.promise;
+          } else await p.locator(".droplet").evaluate(async (el) => {
             // 연속 입력과 실제 애니메이션이 겹치는 원래 속도를 유지한다.
             await Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {})));
           });
         })().finally(() => ended = true);
         // 새 제목을 기다리는 동안에도 친다: 앞 알림의 접힘과 다음 알림의 등장 모두 검사한다.
         await Promise.all([animation, (async () => {
+          let currentKeys = 0;
           do {
             await p.keyboard.press("x");
             keys++;
-            // 약 10타/초의 연속 입력. PTY에 매 frame 키를 쌓는 부하 시험과 구분한다.
-            await p.evaluate(async () => {
+            const current = await p.evaluate(() => document.querySelector(".droplet-title")?.textContent);
+            if (current === title && ++currentKeys >= 3) typed.resolve();
+            // 6 frame은 다음 키까지의 간격이다. 마지막 키 뒤에는 실제
+            // 애니메이션/입력 완료로 끝내며 남은 간격을 마저 기다리지 않는다.
+            await Promise.race([animation, p.evaluate(async () => {
               for (let frame = 0; frame < 6; frame++) await new Promise(requestAnimationFrame);
-            });
+            })]);
           } while (!ended);
         })()]);
         if ((await p.getByTestId("activity-badge-reports").textContent()) !== String(round + 1)) throw new Error("입력 중 보고서 배지가 갱신되지 않음");
@@ -140,11 +157,12 @@ async function check(engine, name, width, terminalMode, transcript) {
       results.push({ terminal, ...result });
       if (!result.focused || result.focus.length) throw new Error(`${name}: 알림이 포커스를 바꿈 ${JSON.stringify(result)}`);
       if (result.keys !== keys || (!terminal && result.draft !== "x".repeat(keys))) throw new Error(`${name}: 대화 초안/키 누락 ${JSON.stringify(result)}`);
+      if (result.moving.length !== 3) throw new Error(`${name}: 세 알림의 움직임 중 입력을 받지 못함 ${JSON.stringify(result)}`);
       await shot(p, `notice-input-${name}-${terminal ? "terminal" : "chat"}`);
       // 자동 사라짐의 4.16초는 입력 회귀마다 반복하지 않는다.
       // 실제 닫기와 교체의 fold 경로를 쓰며, 자동 만료는 알림 owner가 맡는다.
       await p.locator(".droplet-close").click();
-      await p.locator(".droplet").waitFor({ state: "detached" });
+      await domIs(p, "알림 닫힘", () => !document.querySelector(".droplet"));
     }
     console.log(`알림 입력 ${name}: ${JSON.stringify(results)}`);
     if (dev.errors.length) throw new Error(dev.errors.join("; "));

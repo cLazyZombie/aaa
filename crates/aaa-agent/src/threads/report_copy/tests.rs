@@ -26,6 +26,9 @@ impl Drop for Lab {
 /// sparse 파일의 metadata만 읽어 선택 계약을 검증하고 큰 본문 해시는 아래 작은 회수 시험으로 지킨다.
 #[test]
 fn real_size_budget_preserves_report_links_and_small_evidence_before_images() {
+    let mut phases = aaa_test_support::phases::Phases::new(
+        "real_size_budget_preserves_report_links_and_small_evidence_before_images",
+    );
     let lab = Lab::new();
     // 같은 부모의 준비를 2390번 반복하지 않는다. 각 파일은 원래처럼
     // 서로 다른 실제 inode와 224 KiB sparse 크기를 가진다.
@@ -41,6 +44,7 @@ fn real_size_budget_preserves_report_links_and_small_evidence_before_images() {
     lab.put("z-linked/too-large.mp4", 201 << 20);
     lab.put("z-linked/판정 자료.json", 2048);
     let report = "[결과](library/z-linked/final.png)\n[원본](library/z-linked/too-large.mp4)\n[측정](<library/z-linked/판정 자료.json>)";
+    phases.mark("contract", "select-real-library");
     let (files, skipped) = select(&lab.work().join("library"), report.as_bytes(), 200 << 20).unwrap();
     assert_eq!(files.first().unwrap().path, "z-linked/판정 자료.json");
     assert!(files[1..7].iter().all(|f| f.path.starts_with("z-evidence/")));
@@ -55,6 +59,7 @@ fn real_size_budget_preserves_report_links_and_small_evidence_before_images() {
             && s.reason.contains("200 MiB"))
     );
     assert!(skipped.iter().all(|s| s.lazy_size.is_some()));
+    phases.mark("cleanup", "real-library");
 }
 
 /// 실제 collect의 순서·상한·해시·누락과 링크 표기별 선택을 함께 검증한다.

@@ -56,7 +56,13 @@ sys.exit(rc)
         world_start(w, env)
     }
     fn take(&self, action: &str) -> TcpStream {
-        let (mut stream, _) = wait_for("Git 진입 사건", T, || self.listener.accept().ok());
+        // 100ms마다 accept를 다시 묻지 않고 실제 socket 읽기 준비로 깨어난다.
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let (stream, _) = rt.block_on(async {
+            let listener = tokio::net::TcpListener::from_std(self.listener.try_clone().unwrap()).unwrap();
+            tokio::time::timeout(T, listener.accept()).await.expect("Git 진입 사건 한도").expect("Git 연결 수신")
+        });
+        let mut stream = stream.into_std().unwrap();
         stream.set_nonblocking(false).unwrap();
         stream.set_read_timeout(Some(T)).unwrap();
         let mut text = vec![0; action.len() + 1];
@@ -150,6 +156,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     let pending = gate.take("add");
     let cwd = w.lab.root.join("workA/repo/demo-t-0001");
     assert!(cwd.exists(), "응답 전에 worktree가 만들어졌다");
+    phases.mark("contract", "host-restart-and-placement-receipt");
     restart_host(&mut w, "host", "host2");
     // 연결 공개 뒤 ticker의 중단 기동 회수가 claim을 잡는다. 상태 발행은 claim 반환보다
     // 앞서므로 Failed 사건과 그 뒤 tick 완료까지 확인한 뒤 명시 restart를 한 번 보낸다.
@@ -170,8 +177,10 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
 
     // 같은 상태 폴더로 agent만 B에 다시 시작한다. 기존 세션·host DB의 A 경로는 옮기지 않는다.
     phases.mark("contract", "agent-restart-and-cleanup-receipt");
+    let mut connections = HostWatch::new(&w.h, T);
+    connections.wait("기존 agent 연결", |s| s.connected("labA").then_some(()));
     w.lab.kill("agentA");
-    wait_for("이전 agent 연결 종료", T, || (!w.h.connected("labA")).then_some(()));
+    connections.wait("이전 agent 연결 종료", |s| (!s.connected("labA")).then_some(()));
     let next_root = w.lab.root.join("workB");
     std::fs::write(w.h.cfg.join("agent.local.toml"), format!("schema = 1\n[agent]\nwork_root = {next_root:?}\n"))
         .unwrap();
@@ -197,12 +206,13 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
             ("CLAUDECODE", "1"),
         ],
     );
-    wait_for("B root agent 연결", T, || w.h.connected("labA").then_some(()));
+    connections.wait("B root agent 연결", |s| s.connected("labA").then_some(()));
 
     GitGate::enable(&w, "remove");
     let (_, _old_output) = w.lab.spawn_piped("resolve-old", &w.h, &["--json", "thread", "resolve", "demo", &id]);
     let pending = gate.take("remove");
     assert!(!cwd.exists(), "Git 정리는 끝났지만 응답은 아직 안 왔다");
+    phases.mark("contract", "host-restart-and-cleanup-receipt");
     restart_host(&mut w, "host2", "host3");
     let (_, mut output) = w.lab.spawn_piped("resolve-new", &w.h, &["--json", "thread", "resolve", "demo", &id]);
     GitGate::release(&w, "remove", pending);
@@ -223,6 +233,7 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     )
     .unwrap();
     assert!(record["result"].is_object(), "agent도 정리 결과를 기록했다: {record}");
+    phases.mark("contract", "fresh-placement-in-new-root");
     let fresh = start_gated(&w);
     let fresh_id = fresh["id"].as_str().unwrap();
     let fresh = w.wait_show("새 thread는 B에 준비", fresh_id, |v| v["status"] == "open");
