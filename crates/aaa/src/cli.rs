@@ -646,6 +646,12 @@ enum TaskCmd {
         /// 앞 할 일(ID·제목). 그 할 일이 완료 보관된 뒤에 자리 대기에 든다(예약을 갱신할 때 다시 준다)
         #[arg(long, value_name = "ID_OR_TITLE")]
         after: Option<String>,
+        /// 예약 전에 자동 병합을 정한다(on: `[병합 준비됨]` 뒤 coordinator가 묻지 않고 착지 창)
+        #[arg(long, value_parser = ["on", "off"])]
+        auto_merge: Option<String>,
+        /// coordinator: 자동 병합을 바꾸라는 사용자 지시 근거(한 줄)
+        #[arg(long, value_name = "REASON", requires = "auto_merge")]
+        user_request: Option<String>,
     },
     /// 아직 시작하지 않은 예약을 취소한다(실행 중 thread는 그대로)
     Unreserve { task_id: String },
@@ -691,14 +697,23 @@ enum TaskCmd {
         /// 띄울 저장소: project.toml repos 경로나 그 마지막 이름(이름으로 적는다), 또는 `작업 폴더`. 비우면 정하지 않음
         #[arg(long)]
         repo: Option<String>,
+        /// 자동 병합(기본 off). on이면 `[병합 준비됨]` 뒤 coordinator가 묻지 않고 착지 창을 준다
+        #[arg(long, value_parser = ["on", "off"])]
+        auto_merge: Option<String>,
+        /// coordinator: 자동 병합을 켜라는 사용자 지시 근거(한 줄)
+        #[arg(long, value_name = "REASON", requires = "auto_merge")]
+        user_request: Option<String>,
     },
     /// task 칸을 바꾼다(준 칸만, 나머지 줄은 바이트 그대로)
     Edit {
         /// 고칠 task ID(d-0001·ULID) 또는 제목(대소문자 무시)
         task: String,
-        /// 사용자 지시로 모델·머신을 바꾸는 근거 한 줄. --profile·--machine 변경에만 쓴다(예약 유지)
+        /// 사용자 지시로 모델·머신·자동 병합을 바꾸는 근거 한 줄. --profile·--machine·--auto-merge 변경에만 쓴다(예약 유지)
         #[arg(long, value_name = "REASON")]
         user_request: Option<String>,
+        /// 자동 병합 on/off. on이면 `[병합 준비됨]` 뒤 coordinator가 묻지 않고 착지 창을 준다
+        #[arg(long, value_parser = ["on", "off"])]
+        auto_merge: Option<String>,
         /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
         #[arg(long, value_name = "SHA256")]
         block: Option<String>,
@@ -976,9 +991,12 @@ struct ThreadStartArgs {
     /// 사용자가 직접 실행 한도를 무시하고 시작한다(자동 시작·예약에는 쓰지 않는다)
     #[arg(long)]
     over_limit: bool,
-    /// coordinator가 해당 task를 강제 시작하라는 사용자 지시 근거를 남긴다
-    #[arg(long, requires = "over_limit")]
+    /// coordinator가 해당 task를 강제 시작하거나 자동 병합을 바꾸라는 사용자 지시 근거를 남긴다(--over-limit·--auto-merge와 함께)
+    #[arg(long)]
     user_request: Option<String>,
+    /// 시작하며 이어진 할 일의 자동 병합을 정한다(on: `[병합 준비됨]` 뒤 coordinator가 묻지 않고 착지 창)
+    #[arg(long, value_parser = ["on", "off"])]
+    auto_merge: Option<String>,
     /// (옛 꼴의 프로젝트, 생략한다)
     #[arg(hide = true)]
     project: Option<String>,
@@ -1205,6 +1223,16 @@ enum ThreadCmd {
         /// 맡긴 정리를 거둔다(아직 닫지 않았을 때)
         #[arg(long)]
         cancel: bool,
+    },
+    /// 이어진 할 일의 자동 병합을 켜고 끈다(생략하면 지금 값). on이면 `[병합 준비됨]` 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다.
+    /// coordinator는 사용자 지시가 있을 때만 `--user-request`와 함께 쓴다
+    AutoMerge {
+        thread: String,
+        #[arg(value_parser = ["on", "off"])]
+        mode: Option<String>,
+        /// coordinator: 자동 병합을 바꾸라는 사용자 지시 근거(한 줄)
+        #[arg(long, value_name = "TEXT", requires = "mode")]
+        user_request: Option<String>,
     },
     /// 보류를 풀고 이어 한다. 같은 머신(기본)은 같은 대화를 잇고, 다른 머신은 push된 branch로 새 worktree와 요약 brief의 새 대화다
     Unpark {
@@ -2091,8 +2119,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Task { cmd: TaskCmd::Queue } => {
             front(json, FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::List })
         }
-        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile, after } } => {
+        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile, after, auto_merge, user_request } } => {
             let project = project_or_here(None)?;
+            auto_merge_first(&project, &task, auto_merge.as_deref(), user_request)?;
             let response = front_call(FrontRequest::ThreadStartPreview {
                 project: project.clone(),
                 from_task: task.clone(),
@@ -2143,6 +2172,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Task { cmd } => {
             use aaa_proto::TaskOp;
             let mut user_request = None;
+            // 할 일을 쓴 뒤 자동 병합을 정한다(새 할 일은 제목으로 찾는다)
+            let mut after_merge = None;
             let mut ops = Vec::new();
             let op = match cmd {
                 TaskCmd::List
@@ -2152,7 +2183,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 | TaskCmd::Unreserve { .. }
                 | TaskCmd::QueueMove { .. }
                 | TaskCmd::Archive { .. } => unreachable!(),
-                TaskCmd::Add { title, list, profile, machine, owner, person, notes, parent, before, thread, repo } => {
+                TaskCmd::Add {
+                    title,
+                    list,
+                    profile,
+                    machine,
+                    owner,
+                    person,
+                    notes,
+                    parent,
+                    before,
+                    thread,
+                    repo,
+                    auto_merge,
+                    user_request: reason,
+                } => {
+                    if let Some(mode) = auto_merge {
+                        after_merge = Some((title.clone(), mode, reason));
+                    }
                     TaskOp::Add {
                         list,
                         title,
@@ -2169,6 +2217,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 TaskCmd::Edit {
                     user_request: reason,
+                    auto_merge,
                     task,
                     block,
                     title,
@@ -2184,6 +2233,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     done,
                     undone,
                 } => {
+                    let only_merge = title.is_none()
+                        && profile.is_none()
+                        && machine.is_none()
+                        && owner.is_none()
+                        && !person
+                        && notes.is_empty()
+                        && add_notes.is_empty()
+                        && !clear_notes
+                        && thread.is_none()
+                        && repo.is_none()
+                        && !done
+                        && !undone;
+                    if let Some(mode) = auto_merge {
+                        if only_merge {
+                            let project = project_or_here(None)?;
+                            return front(json, auto_merge_request(project, task, &mode, reason));
+                        }
+                        after_merge = Some((task.clone(), mode, reason.clone()));
+                    }
                     user_request = reason;
                     let at = task_at_block(&task, block);
                     if !add_notes.is_empty() {
@@ -2253,7 +2321,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 TaskCmd::ListMove { name, before } => TaskOp::ListMove { name, before },
             };
             ops.push(op);
-            task_edit_cmd(json, ops, user_request)
+            let code = task_edit_cmd(json, ops, user_request)?;
+            if code == ExitCode::SUCCESS
+                && let Some((task, mode, reason)) = after_merge
+            {
+                auto_merge_first(&project_or_here(None)?, &task, Some(&mode), reason)?;
+            }
+            Ok(code)
         }
         Cmd::Assignable { project, check } => {
             front(json, FrontRequest::Assignable { project: project_or_here(project)?, check })
@@ -2421,6 +2495,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         start_id,
                         over_limit,
                         user_request,
+                        auto_merge,
                         holds,
                         project,
                         title,
@@ -2445,13 +2520,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     if task_file.as_deref() == Some("-") && summary_file.as_deref() == Some("-") {
                         anyhow::bail!("--task-file과 --summary-file을 둘 다 표준 입력(-)으로 줄 수 없다");
                     }
+                    if user_request.is_some() && !over_limit && auto_merge.is_none() {
+                        anyhow::bail!("--user-request는 --over-limit이나 --auto-merge와 함께 쓴다");
+                    }
                     let task = task_text(task_file.as_deref())?;
                     let summary = summary_file.as_deref().map(|f| file_text(f, "요약 파일")).transpose()?;
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     let project = project_or_here(project)?;
+                    // 할 일에서 띄우면 먼저 정한다(시작 뒤 brief가 지금 값을 싣는다). 제목으로 띄우면 host가 만든 할 일에 시작 뒤 정한다
+                    let merge_after = match (&from_task, auto_merge) {
+                        (Some(t), Some(mode)) => {
+                            auto_merge_first(&project, t, Some(&mode), user_request.clone())?;
+                            None
+                        }
+                        (None, Some(mode)) => Some((mode, user_request.clone())),
+                        (_, None) => None,
+                    };
                     let req = FrontRequest::ThreadStart {
                         over_limit,
-                        user_request,
+                        user_request: user_request.filter(|_| over_limit),
                         holds,
                         background,
                         project: project.clone(),
@@ -2483,7 +2570,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
                             None => req,
                         }
                     };
-                    return with_summary(json, req, project, None, summary);
+                    return with_summary(json, req, project, None, summary, merge_after);
+                }
+                ThreadCmd::AutoMerge { thread, mode, user_request } => {
+                    let project = project_or_here(None)?;
+                    match mode {
+                        Some(mode) => auto_merge_request(project, thread, &mode, user_request),
+                        None => FrontRequest::ThreadShow { project, thread },
+                    }
                 }
                 ThreadCmd::Adopt { project, pane, title, task_file } => FrontRequest::ThreadAdopt {
                     project: project_or_here(project)?,
@@ -2650,7 +2744,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         if interrupt { aaa_proto::MessageMode::Interrupt } else { aaa_proto::MessageMode::Queue };
                     let req =
                         FrontRequest::ThreadMessage { project: project.clone(), thread: thread.clone(), text, mode };
-                    return with_summary(json, req, project, Some(thread), summary);
+                    return with_summary(json, req, project, Some(thread), summary, None);
                 }
             },
         ),
@@ -4230,12 +4324,14 @@ fn account_pool_command(json: bool, cmd: AccountPoolCmd) -> Result<ExitCode> {
     front(json, request)
 }
 
+/// 시작 뒤 할 일(자동 병합, 작업 요약)을 이어 한다. `merge_after`는 제목으로 띄운 thread의 자동 병합(host가 만든 할 일에 둔다)
 fn with_summary(
     json: bool,
     req: FrontRequest,
     project: String,
     thread: Option<String>,
     summary: Option<String>,
+    merge_after: Option<(String, Option<String>)>,
 ) -> Result<ExitCode> {
     if let Some(text) = &summary
         && let Err(e) = aaa_host::validate_thread_summary(text)
@@ -4243,6 +4339,14 @@ fn with_summary(
         return front_print(json, Err(e));
     }
     let res = front_call(req)?;
+    if let Some((mode, reason)) = merge_after {
+        match &res {
+            Ok(FrontResponse::Thread(v)) => auto_merge_first(&project, &v.id, Some(&mode), reason)?,
+            _ => eprintln!(
+                "thread가 아직 없어 자동 병합은 정하지 않았다. 시작 뒤 `aaa thread auto-merge <thread> {mode}`"
+            ),
+        }
+    }
     let Some(text) = summary else { return front_print(json, res) };
     let thread = match (&res, thread) {
         (Ok(FrontResponse::Thread(v)), _) => v.id.clone(),
@@ -4261,6 +4365,22 @@ fn with_summary(
             Ok(code)
         }
         Err(e) => front_print(json, Err(e)),
+    }
+}
+
+fn auto_merge_request(project: String, target: String, mode: &str, user_request: Option<String>) -> FrontRequest {
+    FrontRequest::AutoMergeSet { project, target, on: mode == "on", user_request }
+}
+
+/// 다른 명령 앞뒤에 자동 병합을 정한다. 실패하면 멈춘다(앞이면 뒤 명령을 하지 않는다). 결과는 표준 오류에 한 줄(표준 출력은 본 명령 것)
+fn auto_merge_first(project: &str, target: &str, mode: Option<&str>, user_request: Option<String>) -> Result<()> {
+    let Some(mode) = mode else { return Ok(()) };
+    match front_call(auto_merge_request(project.to_string(), target.to_string(), mode, user_request))? {
+        Ok(r) => {
+            eprint!("{}", render_front(&r));
+            Ok(())
+        }
+        Err(e) => anyhow::bail!("자동 병합: {}", e.message),
     }
 }
 
@@ -4338,6 +4458,9 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     }
     if let Some(id) = &t.report_id {
         let _ = writeln!(s, "보고: {id}");
+    }
+    if t.auto_merge {
+        let _ = writeln!(s, "자동 병합: on (병합 준비되면 사용자에게 묻지 않고 착지 창)");
     }
     if let Some(o) = &t.over_limit {
         let _ = writeln!(
@@ -4552,7 +4675,8 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
             let pad = "  ".repeat(depth(t) + 1);
             let id = t.short_id.as_deref().map(|s| format!("{s} ")).unwrap_or_default();
-            let _ = writeln!(s, "{pad}{mark} {id}{}{owner}{repo}{thread}  [{}줄]", t.title, t.line);
+            let merge = if t.auto_merge { "  {자동 병합}" } else { "" };
+            let _ = writeln!(s, "{pad}{mark} {id}{}{owner}{repo}{thread}{merge}  [{}줄]", t.title, t.line);
             for p in &t.problems {
                 let _ = writeln!(s, "{pad}    형식 어긋남: {p}");
             }
@@ -4650,7 +4774,11 @@ fn render_task_log(s: &mut String, entries: &[aaa_proto::TaskLogEntry], next: Op
             (true, None) => format!(" (되살리기: aaa task restore {})", e.id),
             _ => String::new(),
         };
-        let _ = writeln!(s, "#{} {when} {} {}{list} {}{back}", e.id, e.by, e.action.as_str(), e.title);
+        let value = match (e.action, &e.after) {
+            (aaa_proto::TaskAction::AutoMerge, Some(v)) => format!(" → {v}"),
+            _ => String::new(),
+        };
+        let _ = writeln!(s, "#{} {when} {} {}{list} {}{value}{back}", e.id, e.by, e.action.as_str(), e.title);
     }
     if let Some(n) = next {
         let _ = writeln!(s, "더 있다: aaa task log --before {n}");
@@ -4690,7 +4818,8 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
         let done = if t.done { " [x]" } else { "" };
         let id = t.short_id.as_deref().map(|id| format!("{id} ")).unwrap_or_default();
-        let _ = writeln!(s, "  [{}] {id}{}{owner}{repo}{thread}{done}", t.list, t.title);
+        let merge = if t.auto_merge { " {자동 병합}" } else { "" };
+        let _ = writeln!(s, "  [{}] {id}{}{owner}{repo}{thread}{done}{merge}", t.list, t.title);
         if !t.notes.is_empty() {
             let n: String = t.notes.join(" ").chars().take(60).collect();
             let _ = writeln!(s, "    notes: {n}");
@@ -4708,9 +4837,10 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     }
     for t in &c.threads {
         let state = t.agent.as_ref().map(|a| format!(" · {:?}", a.activity)).unwrap_or_default();
+        let merge = if t.auto_merge { " · 자동 병합 on(착지 창은 묻지 않고)" } else { "" };
         let _ = writeln!(
             s,
-            "  {} {} {} {}@{}{state}",
+            "  {} {} {} {}@{}{state}{merge}",
             t.id,
             t.stage.map_or_else(|| t.group.label(), |s| s.label()),
             t.title,
@@ -4777,6 +4907,16 @@ fn render_front(r: &FrontResponse) -> String {
                 s,
                 "설치 공개 포트: {} → {} · mapping {:?} · HTTPS {:?}",
                 publication.serve_port, publication.target_port, publication.mapping, publication.public_https
+            );
+        }
+        FrontResponse::AutoMerge { task_id, short_id, thread, on, changed } => {
+            let _ = writeln!(
+                s,
+                "자동 병합 {}{}: {}{}",
+                if *on { "on" } else { "off" },
+                if *changed { "" } else { "(그대로)" },
+                short_id.as_deref().unwrap_or(task_id),
+                thread.as_deref().map(|t| format!(" · {t}")).unwrap_or_default()
             );
         }
         FrontResponse::InstallApproval { approval } => {

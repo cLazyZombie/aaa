@@ -519,7 +519,12 @@ suggestion: TaskSuggestion | null,
  * 「확인 필요」의 까닭(FRONT_API 1.63, 할 일 T3): 이어진 thread가 끝났는데 완료로 판정하지 못했다(보고 표지·버림·하위 task
  * 남음), 하위 task가 모두 끝났다 등. host가 지우지 않고 사람이 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」로 정한다
  */
-attention: string | null, };
+attention: string | null,
+/**
+ * 자동 병합(FRONT_API 1.143): on이면 `[병합 준비됨]` 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다. host DB 값이며
+ * 프로젝트 기본값 없이 off에서 시작한다. 옛 host는 생략한다
+ */
+auto_merge?: boolean, };
 
 export type TaskListView = {
 /**
@@ -635,7 +640,7 @@ op: number, reason: string,
  */
 latest: TaskView | null, };
 
-export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean" | "completed";
+export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean" | "completed" | "auto_merge";
 
 export type TaskLogEntry = { id: number, at_ms: number,
 /**
@@ -1261,7 +1266,7 @@ skip_copy: boolean,
 /**
  * 집에 다 오지 않았어도 worktree를 지운다(herdr-projects `--discard-uncopied`)
  */
-discard_uncopied: boolean, } | { "op": "thread_park", project?: string, thread: string, now?: boolean, note?: string, user_request?: string, cancel?: boolean, } | { "op": "thread_unpark", project?: string, thread: string, machine?: string,
+discard_uncopied: boolean, } | { "op": "thread_park", project?: string, thread: string, now?: boolean, note?: string, user_request?: string, cancel?: boolean, } | { "op": "auto_merge_set", project?: string, target: string, on: boolean, user_request?: string, } | { "op": "thread_unpark", project?: string, thread: string, machine?: string,
 /**
  * 다른 머신의 저장소 경로(같은 이름의 저장소가 하나뿐이면 생략)
  */
@@ -1412,7 +1417,7 @@ handled?: boolean, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**
  * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */
-muted?: Array<string>, } | { "kind": "auto_mode" } & AutoMode | { "kind": "auto_decisions", decisions: Array<AutoDecision>, next: string | null, } | { "kind": "asks", auto_mode: AutoMode, auto_decisions: Array<AutoDecision>, auto_next: string | null, auto_exceptions: number, requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+muted?: Array<string>, } | { "kind": "auto_mode" } & AutoMode | { "kind": "auto_merge", task_id: string, short_id?: string, thread?: string, on: boolean, changed: boolean, } | { "kind": "auto_decisions", decisions: Array<AutoDecision>, next: string | null, } | { "kind": "asks", auto_mode: AutoMode, auto_decisions: Array<AutoDecision>, auto_next: string | null, auto_exceptions: number, requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -1667,6 +1672,10 @@ over_limit?: ThreadLimitOverride,
  * 보류 요청·보류 기록(FRONT_API 1.105). 보류하지 않은 thread와 옛 host는 생략한다.
  */
 park?: ThreadPark,
+/**
+ * 이어진 할 일의 자동 병합(FRONT_API 1.143). off·할 일 없는 thread·옛 host는 생략한다
+ */
+auto_merge?: boolean,
 /**
  * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
  */

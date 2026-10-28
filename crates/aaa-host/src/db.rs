@@ -7,6 +7,7 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
 mod account_rename;
+mod auto_merge;
 mod automation_ids;
 pub(crate) mod automation_runs;
 #[cfg(test)]
@@ -423,6 +424,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS task_archive(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
+             CREATE TABLE IF NOT EXISTS task_auto_merge(project TEXT NOT NULL, task_id TEXT NOT NULL, on_ INTEGER NOT NULL, actor TEXT NOT NULL, user_request TEXT, at_ms INTEGER NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_log(
                id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, at_ms INTEGER NOT NULL, actor TEXT NOT NULL,
                action TEXT NOT NULL, list TEXT NOT NULL, from_list TEXT, title TEXT NOT NULL, before TEXT, after TEXT,

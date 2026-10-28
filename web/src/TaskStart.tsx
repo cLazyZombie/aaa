@@ -8,6 +8,7 @@ import { Search } from "lucide-react";
 import type { AccountStartView, FrontRequest, OwnerChoice, TaskBoard, TaskThread, TaskView, ThreadStartPreview, ThreadView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { apiAtLeast } from "./automationModel";
+import { AutoMergeCheck, canAutoMerge, setAutoMerge } from "./AutoMerge";
 import { Markdown } from "./Markdown";
 import { TaskModal } from "./TaskDialogs";
 import { WhoChips } from "./TaskDetail";
@@ -19,12 +20,16 @@ const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e
 export function StartDialog({ project, task, owners, allowOverLimit, onStarted, onClose }: { project: string; task: TaskView; allowOverLimit: boolean; owners: OwnerChoice[] | null; onStarted: (v: ThreadView) => void; onClose: () => void }) {
   const requestId = useRef(crypto.randomUUID());
   const [poolEnabled, setPoolEnabled] = useState(false);
+  // 자동 병합 칸(FRONT_API 1.143): 처음은 할 일의 지금 값, 바뀌었으면 시작 전에 저장한다
+  const [mergeApi, setMergeApi] = useState(false);
+  const [autoMerge, setMerge] = useState(!!task.auto_merge);
   const [waiting, setWaiting] = useState<AccountStartView | null>(null);
   const [preview, setPreview] = useState<ThreadStartPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     void me().then(async (m) => {
+      if (active) setMergeApi(canAutoMerge(m?.front_api));
       if (!apiAtLeast(m?.front_api, 1, 102)) return;
       const r = await call({ op: "account_pool" });
       if (active && r.kind === "account_pool") setPoolEnabled(apiAtLeast(m?.front_api, 1, 129) ? r.pool.members.length > 0 : r.pool.projects.includes(project));
@@ -92,6 +97,7 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
     setBusy(true);
     setError(null);
     try {
+      if (mergeApi && autoMerge !== !!task.auto_merge) await setAutoMerge(project, task.short_id ?? task.title, autoMerge);
       const request: FrontRequest = {
         op: "thread_start",
         project,
@@ -196,6 +202,7 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
                   </select>
                 </label>
               </div>
+              {mergeApi && <AutoMergeCheck checked={autoMerge} disabled={busy || confirmOver} onChange={setMerge} testid="task-start-auto-merge" />}
               {problem !== null && choice !== "" && (
                 <p className="banner task-start-warning" role="alert" data-testid="task-start-problem">
                   {problem}

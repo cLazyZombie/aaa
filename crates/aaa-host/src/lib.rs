@@ -9,6 +9,7 @@ mod answer;
 mod app_badge;
 mod asks;
 mod attach;
+mod auto_merge;
 mod auto_mode;
 mod question_ids;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
@@ -2099,6 +2100,9 @@ impl Host {
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
                 self.thread_stop(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
+            }
+            FrontRequest::AutoMergeSet { project, target, on, user_request } => {
+                self.auto_merge_set(&project, &target, on, user_request, actor)
             }
             FrontRequest::ThreadPark { project, thread, now, note, user_request, cancel } => self
                 .thread_park(&project, &thread, now, note, user_request, cancel, actor)

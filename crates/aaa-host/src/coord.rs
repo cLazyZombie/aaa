@@ -437,6 +437,10 @@ impl Host {
         let (lists, mut tasks) = tasks::parse_board(&text);
         self.fill_task_ids(project, &mut tasks)?;
         tasks::fill_agent(&mut tasks, &self.known_profiles(project));
+        let auto_merge = self.db.auto_merge_on(project).map_err(internal)?;
+        for t in &mut tasks {
+            t.auto_merge = t.id.as_ref().is_some_and(|id| auto_merge.contains(id));
+        }
         let linked: std::collections::HashSet<String> = tasks.iter().filter_map(|t| t.thread.clone()).collect();
         let open: Vec<_> =
             self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();

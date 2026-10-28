@@ -6,6 +6,7 @@ import { taskTarget } from "./appIds";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import type { ThreadLimitOverride } from "./gen/proto";
 import { ThreadStageBadge } from "./ThreadStageBadge";
+import { AutoMergeBadge } from "./AutoMerge";
 // 본문(오른쪽) 할 일 화면(할 일 보기 T1 §8.306, 편집 T2 §8.311, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이
 // 있어서 거기서 들어가게), 필요하면 수정, 삭제 할수 있고」). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽고
 // `task_edit`로 고친다(바뀐 블록만 쓰고 블록 hash로 충돌을 감지한다). thread 연결(T3, §8.316): 상세의 「coordinator에게 맡기기」·
@@ -461,6 +462,8 @@ export function TasksView({
   const parkApi = apiAtLeast(frontApi, [1, 105]);
   // 예약의 앞 할 일(plan §8.463): 옛 host는 그 칸을 버리고 바로 자리 대기에 넣으므로 1.113부터 연다
   const afterApi = apiAtLeast(frontApi, [1, 113]);
+  // 자동 병합(plan §8.530): 옛 host는 모르는 요청을 거부하므로 1.143부터 칸을 그린다
+  const autoMergeApi = apiAtLeast(frontApi, [1, 143]);
   const pick = (t: TaskView) => {
     if (target !== null) onTarget?.(t.short_id);
     setCreating(null);
@@ -975,6 +978,7 @@ export function TasksView({
               repoApi={repoApi}
               queueApi={queueApi}
               afterApi={afterApi}
+              autoMergeApi={autoMergeApi}
               reserveRequest={reserveReq}
               onQueueStep={manual ? (t, dir) => t.id && stepReserved(t.id, dir) : undefined}
               onUnreserved={(t) => t.id && setFlash(t.id)}
@@ -1223,7 +1227,7 @@ function TaskRow({ t, row, compact, stage, overLimit, depth, state, selected, gr
         {compact && withoutAttachments(t.notes.join("\n")) !== "" && <span className="task-notes-mobile" role="img" aria-label="메모 있음" title="메모 있음">≡</span>}
       </button>
       <div className="task-row-chips">
-        <span className="task-stage-chips"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /></span>
+        <span className="task-stage-chips"><ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} /><AutoMergeBadge on={t.auto_merge} /></span>
         {reserved && row.missing && <span className="task-chip task-problem">연결된 할 일 없음</span>}
         {row.kind === "task" && row.reservedKids > 0 && <span className="task-chip task-kids-reserved">하위 {row.reservedKids} 예약됨</span>}
         {flash && <span className="task-flash-note" data-testid="task-flash">↩ 원래 자리로 돌아옴</span>}

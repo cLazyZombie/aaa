@@ -2,10 +2,11 @@ import { ThreadFollowups } from "./ThreadFollowups";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
+import { AutoMergeBadge, AutoMergeSwitch, canAutoMerge } from "./AutoMerge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
-import { ApiError, call } from "./api";
+import { ApiError, call, me } from "./api";
 import { Icon } from "./icons";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
@@ -68,6 +69,16 @@ export function ThreadPanel({
   onAddDoc?: (path: string) => void;
 }) {
   const statusLabel = t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_LABEL[t.group] ?? t.group;
+  // 자동 병합(plan §8.530): 사람이 맡긴 열린 Worker의 이어진 할 일 값. 조작 기기는 여기서 켜고 끈다
+  const [frontApi, setFrontApi] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    me().then((m) => live && setFrontApi(m?.front_api ?? null), ignoredFailure("ThreadPanel.tsx:me", () => undefined));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const mergeSwitch = role !== "reader" && canAutoMerge(frontApi) && t.role === "worker" && !t.automation && t.status !== "resolved";
   const [lib, setLib] = useState<LibraryView | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => {
@@ -165,7 +176,7 @@ export function ThreadPanel({
           {lib && <LibraryCopyNotice files={lib.files} />}
 
           <div className="t-hero">
-            <h1><ResponsibilityBadge value={t.responsibility} /><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
+            <h1><ResponsibilityBadge value={t.responsibility} /><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{!mergeSwitch && <AutoMergeBadge on={t.auto_merge} />}{t.title}</h1>
             {t.over_limit && <p className="muted" data-testid="thread-over-limit-origin">{t.over_limit.actor} · {new Date(t.over_limit.at_ms).toLocaleString()}{t.over_limit.user_request && ` · 사용자 지시: ${t.over_limit.user_request}`}</p>}
             <div className="t-meta">
               {t.account && <span data-testid="thread-account">계정 {t.account}</span>}
@@ -178,6 +189,7 @@ export function ThreadPanel({
               </span>
               {t.branch && <span className="mono">{t.branch}</span>}
               {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
+              {mergeSwitch && <AutoMergeSwitch project={t.project} target={t.id} on={!!t.auto_merge} />}
             </div>
             {t.account_selection && <p className="muted" data-testid="thread-account-selection">{t.account_selection.reason} · 한도 그룹 {t.account_selection.group} · 예상 예약 {({ small: 5, medium: 15, large: 30 })[t.account_selection.size]}%p</p>}
           </div>

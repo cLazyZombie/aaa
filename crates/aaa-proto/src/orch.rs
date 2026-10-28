@@ -1032,6 +1032,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub park: Option<Box<ThreadPark>>,
+    /// 이어진 할 일의 자동 병합(FRONT_API 1.143). off·할 일 없는 thread·옛 host는 생략한다
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub auto_merge: bool,
     /// FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -2598,6 +2602,11 @@ pub struct TaskView {
     /// 남음), 하위 task가 모두 끝났다 등. host가 지우지 않고 사람이 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」로 정한다
     #[serde(default)]
     pub attention: Option<String>,
+    /// 자동 병합(FRONT_API 1.143): on이면 `[병합 준비됨]` 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다. host DB 값이며
+    /// 프로젝트 기본값 없이 off에서 시작한다. 옛 host는 생략한다
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub auto_merge: bool,
 }
 
 /// 「정리 제안」(할 일 편집 T2): 끝 괄호 글 → 메모, 본문 속 열린 thread 번호 → 연결, `미할당` → owner 비움
@@ -2771,6 +2780,8 @@ pub enum TaskAction {
     /// 끝난 thread의 task를 host가 지웠다(T3)
     AutoClean,
     Completed,
+    /// 자동 병합 on/off 변경(FRONT_API 1.143). before·after는 `off`·`on`이다
+    AutoMerge,
 }
 
 impl TaskAction {
@@ -2789,6 +2800,7 @@ impl TaskAction {
             TaskAction::Raw => "raw",
             TaskAction::AutoClean => "auto_clean",
             TaskAction::Completed => "completed",
+            TaskAction::AutoMerge => "auto_merge",
         }
     }
 
@@ -2807,6 +2819,7 @@ impl TaskAction {
             TaskAction::Raw,
             TaskAction::AutoClean,
             TaskAction::Completed,
+            TaskAction::AutoMerge,
         ]
         .into_iter()
         .find(|a| a.as_str() == s)

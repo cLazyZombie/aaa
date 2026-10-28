@@ -1,0 +1,11 @@
+/* 자동 병합 표지는 병합 대기(초록)·병합 중(주황)과 구별되는 청록 */
+.thread-stage.is-auto-merge { color: #3fb8c4; background: color-mix(in srgb, #3fb8c4 14%, transparent); }
+[data-theme="light"] .thread-stage.is-auto-merge { color: #00707a; background: color-mix(in srgb, #00707a 12%, transparent); }
+.auto-merge-switch { display: inline-flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.auto-merge-label { font-size: var(--fs-sm); }
+.auto-merge-error { color: var(--danger-text); font-size: var(--fs-xs); flex-basis: 100%; }
+.auto-merge-check { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-sm); }
+/* 할 일 상세의 속성 줄: 이름 칸(72px)·값 칸 배치를 다른 속성과 맞춘다 */
+.task-prop > .auto-merge-switch { flex: 1 1 auto; flex-wrap: nowrap; gap: var(--space-2); color: inherit; font-size: inherit; }
+.task-prop > .auto-merge-switch .auto-merge-label { flex: 0 0 72px; color: var(--text-dim); font-size: var(--fs-xs); }
+.task-prop > .auto-merge-switch .auto-merge-error { flex-basis: auto; }

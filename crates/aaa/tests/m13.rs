@@ -8,6 +8,8 @@
 
 #[path = "m13/accounts.rs"]
 mod accounts;
+#[path = "m13/auto_merge.rs"]
+mod auto_merge;
 #[path = "m13/automation_start.rs"]
 mod automation_start;
 #[path = "m13/ci.rs"]
@@ -5490,12 +5492,14 @@ const GUIDE_SECTIONS: &[&str] = &[
     "`coordinator_deploy`가 on일 때만",
     "사용자가 일정 작업이나 감시를 요청하면 `automations/<이름>.toml`에 `schema = 2`를 쓴다",
     "`aaa context`의 「auto 예외」와",
-    "병합, force push, branch 지우기, worktree 지우기, thread 끝내기",
+    "병합(자동 병합 on은 예외), force push, branch 지우기, worktree 지우기, thread 끝내기",
+    "「자동 병합 on」 thread의 `[병합 준비됨]`은 묻지 않고 차례대로 착지 창을 준다(그 값이 승인)",
 ];
 
 /// AGENTS.md에서 `aaa guide <주제>`로 옮긴 세부(plan §8.491): (주제, 그 출력에 있어야 할 글)
 const GUIDE_TOPIC_SECTIONS: &[(&str, &str)] = &[
     ("tasks", "가능한 예약 중 앞 것을 host가 시작한다"),
+    ("tasks", "`--user-request '<사용자 지시>'`를 함께 준다. on인 할 일의 `[병합 준비됨]`은 묻지 않고"),
     ("tasks", "`aaa task archive --restore <task ID>`"),
     ("tasks", "- 더하기: 사용자가 맡긴 새 일은 지금 시작할 일도 먼저 더한다"),
     ("tasks", "- 목록(`##` 머리): 사용자가 요청하면"),

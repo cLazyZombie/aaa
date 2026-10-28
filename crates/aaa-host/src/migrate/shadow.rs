@@ -194,6 +194,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         error: None,
         resolve_pending: None,
         task_clean: Default::default(),
+        task_id: None,
         attachments: Vec::new(),
         prepare_started_ms: None,
         leftover: None,
