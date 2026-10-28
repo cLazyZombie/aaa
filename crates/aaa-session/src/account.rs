@@ -128,7 +128,24 @@ pub async fn prepare(
                 let key = serde_json::to_string(&cwd.to_string_lossy())?;
                 config.push_str(&format!("\n[projects.{key}]\ntrust_level = \"trusted\"\n"));
             }
-            private(&home.join("config.toml"), config.as_bytes())?;
+            // aaa 소유 실행 홈만 구성한다. 개인 홈의 설정·hook을 읽거나 복사하지 않는다.
+            config.push_str("\n[features]\nhooks = true\n");
+            private(&home.join("hooks.json"), &serde_json::to_vec_pretty(&aaa_common::codex_hooks::settings(exe))?)
+                .context("계정 Codex hook 설정 쓰기 실패")?;
+            // Codex가 보는 정규 절대 경로와 내용 해시로 aaa 소유 hook만 사전 신뢰한다.
+            // 사용자·프로젝트의 다른 hook을 일괄 허용하는 실행 옵션은 쓰지 않는다.
+            let canonical = std::fs::canonicalize(&home).context("계정 Codex hook 홈 확인 실패")?;
+            #[cfg(windows)]
+            let canonical = dunce::simplified(&canonical);
+            let state = aaa_common::codex_hooks::trusted_state(exe, &canonical.join("hooks.json"));
+            for (key, value) in state.as_object().unwrap() {
+                config.push_str(&format!(
+                    "\n[hooks.state.{}]\ntrusted_hash = {}\n",
+                    serde_json::to_string(key)?,
+                    value["trusted_hash"]
+                ));
+            }
+            private(&home.join("config.toml"), config.as_bytes()).context("계정 Codex 기능 설정 쓰기 실패")?;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let token = hex::encode(rand::random::<[u8; 32]>());
             let url = format!("http://{}/{token}", listener.local_addr()?);
@@ -380,6 +397,29 @@ mod tests {
         let read =
             || toml::from_str::<toml::Value>(&std::fs::read_to_string(home.join("config.toml")).unwrap()).unwrap();
         let config = read();
+        assert_eq!(config["features"]["hooks"].as_bool(), Some(true));
+        let hooks =
+            || serde_json::from_slice::<serde_json::Value>(&std::fs::read(home.join("hooks.json")).unwrap()).unwrap();
+        let installed = hooks();
+        let events = installed["hooks"].as_object().unwrap();
+        assert_eq!(
+            events.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["PostToolUse", "SessionStart", "UserPromptSubmit"]
+        );
+        assert_eq!(events["SessionStart"][0]["matcher"], "^(startup|resume|clear|compact|fork)$");
+        for event in events.values() {
+            let command = event[0]["hooks"][0]["command"].as_str().unwrap();
+            assert!(command.contains(if cfg!(windows) { "-EncodedCommand " } else { "hook --agent codex" }));
+        }
+        let state = config["hooks"]["state"].as_table().unwrap();
+        assert_eq!(state.len(), 3, "생성한 세 hook만 신뢰한다");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(home.join("hooks.json")).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::create_dir(home.join("sessions")).unwrap();
+        std::fs::write(home.join("sessions/history.jsonl"), "history").unwrap();
         let projects = config["projects"].as_table().unwrap();
         assert_eq!(projects.len(), 1, "부모 저장소·다른 worktree로 신뢰를 넓히지 않는다");
         assert_eq!(projects.get(native).map(|v| v["trust_level"].as_str()), Some(Some("trusted")));
@@ -388,10 +428,39 @@ mod tests {
         // 재시작도 같은 키를 쓰며 coordinator → user 변경 때 사전 신뢰를 없앤다.
         let prepared = prepare(&home, auth.clone(), Path::new("aaa"), tx.clone(), &argv).await.unwrap();
         assert_eq!(read(), config);
+        assert_eq!(hooks(), installed);
+        assert_eq!(std::fs::read_to_string(home.join("sessions/history.jsonl")).unwrap(), "history");
         drop(prepared);
         auth.trust_cwd = None;
-        let _prepared = prepare(&home, auth, Path::new("aaa"), tx, &argv).await.unwrap();
+        let _prepared = prepare(&home, auth, Path::new("new aaa"), tx, &argv).await.unwrap();
         assert!(read().get("projects").is_none());
+        assert_eq!(read()["features"]["hooks"].as_bool(), Some(true));
+        assert_ne!(hooks(), installed, "실행 파일 이동 때 옛 명령을 남기지 않는다");
+        let renewed = read();
+        let new_state = renewed["hooks"]["state"].as_table().unwrap();
+        assert_eq!(new_state.keys().collect::<Vec<_>>(), state.keys().collect::<Vec<_>>());
+        assert!(state.iter().all(|(key, value)| new_state[key] != *value), "명령이 바뀌면 신뢰 해시도 갱신한다");
+        assert_eq!(std::fs::read_to_string(home.join("sessions/history.jsonl")).unwrap(), "history");
+    }
+
+    #[tokio::test]
+    async fn codex_hook_write_failure_keeps_cause_and_removes_auth_before_launch() {
+        let lab = Lab::new();
+        let home = lab.0.join("codex-home");
+        std::fs::create_dir_all(home.join("hooks.json")).unwrap();
+        let mut auth = credential(None);
+        auth.harness = "codex".into();
+        let (tx, _) = mpsc::channel(1);
+        let result = prepare(&home, auth, Path::new("aaa"), tx, &["codex".into()]).await;
+        let error = match result {
+            Ok(_) => panic!("hook 설치 실패를 무시했다"),
+            Err(e) => e,
+        };
+        let cause = format!("{error:#}");
+        assert!(cause.contains("계정 Codex hook 설정 쓰기 실패") && cause.contains("os error"), "{cause}");
+        assert!(!home.join("auth.json").exists());
+        assert!(!home.join("config.toml").exists());
+        assert!(home.join("hooks.json").is_dir());
     }
 
     #[tokio::test]

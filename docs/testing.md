@@ -1,3 +1,4 @@
+- t-1229: [계정 Codex hook 설치·실기 검증](testing-account-codex-hooks.md)
 - t-1228: [inbox 짧은 별칭 검증](testing-inbox-ids.md)
 - t-1223: [자동 결정 지우기·대화창 줄 검증](testing-auto-decision-forget.md)
 - t-1222: [보고 글·diff 줄 의견과 인용 위치 검증](testing-review-notes.md)

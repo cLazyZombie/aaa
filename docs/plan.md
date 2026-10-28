@@ -8254,3 +8254,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **계약.** FRONT_API 1.145: InboxItem.short_id를 선택적 표시 필드로 추가한다. id는 기존 저장 키를 유지하며 InboxDone은 두 ID 모두 받는다. AGENT_LINK 변경은 없다. 옛 웹도 host가 준 id를 그대로 되돌려 쓸 수 있다. 새 웹은 옛 host의 긴 ID도 받아 같은 경로로 처리한다.
 - **참고.** [Taskwarrior ID/UUID](https://taskwarrior.org/docs/ids/)([MIT](https://github.com/GothenburgBitFactory/taskwarrior/blob/develop/LICENSE))의 저장 ID와 짧은 선택자 분리, [GitHub CLI issue lookup](https://github.com/cli/cli/blob/trunk/pkg/cmd/issue/shared/lookup.go)([MIT](https://github.com/cli/cli/blob/trunk/LICENSE))의 번호/원래 참조와 저장소 경계를 대조했다. aaa는 Taskwarrior의 재번호 부여를 따르지 않고 영속 번호를 쓴다. 외부 코드·의존성을 가져오지 않았다.
 - **검증.** [별도 기록](testing-inbox-ids.md)에 새 keeper의 필요성과 기존 m13·E114 검증을 남긴다. t-1225와 inbox·context 변경이 겹치므로 착지 차례에서 함께 맞춘다. 착지 기준의 마지막 §8.532·FRONT_API 1.144 다음 번호이며 새 E2E 번호는 쓰지 않는다.
+
+
+### 8.534 계정 Codex 홈의 aaa hook(t-1229)
+
+- **목적.** t-1225 조사 후속: 계정 실행 CODEX_HOME에도 진행 알림과 압축 뒤 재독 안내를 넣는다. 사용자 홈은 읽거나 변경하지 않는다.
+- **설치.** session host가 계정 전용 홈에 SessionStart·UserPromptSubmit·PostToolUse의 hooks.json과 features.hooks=true를 쓴다. 전역 설치와 명령·사건 생성은 common에서 공유한다. 재시작에도 대화 기록을 보존하고 실행 파일 이동 때 명령과 해시를 갱신한다. 쓰기 실패는 하위 원인을 보존하고 전달한 인증을 지운다.
+- **신뢰·Windows.** Codex 0.164.0에서 생성한 세 handler의 정규 경로·내용 해시만 신뢰한다. 사용자·프로젝트 hook의 신뢰를 일괄 우회하지 않는다. 선택된 PowerShell에서도 기존 cmd guard가 동작하도록 cmd 실행 경계를 명시하고 UTF-16LE EncodedCommand·UTF-8 입출력을 유지한다.
+- **계약·번호.** 착지 기준 main의 마지막 §8.533 다음 번호다. wire 변경이 없어 FRONT_API 1.145·AGENT_LINK 1.11을 유지하며 E30·35의 기존 두 파일씩 분할과 E2E 번호를 바꾸지 않는다.
+- **참고·검증.** [동작과 오픈소스 후보](account-codex-hooks.md), [별도 검증 기록](testing-account-codex-hooks.md)에 적었다. Mac·Windows 실제 계정 Codex의 startup·compact와 다음 모델 요청의 재독 표지, 기존 Codex 통합 owner, 계정 설정·쓰기 실패 회귀를 확인한다. 정규 착지는 전체 ci-local·strict cross·Windows production과 공개 검사를 수행한다.

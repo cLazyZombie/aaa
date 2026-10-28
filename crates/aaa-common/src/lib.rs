@@ -4,6 +4,7 @@
 pub mod caller;
 pub mod child_process;
 pub mod ci;
+pub mod codex_hooks;
 pub mod conn;
 pub mod diagnostic;
 pub mod diff;

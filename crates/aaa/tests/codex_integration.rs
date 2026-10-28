@@ -548,6 +548,15 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
         let payload = if args.first().is_some_and(|a| a == "hook") { Some(args[3].clone()) } else { None };
         let mut c = if payload.is_some() {
             let mut shell = h.hook_command(&installed);
+            #[cfg(windows)]
+            if payload
+                .as_deref()
+                .is_some_and(|p| serde_json::from_str::<Value>(p).is_ok_and(|v| v["source"] == "compact"))
+            {
+                // Codex 0.164의 실제 Windows turn shell도 cmd guard를 실행할 수 있어야 한다.
+                shell = h.cmd(Path::new("powershell.exe"));
+                shell.args(["-NoProfile", "-NonInteractive", "-Command", &installed]);
+            }
             shell.stdin(std::process::Stdio::piped());
             shell
         } else {
