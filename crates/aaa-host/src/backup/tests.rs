@@ -201,3 +201,21 @@ async fn scheduled_success_survives_restart_without_duplicate_backup() {
     assert!(!host.backup_running.load(Ordering::Acquire));
     assert_eq!(status(&lab.state()).unwrap().last_attempt_ms, Some(DAY_MS));
 }
+
+#[cfg(unix)]
+#[test]
+fn backup_owner_releases_lock_even_while_a_fork_or_dup_copy_remains_open() {
+    let lab = Lab::new();
+    let path = lab.0.join("lock");
+    let owner = BackupLock(private_file::lock(&path).unwrap());
+    // fork와 같은 open file description을 공유한다. 별도 프로세스·시간 경과 없이 수명을 고정한다.
+    let inherited = owner.0.try_clone().unwrap();
+    assert_eq!(private_file::lock(&path).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    drop(owner);
+    let next = BackupLock(private_file::lock(&path).expect("복제 FD가 살아 있어도 끝난 백업의 잠금은 풀려야 한다"));
+    assert!(inherited.metadata().unwrap().is_file(), "원래 open file description의 사본은 아직 살아 있다");
+    assert_eq!(private_file::lock(&path).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    drop(next);
+    let _after = BackupLock(private_file::lock(&path).unwrap());
+    drop(inherited);
+}

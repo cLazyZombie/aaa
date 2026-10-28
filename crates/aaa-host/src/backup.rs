@@ -44,6 +44,20 @@ pub fn status(state: &Path) -> Result<Status> {
     })
 }
 
+/// close만 하면 다른 스레드의 fork~exec 사이 자식이 같은 잠금을 붙잡을 수 있다.
+/// 백업 owner가 끝나면 Unix 잠금을 명시적으로 풀고 Windows 예약은 handle close로 해제한다.
+struct BackupLock(File);
+impl Drop for BackupLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Err(error) = self.0.unlock() {
+            tracing::error!(%error, "백업 중복 실행 잠금 해제 실패");
+        }
+        #[cfg(windows)]
+        let _ = &self.0;
+    }
+}
+
 struct Cleanup(Vec<PathBuf>);
 impl Drop for Cleanup {
     fn drop(&mut self) {
@@ -142,7 +156,7 @@ pub fn run(state: &Path, cfg: &BackupSection, now: u64) -> Result<PathBuf> {
     ensure!(metadata.is_dir(), "백업 목적지가 폴더가 아니다: {}", root.display());
     let staging = state.join("db-backup-staging");
     private_file::directory(&staging).context("백업 private staging 준비")?;
-    let _lock = private_file::lock(&staging.join("lock")).context("백업 중복 실행 잠금")?;
+    let _lock = BackupLock(private_file::lock(&staging.join("lock")).context("백업 중복 실행 잠금")?);
     let plain = staging.join("snapshot.db");
     // 이전 비정상 종료의 평문도 자기 staging 안에서만 지운다. 잠금을 가진 실행만 접근한다.
     for path in sqlite_files(&plain) {

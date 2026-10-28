@@ -4968,3 +4968,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - Claude thread 생각 수준(hook·상태줄 `effort.level`) 표시: [t-1264 검증](testing-claude-effort.md).
 
 - t-1263 작업 요약 진행 목록 6개 허용·7개 거부와 웹 회귀: [별도 기록](testing-summary-six-steps.md).
+- t-1263(q-1664) WAL 백업 잠금 첫 실패의 수리 전 재현·owner 수명 수리(t-1266 겹침): [별도 기록](testing-backup-lock-owner.md).
