@@ -1,3 +1,5 @@
+- t-1223: [자동 결정 지우기·대화창 줄 검증](testing-auto-decision-forget.md)
+- t-1222: [보고 글·diff 줄 의견과 인용 위치 검증](testing-review-notes.md)
 - t-1221: [macOS CI 재컴파일 수리·착지 검증](testing-macos-ci-budget.md)
 
 - t-1212: [첫 trust 관측 회귀와 착지 검증](testing-trust-observation.md)

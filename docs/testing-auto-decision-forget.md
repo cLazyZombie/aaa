@@ -1,4 +1,4 @@
-## 자동 결정 지우기와 대화창 줄(t-1223, plan §8.531)
+## 자동 결정 지우기와 대화창 줄(t-1223, plan §8.532)
 
 - host 유닛 `auto_mode::tests::forgetting_decisions_clears_every_list_but_never_reopens_an_auto_resend`는 실제 Host·SQLite로 질문 두 개를
   자동 답한 뒤 보기 기기·coordinator 세션·worker의 지우기 거부, ID 없는 요청 거부, 하나 지우기 → `Asks` 응답의 목록·「답한 것」·`asks`

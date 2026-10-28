@@ -83,6 +83,8 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { setAppBadge } from "./appBadge";
 import { watchBadgeFocus } from "./faviconBadge";
 import { PasskeyGesture, PasskeyNotice, usePasskeyState } from "./PasskeyPanel";
+import { handDraft, requestReveal } from "./quoteHandoff.ts";
+import type { QuoteRef } from "./selectionQuote.ts";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -1207,6 +1209,38 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (pane) choose(pane.id);
     else chooseThread(t);
   };
+  /** thread의 돌고 있는 pane */
+  const runningPane = (t: ThreadView) => (t.pane ? panes.find((p) => p.id === t.pane && p.state === "running") : undefined);
+  /**
+   * 의견 모음을 그 thread pane 입력 초안에 넣는다(t-1222): pane 화면을 열고 그 화면이 보이는 초안에 붙인다(quoteHandoff). 조작 기기·돌고
+   * 있는 pane만
+   */
+  const sendNotesTo = (project: string, id: string) => {
+    const t = allThreads.find((x) => x.project === project && x.id === id);
+    const pane = role !== "reader" && t ? runningPane(t) : undefined;
+    return pane ? (text: string, done: (ok: boolean) => void) => {
+      handDraft(`${pane.machine_id}:${pane.id}`, text, done);
+      choose(pane.id);
+    } : undefined;
+  };
+  /**
+   * 보낸 말 속 보고·diff 인용의 자리로(t-1222): 그 thread의 지금 보고 판이면 thread 화면, 옛 판이면 보고서 화면을 열고 그 글을 고른다.
+   * diff 줄은 thread 화면의 diff 칸을 열어 그 범위를 고른다
+   */
+  const quoteReturn = (ref: QuoteRef) => {
+    if (ref.kind !== "report" && ref.kind !== "diff") return;
+    const id = normalizeAppTarget(ref.source, "t");
+    const t = allThreads.find((x) => x.id === id);
+    if (!t) return;
+    if (ref.kind === "diff") {
+      requestReveal({ kind: "diff", project: t.project, thread: t.id, scope: ref.scope, path: ref.path, range: ref.range, text: ref.text });
+      chooseThread(t);
+      return;
+    }
+    requestReveal({ kind: "report", project: t.project, report: ref.report, anchor: { text: ref.text, start: -1, end: -1, prefix: "", suffix: "" } });
+    if (t.report_id === ref.report) chooseThread(t);
+    else goSel(`reports:${t.project}/${ref.report}`);
+  };
   /**
    * 자동화 카드·줄의 「자동 · 규칙」 표지: 자동화 패널을 보이고 본문에 그 규칙 설정을 연다(접은 사이드바는 편다, t-0628). 이름이 없으면 새 자동화.
    * `replace`: 지금 주소 칸을 바꾼다(새로 만든 규칙: 뒤로가 빈 편집 화면으로 가지 않는다)
@@ -1607,6 +1641,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             rev={reportsRev}
             onOpen={(r) => goSel(r ? `reports:${r.project}/${r.name}` : "reports:")}
             onAddDoc={addReportDoc}
+            sendNotesTo={sendNotesTo}
           />
         )}
         {asksOpened && (
@@ -1691,6 +1726,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onOpenLink={openLink}
             title={paneTitle(p)}
             quoteSource={threadOfPane.get(p.id)?.id ?? (p.coordinator_project ? "coordinator" : `${p.machine} ${p.name || p.id}`)}
+            onQuoteReturn={quoteReturn}
             agent={agentOf(p, threadOfPane.get(p.id))}
             crumb={`${p.machine} › ${paneSub(p)}`}
             status={activePane === chatKey(p) ? (
@@ -1750,6 +1786,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
             onAddDoc={addReportDoc && ((path) => addReportDoc(currentThread.id, path))}
             reportsRev={reportsRev}
+            sendNotes={sendNotesTo(currentThread.project, currentThread.id)}
+            onOpenReport={(project, report) => goSel(`reports:${project}/${report}`)}
           />
         ) : sel === "threads:" ? (
           <ProjectThreads
