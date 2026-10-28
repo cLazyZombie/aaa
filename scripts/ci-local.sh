@@ -106,7 +106,7 @@ step_test() {
   fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
-  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases >"$LOGS/python.log" 2>&1 &
+  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_build_watch scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases >"$LOGS/python.log" 2>&1 &
   python_pid=$!
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
   wait "$python_pid" || python_code=$?
