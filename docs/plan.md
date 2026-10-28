@@ -8279,3 +8279,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **후속.** q-1710의 두 후속(inbox 항목 짧은 별칭 §8.533 t-1228, 계정 실행 Codex의 aaa hook §8.534 t-1229)은 먼저 착지했다.
 - **착지 수리.** 1회차 전체 ci-local(부하 36.6)의 E2E12 WebKit 단계에서 응답 헤더 전 `request-failed: cancelled`가 새 문서 표지보다 먼저 와 오류로 남았다. `web/e2e/lib/thread-page-trace.mjs`는 이제 응답 전 실패도 실제 Document 교체(retire)로만 navigation 취소로 구별하고, 같은 문서의 실패는 그대로 오류로 둔다(q-1711 1A, 재시도·시한·기대값 그대로).
 - **계약.** API·저장 형식·FRONT_API·AGENT_LINK 변경 없음. 검증은 [주입 글 줄이기 검증](testing-context-budget.md)에 둔다.
+
+
+### 8.536 m13 질문 이력·E42 관측 경쟁 수리(t-1236)
+
+- **m13.** 가짜 Claude 메뉴가 함께 온 화살표·Enter 사이에 셸 자식·중간 재그림을 끼워 답한 신뢰 창을 800ms 뒤 재질문으로 감지할 수 있었다. 한 프로세스에서 입력 묶음을 먼저 처리하도록 고쳤다. 실제 PTY 회귀는 수리 전 중간 재그림으로 실패하고 수리 후 통과한다.
+- **E42.** ElementHandle을 얻은 뒤 observer 설치 전에 이미 단추가 제거되면 과거 제거 사건을 받을 수 없었다. 관측 설치와 함께 현재 연결 상태도 읽는다. 실제 Shadow DOM의 관측 전·후 제거 회귀는 수리 전 원문과 같은 5초 실패를 재현하고 수리 후 두 엔진에서 통과한다.
+- **계약·번호.** 착지 기준 main e321baab의 마지막 §8.535 다음 번호다. 제품 API·저장 형식 변경이 없어 FRONT_API 1.145·AGENT_LINK 1.11을 유지한다. 기존 E2E120까지의 번호·분할, m13 질문/메시지 이력, 800ms 재질문 규칙, E42의 5초 상한·실제 터치·44px·원문 한 번 읽기를 유지한다. 새 웹 E2E 번호·재시도·시한 확대·기대값 완화는 없다.
+- **검증.** [m13 검증](testing-claude-menu-input-batch.md)과 [E42 검증](testing-diff-context-reflow.md)에 수리 전후 증거를 둔다. 최신 main의 전용 worktree에서 전체 ci-local·공개·Linux/Windows strict cross·Windows production을 수행하고 실제 착지 SHA의 salt 설치기를 격리 폴더에서 확인한다.

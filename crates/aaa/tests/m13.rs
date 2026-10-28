@@ -204,28 +204,10 @@ race_ready() {
 }
 # $1 본문 $2 기본 선택(0·1) $3·$4 선택지 $5 아래 안내 $6 처음 그리기 앞에 함께 쓸 것. 창 하나를 한 번에 그리고(커서는
 # 안내 줄 아래), 그린 자리에서 다시 그리고, 고른 뒤 지운다.
-menu() {
-  sel=$2; h=$(( $(printf '%s\n' "$1" | wc -l) + 5 )); pre=${6:-}
-  while :; do
-    if [ "$sel" = 0 ]; then o=$(printf ' \342\235\257 %s\n   %s' "$3" "$4"); else o=$(printf '   %s\n \342\235\257 %s' "$3" "$4"); fi
-    out "$pre$(printf '%s\n%s\n%s\n\n %s' "$RULE" "$1" "$o" "$5")"
-    pre=$(printf '\033[%sA\r\033[J' "$h")
-    # 한 번에 온 화살표는 세 바이트를 함께 받는다. Esc처럼 창을 지웠다가 다시 그리면
-    # 감지기가 잠깐 Working을 본 뒤 같은 신뢰 질문을 새 질문으로 연다.
-    stty -icanon -echo min 1 time 0; k=$(dd bs=3 count=1 2>/dev/null)
-    case "$k" in "$ESC[A") sel=0; continue;; "$ESC[B") sel=1; continue;; esac
-    if [ "$k" = "$ESC" ]; then
-      # 답한 창은 바로 지우되 suffix를 읽는 동안에는 작업 중이다. 빈 화면은 idle로
-      # 감지되어 다음 메시지의 첫 글자를 suffix dd가 먹는다. 지움과 작업 표지를 함께 낸다.
-      printf '%s' "$pre$WORKING$NL"; pre=$(printf '\033[1A\r\033[J')
-      keyt 2
-      if [ "$k" = "[" ]; then keyt 2; case "$k" in A) sel=0;; B) sel=1;; esac; continue; fi
-      pick=cancel; break
-    fi
-    if [ -z "$k" ]; then if [ "$sel" = 0 ]; then pick=$3; else pick=$4; fi; break; fi
-  done
-  printf '%s' "$pre"
-}
+# 한 프로세스가 함께 온 화살표·Enter를 먼저 처리한다. 셸의 dd·stty·재그림을
+# 사이에 끼우면 부하 아래 800ms가 지나 답한 창을 재질문으로 감지할 수 있다.
+menu() { pick=$(python3 "$CLAUDE_MENU" "$@"); } 3>&1
+
 perm() {
   unspin
   menu " Bash command
@@ -442,7 +424,7 @@ fn fixture_profiles(scripts: &Path, host_state: &Path) -> String {
     format!(
         "[profiles.fake]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\n\
          [profiles.mute]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ MUTE_LOG = \"{}\" }}\n\
-         [profiles.claude]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", HOOK_LOG = \"{}\" }}\n\
+         [profiles.claude]\nagent = \"claude\"\ncommand = [\"{}\"]\nenv = {{ AA = \"{}\", HOOK_LOG = \"{}\", CLAUDE_MENU = \"{}\" }}\n\
          [profiles.sticky]\nagent = \"claude\"\ncommand = [\"{}\"]\n\
          [profiles.prog]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ AA = \"{}\" }}\n\
          [profiles.paste]\nagent = \"custom\"\ncommand = [\"/bin/sh\", \"{}\"]\nenv = {{ PASTE_LOG = \"{}\" }}\n\
@@ -456,6 +438,7 @@ fn fixture_profiles(scripts: &Path, host_state: &Path) -> String {
         path_str(&scripts.join("claude.sh")),
         lab::BIN,
         path_str(&scripts.join("hook.log")),
+        path_str(&scripts.join("claude-menu.py")),
         path_str(&scripts.join("sticky.sh")),
         path_str(&scripts.join("prog.sh")),
         lab::BIN,
@@ -562,6 +545,7 @@ fn world_files(
     std::fs::write(scripts.join("fake.sh"), FAKE_AGENT).unwrap();
     std::fs::write(scripts.join("mute.sh"), MUTE_AGENT).unwrap();
     std::fs::write(scripts.join("claude.sh"), CLAUDE_AGENT).unwrap();
+    std::fs::write(scripts.join("claude-menu.py"), include_str!("fixtures/claude-menu.py")).unwrap();
     std::fs::write(scripts.join("sticky.sh"), STICKY_AGENT).unwrap();
     std::fs::write(scripts.join("prog.sh"), PROGRESS_AGENT).unwrap();
     std::fs::write(scripts.join("asker.sh"), ASKER_AGENT).unwrap();
@@ -1659,12 +1643,17 @@ fn claude_race_ready_prepares_input_before_publishing_prompt() {
 fn claude_menu_dismisses_escape_before_waiting_for_its_suffix() {
     let (functions, _) = CLAUDE_AGENT.split_once("printf '\\033[2J\\033[H'").unwrap();
     let script = format!(
-        "{functions}\nkeyt() {{ printf '\\nESC-DECODE-GATE\\n'; k=; }}\nmenu 'Do you want to proceed?' 0 '1. Yes' '2. No (esc)' 'Esc to cancel'\nprintf '\\npick:<%s>\\n' \"$pick\"\n"
+        "{functions}\nmenu 'Do you want to proceed?' 0 '1. Yes' '2. No (esc)' 'Esc to cancel'\nprintf '\\npick:<%s>\\n' \"$pick\"\n"
     );
     let mut command = lab::terminal_command(Path::new("/bin/sh"));
     command.args(["-c", &script]);
-    let output = lab::Terminal::spawn(command).read(&["fixture escape decode"], &[("Esc to cancel", "\u{1b}")], T);
-    let before = output.split("ESC-DECODE-GATE").next().unwrap();
+    command.env("CLAUDE_MENU", Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude-menu.py"));
+    let output = lab::Terminal::spawn(command).read_raw(
+        &["fixture escape decode"],
+        &[("Esc to cancel", "\u{1b}"), ("Working… (1s · esc to interrupt)", "x")],
+        T,
+    );
+    let before = format!("{}Working… (1s · esc to interrupt)\n", output.split("Working…").next().unwrap());
     let mut vt = aaa_vt::Vt::new(36, 120);
     vt.feed(before.as_bytes());
     let screen = vt.text("fixture");
@@ -1687,12 +1676,18 @@ fn claude_menu_dismisses_escape_before_waiting_for_its_suffix() {
 fn claude_menu_arrow_preserves_the_question_until_enter() {
     let (functions, _) = CLAUDE_AGENT.split_once("printf '\\033[2J\\033[H'").unwrap();
     let script = format!(
-        "{functions}\nout() {{ printf '%s\n' \"$1\"; if [ \"$sel\" = 1 ]; then printf 'ARROW-REDRAW-GATE\n'; exit 0; fi; }}\nmenu 'Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder' 'Enter to confirm · Esc to cancel'\n"
+        "{functions}\nmenu 'Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder' 'Enter to confirm · Esc to cancel'\nprintf '\\npick:<%s>\\n' \"$pick\"\n"
     );
     let mut command = lab::terminal_command(Path::new("/bin/sh"));
     command.args(["-c", &script]);
-    let output = lab::Terminal::spawn(command).read(&["fixture arrow redraw"], &[("Esc to cancel", "\u{1b}[B\r")], T);
-    let before = output.split("ARROW-REDRAW-GATE").next().unwrap();
+    command.env("CLAUDE_MENU", Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude-menu.py"));
+    let output = lab::Terminal::spawn(command).read_raw(
+        &["fixture arrow redraw"],
+        &[("Esc to cancel", "\u{1b}[B"), (" ❯ Yes, I trust this folder", "\r")],
+        T,
+    );
+    let before = output.rsplit_once("\u{1b}[6A\r\u{1b}[J").unwrap().0;
+    assert!(output.contains("pick:<Yes, I trust this folder>"), "{output}");
     assert!(!before.contains("Working"), "화살표를 취소로 그렸다: {before:?}");
     let mut vt = aaa_vt::Vt::new(36, 120);
     vt.feed(before.as_bytes());
@@ -1701,6 +1696,23 @@ fn claude_menu_arrow_preserves_the_question_until_enter() {
         aaa_agent::detect::DetectionInput { screen: &vt.detection_text(), osc_title: "", osc_progress: "" },
     );
     assert_eq!(detected.state, aaa_agent::detect::State::Blocked, "{before:?}");
+}
+
+/// 함께 온 답은 선택을 옮긴 중간 화면보다 먼저 처리한다.
+#[test]
+fn claude_menu_consumes_a_batched_answer_before_redrawing() {
+    let (functions, _) = CLAUDE_AGENT.split_once("printf '\\033[2J\\033[H'").unwrap();
+    let title = "Quick safety check: Do you trust the files in this folder?";
+    let script = format!(
+        "{functions}\nmenu '{title}' 0 'No, exit' 'Yes, I trust this folder' 'Enter to confirm · Esc to cancel'\nprintf '\\npick:<%s>\\n' \"$pick\"\n"
+    );
+    let mut command = lab::terminal_command(Path::new("/bin/sh"));
+    command.args(["-c", &script]);
+    command.env("CLAUDE_MENU", Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude-menu.py"));
+    let output =
+        lab::Terminal::spawn(command).read_raw(&["fixture batched answer"], &[("Esc to cancel", "\u{1b}[B\r")], T);
+    assert!(output.contains("pick:<Yes, I trust this folder>"), "{output}");
+    assert_eq!(output.matches(title).count(), 1, "Enter가 대기 중인데 질문을 다시 그렸다: {output}");
 }
 
 /// thread `id`의 진행 보고가 `text`가 되기를 기다린다
