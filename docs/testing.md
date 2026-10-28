@@ -4953,3 +4953,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 [작업 기록 통합 검색·E42 수리 검증](testing-record-search.md)
 
 - t-1244 deploy_start 재시작 뒤 agent 준비 경계·수리 전 재현·검증: [별도 기록](testing-deploy-start-reconnect.md).
+- t-1244 resource_limits의 web_listen 준비 경계·실제 null 응답 RED/GREEN: [별도 기록](testing-resource-web-ready.md).
