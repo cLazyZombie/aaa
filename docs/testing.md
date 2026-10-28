@@ -4964,3 +4964,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - Windows install 승인 PTY 60초 실패 조사와 공개 진행 사건 진단 후보: [t-1246 기록](testing-install-pty-t-1246.md).
 
 - t-1263 작업 요약 진행 목록 6개 허용·7개 거부와 웹 회귀: [별도 기록](testing-summary-six-steps.md).
+- t-1263(q-1664) WAL 백업 잠금 첫 실패의 수리 전 재현·owner 수명 수리(t-1266 겹침): [별도 기록](testing-backup-lock-owner.md).
