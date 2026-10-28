@@ -14,6 +14,10 @@ export interface PaneControls {
 }
 
 export interface AppActions {
+  openCoordinator: () => void;
+  openAsks: () => void;
+  openThreads: () => void;
+  openTasks: () => void;
   /** 목록 차례의 이전·다음 pane(같은 머신 안, 끝에서 처음으로) */
   selectAdjacentPane: (direction: -1 | 1) => void;
   toggleView: () => void;

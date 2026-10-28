@@ -243,3 +243,18 @@ audience: coordinator
 - `audience: coordinator`: thread brief에 넣지 않는다(coordinator 운영 규칙).
 - `repos: rc, pt`: 그 저장소(project.toml repos 경로의 마지막 이름)에서 도는 thread에만 넣는다. 작업 폴더 thread는 받지 않는다.
 - 머리가 없거나 닫히지 않은 파일은 모든 thread에 넣는다. 머리는 brief에 싣지 않고, 뺀 파일은 글자 수 상한에 세지 않는다.
+
+## 웹 화면 이동 단축키
+
+| 기본 키 | 이동할 화면 |
+|---|---|
+| Option(Alt)+O | coordinator 대화 |
+| Option(Alt)+Q | 답할 것(질문) |
+| Option(Alt)+T | 모든 thread |
+| Option(Alt)+D | 할 일 |
+
+설정 → 단축키에서 조합을 기록하거나 끄고 기본값으로 되돌린다. 입력 중에도 이동하며 쓰던 초안은 남는다. 같은 키를 다시 눌러도 그 화면에 머문다. 한글 등 IME 조합 중에는 이동하지 않는다. macOS Option이 특수 문자나 dead key를 만들어도 `KeyboardEvent.code`의 물리 키로 판단한다. 기존에 저장한 조합이 새 기본값과 같으면 저장한 조합이 우선한다. coordinator가 없으면 기존 coordinator 단추처럼 기본 profile로 연다. 보기 전용 기기는 실행 중인 coordinator만 열 수 있다. OS·브라우저가 먼저 가져가는 조합은 웹에서 받을 수 없으므로 설치한 PWA에서 쓰거나 설정에서 바꾼다.
+
+설치한 PWA의 대화 입력창에서는 Ctrl+W로 커서 앞 공백과 그 앞 한 단어를 함께 지운다. 단어는 공백(줄바꿈·탭 포함)으로 구분하므로 `hello 한글/문장!`의 끝에서 누르면 `hello `가 남는다. 선택한 글이 있으면 선택만 지우고, 커서 뒤 글은 보존한다. 브라우저 편집 기록으로 되돌릴 수 있다. 조합 중이나 Ctrl에 다른 보조키를 더 누른 경우는 가로채지 않는다. 일반 브라우저 탭·터미널·다른 입력칸에는 이 동작을 적용하지 않는다.
+
+단어 경계는 [GNU Readline의 unix-word-rubout](https://tiswww.case.edu/php/chet/readline/rluserman.html#Killing-Commands)을 따른다. 문장부호·경로 구분자까지 나누는 [fish의 Ctrl+W](https://fishshell.com/docs/current/interactive.html#shared-bindings)와 비교해 한글·영문을 똑같이 다루는 공백 경계를 택했다. 라이브러리 코드는 가져오지 않았다. 브라우저 예약 키는 [Chrome 공식 단축키](https://support.google.com/chrome/answer/157179)를 참고한다.

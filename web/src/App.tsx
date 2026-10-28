@@ -1048,9 +1048,14 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const openSettings = useCallback(() => { setDrawerOpen(false); setCollapsed(false); setSettingsOpen(true); }, []);
   const paneControls = useRef<PaneControls | null>(null);
   const [recentFocusRequest, setRecentFocusRequest] = useState(0);
+  const coordinatorShortcut = useRef(() => {});
   const actions = useMemo<AppActions>(() => {
     const none = () => {};
     return {
+      openCoordinator: () => coordinatorShortcut.current(),
+      openAsks: () => { setPanel("asks"); setCollapsed(false); goSel(asksAt.current); },
+      openThreads: chooseThreads,
+      openTasks: () => goSel("tasks:"),
       selectAdjacentPane: (direction) => {
         // 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 목록이 프로젝트 먼저라(plan §8.195) 머신을 넘어
         // 목록 전체를 돈다. 끊긴 머신의 줄은 열 수 없다
@@ -1477,6 +1482,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     } finally {
       setCoordinatorBusy(false);
     }
+  };
+  coordinatorShortcut.current = () => {
+    if (coordinatorPane || canControl) void openCoordinator();
   };
   const coordinatorStatus = coordinatorPane?.connection === "connected" ? paneAgentStatus(coordinatorPane) : undefined;
   const coordinatorButton: CoordinatorButton | null =

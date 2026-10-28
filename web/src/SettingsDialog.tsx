@@ -541,6 +541,10 @@ function AlertsPage() {
 
 /** 단축키 이름(참고 SHORTCUTS label의 i18n.ko.ts 문구) */
 const SHORTCUT_LABEL: Record<AaaShortcutId, string> = {
+  "open-coordinator": "coordinator 대화",
+  "open-asks": "답할 것",
+  "open-threads": "모든 thread",
+  "open-tasks": "할 일",
   palette: "명령 팔레트",
   // 참고 「새 워크스페이스」: aaa에서 그 자리는 pane이다(새 pane 창)
   "new-session": "새 pane",
@@ -653,11 +657,11 @@ function ShortcutsPage() {
           const selectedKey = displayedKeys[displayedKeys.length - 1];
           const override = Object.hasOwn(overrides, id) ? overrides[id] : null;
           const exact = override ? parseExactChord(override) : null;
-          const selectedRisk = exact ? exactChordRisk(exact, platformIsMac) : selectedKey !== undefined && isReservedShortcutKey(selectedKey, platformIsMac) ? "browser" : null;
+          const selectedRisk = exact ? exactChordRisk(exact, platformIsMac) : displayedKeys.includes("Mod") && selectedKey !== undefined && isReservedShortcutKey(selectedKey, platformIsMac) ? "browser" : null;
           const confirming = pending?.id === id ? pending : null;
           const defaultKeys = shortcutDisplayKeys(id, {});
           const defaultKey = defaultKeys[defaultKeys.length - 1];
-          const defaultReserved = defaultKey !== undefined && isReservedShortcutKey(defaultKey, platformIsMac);
+          const defaultReserved = defaultKeys.includes("Mod") && defaultKey !== undefined && isReservedShortcutKey(defaultKey, platformIsMac);
           const rowText =
             recording?.id === id
               ? (recording.problem ?? "새 단축키를 누르거나 Escape로 취소하세요.")

@@ -385,7 +385,7 @@ export function useMarkdownWidth(): MarkdownWidth {
  * 참고 표(herdr/shortcuts.ts `SHORTCUTS`) 가운데 aaa에 그 동작이 있는 것만 켠다. 나머지는 「끄기」(null)로 두어 키가 터미널로
  * 간다: 없는 동작이 Ctrl+Shift+K 같은 터미널 키를 가져가지 않는다. 그 화면이 생기면 이 목록에 더한다.
  */
-export const AAA_SHORTCUTS = ["palette", "new-session", "toggle-view", "focus-input", "scroll-up", "scroll-down", "toggle-sidebar", "previous-pane", "next-pane", "settings"] as const satisfies readonly ShortcutId[];
+export const AAA_SHORTCUTS = ["open-coordinator", "open-asks", "open-threads", "open-tasks", "palette", "new-session", "toggle-view", "focus-input", "scroll-up", "scroll-down", "toggle-sidebar", "previous-pane", "next-pane", "settings"] as const satisfies readonly ShortcutId[];
 export type AaaShortcutId = (typeof AAA_SHORTCUTS)[number];
 const NOT_IN_AAA: ShortcutOverrides = Object.fromEntries(
   CUSTOM_SHORTCUT_IDS.filter((id) => !(AAA_SHORTCUTS as readonly string[]).includes(id)).map((id) => [id, null]),

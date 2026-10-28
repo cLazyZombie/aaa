@@ -42,6 +42,8 @@ import { imageMention, imagePaths, insertLeadingMention } from "./herdr/composer
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import "./herdr/Composer.css";
 import { composerDrafts } from "./herdr/composerDraft.ts";
+import { standaloneWindow } from "./recentScreens.ts";
+import { wordDeleteRange } from "./composerWordDelete.ts";
 import { caretOnVisualEdge, recallEntries, recallStep, type RecallPosition } from "./composerRecall";
 import { hiddenNote, HIDDEN_ONLY, stripHidden } from "./hiddenChars";
 import { compactionStep, composerOpenIn, messageQueues, openComposer, TAB_ID } from "./herdr/messageQueue.ts";
@@ -809,6 +811,18 @@ export function ChatComposer({
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
       if (event.key === "Enter" && event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey)
         onInputTrace(inputTraceId(), "ctrl_enter_blocked", "composing");
+      return;
+    }
+    if (!event.defaultPrevented && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+        event.code === "KeyW" && standaloneWindow()) {
+      event.preventDefault();
+      const box = event.currentTarget;
+      const [start, end] = wordDeleteRange(box.value, box.selectionStart, box.selectionEnd);
+      if (start === end) return;
+      box.setSelectionRange(start, end);
+      // 브라우저 편집 기록을 유지해 되돌리기도 같은 입력칸에서 된다.
+      if (!box.ownerDocument.execCommand("delete")) box.setRangeText("", start, end, "end");
+      editText(box);
       return;
     }
     // 「/」 목록(herdr-web-ui Composer.tsx 979~1003줄): ↑↓ 고르기, Tab·Enter 넣기(보내지 않음), Esc 닫기(글은 그대로).
