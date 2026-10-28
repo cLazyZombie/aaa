@@ -1,11 +1,62 @@
 use super::authorization::{redact_private, terminal_steps};
 use super::*;
 
+// 원래 CI에는 제목 OSC만 남았다. 공개 사건의 타입·순서만 출력해 승인 파일이나
+// private 입력을 노출하지 않고 worker 시작/파일 적용/등록 중 마지막 경계를 구분한다.
+struct RecoveryDiagnostic {
+    phase: &'static str,
+    started: std::time::Instant,
+    events: Option<PathBuf>,
+}
+impl RecoveryDiagnostic {
+    fn mark(&mut self, phase: &'static str, events: Option<PathBuf>) {
+        eprintln!("closed-window phase={} elapsed={:?}", self.phase, self.started.elapsed());
+        self.phase = phase;
+        self.started = std::time::Instant::now();
+        self.events = events;
+        eprintln!("closed-window phase={phase} started");
+    }
+}
+impl Drop for RecoveryDiagnostic {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        eprintln!("closed-window failed phase={} elapsed={:?}", self.phase, self.started.elapsed());
+        let Some(path) = &self.events else { return };
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("closed-window public events unavailable: {error}");
+                return;
+            }
+        };
+        for line in text.lines() {
+            match serde_json::from_str::<aaa_proto::install::InstallStreamItem>(line) {
+                Ok(aaa_proto::install::InstallStreamItem::Event { seq, phase, state, .. }) => {
+                    eprintln!("closed-window public event seq={seq} phase={phase:?} state={state:?}");
+                }
+                Ok(aaa_proto::install::InstallStreamItem::Result { seq, result, .. }) => {
+                    eprintln!("closed-window public result seq={seq} exit={}", result.exit_code);
+                }
+                // 파싱 오류도 원문 줄·payload를 출력하지 않는다.
+                Err(error) => eprintln!(
+                    "closed-window public event parse failed: category={:?} line={} column={}",
+                    error.classify(),
+                    error.line(),
+                    error.column()
+                ),
+            }
+        }
+    }
+}
+
 #[test]
 fn closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied() {
     use aaa_proto::DeviceRole;
     let lab = std::mem::ManuallyDrop::new(Lab::new());
     eprintln!("closed-window owner lab: {}", lab.0.display());
+    let mut diagnostic = RecoveryDiagnostic { phase: "prepare", started: std::time::Instant::now(), events: None };
     let codex = lab.0.join(".codex");
     std::fs::create_dir(&codex).unwrap();
     std::fs::write(codex.join("config.toml"), "[features]\nhooks = true\n").unwrap();
@@ -51,19 +102,31 @@ fn closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied() {
         "--out".into(),
         approval.to_string_lossy().into_owned(),
     ]);
+    diagnostic.mark("authorize", None);
     assert_eq!(terminal_steps(&lab, &issue, &[("정확히 yes", "yes\r")], false).0, 0);
     let issued: Value = serde_json::from_slice(&std::fs::read(&approval).unwrap()).unwrap();
     let id = issued["claims"]["installation_id"].as_str().unwrap();
     let mut interactive = base.clone();
-    interactive.extend(["--prompt".into(), "plain".into()]);
+    let resume_events = lab.0.join("resume-events.jsonl");
+    interactive.extend([
+        "--prompt".into(),
+        "plain".into(),
+        "--events-file".into(),
+        resume_events.to_string_lossy().into_owned(),
+    ]);
+    let apply_events = lab.0.join("apply-events.jsonl");
     base.extend([
         "--authorization-file".into(),
         approval.to_string_lossy().into_owned(),
         "--prompt".into(),
         "plain".into(),
+        "--events-file".into(),
+        apply_events.to_string_lossy().into_owned(),
     ]);
+    diagnostic.mark("apply", Some(apply_events.clone()));
     let (code, text) = terminal_steps(&lab, &base, &[], false);
     assert_eq!(code, 3, "{}", redact_private(&text));
+    diagnostic.mark("observe-applied", Some(apply_events));
     assert!(lab.0.join("config/agent.toml").is_file(), "부분 파일 적용을 삭제하면 안 된다");
     let before = snapshot(&lab.0);
     let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
@@ -90,9 +153,11 @@ fn closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied() {
     );
 
     let nonce = issued["claims"]["nonce"].clone();
+    diagnostic.mark("resume", Some(resume_events.clone()));
     let (code, text) =
         terminal_steps(&lab, &interactive, &[("남은 설치 처리", "resume\r"), ("정확히 yes", "yes\r")], false);
     assert_eq!(code, 3, "{}", redact_private(&text));
+    diagnostic.mark("observe-resumed", Some(resume_events));
     assert!(text.contains(id) && text.contains("등록 창"), "{}", redact_private(&text));
     let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
     assert_eq!(observed["installation_id"], id, "{observed}");
@@ -110,9 +175,11 @@ fn closed_enrollment_window_keeps_the_id_and_action_after_files_are_applied() {
 
     // Listener tasks retain Host/SQLite handles. Runtime drop joins their shutdown;
     // release the last Host before removing its lab on Windows too.
+    diagnostic.mark("cleanup", None);
     drop(rt);
     drop(host);
     drop(std::mem::ManuallyDrop::into_inner(lab));
+    diagnostic.mark("completed", None);
 }
 
 #[test]

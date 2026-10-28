@@ -4953,3 +4953,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 고정 sleep·재시도·시한 확대·기대값 완화는 없다. WebKit에서 SVG use가 터치 대상을 가리므로 아이콘은 pointer-events: none으로 하고 단추 자체에 실제 tap을 보낸다. 새 개별 유닛/단계는 보통 부하 5초 이하를 확인하며 전체 suite 시간과 구별한다.
 
 [작업 기록 통합 검색·E42 수리 검증](testing-record-search.md)
+
+- Windows install 승인 PTY 60초 실패 조사와 공개 진행 사건 진단 후보: [t-1246 기록](testing-install-pty-t-1246.md).
