@@ -2649,8 +2649,9 @@ fn inbox_and_nudge() {
     };
     assert_eq!(files(&inbox).len(), 2);
     let report_id = items.iter().find(|i| i["event"] == "new report").unwrap()["id"].as_str().unwrap().to_string();
-    assert_eq!(report_id, "i-0001");
+    assert_eq!(items.iter().find(|i| i["event"] == "new report").unwrap()["short_id"], "i-0001");
     assert_eq!(c["inbox"][0]["id"], report_id);
+    assert_eq!(c["inbox"][0]["short_id"], "i-0001");
     let db = rusqlite::Connection::open(w.h.state.join("host/host.db")).unwrap();
     let stored: String =
         db.query_row("SELECT item_id FROM inbox_ids WHERE project='demo' AND number=1", [], |r| r.get(0)).unwrap();
@@ -2670,7 +2671,7 @@ fn inbox_and_nudge() {
     // 끝내기: 파일은 inbox/done으로
     let e = w.h.json(&["inbox", "done", "demo", "no-such-item"]).expect_err("없는 항목");
     assert!(e.contains("no-such-item"), "{e}");
-    let done = w.h.ok(&["inbox", "done", "demo", &report_id]);
+    let done = w.h.ok(&["inbox", "done", "demo", "i-00001"]);
     assert_eq!((done["done"].as_u64(), done["items"].as_array().unwrap().len()), (Some(1), 1), "{done}");
     // 끝낸 수를 말한다(herdr-projects 「N item(s) moved to inbox/done」)
     let idle_stored: String =
@@ -4308,12 +4309,7 @@ fn routines() {
             .then_some(())
     });
     finished("cmd");
-    let db = rusqlite::Connection::open(w.h.state.join("host/host.db")).unwrap();
-    let number = aaa_proto::short_id_number(first["id"].as_str().unwrap(), 'i').unwrap();
-    let stored: String = db
-        .query_row("SELECT item_id FROM inbox_ids WHERE project='demo' AND number=?1", [number], |r| r.get(0))
-        .unwrap();
-    let md = std::fs::read_to_string(dir.join("inbox").join(format!("{stored}.md"))).unwrap();
+    let md = std::fs::read_to_string(dir.join("inbox").join(format!("{}.md", first["id"].as_str().unwrap()))).unwrap();
     assert!(md.contains("```text\nv1\n```"), "{md}");
     // 같은 출력으로 한 번 더 돈 뒤에도 항목은 하나다. 돈 것은 흐름 사건 routine_ran으로 본다(항목은 그 사건보다 먼저
     // 남긴다): 첫 실행(출력 바뀜, 위 항목) 다음 실행이 「출력 같음」이어야 한다
@@ -4636,7 +4632,7 @@ fn notify_webhook() {
     assert_eq!(v["project"], "demo");
     let items = v["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "thread 보고를 외부로 보냈다: {body}");
-    assert!(items.iter().all(|i| aaa_proto::short_id_number(i["id"].as_str().unwrap(), 'i').is_some()), "{body}");
+    assert!(items.iter().all(|i| aaa_proto::short_id_number(i["short_id"].as_str().unwrap(), 'i').is_some()), "{body}");
     assert!(
         items.iter().all(|i| i["kind"] == "post" && i["subject"] == "coordinator" && i["event"] == "post completed"),
         "{body}"

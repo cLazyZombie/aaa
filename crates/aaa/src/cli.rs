@@ -4864,7 +4864,7 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         c.inbox_open, c.project
     );
     for i in &c.inbox {
-        let _ = writeln!(s, "  {} [{}] {}: {}", i.id, i.item_kind, i.subject, i.summary);
+        let _ = writeln!(s, "  {} [{}] {}: {}", i.display_id(), i.item_kind, i.subject, i.summary);
         if i.item_kind == "routine" && !i.body.is_empty() {
             let _ = writeln!(s, "{}", i.body);
         }
@@ -5951,7 +5951,7 @@ fn render_front(r: &FrontResponse) -> String {
                 } else {
                     "새것"
                 };
-                let _ = writeln!(s, "{}\t{}\t{} {}\t{mark}", i.id, i.item_kind, i.subject, i.event);
+                let _ = writeln!(s, "{}\t{}\t{} {}\t{mark}", i.display_id(), i.item_kind, i.subject, i.event);
                 let _ = writeln!(s, "  {}", i.summary);
             }
             // 응답 크기 한도(host `INBOX_REPLY_BYTES`)로 싣지 못한 항목

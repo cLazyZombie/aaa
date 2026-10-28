@@ -3,6 +3,7 @@ use aaa_proto::InboxItem;
 
 fn item(id: &str, project: &str, event: &str) -> InboxItem {
     InboxItem {
+        short_id: None,
         id: id.into(),
         project: project.into(),
         item_kind: "post".into(),
@@ -155,7 +156,7 @@ fn inbox_aliases_backfill_without_rewriting_and_survive_prune_restart_and_rename
     let db = Db::open(&path).unwrap();
     let mut display = vec![old.clone(), second.clone()];
     db.inbox_display_ids(&mut display).unwrap();
-    assert_eq!((&*display[0].id, &*display[1].id), ("i-0001", "i-0002"));
+    assert_eq!((display[0].display_id(), display[1].display_id()), ("i-0001", "i-0002"));
     assert_eq!(
         db.conn
             .lock()
@@ -217,7 +218,7 @@ fn inbox_aliases_commit_with_every_insert_and_reject_legacy_collisions() {
     }
     let mut display = db.inbox_list(Some("demo"), true).unwrap();
     db.inbox_display_ids(&mut display).unwrap();
-    assert_eq!(display.iter().map(|i| &i.id).collect::<std::collections::HashSet<_>>().len(), 4);
+    assert_eq!(display.iter().map(|i| &i.short_id).collect::<std::collections::HashSet<_>>().len(), 4);
     db.inbox_finish("demo", "parallel-0", 3, Some(&item("notice", "demo", "request handled"))).unwrap();
     assert_eq!(db.inbox_long_id("demo", "i-5").unwrap().as_deref(), Some("notice"));
     db.conn.lock().unwrap().execute_batch("CREATE TRIGGER reject_alias BEFORE INSERT ON inbox_ids WHEN NEW.item_id='fail' BEGIN SELECT RAISE(ABORT, 'alias failure'); END;").unwrap();

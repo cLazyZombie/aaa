@@ -33,13 +33,13 @@ impl Db {
         Ok(())
     }
 
-    /// Front·알림으로 나갈 사본만 줄인다. 내부 중복 판정·파일명·원문은 저장 ID를 계속 쓴다.
+    /// Front·알림으로 나갈 사본에 표시 별칭만 채운다. 내부 중복 판정·파일명·원문은 저장 ID를 계속 쓴다.
     pub(crate) fn inbox_display_ids(&self, items: &mut [InboxItem]) -> Result<()> {
         let c = self.conn.lock().unwrap();
         let mut find = c.prepare("SELECT number FROM inbox_ids WHERE project=?1 AND item_id=?2")?;
         for item in items {
             let n: i64 = find.query_row(params![item.project, item.id], |r| r.get(0))?;
-            item.id = format!("i-{n:04}");
+            item.short_id = Some(format!("i-{n:04}"));
         }
         Ok(())
     }

@@ -36,6 +36,7 @@ impl Host {
         let change = latest.ok_or_else(|| err(ErrorCode::BadRequest, "배포 제안 입력이 비었다"))?;
         let commit = change.after.unwrap();
         let item = InboxItem {
+            short_id: None,
             id: id.into(),
             project: project.into(),
             item_kind: "deploy_proposal".into(),

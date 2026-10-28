@@ -152,7 +152,7 @@ pub(crate) fn nudge_text(project: &str, items: &[InboxItem]) -> String {
         }
         let item_ids = ids.entry(who.clone()).or_default();
         if item_ids.len() < NUDGE_SUBJECTS {
-            item_ids.push(i.id.clone());
+            item_ids.push(i.display_id().to_owned());
         }
         let ev = events.entry(who).or_default();
         if !ev.contains(&i.event) {
@@ -222,6 +222,7 @@ impl Host {
         let now = aaa_common::util::now_ms();
         let n = self.db.inbox_count(project).unwrap_or(0) + 1;
         let mut item = InboxItem {
+            short_id: None,
             id: String::new(),
             project: project.to_string(),
             item_kind: kind.to_string(),
@@ -304,14 +305,15 @@ impl Host {
     /// 실은 항목만 「봤다」로 표시한다: 못 실은 항목은 다음에 보일 때 처음 보는 것이다.
     pub(crate) fn inbox(&self, project: &str, all: bool, peek: bool) -> Result<InboxPage, ErrorBody> {
         self.project_dir(project)?;
-        let mut page = fit_inbox(self.db.inbox_list(Some(project), all).map_err(internal)?, INBOX_REPLY_BYTES);
+        let mut items = self.db.inbox_list(Some(project), all).map_err(internal)?;
+        self.db.inbox_display_ids(&mut items).map_err(internal)?;
+        let mut page = fit_inbox(items, INBOX_REPLY_BYTES);
         if !peek {
             for i in page.items.iter_mut().filter(|i| !i.done && !i.seen) {
                 i.seen = true;
                 self.db.inbox_mark_seen(project, &i.id).map_err(internal)?;
             }
         }
-        self.db.inbox_display_ids(&mut page.items).map_err(internal)?;
         Ok(page)
     }
 
@@ -428,6 +430,7 @@ impl Host {
                 continue;
             }
             let notice = summary(&i).map(|summary| InboxItem {
+                short_id: None,
                 id: format!("{}-handled", i.id),
                 project: project.into(),
                 item_kind: "thread-state".into(),
@@ -1193,6 +1196,7 @@ mod tests {
 
     fn item(kind: &str, subject: &str, event: &str) -> InboxItem {
         InboxItem {
+            short_id: None,
             id: format!("{kind}-{subject}-{event}"),
             project: "demo".into(),
             item_kind: kind.into(),
@@ -1217,7 +1221,7 @@ mod tests {
             item("session", "mac-c", "sessions ended"),
         ];
         for (n, i) in items.iter_mut().enumerate() {
-            i.id = format!("i-{:04}", n + 1);
+            i.short_id = Some(format!("i-{:04}", n + 1));
         }
         assert_eq!(
             nudge_text("demo", &items),
@@ -1309,6 +1313,8 @@ mod alias_tests {
         for (shown, original) in items.iter().zip(&stored) {
             assert_eq!(h.db.inbox_long_id("demo", &shown.id).unwrap().as_deref(), Some(original.id.as_str()));
             assert_eq!(shown.summary, original.summary);
+            assert_eq!(shown.id, original.id);
+            assert!(shown.short_id.as_ref().is_some_and(|id| id.starts_with("i-")));
         }
         let second = stored.iter().find(|i| i.summary == "둘째 항목").unwrap();
         assert!(!h.db.inbox_list(Some("demo"), false).unwrap()[0].seen);
@@ -1326,7 +1332,7 @@ mod alias_tests {
             panic!()
         };
         assert_eq!(n, 2);
-        assert_eq!(items[0].id, "i-0003");
+        assert_eq!(items[0].short_id.as_deref(), Some("i-0003"));
         for item in stored.iter().filter(|i| i.event == "idle") {
             assert!(h.inbox_dir("demo").join("done").join(format!("{}.md", item.id)).is_file());
         }
@@ -1341,8 +1347,15 @@ mod alias_tests {
             &public,
             &HashMap::new(),
         );
-        assert_eq!(body["items"][0]["id"], "i-0001");
-        assert!(!body.to_string().contains(&first.id));
+        assert_eq!(body["items"][0]["id"], first.id);
+        assert_eq!(body["items"][0]["short_id"], "i-0001");
+        // 구판 payload는 별칭이 없고, 새 응답의 id도 같은 저장 키다.
+        let old_json = serde_json::to_value(first).unwrap();
+        assert!(old_json.get("short_id").is_none());
+        let old: InboxItem = serde_json::from_value(old_json).unwrap();
+        assert_eq!(old.display_id(), first.id);
+        let asks = h.user_requests("demo").unwrap();
+        assert_eq!(asks[0].id, items[0].id);
         drop(h);
         std::fs::remove_dir_all(root).unwrap();
     }

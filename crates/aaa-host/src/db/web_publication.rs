@@ -192,6 +192,7 @@ mod tests {
             web_port: 7000,
         };
         let item = aaa_proto::InboxItem {
+            short_id: None,
             id: "i-1".into(),
             project: "demo".into(),
             item_kind: "post".into(),

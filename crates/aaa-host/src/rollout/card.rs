@@ -71,6 +71,7 @@ pub(super) fn completion_item(r: &RolloutView) -> Option<InboxItem> {
         _ => format!("{what} 중단"),
     };
     Some(InboxItem {
+        short_id: None,
         id: format!("rollout-{}", r.id),
         project: r.project.clone(),
         item_kind: "rollout".into(),

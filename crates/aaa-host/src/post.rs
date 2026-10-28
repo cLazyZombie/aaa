@@ -509,6 +509,7 @@ impl Host {
             state: "delivered".into(),
         };
         let mut item = accepted.then(|| InboxItem {
+            short_id: None,
             id: format!("{}-post-{id}", util::utc_compact(now)),
             project: project.into(),
             item_kind: "post".into(),

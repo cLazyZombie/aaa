@@ -126,7 +126,7 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
               ? splitAppIds(i.summary, id => id.kind === "report").find(id => typeof id !== "string")?.target : undefined;
             return <li key={i.id} className={i.done ? "is-done" : undefined} data-testid="inbox-item">
               <div className="inbox-line">
-                <span className="inbox-kind">{i.id}</span>
+                <span className="inbox-kind">{i.short_id ?? i.id}</span>
                 <span className="inbox-kind">{i.item_kind}</span>
                 {THREAD_ID.test(i.subject) && onThread ? (
                   <button type="button" className="link inbox-subject" onClick={() => onThread(i.project, i.subject)}>

@@ -74,7 +74,8 @@ export async function inboxScenario(engine, label, width) {
     await domIs(page, "새 inbox 하나만 남음", () => document.querySelectorAll('[data-testid="inbox-item"]').length === 1);
     assert.equal(gate.calls.length, 1);
     assert.equal(gate.calls[0].ids.length, count);
-    assert.deepEqual(new Set(gate.calls[0].ids), new Set(displayed));
+    const stored = displayed.map(id => db.prepare("SELECT item_id FROM inbox_ids WHERE project='demo' AND number=?").get(Number(id.slice(2))).item_id);
+    assert.deepEqual(new Set(gate.calls[0].ids), new Set(stored), "표시 별칭 대신 저장 ID로 같은 항목을 끝낸다");
     assert.equal(gate.calls[0].all, false);
     assert.equal(db.prepare("SELECT count(*) AS n FROM inbox WHERE done=1").get().n, count);
     assert.equal(db.prepare("SELECT count(*) AS n FROM inbox WHERE done=0").get().n, 1);
@@ -85,7 +86,7 @@ export async function inboxScenario(engine, label, width) {
         if (route.request().postDataJSON().op !== "inbox") return route.fallback();
         const response = await route.fetch();
         const body = await response.json();
-        for (const item of body.ok.items) item.id = "late-inbox-0";
+        for (const item of body.ok.items) { item.id = "late-inbox-0"; delete item.short_id; }
         await route.fulfill({ response, json: body });
       });
       await page.reload();

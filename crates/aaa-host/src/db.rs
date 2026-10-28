@@ -2306,6 +2306,7 @@ mod rollout_tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         db.start_rollout("r", "running").unwrap();
         let item = aaa_proto::InboxItem {
+            short_id: None,
             id: "rollout-r".into(),
             project: "demo".into(),
             item_kind: "rollout".into(),

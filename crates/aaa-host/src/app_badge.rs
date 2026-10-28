@@ -80,6 +80,7 @@ mod tests {
         };
         h.save_question(&q);
         let mut item = InboxItem {
+            short_id: None,
             id: "i1".into(),
             project: "demo".into(),
             item_kind: "post".into(),

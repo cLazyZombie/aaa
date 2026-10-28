@@ -2179,9 +2179,13 @@ export type MessageView = { id: string, project: string, thread: string, mode: M
 
 export type InboxItem = {
 /**
- * Front 응답은 프로젝트별 `i-NNNN` 별칭. DB·투영 파일은 기존 긴 ID를 유지한다.
+ * 저장 ID. 질문·inbox·파일·API 연결에서 같은 값을 쓴다.
  */
-id: string, project: string,
+id: string,
+/**
+ * 표시 전용 프로젝트별 `i-NNNN`. 구형 host 응답에는 없다.
+ */
+short_id?: string, project: string,
 /**
  * report·question·delivery·thread·session·outage·health·config-error·routine·routine-approval
  */

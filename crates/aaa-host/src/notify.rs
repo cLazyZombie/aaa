@@ -365,7 +365,7 @@ pub(crate) fn notify_body(
             "project": match place { Place::Project(p) => Some(p.as_str()), Place::Machines(_) => None },
             "text": text,
             "items": items.iter().map(|i| serde_json::json!({
-                "id": i.id, "project": i.project, "kind": i.item_kind, "subject": i.subject, "event": i.event,
+                "id": i.id, "short_id": i.short_id, "project": i.project, "kind": i.item_kind, "subject": i.subject, "event": i.event,
                 "summary": safe_summary(i),
             })).collect::<Vec<_>>(),
         }),
@@ -562,6 +562,7 @@ impl Host {
             .flatten()
             .unwrap_or_default();
         let item = InboxItem {
+            short_id: None,
             id: format!("host-health-{}", event.id),
             project: project.clone(),
             item_kind: "host-health".into(),
@@ -698,6 +699,7 @@ mod tests {
 
     fn item(subject: &str, event: &str) -> InboxItem {
         InboxItem {
+            short_id: None,
             id: format!("x-{subject}"),
             project: "demo".into(),
             item_kind: "thread-state".into(),

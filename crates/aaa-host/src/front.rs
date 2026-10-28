@@ -803,6 +803,7 @@ mod tests {
         let (id, r) = parse(&res_frame("7".into(), Ok(FrontResponse::Done)));
         assert_eq!((id.as_str(), r), ("7", Ok(FrontResponse::Done)));
         let item = aaa_proto::InboxItem {
+            short_id: None,
             id: "i".into(),
             project: "p".into(),
             item_kind: "routine".into(),

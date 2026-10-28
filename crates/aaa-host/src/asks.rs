@@ -439,6 +439,7 @@ impl Host {
             files_base: Some(record_files_base(project, &id)),
         };
         let notice = InboxItem {
+            short_id: None,
             id: format!("{}-thread-state-coordinator-{}", aaa_common::util::utc_compact(now), id),
             project: project.into(),
             item_kind: "thread-state".into(),

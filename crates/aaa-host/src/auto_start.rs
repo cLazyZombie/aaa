@@ -281,6 +281,7 @@ impl Host {
         body: String,
     ) -> Result<(), ErrorBody> {
         let item = InboxItem {
+            short_id: None,
             id: aaa_common::util::new_id(),
             project: p.into(),
             item_kind: "automation".into(),

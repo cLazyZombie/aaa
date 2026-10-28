@@ -1259,6 +1259,7 @@ impl Host {
                     format!("{}\n\n{}", a.text.as_deref().unwrap_or(""), data)
                 };
                 let item = InboxItem {
+                    short_id: None,
                     id: batch.id.clone(),
                     project: p.into(),
                     item_kind: "routine".into(),

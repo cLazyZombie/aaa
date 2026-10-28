@@ -1838,8 +1838,12 @@ pub fn progress_guidance(prefix: &str) -> String {
 /// inbox 항목(0.2.35 inbox 계승, §8.9). DB가 원본이고 `projects/<p>/inbox/<id>.md`는 투영이다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct InboxItem {
-    /// Front 응답은 프로젝트별 `i-NNNN` 별칭. DB·투영 파일은 기존 긴 ID를 유지한다.
+    /// 저장 ID. 질문·inbox·파일·API 연결에서 같은 값을 쓴다.
     pub id: String,
+    /// 표시 전용 프로젝트별 `i-NNNN`. 구형 host 응답에는 없다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub short_id: Option<String>,
     pub project: String,
     /// report·question·delivery·thread·session·outage·health·config-error·routine·routine-approval
     pub item_kind: String,
@@ -1859,6 +1863,13 @@ pub struct InboxItem {
     pub created_at_ms: u64,
     #[ts(type = "number | null")]
     pub done_at_ms: Option<u64>,
+}
+
+impl InboxItem {
+    /// CLI·알림의 표시만 줄인다. 요청·연결 키는 id를 그대로 쓴다.
+    pub fn display_id(&self) -> &str {
+        self.short_id.as_deref().unwrap_or(&self.id)
+    }
 }
 
 /// 자동화 한 차례의 결과. 사건 자료·명령 출력 본문은 넣지 않는다.

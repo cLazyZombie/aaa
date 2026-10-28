@@ -321,6 +321,7 @@ impl Host {
                     }
                 } else {
                     let item = InboxItem {
+                        short_id: None,
                         id: n.id.clone(),
                         project: p.into(),
                         item_kind: policy.source.into(),

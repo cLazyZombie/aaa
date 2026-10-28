@@ -470,6 +470,7 @@ mod tests {
     #[test]
     fn pushed_log_keeps_recent_items_per_device() {
         let it = |subject: &str| InboxItem {
+            short_id: None,
             id: subject.into(),
             project: "demo".into(),
             item_kind: "thread-state".into(),
@@ -502,6 +503,7 @@ mod tests {
     #[test]
     fn device_alert_kinds() {
         let it = |kind: &str, event: &str| InboxItem {
+            short_id: None,
             id: event.into(),
             project: "demo".into(),
             item_kind: kind.into(),
@@ -613,6 +615,7 @@ mod tests {
     fn payloads() {
         use crate::notify::Place;
         let item = |subject: &str, kind: &str, event: &str| InboxItem {
+            short_id: None,
             id: "x".into(),
             project: "demo".into(),
             item_kind: kind.into(),

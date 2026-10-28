@@ -440,6 +440,7 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
                 .map_or(created, |d| d.as_millis() as u64)
         });
         let item = InboxItem {
+            short_id: None,
             id: i.id.clone(),
             project: dest.project.clone(),
             item_kind: i.kind.clone(),
