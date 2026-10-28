@@ -1528,6 +1528,19 @@ impl Agent {
         }
         if credential.as_ref().is_some_and(|c| c.harness == "claude" && c.auth_generation.is_some()) {
             let mut settings = hooks::claude_settings(&self.exe);
+            // session의 계정 격리가 CLAUDE_CONFIG_DIR을 바꾸기 전에 로컬 사용자 홈을 읽는다.
+            // 머신/profile의 덮어쓰기를 우선하며 권한·hooks·인증 등은 가져오지 않는다.
+            let home = spec.env.iter().rev().find(|(key, _)| key == "CLAUDE_CONFIG_DIR").map_or_else(
+                chat::claude_home,
+                |(_, value)| {
+                    if value.is_empty() { aaa_config::paths::home().join(".claude") } else { PathBuf::from(value) }
+                },
+            );
+            match hooks::claude_advisor_model(&home) {
+                Ok(Some(model)) => settings["advisorModel"] = model.into(),
+                Ok(None) => {}
+                Err(e) => tracing::warn!("Claude advisorModel 전달 실패: {e:#}"),
+            }
             settings["statusLine"] = serde_json::json!({"type":"command","command":format!("'{}' hook --agent quota", self.exe.to_string_lossy().replace('\'', "'\\''"))});
             let path = paths.dir.join("quota-settings.json");
             util::write_json(&path, &settings)?;

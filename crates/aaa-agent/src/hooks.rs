@@ -288,6 +288,24 @@ pub fn claude_settings(exe: &Path) -> Value {
     })
 }
 
+/// 격리 계정 홈에 전달할 사용자 설정은 advisorModel 하나로 제한한다.
+pub(crate) fn claude_advisor_model(home: &Path) -> Result<Option<String>> {
+    let path = home.join("settings.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("Claude 사용자 설정 읽기: {}", path.display())),
+    };
+    let settings: Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("Claude 사용자 설정 JSON: {}", path.display()))?;
+    let settings = settings.as_object().context("Claude 사용자 설정은 객체여야 한다")?;
+    match settings.get("advisorModel") {
+        None => Ok(None),
+        Some(Value::String(model)) => Ok(Some(model.clone())),
+        Some(_) => bail!("Claude advisorModel은 문자열이어야 한다"),
+    }
+}
+
 /// 세션 안에서: hook 사건 하나를 agent에 보낸다. 실패해도 harness를 막지 않게 짧게 끝낸다. agent가 돌려준 출력(진행
 /// 안내 JSON 한 줄)이 있으면 준다. 옛 agent는 `ok`만 답하고, 옛 `aaa hook`은 `ok` 뒤를 읽지 않는다.
 pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
@@ -364,6 +382,32 @@ pub async fn read_msg(s: &mut aaa_common::ipc::LocalStream) -> Result<HookMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn advisor_reads_only_a_string_and_observes_changes_and_removal() {
+        let home = std::env::temp_dir().join(format!("aaa-advisor-{}-{}", std::process::id(), rand::random::<u64>()));
+        std::fs::create_dir(&home).unwrap();
+        let path = home.join("settings.json");
+        assert_eq!(claude_advisor_model(&home).unwrap(), None);
+        for (input, expected) in [
+            (r#"{"advisorModel":"fable","permissions":{"defaultMode":"bypassPermissions"},"hooks":{}}"#, Some("fable")),
+            (r#"{"advisorModel":"off"}"#, Some("off")),
+            (r#"{"permissions":{}}"#, None),
+        ] {
+            std::fs::write(&path, input).unwrap();
+            assert_eq!(claude_advisor_model(&home).unwrap().as_deref(), expected);
+        }
+        for input in [r#"{"advisorModel":true}"#, r#"{"advisorModel":null}"#, "[]", "{"] {
+            std::fs::write(&path, input).unwrap();
+            assert!(claude_advisor_model(&home).is_err());
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(claude_advisor_model(&home).unwrap(), None);
+        std::fs::create_dir(&path).unwrap();
+        assert!(claude_advisor_model(&home).is_err());
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::remove_dir(&home).unwrap();
+    }
 
     #[test]
     fn image_reply_preserves_encoded_collisions_and_masks_actual_secret_bytes() {

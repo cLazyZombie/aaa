@@ -229,6 +229,8 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) 
     std::fs::set_permissions(&executable, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     let projects = lab.root.join("projects");
     let proof = lab.root.join("proof");
+    let claude_source = scripts.join("source-claude");
+    std::fs::create_dir(&claude_source).unwrap();
     std::fs::create_dir_all(&proof).unwrap();
     let mut config = format!(
         "schema = 1\n[host]\nagent_listen=\"127.0.0.1:0\"\n[web]\nlisten=\"\"\n[local_agent]\nmode=\"none\"\n[projects]\nroot={projects:?}\nallow_profiles=[\"token\",\"file\",\"plain\"]\n"
@@ -236,7 +238,7 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) 
     for (profile, harness) in [("token", "claude"), ("file", "codex"), ("plain", "claude")] {
         let extra =
             if profile == "token" { format!(",CLAUDE_CODE_OAUTH_TOKEN={legacy_token:?}") } else { String::new() };
-        config.push_str(&format!("[profiles.{profile}]\nagent={harness:?}\ncommand=[{:?}]\nmodel=\"example-model\"\neffort=\"high\"\nenv={{ACCOUNT_GATE={:?},ACCOUNT_PROOF={proof:?},ACCOUNT_KIND={harness:?},ACCOUNT_AAA={:?}{extra}}}\n",executable,gate.address(),lab::BIN));
+        config.push_str(&format!("[profiles.{profile}]\nagent={harness:?}\ncommand=[{:?}]\nmodel=\"example-model\"\neffort=\"high\"\nenv={{ACCOUNT_GATE={:?},CLAUDE_CONFIG_DIR={claude_source:?},ACCOUNT_PROOF={proof:?},ACCOUNT_KIND={harness:?},ACCOUNT_AAA={:?}{extra}}}\n",executable,gate.address(),lab::BIN));
     }
     let h = lab.node("h", Some(&config));
     let mut w = World {
@@ -953,6 +955,7 @@ else:
     projects=config.get('projects',{})
     trusted=projects.get(cwd,{}).get('hasTrustDialogAccepted') is True
     settings=json.loads((home/'settings.json').read_text()) if (home/'settings.json').exists() else {}
+    launch_settings=json.loads(pathlib.Path(sys.argv[sys.argv.index('--settings')+1]).read_text())
     # 격리 Claude 기록도 실제 hook → agent → 대화/계획 조회 경로를 거친다.
     sid=str(uuid.uuid4())
     transcript=home/'projects'/'fixture'/(sid+'.jsonl')
@@ -967,11 +970,11 @@ if kind=='claude' and '--dangerously-skip-permissions' in sys.argv and not setti
     print('WARNING: Claude Code running in Bypass Permissions mode',flush=True)
 h,p=os.environ['ACCOUNT_GATE'].split(':')
 s=socket.create_connection((h,int(p)),timeout=30)
-s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=4,home=str(home),cwd=cwd,projects=projects,trusted=trusted,settings=settings,config=config))+'\n').encode())
+s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=4,home=str(home),cwd=cwd,projects=projects,trusted=trusted,settings=settings,config=config,launch_settings=launch_settings if kind=='claude' else {}))+'\n').encode())
 assert s.recv(1)==b'X'
 "#;
 
-fn account_onboarding_case(yolo: bool, args: &str, accepted: bool, machine: &str) {
+fn account_onboarding_case(yolo: bool, args: &str, accepted: bool, machine: &str, advisor: bool) {
     let gate = Gate::new();
     let mut w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("local-auth"), TRUST_HARNESS);
     if machine == "labB" {
@@ -984,16 +987,24 @@ fn account_onboarding_case(yolo: bool, args: &str, accepted: bool, machine: &str
     let task = w.task("onboarding.md", "가짜 첫 실행 검증");
     let host = w.h.cfg.join("host.toml");
     let original = std::fs::read_to_string(&host).unwrap();
-    // 실제 사용자 홈 대신 가짜 원본 홈을 가리켜도 첫 실행 키 외의 설정·인증은 복사하지 않는다.
+    // 실제 사용자 홈 대신 가짜 원본 홈을 가리켜 advisor 외의 설정·인증 비전달도 확인한다.
     let source = w.scripts.join("source-claude");
-    std::fs::create_dir(&source).unwrap();
     let source_config =
         serde_json::json!({"oauthAccount":{"accessToken":aaa_test_support::token("source")},"theme":"light"})
             .to_string();
-    let source_settings = serde_json::json!({"env":{"ANTHROPIC_API_KEY":aaa_test_support::token("source")},"skipAutoPermissionPrompt":true}).to_string();
+    let mut source_settings = serde_json::json!({
+        "env":{"ANTHROPIC_API_KEY":aaa_test_support::token("source")},
+        "skipAutoPermissionPrompt":true,
+        "permissions":{"defaultMode":"bypassPermissions"},
+        "hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"exit 99"}]}]},
+        "statusLine":{"type":"command","command":"exit 98"}
+    });
+    if advisor {
+        source_settings["advisorModel"] = "fable".into();
+    }
+    let source_settings = source_settings.to_string();
     std::fs::write(source.join(".claude.json"), &source_config).unwrap();
     std::fs::write(source.join("settings.json"), &source_settings).unwrap();
-    let original = original.replace("env={ACCOUNT_GATE=", &format!("env={{CLAUDE_CONFIG_DIR={source:?},ACCOUNT_GATE="));
     let config = original.replace("[profiles.token]\n", &format!("[profiles.token]\nargs={args}\n"));
     std::fs::write(&host, format!("{config}\n[safety.demo]\nyolo={yolo}\ntrust_screens=\"coordinator\"\n")).unwrap();
     let started = w.start(&[
@@ -1014,6 +1025,13 @@ fn account_onboarding_case(yolo: bool, args: &str, accepted: bool, machine: &str
     let expected =
         if accepted { serde_json::json!({"skipDangerousModePermissionPrompt":true}) } else { serde_json::json!({}) };
     assert_eq!(proof["settings"], expected, "{machine}/{yolo}/{args}: {proof}");
+    let launch = &proof["launch_settings"];
+    let mut expected_launch = aaa_agent::hooks::claude_settings(Path::new(lab::BIN));
+    expected_launch["statusLine"] = serde_json::json!({"type":"command","command":format!("'{}' hook --agent quota", lab::BIN.replace('\'', "'\\''"))});
+    if advisor {
+        expected_launch["advisorModel"] = "fable".into();
+    }
+    assert_eq!(launch, &expected_launch, "advisorModel만 복사하고 aaa hooks·statusLine을 유지한다");
     let config = proof["config"].as_object().unwrap();
     assert_eq!(config.len(), 2, "인증·다른 사용자 설정을 복사하지 않는다: {proof}");
     assert_eq!(config["hasCompletedOnboarding"], true);
@@ -1032,9 +1050,17 @@ macro_rules! onboarding_case {
     ($name:ident, $yolo:literal, $args:literal, $accepted:literal, $machine:literal) => {
         #[test]
         fn $name() {
-            account_onboarding_case($yolo, $args, $accepted, $machine);
+            account_onboarding_case($yolo, $args, $accepted, $machine, false);
         }
     };
+}
+#[test]
+fn account_advisor_local() {
+    account_onboarding_case(false, "[]", false, "labA", true);
+}
+#[test]
+fn account_advisor_remote() {
+    account_onboarding_case(false, "[]", false, "labB", true);
 }
 onboarding_case!(account_onboarding_default_local, false, "[]", false, "labA");
 onboarding_case!(account_onboarding_default_remote, false, "[]", false, "labB");
