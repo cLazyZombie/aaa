@@ -1,3 +1,4 @@
+- t-1273: [첫 자동 선택과 열린 목록 경합 검증](testing-initial-selection-drawer.md)
 - t-1266: [자주 깨지는 시험 전수 정리와 install 여유·Claude 메뉴 Esc·diff maintenance 잠금·E2E77 보관 대기 수리](testing-flaky-sweep-t-1266.md)
 - t-1260: [아이디어 기능 검증](testing-ideas.md)
 - t-1271: [원격 읽기 Python fixture의 peer 종료 경합 수리](testing-remote-thread-read-hook-close.md)
