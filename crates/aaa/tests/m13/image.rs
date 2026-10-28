@@ -176,6 +176,7 @@ fn image_scenario(scenario: ImageScenario) {
     w.h.ok(&["project", "create", "demo"]);
     w.h.ok(&["machine", "workspaces", "labA", "--allow", "작업 폴더"]);
     w.add_remote();
+    phases.mark("prepare", "accounts-and-default");
     for (alias, token) in [("work-codex", &access), ("other-codex", &other)] {
         let path = w.scripts.join("image-import.json");
         std::fs::write(&path, serde_json::json!({"tokens":{"access_token":token,"refresh_token":refresh}}).to_string())
@@ -186,9 +187,21 @@ fn image_scenario(scenario: ImageScenario) {
         std::fs::remove_file(path).unwrap();
     }
     w.h.ok(&["account", "default", "codex", "work-codex"]);
+    phases.mark("prepare", "local-and-remote-briefs");
     let task = w.task("image-task.txt", "noreport");
-    let local = w.start(&["--title", "이미지 로컬", "--profile", "fake", "--task-file", &task]);
-    let remote = w.start(&["--title", "이미지 원격", "--profile", "fake", "--machine", "labB", "--task-file", &task]);
+    // 독립한 두 준비는 함께 시작하되 각 실제 brief 전달은 아래에서 모두 확인한다.
+    let local = w.start(&["--background", "--title", "이미지 로컬", "--profile", "fake", "--task-file", &task]);
+    let remote = w.start(&[
+        "--background",
+        "--title",
+        "이미지 원격",
+        "--profile",
+        "fake",
+        "--machine",
+        "labB",
+        "--task-file",
+        &task,
+    ]);
     let local =
         w.wait_show("이미지 로컬 thread 안내", local["id"].as_str().unwrap(), |v| v["brief"] == "delivered");
     let remote =

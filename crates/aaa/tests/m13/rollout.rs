@@ -128,14 +128,18 @@ fn rollout_scenario(scenario: Scenario) {
         Scenario::RemoteRecovery => [Some("rollout-candidate"), Some("rollout-candidate")],
         Scenario::SharedRecovery => [Some("third-candidate"), Some("rollout-candidate")],
     };
+    // 같은 서명 판은 한 번만 만들고 각 머신에는 독립 사본을 둔다.
+    // 원격 실패/복구 owner는 두 실행 파일과 후보가 같은 시작 판이다.
+    lab::variant_binary(Path::new(lab::BIN), &candidate, "rollout-candidate");
     for (path, variant) in [(&a_exe, initial[0]), (&b_exe, initial[1])] {
-        if let Some(variant) = variant {
+        if variant == Some("rollout-candidate") {
+            assert!(Command::new("cp").args([&candidate, path]).status_guarded().unwrap().success());
+        } else if let Some(variant) = variant {
             lab::variant_binary(Path::new(lab::BIN), path, variant);
         } else {
             assert!(Command::new("cp").args([lab::BIN, path_str(path)]).status_guarded().unwrap().success());
         }
     }
-    lab::variant_binary(Path::new(lab::BIN), &candidate, "rollout-candidate");
     let original = hex::encode(Sha256::digest(std::fs::read(&a_exe).unwrap()));
     let sha = hex::encode(Sha256::digest(std::fs::read(&candidate).unwrap()));
     std::fs::write(candidate_dir.join("provenance.json"), serde_json::json!({"sha256":sha}).to_string()).unwrap();
@@ -392,6 +396,7 @@ esac
             assert_eq!(hex::encode(Sha256::digest(std::fs::read(exe).unwrap())), original);
         }
 
+        phases.mark("contract", "actual-transfer-resume-and-preflight");
         // L2: 빌드 머신 한 곳의 provenance 후보를 보낸다. 대상에는 미리 복사하지 않는다.
         let off = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "off"], &[("바꿀까?", "y")], T);
         assert!(off.contains("coordinator_deploy = off"), "{off}");
@@ -485,6 +490,7 @@ esac
         }
         phase_started(&id, aaa_proto::RolloutPhase::HostRestart);
         assert!(next_call(0).ends_with("/dev.aaa.host"));
+        phases.mark("contract", "host-and-agent-restart-after-transfer");
         let transfer_ms = transfer_started.elapsed().as_millis();
         eprintln!(
             "L2 all target transfer/preflight to host restart={transfer_ms}ms, bytes={total}, chunk={}",

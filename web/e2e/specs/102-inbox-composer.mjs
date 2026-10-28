@@ -1,3 +1,4 @@
+import { installChatRefreshClock, advanceChatRefresh } from "../lib/chat-refresh-clock.mjs";
 // 실제 host 주입(pane run → send_prompt)·PTY에서 알림 턴의 기록 반영을 보류한다.
 // 완료 사건은 PTY 수신·submit ACK·대화 DOM이다. 모델 응답 시간을 sleep으로 흉내 내지 않는다.
 import fs from 'node:fs';
@@ -54,7 +55,10 @@ async function check(engineName, engine, width, role, program) {
   const capture = shots && width === 390 && role === 'coordinator';
   const recordingEngine = capture ? { newContext: options => engine.newContext({ ...options, recordVideo: { dir: `${shots}/video`, size: { width: 390, height: 844 } } }) } : engine;
   const dev = await pairPage(recordingEngine, aaa('web', 'pair').code, { width, height: 844 }, { hash: role === 'thread' ? paneHash(pane) : `#pane=${encodeURIComponent(pane)}`, touch: width === 390, wsRoute: [/\/api\/v1\/panes\/[^/]+\/ws/, route],
-    setup: context => diagnostics.watch(context),
+    setup: async context => {
+      diagnostics.watch(context);
+      await context.addInitScript(installChatRefreshClock);
+    },
     init: () => {
       const states = [];
       window.takeChatStates = () => states.splice(0);
@@ -124,6 +128,9 @@ async function check(engineName, engine, width, role, program) {
     assert.deepEqual(fs.readFileSync(receipts, 'utf8').trim().split('\n').map(JSON.parse).slice(1), ['첫 사람 메시지', '두 번째 사람 메시지']);
     assert.equal((await sentFrames(p)).filter(f => f.t === 'submit').length, 2);
     phase("contract", "first-transcript-refresh");
+    // 갱신 간격은 ConversationRefresh의 시각 주입 owner가 지킨다. 여기서는
+    // 이전 읽기부터 2초를 진행한 뒤 실제 파일 변화→push→HTTP→DOM을 기다린다.
+    await advanceChatRefresh(p);
     fs.appendFileSync(transcript, line('첫 사람 메시지') + line('두 번째 사람 메시지'));
     await domIs(p, '늦은 기록은 대기 말만 정리', () => !document.querySelector('.chat-msg.user.is-pending'));
     assert.equal(await box.inputValue(), '아직 보내지 않은 초안');
@@ -138,9 +145,11 @@ async function check(engineName, engine, width, role, program) {
       await domIs(p, '반복 전송 대기', n => document.querySelectorAll('.chat-msg.user.is-pending').length === n, n + 1);
     }
     phase("contract", "first-duplicate-transcript-refresh");
+    await advanceChatRefresh(p);
     fs.appendFileSync(transcript, line('같은 추가 지시'));
     await domIs(p, '첫 수신은 하나만 정리', () => document.querySelectorAll('.chat-msg.user.is-pending').length === 1);
     phase("contract", "second-duplicate-transcript-refresh");
+    await advanceChatRefresh(p);
     fs.appendFileSync(transcript, line('같은 추가 지시'));
     await domIs(p, '두 번째 수신 뒤 정리', () => !document.querySelector('.chat-msg.user.is-pending'));
     phase("contract", "final-input-assertions");

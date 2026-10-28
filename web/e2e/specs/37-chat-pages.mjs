@@ -1,3 +1,4 @@
+import { installChatRefreshClock, advanceChatRefresh } from "../lib/chat-refresh-clock.mjs";
 // 실제 lab JSONL → agent → host → 웹. 앞 쪽 도달과 prepend 위치는 브라우저가 소유한다.
 import fs from "node:fs";
 import { root, aaa, AA, step, inList, until, domIs, shot, pairPage, browser, webkit, inTime } from "../lib/harness.mjs";
@@ -82,6 +83,7 @@ export default async function () {
         });
       }],
       setup: async (context) => {
+        await context.addInitScript(installChatRefreshClock);
         diagnostics.watch(context);
         if (!process.env.AAA_CHAT_FRAME_MS) return;
         await context.addInitScript((ms) => {
@@ -254,6 +256,8 @@ export default async function () {
     await chat.evaluate((el) => { el.scrollTop = 0; window.flushChatResize(); el.dispatchEvent(new Event("scroll", { bubbles: true })); });
     await chat.getByText("기록 0 ·", { exact: false }).first().waitFor();
     // 최신 읽기 사이에 두 쪽 이상 자랐어도 중간 400줄을 빠뜨리지 않는다.
+    // 실제 frame/scroll은 그대로 실행하고 갱신 간격만 파일 변경 전에 진행한다.
+    await advanceChatRefresh(page);
     fs.appendFileSync(tr, Array.from({ length: 400 }, (_, n) => line(harness, 2400 + n)).join(""));
     phase("최신 gap");
     await until("최신 gap도 전부 합침", async () => (await chat.locator(".chat-row").count()) === 2800);
@@ -262,7 +266,12 @@ export default async function () {
     if (!firstAt || firstAt.y < (await chat.boundingBox()).y) throw new Error("위를 읽는 중 최신 gap이 자리를 바꿈");
     await page.getByTestId("chat-jump").click();
     phase("최신 따라가기");
+    // 이동 직후에는 아직 추정 높이의 가상 shell이 끝일 수 있다. 현재 마지막
+    // 본문이 mount되고 기존 두 frame의 실측/scroll을 마친 뒤 다음 append를 보낸다.
+    await chat.getByText("기록 2799 ·", { exact: false }).first().waitFor();
+    await frame(page, diagnostics);
     await domIs(page, "끝 따라가기", () => { const e = document.querySelector('[data-testid="chat"]'); return e.scrollHeight - e.scrollTop - e.clientHeight <= 40; });
+    await advanceChatRefresh(page);
     fs.appendFileSync(tr, line(harness, 2800));
     try { await chat.getByText("기록 2800 ·", { exact: false }).first().waitFor(); }
     catch (error) {
@@ -321,6 +330,7 @@ export default async function () {
         requestAnimationFrame(busy);
       });
       markPhase("prepare", "replacement-17MiB-transcript");
+      await advanceChatRefresh(page);
       fs.writeFileSync(`${tr}.replacement`, Array.from({ length: 300 }, (_, n) => line(harness, n)).join("")
         + JSON.stringify({ type: "blob", data: "x".repeat(17 << 20) }) + "\n" + line(harness, 9000));
       fs.renameSync(tr, `${tr}.old`);

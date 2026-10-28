@@ -811,27 +811,31 @@ export function ChatPanel({
     el.scrollTop = target;
     lastScrollTop.current = el.scrollTop;
   };
-  const resizeRow = useRef<() => void>(() => {});
-  resizeRow.current = () => {
+  const resizeRow = useRef<(resized: boolean) => void>(() => {});
+  resizeRow.current = (resized) => {
     const el = list.current;
-    if (!active || !layoutActive.current || !el || el.scrollTop !== lastScrollTop.current) return;
+    if (!active || !layoutActive.current || !el) return;
+    // 실제 실측 변화만 browser clamp를 보정한다. 같은 크기의 observer가
+    // 손의 scroll보다 먼저 와도 그 새 위치를 다시 끝으로 덮지 않는다.
+    if (el.scrollTop !== lastScrollTop.current && !(atBottom.current && resized)) return;
     if (atBottom.current) scrollToEnd(false);
     else holdAnchor(el);
   };
   // 한 페이지의 행 높이는 같은 ResizeObserver 묶음에서 모두 잰 뒤 보던 줄을 한 번 맞춘다.
   // 행마다 전체 목록을 찾고 scrollTop을 쓰면 앞 페이지 commit 중 layout을 반복 강제한다.
-  const rowSizes = useRef(new Map<Element, () => void>());
+  const rowSizes = useRef(new Map<Element, () => boolean>());
   const rowObserver = useRef<ResizeObserver | null>(null);
-  const observeRowSize = useCallback((el: HTMLDivElement, measure: () => void) => {
+  const observeRowSize = useCallback((el: HTMLDivElement, measure: () => boolean, resized: boolean) => {
     const observer = rowObserver.current ??= new ResizeObserver(entries => {
-      for (const entry of entries) rowSizes.current.get(entry.target)?.();
-      resizeRow.current();
+      let changed = false;
+      for (const entry of entries) changed = rowSizes.current.get(entry.target)?.() || changed;
+      resizeRow.current(changed);
     });
     rowSizes.current.set(el, measure);
     observer.observe(el);
     // mount·가상 본문 복귀 직후의 실측은 같은 layout 단계에서 보정해야 한다.
     // 첫 observer 통지까지 미루면 그 사이 scroll 사건이 중간 위치를 새 기준으로 기억한다.
-    resizeRow.current();
+    resizeRow.current(resized);
     return () => {
       rowSizes.current.delete(el);
       observer.unobserve(el);
@@ -1013,17 +1017,21 @@ export function ChatPanel({
         data-testid={active ? "chat" : undefined}
         tabIndex={0}
         onKeyDown={(e) => {
+          const editing = e.target instanceof Element && e.target.closest("input, textarea, [contenteditable=true]");
+          if (!editing && ["ArrowUp", "PageUp", "Home"].includes(e.key)) atBottom.current = false;
           if (e.key === "End" && !(e.target instanceof Element && e.target.closest("input, textarea, [contenteditable=true]"))) {
             e.preventDefault();
             scrollToEnd(false);
           }
         }}
         onWheel={(e) => {
+          if (e.deltaY < 0) atBottom.current = false;
           if (e.deltaY > 0 && e.currentTarget.style.getPropertyValue("--chat-tail-space") && chatIsAtEnd(e.currentTarget)) scrollToEnd(false);
         }}
         onTouchStart={(e) => { touchY.current = e.touches[0]?.clientY ?? null; }}
         onTouchMove={(e) => {
           const next = e.touches[0]?.clientY;
+          if (next !== undefined && touchY.current !== null && next > touchY.current) atBottom.current = false;
           if (next !== undefined && touchY.current !== null && next < touchY.current
             && e.currentTarget.style.getPropertyValue("--chat-tail-space") && chatIsAtEnd(e.currentTarget)) scrollToEnd(false);
           touchY.current = next ?? null;
