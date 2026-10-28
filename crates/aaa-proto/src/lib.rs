@@ -166,8 +166,6 @@ pub fn typescript_bindings() -> String {
         IdeaNote::decl(&cfg),
         IdeaTaskDraft::decl(&cfg),
         IdeaConflict::decl(&cfg),
-        TaskNotesSection::decl(&cfg),
-        TaskNotesFile::decl(&cfg),
         TaskBoard::decl(&cfg),
         TaskSuggestion::decl(&cfg),
         TaskAnchor::decl(&cfg),

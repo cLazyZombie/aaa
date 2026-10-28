@@ -1,6 +1,6 @@
 import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.311)은
-// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
+// 화면 동작 → host 동작(TaskOp). thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
 // 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
 import type { TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReservation, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
@@ -511,33 +511,6 @@ export function canonicalLine(title: string, owner: string | null, repo: string 
   const r = repo ? ` [${repo}]` : "";
   const th = thread ? ` · ${thread}` : "";
   return `- [${done ? "x" : " "}] ${title}${o}${r}${th}`;
-}
-
-/** 「나중」 절의 줄을 항목으로 묶는다: 들여쓰지 않은 글머리(`- `·`* `·`1. `)가 새 항목이고, 들여쓴 줄·이어진 줄은 그 항목에 붙는다 */
-export function noteItems(lines: readonly string[]): string[][] {
-  const out: string[][] = [];
-  for (const l of lines) {
-    const starts = /^([-*]|\d+\.)\s/.test(l);
-    if (l.trim() === "") {
-      if (out.length > 0) out[out.length - 1].push(l);
-      continue;
-    }
-    if (starts || out.length === 0) out.push([l]);
-    else out[out.length - 1].push(l);
-  }
-  return out.map((item) => {
-    while (item.length > 0 && item[item.length - 1].trim() === "") item.pop();
-    return item;
-  });
-}
-
-/** 「할 일로 옮기기」: 항목 첫 줄(글머리를 뗌)이 제목 후보, 나머지 줄이 메모. 제목은 한 줄 120자까지 자르고 넘친 것은 메모 앞에 둔다 */
-export function itemToTask(item: readonly string[]): { title: string; notes: string[] } {
-  const first = (item[0] ?? "").replace(/^([-*]|\d+\.)\s+/, "").trim();
-  const rest = item.slice(1).map((l) => l.replace(/^ {2}/, ""));
-  if ([...first].length <= 120) return { title: first, notes: rest };
-  const cut = [...first].slice(0, 120).join("");
-  return { title: cut, notes: [first, ...rest] };
 }
 
 // ───────────── thread 연결(할 일 T3, plan §8.316) ─────────────

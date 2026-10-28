@@ -57,10 +57,10 @@ export function withEditNote(note: Pick<IdeaNote, "edited"> | null, text: string
   return note?.edited && !text.startsWith("(노트 고침:") && !text.startsWith("/") ? `(노트 고침: ${note.edited})\n${text}` : text;
 }
 
-/** 노트 칸에서 고른 자리의 `##` 절 이름: 고른 글 앞의 마지막 h2 */
+/** 노트 칸에서 고른 자리의 `##` 절 이름: 고른 글 앞의 마지막 둘째 단계 머리(Markdown.tsx는 머리를 `data-markdown-heading`으로 그린다) */
 export function sectionBefore(root: Element, range: Range): string | null {
   let found: string | null = null;
-  for (const h of Array.from(root.querySelectorAll("h2"))) {
+  for (const h of Array.from(root.querySelectorAll('[data-markdown-heading="2"]'))) {
     if (range.comparePoint(h, 0) > 0) break;
     found = h.textContent?.trim() || null;
   }

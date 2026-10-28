@@ -317,8 +317,7 @@ enum Cmd {
         cmd: ProjectCmd,
     },
     /// 설정 값 하나를 바꾼다(`aaa project set`의 새 꼴, plan §8.285): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove(workspaces.add·remove도 같다), nudge, mute,
-    /// task_notes.add, task_notes.remove(할 일 화면 「나중」 탭이 읽는 프로젝트 폴더 안 Markdown).
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove(workspaces.add·remove도 같다), nudge, mute.
     /// 프로젝트 홈의 aaa.toml이 있으면 거기, 없으면 project.toml에 쓴다(plan §8.288)
     Set { key: String, value: String },
     /// coordinator(`aaa project open`의 새 꼴, plan §8.285)
@@ -543,7 +542,7 @@ enum ProjectCmd {
         new: bool,
     },
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute, task_notes.add, task_notes.remove
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
     Set { project: String, key: String, value: String },
     /// 지금 설정 값(`set`이 고치는 key 모두, 잘못된 값은 host가 쓰는 기본값으로)
     Show { project: String },
@@ -4795,16 +4794,6 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let _ = writeln!(s, "  {} {} · {}", t.id, t.title, t.group.label());
         }
     }
-    for f in &b.notes_files {
-        match &f.error {
-            Some(e) => {
-                let _ = writeln!(s, "\n나중 {}: {e}", f.path);
-            }
-            None => {
-                let _ = writeln!(s, "\n나중 {}: 절 {}개", f.path, f.sections.len());
-            }
-        }
-    }
 }
 
 /// `aaa guide [주제]`: host에 묻지 않고 이 실행 파일에 든 안내를 보인다(`aaa automation schema`처럼)
@@ -5548,9 +5537,6 @@ fn render_front(r: &FrontResponse) -> String {
                     r.machine.as_deref().map(|m| format!("@{m}")).unwrap_or_default()
                 );
             }
-            for n in &v.task_notes {
-                let _ = writeln!(s, "task_notes: {n}");
-            }
         }
         FrontResponse::UnparkPreview(p) => {
             let _ = writeln!(s, "{}/{} 이어 하기 · 열린 thread {}/{}", p.project, p.thread, p.open, p.limit);
@@ -5875,13 +5861,17 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Idea { note } => {
             let i = &note.idea;
             let old = if note.rev == i.rev { String::new() } else { format!("(지금 판 {})", i.rev) };
-            let _ = writeln!(s, "{} · 판 {}{old} · {} · {}", i.short_id, note.rev, i.status.as_str(), i.title);
-            if let Some(e) = &note.edited {
-                let _ = writeln!(s, "사람이 고침(thread에 아직 알리지 않음): {e}");
-            }
-            if let Some(m) = note.merging {
-                let _ = writeln!(s, "판 {m} 기준 사람 고침을 thread가 합치는 중");
-            }
+            // 첫 줄 하나에 머리를 모은다: thread는 첫 줄의 판을 읽고 셋째 줄부터를 노트로 쓴다
+            let edited = note.edited.as_deref().map(|e| format!(" · 사람이 고침: {e}")).unwrap_or_default();
+            let merging = note.merging.map(|m| format!(" · 판 {m} 기준 사람 고침을 합치는 중")).unwrap_or_default();
+            let _ = writeln!(
+                s,
+                "{} · 판 {}{old} · {} · {}{edited}{merging}",
+                i.short_id,
+                note.rev,
+                i.status.as_str(),
+                i.title
+            );
             let _ = write!(s, "\n{}", note.text);
             if !note.text.ends_with('\n') {
                 s.push('\n');

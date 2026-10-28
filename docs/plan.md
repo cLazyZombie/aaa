@@ -8296,3 +8296,16 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **E72.** main에 있던 큰 binary 전송과 화면 30초 대기의 결합을 양쪽 수리 전 코드에서 재현했다. 실제 비특권 SSH 거부와 화면 폼/오류 표시를 분리하고 전송·SHA·정리는 기존 host keeper가 맡는다. 시한·기대값·제품 신뢰 정책은 유지한다.
 - **번호·계약.** 착지 기준 main 60052d5c의 마지막 §8.536 다음 번호다. 기존 JSON 확장·내부 보존으로 FRONT_API 1.145·AGENT_LINK 1.11을 유지하며 새 웹 기능이 없어 E2E01~120 번호를 유지한다.
 - **검증.** [큰 입력·원장 회귀](testing-automation-large-input.md), [E72 수리 전후와 계약별 검사](testing-machine-plan-boundary.md)에 기록한다. 운영 복구는 배포 알림 뒤 보존 커서와 원인 사건·후속 보고 사건의 원장을 읽어 확인한다.
+
+
+### 8.538 아이디어: 노트·전용 thread·3분할 화면·할 일로 넘기기(t-1260)
+
+- **목적.** 사용자 10-28: 「aaa에 할일 처럼 아이디어 라는게 있고, 여기서는 계속 이야기하면서 결정과 수정을 반복해서 아이디어 노트를 개량하고, 최종 개량한걸 할일에 집어 넣는 flow」. 기획은 t-1255 보고 r-4673(결정 28개, 시안)이고 사용자 「할일을 하나로 만들어」로 일곱 부분을 한 할 일에서 했다.
+- **저장·ID.** host `ideas/<ULID>/`(note.md·idea.json·revs/·그림·merge/), 짧은 ID `n-NNNN`은 `idea_ids` 원장(프로젝트 내보내기·이름 바꾸기 표에 든다). 판을 주고 저장하며 겹치면 thread는 두 판을 받고 사람 글은 `merge/`에 둔 채 thread가 합친다. 사람이 고친 판은 host가 절마다 더하고 뺀 줄을 세어 다음 말 앞 「(노트 고침: …)」으로 알린다.
+- **전용 thread.** `ThreadRec.idea`가 표지다. host 머신 작업 폴더 thread, 할 일을 만들지 않고 실행 한도(`holds_worker_slot`)·할 일 화면·coordinator context·웹 작업 목록에서 뺀다. brief는 `IDEA_GUIDE`(보고·착지 대신 노트 저장). 쉼이 `[projects] idea_rest_secs` 넘으면 ticker가 알림함 항목 없이 보류하고(park.rs), 화면 열기(`idea_wake`)·말(`idea_say`)이 같은 대화로 잇는다. 잇지 못하면 새 thread가 노트를 읽는다. 말은 brief를 받은 뒤 보내도록 메타 `pending`에 두고 배경 일이 보낸다. thread 세션 CLI(보기 권한)는 자기 아이디어 노트만 `idea_save`한다.
+- **웹.** 활동 막대 「아이디어」 패널이 목록, 본문은 노트(보고 글 렌더러·textarea 고치기·그림 붙여 넣기)와 대화(ChatPanel·ChatComposer 재사용, `prepare`로 고친 노트 머리). 노트 글·그림 의견은 t-1222 의견 모음 원천(`note`·`media`)으로 모아 「입력창에 넣기」. 휴대폰은 「목록 | 노트 | 대화」 페이지 쓸기이고 대화 칸은 drawer 쓸기를 받지 않는다(`data-drawer-swipe="off"`).
+- **넘기기.** 초안 여럿을 `TaskOp::Add`로 더하고 메모 첫 줄이 `[아이디어 n-NNNN](ideas/n-NNNN)`이다. thread 시작 때 그 링크가 노트와 그림을 `attachments/`로 넘긴다(task_attach, agent 첨부 이름에 mp4·webm). 넘긴 아이디어는 완료로 잠기고 「복사해서 새 아이디어」로 다시 다듬는다.
+- **「나중」 없애기.** 사용자 「나중 파일은 쓰지 않아. 없애.」: 할 일 「나중」 탭, `task_notes` 설정·CLI·설정 화면, TaskBoard.notes_files를 뺐다.
+- **참고.** 구성만 참고했다: ChatGPT Canvas·Open Canvas(MIT, 문서와 대화 나란히), GitHub Discussions·Jira Product Discovery(아이디어 → 할 일 여럿, 양쪽 링크), spec-kit `/clarify`(MIT, 정리본 모양), Hypothesis(BSD-2)·W3C Web Annotation(고른 글 자리). 코드·의존성은 가져오지 않았다.
+- **계약.** FRONT_API 1.146(Idea* 요청·응답, 웹 events `ideas`, ThreadView.idea). AGENT_LINK 1.11 유지(agent 첨부 이름 확장은 같은 판 안). 사용법은 [사용법 「아이디어」](usage.md#아이디어).
+

@@ -23,16 +23,13 @@ import {
   ArrowUp,
   ArrowUpDown,
   ArrowUpToLine,
-  ChevronRight,
   CircleDot,
   Clock,
-  Copy,
   CornerDownRight,
   Ellipsis,
   FileCode,
   GripVertical,
   Link2,
-  ListPlus,
   Paperclip,
   Pencil,
   Plus,
@@ -41,13 +38,11 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { MachineView, OwnerChoice, QueueOp, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStage, ThreadView } from "./gen/proto";
+import type { MachineView, OwnerChoice, QueueOp, TaskBoard, TaskConflict, TaskLogEntry, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStage, ThreadView } from "./gen/proto";
 import { ApiError, call, me, onTasksChanged } from "./api";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
-import { Markdown } from "./Markdown";
 import { GROUP_WORD } from "./sidebarModel";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
-import { copyText } from "./herdr/clipboard";
 import { useMediaQuery } from "./herdr/useMediaQuery";
 import { StateIcon, TaskDetail, ThreadChip, WhoChips, type SaveResult } from "./TaskDetail";
 import { ConflictDialog, RawEditor, type MyEdit } from "./TaskDialogs";
@@ -57,7 +52,7 @@ import { AccountWaits } from "./AccountPoolPanel";
 import { TaskArchiveView } from "./TaskArchiveView";
 import { TaskFilterChips, TaskSearchInput } from "./TaskHistoryTools";
 import { TaskSortChip } from "./TaskSortChip";
-import { ACTIVE_TASK_SORTS, LATER_SORTS, readTaskSort, writeTaskSort, sortActiveTasks, sortedNoteItems, type ActiveTaskSort, type LaterSort } from "./taskSortModel";
+import { ACTIVE_TASK_SORTS, readTaskSort, writeTaskSort, sortActiveTasks, type ActiveTaskSort } from "./taskSortModel";
 import {
   TASK_FILTERS,
   TASK_STATE_LABEL,
@@ -71,13 +66,11 @@ import {
   taskList,
   findTask,
   handOffText,
-  itemToTask,
   lastLogId,
   linkOp,
   mineKeys,
   moveOp,
   newAutoCleans,
-  noteItems,
   taskState,
   addAttachment,
   attachmentLine,
@@ -95,7 +88,7 @@ import {
 } from "./tasksModel";
 import "./TasksView.css";
 
-type Tab = "tasks" | "later" | "completed";
+type Tab = "tasks" | "completed";
 
 /** host가 편집(`task_edit`)을 아는 FRONT_API */
 const EDIT_API: readonly [number, number] = [1, 62];
@@ -162,7 +155,7 @@ export function useTaskBoard(up: boolean, openThreads: string, visible: boolean)
   useEffect(() => {
     if (up && visible) load();
   }, [up, visible, load]);
-  // 같은 hash여도 다시 읽는다: 「나중」 파일·설정만 바뀐 사건도 TASKS.md hash는 그대로다
+  // 같은 hash여도 다시 읽는다: 열린 thread·예약만 바뀐 사건도 TASKS.md hash는 그대로다
   useEffect(() => onTasksChanged(() => load()), [load]);
   return { board, error, replace };
 }
@@ -204,7 +197,7 @@ type CapabilityListPosition = {
   anchor: { row: HTMLElement; offset: number } | null;
 };
 
-/** ⋯ 메뉴(행·목록 머리·「나중」 항목) */
+/** ⋯ 메뉴(행·목록 머리) */
 type Menu = { key: string; anchor: HTMLElement; title: string; items: RowMenuItem[] };
 /** 창 */
 type Dialog =
@@ -270,7 +263,6 @@ export function TasksView({
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
   const [sort, setSort] = useState<ActiveTaskSort>(() => readTaskSort("active"));
-  const [laterSort, setLaterSort] = useState<LaterSort>(() => readTaskSort("later"));
   const manual = sort === "manual";
   const pickSort = (next: ActiveTaskSort) => {
     setSort(next); writeTaskSort("active", next);
@@ -393,11 +385,6 @@ export function TasksView({
   useEffect(() => {
     if (shown && board) onSeenMine?.(mineKeys(board));
   }, [shown, board, onSeenMine]);
-  const notesFiles = board?.notes_files ?? [];
-  // 「나중」 파일이 설정에서 빠지면 할 일 탭으로
-  useEffect(() => {
-    if (tab === "later" && notesFiles.length === 0) setTab("tasks");
-  }, [tab, notesFiles.length]);
   // 명령 팔레트 「할 일 더하기」: 화면을 처음 여는 요청도 받는다(처음 mount 전에 수가 올라 있다). host 판(`frontApi`)과 board를
   // 받기 전에는 아직 쓰지 않고 기다린다
   const lastAdd = useRef(0);
@@ -743,7 +730,6 @@ export function TasksView({
     };
   };
 
-  const later = notesFiles.length > 0;
   return (
     <div
       className={`tasks-view${shown ? "" : " is-hidden"}`}
@@ -772,11 +758,6 @@ export function TasksView({
               완료
             </button>
           )}
-          {later && (
-            <button type="button" role="tab" aria-selected={tab === "later"} className={`tasks-tab${tab === "later" ? " is-on" : ""}`} data-testid="tasks-tab-later" onClick={() => setTab("later")}>
-              나중
-            </button>
-          )}
         </div>
         {tab === "tasks" && (
           <>
@@ -794,7 +775,6 @@ export function TasksView({
             </TaskFilterChips>
           </>
         )}
-        {tab === "later" && <TaskFilterChips label="나중 보기" repo={null} sort={<TaskSortChip value={laterSort} choices={LATER_SORTS} onChange={next => { setLaterSort(next); writeTaskSort("later", next); setMenu(null); }} testId="tasks-later-sort" />}>{null}</TaskFilterChips>}
         {canEdit && tab === "tasks" && (
           <div className="tasks-actions">
             {coarse && manual && (
@@ -854,31 +834,6 @@ export function TasksView({
       )}
       {tab === "completed" ? (
         <TaskArchiveView key={project} toolbar={toolbar} canEdit={canEdit} rev={sha} project={project} repos={board?.repos ?? []} onThread={onThread} extendedFilters={apiAtLeast(frontApi, [1, 110])} sortable={apiAtLeast(frontApi, [1, 126])} onOpenAttachment={onOpenAttachment} />
-      ) : tab === "later" ? (
-        <div className="tasks-scroll" data-testid="tasks-later" data-sort={laterSort}>
-          {notesFiles.map((f) => (
-            <NotesFile
-              key={f.path}
-              file={f}
-              sort={laterSort}
-              canEdit={canEdit}
-              menuKey={menu?.key ?? null}
-              onMenu={(key, anchor, item, section) =>
-                openMenu(key, anchor, "나중 항목", [
-                  ...(canEdit
-                    ? [{ id: "to-task", label: "할 일로 옮기기", icon: ListPlus, run: () => {
-                        const { title, notes } = itemToTask(item);
-                        setTab("tasks");
-                        setPicked(null);
-                        setCreating({ ...emptyDraft(defaultList(board)), title, notes: [...notes, `(나중 ${f.path} · ${section || "머리 없음"}에서 옮김)`].join("\n") });
-                      } }]
-                    : []),
-                  { id: "copy", label: "복사", icon: Copy, run: () => void copyText(item.join("\n")) },
-                ])
-              }
-            />
-          ))}
-        </div>
       ) : (
         <div className={`tasks-main${detailOpen ? " has-detail" : ""}`}>
           <div className="tasks-scroll" data-testid="tasks-list" data-sort={sort} ref={listScroll}
@@ -1306,46 +1261,3 @@ function Unlinked({ overLimits, threads, canLink, onThread, onLink, onMake }: { 
   );
 }
 
-/** 「나중」 파일 하나: `##` 절을 접는 묶음, 절 안은 항목마다(Markdown 그대로) ⋯ 메뉴 「할 일로 옮기기」·「복사」(t-0469 §3.6) */
-function NotesFile({ file, sort, canEdit, menuKey, onMenu }: { file: TaskNotesFile; sort: LaterSort; canEdit: boolean; menuKey: string | null; onMenu: (key: string, anchor: HTMLElement, item: string[], section: string) => void }) {
-  return (
-    <section className="task-notes-file" aria-label={file.path} data-testid={`tasks-notes-${file.path}`}>
-      <h3 className="task-list-head">
-        <span className="task-list-static">{file.path}</span>
-      </h3>
-      {file.error ? (
-        <p className="tasks-empty" data-testid="tasks-notes-error">
-          {file.error}
-        </p>
-      ) : (
-        file.sections.map((s, i) => {
-          const items = noteItems(s.lines);
-          return (
-            <details key={`${i}:${s.name}`} className="task-notes-section">
-              <summary>
-                <ChevronRight className="task-notes-chevron" aria-hidden="true" />
-                <span className="task-list-name">{s.name || "(머리 없음)"}</span>
-                <span className="tasks-count">{items.length}</span>
-              </summary>
-              {items.length > 0 ? (
-                <ul className="task-notes-items">
-                  {sortedNoteItems(items, sort).map(({ item, index: k }) => {
-                    const key = `later:${file.path}:${i}:${k}`;
-                    return (
-                      <li key={k} className="task-notes-item" data-testid={`tasks-notes-item-${i}-${k}`}>
-                        <Markdown className="task-notes">{item.join("\n")}</Markdown>
-                        <MenuButton title={canEdit ? "나중 항목" : "나중 항목 복사"} open={menuKey === key} testid={`tasks-notes-menu-${i}-${k}`} onToggle={(a) => onMenu(key, a, item, s.name)} />
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="muted">비었음</p>
-              )}
-            </details>
-          );
-        })
-      )}
-    </section>
-  );
-}

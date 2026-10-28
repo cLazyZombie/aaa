@@ -911,6 +911,14 @@ printf 'fake> '
 while IFS= read -r line; do
   case "$line" in
     post-probe\\ *) sh "\${line#post-probe }" ;;
+    *"노트에 한 줄"*)
+      # 아이디어 전용 thread(121, t-1260): 노트를 읽고 한 줄 더해 읽은 판으로 저장한다
+      id=$(printf '%s' "$line" | grep -o 'n-[0-9]*' | head -n 1)
+      out=$("${AA}" idea show "$id")
+      rev=$(printf '%s\n' "$out" | head -n 1 | grep -o '판 [0-9]*' | grep -o '[0-9]*')
+      printf '%s\n' "$out" | tail -n +3 > idea-note.md
+      printf -- '- thread가 더한 줄\n' >> idea-note.md
+      "${AA}" idea save "$id" --base "$rev" --file idea-note.md --summary '한 줄 더함' > /dev/null && echo idea-saved ;;
     *"[aaa 보류 준비]"*)
       # 보류 정리 부탁(85, plan §8.426): 맡긴 대로 Handoff 보고를 쓴다(커밋·push할 것이 없는 작업 폴더 thread)
       path=$(printf '%s' "$line" | grep -o '[.]aaa/[^)]*/report[.]md' | head -n 1)
@@ -919,6 +927,12 @@ while IFS= read -r line; do
       echo park-ready ;;
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
+      # 아이디어 전용 thread는 보고를 쓰지 않고 말을 기다린다(121)
+      if grep -q '아이디어 thread brief' "$dir/brief.md"; then
+        echo idea-ready
+        printf 'fake> '
+        continue
+      fi
       # 할 일에 「사람을 기다림」이 있으면 보고 없이 사람을 기다린다고만 알린다(host 묶음 확인 필요, 12 「프로젝트 머리 셈」)
       if grep -q '사람을 기다림' "$dir/brief.md"; then
         "${AA}" report --percent 50 --activity 'Waiting for you'

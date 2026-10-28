@@ -275,6 +275,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.144: AutoDecisionForget — 자동 결정 기록 지우기·모두 지우기(t-1223). 옛 host는 모르는 요청으로 거절한다.
 // 1.145: InboxItem.short_id 표시 별칭. id는 기존 저장 키이며 InboxDone은 두 ID 모두 받는다(t-1228).
 // 1.146: 아이디어 — Idea* 요청·응답과 웹 events `ideas` 사건(t-1260). 옛 host는 모르는 요청으로 거절한다.
+//        「나중」 탭을 없앤다: TaskBoard.notes_files·ProjectSettingsView.task_notes를 빼고 `task_notes.add|remove` 설정을 거절한다.
 pub const FRONT_API: Version = Version { major: 1, minor: 146 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

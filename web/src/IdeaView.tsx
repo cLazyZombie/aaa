@@ -67,6 +67,8 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
   useEffect(() => { setEditing(null); setHandoff(false); setPage("note"); }, [target]);
   // 화면을 열면 쉬느라 내린 thread를 조용히 잇는다(결정 20). 아직 말하지 않은 아이디어는 그대로 둔다
   const woke = useRef<string | null>(null);
+  // 다른 화면에 다녀오면 다시 연 것이다(본문은 숨긴 채 남아 있다)
+  useEffect(() => { if (!shown) woke.current = null; }, [shown]);
   useEffect(() => {
     if (!shown || !canControl || !note || note.idea.status !== "open" || !note.idea.thread || woke.current === note.idea.short_id) return;
     woke.current = note.idea.short_id;
@@ -220,7 +222,8 @@ function MediaNotes({ root, text, onAdd }: {
     const el = root.current;
     if (!el) return;
     const measure = () => {
-      const box = el.getBoundingClientRect();
+      // 단추는 노트 칸(.idea-note-body, position: relative) 기준이다. 그림 오른쪽 위에 두되 칸 밖으로 나가지 않게 한다
+      const box = (el.parentElement ?? el).getBoundingClientRect();
       const found = Array.from(el.querySelectorAll<HTMLElement>("img, video")).flatMap((m) => {
         const src = m.getAttribute("src") ?? m.querySelector("source")?.getAttribute("src") ?? "";
         const name = decodeURIComponent(src.split("/").pop() ?? "");
@@ -228,7 +231,7 @@ function MediaNotes({ root, text, onAdd }: {
         const r = m.getBoundingClientRect();
         const range = document.createRange();
         range.selectNode(m);
-        return [{ name, label: m.getAttribute("alt") ?? m.getAttribute("aria-label") ?? "", section: sectionBefore(el, range), top: r.top - box.top + 6, right: box.right - r.right + 6 }];
+        return [{ name, label: m.getAttribute("alt") ?? m.getAttribute("aria-label") ?? "", section: sectionBefore(el, range), top: r.top - box.top + 6, right: Math.max(6, Math.min(box.right - r.right + 6, box.width - (r.left - box.left) - 72)) }];
       });
       setSpots(found);
     };
@@ -327,6 +330,8 @@ function IdeaChat({ note, threads, panes, canControl, notes, active, onSaid, onE
   const pane = thread?.pane ? panes.find((p) => p.id === thread.pane && p.state === "running") ?? null : null;
   const owner = `idea:${note.project}/${note.idea.short_id}`;
   const harness = pane?.agent?.harness === "codex" ? "codex" : "claude";
+  // Claude·Codex pane만 대화 기록을 읽는다(터미널 보기와 같은 규칙). 그 밖의 harness는 thread 화면에서 터미널로 본다
+  const chatable = pane?.agent?.harness === "claude" || pane?.agent?.harness === "codex";
   const [pending, setPending] = useState<PendingSend[]>(() => restorePending(owner));
   useEffect(() => savePending(owner, pending), [owner, pending]);
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
@@ -352,14 +357,14 @@ function IdeaChat({ note, threads, panes, canControl, notes, active, onSaid, onE
         {thread ? <a className="idea-thread-chip" href={`#thread=${encodeURIComponent(thread.id)}`} data-testid="idea-thread">{thread.id} · {thread.machine}</a> : <span className="muted">대화 없음</span>}
       </div>
       <div className="idea-chat-body">
-        {pane ? (
+        {pane && chatable ? (
           <ChatPanel active={active} pane={pane.id} status={status} compacting={pane.agent?.compacting ?? false} compaction={pane.agent?.context?.compaction ?? null}
             readNow={sent} onMessages={setMessages} pending={pending} harness={harness} onOpenLink={onOpenLink}
             onDismissPending={(id) => setPending((list) => list.filter((p) => p.id !== id))} />
         ) : (
           <div className="idea-chat-idle" data-testid="idea-chat-idle">
             {pending.map((p) => <div key={p.id} className="chat-msg user chat-bubble is-pending" data-testid="idea-pending">{p.text}</div>)}
-            {pending.length === 0 && note.pending.length === 0 && <p className="chat-note">{thread ? "잇는 중…" : "아직 대화가 없다."}</p>}
+            {pending.length === 0 && note.pending.length === 0 && <p className="chat-note">{pane ? "대화 기록을 읽지 못하는 harness다" : thread ? "잇는 중…" : "아직 대화가 없다."}</p>}
           </div>
         )}
         {note.pending.length > 0 && <p className="idea-chat-wait" role="status" data-testid="idea-waiting">thread 준비 중 · 보낼 말 {note.pending.length}개</p>}

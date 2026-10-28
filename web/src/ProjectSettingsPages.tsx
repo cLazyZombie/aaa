@@ -130,8 +130,6 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
   const [prune, setPrune] = useState<LibraryPrunePlan | null>(null);
   const [cleanBusy, setCleanBusy] = useState<string | null>(null);
   const [cleanNote, setCleanNote] = useState<string | null>(null);
-  const [note, setNote] = useState("");
-  const [noteError, setNoteError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     call({ op: "profiles", machine: null })
@@ -152,16 +150,6 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
       await set(key, on ? "true" : "false");
     } catch (e) {
       setRowError(say(e));
-    }
-  };
-  // 할 일 「나중」 탭이 읽는 파일(`task_notes.add|remove`, 관리 GUI W8): 경로 검사는 host가 한다
-  const editNote = async (key: "task_notes.add" | "task_notes.remove", path: string) => {
-    setNoteError(null);
-    try {
-      await set(key, path);
-      if (key === "task_notes.add") setNote("");
-    } catch (e) {
-      setNoteError(say(e));
     }
   };
   const previewSweep = async () => {
@@ -209,41 +197,6 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
           <Toggle label="밖으로 가는 알림 끄기" checked={view.mute} disabled={!canEdit} onChange={(on) => void toggle("mute", on)} />
         </SettingsRow>
         {rowError && <p className="op-warn settings-item">{rowError}</p>}
-      </SettingsGroup>
-      <SettingsGroup title="할 일 「나중」 파일">
-        <div className="settings-item op-section" data-testid="task-notes">
-          {view.task_notes.length === 0 ? (
-            <p className="op-muted">정한 파일이 없다</p>
-          ) : (
-            <ul className="op-prune">
-              {view.task_notes.map((n) => (
-                <li key={n} data-note={n}>
-                  <span className="mono">{n}</span>
-                  {canEdit && (
-                    <button type="button" className="btn small" onClick={() => void editNote("task_notes.remove", n)} aria-label={`${n} 빼기`}>
-                      빼기
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          {canEdit && (
-            <div className="op-row">
-              <div className="op-field">
-                <input value={note} placeholder="memory/later.md" aria-label="더할 「나중」 파일" onChange={(e) => setNote(e.target.value)} data-testid="task-notes-path" />
-              </div>
-              <button type="button" className="btn" disabled={note.trim() === ""} onClick={() => void editNote("task_notes.add", note.trim())} data-testid="task-notes-add">
-                더하기
-              </button>
-            </div>
-          )}
-          {noteError && (
-            <p className="op-warn" role="alert">
-              {noteError}
-            </p>
-          )}
-        </div>
       </SettingsGroup>
       <SettingsGroup title="멈춤">
         <SettingsRow label={paused ? "멈춰 있다" : "돌고 있다"}>

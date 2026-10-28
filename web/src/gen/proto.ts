@@ -620,22 +620,6 @@ base_rev: number, base_text: string,
  */
 current: IdeaNote, };
 
-export type TaskNotesSection = {
-/**
- * `##` 머리 이름. 첫 `##` 앞 줄은 이름 없는 절이다
- */
-name: string, lines: Array<string>, };
-
-export type TaskNotesFile = {
-/**
- * 프로젝트 폴더 기준 상대 경로
- */
-path: string,
-/**
- * 읽지 못한 까닭(없음·프로젝트 폴더 밖·너무 큼). 있으면 `sections`는 비어 있다
- */
-error: string | null, sections: Array<TaskNotesSection>, };
-
 export type TaskBoard = { queue: Array<TaskReservation>, project: string,
 /**
  * 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
@@ -645,10 +629,6 @@ sha256: string, lists: Array<TaskListView>, tasks: Array<TaskView>,
  * 열린 thread 중 어느 task의 `thread`에도 없는 것
  */
 unlinked_threads: Array<TaskThread>,
-/**
- * project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
- */
-notes_files: Array<TaskNotesFile>,
 /**
  * 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
  */
@@ -2535,7 +2515,7 @@ repos: Array<RepoChoice>,
 /**
  * host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
  */
-local_machine: string | null, task_notes: Array<string>, };
+local_machine: string | null, };
 
 export type WorkspaceAccessView = { project: string, machine: string, revision: string, workspaces: Array<WorkspaceAccessRow>, };
 

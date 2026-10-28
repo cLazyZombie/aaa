@@ -102,7 +102,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 }
 .tasks-empty { margin: var(--space-3) var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); }
 
-.task-list + .task-list, .task-notes-file + .task-notes-file { margin-top: var(--space-4); }
+.task-list + .task-list { margin-top: var(--space-4); }
 .task-list-head { display: flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-1); border-radius: var(--radius-sm); font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-dim); }
 .task-list-toggle, .task-list-static {
   display: flex;
@@ -118,7 +118,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   text-align: left;
 }
 .task-list-toggle { justify-content: flex-start; cursor: pointer; border-radius: var(--radius-sm); }
-.task-list-toggle svg, .task-notes-chevron { width: 14px; height: 14px; flex: 0 0 auto; }
+.task-list-toggle svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .task-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-list-note { margin: 0 0 var(--space-1); padding: 0 var(--space-2) 0 calc(var(--space-2) + 14px); color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
 
@@ -248,24 +248,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   .task-row .task-machine,
   .task-row .task-repo { display: none; }
 }
-
-/* 「나중」 탭: `##` 절을 접는 묶음 */
-.task-notes-section { margin: 0 0 var(--space-1); border-radius: var(--radius-md); }
-.task-notes-section > summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: var(--control-h);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  list-style: none;
-  font-size: var(--fs-sm);
-}
-.task-notes-section > summary::-webkit-details-marker { display: none; }
-.task-notes-section[open] > summary .task-notes-chevron { transform: rotate(90deg); }
-@media (hover: hover) { .task-notes-section > summary:hover { background: var(--bg-hover); } }
-.task-notes-section > .task-notes { padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + 14px); }
 
 /* ───────────── 편집(할 일 편집 T2, plan §8.311) ───────────── */
 .tasks-tab-icon { width: 14px; height: 14px; }
@@ -412,14 +394,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-conflict-sides h3 { margin: 0 0 var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
 .task-raw-form { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .task-raw-text { width: 100%; min-height: 50vh; resize: vertical; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; white-space: pre; }
-
-/* 「나중」 항목: 항목마다 ⋯ */
-.task-notes-items { list-style: none; margin: 0; padding: 0 var(--space-1) var(--space-2) calc(var(--space-3) + 14px); }
-.task-notes-item { display: flex; align-items: flex-start; gap: var(--space-1); padding: var(--space-1) 0; border-bottom: var(--hairline) solid var(--border); }
-.task-notes-item:last-child { border-bottom: 0; }
-.task-notes-item > .task-notes { flex: 1 1 auto; min-width: 0; }
-.task-notes-item > .task-notes > :first-child { margin-top: 0; }
-.task-notes-item > .task-notes > :last-child { margin-bottom: 0; }
 
 /* thread 연결(T3, plan §8.316): 확인 필요 칸, thread로 맡기기, 바로 시작 확인창, task에 잇기, 시작 알림 */
 .task-attention { padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--notice); border-radius: var(--radius-md); background: color-mix(in srgb, var(--notice) 12%, transparent); }

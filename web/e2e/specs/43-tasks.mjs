@@ -188,31 +188,4 @@ export default async function ({ page }) {
       await shot(p, "tasks-pad-landscape");
     } finally { await p.context().close(); }
   });
-
-  await step("「나중」 탭: 설정이 비면 없고, task_notes를 더하면 생겨 `##` 절을 접는 묶음으로 보이며, 없는 파일은 「없음」이다", async () => {
-    if ((await page.getByTestId("tasks-tab-later").count()) !== 0) throw new Error("설정이 비었는데 「나중」 탭");
-    fs.mkdirSync(`${dir()}/memory`, { recursive: true });
-    fs.writeFileSync(`${dir()}/memory/later.md`, "# 나중 작업 모음\n\n## UI\n- 건설 안내 문구를 UI로\n- `카드` 기울기\n\n## 밸런스\n- 포병이 약함\n");
-    aaa("project", "set", "demo", "task_notes.add", "memory/later.md");
-    aaa("ticker", "tick");
-    await page.getByTestId("tasks-tab-later").waitFor();
-    await page.getByTestId("tasks-tab-later").click();
-    const file = page.getByTestId("tasks-notes-memory/later.md");
-    const names = await file.locator("summary .task-list-name").allTextContents();
-    if (names.join("|") !== "UI|밸런스") throw new Error(`절 ${names}`);
-    await file.locator("summary", { hasText: "UI" }).click();
-    await file.locator(".task-notes code", { hasText: "카드" }).waitFor();
-    await shot(page, "tasks-later");
-    aaa("project", "set", "demo", "task_notes.add", "memory/none.md");
-    aaa("ticker", "tick");
-    await domIs(page, "없는 파일", () => document.querySelector('[data-testid="tasks-notes-memory/none.md"] [data-testid="tasks-notes-error"]')?.textContent === "없음");
-    // 「나중」 파일을 고치면 다시 읽는다
-    fs.appendFileSync(`${dir()}/memory/later.md`, "- 마석 사용처\n");
-    aaa("ticker", "tick");
-    await domIs(page, "고친 「나중」", () => document.querySelector('[data-testid="tasks-notes-memory/later.md"]')?.textContent.includes("밸런스2"));
-    for (const p of ["memory/later.md", "memory/none.md"]) aaa("project", "set", "demo", "task_notes.remove", p);
-    aaa("ticker", "tick");
-    await page.getByTestId("tasks-tab-later").waitFor({ state: "detached" });
-    await page.getByTestId("tasks-list").waitFor();
-  });
 }

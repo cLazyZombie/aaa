@@ -854,7 +854,6 @@ impl Host {
             mute: s.mute,
             repos: s.repos.into_iter().map(|r| aaa_proto::RepoChoice { path: r.path, machine: r.machine }).collect(),
             local_machine: self.machine_order().1,
-            task_notes: s.task_notes,
         })
     }
 

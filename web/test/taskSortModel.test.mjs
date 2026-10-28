@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { taskList } from "../src/tasksModel.ts";
-import { ACTIVE_TASK_SORTS, readTaskSort, writeTaskSort, sortActiveTasks, sortedNoteItems } from "../src/taskSortModel.ts";
+import { ACTIVE_TASK_SORTS, readTaskSort, writeTaskSort, sortActiveTasks } from "../src/taskSortModel.ts";
 
 const task = (line, over = {}) => ({ line, id: `id${line}`, short_id: `d-${line}`, title: `일 ${line}`, parent: null,
   done: false, problems: [], attention: null, thread: null, profile: null, machine: null, notes: [], owner: null, ...over });
@@ -55,29 +55,17 @@ it("예약과 숨은 예약 자리는 고정하고 하위는 상위와 함께, �
   assert.deepEqual(titles(sortActiveTasks(taskList(board, "unassigned", "", "aaa", groups), board, "title", groups)), ["나 상위", "가 하위", "나 하위", "가 손자"]);
 });
 
-it("나중은 항목 첫 줄 제목으로 정렬하며 메모·원문 위치와 동일 제목 차례를 보존한다", () => {
-  const items = [["- `하 항목`", "  메모 가"], ["1. **가 항목**", "  메모 하"], ["* [가 항목](https://example.com)", "  다른 메모"]];
-  const original = structuredClone(items);
-  assert.deepEqual(sortedNoteItems(items, "manual").map(r => r.index), [0, 1, 2]);
-  const sorted = sortedNoteItems(items, "title");
-  assert.deepEqual(sorted.map(r => r.index), [1, 2, 0]);
-  assert.equal(sorted[0].item, items[1]);
-  assert.deepEqual(items, original);
-  const prefix = "긴 제목 ".repeat(30);
-  assert.deepEqual(sortedNoteItems([[`- ${prefix}하`], [`- ${prefix}가`]], "title").map(r => r.index), [1, 0]);
-});
-
-it("할 일·나중·완료 선택을 독립하여 기억하고 모르는 저장값은 손 차례다", () => {
+it("할 일·완료 선택을 독립하여 기억하고 모르는 저장값은 손 차례다", () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const storage = new Map([["aaa:tasks:completed-sort", "started"]]);
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) } });
   try {
     assert.equal(readTaskSort("active"), "manual");
-    writeTaskSort("active", "machine"); writeTaskSort("later", "title");
-    assert.equal(readTaskSort("active"), "machine"); assert.equal(readTaskSort("later"), "title");
+    writeTaskSort("active", "machine");
+    assert.equal(readTaskSort("active"), "machine");
     assert.equal(storage.get("aaa:tasks:completed-sort"), "started");
-    storage.set("aaa:tasks:later-sort", "machine");
-    assert.equal(readTaskSort("later"), "manual");
+    storage.set("aaa:tasks:active-sort", "unknown");
+    assert.equal(readTaskSort("active"), "manual");
   } finally {
     if (previous) Object.defineProperty(globalThis, "localStorage", previous);
     else delete globalThis.localStorage;

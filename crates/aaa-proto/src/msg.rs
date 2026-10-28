@@ -2726,7 +2726,7 @@ pub enum FrontRequest {
         project: String,
         check: Option<String>,
     },
-    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.60, Reader 가능). 형식 어긋남·줄 번호·블록 hash·「나중」 파일을 함께 준다.
+    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.60, Reader 가능). 형식 어긋남·줄 번호·블록 hash를 함께 준다.
     Tasks {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]

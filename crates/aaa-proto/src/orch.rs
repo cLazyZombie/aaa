@@ -2102,7 +2102,6 @@ pub struct ProjectSettingsView {
     pub repos: Vec<RepoChoice>,
     /// host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
     pub local_machine: Option<String>,
-    pub task_notes: Vec<String>,
 }
 
 /// `thread_resolve_preview`의 답(관리 GUI W4): 끝내기 전에 잃을 수 있는 것. host는 기록을 고치지 않고, git은 그 머신 agent가
@@ -2908,26 +2907,6 @@ pub struct TaskThread {
     pub stage: Option<ThreadStage>,
 }
 
-/// `task_notes` 파일(예: `memory/later.md`)의 `##` 절 하나. 줄은 Markdown 원문 그대로다
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(default)]
-pub struct TaskNotesSection {
-    /// `##` 머리 이름. 첫 `##` 앞 줄은 이름 없는 절이다
-    pub name: String,
-    pub lines: Vec<String>,
-}
-
-/// 「나중」 탭의 읽기 전용 파일 하나(project.toml `task_notes`)
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(default)]
-pub struct TaskNotesFile {
-    /// 프로젝트 폴더 기준 상대 경로
-    pub path: String,
-    /// 읽지 못한 까닭(없음·프로젝트 폴더 밖·너무 큼). 있으면 `sections`는 비어 있다
-    pub error: Option<String>,
-    pub sections: Vec<TaskNotesSection>,
-}
-
 /// `tasks` 답(FRONT_API 1.60): 할 일 화면이 읽는 TASKS.md 전체
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
@@ -2941,8 +2920,6 @@ pub struct TaskBoard {
     pub tasks: Vec<TaskView>,
     /// 열린 thread 중 어느 task의 `thread`에도 없는 것
     pub unlinked_threads: Vec<TaskThread>,
-    /// project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
-    pub notes_files: Vec<TaskNotesFile>,
     /// 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
     pub text: String,
     /// task 저장소 칸에 쓸 수 있는 이름(FRONT_API 1.73): `project.toml` repos 경로의 마지막 이름, 겹치지 않게 적힌 차례

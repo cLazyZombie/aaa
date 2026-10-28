@@ -5009,7 +5009,7 @@ fn coordinator_flow() {
     assert!(!w.projects.join("p2").exists(), "거부한 프로젝트 폴더를 남기지 않는다");
 }
 
-/// 할 일 보기(T1, plan §8.306): `tasks`(`aaa task list`)가 목록·형식 어긋남·task 없는 열린 thread·「나중」 파일을 주고, 보기 권한
+/// 할 일 보기(T1, plan §8.306): `tasks`(`aaa task list`)가 목록·형식 어긋남·task 없는 열린 thread를 주고, 보기 권한
 /// 세션도 읽는다. 파일을 직접 고치면 다음 tick이 `tasks` 사건(새 sha)을 내고, 고치지 않은 tick은 내지 않는다. `--from-task`는 owner 칸이
 /// 상태 메모인 task를 사람 owner로 오인하지 않고 정확한 까닭으로 거부한다.
 #[test]
@@ -5062,7 +5062,6 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     );
     assert_eq!(row("실패 조사")["owner"], Value::Null);
     assert_eq!(b["unlinked_threads"].as_array().unwrap().iter().map(|t| t["id"].clone()).collect::<Vec<_>>(), [oid]);
-    assert_eq!(b["notes_files"], serde_json::json!([]));
     // context도 같은 파서다: 형식 어긋남을 보이고 사람 owner로 쓰지 않는다
     let text = String::from_utf8_lossy(&w.h.run(&["context", "demo", "--peek"]).stdout).to_string();
     assert!(
@@ -5088,35 +5087,12 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     let md2 = identified_tasks(&md.replace("## 빈 목록\n", "## 빈 목록\n- [ ] 새로 더한 일\n"));
     write(&md2);
     w.h.ok(&["ticker", "tick"]);
-    let (at, got) = ev.wait_from(baseline + 1, "tasks 사건", T, |e| match e {
+    let (_, got) = ev.wait_from(baseline + 1, "tasks 사건", T, |e| match e {
         aaa_proto::FrontEvent::Tasks { project, sha256 } if project == "demo" => Some(sha256.clone()),
         _ => None,
     });
     assert_eq!(got, sha(&md2));
     assert_eq!(w.h.ok(&["task", "list"])["sha256"].as_str(), Some(sha(&md2).as_str()));
-
-    // 「나중」 파일: 상대 경로만 받고, 프로젝트 폴더 밖을 가리키는 symlink는 읽지 않는다
-    std::fs::create_dir_all(pdir.join("memory")).unwrap();
-    std::fs::write(pdir.join("memory/later.md"), "# 나중\n\n## UI\n- 하나\n").unwrap();
-    let outside = w.task("outside.md", "## 밖\n- 비밀\n");
-    std::os::unix::fs::symlink(&outside, pdir.join("memory/out.md")).unwrap();
-    for bad in ["../x.md", "/etc/hosts"] {
-        let e = w.h.json(&["project", "set", "demo", "task_notes.add", bad]).expect_err(bad);
-        assert!(e.contains("상대 경로") || e.contains("`..`"), "{bad}: {e}");
-    }
-    for p in ["memory/later.md", "memory/out.md", "memory/none.md"] {
-        w.h.ok(&["project", "set", "demo", "task_notes.add", p]);
-    }
-    w.h.ok(&["ticker", "tick"]);
-    ev.wait_from(at + 1, "「나중」 설정 뒤 tasks 사건", T, |e| match e {
-        aaa_proto::FrontEvent::Tasks { .. } => Some(()),
-        _ => None,
-    });
-    let files = w.h.ok(&["task", "list"])["notes_files"].clone();
-    assert_eq!(files[0]["sections"], serde_json::json!([{"name": "UI", "lines": ["- 하나"]}]), "{files}");
-    assert!(files[1]["error"].as_str().unwrap().contains("프로젝트 폴더 밖"), "{files}");
-    assert!(files[1]["sections"].as_array().unwrap().is_empty() && !files.to_string().contains("비밀"), "{files}");
-    assert_eq!(files[2]["error"].as_str(), Some("없음"), "{files}");
 }
 
 /// 메모 추가·전체 교체 경고·원문 기록과 잘못된 제목의 저장 거부를 실제 CLI/host에서 지킨다.

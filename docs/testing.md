@@ -1,3 +1,4 @@
+- t-1260: [아이디어 기능 검증](testing-ideas.md)
 - t-1251: [중단 기동 회수와 명시 restart의 시험 경쟁 검증](testing-preparation-recovery.md)
 - t-1251: [Claude 계정 thread의 advisorModel 전달 검증](testing-claude-advisor.md)
 - t-1238: [자동화 큰 입력 검증](testing-automation-large-input.md) · [E72 설치 계획 검사 경계 수리](testing-machine-plan-boundary.md) · [정기 DB 백업 시험 경계](testing-db-backup-ticker-boundary.md)
