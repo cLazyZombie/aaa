@@ -1,3 +1,4 @@
+- t-1267: [원격 thread의 host 보고·library·검색 읽기 검증](testing-remote-thread-read.md)
 - t-1262: [자동 결정 보존 기간 정리 검증](testing-auto-decision-prune.md)
 - t-1251: [중단 기동 회수와 명시 restart의 시험 경쟁 검증](testing-preparation-recovery.md)
 - t-1251: [Claude 계정 thread의 advisorModel 전달 검증](testing-claude-advisor.md)

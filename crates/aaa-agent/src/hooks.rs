@@ -50,6 +50,7 @@ pub struct HookMsg {
 /// 글과 이미지 bytes의 구별을 로컬 IPC 직렬화까지 유지한다.
 pub(crate) enum Reply {
     Text(String),
+    ThreadRead(Box<aaa_proto::Outcome<aaa_proto::FrontResponse>>),
     Image(aaa_proto::Outcome<aaa_proto::ImageResponse>),
 }
 
@@ -57,6 +58,14 @@ pub(crate) fn reply(result: Result<Option<Reply>>) -> String {
     let encoded = result.and_then(|out| match out {
         None => Ok(String::new()),
         Some(Reply::Text(text)) => Ok(aaa_common::redact::text(&text)),
+        Some(Reply::ThreadRead(result)) => {
+            // 파일 bytes는 host 파일 보기와 같다. host에서 가린 보고 JSON만 다시 가린다.
+            let clean = match &*result {
+                aaa_proto::Outcome::Ok(aaa_proto::FrontResponse::LibraryChunk { .. }) => serde_json::to_value(&result)?,
+                _ => aaa_common::redact::to_value(&result).context("읽기 응답 가림 직렬화")?,
+            };
+            Ok(format!("thread_read.v1 {clean}"))
+        }
         Some(Reply::Image(result)) => {
             let clean = aaa_common::redact::to_value(&result).context("이미지 hook 응답 가림 직렬화")?;
             // B64는 원시 bytes를 가린 뒤 인코딩했다. 완성된 JSON을 글로 다시 가리면
@@ -331,7 +340,8 @@ pub async fn send(harness: &str, payload: Value) -> Result<Option<String>> {
     if body.len() > MAX_MSG {
         bail!("사건이 너무 크다");
     }
-    tokio::time::timeout(Duration::from_secs(3), async {
+    let wait = if harness == "thread_read" { 30 } else { 3 };
+    tokio::time::timeout(Duration::from_secs(wait), async {
         let mut s = aaa_common::ipc::connect(Path::new(&sock)).await?;
         exchange(&mut s, &body).await
     })

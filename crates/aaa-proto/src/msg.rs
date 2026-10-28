@@ -812,6 +812,11 @@ pub enum AgentRequest {
         post_id: String,
         result: crate::PostResult,
     },
+    /// thread_read.v1: 세션 읽기 요청의 응답.
+    ThreadReadReply {
+        request_id: String,
+        result: Outcome<FrontResponse>,
+    },
     /// imagegen.v1: 이미지 요청의 비밀 없는 응답.
     ImageReply {
         request_id: String,
@@ -1266,6 +1271,12 @@ pub struct CommandRan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// thread_read.v1: agent가 세션 token·peer PID를 확인한 읽기 요청.
+    ThreadRead {
+        request_id: String,
+        session: String,
+        request: Box<FrontRequest>,
+    },
     /// imagegen.v1: agent가 peer PID·hook token을 확인한 자기 thread 요청.
     Image {
         request_id: String,
@@ -2930,6 +2941,16 @@ pub enum FrontRequest {
     LibraryReports {
         project: Option<String>,
     },
+    /// FRONT_API 1.146: manifest 안 파일을 64KiB씩 읽는다.
+    LibraryRead {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        path: String,
+        #[ts(type = "number")]
+        offset: u64,
+    },
     LibraryOpen {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -3518,6 +3539,7 @@ impl FrontRequest {
             | FrontRequest::ProfilePlan { project, .. }
             | FrontRequest::ProfileApply { project, .. }
             | FrontRequest::LibraryImport { project, .. }
+            | FrontRequest::LibraryRead { project, .. }
             | FrontRequest::LibraryOpen { project, .. }
             | FrontRequest::LibraryResolve { project, .. }
             | FrontRequest::ThreadAck { project, .. }
@@ -3573,6 +3595,23 @@ impl FrontRequest {
         }
     }
 
+    /// thread_read.v1의 명시적 허용 목록. Reader 요청 중에도 부수 효과·관리 조회는 전달하지 않는다.
+    pub fn thread_read_allowed(&self) -> bool {
+        matches!(
+            self,
+            Self::Projects { .. }
+                | Self::Threads { .. }
+                | Self::ThreadShow { .. }
+                | Self::ThreadSummary { .. }
+                | Self::ThreadLibrary { .. }
+                | Self::LibraryReports { .. }
+                | Self::LibraryOpen { .. }
+                | Self::LibraryRead { .. }
+                | Self::RecordSearch { .. }
+                | Self::RecordOpen { .. }
+        )
+    }
+
     /// 조작(controller) 권한이 필요한 요청인가
     pub fn needs_control(&self) -> bool {
         !matches!(
@@ -3609,6 +3648,7 @@ impl FrontRequest {
                 | FrontRequest::RecordSearch { .. }
                 | FrontRequest::RecordOpen { .. }
                 | FrontRequest::LibraryReports { .. }
+                | FrontRequest::LibraryRead { .. }
                 | FrontRequest::LibraryOpen { .. }
                 | FrontRequest::LibraryMarkRead { .. }
                 | FrontRequest::LibraryUsage
@@ -4016,6 +4056,11 @@ pub enum FrontResponse {
     },
     RecordSearch(crate::RecordSearchPage),
     RecordDocument(crate::RecordDocument),
+    LibraryChunk {
+        data: B64,
+        #[ts(type = "number | null")]
+        next: Option<u64>,
+    },
     Library(LibraryView),
     /// `thread_diff`의 답
     ThreadDiff {

@@ -40,6 +40,7 @@ mod shell_chat;
 mod turn_reply;
 pub use selfcheck::start_selfcheck;
 mod slash;
+pub mod thread_read;
 pub mod threads;
 pub mod work_root;
 mod workspace_metrics;
@@ -221,6 +222,8 @@ pub struct Agent {
     host_compacting: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
     host_automation_results: Mutex<bool>,
+    host_thread_read: std::sync::atomic::AtomicBool,
+    read_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::FrontResponse>>>>,
     host_image: std::sync::atomic::AtomicBool,
     image_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::Outcome<aaa_proto::ImageResponse>>>>,
     host_mission: Mutex<bool>,
@@ -287,6 +290,8 @@ impl Agent {
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
             host_automation_results: Mutex::new(false),
+            host_thread_read: std::sync::atomic::AtomicBool::new(false),
+            read_waiters: Mutex::new(HashMap::new()),
             host_image: std::sync::atomic::AtomicBool::new(false),
             image_waiters: Mutex::new(HashMap::new()),
             host_mission: Mutex::new(false),
@@ -364,6 +369,9 @@ impl Agent {
                 self.reject_post(&msg, "hook token이 맞지 않는다").await;
             }
             bail!("hook token이 맞지 않는다");
+        }
+        if msg.harness == "thread_read" {
+            return self.on_thread_read(msg, pid).await.map(Box::new).map(hooks::Reply::ThreadRead).map(Some);
         }
         if msg.harness == "imagegen" {
             return self.on_image(msg, pid).await.map(hooks::Reply::Image).map(Some);
@@ -999,6 +1007,7 @@ impl Agent {
             t.abort();
         }
         if gone {
+            self.read_waiters.lock().unwrap().clear();
             let pumps: Vec<_> = self.sessions.lock().unwrap().values().filter_map(|e| e.pump.clone()).collect();
             for p in pumps {
                 aaa_common::diagnostic::ignored(
@@ -1678,6 +1687,12 @@ impl Agent {
                 return self.deploy_start(id, job, project, action).await;
             }
             AgentRequest::DeployStatus { id } => self.deployments.status(&id).map(|job| self.deployments.response(job)),
+            AgentRequest::ThreadReadReply { request_id, result } => {
+                if let Some(tx) = self.read_waiters.lock().unwrap().remove(&request_id) {
+                    aaa_common::diagnostic::ignored(tx.send(result), "읽기 응답 수신자가 끝났다");
+                }
+                return;
+            }
             AgentRequest::ImageReply { request_id, result } => {
                 if let Some(tx) = self.image_waiters.lock().unwrap().remove(&request_id) {
                     aaa_common::diagnostic::ignored(tx.send(result), "수신자가 끝난 뒤에도 현재 작업은 마친다");

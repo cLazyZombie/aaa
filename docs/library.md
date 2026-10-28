@@ -3,6 +3,26 @@
 보고서는 host가 `/v/`에서 같은 sandbox·서명 링크 규칙으로 보여 준다. 공유 링크는 기본 30일이며 폐기할 수 있다.
 만료·폐기돼도 pairing한 앱에서는 「앱에서 열기」로 본다.
 
+## CLI에서 파일 읽기
+
+`aaa library show <이름|t-ID|r-ID>`는 보고 정보와 파일 목록을, `aaa --json library show <대상>`은
+회수한 보고 본문도 반환한다. `aaa library list`와 별칭 `aaa library ls`로 목록을 본다.
+
+`aaa library cat <이름|t-ID|r-ID> <상대 경로>`는 파일 bytes를 표준 출력으로 보낸다.
+자료를 파일로 받으려면 셸 리다이렉션을 쓴다. `--json`은 64 KiB 이하 bytes를 base64로 담은
+`library_chunk`를 한 줄씩 출력하며 `next`가 다음 바이트 위치다. 내부적으로 같은 크기로 나누어
+읽으므로 큰 파일도 단일 Front frame 상한에 걸리지 않는다. 파일 읽기에는 Front API 1.146 이상이 필요하다.
+
+```sh
+aaa library cat r-0001 plans/design.md
+aaa library cat r-0001 preview/image.png > image.png
+```
+
+원격 thread에서도 인증된 agent 연결을 통해 읽는다. host 사본·agent에 남은 파일·실시간 등록 파일은
+웹 파일 보기와 같은 manifest·상대 경로·symlink 검사를 거친다. r-ID로 읽으면 그 불변 판만 읽고,
+사본에 없는 파일을 최신 agent 파일로 대체하지 않는다. 여러 조각을 읽는 동안 판을 고정하려면
+이름이나 t-ID 대신 r-ID를 쓴다. bytes는 웹 파일 보기와 같으며 원격 전달 중 다시 치환하지 않는다.
+
 ## thread 보고 사본과 비밀값
 
 host는 agent에서 받은 보고 본문과 첨부의 원본 길이·SHA-256을 먼저 확인한다. 보고 본문은 계속

@@ -8320,3 +8320,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **표시.** §8.443의 모델 관측(기록의 `requestedModel`)에 이 수준을 붙여 Codex thread와 같은 자리에 「최근 확인 모델: opus 5.5 high」로 보인다. 모델을 아직 못 봤으면 수준만으로 관측을 만들지 않는다. 확인 시각은 모델·수준 중 늦은 것이다. 수준을 아직 받지 못했으면 기존처럼 「생각 수준 미확인」이다. 시작 profile의 effort는 여전히 추측하지 않는다.
 - **참고.** 상태줄 입력의 `effort.level`을 모델 옆에 보이는 [claude-status-line](https://jsr.io/@wyattjoh/claude-status-line)(MIT)과 [claudeline](https://pkg.go.dev/github.com/lexfrei/claudeline)(BSD-3-Clause)을 보았다. 칸 이름·없을 때 숨김을 따르고 코드·의존성은 가져오지 않았다.
 - **번호·계약.** 착지 기준 main f59a340d의 마지막 §8.539 다음 번호다. 기존 선택 `ModelObservation.effort`의 값만 채워 FRONT_API 1.145·AGENT_LINK 1.11과 웹 코드·E2E 번호를 바꾸지 않는다. 새 hook·상태줄 설정도 더하지 않는다. 검증은 [생각 수준 검증](testing-claude-effort.md)에 둔다.
+
+
+### 8.541 원격 thread의 host 보고·library·검색 읽기(t-1267)
+
+- **목적.** host가 아닌 머신의 worker thread도 host에 모인 다른 thread의 보고와 자료를 읽는다. 로컬 Front socket이 없거나 연결을 거부하면 기존 hook → agent → host 연결로 읽기 요청을 전달한다. 다른 Front 오류와 세션 밖 CLI는 이 경로로 우회하지 않는다.
+- **범위.** thread list/show/summary/library, library show/list(ls)/cat, search/record와 프로젝트 생략에 필요한 Projects만 허용한다. ThreadShow는 기존 상태·보고 ID·Next이며 보고 본문은 LibraryOpen의 report 또는 검색 원문으로 읽는다. 쓰기·승인·병합 명령은 넓히지 않는다.
+- **신원·권한.** agent가 hook token·peer PID의 실제 세션을 확인하고 host가 그 머신 소속의 실행 중 세션인지 확인한다. 양쪽의 명시적 읽기 허용 목록과 host Reader 권한을 함께 적용한다. coordinator나 일반 pane도 이 전달 경로에서는 Reader다. 연결이 끊기면 응답 대기를 정리한다.
+- **자료 읽기.** `aaa library cat <이름|t-ID|r-ID> <상대 경로>`는 웹 파일 보기와 같은 manifest·상대 경로·symlink·불변 판 검사를 거쳐 64KiB씩 bytes를 읽는다. 원격 전달은 보관한 파일 bytes를 다시 치환하지 않는다. 보고·오류 JSON은 기존 가림을 쓴다. 특정 판을 여러 조각으로 읽을 때는 r-ID를 쓴다.
+- **번호·호환.** 착지 기준 main 4d09d7f3의 마지막 §8.540 다음 번호다. main FRONT_API 1.145 다음 1.146에 LibraryRead·LibraryChunk를 추가한다. AGENT_LINK 1.11의 선택 기능 thread_read.v1을 양쪽이 광고할 때만 새 메시지를 보낸다. 구버전·연결 끊김은 명령 오류이며 새 웹 E2E 번호는 없다.
+- **참고·검증.** Tailscale LocalAPI(BSD-3-Clause)의 읽기/쓰기 분리와 Moby client(Apache-2.0)의 transport·API 협상 분리를 참고했으며 외부 코드·의존성을 가져오지 않았다. [별도 검증 기록](testing-remote-thread-read.md)에 고유 권한·bytes·응답 상한 시험과 실제 원격 Mac의 격리 thread 검증을 둔다.

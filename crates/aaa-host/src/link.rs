@@ -365,6 +365,7 @@ async fn serve_connection(
             "post.v1".into(),
             "automation_results.v1".into(),
             "imagegen.v1".into(),
+            "thread_read.v1".into(),
             "mission.v1".into(), // N-1 agent의 파일 전송
             "work_files.v1".into(),
             aaa_common::response_parts::FEATURE.into(),
@@ -452,6 +453,22 @@ async fn serve_connection(
                     msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. } | AgentResponse::ReportTransfer(_) | AgentResponse::ReportFileChunk { .. }), .. } => msg,
                     msg => aaa_common::redact::json(msg).map_err(|source_error| aaa_common::diagnostic::context(source_error, anyhow::anyhow!("agent 메시지 가림 거부")))?,
                 } {
+                    LinkMsg::Event(AgentEvent::ThreadRead { request_id, session, request }) => {
+                        if hello.features.iter().any(|f| f == "thread_read.v1") {
+                            let h = host.clone(); let m = mid.clone(); let tx = tx.clone();
+                            tokio::spawn(async move {
+                                let result = h.relay_thread_read(&m, &session, *request).await;
+                                // Front와 같은 가림·크기 제한을 거친다.
+                                let frame = crate::front::res_frame_within(String::new(), result, MAX_FRAME - 1024);
+                                if let Ok(aaa_proto::FrontMsg::Res { result, .. }) = serde_json::from_slice(&frame) {
+                                    aaa_common::diagnostic::ignored(tx.json(&LinkMsg::Req {
+                                        id: format!("read-{request_id}"), deadline_ms: None,
+                                        body: aaa_proto::AgentRequest::ThreadReadReply { request_id, result },
+                                    }).await, "읽기 응답 전송 실패");
+                                }
+                            });
+                        }
+                    }
                     LinkMsg::Event(AgentEvent::Image { request_id, session, request }) => {
                         if hello.features.iter().any(|f| f == "imagegen.v1") {
                             let h = host.clone(); let m = mid.clone(); let tx = tx.clone();
