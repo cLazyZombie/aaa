@@ -20,6 +20,7 @@
 | m13 `claude_menu_dismisses_escape_before_waiting_for_its_suffix` | CI Ubuntu 1(10-27, 셸 fixture 30초), macOS 1(10-28, EIO) | 부하 | 이 기록 B |
 | m13 `ssh_install::ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_checks` | CI macOS 1 | 원격 계획 exit 4 | 남김(아래) |
 | agent `diff::tests::full_context_is_file_only_bounded_and_keeps_default_patch_small` | CI Ubuntu 1(4d09d7f3) | 「원본 저장소를 바꾸면 안 된다」 | 이 기록 C |
+| E2E77 「보고서 본문의 ID도 링크, 삭제·자동 보관된 할 일은 없음과 일반 글」 | CI 웹 macOS 1(2b75d22b) | `The expression evaluated to a falsy value` | 이 기록 D |
 | E2E16 긴 소스 가상화 | CI 웹 4 | 20초·5초 상한 | t-1209(b233a489) 뒤 재발 없음 |
 | host `rollout::web_tests` 두 시험 | CI Windows 4(10-27 연속) | Windows 경로 형식 BadRequest(결정적) | t-1183(2988273b, 원격 rollout 경로 문법) 뒤 재발 없음 |
 | common `child_process::tests::pipe_window_*`·`subprocess_fixture` | CI macOS 3 | SIGILL | t-1137·t-1146 수리 뒤 재발 없음 |
@@ -162,6 +163,34 @@ Python PTY로 같은 fixture를 띄워 Esc를 보내고, Working을 본 뒤 계�
 
 감싸기는 분리된 자식이 다른 일에 밀려 늦게 끝나는 CI 상황을 우선순위로 흉내 낸 결함 심기다. 원 CI 실행의 실제 지연 원인은 원문이 없어 단정하지 않는다.
 바쁜 프로세스만으로는 이 Mac에서 재현이 들쭉날쭉했다(60/160 뒤 0/160 세 번). 재현 기준은 감싸기 조건이다.
+
+## D. E2E77 완료 보관 단언과 제자리에 쓰는 fake 보고
+
+### 원인
+
+- 원 CI 로그는 단언 첫 줄에서 잘려 식이 없었다. 아래 결함 심기에서 같은 문구로 실패한 식은
+  `assert.ok(aaa("task", "archive").entries.some(e => e.task.short_id === other))`다.
+- 공통 fake는 `cp`로 `report.md`를 제자리에 쓴다. agent는 kqueue 쓰기 사건마다 hash를 다시 읽으므로,
+  파일이 만들어진 직후의 빈 판도 `report_hash`로 기록될 수 있다.
+- 시험은 `report_hash`가 있기만 하면 넘어가 그 순간의 후속(followups)을 처리하고 resolve했다. 그 뒤 `[완료]`와
+  Next(「결과 확인」)가 담긴 마지막 판이 들어오면 처리하지 않은 후속이 생긴다. host는 계약대로 완료 보관을 막는다.
+- 제품 결함이 아니다. 후속을 판마다 기록하고 처리되지 않은 후속이 있으면 보관하지 않는 동작은 의도된 계약이다.
+  시험이 자신이 기대는 마지막 보고를 기다리지 않은 준비 순서 결함이다.
+
+### 수리
+
+- `report-fixture.md`의 sha256과 thread의 `report_hash`가 같아질 때까지 기다린다. 앞 단계의 링크 본문 대기와 같은 방식이다.
+- 후속 처리·resolve·`ticker tick`·보관 단언과 시한은 그대로다. 공통 fake와 다른 spec은 바꾸지 않았다.
+  `report_hash`가 있기만 하면 넘어가는 다른 spec 대기는 이번 실패와 연결된 근거가 없어 그대로 두었다.
+
+### 재현과 확인
+
+| 조건 | 결과 |
+| --- | --- |
+| 수리 전, 원래 fake, 단독 | 통과 |
+| 수리 전, fake의 `cp` 앞에 빈 `report.md`와 0.5초를 심음 | 실패, CI와 같은 `The expression evaluated to a falsy value:` |
+| 수리 뒤, 같은 심기 3회 | 3/3 통과 |
+| 수리 뒤, 원래 fake, `--repeat 8 --workers 4` | 8/8 통과(중간 12.0초) |
 
 ## 남긴 것
 
