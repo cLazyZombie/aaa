@@ -92,6 +92,40 @@ pub struct HostConfig {
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
     pub update: UpdateSection,
+    pub backup: BackupSection,
+}
+
+/// host DB 전체의 암호화 백업. 목적지와 공개키를 명시하기 전에는 실행하지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BackupSection {
+    pub enabled: bool,
+    pub directory: String,
+    pub recipient: String,
+    /// UTC HH:MM. 시간대·서머타임과 무관한 하루 한 차례다.
+    pub daily_utc: String,
+    pub keep: u32,
+}
+
+impl Default for BackupSection {
+    fn default() -> Self {
+        Self { enabled: false, directory: String::new(), recipient: String::new(), daily_utc: "19:45".into(), keep: 7 }
+    }
+}
+
+impl BackupSection {
+    pub fn time(&self) -> Option<(u32, u32)> {
+        let bytes = self.daily_utc.as_bytes();
+        if bytes.len() != 5
+            || bytes[2] != b':'
+            || ![bytes[0], bytes[1], bytes[3], bytes[4]].iter().all(u8::is_ascii_digit)
+        {
+            return None;
+        }
+        let h = self.daily_utc[..2].parse().ok()?;
+        let m = self.daily_utc[3..].parse().ok()?;
+        (h < 24 && m < 60).then_some((h, m))
+    }
 }
 
 /// post 한도(시간 판정은 host 시각, agent outbox 상한은 별도 고정값).
@@ -268,6 +302,7 @@ impl Default for HostConfig {
             safety: Default::default(),
             defaults: DefaultsSection::default(),
             update: UpdateSection::default(),
+            backup: BackupSection::default(),
         }
     }
 }
@@ -688,6 +723,28 @@ fn key(parts: &[&str]) -> Vec<String> {
 
 fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    if c.backup.time().is_none() {
+        out.push(Invalid {
+            path: key(&["backup", "daily_utc"]), message: "UTC HH:MM(00:00~23:59)이어야 한다".into()
+        });
+    }
+    if !(1..=365).contains(&c.backup.keep) {
+        out.push(Invalid { path: key(&["backup", "keep"]), message: "1~365개여야 한다".into() });
+    }
+    if c.backup.enabled {
+        if !is_absolute_anywhere(&c.backup.directory) {
+            out.push(Invalid {
+                path: key(&["backup", "directory"]),
+                message: "미리 만든 백업 폴더의 절대 경로가 필요하다".into(),
+            });
+        }
+        if !c.backup.recipient.starts_with("age1") {
+            out.push(Invalid {
+                path: key(&["backup", "recipient"]),
+                message: "age X25519 공개키가 필요하다(개인키는 넣지 않는다)".into(),
+            });
+        }
+    }
     for (name, value) in [
         ("thread_prepare_timeout_secs", c.host.thread_prepare_timeout_secs),
         ("thread_cleanup_timeout_secs", c.host.thread_cleanup_timeout_secs),

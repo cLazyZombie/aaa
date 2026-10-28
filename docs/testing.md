@@ -1,3 +1,4 @@
+- t-1242: [host DB 정기 암호화 백업·복원 검증](testing-host-db-backup.md)
 - t-1236: [m13 질문 이력](testing-claude-menu-input-batch.md) · [E42 관측 경쟁 재현·수리](testing-diff-context-reflow.md)
 - t-1225: [coordinator·thread에 넣는 글 줄이기 검증](testing-context-budget.md)
 - t-1232: [E2E12 events 수신·route 정리 검증](testing-thread-events-liveness.md)

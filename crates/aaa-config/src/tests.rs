@@ -30,6 +30,31 @@ fn missing_files_mean_defaults() {
 }
 
 #[test]
+fn backup_rejects_unsafe_or_incomplete_enabled_settings() {
+    let d = Dir::new("db-backup");
+    assert!(!load_host(&d.0).unwrap().config.backup.enabled);
+    for body in [
+        "enabled=true",
+        "daily_utc='24:00'",
+        "daily_utc='1:30'",
+        "daily_utc='🦀:00'",
+        "keep=0",
+        "keep=366",
+        "enabled=true\ndirectory='relative'\nrecipient='age1example'",
+    ] {
+        d.write("host.toml", &format!("schema = 1\n[backup]\n{body}\n"));
+        assert!(load_host(&d.0).is_err(), "잘못된 설정을 받았다: {body}");
+    }
+    d.write(
+        "host.toml",
+        "schema = 1\n[backup]\nenabled=true\ndirectory='/backup'\nrecipient='age1example'\ndaily_utc='19:45'\nkeep=14\n",
+    );
+    let loaded = load_host(&d.0).unwrap();
+    assert!(loaded.warnings.is_empty());
+    assert_eq!(loaded.config.backup.time(), Some((19, 45)));
+}
+
+#[test]
 fn post_defaults_and_explicit_overrides() {
     let d = Dir::new("post");
     let expected =

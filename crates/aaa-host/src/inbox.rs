@@ -530,6 +530,7 @@ impl Host {
     }
 
     async fn tick(self: &Arc<Self>) {
+        self.backup_pass_at(aaa_common::util::now_ms());
         self.refresh_usage();
         // 알려진 만료 시각에 다가간 계정(곧 만료·끊김)을 알림함에 낸다(plan §8.351)
         self.account_health_pass();
