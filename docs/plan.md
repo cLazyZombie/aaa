@@ -8287,3 +8287,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **E42.** ElementHandle을 얻은 뒤 observer 설치 전에 이미 단추가 제거되면 과거 제거 사건을 받을 수 없었다. 관측 설치와 함께 현재 연결 상태도 읽는다. 실제 Shadow DOM의 관측 전·후 제거 회귀는 수리 전 원문과 같은 5초 실패를 재현하고 수리 후 두 엔진에서 통과한다.
 - **계약·번호.** 착지 기준 main e321baab의 마지막 §8.535 다음 번호다. 제품 API·저장 형식 변경이 없어 FRONT_API 1.145·AGENT_LINK 1.11을 유지한다. 기존 E2E120까지의 번호·분할, m13 질문/메시지 이력, 800ms 재질문 규칙, E42의 5초 상한·실제 터치·44px·원문 한 번 읽기를 유지한다. 새 웹 E2E 번호·재시도·시한 확대·기대값 완화는 없다.
 - **검증.** [m13 검증](testing-claude-menu-input-batch.md)과 [E42 검증](testing-diff-context-reflow.md)에 수리 전후 증거를 둔다. 최신 main의 전용 worktree에서 전체 ci-local·공개·Linux/Windows strict cross·Windows production을 수행하고 실제 착지 SHA의 salt 설치기를 격리 폴더에서 확인한다.
+
+
+### 8.537 자동화 큰 입력 보존·축약과 실행 원장 수리(t-1238)
+
+- **원인.** 보고 첨부 누락 목록이 흐름 사건 detail에 커져 512KiB 접수 상한에서 source 커서가 멈췄고, 접수 전 실패가 실행 원장에 없었다.
+- **수리.** 원본 사건 전체를 host에 SHA-256으로 보존하고 크기가 제한된 미리보기와 원본 위치를 입력에 붙인다. 8MiB 이하는 worker 작업 폴더에도 검증한 조각으로 먼저 전달한다. 원본 저장 실패는 커서를 유지하고 Failed 원장·복구 이력에 남긴다. 큰 복사 누락 목록은 새 사건에서 8KiB로 제한하고 보고의 원본 목록은 보존한다.
+- **E72.** main에 있던 큰 binary 전송과 화면 30초 대기의 결합을 양쪽 수리 전 코드에서 재현했다. 실제 비특권 SSH 거부와 화면 폼/오류 표시를 분리하고 전송·SHA·정리는 기존 host keeper가 맡는다. 시한·기대값·제품 신뢰 정책은 유지한다.
+- **번호·계약.** 착지 기준 main 60052d5c의 마지막 §8.536 다음 번호다. 기존 JSON 확장·내부 보존으로 FRONT_API 1.145·AGENT_LINK 1.11을 유지하며 새 웹 기능이 없어 E2E01~120 번호를 유지한다.
+- **검증.** [큰 입력·원장 회귀](testing-automation-large-input.md), [E72 수리 전후와 계약별 검사](testing-machine-plan-boundary.md)에 기록한다. 운영 복구는 배포 알림 뒤 보존 커서와 원인 사건·후속 보고 사건의 원장을 읽어 확인한다.

@@ -168,6 +168,11 @@ impl Host {
             detail: detail.chars().take(2000).collect(),
             thread: thread.map(str::to_owned),
         };
+        if status == "failed"
+            && let Err(e) = self.db.automation_source_failure(p, name, &run)
+        {
+            tracing::error!(project=p, routine=name, %e, "자동화 접수 실패 원장을 저장하지 못했다");
+        }
         if let Err(e) = self.db.update_meta(&format!("routine_runs:{p}:{name}"), |old| {
             let mut history: History = old.map(|s| serde_json::from_str(&s)).transpose()?.unwrap_or_default();
             history.put(run);

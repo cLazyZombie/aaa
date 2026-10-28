@@ -681,6 +681,19 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// 전체 누락 목록은 ThreadRec.copy_notes에 보존한다. 흐름 사건에는 앞부분만 싣는다.
+fn copy_notes_summary(notes: &[String]) -> String {
+    let text = notes.join("; ");
+    if text.len() <= 8 * 1024 {
+        return text;
+    }
+    let mut end = 8 * 1024;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} … (총 {}건, 전체 목록은 thread copy_notes에 보존)", &text[..end], notes.len())
+}
+
 impl Host {
     pub(crate) fn projects_root(&self) -> PathBuf {
         if self.cfg.projects.root.is_empty() {
@@ -2733,7 +2746,7 @@ impl Host {
                     }
                     let mut detail = format!("마지막 사본 {copy}");
                     if !skipped.is_empty() {
-                        detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
+                        detail.push_str(&format!(", 건너뜀: {}", copy_notes_summary(&skipped)));
                     }
                     self.flow(&rec, "library_copied", Some(format!("library/{id}")), detail);
                     return failures.first().map_or(Ok(()), |e| Err(internal(e.clone())));
@@ -2791,7 +2804,7 @@ impl Host {
                 self.reconcile_question_requests(project)?;
                 let mut detail = format!("사본 {copy}");
                 if !skipped.is_empty() {
-                    detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
+                    detail.push_str(&format!(", 건너뜀: {}", copy_notes_summary(&skipped)));
                 }
                 if rec.automation.is_some() && crate::report_mark::marker(&text) == Some("[완료]") {
                     self.thread_ack(project, id, "automation")?;
@@ -2959,7 +2972,7 @@ impl Host {
             notes.push(if opts.skip_copy {
                 "마지막 사본 없이 끝냈다".to_string()
             } else {
-                format!("집에 오지 않은 것: {}", rec.copy_notes.join("; "))
+                format!("집에 오지 않은 것: {}", copy_notes_summary(&rec.copy_notes))
             });
         }
         if let Some(cwd) = rec.cwd.as_ref().filter(|_| !adopted) {
@@ -3250,6 +3263,17 @@ mod tests {
     use super::*;
 
     const NOW: u64 = 10_000_000;
+
+    #[test]
+    fn copy_notes_in_flow_keep_a_bounded_preview_and_the_total_count() {
+        let notes = vec!["첨부 경로/한글.log: 복사 상한 초과".into(); 20000];
+        let summary = copy_notes_summary(&notes);
+        assert!(summary.len() < 9 * 1024);
+        assert!(summary.starts_with(&notes[0]));
+        assert!(summary.contains("총 20000건"));
+        assert!(summary.contains("copy_notes"));
+        assert_eq!(copy_notes_summary(&["one".into(), "two".into()]), "one; two");
+    }
 
     fn open_thread() -> ThreadRec {
         ThreadRec {

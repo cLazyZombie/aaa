@@ -2,6 +2,7 @@
 mod convert;
 mod deploy;
 pub(crate) mod edit;
+pub(crate) mod input;
 pub(crate) mod model;
 pub(crate) mod runtime;
 mod usage;
