@@ -87,6 +87,68 @@ it("완료 대기는 현재 문서의 두 실제 본문을 기다리고 이전 �
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+// 응답 헤더 전에 실패한 threads 요청 하나와 그 page. evaluate는 page의 지금 문서 표지를 돌려준다.
+function failedBeforeHeaders(doc) {
+  const page = new EventEmitter();
+  page.current = doc;
+  page.evaluate = async () => page.current;
+  const request = {
+    url: () => "http://example.test/api/v1/call", postDataJSON: () => ({ op: "threads" }),
+    headers: () => ({ "x-e2e-document": doc, "x-e2e-connection": "2", "x-e2e-request": "32" }),
+    failure: () => ({ errorText: "cancelled" }),
+  };
+  const traced = row => ({ text: () => "THREAD_TRACE " + JSON.stringify({ connection: 0, ...row }) });
+  return { page, request, traced };
+}
+
+it("응답 전 실패가 새 문서 표지보다 먼저 와도 실제 문서 교체면 navigation 취소다", async () => {
+  // t-1225 착지 1회차 WebKit 기록 순서: 요청 → beforeunload → request-failed(cancelled) → pagehide → 새 문서
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aaa-thread-trace-"));
+  try {
+    const trace = threadPageTrace(directory, "unit");
+    const { page, request, traced } = failedBeforeHeaders("old");
+    trace.onPage(page);
+    page.emit("request", request);
+    page.emit("console", traced({ doc: "old", event: "beforeunload" }));
+    page.emit("requestfailed", request);
+    page.emit("console", traced({ doc: "old", event: "pagehide" }));
+    page.current = "new";
+    page.emit("console", traced({ doc: "new", event: "document" }));
+    const reads = await trace.reads([]);
+    assert.deepEqual(reads.map(read => [read.doc, read.pages, read.next]), [["old", 0, "aborted-before-body"]]);
+    const rows = fs.readFileSync(path.join(directory, "thread-pages-unit.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(rows.find(row => row.event === "navigation-aborted")?.failed, "cancelled");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+it("응답 전 실패 뒤 문서 표지 사건 없이 읽어도 지금 문서가 바뀌었으면 취소, 같은 문서면 실패 그대로다", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aaa-thread-trace-"));
+  try {
+    const replaced = failedBeforeHeaders("old");
+    const moved = threadPageTrace(directory, "moved");
+    moved.onPage(replaced.page);
+    replaced.page.emit("request", replaced.request);
+    replaced.page.emit("requestfailed", replaced.request);
+    replaced.page.current = "blank";
+    assert.equal((await moved.reads([]))[0].next, "aborted-before-body");
+
+    const same = failedBeforeHeaders("current");
+    const stayed = threadPageTrace(directory, "stayed");
+    stayed.onPage(same.page);
+    same.page.emit("request", same.request);
+    same.page.emit("requestfailed", same.request);
+    await assert.rejects(stayed.reads([]), /HTTP 본문 읽기 실패: cancelled/);
+
+    const closed = failedBeforeHeaders("closing");
+    const ended = threadPageTrace(directory, "closed");
+    ended.onPage(closed.page);
+    closed.page.emit("request", closed.request);
+    closed.page.emit("requestfailed", closed.request);
+    closed.page.emit("close");
+    await assert.rejects(ended.reads([]), /HTTP 본문 읽기 실패: cancelled/, "닫힌 page도 원래 실패 문구로 남긴다");
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 it("새 문서의 CONNECTING events는 실제 open 뒤에만 닫고 close 사건으로 끝난다", async () => {
   const page = documentWorld();
   page.evaluate(traceThreadRequests);

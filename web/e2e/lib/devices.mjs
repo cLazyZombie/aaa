@@ -1,6 +1,6 @@
 // 기기 능력 가짜: 소리(AudioContext)·소리 범주(audioSession)·알림(Notification)·push(PushManager)·홈 화면 앱(standalone).
 // 실제 기기의 규칙을 따른다. 규칙 없는 가짜(아무 때나 resume되는 AudioContext, 어디에나 있는 Notification)는 iPhone에서만
-// 드러난 결함(무음 스위치에 묻힌 소리, 가려졌다 온 뒤 소리 없음, 탭에 없는 알림)을 headless에서 못 잡았다(docs/testing.md 「실기와 headless」).
+// 드러난 결함(무음 스위치에 묻힌 소리, 가려졌다 온 뒤 소리 없음, 탭에 없는 알림)을 headless에서 못 잡았다(docs/testing-rules.md 「실기와 headless」).
 //
 // 기록은 exposeBinding으로 Node에 바로 온다: 시험은 `device.next(…)`로 그 기록을 사건으로 기다린다(page를 다시 묻지 않는다).
 //

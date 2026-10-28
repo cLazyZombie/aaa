@@ -144,6 +144,13 @@ pub struct Progress {
     pub percent: Option<u8>,
     /// 마지막으로 넣은 안내(ms)
     pub reminded_at: u64,
+    /// 이 세션에 마지막으로 넣은 coordinator auto mode 상태. 같은 상태는 다시 넣지 않는다(SessionStart가 비운다)
+    pub auto_mode: Option<String>,
+}
+
+/// aaa가 입력창에 친 글(`[aaa inbox] …` 알림 등)인가. 사람 입력이 아니라 진행 알림을 넣지 않는다.
+pub fn typed_by_aaa(p: &Value) -> bool {
+    s(p, "prompt").is_some_and(|t| t.trim_start().starts_with("[aaa "))
 }
 
 /// 안내를 넣을 Claude·Codex 사건이면 그 이름(herdr-projects progress.rs `eligible`): 맨 위 agent의 SessionStart·UserPromptSubmit·
@@ -165,24 +172,43 @@ pub fn guide_kind(p: &Value) -> Option<&'static str> {
     Some(kind)
 }
 
+/// 안내를 받는 세션
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Reader<'a> {
+    /// coordinator가 아닌 세션(worker·evaluator): 진행 안내에 report.md `## 진행` 줄이 붙는다
+    pub thread: bool,
+    /// memory=true 자동화의 재독 안내(SessionStart에만 넣는다)
+    pub reentry: Option<&'a str>,
+}
+
 /// 사건 하나에 넣을 안내(herdr-projects progress.rs `respond`, 글은 한국어로 옮김). 시계는 인자로 받는다.
-pub fn respond(rec: &mut Progress, kind: &str, prefix: &str, now_ms: u64, reentry: Option<&str>) -> Option<String> {
+/// aaa가 친 입력(`typed_by_aaa`)에는 UserPromptSubmit 알림을 넣지 않는다: coordinator 입력의 대부분이 inbox 알림이고,
+/// 진행 안내는 SessionStart와 PostToolUse 알림에 남는다(hook 글은 compaction 전까지 매 요청에 다시 실린다).
+pub fn respond(
+    rec: &mut Progress,
+    kind: &str,
+    prefix: &str,
+    now_ms: u64,
+    reader: Reader,
+    by_aaa: bool,
+) -> Option<String> {
     match kind {
         "SessionStart" => {
             // 이 pane의 새 세션: 옛 보고는 더 이 세션을 말하지 않는다
             *rec = Progress { reminded_at: now_ms, ..Progress::default() };
-            let mut text = format!("# 진행 보고(aaa)\n\n{}", aaa_proto::progress_guidance(prefix));
-            if let Some(reentry) = reentry {
+            let mut text = format!("# 진행 보고(aaa)\n\n{}", aaa_proto::progress_guidance(prefix, reader.thread));
+            if let Some(reentry) = reader.reentry {
                 text.push_str("\n\n");
                 text.push_str(reentry);
             }
             Some(text)
         }
+        "UserPromptSubmit" if by_aaa => None,
         "UserPromptSubmit" => {
             rec.reminded_at = now_ms;
             Some(format!(
-                "작업 도구를 쓰거나 막히는 질문을 하기 전에 이 요청이 새 일을 시작하는지 본다. 그렇다면 새 어림을 보고한다. \
-                 그리고 사용자를 기다리기 전에 보고한다. 예: `{prefix} report --unknown --activity 'Waiting for you'`."
+                "새 일을 시작하면 다시 어림해 `{prefix} report`로 알린다. 사용자를 기다리기 전에는 \
+                 `--activity 'Waiting for you'`로 보고한다."
             ))
         }
         "PostToolUse" => {
@@ -191,14 +217,28 @@ pub fn respond(rec: &mut Progress, kind: &str, prefix: &str, now_ms: u64, reentr
             if since(rec.reminded_at) && !done && (rec.reported_at == 0 || since(rec.reported_at)) {
                 rec.reminded_at = now_ms;
                 Some(format!(
-                    "자연스러운 경계라면 진행을 보고할 때다: `{prefix} report --percent N --activity '...'`. 지금 일을 다시 \
-                     어림하고 진행을 지어내지 않는다. 사용자에게 묻기 전에는 `Waiting for you`로 보고한다."
+                    "자연스러운 경계라면 진행을 보고할 때다: `{prefix} report --percent N --activity '...'`(다시 어림하고 \
+                     지어내지 않는다)."
                 ))
             } else {
                 None
             }
         }
         _ => None,
+    }
+}
+
+/// 진행 안내와 coordinator auto mode 안내(상태, 글)를 한 글로 묶는다. auto mode는 이 세션에 마지막으로 넣은 상태와 다를
+/// 때만 넣는다: SessionStart의 `respond`가 기록을 비우므로 compaction 뒤에는 다시 들어가고, 같은 상태는 대화에 이미 있다.
+pub fn with_auto_mode(rec: &mut Progress, progress: Option<String>, auto: Option<(&str, &str)>) -> Option<String> {
+    let auto = auto.filter(|(state, _)| rec.auto_mode.as_deref() != Some(*state)).map(|(state, text)| {
+        rec.auto_mode = Some(state.to_string());
+        text
+    });
+    match (progress, auto) {
+        (Some(progress), Some(auto)) => Some(format!("{progress}\n\n{auto}")),
+        (progress, None) => progress,
+        (None, Some(auto)) => Some(auto.to_string()),
     }
 }
 
@@ -599,8 +639,9 @@ mod tests {
     fn automation_reentry_is_session_start_context_only() {
         let mut rec = Progress::default();
         let reentry = "자동화 기억 재독: /work/.aaa/demo-t-0001/memory/memory.md";
+        let reader = Reader { thread: true, reentry: Some(reentry) };
         for kind in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
-            let text = respond(&mut rec, kind, "aaa", 1_000_000, Some(reentry)).unwrap_or_default();
+            let text = respond(&mut rec, kind, "aaa", 1_000_000, reader, false).unwrap_or_default();
             assert_eq!(text.contains(reentry), kind == "SessionStart", "{kind}: {text}");
         }
     }
@@ -609,24 +650,70 @@ mod tests {
     /// `reminders_are_throttled_to_once_a_minute_and_stop_at_done`(초를 ms로)
     #[test]
     fn session_start_guides_and_reminders_are_throttled_to_once_a_minute() {
-        let mut rec = Progress { percent: Some(50), reported_at: 5, reminded_at: 0 };
-        let text = respond(&mut rec, "SessionStart", "/p/aaa", 1_000_000, None).unwrap();
+        let mut rec = Progress { percent: Some(50), reported_at: 5, reminded_at: 0, auto_mode: Some("on".into()) };
+        let thread = Reader { thread: true, reentry: None };
+        let text = respond(&mut rec, "SessionStart", "/p/aaa", 1_000_000, thread, false).unwrap();
         assert!(text.contains("`/p/aaa report --percent 25"), "{text}");
         assert!(!text.contains("자동화 기억"), "일반 thread에 기억 재독 안내가 섞였다: {text}");
-        assert_eq!(rec, Progress { reported_at: 0, percent: None, reminded_at: 1_000_000 });
+        assert_eq!(rec, Progress { reported_at: 0, percent: None, reminded_at: 1_000_000, auto_mode: None });
 
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_030_000, None).is_none());
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_061_000, None).is_some());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_030_000, thread, false).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_061_000, thread, false).is_some());
         assert_eq!(rec.reminded_at, 1_061_000);
         // 새 보고도 1분 동안 알림을 멈춘다
         rec.reported_at = 1_100_000;
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_130_000, None).is_none());
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_200_000, None).is_some());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_130_000, thread, false).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 1_200_000, thread, false).is_some());
         rec.percent = Some(100);
-        assert!(respond(&mut rec, "PostToolUse", "aaa", 9_000_000, None).is_none());
-        assert!(respond(&mut rec, "UserPromptSubmit", "aaa", 9_001_000, None).unwrap().contains("Waiting for you"));
-        assert!(respond(&mut rec, "Stop", "aaa", 9_002_000, None).is_none());
+        assert!(respond(&mut rec, "PostToolUse", "aaa", 9_000_000, thread, false).is_none());
+        assert!(
+            respond(&mut rec, "UserPromptSubmit", "aaa", 9_001_000, thread, false).unwrap().contains("Waiting for you")
+        );
+        assert!(respond(&mut rec, "Stop", "aaa", 9_002_000, thread, false).is_none());
         let out: Value = serde_json::from_str(&output("PostToolUse", "hi")).unwrap();
         assert_eq!(out, json!({"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"hi"}}));
+    }
+
+    /// 진행 안내는 역할별이다: thread만 report.md `## 진행` 줄을 받고, 외부 푸시 정책은 둘 다 받지 않는다(coordinator
+    /// 안내에 있다). aaa가 친 입력(inbox 알림)에는 매 입력 알림을 넣지 않고 기록도 바꾸지 않는다.
+    #[test]
+    fn guidance_follows_the_reader_and_skips_prompts_typed_by_aaa() {
+        let mut rec = Progress::default();
+        let coordinator = respond(&mut rec, "SessionStart", "aaa", 1, Reader::default(), false).unwrap();
+        let thread =
+            respond(&mut rec, "SessionStart", "aaa", 1, Reader { thread: true, reentry: None }, false).unwrap();
+        assert!(!coordinator.contains("`## 진행`") && thread.contains("`## 진행`"), "{coordinator}\n{thread}");
+        assert!(!thread.contains("외부 푸시") && !coordinator.contains("외부 푸시"));
+        let nudge = json!({"hook_event_name":"UserPromptSubmit","prompt":"[aaa inbox] t-0001 new report (aaa inbox list demo)"});
+        let person = json!({"hook_event_name":"UserPromptSubmit","prompt":"배포해 줘"});
+        assert!(
+            typed_by_aaa(&nudge)
+                && !typed_by_aaa(&person)
+                && !typed_by_aaa(&json!({"hook_event_name":"UserPromptSubmit"}))
+        );
+        let before = rec.clone();
+        assert_eq!(respond(&mut rec, "UserPromptSubmit", "aaa", 120_000, Reader::default(), true), None);
+        assert_eq!(rec, before, "알림을 넣지 않은 입력은 다음 알림 시각을 바꾸지 않는다");
+        let prompt = respond(&mut rec, "UserPromptSubmit", "aaa", 120_000, Reader::default(), false).unwrap();
+        assert!(prompt.contains("새 일을") && prompt.contains("Waiting for you") && prompt.len() < 200, "{prompt}");
+    }
+
+    /// coordinator auto mode 안내는 SessionStart(compaction 포함)와 상태가 바뀐 뒤 첫 입력에만 들어간다. 같은 상태의 inbox
+    /// 알림에는 아무것도 넣지 않는다(E2E100은 compaction hook에 `auto_mode: on`이 있는지 본다)
+    #[test]
+    fn auto_mode_is_added_at_session_start_and_when_it_changes() {
+        let mut rec = Progress::default();
+        let reader = Reader::default();
+        let mut hook = |kind: &str, by_aaa: bool, state: &str| {
+            let progress = respond(&mut rec, kind, "aaa", 1, reader, by_aaa);
+            with_auto_mode(&mut rec, progress, Some((state, &format!("aaa coordinator auto_mode: {state}"))))
+        };
+        let start = hook("SessionStart", false, "off").unwrap();
+        assert!(start.contains("# 진행 보고(aaa)") && start.ends_with("aaa coordinator auto_mode: off"), "{start}");
+        assert_eq!(hook("UserPromptSubmit", true, "off"), None, "같은 상태의 inbox 알림");
+        assert!(!hook("UserPromptSubmit", false, "off").unwrap().contains("auto_mode"), "같은 상태의 사람 입력");
+        assert_eq!(hook("UserPromptSubmit", true, "on").as_deref(), Some("aaa coordinator auto_mode: on"));
+        assert_eq!(hook("UserPromptSubmit", true, "on"), None);
+        assert!(hook("SessionStart", false, "on").unwrap().ends_with("aaa coordinator auto_mode: on"), "compaction 뒤");
     }
 }

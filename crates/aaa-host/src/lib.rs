@@ -1982,12 +1982,15 @@ impl Host {
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
             }
-            FrontRequest::Context { project, peek } => self.context(&project, peek).await.map(|mut c| {
-                if role.can_control() {
-                    self.library_notice_links(&mut c.inbox);
-                }
-                FrontResponse::Context(c)
-            }),
+            FrontRequest::Context { project, peek } => {
+                let peek = peek || !self.inbox_seen_by(&project, actor);
+                self.context(&project, peek).await.map(|mut c| {
+                    if role.can_control() {
+                        self.library_notice_links(&mut c.inbox);
+                    }
+                    FrontResponse::Context(c)
+                })
+            }
             FrontRequest::WorkspaceDashboard { query } => {
                 self.workspace_dashboard(query).map(FrontResponse::WorkspaceDashboard)
             }
@@ -2165,17 +2168,19 @@ impl Host {
                 self.db.audit(actor, "preferences_set", &doc.revision.to_string());
                 Ok(FrontResponse::Preferences(doc))
             }
-            FrontRequest::Inbox { project, all, peek } => self.inbox(&project, all, peek).map(|mut p| {
-                if role.can_control() {
-                    self.library_notice_links(&mut p.items);
-                }
-                FrontResponse::Inbox {
-                    items: p.items,
-                    done: None,
-                    omitted_open: p.omitted_open,
-                    omitted_done: p.omitted_done,
-                }
-            }),
+            FrontRequest::Inbox { project, all, peek } => {
+                self.inbox(&project, all, peek || !self.inbox_seen_by(&project, actor)).map(|mut p| {
+                    if role.can_control() {
+                        self.library_notice_links(&mut p.items);
+                    }
+                    FrontResponse::Inbox {
+                        items: p.items,
+                        done: None,
+                        omitted_open: p.omitted_open,
+                        omitted_done: p.omitted_done,
+                    }
+                })
+            }
             FrontRequest::InboxDone { project, ids, all } => {
                 self.inbox_done(&project, &ids, all, actor).map(|(done, p)| FrontResponse::Inbox {
                     items: p.items,

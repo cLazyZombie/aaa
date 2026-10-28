@@ -1,7 +1,7 @@
 import { token as fixtureToken } from "../../../scripts/fixture-secret.mjs";
 // 웹 E2E 공통 준비: 실험실(host·agent·가짜 push·구독 서버·시험 프로그램)과 Chromium, 단계·기다림·화면·IME·push 도우미.
 // spec(web/e2e/specs/*.mjs) 하나를 한 프로세스에서 돈다(lib/child.mjs). 이 파일을 불러오면 실험실을 만든다: 입구(web.e2e.mjs)는
-// 불러오지 않는다. 실행·고르기는 web.e2e.mjs 머리, 쓰는 법은 docs/testing.md 「웹 E2E」.
+// 불러오지 않는다. 실행·고르기는 web.e2e.mjs 머리, 쓰는 법은 docs/testing-rules.md 「웹 E2E」.
 
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";

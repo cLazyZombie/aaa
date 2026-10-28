@@ -15,7 +15,7 @@ function fail(offenders, instruction) {
 }
 
 const HOW =
-  "정한 시간이 아니라 기다리는 것을 기다린다(docs/testing.md 「기다리기」): 관찰할 수 있는 사건(host 흐름 사건·`pane wait-output`·" +
+  "정한 시간이 아니라 기다리는 것을 기다린다(docs/testing-rules.md 「기다리기」): 관찰할 수 있는 사건(host 흐름 사건·`pane wait-output`·" +
   "`aaa ticker tick`·화면 표지·fake 기록)을 기다리거나, 시한이 있는 반복으로 상태를 본다. 일부러 고정한 기다림(아무것도 오지 않음 증명)은 " +
   "그 줄이나 윗줄에 `// fixed wait: <이유>`를 단다. fixed-sleeps.json은 올리지 않는다. 파일 이름을 바꿨으면 같은 수로 새 경로에 옮긴다.";
 

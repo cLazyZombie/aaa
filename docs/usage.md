@@ -214,7 +214,7 @@ aaa task edit d-0001 --profile codex --machine mac-a --user-request '사용자�
 
 ### 머신 이름 바꾸기
 
-`aaa machine rename mac-b mac-c` 또는 설정 → 머신의 「이름 바꾸기」를 쓴다. 재등록·승인·서비스 재설치·재시작은 필요 없다. 열린 pane·thread·세션 ID와 장치 키는 그대로다. 다른 머신·등록 대기 이름·host 이름과 겹치거나 이름 규칙(영문·숫자·`._-`, 1~64자)을 벗어나면 거부한다. host 자신의 이름은 로컬 agent 실행 설정과 묶여 있어 이 기능으로 바꾸지 않는다.
+`aaa machine rename mac-b mac-c` 또는 설정 → 머신의 「이름 바꾸기」를 쓴다. 재등록·승인·서비스 재설치·재시작은 필요 없다. 열린 pane·thread·세션 ID와 장치 키는 그대로다. 다른 머신·등록 대기 이름·host 이름과 겹치거나 이름 규칙(영문·숫자·`._-`, 1~64자)을 벗어나면 거부한다. host 자신의 이름은 로컬 agent 실행 설정과 묶여 있어 이 기능으로 바꾸지 않는다. aaa 세션 안의 agent(coordinator·thread)는 요청할 수 없다.
 
 프로젝트 설정의 repos/workspaces, TASKS.md의 모델@머신, 예약의 승인판·선택 고정, 완료 보관의 복원 블록, 자동화와 예전 routine/mission의 머신 칸, workspace 허용·배포·thread 기록의 표시도 따라 바뀐다. 예약 기동·자동화 실행·workspace 지표 회수 중이면 충돌을 알린다. 끝난 뒤 다시 요청한다. 당시 증거인 감사 로그·명령 출력·설치 계획/영수증·보고서·brief·사용자가 쓴 메모·경로·OS/Tailscale 이름은 바꾸지 않는다. 예전 이름으로 만든 외부 셸 스크립트나 따로 보관한 설정은 사용자가 고친다.
 
@@ -223,3 +223,21 @@ host의 등록 ID가 이름의 정본이다. `machine_label.v1` agent는 변경 
 변경은 파일별 잠금·원문 대조와 SQLite 트랜잭션으로 처리한다. 파일과 DB 사이에서 host가 종료돼도 시작할 때 journal을 복구한다. 복구 중 직접 편집을 발견하면 그 글을 덮지 않고 경로를 알리며 멈춘다.
 
 할 일 메모를 보태려면 `aaa task edit <ID> --add-note "한 줄"`을 여러 번 쓴다. `--note`는 전체 교체, `--clear-notes`는 전체 삭제다. 세 방식은 함께 쓸 수 없다. 기존 메모 줄이 빠지거나 바뀌면 저장 결과에 「메모 N줄→M줄」과 기록 번호가 나온다. `aaa --json task log`의 해당 기록 `before`에서 이전 원문을 찾는다. 웹 상세의 「메모 추가」는 손대지 않은 일에 바로 저장하고, 고치는 중이거나 새 일이면 초안에 더해 「저장」 때 함께 쓴다. 잘못된 제목은 CLI·웹 저장에서 거부하며 thread 번호는 연결 칸, 상태·긴 글은 메모로 옮긴다.
+
+### 끝난 thread의 후속
+
+끝난 thread를 resolve하기 전에 보고·요약의 Next를 확인한다. 후속이 남으면 후속 할 일을 만들고 `aaa thread followup <thread> --id <후속 ID> --task <d-ID>`로 잇거나, 일부러 버리는 사유를 `--reason-file <파일>`로 기록한다. 후속 ID는 `aaa thread show <thread>`가 보인다. 정리만 남은 줄은 `정리:`로 구분하고 정리를 마친 사실을 사유로 기록한다. 일반 inbox 종료·완료 체크·연결 해제로는 후속이 닫히지 않는다. 자동화가 시작한 thread의 Next는 그 자동화의 다음 실행이 맡으므로 후속 원장에서 뺀다. 시작 출처로만 판정하며 이름·문구로 빼지 않는다.
+
+### 프로젝트 memory
+
+프로젝트 폴더의 `MEMORY.md`(색인)와 `memory/*.md`는 thread를 시작할 때 brief에 들어간다. 이름순으로 host.toml `[projects] brief_memory_chars`(기본 32,000자)까지 넣고, 넘친 파일은 이름만 적는다. coordinator는 세션을 시작하거나 compaction한 뒤 직접 읽는다. 파일 맨 앞에 머리를 두면 받는 thread를 고른다.
+
+```
+---
+audience: coordinator
+---
+```
+
+- `audience: coordinator`: thread brief에 넣지 않는다(coordinator 운영 규칙).
+- `repos: rc, pt`: 그 저장소(project.toml repos 경로의 마지막 이름)에서 도는 thread에만 넣는다. 작업 폴더 thread는 받지 않는다.
+- 머리가 없거나 닫히지 않은 파일은 모든 thread에 넣는다. 머리는 brief에 싣지 않고, 뺀 파일은 글자 수 상한에 세지 않는다.

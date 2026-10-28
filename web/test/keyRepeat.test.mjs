@@ -1,5 +1,5 @@
 // 키 막대 꾹 누름 되풀이(src/herdr/keyRepeat.ts, herdr-web-ui `src/lib/keyRepeat.test.ts`를 옮겼다). 타이머로 늦게 보내는 일의
-// 「없음」(뗀 뒤 한 번 더, 밀어서 취소한 누름)은 E2E가 sleep으로 어림하지 않고 여기서 가짜 시계로 본다(docs/testing.md 「웹 E2E」).
+// 「없음」(뗀 뒤 한 번 더, 밀어서 취소한 누름)은 E2E가 sleep으로 어림하지 않고 여기서 가짜 시계로 본다(docs/testing-rules.md 「웹 E2E」).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {

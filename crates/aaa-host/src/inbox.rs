@@ -303,6 +303,18 @@ impl Host {
 
     /// `aaa inbox list`: peek가 아니면 보인 항목을 「봤다」로 표시한다
     /// 실은 항목만 「봤다」로 표시한다: 못 실은 항목은 다음에 보일 때 처음 보는 것이다.
+    /// inbox 항목을 「봤다」로 남기는 호출자: 세션 밖의 사람(터미널·웹)과 그 프로젝트 coordinator. thread·자동화 pane이
+    /// context·inbox를 읽어도 coordinator 알림(nudge)이 빠지지 않는다(t-1225: thread brief가 `aaa context`를 안내했다).
+    pub(crate) fn inbox_seen_by(&self, project: &str, actor: &str) -> bool {
+        match self.coordinator_project_of_actor(actor) {
+            Some(p) => p == project,
+            None => {
+                !crate::front::in_session(actor)
+                    && !["worker:", "evaluator:", "detached:"].iter().any(|p| actor.starts_with(p))
+            }
+        }
+    }
+
     pub(crate) fn inbox(&self, project: &str, all: bool, peek: bool) -> Result<InboxPage, ErrorBody> {
         self.project_dir(project)?;
         let mut items = self.db.inbox_list(Some(project), all).map_err(internal)?;
@@ -1285,6 +1297,34 @@ mod tests {
         let p = fit_inbox(vec![mk(1, false), big, mk(9, false)], size * 2);
         assert_eq!(ids(&p), ["0001"]);
         assert_eq!(p.omitted_open, 2);
+    }
+
+    /// thread·자동화 pane이 context·inbox를 읽어도 새 항목은 「봤다」가 되지 않는다(coordinator 알림이 빠지지 않는다).
+    /// 세션 밖의 사람은 지금처럼 「봤다」를 남긴다(t-1225)
+    #[tokio::test]
+    async fn reading_from_a_thread_pane_keeps_the_coordinator_nudge() {
+        use aaa_proto::{DeviceRole, FrontRequest};
+        let state = std::env::temp_dir().join(format!("aaa-inbox-seen-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.projects.root = state.join("projects").display().to_string();
+        let h = Host::open(cfg, state.clone()).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        h.inbox_add("demo", "thread-state", "t-0001", "new report", "보고");
+        let unseen = |h: &Host| h.db.inbox_list(Some("demo"), false).unwrap().iter().filter(|i| !i.seen).count();
+        for actor in ["local:cli@p-thread", "worker:s1"] {
+            let context = FrontRequest::Context { project: "demo".into(), peek: false };
+            h.call(DeviceRole::Local, actor, context).await.unwrap();
+            let list = FrontRequest::Inbox { project: "demo".into(), all: false, peek: false };
+            h.call(DeviceRole::Local, actor, list).await.unwrap();
+            assert_eq!(unseen(&h), 1, "{actor}");
+        }
+        h.call(DeviceRole::Local, "local:cli", FrontRequest::Context { project: "demo".into(), peek: false })
+            .await
+            .unwrap();
+        assert_eq!(unseen(&h), 0, "세션 밖의 사람이 본 항목은 다시 알리지 않는다");
+        drop(h);
+        aaa_common::diagnostic::ignored(std::fs::remove_dir_all(&state), "시험 폴더 정리");
     }
 }
 
