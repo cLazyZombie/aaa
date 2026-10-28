@@ -10,6 +10,14 @@ import { isVideoPath } from "./reportMedia.ts";
 
 export type AsksData = { requests: UserRequestView[]; done: AskRecord[]; keepDays: number; autoMode?: AutoMode; autoDecisions?: AutoDecision[]; autoExceptions?: number; autoNext?: string | null };
 
+/** host 첫 쪽으로 자동 결정 목록을 바꾼다. 「더 보기」로 읽은 이전 쪽(첫 쪽보다 오래된 것)은 이전 쪽이 남아 있을 때만 둔다:
+ * 다른 기기에서 지운 결정이 첫 쪽에서 빠져도 이 기기에 남지 않게 한다. */
+export function freshAuto(fresh: AutoDecision[], next: string | null, old: AutoDecision[] = []): AutoDecision[] {
+  const oldest = fresh.at(-1);
+  const older = next && oldest ? old.filter(d => d.at_ms < oldest.at_ms && !fresh.some(f => f.id === d.id)) : [];
+  return [...fresh, ...older].sort((a, b) => b.at_ms - a.at_ms);
+}
+
 export type OpenAsk =
   | { kind: "question"; key: string; at: number; thread: ThreadView & { questions: ThreadQuestions } }
   | { kind: "request"; key: string; at: number; request: UserRequestView }

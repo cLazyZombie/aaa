@@ -1,4 +1,4 @@
-import { AutoDecisionCard } from "./AutoMode";
+import { AutoDecisionCard, useAutoMode } from "./AutoMode";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ListId } from "./ListId";
 // 「답할 것」(plan §8.345, 사용자 결정 10-21 1B·1A 2B): 사이드바 패널(AsksPanel)에 답할 것·답한 것 목록, 본문(AsksView)에 고른 것
@@ -17,7 +17,7 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useLightbox } from "./Lightbox";
 import { markdownImages } from "./reportImages";
-import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, openMeta, type AsksData, type OpenAsk } from "./asksModel";
+import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, freshAuto, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
@@ -66,6 +66,8 @@ export function AsksPanel({
   onMoreAuto: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState<string[] | null>(null);
+  const [confirmAuto, setConfirmAuto] = useState(false);
+  const forgetAuto = useAutoMode()?.forget;
   const [moreBusy, setMoreBusy] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
   const [visible, setVisible] = useState(50);
@@ -89,7 +91,14 @@ export function AsksPanel({
           <AskRow selected={selected} onPick={onPick} key={a.key} k={a.key} kind="task" ids={a.task.short_id ? [a.task.short_id] : []} title={a.task.title} meta={openMeta(a, now)} />
         ),
       )}
-      <h3 className="asks-panel-head">자동으로 정한 것 <span data-testid="asks-auto-count">{auto.length}</span></h3>
+      <h3 className="asks-panel-head">
+        자동으로 정한 것 <span data-testid="asks-auto-count">{auto.length}</span>
+        {canControl && forgetAuto && auto.length > 0 && (
+          <button type="button" className="ghost small asks-forget-all" data-testid="asks-auto-forget-all" onClick={() => setConfirmAuto(true)}>
+            <Trash2 aria-hidden="true" /> 모두 지우기
+          </button>
+        )}
+      </h3>
       {auto.map(autoRow)}
       {data?.autoNext && <button disabled={moreBusy} onClick={() => { setMoreBusy(true); setMoreError(null); void onMoreAuto().catch(e => setMoreError(String(e))).finally(() => setMoreBusy(false)); }}>이전 자동 결정 더 보기</button>}
       {moreError && <p role="alert">{moreError}</p>}
@@ -106,6 +115,15 @@ export function AsksPanel({
       ))}
       {done.length > visible && <button type="button" onClick={() => setVisible(n => n + 50)}>답한 것 더 보기</button>}
       {data && <p className="asks-panel-note">답한 것은 {data.keepDays}일 지나면 자동으로 지운다. 지우면 모든 기기에서 사라진다</p>}
+      {confirmAuto && forgetAuto && (
+        <ConfirmDialog
+          title="자동으로 정한 것 모두 지우기"
+          body={`자동 결정 기록${data?.autoNext ? " 전부" : ` ${auto.length}개`}와 보존한 원문·그림을 모든 기기에서 지운다. 이미 진행한 일은 되돌리지 않는다. 되돌릴 수 없다.`}
+          confirmLabel="모두 지우기"
+          onConfirm={() => forgetAuto([], true)}
+          onClose={() => setConfirmAuto(false)}
+        />
+      )}
       {confirm && (
         <ConfirmDialog
           title="답한 것 모두 지우기"
@@ -586,15 +604,20 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
 }
 
 /** host 「답할 것」 자료(열린 확인 필요 post·답한 것 기록): 연결할 때와 host `asks` 사건마다 읽는다. 조작 응답도 같은 꼴이라 `put`으로 바로 넣는다 */
-export function useAsksData(up: boolean): { data: AsksData | null; put: (r: FrontResponse) => void; moreAuto: () => Promise<void> } {
+export function useAsksData(up: boolean): { data: AsksData | null; put: (r: FrontResponse) => void; moreAuto: () => Promise<void>; forgetAuto: (ids: string[], all: boolean) => Promise<void> } {
   const [data, setData] = useState<AsksData | null>(null);
   const seq = useRef(0);
   const mergeAuto = (fresh: AutoDecision[], old: AutoDecision[] = []) => [...new Map([...old, ...fresh].map(d => [d.id, d])).values()].sort((a, b) => b.at_ms - a.at_ms);
   const put = useCallback((r: FrontResponse) => {
     if (r.kind === "asks") {
       ++seq.current;
-      setData(old => ({ requests: r.requests, done: r.done, keepDays: r.keep_days, autoMode: r.auto_mode,
-        autoDecisions: mergeAuto(r.auto_decisions ?? [], old?.autoDecisions), autoExceptions: r.auto_exceptions, autoNext: r.auto_next }));
+      setData(old => {
+        const fresh = r.auto_decisions ?? [];
+        const autoDecisions = freshAuto(fresh, r.auto_next ?? null, old?.autoDecisions);
+        // 이전 쪽을 남겼으면 그 다음 cursor를 그대로 쓴다
+        const autoNext = autoDecisions.length > fresh.length ? old?.autoNext : r.auto_next;
+        return { requests: r.requests, done: r.done, keepDays: r.keep_days, autoMode: r.auto_mode, autoDecisions, autoExceptions: r.auto_exceptions, autoNext };
+      });
     } else if (r.kind === "auto_decisions") {
       setData(old => old ? { ...old, autoDecisions: mergeAuto(r.decisions, old.autoDecisions) } : old);
     }
@@ -605,6 +628,11 @@ export function useAsksData(up: boolean): { data: AsksData | null; put: (r: Fron
     put(r);
     if (r.kind === "auto_decisions") setData(old => old ? { ...old, autoNext: r.next } : old);
   }, [data?.autoNext, put]);
+  const forgetAuto = useCallback(async (ids: string[], all: boolean) => {
+    const r = await call({ op: "auto_decision_forget", project: "", ids, all });
+    put(r);
+    if (!all) setData(old => old ? { ...old, autoDecisions: (old.autoDecisions ?? []).filter(d => !ids.includes(d.id)) } : old);
+  }, [put]);
   const load = useCallback(() => {
     const n = ++seq.current;
     call({ op: "asks" })
@@ -617,7 +645,7 @@ export function useAsksData(up: boolean): { data: AsksData | null; put: (r: Fron
     if (up) load();
   }, [up, load]);
   useEffect(() => onAsksChanged(load), [load]);
-  return { data, put, moreAuto };
+  return { data, put, moreAuto, forgetAuto };
 }
 
 /** 열쇠 → 본문에 그릴 것 */

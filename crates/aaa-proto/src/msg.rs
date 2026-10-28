@@ -2147,6 +2147,15 @@ pub enum FrontRequest {
         id: String,
         answer: Option<String>,
     },
+    /// 자동 결정 기록을 host 원장에서 지운다(모든 기기). `all`이면 모두. 이미 실행한 일은 되돌리지 않는다.
+    AutoDecisionForget {
+        #[serde(default)]
+        project: String,
+        #[serde(default)]
+        ids: Vec<String>,
+        #[serde(default)]
+        all: bool,
+    },
     /// 사람이 읽는 질문 ID로 선택·직접 답을 기록한다. 일부만 답하면 나머지는 열린 채로 남는다.
     QuestionReply {
         #[serde(default)]
@@ -3476,6 +3485,7 @@ impl FrontRequest {
             | FrontRequest::AutoModeSet { project, .. }
             | FrontRequest::QuestionAutoAnswer { project, .. }
             | FrontRequest::AutoDecisionReview { project, .. }
+            | FrontRequest::AutoDecisionForget { project, .. }
             | FrontRequest::AskForget { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }

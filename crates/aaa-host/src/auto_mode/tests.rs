@@ -277,6 +277,7 @@ async fn long_running_mode_pages_records_and_can_review_an_older_decision() {
                 files_base: None,
             })
             .collect(),
+        forgotten: vec![],
     };
     h.db.set_meta(&key("demo"), &serde_json::to_string(&d).unwrap()).unwrap();
     let mut before = None;
@@ -299,4 +300,78 @@ async fn long_running_mode_pages_records_and_can_review_an_older_decision() {
     assert_eq!(decisions.len(), 1);
     assert_eq!(decisions[0].reconsideration.as_deref(), Some("B"));
     assert_eq!(h.auto_mode("demo").unwrap().decisions, 75);
+}
+
+/// 지우기는 원장·질문 사본과 자동 답만으로 된 「답한 것」 기록을 함께 지운다. 전달을 모르는 기록은 지워도 다시 자동 답하지 않는다.
+#[tokio::test]
+async fn forgetting_decisions_clears_every_list_but_never_reopens_an_auto_resend() {
+    let (h, _lab) = coordinator_host();
+    h.auto_mode_set("demo", true, "local:cli").unwrap();
+    let first = question(&h, 1, "## Questions\n### 1. 배치\n- A 아래 (추천)\n- B 위\n").remove(0);
+    let second = question(&h, 2, "## Questions\n### 1. 색\n- A 파랑\n- B 빨강\n").remove(0);
+    answer(&h, &first, COORD).await.unwrap();
+    answer(&h, &second, COORD).await.unwrap();
+    let dir = h.project_dir("demo").unwrap().join("asks");
+    let auto_only = |h: &Host| {
+        h.db.ask_list("demo")
+            .unwrap()
+            .into_iter()
+            .filter(|a| a.items.iter().any(|q| q.id.as_deref() == Some(first.as_str())))
+            .count()
+    };
+    assert_eq!(auto_only(&h), 1);
+    assert!(dir.join(format!("auto-{first}")).is_dir());
+    let forget = |ids: Vec<String>, all: bool| FrontRequest::AutoDecisionForget { project: "demo".into(), ids, all };
+    for (role, actor) in
+        [(DeviceRole::Reader, "device:reader"), (DeviceRole::Local, COORD), (DeviceRole::Local, "worker:w")]
+    {
+        assert!(h.call(role, actor, forget(vec![format!("auto-{first}")], false)).await.is_err());
+    }
+    assert!(h.call(DeviceRole::Controller, "device:phone", forget(vec![], false)).await.is_err());
+    let events = h.asks_changed.subscribe();
+    let r = h.call(DeviceRole::Controller, "device:phone", forget(vec![format!("auto-{first}")], false)).await.unwrap();
+    let FrontResponse::Asks { auto_decisions, done, .. } = r else { panic!() };
+    assert_eq!(
+        auto_decisions.iter().map(|d| d.question.id.clone().unwrap()).collect::<Vec<_>>(),
+        std::slice::from_ref(&second)
+    );
+    assert!(done.iter().all(|a| a.items.iter().all(|q| q.id.as_deref() != Some(first.as_str()))));
+    assert!(events.has_changed().unwrap());
+    assert!(!dir.join(format!("auto-{first}")).exists());
+    assert_eq!(auto_only(&h), 0);
+    // 답한 질문은 지운 뒤에도 「이미 답한 질문」으로 막힌다.
+    assert!(answer(&h, &first, COORD).await.is_err());
+    // 전달 여부를 모르는 기록을 지워도 같은 ID 예약은 계속 막힌다.
+    let pending = |id: &str| AutoDecision {
+        id: id.into(),
+        run: 0,
+        subject: "coordinator".into(),
+        question: ThreadQuestion {
+            source_number: None,
+            id: None,
+            text: "q".into(),
+            body: None,
+            after: None,
+            choices: vec![],
+        },
+        choice: "A".into(),
+        pick: None,
+        reason: "r".into(),
+        action: "a".into(),
+        reversible: None,
+        decided_by: "coordinator(auto)".into(),
+        at_ms: 1,
+        outcome: "pending".into(),
+        error: None,
+        reviewed: false,
+        reconsideration: None,
+        files_base: None,
+    };
+    h.auto_reserve("demo", pending("auto-q-9999")).unwrap();
+    h.call(DeviceRole::Controller, "device:phone", forget(vec![], true)).await.unwrap();
+    assert!(h.auto_decisions("demo").unwrap().is_empty());
+    assert!(h.auto_reserve("demo", pending("auto-q-9999")).is_err());
+    assert!(
+        h.db.ask_list("demo").unwrap().iter().all(|a| a.items.iter().all(|q| q.id.as_deref() != Some(second.as_str())))
+    );
 }

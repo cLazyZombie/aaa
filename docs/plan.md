@@ -8222,3 +8222,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **표시·안내.** 웹: 할 일 상세 스위치(바로 저장), 새 할 일 폼·「바로 시작」·예약 확인의 칸(확인할 때 먼저 저장), thread 화면 정보 줄의 스위치, 할 일 줄·「모든 thread」·thread 제목의 「자동 병합」 표지. CLI: `task add|edit|reserve --auto-merge`, `thread start --auto-merge`, `thread auto-merge`, `thread show`·`task list`·`context`·`task log` 표시. thread brief 머리에 기동 때 값과 뜻을, 착지 절에 「병합·push는 착지 창 뒤, thread는 값을 바꾸지 않음」을 싣는다. coordinator AGENTS.md는 착지 절과 「요청하지 않으면 하지 않는 것」에 예외를 두고, 세부 명령은 `aaa guide tasks`에 둔다. auto mode는 자동 병합 값을 켜지 않으며 on인 thread의 착지 창은 이미 받은 승인이다.
 - **참고.** t3code의 PR별 auto-merge 켜기·끄기(검사 통과 뒤 병합, 언제든 해제, MIT)와 프로젝트 기본값 덮어쓰기 설정을 보았다. 할 일별 켜기·끄기와 off 기본만 따르고 프로젝트 기본값은 사용자 답대로 두지 않는다. herdr·herdr-projects·herdr-web-ui에는 비슷한 기능이 없다. 외부 코드는 가져오지 않는다.
 - **검증.** host 유닛(사용자 경로·기록·inbox·같은 값·옛 thread 연결·거부 경로), m13 실제 CLI coordinator 근거 필수·brief·context·inbox, brief·guide 문구, 새 E2E119(Chromium 1280 상세·시작 창·thread 스위치·CLI 반영·새 할 일·예약, WebKit 390 thread 스위치)다. 상세는 [자동 병합 검증](testing-auto-merge.md)에 둔다. 착지 기준 main a57ab031의 마지막 §8.529·FRONT_API 1.142·E2E118 다음 번호를 썼으며 착지 때 다시 대조한다.
+
+### 8.531 자동 결정 지우기와 대화창 줄 접기(t-1223)
+
+- **목적.** 사용자 10-28: 「자동 결정 지울수 있게 해줘. ui상으로」, 「대화창에 계속 뜨는건 어떻게 하지?」. 질문 화면 「자동으로 정한 것」은 지울 방법이 없었고, coordinator 대화창은 auto mode를 끄거나 「괜찮음」을 눌러도 최근 자동 결정 20개를 긴 까닭과 함께 대화 끝에 붙였다. 사용자 우선 지시로 지우기·대화창 정리만 먼저 착지하고 보존 일수 자동 삭제는 뒤로 미룬다.
+- **계약.** FRONT_API 1.144: `AutoDecisionForget { project, ids, all }` → `Asks`. 조작 기기만 쓰며(보기 기기·세션 안 CLI·worker 거부), host 원장 `auto-mode:<project>`에서 지우고 `asks_bump`로 모든 기기에 알린다. 지운 결정의 질문 사본(`<프로젝트>/asks/auto-<q-ID>/`)과, 질문이 모두 자동 답이라 웹이 「답한 것」에서 숨기던 기록도 함께 지워 다른 목록에 다시 나타나지 않게 한다. 이미 실행한 일은 되돌리지 않는다.
+- **재전송 방지.** 전달 실패·전달 여부를 모르는 결정(`failed`·`pending`)을 지우면 그 ID를 원장 `forgotten`에 남겨 같은 질문의 자동 답 예약을 계속 거부한다(§8.479 「자동 재전송하지 않는다」). 답이 전달된 결정은 질문의 답 기록이 같은 일을 막는다.
+- **질문 화면.** 「자동으로 정한 것」 머리에 「모두 지우기」(확인 창, 더 읽지 않은 이전 쪽까지 `all`), 결정 카드에 「지우기」(확인 창). 「답한 것」의 지우기와 같은 모양이며 도움말 문구는 넣지 않는다. 웹은 `Asks`를 받을 때 첫 쪽으로 목록을 바꾸고 「더 보기」로 읽은 이전 쪽만 남겨, 다른 기기에서 지운 결정이 남지 않게 한다(`freshAuto`).
+- **대화창.** 같은 원장에서 답을 전달했고 아직 확인하지 않은 결정만 보인다. 접은 한 줄(「자동으로 정함 · 확인 안 함 N」)로 시작하고, 펼친 목록은 높이 상한 안에서 굴러가며 줄마다 질문·답·추천 여부만 한 줄로 보인다(까닭은 카드에서). 줄에서 열기·확인(= 「괜찮음」)·지우기를 한다. 대화 기록 줄에는 시각이 없어 결정한 자리에 끼우지 않고 접기를 택했다.
+- **참고.** 기존 「답한 것」 지우기·모두 지우기(§8.345)와 herdr-web-ui ConfirmDialog를 그대로 쓴다. 새 외부 의존성은 없다.
+- **검증.** host 유닛 `forgetting_decisions_clears_every_list_but_never_reopens_an_auto_resend`, 웹 유닛 `freshAuto`, E2E100 마지막 단계(두 기기 대화창 접힘·펼침 높이·확인·지우기, 카드 지우기, 모두 지우기 뒤 목록·대화창·답한 것, Reader 거부). 상세는 [자동 결정 지우기 검증](testing-auto-decision-forget.md)에 둔다. 기준 main 6eeeaa36의 마지막 §8.530·FRONT_API 1.143·E2E119 다음 번호이며 착지 때 다시 대조한다.
