@@ -353,6 +353,9 @@ pub struct StartArgs {
     pub(crate) pool: Option<crate::account_pool::PoolRequest>,
     pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     pub(crate) reservation: Option<(String, String)>,
+    /// 머신 독점 예약을 무시한 시작(누가·사용자 지시 근거, `reservation_override`). 없으면 예약이 막는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) machine_override: Option<String>,
     pub account: Option<String>,
     pub holds: Vec<String>,
     pub project: String,
@@ -1701,6 +1704,7 @@ impl Host {
         }
         let mid = self.resolve_machine(a.machine.as_deref())?;
         self.check_automatic_workspace(&a, &mid)?;
+        self.check_machine_reservation(&a, &mid)?;
         let conn = self.live_conn(&mid)?;
         self.check_health(&mid)?;
         // task 첨부는 그 머신 작업 폴더로 넘긴다: 받지 못하는 agent면 thread를 만들기 전에 거부한다(plan §8.327)
@@ -1796,6 +1800,15 @@ impl Host {
                 a.over_limit.is_none().then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
                 |tx, id| {
+                    if a.machine_override.is_none() {
+                        crate::machine_reserve::check_tx(
+                            tx,
+                            &mid,
+                            &a.project,
+                            a.start_task.as_ref().and_then(|t| t.id.as_deref()),
+                            aaa_common::util::now_ms(),
+                        )?;
+                    }
                     if let Some(input) = &selection {
                         let (account, allocation) = input.select(tx, aaa_common::util::now_ms())?;
                         anyhow::ensure!(

@@ -84,4 +84,37 @@ export default async function () {
       aaa("thread", "resolve", thread.id, "--skip-copy");
     } finally { await p.context().close(); }
   });
+
+  await step("머신 독점 예약·비중: 웹 걸기·풀기, 지정 시작 대기, Reader 잠김", async () => {
+    fs.writeFileSync(`${root}/projects/demo/TASKS.md`, "## Backlog\n- [ ] 측정 일 (fake) [작업 폴더]\n  예약 주인\n- [ ] 다른 일 (fake@labA) [작업 폴더]\n  예약 대기 시험\n");
+    const tasks = aaa("task", "list").tasks;
+    const holder = tasks.find(t => t.title === "측정 일"), other = tasks.find(t => t.title === "다른 일");
+    const machine = () => aaa("machine", "list").machines.find(m => m.name === "labA");
+    const p = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
+    try {
+      await open(p);
+      await p.getByLabel("예약 주인").fill(holder.short_id);
+      await p.getByLabel("예약 까닭").fill("빌드 측정");
+      await p.getByTestId("machine-reserve-form").getByRole("button", { name: "걸기" }).click();
+      await p.getByTestId("machine-reservation").waitFor();
+      assert.equal(machine().reservation.holder, holder.short_id);
+      assert.throws(() => aaa("thread", "start", "--from-task", other.short_id, "--link-task"), /labA 독점 예약/);
+      const reader = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 })).page;
+      try {
+        await open(reader);
+        assert.equal(await reader.getByTestId("machine-reservation").getByRole("button", { name: "풀기" }).isDisabled(), true);
+        await shot(p, "machine-reservation-owner-390");
+      } finally { await reader.context().close(); }
+      await p.getByTestId("machine-reservation").getByRole("button", { name: "풀기" }).click();
+      await p.getByTestId("machine-reserve-form").waitFor();
+      assert.equal(machine().reservation, undefined);
+      await p.getByLabel("labA 비중").fill("0");
+      await p.getByTestId("machine-weight").getByRole("button", { name: "저장" }).click();
+      await domIs(p, "비중 0 반영", () => document.querySelector('[data-testid="machine-weight"] strong')?.textContent === "0 (자동 배정 안 함)");
+      assert.equal(machine().weight, 0);
+      await p.getByTestId("machine-weight").getByRole("button", { name: "CPU 수로" }).click();
+      await domIs(p, "CPU 수로 되돌림", () => document.querySelector('[data-testid="machine-weight"] strong')?.textContent?.endsWith("(CPU 수)") === true);
+      assert.equal(machine().weight, undefined);
+    } finally { await p.context().close(); }
+  });
 }

@@ -621,6 +621,7 @@ fn queued_job(l: &Lab, id: &str) -> Job {
             pool: Some(PoolRequest { id: id.into(), size: AccountTaskSize::Medium }),
             over_limit: None,
             reservation: None,
+            machine_override: None,
             account: None,
             holds: vec![],
             project: "demo".into(),

@@ -34,6 +34,9 @@ pub(crate) fn start_key(p: &str, n: &str, event: &str) -> String {
 fn subset(new: &[String], old: &[String], all_when_empty: bool) -> bool {
     all_when_empty && old.is_empty() || (!all_when_empty || !new.is_empty()) && new.iter().all(|s| old.contains(s))
 }
+fn matches_repo(path: &str, name: &str) -> bool {
+    path == name || Path::new(path).file_name().is_some_and(|s| s == name)
+}
 fn sorted(items: &mut Vec<String>) {
     items.sort();
     items.dedup();
@@ -83,10 +86,15 @@ pub(crate) struct Scope {
     source_repos: BTreeSet<(String, String)>,
     targets: BTreeMap<String, Option<String>>,
     profiles: BTreeSet<String>,
+    /// `machines`를 비운 자동 머신 규칙의 workspace 이름(저장소 이름 또는 `작업 폴더`). 후보는 그 workspace 자동 배정을
+    /// 사람이 허용한 머신이다. 고정 머신 규칙은 생략해 기존 승인 hash를 그대로 둔다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auto: Option<String>,
 }
 impl Scope {
     fn covers(&self, new: &Self) -> bool {
-        self.command == new.command
+        self.auto == new.auto
+            && self.command == new.command
             && self.query_machine == new.query_machine
             && covers_on(&self.on, &new.on)
             && new.targets.iter().all(|(m, r)| self.targets.get(m) == Some(r))
@@ -100,6 +108,8 @@ pub(crate) struct Choice {
     pub machine: String,
     pub profile: String,
     pub repo: Option<String>,
+    /// 자동 머신으로 고른 workspace(기동 때 허용을 다시 본다)
+    pub workspace: Option<String>,
 }
 pub(crate) struct StartOutcome {
     pub thread: Option<String>,
@@ -116,14 +126,21 @@ pub(crate) enum Decision {
 
 impl Host {
     pub(crate) fn automation_start_scope(&self, p: &str, r: &Routine, a: &Start) -> Result<Scope, ErrorBody> {
-        let settings = self.settings(p);
-        let registered: Vec<_> = settings
-            .repos
-            .iter()
-            .map(|repo| self.resolve_machine(repo.machine.as_deref()).map(|m| (m, repo.path.clone())))
-            .collect::<Result<_, _>>()?;
-        let matches_repo =
-            |path: &str, name: &str| path == name || Path::new(path).file_name().is_some_and(|s| s == name);
+        let registered = self.registered_repos(p)?;
+        let auto = if a.machines.is_empty() {
+            let workspace = match &a.repo {
+                None => crate::tasks::REPO_DIR.to_string(),
+                Some(name) => {
+                    if !registered.iter().any(|(_, path)| matches_repo(path, name)) {
+                        return Err(bad(format!("do.start.repo: 등록한 저장소에 {name}이 없다")));
+                    }
+                    crate::task_repo::repo_name(name).unwrap_or(name).to_string()
+                }
+            };
+            Some(workspace)
+        } else {
+            None
+        };
         let mut targets = BTreeMap::new();
         for machine in &a.machines {
             let mid = self.resolve_machine(Some(machine))?;
@@ -191,7 +208,16 @@ impl Host {
             source_repos,
             targets,
             profiles: a.profiles.iter().cloned().collect(),
+            auto,
         })
+    }
+    /// project.toml repos의 (머신 id, 경로)
+    fn registered_repos(&self, p: &str) -> Result<Vec<(String, String)>, ErrorBody> {
+        self.settings(p)
+            .repos
+            .iter()
+            .map(|repo| self.resolve_machine(repo.machine.as_deref()).map(|m| (m, repo.path.clone())))
+            .collect()
     }
     pub(crate) fn automation_start_approval(&self, p: &str, r: &Routine) -> Result<Option<(String, bool)>, ErrorBody> {
         let crate::automation::Action::Start(a) = &r.action else { return Ok(None) };
@@ -225,6 +251,11 @@ impl Host {
             }
         };
         let mut text = format!("조건: {condition}\n시작 후보:\n");
+        if let Some(workspace) = &scope.auto {
+            text.push_str(&format!(
+                "- 자동: {workspace} 자동 배정을 허용한 머신(독점 예약·착지 중 제외, 열린 thread÷비중)\n"
+            ));
+        }
         for (mid, path) in &scope.targets {
             text.push_str(&format!(
                 "- {} · {}\n",
@@ -441,8 +472,49 @@ impl Host {
         }
         let mut candidates = Vec::new();
         let mut blocked = Vec::new();
-        for (order, name) in a.machines.iter().enumerate() {
+        // 자동 머신: workspace 허용 → 독점 예약·착지 중 제외 → 열린 thread÷비중 차례. 고정 목록도 예약·착지 중 머신은 뺀다
+        let names: Vec<(String, Option<String>)> = if let Some(workspace) = &scope.auto {
+            let (order, out) = self.auto_machine_order(p, None);
+            blocked.extend(out);
+            let registered = self.registered_repos(p)?;
+            let mut names = Vec::new();
+            for name in order {
+                if !self.workspace_allowed(p, workspace, &name)? {
+                    continue;
+                }
+                let repo = match &a.repo {
+                    None => None,
+                    Some(want) => {
+                        let mid = self.resolve_machine(Some(&name))?;
+                        let found: Vec<_> =
+                            registered.iter().filter(|(m, path)| m == &mid && matches_repo(path, want)).collect();
+                        if found.len() != 1 {
+                            blocked.push(format!("{name} {want} 저장소를 하나로 찾지 못함"));
+                            continue;
+                        }
+                        Some(found[0].1.clone())
+                    }
+                };
+                names.push((name, repo));
+            }
+            if names.is_empty() && blocked.is_empty() {
+                blocked.push(format!("{workspace} 자동 배정을 허용한 연결 머신 없음"));
+            }
+            names
+        } else {
+            a.machines.iter().map(|n| (n.clone(), None)).collect()
+        };
+        let landing = self.landing_machines();
+        for (order, (name, auto_repo)) in names.iter().enumerate() {
             let mid = self.resolve_machine(Some(name))?;
+            if let Some(why) = self.reservation_block(&mid, p, None) {
+                blocked.push(why);
+                continue;
+            }
+            if let Some(t) = landing.get(&mid) {
+                blocked.push(format!("{name} 착지 중({t})"));
+                continue;
+            }
             if self.conn_of(&mid).is_none() {
                 blocked.push(format!("{name} 연결 없음"));
                 continue;
@@ -476,23 +548,30 @@ impl Host {
                 blocked.push(format!("{name} 사용 가능한 profile 없음"));
                 continue;
             }
-            let working = active
-                .iter()
-                .filter(|t| t.machine_id == mid && self.thread_view(t).group == ThreadGroup::Working)
-                .count();
-            let cpu = self
-                .inner
-                .lock()
-                .unwrap()
-                .machines
-                .get(&mid)
-                .and_then(|m| m.health.as_ref())
-                .and_then(|(h, _)| h.cpu_pct)
-                .unwrap_or(101);
-            candidates.push((working, cpu, order, mid, profiles));
+            // 자동 머신은 비중 차례를 그대로 쓴다. 고정 목록은 지금처럼 Working 수·CPU·목록 순서다
+            let (working, cpu) = if scope.auto.is_some() {
+                (0, 0)
+            } else {
+                let working = active
+                    .iter()
+                    .filter(|t| t.machine_id == mid && self.thread_view(t).group == ThreadGroup::Working)
+                    .count();
+                let cpu = self
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .machines
+                    .get(&mid)
+                    .and_then(|m| m.health.as_ref())
+                    .and_then(|(h, _)| h.cpu_pct)
+                    .unwrap_or(101);
+                (working, cpu)
+            };
+            let repo = auto_repo.clone().or_else(|| scope.targets.get(&mid).cloned().flatten());
+            candidates.push((working, cpu, order, mid, profiles, repo));
         }
-        candidates.sort_by_key(|(work, cpu, order, _, _)| (*work, *cpu, *order));
-        let Some((_, _, _, mid, profiles)) = candidates.into_iter().next() else {
+        candidates.sort_by_key(|(work, cpu, order, _, _, _)| (*work, *cpu, *order));
+        let Some((_, _, _, mid, profiles, repo)) = candidates.into_iter().next() else {
             return self.automation_wait(p, r, event, a, now, format!("머신 대기: {}", blocked.join(" · ")));
         };
         let mut profile = profiles[0].clone();
@@ -505,7 +584,7 @@ impl Host {
                 .collect::<Result<_, _>>()?;
             profile = week_profile(&choices, &report).unwrap_or(&profile).to_string();
         }
-        Ok(Decision::Ready(Choice { repo: scope.targets.get(&mid).cloned().flatten(), machine: mid, profile }))
+        Ok(Decision::Ready(Choice { repo, machine: mid, profile, workspace: scope.auto.clone() }))
     }
     pub(crate) async fn automation_start(
         self: &Arc<Self>,
@@ -589,11 +668,12 @@ impl Host {
             },
         };
         let args = crate::orch::StartArgs {
-            automatic_workspace: None,
+            automatic_workspace: choice.workspace,
             start_task: None,
             pool: None,
             over_limit: None,
             reservation: None,
+            machine_override: None,
             account: None,
             holds: vec![],
             project: p.into(),

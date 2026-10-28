@@ -66,6 +66,7 @@ mod library_upload;
 mod lifecycle;
 pub mod link;
 mod machine_rename;
+mod machine_reserve;
 mod machine_setup;
 pub mod migrate;
 mod notice;
@@ -1258,6 +1259,8 @@ impl Host {
 
     pub fn machine_views(&self) -> Vec<MachineView> {
         let host_software = aaa_common::util::software();
+        // DB·할 일 파일은 inner 잠금 밖에서 읽는다
+        let (mut reservations, weights) = (self.machine_reservations(), self.machine_weights());
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i
             .machines
@@ -1280,6 +1283,8 @@ impl Host {
                 sha256: m.build.sha256.clone(),
                 features: m.features.clone(),
                 selfcheck: m.build.selfcheck.clone(),
+                reservation: reservations.remove(id),
+                weight: weights.get(id).copied(),
             })
             .collect();
         v.sort_by(|a, b| b.local.cmp(&a.local).then(a.name.cmp(&b.name)));
@@ -1520,6 +1525,9 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         if matches!(&req, FrontRequest::WorkspaceAccessSet { .. }) && !account_meta::shows_email(role, actor) {
             return Err(err(ErrorCode::Forbidden, "workspace 허용 변경은 Owner(웹 조작 기기·aaa 세션 밖 CLI)만 한다"));
+        }
+        if matches!(&req, FrontRequest::MachineWeightSet { .. }) && !account_meta::shows_email(role, actor) {
+            return Err(err(ErrorCode::Forbidden, "머신 비중 변경은 Owner(웹 조작 기기·aaa 세션 밖 CLI)만 한다"));
         }
         // 계정 인증 파일을 넣고 빼는 것은 host의 세션 밖 터미널만 한다
         if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
@@ -1857,6 +1865,7 @@ impl Host {
             FrontRequest::ThreadStart {
                 over_limit,
                 user_request,
+                ignore_reservation,
                 holds,
                 project,
                 title,
@@ -1873,10 +1882,13 @@ impl Host {
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
                 // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                // 사용자 지시 근거는 한도 무시와 예약 무시가 함께 쓴다
+                let machine_override =
+                    self.reservation_override(&project, ignore_reservation, user_request.as_deref(), actor)?;
                 let over_limit = self.thread_limit_override(
                     &project,
                     over_limit,
-                    user_request.as_deref(),
+                    user_request.as_deref().filter(|_| over_limit || !ignore_reservation),
                     from_task.as_deref(),
                     actor,
                 )?;
@@ -1892,6 +1904,7 @@ impl Host {
                     pool: pool_request,
                     over_limit,
                     reservation: None,
+                    machine_override,
                     account: selected_account,
                     holds,
                     project,
@@ -2639,6 +2652,13 @@ impl Host {
             }
             FrontRequest::EnrollApprove { name, code } => self.approve(&name, &code, actor),
             FrontRequest::MachineRename { name, to } => self.machine_rename(&name, &to, actor),
+            FrontRequest::MachineReserve { machine, project, holder, note, until_ms, user_request } => {
+                self.machine_reserve(&machine, &project, &holder, note, until_ms, user_request, actor)
+            }
+            FrontRequest::MachineRelease { machine, user_request } => {
+                self.machine_release(&machine, user_request, actor)
+            }
+            FrontRequest::MachineWeightSet { machine, weight } => self.machine_weight_set(&machine, weight, actor),
             FrontRequest::MachineRevoke { name } => {
                 // 웹에서는 host 머신 자신을 폐기하지 않는다(그 머신의 agent·화면이 함께 끊긴다: host 터미널에서 한다)
                 if actor.starts_with("device:")

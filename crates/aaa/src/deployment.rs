@@ -268,6 +268,8 @@ mod tests {
                         software_differs: false,
                         features: vec![],
                         selfcheck: None,
+                        reservation: None,
+                        weight: None,
                     };
                     tx.json(&FrontMsg::Event(FrontEvent::State { machines: vec![m], panes: vec![] })).await.unwrap();
                     let FrontMsg::Req { id, body } = rx.control::<FrontMsg>().await.unwrap() else {

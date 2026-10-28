@@ -194,6 +194,18 @@ impl Host {
             verified: "peer+token".into(),
         };
         let actor = format!("post:{}@{}", rec.id, sender.machine);
+        // 자기 머신 독점 예약(`aaa machine reserve`·`release`): 걸거나 푼 뒤 coordinator에게 같은 post로 알린다
+        if matches!(input.topic.as_str(), "machine-hold" | "machine-release")
+            && input.to == "coordinator"
+            && let Err(reason) = self.thread_machine_post(&rec, &input)
+        {
+            self.db.audit(
+                &actor,
+                "post_refuse",
+                &format!("post_id={} topic={} reason={reason}", input.post_id, input.topic),
+            );
+            return refused(reason);
+        }
         self.store_post(&rec.project, sender, input, &actor, Some(&rec), util::now_ms())
     }
     pub(crate) fn front_post(&self, project: &str, input: PostInput, actor: &str) -> Result<PostResult, ErrorBody> {

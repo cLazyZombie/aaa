@@ -312,7 +312,15 @@ features?: Array<string>,
 /**
  * 마지막 연결의 시작 자가 점검(§10.4 6) 요약. 점검이 hello보다 늦게 끝났으면 다음 연결 때 온다
  */
-selfcheck?: MachineSelfcheck, };
+selfcheck?: MachineSelfcheck,
+/**
+ * 지금 걸린 독점 예약(FRONT_API 1.146). 끝났거나 시한이 지난 예약은 싣지 않는다
+ */
+reservation?: MachineReservation,
+/**
+ * 사람이 정한 자동 배정 비중(FRONT_API 1.146). 없으면 건강 보고의 CPU 수를 쓴다. 0이면 자동 배정에서 뺀다
+ */
+weight?: number, };
 
 export type MachineHealth = {
 /**
@@ -355,6 +363,28 @@ warnings: Array<string>, };
 export type MachineInfo = { at_ms: number, os_version: string | null, cpu_model: string | null, claude: string | null, codex: string | null, installation: string | null, work_root: string, };
 
 export type MachineSelfcheck = { pass: boolean, reasons: Array<string>, };
+
+export type MachineReservation = { project: string,
+/**
+ * 주인: `t-NNNN` thread 또는 `d-NNNN` 할 일
+ */
+holder: string,
+/**
+ * 주인이 할 일이면 그 ULID
+ */
+task_id?: string, note?: string,
+/**
+ * 저절로 풀리는 시각(없으면 주인이 끝나거나 풀 때까지)
+ */
+until_ms?: number,
+/**
+ * 건 쪽: `사용자`·`coordinator`·`t-NNNN`(자기 머신을 건 thread)
+ */
+by: string,
+/**
+ * coordinator가 인용한 사용자 지시
+ */
+user_request?: string, at_ms: number, };
 
 export type HealthProblem = { code: string, text: string, };
 
@@ -1157,7 +1187,11 @@ timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pa
 /**
  * FRONT_API 1.112. 사람의 웹 확인 창에서만 일회 전달한다. CLI·세션·저장·응답 금지.
  */
-service_password?: MachineSetupPassword, } | { "op": "machine_setup_check", job: string, } | { "op": "machine_setup_login", job: string, harness: InstallHarness, } | { "op": "machine_setup_list" } | { "op": "enroll_guide" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_rename", name: string, to: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_port", port: number, } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+service_password?: MachineSetupPassword, } | { "op": "machine_setup_check", job: string, } | { "op": "machine_setup_login", job: string, harness: InstallHarness, } | { "op": "machine_setup_list" } | { "op": "enroll_guide" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_rename", name: string, to: string, } | { "op": "machine_revoke", name: string, } | { "op": "machine_reserve", machine: string, project?: string,
+/**
+ * `t-NNNN` thread 또는 할 일(`d-NNNN`·ULID·제목)
+ */
+holder: string, note?: string, until_ms?: number, user_request?: string, } | { "op": "machine_release", machine: string, user_request?: string, } | { "op": "machine_weight_set", machine: string, weight: number | null, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_port", port: number, } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -1181,7 +1215,11 @@ over_limit?: boolean,
 /**
  * coordinator는 해당 task를 강제로 시작하라는 사용자 지시 근거를 한 줄로 남긴다.
  */
-user_request?: string, holds: Array<string>,
+user_request?: string,
+/**
+ * FRONT_API 1.146. 다른 일이 독점 예약한 머신에도 시작한다. 사용자, 또는 `user_request`를 준 coordinator만
+ */
+ignore_reservation?: boolean, holds: Array<string>,
 /**
  * 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
  */
@@ -2241,7 +2279,11 @@ export type AutomationNotice = { text: string | null, text_file: string | null, 
 
 export type AutomationMessage = { thread: string, text?: string | null, text_file?: string | null, };
 
-export type AutomationThread = { title: string, repo?: string | null, profiles: Array<string>, machines: Array<string>, reuse: AutomationReuse, memory: boolean, reports: boolean, close_idle?: string | null, profile_pick: AutomationProfilePick, machine_pick: AutomationMachinePick, wait: Array<string>, wait_max?: string | null, text?: string | null, text_file?: string | null, brief_file?: string | null, };
+export type AutomationThread = { title: string, repo?: string | null, profiles: Array<string>,
+/**
+ * 비우거나 생략하면 자동 머신(workspace 허용·독점 예약·착지 중·비중으로 host가 고른다)
+ */
+machines?: Array<string>, reuse: AutomationReuse, memory: boolean, reports: boolean, close_idle?: string | null, profile_pick: AutomationProfilePick, machine_pick: AutomationMachinePick, wait: Array<string>, wait_max?: string | null, text?: string | null, text_file?: string | null, brief_file?: string | null, };
 
 export type AutomationReuse = "new" | "open";
 

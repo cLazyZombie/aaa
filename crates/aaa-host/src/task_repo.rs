@@ -2,7 +2,8 @@
 //!
 //! - 칸 값은 `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`다. 경로를 받으면 이름으로 바꿔 적는다.
 //! - 띄울 때는 그 이름을 가진 repos 줄(머신마다 경로가 다를 수 있다) 가운데 하나를 고른다. owner·`--machine`이 머신을 정했으면
-//!   그 머신이고, 거기에 그 저장소가 없으면 거부한다. 정하지 않았으면 덜 붐비는 머신이다(`machine_order`).
+//!   그 머신이고, 거기에 그 저장소가 없으면 거부한다. 정하지 않았으면 workspace 허용 → 독점 예약·착지 중 제외 → 덜 붐비는
+//!   머신이다(`auto_machine_order`, 비중은 `machine_reserve.rs`).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -71,14 +72,15 @@ pub(crate) struct Busy {
     /// 모든 프로젝트의 열린(시작 중 포함) thread 수
     pub open: u32,
     pub load_x100: Option<u32>,
+    /// 자동 배정 비중(사람이 정한 값, 없으면 CPU 수). 0이면 자동 배정에서 뺀다
+    pub weight: u32,
 }
 
-/// 덜 붐비는 차례(고를 수 있는 머신만): 열린 thread 적은 차례 → 부하 낮은 차례(모르면 뒤) → 이름
+/// 덜 붐비는 차례(고를 수 있는 머신만): 열린 thread÷비중이 작은 차례 → 부하 낮은 차례(모르면 뒤) → 이름. 비중 0은 뺀다
 pub(crate) fn least_busy_order(mut all: Vec<Busy>) -> Vec<String> {
-    all.retain(|b| b.ready);
-    all.sort_by(|a, b| {
-        (a.open, a.load_x100.unwrap_or(u32::MAX), &a.name).cmp(&(b.open, b.load_x100.unwrap_or(u32::MAX), &b.name))
-    });
+    all.retain(|b| b.ready && b.weight > 0);
+    let key = |b: &Busy| (u64::from(b.open) * 1_000_000 / u64::from(b.weight), b.load_x100.unwrap_or(u32::MAX));
+    all.sort_by(|a, b| (key(a), &a.name).cmp(&(key(b), &b.name)));
     all.into_iter().map(|b| b.name).collect()
 }
 
@@ -105,6 +107,7 @@ impl Host {
                 ready: m.connection == Connection::Connected && m.problems.is_empty(),
                 open: open.get(&m.id).copied().unwrap_or(0),
                 load_x100: m.health.as_ref().and_then(|h| h.load_x100),
+                weight: m.weight.or_else(|| m.health.as_ref().map(|h| h.cpus)).unwrap_or(1),
                 name: m.name,
             })
             .collect();
@@ -115,6 +118,25 @@ impl Host {
     pub(crate) fn machine_order(&self) -> (Vec<String>, Option<String>) {
         let (all, local) = self.busy();
         (least_busy_order(all), local)
+    }
+
+    /// 자동 배정 차례: 덜 붐비는 차례에서 다른 일의 독점 예약·착지 중 머신을 뺀다. 뺀 까닭도 돌려준다.
+    /// `task`는 시작할 할 일 ULID(예약 주인 할 일이면 그 머신에 들어간다)
+    pub(crate) fn auto_machine_order(&self, project: &str, task: Option<&str>) -> (Vec<String>, Vec<String>) {
+        let landing = self.landing_machines();
+        let mut order = Vec::new();
+        let mut blocked = Vec::new();
+        for name in self.machine_order().0 {
+            let Ok(mid) = self.resolve_machine(Some(&name)) else { continue };
+            if let Some(why) = self.reservation_block(&mid, project, task) {
+                blocked.push(why);
+            } else if let Some(t) = landing.get(&mid) {
+                blocked.push(format!("{name} 착지 중({t})"));
+            } else {
+                order.push(name);
+            }
+        }
+        (order, blocked)
     }
 
     /// 칸에 쓸 값(`task_edit`의 저장소 판정)
@@ -161,7 +183,15 @@ impl Host {
         {
             return Err(bad(format!("project.toml repos에 {name} 저장소가 없다")));
         }
-        let (mut order, local) = self.machine_order();
+        let (all, local) = self.machine_order();
+        // 지정한 머신의 예약은 시작 직전 판정(`check_machine_reservation`)이 기다리게 한다
+        let (mut order, blocked) = if a.machine.is_some() {
+            (all, Vec::new())
+        } else {
+            self.auto_machine_order(&a.project, a.start_task.as_ref().and_then(|t| t.id.as_deref()))
+        };
+        let blocked =
+            if blocked.is_empty() { String::new() } else { format!(" · 뺀 머신: {}", blocked.join(", ")) };
         let workspace = want.as_deref().unwrap_or(REPO_DIR);
         let explicit = a.machine.is_some();
         let mut access_warning = None;
@@ -182,7 +212,7 @@ impl Host {
                 return Err(err(
                     ErrorCode::Unavailable,
                     format!(
-                        "자리 대기: {workspace} 자동 배정이 허용된 연결 머신이 없다. 기기 정보에서 workspace 허용을 켠다"
+                        "자리 대기: {workspace} 자동 배정이 허용된 연결 머신이 없다{blocked}. 기기 정보에서 workspace 허용을 켠다"
                     ),
                 ));
             }
@@ -232,7 +262,7 @@ impl Host {
                     if cands.is_empty() {
                         return Err(err(
                             ErrorCode::Unavailable,
-                            format!("자리 대기: {name} 저장소가 있고 자동 배정이 허용된 연결 머신이 없다"),
+                            format!("자리 대기: {name} 저장소가 있고 자동 배정이 허용된 연결 머신이 없다{blocked}"),
                         ));
                     }
                 }
@@ -312,7 +342,7 @@ mod tests {
 
     #[test]
     fn least_busy_skips_unready_then_open_load_name() {
-        let b = |name: &str, ready, open, load| Busy { name: name.into(), ready, open, load_x100: load };
+        let b = |name: &str, ready, open, load| Busy { name: name.into(), ready, open, load_x100: load, weight: 8 };
         let order = least_busy_order(vec![
             b("mac-a", true, 2, Some(10)),
             b("mac-b", true, 1, None),
@@ -321,5 +351,14 @@ mod tests {
             b("mac-e", true, 1, Some(300)),
         ]);
         assert_eq!(order, ["mac-c", "mac-e", "mac-b", "mac-a"]);
+    }
+
+    /// 비중 계약: 열린 thread를 비중(기본 CPU 수)으로 나눈 몫이 작은 머신부터, 비중 0은 자동 배정에서 뺀다
+    #[test]
+    fn least_busy_divides_open_threads_by_weight_and_skips_zero() {
+        let b = |name: &str, open, weight| Busy { name: name.into(), ready: true, open, load_x100: None, weight };
+        // 24코어에 3개(0.125)가 8코어에 2개(0.25)보다 한가하다. 0은 비어 있어도 고르지 않는다
+        let order = least_busy_order(vec![b("small", 2, 8), b("big", 3, 24), b("off", 0, 0)]);
+        assert_eq!(order, ["big", "small"]);
     }
 }

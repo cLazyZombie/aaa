@@ -996,9 +996,13 @@ struct ThreadStartArgs {
     /// 사용자가 직접 실행 한도를 무시하고 시작한다(자동 시작·예약에는 쓰지 않는다)
     #[arg(long)]
     over_limit: bool,
-    /// coordinator가 해당 task를 강제 시작하거나 자동 병합을 바꾸라는 사용자 지시 근거를 남긴다(--over-limit·--auto-merge와 함께)
+    /// coordinator가 해당 task를 강제 시작하거나 자동 병합을 바꾸라는 사용자 지시 근거를 남긴다(--over-limit·--auto-merge·
+    /// --ignore-reservation과 함께)
     #[arg(long)]
     user_request: Option<String>,
+    /// 다른 일이 독점 예약한 머신에도 시작한다(사용자, 또는 --user-request를 준 coordinator)
+    #[arg(long)]
+    ignore_reservation: bool,
     /// 시작하며 이어진 할 일의 자동 병합을 정한다(on: `[병합 준비됨]` 뒤 coordinator가 묻지 않고 착지 창)
     #[arg(long, value_parser = ["on", "off"])]
     auto_merge: Option<String>,
@@ -1581,6 +1585,35 @@ enum MachineCmd {
     Rename {
         name: String,
         to: String,
+    },
+    /// 머신 독점 예약을 건다. 주인이 아닌 일은 자동 배정에서 빠지고 이 머신을 지정한 시작은 풀릴 때까지 기다린다.
+    /// 사용자, 사용자 지시를 인용한 coordinator(--user-request), thread 세션 안이면 자기 머신을 자기 이름으로 건다
+    Reserve {
+        name: String,
+        /// 주인: t-NNNN thread나 할 일(d-NNNN). thread 세션 안에서는 생략한다(그 thread)
+        #[arg(long)]
+        holder: Option<String>,
+        /// 까닭 한 줄
+        #[arg(long)]
+        note: Option<String>,
+        /// 저절로 풀릴 때까지(예: 90m·2h·1d). 생략하면 주인이 끝나거나 풀 때까지
+        #[arg(long = "for")]
+        duration: Option<String>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        user_request: Option<String>,
+    },
+    /// 머신 독점 예약을 푼다(건 쪽과 같은 권한, thread는 자기 예약만)
+    Release {
+        name: String,
+        #[arg(long)]
+        user_request: Option<String>,
+    },
+    /// 자동 배정 비중: 숫자(0은 자동 배정 제외) 또는 auto(CPU 수). 사람만 바꾼다
+    Weight {
+        name: String,
+        value: String,
     },
     Revoke {
         name: String,
@@ -2506,6 +2539,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         start_id,
                         over_limit,
                         user_request,
+                        ignore_reservation,
                         auto_merge,
                         holds,
                         project,
@@ -2531,8 +2565,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     if task_file.as_deref() == Some("-") && summary_file.as_deref() == Some("-") {
                         anyhow::bail!("--task-file과 --summary-file을 둘 다 표준 입력(-)으로 줄 수 없다");
                     }
-                    if user_request.is_some() && !over_limit && auto_merge.is_none() {
-                        anyhow::bail!("--user-request는 --over-limit이나 --auto-merge와 함께 쓴다");
+                    if user_request.is_some() && !over_limit && !ignore_reservation && auto_merge.is_none() {
+                        anyhow::bail!("--user-request는 --over-limit·--ignore-reservation·--auto-merge와 함께 쓴다");
                     }
                     let task = task_text(task_file.as_deref())?;
                     let summary = summary_file.as_deref().map(|f| file_text(f, "요약 파일")).transpose()?;
@@ -2549,7 +2583,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     };
                     let req = FrontRequest::ThreadStart {
                         over_limit,
-                        user_request: user_request.filter(|_| over_limit),
+                        user_request: user_request.filter(|_| over_limit || ignore_reservation),
+                        ignore_reservation,
                         holds,
                         background,
                         project: project.clone(),
@@ -2869,38 +2904,64 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Attach { .. } => {
             anyhow::bail!("{}", aaa_common::front::TUI_REMOVED)
         }
-        Cmd::Machine { cmd } => front(
-            json,
-            match cmd {
-                MachineCmd::List => FrontRequest::Machines,
-                MachineCmd::Workspaces { name, project, allow, deny } => {
-                    let project = project_or_here(project)?;
-                    let request = FrontRequest::WorkspaceAccess { project: project.clone(), machine: name.clone() };
-                    if let Some(workspace) = allow.as_ref().or(deny.as_ref()) {
-                        let view = match front_call(request)? {
-                            Ok(FrontResponse::WorkspaceAccess(view)) => view,
-                            Err(e) => return front_print(json, Err(e)),
-                            _ => anyhow::bail!("workspace 허용 응답이 아니다"),
-                        };
-                        FrontRequest::WorkspaceAccessSet {
-                            project,
-                            machine: name,
-                            workspace: workspace.clone(),
-                            enabled: allow.is_some(),
-                            revision: view.revision,
+        Cmd::Machine { cmd } => {
+            if let Some(code) = machine_post_cmd(json, &cmd)? {
+                return Ok(code);
+            }
+            front(
+                json,
+                match cmd {
+                    MachineCmd::List => FrontRequest::Machines,
+                    MachineCmd::Workspaces { name, project, allow, deny } => {
+                        let project = project_or_here(project)?;
+                        let request = FrontRequest::WorkspaceAccess { project: project.clone(), machine: name.clone() };
+                        if let Some(workspace) = allow.as_ref().or(deny.as_ref()) {
+                            let view = match front_call(request)? {
+                                Ok(FrontResponse::WorkspaceAccess(view)) => view,
+                                Err(e) => return front_print(json, Err(e)),
+                                _ => anyhow::bail!("workspace 허용 응답이 아니다"),
+                            };
+                            FrontRequest::WorkspaceAccessSet {
+                                project,
+                                machine: name,
+                                workspace: workspace.clone(),
+                                enabled: allow.is_some(),
+                                revision: view.revision,
+                            }
+                        } else {
+                            request
                         }
-                    } else {
-                        request
                     }
-                }
-                MachineCmd::Enroll { close: true, .. } => FrontRequest::EnrollClose,
-                MachineCmd::Enroll { open, .. } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
-                MachineCmd::Pending => FrontRequest::EnrollPending,
-                MachineCmd::Approve { name, code } => FrontRequest::EnrollApprove { name, code },
-                MachineCmd::Rename { name, to } => FrontRequest::MachineRename { name, to },
-                MachineCmd::Revoke { name } => FrontRequest::MachineRevoke { name },
-            },
-        ),
+                    MachineCmd::Enroll { close: true, .. } => FrontRequest::EnrollClose,
+                    MachineCmd::Enroll { open, .. } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
+                    MachineCmd::Pending => FrontRequest::EnrollPending,
+                    MachineCmd::Approve { name, code } => FrontRequest::EnrollApprove { name, code },
+                    MachineCmd::Rename { name, to } => FrontRequest::MachineRename { name, to },
+                    MachineCmd::Revoke { name } => FrontRequest::MachineRevoke { name },
+                    MachineCmd::Reserve { name, holder, note, duration, project, user_request } => {
+                        FrontRequest::MachineReserve {
+                            machine: name,
+                            project: project_or_here(project)?,
+                            holder: holder.context("--holder가 필요하다(t-NNNN thread나 d-NNNN 할 일)")?,
+                            note,
+                            until_ms: duration.as_deref().map(until_ms).transpose()?,
+                            user_request,
+                        }
+                    }
+                    MachineCmd::Release { name, user_request } => {
+                        FrontRequest::MachineRelease { machine: name, user_request }
+                    }
+                    MachineCmd::Weight { name, value } => FrontRequest::MachineWeightSet {
+                        machine: name,
+                        weight: if value == "auto" {
+                            None
+                        } else {
+                            Some(value.parse().with_context(|| format!("비중은 0 이상 숫자나 auto다: {value}"))?)
+                        },
+                    },
+                },
+            )
+        }
         Cmd::Library { cmd } => front(
             json,
             match cmd {
@@ -3448,6 +3509,88 @@ fn load_or_exit<T>(r: Result<aaa_config::Loaded<T>, aaa_config::ConfigErrors>) -
         }
         Err(e) => anyhow::bail!("설정을 읽지 못해 시작하지 않는다:\n{}", e.render()),
     }
+}
+
+/// `90m`·`2h`·`1d` 뒤의 시각(ms)
+fn until_ms(s: &str) -> Result<u64> {
+    let (n, unit) = s.trim().split_at(s.trim().len().saturating_sub(1));
+    let n: u64 = n.parse().with_context(|| format!("기간은 90m·2h·1d처럼 쓴다: {s}"))?;
+    let ms = match unit {
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        _ => anyhow::bail!("기간은 90m·2h·1d처럼 쓴다: {s}"),
+    };
+    anyhow::ensure!(n > 0, "기간은 0보다 길다: {s}");
+    Ok(aaa_common::util::now_ms() + n * ms)
+}
+
+/// thread 세션 안(보기 권한)의 `machine reserve|release`: 자기 머신을 post 길로 잡고 푼다(host가 보낸 pane의 thread·머신을
+/// 확인한다). 세션 밖·조작 권한이면 None(Front 요청)
+fn machine_post_cmd(json: bool, cmd: &MachineCmd) -> Result<Option<ExitCode>> {
+    use aaa_proto::{PostInput, PostResult, PostType};
+    use sha2::Digest;
+    let (topic, name, note, duration) = match cmd {
+        MachineCmd::Reserve { name, note, duration, holder, .. } => {
+            ("machine-hold", name, note.clone(), duration.clone().filter(|_| holder.is_none()))
+        }
+        MachineCmd::Release { name, .. } => ("machine-release", name, None, None),
+        _ => return Ok(None),
+    };
+    if std::env::var_os(aaa_agent::hooks::ENV_SESSION).is_none() {
+        return Ok(None);
+    }
+    let rt = runtime()?;
+    let control = rt
+        .block_on(aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()))
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료를 읽지 못해 기존 fallback을 쓴다"))
+        .ok()
+        .is_some_and(|c| c.role.can_control());
+    if control {
+        return Ok(None);
+    }
+    if let MachineCmd::Reserve { holder: Some(_), .. } = cmd {
+        anyhow::bail!("thread는 자기 머신을 자기 이름으로만 예약한다(--holder 없이)");
+    }
+    let body = serde_json::json!({
+        "machine": name,
+        "note": note,
+        "until_ms": duration.as_deref().map(until_ms).transpose()?,
+    });
+    let input = PostInput {
+        post_id: hex::encode(&sha2::Sha256::digest(aaa_common::util::new_id().as_bytes())[..16]),
+        to: "coordinator".into(),
+        post_type: PostType::Notice,
+        topic: topic.into(),
+        title: format!("{name} {}", if topic == "machine-hold" { "독점 예약" } else { "독점 예약 풂" }),
+        body: body.to_string(),
+        needs_user: false,
+        refs: vec![],
+    };
+    let result = rt.block_on(aaa_agent::post::send(serde_json::to_value(input)?))?;
+    if json {
+        println!("{}", serde_json::to_value(&result)?);
+    }
+    Ok(Some(match result {
+        PostResult::Accepted { .. } | PostResult::AutomationCompleted { .. } => {
+            if !json {
+                println!("ok {name}");
+            }
+            ExitCode::SUCCESS
+        }
+        PostResult::Refused { reason, .. } => {
+            if !json {
+                eprintln!("err {reason}");
+            }
+            ExitCode::from(1)
+        }
+        PostResult::Queued { post_id } => {
+            if !json {
+                println!("queued {post_id} · host 연결 뒤 처리한다");
+            }
+            ExitCode::from(2)
+        }
+    }))
 }
 
 fn parse_minutes(s: &str) -> Result<u32> {
@@ -4917,6 +5060,21 @@ fn render_front(r: &FrontResponse) -> String {
                 if m.dev_mode { "\t개발 모드" } else { "" },
                 health_text(m)
             );
+            let weight = match (m.weight, m.health.as_ref().map(|h| h.cpus)) {
+                (Some(w), _) => format!("비중 {w}"),
+                (None, Some(c)) => format!("비중 {c}(CPU)"),
+                (None, None) => "비중 1(CPU 모름)".into(),
+            };
+            let reservation = m.reservation.as_ref().map(|r| {
+                format!(
+                    " · 독점 예약 {}{}{} · {}",
+                    r.holder,
+                    r.note.as_deref().map(|n| format!("({n})")).unwrap_or_default(),
+                    r.until_ms.map(|u| format!(" ~{}", aaa_common::util::utc_iso(u))).unwrap_or_default(),
+                    r.by
+                )
+            });
+            let _ = writeln!(s, "  {weight}{}", reservation.unwrap_or_default());
         }
     };
     match r {

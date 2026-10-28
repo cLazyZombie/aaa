@@ -185,6 +185,7 @@ mod tests {
                 pool: None,
                 over_limit: None,
                 reservation: None,
+                machine_override: None,
                 account: None,
                 holds: vec![],
                 project: "demo".into(),

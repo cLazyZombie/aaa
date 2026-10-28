@@ -827,6 +827,7 @@ impl Host {
                 pool: None,
                 over_limit: None,
                 reservation: Some((row.task_id.clone(), row.approved_block.clone())),
+                machine_override: None,
                 account: None,
                 holds: vec![],
                 project: project.into(),
@@ -843,18 +844,25 @@ impl Host {
             if a.machine.is_none() {
                 let workspace = t.repo.as_deref().unwrap_or(tasks::REPO_DIR);
                 a.automatic_workspace = Some(workspace.into());
+                // workspace 허용 → 독점 예약·착지 중 제외 → 열린 thread÷비중(`auto_machine_order`)
+                let (order, blocked) = self.auto_machine_order(project, Some(&row.task_id));
                 let mut allowed = Vec::new();
-                for m in self.machine_order().0 {
+                for m in order {
                     if self.workspace_allowed(project, workspace, &m)? {
                         allowed.push(m);
                     }
                 }
                 if allowed.is_empty() {
+                    let blocked = if blocked.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · 뺀 머신: {}", blocked.join(", "))
+                    };
                     self.queue_status(
                         project,
                         &row.task_id,
                         S::Queued,
-                        &format!("자리 대기: {workspace} 자동 배정이 허용된 연결 머신이 없다"),
+                        &format!("자리 대기: {workspace} 자동 배정이 허용된 연결 머신이 없다{blocked}"),
                     )?;
                     continue;
                 }
