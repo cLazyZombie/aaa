@@ -77,6 +77,12 @@ impl Lab {
                 let LinkMsg::Req { id, body, .. } = msg else { continue };
                 log.lock().unwrap().push(body.clone());
                 let answer = match body {
+                    AgentRequest::WorkFileWrite { work_dir, path, data } => {
+                        let dest = std::path::Path::new(&work_dir).join(path);
+                        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                        std::fs::write(dest, data.0).unwrap();
+                        AgentResponse::Done
+                    }
                     AgentRequest::MissionInboxStatus { .. } | AgentRequest::WorkFileInboxStatus { .. } => {
                         let names = seen_names.lock().unwrap().clone();
                         AgentResponse::MissionInbox { pending: names.len() as u32, names }
@@ -134,11 +140,25 @@ impl Lab {
                         let bytes = std::fs::read(std::path::Path::new(&work_dir).join(path)).unwrap();
                         AgentResponse::FileChunk { data: B64(bytes[offset as usize..].to_vec()), eof: true }
                     }
-                    AgentRequest::MissionStateWrite { work_dir, path, data, .. }
-                    | AgentRequest::WorkFileWriteChunk { work_dir, path, data, .. } => {
+                    AgentRequest::MissionStateWrite { work_dir, path, data, offset, eof, sha256 }
+                    | AgentRequest::WorkFileWriteChunk { work_dir, path, data, offset, eof, sha256 } => {
+                        use std::io::Write;
                         let dest = std::path::Path::new(&work_dir).join(path);
                         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
-                        std::fs::write(dest, data.0).unwrap();
+                        let mut options = std::fs::OpenOptions::new();
+                        options.write(true).create(true);
+                        if offset == 0 {
+                            options.truncate(true);
+                        } else {
+                            options.append(true);
+                        }
+                        let mut file = options.open(&dest).unwrap();
+                        assert_eq!(file.metadata().unwrap().len(), offset);
+                        file.write_all(&data.0).unwrap();
+                        drop(file);
+                        if eof {
+                            assert_eq!(hex::encode(Sha256::digest(std::fs::read(dest).unwrap())), sha256);
+                        }
                         AgentResponse::Done
                     }
                     AgentRequest::Screen { session } => {
@@ -460,8 +480,10 @@ async fn failed_start_admission_rolls_back_the_row_and_releases_the_claim() {
         start_scope: Some(l.h.automation_start_scope("demo", &r, start).unwrap()),
         observe: None,
         revision: String::new(),
+        original: None,
     };
-    let error = l.h.automation_start("demo", &r, &event, now, "rejected-input").await.err().expect("입장 SQL 오류");
+    let error =
+        l.h.automation_start("demo", &r, &event, now, "rejected-input", &[]).await.err().expect("입장 SQL 오류");
     assert!(error.message.contains("admission rejected"), "{error:?}");
     assert!(l.h.db.threads(Some("demo")).unwrap().is_empty());
     assert!(l.h.db.meta(&crate::auto_start::start_key("demo", "check", "due:rejected")).unwrap().is_none());
@@ -874,7 +896,7 @@ async fn reuse_open_batches_32_and_queues_without_new_thread_even_in_propose() {
             t.automation = Some("check".into());
             t.created_at_ms = at;
             t.pane = Some("s1".into());
-            t.work_dir = Some("/lab/.aaa/demo-t-0001".into());
+            t.work_dir = Some(l.root.join("reuse").to_string_lossy().into());
         })
         .unwrap();
     }
@@ -980,6 +1002,147 @@ async fn reuse_accepts_codex_and_seeds_memory_reentry_only_when_enabled() {
 }
 
 #[tokio::test]
+async fn oversized_flow_replays_after_preservation_failure_and_delivers_originals_once() {
+    for features in [vec!["mission.v1".into()], vec!["work_files.v1".into()]] {
+        let mut l = auto_lab();
+        let agent = l.fake(features.clone()).await;
+        let _other = l.fake_on("b", "mac-b", features.clone()).await;
+        let mut r = rule(&l, "reuse='open'\nreports=true");
+        let Action::Start(start) = &mut r.action else { unreachable!() };
+        start.machines = vec!["mac-a".into()];
+        r.trigger = crate::routine::Trigger::Thread(automation::Threads {
+            events: vec!["report_ready".into()],
+            repos: vec![],
+            include_automation: false,
+        });
+        let root = l.h.project_dir("demo").unwrap();
+        std::fs::write(
+            root.join("automations/check.toml"),
+            toml::to_string(&automation::File::from_routine(&r)).unwrap(),
+        )
+        .unwrap();
+        approve(&l, &r);
+        l.h.automation_pass("demo").await;
+        let source = seed(&l, "m", &[]);
+        let detail = "첨부 복사 누락: 경로/한글\\\"\n".repeat(20000);
+        l.h.flow(&source, "report_ready", Some(format!("threads/{}.md", source.id)), &detail);
+        let seq = l.h.db.flow_max("demo").unwrap();
+        let input = format!("flow:{seq}");
+        l.h.flow(&source, "report_ready", None, "뒤 사건도 전달한다");
+        for _ in 0..205 {
+            l.h.flow(&source, "progress", None, "다른 사건");
+        }
+        l.h.flow(&source, "report_ready", None, "다음 페이지의 놓친 사건");
+        let latest = l.h.db.flow_max("demo").unwrap();
+        // 저장 실패는 원장에 Failed로 보이고, source cursor와 원문을 움직이지 않는다.
+        std::fs::write(root.join("automations/.inputs"), b"blocked").unwrap();
+        l.h.automation_pass("demo").await;
+        let failed =
+            l.h.db.automation_execution("demo", &crate::db::automation_runs::id("check", &input)).unwrap().unwrap();
+        assert_eq!((failed.state, failed.stage), (AutomationRunState::Failed, AutomationStage::Trigger));
+        assert!(failed.reason.contains("일반 폴더"));
+        let raw: serde_json::Value =
+            serde_json::from_str(&l.h.db.meta("automation:demo:check").unwrap().unwrap()).unwrap();
+        assert!(raw["cursor"].as_u64().unwrap() < seq);
+        assert!(raw["pending"].as_array().unwrap().is_empty());
+        assert_eq!(l.h.db.flow_after(Some("demo"), seq - 1, 1).unwrap()[0].detail, detail);
+        std::fs::remove_file(root.join("automations/.inputs")).unwrap();
+        drop(agent);
+        // 새 host가 같은 커서에서 읽는다. 앞 사건을 버리거나 수동 실행 사건으로 바꾸지 않는다.
+        l.h = Host::open(l.h.cfg.clone(), l.h.state.clone()).unwrap();
+        let agent = l.fake(features.clone()).await;
+        let _other = l.fake_on("b", "mac-b", features).await;
+        let mut events = l.h.thread_events.subscribe();
+        l.h.automation_pass("demo").await;
+        let target = l.h.automation_open("demo", "check").unwrap().unwrap();
+        launched(&l, &mut events, &target.id).await;
+        // 이 frame fixture는 harness의 brief echo를 흉내 내지 않는다. 이어 보내기의 준비 상태만 둔다.
+        l.h.update_rec("demo", &target.id, |r| r.brief = BriefState::Delivered).unwrap();
+        let pane = l.h.load("demo", &target.id).unwrap().pane.unwrap();
+        l.h.on_harness(
+            "m",
+            serde_json::from_value(serde_json::json!({
+                "session":pane,"harness":"claude","kind":"idle","at_ms":util::now_ms()
+            }))
+            .unwrap(),
+        );
+        let run = l.h.db.automation_execution("demo", &failed.id).unwrap().unwrap();
+        assert_eq!(run.state, AutomationRunState::Succeeded);
+        assert!(run.events.iter().any(|e| e.state == AutomationRunState::Failed));
+        let work = l.h.load("demo", &target.id).unwrap().work_dir.unwrap();
+        let packet: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(std::path::Path::new(&work).join(run.input_file.unwrap())).unwrap())
+                .unwrap();
+        assert_eq!(packet["inputs"].as_array().unwrap().len(), 2);
+        let body: serde_json::Value = serde_json::from_str(packet["inputs"][0]["body"].as_str().unwrap()).unwrap();
+        assert_eq!(body["events"][0]["seq"], seq);
+        assert!(body["events"][0]["detail"].as_str().unwrap().len() < detail.len());
+        let original = &body["input_truncation"];
+        let host_bytes = std::fs::read(root.join(original["host_file"].as_str().unwrap())).unwrap();
+        assert_eq!(sha(std::str::from_utf8(&host_bytes).unwrap()), original["sha256"]);
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&work).join(original["file"].as_str().unwrap())).unwrap(),
+            host_bytes
+        );
+        let full: serde_json::Value = serde_json::from_slice(&host_bytes).unwrap();
+        let full_body: serde_json::Value = serde_json::from_str(full["body"].as_str().unwrap()).unwrap();
+        assert_eq!(full_body["events"][0]["detail"], detail);
+        // 열린 thread에도 원본 조각을 먼저 쓰고 같은 thread로 이어 보낸다.
+        l.h.automation_submit("demo", &r, "large-next", detail, None).unwrap();
+        l.h.automation_drain_at("demo", &r, util::now_ms()).await.unwrap();
+        l.h.automation_pass("demo").await;
+        l.h.automation_pass("demo").await;
+        let requests = agent.requests.lock().unwrap();
+        let packets: Vec<_> = requests
+            .iter()
+            .filter_map(|r| match r {
+                AgentRequest::WorkFileWrite { data, .. } => Some(&data.0),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            packets.len(),
+            3,
+            "첫 묶음·이어 보낸 큰 입력·다음 페이지 사건만 전달한다: {:?} · {:?}",
+            l.h.routine_runs("demo", "check").unwrap(),
+            l.h.automation_queue("demo", "check").unwrap()
+        );
+        assert!(packets.iter().all(|data| data.len() <= 512 * 1024));
+        let next: serde_json::Value = serde_json::from_slice(packets[1]).unwrap();
+        let next_file = next["input_truncation"]["file"].as_str().unwrap();
+        assert!(std::path::Path::new(&work).join(next_file).is_file());
+        let last: serde_json::Value = serde_json::from_slice(packets[2]).unwrap();
+        assert_eq!(last["events"][0]["seq"], latest);
+        assert_eq!(last["events"][0]["detail"], "다음 페이지의 놓친 사건");
+        drop(requests);
+        assert_eq!(starts(&agent), 1);
+        assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 0);
+    }
+}
+
+#[tokio::test]
+async fn oversized_input_above_transfer_limit_keeps_host_original_and_bounded_preview() {
+    let l = auto_lab();
+    let _agent = l.fake(vec![]).await;
+    let _other = l.fake_on("b", "mac-b", vec![]).await;
+    let r = rule(&l, "reuse='open'");
+    let body = serde_json::json!({"owners":["t-0099"],"payload":"한글\n\\\"".repeat(900000)}).to_string();
+    l.h.automation_submit("demo", &r, "large", body.clone(), None).unwrap();
+    let raw: serde_json::Value = serde_json::from_str(&l.h.db.meta("automation:demo:check").unwrap().unwrap()).unwrap();
+    let event = &raw["pending"][0];
+    assert!(event.to_string().len() <= 512 * 1024);
+    let compact: serde_json::Value = serde_json::from_str(event["body"].as_str().unwrap()).unwrap();
+    assert!(compact["input_truncation"]["file"].is_null());
+    let bytes = std::fs::read(
+        l.h.project_dir("demo").unwrap().join(compact["input_truncation"]["host_file"].as_str().unwrap()),
+    )
+    .unwrap();
+    assert!(bytes.len() > 8 * 1024 * 1024);
+    let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(original["body"].as_str().unwrap(), body);
+}
+
+#[tokio::test]
 async fn start_reports_are_optional_capped_snapshots_of_source_threads() {
     let l = auto_lab();
     let _a = l.fake(vec![]).await;
@@ -1005,12 +1168,8 @@ async fn start_reports_are_optional_capped_snapshots_of_source_threads() {
         )
         .unwrap();
     }
-    let Action::Start(a) = &mut r.action else { panic!() };
-    a.reuse = automation::Reuse::Open;
-    let error = l.h.automation_submit("demo", &r, "oversized", "x".repeat(512 * 1024), None).unwrap_err();
-    assert!(error.message.contains("512KiB"));
     let raw: serde_json::Value = serde_json::from_str(&l.h.db.meta("automation:demo:check").unwrap().unwrap()).unwrap();
-    assert_eq!(raw["pending"].as_array().unwrap().len(), 2, "거부한 입력은 접수하지 않는다");
+    assert_eq!(raw["pending"].as_array().unwrap().len(), 2);
     let first: serde_json::Value = serde_json::from_str(raw["pending"][0]["body"].as_str().unwrap()).unwrap();
     assert!(first.get("reports").is_none());
     let second: serde_json::Value = serde_json::from_str(raw["pending"][1]["body"].as_str().unwrap()).unwrap();

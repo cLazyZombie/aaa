@@ -738,6 +738,7 @@ impl Host {
             start_scope: None,
             observe: None,
             revision: String::new(),
+            original: None,
         };
         let accepted = self.automation_accept(p, &r, event)?;
         if !accepted {

@@ -104,6 +104,11 @@ pub(super) fn sync(
             if e["action"]["start"]["reuse"] == "open" {
                 run.input_file = b["input_name"].as_str().map(|s| format!("inbox/{s}.json"));
             }
+        } else if run.state == Status::Failed && run.stage == Stage::Trigger {
+            run.state = Status::Queued;
+            run.reason = "입력 재접수 · 앞 접수 실패 이력 보존".into();
+            run.revision = e["revision"].as_str().unwrap_or("").into();
+            run.source = e["source"].as_str().unwrap_or("source").into();
         } else if run.state == Status::Running {
             run.state = Status::Waiting;
             run.stage = Stage::Policy;
@@ -139,6 +144,28 @@ pub(super) fn sync(
     Ok(())
 }
 impl Db {
+    /// 큐에 넣기 전 실패도 남긴다. 이미 접수한 실행의 결과·receipt는 관측 오류가 덮지 않는다.
+    pub(crate) fn automation_source_failure(&self, p: &str, name: &str, old: &aaa_proto::RoutineRun) -> Result<()> {
+        self.image_transaction(|c| {
+            let input = serde_json::json!({"id":old.id,"at_ms":old.at_ms,"source":"source"});
+            let new = fresh(name, &input, old.at_ms)?;
+            let mut run = read(c, p, &new.id)?.unwrap_or(new);
+            if old.at_ms < run.updated_at_ms {
+                return Ok(());
+            }
+            if run.stage != Stage::Trigger || !matches!(run.state, Status::Queued | Status::Failed) {
+                return Ok(());
+            }
+            if run.state == Status::Queued && !run.events.is_empty() {
+                return Ok(());
+            }
+            run.state = Status::Failed;
+            run.reason = old.detail.clone();
+            run.updated_at_ms = old.at_ms;
+            put(c, p, run, None)
+        })
+    }
+
     pub(crate) fn automation_executions(&self, p: &str, name: Option<&str>, before: Option<&str>) -> Result<Vec<Run>> {
         let c = self.conn.lock().unwrap();
         let mut stmt=c.prepare("SELECT data FROM automation_runs WHERE project=?1 AND (?2 IS NULL OR name=?2) AND (?3 IS NULL OR rowid<(SELECT rowid FROM automation_runs WHERE project=?1 AND id=?3)) ORDER BY rowid DESC LIMIT 100")?;
@@ -249,6 +276,38 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn admission_failures_recover_without_overwriting_accepted_runs() {
+        let dir = std::env::temp_dir().join(format!("aaa-admission-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Db::open(&dir.join("db")).unwrap();
+        let failure = aaa_proto::RoutineRun {
+            id: "flow:1".into(),
+            at_ms: 1,
+            status: "failed".into(),
+            detail: "원본 저장 실패".into(),
+            thread: None,
+        };
+        db.automation_source_failure("demo", "watch", &failure).unwrap();
+        let run_id = id("watch", &failure.id);
+        let failed = db.automation_execution("demo", &run_id).unwrap().unwrap();
+        assert_eq!(failed.state, Status::Failed);
+        db.automation_source_failure("demo", "watch", &failure).unwrap();
+        assert_eq!(db.automation_execution("demo", &run_id).unwrap().unwrap().events.len(), 1);
+        let event = serde_json::json!({"id":"flow:1","at_ms":2,"source":"events","revision":"rev"});
+        db.update_meta("automation:demo:watch", |_| Ok(serde_json::json!({"pending":[event]}).to_string())).unwrap();
+        let accepted = db.automation_execution("demo", &run_id).unwrap().unwrap();
+        assert_eq!(accepted.state, Status::Queued);
+        assert_eq!(accepted.revision, "rev");
+        assert_eq!(accepted.source, "events");
+        assert!(accepted.events.iter().any(|e| e.state == Status::Failed));
+        let later = aaa_proto::RoutineRun { at_ms: aaa_common::util::now_ms() + 1, ..failure };
+        db.automation_source_failure("demo", "watch", &later).unwrap();
+        assert_eq!(db.automation_execution("demo", &run_id).unwrap().unwrap().state, Status::Queued);
+        drop(db);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn queue_receipt_and_execution_commit_together_and_survive_restart() {
         let dir = std::env::temp_dir().join(format!("aaa-ledger-{}", aaa_common::util::new_id()));

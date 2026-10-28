@@ -3,7 +3,7 @@ import { freshToken } from "../../../scripts/fixture-secret.mjs";
 import fs from "node:fs";
 import { root, aaa, pairPage, browser, webkit, openSettings } from "./harness.mjs";
 
-export async function machinePassword() {
+export async function machinePassword(kind, width) {
   const password = freshToken() + "한글 '\\";
   const job = {
     job: "01ARZ3NDEKTSV4RRFFQ69G5FAV", target: "pc-b", phase: "review", ssh: null, host_keys: [],
@@ -12,9 +12,8 @@ export async function machinePassword() {
     settings: { name: "pc-b", host: "mac-a.example.ts.net:7430", work_root: "C:/aaa-work", work_mount: null, harness: [], login: "defer" },
     review: { plan_sha256: "a".repeat(64), binary_sha256: "b".repeat(64), binary_version: "aaa 0.1.5", changes: [], checks: [], needs_user: [], operations: ["register_service"], service_password: true },
   };
-  const wk = await webkit.launch({ headless: true });
+  const engine = kind === "webkit" ? await webkit.launch({ headless: true }) : browser;
   try {
-  for (const engine of [browser, wk]) for (const width of [1280, 390]) {
     let applied = 0;
     let listed = 0;
     let stage = "화면 열기";
@@ -80,8 +79,7 @@ export async function machinePassword() {
         phases: Array.from(document.querySelectorAll('[data-job]')).map((e) => e.getAttribute('data-phase')) }));
       throw new Error(`${engine.browserType().name()} ${width}px ${stage}, list=${listed}, DOM=${JSON.stringify(state)}, errors=${controller.errors.length}: ${error.message}`);
     } finally { await p.context().unrouteAll({ behavior: "wait" }); await p.context().close(); }
-  }
-  } finally { await wk.close(); }
+  } finally { if (kind === "webkit") await engine.close(); }
   // 실제 host의 DB/WAL·inbox·질문·작업·보고·library·실험실 harness 기록 전체. 운영 ~/.claude·~/.codex에는 접근하지 않는다.
   const needle = Buffer.from(password);
   const scan = (dir) => {

@@ -78,13 +78,47 @@ fn host_ticker_backs_up_once_and_remembers_attempt_after_restart() {
         "schema=1\n[host]\nagent_listen=''\n[web]\nlisten=''\n[local_agent]\nmode='none'\n[notify]\nweb_push=false\n[projects]\nroot={}\ntick_secs=1\n[backup]\nenabled=true\ndirectory={directory}\nrecipient={}\ndaily_utc='00:00'\n",
         serde_json::to_string(&lab.root.join("projects").to_string_lossy()).unwrap(), key["recipient"]
     )).unwrap();
+    // db-backup status는 DB만 읽는다. host 준비와 첫 ticker 실행을 백업 기록의 5초에 섞지 않는다.
+    // 준비는 읽기 전용 IPC 상태로 확인하고, ticker 요청은 성공 뒤 한 번만 보낸다.
+    let wait_host = |lab: &lab::Lab, tag: &str| {
+        let last_error = std::cell::RefCell::new(String::new());
+        lab::wait_for_diag(
+            "백업 시험 host의 Front 준비",
+            Duration::from_secs(30),
+            || match node.json(&["status"]) {
+                Ok(status) => Some(status),
+                Err(error) => {
+                    *last_error.borrow_mut() = error;
+                    None
+                }
+            },
+            || format!("마지막 IPC 오류: {}\nhost:\n{}", last_error.borrow(), lab.log(tag)),
+        );
+    };
     lab.spawn("host", &node, &["host"]);
-    let first = lab::wait_for("정기 백업 성공 기록", Duration::from_secs(5), || {
-        let status = node.json(&["db-backup", "status"]).ok()?;
-        status["last_success_ms"].as_u64().map(|_| status)
-    });
+    wait_host(&lab, "host");
+    // 백업 완료는 tick 응답보다 늦을 수 있다. 먼저 구독해 완료의 State 사건을 놓치지 않는다.
+    let mut events = lab::watch::HostWatch::new(&node, Duration::from_secs(5));
+    node.ticks(1);
+    let last_status = std::cell::RefCell::new(String::new());
+    let first = events.wait_diag(
+        "정기 백업 성공 기록",
+        |_| match node.json(&["db-backup", "status"]) {
+            Ok(status) => {
+                *last_status.borrow_mut() = status.to_string();
+                status["last_success_ms"].as_u64().map(|_| status)
+            }
+            Err(error) => {
+                *last_status.borrow_mut() = error;
+                None
+            }
+        },
+        || format!("마지막 백업 상태: {}\nhost:\n{}", last_status.borrow(), lab.log("host")),
+    );
+    drop(events);
     lab.kill("host");
     lab.spawn("restarted", &node, &["host"]);
-    lab::wait_for("다시 뜬 host의 tick", Duration::from_secs(5), || node.json(&["ticker", "tick"]).ok());
+    wait_host(&lab, "restarted");
+    node.ticks(1);
     assert_eq!(node.json(&["db-backup", "status"]).unwrap(), first);
 }

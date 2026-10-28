@@ -1,12 +1,13 @@
 // 웹 머신 추가 M2(plan §8.384): 설정 「머신」 → 「SSH로 추가」. 실험실 sshd(비특권·loopback·비밀번호 끔)를 이 시험이 띄우고, host는
 // host.toml `[host] ssh_config`의 실험실 ssh 설정(별칭 lab·lab-down, 실험실 키만)으로 접속한다. 접속 → host key 지문(ssh-keygen -lf와
 // 같음) → 「믿음」 확인 창 → OS 감지 → 준비됨, 비밀번호 꼴 대상은 보내기 전에 막음, 닫힌 포트는 까닭, 보기 기기는 목록만, 휴대폰 390 폭,
-// 지우기. M3(plan §8.420): 준비된 작업의 설치 설정 폼 → 「계획 보기」가 실제 host 실행 파일을 원격 임시 폴더에 보내 확인하고 원격
-// install에 계획을 묻는다. 실험실 sshd는 비특권이라 install의 검증 SSH 입구가 거부해야 하고(시스템 sshd만 믿는다) 그 까닭이
-// 보인다. 실제 설치·등록 끝까지는 host 시험(대본 원격)과 CI의 root sshd가 본다. sshd가 없는 머신에서는 이 파일을 건너뛴다.
+// 지우기. M3(plan §8.420)는 화면의 설정 전송·SSH 거부 표시와 실제 install의 비특권 SSH 거부를 각각 검사한다.
+// 큰 실행 파일의 전송·SHA/판 대조·실패 뒤 정리는 host의 실험실 SSH 시험이 맡는다. 실제 설치·등록 끝까지는
+// host 시험(대본 원격)과 CI의 root sshd가 본다. sshd가 없는 머신에서는 이 파일을 건너뛴다.
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { machinePassword } from "../lib/machine-password.mjs";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import net from "node:net";
 import readline from "node:readline";
 import { root, procs, aaa, AA, step, browser, pairPage, openSettings, shot, inTime } from "../lib/harness.mjs";
@@ -131,7 +132,23 @@ export default async function ({ page }) {
     await ph.context().close();
   });
 
-  await step("설치 설정 → 계획 보기: 실제 install은 비특권 sshd를 믿지 않는다(까닭, 원격 임시 폴더 없음)", async () => {
+  await step("실제 install 계획: 비특권 sshd를 거부하고 상태를 쓰지 않는다", async () => {
+    const state = `${lab}/executor-state`;
+    const sha = createHash("sha256").update(fs.readFileSync(AA)).digest("hex");
+    // loopback sshd가 있는 같은 머신의 실제 binary를 직접 실행한다. 원격 파일 복사는 host keeper가 본다.
+    const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+    const command = `${quote(AA)} --state-dir ${quote(state)} install-probe --executor-sha256 ${sha}`;
+    const result = await new Promise((resolve) => {
+      const child = execFile("ssh", ["-F", `${lab}/ssh_config`, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", `UserKnownHostsFile=${root}/s/host/ssh/known_hosts`, "lab", command],
+        { encoding: "utf8" }, (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }));
+      procs.set("install-probe-ssh", child);
+      child.stdin.end();
+    });
+    if (result.code !== 3 || result.stdout || result.stderr) throw new Error(`비특권 SSH 거부: ${JSON.stringify(result)}`);
+    if (fs.existsSync(state)) throw new Error("SSH 검증 전에 상태를 썼다");
+  });
+
+  await step("설치 설정 → 계획 보기: 설정 전송과 SSH 거부 까닭 표시", async () => {
     const job = mp.locator('li[data-target="lab"]');
     const form = job.getByTestId("machine-setup-settings");
     await form.waitFor();
@@ -144,20 +161,42 @@ export default async function ({ page }) {
     await form.getByTestId("machine-setup-host").fill("127.0.0.1:7430");
     await form.getByTestId("machine-setup-plan-start").scrollIntoViewIfNeeded();
     await shot(page, "72-settings-desktop");
-    await form.getByTestId("machine-setup-plan-start").click();
-    await job.and(page.locator('[data-phase="failed"]')).waitFor();
-    const why = job.getByText("시스템 SSH 서버로 확인하지 못했다", { exact: false });
-    // 실패 단계에 이르렀으므로 까닭은 이미 그려져 있다: 다르면 작업 줄을 그대로 적는다
-    if (!(await why.isVisible())) throw new Error(`까닭이 다르다: ${await job.innerText()}`);
-    await why.scrollIntoViewIfNeeded();
-    await shot(page, "72-install-refused-desktop");
-    // 실험실 원격은 같은 머신이다: 보낸 파일(host 실행 파일과 같은 크기)이 든 임시 폴더가 남지 않았다
-    const size = fs.statSync(AA).size;
-    const left = [process.env.TMPDIR, "/tmp"]
-      .filter(Boolean)
-      .flatMap((d) => fs.readdirSync(d).map((n) => `${d}/${n}`))
-      .filter((p) => p.includes("/aaa-setup.") && fs.existsSync(`${p}/aaa`) && fs.statSync(`${p}/aaa`).size === size);
-    if (left.length) throw new Error(`원격 임시 폴더가 남았다: ${left}`);
+    // 이 단계의 계약은 폼과 응답 표시다. 전송·정리의 실물 검사는 host keeper,
+    // 실제 SSH 출처 거부는 바로 앞 단계가 지킨다. 브라우저 30초 대기에 binary 전송을 섞지 않는다.
+    const current = await page.evaluate(async () => (await fetch("/api/v1/call", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "machine_setup_list" }),
+    })).json());
+    const source = current.ok.setups.find((s) => s.target === "lab");
+    if (!source) throw new Error("준비된 실제 SSH 작업이 없다");
+    let failed;
+    let submitted = 0;
+    const intercept = async (route) => {
+      const req = route.request().postDataJSON();
+      if (req.op === "machine_setup_plan") {
+        submitted++;
+        failed = { ...source, phase: "failed", settings: req.settings, error: "원격 install 계획: 그 머신의 install이 이 접속을 시스템 SSH 서버로 확인하지 못했다", updated_ms: source.updated_ms + 1 };
+        await route.fulfill({ json: { ok: { kind: "machine_setup", setup: failed } } });
+      } else if (req.op === "machine_setup_list" && failed) {
+        await route.fulfill({ json: { ok: { kind: "machine_setups", setups: [failed] } } });
+      } else await route.continue();
+    };
+    await page.route("**/api/v1/call", intercept);
+    try {
+      const request = page.waitForRequest((r) => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "machine_setup_plan");
+      await form.getByTestId("machine-setup-plan-start").click();
+      const req = (await request).postDataJSON();
+      if (req.job !== source.job || req.settings.name !== "lab-b" || req.settings.host !== "127.0.0.1:7430" || req.settings.work_root !== `${home}/aaa-work`) throw new Error(`설치 설정 전송이 다르다: ${JSON.stringify(req)}`);
+      await job.and(page.locator('[data-phase="failed"]')).waitFor();
+      const why = job.getByText("시스템 SSH 서버로 확인하지 못했다", { exact: false });
+      // 실패 단계에 이르렀으므로 까닭은 이미 그려져 있다: 다르면 작업 줄을 그대로 적는다
+      if (!(await why.isVisible())) throw new Error(`까닭이 다르다: ${await job.innerText()}`);
+      await why.scrollIntoViewIfNeeded();
+      await shot(page, "72-install-refused-desktop");
+      if (submitted !== 1) throw new Error(`계획을 ${submitted}번 보냈다`);
+    } finally { await page.unroute("**/api/v1/call", intercept); }
   });
-  await step("Windows 전용 가림 입력: 취소·일회 전달·거부·페이지 종료·기록 누출", machinePassword);
+  await step("Windows 전용 가림 입력 Chromium 1280: 취소·일회 전달·거부·페이지 종료·기록 누출", () => machinePassword("chromium", 1280));
+  await step("Windows 전용 가림 입력 Chromium 390: 취소·일회 전달·거부·페이지 종료·기록 누출", () => machinePassword("chromium", 390));
+  await step("Windows 전용 가림 입력 WebKit 1280: 취소·일회 전달·거부·페이지 종료·기록 누출", () => machinePassword("webkit", 1280));
+  await step("Windows 전용 가림 입력 WebKit 390: 취소·일회 전달·거부·페이지 종료·기록 누출", () => machinePassword("webkit", 390));
 }

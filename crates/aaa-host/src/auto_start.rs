@@ -514,6 +514,7 @@ impl Host {
         event: &crate::automation::runtime::Event,
         now: u64,
         input_id: &str,
+        originals: &[crate::automation::input::Original],
     ) -> Result<StartOutcome, ErrorBody> {
         let choice = match self.automation_start_decision(p, r, event, now).await? {
             Decision::Wait(why) => return Err(err(ErrorCode::BadRequest, format!("start_wait: {why}"))),
@@ -576,6 +577,7 @@ impl Host {
                     event.owner.as_deref().map(|id| format!(" · 원인 thread {id}")).unwrap_or_default()
                 )),
                 first_input: (a.reuse == crate::automation::Reuse::Open).then(|| (input_id.into(), event.body.clone())),
+                first_originals: originals.to_vec(),
                 ..crate::automation_thread::Run::new(a, aaa_common::util::now_ms())
             },
             admission: crate::db::StartAdmission {
