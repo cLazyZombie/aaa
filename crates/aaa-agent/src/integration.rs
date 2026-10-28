@@ -5,11 +5,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use aaa_common::codex_hooks::{EVENTS, command, group as hook_group};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use toml_edit::DocumentMut;
 
-const EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "PostToolUse"];
 const OWNED: &str = "aaa-codex-integration.json";
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -18,41 +18,6 @@ pub fn codex_home() -> PathBuf {
         .filter(|p| !p.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| aaa_config::paths::home().join(".codex"))
-}
-
-/// Unix는 sh 인용, Windows는 herdr의 PowerShell EncodedCommand 방식이다.
-fn command(exe: &Path) -> String {
-    #[cfg(not(windows))]
-    {
-        format!("'{}' hook --agent codex", exe.to_string_lossy().replace('\'', "'\\''"))
-    }
-    #[cfg(windows)]
-    {
-        windows_command(exe)
-    }
-}
-
-#[cfg(any(windows, test))]
-fn windows_command(exe: &Path) -> String {
-    use base64::Engine;
-    // EncodedCommand는 stderr를 CLIXML로 내보낸다. 모듈 첫 검색의 진행 출력도 hook 출력이 되므로 억제한다.
-    // 기본 code page와 native stdin 전달 차이를 피한다.
-    // 비-aaa 세션은 cmd에서 거른다. PowerShell 안의 guard만으로는 그 host의 기동 비용을 피하지 못한다.
-    let script = format!(
-        "$ProgressPreference = 'SilentlyContinue'; \
-         if (-not $env:AAA_SESSION_ID -or -not $env:AAA_HOOK_SOCK -or -not $env:AAA_HOOK_TOKEN) {{ exit 0 }}; \
-         [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); \
-         [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
-         $OutputEncoding = [Console]::OutputEncoding; \
-         [Console]::In.ReadToEnd() | & '{}' hook --agent codex; exit 0",
-        exe.to_string_lossy().replace('\'', "''")
-    );
-    let bytes: Vec<_> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    format!(
-        "if defined AAA_SESSION_ID if defined AAA_HOOK_SOCK if defined AAA_HOOK_TOKEN \
-         powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
 }
 
 fn read(path: &Path) -> Result<Option<String>> {
@@ -107,11 +72,7 @@ fn edit_hooks(mut v: Value, commands: &[String], current: &str, remove: bool) ->
             hooks.insert(event.into(), json!([]));
         }
         let entries = hooks.get_mut(event).unwrap().as_array_mut().unwrap();
-        let desired = if event == "SessionStart" {
-            json!({"matcher":"^(startup|resume|clear|compact|fork)$","hooks":[{"type":"command","command":current,"timeout":10}]})
-        } else {
-            json!({"hooks":[{"type":"command","command":current,"timeout":10}]})
-        };
+        let desired = hook_group(event, current);
         // 같은 명령도 소유 대상으로 삼는다. 옮긴 실행 파일은 기록한 완전 일치만 제거한다.
         let ours = |h: &Value| {
             h["type"] == "command"
@@ -285,33 +246,4 @@ fn replace(path: &Path, before: &Option<String>, after: &str) -> Result<Option<P
     }
     result?;
     Ok(backup)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn windows_command_preserves_special_path_and_utf8_stdin_stdout() {
-        use base64::Engine;
-        let cmd = super::windows_command(std::path::Path::new(r"C:\A b\한글 ' $ &\aaa.exe"));
-        let encoded = cmd
-            .strip_prefix(concat!(
-                "if defined AAA_SESSION_ID if defined AAA_HOOK_SOCK if defined AAA_HOOK_TOKEN ",
-                "powershell -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand "
-            ))
-            .unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
-        let utf16: Vec<_> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
-        let script = String::from_utf16(&utf16).unwrap();
-        assert_eq!(
-            script,
-            concat!(
-                "$ProgressPreference = 'SilentlyContinue'; ",
-                "if (-not $env:AAA_SESSION_ID -or -not $env:AAA_HOOK_SOCK -or -not $env:AAA_HOOK_TOKEN) { exit 0 }; ",
-                "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); ",
-                "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); ",
-                "$OutputEncoding = [Console]::OutputEncoding; ",
-                r"[Console]::In.ReadToEnd() | & 'C:\A b\한글 '' $ &\aaa.exe' hook --agent codex; exit 0"
-            )
-        );
-    }
 }
