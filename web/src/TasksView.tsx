@@ -462,8 +462,8 @@ export function TasksView({
   const parkApi = apiAtLeast(frontApi, [1, 105]);
   // 예약의 앞 할 일(plan §8.463): 옛 host는 그 칸을 버리고 바로 자리 대기에 넣으므로 1.113부터 연다
   const afterApi = apiAtLeast(frontApi, [1, 113]);
-  // 자동 병합(plan §8.521): 옛 host는 모르는 요청을 거부하므로 1.136부터 칸을 그린다
-  const autoMergeApi = apiAtLeast(frontApi, [1, 136]);
+  // 자동 병합(plan §8.530): 옛 host는 모르는 요청을 거부하므로 1.143부터 칸을 그린다
+  const autoMergeApi = apiAtLeast(frontApi, [1, 143]);
   const pick = (t: TaskView) => {
     if (target !== null) onTarget?.(t.short_id);
     setCreating(null);

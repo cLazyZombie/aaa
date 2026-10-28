@@ -43,7 +43,7 @@ export function useQueue({ task, board, canEdit, afterApi, autoMergeApi, request
   canEdit: boolean;
   /** 예약 확인에서 앞 할 일을 고른다(host가 그 할 일이 완료 보관될 때까지 기다린다) */
   afterApi?: boolean;
-  /** host가 자동 병합을 안다(FRONT_API 1.136) */
+  /** host가 자동 병합을 안다(FRONT_API 1.143) */
   autoMergeApi?: boolean;
   request?: ReserveRequest | null;
   /** 예약을 풀었다(목록이 원래 자리에서 잠깐 알린다) */

@@ -1,4 +1,4 @@
-//! 할 일별 자동 병합(plan §8.521). 할 일 내용의 정본은 Markdown이지만 이 값은 승인이라 host DB만 쓴다(파일 직접 편집으로 켜지 않는다).
+//! 할 일별 자동 병합(plan §8.530). 할 일 내용의 정본은 Markdown이지만 이 값은 승인이라 host DB만 쓴다(파일 직접 편집으로 켜지 않는다).
 //! 행이 없으면 off다. 끈 값도 누가·언제 껐는지 남기려고 행을 지우지 않는다.
 use super::*;
 
@@ -61,7 +61,17 @@ impl Db {
         tx.execute(
             "INSERT INTO task_log(project,at_ms,actor,action,list,from_list,title,before,after,thread)
              VALUES(?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9)",
-            params![project, now, log_actor, log.action.as_str(), log.list, log.title, log.before, log.after, log.thread],
+            params![
+                project,
+                now,
+                log_actor,
+                log.action.as_str(),
+                log.list,
+                log.title,
+                log.before,
+                log.after,
+                log.thread
+            ],
         )?;
         tx.commit()?;
         Ok(true)

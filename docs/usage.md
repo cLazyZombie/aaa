@@ -154,6 +154,20 @@ d-0001이 완료 보관(완료 체크·보고 `[완료]`·병합)되면 d-0002�
 착지를 그만두거나 다음 단계 구현을 시작하면 `[진행 중]`으로 돌린다. `[완료]`만으로는 자리 제외가 아니다.
 표지는 첫 줄에 하나만 쓰며, 옛 표지 없는 보고·겹친 표지는 작업으로 센다. 새로 셀 때 한도를 넘으면 새 시작만 막는다.
 
+### 자동 병합
+
+할 일마다 「자동 병합」을 켜고 끈다(기본 off, 프로젝트 기본값 없음). on이면 thread가 `[병합 준비됨]`으로 보고한 뒤
+coordinator가 사용자에게 묻지 않고 착지 차례대로 착지 창을 준다. 착지는 그대로 한 번에 하나다. off면 지금처럼 사용자 승인 뒤 준다.
+thread는 이어진 할 일의 값을 보이므로 다시 시작·이어 하기도 같은 값이다. 착지 중에 끄면 이미 시작한 착지는 되돌리지 않는다.
+
+- 웹: 할 일 상세의 「자동 병합」 스위치, 새 할 일 폼·「바로 시작」·예약 확인의 칸, thread 화면 머리 아래의 스위치.
+  할 일 줄·「모든 thread」 목록·thread 제목에 「자동 병합」 표지가 보인다.
+- CLI: `aaa task add|edit|reserve … --auto-merge on|off`, `aaa thread start --auto-merge on|off`,
+  `aaa thread auto-merge <thread> [on|off]`(생략하면 thread show).
+- 바꾼 사람·시각·off→on은 `aaa task log`의 `auto_merge` 기록에 남는다. 사용자가 바꾸면 coordinator inbox에 `auto-merge on/off`가 남는다.
+- coordinator는 사용자가 채팅에서 말했을 때만 `--user-request '<사용자 지시>'`와 함께 바꾼다. thread 세션은 바꾸지 못한다.
+  값은 host DB에 있어 TASKS.md를 직접 고쳐 켜지 않는다.
+
 host는 사용자·coordinator가 띄운 Worker의 `max_parallel_threads`를 실제 한도로 집행한다.
 자동화 thread(`automations/*.toml`의 `do.start`)는 이 수와 예약 자리에서 빼고 규칙별 동시 상한(기본 1개)으로 제한한다.
 웹·`aaa context`·`aaa thread list`의 표지는 「자동화 thread」이며 사건·일정 출처는 상세에 보인다. 검토·답 대기·Idle·보고 [완료]에도 자리를 보유하며

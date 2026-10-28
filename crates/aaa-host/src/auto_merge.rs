@@ -1,4 +1,4 @@
-//! 할 일·thread별 자동 병합(plan §8.521, t-1214). on이면 thread가 `[병합 준비됨]`으로 보고한 뒤 coordinator가 사용자에게 묻지 않고
+//! 할 일·thread별 자동 병합(plan §8.530, t-1214). on이면 thread가 `[병합 준비됨]`으로 보고한 뒤 coordinator가 사용자에게 묻지 않고
 //! 착지 창을 준다(착지는 그대로 한 번에 하나). off면 지금처럼 사용자 승인을 받는다.
 //! - 값은 할 일 하나에 하나이고 host DB가 정본이다(`db/auto_merge.rs`). thread는 이어진 할 일의 값을 보인다: 재시작·이어 하기도 같다.
 //! - 프로젝트 기본값은 없다. 새 할 일은 off에서 시작한다(사용자 답 2A).
@@ -43,7 +43,12 @@ impl Host {
         })
     }
 
-    fn auto_merge_actor(&self, project: &str, actor: &str, user_request: Option<String>) -> Result<Option<String>, ErrorBody> {
+    fn auto_merge_actor(
+        &self,
+        project: &str,
+        actor: &str,
+        user_request: Option<String>,
+    ) -> Result<Option<String>, ErrorBody> {
         let reason = reason(user_request)?;
         if self.coordinator_project_of_actor(actor).as_deref() == Some(project) {
             if reason.is_none() {
@@ -67,12 +72,22 @@ impl Host {
     fn auto_merge_target(&self, project: &str, target: &str) -> Result<Target, ErrorBody> {
         let board = self.task_board(project)?;
         let of = |t: &aaa_proto::TaskView| -> Option<Target> {
-            Some(Target { task_id: t.id.clone()?, title: t.title.clone(), list: t.list.clone(), thread: t.thread.clone() })
+            Some(Target {
+                task_id: t.id.clone()?,
+                title: t.title.clone(),
+                list: t.list.clone(),
+                thread: t.thread.clone(),
+            })
         };
         let archived = |pick: &dyn Fn(&aaa_proto::ArchivedTask) -> bool| -> Result<Option<Target>, ErrorBody> {
-            Ok(self.db.archive_list(project).map_err(internal)?.into_iter().rev().find(|r| !r.restored && pick(r)).map(
-                |r| Target { task_id: r.task_id, title: r.task.title, list: r.task.list, thread: r.task.thread },
-            ))
+            Ok(self
+                .db
+                .archive_list(project)
+                .map_err(internal)?
+                .into_iter()
+                .rev()
+                .find(|r| !r.restored && pick(r))
+                .map(|r| Target { task_id: r.task_id, title: r.task.title, list: r.task.list, thread: r.task.thread }))
         };
         if aaa_proto::canonical_short_id(target, 't').as_deref() == Some(target) {
             let rec = self.load(project, target)?;
@@ -118,10 +133,8 @@ impl Host {
             thread: t.thread.clone(),
             restored: None,
         };
-        let changed = self
-            .db
-            .auto_merge_set(project, &t.task_id, on, actor, user_request.as_deref(), &log)
-            .map_err(internal)?;
+        let changed =
+            self.db.auto_merge_set(project, &t.task_id, on, actor, user_request.as_deref(), &log).map_err(internal)?;
         if changed {
             self.db.audit(
                 actor,
@@ -196,7 +209,8 @@ mod tests {
         let h = Host::open(cfg, root.join("host")).unwrap();
         h.project_create("demo", Default::default(), "local:cli").unwrap();
         let dir = h.project_dir("demo").unwrap();
-        std::fs::write(dir.join("TASKS.md"), "## Backlog\n- [ ] 새 일\n- [ ] 이은 일 · t-0007\n- [ ] 옛 일 · t-0008\n").unwrap();
+        std::fs::write(dir.join("TASKS.md"), "## Backlog\n- [ ] 새 일\n- [ ] 이은 일 · t-0007\n- [ ] 옛 일 · t-0008\n")
+            .unwrap();
         h.task_identify("demo").unwrap();
         h
     }
@@ -211,7 +225,8 @@ mod tests {
     }
 
     fn thread(h: &Host, id: &str, task_id: Option<String>) {
-        let mut rec = crate::orch::ThreadRec::starting("demo", "이은 일", "mac-a", "fake", Role::Worker, ThreadKind::Dir, 1);
+        let mut rec =
+            crate::orch::ThreadRec::starting("demo", "이은 일", "mac-a", "fake", Role::Worker, ThreadKind::Dir, 1);
         rec.id = id.into();
         rec.status = ThreadStatus::Open;
         rec.task_id = task_id;

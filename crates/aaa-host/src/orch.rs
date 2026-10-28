@@ -150,7 +150,7 @@ pub(crate) struct ThreadRec {
     /// 끝난 thread의 이어진 task 판정(할 일 T3, task_clean.rs). 이 칸 전에 끝난 thread는 `why`가 없어 판정하지 않는다
     #[serde(default)]
     pub task_clean: TaskClean,
-    /// 이어진 할 일의 ULID(자동 병합 조회, plan §8.521). 이 칸 전에 띄운 thread는 없어 할 일 목록의 연결로 찾는다
+    /// 이어진 할 일의 ULID(자동 병합 조회, plan §8.530). 이 칸 전에 띄운 thread는 없어 할 일 목록의 연결로 찾는다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
     /// `--from-task`로 넘길 task 첨부(plan §8.327): 작업 폴더 `attachments/`에 쓸 이름과 host 원본. 세션을 띄울 때마다 쓴다

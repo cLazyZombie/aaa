@@ -69,7 +69,7 @@ export function ThreadPanel({
   onAddDoc?: (path: string) => void;
 }) {
   const statusLabel = t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_LABEL[t.group] ?? t.group;
-  // 자동 병합(plan §8.521): 사람이 맡긴 열린 Worker의 이어진 할 일 값. 조작 기기는 여기서 켜고 끈다
+  // 자동 병합(plan §8.530): 사람이 맡긴 열린 Worker의 이어진 할 일 값. 조작 기기는 여기서 켜고 끈다
   const [frontApi, setFrontApi] = useState<string | null>(null);
   useEffect(() => {
     let live = true;

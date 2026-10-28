@@ -31,7 +31,7 @@ pub(crate) struct BriefInput<'a> {
     pub restart: bool,
     /// coordinator가 쓴 작업 요약(`threads/<id>.summary.md`, 표지 줄 뺀 글). 없으면 빈 글
     pub summary: &'a str,
-    /// 이어진 할 일의 자동 병합(brief를 만들 때의 값, plan §8.521)
+    /// 이어진 할 일의 자동 병합(brief를 만들 때의 값, plan §8.530)
     pub auto_merge: bool,
 }
 

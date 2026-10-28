@@ -2982,7 +2982,7 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<bool>")]
         cancel: bool,
     },
-    /// FRONT_API 1.136. 할 일(`d-0001`·ULID·제목) 또는 thread(`t-0001`, 이어진 할 일)의 자동 병합을 켜고 끈다. 값이 같으면 바꾸지 않는다.
+    /// FRONT_API 1.143. 할 일(`d-0001`·ULID·제목) 또는 thread(`t-0001`, 이어진 할 일)의 자동 병합을 켜고 끈다. 값이 같으면 바꾸지 않는다.
     /// 사용자(조작 기기·세션 밖 CLI)와, `user_request`를 인용한 그 프로젝트 coordinator만. 답은 `auto_merge`
     AutoMergeSet {
         #[serde(default)]
@@ -3737,7 +3737,7 @@ pub enum FrontResponse {
     },
     /// 「답할 것」(FRONT_API 1.78): 열린 확인 필요 post, 답한 것(최신부터), 자동 정리 기간
     AutoMode(crate::AutoMode),
-    /// `auto_merge_set`의 답(FRONT_API 1.136): 할 일 표시 ID·ULID, 이어진 thread, 지금 값, 이번에 바꿨는가
+    /// `auto_merge_set`의 답(FRONT_API 1.143): 할 일 표시 ID·ULID, 이어진 thread, 지금 값, 이번에 바꿨는가
     AutoMerge {
         task_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

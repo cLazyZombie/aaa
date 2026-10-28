@@ -20,7 +20,7 @@ const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e
 export function StartDialog({ project, task, owners, allowOverLimit, onStarted, onClose }: { project: string; task: TaskView; allowOverLimit: boolean; owners: OwnerChoice[] | null; onStarted: (v: ThreadView) => void; onClose: () => void }) {
   const requestId = useRef(crypto.randomUUID());
   const [poolEnabled, setPoolEnabled] = useState(false);
-  // 자동 병합 칸(FRONT_API 1.136): 처음은 할 일의 지금 값, 바뀌었으면 시작 전에 저장한다
+  // 자동 병합 칸(FRONT_API 1.143): 처음은 할 일의 지금 값, 바뀌었으면 시작 전에 저장한다
   const [mergeApi, setMergeApi] = useState(false);
   const [autoMerge, setMerge] = useState(!!task.auto_merge);
   const [waiting, setWaiting] = useState<AccountStartView | null>(null);

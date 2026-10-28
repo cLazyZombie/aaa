@@ -4342,7 +4342,9 @@ fn with_summary(
     if let Some((mode, reason)) = merge_after {
         match &res {
             Ok(FrontResponse::Thread(v)) => auto_merge_first(&project, &v.id, Some(&mode), reason)?,
-            _ => eprintln!("thread가 아직 없어 자동 병합은 정하지 않았다. 시작 뒤 `aaa thread auto-merge <thread> {mode}`"),
+            _ => eprintln!(
+                "thread가 아직 없어 자동 병합은 정하지 않았다. 시작 뒤 `aaa thread auto-merge <thread> {mode}`"
+            ),
         }
     }
     let Some(text) = summary else { return front_print(json, res) };

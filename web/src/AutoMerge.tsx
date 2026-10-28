@@ -1,4 +1,4 @@
-// 할 일·thread별 자동 병합(plan §8.521). on이면 thread가 `[병합 준비됨]`으로 보고한 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다.
+// 할 일·thread별 자동 병합(plan §8.530). on이면 thread가 `[병합 준비됨]`으로 보고한 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다.
 // 값은 할 일 하나에 하나이고 host가 정본이다(thread는 이어진 할 일의 값). 기본 off, 프로젝트 기본값은 없다.
 import "./ThreadStageBadge.css";
 import "./AutoMerge.css";
@@ -8,8 +8,8 @@ import { call } from "./api";
 import { apiAtLeast } from "./automationModel";
 import { Toggle } from "./herdr/SettingsControls";
 
-/** host가 자동 병합을 안다(FRONT_API 1.136) */
-export const canAutoMerge = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 136);
+/** host가 자동 병합을 안다(FRONT_API 1.143) */
+export const canAutoMerge = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 143);
 
 /** 할 일(`d-0001`·제목) 또는 thread(`t-0001`)의 자동 병합을 정한다. 값이 같으면 host가 그대로 둔다 */
 export async function setAutoMerge(project: string, target: string, on: boolean): Promise<void> {

@@ -5,3 +5,7 @@
 .auto-merge-label { font-size: var(--fs-sm); }
 .auto-merge-error { color: var(--danger-text); font-size: var(--fs-xs); flex-basis: 100%; }
 .auto-merge-check { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-sm); }
+/* 할 일 상세의 속성 줄: 이름 칸(72px)·값 칸 배치를 다른 속성과 맞춘다 */
+.task-prop > .auto-merge-switch { flex: 1 1 auto; flex-wrap: nowrap; gap: var(--space-2); color: inherit; font-size: inherit; }
+.task-prop > .auto-merge-switch .auto-merge-label { flex: 0 0 72px; color: var(--text-dim); font-size: var(--fs-xs); }
+.task-prop > .auto-merge-switch .auto-merge-error { flex-basis: auto; }

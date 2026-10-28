@@ -8,6 +8,8 @@
 
 #[path = "m13/accounts.rs"]
 mod accounts;
+#[path = "m13/auto_merge.rs"]
+mod auto_merge;
 #[path = "m13/automation_start.rs"]
 mod automation_start;
 #[path = "m13/ci.rs"]

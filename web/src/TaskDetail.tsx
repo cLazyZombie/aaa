@@ -150,7 +150,7 @@ export interface DetailProps {
   queueApi?: boolean;
   /** host가 예약의 앞 할 일을 안다(FRONT_API 1.113) */
   afterApi?: boolean;
-  /** host가 자동 병합을 안다(FRONT_API 1.136): 상세의 스위치·새 할 일·예약 확인의 칸 */
+  /** host가 자동 병합을 안다(FRONT_API 1.143): 상세의 스위치·새 할 일·예약 확인의 칸 */
   autoMergeApi?: boolean;
   /** 목록이 연 예약(끌어 놓기·⋯): 내용 확인을 바로 연다 */
   reserveRequest?: ReserveRequest | null;

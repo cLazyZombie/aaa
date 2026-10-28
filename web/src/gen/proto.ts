@@ -521,7 +521,7 @@ suggestion: TaskSuggestion | null,
  */
 attention: string | null,
 /**
- * 자동 병합(FRONT_API 1.136): on이면 `[병합 준비됨]` 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다. host DB 값이며
+ * 자동 병합(FRONT_API 1.143): on이면 `[병합 준비됨]` 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다. host DB 값이며
  * 프로젝트 기본값 없이 off에서 시작한다. 옛 host는 생략한다
  */
 auto_merge?: boolean, };
@@ -1673,7 +1673,7 @@ over_limit?: ThreadLimitOverride,
  */
 park?: ThreadPark,
 /**
- * 이어진 할 일의 자동 병합(FRONT_API 1.136). off·할 일 없는 thread·옛 host는 생략한다
+ * 이어진 할 일의 자동 병합(FRONT_API 1.143). off·할 일 없는 thread·옛 host는 생략한다
  */
 auto_merge?: boolean,
 /**
