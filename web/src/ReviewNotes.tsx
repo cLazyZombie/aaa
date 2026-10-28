@@ -33,6 +33,7 @@ export function useReviewNotes(project: string, thread: string): ReviewNotesApi 
 /** 의견 자리 이름: 「보고 r-4001」·「src/a.rs 새 12~15줄」 */
 export function noteLabel(note: ReviewNote): string {
   const s = note.source;
+  if (s.kind === "note" || s.kind === "media") return s.section ? `노트 「${s.section}」` : "노트";
   return s.kind === "report" ? `보고 ${s.report}` : `${s.path} ${diffRangeLabel(s.range)}`;
 }
 

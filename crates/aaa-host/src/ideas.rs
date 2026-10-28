@@ -256,6 +256,7 @@ impl Host {
         }
         let text = f.text((rev != m.rev).then_some(rev))?;
         Ok(IdeaNote {
+            project: project.to_string(),
             idea: self.idea_summary(project, f, &m)?,
             rev,
             text,

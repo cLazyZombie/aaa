@@ -1,0 +1,77 @@
+/* 아이디어 화면(t-1260, 시안 r-4673): 사이드바 목록 · 노트 · 대화. 넓은 창은 노트와 대화를 나란히, 휴대폰은 한 칸씩 */
+.idea-screen { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
+.idea-screen.is-hidden { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+.idea-screen > .thread-view { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; padding-left: 0; padding-right: 0; }
+.idea-empty { padding: var(--space-6); color: var(--text-dim); }
+
+.idea-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-direction: row; }
+.idea-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.idea-chip { flex: none; font-size: var(--fs-xs); padding: 2px 8px; border-radius: var(--radius-pill); background: var(--accent-bg); color: var(--accent-strong); white-space: nowrap; }
+.idea-chip.is-done { background: var(--done-bg); color: var(--done); }
+.idea-chip .app-id { color: inherit; }
+.idea-head-tools, .idea-note-tools { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+.idea-note-tools { justify-content: flex-end; padding: var(--space-2) var(--space-4) 0; }
+.idea-head-tools .i, .idea-note-tools .i { width: 14px; height: 14px; }
+
+.idea-columns { flex: 1 1 auto; min-height: 0; display: flex; }
+.idea-note-pane { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
+.idea-chat-pane { flex: 0 0 min(400px, 40%); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: var(--hairline) solid var(--border); }
+.idea-note-pane[hidden], .idea-chat-pane[hidden] { display: none; }
+
+.idea-note-body { position: relative; padding: var(--space-5) var(--space-6) var(--space-8); max-width: 860px; width: 100%; margin: 0 auto; }
+.idea-note-text img, .idea-note-text video { max-width: 100%; border-radius: var(--radius-md); }
+.idea-media-note { position: absolute; z-index: 2; }
+.idea-media-note .quote-note { width: min(320px, 70vw); background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.25)); }
+
+.idea-editor { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); min-height: 0; }
+.idea-editor-text { flex: 1 1 auto; min-height: 16em; resize: none; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; }
+.idea-editor-foot { display: flex; align-items: center; gap: var(--space-2); }
+.idea-editor-foot .spacer, .idea-tray-head .spacer, .idea-handoff .spacer { flex: 1 1 auto; }
+
+.idea-chat { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.idea-chat-head { flex: none; padding: var(--space-2) var(--space-3); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); border-bottom: var(--hairline) solid var(--border); }
+.idea-thread-chip { color: var(--text-dim); }
+.idea-chat-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.idea-chat-idle { flex: 1 1 auto; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.idea-chat-idle .chat-bubble { align-self: flex-end; white-space: pre-wrap; max-width: 85%; }
+.idea-chat-wait { flex: none; margin: 0; padding: var(--space-1) var(--space-3); font-size: var(--fs-xs); color: var(--text-dim); }
+
+.idea-tray { flex: none; margin: 0 var(--space-3) var(--space-2); border: var(--hairline) solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elevated); max-height: 40%; display: flex; flex-direction: column; min-height: 0; }
+.idea-tray-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); font-size: var(--fs-sm); }
+.idea-tray-list { list-style: none; margin: 0; padding: 0 var(--space-2) var(--space-2); overflow: auto; display: flex; flex-direction: column; gap: var(--space-1); }
+.idea-tray-item { position: relative; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-6) var(--space-2) var(--space-2); border-radius: var(--radius-md); background: var(--bg); font-size: var(--fs-sm); }
+.idea-tray-item > button { position: absolute; top: var(--space-1); right: var(--space-1); }
+.idea-tray-where { font-size: var(--fs-xs); color: var(--text-dim); }
+.idea-tray-comment { font-weight: var(--fw-semibold); }
+
+.idea-tabs { display: inline-flex; flex: none; border: var(--hairline) solid var(--border); border-radius: var(--radius-pill); padding: 2px; }
+.idea-tabs button { position: relative; border: 0; background: none; padding: 4px 12px; border-radius: var(--radius-pill); font-size: var(--fs-sm); color: var(--text-dim); min-height: 32px; }
+.idea-tabs button[aria-selected="true"] { background: var(--bg-hover); color: var(--text-strong); }
+.idea-badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--primary); color: var(--primary-text); font-size: 11px; line-height: 18px; text-align: center; }
+
+.idea-handoff { width: min(640px, 100%); }
+.idea-handoff .modal-body { display: flex; flex-direction: column; gap: var(--space-3); max-height: 70vh; overflow: auto; }
+.idea-draft { display: flex; flex-direction: column; gap: var(--space-2); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); margin: 0; }
+.idea-draft label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--text-dim); }
+.idea-draft textarea { resize: vertical; font-size: var(--fs-sm); }
+.idea-handoff .modal-footer { display: flex; align-items: center; gap: var(--space-2); }
+
+/* 사이드바 목록 */
+.ideas-panel { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); overflow: auto; min-height: 0; }
+.ideas-tools { display: flex; padding-bottom: var(--space-1); }
+.ideas-tools .i { width: 14px; height: 14px; }
+.ideas-new { display: flex; gap: var(--space-2); width: 100%; }
+.ideas-new .input { flex: 1 1 auto; min-width: 0; }
+.ideas-group { display: flex; flex-direction: column; gap: 2px; }
+.ideas-group-head { padding: var(--space-2) var(--space-2) var(--space-1); font-size: var(--fs-xs); color: var(--text-dim); }
+.idea-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left; padding: var(--space-2); border: 0; border-left: 2px solid transparent; border-radius: var(--radius-md); background: none; color: var(--text); }
+@media (hover: hover) { .idea-row:hover { background: var(--bg-hover); } }
+.idea-row[aria-current="true"] { background: var(--bg-hover); border-left-color: var(--accent); }
+.idea-row-title { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.idea-row-meta { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); }
+
+@media (max-width: 768px) {
+  .idea-chat-pane { flex: 1 1 auto; border-left: 0; }
+  .idea-note-body { padding: var(--space-4); }
+  .idea-head .term-title { flex: 1 1 auto; }
+}

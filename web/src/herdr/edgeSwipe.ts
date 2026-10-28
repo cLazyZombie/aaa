@@ -53,10 +53,16 @@ export function drawerSettles(shown: number, width: number, speed: number): bool
 }
 
 /** A dialog, the palette or a sheet is up: a swipe there is theirs, not the drawer's under them. */
-const MODAL = "[aria-modal='true'], dialog[open]";
+export const MODAL = "[aria-modal='true'], dialog[open]";
+
+/** 쓸기를 스스로 쓰는 화면(아이디어 대화 쪽: 오른쪽 쓸기가 노트로 간다, t-1260): 그 안에서 시작한 쓸기는 drawer 것이 아니다 */
+function ownSwipe(target: EventTarget | null): boolean {
+  const node = target as { closest?: (selector: string) => unknown } | null;
+  return typeof node?.closest === "function" && node.closest("[data-drawer-swipe='off']") !== null;
+}
 
 /** Something under the finger scrolled sideways, a code block or a table: a swipe right scrolls it back. */
-function scrolledAside(target: EventTarget | null): boolean {
+export function scrolledAside(target: EventTarget | null): boolean {
   for (let node = target as HTMLElement | null; node; node = node.parentElement) {
     if (node.scrollLeft > 0 && node.scrollWidth > node.clientWidth) return true;
   }
@@ -64,7 +70,7 @@ function scrolledAside(target: EventTarget | null): boolean {
 }
 
 /** A finger on a text field edits its text: a sideways stroke there moves the caret or the selection. */
-function editable(target: EventTarget | null): boolean {
+export function editable(target: EventTarget | null): boolean {
   for (let node = target as HTMLElement | null; node; node = node.parentElement) {
     if (node.isContentEditable === true || /^(?:INPUT|TEXTAREA|SELECT)$/.test(node.tagName ?? "")) return true;
   }
@@ -72,7 +78,7 @@ function editable(target: EventTarget | null): boolean {
 }
 
 /** Text is selected (the transcript's, a long press in the gutter): a stroke drags its handles. */
-function selecting(): boolean {
+export function selecting(): boolean {
   const selection = document.getSelection?.() ?? null;
   return selection !== null && !selection.isCollapsed;
 }
@@ -99,7 +105,7 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
     // it began on left the page and took its touches with it). It lets go where it was first
     const open = follow !== null ? onEnd() : isOpen();
     start = event.touches.length === 1 && touch && narrow.matches && document.querySelector(MODAL) === null && (open || !scrolledAside(event.target))
-      && !editable(event.target) && !selecting()
+      && !editable(event.target) && !selecting() && (open || !ownSwipe(event.target))
       ? { x: touch.clientX, y: touch.clientY, open, at: event.timeStamp } : null;
     claimed = false;
     done = false;

@@ -54,6 +54,12 @@ export function onWorkspaceMetricsChanged(listener: () => void): () => void {
   workspaceMetricsListeners.add(listener);
   return () => workspaceMetricsListeners.delete(listener);
 }
+const ideasListeners = new Set<() => void>();
+/** 아이디어 목록·노트가 바뀌었다(웹 events `ideas`, FRONT_API 1.146) */
+export function onIdeasChanged(listener: () => void): () => void {
+  ideasListeners.add(listener);
+  return () => ideasListeners.delete(listener);
+}
 const tasksListeners = new Set<(sha256: string) => void>();
 export function onTasksChanged(listener: (sha256: string) => void): () => void {
   tasksListeners.add(listener);
@@ -153,6 +159,14 @@ export async function uploadTaskFile(project: string, file: File, kind?: "md" | 
     method: "POST", body: file, credentials: "same-origin",
   });
   return (await unwrap<{ path: string }>(response)).path;
+}
+
+/** 아이디어 노트의 그림·영상 올리기(t-1260): 그 아이디어 폴더에 내용 hash 이름으로 쓰고 노트에 적을 이름을 돌려준다 */
+export async function uploadIdeaFile(project: string, idea: string, file: Blob): Promise<string> {
+  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/ideas/${encodeURIComponent(idea)}/files`, {
+    method: "POST", body: file, credentials: "same-origin",
+  });
+  return (await unwrap<{ name: string }>(response)).name;
 }
 
 /** 웹 「보고서 올리기」(FRONT_API 1.80, plan §8.355): 파일 하나를 올리기 폴더의 `path`에 쓴다. 다 올리면 `library_upload_publish`로 등록한다 */
@@ -484,6 +498,7 @@ export function watchEvents(
       else if (ev.ev === "reports") onReports(ev.unseen);
       else if (ev.ev === "workspace_metrics") for (const listener of workspaceMetricsListeners) listener();
       else if (ev.ev === "tasks") for (const listener of tasksListeners) listener(ev.sha256);
+      else if (ev.ev === "ideas") for (const listener of ideasListeners) listener();
       else if (ev.ev === "asks") for (const listener of asksListeners) listener();
       else if (ev.ev === "inbox") for (const listener of inboxListeners) listener();
       else if (ev.ev === "accounts") for (const listener of accountsListeners) listener();

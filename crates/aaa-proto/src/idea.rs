@@ -73,6 +73,8 @@ pub struct IdeaRevView {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct IdeaNote {
+    /// 프로젝트(그림 주소 `/api/v1/projects/<p>/ideas/<id>/files/<이름>`)
+    pub project: String,
     pub idea: IdeaSummary,
     /// 이 글의 판(옛 판을 읽으면 `idea.rev`보다 작다)
     pub rev: u32,

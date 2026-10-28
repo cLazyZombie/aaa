@@ -574,7 +574,11 @@ export type IdeaRevView = { rev: number, at_ms: number, by: IdeaAuthor,
  */
 summary: string | null, };
 
-export type IdeaNote = { idea: IdeaSummary,
+export type IdeaNote = {
+/**
+ * 프로젝트(그림 주소 `/api/v1/projects/<p>/ideas/<id>/files/<이름>`)
+ */
+project: string, idea: IdeaSummary,
 /**
  * 이 글의 판(옛 판을 읽으면 `idea.rev`보다 작다)
  */

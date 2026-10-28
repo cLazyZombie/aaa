@@ -20,6 +20,7 @@ import { browserClick } from "./reportLinks.ts";
 import { appLinkOf, appRefOf, splitAppRefs } from "./appRef.ts";
 import { AppIdLink, AppRefChip, AppRefContext } from "./AppRefChip.tsx";
 import { splitAppIds } from "./appIds";
+import { ideaLinkTarget } from "./ideasModel";
 import { isVideoPath } from "./reportMedia";
 import { ReportVideo } from "./ReportVideo";
 import { ReportMediaStatus } from "./ReportMediaStatus";
@@ -199,6 +200,9 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
             );
           }
           case "file": {
+            // 할 일 메모의 아이디어 링크(`[아이디어 n-0001](ideas/n-0001)`, t-1260): 앱 안 아이디어 화면으로
+            const idea = ideaLinkTarget(node.path);
+            if (idea) return <a key={key} className="app-id" data-testid="idea-link" href={`#idea=${encodeURIComponent(idea)}`}><Inline nodes={node.children} interactive={false} /></a>;
             const url = attachment?.(node.path);
             if (url && interactive && isVideoPath(node.path)) return <ReportVideo key={key} src={url} label={node.children.map((n) => "value" in n ? n.value : "").join("")} />;
             if (url && interactive) return <a key={key} href={url} target="_blank" rel="noopener noreferrer"><Inline nodes={node.children} interactive={false} /></a>;

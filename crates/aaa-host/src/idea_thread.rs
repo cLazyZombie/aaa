@@ -129,7 +129,8 @@ impl Host {
             let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
             let mut meta = f.meta()?;
             let edited = std::mem::take(&mut meta.edited);
-            let line = if edited.is_empty() {
+            // 웹은 보낼 글에 이미 머리를 붙인다(대화 끝의 보낸 말이 기록과 같게): 두 번 붙이지 않는다
+            let line = if edited.is_empty() || text.starts_with("(노트 고침:") {
                 text.to_string()
             } else {
                 format!("(노트 고침: {})\n{text}", edited.join("; "))
