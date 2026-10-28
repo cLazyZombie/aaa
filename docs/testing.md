@@ -1,4 +1,4 @@
-- t-1238: [자동화 큰 입력 검증](testing-automation-large-input.md) · [E72 설치 계획 검사 경계 수리](testing-machine-plan-boundary.md)
+- t-1238: [자동화 큰 입력 검증](testing-automation-large-input.md) · [E72 설치 계획 검사 경계 수리](testing-machine-plan-boundary.md) · [정기 DB 백업 시험 경계](testing-db-backup-ticker-boundary.md)
 - t-1242: [host DB 정기 암호화 백업·복원 검증](testing-host-db-backup.md)
 - t-1236: [m13 질문 이력](testing-claude-menu-input-batch.md) · [E42 관측 경쟁 재현·수리](testing-diff-context-reflow.md)
 - t-1225: [coordinator·thread에 넣는 글 줄이기 검증](testing-context-budget.md)
