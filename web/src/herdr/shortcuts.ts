@@ -7,6 +7,10 @@ import { physicalKey } from "./keys.ts";
 import type { AppActions } from "../actions.ts";
 
 export const SHORTCUTS = [
+  { id: "open-coordinator", label: "coordinator", keys: ["Alt", "O"] },
+  { id: "open-asks", label: "답할 것", keys: ["Alt", "Q"] },
+  { id: "open-threads", label: "모든 thread", keys: ["Alt", "T"] },
+  { id: "open-tasks", label: "할 일", keys: ["Alt", "D"] },
   { id: "palette", label: "Command palette", keys: ["Mod", "Shift", "K"] },
   { id: "find", label: "Find in terminal", keys: ["Mod", "Shift", "F"] },
   { id: "toggle-view", label: "Switch chat / terminal", keys: ["Mod", "Shift", "J"] },
@@ -29,6 +33,13 @@ export const SHORTCUTS = [
 ] as const;
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];
+
+const DEFAULT_EXACT_BINDINGS: Partial<Record<ShortcutId, string>> = {
+  "open-coordinator": "alt+o",
+  "open-asks": "alt+q",
+  "open-threads": "alt+t",
+  "open-tasks": "alt+d",
+};
 
 export interface ShortcutEventLike {
   key: string;
@@ -58,6 +69,8 @@ const KEY_TO_ID: Readonly<Record<string, ShortcutId>> = {
 
 export function shortcutKeys(id: ShortcutId, overrides: ShortcutOverrides): string[] {
   if (Object.hasOwn(overrides, id)) return overrides[id] ? [overrides[id]!] : [];
+  const exact = DEFAULT_EXACT_BINDINGS[id];
+  if (exact) return [exact];
   return Object.entries(KEY_TO_ID).filter(([, action]) => action === id).map(([key]) => key);
 }
 
@@ -131,11 +144,15 @@ export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean, 
   if (event.isComposing || event.keyCode === 229) return null;
   if (event.ctrlKey || event.altKey || event.metaKey) {
     const pressed = formatExactChord(exactChordFromEvent(event));
-    for (const shortcut of SHORTCUTS) {
-      if (shortcut.id === "voice") continue;
-      const value = Object.hasOwn(overrides, shortcut.id) ? overrides[shortcut.id] : null;
-      const chord = value ? parseExactChord(value) : null;
-      if (chord && formatExactChord(chord) === pressed) return shortcut.id;
+    // 이미 저장한 조합이 새 기본값보다 우선한다.
+    for (const customized of [true, false]) {
+      for (const shortcut of SHORTCUTS) {
+        if (shortcut.id === "voice" || Object.hasOwn(overrides, shortcut.id) !== customized) continue;
+        for (const value of shortcutKeys(shortcut.id, overrides)) {
+          const chord = parseExactChord(value);
+          if (chord && formatExactChord(chord) === pressed) return shortcut.id;
+        }
+      }
     }
   }
   const hasMod = platformIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
@@ -235,6 +252,18 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
       // a held chord repeats: a tab or a split is made once per press, not once per key repeat
       if (event.repeat && (shortcut === "new-tab" || shortcut === "split-right" || shortcut === "split-down")) return;
       switch (shortcut) {
+        case "open-coordinator":
+          if (!event.repeat) actions.openCoordinator();
+          break;
+        case "open-asks":
+          actions.openAsks();
+          break;
+        case "open-threads":
+          actions.openThreads();
+          break;
+        case "open-tasks":
+          actions.openTasks();
+          break;
         case "palette":
           actions.openPalette();
           break;

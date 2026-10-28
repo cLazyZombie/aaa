@@ -8296,3 +8296,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **E72.** main에 있던 큰 binary 전송과 화면 30초 대기의 결합을 양쪽 수리 전 코드에서 재현했다. 실제 비특권 SSH 거부와 화면 폼/오류 표시를 분리하고 전송·SHA·정리는 기존 host keeper가 맡는다. 시한·기대값·제품 신뢰 정책은 유지한다.
 - **번호·계약.** 착지 기준 main 60052d5c의 마지막 §8.536 다음 번호다. 기존 JSON 확장·내부 보존으로 FRONT_API 1.145·AGENT_LINK 1.11을 유지하며 새 웹 기능이 없어 E2E01~120 번호를 유지한다.
 - **검증.** [큰 입력·원장 회귀](testing-automation-large-input.md), [E72 수리 전후와 계약별 검사](testing-machine-plan-boundary.md)에 기록한다. 운영 복구는 배포 알림 뒤 보존 커서와 원인 사건·후속 보고 사건의 원장을 읽어 확인한다.
+
+### 8.538 웹 화면 이동 단축키와 PWA 단어 삭제(t-1259)
+
+- **화면 이동.** Option(Alt)+O는 coordinator, Q는 답할 것, T는 모든 thread, D는 할 일이다. 입력 중에도 이동하고 초안을 보존하며 IME 조합·229 사건은 제외한다. 기존 단축키 설정에서 기록·끄기·초기화하고 기존 저장 조합이 새 기본값보다 우선한다. Option 특수 문자는 물리 code로 판정한다.
+- **PWA 입력.** standalone 대화 입력창의 Ctrl+W는 커서 앞 공백과 앞 단어를 지운다. 선택은 선택만 지우고 커서 뒤 글과 native 편집 기록을 보존한다. 일반 탭·터미널·다른 입력칸에는 적용하지 않는다. Readline의 공백 경계를 참고하고 소스 코드는 가져오지 않았다.
+- **번호·계약.** 착지 기준 main 9121d473의 마지막 §8.537 다음 번호다. 새 웹 시험은 기존 E120 다음 E121이며 충돌이 없다. wire·저장 형식 변경이 없어 FRONT_API 1.145·AGENT_LINK 1.11을 유지한다.
+- **검증.** [별도 검증 기록](testing-navigation-shortcuts.md)에 유닛·Chromium/WebKit의 일반 탭/PWA 조건·기존 키 회귀와 한계를 남긴다. 실제 OS 키 전달은 headless 검증의 범위 밖이며 운영 PWA에서 확인한다.
