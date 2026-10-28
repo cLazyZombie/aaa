@@ -49,6 +49,8 @@ pub(crate) struct Meta {
     pub merging: Option<u32>,
     /// 전용 thread가 준비되기를 기다리는 말(idea_thread.rs)
     pub pending: Vec<String>,
+    /// 전용 thread를 띄우지 못한 까닭(다음 말에 지운다)
+    pub error: Option<String>,
 }
 
 /// 폴더 이름(ULID: 26자 Crockford base32 대문자)
@@ -264,6 +266,7 @@ impl Host {
             edited: (!m.edited.is_empty()).then(|| m.edited.join("; ")),
             merging: m.merging,
             pending: m.pending.clone(),
+            error: m.error.clone(),
         })
     }
 

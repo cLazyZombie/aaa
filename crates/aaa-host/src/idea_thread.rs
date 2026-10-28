@@ -51,8 +51,15 @@ impl Host {
         self.thread_op_lock(project, &format!("idea:{id}"))
     }
 
-    /// 전용 thread를 쓸 수 있게 한다: 열린 것은 그대로, 쉬느라 내린 것은 같은 대화로 잇고, 없거나 잇지 못하면 새로 띄운다
-    async fn idea_thread_ready(self: &Arc<Self>, project: &str, f: &Folder, actor: &str) -> Result<String, ErrorBody> {
+    /// 전용 thread를 쓸 수 있게 한다: 열린 것은 그대로, 쉬느라 내린 것은 같은 대화로 잇고, 없거나 잇지 못하면(`start`일 때만)
+    /// 새로 띄운다. 새 thread는 기록만 만들고 돌려준다(세션은 배경에서 뜬다). 띄울 것이 없으면 None
+    async fn idea_thread_ready(
+        self: &Arc<Self>,
+        project: &str,
+        f: &Folder,
+        actor: &str,
+        start: bool,
+    ) -> Result<Option<String>, ErrorBody> {
         let lock = self.idea_lock(project, &f.id);
         let _one = lock.lock().await;
         let meta = f.meta()?;
@@ -60,9 +67,9 @@ impl Host {
         if let Some(id) = meta.thread.as_deref() {
             match self.load(project, id) {
                 Ok(rec) => match rec.status {
-                    ThreadStatus::Open | ThreadStatus::Starting => return Ok(id.to_string()),
+                    ThreadStatus::Open | ThreadStatus::Starting => return Ok(Some(id.to_string())),
                     ThreadStatus::Parked => match self.thread_unpark(project, id, None, None, false, actor).await {
-                        Ok(_) => return Ok(id.to_string()),
+                        Ok(_) => return Ok(Some(id.to_string())),
                         Err(e) => {
                             tracing::warn!(
                                 project,
@@ -81,6 +88,10 @@ impl Host {
                 }
             }
         }
+        // 화면 열기는 쉬는 thread만 잇는다: 새 thread는 처음 말할 때 띄운다
+        if !start {
+            return Ok(None);
+        }
         let short = self.db.idea_short_id(project, &f.id).map_err(internal)?;
         let args = StartArgs {
             project: project.to_string(),
@@ -94,7 +105,7 @@ impl Host {
             idea: Some(f.id.clone()),
             ..Default::default()
         };
-        let view = self.thread_start(args, actor).await?;
+        let view = self.thread_start_mode(args, actor, true).await?;
         {
             let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
             let mut meta = f.meta()?;
@@ -102,7 +113,7 @@ impl Host {
             f.write_meta(&meta)?;
         }
         self.ideas_bump(project);
-        Ok(view.id)
+        Ok(Some(view.id))
     }
 
     /// 사람이 전용 thread에 말한다(웹 대화 입력창). 고친 노트 요약을 앞에 붙이고, thread가 준비되면 보낸다
@@ -123,8 +134,6 @@ impl Host {
         if f.meta()?.status == IdeaStatus::Done {
             return Err(bad("할 일로 넘겨 잠긴 아이디어다. 복사해서 새 아이디어로 다듬는다"));
         }
-        // thread를 먼저 준비한다: 띄우지 못하면 말을 남기지 않고 까닭을 돌려준다(다시 보내도 겹치지 않게)
-        self.idea_thread_ready(project, &f, actor).await?;
         {
             let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
             let mut meta = f.meta()?;
@@ -136,11 +145,13 @@ impl Host {
                 format!("(노트 고침: {})\n{text}", edited.join("; "))
             };
             meta.pending.push(line);
+            meta.error = None;
             f.write_meta(&meta)?;
         }
         self.db.audit(actor, "idea_say", &format!("{project}/{idea} {} bytes", text.len()));
         self.ideas_bump(project);
-        self.spawn_idea_delivery(project, &f.id);
+        // 띄우기·잇기는 배경에서 한다(실제 harness는 몇 초 걸린다): 말은 남겨 두고 준비되면 보낸다
+        self.spawn_idea_work(project, &f.id, true, actor);
         self.idea_note(project, &f, None)
     }
 
@@ -154,21 +165,36 @@ impl Host {
         let f = self.idea_folder(project, idea)?;
         let meta = f.meta()?;
         if meta.status == IdeaStatus::Open && meta.thread.is_some() {
-            self.idea_thread_ready(project, &f, actor).await?;
-            if !meta.pending.is_empty() {
-                self.spawn_idea_delivery(project, &f.id);
-            }
+            self.spawn_idea_work(project, &f.id, false, actor);
         }
         self.idea_note(project, &f, None)
     }
 
-    /// 남은 말을 thread가 brief를 받은 뒤 차례로 보낸다(배경). 기다림이 길면 말을 남겨 두고 끝낸다
-    fn spawn_idea_delivery(self: &Arc<Self>, project: &str, id: &str) {
-        let (host, project, id) = (self.clone(), project.to_string(), id.to_string());
+    /// 배경 일: thread를 쓸 수 있게 하고(`start`면 없을 때 새로), 남은 말을 brief 뒤 차례로 보낸다. 띄우지 못하면 까닭을 노트 메타에
+    /// 남겨 화면이 보인다(말은 남는다: 다음 말·화면 열기 때 다시 한다). 기다림이 길면 말을 남겨 두고 끝낸다
+    fn spawn_idea_work(self: &Arc<Self>, project: &str, id: &str, start: bool, actor: &str) {
+        let (host, project, id, actor) = (self.clone(), project.to_string(), id.to_string(), actor.to_string());
         tokio::spawn(async move {
+            // 아이디어마다 하나씩 차례로: 앞 일이 보내는 동안 온 말도 그 뒤에 이어 보낸다
             let lock = host.thread_op_lock(&project, &format!("idea-say:{id}"));
-            // 이미 보내는 일이 있으면 그 일이 새 말까지 보낸다
-            let Ok(_one) = lock.try_lock_owned() else { return };
+            let _one = lock.lock_owned().await;
+            let Ok(f) = host.idea_folder(&project, &id) else { return };
+            match host.idea_thread_ready(&project, &f, &actor, start).await {
+                Ok(Some(_)) => {}
+                Ok(None) => return,
+                Err(e) => {
+                    tracing::warn!(project, idea = %id, "아이디어 thread를 띄우지 못했다: {}", e.message);
+                    {
+                        let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Ok(mut meta) = f.meta() {
+                            meta.error = Some(e.message);
+                            aaa_common::diagnostic::ignored(f.write_meta(&meta), "화면에 까닭을 못 남겨도 로그에 있다");
+                        }
+                    }
+                    host.ideas_bump(&project);
+                    return;
+                }
+            }
             if let Err(e) = tokio::time::timeout(DELIVER_WAIT, host.idea_deliver(&project, &id)).await {
                 tracing::warn!(project, idea = %id, "아이디어 thread가 준비되지 않아 말을 남겨 두었다: {e}");
             }
@@ -241,13 +267,8 @@ impl Host {
                     meta.pending.push(ask);
                     f.write_meta(&meta)?;
                 }
-                // 사람 글은 이미 따로 두었다: thread를 띄우지 못해도 저장은 실패가 아니다(다음 말·화면 열기 때 다시 맡긴다)
-                match self.idea_thread_ready(project, &f, actor).await {
-                    Ok(_) => self.spawn_idea_delivery(project, &f.id),
-                    Err(e) => {
-                        tracing::warn!(project, idea = %short, "합치기를 맡길 thread를 띄우지 못했다: {}", e.message)
-                    }
-                }
+                // 사람 글은 이미 따로 두었다: 띄우기·보내기는 배경에서 한다(못 띄우면 까닭이 노트 메타에 남는다)
+                self.spawn_idea_work(project, &f.id, true, actor);
                 Ok(FrontResponse::Idea { note: self.idea_note(project, &f, None)? })
             }
             Err(Saved::Same | Saved::Written) => Err(internal("저장 결과가 맞지 않는다")),

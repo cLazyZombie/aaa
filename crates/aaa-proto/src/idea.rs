@@ -87,6 +87,8 @@ pub struct IdeaNote {
     pub merging: Option<u32>,
     /// 전용 thread가 준비되기를 기다리는 말(보낸 차례). 준비되면 host가 보내고 지운다
     pub pending: Vec<String>,
+    /// 전용 thread를 띄우지 못한 까닭(말은 남는다. 다음 말이나 화면 열기 때 다시 띄운다)
+    pub error: Option<String>,
 }
 
 /// 할 일로 넘길 초안 하나

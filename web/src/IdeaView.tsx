@@ -367,6 +367,7 @@ function IdeaChat({ note, threads, panes, canControl, notes, active, onSaid, onE
             {pending.length === 0 && note.pending.length === 0 && <p className="chat-note">{pane ? "대화 기록을 읽지 못하는 harness다" : thread ? "잇는 중…" : "아직 대화가 없다."}</p>}
           </div>
         )}
+        {note.error && <p className="banner err idea-chat-error" role="alert" data-testid="idea-error">thread를 띄우지 못했다: {note.error}</p>}
         {note.pending.length > 0 && <p className="idea-chat-wait" role="status" data-testid="idea-waiting">thread 준비 중 · 보낼 말 {note.pending.length}개</p>}
       </div>
       {sorted.length > 0 && (

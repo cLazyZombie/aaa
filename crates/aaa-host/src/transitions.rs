@@ -114,7 +114,11 @@ impl MachinePanes {
 }
 
 fn auto_resolve_eligible(r: &ThreadRec) -> bool {
-    r.status == ThreadStatus::Open && r.role != Role::Evaluator && r.last_group == Some(ThreadGroup::Idle)
+    // 아이디어 thread는 끝내지 않고 쉬게 한다(idea_thread.rs `idea_rest_pass`)
+    r.status == ThreadStatus::Open
+        && r.role != Role::Evaluator
+        && r.idea.is_none()
+        && r.last_group == Some(ThreadGroup::Idle)
 }
 
 /// auto-resolve 때가 됐나: 묶음·보고가 마지막으로 바뀐 때와 host가 뜬 때 중 가장 늦은 때부터 `limit_ms`가 지났다
