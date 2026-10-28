@@ -995,39 +995,90 @@ draw();
     await client.page.context().close();
   });
 
-  await step("대화 Enter: 터치 기기는 줄바꿈·버튼 보내기, 데스크톱 Enter/Shift+Enter, 한국어 IME 확정은 무전송", async () => {
-    const wk = await webkit.launch();
+  // 실제 threads JSON 완료만 보류한다. 고정 지연·가짜 목록 없이 초기 자동 선택을 목록 클릭 뒤로 보낸다.
+  function holdInitialThreads() {
+    const fetch = window.fetch;
+    let first = true;
+    window.fetch = async (...args) => {
+      const response = await fetch(...args);
+      if (!first || JSON.parse(args[1]?.body ?? "null")?.op !== "threads") return response;
+      first = false;
+      const body = await response.clone().json();
+      response.json = () => new Promise(resolve => { window.__releaseInitialThreads = () => resolve(body); });
+      return response;
+    };
+  }
+
+  async function enterCase(name) {
+    const wk = name === "chrome" ? null : await webkit.launch();
+    let client;
+    let stage = "페어링";
     try {
-      for (const name of ["iphone", "ipad", "chrome", "safari"]) {
-        const client = name === "iphone" || name === "ipad" ? await pairDevice(wk, aaa("web", "pair").code, name) : await pairPage(name === "chrome" ? browser : wk, aaa("web", "pair").code, { width: 1280, height: 800 });
-        const p = client.page;
-        const box = await openChat(p);
-        await box.fill("");
-        await box.fill("첫 줄");
-        const touch = name === "iphone" || name === "ipad";
-        let mark = (await sentFrames(p)).length;
-        await box.press(touch ? "Enter" : "Shift+Enter");
-        await box.pressSequentially("둘째 줄");
-        if ((await box.inputValue()) !== "첫 줄\n둘째 줄" || (await sentFrames(p, mark)).some((f) => f.t === "submit")) throw new Error(`${name} 줄바꿈 대신 전송했다`);
-        await box.evaluate((el) => {
-          el.dispatchEvent(new CompositionEvent("compositionstart", { data: "한", bubbles: true }));
-          el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
-          el.dispatchEvent(new CompositionEvent("compositionend", { data: "한", bubbles: true }));
-          el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true }));
-        });
-        if ((await sentFrames(p, mark)).some((f) => f.t === "submit")) throw new Error(`${name} 조합 확정이 전송했다`);
-        await shot(p, `composer-multiline-${name}`);
-        const got = await submit(p);
-        if (got.text !== "첫 줄\n둘째 줄") throw new Error(`줄바꿈 전달 ${JSON.stringify(got)}`);
-        if (!touch) {
-          await box.fill("desktop-enter");
-          await box.press("Enter");
-          await waitOutput("composer", `CMP_RECEIVED_${++received}`);
-          await domIs(p, "Enter 전송 완료", () => document.querySelector('[aria-label="메시지"]').value === "");
-          if (JSON.parse(fs.readFileSync(receipts, "utf8")).text !== "desktop-enter") throw new Error("desktop Enter 전송이 다르다");
-        }
-        await p.context().close();
+      client = name === "iphone" || name === "ipad" ? await pairDevice(wk, aaa("web", "pair").code, name, name === "iphone" ? { init: holdInitialThreads } : {}) : await pairPage(name === "chrome" ? browser : wk, aaa("web", "pair").code, { width: 1280, height: 800 });
+      const p = client.page;
+      if (name === "iphone") {
+        stage = "첫 threads 응답 전 목록 열기";
+        await p.waitForFunction(() => typeof window.__releaseInitialThreads === "function");
+        assert.equal(await p.evaluate(() => location.hash), "", "첫 자동 선택 전");
+        await p.locator(".view [data-testid='drawer-toggle']:visible").click();
+        await p.locator("#workspace-drawer.is-open").waitFor();
+        stage = "늦은 초기 선택 뒤 열린 목록 보존";
+        await p.evaluate(() => window.__releaseInitialThreads());
+        await domIs(p, "첫 화면 선택 완료", () => document.querySelector('#workspace-drawer [aria-current="true"]') !== null);
+        assert.equal(await p.locator("#workspace-drawer").evaluate(el => el.classList.contains("is-open")), true, "초기 자동 선택이 사용자가 연 목록을 닫았다");
       }
-    } finally { await wk.close(); }
-  });
+      stage = "대화 입력창 열기";
+      const box = await openChat(p);
+      stage = "줄바꿈·IME 확정";
+      await box.fill("");
+      await box.fill("첫 줄");
+      const touch = name === "iphone" || name === "ipad";
+      let mark = (await sentFrames(p)).length;
+      await box.press(touch ? "Enter" : "Shift+Enter");
+      await box.pressSequentially("둘째 줄");
+      if ((await box.inputValue()) !== "첫 줄\n둘째 줄" || (await sentFrames(p, mark)).some((f) => f.t === "submit")) throw new Error(`${name} 줄바꿈 대신 전송했다`);
+      await box.evaluate((el) => {
+        el.dispatchEvent(new CompositionEvent("compositionstart", { data: "한", bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
+        el.dispatchEvent(new CompositionEvent("compositionend", { data: "한", bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true }));
+      });
+      if ((await sentFrames(p, mark)).some((f) => f.t === "submit")) throw new Error(`${name} 조합 확정이 전송했다`);
+      await shot(p, `composer-multiline-${name}`);
+      stage = "버튼 전송·PTY 수신·초안 비움";
+      const got = await submit(p);
+      if (got.text !== "첫 줄\n둘째 줄") throw new Error(`줄바꿈 전달 ${JSON.stringify(got)}`);
+      if (!touch) {
+        stage = "Enter 전송·PTY 수신·초안 비움";
+        await box.fill("desktop-enter");
+        await box.press("Enter");
+        await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+        await domIs(p, "Enter 전송 완료", () => document.querySelector('[aria-label="메시지"]').value === "");
+        if (JSON.parse(fs.readFileSync(receipts, "utf8")).text !== "desktop-enter") throw new Error("desktop Enter 전송이 다르다");
+      }
+      assert.deepEqual(client.errors, [], `${name} 페이지 오류`);
+    } catch (error) {
+      const p = client?.page;
+      const directory = `${root}/diagnostics`;
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(`${directory}/composer-enter-${name}.json`, JSON.stringify({
+        name, stage, error: error.stack,
+        dom: p && !p.isClosed() ? await p.evaluate(() => ({
+          drawer: document.getElementById("workspace-drawer")?.className,
+          selected: document.querySelector('#workspace-drawer [aria-current="true"]')?.getAttribute("data-testid"),
+          composer: Boolean(document.querySelector('[data-testid="chat-composer"]')),
+          sendState: document.querySelector('[data-testid="chat-send-state"]')?.getAttribute("data-state"),
+        })).catch(e => String(e)) : null,
+      }, null, 2));
+      // CI annotation이 첫 줄만 수집해도 기기·단계·selector·call log를 남긴다.
+      throw new Error(`${name}/${stage}: ${error.message.replace(/\s*\n\s*/g, " ")}`, { cause: error });
+    } finally {
+      await client?.page.context().close();
+      await wk?.close();
+    }
+  }
+  await step("대화 Enter (iphone): 줄바꿈·버튼·한국어 IME 확정 무전송·늦은 초기 선택", () => enterCase("iphone"));
+  await step("대화 Enter (ipad): 줄바꿈·버튼·한국어 IME 확정 무전송", () => enterCase("ipad"));
+  await step("대화 Enter (chrome): Enter/Shift+Enter·버튼·한국어 IME 확정 무전송", () => enterCase("chrome"));
+  await step("대화 Enter (safari): Enter/Shift+Enter·버튼·한국어 IME 확정 무전송", () => enterCase("safari"));
 }

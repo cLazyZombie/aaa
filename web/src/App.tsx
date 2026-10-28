@@ -787,10 +787,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 다른 pane·thread·화면으로 가는 것만 기록 한 칸이다(뒤로가 앞 화면으로 돌아간다). 앱이 스스로 고른 첫 화면과 「고른 것 없음」은
   // 지금 칸을 바꾼다: 뒤로 끝에 빈 「하나를 고른다」 칸이 남지 않는다(herdr-web-ui App.tsx 1091줄 첫 쓰기·autoSelected는
   // replaceState, deepLink.ts `isNavigation`은 pane 없는 곳을 이동으로 치지 않는다, plan §8.301)
-  const goHash = (hash: string, replace = false) => {
+  const goHash = (hash: string, replace = false, options: { keepDrawer?: boolean } = {}) => {
     setRecentPanel(null);
     const next = hash ? `#${hash}` : "";
-    drawerSwipe.current?.beforeNavigation();
+    if (!options.keepDrawer) drawerSwipe.current?.beforeNavigation();
     if (settingsEntry(history.state)) {
       // 설정에서 다른 본문을 고르면 그 주소에 새 칸을 만든다. 늦은 설정 뒤로가기를 일으키지 않는다.
       const url = new URL(location.href);
@@ -871,12 +871,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // App이 스스로 고른 pane(주소의 pane이 닫혀 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected)
   const [autoSelected, setAutoSelected] = useState(false);
   // replace: 지금 칸을 바꾼다(앱이 고른 첫 화면, 고른 것 없음. goHash)
-  const choose = (id: string | null, auto = false, replace = auto || id === null) => {
+  const choose = (id: string | null, auto = false, replace = auto || id === null, options: { keepDrawer?: boolean } = {}) => {
     drawerTrace("pane-select");
-    goHash(id ? `pane=${encodeURIComponent(id)}` : "", replace);
+    goHash(id ? `pane=${encodeURIComponent(id)}` : "", replace, options);
     setSel(id ? `pane:${id}` : null);
     setAutoSelected(auto);
-    setDrawerOpen(false);
+    if (!options.keepDrawer) setDrawerOpen(false);
   };
   // 보던 pane이 새 pane으로 바뀌었다(`pane resume`·재부팅 복원은 새 세션을 띄우고 옛 기록을 지운다, PaneView.replaced): 그 자리를
   // 이은 pane을 따라가고 주소도 바꾼다(뒤로 가기에 옛 주소를 남기지 않는다, QA Q19)
@@ -889,12 +889,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     history.replaceState(history.state, "", `#pane=${encodeURIComponent(next.id)}`);
     setSel(`pane:${next.id}`);
   }, [panes, sel]);
-  const chooseThread = (t: ThreadView, from: string | null = null, replace = false) => {
+  const chooseThread = (t: ThreadView, from: string | null = null, replace = false, options: { keepDrawer?: boolean } = {}) => {
     setAutoSelected(false);
-    setDrawerOpen(false);
+    if (!options.keepDrawer) setDrawerOpen(false);
     setBackTo(from);
     openedHash.current = `#${hashOf(`thread:${threadKey(t)}`)}`;
-    goHash(openedHash.current.slice(1), replace);
+    goHash(openedHash.current.slice(1), replace, options);
     setSel(`thread:${threadKey(t)}`);
   };
   // 할 일 「coordinator에게 맡기기」(t-0469 §3.4, plan §8.316): 도는 coordinator(없으면 기본 profile로 띄운 것, `project open`)의
@@ -1133,8 +1133,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       const shown = [...threads.values()].filter(inSidebar);
       const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity")[0];
       if (!first) return;
-      if ("pane" in first.open) choose(first.open.pane, auto, true);
-      else chooseThread(first.open.thread, null, true);
+      // 조회가 늦어 사용자가 목록을 먼저 열었어도 초기 자동 선택이 닫지 않는다.
+      if ("pane" in first.open) choose(first.open.pane, auto, true, { keepDrawer: true });
+      else chooseThread(first.open.thread, null, true, { keepDrawer: true });
     };
     // 주소가 가리킨 pane이 없다(닫혔다): 첫 줄을 열고 머리에 말한다. 키보드는 사용자가 고를 때까지 둔다(참고 resolveLink
     // 「workspace-closed」·fallback·autoSelected. aaa 주소에는 workspace가 없어 그 workspace의 pane을 여는 갈래는 없다)
@@ -1145,9 +1146,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       return pickFirst(true);
     }
     const stored = storedSelection();
-    if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5), false, true);
+    if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5), false, true, { keepDrawer: true });
     const storedThread = stored?.startsWith("thread:") ? threads.get(stored.slice(7)) : undefined;
-    if (storedThread && inSidebar(storedThread)) return chooseThread(storedThread, null, true);
+    if (storedThread && inSidebar(storedThread)) return chooseThread(storedThread, null, true, { keepDrawer: true });
     pickFirst(false);
     // choose·chooseThread는 주소와 setSel만 쓴다
     // eslint-disable-next-line react-hooks/exhaustive-deps

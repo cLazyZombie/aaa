@@ -48,8 +48,8 @@ const openDrawer = async (p) => {
 };
 const drawerOpen = (p) => p.locator("#workspace-drawer").evaluate((el) => el.classList.contains("is-open"));
 
-// 머신 행 부착 뒤에도 첫 threads 응답은 늦게 올 수 있다. 빈 주소의 자동 첫 선택(choose)은
-// 그때 사용자가 연 메뉴까지 닫으므로, 이 시험의 시작 목적지를 처음부터 명시한다.
+// 머신 행 부착 뒤에도 첫 threads 응답은 늦게 올 수 있다. 이 시험은 시작 목적지를 명시해
+// 설정의 복귀만 본다. 빈 주소의 자동 첫 선택과 열린 메뉴의 경합은 E2E23이 검사한다.
 function pairSettingsPage(browser, diagnostics, close, options = {}) {
   return pairDevice(browser, aaa("web", "pair").code, "iphone", {
     ...options, hash: paneHash("bk1"), init: holdSettingsRewind,
