@@ -2,6 +2,14 @@
 # 머신별 값은 같은 폴더의 host.local.toml에 두면 덮어쓴다.
 schema = 1
 
+# DB 전체를 압축·age 암호화해 하루 한 번 보관한다. 설정·복원: docs/host-db-backup.md
+[backup]
+enabled = false
+directory = ""
+recipient = ""
+daily_utc = "19:45"
+keep = 7
+
 [host]
 # Agent link(TCP+TLS 1.3) listen 주소. 원격 agent가 여기로 연결한다. 빈 문자열이면 원격을 받지 않는다.
 agent_listen = "0.0.0.0:7430"

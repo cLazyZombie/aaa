@@ -31,7 +31,9 @@ tracing.workspace = true
 tokio-rustls.workspace = true
 rustls.workspace = true
 webpki-roots.workspace = true
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+# age v1 파일 형식으로 스트리밍 암호화한다. SSH·plugin·외부 실행은 쓰지 않는다.
+age = { version = "0.11.1", default-features = false }
 # Retry-After의 HTTP 날짜(구독 사용량 429). hyper가 이미 쓰는 판이다
 httpdate = "1"
 # `pane wait-output --regex`(Cargo.lock에 이미 있는 판)

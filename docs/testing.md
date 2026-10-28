@@ -1,3 +1,4 @@
+- t-1242: [host DB 정기 암호화 백업·복원 검증](testing-host-db-backup.md)
 - t-1225: [coordinator·thread에 넣는 글 줄이기 검증](testing-context-budget.md)
 - t-1232: [E2E12 events 수신·route 정리 검증](testing-thread-events-liveness.md)
 - t-1229: [계정 Codex hook 설치·실기 검증](testing-account-codex-hooks.md)

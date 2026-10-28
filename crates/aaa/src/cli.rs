@@ -167,6 +167,11 @@ enum Cmd {
     },
     /// host backend 실행(보통 OS 감독자가 띄운다)
     Host,
+    /// host DB의 암호화 백업·새 파일 복원(host 머신에서 실행).
+    DbBackup {
+        #[command(subcommand)]
+        cmd: crate::db_backup::Command,
+    },
     /// (내부) SCM에서만 실행하는 고정 Windows 서비스 입구. console fallback은 없다.
     #[command(hide = true)]
     ServiceRun {
@@ -2014,6 +2019,12 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 fn run(cli: Cli) -> Result<ExitCode> {
     let json = cli.json;
     match cli.cmd {
+        Cmd::DbBackup { cmd } => {
+            init_log("info");
+            aaa_common::resource::disable_core_dump("db-backup");
+            crate::db_backup::run(cmd, json)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Install(_) => unreachable!("install은 환경 변경 전에 처리한다"),
         Cmd::ServiceRun { .. } => unreachable!("SCM은 환경 변경 전에 연결한다"),
         Cmd::Setup(_) | Cmd::SetupService => unreachable!("setup은 run 전에 처리한다"),

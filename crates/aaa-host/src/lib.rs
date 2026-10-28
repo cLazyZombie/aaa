@@ -25,6 +25,7 @@ mod accounts;
 mod auto_start;
 mod automation;
 mod automation_thread;
+pub mod backup;
 mod bgwait;
 mod brief;
 mod brief_text;
@@ -523,6 +524,7 @@ pub fn normalize_device_label(value: &str, fallback: &str) -> String {
 }
 
 pub struct Host {
+    backup_running: AtomicBool,
     pub cfg: HostConfig,
     accounts: accounts::Accounts,
     pub state: PathBuf,
@@ -808,6 +810,7 @@ impl Host {
         let dev_mode = cfg.local_agent.mode == LocalAgentMode::Child;
         let upload_gate = library_upload::upload_gate(&state).context("업로드 쓰기 잠금 경로")?;
         let host = Arc::new(Host {
+            backup_running: AtomicBool::new(false),
             health: Mutex::new(supervisor::Health::load(&db)),
             health_wake: Default::default(),
             accounts,
