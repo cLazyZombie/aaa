@@ -387,6 +387,42 @@ impl Host {
         Ok(buf)
     }
 
+    /// CLI 파일 읽기도 웹과 같은 manifest·상대 경로·symlink·불변 판 검사를 거친다.
+    pub(crate) async fn library_read(
+        self: &Arc<Self>,
+        project: &str,
+        name: &str,
+        path: &str,
+        offset: u64,
+    ) -> Result<FrontResponse, ErrorBody> {
+        use futures_util::StreamExt;
+        if !safe_rel(path) {
+            return Err(err(ErrorCode::BadRequest, "library 상대 경로가 아니다"));
+        }
+        let view = self.report_library(project, name, None, false)?;
+        let cap = view.base.trim_start_matches("/v/").trim_end_matches('/');
+        let source = self.view_source(cap, path).await;
+        self.view_caps.lock().unwrap().remove(cap);
+        let source = source?.source;
+        let size = source.size();
+        if offset > size {
+            return Err(err(ErrorCode::BadRequest, "파일 끝을 넘은 위치다"));
+        }
+        let len = (size - offset).min(64 * 1024);
+        let mut stream = source.open(offset, len).await?;
+        let mut data = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            data.extend(chunk.map_err(|e| err(ErrorCode::Unavailable, format!("library 읽기 실패: {e}")))?);
+        }
+        if data.len() as u64 != len {
+            return Err(err(ErrorCode::Unavailable, "library 파일 크기가 읽는 중 바뀌었다"));
+        }
+        Ok(FrontResponse::LibraryChunk {
+            data: aaa_proto::B64(data),
+            next: (offset + len < size).then_some(offset + len),
+        })
+    }
+
     /// 보기 경로의 파일을 찾는다. 읽기는 `ViewSource::open`이다.
     pub(crate) async fn view_source(self: &Arc<Self>, cap: &str, path: &str) -> Result<ViewFile, ErrorBody> {
         let signed = !self.view_caps.lock().unwrap().contains_key(cap);

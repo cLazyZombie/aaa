@@ -1599,6 +1599,8 @@ enum LibraryCmd {
     /// 이름·thread ID·r-NNNN으로 특정 보고 판과 파일 목록을 읽는다.
     #[command(alias = "open")]
     Show { name: String },
+    /// 보고 판의 library 파일을 읽는다. 기본은 원문 bytes, --json은 조각 응답이다.
+    Cat { name: String, path: String },
     /// host 머신의 폴더·파일을 복사한다. 같은 이름은 최신으로 바꾼다.
     Publish {
         source: std::path::PathBuf,
@@ -1664,6 +1666,7 @@ enum LibraryCmd {
         days: Option<u32>,
     },
     /// 링크·만료·마지막 열람·사본 크기
+    #[command(alias = "ls")]
     List {
         #[arg(long)]
         project: Option<String>,
@@ -2901,6 +2904,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 MachineCmd::Revoke { name } => FrontRequest::MachineRevoke { name },
             },
         ),
+        Cmd::Library { cmd: LibraryCmd::Cat { name, path } } => library_cat(json, name, path),
         Cmd::Library { cmd } => front(
             json,
             match cmd {
@@ -2918,6 +2922,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         archived: !remove,
                     }
                 }
+                LibraryCmd::Cat { .. } => unreachable!(),
                 LibraryCmd::Show { name } => FrontRequest::LibraryOpen { project: project_or_here(None)?, name },
                 LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
                 LibraryCmd::Publish { source, project, name, live, to_user, title, from_thread } => {
@@ -3922,11 +3927,54 @@ fn shift_project(first: String, rest: &mut Vec<String>) -> Result<(String, Strin
     Ok((project_or_here(None)?, first))
 }
 
+fn library_cat(json: bool, name: String, path: String) -> Result<ExitCode> {
+    use std::io::Write;
+    let project = project_or_here(None)?;
+    let mut offset = 0;
+    loop {
+        match front_call(FrontRequest::LibraryRead {
+            project: project.clone(),
+            name: name.clone(),
+            path: path.clone(),
+            offset,
+        })? {
+            Ok(FrontResponse::LibraryChunk { data, next }) => {
+                if json {
+                    println!("{}", serde_json::to_string(&FrontResponse::LibraryChunk { data, next })?);
+                } else {
+                    std::io::stdout().lock().write_all(&data.0)?;
+                }
+                match next {
+                    Some(n) if n > offset => offset = n,
+                    None => return Ok(ExitCode::SUCCESS),
+                    _ => anyhow::bail!("library 읽기 위치가 나아가지 않았다"),
+                }
+            }
+            other => return front_print(json, other),
+        }
+    }
+}
+
 pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
     // 한 CLI 요청의 writer·응답 수신은 이 block_on 안에서 끝난다. 요청마다
     // CPU 수만큼 worker thread를 만들지 않아도 같은 I/O·timer를 구동한다.
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-        let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+        let mut c = match aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await {
+                    Ok(client) => client,
+                    Err(error)
+                        if aaa_agent::hooks::in_session()
+                            && req.thread_read_allowed()
+                            && error.chain().filter_map(|e| e.downcast_ref::<std::io::Error>()).any(|e| {
+                                matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused)
+                            }) =>
+                    {
+                        return aaa_agent::thread_read::send(req).await;
+                    }
+                    Err(error) => return Err(error),
+                };
+        if matches!(&req, FrontRequest::LibraryRead { .. }) && c.proto.minor < 146 {
+            anyhow::bail!("library 파일 읽기는 Front API 1.146 이상 host가 필요하다");
+        }
         if matches!(&req, FrontRequest::RecordSearch { .. } | FrontRequest::RecordOpen { .. }) && c.proto.minor < 140 {
             anyhow::bail!("작업 기록 검색은 host 1.140 이상이 필요하다");
         }
@@ -5669,6 +5717,7 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str(&render_front(&FrontResponse::LibraryLink(l.clone())));
             }
         }
+        FrontResponse::LibraryChunk { data, .. } => s.push_str(&String::from_utf8_lossy(&data.0)),
         FrontResponse::Library(l) => {
             if let Some(id) = &l.report_id {
                 let _ = writeln!(s, "보고: {id}");

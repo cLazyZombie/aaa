@@ -37,6 +37,8 @@ mod ssh_install;
 mod task_main_merge;
 #[path = "m13/thread_park.rs"]
 mod thread_park;
+#[path = "m13/thread_read.rs"]
+mod thread_read;
 #[path = "m13/thread_stages.rs"]
 mod thread_stages;
 #[path = "m13/web_publication.rs"]

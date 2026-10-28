@@ -46,6 +46,27 @@ pairing 코드 발급, 머신 등록 창 열기·승인·폐기, 기기 폐기, 
 
 coordinator의 상태 조회·post·일반 thread 관리·허용된 배포 경로는 이 제한의 대상이 아니다. 같은 OS 사용자 권한의 agent가 pane 밖 터미널을 흉내 내거나 host.toml을 직접 고치는 한계는 남는다. 이 제한은 OS 사용자 격리를 제공하지 않는다.
 
+## 원격 thread의 host 자료 읽기
+
+host가 아닌 머신의 aaa 세션에서도 `thread list`·`thread show`·`thread summary`·`thread library`,
+`library show`·`library list`(`ls`)·`library cat`, `search`·`record`를 쓸 수 있다.
+로컬 host socket이 없거나 연결을 거부하면 그 세션의 agent 연결을 통해 host로 전달한다.
+출력과 JSON은 host에서 같은 명령을 실행했을 때와 같다. `thread show`는 상태·보고 ID·Next를,
+`library show <r-ID>`의 JSON은 회수한 보고 본문과 파일 목록을 준다.
+
+```sh
+aaa thread show t-0001
+aaa --json library show r-0001
+aaa library cat r-0001 plans/design.md
+aaa search '설계 결정'
+aaa record <프로젝트> <검색 결과 key>
+```
+
+원격 읽기는 `thread_read.v1`을 지원하는 host·agent가 필요하다. 구버전 agent·host나 연결 끊김은
+명령 오류로 알린다. 세션 밖 원격 셸에는 이 경로를 열지 않는다. agent가 세션 token과 실제 요청
+프로세스를 확인하고 host가 그 머신의 실행 중 세션인지 확인한다. 전달 경로는 읽기 허용 목록과
+Reader 권한을 함께 적용한다. 쓰기·승인·병합 명령의 권한은 그대로다.
+
 ## 자주 쓰는 CLI
 
 host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생략한다(§8.285). 옛 꼴(`aaa thread show <p> <id>`처럼 앞에 프로젝트)도 한 판 동안 받는다: 이 host의 프로젝트와 같은 이름이면 표준 오류에 경고 한 줄을 남기고 그대로 하고, 다른 이름이면 거부한다. `post`(coordinator·사람의 셸 pane은 Front로, thread pane은 hook으로)·`safety`·`profile list --project`도 생략한다(§8.288). `project pause|resume|sweep|archive|delete`도 이름 없이 쓰고, `project rename <새 이름>`은 새 이름만 준다(S5). 보관한 프로젝트나 여럿이 남은 옛 상태의 이름은 옛 꼴로 지정할 수 있다. 보관을 풀 때는 `project unarchive <이름>`을 쓴다. 프로젝트 설정은 홈의 `aaa.toml`(`[[workspaces]]`)이 있으면 그것을, 없으면 `project.toml`(`[[repos]]`)을 읽고 쓴다. aaa는 aaa.toml을 만들지 않는다.

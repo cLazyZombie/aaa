@@ -110,6 +110,7 @@ mod task_queue;
 mod task_repo;
 mod tasks;
 mod text;
+mod thread_read;
 mod transitions;
 mod trust_screen;
 pub mod usage;
@@ -2068,6 +2069,9 @@ impl Host {
                 .library_reports(project.as_deref(), role.can_control())
                 .map(|reports| FrontResponse::LibraryReports { reports }),
             FrontRequest::LibraryMarkRead { reports } => self.library_mark_read(&reports, actor, role.can_control()),
+            FrontRequest::LibraryRead { project, name, path, offset } => {
+                self.library_read(&project, &name, &path, offset).await
+            }
             FrontRequest::LibraryOpen { project, name } => {
                 let view = self.report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())?;
                 self.library_opened(&project, &name);

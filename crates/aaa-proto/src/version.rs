@@ -40,6 +40,7 @@ impl std::fmt::Display for Version {
 // 1.10: work_files.v1의 일반 작업 파일 전송. 1.9 agent에는 옛 파일 태그로 보낸다.
 // 같은 1.10에 hello 선택 칸 `sha256`(실행 파일 SHA-256, plan §8.372)을 더한다. 옛 agent는 보내지 않고 옛 host는 버린다.
 // 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
+// 같은 1.11의 선택 기능 thread_read.v1: 인증된 세션의 명시적 읽기 요청만 host Reader로 전달한다.
 // 같은 1.11의 선택 기능 imagegen.v1: 세션 peer·token 확인 뒤 자기 이미지 요청/결과만 양쪽에서 보낸다.
 // 같은 1.11의 선택 기능 terminal_payload.zstd.v1: 원격 snapshot/history만 압축한다(t-0876). IPC는 원시다.
 // 같은 1.11의 선택 기능 report_hash.v1: library 없이 보고 hash만 조회한다.
@@ -274,7 +275,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.143: 할 일·thread별 자동 병합 — AutoMergeSet·TaskView/ThreadView.auto_merge·TaskAction::AutoMerge(t-1214).
 // 1.144: AutoDecisionForget — 자동 결정 기록 지우기·모두 지우기(t-1223). 옛 host는 모르는 요청으로 거절한다.
 // 1.145: InboxItem.short_id 표시 별칭. id는 기존 저장 키이며 InboxDone은 두 ID 모두 받는다(t-1228).
-pub const FRONT_API: Version = Version { major: 1, minor: 145 };
+// 1.146: LibraryRead·LibraryChunk로 library 파일 bytes를 조각 읽는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 146 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
