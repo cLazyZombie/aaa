@@ -1,3 +1,4 @@
+- t-1251: [중단 기동 회수와 명시 restart의 시험 경쟁 검증](testing-preparation-recovery.md)
 - t-1251: [Claude 계정 thread의 advisorModel 전달 검증](testing-claude-advisor.md)
 - t-1242: [host DB 정기 암호화 백업·복원 검증](testing-host-db-backup.md)
 - t-1236: [m13 질문 이력](testing-claude-menu-input-batch.md) · [E42 관측 경쟁 재현·수리](testing-diff-context-reflow.md)
