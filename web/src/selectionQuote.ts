@@ -65,6 +65,14 @@ export function formatChatQuote(quote: { source: string; speaker: QuoteSpeaker; 
   return `인용: ${chatQuoteSource(quote.source, quote.speaker, quote.harness)}\n${quoteLines(text)}`;
 }
 
+/** 아이디어 노트(t-1260): 「n-0001 노트 「결정」」. 그림·영상은 통째로 이름과 설명을 인용한다 */
+export function formatIdeaQuote(quote: { idea: string; section: string | null; text: string }): string | null {
+  const text = quotedText(quote.text);
+  if (text === null) return null;
+  const where = quote.section ? ` 「${quote.section.replace(/\s+/g, " ").trim()}」` : "";
+  return `인용: ${sourceName(quote.idea, "아이디어")} 노트${where}\n${quoteLines(text)}`;
+}
+
 /** 보고 글(t-1222): 「t-1222 보고 r-4001」. 판(r-ID)은 바뀌지 않는 보고 판이다 */
 export function formatReportQuote(quote: { source: string; report: string; text: string }): string | null {
   const text = quotedText(quote.text);

@@ -6,14 +6,15 @@
 // Accounts·Manage 자리). 맨 위 「coordinator」(사용자 요청 10-21 「왼쪽 제일 위로 (버튼 중에 제일 위)」, t-0621)는 로고 밑, 패널 단추 위의 보통
 // 단추다(tablist 밖): 도는 coordinator pane을 연다. pane이 하나라 배지는 수 대신 점이다(새 답은 강조색, 질문·확인창은 빨강, 사용자 결정 10-21).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Search, Bot, LoaderCircle, Eye, FileText, FolderKanban, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
+import { Search, Bot, LoaderCircle, Eye, FileText, FolderKanban, Lightbulb, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
 import { AutomationIcon, TasksIcon, WorkspaceIcon } from "./activityIcons";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
 // 작업은 FolderKanban: 작업 공간 폴더 안에서 도는 thread(시안 6개 중 사용자 결정 10-19, plan §8.280·§8.287).
 // 자동화·할 일은 직접 그린 아이콘(시안 4개씩 중 사용자 결정 10-22, t-0727)
-const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { workspace: WorkspaceIcon, asks: MessageCircleQuestionMark, work: FolderKanban, machines: Monitor, automations: AutomationIcon };
+// 아이디어는 전구(시안 r-4673, t-1260)
+const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { workspace: WorkspaceIcon, asks: MessageCircleQuestionMark, work: FolderKanban, machines: Monitor, automations: AutomationIcon, ideas: Lightbulb };
 
 /** 맨 위 「coordinator」 단추. `badge`: reply는 안 본 끝난 턴, ask는 확인창·질문 */
 export type CoordinatorButton = { active: boolean; badge: "reply" | "ask" | null; busy: boolean; onOpen: () => void };

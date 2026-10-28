@@ -6,10 +6,10 @@ import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 「작업」은 예전 프로젝트·에이전트 두 패널을 합친 트리다(사용자 결정 10-19 안 A, plan §8.280). 「답할 것」은 보고서 바로 위다: thread 질문·
 // coordinator 확인 필요·할 일 확인 필요 목록이고 고른 것을 본문 카드로 연다(사용자 결정 10-21 1B, plan §8.345)
 // coordinator 알림함은 CLI에서 다룬다. 사용자 화면에는 「답할 것」·보고서로 필요한 항목을 보인다(t-0590).
-export const PANELS = ["work", "workspace", "machines", "automations", "asks"] as const;
+export const PANELS = ["work", "workspace", "machines", "automations", "ideas", "asks"] as const;
 export type SidebarPanel = (typeof PANELS)[number];
 
-export const PANEL_LABEL: Record<SidebarPanel, string> = { workspace: "workspace", asks: "답할 것", work: "작업", machines: "머신", automations: "자동화" };
+export const PANEL_LABEL: Record<SidebarPanel, string> = { workspace: "workspace", asks: "답할 것", work: "작업", machines: "머신", automations: "자동화", ideas: "아이디어" };
 
 /** 예전 패널 이름이나 숨긴 알림함으로 남긴 기억은 「작업」으로 연다 */
 const OLD_PANELS: Record<string, SidebarPanel> = { projects: "work", agents: "work", special: "work", inbox: "work" };

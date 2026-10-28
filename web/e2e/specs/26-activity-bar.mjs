@@ -47,7 +47,7 @@ export default async function () {
       same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
       // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280). 「답할 것」은 패널 끝, 보고서 바로 위다(§8.359).
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
-      if (tabs !== "activity-work,activity-workspace,activity-machines,activity-automations,activity-asks") throw new Error(`패널 단추: ${tabs}`);
+      if (tabs !== "activity-work,activity-workspace,activity-machines,activity-automations,activity-ideas,activity-asks") throw new Error(`패널 단추: ${tabs}`);
       // 자동화·할 일은 직접 그린 아이콘(사용자 결정 10-22, t-0727 plan §8.437): 옛 Workflow·ListTodo가 막대에 없다
       const icons = await p.evaluate(() => ({
         automation: document.querySelector('[data-testid="activity-automations"] > svg')?.getAttribute("class"),

@@ -10,6 +10,7 @@ mod account_rename;
 mod auto_merge;
 mod automation_ids;
 pub(crate) mod automation_runs;
+mod idea_ids;
 mod inbox_ids;
 #[cfg(test)]
 mod inbox_tests;
@@ -423,6 +424,7 @@ impl Db {
              CREATE INDEX IF NOT EXISTS automation_runs_name ON automation_runs(project,name,updated);
              CREATE TABLE IF NOT EXISTS automation_ids(project TEXT NOT NULL, name TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,name), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_ids(project TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,task_id), UNIQUE(project,number));
+             CREATE TABLE IF NOT EXISTS idea_ids(project TEXT NOT NULL, idea_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,idea_id), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS task_archive(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
@@ -1848,7 +1850,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 25] = [
+const PROJECT_TABLES: [&str; 26] = [
     "work_records",
     "work_record_sources",
     "threads",
@@ -1868,6 +1870,7 @@ const PROJECT_TABLES: [&str; 25] = [
     "posts",
     "task_log",
     "task_ids",
+    "idea_ids",
     "automation_ids",
     "automation_runs",
     "task_queue",

@@ -70,6 +70,8 @@ import { normalizeAppTarget, uniqueAppTargets, type AppId } from "./appIds";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
+import { IdeaView } from "./IdeaView";
+import { IdeasPanel, useIdeas } from "./IdeasPanel";
 import { useAutomations } from "./automationData";
 import { openAsks, questionKey, questionRefLook } from "./asksModel";
 import { isSheetRewind } from "./herdr/sheetHistory.ts";
@@ -309,9 +311,9 @@ function selectedFromHash(): string | null {
   if (location.hash === "#asks") return "asks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|task|question|ask|automation|workspace|machine)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|task|question|ask|automation|workspace|machine|idea)=(.+)$/.exec(location.hash);
   if (!m) return null;
-  const prefixes: Record<string, string> = { thread: "t", task: "d", question: "qt", automation: "a" };
+  const prefixes: Record<string, string> = { thread: "t", task: "d", question: "qt", automation: "a", idea: "n" };
   return `${m[1]}:${normalizeAppTarget(decodeURIComponent(m[2]), prefixes[m[1]!] ?? "")}`;
 }
 
@@ -990,6 +992,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const toggleTasks = () => goSel(tasksShown && !settingsOpen ? beforeTasks.current : tasksShown ? sel : "tasks:");
   // 자동화 설정 화면(t-0628): 사이드바 「자동화」 카드가 목록이고 본문은 고른 규칙 하나다. 「답할 것」처럼 앞 화면을 기억하고 한 번 연 뒤
   // 숨긴 채 그려 둔다(쓰던 편집 초안이 그대로)
+  // 아이디어 화면(t-1260): 사이드바 「아이디어」 목록이 고르고 본문은 노트·대화다. 한 번 연 뒤에는 숨긴 채 그려 둔다(쓰던 노트 편집이 그대로)
+  const ideaShown = sel?.startsWith("idea:") === true;
+  const [ideaAt, setIdeaAt] = useState<string | null>(ideaShown ? sel!.slice("idea:".length) : null);
+  useEffect(() => {
+    if (ideaShown) setIdeaAt(sel!.slice("idea:".length));
+  }, [ideaShown, sel]);
   const automationShown = sel?.startsWith("automation:") === true;
   // 마지막으로 연 자동화(`automation:…`): 다른 화면에 있는 동안에도 본문은 그것을 숨긴 채 그려 둔다
   const [automationAt, setAutomationAt] = useState<string | null>(automationShown ? sel : null);
@@ -1264,7 +1272,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}${t.group === "parked" ? ":parked" : ""}`).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
-  const shownThreads = allThreads.filter(inSidebar);
+  // 아이디어 전용 thread는 작업 목록·배지에 보이지 않는다(아이디어 화면의 대화다, t-1255 결정 20). 그 pane도 목록에서 뺀다
+  const shownThreads = allThreads.filter((t) => inSidebar(t) && !t.idea);
+  // 질문 카드는 아이디어 thread의 것도 「답할 것」에 보인다(최후의 수단, 결정 2)
+  const askThreads = allThreads.filter(inSidebar);
+  const ideaPanes = new Set(allThreads.flatMap((t) => (t.idea && t.pane ? [t.pane] : [])));
+  const sidebarPanes = ideaPanes.size === 0 ? panes : panes.filter((p) => !ideaPanes.has(p.id));
+  const ideas = useIdeas(up);
   // 닫힌 thread의 pane을 독립 셸로 오인하지 않도록 전체 thread로 별칭을 만든다.
   const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
@@ -1283,11 +1297,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     return () => { active = false; unwatch(); };
   }, [sel, up, !!asksData?.autoMode, putAsks]);
   const asksDone = asksData?.done ?? [];
-  const askList = useMemo(() => openAsks(shownThreads, asksData, taskBoard.board?.tasks ?? []), [threads, asksData, taskBoard.board]); // eslint-disable-line react-hooks/exhaustive-deps
+  const askList = useMemo(() => openAsks(askThreads, asksData, taskBoard.board?.tasks ?? []), [threads, asksData, taskBoard.board]); // eslint-disable-line react-hooks/exhaustive-deps
   const askKey = sel?.startsWith("ask:")
     ? sel.slice("ask:".length)
     : sel?.startsWith("question:")
-      ? (questionKey(sel.slice("question:".length), shownThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
+      ? (questionKey(sel.slice("question:".length), askThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
       : null;
   const autoQuestion = sel?.startsWith("question:") ? asksData?.autoDecisions?.find(d => d.question.id === sel.slice("question:".length) && d.outcome === "answered") : null;
   const askSelection = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions);
@@ -1296,6 +1310,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => {
     if (asksShown && panelRef.current !== "asks") setPanel("asks");
   }, [asksShown]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (ideaShown && panelRef.current !== "ideas") setPanel("ideas");
+  }, [ideaShown]); // eslint-disable-line react-hooks/exhaustive-deps
   // 자동화 주소로 들어오면 사이드바도 「자동화」 카드 목록이다
   useEffect(() => {
     if (automationShown && panelRef.current !== "automations") setPanel("automations");
@@ -1353,17 +1370,18 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const knownIds = useMemo(() => new Set([
     ...uniqueAppTargets(allThreads, t => t.project, t => t.id).keys(),
     ...automationIds.keys(),
+    ...(ideas.list ?? []).map((i) => i.short_id),
     ...(taskBoard.board?.tasks ?? []).flatMap((t) => t.short_id ? [t.short_id] : []),
     ...[...reportNames.keys()].filter(id => /^r-/.test(id)),
     ...askList.flatMap((a) => a.kind === "question" ? a.thread.questions.items.map((q) => q.id) : []),
     ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
     ...asksDone.flatMap((r) => [r.question_id, ...r.items.map((q) => q.id)]),
-  ]), [threads, taskBoard.board, reportNames, asksData, automationIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]), [threads, taskBoard.board, reportNames, asksData, automationIds, ideas.list]); // eslint-disable-line react-hooks/exhaustive-deps
   const questionLooks = useMemo(() => new Map([...new Set([
-    ...shownThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
+    ...askThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...(asksData?.requests ?? []).flatMap((r) => [...(r.question_id ? [r.question_id] : []), ...(r.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...asksDone.flatMap((r) => [r.subject, ...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
-  ])].map((id) => [id, questionRefLook(id, shownThreads, asksDone, asksData?.requests)])), [threads, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
+  ])].map((id) => [id, questionRefLook(id, askThreads, asksDone, asksData?.requests)])), [threads, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
   // 실제 대상·칩의 표시가 바뀔 때만 대화 Markdown을 다시 그린다. coordinator 답·기록 삭제도 포함한다.
   const refKey = [
     ...knownIds,
@@ -1379,6 +1397,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       return;
     }
     if (ref.kind === "automation") return goSel(`automation:${ref.target}`);
+    if (ref.kind === "idea") return goSel(`idea:${ref.target}`);
     if (ref.kind === "task") return goSel(`task:${ref.target}`);
     if (ref.kind === "question") return goSel(`question:${ref.target}`);
     const raw = "rawTarget" in ref ? ref.rawTarget : "label" in ref ? ref.label : undefined;
@@ -1571,7 +1590,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           machines={machines}
           rollout={rollout}
           connected={up}
-          panes={panes}
+          panes={sidebarPanes}
           threads={shownThreads}
           threadsLoaded={threadsSync > 0}
           threadsError={threadsError}
@@ -1586,6 +1605,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           automations={automations}
           automationSelected={automationShown && automationOpen?.name ? `${automationOpen.project}/${automationOpen.name}` : null}
           onAsks={() => showPanel("asks")}
+          ideas={<IdeasPanel ideas={ideas} selected={ideaShown ? ideaAt : null} canControl={canControl} onOpen={(id) => { goSel(`idea:${id}`); setDrawerOpen(false); }} />}
           workspaces={<WorkspaceList state={workspaceData} selected={workspaceData.data?.workspace_id ?? null} onSelect={(id) => { goSel(workspaceRoute(workspaceShown ? sel : null, { ws: id, run: null })); setDrawerOpen(false); }} />}
           asks={
             <AsksPanel
@@ -1636,7 +1656,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         )}
         <div className="view-content" hidden={settingsOpen}>
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
-        <ErrorBoundary area="본문" resetKeys={[sel, searchShown, reportsShown, tasksShown, asksShown, automationShown, workspaceShown]}>
+        <ErrorBoundary area="본문" resetKeys={[sel, searchShown, reportsShown, tasksShown, asksShown, automationShown, workspaceShown, ideaShown]}>
         {machineRoute && selectedMachine && <MachineInfoPanel key={selectedMachine.id} role={role} page machine={selectedMachine} onClose={closeMachineInfo} />}
         {searchOpened && <RecordSearch shown={searchShown}/>}
         {workspaceShown && <WorkspaceView state={workspaceData} route={sel} onRoute={goSel} up={up} />}
@@ -1702,6 +1722,24 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               if (!doc) return;
               const r = await call({ op: "library_open", project, name: doc.name });
               if (r.kind === "library") openFile({ path: doc.path, pane: null, view: r.base });
+            }}
+          />
+        )}
+        {ideaAt !== null && (
+          <IdeaView
+            shown={ideaShown}
+            target={ideaAt}
+            ideas={ideas.list ?? []}
+            threads={allThreads}
+            panes={panes}
+            canControl={canControl}
+            onOpen={(id) => goSel(`idea:${id}`)}
+            onOpenLink={(href) => {
+              const m = /^#(task|idea|thread)=(.+)$/.exec(href);
+              if (!m) return false;
+              if (m[1] === "thread") openRefRef.current({ kind: "thread", target: decodeURIComponent(m[2]!) });
+              else goSel(`${m[1]}:${decodeURIComponent(m[2]!)}`);
+              return true;
             }}
           />
         )}
@@ -1780,7 +1818,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }
           />);
         })}
-        {searchShown || machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown ? null : currentThread ? (
+        {searchShown || machineRoute || reportsShown || tasksShown || asksShown || automationShown || workspaceShown || ideaShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}
@@ -1799,7 +1837,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         ) : sel === "threads:" ? (
           <ProjectThreads
-            threads={allThreads}
+            threads={allThreads.filter((t) => !t.idea)}
             onThread={(t) => chooseThread(t, "threads:")}
             onBack={() => choose(null)}
             onPane={canControl ? (id) => choose(id) : undefined}

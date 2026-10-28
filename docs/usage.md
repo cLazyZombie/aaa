@@ -10,6 +10,7 @@ host DB의 정기 암호화 백업·보관 회전·새 파일 복원은 [host DB
   - **작업**: 맨 위 coordinator, 그 아래 작업 공간(thread가 일하는 저장소 이름) 폴더마다 thread(모든 머신의 thread를 한 폴더에, 둘째 줄에 상태 말과 머신 이름, 첫 줄 끝에 배경 작업 수·계획 진행), 저장소 없는 thread의 「작업 폴더」, thread에 딸리지 않은 pane의 「기타」 묶음. thread 줄도 ⋯ 메뉴로 맨 위에 고정합니다. 배지는 확인 필요·검토 대기 thread와 답을 기다리는 agent 수입니다. 설정 → 모양 「폴더 안 정렬」에서 활동순(질문 먼저, 그다음 최근 바뀐 것)으로 바꿀 수 있습니다.
   - **머신**: 머신마다 연결·끊김과 그 머신의 pane, 새 pane `+`.
   - **특수**: 임무와 사후 평가자(임무 thread는 여기에만 보입니다).
+  - **아이디어**(전구): 다듬는 중·완료 아이디어 목록과 「새 아이디어」. 고르면 본문이 노트와 그 아이디어 전용 thread의 대화입니다([아이디어](#아이디어)).
   - 그 아래 **보고서** 단추는 본문을 보고서 목록으로 바꾸고(다시 누르면 앞 화면), 맨 아래 톱니는 설정입니다.
   - 상태는 작업 중·입력 대기·질문·검토 대기·확인 필요·쉼이고, 질문은 터미널 아래 카드로 답합니다.
 - **새 pane**: 머신 패널의 머신 이름 옆 `+`나 `⌘⇧O`(Windows·Linux `Ctrl+Shift+O`)로 창을 엽니다. 셸이나 그 머신에서 쓸 수 있는 profile, 폴더(절대 경로나 `~/…`, 최근 폴더), 이름을 고르고 「시작」합니다.
@@ -40,7 +41,7 @@ host DB의 정기 암호화 백업·보관 회전·새 파일 복원은 [host DB
 
 pairing 코드 발급, 머신 등록 창 열기·승인·폐기, 기기 폐기, 웹 공개 켜기·끄기는 aaa pane 안에서 실행할 수 없다. coordinator도 포함한다. host는 `local:…@…`·worker·evaluator·detached actor를 요청 실행 전에 거부하며, 사람이 aaa 밖 터미널이나 웹에서 하도록 안내한다. aaa 밖 Local은 기존처럼 사용할 수 있다. 웹 Controller는 pairing·기기 폐기와 함께 머신 등록 창·승인·폐기, 웹 공개 켜기·끄기, 보고서 올리기·공유 링크 키 교체를 한다(FRONT_API 1.80). 웹은 마지막 조작 기기와 host 머신을 폐기하지 않는다: 마지막 조작 기기는 다른 조작 기기를 먼저 페어링하거나 host 터미널의 `aaa web revoke`로, host 머신은 폐기 대상이 아니다. Reader는 목록만 본다.
 
-설치(프로젝트 만들기와 첫 기기 짝짓기) 뒤의 운영은 웹으로 한다. CLI 몇 가지의 웹 자리: `aaa pane kill`은 pane 줄 메뉴 「세션 끝내기」(자리는 남고 「다시 열기」), `aaa project open --new`는 coordinator 메뉴 「하나 더 띄우기」, `aaa library list`·`revoke`는 설정 「이 aaa」 → 공유 링크의 「낸 링크」, `aaa library link --days`는 보고 링크 줄의 수명 고르기, `aaa project set task_notes.add|remove`는 「이 aaa」의 할 일 「나중」 파일이다. host 터미널에 남는 것은 임의 명령·경로를 여는 safety(`routine_commands`·agent 인자)와 custom profile, 보기 전용 짝짓기 코드(`aaa web pair --reader`), coordinator 내부 알림(`inbox`·`events`·`post`), 할 일 목록 머리 편집, `library import`·기한 지정 정리, release 받기·`update rollback`이다(plan §8.417).
+설치(프로젝트 만들기와 첫 기기 짝짓기) 뒤의 운영은 웹으로 한다. CLI 몇 가지의 웹 자리: `aaa pane kill`은 pane 줄 메뉴 「세션 끝내기」(자리는 남고 「다시 열기」), `aaa project open --new`는 coordinator 메뉴 「하나 더 띄우기」, `aaa library list`·`revoke`는 설정 「이 aaa」 → 공유 링크의 「낸 링크」, `aaa library link --days`는 보고 링크 줄의 수명 고르기다. host 터미널에 남는 것은 임의 명령·경로를 여는 safety(`routine_commands`·agent 인자)와 custom profile, 보기 전용 짝짓기 코드(`aaa web pair --reader`), coordinator 내부 알림(`inbox`·`events`·`post`), 할 일 목록 머리 편집, `library import`·기한 지정 정리, release 받기·`update rollback`이다(plan §8.417).
 
 공개 주소(HTTPS)로 연 조작 기기는 위 승인 필요 동작마다 그 기기 passkey로 사용자 확인(Face ID·지문·암호)을 한 번 한다(관리 GUI W7, FRONT_API 1.101). passkey는 짝지은 뒤 10분 안에만 등록한다: 짝지은 직후 본문 위 「passkey 등록」이나 설정 → 폰 및 기기 「이 기기 passkey」. passkey가 없는 기기는 승인할 수 없고, 짝지은 뒤 10분이 지나면 등록도 할 수 없다(등록한 passkey는 그 뒤에도 쓴다). host Mac 화면·passkey가 있는 기기·aaa 밖 터미널(`aaa web pair`)에서 짝짓기 코드를 받아 그 브라우저를 다시 짝지은 뒤 10분 안에 등록한다. 공개 주소(이름)가 바뀌어도 다시 짝짓는다. host Mac에서 연 `http://127.0.0.1:<port>` 화면과 aaa 밖 터미널은 passkey 없이 지금처럼 승인한다.
 
@@ -87,8 +88,10 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa pane wait-output <pane> --match "…" --timeout 30000` | 출력에 글이 나올 때까지 기다리기 |
 | `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
 | `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox). host는 보관하지 않은 프로젝트 하나만 맡는다: 둘째 만들기는 거부하고(§8.285), 둘 이상이면 다시 띄울 때 시작하지 않고 줄일 목록을 말한다(§8.283). 인스턴스에서는 이름을 생략하면 인스턴스 이름이다(§8.294) |
-| `aaa set <key> <값>` | 설정 값 하나 바꾸기(aaa.toml, 없으면 project.toml: goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove, workspaces.add·remove도 같다, task_notes.add·remove: 할 일 화면 「나중」 탭이 읽는 프로젝트 폴더 안 Markdown) |
-| `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task ID(`d-0001`)·제목, 형식 어긋남, task 없는 열린 thread, 「나중」 파일. 웹은 활동 막대 「할 일」(§8.306) |
+| `aaa set <key> <값>` | 설정 값 하나 바꾸기(aaa.toml, 없으면 project.toml: goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove, workspaces.add·remove도 같다) |
+| `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task ID(`d-0001`)·제목, 형식 어긋남, task 없는 열린 thread. 웹은 활동 막대 「할 일」(§8.306) |
+| `aaa idea list` · `aaa idea show <n-ID> [--rev N]` · `aaa idea new "<제목>" [--file F]` | 아이디어 목록 · 노트(첫 줄에 판) · 새 아이디어. 웹은 활동 막대 「아이디어」([아이디어](#아이디어)) |
+| `aaa idea save <n-ID> --base <판> --file F [--summary "…"]` · `aaa idea say <n-ID> "…"` · `aaa idea copy <n-ID>` | 판을 주고 노트 저장(그사이 다른 판이 있으면 쓰지 않고 `F.base-<판>.md`·`F.current-<판>.md`를 남기고 종료 코드 3) · 전용 thread에 말하기 · 복사해서 새 아이디어 |
 | `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit <task ID\|제목> [--title …] [--profile …] [--machine …] [--user-request 근거] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm <task ID\|제목>` · `aaa task restore <task ID\|기록 id>` · `aaa task log [task ID\|제목]` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
 | `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
@@ -246,6 +249,20 @@ host의 등록 ID가 이름의 정본이다. `machine_label.v1` agent는 변경 
 변경은 파일별 잠금·원문 대조와 SQLite 트랜잭션으로 처리한다. 파일과 DB 사이에서 host가 종료돼도 시작할 때 journal을 복구한다. 복구 중 직접 편집을 발견하면 그 글을 덮지 않고 경로를 알리며 멈춘다.
 
 할 일 메모를 보태려면 `aaa task edit <ID> --add-note "한 줄"`을 여러 번 쓴다. `--note`는 전체 교체, `--clear-notes`는 전체 삭제다. 세 방식은 함께 쓸 수 없다. 기존 메모 줄이 빠지거나 바뀌면 저장 결과에 「메모 N줄→M줄」과 기록 번호가 나온다. `aaa --json task log`의 해당 기록 `before`에서 이전 원문을 찾는다. 웹 상세의 「메모 추가」는 손대지 않은 일에 바로 저장하고, 고치는 중이거나 새 일이면 초안에 더해 「저장」 때 함께 쓴다. 잘못된 제목은 CLI·웹 저장에서 거부하며 thread 번호는 연결 칸, 상태·긴 글은 메모로 옮긴다.
+
+### 아이디어
+
+아이디어는 한 번에 정리되지 않는다. 그래서 정본은 계속 고쳐지는 노트(중간 정리본)이고, 대화할 때마다 그 노트가 새로 고쳐진다. 짧은 ID는 `n-0001`이다([짧은 번호](short-ids.md)).
+
+- **저장**: host 프로젝트 폴더 `ideas/<ULID>/`에 노트 `note.md`, 고칠 때마다 남는 판 `revs/<판>.md`, 메타 `idea.json`, 그림·영상(내용 해시 이름)을 둔다. 노트는 `![설명](<이름>)`으로 같은 폴더의 그림을 가리킨다.
+- **바꾸는 길 셋**: 대화(전용 thread가 답하며 노트를 고친다), 직접 고치기(「고치기」 → textarea → 「저장」, 그림·영상은 붙여 넣기·끌어 놓기), 인용 의견(노트 글을 골라 「의견」, 그림·영상은 오른쪽 위 「의견」으로 통째로). 의견은 이 기기에 모였다가 대화 칸의 「입력창에 넣기」로 한 번에 입력창에 붙고, 넣은 의견은 모음에서 지워진다. 보내기는 사람이 누른다.
+- **판과 겹침**: 사람·thread 모두 읽은 판을 주고 저장한다. 그사이 다른 판이 생겼으면 쓰지 않는다. thread는 두 판을 받아 합쳐 다시 저장하고, 사람의 글은 버리지 않고 `merge/`에 둔 채 thread에 합치기를 맡긴다(그동안 노트 머리는 「합치는 중」).
+- **고친 것 알리기**: 사람이 노트를 직접 고치면 다음에 대화로 말을 보낼 때 그 앞에 `(노트 고침: 판 9 「미정」 1줄 더함)`처럼 고친 판과 절이 붙는다. 저장하는 순간에는 따로 알리지 않는다.
+- **전용 thread**: 아이디어마다 하나, 처음 말할 때 host 머신의 작업 폴더 thread로 뜬다. 동시 thread 한도에 세지 않고, 할 일·작업 목록·coordinator 요약에 보이지 않는다. 대화가 `[projects] idea_rest_secs`(기본 1800초) 넘게 쉬면 알림 없이 보류하고, 아이디어 화면을 열거나 다시 말하면 같은 대화로 잇는다. 잇지 못하면 새 thread가 노트를 읽고 이어 간다. 질문 카드는 정말 막혔을 때만 쓴다.
+- **할 일로 넘기기**: 「할 일로 넘기기」에서 초안을 여럿 만들 수 있다(제목·저장소·메모). 메모 첫 줄에 `[아이디어 n-0001](ideas/n-0001)`이 붙고, 아이디어 머리에는 넘긴 `d-` ID가 보인다. 그 할 일로 thread를 시작하면 노트와 노트의 그림·영상이 작업 폴더 `attachments/`로 넘어간다(대화 기록은 넘기지 않는다). 넘긴 아이디어는 완료로 보관되고 고칠 수 없다. 다시 다듬으려면 「복사해서 새 아이디어」를 쓴다.
+- **휴대폰**: 「목록 | 노트 | 대화」가 한 줄로 놓인 페이지처럼 넘긴다. 노트에서 왼쪽으로 쓸면 대화, 대화에서 오른쪽으로 쓸면 노트, 노트에서 오른쪽으로 쓸면 목록이다. 머리의 「노트 | 대화」 단추로도 바꾸고, 「대화」의 수는 모은 의견 수다. 화면 왼쪽 끝 24px에서 시작한 쓸기(브라우저 뒤로)·글을 고르는 중·입력칸·가로로 밀린 표 위에서는 넘기지 않는다.
+
+예전 할 일 화면의 「나중」 탭과 `task_notes` 설정은 없어졌다. project.toml에 남은 `task_notes` 줄은 읽지 않는다.
 
 ### 끝난 thread의 후속
 

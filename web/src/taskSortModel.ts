@@ -2,10 +2,8 @@
 import type { TaskBoard, TaskView } from "./gen/proto";
 import { taskState, type TaskListModel, type ThreadGroups } from "./tasksModel.ts";
 import { logIgnoredFailure } from "./errorDiagnostic.ts";
-import { parseInline, type InlineNode } from "./herdr/markdown.ts";
 
 export type ActiveTaskSort = "manual" | "number" | "title" | "state" | "profile" | "machine";
-export type LaterSort = "manual" | "title";
 export const ACTIVE_TASK_SORTS: readonly { key: ActiveTaskSort; label: string; hint: string }[] = [
   { key: "manual", label: "손 차례", hint: "예약 차례 뒤 원문 차례" },
   { key: "number", label: "번호", hint: "큰 번호가 위 · 번호 없음은 끝" },
@@ -14,23 +12,16 @@ export const ACTIVE_TASK_SORTS: readonly { key: ActiveTaskSort; label: string; h
   { key: "profile", label: "모델", hint: "모델 이름순 · 미지정은 끝" },
   { key: "machine", label: "머신", hint: "머신 이름순 · 미지정은 끝" },
 ];
-export const LATER_SORTS: readonly { key: LaterSort; label: string; hint: string }[] = [
-  { key: "manual", label: "원문 차례", hint: "파일과 절 안의 원래 차례" },
-  { key: "title", label: "제목", hint: "각 절 안에서 가나다순" },
-];
-
-export function readTaskSort(scope: "active"): ActiveTaskSort;
-export function readTaskSort(scope: "later"): LaterSort;
-export function readTaskSort(scope: "active" | "later"): ActiveTaskSort {
+export function readTaskSort(scope: "active"): ActiveTaskSort {
   try {
     const v = localStorage.getItem(`aaa:tasks:${scope}-sort`);
-    return (scope === "active" ? ACTIVE_TASK_SORTS : LATER_SORTS).some(s => s.key === v) ? v as ActiveTaskSort : "manual";
+    return ACTIVE_TASK_SORTS.some(s => s.key === v) ? v as ActiveTaskSort : "manual";
   } catch (error) {
     logIgnoredFailure(error, "taskSortModel.readTaskSort");
     return "manual";
   }
 }
-export function writeTaskSort(scope: "active" | "later", sort: ActiveTaskSort): void {
+export function writeTaskSort(scope: "active", sort: ActiveTaskSort): void {
   try { localStorage.setItem(`aaa:tasks:${scope}-sort`, sort); }
   catch (error) { logIgnoredFailure(error, "taskSortModel.writeTaskSort"); }
 }
@@ -73,14 +64,4 @@ export function sortActiveTasks(model: TaskListModel, board: TaskBoard, sort: Ac
     return ap.length - bp.length;
   });
   return { ...model, rest };
-}
-
-/** 원문 위치 index를 키로 유지한다. 제목을 골라도 항목의 메모와 메뉴 대상이 함께 움직인다. */
-export function sortedNoteItems(items: string[][], sort: LaterSort): { item: string[]; index: number }[] {
-  const rows = items.map((item, index) => ({ item, index }));
-  if (sort === "manual") return rows;
-  // 화면과 같은 파서로 코드·강조·링크의 표시 글만 읽는다. 주소와 Markdown 표지를 제목으로 비교하지 않는다.
-  const text = (nodes: InlineNode[]): string => nodes.map(n => "value" in n ? n.value : n.type === "image" ? n.alt : text(n.children)).join("");
-  const titles = items.map(item => text(parseInline((item[0] ?? "").replace(/^([-*]|\d+\.)\s+/, "").trim())));
-  return rows.sort((a, b) => textCompare(titles[a.index], titles[b.index]) || a.index - b.index);
 }

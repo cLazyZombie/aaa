@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use aaa_proto::{
     ErrorBody, ErrorCode, FrontResponse, MessageMode, OwnerChoice, ProjectContext, TaskAction, TaskBoard, TaskConflict,
-    TaskLogFilter, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStatus,
+    TaskLogFilter, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStatus,
 };
 
 use crate::file_rev::{self, Edit};
@@ -385,6 +385,7 @@ impl Host {
             task: String::new(),
             role: aaa_proto::Role::Worker,
             attachments: Vec::new(),
+            idea: None,
         };
         let (warning, t) = self.apply_from_task(&mut a, from_task, block).await?;
         if a.profile.is_empty() {
@@ -426,14 +427,13 @@ impl Host {
         }
     }
 
-    /// 할 일 화면(`tasks`): TASKS.md 목록·task, task 없는 열린 thread, 「나중」 파일. 읽은 파일 상태를 ticker 기억에 심는다
+    /// 할 일 화면(`tasks`): TASKS.md 목록·task, task 없는 열린 thread. 읽은 파일 상태를 ticker 기억에 심는다
     /// (host가 뜬 직후 첫 tick 전에 읽고 그사이 바뀐 것을 놓치지 않게)
     pub(crate) fn task_board(&self, project: &str) -> Result<TaskBoard, ErrorBody> {
         let dir = self.project_dir(project)?;
         self.task_identify(project)?;
         let (text, seen) = tasks_file(&dir);
-        let notes = notes_stamps(&dir, &self.settings(project).task_notes);
-        self.tasks_seen.lock().unwrap().entry(project.to_string()).or_insert(TasksSeen { notes, ..seen.clone() });
+        self.tasks_seen.lock().unwrap().entry(project.to_string()).or_insert(seen.clone());
         let (lists, mut tasks) = tasks::parse_board(&text);
         self.fill_task_ids(project, &mut tasks)?;
         tasks::fill_agent(&mut tasks, &self.known_profiles(project));
@@ -442,8 +442,12 @@ impl Host {
             t.auto_merge = t.id.as_ref().is_some_and(|id| auto_merge.contains(id));
         }
         let linked: std::collections::HashSet<String> = tasks.iter().filter_map(|t| t.thread.clone()).collect();
-        let open: Vec<_> =
-            self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
+        // 아이디어 전용 thread는 할 일과 잇지 않는다(아이디어 화면의 대화다)
+        let open: Vec<_> = self
+            .threads_of(Some(project), None)?
+            .into_iter()
+            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none())
+            .collect();
         // 「정리 제안」의 연결 후보는 이 프로젝트의 열린 thread 번호다
         let open_ids: Vec<String> = open.iter().map(|t| t.id.clone()).collect();
         for t in &mut tasks {
@@ -463,7 +467,6 @@ impl Host {
             .filter(|t| t.automation.is_none() && !linked.contains(&t.id))
             .map(|t| TaskThread { id: t.id, title: t.title, group: t.group, stage: t.stage })
             .collect();
-        let notes_files = self.settings(project).task_notes.iter().map(|p| notes_file(&dir, p)).collect();
         Ok(TaskBoard {
             queue: self.db.queue_list(project).map_err(crate::orch::internal)?,
             project: project.to_string(),
@@ -471,7 +474,6 @@ impl Host {
             lists,
             tasks,
             unlinked_threads,
-            notes_files,
             text,
             repos,
         })
@@ -831,14 +833,12 @@ impl Host {
             // 자기 쓰기를 다음 tick이 「파일 직접」으로 적지 않게 기억을 새 판으로 둔다. 크기·mtime은 비워 다음 tick이 다시 재게 한다
             // (rename과 이 기억 사이에 끼어든 직접 편집은 내용 hash가 달라 그대로 잡힌다)
             // 기억이 아직 없으면(host가 뜬 뒤 첫 tick 전) 새 판으로 심는다: 쓰기 전에 읽은 `tasks`가 옛 글을 심지 못하게
-            let notes = notes_stamps(dir, &self.settings(project).task_notes);
             let mut seen = self.tasks_seen.lock().unwrap();
             let seen = seen.entry(project.to_string()).or_insert_with(|| TasksSeen {
                 len: u64::MAX,
                 mtime: None,
                 sha256: String::new(),
                 text: String::new(),
-                notes,
             });
             (seen.len, seen.mtime, seen.sha256, seen.text) = (u64::MAX, None, after.sha256.clone(), after.text.clone());
             drop(guard);
@@ -977,7 +977,7 @@ impl Host {
     }
 
     /// ticker: TASKS.md의 (크기, mtime)이 기억과 다르면 내용 hash를 다시 재고, 바뀌었으면 `tasks` 사건을 낸다(파일 감시는 두지
-    /// 않는다). 「나중」 파일(`task_notes`)은 목록과 (크기, mtime)이 바뀌면 같은 사건을 낸다. 처음 보는 프로젝트는 기억만 한다.
+    /// 않는다). 처음 보는 프로젝트는 기억만 한다.
     /// 파일 직접 편집(사람·agent가 파일을 고침)은 task마다의 차이를 「파일 직접」으로 기록한다(t-0469 §2.3). host가 쓴 판은 쓰기가
     /// 기억을 새 판으로 두므로 여기서 다시 적지 않는다: 그래서 쓰기와 같은 파일 lock 안에서 본다.
     pub(crate) fn tasks_pass(&self, project: &str, dir: &Path) {
@@ -990,15 +990,12 @@ impl Host {
             return;
         }
         let stamp = file_stamp(&path);
-        let notes = notes_stamps(dir, &self.settings(project).task_notes);
         let mut seen = self.tasks_seen.lock().unwrap();
         let Some(old) = seen.get_mut(project) else {
-            seen.insert(project.to_string(), TasksSeen { notes, ..tasks_file(dir).1 });
+            seen.insert(project.to_string(), tasks_file(dir).1);
             return;
         };
-        let notes_changed = old.notes != notes;
-        old.notes = notes;
-        let mut changed = notes_changed;
+        let mut changed = false;
         let mut edits = Vec::new();
         if (old.len, old.mtime) != stamp {
             let now = tasks_file(dir).1;
@@ -1031,8 +1028,12 @@ impl Host {
         let mut tasks = self.task_board(project)?.tasks;
         tasks::fill_agent(&mut tasks, &self.known_profiles(project));
         self.fill_attention(project, &mut tasks);
-        let mut threads: Vec<_> =
-            self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
+        // 아이디어 전용 thread는 사용자와 아이디어 화면의 대화라 coordinator가 맡지 않는다
+        let mut threads: Vec<_> = self
+            .threads_of(Some(project), None)?
+            .into_iter()
+            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none())
+            .collect();
         for t in &mut threads {
             t.next = self.next_lines(&dir, &t.next, &t.id);
         }
@@ -1092,18 +1093,6 @@ pub(crate) struct TasksSeen {
     sha256: String,
     /// 마지막으로 본 글(파일 직접 편집의 차이를 task마다 적는다)
     text: String,
-    /// 「나중」 파일마다 (경로, 크기, mtime)
-    notes: Vec<(String, u64, Option<std::time::SystemTime>)>,
-}
-
-fn notes_stamps(dir: &Path, files: &[String]) -> Vec<(String, u64, Option<std::time::SystemTime>)> {
-    files
-        .iter()
-        .map(|p| {
-            let (len, mtime) = file_stamp(&dir.join(p));
-            (p.clone(), len, mtime)
-        })
-        .collect()
 }
 
 fn file_stamp(path: &Path) -> (u64, Option<std::time::SystemTime>) {
@@ -1132,36 +1121,7 @@ fn tasks_file(dir: &Path) -> (String, TasksSeen) {
         .unwrap_or_default();
     let sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
     let text = String::from_utf8_lossy(&bytes).into_owned();
-    (text.clone(), TasksSeen { len, mtime, sha256, text, notes: Vec::new() })
-}
-
-/// 「나중」 파일 하나. 프로젝트 폴더 밖(symlink 포함)·없음·너무 큼은 까닭만 준다
-fn notes_file(dir: &Path, rel: &str) -> TaskNotesFile {
-    let fail = |e: String| TaskNotesFile { path: rel.to_string(), error: Some(e), sections: Vec::new() };
-    if let Err(e) = tasks::check_notes_path(rel) {
-        return fail(e);
-    }
-    let path = dir.join(rel);
-    let (Ok(real), Ok(root)) = (path.canonicalize(), dir.canonicalize()) else { return fail("없음".into()) };
-    if !real.starts_with(&root) {
-        return fail("프로젝트 폴더 밖을 가리킨다(symlink)".into());
-    }
-    match std::fs::metadata(&real) {
-        Ok(m) if !m.is_file() => return fail("파일이 아니다".into()),
-        Ok(m) if m.len() > tasks::NOTES_MAX_BYTES => {
-            return fail(format!("너무 크다({}KiB 넘음)", tasks::NOTES_MAX_BYTES / 1024));
-        }
-        Err(e) => return fail(e.to_string()),
-        Ok(_) => {}
-    }
-    match std::fs::read(&real) {
-        Ok(b) => TaskNotesFile {
-            path: rel.to_string(),
-            error: None,
-            sections: tasks::parse_notes(&String::from_utf8_lossy(&b)),
-        },
-        Err(e) => fail(e.to_string()),
-    }
+    (text.clone(), TasksSeen { len, mtime, sha256, text })
 }
 
 /// 할 일 쓰기 충돌: 동작 차례, 까닭, 대상 제목(없으면 빈 글)

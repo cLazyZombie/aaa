@@ -2737,7 +2737,7 @@ pub enum FrontRequest {
         project: String,
         check: Option<String>,
     },
-    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.60, Reader 가능). 형식 어긋남·줄 번호·블록 hash·「나중」 파일을 함께 준다.
+    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.60, Reader 가능). 형식 어긋남·줄 번호·블록 hash를 함께 준다.
     Tasks {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2794,6 +2794,78 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional)]
         search: Option<crate::TaskHistorySearch>,
+    },
+    /// 아이디어 목록(FRONT_API 1.147, 보기 권한). 다듬는 중을 먼저, 그 안에서는 최근에 고친 것부터
+    IdeaList {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// 노트 하나(보기 권한·그 아이디어의 전용 thread). `idea`는 `n-NNNN`·ULID, `rev`가 없으면 지금 판
+    IdeaRead {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        #[serde(default)]
+        #[ts(optional)]
+        rev: Option<u32>,
+    },
+    /// 새 아이디어(조작 권한). 노트 글이 비면 `# 제목`으로 시작한다. 전용 thread는 처음 말할 때 띄운다
+    IdeaCreate {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        title: String,
+        #[serde(default)]
+        text: String,
+    },
+    /// 판을 주고 노트를 저장한다(조작 권한, 또는 그 아이디어의 전용 thread). 기준 판이 지금 판이 아니면: thread는 `idea_conflict`를
+    /// 받아 두 판을 합쳐 다시 저장하고, 사람의 글은 host가 따로 두고 전용 thread에 합치기를 맡긴다(답의 `merging`)
+    IdeaSave {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        base_rev: u32,
+        text: String,
+        /// 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
+        #[serde(default)]
+        #[ts(optional)]
+        summary: Option<String>,
+    },
+    /// 전용 thread에 말한다(조작 권한). 없으면 host 머신에 띄우고, 쉬느라 내렸으면 잇는다. 사람이 고친 노트가 있으면 앞에
+    /// 「(노트 고침: …)」을 붙인다
+    IdeaSay {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        text: String,
+    },
+    /// 아이디어 화면을 열었다(조작 권한): 쉬느라 내린 전용 thread를 조용히 잇는다. 아직 thread가 없으면 아무것도 하지 않는다
+    IdeaWake {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+    },
+    /// 할 일로 넘긴다(조작 권한): 초안마다 할 일을 더하고(메모 첫 줄에 아이디어 링크), 아이디어는 완료로 잠근다
+    IdeaHandoff {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        /// 화면이 본 판. 그 뒤에 바뀌었으면 넘기지 않는다
+        base_rev: u32,
+        tasks: Vec<crate::IdeaTaskDraft>,
+    },
+    /// 노트를 복사해 새 아이디어로(조작 권한). 완료한 것을 다시 다듬을 때
+    IdeaCopy {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
@@ -3526,6 +3598,14 @@ impl FrontRequest {
             | FrontRequest::TaskEdit { project, .. }
             | FrontRequest::TaskLog { project, .. }
             | FrontRequest::TaskLogPrune { project, .. }
+            | FrontRequest::IdeaList { project }
+            | FrontRequest::IdeaRead { project, .. }
+            | FrontRequest::IdeaCreate { project, .. }
+            | FrontRequest::IdeaSave { project, .. }
+            | FrontRequest::IdeaSay { project, .. }
+            | FrontRequest::IdeaWake { project, .. }
+            | FrontRequest::IdeaHandoff { project, .. }
+            | FrontRequest::IdeaCopy { project, .. }
             | FrontRequest::ThreadStartPreview { project, .. }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
@@ -3660,6 +3740,10 @@ impl FrontRequest {
                 | FrontRequest::TaskQueue { action: crate::QueueOp::List, .. }
                 | FrontRequest::TaskArchive { restore: None, .. }
                 | FrontRequest::TaskLog { .. }
+                | FrontRequest::IdeaList { .. }
+                | FrontRequest::IdeaRead { .. }
+                // 전용 thread(보기 권한)도 자기 노트를 저장한다: 권한은 host가 요청자로 다시 본다
+                | FrontRequest::IdeaSave { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
@@ -3837,6 +3921,16 @@ pub enum FrontResponse {
     },
     /// `tasks`의 답(FRONT_API 1.60)
     TaskBoard(TaskBoard),
+    /// `idea_list`의 답(FRONT_API 1.147)
+    Ideas {
+        ideas: Vec<crate::IdeaSummary>,
+    },
+    /// 노트 하나(`idea_read`·`idea_create`·`idea_save`·`idea_say`·`idea_wake`·`idea_handoff`·`idea_copy`)
+    Idea {
+        note: crate::IdeaNote,
+    },
+    /// 전용 thread의 `idea_save`가 다른 판과 겹쳤다(쓰지 않음)
+    IdeaConflict(crate::IdeaConflict),
     TaskQueue {
         entries: Vec<crate::TaskReservation>,
     },
@@ -4176,6 +4270,8 @@ pub enum FrontEvent {
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },
+    /// FRONT_API 1.147. 아이디어 목록이나 노트가 바뀌었다(웹은 `idea_list`와 연 노트를 다시 읽는다). 웹 events 연결에만 보낸다
+    Ideas { project: String },
     /// 설치 앱 아이콘의 host 공통 수. 웹 events 연결에서 처음과 값이 바뀔 때만 보낸다.
     AppBadge { count: u32 },
     /// 웹 연결 처음과 배포 내구 상태가 바뀔 때 주는 최신 요약. 조회만 하며 진행기를 재개하지 않는다.

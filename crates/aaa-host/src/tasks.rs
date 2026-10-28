@@ -13,7 +13,7 @@
 //! - 쓰는 꼴(정규형): `- [ ] 제목 (owner) [저장소] · t-0001`. 저장 때 제목을 검사하고(`check_title`), 쓴 줄을 다시 읽어 같은 값인지 본다.
 //!   형식 어긋남 task에는 「정리 제안」(`suggest`)을 단다: 사람이 보고 「이대로 저장」해야 바뀐다.
 
-use aaa_proto::{TaskListView, TaskNotesSection, TaskSuggestion, TaskView};
+use aaa_proto::{TaskListView, TaskSuggestion, TaskView};
 use sha2::Digest as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,8 +129,6 @@ const OWNER_MAX_CHARS: usize = 40;
 const TITLE_MAX_CHARS: usize = 120;
 /// 저장소 칸의 「저장소 없는 작업 폴더」
 pub(crate) const REPO_DIR: &str = "작업 폴더";
-/// 「나중」 파일은 이만큼까지 읽는다
-pub(crate) const NOTES_MAX_BYTES: u64 = 512 * 1024;
 
 pub(crate) fn indent(l: &str) -> usize {
     l.len() - l.trim_start().len()
@@ -567,48 +565,6 @@ pub(crate) fn start_warning(tasks: &[TaskView], title: &str) -> Option<String> {
     Some(format!("비슷한 열린 task 「{}」: aaa thread start --from-task '{quoted}' --link-task", t.title))
 }
 
-/// `task_notes` 경로: 프로젝트 폴더 안 상대 경로만(절대 경로·`..`·빈 값 거부). symlink는 읽을 때 본다
-pub(crate) fn check_notes_path(p: &str) -> Result<(), String> {
-    use std::path::Component;
-    let path = std::path::Path::new(p);
-    if p.trim().is_empty() || p.contains('\0') {
-        return Err("`task_notes` 경로가 비었다".into());
-    }
-    if path.is_absolute() || p.starts_with(['/', '\\']) || path.components().any(|c| matches!(c, Component::Prefix(_)))
-    {
-        return Err(format!("`{p}`: 프로젝트 폴더 안 상대 경로만 받는다"));
-    }
-    if path.components().any(|c| matches!(c, Component::ParentDir)) {
-        return Err(format!("`{p}`: `..`는 받지 않는다"));
-    }
-    Ok(())
-}
-
-/// 「나중」 Markdown → `##` 절. 첫 `##` 앞의 `#` 제목 줄은 버리고, 절 앞뒤 빈 줄을 뗀다. 줄은 원문 그대로다.
-pub(crate) fn parse_notes(text: &str) -> Vec<TaskNotesSection> {
-    let mut out = vec![TaskNotesSection::default()];
-    for l in text.lines() {
-        if let Some(h) = l.strip_prefix("## ") {
-            out.push(TaskNotesSection { name: h.trim().to_string(), lines: Vec::new() });
-        } else if out.len() == 1 && l.starts_with("# ") {
-            continue;
-        } else {
-            out.last_mut().unwrap().lines.push(l.trim_end().to_string());
-        }
-    }
-    for s in &mut out {
-        while s.lines.last().is_some_and(|l| l.is_empty()) {
-            s.lines.pop();
-        }
-        let lead = s.lines.iter().take_while(|l| l.is_empty()).count();
-        s.lines.drain(..lead);
-    }
-    if out[0].lines.is_empty() {
-        out.remove(0);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,35 +853,5 @@ mod tests {
             fill_agent(&mut back, &profiles);
             assert_eq!((back[0].profile.as_deref(), back[0].machine.as_deref()), (p, m), "{line}");
         }
-    }
-
-    #[test]
-    fn notes_paths_and_sections() {
-        for ok in ["memory/later.md", "later.md", "./a/b.md"] {
-            assert!(check_notes_path(ok).is_ok(), "{ok}");
-        }
-        for (bad, why) in [
-            ("../x.md", "`..`"),
-            ("memory/../../x.md", "`..`"),
-            ("/etc/passwd", "상대 경로"),
-            ("\\\\server\\x", "상대 경로"),
-            ("", "비었다"),
-        ] {
-            let e = check_notes_path(bad).unwrap_err();
-            assert!(e.contains(why), "{bad}: {e}");
-        }
-        let s =
-            parse_notes("# 나중 작업 모음\n\n소개 줄\n\n## UI\n- 하나 `code`\n\n- 둘\n\n## 빈 절\n\n## 밸런스\n- 셋\n");
-        let v: Vec<_> = s.iter().map(|s| (s.name.as_str(), s.lines.clone())).collect();
-        assert_eq!(
-            v,
-            [
-                ("", vec!["소개 줄".to_string()]),
-                ("UI", vec!["- 하나 `code`".into(), "".into(), "- 둘".into()]),
-                ("빈 절", vec![]),
-                ("밸런스", vec!["- 셋".into()]),
-            ]
-        );
-        assert_eq!(parse_notes("## A\n- x\n").len(), 1);
     }
 }

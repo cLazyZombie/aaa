@@ -415,29 +415,6 @@ export default async function ({ page }) {
       await p.context().close();
     }
   });
-
-  await step("「나중」 항목 메뉴 「할 일로 옮기기」가 새 task 폼을 채우고, 더하면 Backlog에 들어간다(「나중」 파일은 그대로)", async () => {
-    fs.mkdirSync(`${dir()}/memory`, { recursive: true });
-    const later = "# 나중 작업 모음\n\n## UI\n- 건설 안내 문구를 UI로\n  취소 버튼(터치)은 필요\n- `카드` 기울기\n";
-    fs.writeFileSync(`${dir()}/memory/later.md`, later);
-    aaa("project", "set", "demo", "task_notes.add", "memory/later.md");
-    aaa("ticker", "tick");
-    await page.getByTestId("tasks-tab-later").click();
-    await page.locator("summary", { hasText: "UI" }).click();
-    await page.getByTestId("tasks-notes-menu-0-0").click();
-    await shot(page, "edit-desktop-later-menu");
-    await page.getByRole("menuitem", { name: "할 일로 옮기기", exact: true }).click();
-    const title = page.getByTestId("task-field-title");
-    if ((await title.inputValue()) !== "건설 안내 문구를 UI로") throw new Error(await title.inputValue());
-    const before = await shaOf(page);
-    await page.getByTestId("task-save").click();
-    const text = await saved(page, before);
-    if (!taskContent(text).includes("- [ ] 건설 안내 문구를 UI로\n  취소 버튼(터치)은 필요\n  (나중 memory/later.md · UI에서 옮김)\n")) throw new Error(text);
-    // 「나중」 파일은 고치지 않는다(출처는 메모 끝 줄에만 남는다)
-    if (fs.readFileSync(`${dir()}/memory/later.md`, "utf8") !== later) throw new Error("「나중」 파일이 바뀌었다");
-    md = sha(text);
-  });
-
   await step("원문 편집: 연 판 그대로일 때만 저장하고, 그사이 바뀌었으면 쓰지 않고 「최신으로 다시 열기」", async () => {
     await page.getByTestId("tasks-raw").click();
     const editor = page.getByTestId("task-raw-editor");
@@ -508,5 +485,4 @@ export default async function ({ page }) {
     if ((await input.inputValue()) !== "# 잘못된 머리") throw new Error("실패한 입력 유실");
     expectFile(read(), before, "메모 추가 저장 거부");
   });
-
 }

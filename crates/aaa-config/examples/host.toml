@@ -78,6 +78,8 @@ stop_wait_ms = 15000
 delivered_working_secs = 15
 # inbox에서 끝낸 항목을 지우기까지 날짜
 inbox_done_days = 30
+# 아이디어 전용 thread가 이만큼(초) 쉬면 알림 없이 보류한다. 다시 말하거나 아이디어 화면을 열면 같은 대화로 잇는다
+idea_rest_secs = 1800
 # routine 명령을 실행해도 되는 프로젝트(옛 자리, "*"는 모두). [safety.*] routine_commands가 있으면 그것이 먼저다.
 # 실행하려면 `aaa routine approve`로 사람이 명령을 승인해야 한다.
 routine_commands = []

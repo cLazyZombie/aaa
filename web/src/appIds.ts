@@ -1,7 +1,7 @@
 // 짧은 ID는 host가 알려 준 대상만 앱 안 링크로 그린다. 주소·경로 속 ID는 건드리지 않는다.
-export type AppId = { kind: "thread" | "task" | "question" | "report" | "automation"; target: string; label?: string };
-const KINDS = { t: "thread", d: "task", q: "question", r: "report", a: "automation" } as const;
-const ID = /(?<![A-Za-z0-9_./:@%?#=&+-])([tdqra])-\d+(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])/g;
+export type AppId = { kind: "thread" | "task" | "question" | "report" | "automation" | "idea"; target: string; label?: string };
+const KINDS = { t: "thread", d: "task", q: "question", r: "report", a: "automation", n: "idea" } as const;
+const ID = /(?<![A-Za-z0-9_./:@%?#=&+-])([tdqran])-\d+(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])/g;
 
 export function splitAppIds(text: string, exists: (id: AppId) => boolean): (string | AppId)[] {
   const out: (string | AppId)[] = [];
@@ -30,7 +30,7 @@ export const appIdHash = (id: AppId): string => `#${id.kind}=${encodeURIComponen
 
 /** JS Number로 바꾸지 않아 SQLite i64 끝에서도 숫자를 반올림하지 않는다. */
 export function canonicalShortId(value: string, prefix: string): string | null {
-  if (!/^[tdqrap]$/.test(prefix) || !value.startsWith(`${prefix}-`)) return null;
+  if (!/^[tdqrapn]$/.test(prefix) || !value.startsWith(`${prefix}-`)) return null;
   const digits = value.slice(2);
   if (!/^\d+$/.test(digits)) return null;
   const n = digits.replace(/^0+/, "");

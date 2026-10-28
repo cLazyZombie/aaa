@@ -43,8 +43,6 @@ pub(crate) struct ProjectSettings {
     /// 처음 보는 inbox 항목 묶음을 coordinator에 한 줄로 알린다(herdr-projects `nudge`, 기본 켬). 끄면 묶음을 본 것으로만
     /// 적고 항목은 coordinator의 다음 턴 `context`가 보인다(사건마다 가는 알림은 그대로다).
     pub nudge: bool,
-    /// 할 일 화면 「나중」 탭이 읽기만 하는 Markdown 파일(프로젝트 폴더 기준 상대 경로, 예 `memory/later.md`, plan §8.306)
-    pub task_notes: Vec<String>,
 }
 
 impl Default for ProjectSettings {
@@ -60,7 +58,6 @@ impl Default for ProjectSettings {
             trust_screens: None,
             mute: false,
             nudge: true,
-            task_notes: Vec::new(),
         }
     }
 }
@@ -125,18 +122,13 @@ impl ProjectSettings {
             trust_screens,
             mute: t.get("mute").and_then(|v| v.as_bool()).unwrap_or(d.mute),
             nudge: t.get("nudge").and_then(|v| v.as_bool()).unwrap_or(d.nudge),
-            task_notes: t
-                .get("task_notes")
-                .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
-                .unwrap_or_default(),
         }
     }
 }
 
 /// `aaa project set`이 받는 key와 값(herdr-projects `settings::KEYS`에서 aaa가 읽는 것만: 이름은 폴더 이름이라
 /// `project rename`)
-pub(crate) const KEYS: [(&str, &str); 11] = [
+pub(crate) const KEYS: [(&str, &str); 9] = [
     ("goal", "글"),
     ("thread_profile", "profile 이름"),
     ("coordinator_profile", "profile 이름"),
@@ -146,8 +138,6 @@ pub(crate) const KEYS: [(&str, &str); 11] = [
     ("repos.remove", "PATH 또는 PATH@MACHINE"),
     ("nudge", "true/false"),
     ("mute", "true/false"),
-    ("task_notes.add", "프로젝트 폴더 안 상대 경로(할 일 화면 「나중」 탭)"),
-    ("task_notes.remove", "프로젝트 폴더 안 상대 경로"),
 ];
 
 /// 켜고 끄는 값(herdr-projects `parse_bool`)
@@ -266,23 +256,6 @@ pub(crate) fn set_in_table(text: &str, key: &str, value: &str, repos: &str) -> R
             }
         }
         "nudge" | "mute" => doc[key] = toml_edit::value(parse_bool(value)?),
-        // `repos.add|remove`와 같은 꼴: 문자열 목록에 하나씩 더하고 뺀다
-        "task_notes.add" | "task_notes.remove" => {
-            crate::tasks::check_notes_path(value)?;
-            if !doc.contains_key("task_notes") {
-                doc["task_notes"] = toml_edit::value(toml_edit::Array::new());
-            }
-            let list = doc["task_notes"].as_array_mut().ok_or("`task_notes`는 문자열 목록이어야 한다")?;
-            let at = list.iter().position(|v| v.as_str() == Some(value));
-            match (key, at) {
-                ("task_notes.add", Some(_)) => return Err(format!("{value}는 이미 있다")),
-                ("task_notes.add", None) => list.push(value),
-                (_, Some(i)) => {
-                    list.remove(i);
-                }
-                (_, None) => return Err(format!("{value}는 `task_notes`에 없다")),
-            }
-        }
         "name" => return Err("aaa 프로젝트 이름은 폴더 이름이다: `aaa project rename <새 이름>`".into()),
         other => {
             return Err(format!(
@@ -436,16 +409,6 @@ mod tests {
         let t = set_in(&t, "repos.remove", "/work/app").unwrap();
         assert_eq!(ProjectSettings::from_table(&t.parse().unwrap()).repos.len(), 1);
         assert!(set_in(&t, "repos.remove", "/work/app").unwrap_err().contains("없다"));
-        // 「나중」 파일: 상대 경로만, 더하고 빼기
-        let t = set_in(&t, "task_notes.add", "memory/later.md").unwrap();
-        assert_eq!(ProjectSettings::from_table(&t.parse().unwrap()).task_notes, ["memory/later.md"]);
-        assert!(set_in(&t, "task_notes.add", "memory/later.md").unwrap_err().contains("이미"));
-        for bad in ["../x.md", "/etc/hosts"] {
-            assert!(set_in(&t, "task_notes.add", bad).is_err(), "{bad}");
-        }
-        let t = set_in(&t, "task_notes.remove", "memory/later.md").unwrap();
-        assert!(ProjectSettings::from_table(&t.parse().unwrap()).task_notes.is_empty());
-        assert!(set_in(&t, "task_notes.remove", "memory/later.md").unwrap_err().contains("없다"));
         // 잘못된 값은 거부하고 글을 바꾸지 않는다
         for (k, v) in
             [("max_parallel_threads", "0"), ("auto_resolve_days", "-1"), ("thread_profile", "-x"), ("name", "새")]

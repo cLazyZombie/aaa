@@ -148,6 +148,8 @@ export function ThreadPanel({
   }, [canDiff, t.project, t.id, focusDiff]);
   const revealNote = (note: ReviewNote) => {
     const s = note.source;
+    // 아이디어 노트 의견은 thread 화면의 모음에 없다(아이디어마다 따로 모은다)
+    if (s.kind === "note" || s.kind === "media") return;
     if (s.kind === "diff") {
       focusDiff({ scope: s.scope, path: s.path, range: s.range, text: s.rows.map((r) => r.text).join("\n") });
     } else if (s.report === t.report_id) {

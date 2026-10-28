@@ -112,7 +112,8 @@ impl Db {
         {
             policy.check(&tx, project, Some(id))?;
         }
-        if rec.automation.is_none() && !rec.holds_slot() {
+        // 자동화·아이디어 thread는 실행 한도에 세지 않는다(holds_worker_slot과 같은 규칙, t-1255 결정 19)
+        if rec.automation.is_none() && rec.idea.is_none() && !rec.holds_slot() {
             anyhow::ensure!(
                 slots(&tx, project, Some(id))? < limit,
                 "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"

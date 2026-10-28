@@ -317,8 +317,7 @@ enum Cmd {
         cmd: ProjectCmd,
     },
     /// 설정 값 하나를 바꾼다(`aaa project set`의 새 꼴, plan §8.285): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove(workspaces.add·remove도 같다), nudge, mute,
-    /// task_notes.add, task_notes.remove(할 일 화면 「나중」 탭이 읽는 프로젝트 폴더 안 Markdown).
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove(workspaces.add·remove도 같다), nudge, mute.
     /// 프로젝트 홈의 aaa.toml이 있으면 거기, 없으면 project.toml에 쓴다(plan §8.288)
     Set { key: String, value: String },
     /// coordinator(`aaa project open`의 새 꼴, plan §8.285)
@@ -361,6 +360,11 @@ enum Cmd {
     Task {
         #[command(subcommand)]
         cmd: TaskCmd,
+    },
+    /// 아이디어 노트(n-NNNN): 목록·보기·만들기·판을 주고 저장·전용 thread에 말하기·복사. 웹 「아이디어」 화면과 같은 저장소다
+    Idea {
+        #[command(subcommand)]
+        cmd: IdeaCmd,
     },
     /// inbox: 보고·질문·세션 끝남·머신 단절 같은 잃지 않는 항목(끝내기로 정리)
     Inbox {
@@ -538,7 +542,7 @@ enum ProjectCmd {
         new: bool,
     },
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute, task_notes.add, task_notes.remove
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
     Set { project: String, key: String, value: String },
     /// 지금 설정 값(`set`이 고치는 key 모두, 잘못된 값은 host가 쓰는 기본값으로)
     Show { project: String },
@@ -635,6 +639,43 @@ enum InboxCmd {
         #[arg(long)]
         all: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum IdeaCmd {
+    /// 아이디어 목록(다듬는 중 먼저)
+    List,
+    /// 노트 글. 첫 줄에 ID·판·상태·제목, 빈 줄 뒤에 노트다
+    Show {
+        /// `n-0001`
+        idea: String,
+        /// 옛 판(생략하면 지금 판)
+        #[arg(long)]
+        rev: Option<u32>,
+    },
+    /// 새 아이디어. 전용 thread는 처음 말할 때 뜬다
+    New {
+        title: String,
+        /// 노트 첫 글(Markdown 파일). 생략하면 `# 제목`
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+    /// 판을 주고 노트를 저장한다. 그사이 다른 판이 있으면 쓰지 않고, 기준 판과 지금 판을 `<파일>.base-<판>.md`·`<파일>.current-<판>.md`로 남긴다
+    Save {
+        idea: String,
+        /// 읽은 판(`idea show` 첫 줄)
+        #[arg(long)]
+        base: u32,
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// 바뀐 곳 한 줄
+        #[arg(long)]
+        summary: Option<String>,
+    },
+    /// 전용 thread에 말한다(없으면 host 머신에 띄우고, 쉬느라 내렸으면 잇는다)
+    Say { idea: String, text: String },
+    /// 노트를 복사해 새 아이디어로(완료한 것을 다시 다듬을 때)
+    Copy { idea: String },
 }
 
 #[derive(Subcommand)]
@@ -2130,6 +2171,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Context { project, peek } => {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
+        Cmd::Idea { cmd } => idea_cli(json, cmd),
         Cmd::Task { cmd: TaskCmd::Queue } => {
             front(json, FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::List })
         }
@@ -3823,6 +3865,52 @@ fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
 }
 
+/// `aaa idea …`. 저장 겹침은 두 판을 파일로 남기고 실패로 끝낸다(thread가 합쳐 다시 저장한다)
+fn idea_cli(json: bool, cmd: IdeaCmd) -> Result<ExitCode> {
+    let project = project_or_here(None)?;
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).with_context(|| format!("{}", p.display()));
+    match cmd {
+        IdeaCmd::List => front(json, FrontRequest::IdeaList { project }),
+        IdeaCmd::Show { idea, rev } => front(json, FrontRequest::IdeaRead { project, idea, rev }),
+        IdeaCmd::New { title, file } => {
+            let text = file.as_deref().map(read).transpose()?.unwrap_or_default();
+            front(json, FrontRequest::IdeaCreate { project, title, text })
+        }
+        IdeaCmd::Save { idea, base, file, summary } => {
+            let text = read(&file)?;
+            let r = front_call(FrontRequest::IdeaSave { project, idea, base_rev: base, text, summary })?;
+            if let Ok(FrontResponse::IdeaConflict(c)) = &r {
+                let side = |what: &str, rev: u32| {
+                    let mut name = file.clone().into_os_string();
+                    name.push(format!(".{what}-{rev}.md"));
+                    std::path::PathBuf::from(name)
+                };
+                let (base_path, current_path) = (side("base", c.base_rev), side("current", c.current.rev));
+                std::fs::write(&base_path, &c.base_text).with_context(|| format!("{}", base_path.display()))?;
+                std::fs::write(&current_path, &c.current.text)
+                    .with_context(|| format!("{}", current_path.display()))?;
+                if json {
+                    println!("{}", serde_json::to_string(&c)?);
+                } else {
+                    eprintln!(
+                        "겹침: 판 {}을 기준으로 고쳤지만 지금 판은 {}이다. 기준 판 {} · 지금 판 {}. 지금 판에 고침을 다시 얹어 \
+                         `--base {}`로 저장한다",
+                        c.base_rev,
+                        c.current.rev,
+                        base_path.display(),
+                        current_path.display(),
+                        c.current.rev
+                    );
+                }
+                return Ok(ExitCode::from(3));
+            }
+            front_print(json, r)
+        }
+        IdeaCmd::Say { idea, text } => front(json, FrontRequest::IdeaSay { project, idea, text }),
+        IdeaCmd::Copy { idea } => front(json, FrontRequest::IdeaCopy { project, idea }),
+    }
+}
+
 /// host가 아는 프로젝트(이름, 보관 여부). 프로젝트 인자를 생략한 명령이 한 번 묻는다(plan §8.285)
 fn known_projects() -> Result<&'static [(String, bool)]> {
     static KNOWN: std::sync::OnceLock<Vec<(String, bool)>> = std::sync::OnceLock::new();
@@ -4754,16 +4842,6 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let _ = writeln!(s, "  {} {} · {}", t.id, t.title, t.group.label());
         }
     }
-    for f in &b.notes_files {
-        match &f.error {
-            Some(e) => {
-                let _ = writeln!(s, "\n나중 {}: {e}", f.path);
-            }
-            None => {
-                let _ = writeln!(s, "\n나중 {}: 절 {}개", f.path, f.sections.len());
-            }
-        }
-    }
 }
 
 /// `aaa guide [주제]`: host에 묻지 않고 이 실행 파일에 든 안내를 보인다(`aaa automation schema`처럼)
@@ -5507,9 +5585,6 @@ fn render_front(r: &FrontResponse) -> String {
                     r.machine.as_deref().map(|m| format!("@{m}")).unwrap_or_default()
                 );
             }
-            for n in &v.task_notes {
-                let _ = writeln!(s, "task_notes: {n}");
-            }
         }
         FrontResponse::UnparkPreview(p) => {
             let _ = writeln!(s, "{}/{} 이어 하기 · 열린 thread {}/{}", p.project, p.thread, p.open, p.limit);
@@ -5815,6 +5890,45 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
+        FrontResponse::Ideas { ideas } => {
+            for i in ideas {
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t판 {}\t{}{}{}",
+                    i.short_id,
+                    i.status.as_str(),
+                    i.rev,
+                    i.title,
+                    if i.tasks.is_empty() { String::new() } else { format!("\t→ {}", i.tasks.join(", ")) },
+                    i.thread.as_deref().map(|t| format!("\t{t}")).unwrap_or_default()
+                );
+            }
+            if ideas.is_empty() {
+                s.push_str("아이디어 없음\n");
+            }
+        }
+        FrontResponse::Idea { note } => {
+            let i = &note.idea;
+            let old = if note.rev == i.rev { String::new() } else { format!("(지금 판 {})", i.rev) };
+            // 첫 줄 하나에 머리를 모은다: thread는 첫 줄의 판을 읽고 셋째 줄부터를 노트로 쓴다
+            let edited = note.edited.as_deref().map(|e| format!(" · 사람이 고침: {e}")).unwrap_or_default();
+            let merging = note.merging.map(|m| format!(" · 판 {m} 기준 사람 고침을 합치는 중")).unwrap_or_default();
+            let _ = writeln!(
+                s,
+                "{} · 판 {}{old} · {} · {}{edited}{merging}",
+                i.short_id,
+                note.rev,
+                i.status.as_str(),
+                i.title
+            );
+            let _ = write!(s, "\n{}", note.text);
+            if !note.text.ends_with('\n') {
+                s.push('\n');
+            }
+        }
+        FrontResponse::IdeaConflict(c) => {
+            let _ = writeln!(s, "겹침: 판 {} 기준, 지금 판 {}", c.base_rev, c.current.rev);
+        }
         FrontResponse::Accounts { accounts } => {
             for a in accounts {
                 let _ = write!(s, "{}\t{}\t판 {}", a.name, a.harness, a.version);

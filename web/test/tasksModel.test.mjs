@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskList, taskState, unassigned, pendingQueue, queueDropPosition, queueStep, queueWhy, repoChoices, unreserveHome } from "../src/tasksModel.ts";
+import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, moveOp, ownerKindOf, ownerLabel, parentAnchor, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskList, taskState, unassigned, pendingQueue, queueDropPosition, queueStep, queueWhy, repoChoices, unreserveHome } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -219,15 +219,6 @@ describe("할 일 편집", () => {
     assert.deepEqual(draftOps(sub, draftOf(sub, [], was), was), [], "상위를 그대로 두면 옮기지 않는다");
     const add = draftOps(null, { ...emptyDraft("A", anchorOf(by(4))), title: "하위 새 일" });
     assert.deepEqual([add[0].parent.title, add[0].parent.block_sha256], ["둘", "sha-4"], "줄 번호가 아니라 고른 판의 블록을 보낸다(줄이 밀려도 host가 블록 hash로 찾는다)");
-  });
-
-  it("「나중」 항목: 들여쓰지 않은 글머리마다 하나, 들여쓴 줄은 붙고 빈 줄은 끝에서 뗀다", () => {
-    const items = noteItems(["소개", "- 하나 `code`", "  이어진 줄", "", "- 둘", "1. 셋", ""]);
-    assert.deepEqual(items, [["소개"], ["- 하나 `code`", "  이어진 줄"], ["- 둘"], ["1. 셋"]]);
-    assert.deepEqual(itemToTask(items[1]), { title: "하나 `code`", notes: ["이어진 줄"] });
-    const long = itemToTask([`- ${"가".repeat(130)}`]);
-    assert.equal([...long.title].length, 120);
-    assert.equal(long.notes[0], "가".repeat(130));
   });
 });
 

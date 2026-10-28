@@ -36,22 +36,27 @@ export const isDoc = (name: string, f: LibraryFile) => !f.on_agent && reportDocL
 /** 보고 글에 다는 의견(t-1222): 의견을 단 글(칠한다)과 새 의견 */
 export interface ReportNotes {
   anchors: readonly TextAnchor[];
-  onAdd: (anchor: TextAnchor, comment: string) => boolean;
+  /** `range`는 고른 자리(아이디어 노트가 그 `##` 절을 찾는다) */
+  onAdd: (anchor: TextAnchor, comment: string, range: Range) => boolean;
 }
 
 /**
  * 보고 글(report.md): `library/…` 그림을 그 보고서 보기 경로(`base`)로 그리고, 누르면 크게 본다(같은 글의 다른 그림으로 넘긴다).
  * `notes`가 있으면 글을 고른 끝에 「의견」이 뜬다(t-1222)
  */
-export function ReportMarkdown({ base, text, onImages, notes }: { base: string | null; text: string; onImages: (s: LightboxState) => void; notes?: ReportNotes }) {
+export function ReportMarkdown({ base, text, onImages, notes, image }: {
+  base: string | null; text: string; onImages: (s: LightboxState) => void; notes?: ReportNotes;
+  /** 그림·영상 주소를 따로 푼다(아이디어 노트: 그 폴더의 이름만, t-1260). 없으면 보고 library 경로 */
+  image?: (src: string) => string | null;
+}) {
   const root = useRef<HTMLDivElement>(null);
   const [noting, setNoting] = useState(false);
   useNoteHighlights(root, notes?.anchors ?? NO_ANCHORS, text);
-  const attachment = useCallback((src: string) => base === null ? null : reportMarkdownImage(base, src), [base]);
+  const attachment = useCallback((src: string) => image ? image(src) : base === null ? null : reportMarkdownImage(base, src), [base, image]);
   const resolve = useCallback(async (src: string) => {
-    const url = base === null ? null : reportMarkdownImage(base, src);
+    const url = attachment(src);
     return url === null ? null : ({ kind: "inline", url } as const);
-  }, [base]);
+  }, [attachment]);
   return (
     <MarkdownAttachmentContext.Provider value={attachment}><MarkdownImageContext.Provider value={resolve}>
       <div
@@ -70,7 +75,7 @@ export function ReportMarkdown({ base, text, onImages, notes }: { base: string |
           {(picked, control) => noting ? (
             <NoteEditor quote={picked.anchor.text} submitLabel="의견 추가"
               onSubmit={(comment) => {
-                if (!notes.onAdd(picked.anchor, comment)) return false;
+                if (!notes.onAdd(picked.anchor, comment, picked.range)) return false;
                 setNoting(false);
                 control.close();
                 return true;
@@ -183,6 +188,7 @@ function NotedReport({ project, thread, report, base, text, onImages, sendNotes 
   useReportReveal(project, report, root, true);
   const reveal = (note: ReviewNote) => {
     const s = note.source;
+    if (s.kind === "note" || s.kind === "media") return;
     if (s.kind === "report" && s.report === report) {
       const el = root.current?.querySelector(".report-markdown");
       const range = el ? resolveAnchor(el, s.anchor) : null;

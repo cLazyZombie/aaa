@@ -48,6 +48,8 @@ pub mod guide;
 mod harness;
 mod health;
 mod http;
+mod idea_thread;
+mod ideas;
 mod image;
 mod image_rpc;
 mod inbox;
@@ -604,6 +606,8 @@ pub struct Host {
     pub notice_events: broadcast::Sender<aaa_proto::NoticeView>,
     /// 프로젝트 TASKS.md가 바뀌었다(프로젝트, 내용 sha256). ticker가 낸다(coord.rs `tasks_pass`)
     pub task_events: broadcast::Sender<(String, String)>,
+    /// 아이디어 목록·노트가 바뀐 프로젝트(ideas.rs). 웹 events 연결이 `ideas` 사건으로 보낸다
+    pub ideas_changed: broadcast::Sender<String>,
     /// ticker가 마지막으로 본 프로젝트마다의 TASKS.md 상태
     tasks_seen: Mutex<HashMap<String, coord::TasksSeen>>,
     queue_gate: tokio::sync::Mutex<()>,
@@ -867,6 +871,7 @@ impl Host {
             running_sha256: rollout::running_sha()?,
             notice_events: broadcast::channel(64).0,
             task_events: broadcast::channel(64).0,
+            ideas_changed: broadcast::channel(64).0,
             tasks_seen: Mutex::new(HashMap::new()),
             queue_gate: tokio::sync::Mutex::new(()),
             file_locks: Default::default(),
@@ -1905,6 +1910,7 @@ impl Host {
                     task,
                     role: aaa_proto::Role::Worker,
                     attachments: Vec::new(),
+                    idea: None,
                 };
                 let (mut warnings, picked) = match from_task {
                     Some(t) => {
@@ -2020,6 +2026,29 @@ impl Host {
                 self.task_log_search(&project, before, limit, filter, task.as_deref(), search.as_ref())
             }
             FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
+            FrontRequest::IdeaList { project } => Ok(FrontResponse::Ideas { ideas: self.idea_list(&project)? }),
+            FrontRequest::IdeaRead { project, idea, rev } => {
+                let f = self.idea_folder(&project, &idea)?;
+                Ok(FrontResponse::Idea { note: self.idea_note(&project, &f, rev)? })
+            }
+            FrontRequest::IdeaCreate { project, title, text } => {
+                Ok(FrontResponse::Idea { note: self.idea_create(&project, &title, &text, None, actor)? })
+            }
+            FrontRequest::IdeaSave { project, idea, base_rev, text, summary } => {
+                self.idea_save(role, actor, &project, &idea, base_rev, &text, summary).await
+            }
+            FrontRequest::IdeaSay { project, idea, text } => {
+                Ok(FrontResponse::Idea { note: self.idea_say(&project, &idea, &text, actor).await? })
+            }
+            FrontRequest::IdeaWake { project, idea } => {
+                Ok(FrontResponse::Idea { note: self.idea_wake(&project, &idea, actor).await? })
+            }
+            FrontRequest::IdeaHandoff { project, idea, base_rev, tasks } => {
+                Ok(FrontResponse::Idea { note: self.idea_handoff(&project, &idea, base_rev, tasks, actor).await? })
+            }
+            FrontRequest::IdeaCopy { project, idea } => {
+                Ok(FrontResponse::Idea { note: self.idea_copy(&project, &idea, actor)? })
+            }
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;

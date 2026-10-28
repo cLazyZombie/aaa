@@ -167,6 +167,8 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/projects/{project}/uploads", post(task_file))
         .route("/api/v1/projects/{project}/library-uploads/{upload}", post(library_upload))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
+        .route("/api/v1/projects/{project}/ideas/{idea}/files", post(idea_file))
+        .route("/api/v1/projects/{project}/ideas/{idea}/files/{name}", get(idea_file_get))
         .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
         .route("/api/v1/projects/{project}/requests/{item}/{hash}/{*path}", get(request_file_get))
         .route("/api/v1/projects/{project}/asks/{id}/{*path}", get(ask_file_get))
@@ -718,6 +720,68 @@ async fn library_upload(
         "보고서 파일 요청");
     match result {
         Ok((files, total)) => Json(Outcome::Ok(serde_json::json!({ "files": files, "total": total }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// 아이디어 노트의 그림·영상 올리기(t-1260): 그 아이디어 폴더에 내용 hash 이름으로 쓰고 노트에 적을 이름을 돌려준다(16MiB)
+async fn idea_file(
+    State(host): State<Arc<Host>>,
+    Path((project, idea)): Path<(String, String)>,
+    req: Request,
+) -> Response {
+    let Some((id, role)) = device(&host, req.headers()) else { return unauthorized() };
+    if !role.can_control() {
+        return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 올릴 수 없다"));
+    }
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::task_attach::MAX_BYTES as usize)
+        .await
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 자료 실패 뒤 기존 복구·거부를 따른다"))
+    else {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::TooLarge, "파일은 16MiB까지 올린다"))),
+        )
+            .into_response();
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let r = host.idea_file_save(&project, &idea, &bytes);
+        if let Ok(name) = &r {
+            host.db.audit(
+                &format!("device:{id}"),
+                "idea_file",
+                &format!("{project}/{idea} {name} {} bytes", bytes.len()),
+            );
+        }
+        r
+    })
+    .await
+    .map_err(crate::orch::internal)
+    .and_then(|r| r);
+    match result {
+        Ok(name) => Json(Outcome::Ok(serde_json::json!({ "name": name }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// 아이디어 노트의 그림·영상(보기 권한도). 이름이 내용 hash라 오래 둔다
+async fn idea_file_get(
+    State(host): State<Arc<Host>>,
+    Path((project, idea, name)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    match host.idea_file_read(&project, &idea, &name) {
+        Ok(bytes) => Response::builder()
+            .header(header::CONTENT_TYPE, crate::ideas::media_mime(&name))
+            .header(header::CACHE_CONTROL, "private, max-age=31536000, immutable")
+            .header("x-content-type-options", "nosniff")
+            .header(header::CONTENT_SECURITY_POLICY, VIEW_CSP)
+            .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
+            .body(Body::from(bytes))
+            .unwrap(),
         Err(e) => error_response(e),
     }
 }
@@ -1312,6 +1376,7 @@ where
     let mut threads = host.thread_events.subscribe();
     let mut notices = host.notice_events.subscribe();
     let mut tasks = host.task_events.subscribe();
+    let mut ideas = host.ideas_changed.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut reports = host.reports_changed.subscribe();
     let mut workspace_metrics = host.workspace_metrics_changed.subscribe();
@@ -1624,6 +1689,19 @@ where
                 match t {
                     Ok((project, sha256)) => {
                         let text = serde_json::to_string(&FrontEvent::Tasks { project, sha256 }).unwrap();
+                        if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) | Err(RecvError::Closed) => break,
+                }
+            }
+            // 아이디어 목록·노트가 바뀌었다(아이디어 화면이 다시 읽는다). 놓쳤으면 끊는다: 웹은 다시 붙으며 새로 읽는다
+            i = ideas.recv() => {
+                send_state = false;
+                match i {
+                    Ok(project) => {
+                        let text = serde_json::to_string(&FrontEvent::Ideas { project }).unwrap();
                         if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
                             break;
                         }

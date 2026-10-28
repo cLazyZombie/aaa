@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 
 /// aaa의 순번 ID만 읽는다. 무작위 q/m-ID·ULID·제목·경로는 번호로 해석하지 않는다.
 pub fn short_id_number(value: &str, prefix: char) -> Option<i64> {
-    if !matches!(prefix, 't' | 'd' | 'r' | 'q' | 'a' | 'p' | 'i') {
+    if !matches!(prefix, 't' | 'd' | 'r' | 'q' | 'a' | 'p' | 'i' | 'n') {
         return None;
     }
     let digits = value.strip_prefix(prefix)?.strip_prefix('-')?;
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn numeric_aliases_keep_the_existing_format_and_integer_precision() {
-        for prefix in ['t', 'd', 'r', 'q', 'a', 'p', 'i'] {
+        for prefix in ['t', 'd', 'r', 'q', 'a', 'p', 'i', 'n'] {
             for digits in ["965", "0965", "00965", "00000000965"] {
                 let canonical = if prefix == 'p' { format!("{prefix}-00000965") } else { format!("{prefix}-0965") };
                 assert_eq!(canonical_short_id(&format!("{prefix}-{digits}"), prefix), Some(canonical));

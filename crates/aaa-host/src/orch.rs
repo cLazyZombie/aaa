@@ -64,6 +64,9 @@ pub(crate) struct ThreadRec {
     /// 다른 머신으로 옮기며 남긴 앞 자리(park.rs). 지우지 않았고, 그 머신으로 돌아가면 다시 쓴다
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub left_places: Vec<crate::park::LeftPlace>,
+    /// 아이디어 전용 thread면 그 아이디어 ULID(ideas.rs). host 머신에만 띄우고 실행 한도에 세지 않는다(t-1255 결정 19·21)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idea: Option<String>,
     #[serde(default)]
     pub automation: Option<String>,
     #[serde(default)]
@@ -170,6 +173,7 @@ impl ThreadRec {
     pub(crate) fn holds_worker_slot(&self) -> bool {
         self.role == Role::Worker
             && self.automation.is_none()
+            && self.idea.is_none()
             && self.holds_slot()
             && self.execution_stage() != Some(aaa_proto::ThreadStage::MergeReady)
     }
@@ -220,6 +224,7 @@ impl ThreadRec {
             park: None,
             brief_line: None,
             left_places: Vec::new(),
+            idea: None,
             automation: None,
             automation_run: None,
             repo: None,
@@ -342,7 +347,7 @@ pub(crate) struct StartOrigin {
     pub admission: crate::db::StartAdmission,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct StartArgs {
     /// 자동으로 고른 workspace. 계정 배정 대기 뒤 실제 기동에도 현재 허용을 다시 확인한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,6 +371,9 @@ pub struct StartArgs {
     pub role: Role,
     /// 할 일 글이 `attachments/<이름>`으로 가리키는 task 첨부(`--from-task`만 채운다, plan §8.327)
     pub attachments: Vec<crate::task_attach::TaskFile>,
+    /// 아이디어 전용 thread(ideas.rs): 할 일을 남기지 않고 실행 한도에 세지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) idea: Option<String>,
 }
 
 /// `project create`의 옵션(herdr-projects `new`)
@@ -846,7 +854,6 @@ impl Host {
             mute: s.mute,
             repos: s.repos.into_iter().map(|r| aaa_proto::RepoChoice { path: r.path, machine: r.machine }).collect(),
             local_machine: self.machine_order().1,
-            task_notes: s.task_notes,
         })
     }
 
@@ -1020,6 +1027,14 @@ impl Host {
                 .as_ref()
                 .and_then(|id| self.inner.lock().unwrap().panes.get(id).and_then(|p| p.info.responsibility.clone())),
             account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
+            idea: r.idea.as_deref().and_then(|i| {
+                self.db
+                    .idea_short_id(&r.project, i)
+                    .inspect_err(|error| {
+                        aaa_common::diagnostic::observe(error, "아이디어 번호를 못 읽으면 표지 없이 보인다")
+                    })
+                    .ok()
+            }),
             over_limit: r.over_limit.clone(),
             park: r.park.clone().map(Box::new),
             auto_merge: self.thread_auto_merge(r),
@@ -1547,7 +1562,7 @@ impl Host {
             .collect();
         let file = read(&format!("threads/{}.summary.md", r.id));
         let summary = crate::summary::split_meta(&file).1.trim().to_string();
-        let guide = THREAD_GUIDE.to_string();
+        let guide = if r.idea.is_some() { crate::brief_text::IDEA_GUIDE } else { THREAD_GUIDE }.to_string();
         let machine = self.machine_name(&r.machine_id);
         compose_brief(&BriefInput {
             title: &title,
@@ -1748,7 +1763,7 @@ impl Host {
             input.minimum = origin.usage_minimum;
         }
         // 자동화 do.start는 자체 실행 기록으로 관리한다. 사용자·coordinator 기동은 할 일을 먼저 남긴다.
-        if origin.is_none() && a.start_task.is_none() {
+        if origin.is_none() && a.start_task.is_none() && a.idea.is_none() {
             a.machine = Some(self.machine_name(&mid));
             a.start_task = Some(self.create_start_task(&a, actor).await?);
         }
@@ -1766,6 +1781,7 @@ impl Host {
             base: a.base.clone(),
             attachments: a.attachments.clone(),
             task_id: a.start_task.as_ref().and_then(|t| t.id.clone()),
+            idea: a.idea.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         // 내용 승인판 검사와 DB 선점 사이에 host의 파일 쓰기가 끼지 못하게 한다.
@@ -1793,7 +1809,7 @@ impl Host {
                 &a.project,
                 pool_key.as_deref().or_else(|| origin.map(|o| o.key.as_str())),
                 origin.map(|o| &o.admission),
-                a.over_limit.is_none().then(|| self.settings(&a.project).max_parallel_threads),
+                (a.over_limit.is_none() && a.idea.is_none()).then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
                 |tx, id| {
                     if let Some(input) = &selection {
@@ -3286,6 +3302,7 @@ mod tests {
             park: None,
             brief_line: None,
             left_places: Vec::new(),
+            idea: None,
             automation: None,
             automation_run: None,
             project: "p".into(),

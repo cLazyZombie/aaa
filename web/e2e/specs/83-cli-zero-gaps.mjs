@@ -1,12 +1,11 @@
 // 「CLI 0회」 인수의 작은 빈칸(관리 GUI W8, plan §8.417, 답 1A): 인벤토리에서 웹 화면이 모자랐던 CLI 다섯을 웹으로 한다.
 // pane 「세션 끝내기」(`pane kill`: 자리는 남고 「다시 열기」), coordinator 「하나 더 띄우기」(`project open --new`), 「이 aaa」의
-// 「낸 링크」 목록과 폐기(`library list`·`revoke`), 새 링크 수명(`library link --days`), 할 일 「나중」 파일(`project set task_notes.add|remove`).
+// 「낸 링크」 목록과 폐기(`library list`·`revoke`), 새 링크 수명(`library link --days`).
 // 결과는 host 기록(CLI 보기)으로 확인한다.
 import fs from "node:fs";
 import { root, aaa, step, until, domIs, hashIs, openSettings, screenText, inTime } from "../lib/harness.mjs";
 
 const DAY_MS = 86_400_000;
-const dir = () => `${root}/projects/demo`;
 const pane = (name) => aaa("pane", "list").panes.find((p) => p.name === name);
 const coordinators = () => aaa("pane", "list").panes.filter((p) => p.role === "coordinator" && p.state === "running");
 /** host가 기록한 그 thread의 링크들(새것부터) */
@@ -109,23 +108,5 @@ export default async function ({ page }) {
     await domIs(page, "새 링크", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "active");
     const [made] = await links(page, id);
     if (made.id === first.id || made.expires_at_ms - made.created_at_ms !== 7 * DAY_MS) throw new Error(`새 링크 수명 ${JSON.stringify(made)}`);
-  });
-
-  await step("할 일 「나중」 파일: 이 aaa에서 더하고 빼며, 폴더 밖 경로는 host가 거부한 말을 보인다", async () => {
-    fs.mkdirSync(`${dir()}/memory`, { recursive: true });
-    fs.writeFileSync(`${dir()}/memory/later.md`, "## UI\n- 안내 문구\n");
-    const dialog = await openSettings(page, "이 aaa");
-    const notes = dialog.getByTestId("task-notes");
-    await notes.getByText("정한 파일이 없다").waitFor();
-    await notes.getByTestId("task-notes-path").fill("../outside.md");
-    await notes.getByTestId("task-notes-add").click();
-    await notes.getByRole("alert").waitFor();
-    await notes.getByTestId("task-notes-path").fill("memory/later.md");
-    await notes.getByTestId("task-notes-add").click();
-    await notes.locator('[data-note="memory/later.md"]').waitFor();
-    if (JSON.stringify(aaa("project", "show", "demo").task_notes) !== JSON.stringify(["memory/later.md"])) throw new Error(`host task_notes ${JSON.stringify(aaa("project", "show", "demo"))}`);
-    await notes.getByRole("button", { name: "memory/later.md 빼기" }).click();
-    await notes.getByText("정한 파일이 없다").waitFor();
-    await dialog.getByRole("button", { name: "설정 닫기" }).click();
   });
 }

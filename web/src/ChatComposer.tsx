@@ -247,6 +247,8 @@ export interface ChatComposerProps {
   coordinator?: boolean;
   /** 그 harness 세션의 컨텍스트 사용량(plan §8.321). 없으면 게이지를 그리지 않는다(옛 host·첫 응답 전) */
   context?: ContextUsage | null;
+  /** 보낼 글을 보내기 직전에 고친다(아이디어 대화: 사람이 고친 노트 요약 머리, t-1260). 대화 끝 말풍선도 고친 글이다 */
+  prepare?: (text: string) => string;
 }
 
 export function ChatComposer({
@@ -274,6 +276,7 @@ export function ChatComposer({
   asking = false,
   coordinator = false,
   context = null,
+  prepare,
 }: ChatComposerProps) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -705,7 +708,7 @@ export function ChatComposer({
     if (!activeRef.current || raw === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
     // 보이지 않는 문자는 빼고 보낸다(plan §8.266). 보내짐 증거(기록의 같은 글)도 뺀 글로 맞춘다
     const { text: cleaned, removed } = stripHidden(raw);
-    const message = cleaned.trim();
+    const message = cleaned.trim() === "" || !prepare ? cleaned.trim() : prepare(cleaned.trim());
     if (message === "") {
       setNote({ text: HIDDEN_ONLY });
       return;

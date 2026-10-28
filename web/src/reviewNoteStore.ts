@@ -5,11 +5,14 @@ import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // `markdown-review-notes.ts`(파일·줄 차례로 정렬). 다른 곳: Orca는 worktree 메타에 저장하고 바로 agent에 보낸다. aaa는 이 기기
 // localStorage에 두고, 보내기는 사람이 초안에서 누른다(t-1204 인용과 같은 규칙).
 import type { DiffScope } from "./gen/proto";
-import { diffScopeLabel, formatDiffQuote, formatReportQuote, withComment, type DiffQuoteRange } from "./selectionQuote.ts";
+import { diffScopeLabel, formatDiffQuote, formatIdeaQuote, formatReportQuote, withComment, type DiffQuoteRange } from "./selectionQuote.ts";
 import type { TextAnchor } from "./textAnchor.ts";
 
 export type ReviewSource =
   | { kind: "report"; report: string; anchor: TextAnchor }
+  // 아이디어 노트(t-1260): 고른 글과 그 `##` 절, 그림·영상은 통째로(이름과 설명)
+  | { kind: "note"; idea: string; section: string | null; anchor: TextAnchor }
+  | { kind: "media"; idea: string; section: string | null; name: string; label: string }
   | { kind: "diff"; scope: DiffScope; base: string; base_sha: string; path: string; range: DiffQuoteRange; rows: { kind: " " | "-" | "+"; text: string }[] };
 
 export interface ReviewNote {
@@ -30,6 +33,8 @@ function valid(v: unknown): v is ReviewNote {
   const s = n.source as Record<string, unknown> | null;
   if (typeof n.id !== "string" || typeof n.comment !== "string" || typeof n.at !== "number" || typeof s !== "object" || s === null) return false;
   if (s.kind === "report") return typeof s.report === "string" && typeof s.anchor === "object" && s.anchor !== null && typeof (s.anchor as TextAnchor).text === "string";
+  if (s.kind === "note") return typeof s.idea === "string" && typeof s.anchor === "object" && s.anchor !== null && typeof (s.anchor as TextAnchor).text === "string";
+  if (s.kind === "media") return typeof s.idea === "string" && typeof s.name === "string" && typeof s.label === "string";
   return s.kind === "diff" && typeof s.path === "string" && Array.isArray(s.rows) && typeof s.range === "object" && s.range !== null;
 }
 
@@ -81,7 +86,10 @@ export function newNoteId(): string {
 
 /** 원문(보고 글은 고른 글, diff는 표지 없는 줄) */
 export function noteText(note: ReviewNote): string {
-  return note.source.kind === "report" ? note.source.anchor.text : note.source.rows.map((r) => r.text).join("\n");
+  const s = note.source;
+  if (s.kind === "report" || s.kind === "note") return s.anchor.text;
+  if (s.kind === "media") return `${/\.(mp4|webm)$/.test(s.name) ? "영상" : "그림"} ${s.label || s.name}`;
+  return s.rows.map((r) => r.text).join("\n");
 }
 
 /** 의견 하나의 글(인용 머리·원문·의견) */
@@ -89,13 +97,15 @@ export function formatNote(thread: string, note: ReviewNote): string | null {
   const s = note.source;
   const block = s.kind === "report"
     ? formatReportQuote({ source: thread, report: s.report, text: s.anchor.text })
+    : s.kind === "note" ? formatIdeaQuote({ idea: s.idea, section: s.section, text: s.anchor.text })
+    : s.kind === "media" ? formatIdeaQuote({ idea: s.idea, section: s.section, text: `${noteText(note)} (${s.name})` })
     : formatDiffQuote({ source: thread, scope: diffScopeLabel(s.scope, s.base, s.base_sha), path: s.path, range: s.range, rows: s.rows });
   return block === null ? null : withComment(block, note.comment);
 }
 
 /** 보낼 차례(참고 sortMarkdownReviewNotes): 보고 글이 먼저(판·글 차례), diff는 파일·줄 차례, 같으면 단 차례 */
 export function sortNotes(notes: readonly ReviewNote[]): ReviewNote[] {
-  const rank = (n: ReviewNote) => (n.source.kind === "report" ? 0 : 1);
+  const rank = (n: ReviewNote) => (n.source.kind === "report" ? 0 : n.source.kind === "diff" ? 1 : 2);
   return [...notes].sort((a, b) => {
     if (rank(a) !== rank(b)) return rank(a) - rank(b);
     const sa = a.source, sb = b.source;
