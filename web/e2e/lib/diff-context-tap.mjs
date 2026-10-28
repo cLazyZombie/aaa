@@ -14,6 +14,9 @@ export async function reflowContextButton(page, handle) {
     observer.observe(button.getRootNode(), { childList: true, subtree: true });
     gate.cleanup = () => observer.disconnect();
     gate.events.push({ event: "old-resolved", at: performance.now() });
+    // handle을 얻은 뒤 이미 제거됐으면 과거 MutationObserver 사건은 오지 않는다.
+    // 관측을 설치한 같은 task에서 현재 상태도 읽어 그 제거를 놓치지 않는다.
+    record();
   });
   try {
     const response = page.waitForResponse((r) => {

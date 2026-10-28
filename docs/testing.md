@@ -1,3 +1,4 @@
+- t-1236: [E42의 관측보다 먼저 제거된 단추 재현·수리](testing-diff-context-reflow.md)
 - t-1236: [가짜 Claude 메뉴의 답 묶음 처리 검증](testing-claude-menu-input-batch.md)
 - t-1225: [coordinator·thread에 넣는 글 줄이기 검증](testing-context-budget.md)
 - t-1232: [E2E12 events 수신·route 정리 검증](testing-thread-events-liveness.md)

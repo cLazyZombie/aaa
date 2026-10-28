@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { aaa, until, step, webkit, domIs, shot, root, openSettings } from "../lib/harness.mjs";
 import { tapContextButton } from "../lib/diff-context-tap.mjs";
+import { checkContextReflow } from "../lib/diff-context-reflow-case.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 let thread = "";
@@ -158,6 +159,16 @@ async function expandContext(p, name, refreshDuringKey = false) {
 }
 
 export default async function ({ page }) {
+  await step("맥락 제거 관측: 관측 준비 전·후 제거를 실제 Shadow DOM에서 구별한다", async () => {
+    const p = await page.context().newPage();
+    try { await checkContextReflow(p); } finally { await p.close(); }
+    const wk = await webkit.launch({ headless: true });
+    try {
+      const mobile = await wk.newPage();
+      await checkContextReflow(mobile);
+    } finally { await wk.close(); }
+  });
+
   await step("준비: main에 커밋한 저장소, 그 저장소 thread의 worktree에 branch 커밋·지움·새 파일·무시한 파일", async () => {
     const repo = `${root}/repos/diffgame`;
     fs.mkdirSync(`${repo}/src`, { recursive: true });
