@@ -656,6 +656,10 @@ impl Host {
                     }
                     let mut items = items;
                     me.library_notice_links(&mut items);
+                    if let Err(e) = me.db.inbox_display_ids(&mut items) {
+                        tracing::error!("알림 inbox 별칭 조회 실패: {e:#}");
+                        continue;
+                    }
                     let body = notify_body(&n.format, &n.telegram_chat_id, &place, &items, &titles);
                     let sent = tokio::time::timeout(SEND_TIMEOUT, post(&n.webhook, body.to_string().as_bytes())).await;
                     let res = match sent {

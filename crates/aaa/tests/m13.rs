@@ -2607,7 +2607,7 @@ fn inbox_and_nudge() {
     w.h.ok(&["pane", "send-keys", &coord, "enter"]);
     w.wait_screen(&coord, "got: draft-text");
     let screen = w.wait_screen(&coord, "got: [aaa inbox]");
-    assert!(screen.contains(&format!("got: [aaa inbox] {id} new report (aaa inbox list demo)")), "{screen}");
+    assert!(screen.contains(&format!("got: [aaa inbox] {id} new report [i-0001] (aaa inbox list demo)")), "{screen}");
     // 같은 묶음은 다시 보내지 않는다: 받은 뒤 화면이 그대로 머문 다음 nudge 창이 다시 지나도 한 번이다
     wait_for_diag(
         "알림을 받은 뒤 입력 대기",
@@ -2629,7 +2629,7 @@ fn inbox_and_nudge() {
     w.h.ok(&["thread", "ack", "demo", &id]);
     w.wait_for_count(&coord, "got: [aaa inbox]", 2);
     let screen = w.h.screen(&coord);
-    assert!(screen.contains(&format!("got: [aaa inbox] {id} idle (aaa inbox list demo)")), "{screen}");
+    assert!(screen.contains(&format!("got: [aaa inbox] {id} idle [i-0002] (aaa inbox list demo)")), "{screen}");
 
     // 보면(peek 아님) 「봤다」가 되고, 더 알리지 않는다
     let items = w.h.ok(&["inbox", "list", "demo"])["items"].as_array().unwrap().clone();
@@ -2649,19 +2649,33 @@ fn inbox_and_nudge() {
     };
     assert_eq!(files(&inbox).len(), 2);
     let report_id = items.iter().find(|i| i["event"] == "new report").unwrap()["id"].as_str().unwrap().to_string();
-    let md = std::fs::read_to_string(inbox.join(format!("{report_id}.md"))).unwrap();
+    assert_eq!(report_id, "i-0001");
+    assert_eq!(c["inbox"][0]["id"], report_id);
+    let db = rusqlite::Connection::open(w.h.state.join("host/host.db")).unwrap();
+    let stored: String =
+        db.query_row("SELECT item_id FROM inbox_ids WHERE project='demo' AND number=1", [], |r| r.get(0)).unwrap();
+    let md = std::fs::read_to_string(inbox.join(format!("{stored}.md"))).unwrap();
     assert!(
         md.starts_with("+++\n") && md.contains("kind = \"thread-state\"") && md.contains("event = \"new report\""),
         "{md}"
     );
 
+    // 일반 CLI·context도 별칭을 쓰고 긴 저장 ID를 출력하지 않는다.
+    for args in [vec!["inbox", "list", "demo", "--peek"], vec!["context", "demo", "--peek"]] {
+        let output = w.h.run(&args);
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("i-0001") && !text.contains(&stored), "{text}");
+    }
     // 끝내기: 파일은 inbox/done으로
     let e = w.h.json(&["inbox", "done", "demo", "no-such-item"]).expect_err("없는 항목");
     assert!(e.contains("no-such-item"), "{e}");
     let done = w.h.ok(&["inbox", "done", "demo", &report_id]);
     assert_eq!((done["done"].as_u64(), done["items"].as_array().unwrap().len()), (Some(1), 1), "{done}");
     // 끝낸 수를 말한다(herdr-projects 「N item(s) moved to inbox/done」)
-    let out = w.h.run(&["inbox", "done", "demo", "--all"]);
+    let idle_stored: String =
+        db.query_row("SELECT item_id FROM inbox_ids WHERE project='demo' AND number=2", [], |r| r.get(0)).unwrap();
+    let out = w.h.run(&["inbox", "done", "demo", &idle_stored]);
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout), "1개 항목을 끝냈다(inbox/done으로 옮김)\n");
     assert!(w.h.ok(&["inbox", "list", "demo"])["items"].as_array().unwrap().is_empty());
@@ -2672,7 +2686,7 @@ fn inbox_and_nudge() {
     // project.toml을 읽지 못하면 내용당 한 번 알린다
     std::fs::write(dir.join("project.toml"), "schema = [\n").unwrap();
     let screen = w.wait_screen(&coord, "got: [aaa inbox] project.toml not usable");
-    assert!(screen.contains("got: [aaa inbox] project.toml not usable (aaa inbox list demo)"), "{screen}");
+    assert!(screen.contains("got: [aaa inbox] project.toml not usable [i-0003] (aaa inbox list demo)"), "{screen}");
     // ticker가 같은 내용을 두 번 더 봐도 항목은 하나다(tick마다 다시 읽는다, 내용 hash당 한 번)
     w.h.ticks(2);
     assert_eq!(w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().len(), 1);
@@ -2722,7 +2736,7 @@ fn nudge_only_marks_the_set_without_a_coordinator_or_when_off() {
     // 3) 새 항목이 생겨 묶음이 바뀌면 알린다: 아직 보지 않은 앞 항목도 함께다
     let b = report("b");
     let screen = w.wait_screen(&coord, "got: [aaa inbox]");
-    assert!(screen.contains(&format!("got: [aaa inbox] {a} new report; {b} new report")), "{screen}");
+    assert!(screen.contains(&format!("got: [aaa inbox] {a} new report [i-0001]; {b} new report [i-0002]")), "{screen}");
     wait_for_diag(
         "알림을 받은 뒤 입력 대기",
         T,
@@ -4294,7 +4308,12 @@ fn routines() {
             .then_some(())
     });
     finished("cmd");
-    let md = std::fs::read_to_string(dir.join("inbox").join(format!("{}.md", first["id"].as_str().unwrap()))).unwrap();
+    let db = rusqlite::Connection::open(w.h.state.join("host/host.db")).unwrap();
+    let number = aaa_proto::short_id_number(first["id"].as_str().unwrap(), 'i').unwrap();
+    let stored: String = db
+        .query_row("SELECT item_id FROM inbox_ids WHERE project='demo' AND number=?1", [number], |r| r.get(0))
+        .unwrap();
+    let md = std::fs::read_to_string(dir.join("inbox").join(format!("{stored}.md"))).unwrap();
     assert!(md.contains("```text\nv1\n```"), "{md}");
     // 같은 출력으로 한 번 더 돈 뒤에도 항목은 하나다. 돈 것은 흐름 사건 routine_ran으로 본다(항목은 그 사건보다 먼저
     // 남긴다): 첫 실행(출력 바뀜, 위 항목) 다음 실행이 「출력 같음」이어야 한다
@@ -4617,6 +4636,7 @@ fn notify_webhook() {
     assert_eq!(v["project"], "demo");
     let items = v["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "thread 보고를 외부로 보냈다: {body}");
+    assert!(items.iter().all(|i| aaa_proto::short_id_number(i["id"].as_str().unwrap(), 'i').is_some()), "{body}");
     assert!(
         items.iter().all(|i| i["kind"] == "post" && i["subject"] == "coordinator" && i["event"] == "post completed"),
         "{body}"

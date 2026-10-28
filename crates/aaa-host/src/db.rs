@@ -10,6 +10,7 @@ mod account_rename;
 mod auto_merge;
 mod automation_ids;
 pub(crate) mod automation_runs;
+mod inbox_ids;
 #[cfg(test)]
 mod inbox_tests;
 mod library_catalog;
@@ -357,6 +358,7 @@ impl Db {
         // DDL마다 별도 내구 쓰기를 하지 않는다. 실패한 이행도 일부만 남기지 않는다.
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         Self::initialize_schema(&tx)?;
+        Self::initialize_inbox_ids(&tx)?;
         tx.commit()?;
         scrub_audit_env(&mut conn)?;
         Ok(Db { conn: Mutex::new(conn) })
@@ -1752,6 +1754,7 @@ impl Db {
         for t in PROJECT_TABLES {
             tx.execute(&format!("UPDATE {t} SET project=?2 WHERE project=?1"), [from, to])?;
         }
+        tx.execute("UPDATE inbox SET data=json_set(data,'$.project',?1) WHERE project=?1", [to])?;
         tx.execute("UPDATE posts SET data=json_set(data,'$.project',?1) WHERE project=?1 AND data IS NOT NULL", [to])?;
         for (k, v) in project_meta(&tx, from)? {
             let (kind, rest) = k.split_once(':').unwrap_or((&k, ""));
@@ -1845,7 +1848,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 24] = [
+const PROJECT_TABLES: [&str; 25] = [
     "work_records",
     "work_record_sources",
     "threads",
@@ -1854,6 +1857,7 @@ const PROJECT_TABLES: [&str; 24] = [
     "flow_events",
     "messages",
     "inbox",
+    "inbox_ids",
     "evaluations",
     "library_links",
     "library_reports",
