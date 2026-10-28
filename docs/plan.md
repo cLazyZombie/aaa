@@ -8296,3 +8296,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **E72.** main에 있던 큰 binary 전송과 화면 30초 대기의 결합을 양쪽 수리 전 코드에서 재현했다. 실제 비특권 SSH 거부와 화면 폼/오류 표시를 분리하고 전송·SHA·정리는 기존 host keeper가 맡는다. 시한·기대값·제품 신뢰 정책은 유지한다.
 - **번호·계약.** 착지 기준 main 60052d5c의 마지막 §8.536 다음 번호다. 기존 JSON 확장·내부 보존으로 FRONT_API 1.145·AGENT_LINK 1.11을 유지하며 새 웹 기능이 없어 E2E01~120 번호를 유지한다.
 - **검증.** [큰 입력·원장 회귀](testing-automation-large-input.md), [E72 수리 전후와 계약별 검사](testing-machine-plan-boundary.md)에 기록한다. 운영 복구는 배포 알림 뒤 보존 커서와 원인 사건·후속 보고 사건의 원장을 읽어 확인한다.
+
+### 8.538 자동 결정 보존 기간 자동 삭제(t-1262)
+
+- **목적.** §8.532(t-1223)가 사용자 「빨리 배포」 지시로 미룬 부분이다. 자동 결정 원장 `auto-mode:<project>`는 지우기 전까지 끝없이 쌓였고 질문 화면 「자동으로 정한 것」·대화창이 오래된 결정을 계속 실었다.
+- **계약.** host ticker가 `ask_prune_pass` 바로 뒤 같은 시각으로 `auto_prune_pass`를 돈다. 결정 시각 `at_ms`가 「답한 것」과 같은 `ASK_KEEP_DAYS`(14일)보다 오래된 결정은 결과·확인 여부와 상관없이 지운다. 원장이 있는 모든 프로젝트(멈춤·보관 포함, `ask_prune`과 같은 범위)를 본다. 지우는 일은 §8.532 지우기와 같은 helper로 하여 질문 사본 `asks/auto-<q-ID>/`와 자동 답만으로 된 「답한 것」 기록도 함께 빠지고, 바뀌면 `asks_bump`로 모든 기기에 알린다. wire 변경은 없다.
+- **재전송 방지.** 지운 `failed`·`pending` 결정은 §8.532처럼 `forgotten`에 남는다(§8.479 「자동 재전송하지 않는다」). `forgotten`은 그 질문이 아직 자동 답을 받을 수 있을 때만 필요하므로, 같은 ticker에서 답을 기다리는 thread 질문(끝난 thread 포함)·사용자 요청의 질문 ID에 없는 항목을 뺀다. 질문 ID는 `question_ids` 원장이 지우지 않아 재사용하지 않고, 답했거나 판이 바뀐 질문은 `auto_answer`가 먼저 거부한다. post 번호로 만든 결정(`auto-decision` post)은 재전송 경로가 없어 뺀다. `forgotten`이 비어 있으면 질문 목록을 읽지 않고, thread 질문 ID 발급이 실패해 ID 없는 질문이 보이면 그 회차는 `forgotten`을 그대로 둔다. 오래된 결정도 뺄 항목도 없으면 원장을 다시 쓰지 않는다(ticker마다 쓰기 없음).
+- **참고.** 기존 「답한 것」 14일 정리(§8.345, `ask_prune_pass`)를 그대로 따른다. 새 외부 의존성은 없다.
+- **번호·계약.** 기준 main 9121d473의 마지막 §8.537 다음 번호이며 착지 때 다시 대조한다. FRONT_API 1.145·AGENT_LINK 1.11을 유지하고 웹·E2E 번호는 바꾸지 않는다. UI 문구는 넣지 않는다.
+- **검증.** host 유닛 `old_decisions_expire_like_answered_records_but_never_reopen_an_auto_resend`. 상세는 [자동 결정 보존 기간 정리 검증](testing-auto-decision-prune.md)에 둔다.

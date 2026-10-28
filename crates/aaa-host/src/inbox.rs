@@ -576,7 +576,9 @@ impl Host {
 
             self.nudge(&p.name, dir).await;
         }
-        self.ask_prune_pass(aaa_common::util::now_ms());
+        let now = aaa_common::util::now_ms();
+        self.ask_prune_pass(now);
+        self.auto_prune_pass(now);
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;
         if let Ok(gone) = self.db.inbox_prune(aaa_common::util::now_ms().saturating_sub(keep)) {
             for (project, id) in gone {

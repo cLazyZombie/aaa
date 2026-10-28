@@ -375,3 +375,54 @@ async fn forgetting_decisions_clears_every_list_but_never_reopens_an_auto_resend
         h.db.ask_list("demo").unwrap().iter().all(|a| a.items.iter().all(|q| q.id.as_deref() != Some(second.as_str())))
     );
 }
+
+/// 자동 결정은 「답한 것」과 같은 14일이 지나면 ticker가 지운다. 전달을 모르는 결정은 질문이 열려 있는 동안 계속 자동 답을 막는다.
+#[tokio::test]
+async fn old_decisions_expire_like_answered_records_but_never_reopen_an_auto_resend() {
+    let (h, _lab) = coordinator_host();
+    h.auto_mode_set("demo", true, "local:cli").unwrap();
+    let old = question(&h, 1, "## Questions\n### 1. 배치\n- A 아래 (추천)\n- B 위\n").remove(0);
+    let recent = question(&h, 2, "## Questions\n### 1. 색\n- A 파랑\n- B 빨강\n").remove(0);
+    let open = question(&h, 3, "## Questions\n### 1. 폭\n- A 좁게\n- B 넓게\n").remove(0);
+    answer(&h, &old, COORD).await.unwrap();
+    answer(&h, &recent, COORD).await.unwrap();
+    let now = now_ms();
+    let record = |id: &str, outcome: &str| {
+        let mut r = h.auto_decisions("demo").unwrap()[0].clone();
+        r.question.id = id.strip_prefix("auto-").map(Into::into);
+        AutoDecision { id: id.into(), outcome: outcome.into(), at_ms: 1, ..r }
+    };
+    let mut d = h.auto_document("demo").unwrap();
+    d.decisions.iter_mut().filter(|r| r.id == format!("auto-{old}")).for_each(|r| r.at_ms = 1);
+    d.decisions.push(record(&format!("auto-{open}"), "failed"));
+    d.decisions.push(record("auto-q-9999", "pending"));
+    d.forgotten.push("p-00000001".into());
+    h.db.set_meta(&key("demo"), &serde_json::to_string(&d).unwrap()).unwrap();
+    let dir = h.project_dir("demo").unwrap().join("asks");
+    let asked = |h: &Host, q: &str| {
+        h.db.ask_list("demo").unwrap().iter().filter(|a| a.items.iter().any(|i| i.id.as_deref() == Some(q))).count()
+    };
+    assert_eq!((asked(&h, &old), asked(&h, &recent)), (1, 1));
+    let events = h.asks_changed.subscribe();
+    h.ask_prune_pass(now);
+    h.auto_prune_pass(now);
+    let d = h.auto_document("demo").unwrap();
+    assert_eq!(d.decisions.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), [format!("auto-{recent}")]);
+    // 닫힌 질문(q-9999)과 post 번호 ID는 빠지고, 열린 질문의 실패 기록만 남는다.
+    assert_eq!(d.forgotten, [format!("auto-{open}")]);
+    assert!(events.has_changed().unwrap());
+    assert!(!dir.join(format!("auto-{old}")).exists() && dir.join(format!("auto-{recent}")).is_dir());
+    assert_eq!((asked(&h, &old), asked(&h, &recent)), (0, 1));
+    assert!(answer(&h, &open, COORD).await.unwrap_err().message.contains("이미 자동 답"));
+    // 사람이 답해 질문이 닫히면 다음 정리에서 빠진다.
+    h.call(
+        DeviceRole::Controller,
+        "device:phone",
+        FrontRequest::QuestionReply { project: "demo".into(), id: open.clone(), choice: Some("A".into()), text: None },
+    )
+    .await
+    .unwrap();
+    h.auto_prune_pass(now);
+    assert!(h.auto_document("demo").unwrap().forgotten.is_empty());
+    assert!(answer(&h, &open, COORD).await.is_err());
+}

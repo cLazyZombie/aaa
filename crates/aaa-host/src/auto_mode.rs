@@ -1,5 +1,5 @@
 //! host가 소유하는 coordinator auto mode와 자동 결정 원장. 웹은 사본을 그릴 뿐이다.
-use crate::{Host, err, orch::internal};
+use crate::{Host, asks::ASK_KEEP_DAYS, err, orch::internal};
 use aaa_common::util::now_ms;
 use aaa_proto::{AutoDecision, AutoDecisionNote, AutoMode, ErrorBody, ErrorCode, FrontResponse, ThreadQuestion};
 use serde::{Deserialize, Serialize};
@@ -310,8 +310,7 @@ impl Host {
         let (decisions, next) = self.auto_decision_page(project, None, Some(id))?;
         Ok(FrontResponse::AutoDecisions { decisions, next })
     }
-    /// 자동 결정 기록을 지운다(모든 기기). 질문 사본과, 자동 답만으로 된 「답한 것」 기록도 함께 지워 다른 목록에 다시 나타나지 않게
-    /// 한다. 이미 실행한 일은 되돌리지 않는다.
+    /// 자동 결정 기록을 지운다(모든 기기). 이미 실행한 일은 되돌리지 않는다.
     pub(crate) fn auto_decision_forget(
         &self,
         project: &str,
@@ -319,17 +318,59 @@ impl Host {
         all: bool,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
-        let dir = self.project_dir(project)?;
+        self.project_dir(project)?;
         if ids.is_empty() && !all {
             return Err(err(ErrorCode::BadRequest, "지울 자동 결정 ID나 all이 필요하다"));
         }
+        let gone = self.auto_decision_remove(project, |r| all || ids.contains(&r.id))?;
+        if gone == 0 {
+            return self.asks_view(project);
+        }
+        self.db.audit(actor, "auto_decision_forget", &format!("{project} {gone}"));
+        self.asks_bump();
+        self.asks_view(project)
+    }
+    /// 결정한 지 [`ASK_KEEP_DAYS`]일이 지난 자동 결정을 지우고(ticker, 「답한 것」과 같은 기준), 질문이 닫혀 더는 자동 답을 받을 수
+    /// 없는 `forgotten` ID를 뺀다.
+    pub(crate) fn auto_prune_pass(&self, now_ms: u64) {
+        let cutoff = now_ms.saturating_sub(u64::from(ASK_KEEP_DAYS) * 86_400_000);
+        let Ok(projects) = self
+            .db
+            .meta_suffixes("auto-mode:")
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "다음 ticker에서 다시 정리한다"))
+        else {
+            return;
+        };
+        let mut changed = false;
+        for project in projects {
+            // 지울 것이 없으면 원장을 다시 쓰지 않는다(ticker마다 도는 쓰기를 피한다).
+            let pruned = self.auto_document(&project).and_then(|d| {
+                let gone = if d.decisions.iter().any(|r| r.at_ms < cutoff) {
+                    self.auto_decision_remove(&project, |r| r.at_ms < cutoff)?
+                } else {
+                    0
+                };
+                let left = self.auto_forgotten_prune(&project)?;
+                Ok(gone > 0 || left)
+            });
+            match pruned {
+                Ok(c) => changed |= c,
+                Err(e) => tracing::warn!(project=%project, "자동 결정 보존 기간 정리 실패: {}", e.message),
+            }
+        }
+        if changed {
+            self.asks_bump();
+        }
+    }
+    /// 고른 결정을 원장에서 빼고 질문 사본과, 자동 답만으로 된 「답한 것」 기록도 지워 다른 목록에 다시 나타나지 않게 한다. 답을
+    /// 전달하지 못했거나 전달 여부를 모르는 ID는 `forgotten`에 남겨 같은 질문에 자동 재전송하지 않는다(§8.479). 지운 수를 준다.
+    fn auto_decision_remove(&self, project: &str, pick: impl Fn(&AutoDecision) -> bool) -> Result<usize, ErrorBody> {
         let mut gone = Vec::new();
         let mut kept = std::collections::BTreeSet::new();
         self.db
             .update_meta(&key(project), |raw| {
                 let mut d = decode(raw)?;
-                let (out, keep): (Vec<_>, Vec<_>) =
-                    std::mem::take(&mut d.decisions).into_iter().partition(|r| all || ids.contains(&r.id));
+                let (out, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut d.decisions).into_iter().partition(&pick);
                 for r in out.iter().filter(|r| r.outcome != "answered") {
                     if !d.forgotten.contains(&r.id) {
                         d.forgotten.push(r.id.clone());
@@ -342,8 +383,12 @@ impl Host {
             })
             .map_err(internal)?;
         if gone.is_empty() {
-            return self.asks_view(project);
+            return Ok(0);
         }
+        // 지운 프로젝트에 남은 원장도 정리한다. 폴더가 없으면 지울 사본도 없다.
+        let Ok(dir) = self.project_dir(project) else {
+            return Ok(gone.len());
+        };
         for r in &gone {
             aaa_common::diagnostic::ignored(
                 std::fs::remove_dir_all(dir.join("asks").join(&r.id)),
@@ -375,9 +420,57 @@ impl Host {
                 );
             }
         }
-        self.db.audit(actor, "auto_decision_forget", &format!("{project} {}", gone.len()));
-        self.asks_bump();
-        self.asks_view(project)
+        Ok(gone.len())
+    }
+    /// `forgotten`은 그 질문이 아직 자동 답을 받을 수 있을 때만 쓸모가 있다. 질문 ID는 재사용하지 않으므로, 답했거나 판이 바뀌었거나
+    /// 닫힌 질문의 ID와 post 번호로 만든 결정(`auto-decision` post, 재전송 경로 없음)의 ID는 뺀다. 뺐으면 true.
+    fn auto_forgotten_prune(&self, project: &str) -> Result<bool, ErrorBody> {
+        let forgotten = self.auto_document(project)?.forgotten;
+        if forgotten.is_empty() {
+            return Ok(false);
+        }
+        let open = match self.project_dir(project) {
+            Ok(_) => self.auto_open_questions(project)?,
+            Err(_) => Default::default(),
+        };
+        let stale = |id: &String| !id.strip_prefix("auto-").is_some_and(|q| open.contains(q));
+        if !forgotten.iter().any(stale) {
+            return Ok(false);
+        }
+        let mut changed = false;
+        self.db
+            .update_meta(&key(project), |raw| {
+                let mut d = decode(raw)?;
+                let before = d.forgotten.len();
+                d.forgotten.retain(|id| !stale(id));
+                changed = d.forgotten.len() != before;
+                Ok(serde_json::to_string(&d)?)
+            })
+            .map_err(internal)?;
+        Ok(changed)
+    }
+    /// 지금 답을 기다리는 thread 질문·사용자 요청의 질문 ID(`auto_answer`가 받는 범위). 끝난 thread도 다시 열릴 수 있어 넣는다.
+    fn auto_open_questions(&self, project: &str) -> Result<std::collections::BTreeSet<String>, ErrorBody> {
+        let mut ids = std::collections::BTreeSet::new();
+        for t in self.threads_of(Some(project), None)? {
+            if let Some(q) = t.questions.as_ref().filter(|q| q.answer.is_none()) {
+                // ID 발급이 실패하면 thread_view는 ID 없는 원문을 준다. 열린 질문을 놓쳐 재전송을 막는 기록을 지우지 않게 멈춘다.
+                if q.items.iter().any(|q| q.id.is_none()) {
+                    return Err(err(
+                        ErrorCode::Internal,
+                        format!("{} 질문 ID를 읽지 못해 forgotten을 그대로 둔다", t.id),
+                    ));
+                }
+                ids.extend(q.items.iter().filter_map(|q| q.id.clone()));
+            }
+        }
+        for r in self.user_requests(project)? {
+            match r.questions {
+                Some(q) => ids.extend(q.items.into_iter().filter_map(|q| q.id)),
+                None => ids.extend(r.question_id),
+            }
+        }
+        Ok(ids)
     }
     pub(crate) fn auto_exception_count(&self, project: &str) -> Result<u32, ErrorBody> {
         let mut ids = std::collections::BTreeSet::new();
