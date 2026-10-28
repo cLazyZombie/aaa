@@ -132,6 +132,19 @@ pub fn keygen(path: &Path) -> Result<String> {
     Ok(identity.to_public().to_string())
 }
 
+/// staging 잠금. Unix는 병렬 spawn의 fork가 FD 사본을 물려받아도 실행이 끝날 때 unlock한다(plan §8.233과 같은 수리):
+/// File close만으로는 사본이 남은 동안 flock이 풀리지 않아 다음 백업이 「중복 실행」으로 거부됐다(t-1265 병렬 시험).
+struct StagingLock(File);
+impl Drop for StagingLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        aaa_common::diagnostic::ignored(self.0.unlock(), "잠금 해제 실패는 close가 마저 푼다");
+    }
+}
+fn staging_lock(path: &Path) -> std::io::Result<StagingLock> {
+    private_file::lock(path).map(StagingLock)
+}
+
 /// 이미 존재하는 목적지 아래 host별 폴더를 쓴다. NAS가 없을 때 mount 자리의 상위 폴더를 만들지 않는다.
 pub fn run(state: &Path, cfg: &BackupSection, now: u64) -> Result<PathBuf> {
     ensure!((1..=365).contains(&cfg.keep), "백업 keep은 1~365개여야 한다");
@@ -142,7 +155,7 @@ pub fn run(state: &Path, cfg: &BackupSection, now: u64) -> Result<PathBuf> {
     ensure!(metadata.is_dir(), "백업 목적지가 폴더가 아니다: {}", root.display());
     let staging = state.join("db-backup-staging");
     private_file::directory(&staging).context("백업 private staging 준비")?;
-    let _lock = private_file::lock(&staging.join("lock")).context("백업 중복 실행 잠금")?;
+    let _lock = staging_lock(&staging.join("lock")).context("백업 중복 실행 잠금")?;
     let plain = staging.join("snapshot.db");
     // 이전 비정상 종료의 평문도 자기 staging 안에서만 지운다. 잠금을 가진 실행만 접근한다.
     for path in sqlite_files(&plain) {

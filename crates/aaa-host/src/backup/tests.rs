@@ -201,3 +201,17 @@ async fn scheduled_success_survives_restart_without_duplicate_backup() {
     assert!(!host.backup_running.load(Ordering::Acquire));
     assert_eq!(status(&lab.state()).unwrap().last_attempt_ms, Some(DAY_MS));
 }
+
+/// 잠금 수명 계약: 병렬 spawn의 fork처럼 잠금 FD 사본이 남아도 끝난 백업의 잠금은 바로 다시 잡힌다
+#[cfg(unix)]
+#[test]
+fn staging_lock_releases_even_when_a_forked_copy_survives() {
+    let lab = Lab::new();
+    let path = lab.0.join("lock");
+    let lock = staging_lock(&path).unwrap();
+    let copy = lock.0.try_clone().unwrap();
+    assert!(staging_lock(&path).is_err(), "실행 중에는 중복 실행을 막는다");
+    drop(lock);
+    staging_lock(&path).expect("사본이 남아도 끝난 실행의 잠금은 풀린다");
+    drop(copy);
+}
