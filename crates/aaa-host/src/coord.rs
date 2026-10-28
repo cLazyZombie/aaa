@@ -385,6 +385,7 @@ impl Host {
             task: String::new(),
             role: aaa_proto::Role::Worker,
             attachments: Vec::new(),
+            idea: None,
         };
         let (warning, t) = self.apply_from_task(&mut a, from_task, block).await?;
         if a.profile.is_empty() {
@@ -442,8 +443,12 @@ impl Host {
             t.auto_merge = t.id.as_ref().is_some_and(|id| auto_merge.contains(id));
         }
         let linked: std::collections::HashSet<String> = tasks.iter().filter_map(|t| t.thread.clone()).collect();
-        let open: Vec<_> =
-            self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
+        // 아이디어 전용 thread는 할 일과 잇지 않는다(아이디어 화면의 대화다)
+        let open: Vec<_> = self
+            .threads_of(Some(project), None)?
+            .into_iter()
+            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none())
+            .collect();
         // 「정리 제안」의 연결 후보는 이 프로젝트의 열린 thread 번호다
         let open_ids: Vec<String> = open.iter().map(|t| t.id.clone()).collect();
         for t in &mut tasks {
@@ -1031,8 +1036,12 @@ impl Host {
         let mut tasks = self.task_board(project)?.tasks;
         tasks::fill_agent(&mut tasks, &self.known_profiles(project));
         self.fill_attention(project, &mut tasks);
-        let mut threads: Vec<_> =
-            self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
+        // 아이디어 전용 thread는 사용자와 아이디어 화면의 대화라 coordinator가 맡지 않는다
+        let mut threads: Vec<_> = self
+            .threads_of(Some(project), None)?
+            .into_iter()
+            .filter(|t| t.group != ThreadGroup::Resolved && t.idea.is_none())
+            .collect();
         for t in &mut threads {
             t.next = self.next_lines(&dir, &t.next, &t.id);
         }

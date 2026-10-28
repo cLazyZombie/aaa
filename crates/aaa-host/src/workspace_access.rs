@@ -197,6 +197,7 @@ mod tests {
                 task: "작업".into(),
                 role: Role::Worker,
                 attachments: vec![],
+                idea: None,
             }
         }
         fn connect(&self) {

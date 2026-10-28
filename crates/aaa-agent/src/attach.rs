@@ -21,7 +21,7 @@ fn valid_att(att: &str) -> bool {
     let Some((stem, ext)) = att.split_once('.') else { return false };
     stem.len() == 16
         && stem.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-        && matches!(ext, "png" | "jpg" | "gif" | "webp" | "md" | "html")
+        && matches!(ext, "png" | "jpg" | "gif" | "webp" | "mp4" | "webm" | "md" | "html")
 }
 
 fn private_dir(dir: &Path) -> Result<()> {

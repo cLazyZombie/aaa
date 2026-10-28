@@ -377,6 +377,8 @@ pub struct ProjectsSection {
     pub routine_commands: Vec<String>,
     /// 자동 시작으로 열린 thread 상한. 생략·0은 무제한이다.
     pub max_auto_threads: u32,
+    /// 아이디어 전용 thread가 이만큼(초) 쉬면 조용히 보류한다(t-1260). 다시 말하거나 아이디어 화면을 열면 잇는다. 시험에서 줄인다.
+    pub idea_rest_secs: u64,
 }
 
 impl Default for ProjectsSection {
@@ -403,6 +405,7 @@ impl Default for ProjectsSection {
             inbox_done_days: 30,
             routine_commands: Vec::new(),
             max_auto_threads: 0,
+            idea_rest_secs: 1800,
         }
     }
 }
@@ -814,6 +817,9 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
         out.push(Invalid {
             path: key(&["projects", "auto_resolve_day_secs"]), message: "1초 이상이어야 한다".into()
         });
+    }
+    if c.projects.idea_rest_secs == 0 {
+        out.push(Invalid { path: key(&["projects", "idea_rest_secs"]), message: "1초 이상이어야 한다".into() });
     }
     if c.projects.delivered_working_secs == 0 {
         out.push(Invalid {

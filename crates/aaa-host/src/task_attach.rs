@@ -10,6 +10,8 @@
 //! - `--from-task`로 thread를 띄우면 메모가 가리키는 host 파일(uploads·library)을 그 머신 작업 폴더 `attachments/`에 복사하고
 //!   할 일 글의 경로를 `attachments/<이름>`으로 바꾼다(`WorkAttachWrite`, 다른 머신이어도 같다). 이 기능이 없는 agent면 시작을
 //!   거부한다: host 경로를 brief에 넣으면 다른 머신에서는 열 수 없다. 바깥 주소는 그대로 둔다.
+//! - 아이디어에서 넘긴 할 일(t-1260)은 메모 첫 줄 `[아이디어 n-NNNN](ideas/n-NNNN)`이 그 노트를 가리킨다. 노트(`<hash>.md`)와 노트가
+//!   가리키는 그림·영상을 같은 `attachments/`에 넘긴다: 노트의 `![…](<이름>)`가 그 폴더에서 그대로 열린다. 대화 기록은 넘기지 않는다.
 
 use std::sync::Arc;
 
@@ -73,6 +75,21 @@ fn library_ref(target: &str) -> Option<(&str, &str)> {
         .then_some((name, path))
 }
 
+/// `ideas/n-NNNN`(할 일 메모의 아이디어 링크)의 번호
+fn idea_ref(target: &str) -> Option<&str> {
+    target.strip_prefix("ideas/").filter(|n| aaa_proto::canonical_short_id(n, 'n').is_some_and(|c| c == *n))
+}
+
+/// 넘길 원본 `ideas/<ULID>/<note.md|그림·영상 이름>`인가
+fn idea_src(src: &str) -> bool {
+    let mut parts = src.split('/');
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some("ideas"), Some(id), Some(name), None)
+            if crate::ideas::valid_id(id) && (name == "note.md" || crate::ideas::media_name(name))
+    )
+}
+
 /// 메모 글이 가리키는 host 파일의 경로들(`](uploads/…)`·`](library/…)`, 처음 나온 차례, 겹치지 않게)
 pub(crate) fn refs(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -80,7 +97,9 @@ pub(crate) fn refs(text: &str) -> Vec<String> {
         let rest = &text[at + 2..];
         let Some(end) = rest.find(')') else { continue };
         let target = &rest[..end];
-        let ok = target.strip_prefix("uploads/").is_some_and(valid_name) || library_ref(target).is_some();
+        let ok = target.strip_prefix("uploads/").is_some_and(valid_name)
+            || library_ref(target).is_some()
+            || idea_ref(target).is_some();
         if ok && !out.iter().any(|n| n == target) {
             out.push(target.to_string());
         }
@@ -185,6 +204,20 @@ impl Host {
         let mut found: Vec<TaskFile> = Vec::new();
         let mut missing = Vec::new();
         for target in refs(task) {
+            if let Some(short) = idea_ref(&target) {
+                match self.idea_files(project, short) {
+                    Some(files) => {
+                        *task = task.replace(&format!("]({target})"), &format!("](attachments/{})", files[0].name));
+                        for f in files {
+                            if !found.iter().any(|x| x.name == f.name) {
+                                found.push(f);
+                            }
+                        }
+                    }
+                    None => missing.push(target),
+                }
+                continue;
+            }
             let file = if let Some(name) = target.strip_prefix("uploads/") {
                 dir.join("uploads")
                     .join(name)
@@ -226,6 +259,35 @@ impl Host {
         (found, warnings)
     }
 
+    /// 아이디어 노트와 그 그림·영상(노트가 먼저). 노트가 없으면 None
+    fn idea_files(&self, project: &str, short: &str) -> Option<Vec<TaskFile>> {
+        let f = self
+            .idea_folder(project, short)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "없는 아이디어는 넘기지 않고 경고한다"))
+            .ok()?;
+        let text = f
+            .text(None)
+            .inspect_err(|error| aaa_common::diagnostic::observe(error, "읽지 못한 노트는 넘기지 않고 경고한다"))
+            .ok()?;
+        let mut out = vec![TaskFile {
+            name: format!("{}.md", &hex::encode(Sha256::digest(text.as_bytes()))[..16]),
+            src: format!("ideas/{}/note.md", f.id),
+            sent: false,
+        }];
+        for name in crate::ideas::media_refs(&text) {
+            let ok = f
+                .dir
+                .join(&name)
+                .symlink_metadata()
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "없는 그림은 노트 링크만 남는다"))
+                .is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES);
+            if ok {
+                out.push(TaskFile { src: format!("ideas/{}/{name}", f.id), name, sent: false });
+            }
+        }
+        Some(out)
+    }
+
     /// 세션을 띄우기 전에 task 첨부를 그 머신 작업 폴더 `attachments/`에 쓴다(시작·다시 시작 공통)
     pub(crate) async fn task_attach_transfer(self: &Arc<Self>, rec: &ThreadRec) -> Result<(), ErrorBody> {
         if rec.attachments.is_empty() {
@@ -247,7 +309,7 @@ impl Host {
         for f in &rec.attachments {
             let read = if let Some((report, path)) = library_ref(&f.src) {
                 self.report_doc_bytes(&rec.project, report, path, MAX_BYTES)
-            } else if f.src.strip_prefix("uploads/").is_some_and(valid_name) {
+            } else if f.src.strip_prefix("uploads/").is_some_and(valid_name) || idea_src(&f.src) {
                 std::fs::read(dir.join(&f.src)).map_err(|e| err(ErrorCode::NotFound, e.to_string()))
             } else {
                 Err(err(ErrorCode::BadRequest, "첨부 원본 꼴이 아니다"))
@@ -461,6 +523,7 @@ mod tests {
                 src: "uploads/0123456789abcdef.png".into(),
                 sent: false,
             }],
+            idea: None,
         };
         let e = h.thread_start(start, "test").await.unwrap_err();
         assert_eq!(e.code, ErrorCode::Unavailable, "{e:?}");

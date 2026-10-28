@@ -538,6 +538,84 @@ notes: Array<string>, };
 
 export type TaskThread = { id: string, title: string, group: ThreadGroup, stage?: ThreadStage, };
 
+export type IdeaStatus = "open" | "done";
+
+export type IdeaAuthor = "user" | "thread";
+
+export type IdeaSummary = {
+/**
+ * 폴더 이름(ULID)
+ */
+id: string,
+/**
+ * `n-0001`
+ */
+short_id: string, title: string, status: IdeaStatus,
+/**
+ * 지금 판(1부터)
+ */
+rev: number, created_ms: number, updated_ms: number,
+/**
+ * 넘긴 할 일(`d-NNNN`)
+ */
+tasks: Array<string>,
+/**
+ * 전용 thread(`t-NNNN`). 아직 말하지 않았으면 없다
+ */
+thread: string | null,
+/**
+ * 복사해 온 아이디어(`n-NNNN`)
+ */
+copied_from: string | null, };
+
+export type IdeaRevView = { rev: number, at_ms: number, by: IdeaAuthor,
+/**
+ * 바뀐 곳 요약(사람이 고친 판은 host가 절마다 센다, thread 판은 thread가 준 한 줄)
+ */
+summary: string | null, };
+
+export type IdeaNote = { idea: IdeaSummary,
+/**
+ * 이 글의 판(옛 판을 읽으면 `idea.rev`보다 작다)
+ */
+rev: number, text: string,
+/**
+ * 최근 판부터
+ */
+history: Array<IdeaRevView>,
+/**
+ * 사람이 고친 것을 아직 thread에 알리지 않았다(다음 말 앞에 「(노트 고침: …)」이 붙는다)
+ */
+edited: string | null,
+/**
+ * 사람이 고친 것과 thread 판이 겹쳐 thread가 합치는 중이다(그 사람 판의 기준 판)
+ */
+merging: number | null,
+/**
+ * 전용 thread가 준비되기를 기다리는 말(보낸 차례). 준비되면 host가 보내고 지운다
+ */
+pending: Array<string>, };
+
+export type IdeaTaskDraft = { title: string,
+/**
+ * 저장소 칸(할 일 편집과 같은 값). 비우면 정하지 않음
+ */
+repo: string | null,
+/**
+ * 메모(여러 줄 Markdown)
+ */
+notes: string, };
+
+export type IdeaConflict = {
+/**
+ * 저장하려던 글의 기준 판과 그 글
+ */
+base_rev: number, base_text: string,
+/**
+ * 지금 판
+ */
+current: IdeaNote, };
+
 export type TaskNotesSection = {
 /**
  * `##` 머리 이름. 첫 `##` 앞 줄은 이름 없는 절이다
@@ -1230,7 +1308,15 @@ user_request?: string, } | { "op": "task_log", project?: string, before: number 
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
-task?: string, search?: TaskHistorySearch, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
+task?: string, search?: TaskHistorySearch, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+/**
+ * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
+ */
+summary?: string, } | { "op": "idea_say", project?: string, idea: string, text: string, } | { "op": "idea_wake", project?: string, idea: string, } | { "op": "idea_handoff", project?: string, idea: string,
+/**
+ * 화면이 본 판. 그 뒤에 바뀌었으면 넘기지 않는다
+ */
+base_rev: number, tasks: Array<IdeaTaskDraft>, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
 /**
  * 끝난 thread를 뺀다(준비·실패·보류는 포함).
  */
@@ -1425,7 +1511,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */
@@ -1471,7 +1557,7 @@ source: RoutineSource | null, } | { "kind": "record_search" } & RecordSearchPage
  */
 archived_size: number, size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "accounts" } | { "ev": "workspace_metrics" } | { "ev": "enroll" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "accounts" } | { "ev": "workspace_metrics" } | { "ev": "enroll" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "ideas", project: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
@@ -1660,6 +1746,10 @@ task: string | null,
 reason: string | null, actor: string | null, handled_ms: number | null, };
 
 export type ThreadView = {
+/**
+ * 아이디어 전용 thread면 그 아이디어(`n-NNNN`, FRONT_API 1.146). 작업 목록·할 일 화면에 보이지 않고 아이디어 화면이 쓴다
+ */
+idea?: string,
 /**
  * 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.
  */

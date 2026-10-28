@@ -839,6 +839,7 @@ impl Host {
                 task: String::new(),
                 role: aaa_proto::Role::Worker,
                 attachments: vec![],
+                idea: None,
             };
             if a.machine.is_none() {
                 let workspace = t.repo.as_deref().unwrap_or(tasks::REPO_DIR);

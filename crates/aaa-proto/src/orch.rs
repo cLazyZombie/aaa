@@ -1017,6 +1017,10 @@ pub struct ThreadListQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
+    /// 아이디어 전용 thread면 그 아이디어(`n-NNNN`, FRONT_API 1.146). 작업 목록·할 일 화면에 보이지 않고 아이디어 화면이 쓴다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub idea: Option<String>,
     /// 연결된 pane의 실제 책임 경로. 옛 agent·비 macOS·pane 없는 thread는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
