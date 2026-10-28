@@ -1,3 +1,4 @@
+- t-1236: [가짜 Claude 메뉴의 답 묶음 처리 검증](testing-claude-menu-input-batch.md)
 - t-1225: [coordinator·thread에 넣는 글 줄이기 검증](testing-context-budget.md)
 - t-1232: [E2E12 events 수신·route 정리 검증](testing-thread-events-liveness.md)
 - t-1229: [계정 Codex hook 설치·실기 검증](testing-account-codex-hooks.md)

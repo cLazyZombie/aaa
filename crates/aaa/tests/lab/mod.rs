@@ -746,7 +746,14 @@ impl Terminal {
         drop(pair.slave);
         Self { master: pair.master, child }
     }
-    pub fn read(mut self, args: &[&str], answers: &[(&str, &str)], timeout: Duration) -> String {
+    pub fn read(self, args: &[&str], answers: &[(&str, &str)], timeout: Duration) -> String {
+        let answers: Vec<_> = answers.iter().map(|(prompt, typed)| (*prompt, format!("{typed}\n"))).collect();
+        let answers: Vec<_> = answers.iter().map(|(prompt, typed)| (*prompt, typed.as_str())).collect();
+        self.read_raw(args, &answers, timeout)
+    }
+
+    /// 메뉴의 화살표·Esc는 Enter를 덧붙이지 않고 보낸다.
+    pub fn read_raw(mut self, args: &[&str], answers: &[(&str, &str)], timeout: Duration) -> String {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
         let mut out = self.master.try_clone_reader().unwrap();
         let s2 = seen.clone();
@@ -768,8 +775,8 @@ impl Terminal {
         let mut sent = Vec::new();
         for (prompt, typed) in answers {
             wait_for_diag(&format!("물음 {prompt:?}"), timeout, || text().contains(prompt).then_some(()), text);
-            std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
-            sent.push((*prompt, typed.len() + 1));
+            std::io::Write::write_all(&mut stdin, typed.as_bytes()).unwrap();
+            sent.push((*prompt, typed.len()));
         }
         match done_rx.recv_timeout(timeout) {
             Ok(Ok(())) => {}
