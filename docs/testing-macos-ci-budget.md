@@ -62,7 +62,19 @@ Windows 재현은 두 번째0.35초 재컴파일에서 수리 뒤0.01초 Fresh�
 Windows의 두 시험은 합계5.68초, Mac은 합계2.52초였다. 상위 target 환경까지 둔 격리 검증은
 Mac 합계3.99초로 통과했다. 각 시험은5초 이하다. 기존 runner·CI 셸 회귀도 함께 확인한다.
 Mac 첫 전체 Rust 실행은32개 job(binary31개·doctest1개) 모두 성공했다. Python 첫 통합의
-위 fixture 오류를 수정한 최종 test 단계 결과는 thread 보고에 함께 남긴다.
+위 fixture 오류를 수정하고 깨끗한 후보4a256795에서 다음 검증을 완료했다.
+
+```sh
+RUST_TEST_THREADS=8 nice -n 15 bash scripts/ci-local.sh --only fmt,clippy,test,public --logs <logs>
+```
+
+- fmt2초·clippy23초·test296초·public3초, 전체301초로 모두 통과했다.
+- Python72개 성공(2개 skip), Rust32개 job 모두 exit0, 개별 시험1470개 성공·7개 ignored다.
+  전체 workspace doctest는6.36초에 정상 종료했다.
+- 최종 집계 뒤 no-run은3.44초, 이어진 동일 no-run은0.14초·전체 artifact Fresh였다.
+  두 호출 모두 성공했다. 작은 재현의 실패/성공과 전체 원문·상태·사건 기록을 library에 보존한다.
+- 이 Mac은10 CPU다. 원 CI의3 CPU·동시 부하·캐시와 다르므로 이 시간을 직접적인 전후 속도
+  비교나 GitHub 회복 증거로 쓰지 않는다. 원 CI에 없는 fingerprint·Git 파일 상태는 미확정으로 남긴다.
 
 전체 ci-local·cross·병합·push는 coordinator의 착지 창에서 별도로 수행한다. 로컬 Mac은
 호스티드3 CPU runner와 다르므로 로컬 통과 시간을 GitHub 회복 시간으로 해석하지 않는다.
