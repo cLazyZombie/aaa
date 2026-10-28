@@ -1264,7 +1264,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
   // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
-  const { data: asksData, put: putAsks, moreAuto } = useAsksData(up);
+  const { data: asksData, put: putAsks, moreAuto, forgetAuto } = useAsksData(up);
   useEffect(() => {
     const id = sel?.startsWith("question:q-") ? `auto-${sel.slice("question:".length)}` : sel?.startsWith("ask:a:") ? sel.slice("ask:a:".length) : null;
     if (!up || !id || !asksData?.autoMode) return;
@@ -1504,7 +1504,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
 
   return (
-    <AutoModeProvider data={asksData} put={putAsks} canControl={canControl} onPick={k => goSel(`ask:${k}`)}>
+    <AutoModeProvider data={asksData} put={putAsks} forget={forgetAuto} canControl={canControl} onPick={k => goSel(`ask:${k}`)}>
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onThreads={chooseThreads} coordinator={!!current?.coordinator_project} />, note: headNote }}>
     <AppRefContext.Provider value={appRefs}>

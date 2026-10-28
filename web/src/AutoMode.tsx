@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { Zap } from "lucide-react";
+import { Check, ChevronDown, Trash2, Zap } from "lucide-react";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { call } from "./api";
 import type { AutoDecision, AutoMode, FrontResponse } from "./gen/proto";
 import type { AsksData } from "./asksModel";
@@ -10,11 +11,13 @@ type Value = {
   mode: AutoMode | null; decisions: AutoDecision[]; exceptions: number; canControl: boolean; busy: boolean;
   error: string | null; change: (on: boolean) => Promise<void>; open: (id?: string) => void;
   review: (id: string, answer: string | null) => Promise<void>;
+  /** host 원장에서 지운다(모든 기기). `all`이면 모두 */
+  forget: (ids: string[], all: boolean) => Promise<void>;
 };
 const Context = createContext<Value | null>(null);
 export const useAutoMode = () => useContext(Context);
-export function AutoModeProvider({ data, put, canControl, onPick, children }: {
-  data: AsksData | null; put: (r: FrontResponse) => void; canControl: boolean; onPick: (key: string) => void; children: ReactNode;
+export function AutoModeProvider({ data, put, forget, canControl, onPick, children }: {
+  data: AsksData | null; put: (r: FrontResponse) => void; forget: Value["forget"]; canControl: boolean; onPick: (key: string) => void; children: ReactNode;
 }) {
   const mode = data?.autoMode ?? null;
   const decisions = data?.autoDecisions ?? [];
@@ -39,7 +42,7 @@ export function AutoModeProvider({ data, put, canControl, onPick, children }: {
   const review = async (id: string, answer: string | null) => {
     put(await call({ op: "auto_decision_review", project: "", id, answer }));
   };
-  return <Context.Provider value={{ mode, decisions, exceptions: data?.autoExceptions ?? 0, canControl, busy, error, change, open, review }}>
+  return <Context.Provider value={{ mode, decisions, exceptions: data?.autoExceptions ?? 0, canControl, busy, error, change, open, review, forget }}>
     {children}
     {error && <div className="auto-summary auto-error" role="alert">{error}<button aria-label="auto mode 오류 닫기" onClick={() => setError(null)}>×</button></div>}
     {summary && <div className="auto-summary" role="status" data-testid="auto-off-summary">
@@ -85,13 +88,35 @@ export function recommendation(d: AutoDecision): string {
   if (!d.question.choices.some((c) => c.recommended)) return "추천 없음";
   return d.pick !== null && d.question.choices[d.pick]?.recommended ? "추천과 같음" : "추천과 다름";
 }
+// 대화창에는 확인하지 않은 자동 결정만 접은 한 줄로 둔다(사용자 10-28 「대화창에 계속 뜨는건」). 대화 기록에는 시각이 없어
+// 결정한 자리에 끼우지 못한다. 펼치면 줄마다 열기·확인·지우기다. 질문 화면과 같은 host 원장을 읽어 지우면 함께 빠진다.
 export function AutoDecisionLines() {
   const auto = useAutoMode();
-  const rows = auto?.decisions.filter((d) => d.outcome === "answered").slice(0, 20).reverse() ?? [];
-  return rows.length > 0 && <div className="auto-lines" aria-label="자동 결정 기록">
-    {rows.map((d) => <button key={d.id} className="auto-line" onClick={() => auto?.open(d.id)}>
-      <Zap aria-hidden="true" /><span><strong>자동으로 정함</strong> · {d.question.id} {d.question.text} → <strong>{d.choice}</strong> <span className="muted">({recommendation(d)} · {d.reason})</span></span>
-    </button>)}
+  const [expanded, setExpanded] = useState(false);
+  const [confirm, setConfirm] = useState<AutoDecision | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const rows = auto?.decisions.filter((d) => d.outcome === "answered" && !d.reviewed) ?? [];
+  if (!auto || rows.length === 0) return null;
+  const review = (id: string) => {
+    setError(null);
+    void auto.review(id, null).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  };
+  return <div className="auto-lines" data-testid="auto-lines" aria-label="자동 결정 기록">
+    <button type="button" className="auto-lines-toggle" data-testid="auto-lines-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      <Zap aria-hidden="true" /><span><strong>자동으로 정함</strong> · 확인 안 함 {rows.length}</span><ChevronDown aria-hidden="true" className="auto-lines-chevron" />
+    </button>
+    {expanded && <div className="auto-lines-list">{rows.map((d) => <div key={d.id} className="auto-line" data-testid="auto-line" data-id={d.id}>
+      <button type="button" className="auto-line-open" title={`${d.question.text} → ${d.choice}`} onClick={() => auto.open(d.id)}>
+        <span>{d.question.id && <>{d.question.id} </>}{d.question.text} → <strong>{d.choice}</strong> <span className="muted">({recommendation(d)})</span></span>
+      </button>
+      {auto.canControl && <>
+        <button type="button" className="icon-button" aria-label="확인" title="확인" data-testid="auto-line-review" onClick={() => review(d.id)}><Check aria-hidden="true" /></button>
+        <button type="button" className="icon-button" aria-label="지우기" title="지우기" data-testid="auto-line-forget" onClick={() => setConfirm(d)}><Trash2 aria-hidden="true" /></button>
+      </>}
+    </div>)}</div>}
+    {error && <p role="alert">{error}</p>}
+    {confirm && <ConfirmDialog title="자동 결정 지우기" body={`「${confirm.question.text}」 자동 결정 기록을 모든 기기에서 지운다. 이미 진행한 일은 되돌리지 않는다.`}
+      confirmLabel="지우기" onConfirm={() => auto.forget([confirm.id], false)} onClose={() => setConfirm(null)} />}
   </div>;
 }
 export function AutoDecisionCard({ decision: d }: { decision: AutoDecision }) {
@@ -100,6 +125,7 @@ export function AutoDecisionCard({ decision: d }: { decision: AutoDecision }) {
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
   const submit = async (value: string | null) => {
     setBusy(true); setError(null);
     try { await auto?.review(d.id, value); setEditing(false); }
@@ -123,7 +149,10 @@ export function AutoDecisionCard({ decision: d }: { decision: AutoDecision }) {
     {auto?.canControl && <div className="auto-card-actions">
       <button className="btn btn-primary" disabled={busy || d.reviewed} onClick={() => void submit(null)}>{d.reviewed ? "확인함" : "괜찮음"}</button>
       <button className="btn" disabled={busy} onClick={() => setEditing(!editing)}>다른 답으로 다시 정하기</button>
+      <button className="ghost small ask-forget" data-testid="auto-decision-forget" disabled={busy} onClick={() => setConfirm(true)}><Trash2 aria-hidden="true" /> 지우기</button>
     </div>}
+    {confirm && auto && <ConfirmDialog title="자동 결정 지우기" body={`「${d.question.text}」 자동 결정 기록과 보존한 원문·그림을 모든 기기에서 지운다. 이미 진행한 일은 되돌리지 않는다.`}
+      confirmLabel="지우기" onConfirm={() => auto.forget([d.id], false)} onClose={() => setConfirm(false)} />}
     {editing && <form className="auto-reconsider" onSubmit={(e) => { e.preventDefault(); void submit(answer.trim()); }}>
       <p>이미 진행한 작업은 자동으로 되돌리지 않는다.</p>
       <label>새 답<textarea value={answer} onChange={(e) => setAnswer(e.target.value)} required maxLength={16384} /></label>

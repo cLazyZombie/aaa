@@ -1,4 +1,5 @@
 - t-1225: [coordinator·thread에 넣는 글 줄이기 검증](testing-context-budget.md)
+- t-1223: [자동 결정 지우기·대화창 줄 검증](testing-auto-decision-forget.md)
 - t-1222: [보고 글·diff 줄 의견과 인용 위치 검증](testing-review-notes.md)
 - t-1221: [macOS CI 재컴파일 수리·착지 검증](testing-macos-ci-budget.md)
 

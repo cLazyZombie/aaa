@@ -1620,6 +1620,7 @@ impl Host {
                 | FrontRequest::HookSet { .. }
                 | FrontRequest::AutoModeSet { .. }
                 | FrontRequest::AutoDecisionReview { .. }
+                | FrontRequest::AutoDecisionForget { .. }
         ) && (front::in_session(actor)
             || actor.starts_with("worker:")
             || actor.starts_with("evaluator:")
@@ -1787,6 +1788,9 @@ impl Host {
             }
             FrontRequest::AutoDecisionReview { project, id, answer } => {
                 self.auto_decision_review(&project, &id, answer, actor)
+            }
+            FrontRequest::AutoDecisionForget { project, ids, all } => {
+                self.auto_decision_forget(&project, &ids, all, actor)
             }
             FrontRequest::Asks { project } => self.asks_view(&project),
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
