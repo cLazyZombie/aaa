@@ -4962,3 +4962,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - t-1244 deploy_start 재시작 뒤 agent 준비 경계·수리 전 재현·검증: [별도 기록](testing-deploy-start-reconnect.md).
 - t-1244 resource_limits의 web_listen 준비 경계·실제 null 응답 RED/GREEN: [별도 기록](testing-resource-web-ready.md).
 - Windows install 승인 PTY 60초 실패 조사와 공개 진행 사건 진단 후보: [t-1246 기록](testing-install-pty-t-1246.md).
+
+- t-1263 작업 요약 진행 목록 6개 허용·7개 거부와 웹 회귀: [별도 기록](testing-summary-six-steps.md).

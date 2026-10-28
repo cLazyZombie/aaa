@@ -307,7 +307,7 @@ async fn reports_update_progress_preserve_goal_and_keep_later_instructions_acros
         b"",
         "unused",
         b"",
-        "[진행 중] 확인\n## 진행\n- [x] 구현\n- [~] 검증\n## Decisions\n- 짧게 표시\n",
+        "[진행 중] 확인\n## 진행\n- [x] 구현\n- [~] 검증\n- [ ] 문서\n- [ ] 검토\n- [ ] 정리\n- [ ] 전달\n## Decisions\n- 짧게 표시\n",
     );
     let h = &lab.h;
     let dir = h.project_dir("p").unwrap();
@@ -323,7 +323,8 @@ async fn reports_update_progress_preserve_goal_and_keep_later_instructions_acros
     .unwrap();
     h.collect_if_changed("p", "t-0001").await;
     let v = h.thread_summary("p", "t-0001").unwrap();
-    assert_eq!(v.progress.len(), 2);
+    assert_eq!(v.progress.len(), 6);
+    assert_eq!(v.progress[5].text, "전달");
     assert_eq!(v.progress[0].state, aaa_proto::SummaryStepState::Done);
     assert_eq!(v.goal.as_deref(), Some("원래 목표"));
     assert_eq!(v.decided[0].text, "화면 유지");
@@ -349,6 +350,20 @@ async fn reports_update_progress_preserve_goal_and_keep_later_instructions_acros
     assert_eq!(v.pending, 1);
     assert_eq!(v.pending_lines[0].text, "전송 중 지시");
     assert!(v.progress.iter().all(|s| s.state == aaa_proto::SummaryStepState::Done));
+    h.summary_report_received(
+        "p",
+        "t-0001",
+        "## 진행\n- [ ] 하나\n- [ ] 둘\n- [ ] 셋\n- [ ] 넷\n- [ ] 다섯\n- [ ] 여섯\n- [ ] 일곱",
+        "too-many",
+        3,
+    )
+    .unwrap();
+    assert_eq!(
+        h.thread_summary("p", "t-0001").unwrap().progress,
+        v.progress,
+        "7개 항목 보고는 마지막 정상 목록을 보존한다"
+    );
+    assert_eq!(h.summary_mark("p", "t-0001").unwrap().pending, 1);
     h.summary_report_received("p", "t-0001", "## 진행\n- 잘못된 목록", "invalid", 3).unwrap();
     assert_eq!(h.thread_summary("p", "t-0001").unwrap().progress, v.progress);
     assert_eq!(h.summary_mark("p", "t-0001").unwrap().pending, 1);

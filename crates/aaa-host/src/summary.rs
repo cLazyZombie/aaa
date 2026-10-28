@@ -19,8 +19,8 @@ use crate::orch::{internal, write_atomic};
 pub(crate) const MAX_BYTES: usize = 1024;
 /// 목록 절마다 줄 수 상한
 pub(crate) const MAX_ITEMS: usize = 3;
-/// 전체 큰 작업은 완료한 것도 남긴다. hover에 모두 보일 수 있게 최대 5개다.
-pub(crate) const MAX_STEPS: usize = 5;
+/// 전체 큰 작업은 완료한 것도 남긴다. hover에 모두 보일 수 있게 최대 6개다.
+pub(crate) const MAX_STEPS: usize = 6;
 /// 한 줄 상한(글자, 앞의 「누가 시각」은 빼고 센다). 문장이 아니라 짧은 구
 pub(crate) const MAX_LINE: usize = 30;
 /// 지시 첫 줄·보고 Decisions 줄을 보일 때 자르는 길이(남이 쓴 글이라 거부하지 않고 자른다)
@@ -37,7 +37,7 @@ pub(crate) const FORMAT: &str = "\
 ## 진행
 - [x] <끝낸 큰 작업>
 - [~] <진행 중인 큰 작업>
-- [ ] <남은 큰 작업, 전체 5개 이하>
+- [ ] <남은 큰 작업, 전체 6개 이하>
 ## 정함
 - 사용자 15:0x <정한 것>
 ## 바뀜
@@ -647,7 +647,14 @@ mod tests {
             assert!(report_progress(invalid).is_none(), "{invalid}");
         }
         assert!(report_progress(&format!("## 진행\n- [ ] {}", "가".repeat(MAX_LINE + 1))).is_none());
-        assert!(report_progress(&format!("## 진행\n{}", "- [ ] 항목\n".repeat(MAX_STEPS + 1))).is_none());
+        assert_eq!(
+            report_progress("## 진행\n- [x] 하나\n- [~] 둘\n- [ ] 셋\n- [ ] 넷\n- [ ] 다섯\n- [ ] 여섯").unwrap().len(),
+            6
+        );
+        assert!(
+            report_progress("## 진행\n- [x] 하나\n- [~] 둘\n- [ ] 셋\n- [ ] 넷\n- [ ] 다섯\n- [ ] 여섯\n- [ ] 일곱")
+                .is_none()
+        );
     }
 
     const T0393: &str = "# 목표
@@ -730,7 +737,7 @@ mod tests {
 
     #[test]
     fn progress_preserves_the_whole_order_and_validates_states_and_limits() {
-        let text = "# 목표\n휴대폰 표시 다듬기\n## 진행\n- [x] 표시 조건 확인\n- [~] 휴대폰에서만 숨김\n- [ ] PC·휴대폰 확인\n- [X] 기존 설정 보존\n- [ ] 변경 적용·정리";
+        let text = "# 목표\n휴대폰 표시 다듬기\n## 진행\n- [x] 표시 조건 확인\n- [~] 휴대폰에서만 숨김\n- [ ] PC·휴대폰 확인\n- [X] 기존 설정 보존\n- [ ] 변경 적용·정리\n- [ ] 검증 기록";
         let p = parse(text).unwrap();
         assert_eq!(
             p.progress.iter().map(|s| (s.text.as_str(), s.state)).collect::<Vec<_>>(),
@@ -740,9 +747,10 @@ mod tests {
                 ("PC·휴대폰 확인", SummaryStepState::Pending),
                 ("기존 설정 보존", SummaryStepState::Done),
                 ("변경 적용·정리", SummaryStepState::Pending),
+                ("검증 기록", SummaryStepState::Pending),
             ]
         );
-        assert!(parse(&format!("{text}\n- [ ] 여섯째")).unwrap_err().contains("5줄"));
+        assert!(parse(&format!("{text}\n- [ ] 일곱째")).unwrap_err().contains("6줄"));
         for item in ["[?] 모름", "진행 중", "[x]", "[ ]", "[~]", "[x]이름", "[ ]   "] {
             assert!(parse(&format!("# 목표\n표시 확인\n## 진행\n- {item}")).is_err(), "{item}");
         }

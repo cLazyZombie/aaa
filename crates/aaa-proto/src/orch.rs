@@ -1671,7 +1671,7 @@ pub struct ThreadSummaryView {
     pub goal: Option<String>,
     /// 목표가 바뀌었을 때 처음 시킨 것
     pub origin: Option<String>,
-    /// 전체 큰 작업(최대 5개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
+    /// 전체 큰 작업(최대 6개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
     #[serde(default)]
     #[ts(as = "Option<Vec<SummaryStep>>", optional)]
     pub progress: Vec<SummaryStep>,

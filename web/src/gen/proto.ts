@@ -1991,7 +1991,7 @@ text: string | null, goal: string | null,
  */
 origin: string | null,
 /**
- * 전체 큰 작업(최대 5개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
+ * 전체 큰 작업(최대 6개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
  */
 progress?: Array<SummaryStep>, now: Array<string>, decided: Array<SummaryEntry>, changed: Array<SummaryEntry>, done: Array<string>,
 /**
