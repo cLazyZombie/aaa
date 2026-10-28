@@ -210,8 +210,15 @@ fn stale_working_left_by_hooks_turns_idle_from_the_screen() {
     wait_for("host2 준비", T, || h.json(&["status"]).ok());
     let mut ev = lab::Events::connect(&h);
     let t1 = lab::now_ms();
-    // 재연결의 Hello는 옛 Working을 싣고, 실제 화면 감지는 Welcome 전에 Idle을 기억하게 한다.
-    // 부하로 우연히 벌어지던 순서를 실험실 UDS 중계로 고정한다. 운영 설정·감지 시한은 바꾸지 않는다.
+    // 첫 Detect 요청은 Hello를 읽을 때까지, Welcome은 감지한 Idle을 기억할 때까지 보류한다.
+    // Welcome만 보류하면 Hello 전에 감지가 끝날 수 있다. 두 IPC 경계로 순서를 고정한다.
+    let session_socket = h.state.join("agent/run").join(format!("{id}.sock"));
+    let session_upstream = session_socket.with_extension("gated");
+    std::fs::rename(&session_socket, &session_upstream).unwrap();
+    let session_listener = std::os::unix::net::UnixListener::bind(&session_socket).unwrap();
+    session_listener.set_nonblocking(true).unwrap();
+    let (detect_tx, detect_rx) = std::sync::mpsc::channel();
+    let (detect_release_tx, detect_release_rx) = tokio::sync::oneshot::channel();
     let socket = h.state.join("host/agent.sock");
     let upstream = h.state.join("host/gated.sock");
     std::fs::rename(&socket, &upstream).unwrap();
@@ -223,34 +230,71 @@ fn stale_working_left_by_hooks_turns_idle_from_the_screen() {
     let proxy = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
-            use aaa_proto::{LinkMsg, MAX_FRAME, read_frame, write_frame};
-            let listener = tokio::net::UnixListener::from_std(listener).unwrap();
-            let (mut agent, _) = listener.accept().await.unwrap();
-            let mut host = tokio::net::UnixStream::connect(&upstream).await.unwrap();
-            // 이후 CLI는 정본 socket에 직접 붙는다. 이 agent 연결 하나만 중계한다.
-            std::fs::remove_file(&socket).unwrap();
-            std::fs::rename(&upstream, &socket).unwrap();
-            let hello = read_frame(&mut agent, MAX_FRAME).await.unwrap().unwrap();
-            let LinkMsg::Hello(h) = serde_json::from_slice(&hello.payload).unwrap() else {
-                panic!("Hello가 아니다")
+            use aaa_proto::{LinkMsg, MAX_FRAME, SessionMsg, SessionRequest, read_frame, write_frame};
+            let detection = async move {
+                let listener = tokio::net::UnixListener::from_std(session_listener).unwrap();
+                let (mut agent, _) = listener.accept().await.unwrap();
+                let mut session = tokio::net::UnixStream::connect(&session_upstream).await.unwrap();
+                std::fs::remove_file(&session_socket).unwrap();
+                std::fs::rename(&session_upstream, &session_socket).unwrap();
+                let (mut ar, mut aw) = agent.split();
+                let (mut sr, mut sw) = session.split();
+                let requests = async move {
+                    // 복구의 Hello/Subscribe는 바로 통과시킨다. Detect 하나만 보류한 뒤 바이트 중계로 돌아간다.
+                    loop {
+                        let frame = read_frame(&mut ar, MAX_FRAME).await.unwrap().unwrap();
+                        let detect = matches!(
+                            serde_json::from_slice::<SessionMsg>(&frame.payload).unwrap(),
+                            SessionMsg::Req { body: SessionRequest::Detect { .. }, .. }
+                        );
+                        if detect {
+                            detect_tx.send(()).unwrap();
+                            if detect_release_rx.await.is_err() {
+                                return;
+                            }
+                            write_frame(&mut sw, frame.kind, &frame.payload, MAX_FRAME).await.unwrap();
+                            tokio::io::copy(&mut ar, &mut sw).await.unwrap();
+                            return;
+                        }
+                        write_frame(&mut sw, frame.kind, &frame.payload, MAX_FRAME).await.unwrap();
+                    }
+                };
+                let responses = async move { tokio::io::copy(&mut sr, &mut aw).await.unwrap() };
+                tokio::join!(requests, responses);
             };
-            write_frame(&mut host, hello.kind, &hello.payload, MAX_FRAME).await.unwrap();
-            hello_tx.send(h).unwrap();
-            let welcome = read_frame(&mut host, MAX_FRAME).await.unwrap().unwrap();
-            assert!(matches!(serde_json::from_slice::<LinkMsg>(&welcome.payload).unwrap(), LinkMsg::Welcome(_)));
-            if release_rx.await.is_err() {
-                return;
-            }
-            write_frame(&mut agent, welcome.kind, &welcome.payload, MAX_FRAME).await.unwrap();
+            let connection = async move {
+                let listener = tokio::net::UnixListener::from_std(listener).unwrap();
+                let (mut agent, _) = listener.accept().await.unwrap();
+                let mut host = tokio::net::UnixStream::connect(&upstream).await.unwrap();
+                // 이후 CLI는 정본 socket에 직접 붙는다. 이 agent 연결 하나만 중계한다.
+                std::fs::remove_file(&socket).unwrap();
+                std::fs::rename(&upstream, &socket).unwrap();
+                let hello = read_frame(&mut agent, MAX_FRAME).await.unwrap().unwrap();
+                let LinkMsg::Hello(h) = serde_json::from_slice(&hello.payload).unwrap() else {
+                    panic!("Hello가 아니다")
+                };
+                write_frame(&mut host, hello.kind, &hello.payload, MAX_FRAME).await.unwrap();
+                hello_tx.send(h).unwrap();
+                let welcome = read_frame(&mut host, MAX_FRAME).await.unwrap().unwrap();
+                assert!(matches!(serde_json::from_slice::<LinkMsg>(&welcome.payload).unwrap(), LinkMsg::Welcome(_)));
+                if release_rx.await.is_err() {
+                    return;
+                }
+                write_frame(&mut agent, welcome.kind, &welcome.payload, MAX_FRAME).await.unwrap();
+                tokio::io::copy_bidirectional(&mut agent, &mut host).await.unwrap();
+            };
             tokio::select! {
-                result = tokio::io::copy_bidirectional(&mut agent, &mut host) => { result.unwrap(); }
+                _ = detection => panic!("session 중계가 먼저 끝났다"),
+                _ = connection => panic!("host 중계가 먼저 끝났다"),
                 _ = stop_rx => {}
             }
         });
     });
     lab.spawn("agent2", &h, &["agent", "--host", "local", "--name", "labA"]);
     let hello = hello_rx.recv_timeout(T).unwrap();
-    assert!(hello.harness.iter().any(|e| e.session == id && e.kind == "turn_start"), "{hello:?}");
+    assert!(hello.harness.iter().any(|e| e.session == id && e.kind == "turn_start"), "{:?}", hello.harness);
+    detect_rx.recv_timeout(T).expect("첫 화면 감지 요청");
+    detect_release_tx.send(()).unwrap();
     wait_for("Welcome 전 화면 감지 Idle 기억", T, || {
         let kept: Vec<aaa_proto::HarnessEvent> = serde_json::from_slice(&std::fs::read(&file).ok()?).ok()?;
         kept.iter().any(|e| e.session == id && e.kind == "idle" && e.at_ms >= t1).then_some(())
