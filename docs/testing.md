@@ -1,4 +1,4 @@
-- t-1238: [자동화 큰 입력·원본 보존·커서 복구 검증](testing-automation-large-input.md)
+- t-1238: [자동화 큰 입력 검증](testing-automation-large-input.md) · [E72 설치 계획 검사 경계 수리](testing-machine-plan-boundary.md)
 - t-1225: [coordinator·thread에 넣는 글 줄이기 검증](testing-context-budget.md)
 - t-1232: [E2E12 events 수신·route 정리 검증](testing-thread-events-liveness.md)
 - t-1229: [계정 Codex hook 설치·실기 검증](testing-account-codex-hooks.md)
