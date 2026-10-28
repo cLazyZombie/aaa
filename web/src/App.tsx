@@ -1269,6 +1269,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const seenMine = useSeenMine(taskBoard.board);
   // 아이디어 전용 thread는 작업 목록·배지에 보이지 않는다(아이디어 화면의 대화다, t-1255 결정 20). 그 pane도 목록에서 뺀다
   const shownThreads = allThreads.filter((t) => inSidebar(t) && !t.idea);
+  // 질문 카드는 아이디어 thread의 것도 「답할 것」에 보인다(최후의 수단, 결정 2)
+  const askThreads = allThreads.filter(inSidebar);
   const ideaPanes = new Set(allThreads.flatMap((t) => (t.idea && t.pane ? [t.pane] : [])));
   const sidebarPanes = ideaPanes.size === 0 ? panes : panes.filter((p) => !ideaPanes.has(p.id));
   const ideas = useIdeas(up);
@@ -1290,11 +1292,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     return () => { active = false; unwatch(); };
   }, [sel, up, !!asksData?.autoMode, putAsks]);
   const asksDone = asksData?.done ?? [];
-  const askList = useMemo(() => openAsks(shownThreads, asksData, taskBoard.board?.tasks ?? []), [threads, asksData, taskBoard.board]); // eslint-disable-line react-hooks/exhaustive-deps
+  const askList = useMemo(() => openAsks(askThreads, asksData, taskBoard.board?.tasks ?? []), [threads, asksData, taskBoard.board]); // eslint-disable-line react-hooks/exhaustive-deps
   const askKey = sel?.startsWith("ask:")
     ? sel.slice("ask:".length)
     : sel?.startsWith("question:")
-      ? (questionKey(sel.slice("question:".length), shownThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
+      ? (questionKey(sel.slice("question:".length), askThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
       : null;
   const autoQuestion = sel?.startsWith("question:") ? asksData?.autoDecisions?.find(d => d.question.id === sel.slice("question:".length) && d.outcome === "answered") : null;
   const askSelection = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions);
@@ -1371,10 +1373,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     ...asksDone.flatMap((r) => [r.question_id, ...r.items.map((q) => q.id)]),
   ]), [threads, taskBoard.board, reportNames, asksData, automationIds, ideas.list]); // eslint-disable-line react-hooks/exhaustive-deps
   const questionLooks = useMemo(() => new Map([...new Set([
-    ...shownThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
+    ...askThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...(asksData?.requests ?? []).flatMap((r) => [...(r.question_id ? [r.question_id] : []), ...(r.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...asksDone.flatMap((r) => [r.subject, ...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
-  ])].map((id) => [id, questionRefLook(id, shownThreads, asksDone, asksData?.requests)])), [threads, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
+  ])].map((id) => [id, questionRefLook(id, askThreads, asksDone, asksData?.requests)])), [threads, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
   // 실제 대상·칩의 표시가 바뀔 때만 대화 Markdown을 다시 그린다. coordinator 답·기록 삭제도 포함한다.
   const refKey = [
     ...knownIds,
@@ -1827,7 +1829,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         ) : sel === "threads:" ? (
           <ProjectThreads
-            threads={allThreads}
+            threads={allThreads.filter((t) => !t.idea)}
             onThread={(t) => chooseThread(t, "threads:")}
             onBack={() => choose(null)}
             onPane={canControl ? (id) => choose(id) : undefined}

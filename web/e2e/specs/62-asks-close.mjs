@@ -232,16 +232,17 @@ export default async function () {
         const box = (id) => document.querySelector(`[data-testid="${id}"]`).getBoundingClientRect();
         const asks = box("activity-asks");
         const reports = box("activity-reports");
-        const automations = box("activity-automations");
+        const ideas = box("activity-ideas");
         return {
           ids: items.map((e) => e.dataset.testid).join(","),
-          // 이웃한 두 단추 사이 틈: 자동화↔답할 것과 답할 것↔보고서
-          gapAbove: Math.round(asks.top - automations.bottom),
+          // 이웃한 두 단추 사이 틈: 아이디어↔답할 것과 답할 것↔보고서
+          gapAbove: Math.round(asks.top - ideas.bottom),
           gapBelow: Math.round(reports.top - asks.bottom),
         };
       });
     // 맨 위는 「coordinator」(t-0621). 새 검색은 할 일 다음이며 답할 것·보고서 인접 배치는 유지한다(t-1205).
-    const want = "activity-coordinator,activity-work,activity-workspace,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks,activity-search";
+    // 아이디어(t-1260)는 패널 단추 안 「답할 것」 바로 위다
+    const want = "activity-coordinator,activity-work,activity-workspace,activity-machines,activity-automations,activity-ideas,activity-asks,activity-reports,activity-tasks,activity-search";
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-bar").waitFor();
