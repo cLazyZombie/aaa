@@ -121,7 +121,7 @@ fn approved_worker_outlives_its_cli_and_records_the_same_id_after_private_displa
             host
         });
         let address = host.agent_listen.lock().unwrap().clone().unwrap();
-        let mut args = lab.args();
+        let mut args = lab.args_asking_free_space();
         args.retain(|a| a != "--dry-run");
         for (key, value) in [("--host", address.as_str()), ("--enroll", "wait")] {
             let at = args.iter().position(|a| a == key).unwrap();
@@ -130,7 +130,7 @@ fn approved_worker_outlives_its_cli_and_records_the_same_id_after_private_displa
         args.extend(["--prompt".into(), "plain".into()]);
         let steps = [
             ("설치 방식", "fresh\r"),
-            ("남겨 둘 여유 GB", "20\r"),
+            ("남겨 둘 여유 GB", "0\r"),
             ("harness 로그인 검사", "require\r"),
             ("사용자 PATH", "preserve\r"),
             ("검토 후 승인", "review\r"),
