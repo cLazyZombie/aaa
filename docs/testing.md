@@ -1,3 +1,4 @@
+- t-1232: [E2E12 events 수신·route 정리 검증](testing-thread-events-liveness.md)
 - t-1229: [계정 Codex hook 설치·실기 검증](testing-account-codex-hooks.md)
 - t-1228: [inbox 짧은 별칭 검증](testing-inbox-ids.md)
 - t-1223: [자동 결정 지우기·대화창 줄 검증](testing-auto-decision-forget.md)

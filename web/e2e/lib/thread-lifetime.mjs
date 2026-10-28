@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { browser, root, env, inTime } from './harness.mjs';
 import { threadPageTrace, threadTraceDocument } from './thread-page-trace.mjs';
+import { threadRoutesLifetime } from './thread-routes-lifetime.mjs';
 
 // Term 정리와 같은 CONNECTING → close 순서. 앱의 send는 한 번도 부르지 않는다.
 // Playwright 대체 소켓은 이 순서 뒤 passthrough를 열고 snapshot 수신에서 예외를 냈다.
@@ -32,6 +33,7 @@ export async function threadConnectingPaneLifetime(page, pane) {
 }
 
 export async function threadBodyLifetime() {
+  await threadRoutesLifetime(browser);
   let partial, complete = false;
   const server = http.createServer((req, res) => {
     if (req.url !== '/api/v1/call') return res.end('<!doctype html><p>fixture</p>');

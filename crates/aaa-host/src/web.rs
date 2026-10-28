@@ -31,6 +31,8 @@ use crate::chatwatch::ChatNote;
 use crate::output::{OUTPUT_HARD_BYTES, OUTPUT_STALLED_CLOSE_CODE, OutputWindow, Verdict, check_unacked};
 
 mod assets;
+#[cfg(test)]
+mod events_tests;
 mod report_delivery;
 
 const OUTPUT_STALLED_REASON: &str = "terminal output consumer stalled";
@@ -1299,7 +1301,12 @@ async fn events_ws(State(host): State<Arc<Host>>, headers: HeaderMap, ws: WebSoc
 }
 
 /// 머신·pane 목록(바뀔 때마다 전체)과 확인창 질문·thread 사건. 질문·thread는 연결한 뒤 목록을 한 번 읽고 이 사건으로 따라간다.
-async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket: WebSocket) {
+async fn events_loop<S>(host: Arc<Host>, dev: String, role: DeviceRole, mut socket: S)
+where
+    S: futures_util::Stream<Item = Result<Message, axum::Error>>
+        + futures_util::Sink<Message, Error = axum::Error>
+        + Unpin,
+{
     let mut changed = host.changed.subscribe();
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
@@ -1332,7 +1339,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_rollout = true;
     let mut send_badge = true;
     let mut last_badge = None;
-    let close_revoked = |mut socket: WebSocket| async move {
+    let close_revoked = |mut socket: S| async move {
         let frame = CloseFrame { code: DEVICE_REVOKED_CLOSE_CODE, reason: DEVICE_REVOKED_REASON.into() };
         aaa_common::diagnostic::ignored(
             socket.send(Message::Close(Some(frame))).await,
@@ -1516,6 +1523,54 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     return close_revoked(socket).await;
                 }
             }
+            // 밀린 알림·만료 tick보다 준비된 수신을 먼저 읽는다. 부하 뒤 pong이 이미 와 있어도
+            // timer부터 고르면 살아 있는 연결을 무응답으로 끊고 목록을 다시 읽게 된다.
+            m = socket.next() => {
+                send_state = false;
+                heard = tokio::time::Instant::now();
+                match m {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(Message::Pong(_))) => host.conn_pong(conn),
+                    Some(Ok(Message::Text(t))) => {
+                        app_heard = tokio::time::Instant::now();
+                        host.conn_text(conn);
+                        match serde_json::from_str::<EventsClientMsg>(&t) {
+                            Ok(EventsClientMsg::Presence { active, why, visible, focus, build }) => {
+                                host.conn_presence(conn, presence_why(active, why, visible, focus), build);
+                                presence.set(active)
+                            }
+                            Ok(EventsClientMsg::Touch) => host.touch_device(&dev, "touch"),
+                            Ok(EventsClientMsg::Alert { project, target, kind, outcome }) => {
+                                host.alert_outcome(&dev, conn, project.as_deref(), &target, &kind, &outcome)
+                            }
+                            Ok(EventsClientMsg::Ping { id }) => {
+                                let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
+                                if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
+                                    break;
+                                }
+                            }
+                            // 보기 범위(§8.25)는 대화 읽기(`pane_chat`)와 같다
+                            Ok(EventsClientMsg::ChatWatch { pane, enabled }) => {
+                                if !enabled {
+                                    if chats.panes.remove(&pane) {
+                                        host.chat_watch(&pane, false);
+                                    }
+                                } else if host.pane_view_of(&pane, role).is_some() {
+                                    if chats.panes.insert(pane.clone()) {
+                                        host.chat_watch(&pane, true);
+                                    }
+                                    let ev = FrontEvent::ChatWatching { live: host.chat_live(&pane), pane };
+                                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");}
+                        }
+                    }
+                    _ => {}
+                }
+            }
             r = changed.changed() => {
                 if r.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() { break }
                 send_state = true;
@@ -1664,52 +1719,6 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 tracing::info!("쓰는 화면 lease 끝: 앱 글이 {}초 동안 없다", lease.as_secs());
                 host.conn_presence(conn, format!("lease 끝(앱 글 {}초 없음)", lease.as_secs()), None);
                 presence.set(false);
-            }
-            m = socket.recv() => {
-                send_state = false;
-                heard = tokio::time::Instant::now();
-                match m {
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(Message::Pong(_))) => host.conn_pong(conn),
-                    Some(Ok(Message::Text(t))) => {
-                        app_heard = tokio::time::Instant::now();
-                        host.conn_text(conn);
-                        match serde_json::from_str::<EventsClientMsg>(&t) {
-                            Ok(EventsClientMsg::Presence { active, why, visible, focus, build }) => {
-                                host.conn_presence(conn, presence_why(active, why, visible, focus), build);
-                                presence.set(active)
-                            }
-                            Ok(EventsClientMsg::Touch) => host.touch_device(&dev, "touch"),
-                            Ok(EventsClientMsg::Alert { project, target, kind, outcome }) => {
-                                host.alert_outcome(&dev, conn, project.as_deref(), &target, &kind, &outcome)
-                            }
-                            Ok(EventsClientMsg::Ping { id }) => {
-                                let text = serde_json::to_string(&FrontEvent::Pong { id }).unwrap();
-                                if socket.send(Message::Text(text.into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
-                                    break;
-                                }
-                            }
-                            // 보기 범위(§8.25)는 대화 읽기(`pane_chat`)와 같다
-                            Ok(EventsClientMsg::ChatWatch { pane, enabled }) => {
-                                if !enabled {
-                                    if chats.panes.remove(&pane) {
-                                        host.chat_watch(&pane, false);
-                                    }
-                                } else if host.pane_view_of(&pane, role).is_some() {
-                                    if chats.panes.insert(pane.clone()) {
-                                        host.chat_watch(&pane, true);
-                                    }
-                                    let ev = FrontEvent::ChatWatching { live: host.chat_live(&pane), pane };
-                                    if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.as_ref().inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")).is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                            Err(source_error) => { aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");}
-                        }
-                    }
-                    _ => {}
-                }
             }
         }
     }

@@ -7,6 +7,7 @@ import { root, AA, env, aaa, domIs, browser, webkit, pairPage, inTime, specClean
 import { traceThreadRequests, threadPageTrace, threadTraceDocument, disconnectThreadEvents } from "./thread-page-trace.mjs";
 import { threadConnectingPaneLifetime } from "./thread-lifetime.mjs";
 import { ThreadReloadGate } from "./thread-reload-gate.mjs";
+import { ThreadRoutes } from "./thread-routes.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
 
 export async function prepareThreadPages() {
@@ -61,6 +62,7 @@ export async function threadPages(all, name) {
   try {
     const trace = threadPageTrace(`${root}/diagnostics`, engine.browserType().name());
     const gate = new ThreadReloadGate();
+    const routes = new ThreadRoutes();
     let release, arrive, restart, releaseNew;
     const holding = new Promise(resolve => { release = resolve; });
     const arrived = new Promise(resolve => { arrive = resolve; });
@@ -77,30 +79,32 @@ export async function threadPages(all, name) {
           context = ctx;
           await context.route("**/api/v1/call", async route => {
             try {
-              const request = route.request().postDataJSON();
-              if (request?.op !== "threads") return await route.fallback();
-              const requestDocument = route.request().headers()["x-e2e-document"];
-              if (gate.holdFirst(requestDocument, request.after)) {
-                trace.record({ event: "new-first-held", doc: requestDocument, after: request.after ?? null });
-                restart();
-                await newHolding;
-              }
-              const response = await route.fetch();
-              const body = (await response.json()).ok;
-              const oldFinal = gate.holdFinal(requestDocument, body);
-              if (oldFinal) {
-                trace.record({ event: "old-final-held", doc: requestDocument });
-                arrive();
-                await holding;
-              }
-              await route.fulfill({ response });
-              if (gate.held && !oldFinal && body?.kind === "threads" && !body.next_after) {
-                trace.record({ event: "new-final-delivered" });
-              }
+              await routes.run(route, async () => {
+                const request = route.request().postDataJSON();
+                if (request?.op !== "threads") return await route.fallback();
+                const requestDocument = route.request().headers()["x-e2e-document"];
+                if (gate.holdFirst(requestDocument, request.after)) {
+                  trace.record({ event: "new-first-held", doc: requestDocument, after: request.after ?? null });
+                  restart();
+                  await newHolding;
+                }
+                const response = await route.fetch();
+                const body = (await response.json()).ok;
+                const oldFinal = gate.holdFinal(requestDocument, body);
+                if (oldFinal) {
+                  trace.record({ event: "old-final-held", doc: requestDocument });
+                  arrive();
+                  await holding;
+                }
+                await route.fulfill({ response });
+                if (gate.held && !oldFinal && body?.kind === "threads" && !body.next_after) {
+                  trace.record({ event: "new-final-delivered" });
+                }
+              });
             } catch (error) {
               // route 해제 중의 늦은 fulfill 실패가 원래 단계 오류와 실험실 정리를 가리지 않는다.
               trace.record({ event: "route-failure", phase, cleaning, error: { message: error.message.split("\n")[0], stack: error.stack?.split("\n").filter(line => /^\s+at /.test(line)).join("\n") } });
-              if (!cleaning) routeError ??= error;
+              routeError ??= error;
             }
           });
         },
@@ -151,7 +155,7 @@ export async function threadPages(all, name) {
       releaseNew();
       let cleanupError;
       if (context) for (const [part, close] of [
-        ["routes", () => context.unrouteAll({ behavior: "wait" })],
+        ["routes", () => routes.close(context)],
         ["context", () => context.close()],
       ]) {
         try { await close(); trace.record({ event: "cleanup", part }); }
