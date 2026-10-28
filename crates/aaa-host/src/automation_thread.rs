@@ -40,6 +40,7 @@ pub(crate) struct Run {
     pub last_input_ms: u64,
     pub report_at_input: Option<String>,
     pub first_input: Option<(String, String)>,
+    pub first_originals: Vec<crate::automation::input::Original>,
     pub seeded_work: Option<String>,
     pub initial_memory_hash: Option<String>,
     /// 양쪽에서 합의된 마지막 파일별 판. None은 업그레이드 전 열린 실행이다.
@@ -275,6 +276,7 @@ impl Host {
                 }
             }
         }
+        self.automation_write_originals(&r.project, &r.machine_id, work, &run.first_originals).await?;
         if let Some(input) = &run.first_input {
             write_inputs(&conn, work, [input.clone()]).await?;
         }
@@ -284,6 +286,7 @@ impl Host {
             run.initial_memory_hash = initial;
             run.memory_common = common;
             run.first_input = None;
+            run.first_originals.clear();
         })?;
         Ok(())
     }
@@ -586,7 +589,7 @@ impl Host {
 }
 
 impl Host {
-    fn work_file_request(&self, machine: &str, request: AgentRequest) -> AgentRequest {
+    pub(crate) fn work_file_request(&self, machine: &str, request: AgentRequest) -> AgentRequest {
         if self.machine_feature(machine, "work_files.v1") { request } else { request.legacy_work_file() }
     }
 }

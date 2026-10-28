@@ -228,9 +228,23 @@ Claude·Codex profile 모두 open을 지원한다. `memory=true` 자동화에만
 이 문맥이 없으므로 thread를 재시작하거나 다음 새 실행부터 적용한다. Codex는 기존 전역 연동이 설치되고 hooks가 켜져 있어야 한다.
 실제 모델의 파일 읽기 이행은 harness에 달려 있으며, hook은 그 작업을 요청하는 문맥을 제공한다.
 
-한 사건 자체가 512KiB를 넘으면 접수를 거부해 source 원본·커서를 보존한다. 입력은 최대 32건·512KiB 묶음으로 작업 폴더 inbox에 먼저 기록하고 Queue 메시지로 알린다. 확인창 동안 파일을 보존하며,
+한 사건이 직렬화 뒤 512KiB를 넘으면 원본을 host 프로젝트의 `automations/.inputs/<SHA256>.json`에 먼저 보존하고
+큰 문자열 앞 8KiB·배열 앞 32건·깊이 8까지의 미리보기로 접수한다. 미리보기도 64KiB를 넘으면 본문 앞 8KiB로 줄인다.
+입력의 `input_truncation`에 줄인 사실·원본 크기·SHA256·host 상대 경로를 쓴다. 원본이 8MiB 이하면 세션 시작이나
+이어 보내기 전에 작업 폴더 `history/automation-inputs/<SHA256>.json`에 384KiB 조각으로 옮기고 그 상대 경로도 준다.
+그보다 큰 원본은 host에 보존하고 `file=null`로 작업 폴더에 없음을 표시한다. 원본 파일은 사건 전체 JSON이며 `body`가
+실제 자료다. 미리보기는 자료의 전부가 아니므로 필요한 상세는 원본과 사건의 보고·첨부 근거에서 확인한다.
+원본 저장이 실패하거나 설정·승인 범위 자체가 과도하면 접수를 실패시키고 source 커서를 보존한다.
+접수 전 실패도 실행 원장의 `failed/trigger`에 남기며, 같은 입력을 나중에 접수하면 실패 이력과 실행 ID를 유지한 채 진행한다.
+업그레이드 전 관측에만 있던 명확한 실패는 `automation runs` 조회 때 원장에 보완한다. 이미 접수한 실행의 상태·receipt는
+관측 실패로 덮지 않는다. 보고 복사 누락 전체는 thread의 `copy_notes`에 두고 새 흐름 사건의 설명에는 앞 8KiB만 싣는다.
+
+입력은 실제 JSON 봉투(escape·실행 ID 포함) 기준 최대 32건·512KiB 묶음으로 작업 폴더 inbox에 먼저 기록하고 Queue 메시지로 알린다. 확인창 동안 파일을 보존하며,
 전달 여부를 모르면 막힌 큐에 남긴다. 자동으로 다시 보내지 않는다. 「확인하고 풀기」는 기존 상세 화면에서 한다.
 propose는 새 thread 만들기만 제안으로 바꾸며, 열린 thread에 이어 보내기는 그대로 한다. reports는 사건 thread 보고 앞 64KiB를 붙인다.
+
+크기 초과로 멈춘 thread 사건은 새 host가 보존된 source 커서에서 페이지당 200건씩 다시 읽는다. 규칙을 새로 만들거나
+커서를 최신으로 옮기지 않는다. 앞 큰 사건을 접수한 뒤에는 뒤의 사건도 원래 ID로 처리하고, 전달 receipt가 있는 입력은 다시 보내지 않는다.
 
 기억은 host 프로젝트 `automations/<규칙>.memory/`에 보존한다. 새 thread의 `memory/memory.md`와 history에 먼저 넣고,
 보고 사본과 resolve 전 마지막 사본 때 되가져온다. processed.txt도 보존한다. 이동은 기존 상태 전송의 8MiB·1000개 한도와 hash·symlink 검사를 쓴다.

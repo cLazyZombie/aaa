@@ -2248,6 +2248,12 @@ impl Host {
             FrontRequest::AutomationExecutions { project, name, before } => self
                 .project_dir(&project)
                 .and_then(|_| {
+                    // 업그레이드 전에는 접수 실패가 관측에만 있었다. 명확한 실패만 원장으로 보완한다.
+                    for old in self.routine_history(&project, &name)?.runs.iter().filter(|r| r.status == "failed") {
+                        self.db
+                            .automation_source_failure(&project, &name, old)
+                            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+                    }
                     self.db
                         .automation_executions(&project, Some(&name), before.as_deref())
                         .map_err(|e| err(ErrorCode::Internal, e.to_string()))
