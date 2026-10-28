@@ -178,6 +178,7 @@ export default async function () {
       await p.getByTestId("quote-note").getByRole("textbox", { name: "의견" }).fill("휴대폰 의견");
       await p.getByTestId("quote-note-submit").tap();
       await p.getByTestId("review-notes").getByText("휴대폰 의견", { exact: true }).waitFor();
+      await p.getByTestId("review-notes").scrollIntoViewIfNeeded();
       await shot(p, "120-review-notes-phone");
       assert.deepEqual(errors, []);
     } finally { await safari.close(); }
