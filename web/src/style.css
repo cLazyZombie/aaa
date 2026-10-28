@@ -562,10 +562,18 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .terminal-banners .banner.terminal-quote:hover { border-color: var(--accent); }
 .terminal-banners .banner.terminal-quote:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .terminal-quote svg, .chat-quote svg { width: 16px; height: 16px; flex: none; }
-/* 대화에서 고른 글 끝에 뜨는 「메시지에 인용」(참고 t3code AssistantSelectionToolbar): 자리는 ChatQuote.tsx가 화면 안으로 당긴다 */
-.chat-quote {
+/* 고른 글 끝에 뜨는 띠(참고 t3code AssistantSelectionToolbar): 자리는 ChatQuote.tsx가 화면 안으로 당긴다 */
+.selection-actions {
   position: fixed;
   z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  max-width: calc(100vw - 16px);
+}
+/* 대화에서 고른 글의 「메시지에 인용」·「의견」 */
+.chat-quote {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -585,6 +593,59 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 @media (pointer: coarse) {
   .chat-quote { height: var(--touch-target); }
 }
+/* 인용에 다는 의견 칸(t-1222, 참고 Orca 줄 의견·GitHub 줄 의견) */
+.quote-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(420px, calc(100vw - 16px));
+  padding: var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+.quote-note-text, .review-note-text {
+  margin: 0;
+  padding-left: var(--space-2);
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.quote-note-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 64px;
+  resize: vertical;
+  font: inherit;
+}
+.quote-note-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+/* diff 줄 아래 의견(CodeView 주석 칸) */
+.diff-line-note { padding: var(--space-2); font-family: var(--font-ui); font-size: var(--fs-sm); white-space: normal; }
+.diff-line-note .quote-note { width: auto; max-width: 640px; box-shadow: none; }
+.diff-note-card { display: flex; gap: var(--space-2); align-items: flex-start; max-width: 640px; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-elevated); }
+.diff-note-card p { flex: 1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* thread 의견 모음 */
+.review-notes ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.review-note { display: flex; flex-direction: column; gap: var(--space-1); }
+.review-note-head { display: flex; gap: var(--space-2); align-items: center; min-width: 0; font-size: var(--fs-xs); }
+.review-note-head code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-note-comment { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-notes-foot { display: flex; gap: var(--space-2); align-items: center; justify-content: flex-end; margin-top: var(--space-3); }
+/* 보낸 말 속 인용의 「돌아가기」 */
+.chat-quote-returns { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
+.chat-quote-return { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.chat-quote-return span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-quote-return svg { width: 14px; height: 14px; flex: none; }
+::highlight(aaa-review-note) { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
 /* 「맨 아래로 이동」(참고 TerminalViewportTools.css): 자리는 grid 오른쪽 아래 끝, 거기서 제 크기만큼 안쪽 */
 .terminal-jump-bottom {
   position: absolute;

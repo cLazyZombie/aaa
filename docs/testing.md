@@ -1,3 +1,4 @@
+- t-1222: [보고 글·diff 줄 의견과 인용 위치 검증](testing-review-notes.md)
 - t-1212: [첫 trust 관측 회귀와 착지 검증](testing-trust-observation.md)
 
 E2E12 연결 중 취소·재연결 검증은 [별도 기록](testing-terminal-socket.md)에 둔다.

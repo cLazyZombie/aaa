@@ -26,7 +26,7 @@ function setMark(el: Element, name: string, value: string | null) {
 const highlights = () => (typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined" ? CSS.highlights : null);
 
 /** 사람 말·답만 찾는다(참고: 도구 줄·생각은 찾지 않는다). 사람 말은 그린 글(붙여넣기 표지를 뗀 것)로 */
-function findText(m: ChatMessage): string | null {
+export function findText(m: ChatMessage): string | null {
   return m.role === "user" ? unwrapPasted(m.text) : m.role === "assistant" ? m.text : null;
 }
 
@@ -77,6 +77,8 @@ export function useChatFind({ enabled = true, container, messages, rowIds, canOp
   const [navigation, setNavigation] = useState(0);
   const [revealed, setRevealed] = useState<number | null>(null);
   const restoreFocus = useRef<HTMLElement | null>(null);
+  /** 인용 위치로 돌아가기(t-1222): 이 말을 찾으면 처음 찾음을 그 줄에서 고른다 */
+  const seeking = useRef<{ query: string; rowId: string | null } | null>(null);
   const trimmed = query.trim();
   const debounced = useDebounced(trimmed, 100, enabled);
   // 참고처럼 친 말이 100ms 머문 뒤에 찾는다. 그 사이에는 앞 결과를 그대로 둔다
@@ -140,7 +142,10 @@ export function useChatFind({ enabled = true, container, messages, rowIds, canOp
         setActive(null);
         return;
       }
-      setActive(matchAt(rows, startIndex(rows, firstVisible(rows, searched))));
+      const seek = seeking.current?.query === searched ? seeking.current : null;
+      seeking.current = null;
+      const row = seek && rows.find((r) => r.id === seek.rowId && r.count > 0);
+      setActive(row ? { rowId: row.id, occurrence: 0 } : matchAt(rows, startIndex(rows, firstVisible(rows, searched))));
       setNavigation((n) => n + 1);
       return;
     }
@@ -162,6 +167,14 @@ export function useChatFind({ enabled = true, container, messages, rowIds, canOp
     setFocusRequest((n) => n + 1);
     setStartedFor(null);
   }, [open]);
+  /** 찾기 칸을 그 말로 열고 그 줄의 처음 찾음으로 간다(인용 위치로 돌아가기, t-1222). 줄이 없으면 보통 찾기처럼 */
+  const seek = useCallback((text: string, rowId: string | null) => {
+    if (!enabledRef.current) return;
+    seeking.current = { query: text.trim(), rowId };
+    setOpen(true);
+    setQuery(text);
+    setStartedFor(null);
+  }, []);
   // 「앞 기록도 찾기」(plan §8.310, 참고 t3code useThreadFindNavigation `onLoadEarlier`): 처음까지 앞 쪽을 차례로 받는다. 쪽마다 위
   // rows가 새 말만 세어 개수가 는다. 멈춤·닫기·실패·처음이면 그친다. 받던 쪽 하나는 끝까지 붙인다(그 쪽도 센다)
   const [earlier, setEarlier] = useState<EarlierState>({ state: "idle", pages: 0 });
@@ -435,6 +448,7 @@ export function useChatFind({ enabled = true, container, messages, rowIds, canOp
   return {
     open,
     openFind,
+    seek,
     bar: {
       open,
       query,

@@ -4,7 +4,7 @@ import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { AutoMergeBadge, AutoMergeSwitch, canAutoMerge } from "./AutoMerge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { Icon } from "./icons";
@@ -20,6 +20,11 @@ import { ResponsibilityBanner, ParkBanner, ThreadActions } from "./ThreadActions
 import { ChangedFilesCard } from "./ChangedFiles";
 import { useDiffPanel } from "./useDiffPanel";
 import { useMediaQuery } from "./herdr/useMediaQuery";
+import { ReviewNotesCard, useReportReveal, useReviewNotes } from "./ReviewNotes";
+import { requestReveal, subscribeHandoff, takeReveal, type QuoteReveal } from "./quoteHandoff.ts";
+import { resolveAnchor, revealRange } from "./textAnchor.ts";
+import type { ReviewNote } from "./reviewNoteStore.ts";
+import type { DiffFocus } from "./DiffPanel";
 
 // `@pierre/diffs`는 diff를 열 때만 받는다(파일 보기의 VirtualSource와 같다)
 const DiffPanel = lazy(() => import("./DiffPanel"));
@@ -51,6 +56,8 @@ export function ThreadPanel({
   onOpenReportFile,
   onAddDoc,
   reportsRev = 0,
+  sendNotes,
+  onOpenReport,
 }: {
   t: ThreadView;
   /** host reports 사건 수: 링크 발급·폐기(다른 화면의 「낸 링크」 포함)·열람 뒤 결과물 칸을 다시 읽는다 */
@@ -67,6 +74,10 @@ export function ThreadPanel({
   onOpenReportFile?: (path: string) => void;
   /** 「할 일에 추가」: 결과물 md·html 문서를 링크한 task(조작 권한만, plan §8.327) */
   onAddDoc?: (path: string) => void;
+  /** 의견 모음을 그 thread pane 입력 초안에 넣는다(t-1222). 돌고 있는 pane이 없으면 없다 */
+  sendNotes?: (text: string, done: (ok: boolean) => void) => void;
+  /** 다른 보고 판을 보고서 화면에서 연다(의견의 「위치」) */
+  onOpenReport?: (project: string, report: string) => void;
 }) {
   const statusLabel = t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_LABEL[t.group] ?? t.group;
   // 자동 병합(plan §8.530): 사람이 맡긴 열린 Worker의 이어진 할 일 값. 조작 기기는 여기서 켜고 끈다
@@ -111,6 +122,43 @@ export function ThreadPanel({
     };
   }, [canDiff, t.project, t.id, t.report_hash, t.group, t.status]);
   const diffPanel = useDiffPanel(t.project, t.id);
+  // 의견 모음(t-1222): 보고 글에서 고른 글·diff에서 고른 줄에 단 의견. 조작 기기만
+  const canNote = role !== "reader";
+  const notes = useReviewNotes(t.project, t.id);
+  const reportRoot = useRef<HTMLElement>(null);
+  const reportAnchors = useMemo(() => notes.notes.flatMap((n) => (n.source.kind === "report" && n.source.report === t.report_id ? [n.source.anchor] : [])), [notes.notes, t.report_id]);
+  useReportReveal(t.project, t.report_id, reportRoot, !!lib?.report);
+  const [diffFocus, setDiffFocus] = useState<DiffFocus | null>(null);
+  // 닫은 diff 칸을 다시 열 때 옛 자리로 가지 않는다
+  const diffOpen = diffPanel.target !== null;
+  useEffect(() => { if (!diffOpen) setDiffFocus(null); }, [diffOpen]);
+  const openDiff = diffPanel.open;
+  const focusDiff = useCallback((target: Omit<Extract<QuoteReveal, { kind: "diff" }>, "kind" | "project" | "thread">) => {
+    openDiff(null);
+    setDiffFocus({ scope: target.scope, path: target.path, range: target.range, text: target.text, seq: Date.now() });
+  }, [openDiff]);
+  useEffect(() => {
+    if (!canDiff) return;
+    const run = () => {
+      const target = takeReveal((x) => x.kind === "diff" && x.project === t.project && x.thread === t.id);
+      if (target?.kind === "diff") focusDiff(target);
+    };
+    run();
+    return subscribeHandoff(run);
+  }, [canDiff, t.project, t.id, focusDiff]);
+  const revealNote = (note: ReviewNote) => {
+    const s = note.source;
+    if (s.kind === "diff") {
+      focusDiff({ scope: s.scope, path: s.path, range: s.range, text: s.rows.map((r) => r.text).join("\n") });
+    } else if (s.report === t.report_id) {
+      const el = reportRoot.current?.querySelector(".report-markdown");
+      const range = el ? resolveAnchor(el, s.anchor) : null;
+      if (range) revealRange(range);
+    } else if (onOpenReport) {
+      requestReveal({ kind: "report", project: t.project, report: s.report, anchor: s.anchor });
+      onOpenReport(t.project, s.report);
+    }
+  };
   // t3code `rightPanelLayout.ts`: 980px 위는 thread 옆 칸, 밑은 덮는 sheet
   const sheet = useMediaQuery("(max-width: 980px)");
 
@@ -198,16 +246,18 @@ export function ThreadPanel({
             <p>자동화: {t.automation_title ?? t.automation} ({t.automation})</p>
             <p>무엇이 띄웠는지: {t.automation_trigger ?? "기동 사건 기록 없음(이전 판에서 시작)"}</p>
           </section>}
-          <section className="card report" data-testid="report">
+          <section className="card report" data-testid="report" ref={reportRoot}>
             <h2>보고 {t.report_id && <a href={`#report=${encodeURIComponent(`${t.project}/${t.report_id}`)}`}><code>{t.report_id}</code></a>}</h2>
             {lib?.report ? (
               <OpenFileContext.Provider value={onOpenReportFile ?? null}>
-                <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />
+                <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open}
+                  notes={canNote && t.report_id ? { anchors: reportAnchors, onAdd: (anchor, comment) => notes.add({ kind: "report", report: t.report_id!, anchor }, comment) } : undefined} />
               </OpenFileContext.Provider>
             ) : (
               <p className="muted">아직 회수한 보고가 없다</p>
             )}
           </section>
+          {canNote && <ReviewNotesCard thread={t.id} api={notes} onReveal={revealNote} sendNotes={sendNotes} />}
           {diff?.files && diff.files.length > 0 && (
             <ChangedFilesCard key={`${t.project}/${t.id}`} project={t.project} thread={t.id} base={diff.base} files={diff.files} onOpen={(path) => diffPanel.open(path ?? null)} />
           )}
@@ -266,6 +316,8 @@ export function ThreadPanel({
             sheet={sheet}
             onClose={diffPanel.close}
             onOpenFile={onOpenReportFile}
+            notes={canNote ? notes : undefined}
+            focus={diffFocus}
           />
         </Suspense>
       )}

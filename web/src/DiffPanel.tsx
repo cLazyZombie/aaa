@@ -7,11 +7,13 @@ import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
 // - 큰 비교: agent가 전체 patch 120,000바이트를 넘으면 목록만 준다 → 파일 4개씩 읽고, 아래 자리가 600px 안에 들면 4개 더
 //   (t3code `useReviewFilePatches`·`DiffFileLoadingBoundary`). 파일 하나가 잘리면 머리에 「일부」.
 // - 다시 읽기: 다시 읽기 단추, 창 focus, thread 보고가 바뀔 때(t3code는 workspace 변경 신호).
-// 다른 곳: 파일 이름을 누르면 aaa 파일 보기(worktree 기준)를 연다(t3code는 오른쪽 Files 탭). diff 안 찾기·줄 의견·파일 트리 곁칸은 옮기지
+// 다른 곳: 파일 이름을 누르면 aaa 파일 보기(worktree 기준)를 연다(t3code는 오른쪽 Files 탭). diff 안 찾기·파일 트리 곁칸은 옮기지
 // 않았다(카드가 트리다). 머리 높이는 손가락 기기에서 44px(§8.300).
+// 줄 의견(t-1222, 참고 Orca 줄 의견·GitHub): 줄 번호를 누르거나 끌어 고르면 그 끝 줄 아래에 「의견」이 뜨고, 단 의견은 그 줄 아래
+// 카드로 남아 thread 의견 모음에 쌓인다. 의견 모음의 「위치」·보낸 말의 「돌아가기」는 그 범위로 데려와 고른다(`focus`).
 import { DEFAULT_VIRTUAL_FILE_METRICS, parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import { CodeView, type CodeViewHandle } from "@pierre/diffs/react";
-import type { CodeViewDiffItem, CodeViewItem } from "@pierre/diffs";
+import type { CodeViewDiffItem, CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Columns2, Pilcrow, RefreshCw, Rows3, TextWrap, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -26,6 +28,17 @@ import { contentKey, SHADOW_CSS, SOURCE_THEME } from "./herdr/sourceTheme";
 import { useMediaQuery } from "./herdr/useMediaQuery";
 import { useTerminalToggle } from "./settings";
 import { useAppearance } from "./theme";
+import { NoteButton, NoteEditor } from "./ChatQuote";
+import { diffQuoteRange, diffRows, pickDiffRows } from "./diffQuote.ts";
+import type { DiffQuoteRange } from "./selectionQuote.ts";
+import type { ReviewNotesApi } from "./ReviewNotes";
+import type { ReviewNote } from "./reviewNoteStore.ts";
+
+/** 데려올 줄 범위(의견의 「위치」·보낸 말의 「돌아가기」). `seq`가 바뀔 때마다 다시 데려온다. `text`는 의견을 단 때의 줄이다 */
+export interface DiffFocus { scope: DiffScope; path: string; range: DiffQuoteRange; text: string; seq: number }
+
+/** 줄 아래 칸: 단 의견, 또는 고른 줄의 「의견」 */
+type NoteSlot = { kind: "note"; note: ReviewNote } | { kind: "draft" };
 
 type Load = { status: "pending" } | { status: "failed"; message: string } | { status: "ready"; view: DiffView };
 
@@ -160,6 +173,8 @@ export default function DiffPanel({
   sheet,
   onClose,
   onOpenFile,
+  notes,
+  focus = null,
 }: {
   project: string;
   thread: string;
@@ -173,6 +188,9 @@ export default function DiffPanel({
   onClose: () => void;
   /** 파일 자체를 파일 보기로(worktree 기준 경로) */
   onOpenFile?: (path: string) => void;
+  /** thread 의견 모음(t-1222). 없으면(보기 권한) 줄을 고르지 않는다 */
+  notes?: ReviewNotesApi;
+  focus?: DiffFocus | null;
 }) {
   const { resolvedTheme } = useAppearance();
   const coarse = useMediaQuery("(pointer: coarse)");
@@ -190,7 +208,12 @@ export default function DiffPanel({
   // 접힘은 범위·공백마다 처음(모두 접힘)부터다(t3code collapseScopeKey)
   const scopeKey = `${scope}:${ignoreWhitespace ? "w" : ""}`;
   const [opened, setOpened] = useState<{ key: string; paths: Set<string> }>({ key: scopeKey, paths: new Set() });
-  const viewer = useRef<CodeViewHandle<undefined, undefined> | null>(null);
+  const viewer = useRef<CodeViewHandle<NoteSlot, undefined> | null>(null);
+  // 고른 줄(끄는 동안은 picked만 바뀌고, 놓으면 drafting): 놓은 뒤에 그 끝 줄 아래 「의견」을 띄운다
+  const picked = useRef<{ id: string; range: SelectedLineRange } | null>(null);
+  const [drafting, setDrafting] = useState<{ id: string; range: SelectedLineRange } | null>(null);
+  const [noting, setNoting] = useState(false);
+  const [focusMoved, setFocusMoved] = useState(false);
   const header = coarse ? 44 : 32;
   const separator = coarse ? 44 : 24;
   // 줄 높이는 앱 글꼴(shadow CSS의 --diffs-line-height)로 잰다: 라이브러리 기본 20px로 어림하면 펼친 파일 높이가 실제보다 커서
@@ -222,6 +245,12 @@ export default function DiffPanel({
       contextEpoch.current++;
     };
   }, [project, thread, scope, ignoreWhitespace, tick, reportHash]);
+
+  // 다른 범위·공백 보기에서는 고른 줄이 다른 줄이다
+  useEffect(() => {
+    setDrafting(null);
+    setNoting(false);
+  }, [scopeKey]);
 
   useEffect(() => {
     const onFocus = () => setTick((n) => n + 1);
@@ -323,11 +352,17 @@ export default function DiffPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 고른 파일·읽기가 바뀔 때만
   }, [path, reveal, view, scopeKey, lazy, fileLoads, diffs.length]);
 
-  const items: CodeViewDiffItem[] = diffs.map((d) => {
+  // 의견을 그 줄 아래에(지금 범위의 의견만): 끝 줄·끝 쪽
+  const savedNotes = useMemo(() => (notes?.notes ?? []).flatMap((n) => (n.source.kind === "diff" && n.source.scope === scope ? [{ note: n, source: n.source }] : [])), [notes?.notes, scope]);
+  const items: CodeViewDiffItem<NoteSlot>[] = diffs.map((d) => {
     const p = filePath(d);
     const pending = d.cacheKey?.endsWith(":pending") === true;
     const collapsed = pending || !openPaths.has(p);
-    return { id: p, type: "diff", fileDiff: d, collapsed, version: hash(`${d.cacheKey ?? p}:${collapsed ? 1 : 0}`) };
+    const annotations: DiffLineAnnotation<NoteSlot>[] = savedNotes.filter((n) => n.source.path === p)
+      .map((n) => ({ side: n.source.range.endSide, lineNumber: n.source.range.end, metadata: { kind: "note", note: n.note } }));
+    if (drafting?.id === p) annotations.push({ side: drafting.range.endSide ?? drafting.range.side ?? "additions", lineNumber: drafting.range.end, metadata: { kind: "draft" } });
+    const marks = annotations.map((a) => (a.metadata.kind === "note" ? `${a.metadata.note.id}:${a.metadata.note.comment}` : `draft:${noting ? 1 : 0}`)).join("|");
+    return { id: p, type: "diff", fileDiff: d, collapsed, annotations, version: hash(`${d.cacheKey ?? p}:${collapsed ? 1 : 0}:${marks}`) };
   });
   const allCollapsed = items.every((i) => i.collapsed);
   const toggleAll = () =>
@@ -349,6 +384,61 @@ export default function DiffPanel({
     const item = items.find((i) => i.id === headName);
     if (item && !item.fileDiff.cacheKey?.endsWith(":pending")) setOpen(item.id, item.collapsed === true);
   };
+
+  /** 고른 줄의 원문과 위에서 아래 차례의 범위 */
+  const pickedRows = (sel: { id: string; range: SelectedLineRange }) => {
+    const d = diffs.find((x) => filePath(x) === sel.id);
+    if (!d) return null;
+    const all = diffRows(d);
+    const range = diffQuoteRange(all, sel.range);
+    const rows = pickDiffRows(all, range);
+    return rows.length === 0 ? null : { range, rows };
+  };
+  const addNote = (comment: string): boolean => {
+    if (!notes || !drafting || view === null) return false;
+    const got = pickedRows(drafting);
+    if (!got) return false;
+    const ok = notes.add({ kind: "diff", scope, base: view.base, base_sha: view.base_sha, path: drafting.id, range: got.range, rows: got.rows.map(({ kind, text }) => ({ kind, text })) }, comment);
+    if (!ok) return false;
+    setDrafting(null);
+    setNoting(false);
+    viewer.current?.clearSelectedLines();
+    return true;
+  };
+
+  // 의견의 자리로(t-1222): 그 범위를 고르고(필요하면 범위를 바꾸고 파일을 읽어 펼쳐) 가운데로 데려온다. 지금 줄이 의견을 단 때와
+  // 다르면 띠로 알린다
+  const focused = useRef<number | null>(null);
+  useEffect(() => {
+    if (focus && focus.scope !== scope && focused.current !== focus.seq) setScope(focus.scope);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 새 자리마다 한 번
+  }, [focus?.seq]);
+  useEffect(() => {
+    if (!focus || focused.current === focus.seq || focus.scope !== scope || view === null) return;
+    if (lazy && !fileLoads.has(focus.path)) {
+      requestFiles([focus.path]);
+      return;
+    }
+    const d = diffs.find((x) => filePath(x) === focus.path);
+    if (!d) {
+      if (!lazy || fileLoads.get(focus.path)?.status !== "pending") {
+        focused.current = focus.seq;
+        setFocusMoved(true);
+      }
+      return;
+    }
+    focused.current = focus.seq;
+    const rows = pickDiffRows(diffRows(d), focus.range);
+    setFocusMoved(rows.map((r) => r.text).join("\n").trim() !== focus.text.trim());
+    setOpen(focus.path, true);
+    const range: SelectedLineRange = { start: focus.range.start, side: focus.range.side, end: focus.range.end, endSide: focus.range.endSide };
+    // 펼친 파일이 그려진 다음 frame에 데려간다
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      viewer.current?.scrollTo({ type: "range", id: focus.path, range, align: "center", behavior: "instant" });
+      viewer.current?.setSelectedLines({ id: focus.path, range });
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 자리·읽기가 바뀔 때만
+  }, [focus?.seq, scope, view, lazy, fileLoads, diffs.length]);
 
   const total = files ? summarizeDiffStats(files) : null;
   const status = load.status === "pending" ? "pending" : load.status === "failed" ? "failed" : files?.length === 0 || view?.patch === "" ? "empty" : "ready";
@@ -378,10 +468,35 @@ export default function DiffPanel({
     return (
       <div ref={hostRef} className="diff-scroll-host" onClickCapture={onBodyClick}>
         {lineHeight !== null && <DiffWorkerPool>
-          <CodeView<undefined>
+          <CodeView<NoteSlot>
             ref={viewer}
             className="diff-code-view"
             items={items}
+            onSelectedLinesChange={notes ? (sel) => { picked.current = sel; if (sel === null) { setDrafting(null); setNoting(false); } } : undefined}
+            renderAnnotation={(annotation) => {
+              const slot = annotation.metadata;
+              if (slot.kind === "note") {
+                return (
+                  <div className="diff-line-note" data-testid="diff-line-note">
+                    <div className="diff-note-card">
+                      <p>{slot.note.comment || "의견 없음"}</p>
+                      <button type="button" className="ghost small icon" aria-label="의견 지우기" title="의견 지우기" onClick={() => notes?.remove([slot.note.id])}>
+                        <X aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              const got = drafting && pickedRows(drafting);
+              return (
+                <div className="diff-line-note">
+                  {noting && got ? (
+                    <NoteEditor quote={got.rows.map((r) => `${r.kind}${r.text}`).join("\n")} submitLabel="의견 추가" onSubmit={addNote}
+                      onCancel={() => setNoting(false)} />
+                  ) : <NoteButton testId="diff-note" onClick={() => setNoting(true)} />}
+                </div>
+              );
+            }}
             options={{
               onPostRender: labelContextButtons,
               diffStyle: shownStyle,
@@ -395,11 +510,14 @@ export default function DiffPanel({
               expandUnchanged: false,
               expansionLineCount: 20,
               lineHoverHighlight: "disabled",
+              enableLineSelection: notes !== undefined,
+              onLineSelectionStart: () => { setDrafting(null); setNoting(false); },
+              onLineSelectionEnd: () => setDrafting(picked.current),
               unsafeCSS: css,
               itemMetrics: { lineHeight, diffHeaderHeight: header, hunkSeparatorHeight: separator, spacing: 0, paddingTop: 0, paddingBottom: 8 },
               layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
             }}
-            renderHeaderPrefix={(item: CodeViewItem<undefined>) => {
+            renderHeaderPrefix={(item: CodeViewItem<NoteSlot>) => {
               if (item.type !== "diff") return null;
               const pending = item.fileDiff.cacheKey?.endsWith(":pending") === true;
               const closed = item.collapsed === true;
@@ -420,12 +538,12 @@ export default function DiffPanel({
                 </button>
               );
             }}
-            renderHeaderMetadata={(item: CodeViewItem<undefined>) => {
+            renderHeaderMetadata={(item: CodeViewItem<NoteSlot>) => {
               const f = stats.get(item.id);
               if (!f || f.additions === null || f.deletions === null) return f ? <span className="diff-tag">바이너리</span> : null;
               return <DiffStat additions={f.additions} deletions={f.deletions} />;
             }}
-            renderHeaderFilenameSuffix={(item: CodeViewItem<undefined>) => {
+            renderHeaderFilenameSuffix={(item: CodeViewItem<NoteSlot>) => {
               const l = fileLoads.get(item.id);
               if (l?.status === "failed") return <span className="diff-tag warn" title="이 파일을 읽지 못했다">읽기 실패</span>;
               if (l?.status === "ready" && l.truncated) return <span className="diff-tag warn" title="너무 커서 앞부분만 보인다. 숫자는 모든 변경이다">일부</span>;
@@ -495,6 +613,7 @@ export default function DiffPanel({
       {view?.untracked_omitted && <div className="banner diff-banner">새 파일이 너무 많아 새 파일은 뺐다</div>}
       {view && view.truncated && !lazy && <div className="banner diff-banner">이 비교는 크기 상한을 넘어 일부만 보인다</div>}
       {contextError && <div className="banner diff-banner" role="alert">{contextError}</div>}
+      {focusMoved && <div className="banner diff-banner" role="status" data-testid="diff-focus-moved">의견을 단 뒤 줄이 바뀌었다</div>}
       <div className="diff-panel-body">{body}</div>
     </section>
   );

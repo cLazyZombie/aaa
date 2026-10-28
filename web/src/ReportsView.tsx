@@ -2,7 +2,7 @@
 // 활동 막대 「보고서」·`#reports`가 목록을, `#report=<프로젝트>/<이름>`이 보고서 하나를 연다. 한 번 연 뒤에는 다른 화면으로 가도
 // 그려 둔 채 숨긴다(App): 돌아오면 열어 둔 보고서·굴린 자리가 그대로다. 보고서 HTML은 thread 결과물처럼 sandbox iframe(opaque origin)이다.
 // 보고서 안 그림을 누르면 앱 크게 보기로 연다(plan §8.353: host가 붙인 알림을 그 iframe에서만 받는다).
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, ListPlus, RefreshCw } from "lucide-react";
 import type { DeviceRole, LibraryFile, LibraryView } from "./gen/proto";
 import { ApiError, call } from "./api";
@@ -17,6 +17,14 @@ import { formatBytes } from "./formatBytes";
 import { reportDocLink } from "./tasksModel";
 import { LibraryCopyNotice } from "./LibraryCopyNotice";
 import { diagnosticReason } from "./errorDiagnostic";
+import { NoteButton, NoteEditor, SelectionActions } from "./ChatQuote";
+import { ReviewNotesCard, useNoteHighlights, useReportReveal, useReviewNotes } from "./ReviewNotes";
+import { requestReveal } from "./quoteHandoff.ts";
+import { resolveAnchor, revealRange } from "./textAnchor.ts";
+import type { ReviewNote } from "./reviewNoteStore.ts";
+import { captureAnchor, type TextAnchor } from "./textAnchor.ts";
+
+const NO_ANCHORS: readonly TextAnchor[] = [];
 
 export type ReportRef = { project: string; name: string };
 
@@ -25,8 +33,20 @@ const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/")
 /** task에 링크할 수 있는 결과물: host 사본이 있고(agent에만 있는 것은 thread로 넘길 사본이 없다) 첨부 줄로 쓸 수 있는 md·html */
 export const isDoc = (name: string, f: LibraryFile) => !f.on_agent && reportDocLink(name, f.path) !== null;
 
-/** 보고 글(report.md): `library/…` 그림을 그 보고서 보기 경로(`base`)로 그리고, 누르면 크게 본다(같은 글의 다른 그림으로 넘긴다) */
-export function ReportMarkdown({ base, text, onImages }: { base: string | null; text: string; onImages: (s: LightboxState) => void }) {
+/** 보고 글에 다는 의견(t-1222): 의견을 단 글(칠한다)과 새 의견 */
+export interface ReportNotes {
+  anchors: readonly TextAnchor[];
+  onAdd: (anchor: TextAnchor, comment: string) => boolean;
+}
+
+/**
+ * 보고 글(report.md): `library/…` 그림을 그 보고서 보기 경로(`base`)로 그리고, 누르면 크게 본다(같은 글의 다른 그림으로 넘긴다).
+ * `notes`가 있으면 글을 고른 끝에 「의견」이 뜬다(t-1222)
+ */
+export function ReportMarkdown({ base, text, onImages, notes }: { base: string | null; text: string; onImages: (s: LightboxState) => void; notes?: ReportNotes }) {
+  const root = useRef<HTMLDivElement>(null);
+  const [noting, setNoting] = useState(false);
+  useNoteHighlights(root, notes?.anchors ?? NO_ANCHORS, text);
   const attachment = useCallback((src: string) => base === null ? null : reportMarkdownImage(base, src), [base]);
   const resolve = useCallback(async (src: string) => {
     const url = base === null ? null : reportMarkdownImage(base, src);
@@ -35,6 +55,7 @@ export function ReportMarkdown({ base, text, onImages }: { base: string | null; 
   return (
     <MarkdownAttachmentContext.Provider value={attachment}><MarkdownImageContext.Provider value={resolve}>
       <div
+        ref={root}
         onClick={(e) => {
           const got = markdownImages(e.currentTarget, e.target);
           if (!got) return;
@@ -44,6 +65,20 @@ export function ReportMarkdown({ base, text, onImages }: { base: string | null; 
       >
         <Markdown className="report-markdown">{text}</Markdown>
       </div>
+      {notes && (
+        <SelectionActions container={root} active pick={captureAnchor} testId="report-note-actions">
+          {(picked, control) => noting ? (
+            <NoteEditor quote={picked.anchor.text} submitLabel="의견 추가"
+              onSubmit={(comment) => {
+                if (!notes.onAdd(picked.anchor, comment)) return false;
+                setNoting(false);
+                control.close();
+                return true;
+              }}
+              onCancel={() => { setNoting(false); control.hold(false); }} />
+          ) : <NoteButton testId="report-note" onClick={() => { control.hold(true); setNoting(true); }} />}
+        </SelectionActions>
+      )}
     </MarkdownImageContext.Provider></MarkdownAttachmentContext.Provider>
   );
 }
@@ -65,6 +100,7 @@ export function ReportsView({
   rev,
   onOpen,
   onAddDoc,
+  sendNotesTo,
 }: {
   shown: boolean;
   /** 연 보고서(없으면 목록) */
@@ -76,6 +112,8 @@ export function ReportsView({
   onOpen: (report: ReportRef | null) => void;
   /** 「할 일에 추가」: 보고서 안 md·html 문서를 링크한 task(조작 권한만, plan §8.327) */
   onAddDoc?: (name: string, path: string) => void;
+  /** 그 thread의 의견 모음을 pane 초안에 넣는 동작(t-1222). 없으면 돌고 있는 pane이 없다 */
+  sendNotesTo?: (project: string, thread: string) => ((text: string, done: (ok: boolean) => void) => void) | undefined;
 }) {
   // 목록은 보고서를 연 동안에도 그려 둔다. 숨으면 굴린 자리를 잃는 브라우저가 있어(display:none) 열 때 적고 돌아올 때 놓는다
   const listScroll = useRef<HTMLDivElement>(null);
@@ -105,7 +143,8 @@ export function ReportsView({
           </div>
         </div>
       </div>
-      {open !== null && <ReportDetail onVersion={(name) => onOpen({ project: open.project, name })} key={`${open.project}/${open.name}`} report={open} onBack={() => onOpen(null)} onAddDoc={onAddDoc && ((path) => onAddDoc(open.name, path))} />}
+      {open !== null && <ReportDetail onVersion={(name) => onOpen({ project: open.project, name })} key={`${open.project}/${open.name}`} report={open} onBack={() => onOpen(null)} onAddDoc={onAddDoc && ((path) => onAddDoc(open.name, path))}
+        canNote={role !== "reader"} sendNotesTo={sendNotesTo} />}
     </div>
   );
 }
@@ -131,7 +170,49 @@ function useReportExpiry(until: number | null): boolean {
 }
 
 /** 보고서 하나: 머리(뒤로·이름·다시 열기·새 창)와 index.html(없으면 보고 글·파일 목록). */
-function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportRef; onBack: () => void; onAddDoc?: (path: string) => void; onVersion: (id: string) => void }) {
+/**
+ * thread가 낸 보고 판의 글에 의견을 단다(t-1222): thread 화면과 같은 의견 모음이다. 의견의 「위치」가 이 판 밖이면 그 화면을 연다
+ */
+function NotedReport({ project, thread, report, base, text, onImages, sendNotes }: {
+  project: string; thread: string; report: string; base: string; text: string; onImages: (s: LightboxState) => void;
+  sendNotes?: (text: string, done: (ok: boolean) => void) => void;
+}) {
+  const notes = useReviewNotes(project, thread);
+  const root = useRef<HTMLDivElement>(null);
+  const anchors = useMemo(() => notes.notes.flatMap((n) => (n.source.kind === "report" && n.source.report === report ? [n.source.anchor] : [])), [notes.notes, report]);
+  useReportReveal(project, report, root, true);
+  const reveal = (note: ReviewNote) => {
+    const s = note.source;
+    if (s.kind === "report" && s.report === report) {
+      const el = root.current?.querySelector(".report-markdown");
+      const range = el ? resolveAnchor(el, s.anchor) : null;
+      if (range) revealRange(range);
+      return;
+    }
+    if (s.kind === "report") {
+      requestReveal({ kind: "report", project, report: s.report, anchor: s.anchor });
+      location.hash = `#report=${encodeURIComponent(`${project}/${s.report}`)}`;
+      return;
+    }
+    requestReveal({ kind: "diff", project, thread, scope: s.scope, path: s.path, range: s.range, text: s.rows.map((r) => r.text).join("\n") });
+    location.hash = `#thread=${encodeURIComponent(thread)}`;
+  };
+  return (
+    <>
+      <div ref={root}>
+        <ReportMarkdown base={base} text={text} onImages={onImages}
+          notes={{ anchors, onAdd: (anchor, comment) => notes.add({ kind: "report", report, anchor }, comment) }} />
+      </div>
+      <ReviewNotesCard thread={thread} api={notes} onReveal={reveal} sendNotes={sendNotes} />
+    </>
+  );
+}
+
+function ReportDetail({ report, onBack, onAddDoc, onVersion, canNote = false, sendNotesTo }: {
+  report: ReportRef; onBack: () => void; onAddDoc?: (path: string) => void; onVersion: (id: string) => void;
+  canNote?: boolean;
+  sendNotesTo?: (project: string, thread: string) => ((text: string, done: (ok: boolean) => void) => void) | undefined;
+}) {
   const [lib, setLib] = useState<LibraryView | null>(null);
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(true);
@@ -206,7 +287,10 @@ function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportR
             {lib.report && (
               <section className="card report">
                 <h2>보고</h2>
-                <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />
+                {canNote && lib.from_thread && lib.report_id
+                  ? <NotedReport project={report.project} thread={lib.from_thread} report={lib.report_id} base={lib.base} text={lib.report} onImages={lightbox.open}
+                    sendNotes={sendNotesTo?.(report.project, lib.from_thread)} />
+                  : <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />}
               </section>
             )}
             <section className="card files">
