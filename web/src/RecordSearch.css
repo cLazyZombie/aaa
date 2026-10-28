@@ -1,3 +1,5 @@
+/* 다른 본문으로 바꿔도 검색 상태·굴림 자리는 보존하고, 화면과 배치에서는 숨긴다(ReportsView와 같은 규칙). */
+.record-search.is-hidden { position:absolute; inset:0; visibility:hidden; pointer-events:none; }
 .record-search-form { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; }
 .record-query { display:flex; align-items:center; gap:8px; flex:1 1 240px; }
 .record-query svg { width:18px; height:18px; flex:none; color:var(--text-dim); }

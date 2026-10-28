@@ -38,6 +38,43 @@ export default async function () {
     assert.equal(aaa("search","예전메모","--kind","task").hits.length,1);
   });
 
+  await step("기록 검색은 데스크톱·휴대폰에서 다른 본문과 겹치지 않고 한 화면만 보인다",async()=>{
+    for (const width of [1280,390]) {
+      const {page,errors}=await pairPage(browser,aaa("web","pair").code,{width,height:844});
+      try {
+        const search=page.getByTestId("record-search");
+        const reports=page.getByTestId("reports-view");
+        const tasks=page.getByTestId("tasks-view");
+        const select=async(activity,view)=>{
+          await inList(page,`activity-${activity}`);
+          await domIs(page,`${activity} 본문 선택`,id=>document.querySelector(`[data-testid="${id}"]`)?.dataset.shown==="true",activity==="search" ? "record-search" : `${activity}-view`);
+          assert.ok(await view.isVisible(),`${width}: ${activity} 본문이 보인다`);
+          const fills=await view.evaluate(el=>{
+            const r=el.getBoundingClientRect();
+            const parent=el.closest(".view").getBoundingClientRect();
+            return Math.abs(r.bottom-parent.bottom)<=1;
+          });
+          assert.ok(fills,`${width}: ${activity} 본문이 아래까지 채운다`);
+        };
+        await inList(page,"activity-reports");
+        await reports.waitFor();
+        await select("search",search);
+        assert.equal(await reports.isVisible(),false,`${width}: 검색 중 보고서가 보이지 않는다`);
+        await select("reports",reports);
+        await shot(page,`record-single-reports-${width}`);
+        assert.equal(await search.isVisible(),false,`${width}: 보고서에서 기록 검색이 보이지 않는다`);
+        await select("tasks",tasks);
+        assert.equal(await search.isVisible(),false,`${width}: 할 일에서 기록 검색이 보이지 않는다`);
+        assert.equal(await reports.isVisible(),false,`${width}: 할 일에서 보고서가 보이지 않는다`);
+        await select("search",search);
+        assert.equal(await tasks.isVisible(),false,`${width}: 검색 중 할 일이 보이지 않는다`);
+        assert.equal(await reports.isVisible(),false,`${width}: 검색 중 보고서가 보이지 않는다`);
+        await shot(page,`record-single-search-${width}`);
+        assert.deepEqual(errors,[]);
+      } finally {await page.context().close();}
+    }
+  });
+
   async function scenario(engine,width,reader,label) {
     const paired=await pairPage(engine,aaa("web","pair",...(reader ? ["--reader"] : [])).code,{width,height:844});
     const {page,errors}=paired;
