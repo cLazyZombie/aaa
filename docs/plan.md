@@ -8296,3 +8296,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **E72.** main에 있던 큰 binary 전송과 화면 30초 대기의 결합을 양쪽 수리 전 코드에서 재현했다. 실제 비특권 SSH 거부와 화면 폼/오류 표시를 분리하고 전송·SHA·정리는 기존 host keeper가 맡는다. 시한·기대값·제품 신뢰 정책은 유지한다.
 - **번호·계약.** 착지 기준 main 60052d5c의 마지막 §8.536 다음 번호다. 기존 JSON 확장·내부 보존으로 FRONT_API 1.145·AGENT_LINK 1.11을 유지하며 새 웹 기능이 없어 E2E01~120 번호를 유지한다.
 - **검증.** [큰 입력·원장 회귀](testing-automation-large-input.md), [E72 수리 전후와 계약별 검사](testing-machine-plan-boundary.md)에 기록한다. 운영 복구는 배포 알림 뒤 보존 커서와 원인 사건·후속 보고 사건의 원장을 읽어 확인한다.
+
+
+### 8.538 Claude thread의 생각 수준 표시(t-1264)
+
+- **근거.** Claude Code 공식 문서가 생각 수준을 두 입력으로 준다. [hooks](https://code.claude.com/docs/en/hooks)의 공통 입력 `effort.level`(PreToolUse·PostToolUse·Stop·SubagentStop처럼 도구 문맥 사건, 모델이 effort를 받을 때만, 모델이 받지 않는 수준이면 실제로 돈 수준)과 [statusline](https://code.claude.com/docs/en/statusline)의 `effort.level`(세션 중 `/effort` 변경 반영, 모델이 받지 않으면 없음)이다. hook 명령·Bash에는 `$CLAUDE_EFFORT`도 있다. SessionStart·UserPromptSubmit 입력에는 없다(2.1.312 실측). 대화 기록 줄의 `effort`·`perTurnEffort`는 문서에 없는 칸이라 쓰지 않는다.
+- **동작.** agent는 이미 받는 Claude PostToolUse hook과 계정 thread의 상태줄(`aaa hook --agent quota`) 입력에서 본 세션의 `effort.level`을 세션별로 기억한다. 하위 agent 입력과 이 pane이 시작한 것과 다른 harness 세션 입력은 버리고, SessionStart(startup·resume)에서 비운다. 값이 바뀐 때만 시각을 옮겨 같은 값으로 사건을 다시 만들지 않는다. 칸이 없으면(effort를 받지 않는 모델) 비운다.
+- **표시.** §8.443의 모델 관측(기록의 `requestedModel`)에 이 수준을 붙여 Codex thread와 같은 자리에 「최근 확인 모델: opus 5.5 high」로 보인다. 모델을 아직 못 봤으면 수준만으로 관측을 만들지 않는다. 확인 시각은 모델·수준 중 늦은 것이다. 수준을 아직 받지 못했으면 기존처럼 「생각 수준 미확인」이다. 시작 profile의 effort는 여전히 추측하지 않는다.
+- **참고.** 상태줄 입력의 `effort.level`을 모델 옆에 보이는 [claude-status-line](https://jsr.io/@wyattjoh/claude-status-line)(MIT)과 [claudeline](https://pkg.go.dev/github.com/lexfrei/claudeline)(BSD-3-Clause)을 보았다. 칸 이름·없을 때 숨김을 따르고 코드·의존성은 가져오지 않았다.
+- **계약.** 기존 선택 `ModelObservation.effort`의 값만 채워 FRONT_API·AGENT_LINK 판과 웹 코드를 바꾸지 않는다. 새 hook·상태줄 설정도 더하지 않는다. 검증은 [생각 수준 검증](testing-claude-effort.md)에 둔다.

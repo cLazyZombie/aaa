@@ -8,6 +8,8 @@
 //!   `<task-notification>`(사람 쪽 글·queue-operation·attachment 세 자리)의 task-id·tool-use-id나 `TaskStop`·`KillShell`의 답이다.
 //!   참고와 달리 하위 agent 폴더(`<session>/subagents/`)는 읽지 않는다: 하위 agent의 기록으로 보는 팀 동료의 끝남 추정·
 //!   다시 깨운 agent·하위 agent가 띄운 배경 명령·토큰은 뺐다(plan §8.151).
+//! - 모델(plan §8.443): Codex는 `turn_context`의 model·effort, Claude는 본 대화 응답의 `requestedModel`이다. Claude의 생각
+//!   수준은 기록이 아니라 Claude Code 문서의 hook 입력(PostToolUse)·상태줄 입력의 `effort.level`로 받아 붙인다(`ClaudeEffort`).
 //! - 배경 작업은 그것을 띄운 Claude 프로세스 안에서 돈다: 지금 프로세스가 시작하기 전에 띄운 것은 세지 않는다(`since_ms`:
 //!   Claude SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
 //! - 컨텍스트 사용량(plan §8.321): Claude는 본 대화(sidechain 아님) assistant 줄의 `usage`(input + cache 생성 + cache 읽기,
@@ -728,6 +730,22 @@ impl Reader {
     }
 }
 
+/// Claude 본 세션이 hook(PostToolUse)·상태줄 입력의 `effort.level`로 알린 생각 수준. 모델이 effort를 받지 않으면 칸이 없어
+/// 비운다. 값이 바뀐 때만 시각을 옮긴다: 상태줄은 자주 불려 같은 값으로 사건을 다시 만들지 않는다.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ClaudeEffort {
+    level: Option<String>,
+    at_ms: u64,
+}
+
+impl ClaudeEffort {
+    /// 기록에서 읽은 모델에 붙인다. 아직 모델을 못 봤으면 생각 수준만으로 관측을 만들지 않는다
+    fn apply(&self, m: &mut ModelObservation) {
+        m.effort = self.level.clone();
+        m.at_ms = m.at_ms.max(self.at_ms);
+    }
+}
+
 /// 기록을 훑는 간격(참고 `SessionPlans` pollMs)
 const POLL_EVERY: Duration = Duration::from_secs(2);
 /// 기록을 아직 못 찾은 세션을 다시 찾아보는 간격(참고 retryMs). Codex rollout 찾기는 폴더를 훑는다
@@ -799,6 +817,32 @@ impl crate::Agent {
     /// Claude SessionStart(startup·resume)는 새 Claude 프로세스다: 그 전에 띄운 배경 작업은 이 프로세스에 없다
     pub(crate) fn harness_process_started(&self, session: &str, at_ms: u64) {
         self.plan_since.lock().unwrap().insert(session.to_string(), at_ms);
+        self.claude_effort.lock().unwrap().remove(session);
+    }
+
+    /// Claude hook·상태줄 입력의 생각 수준을 적는다. 하위 agent(frontmatter effort가 다를 수 있다)와 이 pane이 시작한 것과
+    /// 다른 harness 세션의 입력은 버린다
+    pub(crate) fn observe_claude_effort(&self, session: &str, p: &Value, now_ms: u64) {
+        if crate::hooks::subagent(p) {
+            return;
+        }
+        if let (Some(started), Some(id)) =
+            (self.harness_started.lock().unwrap().get(session), p.get("session_id").and_then(Value::as_str))
+            && started != id
+        {
+            return;
+        }
+        let level = p
+            .pointer("/effort/level")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|l| l.chars().take(WORDS).collect::<String>());
+        let mut map = self.claude_effort.lock().unwrap();
+        let e = map.entry(session.to_string()).or_default();
+        if e.level != level {
+            *e = ClaudeEffort { level, at_ms: now_ms };
+        }
     }
 
     fn poll_plans(&self) -> Vec<HarnessEvent> {
@@ -828,6 +872,11 @@ impl crate::Agent {
             wanted.push((session.clone(), ev.harness.clone(), ev.transcript.clone(), ev.harness_session.clone(), kept));
         }
         let since = self.plan_since.lock().unwrap().clone();
+        let efforts = {
+            let mut map = self.claude_effort.lock().unwrap();
+            map.retain(|s, _| running.contains_key(s));
+            map.clone()
+        };
         let mut tracks = self.plans.lock().unwrap();
         tracks.retain(|s, _| running.contains_key(s));
         let mut budget = POLL_BUDGET;
@@ -862,7 +911,12 @@ impl crate::Agent {
             }
             let Some(r) = t.reader.as_mut() else { continue };
             let from = since.get(&session).copied().unwrap_or(running[&session]);
-            let Some(snap) = r.poll(&mut budget, from as i64) else { continue };
+            let Some(mut snap) = r.poll(&mut budget, from as i64) else { continue };
+            if r.source == Source::Claude
+                && let (Some(m), Some(e)) = (snap.model_observation.as_mut(), efforts.get(&session))
+            {
+                e.apply(m);
+            }
             for reply in r.turns.completed.drain(..).filter(|r| r.finished_ms >= from) {
                 out.push(HarnessEvent {
                     session: session.clone(),
@@ -1022,6 +1076,43 @@ mod tests {
         assert_eq!(poll(&mut r).model_observation.unwrap().model, "claude-opus-5-5");
         append(&p, &[answer("claude-sonnet-5-5")]);
         assert_eq!(poll(&mut r).model_observation.unwrap().model, "claude-sonnet-5-5");
+    }
+
+    #[test]
+    fn model_observation_takes_claude_effort_from_documented_hook_input() {
+        let dir = std::env::temp_dir().join(format!("aaa-plan-effort-{}", aaa_common::util::new_id()));
+        let a = crate::Agent::new(dir.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let main = "0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b";
+        let hook = |id: &str, level: Option<&str>| {
+            let mut p = json!({"hook_event_name":"PostToolUse","session_id":id});
+            if let Some(l) = level {
+                p["effort"] = json!({"level":l});
+            }
+            p
+        };
+        let seen = |a: &crate::Agent| a.claude_effort.lock().unwrap().get("s").cloned();
+        a.harness_started.lock().unwrap().insert("s".into(), main.into());
+        a.observe_claude_effort("s", &hook(main, Some("high")), 10);
+        // 상태줄은 같은 값으로 자주 온다: 시각을 옮기지 않아 같은 관측을 다시 보내지 않는다
+        a.observe_claude_effort("s", &hook(main, Some("high")), 20);
+        assert_eq!(seen(&a), Some(ClaudeEffort { level: Some("high".into()), at_ms: 10 }));
+        // 하위 agent·다른 harness 세션의 수준은 본 세션 것이 아니다
+        let mut side = hook(main, Some("low"));
+        side["agent_id"] = json!("x");
+        a.observe_claude_effort("s", &side, 30);
+        a.observe_claude_effort("s", &hook("7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a", Some("low")), 30);
+        a.observe_claude_effort("s", &json!({"session_id":main,"effort":{"level":"max"}}), 40);
+        let mut m = ModelObservation { model: "claude-opus-5-5".into(), effort: None, at_ms: 5 };
+        seen(&a).unwrap().apply(&mut m);
+        assert_eq!((m.effort.as_deref(), m.at_ms), (Some("max"), 40));
+        // effort를 받지 않는 모델로 바꾸면 칸이 없다: 옛 수준을 남기지 않는다
+        a.observe_claude_effort("s", &hook(main, None), 50);
+        seen(&a).unwrap().apply(&mut m);
+        assert_eq!(m.effort, None);
+        a.observe_claude_effort("s", &hook(main, Some("high")), 60);
+        a.harness_process_started("s", 70);
+        assert_eq!(seen(&a), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

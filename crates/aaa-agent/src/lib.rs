@@ -205,6 +205,8 @@ pub struct Agent {
     plans: Mutex<HashMap<String, plan::Track>>,
     /// 세션마다 지금 harness 프로세스가 시작한 때(Claude SessionStart startup·resume, ms)
     plan_since: Mutex<HashMap<String, u64>>,
+    /// 세션마다 Claude가 hook·상태줄 입력으로 알린 생각 수준(plan.rs `ClaudeEffort`)
+    claude_effort: Mutex<HashMap<String, plan::ClaudeEffort>>,
     /// 세션마다 진행 알림 기록(Claude·Codex hook 안내, herdr-projects progress.rs `Record`). 기억만 한다: agent가 다시 뜨면 알림이
     /// 한 번 일찍 갈 수 있을 뿐이다.
     progress: Mutex<HashMap<String, hooks::Progress>>,
@@ -275,6 +277,7 @@ impl Agent {
             harness_started: Mutex::new(HashMap::new()),
             plans: Mutex::new(HashMap::new()),
             plan_since: Mutex::new(HashMap::new()),
+            claude_effort: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
             session_ready: tokio::sync::Notify::new(),
             health: Mutex::new(None),
@@ -411,6 +414,7 @@ impl Agent {
             );
         }
         if msg.harness == "quota" {
+            self.observe_claude_effort(&msg.session, &msg.payload, util::now_ms());
             return self.record_quota(&spec, &msg.payload).map(hooks::Reply::Text).map(Some);
         }
         if msg.harness == "claude"
@@ -420,6 +424,10 @@ impl Agent {
             self.harness_process_started(&msg.session, util::now_ms());
         }
         let now = util::now_ms();
+        if msg.harness == "claude" && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("PostToolUse")
+        {
+            self.observe_claude_effort(&msg.session, &msg.payload, now);
+        }
         if let Some(ev) = hooks::normalize(&msg.session, &msg.harness, &msg.payload, now) {
             if msg.harness == "report" {
                 let mut map = self.progress.lock().unwrap();
