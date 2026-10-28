@@ -1535,6 +1535,7 @@ impl Host {
         let file = read(&format!("threads/{}.summary.md", r.id));
         let summary = crate::summary::split_meta(&file).1.trim().to_string();
         let guide = THREAD_GUIDE.to_string();
+        let machine = self.machine_name(&r.machine_id);
         compose_brief(&BriefInput {
             title: &title,
             project: &r.project,
@@ -1542,6 +1543,8 @@ impl Host {
             repos: &settings.repos,
             uploads_path: &dir.join("uploads").to_string_lossy(),
             remote: !self.machine_is_local(&r.machine_id),
+            machine: &machine,
+            repo: r.repo.as_deref().map(crate::brief_text::repo_leaf),
             attachments: r.attachments.len(),
             guide: &guide,
             instructions: &instructions,

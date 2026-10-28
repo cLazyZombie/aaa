@@ -1,4 +1,4 @@
-// 웹 E2E 파일 규칙(docs/testing.md 「웹 E2E」): 기능별 spec과 공통 harness. 돌리기 전에(3분 실행 없이) 틀을 본다.
+// 웹 E2E 파일 규칙(docs/testing-rules.md 「웹 E2E」): 기능별 spec과 공통 harness. 돌리기 전에(3분 실행 없이) 틀을 본다.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

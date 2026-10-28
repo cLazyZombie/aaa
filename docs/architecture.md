@@ -100,4 +100,4 @@ flowchart LR
 | 머신 동작·터미널 변경 | `aaa-agent` → 필요하면 `aaa-session`·`aaa-vt`. 연결 계약과 OS 차이를 확인하고 해당 crate 시험 및 `crates/aaa/tests/`의 재접속·프로세스 시험을 고른다. |
 | 자동화 종류 추가 | host의 `automation/`·`routine.rs` → 조건 감시·실행·승인·기록. 설정 스키마와 웹 편집기를 맞추고 중복 실행·재시작 시험, [자동화 문서](automations.md)를 고친다. |
 
-설계 근거는 [plan.md](plan.md), 시험 선택과 작성 규칙은 [testing.md](testing.md)를 본다. 로컬·CI의 공통 검사 입구는 `scripts/ci-local.sh`이며 공개 전에는 `scripts/check-public.sh`로 내부 정보가 섞이지 않았는지 확인한다.
+설계 근거는 [plan.md](plan.md), 시험 작성 규칙은 [testing-rules.md](testing-rules.md), 검증 기록은 [testing.md](testing.md)를 본다. 로컬·CI의 공통 검사 입구는 `scripts/ci-local.sh`이며 공개 전에는 `scripts/check-public.sh`로 내부 정보가 섞이지 않았는지 확인한다.

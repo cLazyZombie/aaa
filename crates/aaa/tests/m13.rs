@@ -5542,7 +5542,7 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     }
     // 매 턴 문맥에 실리는 안내라 작게 둔다(Codex AGENTS.md 기본 한도 32 KiB, Claude Code 권장 200줄 미만)
     assert!(
-        guide.len() < 20 * 1024 && guide.lines().count() < 200,
+        guide.len() < 16 * 1024 && guide.lines().count() < 200,
         "{}바이트 {}줄",
         guide.len(),
         guide.lines().count()

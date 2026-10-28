@@ -4615,18 +4615,22 @@ fn health_text(m: &aaa_proto::MachineView) -> String {
     format!("\t{}", parts.join(" · "))
 }
 
-/// `claude, codex @mac-b: claude|codex, @mac-c(끊김, 모름)`
+/// `@mac-a·mac-b: claude|codex, @mac-c(끊김, 모름)`. 같은 목록을 가진 머신은 한 묶음으로 쓴다: coordinator가 매 턴 읽는
+/// `aaa context`에 머신마다 같은 목록이 되풀이됐다(t-1225).
 fn assignable_line(owners: &[aaa_proto::OwnerChoice]) -> String {
-    let parts: Vec<String> = owners
-        .iter()
-        .map(|o| {
-            if !o.connected {
-                format!("@{}(끊김, 모름)", o.machine)
-            } else {
-                format!("@{}: {}", o.machine, if o.profiles.is_empty() { "-".into() } else { o.profiles.join("|") })
-            }
-        })
-        .collect();
+    let mut groups: Vec<(Vec<&str>, String)> = Vec::new();
+    for o in owners {
+        let what = match (o.connected, o.profiles.is_empty()) {
+            (false, _) => "(끊김, 모름)".to_string(),
+            (true, true) => ": -".to_string(),
+            (true, false) => format!(": {}", o.profiles.join("|")),
+        };
+        match groups.iter_mut().find(|(_, w)| *w == what) {
+            Some((machines, _)) => machines.push(&o.machine),
+            None => groups.push((vec![&o.machine], what)),
+        }
+    }
+    let parts: Vec<String> = groups.iter().map(|(machines, what)| format!("@{}{what}", machines.join("·"))).collect();
     format!("맡길 수 있는 모델(머신별, task 칸은 --profile·--machine): {}", parts.join(", "))
 }
 
@@ -4797,7 +4801,10 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         if c.auto_mode.on { "on" } else { "off" },
         c.auto_mode.decisions
     );
-    let _ = writeln!(s, "auto 예외(늘 사용자): {}", c.auto_mode_exceptions);
+    // 예외는 스스로 답할 때만 쓴다: 꺼져 있으면 매 턴 싣지 않는다(JSON에는 늘 있다)
+    if c.auto_mode.on {
+        let _ = writeln!(s, "auto 예외(늘 사용자): {}", c.auto_mode_exceptions);
+    }
     let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
     match &c.web_url {
         Some(u) => {

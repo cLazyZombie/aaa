@@ -431,7 +431,8 @@ impl Agent {
         // aaa가 hook 설정을 주는 thread 세션만 안내한다(herdr-projects `managed`: coordinator·thread pane)
         let managed = spec.spec.role.is_some();
         Ok(if managed && matches!(msg.harness.as_str(), "claude" | "codex") {
-            let auto_context = if spec.spec.role == Some(aaa_proto::Role::Coordinator)
+            let coordinator = spec.spec.role == Some(aaa_proto::Role::Coordinator);
+            let auto_context = if coordinator
                 && matches!(hooks::guide_kind(&msg.payload), Some("SessionStart" | "UserPromptSubmit"))
             {
                 let project = spec
@@ -445,16 +446,18 @@ impl Agent {
             } else {
                 None
             };
+            let reentry = spec
+                .spec
+                .env
+                .iter()
+                .find(|(key, _)| key == aaa_proto::AUTOMATION_REENTRY_ENV)
+                .map(|(_, text)| text.as_str());
             self.guide(
                 &msg.session,
                 &msg.payload,
-                spec.spec
-                    .env
-                    .iter()
-                    .find(|(key, _)| key == aaa_proto::AUTOMATION_REENTRY_ENV)
-                    .map(|(_, text)| text.as_str()),
+                hooks::Reader { thread: !coordinator, reentry },
                 now,
-                auto_context.as_deref(),
+                auto_context.as_ref().map(|(state, text)| (state.as_str(), text.as_str())),
             )
             .map(hooks::Reply::Text)
         } else {
@@ -464,13 +467,15 @@ impl Agent {
 
     /// Claude·Codex hook에 넣을 진행 안내(herdr-projects progress.rs `hook`). 이 세션이 시작한 harness 세션과 다른 세션의 사건에는
     /// 넣지 않는다(`foreign_session`). 실행 파일 경로는 brief와 같은 꼴이다(`fill_brief`).
+    /// coordinator auto mode 상태는 SessionStart(compaction 포함)와 상태가 바뀐 뒤 첫 입력에만 넣는다: hook 글은 compaction
+    /// 전까지 매 요청에 다시 실리고, 같은 상태는 이미 대화에 있다.
     fn guide(
         &self,
         session: &str,
         p: &serde_json::Value,
-        reentry: Option<&str>,
+        reader: hooks::Reader,
         now: u64,
-        auto_context: Option<&str>,
+        auto_context: Option<(&str, &str)>,
     ) -> Option<String> {
         let kind = hooks::guide_kind(p)?;
         let id = p.get("session_id").and_then(|v| v.as_str());
@@ -482,17 +487,15 @@ impl Agent {
         }
         let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
         let mut map = self.progress.lock().unwrap();
-        let mut text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now, reentry)?;
-        if let Some(context) = auto_context {
-            text.push_str("\n\n");
-            text.push_str(context);
-        }
-
+        let rec = map.entry(session.to_string()).or_default();
+        let progress = hooks::respond(rec, kind, &prefix, now, reader, hooks::typed_by_aaa(p));
+        let text = hooks::with_auto_mode(rec, progress, auto_context)?;
         Some(hooks::output(kind, &text))
     }
 
-    /// coordinator는 host 머신에 있다. 재시작·compaction 뒤에도 캐시 대신 host의 정본을 읽는다.
-    async fn coordinator_auto_context(&self, project: &str) -> String {
+    /// coordinator는 host 머신에 있다. 재시작·compaction 뒤에도 캐시 대신 host의 정본을 읽는다. (상태, 안내)를 돌려준다:
+    /// 예외 목록은 켜져 있을 때만 싣는다(꺼져 있으면 쓸 데가 없고, 켜지면 그 입력에 다시 넣는다).
+    async fn coordinator_auto_context(&self, project: &str) -> (String, String) {
         let root = self.state.parent().unwrap_or(&self.state);
         let result = tokio::time::timeout(Duration::from_secs(2), async {
             let mut client = aaa_common::front::FrontClient::connect(root).await?;
@@ -503,15 +506,21 @@ impl Agent {
         })
         .await;
         match result {
-            Ok(Ok(mode)) => format!(
-                "aaa coordinator auto_mode: {} · 자동 결정 {}. 매 턴 aaa context로 다시 확인한다. harness 권한과 무관하며 사용자 전용 승인을 대신하지 않는다. 예외: {}",
-                if mode.on { "on" } else { "off" },
-                mode.decisions,
-                aaa_proto::AUTO_MODE_EXCEPTIONS
+            Ok(Ok(mode)) if mode.on => (
+                "on".into(),
+                format!(
+                    "aaa coordinator auto_mode: on · 자동 결정 {}. 일반 질문은 `aaa guide auto-mode`대로 스스로 정한다. harness 권한과 무관하며 사용자 전용 승인을 대신하지 않는다. 늘 사용자에게 물을 예외: {}",
+                    mode.decisions,
+                    aaa_proto::AUTO_MODE_EXCEPTIONS
+                ),
             ),
+            Ok(Ok(_)) => ("off".into(), "aaa coordinator auto_mode: off. 켜지면 다음 입력에 알린다.".into()),
             other => {
                 tracing::warn!("coordinator hook auto mode 조회 실패: {other:?}");
-                "aaa coordinator auto_mode: 확인 못함. 자동 결정 전에 aaa context로 host 상태와 예외 목록을 확인한다. 이전 상태를 추측하지 않는다.".into()
+                (
+                    "unknown".into(),
+                    "aaa coordinator auto_mode: 확인 못함. 자동 결정 전에 aaa context로 host 상태와 예외 목록을 확인한다. 이전 상태를 추측하지 않는다.".into(),
+                )
             }
         }
     }

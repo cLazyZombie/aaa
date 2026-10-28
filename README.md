@@ -181,7 +181,7 @@ auto mode는 coordinator의 **더 보기 메뉴**에서 켭니다. 자동 결정
 | [자동화](docs/automations.md) | 일정·사건·승인·실행 기록 |
 | [보고서 운영](docs/library.md) | 결과물·보관·웹 보고서 sandbox |
 | [구조 지도](docs/architecture.md) / [프로젝트 계획](docs/plan.md) | crate 역할과 설계 결정 |
-| [시험 쓰는 법](docs/testing.md) | 유닛·통합·웹 E2E 검증 |
+| [시험 쓰는 법](docs/testing-rules.md) / [검증 기록](docs/testing.md) | 유닛·통합·웹 E2E 규칙과 기능별 검증 |
 
 ## 개발
 
