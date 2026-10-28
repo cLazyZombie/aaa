@@ -10,7 +10,7 @@
   한 줄(60px 미만)로 시작하고 펼친 목록이 화면 절반을 넘지 않는지, 「괜찮음」으로 확인한 결정이 없는지, 줄의 확인·지우기가 다른 기기
   대화창에서도 빠지고 host 기록이 바뀌는지, 카드 지우기, 「모두 지우기」 뒤 목록 0·`auto_next` 없음·자동 답만의 「답한 것」 없음·새로 읽은
   대화창 줄 없음, 보기 기기의 `auto_decision_forget` 거부를 본다. 기존 Chromium·WebKit 반복 단계는 접힘 시작과 펼친 줄의 폭·한 줄 높이를
-  본다. 고정 sleep·재시도·시한 확대는 없고 DOM 상태와 host 기록으로 끝낸다. 단계 약 1.5초, 파일 약 21초(studio1 단독)다.
+  본다. 고정 sleep·재시도·시한 확대는 없고 DOM 상태와 host 기록으로 끝낸다. 단계 약 1.5초, 파일 약 21초(Mac 단독)다.
 - 부분 검증: `cargo test -p aaa-host --lib`, `cargo test -p aaa-proto`, `AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript`,
   `cargo clippy -p aaa-host -p aaa-proto --all-targets -- -D warnings`, 웹 `tsc`·build·`npm test`, E2E100(Playwright 1.64.1 패키지는 작업 폴더
   밖 임시 폴더, 브라우저는 공용 캐시). 전체 ci-local·공개 검사·cross는 정규 착지 회차에서 돈다.
