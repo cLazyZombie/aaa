@@ -270,7 +270,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.139: 대화·터미널에서 고른 글을 출처와 함께 입력 초안에 인용(t-1204). wire 형식은 그대로다.
 // 1.140: host 작업 기록 통합 검색과 검색된 원문 판 열기(t-1205).
 // 1.141: E2E12 네이티브 소켓 재연결·연결 중 취소 검증(t-1211). wire 형식은 그대로다.
-pub const FRONT_API: Version = Version { major: 1, minor: 141 };
+// 1.142: 답보다 늦은 첫 trust 관측의 중복 질문 방지(t-1212). wire 형식은 그대로다.
+pub const FRONT_API: Version = Version { major: 1, minor: 142 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

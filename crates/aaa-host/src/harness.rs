@@ -273,7 +273,7 @@ impl Host {
                 p.turn_from = None;
                 p.turn_reported = false;
                 p.alert = None;
-                p.answered = false;
+                p.answered = None;
                 p.transcript = None;
                 aaa_common::diagnostic::ignored(
                     p.events.send(crate::PaneEvent::State),
@@ -364,13 +364,22 @@ impl Host {
                 st.progress_at_ms = None;
                 st.progress_since_ms = None;
             }
-            // 이 막힘(상태가 질문에서 넘어가지 않았다)에서 이미 답했다: 늦게 온 질문 사건은 답한 그 질문이다
-            let answered_block = !anew
-                && next == Some(AgentActivity::Question)
-                && prev.as_ref().is_some_and(|a| a.activity == AgentActivity::Question)
-                && p.answered;
-            if next.is_some_and(|a| a != AgentActivity::Question) {
-                p.answered = false;
+            // brief 화면 읽기가 먼저 질문을 열고 답할 수 있다. 아직 Question을 관측하지 않았다면
+            // 종류·본문이 같은 첫 사건은 답한 그 창이다. 이미 관측한 막힘의 재질문은 agent 계약을 따른다.
+            let was_question = prev.as_ref().is_some_and(|a| a.activity == AgentActivity::Question);
+            let answered_block = next == Some(AgentActivity::Question)
+                && p.answered.as_ref().is_some_and(|(kind, text)| {
+                    if was_question {
+                        !anew
+                    } else {
+                        kind == ev.question_kind.as_deref().unwrap_or("permission")
+                            && text == ev.message.as_deref().unwrap_or_default()
+                    }
+                });
+            if next.is_some_and(|a| a != AgentActivity::Question)
+                || (next == Some(AgentActivity::Question) && !was_question && !answered_block)
+            {
+                p.answered = None;
             }
             // 알림이 본 앞 상태(BG로 기다리는 쉼은 작업 중, notice.rs `alert_activity`)
             let was_alert =
@@ -487,7 +496,8 @@ impl Host {
         // 아예 버리고(`integration/assets/claude/herdr-agent-state.sh`: `session` 말고는 exit 0) 화면 감지는 막힘에 들어설
         // 때만 알린다. 옛 agent는 도구마다 PreToolUse·PostToolUse(작업 중)를 내므로 다음 확인창은 새 막힘이다(t-0333 m13
         // 사건 16, plan §8.99·§8.110). `ask_anew.v1` agent는 화면 감지만 질문을 내고, 막힘에 입력이 간 뒤 남은 확인창을
-        // 새 물음으로 다시 알린다(herdr-web-ui `askingEnded`, QA t-0337 Q18): 답한 질문 뒤의 질문 사건은 새 질문이다
+        // 새 물음으로 다시 알린다(herdr-web-ui `askingEnded`, QA t-0337 Q18). 단 brief 화면 읽기로 이미 답한
+        // 창의 첫 관측은 같은 종류·본문이면 기존 답에 묶는다(plan §8.529).
         // 끝난 세션(재부팅으로 끊김·종료)에는 질문을 열지 않는다: 다시 붙은 agent가 알리는 세션별 마지막 상태
         // (`hello.harness`, 재부팅 복원이 harness 세션 ID를 알려고)가 확인창이면 그 pane 질문을 닫은 뒤 다시 열었다
         // (QA t-0337 Q20). 참고 herdr-web-ui는 살아 있는 blocked pane 화면에서만 질문을 읽는다(`server/prompt.ts`).
@@ -539,7 +549,7 @@ impl Host {
         if q.state == QuestionState::Answered
             && let Some(p) = self.inner.lock().unwrap().panes.get_mut(&q.pane)
         {
-            p.answered = true;
+            p.answered = Some((q.question_kind.clone(), q.text.clone()));
         }
         let state = match q.state {
             QuestionState::Open => "open",
@@ -2016,6 +2026,132 @@ mod tests {
         h.on_harness("m", ev("question", 4_000));
         let again = h.open_question_of("s").expect("다음 확인창의 질문");
         assert_ne!(again.id, q.id);
+    }
+
+    /// brief 화면 읽기 → 실제 답 저장 → 첫 감지 Question → Idle을 직접 순서대로 처리한다.
+    /// 감지 사건이 먼저 온 기존 회귀와 달리, 답할 때 host 상태는 아직 Idle이다.
+    #[tokio::test]
+    async fn a_late_first_trust_observation_keeps_the_answered_brief_question() {
+        use aaa_proto::{AgentResponse, LinkMsg, Role, ThreadKind};
+
+        for anew in [false, true] {
+            let (h, _tmp) = host_with_pane();
+            h.project_create("demo", Default::default(), "test").unwrap();
+            let mut r = ThreadRec::starting("demo", "시험", "m", "claude", Role::Worker, ThreadKind::Dir, 1);
+            r.id = "t-0001".into();
+            r.pane = Some("s".into());
+            r.status = ThreadStatus::Open;
+            h.db.thread_import("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+            h.on_harness("m", codex_event("idle", 1_000));
+
+            let screen =
+                "Quick safety check: Do you trust the files in this folder?\n❯ 1. Yes\n  2. No, exit\nEnter to confirm";
+            let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+            let conn = crate::AgentConn::new(outgoing, 1);
+            h.inner.lock().unwrap().machines.insert(
+                "m".into(),
+                crate::MachineRt {
+                    name: "mac-a".into(),
+                    local: true,
+                    os: None,
+                    boot_id: None,
+                    dev_mode: true,
+                    conn: Some(conn.clone()),
+                    last_seen_ms: None,
+                    health: None,
+                    health_sent: None,
+                    features: if anew { vec!["ask_anew.v1".into()] } else { vec![] },
+                    identity: None,
+                    agent_pid: None,
+                    colors: None,
+                    build: Default::default(),
+                },
+            );
+            let fake = tokio::spawn(async move {
+                while let Some((_, bytes)) = frames.recv().await {
+                    let LinkMsg::Req { id, body, .. } = serde_json::from_slice(&bytes).unwrap() else {
+                        panic!("요청")
+                    };
+                    let reply = match body {
+                        AgentRequest::Screen { .. } => AgentResponse::Screen(aaa_proto::ScreenText {
+                            session: "s".into(),
+                            cols: 80,
+                            rows: 24,
+                            lines: lines(screen),
+                            cursor_row: 0,
+                            cursor_col: 0,
+                            ansi: screen.into(),
+                        }),
+                        AgentRequest::Input { data, .. } => {
+                            assert_eq!(data.0, b"\r");
+                            AgentResponse::Done
+                        }
+                        other => panic!("예상 밖 요청: {other:?}"),
+                    };
+                    conn.pending.lock().unwrap().remove(&id).unwrap().send(aaa_proto::Outcome::Ok(reply)).unwrap();
+                }
+            });
+
+            let error = h.thread_brief("demo", &r.id, "test").await.unwrap_err();
+            assert!(error.message.contains("확인창에 답을 기다린다"), "{error:?}");
+            let q = h.open_question_of("s").expect("brief가 연 신뢰 질문");
+            assert_eq!(q.question_kind, "trust");
+            let answered = h.answer(&q.id, "yes", "test").await.unwrap();
+            assert_eq!(answered.state, QuestionState::Answered);
+            assert_eq!(h.pane_agent("s").unwrap().activity, AgentActivity::Idle);
+
+            let observed = HarnessEvent {
+                harness: "claude".into(),
+                question_kind: Some(q.question_kind.clone()),
+                message: Some(q.text.clone()),
+                ..codex_event("question", 2_000)
+            };
+            h.on_harness("m", observed.clone());
+            assert!(h.open_question_of("s").is_none(), "첫 관측이 답한 질문을 다시 열었다: anew={anew}");
+            h.on_harness("m", codex_event("idle", 3_000));
+            let saved = h.questions(true);
+            assert_eq!(saved.len(), 1, "Idle이 중복 질문을 Gone으로 숨기면 안 된다: {saved:?}");
+            assert_eq!(
+                (saved[0].id.as_str(), saved[0].state, saved[0].answer.as_deref()),
+                (q.id.as_str(), QuestionState::Answered, Some("yes"))
+            );
+
+            // 같은 본문도 막힘이 끝난 뒤 다시 나타나면 다음 질문이다.
+            h.on_harness("m", HarnessEvent { at_ms: 4_000, ..observed.clone() });
+            let next = h.open_question_of("s").unwrap();
+            assert_ne!(next.id, q.id);
+            h.answer(&next.id, "yes", "test").await.unwrap();
+            // 이미 관측한 막힘은 원래 계약대로: 새 agent의 재질문은 열고 옛 중복 사건은 묶는다.
+            h.on_harness("m", HarnessEvent { at_ms: 5_000, ..observed });
+            assert_eq!(h.open_question_of("s").is_some(), anew);
+            fake.abort();
+            assert!(fake.await.unwrap_err().is_cancelled());
+        }
+    }
+
+    /// 첫 감지가 다른 창이면 앞 신뢰 답으로 가리지 않는다. 그 새 질문의 답 전 중복도 열린 질문 하나다.
+    #[tokio::test]
+    async fn a_different_first_observation_is_not_an_answered_screen_question() {
+        for (kind, text) in [("permission", "Do you want to proceed?"), ("trust", "Do you trust another folder?")] {
+            let (h, _tmp) = host_with_pane();
+            h.on_harness("m", codex_event("idle", 1_000));
+            let mut trust = h.ask("s", "trust", "Do you trust the files in this folder?".into());
+            trust.state = QuestionState::Answered;
+            trust.answer = Some("yes".into());
+            h.save_question(&trust);
+            let ev = HarnessEvent {
+                question_kind: Some(kind.into()),
+                message: Some(text.into()),
+                ..codex_event("question", 2_000)
+            };
+            h.on_harness("m", ev.clone());
+            let next = h.open_question_of("s").expect("다른 첫 질문은 열린다");
+            assert_ne!(next.id, trust.id);
+            assert_eq!((next.question_kind.as_str(), next.text.as_str()), (kind, text));
+            h.on_harness("m", HarnessEvent { at_ms: 3_000, ..ev });
+            assert_eq!(h.open_question_of("s").unwrap().id, next.id);
+            assert_eq!(h.questions(true).len(), 2);
+        }
     }
 
     /// 대화 정리(plan §8.309): 화면 감지의 `compacting`은 작업 중이고 정리 표지를 단다. 같은 작업 중이라 상태가 된 때(목록 차례)는

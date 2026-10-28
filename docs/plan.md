@@ -8203,3 +8203,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - E2E12는 `routeWebSocket`을 빼고 관측하는 실제 events 소켓을 닫아 재연결한다. 기존 HTTP 보류·두 독립 완전 목록·실제 DOM 검사는 유지하고, 연결 중 pane 취소 keeper를 두 엔진의 기존 단계에 더한다. 착지 기준 main §8.527·FRONT_API 1.140 다음 §8.528·FRONT_API 1.141을 쓴다. wire·AGENT_LINK·의존성·E2E 번호와 E30·35의 두 파일 분할은 유지한다. 재현과 참고 구현·라이선스는 docs/testing-terminal-socket.md에 적는다.
 
 - 첫 착지의 이전 문서 응답 선행 실패는 gate를 reload 문서에 묶고 그 문서의 events open·close 사건으로 disconnect를 끝내도록 수리한다. 두 사건 순서 keeper가 수리 전 실패/후 통과를 보이며 기존 시한·목록 단언을 유지한다.
+
+### 8.529 답보다 늦은 첫 신뢰 질문 관측(t-1212)
+
+- brief 화면 읽기가 먼저 연 신뢰 질문에 답하면, host의 harness 상태가 아직 시작·쉼이어도 같은 종류·본문의 첫 Question 사건은 이미 답한 질문에 묶는다. Idle에서 Gone으로 닫히는 중복 기록도 만들지 않는다.
+- 답한 질문의 종류·본문은 pane 안에서만 기억한다. agent 시각과 host 시각을 비교하거나 기다림을 늘리지 않는다. 다른 질문은 바로 열고, 막힘을 벗어난 뒤 같은 질문이 다시 나타나도 새 질문으로 연다. 이미 관측한 막힘의 `ask_anew.v1` 재질문과 옛 agent의 중복 사건 처리도 유지한다. wire·저장 형식·AGENT_LINK는 유지하고 FRONT_API는 기준 main 1.141 다음 1.142를 쓴다.
+- 회귀는 실제 Host·SQLite·brief 처리·답 저장을 사용해 Idle → brief 질문 → yes → 첫 Question → Idle을 직접 순서대로 실행한다. 질문 하나의 Answered·yes 보존과 새 확인창 허용을 함께 검사한다. 원래 m13의 기대값·시한과 agent 감지기의 800ms 경계는 유지한다.
+- 참고 후보는 [Tokio watch의 관측과 변경 알림 구분](https://docs.rs/tokio/latest/tokio/sync/watch/index.html#borrow_and_update-versus-borrow)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))과 [Temporal의 명령·사건 대응 및 재생](https://docs.temporal.io/encyclopedia/event-history/event-history-go)([MIT](https://github.com/temporalio/sdk-rust/blob/main/LICENSE.txt))이다. 같은 관측과 새 사건을 구별하는 원칙만 참고하며 외부 코드·의존성은 가져오지 않는다.
+
+- 착지 기준 main의 마지막 §8.528 다음 §8.529를 쓴다. E30·35의 기존 두 파일 분할을 보존한다. 검증 상세는 [첫 trust 관측 회귀와 착지 검증](testing-trust-observation.md)에 둔다.
