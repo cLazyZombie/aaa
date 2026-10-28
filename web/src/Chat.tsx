@@ -12,7 +12,7 @@ import { AutoDecisionLines } from "./AutoMode";
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Eye, Globe, Hammer, LoaderCircle, Minimize2, Search, SquarePen, Terminal, TriangleAlert, Wrench } from "lucide-react";
+import { ArrowDown, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, CornerUpLeft, Eye, Globe, Hammer, LoaderCircle, Minimize2, Search, SquarePen, Terminal, TriangleAlert, Wrench } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView, ContextCompaction } from "./gen/proto";
 import { compactionText } from "./contextUsage";
@@ -34,9 +34,10 @@ import { usePageVisible } from "./pageVisible";
 import { mergeChatPage } from "./chatPages";
 import { steerLabel, type SteerState } from "./steerQueued";
 import { groupChatRows, groupExpanded, readExpandedGroups, rememberExpandedGroups, rowIndexById, summarizeToolGroup, toggleExpanded, toolGroupKind, type ChatDisplayRow, type ToolGroupKind } from "./toolGroups";
-import { ChatFindBar, useChatFind, type OlderOutcome } from "./ChatFind";
+import { ChatFindBar, findText, useChatFind, type OlderOutcome } from "./ChatFind";
 import { ChatQuoteButton } from "./ChatQuote";
-import type { QuoteSpeaker } from "./selectionQuote.ts";
+import { parseQuotes, quoteRefLabel, type QuoteRef, type QuoteSpeaker } from "./selectionQuote.ts";
+import { countInSegments, messageFindSegments } from "./chatFindText";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
@@ -355,8 +356,24 @@ function PendingTag({ harness, stage, working, stale, onDismiss, steer }: Pendin
   );
 }
 
+/** 보낸 말 속 인용마다 그 자리로 돌아가는 단추(t-1222, 참고 t3code 인용 칩을 누르면 원문 자리를 고른다) */
+function QuoteReturns({ text, onReturn }: { text: string; onReturn: (ref: QuoteRef) => void }) {
+  const refs = useMemo(() => parseQuotes(text), [text]);
+  if (refs.length === 0) return null;
+  return (
+    <div className="chat-quote-returns">
+      {refs.map((ref, i) => (
+        <button key={i} type="button" className="ghost small chat-quote-return" data-testid="chat-quote-return" title={`인용 위치로: ${quoteRefLabel(ref)}`} onClick={() => onReturn(ref)}>
+          <CornerUpLeft aria-hidden="true" />
+          <span>{quoteRefLabel(ref)}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** 사람 말: 카드와 그 복사(마우스면 카드 옆, 터치면 아래) */
-function UserTurn({ active, text, pane, onOpenFile, pending }: { active: boolean; text: string; pane: string; onOpenFile?: (path: string) => void; pending?: Pending }) {
+function UserTurn({ active, text, pane, onOpenFile, pending, onQuoteReturn }: { active: boolean; text: string; pane: string; onOpenFile?: (path: string) => void; pending?: Pending; onQuoteReturn?: (ref: QuoteRef) => void }) {
   const { note, onResult } = useCopyResult();
   const inbox = text.trimStart().startsWith("[aaa inbox] ");
   return (
@@ -369,6 +386,7 @@ function UserTurn({ active, text, pane, onOpenFile, pending }: { active: boolean
           <CopyButton active={active} text={text} label="메시지 복사" onResult={onResult} />
         </div>
       </div>
+      {onQuoteReturn && <QuoteReturns text={text} onReturn={onQuoteReturn} />}
       {pending && <PendingTag {...pending} />}
       {note}
     </article>
@@ -444,6 +462,7 @@ export function ChatPanel({
   steer,
   findRequest = 0,
   onQuote,
+  onQuoteReturn,
 }: {
   active?: boolean;
   onBytes?: (bytes: number) => void;
@@ -469,7 +488,9 @@ export function ChatPanel({
   /** 머리 돋보기·팔레트 「대화에서 찾기」가 올린다: 바뀌면 찾기 칸을 연다(plan §8.308) */
   findRequest?: number;
   /** 고른 글을 이 pane 입력 초안에 인용한다(t-1204). 없으면(보기 권한·입력창 없음) 단추를 띄우지 않는다 */
-  onQuote?: (text: string, speaker: QuoteSpeaker) => boolean;
+  onQuote?: (text: string, speaker: QuoteSpeaker, comment?: string) => boolean;
+  /** 보낸 말 속 인용의 자리로(t-1222). 대화 인용은 이 기록에서 찾고, 터미널·보고·diff 인용은 이것이 연다 */
+  onQuoteReturn?: (ref: QuoteRef) => void;
 }) {
   const visible = usePageVisible();
   const reading = active && visible;
@@ -726,6 +747,27 @@ export function ChatPanel({
   const messageRowIds = useMemo(() => chatRowIds(chatMessages), [chatMessages]);
   const find = useChatFind({ enabled: active, container: list, messages: chatMessages, rowIds: messageRowIds, canOpen: onOpenFile !== undefined, openRequest: findRequest,
     more: Boolean(chat?.before || chat?.truncated), loadEarlier: chat?.history && chat.before ? () => pageOlder(true) : null });
+  // 대화 인용의 자리(t-1222): 그 인용을 보낸 말 앞에서 가장 가까운, 인용 첫 줄이 든 말을 찾기 칸으로 고른다. 받아 둔 기록에 없으면
+  // (앞 기록) 찾기 칸만 그 말로 연다(「앞 기록도 찾기」로 이어 간다)
+  const quoteReturn = (ref: QuoteRef, index: number) => {
+    if (ref.kind !== "chat") {
+      onQuoteReturn?.(ref);
+      return;
+    }
+    const query = (ref.text.split("\n").find((line) => line.trim() !== "") ?? "").trim().slice(0, 120);
+    const canOpen = onOpenFile !== undefined;
+    for (let i = Math.min(index, chatMessages.length) - 1; i >= 0; i--) {
+      const m = chatMessages[i]!;
+      const text = findText(m);
+      // 화자를 밝힌 인용은 그 화자의 말에서만(같은 글을 앞서 인용한 사람 말로 가지 않는다)
+      if (ref.who !== null && (ref.who === "사람 글") !== (m.role === "user")) continue;
+      if (text !== null && countInSegments(messageFindSegments(m, text, canOpen), query) > 0) {
+        find.seek(query, messageRowIds[i] ?? null);
+        return;
+      }
+    }
+    find.seek(query, null);
+  };
   // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
   // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
   // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다). 같은 자리를 이 pane의 읽던 자리로도 기억한다(plan §8.266, 참고 MessagesTimeline
@@ -1034,7 +1076,7 @@ export function ChatPanel({
               ) : m.role === "command_output" ? (
                 <CommandOutputRow key={key} text={m.text} />
               ) : m.role === "user" ? (
-                <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
+                <UserTurn active={active} key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, i))} pending={m.pending ? { harness, stage: "queued", working: status === "working", steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (
                 <AgentTurn active={active} key={key} text={m.text} />
               ) : (
@@ -1056,7 +1098,7 @@ export function ChatPanel({
           })}
           {coordinator && <AutoDecisionLines />}
           {pending.map((p) => (
-            <UserTurn active={active} key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
+            <UserTurn active={active} key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile} onQuoteReturn={onQuoteReturn && ((ref) => quoteReturn(ref, chatMessages.length))}
               pending={{ harness, stage: p.stage, working: status === "working", stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
           ))}
           {chat && chat.messages.length === 0 && pending.length === 0 && !error && !compacting && <p className="chat-note">아직 대화가 없다.</p>}

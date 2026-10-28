@@ -74,11 +74,13 @@ import { pasteText } from "./pasteText.ts";
 import { migrateMachineDrafts } from "./machineIdentity.ts";
 import { readTerminalDraft, writeTerminalDraft, TERMINAL_LINE_LIMIT } from "./herdr/terminalDraft.ts";
 import { composerDrafts } from "./herdr/composerDraft.ts";
-import { appendQuote, formatChatQuote, formatTerminalQuote, quotedText, type QuoteSpeaker } from "./selectionQuote.ts";
+import { appendQuote, formatChatQuote, formatTerminalQuote, quotedText, withComment, type QuoteRef, type QuoteSpeaker } from "./selectionQuote.ts";
+import { NoteEditor } from "./ChatQuote";
+import { subscribeHandoff, takeDraft } from "./quoteHandoff.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ArrowDown, Quote, RotateCcw, Search, TriangleAlert } from "lucide-react";
+import { ArrowDown, MessageSquarePlus, Quote, RotateCcw, Search, TriangleAlert } from "lucide-react";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
@@ -149,6 +151,7 @@ export function TermView({
   autoSelected = false,
   focusRequest = 0,
   quoteSource,
+  onQuoteReturn,
 }: {
   pane: PaneView;
   active?: boolean;
@@ -174,6 +177,8 @@ export function TermView({
   focusRequest?: number;
   /** 고른 글을 인용할 때 쓰는 출처 이름(thread ID·coordinator·머신과 pane 이름, t-1204) */
   quoteSource?: string;
+  /** 보낸 말 속 보고·diff 인용의 자리로(t-1222): App이 그 화면을 연다 */
+  onQuoteReturn?: (ref: QuoteRef) => void;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -321,6 +326,8 @@ export function TermView({
   }, [active]);
   /** 터미널에서 고른 글(인용 단추가 쓴다) */
   const [termQuote, setTermQuote] = useState<{ text: string; range: { start: number; end: number } } | null>(null);
+  /** 터미널에서 고른 글에 의견을 쓰는 중(t-1222): 연 때의 고른 글 */
+  const [termNote, setTermNote] = useState<{ text: string; range: { start: number; end: number } } | null>(null);
   /** 보내지 못한 입력의 까닭(참고 `inputError`). 닫기로 지운다 */
   const [inputError, setInputError] = useState<string | null>(null);
   const ended = pane.state !== "running";
@@ -2096,11 +2103,54 @@ export function TermView({
     });
     return true;
   };
-  const quoteChat = (text: string, speaker: QuoteSpeaker) =>
-    addQuote(formatChatQuote({ source: quoteName, speaker, harness: pane.agent?.harness === "codex" ? "codex" : "claude", text }));
-  const quoteTerminal = () => {
-    if (!termQuote || !addQuote(formatTerminalQuote({ source: quoteName, range: termQuote.range, text: termQuote.text }))) return;
+  const quoteChat = (text: string, speaker: QuoteSpeaker, comment = "") => {
+    const block = formatChatQuote({ source: quoteName, speaker, harness: pane.agent?.harness === "codex" ? "codex" : "claude", text });
+    return addQuote(block && withComment(block, comment));
+  };
+  const quoteTerminal = (picked = termQuote, comment = "") => {
+    const block = picked && formatTerminalQuote({ source: quoteName, range: picked.range, text: picked.text });
+    if (!addQuote(block && withComment(block, comment))) return false;
     termRef.current?.clearSelection();
+    setTermNote(null);
+    return true;
+  };
+  // thread 화면의 의견 모음이 맡긴 글(t-1222): 이 pane이 보이고 붙일 곳이 있으면 붙인다(못 붙이면 모음에 남는다)
+  const addQuoteRef = useRef(addQuote);
+  addQuoteRef.current = addQuote;
+  const canTakeDraft = active && quoteTarget !== null;
+  useEffect(() => {
+    if (!canTakeDraft) return;
+    const take = () => {
+      const handed = takeDraft(owner);
+      if (handed) handed.done(addQuoteRef.current(handed.block));
+    };
+    take();
+    return subscribeHandoff(take);
+  }, [canTakeDraft, owner]);
+  // 터미널 인용의 자리(t-1222): 터미널 보기로 바꾸고 그 줄을 고른다. 줄 번호의 글이 인용 첫 줄과 다르면(앞 기록이 잘려 줄이 밀림)
+  // 버퍼에서 그 글을 찾는다
+  const quoteReturn = (ref: QuoteRef) => {
+    if (ref.kind !== "terminal") {
+      onQuoteReturn?.(ref);
+      return;
+    }
+    setChatView(false);
+    requestAnimationFrame(() => {
+      const term = termRef.current;
+      if (!term) return;
+      const buffer = term.buffer.active;
+      const lines = ref.text.split("\n");
+      const first = lines.find((line) => line.trim() !== "")?.trim() ?? "";
+      const at = (y: number) => buffer.getLine(y)?.translateToString(true) ?? "";
+      let start = ref.range && at(ref.range.start).includes(first) ? ref.range.start : -1;
+      for (let y = buffer.length - 1; start < 0 && y >= 0; y--) if (at(y).includes(first)) start = y;
+      if (start < 0) {
+        noteClipboard("인용한 줄을 찾지 못했다");
+        return;
+      }
+      term.scrollToLine(Math.max(0, start - 2));
+      term.selectLines(start, Math.min(buffer.length - 1, start + lines.length - 1));
+    });
   };
 
   let banner: string | null = null;
@@ -2234,6 +2284,7 @@ export function TermView({
       {flowNotices && notices}
       {chatView && chatable && <ChatPanel active={active} onBytes={reportChatBytes} coordinator={pane.role === "coordinator"} pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
         onQuote={quoteTarget === "composer" ? quoteChat : undefined}
+        onQuoteReturn={quoteReturn}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
@@ -2304,12 +2355,22 @@ export function TermView({
               </button>
             </div>
           )}
-          {active && termQuote && quoteTarget && !(chatView && chatable) && (
-            <button type="button" className="banner terminal-quote" data-testid="terminal-quote"
-              onMouseDown={(event) => event.preventDefault()} onClick={quoteTerminal}>
-              <Quote aria-hidden="true" />
-              메시지에 인용
-            </button>
+          {active && termQuote && quoteTarget && !termNote && !(chatView && chatable) && (
+            <>
+              <button type="button" className="banner terminal-quote" data-testid="terminal-quote"
+                onMouseDown={(event) => event.preventDefault()} onClick={() => quoteTerminal()}>
+                <Quote aria-hidden="true" />
+                메시지에 인용
+              </button>
+              <button type="button" className="banner terminal-quote" data-testid="terminal-quote-note"
+                onMouseDown={(event) => event.preventDefault()} onClick={() => setTermNote(termQuote)}>
+                <MessageSquarePlus aria-hidden="true" />
+                의견
+              </button>
+            </>
+          )}
+          {active && termNote && quoteTarget && !(chatView && chatable) && (
+            <NoteEditor quote={termNote.text} submitLabel="메시지에 넣기" onSubmit={(comment) => quoteTerminal(termNote, comment)} onCancel={() => setTermNote(null)} />
           )}
           {clipNote && (
             <div className="banner" role="status" data-testid={active ? "clipboard-note" : undefined}>
