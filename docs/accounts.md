@@ -309,6 +309,23 @@ Claude의 설정 홈·신뢰 기록은 [Claude 공식 설정 문서](https://cod
 Claude의 cwd·조상 조회와 격리 홈 `.claude.json` 경로는 설치된 공식 CLI 코드에서도 확인했다.
 시험은 실제 CLI 로그인 대신 임시 홈의 가짜 harness로 시작과 조회 계약을 검사한다.
 
+### 격리 Claude thread의 advisor
+
+계정 Claude 실행은 머신 사용자 설정 `settings.json`의 문자열 `advisorModel`만
+실행별 `quota-settings.json`에 담는다. 설정 홈은 실행 profile·머신 환경의
+`CLAUDE_CONFIG_DIR`, agent 환경의 같은 변수, 기본 `~/.claude` 순으로 정한다.
+명시적으로 빈 변수를 넘기면 기본 홈을 쓴다. 계정 격리가 홈을 바꾸기 전에 읽으며,
+새 실행과 재개 때마다 다시 읽어 변경·삭제가 다음 실행에 반영된다.
+
+권한·hooks·env·상태줄·다른 모델 설정은 가져오지 않는다. 기존 aaa hook과 사용량
+상태줄을 유지하며 사용자 파일도 고치지 않는다. 파일이나 키가 없으면 기존처럼 실행한다.
+읽기·JSON 오류나 문자열이 아닌 값은 원인과 함께 agent 경고로 남기고 기존 실행을 계속한다.
+이미 실행 중인 Claude에는 소급 적용하지 않는다.
+
+[Claude advisor 문서](https://code.claude.com/docs/en/advisor)는 `advisorModel`과
+모델·계정별 적용 조건을 설명한다. 설정 전달이 성공해도 advisor의 실제 활성 여부는
+Claude의 계정·모델 정책에 따른다. 검증 범위는 [별도 기록](testing-claude-advisor.md)에 남긴다.
+
 
 ## 계정 Claude thread의 첫 실행 안내
 

@@ -151,6 +151,10 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     let cwd = w.lab.root.join("workA/repo/demo-t-0001");
     assert!(cwd.exists(), "응답 전에 worktree가 만들어졌다");
     restart_host(&mut w, "host", "host2");
+    // 연결 공개 뒤 ticker의 중단 기동 회수가 claim을 잡는다. 상태 발행은 claim 반환보다
+    // 앞서므로 Failed 사건과 그 뒤 tick 완료까지 확인한 뒤 명시 restart를 한 번 보낸다.
+    w.wait_show("중단 기동 회수", &id, |v| v["status"] == "failed");
+    w.h.ticks(1);
     let (_, mut output) = w.lab.spawn_piped("restart", &w.h, &["--json", "thread", "restart", "demo", &id]);
     GitGate::release(&w, "add", pending);
     let result: Value = serde_json::from_str(&read_line_containing(&mut output, "open")).unwrap();
