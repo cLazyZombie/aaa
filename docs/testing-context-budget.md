@@ -38,3 +38,16 @@
   aaa-agent detect 3개(fixture 줄 위치가 글자 경계에서 멈춤), aaa-host 4개(공개 스키마·ci·git 예시), aaa-proto 2개(설치 스키마·TypeScript 생성물).
   이 변경은 그 파일·코드를 건드리지 않으며 LF 사본(macOS)에서는 모두 통과한다. 그 사본의 단위 시험 결과는 판정에 쓰지 않았다.
 - 전체 ci-local·Linux strict cross·실제 이름 목록을 포함한 공개 검사는 착지 회차에서 돈다.
+
+## E2E12 응답 전 실패의 navigation 취소 구별(착지 수리)
+
+- 착지 1회차 전체 ci-local(부하 36.6)에서 E2E12 「thread 목록 규모: WebKit 전체 페이지·재연결·실제 DOM」이 `HTTP 본문 읽기 실패: cancelled`로 실패했다.
+  같은 spec의 Chromium 단계와 다른 단계는 통과했다. 보존한 WebKit 기록 순서(시작 기준 ms): 다음 쪽 요청 #32(+5502) → 시험의 reload
+  `beforeunload`(+5605) → #32 `request-failed: cancelled`(+5606) → `pagehide`(+5631) → 새 문서(+5642).
+- 원인: `web/e2e/lib/thread-page-trace.mjs`는 본문을 읽는 중의 실패만 실제 Document 교체(retire)로 navigation 취소를 구별했고, 응답 헤더 전
+  `requestfailed`는 그 자리에서 오류로 끝냈다. 실패 사건이 새 문서 표지보다 먼저 오면 문서가 바뀐 뒤에도 이미 끝난 요청이라 취소로 구별되지 않았다.
+- 수리: `requestfailed`는 실패 문구만 기억하고 끝내지 않는다. 문서가 바뀌면 retire가 navigation 취소로 끝낸다. `reads` 때 아직 남았으면 지금 문서를
+  직접 확인해 같은 문서면 그 실패 그대로 오류로 둔다. 닫힌 page는 원래 실패 문구로 끝낸다. 오류 문구로 성공 처리하지 않으며 재시도·시한·기대값은 그대로다.
+- 시험: `node --test web/test/threadPageTrace.test.mjs`에 위 순서(실패가 새 문서 표지보다 먼저)를 가짜 page로 그대로 재현하는 keeper와, 문서 표지 사건
+  없이 지금 문서가 바뀐 경우(취소)·같은 문서(실패 그대로)·닫힌 page(실패 그대로)를 더했다. 수리 전 코드는 두 시험 모두 착지 때와 같은
+  `HTTP 본문 읽기 실패: cancelled`로 실패하고 수리 뒤 6개가 통과한다. 필요성: 이 순서는 높은 부하에서만 드러나 E2E 실행만으로는 다시 볼 수 없다.

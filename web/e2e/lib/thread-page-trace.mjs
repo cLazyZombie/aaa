@@ -78,7 +78,7 @@ export function threadPageTrace(directory, engine) {
       for (const record of [...active]) if (record.page === page && record.data.doc !== doc) {
         retired.add(record.data.doc);
         if (record.reading) continue;
-        log({ ...record.data, event: "navigation-aborted" });
+        log({ ...record.data, event: "navigation-aborted", ...(record.failed === undefined ? {} : { failed: record.failed }) });
         settle(record, { ...record.data, cancelled: "navigation" });
       }
     };
@@ -90,7 +90,7 @@ export function threadPageTrace(directory, engine) {
     });
     page.on("close", () => {
       for (const record of [...active]) if (record.page === page)
-        settle(record, { ...record.data, error: "본문 완료 전 page.close" });
+        settle(record, { ...record.data, error: record.failed ?? "본문 완료 전 page.close" });
     });
     page.on("console", msg => {
       if (!msg.text().startsWith("THREAD_TRACE ")) return;
@@ -103,7 +103,7 @@ export function threadPageTrace(directory, engine) {
       const headers = request.headers();
       const record = { id: ++next, doc: headers["x-e2e-document"], connection: headers["x-e2e-connection"],
         fetch: headers["x-e2e-request"], after: request.postDataJSON().after ?? null };
-      const entry = { data: record, page, response: null, reading: false };
+      const entry = { data: record, page, retire, response: null, reading: false };
       pending.push(new Promise(resolve => { entry.resolve = resolve; }));
       requests.set(request, entry);
       active.add(entry);
@@ -154,10 +154,22 @@ export function threadPageTrace(directory, engine) {
       if (!entry || !active.has(entry)) return;
       const error = request.failure()?.errorText ?? String(request.failure());
       log({ ...entry.data, event: "request-failed", error });
-      settle(entry, { ...entry.data, error });
+      // 응답 전 실패도 본문 오류와 같은 규칙이다: 오류 문구가 아니라 실제 Document 교체로만 navigation 중단을 구별한다.
+      // 실패 사건은 새 문서 표지보다 먼저 올 수 있어(t-1225 착지 WebKit: beforeunload 1ms 뒤 cancelled, 새 문서는 그 36ms 뒤)
+      // 바로 끝내지 않는다. 문서가 바뀌면 retire가 취소로 끝내고, 바뀌지 않았으면 reads·page.close가 이 실패 그대로 끝낸다.
+      entry.failed = error;
     });
   };
   const reads = async expected => {
+    for (const entry of [...active]) {
+      if (entry.failed === undefined) continue;
+      // 응답 전에 실패하고 아직 남은 요청: 지금 문서가 바뀌었으면 retire가 취소로, 같은 문서면 실패 그대로 끝낸다.
+      try { entry.retire(await entry.page.evaluate(threadTraceDocument)); }
+      catch { /* 닫힌 page는 close 사건이 실패 그대로 끝낸다. */ }
+      if (!active.has(entry)) continue;
+      log({ ...entry.data, event: "request-failed-current-document", error: entry.failed });
+      settle(entry, { ...entry.data, error: entry.failed });
+    }
     const records = (await Promise.all(pending)).sort((a, b) => a.id - b.id);
     const reads = [], starts = new Set();
     for (const record of records) {
