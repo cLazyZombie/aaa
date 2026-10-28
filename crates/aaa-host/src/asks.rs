@@ -6,7 +6,8 @@
 //! - 답한 것(`asks` 표): 질문은 답할 때의 질문·본문·선택지·답과, 본문이 가리킨 `library/…` 파일·보고 글을
 //!   `<프로젝트>/asks/<id>/`에 사본으로 둔다. 새 보고가 질문을 비우고 library를 바꿔도 남는다. 확인 필요 post는 끝낼 때(웹
 //!   「답함으로 표시」·coordinator `inbox done`), 할 일은 확인 필요가 풀릴 때 남는다.
-//! - 지우기는 host 기록이라 모든 기기에서 사라진다. 답한 지 [`ASK_KEEP_DAYS`]일이 지나면 ticker가 지운다.
+//! - 지우기는 host 기록이라 모든 기기에서 사라진다. 답한 지 [`ASK_KEEP_DAYS`]일이 지나면 ticker가 지운다(자동 결정 원장도 같은
+//!   기준, `auto_prune_pass`).
 //! - 본문 그림은 웹 앱과 같은 origin의 인증된 주소로 준다(`/api/v1/projects/<p>/questions/<thread>/<hash>/…`,
 //!   `/api/v1/projects/<p>/asks/<id>/…`). 그 아래는 `report.md`와 `library/<상대 경로>`뿐이고 symlink는 열지 않는다.
 
