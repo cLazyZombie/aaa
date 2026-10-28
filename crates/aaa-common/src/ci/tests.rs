@@ -124,6 +124,13 @@ fn successful_python_fixture_output_is_not_a_rust_failure_even_in_annotations() 
         "[python exit=0] OK (skipped=2)\n",
         // ci-local이 annotation에 복사한 줄도 같은 suite 결과를 보존한다.
         "[python exit=0] test module::failed ... FAILED\n",
+        // gh의 여러 줄 annotation은 첫 줄 뒤에 timestamp 없이 job/step과 탭만 붙인다.
+        "macos-15\ttest\t[python exit=0] test module::failed ... FAILED <5.001s>\n",
+        "macos-15\ttest\t[python exit=0] test owner ... FAILED\n",
+        "macos-15\ttest\t[python exit=0] thread 'owner' panicked at fixture.rs:1:2:\n",
+        "macos-15\ttest\t[python exit=0] test module::slow has been running for over 60 seconds\n",
+        "macos-15\ttest\t[python exit=0] thread 'owner' (3528) has overflowed its stack\n",
+        "macos-15\ttest\t[python exit=0]   process didn't exit successfully: `fixture.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)\n",
         "test module::failed ... FAILED\n",
     ];
     for chunk in lines.concat().as_bytes().chunks(7) {
@@ -131,16 +138,23 @@ fn successful_python_fixture_output_is_not_a_rust_failure_even_in_annotations() 
     }
     assert_eq!(scan.finish(), ["module::failed", "owner"]);
     let mut scan = FailureScan::default();
-    scan.feed(lines[1..8].concat().as_bytes());
+    for chunk in lines[1..lines.len() - 1].concat().trim_end().as_bytes().chunks(7) {
+        scan.feed(chunk);
+    }
     assert!(scan.finish().is_empty(), "성공한 suite만 있으면 panic·느린 시험도 실패가 아니다");
 }
 
 #[test]
 fn failed_or_interrupted_python_suites_keep_their_failure_evidence() {
-    for code in ["1", "7", "137"] {
-        let mut scan = FailureScan::default();
-        scan.feed(format!("[python exit={code}] test owner ... FAILED\n").as_bytes());
-        assert_eq!(scan.finish(), ["owner"]);
+    for code in ["1", "7", "130", "137", "143"] {
+        for prefix in ["", "macos-15\ttest\t", "macos-15\ttest\t2026-10-27T07:02:57Z [test] "] {
+            let mut scan = FailureScan::default();
+            let log = format!("{prefix}[python exit={code}] test owner ... FAILED");
+            for chunk in log.as_bytes().chunks(7) {
+                scan.feed(chunk);
+            }
+            assert_eq!(scan.finish(), ["owner"]);
+        }
     }
     // 출처 표지가 없는 옛 로그와 잘린 마지막 줄은 보수적으로 남긴다.
     let mut scan = FailureScan::default();
@@ -232,5 +246,48 @@ fn web_suite_summary_is_a_fallback_and_successful_fixture_output_stays_successfu
     .join("\n");
     let mut scan = FailureScan::default();
     scan.feed(log.as_bytes());
+    assert!(scan.finish().is_empty());
+}
+
+#[test]
+fn stack_overflow_keeps_the_thread_and_exit_kind_from_real_windows_output() {
+    let raw = include_str!("fixtures/windows-stack-overflow.txt");
+    let expected = ["stack overflow: automation::tests::idle_audit_is_read_only_on_web_and_local_cli_keeps_control"];
+    for log in [raw.to_owned(), raw.lines().map(|line| format!("windows-2025\ttest\t{line}\n")).collect()] {
+        let mut scan = FailureScan::default();
+        for chunk in log.as_bytes().chunks(7) {
+            scan.feed(chunk);
+        }
+        assert_eq!(scan.finish(), expected);
+    }
+    // 다른 시험의 FAILED도 함께 남고, 긴 꼬리·annotation 중복·개행 없는 끝에 지워지지 않는다.
+    let mut scan = FailureScan::default();
+    scan.feed(raw.as_bytes());
+    scan.feed(format!("{}\ntest other::owner ... FAILED\n", "x".repeat(LOG_JOB_CAP * 2)).as_bytes());
+    scan.feed(b"##[error]thread 'automation::tests::idle_audit_is_read_only_on_web_and_local_cli_keeps_control' (3528) has overflowed its stack");
+    assert_eq!(scan.finish(), ["other::owner", expected[0]]);
+}
+
+#[test]
+fn stack_overflow_exit_fallback_and_successful_or_quoted_output_are_distinct() {
+    for exit in ["0xc00000fd, STATUS_STACK_OVERFLOW", "0xc00000fd", "3221225725", "-1073741571"] {
+        let mut scan = FailureScan::default();
+        scan.feed(
+            format!("[test]   process didn't exit successfully: `target\\verify\\deps\\test.exe` (exit code: {exit})")
+                .as_bytes(),
+        );
+        assert_eq!(scan.finish(), ["exit: STATUS_STACK_OVERFLOW"]);
+    }
+    let mut scan = FailureScan::default();
+    scan.feed(b"thread 'old::owner' has overflowed its stack\n");
+    assert_eq!(scan.finish(), ["stack overflow: old::owner"]);
+    let mut scan = FailureScan::default();
+    scan.feed(b"[python exit=0] thread 'fake::owner' (12) has overflowed its stack\n");
+    scan.feed(b"[test] [python exit=0] process didn't exit successfully: `fake.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)\n");
+    scan.feed(b"fixture: thread 'fake::owner' has overflowed its stack\n");
+    scan.feed(b"test successful::owner ... ok\nSTATUS_STACK_OVERFLOW\n");
+    scan.feed(b"quoted: process didn't exit successfully: `fake.exe` (exit code: 0xc00000fd, STATUS_STACK_OVERFLOW)\n");
+    scan.feed(b"thread 'fake::owner' (not-a-pid) has overflowed its stack\n");
+    scan.feed(b"process didn't exit successfully: `test.exe` (exit code: 101)\n");
     assert!(scan.finish().is_empty());
 }

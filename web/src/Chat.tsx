@@ -35,6 +35,8 @@ import { mergeChatPage } from "./chatPages";
 import { steerLabel, type SteerState } from "./steerQueued";
 import { groupChatRows, groupExpanded, readExpandedGroups, rememberExpandedGroups, rowIndexById, summarizeToolGroup, toggleExpanded, toolGroupKind, type ChatDisplayRow, type ToolGroupKind } from "./toolGroups";
 import { ChatFindBar, useChatFind, type OlderOutcome } from "./ChatFind";
+import { ChatQuoteButton } from "./ChatQuote";
+import type { QuoteSpeaker } from "./selectionQuote.ts";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
@@ -356,9 +358,10 @@ function PendingTag({ harness, stage, working, stale, onDismiss, steer }: Pendin
 /** 사람 말: 카드와 그 복사(마우스면 카드 옆, 터치면 아래) */
 function UserTurn({ active, text, pane, onOpenFile, pending }: { active: boolean; text: string; pane: string; onOpenFile?: (path: string) => void; pending?: Pending }) {
   const { note, onResult } = useCopyResult();
+  const inbox = text.trimStart().startsWith("[aaa inbox] ");
   return (
-    <article className="chat-turn chat-turn-user">
-      {text.trimStart().startsWith("[aaa inbox] ") && <div className="chat-inbox-label" data-testid="chat-inbox-label">aaa inbox 안내</div>}
+    <article className={`chat-turn chat-turn-user${inbox ? " is-inbox" : ""}`}>
+      {inbox && <div className="chat-inbox-label" data-testid="chat-inbox-label">aaa inbox 안내</div>}
       {onOpenFile && <UserImages pane={pane} text={text} onOpenFile={onOpenFile} />}
       <div className="chat-user-row">
         <UserMessage active={active} text={text} pending={pending !== undefined} sending={pending?.stage === "sending" || pending?.stage === "stuck"} />
@@ -440,6 +443,7 @@ export function ChatPanel({
   onDismissPending,
   steer,
   findRequest = 0,
+  onQuote,
 }: {
   active?: boolean;
   onBytes?: (bytes: number) => void;
@@ -464,6 +468,8 @@ export function ChatPanel({
   steer?: Omit<SteerView, "count">;
   /** 머리 돋보기·팔레트 「대화에서 찾기」가 올린다: 바뀌면 찾기 칸을 연다(plan §8.308) */
   findRequest?: number;
+  /** 고른 글을 이 pane 입력 초안에 인용한다(t-1204). 없으면(보기 권한·입력창 없음) 단추를 띄우지 않는다 */
+  onQuote?: (text: string, speaker: QuoteSpeaker) => boolean;
 }) {
   const visible = usePageVisible();
   const reading = active && visible;
@@ -590,12 +596,12 @@ export function ChatPanel({
       } catch (e) {
         if (alive) setError(e instanceof ApiError ? e.message : String(e));
       }
-    });
+    }, pane);
     const unwatch = watchChat(pane, (note) => {
       if ("live" in note) {
         refresh.setPushes(note.live);
         setPushes(note.live);
-      } else if (document.visibilityState !== "hidden") refresh.invalidate();
+      } else if (document.visibilityState !== "hidden") refresh.invalidate(note.signature);
     });
     return () => {
       alive = false;
@@ -958,6 +964,7 @@ export function ChatPanel({
       <OpenLinkContext.Provider value={onOpenLink ?? null}>
       <div className="chat-frame">
       <ChatFindBar {...find.bar} />
+      {onQuote && <ChatQuoteButton container={list} active={active} onQuote={onQuote} />}
       <div
         className="chat"
         ref={list}

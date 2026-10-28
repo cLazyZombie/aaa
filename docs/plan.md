@@ -6851,6 +6851,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 예약을 그 자리에 넣는 것은 기존 `reserve`(맨 뒤) 뒤 `move`(순번)로 한다. 프로토콜 변경이 없어 FRONT_API는 유지한다. E2E76은 실제 host 예약 기록으로 데스크톱 끌기 세 가지·「예약」 칩·저장소 거르기와 기기 기억·휴대폰 순서 모드와 시트를 확인한다. 43·46·67은 한 목록에 맞췄다.
 - 착지 기준 origin/main `89e3f676`에서 마지막 §8.392·FRONT_API 1.97·E2E75를 직접 확인했다. 이 작업은 §8.393·E2E76으로 더하고 API 버전은 유지한다. t-0600·t-0609·t-0616의 할 일 화면 변경(머신 연결 재조회·owner 응답 뒤 편집 보존·「병합 중」 표지)과 함께 통합했다.
 
+- 완료 예약 잔상 수리(t-1200): 완료 체크·완료 보관은 대기 예약을 finished로, 명시 삭제는 cancelled로
+  바꾸고 할 일 사건을 보낸다. 구판이 남긴 보관 완료 check 예약도 tick·완료 보관 복구에서 회수한다.
+  되살리기는 옛 예약을 되살리지 않는다. 완료·삭제 근거 없이 파일에서 사라진 예약만 check로 남기며
+  「연결된 할 일 없음」으로 표시하고 전체·예약 칩의 개수와 거르기에 포함한다(E2E116).
+
 ### 8.394 Windows agent 비밀·Named Pipe 보호(t-0613, 웹 머신 추가 M4p)
 
 - Windows 머신을 웹으로 추가하는 M4의 선행 수리다. DPAPI 대신 설치기의 private 파일과 같은 현재 사용자 SID+SYSTEM DACL을 쓴다. 일반 사용자·그룹·Administrators ACE와 상위 폴더 상속은 허용하지 않는다.
@@ -8137,3 +8142,73 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 자동화 schema의 source=pr·on.pr, 웹 선택지·thread/머신 PR 표시·완료 보관의 PR 필터를 제거한다. 옛 PR 규칙은 실행·오류 알림·변환에서 제외하며 doctor가 원본을 `.before-aaa`로 보존한다. 기본 규칙은 만들지 않는다.
 - coordinator 안내·brief·guide는 착지 상태(main SHA·push 여부)를 보고한다. 이 절 이전의 PR 조회·병합 추적 설명은 과거 기록이며 현재 워크플로가 아니다. FRONT_API 1.135, agent link 판은 유지하고 PR 기능 광고를 제거한다.
 - CI 감시는 push Actions run 조회만 사용하므로 유지한다. 외부 구현은 Git merge-base(GPL-2.0)와 GitHub CLI run list(MIT)의 조상 판정·실행 조회 분리를 대조했으며 코드를 복사하지 않는다.
+
+### 8.521 느린 시험의 대기 재예약과 선택 비용 계측(t-1206)
+
+- CI/Git의 진행 중 source는 next_due에서 제외된다. 조회 완료 뒤 기존 tick_wake를 깨워 완료부터 센 다음 deadline을 다시 계산한다. 즉시 중복 조회를 막고, 주기0 usage/automation은 완료에서 깨우지 않아 반복 실행을 만들지 않는다.
+- 선택 시험 계측은 준비·실제 계약·관측·정리를 owner 전체 wall 안에 기록한다. 실패·panic·미완료 원문을 보존하고 보조 span과 브라우저 표본을 전체에서 빼거나 중복 합산하지 않는다. 성능 판정은 정규 gate 앞 독립 단계다.
+- 비TUI FAKE_AGENT preparation은 화면 안정·paste 준비를 생략한다. E90은 엔진/폭별 두 테마의 Reader context만 공유하며 실제 테마·문서 재열기와 기존16조합·drawer·필터·URL·그림 단언을 유지한다. 기존 이름/단계 분할·삭제·시한·기대값 완화는 없다.
+- 새 keeper4개는 재예약/주기0 경계, Rust unwind 원문 보존, Node 원래 오류·미완료 정리, Python 부분/미실행 거부·중복 합산 방지를 지킨다. E30·35의 기존 두 파일 분할을 유지한다. wire/API 형식은 바꾸지 않으므로 main의 FRONT_API 1.135를 유지한다.
+- 참고는 Playwright fixtures·media 전환(Apache-2.0)과 Rust Instant(MIT/Apache-2.0)의 수명·단조 시각 원칙이다. 외부 코드나 실행 의존성은 추가하지 않는다.
+
+### 8.522 완료·보관한 할 일의 예약 잔상 제거(t-1200)
+
+- 점선 위 행은 host의 queued/check 예약이다. 완료 체크·완료 보관은 대기 예약을 finished로, 명시 삭제는 cancelled로 바꾼 뒤 할 일 사건을 보낸다. 구판이 남긴 보관 완료 예약도 회수한다. 복원은 옛 예약을 되살리지 않는다.
+- 완료·삭제 근거 없이 사라진 예약은 check와 「연결된 할 일 없음」을 유지한다. 전체·예약·저장소·탭의 개수를 맞추며 빈 목록 상태와 겹쳐 그리지 않는다. 설명 도움말은 추가하지 않는다.
+- FRONT_API는 착지 기준 main 1.135 다음 1.136으로 올린다. wire 필드·저장 ID·파일명·AGENT_LINK는 유지한다. 새 E2E116은 두 기기의 구판 예약 회수·새로고침·완료 탭·복원을 검사한다.
+- 착지 기준 main의 마지막 plan §8.521 다음 §8.522를 쓴다. E30·35의 기존 두 파일 분할과 main의 도움말 제거·메모 추가·PR 제거를 보존한다. 테스트 문서의 양쪽 추가를 모두 유지한다.
+
+### 8.523 보고서 화면 버튼 배치(t-1201)
+
+- 내 보고서·작업 보고·보관함 탭 줄의 오른쪽 끝에 기존 RefreshCw 아이콘 버튼을 둔다. 접근성 이름·툴팁은 「새로고침」이며 탭 목록과 별도 버튼이다.
+- 다음 줄은 저장소 칩 왼쪽, 「보고서 올리기」·「모두 읽음」 오른쪽으로 합친다. 휴대폰은 탭 여백과 긴 저장소 칩을 줄여 같은 줄을 유지한다. 도움말은 추가하지 않는다.
+- 착지 기준 main §8.522·FRONT_API 1.136 다음 §8.523·FRONT_API 1.137을 쓴다. wire 형식·권한·필터·읽음 범위·AGENT_LINK는 유지한다.
+- E30·35의 기존 두 파일 분할을 보존한다. 기존 E2E21·101·108과 양 브라우저 320/390/820/1280px의 세 탭 배치·새로고침·업로드 창 확인으로 검증한다. 새 E2E 번호는 추가하지 않는다.
+
+### 8.524 diff의 접힌 맥락 펼치기(t-1202)
+
+- 기본은 지금처럼 바뀐 곳 근처만 보인다. `@pierre/diffs` 1.5.2의 기본 구분선과 `loadDiffFiles`를 연결해 20줄씩·해당 접힌 영역 전체를 펼친다. 기존 한 줄/나란히·파일 접기·가상화·공백 무시를 유지한다. 단추 이름은 한글이고 Enter·Space로 누를 수 있으며 터치 구분선은 44px이다. 안내 문단은 넣지 않는다.
+- FRONT_API **1.138**: 파일별 patch 요청에 선택 `DiffQuery.full_context`를 더한다. agent가 같은 범위·공백 설정과 경로를 기존 안전한 git diff에 전달하고 `--unified=2147483647`로 읽는다. 전체 비교 요청에는 허용하지 않으며 기존 파일당 768KiB JSON·20초 상한, 임시 index와 외부 callback 차단을 유지한다. host는 그대로 중계한다. `DiffView.full_context`는 완전한 전체 맥락을 읽었을 때만 참이다. 옛 agent의 생략·잘림은 원문으로 쓰지 않고 오류를 보인다. AGENT_LINK 판과 기존 diff.v1 경계는 유지한다.
+- 전체 맥락은 첫 펼치기에서만 읽고 양쪽 원문을 라이브러리의 hydration에 넘긴다. 기존 hunk의 변경 위치·내용과 기준 SHA를 대조해 읽는 사이 변경을 옛 비교와 섞지 않는다. CRLF·마지막 개행 없음도 보존한다. 다시 읽기·범위 변경은 새 비교로 시작한다.
+- 참고: [고정판 기본 구분선](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/utils/createSeparator.ts), [공식 원문 지연 읽기 문서](https://diffs.com/docs)(Apache-2.0), [react-diff-view의 원문 기반 맥락 확장](https://github.com/otakustay/react-diff-view#readme)(MIT)을 대조했다. 기존 라이브러리 기능을 사용하며 외부 코드·새 의존성은 추가하지 않는다.
+
+### 8.525 고른 글을 출처와 함께 thread 입력 초안에 인용(t-1204)
+
+- t-1170 레퍼런스 조사 1순위의 첫 범위다. 대화 보기에서 글을 끌어 고르면(누른 채는 띄우지 않고 놓은 뒤) 고른 글 끝 아래에 「메시지에 인용」 단추가 뜨고, 터미널 보기에서 고르면 오른쪽 위 띠에 같은 단추가 뜬다. 누르면 그 pane의 보이는 입력 초안 끝에 붙인다. 쓰던 글은 그대로 두고 빈 줄 뒤에 붙이며 그 아래에 이어 쓰도록 줄을 하나 더 둔다. 보내기는 사람이 누른다.
+- 붙이는 곳: 대화 보기·입력줄 없는 터미널(바로 입력)은 대화 입력창 초안(`herdr-web-ui:composer-draft:<machine>:<pane>`), 입력줄이 보이는 터미널은 입력줄 초안(`herdr-web-ui:terminal-line:`)이다. 보이는 입력창이면 끝으로 focus를 옮기고(터치 기기는 화면 키보드를 올리지 않는다), 안 보이는 대화 초안이면 「메시지 초안에 넣었다」를 띄운다. 넘치면(대화 100,000자·입력줄 32,768자) 붙이지 않고 알린다. 보기 권한·중단 pane·agent 아닌 셸 pane에는 단추가 없다.
+- 글 꼴: 머리 `인용: <출처>`. 출처는 thread pane이면 thread ID, coordinator면 `coordinator`, 그 밖은 `<머신> <pane 이름>`이다. 대화는 `· Claude 답`·`· Codex 답`·`· 사람 글`(명령·명령 출력·생각·도구)을 붙이고 여러 말에 걸치면 붙이지 않으며 줄마다 `> `다. 터미널은 `터미널 a~b줄`(xterm 버퍼 줄, 1부터, 다음 줄 첫 칸에서 끝난 선택은 앞 줄까지)과 글 안 backtick 줄보다 긴 울타리다. 대화 글은 화면 글자이며 단추·접기·대기 표지·기록 안내 줄은 빼고 블록 사이를 줄바꿈한다.
+- 참고: t3code `apps/web/src/components/chat/AssistantSelectionToolbar.tsx`·`lib/assistantTextSelection.ts`·`lib/selectionActions.ts`(MIT, 36d4d711: 놓은 뒤 띄우기·단추가 선택을 풀지 않음·글자 아닌 것 빼기·화면 안 자리), herdr-web-ui `src/lib/terminalQuote.ts`·`src/components/PaneTerminal.tsx` 「Quote in message」(MIT, 166290b: 머리·울타리·초안 끝에 붙이기·넘침 거부). 다른 곳: aaa 입력창은 칩이 없는 글이라 t3code의 링크·`<assistant_citations>` 펼치기 대신 받는 agent가 그대로 읽는 Markdown으로 넣는다. 인용 위치 복원·선택 의견·보고 판·diff 줄 의견은 후속이다.
+- 착지 기준 main §8.524·FRONT_API 1.138 다음 §8.525·FRONT_API 1.139를 쓴다. wire·저장 형식·AGENT_LINK는 그대로다. E30·35의 기존 두 파일 분할을 보존한다. 웹 유닛 `selectionQuote.test.mjs`, 웹 E2E117 `117-selection-quote`(main의 E2E116 다음 번호).
+
+
+### 8.526 큰 응답 가림 검색과 Python 성공 fixture 분류 수리(t-1216)
+
+- 원본 macOS CI의 단계별 누적 시간과 전체 aaa_host 로그를 먼저 확보했다. 등록 비밀의 앞 두 바이트 후보가 없는 창은 해시 검색을 건너뛰고, 후보는 기존 8바이트 집합으로 정확히 검사한다. 등록·복원과 같은 잠금 안에서 후보 표를 갱신하며 ANSI/청크·분할 경계와 원본 hash 전 가림 금지 계약을 유지한다.
+- FailureScan은 gh의 여러 줄 annotation에서 시각 없이 탭 뒤에 놓인 `[python exit=0]`도 성공한 suite의 출력으로 읽는다. 같은 이름의 실제 Rust 실패와 Python 비정상 종료, t-1208 스택 초과 수집·원문 보존을 유지한다. 5초 상한·원본 데이터·단계·기대값을 줄이거나 늘리지 않는다.
+- 기준 main §8.525 다음 §8.526이다. wire·API 변경이 없으므로 FRONT_API 1.139·AGENT_LINK 1.11을 유지한다. 기존 E30·35의 두 파일 분할과 E2E01~117을 보존한다. 전체 ci-local·공개 검사·Linux/Windows strict cross·Windows production과 개인정보 검사를 검증용 macOS 전용 worktree에서 수행한다. 성공 뒤 ff push/원격 SHA와 salt 설치기의 Windows SHA·판만 확인하며 설치·웹 기기 페어링·GitHub CI 대기를 하지 않는다.
+- 첫 착지 E103에서 재구독의 같은 기록 signature가 복귀 read 중 다시 invalidate되는 경로를 수리한다. 같은 pane의 마지막 signature를 유지해 동일 값 재전달만 거르고, 다른 기록·다른 pane의 알림은 유지한다. 실제 lane의 응답 gate로 수리 전 중복 read를 재현하며 기존 복귀1회·시한·조합을 유지한다. 별도 커밋 뒤 새 worktree에서 전체 착지 회차를 다시 수행한다.
+
+### 8.527 host 작업 기록 통합 검색(t-1205)
+
+- 사용자 답 1A(q-1668): host에 남은 과거 판까지 검색한다. 완료 보고는 첫 줄이 `[완료]`인 불변 r 판 전체, 질문은 답한 기록의 본문·선택지·선택·직접 답·의견, 할 일은 현재 TASKS·완료 보관 본문·변경 before/after다. 해결·보관 thread도 제외하지 않는다. 원격 agent·PTY·첨부 내용은 읽지 않으며 지워진 원문을 추정 복구하지 않는다.
+- CLI `aaa search '검색어' [--project demo] [--kind report|question|task] [--limit 30] [--after <커서>]`, `aaa record <프로젝트> <해시>`. JSON도 같은 결과다. 웹 왼쪽 「기록 검색」/`#search`에서 종류 선택·본문 검색·더 보기·당시 원문을 연다. Reader도 읽을 수 있다. 기능 설명 문단은 UI에 넣지 않는다.
+- FRONT_API **1.140**: `RecordSearch { query: RecordSearchQuery }` → `RecordSearchPage { hits,next }`, `RecordOpen { project,key,offset? }` → `RecordDocument { hit,body,next }`. 기록 종류는 `report|question|task`. 결과에 프로젝트·ID·제목·출처·시각·일치 문맥·연결 r 판이 있다. 본문 해시는 프로젝트와 함께 써야 하며 최신 원문으로 대체하지 않는다. 큰 본문은 최대 128KiB UTF-8 조각으로 읽고 웹·CLI가 끝까지 합친다. 잘못된 바이트 경계는 거절한다.
+- 검색어는 공백으로 나눈 최대 16단어 AND·대소문자 무시·문자 그대로의 부분 일치다. SQL wildcard나 정규식이 아니다. 한글도 같은 규칙이며 짧은 순번 ID는 입력 0채움 차이를 정규화한다. 빈 검색어·1024바이트 초과는 거절한다. 일치 결과를 종류·프로젝트로 거른 뒤 시각/해시/프로젝트 내림차순으로 1~100건씩 준다. 커서는 검색 조건에 묶어 다른 조건에 재사용하지 못한다.
+- SQLite FTS5 trigram은 3글자 이상 검색 후보를 좁히고 `instr`로 모든 단어의 실제 부분 일치를 확인한다. 1~2글자는 같은 본문에서 직접 찾는다. 검색 때 보관 원장과 현재 파일을 대조해 host 내부의 재생성 가능한 색인을 원자 갱신한다. 이미 색인한 불변 보고 판의 파일은 재독하지 않는다. 같은 대상의 같은 본문은 합치되 원래 r 별칭도 검색한다. 질문·기록 정리/보고 판 삭제는 그 출처와 마지막 출처가 없어진 색인을 함께 지우며 프로젝트 rename/delete도 색인을 옮기거나 지운다.
+- 참고: [T3 본문 검색](https://github.com/pingdotgg/t3code/blob/main/docs/user/thread-sidebar.md)·[보관 범위 차이](https://github.com/pingdotgg/t3code/discussions/11819), [Orca 세션 검색](https://www.onorca.dev/docs/cli/reference#session-search). 두 프로젝트는 MIT다. 본문 문맥·명시한 검색 범위·커서/원문 구분을 참고하고 코드·의존성은 가져오지 않는다. aaa는 원문 판과 프로젝트 경계를 보존한다.
+
+### 8.528 E2E12 대체 소켓의 연결 중 취소 경합(t-1211)
+
+- `Term.tsx` 전송 누락 가설을 조사했으나 현재 전송은 모두 OPEN을 검사한다. 원래 events route를 건 실제 host 페이지에서 pane 소켓을 CONNECTING 중 취소하면 전송 없이 Playwright의 snapshot 수신 전달이 예외를 낸다. 실제 Chromium·WebKit 소켓은 같은 순서에서 정상 종료한다. 최초 간헐 실패 원문은 남아 있지 않아 당시 호출 위치까지 확정하지 않는다.
+- E2E12는 `routeWebSocket`을 빼고 관측하는 실제 events 소켓을 닫아 재연결한다. 기존 HTTP 보류·두 독립 완전 목록·실제 DOM 검사는 유지하고, 연결 중 pane 취소 keeper를 두 엔진의 기존 단계에 더한다. 착지 기준 main §8.527·FRONT_API 1.140 다음 §8.528·FRONT_API 1.141을 쓴다. wire·AGENT_LINK·의존성·E2E 번호와 E30·35의 두 파일 분할은 유지한다. 재현과 참고 구현·라이선스는 docs/testing-terminal-socket.md에 적는다.
+
+- 첫 착지의 이전 문서 응답 선행 실패는 gate를 reload 문서에 묶고 그 문서의 events open·close 사건으로 disconnect를 끝내도록 수리한다. 두 사건 순서 keeper가 수리 전 실패/후 통과를 보이며 기존 시한·목록 단언을 유지한다.
+
+### 8.529 답보다 늦은 첫 신뢰 질문 관측(t-1212)
+
+- brief 화면 읽기가 먼저 연 신뢰 질문에 답하면, host의 harness 상태가 아직 시작·쉼이어도 같은 종류·본문의 첫 Question 사건은 이미 답한 질문에 묶는다. Idle에서 Gone으로 닫히는 중복 기록도 만들지 않는다.
+- 답한 질문의 종류·본문은 pane 안에서만 기억한다. agent 시각과 host 시각을 비교하거나 기다림을 늘리지 않는다. 다른 질문은 바로 열고, 막힘을 벗어난 뒤 같은 질문이 다시 나타나도 새 질문으로 연다. 이미 관측한 막힘의 `ask_anew.v1` 재질문과 옛 agent의 중복 사건 처리도 유지한다. wire·저장 형식·AGENT_LINK는 유지하고 FRONT_API는 기준 main 1.141 다음 1.142를 쓴다.
+- 회귀는 실제 Host·SQLite·brief 처리·답 저장을 사용해 Idle → brief 질문 → yes → 첫 Question → Idle을 직접 순서대로 실행한다. 질문 하나의 Answered·yes 보존과 새 확인창 허용을 함께 검사한다. 원래 m13의 기대값·시한과 agent 감지기의 800ms 경계는 유지한다.
+- 참고 후보는 [Tokio watch의 관측과 변경 알림 구분](https://docs.rs/tokio/latest/tokio/sync/watch/index.html#borrow_and_update-versus-borrow)([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE))과 [Temporal의 명령·사건 대응 및 재생](https://docs.temporal.io/encyclopedia/event-history/event-history-go)([MIT](https://github.com/temporalio/sdk-rust/blob/main/LICENSE.txt))이다. 같은 관측과 새 사건을 구별하는 원칙만 참고하며 외부 코드·의존성은 가져오지 않는다.
+
+- 착지 기준 main의 마지막 §8.528 다음 §8.529를 쓴다. E30·35의 기존 두 파일 분할을 보존한다. 검증 상세는 [첫 trust 관측 회귀와 착지 검증](testing-trust-observation.md)에 둔다.

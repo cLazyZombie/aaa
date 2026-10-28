@@ -84,6 +84,7 @@ mod question_guard;
 mod question_repeat;
 mod quota;
 mod quota_rpc;
+mod record_search;
 mod report_copy;
 mod report_ids;
 mod report_mark;
@@ -387,9 +388,9 @@ struct PaneRt {
     turn_reported: bool,
     /// 알림이 마지막으로 본 상태(notice.rs `alert_activity`: BG로 기다리는 쉼은 작업 중). 턴의 시작·끝은 이것이 바뀔 때다
     alert: Option<aaa_proto::AgentActivity>,
-    /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
-    /// 다시 열지 않게 한다(harness.rs `on_harness`)
-    answered: bool,
+    /// 지금 막힘에서 답한 질문(종류, 본문). brief 화면 읽기가 첫 harness 질문 관측보다 앞설 수 있다.
+    /// 막힘을 벗어나면 지운다: 늦게 온 같은 첫 관측과 다른 새 질문을 구별한다(harness.rs `on_harness`).
+    answered: Option<(String, String)>,
     /// Claude 대화 기록 파일(그 머신의 경로, §8.27). 웹·로그로 내보내지 않는다.
     transcript: Option<String>,
     /// 재부팅 뒤 다시 띄우지 못한 까닭(restore.rs)
@@ -1029,7 +1030,7 @@ impl Host {
                     turn_reported: false,
                     alert: None,
                     transcript: None,
-                    answered: false,
+                    answered: None,
                     restore_error: None,
                     kill_sent: false,
                     replaced: Vec::new(),
@@ -1195,7 +1196,7 @@ impl Host {
                 turn_reported: false,
                 alert: None,
                 transcript: None,
-                answered: false,
+                answered: None,
                 restore_error: None,
                 kill_sent: false,
                 replaced: Vec::new(),
@@ -1985,6 +1986,16 @@ impl Host {
             }),
             FrontRequest::WorkspaceDashboard { query } => {
                 self.workspace_dashboard(query).map(FrontResponse::WorkspaceDashboard)
+            }
+            FrontRequest::RecordSearch { query } => {
+                let host = self.clone();
+                tokio::task::spawn_blocking(move || host.records_search(query))
+                    .await
+                    .map_err(orch::internal)?
+                    .map(FrontResponse::RecordSearch)
+            }
+            FrontRequest::RecordOpen { project, key, offset } => {
+                self.records_chunk(&project, &key, offset).map(FrontResponse::RecordDocument)
             }
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
             FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,

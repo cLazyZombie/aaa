@@ -519,6 +519,11 @@ fn pin_edited_while_sas_waits_is_preserved_as_a_conflict() {
 }
 fn private_enrollment(edit_pin: bool) {
     use aaa_proto::{DeviceRole, FrontRequest};
+    let mut phases = aaa_test_support::phases::Phases::new(if edit_pin {
+        "pin_edited_while_sas_waits_is_preserved_as_a_conflict"
+    } else {
+        "private_tty_enrollment_waits_on_the_real_tls_connection_and_codes_never_enter_public_events"
+    });
     let lab = Lab::new();
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
     let host = rt.block_on(async {
@@ -531,6 +536,7 @@ fn private_enrollment(edit_pin: bool) {
         host
     });
     let address = host.agent_listen.lock().unwrap().clone().unwrap();
+    phases.mark("contract", "private-enrollment-and-sas");
     let relay = rt.block_on(super::network::ReplyLoss::start(address));
     let address = relay.address.clone();
     let mut base = lab.args();
@@ -621,6 +627,7 @@ fn private_enrollment(edit_pin: bool) {
             aaa_common::private_file::read(&lab.0.join("state/agent/host.json"), 65536).unwrap() == CANARY.as_bytes(),
             "동의 뒤 편집된 pin을 보존해야 한다"
         );
+        phases.mark("cleanup", "owned-resources");
         return;
     }
     assert_eq!(code, 3, "{}", redact_private(&text));
@@ -686,6 +693,7 @@ fn private_enrollment(edit_pin: bool) {
     let observed = json(&lab.cmd(&["install", "--status", id, "--json"]));
     assert_eq!(observed["exit_code"], 0, "{observed}");
     assert_eq!(snapshot(&lab.0), before);
+    phases.mark("cleanup", "owned-resources");
 }
 
 #[test]

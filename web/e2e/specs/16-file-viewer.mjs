@@ -6,6 +6,7 @@ import { root, aaa, waitOutput, domIs, inTime, shot, shots, pairPage, step, brow
 import { waitForSettingsExit } from "../lib/settings-closed.mjs";
 import { watchVirtualSource, saveVirtualSource } from "../lib/virtual-source-diagnostics.mjs";
 import { holdSettingsExit, releaseSettingsExit } from "../lib/settings-exit-gate.mjs";
+import { fittedTerminalGrid } from "../lib/terminal-grid-ready.mjs";
 
 /** 터미널에서 `text` 가운데 글자의 화면 좌표 */
 async function textPoint(page, text) {
@@ -35,12 +36,7 @@ async function textPoint(page, text) {
 async function clickLink(page, text, whilePressed) {
   // 첫 출력은 초기 snapshot 크기로도 그려진다. 뒤늦은 resize는 xterm의 링크 커서를 지우므로
   // 이 화면의 맞추기와 그리드 적용이 끝난 뒤 좌표를 잰다(시한·링크 단언은 그대로다).
-  await domIs(page, `${text} 좌표를 재기 전 크기 맞춤`, () => {
-    const term = document.querySelector('[data-testid="terminal"]');
-    const size = /(\d+)×(\d+)/.exec(document.querySelector(".term-title .muted")?.textContent ?? "");
-    return term?.dataset.fit === "same" && !term.hasAttribute("data-fit-pending") &&
-      document.querySelector(".xterm-rows")?.childElementCount === Number(size?.[2]);
-  });
+  await domIs(page, `${text} 좌표를 재기 전 크기 맞춤`, fittedTerminalGrid);
   const { x, y, w } = await textPoint(page, text);
   await page.mouse.move(x - w, y);
   await page.mouse.move(x, y);
@@ -64,6 +60,11 @@ async function observeFileOpen(page) {
         viewer: Boolean(document.querySelector('[data-testid="file-viewer"]')),
         code: document.querySelector('[data-testid="file-viewer-code"]')?.textContent?.length ?? null,
         fit: term?.dataset.fit, pending: term?.hasAttribute('data-fit-pending'),
+        size: document.querySelector('.term-title .muted')?.textContent,
+        rows: term?.querySelector('.xterm-rows')?.childElementCount,
+        viewport: { width: innerWidth, height: innerHeight },
+        terminal: term?.getBoundingClientRect().toJSON(),
+        cellHeight: term?.querySelector('.xterm-rows > div')?.getBoundingClientRect().height,
         selection: Boolean(getSelection()?.toString()), fonts: document.fonts.status,
         linkPointer: Boolean(term?.querySelector('.xterm-cursor-pointer')),
         focused: document.activeElement?.classList.contains('xterm-helper-textarea') ?? false,
@@ -100,6 +101,10 @@ async function observeFileOpen(page) {
     new MutationObserver(attach).observe(document.body, { childList: true, subtree: true });
     attach();
     window.__aaaFileOpenRecord = record;
+    new MutationObserver(() => record('fit-state')).observe(document.body, {
+      subtree: true, attributes: true, attributeFilter: ['data-fit', 'data-fit-pending'],
+    });
+    window.addEventListener('resize', () => record('window-resize'));
   });
   if (!page.__aaaFileOpenListening) {
     page.__aaaFileOpenListening = true;
@@ -958,6 +963,10 @@ export default async function ({ ctl, page }) {
       aaa("pane", "send-text", "big", "x");
       await domIs(dp, "누른 링크를 실제 PTY가 다시 그림", () =>
         document.querySelector('.xterm-rows > div:first-child .xterm-bold')?.textContent === 'src/big.ts:2500', null, 5000);
+      if (shots) fs.writeFileSync(`${shots}/file-link-resize.json`, JSON.stringify({
+        before, point, resizedPoint,
+        ...await dp.evaluate(() => ({ events: window.__aaaFileOpen, wire: window.__aaaTermLog })),
+      }, null, 2));
     });
     await paintedIs(dp, "접은 소스의 worker 강조 반영");
     await centered(dp, "재측정한 big.ts 2500번째 줄 가운데", 2500);

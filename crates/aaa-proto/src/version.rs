@@ -264,8 +264,15 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.133: ThreadAnswer·AskAnswer·QuestionAnswerView.comments — 질문별 직접 답과 의견. text는 옛 공통 답을 유지한다.
 // 1.134: TaskOp::AppendNotes·TaskEdited.warnings — 메모 추가와 교체 경고.
 // 1.135: PR 조회·자동화 source·상태를 제거한다. branch 정리는 원격 main 포함 판정을 쓴다(t-1203).
-// 1.136: 할 일·thread별 자동 병합 — AutoMergeSet·TaskView/ThreadView.auto_merge·TaskAction::AutoMerge.
-pub const FRONT_API: Version = Version { major: 1, minor: 136 };
+// 1.136: 완료·보관·삭제한 할 일의 대기 예약 종료와 구판 예약 회수(t-1200). wire 형식은 그대로다.
+// 1.137: 보고서 탭 줄 새로고침과 저장소 줄 버튼 배치(t-1201). wire 형식은 그대로다.
+// 1.138: DiffQuery.full_context·DiffView.full_context — 파일별 전체 맥락 지연 읽기와 미지원/잘림 구별.
+// 1.139: 대화·터미널에서 고른 글을 출처와 함께 입력 초안에 인용(t-1204). wire 형식은 그대로다.
+// 1.140: host 작업 기록 통합 검색과 검색된 원문 판 열기(t-1205).
+// 1.141: E2E12 네이티브 소켓 재연결·연결 중 취소 검증(t-1211). wire 형식은 그대로다.
+// 1.142: 답보다 늦은 첫 trust 관측의 중복 질문 방지(t-1212). wire 형식은 그대로다.
+// 1.143: 할 일·thread별 자동 병합 — AutoMergeSet·TaskView/ThreadView.auto_merge·TaskAction::AutoMerge(t-1214).
+pub const FRONT_API: Version = Version { major: 1, minor: 143 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

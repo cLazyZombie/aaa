@@ -3,7 +3,7 @@
 // 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 작업 목록 ⋯의 「요약」도 같은 상세를 연다(plan §8.434).
 import fs from "node:fs";
 import assert from "node:assert/strict";
-import { root, AA, aaa, step, only, browser, webkit, pairPage, inList, domIs, until, inTime, focusIs, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
+import { root, AA, aaa, step, only, browser, webkit, pairPage, inList, domIs, until, inTime, focusIs, shot, shots, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
 
 import { clickMenuItem } from "../lib/menu.mjs";
 
@@ -534,9 +534,16 @@ export default async function ({ page }) {
       await domIs(p, `${value} 테마`, (t) => document.documentElement.dataset.theme === t, value);
     };
     const desktopModel = async (value) => {
+      await diagnostics.mark(`theme-${value}-start`);
       await theme(page, value);
+      await diagnostics.mark(`theme-${value}-done`);
+      // hover()는 포인터를 같은 좌표로 보낼 뿐이다. 이전 카드가 resize·scroll로
+      // 닫힌 채 행 위에 남아 있어도 이번 검사의 실제 mouseenter를 새로 만든다.
+      await page.mouse.move(1000, 600);
       await page.getByTestId(`thread-demo-${id}`).hover();
+      await diagnostics.mark(`hover-${value}-done`);
       await diagnostics.visible(`모델 카드 ${value} 테마`);
+      await diagnostics.mark(`card-${value}-visible`);
       await shows(page, "최근 확인 모델: astra medium");
       await shot(page, `summary-model-hover-${value}`);
       await page.mouse.move(1000, 600);
@@ -547,8 +554,32 @@ export default async function ({ page }) {
       await page.keyboard.press("Escape");
       await page.getByTestId("summary-pop").waitFor({ state: "detached" });
     };
-  await step("모델: desktop light · 열린 카드·상세", async () => { await desktopModel("light"); }, modelDiag);
-  await step("모델: desktop dark · 열린 카드·상세", async () => { await desktopModel("dark"); }, modelDiag);
+  await step("모델: desktop light · 열린 카드·상세", async () => {
+      // 앞 단계가 남긴 카드가 창 크기 변경으로 닫혀도 포인터는 같은 행에 남는다.
+      // 같은 좌표의 locator.hover()는 새 mouseenter를 보장하지 않는다.
+      await theme(page, "light");
+      const row = page.getByTestId(`thread-demo-${id}`);
+      await page.mouse.move(1000, 600);
+      await row.hover();
+      await diagnostics.visible("크기 변경 전 모델 카드");
+      for (const height of [801, 800]) {
+        await page.evaluate(() => {
+          window.summaryViewportResize = new Promise(done => window.addEventListener('resize', () => done(), { once: true }));
+        });
+        await page.setViewportSize({ width: 1280, height });
+        await inTime(page.evaluate(() => window.summaryViewportResize), 5000, '실제 창 resize 전달');
+        await hover.waitFor({ state: "detached" });
+      }
+      assert.equal(await row.evaluate(el => el.matches(':hover')), true, "닫힌 카드의 포인터는 같은 행에 남는다");
+      await diagnostics.mark('closed-under-pointer');
+      await desktopModel("light");
+    }, modelDiag);
+  await step("모델: desktop dark · 열린 카드·상세", async () => {
+      await desktopModel("dark");
+      if (shots) fs.writeFileSync(`${shots}/summary-model-events.json`, JSON.stringify({
+        events: await page.evaluate(() => window.summaryHoverEvents), network: diagnostics.network,
+      }, null, 2));
+    }, modelDiag);
     let wk;
   await step("모델: WebKit 준비", async () => { wk = await webkit.launch({ headless: true }); }, { always: true, ...modelDiag });
     try {

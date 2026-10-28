@@ -1,6 +1,8 @@
-//! Rust·Python·Node 시험이 공유하는 비밀 fixture 규약 v1.
+//! Rust 시험의 선택 단계 계측과 Rust·Python·Node가 공유하는 비밀 fixture 규약 v1.
 //! 업무 이름은 SHA-256 입력으로만 쓰고 토큰에는 담지 않는다. 운영 인증에 쓰지 않는다.
 use sha2::{Digest, Sha256};
+
+pub mod phases;
 
 /// const 문맥과 외부 스크립트에 쓰는 token("installation")의 공용 산출물.
 pub const CANARY: &str = include_str!("../../../scripts/fixtures/secret-canary.txt");

@@ -28,6 +28,12 @@ function readable(color: string, backgrounds: string[], mode: "light" | "dark"):
   throw new Error(`팔레트 대비를 맞출 수 없음: ${color}`);
 }
 
+/** 두 색을 sRGB에서 섞는다(CSS `color-mix(in srgb, a weight, b)`와 같은 셈) */
+function mix(a: string, b: string, weight: number): string {
+  const [x, y] = [channels(a), channels(b)];
+  return "#" + x.map((v, i) => Math.round(v * weight + y[i]! * (1 - weight)).toString(16).padStart(2, "0")).join("");
+}
+
 const cachedTokens = new Map<CatalogPalette, Record<string, string>>();
 
 export function catalogTokens(id: CatalogPalette): Record<string, string> {
@@ -39,10 +45,13 @@ export function catalogTokens(id: CatalogPalette): Record<string, string> {
   const fg = (color: string) => readable(color, surfaces, theme.mode);
   const tint = (color: string) => `rgba(${channels(color).join(", ")}, 0.12)`;
   const accent = fg(c.accent);
+  // inbox 안내 글은 말풍선(surface0) 위에만 쓴다: 사람 말 글색을 그 바탕 쪽으로 섞고 그 바탕에서만 대비를 맞춘다
+  const quiet = readable(mix(fg(c.text), c.surface0, 0.72), [c.surface0], theme.mode);
   const tokens: Record<string, string> = {
     "bg": c.panel_bg, "bg-panel": c.panel_bg, "bg-elevated": c.surface0, "bg-hover": c.surface1,
     "bg-input": c.panel_bg, "border": c.surface1, "border-strong": c.overlay0, "bubble-border": c.surface1,
-    "text": fg(c.text), "text-dim": fg(c.subtext0), "text-strong": fg(c.text), "line-number": fg(c.overlay1),
+    "text": fg(c.text), "text-dim": fg(c.subtext0), "text-strong": fg(c.text),
+    "text-quiet": quiet, "line-number": fg(c.overlay1),
     "accent": accent, "accent-tint": tint(accent), "primary": accent, "primary-hover": accent,
     "primary-text": contrast("#000000", accent) >= 4.5 ? "#000000" : "#ffffff", "primary-tint": tint(accent),
     "status-idle": fg(c.subtext0), "status-working": fg(c.blue), "status-blocked": fg(c.red), "status-done": fg(c.green),

@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { aaa, until, step, webkit, domIs, shot, root, openSettings } from "../lib/harness.mjs";
+import { tapContextButton } from "../lib/diff-context-tap.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 let thread = "";
@@ -53,6 +54,109 @@ const fileHeads = (p) =>
     })),
   );
 
+/** 처음에는 변경 주변만, 사용자가 누르면 네이티브 UI가 원문을 한 번 읽고 맥락을 펼친다. */
+async function expandContext(p, name, refreshDuringKey = false) {
+  let reads = 0;
+  const requests = [];
+  const record = (request) => {
+    if (request.method() !== "POST") return;
+    const body = request.postDataJSON();
+    if (body?.op === "thread_diff") requests.push({ at: Date.now(), query: body.query });
+    if (body?.op === "thread_diff" && body.query?.full_context) reads++;
+  };
+  p.on("request", record);
+  try {
+    const card = p.getByTestId("changed-files");
+    if (await card.locator('[data-path="src/lib.rs"]').count() === 0) await card.getByRole("button", { name: "모든 폴더 펼치기" }).click();
+    await card.locator('[data-path="src/lib.rs"]').click();
+    await panelReady(p);
+    const diff = p.locator("diffs-container").filter({ has: p.getByRole("button", { name: "접기 src/lib.rs", exact: true }) });
+    const context = (i) => diff.locator('[data-line-type^="context"]').filter({ hasText: `fn f${i}()` }).first();
+    const scroll = p.locator(".diff-code-view");
+    await diff.getByRole("button", { name: "위로 20줄 펼치기", exact: true }).first().waitFor();
+    if (await context(0).count() || await context(60).count() || reads) throw new Error("기본 맥락이 펼쳐졌거나 원문을 미리 읽었다");
+    const touch = await p.evaluate(() => matchMedia("(pointer: coarse)").matches);
+    const more = diff.getByRole("button", { name: "위로 20줄 펼치기", exact: true }).first();
+    if (touch) {
+      // 실제 재조회로 옛 단추를 제거한 뒤 tap이 받은 최종 DOM에서 44px를 검증한다.
+      await tapContextButton(p, more);
+      const diagnostics = process.env.AAA_E2E_ARTIFACTS ?? root;
+      fs.mkdirSync(diagnostics, { recursive: true });
+      fs.writeFileSync(`${diagnostics}/42-context-tap-${process.pid}.json`, JSON.stringify(await p.evaluate(() => ({
+        touch: window.__contextTap.events,
+        reflow: { before: window.__contextReflow.before, after: window.__contextReflow.after, events: window.__contextReflow.events },
+      })), null, 2));
+    } else if (refreshDuringKey) {
+      const refresh = async () => {
+        const response = p.waitForResponse((r) => {
+          if (r.request().method() !== "POST") return false;
+          const body = r.request().postDataJSON();
+          return body?.op === "thread_diff" && !body.query?.full_context;
+        });
+        await p.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await (await response).finished();
+        // 재조회 뒤 실제 렌더 frame까지 보내고, 새 단추에 다시 focus하지 않은 채 키를 누른다.
+        await p.evaluate(() => new Promise(requestAnimationFrame));
+      };
+      const scope = p.getByLabel("비교 범위");
+      await scope.focus();
+      await refresh();
+      if (!await scope.evaluate((el) => document.activeElement === el)) throw new Error("다른 조작의 focus를 빼앗았다");
+      await more.focus();
+      await refresh();
+      if (!await more.evaluate((el) => el.getRootNode().activeElement === el)) throw new Error("맥락 단추의 키 입력 focus가 재조회에 사라졌다");
+      await p.keyboard.press("Enter");
+    } else await more.press("Enter");
+    await context(60).waitFor();
+    if (await context(0).count()) throw new Error("20줄 대신 전체가 펼쳐졌다");
+    await shot(p, `42-${name}-context-20`);
+    if (!touch) {
+      await p.getByRole("button", { name: "나란히 보기" }).click();
+      await diff.locator('[data-diff-type="split"]').waitFor();
+      await context(60).waitFor();
+      await shot(p, `42-${name}-context-split`);
+      await p.getByRole("button", { name: "한 줄로 보기" }).click();
+      await diff.locator('[data-diff-type="single"]').waitFor();
+    }
+    await diff.getByRole("button", { name: "모두 펼치기", exact: true }).first().click();
+    await context(0).waitFor();
+    await scroll.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await diff.getByRole("button", { name: "모두 펼치기", exact: true }).last().click();
+    await diff.locator('[data-expand-all-button]').first().waitFor({ state: "detached" });
+    await scroll.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await context(159).waitFor();
+    if (reads !== 1) throw new Error(`원문 읽기 ${reads}회`);
+    await shot(p, `42-${name}-context-all`);
+    await p.getByRole("button", { name: "diff 닫기" }).click();
+    await domIs(p, "맥락 diff 닫힘", () => !document.querySelector('[data-testid="diff-panel"]'));
+  } catch (error) {
+    await p.screenshot({ path: `${root}/context-failure.png` });
+    fs.writeFileSync(`${root}/context-failure.json`, JSON.stringify({ reads, requests, ...await p.evaluate(() => ({
+      touch: window.__contextTap?.events,
+      reflow: window.__contextReflow,
+      alert: document.querySelector('[role="alert"]')?.textContent,
+      buttons: [...document.querySelectorAll('diffs-container')].flatMap((host) => [...host.shadowRoot.querySelectorAll('[data-expand-button]')].map((button) => {
+        const r = button.getBoundingClientRect();
+        const hit = [];
+        let el = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        while (el) {
+          hit.push([el.tagName, el.className, el.getAttribute('style')]);
+          const next = el.shadowRoot?.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          if (next === el) break;
+          el = next;
+        }
+        const ancestors = [];
+        for (let el = button; el; el = el.parentElement ?? el.getRootNode().host) ancestors.push([el.tagName, getComputedStyle(el).pointerEvents, el.getAttribute('style')]);
+        return { label: button.getAttribute('aria-label'), box: r.toJSON(), hit, ancestors };
+      })),
+      shadow: [...document.querySelectorAll('diffs-container')].map((e) => e.shadowRoot?.innerHTML),
+    })) }, null, 2));
+    throw error;
+  } finally {
+    p.off("request", record);
+  }
+}
+
 export default async function ({ page }) {
   await step("준비: main에 커밋한 저장소, 그 저장소 thread의 worktree에 branch 커밋·지움·새 파일·무시한 파일", async () => {
     const repo = `${root}/repos/diffgame`;
@@ -60,7 +164,7 @@ export default async function ({ page }) {
     fs.mkdirSync(`${repo}/docs`, { recursive: true });
     git(repo, "init", "-q", "-b", "main");
     fs.writeFileSync(`${repo}/README.md`, "# 게임\n\n처음 글\n");
-    fs.writeFileSync(`${repo}/src/lib.rs`, Array.from({ length: 40 }, (_, i) => `fn f${i}() -> u32 { ${i} }\n`).join(""));
+    fs.writeFileSync(`${repo}/src/lib.rs`, Array.from({ length: 160 }, (_, i) => `fn f${i}() -> u32 { ${i} }\n`).join(""));
     fs.writeFileSync(`${repo}/docs/old.md`, "옛 문서\n");
     fs.writeFileSync(`${repo}/.gitignore`, "*.log\n");
     git(repo, "add", "-A");
@@ -139,6 +243,37 @@ export default async function ({ page }) {
     await page.goBack();
     await domIs(page, "뒤로 diff 닫힘", () => !document.querySelector('[data-testid="diff-panel"]') && !!document.querySelector('[data-testid="changed-files"]'));
     if ((await page.evaluate(() => location.hash)) !== before) throw new Error("뒤로가 thread 화면을 떠났다");
+  }, { diagnose: async () => {
+    await page.screenshot({ path: `${root}/diff-failure.png` });
+    fs.writeFileSync(`${root}/diff-failure.json`, JSON.stringify(await page.evaluate(() => ({
+      heads: [...document.querySelectorAll('.diff-file-toggle')].map((e) => [e.outerHTML, e.getBoundingClientRect().toJSON()]),
+      panel: document.querySelector('[data-testid="diff-panel"]')?.outerHTML,
+      shadow: [...document.querySelectorAll('diffs-container')].map((e) => e.shadowRoot?.innerHTML),
+    })), null, 2));
+  } });
+
+  await step("데스크톱 맥락: 기본은 변경 주변, 키보드로 20줄·전체 펼치기와 원문 한 번 읽기", async () => {
+    // 기존 카드 단계의 변경 위치는 유지한다. 이 단계에서만 양쪽에 긴 맥락을 둔다.
+    fs.writeFileSync(`${cwd}/src/lib.rs`, Array.from({ length: 160 }, (_, i) => `fn f${i}() -> u32 { ${i === 80 ? 33 : i} }\n`).join(""));
+    await openThread(page, FILES);
+    await expandContext(page, "desktop");
+  });
+
+  await step("데스크톱 맥락: 재조회 중 단추 focus와 다른 조작의 focus를 지킨다", async () => {
+    await openThread(page, FILES);
+    await expandContext(page, "desktop-focus-refresh", true);
+  });
+
+  await step("iPhone 맥락: 기본은 변경 주변, 20줄·전체 펼치기와 원문 한 번 읽기", async () => {
+    fs.writeFileSync(`${cwd}/src/lib.rs`, Array.from({ length: 160 }, (_, i) => `fn f${i}() -> u32 { ${i === 80 ? 33 : i} }\n`).join(""));
+    const wk = await webkit.launch();
+    try {
+      const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", {});
+      await openThread(p, FILES);
+      await expandContext(p, "iphone-390");
+    } finally {
+      await wk.close();
+    }
   });
 
   await step("iPhone 390·430·iPad 820(WebKit): 카드 줄 40px, diff는 화면을 덮는 sheet, 머리 한 줄·닫기 44px, 닫기와 뒤로가 같은 칸", async () => {

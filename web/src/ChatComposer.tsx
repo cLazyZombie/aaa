@@ -54,7 +54,7 @@ import { heldSend } from "./steerQueued";
 import { usePageVisible } from "./pageVisible";
 
 /** 참고 `MAX_COMPOSER_CHARS` */
-const MAX_COMPOSER_CHARS = 100_000;
+export const MAX_COMPOSER_CHARS = 100_000;
 /** host가 이만큼 전달(글+Enter)을 확인하지 않으면 막힌 것으로 보고 탈출구(×)를 보인다. 평소 답은 0.3~0.5초다 */
 export const STUCK_MS = 3000;
 /** 전달된 글이 이만큼 기록에 보이지 않으면 오래 걸림(t-0387의 미확인과 같은 10초) */

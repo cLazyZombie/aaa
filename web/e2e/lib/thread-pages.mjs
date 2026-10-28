@@ -4,7 +4,9 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { root, AA, env, aaa, domIs, browser, webkit, pairPage, inTime, specCleanup } from "./harness.mjs";
-import { traceThreadRequests, threadPageTrace, threadTraceDocument } from "./thread-page-trace.mjs";
+import { traceThreadRequests, threadPageTrace, threadTraceDocument, disconnectThreadEvents } from "./thread-page-trace.mjs";
+import { threadConnectingPaneLifetime } from "./thread-lifetime.mjs";
+import { ThreadReloadGate } from "./thread-reload-gate.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
 
 export async function prepareThreadPages() {
@@ -58,7 +60,8 @@ export async function threadPages(all, name) {
   const engine = owned ? await owned.value : browser;
   try {
     const trace = threadPageTrace(`${root}/diagnostics`, engine.browserType().name());
-    let armed = false, held = false, socket, server, release, arrive, restart, releaseNew;
+    const gate = new ThreadReloadGate();
+    let release, arrive, restart, releaseNew;
     const holding = new Promise(resolve => { release = resolve; });
     const arrived = new Promise(resolve => { arrive = resolve; });
     const restarted = new Promise(resolve => { restart = resolve; });
@@ -69,7 +72,6 @@ export async function threadPages(all, name) {
         init: traceThreadRequests, onPage: trace.onPage,
         // WebKit에서도 실제 HTTP 전달을 가로채도록 이 목록 전용 context는 SW를 거치지 않는다.
         serviceWorkers: "block",
-        wsRoute: ["**/api/v1/events", ws => { socket = ws; server = ws.connectToServer(); }],
         setup: async ctx => {
           // pairing 자체가 실패해도 이 context의 route부터 마친 뒤 닫는다.
           context = ctx;
@@ -77,22 +79,22 @@ export async function threadPages(all, name) {
             try {
               const request = route.request().postDataJSON();
               if (request?.op !== "threads") return await route.fallback();
-              if (held && !request.after) {
-                trace.record({ event: "new-first-held", after: request.after ?? null });
+              const requestDocument = route.request().headers()["x-e2e-document"];
+              if (gate.holdFirst(requestDocument, request.after)) {
+                trace.record({ event: "new-first-held", doc: requestDocument, after: request.after ?? null });
                 restart();
                 await newHolding;
               }
               const response = await route.fetch();
               const body = (await response.json()).ok;
-              const oldFinal = armed && !held && body?.kind === "threads" && !body.next_after;
+              const oldFinal = gate.holdFinal(requestDocument, body);
               if (oldFinal) {
-                held = true;
-                trace.record({ event: "old-final-held" });
+                trace.record({ event: "old-final-held", doc: requestDocument });
                 arrive();
                 await holding;
               }
               await route.fulfill({ response });
-              if (held && !oldFinal && body?.kind === "threads" && !body.next_after) {
+              if (gate.held && !oldFinal && body?.kind === "threads" && !body.next_after) {
                 trace.record({ event: "new-final-delivered" });
               }
             } catch (error) {
@@ -103,17 +105,21 @@ export async function threadPages(all, name) {
           });
         },
       });
+      phase = "connecting-pane-cancel";
+      await threadConnectingPaneLifetime(page, aaa("pane", "list").panes.find(p => p.name === "t1").id);
       phase = "initial-list";
       await page.evaluate(() => { location.hash = "threads"; });
       await domIs(page, "초기 목록의 마지막 thread", () => !!document.querySelector('[data-testid="all-threads"] [data-testid="project-thread-t-12499"]'));
       await inTime(trace.drain(), 20000, "초기 문서의 완료 응답 본문 회수");
-      armed = true;
+      gate.arm(await page.evaluate(threadTraceDocument));
       phase = "reload-last-response";
       await page.reload();
+      const doc = await page.evaluate(threadTraceDocument);
+      assert.notEqual(doc, gate.previousDocument);
       await inTime(arrived, 20000, "reload 목록의 마지막 실제 응답");
       // host 응답은 바꾸지 않는다. 마지막 응답 전달 전에 실제 events 연결을 한 번 바꿔 두 읽기를 겹친다.
-      await socket.close({ code: 1012, reason: "E2E12 재연결 경계" });
-      await server.close();
+      assert.equal(gate.document, doc, "보류한 끝 응답은 reload 문서 것이어야 한다");
+      await inTime(page.evaluate(disconnectThreadEvents, doc), 20000, "reload 문서의 events open·close");
       phase = "reconnected-list";
       await inTime(restarted, 20000, "새 events 연결의 첫 목록 요청");
       trace.record({ event: "old-final-released" });
@@ -122,7 +128,6 @@ export async function threadPages(all, name) {
       // 새 연결의 첫 응답이 아직 없더라도 옛 연결의 완전한 목록은 보여야 한다.
       trace.record({ event: "old-complete-visible-before-new-response" });
       trace.record({ event: "new-first-released" });
-      const doc = await page.evaluate(threadTraceDocument);
       releaseNew();
       await inTime(trace.completed(doc, 2), 20000, "재연결 HTTP 두 완전 목록의 본문 수집");
       const expected = all.map(t => `${t.project}/${t.id}`);

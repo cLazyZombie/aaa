@@ -105,9 +105,15 @@ fn rollout_shared_host_agent_recovery_and_inflight_cancel_preserve_baselines() {
 
 fn rollout_scenario(scenario: Scenario) {
     use sha2::{Digest, Sha256};
+    let mut phases = aaa_test_support::phases::Phases::new(match scenario {
+        Scenario::Transfer => "rollout_transfer_preflight_and_resume_keep_the_same_jobs",
+        Scenario::RemoteRecovery => "rollout_rejected_update_and_remote_recovery_keep_the_same_jobs",
+        Scenario::SharedRecovery => "rollout_shared_host_agent_recovery_and_inflight_cancel_preserve_baselines",
+    });
     // 웹을 연 host: 새 host 감시가 실행 신원과 함께 웹 응답(`/api/v1/me`)까지 본다(W6c)
     // 이 keeper는 실제 사본으로 시작한다. 곧바로 버릴 원본 host/agent 셋과 쓰지 않는 Git repo는 준비하지 않는다.
     let (mut w, _) = world_files("", true, Some(BRIEF_SETTLE_MS), false, |_| Vec::new());
+    phases.mark("prepare", "variant-binaries-and-service-fixture");
     let dir = w.lab.root.join("rollout-bin");
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
@@ -168,6 +174,7 @@ esac
         Scenario::RemoteRecovery => ("rollout-host-new", "rollout-a-new", "rollout-b-new"),
         Scenario::SharedRecovery => ("rollout-host-recovery-resume", "rollout-a-third", "rollout-b-restored"),
     };
+    phases.mark("prepare", "host-and-agent-start");
     w.lab.spawn_command(host_tag, w.host_command(&a_exe));
     let status = wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = status["agent_listen"].as_str().unwrap().into();
@@ -203,6 +210,7 @@ esac
     });
     w.h.ok(&["project", "create", "demo"]);
     w.h.ok(&["machine", "workspaces", "labA", "--allow", "작업 폴더"]);
+    phases.mark("prepare", "coordinator-start");
     let coordinator = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
     let pane = coordinator["pane"]["id"].as_str().unwrap().to_string();
     w.wait_screen(&pane, "fake>");
@@ -323,6 +331,7 @@ esac
         assert!(Command::new("cp").args([path_str(from), path_str(to)]).status_guarded().unwrap().success());
     };
     let variant = |p: &Path, suffix: &str| lab::variant_binary(Path::new(lab::BIN), p, suffix);
+    phases.mark("contract", "rollout-transitions");
     if scenario == Scenario::Transfer {
         let (rc, _, err) = probe(&w, &start(&sha));
         assert_eq!(rc, "1");
@@ -565,6 +574,7 @@ esac
             serde_json::from_str(person_status[person_status.find('{').unwrap()..].trim()).unwrap();
         assert_eq!(person_view["rollout"]["id"], id);
         assert_eq!(person_view["rollout"]["state"], "done", "{person_status}");
+        phases.mark("cleanup", "world-and-proxy");
         return;
     }
     let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
@@ -628,7 +638,9 @@ esac
         // L3: 앞 머신은 새 판을 유지하고, 실패한 remote만 배포 전 SHA로 복구한다.
         let old_b = dir.join("old-b");
         copy(&b_exe, &old_b);
+        phases.mark("prepare", "replacement-candidate");
         variant(&candidate, "third-candidate");
+        phases.mark("contract", "rollout-transitions");
         let third_sha = digest(&candidate);
         let (rc, out, err) = probe(&w, &start(&third_sha));
         assert_eq!(rc, "0", "{out} {err}");
@@ -721,13 +733,16 @@ esac
         assert_eq!(service_count(), 9, "복구 재시작은 한 번만 실행한다");
 
         eprintln!("L3 remote rollback survived agent death and host restart with the same recovery IDs");
+        phases.mark("cleanup", "world-and-proxy");
         return;
     }
     let third_sha = digest(&a_exe);
     // host가 옛 판으로 돌아온 실패도 host 밖 감시가 복구한다. remote 파일/서비스는 건드리지 않는다.
     let old_a = dir.join("old-a");
     copy(&a_exe, &old_a);
+    phases.mark("prepare", "replacement-candidate");
     variant(&candidate, "fourth-candidate");
+    phases.mark("contract", "rollout-transitions");
     let fourth_sha = digest(&candidate);
     let (rc, out, err) = probe(&w, &start(&fourth_sha));
     assert_eq!(rc, "0", "{out} {err}");
@@ -764,7 +779,9 @@ esac
     eprintln!("L3 wrong host restored without touching the remote agent");
 
     // 로컬 agent 실패는 공유 실행 파일을 복구하고 host/agent 둘의 새 옛판 프로세스를 확인한다.
+    phases.mark("prepare", "replacement-candidate");
     variant(&candidate, "fifth-candidate");
+    phases.mark("contract", "rollout-transitions");
     let fifth_sha = digest(&candidate);
     let (rc, out, err) = probe(&w, &start(&fifth_sha));
     assert_eq!(rc, "0", "{out} {err}");
@@ -902,4 +919,5 @@ else:
     assert_eq!(digest(&a_exe), third_sha, "재시작은 실행 파일을 바꾸지 않는다");
     assert_eq!(service_count(), 17, "재시작을 한 번만 했다");
     eprintln!("W6c host restart rollout confirmed the new host and its web");
+    phases.mark("cleanup", "world-and-proxy");
 }

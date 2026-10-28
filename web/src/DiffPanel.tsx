@@ -18,6 +18,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ApiError, call } from "./api";
 import { DiffStat, PATH_ORDER as COLLATOR } from "./ChangedFiles";
 import { hasNonZeroStat, summarizeDiffStats } from "./diffTree";
+import { diffContextFiles } from "./diffContext";
+import { labelContextButtons } from "./diffContextButtons";
 import type { DiffFile, DiffScope, DiffView } from "./gen/proto";
 import { DiffWorkerPool } from "./herdr/DiffWorkerPool";
 import { contentKey, SHADOW_CSS, SOURCE_THEME } from "./herdr/sourceTheme";
@@ -34,7 +36,7 @@ const BATCH = 4;
 const STYLE_KEY = "aaa:diff-style";
 
 /** t3code `StyledDiffCodeView`의 머리·구분선 크기. 접힌 파일은 다시 재지 않으므로 그린 높이가 이 값과 같아야 한다 */
-function shadowCss(header: number): string {
+function shadowCss(header: number, separator: number): string {
   return `${SHADOW_CSS}
 :host {
   --diffs-light-addition-color: var(--syntax-inserted);
@@ -71,8 +73,30 @@ function shadowCss(header: number): string {
 [data-title]:hover { text-decoration: underline; }
 [data-additions-count], [data-deletions-count] { display: none; }
 :is([data-separator="line-info"], [data-separator="line-info-basic"]) {
-  height: 24px !important;
+  height: ${separator}px !important;
   margin-block: 0 !important;
+}
+[data-expand-button] { min-width: ${separator}px; }
+/* WebKit의 SVG use 대신 단추 자체가 터치를 받는다. */
+[data-expand-button] :is(svg, use) { pointer-events: none; }
+[data-code]:not([data-additions]) > [data-gutter] [data-separator="line-info"][data-expand-index] [data-separator-wrapper] {
+  display: grid !important;
+  box-sizing: border-box;
+  width: 100cqi;
+  grid-template-columns: ${separator}px minmax(0, 1fr) auto !important;
+  grid-template-rows: 1fr !important;
+}
+[data-code]:not([data-additions]) > [data-gutter] [data-separator="line-info"][data-expand-index] [data-separator-multi-button] {
+  grid-template-columns: ${separator}px ${separator}px minmax(0, 1fr) auto !important;
+}
+[data-separator="line-info"] :is([data-expand-button], [data-separator-content]) {
+  grid-column: auto !important;
+  grid-row: auto !important;
+}
+[data-code]:not([data-additions]) > [data-gutter] [data-expand-all-button] {
+  display: flex !important;
+  padding-inline: 8px;
+  white-space: nowrap;
 }
 `;
 }
@@ -126,6 +150,7 @@ function errorText(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
 }
 
+
 export default function DiffPanel({
   project,
   thread,
@@ -160,11 +185,14 @@ export default function DiffPanel({
   const [tick, setTick] = useState(0);
   const [load, setLoad] = useState<Load>({ status: "pending" });
   const [fileLoads, setFileLoads] = useState<Map<string, FileLoad>>(new Map());
+  const [contextError, setContextError] = useState<string | null>(null);
+  const contextEpoch = useRef(0);
   // 접힘은 범위·공백마다 처음(모두 접힘)부터다(t3code collapseScopeKey)
   const scopeKey = `${scope}:${ignoreWhitespace ? "w" : ""}`;
   const [opened, setOpened] = useState<{ key: string; paths: Set<string> }>({ key: scopeKey, paths: new Set() });
   const viewer = useRef<CodeViewHandle<undefined, undefined> | null>(null);
   const header = coarse ? 44 : 32;
+  const separator = coarse ? 44 : 24;
   // 줄 높이는 앱 글꼴(shadow CSS의 --diffs-line-height)로 잰다: 라이브러리 기본 20px로 어림하면 펼친 파일 높이가 실제보다 커서
   // 내용이 화면보다 짧을 때 붙는 창이 아래로 밀린다(herdr-web-ui RepoDiff도 재서 넘긴다)
   const hostRef = useRef<HTMLDivElement>(null);
@@ -179,6 +207,8 @@ export default function DiffPanel({
 
   useEffect(() => {
     let live = true;
+    contextEpoch.current++;
+    setContextError(null);
     setLoad((cur) => (cur.status === "ready" && tick > 0 ? cur : { status: "pending" }));
     call({ op: "thread_diff", project, thread, query: { scope, ignore_whitespace: ignoreWhitespace, patch: true } })
       .then((r) => {
@@ -189,6 +219,7 @@ export default function DiffPanel({
       .catch((e: unknown) => live && setLoad({ status: "failed", message: errorText(e) }));
     return () => {
       live = false;
+      contextEpoch.current++;
     };
   }, [project, thread, scope, ignoreWhitespace, tick, reportHash]);
 
@@ -321,7 +352,23 @@ export default function DiffPanel({
 
   const total = files ? summarizeDiffStats(files) : null;
   const status = load.status === "pending" ? "pending" : load.status === "failed" ? "failed" : files?.length === 0 || view?.patch === "" ? "empty" : "ready";
-  const css = useMemo(() => shadowCss(header), [header]);
+  const css = useMemo(() => shadowCss(header, separator), [header, separator]);
+  const loadDiffFiles = useCallback(async (fileDiff: FileDiffMetadata) => {
+    const epoch = contextEpoch.current;
+    try {
+      const r = await call({ op: "thread_diff", project, thread, query: {
+        scope, ignore_whitespace: ignoreWhitespace, patch: true, full_context: true,
+        file: { path: fileDiff.name, ...(fileDiff.prevName ? { old_path: fileDiff.prevName } : {}) },
+      } });
+      if (r.kind !== "thread_diff") throw new Error("전체 맥락 응답 형식이 다르다");
+      const files = diffContextFiles(fileDiff, view?.base_sha ?? "", r.diff);
+      if (epoch === contextEpoch.current) setContextError(null);
+      return files;
+    } catch (e) {
+      if (epoch === contextEpoch.current) setContextError(`${fileDiff.name}: ${errorText(e)}`);
+      throw e;
+    }
+  }, [project, thread, scope, ignoreWhitespace, view?.base_sha]);
   const toggleLabel = (on: boolean, yes: string, no: string) => (on ? yes : no);
 
   const body = (() => {
@@ -336,6 +383,7 @@ export default function DiffPanel({
             className="diff-code-view"
             items={items}
             options={{
+              onPostRender: labelContextButtons,
               diffStyle: shownStyle,
               lineDiffType: "none",
               overflow: wrap ? "wrap" : "scroll",
@@ -343,9 +391,12 @@ export default function DiffPanel({
               themeType: resolvedTheme,
               stickyHeaders: true,
               hunkSeparators: "line-info",
+              loadDiffFiles,
+              expandUnchanged: false,
+              expansionLineCount: 20,
               lineHoverHighlight: "disabled",
               unsafeCSS: css,
-              itemMetrics: { lineHeight, diffHeaderHeight: header, hunkSeparatorHeight: 24, spacing: 0, paddingTop: 0, paddingBottom: 8 },
+              itemMetrics: { lineHeight, diffHeaderHeight: header, hunkSeparatorHeight: separator, spacing: 0, paddingTop: 0, paddingBottom: 8 },
               layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
             }}
             renderHeaderPrefix={(item: CodeViewItem<undefined>) => {
@@ -443,6 +494,7 @@ export default function DiffPanel({
       </header>
       {view?.untracked_omitted && <div className="banner diff-banner">새 파일이 너무 많아 새 파일은 뺐다</div>}
       {view && view.truncated && !lazy && <div className="banner diff-banner">이 비교는 크기 상한을 넘어 일부만 보인다</div>}
+      {contextError && <div className="banner diff-banner" role="alert">{contextError}</div>}
       <div className="diff-panel-body">{body}</div>
     </section>
   );

@@ -1,3 +1,265 @@
+- t-1212: [첫 trust 관측 회귀와 착지 검증](testing-trust-observation.md)
+
+E2E12 연결 중 취소·재연결 검증은 [별도 기록](testing-terminal-socket.md)에 둔다.
+
+## E81 Reader 사용 설정 준비·E109 종료 증거(t-1218)
+
+- [원본 macOS 웹 job](https://github.com/cLazyZombie/aaa/actions/runs/40584602186/job/122472617885)의
+  전체 로그와 artifact 목록을 확보했다. E81 원문은 `false !== true`이며 stack·Reader 실패 화면은 없다.
+  E109는 `getByTestId('terminal')`의 detached 대기 중 page/context/browser closed다. 원본 artifact에는
+  `return-failure-390.json`·브라우저 stderr/종료 신호·page crash/close/disconnected 기록이 없다.
+  원래 E109의 JSON은 실험실 루트에만 썼으며 공통 수집기는 diagnostics 폴더만 복사했다.
+- E81의 같은 Reader owner에서 실제 account_pool 응답 전달만 gate로 보류한다. 서버 members에 cold가
+  있는데 목록 checkbox는 checked=false/disabled=true인 경계에서 기존 단언이 실패했다. 목록 생성은
+  설정 반영 완료가 아니다. 응답 도착을 확인하고 gate를 풀어 checked/disabled DOM 사건을 기다린 뒤
+  기존 checked=true·disabled=true 단언을 그대로 수행한다. forbidden·응답/host 파일의 인증 비노출·
+  Reader 메일 비노출도 유지한다. gate는 원래 fetch·응답을 쓰며 Service Worker 경유도 같은 경계를 지난다.
+  새 대기의 상한은5초다. 실패 때 원래 stack·응답 종류/상태/비밀 없는 계정 별칭·DOM·그림을 저장한다.
+- E109의 `returnDiagnostics`는 renderer에 다시 묻기 전에 최초 오류/stack을 기록한다. page crash/close,
+  context close, browser disconnected, 명시적 정리 시작/끝/실패, Playwright 소유 launcher의 stderr와
+  종료 코드/신호를 diagnostics에 둔다. launcher는 macOS pw_run.sh이므로 그 신호를 별도 WebProcess의
+  신호로 단정하지 않는다. 조회·정리 오류가 최초 오류를 덮지 않으며 실패 JSON도 공통 artifact 수집에 들어간다.
+  기존12회 왕복·같은 xterm/연결·휠 한 번·실제 입력·숨김/만료·Reader 비전송 단언과 시한은 바꾸지 않는다.
+- `NODE_PATH=<격리 node_modules> nice -n 15 node --test web/e2e/return-diagnostics.test.mjs`의 두 keeper는
+  저장소 고정 Playwright1.64.1과 공용 WebKit을 쓴다. 실제 DOM 분리의 성공 뒤 명시적 정리와 정상 exit를
+  구별하고, 실제 selector가 기다리기 시작한 뒤 공개 browser.close를 호출해 최초 locator 오류·다음 조회 오류·
+  정리 오류의 독립 보존을 확인한다. 필요성: 페이지 종료 뒤 진단도 실패하면 최초 오류와 산출물을 잃는다.
+  구 수집 순서는 두 번째 keeper에서 page.evaluate 오류로 실패했고 수리 뒤 두 keeper는 각각1초 미만이다.
+  이 제어된 종료는 원본 CI의 종료 주체/원인을 재현했다는 뜻이 아니다.
+- E109 원본과 수명 계측판은 로컬 단독에서 모두 통과했다. 이 결과를 원본 CI 종료의 회복이나
+  부하/환경 원인으로 판정하지 않는다. E109 종료 원인은 미확정이며 다음 실패의 위 증거가 필요하다.
+  E81 수리와 E109 증거 수집을 구별해 보고하고 전체 수리 완료로 표시하지 않는다.
+- 참고 후보는 [React ChangeEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/ChangeEventPlugin.js)
+  ([MIT](https://github.com/facebook/react/blob/main/LICENSE))의 controlled checkbox commit과
+  [Playwright page events](https://playwright.dev/docs/api/class-page#page-event-crash)·
+  [browser disconnected](https://playwright.dev/docs/api/class-browser#browser-event-disconnected)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))의 수명 구분이다.
+  외부 코드·의존성은 가져오지 않는다. 고정 sleep·재시도·시한 연장·기대값 완화·시험 삭제·새 E2E 번호는 없다.
+
+## E2E16 복귀 크기 기준·E2E28 새 hover 진입(t-1209)
+
+- [원본 macOS 웹 job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985055)의
+  전체 E2E 로그·실패 JSON/PNG·실행 시각 artifact를 확보했다. E16은 설정 중 112×38,
+  복귀 요청 112×35와 응답, 창 높이 증가 뒤 112×36과 응답까지 왔다. 실패 뒤에도 같은 링크의
+  up은 파일 창을 열었다. 원본은 `before` 변수와 실패 순간 제목/DOM 행 수를 직접 기록하지 않았다.
+- 설정을 가린 터미널은 더 큰 칸에서 맞춰진다. 복귀 commit 뒤 ResizeObserver 전에는 옛
+  `fit=same`·제목·DOM 행 수가 모두 38로 맞아도 실제 칸은 35행이다. `fittedTerminalGrid`는
+  현재 부모 높이·xterm padding·실제 행 높이까지 대조해 이 기준값을 거절한다. 새 관측 keeper는
+  옛 세 표지의 자체 일치, 늦은 ACK, 실제 행 반영과 pending을 구별한다. 필요한 이유는
+  잘못 읽은 38행에 1을 더한 값을 기다리는 준비 경쟁을 막기 위해서다. 기존 112열·한 행 증가·
+  좌표 불변·실제 PTY 재그림·선택/링크·가상화/줄 참조/설정 기록 계약은 유지한다.
+- 원본 E28은 행 `hover=true`·카드 없음·요약 응답 200이었다. 진행 목록 검사의 reload가
+  DOM 사건 수집기를 지워 당시 닫힘 원인이 resize인지 목록 scroll인지 소급 확정할 수 없다.
+  수집기는 addInitScript로 reload 뒤에도 설치하며 테마 경계·좌표·관련 요소·scroll·응답·표시를 남긴다.
+- 같은 E28 desktop light owner에 실제 테마 변경 → 카드 표시 → native resize 두 번으로 원래
+  창 크기 복귀 → 포인터는 같은 행·카드 없음 순서를 넣었다. 기존 같은 좌표 `hover()`는
+  새 mouseover 없이 원본과 같은 30초 오류로 실패했다. 각 테마 검사는 행 밖 이동 뒤 실제
+  진입을 한 번 수행한다. 동일 재현이 통과하며 light/dark 카드·상세, Chromium320/WebKit390
+  Reader·읽기 전용·실제 모델 관측/재시작 계약도 그대로 검사한다. resize 전달은 미리 구독한
+  native 사건으로 끝낸다. 실패 재시도·시한 확대·기대값 완화·고정 sleep은 추가하지 않는다.
+- E16 실패 관측은 실제 제목·행 수·칸/행 높이·fit과 기존 동기 WebSocket 전송/상태 기록을
+  함께 남긴다. 스크린샷 폴더를 지정하면 성공 경로에도 누름 중 resize와 모델 카드 사건을 저장한다.
+- 참고 후보는 [xterm 5.5.0 FitAddon](https://github.com/xtermjs/xterm.js/blob/5.5.0/addons/addon-fit/src/FitAddon.ts)
+  (MIT)의 실제 칸 치수, [Playwright mouse 시험](https://github.com/microsoft/playwright/blob/main/tests/page/page-mouse.spec.ts)
+  (Apache-2.0)의 실제 포인터 이동, [React EnterLeaveEventPlugin](https://github.com/facebook/react/blob/main/packages/react-dom-bindings/src/events/plugins/EnterLeaveEventPlugin.js)
+  (MIT)의 진입/이탈 경계다. 외부 코드·의존성·제품 동작은 바꾸지 않는다.
+- 부분 검증은 웹 유닛 전체·타입/번들, 기존 E16/E28 전체와 E03 드래그/제자리 클릭,
+  공개 검사다. Playwright 1.64.1과 공용 브라우저 캐시를 쓴다. 전체 ci-local·cross·병합·push는
+  정규 착지 차례에서 수행한다.
+
+## E103 재구독의 같은 기록 알림과 복귀 읽기(t-1216 착지 수리)
+
+- 첫 착지의 E103은 지연 회선 Chromium1280/coordinator/trial1에서 최신 요청2회로 실패했다.
+  보존된 return-body는2342.5ms·응답1회다. t-1147의 protocol은 count/lookup/commit의 DOM·Runtime만
+  기록하므로 복귀 구간의 Network 요청·예약 호출 스택은 없다. 이 원문만으로 두 번째 예약자를
+  소급 확정했다고 하지 않는다. t-1147 보고와 t-1134의 이전 read/복귀 경계도 먼저 읽었다.
+- 같은 합성 fixture의 별도 관측에서 복귀 effect의 `refresh()`로 최신 요청이 시작된 뒤,
+  재구독이 기존과 같은 signature의 chat_changed를 재전달하는 순서를 확보했다.
+  api가 signature를 버려 `invalidate()`가2초 trailing read를 남기는 실제 경로가 있다.
+  해당 순서를 실제 ConversationRefresh의 응답 보류 gate와 정지 단조 시계로 고정하면
+  수리 전 처음1회+복귀1회가 아니라3회로 실패한다. 부하·간헐로 결론내지 않는다.
+- API가 이미 받는 signature를 내부 ChatNote로 전달하고, 같은 pane의 마지막 signature를
+  lane에 유지한다. 같은 값의 재전달은 추가 invalidate를 만들지 않는다. 다른 signature는
+  읽는 중에도 다음 확인을 남기며 다른 pane으로 바뀌면 이전 signature를 잊는다.
+  복귀의 강제 최신 확인·2초 변경 경계·10초 backstop·직렬화·숨김 정리와 wire는 유지한다.
+- 새 `conversationRefresh.test.mjs` keeper1개가 필요한 이유는 재구독의 중복 확인을 막으면서
+  실제 변경·다른 pane의 확인을 잃지 않아야 하기 때문이다. 응답 gate의 완료로 끝나고 실제로
+  2초를 자지 않는다. 수리 전 실패 원문과 수리 후 통과를 보존한다. fixture 정리 순서와 다른
+  pane read 시작의 비동기 경계 오류도 원문을 보존한 뒤 사건 대기로 수리했다.
+- 기존 E103의 모든 조합·trial·과거 위치·동일 DOM·초안·과거 요청0회·복귀 최신1회·시한을
+  그대로 확인한다. 시험 집계 창·기대값·시한·데이터·단계는 바꾸지 않는다.
+- 참고는 [VS Code Event.latch](https://github.com/microsoft/vscode/blob/main/src/vs/base/common/event.ts)
+  ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))와
+  [RxJS distinctUntilChanged](https://github.com/ReactiveX/rxjs/blob/7.8.2/src/internal/operators/distinctUntilChanged.ts)
+  ([Apache-2.0](https://github.com/ReactiveX/rxjs/blob/7.8.2/LICENSE.txt))다.
+  같은 키의 연속 알림을 걸러 내는 원칙만 참고하며 외부 코드·실행 의존성을 추가하지 않는다.
+
+## E117 터미널 인용의 실제 행 준비(t-1208 착지 수리)
+
+- main `165797c0`·후보 `8d8491b1`의 변경 없는 E117을 각각 한 번 단독 실행했고 모두 통과했다.
+  병렬 실패 원문은 `selectNodeContents(undefined)`이며, 대상 검색과 Range 설정은 한 동기 호출이다.
+  그 사이 DOM이 교체됐다고 단정하지 않는다. 실제 host snapshot을 gate로 붙잡으면 래퍼·빈 xterm 행만
+  있는 상태에서 같은 TypeError가 결정적으로 재현된다. agent 출력 완료와 브라우저 행 준비는 다르다.
+- gate를 푼 첫 snapshot 그림 직후에는 autoFit resize가 다시 그려 좌표가 한 줄 밀리는 추가 실패도 관측했다.
+  `Term`의 기존 onRender 관측 표지에 그린 cols/rows를 더한다. E117은 마지막 송신 resize와 그린 크기,
+  fit 완료와 두 원문 행을 DOM 사건으로 확인한 뒤 좌표를 읽는다. 제품의 입력·인용 계약은 바꾸지 않는다.
+- 기존 입력줄 owner에 실제 WebSocket 중계 gate를 둔다. 빈 래퍼를 준비로 세지 않음을 확인한 뒤 서버의
+  원래 메시지를 같은 순서로 한 번만 풀고, 기존 실제 마우스 드래그·두 줄 원문·출처·연속 줄 번호·focus·
+  PTY 미전송·오류 없음 단언을 모두 유지한다. 새 E2E 번호/단계·고정 sleep·재시도는 없다.
+  행 준비의 실패 상한은5초이며 기존 시험의 시한·단언을 늘리거나 완화하지 않는다.
+- 최초 병렬 실패에는 해당 페이지가 finally에서 닫히기 전의 행 진단이 없다. 남은 공통 페이지의 t1 터미널
+  진단을 실패 페이지의 pane으로 해석하지 않는다. gate의 같은 오류와 제품 render 수명으로 원인을 판정한다.
+- 참고 후보는 [xterm 5.5 DOM renderer](https://github.com/xtermjs/xterm.js/blob/5.5.0/src/browser/renderer/dom/DomRenderer.ts)
+  ([MIT](https://github.com/xtermjs/xterm.js/blob/5.5.0/LICENSE))와
+  [Playwright WebSocketRoute](https://playwright.dev/docs/api/class-websocketroute)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE))다.
+  xterm의 행 자식 교체·비동기 렌더 수명과 실제 서버 중계 gate를 대조했으며 외부 코드·의존성을 가져오지 않았다.
+
+## E42 맥락 단추의 재그리기와 키 focus(t-1208 착지 수리)
+
+- main `165797c0`와 후보 `762c39fc`의 원래 E42 전체를 각각 한 번 단독 실행했고 모두 약13.1초에 통과했다.
+  병렬 최초 실패의 원문에는 HTTP/키 사건 trace가 없어 그 순간의 순서를 소급 단정하지 않는다.
+  별도 사건 gate에서 단추 focus와 Enter 사이에 실제 focus 재조회 응답을 놓아 같은 f60 대기를 재현했다.
+  DOM 교체 → focus가 BODY → Enter가 BODY → full_context 요청0회다. agent 읽기·host 중계 전에 입력이 사라졌다.
+  부하나 시한으로 닫지 않고 실제 재그리기 경계를 수리한다.
+- `labelContextButtons`는 같은 파일·hunk·방향 단추가 같은 render에서 제거·생성된 경우에만 focus를 복구한다.
+  연결된 옛 단추에서 다른 곳으로 이동한 focus·unmount·다른 창은 복구하지 않는다. 새 입력을 보내거나 원문을 선행 읽지 않는다.
+  기존 한글 이름·Enter/Space·20줄/전체·한 줄/나란히·가상화·44px 계약은 유지한다.
+- E42의 새 keeper `데스크톱 맥락: 재조회 중 단추 focus와 다른 조작의 focus를 지킨다`는 실제 HTTP 응답과
+  다음 렌더 frame을 사건 gate로 사용한다. 다시 focus하는 locator.press 대신 native keyboard 입력을 보낸다.
+  수리 전 focus 소실로 실패했고 수리 후 full_context1회·HTTP200/full_context=true·20줄/전체/끝 줄까지 확인한다.
+  필요성: 기존 단독 성공만으로 가상 DOM 교체 사이의 다음 키 유실을 막을 수 없다. 개별 keeper는5초 미만이다.
+  실패 진단에는 full_context 요청 수·query도 남긴다. 기존 단언·시한·시험을 완화/삭제하지 않는다.
+- 휴대폰의 visible 확인과 boundingBox 사이에 단추가 교체돼 null이 된 원문도 보존했다. 크기는 같은 DOM 호출에서
+  getBoundingClientRect로 읽고 기존44px 단언·실제 tap을 유지한다. 실패 재시도·고정 sleep·시한 확대는 없다.
+- 참고는 고정 [Pierre FileDiff](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/components/FileDiff.ts)와
+  [CodeView React wrapper](https://github.com/pierrecomputer/pierre/blob/diffs-v1.5.2/packages/diffs/src/react/CodeView.tsx)(Apache-2.0),
+  [VS Code diff view model](https://github.com/microsoft/vscode/blob/main/src/vs/editor/browser/widget/diffEditor/diffEditorViewModel.ts)
+  ([MIT](https://github.com/microsoft/vscode/blob/main/LICENSE.txt))다. 실제 DOM 수명과 맥락 표시/입력 상태 분리를 대조했다.
+  외부 코드·의존성을 추가하지 않는다.
+
+## Windows idle-audit의 스택 사용과 실패 수집(t-1208)
+
+- [원본 Windows job](https://github.com/cLazyZombie/aaa/actions/runs/40521069216/job/122247985312)
+  (main `3ee2b329`)의 idle-audit owner가 `has overflowed its stack` 뒤
+  `0xc00000fd, STATUS_STACK_OVERFLOW`로 끝났다. 같은 코드의 Windows 격리 실행에서도 재현했다.
+  직접 만든 외부 디버거가 소유한 자식의 Windows debug event·DbgHelp stack walk를 읽었다.
+  시험 poll → `Host::call` → `Host::call_from` → 요청 가림 직렬화 → 할당 순서이며 재귀는 관측되지 않았다.
+  원본의 인접 stack pointer 차이는 시험 poll 757,008바이트·call 48,016바이트·call_from 1,115,312바이트다.
+  예외의 마지막 할당 함수 하나를 원인으로 단정하지 않는다.
+- 같은 Windows verify profile의 `-Zprint-type-sizes` 관측에서 시험 body future는
+  27,440→6,384바이트다. call future 23,456바이트·call_from future 23,152바이트는 그대로다.
+  future의 저장 크기와 poll의 실제 stack frame 크기는 다르다. 이 긴 owner의 요청별 future만
+  `Box::pin`으로 heap에 두어 await의 큰 상태·임시값 중첩을 줄인다. 기본 thread stack·runtime·
+  profile 최적화·제품 Front API는 바꾸지 않는다. 웹 Forbidden·오류 문구·매 요청 snapshot 불변,
+  Reader/Controller 읽기·다른 자동화 쓰기·Local 저장/토글/실행/삭제/복원·구형 변환 보호 단언은 유지한다.
+- `ci::tests::stack_overflow_keeps_the_thread_and_exit_kind_from_real_windows_output`은 원본 일곱 줄
+  fixture를 7바이트 조각으로 읽고 원문/gh 앞머리·긴 꼬리·annotation 중복·끝 개행 누락·다른 FAILED와의
+  공존을 검사한다. 필요한 이유: abort는 일반 FAILED를 내지 않으며, 다른 실패가 있어도 이 증거를 잃으면 안 된다.
+  `stack_overflow_exit_fallback_and_successful_or_quoted_output_are_distinct`는 PID 없는 Rust 표지,
+  이름 없는 Cargo 종료의 hex/unsigned/signed 코드와 성공 Python fixture·인용·잘못된 PID·일반 exit101을
+  구별한다. 필요한 이유: 이름을 추측하거나 상태 문자열 인용을 실제 스택 초과로 기록하는 오탐을 막는다.
+  두 keeper는 수리 전 실패했고 수리 뒤 통과한다. 기존 시험 삭제·시한/기대값 완화·고정 sleep은 없다.
+- 부분 확인은 macOS common 전체 67통과/보조1ignored·자동화 82통과·의존 경계2통과,
+  두 crate all-targets strict clippy와 fmt·공개 검사다. Windows는 같은 verify profile·기본 스택에서
+  자동화80개가2.66초에, CI 수집기13개가0.00초에 통과했다. OS별 cfg로 macOS 두 owner가 Windows 목록에서 빠진다.
+  Windows 서비스·예약 작업·Run·사용자 PATH·방화벽 기준이 모두 같고 시험 자식0개를 확인한 뒤 격리 폴더를 지웠다.
+  새 두 keeper는 개별5초 미만이며 새 E2E 번호는 없다. 전체 ci-local·cross·main 병합/push는 정규 착지 차례에 수행한다.
+- 참고 후보는 [Tokio test macro의 stack pinning](https://github.com/tokio-rs/tokio/blob/tokio-macros-2.7.2/tokio-macros/src/entry.rs)
+  ([MIT](https://github.com/tokio-rs/tokio/blob/tokio-macros-2.7.2/LICENSE))와
+  [Rust Windows stack overflow handler](https://github.com/rust-lang/rust/blob/master/library/std/src/sys/pal/windows/stack_overflow.rs)
+  ([MIT/Apache-2.0](https://github.com/rust-lang/rust/blob/master/COPYRIGHT))다.
+  macro의 저장 방식과 표준 런타임의 thread/PID 진단을 대조했고 외부 코드·의존성을 가져오지 않았다.
+
+## 고른 글 인용(t-1204)
+
+- 웹 유닛 `selectionQuote.test.mjs` 셋은 출처 머리·터미널 줄 범위·backtick 울타리, 대화 화자·`>` 줄, 쓰던 초안 뒤 붙이기·넘침 거부를 지킨다.
+  필요한 이유: 받는 agent가 읽는 글 꼴과 「쓰던 글을 지우지 않는다」는 계약이 바뀌는 회귀를 막는다.
+- 웹 E2E117 `117-selection-quote`(새 번호)는 실제 host·agent·PTY의 thread pane에서 세 단계를 본다.
+  Chromium 1280 바로 입력: 대화 답을 마우스로 끄는 동안 단추 없음 → 놓으면 단추 → 쓰던 초안 뒤 `인용: t-NNNN 대화 · Claude 답`,
+  입력창 focus, 터미널 두 줄 끌기 → 대화 입력창 초안에 `터미널 a~b줄`(b=a+1)·울타리, 알림, PTY로 보낸 것 없음.
+  Chromium 1280 입력줄: 끈 두 줄이 입력줄 초안의 쓰던 글 뒤에 붙고 입력줄 focus. WebKit 390: 고른 글 단추를 눌러 빈 초안에 붙고 입력창 focus 없음.
+  필요한 이유: 선택 사건·xterm 줄 번호·두 초안 저장소·터치 focus는 브라우저와 실제 pane에서만 드러난다. 완료는 DOM 사건·PTY 출력이며 고정 sleep이 없다.
+- 이 thread는 Windows에서 일해 Unix 전용 E2E 실험실(`/tmp`·UDS)과 Playwright 브라우저가 없었다. E2E117은 쓰기만 했고 실행하지 못했다.
+  대신 같은 컴포넌트·xterm 5.5를 scratch 페이지로 묶어 설치된 Chrome(playwright-core 1.64.1 executablePath)으로 끌기·놓기·클릭·터치 탭,
+  여러 블록·단추 줄 제외·여러 화자, xterm `getSelectionPosition` 0부터 줄과 다음 줄 첫 칸 끝을 확인했다. 웹 유닛 전체·타입 검사·빌드는 통과했다.
+- 첫 착지 gate에서 이 E2E의 WebKit 390 단계가 실패했다(20초 안에 초안이 비어 있음). 단추가 고른 글을 지키려고 pointerdown을 막았는데,
+  WebKit은 터치 pointerdown을 막으면 tap의 mousedown·click을 내지 않는다(Chrome 터치 탭은 click을 내 scratch 확인에서 드러나지 않았다).
+  같은 fixture의 별도 진단에서 수리 전 pointer/touch 사건 뒤 click 없음을, 마우스 pointer만 막은 수리 뒤 click·초안·focus 없음을 확인했다. 시험·시한은 그대로다.
+
+## 큰 응답 분할의 가림 검색 비용(t-1216)
+
+- 원본 macOS CI의 `aaa_host` 전체 artifact를 확보했다. 응답 분할 owner는 큰 보고 전송까지
+  1.442초, 조각 경계 가림 뒤 5.307초였으며, 잘못된 조각 단계에서 5.311초 상한 오류가 났다.
+  마지막 단계 이름만으로 BadRequest 전달이 5초 걸렸다고 해석하지 않는다.
+- 별도 Mac worktree의 같은 verify profile에서 가림 274ms 중 원문 8바이트 창의 집합 검색이
+  203ms였다. 후보의 앞 두 바이트를 8KiB 비트 표로 거른 뒤 기존 집합으로 정확히 검사하자
+  검색 16ms·가림 83ms였다. 원본 CI에는 검색 내부 계측이 없으므로 이 수치를 CI 내부 시간으로
+  바꾸어 말하지 않는다. 등록·복원과 같은 잠금 안에서 표와 집합을 함께 갱신한다.
+- 기존 `link::response_parts_tests::large_report_and_bad_parts_keep_requests_on_one_link`가
+  Host 준비부터 실제 reader·fake 종료와 파일 정리까지 같은 5초 상한으로 검사한다.
+  2*MAX_FRAME 초과 원본과 협상, hash 확인 전 원본 보존, 조각 경계를 가로지르는 비밀 가림,
+  BadRequest 뒤 같은 generation의 Done, 취소·정리 단언과 데이터 크기를 유지한다.
+  응답 분할·binary hash·ANSI/청크 경계의 기존 common/host owner도 함께 확인한다.
+- 새 `encoded_fragments_and_nonsecret_prefix_candidates_keep_their_redaction_contract`는
+  원문·JSON/URL·두 base64 형식의 각 8바이트 조각과 같은 접두부의 일반 바이너리를 확인한다.
+  필요한 이유는 후보 검사로 비밀 조각을 놓치거나 접두부만 같은 내용을 과하게 가리는 회귀를
+  막기 위해서다. 고정 sleep·재시도·시한 확대·기대값 완화·시험 분할은 없다.
+- 참고 후보는 [Aho-Corasick의 prefilter 설계](https://github.com/BurntSushi/aho-corasick/blob/master/DESIGN.md)
+  와 [memchr](https://github.com/BurntSushi/memchr)다. 둘 다
+  [MIT/Unlicense](https://github.com/BurntSushi/aho-corasick/blob/master/COPYING)이며,
+  후보를 거르고 정확히 확인하는 원칙을 참고했다. 기존 고정 길이 집합을 유지하고 외부 코드나
+  실행 의존성을 추가하지 않는다.
+
+### Python 성공 fixture의 gh annotation 경계
+
+- t-1208이 착지한 main `b3fa9a08` 위에서 기존 `FailureScan`의 성공 suite 제외만 보강한다.
+  gh의 여러 줄 annotation에는 첫 줄 뒤 `job\tstep\t[python exit=0] ...`처럼 시각 없이 탭이
+  바로 표지 앞에 오는 줄이 있다. 성공 표지 앞의 줄 시작·공백 검사에 탭을 더한다.
+  스택 초과 수집·실패 집합 선택·원본 로그 보존은 기존 코드를 그대로 쓴다.
+- 기존 `successful_python_fixture_output_is_not_a_rust_failure_even_in_annotations`에 원본 형식의
+  module::failed·owner·panic·느린 경고·스택 초과 fixture를 보강한다. 7바이트 청크와 마지막
+  개행 누락에서도 성공한 suite만 있으면 실패가 비어야 하며, 같은 이름의 진짜 Rust 실패는 남긴다.
+  기존 `failed_or_interrupted_python_suites_keep_their_failure_evidence`는 같은 gh 앞머리 조합에서
+  Python exit 1/7/130/137/143을 그대로 수집하는지 확인한다.
+  두 owner 보강이 필요한 이유는 성공 여부를 시험 이름으로 판정하거나 annotation 줄을 통째로
+  무시해서 실제 실패를 숨기는 회귀를 막기 위해서다. 새 시험 번호·시한 변경은 없다.
+
+## 보고서 화면 버튼 배치(t-1201)
+
+- 기존 E2E21·101·108 전체로 목록·보관·읽음 확인/취소/실패·Reader·저장소 필터를 확인한다. 새 시험·E2E 번호는 추가하지 않는다.
+- 별도 화면 확인은 같은 E2E108 fixture와 실제 host·agent를 쓰며 Chromium/WebKit × 1280/820/390/320px에서 세 탭을 촬영한다. 새로고침의 접근성 이름·툴팁·장식 SVG와 실제 목록/용량 응답, 업로드 창 열기/닫기, 필터와 두 버튼의 같은 줄 정렬·화면 안 클릭 가능·탭과 새로고침의 겹침 없음·가로 넘침 없음을 확인한다. 응답·DOM 사건으로 끝내며 고정 sleep은 쓰지 않는다.
+- 웹 유닛·타입/빌드와 공개 검사를 함께 수행한다. 전체 ci-local·cross·main 병합/push는 정규 착지 차례에 수행한다. 전후 그림은 해당 thread의 library에 둔다.
+- 참고는 [Primer IconButton](https://primer.style/product/components/icon-button/)([MIT](https://github.com/primer/react/blob/main/LICENSE))의 접근성 이름·툴팁과 [MUI Toolbar](https://github.com/mui/material-ui/blob/master/packages/mui-material/src/Toolbar/Toolbar.js)([MIT](https://github.com/mui/material-ui/blob/master/LICENSE))의 가로 정렬이다. 기존 공통 아이콘·버튼을 사용하고 외부 코드나 의존성은 추가하지 않는다.
+
+## 완료·보관한 할 일의 예약 잔상(t-1200)
+
+- 맨 위 점선 위 행은 host의 queued/check 예약이다. 원래 할 일이 완료·보관됐는데 예약이 남으면
+  승인 당시 사본을 그리며 `task 없음`이 붙었다. 선택·주소·기기 저장의 잔상이 아니다.
+- `task_queue::tests::completed_or_deleted_tasks_retire_pending_reservations_before_the_board_event`는
+  완료 체크/명시 삭제 응답부터 예약이 finished/cancelled이고, 재시작·복원 뒤에도 재기동하지 않음을 확인한다.
+  `old_archived_reservation_is_repaired_but_unknown_missing_task_keeps_its_warning`는 구판 보관 완료 예약의
+  회수와 완료 근거 없는 파일 유실의 check 보존을 같은 실제 SQLite/Host 경계에서 확인한다.
+  필요한 이유: UI에서만 숨기면 다른 기기·재시작·복원 때 승인한 옛 예약이 다시 나타나거나 기동할 수 있다.
+  두 keeper는 수리 전 모두 Check/Finished 불일치로 실패했다.
+- `tasksModel.test.mjs`의 끊긴 예약 keeper는 전체/예약 칩·검색·저장소 거르기·칩 합을 확인한다.
+  필요한 이유: 진짜 연결 끊김은 경고 행을 남겨야 하며 예약 0개로 표시하거나 예약 필터에서 숨기면 안 된다.
+  완료/취소 예약은 계속 제외한다. 수리 전 예약 개수가 0으로 실패했다.
+- E2E116 `116-task-queue-retirement.mjs`는 격리 DB에 구판의 check 예약 두 개(완료 보관/진짜 끊김)를
+  넣고 host를 다시 띄운다. 데스크톱과 별도 휴대폰 context에서 제거·경고·예약 칩·reload·완료 탭·복원을
+  확인한다. 필요한 이유: host 수리와 tasks 사건이 두 기기에 전달되고 복원이 재예약하지 않는 계약을
+  실제 웹 경계에서 확인해야 한다. 수리 전후 화면은 같은 fixture에서 촬영한다.
+- 기존 시험·기대값·시한을 완화하거나 삭제하지 않는다. 새 검사는 사건·DOM 변경·프로세스 종료로 끝낸다.
+- 전체 웹 유닛의 마지막 확인에서 기존 session-cleanup keeper가 살아 있는 session host를 보고 실패했다.
+  종료 대기가 argv 변경만으로 끝날 수 있는 경계를 제거하고, 신호를 보낸 PID가 실제로 끝날 때까지 기다린다.
+  추가 신호·시한 변경은 없다. 원본 실패에서 argv 변경 자체는 수집하지 못했으며 해당 분기를 특정했다고 주장하지 않는다.
+  기존 keeper의 부모·분리된 writer 종료와 무관한 PID 보존 단언을 그대로 유지한다.
+- 참고 후보는 [TanStack Query의 invalidate/refetch](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryClient.ts)
+  ([MIT](https://github.com/TanStack/query/blob/main/LICENSE))와
+  [react-admin 목록 선택 정리](https://github.com/marmelab/react-admin/blob/master/packages/ra-core/src/controller/list/useListController.ts)
+  ([MIT](https://github.com/marmelab/react-admin/blob/master/LICENSE.md))다.
+  host 정본 갱신 후 목록이 따라가는 원칙을 대조했다. 외부 코드·의존성을 추가하지 않는다.
+
 ## 할 일 메모 추가·교체 경고·저장 전 형식 검사(t-1197)
 
 - host `task_edit::tests::append_notes_keeps_raw_block_and_conflicts`는 CRLF·공백·첨부와 같은 기존 메모 원문·하위 task·개행 없는 끝을 보존하고, 같은 요청의 추가 뒤 제목 변경·오래된 블록 거부·메모 문법 거부를 검사한다. 필요한 이유: 전체 메모 재구성으로 원문이 손상되거나 경합 변경을 덮는 것을 막는다.
@@ -4864,3 +5126,67 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - `report_events::report_state_precedes_completion_event`는 사건 발행 잠금의 계기로 PR routine을 토글했다. 후보는 폐지된 규칙을 목록에서 제외하므로 toggle이 즉시 `BadRequest`로 끝나 Hhold를 내지 못했다. fixture만 명시적인 `every 1h` 일정 규칙으로 이관한다. 원자 공개·H/W/R 사건·상태 저장 선행·실시간/재생 순서의 모든 단언과 원래 시한을 유지한다.
 - 원본 CI의 추가 `(trust, -)`는 brief 화면 관측이 연 질문에 답한 뒤 첫 agent Question 사건이 늦게 와 같은 질문을 다시 열고 Idle에서 닫은 기록이었다. `harness.rs`·`brief.rs`·보고 owner는 main과 실패 후보 383935ff에서 바이트가 같다. 별도 단독 진단에서 main의 실제 Host/DB에 Idle→brief 질문→답→지연 Question→Idle 순서를 재생하자 같은 두 trust 기록이 생겼다. PR 제거 전에도 존재하는 경쟁임을 확인했으며 이 범위에서는 제품의 질문 처리·원래 E2E 기대값을 바꾸지 않는다. 진단 source는 원본으로 복원했고 실패 재현 자료는 thread library에 보존했다.
 - 착지 충돌 해소 때 FRONT_API 문서 주석 사이에 넣은 빈 줄을 제거한다. API·계획 번호와 E30·35 분할은 유지한다. 전체 ci-local·cross·Windows production·push는 계측 종료 후 새 착지 차례에서 수행한다.
+
+## 느린 owner의 선택 단계 계측(t-1206)
+
+- Git/CI source가 진행 중이면 next_due 후보에서 빠진다. 완료 뒤 새 deadline이 생겨도 ticker를
+  깨우지 않으면, 이미 고른 일반 ticker 간격 동안 대기가 남았다. 완료 시 잠금을 푼 뒤 기존
+  tick_wake로 deadline을 다시 계산하게 한다. 조회 간격은 여전히 완료부터 세고 중복 실행을 막는다.
+  깨움은 next_due를 쓰는 CI/Git에만 적용한다. usage/automation은 주기0이므로 공통 완료에서
+  깨우면 ticker→완료→ticker가 반복된다. 이 두 source는 기존 변화/할 일 사건으로만 깨운다.
+  새 `completed_source_rearms_a_sleeping_ticker_without_skipping_the_interval`은 정지 시계에서
+  이 깨움·완료 기준 deadline·즉시 중복 조회 거부와 주기0 무깨움을 함께 검사한다. 수리 전0.57초에 실패했고
+  수리 뒤 기존 시간 경계와 함께0.45초에 통과했다. 오래된 timer를 깨우지 않는 회귀를 막기 위해 필요하다.
+- GitGate의 세 preparation owner는 모두 TUI 없는 FAKE_AGENT를 쓴다. 이 fixture의 화면 안정과
+  paste 준비만0으로 하며 실제 Git 완료·시한·원문/journal·재시작·폴더 보존 단언은 유지한다.
+- `AAA_TEST_PHASES`를 자기 작업 폴더의 새 절대 경로로 지정하면 Rust와 웹은 owner별 JSONL을
+  남긴다. `start/phase/end`의 단조 경과와 실제 사건 시각으로 준비·계약·관측·정리를 구별한다.
+  Rust guard는 실험실보다 먼저 선언해 정상 마지막 cleanup 표지가 실제 Drop까지 포함한다.
+  panic·실패·중단의 부분 원문도 남기며, 계측 I/O 오류는 원래 실패를 바꾸지 않는다.
+- rollout 3개는 사본 생성/서명·host/agent·coordinator 준비와 실제 전이·정리를 나눈다.
+  Git/CI는 실제 poll/304·ticker 울타리를 별도로 표시한다. 새 Rust 경계 3개·cache·이미지 복원은
+  준비/실제 계약/재시작/정리를 기록한다. 상태·호출·상한·원래 단언은 유지한다.
+- 웹 step의 원래 이름/개수는 그대로다. 공통 pairPage·shot·대화 진단 body의 보조 span을 남긴다.
+  E37은 기존 왕복 안에서 읽은 브라우저 두 frame 구간과 Node 왕복을 각각 기록한다.
+  E53의 foreground 준비/답 PTY 수락, E68의 실제 reload gate/TCP/앱·agent·PTY 복귀,
+  E94/E102의 조합별 준비·입력·정리도 구분한다. body 읽기 span은 본문 수신과 protocol 대기까지
+  포함하므로 JSON 순수 CPU 비용이라고 해석하지 않는다.
+- `python3 scripts/case_phases.py <새 계측 폴더>`는 원문을 바꾸지 않고 요약한다.
+  `inclusive_spans`와 `browser_samples`는 phase 안에 겹치는 보조 값이므로 전체에 더하거나 빼지 않는다.
+  helper가 끝나기 전에 닫힌 경우 `unfinished_spans`를 남긴다. 이것만으로 배경 진단의 완료를 주장하지 않는다.
+  개별 wall은 준비·관측·정리를 모두 포함하며, 파일/전체 suite wall과 구별한다.
+- 독립 성능 판정 예:
+  `python3 scripts/case_phases.py <새 계측 폴더> --require usage_cache_keeps_limits_replacements_and_failed_writes_correct --max-seconds 5`.
+  필수 owner 미실행·빈 폴더·실패/미완료·상한 초과는 실패다. 실패 회차와 성공 회차를 같은 폴더로 합치지 않는다.
+  성능 판정을 통과한 뒤에만 별도 정규 ci-local을 시작하며, 정규 gate의 기준은 바꾸지 않는다.
+- E90 Reader는 같은 엔진·폭의 밝음/어두움에서 같은 신원/context를 재사용하는 후보다.
+  2엔진×4폭×2테마의 16조합을 그대로 검사하며, 두 번째 테마는 실제 공유 설정을 바꾸고 media를
+  맞춘 뒤 원래 URL로 문서를 새로 연다. Reader pairing/context 준비는 16회에서 8회가 된다.
+  모든 기존 drawer·필터·URL·가로 넘침·footer·기준 실행·오류·사진 단언을 유지한다.
+  단계 분할은 없다. Mac 단독 전체 E90은 통과했으며, 실제 시간 개선과 느린 원장 수는 같은 조건의 전후 계측으로 판정한다.
+- 새 keeper는 위 재예약 경계와 계측용3개를 합한4개다. Rust의 unwind 원문 보존, Node의 동일 오류·보조 관측/정리 보존,
+  Python의 미실행/부분 결과 거부와 겹치는 span의 이중 계산 방지를 각각 지켜야 하므로 필요하다.
+  시간 경과를 기다리는 시험·삭제·대체·새 E2E 번호는 없다.
+- 참고 후보: [Playwright fixtures](https://playwright.dev/docs/test-fixtures)의 의미별 수명과
+  [media 전환](https://playwright.dev/docs/api/class-page#page-emulate-media)
+  ([Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE)),
+  [Rust Instant](https://doc.rust-lang.org/std/time/struct.Instant.html)의 단조 경과
+  ([MIT/Apache-2.0](https://github.com/rust-lang/rust/blob/master/COPYRIGHT))다.
+  fixture 수명과 시각 원칙을 참고했으며 외부 코드/실행 의존성을 추가하지 않는다.
+- Windows의 부분 통과나 0개 실행을 Mac의 단독/평소병렬 결과로 바꾸지 않는다.
+  Mac 전용 worktree에서 같은 기준·동일 조합·nice15·Rust6worker/4thread·웹10worker·빌드별도로
+  전후 각1회와 관련 전체 E2E를 확인한다. 무거운 전체 전후는 coordinator의 계측 차례를 받아 실행한다.
+
+## inbox 안내 말풍선의 연한 글색(t-1199)
+
+- E2E102는 주입된 `[aaa inbox]` 말풍선의 계산된 글색이 같은 대화의 사람 말과 다른지 확인한다. 필요한 이유: 표지만 남고 본문이 사람 말과 같아지는 회귀를 실제 host 대화 DOM에서 잡는다. 새 E2E 파일·단계는 없다.
+- `theme.test.mjs`는 12개 팔레트 자료의 `--text-quiet`가 말풍선 바탕(`--bg-elevated`)에서 4.5:1 이상인지 확인한다. 기본 9개 팔레트는 CSS 섞기 값이라 전후 촬영 때 headless Chromium의 계산된 색으로 대비를 쟀다(최저 catppuccin 밝음 5.14:1).
+
+## diff의 접힌 맥락 펼치기(t-1202, plan §8.524)
+
+- `cargo test --profile verify --locked -p aaa-agent --lib diff::tests::`의 새 `full_context_is_file_only_bounded_and_keeps_default_patch_small`은 실제 git rename의 기본 patch가 작게 남고, 전체 맥락에는 첫·마지막 줄이 있으며, 원본 index·ref·파일이 바뀌지 않고 상한 초과/파일 없는 요청은 거부됨을 본다. 필요한 이유: 맥락 펼치기가 기본 표시·읽기 전용·전송 상한을 깨지 않아야 한다.
+- `node --test web/test/diffContext.test.mjs`의 세 keeper는 실제 git patch로 CRLF·마지막 개행 없음, 구판/잘림/기준 변경 거부와 기존 hunk 밖의 새 변경 거부를 검사한다. 필요한 이유: 불완전하거나 서로 다른 시점의 원문을 hydration에 넘겨 변경을 숨기지 않아야 한다. 원문 합성 parser를 따로 만들지 않고 기존 라이브러리를 쓴다.
+- 기존 E2E42의 160줄 파일에서 처음에는 변경 주변만 보이고 전체 맥락 요청은 0회여야 한다. 데스크톱 Chromium과 iPhone WebKit의 새 두 단계에서 실제 기본 UI를 데스크톱 Enter·휴대폰 tap으로 눌러 20줄을 더 보이고, 전체 펼치기로 첫·마지막 줄을 확인한다. 이어지는 펼치기는 추가 요청 없이 같은 원문을 쓴다. 필요한 이유: 가상화·shadow DOM·지연 hydration의 실제 연결과 휴대폰 터치 크기는 순수 유닛만으로 확인할 수 없다. 기존 카드·기기 폭·테마·대량 lazy 계약과 E2E 번호는 유지한다.
+- 고정 sleep·재시도·시한 확대·기대값 완화는 없다. WebKit에서 SVG use가 터치 대상을 가리므로 아이콘은 pointer-events: none으로 하고 단추 자체에 실제 tap을 보낸다. 새 개별 유닛/단계는 보통 부하 5초 이하를 확인하며 전체 suite 시간과 구별한다.
+
+[작업 기록 통합 검색·E42 수리 검증](testing-record-search.md)

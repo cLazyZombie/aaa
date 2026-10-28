@@ -163,9 +163,12 @@ fn an_upload_under_a_thread_numbered_state_path_has_no_origin_thread() {
 
 #[test]
 fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
+    let mut phases =
+        aaa_test_support::phases::Phases::new("usage_cache_keeps_limits_replacements_and_failed_writes_correct");
     let lab = lab();
     let h = &lab.h;
     let put = |path: &str, bytes: &[u8]| h.library_upload_put(DeviceRole::Controller, "demo", UP, path, bytes);
+    phases.mark("contract", "preliminary-puts");
     assert_eq!(put("empty", b"").unwrap(), (1, 0));
     assert_eq!(put("empty", b"changed").unwrap(), (1, 7), "0바이트도 기존 파일이다");
     // 실패 뒤 디스크 기준으로 재계산하고 완료된 다른 파일은 보존한다.
@@ -175,6 +178,7 @@ fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
     assert_eq!(h.library_upload_put(DeviceRole::Controller, "demo", OTHER, "x", b"z").unwrap(), (1, 1));
     assert_eq!(put("empty", b"").unwrap(), (2, 2), "다른 올리기 뒤 다시 디스크를 센다");
     // 많은 기존 파일은 디스크에 준비하고, 상한을 채우는 마지막 추가는 실제 owner를 통과한다.
+    phases.mark("prepare", "count-fixture");
     let dir = h.uploads_root().join(UP);
     // 경계는 실제 1000개 경로다. 빈 준비 파일의 inode를 매번 새로 만들 필요는 없다.
     let empty = dir.join("file-2");
@@ -182,6 +186,7 @@ fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
     for i in 3..FILES_MAX - 1 {
         std::fs::hard_link(&empty, dir.join(format!("file-{i}"))).unwrap();
     }
+    phases.mark("contract", "limit-and-replacement");
     h.library_upload_put(DeviceRole::Controller, "demo", OTHER, "x", b"z").unwrap();
     assert_eq!(put(&format!("file-{}", FILES_MAX - 1), b"").unwrap(), (FILES_MAX, 2));
     assert_eq!(put("extra", b"").unwrap_err().code, ErrorCode::TooLarge);
@@ -189,6 +194,7 @@ fn usage_cache_keeps_limits_replacements_and_failed_writes_correct() {
     assert_eq!(std::fs::read(dir.join("file-2")).unwrap(), b"replace", "교체한 내용도 실제 저장한다");
     assert_eq!(std::fs::read(dir.join("file-3")).unwrap(), b"", "교체는 다른 준비 파일을 바꾸지 않는다");
     assert_eq!(put("large", &vec![0; FILE_MAX as usize + 1]).unwrap_err().code, ErrorCode::TooLarge);
+    phases.mark("cleanup", "host-and-files");
 }
 
 #[test]

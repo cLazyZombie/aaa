@@ -122,6 +122,20 @@ enum AccountPoolCmd {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// host에 보관된 완료 보고·답한 질문·할 일 본문의 과거 판까지 찾는다
+    Search {
+        query: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, value_parser=["report","question","task"])]
+        kind: Option<String>,
+        #[arg(long)]
+        after: Option<String>,
+        #[arg(long)]
+        limit: Option<u32>,
+    },
+    /// 검색 결과의 프로젝트와 해시로 당시 원문 판을 연다
+    Record { project: String, key: String },
     /// 어느 harness든 host Codex 계정으로 이미지를 생성·편집한다.
     Image {
         #[command(subcommand)]
@@ -2779,6 +2793,42 @@ fn run(cli: Cli) -> Result<ExitCode> {
             runtime()?.block_on(aaa_agent::hooks::send("report", v))?;
             Ok(ExitCode::SUCCESS)
         }
+        Cmd::Search { query, project, kind, after, limit } => front(
+            json,
+            FrontRequest::RecordSearch {
+                query: aaa_proto::RecordSearchQuery {
+                    query,
+                    project,
+                    kind: kind.map(|k| serde_json::from_value(serde_json::Value::String(k))).transpose()?,
+                    after,
+                    limit,
+                },
+            },
+        ),
+        Cmd::Record { project, key } => {
+            let mut offset = None;
+            let mut full: Option<aaa_proto::RecordDocument> = None;
+            loop {
+                let r = front_call(FrontRequest::RecordOpen { project: project.clone(), key: key.clone(), offset })?;
+                match r {
+                    Ok(FrontResponse::RecordDocument(doc)) => {
+                        offset = doc.next;
+                        if let Some(f) = full.as_mut() {
+                            f.body.push_str(&doc.body);
+                            f.next = doc.next;
+                        } else {
+                            full = Some(doc);
+                        }
+                        if offset.is_none() {
+                            break;
+                        }
+                    }
+                    Err(e) => return front_print(json, Err(e)),
+                    Ok(_) => anyhow::bail!("원문 응답 형식이 다르다"),
+                }
+            }
+            front_print(json, Ok(FrontResponse::RecordDocument(full.unwrap())))
+        }
         Cmd::Question { cmd } => front(
             json,
             match cmd {
@@ -3866,6 +3916,9 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
     // CPU 수만큼 worker thread를 만들지 않아도 같은 I/O·timer를 구동한다.
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+        if matches!(&req, FrontRequest::RecordSearch { .. } | FrontRequest::RecordOpen { .. }) && c.proto.minor < 140 {
+            anyhow::bail!("작업 기록 검색은 host 1.140 이상이 필요하다");
+        }
         if matches!(&req, FrontRequest::ThreadAnswer { comments, .. } | FrontRequest::AskAnswer { comments, .. } if !comments.is_empty()) && c.proto.minor < 133 {
             anyhow::bail!("질문별 의견은 Front API 1.133 이상 host가 필요하다. host를 갱신한다");
         }
@@ -5795,6 +5848,41 @@ fn render_front(r: &FrontResponse) -> String {
                 let ids: Vec<String> = log_ids.iter().map(|i| format!("#{i}")).collect();
                 let _ = writeln!(s, "저장했다: 기록 {} · TASKS.md sha256 {}", ids.join(" "), board.sha256);
             }
+        }
+        FrontResponse::RecordSearch(page) => {
+            for h in &page.hits {
+                let kind = match h.kind {
+                    aaa_proto::RecordKind::Report => "완료 보고",
+                    aaa_proto::RecordKind::Question => "답한 질문",
+                    aaa_proto::RecordKind::Task => "할 일",
+                };
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{}\t{}\t{}\n  {}\n  aaa record {} {}",
+                    h.project,
+                    kind,
+                    h.id,
+                    h.at_ms,
+                    h.title,
+                    h.excerpt.replace('\n', " "),
+                    h.project,
+                    h.key
+                );
+            }
+            if page.hits.is_empty() {
+                let _ = writeln!(s, "일치하는 기록이 없다");
+            }
+            if let Some(next) = &page.next {
+                let _ = writeln!(s, "다음 커서: {next}");
+            }
+        }
+        FrontResponse::RecordDocument(doc) => {
+            let h = &doc.hit;
+            let _ = writeln!(
+                s,
+                "{} · {} · {}\n판: {}\n출처: {}\n시각: {}\n\n{}",
+                h.project, h.id, h.title, h.key, h.source, h.at_ms, doc.body
+            );
         }
         FrontResponse::TaskLog { entries, next, .. } => render_task_log(&mut s, entries, *next),
         FrontResponse::Evaluators { .. } | FrontResponse::Evaluations { .. } | FrontResponse::Evaluation(_) => {

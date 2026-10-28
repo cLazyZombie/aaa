@@ -6,20 +6,27 @@ import os from "node:os";
 import path from "node:path";
 import { it } from "node:test";
 import vm from "node:vm";
-import { threadPageTrace, threadTraceDocument, traceThreadRequests } from "../e2e/lib/thread-page-trace.mjs";
+import { threadPageTrace, threadTraceDocument, traceThreadRequests, disconnectThreadEvents } from "../e2e/lib/thread-page-trace.mjs";
 
 function documentWorld() {
   const requests = [];
   let clockReads = 0;
   const world = vm.createContext({
-    document: {}, crypto: webcrypto, Headers,
+    document: new EventTarget(), crypto: webcrypto, Headers, Event, queueMicrotask,
     performance: { get timeOrigin() { return 1000 + ++clockReads; } },
-    WebSocket: class extends EventTarget {},
+    WebSocket: class extends EventTarget {
+      static OPEN = 1;
+      readyState = 0;
+      closeCalls = 0;
+      open() { this.readyState = 1; this.dispatchEvent(new Event("open")); }
+      close() { this.closeCalls++; this.readyState = 2; }
+      finishClose() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+    },
     fetch: async (_url, init) => { requests.push(init); },
     addEventListener() {}, console: { debug() {} },
   });
   world.window = world;
-  const evaluate = (fn) => vm.runInContext(`(${fn.toString()})()`, world);
+  const evaluate = (fn, ...args) => vm.runInContext(`(${fn.toString()})(${args.map(a => JSON.stringify(a)).join(",")})`, world);
   return { world, requests, evaluate, clockReads: () => clockReads };
 }
 
@@ -78,4 +85,23 @@ it("완료 대기는 현재 문서의 두 실제 본문을 기다리고 이전 �
     assert.deepEqual(rows.find(row => row.event === "completion-wait").collected, {});
     assert.deepEqual(rows.find(row => row.event === "completion-reached").collected, { old: 1, current: 2 });
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+it("새 문서의 CONNECTING events는 실제 open 뒤에만 닫고 close 사건으로 끝난다", async () => {
+  const page = documentWorld();
+  page.evaluate(traceThreadRequests);
+  const doc = page.evaluate(threadTraceDocument);
+  const socket = vm.runInContext('new WebSocket("ws://example.test/api/v1/events")', page.world);
+  const disconnected = page.evaluate(disconnectThreadEvents, doc);
+  let done = false;
+  disconnected.then(() => { done = true; });
+  assert.equal(socket.closeCalls, 0);
+  socket.addEventListener("open", () => assert.equal(socket.closeCalls, 0, "앱 onopen이 끝나기 전에는 닫지 않는다"));
+  socket.open();
+  await Promise.resolve();
+  assert.equal(socket.closeCalls, 1);
+  assert.equal(done, false, "close 메서드 반환은 close 사건이 아니다");
+  socket.finishClose();
+  await disconnected;
+  assert.equal(done, true);
 });

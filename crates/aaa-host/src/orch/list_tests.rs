@@ -63,7 +63,11 @@ impl Drop for Root {
 
 #[tokio::test]
 async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_live_states() {
+    let mut phases = aaa_test_support::phases::Phases::new(
+        "thousands_of_resolved_threads_page_without_losing_projects_roles_or_live_states",
+    );
     let lab = Lab::new();
+    phases.mark("prepare", "thread-fixture-transaction");
     // 원장 읽기가 계약이다. 2,507번 디스크 commit 대신 준비만 한 transaction에 묶는다.
     lab.host.db.conn_for_test().execute_batch("BEGIN").unwrap();
     for n in 1..=2500 {
@@ -80,6 +84,7 @@ async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_liv
         lab.insert("z", n, ThreadStatus::Resolved, if n == 10001 { Role::Evaluator } else { Role::Coordinator }, None);
     }
     lab.host.db.conn_for_test().execute_batch("COMMIT").unwrap();
+    phases.mark("contract", "all-pages-and-filters");
     let mut query = ThreadListQuery { limit: Some(u32::MAX), ..Default::default() };
     let mut all = Vec::new();
     loop {
@@ -123,6 +128,7 @@ async fn thousands_of_resolved_threads_page_without_losing_projects_roles_or_liv
         &ThreadListQuery { details: true, after: next, limit: Some(1), ..Default::default() },
     );
     assert_eq!(continued[0].id, format!("t-{:04}", detailed.len() + 1));
+    phases.mark("cleanup", "host-and-files");
 }
 
 #[tokio::test]

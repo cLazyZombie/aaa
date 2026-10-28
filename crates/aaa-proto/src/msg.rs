@@ -2905,6 +2905,18 @@ pub enum FrontRequest {
         #[ts(optional)]
         title: Option<String>,
     },
+    /// host에 보관된 완료 보고·답한 질문·할 일의 과거 판까지 검색한다.
+    RecordSearch {
+        query: crate::RecordSearchQuery,
+    },
+    /// 검색에서 반환한 프로젝트와 내용 해시로 당시 본문을 연다.
+    RecordOpen {
+        project: String,
+        key: String,
+        #[serde(default)]
+        #[ts(optional, type = "number")]
+        offset: Option<u64>,
+    },
     /// 링크는 조작 권한에만 싣는다. 앱 안 열기는 읽기 권한도 된다.
     LibraryReports {
         project: Option<String>,
@@ -3476,6 +3488,7 @@ impl FrontRequest {
             | FrontRequest::ThreadFollowup { project, .. }
             | FrontRequest::Context { project, .. }
             | FrontRequest::Assignable { project, .. }
+            | FrontRequest::RecordOpen { project, .. }
             | FrontRequest::Tasks { project }
             | FrontRequest::TaskQueue { project, .. }
             | FrontRequest::TaskArchive { project, .. }
@@ -3583,6 +3596,8 @@ impl FrontRequest {
                 | FrontRequest::ThreadLibrary { .. }
                 | FrontRequest::ThreadSummary { .. }
                 | FrontRequest::ThreadUnpark { dry_run: true, .. }
+                | FrontRequest::RecordSearch { .. }
+                | FrontRequest::RecordOpen { .. }
                 | FrontRequest::LibraryReports { .. }
                 | FrontRequest::LibraryOpen { .. }
                 | FrontRequest::LibraryMarkRead { .. }
@@ -3989,6 +4004,8 @@ pub enum FrontResponse {
         #[serde(default)]
         source: Option<crate::RoutineSource>,
     },
+    RecordSearch(crate::RecordSearchPage),
+    RecordDocument(crate::RecordDocument),
     Library(LibraryView),
     /// `thread_diff`의 답
     ThreadDiff {

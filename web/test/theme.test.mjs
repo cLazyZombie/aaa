@@ -41,6 +41,7 @@ it("새 팔레트는 원본 자료·ANSI를 보존하고 수동·시스템 밝�
     for (const foreground of roles) for (const background of ["bg", "bg-panel", "bg-elevated", "bg-hover", "bg-input"]) {
       assert.ok(contrast(tokens[`--${foreground}`], tokens[`--${background}`]) >= 4.5, `${theme.id}: ${foreground}/${background}`);
     }
+    assert.ok(contrast(tokens["--text-quiet"], tokens["--bg-elevated"]) >= 4.5, `${theme.id}: text-quiet/bg-elevated`);
     for (const background of ["primary", "primary-hover"]) {
       assert.ok(contrast(tokens["--primary-text"], tokens[`--${background}`]) >= 4.5, `${theme.id}: primary-text/${background}`);
     }

@@ -364,6 +364,21 @@ describe("할 일 한 목록과 예약", () => {
     assert.equal(Object.entries(m.counts).filter(([f]) => f !== "all").reduce((n, [, c]) => n + c, 0), m.counts.all);
   });
 
+  it("실제로 끊긴 예약은 전체·예약 칩과 검색에 남고 완료·취소 예약은 빠진다", () => {
+    const b = board([q(8, 1, { state: "check" }), q(9, 2, { state: "finished" }), q(10, 3, { state: "cancelled" })]);
+    for (const filter of ["all", "reserved"]) {
+      const m = taskList(b, filter, "d-0008", null, groups);
+      assert.deepEqual(rows(m.top), ["reserved:옛 8"]);
+      assert.equal(m.top[0].missing, true);
+      assert.equal(m.counts.reserved, 1);
+      assert.equal(m.counts.all, tasks.length + 1);
+      assert.equal(m.inRepo, m.counts.all);
+      assert.equal(Object.entries(m.counts).filter(([f]) => f !== "all").reduce((n, [, c]) => n + c, 0), m.counts.all);
+    }
+    assert.deepEqual(rows(taskList(b, "reserved", "", "rc", groups).top), []);
+    assert.equal(repoChoices(b).find((c) => c.key === "aaa").n, 6);
+  });
+
   it("예약 차례 순번: 놓은 자리 앞·뒤, 같은 자리는 없음, 일반 → 예약은 그 자리에", () => {
     const order = ["A", "B", "C", "D"];
     assert.equal(queueDropPosition(order, "D", "A", "before"), 1);

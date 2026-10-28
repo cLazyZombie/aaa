@@ -16,6 +16,7 @@ mod library_catalog;
 mod library_delete;
 mod machine_rename;
 mod question_ids;
+mod record_search;
 mod report_ids;
 #[cfg(test)]
 mod short_ids_tests;
@@ -526,6 +527,7 @@ impl Db {
             installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
             fingerprint TEXT NOT NULL, machine TEXT NOT NULL UNIQUE, name TEXT NOT NULL)",
         )?;
+        record_search::init(conn)?;
         // v1에는 원격 신원·main 근거가 없다. 통계 전용 자료만 원자적으로 초기화한다.
         let metrics_version: Option<String> = conn
             .query_row("SELECT value FROM meta WHERE key='workspace-metrics-schema'", [], |r| r.get(0))
@@ -1843,7 +1845,9 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 22] = [
+const PROJECT_TABLES: [&str; 24] = [
+    "work_records",
+    "work_record_sources",
     "threads",
     "repo_workspaces",
     "repo_metrics",
