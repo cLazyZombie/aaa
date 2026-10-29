@@ -2,6 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 06-settings(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import { panelRows } from "../lib/panel-rows.mjs";
+import { saveFontSettingsFailure, traceFontSettings } from "../lib/font-settings-diagnostics.mjs";
 import path from "node:path";
 import {
   shots, root, aaa, domIs, webkit, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
@@ -261,7 +262,7 @@ export default async function ({ ctl, page }) {
     const mobileBrowser = await webkit.launch({ headless: true });
     try {
       for (const [engine, width, name] of [[browser, 1280, "desktop"], [mobileBrowser, 390, "phone"]]) {
-        const pg = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 })).page;
+        const pg = (await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { init: traceFontSettings })).page;
         try {
           const fields = [
             { label: "화면 글꼴", page: "모양", key: "aaa:ui-font-family", variable: "--font-ui", family: '"E2E Missing UI", serif' },
@@ -375,6 +376,10 @@ export default async function ({ ctl, page }) {
           await pg.getByTestId("machine-labA").waitFor({ state: "attached" });
           await domIs(pg, "새로고침 뒤 기본 터미널", (family) => getComputedStyle(document.querySelector(".xterm-rows")).fontFamily === family, baseline.term);
           if ((await read()).ui !== baseline.ui || (await read()).mono !== baseline.mono) throw new Error(`${name}: 기본값 새로고침 복원 실패`);
+        } catch (error) {
+          await saveFontSettingsFailure(root, pg, name, error)
+            .catch(cause => console.error("글꼴 실패 진단 저장 오류", String(cause)));
+          throw error;
         } finally {
           await pg.context().close();
         }
