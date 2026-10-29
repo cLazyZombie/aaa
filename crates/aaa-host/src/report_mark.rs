@@ -9,6 +9,7 @@ pub(crate) fn marker(report: &str) -> Option<&'static str> {
     // 새 안내는 [확인 필요]를 쓴다. 이미 회수한 보고의 옛 표지는 입력 호환용으로만 받는다.
     [
         "[완료]",
+        ALERT,
         "[결정 필요]",
         "[검수 대기]",
         "[확인 필요]",
@@ -20,6 +21,23 @@ pub(crate) fn marker(report: &str) -> Option<&'static str> {
     ]
     .into_iter()
     .find(|m| first == *m || first.strip_prefix(m).is_some_and(|rest| rest.starts_with(char::is_whitespace)))
+}
+
+/// 자동화 thread가 새 결함을 찾았을 때 쓰는 완료 표지다. 끝남은 `[완료]`와 같고 「내 보고서」로 올라간다.
+pub(crate) const ALERT: &str = "[알림]";
+
+/// 끝난 보고인가(`[완료]`·`[알림]`)
+pub(crate) fn done(mark: Option<&str>) -> bool {
+    matches!(mark, Some("[완료]" | ALERT))
+}
+
+/// 자동화 thread의 끝난 보고를 「내 보고서」에 올릴 일인가: `[알림]` 표지나 질문 카드가 있을 때다
+pub(crate) fn notable(report: &str) -> bool {
+    marker(report) == Some(ALERT) || has_questions(report) || !questions(report).is_empty()
+}
+
+fn has_questions(report: &str) -> bool {
+    report.lines().any(|l| l.trim() == "## Questions")
 }
 
 /// 단계는 첫 줄의 단독 표지만 인정한다. 완료 등 여러 표지를 겹쳐 쓰면 보수적으로 작업으로 센다.
@@ -44,7 +62,7 @@ pub(crate) fn needs_user(report: &str) -> bool {
 
 /// 검수 결과를 보고도 채팅으로 따로 답하지 않게 한다. 명시한 Questions는 그대로 정본이다.
 pub(crate) fn default_review(report: &str) -> bool {
-    marker(report) == Some("[검수 대기]") && !report.lines().any(|l| l.trim() == "## Questions")
+    marker(report) == Some("[검수 대기]") && !has_questions(report)
 }
 pub(crate) fn questions(report: &str) -> Vec<aaa_proto::ThreadQuestion> {
     if !needs_user(report) {
@@ -265,7 +283,7 @@ impl Host {
         if needs_user(&report) {
             return Some(ReportAttention::NeedsUser);
         }
-        (marker(&report) == Some("[완료]")).then_some(ReportAttention::Completed)
+        done(marker(&report)).then_some(ReportAttention::Completed)
     }
 }
 
@@ -370,5 +388,21 @@ mod tests {
             assert_eq!(stage(text), expected, "{text}");
         }
         assert!(!needs_user("[병합 준비됨] 착지 창 대기"));
+    }
+
+    #[test]
+    fn automation_reports_reach_the_user_only_with_alert_or_question_card() {
+        for (text, expected) in [
+            ("[알림] 새 결함: rc 도구 빌드 실패\n## Report\n", true),
+            ("[완료] 결함 없음\n## Report\n", false),
+            ("[완료] 정리\n## Questions\n### 1. 지울까\n- A 지움\n- B 둠\n", true),
+            ("[검수 대기] 시안\n## Report\n", true),
+            ("[진행 중] 분류 중\n", false),
+            ("옛 보고\n[알림] 본문 속 표지", false),
+        ] {
+            assert_eq!(notable(text), expected, "{text}");
+        }
+        assert!(done(marker("[알림] 새 결함")) && done(marker("[완료]")) && !done(marker("[알림]새 결함")));
+        assert!(!needs_user("[알림] 새 결함") && stage("[알림] 새 결함").is_none());
     }
 }

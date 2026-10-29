@@ -827,3 +827,21 @@ async fn resolved_last_report_and_existing_completed_reports_are_automatically_l
     assert!(!lab.h.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
     lab.close().await;
 }
+
+/// 자동화 thread의 끝난 보고는 `[알림]`일 때만 내 보고서에 오고, 아니면 회수·resolve 뒤에도 작업 보고에 남는다.
+#[tokio::test]
+async fn automation_reports_reach_my_reports_only_with_an_alert() {
+    for (report, to_user) in [("[완료] 새 결함 없음\n", false), ("[알림] 새 결함 있음\nrc 도구 빌드 실패\n", true)]
+    {
+        let lab = Lab::with_report(0, b"old", "test.log", b"old", report);
+        lab.h.update_rec("p", "t-0001", |r| r.automation = Some("rc-verify".into())).unwrap();
+        lab.h.collect("p", "t-0001", true).await.unwrap();
+        let rec = lab.h.load("p", "t-0001").unwrap();
+        assert_eq!(rec.acked_hash, rec.report_hash, "{report}: 자동화의 끝난 보고는 바로 ack한다");
+        lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Resolved).unwrap();
+        lab.h.backfill_completed_reports().unwrap();
+        let row = lab.h.db.library_report("p", "t-0001").unwrap().unwrap();
+        assert_eq!((row.to_user, row.unseen()), (to_user, to_user), "{report}");
+        lab.close().await;
+    }
+}

@@ -8361,3 +8361,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **분리·권한.** 기존 peer PID·token으로 인증한 자동화 worker만 자기 입력을 완료한다. 완료는 post 전송·영수증을 재사용하되 일반 알림 quota·음소거·내용 중복 검사에서 분리한다. 일반 한도와 음소거는 유지하고 coordinator inbox·사용자 알림을 만들지 않는다. 입력 원장·영수증·감사 기록은 보존한다.
 - **번호·호환.** 착지 기준 main `7f2bf719`의 마지막 §8.543 다음 번호다. 기존 완료 요청 본문에 묶음 꼴과 영수증의 선택 `runs`를 추가하고 새 Front 요청·Agent link 사건은 없다. FRONT_API 1.148·AGENT_LINK 1.11을 유지한다. 단건 wire를 유지하고 묶음은 전체 영수증을 대조해 구형 host·agent를 성공으로 오인하지 않는다. 기존 웹 E2E01~123을 유지하며 새 검증은 m13에 둔다.
 - **검증.** [묶음 완료 검증](testing-automation-completion-batch.md)에 74개 등록·음소거·원자성·소유권과 실제 pane CLI 왕복을 기록한다. 알림 생성·부분 commit 결함을 되심어 실패를 확인했다. salt 없는 전체 ci-local·공개·Linux/Windows strict cross·Windows production·개인정보 검사 뒤 ff push와 원격 SHA를 대조하며 착지 SHA salt 설치기는 전달·판 확인만 하고 설치·배포하지 않는다.
+
+
+### 8.545 자동화 thread 보고는 새 결함일 때만 내 보고서로(t-1306)
+
+- **요청.** 사용자 10-29 「내 보고서가 너무 많이 와. rc 검증 감시 나 aaa CI실패 분류 같은 자동화 된건 작업 보고는 특별한일이 없으면 그냥 다른곳에 쌓이면 좋겠는데」. 결정은 아이디어 n-0001 정리본이다: 특별한 일 = 새 결함, 판단은 각 자동화 thread, 가는 곳은 기존 「작업 보고」(배지 없음·기존 자동 정리), 모든 자동화 thread에 적용하고 규칙별 설정·host 받침은 두지 않는다.
+- **표지.** `[알림]`을 보고 첫 줄 표지로 더한다(`report_mark::ALERT`). 끝남 판정 `report_mark::done`은 `[완료]`·`[알림]`이며 자동화 자동 닫기(`close_at`)·자동 ack·조용한 턴 끝·완료 주의(`ReportAttention::Completed`)·기록 검색·inbox 요약이 이를 쓴다. 사람 대기(`needs_user`)·단계·사람 thread brief는 바꾸지 않는다.
+- **가는 곳.** `complete_thread_report`(회수·resolve·시작 backfill 공통)에서 `ThreadRec.automation`이 있고 `report_mark::notable`(첫 줄 `[알림]`, `## Questions`, 질문 카드)이 아니면 `library_complete`를 부르지 않는다. 사본은 `to_user=0`인 작업 보고로 남아 안 봄 수가 없고 기존 30일·20 GiB 정리 대상이다. 이미 올라온 행은 내리지 않는다. 같은 thread가 `[알림]` 뒤 `[완료]`를 내면 그 이름은 내 보고서에 남고 다시 안 봄이 되지 않는다.
+- **brief.** `automation_thread::brief`가 기억·이어 보내기 여부와 관계없이 같은 문단(`REPORT_GUIDANCE`)을 붙인다. 옛 「사용자 판단이 필요 없으면 보고 첫 줄을 [완료]로 쓴다」는 이 문단으로 바뀐다. 압축 뒤 재독(`reentry`)도 같은 글을 쓴다.
+- **번호·호환.** wire·저장 형식은 바꾸지 않는다(FRONT_API·AGENT_LINK 유지). 웹 변경은 없다. 새 시험은 `report_mark`·`automation_thread` 유닛과 `orch::report_tests::automation_reports_reach_my_reports_only_with_an_alert`(실제 회수·resolve backfill 경계)이며, 분기를 끈 RED에서 실패를 확인했다.

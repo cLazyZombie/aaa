@@ -61,7 +61,10 @@ fn report_item(i: &InboxItem) -> bool {
 /// 첫 줄 표지 뒤 요약만 보낸다. 본문·PR·링크를 요약으로 끌어올리지 않는다.
 fn report_preview(report: &str) -> Option<String> {
     let mark = crate::report_mark::marker(report)?;
-    if !matches!(mark, "[완료]" | "[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]") {
+    if !matches!(
+        mark,
+        "[완료]" | crate::report_mark::ALERT | "[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]"
+    ) {
         return None;
     }
     let line = report.trim_start_matches('\u{feff}').lines().next()?.strip_prefix(mark)?.trim();

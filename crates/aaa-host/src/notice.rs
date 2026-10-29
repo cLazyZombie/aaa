@@ -131,7 +131,7 @@ impl Host {
             .is_some_and(|a| a.activity == AgentActivity::Idle && !a.seen);
         let quiet = self
             .thread_of_pane(pane)
-            .is_some_and(|r| r.automation.is_some() && self.report_marker(&r) == Some("[완료]"));
+            .is_some_and(|r| r.automation.is_some() && crate::report_mark::done(self.report_marker(&r)));
         if !reported && unseen_idle && !quiet {
             self.send_notice(n);
         }

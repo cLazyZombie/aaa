@@ -1219,7 +1219,7 @@ impl Host {
             view.questions = None;
             view.report_attention = if crate::report_mark::needs_user(&report) {
                 Some(aaa_proto::ReportAttention::NeedsUser)
-            } else if crate::report_mark::marker(&report) == Some("[완료]") {
+            } else if crate::report_mark::done(crate::report_mark::marker(&report)) {
                 Some(aaa_proto::ReportAttention::Completed)
             } else {
                 None
@@ -2835,7 +2835,7 @@ impl Host {
                 if !skipped.is_empty() {
                     detail.push_str(&format!(", 건너뜀: {}", copy_notes_summary(&skipped)));
                 }
-                if rec.automation.is_some() && crate::report_mark::marker(&text) == Some("[완료]") {
+                if rec.automation.is_some() && crate::report_mark::done(crate::report_mark::marker(&text)) {
                     self.thread_ack(project, id, "automation")?;
                     self.new_report_item(project, &self.load(project, id)?);
                 }

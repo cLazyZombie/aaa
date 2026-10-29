@@ -82,7 +82,12 @@ impl Host {
         revision: &str,
     ) -> Result<(), ErrorBody> {
         let rec = self.load(project, id)?;
-        if crate::report_mark::marker(body) != Some("[완료]") && rec.status != ThreadStatus::Resolved {
+        if !crate::report_mark::done(crate::report_mark::marker(body)) && rec.status != ThreadStatus::Resolved {
+            return Ok(());
+        }
+        // 자동화 thread는 새 결함(`[알림]`)이나 질문 카드가 있을 때만 올린다. 나머지는 작업 보고에 남아 자동 정리된다.
+        if rec.automation.is_some() && !crate::report_mark::notable(body) {
+            tracing::debug!(project, thread = id, "자동화 보고를 작업 보고에 남겼다");
             return Ok(());
         }
         // 불완전한 판은 올리지 않는다. 다음 정상 회수 때 같은 본문으로도 올릴 수 있다.
