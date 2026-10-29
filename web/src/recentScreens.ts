@@ -13,7 +13,7 @@ export interface RecentTarget {
 export function appScreenTarget(key: string): RecentTarget | null {
   const at = key.indexOf(":");
   const kind = key.slice(0, at), value = key.slice(at + 1);
-  const labels: Record<string, string> = { reports: "보고서", tasks: "할 일", task: "할 일", automations: "자동화", automation: "자동화", settings: "설정", asks: "답할 것", ask: "답할 것", question: "답할 것", workspace: "작업 공간", threads: "모든 thread" };
+  const labels: Record<string, string> = { reports: "보고서", tasks: "할 일", task: "할 일", automations: "자동화", automation: "자동화", ideas: "아이디어", idea: "아이디어", settings: "설정", asks: "답할 것", ask: "답할 것", question: "답할 것", workspace: "작업 공간", threads: "모든 thread" };
   const label = labels[kind];
   if (at < 0 || !label) return null;
   return { key, keys: [key], title: value ? `${label} · ${value}` : label, detail: "앱 화면", open: key, coordinator: false };

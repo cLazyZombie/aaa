@@ -370,7 +370,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());
   // 본문을 바꾸지 않는 목록도 마지막으로 열었을 때 전환기의 현재 화면으로 센다.
-  const [recentPanel, setRecentPanel] = useState<"automations" | "asks" | null>(null);
+  const [recentPanel, setRecentPanel] = useState<"automations" | "ideas" | "asks" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   // 768px 이하에서 목록은 pane 위의 drawer다(herdr-web-ui App.tsx 290~316줄, drawer.tsx). 769px부터는 늘 옆 칸이라
   // 좁은 창이 열어 둔 drawer가 다음에 좁아질 때 다시 나오지 않게 닫는다
@@ -1328,7 +1328,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   useEffect(() => { if (workspaceShown) setPanel("workspace"); }, [workspaceShown]);
   const showPanel = (next: SidebarPanel) => {
     const opening = settingsOpen || collapsed || next !== panelRef.current;
-    setRecentPanel(opening && (next === "automations" || (next === "asks" && !wideScreen)) ? next : null);
+    setRecentPanel(opening && (next === "automations" || next === "ideas" || (next === "asks" && !wideScreen)) ? next : null);
     if (settingsOpen) {
       closeSettings();
       setPanel(next);
@@ -1917,9 +1917,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         targets={recentScreenTargets} selected={settingsOpen ? "settings:" : recentPanel && panel === recentPanel && !collapsed && (wideScreen || drawerOpen) ? `${recentPanel}:` : sel} onOpen={(screen) => {
           if (screen.startsWith("pane:") || screen.startsWith("thread:")) setRecentFocusRequest((value) => value + 1);
           if (screen === "settings:") openSettings();
-          else if (screen === "automations:") {
+          else if (screen === "automations:" || screen === "ideas:") {
+            const next = screen === "ideas:" ? "ideas" : "automations";
             goSel(sel);
-            setPanel("automations"); setCollapsed(false); setRecentPanel("automations");
+            setPanel(next); setCollapsed(false); setRecentPanel(next);
             setDrawerOpen(!wideScreen);
           }
           else {
