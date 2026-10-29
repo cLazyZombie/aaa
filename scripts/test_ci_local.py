@@ -48,6 +48,7 @@ elif tool == "node":
     if args[0] == "-e":
         sys.exit(0)
     assert pathlib.Path(os.environ["AAA_BIN"]).read_text() == "fixture binary"
+    assert args[1:] == (["--spec", os.environ["EXPECT_SPEC"]] if os.environ.get("EXPECT_SPEC") else [])
     stage = "e2e"
 else:
     stage = "public"
@@ -235,6 +236,18 @@ class CiLocal(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("TAIL-clippy", result.stdout)
         self.assertNotIn("── 함께:", result.stdout)
+
+    def test_related_specs_require_explicit_partial_gate_and_keep_binary_preparation(self):
+        self.env["EXPECT_SPEC"] = "23,109"
+        result = self.run_ci("--only", "web,e2e,public", "--spec", "23,109")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue((self.root / "e2e.finished").exists())
+        self.assertEqual((self.root / "logs/e2e-selection.txt").read_text(), "23,109\n")
+        summary = (self.root / "logs/workspace-summary.tsv").read_text()
+        self.assertIn("e2e|ok|", summary)
+        self.assertNotIn("build|", summary, "관련 웹 검사에 workspace unit 사전 컴파일을 붙이지 않는다")
+        rejected = self.run_ci("--spec", "23")
+        self.assertEqual(rejected.returncode, 2, rejected.stdout)
 
     def test_annotation_keeps_masked_error_body_after_panic_and_escapes_percent(self):
         secret = token("ci-annotation")
