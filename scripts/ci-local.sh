@@ -123,7 +123,8 @@ step_build() {
   fi
   # integration test가 쓰는 실제 verify/aaa를 웹에도 고정 복사한다. 같은 CLI를 두 profile로 만들지 않는다.
   # cold unit codegen을 headless와 겹치지 않는다. test의 no-run은 산출물 목록만 다시 모은다.
-  cargo test --profile verify --workspace --locked --no-fail-fast --no-run
+  # 병합 뒤 재빌드 비용을 Cargo unit별로 남긴다. 캐시 판정과 실행 범위는 Cargo가 그대로 정한다.
+  cargo test --profile verify --workspace --locked --no-fail-fast --no-run --timings
 }
 # 한 crate가 실패해도 나머지를 모두 본다: 아니면 cargo가 새 unit을 띄우지 않아 뒤 crate의 오류가 로그에 없다(10-18 windows: process.rs
 # unused import가 9eeced3 뒤 main CI에서 clip.rs dead code를 가렸다)
