@@ -1661,7 +1661,7 @@ html[data-mock-text] .app-ref-ask { display: flex; margin: 4px 0; }
 /* dock 바깥 여백은 입력칸과 같게, 칩은 설정의 대화 열 너비를 따른다. */
 .dock:has(> .dock-ref) { padding-inline: var(--space-4); }
 .dock-ref { display: flex; width: min(100%, var(--chat-w)); margin: 0 auto var(--space-2); }
-.dock-ref > .app-ref { margin-inline: 0; }
+.dock-ref > .app-ref, .dock-ref > .app-ref-ask { margin-inline: 0; }
 @media (max-width: 480px) {
   .dock:has(> .dock-ref) { padding-inline: var(--space-3); }
 }

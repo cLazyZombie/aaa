@@ -34,7 +34,8 @@ export type AppRefs = {
 /** 대화 글이 참조를 칩으로 그리는 곳(App). 없으면 글 그대로다 */
 export const AppRefContext = createContext<AppRefs | null>(null);
 
-export function AppRefChip({ at, refs }: { at: AppRef; refs?: AppRefs }) {
+/** choices: 열린 질문이면 선택지 단추를 붙인다. 문장 속 맨 ID는 끈다(링크·`aaa:` 참조만 단추) */
+export function AppRefChip({ at, refs, choices = true }: { at: AppRef; refs?: AppRefs; choices?: boolean }) {
   const context = useContext(AppRefContext);
   const use = refs ?? context;
   if (use === null) return <>{`aaa:${at.kind}/${at.target}`}</>;
@@ -60,7 +61,7 @@ export function AppRefChip({ at, refs }: { at: AppRef; refs?: AppRefs }) {
     </button>
   );
   const answer = use.answer;
-  if (!look.ask || !answer) return chip;
+  if (!choices || !look.ask || !answer) return chip;
   return <ChipChoices at={at} ask={look.ask} chip={chip} answer={answer} open={() => use.open(at)} />;
 }
 
@@ -100,7 +101,7 @@ function ChipChoices({ at, ask, chip, answer, open }: { at: AppRef; ask: ChipAsk
 
 /** 질문 ID는 명시 참조와 같은 상태 칩, 나머지는 보조 키·가운데 누름도 되는 실제 링크다. */
 export function AppIdLink({ at, refs }: { at: AppId; refs: AppRefs }) {
-  if (at.kind === "question") return <AppRefChip at={{ kind: "question", target: at.target }} refs={refs} />;
+  if (at.kind === "question") return <AppRefChip at={{ kind: "question", target: at.target }} refs={refs} choices={false} />;
   return <a className="app-id" data-testid="app-id" data-kind={at.kind} data-target={at.target} href={appIdHash(at)}
     onClick={(e) => { if (!browserClick(e)) { e.preventDefault(); e.stopPropagation(); refs.openId(at); } }}>{at.label ?? at.target}</a>;
 }

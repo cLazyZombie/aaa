@@ -86,9 +86,9 @@ function itemLook(target: string, label: string, q: ThreadQuestions, project?: s
   if (!item?.id) return null;
   const number = item.source_number ?? n + 1;
   const pick = q.draft?.picks[n];
-  if (pick != null) return { label, tone: "done", state: `답함 · ${number}${choiceLetter(item.choices[pick] ?? {}, pick)}` };
+  if (pick != null) return { label, tone: "done", state: `답함 · ${number}${choiceLetter(item.choices?.[pick] ?? {}, pick)}` };
   if (q.draft?.comments?.[n]) return { label, tone: "done", state: `답함 · ${number}직접` };
-  if (!item.choices.length) return null;
+  if (!item.choices?.length) return null;
   return {
     label, tone: "ask", state: "답할 것",
     ask: {
