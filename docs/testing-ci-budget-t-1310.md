@@ -31,6 +31,7 @@ GitHub OS별 명시 `--only clippy`, 착지 full의 Linux/Windows strict cross�
 | 첫 커밋 5304098d | 222.1 | 154 | 136 | 전체 통과·예산 초과. 새 SHA가 공통 crate와 backend 전체를 무효화해 build 54초 |
 | SHA만 옮긴 0622a38b | 194.1 | 154 | 134 | 기존 Git 감시 회귀가 옛 생성물을 검사해 실패. 경로 목록·감시 owner도 CLI로 함께 옮긴다 |
 | 메타데이터 분리 fdd405ed | 185.8 | 154 | 135 | 전체 통과. backend 캐시는 보존됐고 CLI/unit 재빌드 17초가 남았다 |
+| 단일 thread 1bd53d09 | 178.9 | 148 | 138 | panic fixture의 stdout 표지가 libtest 이름 뒤에 붙어 실패. 줄 경계와 단일 thread 실측 우선순위를 수리한다 |
 
 측정 머신은 10 CPU·32 GiB Mac이다. 모든 무거운 명령은 `nice -n 15`로 실행했다.
 Cargo의 컴파일 worker 수는 지정하지 않았다. worktree의 target과 기존 컴파일 캐시만 사용했다.
@@ -70,7 +71,7 @@ SHA와 tracked Rust 상대 경로 목록을 모두 CLI 생성 파일에 두고, 
 변경이 없는 backend는 Git index·HEAD만 바뀌어도 fresh를 유지해야 한다. packed ref·linked worktree·detached HEAD의 실제 Cargo 회귀에서 이 조건을 함께 검사한다.
 기존 panic 출력의 SHA·경로 가림·payload/이름 비공개·네 역할·반복 횟수는 유지한다.
 작은 독립 `build_metadata` owner가 내장 SHA와 실제 checkout, 상대 경로 목록을 비교한다.
-큰 CLI unit은 판별 데이터에 의존하지 않아 SHA만 바뀌었을 때 캐시를 재사용한다. 실제 CLI main은 같은 생성물을 hook에 전달한다.
+큰 CLI unit의 소스는 판별 데이터를 참조하지 않는다. 실제 CLI main은 같은 생성물을 hook에 전달한다.
 Rust 생성 파일의 내용이 같으면 다시 쓰지 않는다. SHA를 Cargo 환경 전체에 주입해 같은 package의 무관한 target까지 무효화하지 않는다.
 
 깨끗한 실행은 지표 archive의 기존 128작업 상한도 드러냈다. 독립 owner 분할은 300개 넘는 작업을 만든다.
@@ -114,7 +115,9 @@ E100에서 지운 51개 paging 시험이 뒤 삭제 동기화 시험의 미확�
 뒤 시험이 필요한 자동 답 두 개를 자기 단계에서 실제 명령으로 만들도록 바꿨다. 기존 목록·화면 단언은 그대로다.
 Rust owner 삭제 뒤 남은 HTTP/webhook helper는 strict Clippy의 dead-code 실패로 확인하고 함께 제거했다.
 350개 집계 회귀의 첫 fixture에는 실제 libtest 줄 끝의 세미콜론이 빠졌다. parser가 그 잘못된 줄을 거부한 원인을 확인하고 실제 형식으로 고쳤다. agent 21개 owner와 producer 4개 owner가 통과했다.
-실패 로그는 `target/ci-local/candidate-{1,2}/`와 `final-m13-clippy.log`에 남겼다.
+단일 thread의 libtest는 `test 이름 ... ` 뒤에 fixture stdout을 붙인다. 실제 자식 stdout으로 재현하고 `latest:` 앞에 명시적 줄 경계를 넣었다.
+parent의 snapshot·비밀값·역할·콜스택 기대값은 그대로이며 RUST_TEST_THREADS=1의 common 64개·기존 ignored 1개가 통과했다.
+실패 로그는 `target/ci-local/candidate-{1,2}/`, `final-m13-clippy.log`, `tiny-metadata-final/` 등에 남겼다.
 
 의존성 opt-level 3, CLI package opt-level 1은 대표 onboarding owner의 전체 실행 시간을 줄이지 못해 철회했다.
 각각 약 1.5초였고 추가 컴파일 비용도 있었다. 반 슬롯으로 프로세스 owner를 더 띄운 실험도 목표 달성을 입증하지 못해 철회했다.

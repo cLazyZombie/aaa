@@ -63,7 +63,7 @@ fn hook_child() {
     assert!(last.task_id.is_some());
     assert_eq!(last.thread, "tokio-runtime-worker");
     // 알림 소비자가 받는 snapshot에도 비밀이 없어야 한다.
-    println!("latest: {}", serde_json::to_string(&last).unwrap());
+    println!("\nlatest: {}", serde_json::to_string(&last).unwrap());
 }
 
 #[test]
