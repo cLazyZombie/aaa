@@ -31,22 +31,28 @@ export function seedAsks(db, amount = count, prefix = "bulk") {
 }
 
 // 서버 응답을 만든 뒤 전달만 보류한다. 실제 변경·파일 제거는 host가 수행한다.
-export function responseGate() {
+export function responseGate(record = () => {}) {
   let selected = null;
+  let sequence = 0;
   const calls = [];
   const setup = ctx => ctx.route("**/api/v1/call", async route => {
     const req = route.request().postDataJSON();
     if (!selected || !selected.match(req)) return route.fallback();
     calls.push(req);
     const gate = selected;
+    const detail = { gate: gate.id, call: calls.length, op: req.op };
+    record("gate.matched", detail);
     if (typeof gate.fail === "function" ? gate.fail(req, calls) : gate.fail) {
+      record("gate.synthetic-failure", detail);
       gate.arrive();
       return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ err: { code: "unavailable", message: "실험실 일괄 저장 실패" } }) });
     }
     try {
       const started = performance.now();
+      record("gate.fetch.start", detail);
       const response = await route.fetch();
       const elapsed = performance.now() - started;
+      record("gate.fetch.end", { ...detail, elapsedMs: Math.round(elapsed), status: response.status() });
       if (req.op === "library_delete") {
         const latest = fs.readFileSync(`${root}/host.log`, "utf8").split("\n").filter(l => l.includes("보고서 영구 삭제 계측")).at(-1);
         if (!latest) throw new Error("보고서 삭제의 DB·파일 계측이 없다");
@@ -57,18 +63,24 @@ export function responseGate() {
         assert.ok(elapsed < 10_000, `보고서 500개 삭제 ${Math.round(elapsed)}ms: 20초 상한의 절반 미만이어야 한다`);
       }
       gate.arrive();
+      record("gate.hold", detail);
       await gate.wait;
+      record("gate.fulfill.start", detail);
       await route.fulfill({ response });
+      record("gate.fulfill.end", detail);
     } catch (e) {
+      record("gate.error", { ...detail, error: { name: e.name, message: e.message, stack: e.stack } });
       gate.reject(new Error(`일괄 응답 전달 실패: ${req.op} (${e.name}): ${e.message}`, { cause: e }));
     }
   });
   const arm = (match, fail = false) => {
     const arrived = Promise.withResolvers(), release = Promise.withResolvers();
-    selected = { match: typeof match === "string" ? req => req.op === match : match, fail, arrive: arrived.resolve, reject: arrived.reject, wait: release.promise };
+    const id = ++sequence;
+    selected = { id, match: typeof match === "string" ? req => req.op === match : match, fail, arrive: arrived.resolve, reject: arrived.reject, wait: release.promise };
     calls.length = 0;
     arrived.promise.catch(() => {});
-    return { arrived: inTime(arrived.promise, 20_000, "host 일괄 응답"), release: release.resolve };
+    record("gate.arm", { gate: id });
+    return { arrived: inTime(arrived.promise, 20_000, "host 일괄 응답"), release: () => { record("gate.release", { gate: id }); release.resolve(); } };
   };
   return { setup, arm, calls, clear: () => { selected = null; } };
 }
