@@ -52,10 +52,11 @@ async function shown(p, { hash, settings, selector }) {
     if (location.hash !== hash || query.get("settings") !== settings) return false;
     if (settings !== null) return !!document.querySelector("#settings-screen") && !!document.querySelector(selector);
     return !document.querySelector("#settings-screen") && !!document.querySelector(selector);
-  }, { hash, settings, selector }).catch(async (error) => {
+  }, { hash, settings, selector }, 20_000, ["popstate", "hashchange"]).catch(async (error) => {
     const actual = await p.evaluate((selector) => ({
       hash: location.hash,
       settings: new URLSearchParams(location.search).get("settings"),
+      settingsScreen: !!document.querySelector("#settings-screen"),
       selector,
       found: !!document.querySelector(selector),
       shown: [...document.querySelectorAll("[data-shown='true']")].map((el) => el.getAttribute("data-testid")),
@@ -139,13 +140,36 @@ export async function historyDestinations(browser) {
     await drawerSettled(p, true);
     await inList(p, "pane-bk3");
     const pane = await p.evaluate(() => location.hash);
+    // 실제 빈 주소 hashchange의 앱 전달만 보류한다. DOM 관측 설치 뒤 같은 사건을 전달한다.
+    if (engine === "webkit") await p.evaluate(installEmptyHashGate);
     for (const direction of [-1, 1]) {
       await setDrawer(p, true);
+      const gated = engine === "webkit" && direction === -1;
+      if (gated) await p.evaluate(() => { window.__emptyHistoryGate.armed = true; });
       await inTime(p.evaluate((direction) => new Promise((done) => {
         addEventListener("popstate", done, { once: true });
         history.go(direction);
       }), direction), 20_000, "빈 칸 순회의 popstate");
-      await shown(p, { hash: pane, settings: null, selector: '[data-testid="pane-bk3"][aria-current="true"]' });
+      const entry = { hash: pane, settings: null, selector: '[data-testid="pane-bk3"][aria-current="true"]' };
+      if (gated) {
+        await inTime(p.evaluate(() => window.__emptyHistoryGate.wait("held")), 5000, "빈 주소 hashchange 보류");
+        await domIs(p, "popstate 뒤 메뉴 닫힘", () => !document.querySelector("#workspace-drawer")?.classList.contains("is-open"));
+        await drawerSettled(p, true);
+        await p.evaluate(() => { window.__emptyHistoryGate.awaitObserver = true; });
+        const observed = shown(p, entry).then(() => null, (error) => error);
+        await inTime(p.evaluate(() => window.__emptyHistoryGate.wait("observer")), 5000, "본문 관측 설치");
+        await p.evaluate(() => window.__emptyHistoryGate.release());
+        const error = await observed;
+        if (error) throw error;
+        const trace = await p.evaluate(() => window.__emptyHistoryGate.trace);
+        if (trace.map((event) => event.phase).join(",") !== "held,observer,release,normalized") {
+          throw new Error(`빈 주소 사건 순서가 다르다: ${JSON.stringify(trace)}`);
+        }
+        console.log("빈 주소 관측 사건", JSON.stringify(trace.map(({ phase, at, selected, settings }) => ({ phase, at, selected, settings }))));
+        fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
+        fs.writeFileSync(`${root}/diagnostics/empty-hash-${engine}.json`, JSON.stringify(trace, null, 2));
+        await p.evaluate(() => window.__emptyHistoryGate.dispose());
+      } else await shown(p, entry);
       await drawerSettled(p, true);
       if (await drawerIsOpen(p)) throw new Error(`${engine}: 빈 칸 순회 뒤 메뉴 열림`);
     }
@@ -154,6 +178,8 @@ export async function historyDestinations(browser) {
       const trace = await p.evaluate(() => window.__historyDestinations);
       fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
       fs.writeFileSync(`${root}/diagnostics/history-destinations-${engine}.json`, JSON.stringify(trace, null, 2));
+      const gate = await p.evaluate(() => window.__emptyHistoryGate?.trace ?? null);
+      fs.writeFileSync(`${root}/diagnostics/empty-hash-${engine}.json`, JSON.stringify(gate, null, 2));
     } catch (diagnosticError) {
       console.log(`기록 순회 진단 저장 실패: ${diagnosticError.message}`);
     }
@@ -163,6 +189,59 @@ export async function historyDestinations(browser) {
     await history.close();
     await p.context().close();
   }
+}
+
+function installEmptyHashGate() {
+  const phases = new Set();
+  const waiters = new Map();
+  const trace = [];
+  const mark = (phase, extra = {}) => {
+    phases.add(phase);
+    trace.push({ phase, at: Math.round(performance.now()), hash: location.hash, selected: !!document.querySelector('[data-testid="pane-bk3"][aria-current="true"]'), settings: !!document.querySelector("#settings-screen"), ...extra });
+    waiters.get(phase)?.();
+  };
+  let held;
+  const gate = window.__emptyHistoryGate = {
+    armed: false, awaitObserver: false, released: false, trace,
+    wait: (phase) => phases.has(phase) ? Promise.resolve() : new Promise((resolve) => waiters.set(phase, resolve)),
+    release: () => {
+      if (!held || !phases.has("observer")) throw new Error("빈 주소·관측 설치 사건이 없다");
+      gate.armed = false;
+      gate.released = true;
+      mark("release");
+      // 실제 브라우저가 만든 사건의 oldURL/newURL·순서를 보존해 앱에 한 번 전달한다.
+      dispatchEvent(held);
+      mark("normalized");
+    },
+    dispose: () => {
+      removeEventListener("hashchange", hold, true);
+      window.MutationObserver = NativeObserver;
+    },
+  };
+  const hold = (event) => {
+    if (!gate.armed || location.hash !== "") return;
+    event.stopImmediatePropagation();
+    held = event;
+    mark("held");
+  };
+  addEventListener("hashchange", hold, true);
+  const NativeObserver = MutationObserver;
+  window.MutationObserver = class extends NativeObserver {
+    constructor(callback) {
+      super((records, observer) => {
+        if (observer.emptyHashWaiter) mark("mutation", { count: records.length });
+        callback(records, observer);
+      });
+    }
+    observe(target, options) {
+      super.observe(target, options);
+      if (gate.awaitObserver && target === document && options.characterData) {
+        gate.awaitObserver = false;
+        this.emptyHashWaiter = true;
+        mark("observer");
+      }
+    }
+  };
 }
 
 // 상세는 시트 전용 기록을 갖는다. 일반 본문 순회와 별도 페이지에서 그 수명을 확인한다.

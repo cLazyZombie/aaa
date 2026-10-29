@@ -1,3 +1,4 @@
+- t-1288: [E39 빈 주소 정규화의 본문 관측 누락 수리](testing-history-destination-events.md)
 - t-1288: [원격 머신 추가의 디스크 부족 진단 검증](testing-install-disk-space.md)
 - t-1276: [화면 idle 복구 시험의 Hello 경합 검증](testing-stale-working-handshake.md)
 - t-1273: [첫 자동 선택과 열린 목록 경합 검증](testing-initial-selection-drawer.md)

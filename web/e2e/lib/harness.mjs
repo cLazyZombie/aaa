@@ -125,7 +125,8 @@ function inTime(promise, ms, what) {
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
-const domIs = (p, what, fn, arg, ms = 20_000) =>
+// 주소 같은 DOM 밖 조건도 검사할 때는 그 조건을 바꾸는 window 사건을 함께 지정한다.
+const domIs = (p, what, fn, arg, ms = 20_000, events = []) =>
   inTime(p.evaluate(`new Promise((done, fail) => {
     const ok = () => { try { return Boolean((${fn})(${JSON.stringify(arg)})); } catch { return false; } };
     if (ok()) return done();
@@ -135,6 +136,7 @@ const domIs = (p, what, fn, arg, ms = 20_000) =>
       document.removeEventListener('scroll', check, true);
       document.removeEventListener('load', check, true);
       document.removeEventListener('error', check, true);
+      for (const event of ${JSON.stringify(events)}) window.removeEventListener(event, check);
     };
     const check = () => { if (ok()) { cleanup(); done(); } };
     const mo = new MutationObserver(check);
@@ -142,6 +144,7 @@ const domIs = (p, what, fn, arg, ms = 20_000) =>
     document.addEventListener('scroll', check, true);
     document.addEventListener('load', check, true);
     document.addEventListener('error', check, true);
+    for (const event of ${JSON.stringify(events)}) window.addEventListener(event, check);
     mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
   })`), ms, what);
 const hashIs = (p, hash, ms = 20_000) =>
