@@ -8,15 +8,33 @@ const pane = (id, extra = {}) => ({ id, machine_id: "m", name: id, argv: [], sta
 const thread = (id, extra = {}) => ({ id, project: "demo", title: id, machine: "mac-a", pane: id, status: "open", group: "working", ...extra });
 
 test("앱 목록·상세·설정도 방문 순서와 열 주소를 보존하며 pane 생명주기 필터와 분리한다", () => {
-  const keys = ["reports:", "reports:demo/r-0001", "tasks:", "task:d-0001", "automations:", "automation:demo/daily", "ideas:", "idea:n-0001", "idea:demo/n-0002", "settings:", "asks:", "question:q-0001", "workspace:", "workspace:m/repo"];
+  const keys = ["reports:", "reports:demo/r-0001", "tasks:", "task:d-0001", "automation:demo/daily", "idea:n-0001", "idea:demo/n-0002", "settings:", "question:q-0001", "workspace:", "workspace:m/repo"];
   const panes = paletteTargets(machines, [pane("coord", { coordinator_project: "demo" }), pane("gone", { state: "exited" })], []);
   const targets = recentTargets(panes, [...keys, "reports:", "pane:gone", "https://example.com"]);
   assert.deepEqual(visitedScreens(targets, keys).map(t => t.open), keys);
   assert.equal(targets.length, keys.length + 1);
   assert.equal(targets[0].coordinator, true);
-  assert.equal(appScreenTarget("ideas:").title, "아이디어");
   assert.equal(appScreenTarget("idea:n-0001").title, "아이디어 · n-0001");
   for (const key of ["https://example.com", "pane:gone", "unknown:", "settings"]) assert.equal(appScreenTarget(key), null);
+});
+
+test("아이디어 목록은 옛 기록에서도 제외하고 오른쪽 노트만 순환한다", () => {
+  const keys = ["idea:n-0002", "ideas:", "idea:n-0001", "tasks:"];
+  assert.equal(appScreenTarget("ideas:"), null);
+  const targets = recentTargets([], keys);
+  const visited = visitedScreens(targets, keys).map(target => target.key);
+  assert.deepEqual(visited, ["idea:n-0002", "idea:n-0001", "tasks:"]);
+  assert.equal(startRecentCycle(visited, "idea:n-0002", 1).key, "idea:n-0001");
+  assert.equal(startRecentCycle(visited, "idea:n-0002", -1).key, "tasks:");
+});
+
+test("자동화·답할 것 목록의 옛 기록을 제외하고 규칙·질문 본문만 순환한다", () => {
+  const keys = ["question:q-0001", "asks:", "automation:demo/daily", "automations:", "ask:r:request", "ideas:"];
+  assert.deepEqual([appScreenTarget("automations:"), appScreenTarget("asks:")], [null, null]);
+  const visited = visitedScreens(recentTargets([], keys), keys).map(target => target.open);
+  assert.deepEqual(visited, ["question:q-0001", "automation:demo/daily", "ask:r:request"]);
+  assert.equal(startRecentCycle(visited, "question:q-0001", 1).key, "automation:demo/daily");
+  assert.equal(startRecentCycle(visited, "question:q-0001", -1).key, "ask:r:request");
 });
 
 test("완료 보고의 쉼은 포함하고 종료·보류·해결·보관·연결 해제는 제외한다", () => {

@@ -5,6 +5,7 @@ import { root, aaa, inList, domIs, pairPage } from "./harness.mjs";
 import { responseGate, responsive, count } from "./bulk-actions.mjs";
 import { clickDialogButton } from "./menu.mjs";
 import { seedHost } from "./bulk-fixture.mjs";
+import { BulkConversionDiagnostics } from "./bulk-conversion-diagnostics.mjs";
 
 export async function automationQueueScenario(engine, label, width) {
   console.log(`bulk queue ${label} ${width}`);
@@ -71,17 +72,26 @@ export async function automationConvertScenario(engine, label, width) {
   const prefix = `legacy-${label}-${width}-`;
   const source = '+++\nschedule="every 1h"\nenabled=false\n+++\n보존할 원문\n';
   for (let i = 0; i < count; i++) fs.writeFileSync(`${dir}/routines/${prefix}${i}.md`, source);
-  const gate = responseGate();
+  const diagnostic = new BulkConversionDiagnostics(root, label, width, hostOffset);
+  const gate = responseGate(diagnostic.record);
   const paired = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, { serviceWorkers: "block", setup: gate.setup });
   const page = paired.page;
+  diagnostic.watch(page, engine);
+  diagnostic.phase = "preview";
+  diagnostic.record("pair.ready");
   try {
+    await diagnostic.observeClick();
     await page.getByTestId("terminal").waitFor();
     await inList(page, "activity-automations");
     await page.getByTestId("automation-legacy-demo").getByRole("button", { name: "새 형식으로 바꾸기", exact: true }).click();
     const sheet = page.getByTestId("automation-convert");
     await domIs(page, "변환 계획 규칙 500개", () => document.querySelectorAll('[data-group="rules"] li').length === 500);
+    diagnostic.phase = "convert";
+    diagnostic.record("preview.ready");
     const held = gate.arm(req => req.op === "automation_convert" && !req.dry_run);
+    diagnostic.record("click.start");
     await sheet.getByRole("button", { name: "변환", exact: true }).click();
+    diagnostic.record("click.end");
     try {
       await held.arrived;
       await responsive(page);
@@ -99,12 +109,12 @@ export async function automationConvertScenario(engine, label, width) {
       assert.equal(fs.existsSync(`${dir}/automations/${prefix}${i}.toml`), true);
     }
     assert.deepEqual(paired.errors, []);
-  } catch (e) { console.error(label, width, paired.errors, await page.locator("body").innerText()); throw e; }
+  } catch (e) { await diagnostic.capture(e); throw e; }
   finally {
     // 성공한 실험실도 정리 전에 제품의 단계별 비용을 전체 gate 로그에 보존한다.
     for (const line of fs.readFileSync(`${root}/host.log`).subarray(hostOffset).toString().split("\n")) {
       if (line.includes("자동화 변환 단계 비용")) console.log(`[bulk-conversion ${label} ${width}] ${line}`);
     }
-    await page.context().close();
+    await diagnostic.close(() => page.context().close());
   }
 }

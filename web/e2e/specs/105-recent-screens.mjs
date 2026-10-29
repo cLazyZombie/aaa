@@ -70,12 +70,13 @@ async function chatFocusCase(engine, width) {
         await p.keyboard.insertText("교체");
         assert.equal(await input().inputValue(), second.text.slice(0, 3) + "교체" + second.text.slice(8), "복귀 직후 선택한 범위 교체");
         const edited = await state();
-        // 같은 pane을 뒤에 둔 패널에서 복귀해도 active 변화 없이 focus를 돌린다.
+        // 목록은 현재 대화를 가리지 않는다. Ctrl+Tab은 이전 대화로 가고 왕복 때 커서를 돌린다.
         await inList(p, "activity-automations");
         await p.locator('#sidebar-panel-automations:not([hidden])').waitFor();
+        await cycle(); await opened(0); await focused(".composer-text");
         await cycle(); await opened(1); await focused(".composer-text");
-        assert.deepEqual(await state(), edited, "패널에서 같은 대화로 focus 복귀");
-        // 패널 방문도 MRU에 들어간다. 뒤의 두 대화 왕복은 방문 순서를 다시 준비한다.
+        assert.deepEqual(await state(), edited, "목록을 연 뒤 대화 왕복과 focus 복귀");
+        // 패널은 MRU에 넣지 않는다. 뒤의 두 대화 왕복은 방문 순서를 다시 준비한다.
         await go(0); await go(1);
         assert.deepEqual(await state(), edited, "패널을 다녀온 뒤 연속 복귀 커서");
         // 입력칸 밖을 누른 사건을 마지막 focus 대상으로 잘못 기록하지 않는다.
@@ -251,7 +252,7 @@ export default async function () {
       }
     } finally { await wk.close(); }
   });
-  await step("PWA 앱 화면: 보고서·할 일·자동화·설정·답할 것·작업 공간 왕복과 coordinator 표시", async () => {
+  await step("PWA 앱 화면: 보고서·할 일·설정·작업 공간 왕복과 목록 제외·coordinator 표시", async () => {
     aaa("project", "create", "demo");
     const coordinator = aaa("project", "open", "demo", "--profile", "fake").pane;
     await waitOutput(coordinator.id, "fake>");
@@ -286,16 +287,12 @@ export default async function () {
             await p.keyboard.down("Control"); await p.keyboard.press("Tab"); await modal.waitFor();
             const rows = await modal.getByRole("option").locator(":scope > span").allTextContents();
             assert.ok(rows.includes(title), `${name}: ${title} 누락: ${rows}`);
+            assert.ok(!rows.includes("자동화") && !rows.includes("답할 것"), "사이드바 목록은 전환 후보에서 제외");
             for (let n = 0; n < rows.length && await modal.getByRole("option", { selected: true }).locator(":scope > span").innerText() !== title; n++) await p.keyboard.press("Tab");
             assert.equal(await address(), before, "Ctrl 유지 중 주소 불변");
             assert.deepEqual(await history(), recent, "Ctrl 유지 중 MRU 불변");
             await p.keyboard.up("Control"); await modal.waitFor({ state: "detached" });
-            if (hash === "automations") {
-              await p.locator('#sidebar-panel-automations:not([hidden])').waitFor();
-              assert.equal(await p.getByTestId("activity-automations").getAttribute("aria-selected"), "true");
-              assert.equal(await address(), before, "자동화 목록은 보던 본문을 유지");
-            }
-            else if (hash === "settings") await p.getByRole("region", { name: "설정", exact: true }).waitFor();
+            if (hash === "settings") await p.getByRole("region", { name: "설정", exact: true }).waitFor();
             else await until(`Ctrl 해제 ${title}`, async () => await address() === `#${hash}` && await p.locator("#settings-screen").count() === 0);
           };
           await p.locator('.term:not([hidden]) > .term-head').waitFor();
@@ -313,7 +310,7 @@ export default async function () {
           await settings.locator('.settings-shortcut-record').first().click();
           await p.keyboard.press("Control+Tab"); assert.equal(await modal.count(), 0);
           await p.keyboard.press("Escape");
-          const screens = [["보고서", "reports"], ["할 일", "tasks"], ["자동화", "automations"], ["답할 것", "asks"], ["작업 공간", "workspace="], ["설정", "settings"]];
+          const screens = [["보고서", "reports"], ["할 일", "tasks"], ["작업 공간", "workspace="], ["설정", "settings"]];
           for (const [title, hash] of screens) await switchTo(title, hash);
           // 목록뿐 아니라 개별 보고서 주소도 다시 연다.
           await switchTo("보고서", "reports");
