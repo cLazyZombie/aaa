@@ -481,6 +481,10 @@ mod tests {
         let report = "[착지] 병합했다\n## Report\n- **병합 커밋**: `abcdef123`\n착지: 1234567\n검증: 7654321\n```text\n병합: 9876543\n```\n~~~\n착지: 1111111\n~~~\n병합 커밋: `abcdef123`\n";
         assert_eq!(merge_commits(report), ["abcdef123", "1234567"]);
         assert!(merge_commits("병합 커밋: --help main^ ").is_empty());
+        // thread brief가 시키는 착지 결과 줄(첫 단락 끝)을 host가 병합 근거로 읽는다
+        let guide = crate::brief_text::THREAD_GUIDE;
+        let line = guide.split("`착지: ").nth(1).and_then(|rest| rest.split('`').next()).unwrap();
+        assert_eq!(merge_commits(&format!("[완료] 결론\n\n원인과 수리.\n착지: {line}\n")), ["1a2b3c4d"]);
     }
 
     fn rec(why: Option<&str>, judged: bool) -> ThreadRec {
