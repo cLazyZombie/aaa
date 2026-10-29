@@ -7,6 +7,7 @@
 `scripts/ci-local.sh`의 인자 없는 실행은 web·fmt·build·test·e2e·public 전체 gate다.
 네이티브 strict Clippy는 개발의 관련 Rust owner와 GitHub OS별 명시 단계에서 실행한다. 착지 full의 양 OS strict cross도 유지한다.
 실행 자원과 시험 축소의 근거는 [t-1310 측정 기록](testing-ci-budget-t-1310.md)에 있다. 남긴 시험의 시한·단언은 유지한다.
+후속 목표는 재빌드 포함 전체 ci-local 5분이다. [재빌드 비교와 측정 조건](testing-ci-rebuild-t-1310.md)에 따르며 Cargo unit별 시간은 `target/cargo-timings/`에 남긴다.
 `scripts/verify.py`는 변경 범위와 단계를 기록하며 이 진입점을 호출한다. Python 3.11 이상을 사용한다.
 
 ## 개발
