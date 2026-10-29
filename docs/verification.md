@@ -68,7 +68,7 @@ Windows 변경의 실제 native owner를 확인한다. cross 성공을 Windows �
 web·fmt·build를 끝낸 뒤 Rust 시험과 웹 E2E를 함께 실행한다. Clippy도 명시했다면 build 뒤에 먼저 완료한다.
 Cargo 컴파일의 병렬도는 바꾸지 않는다. 실행 단계에서는 브라우저에 CPU 수의 2/5(최소 1·최대 6)를 주고 나머지를 Rust에 준다.
 10 CPU에서는 Rust 6·브라우저 4이다. 1 CPU에서는 두 단계를 직렬 실행한다. E2E 종료 뒤 Rust가 전체 CPU 예산을 돌려받는다.
-Unix Rust의 다중 owner 묶음은 기본 libtest thread 2개 이내, 독립 통합 owner는 한 슬롯을 쓴다.
+Unix Rust의 다중 owner 묶음은 기본 libtest thread 1개, 독립 통합 owner는 한 슬롯을 쓴다.
 Windows의 기존 실행 환경과 명시한 worker/thread 값은 보존한다.
 E2E만 실행할 때는 CPU 둘마다 worker 하나·최대 6개다. `resources.tsv`와 Rust `state.json`/`events.jsonl`에 예산·반환을 기록한다.
 

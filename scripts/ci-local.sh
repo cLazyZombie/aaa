@@ -102,7 +102,7 @@ if wanted test || wanted e2e; then
   if [ "$ci_rust" -eq 1 ]; then
     export AAA_RUST_TEST_CPU_BUDGET=${AAA_RUST_TEST_CPU_BUDGET:-$ci_rust_slots}
     export AAA_RUST_TEST_WORKERS=${AAA_RUST_TEST_WORKERS:-$CI_CPUS}
-    if [ "$OS" != windows ]; then export RUST_TEST_THREADS=${RUST_TEST_THREADS:-2}; fi
+    if [ "$OS" != windows ]; then export RUST_TEST_THREADS=${RUST_TEST_THREADS:-1}; fi
   fi
   if [ "$ci_web" -eq 1 ]; then export AAA_E2E_WORKERS=${AAA_E2E_WORKERS:-$ci_web_workers}; fi
 fi

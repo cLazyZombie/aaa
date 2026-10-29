@@ -30,6 +30,7 @@ GitHub OS별 명시 `--only clippy`, 착지 full의 Linux/Windows strict cross�
 | 수정 9 | 174.4 | 154 | 136 | 전체 통과. SHA 변경 없는 캐시 조건, web 10·fmt 2·build 6·public 1초 |
 | 첫 커밋 5304098d | 222.1 | 154 | 136 | 전체 통과·예산 초과. 새 SHA가 공통 crate와 backend 전체를 무효화해 build 54초 |
 | SHA만 옮긴 0622a38b | 194.1 | 154 | 134 | 기존 Git 감시 회귀가 옛 생성물을 검사해 실패. 경로 목록·감시 owner도 CLI로 함께 옮긴다 |
+| 메타데이터 분리 fdd405ed | 185.8 | 154 | 135 | 전체 통과. backend 캐시는 보존됐고 CLI/unit 재빌드 17초가 남았다 |
 
 측정 머신은 10 CPU·32 GiB Mac이다. 모든 무거운 명령은 `nice -n 15`로 실행했다.
 Cargo의 컴파일 worker 수는 지정하지 않았다. worktree의 target과 기존 컴파일 캐시만 사용했다.
@@ -52,6 +53,7 @@ ci-local 자식이 종료하고 임시 실행 사본 정리·metrics finish가 �
   독립 owner로 나눈다. CLI/host/agent unit은 모듈로, 큰 CLI install 묶음은 namespace로 나눈다.
   목록의 중복·누락, 실제 실행 수 불일치는 실패다. 기존 ignored와 doctest 범위는 유지한다.
   준비와 Clippy가 끝난 뒤 doctest도 같은 예산으로 배치해 마지막에 남던 4.5초 대기를 줄인다.
+- 모듈 작업을 병렬성의 기본 단위로 삼고 Unix libtest는 기본 thread 1개를 쓴다. 중첩된 libtest pool이 같은 예산을 다시 예약하지 않는다.
 - 시간 원장은 긴 작업의 우선순위에만 쓴다. 특정 owner를 생략하거나 시한을 정하는 자료가 아니다.
 - macOS 전체는 verify의 실제 CLI를 고정 사본으로 웹에도 사용해 같은 CLI의 e2e profile 빌드를 중복하지 않는다.
   다른 OS와 단독 build의 기존 e2e 산출물은 보존한다. 실행 사본은 복사 후 `cmp`, 종료 시 정리한다.
@@ -67,7 +69,8 @@ ci-local 자식이 종료하고 임시 실행 사본 정리·metrics finish가 �
 SHA와 tracked Rust 상대 경로 목록을 모두 CLI 생성 파일에 두고, 공통 crate의 Git build script는 제거한다.
 변경이 없는 backend는 Git index·HEAD만 바뀌어도 fresh를 유지해야 한다. packed ref·linked worktree·detached HEAD의 실제 Cargo 회귀에서 이 조건을 함께 검사한다.
 기존 panic 출력의 SHA·경로 가림·payload/이름 비공개·네 역할·반복 횟수는 유지한다.
-CLI의 새 owner는 내장 SHA와 실제 checkout, 상대 경로 목록을 비교해 누락된 Git 감시나 오래된 산출물을 잡는다.
+작은 독립 `build_metadata` owner가 내장 SHA와 실제 checkout, 상대 경로 목록을 비교한다.
+큰 CLI unit은 판별 데이터에 의존하지 않아 SHA만 바뀌었을 때 캐시를 재사용한다. 실제 CLI main은 같은 생성물을 hook에 전달한다.
 Rust 생성 파일의 내용이 같으면 다시 쓰지 않는다. SHA를 Cargo 환경 전체에 주입해 같은 package의 무관한 target까지 무효화하지 않는다.
 
 깨끗한 실행은 지표 archive의 기존 128작업 상한도 드러냈다. 독립 owner 분할은 300개 넘는 작업을 만든다.
