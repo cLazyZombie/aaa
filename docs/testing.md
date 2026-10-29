@@ -1,3 +1,4 @@
+- t-1292: [E2E06 글꼴 저장 실패 조사와 진단 보존](testing-e2e06-font-evidence.md)
 - t-1290: [자동화 입력 묶음 완료·post 한도 분리 검증](testing-automation-completion-batch.md)
 - t-1289: [60초 경고 시험 7건의 계약·중복 정리와 전후 시간](testing-long-cases-t-1289.md)
 - t-1276: [화면 idle 복구 시험의 Hello 경합 검증](testing-stale-working-handshake.md)
