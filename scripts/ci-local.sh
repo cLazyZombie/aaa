@@ -8,6 +8,7 @@
 #   bash scripts/ci-local.sh --logs DIR            로그 폴더(기본 target/ci-local/<시각>)
 #   bash scripts/ci-local.sh --tee                 단계 출력을 로그와 함께 화면에도 낸다(CI가 쓴다)
 #   bash scripts/ci-local.sh --only linux-clippy   Zig로 Linux strict cross 검사(선택 단계)
+#   bash scripts/ci-local.sh --only web,e2e --spec 23,109   개발 중 관련 E2E만
 #
 # 단계: web fmt build clippy test e2e public. web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 test·e2e·clippy를
 # 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee도 같은 병렬 경로에서 단계별 로그를 읽어 출력한다.
@@ -41,6 +42,7 @@ ONLY=""
 SKIP=""
 LOGS=""
 TEE=""
+E2E_SPEC=""
 usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -51,10 +53,15 @@ while [ $# -gt 0 ]; do
     --logs) LOGS="${2:-}"; shift 2 ;;
     --logs=*) LOGS="${1#*=}"; shift ;;
     --tee) TEE=1; shift ;;
+    --spec) E2E_SPEC="${2:-}"; [ -n "$E2E_SPEC" ] || { echo '--spec 뒤에 번호가 필요하다' >&2; exit 2; }; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "모르는 인자: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [ -n "$E2E_SPEC" ]; then
+  case " $ONLY " in *" e2e "*) ;; *) echo '--spec은 --only e2e를 명시한 개발 검사에서만 쓴다' >&2; exit 2 ;; esac
+  echo "개발 관련 검사: E2E $E2E_SPEC (전체 gate 아님)"
+fi
 for s in $ONLY $SKIP; do
   case " $KNOWN " in *" $s "*) ;; *) echo "모르는 단계: $s (단계: $KNOWN)" >&2; exit 2 ;; esac
 done
@@ -80,7 +87,7 @@ wanted() {
 }
 
 # ── 단계 명령(여기가 유일한 정의다) ──
-step_web() { (cd web && npm ci --no-audit --no-fund && npm run build && npm test); }
+step_web() { python3 scripts/check_fixture_secrets.py && (cd web && npm ci --no-audit --no-fund && npm run build && npm test); }
 step_fmt() { cargo fmt --all --check; }
 # Windows release 전용 cfg는 check로 확인하고 내부 실행 파일은 e2e로 빌드한다.
 # 실제 배포 최적화·PDB 검증은 release workflow가 담당한다.
@@ -106,7 +113,7 @@ step_test() {
   fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
-  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_build_watch scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases >"$LOGS/python.log" 2>&1 &
+  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_build_watch scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases scripts.test_verify scripts.test_windows_production >"$LOGS/python.log" 2>&1 &
   python_pid=$!
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
   wait "$python_pid" || python_code=$?
@@ -139,6 +146,8 @@ prepare_e2e_bin() {
 }
 step_e2e() {
   local root newer built
+  set --
+  if [ -n "$E2E_SPEC" ]; then set -- --spec "$E2E_SPEC"; fi
   if [ -n "$E2E_PREP_FAILED" ]; then cat "$LOGS/e2e-binary.log"; return 1; fi
   # 옛 번들·옛 binary로 시험하지 않는다(--only e2e처럼 web·build 없이 돌 때). host 실행 파일은 web/dist를 넣어 빌드된다
   if [ -z "$(result_of web)" ]; then
@@ -154,7 +163,7 @@ step_e2e() {
     echo "Playwright 1.64.1이 필요하다: npm install -g playwright@1.64.1 && npx playwright@1.64.1 install chromium webkit"
     return 1
   fi
-  AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs
+  AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs "$@"
 }
 step_public() { bash scripts/check-public.sh ${AAA_PUBLIC_BASE:+"$AAA_PUBLIC_BASE"}; }
 
@@ -244,6 +253,7 @@ TOGETHER="test e2e clippy"
 started=$(date +%s)
 python3 scripts/workspace_metrics.py start "$LOGS" || true
 echo "ci-local: $OS, 로그 $LOGS"
+printf '%s\n' "$E2E_SPEC" >"$LOGS/e2e-selection.txt"
 for s in web fmt build; do
   skipped "$s" || { run_step "$s"; collect "$s"; }
 done

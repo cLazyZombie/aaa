@@ -2,6 +2,7 @@
 
 시험을 쓰거나 고칠 때 따르는 규칙이다. 기능별 검증 기록은 [testing.md](testing.md)와 그 문서가 가리키는 별도 기록에 있다.
 개별 시험의 시간 기준은 [testing.md 「개별 시험의 5초 기준」](testing.md#개별-시험의-5초-기준t-1117)을 따른다.
+개발의 관련 검사와 착지 gate의 범위·명령은 [verification.md](verification.md)를 따른다. 전체 전수·OS cross·Windows production을 개발 후보마다 반복하지 않는다.
 
 ## 원칙
 

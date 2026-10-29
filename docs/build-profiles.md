@@ -32,6 +32,7 @@
 | Windows SYSTEM SSH owner | build의 target/e2e/aaa.exe를 자원 생성 전에 확인해 절대 경로로 전달; cargo test는 verify |
 | macOS 실제 LaunchAgent·root SSH owner | cargo test는 verify; 시험용 aaa는 해당 profile의 Cargo 산출물 |
 | scripts/deploy-build.sh / .github/workflows/release.yml | release; 기존 실제 배포 설정·기호 보관 유지 |
+| scripts/windows-production.py | 최종 SHA+salt의 독립 release 한 번, 같은 exe/PDB·native 영수증 보존·전달 전후 검증 |
 | p0/build-app.sh 서명·업그레이드 모의 | e2e; 실제 배포 성능을 주장하지 않는 내부 후보 |
 
 AAA release만 기존 opt-level="s"를 유지한다. 이 프로그램은 배포·업데이트 시 실행 파일 bytes를 전송하므로 검증한 크기 최적화를 보존한다. 다른 저장소는 release opt-level=3이다. 배포용의 역할·thin LTO·CGU1·줄 정보는 같다. SHA/base64/JSON 처리의 기존 package 최적화는 유지한다.

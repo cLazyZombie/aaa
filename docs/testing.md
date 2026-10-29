@@ -1,3 +1,4 @@
+- t-1309: [검증 중복 축소·Windows 산출물 재사용 검증](testing-verification-dedup.md)
 - t-1292: [아이디어 최근 화면 등록 검증](testing-idea-recent-screens.md) · [E2E06 글꼴 저장 실패 조사와 진단 보존](testing-e2e06-font-evidence.md)
 - t-1288: [원격 머신 추가의 디스크 부족 진단](testing-install-disk-space.md) · [E39 본문 관측 수리](testing-history-destination-events.md)
 - t-1290: [자동화 입력 묶음 완료·post 한도 분리 검증](testing-automation-completion-batch.md)
