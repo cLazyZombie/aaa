@@ -74,6 +74,8 @@ def commands(phase, scope, specs, packages):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("develop", "landing"))
     parser.add_argument("--base", required=True, help="개발/착지를 시작한 기준 commit 또는 ref")

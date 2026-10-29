@@ -41,6 +41,7 @@ class Verification(unittest.TestCase):
 
     def cli(self, *args, **env):
         context = {k: v for k, v in os.environ.items() if k != "AAA_E2E_ONLY"}
+        context["PYTHONIOENCODING"] = "cp1252"
         return subprocess.run([sys.executable, "scripts/verify.py", *args, "--base", self.base],
                               cwd=self.root, env={**context, **env}, capture_output=True, text=True)
 

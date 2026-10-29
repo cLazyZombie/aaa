@@ -154,6 +154,9 @@ def build(artifact, commit, directory):
 
 
 def main():
+    # Windows SSH pipe의 기본 ANSI 코드 페이지에서도 한국어 결과/오류를 출력한다.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("build", "native", "verify"))
     parser.add_argument("--commit", required=True, help="최종 통합 SHA 40자리")

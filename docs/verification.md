@@ -39,6 +39,16 @@ nice -n 15 python3 scripts/verify.py landing --base <착지-시작-main-SHA>
 | `docs/`의 Markdown만 | `ci-local --only public` | 공개 저장소 검사 |
 | 그 밖, 혼합 변경, 변경 없음 | 인자 없는 ci-local 전체 | 기존 Rust/Python·의존 경계·설치/SSH·백업·웹 전체 |
 
+`verify.py landing`은 위 로컬 gate를 실행한다. full 범위이면 이어서 기존 Linux/Windows strict cross를 실행하고,
+Windows 코드 변경은 실제 Windows owner를 확인한다. 배포 후보의 production/native/전달 전 검증은 아래 별도 절차로 수행한다.
+웹 전용 범위에서 무관한 양 OS cross를 다시 실행하지 않는다.
+
+```sh
+nice -n 15 bash scripts/ci-linux-clippy.sh
+nice -n 15 cargo xwin clippy --profile verify --workspace --all-targets --locked --keep-going \
+  --target x86_64-pc-windows-msvc -- -D warnings
+```
+
 Git의 기준 SHA부터 현재 작업 파일까지 직접 비교한다. rename은 삭제·추가 양쪽 경로를 보며 미추적 파일도 포함한다.
 착지는 clean HEAD에서만 시작하고 실행 뒤 HEAD·작업 파일이 바뀌면 실패한다. `--spec`·`--package`·`AAA_E2E_ONLY`는 착지에서 거부한다.
 실행 계획·기준/최종 SHA·변경 파일·종료 코드·경과는 `target/verification/<단계>-<시각>/`에 보존한다.
@@ -77,6 +87,7 @@ exe와 PDB의 SHA를 복사 전후에 대조하고, 실제 `--version`이 salt �
 Windows 코드 변경에 필요한 실제 SCM/ConPTY/ACL 등의 owner를 대신하지 않는다. 작업 전용 자원은 검사 뒤 지운다.
 
 native 영수증을 원래 산출물 폴더로 회수하고 다음 명령을 실행한다. `verify`에는 Cargo·npm·재포장·설치·전송이 없다.
+Windows SSH의 ANSI pipe에서도 결과와 오류를 한국어로 남기도록 도구가 자기 stdout/stderr만 UTF-8로 설정한다.
 
 ```sh
 python3 scripts/windows-production.py verify --commit <최종-SHA> \

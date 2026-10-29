@@ -65,7 +65,7 @@ class WindowsProduction(unittest.TestCase):
         self.commit = self.git("rev-parse", "HEAD").strip()
         self.artifact = self.root / "artifact"
         self.env = {**os.environ, "PATH": str(self.tools) + os.pathsep + os.environ["PATH"],
-                    "BUILD_CALLS": str(self.root / "calls")}
+                    "BUILD_CALLS": str(self.root / "calls"), "PYTHONIOENCODING": "cp1252"}
 
     def git(self, *args):
         return subprocess.check_output(["git", *args], cwd=self.root, text=True, stderr=subprocess.PIPE)
