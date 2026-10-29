@@ -8378,3 +8378,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **수집·표시.** pt-tests와 E2E 보고를 기존 main 귀속·freshness 검사 안에서 읽어 개수와 TOP 5를 만든다. `scenario-wall`은 빌드를 뺀 시나리오 실행 경과이며 rc·engine의 단계 시간 합계와 구분한다. 실패·ignored와 부분 결과를 유지한다.
 - **번호·범위.** 착지 기준 main 408e1f9a의 마지막 §8.545 다음 번호다. wire 필드·요청·사건을 추가하지 않아 FRONT_API 1.148·AGENT_LINK 1.11과 기존 E2E01~124를 유지한다. profile 기록·같은 실행 보강은 후속 범위다.
 - **검증.** 실제 Python writer에서 Rust 수집까지 연결하는 계약과 기존 runner 회귀를 [별도 검증 기록](testing-pt-workspace-metrics.md)에 둔다. 전체 착지 검증에는 salt를 넣지 않으며 설치·배포는 하지 않는다.
+
+### 8.547 thread 보고는 결론 먼저(t-1312)
+
+- **요청.** 사용자 10-29: 보고서가 처음에 결론이 나와야 하고 지금보다 훨씬 짧아야 한다. 예로 든 t-1305 완료 보고는 착지 SHA·tree·번호 감사·검증 단계표가 대부분이라 무엇이 왜 안 됐고 어떻게 고쳐 어떻게 되었는지 찾기 힘들었다.
+- **thread brief.** `THREAD_GUIDE` 「보고」: 사용자는 첫 단락으로 판단한다. 첫 줄은 표지와 한 줄 결론, 그 바로 아래 절 머리 없는 첫 단락 2~4줄에 원인 → 수리 → 지금 사용자에게 보이는 결과(조사·시안은 알아낸 것 → 근거 → 권하는 것)를 쓴다. `## Report`는 남은 것·사용자가 정할 것·위험만 쓰고, SHA·tree·번호 감사·환경·단계별 시간·명령·검증 표 같은 진행 기록은 library 문서 하나에 두고 링크 한 줄만 단다. `## Report`를 `## 진행`보다 앞에 둔다. 「착지」: 착지 결과는 첫 단락 끝 한 줄 `착지: main <SHA> · push함 · 실패 없음`(실패가 있었으면 한 줄 더)이다. 이 줄은 `task_clean::merge_commits`가 병합 근거로 읽는 꼴이다. 자동화 thread도 같은 안내를 받는다.
+- **coordinator.** AGENTS.md의 thread 결과 요약도 결론(원인 → 수리 → 결과) 먼저 쓰고 진행·검증 기록은 옮기지 않는다.
+- **웹.** 보고 본문은 글 차례대로 그리므로 첫 단락이 표지 줄 바로 아래 보인다. 웹 변경은 없다.
+- **번호·호환.** wire·저장 형식은 바꾸지 않는다(FRONT_API·AGENT_LINK 유지). 시험: `brief_text::tests::brief_order_and_memory_cap`(첫 단락 규칙이 `## 진행` 앞), `task_clean::tests::only_explicit_merge_commit_lines_are_candidates`(brief가 시키는 착지 줄을 host가 병합 근거로 읽는다).
