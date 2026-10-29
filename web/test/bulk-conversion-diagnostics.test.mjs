@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { token as fixtureToken } from "../../scripts/fixture-secret.mjs";
 import { BulkConversionDiagnostics } from "../e2e/lib/bulk-conversion-diagnostics.mjs";
 
 function lab(t) {
@@ -57,8 +58,9 @@ test("변환 진단은 실제 클릭·요청·응답·종료 사건을 구분하
   const page = new EventEmitter();
   const browser = new EventEmitter();
   diagnostic.watch(page, browser);
+  const auth = fixtureToken("bulk-conversion-diagnostics");
   const request = { url: () => "http://localhost/api/v1/call?secret=private-query",
-    postDataJSON: () => ({ op: "automation_convert", dry_run: false, token: "private-token", plan_sha256: "private-plan" }),
+    postDataJSON: () => ({ op: "automation_convert", dry_run: false, token: auth, plan_sha256: "private-plan" }),
     failure: () => ({ errorText: "net::ERR_ABORTED" }) };
   page.emit("console", { text: () => "aaa:e114:convert-click" });
   page.emit("request", request);
@@ -73,7 +75,7 @@ test("변환 진단은 실제 클릭·요청·응답·종료 사건을 구분하
   assert.deepEqual(result.events[1].op, "automation_convert");
   assert.equal(result.events[1].dryRun, false);
   assert.ok(result.events.every(e => Number.isFinite(e.ms) && e.at));
-  for (const secret of ["private-query", "private-token", "private-plan"]) assert.ok(!raw.includes(secret));
+  for (const secret of ["private-query", auth, "private-plan"]) assert.ok(!raw.includes(secret));
   const original = new Error("cleanup failure");
   await assert.rejects(diagnostic.close(async () => { throw original; }), error => error === original);
 });

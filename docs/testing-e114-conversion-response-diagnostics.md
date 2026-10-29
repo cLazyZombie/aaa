@@ -60,3 +60,9 @@
 - [Puppeteer 요청 가로채기](https://pptr.dev/guides/network-interception)
   ([Apache-2.0](https://github.com/puppeteer/puppeteer/blob/main/LICENSE)): 비동기 처리 중의 요청 상태와 전달 단계를 따로 관찰하는 원칙을 비교했다.
 - 외부 코드·새 의존성은 가져오지 않았다.
+
+## 인증 fixture 수리
+
+후속 착지의 fixture 검사에서 새 진단 시험의 직접 token 문자열이 공통 생성 규칙에 걸렸다.
+기존 `scripts/fixture-secret.mjs`의 token 생성기로 만들고, 그 생성값이 진단에 남지 않는 원래 단언을 유지했다.
+`python3 scripts/check_fixture_secrets.py`와 진단·공통 fixture 웹 유닛 3개가 통과했다. 기대값·예외 목록·검사 규칙은 바꾸지 않았다.
