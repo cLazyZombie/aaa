@@ -193,7 +193,8 @@ coordinator가 사용자에게 묻지 않고 착지 차례대로 착지 창을 �
 thread는 이어진 할 일의 값을 보이므로 다시 시작·이어 하기도 같은 값이다. 착지 중에 끄면 이미 시작한 착지는 되돌리지 않는다.
 
 - 웹: 할 일 상세의 「자동 병합」 스위치, 새 할 일 폼·「바로 시작」·예약 확인의 칸, thread 화면 머리 아래의 스위치.
-  할 일 줄·「모든 thread」 목록·thread 제목에 「자동 병합」 표지가 보인다.
+  할 일 줄·「모든 thread」 목록·thread 제목·작업 요약 카드에 「자동 병합」 표지가, 「작업」 목록 thread 줄에는 병합 아이콘이 보인다.
+  「작업」 목록 줄의 첫 줄은 「번호 · 제목」만 두고, 표지(병합 대기·병합 중·자동 병합 아이콘 등)는 둘째 줄 상태 말 앞에 둔다(한 줄 모드는 이름 뒤).
 - CLI: `aaa task add|edit|reserve … --auto-merge on|off`, `aaa thread start --auto-merge on|off`,
   `aaa thread auto-merge <thread> [on|off]`(생략하면 thread show).
 - 바꾼 사람·시각·off→on은 `aaa task log`의 `auto_merge` 기록에 남는다. 사용자가 바꾸면 coordinator inbox에 `auto-merge on/off`가 남는다.

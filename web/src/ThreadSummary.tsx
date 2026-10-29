@@ -11,6 +11,7 @@ import { ApiError, call } from "./api";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "./herdr/sheets.ts";
 import { useSheetHistory } from "./herdr/sheetHistory.ts";
+import { AutoMergeBadge } from "./AutoMerge";
 import { GROUP_WORD } from "./sidebarModel";
 import { cardLines, decidedLines, hoverPlace, popoverPlace, summaryActivity, summaryModel, summaryStale, summaryUpdates, whoWord } from "./summaryCard";
 import { useNowSecond } from "./nowClock";
@@ -64,6 +65,7 @@ function Status({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   return (
     <p className="summary-status">
       <span className={`thread-state is-${t.group}`}>{GROUP_WORD[t.group] ?? t.group}</span>
+      <AutoMergeBadge on={t.auto_merge} />
       {v.pending > 0 ? (
         <span className="summary-warn">
           <TriangleAlert aria-hidden="true" />

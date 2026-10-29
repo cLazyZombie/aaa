@@ -2,6 +2,7 @@ import { logIgnoredFailure } from "./errorDiagnostic.ts";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
+import { AutoMergeMark } from "./AutoMerge";
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
 // 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.258·§8.280): 「작업」은 coordinator → 작업 공간(저장소) 폴더 → thread 줄(둘째 줄 왼쪽
 // 상태 말, 오른쪽 머신 이름, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름). 프로젝트가 둘 이상일 때만 프로젝트 머리가
@@ -1032,6 +1033,20 @@ function ThreadName({ id, title }: { id: string | undefined; title: string }) {
   );
 }
 
+/**
+ * thread 줄의 표지(느린 빌드·한도 초과·병합 대기/병합 중·자동 병합 아이콘). 첫 줄 「번호 · 제목」을 가리지 않게(t-1293 사용자 답) 두 줄
+ * 모드는 둘째 줄 상태 말 앞에, 한 줄 모드는 이름 뒤에 둔다. 상태 말 칸(시험이 글을 읽는다)과는 따로 둔다.
+ */
+function ThreadChips({ t }: { t: ThreadView }) {
+  const slow = t.responsibility != null && t.responsibility.state !== "launcher";
+  if (!slow && !t.stage && !t.over_limit && !t.auto_merge) return null;
+  return (
+    <span className="thread-chips">
+      <ResponsibilityBadge value={t.responsibility} /><ThreadLimitBadge start={t.over_limit} /><ThreadStageBadge stage={t.stage} /><AutoMergeMark on={t.auto_merge} />
+    </span>
+  );
+}
+
 function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t: ThreadView; online: boolean; machine: MachineView | undefined; twoLine: boolean }) {
   const now = useMinute();
   const pane = t.pane ? props.panes.find((p) => p.id === t.pane) : undefined;
@@ -1046,7 +1061,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   const limited = tone === "limited" && t.limited_until_ms != null ? <UsageLimited untilMs={t.limited_until_ms} now={now} /> : null;
   // 머신은 트리 단계가 아니라 둘째 줄 오른쪽 글자로(plan §8.195), 끊겼으면 「이름 끊김」
   const machineName = machine?.name ?? t.machine;
-  const tooltip = [`${t.project}/${t.id}`, t.title, line, `${t.profile}@${machineName}`, t.branch].filter(Boolean).join("\n");
+  const tooltip = [`${t.project}/${t.id}`, t.title, line, t.auto_merge ? "자동 병합 on" : "", `${t.profile}@${machineName}`, t.branch].filter(Boolean).join("\n");
   // 줄은 그 thread의 agent pane을 연다(herdr-projects: thread는 자기 agent 줄). pane이 없으면 보고서
   const open = () => (paneOpen && pane ? props.onPane(pane.id) : props.onThread(t));
   const rows = useRows();
@@ -1116,12 +1131,13 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           {twoLine ? (
             <span className="workspace-copy is-two-line">
               <span className="workspace-line">
-                <ResponsibilityBadge value={t.responsibility} /><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} /><ThreadName id={t.id} title={t.title} />
+                <ThreadName id={t.id} title={t.title} />
                 {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
                 {online && paneOpen && <AgentCounts pane={pane} />}
               </span>
               <span className="workspace-place thread-place">
                 {origin}
+                <ThreadChips t={t} />
                 <span className={`thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                   {line}
                   <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />
@@ -1134,9 +1150,10 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
             </span>
           ) : (
             <span className="workspace-copy">
-              <ResponsibilityBadge value={t.responsibility} /><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} /><ThreadName id={t.id} title={t.title} />
+              <ThreadName id={t.id} title={t.title} />
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
               {online && paneOpen && <AgentCounts pane={pane} />}
+              <ThreadChips t={t} />
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                 {t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_WORD[t.group] ?? t.group}
                 <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />
