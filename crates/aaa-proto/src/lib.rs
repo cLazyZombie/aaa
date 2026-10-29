@@ -305,6 +305,7 @@ pub fn typescript_bindings() -> String {
         MessageView::decl(&cfg),
         InboxItem::decl(&cfg),
         AutomationCompletion::decl(&cfg),
+        AutomationCompletionBatch::decl(&cfg),
         AutomationOutcome::decl(&cfg),
         AutomationDefinition::decl(&cfg),
         AutomationTrigger::decl(&cfg),

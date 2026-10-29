@@ -1142,7 +1142,11 @@ export type PostType = "notice" | "data" | "request";
 
 export type PostInput = { post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
-export type PostResult = { "state": "accepted", id: string, } | { "state": "automation_completed", id: string, run: string, } | { "state": "refused", reason: string, existing: string | null, } | { "state": "queued", post_id: string, };
+export type PostResult = { "state": "accepted", id: string, } | { "state": "automation_completed", id: string, run: string,
+/**
+ * 묶음 등록의 전체 ID. 옛 단일 영수증은 이 칸이 없다.
+ */
+runs?: Array<string>, } | { "state": "refused", reason: string, existing: string | null, } | { "state": "queued", post_id: string, };
 
 export type PostSender = { thread: string | null, role: Role, mission: string | null, machine: string, session: string | null, verified: string, };
 
@@ -2328,6 +2332,8 @@ body: string, done: boolean,
 seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
 export type AutomationCompletion = { run: string, outcome: AutomationOutcome, report: string | null, };
+
+export type AutomationCompletionBatch = { runs: Array<string>, outcome: AutomationOutcome, report: string | null, };
 
 export type AutomationOutcome = "completed" | "failed" | "needs_decision";
 

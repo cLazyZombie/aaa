@@ -1996,7 +1996,18 @@ impl Db {
         }
         tx.execute(
             "INSERT INTO audit(ts,actor,action,detail) VALUES(?1,?2,?3,?4)",
-            params![row.created_ms, actor, if env.is_some() { "post_accept" } else { "post_refuse" }, detail],
+            params![
+                row.created_ms,
+                actor,
+                if matches!(row.result, aaa_proto::PostResult::AutomationCompleted { .. }) {
+                    "automation_complete"
+                } else if env.is_some() {
+                    "post_accept"
+                } else {
+                    "post_refuse"
+                },
+                detail
+            ],
         )?;
         tx.commit()?;
         Ok(())

@@ -273,6 +273,15 @@ pub struct AutomationCompletion {
     #[serde(default)]
     pub report: Option<String>,
 }
+/// 같은 결과를 여러 입력에 원자적으로 기록한다. 단일 입력의 옛 JSON과 구별한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationCompletionBatch {
+    pub runs: Vec<String>,
+    pub outcome: AutomationOutcome,
+    #[serde(default)]
+    pub report: Option<String>,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AutomationOutcome {
