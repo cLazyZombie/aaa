@@ -366,9 +366,14 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
         }
         let (identity, free, writable) =
             platform::storage(&resolved).ok_or_else(|| error("work_storage_unavailable", 2))?;
-        let needed = u64::from(c.min_free_gb.unwrap_or(20)).saturating_mul(1024 * 1024 * 1024);
+        let required_gb = c.min_free_gb.unwrap_or(20);
+        let needed = u64::from(required_gb).saturating_mul(1024 * 1024 * 1024);
         if free < needed {
-            return Err(error("work_space_insufficient", 2));
+            return Err(Box::new(InstallResult::insufficient_work_space(InstallDiskSpace {
+                required_gb,
+                available_bytes: free,
+                path: path_text(&resolved)?,
+            })));
         }
         if writable == Some(false) {
             return Err(error("work_storage_not_writable", 2));

@@ -1,6 +1,30 @@
 use super::authorization::terminal_steps;
 use super::*;
 #[test]
+fn wizard_reports_disk_capacity_and_path_before_asking_to_change_choices() {
+    let lab = Lab::new();
+    let mut args = lab.args();
+    let at = args.iter().position(|a| a == "--min-free-gb").unwrap();
+    args[at + 1] = u32::MAX.to_string();
+    args.extend([
+        "--mode".into(),
+        "fresh".into(),
+        "--login".into(),
+        "defer".into(),
+        "--path".into(),
+        "preserve".into(),
+        "--prompt".into(),
+        "plain".into(),
+    ]);
+    let before = snapshot(&lab.0);
+    let (code, text) = terminal_steps(&lab, &args, &[("선택을 바꿀까요", ":cancel\r")], false);
+    assert_eq!(code, 130, "{text}");
+    assert!(text.contains("디스크 여유 부족: 필요 4294967295GB, 남은 "), "{text}");
+    assert!(text.contains(lab.0.canonicalize().unwrap().join("작업 root").to_str().unwrap()), "{text}");
+    assert_eq!(snapshot(&lab.0), before);
+}
+
+#[test]
 fn dry_run_cannot_save_a_draft_or_create_any_other_file_from_either_prompt_backend() {
     for plain in [true, false] {
         let lab = Lab::new();

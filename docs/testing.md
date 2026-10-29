@@ -1,3 +1,4 @@
+- t-1288: [원격 머신 추가의 디스크 부족 진단](testing-install-disk-space.md) · [E39 본문 관측 수리](testing-history-destination-events.md)
 - t-1290: [자동화 입력 묶음 완료·post 한도 분리 검증](testing-automation-completion-batch.md)
 - t-1289: [60초 경고 시험 7건의 계약·중복 정리와 전후 시간](testing-long-cases-t-1289.md)
 - t-1276: [화면 idle 복구 시험의 Hello 경합 검증](testing-stale-working-handshake.md)

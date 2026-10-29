@@ -211,6 +211,25 @@ pub(crate) fn apply_script(dir: &str, os: &str, id: &str) -> Option<String> {
 
 /// install 검증 SSH 입구의 종료 코드를 사람 말로
 pub(crate) fn remote_why(step: &str, r: &Ran, code: Option<i32>) -> String {
+    // 임의 stdout/stderr·오류 message를 공개하지 않는다. 검증한 디스크 관측값으로만 문구를 만든다.
+    if code == Some(2)
+        && let Ok(result) = serde_json::from_str::<InstallResult>(&r.stdout)
+        && result.status == InstallStatus::Failed
+        && result.exit_code == 2
+        && let Some(error) = result.error
+        && error.code == "work_space_insufficient"
+    {
+        if let Some(space) = error.disk_space.filter(|s| {
+            s.available_bytes < u64::from(s.required_gb) * 1024 * 1024 * 1024
+                && (remote_path_ok(&s.path)
+                    // 현지 canonicalize 결과만 확장 길이 접두사를 벗겨 기존 드라이브 경로 규칙으로 검사한다.
+                    // 설정 입력·UNC·기기 namespace를 받는 범위는 넓히지 않는다.
+                    || super::windows::path(s.path.strip_prefix(r"\\?\").unwrap_or(&s.path)))
+        }) {
+            return format!("{step}: {}", space.message());
+        }
+        return format!("{step}: 디스크 여유 부족(work_space_insufficient, exit 2)");
+    }
     match code {
         Some(2) => format!("{step}: 원격 install의 실행 인자·사용법이 잘못됐다(exit 2)"),
         Some(3) => format!(

@@ -683,7 +683,10 @@ case "$*" in
   *install-probe*)
     printf '%s\n' "$@" > "$L/probe.args"; cat > "$L/probe.in"
     for f in "$(dirname "$0")"/aaa-launcher-*.json; do if [ -f "$f" ]; then cp "$f" "$L/probe.launcher"; fi; done
-    if [ -f "$L/probe.exit" ]; then exit "$(cat "$L/probe.exit")"; fi
+    if [ -f "$L/probe.exit" ]; then
+      if [ -f "$L/probe.out" ]; then cat "$L/probe.out"; fi
+      exit "$(cat "$L/probe.exit")"
+    fi
     cat "$L/probe.out"; exit 0;;
   *install-bootstrap*)
     n=$(ls "$L" | grep -c '^boot.*\.in$'); cat > "$L/boot$n.in"
@@ -928,11 +931,35 @@ fn tls_like_identity() -> String {
 #[cfg(unix)]
 #[test]
 fn a_remote_install_that_refuses_this_ssh_fails_with_the_reason_and_leaves_nothing() {
+    remote_install_failure("3", None, "시스템 SSH 서버");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_remote_disk_shortage_keeps_capacity_and_path_and_cleans_up() {
+    use aaa_proto::install::*;
+    let result = InstallResult::insufficient_work_space(InstallDiskSpace {
+        required_gb: 20,
+        available_bytes: 7 * 1024 * 1024 * 1024,
+        path: "/work/작업 root".into(),
+    });
+    remote_install_failure(
+        "2",
+        Some(serde_json::to_vec(&result).unwrap()),
+        "디스크 여유 부족: 필요 20GB, 남은 7.00GB (/work/작업 root)",
+    );
+}
+
+#[cfg(unix)]
+fn remote_install_failure(code: &str, stdout: Option<Vec<u8>>, expected: &str) {
     use aaa_proto::install::InstallLogin;
     let Some(lab) = lab() else { return };
     let fake = fake_remote(&lab.root);
     fake_launcher(&fake, "9.9.9");
-    std::fs::write(lab.root.join("remote/probe.exit"), "3").unwrap();
+    std::fs::write(lab.root.join("remote/probe.exit"), code).unwrap();
+    if let Some(stdout) = stdout {
+        std::fs::write(lab.root.join("remote/probe.out"), stdout).unwrap();
+    }
     install::tests_binary::set(Some((fake.clone(), "aaa 9.9.9".into())));
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let weak = rt.block_on(async {
@@ -962,7 +989,7 @@ fn a_remote_install_that_refuses_this_ssh_fails_with_the_reason_and_leaves_nothi
             .unwrap();
         let failed = leave(&h, &job.job, MachineSetupPhase::Planning).await;
         assert_eq!(failed.phase, MachineSetupPhase::Failed);
-        assert!(failed.error.as_deref().unwrap().contains("시스템 SSH 서버"), "{:?}", failed.error);
+        assert!(failed.error.as_deref().unwrap().contains(expected), "{:?}", failed.error);
         assert_eq!(h.setup_load(&job.job).unwrap().remote_dir, None);
         assert_eq!(remote_setup_dirs(&fake), Vec::<PathBuf>::new(), "원격 임시 폴더를 지웠다");
         assert!(!install::plan_file(&h.state, &job.job).exists());
@@ -1609,6 +1636,76 @@ fn installed_machine_check_and_login(os: Option<&str>) {
 }
 
 #[test]
+fn failed_probe_reports_only_validated_disk_space_observations() {
+    use aaa_proto::install::*;
+    let space = InstallDiskSpace {
+        required_gb: 20,
+        available_bytes: 7 * 1024 * 1024 * 1024 + 512 * 1024 * 1024,
+        path: "/work/작업 root".into(),
+    };
+    let mut result = InstallResult::insufficient_work_space(space.clone());
+    let error = result.error.as_mut().unwrap();
+    error.message = "private remote message".into();
+    error.details = vec!["private remote detail".into()];
+    let response = |result: &InstallResult| Ran {
+        ok: false,
+        stdout: serde_json::to_string(result).unwrap(),
+        stderr: "private remote stderr".into(),
+    };
+    let why = install::probe_response(&response(&result), Some(2)).err().unwrap();
+    assert_eq!(why, "원격 install 계획: 디스크 여유 부족: 필요 20GB, 남은 7.50GB (/work/작업 root)");
+    assert!(!why.contains("private"));
+    // 경계 바로 아래를 20GB로 반올림해 오해시키지 않는다.
+    result.error.as_mut().unwrap().disk_space.as_mut().unwrap().available_bytes = 20 * 1024 * 1024 * 1024 - 1;
+    assert!(install::probe_response(&response(&result), Some(2)).err().unwrap().contains("남은 19.99GB"));
+    for path in [
+        "relative/private",
+        "/private\nforged",
+        r"\\?\UNC\private\share",
+        r"\\.\C:\private",
+        r"\\?\GLOBALROOT\Device\private",
+        r"\\?\C:\private\..\escape",
+        r"\\?\C:relative-private",
+        r"\\?\C:\private:stream",
+        "\\\\?\\C:\\private\nforged",
+    ] {
+        result.error.as_mut().unwrap().disk_space.as_mut().unwrap().path = path.into();
+        let why = install::probe_response(&response(&result), Some(2)).err().unwrap();
+        assert!(why.contains("디스크 여유 부족") && !why.contains("private"));
+    }
+    result.error.as_mut().unwrap().disk_space = None;
+    assert!(install::probe_response(&response(&result), Some(2)).err().unwrap().contains("디스크 여유 부족"));
+    result.error.as_mut().unwrap().disk_space = Some(space);
+    for code in [Some(0), Some(3), Some(4), Some(255), None] {
+        let mut ran = response(&result);
+        // SSH 전송 실패의 기존 stderr 진단은 유지한다. install 결과로 오인하지 않는지만 본다.
+        if code == Some(255) || code.is_none() {
+            ran.stderr = "Connection refused".into();
+        }
+        let why = install::probe_response(&ran, code).err().unwrap();
+        assert!(!why.contains("디스크 여유 부족") && !why.contains("private"));
+    }
+}
+
+#[test]
+fn remote_disk_shortage_preserves_capacity_for_windows_canonical_work_roots() {
+    use aaa_proto::install::*;
+    // 드라이브 경로의 기존 4096바이트 상한을 canonical 접두사 4바이트 때문에 줄이지 않는다.
+    let longest = format!("\\\\?\\C:\\{}", "a".repeat(4093));
+    for path in [r"\\?\C:\aaa-work", r"\\?\D:\작업 폴더\aaa-work", r"C:\aaa-work", &longest] {
+        let result = InstallResult::insufficient_work_space(InstallDiskSpace {
+            required_gb: 20,
+            available_bytes: 7 * 1024 * 1024 * 1024,
+            path: path.into(),
+        });
+        let ran = Ran { ok: false, stdout: serde_json::to_string(&result).unwrap(), stderr: String::new() };
+        let why = install::probe_response(&ran, Some(2)).err().unwrap();
+        assert!(why.contains("필요 20GB, 남은 7.00GB"), "{why}");
+        assert!(why.contains(path), "검사한 작업 경로가 빠졌다");
+    }
+}
+
+#[test]
 fn failed_probe_keeps_remote_output_out_of_the_public_error() {
     let response =
         |stdout: &str| Ran { ok: false, stdout: stdout.into(), stderr: "private stderr: C:/private/probe".into() };
@@ -1648,7 +1745,7 @@ fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
     assert_eq!(choices.service_account, Some(InstallAccount::CurrentUser));
     assert_eq!(choices.service_password_source, Some(InstallPasswordSource::Prompt));
     assert!(choices.state_dir.is_none() && choices.bin_path.is_none() && choices.launcher_policy.is_none());
-    for root in ["C:relative", r"C:\a\..\b", r"\\server\share", "/a/b", "C:/a\n"] {
+    for root in ["C:relative", r"C:\a\..\b", r"\\server\share", r"\\?\C:\aaa-work", "/a/b", "C:/a\n"] {
         assert!(
             install::choices(&MachineSetupSettings { work_root: root.into(), ..settings.clone() }, &detected).is_err()
         );

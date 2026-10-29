@@ -69,37 +69,53 @@ fn system_sshd(pid: u32) -> bool {
 
 /// 최초 pin 이전의 읽기 제안도 검증 SSH 경계에서만 private 채널로 돌려준다.
 pub(super) fn probe(state: &Path, executor_sha256: &str) -> std::process::ExitCode {
-    let result = (|| -> Result<()> {
-        let _ssh = VerifiedSsh::current()?;
-        let exe = std::env::current_exe().map_err(Fault::io)?;
-        if !digest_ok(executor_sha256)
-            || crate::update::sha256(&exe)
-                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
-                != executor_sha256
-        {
-            return Err(Fault::conflict());
+    let result = VerifiedSsh::current().and_then(|ssh| {
+        probe_verified(&ssh, state, executor_sha256, std::io::stdin().lock(), std::io::stdout().lock())
+    });
+    std::process::ExitCode::from(result.unwrap_or_else(|fault| fault.exit))
+}
+
+fn probe_verified(
+    _ssh: &VerifiedSsh,
+    state: &Path,
+    executor_sha256: &str,
+    input: impl Read,
+    output: impl std::io::Write,
+) -> Result<u8> {
+    let exe = std::env::current_exe().map_err(Fault::io)?;
+    if !digest_ok(executor_sha256)
+        || crate::update::sha256(&exe)
+            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?
+            != executor_sha256
+    {
+        return Err(Fault::conflict());
+    }
+    let mut bytes = Vec::new();
+    input.take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(Fault::io)?;
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err(Fault::conflict());
+    }
+    let choices: InstallChoices = serde_json::from_slice(&bytes)
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
+    let invocation = InstallInvocation { choices, dry_run: true, non_interactive: true, ..Default::default() };
+    let (result, plan) = match crate::install::detect::inspect(&invocation) {
+        Ok(planned) => planned,
+        Err(result) => {
+            // 현지 검사 실패도 원래 종료 코드와 진단을 보존한다. 승인·파일 작업은 시작하지 않는다.
+            serde_json::to_writer(output, &result)
+                .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
+            return Ok(result.exit_code);
         }
-        let mut bytes = Vec::new();
-        std::io::stdin().lock().take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(Fault::io)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err(Fault::conflict());
-        }
-        let choices: InstallChoices = serde_json::from_slice(&bytes)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
-        let invocation = InstallInvocation { choices, dry_run: true, non_interactive: true, ..Default::default() };
-        let (result, plan) = crate::install::detect::inspect(&invocation)
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
-        if Path::new(&plan.context.state_dir) != transaction::real_directory(state)?
-            || plan.context.binary_sha256 != executor_sha256
-        {
-            return Err(Fault::conflict());
-        }
-        let permissions = scope::all(&plan)?;
-        serde_json::to_writer(std::io::stdout().lock(), &InstallProposal { plan, permissions, result })
-            .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
-        Ok(())
-    })();
-    std::process::ExitCode::from(result.map_or_else(|fault| fault.exit, |_| 0))
+    };
+    if Path::new(&plan.context.state_dir) != transaction::real_directory(state)?
+        || plan.context.binary_sha256 != executor_sha256
+    {
+        return Err(Fault::conflict());
+    }
+    let permissions = scope::all(&plan)?;
+    serde_json::to_writer(output, &InstallProposal { plan, permissions, result })
+        .map_err(|source_error| aaa_common::diagnostic::context(source_error, Fault::conflict()))?;
+    Ok(0)
 }
 
 /// 이 stdout은 일반 NDJSON이 아니라 검증 SSH executor의 private 결과 채널이다.
@@ -171,6 +187,33 @@ mod tests {
     use crate::install::engine::transaction::tests::{Lab, tree};
     use authorization::Authority;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    #[test]
+    fn verified_probe_preserves_disk_shortage_result_and_exit_without_writes() {
+        let lab = Lab::new();
+        let mut choices = lab.plan("target").choices;
+        choices.from = None;
+        choices.sha256 = None;
+        choices.min_free_gb = Some(u32::MAX);
+        choices.bin_path = Some(lab.0.join("bin/aaa").to_string_lossy().into_owned());
+        let state = PathBuf::from(choices.state_dir.as_ref().unwrap());
+        let before = tree(&lab.0);
+        let sha = crate::update::sha256(&std::env::current_exe().unwrap()).unwrap();
+        let input = serde_json::to_vec(&choices).unwrap();
+        let mut output = Vec::new();
+        // OS 출처 증명만 대체하고 SHA·stdin·현지 검사·SSH 결과 직렬화는 실제 경로를 쓴다.
+        let exit = probe_verified(&VerifiedSsh(()), &state, &sha, input.as_slice(), &mut output).unwrap();
+        assert_eq!(exit, 2);
+        let result: InstallResult = serde_json::from_slice(&output).unwrap();
+        assert_eq!(result.exit_code, 2);
+        let error = result.error.unwrap();
+        assert_eq!(error.code, "work_space_insufficient");
+        let space = error.disk_space.unwrap();
+        assert_eq!(space.required_gb, u32::MAX);
+        assert_eq!(space.path, choices.work_root.unwrap());
+        assert!(space.available_bytes < u64::from(u32::MAX) * 1024 * 1024 * 1024);
+        assert_eq!(tree(&lab.0), before);
+    }
+
     #[test]
     fn ssh_import_binds_the_real_target_keeps_issuer_pin_and_cannot_reset_a_consumed_nonce() {
         let lab = Lab::new();
