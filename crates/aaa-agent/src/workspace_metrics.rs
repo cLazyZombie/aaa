@@ -365,7 +365,7 @@ fn runtime_reports(run: &mut MetricRun, dir: &Path, start: u64, at: u64, names: 
     let mut items = Vec::new();
     let mut count_complete = true;
     let mut timing_complete = true;
-    // 이 두 보고는 rc의 기존 test_binaries.py가 이미 보존한 결과다. 추가 실행은 없다.
+    // runner가 이미 보존한 개별 실행 결과만 읽는다. 추가 실행은 없다.
     for name in names {
         let Some(report) = fresh_json(&dir.join(name).join("report.json"), start, at) else {
             count_complete = false;
@@ -450,7 +450,8 @@ fn runtime_reports(run: &mut MetricRun, dir: &Path, start: u64, at: u64, names: 
             })
             .collect();
         let complete = items.len() == scenarios.len() && report["status"] == "passed";
-        run.slow_e2e = top(items, "scenario-step-sum", complete);
+        let unit = if report["timing_unit"] == "scenario-wall" { "scenario-wall" } else { "scenario-step-sum" };
+        run.slow_e2e = top(items, unit, complete);
     }
     if run.tests.is_none() {
         run.notes.push("테스트 수는 기존 결과 일부 누락으로 미수집".into());

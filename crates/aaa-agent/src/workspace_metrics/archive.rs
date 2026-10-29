@@ -120,7 +120,8 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
             );
             let runner = source.runner.as_deref().unwrap_or("ci-local");
             let names: &[&str] = match runner {
-                "ci-local" | "pt" => &[],
+                "ci-local" => &[],
+                "pt" => &["pt-tests"],
                 "rc" => &["default-tests", "workspace-tests"],
                 "engine" => &["workspace-tests", "automation-tests", "2d-tests", "3d-tests"],
                 _ => bail!("검증 runner 미지원: {runner}"),

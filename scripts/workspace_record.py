@@ -17,7 +17,7 @@ import uuid
 
 MAX_INPUT = 8 * 1024 * 1024
 RUNNERS = {"rc": ("default-tests", "workspace-tests"),
-           "engine": ("workspace-tests", "automation-tests", "2d-tests", "3d-tests"), "pt": ()}
+           "engine": ("workspace-tests", "automation-tests", "2d-tests", "3d-tests"), "pt": ("pt-tests",)}
 
 
 def git(*args):
@@ -147,10 +147,12 @@ def finish(token, code):
         for name in RUNNERS[before["runner"]]:
             optional_json(Path("target/verification") / name / "report.json",
                           out / "verification" / name / "report.json", before, compact_tests)
-        e2e = {"rc": "target/rc-e2e/report.json", "engine": "target/no2-e2e/all-headless.json"}.get(before["runner"])
+        e2e = {"rc": "target/rc-e2e/report.json", "engine": "target/no2-e2e/all-headless.json",
+               "pt": "target/pt-e2e/report.json"}.get(before["runner"])
         if e2e:
             optional_json(Path(e2e), out / "e2e.json", before, lambda v: dict(
-                status=v.get("status"), reports=[fields(r, ("scenario", "status", "duration_ms")) for r in v.get("reports", [])]))
+                **fields(v, ("status", "timing_unit")),
+                reports=[fields(r, ("scenario", "status", "duration_ms")) for r in v.get("reports", [])]))
         (out / "provenance.json").write_text(json.dumps(before) + "\n")
         os.rename(out, store / f'run-{before["started_at_ms"]}-{source.stem}')
     source.unlink()
