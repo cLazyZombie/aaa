@@ -5,8 +5,6 @@ use std::io::Write as _;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-include!(concat!(env!("OUT_DIR"), "/panic_build.rs"));
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 #[repr(u8)]
@@ -59,7 +57,7 @@ pub struct StackFrame {
 
 // 이름은 실행 파일의 심볼에서만 얻는다. 원본 경로·payload·지역 변수는 포맷하지 않는다.
 // 크래시 로그가 무한 재귀/거대한 제네릭 이름으로 커지지 않도록 프레임과 이름 길이를 제한한다.
-fn call_stack() -> Vec<StackFrame> {
+fn call_stack(source_files: &'static [&'static str]) -> Vec<StackFrame> {
     let mut frames = Vec::new();
     let mut count = 0;
     backtrace::trace(|frame| {
@@ -77,7 +75,8 @@ fn call_stack() -> Vec<StackFrame> {
             } else {
                 function.chars().take(512).collect()
             };
-            let file = symbol.filename().and_then(|p| p.to_str()).map(safe_file).unwrap_or("external");
+            let file =
+                symbol.filename().and_then(|p| p.to_str()).map(|p| safe_file(p, source_files)).unwrap_or("external");
             frames.push(StackFrame { function, file, line: symbol.lineno(), module_offset });
         });
         if frames.len() == before && frames.len() < 64 {
@@ -101,17 +100,18 @@ pub fn latest() -> Option<Snapshot> {
 }
 
 // 출력값은 허용 목록에서 고른다. 절대 경로 앞부분에는 사용자 홈·빌드 환경이 있을 수 있다.
-fn safe_file(file: &str) -> &'static str {
+fn safe_file(file: &str, source_files: &'static [&'static str]) -> &'static str {
     let normalized = file.replace('\\', "/");
-    SOURCE_FILES
+    source_files
         .iter()
         .copied()
         .find(|known| normalized == *known || normalized.strip_suffix(*known).is_some_and(|p| p.ends_with('/')))
         .unwrap_or("external")
 }
 
-pub fn install() {
-    std::panic::set_hook(Box::new(|info| {
+/// 실행 파일의 build script가 검증한 SHA를 받는다. 실행 환경이나 panic payload에서 읽지 않는다.
+pub fn install(build_sha: &'static str, source_files: &'static [&'static str]) {
+    std::panic::set_hook(Box::new(move |info| {
         let location = info.location();
         let (raw_file, line, column) = location.map(|l| (l.file(), l.line(), l.column())).unwrap_or(("", 0, 0));
         let thread = std::thread::current();
@@ -122,16 +122,16 @@ pub fn install() {
             _ => "other",
         };
         let snapshot = Snapshot {
-            file: safe_file(raw_file),
+            file: safe_file(raw_file, source_files),
             line,
             column,
             thread: name,
             thread_id: format!("{:?}", thread.id()),
             task_id: tokio::task::try_id().map(|id| id.to_string()),
             process: process(),
-            build_sha: BUILD_SHA,
+            build_sha,
             count: 0,
-            stack: call_stack(),
+            stack: call_stack(source_files),
         };
         let snapshot = {
             let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());

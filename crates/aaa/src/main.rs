@@ -19,6 +19,12 @@ mod update;
 mod work_root;
 
 fn main() -> std::process::ExitCode {
-    aaa_common::panic_log::install();
+    #[cfg(not(test))]
+    aaa_common::panic_log::install(build_metadata::BUILD_SHA, build_metadata::SOURCE_FILES);
     cli::main()
+}
+
+#[cfg(not(test))]
+mod build_metadata {
+    include!(concat!(env!("OUT_DIR"), "/panic_build.rs"));
 }

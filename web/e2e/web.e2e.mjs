@@ -4,7 +4,7 @@
 //
 // 실행(저장소 루트): cargo build --profile e2e -p aaa && (cd web && npm run build) && cargo build --profile e2e -p aaa
 //   NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs [스크린샷 폴더]   모든 파일을
-//     --workers 1                    함께 도는 작업 수(기본: 10 CPU 이상은 5/8 내림·최대10개, 그 밖은 core 둘마다 하나).
+//     --workers 1                    함께 도는 작업 수(기본: core 둘마다 하나·최대6개).
 //                                    AAA_E2E_WORKERS와 같다.
 //                                    1이면 차례로 돌며 출력을 바로 보이고, 2 이상이면 파일이 끝날 때 그 파일 출력을 한 덩어리로 찍는다
 //     --spec 07-scroll-history,09    고른 파일만(이름이나 앞 번호)
@@ -27,11 +27,11 @@ const specDir = path.join(here, "specs");
 const compareSpecs = (a, b) => parseInt(a, 10) - parseInt(b, 10) || a.localeCompare(b);
 const STEP = /^ {2}await step\("((?:[^"\\]|\\.)*)"/;
 const durationsFile = path.join(here, "durations.json");
-// 10 CPU 이상은 5/8 내림·최대10개, 그 밖은 core 둘마다 하나다. 실험실·브라우저는 작업마다 격리한다.
+// 단독 실행은 core 둘마다 하나·최대6개다. ci-local은 Rust와 나눈 예산을 환경으로 전달한다.
 // 전후 시간은 docs/testing.md 「웹 E2E 병렬 작업」처럼 같은 실행 파일과 모든 기존 조합으로 비교한다.
-const MAX_WORKERS = 10;
+const MAX_WORKERS = 6;
 const cores = os.availableParallelism();
-const defaultWorkers = cores >= 10 ? Math.min(MAX_WORKERS, Math.floor(cores * 5 / 8)) : Math.max(1, Math.floor(cores / 2));
+const defaultWorkers = Math.max(1, Math.min(MAX_WORKERS, Math.floor(cores / 2)));
 
 const args = process.argv.slice(2);
 const opt = { spec: null, grep: null, repeat: 1, list: false, shots: null, workers: null, writeDurations: false };

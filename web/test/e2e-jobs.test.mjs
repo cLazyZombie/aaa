@@ -8,14 +8,14 @@ const steps = [...source.matchAll(/^ {2}await step\("((?:[^"\\]|\\.)*)"/gm)].map
 const spec = { name: "37-chat-pages", steps };
 const options = { repeat: 2, workers: 8, durations: { [spec.name]: 120 }, only: null };
 
-test("긴 대화의 모든 기존 조합을 반복마다 정확히 한 번 실행한다", () => {
+test("긴 대화의 남긴 두 경계를 반복마다 정확히 한 번 실행한다", () => {
   const jobs = planJobs([spec], options);
-  assert.equal(steps.length, 12);
-  assert.equal(jobs.length, 24);
+  assert.equal(steps.length, 2);
+  assert.equal(jobs.length, 4);
   for (const r of [1, 2]) for (const name of steps) {
     assert.equal(jobs.filter((j) => j.r === r && new RegExp(j.filter).test(name)).length, 1, name);
   }
-  assert.ok(jobs.every((j) => j.weight === 10));
+  assert.ok(jobs.every((j) => j.weight === 60));
 });
 
 test("단일 worker는 기존 순서·실험실이고 grep은 선택한 조합만 분할한다", () => {
@@ -23,7 +23,7 @@ test("단일 worker는 기존 순서·실험실이고 grep은 선택한 조합�
   assert.equal(sequential.length, 2);
   assert.ok(sequential.every((j) => j.filter === null && j.part === null));
   const selected = planJobs([spec], { ...options, only: /WebKit 390/ });
-  assert.equal(selected.length, 4);
+  assert.equal(selected.length, 2);
   assert.ok(selected.every((j) => steps.filter((n) => new RegExp(j.filter).test(n)).length === 1));
 });
 

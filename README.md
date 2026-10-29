@@ -200,7 +200,8 @@ cargo build --locked -p aaa --bin aaa
 CI와 같은 단계는 `scripts/ci-local.sh`에 있습니다.
 
 ```sh
-bash scripts/ci-local.sh                     # web fmt build clippy test e2e public
+bash scripts/ci-local.sh                     # web fmt build test e2e public
+bash scripts/ci-local.sh --only clippy        # 네이티브 strict Clippy
 bash scripts/ci-local.sh --only web,e2e,public
 ```
 

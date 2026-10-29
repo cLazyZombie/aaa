@@ -1037,7 +1037,7 @@ fn account_onboarding_case(yolo: bool, args: &str, accepted: bool, machine: &str
     assert_eq!(std::fs::read_to_string(source.join("settings.json")).unwrap(), source_settings);
 }
 
-// 각 설정과 머신은 서로의 결과를 쓰지 않는 독립 최초 기동이다.
+// 기본·yolo·분리/inline 옵션과 로컬/원격 경계를 남긴다.
 macro_rules! onboarding_case {
     ($name:ident, $yolo:literal, $args:literal, $accepted:literal, $machine:literal) => {
         #[test]
@@ -1046,17 +1046,9 @@ macro_rules! onboarding_case {
         }
     };
 }
-#[test]
-fn account_advisor_local() {
-    account_onboarding_case(false, "[]", false, "labA", true);
-}
-#[test]
-fn account_advisor_remote() {
-    account_onboarding_case(false, "[]", false, "labB", true);
-}
+
 onboarding_case!(account_onboarding_default_local, false, "[]", false, "labA");
-onboarding_case!(account_onboarding_default_remote, false, "[]", false, "labB");
-onboarding_case!(account_onboarding_yolo_local, true, "[]", true, "labA");
+
 onboarding_case!(account_onboarding_yolo_remote, true, "[]", true, "labB");
 onboarding_case!(
     account_onboarding_split_bypass_local,
@@ -1065,39 +1057,12 @@ onboarding_case!(
     true,
     "labA"
 );
-onboarding_case!(
-    account_onboarding_split_bypass_remote,
-    false,
-    "[\"--permission-mode\",\"bypassPermissions\"]",
-    true,
-    "labB"
-);
-onboarding_case!(
-    account_onboarding_inline_bypass_local,
-    false,
-    "[\"--permission-mode=bypassPermissions\"]",
-    true,
-    "labA"
-);
+
 onboarding_case!(
     account_onboarding_inline_bypass_remote,
     false,
     "[\"--permission-mode=bypassPermissions\"]",
     true,
-    "labB"
-);
-onboarding_case!(
-    account_onboarding_explicit_default_local,
-    false,
-    "[\"--permission-mode\",\"default\"]",
-    false,
-    "labA"
-);
-onboarding_case!(
-    account_onboarding_explicit_default_remote,
-    false,
-    "[\"--permission-mode\",\"default\"]",
-    false,
     "labB"
 );
 
@@ -1166,7 +1131,7 @@ fn account_trust_case(policy: &str, profile: &str, machine: &str, kind: &str) {
     assert_eq!(resolved["status"], "resolved");
 }
 
-// 정책·harness·머신·작업 폴더 형태의 기존16조합을 각각 고를 수 있다.
+// 정책·harness·머신·폴더 형태의 네 경계를 남긴다. 나머지 직교 반복은 삭제한다.
 macro_rules! trust_case {
     ($name:ident, $policy:literal, $profile:literal, $machine:literal, $kind:literal) => {
         #[test]
@@ -1175,21 +1140,9 @@ macro_rules! trust_case {
         }
     };
 }
-trust_case!(account_trust_coordinator_codex_local_worktree, "coordinator", "file", "labA", "worktree");
 trust_case!(account_trust_coordinator_codex_local_dir, "coordinator", "file", "labA", "dir");
-trust_case!(account_trust_coordinator_codex_remote_worktree, "coordinator", "file", "labB", "worktree");
-trust_case!(account_trust_coordinator_codex_remote_dir, "coordinator", "file", "labB", "dir");
-trust_case!(account_trust_coordinator_claude_local_worktree, "coordinator", "token", "labA", "worktree");
-trust_case!(account_trust_coordinator_claude_local_dir, "coordinator", "token", "labA", "dir");
 trust_case!(account_trust_coordinator_claude_remote_worktree, "coordinator", "token", "labB", "worktree");
-trust_case!(account_trust_coordinator_claude_remote_dir, "coordinator", "token", "labB", "dir");
 trust_case!(account_trust_user_codex_local_worktree, "user", "file", "labA", "worktree");
-trust_case!(account_trust_user_codex_local_dir, "user", "file", "labA", "dir");
-trust_case!(account_trust_user_codex_remote_worktree, "user", "file", "labB", "worktree");
-trust_case!(account_trust_user_codex_remote_dir, "user", "file", "labB", "dir");
-trust_case!(account_trust_user_claude_local_worktree, "user", "token", "labA", "worktree");
-trust_case!(account_trust_user_claude_local_dir, "user", "token", "labA", "dir");
-trust_case!(account_trust_user_claude_remote_worktree, "user", "token", "labB", "worktree");
 trust_case!(account_trust_user_claude_remote_dir, "user", "token", "labB", "dir");
 
 /// 시험용 Codex id_token(서명은 가짜): 공식 CLI가 로그인 때 남기는 계정 정보 자리

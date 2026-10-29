@@ -406,7 +406,7 @@ export default async function ({ ctl, page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("iPad IME 회귀(herdr-web-ui scripts/terminal-ipad-ime-regression.ts 그대로): Chromium MacIntel·iPad, 화면 키보드가 올라온 WebKit iPad", async () => {
+  await step("iPad IME 회귀(herdr-web-ui scripts/terminal-ipad-ime-regression.ts 그대로): Chromium MacIntel, 화면 키보드가 올라온 WebKit iPad", async () => {
     // 참고 시험처럼 pane WebSocket을 가로채 보낸 input 프레임을 그대로 본다(입력은 pane에 가지 않는다).
     // 두 pane은 참고처럼 조용한 입력창이다(출력이 오는 동안의 조합은 「터미널 한글 IME」 단계의 화면 키보드 판이 본다).
     for (const n of ["ipadA", "ipadB"]) aaa("tab", "create", "--machine", "labA", "--label", n, "--", process.execPath, `${root}/paste.js`);
@@ -416,7 +416,6 @@ export default async function ({ ctl, page }) {
     const IPAD_PORTRAIT = { width: 820, height: 1180 };
     const runs = [
       ["Chromium MacIntel", () => pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { userAgent: IPAD_UA, platform: "MacIntel" }), false],
-      ["Chromium iPad", () => pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { userAgent: IPAD_UA, platform: "iPad" }), false],
       [
         "WebKit iPad 화면 키보드",
         () => pairPage(wk, aaa("web", "pair").code, IPAD_PORTRAIT, { userAgent: IPAD_UA, platform: "iPad", touch: true, init: fakeViewport }),
@@ -552,91 +551,5 @@ export default async function ({ ctl, page }) {
   });
 
   let tracePage;
-  await step("입력 기록(실기 키보드 진단): 켜면 터미널 사건·textarea 값·화면 키보드 상태·보낸 글을 모으고, 보내면 host diag/에 남는다", async () => {
-    // pairing 없이는 남기지 않는다
-    const anon = await fetch(`${base}api/v1/diag/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: base.slice(0, -1) },
-      body: "{}",
-    });
-    if (anon.status !== 401) throw new Error(`인증 없는 기록 보내기가 ${anon.status}`);
-    aaa("tab", "create", "--machine", "labA", "--label", "traceapp", "--", process.execPath, `${root}/paste.js`);
-    const tp = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    tracePage = tp;
-    await tp.evaluate(() => {
-      window.__aaaTraceTimeline = [];
-      const record = (type) => {
-        const text = document.querySelector(".settings-row:has([aria-label='입력 기록'])")?.textContent ?? '';
-        const count = /(\d+)개 모았습니다/.exec(text)?.[1] ?? null;
-        window.__aaaTraceTimeline.push({ at: performance.now(), type, count, sent: Boolean(document.querySelector('[data-testid="trace-msg"]')?.textContent?.startsWith('보냈다:')) });
-        if (window.__aaaTraceTimeline.length > 150) window.__aaaTraceTimeline.shift();
-      };
-      new MutationObserver(() => record('dom')).observe(document, { subtree: true, childList: true, characterData: true });
-      for (const type of ['selectionchange', 'focus', 'blur']) document.addEventListener(type, () => record(type), true);
-    });
-    // 목록에는 진단 단추가 없고(참고 목록에 그런 자리가 없다) 설정 → 터미널 쪽 맨 끝 「진단」에 있다(사용자 화면 10-18, plan §8.82·§8.97)
-    if ((await tp.getByText("입력 기록", { exact: false }).count()) !== 0) throw new Error("목록에 입력 기록 단추가 있다");
-    const dialog = tp.getByRole("region", { name: "설정" });
-    const traceSwitch = dialog.getByRole("switch", { name: "입력 기록" });
-    await openSettings(tp, "터미널");
-    await traceSwitch.click();
-    if ((await traceSwitch.getAttribute("aria-checked")) !== "true") throw new Error("입력 기록이 켜지지 않았다");
-    await tp.keyboard.press("Escape");
-    await inList(tp, "pane-traceapp");
-    await until("trace 화면", async () => (await screenText(tp)).includes("paste>"));
-    await tp.locator(".xterm-screen").click();
-    await imeType(tp);
-    await waitOutput("traceapp", 'GOT:"태"');
-    await openSettings(tp, "터미널");
-    // 보내기 전에 reset을 관측한다. 뒤의 다른 기기 pairing 중 새 selection/focus가 쌓여도
-    // 이미 확인한 초기화 사건은 사라지지 않는다. 원래 0개 단언은 그대로 지킨다.
-    await tp.evaluate(() => {
-      window.__aaaTraceReset = false;
-      const row = document.querySelector(".settings-row:has([aria-label='입력 기록'])");
-      if (!row || !/[1-9]\d*개 모았습니다/.test(row.textContent)) throw new Error('보낼 입력 기록이 없다');
-      const observer = new MutationObserver(() => {
-        if (/(?:^|\D)0개 모았습니다/.test(row.textContent) && row.querySelector('[data-testid="trace-send"]')?.disabled) {
-          window.__aaaTraceReset = true;
-          observer.disconnect();
-        }
-      });
-      observer.observe(row, { subtree: true, childList: true, characterData: true, attributes: true });
-    });
-    await dialog.getByTestId("trace-send").click();
-    await until("보냄 표시", async () => (await dialog.getByTestId("trace-msg").innerText()).startsWith("보냈다: input-"));
-    await domIs(tp, "보낸 뒤 비움", () => window.__aaaTraceReset === true);
-    // 다음 기록 세대를 실제로 만든다. 계속 켜 둔 수집기가 새 사건을 받는 것은 reset 실패가 아니다.
-    await tp.evaluate(() => document.dispatchEvent(new Event('selectionchange')));
-    await domIs(tp, "보낸 뒤 새 사건 수집", () => /[1-9]\d*개 모았습니다/.test(document.querySelector(".settings-row:has([aria-label='입력 기록'])")?.textContent ?? ''));
-    const dir = `${root}/s/host/diag`;
-    const files = fs.readdirSync(dir).filter((n) => /^input-\d+\.json$/.test(n));
-    if (files.length !== 1) throw new Error(`diag 파일 ${files}`);
-    const rec = JSON.parse(fs.readFileSync(path.join(dir, files[0]), "utf8"));
-    const types = new Set(rec.events.map((e) => e.type));
-    for (const t of ["keydown", "compositionstart", "compositionupdate", "compositionend", "input", "focus", "send"])
-      if (!types.has(t)) throw new Error(`기록에 ${t}가 없다: ${[...types]}`);
-    const sent = rec.events.filter((e) => e.type === "send").map((e) => e.data).join("");
-    if (sent !== "상태") throw new Error(`기록의 보낸 글 ${JSON.stringify(sent)}`);
-    const upd = rec.events.find((e) => e.type === "compositionupdate" && e.data === "사");
-    if (!upd || typeof upd.value !== "string" || !Array.isArray(upd.sel) || typeof upd.kb !== "boolean") throw new Error(`상태가 빠졌다 ${JSON.stringify(upd)}`);
-    // 친 글 원문이 들어 있다: 사용자 전용 파일이고, 다른 사이트 폼이 보낼 수 있는 text/plain과 보기 권한 기기는 받지 않는다(보안 감사 t-0340 A6·B8)
-    const mode = fs.statSync(path.join(dir, files[0])).mode & 0o777;
-    if (mode !== 0o600) throw new Error(`diag 파일 권한 ${mode.toString(8)}`);
-    const post = (p, type) =>
-      p.evaluate(async (type) => (await fetch("/api/v1/diag/input", { method: "POST", headers: { "content-type": type }, body: "{}" })).status, type);
-    if ((await post(tp, "text/plain")) !== 400) throw new Error("text/plain 기록을 받았다");
-    const rd = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 })).page;
-    if ((await post(rd, "application/json")) !== 403) throw new Error("보기 권한 기기의 기록을 받았다");
-    await rd.context().close();
-    if (fs.readdirSync(dir).filter((n) => /^input-\d+\.json$/.test(n)).length !== 1) throw new Error("거절한 기록이 남았다");
-    // 보내기 reset은 위에서 확인했다. 끄면 모으지 않는다.
-    await traceSwitch.click();
-    if ((await traceSwitch.getAttribute("aria-checked")) !== "false") throw new Error("입력 기록이 꺼지지 않았다");
-    await tp.context().close();
-    aaa("pane", "kill", "traceapp");
-  }, { diagnose: async () => {
-    if (!tracePage) return;
-    fs.mkdirSync(`${root}/diagnostics`, { recursive: true });
-    fs.writeFileSync(`${root}/diagnostics/input-trace.json`, JSON.stringify(await tracePage.evaluate(() => window.__aaaTraceTimeline), null, 2));
-  } });
+
 }

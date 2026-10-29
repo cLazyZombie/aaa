@@ -142,7 +142,10 @@ fn rust_counts(dir: &Path) -> Result<Option<MetricCounts>> {
     let mut complete = !jobs.is_empty();
     let mut bytes = 0usize;
     let mut seen = std::collections::BTreeSet::new();
-    for job in jobs.iter().take(128) {
+    if jobs.len() > 4096 {
+        return Ok(None);
+    }
+    for job in jobs {
         let Some(name) = job["log"].as_str().filter(|n| !n.contains(['/', '\\']) && !n.starts_with('.')) else {
             complete = false;
             continue;
@@ -171,7 +174,7 @@ fn rust_counts(dir: &Path) -> Result<Option<MetricCounts>> {
             }
         }
     }
-    if !complete || jobs.len() > 128 {
+    if !complete {
         return Ok(None);
     }
     Ok(Some(all))

@@ -3,12 +3,14 @@ use std::process::Command;
 
 use aaa_test_support::CANARY as SECRET;
 const NAME_SECRET: &str = SECRET;
+const BUILD_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SOURCE_FILES: &[&str] = &["crates/aaa-common/src/panic_log.rs", "crates/aaa-common/src/panic_log/tests.rs"];
 
 // 공개 hook을 실제 자식 프로세스에서 실행한다. 전역 hook·환경을 다른 시험과 공유하지 않는다.
 #[test]
 fn hook_child() {
     let Ok(role) = std::env::var("AAA_PANIC_TEST_ROLE") else { return };
-    install();
+    install(BUILD_SHA, SOURCE_FILES);
     set_process(match role.as_str() {
         "host" => ProcessKind::Host,
         "agent" => ProcessKind::Agent,
@@ -61,7 +63,7 @@ fn hook_child() {
     assert!(last.task_id.is_some());
     assert_eq!(last.thread, "tokio-runtime-worker");
     // 알림 소비자가 받는 snapshot에도 비밀이 없어야 한다.
-    println!("latest: {}", serde_json::to_string(&last).unwrap());
+    println!("\nlatest: {}", serde_json::to_string(&last).unwrap());
 }
 
 #[test]
@@ -107,8 +109,6 @@ fn hook_reports_safe_locations_for_every_role_without_payload_or_names() {
                 assert!(file == "external" || SOURCE_FILES.contains(&file), "원본 경로: {file}");
             }
         }
-        // git checkout 빌드는 SHA가 있어야 한다. 소스 배포의 unknown은 별도의 보수적 경로다.
-        assert!(matches!(BUILD_SHA.len(), 40 | 64) && BUILD_SHA.bytes().all(|b| b.is_ascii_hexdigit()));
         for (index, event) in events[..3].iter().enumerate() {
             assert_eq!(event["count"], index + 1);
             assert_eq!(event["thread"], "other");
@@ -137,9 +137,9 @@ fn location_paths_are_selected_from_repository_files_only() {
         format!("/Users/me/private-build/{known}"),
         format!("C:\\Users\\me\\private-build\\{}", known.replace('/', "\\")),
     ] {
-        assert_eq!(safe_file(&file), known);
+        assert_eq!(safe_file(&file, SOURCE_FILES), known);
     }
     for file in ["/Users/me/private-dependency/src/lib.rs", "C:\\Users\\me\\private.rs", "private-panic-payload.rs"] {
-        assert_eq!(safe_file(file), "external");
+        assert_eq!(safe_file(file, SOURCE_FILES), "external");
     }
 }

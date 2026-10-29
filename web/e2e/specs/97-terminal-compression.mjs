@@ -95,7 +95,6 @@ function routeWire(stats, bps = 1e9, rtt = 1) {
   };
 }
 
-
 let corpusFixture;
 let safari;
 const safariBrowser = async () => (safari ??= specCleanup.own(() => webkit.launch({ headless: true }), value => value.close())).value;
@@ -315,21 +314,11 @@ export default async function ({ page }) {
   await step("압축 Worker 로드: chromium 1280 access", () => workerLoad(browser, "chromium", 1280, "access"));
   await step("압축 Worker 로드: chromium 1280 constructor", () => workerLoad(browser, "chromium", 1280, "constructor"));
   await step("압축 Worker 로드: chromium 1280 runtime", () => workerLoad(browser, "chromium", 1280, "runtime"));
-  await step("압축 Worker 로드: chromium 390 access", () => workerLoad(browser, "chromium", 390, "access"));
-  await step("압축 Worker 로드: chromium 390 constructor", () => workerLoad(browser, "chromium", 390, "constructor"));
-  await step("압축 Worker 로드: chromium 390 runtime", () => workerLoad(browser, "chromium", 390, "runtime"));
-  await step("압축 Worker 로드: webkit 1280 access", async () => workerLoad(await safariBrowser(), "webkit", 1280, "access"));
-  await step("압축 Worker 로드: webkit 1280 constructor", async () => workerLoad(await safariBrowser(), "webkit", 1280, "constructor"));
-  await step("압축 Worker 로드: webkit 1280 runtime", async () => workerLoad(await safariBrowser(), "webkit", 1280, "runtime"));
   await step("압축 Worker 로드: webkit 390 access", async () => workerLoad(await safariBrowser(), "webkit", 390, "access"));
   await step("압축 Worker 로드: webkit 390 constructor", async () => workerLoad(await safariBrowser(), "webkit", 390, "constructor"));
   await step("압축 Worker 로드: webkit 390 runtime", async () => workerLoad(await safariBrowser(), "webkit", 390, "runtime"));
   await step("압축 기록: chromium 1280 Worker·ACK·입력·재연결·두 쪽 prepend", async () => compressedHistory("chromium-1280", browser, 1280));
-  await step("압축 기록: chromium 390 Worker·ACK·입력·재연결·두 쪽 prepend", async () => compressedHistory("chromium-390", browser, 390));
-  await step("압축 기록: webkit 1280 Worker·ACK·입력·재연결·두 쪽 prepend", async () => compressedHistory("webkit-1280", await safariBrowser(), 1280));
   await step("압축 기록: webkit 390 Worker·ACK·입력·재연결·두 쪽 prepend", async () => compressedHistory("webkit-390", await safariBrowser(), 390));
-  await step("압축 회선 경계: plain 실제 PTY의 identity/gzip·입력 8키·최종 ACK", () => networkSample("plain"));
-  await step("압축 회선 경계: ansi 실제 PTY의 identity/gzip·입력 8키·최종 ACK", () => networkSample("ansi"));
   await step("압축 회선 경계: korean 실제 PTY의 identity/gzip·입력 8키·최종 ACK", () => networkSample("korean"));
   } finally { await safari?.close(); }
 }

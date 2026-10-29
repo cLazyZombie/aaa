@@ -19,6 +19,7 @@ class Job:
     argv: list[str]
     cwd: Path
     tests: list[str] | None = None
+    weight: float = 0
 
 
 class Interrupted(RuntimeError):
@@ -158,14 +159,13 @@ def load_average():
     return list(os.getloadavg()) if hasattr(os, "getloadavg") else None
 
 
-def partitions(names, count):
-    """긴 rollout은 먼저 시작하고 나머지는 정확한 이름으로 균등 분할한다."""
+def partitions(names):
+    """각 독립 integration owner를 슬롯에 넣는다. 긴 고정 shard가 뒤 시험을 붙잡지 않는다."""
     if len(set(names)) != len(names):
         raise ValueError("시험 목록에 중복 이름이 있다")
     slow = [name for name in names if name.startswith("rollout::")]
     rest = [name for name in names if not name.startswith("rollout::")]
-    groups = [[name] for name in slow]
-    groups += [rest[i::count] for i in range(min(count, len(rest)))]
+    groups = [[name] for name in [*slow, *rest]]
     if sorted(name for group in groups for name in group) != sorted(names):
         raise ValueError("시험 분할이 원래 목록과 다르다")
     return groups
@@ -205,52 +205,67 @@ def prepare(logs, record=None):
 
 
 def plan(artifacts, workers, durations=None, record=None):
+    durations = {} if durations is None else durations
     jobs = []
     for artifact in artifacts:
         executable = artifact["executable"]
         target = artifact["target"]
         cwd = Path(artifact["manifest_path"]).parent
         name = target["name"]
-        if name == "m13" and "test" in target["kind"]:
+        independent = (name in {"m13", "install", "e2e", "m12", "deploy_start"}
+                       or name == "restart" and sys.platform == "darwin") and "test" in target["kind"]
+        modules = name in {"aaa", "aaa_host", "aaa_agent"}
+        if independent or modules:
             argv = [executable, "--list", "--format", "terse"]
             if record is None:
                 listed = subprocess.check_output(argv, cwd=cwd, text=True)
             else:
                 record.update("listing_started", phase="list")
-                log = record.logs / "list-m13.log"
+                log = record.logs / f"list-{name}.log"
                 with log.open("w") as output:
-                    code = record.run("list-m13", argv, cwd, output)
+                    code = record.run(f"list-{name}", argv, cwd, output)
                 if record.stopping:
-                    raise Interrupted("m13 시험 목록 읽기 중단")
+                    raise Interrupted(f"{name} 시험 목록 읽기 중단")
                 if code:
-                    raise RuntimeError(f"m13 시험 목록 읽기 실패: exit={code}, 로그 {log}")
+                    raise RuntimeError(f"{name} 시험 목록 읽기 실패: exit={code}, 로그 {log}")
                 listed = log.read_text()
             names = [line.removesuffix(": test") for line in listed.splitlines() if line.endswith(": test")]
             if not names:
-                raise RuntimeError("m13 시험 목록이 비었다")
-            for index, group in enumerate(partitions(names, max(1, min(3, workers - 1)))):
-                jobs.append(Job(f"m13-{index + 1}", [executable, "--exact", *group], cwd, group))
+                raise RuntimeError(f"{name} 시험 목록이 비었다")
+            groups = partitions(names)
+            if modules:
+                by_module = {}
+                for test in names:
+                    parts = test.split("::")
+                    module = "::".join(parts[:4]) if name == "aaa" and parts[0] == "install" else parts[0]
+                    by_module.setdefault(module, []).append(test)
+                groups = list(by_module.values())
+            for index, group in enumerate(groups):
+                weight = durations.get(f"{name}::{group[0]}",
+                                       durations.get(name, 6 * workers) * len(group) / len(names))
+                if name == "m13" and group[0].startswith("rollout::"):
+                    weight = durations.get(f"{name}::{group[0]}", 60)
+                jobs.append(Job(f"{name}-{index + 1}", [executable, "--exact", *group], cwd, group, weight))
         else:
-            jobs.append(Job(name, [executable], cwd))
-    # m13 여섯 묶음을 먼저 시작하고, 빈 자리에는 실측상 긴 binary부터 넣는다.
-    # 새 binary는 시간이 없으므로 먼저 실행한다. 시간은 순서에만 쓰고 선택·시한에는 쓰지 않는다.
-    durations = {} if durations is None else durations
-    jobs.sort(key=lambda job: (not job.name.startswith("m13-"), -durations.get(job.name, float("inf"))))
+            jobs.append(Job(name, [executable], cwd, weight=durations.get(name, float("inf"))))
+    # 시간은 순서에만 쓴다. 전부 실행하며 선택·시한·실패 판정을 바꾸지 않는다.
+    jobs.sort(key=lambda job: -job.weight)
     return jobs
 
 
-def execute(jobs, logs, workers, threads, cpu_budget=None, report_time=False, record=None):
+def execute(jobs, logs, workers, threads, cpu_budget=None, report_time=False, record=None, release_budget=None):
     cpu_budget = max(1, os.cpu_count() or 1) if cpu_budget is None else cpu_budget
     if cpu_budget < 1:
         raise ValueError("CPU 예산은 1 이상이어야 한다")
+    threads = min(threads, cpu_budget)
     available = cpu_budget
     record = RunRecord(logs) if record is None else record
     epoch = time.monotonic()
     record.update("execution_started", phase="execute", workers=workers, threads=threads, cpu_budget=cpu_budget,
+                  initial_cpu_budget=cpu_budget,
                   jobs=[dict(name=job.name, tests=job.tests, status="queued") for job in jobs])
 
     def slots_for(job):
-        # exact 한 시험뿐인 rollout이 libtest 기본 thread 수만큼 자리를 예약하지 않는다.
         return max(1, min(cpu_budget, threads, len(job.tests) if job.tests is not None else threads))
 
     def run(index, job, slots):
@@ -302,6 +317,12 @@ def execute(jobs, logs, workers, threads, cpu_budget=None, report_time=False, re
         pending = list(enumerate(jobs))
         running = {}
         while pending or running:
+            if release_budget is not None and release_budget[0].is_file():
+                following = max(cpu_budget, release_budget[1])
+                available += following - cpu_budget
+                cpu_budget = following
+                record.update("cpu_budget_returned", cpu_budget=cpu_budget)
+                release_budget = None
             if record.stopping:
                 with record.lock:
                     for index, _ in pending:
@@ -370,14 +391,22 @@ def run_suite(args, record):
     durations = json.loads(Path(__file__).with_name("rust-test-durations.json").read_text())
     jobs = plan(artifacts, args.workers, durations, record)
     # doctest를 binary 실행으로 대신하지 않는다. 기존 Cargo의 전체 workspace doc 범위를 그대로 실행한다.
-    jobs.append(Job("doctests", ["cargo", "test", "--profile", "verify", "--workspace", "--doc", "--locked", "--no-fail-fast"], Path.cwd()))
-    # 여섯 m13 프로세스는 1+1+1+4+4+4=15자리다(16 CPU). 나머지는 CPU 예산 안에서 들어온다.
+    jobs.append(Job("doctests", ["cargo", "test", "--profile", "verify", "--workspace", "--doc", "--locked", "--no-fail-fast"], Path.cwd(),
+                    weight=durations.get("doctests", 5)))
+    # 준비/Clippy가 끝났으므로 Cargo 잠금 경합 없이 doctest도 같은 실행 예산에 넣는다.
+    jobs.sort(key=lambda job: -job.weight)
+    # 큰 unit binary 안의 병렬도와 integration owner의 한 자리를 같은 예산에서 계산한다.
     threads = int(os.environ.get("RUST_TEST_THREADS", max(1, (os.cpu_count() or 1) // min(args.workers, 4))))
     if threads < 1:
         raise ValueError("RUST_TEST_THREADS는 1 이상이어야 한다")
     manifest = [dict(name=job.name, argv=job.argv, cwd=str(job.cwd), tests=job.tests) for job in jobs]
     (args.logs / "plan.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-    results = execute(jobs, args.logs, args.workers, threads, report_time=args.report_time, record=record)
+    cpu_budget = int(os.environ.get("AAA_RUST_TEST_CPU_BUDGET", os.cpu_count() or 1))
+    release_file = os.environ.get("AAA_RUST_TEST_RELEASE_FILE")
+    cpus = getattr(os, "process_cpu_count", os.cpu_count)() or 1
+    release_budget = (Path(release_file), cpus) if release_file else None
+    results = execute(jobs, args.logs, args.workers, threads, cpu_budget=cpu_budget,
+                      report_time=args.report_time, record=record, release_budget=release_budget)
     code = record.stop_code if record.stopping else int(any(result["exit"] for result in results))
     record.update("runner_finished", status="interrupted" if record.stopping else "failed" if code else "completed",
                   exit=code)

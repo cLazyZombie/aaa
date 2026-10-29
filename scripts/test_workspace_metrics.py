@@ -99,6 +99,24 @@ class WorkspaceMetrics(unittest.TestCase):
         self.assertEqual(len(json.loads((archive / "rust/summary.json").read_text())["jobs"]), 2)
         self.assertFalse((archive / "rust/missing.log").exists())
 
+    def test_split_owner_results_are_all_archived(self):
+        self.assertEqual(self.helper("start").returncode, 0)
+        (self.logs / "workspace-summary.tsv").write_text("v1|100|164|succeeded\n")
+        (self.logs / "rust").mkdir()
+        jobs = [dict(log=f"{n}-owner.log") for n in range(350)]
+        (self.logs / "rust/summary.json").write_text(json.dumps(dict(jobs=jobs)))
+        for job in jobs:
+            (self.logs / "rust" / job["log"]).write_text(
+                "private stdout\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n")
+        result = self.helper("finish")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        archive, = self.archives()
+        self.assertEqual(json.loads((archive / "rust/summary.json").read_text())["jobs"], jobs)
+        self.assertEqual(len(list((archive / "rust").glob("*-owner.log"))), len(jobs))
+        for job in jobs:
+            self.assertNotIn("private", (archive / "rust" / job["log"]).read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

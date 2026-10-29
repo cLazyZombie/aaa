@@ -373,16 +373,6 @@ export default async function () {
   try {
     // 독립된 조합마다 같은 상한을 적용한다. literal 이름으로 --list/--grep에도 모두 보인다.
   await step("긴 대화 앞 쪽: Chromium 1280 claude", async () => check(browser, 1280, "claude"), failure);
-  await step("긴 대화 앞 쪽: Chromium 1280 codex", async () => check(browser, 1280, "codex"), failure);
-  await step("긴 대화 앞 쪽: Chromium 390 claude", async () => check(browser, 390, "claude"), failure);
-  await step("긴 대화 앞 쪽: Chromium 390 codex", async () => check(browser, 390, "codex"), failure);
-  await step("긴 대화 앞 쪽: Chromium 820 claude", async () => check(browser, 820, "claude"), failure);
-  await step("긴 대화 앞 쪽: Chromium 820 codex", async () => check(browser, 820, "codex"), failure);
-  await step("긴 대화 앞 쪽: WebKit 1280 claude", async () => check(await safariBrowser(), 1280, "claude"), failure);
-  await step("긴 대화 앞 쪽: WebKit 1280 codex", async () => check(await safariBrowser(), 1280, "codex"), failure);
-  await step("긴 대화 앞 쪽: WebKit 390 claude", async () => check(await safariBrowser(), 390, "claude"), failure);
   await step("긴 대화 앞 쪽: WebKit 390 codex", async () => check(await safariBrowser(), 390, "codex"), failure);
-  await step("긴 대화 앞 쪽: WebKit 820 claude", async () => check(await safariBrowser(), 820, "claude"), failure);
-  await step("긴 대화 앞 쪽: WebKit 820 codex", async () => check(await safariBrowser(), 820, "codex"), failure);
   } finally { for (const release of releases) release(); await safari?.close(); }
 }

@@ -4988,3 +4988,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - t-1298 E2E104 재검증 fixture 정렬 수리와 실패 진단: [별도 기록](testing-chat-lifecycle-ci.md).
 - Windows 설치 승인 Ctrl+Z 정체의 원문 로그·실기 대조·진단 후보: [t-1303 조사 기록](testing-win-auth-t-1303.md).
 - pt 상세 검증 원장 수집·회귀: [testing-pt-workspace-metrics.md](testing-pt-workspace-metrics.md).
+- t-1310: [전체 ci-local 3분 예산·실측·보존 경계](testing-ci-budget-t-1310.md)와 [삭제 owner 원장](testing-ci-budget-t-1310-removed.md).

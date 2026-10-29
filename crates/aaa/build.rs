@@ -1,4 +1,4 @@
-//! panic 로그에는 저장소가 아는 상대 경로와 검증한 판 SHA만 넣는다.
+//! 커밋 식별자는 최종 실행 파일에만 넣어 공통 backend의 컴파일 캐시를 보존한다.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -8,15 +8,9 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn main() {
-    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let root = manifest.join("../..");
-    // worktree의 .git은 파일이다. 실제 HEAD·index·현재 ref·packed-refs를 감시한다.
-    for name in ["HEAD", "index"] {
-        watch_git(&root, name);
-    }
-    // 새 checkout에는 packed-refs가 없다. 없는 파일을 감시하면 Cargo가 모든 호출에서
-    // build script와 aaa-common의 모든 의존 crate를 다시 빌드한다. loose ref의 생성·삭제는
-    // 아래 ref 감시가, detached HEAD의 변경은 HEAD 감시가 맡는다.
+    let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    watch_git(&root, "HEAD");
+    watch_git(&root, "index");
     if let Some(path) = git_path(&root, "packed-refs").filter(|path| path.exists()) {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -29,16 +23,15 @@ fn main() {
     let files = git(&root, &["ls-files", "-z", "--", "*.rs"]).unwrap_or_default();
     let mut paths: Vec<_> = files.split('\0').filter(|s| !s.is_empty()).collect();
     paths.sort_unstable();
-    // 생성물에 홈 절대 경로를 넣지 않는다. git 없는 소스 배포는 external/unknown으로 숨긴다.
-    let source = format!("pub const BUILD_SHA: &str = {sha:?};\nconst SOURCE_FILES: &[&str] = &{paths:?};\n");
-    std::fs::write(PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("panic_build.rs"), source).unwrap();
+    let source = format!("pub const BUILD_SHA: &str = {sha:?};\npub const SOURCE_FILES: &[&str] = &{paths:?};\n");
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("panic_build.rs");
+    if std::fs::read_to_string(&output).ok().as_deref() != Some(&source) {
+        std::fs::write(output, source).unwrap();
+    }
 }
 
 fn watch_git(root: &Path, name: &str) {
     if let Some(mut path) = git_path(root, name) {
-        // packed ref뿐인 branch와 아직 index가 없는 저장소도 없는 경로를 감시하지 않는다.
-        // 가장 가까운 기존 폴더에서 loose ref/index가 생기는 사건을 잡고 다음 빌드부터
-        // 그 파일만 감시한다. worktree의 공용 refs도 git이 준 경로로 찾는다.
         while !path.exists() {
             if !path.pop() {
                 return;

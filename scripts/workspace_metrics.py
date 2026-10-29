@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import uuid
 
 MAX_INPUT = 8 * 1024 * 1024
+MAX_RUST_JOBS = 4096  # 모듈/독립 owner 분할 결과도 보존한다. 원문 입력의 8 MiB 상한은 별도다.
 
 
 def git(*args):
@@ -90,7 +91,7 @@ def finish(logs):
         if rust.is_file():
             try:
                 jobs = json.loads(read(rust))["jobs"]
-                if len(jobs) > 128:
+                if len(jobs) > MAX_RUST_JOBS:
                     raise ValueError("Rust 결과 개수 상한")
                 (out / "rust").mkdir()
                 compact = []

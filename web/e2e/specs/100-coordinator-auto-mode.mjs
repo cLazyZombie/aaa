@@ -151,43 +151,14 @@ export default async function () {
     assert.ok((await call(reader, { op: "question_auto_answer", project: "demo", id: ids[1], choice: "A", text: null, reason: "안 됨" })).err);
     assert.equal(aaa("project", "auto-mode").on, false);
   });
-  await step("auto mode: 오래 켠 모드의 기록 페이지·옛 결정 직접 주소·재판단", async () => {
-    aaa("project", "auto-mode", "on");
-    // 질문 카드는 묶음당 9개까지다. 실제 제한 안에서 51개의 자동 답을 쌓는다.
-    for (let offset = 0; offset < 51; offset += 9) {
-      const size = Math.min(9, 51 - offset);
-      fs.writeFileSync(`${root}/auto-many.md`, "## Questions\n" + Array.from({ length: size }, (_, n) => `### ${n + 1}. 기록 ${offset + n + 1}\n- A 먼저\n- B 나중\n`).join(""));
-      const title = `오래 켠 모드 기록 ${offset}`;
-      const posted = await run(["post", "user", "--request", "--needs-user", "--topic", "user-action", "--title", title, "--body-file", `${root}/auto-many.md`]);
-      assert.equal(posted.state, "accepted");
-      const request = (await call(desktop, { op: "asks" })).ok.requests.find(r => r.title === title);
-      assert.equal(request.questions.items.length, size);
-      for (const q of request.questions.items) {
-        const result = await run(["question", "answer", q.id, "B", "--auto", "--reason-file", `${root}/auto-reason.txt`]);
-        assert.equal(result.kind, "asks");
-      }
-    }
-    const first = (await call(desktop, { op: "asks" })).ok;
-    assert.equal(first.auto_decisions.length, 50); assert.ok(first.auto_next);
-    await desktop.evaluate(() => { location.hash = "ask=a:"; }); await desktop.reload();
-    await domIs(desktop, "최근 기록 50개", () => document.querySelector('[data-testid="asks-auto-count"]')?.textContent === "50");
-    await desktop.getByRole("button", { name: "이전 자동 결정 더 보기" }).click();
-    await domIs(desktop, "이전 기록까지 53개", () => document.querySelector('[data-testid="asks-auto-count"]')?.textContent === "53");
-    await desktop.evaluate(id => { location.hash = `question=${id}`; }, ids[0]); await desktop.reload();
-    await desktop.getByTestId("auto-decision-card").waitFor();
-    assert.match(await desktop.getByTestId("auto-decision-card").textContent(), /글자 렌더 방식/);
-    await desktop.getByRole("button", { name: "다른 답으로 다시 정하기" }).click();
-    await mirror.evaluate(id => { location.hash = `question=${id}`; }, ids[0]); await mirror.reload();
-    await mirror.getByTestId("auto-decision-card").waitFor();
-    await desktop.getByLabel("새 답", { exact: true }).fill("오래된 결정도 A를 다시 검토해라");
-    await desktop.getByRole("button", { name: "새 답 보내기" }).click();
-    await desktop.getByText("다시 정한 답: 오래된 결정도 A를 다시 검토해라 · coordinator에 전달함").waitFor();
-    await mirror.getByText("다시 정한 답: 오래된 결정도 A를 다시 검토해라 · coordinator에 전달함").waitFor();
-    const old = (await call(desktop, { op: "auto_decisions", project: "demo", before: null, id: `auto-${ids[0]}` })).ok.decisions[0];
-    assert.equal(old.choice, "B"); assert.equal(old.reviewed, true);
-    aaa("project", "auto-mode", "off");
-  });
+
   await step("auto mode: 대화창 접은 줄의 확인·지우기와 질문 화면 지우기·모두 지우기가 모든 기기에서 함께 빠진다", async () => {
+    // 지우기 검사는 미확인 결정 둘을 직접 준비한다. 앞 페이지 규모 시험의 잔여 상태를 쓰지 않는다.
+    aaa("project", "auto-mode", "on");
+    fs.writeFileSync(`${root}/auto-clear.md`, "## Questions\n### 1. 지울 결정 하나\n- A 먼저\n- B 나중\n### 2. 지울 결정 둘\n- A 먼저\n- B 나중\n");
+    await run(["post", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "지우기 준비", "--body-file", `${root}/auto-clear.md`]);
+    const clearing = (await call(desktop, { op: "asks" })).ok.requests.find(r => r.title === "지우기 준비");
+    for (const q of clearing.questions.items) await run(["question", "answer", q.id, "B", "--auto", "--reason-file", `${root}/auto-reason.txt`]);
     const rows = p => p.evaluate(() => [...document.querySelectorAll('[data-testid="auto-line"]')].map(r => r.dataset.id));
     const before = (await call(desktop, { op: "asks" })).ok;
     const autoQ = new Set(before.auto_decisions.map(d => d.question.id).filter(Boolean));

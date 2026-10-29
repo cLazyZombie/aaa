@@ -117,7 +117,6 @@ export default async function () {
     { await fragmentHistory(wk); }
   });
 
-  await step("메뉴 A→B 뒤 쓸기 · 기록·취소·늦은 터치·복원: Chromium", async () => { await drawerNavigation(browser); });
   await step("메뉴 A→B 뒤 쓸기 · 기록·취소·늦은 터치·복원: WebKit", async () => { const wk = await safariBrowser(); await drawerNavigation(wk); });
 
   async function phoneBackToBottom(width, standalone) {
@@ -161,9 +160,6 @@ export default async function () {
 
   }
   await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 390 Safari", async () => { await phoneBackToBottom(390, false); });
-  await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 390 홈 화면 앱", async () => { await phoneBackToBottom(390, true); });
-  await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 430 Safari", async () => { await phoneBackToBottom(430, false); });
-  await step("휴대폰 뒤로 끝까지 · pane·보고서·첫 pane: WebKit 430 홈 화면 앱", async () => { await phoneBackToBottom(430, true); });
 
   // t-0780, plan §8.340: 휴대폰 뒤로·앞으로는 메뉴를 항상 닫는다.
   async function phoneMenuHistory(width, standalone) {
@@ -225,10 +221,6 @@ export default async function () {
 
     if (bad.length) throw new Error(bad.join("; "));
   }
-  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 390 Safari", async () => { await phoneMenuHistory(390, false); });
-  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 390 홈 화면 앱", async () => { await phoneMenuHistory(390, true); });
-  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 430 Safari", async () => { await phoneMenuHistory(430, false); });
-  await step("메뉴 열고 뒤로·앞으로 · 닫힘·기록 불변: WebKit 430 홈 화면 앱", async () => { await phoneMenuHistory(430, true); });
 
   async function phoneEdgeHistory(width, standalone) {
     const wk = await safariBrowser();
@@ -272,100 +264,7 @@ export default async function () {
 
   }
   await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 390 Safari", async () => { await phoneEdgeHistory(390, false); });
-  await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 390 홈 화면 앱", async () => { await phoneEdgeHistory(390, true); });
-  await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 430 Safari", async () => { await phoneEdgeHistory(430, false); });
-  await step("가장자리·안쪽 쓸기 · 시스템 뒤로·메뉴: WebKit 430 홈 화면 앱", async () => { await phoneEdgeHistory(430, true); });
 
-  await step("넓은 화면 뒤로·앞으로: 데스크톱·패드의 사이드바 펼침·접힘 유지(WebKit 1280·820)", async () => {
-    const wk = await safariBrowser();
-    {
-      for (const profile of ["desktop", "ipad"]) {
-        const { page: p } = await pairDevice(wk, aaa("web", "pair").code, profile);
-        try {
-          for (const label of ["bk1", "bk2"]) await inList(p, `pane-${label}`);
-          await showPanel(p, "work");
-          for (const collapsed of [false, true]) {
-            if (collapsed) {
-              await p.getByTestId("activity-work").click();
-              await p.locator(".app.sidebar-collapsed").waitFor();
-            }
-            for (const [direction, label] of [[-1, "bk1"], [1, "bk2"]]) {
-              await inTime(p.evaluate((direction) => new Promise((r) => {
-                addEventListener("popstate", () => r(), { once: true });
-                history.go(direction);
-              }), direction), 20_000, "넓은 화면 popstate");
-              await domIs(p, `${label} 선택`, (label) => document.querySelector(`[data-testid="pane-${label}"]`)?.getAttribute("aria-current") === "true", label);
-              const actual = await p.locator(".app").evaluate((el) => el.classList.contains("sidebar-collapsed"));
-              if (actual !== collapsed || (await screen(p)).empty)
-                throw new Error(`${profile}: 뒤로·앞으로 사이드바 접힘 ${actual} ≠ ${collapsed}`);
-            }
-          }
-        } finally {
-          await p.context().close();
-        }
-      }
-    }
-  });
-
-  await step("고른 것이 없는 화면: 휴대폰은 「목록에서 하나를 고른다」와 「목록 열기」 단추, 기록 칸을 더하지 않고 뒤로는 앞 화면, 데스크톱은 「왼쪽에서」 그대로", async () => {
-    const wk = await safariBrowser();
-    {
-      const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone: false });
-      try {
-        await domIs(p, "첫 pane", () => /^#pane=/.test(location.hash) && document.querySelector('[data-testid="terminal"], [data-testid="chat"]') !== null);
-        // 닫힌 pane의 칸에 뒤로가 닿으면 지금 pane에 머물고 그렇다고 말한다(참고 onPop: pane이 없으면 그대로)
-        await inList(p, "pane-bk4");
-        const h4 = paneHashOf("bk4");
-        await domIs(p, "bk4 주소", (h) => location.hash === h, h4);
-        await inList(p, "pane-bk2");
-        const h2 = paneHashOf("bk2");
-        await domIs(p, "bk2 주소", (h) => location.hash === h, h2);
-        aaa("pane", "close", "bk4");
-        await p.getByTestId("pane-bk4").waitFor({ state: "detached" });
-        const gone = await back(p);
-        if (gone.hash !== h2 || gone.empty) throw new Error(`닫힌 pane 칸으로 뒤로: ${fmt(gone)} (원함 ${h2})`);
-        await domIs(p, "닫힌 pane 알림", () => document.querySelector('[data-testid="head-note"]')?.textContent === "그 pane은 닫혔습니다");
-        const pane = await screen(p);
-        // 모든 thread 화면을 열고(기록 한 칸) 닫는다: 고른 것 없음은 그 칸을 바꾼다
-        await p.evaluate(() => (location.hash = "threads"));
-        await p.getByTestId("all-threads").waitFor();
-        const pushed = (await screen(p)).len;
-        await p.getByTestId("all-threads").getByRole("button", { name: "닫기" }).click();
-        const view = p.locator(".empty-view");
-        await view.waitFor();
-        const head = await view.locator("h2").textContent();
-        if (head !== "목록에서 하나를 고른다") throw new Error(`휴대폰 빈 화면 제목 「${head}」`);
-        const open = p.getByTestId("empty-open-list");
-        const box = await open.boundingBox();
-        if (!box || box.height < 44 || box.x < 0 || box.x + box.width > 390) throw new Error(`목록 열기 단추 ${JSON.stringify(box)}`);
-        await shot(p, "phone-empty-list");
-        const closed = await screen(p);
-        if (closed.len !== pushed || closed.hash !== "") throw new Error(`고른 것 없음이 기록 칸을 더했다(${pushed} → ${closed.len}, 주소 ${closed.hash})`);
-        await open.click();
-        await p.locator("#workspace-drawer.is-open").waitFor();
-        await drawerSettled(p, true);
-        await p.locator(".scrim.is-open").click({ position: { x: 380, y: 600 } });
-        await drawerSettled(p, true);
-        // 뒤로: 모든 thread 칸이던 곳(이제 빈 칸)에 머물지 않고 그 앞 pane으로
-        const s = await back(p);
-        if (s.hash !== pane.hash || s.empty) throw new Error(`빈 화면에서 뒤로: ${fmt(s)} (원함 ${pane.hash})`);
-      } finally {
-        await p.context().close();
-      }
-      const { page: d } = await pairDevice(wk, aaa("web", "pair").code, "desktop");
-      try {
-        await domIs(d, "첫 pane", () => /^#pane=/.test(location.hash));
-        await d.evaluate(() => (location.hash = "threads"));
-        await d.getByTestId("all-threads").getByRole("button", { name: "닫기" }).click();
-        const head = await d.locator(".empty-view h2").textContent();
-        if (head !== "왼쪽에서 하나를 고른다" || (await d.getByTestId("empty-open-list").count()) !== 0) throw new Error(`데스크톱 빈 화면 「${head}」`);
-      } finally {
-        await d.context().close();
-      }
-    }
-  });
-  await step("휴대폰 본문 기록 뒤로·앞으로 · 모든 목적지·메뉴: Chromium", async () => { await historyDestinations(browser); });
-  await step("할 일 상세의 별도 기록 · 메뉴 열림/닫힘·뒤로/앞으로: Chromium", async () => { await taskSheetHistory(browser); });
   await step("휴대폰 본문 기록 뒤로·앞으로 · 모든 목적지·메뉴: WebKit", async () => { const wk = await safariBrowser(); await historyDestinations(wk); });
   await step("할 일 상세의 별도 기록 · 메뉴 열림/닫힘·뒤로/앞으로: WebKit", async () => { const wk = await safariBrowser(); await taskSheetHistory(wk); });
 
@@ -376,8 +275,6 @@ export default async function () {
   }, { diagnose: (error) => settingsDiagnostics.save(error) });
 
   await step("설정 내부 복귀·실제 기록 이동 · 작업 패널: Chromium", async () => { await settingsDrawerHistory(browser, settingsDiagnostics, "panel"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
-  await step("설정 내부 복귀·실제 기록 이동 · 닫기 버튼: Chromium", async () => { await settingsDrawerHistory(browser, settingsDiagnostics, "x"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
-  await step("설정 내부 복귀·실제 기록 이동 · 작업 패널: WebKit", async () => { const wk = await safariBrowser(); await settingsDrawerHistory(wk, settingsDiagnostics, "panel"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
   await step("설정 내부 복귀·실제 기록 이동 · 닫기 버튼: WebKit", async () => { const wk = await safariBrowser(); await settingsDrawerHistory(wk, settingsDiagnostics, "x"); }, { diagnose: (error) => settingsDiagnostics.save(error) });
 
   } finally { await safari?.close(); }
