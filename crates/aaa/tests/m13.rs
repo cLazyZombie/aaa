@@ -6163,16 +6163,21 @@ try_post barrier "$BIN" post coordinator --data --topic test --title 자료
 /// 실제 coordinator→host→TLS agent에서 사본 binary를 바꾼다. 공용 시험 binary·운영 서비스는 건드리지 않는다.
 #[test]
 fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
-    let mut w = world();
+    let mut phases =
+        aaa_test_support::phases::Phases::new("coordinator_deployment_is_gated_and_survives_backend_restarts");
+    // 줄 단위 coordinator/worker 셸만 쓴다. 저장소·TUI 준비는 필요 없다.
+    let (mut w, env) = world_files("", false, Some("0"), false, |_| Vec::new());
+    w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
+    let mut w = world_start(w, env);
     w.add_remote();
     let b = w.lab.node("b", None);
     let bin = w.lab.root.join("deploy-bin");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join("aaa");
-    assert!(Command::new("cp").args([Path::new(lab::BIN), &exe]).status_guarded().unwrap().success());
+    lab::deployment_binary(Path::new(lab::BIN), &exe);
     let original = std::fs::read(&exe).unwrap();
     let candidate = w.lab.root.join("deploy-candidate");
-    lab::variant_binary(Path::new(lab::BIN), &candidate, "aaa-deployment-test");
+    lab::variant_binary(&exe, &candidate, "aaa-deployment-test");
     let changed = std::fs::read(&candidate).unwrap();
     // launchd adapter도 같은 typed 경로로 본다. HOME·PATH는 이 실험실뿐이며 실제 서비스에는 닿지 않는다.
     let service_home = w.lab.root.join("service-home");
@@ -6252,6 +6257,7 @@ esac
         let read = |suffix: &str| std::fs::read_to_string(prefix.with_extension(suffix)).unwrap();
         (read("rc"), read("out"), read("err"))
     };
+    phases.mark("contract", "authorization-update-and-rollback");
     let update = format!("update --machine labB --from '{}'", candidate.display());
     let (rc, _, err) = probe(&w, &pane, &mut probe_number, &update);
     assert_eq!(rc, "1", "{err}");
@@ -6328,6 +6334,7 @@ esac
     assert!(std::fs::read_to_string(w.lab.root.join("deploy-worker-denied")).unwrap().contains("thread는 계속 막는다"));
     assert_eq!(std::fs::read(&exe).unwrap(), original);
 
+    phases.mark("contract", "service-restart");
     if cfg!(target_os = "macos") {
         // 재시작은 재시작만 하는 rollout이다(W6c, 답 1A): 독립 감시가 새 agent를 확인해야 끝난다. 가짜 launchctl은 기록만
         // 하므로 감독자 대신 같은 실행 파일로 다시 띄운다. host 재시작은 m13 `rollout`이 웹 응답까지 본다
@@ -6404,6 +6411,7 @@ esac
     assert_eq!(rc, "1");
     assert!(err.contains("coordinator_deploy on"), "{err}");
 
+    phases.mark("contract", "backend-restart");
     let config = w.h.cfg.join("host.toml");
     std::fs::write(&config, std::fs::read_to_string(&config).unwrap().replace("127.0.0.1:0", &w.addr)).unwrap();
     w.lab.kill("host");
@@ -6422,6 +6430,7 @@ esac
     assert_eq!(rc, "0", "재시작 후 같은 pane의 CLI: {out}\n{err}");
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed");
     eprintln!("재시작 뒤 같은 coordinator pane의 배포 조회: {out}");
+    phases.mark("cleanup", "owned-resources");
 }
 
 /// 머신:경로를 Git 경로로 보내면 실패한 thread를 만든다. host가 기록 전에 거부해야 한다.
