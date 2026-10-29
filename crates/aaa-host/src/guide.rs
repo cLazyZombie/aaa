@@ -597,7 +597,7 @@ const AUTOMATION: &str = r#"# 자동화
   `aaa automation migrate --dry-run`으로 계획을 읽고 같은 hash로 적용한다. 현재 profiles·일정·켜짐·입력·기억을 보존한다.
 - 자동화 기억은 공통 SessionStart(compact/resume) 안내로 다시 읽는다. harness 이름을 고정하지 않는다.
   processed.txt는 입력 처리 확인이며 작업 성공 증거가 아니다. 처리 결과는 자기 입력 execution_ids에 대해
-  `aaa automation input complete <실행 ID> --outcome completed|failed|needs-decision [--report r-NNNN]`으로 남긴다.
+  `aaa automation input complete <실행 ID>... --outcome completed|failed|needs-decision [--report r-NNNN]`으로 남긴다.
 - 기존 notice를 thread 시작으로 임의 변경하지 않는다.
   멈추려면 `enabled = false`로 둔다.
 "#;

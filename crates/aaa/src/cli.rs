@@ -961,7 +961,8 @@ enum AutomationCmd {
 #[derive(Subcommand)]
 enum AutomationInputCmd {
     Complete {
-        run: String,
+        #[arg(required = true, num_args = 1..)]
+        runs: Vec<String>,
         #[arg(long,value_parser=["completed","failed","needs-decision"])]
         outcome: String,
         #[arg(long)]
@@ -2445,10 +2446,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
              `aaa thread next <id> --line N`으로 보내 착지를 진행한다. 결과는 main SHA와 push 여부로 확인한다"
         ),
         Cmd::Automation {
-            cmd: AutomationCmd::Input { cmd: AutomationInputCmd::Complete { run, outcome, report } },
+            cmd: AutomationCmd::Input { cmd: AutomationInputCmd::Complete { runs, outcome, report } },
         } => {
-            let completion = aaa_proto::AutomationCompletion {
-                run,
+            let mut seen = std::collections::HashSet::new();
+            let runs: Vec<_> = runs.into_iter().filter(|id| seen.insert(id.clone())).collect();
+            let completion = aaa_proto::AutomationCompletionBatch {
+                runs: runs.clone(),
                 outcome: match outcome.as_str() {
                     "completed" => aaa_proto::AutomationOutcome::Completed,
                     "failed" => aaa_proto::AutomationOutcome::Failed,
@@ -2457,7 +2460,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 report,
             };
             use sha2::Digest;
-            let body = serde_json::to_string(&completion)?;
+            let body = if runs.len() == 1 {
+                serde_json::to_string(&aaa_proto::AutomationCompletion {
+                    run: runs[0].clone(),
+                    outcome: completion.outcome,
+                    report: completion.report,
+                })?
+            } else {
+                serde_json::to_string(&completion)?
+            };
             let input = aaa_proto::PostInput {
                 post_id: hex::encode(
                     &sha2::Sha256::digest(
@@ -2470,12 +2481,24 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 title: "자동화 입력 처리 결과".into(),
                 body,
                 needs_user: false,
-                refs: vec![completion.run],
+                refs: if runs.len() == 1 { runs.clone() } else { vec![] },
             };
             let rt = tokio::runtime::Runtime::new()?;
             let result = rt.block_on(aaa_agent::post::send(serde_json::to_value(input)?))?;
-            let success = matches!(result, aaa_proto::PostResult::AutomationCompleted { .. });
+            let success = match &result {
+                aaa_proto::PostResult::AutomationCompleted { run, runs: recorded, .. } => {
+                    if runs.len() == 1 {
+                        run == &runs[0]
+                    } else {
+                        recorded == &runs
+                    }
+                }
+                _ => false,
+            };
             println!("{}", serde_json::to_string(&result)?);
+            if !success && matches!(result, aaa_proto::PostResult::AutomationCompleted { .. }) {
+                eprintln!("완료 등록 영수증의 실행 ID가 요청과 다르다. CLI·agent·host 판을 확인하라");
+            }
             Ok(if success { ExitCode::SUCCESS } else { ExitCode::from(1) })
         }
         Cmd::Automation { cmd: AutomationCmd::Approve { name, approval_sha256, capability } } => {
@@ -4502,7 +4525,9 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         println!("{}", value);
     } else {
         match result {
-            PostResult::AutomationCompleted { id, run } => println!("{id} · 입력 처리 기록됨 {run}"),
+            PostResult::AutomationCompleted { id, run, runs } => {
+                println!("{id} · 입력 처리 기록됨 {}", if runs.is_empty() { run } else { runs.join(" ") });
+            }
             PostResult::Accepted { id } => println!(
                 "ok {id}{}",
                 match handled {

@@ -321,6 +321,9 @@ impl Host {
         {
             result = Some(refused("topic은 영문 소문자·숫자·- 1~40자다"));
         }
+        if input.topic == "automation-input-complete" {
+            return self.store_automation_completion(project, sender, input, actor, rec, now, result);
+        }
         // topic 자기 신고로 면제받지 않는다. library 경로와 host가 검증한 coordinator만 별도 한도다.
         let quota = if sender.verified == "library-publish" {
             "report"
@@ -483,31 +486,7 @@ impl Host {
         {
             result = Some(refused(e.message));
         }
-        let mut completed_run = None;
-        if result.is_none() && input.topic == "automation-input-complete" {
-            let completion = (|| -> anyhow::Result<()> {
-                anyhow::ensure!(
-                    sender.verified == "peer+token"
-                        && sender.role == Role::Worker
-                        && input.post_type == PostType::Data
-                        && !input.needs_user,
-                    "인증된 worker의 입력 처리 자료만 받는다"
-                );
-                let rec = rec.ok_or_else(|| anyhow::anyhow!("thread 신원이 없다"))?;
-                anyhow::ensure!(rec.automation.is_some(), "자동화 thread가 아니다");
-                let completion: aaa_proto::AutomationCompletion = serde_json::from_str(&input.body)?;
-                self.db.automation_complete(project, &rec.id, &completion)?;
-                completed_run = Some(completion.run);
-                Ok(())
-            })();
-            if let Err(e) = completion {
-                result = Some(refused(e.to_string()));
-            }
-        }
-        let result = result.unwrap_or_else(|| match completed_run {
-            Some(run) => PostResult::AutomationCompleted { id: id.clone(), run },
-            None => PostResult::Accepted { id: id.clone() },
-        });
+        let result = result.unwrap_or_else(|| PostResult::Accepted { id: id.clone() });
         let accepted = matches!(result, PostResult::Accepted { .. } | PostResult::AutomationCompleted { .. });
         input.title = clean(&input.title);
         let env = PostEnvelope {
@@ -614,6 +593,75 @@ impl Host {
             self.flow(rec, if accepted { "post_accepted" } else { "post_refused" }, None, audit);
         } else {
             self.flow_project(project, if accepted { "post_accepted" } else { "post_refused" }, None, audit);
+        }
+        result
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn store_automation_completion(
+        &self,
+        project: &str,
+        sender: PostSender,
+        input: PostInput,
+        actor: &str,
+        rec: Option<&crate::orch::ThreadRec>,
+        now: u64,
+        validation: Option<PostResult>,
+    ) -> PostResult {
+        let completed = || -> anyhow::Result<PostResult> {
+            anyhow::ensure!(
+                sender.verified == "peer+token"
+                    && sender.role == Role::Worker
+                    && input.post_type == PostType::Data
+                    && !input.needs_user,
+                "인증된 worker의 입력 처리 자료만 받는다"
+            );
+            let rec = rec.ok_or_else(|| anyhow::anyhow!("thread 신원이 없다"))?;
+            anyhow::ensure!(rec.automation.is_some(), "자동화 thread가 아니다");
+            #[derive(serde::Deserialize)]
+            #[serde(untagged)]
+            enum Completion {
+                Single(aaa_proto::AutomationCompletion),
+                Batch(aaa_proto::AutomationCompletionBatch),
+            }
+            let (completions, runs) = match serde_json::from_str::<Completion>(&input.body)? {
+                Completion::Single(c) => (vec![c], vec![]),
+                Completion::Batch(c) => {
+                    let mut seen = std::collections::HashSet::new();
+                    let runs: Vec<_> = c.runs.into_iter().filter(|id| seen.insert(id.clone())).collect();
+                    let completions = runs
+                        .iter()
+                        .map(|run| aaa_proto::AutomationCompletion {
+                            run: run.clone(),
+                            outcome: c.outcome,
+                            report: c.report.clone(),
+                        })
+                        .collect();
+                    (completions, runs)
+                }
+            };
+            let first = completions.first().ok_or_else(|| anyhow::anyhow!("실행 ID가 비었다"))?;
+            let id = self.db.post_next_id()?;
+            if completions.len() == 1 {
+                self.db.automation_complete(project, &rec.id, first)?;
+            } else {
+                self.db.automation_complete_batch(project, &rec.id, &completions)?;
+            }
+            Ok(PostResult::AutomationCompleted { id, run: first.run.clone(), runs })
+        };
+        let result = validation.unwrap_or_else(|| completed().unwrap_or_else(|e| refused(format!("{e:#}"))));
+        let row = PostRow {
+            project: project.into(),
+            sender: sender.thread.clone().unwrap_or_else(|| actor.into()),
+            session: sender.session,
+            machine: rec.map(|r| r.machine_id.clone()).unwrap_or(sender.machine),
+            content_sha: content_sha(&input),
+            created_ms: now,
+            result: result.clone(),
+            quota: "automation".into(),
+        };
+        let audit = format!("post_id={} result={result:?}", input.post_id);
+        if let Err(e) = self.db.post_record(&input.post_id, &row, None, None, actor, &audit) {
+            return refused(format!("완료 등록 영수증 저장 실패: {e:#}"));
         }
         result
     }
@@ -1137,6 +1185,118 @@ mod tests {
         let finished = h.db.automation_execution("demo", &run.id).unwrap().unwrap();
         assert!(finished.processed);
         assert_eq!(finished.outcome.as_deref(), Some("completed"));
+    }
+
+    fn completion_fixture() -> (Arc<Host>, Lab, Vec<String>) {
+        use sha2::{Digest, Sha256};
+        let (h, lab) = small_limit_host();
+        let mut rec = crate::orch::ThreadRec::starting(
+            "demo",
+            "감시",
+            "machine-id",
+            "fake",
+            Role::Worker,
+            aaa_proto::ThreadKind::Adopted,
+            1,
+        );
+        rec.id = "t-0001".into();
+        rec.pane = Some("s1".into());
+        rec.status = aaa_proto::ThreadStatus::Open;
+        rec.automation = Some("watch".into());
+        h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+        let pending: Vec<_> = (0..74).map(|n| serde_json::json!({"id":format!("event-{n}"),"source":"ci"})).collect();
+        let key = "automation:demo:watch";
+        h.db.update_meta(key, |_| Ok(serde_json::json!({"pending":pending}).to_string())).unwrap();
+        let receipts = pending.iter().map(|e| {
+            (format!("automation_done:demo:watch:{}", hex::encode(Sha256::digest(e["id"].as_str().unwrap().as_bytes()))),
+             serde_json::json!({"state":"succeeded","stage":"action","reason":"시작","receipt":"thread_started","thread":rec.id}).to_string())
+        }).collect();
+        h.db.update_meta_checked(key, &[], |_| Ok((serde_json::json!({"pending":[]}).to_string(), receipts))).unwrap();
+        let ids = h.db.automation_executions("demo", Some("watch"), None).unwrap().into_iter().map(|r| r.id).collect();
+        (h, lab, ids)
+    }
+    fn completion_input(n: u32, body: serde_json::Value) -> PostInput {
+        PostInput {
+            post_type: PostType::Data,
+            needs_user: false,
+            topic: "automation-input-complete".into(),
+            body: body.to_string(),
+            ..input(n)
+        }
+    }
+
+    /// 밀린 74개를 한 번에 등록하고 단건을 반복해도 알림 한도·음소거와 섞이지 않아야 한다.
+    #[test]
+    fn automation_completion_batch_is_independent_of_post_quota_and_mute() {
+        let (h, _lab, ids) = completion_fixture();
+        let batch = completion_input(100, serde_json::json!({"runs":ids,"outcome":"completed"}));
+        let accepted = h.receive_post("machine-id", "s1", batch.clone());
+        assert!(matches!(&accepted, PostResult::AutomationCompleted { runs, .. } if runs == &ids), "{accepted:?}");
+        assert_eq!(h.receive_post("machine-id", "s1", batch.clone()), accepted);
+        for (n, run) in ids.iter().enumerate() {
+            let single = completion_input(200 + n as u32, serde_json::json!({"run":run,"outcome":"completed"}));
+            assert!(matches!(h.receive_post("machine-id", "s1", single), PostResult::AutomationCompleted { .. }));
+            assert!(h.db.automation_execution("demo", run).unwrap().unwrap().processed);
+        }
+        assert!(h.db.inbox_list(Some("demo"), true).unwrap().is_empty());
+        assert!(h.db.post_list("demo").unwrap().is_empty(), "완료는 알림 post 목록에 쌓지 않는다");
+        let now = util::now_ms();
+        for n in 1..=3 {
+            assert!(matches!(put(&h, n, now), PostResult::Accepted { .. }));
+        }
+        for n in 4..=6 {
+            assert!(matches!(put(&h, n, now), PostResult::Refused { reason, .. } if reason.starts_with("rate:")));
+        }
+        assert!(matches!(put(&h, 7, now), PostResult::Refused { reason, .. } if reason.starts_with("muted:")));
+        let mut muted_batch = batch;
+        muted_batch.post_id = input(300).post_id;
+        assert!(matches!(h.receive_post("machine-id", "s1", muted_batch), PostResult::AutomationCompleted { .. }));
+        assert!(
+            matches!(put(&h, 8, now), PostResult::Refused { reason, .. } if reason.starts_with("muted:")),
+            "완료 등록으로 음소거를 풀지 않는다"
+        );
+    }
+
+    /// 한 ID의 소유권·보고·결과 충돌 때문에 묶음 일부만 완료되는 일을 막는다.
+    #[test]
+    fn automation_completion_batch_rolls_back_invalid_ids_reports_and_conflicts() {
+        let (h, _lab, ids) = completion_fixture();
+        let other = h.db.automation_execution("demo", &ids[1]).unwrap().unwrap();
+        let mut foreign = other.clone();
+        foreign.thread = Some("t-9999".into());
+        h.db.image_transaction(|c| {
+            c.execute(
+                "UPDATE automation_runs SET data=?1 WHERE project='demo' AND id=?2",
+                rusqlite::params![serde_json::to_string(&foreign)?, ids[1]],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        for (n, body, reason) in [
+            (1, serde_json::json!({"runs":[ids[0],"absent"],"outcome":"completed"}), "absent"),
+            (2, serde_json::json!({"runs":[ids[0],ids[1]],"outcome":"completed"}), "이 thread에 전달된 입력이 아니다"),
+            (
+                3,
+                serde_json::json!({"runs":[ids[0],ids[2]],"outcome":"completed","report":"r-9999"}),
+                "준비된 보고가 아니다",
+            ),
+            (4, serde_json::json!({"runs":[],"outcome":"completed"}), "실행 ID가 비었다"),
+        ] {
+            let result = h.receive_post("machine-id", "s1", completion_input(n, body));
+            assert!(matches!(result, PostResult::Refused { reason: ref r, .. } if r.contains(reason)), "{result:?}");
+            assert!(!h.db.automation_execution("demo", &ids[0]).unwrap().unwrap().processed);
+        }
+        let first = completion_input(5, serde_json::json!({"runs":[ids[2],ids[2]],"outcome":"failed"}));
+        assert!(
+            matches!(h.receive_post("machine-id", "s1", first), PostResult::AutomationCompleted { runs, .. } if runs == vec![ids[2].clone()])
+        );
+        let conflict = completion_input(6, serde_json::json!({"runs":[ids[0],ids[2]],"outcome":"completed"}));
+        assert!(
+            matches!(h.receive_post("machine-id", "s1", conflict), PostResult::Refused { reason, .. } if reason.contains("이미 다른 처리 결과"))
+        );
+        assert!(!h.db.automation_execution("demo", &ids[0]).unwrap().unwrap().processed);
+        assert_eq!(h.db.automation_execution("demo", &ids[2]).unwrap().unwrap().outcome.as_deref(), Some("failed"));
+        assert!(h.db.inbox_list(Some("demo"), true).unwrap().is_empty());
     }
 
     fn coordinator_host() -> (Arc<Host>, Lab) {

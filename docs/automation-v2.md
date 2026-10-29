@@ -56,13 +56,15 @@ aaa automation approve --capability thread ci-watch <시작-범위-hash>
 
 Reader·worker·coordinator는 사람 전용 승인·safety 변경을 할 수 없다. 이관은 grant를 만들지 않고, 배포는 proposal만 지원한다. 일반 merge/push/deploy/resolve 동작을 추가하지 않는다. idle-audit의 웹 읽기 전용 보호와 기존 close_idle 수명 조건을 유지한다.
 
-기억은 기존 `.memory` 경로와 processed.txt를 유지한다. SessionStart(compact/resume)은 t-0941의 harness 공통 재독 안내를 쓴다. processed.txt는 입력 ACK이며 작업 성공 증거가 아니다. 새 입력 JSON의 execution_ids 각각에 대해 현재 thread가 처리 결과를 남길 수 있다.
+기억은 기존 `.memory` 경로와 processed.txt를 유지한다. SessionStart(compact/resume)은 t-0941의 harness 공통 재독 안내를 쓴다. processed.txt는 입력 ACK이며 작업 성공 증거가 아니다. 새 입력 JSON의 execution_ids에 대해 현재 thread가 같은 처리 결과를 묶어 남길 수 있다.
 
 ```sh
-aaa automation input complete ar-... --outcome completed --report r-0123
+aaa automation input complete ar-... ar-... --outcome completed --report r-0123
 ```
 
-outcome은 completed/failed/needs-decision 중 하나다. 기존 peer+token post 전송 경로로 오며, host는 실행에 연결된 thread와 준비된 보고의 소유자를 확인한다. 다른 thread·coordinator·웹·자기 신고 session으로 대신 기록할 수 없다. 완료 신고는 agent의 보고이며 작업 권한·resolve를 만들지 않는다. 같은 결과는 멱등이고 다른 결과로 덮을 수 없다. 새 CLI는 명시적 automation_completed 영수증만 기록 성공으로 인정한다. 구형 host/agent와 섞인 동안에는 기존 processed.txt를 유지하고 입력 결과 명령은 함께 업그레이드한 뒤 쓴다.
+실행 ID는 하나 이상 받으며 중복 ID는 한 번만 기록한다. outcome과 선택 report는 묶음 전체에 적용한다. 실행 ID·thread 소유권·보고·기존 결과 중 하나라도 잘못되면 묶음 전체를 취소하고 오류에 해당 실행 ID와 원인을 남긴다.
+
+outcome은 completed/failed/needs-decision 중 하나다. 기존 peer+token post 전송 경로로 오며, host는 실행에 연결된 thread와 준비된 보고의 소유자를 확인한다. 다른 thread·coordinator·웹·자기 신고 session으로 대신 기록할 수 없다. 완료 신고는 agent의 보고이며 작업 권한·resolve를 만들지 않는다. 같은 결과는 멱등이고 다른 결과로 덮을 수 없다. 완료 등록은 일반 post의 속도 제한·음소거·내용 중복 제한과 별개다. 일반 post 한도를 소모하거나 음소거를 풀지 않으며 coordinator inbox·사용자 알림을 만들지 않는다. 완료와 거부의 영수증·감사 기록은 보존한다. 새 CLI는 명시적 automation_completed 영수증을 확인하며 묶음은 전체 실행 ID가 일치해야 성공으로 인정한다. 단건의 기존 JSON과 영수증도 계속 받는다. 구형 host/agent와 섞인 동안에는 기존 processed.txt를 유지하고 입력 결과 명령은 CLI·agent·host를 함께 업그레이드한 뒤 쓴다. 구형 host는 새 묶음 본문을 거부하고 구형 agent는 묶음 영수증의 ID 목록을 잃을 수 있으므로 CLI가 성공으로 처리하지 않는다.
 
 ## 이관과 복구
 

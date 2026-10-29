@@ -3,6 +3,7 @@ use super::*;
 use aaa_proto::{
     AutomationExecution as Run, AutomationRunEvent, AutomationRunState as Status, AutomationStage as Stage,
 };
+use anyhow::Context;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -206,38 +207,53 @@ impl Db {
         thread: &str,
         completion: &aaa_proto::AutomationCompletion,
     ) -> Result<()> {
+        self.automation_complete_batch(p, thread, std::slice::from_ref(completion))
+    }
+    pub(crate) fn automation_complete_batch(
+        &self,
+        p: &str,
+        thread: &str,
+        completions: &[aaa_proto::AutomationCompletion],
+    ) -> Result<()> {
+        anyhow::ensure!(!completions.is_empty(), "실행 ID가 비었다");
         self.image_transaction(|c| {
-            let mut run = read(c, p, &completion.run)?.ok_or_else(|| anyhow::anyhow!("실행 ID가 없다"))?;
-            anyhow::ensure!(run.thread.as_deref() == Some(thread), "이 thread에 전달된 입력이 아니다");
-            if let Some(report) = &completion.report {
-                let source: Option<String> = c
-                    .query_row(
-                        "SELECT source FROM report_ids WHERE project=?1 AND id=?2 AND ready=1 AND deleted=0",
-                        params![p, report],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                anyhow::ensure!(source.as_deref() == Some(thread), "이 thread의 준비된 보고가 아니다");
+            for completion in completions {
+                (|| -> Result<()> {
+                    let mut run = read(c, p, &completion.run)?.ok_or_else(|| anyhow::anyhow!("실행 ID가 없다"))?;
+                    anyhow::ensure!(run.thread.as_deref() == Some(thread), "이 thread에 전달된 입력이 아니다");
+                    if let Some(report) = &completion.report {
+                        let source: Option<String> = c
+                            .query_row(
+                                "SELECT source FROM report_ids WHERE project=?1 AND id=?2 AND ready=1 AND deleted=0",
+                                params![p, report],
+                                |r| r.get(0),
+                            )
+                            .optional()?;
+                        anyhow::ensure!(source.as_deref() == Some(thread), "이 thread의 준비된 보고가 아니다");
+                    }
+                    let outcome = serde_json::to_value(completion.outcome)?.as_str().unwrap().to_string();
+                    if run.processed {
+                        anyhow::ensure!(
+                            run.outcome.as_deref() == Some(&outcome) && run.report == completion.report,
+                            "이미 다른 처리 결과가 기록돼 있다"
+                        );
+                        return Ok(());
+                    }
+                    run.processed = true;
+                    run.outcome = Some(outcome);
+                    run.report = completion.report.clone();
+                    run.updated_at_ms = aaa_common::util::now_ms();
+                    run.events.push(AutomationRunEvent {
+                        at_ms: run.updated_at_ms,
+                        stage: Stage::FollowUp,
+                        state: run.state,
+                        reason: format!("입력 처리 신고: {:?}", completion.outcome),
+                    });
+                    put(c, p, run, None)
+                })()
+                .with_context(|| format!("실행 {} 완료 등록 실패", completion.run))?;
             }
-            let outcome = serde_json::to_value(completion.outcome)?.as_str().unwrap().to_string();
-            if run.processed {
-                anyhow::ensure!(
-                    run.outcome.as_deref() == Some(&outcome) && run.report == completion.report,
-                    "이미 다른 처리 결과가 기록돼 있다"
-                );
-                return Ok(());
-            }
-            run.processed = true;
-            run.outcome = Some(outcome);
-            run.report = completion.report.clone();
-            run.updated_at_ms = aaa_common::util::now_ms();
-            run.events.push(AutomationRunEvent {
-                at_ms: run.updated_at_ms,
-                stage: Stage::FollowUp,
-                state: run.state,
-                reason: format!("입력 처리 신고: {:?}", completion.outcome),
-            });
-            put(c, p, run, None)
+            Ok(())
         })
     }
     /// 대기 사유는 기존 관측 API도 받지만 완료 판정은 명시적 receipt만 맡는다.

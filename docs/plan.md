@@ -8352,3 +8352,12 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **참고.** 구성만 참고했다: ChatGPT Canvas·Open Canvas(MIT, 문서와 대화 나란히), GitHub Discussions·Jira Product Discovery(아이디어 → 할 일 여럿, 양쪽 링크), spec-kit `/clarify`(MIT, 정리본 모양), Hypothesis(BSD-2)·W3C Web Annotation(고른 글 자리). 코드·의존성은 가져오지 않았다.
 - **계약.** FRONT_API 1.147(Idea* 요청·응답, 웹 events `ideas`, ThreadView.idea). AGENT_LINK 1.11 유지(agent 첨부 이름 확장은 같은 판 안). 사용법은 [사용법 「아이디어」](usage.md#아이디어).
 - **착지 통합.** 기준 origin/main `2b75d22b`의 마지막 §8.542·FRONT_API 1.146(t-1267 LibraryRead·LibraryChunk)·AGENT_LINK 1.11·웹 E2E121(navigation-shortcuts)을 확인했다. 후보의 §8.538을 §8.543으로, FRONT_API 1.146을 1.147로, E2E121을 E2E122로 옮기고 main의 절·판·E2E를 보존한다.
+
+
+### 8.544 자동화 입력 묶음 완료와 post 알림 한도 분리(t-1290)
+
+- **원인.** 자동화 입력 완료를 ID마다 post로 등록하면서 일반 알림의 rate 제한과 음소거를 먼저 적용해 처리 결과를 남기지 못했다.
+- **묶음.** `aaa automation input complete <실행 ID>... --outcome completed|failed|needs-decision [--report r-NNNN]`으로 같은 결과를 묶어 기록한다. 중복 ID는 한 번만 처리한다. 없는 ID·다른 thread 입력·잘못된 보고·기존 결과 충돌은 SQLite transaction 전체를 취소하며 오류에 ID와 하위 원인을 남긴다.
+- **분리·권한.** 기존 peer PID·token으로 인증한 자동화 worker만 자기 입력을 완료한다. 완료는 post 전송·영수증을 재사용하되 일반 알림 quota·음소거·내용 중복 검사에서 분리한다. 일반 한도와 음소거는 유지하고 coordinator inbox·사용자 알림을 만들지 않는다. 입력 원장·영수증·감사 기록은 보존한다.
+- **번호·호환.** 착지 기준 main `7f2bf719`의 마지막 §8.543 다음 번호다. 기존 완료 요청 본문에 묶음 꼴과 영수증의 선택 `runs`를 추가하고 새 Front 요청·Agent link 사건은 없다. FRONT_API 1.148·AGENT_LINK 1.11을 유지한다. 단건 wire를 유지하고 묶음은 전체 영수증을 대조해 구형 host·agent를 성공으로 오인하지 않는다. 기존 웹 E2E01~123을 유지하며 새 검증은 m13에 둔다.
+- **검증.** [묶음 완료 검증](testing-automation-completion-batch.md)에 74개 등록·음소거·원자성·소유권과 실제 pane CLI 왕복을 기록한다. 알림 생성·부분 commit 결함을 되심어 실패를 확인했다. salt 없는 전체 ci-local·공개·Linux/Windows strict cross·Windows production·개인정보 검사 뒤 ff push와 원격 SHA를 대조하며 착지 SHA salt 설치기는 전달·판 확인만 하고 설치·배포하지 않는다.

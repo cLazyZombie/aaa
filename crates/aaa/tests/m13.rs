@@ -10,6 +10,8 @@
 mod accounts;
 #[path = "m13/auto_merge.rs"]
 mod auto_merge;
+#[path = "m13/automation_completion.rs"]
+mod automation_completion;
 #[path = "m13/automation_start.rs"]
 mod automation_start;
 #[path = "m13/ci.rs"]

@@ -34,6 +34,9 @@ pub enum PostResult {
     AutomationCompleted {
         id: String,
         run: String,
+        /// 묶음 등록의 전체 ID. 옛 단일 영수증은 이 칸이 없다.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        runs: Vec<String>,
     },
     Refused {
         reason: String,
