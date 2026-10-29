@@ -29,6 +29,7 @@ GitHub OS별 명시 `--only clippy`, 착지 full의 Linux/Windows strict cross�
 | 수정 8 | 191.7 | 168 | 145 | 전체 통과. 추가 웹 축소, build 9초 포함. 아직 예산 초과 |
 | 수정 9 | 174.4 | 154 | 136 | 전체 통과. SHA 변경 없는 캐시 조건, web 10·fmt 2·build 6·public 1초 |
 | 첫 커밋 5304098d | 222.1 | 154 | 136 | 전체 통과·예산 초과. 새 SHA가 공통 crate와 backend 전체를 무효화해 build 54초 |
+| SHA만 옮긴 0622a38b | 194.1 | 154 | 134 | 기존 Git 감시 회귀가 옛 생성물을 검사해 실패. 경로 목록·감시 owner도 CLI로 함께 옮긴다 |
 
 측정 머신은 10 CPU·32 GiB Mac이다. 모든 무거운 명령은 `nice -n 15`로 실행했다.
 Cargo의 컴파일 worker 수는 지정하지 않았다. worktree의 target과 기존 컴파일 캐시만 사용했다.
@@ -63,9 +64,11 @@ ci-local 자식이 종료하고 임시 실행 사본 정리·metrics finish가 �
 `aaa-common`의 생성 소스에 SHA 상수를 넣던 구조는 커밋만 바뀌어도 session/doctor/host/agent와 모든 시험을 재컴파일했다.
 깨끗한 첫 커밋에서 build 54초·전체 222.1초로 재현했다. SHA를 고정하거나 검사를 건너뛰어 덮지 않는다.
 최종 `aaa` build script가 실제 HEAD를 검증해 compile-time 값으로 주고, main이 panic hook에 주입한다.
-공통 crate는 tracked Rust 상대 경로 목록만 만들며 내용이 같으면 생성 파일을 다시 쓰지 않는다.
+SHA와 tracked Rust 상대 경로 목록을 모두 CLI 생성 파일에 두고, 공통 crate의 Git build script는 제거한다.
+변경이 없는 backend는 Git index·HEAD만 바뀌어도 fresh를 유지해야 한다. packed ref·linked worktree·detached HEAD의 실제 Cargo 회귀에서 이 조건을 함께 검사한다.
 기존 panic 출력의 SHA·경로 가림·payload/이름 비공개·네 역할·반복 횟수는 유지한다.
-CLI의 새 owner는 내장 SHA와 실제 checkout을 비교해 누락된 Git 감시나 오래된 산출물을 잡는다.
+CLI의 새 owner는 내장 SHA와 실제 checkout, 상대 경로 목록을 비교해 누락된 Git 감시나 오래된 산출물을 잡는다.
+Rust 생성 파일의 내용이 같으면 다시 쓰지 않는다. SHA를 Cargo 환경 전체에 주입해 같은 package의 무관한 target까지 무효화하지 않는다.
 
 깨끗한 실행은 지표 archive의 기존 128작업 상한도 드러냈다. 독립 owner 분할은 300개 넘는 작업을 만든다.
 producer와 agent parser가 4,096작업까지 받아 실제 350개 요약을 온전히 보관/집계하는 회귀를 둔다.
@@ -125,6 +128,7 @@ CPU 예산의 누락/중복 예약 검사, 실제 소켓 사건으로 E2E 종료
 
 시험 삭제 후 m13의 macOS/Linux strict Clippy가 통과했다. SHA/수집 후속은 aaa-common·aaa-agent·aaa의 native, Linux/Windows all-targets strict Clippy가 통과했다.
 기존 panic 세 owner, 실제 checkout SHA owner, agent 집계 21개와 producer 4개 owner도 확인했다.
+메타데이터를 모두 옮긴 뒤 Rust workspace 1,469개·기존 ignored 7개와 Git 감시/원장 회귀 6개가 통과했다.
 cross는 cfg·공유 helper·unused 경계 확인이며 Linux/Windows 실기 실행 결과가 아니다.
 실행기 회귀 32개와 웹 분할/sleep 회귀 14개도 통과했고, 전체 실행에서는 Python 85개와 웹 unit 660개에 포함된다.
 삭제 원장은 Git의 실제 삭제 파일과 Cargo의 전후 m13 목록 차이 65개에 정확히 일치한다.

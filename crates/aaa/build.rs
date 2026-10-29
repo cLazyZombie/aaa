@@ -10,6 +10,7 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     watch_git(&root, "HEAD");
+    watch_git(&root, "index");
     if let Some(path) = git_path(&root, "packed-refs").filter(|path| path.exists()) {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -19,7 +20,14 @@ fn main() {
     let sha = git(&root, &["rev-parse", "HEAD"])
         .filter(|s| matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit()))
         .unwrap_or_else(|| "unknown".into());
-    println!("cargo:rustc-env=AAA_BUILD_SHA={sha}");
+    let files = git(&root, &["ls-files", "-z", "--", "*.rs"]).unwrap_or_default();
+    let mut paths: Vec<_> = files.split('\0').filter(|s| !s.is_empty()).collect();
+    paths.sort_unstable();
+    let source = format!("pub const BUILD_SHA: &str = {sha:?};\npub const SOURCE_FILES: &[&str] = &{paths:?};\n");
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("panic_build.rs");
+    if std::fs::read_to_string(&output).ok().as_deref() != Some(&source) {
+        std::fs::write(output, source).unwrap();
+    }
 }
 
 fn watch_git(root: &Path, name: &str) {

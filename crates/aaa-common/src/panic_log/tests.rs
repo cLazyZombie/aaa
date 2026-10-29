@@ -4,12 +4,13 @@ use std::process::Command;
 use aaa_test_support::CANARY as SECRET;
 const NAME_SECRET: &str = SECRET;
 const BUILD_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SOURCE_FILES: &[&str] = &["crates/aaa-common/src/panic_log.rs", "crates/aaa-common/src/panic_log/tests.rs"];
 
 // 공개 hook을 실제 자식 프로세스에서 실행한다. 전역 hook·환경을 다른 시험과 공유하지 않는다.
 #[test]
 fn hook_child() {
     let Ok(role) = std::env::var("AAA_PANIC_TEST_ROLE") else { return };
-    install(BUILD_SHA);
+    install(BUILD_SHA, SOURCE_FILES);
     set_process(match role.as_str() {
         "host" => ProcessKind::Host,
         "agent" => ProcessKind::Agent,
@@ -136,9 +137,9 @@ fn location_paths_are_selected_from_repository_files_only() {
         format!("/Users/me/private-build/{known}"),
         format!("C:\\Users\\me\\private-build\\{}", known.replace('/', "\\")),
     ] {
-        assert_eq!(safe_file(&file), known);
+        assert_eq!(safe_file(&file, SOURCE_FILES), known);
     }
     for file in ["/Users/me/private-dependency/src/lib.rs", "C:\\Users\\me\\private.rs", "private-panic-payload.rs"] {
-        assert_eq!(safe_file(file), "external");
+        assert_eq!(safe_file(file, SOURCE_FILES), "external");
     }
 }

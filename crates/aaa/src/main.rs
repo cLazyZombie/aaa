@@ -19,19 +19,22 @@ mod update;
 mod work_root;
 
 fn main() -> std::process::ExitCode {
-    aaa_common::panic_log::install(env!("AAA_BUILD_SHA"));
+    aaa_common::panic_log::install(build_metadata::BUILD_SHA, build_metadata::SOURCE_FILES);
     cli::main()
 }
 
-#[cfg(test)]
 mod build_metadata {
+    include!(concat!(env!("OUT_DIR"), "/panic_build.rs"));
+
     #[test]
+    #[cfg(test)]
     fn panic_sha_matches_the_current_checkout() {
         let output = std::process::Command::new("git")
             .args(["-C", env!("CARGO_MANIFEST_DIR"), "rev-parse", "HEAD"])
             .output()
             .unwrap();
         assert!(output.status.success());
-        assert_eq!(env!("AAA_BUILD_SHA"), String::from_utf8(output.stdout).unwrap().trim());
+        assert_eq!(BUILD_SHA, String::from_utf8(output.stdout).unwrap().trim());
+        assert!(SOURCE_FILES.contains(&"crates/aaa/src/main.rs"));
     }
 }
