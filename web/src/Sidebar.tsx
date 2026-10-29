@@ -181,7 +181,7 @@ function useFold(key: string, initial = false, oldKey?: string): [boolean, () =>
   return [folded, toggle];
 }
 
-const onRowKey = (event: KeyboardEvent, open: () => void) => {
+export const onRowKey = (event: KeyboardEvent, open: () => void) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   open();
@@ -1000,7 +1000,7 @@ function WorkFolderGroup({ name, threads, panes, selected, machineOf, twoLine, t
 }
 
 /** 지금 시각, 1분마다 다시 그린다(「n분 조용」이 화면에서 늘어나게. herdr-projects는 ticker가 줄을 다시 쓴다) */
-function useMinute(): number {
+export function useMinute(): number {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -1019,7 +1019,7 @@ function UsageLimited({ untilMs, now }: { untilMs: number; now: number }) {
  * 줄 이름 「id · 제목」(herdr-projects thread_display). 일반 thread 줄과 특수 줄(사용자 요청 10-20 「특수스레드도 번호 … 왼쪽에」)이 같은
  * 조각을 써서 번호의 글꼴·색·폭이 같다. 줄이 좁으면 제목 끝이 잘리고 왼쪽 번호는 남는다. 번호가 없으면(시작 전 임무) 제목만.
  */
-function ThreadName({ id, title }: { id: string | undefined; title: string }) {
+export function ThreadName({ id, title }: { id: string | undefined; title: string }) {
   return (
     <span className="workspace-name">
       {id && (
