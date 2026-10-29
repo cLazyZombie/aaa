@@ -76,7 +76,8 @@ while True:
             # hold: Claude가 받지 못한 것처럼(기록·hook 없음). -queue: 작업 중이라 대기열에 넣는다(Claude는 넣자마자 적는다)
             if not os.path.exists(sys.argv[4]):
                 queue=os.path.exists(sys.argv[4]+'-queue')
-                recorded='<pasted_content id="local_408">\\n'+message+'\\n</pasted_content id="local_408">' if '\\n' in message else message
+                recorded=message.replace('\\t','    ')
+                recorded='<pasted_content id="local_408">\\n'+recorded+'\\n</pasted_content id="local_408">' if '\\n' in recorded else recorded
                 line={'type':'queue-operation','operation':'enqueue','content':recorded} if queue else {'type':'user','message':{'content':recorded}}
                 with open(sys.argv[3],'a') as f: f.write(json.dumps(line,ensure_ascii=False)+'\\n')
                 if not queue: hook('UserPromptSubmit')
@@ -264,7 +265,7 @@ while True:
     } finally { await wk.close(); }
   });
 
-  await step("WebCrypto 없는 연결도 짧은 글은 기존 수신 비교로 보낸다", async () => {
+  await step("WebCrypto 없는 연결도 짧은 탭·여러 줄 글은 기존 수신 비교로 보낸다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = client.page;
     const box = await openChat(p);
@@ -272,8 +273,9 @@ while True:
       Object.defineProperty(crypto, "subtle", { value: undefined });
       Object.defineProperty(crypto, "randomUUID", { value: undefined });
     });
-    await box.fill("짧은 호환 입력");
+    await box.fill("짧은 호환 입력\t결과\n다음 줄");
     await submit(p);
+    await domIs(p, "해시 없는 탭 입력의 수신", () => !document.querySelector(".chat-msg.user.is-pending"));
     if (client.errors.length) throw new Error(client.errors.join("; "));
     await p.context().close();
   });
@@ -296,6 +298,72 @@ while True:
     fs.unlinkSync(hold);
     await p.context().close();
   });
+
+  // 운영 기록의 원인: 웹이 보낸 탭 14개가 Claude JSONL에서 각각 공백 네 칸이 됐다(t-1314).
+  // 화면용 4천 자 상한을 넘겨, 앞부분 비교가 아닌 전체 해시로 같은 글만 확인하는지 본다.
+  for (const [name, engine] of [["Chromium", browser], ["WebKit", webkit]]) {
+    let owned, client, p, saved;
+    const marker = `탭 수신 ${name}`;
+    const message = `${marker}\n` + "검증\t결과\t경과\n".repeat(500) + "실제 끝";
+    const expanded = message.replace(/\t/g, "    ");
+    try {
+      await step(`${name}: 탭 수신 화면 준비`, async () => {
+        owned = engine === webkit ? await engine.launch() : null;
+        client = await pairPage(owned ?? engine, aaa("web", "pair").code, { width: 1280, height: 800 });
+        p = client.page;
+        await openChat(p);
+      });
+      await step(`${name}: 긴 탭 붙여넣기 수신과 같은 앞부분 거부`, async () => {
+        const box = await openChat(p);
+        fs.writeFileSync(hold, "hold");
+        await box.fill(message);
+        await press(p);
+        await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+        assert.equal(JSON.parse(fs.readFileSync(receipts, "utf8")).text, message, "실제 전송 원문의 탭은 보존한다");
+        await domIs(p, "탭 글 대기 표시", () => document.querySelector('[data-testid="chat-pending"]')?.dataset.stage === "sent");
+        saved = await p.evaluate(text => {
+          const key = Object.keys(sessionStorage).find(key => key.startsWith("aaa:chat-pending:") && sessionStorage.getItem(key).includes(text));
+          return { key, list: JSON.parse(sessionStorage.getItem(key)) };
+        }, marker);
+        fs.appendFileSync(transcript, chatLine(expanded.slice(0, -4) + "다른 끝"));
+        await domIs(p, "같은 앞부분의 다른 탭 글 도착", marker => [...document.querySelectorAll('[data-role="user"]:not(.is-pending)')].some(el => el.textContent.includes(marker)), marker);
+        assert.equal(await p.locator(".chat-msg.user.is-pending").count(), 1);
+        const wrapped = `<pasted_content id="tabs">\n${expanded}\n</pasted_content id="tabs">`;
+        fs.appendFileSync(transcript, chatLine(wrapped));
+        await domIs(p, "탭 변환된 전체 글 수신 뒤 대기 없음", () => !document.querySelector(".chat-msg.user.is-pending"));
+      });
+      await step(`${name}: 탭 경고 복구와 연속 전송의 새로고침 수신 차례`, async () => {
+        // 수리 전 저장된 경고를 그대로 되살린다. 보조 해시가 없는 구판 sessionStorage도 새로고침하면 정리한다.
+        await p.evaluate(({ key, list }) => sessionStorage.setItem(key, JSON.stringify(list.map(({ tabHash, ...item }) => ({ ...item, stale: true })))), saved);
+        await p.reload();
+        await openChat(p);
+        await domIs(p, "구판의 잘못된 경고도 수신 확인 뒤 저장소에서 제거", key => !sessionStorage.getItem(key)
+          && !document.querySelector('[data-testid="chat-pending"]'), saved.key);
+
+        // 같은 글을 탭·공백 꼴로 두 번 보냈다면 기록 한 건은 첫 대기 말만 확인한다.
+        const hash = crypto.createHash("sha256").update(expanded).digest("hex");
+        await p.evaluate(({ key, list, expanded, hash }) => {
+          const { tabHash, ...first } = list[0];
+          sessionStorage.setItem(key, JSON.stringify([first, { ...first, id: first.id + 1, text: expanded, hash }]));
+        }, { ...saved, expanded, hash });
+        await p.reload();
+        await openChat(p);
+        await domIs(p, "복원 수신 판정 완료", key => {
+          const list = JSON.parse(sessionStorage.getItem(key) ?? "[]");
+          return list.length === 0 || (list.length === 1 && list[0].before === 1);
+        }, saved.key);
+        assert.equal(await p.locator(".chat-msg.user.is-pending").count(), 1, "수신 한 건으로 대기 두 건을 없애면 안 된다");
+        fs.appendFileSync(transcript, chatLine(expanded));
+        await domIs(p, "두 번째 실제 기록 뒤 남은 대기도 제거", key => !sessionStorage.getItem(key)
+          && !document.querySelector('[data-testid="chat-pending"]'), saved.key);
+        assert.deepEqual(client.errors, []);
+      });
+    } finally {
+      if (fs.existsSync(hold)) fs.unlinkSync(hold);
+      await p?.context().close();
+      await owned?.close();
+    }
+  }
 
   await step("Claude 내부 알림은 사용자 말·수신 확인에서 제외하고 사람이 같은 모양을 보낸 글은 보존한다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
@@ -372,7 +440,19 @@ while True:
     await openChat(p);
     await domIs(p, "허용 밖 썸네일 거부", () => document.querySelectorAll('.chat-user-image[data-state="error"]').length === 2);
     const image = p.getByAltText("seed.png", { exact: true });
+    const visibility = () => image.evaluate(img => {
+      const rect = img.getBoundingClientRect();
+      return { connected: img.isConnected, loading: img.loading, complete: img.complete, width: img.naturalWidth, top: Math.round(rect.top), bottom: Math.round(rect.bottom), viewport: innerHeight };
+    });
+    const beforeImage = await visibility();
+    // 긴 기록 뒤에는 맨 앞의 seed 그림이 화면 밖 lazy 상태다. 실제로 보이게 한 뒤 로드 사건을 기다린다.
+    await image.scrollIntoViewIfNeeded();
+    await domIs(p, "화면에 들어온 허용 그림 로드", () => {
+      const img = document.querySelector('img[alt="seed.png"]');
+      return img?.complete && img.naturalWidth > 0;
+    });
     await image.evaluate((img) => img.decode());
+    console.log(`SEED_IMAGE_VISIBILITY ${JSON.stringify({ before: beforeImage, after: await visibility() })}`);
     const url = await image.getAttribute("src");
     const anon = await browser.newContext();
     if ((await anon.request.get(new URL(url, p.url()).href)).status() !== 401) throw new Error("미인증 그림 읽기를 허용했다");

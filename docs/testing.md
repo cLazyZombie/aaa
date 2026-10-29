@@ -1,3 +1,4 @@
+- t-1314: [탭 붙여넣기 수신 확인과 기존 경고 복구](testing-chat-tab-receipts.md)
 - t-1309: [검증 중복 축소·Windows 산출물 재사용 검증](testing-verification-dedup.md)
 - t-1304: [Ctrl+Tab 아이디어 목록 제외와 다른 목록 점검](testing-idea-list-exclusion.md) · [E114 변환 응답 실패 조사와 진단](testing-e114-conversion-response-diagnostics.md)
 - t-1292: [아이디어 최근 화면 등록 검증](testing-idea-recent-screens.md) · [E2E06 글꼴 저장 실패 조사와 진단 보존](testing-e2e06-font-evidence.md)
