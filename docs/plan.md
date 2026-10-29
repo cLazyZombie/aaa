@@ -8370,3 +8370,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **가는 곳.** `complete_thread_report`(회수·resolve·시작 backfill 공통)에서 `ThreadRec.automation`이 있고 `report_mark::notable`(첫 줄 `[알림]`, `## Questions`, 질문 카드)이 아니면 `library_complete`를 부르지 않는다. 사본은 `to_user=0`인 작업 보고로 남아 안 봄 수가 없고 기존 30일·20 GiB 정리 대상이다. 이미 올라온 행은 내리지 않는다. 같은 thread가 `[알림]` 뒤 `[완료]`를 내면 그 이름은 내 보고서에 남고 다시 안 봄이 되지 않는다.
 - **brief.** `automation_thread::brief`가 기억·이어 보내기 여부와 관계없이 같은 문단(`REPORT_GUIDANCE`)을 붙인다. 옛 「사용자 판단이 필요 없으면 보고 첫 줄을 [완료]로 쓴다」는 이 문단으로 바뀐다. 압축 뒤 재독(`reentry`)도 같은 글을 쓴다.
 - **번호·호환.** wire·저장 형식은 바꾸지 않는다(FRONT_API·AGENT_LINK 유지). 웹 변경은 없다. 새 시험은 `report_mark`·`automation_thread` 유닛과 `orch::report_tests::automation_reports_reach_my_reports_only_with_an_alert`(실제 회수·resolve backfill 경계)이며, 분기를 끈 RED에서 실패를 확인했다.
+
+### 8.546 pt 검증의 테스트·headless 상세 원장 수집(t-1305)
+
+- **원인.** pt 검증은 단계별 시간만 보관하고 테스트·headless 부속 결과를 만들지 않았으며 agent의 pt 상세 수집 목록도 비어 있었다.
+- **생산·보관.** pt는 stable Rust와 nextest JUnit으로 실제 unit·integration의 개수·개별 시간을 보관한다. headless는 빌드 뒤 예제 실행만 계측하며 공통 writer가 이번 실행의 이름·상태·시간·개수만 Git 공용 원장에 남긴다.
+- **수집·표시.** pt-tests와 E2E 보고를 기존 main 귀속·freshness 검사 안에서 읽어 개수와 TOP 5를 만든다. `scenario-wall`은 빌드를 뺀 시나리오 실행 경과이며 rc·engine의 단계 시간 합계와 구분한다. 실패·ignored와 부분 결과를 유지한다.
+- **번호·범위.** 착지 기준 main 408e1f9a의 마지막 §8.545 다음 번호다. wire 필드·요청·사건을 추가하지 않아 FRONT_API 1.148·AGENT_LINK 1.11과 기존 E2E01~124를 유지한다. profile 기록·같은 실행 보강은 후속 범위다.
+- **검증.** 실제 Python writer에서 Rust 수집까지 연결하는 계약과 기존 runner 회귀를 [별도 검증 기록](testing-pt-workspace-metrics.md)에 둔다. 전체 착지 검증에는 salt를 넣지 않으며 설치·배포는 하지 않는다.

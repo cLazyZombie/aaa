@@ -536,14 +536,15 @@ fn verification_archive_supports_game_runners_on_unchanged_main_with_fresh_runti
             source["started_at_ms"] = serde_json::json!(now - 1000);
             source["ended_at_ms"] = serde_json::json!(now + 1000);
             fs::write(path, source.to_string()).unwrap();
-            for suite in ["default-tests", "workspace-tests", "automation-tests", "2d-tests", "3d-tests"] {
+            for suite in ["default-tests", "workspace-tests", "automation-tests", "2d-tests", "3d-tests", "pt-tests"] {
                 l.put(&format!("{dir}/verification/{suite}/report.json"),
                     r#"[{"target":"game","exit":0,"tests":[{"name":"unit","event":"ok","exec_time":0.25}],"suites":[{"passed":1,"failed":0,"ignored":0}]}]"#);
             }
-            l.put(
-                &format!("{dir}/e2e.json"),
-                r#"{"status":"passed","reports":[{"scenario":"smoke","duration_ms":30,"status":"passed"}]}"#,
-            );
+            let mut e2e = serde_json::json!({"status":"passed","reports":[{"scenario":"smoke","duration_ms":30,"status":"passed"}]});
+            if runner == "pt" {
+                e2e["timing_unit"] = serde_json::json!("scenario-wall");
+            }
+            l.put(&format!("{dir}/e2e.json"), &e2e.to_string());
         }
     }
     let got = collect(&state.0, &l.0, "ws", &[]).unwrap();
@@ -552,16 +553,54 @@ fn verification_archive_supports_game_runners_on_unchanged_main_with_fresh_runti
         assert_eq!(r.commit, commit);
         assert!(r.notes.iter().any(|n| n.contains("coverage")));
         assert!(r.notes.iter().any(|n| n.contains("full")));
-        if r.source.starts_with("pt ") {
-            assert!(r.tests.is_none());
-        } else {
-            assert_eq!(r.tests.as_ref().unwrap().passed, if r.source.starts_with("rc ") { 2 } else { 4 });
-            assert_eq!(r.slow_tests.items[0].duration_ms, 250);
-            assert_eq!(r.e2e_files, Some(1));
-            assert_eq!(r.slow_e2e.items[0].duration_ms, 30);
-        }
+        let pt = r.source.starts_with("pt ");
+        assert_eq!(
+            r.tests.as_ref().unwrap().passed,
+            if pt {
+                1
+            } else if r.source.starts_with("rc ") {
+                2
+            } else {
+                4
+            }
+        );
+        assert_eq!(r.slow_tests.items[0].duration_ms, 250);
+        assert_eq!(r.e2e_files, Some(1));
+        assert_eq!(r.slow_e2e.items[0].duration_ms, 30);
+        assert_eq!(r.slow_e2e.unit, if pt { "scenario-wall" } else { "scenario-step-sum" });
     }
     assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, got.runs);
+}
+
+#[test]
+fn pt_actual_writer_preserves_failed_test_and_headless_results_through_collection() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    let writer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/workspace_record.py");
+    let invoke = |args: &[&str]| {
+        let output = std::process::Command::new("python3").arg(&writer).args(args).current_dir(&l.0).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    let token = invoke(&["start", "pt", "default", "desktop"]);
+    l.put("target/verification/pt-tests/report.json", r#"[{"target":"game","exit":7,"tests":[{"name":"ok","event":"ok","exec_time":0.125},{"name":"bad","event":"failed","exec_time":0.25},{"name":"skip","event":"ignored"}],"suites":[{"passed":1,"failed":1,"ignored":1,"filtered_out":0}]}]"#);
+    l.put("target/pt-e2e/report.json", r#"{"status":"failed","timing_unit":"scenario-wall","reports":[{"scenario":"console-replay","status":"passed","duration_ms":12},{"scenario":"settings","status":"failed","duration_ms":34}]}"#);
+    invoke(&["finish", &token, "7"]);
+    let got = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    let run = got.runs.first().unwrap();
+    assert_eq!(got.runs.len(), 1);
+    assert_eq!(run.outcome, "failed");
+    let counts = run.tests.as_ref().unwrap();
+    assert_eq!((counts.passed, counts.failed, counts.skipped), (1, 1, 1));
+    assert_eq!(run.slow_tests.items[0].duration_ms, 250);
+    assert!(!run.slow_tests.complete);
+    assert_eq!(run.e2e_files, Some(2));
+    assert_eq!(run.slow_e2e.unit, "scenario-wall");
+    assert_eq!(run.slow_e2e.items[0].name, "settings");
+    assert_eq!(run.slow_e2e.items[0].duration_ms, 34);
+    assert!(!run.slow_e2e.complete);
+    assert!(run.profile.is_none());
 }
 
 #[test]

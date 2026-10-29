@@ -57,10 +57,11 @@ class WorkspaceRecord(unittest.TestCase):
                     (self.repo / token).with_suffix(".stages").write_text("build|ok|0|0|2\n")
                 report = [dict(target="/private/build/game", exit=0, stdout="secret", tests=[dict(name="unit", event="ok", exec_time=.25, stdout="secret")], suites=[dict(passed=1, failed=0, ignored=0)])]
                 self.put("target/verification/workspace-tests/report.json", report)
+                self.put("target/verification/pt-tests/report.json", report)
                 stale = self.put("target/verification/default-tests/report.json", report)
                 os.utime(stale, ns=(1, 1))
-                for name in ("rc-e2e/report.json", "no2-e2e/all-headless.json"):
-                    self.put("target/" + name, dict(status="passed", error="secret", reports=[dict(scenario="smoke", duration_ms=3, status="passed", steps=[dict(error="secret")])]))
+                for name in ("rc-e2e/report.json", "no2-e2e/all-headless.json", "pt-e2e/report.json"):
+                    self.put("target/" + name, dict(status="passed", timing_unit="scenario-wall", error="secret", reports=[dict(scenario="smoke", duration_ms=3, status="passed", steps=[dict(error="secret")])]))
                 result = self.helper("finish", token, code)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse((self.repo / token).exists())
@@ -76,6 +77,12 @@ class WorkspaceRecord(unittest.TestCase):
             self.assertEqual(source["scope"], "full")
             self.assertEqual(source["commit"], self.git("rev-parse", "HEAD"))
             self.assertIn("|2", (path / "workspace-summary.tsv").read_text())
+            if source["runner"] == "pt":
+                tests = json.loads((path / "verification/pt-tests/report.json").read_text())
+                self.assertEqual(tests[0]["tests"][0]["exec_time"], .25)
+                e2e = json.loads((path / "e2e.json").read_text())
+                self.assertEqual(e2e["timing_unit"], "scenario-wall")
+                self.assertEqual(e2e["reports"][0]["duration_ms"], 3)
 
     def test_finish_when_source_changes_then_rejects_without_changing_original_failure(self):
         token = self.helper("start", "rc", "default", "desktop").stdout.strip()
