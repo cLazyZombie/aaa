@@ -1,6 +1,7 @@
 # 전체 ci-local 3분 예산(t-1310)
 
-수정본의 캐시 실행은 174.4초였지만 첫 커밋 SHA에서는 222.1초였다. SHA 변경의 빌드 무효화까지 포함해 최종 후보를 다시 측정한다.
+새 커밋 `d84623e8`의 전체 ci-local은 **179.6794초에 모두 통과**했다. CLI 재빌드 19초와 종료 정리·지표 보관을 포함한다.
+180초 예산의 여유는 약 0.3초다. 10 CPU Mac·컴파일 캐시 조건의 실측이며 다른 부하나 캐시 없는 최초 빌드까지 보장하는 수치는 아니다.
 
 사용자가 전체 검증 시간을 3분 안으로 줄이도록 허용한 시험 삭제와 실행 자원 변경이다.
 제품 쪽은 panic SHA의 주입 위치와 분할된 검증 결과의 수집만 바꾼다. release 최적화·시스템 설정·공용 브라우저 설치는 유지한다. 실패 재시도·시한 확대·기대값 완화는 없다.
@@ -33,17 +34,18 @@ GitHub OS별 명시 `--only clippy`, 착지 full의 Linux/Windows strict cross�
 | 메타데이터 분리 fdd405ed | 185.8 | 154 | 135 | 전체 통과. backend 캐시는 보존됐고 CLI/unit 재빌드 17초가 남았다 |
 | 단일 thread 1bd53d09 | 178.9 | 148 | 138 | panic fixture의 stdout 표지가 libtest 이름 뒤에 붙어 실패. 줄 경계와 단일 thread 실측 우선순위를 수리한다 |
 | 출력 수리 0d6adcd7 | 181.5 | 147 | 140 | 전체 통과. common unit 최초 재빌드를 포함한 build 20초. fmt/web의 독립 사전 단계를 겹친다 |
+| 최종 d84623e8 | **179.7** | 147 | 139 | **전체 통과·180초 충족**. web 9·fmt 2 병렬, build 19·public 2초 |
 
 측정 머신은 10 CPU·32 GiB Mac이다. 모든 무거운 명령은 `nice -n 15`로 실행했다.
 Cargo의 컴파일 worker 수는 지정하지 않았다. worktree의 target과 기존 컴파일 캐시만 사용했다.
 Playwright는 작업 target에 npm package 1.64.1만 준비했고 브라우저는 기존 공용 캐시를 사용했다.
 첫 기준과 수정본은 캐시 조건이 같지 않다. 캐시가 없는 신규 머신의 최초 컴파일까지 180초라고 보장하지 않는다.
 
-SHA 변경 전 수정 9의 외부 실측은 174.4428초, 종료 코드 0이다. 단계 선택 없이 `--logs`만 지정했다.
-Rust 1,467개 통과·기존 ignored 7개, Python 85개·기존 skip 2개, 웹 unit 660개, E2E 22파일 전체가 통과했다.
-Rust 323작업과 브라우저 31작업을 실행했다. 최초 준비와 이번 캐시 상태의 차이를 위 조건과 함께 해석한다.
-수정 6부터는 바깥 `time.monotonic()`으로
-ci-local 자식이 종료하고 임시 실행 사본 정리·metrics finish가 끝난 시점까지 잰다. 내부 요약의 정수 초와 구분한다.
+최종 외부 실측은 **179.6794초**, 종료 코드 0이다. 단계 선택 없이 `--logs`만 지정했다.
+Rust 1,469개 통과·기존 ignored 7개, Python 87개·기존 skip 2개, 웹 unit 660개, E2E 22파일 전체가 통과했다.
+Rust 324작업과 브라우저 31작업을 실행했다. Rust 324개 결과가 원장에 온전히 보관된 것도 확인했다.
+수정 6부터는 바깥 `time.monotonic()`으로 ci-local 자식의 사본 정리·metrics finish 종료까지 잰다.
+내부 단계 요약은 정수 초다. 병렬 단계 시간을 더해 전체 경과로 쓰지 않는다.
 
 ## 실행기 변경
 
@@ -98,8 +100,9 @@ r-5206의 실제 결함 사례에 해당하는 다음 경계를 계속 실행한
 | history 복원 뒤 첫 휠 SGR | E109의 두 엔진·6가지 복귀 |
 | 실제 CLI 배포와 backend 재시작 | m13 coordinator_deployment_is_gated_and_survives_backend_restarts |
 
-작업 중 측정이라 metrics archive는 미커밋 출처를 확인할 수 없어 보관하지 않았다.
-로컬 원문은 `target/ci-local/candidate-9/`의 단계 로그·Rust state/plan/events·`wall-clock.json`에 남았다.
+초기 작업 중 실행은 미커밋 출처로 archive를 남기지 않았다. 최종 원문은
+`target/ci-local/parallel-final/`의 단계 로그·Rust state/plan/events·`wall-clock.json`에 남았고,
+깨끗한 커밋 출처와 Rust 324작업의 개수 요약도 별도 원장에 보관됐다.
 착지 gate는 최종 통합 SHA에서 별도로 한 번 실행한다.
 
 삭제한 화면의 장치별 CSS·전체 흐름, 복합 다중 머신 rollout 복구, CLI 메타데이터 편의 흐름,
