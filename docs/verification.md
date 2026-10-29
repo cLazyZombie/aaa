@@ -65,7 +65,7 @@ Windows 변경의 실제 native owner를 확인한다. cross 성공을 Windows �
 
 ## 전체 gate의 실행 자원
 
-web·fmt·build를 끝낸 뒤 Rust 시험과 웹 E2E를 함께 실행한다. Clippy도 명시했다면 build 뒤에 먼저 완료한다.
+2 CPU 이상에서는 읽기 전용 fmt를 web과 함께 끝내고 build를 수행한 뒤 Rust 시험과 웹 E2E를 함께 실행한다. Clippy도 명시했다면 build 뒤에 먼저 완료한다.
 Cargo 컴파일의 병렬도는 바꾸지 않는다. 실행 단계에서는 브라우저에 CPU 수의 2/5(최소 1·최대 6)를 주고 나머지를 Rust에 준다.
 10 CPU에서는 Rust 6·브라우저 4이다. 1 CPU에서는 두 단계를 직렬 실행한다. E2E 종료 뒤 Rust가 전체 CPU 예산을 돌려받는다.
 Unix Rust의 다중 owner 묶음은 기본 libtest thread 1개, 독립 통합 owner는 한 슬롯을 쓴다.

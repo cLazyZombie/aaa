@@ -94,7 +94,7 @@ wanted() {
 
 # Cargo 빌드의 병렬도는 바꾸지 않는다. 실행 단계만 같은 CPU를 중복 예약하지 않게 나눈다.
 CI_CPUS=1
-if wanted test || wanted e2e; then
+if wanted test || wanted e2e || { wanted web && wanted fmt; }; then
   ci_rust=0; wanted test && ci_rust=1
   ci_web=0; wanted e2e && [ "$OS" != windows ] && ci_web=1
   python3 scripts/ci_resources.py "$ci_rust" "$ci_web" >"$LOGS/resources.tsv" || exit 2
@@ -284,9 +284,17 @@ started=$(date +%s)
 python3 scripts/workspace_metrics.py start "$LOGS" || true
 echo "ci-local: $OS, 로그 $LOGS"
 printf '%s\n' "$E2E_SPEC" >"$LOGS/e2e-selection.txt"
-for s in web fmt build clippy; do
-  skipped "$s" || { run_step "$s"; collect "$s"; }
-done
+# 포맷은 읽기 전용이며 npm의 출력과 독립이다. 1 CPU에서는 기존처럼 직렬 실행한다.
+if [ "$CI_CPUS" -gt 1 ] && wanted web && wanted fmt; then
+  run_step fmt &
+  fmt_pid=$!
+  run_step web; collect web
+  wait "$fmt_pid"
+  collect fmt
+else
+  for s in web fmt; do skipped "$s" || { run_step "$s"; collect "$s"; }; done
+fi
+for s in build clippy; do skipped "$s" || { run_step "$s"; collect "$s"; }; done
 go=""
 for s in $TOGETHER; do skipped "$s" || go="$go $s"; done
 unset AAA_RUST_TEST_RELEASE_FILE

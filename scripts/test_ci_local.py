@@ -23,6 +23,13 @@ import os, pathlib, socket, sys
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
 tool = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
+if os.environ.get("PREP_GATE") and ((tool == "cargo" and args[0] == "fmt") or (tool == "npm" and args[0] == "ci")):
+    stage = "fmt" if tool == "cargo" else "web"
+    with socket.create_connection(("127.0.0.1", int(os.environ["GATE"])), timeout=10) as link:
+        link.sendall(stage.encode())
+        assert link.recv(1) == b"!"
+    (root / (stage + ".finished")).touch()
+    sys.exit(7 if os.environ.get("FAIL_STAGE") == stage else 0)
 if tool == "python3":
     if args[:2] == ["-m", "unittest"]:
         if not os.environ.get("PYTHON_STAGE"):
@@ -205,6 +212,16 @@ class CiLocal(unittest.TestCase):
 
     def test_python_and_rust_start_together(self):
         self.assert_python_and_rust()
+
+    def test_web_and_fmt_overlap_and_keep_fmt_failure(self):
+        (self.root / "scripts/ci_resources.py").write_text('print("2|0|0")\n')
+        self.env.update(PREP_GATE="1", FAIL_STAGE="fmt", EXPECT_STAGES="web fmt")
+        result = self.run_ci("--only", "web,fmt,public", "--tee", gate=True,
+                             stages=("web", "fmt"), live_output=False)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        summary = (self.root / "logs/workspace-summary.tsv").read_text()
+        for stage, status in (("web", "ok"), ("fmt", "FAIL"), ("public", "ok")):
+            self.assertIn(f"{stage}|{status}|", summary)
 
     def test_python_failure_waits_for_rust_and_fails_the_stage(self):
         self.assert_python_and_rust("python")

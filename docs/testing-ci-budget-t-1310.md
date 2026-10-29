@@ -32,6 +32,7 @@ GitHub OS별 명시 `--only clippy`, 착지 full의 Linux/Windows strict cross�
 | SHA만 옮긴 0622a38b | 194.1 | 154 | 134 | 기존 Git 감시 회귀가 옛 생성물을 검사해 실패. 경로 목록·감시 owner도 CLI로 함께 옮긴다 |
 | 메타데이터 분리 fdd405ed | 185.8 | 154 | 135 | 전체 통과. backend 캐시는 보존됐고 CLI/unit 재빌드 17초가 남았다 |
 | 단일 thread 1bd53d09 | 178.9 | 148 | 138 | panic fixture의 stdout 표지가 libtest 이름 뒤에 붙어 실패. 줄 경계와 단일 thread 실측 우선순위를 수리한다 |
+| 출력 수리 0d6adcd7 | 181.5 | 147 | 140 | 전체 통과. common unit 최초 재빌드를 포함한 build 20초. fmt/web의 독립 사전 단계를 겹친다 |
 
 측정 머신은 10 CPU·32 GiB Mac이다. 모든 무거운 명령은 `nice -n 15`로 실행했다.
 Cargo의 컴파일 worker 수는 지정하지 않았다. worktree의 target과 기존 컴파일 캐시만 사용했다.
@@ -46,7 +47,8 @@ ci-local 자식이 종료하고 임시 실행 사본 정리·metrics finish가 �
 
 ## 실행기 변경
 
-- web·fmt·build를 완료한 뒤 Rust와 브라우저가 같은 CPU를 나눈다. 10 CPU는 Rust 6·브라우저 4이다.
+- 읽기 전용 fmt와 web을 함께 실행하고 둘 다 끝난 뒤 build를 수행한다. 1 CPU는 직렬이다.
+- build를 완료한 뒤 Rust와 브라우저가 같은 CPU를 나눈다. 10 CPU는 Rust 6·브라우저 4이다.
   1 CPU는 직렬 실행한다. 브라우저만 실행하면 CPU 둘마다 worker 하나·최대 6개다.
 - 브라우저 단계의 실제 종료 결과 파일을 확인한 뒤 Rust에 전체 CPU를 돌려준다. 이전 실행의 표지는 먼저 지운다.
   `resources.tsv`와 Rust events/state에 초기 예산·반환을 남긴다. 선택하지 않은 단계에는 worker 0을 주입하지 않는다.
@@ -126,6 +128,7 @@ parent의 snapshot·비밀값·역할·콜스택 기대값은 그대로이며 RU
 ## 필요한 실행기 회귀
 
 기존 실패 전파·중단·고정 사본·기존 바이너리 최신성 검사는 보존했다.
+실제 소켓 사건으로 fmt와 web의 동시 진입·fmt 실패 전파도 확인한다. 두 단계가 서로 완료를 기다리면 안 되며 실패가 사라지면 안 되기 때문이다.
 CPU 예산의 누락/중복 예약 검사, 실제 소켓 사건으로 E2E 종료 뒤 Rust 슬롯이 반환되는 검사,
 분할된 원래 owner가 정확히 한 번씩 들어가는 검사가 필요하다. 잘못된 분할은 검사를 조용히 생략할 수 있고,
 예산 오류는 병렬 과부하 또는 미선택 단계의 기동 실패를 만들기 때문이다. 고정 sleep을 추가하지 않았다. SHA freshness와 350개 결과 회귀는 각각 진단 판의 정확성과 분할 뒤 지표 유실을 지키기 위해 필요하다.
