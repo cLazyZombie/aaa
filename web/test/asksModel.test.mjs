@@ -18,6 +18,23 @@ it("q 칩은 현재 질문과 지난 답을 ID로 구별하고 기록 삭제 뒤
   assert.equal(questionRefLook("q-1000", [current], []).tone, "plain");
 });
 
+// 칩에서 바로 답하기(t-1287): 칩은 자기 질문 하나의 선택지만 싣고, 한 질문만 답해도 그 칩은 「답함」이다.
+it("q 칩은 자기 질문의 선택지를 싣고 일부 답한 질문은 답함이다", () => {
+  const choices = [{ label: "오른쪽 아래", description: null, recommended: true }, { letter: "B", label: "가운데", description: null, recommended: false }];
+  const items = [{ id: "q-1001", text: "단추 자리", choices }, { id: "q-1002", text: "눈 아이콘", choices }];
+  const t = { ...thread("t-1", { ...open, items, draft: { picks: [1, null], comments: [null, null], text: null, summary: "1B", by: "웹", at_ms: 1 } }), project: "demo" };
+  assert.deepEqual(questionRefLook("q-1001", [t], []), { label: "q-1001 질문", tone: "done", state: "답함 · 1B" });
+  assert.deepEqual(questionRefLook("q-1002", [t], []).ask, {
+    id: "q-1002", project: "demo", text: "눈 아이콘",
+    choices: [{ letter: "A", label: "오른쪽 아래", recommended: true, card: false }, { letter: "B", label: "가운데", recommended: false, card: false }],
+  });
+  // 질문 여러 개를 한꺼번에 가리키는 thread 번호는 단추 없이 카드를 연다.
+  assert.equal(questionRefLook("t-1", [t], []).ask, undefined);
+  // 검수 카드의 B는 글이 필요해 카드를 연다.
+  const review = { ...thread("t-2", { ...open, review: true, items: [{ id: "q-1003", text: "검수", choices }] }), project: "demo" };
+  assert.deepEqual(questionRefLook("t-2", [review], []).ask.choices.map((c) => c.card), [false, true]);
+});
+
 it("coordinator 평문·구조화 q 칩은 열림·답함·사라짐을 구별한다", () => {
   for (const request of [
     { id: "i1", question_id: "q-1000" },
