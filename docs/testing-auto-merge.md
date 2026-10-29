@@ -18,6 +18,9 @@
   따라오는지, 새 할 일 폼·예약 확인 칸의 저장, WebKit 390px thread 화면 스위치의 폭과 누르기를 본다. 필요한 이유: 사용자가 요청한
   다섯 자리(만들 때·예약·시작·실행 중 보기·thread 안 전환)가 같은 host 값을 쓰는지 화면에서 확인한다. 고정 sleep·재시도·시한 확대는 없고
   host 기록과 DOM 상태로 끝낸다. 단독 실행 약 6초다.
+- (t-1293) E2E119 셋째 단계는 「작업」 목록 thread 줄도 본다: 첫 줄(`.workspace-line`)에 표지가 없고, 자동 병합 아이콘이 둘째 줄
+  표지 묶음 끝·상태 말 바로 앞에 있으며, 끄면 사라지고 CLI로 켜면 따라온다. 필요한 이유: 사용자가 정한 줄 배치(첫 줄은 가리지 않음)와
+  사건 반영을 지킨다. 새 E2E 파일은 만들지 않았다.
 - 부분 검증: `cargo test -p aaa-host --lib -- auto_merge brief guide`, `cargo test -p aaa --test m13 -- auto_merge doctor_files`,
   `AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript`, 웹 `tsc`·build·`npm test`, E2E119(Playwright 1.64.1 패키지는 작업 폴더 안,
   브라우저는 공용 캐시). 전체 ci-local·공개 검사·cross는 아래 실행 결과와 정규 착지 차례에서 확인한다.

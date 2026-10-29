@@ -21,6 +21,12 @@
 .thread-place .thread-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-place .thread-machine { flex: 0 1 auto; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
 .thread-place .thread-machine.is-offline { color: var(--notice); }
+/* thread 표지(t-1293 사용자 답): 첫 줄 「번호 · 제목」을 가리지 않는다. 두 줄은 둘째 줄 상태 말 앞(상태 말이 먼저 줄어든다),
+   한 줄은 이름 뒤(번호·제목 앞머리는 늘 보이고 표지는 잘리지 않는다). 둘째 줄 높이를 늘리지 않게 표지를 줄 높이에 맞춘다 */
+.thread-chips { display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--space-1); }
+.thread-chips > .thread-stage { margin: 0; padding: 0 4px; line-height: var(--lh-tight); }
+.thread-chips > .auto-merge-mark { width: calc(var(--lh-tight) * 1em + 4px); height: calc(var(--lh-tight) * 1em); }
+.workspace-copy > .thread-chips { align-self: center; font-size: var(--fs-xs); }
 .thread-state.is-waiting_on_you { color: var(--status-blocked); }
 .thread-state.is-ready_for_review,
 .thread-state.is-landing { color: var(--status-done); }

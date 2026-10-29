@@ -4,6 +4,7 @@ import "./ThreadStageBadge.css";
 import "./AutoMerge.css";
 
 import { useEffect, useState } from "react";
+import { GitMerge } from "lucide-react";
 import { call } from "./api";
 import { apiAtLeast } from "./automationModel";
 import { Toggle } from "./herdr/SettingsControls";
@@ -21,6 +22,16 @@ export async function setAutoMerge(project: string, target: string, on: boolean)
 export function AutoMergeBadge({ on }: { on?: boolean | null }) {
   if (!on) return null;
   return <span className="thread-stage is-auto-merge" data-testid="auto-merge-badge" title="병합 준비되면 사용자에게 묻지 않고 착지 창">자동 병합</span>;
+}
+
+/** 「작업」 목록 줄의 아이콘 표지(t-1293 사용자 답): 단계 표지 옆, 상태 말 앞. on일 때만 */
+export function AutoMergeMark({ on }: { on?: boolean | null }) {
+  if (!on) return null;
+  return (
+    <span className="auto-merge-mark" role="img" aria-label="자동 병합" data-testid="auto-merge-mark" title="자동 병합: 병합 준비되면 사용자에게 묻지 않고 착지 창">
+      <GitMerge aria-hidden="true" />
+    </span>
+  );
 }
 
 /** 바로 저장하는 스위치(thread 화면·할 일 상세). 실패하면 원래 값으로 돌리고 까닭을 보인다 */

@@ -4979,3 +4979,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 - 느린 시험 후속(t-1261): [선택 비용·대기 변경과 독립 성능 판정](testing-slow-followup.md).
 - t-1265: [머신 독점 예약·착지 제외·비중 배정 검증](testing-machine-reservation.md)
+- t-1293: [「작업」 목록 줄 자동 병합 아이콘·표지 둘째 줄 배치(E2E119 셋째 단계)](testing-auto-merge.md)

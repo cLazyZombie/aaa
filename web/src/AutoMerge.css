@@ -1,6 +1,10 @@
 /* 자동 병합 표지는 병합 대기(초록)·병합 중(주황)과 구별되는 청록 */
 .thread-stage.is-auto-merge { color: #3fb8c4; background: color-mix(in srgb, #3fb8c4 14%, transparent); }
 [data-theme="light"] .thread-stage.is-auto-merge { color: #00707a; background: color-mix(in srgb, #00707a 12%, transparent); }
+/* 「작업」 목록 줄의 아이콘 표지: 단계 표지와 같은 높이·색 */
+.auto-merge-mark { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; align-self: center; width: 1.5em; height: 1.5em; border-radius: var(--radius-sm); color: #3fb8c4; background: color-mix(in srgb, #3fb8c4 14%, transparent); }
+.auto-merge-mark svg { width: 1em; height: 1em; }
+[data-theme="light"] .auto-merge-mark { color: #00707a; background: color-mix(in srgb, #00707a 12%, transparent); }
 .auto-merge-switch { display: inline-flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
 .auto-merge-label { font-size: var(--fs-sm); }
 .auto-merge-error { color: var(--danger-text); font-size: var(--fs-xs); flex-basis: 100%; }

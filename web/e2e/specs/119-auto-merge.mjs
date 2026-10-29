@@ -1,6 +1,6 @@
 // 할 일·thread별 자동 병합(plan §8.530, t-1214, 사용자 답 1A 2A): 값은 할 일 하나에 하나이고 host DB가 정본이다. 할 일 상세의 스위치,
 // 「바로 시작」·예약 확인·새 할 일 폼의 칸, thread 화면의 스위치가 같은 값을 바꾸고, 할 일 줄·thread 목록·thread 제목이 「자동 병합」 표지로
-// 보인다. CLI(`thread auto-merge`)로 바꾼 값은 열린 화면에 사건으로 따라온다. brief 머리에 시작 때 값이 실린다. 휴대폰 폭에서 넘치지 않는다.
+// 보인다(「작업」 목록 줄은 둘째 줄 아이콘, t-1293). CLI(`thread auto-merge`)로 바꾼 값은 열린 화면에 사건으로 따라온다. brief 머리에 시작 때 값이 실린다. 휴대폰 폭에서 넘치지 않는다.
 // 시간은 기다리지 않는다: host 기록(`task list`·`thread show`·`task log`)과 화면 표지를 본다.
 import fs from "node:fs";
 import { root, aaa, until, step, domIs, shot, openSettings, pairPage, webkit } from "../lib/harness.mjs";
@@ -12,6 +12,15 @@ const task = (title) => aaa("task", "list").tasks.find((t) => t.title === title)
 const merged = (title) => task(title)?.auto_merge === true;
 const show = (id) => aaa("thread", "show", "demo", id);
 /** 스위치(herdr Toggle)의 지금 값 */
+/** 「작업」 목록 thread 줄(t-1293 사용자 답): 첫 줄은 「번호 · 제목」만, 아이콘은 둘째 줄 상태 말 앞 */
+const rowMarkIs = (p, id, on) =>
+  domIs(p, `작업 목록 아이콘 ${on ? "on" : "off"}`, ([id, want]) => {
+    const row = document.querySelector(`[data-testid="thread-demo-${id}"]`);
+    const first = row?.querySelector(".workspace-line");
+    if (!first || first.querySelector(".thread-stage, .auto-merge-mark")) return false;
+    const mark = row.querySelector('.thread-place > .thread-chips > [data-testid="auto-merge-mark"]');
+    return want ? mark?.nextElementSibling === null && mark.parentElement.nextElementSibling?.classList.contains("thread-state") : mark === null && row.querySelector('[data-testid="auto-merge-mark"]') === null;
+  }, [id, on]);
 const switchIs = (p, testid, on) =>
   domIs(p, `${testid} ${on ? "on" : "off"}`, ([id, want]) => {
     const s = document.querySelector(`[data-testid="${id}"]`);
@@ -72,9 +81,11 @@ export default async function ({ page }) {
     await page.getByTestId("auto-merge-switch").getByRole("switch").click();
     await until("thread 화면에서 끔", () => !show(id).auto_merge && !merged("자동 착지 시험"));
     await switchIs(page, "auto-merge-switch", false);
+    await rowMarkIs(page, id, false);
     const back = aaa("thread", "auto-merge", id, "on");
     if (back.kind !== "auto_merge" || !back.on || !back.changed || back.thread !== id) throw new Error(JSON.stringify(back));
     await switchIs(page, "auto-merge-switch", true);
+    await rowMarkIs(page, id, true);
     await shot(page, "auto-merge-thread-desktop");
     // 같은 값은 기록을 늘리지 않는다
     if (aaa("thread", "auto-merge", id, "on").changed) throw new Error("같은 값을 다시 썼다");
