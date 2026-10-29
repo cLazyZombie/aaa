@@ -112,11 +112,15 @@ fn rollout_scenario(scenario: Scenario) {
     });
     // 웹을 연 host: 새 host 감시가 실행 신원과 함께 웹 응답(`/api/v1/me`)까지 본다(W6c)
     // 이 keeper는 실제 사본으로 시작한다. 곧바로 버릴 원본 host/agent 셋과 쓰지 않는 Git repo는 준비하지 않는다.
-    let (mut w, _) = world_files("", true, Some(BRIEF_SETTLE_MS), false, |_| Vec::new());
+    let (mut w, _) = world_files("", true, Some("0"), false, |_| Vec::new());
+    // coordinator는 줄 단위 셸이다. TUI의 paste 처리를 기다리지 않는다.
+    w.host_env.push(("AAA_TEST_SUBMIT_GAP_MS".into(), "0".into()));
     phases.mark("prepare", "variant-binaries-and-service-fixture");
     let dir = w.lab.root.join("rollout-bin");
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
+    let source = dir.join("source-aaa");
+    lab::deployment_binary(Path::new(lab::BIN), &source);
     let a_exe = dir.join("a/aaa");
     let b_exe = dir.join("b/aaa");
     let candidate_dir = dir.join("build");
@@ -130,14 +134,14 @@ fn rollout_scenario(scenario: Scenario) {
     };
     // 같은 서명 판은 한 번만 만들고 각 머신에는 독립 사본을 둔다.
     // 원격 실패/복구 owner는 두 실행 파일과 후보가 같은 시작 판이다.
-    lab::variant_binary(Path::new(lab::BIN), &candidate, "rollout-candidate");
+    lab::variant_binary(&source, &candidate, "rollout-candidate");
     for (path, variant) in [(&a_exe, initial[0]), (&b_exe, initial[1])] {
         if variant == Some("rollout-candidate") {
             assert!(Command::new("cp").args([&candidate, path]).status_guarded().unwrap().success());
         } else if let Some(variant) = variant {
-            lab::variant_binary(Path::new(lab::BIN), path, variant);
+            lab::variant_binary(&source, path, variant);
         } else {
-            assert!(Command::new("cp").args([lab::BIN, path_str(path)]).status_guarded().unwrap().success());
+            assert!(Command::new("cp").args([path_str(&source), path_str(path)]).status_guarded().unwrap().success());
         }
     }
     let original = hex::encode(Sha256::digest(std::fs::read(&a_exe).unwrap()));
@@ -334,7 +338,7 @@ esac
     let copy = |from: &Path, to: &Path| {
         assert!(Command::new("cp").args([path_str(from), path_str(to)]).status_guarded().unwrap().success());
     };
-    let variant = |p: &Path, suffix: &str| lab::variant_binary(Path::new(lab::BIN), p, suffix);
+    let variant = |p: &Path, suffix: &str| lab::variant_binary(&source, p, suffix);
     phases.mark("contract", "rollout-transitions");
     if scenario == Scenario::Transfer {
         let (rc, _, err) = probe(&w, &start(&sha));

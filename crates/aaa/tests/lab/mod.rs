@@ -47,6 +47,21 @@ pub fn captured(cmd: &mut Command) -> std::io::Result<Output> {
     result
 }
 
+/// 실제 배포 경로를 통과하는 시험 소유 실행 파일. 원본의 진단 심볼은 보존한다.
+/// macOS 사본의 심볼 표만 제거해 반복 전송·해시·설치가 빌드용 이름 표의 크기에 매이지 않게 한다.
+/// 코드·실제 SHA 대조·서명 검사·조각별 동기화는 그대로이며 쓰기 FD는 모두 자식이 소유한다.
+#[cfg(unix)]
+pub fn deployment_binary(source: &Path, target: &Path) {
+    assert!(Command::new("cp").args([source, target]).status_guarded().unwrap().success());
+    #[cfg(target_os = "macos")]
+    {
+        let out = Command::new("strip").arg(target).capture_output().unwrap();
+        assert!(out.status.success(), "시험 배포 사본 심볼 제거: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("codesign").args(["--force", "--sign", "-"]).arg(target).capture_output().unwrap();
+        assert!(out.status.success(), "시험 배포 사본 서명: {}", String::from_utf8_lossy(&out.stderr));
+    }
+}
+
 /// 같은 프로그램·version이면서 SHA가 다른 시험 실행 파일. macOS는 서명 식별자로 구분한다.
 /// 실행 파일을 쓰는 FD가 병렬 시험의 fork에 물려가지 않도록 복사·수정은 자식 프로세스에서 한다.
 #[cfg(unix)]

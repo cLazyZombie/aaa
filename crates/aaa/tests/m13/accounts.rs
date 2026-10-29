@@ -25,9 +25,10 @@ fn credential_canary_distinguishes_hex_metadata_and_detects_every_eight_byte_fra
 }
 
 const HARNESS: &str = r#"#!/usr/bin/env python3
-import os,sys,json,pathlib,socket,urllib.request,urllib.error,hashlib,base64,stat,subprocess,datetime
+import sys
 if sys.argv[1:]==['--version']:
     print('development harness build');sys.exit(7)
+import os,json,pathlib,socket,urllib.request,urllib.error,hashlib,base64,stat,subprocess,datetime
 # ConPTY처럼 첫 출력은 커서 질의뿐이며 답을 받기 전에는 다음 출력을 만들지 않는다.
 import termios,tty,select
 saved=termios.tcgetattr(0)
@@ -276,6 +277,8 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) 
 
 #[test]
 fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
+    let mut phases =
+        aaa_test_support::phases::Phases::new("account_credentials_parallel_refresh_and_all_records_are_redacted");
     let pairs: Vec<_> = (0..3).map(|i| (canary(&format!("access{i}")), canary(&format!("refresh{i}")))).collect();
     let token_pairs: Vec<_> = pairs.iter().map(|(a, r)| (a.0.clone(), r.0.clone())).collect();
     let (claude, claude_hex) = canary("claude");
@@ -283,6 +286,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let gate = Gate::new();
     let mut w = world(&format!("http://{}", upstream.addr), &gate, &claude, HARNESS);
     w.add_remote();
+    phases.mark("contract", "codex-delivery-and-refresh");
     let credential = w.scripts.join("import.json");
     std::fs::write(
         &credential,
@@ -372,6 +376,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
             assert!(!output.as_bytes().windows(n.len()).any(|v| v == n), "pane 비밀 조각 노출");
         }
     }
+    phases.mark("contract", "claude-delivery-and-durable-outbox");
     // Claude 동시 전달과 계정 미지정 profile 인증은 원문을 유지한다.
     let mut token_jobs = vec![];
     for (selected, profile) in [(true, "token"), (true, "token"), (false, "token"), (false, "plain")] {
@@ -407,6 +412,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let inbox = w.h.ok(&["post", "list"]);
     assert!(!inbox.to_string().contains(&claude));
     let b_state = w.lab.root.join("b/s");
+    phases.mark("observe", "credential-scan");
     let leak = hits(
         &[
             w.h.state.clone(),
@@ -421,14 +427,16 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
         &|_| false,
     );
     assert!(leak.is_empty(), "비밀이 남은 경로: {leak:?}");
+    phases.mark("cleanup", "owned-resources");
 }
 
 // 이 fixture는 인증을 선택하지 않는다. 실제 자식이 받은 env/파일을 해시로 보고하고
 // 제공자 갱신을 요청할 뿐이다. 선택·저장·재개는 제품 경로가 맡는다.
 const POLICY_HARNESS: &str = r#"#!/usr/bin/env python3
-import os,sys,json,pathlib,socket,hashlib,subprocess,urllib.request,uuid
+import sys
 if sys.argv[1:]==['--version']:
     print('codex-cli 0.163.0');sys.exit(0)
+import os,json,pathlib,socket,hashlib,subprocess,urllib.request,uuid
 kind=os.environ['ACCOUNT_KIND']
 tid=os.environ.get('AAA_THREAD','coordinator')
 home=os.environ.get('CODEX_HOME') if kind=='codex' else None
@@ -522,6 +530,9 @@ fn login_result(w: &World, id: &str, expected: &str) -> Value {
 
 #[test]
 fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials() {
+    let mut phases = aaa_test_support::phases::Phases::new(
+        "host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials",
+    );
     let (legacy, legacy_hex) = canary("legacy");
     let (raw, raw_hex) = canary("login-claude");
     let claude = format!("sk-ant-oat01-{raw}");
@@ -534,7 +545,8 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     w.add_remote();
     let task = w.task("policy.txt", "가짜 인증에서 기다린다");
     let values = serde_json::json!({"claude":claude,"codex":{"tokens":{"access_token":tokens[0].0,"refresh_token":tokens[0].1}}});
-    let fixture = install_login_fixture(&w, &gate, &values);
+    install_login_fixture(&w, &gate, &values);
+    phases.mark("contract", "defaults-and-pinned-workers");
     let old = w.start(&["--title", "기존 로컬", "--profile", "token", "--task-file", &task]);
     let old_first = gate.take(1, 0);
     assert_eq!(old_first[0].1["token"], sha(&legacy));
@@ -685,6 +697,7 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
         (w.h.pane(worker_resume["id"].as_str().unwrap())["state"] == "exited").then_some(())
     });
 
+    phases.mark("contract", "coordinator-restore-and-resume");
     // 새 coordinator, host 재시작, 중앙 갱신, 재부팅 복원, 수동 pane 재개가 같은 인증/기록 홈을 잇는다.
     let opened = w.h.ok(&["project", "open", "demo", "--profile", "file", "--new"]);
     let pane = opened["pane"]["id"].as_str().unwrap().to_string();
@@ -776,55 +789,18 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
         find.extend(needles(&a.0, &a.1));
         find.extend(needles(&r.0, &r.1));
     }
-    // 새 로그인 실패·취소도 원본 출력·인증을 남기지 않는다. 재시작한 host에는 실험실 PATH를 명시한다.
-    w.lab.kill("policy-host2");
-    let path = std::env::join_paths(
-        std::iter::once(w.scripts.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
-    w.lab.spawn_env("policy-host3", &w.h, &["host"], &[("PATH", path.to_str().unwrap()), ("AAA_LOG", "trace")]);
-    wait_for("host 로그인 재접속", T, || w.h.json(&["status"]).ok());
-    let (failed, failed_hex) = canary("failed-login");
-    find.extend(needles(&failed, &failed_hex));
-    for (name, cancel) in [("failed-login", false), ("cancelled-login", true)] {
-        std::fs::write(
-            &fixture,
-            serde_json::to_vec(
-                &serde_json::json!({"claude":format!("sk-ant-oat01-{failed}"),"fail":true,"stubborn":cancel}),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let v = w.h.ok(&["account", "login", name, "--harness", "claude"]);
-        let id = v["login"]["id"].as_str().unwrap();
-        let ready = gate.take(1, 8);
-        let home = PathBuf::from(ready[0].1["home"].as_str().unwrap());
-        let held = if cancel {
-            w.h.ok(&["account", "login-cancel", id]);
-            Some(ready)
-        } else {
-            Gate::release(ready, b'1');
-            None
-        };
-        responses.push(login_result(&w, id, if cancel { "cancelled" } else { "failed" }));
-        drop(held);
-        assert!(!home.exists());
-        assert!(!w.h.state.join(format!("host/accounts/{name}.json")).exists());
-    }
+    // 실패·취소·host 종료의 자식/인증 정리는 아래 병렬 로그인 owner가 소유한다.
     for v in responses {
         for (_, n) in &find {
             assert!(!v.to_string().as_bytes().windows(n.len()).any(|b| b == n), "로그인 응답 노출");
         }
     }
+    // 마지막 기록을 쓴 tick과 정상 종료 뒤 스캔한다. 옮긴 로그인 시험 때문에
+    // 원래의 쓰기 완료 울타리까지 사라지면 안 된다.
     w.h.ticks(1);
-    let pending = w.h.ok(&["account", "login", "shutdown-login", "--harness", "claude"]);
-    let ready = gate.take(1, 8);
-    let home = PathBuf::from(ready[0].1["home"].as_str().unwrap());
-    assert_eq!(pending["login"]["state"], "waiting");
-    w.lab.signal("policy-host3", libc::SIGTERM);
-    assert!(w.lab.wait_exit("policy-host3", T).success(), "host가 로그인 자식 종료까지 마친다");
-    drop(ready);
-    assert!(!home.exists(), "host 정상 종료도 임시 인증을 정리한다");
+    w.lab.signal("policy-host2", libc::SIGTERM);
+    assert!(w.lab.wait_exit("policy-host2", T).success());
+    phases.mark("observe", "credential-scan");
     let leak = hits(
         &[
             w.h.state.clone(),
@@ -832,12 +808,12 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
             w.projects.clone(),
             w.lab.root.join("host.log"),
             w.lab.root.join("policy-host2.log"),
-            w.lab.root.join("policy-host3.log"),
         ],
         &find,
         &|_| false,
     );
     assert!(leak.is_empty(), "인증 비밀이 남은 경로: {leak:?}");
+    phases.mark("cleanup", "owned-resources");
 }
 
 #[test]
@@ -848,8 +824,18 @@ fn parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup() 
     let mut w = world(&format!("http://{}", upstream.addr), &gate, &token, POLICY_HARNESS);
     let values = serde_json::json!({"claude":format!("sk-ant-oat01-{token}"),"codex":{"tokens":{"access_token":token,"refresh_token":token}}});
     let fixture = install_login_fixture(&w, &gate, &values);
+    // 옮긴 계약: 로그인 성공·실패·취소 응답에도 원문과 8바이트 조각이 없어야 한다.
+    let find = needles(&token, &encoded);
+    let checked = |v: Value| {
+        let text = v.to_string();
+        for (_, n) in &find {
+            assert!(!text.as_bytes().windows(n.len()).any(|b| b == n), "로그인 응답 노출");
+        }
+        v
+    };
     let start = |harness: &str, suffix: &str| {
-        let v = w.h.ok(&["account", "login", &format!("parallel-{harness}-{suffix}"), "--harness", harness]);
+        let v = checked(w.h.ok(&["account", "login", &format!("parallel-{harness}-{suffix}"), "--harness", harness]));
+        assert_eq!(v["login"]["state"], "waiting");
         v["login"]["id"].as_str().unwrap().to_string()
     };
     let a = start("claude", "done");
@@ -859,12 +845,12 @@ fn parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup() 
     let waiting = held.remove(b_at);
     let a_home = PathBuf::from(held[0].1["home"].as_str().unwrap());
     Gate::release(held, b'1');
-    login_result(&w, &a, "succeeded");
+    checked(login_result(&w, &a, "succeeded"));
     assert!(!a_home.exists(), "다른 로그인이 진행 중이어도 종료한 자식의 자료를 정리한다");
     assert_eq!(w.h.ok(&["account", "login-status", &b])["login"]["state"], "waiting");
     let b_home = PathBuf::from(waiting.1["home"].as_str().unwrap());
     Gate::release(vec![waiting], b'1');
-    login_result(&w, &b, "succeeded");
+    checked(login_result(&w, &b, "succeeded"));
     assert!(!b_home.exists());
 
     assert_eq!(w.h.ok(&["account", "login-cancel", &a])["login"]["state"], "succeeded");
@@ -879,12 +865,14 @@ fn parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup() 
     let done = held.remove(a_at);
     let a_home = PathBuf::from(done.1["home"].as_str().unwrap());
     Gate::release(vec![done], b'1');
-    login_result(&w, &a, "failed");
+    checked(login_result(&w, &a, "failed"));
+    assert!(!w.h.state.join("host/accounts/parallel-claude-failed.json").exists());
     assert!(!a_home.exists());
     assert_eq!(w.h.ok(&["account", "login-cancel", &a])["login"]["state"], "failed");
     assert_eq!(w.h.ok(&["account", "login-status", &b])["login"]["state"], "waiting");
-    assert_eq!(w.h.ok(&["account", "login-cancel", &b])["login"]["state"], "cancelled");
+    assert_eq!(checked(w.h.ok(&["account", "login-cancel", &b]))["login"]["state"], "cancelled");
     assert!(!Path::new(held[0].1["home"].as_str().unwrap()).exists());
+    assert!(!w.h.state.join("host/accounts/parallel-codex-held.json").exists());
     drop(held);
 
     std::fs::write(
@@ -912,9 +900,13 @@ fn parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup() 
         calls.into_iter().map(|c| c.join().unwrap()).collect::<Vec<_>>()
     });
     for v in results {
+        let v = checked(v);
         assert_eq!(v["login"]["state"], "cancelled", "cancel 응답은 자식 종료·자료 정리 뒤의 최종 상태여야 한다");
     }
     for (_, v) in &held {
+        assert!(
+            !w.h.state.join(format!("host/accounts/parallel-{}-cancel.json", v["harness"].as_str().unwrap())).exists()
+        );
         assert!(!Path::new(v["home"].as_str().unwrap()).exists());
         assert_ne!(
             unsafe { libc::kill(v["pid"].as_i64().unwrap() as i32, 0) },
