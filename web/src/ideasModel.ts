@@ -12,11 +12,11 @@ export function ideaGroups(ideas: readonly IdeaSummary[]): { name: string; items
   ];
 }
 
-/** 목록 줄의 둘째 줄: 「n-0001 · 다듬는 중」·「n-0003 · 완료 · d-1189」 */
-export function ideaLine(i: IdeaSummary): string {
-  return i.status === "done"
-    ? [i.short_id, "완료", ...(i.tasks.length ? [i.tasks.join(", ")] : [])].join(" · ")
-    : `${i.short_id} · 다듬는 중`;
+export const IDEA_STATE: Record<IdeaSummary["status"], string> = { open: "다듬는 중", done: "완료" };
+
+/** 목록 줄 둘째 줄 오른쪽(thread 줄의 머신 자리): 완료는 넘긴 할 일, 다듬는 중은 전용 thread */
+export function ideaRefs(i: IdeaSummary): string {
+  return i.status === "done" ? i.tasks.join(", ") : (i.thread ?? "");
 }
 
 /** 휴대폰 본문 페이지. 목록은 앱 drawer다(노트에서 오른쪽으로 쓸면 열린다) */

@@ -56,20 +56,26 @@
 .idea-draft textarea { resize: vertical; font-size: var(--fs-sm); }
 .idea-handoff .modal-footer { display: flex; align-items: center; gap: var(--space-2); }
 
-/* 사이드바 목록 */
-.ideas-panel { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); overflow: auto; min-height: 0; }
-.ideas-tools { display: flex; padding-bottom: var(--space-1); }
-.ideas-tools .i { width: 14px; height: 14px; }
-.ideas-new { display: flex; gap: var(--space-2); width: 100%; }
+/* 사이드바 목록: 줄은 thread 줄(herdr/Sidebar.css의 .workspace-header·.sidebar-mark·두 줄 칸)을 그대로 쓰고 여기서는 더하는 것만 둔다.
+   상태 색은 본문 머리 칩(.idea-chip)과 같은 뜻: 다듬는 중 accent, 완료 done. 완료 줄은 끝난 pane처럼 이름·표지를 흐린다 */
+.ideas-sidebar { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; }
+.ideas-panel { display: flex; flex-direction: column; flex: 1 1 0; padding: 0 var(--side-gutter) var(--space-2); overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.ideas-panel > * { flex-shrink: 0; }
+.sidebar-shell button.sidebar-row-action.ideas-add { display: flex; align-items: center; justify-content: flex-start; width: 100%; padding: 0; border-radius: var(--radius-md); color: var(--text-dim); font-size: var(--fs-sm); }
+@media (hover: hover) { .sidebar-shell button.sidebar-row-action.ideas-add:hover { background: var(--side-hover); color: var(--text); } }
+.ideas-add .sidebar-mark { color: inherit; }
+.ideas-new { display: flex; gap: var(--space-2); width: 100%; padding: var(--space-1) 0; }
 .ideas-new .input { flex: 1 1 auto; min-width: 0; }
-.ideas-group { display: flex; flex-direction: column; gap: 2px; }
-.ideas-group-head { padding: var(--space-2) var(--space-2) var(--space-1); font-size: var(--fs-xs); color: var(--text-dim); }
-.idea-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; height: auto; min-height: var(--touch); text-align: left; padding: var(--space-2); border: 0; border-left: 2px solid transparent; border-radius: var(--radius-md); background: none; color: var(--text); }
-.idea-row > span { flex: none; }
-@media (hover: hover) { .idea-row:hover { background: var(--bg-hover); } }
-.idea-row[aria-current="true"] { background: var(--bg-hover); border-left-color: var(--accent); }
-.idea-row-title { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.idea-row-meta { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); }
+.ideas-group-head { display: flex; align-items: flex-end; gap: var(--space-2); min-height: 22px; margin: var(--space-2) 0 0; padding: 0 0 2px var(--space-2); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-regular); letter-spacing: 0.02em; }
+.ideas-group-count { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.ideas-panel .workspace-header { min-height: var(--side-row-2); }
+.ideas-panel .idea-item.is-open .sidebar-mark { color: var(--accent-strong); }
+.idea-item.is-open .idea-state { color: var(--accent-strong); }
+.idea-item.is-done .idea-state { color: var(--done); }
+.idea-item.is-done:not(.is-selected) .workspace-name,
+.idea-item.is-done:not(.is-selected) .sidebar-mark { color: var(--text-dim); }
+.idea-when { color: var(--text-dim); white-space: pre; }
+.idea-when::before { content: " · "; }
 
 @media (max-width: 768px) {
   .idea-chat-pane { flex: 1 1 auto; border-left: 0; }
