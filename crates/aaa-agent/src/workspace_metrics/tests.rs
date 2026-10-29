@@ -52,6 +52,23 @@ fn ci_reads_existing_counts_and_spec_work_without_inventing_individual_test_time
     assert!(r.artifact_bytes.is_none());
 }
 #[test]
+fn split_owner_results_keep_the_complete_rust_count() {
+    let l = Lab::new();
+    fixture(&l);
+    let jobs: Vec<_> = (0..350).map(|n| serde_json::json!({"log": format!("{n}-owner.log")})).collect();
+    l.put("target/ci-local/run/rust/summary.json", &serde_json::json!({"jobs": jobs}).to_string());
+    for n in 0..350 {
+        l.put(
+            &format!("target/ci-local/run/rust/{n}-owner.log"),
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n",
+        );
+    }
+    let r = ci_run(&l.0.join("target/ci-local/run"), 1000, "run".into()).unwrap();
+    let counts = r.tests.expect("분할한 Rust 결과를 잃었다");
+    assert_eq!((counts.passed, counts.failed, counts.skipped), (350, 0, 0));
+}
+
+#[test]
 fn same_input_version_reuses_small_summary_after_source_logs_disappear() {
     let l = Lab::new();
     fixture(&l);

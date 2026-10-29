@@ -76,6 +76,7 @@ macOS 전체 실행은 이번 `cargo test --no-run`이 만든 verify CLI를 바�
 단독 build와 다른 OS는 기존 e2e CLI 빌드를 유지한다. Windows production의 별도 release·실기·같은 파일 전달 절차는 그대로다.
 독립 통합 owner와 큰 unit 모듈은 각각 작업으로 나눠 실행하며 전체 목록과 실행 수가 다르면 실패한다. doctest도 실행한다.
 시간 원장은 긴 작업을 먼저 배치하는 데만 쓰며 선택·실패 판정·시한에는 쓰지 않는다.
+커밋 SHA는 최종 CLI build script가 panic hook에 주입한다. 공통 crate에 SHA를 내장해 커밋마다 전체 backend 캐시를 무효화하지 않는다.
 
 ## Windows production은 최종 SHA에서 한 번
 

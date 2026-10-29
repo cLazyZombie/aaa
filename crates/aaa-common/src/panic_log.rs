@@ -110,8 +110,9 @@ fn safe_file(file: &str) -> &'static str {
         .unwrap_or("external")
 }
 
-pub fn install() {
-    std::panic::set_hook(Box::new(|info| {
+/// 실행 파일의 build script가 검증한 SHA를 받는다. 실행 환경이나 panic payload에서 읽지 않는다.
+pub fn install(build_sha: &'static str) {
+    std::panic::set_hook(Box::new(move |info| {
         let location = info.location();
         let (raw_file, line, column) = location.map(|l| (l.file(), l.line(), l.column())).unwrap_or(("", 0, 0));
         let thread = std::thread::current();
@@ -129,7 +130,7 @@ pub fn install() {
             thread_id: format!("{:?}", thread.id()),
             task_id: tokio::task::try_id().map(|id| id.to_string()),
             process: process(),
-            build_sha: BUILD_SHA,
+            build_sha,
             count: 0,
             stack: call_stack(),
         };

@@ -1,4 +1,4 @@
-//! panic 로그에는 저장소가 아는 상대 경로와 검증한 판 SHA만 넣는다.
+//! panic 로그의 원본 경로는 저장소가 아는 상대 경로로 제한한다. SHA는 실행 파일이 주입한다.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -10,28 +10,17 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
 fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let root = manifest.join("../..");
-    // worktree의 .git은 파일이다. 실제 HEAD·index·현재 ref·packed-refs를 감시한다.
-    for name in ["HEAD", "index"] {
-        watch_git(&root, name);
-    }
-    // 새 checkout에는 packed-refs가 없다. 없는 파일을 감시하면 Cargo가 모든 호출에서
-    // build script와 aaa-common의 모든 의존 crate를 다시 빌드한다. loose ref의 생성·삭제는
-    // 아래 ref 감시가, detached HEAD의 변경은 HEAD 감시가 맡는다.
-    if let Some(path) = git_path(&root, "packed-refs").filter(|path| path.exists()) {
-        println!("cargo:rerun-if-changed={}", path.display());
-    }
-    if let Some(name) = git(&root, &["symbolic-ref", "-q", "HEAD"]) {
-        watch_git(&root, &name);
-    }
-    let sha = git(&root, &["rev-parse", "HEAD"])
-        .filter(|s| matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .unwrap_or_else(|| "unknown".into());
+    // tracked Rust 파일 목록만 감시한다. SHA를 공통 crate에 넣으면 매 커밋마다 모든 backend가 재컴파일된다.
+    watch_git(&root, "index");
     let files = git(&root, &["ls-files", "-z", "--", "*.rs"]).unwrap_or_default();
     let mut paths: Vec<_> = files.split('\0').filter(|s| !s.is_empty()).collect();
     paths.sort_unstable();
     // 생성물에 홈 절대 경로를 넣지 않는다. git 없는 소스 배포는 external/unknown으로 숨긴다.
-    let source = format!("pub const BUILD_SHA: &str = {sha:?};\nconst SOURCE_FILES: &[&str] = &{paths:?};\n");
-    std::fs::write(PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("panic_build.rs"), source).unwrap();
+    let source = format!("const SOURCE_FILES: &[&str] = &{paths:?};\n");
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("panic_build.rs");
+    if std::fs::read_to_string(&output).ok().as_deref() != Some(&source) {
+        std::fs::write(output, source).unwrap();
+    }
 }
 
 fn watch_git(root: &Path, name: &str) {
