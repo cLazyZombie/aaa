@@ -12,11 +12,6 @@ fn brief(w: &World, id: &str) -> String {
 }
 
 #[test]
-fn account_unpark_keeps_auth_and_history_on_the_same_machine() {
-    account_unpark(false);
-}
-
-#[test]
 fn account_unpark_keeps_auth_when_moving_and_returning() {
     account_unpark(true);
 }

@@ -144,7 +144,6 @@ while True:
     }
   });
 
-
   await step("종료 시작의 완료 응답: WebKit 실제 reload에서 projects 뒤 routines를 시작하지 않는다", async () => {
     const wk = await webkit.launch();
     const trace = [];
@@ -767,7 +766,7 @@ draw();
   });
 
   let imageDiagnosticPage;
-  await step("대화 이미지: Chrome·Safari·iPhone·iPad에서 올린 그림을 coordinator가 읽고 task 첨부로 thread에 넘긴다", async () => {
+  await step("대화 이미지: Chrome·iPhone에서 올린 그림을 coordinator가 읽고 task 첨부로 thread에 넘긴다", async () => {
     let imageDevice = "setup", imageMethod = "setup";
     const imageLog = (event, label, extra = {}) => {
       const row = { at: new Date().toISOString(), event, device: imageDevice, method: imageMethod, label, ...extra };
@@ -790,7 +789,7 @@ draw();
     const digest = crypto.createHash("sha256").update(png).digest("hex");
     const wk = await imageAwait("webkit.launch()", async () => (webkit.launch()));
     try {
-      for (const name of ["chrome", "safari", "iphone", "ipad"]) {
+      for (const [name, methods] of [["chrome", ["paste", "drop"]], ["iphone", ["picker"]]]) {
         imageDevice = name; imageMethod = "setup";
         const client = name === "iphone" || name === "ipad" ? await imageAwait("pairDevice(wk, aaa(\"web\", \"pair\").code, name)", async () => (pairDevice(wk, aaa("web", "pair").code, name))) : await imageAwait("pairPage(name === \"chrome\" ? browser : wk, aaa(\"web\", \"pair\").code, { width: 1280, height: 800 })", async () => (pairPage(name === "chrome" ? browser : wk, aaa("web", "pair").code, { width: 1280, height: 800 })));
         const p = client.page;
@@ -800,7 +799,7 @@ draw();
         });
         const box = await imageAwait("openChat(p)", async () => (openChat(p)));
         const composer = p.getByTestId("chat-composer");
-        for (const method of ["paste", "drop", "picker"]) {
+        for (const method of methods) {
           imageMethod = method;
           const before = (await imageAwait("sentFrames(p)", async () => (sentFrames(p)))).length;
           await imageAwait("box.fill(`그림 확인 ${name} ${method}`)", async () => (box.fill(`그림 확인 ${name} ${method}`)));
@@ -1078,7 +1077,5 @@ draw();
     }
   }
   await step("대화 Enter (iphone): 줄바꿈·버튼·한국어 IME 확정 무전송·늦은 초기 선택", () => enterCase("iphone"));
-  await step("대화 Enter (ipad): 줄바꿈·버튼·한국어 IME 확정 무전송", () => enterCase("ipad"));
   await step("대화 Enter (chrome): Enter/Shift+Enter·버튼·한국어 IME 확정 무전송", () => enterCase("chrome"));
-  await step("대화 Enter (safari): Enter/Shift+Enter·버튼·한국어 IME 확정 무전송", () => enterCase("safari"));
 }

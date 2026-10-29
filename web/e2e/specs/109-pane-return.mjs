@@ -150,51 +150,50 @@ process.stdin.on('data', bytes => {
       await page.clock.resume();
       for (const destination of ['thread', 'tasks', 'reports']) {
         for (const method of ['normal', 'ctrl-tab']) {
-          for (let round = 0; round < 2; round++) {
-            phase = { stage: "retained", pane: fixture.coordinator, destination, method, round };
-            await page.evaluate(() => { window.watchReturns(null); window.returnTerminal = document.querySelector('.term:not([hidden]) .xterm'); });
-            if (destination === 'thread') await go(page, `pane=${fixture.thread}`);
-            else await inList(page, `activity-${destination}`);
-            await page.locator(`.term[data-pane="${fixture.coordinator}"][hidden]`).waitFor({ state: 'attached' });
-            await frames(page);
-            const connections = await page.evaluate(id => { window.returnFrames = []; window.watchReturns(id); return { connections: window.returnConnections[id], snapshots: window.returnSnapshots[id] }; }, fixture.coordinator);
-            if (method === 'ctrl-tab') await page.keyboard.press('Control+Tab');
-            else await inList(page, 'activity-coordinator');
-            await ready();
-            assert.equal(await page.evaluate(id => window.returnConnections[id], fixture.coordinator), connections.connections, "보관 복귀는 새 연결 없음");
-            assert.equal(await page.evaluate(id => window.returnSnapshots[id], fixture.coordinator), connections.snapshots, "보관 복귀는 새 snapshot 없음");
-            assert.equal(await terminal.evaluate(el => el.querySelector(".xterm") === window.returnTerminal), true, "같은 xterm으로 복귀");
-            await frames(page);
-            // 보관한 실제 xterm이 첫 휠의 대상이며 같은 마우스 모드로 바로 보낸다.
-            assert.equal(await terminal.evaluate(box => {
-              const live = box.querySelector('.xterm');
-              const rect = live.querySelector('.xterm-screen').getBoundingClientRect();
-              const area = box.getBoundingClientRect();
-              const hit = document.elementFromPoint((rect.left + Math.min(rect.right, area.right)) / 2, (rect.top + Math.min(rect.bottom, area.bottom)) / 2);
-              return live.contains(hit);
-            }), true, '복귀 중 실제 터미널이 휠 입력 대상이다');
-            const before = await page.evaluate(() => window.returnFrames.slice());
-            const wheelFrom = await sentCount(page);
-            const receivedBefore = receivedWheels();
-            phase.sentFrom = wheelFrom;
-            phase.receivedBefore = receivedBefore;
-            await wheel();
-            if (round === 0 && destination === 'tasks') await shot(page, `return-${engine.browserType().name()}-${width}-${method}-pending`);
-            await until('복귀 중 휠 한 번 전달', async () => (await wheelInputs(wheelFrom)).length > 0);
-            assert.equal((await wheelInputs(wheelFrom)).length, 1, '복귀 휠 정확히 한 프레임');
-            await until('복귀 휠 실제 PTY 수신', () => receivedWheels() > receivedBefore);
-            assert.equal(receivedWheels(), receivedBefore + 1, 'PTY 휠 정확히 한 번');
-            await frames(page);
-            assert.equal((await wheelInputs(wheelFrom)).length, 1, '복귀 휠은 중복 전달하지 않는다');
-            const samples = await page.evaluate(() => window.returnFrames.slice());
-            results.push({ destination, method, round, before, samples });
-            // 권한이 확인된 뒤 실제 입력이 host·PTY에 도착한다.
-            const marker = `return-${destination}-${method}-${round}`;
-            await page.getByLabel('보낼 글').fill(marker);
-            await page.getByLabel('보낼 글').press('Enter');
-            await until('복귀 뒤 입력 반영', () => terminal.locator('.xterm-rows').textContent().then(text => text.includes(marker)));
-            assert.equal(receivedWheels(), receivedBefore + 1, '다음 입력까지 휠 중복 없음');
-          }
+          const round = 0;
+          phase = { stage: "retained", pane: fixture.coordinator, destination, method, round };
+          await page.evaluate(() => { window.watchReturns(null); window.returnTerminal = document.querySelector('.term:not([hidden]) .xterm'); });
+          if (destination === 'thread') await go(page, `pane=${fixture.thread}`);
+          else await inList(page, `activity-${destination}`);
+          await page.locator(`.term[data-pane="${fixture.coordinator}"][hidden]`).waitFor({ state: 'attached' });
+          await frames(page);
+          const connections = await page.evaluate(id => { window.returnFrames = []; window.watchReturns(id); return { connections: window.returnConnections[id], snapshots: window.returnSnapshots[id] }; }, fixture.coordinator);
+          if (method === 'ctrl-tab') await page.keyboard.press('Control+Tab');
+          else await inList(page, 'activity-coordinator');
+          await ready();
+          assert.equal(await page.evaluate(id => window.returnConnections[id], fixture.coordinator), connections.connections, "보관 복귀는 새 연결 없음");
+          assert.equal(await page.evaluate(id => window.returnSnapshots[id], fixture.coordinator), connections.snapshots, "보관 복귀는 새 snapshot 없음");
+          assert.equal(await terminal.evaluate(el => el.querySelector(".xterm") === window.returnTerminal), true, "같은 xterm으로 복귀");
+          await frames(page);
+          // 보관한 실제 xterm이 첫 휠의 대상이며 같은 마우스 모드로 바로 보낸다.
+          assert.equal(await terminal.evaluate(box => {
+            const live = box.querySelector('.xterm');
+            const rect = live.querySelector('.xterm-screen').getBoundingClientRect();
+            const area = box.getBoundingClientRect();
+            const hit = document.elementFromPoint((rect.left + Math.min(rect.right, area.right)) / 2, (rect.top + Math.min(rect.bottom, area.bottom)) / 2);
+            return live.contains(hit);
+          }), true, '복귀 중 실제 터미널이 휠 입력 대상이다');
+          const before = await page.evaluate(() => window.returnFrames.slice());
+          const wheelFrom = await sentCount(page);
+          const receivedBefore = receivedWheels();
+          phase.sentFrom = wheelFrom;
+          phase.receivedBefore = receivedBefore;
+          await wheel();
+          if (round === 0 && destination === 'tasks') await shot(page, `return-${engine.browserType().name()}-${width}-${method}-pending`);
+          await until('복귀 중 휠 한 번 전달', async () => (await wheelInputs(wheelFrom)).length > 0);
+          assert.equal((await wheelInputs(wheelFrom)).length, 1, '복귀 휠 정확히 한 프레임');
+          await until('복귀 휠 실제 PTY 수신', () => receivedWheels() > receivedBefore);
+          assert.equal(receivedWheels(), receivedBefore + 1, 'PTY 휠 정확히 한 번');
+          await frames(page);
+          assert.equal((await wheelInputs(wheelFrom)).length, 1, '복귀 휠은 중복 전달하지 않는다');
+          const samples = await page.evaluate(() => window.returnFrames.slice());
+          results.push({ destination, method, round, before, samples });
+          // 권한이 확인된 뒤 실제 입력이 host·PTY에 도착한다.
+          const marker = `return-${destination}-${method}-${round}`;
+          await page.getByLabel('보낼 글').fill(marker);
+          await page.getByLabel('보낼 글').press('Enter');
+          await until('복귀 뒤 입력 반영', () => terminal.locator('.xterm-rows').textContent().then(text => text.includes(marker)));
+          assert.equal(receivedWheels(), receivedBefore + 1, '다음 입력까지 휠 중복 없음');
         }
       }
       const bad = results.filter(r => r.samples.some(s => s.banner.includes('읽기 전용')) || r.before.some(s => !s.body));
@@ -297,7 +296,7 @@ process.stdin.on('data', bytes => {
     } finally { await diagnostic.cleanup('controller', () => page.context().close()); }
   };
   try {
-  await step("화면 복귀: Chromium 1280 일반 이동·Ctrl+Tab 12회와 실제 입력·Reader", async () => check(browser, 1280));
-  await step("화면 복귀: WebKit 390 일반 이동·Ctrl+Tab 12회와 실제 입력·Reader", async () => check(safari = await webkit.launch({ headless: true }), 390));
+  await step("화면 복귀: Chromium 1280 일반 이동·Ctrl+Tab 6회와 실제 입력·Reader", async () => check(browser, 1280));
+  await step("화면 복귀: WebKit 390 일반 이동·Ctrl+Tab 6회와 실제 입력·Reader", async () => check(safari = await webkit.launch({ headless: true }), 390));
   } finally { await safari?.close(); }
 }

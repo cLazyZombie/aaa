@@ -33,9 +33,9 @@ if tool == "python3":
     else:
         stage = "test"
 elif tool == "cargo":
-    stage = args[0]
+    stage = "build" if "--no-run" in args else args[0]
     if stage == "build":
-        binary = root / "target/e2e/aaa"
+        binary = root / ("target/verify/aaa" if "--no-run" in args else "target/e2e/aaa")
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("fixture binary")
     if stage != "clippy":
@@ -58,13 +58,15 @@ else:
     sys.exit(0)
 print(f"LIVE-{stage}-한글", end="", flush=True)
 print(f"stderr-{stage}", file=sys.stderr, flush=True)
+if stage in ("test", "e2e") and os.environ.get("EXPECT_CLIPPY_FIRST"):
+    assert (root / "clippy.finished").exists(), "clippy가 끝나기 전에 시험 시작"
 if os.environ.get("PANIC_FIXTURE"):
     print("test rollout::owner ... FAILED")
     print("thread 'rollout::owner' (3140) panicked at crates/aaa-host/src/rollout/web_tests.rs:372:102:")
     print('called `Result::unwrap()` on an `Err` value: ErrorBody { code: BadRequest, message: "경로% 검사 ' + os.environ['CI_EXCERPT_TOKEN'] + '" }')
     for frame in range(30):
         print(f"   {frame}: stack frame")
-if os.environ.get("GATE"):
+if os.environ.get("GATE") and stage != "clippy":
     with socket.create_connection(("127.0.0.1", int(os.environ["GATE"])), timeout=10) as link:
         link.sendall(stage.encode())
         assert link.recv(1) == b"!"
@@ -104,7 +106,7 @@ class CiLocal(unittest.TestCase):
         (self.root / "web/dist").mkdir(parents=True)
         # e2e의 기존 번들 최신성 검사도 그대로 실행한다.
         (self.root / "web/dist/index.html").touch()
-        for name in ("ci-local.sh", "ci_stream.py", "ci_failure_excerpt.py", "workspace_metrics.py", "check_fixture_secrets.py"):
+        for name in ("ci-local.sh", "ci_resources.py", "ci_stream.py", "ci_failure_excerpt.py", "workspace_metrics.py", "check_fixture_secrets.py"):
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
         for name in ("cargo", "npm", "node", "python3", "public"):
             self.write_tool(self.root / "tools" / name)
@@ -119,7 +121,7 @@ class CiLocal(unittest.TestCase):
         path.write_text(f"#!{sys.executable}\n" + TOOL)
         path.chmod(0o755)
 
-    def run_ci(self, *args, gate=False, stages=("test", "e2e", "clippy"), live_output=True):
+    def run_ci(self, *args, gate=False, stages=("test", "e2e"), live_output=True):
         command = ["bash", "scripts/ci-local.sh", "--logs", "logs", *args]
         if not gate:
             return subprocess.run(command, cwd=self.root, env=self.env,
@@ -210,8 +212,8 @@ class CiLocal(unittest.TestCase):
     def test_rust_failure_waits_for_python_and_fails_the_stage(self):
         self.assert_python_and_rust("test")
 
-    def test_tee_runs_all_three_together_and_keeps_failure_and_final_bytes(self):
-        self.env.update(FAIL_STAGE="clippy", EXPECT_STAGES="test e2e clippy")
+    def test_tee_finishes_clippy_before_parallel_tests_and_keeps_failure_and_final_bytes(self):
+        self.env.update(FAIL_STAGE="clippy", EXPECT_STAGES="test e2e clippy", EXPECT_CLIPPY_FIRST="1")
         # 같은 --logs 폴더를 다시 써도 옛 완료 표지로 일찍 끝나면 안 된다.
         (self.root / "logs").mkdir()
         (self.root / "logs/.stream-done").touch()
@@ -224,7 +226,7 @@ class CiLocal(unittest.TestCase):
         for stage in ("test", "e2e", "clippy"):
             log = (self.root / f"logs/{stage}.log").read_text()
             self.assertEqual(log, f"LIVE-{stage}-한글stderr-{stage}\n" + "x" * 20000 + f"\nTAIL-{stage}")
-            self.assertIn(f"[{stage}] TAIL-{stage}", result.stdout)
+            self.assertIn(f"[{stage}] TAIL-{stage}" if stage != "clippy" else "TAIL-clippy", result.stdout)
         summary = (self.root / "logs/workspace-summary.tsv").read_text()
         self.assertIn("clippy|FAIL|", summary)
         for stage in ("test", "e2e", "public"):
@@ -291,16 +293,15 @@ class CiLocal(unittest.TestCase):
         self.assertFalse((self.root / "e2e.finished").exists())
 
     def test_build_failure_skips_dependents_but_runs_public(self):
-        for failing in ("build", "test"):
-            with self.subTest(failing=failing):
-                self.env["FAIL_STAGE"] = failing
-                result = self.run_ci("--tee")
-                self.assertEqual(result.returncode, 1, result.stdout)
-                summary = (self.root / "logs/workspace-summary.tsv").read_text()
-                for stage in ("test", "e2e", "clippy"):
-                    self.assertIn(f"{stage}|건너뜀:", summary)
-                    self.assertFalse((self.root / f"{stage}.finished").exists())
-                self.assertIn("public|ok|", summary)
+        self.env["FAIL_STAGE"] = "build"
+        result = self.run_ci("--tee")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        summary = (self.root / "logs/workspace-summary.tsv").read_text()
+        for stage in ("test", "e2e"):
+            self.assertIn(f"{stage}|건너뜀:", summary)
+            self.assertFalse((self.root / f"{stage}.finished").exists())
+        self.assertNotIn("clippy|", summary, "기본 gate의 Clippy 중복은 owner/명시 CI에 맡긴다")
+        self.assertIn("public|ok|", summary)
 
     def test_without_tee_keeps_logs_and_summary(self):
         self.env["EXPECT_STAGES"] = "test e2e clippy"

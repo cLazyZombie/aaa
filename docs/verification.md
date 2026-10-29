@@ -4,7 +4,9 @@
 개발 후보마다 전체 ci-local·양 OS cross·Windows production을 반복하지 않는다. 공통 backend·protocol·의존성 변경,
 충돌 해소로 영향이 넓어졌으면 관련 owner를 더 확인하고 그 이유를 기록한다. 이미 발생한 실패는 원인과 수리 증거를 남긴다.
 
-`scripts/ci-local.sh`의 인자 없는 실행은 기존 전체 gate다. 단계 명령·병렬도·worker·시한·단언을 바꾸지 않는다.
+`scripts/ci-local.sh`의 인자 없는 실행은 web·fmt·build·test·e2e·public 전체 gate다.
+네이티브 strict Clippy는 개발의 관련 Rust owner와 GitHub OS별 명시 단계에서 실행한다. 착지 full의 양 OS strict cross도 유지한다.
+실행 자원과 시험 축소의 근거는 [t-1310 측정 기록](testing-ci-budget-t-1310.md)에 있다. 남긴 시험의 시한·단언은 유지한다.
 `scripts/verify.py`는 변경 범위와 단계를 기록하며 이 진입점을 호출한다. Python 3.11 이상을 사용한다.
 
 ## 개발
@@ -59,7 +61,21 @@ Windows 변경의 실제 native owner를 확인한다. cross 성공을 Windows �
 
 빠른 백업/원격 경로 회귀는 기존 Rust 전체와 GitHub OS 행렬에 남는다. iPhone 첫 응답 경합, history/PTY, 대량 처리 계약은
 웹 전용 착지에서도 웹 E2E 전체로 확인한다. GitHub `ci.yml`의 OS별 전체 검사와 브라우저 행렬은 유지한다. 따라서 OS 의미 차이의
-주기적인 전체 실행을 없애지 않는다. full gate의 병렬도 조정은 별도 작업에서 다룬다.
+주기적인 전체 실행을 없애지 않는다.
+
+## 전체 gate의 실행 자원
+
+web·fmt·build를 끝낸 뒤 Rust 시험과 웹 E2E를 함께 실행한다. Clippy도 명시했다면 build 뒤에 먼저 완료한다.
+Cargo 컴파일의 병렬도는 바꾸지 않는다. 실행 단계에서는 브라우저에 CPU 수의 2/5(최소 1·최대 6)를 주고 나머지를 Rust에 준다.
+10 CPU에서는 Rust 6·브라우저 4이다. 1 CPU에서는 두 단계를 직렬 실행한다. E2E 종료 뒤 Rust가 전체 CPU 예산을 돌려받는다.
+Unix Rust의 다중 owner 묶음은 기본 libtest thread 2개 이내, 독립 통합 owner는 한 슬롯을 쓴다.
+Windows의 기존 실행 환경과 명시한 worker/thread 값은 보존한다.
+E2E만 실행할 때는 CPU 둘마다 worker 하나·최대 6개다. `resources.tsv`와 Rust `state.json`/`events.jsonl`에 예산·반환을 기록한다.
+
+macOS 전체 실행은 이번 `cargo test --no-run`이 만든 verify CLI를 바이트 대조한 별도 사본으로 웹에도 쓴다.
+단독 build와 다른 OS는 기존 e2e CLI 빌드를 유지한다. Windows production의 별도 release·실기·같은 파일 전달 절차는 그대로다.
+독립 통합 owner와 큰 unit 모듈은 각각 작업으로 나눠 실행하며 전체 목록과 실행 수가 다르면 실패한다. doctest도 실행한다.
+시간 원장은 긴 작업을 먼저 배치하는 데만 쓰며 선택·실패 판정·시한에는 쓰지 않는다.
 
 ## Windows production은 최종 SHA에서 한 번
 

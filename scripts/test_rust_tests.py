@@ -164,16 +164,16 @@ sys.exit(7 if sys.argv[1] == 'complete' else 0)
                 for key in ["load_before", "load_after"]:
                     self.assertTrue(result[key] is None or len(result[key]) == 3)
 
-    def test_long_binaries_follow_m13_without_losing_unknown_or_short_jobs(self):
+    def test_long_jobs_start_first_without_losing_unknown_or_short_jobs(self):
         artifacts = [dict(executable=name, manifest_path=f"/workspace/{name}/Cargo.toml",
                           target=dict(name=name, kind=["test"]))
-                     for name in ("short", "e2e", "install", "new", "m13")]
+                     for name in ("short", "slow", "new", "m13")]
         names = ["rollout::one", "rollout::two", "rollout::three", "a", "b", "c"]
         with patch("scripts.rust_tests.subprocess.check_output",
                    return_value="\n".join(name + ": test" for name in names)):
-            jobs = plan(artifacts, 6, {"short": 1, "e2e": 17, "install": 40})
+            jobs = plan(artifacts, 6, {"short": 1, "slow": 40})
         self.assertEqual([job.name for job in jobs],
-                         [f"m13-{n}" for n in range(1, 7)] + ["new", "install", "e2e", "short"])
+                         ["new", "m13-1", "m13-2", "m13-3", "slow", "m13-4", "m13-5", "m13-6", "short"])
         self.assertCountEqual([name for job in jobs for name in job.tests or []], names)
         for job in jobs:
             self.assertEqual(job.cwd.name, "m13" if job.tests else job.name)
@@ -232,13 +232,75 @@ print(f'running {sys.argv[3]} tests')
 
     def test_every_test_is_selected_exactly_once_including_rollout(self):
         names = [f"module::case_{n}" for n in range(99)] + ["rollout::restart"]
-        for count in (1, 2, 3, 8):
-            groups = partitions(names, count)
-            self.assertEqual(sorted(name for group in groups for name in group), sorted(names))
-            self.assertEqual(groups[0], ["rollout::restart"])
-            self.assertTrue(all(groups))
+        groups = partitions(names)
+        self.assertEqual(sorted(name for group in groups for name in group), sorted(names))
+        self.assertEqual(groups[0], ["rollout::restart"])
+        self.assertTrue(all(len(group) == 1 for group in groups))
         with self.assertRaises(ValueError):
-            partitions(["same", "same"], 2)
+            partitions(["same", "same"])
+
+    def test_module_and_install_splits_keep_each_original_owner_once(self):
+        names = ["backup::tests::one", "backup::tests::two", "router::tests::three"]
+        artifacts = [dict(executable=name, manifest_path=f"/workspace/{name}/Cargo.toml",
+                          target=dict(name=name, kind=[kind]))
+                     for name, kind in (("aaa_host", "lib"), ("install", "test"))]
+        with patch("scripts.rust_tests.subprocess.check_output",
+                   return_value="\n".join(name + ": test" for name in names)):
+            jobs = plan(artifacts, 4)
+        for target in ("aaa_host", "install"):
+            selected = [job for job in jobs if job.name.startswith(target + "-")]
+            self.assertCountEqual([name for job in selected for name in job.tests], names)
+            self.assertTrue(all("--exact" in job.argv for job in selected))
+            if target == "install":
+                self.assertTrue(all(len(job.tests) == 1 for job in selected))
+
+    def test_completed_browser_returns_slots_without_restarting_any_job(self):
+        with tempfile.TemporaryDirectory(prefix="aaa-rust-returned-cpu-") as tmp, socket.socket() as listener:
+            root = Path(tmp)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            listener.settimeout(3)
+            fixture = root / "child.py"
+            fixture.write_text("""import socket, sys
+with socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=3) as peer:
+    peer.sendall(sys.argv[2].encode())
+    assert peer.recv(1) == b'!'
+print('running 1 test')
+""")
+            completion = root / "e2e.result"
+            errors, seen = [], []
+
+            def finish_browser():
+                peers = []
+                try:
+                    peer, _ = listener.accept()
+                    peers.append(peer)
+                    seen.append(peer.recv(10))
+                    self.assertEqual(seen, [b"first"])
+                    # 처음 Rust 한 자리가 아직 점유 중이다. 브라우저 완료 뒤 두 자리를 반환한다.
+                    completion.write_text("e2e|ok\n")
+                    for _ in range(2):
+                        peer, _ = listener.accept()
+                        peers.append(peer)
+                        seen.append(peer.recv(10))
+                except Exception as error:
+                    errors.append(error)
+                finally:
+                    for peer in peers:
+                        peer.sendall(b"!")
+                        peer.close()
+
+            browser = threading.Thread(target=finish_browser)
+            browser.start()
+            jobs = [Job(name, [sys.executable, str(fixture), str(listener.getsockname()[1]), name], root, ["owner"])
+                    for name in ("first", "second", "third")]
+            results = execute(jobs, root, 3, 1, cpu_budget=1, release_budget=(completion, 3))
+            browser.join()
+            self.assertEqual(errors, [])
+            self.assertCountEqual(seen, [b"first", b"second", b"third"])
+            self.assertEqual(len(results), 3)
+            self.assertTrue(all(result["exit"] == 0 for result in results))
+
 
     def test_parallel_jobs_finish_without_dropping_a_failed_or_following_job(self):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-runner-") as tmp, socket.socket() as listener:

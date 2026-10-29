@@ -10,16 +10,17 @@
 #   bash scripts/ci-local.sh --only linux-clippy   Zig로 Linux strict cross 검사(선택 단계)
 #   bash scripts/ci-local.sh --only web,e2e --spec 23,109   개발 중 관련 E2E만
 #
-# 단계: web fmt build clippy test e2e public. web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 test·e2e·clippy를
-# 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee도 같은 병렬 경로에서 단계별 로그를 읽어 출력한다.
+# 기본: web fmt build test e2e public. test·e2e가 CPU 예산을 나눠 함께 돈다.
+# clippy는 개발 owner·CI가 명시해서 실행한다. 함께 고르면 준비 뒤 먼저 끝내 Cargo 잠금을 나눈다.
+# 1 CPU는 test·e2e도 직렬 실행하며 끝나면 public이다.
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
-#   build      내부 e2e 실행 파일과 verify unit 사전 컴파일(Windows release cfg도 check)
+#   build      verify 실행 파일·unit 사전 컴파일(Windows release cfg도 check)
 #   clippy     cargo clippy --profile verify --workspace --all-targets --locked --keep-going -- -D warnings
-#   test       Python 검사와 전체 Rust 시험을 함께 실행한다. binary·m13 분할과 doctest도 모두 유지한다
+#   test       Python 검사와 전체 Rust 시험을 함께 실행한다. 독립 owner 분할과 doctest도 유지한다
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
-#              spec 파일은 worker 여러 개가 함께 돈다(10 CPU 이상은 5/8 내림·최대10개, 그 밖은 core 둘마다 하나).
+#              전체 실행은 Rust와 CPU를 나누며, E2E만 실행하면 core 둘마다 하나·최대6 worker다.
 #              AAA_E2E_WORKERS=1이면 차례로.
 #              병렬 단계 전에 이번 build의 실행 파일을 별도 사본으로 고정한다(test의 Cargo 링크 갱신과 겹치지 않는다).
 #              아니면 스스로 빌드하고(바뀐 것이 없으면 그대로), web 없이 돌면 web/dist가 웹 소스보다 새것인지 본다.
@@ -31,8 +32,8 @@
 # 이 스크립트는 자식 프로세스에 신호를 보내지 않는다(각 명령이 끝나기를 기다린다. 함께 띄운 단계는 모두 끝날 때까지 wait).
 set -uo pipefail
 
-ALL="web fmt build clippy test e2e public"
-KNOWN="$ALL linux-clippy"
+ALL="web fmt build test e2e public"
+KNOWN="$ALL clippy linux-clippy"
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
 # 고정 binary 입력 경로와 Cargo 출력을 맞춰 외부 target의 낡은 파일을 쓰지 않는다.
@@ -67,6 +68,7 @@ for s in $ONLY $SKIP; do
 done
 # cross 도구·target이 없는 기본 CI에는 추가하지 않는다. 명시한 실행만 기존 집계에 넣는다.
 case " $ONLY " in *" linux-clippy "*) ALL="$ALL linux-clippy" ;; esac
+case " $ONLY " in *" clippy "*) ALL="$ALL clippy" ;; esac
 [ -n "$LOGS" ] || LOGS="target/ci-local/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$LOGS" || exit 2
 LOGS=$(cd "$LOGS" && pwd)
@@ -78,6 +80,10 @@ case "$(uname -s)" in
   *) OS=other ;;
 esac
 
+# 격리한 시험 CLI·host·agent마다 머신 전체 코어 수의 runtime을 만들지 않는다.
+# Windows native owner의 기존 환경은 유지한다.
+if [ "$OS" != windows ]; then export TOKIO_WORKER_THREADS=${TOKIO_WORKER_THREADS:-2}; fi
+
 wanted() {
   local s=$1
   case " $ALL " in *" $s "*) ;; *) return 1 ;; esac
@@ -86,18 +92,37 @@ wanted() {
   return 0
 }
 
+# Cargo 빌드의 병렬도는 바꾸지 않는다. 실행 단계만 같은 CPU를 중복 예약하지 않게 나눈다.
+CI_CPUS=1
+if wanted test || wanted e2e; then
+  ci_rust=0; wanted test && ci_rust=1
+  ci_web=0; wanted e2e && [ "$OS" != windows ] && ci_web=1
+  python3 scripts/ci_resources.py "$ci_rust" "$ci_web" >"$LOGS/resources.tsv" || exit 2
+  IFS='|' read -r CI_CPUS ci_rust_slots ci_web_workers <"$LOGS/resources.tsv"
+  if [ "$ci_rust" -eq 1 ]; then
+    export AAA_RUST_TEST_CPU_BUDGET=${AAA_RUST_TEST_CPU_BUDGET:-$ci_rust_slots}
+    export AAA_RUST_TEST_WORKERS=${AAA_RUST_TEST_WORKERS:-$CI_CPUS}
+    if [ "$OS" != windows ]; then export RUST_TEST_THREADS=${RUST_TEST_THREADS:-2}; fi
+  fi
+  if [ "$ci_web" -eq 1 ]; then export AAA_E2E_WORKERS=${AAA_E2E_WORKERS:-$ci_web_workers}; fi
+fi
+
 # ── 단계 명령(여기가 유일한 정의다) ──
 step_web() { python3 scripts/check_fixture_secrets.py && (cd web && npm ci --no-audit --no-fund && npm run build && npm test); }
 step_fmt() { cargo fmt --all --check; }
-# Windows release 전용 cfg는 check로 확인하고 내부 실행 파일은 e2e로 빌드한다.
+# Windows release 전용 cfg는 check로 확인하고 내부 실행 파일은 verify로 빌드한다.
 # 실제 배포 최적화·PDB 검증은 release workflow가 담당한다.
 step_build() {
   if [ "$OS" = windows ]; then
     cargo check --profile release --locked -p aaa --bin aaa --target x86_64-pc-windows-msvc || return $?
   fi
-  # test·clippy가 verify에서 모든 target을 검사하므로 e2e에서는 실제 실행 파일만 만든다.
-  cargo build --profile e2e --locked -p aaa --bin aaa || return $?
-  # cold unit codegen을 headless와 겹치지 않는다. test 단계의 같은 no-run 호출은 산출물 목록만 다시 모은다.
+  # macOS 전체 실행은 integration test의 CLI를 공유한다. 단독 build와 다른 OS의
+  # SSH/native owner가 요구하는 기존 e2e 산출물은 같은 명령으로 만든다.
+  if [ "$OS" != macos ] || ! wanted test || ! wanted e2e; then
+    cargo build --profile e2e --locked -p aaa --bin aaa || return $?
+  fi
+  # integration test가 쓰는 실제 verify/aaa를 웹에도 고정 복사한다. 같은 CLI를 두 profile로 만들지 않는다.
+  # cold unit codegen을 headless와 겹치지 않는다. test의 no-run은 산출물 목록만 다시 모은다.
   cargo test --profile verify --workspace --locked --no-fail-fast --no-run
 }
 # 한 crate가 실패해도 나머지를 모두 본다: 아니면 cargo가 새 unit을 띄우지 않아 뒤 crate의 오류가 로그에 없다(10-18 windows: process.rs
@@ -113,7 +138,7 @@ step_test() {
   fi
   local python_pid python_code=0 rust_code=0
   # 서로 산출물을 쓰지 않는 검사다. 어느 쪽이 실패해도 둘 다 끝까지 확인한다.
-  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_build_watch scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases scripts.test_verify scripts.test_windows_production >"$LOGS/python.log" 2>&1 &
+  python3 -m unittest scripts.test_fixture_secrets scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests scripts.test_build_watch scripts.test_release scripts.test_install_site scripts.test_ci_local scripts.test_ci_resources scripts.test_workspace_metrics scripts.test_workspace_record scripts.test_linux_cross scripts.test_short_ids scripts.test_case_phases scripts.test_verify scripts.test_windows_production >"$LOGS/python.log" 2>&1 &
   python_pid=$!
   python3 scripts/rust_tests.py --logs "$LOGS/rust" || rust_code=$?
   wait "$python_pid" || python_code=$?
@@ -136,12 +161,17 @@ cleanup_e2e_bin() {
 }
 trap cleanup_e2e_bin EXIT
 prepare_e2e_bin() {
+  local source="$ROOT/target/e2e/aaa"
+  if [ "$OS" = macos ] && [ "$(result_of build)" = ok ] && wanted test; then source="$ROOT/target/verify/aaa"; fi
   # 병렬 검증의 작업 파일과 분리해 이번 E2E가 실행할 바이트를 고정한다.
-  if [ "$(result_of build)" != ok ]; then cargo build --locked --profile e2e -p aaa --bin aaa || return 1; fi
+  if [ "$(result_of build)" != ok ]; then
+    cargo build --locked --profile e2e -p aaa --bin aaa || return 1
+    source="$ROOT/target/e2e/aaa"
+  fi
   E2E_BIN_DIR=$(mktemp -d "$ROOT/target/aaa-ci-e2e.XXXXXX") || return 1
   E2E_BIN="$E2E_BIN_DIR/aaa"
-  cp "$ROOT/target/e2e/aaa" "$E2E_BIN" || return 1
-  cmp "$ROOT/target/e2e/aaa" "$E2E_BIN" || return 1
+  cp "$source" "$E2E_BIN" || return 1
+  cmp "$source" "$E2E_BIN" || return 1
   echo "이번 빌드의 웹 E2E 실행 사본: $E2E_BIN"
 }
 step_e2e() {
@@ -247,22 +277,28 @@ skipped() {
 "
 }
 
-# build 뒤 서로 기대지 않는 단계. test가 가장 긴 길이라 먼저 띄우고, clippy는 cargo 잠금을 기다려도 끝이 늦어지지 않는 마지막
-TOGETHER="test e2e clippy"
+# clippy가 끝난 뒤 실행만 겹친다. Rust 준비·doctest가 Cargo 잠금을 다투지 않는다.
+TOGETHER="test e2e"
 
 started=$(date +%s)
 python3 scripts/workspace_metrics.py start "$LOGS" || true
 echo "ci-local: $OS, 로그 $LOGS"
 printf '%s\n' "$E2E_SPEC" >"$LOGS/e2e-selection.txt"
-for s in web fmt build; do
+for s in web fmt build clippy; do
   skipped "$s" || { run_step "$s"; collect "$s"; }
 done
 go=""
 for s in $TOGETHER; do skipped "$s" || go="$go $s"; done
+unset AAA_RUST_TEST_RELEASE_FILE
+case " $go " in
+  *" test e2e "*) export AAA_RUST_TEST_RELEASE_FILE="$LOGS/.e2e.result" ;;
+esac
+# 같은 로그 폴더를 다시 써도 이전 완료를 자원 반환으로 보지 않는다.
+for s in $go; do rm -f "$LOGS/.$s.result"; done
 case " $go " in
   *" e2e "*) prepare_e2e_bin >"$LOGS/e2e-binary.log" 2>&1 || E2E_PREP_FAILED=1 ;;
 esac
-if [ "$(echo $go | wc -w)" -lt 2 ]; then
+if [ "$CI_CPUS" -eq 1 ] || [ "$(echo $go | wc -w)" -lt 2 ]; then
   for s in $ALL; do
     case " $go " in *" $s "*) run_step "$s"; collect "$s" ;; esac
   done
