@@ -556,7 +556,7 @@ pub(super) fn run(args: &Args, original: &InstallInvocation, reporter: &mut outp
             Err(error) => {
                 println!(
                     "현지 검사를 통과하지 못했습니다: {}",
-                    error.error.as_ref().map_or("invalid_plan", |e| &e.code)
+                    error.error.as_ref().map_or("invalid_plan".into(), |e| format!("{} ({})", e.message, e.code))
                 );
                 let q = Question {
                     key: "retry",

@@ -3096,7 +3096,9 @@ export type InstallPlanContext = { platform: InstallPlatform, version: string, b
 
 export type InstallPlan = { schema: InstallPlanSchema, context: InstallPlanContext, choices: InstallChoices, };
 
-export type InstallError = { code: string, message: string, details: Array<string>, };
+export type InstallError = { code: string, message: string, details: Array<string>, disk_space?: InstallDiskSpace, };
+
+export type InstallDiskSpace = { required_gb: number, available_bytes: bigint, path: string, };
 
 export type InstallChange = { kind: string, action: string, state: InstallChangeState, };
 

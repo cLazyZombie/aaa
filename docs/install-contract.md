@@ -79,6 +79,15 @@ I0의 함수는 파일·env·OS·프로세스·네트워크를 읽거나 쓰지 
 | 기록/승인 | `--events-file`, `--authorization-stdin` 또는 `--authorization-file` | 승인 입력 둘 중 하나, EOF 뒤 적용. 비밀 stdin의 질문 응답 혼합 금지 |
 | 재개/조회 | `--resume ID`, `--status ID` | status 읽기만. ID와 소유자·instance·판·hash·실물 대조. 변경은 새 계획/승인 |
 
+작업 root의 디스크 여유가 기준보다 작으면 `work_space_insufficient`(exit 2)로 거부한다.
+기본 기준은 20GB(1GB = 1024³ bytes)이며 기존 설정·명시한 `--min-free-gb`를 적용하는 규칙은 같다.
+일반 CLI·wizard·웹 「머신 추가」는 필요량·남은 용량·검사한 작업 root를 오류에 표시한다.
+남은 용량은 소수 둘째 자리까지 표시하고 그 아래를 버려 기준 바로 아래를 기준 이상으로 보이지 않게 한다.
+JSON 오류의 선택적 `disk_space`에는 `required_gb`·`available_bytes`·`path`를 담는다.
+이 경로는 해당 디스크 진단에만 쓰며 다른 입력·설정·하위 오류 원문을 공개하지 않는다.
+SSH `install-probe`도 현지 검사 실패의 원래 `InstallResult`와 종료 코드를 반환한다.
+host는 디스크 부족 코드와 관측값을 검증해 문구를 만들며 이 진단에 임의 원격 stdout·stderr·message는 표시하지 않는다.
+
 역할에 맞지 않는 선택을 버리지 않는다. 공백·한글·괄호·`&`·`%`·`!`·따옴표·역슬래시·drive/UNC는 argv 데이터다.
 줄바꿈/NUL/제어 문자·`$(`·backtick은 인자에서 거부한다. 경로는 대상 OS 절대 경로를 요구한다.
 SSH의 POSIX/PowerShell/cmd 인용은 t-0471 전송 adapter의 소유다. 공백 join으로 명령을 만들지 않는다.

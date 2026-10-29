@@ -785,6 +785,31 @@
         "windows_scm"
       ]
     },
+    "InstallDiskSpace": {
+      "description": "디스크 부족 진단에 필요한 관측값. path는 검사한 작업 root만 담는다.",
+      "type": "object",
+      "properties": {
+        "available_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string"
+        },
+        "required_gb": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "required_gb",
+        "available_bytes",
+        "path"
+      ]
+    },
     "InstallEnroll": {
       "type": "string",
       "enum": [
@@ -840,7 +865,7 @@
       ]
     },
     "InstallError": {
-      "description": "공개 오류에는 입력 원문·OS 하위 오류를 싣지 않는다.",
+      "description": "공개 오류에는 임의 입력 원문·OS 하위 오류를 싣지 않는다. disk_space는 작업 root 진단만 허용한다.",
       "type": "object",
       "properties": {
         "code": {
@@ -851,6 +876,16 @@
           "items": {
             "type": "string"
           }
+        },
+        "disk_space": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallDiskSpace"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "message": {
           "type": "string"

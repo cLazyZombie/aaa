@@ -222,6 +222,42 @@ fn install_errors_are_sanitized_and_never_prompt_or_write() {
 }
 
 #[test]
+fn insufficient_work_space_reports_observed_capacity_and_path_without_writes() {
+    let lab = Lab::new();
+    let before = snapshot(&lab.0);
+    let mut args = lab.args();
+    let at = args.iter().position(|a| a == "--min-free-gb").unwrap();
+    args[at + 1] = u32::MAX.to_string();
+    args.push("--non-interactive".into());
+    args.push("--json".into());
+    let out = lab.run(&args);
+    assert_eq!(out.status.code(), Some(2));
+    let result = json(&out);
+    assert_eq!(result["error"]["code"], "work_space_insufficient");
+    let space = &result["error"]["disk_space"];
+    assert_eq!(space["required_gb"], u32::MAX);
+    assert!(space["available_bytes"].as_u64().unwrap() < u64::from(u32::MAX) * 1024 * 1024 * 1024);
+    let root = lab.0.canonicalize().unwrap().join("작업 root");
+    assert_eq!(space["path"], root.to_string_lossy().as_ref());
+    let message = result["error"]["message"].as_str().unwrap();
+    assert!(message.starts_with("디스크 여유 부족: 필요 4294967295GB, 남은 "));
+    assert!(message.contains(root.to_str().unwrap()));
+    args.pop();
+    let out = lab.run(&args);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("디스크 여유 부족: 필요 4294967295GB, 남은 "), "{text}");
+    assert!(text.contains(root.to_str().unwrap()));
+    args.push("--json-stream".into());
+    let out = lab.run(&args);
+    assert_eq!(out.status.code(), Some(2));
+    let item: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(item["type"], "result");
+    assert_eq!(item["result"]["error"]["disk_space"]["path"], space["path"]);
+    assert_eq!(snapshot(&lab.0), before, "디스크 부족 거부는 파일을 만들지 않는다");
+}
+
+#[test]
 fn install_status_is_read_only_and_input_authorization_cannot_open_writes() {
     let lab = Lab::new();
     let authorization = lab.0.join("authorization.json");

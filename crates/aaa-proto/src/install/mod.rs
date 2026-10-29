@@ -238,7 +238,29 @@ pub struct InstallPlan {
     pub choices: InstallChoices,
 }
 
-/// 공개 오류에는 입력 원문·OS 하위 오류를 싣지 않는다.
+/// 디스크 부족 진단에 필요한 관측값. path는 검사한 작업 root만 담는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallDiskSpace {
+    pub required_gb: u32,
+    pub available_bytes: u64,
+    pub path: String,
+}
+impl InstallDiskSpace {
+    pub fn message(&self) -> String {
+        // 기존 기준과 같은 1GB = 1024³ bytes. 경계 바로 아래를 20.00GB로 반올림하지 않는다.
+        let hundredths = u128::from(self.available_bytes) * 100 / (1024 * 1024 * 1024);
+        let path: String = self.path.chars().map(|c| if c.is_control() { '�' } else { c }).collect();
+        format!(
+            "디스크 여유 부족: 필요 {}GB, 남은 {}.{:02}GB ({path})",
+            self.required_gb,
+            hundredths / 100,
+            hundredths % 100,
+        )
+    }
+}
+
+/// 공개 오류에는 임의 입력 원문·OS 하위 오류를 싣지 않는다. disk_space는 작업 root 진단만 허용한다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, thiserror::Error)]
 #[error("{code}: {message}")]
 #[serde(deny_unknown_fields)]
@@ -246,6 +268,9 @@ pub struct InstallError {
     pub code: String,
     pub message: String,
     pub details: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub disk_space: Option<InstallDiskSpace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -383,12 +408,23 @@ impl InstallResult {
                 code: "invalid_arguments".into(),
                 message: "설치 인자를 확인하세요".into(),
                 details: vec![],
+                disk_space: None,
             }),
             rollback: InstallRollback { state: InstallRollbackState::NotRequested, remaining: vec![] },
             resume: None,
             service: None,
             web: None,
         }
+    }
+    pub fn insufficient_work_space(space: InstallDiskSpace) -> Self {
+        let mut result = Self::invalid();
+        result.error = Some(InstallError {
+            code: "work_space_insufficient".into(),
+            message: space.message(),
+            details: vec![],
+            disk_space: Some(space),
+        });
+        result
     }
     pub fn valid_exit(&self) -> bool {
         match self.status {
@@ -636,6 +672,7 @@ pub fn typescript() -> String {
         InstallPlanContext::decl(&cfg),
         InstallPlan::decl(&cfg),
         InstallError::decl(&cfg),
+        InstallDiskSpace::decl(&cfg),
         InstallChange::decl(&cfg),
         InstallCheck::decl(&cfg),
         InstallNeedsUser::decl(&cfg),

@@ -90,6 +90,7 @@ pub fn error(code: &str, exit: u8) -> Box<InstallResult> {
                 code: code.into(),
                 message: "설치 계획의 입력과 현지 전제를 확인하세요".into(),
                 details: vec![],
+                disk_space: None,
             })
         }
     }

@@ -195,6 +195,38 @@ export default async function ({ page }) {
       if (submitted !== 1) throw new Error(`계획을 ${submitted}번 보냈다`);
     } finally { await page.unroute("**/api/v1/call", intercept); }
   });
+  await step("디스크 부족: 필요량·남은 용량·검사 경로 표시", async () => {
+    const current = await page.evaluate(async () => (await fetch("/api/v1/call", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "machine_setup_list" }),
+    })).json());
+    const source = current.ok.setups.find((s) => s.target === "lab");
+    // OS 실행·스토리지 판정은 CLI/host 시험이 맡고, 여기서는 host의 오류가 그대로 보이는지 확인한다.
+    let shown = { ...source, phase: "ready", detected: { ...source.detected, os: "macos" } };
+    const message = "원격 install 계획: 디스크 여유 부족: 필요 20GB, 남은 7.50GB (/work/작업 root)";
+    const intercept = async (route) => {
+      const req = route.request().postDataJSON();
+      if (req.op === "machine_setup_plan") {
+        shown = { ...shown, phase: "failed", settings: req.settings, error: message, updated_ms: shown.updated_ms + 1 };
+        await route.fulfill({ json: { ok: { kind: "machine_setup", setup: shown } } });
+      } else if (req.op === "machine_setup_list") {
+        await route.fulfill({ json: { ok: { kind: "machine_setups", setups: [shown] } } });
+      } else await route.continue();
+    };
+    await page.route("**/api/v1/call", intercept);
+    try {
+      await page.reload();
+      const dialog = await openSettings(page, "머신");
+      const job = dialog.getByTestId("machine-setup").locator('li[data-target="lab"]');
+      const form = job.getByTestId("machine-setup-settings");
+      await form.getByTestId("machine-setup-host").fill("127.0.0.1:7430");
+      await form.getByTestId("machine-setup-work-root").fill("/work/작업 root");
+      await form.getByTestId("machine-setup-plan-start").click();
+      await job.and(page.locator('[data-phase="failed"]')).waitFor();
+      if (!(await job.getByText(message, { exact: true }).isVisible())) throw new Error(`디스크 진단 누락: ${await job.innerText()}`);
+      if ((await job.innerText()).includes("사용법이 잘못")) throw new Error("디스크 부족을 사용법 오류로 표시했다");
+      await shot(page, "72-install-disk-space");
+    } finally { await page.unroute("**/api/v1/call", intercept); }
+  });
   await step("Windows 전용 가림 입력 Chromium 1280: 취소·일회 전달·거부·페이지 종료·기록 누출", () => machinePassword("chromium", 1280));
   await step("Windows 전용 가림 입력 Chromium 390: 취소·일회 전달·거부·페이지 종료·기록 누출", () => machinePassword("chromium", 390));
   await step("Windows 전용 가림 입력 WebKit 1280: 취소·일회 전달·거부·페이지 종료·기록 누출", () => machinePassword("webkit", 1280));

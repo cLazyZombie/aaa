@@ -5,7 +5,10 @@ use sha2::{Digest, Sha256};
 
 fn invalid(code: &str) -> InstallError {
     InstallError {
-        code: code.into(), message: "설치 선택의 필수값과 상충 항목을 확인하세요".into(), details: vec![]
+        code: code.into(),
+        message: "설치 선택의 필수값과 상충 항목을 확인하세요".into(),
+        details: vec![],
+        disk_space: None,
     }
 }
 fn require(ok: bool, code: &str) -> Result<(), InstallError> {
