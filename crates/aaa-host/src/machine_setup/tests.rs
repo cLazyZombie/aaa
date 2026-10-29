@@ -1658,7 +1658,17 @@ fn failed_probe_reports_only_validated_disk_space_observations() {
     // 경계 바로 아래를 20GB로 반올림해 오해시키지 않는다.
     result.error.as_mut().unwrap().disk_space.as_mut().unwrap().available_bytes = 20 * 1024 * 1024 * 1024 - 1;
     assert!(install::probe_response(&response(&result), Some(2)).err().unwrap().contains("남은 19.99GB"));
-    for path in ["relative/private", "/private\nforged"] {
+    for path in [
+        "relative/private",
+        "/private\nforged",
+        r"\\?\UNC\private\share",
+        r"\\.\C:\private",
+        r"\\?\GLOBALROOT\Device\private",
+        r"\\?\C:\private\..\escape",
+        r"\\?\C:relative-private",
+        r"\\?\C:\private:stream",
+        "\\\\?\\C:\\private\nforged",
+    ] {
         result.error.as_mut().unwrap().disk_space.as_mut().unwrap().path = path.into();
         let why = install::probe_response(&response(&result), Some(2)).err().unwrap();
         assert!(why.contains("디스크 여유 부족") && !why.contains("private"));
@@ -1674,6 +1684,24 @@ fn failed_probe_reports_only_validated_disk_space_observations() {
         }
         let why = install::probe_response(&ran, code).err().unwrap();
         assert!(!why.contains("디스크 여유 부족") && !why.contains("private"));
+    }
+}
+
+#[test]
+fn remote_disk_shortage_preserves_capacity_for_windows_canonical_work_roots() {
+    use aaa_proto::install::*;
+    // 드라이브 경로의 기존 4096바이트 상한을 canonical 접두사 4바이트 때문에 줄이지 않는다.
+    let longest = format!("\\\\?\\C:\\{}", "a".repeat(4093));
+    for path in [r"\\?\C:\aaa-work", r"\\?\D:\작업 폴더\aaa-work", r"C:\aaa-work", &longest] {
+        let result = InstallResult::insufficient_work_space(InstallDiskSpace {
+            required_gb: 20,
+            available_bytes: 7 * 1024 * 1024 * 1024,
+            path: path.into(),
+        });
+        let ran = Ran { ok: false, stdout: serde_json::to_string(&result).unwrap(), stderr: String::new() };
+        let why = install::probe_response(&ran, Some(2)).err().unwrap();
+        assert!(why.contains("필요 20GB, 남은 7.00GB"), "{why}");
+        assert!(why.contains(path), "검사한 작업 경로가 빠졌다");
     }
 }
 
@@ -1717,7 +1745,7 @@ fn windows_choices_use_scm_and_remote_defaults_with_a_console_fallback() {
     assert_eq!(choices.service_account, Some(InstallAccount::CurrentUser));
     assert_eq!(choices.service_password_source, Some(InstallPasswordSource::Prompt));
     assert!(choices.state_dir.is_none() && choices.bin_path.is_none() && choices.launcher_policy.is_none());
-    for root in ["C:relative", r"C:\a\..\b", r"\\server\share", "/a/b", "C:/a\n"] {
+    for root in ["C:relative", r"C:\a\..\b", r"\\server\share", r"\\?\C:\aaa-work", "/a/b", "C:/a\n"] {
         assert!(
             install::choices(&MachineSetupSettings { work_root: root.into(), ..settings.clone() }, &detected).is_err()
         );

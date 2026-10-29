@@ -221,9 +221,10 @@ pub(crate) fn remote_why(step: &str, r: &Ran, code: Option<i32>) -> String {
     {
         if let Some(space) = error.disk_space.filter(|s| {
             s.available_bytes < u64::from(s.required_gb) * 1024 * 1024 * 1024
-                && s.path.len() <= 4096
-                && !s.path.chars().any(char::is_control)
-                && (remote_path_ok(&s.path) || super::windows::path(&s.path))
+                && (remote_path_ok(&s.path)
+                    // 현지 canonicalize 결과만 확장 길이 접두사를 벗겨 기존 드라이브 경로 규칙으로 검사한다.
+                    // 설정 입력·UNC·기기 namespace를 받는 범위는 넓히지 않는다.
+                    || super::windows::path(s.path.strip_prefix(r"\\?\").unwrap_or(&s.path)))
         }) {
             return format!("{step}: {}", space.message());
         }
