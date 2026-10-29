@@ -103,7 +103,7 @@ impl Host {
                 let Some(body) = read_optional(&path)? else {
                     continue;
                 };
-                if crate::report_mark::marker(&body) != Some("[완료]") {
+                if !crate::report_mark::done(crate::report_mark::marker(&body)) {
                     continue;
                 }
                 let at = catalog.rows.get(&id).map_or(0, |r| r.updated);
