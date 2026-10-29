@@ -61,12 +61,31 @@ Windows 전체 묶음의 별도 실패는 다음과 같다. 이 조사에서 기
 - Windows 시험 종료 뒤 서비스·예약 작업·Run·사용자 PATH·방화벽이 시작 목록과 같고,
   격리 폴더의 실행 중인 실행 파일은 0개임을 확인했다. 격리 폴더를 지웠다.
 
-## 다음 관측
+## 승인된 진단 CI의 결과
 
-현재 실기는 CI와 OS 빌드가 다르다. 진단 변경을 `hp/t-1303-win-auth-diagnostic`에 한 번 push해 기존 CI의
-Windows job에서 원래 묶음을 실행하는 안을 제안한다. 새 workflow·반복 실행·시한 변경은 없다.
-`read_call` 뒤 반환이 없는지, 반환 뒤 결과/프로세스 종료가 멈췄는지부터 구별한다.
-승인 전에는 push·병합하지 않는다. 성공 한 번만으로 원인 해결로 닫지 않는다.
+q-1863 1A에 따라 `9a9f2be2`를 `hp/t-1303-win-auth-diagnostic`에 한 번 push했다.
+[진단 Windows job](https://github.com/cLazyZombie/aaa/actions/runs/40819795921/job/123269332672)의
+`rust-tests-windows-2025-40819795921-1` artifact에서 전체 test.log를 직접 확인했다.
+
+- head SHA는 진단 후보와 같다. Windows job 전체가 통과했다. build·clippy·test·원문 보존과
+  SYSTEM SSH 설치·SCM·등록 단계도 통과했다.
+- Windows Server 2025 `10.0.26100`, image `windows-2025-vs2026` / `20261021.278.1`로
+  원본 실패와 OS 빌드·runner image가 같다. 같은 이미지에서도 이번 실행은 재현되지 않았다.
+- 문제의 `cancelled_or_automated_or_session_review_creates_no_issuer_or_approval`는 통과했다.
+  따라서 Ctrl+Z의 준비·호출·반환 표지 단언, Ctrl+C, 자동화 거부, issuer·approval 무변경 단언도 통과했다.
+- install 묶음은 **30통과·0실패, 36.81초**다. 전체 Rust test 단계는 3분 50초다.
+- 성공한 PTY의 개별 transcript는 libtest가 출력하지 않는다. 실제 단계 표지 원문이나
+  각 install 시험의 개별 시간은 이 artifact로 제시할 수 없다. 묶음 시간을 개별 시험 시간으로 쓰지 않는다.
+- 추가 push·CI 재실행·시한 변경은 없다. main에는 병합하지 않았다.
+
+이번에도 정체가 재현되지 않았다. **원인은 여전히 미확정이며, 정체 수리를 끝냈다고 판정하지 않는다.**
+이 진단으로 실제 실패가 관측돼야 `ReadConsoleW` 호출 전/내부/반환 뒤 중 정체 경계를 더 좁힐 수 있다.
+진단을 main에 포함해 자연 발생 실패를 관측하는 작업은 별도 착지 승인이 필요하다.
+
+추가 upstream 대조에서도 [#19994](https://github.com/microsoft/terminal/pull/19994)는 폭 1칸 ConPTY에
+wide glyph를 쓰는 cooked-read deadlock이고, [#19940](https://github.com/microsoft/terminal/pull/19940)은
+`ReadFile`의 Ctrl+Z 처리였다. 현재 120칸 ConPTY·`ReadConsoleW` 호출과 전제가 달라
+같은 원인으로 판정하거나 그 변경을 가져오지 않았다.
 
 ## 참고 구현
 
