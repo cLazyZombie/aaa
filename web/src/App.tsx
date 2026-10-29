@@ -67,7 +67,7 @@ import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { inAppLink } from "./reportLinks.ts";
 import type { AppRef } from "./appRef";
 import { normalizeAppTarget, uniqueAppTargets, type AppId } from "./appIds";
-import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppRefChip";
+import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs, type ChipAsk } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
 import { IdeaView } from "./IdeaView";
@@ -1389,6 +1389,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     ...[...questionLooks].map(([id, look]) => `${id}:${JSON.stringify(look)}`),
     ...[...reportNames.values()].map((r) => `${r.project}/${r.name}:${r.title ?? ""}`),
   ].join("\n");
+  const answerChipRef = useRef<(ask: ChipAsk, letter: string) => Promise<void>>(async () => {});
+  answerChipRef.current = async (ask, letter) => {
+    const t = askThreads.find((t) => t.project === ask.project && t.questions?.items.some((q) => q.id === ask.id));
+    const reply = t ? threadReload.current.beginReply(t) : null;
+    try {
+      const r = await call({ op: "question_reply", project: ask.project, id: ask.id, choice: letter, text: null });
+      if (r.kind === "thread" && reply) putThread(reply.finish(r));
+    } finally { reply?.cancel(); }
+  };
   const openRefRef = useRef<(ref: AppRef | AppId) => void>(() => {});
   openRefRef.current = (ref) => {
     if (ref.kind === "thread") {
@@ -1423,8 +1432,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         return questionLooks.get(ref.target) ?? { label: `${ref.target} 질문`, tone: "plain", state: null };
       },
       open: (ref) => openRefRef.current(ref),
+      // 칩의 선택지 단추: 짧은 질문 ID 답(CLI `thread answer q-ID A`와 같은 host 경로). 보기 권한은 단추가 없다
+      answer: role === "reader" ? undefined : (ask, letter) => answerChipRef.current(ask, letter),
     };
-  }, [refKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [refKey, role]); // eslint-disable-line react-hooks/exhaustive-deps
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);

@@ -77,15 +77,40 @@ export function questionKey(thread: string, threads: ThreadView[], done: AskReco
   return r ? `d:${r.id}` : null;
 }
 
+const choiceLetter = (c: { letter?: string }, i: number) => c.letter ?? String.fromCharCode(65 + i);
+
+/** 칩이 가리킨 질문 하나(q ID, 질문이 하나뿐인 카드는 thread·post 번호도): 일부 답이 있으면 그 답, 없으면 칩에서 고를 선택지 */
+function itemLook(target: string, label: string, q: ThreadQuestions, project?: string): AppRefLook | null {
+  const n = q.items.length === 1 && q.items[0]!.id && !q.items.some((item) => item.id === target) ? 0 : q.items.findIndex((item) => item.id === target);
+  const item = q.items[n];
+  if (!item?.id) return null;
+  const number = item.source_number ?? n + 1;
+  const pick = q.draft?.picks[n];
+  if (pick != null) return { label, tone: "done", state: `답함 · ${number}${choiceLetter(item.choices[pick] ?? {}, pick)}` };
+  if (q.draft?.comments?.[n]) return { label, tone: "done", state: `답함 · ${number}직접` };
+  if (!item.choices.length) return null;
+  return {
+    label, tone: "ask", state: "답할 것",
+    ask: {
+      id: item.id, project, text: item.text,
+      // 검수 카드의 B(고칠 점)는 글이 필요하다: 칩에서 고르면 카드를 연다.
+      choices: item.choices.map((c, i) => ({ letter: choiceLetter(c, i), label: c.label, recommended: c.recommended, card: q.review && i === 1 })),
+    },
+  };
+}
+
 /** 카드와 같은 대상으로 상태를 찾는다. q ID는 thread·coordinator·보존한 답 모두에 속할 수 있다. */
 export function questionRefLook(target: string, threads: ThreadView[], done: AskRecord[], requests: UserRequestView[] = []): AppRefLook {
   const label = `${target} 질문`;
   const key = questionKey(target, threads, done, requests);
   if (key?.startsWith("q:")) {
-    const q = threads.find((t) => t.id === key.slice(2))!.questions!;
-    return { label: `${label} ${q.items.length}개`, tone: "ask", state: "답할 것" };
+    const t = threads.find((t) => t.id === key.slice(2))!;
+    return itemLook(target, label, t.questions!, t.project) ?? { label: `${label} ${t.questions!.items.length}개`, tone: "ask", state: "답할 것" };
   }
-  if (key?.startsWith("r:")) return { label, tone: "ask", state: "답할 것" };
+  if (key?.startsWith("r:")) {
+    const r = requests.find((r) => r.id === key.slice(2));
+    return (r?.questions && itemLook(target, label, r.questions)) || { label, tone: "ask", state: "답할 것" };
+  }
   if (key?.startsWith("d:")) {
     const rec = done.find((r) => r.id === key.slice(2))!;
     return { label, tone: "done", state: rec.answer ? `답함 · ${rec.answer.summary}` : rec.summary };
