@@ -2007,6 +2007,7 @@ pub fn main() -> ExitCode {
         _ => ProcessKind::Cli,
     });
     if let Cmd::Install(args) = &cli.cmd {
+        init_log("off");
         return crate::install::run(
             args,
             cli.json,

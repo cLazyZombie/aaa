@@ -94,14 +94,28 @@ mod windows {
         };
         let mut value = vec![0u16; 16384];
         let mut count = 0;
+        // 질문·입력 원문은 남기지 않는다. 입력 준비와 실제 API 반환을 구별한다.
+        tracing::debug!(original_mode = original, input_mode = mode, "install_console_input_prepared");
         show(question)?;
+        tracing::debug!("install_console_read_call");
+        let started = std::time::Instant::now();
         let ok = unsafe { ReadConsoleW(handle, value.as_mut_ptr().cast(), value.len() as u32, &mut count, &control) };
+        // 로그 출력이 Win32의 thread-local 오류 번호를 바꾸기 전에 수집한다.
+        let os_error = (ok == 0).then(std::io::Error::last_os_error);
+        tracing::debug!(
+            success = ok != 0,
+            os_code = os_error.as_ref().and_then(std::io::Error::raw_os_error),
+            elapsed_ms = started.elapsed().as_millis(),
+            "install_console_read_returned"
+        );
         if ok == 0 {
-            return Err(if unsafe { GetLastError() } == ERROR_OPERATION_ABORTED {
+            let source_error = os_error.unwrap();
+            let mapped = if source_error.raw_os_error() == Some(ERROR_OPERATION_ABORTED as i32) {
                 error("installation_cancelled", 130)
             } else {
                 unavailable()
-            });
+            };
+            return Err(aaa_common::diagnostic::context(source_error, mapped));
         }
         if count as usize > value.len() {
             return Err(unavailable());

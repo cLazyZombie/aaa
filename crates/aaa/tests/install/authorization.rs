@@ -68,6 +68,8 @@ pub(super) fn terminal_controlled(
         }
     }
     command.env("TERM", "xterm-256color");
+    // 실제 Windows API의 준비/호출/반환만 관측한다. 질문과 입력 원문은 로그하지 않는다.
+    command.env("AAA_LOG", "aaa::install::prompt=debug");
     if session {
         command.env("AAA_SESSION_ID", "session-example");
     }
@@ -198,7 +200,14 @@ fn drive_terminal_on(
                 }
                 child.finished = true;
                 let output = redact_private(&String::from_utf8_lossy(&seen));
-                let needle = steps.get(answered).map_or("<PTY EOF>", |(needle, _)| *needle);
+                let waiting = if answered < steps.len() {
+                    "prompt"
+                } else if status.is_none() {
+                    "child_exit"
+                } else {
+                    "reader_done"
+                };
+                let needle = steps.get(answered).map(|(needle, _)| *needle);
                 // 비밀값을 먼저 가린 뒤 마지막 네 줄을 줄마다 200자로 제한한다.
                 let mut tail: Vec<_> = output.lines().rev().take(4).collect();
                 tail.reverse();
@@ -212,7 +221,7 @@ fn drive_terminal_on(
                     .collect::<Vec<_>>()
                     .join(" | ");
                 panic!(
-                    "install 승인 PTY({pid}) 사건 상한(elapsed={:?}): {output}\nPTY stalled: answered={answered}/{}, needle={needle:?}, child_exit={child_exit:?}, reader_done={reader_done}, tail={tail:?}",
+                    "install 승인 PTY({pid}) 사건 상한(elapsed={:?}): {output}\nPTY stalled: answered={answered}/{}, waiting={waiting}, needle={needle:?}, child_exit={child_exit:?}, reader_done={reader_done}, tail={tail:?}",
                     started.elapsed(),
                     steps.len()
                 );
@@ -286,8 +295,14 @@ fn cancelled_or_automated_or_session_review_creates_no_issuer_or_approval() {
     assert_eq!(snapshot(&lab.0), before);
     // OS의 실제 console EOF를 보낸다. Windows stdio는 Ctrl+Z, Unix canonical TTY는 Ctrl+D다.
     let eof = if cfg!(windows) { "\x1a" } else { "\x04" };
-    let (code, _) = terminal(&lab, &args, Some(eof), false);
+    let (code, text) = terminal(&lab, &args, Some(eof), false);
     assert_eq!(code, 130, "동의 전 EOF는 cancelled/130이다");
+    #[cfg(windows)]
+    for stage in ["install_console_input_prepared", "install_console_read_call", "install_console_read_returned"] {
+        assert!(text.contains(stage), "취소의 실제 console API 경계를 관측해야 한다: {}", redact_private(&text));
+    }
+    #[cfg(not(windows))]
+    let _ = text;
     assert_eq!(snapshot(&lab.0), before, "취소는 issuer와 승인 파일을 만들지 않는다");
     let (code, _) = terminal(&lab, &args, Some("\x03"), false);
     assert_eq!(code, 130, "외부 plain Ctrl+C도 cancelled/130 계약이다");
