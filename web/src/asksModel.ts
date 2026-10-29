@@ -94,7 +94,7 @@ function itemLook(target: string, label: string, q: ThreadQuestions, project?: s
     ask: {
       id: item.id, project, text: item.text,
       // 검수 카드의 B(고칠 점)는 글이 필요하다: 칩에서 고르면 카드를 연다.
-      choices: item.choices.map((c, i) => ({ letter: choiceLetter(c, i), label: c.label, recommended: c.recommended, card: q.review && i === 1 })),
+      choices: item.choices.map((c, i) => ({ letter: choiceLetter(c, i), label: c.label, recommended: c.recommended, card: q.review === true && i === 1 })),
     },
   };
 }
