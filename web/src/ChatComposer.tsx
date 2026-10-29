@@ -51,7 +51,7 @@ import { holdPageRef } from "./pageHold";
 import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
 import { useAppearance } from "./theme";
-import { receiptMethod, receiptSeen, receiptHash, inputTraceId, slashCommand } from "./inputReceipt";
+import { receiptMethod, receiptSeen, receiptHashes, inputTraceId, slashCommand, type ReceiptHashes } from "./inputReceipt";
 import { heldSend } from "./steerQueued";
 import { usePageVisible } from "./pageVisible";
 
@@ -66,10 +66,9 @@ const SLOW_MS = 10_000;
 /** 보냈지만 아직 기록에 없는 글(t-1069): Enter 즉시 대화 끝에 띄우고, 기록에 같은 새 사람 글이 보이면 지운다.
  * `stage`: 보내는 중(host 답 전) → 막힘(3초) → 전달됨(글과 Enter가 pane에 들어감). 새로고침 전에 보내던 글은 답을 모른다(unknown).
  * `stale`: 그 harness가 이미 적었어야 할 때가 지났는데 기록에 없다(Enter가 먹혔을 수 있다) */
-export interface PendingSend {
+export interface PendingSend extends ReceiptHashes {
   id: number;
   trace?: string;
-  hash?: string;
   text: string;
   /** 보낼 때 기록에 있던 같은 글 수(기록을 아직 못 읽었으면 null: 확인하지 못한다) */
   before: number | null;
@@ -117,10 +116,9 @@ const lastSettled = (list: ChatMessage[] | null): string | null | undefined => {
 };
 /** 보내는 중(host 답 전) → 막힘(3초, 탈출구) → 멈추는 중 */
 type Phase = "sending" | "stuck" | "stopping";
-interface Flight {
+interface Flight extends ReceiptHashes {
   id: number;
   trace: string;
-  hash?: string;
   text: string;
   /** 입력창 글·빠른 답장·이 기기 대기 메시지 */
   source: "box" | "reply" | "queue";
@@ -446,10 +444,10 @@ export function ChatComposer({
   const flightSequence = useRef(0);
   /** 멈춤 답을 기다리는 동안 온 전달 답 */
   const answered = useRef<{ id: number; result: true | string | null } | null>(null);
-  const occurrences = (text: string, list = messagesRef.current, hash?: string) =>
-    (list ?? []).filter((m) => receiptMethod(text, m, hash) !== null).length;
+  const occurrences = (text: string, list = messagesRef.current, hash?: string, tabHash?: string) =>
+    (list ?? []).filter((m) => receiptMethod(text, m, hash, tabHash) !== null).length;
   /** 기록에 이 글의 새 사람 글이 보인다(같은 글의 출현 횟수가 늘었다, t-0387) */
-  const seen = (item: { text: string; hash?: string; before: number | null }, list = messagesRef.current) =>
+  const seen = (item: ReceiptHashes & { text: string; before: number | null }, list = messagesRef.current) =>
     receiptSeen(item, list);
   const queued = useSyncExternalStore(messageQueues.subscribe, () =>
     messageQueues.read(owner),
@@ -509,7 +507,7 @@ export function ChatComposer({
   /** 전달 ACK 뒤 전송 단추를 풀고 첨부를 놓는다. 기록 수신은 대기 말에서 따로 추적한다 */
   const settle = (f: Flight, fallback?: InputReceiptMethod): void => {
     if (!finish(f)) return;
-    const method = seen(f) ? [...(messagesRef.current ?? [])].reverse().map((m) => receiptMethod(f.text, m, f.hash)).find((m) => m !== null) : fallback;
+    const method = seen(f) ? [...(messagesRef.current ?? [])].reverse().map((m) => receiptMethod(f.text, m, f.hash, f.tabHash)).find((m) => m !== null) : fallback;
     if (method) onInputTrace(f.trace, "receipt", method);
     onInputTrace(f.trace, "unlocked");
     if (f.source === "box") { clearAttachments(f.attachments); pasted.current = false; }
@@ -570,17 +568,19 @@ export function ChatComposer({
     onInputTrace(f.trace, "preparing");
     const again = f.source === "queue" ? undefined : () => send(f.source === "reply" ? f.text : undefined, f.steer);
     void (async () => {
-      f.hash = await receiptHash(f.text);
+      Object.assign(f, await receiptHashes(f.text));
       if (flightRef.current?.id !== f.id) return;
-      f.before = messagesRef.current === null ? null : occurrences(f.text, messagesRef.current, f.hash);
+      f.before = messagesRef.current === null ? null : occurrences(f.text, messagesRef.current, f.hash, f.tabHash);
       // 같은 글을 연속 보냈으면 기록 한 줄이 두 보내기를 동시에 확인하지 않게 차례를 잡는다.
       if (f.before !== null) {
         for (const p of pendingRef.current) {
-          if (p.id !== f.shown && p.before !== null && (f.hash ? p.hash === f.hash : p.text === f.text))
+          if (p.id !== f.shown && p.before !== null && (f.hash
+            ? [f.hash, f.tabHash].some(h => h !== undefined && (h === p.hash || h === p.tabHash))
+            : p.text.replace(/\t/g, "    ") === f.text.replace(/\t/g, "    ")))
             f.before = Math.max(f.before, p.before + 1);
         }
       }
-      if (f.shown !== undefined) setPending((list) => list.map((p) => p.id === f.shown ? { ...p, hash: f.hash, before: f.before } : p));
+      if (f.shown !== undefined) setPending((list) => list.map((p) => p.id === f.shown ? { ...p, hash: f.hash, tabHash: f.tabHash, before: f.before } : p));
       let sent: false | Promise<true | string>;
       try {
         sent = !activeRef.current ? false : onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length, ctrl_enter: f.ctrlEnter ?? f.steer ?? false });
@@ -625,8 +625,8 @@ export function ChatComposer({
     } else {
       // 주입 알림 처리·상태 사건 지연·기록 지연 모두 같은 길이다. 전달 확인과 기록 수신을 구분한다.
       // 띄운 말이 없으면(이 기기 대기 메시지) 이제 대화 끝에 둔다. 10초 경고는 전달된 때부터 잰다
-      const sent: PendingSend = { id: f.shown ?? ++pendingSequence, trace: f.trace, hash: f.hash, text: f.text, before: f.before, anchor: lastSettled(messagesRef.current), at: Date.now(), stage: "sent", stale: false };
-      setPending((list) => list.some((p) => p.id === sent.id) ? list.map((p) => p.id === sent.id ? { ...p, hash: sent.hash, before: sent.before, at: sent.at, stage: "sent" } : p) : [...list, sent]);
+      const sent: PendingSend = { id: f.shown ?? ++pendingSequence, trace: f.trace, hash: f.hash, tabHash: f.tabHash, text: f.text, before: f.before, anchor: lastSettled(messagesRef.current), at: Date.now(), stage: "sent", stale: false };
+      setPending((list) => list.some((p) => p.id === sent.id) ? list.map((p) => p.id === sent.id ? { ...p, hash: sent.hash, tabHash: sent.tabHash, before: sent.before, at: sent.at, stage: "sent" } : p) : [...list, sent]);
       onInputTrace(f.trace, "pending");
       settle(f);
     }
@@ -661,16 +661,31 @@ export function ChatComposer({
     const timer = window.setTimeout(() => step(flight, "stuck"), Math.max(0, flight.at + STUCK_MS - Date.now()));
     return () => window.clearTimeout(timer);
   }, [active, flight]);
+  // 수리 전 저장된 대기 말도 탭 변환 해시를 보충한다. 새 웹으로 돌아왔을 때 기존 잘못된 경고도 정리한다.
+  useEffect(() => {
+    if (!crypto.subtle) return;
+    let alive = true;
+    const restored = pendingRef.current.filter(p => p.before === null && p.text.includes("\t") && p.tabHash === undefined);
+    if (restored.length) void Promise.all(restored.map(async p => ({ id: p.id, ...await receiptHashes(p.text) }))).then(hashes => {
+      if (alive) setPending(list => list.map(p => {
+        const found = hashes.find(h => h.id === p.id);
+        return found ? { ...p, hash: found.hash, tabHash: found.tabHash } : p;
+      }));
+    }).catch(error => logIgnoredFailure(error, "ChatComposer.tsx:restoreReceiptHashes"));
+    return () => { alive = false; };
+  }, [owner]);
   // 새로고침 뒤 되살린 말(t-1069): 보낼 때의 마지막 말까지 같은 글 수를 다시 센다. 그 말이 이 쪽에 없으면 확인할 수 없어 거둔다
   useEffect(() => {
     if (messages === null || !pending.some((p) => p.before === null && (p.stage === "sent" || p.stage === "unknown"))) return;
+    // 한 묶음의 해시가 준비된 뒤 함께 차례를 매긴다. 탭 글과 공백 글을 따로 복원하면 같은 기록이 둘을 확인할 수 있다.
+    if (crypto.subtle && pending.some(p => p.before === null && p.text.includes("\t") && p.tabHash === undefined)) return;
     const counted = new Map<string, number>();
     setPending((list) => list.flatMap((p) => {
       if (p.before !== null || (p.stage !== "sent" && p.stage !== "unknown")) return [p];
       const at = p.anchor === null ? -1 : messages.findIndex((m) => m.id === p.anchor);
       if (p.anchor !== null && at < 0) return [];
-      const key = p.hash ?? p.text;
-      const before = Math.max(occurrences(p.text, messages.slice(0, at + 1), p.hash), (counted.get(key) ?? -1) + 1);
+      const key = p.tabHash ?? p.hash ?? p.text.replace(/\t/g, "    ");
+      const before = Math.max(occurrences(p.text, messages.slice(0, at + 1), p.hash, p.tabHash), (counted.get(key) ?? -1) + 1);
       counted.set(key, before);
       return [{ ...p, before }];
     }));
@@ -678,7 +693,7 @@ export function ChatComposer({
   // 새 사람 글이 실제 기록에 오르면 대기 말만 지운다. 다음 초안은 유지한다. 보내는 중인 말의 수신은 전달 답(settle)이 적는다
   useEffect(() => {
     for (const p of pending.filter((p) => p.trace && p.stage !== "sending" && p.stage !== "stuck" && seen(p, messages))) {
-      const method = [...(messages ?? [])].reverse().map((m) => receiptMethod(p.text, m, p.hash)).find((m) => m !== null);
+      const method = [...(messages ?? [])].reverse().map((m) => receiptMethod(p.text, m, p.hash, p.tabHash)).find((m) => m !== null);
       onInputTrace(p.trace!, "receipt", method ?? undefined);
     }
     if (pending.some((p) => seen(p, messages))) setPending((list) => list.filter((p) => !seen(p, messages)));
