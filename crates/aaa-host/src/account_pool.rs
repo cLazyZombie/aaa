@@ -650,10 +650,8 @@ impl SelectionInput {
                 return Ok(self.allocate(c, false, now, percent, "명시한 계정"));
             }
             let quota = c.quota.as_ref();
-            if quota.is_some_and(|q| matches!(q.problem, Some(QuotaProblem::Expired | QuotaProblem::Locked))) {
-                rejected.push(format!("{}: 인증 끊김", c.member.account));
-                continue;
-            }
+            // 조회 helper의 401·잠김은 작업 인증의 거부가 아니다. 실제 금고·인증 건강은
+            // account_selection_input에서 확인했고, 조회 실패는 마지막 관측·미관측으로 판단한다.
             if quota.is_some_and(|q| known_limit(q, self.model.as_deref(), now)) {
                 rejected.push(format!("{}: 사용 한도 도달", c.member.account));
                 continue;

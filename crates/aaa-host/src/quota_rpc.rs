@@ -7,6 +7,10 @@ use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -27,22 +31,31 @@ impl Drop for Home {
         );
     }
 }
-struct Refuse(tokio::task::JoinHandle<()>);
+struct Refuse {
+    task: tokio::task::JoinHandle<()>,
+    attempted: Arc<AtomicBool>,
+}
 impl Drop for Refuse {
     fn drop(&mut self) {
-        self.0.abort();
+        self.task.abort();
     }
 }
 
 fn refuse_refresh(listener: tokio::net::TcpListener) -> Refuse {
-    Refuse(tokio::spawn(async move {
+    let attempted = Arc::new(AtomicBool::new(false));
+    let seen = attempted.clone();
+    let task = tokio::spawn(async move {
         // 본문을 읽기 전에 TCP를 닫으면 갱신 POST가 401 대신 reset/broken pipe를 받는다.
         // 표준 HTTP 처리를 쓰고 본문은 크기를 제한해 읽은 뒤 저장·기록 없이 버린다.
         let app = axum::Router::new()
-            .fallback(|_: axum::body::Bytes| async { (axum::http::StatusCode::UNAUTHORIZED, "{}") })
+            .fallback(move |_: axum::body::Bytes| {
+                seen.store(true, Ordering::Relaxed);
+                async { (axum::http::StatusCode::UNAUTHORIZED, "{}") }
+            })
             .layer(axum::extract::DefaultBodyLimit::max(MAX));
         aaa_common::diagnostic::ignored(axum::serve(listener, app).await, "보조 작업 실패 뒤 기존 처리를 계속한다");
-    }))
+    });
+    Refuse { task, attempted }
 }
 
 struct ProbeChild(tokio::process::Child);
@@ -136,12 +149,12 @@ async fn response<R: AsyncBufRead + Unpin>(r: &mut R, id: u32) -> Result<Value, 
     Err(())
 }
 
-fn error(v: &Value, now: u64) -> (QuotaProblem, Option<u64>) {
+fn error(v: &Value, now: u64, stage: &'static str, refresh_blocked: bool) -> (QuotaProblem, Option<u64>) {
     let e = &v["error"];
     let status = e.pointer("/data/status").and_then(Value::as_u64).or_else(|| e.get("code").and_then(Value::as_u64));
     let msg = e.get("message").and_then(Value::as_str).unwrap_or("");
     let has = |code| status == Some(code) || msg.split(|c: char| !c.is_ascii_digit()).any(|s| s == code.to_string());
-    if has(401) {
+    let result = if has(401) {
         (QuotaProblem::Expired, None)
     } else if has(429) {
         let wait = e
@@ -152,7 +165,11 @@ fn error(v: &Value, now: u64) -> (QuotaProblem, Option<u64>) {
         (QuotaProblem::RateLimited, Some(now.saturating_add(wait.saturating_mul(1000))))
     } else {
         (QuotaProblem::Failed, None)
-    }
+    };
+    // 제공자 원문·code·URL은 기록하지 않는다. 숫자 상태도 HTTP 범위만 허용한다.
+    let http_status = status.filter(|s| (100..=599).contains(s));
+    tracing::warn!(stage, ?http_status, problem = ?result.0, refresh_blocked, "Codex 사용량 RPC 오류");
+    result
 }
 
 pub(crate) async fn read(state: &Path, generation: String, auth: &str, now: u64) -> QuotaSnapshot {
@@ -228,7 +245,7 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
     else {
         return snapshot;
     };
-    let _refuse = refuse_refresh(listener);
+    let refuse = refuse_refresh(listener);
     let child = command(exe, &home.0)
         .arg("app-server")
         .env("CODEX_REFRESH_TOKEN_URL_OVERRIDE", format!("http://{addr}/refuse"))
@@ -241,6 +258,7 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
         return snapshot;
     };
     let mut child = ProbeChild(child);
+    let mut stage = "initialize";
     let exchange = async {
         let mut tx = child.stdin.take().ok_or(())?;
         let mut rx = BufReader::new(child.stdout.take().ok_or(())?);
@@ -249,6 +267,7 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
         if init.get("error").is_some() {
             return Ok(init);
         }
+        stage = "account/rateLimits/read";
         tx.write_all(
             b"{\"method\":\"initialized\",\"params\":{}}\n{\"id\":2,\"method\":\"account/rateLimits/read\"}\n",
         )
@@ -259,16 +278,20 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
     let result = tokio::time::timeout(DEADLINE, exchange).await;
     // 자기 자식 PID만 종료하고 wait가 끝난 뒤 인증 홈을 지운다.
     terminate(&mut child).await;
+    let refresh_blocked = refuse.attempted.load(Ordering::Relaxed);
+    if refresh_blocked {
+        tracing::info!(stage, "Codex 사용량 helper의 갱신 요청을 로컬에서 차단했다");
+    }
     match &result {
         Err(error) => {
-            tracing::info!(error = %aaa_common::diagnostic::Cause::capture(error), "사용량 RPC 시간 초과");
+            tracing::info!(stage, refresh_blocked, error = %aaa_common::diagnostic::Cause::capture(error), "사용량 RPC 시간 초과");
         }
-        Ok(Err(())) => tracing::info!("사용량 RPC 교환 실패: 앞 단계 진단을 확인한다"),
+        Ok(Err(())) => tracing::info!(stage, refresh_blocked, "사용량 RPC 교환 실패: 앞 단계 진단을 확인한다"),
         Ok(Ok(_)) => {}
     }
     if let Ok(Ok(v)) = result {
         if v.get("error").is_some() {
-            let (problem, retry) = error(&v, now);
+            let (problem, retry) = error(&v, now, stage, refresh_blocked);
             snapshot.problem = Some(problem);
             snapshot.retry_at_ms = retry;
         } else if let Some(v) = v.get("result") {
@@ -311,6 +334,9 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
     snapshot
 }
 
+#[cfg(test)]
+mod diagnostic_tests;
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -321,7 +347,7 @@ mod tests {
     async fn refresh_refusal_reads_the_post_body_before_closing() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let _refuse = refuse_refresh(listener);
+        let refuse = refuse_refresh(listener);
         let exchange = async {
             let mut client = BufReader::new(tokio::net::TcpStream::connect(addr).await.unwrap());
             client
@@ -343,6 +369,7 @@ mod tests {
             assert!(response.ends_with("\r\n\r\n{}"), "{response}");
         };
         tokio::time::timeout(Duration::from_secs(5), exchange).await.expect("가짜 갱신 POST 완료");
+        assert!(refuse.attempted.load(Ordering::Relaxed), "실제 로컬 차단을 진단할 수 있다");
     }
 
     fn fake(root: &Path, mode: &str) -> PathBuf {
