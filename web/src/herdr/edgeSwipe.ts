@@ -95,12 +95,6 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
   let follow: { drawer: HTMLElement; scrim: HTMLElement | null; width: number; shown: number; x: number; at: number; speed: number } | null = null;
   const onStart = (event: TouchEvent): void => {
     const touch = event.touches[0];
-    // 가장자리 몸짓은 미리보기를 취소해도 메뉴를 열지 않는다. 기존 메뉴도 닫는다.
-    if (touch && narrow.matches && touch.clientX <= EDGE_PX) {
-      if (isOpen() || follow !== null) cancel("edge-start");
-      start = null;
-      return;
-    }
     // the last stroke still holds the drawer: a second finger, or its end never came (the element
     // it began on left the page and took its touches with it). It lets go where it was first
     const open = follow !== null ? onEnd() : isOpen();
@@ -116,6 +110,16 @@ export function watchDrawerSwipe(isOpen: () => boolean, setOpen: (open: boolean)
   const onMove = (event: TouchEvent): void => {
     const touch = event.touches[0];
     if (start === null || !touch) return;
+    // 가장자리 누름·세로 스크롤은 메뉴를 유지한다. 오른쪽 쓸기가 확인될 때만
+    // 뒤로 미리보기에 대비해 닫고, 몸짓 자체는 브라우저에 그대로 둔다.
+    if (start.x <= EDGE_PX) {
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      if (Math.abs(dx) < SLOP_PX && Math.abs(dy) < SLOP_PX) return;
+      if (narrow.matches && start.open && dx >= SLOP_PX && dx > Math.abs(dy)) cancel("edge-swipe");
+      else onEnd();
+      return;
+    }
     // 시스템이 소유한 touchmove로 메뉴를 끌거나 preventDefault를 시도하지 않는다.
     if (event.cancelable === false) { cancel("noncancelable-move"); return; }
     // the screen turned wide mid-stroke: there is no drawer to swipe any more

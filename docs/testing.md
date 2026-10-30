@@ -4992,3 +4992,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - t-1310: [전체 ci-local 3분 예산·실측·보존 경계](testing-ci-budget-t-1310.md)와 [삭제 owner 원장](testing-ci-budget-t-1310-removed.md).
 - t-1324: [v0.1.7 릴리스 준비 검증](testing-release-v0.1.7.md).
 - [계정 사용량 추가 조회·마지막 잔량 배정 검증](testing-account-quota-fallback.md)
+- t-1333: [휴대폰 메뉴 왼쪽 끝 누름 회귀 검사](testing-phone-menu-edge-t-1333.md).
