@@ -1397,3 +1397,62 @@ fn renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_run
     Gate::release(last, b'X');
     w.wait_show("변경 계정 작업 종료", started["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
 }
+
+/// 필요: 재시작한 실제 host가 마지막 잔량으로 계정을 골라 agent 자식에게 해당 인증을 전달한다.
+#[test]
+fn automatic_assignment_uses_persisted_weekly_quota_after_host_restart() {
+    let gate = Gate::new();
+    let harness = r#"#!/usr/bin/env python3
+import sys
+if sys.argv[1:]==['--version']:
+    print('fixture');sys.exit(0)
+import os,json,socket,hashlib
+h,p=os.environ['ACCOUNT_GATE'].split(':')
+s=socket.create_connection((h,int(p)),timeout=5)
+token=os.environ['CLAUDE_CODE_OAUTH_TOKEN']
+s.sendall((json.dumps(dict(phase=0,token=hashlib.sha256(token.encode()).hexdigest()))+'\n').encode())
+assert s.recv(1)==b'X'
+"#;
+    let mut w = world("http://127.0.0.1:0", &gate, &aaa_test_support::token("unused-profile"), harness);
+    let now = aaa_common::util::now_ms();
+    let mut expected = String::new();
+    for name in ["low", "high"] {
+        let token = aaa_test_support::token(&format!("quota-{name}"));
+        let path = w.scripts.join(format!("{name}.token"));
+        std::fs::write(&path, &token).unwrap();
+        w.h.ok(&["account", "import", name, "--harness", "claude", "--file", path_str(&path)]);
+        if name == "high" {
+            expected = sha(&token);
+        }
+    }
+    w.lab.kill("host");
+    for (name, used) in [("low", 89.0), ("high", 35.0)] {
+        let auth: Value =
+            serde_json::from_slice(&std::fs::read(w.h.state.join(format!("host/accounts/{name}.json"))).unwrap())
+                .unwrap();
+        let observed = now - 3_600_000;
+        let entry = serde_json::json!({
+            "generation": auth["generation"], "attempted_ms": now, "next_ms": now + 60_000,
+            "readings": {"pane": {"machine":"mac-a", "received_at_ms":now,
+                "snapshot": {"generation": auth["generation"], "source":"claude_statusline",
+                    "sampled_at_ms": now, "problem":"disconnected", "retry_at_ms":null,
+                    "windows":[{"limit_id":"claude", "window_id":"seven_day", "scope":null,
+                        "duration_mins":10080, "used_percent":used, "observed_at_ms":observed,
+                        "resets_at_ms":now + 86_400_000}]}}}
+        });
+        let db = rusqlite::Connection::open(w.h.state.join("host/host.db")).unwrap();
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key,value) VALUES(?1,?2)",
+            rusqlite::params![format!("account-quota-v1/{name}"), entry.to_string()],
+        )
+        .unwrap();
+    }
+    w.spawn_host("host-restarted");
+    w.h.wait_connected("labA", T);
+    let task = w.task("quota-task.txt", "마지막 주간 잔량으로 배정한다");
+    let started = w.start(&["--title", "잔량 배정", "--profile", "plain", "--task-file", &task]);
+    assert_eq!(started["account"], "high");
+    let child = gate.take(1, 0);
+    assert_eq!(child[0].1["token"], expected, "선택한 계정의 인증이 실제 자식에게 전달된다");
+    Gate::release(child, b'X');
+}

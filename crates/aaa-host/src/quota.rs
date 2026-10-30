@@ -16,6 +16,9 @@ struct Entry {
     attempted_ms: u64,
     next_ms: u64,
     readings: HashMap<String, Reading>,
+    /// 마지막 정상 관측. 이후 빈 응답·실패와 별도로 보존하며 재로그인 때 함께 버린다.
+    #[serde(default)]
+    last_known: HashMap<String, Reading>,
 }
 #[derive(Default)]
 pub(crate) struct Cache {
@@ -121,6 +124,27 @@ fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot,
         return;
     }
     s.windows.retain(quota::valid);
+    if s.problem.is_none() && s.sampled_at_ms.abs_diff(now) <= quota::CLOCK_SKEW_MS {
+        let mut saved = s.clone();
+        if let Some(old) = entry.last_known.get(&key).or_else(|| entry.readings.get(&key))
+            && old.snapshot.generation == entry.generation
+            && old.snapshot.sampled_at_ms.abs_diff(old.received_at_ms) <= quota::CLOCK_SKEW_MS
+            && old.snapshot.problem != Some(QuotaProblem::ClockSkew)
+        {
+            for w in &old.snapshot.windows {
+                if let Some(new) = saved.windows.iter_mut().find(|new| same_window(new, w)) {
+                    if new.observed_at_ms < w.observed_at_ms {
+                        *new = w.clone();
+                    }
+                } else {
+                    saved.windows.push(w.clone());
+                }
+            }
+        }
+        entry
+            .last_known
+            .insert(key.clone(), Reading { snapshot: saved, machine: machine.clone(), received_at_ms: now });
+    }
     if s.problem.is_some()
         && s.windows.is_empty()
         && let Some(old) = entry.readings.get(&key)
@@ -128,6 +152,30 @@ fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot,
         s.windows = old.snapshot.windows.clone();
     }
     entry.readings.insert(key, Reading { snapshot: s, machine, received_at_ms: now });
+}
+
+fn same_window(a: &QuotaWindow, b: &QuotaWindow) -> bool {
+    a.limit_id == b.limit_id
+        && a.scope == b.scope
+        && a.duration_mins == b.duration_mins
+        && (a.duration_mins.is_some() || a.window_id == b.window_id)
+}
+
+fn last_known(entry: &Entry, account: &str, harness: &str, now: u64) -> AccountQuota {
+    // 옛 저장 형식의 관측도 쓴다. 실패 때 보존한 수치의 관측 시각은 바꾸지 않는다.
+    let mut history =
+        Entry { generation: entry.generation.clone(), readings: entry.last_known.clone(), ..Default::default() };
+    for (key, reading) in &entry.readings {
+        if !history.readings.contains_key(key)
+            && reading.snapshot.sampled_at_ms.abs_diff(reading.received_at_ms) <= quota::CLOCK_SKEW_MS
+            && reading.snapshot.problem != Some(QuotaProblem::ClockSkew)
+        {
+            let mut reading = reading.clone();
+            reading.snapshot.problem = None;
+            history.readings.insert(key.clone(), reading);
+        }
+    }
+    merge(&history, account, harness, now)
 }
 
 impl Cache {
@@ -143,6 +191,21 @@ impl crate::Host {
     /// 마지막 완료된 웹 계정 사용량을 읽는다. 조회 중인 RPC의 잠금·응답을 기다리지 않는다.
     /// 재로그인 전 세대와 삭제된 계정은 판정에 쓰지 않는다.
     pub(crate) fn cached_account_quota(&self, name: &str, harness: &str) -> Result<AccountQuota, ErrorBody> {
+        let entry = self.cached_quota_entry(name, harness)?;
+        Ok(merge(&entry, name, harness, util::now_ms()))
+    }
+
+    pub(crate) fn cached_allocation_quota(
+        &self,
+        name: &str,
+        harness: &str,
+    ) -> Result<(AccountQuota, AccountQuota), ErrorBody> {
+        let entry = self.cached_quota_entry(name, harness)?;
+        let now = util::now_ms();
+        Ok((merge(&entry, name, harness, now), last_known(&entry, name, harness, now)))
+    }
+
+    fn cached_quota_entry(&self, name: &str, harness: &str) -> Result<Entry, ErrorBody> {
         if !self.accounts.list()?.iter().any(|a| a.name == name && a.harness == harness) {
             return Err(crate::err(ErrorCode::BadRequest, "등록 계정과 profile의 harness가 다르거나 계정이 없다"));
         }
@@ -155,7 +218,7 @@ impl crate::Host {
             .transpose()
             .map_err(crate::orch::internal)?;
         let entry = entry.filter(|e| e.generation == generation).unwrap_or_default();
-        Ok(merge(&entry, name, harness, util::now_ms()))
+        Ok(entry)
     }
 
     pub(crate) async fn quota_report(self: &Arc<Self>, refresh: bool) -> Result<AccountQuotaReport, ErrorBody> {
@@ -279,6 +342,28 @@ impl crate::Host {
                         for (pane, machine, snapshot) in futures_util::future::join_all(reads).await {
                             accept(&mut entry, pane, machine, snapshot, util::now_ms());
                         }
+                        if harness == "claude" {
+                            let live = merge(&entry, &name, &harness, now);
+                            let complete = [300, 10080].into_iter().all(|duration| {
+                                live.windows.iter().any(|w| {
+                                    w.window.scope.is_none()
+                                        && w.window.duration_mins == Some(duration)
+                                        && w.problem.is_none()
+                                        && !w.conflict
+                                        && quota::freshness(&w.window, now) == QuotaFreshness::Fresh
+                                })
+                            });
+                            let retry = entry.readings.get("host").and_then(|r| r.snapshot.retry_at_ms);
+                            if !complete && retry.is_none_or(|t| now >= t) {
+                                let snapshot = match self.accounts.credential(&name) {
+                                    Ok(c) if c.auth_generation.as_deref() == Some(&generation) => {
+                                        self.usage.claude_account_quota(generation.clone(), &c.secret.0, now).await
+                                    }
+                                    _ => empty(&generation, QuotaSource::ClaudeOauth, QuotaProblem::Locked, now),
+                                };
+                                accept(&mut entry, "host".into(), "host".into(), snapshot, util::now_ms());
+                            }
+                        }
                     }
                     (name, entry)
                 }
@@ -380,7 +465,11 @@ mod tests {
         let mut cfg = aaa_config::HostConfig::default();
         cfg.notify.web_push = false;
         cfg.projects.root = root.join("projects").display().to_string();
-        let h = crate::Host::open(cfg, root.join("host")).unwrap();
+        let mut h = crate::Host::open(cfg, root.join("host")).unwrap();
+        Arc::get_mut(&mut h).unwrap().usage = crate::usage::UsageService::new(crate::usage::UsageContext {
+            origin: Some("http://127.0.0.1:0".into()),
+            ..crate::usage::UsageContext::system()
+        });
         h.accounts.import("work", "claude", &aaa_test_support::token("fixture-quota-rename-0123456789")).unwrap();
         let generation = h.accounts.generation("work").unwrap();
         let now = util::now_ms();
@@ -448,5 +537,37 @@ mod tests {
         assert_eq!(q.windows[0].problem, Some(QuotaProblem::ClockSkew));
         assert_eq!(q.windows[0].freshness, QuotaFreshness::Unknown);
         assert_eq!(merge(&e, "work", "claude", 9_999_999).windows[0].window.used_percent, 5.);
+    }
+
+    // 필요: 정상 빈 응답·부분 응답도 마지막 주간 잔량과 리셋을 지우면 안 된다.
+    #[test]
+    fn history_survives_empty_partial_failed_and_skewed_snapshots() {
+        let mut entry = Entry { generation: "login-a".into(), ..Default::default() };
+        let mut week = good(1000, 35.);
+        week.windows[0].duration_mins = Some(10080);
+        week.windows[0].window_id = "seven_day".into();
+        accept(&mut entry, "pane".into(), "mac-a".into(), week, 1000);
+        accept(&mut entry, "pane".into(), "mac-a".into(), good(2000, 80.), 2000);
+        let blank = QuotaSnapshot { windows: vec![], ..good(3000, 0.) };
+        accept(&mut entry, "pane".into(), "mac-a".into(), blank, 3000);
+        accept(
+            &mut entry,
+            "pane".into(),
+            "mac-a".into(),
+            empty("login-a", QuotaSource::ClaudeStatusline, QuotaProblem::Disconnected, 4000),
+            4000,
+        );
+        accept(&mut entry, "pane".into(), "mac-a".into(), good(100_000, 1.), 5000);
+        let entry: Entry = serde_json::from_str(&serde_json::to_string(&entry).unwrap()).unwrap();
+        let history = last_known(&entry, "work", "claude", 700_000);
+        assert_eq!(history.windows.len(), 2);
+        let week = history.windows.iter().find(|w| w.window.duration_mins == Some(10080)).unwrap();
+        assert_eq!(week.window.used_percent, 35.);
+        assert_eq!(week.window.observed_at_ms, 1000);
+        assert_eq!(week.window.resets_at_ms, Some(9_999_999));
+        assert_eq!(
+            history.windows.iter().find(|w| w.window.duration_mins == Some(300)).unwrap().window.used_percent,
+            80.
+        );
     }
 }

@@ -45,6 +45,7 @@ pub(crate) struct Candidate {
     member: AccountPoolMember,
     generation: String,
     quota: Option<AccountQuota>,
+    last_quota: Option<AccountQuota>,
 }
 
 pub(crate) struct SelectionInput {
@@ -243,16 +244,15 @@ impl Host {
             return Ok(None);
         }
         // 사용량 조회·RPC 잠금은 기동의 선행 조건이 아니다. 완료된 같은 인증 세대의 캐시만 읽는다.
-        let report = AccountQuotaReport {
-            accounts: if auto {
-                pool.members.iter().filter_map(|m| match self.cached_account_quota(&m.account, &profile.harness) {
+        let cached: Vec<_> = if auto {
+            pool.members.iter().filter_map(|m| match self.cached_allocation_quota(&m.account, &profile.harness) {
                 Ok(q) => Some(q),
                 Err(e) => { tracing::debug!(account = %m.account, code = ?e.code, "배정용 사용량 캐시를 읽지 못했다: {}", e.message); None }
             }).collect()
-            } else {
-                vec![]
-            },
+        } else {
+            vec![]
         };
+        let report = AccountQuotaReport { accounts: cached.iter().map(|(q, _)| q.clone()).collect() };
         if auto {
             self.pool_reconcile(&report)?;
         }
@@ -290,6 +290,7 @@ impl Host {
                 member,
                 generation,
                 quota: report.accounts.iter().find(|a| a.account == name).cloned(),
+                last_quota: cached.iter().find(|(_, q)| q.account == name).map(|(_, q)| q.clone()),
             });
         }
         Ok(Some(input))
@@ -692,15 +693,45 @@ impl SelectionInput {
                 )
                 .max()
                 .unwrap_or(0);
-            let unobserved = quota.is_none_or(|q| fresh_windows(q, self.model.as_deref(), now).is_err());
-            candidates.push((c, active, last, unobserved));
+            let mut unobserved = quota.is_none_or(|q| fresh_windows(q, self.model.as_deref(), now).is_err());
+            let remaining = [true, false].into_iter().find_map(|weekly| {
+                let live = quota.and_then(|q| remaining_quota(q, self.model.as_deref(), now, true, weekly));
+                let saved = c
+                    .last_quota
+                    .as_ref()
+                    .or(quota)
+                    .and_then(|q| remaining_quota(q, self.model.as_deref(), now, false, weekly));
+                match (live, saved) {
+                    (Some(live), Some(saved)) if saved.1 > live.1 => {
+                        unobserved = true;
+                        Some(saved.0)
+                    }
+                    (Some(live), _) => Some(live.0),
+                    (None, Some(saved)) => {
+                        unobserved = true;
+                        Some(saved.0)
+                    }
+                    _ => None,
+                }
+            });
+            candidates.push((c, active, last, unobserved, remaining));
         }
-        candidates.sort_by(|a, b| (a.1, a.2, &a.0.member.account).cmp(&(b.1, b.2, &b.0.member.account)));
-        if let Some((c, active, _, unobserved)) = candidates.first() {
-            let reason = if *unobserved {
-                "사용량 판단 불가 · 그대로 시작"
+        candidates.sort_by(|a, b| {
+            // 잔량을 아는 계정부터 큰 순서. 같은 잔량·모두 미관측일 때 기존 작업 수·차례를 쓴다.
+            b.4.partial_cmp(&a.4)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| (a.1, a.2, &a.0.member.account).cmp(&(b.1, b.2, &b.0.member.account)))
+        });
+        if let Some((c, active, _, unobserved, remaining)) = candidates.first() {
+            let reason = if let Some(remaining) = remaining {
+                format!(
+                    "{} 잔량 {remaining:.1}% · 잔량 많은 계정",
+                    if *unobserved { "마지막 관측으로 판단" } else { "최신 관측" }
+                )
+            } else if *unobserved {
+                "사용량 판단 불가 · 그대로 시작".into()
             } else {
-                "진행 중 작업·최근 배정 순서"
+                "진행 중 작업·최근 배정 순서".into()
             };
             return Ok(self.allocate(c, *unobserved, now, percent, &format!("{reason} · 진행 중 {active}개")));
         }
@@ -728,6 +759,41 @@ impl SelectionInput {
             },
         )
     }
+}
+
+/// 배정 비교에는 주간 공용 창을 우선한다. 실시간 조회 실패 때만 원래 관측과 리셋으로 추정한다.
+fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool, weekly: bool) -> Option<(f64, u64)> {
+    if fresh && q.problem.is_some() {
+        return None;
+    }
+    let windows: Vec<_> = q
+        .windows
+        .iter()
+        .filter(|w| {
+            aaa_common::quota::valid(&w.window)
+                && !w.conflict
+                && w.window.observed_at_ms <= now.saturating_add(aaa_common::quota::CLOCK_SKEW_MS)
+                && w.window.scope.as_deref().is_none_or(|s| model == Some(s))
+                && (!weekly || (w.window.duration_mins == Some(10080) && w.window.scope.is_none()))
+                && w.problem != Some(QuotaProblem::ClockSkew)
+                && (!fresh
+                    || (w.problem.is_none()
+                        && w.freshness == QuotaFreshness::Fresh
+                        && aaa_common::quota::freshness(&w.window, now) == QuotaFreshness::Fresh))
+        })
+        .collect();
+    windows
+        .into_iter()
+        .map(|w| {
+            let remaining =
+                if !fresh && w.window.duration_mins == Some(10080) && w.window.resets_at_ms.is_some_and(|t| t <= now) {
+                    100.0
+                } else {
+                    100.0 - w.window.used_percent
+                };
+            (remaining, w.window.observed_at_ms)
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
 /// 확실하게 관측한 현재 한도만 제외한다. 일부 창이 없어도 알려진 고갈은 존중한다.
