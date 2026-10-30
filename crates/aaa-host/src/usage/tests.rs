@@ -315,11 +315,14 @@ async fn sidebar_uses_registered_claude_statusline_instead_of_unrelated_expired_
     assert_eq!(usage.checked_at, Some(utc_iso(now)));
     assert_eq!(fake.hits("/api/oauth/usage"), 0, "기본 인증을 갱신하거나 모델 작업을 만들지 않는다");
     assert_eq!(host.usage.cached().await, local, "자동화의 로컬 캐시 의미는 바꾸지 않는다");
-    // 같은 별칭에 다시 로그인하면 이전 세대의 숫자가 새 인증에 붙지 않는다.
-    host.accounts.import("work", "claude", &aaa_test_support::token("fixture-new-claude-token-0123456789")).unwrap();
+    // 같은 별칭에 다시 로그인하면 새 인증으로 조회하며 이전 세대의 숫자가 붙지 않는다.
+    fake.route("/api/oauth/usage", 403, serde_json::json!({}));
+    let replacement = aaa_test_support::token("fixture-new-claude-token-0123456789");
+    host.accounts.import("work", "claude", &replacement).unwrap();
     let report = host.sidebar_usage(false).await;
-    assert_eq!(report.providers[0].problem, Some(UsageProblem::Unobserved));
+    assert_eq!(report.providers[0].problem, Some(UsageProblem::Unsupported));
     assert!(report.providers[0].windows.is_empty());
+    assert_eq!(fake.header("/api/oauth/usage", "authorization"), Some(format!("Bearer {replacement}")));
 }
 
 #[test]
@@ -452,4 +455,92 @@ async fn sign_ins_that_name_no_account_are_numbered_and_keyed_without_their_path
     for u in &r.providers {
         assert!(u.key.starts_with("codex@") && !u.key.contains("codex-work") && !u.key.contains('/'), "{}", u.key);
     }
+}
+
+// 필요: pane이 없는 등록 계정도 자기 인증으로 조회하고, 실패·재시작 뒤 같은 기록으로 배정해야 한다.
+#[tokio::test]
+async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking_start() {
+    use aaa_proto::*;
+    let (fake, origin) = Fake::start().await;
+    let lab = Lab::new("registered-oauth");
+    let mut host = crate::Host::open(aaa_config::HostConfig::default(), lab.home.join("host")).unwrap();
+    Arc::get_mut(&mut host).unwrap().usage = UsageService::new(lab.ctx(&origin, false));
+    let token = aaa_test_support::token("registered-only-quota");
+    host.register_account("work", "claude", &token).unwrap();
+    let now = aaa_common::util::now_ms();
+    let reset = now / 1000 * 1000 + 86_400_000;
+    fake.route(
+        "/api/oauth/usage",
+        200,
+        serde_json::json!({
+            "five_hour": {"utilization": 20, "resets_at": utc_iso(reset)},
+            "seven_day": {"utilization": 35, "resets_at": utc_iso(reset)},
+            "ignored": token
+        }),
+    );
+    let report = host.quota_report(false).await.unwrap();
+    assert_eq!(report.accounts[0].problem, None);
+    assert_eq!(report.accounts[0].windows.len(), 2);
+    assert!(report.accounts[0].windows.iter().all(|w| w.source == QuotaSource::ClaudeOauth));
+    assert_eq!(fake.header("/api/oauth/usage", "authorization"), Some(format!("Bearer {token}")));
+    assert_eq!(fake.header("/api/oauth/usage", "anthropic-beta").as_deref(), Some("oauth-2025-04-20"));
+    assert!(!serde_json::to_string(&report).unwrap().contains(&token));
+    // 같은 DB에서 수집기를 새로 만들고 시계를 기다리지 않고 다음 조회를 시작한다.
+    async fn due(host: &crate::Host, age: bool) {
+        let mut entry: Value = serde_json::from_str(&host.db.meta("account-quota-v1/work").unwrap().unwrap()).unwrap();
+        entry["attempted_ms"] = 0.into();
+        entry["next_ms"] = 0.into();
+        if age {
+            for key in ["readings", "last_known"] {
+                let r = &mut entry[key]["host"];
+                r["received_at_ms"] = (r["received_at_ms"].as_u64().unwrap() - 600_001).into();
+                r["snapshot"]["sampled_at_ms"] = (r["snapshot"]["sampled_at_ms"].as_u64().unwrap() - 600_001).into();
+                for w in r["snapshot"]["windows"].as_array_mut().unwrap() {
+                    w["observed_at_ms"] = (w["observed_at_ms"].as_u64().unwrap() - 600_001).into();
+                }
+            }
+        }
+        host.db.set_meta("account-quota-v1/work", &entry.to_string()).unwrap();
+        *host.account_quota.lock().await = Default::default();
+    }
+    due(&host, true).await;
+    fake.route("/api/oauth/usage", 403, serde_json::json!({"error":"user:profile required"}));
+    let report = host.quota_report(false).await.unwrap();
+    assert_eq!(report.accounts[0].problem, Some(QuotaProblem::Unsupported));
+    assert_eq!(fake.hits("/api/oauth/usage"), 2);
+    let (_, history) = host.cached_allocation_quota("work", "claude").unwrap();
+    assert_eq!(history.windows[1].window.used_percent, 35.);
+    assert_eq!(history.windows[1].window.resets_at_ms, Some(reset));
+    let observed = history.windows[1].window.observed_at_ms;
+    assert!(observed < now);
+    due(&host, false).await;
+    fake.route_with("/api/oauth/usage", 429, vec![("Retry-After", "1200")], serde_json::json!({}));
+    let report = host.quota_report(false).await.unwrap();
+    assert_eq!(report.accounts[0].problem, Some(QuotaProblem::Failed), "조회 한도는 모델 사용 한도가 아니다");
+    assert!(report.accounts[0].retry_at_ms.unwrap() >= now + 1_200_000);
+    due(&host, false).await;
+    host.quota_report(false).await.unwrap();
+    assert_eq!(fake.hits("/api/oauth/usage"), 3, "host 캐시를 다시 읽어도 Retry-After 전에는 묻지 않는다");
+    // Host 자체도 다시 열어 마지막 정상 관측이 메모리에만 있는 것이 아님을 확인한다.
+    drop(host);
+    let host = crate::Host::open(aaa_config::HostConfig::default(), lab.home.join("host")).unwrap();
+    let (_, history) = host.cached_allocation_quota("work", "claude").unwrap();
+    assert_eq!(history.windows[1].window.observed_at_ms, observed);
+    let profile = ResolvedProfile {
+        harness: "claude".into(),
+        model: "any".into(),
+        effort: "high".into(),
+        args: vec![],
+        command: vec![],
+        env: Default::default(),
+    };
+    let input = host.account_selection_input("demo", &profile, None, AccountTaskSize::Medium).await.unwrap().unwrap();
+    let (name, allocation) = input.select(&host.db.conn_for_test(), now).unwrap();
+    assert_eq!(name, "work");
+    assert!(allocation.selection.reason.contains("마지막 관측으로 판단 잔량 65.0%"));
+    host.accounts.import("work", "claude", &aaa_test_support::token("replacement-quota")).unwrap();
+    assert!(
+        host.cached_allocation_quota("work", "claude").unwrap().1.windows.is_empty(),
+        "재로그인 때 옛 기록을 섞지 않는다"
+    );
 }

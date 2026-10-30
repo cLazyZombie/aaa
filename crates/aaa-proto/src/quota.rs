@@ -7,6 +7,7 @@ use ts_rs::TS;
 pub enum QuotaSource {
     CodexRpc,
     ClaudeStatusline,
+    ClaudeOauth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

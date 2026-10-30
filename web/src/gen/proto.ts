@@ -69,7 +69,7 @@ expires_ms?: number,
  */
 health?: AccountHealth, };
 
-export type QuotaSource = "codex_rpc" | "claude_statusline";
+export type QuotaSource = "codex_rpc" | "claude_statusline" | "claude_oauth";
 
 export type QuotaProblem = "unknown" | "expired" | "rate_limited" | "locked" | "disconnected" | "unsupported" | "failed" | "clock_skew";
 

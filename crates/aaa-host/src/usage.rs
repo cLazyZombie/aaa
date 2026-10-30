@@ -111,7 +111,8 @@ impl UsageContext {
                 home: PathBuf::from(home),
                 env: HashMap::new(),
                 darwin: cfg!(target_os = "macos"),
-                origin,
+                // 시험 홈만 지정해도 등록 인증을 실제 제공자에게 보내지 않는다.
+                origin: Some(origin.unwrap_or_else(|| "http://127.0.0.1:0".into())),
                 keychain: Arc::new(|_, _| KeychainRead::Missing),
                 run: Arc::new(|_| None),
                 now,
@@ -792,6 +793,73 @@ impl UsageService {
         UsageService { ctx, state: Default::default(), snapshot: Default::default() }
     }
 
+    /// 등록 계정 금고의 인증만 쓴다. 로컬 로그인 탐색이나 token 갱신은 하지 않는다.
+    pub(crate) async fn claude_account_quota(
+        &self,
+        generation: String,
+        token: &str,
+        now: u64,
+    ) -> aaa_proto::QuotaSnapshot {
+        use aaa_proto::{QuotaProblem, QuotaSnapshot, QuotaSource, QuotaWindow};
+        let mut snapshot = QuotaSnapshot {
+            generation,
+            source: QuotaSource::ClaudeOauth,
+            sampled_at_ms: now,
+            windows: vec![],
+            problem: None,
+            retry_at_ms: None,
+        };
+        let body = request_json(
+            &self.ctx,
+            "GET",
+            "https://api.anthropic.com/api/oauth/usage",
+            &[
+                ("Authorization", format!("Bearer {token}")),
+                ("Accept", "application/json".into()),
+                ("anthropic-beta", "oauth-2025-04-20".into()),
+                ("User-Agent", USER_AGENT.into()),
+            ],
+            b"",
+        )
+        .await;
+        match body {
+            Ok(body) => {
+                for (key, duration) in [("five_hour", 300), ("seven_day", 10080)] {
+                    let Some(value) = body.get(key) else { continue };
+                    let Some(used) = value.get("utilization").and_then(Value::as_f64) else { continue };
+                    let window = QuotaWindow {
+                        limit_id: "claude".into(),
+                        window_id: key.into(),
+                        scope: None,
+                        duration_mins: Some(duration),
+                        used_percent: used,
+                        observed_at_ms: now,
+                        resets_at_ms: value.get("resets_at").and_then(Value::as_str).and_then(parse_iso),
+                    };
+                    if aaa_common::quota::valid(&window) {
+                        snapshot.windows.push(window);
+                    }
+                }
+                if snapshot.windows.is_empty() {
+                    snapshot.problem = Some(QuotaProblem::Unknown);
+                }
+            }
+            Err(error) => {
+                // setup-token은 실행 권한만 있을 수 있다. 조회 거부를 계정 인증 고장으로 취급하지 않는다.
+                snapshot.problem = Some(match &error {
+                    ReadError::Http { status: 401 | 403, .. } => QuotaProblem::Unsupported,
+                    _ => QuotaProblem::Failed,
+                });
+                if let ReadError::Http { status: 429, retry_after_ms } = &error {
+                    // 조회 endpoint의 429는 모델 사용 한도가 아니다. 재조회만 미룬다.
+                    snapshot.retry_at_ms = Some(now.saturating_add(RETRY_MS.max(retry_after_ms.unwrap_or(RETRY_MS))));
+                }
+                tracing::warn!(source = "claude_oauth", ?error, "등록 계정 사용량 조회 실패");
+            }
+        }
+        snapshot
+    }
+
     /// 마지막으로 읽기를 끝낸 숫자만 쓴다. 외부 서비스의 응답을 기다리지 않는다.
     pub(crate) async fn cached(&self) -> UsageReport {
         self.snapshot.lock().unwrap().clone()
@@ -1018,7 +1086,7 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
     let mut observed_at = None::<u64>;
     for item in &quota.windows {
         let w = &item.window;
-        if item.source != QuotaSource::ClaudeStatusline
+        if !matches!(item.source, QuotaSource::ClaudeStatusline | QuotaSource::ClaudeOauth)
             || w.limit_id != "claude"
             || w.scope.is_some()
             || item.conflict

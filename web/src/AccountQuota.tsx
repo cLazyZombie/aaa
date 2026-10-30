@@ -46,7 +46,7 @@ export function AccountQuotaCard({ quota, now, failed }: { quota: AccountQuota |
         <meter min={0} max={100} value={Number.isFinite(w.used_percent) ? 100 - w.used_percent : 0} aria-label={`${quotaLabel(w)} 남은 양`} />
         <p>{state === "fresh" ? "최신" : state === "stale" ? "오래됨" : "모름 · 재조회 필요"}{w.problem ? ` · ${quotaProblem[w.problem]}` : ""}{w.conflict ? " · 관측 충돌(작은 잔량)" : ""}</p>
         <p>리셋 {quotaTime(w.resets_at_ms)} · 관측 {quotaTime(w.observed_at_ms)}</p>
-        <p>{w.machine} · {w.source === "codex_rpc" ? "공식 조회" : "상태줄 관측"}</p>
+        <p>{w.machine} · {w.source === "codex_rpc" ? "공식 조회" : w.source === "claude_oauth" ? "OAuth 조회" : "상태줄 관측"}</p>
       </div>;
     })}
     {[300, 10080].filter((n) => !windows.some((w) => w.duration_mins === n && !w.scope)).map((n) => <p key={n} className="op-muted">{n === 300 ? "5시간" : "주간"} 사용량 모름</p>)}

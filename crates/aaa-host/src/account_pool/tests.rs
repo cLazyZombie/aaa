@@ -74,6 +74,7 @@ fn candidate(name: &str, five: f64, week: f64) -> Candidate {
     Candidate {
         member: AccountPoolMember { account: name.into(), group: name.into(), models: vec![] },
         generation: format!("generation-{name}"),
+        last_quota: None,
         quota: Some(AccountQuota {
             account: name.into(),
             harness: "claude".into(),
@@ -223,11 +224,11 @@ fn active_jobs_then_recent_assignment_balance_accounts_without_legacy_groups_or_
     let mut a = unknown("a");
     a.member.group = "shared".into();
     a.member.models = vec!["unused".into()];
-    let mut b = candidate("b", 99.0, 99.0);
+    let mut b = unknown("b");
     b.member.group = "shared".into();
     let p = input(&l, vec![b, a]);
     let (name, mut allocation) = choose(&l, &p).unwrap();
-    assert_eq!(name, "a", "미관측과 작은 잔량도 같은 차례로 분산한다");
+    assert_eq!(name, "a", "잔량을 모르면 기존 차례로 분산한다");
     allocation.selection.selected_at_ms = NOW - 20;
     let a = l.seed(&name, allocation, ThreadStatus::Open, true);
     let (name, mut allocation) = choose(&l, &p).unwrap();
@@ -700,4 +701,76 @@ fn automation_thresholds_filter_the_selected_account_and_ignore_missing_windows(
     assert!(choose(&l, &p).unwrap_err().to_string().contains("자동화 사용량 문턱"));
     p.candidates[0].quota.as_mut().unwrap().windows.remove(0);
     assert_eq!(choose(&l, &p).unwrap().0, "a", "5시간 창이 없으면 들어온 주간 창만 판정한다");
+}
+
+// 필요: 조회 실패 사례의 11% 대신 65% 계정을 실제 배정하고 주간 리셋 경계를 지킨다.
+#[test]
+fn last_weekly_quota_ranks_accounts_and_reset_restores_full_capacity() {
+    let l = Lab::new();
+    let mut low = candidate("a", 1.0, 89.0);
+    let mut high = candidate("b", 80.0, 35.0);
+    for c in [&mut low, &mut high] {
+        let q = c.quota.as_mut().unwrap();
+        for w in &mut q.windows {
+            w.window.observed_at_ms = NOW - 600_001;
+        }
+        c.last_quota = Some(q.clone());
+        q.windows.clear();
+        q.problem = Some(QuotaProblem::Failed);
+    }
+    let mut p = input(&l, vec![low, high, unknown("c")]);
+    let (name, allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "b");
+    assert!(allocation.selection.unobserved);
+    assert!(allocation.selection.reason.contains("마지막 관측으로 판단 잔량 65.0%"));
+    l.seed(&name, allocation, ThreadStatus::Open, true);
+    assert_eq!(choose(&l, &p).unwrap().0, "b", "잔량이 작업 수보다 먼저다");
+    p.candidates[0].last_quota.as_mut().unwrap().windows[1].window.resets_at_ms = Some(NOW + 1);
+    assert_eq!(choose(&l, &p).unwrap().0, "b", "리셋 직전에는 원래 잔량이다");
+    p.candidates[0].last_quota.as_mut().unwrap().windows[1].window.resets_at_ms = Some(NOW);
+    let (name, allocation) = choose(&l, &p).unwrap();
+    assert_eq!(name, "a");
+    assert!(allocation.selection.reason.contains("100.0%"));
+    p.candidates[0].last_quota.as_mut().unwrap().windows[1].window.resets_at_ms = None;
+    assert_eq!(choose(&l, &p).unwrap().0, "b", "리셋을 모르면 채워졌다고 추정하지 않는다");
+    // 현재 정상 조회는 같은 계정의 지난 기록보다 먼저 쓴다.
+    p.candidates[0].quota = candidate("a", 50.0, 1.0).quota;
+    assert_eq!(choose(&l, &p).unwrap().0, "a");
+    p.candidates[0].quota.as_mut().unwrap().windows[1].window.used_percent = 99.0;
+    assert_eq!(choose(&l, &p).unwrap().0, "b");
+}
+
+// 필요: 시각 오류·충돌·다른 모델 잔량은 자동 배정 근거로 쓰면 안 된다.
+#[test]
+fn last_quota_ignores_invalid_conflicting_and_unrelated_windows() {
+    let l = Lab::new();
+    for mode in ["nan", "clock", "conflict", "scope"] {
+        let mut c = candidate("a", 0.0, 0.0);
+        let q = c.quota.as_mut().unwrap();
+        q.problem = Some(QuotaProblem::Failed);
+        q.windows.remove(0);
+        let w = &mut q.windows[0];
+        match mode {
+            "nan" => w.window.used_percent = f64::NAN,
+            "clock" => w.window.observed_at_ms = NOW + 30_001,
+            "conflict" => w.conflict = true,
+            "scope" => w.window.scope = Some("other-model".into()),
+            _ => unreachable!(),
+        }
+        let p = input(&l, vec![c, candidate("b", 50.0, 50.0)]);
+        assert_eq!(choose(&l, &p).unwrap().0, "b", "{mode}");
+    }
+}
+
+// 필요: 다른 머신의 이전 성공이 조회 실패 직전의 더 최근 정상 기록을 덮지 않게 한다.
+#[test]
+fn newest_saved_weekly_observation_beats_an_older_still_fresh_source() {
+    let l = Lab::new();
+    let mut c = candidate("a", 20.0, 5.0);
+    c.last_quota = candidate("a", 20.0, 95.0).quota;
+    for w in &mut c.quota.as_mut().unwrap().windows {
+        w.window.observed_at_ms -= 1000;
+    }
+    let p = input(&l, vec![c, candidate("b", 20.0, 35.0)]);
+    assert_eq!(choose(&l, &p).unwrap().0, "b", "계정 a의 최신 잔량은 95%가 아니라 5%다");
 }
