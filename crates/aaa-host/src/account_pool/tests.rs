@@ -137,6 +137,107 @@ fn choose(lab: &Lab, input: &SelectionInput) -> anyhow::Result<(String, Allocati
     input.select(&lab.h.db.conn_for_test(), NOW)
 }
 
+fn codex_auth() -> String {
+    serde_json::json!({"tokens": {
+        "access_token": aaa_test_support::token("pool-access"),
+        "refresh_token": aaa_test_support::token("pool-refresh")
+    }})
+    .to_string()
+}
+
+fn codex_profile() -> ResolvedProfile {
+    ResolvedProfile {
+        harness: "codex".into(),
+        model: "model-a".into(),
+        effort: "high".into(),
+        args: vec![],
+        command: vec![],
+        env: Default::default(),
+    }
+}
+
+// 필요: 실제 금고·목록·저장 캐시·재열기·공통 배정 경로에서 이번 운영 회귀를 재현한다.
+#[tokio::test]
+async fn persisted_usage_auth_errors_do_not_block_a_healthy_account_after_reopen() {
+    let l = Lab::new();
+    l.h.register_account("work", "codex", &codex_auth()).unwrap();
+    let generation = l.h.accounts.generation("work").unwrap();
+    let now = util::now_ms();
+    let good = QuotaSnapshot {
+        generation: generation.clone(),
+        source: QuotaSource::CodexRpc,
+        sampled_at_ms: now - 180_001,
+        windows: vec![QuotaWindow {
+            limit_id: "codex".into(),
+            window_id: "weekly".into(),
+            scope: None,
+            duration_mins: Some(10080),
+            used_percent: 19.0,
+            observed_at_ms: now - 180_001,
+            resets_at_ms: Some(now + 3_600_000),
+        }],
+        problem: None,
+        retry_at_ms: None,
+    };
+    let reading = |snapshot: &QuotaSnapshot| serde_json::json!({"snapshot": snapshot, "machine": "host", "received_at_ms": snapshot.sampled_at_ms});
+    for problem in [QuotaProblem::Expired, QuotaProblem::Locked] {
+        for history in [true, false] {
+            let mut failed = good.clone();
+            failed.sampled_at_ms = now;
+            failed.problem = Some(problem);
+            if !history {
+                failed.windows.clear();
+            }
+            let saved = if history { serde_json::json!({"host": reading(&good)}) } else { serde_json::json!({}) };
+            let entry = serde_json::json!({
+                "generation": generation, "attempted_ms": now, "next_ms": now + 60_000,
+                "readings": {"host": reading(&failed)}, "last_known": saved
+            });
+            l.h.db.set_meta("account-quota-v1/work", &entry.to_string()).unwrap();
+            let reopened = Host::open(l.h.cfg.clone(), l._root.0.join("host")).unwrap();
+            assert_eq!(reopened.account_views(false).unwrap()[0].health, Some(AccountHealth::Ok));
+            let input = reopened
+                .account_selection_input("demo", &codex_profile(), None, AccountTaskSize::Medium)
+                .await
+                .unwrap()
+                .unwrap();
+            let (name, allocation) = input
+                .select(&reopened.db.conn_for_test(), util::now_ms())
+                .unwrap_or_else(|e| panic!("{problem:?}, history={history}: 정상 계정 배정 실패: {e}"));
+            assert_eq!(name, "work");
+            assert!(allocation.selection.unobserved);
+            assert!(allocation.selection.reason.contains(if history { "81.0%" } else { "판단 불가" }));
+        }
+    }
+}
+
+// 필요: 조회 실패를 허용해도 실제 갱신 거부·만료·금고 잠김과 인증 세대 경계는 지킨다.
+#[tokio::test]
+async fn real_auth_failures_still_block_and_old_rejections_do_not_poison_a_new_login() {
+    let l = Lab::new();
+    let first = l.h.register_account("work", "codex", &codex_auth()).unwrap();
+    let original_generation = l.h.accounts.generation("work").unwrap();
+    let profile = codex_profile();
+    let prepare = || l.h.account_selection_input("demo", &profile, None, AccountTaskSize::Medium);
+    l.h.account_refresh_seen("work", crate::accounts::RefreshOutcome::Rejected, first.version);
+    let input = prepare().await.unwrap().unwrap();
+    assert!(choose(&l, &input).unwrap_err().to_string().contains("인증 끊김"));
+    l.h.db.set_meta("account-meta:work", &serde_json::json!({"expires_ms": 1}).to_string()).unwrap();
+    assert!(choose(&l, &prepare().await.unwrap().unwrap()).unwrap_err().to_string().contains("인증 끊김"));
+    l.h.account_logged_in("work", &Default::default(), false);
+    let root = l._root.0.join("host");
+    std::fs::rename(root.join("secrets.key"), root.join("held.key")).unwrap();
+    let locked = prepare().await.unwrap().unwrap();
+    std::fs::rename(root.join("held.key"), root.join("secrets.key")).unwrap();
+    assert!(choose(&l, &locked).unwrap_err().to_string().contains("인증 잠김·없음"));
+    l.h.register_account("work", "codex", &codex_auth()).unwrap();
+    l.h.account_refresh_seen("work", crate::accounts::RefreshOutcome::Rejected, first.version);
+    let input = prepare().await.unwrap().unwrap();
+    let (_, allocation) = choose(&l, &input).unwrap();
+    assert_ne!(allocation.generation, original_generation);
+    assert_eq!(l.h.account_views(false).unwrap()[0].health, Some(AccountHealth::Ok));
+}
+
 // 필요: 관측 수집과 무관하게 시작한다는 사용자 계약과 알려진 한도의 경계를 지킨다.
 #[test]
 fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_first_run() {
@@ -153,6 +254,8 @@ fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_firs
         "no-reset",
         "conflict",
         "rate-unknown",
+        "usage-expired",
+        "usage-locked",
     ] {
         // Host/DB 준비만 공유한다. 각 입력은 이력 없는 새 계정으로 처음·두 번째·종료 뒤를 모두 검사한다.
         let account = format!("work-{mode}");
@@ -178,6 +281,8 @@ fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_firs
                 "no-reset" => q.windows[0].window.resets_at_ms = None,
                 "conflict" => q.windows[0].conflict = true,
                 "rate-unknown" => q.problem = Some(QuotaProblem::RateLimited),
+                "usage-expired" => q.problem = Some(QuotaProblem::Expired),
+                "usage-locked" => q.problem = Some(QuotaProblem::Locked),
                 _ => {}
             }
         }
@@ -195,7 +300,7 @@ fn unknown_stale_failed_partial_and_invalid_usage_never_waits_or_requires_a_firs
 }
 
 #[test]
-fn only_confirmed_limits_and_broken_auth_exclude_an_account() {
+fn only_confirmed_usage_limits_exclude_an_authenticated_candidate() {
     let l = Lab::new();
     let mut full = candidate("full", 100.0, 20.0);
     full.quota.as_mut().unwrap().windows.pop(); // 필수 창 누락으로 알려진 고갈을 지우지 않는다.
@@ -208,14 +313,12 @@ fn only_confirmed_limits_and_broken_auth_exclude_an_account() {
     p.candidates[0].quota.as_mut().unwrap().windows[0].window.scope = None;
     p.candidates[0].quota.as_mut().unwrap().windows[0].window.observed_at_ms = NOW - 120001;
     assert_eq!(choose(&l, &p).unwrap().0, "full", "오래된 100%는 현재 한도로 단정하지 않는다");
-    for problem in [QuotaProblem::Expired, QuotaProblem::Locked, QuotaProblem::RateLimited] {
-        let mut c = unknown("broken");
-        let q = c.quota.as_mut().unwrap();
-        q.problem = Some(problem);
-        q.retry_at_ms = Some(NOW + 1000);
-        let p = input(&l, vec![c]);
-        assert!(choose(&l, &p).is_err(), "{problem:?}");
-    }
+    let mut c = unknown("limited");
+    let q = c.quota.as_mut().unwrap();
+    q.problem = Some(QuotaProblem::RateLimited);
+    q.retry_at_ms = Some(NOW + 1000);
+    let p = input(&l, vec![c]);
+    assert!(choose(&l, &p).unwrap_err().to_string().contains("사용 한도 도달"));
 }
 
 #[test]

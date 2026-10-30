@@ -1,3 +1,4 @@
+- t-1338: [사용량 조회 오류와 작업 인증 건강 분리 검증](testing-account-usage-auth-separation.md)
 - [t-1310 후속: 전체 gate 재빌드 예산과 179.7/208초 차이](testing-ci-rebuild-t-1310.md)
 - t-1314: [탭 붙여넣기 수신 확인과 기존 경고 복구](testing-chat-tab-receipts.md)
 - t-1309: [검증 중복 축소·Windows 산출물 재사용 검증](testing-verification-dedup.md)

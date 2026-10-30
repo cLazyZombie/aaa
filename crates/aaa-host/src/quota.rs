@@ -276,7 +276,11 @@ impl crate::Host {
                             if retry.is_none_or(|t| now >= t) {
                                 let snapshot = match self.accounts.credential(&name) {
                                     Ok(c) if c.auth_generation.as_deref() == Some(&generation) => {
-                                        crate::quota_rpc::read(&self.state, generation.clone(), &c.secret.0, now).await
+                                        tracing::Instrument::instrument(
+                                            crate::quota_rpc::read(&self.state, generation.clone(), &c.secret.0, now),
+                                            tracing::info_span!("계정 사용량 조회", account = %name),
+                                        )
+                                        .await
                                     }
                                     _ => empty(&generation, QuotaSource::CodexRpc, QuotaProblem::Locked, now),
                                 };

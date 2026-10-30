@@ -1398,7 +1398,7 @@ fn renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_run
     w.wait_show("변경 계정 작업 종료", started["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
 }
 
-/// 필요: 재시작한 실제 host가 마지막 잔량으로 계정을 골라 agent 자식에게 해당 인증을 전달한다.
+/// 필요: 사용량 인증 오류가 남아도 재시작한 host가 마지막 잔량으로 골라 자식에게 해당 인증을 전달한다.
 #[test]
 fn automatic_assignment_uses_persisted_weekly_quota_after_host_restart() {
     let gate = Gate::new();
@@ -1427,6 +1427,7 @@ assert s.recv(1)==b'X'
     }
     w.lab.kill("host");
     for (name, used) in [("low", 89.0), ("high", 35.0)] {
+        let problem = if name == "high" { "expired" } else { "disconnected" };
         let auth: Value =
             serde_json::from_slice(&std::fs::read(w.h.state.join(format!("host/accounts/{name}.json"))).unwrap())
                 .unwrap();
@@ -1435,7 +1436,7 @@ assert s.recv(1)==b'X'
             "generation": auth["generation"], "attempted_ms": now, "next_ms": now + 60_000,
             "readings": {"pane": {"machine":"mac-a", "received_at_ms":now,
                 "snapshot": {"generation": auth["generation"], "source":"claude_statusline",
-                    "sampled_at_ms": now, "problem":"disconnected", "retry_at_ms":null,
+                    "sampled_at_ms": now, "problem":problem, "retry_at_ms":null,
                     "windows":[{"limit_id":"claude", "window_id":"seven_day", "scope":null,
                         "duration_mins":10080, "used_percent":used, "observed_at_ms":observed,
                         "resets_at_ms":now + 86_400_000}]}}}
