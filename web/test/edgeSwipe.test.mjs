@@ -123,6 +123,17 @@ describe("watchDrawerSwipe", () => {
     expect(stroke([[4, 400], [24, 400], [90, 400], [200, 400]])).toEqual({ reached: 3, calls: [] });
   });
 
+  test("열린 메뉴의 왼쪽 끝을 누르거나 살짝 움직여도 닫히지 않는다", () => {
+    for (const x of [0, 4, EDGE_PX, EDGE_PX + 1]) {
+      expect(stroke([[x, 400]], true)).toEqual({ reached: 0, calls: [] });
+      expect(stroke([[x, 400], [x + 3, 402]], true)).toEqual({ reached: 1, calls: [] });
+    }
+  });
+
+  test("열린 메뉴의 왼쪽 끝 세로 스크롤은 메뉴를 닫지 않는다", () => {
+    expect(stroke([[4, 400], [6, 420], [7, 460]], true)).toEqual({ reached: 2, calls: [] });
+  });
+
   test("열린 메뉴의 가장자리 쓸기는 취소되어도 메뉴를 거두고 움직임을 가로채지 않는다", () => {
     expect(stroke([[4, 400], [24, 400], [90, 400], [200, 400]], true)).toEqual({ reached: 3, calls: [false] });
   });

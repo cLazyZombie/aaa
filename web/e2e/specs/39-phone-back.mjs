@@ -111,6 +111,33 @@ export default async function () {
     for (const label of ["bk3", "bk4"]) aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", "exec cat");
   }, { always: true });
 
+  await step("휴대폰 메뉴 왼쪽 끝 누름은 메뉴를 유지하고 패널을 고른다(Chromium·WebKit)", async () => {
+    for (const b of [browser, await safariBrowser()]) {
+      const { page: p } = await pairDevice(b, aaa("web", "pair").code, "iphone");
+      try {
+        await inList(p, "pane-bk1");
+        await p.locator(".view [data-testid='drawer-toggle']:visible").click();
+        await p.locator("#workspace-drawer.is-open").waitFor();
+        await drawerSettled(p, true);
+        const group = await p.getByRole("button", { name: "기록 검색", exact: true }).boundingBox();
+        const bottom = await p.locator(".activity-bottom").boundingBox();
+        const y = (group.y + group.height + bottom.y) / 2;
+        for (const x of [4, 24]) {
+          if (!(await p.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.matches('[data-testid="activity-bar"]'), { x, y })))
+            throw new Error("메뉴 빈 공간의 누름 좌표가 활동 막대를 벗어났다");
+          await p.touchscreen.tap(x, y);
+          await painted(p);
+          if (!(await screen(p)).drawer) throw new Error(`${b.browserType().name()}: x=${x} 누름이 메뉴를 닫았다`);
+        }
+        const machines = p.getByRole("tab", { name: "머신", exact: true });
+        const box = await machines.boundingBox();
+        await p.touchscreen.tap(4, box.y + box.height / 2);
+        await domIs(p, "왼쪽 끝에서 머신 패널 선택", () => document.querySelector('.activity-bar [role="tab"][aria-selected="true"]')?.getAttribute("aria-label") === "머신");
+        if (!(await screen(p)).drawer) throw new Error("패널 왼쪽 끝 누름이 메뉴를 닫았다");
+      } finally { await p.context().close(); }
+    }
+  });
+
   await step("fragment 기록 직후 popstate와 Back·재선택의 칸 수 불변을 구분한다(Chromium·WebKit)", async () => {
     await fragmentHistory(browser);
     const wk = await safariBrowser();
