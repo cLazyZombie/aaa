@@ -186,6 +186,11 @@ export function TermView({
   const box = useRef<HTMLDivElement>(null);
   const openFileRef = useRef(onOpenFile);
   openFileRef.current = onOpenFile;
+  const openLinkRef = useRef(onOpenLink);
+  openLinkRef.current = onOpenLink;
+  // 다른 pane의 상태 갱신이 Markdown Context 값을 바꾸지 않게 한다. 실행할 때는 최신 동작을 읽는다.
+  const openChatFile = useCallback((path: string) => openFileRef.current?.(path), []);
+  const openChatLink = useCallback((href: string) => openLinkRef.current?.(href) ?? false, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const finishHiddenHistoryRef = useRef(() => {});
@@ -2282,7 +2287,7 @@ export function TermView({
         {active && <HeadMore />}
       </header>}
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel active={active} onBytes={reportChatBytes} coordinator={pane.role === "coordinator"} pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
+      {chatView && chatable && <ChatPanel active={active} onBytes={reportChatBytes} coordinator={pane.role === "coordinator"} pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile ? openChatFile : undefined} onOpenLink={onOpenLink ? openChatLink : undefined} onMessages={setChatMessages} findRequest={findRequest}
         onQuote={quoteTarget === "composer" ? quoteChat : undefined}
         onQuoteReturn={quoteReturn}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
