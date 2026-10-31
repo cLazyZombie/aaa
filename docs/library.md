@@ -58,7 +58,8 @@ agent의 thread 보고 회수에 적용한다. 이미 손상된 과거 r 판은 
 ```
 
 카드·보고 본문에서 영상의 재생 단추를 한 번 누르면 새 탭 없이 바로 재생한다. `mp4`·`webm`의
-`![]()`와 기존 `[시안 영상](library/preview/a.mp4)` 모두 controls·muted·playsinline 재생기로 표시한다.
+`![시안 영상](library/preview/a.mp4)`와 기존 `[시안 영상](library/preview/a.mp4)` 모두 controls·muted·playsinline 재생기로 표시한다.
+그림·영상은 설명이 있는 alt를 권장하며, 빈 alt인 `![](library/preview/a.png)`·`![](library/preview/a.mp4)`도 표시한다.
 멈춤·탐색·음소거 해제는 재생기에서 한다. 기본 자동 재생·반복은 없으며 답을 골라도 영상 재생으로 선택이 바뀌지 않는다.
 Markdown 영상은 첫 재생 누름에서만 주소를 붙인다. 누르기 전에는 metadata 요청도 보내지 않는다.
 첫 화면은 재생 단추 하나만 표시하고, 주소를 붙인 뒤에는 기본 컨트롤로 전환한다. 일시정지 뒤에도 단추가 겹치지 않는다.
