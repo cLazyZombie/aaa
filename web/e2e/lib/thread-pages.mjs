@@ -83,12 +83,16 @@ export async function threadPages(all, name) {
                 const request = route.request().postDataJSON();
                 if (request?.op !== "threads") return await route.fallback();
                 const requestDocument = route.request().headers()["x-e2e-document"];
+                const stamp = { doc: requestDocument, fetch: route.request().headers()["x-e2e-request"],
+                  connection: route.request().headers()["x-e2e-connection"], after: request.after ?? null };
                 if (gate.holdFirst(requestDocument, request.after)) {
                   trace.record({ event: "new-first-held", doc: requestDocument, after: request.after ?? null });
                   restart();
                   await newHolding;
                 }
+                trace.record({ ...stamp, event: "route-fetch-start" });
                 const response = await route.fetch();
+                trace.record({ ...stamp, event: "route-fetch-complete", status: response.status() });
                 const body = (await response.json()).ok;
                 const oldFinal = gate.holdFinal(requestDocument, body);
                 if (oldFinal) {
@@ -96,7 +100,9 @@ export async function threadPages(all, name) {
                   arrive();
                   await holding;
                 }
+                trace.record({ ...stamp, event: "route-fulfill-start" });
                 await route.fulfill({ response });
+                trace.record({ ...stamp, event: "route-fulfill-complete" });
                 if (gate.held && !oldFinal && body?.kind === "threads" && !body.next_after) {
                   trace.record({ event: "new-final-delivered" });
                 }
@@ -133,6 +139,7 @@ export async function threadPages(all, name) {
       trace.record({ event: "old-complete-visible-before-new-response" });
       trace.record({ event: "new-first-released" });
       releaseNew();
+      trace.snapshot("reconnected-list");
       await inTime(trace.completed(doc, 2), 20000, "재연결 HTTP 두 완전 목록의 본문 수집");
       const expected = all.map(t => `${t.project}/${t.id}`);
       phase = "trace-and-dom";
@@ -148,6 +155,7 @@ export async function threadPages(all, name) {
       primary = routeError ?? error;
       // 추가 진단과 정리보다 먼저 남긴다. 닫는 중 생긴 오류가 최초 단계를 가리지 않는다.
       trace.record({ event: "failure", phase, original: { message: error.message, stack: error.stack } });
+      trace.snapshot(phase);
       throw primary;
     } finally {
       cleaning = true;

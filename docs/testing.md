@@ -542,6 +542,7 @@ E2E12 연결 중 취소·재연결 검증은 [별도 기록](testing-terminal-so
 
 ## E2E12의 문서 식별과 본문 완료(t-1117)
 
+- [macOS WebKit 재연결 본문 수집 조사·추가 계측(t-1380)](testing-webkit-thread-reconnect-t-1380.md)
 - 관측기는 `timeOrigin`을 반복 환산해 문서 키로 비교하지 않고, 실제 Document에 한 번 붙인
   표지를 HTTP 헤더·완료 대기·문서 교체 취소에서 함께 읽는다. hash 이동은 표지를 유지하고,
   새 Document는 같은 시계 값에서도 다른 표지를 받는다. 완료 대기의 키·목표 개수와
