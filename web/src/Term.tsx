@@ -1,3 +1,4 @@
+import { ProviderError } from "./ProviderError";
 import { recentScreenChord, standaloneWindow } from "./recentScreens.ts";
 import { AutoModeChip } from "./AutoMode";
 import { ignoredFailure, logIgnoredFailure } from "./errorDiagnostic.ts";
@@ -2286,6 +2287,7 @@ export function TermView({
         )}
         {active && <HeadMore />}
       </header>}
+      {active && <ProviderError agent={pane.agent} />}
       {flowNotices && notices}
       {chatView && chatable && <ChatPanel active={active} onBytes={reportChatBytes} coordinator={pane.role === "coordinator"} pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile ? openChatFile : undefined} onOpenLink={onOpenLink ? openChatLink : undefined} onMessages={setChatMessages} findRequest={findRequest}
         onQuote={quoteTarget === "composer" ? quoteChat : undefined}

@@ -112,6 +112,7 @@ pub fn normalize(session: &str, harness: &str, p: &Value, now_ms: u64) -> Option
         background: None,
         context: None,
         model_observation: None,
+        provider_turn: None,
         turn_reply: None,
     };
     if harness == "report" {

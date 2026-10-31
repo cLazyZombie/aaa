@@ -387,6 +387,7 @@ mod tests {
                     background: None,
                     context: None,
                     model_observation: None,
+                    provider_turn: None,
                     turn_reply: None,
                 };
                 let sessions = ["first", "s"].map(|id| SessionInfo {
@@ -617,6 +618,7 @@ mod tests {
             compacting: false,
             context: None,
             model_observation: None,
+            provider_turn: None,
         }
     }
 

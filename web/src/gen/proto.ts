@@ -2200,6 +2200,24 @@ compaction: ContextCompaction | null, };
 
 export type ModelObservation = { model: string, effort: string | null, at_ms: number, };
 
+export type ProviderTurn = {
+/**
+ * agent가 확인한 harness 실행 시작 시각(실행 세대).
+ */
+generation_ms: number, harness_session: string, started_ms: number,
+/**
+ * 이 관측의 native 시각. 시작이면 started_ms, 완료면 finished_ms와 같다.
+ */
+at_ms: number, finished_ms: number | null, error: ProviderFailure | null, };
+
+export type ProviderFailure = { kind: ProviderFailureKind,
+/**
+ * 알려진 native 코드만 싣는다. 모르는 코드는 None이다.
+ */
+code: string | null, http_status: number | null, };
+
+export type ProviderFailureKind = "overloaded" | "authentication" | "allowance" | "model" | "rate_limit" | "unknown";
+
 export type ContextCompaction = { before: number, after: number, };
 
 export type AgentStatus = { activity: AgentActivity, since_ms: number, harness: string, message: string | null,
@@ -2249,7 +2267,11 @@ context: ContextUsage | null,
 /**
  * 마지막으로 확인한 실행 모델(FRONT_API 1.109). 시작 profile과 별개이며 옛 agent는 보내지 않는다.
  */
-model_observation?: ModelObservation, };
+model_observation?: ModelObservation,
+/**
+ * native turn의 마지막 관측. 옛 agent는 보내지 않는다.
+ */
+provider_turn?: ProviderTurn, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

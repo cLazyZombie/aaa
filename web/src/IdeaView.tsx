@@ -1,3 +1,4 @@
+import { ProviderError } from "./ProviderError";
 // 아이디어 본문(t-1260, 기획 t-1255 결정 6·8·10·12·16~18·24, 시안 r-4673): 노트와 전용 thread 대화를 나란히 둔다(목록은 사이드바).
 // 노트 보기는 보고 글과 같은 Markdown 렌더러(그림·영상), 고치기는 그냥 textarea다. 노트 글·그림에 단 의견은 이 기기에 모았다가
 // 「입력창에 넣기」로 대화 입력창에 한 번에 붙인다(t-1222 의견 모음). 대화창은 thread pane의 대화 보기와 입력창을 그대로 쓴다.
@@ -357,6 +358,7 @@ function IdeaChat({ note, threads, panes, canControl, notes, active, onSaid, onE
         {thread ? <a className="idea-thread-chip" href={`#thread=${encodeURIComponent(thread.id)}`} data-testid="idea-thread">{thread.id} · {thread.machine}</a> : <span className="muted">대화 없음</span>}
       </div>
       <div className="idea-chat-body">
+        <ProviderError agent={pane?.agent} />
         {pane && chatable ? (
           <ChatPanel active={active} pane={pane.id} status={status} compacting={pane.agent?.compacting ?? false} compaction={pane.agent?.context?.compaction ?? null}
             readNow={sent} onMessages={setMessages} pending={pending} harness={harness} onOpenLink={onOpenLink}

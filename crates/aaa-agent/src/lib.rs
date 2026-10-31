@@ -30,6 +30,7 @@ pub mod link;
 mod page;
 mod plan;
 pub mod post;
+mod provider_error;
 mod quota;
 #[cfg(target_os = "macos")]
 mod report_watch;
@@ -425,13 +426,13 @@ impl Agent {
             self.observe_claude_effort(&msg.session, &msg.payload, util::now_ms());
             return self.record_quota(&spec, &msg.payload).map(hooks::Reply::Text).map(Some);
         }
-        if msg.harness == "claude"
+        let now = util::now_ms();
+        if matches!(msg.harness.as_str(), "claude" | "codex")
             && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
             && matches!(msg.payload.get("source").and_then(|v| v.as_str()), Some("startup" | "resume"))
         {
-            self.harness_process_started(&msg.session, util::now_ms());
+            self.harness_process_started(&msg.session, now);
         }
-        let now = util::now_ms();
         if msg.harness == "claude" && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("PostToolUse")
         {
             self.observe_claude_effort(&msg.session, &msg.payload, now);
@@ -542,8 +543,21 @@ impl Agent {
     }
 
     /// harness 사건을 기억하고(다시 알릴 것이면) host에 보낸다
-    async fn harness_event(self: &Arc<Self>, ev: aaa_proto::HarnessEvent) {
+    async fn harness_event(self: &Arc<Self>, mut ev: aaa_proto::HarnessEvent) {
         let _delivery = self.harness_delivery.lock().await;
+        if matches!(ev.kind.as_str(), "session_start" | "session") {
+            let pane_started = self.sessions.lock().unwrap().get(&ev.session).map(|e| e.info.started_at_ms);
+            let generation =
+                self.plan_since.lock().unwrap().get(&ev.session).copied().or(pane_started).unwrap_or(ev.at_ms);
+            ev.provider_turn = ev.harness_session.as_ref().map(|id| aaa_proto::ProviderTurn {
+                generation_ms: generation,
+                harness_session: id.clone(),
+                started_ms: generation,
+                at_ms: ev.at_ms,
+                finished_ms: None,
+                error: None,
+            });
+        }
         // 이 pane이 시작한 harness 세션과 다른 세션(중첩 Codex thread 등)의 사건은 버린다(herdr-projects `foreign_session`)
         if ev.harness != "report" {
             let mut started = self.harness_started.lock().unwrap();
@@ -583,6 +597,7 @@ impl Agent {
             background: None,
             context: None,
             model_observation: None,
+            provider_turn: None,
             turn_reply: None,
         })
         .await;
@@ -1227,6 +1242,7 @@ impl Agent {
                         {
                             match foreground_tick(p, *pid, now) {
                                 Some(detect::foreground::Change::Acquired(h)) => {
+                                    self.harness_process_started(&id, util::now_ms());
                                     watch = Some(detect::Watch::new(h, now, detect_ipc, now));
                                 }
                                 Some(detect::foreground::Change::Exited(h)) => {
@@ -2307,6 +2323,8 @@ enum Slot {
     Plan,
     /// 마지막 완료 답. 연결 복구 때 같은 사건을 재전송하며 host가 중복을 거른다.
     Reply,
+    /// 완료 오류와 다음 turn 시작 관측. 상태 사건과 따로 재전송한다.
+    ProviderTurn,
 }
 
 impl Slot {
@@ -2317,6 +2335,7 @@ impl Slot {
             "session_start" | "session" => Some(Slot::Session),
             "plan" => Some(Slot::Plan),
             "turn_reply" => Some(Slot::Reply),
+            "provider_turn" => Some(Slot::ProviderTurn),
             "prompt_submit" => None,
             _ => Some(Slot::State),
         }
@@ -2495,6 +2514,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            provider_turn: None,
             turn_reply: None,
         };
         let mut sent = async |host_compacting: bool| {

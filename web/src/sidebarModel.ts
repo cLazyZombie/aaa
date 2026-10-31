@@ -1,3 +1,4 @@
+import { providerFailure } from "./providerFailure.ts";
 // 목록(sidebar)이 그리는 값: thread 묶음 순서·상태 줄, pane 상태를 herdr 상태 말로, 머신·프로젝트 묶음.
 // 참고: herdr-projects `thread.rs` Group::rank·`sidebar.rs` word·state_line·project_line(1f05c00),
 // herdr-web-ui `lib/status.ts`(aa624cb, herdr/status.ts에 그대로 있다)·`components/Sidebar.tsx`·`AgentSidebar.tsx`.
@@ -135,6 +136,8 @@ export function activityOrder<T>(rows: readonly T[], paneOf: (row: T) => PaneVie
 export function paneProblem(p: PaneView): string | null {
   if (p.state === "interrupted") return p.restore_error ? `중단: ${p.restore_error}` : "중단: agent backend가 다시 떴을 때 이 세션이 없었다";
   if (p.state === "lost") return "유실: 세션 기록을 찾지 못했다";
+  const native = p.state === "running" ? providerFailure(p.agent) : null;
+  if (native) return `${native.reason} · ${native.evidence}`;
   if (p.state === "running" && p.agent?.activity === "error") return `harness 오류${p.agent.message ? `: ${p.agent.message}` : ""}`;
   return null;
 }

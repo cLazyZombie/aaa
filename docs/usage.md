@@ -310,3 +310,24 @@ audience: coordinator
 설치한 PWA의 대화 입력창에서는 Ctrl+W로 커서 앞 공백과 그 앞 한 단어를 함께 지운다. 단어는 공백(줄바꿈·탭 포함)으로 구분하므로 `hello 한글/문장!`의 끝에서 누르면 `hello `가 남는다. 선택한 글이 있으면 선택만 지우고, 커서 뒤 글은 보존한다. 브라우저 편집 기록으로 되돌릴 수 있다. 조합 중이나 Ctrl에 다른 보조키를 더 누른 경우는 가로채지 않는다. 일반 브라우저 탭·터미널·다른 입력칸에는 이 동작을 적용하지 않는다.
 
 단어 경계는 [GNU Readline의 unix-word-rubout](https://tiswww.case.edu/php/chet/readline/rluserman.html#Killing-Commands)을 따른다. 문장부호·경로 구분자까지 나누는 [fish의 Ctrl+W](https://fishshell.com/docs/current/interactive.html#shared-bindings)와 비교해 한글·영문을 똑같이 다루는 공백 경계를 택했다. 라이브러리 코드는 가져오지 않았다. 브라우저 예약 키는 [Chrome 공식 단축키](https://support.google.com/chrome/answer/157179)를 참고한다.
+
+## 공급자 오류 원인
+
+Claude·Codex가 완료된 turn의 native 기록에 오류를 남기면 대화·터미널과 작업 요약에 원인, native 코드,
+완료 시각, 실행 시작 시각을 표시한다. 목록의 경고에서도 같은 근거를 볼 수 있다.
+
+- `공급자 과부하`: native 과부하 코드 또는 HTTP 529.
+- `로그인 필요`: 인증 실패 코드 또는 HTTP 401. 로그인 만료 여부를 본문 단어로 추측하지 않는다.
+- `구독·결제 한도`: Codex `usage_limit_exceeded`, Claude `billing_error`.
+- `모델 오류`: `model_not_found`(선택한 모델이 없거나 사용할 수 없음).
+- `요청 한도`: native 요청 제한 코드 또는 HTTP 429. 구독 고갈과 구별한다.
+- `공급자 오류 · 원인 미확인`: 완료 오류는 있지만 알려진 구조화된 근거가 없는 경우.
+
+새 turn 시작·정상 완료·새 실행·입력 제출은 지난 오류 표시를 걷는다. 다른 머신·세션·실행 세대나 지난 turn의
+늦은 완료는 현재 표시를 바꾸지 않는다. 재시도 중 오류·도구 오류·하위 agent 오류·본문의 오류 단어는 근거로 쓰지 않는다.
+읽은 오류는 활동·질문·승인 상태를 바꾸지 않으며 자동 이어하기나 모델 변경을 하지 않는다.
+기존 구독 사용량 표지는 별개이며, native 원인을 알 수 없을 때 그 수치로 원인을 채우지 않는다.
+
+원문 오류 글·기록 경로·요청 내용은 이 표시를 위해 전송하지 않는다. 지원하지 않는 기록 형식이나 구판 agent는
+native 표시가 없고 기존 화면 감지를 유지한다. 현재 Codex는 완료/중단 사건의 `error`, Claude는 메인 응답의
+`isApiErrorMessage`·`error`와 turn 경계를 읽는다. native 기록에 완료 오류가 없으면 화면만으로 분류하지 않는다.

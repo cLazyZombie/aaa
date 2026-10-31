@@ -1,3 +1,4 @@
+import { ProviderError } from "./ProviderError";
 // thread 작업 요약(plan §8.259): 「작업」 트리 thread 줄의 hover 카드(마우스 기기만)와 thread 화면 머리의 「요약」 단추.
 // 카드는 목표·큰 작업(최대 6개)·상태를 보인다(10-21 사용자 1A). 옛 요약은 지금(3줄)·최근 변경을 유지한다.
 // 정한 것·지난 변경·끝남·요약 뒤 지시는 단추 창에서만, 접어 둔다. 카드 모양·지연·자리는 t3code SidebarThreadTooltip
@@ -86,6 +87,7 @@ function Activity({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   return (
     <div className="summary-activity" data-testid="summary-activity">
       <p className="summary-model" data-testid="summary-model" title={model.title}>{model.text}</p>
+      <ProviderError agent={t.agent} />
       <p title={activity}>{activity}</p>
       <p className="summary-dim" data-testid="summary-updated" title={updates}>{updates}</p>
       <p className="summary-dim" data-testid="summary-time">{time}</p>
