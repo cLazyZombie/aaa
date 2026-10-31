@@ -861,13 +861,49 @@ mod terminal_lifecycle;
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[test]
 fn console_stack_snapshot_records_the_owned_reader_without_private_values() {
+    check_console_stack_snapshot(Path::new(BIN));
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn console_stack_snapshot_accepts_cargo_target_path_separators() {
+    // CI의 Git Bash CARGO_TARGET_DIR 표기를 실기의 기본 Cargo 호출에서도 재현한다.
+    let exe = Path::new(BIN);
+    let alternate = exe.parent().unwrap().join(".").join(exe.file_name().unwrap());
+    check_console_stack_snapshot(Path::new(&alternate.to_string_lossy().replace('\\', "/")));
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn console_stack_snapshot_rejects_a_different_image_with_typed_error() {
+    let lab = Lab::new();
+    let args = authorize_args(&lab, &lab.0.join("diagnostic-approval.json"), true);
+    // 이름이 같은 다른 위치의 파일도 소유한 CLI의 실행 파일로 인정하지 않는다.
+    let wrong_exe = lab.0.join(Path::new(BIN).file_name().unwrap());
+    let mut checked = false;
+    let (code, text) = terminal_controlled(&lab, &args, &[("[console-read-call]", "yes\r")], false, |child, text| {
+        if !checked && text.contains("[console-read-call]") {
+            let error = terminal_snapshot::capture(child.process_id().unwrap(), &wrong_exe).unwrap_err();
+            assert_eq!(
+                error,
+                "snapshot_helper_failed: exit=Some(1), phase=child_image_mismatch, type=RuntimeException, os_code=Some(0)"
+            );
+            checked = true;
+        }
+    });
+    assert_eq!(code, 0, "{}", redact_private(&text));
+    assert!(checked);
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn check_console_stack_snapshot(expected_exe: &Path) {
     let lab = Lab::new();
     let approval = lab.0.join("diagnostic-approval.json");
     let args = authorize_args(&lab, &approval, true);
     let mut captured = None;
     let (code, text) = terminal_controlled(&lab, &args, &[("[console-read-call]", "yes\r")], false, |child, text| {
         if captured.is_none() && text.contains("[console-read-call]") {
-            let snapshot = terminal_snapshot::capture(child.process_id().unwrap(), Path::new(BIN)).unwrap();
+            let snapshot = terminal_snapshot::capture(child.process_id().unwrap(), expected_exe).unwrap();
             let read_thread: u32 = text
                 .rsplit("install_console_read_call thread_id=")
                 .next()
