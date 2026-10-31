@@ -10,7 +10,12 @@ try {
     $target=Get-CimInstance Win32_Process -Filter "ProcessId=$TargetPid"
     if(-not $target) {$phase='child_missing';throw 'owned_child_missing'}
     if($target.ParentProcessId -ne $OwnerPid) {$phase='child_owner_mismatch';throw 'owned_child_mismatch'}
-    if(-not [string]::Equals($target.ExecutablePath,$ExpectedExe,[StringComparison]::OrdinalIgnoreCase)) {
+    if([string]::IsNullOrEmpty($target.ExecutablePath)) {$phase='child_image_unavailable';throw 'owned_child_image_unavailable'}
+    $phase='normalize_child_image'
+    # Cargo의 CARGO_TARGET_DIR는 Git Bash에서 /를 포함할 수 있다. 같은 Windows 경로로 정규화해 비교한다.
+    $actualExe=[IO.Path]::GetFullPath($target.ExecutablePath)
+    $ExpectedExe=[IO.Path]::GetFullPath($ExpectedExe)
+    if(-not [string]::Equals($actualExe,$ExpectedExe,[StringComparison]::OrdinalIgnoreCase)) {
         $phase='child_image_mismatch'
         throw 'owned_child_mismatch'
     }
