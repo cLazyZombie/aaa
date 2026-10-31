@@ -1,3 +1,4 @@
+- t-1363: [연결 오류 때 로컬 소켓 보존 검증](testing-local-socket-preservation.md)
 - t-1361: [내 보고서 자동 등록 기준 검증](testing-my-reports-filter.md)
 - t-1352: [다른 pane inbox 알림과 대화 입력 지연 수리](testing-inbox-input-render.md)
 - t-1338: [사용량 조회 오류와 작업 인증 건강 분리 검증](testing-account-usage-auth-separation.md)

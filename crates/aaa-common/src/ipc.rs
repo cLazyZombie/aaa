@@ -11,9 +11,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Duplex for T {}
 
 pub type LocalStream = Box<dyn Duplex>;
 
+#[cfg(unix)]
+#[path = "ipc/unix.rs"]
+mod unix;
+
 pub struct LocalListener {
     #[cfg(unix)]
     inner: tokio::net::UnixListener,
+    #[cfg(unix)]
+    socket_identity: unix::SocketIdentity,
     #[cfg(windows)]
     inner: tokio::sync::Mutex<tokio::net::windows::named_pipe::NamedPipeServer>,
     #[cfg(windows)]
@@ -124,21 +130,14 @@ impl LocalListener {
             if let Some(dir) = path.parent() {
                 crate::util::ensure_private_dir(dir)?;
             }
-            // 이전 프로세스가 남긴 socket 파일. 살아 있는 상대가 있으면 bind 전에 확인한다.
-            if path.exists() {
-                if std::os::unix::net::UnixStream::connect(path)
-                    .as_ref()
-                    .inspect_err(|error| crate::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
-                    .is_ok()
-                {
-                    return Err(io::Error::new(io::ErrorKind::AddrInUse, format!("이미 사용 중: {}", path.display())));
-                }
-                std::fs::remove_file(path)?;
-            }
+            unix::prepare_socket_path(path, |path| std::os::unix::net::UnixStream::connect(path).map(drop))?;
             let inner = tokio::net::UnixListener::bind(path)?;
+            let socket_identity = unix::SocketIdentity::read(path)?;
+            // 권한 설정 실패도 같은 identity를 확인하는 Drop으로 정리한다.
+            let listener = LocalListener { inner, socket_identity, path: path.to_path_buf() };
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-            Ok(LocalListener { inner, path: path.to_path_buf() })
+            Ok(listener)
         }
         #[cfg(windows)]
         {
@@ -204,7 +203,10 @@ impl LocalListener {
 impl Drop for LocalListener {
     fn drop(&mut self) {
         #[cfg(unix)]
-        crate::diagnostic::ignored(std::fs::remove_file(&self.path), "정리 실패가 본 작업의 결과를 덮지 않게 한다");
+        crate::diagnostic::ignored(
+            self.socket_identity.remove_if_owned(&self.path),
+            "로컬 소켓 정리 실패가 본 작업의 결과를 덮지 않게 한다",
+        );
     }
 }
 
@@ -445,3 +447,7 @@ mod tests {
         .unwrap();
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "ipc/unix_tests.rs"]
+mod unix_tests;
