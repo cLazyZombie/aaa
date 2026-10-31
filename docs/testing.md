@@ -5005,3 +5005,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 접속 기기 계정 재로그인: [t-1357 검증 기록](testing-remote-login-t-1357.md).
 
 - t-1362 native 공급자 오류 분류·세대 경계·웹 표시 검증: [기록](testing-native-provider-errors-t-1362.md).
+- main CI 세 OS 간헐 실패: Linux brief·macOS 빈 예약·Windows guard pipe 경합 수리와 승인 콘솔 미재현 대조는 [t-1365 기록](testing-ci-three-os-t1365.md)에 있다.

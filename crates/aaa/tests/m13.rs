@@ -1245,7 +1245,22 @@ fn unknown_brief_is_not_resent() {
     assert!(e["detail"].as_str().unwrap().contains("입력창을 읽을 수 없어"), "{e}");
     // 배경 task는 멈췄다(brief_unknown 뒤에는 보내는 쪽이 없다): 한 번뿐이다
     let log = w.scripts.join("mute.log");
-    let got = std::fs::read_to_string(&log).unwrap();
+    // unknown은 host의 받음 판정 완료이며 PTY 자식의 read/write 완료가 아니다.
+    // cat이 줄 끝까지 기록한 뒤 횟수를 단언해야 늦은 두 번째 read를 누락하지 않는다.
+    let received = |count| {
+        wait_for_diag(
+            "mute의 brief 수신 기록",
+            T,
+            || {
+                std::fs::read(&log)
+                    .is_ok_and(|bytes| bytes.iter().filter(|&&b| b == b'\n').count() >= count)
+                    .then_some(())
+            },
+            || format!("기대 줄 수: {count}, 기록: {:?}", std::fs::read_to_string(&log)),
+        );
+        std::fs::read_to_string(&log).unwrap()
+    };
+    let got = received(1);
     assert_eq!(got.matches("brief.md").count(), 1, "{got}");
     assert_eq!(ev.kinds(), ["thread_started", "brief_unknown"]);
     let v = w.show(&id);
@@ -1253,7 +1268,7 @@ fn unknown_brief_is_not_resent() {
     // 사람이 다시 보내면 한 번 더 간다(받았다는 표지가 없어 여전히 모른다)
     let e = w.h.json(&["thread", "brief", "demo", &id]).expect_err("받았는지 모른다");
     assert!(e.contains("아직 보내지 못했다"), "{e}");
-    let got = std::fs::read_to_string(&log).unwrap();
+    let got = received(2);
     assert_eq!(got.matches("brief.md").count(), 2, "{got}");
     // brief를 받기 전의 메시지는 입력하기 전에 거부한다(brief보다 먼저 가지 않게, herdr-projects threads.rs `prompt`)
     let e = w.h.json(&["thread", "message", "demo", &id, "--text", "MSG-EARLY-1"]).expect_err("brief 전 메시지");

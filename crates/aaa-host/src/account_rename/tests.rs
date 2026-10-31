@@ -34,6 +34,28 @@ fn request(to: &str) -> FrontRequest {
 }
 
 #[tokio::test]
+async fn idle_queue_pass_does_not_join_the_gate_or_block_the_first_account_rename() {
+    let l = Lab::new();
+    let h = &l.h;
+    let held = h.queue_gate.lock().await;
+    let pass = h.queue_pass("demo");
+    tokio::pin!(pass);
+    assert!(
+        matches!(futures_util::poll!(&mut pass), std::task::Poll::Ready(Ok(()))),
+        "예약·미완료 보관 영수증이 없는 조회는 예약 잠금을 요구하지 않는다"
+    );
+    let error = h.call(DeviceRole::Local, "local:cli", request("renamed")).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::Conflict);
+    assert!(error.message.contains("예약 처리 중"), "{error:?}");
+    assert!(h.accounts.credential("work").is_ok());
+    assert!(h.accounts.credential("renamed").is_err());
+    drop(held);
+    h.call(DeviceRole::Local, "local:cli", request("renamed")).await.unwrap();
+    assert!(h.accounts.credential("renamed").is_ok());
+    assert!(h.accounts.credential("work").is_err());
+}
+
+#[tokio::test]
 async fn idle_automation_drain_does_not_join_dispatch_or_block_the_first_account_rename() {
     let l = Lab::new();
     let h = &l.h;
