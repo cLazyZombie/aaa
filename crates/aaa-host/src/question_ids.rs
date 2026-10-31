@@ -86,10 +86,8 @@ impl Host {
                 .unwrap_or_default();
             q.short_id = Some(self.db.question_id(&project, "harness", &q.id, "", 0).map_err(internal)?);
         }
-        for t in self.threads_of(None, None)? {
-            if t.status == aaa_proto::ThreadStatus::Resolved && !all {
-                continue;
-            }
+        let threads = if all { self.threads_of(None, None)? } else { self.unresolved_threads_of(None, None)? };
+        for t in threads {
             if let Some(q) = t.questions.as_ref().filter(|q| all || q.answer.is_none()) {
                 for (n, item) in q.items.iter().enumerate() {
                     out.push(catalog_item(

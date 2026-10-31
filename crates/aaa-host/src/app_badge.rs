@@ -9,7 +9,7 @@ impl Host {
         let reports = self.db.library_unseen_count().map_err(internal)?;
         // 같은 pane의 thread 확인 필요·미처리 보고·열린 질문은 한 자리다.
         let mut panes = HashSet::new();
-        for t in self.threads_of(None, None)? {
+        for t in self.unresolved_threads_of(None, None)? {
             if t.status != ThreadStatus::Resolved
                 && (t.group == ThreadGroup::WaitingOnYou
                     || (t.report_attention == Some(ReportAttention::NeedsUser) && t.report_hash != t.acked_hash)

@@ -1127,7 +1127,36 @@ impl Host {
 
     /// thread 목록. 기본(`role` 없음)은 사후 평가자를 뺀다(§8.13).
     pub(crate) fn threads_of(&self, project: Option<&str>, role: Option<Role>) -> Result<Vec<ThreadView>, ErrorBody> {
-        let rows = self.db.threads(project).map_err(internal)?;
+        self.thread_views_for(project, role, false)
+    }
+
+    /// 열린 질문·배지는 끝난 원장을 읽거나 상세·질문 번호를 만들지 않는다.
+    pub(crate) fn unresolved_threads_of(
+        &self,
+        project: Option<&str>,
+        role: Option<Role>,
+    ) -> Result<Vec<ThreadView>, ErrorBody> {
+        self.thread_views_for(project, role, true)
+    }
+
+    fn thread_views_for(
+        &self,
+        project: Option<&str>,
+        role: Option<Role>,
+        unresolved: bool,
+    ) -> Result<Vec<ThreadView>, ErrorBody> {
+        let rows = if unresolved {
+            self.db.thread_page(
+                project,
+                None,
+                &aaa_proto::ThreadListQuery { open: true, ..Default::default() },
+                None,
+                u32::MAX,
+            )
+        } else {
+            self.db.threads(project)
+        }
+        .map_err(internal)?;
         Ok(rows
             .iter()
             .filter_map(|j| {

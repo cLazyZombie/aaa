@@ -313,3 +313,34 @@ async fn numeric_question_aliases_share_drafts_and_the_completed_record() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].items.iter().map(|q| q.id.as_deref().unwrap()).collect::<Vec<_>>(), ["q-1000", "q-1001"]);
 }
+
+/// 열린 목록·배지 조회는 화면에서 제외한 끝난 보고의 질문 번호를 발급하지 않는다.
+#[test]
+fn closed_report_queries_do_not_allocate_question_numbers() {
+    use aaa_proto::{Role, ThreadKind, ThreadStatus};
+    for badge in [false, true] {
+        let lab = Lab::new();
+        let mut rec =
+            crate::orch::ThreadRec::starting("demo", "끝난 보고", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.status = ThreadStatus::Resolved;
+        rec.report_hash = Some("closed-report".into());
+        rec.questions = crate::report_mark::questions(
+            "[결정 필요] 지난 보고\n\n## Questions\n### 1. 지난 질문\n- A 확인\n- B 보류\n",
+        );
+        assert_eq!(rec.questions.len(), 1, "실제 보고 규칙으로 만든 질문 fixture");
+        lab.h.db.thread_import("demo", &rec.id, "resolved", &serde_json::to_string(&rec).unwrap()).unwrap();
+        if badge {
+            assert_eq!(lab.h.app_badge_count().unwrap(), 0);
+        } else {
+            assert!(lab.h.question_catalog(false).unwrap().is_empty());
+        }
+        assert!(
+            lab.h.db.question_target(Some("demo"), "q-1000").unwrap().is_none(),
+            "열린 조회가 숨긴 보고의 질문 번호를 먼저 발급했다: badge={badge}"
+        );
+        let all = lab.h.question_catalog(true).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "q-1000", "전체 질문 조회에서는 끝난 보고를 같은 번호로 읽는다");
+    }
+}
