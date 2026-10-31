@@ -105,6 +105,7 @@ pub fn typescript_bindings() -> String {
         AccountStartState::decl(&cfg),
         AccountStartView::decl(&cfg),
         AccountLoginView::decl(&cfg),
+        AccountLoginPrompt::decl(&cfg),
         Version::decl(&cfg),
         B64::decl(&cfg),
         ErrorCode::decl(&cfg),

@@ -8386,3 +8386,10 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **coordinator.** AGENTS.md의 thread 결과 요약도 결론(원인 → 수리 → 결과) 먼저 쓰고 진행·검증 기록은 옮기지 않는다.
 - **웹.** 보고 본문은 글 차례대로 그리므로 첫 단락이 표지 줄 바로 아래 보인다. 웹 변경은 없다.
 - **번호·호환.** wire·저장 형식은 바꾸지 않는다(FRONT_API·AGENT_LINK 유지). 시험: `brief_text::tests::brief_order_and_memory_cap`(첫 단락 규칙이 `## 진행` 앞), `task_clean::tests::only_explicit_merge_commit_lines_are_candidates`(brief가 시키는 착지 줄을 host가 병합 근거로 읽는다).
+
+### 8.548 접속 기기의 계정 재로그인(t-1357)
+
+- 왼쪽 메뉴 아래에 만료·갱신 거부·곧 만료 계정을 표시하고, 기본 설정 「계정」과 같은 인증 창으로 연결한다.
+- Codex는 기기 코드, Claude는 POSIX host의 공식 setup-token 수동 코드 경로를 사용한다. 인증 자료는 시작한 조작 기기에만 짧게 전달한다.
+- 다른 기기의 조회·입력·취소·교체를 거부한다. 만료·취소·권한 해제는 자식과 임시 자료를 정리하고, 신원 불일치·미확인은 교체 확인을 거친다.
+- FRONT_API 1.151, AGENT_LINK 1.11 유지, E2E 118. 동작은 [계정](accounts.md), 관련 검사는 [검증 기록](testing-remote-login-t-1357.md)에 둔다.

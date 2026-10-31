@@ -2,7 +2,7 @@
 // (account_meta/tests.rs, m13 `host_relogin_checks_the_email_and_asks_before_switching`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canAccounts, day, groupAccounts, healthWord, loginText, validAlias } from "../src/accountsModel.ts";
+import { renewalAccounts, canAccounts, day, groupAccounts, healthWord, loginText, validAlias } from "../src/accountsModel.ts";
 
 describe("계정", () => {
   it("웹 로그인·기본 변경은 1.79 이상 host만", () => {
@@ -48,4 +48,10 @@ describe("계정", () => {
     assert.ok(other.lines.includes("로그인한 메일: other@example.com"));
     for (const state of ["succeeded", "kept", "cancelled", "failed", "lost"]) assert.equal(loginText({ ...base, state }).done, true, state);
   });
+});
+
+it("갱신 메뉴는 만료·갱신 거부·곧 만료만 포함한다", () => {
+  const rows = ["ok", "expiring", "expired", "rejected", undefined].map((health, n) => ({ name: `a${n}`, harness: "codex", health, version: 1 }));
+  assert.deepEqual(renewalAccounts(rows).map(a => a.health), ["expired", "rejected", "expiring"]);
+  assert.equal(rows.length, 5);
 });

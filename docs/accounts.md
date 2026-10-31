@@ -4,7 +4,8 @@ thread에서 host Codex 계정으로 이미지 생성·편집을 요청하는 �
 
 profile은 실행할 harness·model·effort를 고르고, account는 인증 신원을 고른다.
 host의 **aaa 세션 밖 터미널**이나 **웹 설정 「계정」(조작 기기)**에서 공식 harness 로그인을 시작하고 기본 계정을 정한다.
-브라우저 인증은 사용자가 host에서 한다. 기본 계정을 지정하기 전에는 기존 머신 로컬 로그인을 사용한다.
+웹에서는 접속한 폰·PC에서 인증한다. CLI 명령은 기존 host 브라우저 인증을 유지한다.
+기본 계정을 지정하기 전에는 기존 머신 로컬 로그인을 사용한다.
 
 ```sh
 aaa account login work-claude --harness claude
@@ -17,7 +18,7 @@ aaa account default claude
 aaa account list
 ```
 
-로그인은 host의 격리된 임시 홈과 별도 PTY에서 공식 `claude setup-token` 또는
+CLI 로그인은 host의 격리된 임시 홈과 별도 PTY에서 공식 `claude setup-token` 또는
 `codex -c 'cli_auth_credentials_store="file"' login`을 실행한다. host 브라우저가 열리면 해당 계정으로
 인증한다. 다른 머신 브라우저로 localhost callback을 대신하지 않는다. 원본 출력·오류·토큰·인증 URL은
 aaa 화면이나 로그에 중계하지 않는다. 원본 출력이 필요한 수동 코드 입력 방식은 이 경로에서 지원하지 않는다.
@@ -27,6 +28,38 @@ host를 다시 시작하면 진행 상태 ID는 유지하지 않는다.
 `waiting`은 로그인 미완료 상태이며 브라우저가 열렸다는 확인은 아니다. 원래 실행한 host의 로그인 사용자 브라우저에서 인증한다. 로그인별 자식 PID·종료 코드·최종 상태·임시 자료 정리 여부는 host 로그로 확인할 수 있지만 원본 출력·인증 URL·토큰은 기록하지 않는다.
 성공 결과를 암호화 저장하고 성공·실패·취소의 임시 홈 정리를 끝낸 뒤 종료 상태를 표시한다.
 정상 host 종료도 진행 중인 로그인을 취소하고 정리가 끝나기를 기다린다.
+
+## 접속한 기기에서 다시 로그인
+
+FRONT_API 1.151부터 왼쪽 메뉴 아래 「인증 갱신」에 만료·갱신 거부·곧 만료인 계정을 보인다.
+항목을 누르면 해당 계정의 인증 창이 열린다. 기본 설정 → 계정 → 「다시 로그인」도 같은 창을 연다.
+정상 계정·일시적인 조회 실패·사용량 소진은 갱신 목록에 추가하지 않는다.
+
+- **Codex**: 「인증 열기」로 공식 기기 인증 페이지를 열고 화면의 코드를 입력한다. host의 공식
+  `codex app-server`가 `account/login/start(type=chatgptDeviceCode)`로 시작하고 해당 loginId의 완료를 기다린다.
+  계정에서 기기 코드 로그인을 허용해야 한다. 인증이 성공하면 host 임시 홈의 auth.json을 기존 금고에 저장한다.
+- **Claude**: 「인증 열기」에서 로그인한 뒤 제공자가 보여 주는 코드를 aaa 인증 창에 붙여넣고 「확인」한다.
+  공식 `claude setup-token`의 수동 코드 경로를 사용하며, host 브라우저는 열지 않는다.
+  발급된 장기 OAuth 토큰은 기존 Claude 계정 형식으로 저장한다. 웹·메일·Google 로그인 여부는 제공자 화면에서 선택한다.
+  현재 Claude 원격 경로는 POSIX host(macOS·Linux)에서 제공하며 Windows host에서는 시작을 거부한다.
+
+인증 링크와 기기 코드는 **시작한 웹 조작 기기만**, 5분 동안 볼 수 있다. 같은 기기의 새로고침·화면 복귀는
+host의 진행 중 인증을 다시 읽는다. 다른 기기·보기 전용 기기·pane 안 agent는 조회·코드 제출·취소·교체를 할 수 없다.
+기기별 진행은 하나이며 코드는 한 번만 제출한다. 잘못 입력해 실패하면 다시 시작한다.
+브라우저 저장소·URL hash·보고·감사 기록·일반 이벤트·로그에는 인증 링크와 코드를 넣지 않는다.
+API 응답은 기존 `no-store` 정책을 따른다. 실제 OAuth 토큰·refresh token·CLI 원본 출력은 웹에 보내지 않는다.
+
+「취소」·5분 만료·기기 권한 해제·정상 host 종료는 로그인 자식을 종료하고 임시 자료를 지운다.
+기존 인증은 새 인증이 성공적으로 저장될 때까지 유지한다. 다른 메일이거나 기존 계정의 새 메일을 확인할 수 없으면
+「유지 / 교체」를 고르게 한다. 이 확인에도 5분 시한이 있으며 권한 해제·취소 시 새 인증을 버린다.
+강제 종료·전원 손실 뒤 진행 복원은 제공하지 않는다.
+
+원격 경로는 [Codex 공식 인증 문서](https://learn.chatgpt.com/docs/auth#login-on-headless-devices)와
+[app-server 기기 코드 계약](https://learn.chatgpt.com/docs/app-server#3b-log-in-with-chatgpt-device-code-flow),
+[Claude 공식 인증 문서](https://code.claude.com/docs/en/authentication)를 따른다.
+[Orca](https://github.com/stablyai/orca)·[T3 Code](https://github.com/pingdotgg/t3code)·
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)(모두 MIT)의 공식 CLI 중계·요청자 결속·상태 검증 방식을 참고했다.
+외부 코드를 복사하거나 새 런타임 의존성을 추가하지 않았다.
 
 새 worker·평가 thread와 새 coordinator pane은 profile의 harness에 지정된 host 기본 계정을 사용한다.
 CLI·웹·할 일·자동화·임무에서 시작해도 host가 같은 규칙을 적용한다. `thread start --account`가 있으면

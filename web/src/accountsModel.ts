@@ -101,3 +101,9 @@ export function loginText(v: AccountLoginView): { title: string; lines: string[]
       };
   }
 }
+
+/** host가 인증 문제로 판정한 계정만 보인다. 사용량 한도·조회 오류는 재로그인 사유가 아니다. */
+export function renewalAccounts(accounts: readonly AccountView[]): AccountView[] {
+  return accounts.filter(a => ["expired", "rejected", "expiring"].includes(a.health ?? ""))
+    .sort((a, b) => Number(a.health === "expiring") - Number(b.health === "expiring") || a.harness.localeCompare(b.harness) || a.name.localeCompare(b.name));
+}

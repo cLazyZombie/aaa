@@ -1550,6 +1550,9 @@ impl Host {
                 | FrontRequest::AccountPoolMember { .. }
                 | FrontRequest::AccountPoolProject { .. }
                 | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginRemote { .. }
+                | FrontRequest::AccountLoginInteraction { .. }
+                | FrontRequest::AccountLoginCode { .. }
                 | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::AccountLoginCancel { .. }
                 | FrontRequest::AccountLoginConfirm { .. }
@@ -1575,6 +1578,9 @@ impl Host {
                 | FrontRequest::AccountStarts { .. }
                 | FrontRequest::AccountStartCancel { .. }
                 | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginRemote { .. }
+                | FrontRequest::AccountLoginInteraction { .. }
+                | FrontRequest::AccountLoginCode { .. }
                 | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::AccountLoginCancel { .. }
                 | FrontRequest::AccountLoginConfirm { .. }
@@ -1596,7 +1602,12 @@ impl Host {
         {
             return Err(err(ErrorCode::Forbidden, "서비스 암호는 사람이 웹 확인 창의 전용 입력칸에 직접 넣는다"));
         }
-        let req = if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::MachineSetupApply { .. }) {
+        let req = if matches!(
+            &req,
+            FrontRequest::AccountImport { .. }
+                | FrontRequest::MachineSetupApply { .. }
+                | FrontRequest::AccountLoginCode { .. }
+        ) {
             req
         } else {
             aaa_common::redact::json(req).map_err(|source_error| {
@@ -1753,8 +1764,11 @@ impl Host {
                 Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? })
             }
             FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
-            FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
-            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id).await,
+            FrontRequest::AccountLoginRemote { name, harness } => self.account_login_remote(&name, &harness, actor),
+            FrontRequest::AccountLoginInteraction { id } => self.account_login_interaction(id.as_deref(), actor),
+            FrontRequest::AccountLoginCode { id, code } => self.account_login_code(&id, code, actor),
+            FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id, actor),
+            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id, actor).await,
             FrontRequest::AccountLoginConfirm { id, switch } => self.account_login_confirm(&id, switch, actor),
             FrontRequest::AccountRename { name, to } => self.account_rename(&name, &to, actor).await,
             FrontRequest::AccountRemove { name } => {
@@ -3710,6 +3724,7 @@ impl Host {
         let done = self.db.revoke_device(id).map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
         if done {
             self.revoked_devices.lock().unwrap().insert(id.to_string());
+            self.revoke_account_logins(id);
             aaa_common::diagnostic::ignored(
                 self.device_revoked.send(id.to_string()),
                 "수신자가 끝난 뒤에도 현재 작업은 마친다",
