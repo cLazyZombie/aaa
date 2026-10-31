@@ -1,6 +1,7 @@
 // E2E12의 실제 HTTP를 문서·events 연결·커서로 잇는다. URL·쿠키·인증 값은 기록하지 않는다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 
 // page.evaluate로도 독립 직렬화된다. 시계의 반복 환산값 대신 Document 수명을 식별한다.
 export function threadTraceDocument() {
@@ -30,7 +31,15 @@ export function traceThreadRequests() {
   // init도 독립 직렬화되므로 위 getter와 같은 Document 칸을 처음 만든다.
   const doc = document.__aaaThreadTraceDocument ??= crypto.getRandomValues(new Uint32Array(4)).join("-");
   let connection = 0, nextConnection = 0, request = 0;
-  const log = row => console.debug("THREAD_TRACE " + JSON.stringify({ doc, connection, ...row }));
+  const log = row => console.debug("THREAD_TRACE " + JSON.stringify({ doc, connection, browserAt: Date.now(), ...row }));
+  // 성공 판정에는 쓰지 않는다. 요청이 느린 것과 페이지 실행 자체가 밀린 것을 구별한다.
+  let lastBeat = Date.now();
+  const beat = setInterval(() => {
+    const now = Date.now();
+    log({ event: "page-heartbeat", gap: now - lastBeat, visibility: document.visibilityState });
+    lastBeat = now;
+  }, 1000);
+  addEventListener("pagehide", () => clearInterval(beat), { once: true });
   const WS = window.WebSocket;
   window.WebSocket = class extends WS {
     constructor(...args) {
@@ -55,7 +64,22 @@ export function traceThreadRequests() {
     headers.set("x-e2e-document", doc);
     headers.set("x-e2e-connection", String(connection));
     headers.set("x-e2e-request", id);
-    return fetch.call(this, input, { ...init, headers });
+    log({ event: "fetch-start", fetch: id, after: body.after ?? null });
+    return fetch.call(this, input, { ...init, headers }).then(response => {
+      log({ event: "fetch-headers", fetch: id, status: response.status });
+      const json = response.json.bind(response);
+      response.json = () => json().then(value => {
+        log({ event: "fetch-body", fetch: id, count: value.ok?.threads?.length, next: value.ok?.next_after ?? null });
+        return value;
+      }, error => {
+        log({ event: "fetch-body-error", fetch: id, error: String(error) });
+        throw error;
+      });
+      return response;
+    }, error => {
+      log({ event: "fetch-error", fetch: id, error: String(error) });
+      throw error;
+    });
   };
   for (const event of ["pageshow", "pagehide", "beforeunload"]) addEventListener(event, () => log({ event }));
   log({ event: "document" });
@@ -69,6 +93,7 @@ export function threadPageTrace(directory, engine) {
   const endings = new Map(), completion = new Set();
   let next = 0;
   const log = row => fs.appendFileSync(file, JSON.stringify({ at: Date.now(), engine, ...row }) + "\n");
+  log({ event: "environment", cores: os.availableParallelism(), load: os.loadavg() });
   const settle = (record, result) => {
     if (!active.delete(record)) return;
     record.resolve(result);
@@ -89,9 +114,12 @@ export function threadPageTrace(directory, engine) {
         .catch(error => log({ event: "navigation-observer-closed", error: error.message.split("\n")[0] }));
     });
     page.on("close", () => {
+      log({ event: "page-close", pending: [...active].filter(record => record.page === page).map(record => record.data.id) });
       for (const record of [...active]) if (record.page === page)
         settle(record, { ...record.data, error: record.failed ?? "본문 완료 전 page.close" });
     });
+    page.on("crash", () => log({ event: "page-crash" }));
+    page.on("pageerror", error => log({ event: "page-error", error: String(error), stack: error.stack }));
     page.on("console", msg => {
       if (!msg.text().startsWith("THREAD_TRACE ")) return;
       const row = JSON.parse(msg.text().slice(13));
@@ -111,12 +139,16 @@ export function threadPageTrace(directory, engine) {
     });
     page.on("response", response => {
       const entry = requests.get(response.request());
-      if (entry) entry.response = response;
+      if (entry) {
+        entry.response = response;
+        log({ ...entry.data, event: "headers", status: response.status() });
+      }
     });
     page.on("requestfinished", request => {
       const entry = requests.get(request);
       if (!entry || !active.has(entry)) return;
       const record = entry.data, response = entry.response;
+      log({ ...record, event: "request-finished" });
       entry.reading = true;
       // response는 헤더 사건이다. 실제 다운로드 완료 전 body()를 시작하면
       // navigation으로 중단된 요청의 protocol Promise가 browser.close까지 남는다.
@@ -229,5 +261,9 @@ export function threadPageTrace(directory, engine) {
   });
   // 문서를 바꾸기 전에 이미 완료한 응답의 protocol body 작업을 먼저 마친다.
   const drain = async () => { while (bodies.size) await Promise.all([...bodies]); };
-  return { onPage, reads, completed, drain, record: log };
+  const snapshot = phase => log({ event: "snapshot", phase, load: os.loadavg(),
+    collected: Object.fromEntries(endings), bodies: bodies.size,
+    active: [...active].map(entry => ({ ...entry.data, headers: entry.response !== null, reading: entry.reading, failed: entry.failed })),
+  });
+  return { onPage, reads, completed, drain, snapshot, record: log };
 }

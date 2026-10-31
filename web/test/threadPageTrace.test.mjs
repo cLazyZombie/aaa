@@ -9,10 +9,12 @@ import vm from "node:vm";
 import { threadPageTrace, threadTraceDocument, traceThreadRequests, disconnectThreadEvents } from "../e2e/lib/thread-page-trace.mjs";
 
 function documentWorld() {
-  const requests = [];
+  const requests = [], logs = [];
+  const events = new EventTarget(), timers = new Map();
   let clockReads = 0;
   const world = vm.createContext({
     document: new EventTarget(), crypto: webcrypto, Headers, Event, queueMicrotask,
+    setInterval: callback => { timers.set(1, callback); return 1; }, clearInterval: id => timers.delete(id),
     performance: { get timeOrigin() { return 1000 + ++clockReads; } },
     WebSocket: class extends EventTarget {
       static OPEN = 1;
@@ -22,13 +24,53 @@ function documentWorld() {
       close() { this.closeCalls++; this.readyState = 2; }
       finishClose() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
     },
-    fetch: async (_url, init) => { requests.push(init); },
-    addEventListener() {}, console: { debug() {} },
+    fetch: async (_url, init) => { requests.push(init); return { status: 200, json: async () => ({ ok: { kind: "threads", threads: [], next_after: null } }) }; },
+    addEventListener: events.addEventListener.bind(events), console: { debug: text => logs.push(JSON.parse(text.slice(13))) },
   });
   world.window = world;
   const evaluate = (fn, ...args) => vm.runInContext(`(${fn.toString()})(${args.map(a => JSON.stringify(a)).join(",")})`, world);
-  return { world, requests, evaluate, clockReads: () => clockReads };
+  return { world, requests, evaluate, logs, events, timers, clockReads: () => clockReads };
 }
+
+it("브라우저 계측은 같은 응답의 JSON을 한 번 읽고 실제 오류를 그대로 돌려준다", async () => {
+  const page = documentWorld();
+  const value = { ok: { kind: "threads", threads: [{ project: "demo", id: "t-0001" }], next_after: null } };
+  let reads = 0;
+  const response = { status: 200, json: async () => { reads++; return value; } };
+  page.world.fetch = async () => response;
+  page.evaluate(traceThreadRequests);
+  const fetch = () => vm.runInContext('fetch("/api/v1/call", { body: JSON.stringify({ op: "threads" }) })', page.world);
+  assert.equal(await fetch(), response, "clone이나 별도 본문 읽기를 만들지 않는다");
+  assert.equal(reads, 0);
+  assert.equal(await response.json(), value);
+  assert.equal(reads, 1);
+  assert.deepEqual(page.logs.filter(row => row.event.startsWith("fetch-")).map(row => [row.event, row.fetch]),
+    [["fetch-start", "1"], ["fetch-headers", "1"], ["fetch-body", "1"]]);
+  assert.equal(page.logs.at(-1).count, 1);
+  const error = new Error("original-body-failure");
+  const failed = documentWorld();
+  failed.world.fetch = async () => ({ status: 200, json: async () => { throw error; } });
+  failed.evaluate(traceThreadRequests);
+  const rejected = await vm.runInContext('fetch("/api/v1/call", { body: JSON.stringify({ op: "threads" }) })', failed.world);
+  await assert.rejects(rejected.json(), e => e === error);
+  assert.equal(failed.logs.at(-1).event, "fetch-body-error");
+  assert.equal(failed.logs.at(-1).error, String(error));
+  const beforeHeaders = documentWorld();
+  beforeHeaders.world.fetch = async () => { throw error; };
+  beforeHeaders.evaluate(traceThreadRequests);
+  await assert.rejects(vm.runInContext('fetch("/api/v1/call", { body: JSON.stringify({ op: "threads" }) })', beforeHeaders.world), e => e === error);
+  assert.equal(beforeHeaders.logs.at(-1).event, "fetch-error");
+});
+
+it("페이지 생존 계측은 사건 대기를 끝내지 않고 pagehide에서 해제된다", () => {
+  const page = documentWorld();
+  page.evaluate(traceThreadRequests);
+  page.timers.get(1)();
+  assert.equal(page.logs.at(-1).event, "page-heartbeat");
+  assert.equal(typeof page.logs.at(-1).browserAt, "number");
+  page.events.dispatchEvent(new Event("pagehide"));
+  assert.equal(page.timers.size, 0);
+});
 
 it("문서의 시계 값이 달라도 init·HTTP 헤더·완료 판정은 같은 문서 표지를 쓴다", async () => {
   const page = documentWorld();
