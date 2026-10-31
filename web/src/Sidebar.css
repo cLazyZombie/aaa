@@ -52,6 +52,23 @@
 .workspace.is-offline { opacity: 0.5; }
 /* 머신 패널(plan §8.240): 패널 이름은 사이드바 머리가 말한다 */
 .machine-strip .machine-group + .machine-group { margin-top: 0; }
+/* 독점 예약(t-1367 시안 1A): 모니터 오른쪽 아래 자물쇠와 이름 아래 「독점 주인 까닭 · 끝 시각」 한 줄. 색은 테마 강조색 */
+.machine-strip .sidebar-mark { position: relative; }
+.machine-lock {
+  position: absolute;
+  right: 1px;
+  bottom: -3px;
+  display: flex;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  color: var(--accent);
+}
+.machine-strip .sidebar-mark .machine-lock svg { width: 10px; height: 10px; margin: auto; stroke-width: 2.6; }
+.machine-state.is-reserved { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-2); }
+.machine-state.is-reserved .machine-state-word { color: var(--accent); }
+.machine-state.is-reserved .list-id { font-size: inherit; }
 
 /* 상태 칸은 모든 줄에서 같은 select 오른쪽을 기준으로 삼는다. 출처 막대가 있는 줄만
    position: relative이면 그 줄의 점은 header의 오른쪽 여백만큼 왼쪽으로 밀린다. */

@@ -122,6 +122,20 @@
   box-sizing: content-box;
 }
 
+/* 독점 예약 자물쇠(t-1367 시안 2A): 아이콘 왼쪽 아래(로고의 보기 권한 눈과 같은 쪽), 오른쪽 아래 수 배지와 겹치지 않는다 */
+.activity-lock {
+  position: absolute;
+  top: 25px;
+  left: 5px;
+  display: flex;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  color: var(--accent);
+}
+.activity-bar button.activity-item > .activity-lock svg { width: 12px; height: 12px; margin: auto; stroke-width: 2.6; }
+
 /* coordinator를 띄우는 동안(ProjectThreads.css 「coordinator」 단추와 같은 돌기) */
 .activity-bar button.activity-item > svg.is-spinning { animation: activity-spin var(--dur-spin) steps(8) infinite; }
 @keyframes activity-spin { to { transform: rotate(360deg); } }

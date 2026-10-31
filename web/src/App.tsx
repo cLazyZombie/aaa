@@ -81,6 +81,7 @@ import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./
 import { DrawerDiagnostics } from "./DrawerDiagnostics";
 import { drawerTrace } from "./herdr/drawerTrace";
 import { highMachines, HIGH_STAT } from "./machineStats";
+import { reservedMachines } from "./machineReservation";
 import { automationAttention } from "./automationModel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { setAppBadge } from "./appBadge";
@@ -1558,6 +1559,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           shown={sidebarShown && !settingsOpen}
           onPanel={showPanel}
           badges={badges}
+          reservedMachines={reservedMachines(machines)}
           search={searchShown && !settingsOpen}
           onSearch={()=>goSel(searchShown && !settingsOpen ? beforeSearch.current : "search:")}
           reports={reportsShown && !settingsOpen}

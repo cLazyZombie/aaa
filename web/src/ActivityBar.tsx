@@ -6,7 +6,7 @@
 // Accounts·Manage 자리). 맨 위 「coordinator」(사용자 요청 10-21 「왼쪽 제일 위로 (버튼 중에 제일 위)」, t-0621)는 로고 밑, 패널 단추 위의 보통
 // 단추다(tablist 밖): 도는 coordinator pane을 연다. pane이 하나라 배지는 수 대신 점이다(새 답은 강조색, 질문·확인창은 빨강, 사용자 결정 10-21).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Search, Bot, LoaderCircle, Eye, FileText, FolderKanban, Lightbulb, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
+import { Search, Bot, LoaderCircle, Eye, FileText, FolderKanban, Lightbulb, Lock, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
 import { AutomationIcon, TasksIcon, WorkspaceIcon } from "./activityIcons";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
@@ -26,6 +26,7 @@ export function ActivityBar({
   shown,
   onPanel,
   badges,
+  reservedMachines = 0,
   search = false,
   onSearch,
   reports,
@@ -46,6 +47,8 @@ export function ActivityBar({
   onPanel: (panel: SidebarPanel) => void;
   /** 단추 위 작은 수(VS Code 배지): 볼 일이 있는 thread·agent 수. `ask`면 빨강(답할 것) */
   badges: Partial<Record<SidebarPanel, { count: number; label: string; ask?: boolean }>>;
+  /** 독점 예약이 걸린 머신 수: 머신 단추 왼쪽 아래 자물쇠(t-1367 시안 2A). 수 배지(오른쪽 아래)와 따로 선다 */
+  reservedMachines?: number;
   /** 본문이 보고서 화면인가 */
   search?: boolean;
   onSearch?: () => void;
@@ -115,6 +118,8 @@ export function ActivityBar({
           const selected = shown && panel === p;
           const badge = badges[p];
           const label = PANEL_LABEL[p];
+          const locked = p === "machines" && reservedMachines > 0;
+          const spoken = [label, badge && badge.count > 0 ? `${badge.label} ${badge.count}` : null, locked ? `독점 예약 ${reservedMachines}` : null].filter(Boolean).join(", ");
           return (
             <button
               key={p}
@@ -125,7 +130,7 @@ export function ActivityBar({
               aria-selected={selected}
               aria-expanded={selected}
               aria-controls={`sidebar-panel-${p}`}
-              aria-label={badge && badge.count > 0 ? `${label}, ${badge.label} ${badge.count}` : label}
+              aria-label={spoken}
               title={label}
               // Tab이 머무는 단추는 하나: 고른 패널, 접혔으면 기억한 패널
               tabIndex={panel === p ? 0 : -1}
@@ -136,6 +141,11 @@ export function ActivityBar({
               {badge && badge.count > 0 && (
                 <span className={`activity-badge${badge.ask ? " is-ask" : ""}`} aria-hidden="true" data-testid={`activity-badge-${p}`}>
                   {badge.count > 99 ? "99+" : badge.count}
+                </span>
+              )}
+              {locked && (
+                <span className="activity-lock" aria-hidden="true" data-testid="activity-lock-machines">
+                  <Lock />
                 </span>
               )}
             </button>
