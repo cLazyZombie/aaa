@@ -70,6 +70,8 @@ pub(super) fn terminal_controlled(
     command.env("TERM", "xterm-256color");
     // 실제 Windows API의 준비/호출/반환만 관측한다. 질문과 입력 원문은 로그하지 않는다.
     command.env("AAA_LOG", "aaa::install::prompt=debug");
+    #[cfg(windows)]
+    command.env("AAA_TEST_INSTALL_CONSOLE_TRACE", "1");
     if session {
         command.env("AAA_SESSION_ID", "session-example");
     }
@@ -97,6 +99,9 @@ enum TerminalEvent {
 }
 #[path = "terminal_exit.rs"]
 mod terminal_exit;
+#[cfg(windows)]
+#[path = "terminal_snapshot.rs"]
+mod terminal_snapshot;
 
 fn drive_terminal(
     command: CommandBuilder,
@@ -156,6 +161,7 @@ fn drive_terminal_on(
     let mut cursor = 0;
     let mut status = None;
     let mut reader_done = false;
+    let mut input_writes = Vec::new();
     while status.is_none() || !reader_done {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(TerminalEvent::Output(bytes)) => {
@@ -172,8 +178,12 @@ fn drive_terminal_on(
                     let text = String::from_utf8_lossy(&seen[cursor..]);
                     if let Some(at) = text.find(needle) {
                         cursor += at + needle.len();
+                        let sent_at = started.elapsed().as_micros();
+                        let utc_us =
+                            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros();
                         writer.write_all(keys.as_bytes()).unwrap();
                         writer.flush().unwrap();
+                        input_writes.push((answered, sent_at, started.elapsed().as_micros(), utc_us));
                         answered += 1;
                     }
                 }
@@ -194,6 +204,14 @@ fn drive_terminal_on(
                     .as_ref()
                     .map(portable_pty::ExitStatus::exit_code)
                     .or_else(|| child.child.try_wait().unwrap().map(|status| status.exit_code()));
+                let failed_after = started.elapsed();
+                eprintln!(
+                    "PTY failure decided: elapsed={failed_after:?}, input_writes(step,before_us,flushed_us,utc_us)={input_writes:?}"
+                );
+                #[cfg(windows)]
+                if child_exit.is_none() {
+                    terminal_snapshot::record(pid, Path::new(BIN));
+                }
                 if child_exit.is_none() {
                     child.child.kill().unwrap();
                     child.child.wait().unwrap();
@@ -222,7 +240,7 @@ fn drive_terminal_on(
                     .join(" | ");
                 panic!(
                     "install 승인 PTY({pid}) 사건 상한(elapsed={:?}): {output}\nPTY stalled: answered={answered}/{}, waiting={waiting}, needle={needle:?}, child_exit={child_exit:?}, reader_done={reader_done}, tail={tail:?}",
-                    started.elapsed(),
+                    failed_after,
                     steps.len()
                 );
             }
@@ -839,3 +857,35 @@ fn terminal_answers_cursor_query_before_application_prompt() {
 #[cfg(unix)]
 #[path = "terminal_lifecycle.rs"]
 mod terminal_lifecycle;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn console_stack_snapshot_records_the_owned_reader_without_private_values() {
+    let lab = Lab::new();
+    let approval = lab.0.join("diagnostic-approval.json");
+    let args = authorize_args(&lab, &approval, true);
+    let mut captured = None;
+    let (code, text) = terminal_controlled(&lab, &args, &[("[console-read-call]", "yes\r")], false, |child, text| {
+        if captured.is_none() && text.contains("[console-read-call]") {
+            let snapshot = terminal_snapshot::capture(child.process_id().unwrap(), Path::new(BIN)).unwrap();
+            let read_thread: u32 = text
+                .rsplit("install_console_read_call thread_id=")
+                .next()
+                .unwrap()
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .unwrap();
+            assert!(snapshot.has_reader_stack(read_thread), "ReadConsoleW 대기 자식의 실제 frame: {snapshot:?}");
+            let encoded = serde_json::to_string(&snapshot).unwrap();
+            assert!(!encoded.contains(CANARY));
+            assert!(!encoded.contains(&lab.0.to_string_lossy().to_string()));
+            captured = Some(snapshot);
+        }
+    });
+    assert_eq!(code, 0, "{}", redact_private(&text));
+    assert!(captured.is_some());
+    assert!(text.contains("install_console_observer_ready"), "{text}");
+    assert!(text.contains("install_console_read_returned"), "{text}");
+}
