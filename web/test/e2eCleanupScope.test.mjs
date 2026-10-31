@@ -40,3 +40,34 @@ test("한 생성·정리가 실패해도 다른 자원을 종료하고 원래 �
   await assert.rejects(acquired.close(), error => error === releaseError);
   assert.equal(released, 1);
 });
+
+// runSpec과 WebKit fixture가 공유하는 경계가 원래 실패를 보존하고 늦은 자원까지 회수해야 한다.
+test("실패한 작업에서 분리된 생성도 공통 run 경계가 회수하고 원래 오류를 보존한다", async () => {
+  const scope = cleanupScope();
+  const late = Promise.withResolvers();
+  const acquiring = Promise.withResolvers();
+  const failure = new Error("owner failed");
+  let released = 0;
+  const running = scope.run(async () => {
+    const dropped = scope.own(() => { acquiring.resolve(); return late.promise; }, () => { released++; });
+    void dropped.value;
+    throw failure;
+  });
+  const result = assert.rejects(running, error => error === failure);
+  await acquiring.promise;
+  assert.equal(released, 0);
+  late.resolve("browser");
+  await result;
+  assert.equal(released, 1);
+});
+
+test("작업과 정리가 함께 실패하면 두 원인을 모두 남긴다", async () => {
+  const scope = cleanupScope();
+  const operation = new Error("operation failed");
+  const release = new Error("release failed");
+  await assert.rejects(scope.run(async () => {
+    await scope.own(() => "browser", () => { throw release; }).value;
+    throw operation;
+  }), error => error instanceof AggregateError && error.errors[0] === operation
+    && error.errors[1] instanceof AggregateError && error.errors[1].errors[0] === release);
+});

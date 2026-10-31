@@ -1187,33 +1187,37 @@ async function coordinatorPost({ request = false, title = "전체 완료", body 
  */
 async function runSpec(spec, labEnv = {}) {
   try {
-    await step("host·agent 시작", async () => {
-      Object.assign(env, labEnv);
-      start("host", "host");
-      webPort = Number((await until("host 준비", () => aaa("status").web_listen)).split(":").pop());
-      base = `http://127.0.0.1:${webPort}/`;
-      // 다시 띄우는 host(07 「host를 다시 띄운 뒤」·13 「host 재시작」)는 같은 port로 뜬다: 열린 화면이 그 주소로 다시 붙는다
-      const toml = `${root}/c/host.toml`;
-      fs.writeFileSync(toml, fs.readFileSync(toml, "utf8").replace('listen = "127.0.0.1:0"', `listen = "127.0.0.1:${webPort}"`));
-      start("agent", "agent", "--host", "local", "--name", "labA");
-      await until("labA 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
-      aaa("tab", "create", "--machine", "labA", "--label", "t1", "--", "/bin/sh");
-    }, { always: true });
-    // 입력줄을 쓰는 단계가 많아 이 화면은 입력줄로 둔다. 기본(바로 입력)은 「입력 방식」 단계가 본다.
-    const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { line: true });
-    const page = ctl.page;
-    aaa("pane", "run", "t1", "echo t1-$((40+2))");
-    await waitOutput("t1", "t1-42");
-    await page.getByTestId("pane-t1").click();
-    await until("t1 화면", async () => (await screenText(page)).includes("t1-42"));
-    await spec({ ctl, page });
-    if (ctl.errors.length) throw new Error(`페이지 오류: ${ctl.errors.join("; ")}`);
-  } catch (e) {
-    failed = true;
-    if (!steps.some((s) => s.startsWith("FAIL"))) steps.push(`FAIL ${e.message}`);
+    await specCleanup.run(async () => {
+      try {
+        await step("host·agent 시작", async () => {
+          Object.assign(env, labEnv);
+          start("host", "host");
+          webPort = Number((await until("host 준비", () => aaa("status").web_listen)).split(":").pop());
+          base = `http://127.0.0.1:${webPort}/`;
+          // 다시 띄우는 host(07 「host를 다시 띄운 뒤」·13 「host 재시작」)는 같은 port로 뜬다: 열린 화면이 그 주소로 다시 붙는다
+          const toml = `${root}/c/host.toml`;
+          fs.writeFileSync(toml, fs.readFileSync(toml, "utf8").replace('listen = "127.0.0.1:0"', `listen = "127.0.0.1:${webPort}"`));
+          start("agent", "agent", "--host", "local", "--name", "labA");
+          await until("labA 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labA" && m.connection === "connected"));
+          aaa("tab", "create", "--machine", "labA", "--label", "t1", "--", "/bin/sh");
+        }, { always: true });
+        // 입력줄을 쓰는 단계가 많아 이 화면은 입력줄로 둔다. 기본(바로 입력)은 「입력 방식」 단계가 본다.
+        const ctl = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { line: true });
+        const page = ctl.page;
+        aaa("pane", "run", "t1", "echo t1-$((40+2))");
+        await waitOutput("t1", "t1-42");
+        await page.getByTestId("pane-t1").click();
+        await until("t1 화면", async () => (await screenText(page)).includes("t1-42"));
+        await spec({ ctl, page });
+        if (ctl.errors.length) throw new Error(`페이지 오류: ${ctl.errors.join("; ")}`);
+      } catch (e) {
+        failed = true;
+        if (!steps.some((s) => s.startsWith("FAIL"))) steps.push(`FAIL ${e.message}`);
+      }
+    });
+  } catch (error) {
+    failed = true; steps.push(`FAIL 실험실 자원 정리: ${error}`);
   } finally {
-    try { await specCleanup.close(); }
-    catch (error) { failed = true; steps.push(`FAIL 실험실 자원 정리: ${error}`); }
     await browser.close();
     pushServer.close();
     usageServer.close();

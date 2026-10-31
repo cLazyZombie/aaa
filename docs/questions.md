@@ -21,7 +21,8 @@ thread는 `report.md`의 `## Questions` 안에 질문을 쓴다. coordinator가 
 - B 고친다 — 고칠 점을 글로 적는다
 ```
 
-영상은 카드·보고 본문 안 재생 단추를 한 번 누르면 그 자리에서 재생된다. `mp4`·`webm`의 `![]()` 문법을 권장한다.
+영상은 카드·보고 본문 안 재생 단추를 한 번 누르면 그 자리에서 재생된다. `mp4`·`webm`은 `![시안 영상](library/preview/a.mp4)`처럼 설명이 있는 문법을 권장한다.
+빈 alt인 `![](library/preview/a.png)`·`![](library/preview/a.mp4)`도 그림·영상으로 표시한다.
 기존 `[시안 영상](library/preview/a.mp4)` 링크도 본문 재생기로 표시한다. 재생기는 controls·muted·playsinline이며,
 멈춤·탐색·음소거 해제를 제공한다. 선택지 아래에 넣은 영상도 재생만으로 답이 선택되지 않는다.
 HTML 링크의 `#A` 같은 장면 위치는 카드의 미리보기와 새 탭에서도 보존된다.

@@ -114,7 +114,7 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   // rendering exactly as it appears in the terminal and native transcript.
   // a bare or <angle> http(s) URL is a link too; it stops at the first non-ASCII character,
   // so `…/pull/36에서` links the address and leaves the Korean after it as text
-  const marker = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
+  const marker = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]*\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
   // its last part alone, for a `__` that nothing closes as bold: one `_` may still close it
   const emphasis = /(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu;
   // what any part of `marker` starts with
@@ -151,7 +151,7 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
     } else if (char === "[") {
       const label = labelEnd(start + 1);
       const target = label + 2;
-      if (!(label > start + 1 && source[label] === "]" && source[label + 1] === "(")) pattern = null;
+      if (!(source[label] === "]" && source[label + 1] === "(")) pattern = null;
       else {
         const end = targetEnd(target);
         if (!(end > target && source[end] === ")")) pattern = null;
@@ -207,7 +207,9 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
       // a label holds no `]`, so no link nests in one: only emphasis counts toward the depth
       const href = safeMarkdownHref(target) ?? webLikeHref(target);
       const file = href === null ? markdownFileTarget(target) : null;
-      const shown: InlineNode = href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
+      // 빈 일반 링크와, 미디어를 못 그리는 곳의 빈 alt 대체 글은 원문을 남긴다.
+      const shown: InlineNode = label === "" ? { type: "text", value: token }
+        : href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
         : file !== null ? { type: "file", path: file, children: parseInline(label, false, depth) }
         : { type: "text", value: label };
       if (image) nodes.push({ type: "image", alt: label, src: target, fallback: [{ type: "text", value: "!" }, shown] });

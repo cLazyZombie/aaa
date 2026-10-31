@@ -16,5 +16,18 @@ export function cleanupScope() {
     const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
     if (errors.length) throw new AggregateError(errors, "실험실 자원 정리 실패");
   };
-  return { own, close };
+  // runSpec과 실제 자식 fixture가 같은 실패·정리 경계를 쓴다.
+  const run = async operation => {
+    let outcome;
+    try { outcome = { value: await operation() }; }
+    catch (error) { outcome = { error }; }
+    try { await close(); }
+    catch (error) {
+      if ("error" in outcome) throw new AggregateError([outcome.error, error], "작업과 실험실 정리 실패");
+      throw error;
+    }
+    if ("error" in outcome) throw outcome.error;
+    return outcome.value;
+  };
+  return { own, close, run };
 }
