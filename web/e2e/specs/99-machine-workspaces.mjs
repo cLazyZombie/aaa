@@ -98,6 +98,11 @@ export default async function () {
       await p.getByTestId("machine-reserve-form").getByRole("button", { name: "걸기" }).click();
       await p.getByTestId("machine-reservation").waitFor();
       assert.equal(machine().reservation.holder, holder.short_id);
+      // 머신 목록 아이콘 자물쇠·이름 아래 줄과 활동 막대 머신 단추 자물쇠(t-1367)
+      await domIs(p, "머신 목록 독점 표시", (id) => document.querySelector('[data-testid="machine-reservation-labA"]')?.textContent === `독점 ${id}빌드 측정 · 풀 때까지`
+        && document.querySelector('[data-testid="machine-lock-labA"]') !== null
+        && document.querySelector('[data-testid="activity-lock-machines"]') !== null
+        && /독점 예약 1$/.test(document.querySelector('[data-testid="activity-machines"]')?.getAttribute("aria-label") ?? ""), holder.short_id);
       assert.throws(() => aaa("thread", "start", "--from-task", other.short_id, "--link-task"), /labA 독점 예약/);
       const reader = (await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 })).page;
       try {
@@ -108,6 +113,7 @@ export default async function () {
       await p.getByTestId("machine-reservation").getByRole("button", { name: "풀기" }).click();
       await p.getByTestId("machine-reserve-form").waitFor();
       assert.equal(machine().reservation, undefined);
+      await domIs(p, "독점 표시 사라짐", () => !document.querySelector('[data-testid="machine-reservation-labA"], [data-testid="machine-lock-labA"], [data-testid="activity-lock-machines"]'));
       await p.getByLabel("labA 비중").fill("0");
       await p.getByTestId("machine-weight").getByRole("button", { name: "저장" }).click();
       await domIs(p, "비중 0 반영", () => document.querySelector('[data-testid="machine-weight"] strong')?.textContent === "0 (자동 배정 안 함)");

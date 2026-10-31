@@ -28,7 +28,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, ClipboardList, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardList, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Lock, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 import { AutomationIcon } from "./activityIcons";
 import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
@@ -58,6 +58,8 @@ import { RolloutPopover } from "./RolloutPopover";
 import { aaaVersion, machineRollout, rolloutBusy, rolloutLabels } from "./rolloutStatus";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
+import { reservationDetail } from "./machineReservation";
+import { ListId } from "./ListId";
 
 /** 상태 말(참고 status.ts STATUS_WORD는 영어 대문자 낱말이다). 화면 낭독·tooltip에 쓴다 */
 const STATUS_KO: Record<KnownStatus, string> = {
@@ -438,12 +440,15 @@ function MachineStrip(props: SidebarProps) {
         const stats = machineStats(m);
         const agents = machineAgents(props, m, threadOf);
         const deployment = machineRollout(card, m.name);
+        const reserved = m.reservation ?? null;
         return (
           <section key={m.id} className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
             <header className="machine-header">
               <button type="button" className="machine-title" aria-label={`${m.name} 기기 정보`} onClick={() => props.onMachineInfo(m.id)}>
-                <span className="sidebar-mark" aria-hidden="true">
+                {/* 독점 예약: 모니터 오른쪽 아래 자물쇠(t-1367 시안 1A). 주인·까닭·끝 시각은 이름 아래 줄 */}
+                <span className={`sidebar-mark${reserved ? " is-reserved" : ""}`} aria-hidden="true">
                   <Monitor />
+                  {reserved && <span className="machine-lock" data-testid={`machine-lock-${m.name}`}><Lock /></span>}
                 </span>
                 <span className="machine-name">{m.name}</span>
                 {m.local && (
@@ -502,6 +507,12 @@ function MachineStrip(props: SidebarProps) {
             ) : (
               <p className="machine-state is-connected visually-hidden" role="status">
                 <span className="machine-state-word">연결됨</span>
+              </p>
+            )}
+            {reserved && (
+              <p className="machine-state is-reserved" data-testid={`machine-reservation-${m.name}`}>
+                <span className="machine-state-word">독점 <ListId id={reserved.holder} /></span>
+                <span className="machine-state-detail">{reservationDetail(reserved)}</span>
               </p>
             )}
           </section>
