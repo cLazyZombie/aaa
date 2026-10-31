@@ -60,7 +60,9 @@ export async function threadPages(all, name) {
   const owned = name === "webkit" ? specCleanup.own(() => webkit.launch({ headless: true }), value => value.close()) : null;
   const engine = owned ? await owned.value : browser;
   try {
-    const trace = threadPageTrace(`${root}/diagnostics`, engine.browserType().name());
+    // 성공한 실험실도 정리 전에 CI 산출물 경로에 기록한다. 실패 기록과 지연 경계를 대조할 근거다.
+    const diagnostics = env.AAA_E2E_ARTIFACTS ? `${env.AAA_E2E_ARTIFACTS}/aaw-${process.pid}` : `${root}/diagnostics`;
+    const trace = threadPageTrace(diagnostics, engine.browserType().name());
     const gate = new ThreadReloadGate();
     const routes = new ThreadRoutes();
     let release, arrive, restart, releaseNew;
