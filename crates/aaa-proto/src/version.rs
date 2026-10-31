@@ -281,7 +281,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.148: 머신 독점 예약·자동 배정 비중 — MachineReserve·MachineRelease·MachineWeightSet, MachineView.reservation·weight,
 //        ThreadStart.ignore_reservation(t-1265). 옛 host는 모르는 요청으로 거절한다.
 // 1.149: 등록 Claude의 OAuth 사용량 출처(claude_oauth). agent로는 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 149 };
+// 1.150: 요청 기기 전용 원격 계정 로그인·코드 전달.
+pub const FRONT_API: Version = Version { major: 1, minor: 150 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -178,6 +178,10 @@ pub struct AccountStartView {
 /// 공식 로그인 자식의 원본 출력은 공개하지 않는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AccountLoginView {
+    /// 원격 어댑터의 고정 오류 문구. CLI 원문·인증 자료는 담지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
     pub id: String,
     pub account: String,
     pub harness: String,
@@ -192,6 +196,17 @@ pub struct AccountLoginView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub email: Option<String>,
+}
+
+/// 시작한 조작 기기에만 전송하는 단기 인증 자료. Debug에는 실제 값이 없다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountLoginPrompt {
+    /// device_code(Codex), paste_code(Claude).
+    pub kind: String,
+    pub url: SecretText,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub user_code: Option<SecretText>,
 }
 
 /// coordinator는 thread와 다른 이름 공간을 쓴다. 경로 탈출은 양쪽 모두 거부한다.

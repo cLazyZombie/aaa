@@ -1,4 +1,6 @@
 //! 공식 harness 로그인만 격리된 PTY에서 실행한다. 원본 출력은 어떠한 공개 경로에도 전달하지 않는다.
+mod remote;
+
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{
@@ -24,12 +26,12 @@ fn fail() -> ErrorBody {
 }
 
 // Unix PTY 자식은 spawn_command가 만든 독립 session/group의 leader다.
-// clone_killer의 SIGHUP은 무시할 수 있으므로 이 로그인만의 group을 강제로 끝낸다.
+// clone_killer의 SIGHUP은 무시할 수 있으므로 확인한 로그인 자식 PID만 끝낸다.
 fn kill_login(killer: &mut dyn portable_pty::ChildKiller, pid: Option<u32>) {
     #[cfg(unix)]
     if let Some(pid) = pid {
         unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
+            libc::kill(pid as i32, libc::SIGKILL);
         }
         return;
     }
@@ -38,6 +40,7 @@ fn kill_login(killer: &mut dyn portable_pty::ChildKiller, pid: Option<u32>) {
 }
 
 pub(crate) struct LoginJob {
+    remote: Option<Arc<Mutex<remote::Remote>>>,
     pub(super) view: Arc<Mutex<AccountLoginView>>,
     cancel: Option<oneshot::Sender<()>>,
     finished: watch::Receiver<bool>,
@@ -198,6 +201,7 @@ impl Host {
             state: "waiting".into(),
             expect_email,
             email: None,
+            error: None,
         };
         let state = Arc::new(Mutex::new(view.clone()));
         let pending = Arc::new(Mutex::new(None));
@@ -205,7 +209,7 @@ impl Host {
         let (done, finished) = watch::channel(false);
         jobs.insert(
             id.clone(),
-            LoginJob { view: state.clone(), cancel: Some(cancel), finished, pending: pending.clone() },
+            LoginJob { remote: None, view: state.clone(), cancel: Some(cancel), finished, pending: pending.clone() },
         );
         drop(jobs);
         self.accounts_bump();
@@ -297,57 +301,7 @@ impl Host {
                 .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
                 .is_ok();
             drop(temp);
-            let other_email =
-                matches!((&v.expect_email, &identity.email), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b));
-            let mut result = Err(fail());
-            if cleaned && let Ok(secret) = secret {
-                if other_email {
-                    // 다른 메일: 옛 인증을 그대로 두고 사람이 고르기를 기다린다
-                    aaa_common::redact::remember_auth(&v.harness, &secret);
-                    v.email = identity.email.clone();
-                    *pending.lock().unwrap() =
-                        Some(Pending { secret, identity, deadline: std::time::Instant::now() + CONFIRM_FOR });
-                    result = Ok(true);
-                    // 아무도 묻지 않아도 시한에 새 인증을 버리고 화면에 알린다
-                    // host를 붙잡지 않는다(약한 참조): 그 전에 host가 끝나면 할 일이 없다
-                    let (view, pending, host) = (state.clone(), pending.clone(), Arc::downgrade(&host));
-                    tokio::spawn(async move {
-                        tokio::time::sleep(CONFIRM_FOR).await;
-                        if expire_parts(&view, &pending) {
-                            tracing::info!(login = %view.lock().unwrap().id, "다른 메일 확인 시한: 새 인증을 버렸다");
-                            if let Some(host) = host.upgrade() {
-                                host.accounts_bump();
-                            }
-                        }
-                    });
-                } else {
-                    result = host.register_account(&v.account, &v.harness, &secret).map(|_| false);
-                    if result
-                        .as_ref()
-                        .inspect_err(|error| {
-                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
-                        })
-                        .is_ok()
-                    {
-                        v.email = identity.email.clone();
-                        host.account_logged_in(&v.account, &identity, false);
-                    }
-                }
-            }
-            v.state = if was_cancelled {
-                "cancelled"
-            } else {
-                match result {
-                    Ok(true) => "mismatch",
-                    Ok(false) => "succeeded",
-                    Err(source_error) => {
-                        aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
-                        "failed"
-                    }
-                }
-            }
-            .into();
-            tracing::info!(login = %id, state = %v.state, temporary_cleaned = cleaned, "계정 로그인 완료");
+            complete(&host, &mut v, &state, &pending, secret, identity, cleaned, was_cancelled);
             drop(v);
             host.accounts_bump();
             done.send_replace(true);
@@ -376,9 +330,10 @@ impl Host {
         }
     }
 
-    pub(crate) fn account_login_status(&self, id: &str) -> Result<FrontResponse, ErrorBody> {
+    pub(crate) fn account_login_status(&self, id: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let jobs = self.accounts.logins.lock().unwrap();
         let job = jobs.get(id).ok_or_else(fail)?;
+        remote::check_owner(job, actor)?;
         if expire(job) {
             self.accounts_bump();
         }
@@ -396,6 +351,7 @@ impl Host {
         let (view, pending) = {
             let jobs = self.accounts.logins.lock().unwrap();
             let job = jobs.get(id).ok_or_else(fail)?;
+            remote::check_owner(job, actor)?;
             if expire(job) {
                 self.accounts_bump();
             }
@@ -436,10 +392,11 @@ impl Host {
         Ok(FrontResponse::AccountLogin { login: out })
     }
 
-    pub(crate) async fn account_login_cancel(&self, id: &str) -> Result<FrontResponse, ErrorBody> {
+    pub(crate) async fn account_login_cancel(&self, id: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let (view, finished) = {
             let mut jobs = self.accounts.logins.lock().unwrap();
             let job = jobs.get_mut(id).ok_or_else(fail)?;
+            remote::check_owner(job, actor)?;
             {
                 // 확인을 기다리던 새 인증은 버린다(옛 인증 그대로)
                 let mut v = job.view.lock().unwrap();
@@ -514,4 +471,68 @@ fn login_secret(harness: &str, home: &std::path::Path, output: &[u8]) -> Result<
             .map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
         Ok(value)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete(
+    host: &Arc<Host>,
+    v: &mut AccountLoginView,
+    state: &Arc<Mutex<AccountLoginView>>,
+    pending: &Arc<Mutex<Option<Pending>>>,
+    secret: Result<String, ErrorBody>,
+    identity: Identity,
+    cleaned: bool,
+    was_cancelled: bool,
+) {
+    let other_email = matches!((&v.expect_email, &identity.email), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b));
+    let mut result = Err(fail());
+    if cleaned
+        && !was_cancelled
+        && let Ok(secret) = secret
+    {
+        if other_email {
+            // 다른 메일: 옛 인증을 그대로 두고 사람이 고르기를 기다린다
+            aaa_common::redact::remember_auth(&v.harness, &secret);
+            v.email = identity.email.clone();
+            *pending.lock().unwrap() =
+                Some(Pending { secret, identity, deadline: std::time::Instant::now() + CONFIRM_FOR });
+            result = Ok(true);
+            // 아무도 묻지 않아도 시한에 새 인증을 버리고 화면에 알린다
+            // host를 붙잡지 않는다(약한 참조): 그 전에 host가 끝나면 할 일이 없다
+            let (view, pending, host) = (state.clone(), pending.clone(), Arc::downgrade(host));
+            tokio::spawn(async move {
+                tokio::time::sleep(CONFIRM_FOR).await;
+                if expire_parts(&view, &pending) {
+                    tracing::info!(login = %view.lock().unwrap().id, "다른 메일 확인 시한: 새 인증을 버렸다");
+                    if let Some(host) = host.upgrade() {
+                        host.accounts_bump();
+                    }
+                }
+            });
+        } else {
+            result = host.register_account(&v.account, &v.harness, &secret).map(|_| false);
+            if result
+                .as_ref()
+                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok()
+            {
+                v.email = identity.email.clone();
+                host.account_logged_in(&v.account, &identity, false);
+            }
+        }
+    }
+    v.state = if was_cancelled {
+        "cancelled"
+    } else {
+        match result {
+            Ok(true) => "mismatch",
+            Ok(false) => "succeeded",
+            Err(source_error) => {
+                aaa_common::diagnostic::observe_type(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
+                "failed"
+            }
+        }
+    }
+    .into();
+    tracing::info!(login = %v.id, state = %v.state, temporary_cleaned = cleaned, "계정 로그인 완료");
 }

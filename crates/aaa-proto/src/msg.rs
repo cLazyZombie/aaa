@@ -2048,6 +2048,19 @@ pub enum FrontRequest {
         name: String,
         harness: String,
     },
+    /// FRONT_API 1.150: 접속 기기에서 공식 CLI 인증을 마친다. 조작 기기 전용.
+    AccountLoginRemote {
+        name: String,
+        harness: String,
+    },
+    /// id가 없으면 요청 기기에서 진행 중인 인증을 복원한다. 다른 기기에는 제공하지 않는다.
+    AccountLoginInteraction {
+        id: Option<String>,
+    },
+    AccountLoginCode {
+        id: String,
+        code: crate::SecretText,
+    },
     AccountLoginStatus {
         id: String,
     },
@@ -3887,6 +3900,13 @@ pub enum FrontResponse {
     },
     AccountStart {
         start: crate::AccountStartView,
+    },
+    /// 인증 URL·일회용 코드는 이 요청 기기의 직접 응답에만 담는다.
+    AccountLoginInteraction {
+        login: Option<crate::AccountLoginView>,
+        prompt: Option<crate::AccountLoginPrompt>,
+        #[ts(type = "number")]
+        expires_ms: u64,
     },
     AccountLogin {
         login: crate::AccountLoginView,

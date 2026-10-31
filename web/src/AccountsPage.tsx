@@ -1,10 +1,11 @@
 import { ignoredFailure } from "./errorDiagnostic.ts";
 // 설정 창 「계정」(관리 GUI W5a, plan §8.351): host 계정을 harness마다 보이고(별칭·메일·plan·최초 인증일·최근 인증된 날·상태·기본),
-// 조작 기기는 로그인·다시 로그인·취소·기본 지정/해제를 한다. 로그인은 host의 공식 CLI가 host Mac 브라우저를 열어 끝낸다:
-// 이 화면은 인증 주소·토큰을 받지 않고 진행·취소만 보인다(사용자 답 4A). 메일은 host가 조작 기기에만 싣는다(5A).
+// 조작 기기는 로그인·다시 로그인·취소·기본 지정/해제를 한다. FRONT_API 1.150부터 접속 기기의 공통 인증 창을 연다.
+// 옛 host에서는 기존 host 브라우저 로그인을 유지한다. 메일은 host가 조작 기기에만 싣는다.
 // 다시 로그인에 다른 메일이 들어오면 host가 옛 인증을 둔 채 기다리고, 여기서 바꿀지 고른다. 바뀌면 host `accounts` 사건으로 다시 읽는다.
 import "./ThreadActions.css";
 import "./AccountsPage.css";
+import { openAccountLogin } from "./AccountRenewal";
 import { AccountQuotaCard, useAccountQuota } from "./AccountQuota";
 import { AccountAutoAssign, useAccountPool } from "./AccountPoolPanel";
 import { apiAtLeast } from "./automationModel";
@@ -17,7 +18,7 @@ import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, 
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
+type Loaded = { remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -42,6 +43,7 @@ function useAccounts(loginId: string | null) {
           : null;
       if (mine !== seq.current) return;
       setData({
+        remote: apiAtLeast(m?.front_api, 1, 150),
         accounts: list.kind === "accounts" ? list.accounts : [],
         defaults: defaults.kind === "account_defaults" ? defaults.defaults : [],
         full,
@@ -101,14 +103,16 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
       setBusy(false);
     }
   };
-  const start = (name: string, h: string) =>
-    run(async () => {
+  const start = (name: string, h: string) => {
+    if (data.remote) { openAccountLogin(name, h); return; }
+    return run(async () => {
       const r = await call({ op: "account_login", name, harness: h });
       if (r.kind === "account_login") {
         setLogin(r.login);
         setLoginId(r.login.id);
       }
     });
+  };
   const active = login && !loginText(login).done;
   const groups = groupAccounts(data.accounts, data.defaults);
   return (

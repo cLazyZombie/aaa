@@ -1,0 +1,20 @@
+.account-renewal { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.account-renewal-heading { display: flex; justify-content: space-between; align-items: center; padding: 0 8px 6px; color: var(--warning, #d7a45b); font-size: 12px; }
+.account-renewal-heading > span:first-child { display: flex; gap: 6px; align-items: center; }
+.account-renewal-heading svg { width: 13px; height: 13px; }
+.account-renewal-row { display: flex; width: 100%; align-items: center; gap: 9px; border: 0; border-radius: 6px; padding: 9px 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.account-renewal-row:hover { background: var(--bg-hover); }
+.account-renewal-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.account-renewal-row > svg { flex: none; width: 14px; height: 14px; color: var(--text-dim); }
+.account-renewal-name { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 3px; }
+.account-renewal-name strong { font-size: 12px; font-weight: 600; }
+.account-renewal-name > span { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-renewal-status { flex: none; font-size: 11px; color: var(--danger, #d88282); }
+.account-renewal-status.is-soon { color: var(--warning, #d7a45b); }
+.account-login-dialog { width: min(440px, calc(100vw - 24px)); }
+.account-login-alias { color: var(--text-dim); margin: 0 0 20px; overflow-wrap: anywhere; }
+.account-login-identity { font-size: 13px; overflow-wrap: anywhere; }
+.account-login-code { padding: 16px; margin: 18px 0 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; font: 24px ui-monospace, monospace; letter-spacing: .1em; text-align: center; overflow-wrap: anywhere; }
+.account-login-input { display: grid; gap: 9px; margin-top: 20px; }
+.account-login-input input { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+.account-login-dialog .modal-body { overflow-wrap: anywhere; }

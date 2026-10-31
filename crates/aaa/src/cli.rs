@@ -6167,6 +6167,11 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{harness}\t{name}");
             }
         }
+        FrontResponse::AccountLoginInteraction { login, .. } => {
+            if let Some(login) = login {
+                let _ = writeln!(s, "{}: {}", login.account, login.state);
+            }
+        }
         FrontResponse::AccountLogin { login } => {
             let _ = writeln!(s, "{}\t{}\t{}\t{}", login.id, login.account, login.harness, login.state);
             if login.state == "waiting" {

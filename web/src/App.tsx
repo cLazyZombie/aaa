@@ -48,6 +48,7 @@ import { inSidebar, needsYou, paneAgentStatus, rosterRows, shortPath, threadKey 
 import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
+import { AccountRenewal } from "./AccountRenewal";
 import { SettingsDialog } from "./SettingsDialog";
 import { isSettingsRewind, onSettingsHistory, outsideSettings, recordSettings, settingsEntry, settingsFromUrl } from "./herdr/settingsHistory.ts";
 import { currentSidebarShared, updateSidebarShared, useKeepScreenOn, useSidebarShared } from "./settings";
@@ -2156,6 +2157,7 @@ function SettingsScreen({ navigationTarget, role, device, machines, onSignedOut:
 function ListFoot() {
   return (
     <div className="list-foot">
+      <AccountRenewal />
       {/* 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row. 그 옆 설정은 활동 막대 톱니로 옮겼다) */}
       <div className="foot-row">
         <UsageMeters />
