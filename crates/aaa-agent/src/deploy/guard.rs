@@ -91,19 +91,30 @@ fn views(state: &Path) -> Vec<DeployGuardView> {
 pub(super) fn for_install(state: &Path, job: &str) -> Option<DeployGuardView> {
     views(state).into_iter().find(|v| v.spec.install_job.as_deref() == Some(job))
 }
-pub(super) async fn rpc(state: &Path, id: &str, control: Control) -> Result<DeployGuardView> {
-    record(state, id)?;
-    tokio::time::timeout(Duration::from_secs(10), async {
-        let stream = aaa_common::ipc::connect(&socket(state, id, "g")).await?;
-        let (r, w) = tokio::io::split(stream);
-        let tx = spawn_writer(w, aaa_proto::MAX_FRAME);
-        let mut rx = FrameRx::new(r, aaa_proto::MAX_FRAME);
-        tx.json(&Envelope { token: agent_auth(state)?.token, control }).await?;
-        rx.control::<Result<DeployGuardView, String>>().await?.map_err(anyhow::Error::msg)
-    })
-    .await
-    .context("guard 응답 한도")?
+#[derive(Default)]
+pub(super) struct Client {
+    gate: tokio::sync::Mutex<()>,
 }
+impl Client {
+    pub(super) async fn rpc(&self, state: &Path, id: &str, control: Control) -> Result<DeployGuardView> {
+        record(state, id)?;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            // 감시는 제어 frame을 순서대로 처리한다. 같은 agent의 동시 조회가
+            // 다음 pipe instance를 준비하기 전에 서로 연결을 선점하지 않게 한다.
+            // 차례 대기도 기존 RPC 한도에 포함하며 arm_guard의 잠금과는 나눈다.
+            let _request = self.gate.lock().await;
+            let stream = aaa_common::ipc::connect(&socket(state, id, "g")).await?;
+            let (r, w) = tokio::io::split(stream);
+            let tx = spawn_writer(w, aaa_proto::MAX_FRAME);
+            let mut rx = FrameRx::new(r, aaa_proto::MAX_FRAME);
+            tx.json(&Envelope { token: agent_auth(state)?.token, control }).await?;
+            rx.control::<Result<DeployGuardView, String>>().await?.map_err(anyhow::Error::msg)
+        })
+        .await
+        .context("guard 응답 한도")?
+    }
+}
+
 impl Agent {
     pub(crate) async fn guard_request(self: &Arc<Self>, req: AgentRequest) -> Result<AgentResponse, ErrorBody> {
         let result = match req {
@@ -113,7 +124,7 @@ impl Agent {
                     matches!(control, Control::Status | Control::Cancel | Control::Commit | Control::Recover { .. });
                 match read(&self.state, &id) {
                     Ok(view) if view.phase.terminal() && terminal_read => Ok(view),
-                    Ok(_) => match rpc(&self.state, &id, control).await {
+                    Ok(_) => match self.deployments.guard_client.rpc(&self.state, &id, control).await {
                         Ok(view) => Ok(view),
                         Err(e) => match read(&self.state, &id) {
                             // terminal commit 뒤 worker가 끝나는 것과 Status가 경주해도 재실행하지 않고 내구 영수증을 읽는다.
@@ -169,7 +180,7 @@ impl Agent {
             if old.phase.terminal() {
                 return Ok(old);
             }
-            if let Ok(live) = rpc(&self.state, &spec.id, Control::Status).await {
+            if let Ok(live) = self.deployments.guard_client.rpc(&self.state, &spec.id, Control::Status).await {
                 return Ok(live);
             }
             let lock = std::fs::OpenOptions::new()
@@ -323,8 +334,11 @@ impl Agent {
     }
     pub(crate) async fn observe_guards(&self, service: DeployService, identity: RuntimeIdentity) {
         for view in views(&self.state).into_iter().filter(|v| !v.phase.terminal()) {
-            if let Err(e) =
-                rpc(&self.state, &view.spec.id, Control::Observe { service, identity: identity.clone() }).await
+            if let Err(e) = self
+                .deployments
+                .guard_client
+                .rpc(&self.state, &view.spec.id, Control::Observe { service, identity: identity.clone() })
+                .await
             {
                 tracing::warn!("복구 감시 실행 신원 전달: {e:#}");
             }
@@ -772,7 +786,37 @@ mod tests {
         apply(&mut v, Control::Activate, util::now_ms()).unwrap();
         let id = v.spec.id.clone();
         save(&root, &v).unwrap();
-        let mut controls = Controls::new(LocalListener::bind(&socket(&root, &id, "g")).unwrap());
+        let listener = LocalListener::bind(&socket(&root, &id, "g")).unwrap();
+        let client = Client::default();
+        let status = async {
+            tokio::join!(
+                client.rpc(&root, &id, Control::Status),
+                client.rpc(&root, &id, Control::Status),
+                client.rpc(&root, &id, Control::Status)
+            )
+        };
+        tokio::pin!(status);
+        #[cfg(windows)]
+        {
+            use std::future::{Future, poll_fn};
+            use std::task::Poll;
+            // 첫 pipe는 연결됐지만 accept task가 아직 실행되지 않은 순서를 고정한다.
+            // 기존 BUSY 창만 가상 시계로 넘긴다. RPC/서비스 작업의 상한은 그대로다.
+            tokio::time::pause();
+            poll_fn(|cx| {
+                assert!(status.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            tokio::time::advance(Duration::from_millis(251)).await;
+            poll_fn(|cx| {
+                assert!(status.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            tokio::time::resume();
+        }
+        let mut controls = Controls::new(listener);
         let (release, pending) = tokio::sync::oneshot::channel();
         let server_root = root.clone();
         let server = tokio::spawn(async move {
@@ -782,38 +826,35 @@ mod tests {
         });
         // 시간 경과가 아니라 세 개의 실제 RPC 응답을 받은 뒤에만 서비스 작업을 놓는다.
         tokio::time::timeout(Duration::from_secs(3), async {
-            let (a, b, c) = tokio::join!(
-                rpc(&root, &id, Control::Status),
-                rpc(&root, &id, Control::Status),
-                rpc(&root, &id, Control::Status)
-            );
+            let (a, b, c) = status.await;
             for response in [a, b, c] {
                 assert_eq!(response.unwrap().phase, Phase::AwaitingNew);
             }
-            let ready = rpc(
-                &root,
-                &id,
-                Control::Observe {
-                    service: DeployService::Agent,
-                    identity: RuntimeIdentity {
-                        sha256: sha(&root.join("aaa")).unwrap(),
-                        software: "aaa 0.1.2+new".into(),
-                        instance: "new-agent".into(),
-                        started_ms: util::now_ms(),
-                        web: None,
+            let ready = client
+                .rpc(
+                    &root,
+                    &id,
+                    Control::Observe {
+                        service: DeployService::Agent,
+                        identity: RuntimeIdentity {
+                            sha256: sha(&root.join("aaa")).unwrap(),
+                            software: "aaa 0.1.2+new".into(),
+                            instance: "new-agent".into(),
+                            started_ms: util::now_ms(),
+                            web: None,
+                        },
                     },
-                },
-            )
-            .await
-            .unwrap();
+                )
+                .await
+                .unwrap();
             assert_eq!(ready.phase, Phase::NewReady);
-            assert_eq!(rpc(&root, &id, Control::Commit).await.unwrap().phase, Phase::VerifiedNew);
+            assert_eq!(client.rpc(&root, &id, Control::Commit).await.unwrap().phase, Phase::VerifiedNew);
             release.send(()).unwrap();
             assert_eq!(server.await.unwrap().phase, Phase::VerifiedNew);
         })
         .await
         .unwrap();
-        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
     }
     #[test]
     fn windows_restart_is_owned_by_the_guard_and_is_not_repeated_after_resume() {

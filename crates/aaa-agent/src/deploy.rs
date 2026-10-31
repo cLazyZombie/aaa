@@ -40,6 +40,7 @@ pub(crate) struct Manager {
     running_sha256: String,
     gate: Mutex<()>,
     stage_gate: Mutex<()>,
+    guard_client: guard::Client,
     /// 후보 점검(웹 「배포」)이 실행기를 쓰는 중이다. `gate` 아래에서 세우고 보며, 점검은 lock 밖에서 실행기를 돌린다
     inspecting: std::sync::atomic::AtomicBool,
     executor: Mutex<Option<Executor>>,
@@ -65,6 +66,7 @@ impl Manager {
             lease: Mutex::new(None),
             gate: Mutex::new(()),
             stage_gate: Mutex::new(()),
+            guard_client: guard::Client::default(),
             inspecting: Default::default(),
             executor: Mutex::new(None),
         })
@@ -238,7 +240,8 @@ impl Manager {
                 .as_ref()
                 .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
                 .is_ok()
-            && let Err(e) = guard::rpc(self.root.parent()?, &job.id, aaa_proto::DeployGuardControl::Activate).await
+            && let Err(e) =
+                self.guard_client.rpc(self.root.parent()?, &job.id, aaa_proto::DeployGuardControl::Activate).await
         {
             job.state = DeployState::Failed;
             job.result = Some(format!("감시를 활성화하지 못해 재시작하지 않았다: {e:#}"));
@@ -276,12 +279,14 @@ impl Manager {
         };
         if mutating
             && let Some(view) = guard::for_install(self.root.parent()?, &job.id)
-            && let Err(e) = guard::rpc(
-                self.root.parent()?,
-                &view.spec.id,
-                aaa_proto::DeployGuardControl::BeginInstall { job_id: job.id.clone() },
-            )
-            .await
+            && let Err(e) = self
+                .guard_client
+                .rpc(
+                    self.root.parent()?,
+                    &view.spec.id,
+                    aaa_proto::DeployGuardControl::BeginInstall { job_id: job.id.clone() },
+                )
+                .await
         {
             job.state = DeployState::Failed;
             job.result = Some(format!("설치 감시 승인 실패: {e:#}"));

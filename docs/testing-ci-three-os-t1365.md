@@ -3,16 +3,16 @@
 ## 범위와 현재 판단
 
 기준은 `e71d9ac3`이다. 검증 시간 축소(t-1310, `5304098d`)는 기준에 포함돼 있고 세 시험은 모두 남아 있다.
-최근 main CI의 완료된 여덟 run은 성공했다. `2e0bcf04`의 첫 실행은 Linux에서 같은 실패가 있었고,
+첫 조사 때 확인한 완료된 main CI 여덟 run은 성공했다. 이후 `e71d9ac3`의 Windows guard 실패가 추가됐다. `2e0bcf04`의 첫 실행은 Linux에서 같은 실패가 있었고,
 그 run의 재실행은 성공했다. 조사 시 진행 중인 두 run은 성공 근거에 넣지 않았다.
 
 - [원래 세 OS 실패](https://github.com/cLazyZombie/aaa/actions/runs/40851405288), `dd2c5ebc`.
 - [축소 이후 Linux 재발 및 재실행](https://github.com/cLazyZombie/aaa/actions/runs/41035602216), `2e0bcf04`.
 - [최근 완료된 성공](https://github.com/cLazyZombie/aaa/actions/runs/41158555758), `ce7f29df`.
 
-Linux의 수신 기록 대기와 macOS의 빈 예약 조회 잠금은 현재 코드에서 원인을 재현해 수리했다.
-Windows의 승인 PTY 정체는 원본 전체 artifact와 실기를 대조했지만 **원인은 미확정**이다.
-Windows 제품 입력 방식이나 승인 계약을 바꾸지 않았다. 이 변경을 세 실패 전체의 수리 완료로 해석하지 않는다.
+Linux의 수신 기록 대기·macOS의 빈 예약 조회 잠금·추가 Windows guard 연결 경쟁은 재현해 수리했다.
+Windows 설치 승인 PTY 정체는 원본 전체 artifact와 실기를 대조했지만 **원인은 미확정**이다.
+Windows 콘솔 입력 방식이나 승인 계약을 바꾸지 않았다. 이 변경을 맡은 CI 실패 전체의 수리 완료로 해석하지 않는다.
 
 ## Linux: host 판정과 PTY 자식의 기록 완료
 
@@ -85,6 +85,43 @@ Windows 실기의 격리 폴더·전용 TEMP에서 기준 소스를 빌드해 �
 다음 자연 발생 실패에서는 기존 read 준비/호출/반환 진단에 더해 입력의 실제 콘솔 도착이나
 정체 스택을 확보해야 한다. 현재 보존 자료만으로 이를 소급 복원할 수 없다.
 
+## 추가 Windows named pipe 경합: guard의 동시 RPC
+
+같은 범위에 추가된 [e71d9ac3 Windows 실패](https://github.com/cLazyZombie/aaa/actions/runs/41191075136/job/124507812003)는
+`deploy::guard::tests::blocked_service_operation_still_answers_status_and_observes_the_new_agent`의
+세 Status 응답 중 하나가 `All pipe instances are busy (231)`로 실패한 것이다(159통과·1실패).
+전체 artifact의 test.log도 확인했다. 보고서 등록 조건을 바꾼 t-1361과 이 IPC/guard 경로의 변경은 관계없다.
+
+공통 `ipc::native_connect`에는 이미 BUSY를 5ms 간격으로 최대 250ms 동안 기다리는 처리가 있다.
+따라서 재시도 부재가 아니다. 세 RPC는 같은 pipe에 동시에 연결하고, listener는 accept 뒤 다음 instance를 만든다.
+첫 연결이 인스턴스를 점유하고 accept task가 밀리면 뒤 연결이 이 짧은 창을 소진할 수 있다.
+원 CI에는 accept 시각이 없어 실제 스케줄 지연 시간을 소급 확정하지는 않는다.
+
+기준의 Windows 단독 owner는 0.03초에 통과했다. 같은 owner에서 첫 연결 뒤 accept task를 아직 시작하지 않은
+순서를 고정하고, 기존 BUSY 창만 Tokio 가상 시계로 넘겼다. 기존 세 동시 Status 호출과 정확한 상태 단언을 유지한
+이 순서에서는 원본 제품 RPC가 같은 231로 결정적으로 실패했다(0.02초). 고정 sleep은 없다.
+
+제품도 Status·Activate·BeginInstall·Observe가 이 free RPC 함수를 공유했다. 배포 Manager가 `guard::Client` 하나를
+보유하게 하고 해당 호출 모두가 같은 클라이언트의 차례를 사용하게 했다. 감시 프로세스는 원래 제어 frame을 순서대로
+처리하므로 한 응답을 받은 뒤 다음 연결을 연다. 첫 응답은 listener가 다음 instance를 만든 뒤에만 올 수 있다.
+따라서 자기 요청들이 첫 instance를 동시에 선점하는 경쟁을 만들지 않는다. 실제 SCM 작업을 기다리는 동안에도
+감시는 Status·Observe·Commit을 계속 처리하며, 클라이언트 차례는 SCM 작업 전체를 점유하지 않는다.
+
+차례 대기도 기존 RPC 10초 timeout 안에 있다. arm_guard의 기동 잠금과는 별개라 기동 중 Status 확인이
+자기 잠금을 다시 기다리지 않는다. 공통 IPC의 BUSY 250ms·5ms, RPC 10초, owner의 3초 상한,
+동시 Status 세 개·새 agent 관측·Commit 뒤 늦은 SCM 오류 무효화 단언은 바꾸지 않았다.
+
+Windows owner는 같은 지연 순서에서 수리 후 통과했다(0.03초). 주입을 위한 가상 시계는 연결 경쟁 구간에서만 쓰고
+즉시 재개한다. Unix에서는 원래 실제 연결 owner로 돈다. 별도 시험을 늘리거나 기존 시험을 삭제하지 않았다.
+필요한 이유는 제품 호출의 경쟁을 시험에서도 실제 named pipe로 재현해 지키기 위해서다.
+
+참고 후보는 [Tokio named-pipe](https://docs.rs/tokio/latest/tokio/net/windows/named_pipe/index.html)
+([MIT](https://github.com/tokio-rs/tokio/blob/master/LICENSE)),
+[Tower ConcurrencyLimit](https://github.com/tower-rs/tower/blob/master/tower/src/limit/concurrency/service.rs)
+([MIT](https://github.com/tower-rs/tower/blob/master/LICENSE))와
+[Microsoft pipe instance 규칙](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-instances)이다.
+응답 완료까지 요청 소유권을 유지하는 원칙을 참고했고 외부 코드는 가져오지 않았다.
+
 ## 검증
 
 - macOS `cargo test --profile verify --locked -p aaa-host --lib -- account_rename::tests:: task_queue::tests::`:
@@ -92,6 +129,9 @@ Windows 실기의 격리 폴더·전용 TEMP에서 기준 소스를 빌드해 �
 - macOS `cargo test --profile verify --locked -p aaa --test m13 -- unknown_brief_is_not_resent
   renamed_account_starts_with_the_same_auth_without_login_and_rejects_while_running
   brief_left_in_box_is_submitted_not_retyped`: 3개 통과(12.60초).
+- macOS 최종 `aaa-agent --lib`: 190개 통과(4.79초), `aaa-agent --all-targets` strict Clippy 통과.
+- Windows 최종 `aaa-agent --lib`: 160개 통과(8.59초), `aaa-agent --all-targets` strict Clippy 통과.
+  기존 guard owner의 지연 재현도 통과했다.
 - `cargo clippy --profile verify --locked -p aaa-host --lib -p aaa --test m13 -- -D warnings`: 통과.
 - `cargo fmt --all --check`, `git diff --check`, 고정 sleep ratchet, `scripts/check-public.sh`: 통과.
 - Windows 기준 private enrollment 및 별도 입력 대조는 위 결과와 같다. 후보 공통 예약/계정 owner 46개가 통과했다(1.94초).
@@ -103,6 +143,14 @@ Windows 준비 중 PowerShell 5의 native stderr를 terminating error로 취급�
 직접 확인한 자기 wrapper PID만 종료하고 직접 실행한 Cargo의 완료만 기다리게 했다. 캐시나 다른 작업의 프로세스는 종료하지 않았다.
 두 준비 오류를 시험 실패나 통과로 세지 않았다. 테스트 실행 실패를 재시도로 덮지 않았다.
 시험 전후 서비스·예약 작업·Run 키·사용자 PATH·방화벽 목록은 같았고, 격리 폴더의 실행 중인 프로그램은 0개였다.
+
+추가 guard 수리의 Windows crate 전수에서 첫 두 실행은 같은 Python 준비 오류로 159통과·1실패였다.
+`workspace_metrics::tests::pt_actual_writer_preserves_failed_test_and_headless_results_through_collection`이
+깨진 Scoop `python3` shim을 불렀다. 설치된 Python 디렉터리를 앞에 둬도 그곳에는 python3.exe 별칭이 없어 같은 shim으로 갔다.
+격리 폴더에 기존 `py -3`로 인자를 전달하는 작은 python3.exe launcher를 만들고 그 폴더를 해당 시험 프로세스의 PATH 앞에만 뒀다.
+별도 readiness 단계의 3.11 요구는 verify.py용 기준을 잘못 적용한 것이어서 원본 workspace_record.py의 API 요구(3.9)를
+코드로 확인한 뒤 바로잡았다. 그 준비 실패는 시험 실행이 아니다. 제품·시험의 단언이나 기대값을 변경하지 않았다.
+이후 실제 writer·수집 단언을 포함해 160개가 통과했다. Python 설치·Scoop·사용자 PATH·시스템 설정은 바꾸지 않았다.
 
 Windows 개별 시험의 8.03초는 기존 5초 목표를 넘는다. 이번 조사에서 시나리오를 축소하거나 성능 목표를 달성했다고 쓰지 않는다.
 
