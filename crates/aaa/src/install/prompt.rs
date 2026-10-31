@@ -58,6 +58,8 @@ mod unix {
     }
 }
 #[cfg(windows)]
+mod windows_trace;
+#[cfg(windows)]
 mod windows {
     use super::*;
     use windows_sys::Win32::{Foundation::*, System::Console::*};
@@ -94,20 +96,34 @@ mod windows {
         };
         let mut value = vec![0u16; 16384];
         let mut count = 0;
+        static READ_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let read_id = READ_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let read_thread = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+        let observation = super::windows_trace::Observation::start(handle, read_id);
         // 질문·입력 원문은 남기지 않는다. 입력 준비와 실제 API 반환을 구별한다.
-        tracing::debug!(original_mode = original, input_mode = mode, "install_console_input_prepared");
+        tracing::debug!(
+            read_id,
+            read_thread,
+            original_mode = original,
+            input_mode = mode,
+            "install_console_input_prepared"
+        );
         show(question)?;
-        tracing::debug!("install_console_read_call");
+        tracing::debug!(read_id, read_thread, "install_console_read_call thread_id={read_thread} [console-read-call]");
         let started = std::time::Instant::now();
         let ok = unsafe { ReadConsoleW(handle, value.as_mut_ptr().cast(), value.len() as u32, &mut count, &control) };
         // 로그 출력이 Win32의 thread-local 오류 번호를 바꾸기 전에 수집한다.
         let os_error = (ok == 0).then(std::io::Error::last_os_error);
+        let elapsed_ms = started.elapsed().as_millis();
         tracing::debug!(
+            read_id,
+            read_thread,
             success = ok != 0,
             os_code = os_error.as_ref().and_then(std::io::Error::raw_os_error),
-            elapsed_ms = started.elapsed().as_millis(),
+            elapsed_ms,
             "install_console_read_returned"
         );
+        drop(observation);
         if ok == 0 {
             let source_error = os_error.unwrap();
             let mapped = if source_error.raw_os_error() == Some(ERROR_OPERATION_ABORTED as i32) {
