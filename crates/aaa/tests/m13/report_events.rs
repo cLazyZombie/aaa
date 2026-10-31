@@ -79,3 +79,36 @@ fn report_state_precedes_completion_event() {
     let mut replay = w.lab.follow("replayed-flow", &w.h, "demo");
     replay.until("구독 전 보고 수집 완료", T, ready);
 }
+
+/// 실제 host·agent에서 진행 보고를 회수한 뒤 thread를 종료해도 사용자 보고로 바뀌지 않는다.
+#[test]
+fn resolving_a_working_report_keeps_it_out_of_my_reports() {
+    let w = world();
+    let mut events = Events::connect(&w.h);
+    let v = w.start(&[
+        "--title",
+        "진행 보고 분류",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("working-report.txt", "noreport"),
+    ]);
+    let id = v["id"].as_str().unwrap();
+    flow_event(&mut events, "brief_delivered", "");
+    let work = PathBuf::from(v["work_dir"].as_str().unwrap());
+    std::fs::write(work.join("report.md.tmp"), "[진행 중] 시안 준비 중\n\n## Report\n자료 확인 중\n").unwrap();
+    std::fs::rename(work.join("report.md.tmp"), work.join("report.md")).unwrap();
+    flow_event(&mut events, "report_ready", "");
+    let assert_work = || {
+        let reports = w.h.ok(&["library", "list", "--project", "demo"]);
+        let row = reports["reports"].as_array().unwrap().iter().find(|r| r["name"] == id).unwrap();
+        assert_eq!(row["to_user"], false, "{reports}");
+        assert_eq!(row["unseen"], false, "{reports}");
+    };
+    assert_work();
+    w.h.ok(&["thread", "resolve", "demo", id]);
+    assert_work();
+    assert_eq!(w.show(id)["status"], "resolved");
+}

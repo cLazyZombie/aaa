@@ -1,6 +1,7 @@
 //! 보관함과 완료 보고는 프로젝트 설정 없이 켜진 제품 기본 동작이다.
 use crate::{Host, err, orch::internal};
-use aaa_proto::{ErrorBody, ErrorCode, FrontResponse, LibraryRef, ThreadStatus};
+use aaa_proto::{ErrorBody, ErrorCode, FrontResponse, LibraryRef};
+use sha2::{Digest, Sha256};
 
 impl Host {
     pub(crate) fn library_mark_read(
@@ -82,7 +83,12 @@ impl Host {
         revision: &str,
     ) -> Result<(), ErrorBody> {
         let rec = self.load(project, id)?;
-        if !crate::report_mark::done(crate::report_mark::marker(body)) && rec.status != ThreadStatus::Resolved {
+        // thread 종료는 보고의 사용자 확인 필요 여부를 바꾸지 않는다.
+        if !crate::report_mark::done(crate::report_mark::marker(body)) && !crate::report_mark::needs_user(body) {
+            // 옛 host가 resolve만 보고 올린 보고와, 완료 뒤 다시 진행 중이 된 보고를 작업 보고로 돌린다.
+            if self.db.library_uncomplete(project, id).map_err(internal)? {
+                self.reports_bump();
+            }
             return Ok(());
         }
         // 자동화 thread는 새 결함(`[알림]`)이나 질문 카드가 있을 때만 올린다. 나머지는 작업 보고에 남아 자동 정리된다.
@@ -95,7 +101,7 @@ impl Host {
             return Ok(());
         }
         if self.db.library_complete(project, id, revision, &rec.title, aaa_common::util::now_ms()).map_err(internal)? {
-            tracing::info!(project, thread = id, "완료 보고를 내 보고서에 올렸다");
+            tracing::info!(project, thread = id, "사용자 확인할 보고를 내 보고서에 올렸다");
             self.reports_bump();
         }
         Ok(())
@@ -112,7 +118,14 @@ impl Host {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(crate::library_publish::io_error(e)),
             };
-            if let Some(revision) = self.load(&project, &id)?.report_hash {
+            let rec = self.load(&project, &id)?;
+            // 회수 도중의 본문으로 다른 판을 등록하거나 내리지 않는다.
+            if Some(hex::encode(Sha256::digest(body.as_bytes()))).as_ref()
+                != rec.report_copy_hash.as_ref().or(rec.report_hash.as_ref())
+            {
+                continue;
+            }
+            if let Some(revision) = rec.report_hash {
                 self.complete_thread_report(&project, &id, &body, &revision)?;
             }
         }
