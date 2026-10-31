@@ -394,7 +394,11 @@ export type QueueOp = { "op": "list" } | { "op": "reserve", task: string, block:
 /**
  * 앞 할 일(ID·제목). 그 할 일이 완료 보관될 때까지 이 예약은 시작하지 않는다(FRONT_API 1.113). 생략하면 바로 자리 대기
  */
-after?: string, } | { "op": "cancel", task_id: string, } | { "op": "move", task_id: string, position: number, };
+after?: string,
+/**
+ * 모든 선행 조건. 명시하면 after를 대신한다(FRONT_API 1.150). 빈 목록은 조건 해제.
+ */
+after_all?: Array<string>, } | { "op": "cancel", task_id: string, } | { "op": "move", task_id: string, position: number, };
 
 export type TaskChoicePin = { owner: string | null, profile: string, machine: string | null, actor: string, at_ms: number, };
 
@@ -411,6 +415,14 @@ after?: string,
  * 앞 할 일의 표시 ID. 저장값 대신 host가 조회 때 채운다.
  */
 after_short_id?: string,
+/**
+ * 모든 선행 할 일의 고정 ID. 구판 자료는 after 하나를 사용한다.
+ */
+after_all?: Array<string>,
+/**
+ * after_all과 같은 순서의 표시 ID. host가 조회 때 채운다.
+ */
+after_all_short_ids?: Array<string>,
 /**
  * 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
  */

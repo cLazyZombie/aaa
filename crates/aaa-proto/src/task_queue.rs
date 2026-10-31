@@ -27,6 +27,10 @@ pub enum QueueOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         after: Option<String>,
+        /// 모든 선행 조건. 명시하면 after를 대신한다(FRONT_API 1.150). 빈 목록은 조건 해제.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        after_all: Option<Vec<String>>,
     },
     Cancel {
         task_id: String,
@@ -74,6 +78,14 @@ pub struct TaskReservation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub after_short_id: Option<String>,
+    /// 모든 선행 할 일의 고정 ID. 구판 자료는 after 하나를 사용한다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub after_all: Vec<String>,
+    /// after_all과 같은 순서의 표시 ID. host가 조회 때 채운다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub after_all_short_ids: Vec<String>,
     /// 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -83,6 +95,15 @@ pub struct TaskReservation {
     pub created_ms: u64,
     #[ts(type = "number")]
     pub updated_ms: u64,
+}
+
+impl TaskReservation {
+    pub fn predecessors(&self) -> &[String] {
+        if self.after_all.is_empty() { self.after.as_slice() } else { &self.after_all }
+    }
+    pub fn predecessor_labels(&self) -> &[String] {
+        if self.after_all_short_ids.is_empty() { self.after_short_id.as_slice() } else { &self.after_all_short_ids }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

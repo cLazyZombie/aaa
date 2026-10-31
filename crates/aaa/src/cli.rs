@@ -689,9 +689,9 @@ enum TaskCmd {
         block: Option<String>,
         #[arg(long)]
         profile: Option<String>,
-        /// 앞 할 일(ID·제목). 그 할 일이 완료 보관된 뒤에 자리 대기에 든다(예약을 갱신할 때 다시 준다)
-        #[arg(long, value_name = "ID_OR_TITLE")]
-        after: Option<String>,
+        /// 앞 할 일(ID·제목). 모두 완료 보관된 뒤 자리 대기에 든다. 여러 값·반복 지정 가능
+        #[arg(long, value_name = "ID_OR_TITLE", num_args = 1..)]
+        after: Vec<String>,
         /// 예약 전에 자동 병합을 정한다(on: `[병합 준비됨]` 뒤 coordinator가 묻지 않고 착지 창)
         #[arg(long, value_parser = ["on", "off"])]
         auto_merge: Option<String>,
@@ -2231,7 +2231,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         block: p.task_block,
                         profile: profile.unwrap_or(p.profile),
                         profile_revision: p.profile_revision,
-                        after,
+                        after: after.first().cloned(),
+                        after_all: Some(after),
                     },
                 },
             )
@@ -4245,6 +4246,11 @@ pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_
         if matches!(&req, FrontRequest::TaskLog { task: Some(_), .. }) && c.proto.minor < 89 {
             anyhow::bail!("ID로 기록을 찾으려면 Front API 1.89 이상 host가 필요하다");
         }
+        if let FrontRequest::TaskQueue { action: aaa_proto::QueueOp::Reserve { after_all: Some(ids), .. }, .. } = &req
+            && c.proto.minor < 150 && ids.len() > 1
+        {
+            anyhow::bail!("여러 앞 할 일을 붙인 예약은 Front API 1.150 이상 host가 필요하다");
+        }
         // 옛 host는 모르는 앞 할 일 칸을 버리고 바로 자리 대기에 넣는다.
         if matches!(&req, FrontRequest::TaskQueue { action: aaa_proto::QueueOp::Reserve { after: Some(_), .. }, .. })
             && c.proto.minor < 113
@@ -6050,10 +6056,12 @@ fn render_front(r: &FrontResponse) -> String {
                     q.task.short_id.as_deref().unwrap_or(&q.task_id),
                     q.profile,
                     q.machine.as_deref().unwrap_or("자동"),
-                    q.after
-                        .as_ref()
-                        .map(|a| format!(" · {} 완료 뒤", q.after_short_id.as_deref().unwrap_or(a)))
-                        .unwrap_or_default(),
+                    if q.predecessors().is_empty() {
+                        String::new()
+                    } else {
+                        let labels = q.predecessor_labels();
+                        format!(" · {} 완료 뒤", if labels.is_empty() { q.predecessors() } else { labels }.join(", "))
+                    },
                     q.reason,
                     q.thread
                         .as_ref()

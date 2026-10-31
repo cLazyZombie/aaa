@@ -288,14 +288,21 @@ impl Host {
         let _gate = self.queue_gate.lock().await;
         match action {
             QueueOp::List => unreachable!(),
-            QueueOp::Reserve { task, block, profile, profile_revision: approved_profile, after } => {
+            QueueOp::Reserve { task, block, profile, profile_revision: approved_profile, after, after_all } => {
                 let board = self.task_board(project)?;
                 let old = tasks::find(&board.tasks, &task)
                     .or_else(|| board.tasks.iter().find(|t| t.id.as_deref() == Some(&task)))
                     .ok_or_else(|| err(ErrorCode::NotFound, "task가 없다"))?;
-                let after = after.map(|a| self.after_id(project, &board.tasks, &a)).transpose()?;
-                if let (Some(after), Some(id)) = (&after, &old.id) {
-                    self.check_after_cycle(project, id, after)?;
+                let explicit_all = after_all.is_some();
+                let mut dependencies = Vec::new();
+                for value in after_all.unwrap_or_else(|| after.into_iter().collect()) {
+                    let id = self.after_id(project, &board.tasks, &value)?;
+                    if !dependencies.contains(&id) {
+                        dependencies.push(id);
+                    }
+                }
+                if let Some(id) = &old.id {
+                    self.check_after_cycle(project, id, &dependencies)?;
                 }
                 if old.id.as_ref().is_some_and(|id| {
                     self.db
@@ -341,6 +348,12 @@ impl Host {
                     .map_err(internal)?
                     .into_iter()
                     .find(|q| old.id.as_ref() == Some(&q.task_id));
+                if !explicit_all && previous.as_ref().is_some_and(|q| q.predecessors().len() > 1) {
+                    return Err(err(
+                        ErrorCode::Conflict,
+                        "여러 앞 할 일이 있는 예약은 Front API 1.150 이상 클라이언트로 갱신한다",
+                    ));
+                }
                 if by.starts_with("coordinator:")
                     && previous.as_ref().is_some_and(|q| {
                         q.selection.owner != old.owner
@@ -449,8 +462,10 @@ impl Host {
                             reason: "자리 대기".into(),
                             launch_id: None,
                             thread: None,
-                            after,
+                            after: dependencies.first().cloned(),
+                            after_all: dependencies,
                             after_short_id: None,
+                            after_all_short_ids: vec![],
                             stage: None,
                             actor: by.clone(),
                             created_ms: updating.map_or(now, |i| rows[i].created_ms),
@@ -523,23 +538,22 @@ impl Host {
     }
 
     /// 앞 할 일을 따라가 자기에게 돌아오면 서로 기다려 영영 시작하지 않는다.
-    fn check_after_cycle(&self, project: &str, id: &str, after: &str) -> Result<(), ErrorBody> {
+    fn check_after_cycle(&self, project: &str, id: &str, after: &[String]) -> Result<(), ErrorBody> {
         let rows = self.db.queue_list(project).map_err(internal)?;
         let mut seen = std::collections::HashSet::new();
-        let mut cur = after.to_string();
-        loop {
+        let mut pending: Vec<_> = after.iter().collect();
+        while let Some(cur) = pending.pop() {
             if cur == id {
                 return Err(err(ErrorCode::BadRequest, "앞 할 일이 이 할 일을 기다린다(순환). 앞뒤를 다시 정한다"));
             }
-            if !seen.insert(cur.clone()) {
-                return Ok(());
+            if !seen.insert(cur) {
+                continue;
             }
-            let next = rows.iter().find(|r| r.task_id == cur && matches!(r.state, S::Queued | S::Check));
-            match next.and_then(|r| r.after.clone()) {
-                Some(next) => cur = next,
-                None => return Ok(()),
+            if let Some(row) = rows.iter().find(|r| &r.task_id == cur && matches!(r.state, S::Queued | S::Check)) {
+                pending.extend(row.predecessors());
             }
         }
+        Ok(())
     }
 
     /// 앞 할 일이 끝났나: 활성 목록에 있으면 기다리고, 없으면 완료 보관(복원 안 됨)에 있어야 끝난 것이다.
@@ -775,20 +789,34 @@ impl Host {
                 continue;
             }
             // 앞 할 일을 기다리는 예약은 자리 차례를 막지 않는다. 뒤의 예약은 그대로 자리를 얻는다.
-            if let Some(after) = &row.after {
-                let name = row.after_short_id.as_deref().unwrap_or(after);
+            let mut waiting = Vec::new();
+            let mut missing = Vec::new();
+            for (i, after) in row.predecessors().iter().enumerate() {
+                let name = row.predecessor_labels().get(i).unwrap_or(after);
                 match self.after_done(project, &board.tasks, after)? {
                     Some(true) => {}
-                    Some(false) => {
-                        self.queue_status(project, &row.task_id, S::Queued, &format!("앞 할 일 {name} 완료 대기"))?;
-                        continue;
-                    }
-                    None => {
-                        let why = format!("앞 할 일 {name}이 활성 목록과 완료 보관에 없다 · 예약 갱신 필요");
-                        self.queue_status(project, &row.task_id, S::Check, &why)?;
-                        continue;
-                    }
+                    Some(false) => waiting.push(name.as_str()),
+                    None => missing.push(name.as_str()),
                 }
+            }
+            // 하나가 아직 진행 중이어도 다른 선행의 삭제를 숨기지 않는다.
+            if !missing.is_empty() {
+                self.queue_status(
+                    project,
+                    &row.task_id,
+                    S::Check,
+                    &format!("앞 할 일 {}이 활성 목록과 완료 보관에 없다 · 예약 갱신 필요", missing.join(", ")),
+                )?;
+                continue;
+            }
+            if !waiting.is_empty() {
+                self.queue_status(
+                    project,
+                    &row.task_id,
+                    S::Queued,
+                    &format!("앞 할 일 {} 완료 대기", waiting.join(", ")),
+                )?;
+                continue;
             }
             if !self.known_profiles(project).contains(&row.profile) {
                 self.queue_status(project, &row.task_id, S::Check, "알려지지 않은 모델")?;

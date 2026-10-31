@@ -150,6 +150,7 @@ export interface DetailProps {
   queueApi?: boolean;
   /** host가 예약의 앞 할 일을 안다(FRONT_API 1.113) */
   afterApi?: boolean;
+  afterAllApi?: boolean;
   /** host가 자동 병합을 안다(FRONT_API 1.143): 상세의 스위치·새 할 일·예약 확인의 칸 */
   autoMergeApi?: boolean;
   /** 목록이 연 예약(끌어 놓기·⋯): 내용 확인을 바로 연다 */
@@ -222,7 +223,7 @@ export function TaskDetail(props: DetailProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  const queue = useQueue({ task: t, board: props.board, canEdit: props.canEdit && !!props.queueApi, afterApi: props.afterApi, autoMergeApi: props.autoMergeApi, request: props.reserveRequest, onUnreserved: props.onUnreserved });
+  const queue = useQueue({ task: t, board: props.board, canEdit: props.canEdit && !!props.queueApi, afterApi: props.afterApi, afterAllApi: props.afterAllApi, autoMergeApi: props.autoMergeApi, request: props.reserveRequest, onUnreserved: props.onUnreserved });
   const state = t ? taskState(t, props.groups) : "wait";
   const label = t ? `할 일 ${t.title}` : props.gone ? "파일에서 빠진 할 일" : "새 할 일";
   return (
@@ -913,7 +914,7 @@ function TaskForm(props: DetailProps & { queue: Queue }) {
           </p>
         )}
         {t && queue.preview ? (
-          <ReservePanel task={t} board={board} afterApi={props.afterApi} autoMergeApi={props.autoMergeApi} queue={queue} />
+          <ReservePanel task={t} board={board} afterApi={props.afterApi} afterAllApi={props.afterAllApi} autoMergeApi={props.autoMergeApi} queue={queue} />
         ) : !base || dirty ? (
           <div className="task-detail-actions">
             <button className="btn btn-primary" disabled={busy || !dirty || draft.title.trim() === ""} data-testid="task-save">

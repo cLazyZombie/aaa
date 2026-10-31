@@ -35,6 +35,8 @@ impl Db {
         for r in &mut rows {
             r.task.short_id = Some(self.task_short_id(project, &r.task_id)?);
             r.after_short_id = r.after.as_deref().map(|id| self.task_short_id(project, id)).transpose()?;
+            r.after_all_short_ids =
+                r.predecessors().iter().map(|id| self.task_short_id(project, id)).collect::<Result<_>>()?;
             r.stage = r
                 .thread
                 .as_deref()

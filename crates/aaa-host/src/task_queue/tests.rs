@@ -227,6 +227,7 @@ async fn reservation_edits_require_new_approval_and_cancel_survives_reopen() {
                 profile: "claude".into(),
                 profile_revision: model_selection(&lab.h, "claude").unwrap().2,
                 after: None,
+                after_all: None,
             },
             "device:user",
         )
@@ -436,6 +437,7 @@ async fn one_reservation(lab: &Lab) -> TaskReservation {
                 profile: "claude".into(),
                 profile_revision: model_selection(&lab.h, "claude").unwrap().2,
                 after: None,
+                after_all: None,
             },
             "device:user",
         )
@@ -562,6 +564,7 @@ async fn account_wait_does_not_hide_the_next_reservations_actual_reason() {
                     profile: "claude".into(),
                     profile_revision: model_selection(&lab.h, "claude").unwrap().2,
                     after: None,
+                    after_all: None,
                 },
                 "device:user",
             )
@@ -676,6 +679,7 @@ async fn slot_released_during_queue_scan_does_not_bypass_the_moved_front() {
                         profile: "claude".into(),
                         profile_revision: model_selection(&lab.h, "claude").unwrap().2,
                         after: None,
+                        after_all: None,
                     },
                     "device:user",
                 )
@@ -849,6 +853,7 @@ async fn lost_launch_reply_reconciles_only_exact_machine_name_and_cwd() {
                 profile: row.profile,
                 profile_revision: row.profile_revision,
                 after: None,
+                after_all: None,
             },
             "device:user",
         )
@@ -973,6 +978,7 @@ async fn stale_model_approval_cannot_migrate_or_unlink_task() {
                 profile: "claude".into(),
                 profile_revision: "stale".into(),
                 after: None,
+                after_all: None,
             },
             "device:user",
         )
@@ -1062,6 +1068,7 @@ async fn approved_default_model_is_protected_even_while_the_task_field_is_empty(
                 profile: "claude".into(),
                 profile_revision: model_selection(&lab.h, "claude").unwrap().2,
                 after: None,
+                after_all: None,
             },
             "device:user",
         )
@@ -1115,6 +1122,7 @@ async fn raw_selection_rewrite_cannot_be_reapproved_by_coordinator_but_user_edit
                 profile: "codex".into(),
                 profile_revision: model_selection(&lab.h, "codex").unwrap().2,
                 after: None,
+                after_all: None,
             },
             "coordinator:verified-pane",
         )
@@ -1155,6 +1163,7 @@ async fn raw_selection_rewrite_cannot_be_reapproved_by_coordinator_but_user_edit
                 profile: "codex".into(),
                 profile_revision: model_selection(&lab.h, "codex").unwrap().2,
                 after: None,
+                after_all: None,
             },
             "coordinator:verified-pane",
         )
@@ -1535,6 +1544,7 @@ async fn requested_machine_only_change_keeps_the_approved_default_model() {
                 profile: profile.clone(),
                 profile_revision: model_selection(&lab.h, &profile).unwrap().2,
                 after: None,
+                after_all: None,
             },
             "device:user",
         )
@@ -1931,6 +1941,7 @@ async fn reserve_after(lab: &Lab, title: &str, after: Option<&str>) -> Result<Fr
                 profile: "claude".into(),
                 profile_revision: model_selection(&lab.h, "claude").unwrap().2,
                 after: after.map(Into::into),
+                after_all: None,
             },
             "device:user",
         )
@@ -2004,4 +2015,139 @@ async fn reservation_after_waits_for_the_previous_task_archive_without_blocking_
     reserve_after(&lab, "다른 일", Some(&draft)).await.unwrap();
     lab.h.queue_pass("demo").await.unwrap();
     assert!(queued(&lab.h.db.queue_list("demo").unwrap(), "다른 일").reason.contains("머신 연결"));
+}
+
+async fn reserve_many(lab: &Lab, title: &str, after: &[&str]) -> Result<FrontResponse, ErrorBody> {
+    let t = lab.h.task_board("demo").unwrap().tasks.into_iter().find(|t| t.title == title).unwrap();
+    lab.h
+        .task_queue(
+            "demo",
+            QueueOp::Reserve {
+                task: t.short_id.unwrap(),
+                block: t.block_sha256,
+                profile: "claude".into(),
+                profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                after: None,
+                after_all: Some(after.iter().map(|s| (*s).into()).collect()),
+            },
+            "device:user",
+        )
+        .await
+}
+
+fn dependency_lab() -> Lab {
+    let lab = Lab::new();
+    lab.write("## Backlog\n- [ ] 첫째 (claude@mac-offline) [작업 폴더]\n  첫 범위\n- [ ] 둘째 (claude@mac-offline) [작업 폴더]\n  둘 범위\n- [ ] 합류 (claude@mac-offline) [작업 폴더]\n  합류 범위\n- [ ] 독립 (claude@mac-offline) [작업 폴더]\n  독립 범위\n");
+    lab
+}
+
+/// 다중 간선은 중복 제거하며, 두 번째 간선으로 생긴 순환·자기 참조도 저장 전에 거부한다.
+#[tokio::test]
+async fn multiple_predecessors_are_fixed_deduplicated_and_cycle_checked_on_every_branch() {
+    let lab = dependency_lab();
+    let board = lab.h.task_board("demo").unwrap();
+    let first = &board.tasks[0];
+    reserve_many(&lab, "합류", &["첫째", "둘째", first.short_id.as_deref().unwrap()]).await.unwrap();
+    let before = lab.h.db.queue_list("demo").unwrap();
+    // 새 필드가 없던 저장 자료도 기존 after 하나를 복구한다.
+    let mut legacy = serde_json::to_value(&before[0]).unwrap();
+    legacy.as_object_mut().unwrap().remove("after_all");
+    legacy.as_object_mut().unwrap().remove("after_all_short_ids");
+    let legacy: TaskReservation = serde_json::from_value(legacy).unwrap();
+    assert_eq!(legacy.predecessors(), first.id.as_slice());
+    assert_eq!(before[0].predecessors(), &[first.id.clone().unwrap(), board.tasks[1].id.clone().unwrap()]);
+    assert!(reserve_many(&lab, "둘째", &["독립", "합류"]).await.unwrap_err().message.contains("순환"));
+    assert!(reserve_many(&lab, "합류", &["첫째", "합류"]).await.unwrap_err().message.contains("순환"));
+    assert_eq!(reserve_many(&lab, "합류", &["첫째", "없음"]).await.unwrap_err().code, ErrorCode::NotFound);
+    assert_eq!(lab.h.db.queue_list("demo").unwrap(), before, "실패한 갱신은 이전 승인 보존");
+    assert!(reserve_after(&lab, "합류", Some("첫째")).await.unwrap_err().message.contains("1.150"));
+    // 다이아몬드의 공통 선행은 순환이 아니다.
+    reserve_many(&lab, "첫째", &["독립"]).await.unwrap();
+    reserve_many(&lab, "둘째", &["독립"]).await.unwrap();
+    reserve_many(&lab, "합류", &["첫째", "둘째"]).await.unwrap();
+    let row = queued(&lab.h.db.queue_list("demo").unwrap(), "합류").clone();
+    reserve_many(&lab, "합류", &[]).await.unwrap();
+    let cleared = queued(&lab.h.db.queue_list("demo").unwrap(), "합류").clone();
+    assert!(cleared.predecessors().is_empty());
+    assert_eq!((cleared.position, cleared.created_ms), (row.position, row.created_ms));
+    // 조건을 다시 붙인 뒤 취소하면 완료 사건·재시작이 취소를 되살리지 않는다.
+    reserve_many(&lab, "합류", &["첫째", "둘째"]).await.unwrap();
+    lab.h.task_queue("demo", QueueOp::Cancel { task_id: cleared.task_id.clone() }, "device:user").await.unwrap();
+    lab.write(&lab.text().replace("- [ ] 첫째", "- [x] 첫째").replace("- [ ] 둘째", "- [x] 둘째"));
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    reopened.queue_pass("demo").await.unwrap();
+    assert_eq!(queued(&reopened.db.queue_list("demo").unwrap(), "합류").state, S::Cancelled);
+    assert!(reopened.db.threads(Some("demo")).unwrap().is_empty());
+}
+
+/// 일부 완료·실패·보류·host 재시작은 합류를 풀지 않고, 삭제는 남은 선행 대기보다 우선한다.
+#[tokio::test]
+async fn multiple_predecessors_wait_through_failure_park_restart_and_detect_deleted_branch() {
+    let lab = dependency_lab();
+    reserve_many(&lab, "합류", &["첫째", "둘째"]).await.unwrap();
+    reserve_many(&lab, "독립", &[]).await.unwrap();
+    let expected = queued(&lab.h.db.queue_list("demo").unwrap(), "합류").predecessor_labels().to_vec();
+    lab.h.queue_pass("demo").await.unwrap();
+    assert_eq!(
+        queued(&lab.h.db.queue_list("demo").unwrap(), "합류").reason,
+        format!("앞 할 일 {} 완료 대기", expected.join(", "))
+    );
+    assert!(queued(&lab.h.db.queue_list("demo").unwrap(), "독립").reason.contains("머신 연결"));
+    assert!(lab.h.db.threads(Some("demo")).unwrap().is_empty(), "대기 중 agent/thread를 만들지 않는다");
+    let tid = lab
+        .h
+        .db
+        .thread_insert_next("demo", |id| {
+            let mut r = Lab::rec();
+            r.id = id.into();
+            r.status = ThreadStatus::Failed;
+            serde_json::to_string(&r).unwrap()
+        })
+        .unwrap();
+    let second = lab.h.task_board("demo").unwrap().tasks.into_iter().find(|t| t.title == "둘째").unwrap();
+    lab.h
+        .task_edit(
+            "demo",
+            vec![TaskOp::Update {
+                at: at(&second),
+                title: None,
+                owner: None,
+                person: false,
+                profile: None,
+                machine: None,
+                notes: None,
+                thread: Some(tid.clone()),
+                done: None,
+                repo: None,
+            }],
+            None,
+            None,
+            "device:user",
+        )
+        .await
+        .unwrap();
+    for status in [ThreadStatus::Failed, ThreadStatus::Parked] {
+        lab.h.update_rec("demo", &tid, |r| r.status = status).unwrap();
+        lab.h.queue_pass("demo").await.unwrap();
+        assert!(queued(&lab.h.db.queue_list("demo").unwrap(), "합류").thread.is_none());
+    }
+    lab.write(&lab.text().replace("- [ ] 첫째", "- [x] 첫째"));
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    reopened.queue_pass("demo").await.unwrap();
+    assert_eq!(
+        queued(&reopened.db.queue_list("demo").unwrap(), "합류").reason,
+        format!("앞 할 일 {} 완료 대기", expected[1])
+    );
+    // 완료된 선행을 복원해 다시 미완료로 두고, 다른 선행을 지운다.
+    let first_id = queued(&reopened.db.queue_list("demo").unwrap(), "합류").predecessors()[0].clone();
+    reopened.task_archive("demo", Some(&first_id), None, "device:user").await.unwrap();
+    let second = reopened.task_board("demo").unwrap().tasks.into_iter().find(|t| t.title == "둘째").unwrap();
+    reopened.task_edit("demo", vec![TaskOp::Delete { at: at(&second) }], None, None, "device:user").await.unwrap();
+    reopened.queue_pass("demo").await.unwrap();
+    let q = queued(&reopened.db.queue_list("demo").unwrap(), "합류").clone();
+    assert_eq!(q.state, S::Check);
+    assert!(q.reason.contains(&expected[1]) && q.reason.contains("활성 목록과 완료 보관에 없다"));
+    assert!(q.thread.is_none());
 }

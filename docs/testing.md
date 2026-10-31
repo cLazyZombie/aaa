@@ -4994,3 +4994,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - t-1324: [v0.1.7 릴리스 준비 검증](testing-release-v0.1.7.md).
 - [계정 사용량 추가 조회·마지막 잔량 배정 검증](testing-account-quota-fallback.md)
 - t-1333: [휴대폰 메뉴 왼쪽 끝 누름 회귀 검사](testing-phone-menu-edge-t-1333.md).
+
+- 여러 선행 ID 예약·순환·삭제·재시작·단일 기동: [검증 기준](testing-task-dependencies.md).
