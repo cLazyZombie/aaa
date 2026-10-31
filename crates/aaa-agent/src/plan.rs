@@ -87,6 +87,7 @@ pub struct Snapshot {
 /// 기록 하나를 따라 읽는 상태
 pub struct Reader {
     turns: crate::turn_reply::Reader,
+    provider: crate::provider_error::Reader,
     source: Source,
     path: PathBuf,
     file: Option<(u64, u64)>,
@@ -95,6 +96,7 @@ pub struct Reader {
     skipping: bool,
     /// 처음 읽기가 아직 끝에 닿지 않았다
     catching: bool,
+    provider_caught_up: bool,
     steps: Vec<Step>,
     /// 답을 기다리는 TaskCreate·TaskUpdate 호출(tool_use id → 이름·입력)
     calls: HashMap<String, (String, Value)>,
@@ -298,12 +300,14 @@ impl Reader {
     pub fn new(source: Source, path: PathBuf) -> Self {
         Reader {
             turns: Default::default(),
+            provider: Default::default(),
             source,
             path,
             file: None,
             offset: 0,
             skipping: false,
             catching: true,
+            provider_caught_up: false,
             steps: Vec::new(),
             calls: HashMap::new(),
             running: HashMap::new(),
@@ -348,7 +352,21 @@ impl Reader {
             return None;
         }
         self.catching = false;
+        self.provider_caught_up = self.offset == meta.len();
         Some(self.snapshot(since_ms))
+    }
+
+    fn provider_turn(&self, generation: u64, session: Option<&str>) -> Option<aaa_proto::ProviderTurn> {
+        let mut native = self
+            .provider
+            .latest
+            .as_ref()
+            .filter(|n| {
+                self.provider_caught_up && n.started_ms >= generation && Some(n.harness_session.as_str()) == session
+            })?
+            .clone();
+        native.generation_ms = generation;
+        Some(native)
     }
 
     fn snapshot(&self, since_ms: i64) -> Snapshot {
@@ -410,6 +428,7 @@ impl Reader {
                 && !line.is_empty()
             {
                 self.turns.line(self.source, line);
+                self.provider.line(self.source, line);
                 match self.source {
                     Source::Claude => self.claude_line(line),
                     Source::Codex => self.codex_line(line),
@@ -759,6 +778,7 @@ pub(crate) struct Track {
     looked: Option<Instant>,
     /// 마지막으로 host에 알린 것
     sent: Snapshot,
+    provider_sent: Option<aaa_proto::ProviderTurn>,
 }
 
 /// harness 세션 사건이 알린 기록 파일. 기록 폴더 밖이면 없다(chat.rs와 같은 검사: hook은 세션 안 누구나 보낸다)
@@ -814,7 +834,7 @@ impl crate::Agent {
         });
     }
 
-    /// Claude SessionStart(startup·resume)는 새 Claude 프로세스다: 그 전에 띄운 배경 작업은 이 프로세스에 없다
+    /// SessionStart(startup·resume)·셸 앞 harness 획득은 새 실행이다. 앞 실행의 관측을 섞지 않는다
     pub(crate) fn harness_process_started(&self, session: &str, at_ms: u64) {
         self.plan_since.lock().unwrap().insert(session.to_string(), at_ms);
         self.claude_effort.lock().unwrap().remove(session);
@@ -869,7 +889,19 @@ impl crate::Agent {
                 context: e.context.clone(),
                 model_observation: e.model_observation.clone(),
             });
-            wanted.push((session.clone(), ev.harness.clone(), ev.transcript.clone(), ev.harness_session.clone(), kept));
+            let generation = ev
+                .provider_turn
+                .as_ref()
+                .map(|n| n.generation_ms)
+                .unwrap_or_else(|| if ev.kind == "session_start" { ev.at_ms } else { running[session] });
+            wanted.push((
+                session.clone(),
+                ev.harness.clone(),
+                ev.transcript.clone(),
+                ev.harness_session.clone(),
+                kept,
+                generation,
+            ));
         }
         let since = self.plan_since.lock().unwrap().clone();
         let efforts = {
@@ -881,9 +913,10 @@ impl crate::Agent {
         tracks.retain(|s, _| running.contains_key(s));
         let mut budget = POLL_BUDGET;
         let mut out = Vec::new();
-        for (session, harness, transcript, harness_session, kept) in wanted {
+        for (session, harness, transcript, harness_session, kept, generation) in wanted {
+            let from = since.get(&session).copied().unwrap_or(generation);
             let key = format!(
-                "{harness}\0{}\0{}",
+                "{harness}\0{from}\0{}\0{}",
                 transcript.as_deref().unwrap_or(""),
                 harness_session.as_deref().unwrap_or("")
             );
@@ -892,6 +925,7 @@ impl crate::Agent {
                 reader: None,
                 looked: None,
                 sent: kept.clone().unwrap_or_default(),
+                provider_sent: None,
             });
             if t.key != key {
                 t.key = key;
@@ -910,8 +944,30 @@ impl crate::Agent {
                 .map(|(src, p)| Reader::new(src, p));
             }
             let Some(r) = t.reader.as_mut() else { continue };
-            let from = since.get(&session).copied().unwrap_or(running[&session]);
             let Some(mut snap) = r.poll(&mut budget, from as i64) else { continue };
+            let native = r.provider_turn(from, harness_session.as_deref());
+            if native != t.provider_sent {
+                t.provider_sent = native.clone();
+                if let Some(native) = native {
+                    out.push(HarnessEvent {
+                        session: session.clone(),
+                        harness: harness.clone(),
+                        kind: "provider_turn".into(),
+                        harness_session: harness_session.clone(),
+                        at_ms: native.at_ms,
+                        provider_turn: Some(native),
+                        message: None,
+                        question_kind: None,
+                        percent: None,
+                        transcript: None,
+                        plan: None,
+                        background: None,
+                        context: None,
+                        model_observation: None,
+                        turn_reply: None,
+                    });
+                }
+            }
             if r.source == Source::Claude
                 && let (Some(m), Some(e)) = (snap.model_observation.as_mut(), efforts.get(&session))
             {
@@ -933,6 +989,7 @@ impl crate::Agent {
                     context: None,
                     model_observation: None,
                     turn_reply: Some(reply),
+                    provider_turn: None,
                 });
             }
             if snap == t.sent {
@@ -954,6 +1011,7 @@ impl crate::Agent {
                 context: snap.context,
                 model_observation: snap.model_observation,
                 turn_reply: None,
+                provider_turn: None,
             });
         }
         out
@@ -981,6 +1039,37 @@ mod tests {
         for l in lines {
             writeln!(f, "{l}").unwrap();
         }
+    }
+
+    #[test]
+    fn native_errors_wait_for_complete_jsonl_and_match_the_current_execution() {
+        use std::io::Write;
+        let id = "00000000-0000-4000-8000-000000000001";
+        let p = file(
+            "native-errors",
+            &[
+                json!({"timestamp":T,"type":"session_meta","payload":{"id":id}}),
+                json!({"timestamp":T,"type":"event_msg","payload":{"type":"task_started","turn_id":"one"}}),
+            ],
+        );
+        let mut r = Reader::new(Source::Codex, p.clone());
+        poll(&mut r);
+        let at = aaa_common::util::parse_iso(T).unwrap();
+        assert_eq!(r.provider_turn(at, Some(id)).unwrap().error, None);
+        let finish = json!({"timestamp":T,"type":"event_msg","payload":{"type":"task_complete","turn_id":"one","error":{"codex_error_info":{"http_connection_failed":{"http_status_code":401}}}}}).to_string();
+        let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+        f.write_all(finish.as_bytes()).unwrap();
+        poll(&mut r);
+        assert_eq!(r.provider_turn(at, Some(id)), None, "완성된 줄까지 읽지 못했으면 관측을 보내지 않는다");
+        f.write_all(b"\n").unwrap();
+        poll(&mut r);
+        let error = r.provider_turn(at, Some(id)).unwrap().error.unwrap();
+        assert_eq!(error.kind, aaa_proto::ProviderFailureKind::Authentication);
+        assert_eq!(error.http_status, Some(401));
+        assert_eq!(r.provider_turn(at + 1, Some(id)), None, "지난 실행의 turn");
+        assert_eq!(r.provider_turn(at, Some("00000000-0000-4000-8000-000000000002")), None, "다른 세션");
+        drop(f);
+        std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
     }
 
     #[test]

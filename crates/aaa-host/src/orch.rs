@@ -3405,6 +3405,7 @@ mod tests {
             compacting: false,
             context: None,
             model_observation: None,
+            provider_turn: None,
         }
     }
 

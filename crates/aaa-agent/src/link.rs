@@ -200,6 +200,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "chat_watch.v1".into(),
             "chat_pages.v1".into(),
             "turn_reply.v1".into(),
+            "provider_turn.v1".into(),
             "diff.v1".into(),
             // task 첨부를 thread 작업 폴더로 받는다(WorkAttachWrite, plan §8.327)
             "work_attach.v1".into(),
@@ -797,6 +798,7 @@ mod post_tests {
                 background: None,
                 context: None,
                 model_observation: None,
+                provider_turn: None,
                 turn_reply: None,
             };
             let working = event("turn_start", 1);
@@ -883,6 +885,7 @@ mod post_tests {
                 background: None,
                 context: None,
                 model_observation: None,
+                provider_turn: None,
                 turn_reply: None,
             };
             // 전송 큐보다 많은 기억을 입력 fixture로 둔다. 디스크 저장은 위 회귀·실제 E2E가 맡고,

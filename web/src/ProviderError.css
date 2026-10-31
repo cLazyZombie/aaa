@@ -1,0 +1,5 @@
+.provider-error {
+  display: block;
+  flex: 0 0 auto;
+  overflow-wrap: anywhere;
+}

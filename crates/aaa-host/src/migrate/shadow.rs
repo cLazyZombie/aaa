@@ -220,6 +220,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         compacting: false,
         context: None,
         model_observation: None,
+        provider_turn: None,
     });
     thread_group(&rec, f.pane_exists, agent.as_ref(), now_ms)
 }

@@ -442,6 +442,46 @@ pub struct HarnessEvent {
     /// `turn_reply`: 기록에서 확인한 완료 답변. 상태·승인 여부를 바꾸지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_reply: Option<TurnReply>,
+    /// `provider_turn`: 현재 실행의 native turn 관측. 화면 상태와 별개다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_turn: Option<ProviderTurn>,
+}
+
+/// native 기록의 turn 경계. 시작·성공도 보내 이전 오류를 걷고 늦은 오류를 거른다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProviderTurn {
+    /// agent가 확인한 harness 실행 시작 시각(실행 세대).
+    #[ts(type = "number")]
+    pub generation_ms: u64,
+    pub harness_session: String,
+    #[ts(type = "number")]
+    pub started_ms: u64,
+    /// 이 관측의 native 시각. 시작이면 started_ms, 완료면 finished_ms와 같다.
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    #[ts(type = "number | null")]
+    pub finished_ms: Option<u64>,
+    pub error: Option<ProviderFailure>,
+}
+
+/// 원문 로그·요청 내용·경로는 경계를 넘기지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProviderFailure {
+    pub kind: ProviderFailureKind,
+    /// 알려진 native 코드만 싣는다. 모르는 코드는 None이다.
+    pub code: Option<String>,
+    pub http_status: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderFailureKind {
+    Overloaded,
+    Authentication,
+    Allowance,
+    Model,
+    RateLimit,
+    Unknown,
 }
 
 /// 같은 턴의 질문 카드 접수와 대조할 로컬 harness 기록의 시각과 답변.
@@ -539,6 +579,10 @@ pub struct AgentStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub model_observation: Option<ModelObservation>,
+    /// native turn의 마지막 관측. 옛 agent는 보내지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider_turn: Option<ProviderTurn>,
 }
 
 fn seen_default() -> bool {

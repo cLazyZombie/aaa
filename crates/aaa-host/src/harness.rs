@@ -153,6 +153,47 @@ pub(crate) struct SubmitErr {
     pub msg: String,
 }
 
+/// 원격 시계는 host 시각과 비교하지 않는다. 같은 agent의 실행 세대·native 시각끼리만 대조한다.
+fn provider_turn_after(st: &AgentStatus, ev: &HarnessEvent, pane_started_ms: u64) -> Option<aaa_proto::ProviderTurn> {
+    let n = ev.provider_turn.as_ref()?;
+    if !matches!(ev.harness.as_str(), "claude" | "codex")
+        || ev.harness != st.harness
+        || Some(n.harness_session.as_str()) != st.harness_session.as_deref()
+        || ev.harness_session.as_deref() != st.harness_session.as_deref()
+        || !aaa_common::util::harness_session_ok(&n.harness_session)
+        || n.generation_ms < pane_started_ms
+        || n.started_ms < n.generation_ms
+        || n.at_ms < n.started_ms
+        || ev.at_ms != n.at_ms
+        || n.finished_ms.is_some_and(|end| end != n.at_ms)
+        || (n.error.is_some() && n.finished_ms.is_none())
+    {
+        return None;
+    }
+    if let Some(old) = &st.provider_turn
+        && (n.generation_ms < old.generation_ms
+            || n.at_ms < old.at_ms
+            || (n.at_ms == old.at_ms
+                && (old.finished_ms.is_some() || n.finished_ms.is_none() || old.at_ms > old.started_ms))
+            || (n.generation_ms == old.generation_ms && n.started_ms < old.started_ms))
+    {
+        return None;
+    }
+    Some(n.clone())
+}
+
+/// hook의 제출·실행 경계를 빈 native 관측으로 남겨 이전 완료 오류의 재전송을 막는다.
+fn provider_boundary(st: &AgentStatus, at_ms: u64, generation_ms: u64) -> Option<aaa_proto::ProviderTurn> {
+    Some(aaa_proto::ProviderTurn {
+        generation_ms,
+        harness_session: st.harness_session.clone()?,
+        started_ms: generation_ms,
+        at_ms,
+        finished_ms: None,
+        error: None,
+    })
+}
+
 /// 사건이 바꿀 활동(없으면 그대로).
 /// - harness 세션 ID(SessionStart·Codex notify)는 상태를 바꾸지 않는다(compact·clear 뒤에도 화면 감지가 낸 상태가
 ///   맞다). 처음 보는 pane만 「시작」으로 둔다.
@@ -265,6 +306,12 @@ impl Host {
             if p.machine_id != mid {
                 return;
             }
+            // native 표시만 갱신한다. 화면 감지의 활동·질문·승인은 바꾸지 않는다.
+            if ev.kind == "provider_turn"
+                && p.agent.as_ref().and_then(|st| provider_turn_after(st, &ev, p.info.started_at_ms)).is_none()
+            {
+                return;
+            }
             // 셸 pane 앞의 agent가 끝나 셸로 돌아왔다(agent의 앞 프로세스 찾기, herdr `ClearAgent`): 다시 agent 없는 셸이다.
             // 재부팅 복원도 그 셸에 대화 이어가기를 치지 않는다(herdr는 놓은 agent를 세션에 남기지 않는다)
             if ev.kind == "released" {
@@ -306,12 +353,16 @@ impl Host {
                 compacting: false,
                 context: None,
                 model_observation: None,
+                provider_turn: None,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
             }
-            if ev.kind == "session_start" || ev.harness_session.is_some() {
+            if ev.kind != "provider_turn" && (ev.kind == "session_start" || ev.harness_session.is_some()) {
                 st.harness_session = ev.harness_session.clone();
+            }
+            if ev.kind == "provider_turn" {
+                st.provider_turn = provider_turn_after(&st, &ev, p.info.started_at_ms);
             }
             let next = next_activity(prev.as_ref(), &ev);
             if matches!(
@@ -352,9 +403,17 @@ impl Host {
                 st.progress_at_ms = None;
                 st.progress_since_ms = None;
                 st.model_observation = None;
+                let generation = ev.provider_turn.as_ref().map_or(ev.at_ms, |n| n.generation_ms);
+                st.provider_turn = provider_boundary(&st, generation, generation);
             }
             if ev.kind == "session" && ev.harness_session != prev.as_ref().and_then(|a| a.harness_session.clone()) {
                 st.model_observation = None;
+                let generation = ev.provider_turn.as_ref().map_or(p.info.started_at_ms, |n| n.generation_ms);
+                st.provider_turn = provider_boundary(&st, generation, generation);
+            }
+            if ev.kind == "prompt_submit" && st.provider_turn.as_ref().is_none_or(|n| ev.at_ms >= n.at_ms) {
+                let generation = st.provider_turn.as_ref().map_or(p.info.started_at_ms, |n| n.generation_ms);
+                st.provider_turn = provider_boundary(&st, ev.at_ms, generation);
             }
             // 사용자가 답했다: 옛 「Waiting for you」는 더 맞지 않다(herdr-projects `respond` UserPromptSubmit)
             if matches!(ev.kind.as_str(), "prompt_submit" | "turn_start")
@@ -1397,6 +1456,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            provider_turn: None,
             turn_reply: None,
         };
         let idle = AgentStatus {
@@ -1416,6 +1476,7 @@ mod tests {
             compacting: false,
             context: None,
             model_observation: None,
+            provider_turn: None,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
@@ -1423,6 +1484,106 @@ mod tests {
         assert_eq!(next_activity(None, &ev("turn_start", 1_000)), Some(AgentActivity::Working));
         assert_eq!(next_activity(None, &ev("session_start", 1_000)), Some(AgentActivity::Started));
         assert_eq!(next_activity(Some(&idle), &ev("session_start", 3_000)), None);
+    }
+
+    #[test]
+    fn discovered_session_uses_the_agents_execution_generation_not_discovery_time() {
+        let (h, _tmp) = host_with_pane();
+        let id = "00000000-0000-4000-8000-000000000001";
+        let native = aaa_proto::ProviderTurn {
+            generation_ms: 100,
+            harness_session: id.into(),
+            started_ms: 150,
+            at_ms: 180,
+            finished_ms: Some(180),
+            error: Some(aaa_proto::ProviderFailure {
+                kind: aaa_proto::ProviderFailureKind::Authentication,
+                code: Some("authentication_failed".into()),
+                http_status: None,
+            }),
+        };
+        let mut event = codex_event("session_start", 200);
+        event.harness_session = Some(id.into());
+        event.provider_turn = Some(aaa_proto::ProviderTurn {
+            started_ms: 100,
+            at_ms: 200,
+            finished_ms: None,
+            error: None,
+            ..native.clone()
+        });
+        h.on_harness("m", event.clone());
+        event.kind = "provider_turn".into();
+        event.at_ms = 180;
+        event.provider_turn = Some(native.clone());
+        h.on_harness("m", event);
+        assert_eq!(h.pane_agent("s").unwrap().provider_turn, Some(native));
+    }
+
+    #[test]
+    fn native_errors_are_bound_to_machine_session_generation_and_latest_turn() {
+        let (h, _tmp) = host_with_pane();
+        let id = "00000000-0000-4000-8000-000000000001";
+        let mut event = codex_event("session_start", 100);
+        event.harness = "claude".into();
+        event.harness_session = Some(id.into());
+        h.on_harness("m", event.clone());
+        let original = h.pane_agent("s").unwrap();
+        let native = |generation, start, at, error: bool| aaa_proto::ProviderTurn {
+            generation_ms: generation,
+            harness_session: id.into(),
+            started_ms: start,
+            at_ms: at,
+            finished_ms: error.then_some(at),
+            error: error.then_some(aaa_proto::ProviderFailure {
+                kind: aaa_proto::ProviderFailureKind::Overloaded,
+                code: Some("overloaded".into()),
+                http_status: None,
+            }),
+        };
+        event.kind = "provider_turn".into();
+        event.at_ms = 200;
+        event.provider_turn = Some(native(100, 150, 200, true));
+        h.on_harness("other-machine", event.clone());
+        assert_eq!(h.pane_agent("s").unwrap(), original);
+        let mut wrong = event.clone();
+        wrong.provider_turn.as_mut().unwrap().harness_session = "00000000-0000-4000-8000-000000000002".into();
+        h.on_harness("m", wrong);
+        assert_eq!(h.pane_agent("s").unwrap(), original);
+        h.on_harness("m", event.clone());
+        let failed = h.pane_agent("s").unwrap();
+        assert_eq!(failed.activity, original.activity);
+        assert_eq!(failed.message, original.message);
+        assert!(failed.provider_turn.as_ref().unwrap().error.is_some());
+        let mut next = event.clone();
+        next.at_ms = 300;
+        next.provider_turn = Some(native(100, 300, 300, false));
+        h.on_harness("m", next.clone());
+        h.on_harness("m", event.clone()); // 옛 완료의 재전송
+        assert_eq!(h.pane_agent("s").unwrap().provider_turn, next.provider_turn);
+        next.kind = "prompt_submit".into();
+        next.at_ms = 400;
+        next.provider_turn = None;
+        h.on_harness("m", next.clone());
+        event.at_ms = 350;
+        event.provider_turn = Some(native(100, 300, 350, true));
+        h.on_harness("m", event.clone());
+        assert!(h.pane_agent("s").unwrap().provider_turn.unwrap().error.is_none());
+        event.at_ms = 400;
+        event.provider_turn = Some(native(100, 300, 400, true));
+        h.on_harness("m", event.clone()); // 제출과 같은 ms의 과거 완료도 버린다.
+        assert!(h.pane_agent("s").unwrap().provider_turn.unwrap().error.is_none());
+        // native 시작이 hook 제출보다 약간 빨라도 완료가 새것이면 받는다.
+        event.at_ms = 450;
+        event.provider_turn = Some(native(100, 390, 450, true));
+        h.on_harness("m", event.clone());
+        assert!(h.pane_agent("s").unwrap().provider_turn.unwrap().error.is_some());
+        next.kind = "session_start".into();
+        next.at_ms = 500;
+        h.on_harness("m", next);
+        event.at_ms = 600;
+        event.provider_turn = Some(native(100, 550, 600, true));
+        h.on_harness("m", event); // 같은 ID로 재개한 옛 실행도 거른다.
+        assert!(h.pane_agent("s").unwrap().provider_turn.unwrap().error.is_none());
     }
 
     struct Tmp(std::path::PathBuf);
@@ -1474,6 +1635,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            provider_turn: None,
             turn_reply: None,
         }
     }
@@ -1947,6 +2109,7 @@ mod tests {
             background,
             context: None,
             model_observation: None,
+            provider_turn: None,
             turn_reply: None,
         };
         h.on_harness("m", ev("working", 1_000, None, None));
@@ -1961,6 +2124,7 @@ mod tests {
             HarnessEvent {
                 context: Some(context.clone()),
                 model_observation: Some(model.clone()),
+                provider_turn: None,
                 turn_reply: None,
                 ..ev("plan", 2_000, Some(plan.clone()), Some(2))
             },
@@ -2011,6 +2175,7 @@ mod tests {
             background: None,
             context: None,
             model_observation: None,
+            provider_turn: None,
             turn_reply: None,
         };
         h.on_harness("m", ev("question", 1_000));
