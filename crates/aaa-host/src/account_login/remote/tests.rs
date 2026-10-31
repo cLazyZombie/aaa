@@ -1,5 +1,4 @@
 use super::*;
-use aaa_proto::{DeviceRole, FrontRequest};
 
 const URL: &str = "https://claude.com/cai/oauth/authorize?code=true&state=fixture-state&code_challenge=fixture-challenge&code_challenge_method=S256&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback";
 
@@ -26,6 +25,7 @@ fn manual_link_requires_complete_official_pkce_url() {
 #[cfg(unix)]
 mod process {
     use super::*;
+    use aaa_proto::{DeviceRole, FrontRequest};
     use std::os::unix::fs::PermissionsExt;
     struct Lab {
         root: std::path::PathBuf,
