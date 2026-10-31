@@ -17,6 +17,7 @@ struct Lab {
     root: PathBuf,
     requests: Arc<AtomicUsize>,
     hash_requests: Arc<AtomicUsize>,
+    report: Arc<std::sync::Mutex<&'static str>>,
     fake: tokio::task::JoinHandle<()>,
     _cleanup: Cleanup,
 }
@@ -104,6 +105,8 @@ impl Lab {
         let seen = requests.clone();
         let hash_requests = Arc::new(AtomicUsize::new(0));
         let hash_seen = hash_requests.clone();
+        let report = Arc::new(std::sync::Mutex::new(report));
+        let reply_report = report.clone();
         let fake = tokio::spawn(async move {
             let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
             while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
@@ -147,6 +150,7 @@ impl Lab {
                         Outcome::Ok(AgentResponse::Done)
                     }
                     AgentRequest::ReportHash { .. } => {
+                        let report = *reply_report.lock().unwrap();
                         hash_seen.fetch_add(1, Ordering::SeqCst);
                         Outcome::Ok(AgentResponse::ReportHash {
                             hash: hex::encode(sha2::Sha256::digest(report.as_bytes())),
@@ -156,7 +160,7 @@ impl Lab {
                         if max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures {
                             Outcome::Err(internal("시험 agent 복사 실패"))
                         } else {
-                            let report = report.as_bytes().to_vec();
+                            let report = reply_report.lock().unwrap().as_bytes().to_vec();
                             Outcome::Ok(AgentResponse::Report(ReportSnapshot {
                                 hash: hex::encode(sha2::Sha256::digest(&report)),
                                 report: B64(report),
@@ -190,6 +194,7 @@ impl Lab {
                         assert_eq!(notice["kind"], "question-format-warning");
                         Outcome::Ok(AgentResponse::Done)
                     }
+                    AgentRequest::ThreadUnwatch { .. } => Outcome::Ok(AgentResponse::Done),
                     other => panic!("예상 밖 요청: {other:?}"),
                 };
                 if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
@@ -199,7 +204,7 @@ impl Lab {
         });
         let weak = Arc::downgrade(&h);
         let cleanup = Cleanup(root.clone(), weak);
-        Self { h, root, requests, hash_requests, fake, _cleanup: cleanup }
+        Self { h, root, requests, hash_requests, report, fake, _cleanup: cleanup }
     }
 }
 
@@ -810,34 +815,128 @@ async fn completed_report_automatically_uses_the_same_copy_and_does_not_reset_se
     let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
     reopened.backfill_completed_reports().unwrap();
     assert!(!reopened.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
+    // 회수 기록과 다른 중간 파일 때문에 기존 사용자 보고를 내리지 않는다.
+    std::fs::write(dir.join("threads/t-0001.md"), "[진행 중] 기록과 다른 사본\n").unwrap();
+    reopened.backfill_completed_reports().unwrap();
+    let unchanged = reopened.db.library_report("p", "t-0001").unwrap().unwrap();
+    assert!(unchanged.to_user && !unchanged.unseen());
     drop(reopened);
     lab.close().await;
 }
 
+/// 종료·재기동은 사용자에게 읽힐 보고의 근거가 아니다. 실제 collect·resolve·기존 사본 복구를 함께 본다.
 #[tokio::test]
-async fn resolved_last_report_and_existing_completed_reports_are_automatically_listed() {
+async fn working_reports_stay_in_work_reports_after_resolve_and_restart() {
+    for body in [
+        "[진행 중] 시안 준비 중\n",
+        "[진행 중] 질문 정리 중\n## Questions\n### 1. 초안\n- A 계속\n- B 멈춤\n",
+        "[착지] 통합 중\n",
+        "[병합 준비됨] 착지 창 대기\n",
+        "[보류 준비됨] 자리 정리 끝\n",
+        "표지 없는 옛 보고\n",
+    ] {
+        let lab = Lab::with_report(0, b"", "test.log", b"", body);
+        lab.h.collect("p", "t-0001", true).await.unwrap();
+        let assert_work = |h: &Host| {
+            let row = h.library_reports(Some("p"), false).unwrap().into_iter().find(|r| r.name == "t-0001").unwrap();
+            assert!(!row.to_user && !row.unseen, "{body}: {row:?}");
+            assert_eq!(h.db.library_unseen_count().unwrap(), 0, "{body}");
+        };
+        assert_work(&lab.h);
+        let resolved =
+            lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
+        assert_eq!(resolved.status, ThreadStatus::Resolved);
+        assert_work(&lab.h);
+        let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+        reopened.backfill_completed_reports().unwrap();
+        assert_work(&reopened);
+        drop(reopened);
+        lab.close().await;
+    }
+}
+
+/// 사람이 봐야 하는 보고는 종료를 기다리지 않고 올라오며, 같은 보고를 다시 모아도 읽음이 유지돼야 한다.
+#[tokio::test]
+async fn user_attention_reports_are_listed_before_resolve_and_keep_seen_on_restart() {
+    for body in [
+        "[완료] 끝\n",
+        "[알림] 새 결함\n",
+        "[결정 필요] 선택 필요\n",
+        "[검수 대기] 결과 확인\n",
+        "[확인 필요] 사람 확인\n",
+        "[사람 필요] 옛 표지\n",
+    ] {
+        let lab = Lab::with_report(0, b"", "test.log", b"", body);
+        lab.h.collect("p", "t-0001", true).await.unwrap();
+        let row = lab.h.db.library_report("p", "t-0001").unwrap().unwrap();
+        assert!(row.to_user && row.unseen(), "{body}");
+        lab.h.library_opened("p", "t-0001");
+        lab.h.thread_resolve("p", "t-0001", ResolveOpts::default(), ResolveWhy::Manual, "test").await.unwrap();
+        let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+        reopened.backfill_completed_reports().unwrap();
+        let row = reopened.db.library_report("p", "t-0001").unwrap().unwrap();
+        assert!(row.to_user && !row.unseen(), "{body}");
+        drop(reopened);
+        lab.close().await;
+    }
+}
+
+/// 구판의 resolve 오등록을 복구할 때 사본·보관 판을 지우지 않고, 뒤의 새 완료 보고를 다시 받을 수 있어야 한다.
+#[tokio::test]
+async fn backfill_moves_automatically_listed_progress_to_work_reports_and_preserves_archive() {
     let lab = Lab::new(0, b"old");
     lab.h.collect("p", "t-0001", true).await.unwrap();
-    assert!(!lab.h.db.library_report("p", "t-0001").unwrap().unwrap().to_user);
     let rec = lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Resolved).unwrap();
-    lab.h.backfill_completed_reports().unwrap();
+    let revision = rec.report_hash.as_deref().unwrap();
+    // 구판이 진행 중 보고를 사용자에게 올린 기록을 재현한다.
+    lab.h.db.library_complete("p", "t-0001", revision, "진행 중", 1).unwrap();
+    let version = lab.h.thread_report_id("p", "t-0001", Some(revision)).unwrap();
+    lab.h
+        .library_archive(&[aaa_proto::LibraryRef { project: "p".into(), name: version.clone() }], true, "test")
+        .unwrap();
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+    reopened.backfill_completed_reports().unwrap();
+    let row = reopened.db.library_report("p", "t-0001").unwrap().unwrap();
+    assert!(!row.to_user && !row.unseen());
+    assert!(reopened.db.library_archived("p", &version).unwrap());
+    let dir = reopened.project_dir("p").unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join(format!("threads/{version}.md"))).unwrap(), "[진행 중] 시험 중\n");
+    assert_eq!(std::fs::read(dir.join("library/t-0001/test.log")).unwrap(), b"old");
+    drop(reopened);
+    // 완료→진행 중→같은 완료 본문 순서도 실제 재수집에서 기존 읽음을 유지한다.
+    *lab.report.lock().unwrap() = "[완료] 끝\n";
+    lab.h.collect("p", "t-0001", true).await.unwrap();
     assert!(lab.h.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
     lab.h.library_opened("p", "t-0001");
-    lab.h.complete_thread_report("p", "t-0001", "[진행 중]", rec.report_hash.as_deref().unwrap()).unwrap();
-    assert!(!lab.h.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
+    *lab.report.lock().unwrap() = "[진행 중] 후속 작업\n";
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    assert!(!lab.h.db.library_report("p", "t-0001").unwrap().unwrap().to_user);
+    *lab.report.lock().unwrap() = "[완료] 끝\n";
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    let same = lab.h.db.library_report("p", "t-0001").unwrap().unwrap();
+    assert!(same.to_user && !same.unseen());
+    *lab.report.lock().unwrap() = "[완료] 새 결과\n";
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    assert!(lab.h.db.library_report("p", "t-0001").unwrap().unwrap().unseen());
     lab.close().await;
 }
 
 /// 자동화 thread의 끝난 보고는 `[알림]`일 때만 내 보고서에 오고, 아니면 회수·resolve 뒤에도 작업 보고에 남는다.
 #[tokio::test]
 async fn automation_reports_reach_my_reports_only_with_an_alert() {
-    for (report, to_user) in [("[완료] 새 결함 없음\n", false), ("[알림] 새 결함 있음\nrc 도구 빌드 실패\n", true)]
-    {
+    for (report, to_user) in [
+        ("[완료] 새 결함 없음\n", false),
+        ("[알림] 새 결함 있음\nrc 도구 빌드 실패\n", true),
+        ("[검수 대기] 결과 확인\n", true),
+        ("[진행 중] 분류 중\n## Questions\n", false),
+    ] {
         let lab = Lab::with_report(0, b"old", "test.log", b"old", report);
         lab.h.update_rec("p", "t-0001", |r| r.automation = Some("rc-verify".into())).unwrap();
         lab.h.collect("p", "t-0001", true).await.unwrap();
         let rec = lab.h.load("p", "t-0001").unwrap();
-        assert_eq!(rec.acked_hash, rec.report_hash, "{report}: 자동화의 끝난 보고는 바로 ack한다");
+        if crate::report_mark::done(crate::report_mark::marker(report)) {
+            assert_eq!(rec.acked_hash, rec.report_hash, "{report}: 자동화의 끝난 보고는 바로 ack한다");
+        }
         lab.h.update_rec("p", "t-0001", |r| r.status = ThreadStatus::Resolved).unwrap();
         lab.h.backfill_completed_reports().unwrap();
         let row = lab.h.db.library_report("p", "t-0001").unwrap().unwrap();

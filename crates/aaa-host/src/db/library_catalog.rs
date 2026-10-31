@@ -86,7 +86,17 @@ impl Db {
         Ok(())
     }
 
-    /// 완료한 같은 본문은 수집·resolve·재시작으로 다시 안 봄이 되지 않는다.
+    /// 자동 등록한 thread 보고만 작업 보고로 돌린다. 명시적으로 발행한 보고·보관한 r 판은 그대로 둔다.
+    pub(crate) fn library_uncomplete(&self, project: &str, name: &str) -> Result<bool> {
+        // 마지막 사용자 보고의 판·열람 기록은 보존한다. 같은 본문으로 돌아와도 새 안 봄이 되지 않는다.
+        Ok(self.conn.lock().unwrap().execute(
+            "UPDATE library_reports SET to_user=0 WHERE project=?1 AND name=?2 AND to_user=1
+             AND EXISTS(SELECT 1 FROM library_completion WHERE project=?1 AND name=?2)",
+            params![project, name],
+        )? > 0)
+    }
+
+    /// 사용자 확인할 같은 본문은 수집·resolve·재시작으로 다시 안 봄이 되지 않는다.
     pub(crate) fn library_complete(
         &self,
         project: &str,
@@ -102,10 +112,15 @@ impl Db {
             ON CONFLICT(project,name) DO UPDATE SET revision=excluded.revision WHERE revision<>excluded.revision",
             params![project, name, revision],
         )? > 0;
-        if changed {
-            tx.execute("UPDATE library_reports SET to_user=1,title=COALESCE(title,?3),sent_at=?4,seen_at=NULL WHERE project=?1 AND name=?2", params![project,name,title,now])?;
-        }
+        let restored = if changed {
+            tx.execute("UPDATE library_reports SET to_user=1,title=COALESCE(title,?3),sent_at=?4,seen_at=NULL WHERE project=?1 AND name=?2", params![project,name,title,now])? > 0
+        } else {
+            tx.execute(
+                "UPDATE library_reports SET to_user=1 WHERE project=?1 AND name=?2 AND to_user=0",
+                params![project, name],
+            )? > 0
+        };
         tx.commit()?;
-        Ok(changed)
+        Ok(changed || restored)
     }
 }

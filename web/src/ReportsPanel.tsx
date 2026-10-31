@@ -51,7 +51,7 @@ const when = (ms: number) => new Date(ms).toLocaleString("ko-KR");
 
 /**
  * 목록·크기·링크 상태는 host 정본이다. 파일 경로나 등록 원본 경로를 웹에 싣지 않는다. 「열기」는 본문에서(`onView`), 「새 창」은 따로.
- * 「내 보고서」는 완료 보고와 사용자에게 보낸 보고다. 「작업 보고」는 나머지 사본이고 「보관함」은 자동 정리에서 제외한 특정 판이다.
+ * 「내 보고서」는 완료·사용자 확인이 필요한 보고와 사용자에게 보낸 보고다. 「작업 보고」는 나머지 사본이고 「보관함」은 자동 정리에서 제외한 특정 판이다.
  * 지우기는 확인 창 한 번 뒤 host 사본·공유 링크·목록에서 영구히 지우며, 진행 중(끝나지 않은) thread의 사본은 고를 수 없다.
  */
 export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: number; onView: (r: LibraryReport) => void }) {
