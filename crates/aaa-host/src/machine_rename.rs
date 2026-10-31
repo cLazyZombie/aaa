@@ -519,6 +519,8 @@ mod tests {
             thread: None,
             after: None,
             after_short_id: None,
+            after_all: vec![],
+            after_all_short_ids: vec![],
             stage: None,
             actor: "local:cli".into(),
             created_ms: 1,

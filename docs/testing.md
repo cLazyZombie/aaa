@@ -4998,3 +4998,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 빈 alt 그림·영상과 빈 링크 회귀: [t-1351 검증 기록](testing-empty-alt-media-t-1351.md).
 
 - E2E 12 실패 자식의 정리 경계: [t-1351 수리 기록](testing-e2e12-owner-boundary-t-1351.md).
+- 여러 선행 ID 예약·순환·삭제·재시작·단일 기동: [검증 기준](testing-task-dependencies.md).

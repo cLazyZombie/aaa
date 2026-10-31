@@ -317,6 +317,7 @@ mod tests {
                     profile: "claude".into(),
                     profile_revision: crate::task_queue::model_selection(&lab.h, "claude").unwrap().2,
                     after: None,
+                    after_all: None,
                 },
                 "device:owner",
             )
