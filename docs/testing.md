@@ -4996,3 +4996,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - t-1333: [휴대폰 메뉴 왼쪽 끝 누름 회귀 검사](testing-phone-menu-edge-t-1333.md).
 
 - 빈 alt 그림·영상과 빈 링크 회귀: [t-1351 검증 기록](testing-empty-alt-media-t-1351.md).
+
+- E2E 12 실패 자식의 정리 경계: [t-1351 수리 기록](testing-e2e12-owner-boundary-t-1351.md).
