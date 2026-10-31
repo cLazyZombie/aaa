@@ -711,6 +711,15 @@ impl Host {
     }
 
     pub(crate) async fn queue_pass(self: &Arc<Self>, project: &str) -> Result<(), ErrorBody> {
+        self.project_dir(project)?;
+        // 빈 주기 조회가 rename의 try_lock을 밀어내지 않게 한다. 파일 제거 뒤
+        // DB 완료 전에 중단된 보관 영수증은 예약이 없어도 잠금 아래에서 회수한다.
+        // 새 예약은 다음 pass가 보며 실제 작업은 잠금 뒤 다시 읽는다.
+        if self.db.queue_list(project).map_err(internal)?.is_empty()
+            && self.db.archive_list(project).map_err(internal)?.iter().all(|r| r.committed)
+        {
+            return Ok(());
+        }
         let _gate = self.queue_gate.lock().await;
         // 구판의 보관 완료 예약과 파일 제거 직후 중단된 완료 영수증도 먼저 회수한다.
         self.archive_recover(project)?;

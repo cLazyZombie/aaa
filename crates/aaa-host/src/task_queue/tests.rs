@@ -497,7 +497,12 @@ async fn old_archived_reservation_is_repaired_but_unknown_missing_task_keeps_its
     // 구판이 남긴 확인 필요 예약을 복원한다. 완료 보관이 있고 thread 연결은 없다.
     lab.h.queue_status("demo", &row.task_id, S::Check, "task가 없어졌다").unwrap();
     let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
-    reopened.queue_pass("demo").await.unwrap();
+    let held = reopened.queue_gate.lock().await;
+    let pass = reopened.queue_pass("demo");
+    tokio::pin!(pass);
+    assert!(matches!(futures_util::poll!(&mut pass), std::task::Poll::Pending), "실제 예약은 잠금 아래에서 처리한다");
+    drop(held);
+    pass.await.unwrap();
     assert_eq!(reopened.db.queue_list("demo").unwrap()[0].state, S::Finished);
     reopened.task_archive("demo", Some(&row.task_id), None, "device:user").await.unwrap();
     assert_eq!(reopened.task_board("demo").unwrap().queue[0].state, S::Finished);
@@ -1016,6 +1021,16 @@ async fn archive_recovers_the_file_removed_before_final_db_receipt() {
     assert!(lab.h.load("demo", &id).unwrap().task_clean.judged_ms.is_none());
     lab.h.db.test_archive_finalize_fault(false);
     let recovered = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    assert!(recovered.db.queue_list("demo").unwrap().is_empty());
+    let held = recovered.queue_gate.lock().await;
+    let pass = recovered.queue_pass("demo");
+    tokio::pin!(pass);
+    assert!(matches!(futures_util::poll!(&mut pass), std::task::Poll::Pending), "보관 복구도 잠금을 요구한다");
+    drop(held);
+    pass.await.unwrap();
+    assert!(recovered.db.archive_list("demo").unwrap()[0].committed);
+    // 같은 미완료 영수증에서 시작하는 명시 조회의 복구 계약도 따로 유지한다.
+    recovered.db.archive_save("demo", &pending).unwrap();
     let response = recovered.task_archive("demo", None, None, "device:user").await.unwrap();
     let FrontResponse::TaskArchive { entries, .. } = response else { panic!("다른 응답") };
     assert_eq!(entries.len(), 1);
