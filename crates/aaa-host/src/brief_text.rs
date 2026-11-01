@@ -87,6 +87,7 @@ pub(crate) const THREAD_GUIDE: &str = "\
 - 사용자가 uploads(아래 「경로」)에 둔 파일은 읽어도 된다.
 - 아래 지침과 memory를 따른다. memory는 고치지 않고, 남길 교훈은 보고의 `## Remember`에 적는다.
 - 채팅·보고에서 thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만 쓴다.
+- 검증 스크립트는 `aaa verify`로 실행한다(자동 탐색, 직접 지정은 `aaa verify -- <기존 명령>`). 저장소의 관련 owner·착지 gate 기준은 지킨다.
 
 ## 시작할 때 묻기
 
@@ -420,6 +421,7 @@ mod tests {
         assert!(!brief.contains(&"x".repeat(100)));
         // 시작할 때 모아 묻기(plan §8.328): 규칙 다음, 보고 형식 앞. pane 안 질문 창이 아니라 보고로 묻는다
         assert!(pos("## 시작할 때 묻기") < pos("## 보고"));
+        assert!(brief.contains("`aaa verify -- <기존 명령>`"));
         assert!(
             brief.contains("`## 진행` 절(필수")
                 && brief.contains("host가 이 목록으로 웹 작업 요약 카드의 진행을 고친다")

@@ -86,7 +86,7 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
     for (dir, v, _) in &dirs {
         // 구형 parser가 새 runner를 CI로 오인했거나 format 2를 거부한 캐시도 재해석한다.
         // runs는 그대로 두어 이미 원본이 지워진 확정 기록을 잃지 않는다.
-        let v = format!("parser-3:{v}");
+        let v = format!("parser-4:{v}");
         if BUDGET_EXHAUSTED.with(|flag| flag.get()) {
             notes.push("읽기 비용 상한으로 CI 일부 미수집".into());
             break;
@@ -102,7 +102,10 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
         let parsed = (|| -> Result<Option<MetricRun>> {
             let source: Provenance = serde_json::from_str(&read(&dir.join("provenance.json"))?)?;
             anyhow::ensure!(
-                matches!(source.format, 1 | 2) && source.clean && source.remote == remote,
+                (matches!(source.format, 1 | 2)
+                    || (source.format == 3 && source.runner.as_deref() == Some("aaa-verify")))
+                    && source.clean
+                    && source.remote == remote,
                 "CI 실행 출처 불일치"
             );
             anyhow::ensure!(
@@ -120,13 +123,24 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
             );
             let runner = source.runner.as_deref().unwrap_or("ci-local");
             let names: &[&str] = match runner {
-                "ci-local" => &[],
+                "ci-local" | "aaa-verify" => &[],
                 "pt" => &["pt-tests"],
                 "rc" => &["default-tests", "workspace-tests"],
                 "engine" => &["workspace-tests", "automation-tests", "2d-tests", "3d-tests"],
                 _ => bail!("검증 runner 미지원: {runner}"),
             };
-            let mut run = if runner == "ci-local" {
+            let mut run = if runner == "aaa-verify" {
+                anyhow::ensure!(source.format == 3, "공통 검증 원장 판 불일치");
+                let mut run: MetricRun = serde_json::from_str(&read(&dir.join("metrics.json"))?)?;
+                anyhow::ensure!(
+                    matches!(run.outcome.as_str(), "succeeded" | "failed") && run.verification_ms.is_some(),
+                    "공통 검증 종료 결과 없음"
+                );
+                run.run_id = id.clone();
+                run.observed_at_ms = source.ended_at_ms;
+                run.machine.clear();
+                run
+            } else if runner == "ci-local" {
                 ci_run(dir, source.ended_at_ms, id.clone())?
             } else {
                 summary_run(dir, source.ended_at_ms, id.clone())?
