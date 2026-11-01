@@ -554,6 +554,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const name = thread?.title || (pane ? pane.name || pane.argv.join(" ") || q.pane.slice(0, 8) : q.pane.slice(0, 8));
     const raise: Raise = (late) => raiseAlert({
       kind: "blocked",
+      topic: "asks", label: "질문", summary: q.text, subject: thread?.id,
       target,
       late,
       showing: sel === `pane:${q.pane}`,
@@ -581,6 +582,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const { sel, panes } = now.current;
     raiseAlert({
       kind: "reset",
+      topic: "workspace", summary: t.title || t.id, subject: t.id,
       target: `thread=${encodeURIComponent(key)}`,
       late: justWoke(),
       showing: sel === `thread:${key}` || (t.pane != null && sel === `pane:${t.pane}`),
@@ -612,6 +614,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       const { sel, panes } = now.current;
       const raise: Raise = (late) => raiseAlert({
         kind: kind === "input" ? "blocked" : "done", target, late, libraryUrl,
+        topic: kind === "input" ? "asks" : "reports", label: kind === "input" ? "확인 필요" : "완료 보고", subject: t.id,
         showing: sel === `thread:${key}`,
         title: t.title || t.id,
         machine: null,
@@ -634,24 +637,25 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const noticeNews = (n: NoticeView) => {
     if (n.kind === "idea_updated" && n.idea) {
       raiseAlert({ kind: "done", target: `idea=${encodeURIComponent(n.idea)}`, late: justWoke(),
+        topic: "ideas", label: "아이디어 갱신", subject: n.idea,
         showing: now.current.sel === `idea:${n.idea}`, title: n.title, machine: null, agent: null,
         notice: { title: `${n.idea} · ${n.title}`, body: "아이디어 노트 갱신", tag: `aaa-idea-${n.project}-${n.idea}` },
       });
       return;
     }
     if (n.kind === "host_issue" || n.kind === "host_recovered") {
-      showDroplet({ target: "threads", title: n.title, kind: n.kind === "host_recovered" ? "done" : "blocked", machine: null, agent: null });
+      showDroplet({ target: "threads", topic: "workspace", label: n.kind === "host_recovered" ? "host 정상" : "host 확인", title: n.title, kind: n.kind === "host_recovered" ? "done" : "blocked", machine: null, agent: null });
       return;
     }
 
     if (n.kind === "rollout_finished" || n.kind === "rollout_failed") {
-      showDroplet({ target: "deployment", title: n.title, kind: n.kind === "rollout_finished" ? "done" : "blocked", machine: null, agent: null });
+      showDroplet({ target: "deployment", topic: "machines", label: n.kind === "rollout_finished" ? "배포 완료" : "배포 실패", title: n.title, kind: n.kind === "rollout_finished" ? "done" : "blocked", machine: null, agent: null });
       return;
     }
 
     if (n.kind === "post_muted" || n.kind === "automation") {
       // 누르면 모든 thread(host는 프로젝트 하나, plan §8.291)
-      showDroplet({ target: "threads", title: n.title, kind: n.kind === "automation" ? "done" : "blocked", machine: null, agent: null });
+      showDroplet({ target: "threads", topic: n.kind === "automation" ? "automations" : "workspace", label: n.kind === "automation" ? "자동화" : "알림 확인", title: n.title, kind: n.kind === "automation" ? "done" : "blocked", machine: null, agent: null });
       return;
     }
     if (n.kind !== "finished" || n.pane === null) return;
@@ -667,6 +671,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     told(
       raiseAlert({
         kind: "done",
+        topic: "work", subject: thread?.id,
         target,
         late: justWoke(),
         showing: sel === `pane:${n.pane}` || (key !== null && sel === `thread:${key}`),

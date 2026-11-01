@@ -5014,3 +5014,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [완료 보고의 최신 결과·참조 판 보호와 과거 판 정리(t-1392)](testing-report-retention-t-1392.md)
 
 - 아이디어 그림·새 글 알림·분할 조절: [t-1412 검증 기록](testing-idea-updates-t-1412.md).
+
+- 앱 안 알림의 종류 아이콘·한 줄 요약·원문 보존: [t-1419 검증 기록](testing-in-app-alerts-t-1419.md).

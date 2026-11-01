@@ -12,10 +12,17 @@
  * 턴 끝 알림(차이 목록 N3)과 함께 옮긴다(plan §8.70).
  */
 
+import type { NotificationTopic } from "../notificationSummary.ts";
+
 /** aaa: `reset`은 사용량 한도가 다시 차오름(plan §8.267) */
 export type DropletKind = "blocked" | "done" | "ended" | "reset";
 
 export interface DropletNotice {
+  /** 앱 안 표시 종류. kind는 기존 알림 설정·소리·색 판정을 맡는다. */
+  topic?: NotificationTopic;
+  label?: string;
+  summary?: string;
+  subject?: string;
   /** aaa: 보고서의 공개 링크 한 줄(조작 기기만). */
   libraryUrl?: string | null;
   /** where a tap goes: the address hash of a pane or a thread */

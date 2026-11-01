@@ -8400,3 +8400,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **경계.** `provider_turn` 사건은 native 세션 ID·실행 시작 시각·turn 시작/관측/완료 시각을 담는다. native ID는 현재 연결과 같아야 하고 시작은 실행 세대 이후여야 한다. host가 머신·pane·세션·세대·최신 시각을 검사한다. 시작·성공·입력 제출도 오류 없는 관측으로 남겨 지난 오류의 재전송을 막는다. agent는 파일을 끝까지 읽은 관측만 보내며 실행 세대가 바뀌면 reader도 다시 만든다.
 - **표시·호환.** `AgentStatus.provider_turn`은 선택 칸(FRONT_API 1.152)이고 AGENT_LINK 1.11을 유지한다. 새 사건은 별도 재연결 slot이다. 구판은 선택 칸을 버린다. 터미널·대화·아이디어·작업 요약에는 오류 원인과 실행/완료 시각, 목록 경고에는 같은 근거를 쓴다. 활동·질문·승인·보고·자동 이어하기·모델 선택은 바꾸지 않는다.
 - **자료 최소화.** 원문 오류·본문·경로는 보내지 않고 알려진 native 코드·HTTP 상태만 보낸다. 모르는 코드는 원인 미확인으로 남기며 원시 값을 전송하지 않는다. 사용법은 [공급자 오류 원인](usage.md#공급자-오류-원인), 검증은 [t-1362 기록](testing-native-provider-errors-t-1362.md).
+
+### 8.550 앱 안 알림의 종류와 한 줄 내용(t-1419)
+
+- 질문·확인 필요, 보고, 작업 완료, 아이디어, 할 일, 자동화, 머신, host 상태를 구별한다. 활동 막대와 알림이 같은 아이콘 표를 쓰며 agent 로고가 종류를 대신하지 않는다.
+- 토스트는 종류와 핵심 내용 한 줄이다. 질문은 질문의 첫 내용 줄, 보고·완료는 작업 제목, 아이디어는 노트 제목을 보이며 대상 ID를 함께 둔다. 48개 글자 묶음까지 보이고 긴 내용은 말줄임한다. 공개 링크는 내용 자리를 차지하지 않는다.
+- 알림 목록도 종류 아이콘과 한 줄 요약을 쓰고 긴 요약·본문은 「자세히」에 보존한다. 토스트를 누르면 기존 대상 화면으로 간다. 알림 발생 조건·소리·외부 푸시·프로토콜은 유지한다.
+- 참고: [herdr-web-ui Droplet](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Droplet.tsx)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))의 짧은 상태와 대상 열기, [herdr-projects inbox](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/inbox.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE))의 종류·대상·짧은 사건 분리, [herdr sidebar](https://github.com/herdrdev/herdr/blob/v0.9.5/src/client/shell/sidebar.rs)([Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.9.5/LICENSE))의 상태 아이콘을 확인했다. 기존에 옮긴 Droplet을 다듬으며 종류 아이콘은 사용자 요청대로 aaa 활동 막대 것을 공유한다. 새 외부 코드·의존성은 추가하지 않는다.
+- 검증은 [t-1419 기록](testing-in-app-alerts-t-1419.md)에 둔다.

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { AA, env, root, base, aaa, until, step, waitOutput, showPanel, inList, webkit, pairPage,
+import { AA, env, root, base, aaa, until, step, waitOutput, showPanel, inList, webkit, pairPage, shot,
   pushDevice, setPushKey, nextPush, pushes, setInUse, pushInUse } from "../lib/harness.mjs";
 
 export const labEnv = { AAA_TEST_NOTIFY_DEBOUNCE_MS: "100" };
@@ -53,6 +53,13 @@ export default async function ({ page }) {
     assert.doesNotMatch(note.text, /library\//);
     assert.match(note.text, /\[그림 링크\]\([0-9a-f]{16}\.png\)/);
     text = note.text;
+    const toast = page.locator('.droplet[data-topic="ideas"][data-phase="in"]');
+    await toast.locator(".droplet-card").waitFor();
+    assert.equal(await toast.locator(".droplet-title").innerText(), "아이디어 갱신");
+    assert.equal(await toast.locator(".droplet-detail").innerText(), `${note.idea.short_id} · 그림 아이디어`);
+    assert.equal(await toast.locator(".droplet-mark svg").innerHTML(), await page.getByTestId("activity-ideas").locator("svg").innerHTML());
+    await toast.evaluate(async el => { await Promise.all(el.getAnimations({ subtree: true }).map(a => a.finished)); });
+    await shot(page, "120-idea-notice");
     const badge = page.getByTestId("activity-badge-ideas");
     await badge.waitFor();
     assert.equal(await badge.innerText(), "1");
