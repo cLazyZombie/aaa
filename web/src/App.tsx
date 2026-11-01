@@ -632,6 +632,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
+    if (n.kind === "idea_updated" && n.idea) {
+      raiseAlert({ kind: "done", target: `idea=${encodeURIComponent(n.idea)}`, late: justWoke(),
+        showing: now.current.sel === `idea:${n.idea}`, title: n.title, machine: null, agent: null,
+        notice: { title: `${n.idea} · ${n.title}`, body: "아이디어 노트 갱신", tag: `aaa-idea-${n.project}-${n.idea}` },
+      });
+      return;
+    }
     if (n.kind === "host_issue" || n.kind === "host_recovered") {
       showDroplet({ target: "threads", title: n.title, kind: n.kind === "host_recovered" ? "done" : "blocked", machine: null, agent: null });
       return;
@@ -1484,6 +1491,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   );
   useEffect(() => { const refresh = () => loadAutomations(); window.addEventListener("aaa:automations-changed", refresh); return () => window.removeEventListener("aaa:automations-changed", refresh); }, []);
   const badges = {
+    ideas: { count: (ideas.list ?? []).filter((i) => i.unseen).length, label: "새 노트" },
     asks: { count: askList.length, label: "질문·확인 필요·할 일", ask: true },
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },

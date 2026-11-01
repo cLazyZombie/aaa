@@ -33,6 +33,7 @@ pub(crate) struct Meta {
     pub title: String,
     pub status: IdeaStatus,
     pub rev: u32,
+    pub seen_rev: u32,
     pub created_ms: u64,
     pub updated_ms: u64,
     /// 오래된 판부터
@@ -191,6 +192,9 @@ impl Folder {
         write_atomic(&self.rev_path(rev), text.as_bytes()).map_err(io)?;
         write_atomic(&self.note_path(), text.as_bytes()).map_err(io)?;
         meta.rev = rev;
+        if by == IdeaAuthor::User {
+            meta.seen_rev = rev;
+        }
         meta.updated_ms = now;
         if let Some(t) = heading(text) {
             meta.title = t;
@@ -201,6 +205,155 @@ impl Folder {
 }
 
 impl Host {
+    fn idea_updated(&self, note: &IdeaNote) {
+        use aaa_proto::{InboxItem, NoticeKind, NoticeView};
+        self.send_notice(NoticeView {
+            kind: NoticeKind::IdeaUpdated,
+            idea: Some(note.idea.short_id.clone()),
+            pane: None,
+            machine: String::new(),
+            project: Some(note.project.clone()),
+            thread: note.idea.thread.clone(),
+            title: note.idea.title.clone(),
+            agent: None,
+            turn_ms: None,
+            long: true,
+            at_ms: note.idea.updated_ms,
+        });
+        if !self.settings(&note.project).mute
+            && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
+        {
+            let item = InboxItem {
+                id: format!("idea:{}:{}", note.idea.id, note.rev),
+                short_id: None,
+                project: note.project.clone(),
+                item_kind: "idea".into(),
+                subject: note.idea.short_id.clone(),
+                event: "updated".into(),
+                summary: note.idea.title.clone(),
+                body: String::new(),
+                done: false,
+                seen: false,
+                created_at_ms: note.idea.updated_ms,
+                done_at_ms: None,
+            };
+            aaa_common::diagnostic::ignored(tx.send(item), "알림 수신자가 끝났다");
+        }
+    }
+
+    pub(crate) fn idea_still_news(&self, item: &aaa_proto::InboxItem) -> bool {
+        self.idea_folder(&item.project, &item.subject)
+            .and_then(|f| {
+                let m = f.meta()?;
+                Ok(m.status == IdeaStatus::Open && m.rev > m.seen_rev && item.id == format!("idea:{}:{}", f.id, m.rev))
+            })
+            .inspect_err(|e| tracing::warn!(project = %item.project, idea = %item.subject, "아이디어 알림 재확인 실패: {}", e.message))
+            .unwrap_or(false)
+    }
+
+    /// 화면이 실제 표시한 판만 확인한다. 그 사이 저장한 새 판은 읽지 않은 채 남는다.
+    pub(crate) fn idea_seen(&self, project: &str, idea: &str, rev: u32) -> Result<(), ErrorBody> {
+        let f = self.idea_folder(project, idea)?;
+        let changed = {
+            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let mut m = f.meta()?;
+            if rev == 0 || rev > m.rev {
+                return Err(bad("읽은 판이 없다"));
+            }
+            if rev <= m.seen_rev {
+                false
+            } else {
+                m.seen_rev = rev;
+                f.write_meta(&m)?;
+                true
+            }
+        };
+        if changed {
+            self.ideas_bump(project);
+        }
+        Ok(())
+    }
+
+    /// 기존 노트의 library 링크도 파일 사본으로 바꾼다. 주소만 이행하므로 판·시각·알림은 바꾸지 않는다.
+    pub(crate) async fn idea_read_note(
+        &self,
+        project: &str,
+        f: &Folder,
+        rev: Option<u32>,
+    ) -> Result<IdeaNote, ErrorBody> {
+        let mut note = self.idea_note(project, f, rev)?;
+        let text = match self.idea_import_media(project, f, &note.text).await {
+            Ok(text) => text,
+            Err(e) => {
+                tracing::warn!(project, idea = %f.id, "아이디어 미디어 이행 실패: {}", e.message);
+                note.media_error = Some(e.message);
+                return Ok(note);
+            }
+        };
+        if text != note.text {
+            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            if f.text(Some(note.rev))? == note.text {
+                write_atomic(&f.rev_path(note.rev), text.as_bytes()).map_err(internal)?;
+            }
+            if f.meta()?.rev == note.rev && f.text(None)? == note.text {
+                write_atomic(&f.note_path(), text.as_bytes()).map_err(internal)?;
+            }
+        }
+        self.idea_note(project, f, rev)
+    }
+
+    /// 전용 thread library의 미디어만 agent를 통해 읽어 아이디어 소유 파일로 보존한다.
+    pub(crate) async fn idea_import_media(&self, project: &str, f: &Folder, text: &str) -> Result<String, ErrorBody> {
+        use aaa_proto::{AgentRequest, AgentResponse};
+        check_text(text)?;
+        let targets = media_targets(text);
+        if !targets.iter().any(|(_, src)| src.contains("library/")) {
+            return Ok(text.to_string());
+        }
+        let Some(thread) = f.meta()?.thread else { return Ok(text.to_string()) };
+        let rec = self.load(project, &thread)?;
+        let Some(work) = rec.work_dir.as_deref() else { return Ok(text.to_string()) };
+        let mut imported = std::collections::HashMap::new();
+        let mut out = text.to_string();
+        for (range, src) in targets.into_iter().rev() {
+            let Some(path) = thread_media_path(&src, work) else { continue };
+            let name = if let Some(name) = imported.get(&path) {
+                name
+            } else {
+                let conn = self.live_conn(&rec.machine_id)?;
+                let mut bytes = Vec::new();
+                loop {
+                    let response = conn
+                        .request(AgentRequest::FileRead {
+                            work_dir: work.to_string(),
+                            path: path["library/".len()..].to_string(),
+                            offset: bytes.len() as u64,
+                            len: 256 * 1024,
+                        })
+                        .await
+                        .map_err(|e| err(e.code, format!("{path}: {}", e.message)))?;
+                    let AgentResponse::FileChunk { data, eof } = response else {
+                        return Err(internal("아이디어 미디어 읽기 응답이 아니다"));
+                    };
+                    if bytes.len() as u64 + data.0.len() as u64 > crate::task_attach::MAX_BYTES {
+                        return Err(bad(format!("{path}: 미디어가 16MiB를 넘는다")));
+                    }
+                    if data.0.is_empty() && !eof {
+                        return Err(internal(format!("{path}: 미디어 읽기가 진행되지 않는다")));
+                    }
+                    bytes.extend(data.0);
+                    if eof {
+                        break;
+                    }
+                }
+                let name = self.idea_store_file(f, &bytes).map_err(|e| internal(format!("{path}: {}", e.message)))?;
+                imported.entry(path).or_insert(name)
+            };
+            out.replace_range(range, name);
+        }
+        Ok(out)
+    }
+
     pub(crate) fn ideas_bump(&self, project: &str) {
         aaa_common::diagnostic::ignored(
             self.ideas_changed.send(project.to_string()),
@@ -242,6 +395,7 @@ impl Host {
             title: m.title.clone(),
             status: m.status,
             rev: m.rev,
+            unseen: m.history.iter().any(|r| r.by == IdeaAuthor::Thread && r.rev > m.seen_rev),
             created_ms: m.created_ms,
             updated_ms: m.updated_ms,
             tasks,
@@ -258,6 +412,7 @@ impl Host {
         }
         let text = f.text((rev != m.rev).then_some(rev))?;
         Ok(IdeaNote {
+            media_error: None,
             project: project.to_string(),
             idea: self.idea_summary(project, f, &m)?,
             rev,
@@ -389,7 +544,11 @@ impl Host {
             Saved::Written => {
                 self.db.audit(actor, "idea_save", &format!("{project}/{short}"));
                 self.ideas_bump(project);
-                Ok(Ok(self.idea_note(project, f, None)?))
+                let note = self.idea_note(project, f, None)?;
+                if by == IdeaAuthor::Thread && note.idea.unseen {
+                    self.idea_updated(&note);
+                }
+                Ok(Ok(note))
             }
             Saved::Merge { .. } => {
                 self.db.audit(actor, "idea_save_merge", &format!("{project}/{short}"));
@@ -525,6 +684,10 @@ impl Host {
         if f.meta()?.status == IdeaStatus::Done {
             return Err(bad("할 일로 넘겨 잠긴 아이디어다"));
         }
+        self.idea_store_file(&f, bytes)
+    }
+
+    fn idea_store_file(&self, f: &Folder, bytes: &[u8]) -> Result<String, ErrorBody> {
         if bytes.is_empty() || bytes.len() as u64 > crate::task_attach::MAX_BYTES {
             return Err(bad("파일은 1바이트부터 16MiB까지 올린다"));
         }
@@ -587,6 +750,53 @@ pub(crate) fn media_name(name: &str) -> bool {
         && matches!(ext, "png" | "jpg" | "gif" | "webp" | "mp4" | "webm")
 }
 
+/// Markdown 링크·그림의 대상 범위. 코드 안의 예시는 파일 요청으로 바꾸지 않는다.
+fn media_targets(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    static TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^\n]*?["'])?\s*\)"#).unwrap()
+    });
+    let mut out = Vec::new();
+    let mut fence: Option<&str> = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            let mark = &trimmed[..3];
+            if fence == Some(mark) {
+                fence = None;
+            } else if fence.is_none() {
+                fence = Some(mark);
+            }
+        } else if fence.is_none() {
+            for c in TARGET.captures_iter(line) {
+                let m = c.get(1).or_else(|| c.get(2)).unwrap();
+                if line[..c.get(0).unwrap().start()].matches('`').count() % 2 == 1 {
+                    continue;
+                }
+                out.push((offset + m.start()..offset + m.end(), m.as_str().to_string()));
+            }
+        }
+        offset += line.len();
+    }
+    out
+}
+
+fn thread_media_path(src: &str, work: &str) -> Option<String> {
+    let src = src.strip_prefix("file://").unwrap_or(src);
+    let relative = src.strip_prefix(work).and_then(|s| s.strip_prefix('/')).unwrap_or(src);
+    let relative = relative.strip_prefix("./").unwrap_or(relative);
+    let relative = if let Some(name) = std::path::Path::new(work).file_name().and_then(|s| s.to_str()) {
+        relative.strip_prefix(&format!(".aaa/{name}/")).unwrap_or(relative)
+    } else {
+        relative
+    };
+    if !relative.starts_with("library/") || !crate::library::safe_rel(relative) {
+        return None;
+    }
+    let ext = relative.rsplit('.').next()?.to_ascii_lowercase();
+    matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "mp4" | "webm").then(|| relative.to_string())
+}
+
 pub(crate) fn media_mime(name: &str) -> &'static str {
     match name.rsplit('.').next() {
         Some("mp4") => "video/mp4",
@@ -612,12 +822,9 @@ fn media_ext(bytes: &[u8]) -> Option<&'static str> {
 /// 노트가 가리키는 폴더 안 그림·영상(`](<이름>)`, 처음 나온 차례)
 pub(crate) fn media_refs(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for (at, _) in text.match_indices("](") {
-        let rest = &text[at + 2..];
-        let Some(end) = rest.find(')') else { continue };
-        let target = rest[..end].trim();
-        if media_name(target) && !out.iter().any(|n| n == target) {
-            out.push(target.to_string());
+    for (_, target) in media_targets(text) {
+        if media_name(&target) && !out.contains(&target) {
+            out.push(target);
         }
     }
     out
@@ -626,6 +833,81 @@ pub(crate) fn media_refs(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 재접속에도 새 판이 남고, 옛 판 읽음·중복 저장·사람 저장이 새 알림을 만들지 않는다.
+    #[test]
+    fn thread_updates_stay_unseen_until_the_displayed_revision_is_seen() {
+        let (h, state) = host();
+        let mut notices = h.notice_events.subscribe();
+        let (tx, mut notifications) = tokio::sync::mpsc::unbounded_channel();
+        *h.notify_tx.lock().unwrap() = Some(tx);
+        let n = h.idea_create("demo", "아이디어", "", None, "test").unwrap();
+        let f = h.idea_folder("demo", &n.idea.id).unwrap();
+        assert!(!n.idea.unseen);
+        let save = |base, text, by| {
+            h.idea_write("demo", &f, base, text, None, by, "test").unwrap().unwrap_or_else(|_| panic!("저장"))
+        };
+        let n = save(1, "# 아이디어\n둘째\n", IdeaAuthor::Thread);
+        assert!(n.idea.unseen);
+        assert_eq!(notices.try_recv().unwrap().idea.as_deref(), Some("n-0001"));
+        let item = notifications.try_recv().unwrap();
+        assert!(h.idea_still_news(&item));
+        let alert = crate::push::payload(
+            &crate::notify::Place::Project("demo".into()),
+            std::slice::from_ref(&item),
+            &Default::default(),
+            None,
+        );
+        assert_eq!(alert["url"], "/#idea=n-0001");
+        assert_eq!(
+            crate::push::for_device(crate::db::Alerts { input: true, done: false }, std::slice::from_ref(&item)).len(),
+            0
+        );
+        h.idea_seen("demo", "n-0001", 1).unwrap();
+        assert!(h.idea_list("demo").unwrap()[0].unseen);
+        assert_eq!(save(2, "# 아이디어\n둘째\n", IdeaAuthor::Thread).rev, 2);
+        assert!(notices.try_recv().is_err());
+        save(2, "# 아이디어\n셋째\n", IdeaAuthor::Thread);
+        h.idea_seen("demo", "n-0001", 2).unwrap();
+        assert!(h.idea_list("demo").unwrap()[0].unseen, "화면에 없던 셋째 판은 남긴다");
+        assert!(!h.idea_still_news(&item), "묶음 전 옛 알림은 보내지 않는다");
+        assert_eq!(f.meta().unwrap().seen_rev, 2, "host 메타에 보존한다");
+        assert!(h.idea_seen("demo", "n-0001", 4).is_err());
+        h.idea_seen("demo", "n-0001", 3).unwrap();
+        assert!(!h.idea_list("demo").unwrap()[0].unseen);
+        assert!(!save(3, "# 아이디어\n사람\n", IdeaAuthor::User).idea.unseen);
+        let _ = std::fs::remove_dir_all(state);
+    }
+
+    /// 임의 파일을 읽지 않고 자기 library만 가져온다. 코드의 예시도 읽기 요청이 되지 않는다.
+    #[test]
+    fn media_import_is_scoped_to_the_threads_library() {
+        let work = "/work/demo/.aaa/demo-t-0001";
+        for src in [
+            "library/pic.png",
+            "./library/pic.png",
+            "/work/demo/.aaa/demo-t-0001/library/pic.png",
+            ".aaa/demo-t-0001/library/pic.png",
+        ] {
+            assert_eq!(thread_media_path(src, work).as_deref(), Some("library/pic.png"), "{src}");
+        }
+        for src in [
+            "library/../secret.png",
+            "library/.hidden.png",
+            "../library/pic.png",
+            "/other/library/pic.png",
+            "https://example.com/library/pic.png",
+            "library/a.html",
+            "library/a.svg",
+        ] {
+            assert!(thread_media_path(src, work).is_none(), "{src}");
+        }
+        let text = "![그림](library/pic.png)\n[링크](<library/a b.png>)\n`![예](library/code.png)`\n```md\n![예](library/fenced.png)\n```\n";
+        assert_eq!(
+            media_targets(text).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(),
+            ["library/pic.png", "library/a b.png"]
+        );
+    }
 
     #[test]
     fn summary_counts_lines_per_section() {

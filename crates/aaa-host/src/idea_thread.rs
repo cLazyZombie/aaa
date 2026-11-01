@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use aaa_proto::{
-    AgentActivity, ErrorBody, ErrorCode, FrontResponse, IdeaAuthor, IdeaNote, IdeaStatus, MessageMode, Role,
-    ThreadKind, ThreadStatus,
+    AgentActivity, DeviceRole, ErrorBody, ErrorCode, FrontRequest, FrontResponse, IdeaAuthor, IdeaNote, IdeaStatus,
+    MessageMode, Role, ThreadKind, ThreadStatus,
 };
 
 use crate::ideas::{Folder, Saved, WRITING};
@@ -46,6 +46,53 @@ fn task_text(short: &str, title: &str, dir: &std::path::Path, again: bool) -> St
 }
 
 impl Host {
+    /// 아이디어의 await 경로를 공용 dispatcher에서 분리해 다른 요청의 poll 스택이 함께 커지지 않게 한다.
+    /// 공용 입구의 권한 검사·요청 가림을 통과한 요청만 받는다.
+    pub(crate) async fn call_idea(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        req: FrontRequest,
+    ) -> Result<FrontResponse, ErrorBody> {
+        match req {
+            FrontRequest::IdeaList { project } => Ok(FrontResponse::Ideas { ideas: self.idea_list(&project)? }),
+            FrontRequest::IdeaRead { project, idea, rev } => {
+                let f = self.idea_folder(&project, &idea)?;
+                Ok(FrontResponse::Idea { note: self.idea_read_note(&project, &f, rev).await? })
+            }
+            FrontRequest::IdeaSeen { project, idea, rev } => {
+                if actor.starts_with("worker:")
+                    || actor.starts_with("evaluator:")
+                    || crate::front::in_session(actor)
+                    || actor.starts_with("detached:")
+                {
+                    return Err(err(ErrorCode::Forbidden, "thread는 사람의 읽음 상태를 바꾸지 못한다"));
+                }
+                self.idea_seen(&project, &idea, rev)?;
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::IdeaCreate { project, title, text } => {
+                Ok(FrontResponse::Idea { note: self.idea_create(&project, &title, &text, None, actor)? })
+            }
+            FrontRequest::IdeaSave { project, idea, base_rev, text, summary } => {
+                self.idea_save(role, actor, &project, &idea, base_rev, &text, summary).await
+            }
+            FrontRequest::IdeaSay { project, idea, text } => {
+                Ok(FrontResponse::Idea { note: self.idea_say(&project, &idea, &text, actor).await? })
+            }
+            FrontRequest::IdeaWake { project, idea } => {
+                Ok(FrontResponse::Idea { note: self.idea_wake(&project, &idea, actor).await? })
+            }
+            FrontRequest::IdeaHandoff { project, idea, base_rev, tasks } => {
+                Ok(FrontResponse::Idea { note: self.idea_handoff(&project, &idea, base_rev, tasks, actor).await? })
+            }
+            FrontRequest::IdeaCopy { project, idea } => {
+                Ok(FrontResponse::Idea { note: self.idea_copy(&project, &idea, actor)? })
+            }
+            _ => Err(internal("아이디어 요청이 아니다")),
+        }
+    }
+
     /// 아이디어마다의 작업 lock(띄우기·잇기를 한 번에 하나)
     fn idea_lock(&self, project: &str, id: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.thread_op_lock(project, &format!("idea:{id}"))
@@ -152,7 +199,7 @@ impl Host {
         self.ideas_bump(project);
         // 띄우기·잇기는 배경에서 한다(실제 harness는 몇 초 걸린다): 말은 남겨 두고 준비되면 보낸다
         self.spawn_idea_work(project, &f.id, true, actor);
-        self.idea_note(project, &f, None)
+        self.idea_read_note(project, &f, None).await
     }
 
     /// 아이디어 화면을 열었다: 쉬느라 내린 thread를 조용히 잇고, 남은 말이 있으면 보낸다. 아직 thread가 없으면 아무것도 하지 않는다
@@ -167,7 +214,7 @@ impl Host {
         if meta.status == IdeaStatus::Open && meta.thread.is_some() {
             self.spawn_idea_work(project, &f.id, false, actor);
         }
-        self.idea_note(project, &f, None)
+        self.idea_read_note(project, &f, None).await
     }
 
     /// 배경 일: thread를 쓸 수 있게 하고(`start`면 없을 때 새로), 남은 말을 brief 뒤 차례로 보낸다. 띄우지 못하면 까닭을 노트 메타에
@@ -250,7 +297,13 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         let f = self.idea_folder(project, idea)?;
         let by = self.idea_writer(role, actor, &f)?;
-        match self.idea_write(project, &f, base_rev, text, summary, by, actor)? {
+        let meta = f.meta()?;
+        let text = if meta.rev == base_rev && meta.status == IdeaStatus::Open {
+            self.idea_import_media(project, &f, text).await?
+        } else {
+            text.to_string()
+        };
+        match self.idea_write(project, &f, base_rev, &text, summary, by, actor)? {
             Ok(note) => Ok(FrontResponse::Idea { note }),
             Err(Saved::Conflict(base_rev, base_text)) => self.idea_conflict(project, &f, base_rev, base_text),
             Err(Saved::Merge { base_rev, mine, current }) => {
@@ -396,6 +449,11 @@ mod tests {
         );
         let stale = h.call(DeviceRole::Reader, "worker:pane-i", save(1)).await.unwrap();
         assert!(matches!(stale, FrontResponse::IdeaConflict(c) if c.base_rev == 1 && c.current.rev == 2));
+        let seen = || FrontRequest::IdeaSeen { project: "demo".into(), idea: "n-0001".into(), rev: 2 };
+        assert_eq!(h.call(DeviceRole::Reader, "worker:pane-i", seen()).await.unwrap_err().code, ErrorCode::Forbidden);
+        assert!(h.idea_list("demo").unwrap()[0].unseen, "thread가 읽어도 사람의 새 글은 남는다");
+        h.call(DeviceRole::Reader, "device:viewer", seen()).await.unwrap();
+        assert!(!h.idea_list("demo").unwrap()[0].unseen);
         for actor in ["worker:pane-o", "device:viewer", "evaluator:pane-i"] {
             let e = h.call(DeviceRole::Reader, actor, save(2)).await.unwrap_err();
             assert_eq!(e.code, ErrorCode::Forbidden, "{actor}");

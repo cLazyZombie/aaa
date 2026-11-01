@@ -63,6 +63,7 @@ pub(crate) fn finish_notice(
     turn_ms: Option<u64>,
 ) -> NoticeView {
     NoticeView {
+        idea: None,
         kind: NoticeKind::Finished,
         pane: Some(pane.to_string()),
         machine: p.machine_id.clone(),
@@ -107,6 +108,7 @@ impl Host {
     /// 멈춘 프로젝트는 ticker가 셈하지 않으므로 바로 보낸다
     pub(crate) fn turn_finished(&self, n: NoticeView, thread: Option<&ThreadRec>) {
         match thread {
+            Some(r) if r.idea.is_some() => {}
             Some(r) if r.role == aaa_proto::Role::Evaluator => {}
             Some(r) if self.active_projects().iter().any(|p| p.name == r.project) => {
                 if let Some(pane) = n.pane.clone() {
@@ -147,6 +149,7 @@ impl Host {
             p.turn_reported = true;
         }
         self.send_notice(NoticeView {
+            idea: None,
             kind: NoticeKind::Report,
             pane: r.pane.clone(),
             machine: r.machine_id.clone(),

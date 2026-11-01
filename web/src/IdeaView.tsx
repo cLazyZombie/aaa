@@ -26,12 +26,14 @@ import { appendQuote } from "./selectionQuote.ts";
 import { useMedia } from "./settings";
 import { paneAgentStatus } from "./sidebarModel";
 import { filesOf } from "./TaskAttachments";
+import { IdeaResizer } from "./IdeaResizer";
+import { usePageVisible } from "./pageVisible";
 
 /** 노트 하나를 읽고, host가 바꿨다고 알리면(`ideas` 사건 → 목록 판이 바뀜) 다시 읽는다 */
 function useIdeaNote(target: string | null, summary: IdeaSummary | undefined) {
   const [note, setNote] = useState<IdeaNote | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const stamp = summary ? `${summary.rev}:${summary.status}:${summary.updated_ms}:${summary.thread ?? ""}` : "";
+  const stamp = summary ? `${summary.rev}:${summary.unseen}:${summary.status}:${summary.updated_ms}:${summary.thread ?? ""}` : "";
   const [again, setAgain] = useState(0);
   useEffect(() => {
     if (!target) { setNote(null); return; }
@@ -80,6 +82,19 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
   }, [shown, canControl, note, setNote, setError]);
   const notes = useReviewNotes(note?.project ?? "", `idea:${target ?? ""}`);
   const columns = useRef<HTMLDivElement>(null);
+  const [notePercent, setNotePercent] = useState(60);
+  const seen = useRef<string | null>(null);
+  const visible = usePageVisible();
+  useEffect(() => {
+    if (!shown || !visible || editing || (narrow && page !== "note") || !note || note.idea.short_id !== target || !note.idea.unseen) return;
+    const key = `${note.project}/${note.idea.id}/${note.rev}`;
+    if (seen.current === key) return;
+    seen.current = key;
+    call({ op: "idea_seen", idea: note.idea.short_id, rev: note.rev }).catch((e: unknown) => {
+      seen.current = null;
+      setError(e instanceof ApiError ? e.message : String(e));
+    });
+  }, [shown, visible, editing, narrow, page, note, target, setError]);
   usePageSwipe(columns, narrow && shown && !editing, page, setPage);
 
   const save = async () => {
@@ -146,13 +161,15 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
           <HeadMore />
         </header>
         {error && <div className="banner err" role="alert">{error}</div>}
-        <div className="idea-columns" ref={columns}>
-          <section className="idea-note-pane" aria-label="아이디어 노트" hidden={narrow && page !== "note"} data-testid="idea-note-pane">
+        {note?.media_error && <div className="banner err" role="alert">그림을 옮기지 못했다: {note.media_error}</div>}
+        <div className="idea-columns" ref={columns} style={{ "--idea-note-percent": `${notePercent}%` } as React.CSSProperties}>
+          <section id="idea-note-pane" className="idea-note-pane" aria-label="아이디어 노트" hidden={narrow && page !== "note"} data-testid="idea-note-pane">
             {narrow && tools && <div className="idea-note-tools">{tools}</div>}
             {note && (editing
               ? <NoteEditorPane note={note} editing={editing} busy={busy} onChange={(text) => setEditing({ ...editing, text })} onCancel={() => setEditing(null)} onSave={() => void save()} onError={setError} />
               : <NoteBody note={note} canNote={canControl && !done} onAdd={notes.add} anchors={notes.notes.flatMap((n) => n.source.kind === "note" ? [n.source.anchor] : [])} onOpenLink={onOpenLink} />)}
           </section>
+          {!narrow && <IdeaResizer percent={notePercent} onResize={setNotePercent} />}
           <section className="idea-chat-pane" aria-label="대화" hidden={narrow && page !== "chat"} data-testid="idea-chat-pane"
             data-drawer-swipe={narrow && page === "chat" ? "off" : undefined}>
             {note && <IdeaChat note={note} threads={threads} panes={panes} canControl={canControl} notes={notes} active={shown && (!narrow || page === "chat")}

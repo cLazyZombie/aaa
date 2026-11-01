@@ -606,7 +606,11 @@ short_id: string, title: string, status: IdeaStatus,
 /**
  * 지금 판(1부터)
  */
-rev: number, created_ms: number, updated_ms: number,
+rev: number,
+/**
+ * 아직 사람이 열지 않은 thread 저장 판이 있다(host에 보존).
+ */
+unseen: boolean, created_ms: number, updated_ms: number,
 /**
  * 넘긴 할 일(`d-NNNN`)
  */
@@ -627,6 +631,10 @@ export type IdeaRevView = { rev: number, at_ms: number, by: IdeaAuthor,
 summary: string | null, };
 
 export type IdeaNote = {
+/**
+ * 기존 미디어 주소를 옮기지 못한 까닭. 글은 계속 읽을 수 있다.
+ */
+media_error: string | null,
 /**
  * 프로젝트(그림 주소 `/api/v1/projects/<p>/ideas/<id>/files/<이름>`)
  */
@@ -1360,7 +1368,7 @@ user_request?: string, } | { "op": "task_log", project?: string, before: number 
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
-task?: string, search?: TaskHistorySearch, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
+task?: string, search?: TaskHistorySearch, } | { "op": "idea_list", project?: string, } | { "op": "idea_read", project?: string, idea: string, rev?: number, } | { "op": "idea_create", project?: string, title: string, text: string, } | { "op": "idea_seen", project?: string, idea: string, rev: number, } | { "op": "idea_save", project?: string, idea: string, base_rev: number, text: string,
 /**
  * 바뀐 곳 한 줄(thread가 준다). 사람이 고친 판은 host가 센다
  */
@@ -2307,9 +2315,9 @@ body: string | null, options: Array<MenuOption>, multi_select: boolean,
  */
 custom_option_index: number | null, };
 
-export type NoticeKind = "host_issue" | "host_recovered" | "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
+export type NoticeKind = "idea_updated" | "host_issue" | "host_recovered" | "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
 
-export type NoticeView = { kind: NoticeKind,
+export type NoticeView = { kind: NoticeKind, idea: string | null,
 /**
  * 갈 pane(새 보고는 그 thread의 pane, 없으면 null)
  */
