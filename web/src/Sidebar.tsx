@@ -37,6 +37,7 @@ import { PaneRename } from "./PaneRename";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { currentSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, subscribeSidebarPins, toggleSidebarPin } from "./herdr/sidebarPins.ts";
 import { AgentMark } from "./herdr/AgentMark.tsx";
+import { asks } from "./asksModel";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD, type AgentStatus, type KnownStatus } from "./herdr/status.ts";
 import { useAppearance } from "./theme";
 import { PANEL_LABEL, type SidebarPanel } from "./sidebarPanel";
@@ -153,10 +154,11 @@ function ProblemBadge({ reason, testid }: { reason: string; testid?: string }) {
 }
 
 /** 줄 앞 표시: 그 줄이 여는 pane의 agent, 셸이면 터미널(참고 Sidebar.tsx `rowMark`) */
-function RowMark({ agent }: { agent: string | null }) {
+function RowMark({ agent, question = false }: { agent: string | null; question?: boolean }) {
   return (
-    <span className="sidebar-mark" aria-hidden="true" data-agent={agent ?? "shell"}>
+    <span className={`sidebar-mark${question ? " is-question" : ""}`} aria-hidden="true" data-agent={agent ?? "shell"}>
       {agent !== null ? <AgentMark agent={agent} size={18} /> : <Terminal />}
+      {question && <span className="thread-question">?</span>}
     </span>
   );
 }
@@ -1064,6 +1066,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   const paneOpen = pane?.state === "running";
   const selected = props.selected === `thread:${threadKey(t)}` || (pane != null && props.selected === `pane:${pane.id}`);
   const agent = props.agentOf(pane, t);
+  const question = asks(t) || (paneOpen && pane.agent?.activity === "question");
   // herdr-projects thread_display: 「id · 제목」
   const title = `${t.id} · ${t.title}`;
   const line = stateLine(t, paneOpen, now);
@@ -1138,7 +1141,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           onClick={open}
           onKeyDown={(e) => onRowKey(e, open)}
         >
-          <RowMark agent={agent} />
+          <RowMark agent={agent} question={question} />
           {twoLine ? (
             <span className="workspace-copy is-two-line">
               <span className="workspace-line">
@@ -1172,7 +1175,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
               </span>
             </span>
           )}
-          <span className="visually-hidden">{agent ?? "agent"}</span>
+          <span className="visually-hidden">{agent ?? "agent"}{question ? " · 질문 대기" : ""}</span>
           <PaneState pane={paneOpen ? pane : undefined} online={online} testid={`thread-agent-${t.project}-${t.id}`} />
         </div>
         <RowMenuButton title={title} open={rows.menuKey === menuKey} onToggle={(anchor) => toggleMenu(anchor)} />

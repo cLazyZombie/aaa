@@ -53,8 +53,8 @@
 /* 머신 패널(plan §8.240): 패널 이름은 사이드바 머리가 말한다 */
 .machine-strip .machine-group + .machine-group { margin-top: 0; }
 /* 독점 예약(t-1367 시안 1A): 모니터 오른쪽 아래 자물쇠와 이름 아래 「독점 주인 까닭 · 끝 시각」 한 줄. 색은 테마 강조색 */
-.machine-strip .sidebar-mark { position: relative; }
-.machine-lock {
+.machine-strip .sidebar-mark, .sidebar-mark.is-question { position: relative; }
+.machine-lock, .thread-question {
   position: absolute;
   right: 1px;
   bottom: -3px;
@@ -66,6 +66,14 @@
   color: var(--accent);
 }
 .machine-strip .sidebar-mark .machine-lock svg { width: 10px; height: 10px; margin: auto; stroke-width: 2.6; }
+.thread-question {
+  align-items: center;
+  justify-content: center;
+  color: var(--status-blocked);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
 .machine-state.is-reserved { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-2); }
 .machine-state.is-reserved .machine-state-word { color: var(--accent); }
 .machine-state.is-reserved .list-id { font-size: inherit; }
