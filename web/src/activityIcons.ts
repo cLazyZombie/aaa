@@ -1,5 +1,5 @@
 // 직접 그린 lucide 꼴 아이콘(24 격자, 둥근 끝·모서리). lucide 컴포넌트와 같은 자리에 쓴다(사용자 결정 10-22 t-0727: 시안 4개씩 중 고름)
-import { createLucideIcon } from "lucide-react";
+import { Bot, createLucideIcon, FileText, FolderKanban, Lightbulb, MessageCircleQuestionMark, Monitor } from "lucide-react";
 
 /** 자동화: 시계 방향으로 도는 화살표 안 시계 바늘(정한 때·사건마다 다시 돈다). 지금까지는 Workflow */
 export const AutomationIcon = createLucideIcon("aaa-automation", [
@@ -19,3 +19,10 @@ export const WorkspaceIcon = createLucideIcon("aaa-workspace", [
   ["rect", { x:"3", y:"3", width:"18", height:"18", rx:"2", key:"panel" }],
   ["path", { d:"M3 9h18M9 9v12m4-4v-3m4 3v-5", key:"metrics" }],
 ]);
+
+/** 활동 막대와 앱 안 알림은 같은 종류에 같은 아이콘을 쓴다. */
+export const ACTIVITY_ICONS = {
+  workspace: WorkspaceIcon, asks: MessageCircleQuestionMark, work: FolderKanban,
+  machines: Monitor, automations: AutomationIcon, ideas: Lightbulb,
+  reports: FileText, tasks: TasksIcon, coordinator: Bot,
+};

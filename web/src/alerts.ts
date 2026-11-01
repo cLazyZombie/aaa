@@ -7,7 +7,7 @@ import { diagnosticReason, ignoredFailure, logIgnoredFailure } from "./errorDiag
 import { useEffect, useSyncExternalStore } from "react";
 import { canPlayAlertSound, playAlertSound, unlockAlertSound, type AlertSoundKind } from "./herdr/alertSound";
 import { createAlertTurnPlayer } from "./herdr/alertTurns";
-import { showDroplet, type DropletKind } from "./herdr/droplet";
+import { showDroplet, type DropletKind, type DropletNotice } from "./herdr/droplet";
 import { pushTest } from "./api";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./push";
 import { alertPrefs, alertSetting, setAlertSetting, useAlertSetting } from "./settings";
@@ -227,6 +227,10 @@ function touchDevice(): boolean {
 
 /** 알림 하나 */
 export interface Alert {
+  topic?: DropletNotice["topic"];
+  label?: string;
+  summary?: string;
+  subject?: string;
   /** 새 보고의 공개 링크. host의 LibraryView에서 조작 기기에만 준다. */
   libraryUrl?: string | null;
   kind: Exclude<DropletKind, "ended">;
@@ -260,7 +264,8 @@ export function raiseAlert(a: Alert): string {
   else if (!visible) did.push("가려짐");
   else if (a.showing) did.push("보는 중");
   else {
-    showDroplet({ target: a.target, agent: a.agent, title: a.title, machine: a.machine, kind: a.kind, libraryUrl: a.libraryUrl });
+    showDroplet({ target: a.target, agent: a.agent, title: a.title, machine: a.machine, kind: a.kind, libraryUrl: a.libraryUrl,
+      topic: a.topic, label: a.label, summary: a.summary, subject: a.subject });
     did.push("띄움");
   }
   did.push(document.hasFocus() ? "focus" : "focus 없음");

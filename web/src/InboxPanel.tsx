@@ -10,6 +10,8 @@ import type { FlowEvent, InboxItem, PostEnvelope } from "./gen/proto";
 import { ApiError, call, me, onInboxChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { canOperate, inboxOpen, isUserRequest, needsAnswer } from "./operateModel.ts";
+import { ACTIVITY_ICONS } from "./activityIcons";
+import { inboxContent } from "./notificationSummary.ts";
 
 type Tab = "inbox" | "events" | "posts";
 const say = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
@@ -122,12 +124,15 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
       ) : (
         <ul className="inbox-list" data-testid="inbox-list">
           {shown.map((i) => {
+            const content = inboxContent(i);
+            const TopicIcon = ACTIVITY_ICONS[content.topic];
             const report = ["new report", "report needs user"].includes(i.event)
               ? splitAppIds(i.summary, id => id.kind === "report").find(id => typeof id !== "string")?.target : undefined;
-            return <li key={i.id} className={i.done ? "is-done" : undefined} data-testid="inbox-item">
+            return <li key={i.id} className={i.done ? "is-done" : undefined} data-testid="inbox-item" data-topic={content.topic}>
               <div className="inbox-line">
                 <span className="inbox-kind">{i.short_id ?? i.id}</span>
-                <span className="inbox-kind">{i.item_kind}</span>
+                <TopicIcon className="inbox-icon" size={18} aria-hidden="true" />
+                <span className="inbox-event">{content.label}</span>
                 {THREAD_ID.test(i.subject) && onThread ? (
                   <button type="button" className="link inbox-subject" onClick={() => onThread(i.project, i.subject)}>
                     {i.subject}
@@ -135,15 +140,15 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
                 ) : (
                   <span className="inbox-subject">{i.subject}</span>
                 )}
-                <span className="inbox-event">{i.event}</span>
                 {report && <a href={`#report=${encodeURIComponent(`${i.project}/${report}`)}`}>{report}</a>}
                 <time className="inbox-time">{when(i.created_at_ms)}</time>
               </div>
-              <p className="inbox-summary">{i.summary}</p>
-              {i.body && (
+              <p className="inbox-summary">{content.summary}</p>
+              {(i.body || i.summary) && (
                 <details className="inbox-detail">
                   <summary>자세히</summary>
-                  <pre>{i.body}</pre>
+                  {i.summary && <p>{i.summary}</p>}
+                  {i.body && <pre>{i.body}</pre>}
                 </details>
               )}
               {canControl && !i.done && (

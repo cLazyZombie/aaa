@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Icon } from "../icons";
 import { flickVelocity, onDroplet, type PressSample, type QueuedDroplet } from "./droplet.ts";
-import { AgentMark } from "./AgentMark.tsx";
+import { ACTIVITY_ICONS } from "../activityIcons";
+import { dropletContent } from "../notificationSummary.ts";
 import "./Droplet.css";
 
 /**
@@ -158,10 +159,10 @@ export function Droplet({ onOpen }: { onOpen: (target: string) => void }) {
   };
 
   if (!current) return <div ref={probe} className="droplet-probe" aria-hidden="true" />;
-  const what = current.kind === "blocked" ? "입력 필요" : current.kind === "done" ? "작업 완료" : current.kind === "reset" ? "한도 풀림" : "터미널 종료됨";
-  const detail = current.machine ? `${current.machine} · ${what}` : what;
+  const content = dropletContent(current);
+  const TopicIcon = ACTIVITY_ICONS[content.topic];
   return (
-    <div className="droplet" role="status" aria-live="polite" data-phase={phase} data-kind={current.kind} data-dragging={drag !== 0 ? "" : undefined} style={{ "--droplet-drag": `${drag}px`, "--droplet-top": `${top ?? 12}px`, ...(fit === null ? {} : { "--droplet-fit": `${fit}px` }), visibility: top === null ? "hidden" : "visible" } as CSSProperties} key={current.id}>
+    <div className="droplet" role="status" aria-live="polite" data-phase={phase} data-kind={current.kind} data-topic={content.topic} data-dragging={drag !== 0 ? "" : undefined} style={{ "--droplet-drag": `${drag}px`, "--droplet-top": `${top ?? 12}px`, ...(fit === null ? {} : { "--droplet-fit": `${fit}px` }), visibility: top === null ? "hidden" : "visible" } as CSSProperties} key={current.id}>
       <div ref={probe} className="droplet-probe" aria-hidden="true" />
       <svg className="droplet-defs" width="0" height="0" aria-hidden="true" focusable="false">
         <filter id="droplet-goo" x="-50%" y="-50%" width="200%" height="200%" colorInterpolationFilters="sRGB">
@@ -177,7 +178,8 @@ export function Droplet({ onOpen }: { onOpen: (target: string) => void }) {
         type="button"
         ref={card}
         className="droplet-card"
-        aria-label={`${current.title}, ${detail}. 패널 열기`}
+        aria-label={`${content.label}, ${content.summary}. 패널 열기`}
+        title={content.full}
         onClick={() => {
           if (dragged.current) {
             dragged.current = false;
@@ -192,12 +194,11 @@ export function Droplet({ onOpen }: { onOpen: (target: string) => void }) {
         onPointerUp={(event) => endPress(event, false)}
         onPointerCancel={(event) => endPress(event, true)}
       >
-        <span className="droplet-mark">{current.agent ? <AgentMark agent={current.agent} size={22} /> : <span className="droplet-mark-blank" />}</span>
+        <span className="droplet-mark" aria-hidden="true"><TopicIcon size={20} /></span>
         <span className="droplet-text">
-          <span className="droplet-title">{current.title}</span>
-          <span className="droplet-detail" title={current.libraryUrl ?? undefined}>{current.libraryUrl ? `보기: ${current.libraryUrl}` : detail}</span>
+          <span className="droplet-title">{content.label}</span>
+          <span className="droplet-detail">{content.summary}</span>
         </span>
-        <span className="droplet-dot" aria-hidden="true" />
       </button>
       <button type="button" className="droplet-close" aria-label="닫기" title="닫기" onClick={leave}>
         <Icon name="close" />
