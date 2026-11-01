@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use aaa_proto::{
-    AgentActivity, ErrorBody, ErrorCode, FrontResponse, IdeaAuthor, IdeaNote, IdeaStatus, MessageMode, Role,
-    ThreadKind, ThreadStatus,
+    AgentActivity, DeviceRole, ErrorBody, ErrorCode, FrontRequest, FrontResponse, IdeaAuthor, IdeaNote, IdeaStatus,
+    MessageMode, Role, ThreadKind, ThreadStatus,
 };
 
 use crate::ideas::{Folder, Saved, WRITING};
@@ -46,6 +46,53 @@ fn task_text(short: &str, title: &str, dir: &std::path::Path, again: bool) -> St
 }
 
 impl Host {
+    /// 아이디어의 await 경로를 공용 dispatcher에서 분리해 다른 요청의 poll 스택이 함께 커지지 않게 한다.
+    /// 공용 입구의 권한 검사·요청 가림을 통과한 요청만 받는다.
+    pub(crate) async fn call_idea(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        req: FrontRequest,
+    ) -> Result<FrontResponse, ErrorBody> {
+        match req {
+            FrontRequest::IdeaList { project } => Ok(FrontResponse::Ideas { ideas: self.idea_list(&project)? }),
+            FrontRequest::IdeaRead { project, idea, rev } => {
+                let f = self.idea_folder(&project, &idea)?;
+                Ok(FrontResponse::Idea { note: self.idea_read_note(&project, &f, rev).await? })
+            }
+            FrontRequest::IdeaSeen { project, idea, rev } => {
+                if actor.starts_with("worker:")
+                    || actor.starts_with("evaluator:")
+                    || crate::front::in_session(actor)
+                    || actor.starts_with("detached:")
+                {
+                    return Err(err(ErrorCode::Forbidden, "thread는 사람의 읽음 상태를 바꾸지 못한다"));
+                }
+                self.idea_seen(&project, &idea, rev)?;
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::IdeaCreate { project, title, text } => {
+                Ok(FrontResponse::Idea { note: self.idea_create(&project, &title, &text, None, actor)? })
+            }
+            FrontRequest::IdeaSave { project, idea, base_rev, text, summary } => {
+                self.idea_save(role, actor, &project, &idea, base_rev, &text, summary).await
+            }
+            FrontRequest::IdeaSay { project, idea, text } => {
+                Ok(FrontResponse::Idea { note: self.idea_say(&project, &idea, &text, actor).await? })
+            }
+            FrontRequest::IdeaWake { project, idea } => {
+                Ok(FrontResponse::Idea { note: self.idea_wake(&project, &idea, actor).await? })
+            }
+            FrontRequest::IdeaHandoff { project, idea, base_rev, tasks } => {
+                Ok(FrontResponse::Idea { note: self.idea_handoff(&project, &idea, base_rev, tasks, actor).await? })
+            }
+            FrontRequest::IdeaCopy { project, idea } => {
+                Ok(FrontResponse::Idea { note: self.idea_copy(&project, &idea, actor)? })
+            }
+            _ => Err(internal("아이디어 요청이 아니다")),
+        }
+    }
+
     /// 아이디어마다의 작업 lock(띄우기·잇기를 한 번에 하나)
     fn idea_lock(&self, project: &str, id: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.thread_op_lock(project, &format!("idea:{id}"))
