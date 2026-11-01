@@ -2902,6 +2902,14 @@ pub enum FrontRequest {
         #[serde(default)]
         text: String,
     },
+    /// 웹에서 실제 표시한 판까지 읽음으로 남긴다. thread의 노트 읽기는 읽음 처리가 아니다.
+    IdeaSeen {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        rev: u32,
+    },
     /// 판을 주고 노트를 저장한다(조작 권한, 또는 그 아이디어의 전용 thread). 기준 판이 지금 판이 아니면: thread는 `idea_conflict`를
     /// 받아 두 판을 합쳐 다시 저장하고, 사람의 글은 host가 따로 두고 전용 thread에 합치기를 맡긴다(답의 `merging`)
     IdeaSave {
@@ -3682,6 +3690,7 @@ impl FrontRequest {
             | FrontRequest::TaskLogPrune { project, .. }
             | FrontRequest::IdeaList { project }
             | FrontRequest::IdeaRead { project, .. }
+            | FrontRequest::IdeaSeen { project, .. }
             | FrontRequest::IdeaCreate { project, .. }
             | FrontRequest::IdeaSave { project, .. }
             | FrontRequest::IdeaSay { project, .. }
@@ -3825,6 +3834,7 @@ impl FrontRequest {
                 | FrontRequest::TaskLog { .. }
                 | FrontRequest::IdeaList { .. }
                 | FrontRequest::IdeaRead { .. }
+                | FrontRequest::IdeaSeen { .. }
                 // 전용 thread(보기 권한)도 자기 노트를 저장한다: 권한은 host가 요청자로 다시 본다
                 | FrontRequest::IdeaSave { .. }
                 | FrontRequest::Events { .. }

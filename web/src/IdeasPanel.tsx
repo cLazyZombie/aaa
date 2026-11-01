@@ -101,7 +101,7 @@ function IdeaRow({ idea: i, selected, now, onOpen }: { idea: IdeaSummary; select
       <div className="workspace-header">
         <div className="pane-select workspace-select" role="button" tabIndex={0} aria-current={selected ? "true" : undefined}
           title={[`${i.short_id} · ${i.title}`, `${IDEA_STATE[i.status]} · ${when}`, refs].filter(Boolean).join("\n")}
-          data-testid="idea-row" data-id={i.short_id} onClick={open} onKeyDown={(e) => onRowKey(e, open)}>
+          data-testid="idea-row" data-id={i.short_id} data-unseen={i.unseen ? "true" : "false"} onClick={open} onKeyDown={(e) => onRowKey(e, open)}>
           <span className="sidebar-mark" aria-hidden="true"><Lightbulb /></span>
           <span className="workspace-copy is-two-line">
             <span className="workspace-line"><ThreadName id={i.short_id} title={i.title} /></span>

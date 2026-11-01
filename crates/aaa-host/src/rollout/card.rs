@@ -45,6 +45,7 @@ impl Host {
         // 내구 정본/inbox 뒤 투영/깨움, 앱 안 알림. 외부 push/webhook은 호출하지 않는다.
         self.inbox_publish(item);
         self.send_notice(NoticeView {
+            idea: None,
             kind: if r.state == RolloutState::Done { NoticeKind::RolloutFinished } else { NoticeKind::RolloutFailed },
             pane: None,
             machine: String::new(),

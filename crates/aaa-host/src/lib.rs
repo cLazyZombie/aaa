@@ -2056,7 +2056,18 @@ impl Host {
             FrontRequest::IdeaList { project } => Ok(FrontResponse::Ideas { ideas: self.idea_list(&project)? }),
             FrontRequest::IdeaRead { project, idea, rev } => {
                 let f = self.idea_folder(&project, &idea)?;
-                Ok(FrontResponse::Idea { note: self.idea_note(&project, &f, rev)? })
+                Ok(FrontResponse::Idea { note: self.idea_read_note(&project, &f, rev).await? })
+            }
+            FrontRequest::IdeaSeen { project, idea, rev } => {
+                if actor.starts_with("worker:")
+                    || actor.starts_with("evaluator:")
+                    || front::in_session(actor)
+                    || actor.starts_with("detached:")
+                {
+                    return Err(err(ErrorCode::Forbidden, "thread는 사람의 읽음 상태를 바꾸지 못한다"));
+                }
+                self.idea_seen(&project, &idea, rev)?;
+                Ok(FrontResponse::Done)
             }
             FrontRequest::IdeaCreate { project, title, text } => {
                 Ok(FrontResponse::Idea { note: self.idea_create(&project, &title, &text, None, actor)? })

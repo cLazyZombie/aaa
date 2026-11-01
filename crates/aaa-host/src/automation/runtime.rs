@@ -1489,6 +1489,7 @@ impl Host {
         }
         if matches!(&first.action, Action::Inbox(a) if a.notify) {
             self.send_notice(aaa_proto::NoticeView {
+                idea: None,
                 kind: aaa_proto::NoticeKind::Automation,
                 pane: None,
                 machine: String::new(),

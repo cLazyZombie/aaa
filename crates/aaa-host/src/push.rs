@@ -9,6 +9,7 @@
 //! - 웹 화면을 지금 쓰고 있으면(어느 기기든 보이고 focus가 있으면, events WS `presence`) 어느 기기에도 보내지 않는다
 //!   (herdr-web-ui push.ts `inUse`). 보낼 때 묻는다. 시험 알림과 webhook(텔레그램)은 이와 상관없다.
 //! - coordinator 사용자 post는 프로젝트 한 자리다(새 것이 옛 것을 바꾼다). thread 보고·머신 사건은 외부로 보내지 않는다.
+//!   아이디어 노트 새 판은 별도 대상이며 같은 기기의 작업 완료 알림 선택을 따른다.
 //! - 제목·본문은 webhook과 같은 함수(notify.rs `alert_text`)가 짓는다. 앱 이름(aaa)은 제목에 붙이지 않는다.
 
 use std::collections::{HashMap, VecDeque};
@@ -443,6 +444,7 @@ pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<Inbox
     items
         .iter()
         .filter(|i| match i.item_kind.as_str() {
+            "idea" => a.done,
             "post" => {
                 if i.event == "post completed" {
                     a.done

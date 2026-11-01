@@ -284,7 +284,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.150: 여러 선행 예약(after_all). 모두 완료 보관된 뒤에만 시작한다. 구판 단일 after는 유지한다.
 // 1.151: 요청 기기 전용 원격 계정 로그인·코드 전달.
 // 1.152: AgentStatus.provider_turn의 native 오류 원인·실행 세대·turn 시각(선택).
-pub const FRONT_API: Version = Version { major: 1, minor: 152 };
+// 1.153: 아이디어 thread의 새 판·읽음·알림(t-1412).
+pub const FRONT_API: Version = Version { major: 1, minor: 153 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

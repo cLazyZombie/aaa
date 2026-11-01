@@ -445,6 +445,7 @@ impl Host {
                         &format!("post 음소거: {who}. 해제: aaa post unmute {who}"),
                     );
                     self.send_notice(aaa_proto::NoticeView {
+                        idea: None,
                         kind: aaa_proto::NoticeKind::PostMuted,
                         pane: None,
                         machine: "host".into(),

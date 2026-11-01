@@ -45,6 +45,8 @@ pub struct IdeaSummary {
     pub status: IdeaStatus,
     /// 지금 판(1부터)
     pub rev: u32,
+    /// 아직 사람이 열지 않은 thread 저장 판이 있다(host에 보존).
+    pub unseen: bool,
     #[ts(type = "number")]
     pub created_ms: u64,
     #[ts(type = "number")]
@@ -73,6 +75,8 @@ pub struct IdeaRevView {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct IdeaNote {
+    /// 기존 미디어 주소를 옮기지 못한 까닭. 글은 계속 읽을 수 있다.
+    pub media_error: Option<String>,
     /// 프로젝트(그림 주소 `/api/v1/projects/<p>/ideas/<id>/files/<이름>`)
     pub project: String,
     pub idea: IdeaSummary,

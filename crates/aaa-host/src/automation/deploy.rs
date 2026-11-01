@@ -59,6 +59,7 @@ impl Host {
         if self.db.inbox_insert_marked(&item, &marker, "proposed", false).map_err(internal)? {
             self.inbox_publish(&item);
             self.send_notice(NoticeView {
+                idea: None,
                 kind: NoticeKind::Automation,
                 pane: None,
                 machine: String::new(),

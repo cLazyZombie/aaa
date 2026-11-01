@@ -660,6 +660,8 @@ pub struct QuestionView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeKind {
+    /// 아이디어 전용 thread가 노트를 저장했다.
+    IdeaUpdated,
     /// host 내부 감시의 이상·회복. 웹 앱 안 알림.
     HostIssue,
     HostRecovered,
@@ -681,6 +683,8 @@ pub enum NoticeKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct NoticeView {
     pub kind: NoticeKind,
+    #[serde(default)]
+    pub idea: Option<String>,
     /// 갈 pane(새 보고는 그 thread의 pane, 없으면 null)
     pub pane: Option<String>,
     pub machine: String,

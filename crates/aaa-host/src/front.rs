@@ -570,6 +570,7 @@ mod tests {
         assert!(matches!(rx.control::<FrontMsg>().await.unwrap(), FrontMsg::Event(FrontEvent::State { .. })));
         for kind in [NoticeKind::RolloutFinished, NoticeKind::RolloutFailed, NoticeKind::Finished] {
             h.send_notice(NoticeView {
+                idea: None,
                 kind,
                 pane: None,
                 machine: String::new(),
