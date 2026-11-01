@@ -43,6 +43,7 @@ pub use selfcheck::start_selfcheck;
 mod slash;
 pub mod thread_read;
 pub mod threads;
+pub use workspace_metrics::verify;
 pub mod work_root;
 mod workspace_metrics;
 

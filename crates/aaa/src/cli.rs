@@ -136,6 +136,12 @@ enum Cmd {
     },
     /// 검색 결과의 프로젝트와 해시로 당시 원문 판을 연다
     Record { project: String, key: String },
+    /// 저장소의 검증 스크립트를 찾아 실행하고 workspace 원장을 자동으로 남긴다
+    Verify {
+        /// 생략하면 scripts/verify.sh·verify_engine.sh·ci-local.sh를 찾는다. 직접 지정할 때는 -- 뒤에 명령을 쓴다
+        #[arg(last = true, value_name = "명령")]
+        command: Vec<std::ffi::OsString>,
+    },
     /// 어느 harness든 host Codex 계정으로 이미지를 생성·편집한다.
     Image {
         #[command(subcommand)]
@@ -2098,6 +2104,19 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 fn run(cli: Cli) -> Result<ExitCode> {
     let json = cli.json;
     match cli.cmd {
+        Cmd::Verify { command } => {
+            let status = aaa_agent::verify::run(&std::env::current_dir()?, &command, json)?;
+            let code = status.code().and_then(|c| u8::try_from(c).ok()).unwrap_or(1);
+            #[cfg(unix)]
+            let code = {
+                use std::os::unix::process::ExitStatusExt;
+                status.signal().map_or(code, |signal| 128u8.saturating_add(signal as u8))
+            };
+            if json {
+                println!("{}", serde_json::json!({"success":status.success(),"code":code}));
+            }
+            Ok(ExitCode::from(code))
+        }
         Cmd::DbBackup { cmd } => {
             init_log("info");
             aaa_common::resource::disable_core_dump("db-backup");
@@ -6504,6 +6523,15 @@ mod launchd_test_args;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn verify_uses_a_common_entry_and_preserves_explicit_command_arguments() {
+        use super::*;
+        let cli = Cli::try_parse_from(["aaa", "verify"]).unwrap();
+        assert!(matches!(cli.cmd, Cmd::Verify { command } if command.is_empty()));
+        let cli = Cli::try_parse_from(["aaa", "verify", "--", "bash", "scripts/verify.sh", "--coverage"]).unwrap();
+        assert!(matches!(cli.cmd, Cmd::Verify { command } if command == ["bash", "scripts/verify.sh", "--coverage"]));
+    }
+
     #[test]
     fn public_port_change_parses_and_rejects_off_and_invalid_ports() {
         use super::{Cli, Cmd, WebCmd};

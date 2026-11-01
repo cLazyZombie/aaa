@@ -9,6 +9,7 @@ use std::{collections::BTreeMap, fs, path::Path, time::UNIX_EPOCH};
 mod archive;
 mod lines;
 mod mainline;
+pub mod verify;
 const MAX_INPUT: u64 = 8 * 1024 * 1024;
 thread_local! {
     static READ_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };

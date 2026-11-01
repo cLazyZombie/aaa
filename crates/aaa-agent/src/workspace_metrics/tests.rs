@@ -651,3 +651,131 @@ fn upgraded_archive_parser_revisits_old_errors_and_preserves_records_with_delete
     assert!(result.runs.iter().any(|r| r.run_id == "deleted-source"));
     assert!(!result.notes.iter().any(|n| n.contains("출처 불일치")));
 }
+
+#[cfg(unix)]
+fn run_common_verify(cwd: &Path, args: &[std::ffi::OsString]) -> std::process::ExitStatus {
+    // 중첩 libtest 출력이 바깥 검증 runner의 테스트 수를 오염시키지 않게 한다.
+    verify::run_with_output(cwd, args, std::io::sink(), std::io::sink()).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn common_verify_runs_real_cargo_then_collects_from_an_old_checkout_after_main_lands() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    let old = git(&l, &["rev-parse", "HEAD"]);
+    git(&l, &["checkout", "-qb", "candidate"]);
+    l.put(".gitignore", "target/\n");
+    l.put("Cargo.toml", "[package]\nname='metrics_fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n");
+    l.put("Cargo.lock", "version = 4\n[[package]]\nname = \"metrics_fixture\"\nversion = \"0.1.0\"\n");
+    l.put("src/lib.rs", "#[test] fn pass() {}\n#[test] #[ignore] fn ignored() {}\n");
+    l.put("scripts/verify.sh", "set -eu\ncargo test --locked --offline\n");
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "generic verification"]);
+    let candidate = git(&l, &["rev-parse", "HEAD"]);
+    // 하위 폴더에서도 저장소 루트의 스크립트를 찾는다. 실제 Cargo 출력만 수집한다.
+    assert!(run_common_verify(&l.0.join("src"), &[]).success());
+    let archive_root = l.0.join(".git/aaa-workspace-runs");
+    let archive = fs::read_dir(&archive_root).unwrap().next().unwrap().unwrap().path();
+    let text = fs::read_to_string(archive.join("metrics.json")).unwrap();
+    assert!(!text.contains(&l.0.to_string_lossy().to_string()), "로컬 경로·출력 원문을 보관하지 않는다");
+    assert!(!text.contains("Compiling"));
+    assert!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs.is_empty(), "main 반영 전에는 대기한다");
+    git(&l, &["checkout", "-q", "main"]);
+    git(&l, &["update-ref", "refs/remotes/origin/main", &candidate]);
+    assert_eq!(git(&l, &["rev-parse", "HEAD"]), old);
+    let collected = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(collected.runs.len(), 1);
+    let run = &collected.runs[0];
+    assert_eq!(run.commit, candidate);
+    assert_eq!(run.outcome, "succeeded");
+    let counts = run.tests.as_ref().unwrap();
+    assert_eq!((counts.passed, counts.failed, counts.skipped), (1, 0, 1));
+    assert!(run.build_ms.is_some());
+    assert_eq!(run.profile.as_deref(), Some("test"));
+    assert!(run.verification_ms.is_some());
+    assert!(run.slow_tests.items.is_empty());
+    assert!(run.slow_tests.missing_reason.is_some());
+    assert_eq!(run.e2e_files, None, "headless 실행을 근거 없이 E2E 개수로 만들지 않는다");
+    assert!(run.source.starts_with("aaa-verify "));
+    fs::remove_dir_all(&archive).unwrap();
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, collected.runs);
+}
+
+#[cfg(unix)]
+#[test]
+fn common_verify_keeps_failure_and_fresh_details_but_rejects_dirty_sources() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    l.put(".gitignore", "target/\n");
+    l.put("scripts/verify.sh", r#"set -eu
+mkdir -p target/verification/unit
+cat > target/verification/unit/report.json <<'JSON'
+[{"target":"game","exit":7,"tests":[{"name":"bad","event":"failed","exec_time":0.125}],"suites":[{"passed":0,"failed":1,"ignored":0}]}]
+JSON
+cat > target/verification/e2e.json <<'JSON'
+{"status":"failed","timing_unit":"scenario-wall","reports":[{"scenario":"headless","status":"failed","duration_ms":12}]}
+JSON
+printf 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n'
+exit 7
+"#);
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "failing verification"]);
+    git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    assert_eq!(run_common_verify(&l.0, &[]).code(), Some(7));
+    let got = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(got.runs.len(), 1);
+    assert_eq!(got.runs[0].outcome, "failed");
+    assert_eq!(got.runs[0].tests.as_ref().unwrap().failed, 1);
+    assert_eq!(got.runs[0].slow_tests.items[0].duration_ms, 125);
+    assert!(!got.runs[0].slow_tests.complete);
+    assert_eq!(got.runs[0].e2e_files, Some(1));
+    assert_eq!(got.runs[0].slow_e2e.items[0].duration_ms, 12);
+    l.put("src/app.ts", "// dirty source\n");
+    assert_eq!(run_common_verify(&l.0, &[]).code(), Some(7));
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, got.runs);
+    git(&l, &["checkout", "--", "src/app.ts"]);
+    // 명령이 tracked 입력을 바꾸어도 검증의 원래 실패 코드를 보존한다.
+    let command = ["bash", "-c", "printf changed > src/app.ts; exit 9"].map(Into::into);
+    assert_eq!(run_common_verify(&l.0, &command).code(), Some(9));
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, got.runs);
+}
+
+#[cfg(unix)]
+#[test]
+fn common_verify_reuses_a_native_writer_without_a_duplicate_run() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    l.put(".gitignore", "target/\n");
+    fs::create_dir_all(l.0.join("scripts")).unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/workspace_record.py"),
+        l.0.join("scripts/workspace_record.py"),
+    )
+    .unwrap();
+    l.put("scripts/verify.sh", "set -eu\ntoken=$(python3 scripts/workspace_record.py start pt default desktop)\npython3 scripts/workspace_record.py finish \"$token\" 7\nexit 7\n");
+    git(&l, &["add", "."]);
+    git(&l, &["commit", "-qm", "native verification"]);
+    git(&l, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    assert_eq!(run_common_verify(&l.0, &[]).code(), Some(7));
+    let got = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(got.runs.len(), 1);
+    assert!(got.runs[0].source.starts_with("pt "));
+    // 이전 marker를 남긴 명시 명령은 native 원장을 다시 사용하지 않는다.
+    let command = ["bash", "-c", "exit 0"].map(Into::into);
+    assert!(run_common_verify(&l.0, &command).success());
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs.len(), 2);
+    // writer가 종료 폴더만 만들고 요약을 망가뜨렸으면 공통 수집으로 보완한다.
+    let command = [
+        "bash",
+        "-c",
+        "token=$(python3 scripts/workspace_record.py start pt default desktop); python3 scripts/workspace_record.py finish \"$token\" 7; for path in .git/aaa-workspace-runs/run-*/workspace-summary.tsv; do printf invalid > \"$path\"; done; exit 7",
+    ].map(Into::into);
+    assert_eq!(run_common_verify(&l.0, &command).code(), Some(7));
+    let got = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(got.runs.len(), 3);
+    assert!(got.runs.iter().any(|r| r.source.starts_with("aaa-verify ") && r.outcome == "failed"));
+}
