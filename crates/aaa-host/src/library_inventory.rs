@@ -1,7 +1,10 @@
 //! manifest 밖에 남은 파일·폴더도 실제 host 사본 용량과 정리 후보에 포함한다.
 use crate::{Host, library::manifest_path, library_publish::io_error, orch::internal};
 use aaa_proto::ErrorBody;
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::Path,
+};
 
 pub(crate) struct LibraryCopy {
     pub project: String,
@@ -39,14 +42,24 @@ fn disk_size(root: &Path) -> std::io::Result<u64> {
 impl Host {
     pub(crate) fn library_inventory(&self) -> Result<Vec<LibraryCopy>, ErrorBody> {
         let mut copies = Vec::new();
-        // catalog의 보호 판정은 source마다 한 번만 한다.
+        // 목록의 busy는 전체 삭제를 막는 값이다. 정리는 참조한 물리 사본만 보호한다.
         let reports = self.library_reports(None, false)?;
         for project in self.projects_all() {
             let p = &project.name;
             let dir = self.project_dir(p)?;
             let catalog = self.db.library_catalog(p).map_err(internal)?;
-            let protected_names =
-                self.db.archive_list(p).ok().map(|rows| crate::library_catalog::referenced_names(&rows));
+            let protected_names = self.db.archive_list(p).ok().map(|rows| {
+                let mut names = crate::library_catalog::referenced_names(&rows);
+                for (source, versions) in &catalog.versions {
+                    if names.contains(source) || versions.iter().any(|id| names.contains(id)) {
+                        // 이름 참조의 최신 결과와 명시한 r 판을 남기고 최신 별칭의 되돌림도 막는다.
+                        names.insert(source.clone());
+                        names.extend(versions.first().cloned());
+                    }
+                }
+                names
+            });
+            let mut active_sources = HashMap::new();
             let mut names = BTreeSet::new();
             for e in std::fs::read_dir(dir.join("threads")).map_err(io_error)? {
                 let e = e.map_err(io_error)?;
@@ -88,26 +101,22 @@ impl Host {
                         .map_or(0, |t| t.as_millis() as u64)
                 });
                 // 일하는 수집의 임시 폴더와 출처를 알 수 없는 thread는 보호한다. 숨은 사본도 용량에서 빼지 않는다.
-                let protected = protected_names.as_ref().is_none_or(|names| {
-                    names.contains(source)
-                        || catalog
-                            .versions
-                            .get(source)
-                            .is_some_and(|versions| versions.iter().any(|id| names.contains(id)))
-                }) || name.starts_with('.')
-                    || parent.is_some_and(|r| r.live || r.busy)
-                    || (source.starts_with("t-")
-                        && parent.is_none()
-                        && self.load(p, source).map_or(true, |r| r.status != aaa_proto::ThreadStatus::Resolved));
-                let family = if target.is_some()
-                    && catalog.versions.get(source).and_then(|v| v.first()) == Some(&name)
-                    && aliases.contains(source)
-                    && !catalog.archived.contains(&name)
-                {
-                    source.to_string()
-                } else {
-                    name.clone()
-                };
+                let active = source.starts_with("t-")
+                    && *active_sources.entry(source.to_string()).or_insert_with(|| {
+                        self.load(p, source).map_or(true, |r| r.status != aaa_proto::ThreadStatus::Resolved)
+                    });
+                let latest = target.is_none() || catalog.versions.get(source).and_then(|v| v.first()) == Some(&name);
+                let protected = protected_names.as_ref().is_none_or(|names| names.contains(&name))
+                    || name.starts_with('.')
+                    || catalog.rows.get(source).is_some_and(|r| r.live.is_some())
+                    || (source.starts_with("t-") && latest)
+                    || active;
+                let family =
+                    if target.is_some() && latest && aliases.contains(source) && !catalog.archived.contains(&name) {
+                        source.to_string()
+                    } else {
+                        name.clone()
+                    };
                 copies.push(LibraryCopy {
                     family,
                     project: p.clone(),

@@ -7,9 +7,13 @@ struct Lab {
 }
 impl Lab {
     fn new() -> Self {
+        Self::with_limit(20 * 1024)
+    }
+    fn with_limit(mb: u64) -> Self {
         let root = std::env::temp_dir().join(format!("aaa-rids-{}", aaa_common::util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
         cfg.projects.root = root.join("projects").to_string_lossy().into();
+        cfg.projects.library_max_mb = mb;
         cfg.notify.web_push = false;
         let h = Host::open(cfg, root.join("state")).unwrap();
         h.project_create("demo", Default::default(), "test").unwrap();
@@ -355,9 +359,10 @@ async fn existing_review_gets_one_question_and_feedback_without_text_is_rejected
 }
 
 #[tokio::test]
-async fn archived_r_attachment_protects_its_entire_report_family_from_delete_and_prune() {
+async fn archived_r_attachment_protects_exact_version_and_latest_but_prunes_unreferenced_history() {
     let lab = Lab::new();
     let first = lab.publish("week", "first", false);
+    let unused = lab.publish("week", "unused", false);
     let second = lab.publish("week", "next", false);
     let row:aaa_proto::ArchivedTask=serde_json::from_value(serde_json::json!({
         "task_id":"fixture-task","task":{"id":"fixture-task","list":"Backlog","title":"완료","owner":null,"thread":null,"notes":[],"done":true},
@@ -365,18 +370,107 @@ async fn archived_r_attachment_protects_its_entire_report_family_from_delete_and
     })).unwrap();
     lab.h.db.archive_save("demo", &row).unwrap();
     let report = lab.h.library_reports(None, false).unwrap().into_iter().find(|r| r.name == "week").unwrap();
-    assert!(report.busy, "완료 보관의 r 첨부가 가리키는 원래 이름과 모든 판을 보호한다");
+    assert!(report.busy, "전체 삭제는 참조한 판까지 지우므로 계속 막는다");
     assert!(lab.h.library_delete(&[LibraryRef { project: "demo".into(), name: first.clone() }], "test").is_err());
     let FrontResponse::LibraryPruned { removed } = lab.h.library_prune_at(Some("demo"), 1, u64::MAX, "test").unwrap()
     else {
         panic!()
     };
-    assert!(removed.is_empty());
+    assert_eq!(removed, vec![format!("demo/{unused}")]);
     assert_eq!(lab.file(&first, "index.html").await, b"first");
     assert_eq!(lab.file(&second, "index.html").await, b"next");
-    // manifest가 없는 옛 잔여 폴더도 완료 할 일의 참조 보호를 유지한다.
+    assert!(lab.h.report_library("demo", &unused, None, false).is_err());
+    // 최신 manifest가 없어도 참조한 판과 최신 판을 보호한다.
     std::fs::remove_file(manifest_path(&lab.h.project_dir("demo").unwrap(), "week")).unwrap();
     assert!(lab.h.library_prune_preview(None, Some(1), u64::MAX).unwrap().candidates.is_empty());
+}
+
+#[tokio::test]
+async fn completed_thread_prunes_old_versions_below_capacity_and_preserves_history_refs_after_restart() {
+    let lab = Lab::with_limit(1);
+    let h = &lab.h;
+    let dir = h.project_dir("demo").unwrap();
+    let source = dir.join("library/t-0001");
+    std::fs::create_dir_all(&source).unwrap();
+    let mut rec = crate::orch::ThreadRec::starting("demo", "결과", "mac-a", "fake", Role::Worker, ThreadKind::Dir, 1);
+    rec.id = "t-0001".into();
+    h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+    let files = vec![LibraryFile {
+        path: "result.md".into(),
+        size: 300_000,
+        on_agent: false,
+        mime: String::new(),
+        kind: Default::default(),
+    }];
+    let mut ids = Vec::new();
+    for (revision, byte) in [("first", b'A'), ("unused", b'B'), ("latest", b'C')] {
+        std::fs::write(source.join("result.md"), vec![byte; 300_000]).unwrap();
+        ids.push(
+            h.snapshot_report_version(
+                "demo",
+                &rec.id,
+                revision,
+                &source,
+                &files,
+                Some(b"done"),
+                &LibraryReportRow {
+                    project: "demo".into(),
+                    name: rec.id.clone(),
+                    updated: 1,
+                    from_thread: Some(rec.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+    }
+    std::fs::write(manifest_path(&dir, &rec.id), serde_json::to_vec(&files).unwrap()).unwrap();
+    std::fs::write(dir.join("threads/t-0001.md"), b"done").unwrap();
+    rec.report_hash = Some("latest".into());
+    h.db.thread_save("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+    let active = h.library_prune_preview(None, None, 2).unwrap();
+    assert!(active.candidates.is_empty(), "미완료 작업은 과거 판도 보호한다");
+    assert_eq!(active.protected_size, active.size);
+    rec.status = aaa_proto::ThreadStatus::Resolved;
+    h.db.thread_save("demo", &rec.id, "resolved", &serde_json::to_string(&rec).unwrap()).unwrap();
+    let unreferenced = h.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    assert_eq!(unreferenced.candidates.iter().map(|r| &r.name).collect::<Vec<_>>(), vec![&ids[0], &ids[1]]);
+    assert!(
+        !unreferenced.candidates.iter().any(|r| r.name == rec.id || r.name == ids[2]),
+        "참조가 없어도 최신 결과는 남긴다"
+    );
+    let row: aaa_proto::ArchivedTask = serde_json::from_value(serde_json::json!({
+        "task_id":"fixture-task", "task":{"id":"fixture-task","list":"Backlog","title":"완료","notes":[],"done":true},
+        "body":"완료", "reason":"완료", "report":"threads/t-0001.md", "completed_ms":1,
+        "restored":true,"committed":true,"removed_sha256":"",
+        "history":[{"id":1,"at_ms":1,"actor":"test","by":"시험","action":"completed","list":"Backlog","title":"완료",
+            "thread":"t-0001", "before":format!("[근거](library/{}/result.md)",ids[0]), "after":null}]
+    }))
+    .unwrap();
+    h.db.archive_save("demo", &row).unwrap();
+    let preview = h.library_prune_preview(None, None, 2).unwrap();
+    assert!(preview.size > preview.max_size);
+    assert!(preview.protected_size < preview.max_size, "완료 참조가 과거 판 전체로 전파되지 않는다");
+    assert_eq!(preview.candidates.len(), 1);
+    assert_eq!(preview.candidates[0].name, ids[1]);
+    assert_eq!(preview.candidates[0].reason, "용량");
+    let FrontResponse::LibraryUsage { size, protected_size, .. } = h.library_usage().unwrap() else { panic!() };
+    assert_eq!((size, protected_size), (preview.size, preview.protected_size), "화면 집계와 정리 판정이 같다");
+    let expected = vec![format!("demo/{}", ids[1])];
+    let FrontResponse::LibraryPruned { removed } = h.library_prune_apply(None, None, &expected, 2, "test").unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(removed, expected);
+    assert!(h.report_library("demo", &ids[1], None, false).is_err());
+    assert_eq!(lab.file(&ids[0], "result.md").await, vec![b'A'; 300_000]);
+    assert_eq!(lab.file(&ids[2], "result.md").await, vec![b'C'; 300_000]);
+    assert_eq!(lab.file(&rec.id, "result.md").await, vec![b'C'; 300_000]);
+    let reopened = Host::open(h.cfg.clone(), lab.root.join("state")).unwrap();
+    let remaining = reopened.library_prune_preview(None, Some(1), u64::MAX).unwrap();
+    assert!(remaining.candidates.is_empty(), "복원된 완료 기록의 참조와 최신 결과는 기한 뒤에도 남는다");
+    assert!(remaining.size <= remaining.max_size);
+    assert_eq!(reopened.report_id("demo", &rec.id).as_deref(), Some(ids[2].as_str()));
 }
 
 #[tokio::test]
