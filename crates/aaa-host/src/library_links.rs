@@ -279,7 +279,9 @@ mod tests {
             r.id = id.into();
             r.report_hash = Some("report".into());
             r.status = aaa_proto::ThreadStatus::Resolved;
-            self.h.db.thread_import("demo", id, "resolved", &serde_json::to_string(&r).unwrap()).unwrap();
+            if id.starts_with("t-") {
+                self.h.db.thread_import("demo", id, "resolved", &serde_json::to_string(&r).unwrap()).unwrap();
+            }
             let root = dir.join("library").join(id);
             std::fs::create_dir_all(&root).unwrap();
             let mut manifest = Vec::new();
@@ -985,10 +987,8 @@ mod tests {
         else {
             panic!("prune 응답")
         };
-        assert_eq!(
-            removed,
-            vec!["demo/old".to_string(), format!("demo/{}", old.report_id.as_ref().unwrap()), "demo/t-0001".into()]
-        );
+        assert_eq!(removed, vec!["demo/old".to_string(), format!("demo/{}", old.report_id.as_ref().unwrap())]);
+        assert!(dir.join("library/t-0001/index.html").is_file(), "완료 보관 참조가 없어도 최신 결과는 남긴다");
         assert!(dir.join("library/t-0002/index.html").is_file());
         assert_eq!(std::fs::read(dir.join("threads/t-0001.md")).unwrap(), b"keep report");
         assert_eq!(lab.h.load("demo", "t-0001").unwrap().status, aaa_proto::ThreadStatus::Resolved);
@@ -999,7 +999,7 @@ mod tests {
         );
         assert!(input.join("index.html").is_file());
         assert!(lab.h.project_dir("demo").unwrap().join("library/recent/index.html").is_file());
-        assert_eq!(lab.h.library_reports(None, true).unwrap().len(), 3);
+        assert_eq!(lab.h.library_reports(None, true).unwrap().len(), 4);
         assert!(lab.h.library_prune_at(None, 0, u64::MAX, "test").is_err());
     }
 
@@ -1031,11 +1031,11 @@ mod tests {
     async fn prune_apply_deletes_only_the_previewed_candidates() {
         let lab = Lab::with_retention(1, 0);
         let day = 86_400_000;
-        let old = retention_report(&lab, "t-0001", 4, RETENTION_NOW - 2 * day, false);
-        let recent = retention_report(&lab, "t-0002", 4, RETENTION_NOW - day, false);
+        let old = retention_report(&lab, "copy-0001", 4, RETENTION_NOW - 2 * day, false);
+        let recent = retention_report(&lab, "copy-0002", 4, RETENTION_NOW - day, false);
         let plan = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
         let seen: Vec<String> = plan.candidates.iter().map(|c| format!("{}/{}", c.project, c.name)).collect();
-        assert_eq!(seen, vec!["demo/t-0001"]);
+        assert_eq!(seen, vec!["demo/copy-0001"]);
         let e = lab.h.library_prune_apply(None, None, &seen, RETENTION_NOW + day, "test").unwrap_err();
         assert_eq!(e.code, aaa_proto::ErrorCode::Conflict, "{}", e.message);
         assert!(old.exists() && recent.exists(), "후보가 바뀌면 하나도 지우지 않는다");
@@ -1051,9 +1051,9 @@ mod tests {
     #[tokio::test]
     async fn retention_expires_copies_and_ends_links() {
         let lab = Lab::with_retention(1, 0);
-        let old = retention_report(&lab, "t-0001", 4, RETENTION_NOW - 2 * 86_400_000, false);
-        let recent = retention_report(&lab, "t-0002", 4, RETENTION_NOW - 86_400_000, false);
-        let link = lab.issue("t-0001");
+        let old = retention_report(&lab, "copy-0001", 4, RETENTION_NOW - 2 * 86_400_000, false);
+        let recent = retention_report(&lab, "copy-0002", 4, RETENTION_NOW - 86_400_000, false);
+        let link = lab.issue("copy-0001");
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         assert!(!old.exists(), "최대 기한을 넘은 사본을 지운다");
         assert!(recent.exists(), "기한 경계는 남긴다");
@@ -1063,13 +1063,13 @@ mod tests {
     #[tokio::test]
     async fn retention_capacity_removes_oldest_first() {
         let lab = Lab::with_retention(0, 1);
-        let oldest = retention_report(&lab, "t-0003", 400_000, 1, false);
-        let middle = retention_report(&lab, "t-0001", 400_000, 2, false);
-        let newest = retention_report(&lab, "t-0002", 700_000, 3, false);
+        let oldest = retention_report(&lab, "copy-0003", 400_000, 1, false);
+        let middle = retention_report(&lab, "copy-0001", 400_000, 2, false);
+        let newest = retention_report(&lab, "copy-0002", 700_000, 3, false);
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         assert!(!oldest.exists() && !middle.exists());
         assert!(newest.exists(), "갱신 시각 순으로 상한 아래에 이를 때까지만 지운다");
-        let later = retention_report(&lab, "t-0003", 400_000, 4, false);
+        let later = retention_report(&lab, "copy-0003", 400_000, 4, false);
         lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000 - 1).unwrap();
         assert!(newest.exists() && later.exists(), "6시간 전 tick은 다시 정리하지 않는다");
         lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000).unwrap();
@@ -1080,8 +1080,8 @@ mod tests {
     async fn retention_protects_active_and_live_and_excludes_live_bytes() {
         let lab = Lab::with_retention(0, 1);
         let active = retention_report(&lab, "t-0001", 700_000, 1, true);
-        let gone = retention_report(&lab, "t-0002", 400_000, 2, false);
-        let newest = retention_report(&lab, "t-0003", 200_000, 3, false);
+        let gone = retention_report(&lab, "copy-0002", 400_000, 2, false);
+        let newest = retention_report(&lab, "copy-0003", 200_000, 3, false);
         let live = lab.state.join("live-source");
         std::fs::create_dir(&live).unwrap();
         std::fs::write(live.join("index.html"), b"live").unwrap();
@@ -1097,11 +1097,11 @@ mod tests {
     #[tokio::test]
     async fn retention_protected_overflow_only_notifies_once() {
         let lab = Lab::with_retention(1, 1);
-        let active = retention_report(&lab, "t-0001", 1_100_000, 1, true);
-        let other = retention_report(&lab, "t-0002", 4, 1, false);
+        let completed = retention_report(&lab, "t-0001", 1_100_000, 1, false);
+        let other = retention_report(&lab, "copy-0002", 4, 1, false);
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         lab.h.library_retention_pass_at(RETENTION_NOW + 6 * 3_600_000).unwrap();
-        assert!(active.exists() && other.exists(), "보호분만으로 상한을 넘으면 삭제 없이 알린다");
+        assert!(completed.exists() && other.exists(), "보호분만으로 상한을 넘으면 삭제 없이 알린다");
         let notices = lab.h.db.inbox_list(None, true).unwrap();
         assert_eq!(notices.iter().filter(|i| i.item_kind == "library-retention").count(), 1);
         // 재시작에도 같은 초과를 다시 알리지 않는다.
@@ -1116,14 +1116,14 @@ mod tests {
     #[tokio::test]
     async fn retention_preview_lists_age_then_capacity_without_writes() {
         let lab = Lab::with_retention(1, 1);
-        let old = retention_report(&lab, "t-0003", 4, 1, false);
-        let middle = retention_report(&lab, "t-0001", 700_000, RETENTION_NOW - 1, false);
-        let newest = retention_report(&lab, "t-0002", 700_000, RETENTION_NOW, false);
+        let old = retention_report(&lab, "copy-0003", 4, 1, false);
+        let middle = retention_report(&lab, "copy-0001", 700_000, RETENTION_NOW - 1, false);
+        let newest = retention_report(&lab, "copy-0002", 700_000, RETENTION_NOW, false);
         let before = lab.h.db.project_export("demo").unwrap();
         let plan = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
         assert_eq!(
             plan.candidates.iter().map(|r| (r.name.as_str(), r.reason.as_str())).collect::<Vec<_>>(),
-            vec![("t-0003", "기한"), ("t-0001", "용량")]
+            vec![("copy-0003", "기한"), ("copy-0001", "용량")]
         );
         assert_eq!((plan.size, plan.remaining_size, plan.max_size, plan.max_days), (1_400_004, 700_000, 1_048_576, 1));
         assert!(old.exists() && middle.exists() && newest.exists());
@@ -1145,7 +1145,7 @@ mod tests {
     #[tokio::test]
     async fn retention_zero_disables_both_limits() {
         let lab = Lab::with_retention(0, 0);
-        let old = retention_report(&lab, "t-0001", 1_100_000, 1, false);
+        let old = retention_report(&lab, "copy-0001", 1_100_000, 1, false);
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         assert!(old.exists());
         assert!(lab.h.db.inbox_list(None, true).unwrap().is_empty());

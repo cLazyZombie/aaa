@@ -305,7 +305,7 @@ impl Host {
                 let mut projects = self
                     .library_reports(None, false)?
                     .into_iter()
-                    .filter(|r| !r.live && self.protected_copy(r))
+                    .filter(|r| !r.live && !r.archived && (r.name.starts_with("t-") || self.protected_copy(r)))
                     .map(|r| r.project)
                     .collect::<Vec<_>>();
                 projects.sort();
