@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { root, AA, aaa, until, step, browser, webkit, pairPage, inList, domIs, shot, waitOutput } from "../lib/harness.mjs";
+import { root, AA, aaa, until, step, browser, webkit, pairPage, inList, domIs, shot, waitOutput, drawerSettled } from "../lib/harness.mjs";
 
 const config = `${root}/c/host.toml`;
 fs.writeFileSync(config, fs.readFileSync(config, "utf8")
@@ -38,6 +38,12 @@ async function scenario(engine, width, agent, rows) {
     assert.equal(result.err, undefined);
     const row = page.getByTestId(`thread-demo-${t.id}`);
     await inList(page, row);
+    // 휴대폰에서 줄 선택은 서랍을 닫는다. 표시를 검사할 때는 목록을 다시 연다.
+    if (width <= 768) {
+      await page.locator('.view [data-testid="drawer-toggle"]:visible').click();
+      await page.locator("#workspace-drawer.is-open").waitFor();
+      await drawerSettled(page, true);
+    }
     await domIs(page, "질문 없는 줄 반영", id => {
       const row = document.querySelector(`[data-testid="thread-demo-${id}"]`);
       return row?.textContent.includes("작업 중") && !row.querySelector(".thread-question");
@@ -45,11 +51,10 @@ async function scenario(engine, width, agent, rows) {
     const source = `[결정 필요] 질문 2개: ${label}\n\n## Questions\n### 1. 진행\n- A 진행\n- B 보류\n### 2. 색\n- A 회색\n- B 파랑\n`;
     const v = await write(source);
     const badge = row.locator(".sidebar-mark .thread-question");
-    await badge.waitFor({ state: "attached" });
-    await inList(page, row);
+    await badge.waitFor({ state: "visible" });
     assert.equal(await badge.textContent(), "?");
     assert.equal(await row.locator(`.sidebar-mark[data-agent="${agent}"]`).count(), 1);
-    assert.match(await row.getAttribute("aria-label") ?? await row.innerText(), /질문 대기/);
+    assert.match(await row.ariaSnapshot(), /질문 대기/);
     const placement = await badge.evaluate(el => {
       const badge = el.getBoundingClientRect(), mark = el.parentElement.getBoundingClientRect();
       return { width: badge.width, height: badge.height, right: mark.right - badge.right, bottom: mark.bottom - badge.bottom,
