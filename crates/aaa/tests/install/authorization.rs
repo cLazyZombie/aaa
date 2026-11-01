@@ -876,6 +876,11 @@ fn console_stack_snapshot_accepts_cargo_target_path_separators() {
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[test]
 fn console_stack_snapshot_rejects_a_different_image_with_typed_error() {
+    // 이미지 검사보다 먼저 직계 자식 소유권을 확인한다. 자신은 자신의 자식이 아니다.
+    assert_eq!(
+        terminal_snapshot::capture(std::process::id(), Path::new(BIN)).unwrap_err(),
+        "snapshot_helper_failed: exit=Some(1), phase=child_owner_mismatch, type=Rejected, os_code=Some(0)"
+    );
     let lab = Lab::new();
     let args = authorize_args(&lab, &lab.0.join("diagnostic-approval.json"), true);
     // 이름이 같은 다른 위치의 파일도 소유한 CLI의 실행 파일로 인정하지 않는다.
@@ -886,7 +891,7 @@ fn console_stack_snapshot_rejects_a_different_image_with_typed_error() {
             let error = terminal_snapshot::capture(child.process_id().unwrap(), &wrong_exe).unwrap_err();
             assert_eq!(
                 error,
-                "snapshot_helper_failed: exit=Some(1), phase=child_image_mismatch, type=RuntimeException, os_code=Some(0)"
+                "snapshot_helper_failed: exit=Some(1), phase=child_image_mismatch, type=Rejected, os_code=Some(0)"
             );
             checked = true;
         }
