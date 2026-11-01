@@ -34,3 +34,5 @@
 - [react-resizable-panels](https://github.com/bvaughn/react-resizable-panels) ([MIT](https://github.com/bvaughn/react-resizable-panels/blob/main/LICENSE.md)): separator의 키보드 접근과 pointer 취소 처리를 비교했다. 저장소 `SidebarResizer` 패턴을 재사용했다.
 
 외부 코드를 복사하거나 새 제품 의존성을 추가하지 않았다.
+
+공용 API 스택 회귀 수리는 [별도 검증 기록](testing-idea-dispatch-stack-t-1412.md)에 있다.
