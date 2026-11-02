@@ -919,6 +919,7 @@ fn check_console_stack_snapshot(expected_exe: &Path) {
                 .parse()
                 .unwrap();
             assert!(snapshot.has_reader_stack(read_thread), "ReadConsoleW 대기 자식의 실제 frame: {snapshot:?}");
+            assert!(snapshot.has_console_host_view(), "소유한 시스템 ConPTY 호스트의 상태: {snapshot:?}");
             let encoded = serde_json::to_string(&snapshot).unwrap();
             assert!(!encoded.contains(CANARY));
             assert!(!encoded.contains(&lab.0.to_string_lossy().to_string()));

@@ -106,7 +106,36 @@ pub(super) struct Snapshot {
     format: u32,
     process_id: u32,
     threads: Vec<Thread>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    console_host: Option<ConsoleHost>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    console_host_error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    console_host_code: Option<u32>,
 }
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConsoleHost {
+    process_id: u32,
+    kernel_100ns: u64,
+    user_100ns: u64,
+    threads: Vec<HostThread>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct HostThread {
+    id: u32,
+    nodes: Vec<WaitNode>,
+    cycle: bool,
+    os_code: u32,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WaitNode {
+    kind: i32,
+    status: i32,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Thread {
@@ -127,6 +156,20 @@ impl Snapshot {
         self.format == 1
             && self.process_id == pid
             && self.threads.len() <= 32
+            && self.console_host_error.len() < 80
+            && self.console_host_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            && self.console_host.as_ref().is_none_or(|host| {
+                host.process_id != pid
+                    && host.process_id != 0
+                    && host.threads.len() <= 32
+                    && host.threads.iter().all(|thread| {
+                        thread.nodes.len() <= 16
+                            && thread
+                                .nodes
+                                .iter()
+                                .all(|node| (0..=32).contains(&node.kind) && (0..=32).contains(&node.status))
+                    })
+            })
             && self.threads.iter().all(|thread| {
                 thread.frames.len() <= 33
                     && thread.error.len() < 40
@@ -153,6 +196,10 @@ impl Snapshot {
                 && thread.frames.len() > 1
                 && thread.frames.iter().any(|frame| frame.module.eq_ignore_ascii_case("aaa.exe"))
         })
+    }
+    #[cfg(target_arch = "x86_64")]
+    pub(super) fn has_console_host_view(&self) -> bool {
+        self.console_host.as_ref().is_some_and(|host| host.process_id != self.process_id && !host.threads.is_empty())
     }
 }
 
