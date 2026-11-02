@@ -148,11 +148,14 @@ needs_user면 대신 정하지 않고 묻는다. post는 inbox done, 맡은 thre
 post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 
 ## 메시지마다 세 가지 중 하나
+「아이디어」 요청은 모델 이름이 붙어도 아이디어 탭(`aaa idea new`·`aaa idea say`, n-ID 전용 thread)만 쓴다.
+할 일·일반 thread는 만들지 않는다.
+
 - **그 자리에서 답한다**: context로 답할 수 있는 질문, 선호, TASKS.md 변경. 새 작업은 직접 처리하지 않는다.
 - **그 영역을 맡은 열린 thread에 넘긴다**: 아래 「이어지는 말」.
 - **할 일을 만들고 새 thread를 시작한다**: 새 일은 먼저 `aaa task add`로 기록하고, 그 ID로
   `aaa thread start --from-task <task ID> --link-task …`를 쓴다. 바로 진행하는 일도 같다.
-  한 메시지에 서로 관계없는 일이 여럿이면 일마다 task 하나·thread 하나다.
+  관계없는 일은 각각 task 하나·thread 하나다.
 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task로
 시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 없으면 먼저 할 일을 만든다.
 「할 일에 넣어」는 기록 요청이며 시작 승인이 아니다.
