@@ -212,7 +212,18 @@ impl Host {
             // 메일을 모르는 기존 계정은 사람의 명시적 교체 확인을 거친다.
             let unknown = is_existing && identity.email.is_none() && secret.is_ok() && cleaned && !was_cancelled;
             if let Some(context) = usage_generation {
-                complete_usage(&host, &mut v, &context, secret, identity, cleaned, was_cancelled);
+                complete_usage(
+                    &host,
+                    &mut v,
+                    &context,
+                    UsageCompletion {
+                        secret,
+                        identity,
+                        cli_error: result.as_ref().err().cloned(),
+                        cleaned,
+                        cancelled: was_cancelled,
+                    },
+                );
             } else if unknown {
                 let secret = secret.unwrap();
                 aaa_common::redact::remember_auth(&harness, &secret);
@@ -597,7 +608,7 @@ async fn claude(
             aaa_common::diagnostic::observe(e, "Claude 원격 인증 자식 회수 실패");
         }
         tracing::info!(child_pid = pid, exit_code, success, "Claude 원격 인증 자식 회수");
-        let _ = status_tx.send(success);
+        let _ = status_tx.send((success, exit_code));
         done.send_replace(true);
     });
     let mut bytes = Vec::new();
@@ -607,11 +618,11 @@ async fn claude(
         tokio::select! {
             chunk = rx.recv() => if let Some(chunk) = chunk {
                 bytes.extend_from_slice(&chunk);
-                if bytes.len() > MAX_OUTPUT as usize { break Err(error("Claude 인증 출력이 상한을 넘었습니다")); }
+                if bytes.len() > MAX_OUTPUT as usize { break Err(failure::claude(&bytes, None)); }
                 if !prompted && let Some(url) = claude_url(&bytes) {
                     publish(host, remote, AccountLoginPrompt { kind: "paste_code".into(), url: SecretText(url), user_code: None }); prompted = true;
                 }
-            } else { let status = (&mut status_rx).await; break if matches!(status, Ok(true)) { Ok(()) } else { Err(error("Claude 인증을 끝내지 못했습니다")) }; },
+            } else { let status = (&mut status_rx).await; break failure::finish(status.ok(), &bytes); },
             code = input.recv(), if !submitted => if let Some(code) = code {
                 writer.write_all(format!("{}\r", code.0).as_bytes()).map_err(|e| aaa_common::diagnostic::context(e, fail()))?;
                 writer.flush().map_err(|e| aaa_common::diagnostic::context(e, fail()))?; submitted = true;
@@ -619,7 +630,7 @@ async fn claude(
             status = &mut status_rx => {
                 while let Ok(chunk) = rx.try_recv() { bytes.extend_from_slice(&chunk); }
                 tracing::info!(child_pid = pid, "Claude 원격 인증 자식 종료");
-                break if matches!(status, Ok(true)) && bytes.len() <= MAX_OUTPUT as usize { Ok(()) } else { Err(error("Claude 인증이 거부됐거나 종료됐습니다")) };
+                break failure::finish(status.ok(), &bytes);
             }
         }
     };

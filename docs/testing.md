@@ -5029,3 +5029,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 - [비밀 없는 한도 입력·OAuth 실패 진단 검증](testing-quota-diagnostic-t-1454.md)
 - [Claude 조회 인증 분리(t-1454)](testing-usage-auth-t-1454.md)
+- [조회 로그인 실패 단계 수리(t-1454)](testing-usage-login-failure-t-1454.md)

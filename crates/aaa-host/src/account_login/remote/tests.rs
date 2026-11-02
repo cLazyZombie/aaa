@@ -108,6 +108,124 @@ mod process {
     }
 
     // 필요: 새 조회 로그인·코드 제출·정리·금고 결속이 기존 실행 인증을 바꾸지 않는다.
+    // 실제 실패와 같은 종료 코드 1을 가짜 CLI로 재현한다. 공급자 원문은 어떤 응답에도 싣지 않는다.
+    #[tokio::test]
+    async fn usage_cli_failure_is_not_relabelled_as_identity_or_vault_failure() {
+        let l = lab();
+        l.host.register_account("work", "claude", &aaa_test_support::token("failure-execution")).unwrap();
+        let generation = l.host.accounts.generation("work").unwrap();
+        let secret = aaa_test_support::token("untrusted-provider-error");
+        for (text, expected) in [
+            ("Token exchange failed (403): Forbidden", "Claude 인증 요청이 거부됐습니다"),
+            ("unrecognized provider error", "공식 Claude CLI 인증이 실패했습니다"),
+        ] {
+            let program = script(
+                &l,
+                &format!("printf '%s\\n' '{URL}'\nIFS= read -r code\nprintf '%s\\n' '{text} {secret}' >&2\nexit 1"),
+            );
+            let FrontResponse::AccountLogin { login } = l
+                .host
+                .start_remote_with_usage("work", "claude", "device:owner", program, true, Some("me@example.com"))
+                .unwrap()
+            else {
+                panic!()
+            };
+            prompt(&l, &login.id).await;
+            l.host.account_login_code(&login.id, SecretText(code()), "device:owner").unwrap();
+            let result = finish(&l, &login.id).await;
+            assert_eq!(result.state, "failed");
+            assert_eq!(result.error.as_deref(), Some(expected));
+            assert!(!serde_json::to_string(&result).unwrap().contains(&secret));
+            assert!(!l.host.state.join("usage-accounts").exists(), "CLI 인증 실패 때 금고를 생성하지 않는다");
+            assert_eq!(l.host.accounts.generation("work").unwrap(), generation);
+            cleaned(&l, &login.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn usage_completion_distinguishes_read_identity_cleanup_account_and_vault() {
+        let l = lab();
+        l.host.register_account("work", "claude", &aaa_test_support::token("stage-execution")).unwrap();
+        let context = l.host.prepare_usage_login("work", Some("me@example.com")).unwrap();
+        let view = || {
+            serde_json::from_value::<AccountLoginView>(serde_json::json!({"id":"test-login","account":"work","harness":"claude","state":"waiting","usage_only":true,"expect_email":"me@example.com"})).unwrap()
+        };
+        let identity = || Identity { email: Some("me@example.com".into()), ..Default::default() };
+        let mut v = view();
+        complete_usage(
+            &l.host,
+            &mut v,
+            &context,
+            UsageCompletion {
+                secret: Err(error("조회 인증 읽기 실패")),
+                identity: Identity::default(),
+                cli_error: None,
+                cleaned: true,
+                cancelled: false,
+            },
+        );
+        assert_eq!(v.error.as_deref(), Some("조회 인증 읽기 실패"));
+        let mut v = view();
+        complete_usage(
+            &l.host,
+            &mut v,
+            &context,
+            UsageCompletion {
+                secret: Ok("test".into()),
+                identity: identity(),
+                cli_error: None,
+                cleaned: false,
+                cancelled: false,
+            },
+        );
+        assert_eq!(v.error.as_deref(), Some("조회 인증 임시 자료 정리를 확인하지 못했습니다"));
+        let mut v = view();
+        complete_usage(
+            &l.host,
+            &mut v,
+            &context,
+            UsageCompletion {
+                secret: Ok("test".into()),
+                identity: Identity::default(),
+                cli_error: None,
+                cleaned: true,
+                cancelled: false,
+            },
+        );
+        assert_eq!(v.error.as_deref(), Some("공식 Claude CLI의 로그인 계정을 확인하지 못했습니다"));
+        std::fs::rename(l.host.state.join("secrets.key"), l.host.state.join("held.key")).unwrap();
+        let mut v = view();
+        complete_usage(
+            &l.host,
+            &mut v,
+            &context,
+            UsageCompletion {
+                secret: Ok("test".into()),
+                identity: identity(),
+                cli_error: None,
+                cleaned: true,
+                cancelled: false,
+            },
+        );
+        assert_eq!(v.error.as_deref(), Some("조회 인증을 금고에 저장하지 못했습니다"));
+        std::fs::rename(l.host.state.join("held.key"), l.host.state.join("secrets.key")).unwrap();
+        l.host.accounts.import("work", "claude", &aaa_test_support::token("new-stage-execution")).unwrap();
+        let mut v = view();
+        complete_usage(
+            &l.host,
+            &mut v,
+            &context,
+            UsageCompletion {
+                secret: Ok("test".into()),
+                identity: identity(),
+                cli_error: None,
+                cleaned: true,
+                cancelled: false,
+            },
+        );
+        assert_eq!(v.error.as_deref(), Some("인증 중 대상 계정이 바뀌었습니다"));
+    }
+
     #[tokio::test]
     async fn unknown_execution_identity_requires_owner_expected_email_and_preserves_metadata() {
         let l = lab();

@@ -1161,6 +1161,7 @@ fn host_usage_login_separates_credentials_without_changing_execution() {
     let (execution, execution_nonce) = canary("usage-login-execution");
     let (access, access_nonce) = canary("usage-login-access");
     let (refresh, refresh_nonce) = canary("usage-login-refresh");
+    let (provider_error, provider_nonce) = canary("usage-login-provider-error");
     let gate = Gate::new();
     let mut w = world("http://127.0.0.1:1", &gate, &execution, POLICY_HARNESS);
     let now = aaa_common::util::now_ms();
@@ -1185,11 +1186,29 @@ fn host_usage_login_separates_credentials_without_changing_execution() {
     let done = login_result(&w, start["login"]["id"].as_str().unwrap(), "succeeded");
     assert_eq!(before, w.h.ok(&["account", "list"]), "실행 인증 판·시각·상태를 바꾸지 않는다");
     assert_eq!(std::fs::read_dir(w.h.state.join("host/usage-accounts")).unwrap().count(), 1);
-    let find: Vec<_> = [(&execution, &execution_nonce), (&access, &access_nonce), (&refresh, &refresh_nonce)]
-        .into_iter()
-        .flat_map(|(value, nonce)| needles(value, nonce))
-        .collect();
-    for value in [start, done] {
+    let vault = std::fs::read_dir(w.h.state.join("host/usage-accounts")).unwrap().next().unwrap().unwrap().path();
+    let original = std::fs::read(&vault).unwrap();
+    install_login_fixture(
+        &w,
+        &gate,
+        &serde_json::json!({"claude_auth":format!("Login failed: Token exchange failed (403): Forbidden {provider_error}"),"fail_for":"claude"}),
+    );
+    let failed_start = w.h.ok(&["account", "usage-login", "work", "--email", "me@example.com"]);
+    Gate::release(gate.take(1, 8), b'1');
+    let failure = login_result(&w, failed_start["login"]["id"].as_str().unwrap(), "failed");
+    assert_eq!(failure["login"]["error"], "Claude 인증 요청이 거부됐습니다");
+    assert_eq!(original, std::fs::read(&vault).unwrap(), "실패한 새 로그인은 옛 조회 인증을 바꾸지 않는다");
+    assert_eq!(before, w.h.ok(&["account", "list"]));
+    let find: Vec<_> = [
+        (&execution, &execution_nonce),
+        (&access, &access_nonce),
+        (&refresh, &refresh_nonce),
+        (&provider_error, &provider_nonce),
+    ]
+    .into_iter()
+    .flat_map(|(value, nonce)| needles(value, nonce))
+    .collect();
+    for value in [start, done, failed_start, failure] {
         assert!(
             !find.iter().any(|(_, n)| value.to_string().as_bytes().windows(n.len()).any(|b| b == n)),
             "로그인 응답 누출"

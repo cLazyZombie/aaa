@@ -38,27 +38,39 @@ fn service(home: &Path) -> String {
     format!("Claude Code-credentials-{}", &hash[..8])
 }
 
+fn login_read_error(reason: &'static str) -> ErrorBody {
+    tracing::warn!(stage = "credential_read", reason, "조회 로그인 인증 읽기 실패");
+    let message = match reason {
+        "missing" => "공식 Claude CLI가 조회 인증을 남기지 않았습니다",
+        "keychain_locked" => "조회 인증의 Keychain을 읽지 못했습니다",
+        "file_read_failed" => "조회 인증 파일을 읽지 못했습니다",
+        _ => "공식 Claude CLI의 조회 인증 형식을 확인하지 못했습니다",
+    };
+    ErrorBody::new(ErrorCode::BadRequest, message)
+}
+
 /// 유일한 임시 로그인 폴더의 파일 또는 그 폴더 전용 Keychain만 읽는다.
 fn login_secret(ctx: &UsageContext, home: &Path) -> Result<String, ErrorBody> {
     let path = home.join(".credentials.json");
     let raw = if path.symlink_metadata().is_ok_and(|m| m.is_file() && m.len() <= 128 * 1024) {
-        std::fs::read_to_string(path).map_err(|_| fail())?
+        std::fs::read_to_string(path).map_err(|_| login_read_error("file_read_failed"))?
     } else if ctx.darwin {
         match (ctx.keychain)(&service(home), None) {
             KeychainRead::Found(raw) => raw,
-            _ => return Err(fail()),
+            KeychainRead::Missing => return Err(login_read_error("missing")),
+            KeychainRead::Locked => return Err(login_read_error("keychain_locked")),
         }
     } else {
-        return Err(fail());
+        return Err(login_read_error("missing"));
     };
-    let v: Value = serde_json::from_str(&raw).map_err(|_| fail())?;
+    let v: Value = serde_json::from_str(&raw).map_err(|_| login_read_error("invalid_json"))?;
     let oauth = &v["claudeAiOauth"];
     let auth = serde_json::json!({
         "access_token": oauth["accessToken"], "refresh_token": oauth["refreshToken"],
         "expires_ms": oauth["expiresAt"], "scopes": oauth["scopes"],
     })
     .to_string();
-    Auth::parse(&auth)?;
+    Auth::parse(&auth).map_err(|_| login_read_error("invalid_credentials"))?;
     Ok(auth)
 }
 
@@ -70,8 +82,17 @@ fn cleanup(ctx: &UsageContext, home: &Path) -> bool {
     let service = service(home);
     match (ctx.keychain)(&service, None) {
         KeychainRead::Missing => true,
-        KeychainRead::Locked => false,
-        KeychainRead::Found(_) => (ctx.run)(&["security", "delete-generic-password", "-s", &service]).is_some(),
+        KeychainRead::Locked => {
+            tracing::warn!(stage = "cleanup", reason = "keychain_locked", "조회 로그인 정리 실패");
+            false
+        }
+        KeychainRead::Found(_) => {
+            let ok = (ctx.run)(&["security", "delete-generic-password", "-s", &service]).is_some();
+            if !ok {
+                tracing::warn!(stage = "cleanup", reason = "delete_failed", "조회 로그인 정리 실패");
+            }
+            ok
+        }
     }
 }
 
