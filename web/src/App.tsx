@@ -1316,6 +1316,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       : null;
   const autoQuestion = sel?.startsWith("question:") ? asksData?.autoDecisions?.find(d => d.question.id === sel.slice("question:".length) && d.outcome === "answered") : null;
   const askSelection = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions);
+  useEffect(() => {
+    // 열어 둔 q-ID가 같은 질문의 재게시로 바뀌었으면 새로고침도 가능한 thread 주소로 잇는다.
+    if (!sel?.startsWith("question:") || askSelection.kind !== "open" || askSelection.ask.kind !== "question") return;
+    const id = sel.slice("question:".length);
+    if (!/(?:^|\/)q-\d+$/.test(id) || askSelection.ask.thread.questions.items.some(item => item.id === id)) return;
+    goSel(`question:${askSelection.ask.thread.id}`);
+  }, [sel, askSelection]); // eslint-disable-line react-hooks/exhaustive-deps
   const askSelected = askSelection.kind === "auto" ? `a:${askSelection.decision.id}` : askSelection.kind === "open" ? askSelection.ask.key : askSelection.kind === "done" ? `d:${askSelection.record.id}` : null;
   // 질문 링크로 들어오면 사이드바도 「답할 것」 목록으로 바꾼다(목록 + 카드, 1B. 휴대폰은 drawer를 열면 그 목록이다)
   useEffect(() => {

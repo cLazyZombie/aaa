@@ -21,6 +21,7 @@ import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, freshAuto, open
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
+import { mergeQuestionDraft, questionDrafts, questionIdentity, type QuestionDraft } from "./questionDraft";
 export { withRecommended } from "./questionAnswer";
 
 const letter = (c: { letter?: string }, i: number) => c.letter ?? String.fromCharCode(65 + i);
@@ -212,12 +213,12 @@ export function AsksView({
           {selection.kind === "missing" && <p className="asks-empty" data-testid="asks-missing"><code>{selection.id}</code> 질문을 찾을 수 없다. 왼쪽 「답할 것」 목록에서 다른 질문을 열 수 있다.</p>}
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
-            <QuestionCard key={`${selection.ask.thread.id} ${selection.ask.thread.questions.report_hash} ${JSON.stringify(selection.ask.thread.questions.draft ?? null)}`} t={selection.ask.thread} q={selection.ask.thread.questions}
+            <QuestionCard key={JSON.stringify(["question", selection.ask.thread.project, selection.ask.thread.id, questionIdentity(selection.ask.thread.questions)])} t={selection.ask.thread} q={selection.ask.thread.questions}
               active={shown} canControl={canControl} onAnswer={(p, text, comments) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text, comments)} onZoom={setZoom} onThread={onThread} />
           )}
           {selection.kind === "open" && selection.ask.kind === "request" && (
             selection.ask.request.questions ? (
-              <QuestionCard key={`${selection.ask.key} ${JSON.stringify(selection.ask.request.questions.draft ?? null)}`} request={selection.ask.request} q={selection.ask.request.questions}
+              <QuestionCard key={JSON.stringify([selection.ask.key, questionIdentity(selection.ask.request.questions)])} request={selection.ask.request} q={selection.ask.request.questions}
                 active={shown} canControl={canControl} onAnswer={(p, text, comments) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text, comments)} onZoom={setZoom} onThread={onThread} />
             ) : <RequestCard key={selection.ask.key} questionId={selection.ask.request.question_id} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
@@ -342,14 +343,32 @@ function QuestionCard({
   onZoom: (z: { src: string; alt: string }) => void;
   onThread: (id: string) => void;
 }) {
-  const [picks, setPicks] = useState<(number | null)[]>(() => q.draft?.picks ?? q.items.map(() => null));
+  const owner = JSON.stringify(t ? ["question", t.project, t.id] : ["request", request!.id]);
+  const [local, setLocal] = useState(() => ({ value: questionDrafts.read(owner, q), server: mergeQuestionDraft(q) }));
+  const server = mergeQuestionDraft(q);
+  const changed = JSON.stringify(server) !== JSON.stringify(local.server);
+  const draft = changed ? mergeQuestionDraft(q, local.value, local.server) : local.value;
+  if (changed) setLocal({ value: draft, server });
+  const { picks, custom, comments } = draft;
+  const current = useRef(draft);
+  current.current = draft;
+  // input capture와 React onChange 모두 같은 최신 초안을 갱신한다. 이벤트 안에서
+  // 바로 저장해 재렌더·새로고침·unmount 전에 글을 보존한다.
+  const update = useCallback((change: (before: QuestionDraft) => QuestionDraft) => {
+    const next = change(current.current);
+    if (JSON.stringify(next) === JSON.stringify(current.current)) return;
+    current.current = next;
+    questionDrafts.write(owner, q, next);
+    setLocal({ value: next, server: mergeQuestionDraft(q) });
+  }, [owner, q]);
   const multiple = q.items.length > 1;
-  const [custom, setCustom] = useState(q.draft?.text ?? (!multiple ? q.draft?.comments?.[0] : null) ?? "");
-  const [comments, setComments] = useState<(string | null)[]>(() => q.items.map((_, n) => q.draft?.comments?.[n] ?? null));
   const commentInputs = useRef<(HTMLTextAreaElement | null)[]>([]);
   const customInput = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const revision = useRef(q.report_hash);
+  revision.current = q.report_hash;
+  useLayoutEffect(() => { setPending(false); setError(null); }, [q.report_hash]);
   const shown = useRef(false);
   useEffect(() => {
     shown.current = true;
@@ -366,30 +385,36 @@ function QuestionCard({
     // 대화 입력창과 같은 경계: root capture의 앞선 commit이 controlled 값을
     // 복원하기 전에 새 글을 받는다. bubble onChange도 기존대로 유지한다.
     const input = (event: Event) => {
-      if (event.target === customInput.current) setCustom(customInput.current!.value);
+      if (event.target === customInput.current) {
+        const value = customInput.current!.value;
+        update(d => ({ ...d, custom: value }));
+      }
       const n = commentInputs.current.findIndex(element => element !== null && element === event.target);
       if (n >= 0) {
         const value = commentInputs.current[n]!.value;
-        setComments(values => values.map((old, i) => i === n ? value : old));
+        update(d => ({ ...d, comments: d.comments.map((old, i) => i === n ? value : old) }));
       }
     };
     view.addEventListener("input", input, true);
     return () => view.removeEventListener("input", input, true);
-  }, [active, off]);
+  }, [active, off, update]);
   const text = custom.trim();
   const got = picks.filter((p) => p !== null).length;
   const all = q.items.every((_, n) => picks[n] !== null || (multiple && !!comments[n]?.trim()));
   const needsReviewText = q.review && picks[0] === 1 && !text && !(multiple && comments[0]?.trim());
   const filled = all ? null : withRecommended(q, picks, multiple ? comments : []);
   const send = async (p: (number | null)[]) => {
+    const sent = questionDrafts.snapshot(owner);
+    const sentRevision = q.report_hash;
     setPending(true);
     setError(null);
     try {
       await onAnswer(p, text || null, multiple ? comments.map(c => c?.trim() || null) : []);
+      questionDrafts.settle(owner, sent);
     } catch (e) {
-      if (shown.current) setError(e instanceof ApiError ? e.message : String(e));
+      if (shown.current && revision.current === sentRevision) setError(e instanceof ApiError ? e.message : String(e));
     }
-    if (shown.current) setPending(false);
+    if (shown.current && revision.current === sentRevision) setPending(false);
   };
   // 다 골랐거나 직접 쓴 답이 있으면 그대로, 아니면 남은 질문을 추천으로 채워 보낸다
   const submit = () => { if (!off) void (all || text ? send(picks) : filled && send(filled)); };
@@ -418,7 +443,7 @@ function QuestionCard({
                 const option = (
                   <button key={i} type="button" role="radio" aria-checked={checked} data-testid={`thread-ask-pick-${item.source_number ?? n + 1}${letter(c, i)}`}
                     className={`prompt-card-option ask-choice${c.description || rest ? " has-description" : ""}${checked ? " is-checked" : ""}`} disabled={off}
-                    onClick={() => setPicks((ps) => ps.map((p, k) => (k === n ? (p === i ? null : i) : p)))}>
+                    onClick={() => update(d => ({ ...d, picks: d.picks.map((p, k) => (k === n ? (p === i ? null : i) : p)) }))}>
                     {pictures && <ChoicePicture base={base} body={c.body ?? ""} onZoom={onZoom} />}
                     <span className="ask-choice-line">
                       <span className="prompt-card-number"><span aria-hidden="true">{letter(c, i)}</span><span className="visually-hidden">{letter(c, i)}.</span></span>{" "}
@@ -441,7 +466,7 @@ function QuestionCard({
               <textarea id={`${customId}-${n}`} ref={element => { commentInputs.current[n] = element; }} className="input" rows={2}
                 value={comments[n] ?? ""} disabled={off} aria-label={`${item.source_number ?? n + 1}번 직접 쓴 답`}
                 data-testid={`thread-ask-text-${item.source_number ?? n + 1}`}
-                onChange={e => { const value = e.currentTarget.value; setComments(values => values.map((old, i) => i === n ? value : old)); }} />
+                onChange={e => { const value = e.currentTarget.value; update(d => ({ ...d, comments: d.comments.map((old, i) => i === n ? value : old) })); }} />
             </div>}
             {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
           </div>
@@ -451,7 +476,7 @@ function QuestionCard({
         <span className="prompt-card-custom-label" id={customId}>또는 직접 답을 입력(고르지 않은 질문을 대신한다)</span>
         <div className="prompt-card-custom-row">
           <input ref={customInput} className="input" value={custom} disabled={off} placeholder="예: 2 둘 다 보이게" aria-labelledby={customId} data-testid="thread-ask-text"
-            onChange={(e) => setCustom(e.currentTarget.value)}
+            onChange={(e) => { const value = e.currentTarget.value; update(d => ({ ...d, custom: value })); }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && text.length > 0) submit();
             }} />
@@ -650,7 +675,8 @@ export function useAsksData(up: boolean): { data: AsksData | null; put: (r: Fron
 
 /** 열쇠 → 본문에 그릴 것 */
 export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRecord[], auto: AutoDecision[] = []): AskSelection {
-  return useMemo<AskSelection>(() => {
+  const previous = useRef<{ key: string | null; ask: OpenAsk } | null>(null);
+  const selection = useMemo<AskSelection>(() => {
     if (key?.startsWith("a:")) {
       const decision = auto.find(d => d.id === key.slice(2)) ?? (key === "a:" ? auto[0] : undefined);
       return decision ? { kind: "auto", decision } : { kind: "none" };
@@ -664,9 +690,22 @@ export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRe
     // 방금 답한 것(그 카드가 답할 것에서 빠졌다): 그때 남긴 기록을 연다
     const answered = key ? doneOf(key, done) : null;
     if (answered) return { kind: "done", record: answered };
+    // q-ID 링크로 답하던 카드가 새 q-ID로 재게시돼도 같은 thread·같은 질문이면 잇는다.
+    const before = previous.current;
+    if (before?.ask.kind === "question" && key?.startsWith("q:")
+      && (before.key === key || before.ask.thread.questions.items.some(item => item.id === key.slice(2)))) {
+      const old = before.ask;
+      const repost = open.find(x => x.kind === "question" && x.key === old.key && x.thread.project === old.thread.project
+        && questionIdentity(x.thread.questions) === questionIdentity(old.thread.questions));
+      if (repost) return { kind: "open", ask: repost };
+    }
     // 영속 ID 링크가 닫혔거나 지워졌어도 다른 질문을 그 ID의 카드처럼 열지 않는다.
     if (/^q:(?:[a-z0-9_][a-z0-9_-]{0,47}\/)?[qt]-\d+$/.test(key ?? "")) return { kind: "missing", id: key!.slice(2) };
     return open[0] ? { kind: "open", ask: open[0] } : { kind: "none" };
   }, [key, open, done, auto]);
+  useLayoutEffect(() => {
+    previous.current = selection.kind === "open" ? { key, ask: selection.ask } : null;
+  }, [key, selection]);
+  return selection;
 }
 

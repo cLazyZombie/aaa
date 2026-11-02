@@ -1,3 +1,4 @@
+- t-1436: [질문 답 초안과 재게시 입력 보존 검증](testing-question-drafts-t-1436.md)
 - t-1421: [작업창 질문 대기 표지 검증](testing-thread-question-mark.md)
 - t-1398: [공통 검증 자동 수집 검증](testing-workspace-verify-t-1398.md)
 - t-1363: [연결 오류 때 로컬 소켓 보존 검증](testing-local-socket-preservation.md)
