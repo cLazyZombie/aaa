@@ -9,6 +9,9 @@ struct Reading {
     snapshot: QuotaSnapshot,
     machine: String,
     received_at_ms: u64,
+    /// 사용량 endpoint의 HTTP 실패. 모델 한도 판정과 분리하며 오류 본문은 저장하지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    http_status: Option<u16>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Entry {
@@ -119,7 +122,18 @@ fn problem_rank(p: Option<QuotaProblem>) -> u8 {
         Some(QuotaProblem::Locked) => 8,
     }
 }
-fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot, now: u64) {
+fn accept(entry: &mut Entry, key: String, machine: String, s: QuotaSnapshot, now: u64) {
+    accept_reading(entry, key, machine, s, None, now);
+}
+
+fn accept_reading(
+    entry: &mut Entry,
+    key: String,
+    machine: String,
+    mut s: QuotaSnapshot,
+    http_status: Option<u16>,
+    now: u64,
+) {
     if s.generation != entry.generation || s.windows.len() > 64 {
         return;
     }
@@ -141,9 +155,10 @@ fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot,
                 }
             }
         }
-        entry
-            .last_known
-            .insert(key.clone(), Reading { snapshot: saved, machine: machine.clone(), received_at_ms: now });
+        entry.last_known.insert(
+            key.clone(),
+            Reading { snapshot: saved, machine: machine.clone(), received_at_ms: now, http_status },
+        );
     }
     if s.problem.is_some()
         && s.windows.is_empty()
@@ -151,7 +166,7 @@ fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot,
     {
         s.windows = old.snapshot.windows.clone();
     }
-    entry.readings.insert(key, Reading { snapshot: s, machine, received_at_ms: now });
+    entry.readings.insert(key, Reading { snapshot: s, machine, received_at_ms: now, http_status });
 }
 
 fn same_window(a: &QuotaWindow, b: &QuotaWindow) -> bool {
@@ -359,13 +374,22 @@ impl crate::Host {
                             });
                             let retry = entry.readings.get("host").and_then(|r| r.snapshot.retry_at_ms);
                             if !complete && retry.is_none_or(|t| now >= t) {
-                                let snapshot = match self.accounts.credential(&name) {
+                                let (snapshot, http_status) = match self.accounts.credential(&name) {
                                     Ok(c) if c.auth_generation.as_deref() == Some(&generation) => {
                                         self.usage.claude_account_quota(generation.clone(), &c.secret.0, now).await
                                     }
-                                    _ => empty(&generation, QuotaSource::ClaudeOauth, QuotaProblem::Locked, now),
+                                    _ => {
+                                        (empty(&generation, QuotaSource::ClaudeOauth, QuotaProblem::Locked, now), None)
+                                    }
                                 };
-                                accept(&mut entry, "host".into(), "host".into(), snapshot, util::now_ms());
+                                accept_reading(
+                                    &mut entry,
+                                    "host".into(),
+                                    "host".into(),
+                                    snapshot,
+                                    http_status,
+                                    util::now_ms(),
+                                );
                             }
                         }
                     }

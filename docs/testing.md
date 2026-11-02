@@ -5024,3 +5024,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [사용량 관측 유효기간과 소비자 검증](testing-quota-age-t-1446.md)
 
 - [창별 구독 사용량 관측 표시 검증](testing-coordinator-usage-t-1454.md)
+
+- [비밀 없는 한도 입력·OAuth 실패 진단 검증](testing-quota-diagnostic-t-1454.md)

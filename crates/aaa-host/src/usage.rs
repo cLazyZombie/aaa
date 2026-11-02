@@ -805,7 +805,7 @@ impl UsageService {
         generation: String,
         token: &str,
         now: u64,
-    ) -> aaa_proto::QuotaSnapshot {
+    ) -> (aaa_proto::QuotaSnapshot, Option<u16>) {
         use aaa_proto::{QuotaProblem, QuotaSnapshot, QuotaSource, QuotaWindow};
         let mut snapshot = QuotaSnapshot {
             generation,
@@ -828,6 +828,10 @@ impl UsageService {
             b"",
         )
         .await;
+        let http_status = match &body {
+            Err(ReadError::Http { status, .. }) => Some(*status),
+            _ => None,
+        };
         match body {
             Ok(body) => {
                 for (key, duration) in [("five_hour", 300), ("seven_day", 10080)] {
@@ -860,10 +864,17 @@ impl UsageService {
                     // 조회 endpoint의 429는 모델 사용 한도가 아니다. 재조회만 미룬다.
                     snapshot.retry_at_ms = Some(now.saturating_add(RETRY_MS.max(retry_after_ms.unwrap_or(RETRY_MS))));
                 }
-                tracing::warn!(source = "claude_oauth", ?error, "등록 계정 사용량 조회 실패");
+                let reason = match http_status {
+                    Some(401) => "authentication_failed",
+                    Some(403) => "access_denied",
+                    Some(429) => "query_rate_limited",
+                    Some(_) => "http_failed",
+                    None => "request_failed",
+                };
+                tracing::warn!(source = "claude_oauth", http_status, reason, ?error, "등록 계정 사용량 조회 실패");
             }
         }
-        snapshot
+        (snapshot, http_status)
     }
 
     /// 마지막으로 읽기를 끝낸 숫자만 쓴다. 외부 서비스의 응답을 기다리지 않는다.
