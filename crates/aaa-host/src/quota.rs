@@ -524,6 +524,20 @@ mod tests {
         accept(&mut e, "pane-new".into(), "mac-a".into(), good(4000, 1.), 4000);
         assert!(merge(&e, "work", "claude", 4000).windows.is_empty(), "늦은 옛 로그인 응답도 버린다");
     }
+    // 필요: 수집이 멎어도 host 응답이 창의 원래 숫자·시각을 리셋 전까지 유지한다.
+    #[test]
+    fn idle_pane_stays_stale_until_its_reset_without_rewriting_observation_time() {
+        let mut e = Entry { generation: "login-a".into(), ..Default::default() };
+        accept(&mut e, "pane-a".into(), "mac-a".into(), good(1000, 80.), 1000);
+        let q = merge(&e, "work", "claude", 601_001);
+        assert_eq!(q.problem, None);
+        assert_eq!(q.windows[0].freshness, QuotaFreshness::Stale);
+        assert_eq!(q.windows[0].window.observed_at_ms, 1000);
+        assert_eq!(q.windows[0].window.used_percent, 80.);
+        let reset = q.windows[0].window.resets_at_ms.unwrap();
+        assert_eq!(merge(&e, "work", "claude", reset).problem, Some(QuotaProblem::Unknown));
+    }
+
     #[test]
     fn failure_keeps_original_observation_and_clock_skew_is_unknown() {
         let mut e = Entry { generation: "login-a".into(), ..Default::default() };

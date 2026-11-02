@@ -10,17 +10,7 @@ impl crate::Agent {
         let old = self.quota_snapshot(&spec.id, generation)?;
         let now = util::now_ms();
         let windows = quota::claude(v, now, old.as_ref().map(|s| s.windows.as_slice()).unwrap_or(&[]));
-        let text = windows
-            .iter()
-            .map(|w| {
-                format!(
-                    "{} {}% 남음",
-                    if w.duration_mins == Some(300) { "5h" } else { "주간" },
-                    (100. - w.used_percent).round()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let text = windows.iter().map(|w| statusline(w, now)).collect::<Vec<_>>().join(" · ");
         let snapshot = QuotaSnapshot {
             generation: generation.clone(),
             source: QuotaSource::ClaudeStatusline,
@@ -61,6 +51,17 @@ impl crate::Agent {
     }
 }
 
+fn statusline(w: &aaa_proto::QuotaWindow, now: u64) -> String {
+    let minutes = now.saturating_sub(w.observed_at_ms) / 60_000;
+    let age = if minutes == 0 { "방금".into() } else { format!("{minutes}분 전") };
+    format!(
+        "{} {}% 남음 ({age}{})",
+        if w.duration_mins == Some(300) { "5h" } else { "주간" },
+        (100. - w.used_percent).round(),
+        if quota::freshness(w, now) == aaa_proto::QuotaFreshness::Unknown { " · 마지막 관측" } else { "" }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +90,10 @@ mod tests {
         let first = a.quota_snapshot("pane1", "generation-a").unwrap().unwrap();
         a.record_quota(&spec, &json!({"rate_limits":{"five_hour":{"used_percentage":70,"resets_at":9999999999_u64}}}))
             .unwrap();
+        let observed = first.windows.iter().find(|w| w.duration_mins == Some(10080)).unwrap();
+        assert_eq!(statusline(observed, observed.observed_at_ms + 45 * 60_000), "주간 80% 남음 (45분 전)");
+        let reset = observed.resets_at_ms.unwrap();
+        assert!(statusline(observed, reset).ends_with(" · 마지막 관측)"));
         let next = a.quota_snapshot("pane1", "generation-a").unwrap().unwrap();
         assert_eq!(
             first.windows.iter().find(|w| w.duration_mins == Some(10080)),

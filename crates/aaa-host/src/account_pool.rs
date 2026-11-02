@@ -759,7 +759,7 @@ impl SelectionInput {
     }
 }
 
-/// 배정 비교에는 주간 공용 창을 우선한다. 실시간 조회 실패 때만 원래 관측과 리셋으로 추정한다.
+/// 배정 비교에는 주간 공용 창을 우선한다. 유효기간 안의 마지막 관측을 현재 창으로 쓴다.
 fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool, weekly: bool) -> Option<(f64, u64)> {
     if fresh && q.problem.is_some() {
         return None;
@@ -776,8 +776,8 @@ fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool,
                 && w.problem != Some(QuotaProblem::ClockSkew)
                 && (!fresh
                     || (w.problem.is_none()
-                        && w.freshness == QuotaFreshness::Fresh
-                        && aaa_common::quota::freshness(&w.window, now) == QuotaFreshness::Fresh))
+                        && w.freshness != QuotaFreshness::Unknown
+                        && aaa_common::quota::usable_for_allocation(&w.window, now)))
         })
         .collect();
     windows
@@ -804,14 +804,14 @@ fn known_limit(q: &AccountQuota, model: Option<&str>, now: u64) -> bool {
             w.window.scope.as_deref().is_none_or(|s| model == Some(s))
                 && w.problem.is_none()
                 && !w.conflict
-                && w.freshness == QuotaFreshness::Fresh
-                && aaa_common::quota::freshness(&w.window, now) == QuotaFreshness::Fresh
+                && w.freshness != QuotaFreshness::Unknown
+                && aaa_common::quota::usable_for_allocation(&w.window, now)
                 && w.window.resets_at_ms.is_some_and(|t| t > now)
                 && w.window.used_percent >= 100.0
         })
 }
 
-/// 자동화에 정한 잔량 문턱은 실제 들어온 최신 공용 창에만 적용한다.
+/// 자동화에 정한 잔량 문턱은 유효기간 안의 마지막 공용 창에도 적용한다.
 pub(crate) fn below_usage_threshold(q: &AccountQuota, minimum: [Option<f64>; 2], now: u64) -> bool {
     q.problem.is_none()
         && q.windows.iter().any(|w| {
@@ -824,8 +824,8 @@ pub(crate) fn below_usage_threshold(q: &AccountQuota, minimum: [Option<f64>; 2],
                 w.window.scope.is_none()
                     && w.problem.is_none()
                     && !w.conflict
-                    && w.freshness == QuotaFreshness::Fresh
-                    && aaa_common::quota::freshness(&w.window, now) == QuotaFreshness::Fresh
+                    && w.freshness != QuotaFreshness::Unknown
+                    && aaa_common::quota::usable_for_allocation(&w.window, now)
                     && 100.0 - w.window.used_percent < threshold
             })
         })

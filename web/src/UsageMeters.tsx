@@ -5,6 +5,7 @@ import type { ProviderUsage, UsageWindow } from "./gen/proto";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { useUsageSettings, type UsageCount, type UsageGlance } from "./settings";
+import { quotaAge } from "./accountQuotaModel";
 import { usageProblemLabel, usageProblemText } from "./usageProblem";
 import {
   formatPercent,
@@ -33,10 +34,10 @@ function isError(usage: ProviderUsage): boolean {
   return usage.problem === "expired" || usage.problem === "failed";
 }
 
-function Chip({ usage, count, glance }: { usage: ProviderUsage; count: UsageCount; glance: UsageGlance }) {
+function Chip({ usage, now, count, glance }: { usage: ProviderUsage; now: number; count: UsageCount; glance: UsageGlance }) {
   const window = glanceWindow(usage, glance);
   return (
-    <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`} data-provider={usage.id} title={usageProblemText(usage) ?? usageName(usage)}>
+    <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`} data-provider={usage.id} title={`${usageProblemText(usage) ?? usageName(usage)} · ${quotaAge(usage.checked_at ? Date.parse(usage.checked_at) : null, now)}`}>
       <AgentMark agent={PROVIDER_MARK[usage.id]} size={14} />
       <span className="usage-chip-value">{window ? formatPercent(meterPercent(window, count)) : usageProblemLabel(usage)}</span>
       <span className="usage-chip-bar" style={{ "--fill": `${window ? meterPercent(window, count) : 0}%` } as CSSProperties} />
@@ -58,6 +59,7 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
           </span>
         )}
       </header>
+      {usage.checked_at && <p className="usage-note">{quotaAge(Date.parse(usage.checked_at), now)}</p>}
       {problem && <p className={`usage-note${isError(usage) ? " is-problem" : ""}`}>{problem}</p>}
       {usage.windows.map((window, index) => {
         const reset = formatResetIn(window.resets_at, now);
@@ -158,7 +160,7 @@ export function UsageMeters() {
         onClick={() => setOpen(!open)}
       >
         {chips.map((usage) => (
-          <Chip key={usage.key} usage={usage} count={count} glance={settings.usageGlance} />
+          <Chip key={usage.key} usage={usage} now={now} count={count} glance={settings.usageGlance} />
         ))}
         {folded > 0 && <span className="usage-more">+{folded}</span>}
       </button>

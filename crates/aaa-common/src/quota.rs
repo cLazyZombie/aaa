@@ -3,14 +3,15 @@ use aaa_proto::{QuotaFreshness, QuotaWindow};
 use serde_json::Value;
 
 pub const FRESH_MS: u64 = 120_000;
-pub const STALE_MS: u64 = 600_000;
+/// 리셋을 모르는 창만 쓰는 보수적인 표시·배정 상한.
+pub const UNKNOWN_RESET_MS: u64 = 600_000;
 pub const CLOCK_SKEW_MS: u64 = 30_000;
 
 pub fn freshness(w: &QuotaWindow, now: u64) -> QuotaFreshness {
     if !valid(w)
         || w.observed_at_ms > now.saturating_add(CLOCK_SKEW_MS)
         || w.resets_at_ms.is_some_and(|r| r <= now)
-        || now.saturating_sub(w.observed_at_ms) > STALE_MS
+        || (w.resets_at_ms.is_none() && now.saturating_sub(w.observed_at_ms) > UNKNOWN_RESET_MS)
     {
         QuotaFreshness::Unknown
     } else if now.saturating_sub(w.observed_at_ms) > FRESH_MS {
@@ -18,6 +19,13 @@ pub fn freshness(w: &QuotaWindow, now: u64) -> QuotaFreshness {
     } else {
         QuotaFreshness::Fresh
     }
+}
+
+/// 새 작업의 한도·문턱 판정은 리셋 전, 최대 한 창 길이 동안 마지막 관측을 쓴다.
+/// 잘못된 먼 리셋이 영구 차단을 만들지 않게 관측 시각 기준 창 길이로도 제한한다.
+pub fn usable_for_allocation(w: &QuotaWindow, now: u64) -> bool {
+    freshness(w, now) != QuotaFreshness::Unknown
+        && now.saturating_sub(w.observed_at_ms) <= w.duration_mins.map_or(UNKNOWN_RESET_MS, |n| u64::from(n) * 60_000)
 }
 
 pub fn valid(w: &QuotaWindow) -> bool {
@@ -127,7 +135,7 @@ mod tests {
         let w = &old[0];
         assert_eq!(freshness(w, 121000), QuotaFreshness::Fresh);
         assert_eq!(freshness(w, 121001), QuotaFreshness::Stale);
-        assert_eq!(freshness(w, 601001), QuotaFreshness::Unknown);
+        assert_eq!(freshness(w, 601001), QuotaFreshness::Stale);
         assert_eq!(freshness(w, 9_999_000), QuotaFreshness::Unknown);
         assert!(claude(&json!({"rate_limits":{"five_hour":{"used_percentage":"NaN"}}}), 3000, &[]).is_empty());
         let mut w = w.clone();
@@ -137,6 +145,30 @@ mod tests {
         w.observed_at_ms = 31_001;
         assert_eq!(freshness(&w, 1000), QuotaFreshness::Unknown);
     }
+    // 필요: 쉬는 pane의 관측 유지와 배정 상한을 실제 대기 없이 창별 경계로 검사한다.
+    #[test]
+    fn observations_last_until_reset_and_allocation_is_bounded_by_window_length() {
+        for (key, duration) in [("five_hour", 300_u64), ("seven_day", 10080)] {
+            let reset = 1000 + duration * 60_000;
+            let mut w =
+                claude(&json!({"rate_limits":{key:{"used_percentage":100,"resets_at":reset / 1000}}}), 1000, &[])
+                    .remove(0);
+            for now in [121_001, 601_001, reset - 1] {
+                assert_eq!(freshness(&w, now), QuotaFreshness::Stale);
+                assert!(usable_for_allocation(&w, now));
+            }
+            assert_eq!(freshness(&w, reset), QuotaFreshness::Unknown);
+            assert!(!usable_for_allocation(&w, reset));
+            assert_eq!(w.used_percent, 100., "리셋으로 남은 양을 만들지 않는다");
+            w.resets_at_ms = Some(reset + 60_000);
+            assert_eq!(freshness(&w, reset + 1), QuotaFreshness::Stale);
+            assert!(!usable_for_allocation(&w, reset + 1), "먼 리셋도 한 창 길이까지만 배정에 쓴다");
+            w.resets_at_ms = None;
+            assert!(usable_for_allocation(&w, 1000 + UNKNOWN_RESET_MS));
+            assert_eq!(freshness(&w, 1001 + UNKNOWN_RESET_MS), QuotaFreshness::Unknown);
+        }
+    }
+
     #[test]
     fn codex_keeps_model_buckets_and_unknown_duration() {
         let v = json!({"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":20,"windowDurationMins":300,"resetsAt":9999},"secondary":{"usedPercent":50,"windowDurationMins":10080}},"spark":{"primary":{"usedPercent":70,"windowDurationMins":15}},"token@example.com":{"primary":{"usedPercent":1}}}});
