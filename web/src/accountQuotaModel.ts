@@ -27,5 +27,9 @@ export function quotaTime(ms: number | null): string {
 export function quotaAge(observedAt: number | null, now: number): string {
   if (!observedAt || !Number.isFinite(observedAt) || observedAt > now + 30_000) return "관측 시각 모름";
   const minutes = Math.floor(Math.max(0, now - observedAt) / 60_000);
-  return minutes < 1 ? "방금 관측" : `${minutes}분 전 관측`;
+  if (minutes < 1) return "방금 관측";
+  if (minutes < 60) return `${minutes}분 전 관측`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간${minutes % 60 ? ` ${minutes % 60}분` : ""} 전 관측`;
+  return `${Math.floor(hours / 24)}일${hours % 24 ? ` ${hours % 24}시간` : ""} 전 관측`;
 }

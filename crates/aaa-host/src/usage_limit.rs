@@ -124,6 +124,8 @@ mod tests {
 
     fn window(kind: W, used: f64, scope: Option<&str>, resets_ms: Option<u64>) -> UsageWindow {
         UsageWindow {
+            observed_at: None,
+            problem: None,
             kind,
             scope: scope.map(str::to_string),
             used_percent: used,

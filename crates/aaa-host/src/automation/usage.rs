@@ -200,7 +200,15 @@ mod tests {
             checked_at: None,
             windows: [UsageWindowKind::Session, UsageWindowKind::Week]
                 .into_iter()
-                .map(|kind| UsageWindow { kind, scope: None, used_percent: used, resets_at: None, starts_at: None })
+                .map(|kind| UsageWindow {
+                    kind,
+                    scope: None,
+                    used_percent: used,
+                    resets_at: None,
+                    starts_at: None,
+                    observed_at: None,
+                    problem: None,
+                })
                 .collect(),
         };
         let mut report = UsageReport {

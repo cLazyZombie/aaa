@@ -38,6 +38,14 @@ pub struct UsageWindow {
     pub resets_at: Option<String>,
     /// 이 창이 세기 시작한 때(ISO 8601). 구독이 그것도 창 길이도 말하지 않으면 None
     pub starts_at: Option<String>,
+    /// 이 창 숫자의 실제 관측 시각. 구판·로컬 조회는 계정 checked_at을 쓴다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub observed_at: Option<String>,
+    /// 창마다 다른 관측 실패·오래됨. 계정 전체 오류와 별개다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub problem: Option<UsageProblem>,
 }
 
 /// 숫자가 없거나 오래된 까닭: 로그인이 끝났거나 거절됨, 구독이 늦추라고 함, 요청 실패,
@@ -71,7 +79,7 @@ pub struct ProviderUsage {
     /// 마지막으로 읽은 숫자. 뒤에 실패해도 남고, 그때는 `problem`이 까닭을 말한다
     pub windows: Vec<UsageWindow>,
     pub problem: Option<UsageProblem>,
-    /// `windows`를 읽은 때(ISO 8601). 한 번도 못 읽었으면 None
+    /// 가장 최근 창을 관측한 때(ISO 8601). 창별 시각은 observed_at. 한 번도 못 읽었으면 None
     pub checked_at: Option<String>,
 }
 

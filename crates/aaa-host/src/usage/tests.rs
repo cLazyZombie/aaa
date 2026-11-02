@@ -366,6 +366,49 @@ fn registered_sidebar_keeps_observation_age_and_failure_without_borrowing_anothe
     assert!(registered_claude_usage("work", None, Some(&quota)).windows.is_empty());
 }
 
+// 필요: coordinator의 주간 관측이 계속 와도 오래된 세션 창이 계정 전체를 낡게 보이던 회귀.
+#[test]
+fn registered_sidebar_keeps_each_window_age_when_only_weekly_observations_arrive() {
+    use aaa_proto::*;
+    let now = NOW + 2908 * 60_000;
+    let window = |duration, observed, used, freshness| AccountQuotaWindow {
+        window: QuotaWindow {
+            limit_id: "claude".into(),
+            window_id: format!("window-{duration}"),
+            scope: None,
+            duration_mins: Some(duration),
+            used_percent: used,
+            observed_at_ms: observed,
+            resets_at_ms: Some(observed + 3_600_000),
+        },
+        machine: "mac-a".into(),
+        source: QuotaSource::ClaudeStatusline,
+        received_at_ms: now,
+        freshness,
+        problem: None,
+        conflict: false,
+    };
+    let mut quota = AccountQuota {
+        account: "work".into(),
+        harness: "claude".into(),
+        problem: None,
+        retry_at_ms: None,
+        windows: vec![window(300, NOW, 0., QuotaFreshness::Unknown), window(10080, now, 9., QuotaFreshness::Fresh)],
+    };
+    for _ in 0..2 {
+        let usage = registered_claude_usage("work", None, Some(&quota));
+        assert_eq!(usage.checked_at, Some(utc_iso(now)), "계정은 최근 관측 시각");
+        assert_eq!(usage.problem, None, "오래된 세션 창이 최신 주간 창을 가리지 않는다");
+        assert_eq!(usage.windows[0].observed_at, Some(utc_iso(NOW)));
+        assert_eq!(usage.windows[0].problem, Some(UsageProblem::Stale));
+        assert_eq!(usage.windows[0].used_percent, 0., "초기화 뒤에도 새 숫자를 합성하지 않는다");
+        assert_eq!(usage.windows[1].observed_at, Some(utc_iso(now)));
+        assert_eq!(usage.windows[1].problem, None);
+        assert_eq!(usage.windows[1].used_percent, 9.);
+        quota.windows.reverse();
+    }
+}
+
 #[tokio::test]
 async fn keychain_item_wins_unless_the_file_is_later_and_a_locked_item_says_locked() {
     let (fake, origin) = Fake::start().await;
