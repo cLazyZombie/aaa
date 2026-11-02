@@ -273,12 +273,14 @@ pub(crate) enum RefreshOutcome {
 pub struct Accounts {
     pub(crate) logins: Mutex<HashMap<String, crate::account_login::LoginJob>>,
     store: Mutex<Store>,
+    usage_store: Mutex<Store>,
     gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 impl Accounts {
     pub fn new(state: &Path) -> Result<Self, ErrorBody> {
         let out = Self {
             store: Mutex::new(Store { root: state.join("accounts"), key_path: state.join("secrets.key") }),
+            usage_store: Mutex::new(Store { root: state.join("usage-accounts"), key_path: state.join("secrets.key") }),
             gates: Default::default(),
             logins: Default::default(),
         };
@@ -330,7 +332,15 @@ impl Accounts {
         } else {
             1
         };
-        s.write(name, harness, version, value, Some(util::new_id()))
+        let previous = if p.exists() { Some(s.record(name)?.auth_generation()) } else { None };
+        let view = s.write(name, harness, version, value, Some(util::new_id()))?;
+        if let Some(generation) = previous {
+            aaa_common::diagnostic::ignored(
+                self.remove_usage(&generation),
+                "옛 조회 인증 정리가 실행 인증 교체 결과를 덮지 않게 한다",
+            );
+        }
+        Ok(view)
     }
     pub(crate) fn generation(&self, name: &str) -> Result<String, ErrorBody> {
         let r = self.store.lock().unwrap().record(name)?;
@@ -338,6 +348,43 @@ impl Accounts {
     }
     pub fn credential(&self, name: &str) -> Result<AccountCredential, ErrorBody> {
         self.store.lock().unwrap().read(name)
+    }
+    /// 실행 인증 세대가 조회 인증의 키다. 별칭 변경에는 유지되고 재등록·삭제에는 쓰이지 않는다.
+    pub(crate) fn usage_credential(&self, generation: &str) -> Result<AccountCredential, ErrorBody> {
+        let store = self.usage_store.lock().unwrap();
+        if store.root.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(fail());
+        }
+        store.read(generation)
+    }
+    fn remove_usage(&self, generation: &str) -> Result<(), ErrorBody> {
+        let s = self.usage_store.lock().unwrap();
+        let path = s.path(generation)?;
+        if path.try_exists().map_err(|_| fail())? {
+            regular(&path)?;
+            std::fs::remove_file(path).map_err(|_| fail())?;
+        }
+        Ok(())
+    }
+    pub(crate) fn store_usage(
+        &self,
+        generation: &str,
+        value: &str,
+        expected_version: Option<u64>,
+    ) -> Result<(), ErrorBody> {
+        redact::remember_auth("claude", value);
+        // 실행 금고의 KEK가 없으면 새 조회 금고가 대체 키를 만들지 않는다.
+        self.store.lock().unwrap().key(false)?;
+        let s = self.usage_store.lock().unwrap();
+        let old = if s.path(generation)?.exists() { Some(s.record(generation)?) } else { None };
+        if expected_version.is_some_and(|v| old.as_ref().is_none_or(|r| r.version != v)) {
+            return Err(fail());
+        }
+        let version = old.as_ref().map_or(Ok(1), |r| r.version.checked_add(1).ok_or_else(fail))?;
+        let auth_generation =
+            expected_version.and_then(|_| old.as_ref().map(Sealed::auth_generation)).unwrap_or_else(util::new_id);
+        s.write(generation, "claude", version, value, Some(auth_generation))?;
+        Ok(())
     }
     /// 옛 AAD로 열고 새 AAD로 봉투 전체를 재암호화한다. 인증 판·세대는 그대로다.
     /// 새 파일을 먼저 내구 저장하고 DB 확정 뒤 옛 파일을 치운다(복구 journal은 host 소유).
@@ -356,7 +403,13 @@ impl Accounts {
         let s = self.store.lock().unwrap();
         let p = s.path(name)?;
         regular(&p)?;
-        std::fs::remove_file(p).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))
+        let generation = s.record(name)?.auth_generation();
+        std::fs::remove_file(p).map_err(|source_error| aaa_common::diagnostic::context(source_error, fail()))?;
+        aaa_common::diagnostic::ignored(
+            self.remove_usage(&generation),
+            "옛 조회 인증 정리가 계정 삭제 결과를 덮지 않게 한다",
+        );
+        Ok(())
     }
     pub(crate) async fn refresh(
         &self,
@@ -587,6 +640,24 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
+    #[test]
+    fn query_vault_does_not_replace_a_missing_execution_key_and_is_removed_with_account() {
+        let state = Temp(std::env::temp_dir().join(format!("aaa-query-key-{}", util::new_id())));
+        let accounts = Accounts::new(&state.0).unwrap();
+        let execution = aaa_test_support::token("query-key-execution");
+        accounts.import("work", "claude", &execution).unwrap();
+        let generation = accounts.generation("work").unwrap();
+        let raw = serde_json::json!({"access_token":aaa_test_support::token("query-key-access"), "refresh_token":aaa_test_support::token("query-key-refresh"), "expires_ms":util::now_ms()+3_600_000,"scopes":["user:profile"]}).to_string();
+        std::fs::rename(state.0.join("secrets.key"), state.0.join("held.key")).unwrap();
+        assert!(accounts.store_usage(&generation, &raw, None).is_err());
+        assert!(!state.0.join("secrets.key").exists(), "교체 KEK를 생성하지 않는다");
+        std::fs::rename(state.0.join("held.key"), state.0.join("secrets.key")).unwrap();
+        accounts.store_usage(&generation, &raw, None).unwrap();
+        assert_eq!(accounts.credential("work").unwrap().secret.0, execution);
+        accounts.remove("work").unwrap();
+        assert!(accounts.usage_credential(&generation).is_err());
+    }
+
     #[test]
     fn legacy_vault_aad_reads_and_reseals_without_changing_auth_generation() {
         let state = Temp(std::env::temp_dir().join(format!("aaa-legacy-vault-{}", util::new_id())));

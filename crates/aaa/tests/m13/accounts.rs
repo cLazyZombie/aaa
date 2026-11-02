@@ -483,7 +483,8 @@ fn install_login_fixture(w: &World, gate: &Gate, values: &Value) -> PathBuf {
 import os,sys,json,pathlib,socket,stat,signal
 signal.signal(signal.SIGHUP,signal.SIG_IGN)
 kind=pathlib.Path(sys.argv[0]).name
-expected=['setup-token'] if kind=='claude' else ['-c','cli_auth_credentials_store="file"','login']
+usage=kind=='claude' and sys.argv[1:]==['auth','login','--claudeai']
+expected=(['auth','login','--claudeai'] if usage else ['setup-token']) if kind=='claude' else ['-c','cli_auth_credentials_store="file"','login']
 assert sys.argv[1:]==expected, 'official login command'
 for key in ['CLAUDE_CODE_OAUTH_TOKEN','OPENAI_API_KEY','CODEX_REFRESH_TOKEN_URL_OVERRIDE','AAA_THREAD','AAA_SESSION_ID']:
     assert key not in os.environ, 'inherited credential or pane identity'
@@ -498,14 +499,16 @@ if values.get('stubborn'):
         s.close();signal.pause();sys.exit(0)
 s.sendall((json.dumps(dict(tid='login',phase=8,home=str(home.parent),harness=kind,pid=os.getpid()))+'\n').encode())
 assert s.recv(1)==b'1'
-value=values[kind]
+value=values['claude_auth'] if usage else values[kind]
 raw=value if isinstance(value,str) else json.dumps(value)
 print(raw,flush=True)
 print(raw,file=sys.stderr,flush=True)
 if values.get('fail') or values.get('fail_for')==kind: sys.exit(1)
 if kind=='codex':
     p=home/'auth.json';p.write_text(raw);p.chmod(0o600)
-if kind=='claude' and values.get('claude_json'):
+if usage:
+    p=home/'.credentials.json';p.write_text(raw);p.chmod(0o600)
+if kind=='claude' and values.get('claude_json') and (usage or not values.get('setup_no_identity')):
     (home/'.claude.json').write_text(json.dumps(values['claude_json']))
 "#,
         fixture = fixture,
@@ -1152,6 +1155,53 @@ fn id_token(email: &str, plan: &str) -> String {
     format!("e30.{}.c2ln", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string()))
 }
 
+// 필요: 실제 새 CLI 요청→host→가짜 공식 로그인→별도 암호화 저장까지 잇고 실행 인증과 비노출을 보존한다.
+#[test]
+fn host_usage_login_separates_credentials_without_changing_execution() {
+    let (execution, execution_nonce) = canary("usage-login-execution");
+    let (access, access_nonce) = canary("usage-login-access");
+    let (refresh, refresh_nonce) = canary("usage-login-refresh");
+    let gate = Gate::new();
+    let mut w = world("http://127.0.0.1:1", &gate, &execution, POLICY_HARNESS);
+    let now = aaa_common::util::now_ms();
+    install_login_fixture(
+        &w,
+        &gate,
+        &serde_json::json!({
+            "setup_no_identity":true,
+        "claude": format!("sk-ant-oat01-{execution}"),
+            "claude_json":{"oauthAccount":{"emailAddress":"me@example.com"}},
+            "claude_auth":{"claudeAiOauth":{"accessToken":access,"refreshToken":refresh,"expiresAt":now+3_600_000,"scopes":["user:profile","user:inference"]}},
+        }),
+    );
+    let start = w.h.ok(&["account", "login", "work", "--harness", "claude"]);
+    Gate::release(gate.take(1, 8), b'1');
+    login_result(&w, start["login"]["id"].as_str().unwrap(), "succeeded");
+    let before = w.h.ok(&["account", "list"]);
+    assert!(w.h.json(&["account", "usage-login", "work"]).is_err());
+    let start = w.h.ok(&["account", "usage-login", "work", "--email", "me@example.com"]);
+    assert_eq!(start["login"]["usage_only"], true);
+    Gate::release(gate.take(1, 8), b'1');
+    let done = login_result(&w, start["login"]["id"].as_str().unwrap(), "succeeded");
+    assert_eq!(before, w.h.ok(&["account", "list"]), "실행 인증 판·시각·상태를 바꾸지 않는다");
+    assert_eq!(std::fs::read_dir(w.h.state.join("host/usage-accounts")).unwrap().count(), 1);
+    let find: Vec<_> = [(&execution, &execution_nonce), (&access, &access_nonce), (&refresh, &refresh_nonce)]
+        .into_iter()
+        .flat_map(|(value, nonce)| needles(value, nonce))
+        .collect();
+    for value in [start, done] {
+        assert!(
+            !find.iter().any(|(_, n)| value.to_string().as_bytes().windows(n.len()).any(|b| b == n)),
+            "로그인 응답 누출"
+        );
+    }
+    w.h.ticks(1);
+    w.lab.signal("host", libc::SIGTERM);
+    assert!(w.lab.wait_exit("host", T).success());
+    let leak = hits(&[w.h.state.clone(), w.projects.clone(), w.lab.root.join("host.log")], &find, &|_| false);
+    assert!(leak.is_empty(), "조회 인증 비밀이 남은 경로: {leak:?}");
+}
+
 /// 관리 GUI W5a(plan §8.351): host 로그인은 공식 CLI가 알린 메일·plan·유효 기간과 인증 날짜를 남기고, 다시 로그인에 다른 메일이
 /// 들어오면 옛 인증을 둔 채 사람이 고르기를 기다린다. 메일은 감사·알림·로그·프로젝트 파일에 나오지 않는다
 #[test]
@@ -1497,11 +1547,13 @@ for phase,payload in enumerate(payloads):
     let path = w.h.state.join("agent/sessions").join(&pane).join("quota.json");
     let read = || serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
     let first_quota = read();
+    assert_eq!(first_quota["input_missing"], serde_json::json!([]));
     assert_eq!(first_quota["input_diagnostic"]["five_hour"]["decision"], "accepted");
     assert_eq!(first_quota["input_diagnostic"]["seven_day"]["decision"], "accepted");
     Gate::release(first, b'1');
     let second = gate.take(1, 1);
     let second_quota = read();
+    assert_eq!(second_quota["input_missing"], serde_json::json!([300]));
     assert_eq!(second_quota["input_diagnostic"]["five_hour"]["decision"], "missing");
     assert_eq!(second_quota["input_diagnostic"]["seven_day"]["decision"], "accepted");
     assert_eq!(second_quota["windows"][0], first_quota["windows"][0], "없는 창의 숫자·시각은 보존한다");
@@ -1509,6 +1561,7 @@ for phase,payload in enumerate(payloads):
     Gate::release(second, b'2');
     let third = gate.take(1, 2);
     let third_quota = read();
+    assert_eq!(third_quota["input_missing"], serde_json::json!([10080]));
     assert_eq!(third_quota["input_diagnostic"]["five_hour"]["decision"], "invalid_percentage");
     assert_eq!(third_quota["input_diagnostic"]["five_hour"]["reset"], "invalid");
     assert_eq!(third_quota["input_diagnostic"]["seven_day"]["decision"], "missing");

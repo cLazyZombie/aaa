@@ -21,6 +21,14 @@ impl crate::Agent {
         let windows = reading.windows;
         let text = windows.iter().map(|w| statusline(w, now)).collect::<Vec<_>>().join(" · ");
         let snapshot = QuotaSnapshot {
+            input_missing: Some(
+                [(300, reading.diagnostic.five_hour.decision), (10080, reading.diagnostic.seven_day.decision)]
+                    .into_iter()
+                    .filter_map(|(duration, decision)| {
+                        (decision == quota::claude::Decision::Missing).then_some(duration)
+                    })
+                    .collect(),
+            ),
             generation: generation.clone(),
             source: QuotaSource::ClaudeStatusline,
             sampled_at_ms: now,
@@ -98,6 +106,7 @@ mod tests {
         assert!(a.quota_snapshot("pane1", "generation-a").unwrap().is_none());
         a.record_quota(&spec, &json!({"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":9999999999_u64},"seven_day":{"used_percentage":20,"resets_at":9999999999_u64}},"token":aaa_test_support::token("discard-untrusted-token")})).unwrap();
         let first = a.quota_snapshot("pane1", "generation-a").unwrap().unwrap();
+        assert_eq!(first.input_missing, Some(vec![]));
         a.record_quota(&spec, &json!({"rate_limits":{"five_hour":{"used_percentage":70,"resets_at":9999999999_u64}}}))
             .unwrap();
         let observed = first.windows.iter().find(|w| w.duration_mins == Some(10080)).unwrap();
@@ -119,6 +128,7 @@ mod tests {
         assert_eq!(diagnostic.snapshot.generation, "generation-a");
         assert_eq!(diagnostic.input_diagnostic.five_hour.decision, quota::claude::Decision::Accepted);
         assert_eq!(diagnostic.input_diagnostic.seven_day.decision, quota::claude::Decision::Missing);
+        assert_eq!(diagnostic.snapshot.input_missing, Some(vec![10080]));
         let private = aaa_test_support::token("discard-untrusted-diagnostic");
         let mut input = json!({"rate_limits":{"five_hour":{"used_percentage":private,"resets_at":private}},
             "token":private,"transcript_path":private,"messages":[private]});

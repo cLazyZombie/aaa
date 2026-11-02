@@ -69,6 +69,42 @@ fn expire_parts(view: &Mutex<AccountLoginView>, pending: &Mutex<Option<Pending>>
     false
 }
 
+struct UsageLogin {
+    generation: String,
+    email: String,
+    registered_email: Option<String>,
+}
+
+fn complete_usage(
+    host: &Arc<Host>,
+    view: &mut AccountLoginView,
+    context: &UsageLogin,
+    secret: Result<String, ErrorBody>,
+    identity: Identity,
+    cleaned: bool,
+    cancelled: bool,
+) {
+    let same = matches!((&view.expect_email, &identity.email), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
+    let current = host.accounts.generation(&view.account).is_ok_and(|g| g == context.generation)
+        && host.account_meta(&view.account).email == context.registered_email;
+    let stored = if cleaned && !cancelled && same && current {
+        secret.and_then(|s| host.accounts.store_usage(&context.generation, &s, None)).is_ok()
+    } else {
+        false
+    };
+    view.state = if cancelled {
+        "cancelled"
+    } else if stored {
+        "succeeded"
+    } else {
+        "failed"
+    }
+    .into();
+    if !stored && !cancelled {
+        view.error = Some("같은 계정의 조회 인증을 저장하지 못했습니다".into());
+    }
+}
+
 fn expire(job: &LoginJob) -> bool {
     expire_parts(&job.view, &job.pending)
 }
@@ -88,12 +124,44 @@ impl Drop for Temp {
 }
 
 impl Host {
+    fn prepare_usage_login(&self, name: &str, supplied: Option<&str>) -> Result<UsageLogin, ErrorBody> {
+        if !self.accounts.list()?.iter().any(|a| a.name == name && a.harness == "claude") {
+            return Err(fail());
+        }
+        let registered_email = self.account_meta(name).email;
+        let email = registered_email
+            .as_deref()
+            .or(supplied)
+            .ok_or_else(|| ErrorBody::new(ErrorCode::BadRequest, "조회할 계정 메일을 입력하세요"))?
+            .trim();
+        if email.len() > 254
+            || email.chars().any(|c| c.is_whitespace() || c.is_control())
+            || !email.split_once('@').is_some_and(|(a, b)| !a.is_empty() && b.contains('.'))
+            || supplied.is_some_and(|s| !s.trim().eq_ignore_ascii_case(email))
+        {
+            return Err(fail());
+        }
+        Ok(UsageLogin { generation: self.accounts.generation(name)?, email: email.into(), registered_email })
+    }
+
     pub(crate) fn account_login(
         self: &Arc<Self>,
         name: &str,
         harness: &str,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.account_login_start(name, harness, actor, false, None)
+    }
+
+    pub(crate) fn account_login_start(
+        self: &Arc<Self>,
+        name: &str,
+        harness: &str,
+        actor: &str,
+        usage_only: bool,
+        usage_email: Option<&str>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let usage_generation = if usage_only { Some(self.prepare_usage_login(name, usage_email)?) } else { None };
         if !crate::accounts::valid_name(name) || !matches!(harness, "claude" | "codex") {
             return Err(fail());
         }
@@ -101,8 +169,13 @@ impl Host {
             return Err(fail());
         }
         // 다시 로그인이면 그 별칭에 기록된 메일로 들어와야 한다(「이 메일로 로그인하세요」)
-        let expect_email =
-            if self.accounts.list()?.iter().any(|a| a.name == name) { self.account_meta(name).email } else { None };
+        let expect_email = if let Some(context) = &usage_generation {
+            Some(context.email.clone())
+        } else if self.accounts.list()?.iter().any(|a| a.name == name) {
+            self.account_meta(name).email
+        } else {
+            None
+        };
         let mut jobs = self.accounts.logins.lock().unwrap();
         if jobs.values().map(expire).fold(false, |a, b| a | b) {
             self.accounts_bump();
@@ -172,7 +245,11 @@ impl Host {
             command.args(["-c", "cli_auth_credentials_store=\"file\"", "login"]);
         } else {
             command.env("CLAUDE_CONFIG_DIR", &home);
-            command.arg("setup-token");
+            if usage_only {
+                command.args(["auth", "login", "--claudeai"]);
+            } else {
+                command.arg("setup-token");
+            }
         }
         let pair = aaa_common::child_process::with_spawn_lock(|| {
             native_pty_system().openpty(PtySize { rows: 32, cols: 512, pixel_width: 0, pixel_height: 0 })
@@ -195,6 +272,7 @@ impl Host {
         };
         drop(pair.slave);
         let view = AccountLoginView {
+            usage_only: usage_only.then_some(true),
             id: id.clone(),
             account: name.into(),
             harness: harness.into(),
@@ -283,7 +361,7 @@ impl Host {
                     .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
                     .is_ok();
             let secret = if end == "succeeded" && !was_cancelled && bytes.len() as u64 <= MAX_OUTPUT {
-                login_secret(&v.harness, &home, &bytes)
+                if usage_only { host.usage.claude_login_secret(&home) } else { login_secret(&v.harness, &home, &bytes) }
             } else {
                 Err(fail())
             };
@@ -296,12 +374,18 @@ impl Host {
                 }
             };
             // 평문 정리에 실패하면 기존 금고 값을 바꾸지 않는다.
-            let cleaned = std::fs::remove_dir_all(&temp.0)
-                .as_ref()
-                .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
-                .is_ok();
+            let keychain_cleaned = !usage_only || host.usage.claude_login_cleanup(&home);
+            let cleaned = keychain_cleaned
+                && std::fs::remove_dir_all(&temp.0)
+                    .as_ref()
+                    .inspect_err(|error| aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류"))
+                    .is_ok();
             drop(temp);
-            complete(&host, &mut v, &state, &pending, secret, identity, cleaned, was_cancelled);
+            if let Some(context) = usage_generation {
+                complete_usage(&host, &mut v, &context, secret, identity, cleaned, was_cancelled);
+            } else {
+                complete(&host, &mut v, &state, &pending, secret, identity, cleaned, was_cancelled);
+            }
             drop(v);
             host.accounts_bump();
             done.send_replace(true);

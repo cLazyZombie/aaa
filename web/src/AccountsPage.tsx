@@ -18,7 +18,7 @@ import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, 
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
+type Loaded = { usageLogin: boolean; remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -43,6 +43,7 @@ function useAccounts(loginId: string | null) {
           : null;
       if (mine !== seq.current) return;
       setData({
+        usageLogin: apiAtLeast(m?.front_api, 1, 155),
         remote: apiAtLeast(m?.front_api, 1, 151),
         accounts: list.kind === "accounts" ? list.accounts : [],
         defaults: defaults.kind === "account_defaults" ? defaults.defaults : [],
@@ -174,6 +175,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                       {data.quota && <AccountQuotaCard quota={usage.report?.accounts.find((q) => q.account === a.name && q.harness === a.harness)} now={usage.now} failed={usage.error} />}
                       {canEdit && (
                         <div className="op-buttons acct-actions">
+                          {data.usageLogin && a.harness === "claude" && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 사용량 조회 로그인`} onClick={() => openAccountLogin(a.name, a.harness, true, a.email)}>조회 로그인</button>}
                           {data.rename && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 이름 바꾸기`} onClick={() => { setRenaming(a.name); setNewName(a.name); setMsg(null); setRenamed(null); }}>이름 바꾸기</button>}
                           <button type="button" className="btn small" disabled={busy || !!active} onClick={() => void start(a.name, a.harness)} aria-label={`${a.name} 다시 로그인`}>
                             다시 로그인

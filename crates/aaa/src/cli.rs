@@ -54,6 +54,13 @@ enum AccountCmd {
         #[arg(long, value_parser=["claude", "codex"])]
         harness: String,
     },
+    /// 실행 인증과 별도로 Claude 사용량 조회에 로그인한다.
+    UsageLogin {
+        name: String,
+        /// 등록 메일이 모름일 때 조회할 계정의 기대 메일. 실행 인증의 메일을 바꾸지 않는다.
+        #[arg(long)]
+        email: Option<String>,
+    },
     LoginStatus {
         id: String,
     },
@@ -2173,6 +2180,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 front(json, FrontRequest::AccountStartCancel { project: project_or_here(project)?, id })
             }
             AccountCmd::Login { name, harness } => front(json, FrontRequest::AccountLogin { name, harness }),
+            AccountCmd::UsageLogin { name, email } => front(
+                json,
+                FrontRequest::AccountUsageLogin { name, remote: false, email: email.map(aaa_proto::SecretText) },
+            ),
             AccountCmd::LoginStatus { id } => front(json, FrontRequest::AccountLoginStatus { id }),
             AccountCmd::LoginCancel { id } => front(json, FrontRequest::AccountLoginCancel { id }),
             AccountCmd::LoginConfirm { id, switch, keep: _ } => {

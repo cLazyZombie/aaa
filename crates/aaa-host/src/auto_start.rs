@@ -765,6 +765,8 @@ mod tests {
     use aaa_proto::{ProviderUsage, UsageProblem, UsageReport, UsageWindow};
     fn account(id: UsageProviderId, used: f64) -> ProviderUsage {
         ProviderUsage {
+            input_missing: None,
+            query_status: None,
             id,
             key: format!("{id:?}"),
             account: None,

@@ -16,6 +16,8 @@ struct Reading {
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Entry {
     generation: String,
+    #[serde(default)]
+    query_generation: Option<String>,
     attempted_ms: u64,
     next_ms: u64,
     readings: HashMap<String, Reading>,
@@ -30,12 +32,39 @@ pub(crate) struct Cache {
 
 fn merge(entry: &Entry, account: &str, harness: &str, now: u64) -> AccountQuota {
     let mut out = AccountQuota {
+        input_missing: None,
+        query_status: None,
         account: account.into(),
         harness: harness.into(),
         windows: vec![],
         problem: None,
         retry_at_ms: None,
     };
+    if harness == "claude" {
+        let inputs: Vec<_> = entry
+            .readings
+            .values()
+            .filter(|r| r.snapshot.generation == entry.generation && r.snapshot.source == QuotaSource::ClaudeStatusline)
+            .filter_map(|r| r.snapshot.input_missing.as_ref())
+            .collect();
+        out.input_missing = (!inputs.is_empty()).then(|| {
+            [300, 10080]
+                .into_iter()
+                .filter(|duration| inputs.iter().all(|missing| missing.contains(duration)))
+                .collect()
+        });
+        out.query_status = if entry.query_generation.is_none() {
+            Some(UsageProblem::Unobserved)
+        } else {
+            entry.readings.get("host").and_then(|r| match r.http_status {
+                Some(403) => Some(UsageProblem::Denied),
+                Some(400 | 401) => Some(UsageProblem::Expired),
+                Some(429) => Some(UsageProblem::RateLimited),
+                Some(_) => Some(UsageProblem::Failed),
+                None => r.snapshot.problem.map(|_| UsageProblem::Failed),
+            })
+        };
+    }
     for r in entry.readings.values() {
         let s = &r.snapshot;
         if s.generation != entry.generation {
@@ -274,6 +303,20 @@ impl crate::Host {
                 if entry.generation != generation {
                     entry = Entry { generation: generation.clone(), ..Default::default() };
                 }
+                let query = if harness == "claude" { self.accounts.usage_credential(&generation).ok() } else { None };
+                let query_generation = query.as_ref().and_then(|c| c.auth_generation.clone());
+                if harness == "claude" && entry.query_generation != query_generation {
+                    entry.query_generation = query_generation;
+                    entry.next_ms = 0;
+                    entry.attempted_ms = 0;
+                    if let Some(reading) = entry.readings.get_mut("host")
+                        && reading.http_status != Some(429)
+                    {
+                        reading.http_status = None;
+                        reading.snapshot.problem = None;
+                        reading.snapshot.retry_at_ms = None;
+                    }
+                }
                 let mine: Vec<_> =
                     bindings.iter().filter(|b| b.account == name && b.harness == harness).cloned().collect();
                 let forced = refresh && now.saturating_sub(entry.attempted_ms) >= crate::usage::min_refresh_ms();
@@ -373,15 +416,17 @@ impl crate::Host {
                                 })
                             });
                             let retry = entry.readings.get("host").and_then(|r| r.snapshot.retry_at_ms);
-                            if !complete && retry.is_none_or(|t| now >= t) {
-                                let (snapshot, http_status) = match self.accounts.credential(&name) {
-                                    Ok(c) if c.auth_generation.as_deref() == Some(&generation) => {
-                                        self.usage.claude_account_quota(generation.clone(), &c.secret.0, now).await
-                                    }
-                                    _ => {
-                                        (empty(&generation, QuotaSource::ClaudeOauth, QuotaProblem::Locked, now), None)
-                                    }
-                                };
+                            let denied = entry
+                                .readings
+                                .get("host")
+                                .is_some_and(|r| matches!(r.http_status, Some(400 | 401 | 403)));
+                            if !complete
+                                && !denied
+                                && retry.is_none_or(|t| now >= t)
+                                && let Some(c) = &query
+                            {
+                                let (snapshot, http_status) =
+                                    self.usage.claude_usage_quota(&self.accounts, c, generation.clone(), now).await;
                                 accept_reading(
                                     &mut entry,
                                     "host".into(),
@@ -411,9 +456,16 @@ impl crate::Host {
                 })
                 .ok()
             {
-                Some(g) if g == entry.generation => {
+                Some(g)
+                    if g == entry.generation
+                        && (self.accounts.credential(&name).is_ok_and(|c| c.harness != "claude")
+                            || self.accounts.usage_credential(&g).ok().and_then(|c| c.auth_generation)
+                                == entry.query_generation) =>
+                {
                     cache.entries.insert(name, entry);
                 }
+                // 조회 로그인만 바뀌었으면 늦은 응답을 버리되 직전 숫자·시각은 남긴다.
+                Some(g) if g == entry.generation => {}
                 Some(generation) => {
                     cache.entries.insert(name, Entry { generation, ..Default::default() });
                 }
@@ -457,6 +509,7 @@ impl crate::Host {
 }
 fn empty(generation: &str, source: QuotaSource, problem: QuotaProblem, now: u64) -> QuotaSnapshot {
     QuotaSnapshot {
+        input_missing: None,
         generation: generation.into(),
         source,
         sampled_at_ms: now,
@@ -471,6 +524,7 @@ mod tests {
     use super::*;
     fn good(at: u64, used: f64) -> QuotaSnapshot {
         QuotaSnapshot {
+            input_missing: None,
             generation: "login-a".into(),
             source: QuotaSource::ClaudeStatusline,
             sampled_at_ms: at,
@@ -487,6 +541,35 @@ mod tests {
             retry_at_ms: None,
         }
     }
+    #[test]
+    fn input_missing_and_query_denied_do_not_change_model_quota() {
+        let now = util::now_ms();
+        let mut entry =
+            Entry { generation: "g".into(), query_generation: Some("query-g".into()), ..Default::default() };
+        let mut pane = good(now, 20.);
+        pane.generation = "g".into();
+        pane.windows[0].resets_at_ms = Some(now + 3_600_000);
+        pane.input_missing = Some(vec![300]);
+        accept(&mut entry, "pane".into(), "mac-a".into(), pane, now);
+        accept_reading(
+            &mut entry,
+            "host".into(),
+            "host".into(),
+            empty("g", QuotaSource::ClaudeOauth, QuotaProblem::Unsupported, now),
+            Some(403),
+            now,
+        );
+        let report = merge(&entry, "work", "claude", now);
+        assert_eq!(report.query_status, Some(UsageProblem::Denied));
+        assert_eq!(report.input_missing, Some(vec![300]));
+        assert_eq!(report.problem, None, "조회 거부를 모델 한도/실행 인증 오류로 올리지 않는다");
+        let mut other = good(now, 20.);
+        other.generation = "g".into();
+        other.input_missing = Some(vec![]);
+        accept(&mut entry, "other".into(), "mac-b".into(), other, now);
+        assert_eq!(merge(&entry, "work", "claude", now).input_missing, Some(vec![]));
+    }
+
     #[tokio::test]
     async fn rename_during_quota_collection_keeps_saved_observations_and_drops_old_alias_cache() {
         let root = std::env::temp_dir().join(format!("aaa-quota-rename-{}", util::new_id()));
@@ -501,10 +584,19 @@ mod tests {
         h.accounts.import("work", "claude", &aaa_test_support::token("fixture-quota-rename-0123456789")).unwrap();
         let generation = h.accounts.generation("work").unwrap();
         let now = util::now_ms();
+        let raw = serde_json::json!({"access_token":aaa_test_support::token("rename-query"), "refresh_token":aaa_test_support::token("rename-refresh"), "expires_ms":now+3_600_000,"scopes":["user:profile"]}).to_string();
+        h.accounts.store_usage(&generation, &raw, None).unwrap();
+        let query = h.accounts.usage_credential(&generation).unwrap();
         let mut snapshot = good(now, 37.);
         snapshot.generation = generation.clone();
         snapshot.windows[0].resets_at_ms = Some(now + 3_600_000);
-        let mut entry = Entry { generation, attempted_ms: now, next_ms: now + 60_000, ..Default::default() };
+        let mut entry = Entry {
+            generation: generation.clone(),
+            query_generation: query.auth_generation.clone(),
+            attempted_ms: now,
+            next_ms: now + 60_000,
+            ..Default::default()
+        };
         accept(&mut entry, "pane-a".into(), "mac-a".into(), snapshot, now);
         h.db.set_meta("account-quota-v1/work", &serde_json::to_string(&entry).unwrap()).unwrap();
         // collector가 cache를 잡고 외부 응답을 기다리는 경계. 이름 변경은 기다림 없이 끝나야 한다.
@@ -522,6 +614,8 @@ mod tests {
         let report = h.quota_report(false).await.unwrap();
         assert_eq!(report.accounts.len(), 1);
         assert_eq!(report.accounts[0].account, "renamed");
+        assert_eq!(h.accounts.usage_credential(&generation).unwrap().secret.0, query.secret.0);
+        assert_eq!(h.accounts.generation("renamed").unwrap(), generation);
         assert_eq!(report.accounts[0].windows[0].window.used_percent, 37.);
         assert!(h.db.meta("account-quota-v1/work").unwrap().is_none());
         assert!(!h.account_quota.lock().await.entries.contains_key("work"));
@@ -590,7 +684,7 @@ mod tests {
         week.windows[0].window_id = "seven_day".into();
         accept(&mut entry, "pane".into(), "mac-a".into(), week, 1000);
         accept(&mut entry, "pane".into(), "mac-a".into(), good(2000, 80.), 2000);
-        let blank = QuotaSnapshot { windows: vec![], ..good(3000, 0.) };
+        let blank = QuotaSnapshot { input_missing: None, windows: vec![], ..good(3000, 0.) };
         accept(&mut entry, "pane".into(), "mac-a".into(), blank, 3000);
         accept(
             &mut entry,

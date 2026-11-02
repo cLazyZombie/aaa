@@ -15,6 +15,7 @@ type Route = (u16, Vec<(String, String)>, String);
 
 /// 길마다 마지막 요청의 머리
 type Seen = HashMap<String, Vec<(String, String)>>;
+type Pause = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 
 #[derive(Clone, Default)]
 struct Fake {
@@ -23,6 +24,8 @@ struct Fake {
     hits: Arc<Mutex<HashMap<String, usize>>>,
     /// 길마다 마지막 요청의 머리(소문자 이름)
     seen: Arc<Mutex<Seen>>,
+    bodies: Arc<Mutex<HashMap<String, Value>>>,
+    pauses: Arc<Mutex<HashMap<String, Pause>>>,
 }
 
 impl Fake {
@@ -43,13 +46,33 @@ impl Fake {
                             Ok(n) => buf.extend_from_slice(&chunk[..n]),
                         }
                     }
-                    let head = String::from_utf8_lossy(&buf).to_string();
+                    let end = buf.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+                    let head = String::from_utf8_lossy(&buf[..end]).to_string();
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.split_once(':')
+                                .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+                                .and_then(|(_, n)| n.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    while buf.len() < end + length {
+                        let n = s.read(&mut chunk).await.unwrap();
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
                     let mut lines = head.split("\r\n");
                     let path = lines.next().unwrap_or("").split_whitespace().nth(1).unwrap_or("").to_string();
                     let headers: Vec<(String, String)> = lines
                         .filter_map(|l| l.split_once(':'))
                         .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
                         .collect();
+                    f.bodies
+                        .lock()
+                        .unwrap()
+                        .insert(path.clone(), serde_json::from_slice(&buf[end..end + length]).unwrap_or(Value::Null));
                     *f.hits.lock().unwrap().entry(path.clone()).or_default() += 1;
                     f.seen.lock().unwrap().insert(path.clone(), headers.clone());
                     // 「길|Authorization」 길이 먼저(token마다 다른 답)
@@ -63,6 +86,11 @@ impl Fake {
                             "{}".into(),
                         ))
                     };
+                    let pause = f.pauses.lock().unwrap().get(&path).cloned();
+                    if let Some((entered, release)) = pause {
+                        entered.notify_one();
+                        release.notified().await;
+                    }
                     let mut out = format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n");
                     for (k, v) in extra {
                         out.push_str(&format!("{k}: {v}\r\n"));
@@ -279,6 +307,7 @@ async fn sidebar_uses_registered_claude_statusline_instead_of_unrelated_expired_
     host.accounts.import("work", "claude", &aaa_test_support::token("fixture-claude-oauth-token-0123456789")).unwrap();
     let now = aaa_common::util::now_ms();
     let snapshot = QuotaSnapshot {
+        input_missing: None,
         generation: host.accounts.generation("work").unwrap(),
         source: QuotaSource::ClaudeStatusline,
         sampled_at_ms: now,
@@ -319,10 +348,16 @@ async fn sidebar_uses_registered_claude_statusline_instead_of_unrelated_expired_
     fake.route("/api/oauth/usage", 403, serde_json::json!({}));
     let replacement = aaa_test_support::token("fixture-new-claude-token-0123456789");
     host.accounts.import("work", "claude", &replacement).unwrap();
+    let disconnected = host.sidebar_usage(false).await;
+    assert_eq!(disconnected.providers[0].query_status, Some(UsageProblem::Unobserved));
+    assert!(disconnected.providers[0].windows.is_empty());
+    let query_replacement = aaa_test_support::token("replacement-query-access");
+    let generation = host.accounts.generation("work").unwrap();
+    host.accounts.store_usage(&generation, &query_auth(&query_replacement, now + 3_600_000), None).unwrap();
     let report = host.sidebar_usage(false).await;
     assert_eq!(report.providers[0].problem, Some(UsageProblem::Unsupported));
     assert!(report.providers[0].windows.is_empty());
-    assert_eq!(fake.header("/api/oauth/usage", "authorization"), Some(format!("Bearer {replacement}")));
+    assert_eq!(fake.header("/api/oauth/usage", "authorization"), Some(format!("Bearer {query_replacement}")));
 }
 
 #[test]
@@ -346,6 +381,8 @@ fn registered_sidebar_keeps_observation_age_and_failure_without_borrowing_anothe
         conflict: false,
     };
     let mut quota = AccountQuota {
+        input_missing: None,
+        query_status: None,
         account: "work".into(),
         harness: "claude".into(),
         windows: vec![window],
@@ -389,6 +426,8 @@ fn registered_sidebar_keeps_each_window_age_when_only_weekly_observations_arrive
         conflict: false,
     };
     let mut quota = AccountQuota {
+        input_missing: None,
+        query_status: None,
         account: "work".into(),
         harness: "claude".into(),
         problem: None,
@@ -511,6 +550,14 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
     let token = aaa_test_support::token("registered-only-quota");
     host.register_account("work", "claude", &token).unwrap();
     let now = aaa_common::util::now_ms();
+    let generation = host.accounts.generation("work").unwrap();
+    let execution = host.accounts.credential("work").unwrap();
+    let missing = host.quota_report(true).await.unwrap();
+    assert_eq!(missing.accounts[0].query_status, Some(UsageProblem::Unobserved));
+    assert_eq!(fake.hits("/api/oauth/usage"), 0, "실행 인증으로 조회하지 않는다");
+    let query_token = aaa_test_support::token("query-only-access");
+    let query_raw = query_auth(&query_token, now + 3_600_000);
+    host.accounts.store_usage(&generation, &query_raw, None).unwrap();
     let reset = now / 1000 * 1000 + 86_400_000;
     fake.route(
         "/api/oauth/usage",
@@ -525,7 +572,7 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
     assert_eq!(report.accounts[0].problem, None);
     assert_eq!(report.accounts[0].windows.len(), 2);
     assert!(report.accounts[0].windows.iter().all(|w| w.source == QuotaSource::ClaudeOauth));
-    assert_eq!(fake.header("/api/oauth/usage", "authorization"), Some(format!("Bearer {token}")));
+    assert_eq!(fake.header("/api/oauth/usage", "authorization"), Some(format!("Bearer {query_token}")));
     assert_eq!(fake.header("/api/oauth/usage", "anthropic-beta").as_deref(), Some("oauth-2025-04-20"));
     assert!(!serde_json::to_string(&report).unwrap().contains(&token));
     // 같은 DB에서 수집기를 새로 만들고 시계를 기다리지 않고 다음 조회를 시작한다.
@@ -553,12 +600,19 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
     let saved: Value = serde_json::from_str(&host.db.meta("account-quota-v1/work").unwrap().unwrap()).unwrap();
     assert_eq!(saved["readings"]["host"]["http_status"], 403);
     assert_eq!(fake.hits("/api/oauth/usage"), 2);
+    assert_eq!(report.accounts[0].query_status, Some(UsageProblem::Denied));
+    due(&host, false).await;
+    host.quota_report(true).await.unwrap();
+    assert_eq!(fake.hits("/api/oauth/usage"), 2, "같은 거부 인증은 강제 새로고침에도 다시 묻지 않는다");
+    assert_eq!(host.accounts.credential("work").unwrap().secret.0, execution.secret.0);
+    assert_eq!(host.accounts.generation("work").unwrap(), generation);
     let (_, history) = host.cached_allocation_quota("work", "claude").unwrap();
     assert_eq!(history.windows[1].window.used_percent, 35.);
     assert_eq!(history.windows[1].window.resets_at_ms, Some(reset));
     let observed = history.windows[1].window.observed_at_ms;
     assert!(observed < now);
     due(&host, false).await;
+    host.accounts.store_usage(&generation, &query_raw, None).unwrap();
     fake.route_with("/api/oauth/usage", 429, vec![("Retry-After", "1200")], serde_json::json!({}));
     let report = host.quota_report(false).await.unwrap();
     assert_eq!(report.accounts[0].problem, Some(QuotaProblem::Failed), "조회 한도는 모델 사용 한도가 아니다");
@@ -568,6 +622,13 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
     due(&host, false).await;
     host.quota_report(false).await.unwrap();
     assert_eq!(fake.hits("/api/oauth/usage"), 3, "host 캐시를 다시 읽어도 Retry-After 전에는 묻지 않는다");
+    host.accounts.store_usage(&generation, &query_raw, None).unwrap();
+    host.quota_report(true).await.unwrap();
+    assert_eq!(fake.hits("/api/oauth/usage"), 3, "조회 재로그인도 Retry-After를 건너뛰지 않는다");
+    let encrypted =
+        std::fs::read_to_string(lab.home.join("host/usage-accounts").join(format!("{generation}.json"))).unwrap();
+    assert!(!encrypted.contains(&query_token));
+    assert!(!encrypted.contains(&aaa_test_support::token("query-owned-refresh")));
     // Host 자체도 다시 열어 마지막 정상 관측이 메모리에만 있는 것이 아님을 확인한다.
     drop(host);
     let host = crate::Host::open(aaa_config::HostConfig::default(), lab.home.join("host")).unwrap();
@@ -586,10 +647,17 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
     assert_eq!(name, "work");
     assert!(allocation.selection.reason.contains("마지막 관측으로 판단 잔량 65.0%"));
     host.accounts.import("work", "claude", &aaa_test_support::token("replacement-quota")).unwrap();
+    assert!(host.accounts.usage_credential(&generation).is_err(), "실행 재등록 때 옛 조회 인증을 정리한다");
     assert!(
         host.cached_allocation_quota("work", "claude").unwrap().1.windows.is_empty(),
         "재로그인 때 옛 기록을 섞지 않는다"
     );
+}
+
+fn query_auth(token: &str, expires_ms: u64) -> String {
+    serde_json::json!({"access_token": token, "refresh_token": aaa_test_support::token("query-owned-refresh"),
+        "expires_ms":expires_ms, "scopes":["user:profile","user:inference"]})
+    .to_string()
 }
 
 // 필요: 실행용 인증의 조회 거부·조회 제한을 진단하며 모델 한도·인증을 바꾸지 않는다.
@@ -625,4 +693,152 @@ async fn registered_oauth_diagnostic_distinguishes_http_status_without_saving_er
     assert_eq!(http_status, None, "성공하면 앞 HTTP 실패 코드를 이어 쓰지 않는다");
     assert_eq!(snapshot.problem, None);
     assert_eq!(snapshot.windows[0].used_percent, 0.);
+}
+
+// 필요: 조회 인증만 host가 갱신하고, 회전한 인증을 보관한 뒤 실제 조회에 쓴다.
+#[tokio::test]
+async fn usage_auth_refresh_rotates_only_query_credentials_and_rejects_late_save() {
+    let (fake, origin) = Fake::start().await;
+    let lab = Lab::new("query-refresh");
+    let service = UsageService::new(lab.ctx(&origin, false));
+    let accounts = crate::accounts::Accounts::new(&lab.home.join("host")).unwrap();
+    let execution = aaa_test_support::token("execution-refresh-untouched");
+    accounts.import("work", "claude", &execution).unwrap();
+    let generation = accounts.generation("work").unwrap();
+    let old = query_auth(&aaa_test_support::token("query-before-refresh"), NOW - 1);
+    accounts.store_usage(&generation, &old, None).unwrap();
+    let credential = accounts.usage_credential(&generation).unwrap();
+    let access = aaa_test_support::token("query-refreshed-access");
+    let refresh = aaa_test_support::token("query-refreshed-refresh");
+    fake.route("/v1/oauth/token", 200, serde_json::json!({"access_token":access,"refresh_token":refresh,"expires_in":3600,"scope":"user:profile user:inference"}));
+    fake.route(
+        "/api/oauth/usage",
+        200,
+        serde_json::json!({"five_hour":{"utilization":24,"resets_at":utc_iso(NOW+3_600_000)}}),
+    );
+    let (snapshot, status) = service.claude_usage_quota(&accounts, &credential, generation.clone(), NOW).await;
+    assert_eq!(status, None);
+    assert_eq!(snapshot.windows[0].used_percent, 24.);
+    let saved = accounts.usage_credential(&generation).unwrap();
+    let auth = crate::usage::claude_auth::Auth::parse(&saved.secret.0).unwrap();
+    assert_eq!(auth.access_token, access);
+    assert_eq!(auth.refresh_token, refresh);
+    assert_eq!(saved.auth_generation, credential.auth_generation, "자동 갱신은 조회 연결 세대를 바꾸지 않는다");
+    assert_eq!(accounts.credential("work").unwrap().secret.0, execution);
+    assert_eq!(accounts.generation("work").unwrap(), generation);
+    assert_eq!(fake.header("/api/oauth/usage", "authorization"), Some(format!("Bearer {access}")));
+    let body = fake.bodies.lock().unwrap()["/v1/oauth/token"].clone();
+    assert_eq!(body["refresh_token"], aaa_test_support::token("query-owned-refresh"));
+    assert_eq!(body["grant_type"], "refresh_token");
+    service.claude_usage_quota(&accounts, &saved, generation.clone(), NOW).await;
+    assert_eq!(fake.hits("/v1/oauth/token"), 1, "새 인증은 다시 갱신하지 않는다");
+    accounts
+        .store_usage(&generation, &query_auth(&aaa_test_support::token("new-login-query"), NOW + 3_600_000), None)
+        .unwrap();
+    let newer = accounts.usage_credential(&generation).unwrap();
+    service.claude_usage_quota(&accounts, &credential, generation.clone(), NOW).await;
+    assert_eq!(fake.hits("/api/oauth/usage"), 2, "늦은 갱신의 저장 실패 뒤 조회하지 않는다");
+    assert_eq!(accounts.usage_credential(&generation).unwrap().secret.0, newer.secret.0);
+    for status in [400, 401, 403, 429, 500] {
+        fake.route_with(
+            "/v1/oauth/token",
+            status,
+            vec![("Retry-After", "1200")],
+            serde_json::json!({"ignored":execution}),
+        );
+        let (snapshot, actual) = service.claude_usage_quota(&accounts, &credential, generation.clone(), NOW).await;
+        assert_eq!(actual, Some(status));
+        assert!(snapshot.windows.is_empty());
+        assert_eq!(snapshot.retry_at_ms, (status == 429).then_some(NOW + 1_200_000));
+        assert_eq!(accounts.usage_credential(&generation).unwrap().secret.0, newer.secret.0);
+    }
+}
+
+#[test]
+fn usage_login_reads_only_its_isolated_store_and_requires_profile_scope() {
+    let lab = Lab::new("query-isolation");
+    let home = lab.home.join("owned-login");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut ctx = lab.ctx("http://127.0.0.1:0", true);
+    let expected_service =
+        format!("Claude Code-credentials-{}", &hex::encode(Sha256::digest(home.to_string_lossy().as_bytes()))[..8]);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let seen = calls.clone();
+    let expected = expected_service.clone();
+    ctx.keychain = Arc::new(move |service, account| {
+        assert_eq!(service, expected);
+        assert!(account.is_none());
+        seen.lock().unwrap().push(service.to_string());
+        KeychainRead::Found(serde_json::json!({"claudeAiOauth":{"accessToken":aaa_test_support::token("isolated-access"),"refreshToken":aaa_test_support::token("isolated-refresh"),"expiresAt":NOW+3_600_000,"scopes":["user:profile"]}}).to_string())
+    });
+    let expected = expected_service.clone();
+    ctx.run = Arc::new(move |args| {
+        assert_eq!(args, ["security", "delete-generic-password", "-s", expected.as_str()]);
+        Some(String::new())
+    });
+    let service = UsageService::new(ctx);
+    let raw = service.claude_login_secret(&home).unwrap();
+    assert!(crate::usage::claude_auth::Auth::parse(&raw).is_ok());
+    assert!(service.claude_login_cleanup(&home));
+    assert_eq!(calls.lock().unwrap().len(), 2);
+    let mut bad: Value = serde_json::from_str(&raw).unwrap();
+    bad["scopes"] = serde_json::json!(["user:inference"]);
+    assert!(crate::usage::claude_auth::Auth::parse(&bad.to_string()).is_err());
+}
+
+// 필요: 조회 중 새 로그인을 연결한 뒤 옛 403이 도착해도 정상 이력과 새 조회 권한을 덮지 않는다.
+#[tokio::test]
+async fn late_query_response_after_relogin_keeps_last_observations() {
+    let (fake, origin) = Fake::start().await;
+    let lab = Lab::new("late-query");
+    let mut host = crate::Host::open(aaa_config::HostConfig::default(), lab.home.join("host")).unwrap();
+    Arc::get_mut(&mut host).unwrap().usage = UsageService::new(lab.ctx(&origin, false));
+    host.accounts.import("work", "claude", &aaa_test_support::token("late-query-execution")).unwrap();
+    let generation = host.accounts.generation("work").unwrap();
+    let now = aaa_common::util::now_ms();
+    host.accounts
+        .store_usage(&generation, &query_auth(&aaa_test_support::token("late-query-old"), now + 3_600_000), None)
+        .unwrap();
+    fake.route(
+        "/api/oauth/usage",
+        200,
+        serde_json::json!({"five_hour":{"utilization":27,"resets_at":utc_iso(now+3_600_000)}}),
+    );
+    host.quota_report(false).await.unwrap();
+    let mut entry: Value = serde_json::from_str(&host.db.meta("account-quota-v1/work").unwrap().unwrap()).unwrap();
+    entry["next_ms"] = 0.into();
+    entry["attempted_ms"] = 0.into();
+    host.db.set_meta("account-quota-v1/work", &entry.to_string()).unwrap();
+    *host.account_quota.lock().await = Default::default();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    fake.pauses.lock().unwrap().insert("/api/oauth/usage".into(), (entered.clone(), release.clone()));
+    fake.route("/api/oauth/usage", 403, serde_json::json!({}));
+    let reading = tokio::spawn({
+        let host = host.clone();
+        async move { host.quota_report(false).await.unwrap() }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(3), entered.notified()).await.unwrap();
+    let query = query_auth(&aaa_test_support::token("late-query-new"), now + 3_600_000);
+    host.accounts.store_usage(&generation, &query, None).unwrap();
+    release.notify_one();
+    let report = reading.await.unwrap();
+    assert_eq!(report.accounts[0].windows[0].window.used_percent, 27.);
+    assert_eq!(
+        report.accounts[0].windows[0].window.observed_at_ms,
+        entry["readings"]["host"]["snapshot"]["windows"][0]["observed_at_ms"].as_u64().unwrap()
+    );
+    assert_ne!(report.accounts[0].query_status, Some(UsageProblem::Denied));
+    fake.pauses.lock().unwrap().clear();
+    fake.route(
+        "/api/oauth/usage",
+        200,
+        serde_json::json!({"five_hour":{"utilization":28,"resets_at":utc_iso(now+3_600_000)}}),
+    );
+    let report = host.quota_report(false).await.unwrap();
+    assert_eq!(report.accounts[0].windows[0].window.used_percent, 28.);
+    assert_eq!(
+        fake.header("/api/oauth/usage", "authorization"),
+        Some(format!("Bearer {}", aaa_test_support::token("late-query-new")))
+    );
 }

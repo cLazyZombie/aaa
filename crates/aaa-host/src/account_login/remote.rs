@@ -46,6 +46,28 @@ impl Host {
         actor: &str,
         program: std::path::PathBuf,
     ) -> Result<FrontResponse, ErrorBody> {
+        self.start_remote_with_usage(name, harness, actor, program, false, None)
+    }
+
+    pub(crate) fn account_usage_login_remote(
+        self: &Arc<Self>,
+        name: &str,
+        actor: &str,
+        email: Option<&str>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        self.start_remote_with_usage(name, "claude", actor, "claude".into(), true, email)
+    }
+
+    fn start_remote_with_usage(
+        self: &Arc<Self>,
+        name: &str,
+        harness: &str,
+        actor: &str,
+        program: PathBuf,
+        usage_only: bool,
+        email: Option<&str>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let usage_generation = if usage_only { Some(self.prepare_usage_login(name, email)?) } else { None };
         if !actor.starts_with("device:") || self.is_revoked(actor.strip_prefix("device:").unwrap_or("")) {
             return Err(ErrorBody::new(ErrorCode::Forbidden, "원격 인증은 웹 조작 기기에서 시작합니다"));
         }
@@ -72,7 +94,7 @@ impl Host {
             }
             if view.account == name && busy(&view.state) {
                 check_owner(job, actor)?;
-                if job.remote.is_some() {
+                if job.remote.is_some() && view.usage_only.unwrap_or(false) == usage_only {
                     return Ok(FrontResponse::AccountLogin { login: view.clone() });
                 }
                 return Err(error("그 계정의 로그인이 진행 중입니다"));
@@ -95,11 +117,12 @@ impl Host {
         let home = temp.0.join(harness);
         util::ensure_private_dir(&home).map_err(|e| aaa_common::diagnostic::context(e, fail()))?;
         let view = AccountLoginView {
+            usage_only: usage_only.then_some(true),
             id: id.clone(),
             account: name.into(),
             harness: harness.into(),
             state: "waiting".into(),
-            expect_email: self.account_meta(name).email,
+            expect_email: usage_generation.as_ref().map(|c| c.email.clone()).or_else(|| self.account_meta(name).email),
             email: None,
             error: None,
         };
@@ -138,7 +161,7 @@ impl Host {
                 if harness == "codex" {
                     codex(&host, &remote, &home, &program).await
                 } else {
-                    claude(&host, &remote, &temp.0, &home, &mut input, &program).await
+                    claude(&host, &remote, &temp.0, &home, &mut input, &program, usage_only).await
                 }
             };
             let owner_device = remote.lock().unwrap().owner.strip_prefix("device:").unwrap_or("").to_string();
@@ -165,14 +188,19 @@ impl Host {
                 r.code = None;
             }
             let output = result.as_ref().map(Vec::as_slice).unwrap_or_default();
-            let secret =
-                if result.is_ok() && !was_cancelled { login_secret(&harness, &home, output) } else { Err(fail()) };
+            let secret = if result.is_ok() && !was_cancelled {
+                if usage_only { host.usage.claude_login_secret(&home) } else { login_secret(&harness, &home, output) }
+            } else {
+                Err(fail())
+            };
             let identity =
                 secret.as_ref().map(|s| login_identity(&harness, &temp.0, &home, output, s)).unwrap_or_default();
             if let Err(e) = &result {
                 tracing::info!(login = %id, reason = %e.message, "원격 인증 종료");
             }
+            let keychain_cleaned = !usage_only || host.usage.claude_login_cleanup(&home);
             let cleaned = cleanup
+                && keychain_cleaned
                 && std::fs::remove_dir_all(&temp.0)
                     .inspect_err(|e| aaa_common::diagnostic::observe(e, "원격 인증 임시 자료 정리"))
                     .is_ok();
@@ -183,7 +211,9 @@ impl Host {
                 || host.revoked_devices.lock().unwrap().contains(&owner_device);
             // 메일을 모르는 기존 계정은 사람의 명시적 교체 확인을 거친다.
             let unknown = is_existing && identity.email.is_none() && secret.is_ok() && cleaned && !was_cancelled;
-            if unknown {
+            if let Some(context) = usage_generation {
+                complete_usage(&host, &mut v, &context, secret, identity, cleaned, was_cancelled);
+            } else if unknown {
                 let secret = secret.unwrap();
                 aaa_common::redact::remember_auth(&harness, &secret);
                 *pending.lock().unwrap() =
@@ -201,7 +231,7 @@ impl Host {
             } else {
                 complete(&host, &mut v, &state, &pending, secret, identity, cleaned, was_cancelled);
             }
-            if v.state == "failed" {
+            if v.state == "failed" && v.error.is_none() {
                 v.error =
                     Some(result.err().map(|e| e.message).unwrap_or_else(|| "인증 결과를 저장하지 못했습니다".into()));
             }
@@ -475,6 +505,7 @@ async fn claude(
     home: &std::path::Path,
     input: &mut mpsc::UnboundedReceiver<SecretText>,
     program: &std::path::Path,
+    usage_only: bool,
 ) -> Result<Vec<u8>, ErrorBody> {
     let browser = root.join("no-browser");
     util::write_private(&browser, b"#!/bin/sh\nexit 0\n").map_err(|e| aaa_common::diagnostic::context(e, fail()))?;
@@ -485,7 +516,11 @@ async fn claude(
             .map_err(|e| aaa_common::diagnostic::context(e, fail()))?;
     }
     let mut c = CommandBuilder::new(program);
-    c.arg("setup-token");
+    if usage_only {
+        c.args(["auth", "login", "--claudeai"]);
+    } else {
+        c.arg("setup-token");
+    }
     c.env_clear();
     for key in ["PATH", "TMPDIR", "TMP", "TEMP", "LANG"] {
         if let Some(v) = std::env::var_os(key) {

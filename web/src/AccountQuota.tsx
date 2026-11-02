@@ -4,6 +4,7 @@ import type { AccountQuota, AccountQuotaReport } from "./gen/proto";
 import { readApiResponse } from "./apiOutcome";
 import { onAccountsChanged } from "./api";
 import { usePageVisible } from "./pageVisible";
+import { quotaQueryStatus } from "./quotaQueryStatus";
 import { quotaAge, quotaLabel, quotaLeft, quotaProblem, quotaState, quotaTime } from "./accountQuotaModel";
 
 export function useAccountQuota(enabled: boolean) {
@@ -39,12 +40,13 @@ export function AccountQuotaCard({ quota, now, failed }: { quota: AccountQuota |
   return <section className="acct-quota" data-testid="account-quota" aria-label="구독 남은 사용량">
     <h4>남은 사용량</h4>
     {(failed || quota?.problem) && <p className="op-muted" data-testid="quota-problem">{failed ? `다시 읽지 못함 · 마지막 관측${typeof failed === "string" ? `: ${failed}` : ""}` : quotaProblem[quota!.problem!]}</p>}
+    {quotaQueryStatus(quota?.query_status) && <p className="op-muted" data-testid="quota-query-status">{quotaQueryStatus(quota?.query_status)}</p>}
     {windows.map((w) => {
       const state = failed ? "unknown" : quotaState(w, now);
       return <div key={`${w.limit_id}/${w.scope}/${w.duration_mins}/${w.window_id}`} className={`acct-quota-window is-${state}`} data-testid="quota-window" data-state={state}>
         <div className="acct-quota-title"><span>{quotaLabel(w)}</span><strong>{state === "unknown" ? `마지막 ${quotaLeft(w)}` : quotaLeft(w)}</strong></div>
         <meter min={0} max={100} value={Number.isFinite(w.used_percent) ? 100 - w.used_percent : 0} aria-label={`${quotaLabel(w)} 남은 양`} />
-        <p>{state === "fresh" ? "최신" : state === "stale" ? "오래됨" : "모름 · 재조회 필요"}{w.problem ? ` · ${quotaProblem[w.problem]}` : ""}{w.conflict ? " · 관측 충돌(작은 잔량)" : ""}</p>
+        <p>{state === "fresh" ? "최신" : state === "stale" ? "오래됨" : "모름 · 재조회 필요"}{w.problem ? ` · ${quotaProblem[w.problem]}` : ""}{w.conflict ? " · 관측 충돌(작은 잔량)" : ""}{w.duration_mins && quota?.input_missing?.includes(w.duration_mins) ? " · 입력 미제공" : ""}</p>
         <p>{quotaAge(w.observed_at_ms, now)} · 리셋 {quotaTime(w.resets_at_ms)}</p>
         <p>{w.machine} · {w.source === "codex_rpc" ? "공식 조회" : w.source === "claude_oauth" ? "OAuth 조회" : "상태줄 관측"}</p>
       </div>;

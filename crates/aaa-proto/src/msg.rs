@@ -2044,6 +2044,14 @@ pub enum FrontRequest {
         harness: String,
         account: Option<String>,
     },
+    /// Claude 조회용 인증. 실행 인증은 바꾸지 않는다.
+    AccountUsageLogin {
+        name: String,
+        remote: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        email: Option<crate::SecretText>,
+    },
     AccountLogin {
         name: String,
         harness: String,
