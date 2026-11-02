@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount, inList, domIs,
+  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, paneHash, base, step, browser, openSettings, sentFrames, sentCount, inList, domIs,
 } from "../lib/harness.mjs";
 
 // 한글을 입력받는 실제 셸의 문자 로케일을 고정한다. SSH의 C 로케일을 물려받으면
@@ -138,28 +138,68 @@ process.stdin.resume();`;
 
   await step("글자 폭(herdr-web-ui terminalWidths): 이모지·새 이모지·ZWJ 묶음·⚠️는 두 칸", async () => {
     aaa("tab", "create", "--machine", "labA", "--label", "widths", "--", process.execPath, `${root}/widths.js`);
-    const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 900, height: 600 })).page;
+    // host가 크기를 바꿨지만 브라우저는 아직 옛 화면인 순간을 고정한다.
+    // CI에서는 이 사이 host 칸 수와 옛 DOM 폭을 섞어 두 칸을 한 칸으로 쟀다.
+    const resized = Promise.withResolvers();
+    const held = [];
+    let snapshotCols;
+    let holding = true;
+    const gate = (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => {
+        const msg = typeof m === "string" ? JSON.parse(m) : null;
+        if (msg?.t === "snapshot") snapshotCols = msg.cols;
+        if (holding && msg?.t === "state" && msg.pane.cols !== snapshotCols) {
+          held.push(() => ws.send(m));
+          resized.resolve(msg.pane.cols);
+        } else ws.send(m);
+      });
+      server.onClose((code, reason) => ws.close({ code, reason }));
+      ws.onClose((code, reason) => server.close({ code, reason }));
+    };
+    const wp = (await pairPage(browser, aaa("web", "pair").code, { width: 900, height: 600 }, {
+      wsRoute: [/\/api\/v1\/panes\//, gate], hash: paneHash("widths"),
+    })).page;
     await inList(wp, "pane-widths");
     await until("폭 화면", async () => (await screenText(wp)).includes("W"));
-    // 글자마다 화면 위치로 몇째 칸인지 잰다(DOM renderer의 span 묶음에 기대지 않는다)
-    const cols = await wp.evaluate((cols) => {
-      const screen = document.querySelector('[data-testid="terminal"] .xterm-screen').getBoundingClientRect();
-      const cell = screen.width / cols;
+    await until("새 크기 응답 보류", () => held.length > 0);
+    const hostCols = await resized.promise;
+    // 눈금·표지를 같은 DOM에서 한 번에 잰다. host 칸 수와 렌더 시점의 차이에 의존하지 않는다.
+    const measure = () => wp.evaluate(() => {
+      const terminal = document.querySelector('[data-testid="terminal"]');
       const at = (ch) => {
-        const walk = document.createTreeWalker(document.querySelector(".xterm-rows"), NodeFilter.SHOW_TEXT);
+        const walk = document.createTreeWalker(terminal.querySelector(".xterm-rows"), NodeFilter.SHOW_TEXT);
         for (let n = walk.nextNode(); n; n = walk.nextNode()) {
           const i = n.textContent.indexOf(ch);
           if (i < 0) continue;
           const r = document.createRange();
           r.setStart(n, i);
           r.setEnd(n, i + 1);
-          return Math.round((r.getBoundingClientRect().left - screen.left) / cell);
+          return r.getBoundingClientRect().left;
         }
         return null;
       };
-      return ["X", "Y", "Z", "W"].map(at);
-    }, aaa("pane", "list").panes.find((x) => x.name === "widths").cols);
-    if (JSON.stringify(cols) !== "[2,2,2,2]") throw new Error(`글자 칸(기대 [2,2,2,2]) ${JSON.stringify(cols)}`);
+      const zero = at("0");
+      const nine = at("9");
+      if (zero === null || nine === null || nine <= zero) throw new Error("폭 눈금이 없다");
+      const cell = (nine - zero) / 9;
+      return ["X", "Y", "Z", "W"].map((ch) => {
+        const left = at(ch);
+        return left === null ? null : Math.round((left - zero) / cell);
+      });
+    });
+    const check = async (when) => {
+      const cols = await measure();
+      if (JSON.stringify(cols) !== "[2,2,2,2]") throw new Error(`${when} 글자 칸(기대 [2,2,2,2]) ${JSON.stringify(cols)}`);
+    };
+    const drawn = Number(await wp.getByTestId("terminal").getAttribute("data-view-cols"));
+    if (drawn !== snapshotCols || drawn === hostCols) throw new Error(`크기 경합 재현 실패: 화면 ${drawn}, snapshot ${snapshotCols}, host ${hostCols}`);
+    await check("크기 응답 전");
+    holding = false;
+    for (const send of held) send();
+    await until("새 크기 렌더", async () => Number(await wp.getByTestId("terminal").getAttribute("data-view-cols")) === hostCols);
+    await check("크기 응답 뒤");
     await wp.context().close();
     aaa("pane", "kill", "widths");
   });
