@@ -11,7 +11,7 @@ function provider() {
     { name: "work-claude", harness: "claude", version: 1, health: "expiring" },
     { name: "healthy", harness: "codex", version: 1, health: "ok" },
   ];
-  let login = null, prompt = null;
+  let login = null, prompt = null, failQuery = false;
   const codes = [], starts = [], seen = [];
   const route = async route => {
     const request = route.request().postDataJSON();
@@ -31,6 +31,7 @@ function provider() {
     } else if (request.op === "account_login_interaction") value = { kind: "account_login_interaction", login: request.id || login?.state === "waiting" ? login : null, prompt, expires_ms: Date.now() + 300_000 };
     else if (request.op === "account_login_code") {
       codes.push(request.code); login.state = "succeeded"; prompt = null;
+      if (login.usage_only && failQuery) { login.state = "failed"; login.error = "공식 Claude CLI 인증이 실패했습니다"; failQuery = false; }
       accounts = accounts.map(a => a.name === login.account ? { ...a, health: "ok" } : a);
       value = { kind: "done" };
     } else if (request.op === "account_login_cancel") {
@@ -38,7 +39,7 @@ function provider() {
     } else return route.continue();
     await route.fulfill({ json: { ok: value } });
   };
-  return { route, starts, codes, seen };
+  return { route, starts, codes, seen, failNextQuery: () => { failQuery = true; } };
 }
 
 async function check(name, engine, width) {
@@ -96,6 +97,15 @@ async function check(name, engine, width) {
       assert.deepEqual(fixture.starts, ["codex", "claude", "query"]);
       assert.deepEqual(fixture.codes, [manualCode, manualCode]);
       await shot(page, `118-query-${name}-${width}`);
+      await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+      fixture.failNextQuery();
+      await settings.getByRole("button", { name: "work-claude 사용량 조회 로그인", exact: true }).click();
+      await dialog.getByLabel("조회 계정 메일", { exact: true }).fill("me@example.com");
+      await dialog.getByRole("button", { name: "조회 로그인", exact: true }).click();
+      await dialog.getByLabel("인증 코드", { exact: true }).fill(manualCode);
+      await dialog.getByRole("button", { name: "확인", exact: true }).click();
+      await dialog.getByText("공식 Claude CLI 인증이 실패했습니다", { exact: true }).waitFor();
+      assert.ok(!(await dialog.innerText()).includes("같은 계정의 조회 인증을 저장하지 못했습니다"));
       await dialog.getByRole("button", { name: "닫기", exact: true }).click();
       assert.deepEqual(errors, []);
     }

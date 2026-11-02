@@ -1,4 +1,5 @@
 //! 공식 harness 로그인만 격리된 PTY에서 실행한다. 원본 출력은 어떠한 공개 경로에도 전달하지 않는다.
+mod failure;
 mod remote;
 
 use std::io::Read;
@@ -75,34 +76,56 @@ struct UsageLogin {
     registered_email: Option<String>,
 }
 
-fn complete_usage(
-    host: &Arc<Host>,
-    view: &mut AccountLoginView,
-    context: &UsageLogin,
+struct UsageCompletion {
     secret: Result<String, ErrorBody>,
     identity: Identity,
+    cli_error: Option<ErrorBody>,
     cleaned: bool,
     cancelled: bool,
-) {
+}
+
+fn complete_usage(host: &Arc<Host>, view: &mut AccountLoginView, context: &UsageLogin, completion: UsageCompletion) {
+    let UsageCompletion { secret, identity, cli_error, cleaned, cancelled } = completion;
+    let credential_read = secret.is_ok();
+    let identity_known = identity.email.is_some();
     let same = matches!((&view.expect_email, &identity.email), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
     let current = host.accounts.generation(&view.account).is_ok_and(|g| g == context.generation)
         && host.account_meta(&view.account).email == context.registered_email;
-    let stored = if cleaned && !cancelled && same && current {
-        secret.and_then(|s| host.accounts.store_usage(&context.generation, &s, None)).is_ok()
+    let cli_ok = cli_error.is_none();
+    let result = if cancelled {
+        Err(("cancelled", "cancelled", None))
+    } else if let Some(error) = cli_error {
+        Err(("cli", "cli_failed", Some(error.message)))
+    } else if let Err(error) = &secret {
+        Err(("credential_read", "read_failed", Some(error.message.clone())))
+    } else if !cleaned {
+        Err(("cleanup", "cleanup_failed", Some("조회 인증 임시 자료 정리를 확인하지 못했습니다".into())))
+    } else if !current {
+        Err(("account", "account_changed", Some("인증 중 대상 계정이 바뀌었습니다".into())))
+    } else if !identity_known {
+        Err(("identity", "identity_missing", Some("공식 Claude CLI의 로그인 계정을 확인하지 못했습니다".into())))
+    } else if !same {
+        Err(("identity", "identity_mismatch", Some("기대 메일과 다른 계정으로 인증됐습니다".into())))
     } else {
-        false
+        match host.accounts.store_usage(&context.generation, &secret.unwrap(), None) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(("vault_write", "write_failed", Some("조회 인증을 금고에 저장하지 못했습니다".into()))),
+        }
     };
-    view.state = if cancelled {
-        "cancelled"
-    } else if stored {
-        "succeeded"
-    } else {
-        "failed"
-    }
-    .into();
-    if !stored && !cancelled {
-        view.error = Some("같은 계정의 조회 인증을 저장하지 못했습니다".into());
-    }
+    let (stage, reason) = match result {
+        Ok(()) => {
+            view.state = "succeeded".into();
+            view.error = None;
+            ("complete", "stored")
+        }
+        Err((stage, reason, message)) => {
+            view.state = if cancelled { "cancelled" } else { "failed" }.into();
+            view.error = message;
+            (stage, reason)
+        }
+    };
+    tracing::info!(login = %view.id, stage, reason, cli_ok, credential_read, identity_known, identity_matches = same,
+        account_current = current, temporary_cleaned = cleaned, "조회 로그인 완료");
 }
 
 fn expire(job: &LoginJob) -> bool {
@@ -382,7 +405,13 @@ impl Host {
                     .is_ok();
             drop(temp);
             if let Some(context) = usage_generation {
-                complete_usage(&host, &mut v, &context, secret, identity, cleaned, was_cancelled);
+                let cli_error = (!was_cancelled && end != "succeeded").then(|| failure::claude(&bytes, exit_code));
+                complete_usage(
+                    &host,
+                    &mut v,
+                    &context,
+                    UsageCompletion { secret, identity, cli_error, cleaned, cancelled: was_cancelled },
+                );
             } else {
                 complete(&host, &mut v, &state, &pending, secret, identity, cleaned, was_cancelled);
             }
