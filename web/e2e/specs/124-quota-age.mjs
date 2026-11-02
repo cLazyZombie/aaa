@@ -7,6 +7,7 @@ async function check(engine, width) {
   let reset = Date.now() + 3_600_000;
   let failed = false;
   let mixed = false;
+  let noSession = false;
   const recent = Date.now();
   const route = async route => {
     const path = new URL(route.request().url()).pathname;
@@ -21,12 +22,13 @@ async function check(engine, width) {
     }
     if (path === "/api/v1/usage") return route.fulfill({ json: { ok: { providers: [{
       id: "claude", key: "claude:registered:work", account: "work", plan: null, problem: mixed ? null : "stale",
+      input_missing: mixed ? ["session"] : [], query_status: mixed ? (noSession ? "unobserved" : "denied") : null,
       checked_at: new Date(mixed ? recent : observed).toISOString(), windows: mixed ? [
         { kind: "session", scope: null, used_percent: 0, resets_at: new Date(recent - 3600000).toISOString(),
           starts_at: null, observed_at: new Date(recent - 2908 * 60000).toISOString(), problem: "stale" },
         { kind: "week", scope: null, used_percent: 9, resets_at: new Date(recent + 86400000).toISOString(),
           starts_at: null, observed_at: new Date(recent).toISOString(), problem: null },
-      ] : [{ kind: "week", scope: null,
+      ].filter(w => !noSession || w.kind !== "session") : [{ kind: "week", scope: null,
         used_percent: 35, resets_at: new Date(reset).toISOString(), starts_at: null }],
     }] } } });
     if (path === "/api/v1/call" && route.request().postDataJSON().op === "account_list") {
@@ -68,10 +70,20 @@ async function check(engine, width) {
     await weekRow.getByText("방금 관측", { exact: true }).waitFor();
     assert.match(await sessionRow.innerText(), /2일 전 관측 · 오래된 관측/);
     assert.match(await weekRow.innerText(), /9%/);
+    assert.match(await sessionRow.innerText(), /입력 미제공/);
+    assert.ok(!(await weekRow.innerText()).includes("입력 미제공"));
+    await usage.getByText("조회 접근 거부", { exact: true }).waitFor();
+    assert.match(await sessionRow.innerText(), /조회 접근 거부/);
+    assert.ok(!(await weekRow.innerText()).includes("조회 접근 거부"));
     assert.equal(await weekRow.getAttribute("data-problem"), "");
     assert.ok(!(await usage.innerText()).includes("상태줄 관측이 오래됐거나"));
     assert.ok(!(await usage.innerText()).includes("2908분"));
     await shot(page, `quota-age-${engine.browserType().name()}-${width}`);
+    noSession = true;
+    await usage.getByRole("button", { name: "다시 읽기", exact: true }).click();
+    await usage.getByText("세션 · 입력 미제공", { exact: true }).waitFor();
+    await usage.getByText("조회 인증 필요", { exact: true }).waitFor();
+    assert.equal(await usage.locator('[data-window="session"] [role="meter"]').count(), 0, "미관측 창에 숫자를 만들지 않는다");
     assert.deepEqual(errors, []);
   } finally { await page.context().close(); }
 }

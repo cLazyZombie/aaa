@@ -21,6 +21,8 @@
 //!   `AAA_USAGE_ORIGIN`(`http://127.0.0.1:<port>`)이 있으면 모든 구독 주소의 scheme·host를 그것으로 바꾼다(가짜 서버).
 //!   웹 E2E가 개발자의 실제 로그인·keychain을 건드리지 않게 한다.
 
+pub(crate) mod claude_auth;
+
 use aaa_common::child_process::StdCommandExt as _;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -808,6 +810,7 @@ impl UsageService {
     ) -> (aaa_proto::QuotaSnapshot, Option<u16>) {
         use aaa_proto::{QuotaProblem, QuotaSnapshot, QuotaSource, QuotaWindow};
         let mut snapshot = QuotaSnapshot {
+            input_missing: None,
             generation,
             source: QuotaSource::ClaudeOauth,
             sampled_at_ms: now,
@@ -1006,6 +1009,8 @@ impl UsageService {
             };
             settle(
                 Some(ProviderUsage {
+                    input_missing: None,
+                    query_status: None,
                     id,
                     key,
                     account,
@@ -1039,6 +1044,8 @@ impl UsageService {
             Ok(Some(r)) => {
                 let (key, account) = identity(r.account.as_ref());
                 let usage = ProviderUsage {
+                    input_missing: None,
+                    query_status: None,
                     id,
                     key,
                     account,
@@ -1078,6 +1085,8 @@ mod tests;
 fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_proto::AccountQuota>) -> ProviderUsage {
     use aaa_proto::{QuotaFreshness, QuotaProblem, QuotaSource};
     let mut usage = ProviderUsage {
+        input_missing: None,
+        query_status: None,
         id: UsageProviderId::Claude,
         key: format!("claude:registered:{name}"),
         account: Some(name.into()),
@@ -1100,6 +1109,17 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
         QuotaProblem::Failed | QuotaProblem::ClockSkew => UsageProblem::Failed,
     };
     usage.problem = quota.problem.map(problem);
+    usage.query_status = quota.query_status;
+    usage.input_missing = quota.input_missing.as_ref().map(|durations| {
+        durations
+            .iter()
+            .filter_map(|duration| match duration {
+                300 => Some(UsageWindowKind::Session),
+                10080 => Some(UsageWindowKind::Week),
+                _ => None,
+            })
+            .collect()
+    });
     let mut observed_at = None::<u64>;
     for item in &quota.windows {
         let w = &item.window;

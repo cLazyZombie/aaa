@@ -126,6 +126,8 @@ mod tests {
     const NOW: u64 = 1_000_000;
     fn quota() -> AccountQuota {
         AccountQuota {
+            input_missing: None,
+            query_status: None,
             account: "work".into(),
             harness: "codex".into(),
             problem: None,
@@ -192,6 +194,8 @@ mod tests {
     #[test]
     fn quota_gate_local_fallback_does_not_mix_providers_or_accounts() {
         let account = |id, key: &str, used| ProviderUsage {
+            input_missing: None,
+            query_status: None,
             id,
             key: key.into(),
             account: None,

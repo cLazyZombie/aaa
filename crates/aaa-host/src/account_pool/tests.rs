@@ -76,6 +76,8 @@ fn candidate(name: &str, five: f64, week: f64) -> Candidate {
         generation: format!("generation-{name}"),
         last_quota: None,
         quota: Some(AccountQuota {
+            input_missing: None,
+            query_status: None,
             account: name.into(),
             harness: "claude".into(),
             windows,
@@ -164,6 +166,7 @@ async fn persisted_usage_auth_errors_do_not_block_a_healthy_account_after_reopen
     let generation = l.h.accounts.generation("work").unwrap();
     let now = util::now_ms();
     let good = QuotaSnapshot {
+        input_missing: None,
         generation: generation.clone(),
         source: QuotaSource::CodexRpc,
         sampled_at_ms: now - 180_001,

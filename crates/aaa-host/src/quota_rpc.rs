@@ -177,6 +177,7 @@ pub(crate) async fn read(state: &Path, generation: String, auth: &str, now: u64)
     let fake = if cfg!(debug_assertions) { std::env::var_os("AAA_TEST_QUOTA_CODEX") } else { None };
     if std::env::var_os("AAA_USAGE_HOME").is_some() && fake.is_none() {
         return QuotaSnapshot {
+            input_missing: None,
             generation,
             source: QuotaSource::CodexRpc,
             sampled_at_ms: now,
@@ -191,6 +192,7 @@ pub(crate) async fn read(state: &Path, generation: String, auth: &str, now: u64)
 async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now: u64) -> QuotaSnapshot {
     aaa_common::redact::remember_auth("codex", auth);
     let mut snapshot = QuotaSnapshot {
+        input_missing: None,
         generation,
         source: QuotaSource::CodexRpc,
         sampled_at_ms: now,

@@ -41,7 +41,16 @@ mod process {
         let mut cfg = aaa_config::HostConfig::default();
         cfg.projects.root = root.join("projects").to_string_lossy().into();
         cfg.notify.web_push = false;
-        let host = Host::open(cfg, root.join("host")).unwrap();
+        let mut host = Host::open(cfg, root.join("host")).unwrap();
+        Arc::get_mut(&mut host).unwrap().usage = crate::usage::UsageService::new(crate::usage::UsageContext {
+            home: root.join("unrelated-home"),
+            env: Default::default(),
+            darwin: true,
+            origin: Some("http://127.0.0.1:0".into()),
+            keychain: Arc::new(|_, _| crate::usage::KeychainRead::Missing),
+            run: Arc::new(|_| None),
+            now: Arc::new(util::now_ms),
+        });
         Lab { root, host }
     }
     fn script(l: &Lab, body: &str) -> std::path::PathBuf {
@@ -96,6 +105,148 @@ mod process {
                 code()
             ),
         )
+    }
+
+    // 필요: 새 조회 로그인·코드 제출·정리·금고 결속이 기존 실행 인증을 바꾸지 않는다.
+    #[tokio::test]
+    async fn unknown_execution_identity_requires_owner_expected_email_and_preserves_metadata() {
+        let l = lab();
+        l.host.register_account("work", "claude", &aaa_test_support::token("unknown-execution")).unwrap();
+        let generation = l.host.accounts.generation("work").unwrap();
+        assert!(l.host.account_usage_login_remote("work", "device:owner", None).is_err());
+        let raw = serde_json::json!({"claudeAiOauth":{"accessToken":aaa_test_support::token("unknown-query-access"),"refreshToken":aaa_test_support::token("unknown-query-refresh"),"expiresAt":util::now_ms()+3_600_000,"scopes":["user:profile"]}}).to_string();
+        for expected in ["other@example.com", "me@example.com"] {
+            let program = script(
+                &l,
+                &format!(
+                    "printf '%s\\n' '{URL}'\nIFS= read -r code\nprintf '%s' '{raw}' > \"$CLAUDE_CONFIG_DIR/.credentials.json\"\nprintf '%s' '{{\"oauthAccount\":{{\"emailAddress\":\"me@example.com\"}}}}' > \"$CLAUDE_CONFIG_DIR/.claude.json\""
+                ),
+            );
+            let FrontResponse::AccountLogin { login } = l
+                .host
+                .start_remote_with_usage("work", "claude", "device:owner", program, true, Some(expected))
+                .unwrap()
+            else {
+                panic!()
+            };
+            prompt(&l, &login.id).await;
+            l.host.account_login_code(&login.id, SecretText(code()), "device:owner").unwrap();
+            assert_eq!(
+                finish(&l, &login.id).await.state,
+                if expected == "me@example.com" { "succeeded" } else { "failed" }
+            );
+            assert_eq!(l.host.accounts.generation("work").unwrap(), generation);
+            assert!(l.host.account_meta("work").email.is_none(), "조회 연결이 실행 인증 신원을 단정해 덮지 않는다");
+            cleaned(&l, &login.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn usage_login_keeps_execution_and_rejects_other_unknown_and_changed_accounts() {
+        let l = lab();
+        l.host.register_account("work", "claude", &aaa_test_support::token("execution-owned")).unwrap();
+        let identity = Identity { email: Some("me@example.com".into()), ..Default::default() };
+        l.host.account_logged_in("work", &identity, false);
+        let execution = l.host.accounts.credential("work").unwrap();
+        let generation = l.host.accounts.generation("work").unwrap();
+        let raw = serde_json::json!({"claudeAiOauth":{"accessToken":aaa_test_support::token("query-access"),
+            "refreshToken":aaa_test_support::token("query-refresh"), "expiresAt":util::now_ms()+3_600_000,
+            "scopes":["user:profile","user:inference"]}})
+        .to_string();
+        for email in ["me@example.com", "other@example.com", "", "me@example.com"] {
+            let program = script(
+                &l,
+                &format!(
+                    "[ \"$*\" = 'auth login --claudeai' ]\nprintf '%s\\n' '{URL}'\nIFS= read -r code\nprintf '%s' '{raw}' > \"$CLAUDE_CONFIG_DIR/.credentials.json\"\nprintf '%s' '{{\"oauthAccount\":{{\"emailAddress\":\"{email}\"}}}}' > \"$CLAUDE_CONFIG_DIR/.claude.json\""
+                ),
+            );
+            let FrontResponse::AccountLogin { login } =
+                l.host.start_remote_with_usage("work", "claude", "device:owner", program, true, None).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(login.usage_only, Some(true));
+            assert_eq!(prompt(&l, &login.id).await.kind, "paste_code");
+            if email == "me@example.com" && l.host.accounts.usage_credential(&generation).is_ok() {
+                l.host.accounts.import("work", "claude", &aaa_test_support::token("new-execution-owned")).unwrap();
+            }
+            l.host.account_login_code(&login.id, SecretText(code()), "device:owner").unwrap();
+            let result = finish(&l, &login.id).await;
+            if email == "me@example.com" && l.host.accounts.generation("work").unwrap() == generation {
+                assert_eq!(result.state, "succeeded");
+                assert!(l.host.accounts.usage_credential(&generation).is_ok());
+            } else {
+                assert_eq!(result.state, "failed");
+            }
+            assert_ne!(result.state, "mismatch", "조회 로그인에는 실행 인증 교체 선택이 없다");
+            if l.host.accounts.generation("work").unwrap() == generation {
+                assert_eq!(l.host.accounts.credential("work").unwrap().secret.0, execution.secret.0);
+            }
+            cleaned(&l, &login.id);
+        }
+        assert_ne!(l.host.accounts.generation("work").unwrap(), generation);
+        assert!(l.host.accounts.usage_credential(&generation).is_err());
+        assert_eq!(execution.secret.0, aaa_test_support::token("execution-owned"));
+    }
+
+    #[tokio::test]
+    async fn usage_login_requires_identity_and_cancel_leaves_execution_unchanged() {
+        let l = lab();
+        l.host.register_account("work", "claude", &aaa_test_support::token("execution-cancel")).unwrap();
+        assert!(l.host.account_usage_login_remote("work", "device:owner", None).is_err());
+        l.host.account_logged_in(
+            "work",
+            &Identity { email: Some("me@example.com".into()), ..Default::default() },
+            false,
+        );
+        let generation = l.host.accounts.generation("work").unwrap();
+        let FrontResponse::AccountLogin { login } =
+            l.host.start_remote_with_usage("work", "claude", "device:owner", claude_script(&l), true, None).unwrap()
+        else {
+            panic!()
+        };
+        prompt(&l, &login.id).await;
+        l.host.account_login_cancel(&login.id, "device:owner").await.unwrap();
+        assert_eq!(finish(&l, &login.id).await.state, "cancelled");
+        assert_eq!(l.host.accounts.generation("work").unwrap(), generation);
+        assert!(l.host.accounts.usage_credential(&generation).is_err());
+        cleaned(&l, &login.id);
+        assert_eq!(
+            l.host
+                .call(
+                    DeviceRole::Controller,
+                    "device:owner",
+                    FrontRequest::AccountUsageLogin { name: "work".into(), remote: false, email: None }
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        assert_eq!(
+            l.host
+                .call(
+                    DeviceRole::Reader,
+                    "device:reader",
+                    FrontRequest::AccountUsageLogin { name: "work".into(), remote: true, email: None }
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+        assert_eq!(
+            l.host
+                .call(
+                    DeviceRole::Local,
+                    "local:session-test",
+                    FrontRequest::AccountUsageLogin { name: "work".into(), remote: true, email: None }
+                )
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
     }
 
     #[tokio::test]

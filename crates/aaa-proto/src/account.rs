@@ -178,6 +178,10 @@ pub struct AccountStartView {
 /// 공식 로그인 자식의 원본 출력은 공개하지 않는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AccountLoginView {
+    /// 실행 인증을 바꾸지 않는 사용량 조회 로그인.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub usage_only: Option<bool>,
     /// 원격 어댑터의 고정 오류 문구. CLI 원문·인증 자료는 담지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

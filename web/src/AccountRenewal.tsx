@@ -12,9 +12,9 @@ import { usePhoneSheetBack } from "./herdr/sheetHistory";
 import "./AccountRenewal.css";
 
 const eventName = "aaa:account-renewal";
-type Target = { name: string; harness: string };
-export function openAccountLogin(name: string, harness: string) {
-  window.dispatchEvent(new CustomEvent<Target>(eventName, { detail: { name, harness } }));
+type Target = { name: string; harness: string; usageOnly?: boolean; email?: string };
+export function openAccountLogin(name: string, harness: string, usageOnly = false, email?: string) {
+  window.dispatchEvent(new CustomEvent<Target>(eventName, { detail: { name, harness, usageOnly, email } }));
 }
 const message = (error: unknown) => error instanceof ApiError || error instanceof Error ? error.message : "인증 요청에 실패했습니다";
 const active = (login: AccountLoginView | null) => login?.state === "waiting" || login?.state === "mismatch";
@@ -48,7 +48,7 @@ export function AccountRenewal() {
       if (list.kind === "accounts") setAccounts(renewalAccounts(list.accounts));
       if (flow.kind === "account_login_interaction" && flow.login) {
         id.current = flow.login.id;
-        setTarget({ name: flow.login.account, harness: flow.login.harness });
+        setTarget({ name: flow.login.account, harness: flow.login.harness, usageOnly: flow.login.usage_only === true });
         setLogin(flow.login); setPrompt(flow.prompt); setError(null);
       }
     } catch (e) { if (seq === sequence.current && !closed.current) { setPrompt(null); setError(message(e)); if (e instanceof ApiError && ["bad_request", "forbidden"].includes(e.body.code)) { id.current = null; setLogin(prev => prev ? { ...prev, state: "lost" } : null); } } }
@@ -65,11 +65,14 @@ export function AccountRenewal() {
   }, [clear, reload]);
   const start = useCallback(async (next: Target) => {
     if (!enabled || starting.current) return;
-    if (active(login)) { setTarget({ name: login!.account, harness: login!.harness }); setError("진행 중인 인증을 먼저 마치거나 취소하세요"); return; }
+    if (active(login)) { setTarget({ name: login!.account, harness: login!.harness, usageOnly: login!.usage_only === true }); setError("진행 중인 인증을 먼저 마치거나 취소하세요"); return; }
     setLogin(null); id.current = null;
+    if (next.usageOnly && !next.email) { ++sequence.current; setTarget(next); setError(null); setPrompt(null); return; }
     starting.current = true; ++sequence.current; setBusy(true); setError(null); setTarget(next); setPrompt(null);
     try {
-      const response = await call({ op: "account_login_remote", ...next });
+      const response = await call(next.usageOnly
+        ? { op: "account_usage_login", name: next.name, remote: true, email: next.email }
+        : { op: "account_login_remote", name: next.name, harness: next.harness });
       if (closed.current) return;
       if (response.kind === "account_login") { id.current = response.login.id; setLogin(response.login); await reload(); }
     } catch (e) { if (!closed.current) setError(message(e)); }
@@ -102,16 +105,18 @@ export function AccountRenewal() {
         <span className={`account-renewal-status ${a.health === "expiring" ? "is-soon" : ""}`}>{a.health === "expiring" ? "곧 만료" : "갱신 필요"}</span><ChevronRight aria-hidden="true" />
       </button>)}
     </section>}
-    {target && <LoginDialog target={target} login={login} prompt={prompt} busy={busy} error={error} close={close}
+    {target && <LoginDialog begin={email => void start({ ...target, email })} target={target} login={login} prompt={prompt} busy={busy} error={error} close={close}
       submit={code => run(() => call({ op: "account_login_code", id: id.current!, code }))}
       confirm={choice => run(() => call({ op: "account_login_confirm", id: id.current!, switch: choice }))} />}
   </>;
 }
 
-function LoginDialog({ target, login, prompt, busy, error, close, submit, confirm }: {
+function LoginDialog({ target, login, prompt, busy, error, close, submit, confirm, begin }: {
   target: Target; login: AccountLoginView | null; prompt: AccountLoginPrompt | null; busy: boolean; error: string | null;
+  begin: (email: string) => void;
   close: () => void; submit: (code: string) => Promise<void>; confirm: (choice: boolean) => Promise<void>;
 }) {
+  const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
@@ -135,14 +140,15 @@ function LoginDialog({ target, login, prompt, busy, error, close, submit, confir
   }
   const stateText: Record<string, string> = { succeeded: "로그인 완료", failed: "로그인하지 못했습니다", cancelled: "인증을 취소했습니다", kept: "기존 인증을 유지했습니다" };
   return createPortal(<div className="modal-scrim"><div className="modal account-login-dialog" role="dialog" aria-modal="true" aria-labelledby="account-login-title" tabIndex={-1} ref={surface} data-testid="account-login-dialog">
-    <header className="modal-header"><h2 className="modal-title" id="account-login-title">{HARNESS_LABEL[target.harness] ?? target.harness} 다시 로그인</h2></header>
+    <header className="modal-header"><h2 className="modal-title" id="account-login-title">{HARNESS_LABEL[target.harness] ?? target.harness} {target.usageOnly ? "사용량 조회 로그인" : "다시 로그인"}</h2></header>
     <div className="modal-body"><p className="account-login-alias">{target.name}</p>
       {waiting && login.expect_email && <p className="account-login-identity">{login.expect_email}</p>}
       {waiting && url && <a className="btn primary" href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">인증 열기</a>}
       {waiting && url && prompt?.kind === "device_code" && <><div className="account-login-code">{prompt.user_code}</div><button type="button" className="btn" onClick={() => { void navigator.clipboard.writeText(prompt.user_code ?? "").then(() => { setCopied(true); setCopyError(false); }, () => setCopyError(true)); }}>{copied ? "복사됨" : "코드 복사"}</button>{copyError && <p role="alert">코드를 복사하지 못했습니다</p>}</>}
       {waiting && url && prompt?.kind === "paste_code" && <form className="account-login-input" onSubmit={e => { e.preventDefault(); const value = code.trim(); setCode(""); void submit(value); }}><label htmlFor="account-auth-code">인증 코드</label><input id="account-auth-code" type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" value={code} onChange={e => setCode(e.target.value)} placeholder="인증 코드 붙여넣기" disabled={busy} /><button className="btn primary" type="submit" disabled={busy || !code.trim()}>확인</button></form>}
       {waiting && <p role="status">{prompt ? "인증 대기 중" : "확인 중"}</p>}
-      {!login && !error && <p role="status">인증 준비 중</p>}
+      {!login && target.usageOnly && !target.email && <form className="account-login-input" onSubmit={e => { e.preventDefault(); begin(email.trim()); }}><label htmlFor="account-query-email">조회 계정 메일</label><input id="account-query-email" type="email" autoComplete="off" value={email} onChange={e => setEmail(e.target.value)} required disabled={busy} /><button type="submit" className="btn primary" disabled={busy || !email.trim()}>조회 로그인</button></form>}
+      {!login && !error && !(target.usageOnly && !target.email) && <p role="status">인증 준비 중</p>}
       {mismatch && <><p role="status">{login.email ? "다른 계정입니다" : "계정 확인 불가"}</p><p>{login.expect_email ?? "기존 계정 모름"} → {login.email ?? "새 계정 모름"}</p><div className="op-buttons"><button className="btn" disabled={busy} onClick={() => void confirm(false)}>유지</button><button className="btn primary" disabled={busy} onClick={() => void confirm(true)}>교체</button></div></>}
       {login && !active(login) && <p role="status">{login.error ?? stateText[login.state] ?? "인증이 종료됐습니다"}</p>}
       {error && <p role="alert" className="op-warn">{error}</p>}

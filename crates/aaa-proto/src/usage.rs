@@ -68,6 +68,14 @@ pub enum UsageProblem {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct ProviderUsage {
+    /// Claude 입력에서 빠진 창 종류. 숫자의 오래됨과 별개다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_missing: Option<Vec<UsageWindowKind>>,
+    /// 실행 인증과 분리된 조회 경로 상태.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub query_status: Option<UsageProblem>,
     pub id: UsageProviderId,
     /// 한 구독의 한 계정. 읽을 때마다 같다: 구독과 계정 id, 누구 것인지 말하지 않는 로그인이면 구독과 찾은 곳(hash).
     /// 한 머신이 한 구독의 두 계정에 로그인했으면 둘 다 나온다.

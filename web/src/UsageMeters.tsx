@@ -5,6 +5,7 @@ import type { ProviderUsage, UsageWindow } from "./gen/proto";
 import { Icon } from "./icons";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { useUsageSettings, type UsageCount, type UsageGlance } from "./settings";
+import { quotaQueryStatus } from "./quotaQueryStatus";
 import { quotaAge } from "./accountQuotaModel";
 import { usageProblemLabel, usageProblemText } from "./usageProblem";
 import {
@@ -64,14 +65,16 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
       </header>
       {usage.checked_at && !perWindow && <p className="usage-note">{quotaAge(Date.parse(usage.checked_at), now)}</p>}
       {problem && <p className={`usage-note${isError(usage) ? " is-problem" : ""}`}>{problem}</p>}
+      {quotaQueryStatus(usage.query_status) && <p className="usage-note" data-testid="usage-query-status">{quotaQueryStatus(usage.query_status)}</p>}
       {usage.windows.map((window, index) => {
+        const missing = usage.input_missing?.includes(window.kind) === true;
         const reset = formatResetIn(window.resets_at, now);
         const value = meterPercent(window, count);
         return (
           <div key={index} className={`usage-row${level(window)}`} data-window={window.kind} data-problem={window.problem ?? ""}>
             <span className="usage-row-label">{windowLabel(window)}</span>
             {reset && <span className="usage-row-reset">{reset} 뒤 초기화</span>}
-            <span className="usage-row-value">{window.problem === "stale" ? "마지막 " : ""}{meterText(window, count)}</span>
+            <span className="usage-row-value">{window.problem || missing ? "마지막 " : ""}{meterText(window, count)}</span>
             <span
               className="usage-bar"
               role="meter"
@@ -88,11 +91,14 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
               <span className="usage-row-observation">
                 {quotaAge(Date.parse(window.observed_at), now)}
                 {window.problem && ` · ${usageProblemLabel({ ...usage, problem: window.problem })}`}
+                {missing && " · 입력 미제공"}
+                {(missing || window.problem) && quotaQueryStatus(usage.query_status) && ` · ${quotaQueryStatus(usage.query_status)}`}
               </span>
             )}
           </div>
         );
       })}
+      {usage.input_missing?.filter(kind => !usage.windows.some(w => w.kind === kind)).map(kind => <p key={kind} className="usage-note" data-window={kind}>{kind === "session" ? "세션" : "주간"} · 입력 미제공</p>)}
       {usage.windows.length === 0 && !problem && <p className="usage-note">알린 한도가 없다</p>}
     </section>
   );

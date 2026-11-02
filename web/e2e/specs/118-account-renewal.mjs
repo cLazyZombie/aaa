@@ -18,10 +18,13 @@ function provider() {
     seen.push(request.op);
     let value;
     if (request.op === "account_list") value = { kind: "accounts", accounts };
-    else if (request.op === "account_login_remote") {
-      starts.push(request.harness);
-      login = { id: `fixture-${starts.length}`, account: request.name, harness: request.harness, state: "waiting" };
-      prompt = request.harness === "codex"
+    else if (["account_login_remote", "account_usage_login"].includes(request.op)) {
+      const usage = request.op === "account_usage_login";
+      const harness = usage ? "claude" : request.harness;
+      if (usage) { assert.equal(request.remote, true); assert.equal(request.email, "me@example.com"); }
+      starts.push(usage ? "query" : harness);
+      login = { id: `fixture-${starts.length}`, account: request.name, harness, usage_only: usage || undefined, state: "waiting" };
+      prompt = harness === "codex"
         ? { kind: "device_code", url: "https://auth.openai.com/codex/device", user_code: "ABCD-1234" }
         : { kind: "paste_code", url: "https://claude.com/cai/oauth/authorize?code=true&state=fixture" };
       value = { kind: "account_login", login };
@@ -79,6 +82,21 @@ async function check(name, engine, width) {
       assert.deepEqual(fixture.starts, ["codex", "claude"]);
       assert.deepEqual(fixture.codes, [manualCode]);
       assert.equal(await page.getByTestId("account-renewal").getByRole("button", { includeHidden: true }).count(), 1);
+      await settings.getByRole("button", { name: "work-claude 사용량 조회 로그인", exact: true }).click();
+      await dialog.getByLabel("조회 계정 메일", { exact: true }).waitFor();
+      assert.deepEqual(fixture.starts, ["codex", "claude"], "기대 메일을 입력하기 전에 로그인을 시작하지 않는다");
+      await dialog.getByLabel("조회 계정 메일", { exact: true }).fill("me@example.com");
+      await dialog.getByRole("button", { name: "조회 로그인", exact: true }).click();
+      await dialog.getByRole("link", { name: "인증 열기", exact: true }).waitFor();
+      await page.reload();
+      await dialog.getByRole("heading", { name: /사용량 조회 로그인/ }).waitFor();
+      await dialog.getByLabel("인증 코드", { exact: true }).fill(manualCode);
+      await dialog.getByRole("button", { name: "확인", exact: true }).click();
+      await dialog.getByText("로그인 완료", { exact: true }).waitFor();
+      assert.deepEqual(fixture.starts, ["codex", "claude", "query"]);
+      assert.deepEqual(fixture.codes, [manualCode, manualCode]);
+      await shot(page, `118-query-${name}-${width}`);
+      await dialog.getByRole("button", { name: "닫기", exact: true }).click();
       assert.deepEqual(errors, []);
     }
   } catch (e) {

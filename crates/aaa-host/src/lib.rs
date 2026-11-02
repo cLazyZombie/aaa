@@ -1549,6 +1549,7 @@ impl Host {
                 | FrontRequest::AccountDefault { .. }
                 | FrontRequest::AccountPoolMember { .. }
                 | FrontRequest::AccountPoolProject { .. }
+                | FrontRequest::AccountUsageLogin { .. }
                 | FrontRequest::AccountLogin { .. }
                 | FrontRequest::AccountLoginRemote { .. }
                 | FrontRequest::AccountLoginInteraction { .. }
@@ -1577,6 +1578,7 @@ impl Host {
                 | FrontRequest::AccountPoolProject { .. }
                 | FrontRequest::AccountStarts { .. }
                 | FrontRequest::AccountStartCancel { .. }
+                | FrontRequest::AccountUsageLogin { .. }
                 | FrontRequest::AccountLogin { .. }
                 | FrontRequest::AccountLoginRemote { .. }
                 | FrontRequest::AccountLoginInteraction { .. }
@@ -1762,6 +1764,16 @@ impl Host {
                 self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));
                 self.accounts_bump();
                 Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? })
+            }
+            FrontRequest::AccountUsageLogin { name, remote, email } => {
+                if !remote && (role != DeviceRole::Local || !actor.starts_with("local:")) {
+                    return Err(err(ErrorCode::Forbidden, "host 브라우저 로그인은 host 터미널에서 시작합니다"));
+                }
+                if remote {
+                    self.account_usage_login_remote(&name, actor, email.as_ref().map(|e| e.0.as_str()))
+                } else {
+                    self.account_login_start(&name, "claude", actor, true, email.as_ref().map(|e| e.0.as_str()))
+                }
             }
             FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
             FrontRequest::AccountLoginRemote { name, harness } => self.account_login_remote(&name, &harness, actor),

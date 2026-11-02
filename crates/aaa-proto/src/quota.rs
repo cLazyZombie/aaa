@@ -1,4 +1,5 @@
 //! 등록 계정의 구독 잔량. 원문·메일·인증 경로는 경계를 넘기지 않는다(A2).
+use crate::UsageProblem;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -47,6 +48,10 @@ pub struct QuotaWindow {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct QuotaSnapshot {
+    /// Claude 입력에서 창 자체가 빠진 기간(분). 숫자의 오래됨과 별개다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_missing: Option<Vec<u32>>,
     /// 로그인·등록 때 새로 만드는 세대. 토큰의 해시가 아니다.
     pub generation: String,
     pub source: QuotaSource,
@@ -73,6 +78,14 @@ pub struct AccountQuotaWindow {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct AccountQuota {
+    /// Claude 입력에서 창 자체가 빠진 기간(분). 숫자의 오래됨과 별개다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_missing: Option<Vec<u32>>,
+    /// 실행 인증과 분리된 조회 경로 상태.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub query_status: Option<UsageProblem>,
     pub account: String,
     pub harness: String,
     pub windows: Vec<AccountQuotaWindow>,

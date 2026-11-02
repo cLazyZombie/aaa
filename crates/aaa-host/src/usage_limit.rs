@@ -135,7 +135,17 @@ mod tests {
     }
 
     fn account(id: P, key: &str, windows: Vec<UsageWindow>) -> ProviderUsage {
-        ProviderUsage { id, key: key.into(), account: None, plan: None, windows, problem: None, checked_at: None }
+        ProviderUsage {
+            input_missing: None,
+            query_status: None,
+            id,
+            key: key.into(),
+            account: None,
+            plan: None,
+            windows,
+            problem: None,
+            checked_at: None,
+        }
     }
 
     #[test]

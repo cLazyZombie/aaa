@@ -83,6 +83,10 @@ window_id: string, scope: string | null, duration_mins: number | null, used_perc
 
 export type QuotaSnapshot = {
 /**
+ * Claude 입력에서 창 자체가 빠진 기간(분). 숫자의 오래됨과 별개다.
+ */
+input_missing?: Array<number>,
+/**
  * 로그인·등록 때 새로 만드는 세대. 토큰의 해시가 아니다.
  */
 generation: string, source: QuotaSource, sampled_at_ms: number, windows: Array<QuotaWindow>, problem: QuotaProblem | null, retry_at_ms: number | null, };
@@ -93,7 +97,15 @@ export type AccountQuotaWindow = { machine: string, source: QuotaSource, receive
  */
 window_id: string, scope: string | null, duration_mins: number | null, used_percent: number, observed_at_ms: number, resets_at_ms: number | null, };
 
-export type AccountQuota = { account: string, harness: string, windows: Array<AccountQuotaWindow>, problem: QuotaProblem | null, retry_at_ms: number | null, };
+export type AccountQuota = {
+/**
+ * Claude 입력에서 창 자체가 빠진 기간(분). 숫자의 오래됨과 별개다.
+ */
+input_missing?: Array<number>,
+/**
+ * 실행 인증과 분리된 조회 경로 상태.
+ */
+query_status?: UsageProblem, account: string, harness: string, windows: Array<AccountQuotaWindow>, problem: QuotaProblem | null, retry_at_ms: number | null, };
 
 export type AccountQuotaReport = { accounts: Array<AccountQuota>, };
 
@@ -126,6 +138,10 @@ export type AccountStartState = "queued" | "started" | "failed" | "cancelled";
 export type AccountStartView = { id: string, project: string, title: string, size: AccountTaskSize, state: AccountStartState, thread: string | null, reason: string, created_at_ms: number, };
 
 export type AccountLoginView = {
+/**
+ * 실행 인증을 바꾸지 않는 사용량 조회 로그인.
+ */
+usage_only?: boolean,
 /**
  * 원격 어댑터의 고정 오류 문구. CLI 원문·인증 자료는 담지 않는다.
  */
@@ -1246,7 +1262,7 @@ untracked_omitted: boolean,
  */
 full_context?: boolean, };
 
-export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery, } | { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_remote", name: string, harness: string, } | { "op": "account_login_interaction", id: string | null, } | { "op": "account_login_code", id: string, code: SecretText, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_rename", name: string, to: string, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
+export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery, } | { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_usage_login", name: string, remote: boolean, email?: SecretText, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_remote", name: string, harness: string, } | { "op": "account_login_interaction", id: string | null, } | { "op": "account_login_code", id: string, code: SecretText, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_rename", name: string, to: string, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
 /**
  * 비었으면 등록된 모든 머신
  */
@@ -3051,7 +3067,15 @@ problem?: UsageProblem, };
 
 export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked" | "unobserved" | "stale" | "disconnected" | "unsupported" | "denied";
 
-export type ProviderUsage = { id: UsageProviderId,
+export type ProviderUsage = {
+/**
+ * Claude 입력에서 빠진 창 종류. 숫자의 오래됨과 별개다.
+ */
+input_missing?: Array<UsageWindowKind>,
+/**
+ * 실행 인증과 분리된 조회 경로 상태.
+ */
+query_status?: UsageProblem, id: UsageProviderId,
 /**
  * 한 구독의 한 계정. 읽을 때마다 같다: 구독과 계정 id, 누구 것인지 말하지 않는 로그인이면 구독과 찾은 곳(hash).
  * 한 머신이 한 구독의 두 계정에 로그인했으면 둘 다 나온다.

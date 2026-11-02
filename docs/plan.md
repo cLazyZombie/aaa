@@ -8408,3 +8408,13 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 알림 목록도 종류 아이콘과 한 줄 요약을 쓰고 긴 요약·본문은 「자세히」에 보존한다. 토스트를 누르면 기존 대상 화면으로 간다. 알림 발생 조건·소리·외부 푸시·프로토콜은 유지한다.
 - 참고: [herdr-web-ui Droplet](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/src/components/Droplet.tsx)([MIT](https://github.com/devswha/herdr-web-ui/blob/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741/LICENSE))의 짧은 상태와 대상 열기, [herdr-projects inbox](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/src/inbox.rs)([MIT](https://github.com/eliasstravik/herdr-projects/blob/v0.2.35/LICENSE))의 종류·대상·짧은 사건 분리, [herdr sidebar](https://github.com/herdrdev/herdr/blob/v0.9.5/src/client/shell/sidebar.rs)([Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.9.5/LICENSE))의 상태 아이콘을 확인했다. 기존에 옮긴 Droplet을 다듬으며 종류 아이콘은 사용자 요청대로 aaa 활동 막대 것을 공유한다. 새 외부 코드·의존성은 추가하지 않는다.
 - 검증은 [t-1419 기록](testing-in-app-alerts-t-1419.md)에 둔다.
+
+### 8.551 Claude 조회용 인증 분리(t-1454)
+
+- 모델 요청용 `setup-token`을 사용량 OAuth endpoint에 보내지 않는다. host의 세션 밖 CLI `aaa account usage-login <별칭>`과 웹 계정의 「조회 로그인」은 격리된 공식 `claude auth login --claudeai`를 실행한다. 실행 인증·판·세대·인증 날짜와 실행 중 pane은 유지한다.
+- 등록 메일 또는 사람이 입력한 기대 메일이 있어야 시작하고, 공식 CLI가 같은 메일을 남긴 결과만 연결한다. 기대 메일/로그인 메일 불명·다른 메일·로그인 중 실행 인증 재등록·취소·기기 해제는 조회 인증을 저장하지 않는다. 실행 인증 교체 확인으로 우회하지 않는다.
+- 조회 인증은 실행 세대를 키로 별도 봉투 암호화 금고에 둔다. host만 조회 access/refresh token을 갱신하고 회전한 값을 먼저 내구 저장한다. 실행 인증·개인 홈·기본 Keychain과 공유하지 않는다. 새 로그인은 조회 세대를 바꾸고 자동 갱신은 유지한다. 늦은 갱신은 판 비교로 거절한다. 별칭 변경에는 유지하고 실행 재등록·삭제에는 옛 인증을 폐기한다.
+- 임시 CLI 인증은 그 로그인 폴더 또는 그 폴더 전용 Keychain 항목만 읽고 정리한다. 정리를 확인하지 못하면 연결하지 않는다. 원문·토큰·갱신 응답은 front·감사·진단에 싣지 않는다.
+- 조회 400/401/403 뒤에는 같은 조회 인증의 자동·강제 재조회를 멈추며, 새 조회 로그인으로만 해제한다. 429는 `Retry-After`까지 기다린다(조회 재로그인도 대기를 건너뛰지 않는다). 조회 오류를 모델 한도·실행 인증 고장으로 올리지 않는다.
+- 상태줄 입력의 창 누락과 OAuth 조회 상태를 선택 필드로 전달한다. 마지막 숫자·실제 관측 시각을 유지하고, 웹에는 「입력 미제공」·「조회 접근 거부」·「조회 인증 필요」 같은 짧은 상태만 보인다. 미관측 창의 숫자를 합성하지 않는다. 구판 agent는 누락 상태를 생략하고, 구판 host에는 새 로그인 요청을 보내지 않는다.
+- 실제 로그인·조회 복구·착지·배포는 구현 검증과 별도 단계다. 검증은 [조회 인증 분리 기록](testing-usage-auth-t-1454.md)에 둔다.
