@@ -331,9 +331,9 @@ const README_PALETTE = "github-dark";
 /** README 그림(docs/media): 데스크톱 질문·보고, 휴대폰 목록, 흐름 영상 */
 async function readmeMedia(t1) {
   const files = [];
-  const save = async (page, name) => {
+  const save = async (page, name, clip) => {
     const f = path.join(out, name);
-    await page.screenshot({ path: f, animations: "disabled" });
+    await page.screenshot({ path: f, animations: "disabled", clip });
     files.push(f);
   };
   {
@@ -366,8 +366,11 @@ async function readmeMedia(t1) {
     await save(page, "automation.png");
     await page.getByTestId("activity-machines").click();
     await page.getByRole("button", { name: "mac-a 기기 정보", exact: true }).click();
-    await page.getByRole("checkbox", { name: "작업 폴더 자동 배정 허용" }).waitFor();
-    await save(page, "workspaces.png");
+    const allow = page.getByRole("checkbox", { name: "작업 폴더 자동 배정 허용" });
+    await allow.waitFor();
+    // 아래 「연결」·「시스템」 칸은 찍는 Mac의 실제 OS·CPU·메모리·디스크다: 자동 배정 칸까지만 담는다
+    const box = await allow.boundingBox();
+    await save(page, "workspaces.png", { x: 0, y: 0, width: 1440, height: Math.ceil(box.y + box.height + 32) });
     await ctx.close();
   }
   {
