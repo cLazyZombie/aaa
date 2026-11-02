@@ -98,3 +98,27 @@ Windows에서 검증한 Rust 네 파일과 로컬 후보의 SHA-256을 대조해
 
 외부 구현 코드를 복사하거나 런타임 의존성을 추가하지 않았다. 다음 자연 실패 또는 별도 승인된 진단 CI의
 실제 실패 근거가 있어야 CR 미도착·입력 소비·콘솔 호스트 대기를 더 좁힐 수 있다.
+
+## 승인된 진단 CI 1회
+
+q-2499 1A에 따라 코드 후보 `9c17101f220a5eaa3e57739a69cf2c76ff79de5a`를
+`hp/t-1472-win-pty-diagnostic`에 한 번 push했다.
+[진단 실행](https://github.com/cLazyZombie/aaa/actions/runs/41541787954)은 push 사건·attempt 1이며 head SHA가 같다.
+네 작업(Windows·macOS·Ubuntu·웹 E2E)이 모두 통과했다. CI 재실행·추가 push·main 반영은 하지 않았다.
+
+[Windows job](https://github.com/cLazyZombie/aaa/actions/runs/41541787954/job/125607519740)의 전체 로그와
+`rust-tests-windows-2025-41541787954-1` artifact의 전체 `test.log`를 직접 대조했다.
+
+- Windows build·strict Clippy·test·SYSTEM SSH 설치/SCM/등록 검사가 통과했다.
+- install 묶음은 **36통과·실패 0개·기존 helper 1개 ignored, 59.17초**다. 개별 시험 시간은 아니다.
+- 원래 wizard 뒤로 이동, 승인 취소·자동화·세션 거부, 실제 TLS enrollment owner가 통과했다.
+- 스냅샷 세 계약·오류 정제 owner도 통과했다. 기존 reader 스택과 추가한 실제 콘솔 호스트 상태 단언이 실행됐다.
+- 성공한 개별 PTY transcript는 libtest가 출력하지 않는다. 제어 키 관측 원문과 새 실패의 conhost 상태는 확보되지 않았다.
+
+OS 표시는 양쪽 모두 Windows Server 2025 `10.0.26100`, 이미지 계열은 `windows-2025-vs2026`이다.
+하지만 **원본은 `20261021.278.1`, 이번은 `20261030.294.1`**로 이미지 판이 다르다.
+같은 이미지에서의 재현 대조라고 쓰거나 이미지 변경이 원인을 고쳤다고 추정하지 않는다.
+
+이번에도 정체는 재현되지 않았다. 근본 원인은 계속 미확정이며 원래 CI 실패의 수리·회복 완료가 아니다.
+보강한 진단을 main의 다음 자연 실패에 적용하려면 별도 착지 승인이 필요하다.
+코드 후보는 변경하지 않았고 이 절은 결과를 보존하는 문서 변경이다.
