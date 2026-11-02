@@ -5022,3 +5022,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - macOS 이모지 폭 측정 경합과 결정적 대조: [t-1427 기록](testing-terminal-width-race-t-1427.md).
 
 - [사용량 관측 유효기간과 소비자 검증](testing-quota-age-t-1446.md)
+
+- [창별 구독 사용량 관측 표시 검증](testing-coordinator-usage-t-1454.md)

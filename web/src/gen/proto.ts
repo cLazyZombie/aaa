@@ -3039,7 +3039,15 @@ resets_at: string | null,
 /**
  * 이 창이 세기 시작한 때(ISO 8601). 구독이 그것도 창 길이도 말하지 않으면 None
  */
-starts_at: string | null, };
+starts_at: string | null,
+/**
+ * 이 창 숫자의 실제 관측 시각. 구판·로컬 조회는 계정 checked_at을 쓴다.
+ */
+observed_at?: string,
+/**
+ * 창마다 다른 관측 실패·오래됨. 계정 전체 오류와 별개다.
+ */
+problem?: UsageProblem, };
 
 export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked" | "unobserved" | "stale" | "disconnected" | "unsupported" | "denied";
 
@@ -3062,7 +3070,7 @@ plan: string | null,
  */
 windows: Array<UsageWindow>, problem: UsageProblem | null,
 /**
- * `windows`를 읽은 때(ISO 8601). 한 번도 못 읽었으면 None
+ * 가장 최근 창을 관측한 때(ISO 8601). 창별 시각은 observed_at. 한 번도 못 읽었으면 None
  */
 checked_at: string | null, };
 

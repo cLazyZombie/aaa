@@ -22,10 +22,16 @@ test("구독 잔량: 알려진 기간만 5시간·주간, 리셋·실패·오래
   assert.equal(quotaLeft({ ...w, used_percent: NaN }), "사용량 모름");
 });
 
-test("마지막 관측은 수신 시각 대신 실제 관측 경과 분을 표시한다", () => {
+test("마지막 관측은 수신 시각 대신 실제 관측 경과 시간을 표시한다", () => {
   assert.equal(quotaAge(1000, 60_999), "방금 관측");
   assert.equal(quotaAge(1000, 61_000), "1분 전 관측");
-  assert.equal(quotaAge(1000, 3_601_000), "60분 전 관측");
+  assert.equal(quotaAge(1000, 3_541_000), "59분 전 관측");
+  assert.equal(quotaAge(1000, 3_601_000), "1시간 전 관측");
+  assert.equal(quotaAge(1000, 3_661_000), "1시간 1분 전 관측");
+  assert.equal(quotaAge(1000, 1000 + 1439 * 60_000), "23시간 59분 전 관측");
+  assert.equal(quotaAge(1000, 1000 + 1440 * 60_000), "1일 전 관측");
+  assert.equal(quotaAge(1000, 1000 + 2908 * 60_000), "2일 전 관측");
+  assert.equal(quotaAge(1000, 1000 + 2940 * 60_000), "2일 1시간 전 관측");
   assert.equal(quotaAge(null, 1000), "관측 시각 모름");
   assert.equal(quotaAge(NaN, 1000), "관측 시각 모름");
   assert.equal(quotaAge(31_001, 1000), "관측 시각 모름");

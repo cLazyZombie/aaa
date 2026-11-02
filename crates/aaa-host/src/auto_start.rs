@@ -772,6 +772,8 @@ mod tests {
             problem: None,
             checked_at: Some("2026-10-20T00:00:00Z".into()),
             windows: vec![UsageWindow {
+                observed_at: None,
+                problem: None,
                 kind: UsageWindowKind::Week,
                 scope: None,
                 used_percent: used,

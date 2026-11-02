@@ -36,8 +36,10 @@ function isError(usage: ProviderUsage): boolean {
 
 function Chip({ usage, now, count, glance }: { usage: ProviderUsage; now: number; count: UsageCount; glance: UsageGlance }) {
   const window = glanceWindow(usage, glance);
+  const problem = window?.problem ?? usage.problem;
+  const observedAt = window?.observed_at ?? usage.checked_at;
   return (
-    <span className={`usage-chip${level(window)}${usage.problem ? " has-problem" : ""}`} data-provider={usage.id} title={`${usageProblemText(usage) ?? usageName(usage)} · ${quotaAge(usage.checked_at ? Date.parse(usage.checked_at) : null, now)}`}>
+    <span className={`usage-chip${level(window)}${problem ? " has-problem" : ""}`} data-provider={usage.id} title={`${usageProblemText({ ...usage, problem }) ?? usageName(usage)} · ${quotaAge(observedAt ? Date.parse(observedAt) : null, now)}`}>
       <AgentMark agent={PROVIDER_MARK[usage.id]} size={14} />
       <span className="usage-chip-value">{window ? formatPercent(meterPercent(window, count)) : usageProblemLabel(usage)}</span>
       <span className="usage-chip-bar" style={{ "--fill": `${window ? meterPercent(window, count) : 0}%` } as CSSProperties} />
@@ -46,7 +48,8 @@ function Chip({ usage, now, count, glance }: { usage: ProviderUsage; now: number
 }
 
 function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; count: UsageCount }) {
-  const problem = usageProblemText(usage);
+  const perWindow = usage.windows.some(window => window.observed_at);
+  const problem = usage.problem === "stale" && perWindow ? null : usageProblemText(usage);
   return (
     <section className="usage-provider" aria-label={usageName(usage)}>
       <header className="usage-provider-head">
@@ -59,16 +62,16 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
           </span>
         )}
       </header>
-      {usage.checked_at && <p className="usage-note">{quotaAge(Date.parse(usage.checked_at), now)}</p>}
+      {usage.checked_at && !perWindow && <p className="usage-note">{quotaAge(Date.parse(usage.checked_at), now)}</p>}
       {problem && <p className={`usage-note${isError(usage) ? " is-problem" : ""}`}>{problem}</p>}
       {usage.windows.map((window, index) => {
         const reset = formatResetIn(window.resets_at, now);
         const value = meterPercent(window, count);
         return (
-          <div key={index} className={`usage-row${level(window)}`}>
+          <div key={index} className={`usage-row${level(window)}`} data-window={window.kind} data-problem={window.problem ?? ""}>
             <span className="usage-row-label">{windowLabel(window)}</span>
             {reset && <span className="usage-row-reset">{reset} 뒤 초기화</span>}
-            <span className="usage-row-value">{meterText(window, count)}</span>
+            <span className="usage-row-value">{window.problem === "stale" ? "마지막 " : ""}{meterText(window, count)}</span>
             <span
               className="usage-bar"
               role="meter"
@@ -81,6 +84,12 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
               {/* 0보다 조금 큰 값도 점이 아니라 막대로 보인다 */}
               <span style={{ width: value > 0 ? `max(4px, ${value}%)` : 0 }} />
             </span>
+            {window.observed_at && (
+              <span className="usage-row-observation">
+                {quotaAge(Date.parse(window.observed_at), now)}
+                {window.problem && ` · ${usageProblemLabel({ ...usage, problem: window.problem })}`}
+              </span>
+            )}
           </div>
         );
       })}

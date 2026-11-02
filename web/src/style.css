@@ -1098,6 +1098,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .usage-note.is-problem { color: var(--blocked); }
 /* 이름·초기화까지·퍼센트 한 줄, 그 아래 막대 */
 .usage-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; column-gap: var(--space-2); row-gap: 2px; font-size: var(--fs-xs); line-height: var(--lh-tight); }
+.usage-row-observation { grid-column: 1 / -1; color: var(--text-dim); }
 .usage-row-label { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .usage-row-reset { color: var(--text-dim); white-space: nowrap; }
 .usage-row-value { grid-column: 3; min-width: 4ch; text-align: right; color: var(--text-strong); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

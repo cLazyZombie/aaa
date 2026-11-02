@@ -570,6 +570,8 @@ fn claude_window(v: Option<&Value>, kind: UsageWindowKind, scope: Option<&str>, 
     let used = number(w.get("utilization"))?;
     let resets_at = iso_time(w.get("resets_at"));
     Some(UsageWindow {
+        observed_at: None,
+        problem: None,
         kind,
         scope: scope.map(String::from),
         used_percent: percent(used),
@@ -629,6 +631,8 @@ async fn claude_read(ctx: &UsageContext, s: &SignIn) -> Result<Option<Reading>, 
             continue;
         }
         windows.push(UsageWindow {
+            observed_at: None,
+            problem: None,
             kind: UsageWindowKind::Week,
             scope: Some(model),
             used_percent: percent(used),
@@ -674,6 +678,8 @@ fn codex_window(v: Option<&Value>, now: u64) -> Option<UsageWindow> {
     let seconds = number(w.get("limit_window_seconds"));
     let resets_at = iso_time(w.get("reset_at")).or_else(|| after.map(|a| utc_iso(now + (a * 1000.0) as u64)));
     Some(UsageWindow {
+        observed_at: None,
+        problem: None,
         kind: kind_of(seconds, UsageWindowKind::Session),
         scope: None,
         used_percent: percent(used),
@@ -1101,24 +1107,27 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
             _ => continue,
         };
         let resets_at = w.resets_at_ms.map(utc_iso);
+        let window_problem = item
+            .problem
+            .map(problem)
+            .or_else(|| (item.freshness != QuotaFreshness::Fresh).then_some(UsageProblem::Stale));
         usage.windows.push(UsageWindow {
+            observed_at: Some(utc_iso(w.observed_at_ms)),
+            problem: window_problem,
             kind,
             scope: None,
             used_percent: w.used_percent,
             starts_at: start_of(&resets_at, Some(duration)),
             resets_at,
         });
-        observed_at = Some(observed_at.map_or(w.observed_at_ms, |old| old.min(w.observed_at_ms)));
-        if let Some(p) = item.problem {
-            usage.problem.get_or_insert(problem(p));
-        } else if item.freshness != QuotaFreshness::Fresh {
-            // 수신 시각으로 옛 창을 새것으로 만들지 않는다. 마지막 숫자와 관측 시각은 보존한다.
-            if usage.problem == Some(UsageProblem::Unobserved) {
-                usage.problem = Some(UsageProblem::Stale);
-            } else {
-                usage.problem.get_or_insert(UsageProblem::Stale);
-            }
-        }
+        observed_at = Some(observed_at.map_or(w.observed_at_ms, |old| old.max(w.observed_at_ms)));
+    }
+    // 오래된 창 하나로 지금도 갱신되는 다른 창까지 관측 중단으로 표시하지 않는다.
+    if !usage.windows.is_empty()
+        && usage.windows.iter().all(|w| w.problem.is_some())
+        && (usage.problem.is_none() || usage.problem == Some(UsageProblem::Unobserved))
+    {
+        usage.problem = usage.windows.iter().find_map(|w| w.problem);
     }
     usage.windows.sort_by_key(|w| if w.kind == UsageWindowKind::Session { 0 } else { 1 });
     usage.checked_at = observed_at.map(utc_iso);

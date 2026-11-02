@@ -285,6 +285,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.151: 요청 기기 전용 원격 계정 로그인·코드 전달.
 // 1.152: AgentStatus.provider_turn의 native 오류 원인·실행 세대·turn 시각(선택).
 // 1.153: 아이디어 thread의 새 판·읽음·알림(t-1412).
+// 같은 1.153의 UsageWindow.observed_at·problem 선택 필드: 창별 관측 상태. 구판은 계정 시각·오류를 쓴다.
 pub const FRONT_API: Version = Version { major: 1, minor: 153 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
