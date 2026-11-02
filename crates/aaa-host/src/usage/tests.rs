@@ -550,6 +550,8 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
     fake.route("/api/oauth/usage", 403, serde_json::json!({"error":"user:profile required"}));
     let report = host.quota_report(false).await.unwrap();
     assert_eq!(report.accounts[0].problem, Some(QuotaProblem::Unsupported));
+    let saved: Value = serde_json::from_str(&host.db.meta("account-quota-v1/work").unwrap().unwrap()).unwrap();
+    assert_eq!(saved["readings"]["host"]["http_status"], 403);
     assert_eq!(fake.hits("/api/oauth/usage"), 2);
     let (_, history) = host.cached_allocation_quota("work", "claude").unwrap();
     assert_eq!(history.windows[1].window.used_percent, 35.);
@@ -560,6 +562,8 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
     fake.route_with("/api/oauth/usage", 429, vec![("Retry-After", "1200")], serde_json::json!({}));
     let report = host.quota_report(false).await.unwrap();
     assert_eq!(report.accounts[0].problem, Some(QuotaProblem::Failed), "조회 한도는 모델 사용 한도가 아니다");
+    let saved: Value = serde_json::from_str(&host.db.meta("account-quota-v1/work").unwrap().unwrap()).unwrap();
+    assert_eq!(saved["readings"]["host"]["http_status"], 429);
     assert!(report.accounts[0].retry_at_ms.unwrap() >= now + 1_200_000);
     due(&host, false).await;
     host.quota_report(false).await.unwrap();
@@ -586,4 +590,39 @@ async fn registered_claude_oauth_persists_history_and_backs_off_without_blocking
         host.cached_allocation_quota("work", "claude").unwrap().1.windows.is_empty(),
         "재로그인 때 옛 기록을 섞지 않는다"
     );
+}
+
+// 필요: 실행용 인증의 조회 거부·조회 제한을 진단하며 모델 한도·인증을 바꾸지 않는다.
+#[tokio::test]
+async fn registered_oauth_diagnostic_distinguishes_http_status_without_saving_error_bodies() {
+    use aaa_proto::QuotaProblem;
+    let (fake, origin) = Fake::start().await;
+    let lab = Lab::new("registered-oauth-diagnostic");
+    let service = UsageService::new(lab.ctx(&origin, false));
+    let token = aaa_test_support::token("diagnostic-only-auth");
+    let private = aaa_test_support::token("discard-private-error-body");
+    for (status, problem) in [
+        (401, QuotaProblem::Unsupported),
+        (403, QuotaProblem::Unsupported),
+        (429, QuotaProblem::Failed),
+        (500, QuotaProblem::Failed),
+    ] {
+        fake.route("/api/oauth/usage", status, serde_json::json!({"error":private}));
+        let (snapshot, http_status) = service.claude_account_quota("generation-a".into(), &token, NOW).await;
+        assert_eq!(http_status, Some(status));
+        assert_eq!(snapshot.problem, Some(problem), "진단 때문에 모델 배정 판단을 바꾸지 않는다");
+        assert!(snapshot.windows.is_empty());
+        assert_eq!(snapshot.retry_at_ms.is_some(), status == 429);
+        let text = serde_json::to_string(&snapshot).unwrap();
+        assert!(!text.contains(&private) && !text.contains(&token));
+    }
+    fake.route(
+        "/api/oauth/usage",
+        200,
+        serde_json::json!({"five_hour":{"utilization":0,"resets_at":utc_iso(NOW+3600000)}}),
+    );
+    let (snapshot, http_status) = service.claude_account_quota("generation-a".into(), &token, NOW).await;
+    assert_eq!(http_status, None, "성공하면 앞 HTTP 실패 코드를 이어 쓰지 않는다");
+    assert_eq!(snapshot.problem, None);
+    assert_eq!(snapshot.windows[0].used_percent, 0.);
 }

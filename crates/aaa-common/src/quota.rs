@@ -2,6 +2,8 @@
 use aaa_proto::{QuotaFreshness, QuotaWindow};
 use serde_json::Value;
 
+pub mod claude;
+
 pub const FRESH_MS: u64 = 120_000;
 /// 리셋을 모르는 창만 쓰는 보수적인 표시·배정 상한.
 pub const UNKNOWN_RESET_MS: u64 = 600_000;
@@ -97,26 +99,7 @@ pub fn codex(v: &Value, now: u64) -> Vec<QuotaWindow> {
 
 /// Claude 상태줄 stdin. 없는 창은 덮어쓰지 않으며 이전 창의 관측 시각도 갱신하지 않는다.
 pub fn claude(v: &Value, now: u64, previous: &[QuotaWindow]) -> Vec<QuotaWindow> {
-    let mut out: Vec<_> = previous.iter().filter(|w| valid(w)).cloned().collect();
-    for (key, duration) in [("five_hour", 300), ("seven_day", 10080)] {
-        let Some(w) = v.get("rate_limits").and_then(|r| r.get(key)) else { continue };
-        let Some(p) = w.get("used_percentage").and_then(used) else { continue };
-        let item = QuotaWindow {
-            limit_id: "claude".into(),
-            window_id: key.into(),
-            scope: None,
-            duration_mins: Some(duration),
-            used_percent: p,
-            observed_at_ms: now,
-            resets_at_ms: seconds(w.get("resets_at")),
-        };
-        if !valid(&item) {
-            continue;
-        }
-        out.retain(|w| w.duration_mins != Some(duration));
-        out.push(item);
-    }
-    out
+    claude::read(v, now, previous).windows
 }
 
 #[cfg(test)]

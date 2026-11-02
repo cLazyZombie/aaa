@@ -366,3 +366,21 @@ native 표시가 없고 기존 화면 감지를 유지한다. 현재 Codex는 �
 주간은 최신 관측으로, 오래된 세션은 `마지막 0%`처럼 마지막 숫자로 남는다. 초기화 시각이
 지났다고 새 잔량을 만들지 않는다. 경과 시간은 분·시간·일로 표시하며 계정 전체 시각은
 가장 최근 창의 관측 시각이다.
+
+
+등록 Claude pane의 마지막 상태줄 입력 진단은 agent 상태 폴더의 `sessions/<pane>/quota.json` 안
+`input_diagnostic`에 있다. 수신 시각, `rate_limits`의 존재·형식, 세션·주간 창의 판정과 리셋 형식만
+저장하며 다음 입력이 덮어쓴다. 원시 입력·인증·대화·임의 키·거부된 원래 값은 저장하지 않는다.
+
+- `decision`: `missing`(창 없음), `invalid_container`(상위 필드 형식 오류), `invalid_window`(창 형식 오류),
+  `invalid_percentage`(사용률 오류), `invalid_reset`(기존 검증이 리셋을 거부),
+  `invalid_observation`(관측 시각 오류), `accepted`(파서 수용).
+- `reset`: `missing`·`invalid`·`elapsed`·`future`. 파서는 리셋이 없거나 형식이 틀리면 리셋 미상으로
+  수용하므로 `accepted`와 `invalid`가 함께 있을 수 있다. `accepted`가 새 잔량이나 최신 상태를 뜻하지 않는다.
+- 진단이 없는 옛 파일도 읽는다. agent link 응답은 기존 사용량 형식을 유지하며 진단은 로컬 파일에만 있다.
+
+host의 계정별 사용량 캐시 `account-quota-v1/<account>`는 OAuth 조회 실패를
+`readings.host.http_status`에 보존한다. 401은 조회 인증 실패, 403은 조회 접근 거부,
+429는 조회 제한이다. 코드가 없는 요청 실패는 코드 없이 남고 성공한 다음 조회는 이전 코드를 지운다.
+오류 본문은 저장하지 않는다. 이 진단은 실행용 인증의 고장이나 모델 한도를 뜻하지 않으며
+조회 backoff와 계정 배정 판단을 바꾸지 않는다.

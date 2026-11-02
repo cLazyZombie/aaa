@@ -4,12 +4,21 @@ use aaa_proto::{QuotaSnapshot, QuotaSource};
 use aaa_session::files::{SessionPaths, SpecFile};
 use anyhow::{Result, ensure};
 
+// 로컬 파일의 마지막 입력 하나만 남긴다. QuotaSnapshot 독자는 추가 필드를 버린다.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RecordedQuota {
+    #[serde(flatten)]
+    snapshot: QuotaSnapshot,
+    input_diagnostic: quota::claude::Diagnostic,
+}
+
 impl crate::Agent {
     pub(crate) fn record_quota(&self, spec: &SpecFile, v: &serde_json::Value) -> Result<String> {
         let generation = spec.account_generation.as_ref().ok_or_else(|| anyhow::anyhow!("계정 귀속 미확인"))?;
         let old = self.quota_snapshot(&spec.id, generation)?;
         let now = util::now_ms();
-        let windows = quota::claude(v, now, old.as_ref().map(|s| s.windows.as_slice()).unwrap_or(&[]));
+        let reading = quota::claude::read(v, now, old.as_ref().map(|s| s.windows.as_slice()).unwrap_or(&[]));
+        let windows = reading.windows;
         let text = windows.iter().map(|w| statusline(w, now)).collect::<Vec<_>>().join(" · ");
         let snapshot = QuotaSnapshot {
             generation: generation.clone(),
@@ -19,7 +28,8 @@ impl crate::Agent {
             problem: None,
             retry_at_ms: None,
         };
-        util::write_json(&SessionPaths::new(&self.state, &spec.id).dir.join("quota.json"), &snapshot)?;
+        let recorded = RecordedQuota { snapshot, input_diagnostic: reading.diagnostic };
+        util::write_json(&SessionPaths::new(&self.state, &spec.id).dir.join("quota.json"), &recorded)?;
         Ok(text)
     }
 
@@ -103,6 +113,35 @@ mod tests {
         assert!(a.quota_snapshot("pane1", "generation-b").unwrap().is_none());
         assert!(a.quota_snapshot("../pane1", "generation-a").is_err());
         assert!(!std::fs::read_to_string(paths.dir.join("quota.json")).unwrap().contains("discard-untrusted-token"));
+        // 진단은 이 pane의 마지막 수신 하나만 저장하고 임의 키·인증·대화를 복제하지 않는다.
+        let diagnostic_path = paths.dir.join("quota.json");
+        let diagnostic: RecordedQuota = util::read_json(&diagnostic_path).unwrap();
+        assert_eq!(diagnostic.snapshot.generation, "generation-a");
+        assert_eq!(diagnostic.input_diagnostic.five_hour.decision, quota::claude::Decision::Accepted);
+        assert_eq!(diagnostic.input_diagnostic.seven_day.decision, quota::claude::Decision::Missing);
+        let private = aaa_test_support::token("discard-untrusted-diagnostic");
+        let mut input = json!({"rate_limits":{"five_hour":{"used_percentage":private,"resets_at":private}},
+            "token":private,"transcript_path":private,"messages":[private]});
+        input["rate_limits"].as_object_mut().unwrap().insert(private.clone(), json!(private));
+        a.record_quota(&spec, &input).unwrap();
+        let diagnostic_text = std::fs::read_to_string(&diagnostic_path).unwrap();
+        assert!(!diagnostic_text.contains(&private));
+        assert!(!diagnostic_text.contains("messages") && !diagnostic_text.contains("transcript"));
+        let diagnostic: RecordedQuota = util::read_json(&diagnostic_path).unwrap();
+        assert!(
+            serde_json::to_string(&diagnostic.input_diagnostic).unwrap().len() < 1024,
+            "입력이 커져도 마지막 판정만 저장한다"
+        );
+        assert_eq!(diagnostic.input_diagnostic.five_hour.decision, quota::claude::Decision::InvalidPercentage);
+        assert_eq!(diagnostic.input_diagnostic.five_hour.reset, quota::claude::Reset::Invalid);
+        let preserved = a.quota_snapshot("pane1", "generation-a").unwrap().unwrap();
+        assert_eq!(preserved.windows, next.windows);
+        assert!(
+            serde_json::to_value(&preserved).unwrap().get("input_diagnostic").is_none(),
+            "로컬 진단은 기존 agent link 응답 형식을 바꾸지 않는다"
+        );
+        let stored: QuotaSnapshot = util::read_json(&paths.dir.join("quota.json")).unwrap();
+        assert_eq!(diagnostic.input_diagnostic.received_at_ms, stored.sampled_at_ms);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

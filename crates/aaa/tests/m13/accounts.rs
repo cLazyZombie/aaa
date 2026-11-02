@@ -1457,3 +1457,68 @@ assert s.recv(1)==b'X'
     assert_eq!(child[0].1["token"], expected, "선택한 계정의 인증이 실제 자식에게 전달된다");
     Gate::release(child, b'X');
 }
+
+/// 필요: 실행 명세의 실제 statusLine 명령→인증된 hook→agent 저장을 고정 sleep 없이 확인한다.
+#[test]
+fn claude_statusline_diagnostic_records_missing_and_rejected_windows_without_raw_input() {
+    let gate = Gate::new();
+    let harness = r#"#!/usr/bin/env python3
+import sys
+if sys.argv[1:]==['--version']:
+    print('fixture');sys.exit(0)
+import os,json,pathlib,socket,shlex,time,subprocess
+settings=json.loads(pathlib.Path(sys.argv[sys.argv.index('--settings')+1]).read_text())
+command=shlex.split(settings['statusLine']['command'])
+secret=os.environ['CLAUDE_CODE_OAUTH_TOKEN']
+reset=int(time.time())+86400
+payloads=[
+    {'rate_limits':{'five_hour':{'used_percentage':40,'resets_at':reset},'seven_day':{'used_percentage':9,'resets_at':reset}}},
+    {'rate_limits':{'seven_day':{'used_percentage':10,'resets_at':reset}}},
+    {'rate_limits':{'five_hour':{'used_percentage':secret,'resets_at':secret},secret:secret},'token':secret,'messages':[secret]}
+]
+for phase,payload in enumerate(payloads):
+    subprocess.run(command,input=json.dumps(payload).encode(),check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    h,p=os.environ['ACCOUNT_GATE'].split(':')
+    s=socket.create_connection((h,int(p)),timeout=5)
+    s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=phase))+'\n').encode())
+    assert s.recv(1)==[b'1',b'2',b'X'][phase]
+    s.close()
+"#;
+    let (token, nonce) = canary("quota-diagnostic");
+    let w = world("http://127.0.0.1:1", &gate, &aaa_test_support::token("unused-profile"), harness);
+    let auth = w.scripts.join("diagnostic-token");
+    std::fs::write(&auth, &token).unwrap();
+    w.h.ok(&["account", "import", "work", "--harness", "claude", "--file", path_str(&auth)]);
+    let task = w.task("diagnostic-task.txt", "상태줄 한도 진단");
+    let started = w.start(&["--title", "한도 진단", "--profile", "token", "--account", "work", "--task-file", &task]);
+    let id = started["id"].as_str().unwrap();
+    let first = gate.take(1, 0);
+    let pane = w.show(id)["pane"].as_str().unwrap().to_string();
+    let path = w.h.state.join("agent/sessions").join(&pane).join("quota.json");
+    let read = || serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
+    let first_quota = read();
+    assert_eq!(first_quota["input_diagnostic"]["five_hour"]["decision"], "accepted");
+    assert_eq!(first_quota["input_diagnostic"]["seven_day"]["decision"], "accepted");
+    Gate::release(first, b'1');
+    let second = gate.take(1, 1);
+    let second_quota = read();
+    assert_eq!(second_quota["input_diagnostic"]["five_hour"]["decision"], "missing");
+    assert_eq!(second_quota["input_diagnostic"]["seven_day"]["decision"], "accepted");
+    assert_eq!(second_quota["windows"][0], first_quota["windows"][0], "없는 창의 숫자·시각은 보존한다");
+    assert_eq!(second_quota["windows"][1]["used_percent"], 10.0);
+    Gate::release(second, b'2');
+    let third = gate.take(1, 2);
+    let third_quota = read();
+    assert_eq!(third_quota["input_diagnostic"]["five_hour"]["decision"], "invalid_percentage");
+    assert_eq!(third_quota["input_diagnostic"]["five_hour"]["reset"], "invalid");
+    assert_eq!(third_quota["input_diagnostic"]["seven_day"]["decision"], "missing");
+    assert_eq!(third_quota["windows"], second_quota["windows"], "거부된 입력도 마지막 정상 숫자를 바꾸지 않는다");
+    assert_eq!(third_quota["input_diagnostic"]["received_at_ms"], third_quota["sampled_at_ms"]);
+    assert!(!third_quota.to_string().contains("messages"));
+    assert!(
+        hits(std::slice::from_ref(&path), &needles(&token, &nonce), &|_| false).is_empty(),
+        "진단에 비밀 조각 노출"
+    );
+    Gate::release(third, b'X');
+    w.wait_show("진단용 가짜 pane 종료", id, |v| v["agent"]["activity"] == "exited");
+}
