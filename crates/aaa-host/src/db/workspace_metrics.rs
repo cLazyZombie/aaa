@@ -42,7 +42,24 @@ impl Db {
             let mut run = run.clone();
             run.machine = machine.into();
             run.run_id = format!("{machine}:{}", run.run_id);
-            tx.execute("INSERT INTO repo_metrics(project,workspace,kind,id,at_ms,data) VALUES(?1,?2,'run',?3,?4,?5) ON CONFLICT(project,workspace,kind,id) DO NOTHING",params![project,workspace,run.run_id,run.observed_at_ms,serde_json::to_string(&run)?])?;
+            let old: Option<String> = tx
+                .query_row(
+                    "SELECT data FROM repo_metrics WHERE project=?1 AND workspace=?2 AND kind='run' AND id=?3",
+                    params![project, workspace, run.run_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(old) = old {
+                let run_id = run.run_id.clone();
+                match aaa_common::workspace_metrics::enrich(&serde_json::from_str(&old)?, run) {
+                    Ok(enriched) => run = enriched,
+                    Err(error) => {
+                        tracing::warn!(%error, run=%run_id, "workspace 동일 ID 보강 거부");
+                        continue;
+                    }
+                }
+            }
+            tx.execute("INSERT INTO repo_metrics(project,workspace,kind,id,at_ms,data) VALUES(?1,?2,'run',?3,?4,?5) ON CONFLICT(project,workspace,kind,id) DO UPDATE SET data=excluded.data",params![project,workspace,run.run_id,run.observed_at_ms,serde_json::to_string(&run)?])?;
         }
         if let Some(lines) = &value.code_lines
             && lines.branch == "main"

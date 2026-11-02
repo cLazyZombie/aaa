@@ -76,10 +76,13 @@ fn same_input_version_reuses_small_summary_after_source_logs_disappear() {
     let state = Lab::new();
     let a = collect(&state.0, &l.0, "ws", &[]).unwrap();
     assert_eq!(a.runs.len(), 1);
+    let unchanged = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(a.runs, unchanged.runs);
+    assert_eq!(READ_BYTES.with(|bytes| bytes.get()), 0, "같은 입력 판의 원문을 다시 읽지 않는다");
     fs::remove_file(l.0.join("target/ci-local/run/rust/a.log")).unwrap();
     fs::remove_file(l.0.join("target/ci-local/run/e2e.log")).unwrap();
     let b = collect(&state.0, &l.0, "ws", &[]).unwrap();
-    assert_eq!(a.runs, b.runs, "한 번 읽은 입력은 로그를 다시 읽지 않는다");
+    assert_eq!(a.runs, b.runs, "원본 정리 뒤 재해석도 이미 수집한 값을 지우지 않는다");
 }
 #[test]
 fn missing_and_repeated_e2e_timings_are_missing_instead_of_zero_or_fake_rankings() {
@@ -650,6 +653,54 @@ fn upgraded_archive_parser_revisits_old_errors_and_preserves_records_with_delete
     assert!(result.runs.iter().any(|r| r.source.starts_with("pt 종료 원장")));
     assert!(result.runs.iter().any(|r| r.run_id == "deleted-source"));
     assert!(!result.notes.iter().any(|n| n.contains("출처 불일치")));
+}
+
+#[test]
+fn archive_recollects_detail_changes_without_new_ids_or_losing_confirmed_results() {
+    let l = Lab::new();
+    let state = Lab::new();
+    main_repo(&l);
+    let commit = git(&l, &["rev-parse", "HEAD"]);
+    archive_fixture(&l, "enrich", &commit, "failed");
+    let dir = ".git/aaa-workspace-runs/run-enrich";
+    let source_path = l.0.join(dir).join("provenance.json");
+    let mut source: serde_json::Value = serde_json::from_str(&fs::read_to_string(&source_path).unwrap()).unwrap();
+    source["format"] = serde_json::json!(2);
+    source["runner"] = serde_json::json!("pt");
+    source["started_at_ms"] = serde_json::json!(1);
+    source["ended_at_ms"] = serde_json::json!(aaa_common::util::now_ms() + 60_000);
+    fs::write(&source_path, source.to_string()).unwrap();
+    let source_version = version(&source_path);
+    let first = collect(&state.0, &l.0, "ws", &[]).unwrap().runs;
+    assert_eq!(first.len(), 1);
+    assert!(first[0].tests.is_none());
+    l.put(&format!("{dir}/verification/pt-tests/report.json"),
+        r#"[{"target":"game","exit":0,"tests":[{"name":"unit","event":"ok","exec_time":0.25}],"suites":[{"passed":1,"failed":0,"ignored":0}]}]"#);
+    l.put(&format!("{dir}/e2e.json"),
+        r#"{"status":"failed","timing_unit":"scenario-wall","reports":[{"scenario":"smoke","duration_ms":30,"status":"passed"}]}"#);
+    let second = collect(&state.0, &l.0, "ws", &[]).unwrap().runs;
+    assert_eq!(second.len(), 1);
+    assert_eq!(first[0].run_id, second[0].run_id);
+    assert_eq!(second[0].tests.as_ref().unwrap().passed, 1);
+    assert!(second[0].slow_tests.complete);
+    assert!(!second[0].slow_e2e.complete);
+    assert!(!second[0].notes.iter().any(|note| note.contains("테스트 수는 기존")));
+    // 출처 파일을 바꾸지 않고 부분 순위가 완전한 순위로 보강된다.
+    l.put(&format!("{dir}/e2e.json"),
+        r#"{"status":"passed","timing_unit":"scenario-wall","reports":[{"scenario":"smoke","duration_ms":30,"status":"passed"}]}"#);
+    let complete = collect(&state.0, &l.0, "ws", &[]).unwrap().runs;
+    assert_eq!(complete.len(), 1);
+    assert!(complete[0].slow_e2e.complete);
+    assert_eq!(complete[0].e2e_files, Some(1));
+    assert_eq!(version(&source_path), source_version);
+    l.put(&format!("{dir}/verification/pt-tests/report.json"), "broken");
+    fs::remove_file(l.0.join(dir).join("e2e.json")).unwrap();
+    assert_eq!(collect(&state.0, &l.0, "ws", &[]).unwrap().runs, complete);
+    source["ended_at_ms"] = serde_json::json!(source["ended_at_ms"].as_u64().unwrap() + 1);
+    fs::write(source_path, source.to_string()).unwrap();
+    let conflict = collect(&state.0, &l.0, "ws", &[]).unwrap();
+    assert_eq!(conflict.runs, complete);
+    assert!(conflict.notes.iter().any(|note| note.contains("종료 시각 불일치")));
 }
 
 #[cfg(unix)]
