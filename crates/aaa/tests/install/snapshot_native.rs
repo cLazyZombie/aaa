@@ -1,5 +1,5 @@
 //! 시험과 함께 컴파일하는 외부 프로세스 수집기. CIM·셸·실행 중 컴파일을 쓰지 않는다.
-use super::{Frame, Snapshot, Thread};
+use super::{ConsoleHost, Frame, HostThread, Snapshot, Thread, WaitNode};
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -11,7 +11,7 @@ use windows_sys::Win32::{
     System::{
         Diagnostics::{Debug::*, ToolHelp::*},
         ProcessStatus::GetModuleFileNameExW,
-        SystemInformation::IMAGE_FILE_MACHINE_AMD64,
+        SystemInformation::{GetSystemDirectoryW, IMAGE_FILE_MACHINE_AMD64},
         Threading::*,
     },
 };
@@ -248,6 +248,53 @@ pub(super) fn capture(
     exe: &Path,
     mut phase: impl FnMut(&'static str) -> Result<(), std::io::Error>,
 ) -> Result<Snapshot, Failure> {
+    capture_one(pid, owner, exe, &mut phase)
+}
+
+// GetConsoleWindow의 message-only HWND는 CLI 자신 소유일 수 있어 호스트 신원으로 쓰지 않는다.
+// 커널의 읽기 전용 연관 정보로 PID를 얻고 별도로 부모·시스템 이미지 경로를 확인한다.
+fn console_host(process: HANDLE) -> Result<u32, Failure> {
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtQueryInformationProcess(
+            process: HANDLE,
+            class: u32,
+            info: *mut usize,
+            length: u32,
+            returned: *mut u32,
+        ) -> i32;
+    }
+    let mut host = 0usize;
+    let mut returned = 0;
+    let status = unsafe {
+        NtQueryInformationProcess(process, 49, &mut host, std::mem::size_of::<usize>() as u32, &mut returned)
+    };
+    if status < 0 {
+        return Err(Failure { phase: "console_host_query", error_type: "NtStatus", os_code: status as u32 });
+    }
+    if returned != std::mem::size_of::<usize>() as u32 {
+        return Err(Failure::rejected("console_host_query_size"));
+    }
+    // ProcessConsoleHostProcess의 하위 두 비트는 PID가 아닌 flag다.
+    u32::try_from(host & !3).ok().filter(|pid| *pid != 0).ok_or_else(|| Failure::rejected("console_host_missing"))
+}
+
+fn console_host_image() -> Result<std::path::PathBuf, Failure> {
+    let mut directory = vec![0; 32768];
+    let count = unsafe { GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) };
+    if count == 0 || count as usize >= directory.len() {
+        return Err(Failure::os("console_host_directory"));
+    }
+    directory.truncate(count as usize);
+    Ok(std::path::PathBuf::from(OsString::from_wide(&directory)).join("conhost.exe"))
+}
+
+fn capture_one(
+    pid: u32,
+    owner: u32,
+    exe: &Path,
+    phase: &mut impl FnMut(&'static str) -> Result<(), std::io::Error>,
+) -> Result<Snapshot, Failure> {
     let mut mark = |name| {
         phase(name).map_err(|error| Failure {
             phase: "write_progress",
@@ -285,5 +332,85 @@ pub(super) fn capture(
     }
     mark("cleanup_symbols")?;
     drop(symbols);
-    Ok(Snapshot { format: 1, process_id: pid, threads: views })
+    let mut snapshot = Snapshot {
+        format: 1,
+        process_id: pid,
+        threads: views,
+        console_host: None,
+        console_host_error: String::new(),
+        console_host_code: None,
+    };
+    mark("console_host")?;
+    match capture_host(process.as_raw_handle(), owner) {
+        Ok(host) => snapshot.console_host = Some(host),
+        Err(error) => {
+            snapshot.console_host_error = error.phase.into();
+            snapshot.console_host_code = Some(error.os_code);
+        }
+    }
+
+    Ok(snapshot)
+}
+
+// 호스트는 중지하지 않는다. 수집기 5초 상한에 helper가 종료돼도 호스트 thread가 중지된 채 남지 않는다.
+fn capture_host(client: HANDLE, owner: u32) -> Result<ConsoleHost, Failure> {
+    let pid = console_host(client)?;
+    let host = verify(pid, owner, &console_host_image()?)?;
+    let mut created = FILETIME::default();
+    let mut exited = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    if unsafe { GetProcessTimes(host.as_raw_handle(), &mut created, &mut exited, &mut kernel, &mut user) } == 0 {
+        return Err(Failure::os("console_host_times"));
+    }
+    let ticks = |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    let session = unsafe { OpenThreadWaitChainSession(0, None) };
+    let session_error = if session.is_null() { unsafe { GetLastError() } } else { 0 };
+    struct Session(*mut core::ffi::c_void);
+    impl Drop for Session {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { CloseThreadWaitChainSession(self.0) };
+            }
+        }
+    }
+    let session = Session(session);
+    let threads = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }, "console_host_threads")?;
+    let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of_val(&entry) as u32;
+    let mut found = unsafe { Thread32First(threads.as_raw_handle(), &mut entry) };
+    let mut views = Vec::new();
+    while found != 0 && views.len() < 32 {
+        if entry.th32OwnerProcessID == pid {
+            let mut nodes = [WAITCHAIN_NODE_INFO::default(); 16];
+            let mut count = nodes.len() as u32;
+            let mut cycle = 0;
+            let ok = !session.0.is_null()
+                && unsafe {
+                    GetThreadWaitChain(session.0, 0, 0, entry.th32ThreadID, &mut count, nodes.as_mut_ptr(), &mut cycle)
+                } != 0;
+            let os_code = if session.0.is_null() {
+                session_error
+            } else if ok {
+                0
+            } else {
+                unsafe { GetLastError() }
+            };
+            // 오브젝트 이름·경로·다른 프로세스의 식별 정보는 출력하지 않는다.
+            let nodes = if ok {
+                nodes[..(count as usize).min(nodes.len())]
+                    .iter()
+                    .map(|node| WaitNode { kind: node.ObjectType, status: node.ObjectStatus })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            views.push(HostThread { id: entry.th32ThreadID, nodes, cycle: cycle != 0, os_code });
+        }
+        found = unsafe { Thread32Next(threads.as_raw_handle(), &mut entry) };
+    }
+    if found == 0 && unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
+        return Err(Failure::os("console_host_thread_next"));
+    }
+    Ok(ConsoleHost { process_id: pid, kernel_100ns: ticks(kernel), user_100ns: ticks(user), threads: views })
 }

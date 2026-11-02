@@ -54,11 +54,24 @@ impl Observation {
                         let key_down = records[..count as usize].iter().any(|record| {
                             record.EventType == KEY_EVENT as u16 && unsafe { record.Event.KeyEvent.bKeyDown } != 0
                         });
+                        // 입력 값·길이는 기록하지 않고 읽기를 끝낼 제어 키의 존재만 구분한다.
+                        let control_down = |unit| {
+                            records[..count as usize].iter().any(|record| {
+                                record.EventType == KEY_EVENT as u16
+                                    && unsafe {
+                                        record.Event.KeyEvent.bKeyDown != 0
+                                            && record.Event.KeyEvent.uChar.UnicodeChar == unit
+                                    }
+                            })
+                        };
                         if key_down || (!noted_other && count > 0) {
                             tracing::debug!(
                                 read_id,
                                 observed_after_us = start.elapsed().as_micros(),
                                 key_down,
+                                enter_down = control_down(13),
+                                cancel_down = control_down(3),
+                                eof_down = control_down(26),
                                 "install_console_input_observed"
                             );
                             noted_other = true;
