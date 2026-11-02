@@ -216,8 +216,8 @@ fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.coordinator]\nagent = "cla
 const base = `http://127.0.0.1:${webPort}/`;
 const browser = await launchChromium(chromium);
 
-/** 새 화면. 테마는 설정이 정한다(기본 어두움, herdr-web-ui settings.ts): 밝음 견본은 설정 값을 넣고 연다. line이면 입력줄(composer)을 쓴다 */
-async function openPage({ width, height, kind, scheme = "dark", line = false }) {
+/** 새 화면. 테마는 설정이 정한다(기본 어두움, herdr-web-ui settings.ts): 밝음 견본은 설정 값을 넣고 연다. palette를 주면 그 팔레트(README는 GitHub Dark). line이면 입력줄(composer)을 쓴다 */
+async function openPage({ width, height, kind, scheme = "dark", palette, line = false }) {
   const touch = kind !== "desktop";
   const ctx = await browser.newContext({
     viewport: { width, height },
@@ -227,11 +227,11 @@ async function openPage({ width, height, kind, scheme = "dark", line = false }) 
     colorScheme: scheme,
   });
   await ctx.addInitScript(
-    ([theme, line]) => {
-      localStorage.setItem("aaa:appearance", JSON.stringify({ theme }));
+    ([theme, palette, line]) => {
+      localStorage.setItem("aaa:appearance", JSON.stringify(palette ? { theme, palette } : { theme }));
       if (line) localStorage.setItem("aaa:terminal-input-mode", "line");
     },
-    [scheme, line],
+    [scheme, palette ?? null, line],
   );
   const page = await ctx.newPage();
   await page.goto(base);
@@ -275,7 +275,9 @@ async function inList(page, item) {
   await drawerSettled(page, true);
 }
 
-const termHas = (page, text) => until(`터미널에 ${text}`, async () => (await page.locator(".xterm-rows").innerText()).includes(text));
+// 연 적 있는 pane의 터미널은 숨은 채 붙어 있을 수 있다: 보이는 터미널에서만 찾는다
+const termHas = (page, text) =>
+  until(`터미널에 ${text}`, async () => (await page.locator(".xterm-rows").filter({ visible: true }).allInnerTexts()).some((t) => t.includes(text)));
 
 /** thread 줄은 그 agent pane을 연다(차이 목록 L4): 보고서는 터미널 머리의 「보고」로 */
 async function openReport(page, id, text) {
@@ -323,6 +325,9 @@ async function designShots(t1) {
   return shots;
 }
 
+/** README 그림의 앱 팔레트(docs/github-themes.md): GitHub 화면에 놓이는 그림이라 GitHub Dark로 찍는다 */
+const README_PALETTE = "github-dark";
+
 /** README 그림(docs/media): 데스크톱 질문·보고, 휴대폰 목록, 흐름 영상 */
 async function readmeMedia(t1) {
   const files = [];
@@ -333,7 +338,7 @@ async function readmeMedia(t1) {
   };
   {
     // 여러 머신의 agent와 thread를 한 목록에, Claude의 확인창은 웹 카드로 답한다
-    const { ctx, page } = await openPage({ width: 1440, height: 900, kind: "desktop" });
+    const { ctx, page } = await openPage({ width: 1440, height: 900, kind: "desktop", palette: README_PALETTE });
     await pair(page);
     await inList(page, "pane-claude-api");
     await termHas(page, "Claude");
@@ -367,7 +372,7 @@ async function readmeMedia(t1) {
   }
   {
     // 휴대폰: 같은 목록(프로젝트·thread 상태). 뒤에 열린 pane은 Claude 터미널로 둔다(처음 화면은 coordinator)
-    const { ctx, page } = await openPage({ width: 390, height: 844, kind: "phone" });
+    const { ctx, page } = await openPage({ width: 390, height: 844, kind: "phone", palette: README_PALETTE });
     await pair(page);
     await inList(page, "pane-claude-api");
     if (await page.getByTestId("chat").isVisible()) await page.getByTestId("chat-toggle").click();
@@ -383,7 +388,7 @@ async function readmeMedia(t1) {
 /** 흐름 영상: coordinator에 글 보내기 → mac-b thread가 일하며 진행을 알림 → 보고 도착 → 보고 열기 */
 async function flowVideo() {
   const [width, height] = [1024, 640];
-  const { ctx, page } = await openPage({ width, height, kind: "desktop", line: true });
+  const { ctx, page } = await openPage({ width, height, kind: "desktop", palette: README_PALETTE, line: true });
   await pair(page);
   await inList(page, page.locator("#sidebar-column .pane-item.is-coordinator").first());
   if (await page.getByTestId("chat").count()) await page.getByTestId("chat-toggle").click();
