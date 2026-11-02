@@ -4,7 +4,7 @@ import type { AccountQuota, AccountQuotaReport } from "./gen/proto";
 import { readApiResponse } from "./apiOutcome";
 import { onAccountsChanged } from "./api";
 import { usePageVisible } from "./pageVisible";
-import { quotaLabel, quotaLeft, quotaProblem, quotaState, quotaTime } from "./accountQuotaModel";
+import { quotaAge, quotaLabel, quotaLeft, quotaProblem, quotaState, quotaTime } from "./accountQuotaModel";
 
 export function useAccountQuota(enabled: boolean) {
   const [report, setReport] = useState<AccountQuotaReport | null>(null);
@@ -45,7 +45,7 @@ export function AccountQuotaCard({ quota, now, failed }: { quota: AccountQuota |
         <div className="acct-quota-title"><span>{quotaLabel(w)}</span><strong>{state === "unknown" ? `마지막 ${quotaLeft(w)}` : quotaLeft(w)}</strong></div>
         <meter min={0} max={100} value={Number.isFinite(w.used_percent) ? 100 - w.used_percent : 0} aria-label={`${quotaLabel(w)} 남은 양`} />
         <p>{state === "fresh" ? "최신" : state === "stale" ? "오래됨" : "모름 · 재조회 필요"}{w.problem ? ` · ${quotaProblem[w.problem]}` : ""}{w.conflict ? " · 관측 충돌(작은 잔량)" : ""}</p>
-        <p>리셋 {quotaTime(w.resets_at_ms)} · 관측 {quotaTime(w.observed_at_ms)}</p>
+        <p>{quotaAge(w.observed_at_ms, now)} · 리셋 {quotaTime(w.resets_at_ms)}</p>
         <p>{w.machine} · {w.source === "codex_rpc" ? "공식 조회" : w.source === "claude_oauth" ? "OAuth 조회" : "상태줄 관측"}</p>
       </div>;
     })}

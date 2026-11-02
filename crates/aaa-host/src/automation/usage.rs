@@ -161,18 +161,24 @@ mod tests {
         assert_eq!(registered(&limits(), &q, NOW), Check::Allowed, "문턱과 같으면 실행");
         q.windows[1].window.used_percent = 90.1;
         assert_eq!(registered(&limits(), &q, NOW), Check::Low);
+        q.windows[1].freshness = QuotaFreshness::Stale;
+        assert_eq!(registered(&limits(), &q, NOW + 600_001), Check::Low, "10분 뒤에도 리셋 전 문턱을 적용한다");
         q.windows.remove(0);
         assert_eq!(registered(&limits(), &q, NOW), Check::Low, "5시간이 없어도 주간 문턱은 적용한다");
         q.windows[0].window.used_percent = 19.0;
         assert_eq!(registered(&Limits { usage_week_below: Some(10.0), ..Default::default() }, &q, NOW), Check::Allowed);
     }
     #[test]
-    fn quota_gate_rejects_stale_reset_invalid_conflicting_and_scoped_windows() {
+    fn quota_gate_ignores_expired_reset_invalid_conflicting_and_scoped_windows() {
         for case in 0..7 {
             let mut q = quota();
             let w = &mut q.windows[0];
+            w.window.used_percent = 99.;
             match case {
-                0 => w.window.observed_at_ms = NOW - aaa_common::quota::FRESH_MS - 1,
+                0 => {
+                    w.window.resets_at_ms = None;
+                    w.window.observed_at_ms = NOW - aaa_common::quota::UNKNOWN_RESET_MS - 1;
+                }
                 1 => w.window.resets_at_ms = Some(NOW),
                 2 => w.window.used_percent = f64::NAN,
                 3 => w.conflict = true,

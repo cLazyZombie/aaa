@@ -11,7 +11,8 @@ export function quotaLabel(w: AccountQuotaWindow): string {
 }
 export function quotaState(w: AccountQuotaWindow, now: number): "fresh" | "stale" | "unknown" {
   if (!Number.isFinite(w.used_percent) || w.used_percent < 0 || w.used_percent > 100 || w.problem
-      || !w.observed_at_ms || w.observed_at_ms > now + 30_000 || now - w.observed_at_ms > 600_000
+      || !w.observed_at_ms || w.observed_at_ms > now + 30_000
+      || (w.resets_at_ms === null && now - w.observed_at_ms > 600_000)
       || (w.resets_at_ms !== null && w.resets_at_ms <= now)) return "unknown";
   if (w.freshness === "unknown") return "unknown";
   return w.freshness === "stale" || now - w.observed_at_ms > 120_000 ? "stale" : "fresh";
@@ -21,4 +22,10 @@ export function quotaLeft(w: AccountQuotaWindow): string {
 }
 export function quotaTime(ms: number | null): string {
   return ms && Number.isFinite(ms) && Number.isFinite(new Date(ms).getTime()) ? new Date(ms).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "모름";
+}
+
+export function quotaAge(observedAt: number | null, now: number): string {
+  if (!observedAt || !Number.isFinite(observedAt) || observedAt > now + 30_000) return "관측 시각 모름";
+  const minutes = Math.floor(Math.max(0, now - observedAt) / 60_000);
+  return minutes < 1 ? "방금 관측" : `${minutes}분 전 관측`;
 }

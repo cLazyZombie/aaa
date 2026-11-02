@@ -312,7 +312,9 @@ fn only_confirmed_usage_limits_exclude_an_authenticated_candidate() {
     assert_eq!(choose(&l, &p).unwrap().0, "full");
     p.candidates[0].quota.as_mut().unwrap().windows[0].window.scope = None;
     p.candidates[0].quota.as_mut().unwrap().windows[0].window.observed_at_ms = NOW - 120001;
-    assert_eq!(choose(&l, &p).unwrap().0, "full", "오래된 100%는 현재 한도로 단정하지 않는다");
+    assert!(choose(&l, &p).unwrap_err().to_string().contains("사용 한도 도달"), "2분 뒤에도 리셋 전 한도는 유지한다");
+    p.candidates[0].quota.as_mut().unwrap().windows[0].window.resets_at_ms = Some(NOW);
+    assert_eq!(choose(&l, &p).unwrap().0, "full", "리셋 경계에서는 이전 한도로 막지 않는다");
     let mut c = unknown("limited");
     let q = c.quota.as_mut().unwrap();
     q.problem = Some(QuotaProblem::RateLimited);
@@ -876,4 +878,28 @@ fn newest_saved_weekly_observation_beats_an_older_still_fresh_source() {
     }
     let p = input(&l, vec![c, candidate("b", 20.0, 35.0)]);
     assert_eq!(choose(&l, &p).unwrap().0, "b", "계정 a의 최신 잔량은 95%가 아니라 5%다");
+}
+
+// 필요: 10분 뒤에도 소진·자동화 문턱이 사라지지 않고 실제 배정에서 리셋 때 해제된다.
+#[test]
+fn idle_observation_still_excludes_exhausted_and_below_threshold_accounts_until_reset() {
+    let l = Lab::new();
+    for duration in [300, 10080] {
+        for (used, minimum, reason) in
+            [(100., [None, None], "사용 한도 도달"), (96., [Some(5.), Some(5.)], "자동화 사용량 문턱")]
+        {
+            let mut c = candidate("work", used, used);
+            let q = c.quota.as_mut().unwrap();
+            q.windows.retain(|w| w.window.duration_mins == Some(duration));
+            let w = &mut q.windows[0];
+            w.window.observed_at_ms = NOW - 3_600_000;
+            w.window.resets_at_ms = Some(NOW + 1000);
+            w.freshness = QuotaFreshness::Stale;
+            let mut p = input(&l, vec![c]);
+            p.minimum = minimum;
+            assert!(choose(&l, &p).unwrap_err().to_string().contains(reason));
+            let (_, allocation) = p.select(&l.h.db.conn_for_test(), NOW + 1000).unwrap();
+            assert!(allocation.selection.unobserved, "리셋 뒤에는 마지막 기록 추정임을 남긴다");
+        }
+    }
 }
