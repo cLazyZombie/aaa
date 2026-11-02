@@ -47,7 +47,7 @@ I0의 함수는 파일·env·OS·프로세스·네트워크를 읽거나 쓰지 
 ## 인자
 
 아래 선택 인자의 전체 타입/enum은 [생성 schema](install.schema.json)의 `InstallChoices`와
-[생성 TS](../web/src/gen/proto.ts)에 있다. 현재 설치 명령을 문서화한 README와 혼동하지 않는다.
+[생성 TS](../web/src/gen/proto.ts)에 있다. 현재 설치 명령을 문서화한 [머신 설치](install.md)와 혼동하지 않는다.
 
 | 영역 | 인자 | 규칙/기본값 |
 |---|---|---|

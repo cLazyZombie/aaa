@@ -1,10 +1,10 @@
 # README 매체 재생성
 
-README는 실제 host·agent 둘을 띄운 격리 실험실을 촬영한다. agent의 대화와 작업 결과만 가짜이며 웹 UI·질문 판정·등록·보고 수집·auto mode 전환·자동화 조회는 실제 구현을 사용한다. 운영 앱을 촬영하거나 화면의 텍스트를 사후 교체하지 않는다.
+README는 실제 host·agent 둘을 띄운 격리 실험실을 GitHub Dark 팔레트(`github-dark`)로 촬영한다. agent의 대화와 작업 결과만 가짜이며 웹 UI·질문 판정·등록·보고 수집·auto mode 전환·자동화 조회는 실제 구현을 사용한다. 운영 앱을 촬영하거나 화면의 텍스트를 사후 교체하지 않는다.
 
 ## 실행
 
-웹과 Rust 실행 파일을 먼저 빌드하고 Playwright 1.64.1의 Chromium, ffmpeg를 준비한다. 자세한 설치는 [README 개발](../README.md#개발)을 따른다.
+웹과 Rust 실행 파일을 먼저 빌드하고 Playwright 1.64.1의 Chromium, ffmpeg를 준비한다. 자세한 설치는 [CONTRIBUTING](../CONTRIBUTING.md)을 따른다.
 
 ```sh
 NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs --readme docs/media
@@ -19,7 +19,7 @@ NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs --readme docs/media
 | `report.png` | thread의 보고와 다음 행동 |
 | `auto-mode.png` | coordinator 대화와 auto mode 입력창 |
 | `automation.png` | 꺼진 견본 일정 규칙의 조건·대상·승인·기록 |
-| `workspaces.png` | 머신 정보의 작업 폴더 자동 배정 |
+| `workspaces.png` | 머신 정보의 작업 폴더 자동 배정(아래 연결·시스템 칸은 찍는 Mac의 실제 값이라 자른다) |
 | `phone.png` | 390px 휴대폰 작업 목록 |
 | `flow.gif` | 입력 → thread 작업 → 보고의 네 장면 |
 

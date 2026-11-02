@@ -1,6 +1,6 @@
 # 사용법
 
-웹 화면과 CLI를 쓰는 법이다. 설치는 [README](../README.md#mac에-설치)와 [운영 설치 점검표](install-runbook.md)에 있다.
+웹 화면과 CLI를 쓰는 법이다. 설치는 [host 설치](host-setup.md)와 [머신 설치](install.md)에 있다.
 
 host DB의 정기 암호화 백업·보관 회전·새 파일 복원은 [host DB 백업](host-db-backup.md)을 따른다.
 
