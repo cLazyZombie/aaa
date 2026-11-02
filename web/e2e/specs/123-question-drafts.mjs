@@ -117,13 +117,12 @@ function draftScenario(engine, width, label) {
       assert.deepEqual(answer.picks, [1, null]);
       assert.deepEqual(answer.comments, [null, "새 질문 답"]);
       await until("성공한 답 초안 삭제", () => page.evaluate(id => localStorage.getItem(`aaa:question-draft:${JSON.stringify(["question", "demo", id])}`) === null, t.id));
-      await write("답한 뒤 다시 같은 질문");
-      assert.equal(await card().getByTestId("thread-ask-pick-1B").getAttribute("aria-checked"), "false");
-      assert.equal(await card().getByTestId("thread-ask-text-2").inputValue(), "", "답한 초안은 다음 질문에 다시 채우지 않는다");
     },
     single: async () => {
-      const single = questions.slice(0, questions.indexOf("### 2."));
+      const single = questions.slice(0, questions.indexOf("### 2.")).replace("단추 자리", "다음 화면 단추 자리");
+      // 이미 답한 질문은 host가 제거한다. 다음 입력 시험은 별개의 실제 질문으로 연다.
       await write("질문 하나", single);
+      assert.equal(await card().getByTestId("thread-ask-text").inputValue(), "");
       await card().getByTestId("thread-ask-pick-1B").click();
       const input = card().getByTestId("thread-ask-text");
       const text = "한글 직접 답 끝  ";
