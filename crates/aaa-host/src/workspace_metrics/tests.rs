@@ -102,6 +102,78 @@ fn ledger_groups_remote_identity_across_machines_and_projects_and_resets_only_ol
     drop(db);
     assert_eq!(Db::open(&path).unwrap().workspace_records("", &a, 0).unwrap().0.len(), 1);
 }
+
+#[test]
+fn ledger_enriches_the_same_run_and_preserves_details_after_sparse_or_conflicting_recollection() {
+    let l = Lab::new();
+    let path = l.0.join("db");
+    let db = Db::open(&path).unwrap();
+    let mut original = run("same", 10, "ignored", "verify", 100, "failed");
+    original.profile = None;
+    original.build_ms = Some(0);
+    let save = |db: &Db, run| {
+        db.save_workspace_metrics("", "ws", "mac-a", &WorkspaceCollected { runs: vec![run], ..Default::default() })
+            .unwrap();
+    };
+    save(&db, original.clone());
+    let mut detailed = original.clone();
+    detailed.profile = Some("verify".into());
+    detailed.build_ms = Some(999);
+    detailed.artifact_bytes = Some(42);
+    detailed.artifact_name = Some("app".into());
+    detailed.tests =
+        Some(aaa_proto::MetricCounts { passed: 3, failed: 1, unit: "rust-test".into(), ..Default::default() });
+    detailed.slow_tests = aaa_proto::MetricRanking {
+        items: vec![MetricTiming { name: "test".into(), duration_ms: 12, outcome: "failed".into(), start_ms: None }],
+        unit: "individual-test".into(),
+        complete: false,
+        missing_reason: None,
+    };
+    detailed.e2e_files = Some(1);
+    detailed.e2e_unit = Some("scenario".into());
+    detailed.slow_e2e = detailed.slow_tests.clone();
+    detailed.slow_e2e.unit = "scenario-wall".into();
+    save(&db, detailed.clone());
+    let mut empty = detailed.clone();
+    empty.slow_tests.complete = true;
+    empty.slow_tests.items.clear();
+    empty.slow_e2e.complete = true;
+    empty.slow_e2e.items.clear();
+    save(&db, empty);
+    let partial = db.workspace_run("", "ws", "mac-a:same").unwrap().unwrap();
+    assert_eq!(partial.slow_tests, detailed.slow_tests, "빈 완료 순위로 기존 부분 순위를 지우지 않는다");
+    assert_eq!(partial.slow_e2e, detailed.slow_e2e);
+    detailed.slow_tests.complete = true;
+    detailed.slow_e2e.complete = true;
+    save(&db, detailed.clone());
+    let complete = db.workspace_run("", "ws", "mac-a:same").unwrap().unwrap();
+    assert_eq!(complete.tests, detailed.tests);
+    assert_eq!(complete.build_ms, Some(0), "관측한 0은 미수집이 아니다");
+    assert_eq!(complete.profile.as_deref(), Some("verify"));
+    assert_eq!(complete.artifact_bytes, Some(42));
+    assert!(complete.slow_tests.complete && complete.slow_e2e.complete);
+    save(&db, original.clone());
+    save(&db, detailed.clone());
+    let mut conflict = detailed.clone();
+    conflict.commit = "b".repeat(40);
+    save(&db, conflict);
+    let mut conflict = detailed.clone();
+    conflict.observed_at_ms += 1;
+    save(&db, conflict);
+    let mut conflict = detailed.clone();
+    conflict.outcome = "succeeded".into();
+    save(&db, conflict);
+    let mut partial = detailed;
+    partial.slow_tests.complete = false;
+    partial.slow_tests.items.clear();
+    partial.slow_e2e.unit = "scenario-step-sum".into();
+    partial.e2e_files = Some(9);
+    save(&db, partial);
+    drop(db);
+    let db = Db::open(&path).unwrap();
+    let (runs, _, _) = db.workspace_records("", "ws", 0).unwrap();
+    assert_eq!(runs, vec![complete], "재시작·재수집에도 하나의 실행과 기존 값이 남는다");
+}
 #[tokio::test]
 async fn reader_queries_only_the_host_ledger_with_filters_missing_values_and_disconnected_agents() {
     let l = Lab::new();

@@ -5017,3 +5017,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - 아이디어 그림·새 글 알림·분할 조절: [t-1412 검증 기록](testing-idea-updates-t-1412.md).
 - Windows 콘솔 스냅샷 실행 의존 제거·실기 대조: [t-1418 검증 기록](testing-win-console-snapshot-t1418.md).
 - 앱 안 알림의 종류 아이콘·한 줄 요약·원문 보존: [t-1419 검증 기록](testing-in-app-alerts-t-1419.md).
+- 같은 검증 실행의 상세 결과 재수집·보강: [t-1425 검증 기록](testing-workspace-enrichment-t-1425.md).

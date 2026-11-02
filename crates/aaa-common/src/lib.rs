@@ -21,6 +21,7 @@ pub mod resource;
 pub mod response_parts;
 pub mod tls;
 pub mod util;
+pub mod workspace_metrics;
 
 /// 역할 사이의 사용자 전용 파일·ACL/잠금 경계. 기존 파일 권한은 고치지 않는다.
 pub mod private_file;

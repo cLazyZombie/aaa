@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, path::Path, time::UNIX_EPOCH};
 
 mod archive;
+mod inputs;
 mod lines;
 mod mainline;
 pub mod verify;
@@ -600,7 +601,19 @@ pub fn collect(
     }
     for (path, v, at, kind) in inputs.into_iter().take(32) {
         let rel = path.strip_prefix(cwd)?.to_string_lossy().into_owned();
-        if cache.versions.get(&rel) == Some(&v) {
+        let root = match kind {
+            "ci" => path.parent().unwrap().to_path_buf(),
+            _ => cwd.join("target"),
+        };
+        let input_version = match inputs::fingerprint(&root, &v) {
+            Ok(version) => version,
+            Err(error) => {
+                tracing::warn!(%error, "workspace 부속 입력 판 미수집");
+                cache.errors.insert(rel, format!("부속 입력 판 미수집: {error}"));
+                continue;
+            }
+        };
+        if cache.versions.get(&rel) == Some(&input_version) {
             continue;
         }
         let id = hex::encode(Sha256::digest(format!("{}:{rel}:{v}", cwd.display()).as_bytes()));
@@ -631,18 +644,29 @@ pub fn collect(
                 });
                 if !start.is_some_and(|start| legacy.as_ref().is_some_and(|main| main.accepts(start, at))) {
                     cache.errors.insert(rel.clone(), "main 변경 전 또는 출처 미확인 실행 제외".into());
-                    cache.versions.insert(rel, v);
+                    cache.versions.insert(rel, input_version);
                     continue;
                 }
                 run.commit = commit.clone();
+                if let Some(old) = cache.runs.get(&id) {
+                    run = match aaa_common::workspace_metrics::enrich(old, run) {
+                        Ok(run) => run,
+                        Err(error) => {
+                            tracing::warn!(%error, run=%id, "workspace 동일 ID 보강 거부");
+                            cache.errors.insert(rel.clone(), error.to_string());
+                            cache.versions.insert(rel, input_version);
+                            continue;
+                        }
+                    };
+                }
                 cache.runs.insert(id, run);
                 cache.errors.remove(&rel);
-                cache.versions.insert(rel, v);
+                cache.versions.insert(rel, input_version);
             }
             Err(source_error) => {
                 aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
                 cache.errors.insert(rel.clone(), "기존 결과 형식·크기 문제로 해당 실행 미수집".into());
-                cache.versions.insert(rel, v);
+                cache.versions.insert(rel, input_version);
             }
         }
         if exhausted {

@@ -86,7 +86,13 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
     for (dir, v, _) in &dirs {
         // 구형 parser가 새 runner를 CI로 오인했거나 format 2를 거부한 캐시도 재해석한다.
         // runs는 그대로 두어 이미 원본이 지워진 확정 기록을 잃지 않는다.
-        let v = format!("parser-4:{v}");
+        let v = match inputs::fingerprint(dir, v) {
+            Ok(version) => version,
+            Err(error) => {
+                notes.push(format!("CI 부속 입력 판 미수집: {error}"));
+                continue;
+            }
+        };
         if BUDGET_EXHAUSTED.with(|flag| flag.get()) {
             notes.push("읽기 비용 상한으로 CI 일부 미수집".into());
             break;
@@ -177,6 +183,19 @@ pub(super) fn collect(state: &Path, cwd: &Path, remote: &str, commit: &str) -> R
         match parsed {
             Ok(Some(run)) => {
                 collected += 1;
+                let run = if let Some(old) = cache.runs.get(&id) {
+                    match aaa_common::workspace_metrics::enrich(old, run) {
+                        Ok(run) => run,
+                        Err(error) => {
+                            tracing::warn!(%error, run=%id, "workspace 동일 ID 보강 거부");
+                            cache.errors.insert(id.clone(), error.to_string());
+                            cache.versions.insert(id, v.clone());
+                            continue;
+                        }
+                    }
+                } else {
+                    run
+                };
                 cache.runs.insert(id.clone(), run);
                 cache.versions.insert(id.clone(), v.clone());
                 cache.errors.remove(&id);
