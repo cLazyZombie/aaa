@@ -49,6 +49,9 @@ function owned(state: unknown): boolean {
   return id !== null && (open.has(id) || leaving.has(id));
 }
 
+/** 다른 기록 관리자는 sheet가 빌린 칸을 고치지 않고, 닫기 복귀 뒤 자기 칸을 조정한다. */
+export const ownsSheetEntry = (state: unknown): boolean => owned(state);
+
 /** Makes the sheet's entry (RowMenu's effect on mount; exported for its test). */
 export function enterSheet(onBack: () => boolean | void, reuse: string | null): string {
   // StrictMode's second mount, or a sheet reopened before its entry went: the same entry

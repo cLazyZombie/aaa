@@ -5039,3 +5039,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 - 계정 메일 한 번 등록·수정: [t-1477 검증 기록](testing-account-email-t-1477.md).
 - [정상 조회 응답의 5시간 필드 유형 진단(t-1454)](testing-five-hour-response-t-1454.md)
+
+- [휴대폰 인증 창 회전과 설정 기록 경합(t-1483)](testing-account-rotation-t-1483.md)

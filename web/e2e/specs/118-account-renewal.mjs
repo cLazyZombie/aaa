@@ -210,7 +210,70 @@ async function checkEmail(name, engine, width) {
   } finally { await page.context().close(); }
 }
 
+// 회전 때 matchMedia effect와 sheet 닫기 timer가 모두 기록 이동을 요청한 뒤
+// 브라우저가 도착하게 한다. 시간을 자거나 실제 기록·popstate를 대체하지 않는다.
+function holdRotationHistory() {
+  const rotation = window.__rotationHistory = { hold: false, moves: [], sheetRequested: null };
+  for (const method of ["go", "back"]) {
+    const original = history[method].bind(history);
+    history[method] = (...args) => {
+      if (!rotation.hold || (method === "go" && !(args[0] < 0))) return original(...args);
+      rotation.moves.push(() => original(...args));
+      if (method === "back") rotation.sheetRequested();
+    };
+  }
+}
+
+async function checkRotation(engine) {
+  const fixture = provider();
+  const { page, errors } = await pairPage(engine, aaa("web", "pair").code, { width: 390, height: 900 }, {
+    serviceWorkers: "block", route: ["**/api/v1/call", fixture.route], init: holdRotationHistory,
+  });
+  try {
+    const settings = await openSettings(page, "계정");
+    await settings.getByRole("button", { name: "sample-claude 다시 로그인", exact: true }).click();
+    const dialog = page.getByTestId("account-login-dialog");
+    await dialog.getByLabel("인증 코드", { exact: true }).waitFor();
+    await page.evaluate(() => {
+      const rotation = window.__rotationHistory;
+      rotation.hold = true;
+      rotation.ready = new Promise(done => { rotation.sheetRequested = done; });
+    });
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.evaluate(async () => {
+      const rotation = window.__rotationHistory;
+      await rotation.ready;
+      await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+      rotation.hold = false;
+      for (const move of rotation.moves) {
+        const landed = new Promise(done => addEventListener("popstate", done, { once: true }));
+        move(); await landed;
+      }
+    });
+    // 새로 그린 설정 탭은 인증 창 밑에 있어도 선택 상태를 보존해야 한다.
+    const accountTab = page.getByRole("tab", { name: "계정", exact: true, includeHidden: true });
+    assert.equal(await accountTab.getAttribute("aria-selected"), "true", "가로 회전은 계정 쪽을 바꾸지 않는다");
+    await page.setViewportSize({ width: 390, height: 900 });
+    await dialog.getByLabel("인증 코드", { exact: true }).fill(manualCode);
+    await dialog.getByRole("button", { name: "확인", exact: true }).click();
+    await dialog.getByText("로그인 완료", { exact: true }).waitFor();
+    await closeCompleted(page, dialog, 390);
+    await settings.getByTestId("settings-accounts").waitFor();
+    assert.deepEqual(fixture.starts, ["claude"], "회전·닫기는 새 인증을 시작하지 않는다");
+    await settings.getByRole("button", { name: "sample-claude 사용량 조회 로그인", exact: true }).click();
+    await dialog.getByLabel("조회 계정 메일", { exact: true }).fill("me@example.com");
+    await dialog.getByRole("button", { name: "조회 로그인", exact: true }).click();
+    await dialog.getByLabel("인증 코드", { exact: true }).waitFor();
+    assert.deepEqual(fixture.starts, ["claude", "query"], "복귀한 계정 쪽에서 요청을 한 번 보낸다");
+    await dialog.getByRole("button", { name: "취소", exact: true }).click();
+    await dialog.waitFor({ state: "detached" });
+    assert.deepEqual(errors, []);
+  } finally { await page.context().close(); }
+}
+
 export default async function () {
+  await step("휴대폰 Chromium 인증 창 회전·설정 기록 경합", async () => { await checkRotation(browser); });
+  await step("휴대폰 WebKit 인증 창 회전·설정 기록 경합", async () => { const wk = await webkit.launch(); try { await checkRotation(wk); } finally { await wk.close(); } });
   await step("PC Chromium 메뉴·설정 원격 인증", async () => { await check("chromium", browser, 1280); });
   await step("휴대폰 Chromium 메뉴·설정 원격 인증", async () => { await check("chromium", browser, 390); });
   await step("PC WebKit 메뉴·설정 원격 인증", async () => { const wk = await webkit.launch(); try { await check("webkit", wk, 1280); } finally { await wk.close(); } });
