@@ -1,5 +1,5 @@
 //! 시험과 함께 컴파일하는 외부 프로세스 수집기. CIM·셸·실행 중 컴파일을 쓰지 않는다.
-use super::{ConsoleHost, Frame, HostThread, Snapshot, Thread, WaitNode};
+use super::{ChildSnapshot, ConsoleHost, Frame, HostThread, Snapshot, Thread, WaitNode};
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -16,7 +16,7 @@ use windows_sys::Win32::{
     },
 };
 
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub(super) struct Failure {
     phase: &'static str,
     error_type: &'static str,
@@ -54,8 +54,11 @@ fn full_path(path: &OsStr) -> Result<Vec<u16>, Failure> {
 
 // 같은 handle을 신원 검사부터 수집 완료까지 보관해 PID 재사용으로 대상을 바꾸지 않는다.
 fn verify(pid: u32, owner: u32, expected: &Path) -> Result<OwnedHandle, Failure> {
+    verify_access(pid, owner, expected, 0)
+}
+fn verify_access(pid: u32, owner: u32, expected: &Path, extra: u32) -> Result<OwnedHandle, Failure> {
     let process = owned(
-        unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_SYNCHRONIZE, 0, pid) },
+        unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_SYNCHRONIZE | extra, 0, pid) },
         "open_process",
     )?;
     match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
@@ -246,9 +249,10 @@ pub(super) fn capture(
     pid: u32,
     owner: u32,
     exe: &Path,
+    children: &[u32],
     mut phase: impl FnMut(&'static str) -> Result<(), std::io::Error>,
 ) -> Result<Snapshot, Failure> {
-    capture_one(pid, owner, exe, &mut phase)
+    capture_one(pid, owner, exe, children, &mut phase)
 }
 
 // GetConsoleWindow의 message-only HWND는 CLI 자신 소유일 수 있어 호스트 신원으로 쓰지 않는다.
@@ -293,6 +297,7 @@ fn capture_one(
     pid: u32,
     owner: u32,
     exe: &Path,
+    children: &[u32],
     phase: &mut impl FnMut(&'static str) -> Result<(), std::io::Error>,
 ) -> Result<Snapshot, Failure> {
     let mut mark = |name| {
@@ -304,15 +309,56 @@ fn capture_one(
     };
     mark("verify_child")?;
     let process = verify(pid, owner, exe)?;
+    let views = capture_threads(process.as_raw_handle(), pid, exe, phase)?;
+    let mut snapshot = Snapshot {
+        format: 1,
+        process_id: pid,
+        threads: views,
+        console_host: None,
+        console_host_error: String::new(),
+        console_host_code: None,
+        children: Vec::new(),
+    };
+    phase("console_host").map_err(|error| Failure {
+        phase: "write_progress",
+        error_type: "IoError",
+        os_code: error.raw_os_error().unwrap_or(0) as u32,
+    })?;
+    match capture_host(process.as_raw_handle(), owner) {
+        Ok(host) => snapshot.console_host = Some(host),
+        Err(error) => {
+            snapshot.console_host_error = error.phase.into();
+            snapshot.console_host_code = Some(error.os_code);
+        }
+    }
+    // CLI handle을 보관한 채 같은 이미지의 직계 자식만 별도로 검증한다.
+    // worker는 DETACHED_PROCESS라 CLI 콘솔 스택에 나타나지 않는다.
+    snapshot.children = capture_children(pid, exe, children, phase);
+    Ok(snapshot)
+}
+
+fn capture_threads(
+    process: HANDLE,
+    pid: u32,
+    exe: &Path,
+    phase: &mut impl FnMut(&'static str) -> Result<(), std::io::Error>,
+) -> Result<Vec<Thread>, Failure> {
+    let mut mark = |name| {
+        phase(name).map_err(|error| Failure {
+            phase: "write_progress",
+            error_type: "IoError",
+            os_code: error.raw_os_error().unwrap_or(0) as u32,
+        })
+    };
     mark("initialize_symbols")?;
     let search = wide(exe.parent().unwrap_or(Path::new(".")).as_os_str());
     unsafe {
         SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS);
     }
-    if unsafe { SymInitializeW(process.as_raw_handle(), search.as_ptr(), 1) } == 0 {
+    if unsafe { SymInitializeW(process, search.as_ptr(), 1) } == 0 {
         return Err(Failure::os("initialize_symbols"));
     }
-    let symbols = Symbols(process.as_raw_handle());
+    let symbols = Symbols(process);
     let threads = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }, "thread_snapshot")?;
     let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
     entry.dwSize = std::mem::size_of_val(&entry) as u32;
@@ -322,7 +368,7 @@ fn capture_one(
         if entry.th32OwnerProcessID == pid {
             // 실제 thread 수집 전후를 남긴다. private 메모리·입력·경로는 기록하지 않는다.
             mark("walk_thread")?;
-            views.push(read_thread(process.as_raw_handle(), pid, entry.th32ThreadID));
+            views.push(read_thread(process, pid, entry.th32ThreadID));
             mark("thread_resumed")?;
         }
         found = unsafe { Thread32Next(threads.as_raw_handle(), &mut entry) };
@@ -332,24 +378,105 @@ fn capture_one(
     }
     mark("cleanup_symbols")?;
     drop(symbols);
-    let mut snapshot = Snapshot {
-        format: 1,
-        process_id: pid,
-        threads: views,
-        console_host: None,
-        console_host_error: String::new(),
-        console_host_code: None,
-    };
-    mark("console_host")?;
-    match capture_host(process.as_raw_handle(), owner) {
-        Ok(host) => snapshot.console_host = Some(host),
-        Err(error) => {
-            snapshot.console_host_error = error.phase.into();
-            snapshot.console_host_code = Some(error.os_code);
+    Ok(views)
+}
+
+fn capture_children(
+    owner: u32,
+    exe: &Path,
+    children: &[u32],
+    phase: &mut impl FnMut(&'static str) -> Result<(), std::io::Error>,
+) -> Vec<ChildSnapshot> {
+    children
+        .iter()
+        .take(4)
+        .map(|&pid| {
+            let result =
+                verify(pid, owner, exe).and_then(|process| capture_threads(process.as_raw_handle(), pid, exe, phase));
+            let mut child = ChildSnapshot { process_id: pid, threads: Vec::new(), error: String::new(), os_code: 0 };
+            match result {
+                Ok(threads) => child.threads = threads,
+                Err(error) => {
+                    child.error = error.phase.into();
+                    child.os_code = error.os_code;
+                }
+            }
+            child
+        })
+        .collect()
+}
+
+// helper가 수집 중 강제 종료되면 SuspendThread의 해제가 실행되지 않을 수 있다.
+// 호출자가 검증한 같은 process handle을 보관하고 그 실패 때만 소유 worker를 종료한다.
+pub(super) struct ChildGuard {
+    pub(super) pid: u32,
+    process: OwnedHandle,
+}
+impl ChildGuard {
+    pub(super) fn terminate(&self) {
+        if unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } == WAIT_TIMEOUT {
+            let ok = unsafe { TerminateProcess(self.process.as_raw_handle(), 1) };
+            let os_code = if ok == 0 { unsafe { GetLastError() } } else { 0 };
+            let wait = unsafe { WaitForSingleObject(self.process.as_raw_handle(), 5000) };
+            eprintln!(
+                "PTY snapshot child cleanup: pid={}, terminated={}, os_code={os_code}, wait={wait}",
+                self.pid,
+                ok != 0
+            );
         }
     }
+}
 
-    Ok(snapshot)
+#[test]
+fn snapshot_cleanup_terminates_the_verified_handle_and_preserves_another_child() {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let exe = console_host_image().unwrap().with_file_name("cmd.exe");
+    let spawn = || {
+        Command::new(&exe)
+            .args(["/d", "/q", "/c", "set /p gate="])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let mut target = spawn();
+    let mut other = spawn();
+    let process = verify_access(target.id(), std::process::id(), &exe, PROCESS_TERMINATE)
+        .unwrap_or_else(|error| panic!("{}", serde_json::to_string(&error).unwrap()));
+    let guard = ChildGuard { pid: target.id(), process };
+    guard.terminate();
+    let status = target.wait().unwrap();
+    let other_status = other.try_wait().unwrap();
+    other.kill().unwrap();
+    other.wait().unwrap();
+    assert_eq!(status.code(), Some(1));
+    assert!(other_status.is_none(), "다른 자식의 수명은 바꾸지 않는다: {other_status:?}");
+}
+
+pub(super) fn owned_children(pid: u32, owner: u32, exe: &Path) -> Result<Vec<ChildGuard>, Failure> {
+    let _cli = verify(pid, owner, exe)?;
+    let processes = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }, "children_snapshot")?;
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of_val(&entry) as u32;
+    let mut found = unsafe { Process32FirstW(processes.as_raw_handle(), &mut entry) };
+    let mut children = Vec::new();
+    while found != 0 && children.len() < 4 {
+        let length = entry.szExeFile.iter().position(|unit| *unit == 0).unwrap_or(entry.szExeFile.len());
+        let name = OsString::from_wide(&entry.szExeFile[..length]);
+        if entry.th32ParentProcessID == pid && Some(name.as_os_str()) == exe.file_name() {
+            let child_pid = entry.th32ProcessID;
+            let process = verify_access(child_pid, pid, exe, PROCESS_TERMINATE)?;
+            children.push(ChildGuard { pid: child_pid, process });
+        }
+        found = unsafe { Process32NextW(processes.as_raw_handle(), &mut entry) };
+    }
+    if found == 0 && unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
+        return Err(Failure::os("children_next"));
+    }
+    Ok(children)
 }
 
 // 호스트는 중지하지 않는다. 수집기 5초 상한에 helper가 종료돼도 호스트 thread가 중지된 채 남지 않는다.

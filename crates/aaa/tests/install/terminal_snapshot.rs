@@ -1,4 +1,4 @@
-//! 실패가 확정된 뒤 자기 CLI 자식의 함수 스택만 수집한다. 메모리/입력/경로 원문은 내보내지 않는다.
+//! 실패 확정 뒤 자기 CLI와 같은 이미지의 직계 자식 스택을 수집한다. 입력/경로 원문은 내보내지 않는다.
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
@@ -13,6 +13,7 @@ struct Request {
     process_id: u32,
     owner_id: u32,
     exe: std::path::PathBuf,
+    children: Vec<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -51,8 +52,10 @@ fn snapshot_helper_process() {
             .map_err(|_| serde_json::json!({"phase": "read_request", "error_type": "SchemaError", "os_code": 0}))?;
         #[cfg(target_arch = "x86_64")]
         {
-            native::capture(request.process_id, request.owner_id, &request.exe, |phase| journal.mark(phase))
-                .map_err(|error| serde_json::to_value(error).unwrap())
+            native::capture(request.process_id, request.owner_id, &request.exe, &request.children, |phase| {
+                journal.mark(phase)
+            })
+            .map_err(|error| serde_json::to_value(error).unwrap())
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
@@ -88,7 +91,7 @@ fn progress(root: &Path) -> String {
         .filter(|raw| raw.len() <= 32 * 1024)
         .and_then(|raw| serde_json::from_slice::<Vec<Stage>>(&raw).ok())
         .filter(|stages| {
-            stages.len() <= 72
+            stages.len() <= 360
                 && stages.iter().all(|stage| {
                     !stage.phase.is_empty()
                         && stage.phase.len() < 80
@@ -112,6 +115,16 @@ pub(super) struct Snapshot {
     console_host_error: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     console_host_code: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    children: Vec<ChildSnapshot>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ChildSnapshot {
+    process_id: u32,
+    threads: Vec<Thread>,
+    error: String,
+    os_code: u32,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -158,6 +171,14 @@ impl Snapshot {
             && self.threads.len() <= 32
             && self.console_host_error.len() < 80
             && self.console_host_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            && self.children.len() <= 4
+            && self.children.iter().all(|child| {
+                child.process_id != 0
+                    && child.process_id != pid
+                    && child.error.len() < 80
+                    && child.error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                    && valid_threads(&child.threads)
+            })
             && self.console_host.as_ref().is_none_or(|host| {
                 host.process_id != pid
                     && host.process_id != 0
@@ -170,23 +191,19 @@ impl Snapshot {
                                 .all(|node| (0..=32).contains(&node.kind) && (0..=32).contains(&node.status))
                     })
             })
-            && self.threads.iter().all(|thread| {
-                thread.frames.len() <= 33
-                    && thread.error.len() < 40
-                    && thread.error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-                    && thread.frames.iter().all(|frame| {
-                        frame.module.len() <= 80
-                            && frame.module.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                            && frame.offset.starts_with("0x")
-                            && frame.offset.len() <= 18
-                            && frame.offset[2..].bytes().all(|b| b.is_ascii_hexdigit())
-                            && frame.symbol.len() <= 256
-                            && frame
-                                .symbol
-                                .bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b"._:$<>[], &()*+-!".contains(&b))
-                    })
-            })
+            && valid_threads(&self.threads)
+    }
+    #[cfg(target_arch = "x86_64")]
+    pub(super) fn has_child_stack(&self, pid: u32) -> bool {
+        self.children.iter().any(|child| {
+            child.process_id == pid
+                && child.error.is_empty()
+                && child.threads.iter().any(|thread| {
+                    thread.error.is_empty()
+                        && thread.frames.len() > 1
+                        && thread.frames.iter().any(|frame| frame.module.eq_ignore_ascii_case("aaa.exe"))
+                })
+        })
     }
     #[cfg(target_arch = "x86_64")]
     pub(super) fn has_reader_stack(&self, thread_id: u32) -> bool {
@@ -203,6 +220,24 @@ impl Snapshot {
     }
 }
 
+fn valid_threads(threads: &[Thread]) -> bool {
+    threads.len() <= 32
+        && threads.iter().all(|thread| {
+            thread.frames.len() <= 33
+                && thread.error.len() < 40
+                && thread.error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                && thread.frames.iter().all(|frame| {
+                    frame.module.len() <= 80
+                        && frame.module.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                        && frame.offset.starts_with("0x")
+                        && frame.offset.len() <= 18
+                        && frame.offset[2..].bytes().all(|b| b.is_ascii_hexdigit())
+                        && frame.symbol.len() <= 256
+                        && frame.symbol.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:$<>[], &()*+-!".contains(&b))
+                })
+        })
+}
+
 pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
@@ -213,9 +248,18 @@ pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
     };
     let root = std::env::temp_dir().join(format!("aaa-console-snapshot-{}", aaa_common::util::new_id()));
     aaa_common::util::ensure_private_dir(&root).map_err(|error| io_stage("snapshot_directory", error).to_owned())?;
+    #[cfg(target_arch = "x86_64")]
+    let children = native::owned_children(pid, std::process::id(), exe).unwrap_or_else(|error| {
+        eprintln!("PTY snapshot children unavailable: {}", serde_json::to_string(&error).unwrap());
+        Vec::new()
+    });
+    #[cfg(target_arch = "x86_64")]
+    let child_ids = children.iter().map(|child| child.pid).collect();
+    #[cfg(not(target_arch = "x86_64"))]
+    let child_ids = Vec::new();
     let result = (|| -> Result<Snapshot, String> {
         let out = root.join("frames.json");
-        let request = Request { process_id: pid, owner_id: std::process::id(), exe: exe.into() };
+        let request = Request { process_id: pid, owner_id: std::process::id(), exe: exe.into(), children: child_ids };
         let request = serde_json::to_vec(&request).map_err(|_| "snapshot_request_schema")?;
         std::fs::write(root.join("request.json"), request).map_err(|error| io_stage("snapshot_request", error))?;
         let helper = std::env::current_exe().map_err(|error| io_stage("snapshot_executable", error))?;
@@ -264,6 +308,18 @@ pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
         }
         Ok(snapshot)
     })();
+    #[cfg(target_arch = "x86_64")]
+    for child in children {
+        let cleanup = match &result {
+            Err(_) => true,
+            Ok(snapshot) => snapshot.children.iter().any(|view| {
+                view.process_id == child.pid && view.threads.iter().any(|thread| thread.error == "resume_thread")
+            }),
+        };
+        if cleanup {
+            child.terminate();
+        }
+    }
     // 요청 경로와 helper 원문은 panic 출력으로 옮기지 않는다.
     let _ = std::fs::remove_dir_all(&root);
     result

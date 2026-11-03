@@ -159,7 +159,10 @@ fn approved_worker_outlives_its_cli_and_records_the_same_id_after_private_displa
                 let record: Value =
                     serde_json::from_slice(&aaa_common::private_file::read(&path, 128 * 1024).unwrap()).unwrap();
                 assert!(record["last_exit"].is_null());
-                let worker = os::Worker::observe(record["worker_pid"].as_u64().unwrap() as u32);
+                let worker_pid = record["worker_pid"].as_u64().unwrap() as u32;
+                let worker = os::Worker::observe(worker_pid);
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                super::authorization::check_worker_stack_snapshot(child, worker_pid, &lab.0);
                 #[cfg(windows)]
                 {
                     assert!(child.try_wait().unwrap().is_none(), "종료 전 부모 CLI가 살아 있어야 한다");

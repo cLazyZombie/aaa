@@ -931,3 +931,12 @@ fn check_console_stack_snapshot(expected_exe: &Path) {
     assert!(text.contains("install_console_observer_ready"), "{text}");
     assert!(text.contains("install_console_read_returned"), "{text}");
 }
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub(super) fn check_worker_stack_snapshot(child: &dyn portable_pty::Child, worker_pid: u32, lab: &Path) {
+    let snapshot = terminal_snapshot::capture(child.process_id().unwrap(), Path::new(BIN)).unwrap();
+    assert!(snapshot.has_child_stack(worker_pid), "소유한 detached worker의 실제 frame: {snapshot:?}");
+    let encoded = serde_json::to_string(&snapshot).unwrap();
+    assert!(!encoded.contains(CANARY));
+    assert!(!encoded.contains(&lab.to_string_lossy().to_string()));
+}
