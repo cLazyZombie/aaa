@@ -245,8 +245,46 @@ fi"#
         assert_eq!(v.error.as_deref(), Some("인증 중 대상 계정이 바뀌었습니다"));
     }
 
+    // 필요: setup-token이 메일을 주지 않아도 등록 메일이 남고 다음 인증에서 재사용되어야 한다.
     #[tokio::test]
-    async fn unknown_execution_identity_requires_owner_expected_email_and_preserves_metadata() {
+    async fn registration_email_survives_missing_cli_identity_and_is_used_on_relogin() {
+        let l = lab();
+        let token = format!("sk-ant-{}-{}", "oat01", aaa_test_support::token("registered-email"));
+        let program = script(&l, &format!("printf '%s\\n' '{URL}'\nIFS= read -r code\nprintf '%s' '{token}'"));
+        let FrontResponse::AccountLogin { login } = l
+            .host
+            .start_remote_with_usage("work", "claude", "device:owner", program, false, Some(" registered@example.com "))
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(login.expect_email.as_deref(), Some("registered@example.com"));
+        assert!(l.host.account_meta("work").email.is_none(), "완료 전에는 저장하지 않는다");
+        prompt(&l, &login.id).await;
+        l.host.account_login_code(&login.id, SecretText(code()), "device:owner").unwrap();
+        assert_eq!(finish(&l, &login.id).await.state, "succeeded");
+        assert_eq!(l.host.account_meta("work").email.as_deref(), Some("registered@example.com"));
+        let before = l.host.account_meta("work");
+        let generation = l.host.accounts.generation("work").unwrap();
+        assert_eq!(l.host.prepare_usage_login("work", None).unwrap().email, "registered@example.com");
+        let id = start(&l, "claude", script(&l, &format!("printf '%s\\n' '{URL}'\nIFS= read -r code")));
+        prompt(&l, &id).await;
+        let FrontResponse::AccountLogin { login } = l.host.account_login_status(&id, "device:owner").unwrap() else {
+            panic!()
+        };
+        assert_eq!(login.expect_email.as_deref(), Some("registered@example.com"));
+        assert_eq!(
+            l.host.account_email("work", "changed@example.com", "device:owner").unwrap_err().code,
+            ErrorCode::Conflict
+        );
+        l.host.account_login_cancel(&id, "device:owner").await.unwrap();
+        assert_eq!(l.host.account_meta("work"), before);
+        assert_eq!(l.host.accounts.generation("work").unwrap(), generation);
+        cleaned(&l, &id);
+    }
+
+    #[tokio::test]
+    async fn unknown_execution_identity_remembers_verified_email_for_next_login() {
         let l = lab();
         l.host.register_account("work", "claude", &aaa_test_support::token("unknown-execution")).unwrap();
         let generation = l.host.accounts.generation("work").unwrap();
@@ -273,7 +311,13 @@ fi"#
                 if expected == "me@example.com" { "succeeded" } else { "failed" }
             );
             assert_eq!(l.host.accounts.generation("work").unwrap(), generation);
-            assert!(l.host.account_meta("work").email.is_none(), "조회 연결이 실행 인증 신원을 단정해 덮지 않는다");
+            assert_eq!(
+                l.host.account_meta("work").email.as_deref(),
+                (expected == "me@example.com").then_some(expected)
+            );
+            if expected == "me@example.com" {
+                assert_eq!(l.host.prepare_usage_login("work", None).unwrap().email, expected);
+            }
             cleaned(&l, &login.id);
         }
     }
@@ -283,7 +327,7 @@ fi"#
         let l = lab();
         l.host.register_account("work", "claude", &aaa_test_support::token("execution-owned")).unwrap();
         let identity = Identity { email: Some("me@example.com".into()), ..Default::default() };
-        l.host.account_logged_in("work", &identity, false);
+        l.host.account_logged_in("work", &identity, false).unwrap();
         let execution = l.host.accounts.credential("work").unwrap();
         let generation = l.host.accounts.generation("work").unwrap();
         let raw = serde_json::json!({"claudeAiOauth":{"accessToken":aaa_test_support::token("query-access"),
@@ -331,11 +375,9 @@ fi"#
         let l = lab();
         l.host.register_account("work", "claude", &aaa_test_support::token("execution-cancel")).unwrap();
         assert!(l.host.account_usage_login_remote("work", "device:owner", None).is_err());
-        l.host.account_logged_in(
-            "work",
-            &Identity { email: Some("me@example.com".into()), ..Default::default() },
-            false,
-        );
+        l.host
+            .account_logged_in("work", &Identity { email: Some("me@example.com".into()), ..Default::default() }, false)
+            .unwrap();
         let generation = l.host.accounts.generation("work").unwrap();
         let FrontResponse::AccountLogin { login } =
             l.host.start_remote_with_usage("work", "claude", "device:owner", claude_script(&l), true, None).unwrap()

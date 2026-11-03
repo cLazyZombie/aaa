@@ -123,7 +123,17 @@ fn complete_usage(host: &Arc<Host>, view: &mut AccountLoginView, context: &Usage
         Err(("identity", "identity_mismatch", Some("기대 메일과 다른 계정으로 인증됐습니다".into())))
     } else {
         match host.accounts.store_usage(&context.generation, &secret.unwrap(), None) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if context.registered_email.is_none() {
+                    let _gate = host.account_meta_gate.lock().unwrap();
+                    let mut meta = host.account_meta(&view.account);
+                    meta.email = identity.email;
+                    host.store_account_meta(&view.account, &meta)
+                        .map_err(|error| ("metadata_write", "write_failed", Some(error.message)))
+                } else {
+                    Ok(())
+                }
+            }
             Err(_) => Err(("vault_write", "write_failed", Some("조회 인증을 금고에 저장하지 못했습니다".into()))),
         }
     };
@@ -182,15 +192,6 @@ impl Host {
         Ok(UsageLogin { generation: self.accounts.generation(name)?, email: email.into(), registered_email })
     }
 
-    pub(crate) fn account_login(
-        self: &Arc<Self>,
-        name: &str,
-        harness: &str,
-        actor: &str,
-    ) -> Result<FrontResponse, ErrorBody> {
-        self.account_login_start(name, harness, actor, false, None)
-    }
-
     pub(crate) fn account_login_start(
         self: &Arc<Self>,
         name: &str,
@@ -199,6 +200,7 @@ impl Host {
         usage_only: bool,
         usage_email: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
+        let supplied = usage_email.map(crate::account_meta::validated_email).transpose()?;
         let usage_generation = if usage_only { Some(self.prepare_usage_login(name, usage_email)?) } else { None };
         if !crate::accounts::valid_name(name) || !matches!(harness, "claude" | "codex") {
             return Err(fail());
@@ -214,6 +216,7 @@ impl Host {
         } else {
             None
         };
+        let expect_email = expect_email.or(supplied);
         let mut jobs = self.accounts.logins.lock().unwrap();
         if jobs.values().map(expire).fold(false, |a, b| a | b) {
             self.accounts_bump();
@@ -496,7 +499,9 @@ impl Host {
         let p = slot.as_ref().ok_or_else(fail)?;
         if switch {
             self.register_account(&v.account, &v.harness, &p.secret)?;
-            self.account_logged_in(&v.account, &p.identity, true);
+            let identity =
+                Identity { email: p.identity.email.clone().or_else(|| v.expect_email.clone()), ..p.identity.clone() };
+            self.account_logged_in(&v.account, &identity, true)?;
             v.state = "succeeded".into();
         } else {
             v.state = "kept".into();
@@ -603,7 +608,7 @@ fn complete(
     state: &Arc<Mutex<AccountLoginView>>,
     pending: &Arc<Mutex<Option<Pending>>>,
     secret: Result<String, ErrorBody>,
-    identity: Identity,
+    mut identity: Identity,
     cleaned: bool,
     was_cancelled: bool,
 ) {
@@ -633,6 +638,7 @@ fn complete(
                 }
             });
         } else {
+            identity.email = identity.email.or_else(|| v.expect_email.clone());
             result = host.register_account(&v.account, &v.harness, &secret).map(|_| false);
             if result
                 .as_ref()
@@ -640,7 +646,10 @@ fn complete(
                 .is_ok()
             {
                 v.email = identity.email.clone();
-                host.account_logged_in(&v.account, &identity, false);
+                if let Err(error) = host.account_logged_in(&v.account, &identity, false) {
+                    v.error = Some(error.message.clone());
+                    result = Err(error);
+                }
             }
         }
     }

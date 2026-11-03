@@ -1545,7 +1545,8 @@ impl Host {
         // evaluator·detached는 Local이어도 거부한다
         if matches!(
             &req,
-            FrontRequest::AccountRename { .. }
+            FrontRequest::AccountEmail { .. }
+                | FrontRequest::AccountRename { .. }
                 | FrontRequest::AccountDefault { .. }
                 | FrontRequest::AccountPoolMember { .. }
                 | FrontRequest::AccountPoolProject { .. }
@@ -1570,6 +1571,7 @@ impl Host {
             &req,
             FrontRequest::AccountImport { .. }
                 | FrontRequest::AccountRemove { .. }
+                | FrontRequest::AccountEmail { .. }
                 | FrontRequest::AccountList
                 | FrontRequest::AccountDefaults
                 | FrontRequest::AccountPool
@@ -1733,16 +1735,24 @@ impl Host {
             FrontRequest::InstallPublishStatus { installation_id } => {
                 self.install_publish_status(&installation_id).await
             }
-            FrontRequest::AccountImport { name, harness, secret } => {
+            FrontRequest::AccountImport { name, harness, secret, email } => {
+                let email = email.as_ref().map(|e| account_meta::validated_email(&e.0)).transpose()?;
                 let secret = secret.0.trim();
-                self.register_account(&name, &harness, secret)?;
                 // 가져온 인증은 로그인으로 기록한다(Codex는 인증의 계정 정보로 메일·plan을 읽는다)
                 let identity = if harness == "codex" {
                     account_meta::codex_identity(secret)
                 } else {
                     account_meta::Identity::default()
                 };
-                self.account_logged_in(&name, &identity, false);
+                if matches!((&email, &identity.email), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b)) {
+                    return Err(err(ErrorCode::BadRequest, "입력한 메일과 인증의 계정이 다릅니다"));
+                }
+                self.register_account(&name, &harness, secret)?;
+                self.account_logged_in(
+                    &name,
+                    &account_meta::Identity { email: email.or(identity.email), ..identity },
+                    false,
+                )?;
                 self.db.audit(actor, "account_import", &name);
                 Ok(FrontResponse::Accounts { accounts: self.account_views(shows_email)? })
             }
@@ -1775,8 +1785,13 @@ impl Host {
                     self.account_login_start(&name, "claude", actor, true, email.as_ref().map(|e| e.0.as_str()))
                 }
             }
-            FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
-            FrontRequest::AccountLoginRemote { name, harness } => self.account_login_remote(&name, &harness, actor),
+            FrontRequest::AccountLogin { name, harness, email } => {
+                self.account_login_start(&name, &harness, actor, false, email.as_ref().map(|e| e.0.as_str()))
+            }
+            FrontRequest::AccountLoginRemote { name, harness, email } => {
+                self.account_login_remote(&name, &harness, actor, email.as_ref().map(|e| e.0.as_str()))
+            }
+            FrontRequest::AccountEmail { name, email } => self.account_email(&name, &email.0, actor),
             FrontRequest::AccountLoginInteraction { id } => self.account_login_interaction(id.as_deref(), actor),
             FrontRequest::AccountLoginCode { id, code } => self.account_login_code(&id, code, actor),
             FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id, actor),

@@ -57,11 +57,19 @@ pub(crate) fn health(m: &AccountMeta, now: u64) -> AccountHealth {
 
 /// 메일 꼴만 받는다(공백·제어 문자·지나친 길이 없음)
 fn email(v: Option<&serde_json::Value>) -> Option<String> {
-    let s = v?.as_str()?.trim();
+    validated_email(v?.as_str()?).ok()
+}
+
+pub(crate) fn validated_email(value: &str) -> Result<String, aaa_proto::ErrorBody> {
+    let s = value.trim();
     let ok = s.len() <= 254
         && s.split_once('@').is_some_and(|(a, b)| !a.is_empty() && b.contains('.'))
         && !s.chars().any(|c| c.is_whitespace() || c.is_control());
-    ok.then(|| s.to_string())
+    if ok {
+        Ok(s.to_string())
+    } else {
+        Err(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::BadRequest, "메일 주소를 확인하세요"))
+    }
 }
 
 fn short(v: Option<&serde_json::Value>) -> Option<String> {
@@ -191,19 +199,49 @@ impl Host {
             .unwrap_or_default()
     }
 
-    fn save_account_meta(&self, name: &str, m: &AccountMeta) {
-        match serde_json::to_string(m) {
-            Ok(text) => {
-                if let Err(e) = self.db.set_meta(&key(name), &text) {
-                    tracing::warn!(account = %name, "계정 기록을 쓰지 못했다: {e:#}");
-                }
-            }
-            Err(source_error) => {
-                aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
-                tracing::warn!(account = %name, "계정 기록을 만들지 못했다")
-            }
-        }
+    pub(crate) fn store_account_meta(&self, name: &str, meta: &AccountMeta) -> Result<(), aaa_proto::ErrorBody> {
+        let text = serde_json::to_string(meta).map_err(|error| {
+            aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::Internal, format!("계정 기록 직렬화 실패: {error}"))
+        })?;
+        self.db.set_meta(&key(name), &text).map_err(|error| {
+            aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::Internal, format!("계정 기록 저장 실패: {error:#}"))
+        })?;
         self.accounts_bump();
+        Ok(())
+    }
+
+    fn save_account_meta(&self, name: &str, meta: &AccountMeta) {
+        if let Err(error) = self.store_account_meta(name, meta) {
+            tracing::warn!(account = %name, "계정 기록을 쓰지 못했다: {}", error.message);
+        }
+    }
+
+    pub(crate) fn account_email(
+        &self,
+        name: &str,
+        value: &str,
+        actor: &str,
+    ) -> Result<aaa_proto::FrontResponse, aaa_proto::ErrorBody> {
+        let email = validated_email(value)?;
+        let jobs = self.accounts.logins.lock().unwrap();
+        if jobs.values().any(|job| {
+            let view = job.view.lock().unwrap();
+            view.account == name && matches!(view.state.as_str(), "waiting" | "mismatch")
+        }) {
+            return Err(aaa_proto::ErrorBody::new(
+                aaa_proto::ErrorCode::Conflict,
+                "진행 중인 인증을 먼저 마치거나 취소하세요",
+            ));
+        }
+        if !self.accounts.list()?.iter().any(|a| a.name == name) {
+            return Err(aaa_proto::ErrorBody::new(aaa_proto::ErrorCode::BadRequest, "계정을 찾지 못했습니다"));
+        }
+        let _gate = self.account_meta_gate.lock().unwrap();
+        let mut meta = self.account_meta(name);
+        meta.email = Some(email);
+        self.store_account_meta(name, &meta)?;
+        self.db.audit(actor, "account_email", name);
+        Ok(aaa_proto::FrontResponse::Done)
     }
 
     /// 목록에 메일·시각·상태를 더한다. 메일은 부른 쪽이 보일 수 있을 때만 남긴다
@@ -227,7 +265,12 @@ impl Host {
 
     /// 로그인(또는 메일을 바꾼 다시 로그인)이 금고에 들어갔다. 메일을 모르면 아는 것을 남기고, 메일이 바뀌거나 처음 기록이면
     /// 최초 인증 시각을 지금으로 한다(사용자 답 3A: 다시 로그인하면 모두 채운다)
-    pub(crate) fn account_logged_in(&self, name: &str, id: &Identity, switched: bool) {
+    pub(crate) fn account_logged_in(
+        &self,
+        name: &str,
+        id: &Identity,
+        switched: bool,
+    ) -> Result<(), aaa_proto::ErrorBody> {
         let now = util::now_ms();
         let gate = self.account_meta_gate.lock().unwrap();
         let mut m = self.account_meta(name);
@@ -243,12 +286,13 @@ impl Host {
         m.last_auth_ms = Some(now);
         m.expires_ms = id.expires_ms;
         m.rejected_ms = None;
-        self.save_account_meta(name, &m);
+        self.store_account_meta(name, &m)?;
         drop(gate);
         self.account_health_pass();
+        Ok(())
     }
 
-    /// Codex 갱신 결과(쓰임으로 본 상태). 거부면 끊김, 성공이면 끊김을 지우고 새 id_token의 plan·메일을 읽는다
+    /// Codex 갱신 결과(쓰임으로 본 상태). 거부면 끊김, 성공이면 끊김을 지우고 plan·비어 있는 메일을 새 id_token에서 채운다
     /// `version`은 갱신을 청한 판이다: 거부는 기록하는 지금도 금고가 그 판일 때만 끊김이다(그 사이 다시 로그인했으면 옛 인증의 거부다)
     pub(crate) fn account_refresh_seen(&self, name: &str, outcome: crate::accounts::RefreshOutcome, version: u64) {
         use crate::accounts::RefreshOutcome;
@@ -274,7 +318,7 @@ impl Host {
                 let id = self.accounts.credential(name).map(|c| codex_identity(&c.secret.0)).unwrap_or_default();
                 let before = m.clone();
                 m.rejected_ms = None;
-                if id.email.is_some() {
+                if m.email.is_none() {
                     m.email = id.email;
                 }
                 if id.plan.is_some() {

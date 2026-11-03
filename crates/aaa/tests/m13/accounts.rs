@@ -1192,7 +1192,9 @@ fn host_usage_login_separates_credentials_without_changing_execution() {
     assert_eq!(start["login"]["usage_only"], true);
     Gate::release(gate.take(1, 8), b'1');
     let done = login_result(&w, start["login"]["id"].as_str().unwrap(), "succeeded");
-    assert_eq!(before, w.h.ok(&["account", "list"]), "실행 인증 판·시각·상태를 바꾸지 않는다");
+    let mut remembered = before.clone();
+    remembered["accounts"][0]["email"] = "me@example.com".into();
+    assert_eq!(remembered, w.h.ok(&["account", "list"]), "확인된 메일만 보관하고 실행 인증 판·시각·상태는 유지한다");
     assert_eq!(std::fs::read_dir(w.h.state.join("host/usage-accounts")).unwrap().count(), 1);
     let vault = std::fs::read_dir(w.h.state.join("host/usage-accounts")).unwrap().next().unwrap().unwrap().path();
     let original = std::fs::read(&vault).unwrap();
@@ -1201,12 +1203,15 @@ fn host_usage_login_separates_credentials_without_changing_execution() {
         &gate,
         &serde_json::json!({"claude_auth":format!("Login failed: Token exchange failed (403): Forbidden {provider_error}"),"fail_for":"claude"}),
     );
-    let failed_start = w.h.ok(&["account", "usage-login", "work", "--email", "me@example.com"]);
+    let failed_start = w.h.ok(&["account", "usage-login", "work"]);
     Gate::release(gate.take(1, 8), b'1');
     let failure = login_result(&w, failed_start["login"]["id"].as_str().unwrap(), "failed");
     assert_eq!(failure["login"]["error"], "Claude 인증 요청이 거부됐습니다");
     assert_eq!(original, std::fs::read(&vault).unwrap(), "실패한 새 로그인은 옛 조회 인증을 바꾸지 않는다");
-    assert_eq!(before, w.h.ok(&["account", "list"]));
+    assert_eq!(remembered, w.h.ok(&["account", "list"]));
+    w.h.ok(&["account", "email", "work", "corrected@example.com"]);
+    remembered["accounts"][0]["email"] = "corrected@example.com".into();
+    assert_eq!(remembered, w.h.ok(&["account", "list"]), "CLI 메일 수정도 실행 인증·시각을 유지한다");
     let find: Vec<_> = [
         (&execution, &execution_nonce),
         (&access, &access_nonce),

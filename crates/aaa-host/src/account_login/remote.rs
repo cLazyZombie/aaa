@@ -35,10 +35,12 @@ impl Host {
         name: &str,
         harness: &str,
         actor: &str,
+        email: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
-        self.start_remote(name, harness, actor, std::path::PathBuf::from(harness))
+        self.start_remote_with_usage(name, harness, actor, std::path::PathBuf::from(harness), false, email)
     }
 
+    #[cfg(test)]
     fn start_remote(
         self: &Arc<Self>,
         name: &str,
@@ -67,6 +69,7 @@ impl Host {
         usage_only: bool,
         email: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
+        let supplied = email.map(crate::account_meta::validated_email).transpose()?;
         let usage_generation = if usage_only { Some(self.prepare_usage_login(name, email)?) } else { None };
         if !actor.starts_with("device:") || self.is_revoked(actor.strip_prefix("device:").unwrap_or("")) {
             return Err(ErrorBody::new(ErrorCode::Forbidden, "원격 인증은 웹 조작 기기에서 시작합니다"));
@@ -122,7 +125,11 @@ impl Host {
             account: name.into(),
             harness: harness.into(),
             state: "waiting".into(),
-            expect_email: usage_generation.as_ref().map(|c| c.email.clone()).or_else(|| self.account_meta(name).email),
+            expect_email: usage_generation
+                .as_ref()
+                .map(|c| c.email.clone())
+                .or_else(|| self.account_meta(name).email)
+                .or(supplied),
             email: None,
             error: None,
         };

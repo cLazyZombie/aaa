@@ -8421,3 +8421,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - CLI 인증 실패·조회 인증 읽기·임시 정리·계정 변경·신원 확인·금고 쓰기 실패를 구별한다. CLI 원문은 남기지 않고 마지막 실패의 고정 분류·종료 코드·제한된 HTTP 상태만 기록한다. 알 수 없는 사유를 추정하지 않는다. [실패 단계 수리 검증](testing-usage-login-failure-t-1454.md).
 - macOS Claude 로그인은 OS 기본 Keychain 발견에 필요한 host HOME을 보존한다. Claude 설정·인증은 임시 CLAUDE_CONFIG_DIR과 그 폴더 전용 Keychain 항목에 격리하며, cwd·USERPROFILE·XDG 경로도 임시 폴더다. Codex와 다른 OS의 HOME 격리는 유지한다. [HOME 격리 결함 검증](testing-claude-keychain-home-t-1454.md).
 - 로그인 창의 메일·인증 코드 입력은 본문 글자 설정을 따르되 16px 하한을 지킨다. 휴대폰 입력 초점 확대를 유발하는 작은 글자를 피하며 사용자 확대는 유지한다. [휴대폰 입력·완료 viewport 검증](testing-account-login-zoom-t-1454.md).
+
+
+### 8.552 계정 메일 한 번 등록·재사용·수정(t-1477)
+
+- 웹 새 계정 폼과 CLI 로그인·가져오기에서 메일을 받아 로그인 성공 뒤 기존 host 계정 메타데이터에 보관한다. 조회 로그인·재로그인은 저장한 메일을 쓴다. 기존 계정의 메일이 없으면 조회 로그인으로 확인한 메일도 성공 뒤 기억한다.
+- 웹 계정의 「메일 수정」과 세션 밖 CLI `account email`로 고친다. 실행 인증·인증 날짜·실행 중 pane을 바꾸지 않으며 진행 중 로그인·교체 확인과 수정은 섞지 않는다. 자동 인증 갱신은 이미 저장한 메일을 덮어쓰지 않는다.
+- FRONT_API 1.156의 선택 `email`과 `account_email`을 더한다. 메일 읽기·수정은 조작 기기와 host 세션 밖 CLI만 허용하고 감사·알림·로그에는 메일을 쓰지 않는다. AGENT_LINK는 바꾸지 않는다.
+- 기존 HOME 보존·실패 단계 표시·실제 조회 신원 일치·휴대폰 입력 16px 하한과 완료 화면 검사를 보존한다. [계정 메일 검증 기록](testing-account-email-t-1477.md).

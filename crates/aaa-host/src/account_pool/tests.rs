@@ -227,7 +227,7 @@ async fn real_auth_failures_still_block_and_old_rejections_do_not_poison_a_new_l
     assert!(choose(&l, &input).unwrap_err().to_string().contains("인증 끊김"));
     l.h.db.set_meta("account-meta:work", &serde_json::json!({"expires_ms": 1}).to_string()).unwrap();
     assert!(choose(&l, &prepare().await.unwrap().unwrap()).unwrap_err().to_string().contains("인증 끊김"));
-    l.h.account_logged_in("work", &Default::default(), false);
+    l.h.account_logged_in("work", &Default::default(), false).unwrap();
     let root = l._root.0.join("host");
     std::fs::rename(root.join("secrets.key"), root.join("held.key")).unwrap();
     let locked = prepare().await.unwrap().unwrap();
