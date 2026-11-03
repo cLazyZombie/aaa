@@ -427,6 +427,35 @@ impl ChildGuard {
     }
 }
 
+#[test]
+fn snapshot_cleanup_terminates_the_verified_handle_and_preserves_another_child() {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let exe = console_host_image().unwrap().with_file_name("cmd.exe");
+    let spawn = || {
+        Command::new(&exe)
+            .args(["/d", "/q", "/c", "set /p gate="])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let mut target = spawn();
+    let mut other = spawn();
+    let process = verify_access(target.id(), std::process::id(), &exe, PROCESS_TERMINATE)
+        .unwrap_or_else(|error| panic!("{}", serde_json::to_string(&error).unwrap()));
+    let guard = ChildGuard { pid: target.id(), process };
+    guard.terminate();
+    let status = target.wait().unwrap();
+    let other_status = other.try_wait().unwrap();
+    other.kill().unwrap();
+    other.wait().unwrap();
+    assert_eq!(status.code(), Some(1));
+    assert!(other_status.is_none(), "다른 자식의 수명은 바꾸지 않는다: {other_status:?}");
+}
+
 pub(super) fn owned_children(pid: u32, owner: u32, exe: &Path) -> Result<Vec<ChildGuard>, Failure> {
     let _cli = verify(pid, owner, exe)?;
     let processes = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }, "children_snapshot")?;

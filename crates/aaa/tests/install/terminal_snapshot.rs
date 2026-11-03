@@ -309,8 +309,14 @@ pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
         Ok(snapshot)
     })();
     #[cfg(target_arch = "x86_64")]
-    if result.is_err() {
-        for child in children {
+    for child in children {
+        let cleanup = match &result {
+            Err(_) => true,
+            Ok(snapshot) => snapshot.children.iter().any(|view| {
+                view.process_id == child.pid && view.threads.iter().any(|thread| thread.error == "resume_thread")
+            }),
+        };
+        if cleanup {
             child.terminate();
         }
     }
