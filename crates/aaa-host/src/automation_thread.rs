@@ -341,15 +341,27 @@ impl Host {
                         || bytes.len() as u64 + data.0.len() as u64 > f.size
                         || data.0.is_empty() && !eof
                     {
-                        return Err(bad("기억 크기가 바뀌었다"));
+                        return Err(bad(format!(
+                            "{}: 기억 크기가 바뀌었다. 원본을 보존했다",
+                            aaa_common::redact::text(&f.path)
+                        )));
                     }
                     bytes.extend(data.0);
                     if eof {
                         break;
                     }
                 }
-                if bytes.len() as u64 != f.size || digest(&bytes) != f.sha256 {
-                    return Err(bad("기억 hash가 바뀌었다. 원본을 보존했다"));
+                if bytes.len() as u64 != f.size {
+                    return Err(bad(format!(
+                        "{}: 기억 크기가 바뀌었다. 원본을 보존했다",
+                        aaa_common::redact::text(&f.path)
+                    )));
+                }
+                if digest(&bytes) != f.sha256 {
+                    return Err(bad(format!(
+                        "{}: 기억 hash가 바뀌었다. 원본을 보존했다",
+                        aaa_common::redact::text(&f.path)
+                    )));
                 }
                 if path == "memory.md" {
                     large = bytes.len() > 65536;

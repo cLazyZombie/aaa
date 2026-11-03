@@ -2735,7 +2735,11 @@ impl Host {
                 self.reports_bump();
             }
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
-            self.automation_copy_memory(&rec, last).await?;
+            // 기억의 실패도 새 본문·완료 단계는 보존한다. 사본 실패로 남겨 마지막
+            // 회수·resolve의 거부와 기존 재수집 경로는 그대로 유지한다.
+            if let Err(error) = self.automation_copy_memory(&rec, last).await {
+                failures.push(format!("자동화 기억 회수 실패: {}", error.message));
+            }
             let copy = if !failures.is_empty() {
                 "failed"
             } else if skipped.is_empty() {

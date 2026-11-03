@@ -148,13 +148,49 @@ use aaa_vt::Vt;
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
-type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<Outcome<AgentResponse>>>>>;
+type Pending = Arc<Mutex<HashMap<String, PendingResponse>>>;
+
+enum WorkFileReply {
+    List,
+    Read,
+}
+
+pub(crate) struct PendingResponse {
+    tx: oneshot::Sender<Outcome<AgentResponse>>,
+    work_file: Option<WorkFileReply>,
+}
+
+impl PendingResponse {
+    /// 같은 FileChunk라도 작업 상태 전송만 원본 hash를 검증한다. 파일 보기는 계속 가린다.
+    fn preserves(&self, response: &AgentResponse) -> bool {
+        matches!(
+            (&self.work_file, response),
+            (Some(WorkFileReply::List), AgentResponse::WorkFiles { .. } | AgentResponse::MissionFiles { .. })
+                | (Some(WorkFileReply::Read), AgentResponse::FileChunk { .. })
+        )
+    }
+
+    fn send(self, result: Outcome<AgentResponse>) -> Result<(), Box<Outcome<AgentResponse>>> {
+        self.tx.send(result).map_err(Box::new)
+    }
+}
+
+/// 취소·전송 실패·시한 종료 뒤에는 원본 전송 예외도 남기지 않는다.
+struct PendingRequest {
+    pending: Pending,
+    id: String,
+}
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        self.pending.lock().unwrap().remove(&self.id);
+    }
+}
 
 /// 연결된 agent 하나. 같은 머신이 다시 붙으면 generation이 바뀌고 이전 연결의 사건은 버린다.
 #[derive(Clone)]
 pub struct AgentConn {
     pub tx: FrameTx,
-    pub pending: Pending,
+    pub(crate) pending: Pending,
     pub generation: u64,
     seq: Arc<AtomicU64>,
     /// pending 잠금 아래에서 검사·변경한다. 종료 뒤에도 남는 clone은 새 요청을 받지 않는다.
@@ -210,13 +246,19 @@ impl AgentConn {
         }
         let disconnected = || ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다");
         let (otx, mut orx) = oneshot::channel();
+        let work_file = match &body {
+            AgentRequest::WorkFileList { .. } | AgentRequest::MissionStateList { .. } => Some(WorkFileReply::List),
+            AgentRequest::WorkFileRead { .. } | AgentRequest::MissionStateRead { .. } => Some(WorkFileReply::Read),
+            _ => None,
+        };
         {
             let mut pending = self.pending.lock().unwrap();
             if self.closed.load(Ordering::Relaxed) {
                 return Err(disconnected());
             }
-            pending.insert(id.clone(), otx);
+            pending.insert(id.clone(), PendingResponse { tx: otx, work_file });
         }
+        let _pending = PendingRequest { pending: self.pending.clone(), id: id.clone() };
         let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
         let mut timed_out = false;
         let mut responded = false;

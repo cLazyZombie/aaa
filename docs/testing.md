@@ -5046,3 +5046,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [휴대폰 인증 창 회전과 설정 기록 경합(t-1483)](testing-account-rotation-t-1483.md)
 
 - Windows 승인 완료 뒤 worker 사건 대기 분류와 직계 자식 스택 수집·실기 검증: [t-1487 조사 기록](testing-win-worker-stall-t1487.md).
+
+- [자동화 보고 회수·기억 hash 검증 수리(t-1499)](testing-automation-copy-t-1499.md)
