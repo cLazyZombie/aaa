@@ -1,3 +1,4 @@
+- t-1486: [계정 메일 시험의 닫기·새로고침 경합 검증](testing-account-email-reload-t-1486.md)
 - t-1475: [Windows 정기 백업 성공 기록 대기 조사와 단계 진단](testing-db-backup-windows-t-1475.md)
 - t-1436: [질문 답 초안과 재게시 입력 보존 검증](testing-question-drafts-t-1436.md)
 - t-1421: [작업창 질문 대기 표지 검증](testing-thread-question-mark.md)

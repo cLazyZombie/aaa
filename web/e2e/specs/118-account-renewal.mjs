@@ -1,7 +1,7 @@
 // 화면 계약은 가짜 제공자 응답으로, 권한·실제 자식 정리는 account_login::remote::tests가 검사한다.
 import assert from "node:assert/strict";
 import { token } from "../../../scripts/fixture-secret.mjs";
-import { aaa, step, browser, webkit, pairPage, inList, openSettings, shot } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, pairPage, inList, openSettings, shot, domIs } from "../lib/harness.mjs";
 
 const manualCode = `${token("manual-code")}#${token("manual-state")}`;
 
@@ -56,6 +56,9 @@ async function closeCompleted(page, dialog, width) {
     await button.tap();
   } else await button.click();
   await dialog.waitFor({ state: "detached" });
+  // DOM을 거둔 뒤에도 sheet의 back()은 아직 도착하지 않을 수 있다.
+  // 실제 복귀를 마친 뒤 다음 인증이나 reload를 시작한다.
+  await domIs(page, "인증 창 닫기 기록 복귀", () => !history.state?.["aaa:sheet"], undefined, 20_000, ["popstate"]);
 }
 
 function provider(registered = false) {
@@ -205,6 +208,7 @@ async function checkEmail(name, engine, width) {
     await closeCompleted(page, dialog, width);
     await page.reload();
     await settings.getByTestId("settings-accounts").waitFor();
+    await row.getByTestId("account-email").getByText("changed@example.com", { exact: true }).waitFor();
     await settings.locator('[data-account="personal"]').getByTestId("account-email").getByText("new@example.com", { exact: true }).waitFor();
     assert.deepEqual(errors, []);
   } finally { await page.context().close(); }
