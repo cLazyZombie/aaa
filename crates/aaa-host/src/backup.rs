@@ -146,17 +146,27 @@ pub fn keygen(path: &Path) -> Result<String> {
     Ok(identity.to_public().to_string())
 }
 
+/// 경로·키·오류 원문 없이 마지막으로 들어간 단계와 경과만 남긴다.
+fn backup_stage(stage: &'static str, started: Instant) {
+    tracing::debug!(stage, elapsed_ms = started.elapsed().as_millis(), "DB 백업 진행");
+}
+
 /// 이미 존재하는 목적지 아래 host별 폴더를 쓴다. NAS가 없을 때 mount 자리의 상위 폴더를 만들지 않는다.
 pub fn run(state: &Path, cfg: &BackupSection, now: u64) -> Result<PathBuf> {
+    let started = Instant::now();
+    backup_stage("validate", started);
     ensure!((1..=365).contains(&cfg.keep), "백업 keep은 1~365개여야 한다");
     let public = recipient(&cfg.recipient)?;
     let root = Path::new(&cfg.directory);
     ensure!(root.is_absolute(), "백업 목적지는 절대 경로여야 한다: {}", root.display());
     let metadata = fs::metadata(root).with_context(|| format!("백업 목적지 조회 {}", root.display()))?;
     ensure!(metadata.is_dir(), "백업 목적지가 폴더가 아니다: {}", root.display());
+    backup_stage("staging", started);
     let staging = state.join("db-backup-staging");
     private_file::directory(&staging).context("백업 private staging 준비")?;
+    backup_stage("lock", started);
     let _lock = BackupLock(private_file::lock(&staging.join("lock")).context("백업 중복 실행 잠금")?);
+    backup_stage("remove_previous_snapshot", started);
     let plain = staging.join("snapshot.db");
     // 이전 비정상 종료의 평문도 자기 staging 안에서만 지운다. 잠금을 가진 실행만 접근한다.
     for path in sqlite_files(&plain) {
@@ -167,9 +177,12 @@ pub fn run(state: &Path, cfg: &BackupSection, now: u64) -> Result<PathBuf> {
         }
     }
     let _cleanup = Cleanup(sqlite_files(&plain));
+    backup_stage("create_snapshot", started);
     drop(private_file::new_file(&plain).context("private snapshot 생성")?);
     let source = state.join("host.db");
-    snapshot(&source, &plain)?;
+    backup_stage("snapshot", started);
+    snapshot(&source, &plain).context("DB 백업 snapshot")?;
+    backup_stage("read_snapshot", started);
     let conn = readonly(&plain)?;
     let host_id: String = conn.query_row("SELECT value FROM meta WHERE key='host_id'", [], |r| r.get(0))?;
     ensure!(
@@ -179,6 +192,7 @@ pub fn run(state: &Path, cfg: &BackupSection, now: u64) -> Result<PathBuf> {
         "백업 host ID가 파일 이름으로 안전하지 않다"
     );
     drop(conn);
+    backup_stage("create_destination", started);
     let directory = root.join(format!("aaa-host-{host_id}"));
     match fs::create_dir(&directory) {
         Ok(()) => {}
@@ -189,21 +203,31 @@ pub fn run(state: &Path, cfg: &BackupSection, now: u64) -> Result<PathBuf> {
     let final_path = directory.join(&name);
     let partial = directory.join(format!(".{name}.partial"));
     let _partial_cleanup = Cleanup(vec![partial.clone()]);
+    backup_stage("create_ciphertext", started);
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&partial)
         .with_context(|| format!("암호문 임시 파일 생성 {}", partial.display()))?;
+    backup_stage("encrypt", started);
     let encryptor = age::Encryptor::with_recipients(std::iter::once(&public as &dyn age::Recipient))?;
     let writer = encryptor.wrap_output(file).context("age 암호화 시작")?;
     let mut gzip = GzEncoder::new(writer, Compression::fast());
     std::io::copy(&mut File::open(&plain)?, &mut gzip).context("snapshot 압축·암호화")?;
     let file = gzip.finish()?.finish().context("age 인증 태그 마감")?;
+    backup_stage("sync_ciphertext", started);
     file.sync_all().context("암호문 내구 쓰기")?;
     drop(file);
+    backup_stage("publish", started);
     fs::rename(&partial, &final_path).context("완성 백업 공개")?;
     private_file::sync_parent(&final_path).context("백업 폴더 내구 쓰기")?;
+    backup_stage("rotate", started);
     rotate(&directory, cfg.keep as usize, &final_path).context("이전 백업 회전")?;
+    backup_stage("cleanup", started);
+    drop(_partial_cleanup);
+    drop(_cleanup);
+    drop(_lock);
+    backup_stage("finished", started);
     Ok(final_path)
 }
 
@@ -285,6 +309,7 @@ impl Host {
             if !due(&self.cfg.backup, last, now) {
                 return Ok(false);
             }
+            tracing::debug!(stage = "record_attempt", attempt_ms = now, "DB 정기 백업 진행");
             self.db.set_meta(LAST_ATTEMPT, &now.to_string())?;
             Ok(true)
         })();
@@ -296,6 +321,8 @@ impl Host {
             }
             Ok(true) => {}
         }
+        let started = Instant::now();
+        backup_stage("queue_worker", started);
         self.backup_running.store(true, Ordering::Release);
         let host = self.clone();
         tokio::spawn(async move {
@@ -304,22 +331,36 @@ impl Host {
                 .await
                 .context("DB 백업 worker 종료")
                 .and_then(|r| r);
+            backup_stage("worker_returned", started);
             let result = result.and_then(|path| {
+                backup_stage("record_success", started);
                 host.db.set_meta(LAST_SUCCESS, &now.to_string())?;
+                backup_stage("clear_error", started);
                 host.db.set_meta(LAST_ERROR, "")?;
+                backup_stage("success_recorded", started);
                 tracing::info!(path=%path.display(), "host DB 암호화 백업 완료");
                 Ok(())
             });
             if let Err(e) = result {
                 host.backup_failed(&e);
             }
+            backup_stage("notify_completion", started);
             host.backup_running.store(false, Ordering::Release);
             host.bump();
             host.tick_wake.notify_one();
+            backup_stage("completion_notified", started);
         });
     }
 
     fn backup_failed(&self, error: &anyhow::Error) {
+        let io = error.chain().find_map(|cause| cause.downcast_ref::<std::io::Error>());
+        let sqlite = error.chain().find_map(|cause| cause.downcast_ref::<rusqlite::Error>());
+        tracing::debug!(
+            io_kind = ?io.map(std::io::Error::kind),
+            os_code = ?io.and_then(std::io::Error::raw_os_error),
+            sqlite_code = ?sqlite.and_then(rusqlite::Error::sqlite_error_code),
+            "DB 백업 실패 코드"
+        );
         let detail = aaa_common::redact::text(&format!("{error:#}"));
         tracing::error!("host DB 백업 실패: {detail}");
         if let Err(e) = self.db.set_meta(LAST_ERROR, &detail) {

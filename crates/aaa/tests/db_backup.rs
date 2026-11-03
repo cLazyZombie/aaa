@@ -68,7 +68,11 @@ fn encrypted_db_backup_cli_restores_live_host_without_overwrite() {
 
 #[test]
 fn host_ticker_backs_up_once_and_remembers_attempt_after_restart() {
-    use std::time::Duration;
+    use std::{
+        cell::Cell,
+        time::{Duration, Instant},
+    };
+    let started = Instant::now();
     let mut lab = lab::Lab::new();
     let node = lab.node("scheduled", None);
     let identity = lab.root.join("identity");
@@ -95,30 +99,56 @@ fn host_ticker_backs_up_once_and_remembers_attempt_after_restart() {
             || format!("마지막 IPC 오류: {}\nhost:\n{}", last_error.borrow(), lab.log(tag)),
         );
     };
-    lab.spawn("host", &node, &["host"]);
+    let backup_log = [("AAA_LOG", "aaa=info,aaa_host::backup=debug")];
+    lab.spawn_env("host", &node, &["host"], &backup_log);
     wait_host(&lab, "host");
+    eprintln!("백업 시험 host_ready elapsed_ms={}", started.elapsed().as_millis());
     // 백업 완료는 tick 응답보다 늦을 수 있다. 먼저 구독해 완료의 State 사건을 놓치지 않는다.
     let mut events = lab::watch::HostWatch::new(&node, Duration::from_secs(5));
+    eprintln!("백업 시험 watch_connected elapsed_ms={}", started.elapsed().as_millis());
     node.ticks(1);
+    eprintln!("백업 시험 tick_completed elapsed_ms={}", started.elapsed().as_millis());
     let last_status = std::cell::RefCell::new(String::new());
+    let queries = Cell::new(0);
+    let query_time = Cell::new(Duration::ZERO);
+    let waiting = Instant::now();
     let first = events.wait_diag(
         "정기 백업 성공 기록",
-        |_| match node.json(&["db-backup", "status"]) {
-            Ok(status) => {
-                *last_status.borrow_mut() = status.to_string();
-                status["last_success_ms"].as_u64().map(|_| status)
-            }
-            Err(error) => {
-                *last_status.borrow_mut() = error;
-                None
+        |_| {
+            let query_started = Instant::now();
+            let result = node.json(&["db-backup", "status"]);
+            queries.set(queries.get() + 1);
+            query_time.set(query_time.get() + query_started.elapsed());
+            match result {
+                Ok(status) => {
+                    *last_status.borrow_mut() = status.to_string();
+                    status["last_success_ms"].as_u64().map(|_| status)
+                }
+                Err(error) => {
+                    *last_status.borrow_mut() = error;
+                    None
+                }
             }
         },
-        || format!("마지막 백업 상태: {}\nhost:\n{}", last_status.borrow(), lab.log("host")),
+        || {
+            format!(
+                "성공 기록 대기 {}ms · 상태 조회 {}회/{}ms\n마지막 백업 상태: {}\nhost:\n{}",
+                waiting.elapsed().as_millis(),
+                queries.get(),
+                query_time.get().as_millis(),
+                last_status.borrow(),
+                lab.log("host")
+            )
+        },
     );
+    eprintln!("백업 시험 success_observed elapsed_ms={}", started.elapsed().as_millis());
     drop(events);
     lab.kill("host");
-    lab.spawn("restarted", &node, &["host"]);
+    eprintln!("백업 시험 first_host_reaped elapsed_ms={}", started.elapsed().as_millis());
+    lab.spawn_env("restarted", &node, &["host"], &backup_log);
     wait_host(&lab, "restarted");
+    eprintln!("백업 시험 restarted_host_ready elapsed_ms={}", started.elapsed().as_millis());
     node.ticks(1);
+    eprintln!("백업 시험 restarted_tick_completed elapsed_ms={}", started.elapsed().as_millis());
     assert_eq!(node.json(&["db-backup", "status"]).unwrap(), first);
 }
