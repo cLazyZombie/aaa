@@ -18,6 +18,7 @@ pub fn automation_schema() -> String {
 }
 mod account_login;
 mod account_meta;
+mod account_plan;
 mod account_policy;
 mod account_pool;
 mod account_rename;
@@ -1545,7 +1546,8 @@ impl Host {
         // evaluator·detached는 Local이어도 거부한다
         if matches!(
             &req,
-            FrontRequest::AccountEmail { .. }
+            FrontRequest::AccountPlan { .. }
+                | FrontRequest::AccountEmail { .. }
                 | FrontRequest::AccountRename { .. }
                 | FrontRequest::AccountDefault { .. }
                 | FrontRequest::AccountPoolMember { .. }
@@ -1572,6 +1574,7 @@ impl Host {
             FrontRequest::AccountImport { .. }
                 | FrontRequest::AccountRemove { .. }
                 | FrontRequest::AccountEmail { .. }
+                | FrontRequest::AccountPlan { .. }
                 | FrontRequest::AccountList
                 | FrontRequest::AccountDefaults
                 | FrontRequest::AccountPool
@@ -1757,6 +1760,8 @@ impl Host {
                 Ok(FrontResponse::Accounts { accounts: self.account_views(shows_email)? })
             }
             FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.account_views(shows_email)? }),
+            FrontRequest::AccountPlans => Ok(FrontResponse::AccountPlans { plans: account_plan::options() }),
+            FrontRequest::AccountPlan { name, plan } => self.account_plan(&name, plan.as_deref(), actor),
             FrontRequest::AccountDefaults => Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? }),
             FrontRequest::AccountPool => Ok(FrontResponse::AccountPool { pool: self.account_pool()? }),
             FrontRequest::AccountPoolMember { revision, account, member } => {

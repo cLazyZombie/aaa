@@ -41,17 +41,22 @@ export function AccountQuotaCard({ quota, now, failed }: { quota: AccountQuota |
     <h4>남은 사용량</h4>
     {(failed || quota?.problem) && <p className="op-muted" data-testid="quota-problem">{failed ? `다시 읽지 못함 · 마지막 관측${typeof failed === "string" ? `: ${failed}` : ""}` : quotaProblem[quota!.problem!]}</p>}
     {quotaQueryStatus(quota?.query_status) && <p className="op-muted" data-testid="quota-query-status">{quotaQueryStatus(quota?.query_status)}</p>}
+    {quota?.session_limit === false ? <p data-testid="quota-session-status">5시간 · 해당 없음</p>
+      : quota?.input_missing?.includes(300) ? <p data-testid="quota-session-status">5시간 · 제공 안 됨</p> : null}
     {windows.map((w) => {
       const state = failed ? "unknown" : quotaState(w, now);
-      return <div key={`${w.limit_id}/${w.scope}/${w.duration_mins}/${w.window_id}`} className={`acct-quota-window is-${state}`} data-testid="quota-window" data-state={state}>
-        <div className="acct-quota-title"><span>{quotaLabel(w)}</span><strong>{state === "unknown" ? `마지막 ${quotaLeft(w)}` : quotaLeft(w)}</strong></div>
+      const history = w.duration_mins === 300 && (state !== "fresh" || quota?.session_limit === false || quota?.input_missing?.includes(300));
+      const row = <div className={`acct-quota-window is-${history ? "unknown" : state}`} data-testid="quota-window" data-state={history ? "unknown" : state}>
+        <div className="acct-quota-title"><span>{quotaLabel(w)}</span><strong>{(state === "unknown" || history) ? `마지막 ${quotaLeft(w)}` : quotaLeft(w)}</strong></div>
         <meter min={0} max={100} value={Number.isFinite(w.used_percent) ? 100 - w.used_percent : 0} aria-label={`${quotaLabel(w)} 남은 양`} />
-        <p>{state === "fresh" ? "최신" : state === "stale" ? "오래됨" : "모름 · 재조회 필요"}{w.problem ? ` · ${quotaProblem[w.problem]}` : ""}{w.conflict ? " · 관측 충돌(작은 잔량)" : ""}{w.duration_mins && quota?.input_missing?.includes(w.duration_mins) ? " · 입력 미제공" : ""}</p>
+        <p>{state === "fresh" && !history ? "최신" : state === "stale" ? "오래됨" : "마지막 관측"}{w.problem ? ` · ${quotaProblem[w.problem]}` : ""}{w.conflict ? " · 관측 충돌(작은 잔량)" : ""}{w.duration_mins && quota?.input_missing?.includes(w.duration_mins) ? " · 제공 안 됨" : ""}</p>
         <p>{quotaAge(w.observed_at_ms, now)} · 리셋 {quotaTime(w.resets_at_ms)}</p>
         <p>{w.machine} · {w.source === "codex_rpc" ? "공식 조회" : w.source === "claude_oauth" ? "OAuth 조회" : "상태줄 관측"}</p>
       </div>;
+      const key = `${w.limit_id}/${w.scope}/${w.duration_mins}/${w.window_id}`;
+      return history ? <details key={key}><summary>지난 {quotaLabel(w)} 관측</summary>{row}</details> : <div key={key}>{row}</div>;
     })}
-    {[300, 10080].filter((n) => !windows.some((w) => w.duration_mins === n && !w.scope)).map((n) => <p key={n} className="op-muted">{n === 300 ? "5시간" : "주간"} 사용량 모름</p>)}
+    {[300, 10080].filter((n) => !(n === 300 && (quota?.session_limit === false || quota?.input_missing?.includes(300))) && !windows.some((w) => w.duration_mins === n && !w.scope)).map((n) => <p key={n} className="op-muted">{n === 300 ? "5시간" : "주간"} · {quota?.input_missing?.includes(n) ? "제공 안 됨" : "사용량 모름"}</p>)}
     {quota?.retry_at_ms && quota.retry_at_ms > now ? <p className="op-muted">다시 조회 가능 {quotaTime(quota.retry_at_ms)}</p> : null}
   </section>;
 }

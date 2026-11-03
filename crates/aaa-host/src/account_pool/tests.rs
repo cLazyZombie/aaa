@@ -76,6 +76,7 @@ fn candidate(name: &str, five: f64, week: f64) -> Candidate {
         generation: format!("generation-{name}"),
         last_quota: None,
         quota: Some(AccountQuota {
+            session_limit: None,
             input_missing: None,
             query_status: None,
             account: name.into(),
@@ -905,4 +906,28 @@ fn idle_observation_still_excludes_exhausted_and_below_threshold_accounts_until_
             assert!(allocation.selection.unobserved, "리셋 뒤에는 마지막 기록 추정임을 남긴다");
         }
     }
+}
+
+// 필요: 요금제·입력 미제공·과거 5시간 값으로 시작을 막거나 잔량 순위를 바꾸지 않는다.
+#[test]
+fn session_policy_and_absence_exclude_history_from_all_allocation_checks() {
+    let mut q = candidate("work", 100., 20.).quota.unwrap();
+    assert!(known_limit(&q, None, NOW));
+    q.session_limit = Some(false);
+    assert!(!known_limit(&q, None, NOW));
+    assert!(!below_usage_threshold(&q, [Some(50.), None], NOW));
+    assert_eq!(fresh_windows(&q, None, NOW).unwrap().len(), 1);
+    assert_eq!(remaining_quota(&q, None, NOW, false, false).unwrap().0, 80.);
+    q.session_limit = Some(true);
+    q.input_missing = Some(vec![300]);
+    assert!(!known_limit(&q, None, NOW));
+    assert!(!below_usage_threshold(&q, [Some(50.), None], NOW));
+    assert_eq!(remaining_quota(&q, None, NOW, false, false).unwrap().0, 80.);
+    q.windows.retain(|w| w.window.duration_mins == Some(300));
+    assert_eq!(remaining_quota(&q, None, NOW, false, false), None);
+    q.input_missing = None;
+    q.windows[0].window.resets_at_ms = Some(NOW);
+    assert_eq!(remaining_quota(&q, None, NOW, false, false), None, "지난 5시간 숫자를 마지막 관측으로 배정하지 않는다");
+    q.windows[0].window.resets_at_ms = Some(NOW + 60000);
+    assert!(known_limit(&q, None, NOW), "실제 5시간 제한은 남는다");
 }

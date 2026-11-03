@@ -98,6 +98,7 @@ pub fn typescript_bindings() -> String {
         AccountQuotaReport::decl(&cfg),
         AccountHealth::decl(&cfg),
         AccountDefault::decl(&cfg),
+        AccountPlanOption::decl(&cfg),
         AccountPoolMember::decl(&cfg),
         AccountPoolView::decl(&cfg),
         AccountTaskSize::decl(&cfg),

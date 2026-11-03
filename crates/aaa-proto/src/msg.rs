@@ -2014,6 +2014,11 @@ pub enum FrontRequest {
         secret: crate::SecretText,
     },
     AccountList,
+    AccountPlans,
+    AccountPlan {
+        name: String,
+        plan: Option<String>,
+    },
     AccountDefaults,
     AccountPool,
     AccountPoolMember {
@@ -3811,6 +3816,7 @@ impl FrontRequest {
         !matches!(
             self,
             FrontRequest::AccountList
+                | FrontRequest::AccountPlans
                 | FrontRequest::AccountDefaults
                 | FrontRequest::AccountPool
                 | FrontRequest::AccountStarts { .. }
@@ -3923,6 +3929,9 @@ pub enum FrontResponse {
     },
     AccountDefaults {
         defaults: Vec<crate::AccountDefault>,
+    },
+    AccountPlans {
+        plans: Vec<crate::AccountPlanOption>,
     },
     AccountPool {
         pool: crate::AccountPoolView,

@@ -1696,3 +1696,6 @@ summary.chat-compact-head { cursor: pointer; }
 [data-theme="light"][data-palette="catppuccin"] { --text-quiet: var(--text-dim); }
 /* 보관한 대화는 레이아웃·입력에 참여하지 않는다. .term의 flex보다 우선한다. */
 .term[hidden] { display: none; }
+
+.usage-history > summary { color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer; }
+.usage-row.is-history { opacity: .55; }

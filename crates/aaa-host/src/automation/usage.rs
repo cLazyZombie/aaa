@@ -42,7 +42,14 @@ fn local(limits: &Limits, report: &UsageReport, harness: &str) -> Check {
     for (duration, threshold) in thresholds(limits) {
         let Some(threshold) = threshold else { continue };
         let kind = if duration == 300 { UsageWindowKind::Session } else { UsageWindowKind::Week };
-        let windows: Vec<_> = accounts[0].windows.iter().filter(|w| w.kind == kind && w.scope.is_none()).collect();
+        if kind == UsageWindowKind::Session && accounts[0].session_limit == Some(false) {
+            continue;
+        }
+        let windows: Vec<_> = accounts[0]
+            .windows
+            .iter()
+            .filter(|w| crate::usage::active_window(accounts[0], w) && w.kind == kind && w.scope.is_none())
+            .collect();
         if windows.len() != 1 || !windows[0].used_percent.is_finite() {
             return Check::Unknown(format!("로컬 {harness} · {kind:?} 창 불명"));
         }
@@ -126,6 +133,7 @@ mod tests {
     const NOW: u64 = 1_000_000;
     fn quota() -> AccountQuota {
         AccountQuota {
+            session_limit: None,
             input_missing: None,
             query_status: None,
             account: "work".into(),
@@ -194,6 +202,7 @@ mod tests {
     #[test]
     fn quota_gate_local_fallback_does_not_mix_providers_or_accounts() {
         let account = |id, key: &str, used| ProviderUsage {
+            session_limit: None,
             input_missing: None,
             query_status: None,
             id,

@@ -22,6 +22,8 @@ pub(crate) struct AccountMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_override: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_auth_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_auth_ms: Option<u64>,
@@ -175,6 +177,8 @@ pub(crate) fn hide_email(views: &mut [AccountView]) {
     for v in views {
         v.email = None;
         v.plan = None;
+        v.plan_override = None;
+        v.detected_plan = None;
     }
 }
 
@@ -183,6 +187,38 @@ fn key(name: &str) -> String {
 }
 
 impl Host {
+    pub(crate) fn account_plan(
+        &self,
+        name: &str,
+        plan: Option<&str>,
+        actor: &str,
+    ) -> Result<aaa_proto::FrontResponse, aaa_proto::ErrorBody> {
+        let account = self
+            .accounts
+            .list()?
+            .into_iter()
+            .find(|a| a.name == name)
+            .ok_or_else(|| crate::err(aaa_proto::ErrorCode::BadRequest, "계정을 찾지 못했습니다"))?;
+        if plan.is_some_and(|id| {
+            !crate::account_plan::options().iter().any(|p| p.id == id && p.harness == account.harness)
+        }) {
+            return Err(crate::err(aaa_proto::ErrorCode::BadRequest, "이 제공자의 요금제를 선택하세요"));
+        }
+        let _gate = self.account_meta_gate.lock().unwrap();
+        let mut meta = self.account_meta(name);
+        meta.plan_override = plan.map(str::to_owned);
+        self.store_account_meta(name, &meta)?;
+        self.db.audit(actor, "account_plan", name);
+        self.tick_wake.notify_one();
+        Ok(aaa_proto::FrontResponse::Done)
+    }
+
+    pub(crate) fn account_session_limit(&self, name: &str, harness: &str) -> Option<bool> {
+        let meta = self.account_meta(name);
+        crate::account_plan::resolve(harness, meta.plan_override.as_deref(), meta.plan.as_deref())
+            .and_then(|p| p.session_limit)
+    }
+
     pub(crate) fn account_meta(&self, name: &str) -> AccountMeta {
         self.db
             .meta(&key(name))
@@ -252,7 +288,16 @@ impl Host {
             let m = self.account_meta(&v.name);
             v.health = Some(health(&m, now));
             v.email = m.email;
-            v.plan = m.plan;
+            v.plan = m
+                .plan_override
+                .as_deref()
+                .and_then(|id| {
+                    crate::account_plan::options().into_iter().find(|p| p.id == id && p.harness == v.harness)
+                })
+                .map(|p| p.label)
+                .or_else(|| m.plan.clone());
+            v.detected_plan = m.plan;
+            v.plan_override = m.plan_override;
             v.first_auth_ms = m.first_auth_ms;
             v.last_auth_ms = m.last_auth_ms;
             v.expires_ms = m.expires_ms;

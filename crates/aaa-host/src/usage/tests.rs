@@ -381,6 +381,7 @@ fn registered_sidebar_keeps_observation_age_and_failure_without_borrowing_anothe
         conflict: false,
     };
     let mut quota = AccountQuota {
+        session_limit: None,
         input_missing: None,
         query_status: None,
         account: "work".into(),
@@ -426,6 +427,7 @@ fn registered_sidebar_keeps_each_window_age_when_only_weekly_observations_arrive
         conflict: false,
     };
     let mut quota = AccountQuota {
+        session_limit: None,
         input_missing: None,
         query_status: None,
         account: "work".into(),
@@ -714,6 +716,7 @@ async fn five_hour_absence_and_null_keep_weekly_without_inventing_zero() {
         assert_eq!(snapshot.windows.len(), 1);
         assert_eq!(snapshot.windows[0].duration_mins, Some(10080));
         assert_eq!(snapshot.windows[0].used_percent, 12.);
+        assert_eq!(snapshot.input_missing, Some(vec![300]));
     }
 }
 
@@ -863,4 +866,43 @@ async fn late_query_response_after_relogin_keeps_last_observations() {
         fake.header("/api/oauth/usage", "authorization"),
         Some(format!("Bearer {}", aaa_test_support::token("late-query-new")))
     );
+}
+
+// 필요: 등록 Codex의 선택 정책과 모델별 주간 창이 하단 변환에서 유실되지 않는다.
+#[test]
+fn registered_codex_sidebar_keeps_plan_policy_and_scoped_weekly_limits() {
+    use aaa_proto::*;
+    let quota = AccountQuota {
+        account: "work".into(),
+        harness: "codex".into(),
+        session_limit: Some(false),
+        input_missing: None,
+        query_status: None,
+        problem: None,
+        retry_at_ms: None,
+        windows: vec![AccountQuotaWindow {
+            window: QuotaWindow {
+                limit_id: "codex".into(),
+                window_id: "secondary".into(),
+                scope: Some("spark".into()),
+                duration_mins: Some(10080),
+                used_percent: 42.,
+                observed_at_ms: NOW,
+                resets_at_ms: Some(NOW + 86400000),
+            },
+            machine: "host".into(),
+            source: QuotaSource::CodexRpc,
+            received_at_ms: NOW,
+            freshness: QuotaFreshness::Fresh,
+            problem: None,
+            conflict: false,
+        }],
+    };
+    let usage = registered_usage("work", Some("Pro · $200/월".into()), Some(&quota), UsageProviderId::Codex);
+    assert_eq!(usage.key, "codex:registered:work");
+    assert_eq!(usage.session_limit, Some(false));
+    assert_eq!(usage.windows[0].scope.as_deref(), Some("spark"));
+    assert_eq!(usage.windows[0].used_percent, 42.);
+    assert_eq!(usage.windows[0].kind, UsageWindowKind::Week);
+    assert!(registered_usage("other", None, Some(&quota), UsageProviderId::Codex).windows.is_empty());
 }

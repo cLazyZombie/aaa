@@ -294,3 +294,45 @@ fn automatic_refresh_preserves_the_edited_email() {
     h.account_refresh_seen("work", RefreshOutcome::Renewed, 1);
     assert_eq!(h.account_meta("work"), before);
 }
+
+// 필요: 로그인 갱신이 사람의 선택을 덮거나 다른 제공자의 요금제로 창을 끄는 회귀를 막는다.
+#[tokio::test]
+async fn plan_selection_is_persistent_provider_scoped_and_owner_only() {
+    let lab = lab(false);
+    let h = &lab.h;
+    h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
+    h.account_meta_backfill();
+    let request = |plan: Option<&str>| FrontRequest::AccountPlan { name: "work".into(), plan: plan.map(str::to_owned) };
+    for (role, actor) in [
+        (DeviceRole::Reader, "device:reader"),
+        (DeviceRole::Local, "local:cli@worker"),
+        (DeviceRole::Local, "worker:t-0001"),
+    ] {
+        assert_eq!(h.call(role, actor, request(Some("pro_200"))).await.unwrap_err().code, ErrorCode::Forbidden);
+    }
+    assert_eq!(
+        h.call(DeviceRole::Controller, "device:owner", request(Some("ultra"))).await.unwrap_err().code,
+        ErrorCode::BadRequest
+    );
+    assert_eq!(
+        h.call(DeviceRole::Controller, "device:owner", request(Some("unknown"))).await.unwrap_err().code,
+        ErrorCode::BadRequest
+    );
+    let before = h.accounts.credential("work").unwrap();
+    h.call(DeviceRole::Controller, "device:owner", request(Some("pro_500"))).await.unwrap();
+    h.account_logged_in("work", &Identity { plan: Some("business".into()), ..Default::default() }, false).unwrap();
+    let view = h.account_views(true).unwrap().remove(0);
+    assert_eq!(view.detected_plan.as_deref(), Some("business"));
+    assert_eq!(view.plan_override.as_deref(), Some("pro_500"));
+    assert!(view.plan.unwrap().contains("$500"));
+    assert_eq!(h.account_session_limit("work", "codex"), Some(false));
+    assert_eq!(h.accounts.credential("work").unwrap(), before, "요금제 선택은 인증을 바꾸지 않는다");
+    let reopened = Host::open(h.cfg.clone(), lab.root.join("host")).unwrap();
+    assert_eq!(reopened.account_meta("work").plan_override.as_deref(), Some("pro_500"));
+    drop(reopened);
+    let hidden = h.account_views(false).unwrap().remove(0);
+    assert_eq!((hidden.plan_override, hidden.detected_plan, hidden.plan), (None, None, None));
+    h.call(DeviceRole::Local, "local:cli", request(None)).await.unwrap();
+    assert_eq!(h.account_views(true).unwrap()[0].plan.as_deref(), Some("business"));
+    assert_eq!(h.account_session_limit("work", "codex"), Some(true));
+}

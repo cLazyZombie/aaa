@@ -66,15 +66,18 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
       {usage.checked_at && !perWindow && <p className="usage-note">{quotaAge(Date.parse(usage.checked_at), now)}</p>}
       {problem && <p className={`usage-note${isError(usage) ? " is-problem" : ""}`}>{problem}</p>}
       {quotaQueryStatus(usage.query_status) && <p className="usage-note" data-testid="usage-query-status">{quotaQueryStatus(usage.query_status)}</p>}
+      {usage.session_limit === false ? <p className="usage-note" data-testid="usage-session-status">5시간 · 해당 없음</p>
+        : usage.input_missing?.includes("session") ? <p className="usage-note" data-testid="usage-session-status">5시간 · 제공 안 됨</p> : null}
       {usage.windows.map((window, index) => {
         const missing = usage.input_missing?.includes(window.kind) === true;
+        const history = window.kind === "session" && (usage.session_limit === false || missing || window.problem);
         const reset = formatResetIn(window.resets_at, now);
         const value = meterPercent(window, count);
-        return (
-          <div key={index} className={`usage-row${level(window)}`} data-window={window.kind} data-problem={window.problem ?? ""}>
+        const row = (
+          <div className={`usage-row${history ? " is-history" : level(window)}`} data-window={window.kind} data-problem={window.problem ?? ""}>
             <span className="usage-row-label">{windowLabel(window)}</span>
             {reset && <span className="usage-row-reset">{reset} 뒤 초기화</span>}
-            <span className="usage-row-value">{window.problem || missing ? "마지막 " : ""}{meterText(window, count)}</span>
+            <span className="usage-row-value">{history || window.problem || missing ? "마지막 " : ""}{meterText(window, count)}</span>
             <span
               className="usage-bar"
               role="meter"
@@ -91,14 +94,15 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
               <span className="usage-row-observation">
                 {quotaAge(Date.parse(window.observed_at), now)}
                 {window.problem && ` · ${usageProblemLabel({ ...usage, problem: window.problem })}`}
-                {missing && " · 입력 미제공"}
+                {missing && " · 제공 안 됨"}
                 {(missing || window.problem) && quotaQueryStatus(usage.query_status) && ` · ${quotaQueryStatus(usage.query_status)}`}
               </span>
             )}
           </div>
         );
+        return history ? <details key={index} className="usage-history"><summary>지난 {windowLabel(window)} 관측</summary>{row}</details> : <div key={index}>{row}</div>;
       })}
-      {usage.input_missing?.filter(kind => !usage.windows.some(w => w.kind === kind)).map(kind => <p key={kind} className="usage-note" data-window={kind}>{kind === "session" ? "세션" : "주간"} · 입력 미제공</p>)}
+      {usage.input_missing?.filter(kind => kind !== "session" && !usage.windows.some(w => w.kind === kind)).map(kind => <p key={kind} className="usage-note" data-window={kind}>{kind === "session" ? "세션" : "주간"} · 제공 안 됨</p>)}
       {usage.windows.length === 0 && !problem && <p className="usage-note">알린 한도가 없다</p>}
     </section>
   );

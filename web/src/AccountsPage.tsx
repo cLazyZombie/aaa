@@ -11,14 +11,14 @@ import { AccountAutoAssign, useAccountPool } from "./AccountPoolPanel";
 import { apiAtLeast } from "./automationModel";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { AccountDefault, AccountLoginView, AccountView, DeviceRole } from "./gen/proto";
+import type { AccountDefault, AccountLoginView, AccountView, AccountPlanOption, DeviceRole } from "./gen/proto";
 import { ApiError, call, me, onAccountsChanged } from "./api";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, loginText, validAlias } from "./accountsModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { emailEdit: boolean; usageLogin: boolean; remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
+type Loaded = { plans: AccountPlanOption[] | null; emailEdit: boolean; usageLogin: boolean; remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -28,10 +28,11 @@ function useAccounts(loginId: string | null) {
   const seq = useRef(0);
   const reload = useCallback(() => {
     const mine = ++seq.current;
-    (async () => {
+    return (async () => {
       const m = await me().catch(ignoredFailure("AccountsPage.tsx:31", () => null));
       const full = canAccounts(m?.front_api);
-      const [list, defaults] = await Promise.all([call({ op: "account_list" }), call({ op: "account_defaults" })]);
+      const [list, defaults, plans] = await Promise.all([call({ op: "account_list" }), call({ op: "account_defaults" }),
+        apiAtLeast(m?.front_api, 1, 157) ? call({ op: "account_plans" }) : null]);
       // 보던 로그인을 host가 잊었으면(다시 시작·오래된 작업 정리) 목록은 그대로 새로 읽고 카드만 「더 읽지 못함」으로 둔다
       // host가 답한 거부만 「잃음」이다. 전송 실패는 아래 catch가 오류로 알리고 카드를 그대로 둔다
       const status =
@@ -43,6 +44,7 @@ function useAccounts(loginId: string | null) {
           : null;
       if (mine !== seq.current) return;
       setData({
+        plans: plans?.kind === "account_plans" ? plans.plans : null,
         emailEdit: apiAtLeast(m?.front_api, 1, 156),
         usageLogin: apiAtLeast(m?.front_api, 1, 155),
         remote: apiAtLeast(m?.front_api, 1, 151),
@@ -158,8 +160,12 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                             <>
                               <dt>메일</dt>
                               <dd data-testid="account-email">{a.email ?? "모름"}</dd>
-                              <dt>plan</dt>
-                              <dd>{a.plan ?? "모름"}</dd>
+                              <dt>요금제</dt>
+                              <dd>{data.plans ? <select aria-label={`${a.name} 요금제`} value={a.plan_override ?? ""} disabled={!canEdit || busy}
+                                onChange={e => { const plan = e.target.value || null; void run(async () => { await call({ op: "account_plan", name: a.name, plan }); await reload(); usage.refresh(); }); }}>
+                                <option value="">자동 감지 · {a.detected_plan ?? "모름"}</option>
+                                {data.plans.filter(p => p.harness === a.harness).map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                              </select> : a.plan ?? "모름"}</dd>
                             </>
                           )}
                           <dt>최초 인증일</dt>
