@@ -24,3 +24,9 @@
 - 부분 검증: `cargo test -p aaa-host --lib -- auto_merge brief guide`, `cargo test -p aaa --test m13 -- auto_merge doctor_files`,
   `AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript`, 웹 `tsc`·build·`npm test`, E2E119(Playwright 1.64.1 패키지는 작업 폴더 안,
   브라우저는 공용 캐시). 전체 ci-local·공개 검사·cross는 아래 실행 결과와 정규 착지 차례에서 확인한다.
+- (t-1495) thread 화면 스위치를 정보 줄에서 맨 윗줄 상태 표시 왼쪽으로 옮겼다(넓은 화면은 글자와 스위치, 700px 이하는 아이콘 단추).
+  좁은 머리줄의 「터미널」 단추는 다른 머리 단추처럼 아이콘만 보인다. E2E119가 지워져(t-1310) 이 자리를 보는 브라우저 시험이 없어,
+  E2E12 「thread 보고서·결과물」 단계의 390px·1280px 화면에 몇 줄을 더했다: 390px에서 아이콘 단추이고 정보 줄에 스위치가 없으며
+  「확인(ack)」이 있는 머리줄의 모든 칸이 화면 안인지, 눌러 host 값이 켜지는지, 1280px에서 글자와 스위치가 상태 표시 바로 앞이고
+  눌러 꺼지는지 본다. 필요한 이유: 사용자가 정한 자리(q-2591 1D)와 휴대폰 머리줄이 넘치지 않는 것을 지킨다. host 값과 DOM 상태로
+  끝내고 고정 sleep·재시도는 없다. 그 단계는 약 4.6초다(`verify.py develop --spec 12` 통과).
