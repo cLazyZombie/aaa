@@ -23,6 +23,8 @@ use aaa_proto::{LINK_DEAD_AFTER as DEAD_AFTER, LINK_PING_EVERY as PING_EVERY};
 
 #[cfg(test)]
 mod response_parts_tests;
+#[cfg(test)]
+mod work_file_tests;
 
 /// 인증 전 동시 연결 상한
 const PREAUTH_LIMIT: usize = 16;
@@ -451,6 +453,10 @@ async fn serve_connection(
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
                     msg @ LinkMsg::Event(AgentEvent::Image { .. }) => msg,
                     msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. } | AgentResponse::ReportTransfer(_) | AgentResponse::ReportFileChunk { .. }), .. } => msg,
+                    // 작업 파일은 목록의 원본 hash와 검증한다. 살아 있는 요청 ID·응답 종류가
+                    // 맞을 때만 가림을 미룬다. FileView의 같은 FileChunk에는 적용하지 않는다.
+                    msg if matches!(&msg, LinkMsg::Res { id, result: Outcome::Ok(response) }
+                        if pending.lock().unwrap().get(id).is_some_and(|p| p.preserves(response))) => msg,
                     msg => aaa_common::redact::json(msg).map_err(|source_error| aaa_common::diagnostic::context(source_error, anyhow::anyhow!("agent 메시지 가림 거부")))?,
                 } {
                     LinkMsg::Event(AgentEvent::ThreadRead { request_id, session, request }) => {
