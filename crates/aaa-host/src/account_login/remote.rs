@@ -538,9 +538,7 @@ async fn claude(
             c.env(key, v);
         }
     }
-    for key in ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
-        c.env(key, root);
-    }
+    isolate_login_home(&mut c, root, "claude")?;
     c.env("CLAUDE_CONFIG_DIR", home);
     c.env("BROWSER", &browser);
     c.env("TERM", "dumb");

@@ -26,6 +26,21 @@ fn fail() -> ErrorBody {
     )
 }
 
+/// Claude 설정은 별도 폴더로 격리하되 macOS security가 기본 Keychain을 찾을 HOME은 보존한다.
+/// CLAUDE_CONFIG_DIR은 호출자가 반드시 임시 Claude 폴더로 지정한다(기본 인증 항목을 공유하지 않는다).
+fn isolate_login_home(command: &mut CommandBuilder, root: &std::path::Path, harness: &str) -> Result<(), ErrorBody> {
+    for key in ["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] {
+        command.env(key, root);
+    }
+    if cfg!(target_os = "macos") && harness == "claude" {
+        let home = std::env::var_os("HOME").filter(|v| std::path::Path::new(v).is_absolute()).ok_or_else(|| {
+            ErrorBody::new(ErrorCode::BadRequest, "macOS Keychain에 필요한 host 홈 경로를 확인하지 못했습니다")
+        })?;
+        command.env("HOME", home);
+    }
+    Ok(())
+}
+
 // Unix PTY 자식은 spawn_command가 만든 독립 session/group의 leader다.
 // clone_killer의 SIGHUP은 무시할 수 있으므로 확인한 로그인 자식 PID만 끝낸다.
 fn kill_login(killer: &mut dyn portable_pty::ChildKiller, pid: Option<u32>) {
@@ -253,12 +268,7 @@ impl Host {
                 command.env(key, value);
             }
         }
-        command.env("HOME", &temp.0);
-        command.env("USERPROFILE", &temp.0);
-        command.env("XDG_CONFIG_HOME", &temp.0);
-        command.env("XDG_DATA_HOME", &temp.0);
-        command.env("XDG_STATE_HOME", &temp.0);
-        command.env("XDG_CACHE_HOME", &temp.0);
+        isolate_login_home(&mut command, &temp.0, harness)?;
         command.env("TERM", "xterm-256color");
         command.cwd(&temp.0);
         #[cfg(unix)]

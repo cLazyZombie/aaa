@@ -393,6 +393,8 @@ host의 계정별 사용량 캐시 `account-quota-v1/<account>`는 OAuth 조회 
 CLI의 `--email me@example.com`으로 기대 메일을 지정한다. 이는 사람이 별칭의 계정을 확인하는 단계이며, 실행용 토큰의 계정을 자동 증명하지 않는다.
 조회 연결로 실행 인증의 메일을 덮어쓰지 않는다.
 CLI에서 시작한 로그인은 `aaa account login-status <로그인 ID>`로 확인하고 `aaa account login-cancel <로그인 ID>`로 취소한다.
+macOS에서는 OS Keychain을 찾기 위해 host의 HOME을 보존한다. Claude 설정·인증은 로그인마다 별도 임시 폴더와
+그 폴더 전용 Keychain 항목에 격리하며, 기본 Claude 인증 항목과 공유하지 않는다.
 
 조회 접근 거부·인증 만료 뒤 같은 조회 인증은 자동으로 다시 사용하지 않는다. 조회 로그인을 새로 연결한다.
 조회 대기(429)는 제공자가 지정한 때까지 유지한다. 상태줄 입력이 창을 알리지 않으면 「입력 미제공」으로 보이며,
