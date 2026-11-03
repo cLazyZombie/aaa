@@ -18,7 +18,7 @@ import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, 
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { usageLogin: boolean; remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
+type Loaded = { emailEdit: boolean; usageLogin: boolean; remote: boolean; accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean; rename: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -43,6 +43,7 @@ function useAccounts(loginId: string | null) {
           : null;
       if (mine !== seq.current) return;
       setData({
+        emailEdit: apiAtLeast(m?.front_api, 1, 156),
         usageLogin: apiAtLeast(m?.front_api, 1, 155),
         remote: apiAtLeast(m?.front_api, 1, 151),
         accounts: list.kind === "accounts" ? list.accounts : [],
@@ -72,6 +73,8 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [alias, setAlias] = useState("");
+  const [email, setEmail] = useState("");
+  const [editingEmail, setEditingEmail] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const renameInput = useRef<HTMLInputElement>(null);
@@ -104,8 +107,8 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
       setBusy(false);
     }
   };
-  const start = (name: string, h: string) => {
-    if (data.remote) { openAccountLogin(name, h); return; }
+  const start = (name: string, h: string, registrationEmail?: string) => {
+    if (data.remote) { openAccountLogin(name, h, false, registrationEmail); return; }
     return run(async () => {
       const r = await call({ op: "account_login", name, harness: h });
       if (r.kind === "account_login") {
@@ -176,6 +179,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                       {canEdit && (
                         <div className="op-buttons acct-actions">
                           {data.usageLogin && a.harness === "claude" && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 사용량 조회 로그인`} onClick={() => openAccountLogin(a.name, a.harness, true, a.email)}>조회 로그인</button>}
+                          {data.emailEdit && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 메일 수정`} onClick={() => { setEditingEmail(a.name); setMsg(null); }}>메일 수정</button>}
                           {data.rename && <button type="button" className="btn small" disabled={busy || !!active} aria-label={`${a.name} 이름 바꾸기`} onClick={() => { setRenaming(a.name); setNewName(a.name); setMsg(null); setRenamed(null); }}>이름 바꾸기</button>}
                           <button type="button" className="btn small" disabled={busy || !!active} onClick={() => void start(a.name, a.harness)} aria-label={`${a.name} 다시 로그인`}>
                             다시 로그인
@@ -191,6 +195,11 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                           </button>
                         </div>
                       )}
+                      {canEdit && editingEmail === a.name && <AccountEmailForm key={a.name} account={a} busy={busy} cancel={() => setEditingEmail(null)} save={value => run(async () => {
+                        await call({ op: "account_email", name: a.name, email: value });
+                        setEditingEmail(null);
+                        reload();
+                      })} />}
                       {renamed?.to === a.name && <p role="status" data-testid="account-renamed">{renamed.from} → {renamed.to}: 이름을 바꿨습니다. 인증은 그대로 사용합니다.</p>}
                       {canEdit && renaming === a.name && (
                         <form className="acct-rename" data-testid="account-rename" onSubmit={(e) => {
@@ -233,13 +242,17 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
             className="settings-item acct-new"
             onSubmit={(e) => {
               e.preventDefault();
-              void start(alias.trim(), harness);
+              void start(alias.trim(), harness, data.emailEdit ? email.trim() : undefined);
             }}
           >
             <label className="op-field">
               <span>별칭(영문·숫자·-·_)</span>
               <input value={alias} onChange={(e) => setAlias(e.target.value)} placeholder="work-claude" disabled={busy} data-testid="account-alias" />
             </label>
+            {data.emailEdit && <label className="op-field">
+              <span>메일</span>
+              <input type="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" disabled={busy} data-testid="account-registration-email" />
+            </label>}
             <label className="op-field">
               <span>harness</span>
               <select value={harness} onChange={(e) => setHarness(e.target.value)} disabled={busy} data-testid="account-harness">
@@ -250,7 +263,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                 ))}
               </select>
             </label>
-            <button type="submit" className="btn btn-primary" disabled={busy || !!active || !validAlias(alias.trim())}>
+            <button type="submit" className="btn btn-primary" disabled={busy || !!active || !validAlias(alias.trim()) || (data.emailEdit && !email.trim())}>
               로그인
             </button>
           </form>
@@ -292,4 +305,12 @@ function LoginCard({ login, busy, run, onClose }: { login: AccountLoginView; bus
       </div>
     </section>
   );
+}
+
+function AccountEmailForm({ account, busy, save, cancel }: { account: AccountView; busy: boolean; save: (email: string) => Promise<void>; cancel: () => void }) {
+  const [email, setEmail] = useState(account.email ?? "");
+  return <form className="acct-rename" data-testid="account-email-edit" onSubmit={e => { e.preventDefault(); void save(email.trim()); }}>
+    <label className="op-field"><span>메일</span><input aria-label={`${account.name} 메일`} type="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} disabled={busy} autoComplete="email" /></label>
+    <div className="op-buttons"><button type="submit" className="btn btn-primary" disabled={busy || !email.trim()}>메일 저장</button><button type="button" className="btn" disabled={busy} onClick={cancel}>취소</button></div>
+  </form>;
 }

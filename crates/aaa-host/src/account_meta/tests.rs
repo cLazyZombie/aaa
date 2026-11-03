@@ -109,7 +109,7 @@ async fn people_log_in_from_the_web_but_only_controllers_and_local_cli_see_email
         assert_eq!(hidden[0].health, Some(AccountHealth::Ok), "상태는 보인다");
     }
     // 로그인·기본은 사람이: 웹 조작 기기는 경계를 지나고(가짜 harness 이름이라 BadRequest), 세션 안·보기 전용은 거부
-    let login = FrontRequest::AccountLogin { name: "x".into(), harness: "nope".into() };
+    let login = FrontRequest::AccountLogin { name: "x".into(), harness: "nope".into(), email: None };
     assert_eq!(
         h.call(DeviceRole::Controller, "device:phone", login.clone()).await.unwrap_err().code,
         ErrorCode::BadRequest
@@ -147,7 +147,7 @@ fn broken_and_expiring_accounts_raise_one_alert_without_email_and_logging_in_cle
     let lab = lab(true);
     let h = &lab.h;
     h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
-    h.account_logged_in("work", &codex_identity(&codex_auth("work@example.com", "plus")), false);
+    h.account_logged_in("work", &codex_identity(&codex_auth("work@example.com", "plus")), false).unwrap();
     assert!(account_items(h).is_empty(), "정상은 알리지 않는다");
     // 제공자가 갱신을 거부했다 → 끊김 한 번. 망 실패는 끊김이 아니다
     h.account_refresh_seen("work", RefreshOutcome::Failed, 1);
@@ -160,7 +160,7 @@ fn broken_and_expiring_accounts_raise_one_alert_without_email_and_logging_in_cle
     assert_eq!((items[0].subject.as_str(), items[0].event.as_str(), items[0].done), ("work", "끊김", false));
     assert!(items[0].summary.starts_with("확인 필요: ") && !items[0].summary.contains('@'), "{}", items[0].summary);
     // 다시 로그인하면 끊김 항목을 끝낸다
-    h.account_logged_in("work", &Identity::default(), false);
+    h.account_logged_in("work", &Identity::default(), false).unwrap();
     let items = account_items(h);
     assert!(items.iter().all(|i| i.done), "{items:?}");
     assert_eq!(h.account_meta("work").email.as_deref(), Some("work@example.com"), "모르는 메일은 옛 값을 남긴다");
@@ -171,7 +171,7 @@ fn broken_and_expiring_accounts_raise_one_alert_without_email_and_logging_in_cle
         .import("ci", "claude", &format!("sk-ant-{}-{}", "oat01", aaa_test_support::token("meta-claude")))
         .unwrap();
     let soon = util::now_ms() + 3 * DAY;
-    h.account_logged_in("ci", &Identity { expires_ms: Some(soon), ..Default::default() }, false);
+    h.account_logged_in("ci", &Identity { expires_ms: Some(soon), ..Default::default() }, false).unwrap();
     let open: Vec<_> = account_items(h).into_iter().filter(|i| !i.done).collect();
     assert_eq!(open.iter().map(|i| (i.subject.as_str(), i.event.as_str())).collect::<Vec<_>>(), [("ci", "곧 만료")]);
     let mut m = h.account_meta("ci");
@@ -194,10 +194,10 @@ fn a_switched_email_restarts_the_first_auth_date() {
     h.accounts.import("work", "codex", &codex_auth("old@example.com", "plus")).unwrap();
     let mut m = AccountMeta { email: Some("old@example.com".into()), first_auth_ms: Some(5), ..Default::default() };
     h.save_account_meta("work", &m);
-    h.account_logged_in("work", &codex_identity(&codex_auth("old@example.com", "pro")), false);
+    h.account_logged_in("work", &codex_identity(&codex_auth("old@example.com", "pro")), false).unwrap();
     m = h.account_meta("work");
     assert_eq!((m.first_auth_ms, m.plan.as_deref()), (Some(5), Some("pro")), "같은 메일은 최초 시각을 둔다");
-    h.account_logged_in("work", &codex_identity(&codex_auth("new@example.com", "plus")), true);
+    h.account_logged_in("work", &codex_identity(&codex_auth("new@example.com", "plus")), true).unwrap();
     m = h.account_meta("work");
     assert_eq!(m.email.as_deref(), Some("new@example.com"));
     assert!(m.first_auth_ms.unwrap() > 5 && m.first_auth_ms == m.last_auth_ms);
@@ -220,4 +220,77 @@ async fn an_old_version_served_from_the_vault_does_not_clear_a_rejection() {
     h.account_refresh_seen("work", outcome, 1);
     assert_eq!(health(&h.account_meta("work"), util::now_ms()), AccountHealth::Rejected);
     assert_eq!(account_items(h).iter().filter(|i| !i.done).count(), 1, "끊김 항목이 그대로 하나");
+}
+
+// 필요: 메일 수정은 실행 인증·인증 날짜를 바꾸지 않고 재시작 뒤 남아야 한다.
+#[tokio::test]
+async fn registered_email_is_editable_durable_and_private_without_changing_credentials() {
+    let lab = lab(false);
+    let h = &lab.h;
+    let initial_email = " first@example.com ";
+    h.call(
+        DeviceRole::Local,
+        "local:cli",
+        FrontRequest::AccountImport {
+            name: "work".into(),
+            harness: "claude".into(),
+            email: Some(aaa_proto::SecretText(initial_email.into())),
+            secret: aaa_proto::SecretText(aaa_test_support::token("email-registration")),
+        },
+    )
+    .await
+    .unwrap();
+    let before = h.account_meta("work");
+    let generation = h.accounts.generation("work").unwrap();
+    assert_eq!(before.email.as_deref(), Some("first@example.com"));
+    let request =
+        |email: &str| FrontRequest::AccountEmail { name: "work".into(), email: aaa_proto::SecretText(email.into()) };
+    for (role, actor) in [
+        (DeviceRole::Reader, "device:reader"),
+        (DeviceRole::Local, "local:cli@coordinator"),
+        (DeviceRole::Controller, "local:cli"),
+    ] {
+        assert_eq!(h.call(role, actor, request("denied@example.com")).await.unwrap_err().code, ErrorCode::Forbidden);
+    }
+    for invalid in ["", "missing-at", "a@b", "a\nb@example.com", "a b@example.com"] {
+        assert_eq!(
+            h.call(DeviceRole::Controller, "device:phone", request(invalid)).await.unwrap_err().code,
+            ErrorCode::BadRequest
+        );
+        assert_eq!(h.account_meta("work"), before);
+    }
+    h.call(DeviceRole::Controller, "device:phone", request(" corrected@example.com ")).await.unwrap();
+    let after = h.account_meta("work");
+    assert_eq!(after, AccountMeta { email: Some("corrected@example.com".into()), ..before });
+    assert_eq!(h.accounts.generation("work").unwrap(), generation);
+    let db = crate::db::Db::open(&lab.root.join("host/host.db")).unwrap();
+    assert_eq!(serde_json::from_str::<AccountMeta>(&db.meta(&key("work")).unwrap().unwrap()).unwrap(), after);
+    let conn = rusqlite::Connection::open(lab.root.join("host/host.db")).unwrap();
+    let mut statement = conn.prepare("SELECT detail FROM audit").unwrap();
+    let details: Vec<String> = statement.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
+    assert!(!details.join("\n").contains("@example.com"));
+    let FrontResponse::Accounts { accounts } =
+        h.call(DeviceRole::Reader, "device:reader", FrontRequest::AccountList).await.unwrap()
+    else {
+        panic!()
+    };
+    assert!(accounts[0].email.is_none());
+    conn.execute_batch("CREATE TRIGGER reject_email_save BEFORE INSERT ON meta WHEN NEW.key = 'account-meta:work' BEGIN SELECT RAISE(ABORT, 'email storage denied'); END;").unwrap();
+    let error = h.call(DeviceRole::Controller, "device:phone", request("failed@example.com")).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::Internal);
+    assert!(error.message.contains("email storage denied"));
+    assert_eq!(h.account_meta("work"), after, "저장 실패를 성공으로 알리거나 기존 메일을 잃지 않는다");
+}
+
+// 필요: 사용자가 고친 메일이 자동 인증 갱신으로 되돌아가면 다시 입력하는 문제가 돌아온다.
+#[test]
+fn automatic_refresh_preserves_the_edited_email() {
+    let lab = lab(false);
+    let h = &lab.h;
+    h.accounts.import("work", "codex", &codex_auth("original@example.com", "plus")).unwrap();
+    h.account_meta_backfill();
+    h.account_email("work", "corrected@example.com", "local:cli").unwrap();
+    let before = h.account_meta("work");
+    h.account_refresh_seen("work", RefreshOutcome::Renewed, 1);
+    assert_eq!(h.account_meta("work"), before);
 }

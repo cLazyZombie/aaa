@@ -18,7 +18,7 @@ pub struct AccountView {
     pub harness: String,
     #[ts(type = "number")]
     pub version: u64,
-    /// 공식 CLI가 로그인 때 알린 메일(FRONT_API 1.79, 관리 GUI W5a). 조작 기기와 host의 세션 밖 CLI에만 싣는다. 모르면 생략
+    /// 등록한 메일 또는 공식 CLI가 알린 메일. 조작 기기와 host의 세션 밖 CLI에만 싣는다. 모르면 생략
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub email: Option<String>,

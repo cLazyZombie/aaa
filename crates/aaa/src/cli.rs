@@ -53,11 +53,13 @@ enum AccountCmd {
         name: String,
         #[arg(long, value_parser=["claude", "codex"])]
         harness: String,
+        #[arg(long)]
+        email: Option<String>,
     },
     /// 실행 인증과 별도로 Claude 사용량 조회에 로그인한다.
     UsageLogin {
         name: String,
-        /// 등록 메일이 모름일 때 조회할 계정의 기대 메일. 실행 인증의 메일을 바꾸지 않는다.
+        /// 등록 메일을 모를 때 기대 메일. 조회 로그인에 성공하면 보관한다.
         #[arg(long)]
         email: Option<String>,
     },
@@ -91,6 +93,13 @@ enum AccountCmd {
         harness: String,
         #[arg(long)]
         file: PathBuf,
+        #[arg(long)]
+        email: Option<String>,
+    },
+    /// 등록 메일을 저장하거나 수정한다.
+    Email {
+        name: String,
+        email: String,
     },
     List,
     /// 다시 로그인 없이 계정 별칭을 바꾼다. aaa 세션 밖에서만 쓴다.
@@ -2179,7 +2188,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             AccountCmd::CancelStart { id, project } => {
                 front(json, FrontRequest::AccountStartCancel { project: project_or_here(project)?, id })
             }
-            AccountCmd::Login { name, harness } => front(json, FrontRequest::AccountLogin { name, harness }),
+            AccountCmd::Login { name, harness, email } => {
+                front(json, FrontRequest::AccountLogin { name, harness, email: email.map(aaa_proto::SecretText) })
+            }
+            AccountCmd::Email { name, email } => {
+                front(json, FrontRequest::AccountEmail { name, email: aaa_proto::SecretText(email) })
+            }
             AccountCmd::UsageLogin { name, email } => front(
                 json,
                 FrontRequest::AccountUsageLogin { name, remote: false, email: email.map(aaa_proto::SecretText) },
@@ -2199,7 +2213,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             AccountCmd::List => front(json, FrontRequest::AccountList),
             AccountCmd::Rename { name, to } => front(json, FrontRequest::AccountRename { name, to }),
             AccountCmd::Remove { name } => front(json, FrontRequest::AccountRemove { name }),
-            AccountCmd::Import { name, harness, file } => {
+            AccountCmd::Import { name, harness, file, email } => {
                 aaa_common::resource::disable_core_dump("account import");
                 if std::env::var_os("AAA_SESSION_ID").is_some() || std::env::var_os("AAA_HOOK_SOCK").is_some() {
                     anyhow::bail!("계정 등록은 host의 aaa 밖 터미널에서 한다");
@@ -2214,7 +2228,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     },
                 )?;
                 aaa_common::redact::remember_auth(&harness, &secret);
-                front(json, FrontRequest::AccountImport { name, harness, secret: aaa_proto::SecretText(secret) })
+                front(
+                    json,
+                    FrontRequest::AccountImport {
+                        name,
+                        harness,
+                        secret: aaa_proto::SecretText(secret),
+                        email: email.map(aaa_proto::SecretText),
+                    },
+                )
             }
         },
         Cmd::Status => front(json, FrontRequest::Status),

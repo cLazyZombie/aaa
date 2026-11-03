@@ -385,13 +385,27 @@ host의 계정별 사용량 캐시 `account-quota-v1/<account>`는 OAuth 조회 
 오류 본문은 저장하지 않는다. 이 진단은 실행용 인증의 고장이나 모델 한도를 뜻하지 않으며
 조회 backoff와 계정 배정 판단을 바꾸지 않는다.
 
+### 계정 메일 등록·수정
+
+웹 설정 → 계정의 새 계정 로그인에서 메일을 한 번 입력한다. 로그인 성공 뒤 host에 저장하며,
+다음 조회 로그인·다시 로그인에서 사용한다. 기존 계정의 「메일 수정」에서 추가하거나 고칠 수 있다.
+메일 수정은 실행 인증·인증 날짜를 바꾸지 않는다. 진행 중인 로그인·교체 확인이 있으면 먼저 마치거나 취소한다.
+
+host의 aaa 세션 밖 CLI에서도 지정할 수 있다.
+
+```sh
+aaa account login work-claude --harness claude --email me@example.com
+aaa account import work-claude --harness claude --file /private/path/setup-token.txt --email me@example.com
+aaa account email work-claude me@example.com
+```
+
 ### Claude 사용량 조회 로그인
 
 웹 설정의 계정에서 「조회 로그인」을 누르거나 host의 aaa 세션 밖 터미널에서 `aaa account usage-login <별칭>`을 실행한다.
 공식 Claude 구독 로그인으로 새 조회 인증을 연결하며, 실행용 인증과 실행 중 pane은 바꾸지 않는다.
 등록 메일과 공식 CLI가 확인한 메일이 같아야 한다. 등록 메일이 「모름」이면 웹에서 조회할 계정 메일을 먼저 입력하거나
 CLI의 `--email me@example.com`으로 기대 메일을 지정한다. 이는 사람이 별칭의 계정을 확인하는 단계이며, 실행용 토큰의 계정을 자동 증명하지 않는다.
-조회 연결로 실행 인증의 메일을 덮어쓰지 않는다.
+기존 등록 메일은 유지한다. 등록 메일이 없던 계정은 조회 로그인이 성공하면 확인한 메일을 저장해 다음부터 사용한다.
 CLI에서 시작한 로그인은 `aaa account login-status <로그인 ID>`로 확인하고 `aaa account login-cancel <로그인 ID>`로 취소한다.
 macOS에서는 OS Keychain을 찾기 위해 host의 HOME을 보존한다. Claude 설정·인증은 로그인마다 별도 임시 폴더와
 그 폴더 전용 Keychain 항목에 격리하며, 기본 Claude 인증 항목과 공유하지 않는다.

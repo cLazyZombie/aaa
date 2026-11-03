@@ -72,7 +72,7 @@ export function AccountRenewal() {
     try {
       const response = await call(next.usageOnly
         ? { op: "account_usage_login", name: next.name, remote: true, email: next.email }
-        : { op: "account_login_remote", name: next.name, harness: next.harness });
+        : { op: "account_login_remote", name: next.name, harness: next.harness, email: next.email });
       if (closed.current) return;
       if (response.kind === "account_login") { id.current = response.login.id; setLogin(response.login); await reload(); }
     } catch (e) { if (!closed.current) setError(message(e)); }

@@ -14,7 +14,7 @@
 .acct-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .acct-actions { margin-top: 8px; }
 .acct-actions .btn { min-height: 32px; }
-.acct-new { display: grid; grid-template-columns: minmax(0, 1fr) max-content max-content; align-items: end; gap: 8px; }
+.acct-new { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content max-content; align-items: end; gap: 8px; }
 .acct-login { padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-elevated); }
 .acct-login.is-warn { background: var(--warn-bg); }
 .acct-login.is-bad { background: var(--status-blocked-tint); }

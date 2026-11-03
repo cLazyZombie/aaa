@@ -2008,6 +2008,9 @@ pub enum FrontRequest {
     AccountImport {
         name: String,
         harness: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        email: Option<crate::SecretText>,
         secret: crate::SecretText,
     },
     AccountList,
@@ -2055,11 +2058,17 @@ pub enum FrontRequest {
     AccountLogin {
         name: String,
         harness: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        email: Option<crate::SecretText>,
     },
     /// FRONT_API 1.151: 접속 기기에서 공식 CLI 인증을 마친다. 조작 기기 전용.
     AccountLoginRemote {
         name: String,
         harness: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        email: Option<crate::SecretText>,
     },
     /// id가 없으면 요청 기기에서 진행 중인 인증을 복원한다. 다른 기기에는 제공하지 않는다.
     AccountLoginInteraction {
@@ -2085,6 +2094,11 @@ pub enum FrontRequest {
     AccountRename {
         name: String,
         to: String,
+    },
+    /// 등록 메일 저장·수정. 조작 기기와 세션 밖 CLI만 허용한다.
+    AccountEmail {
+        name: String,
+        email: crate::SecretText,
     },
     AccountRemove {
         name: String,
