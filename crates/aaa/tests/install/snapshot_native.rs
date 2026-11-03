@@ -54,8 +54,11 @@ fn full_path(path: &OsStr) -> Result<Vec<u16>, Failure> {
 
 // 같은 handle을 신원 검사부터 수집 완료까지 보관해 PID 재사용으로 대상을 바꾸지 않는다.
 fn verify(pid: u32, owner: u32, expected: &Path) -> Result<OwnedHandle, Failure> {
+    verify_access(pid, owner, expected, 0)
+}
+fn verify_access(pid: u32, owner: u32, expected: &Path, extra: u32) -> Result<OwnedHandle, Failure> {
     let process = owned(
-        unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_SYNCHRONIZE, 0, pid) },
+        unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_SYNCHRONIZE | extra, 0, pid) },
         "open_process",
     )?;
     match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
@@ -246,9 +249,10 @@ pub(super) fn capture(
     pid: u32,
     owner: u32,
     exe: &Path,
+    children: &[u32],
     mut phase: impl FnMut(&'static str) -> Result<(), std::io::Error>,
 ) -> Result<Snapshot, Failure> {
-    capture_one(pid, owner, exe, &mut phase)
+    capture_one(pid, owner, exe, children, &mut phase)
 }
 
 // GetConsoleWindow의 message-only HWND는 CLI 자신 소유일 수 있어 호스트 신원으로 쓰지 않는다.
@@ -293,6 +297,7 @@ fn capture_one(
     pid: u32,
     owner: u32,
     exe: &Path,
+    children: &[u32],
     phase: &mut impl FnMut(&'static str) -> Result<(), std::io::Error>,
 ) -> Result<Snapshot, Failure> {
     let mut mark = |name| {
@@ -313,8 +318,6 @@ fn capture_one(
         console_host_error: String::new(),
         console_host_code: None,
         children: Vec::new(),
-        children_error: String::new(),
-        children_code: None,
     };
     phase("console_host").map_err(|error| Failure {
         phase: "write_progress",
@@ -330,13 +333,7 @@ fn capture_one(
     }
     // CLI handle을 보관한 채 같은 이미지의 직계 자식만 별도로 검증한다.
     // worker는 DETACHED_PROCESS라 CLI 콘솔 스택에 나타나지 않는다.
-    match capture_children(pid, exe, phase) {
-        Ok(children) => snapshot.children = children,
-        Err(error) => {
-            snapshot.children_error = error.phase.into();
-            snapshot.children_code = Some(error.os_code);
-        }
-    }
+    snapshot.children = capture_children(pid, exe, children, phase);
     Ok(snapshot)
 }
 
@@ -387,18 +384,13 @@ fn capture_threads(
 fn capture_children(
     owner: u32,
     exe: &Path,
+    children: &[u32],
     phase: &mut impl FnMut(&'static str) -> Result<(), std::io::Error>,
-) -> Result<Vec<ChildSnapshot>, Failure> {
-    let processes = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }, "children_snapshot")?;
-    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
-    entry.dwSize = std::mem::size_of_val(&entry) as u32;
-    let mut found = unsafe { Process32FirstW(processes.as_raw_handle(), &mut entry) };
-    let mut children = Vec::new();
-    while found != 0 && children.len() < 4 {
-        let length = entry.szExeFile.iter().position(|unit| *unit == 0).unwrap_or(entry.szExeFile.len());
-        let name = OsString::from_wide(&entry.szExeFile[..length]);
-        if entry.th32ParentProcessID == owner && Some(name.as_os_str()) == exe.file_name() {
-            let pid = entry.th32ProcessID;
+) -> Vec<ChildSnapshot> {
+    children
+        .iter()
+        .take(4)
+        .map(|&pid| {
             let result =
                 verify(pid, owner, exe).and_then(|process| capture_threads(process.as_raw_handle(), pid, exe, phase));
             let mut child = ChildSnapshot { process_id: pid, threads: Vec::new(), error: String::new(), os_code: 0 };
@@ -409,7 +401,46 @@ fn capture_children(
                     child.os_code = error.os_code;
                 }
             }
-            children.push(child);
+            child
+        })
+        .collect()
+}
+
+// helper가 수집 중 강제 종료되면 SuspendThread의 해제가 실행되지 않을 수 있다.
+// 호출자가 검증한 같은 process handle을 보관하고 그 실패 때만 소유 worker를 종료한다.
+pub(super) struct ChildGuard {
+    pub(super) pid: u32,
+    process: OwnedHandle,
+}
+impl ChildGuard {
+    pub(super) fn terminate(&self) {
+        if unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } == WAIT_TIMEOUT {
+            let ok = unsafe { TerminateProcess(self.process.as_raw_handle(), 1) };
+            let os_code = if ok == 0 { unsafe { GetLastError() } } else { 0 };
+            let wait = unsafe { WaitForSingleObject(self.process.as_raw_handle(), 5000) };
+            eprintln!(
+                "PTY snapshot child cleanup: pid={}, terminated={}, os_code={os_code}, wait={wait}",
+                self.pid,
+                ok != 0
+            );
+        }
+    }
+}
+
+pub(super) fn owned_children(pid: u32, owner: u32, exe: &Path) -> Result<Vec<ChildGuard>, Failure> {
+    let _cli = verify(pid, owner, exe)?;
+    let processes = owned(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }, "children_snapshot")?;
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of_val(&entry) as u32;
+    let mut found = unsafe { Process32FirstW(processes.as_raw_handle(), &mut entry) };
+    let mut children = Vec::new();
+    while found != 0 && children.len() < 4 {
+        let length = entry.szExeFile.iter().position(|unit| *unit == 0).unwrap_or(entry.szExeFile.len());
+        let name = OsString::from_wide(&entry.szExeFile[..length]);
+        if entry.th32ParentProcessID == pid && Some(name.as_os_str()) == exe.file_name() {
+            let child_pid = entry.th32ProcessID;
+            let process = verify_access(child_pid, pid, exe, PROCESS_TERMINATE)?;
+            children.push(ChildGuard { pid: child_pid, process });
         }
         found = unsafe { Process32NextW(processes.as_raw_handle(), &mut entry) };
     }

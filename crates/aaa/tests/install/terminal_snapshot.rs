@@ -13,6 +13,7 @@ struct Request {
     process_id: u32,
     owner_id: u32,
     exe: std::path::PathBuf,
+    children: Vec<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -51,8 +52,10 @@ fn snapshot_helper_process() {
             .map_err(|_| serde_json::json!({"phase": "read_request", "error_type": "SchemaError", "os_code": 0}))?;
         #[cfg(target_arch = "x86_64")]
         {
-            native::capture(request.process_id, request.owner_id, &request.exe, |phase| journal.mark(phase))
-                .map_err(|error| serde_json::to_value(error).unwrap())
+            native::capture(request.process_id, request.owner_id, &request.exe, &request.children, |phase| {
+                journal.mark(phase)
+            })
+            .map_err(|error| serde_json::to_value(error).unwrap())
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
@@ -88,7 +91,7 @@ fn progress(root: &Path) -> String {
         .filter(|raw| raw.len() <= 32 * 1024)
         .and_then(|raw| serde_json::from_slice::<Vec<Stage>>(&raw).ok())
         .filter(|stages| {
-            stages.len() <= 72
+            stages.len() <= 360
                 && stages.iter().all(|stage| {
                     !stage.phase.is_empty()
                         && stage.phase.len() < 80
@@ -114,10 +117,6 @@ pub(super) struct Snapshot {
     console_host_code: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     children: Vec<ChildSnapshot>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    children_error: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    children_code: Option<u32>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -173,8 +172,6 @@ impl Snapshot {
             && self.console_host_error.len() < 80
             && self.console_host_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
             && self.children.len() <= 4
-            && self.children_error.len() < 80
-            && self.children_error.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
             && self.children.iter().all(|child| {
                 child.process_id != 0
                     && child.process_id != pid
@@ -251,9 +248,18 @@ pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
     };
     let root = std::env::temp_dir().join(format!("aaa-console-snapshot-{}", aaa_common::util::new_id()));
     aaa_common::util::ensure_private_dir(&root).map_err(|error| io_stage("snapshot_directory", error).to_owned())?;
+    #[cfg(target_arch = "x86_64")]
+    let children = native::owned_children(pid, std::process::id(), exe).unwrap_or_else(|error| {
+        eprintln!("PTY snapshot children unavailable: {}", serde_json::to_string(&error).unwrap());
+        Vec::new()
+    });
+    #[cfg(target_arch = "x86_64")]
+    let child_ids = children.iter().map(|child| child.pid).collect();
+    #[cfg(not(target_arch = "x86_64"))]
+    let child_ids = Vec::new();
     let result = (|| -> Result<Snapshot, String> {
         let out = root.join("frames.json");
-        let request = Request { process_id: pid, owner_id: std::process::id(), exe: exe.into() };
+        let request = Request { process_id: pid, owner_id: std::process::id(), exe: exe.into(), children: child_ids };
         let request = serde_json::to_vec(&request).map_err(|_| "snapshot_request_schema")?;
         std::fs::write(root.join("request.json"), request).map_err(|error| io_stage("snapshot_request", error))?;
         let helper = std::env::current_exe().map_err(|error| io_stage("snapshot_executable", error))?;
@@ -302,6 +308,12 @@ pub(super) fn capture(pid: u32, exe: &Path) -> Result<Snapshot, String> {
         }
         Ok(snapshot)
     })();
+    #[cfg(target_arch = "x86_64")]
+    if result.is_err() {
+        for child in children {
+            child.terminate();
+        }
+    }
     // 요청 경로와 helper 원문은 panic 출력으로 옮기지 않는다.
     let _ = std::fs::remove_dir_all(&root);
     result
