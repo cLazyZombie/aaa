@@ -1,3 +1,4 @@
+- t-1484: [계정 요금제 선택과 5시간 창 검증](testing-account-plans-t-1484.md)
 - t-1475: [Windows 정기 백업 성공 기록 대기 조사와 단계 진단](testing-db-backup-windows-t-1475.md)
 - t-1436: [질문 답 초안과 재게시 입력 보존 검증](testing-question-drafts-t-1436.md)
 - t-1421: [작업창 질문 대기 표지 검증](testing-thread-question-mark.md)

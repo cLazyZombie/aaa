@@ -6220,6 +6220,11 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::AccountStart { start } => {
             let _ = writeln!(s, "{}\t{:?}\t{}", start.id, start.state, start.reason);
         }
+        FrontResponse::AccountPlans { plans } => {
+            for plan in plans {
+                let _ = writeln!(s, "{}\t{}\t{}", plan.harness, plan.id, plan.label);
+            }
+        }
         FrontResponse::AccountDefaults { defaults } => {
             for harness in ["claude", "codex"] {
                 let name =

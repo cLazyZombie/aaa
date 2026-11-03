@@ -26,6 +26,14 @@ pub struct AccountView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub plan: Option<String>,
+    /// 사람이 고른 요금제 ID. 없으면 자동 감지를 쓴다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan_override: Option<String>,
+    /// 제공자가 알린 원래 요금제. 사용자 선택과 별개로 보존한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detected_plan: Option<String>,
     /// aaa가 처음 기록한 인증 시각(ms). 이 기록 전에 등록한 계정은 생략(모름)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
@@ -42,6 +50,16 @@ pub struct AccountView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub health: Option<AccountHealth>,
+}
+
+/// host가 관리하는 공급자별 요금제 목록. 금액·창 정책은 공식 자료 확인 뒤 갱신한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountPlanOption {
+    pub id: String,
+    pub harness: String,
+    pub label: String,
+    /// None이면 계약·제공자 응답에 따라 달라진다.
+    pub session_limit: Option<bool>,
 }
 
 /// 계정 인증 상태(plan §8.351). 판정은 실제 쓰임(Codex 갱신 거부)과 알려진 만료 시각뿐이다: 제공자에게 따로 묻지 않는다

@@ -839,9 +839,14 @@ impl UsageService {
         match body {
             Ok(body) => {
                 claude_diagnostic::record(&body);
+                snapshot.input_missing = Some(Vec::new());
                 for (key, duration) in [("five_hour", 300), ("seven_day", 10080)] {
-                    let Some(value) = body.get(key) else { continue };
-                    let Some(used) = value.get("utilization").and_then(Value::as_f64) else { continue };
+                    let value = body.get(key);
+                    let Some(used) = value.and_then(|v| v.get("utilization")).and_then(Value::as_f64) else {
+                        snapshot.input_missing.as_mut().unwrap().push(duration);
+                        continue;
+                    };
+                    let value = value.unwrap();
                     let window = QuotaWindow {
                         limit_id: "claude".into(),
                         window_id: key.into(),
@@ -948,6 +953,11 @@ impl UsageService {
                 by_key[i].account = Some(format!("#{}", n + 1));
             }
         }
+        for usage in &mut by_key {
+            let harness = if usage.id == UsageProviderId::Claude { "claude" } else { "codex" };
+            usage.session_limit =
+                crate::account_plan::resolve(harness, None, usage.plan.as_deref()).and_then(|p| p.session_limit);
+        }
         let report = UsageReport { providers: by_key };
         *self.snapshot.lock().unwrap() = report.clone();
         report
@@ -1011,6 +1021,7 @@ impl UsageService {
             };
             settle(
                 Some(ProviderUsage {
+                    session_limit: None,
                     input_missing: None,
                     query_status: None,
                     id,
@@ -1046,6 +1057,7 @@ impl UsageService {
             Ok(Some(r)) => {
                 let (key, account) = identity(r.account.as_ref());
                 let usage = ProviderUsage {
+                    session_limit: None,
                     input_missing: None,
                     query_status: None,
                     id,
@@ -1085,19 +1097,30 @@ mod tests;
 
 /// A2가 검증한 로그인 세대·계정 귀속을 그대로 쓴다. 다른 계정·기본 홈의 수치를 섞지 않는다.
 fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_proto::AccountQuota>) -> ProviderUsage {
+    registered_usage(name, plan, quota, UsageProviderId::Claude)
+}
+
+fn registered_usage(
+    name: &str,
+    plan: Option<String>,
+    quota: Option<&aaa_proto::AccountQuota>,
+    id: UsageProviderId,
+) -> ProviderUsage {
     use aaa_proto::{QuotaFreshness, QuotaProblem, QuotaSource};
+    let harness = if id == UsageProviderId::Claude { "claude" } else { "codex" };
     let mut usage = ProviderUsage {
+        session_limit: None,
         input_missing: None,
         query_status: None,
-        id: UsageProviderId::Claude,
-        key: format!("claude:registered:{name}"),
+        id,
+        key: format!("{harness}:registered:{name}"),
         account: Some(name.into()),
         plan,
         windows: vec![],
         problem: None,
         checked_at: None,
     };
-    let Some(quota) = quota.filter(|q| q.account == name && q.harness == "claude") else {
+    let Some(quota) = quota.filter(|q| q.account == name && q.harness == harness) else {
         usage.problem = Some(UsageProblem::Failed);
         return usage;
     };
@@ -1111,6 +1134,7 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
         QuotaProblem::Failed | QuotaProblem::ClockSkew => UsageProblem::Failed,
     };
     usage.problem = quota.problem.map(problem);
+    usage.session_limit = quota.session_limit;
     usage.query_status = quota.query_status;
     usage.input_missing = quota.input_missing.as_ref().map(|durations| {
         durations
@@ -1125,9 +1149,11 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
     let mut observed_at = None::<u64>;
     for item in &quota.windows {
         let w = &item.window;
-        if !matches!(item.source, QuotaSource::ClaudeStatusline | QuotaSource::ClaudeOauth)
-            || w.limit_id != "claude"
-            || w.scope.is_some()
+        if (id == UsageProviderId::Claude
+            && (!matches!(item.source, QuotaSource::ClaudeStatusline | QuotaSource::ClaudeOauth)
+                || w.limit_id != "claude"
+                || w.scope.is_some()))
+            || (id == UsageProviderId::Codex && item.source != QuotaSource::CodexRpc)
             || item.conflict
             || !aaa_common::quota::valid(w)
         {
@@ -1137,6 +1163,8 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
         let (kind, duration) = match w.duration_mins {
             Some(300) => (UsageWindowKind::Session, FIVE_HOURS),
             Some(10080) => (UsageWindowKind::Week, SEVEN_DAYS),
+            Some(1440) => (UsageWindowKind::Day, 86400.0),
+            Some(43200) => (UsageWindowKind::Month, 30.0 * 86400.0),
             _ => continue,
         };
         let resets_at = w.resets_at_ms.map(utc_iso);
@@ -1148,7 +1176,7 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
             observed_at: Some(utc_iso(w.observed_at_ms)),
             problem: window_problem,
             kind,
-            scope: None,
+            scope: w.scope.clone(),
             used_percent: w.used_percent,
             starts_at: start_of(&resets_at, Some(duration)),
             resets_at,
@@ -1170,12 +1198,18 @@ fn registered_claude_usage(name: &str, plan: Option<String>, quota: Option<&aaa_
     usage
 }
 
+pub(crate) fn active_window(usage: &ProviderUsage, window: &UsageWindow) -> bool {
+    !(window.kind == UsageWindowKind::Session && usage.session_limit == Some(false))
+        && !usage.input_missing.as_ref().is_some_and(|missing| missing.contains(&window.kind))
+        && window.problem.is_none()
+}
+
 impl crate::Host {
-    /// 등록 Claude는 그 계정에 결속된 상태줄 관측을 쓴다. 기본 홈의 OAuth와는 별도 인증이다.
+    /// 등록 계정은 그 계정에 결속된 관측을 쓴다. 기본 홈의 로그인과는 별도 인증이다.
     /// 로컬 사용량 캐시는 자동화의 기존 의미를 유지하고, 웹 응답에서만 자료원을 고른다.
     pub(crate) async fn sidebar_usage(self: &Arc<Self>, refresh: bool) -> UsageReport {
-        let accounts = match self.accounts.list() {
-            Ok(accounts) => accounts.into_iter().filter(|a| a.harness == "claude").collect::<Vec<_>>(),
+        let accounts = match self.account_views(true) {
+            Ok(accounts) => accounts,
             Err(error) => {
                 tracing::warn!(?error, "하단 사용량의 등록 계정 목록을 읽지 못했다");
                 return self.usage.report(refresh).await;
@@ -1188,13 +1222,19 @@ impl crate::Host {
         if let Err(error) = &quotas {
             tracing::warn!(?error, "하단 사용량의 등록 계정 관측을 읽지 못했다");
         }
-        // 등록 계정을 쓰는 host의 Claude 하단은 등록 계정 목록을 따른다. 무관한 기본 로그인으로 채우지 않는다.
-        report.providers.retain(|p| p.id != UsageProviderId::Claude);
+        // 등록 계정이 있는 공급자는 그 목록을 따른다. 무관한 기본 로그인으로 채우지 않는다.
+        report.providers.retain(|p| {
+            !accounts.iter().any(|a| a.harness == if p.id == UsageProviderId::Claude { "claude" } else { "codex" })
+        });
         let mut registered = accounts
             .into_iter()
             .map(|account| {
                 let quota = quotas.as_ref().ok().and_then(|r| r.accounts.iter().find(|q| q.account == account.name));
-                registered_claude_usage(&account.name, account.plan, quota)
+                if account.harness == "claude" {
+                    registered_claude_usage(&account.name, account.plan, quota)
+                } else {
+                    registered_usage(&account.name, account.plan, quota, UsageProviderId::Codex)
+                }
             })
             .collect::<Vec<_>>();
         registered.extend(report.providers);

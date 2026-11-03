@@ -597,8 +597,11 @@ pub(crate) fn fresh_windows<'a>(
     model: Option<&str>,
     now: u64,
 ) -> Result<Vec<&'a AccountQuotaWindow>, &'static str> {
-    let windows: Vec<_> =
-        q.windows.iter().filter(|w| w.window.scope.as_deref().is_none_or(|s| model.is_none_or(|m| s == m))).collect();
+    let windows: Vec<_> = q
+        .windows
+        .iter()
+        .filter(|w| active_window(q, w) && w.window.scope.as_deref().is_none_or(|s| model.is_none_or(|m| s == m)))
+        .collect();
     if q.problem.is_some() || windows.is_empty() {
         return Err("사용량 모름·조회 실패");
     }
@@ -768,7 +771,9 @@ fn remaining_quota(q: &AccountQuota, model: Option<&str>, now: u64, fresh: bool,
         .windows
         .iter()
         .filter(|w| {
-            aaa_common::quota::valid(&w.window)
+            active_window(q, w)
+                && (w.window.duration_mins != Some(300) || aaa_common::quota::usable_for_allocation(&w.window, now))
+                && aaa_common::quota::valid(&w.window)
                 && !w.conflict
                 && w.window.observed_at_ms <= now.saturating_add(aaa_common::quota::CLOCK_SKEW_MS)
                 && w.window.scope.as_deref().is_none_or(|s| model == Some(s))
@@ -801,7 +806,8 @@ fn known_limit(q: &AccountQuota, model: Option<&str>, now: u64) -> bool {
     }
     q.problem.is_none()
         && q.windows.iter().any(|w| {
-            w.window.scope.as_deref().is_none_or(|s| model == Some(s))
+            active_window(q, w)
+                && w.window.scope.as_deref().is_none_or(|s| model == Some(s))
                 && w.problem.is_none()
                 && !w.conflict
                 && w.freshness != QuotaFreshness::Unknown
@@ -821,7 +827,8 @@ pub(crate) fn below_usage_threshold(q: &AccountQuota, minimum: [Option<f64>; 2],
                 _ => None,
             };
             threshold.is_some_and(|threshold| {
-                w.window.scope.is_none()
+                active_window(q, w)
+                    && w.window.scope.is_none()
                     && w.problem.is_none()
                     && !w.conflict
                     && w.freshness != QuotaFreshness::Unknown
@@ -829,4 +836,10 @@ pub(crate) fn below_usage_threshold(q: &AccountQuota, minimum: [Option<f64>; 2],
                     && 100.0 - w.window.used_percent < threshold
             })
         })
+}
+
+/// 표시용으로 보존한 수치는 배정·자동화 판단에 넣지 않는다.
+pub(crate) fn active_window(q: &AccountQuota, w: &AccountQuotaWindow) -> bool {
+    !(w.window.duration_mins == Some(300) && q.session_limit == Some(false))
+        && !w.window.duration_mins.is_some_and(|n| q.input_missing.as_ref().is_some_and(|missing| missing.contains(&n)))
 }

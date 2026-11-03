@@ -66,12 +66,17 @@ async function check(engine, width) {
     await usage.getByRole("button", { name: "다시 읽기", exact: true }).click();
     const sessionRow = usage.locator('[data-window="session"]');
     const weekRow = usage.locator('[data-window="week"]');
+    await usage.getByText("5시간 · 제공 안 됨", { exact: true }).waitFor();
+    const past = usage.locator("details").filter({ has: page.locator('[data-window="session"]') });
+    assert.equal(await past.getAttribute("open"), null, "과거 숫자는 기본으로 접는다");
+    assert.equal(await sessionRow.getByRole("meter").isVisible(), false);
+    await past.locator("summary").click();
     await sessionRow.getByText("마지막 0%", { exact: true }).waitFor();
     await weekRow.getByText("방금 관측", { exact: true }).waitFor();
     assert.match(await sessionRow.innerText(), /2일 전 관측 · 오래된 관측/);
     assert.match(await weekRow.innerText(), /9%/);
-    assert.match(await sessionRow.innerText(), /입력 미제공/);
-    assert.ok(!(await weekRow.innerText()).includes("입력 미제공"));
+    assert.match(await sessionRow.innerText(), /제공 안 됨/);
+    assert.ok(!(await weekRow.innerText()).includes("제공 안 됨"));
     await usage.getByText("조회 접근 거부", { exact: true }).waitFor();
     assert.match(await sessionRow.innerText(), /조회 접근 거부/);
     assert.ok(!(await weekRow.innerText()).includes("조회 접근 거부"));
@@ -81,7 +86,7 @@ async function check(engine, width) {
     await shot(page, `quota-age-${engine.browserType().name()}-${width}`);
     noSession = true;
     await usage.getByRole("button", { name: "다시 읽기", exact: true }).click();
-    await usage.getByText("세션 · 입력 미제공", { exact: true }).waitFor();
+    await usage.getByText("5시간 · 제공 안 됨", { exact: true }).waitFor();
     await usage.getByText("조회 인증 필요", { exact: true }).waitFor();
     assert.equal(await usage.locator('[data-window="session"] [role="meter"]').count(), 0, "미관측 창에 숫자를 만들지 않는다");
     assert.deepEqual(errors, []);

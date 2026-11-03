@@ -32,6 +32,7 @@ pub(crate) struct Cache {
 
 fn merge(entry: &Entry, account: &str, harness: &str, now: u64) -> AccountQuota {
     let mut out = AccountQuota {
+        session_limit: None,
         input_missing: None,
         query_status: None,
         account: account.into(),
@@ -44,13 +45,42 @@ fn merge(entry: &Entry, account: &str, harness: &str, now: u64) -> AccountQuota 
         let inputs: Vec<_> = entry
             .readings
             .values()
-            .filter(|r| r.snapshot.generation == entry.generation && r.snapshot.source == QuotaSource::ClaudeStatusline)
-            .filter_map(|r| r.snapshot.input_missing.as_ref())
+            .filter(|r| {
+                r.snapshot.generation == entry.generation
+                    && r.snapshot.sampled_at_ms.abs_diff(r.received_at_ms) <= quota::CLOCK_SKEW_MS
+            })
+            .filter_map(|r| r.snapshot.input_missing.as_ref().map(|missing| (r, missing)))
             .collect();
+        let oauth = inputs
+            .iter()
+            .filter(|(r, _)| r.snapshot.source == QuotaSource::ClaudeOauth && r.snapshot.problem.is_none())
+            .max_by_key(|(r, _)| r.snapshot.sampled_at_ms);
         out.input_missing = (!inputs.is_empty()).then(|| {
             [300, 10080]
                 .into_iter()
-                .filter(|duration| inputs.iter().all(|missing| missing.contains(duration)))
+                .filter(|duration| {
+                    if let Some((reading, missing)) = oauth {
+                        // sampled_at은 agent의 재조회 때도 갱신된다. 실제 창 관측만 OAuth의 null을 대체한다.
+                        missing.contains(duration)
+                            && !entry.readings.values().any(|r| {
+                                r.snapshot.generation == entry.generation
+                                    && r.snapshot.problem.is_none()
+                                    && r.snapshot.sampled_at_ms.abs_diff(r.received_at_ms) <= quota::CLOCK_SKEW_MS
+                                    && !r
+                                        .snapshot
+                                        .input_missing
+                                        .as_ref()
+                                        .is_some_and(|missing| missing.contains(duration))
+                                    && r.snapshot.windows.iter().any(|w| {
+                                        w.duration_mins == Some(*duration)
+                                            && w.scope.is_none()
+                                            && w.observed_at_ms >= reading.snapshot.sampled_at_ms
+                                    })
+                            })
+                    } else {
+                        inputs.iter().all(|(_, missing)| missing.contains(duration))
+                    }
+                })
                 .collect()
         });
         out.query_status = if entry.query_generation.is_none() {
@@ -195,6 +225,18 @@ fn accept_reading(
     {
         s.windows = old.snapshot.windows.clone();
     }
+    // null로 빠진 창의 과거 숫자는 접힌 기록용으로만 보존한다.
+    if let Some(missing) = &s.input_missing
+        && let Some(old) = entry.last_known.get(&key)
+    {
+        for window in &old.snapshot.windows {
+            if window.duration_mins.is_some_and(|n| missing.contains(&n))
+                && !s.windows.iter().any(|w| same_window(w, window))
+            {
+                s.windows.push(window.clone());
+            }
+        }
+    }
     entry.readings.insert(key, Reading { snapshot: s, machine, received_at_ms: now, http_status });
 }
 
@@ -236,7 +278,7 @@ impl crate::Host {
     /// 재로그인 전 세대와 삭제된 계정은 판정에 쓰지 않는다.
     pub(crate) fn cached_account_quota(&self, name: &str, harness: &str) -> Result<AccountQuota, ErrorBody> {
         let entry = self.cached_quota_entry(name, harness)?;
-        Ok(merge(&entry, name, harness, util::now_ms()))
+        Ok(self.quota_plan(merge(&entry, name, harness, util::now_ms())))
     }
 
     pub(crate) fn cached_allocation_quota(
@@ -246,7 +288,16 @@ impl crate::Host {
     ) -> Result<(AccountQuota, AccountQuota), ErrorBody> {
         let entry = self.cached_quota_entry(name, harness)?;
         let now = util::now_ms();
-        Ok((merge(&entry, name, harness, now), last_known(&entry, name, harness, now)))
+        let live = self.quota_plan(merge(&entry, name, harness, now));
+        let mut last = self.quota_plan(last_known(&entry, name, harness, now));
+        // 마지막 정상 숫자가 현재 제공 안 되는 창을 되살리지 않는다.
+        last.input_missing = live.input_missing.clone();
+        Ok((live, last))
+    }
+
+    fn quota_plan(&self, mut quota: AccountQuota) -> AccountQuota {
+        quota.session_limit = self.account_session_limit(&quota.account, &quota.harness);
+        quota
     }
 
     fn cached_quota_entry(&self, name: &str, harness: &str) -> Result<Entry, ErrorBody> {
@@ -499,7 +550,7 @@ impl crate::Host {
                 .iter()
                 .filter_map(|a| {
                     let e = cache.entries.get(&a.name)?;
-                    Some(merge(e, &a.name, &a.harness, now))
+                    Some(self.quota_plan(merge(e, &a.name, &a.harness, now)))
                 })
                 .collect(),
         };
@@ -568,6 +619,41 @@ mod tests {
         other.input_missing = Some(vec![]);
         accept(&mut entry, "other".into(), "mac-b".into(), other, now);
         assert_eq!(merge(&entry, "work", "claude", now).input_missing, Some(vec![]));
+    }
+
+    // 필요: 정상 null 응답 뒤 과거 수치는 남기되 현재 입력으로 부활시키지 않는다.
+    #[test]
+    fn newer_null_oauth_window_keeps_history_and_overrides_older_presence() {
+        let now = 1_000_000;
+        let mut entry = Entry { generation: "g".into(), ..Default::default() };
+        let mut old = good(now, 100.);
+        old.source = QuotaSource::ClaudeOauth;
+        old.generation = "g".into();
+        old.input_missing = Some(vec![]);
+        accept(&mut entry, "host".into(), "host".into(), old.clone(), now);
+        old.source = QuotaSource::ClaudeStatusline;
+        old.sampled_at_ms = now + 100;
+        accept(&mut entry, "pane".into(), "mac-a".into(), old, now + 100);
+        let missing = QuotaSnapshot {
+            input_missing: Some(vec![300]),
+            generation: "g".into(),
+            source: QuotaSource::ClaudeOauth,
+            sampled_at_ms: now + 1,
+            windows: vec![],
+            problem: None,
+            retry_at_ms: None,
+        };
+        accept(&mut entry, "host".into(), "host".into(), missing, now + 1);
+        let report = merge(&entry, "work", "claude", now + 1);
+        assert_eq!(report.input_missing, Some(vec![300]));
+        assert_eq!(report.windows.len(), 1);
+        assert_eq!(report.windows[0].window.observed_at_ms, now);
+        assert!(!crate::account_pool::below_usage_threshold(&report, [Some(50.), None], now + 1));
+        let mut new = good(now + 102, 20.);
+        new.generation = "g".into();
+        new.input_missing = Some(vec![]);
+        accept(&mut entry, "pane".into(), "mac-a".into(), new, now + 102);
+        assert_eq!(merge(&entry, "work", "claude", now + 102).input_missing, Some(vec![]));
     }
 
     #[tokio::test]

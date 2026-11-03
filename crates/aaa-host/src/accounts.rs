@@ -46,6 +46,8 @@ impl Sealed {
     }
     fn view(&self) -> AccountView {
         AccountView {
+            plan_override: None,
+            detected_plan: None,
             name: self.name.clone(),
             harness: self.harness.clone(),
             version: self.version,

@@ -78,6 +78,10 @@ pub struct AccountQuotaWindow {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct AccountQuota {
+    /// 요금제의 5시간 창 유무. 모르는 요금제는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub session_limit: Option<bool>,
     /// Claude 입력에서 창 자체가 빠진 기간(분). 숫자의 오래됨과 별개다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

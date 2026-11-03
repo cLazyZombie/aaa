@@ -1266,10 +1266,15 @@ async fn usage_report(
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<UsageQuery>,
 ) -> Response {
-    if device(&host, &headers).is_none() {
-        return unauthorized();
+    let Some((_, role)) = device(&host, &headers) else { return unauthorized() };
+    let mut report = host.sidebar_usage(q.refresh.as_deref() == Some("1")).await;
+    if role == DeviceRole::Reader {
+        for usage in &mut report.providers {
+            if usage.key.starts_with("claude:registered:") || usage.key.starts_with("codex:registered:") {
+                usage.plan = None;
+            }
+        }
     }
-    let report = host.sidebar_usage(q.refresh.as_deref() == Some("1")).await;
     let mut res = Json(Outcome::Ok(report)).into_response();
     res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res

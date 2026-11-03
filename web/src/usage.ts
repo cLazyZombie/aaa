@@ -1,5 +1,6 @@
 import { logIgnoredFailure } from "./errorDiagnostic.ts";
 import { apiFetch } from "./apiRequest";
+import { onAccountsChanged } from "./api";
 // 구독 사용량(plan 한도) 화면 쪽. herdr-web-ui `src/lib/usage.ts`(aa624cb)를 옮겼다.
 // 그대로 복사하지 못한 까닭: 참고는 api.ts·settings.ts·i18n·visibility를 부른다. aaa에 맞춰 그 import만 바꾸고
 // 문구를 한국어로 옮겼다(함수와 규칙은 같다). chat 입력칸의 `composerUsage`는 aaa에 chat 입력칸이 없어 뺐다.
@@ -51,7 +52,9 @@ export function tightestWindow(usage: ProviderUsage): UsageWindow | null {
 
 /** 칩이 보이는 한도: 설정에서 고른 종류(주간·세션)의 plan 전체 한도. 없으면 바닥에 가장 가까운 것. */
 export function glanceWindow(usage: ProviderUsage, glance: UsageGlance): UsageWindow | null {
-  return usage.windows.find((window) => window.kind === glance && window.scope === null) ?? tightestWindow(usage);
+  const current = { ...usage, windows: usage.windows.filter(w => !usage.input_missing?.includes(w.kind)
+    && !(w.kind === "session" && (usage.session_limit === false || w.problem))) };
+  return current.windows.find((window) => window.kind === glance && window.scope === null) ?? tightestWindow(current);
 }
 
 export function windowLabel(window: UsageWindow): string {
@@ -153,7 +156,8 @@ export function useUsage(enabled: boolean) {
     if (!visible) return;
     void load(false);
     const timer = setInterval(() => void load(false), POLL_MS);
-    return () => clearInterval(timer);
+    const off = onAccountsChanged(() => void load(false));
+    return () => { clearInterval(timer); off(); generation.current++; };
   }, [enabled, visible, load]);
 
   const refresh = useCallback(() => void load(true), [load]);

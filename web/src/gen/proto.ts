@@ -53,6 +53,14 @@ email?: string,
  */
 plan?: string,
 /**
+ * 사람이 고른 요금제 ID. 없으면 자동 감지를 쓴다.
+ */
+plan_override?: string,
+/**
+ * 제공자가 알린 원래 요금제. 사용자 선택과 별개로 보존한다.
+ */
+detected_plan?: string,
+/**
  * aaa가 처음 기록한 인증 시각(ms). 이 기록 전에 등록한 계정은 생략(모름)
  */
 first_auth_ms?: number,
@@ -99,6 +107,10 @@ window_id: string, scope: string | null, duration_mins: number | null, used_perc
 
 export type AccountQuota = {
 /**
+ * 요금제의 5시간 창 유무. 모르는 요금제는 생략한다.
+ */
+session_limit?: boolean,
+/**
  * Claude 입력에서 창 자체가 빠진 기간(분). 숫자의 오래됨과 별개다.
  */
 input_missing?: Array<number>,
@@ -112,6 +124,12 @@ export type AccountQuotaReport = { accounts: Array<AccountQuota>, };
 export type AccountHealth = "ok" | "expiring" | "expired" | "rejected";
 
 export type AccountDefault = { harness: string, account: string, };
+
+export type AccountPlanOption = { id: string, harness: string, label: string,
+/**
+ * None이면 계약·제공자 응답에 따라 달라진다.
+ */
+session_limit: boolean | null, };
 
 export type AccountPoolMember = { account: string,
 /**
@@ -1262,7 +1280,7 @@ untracked_omitted: boolean,
  */
 full_context?: boolean, };
 
-export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery, } | { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, email?: SecretText, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_usage_login", name: string, remote: boolean, email?: SecretText, } | { "op": "account_login", name: string, harness: string, email?: SecretText, } | { "op": "account_login_remote", name: string, harness: string, email?: SecretText, } | { "op": "account_login_interaction", id: string | null, } | { "op": "account_login_code", id: string, code: SecretText, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_rename", name: string, to: string, } | { "op": "account_email", name: string, email: SecretText, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
+export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery, } | { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, email?: SecretText, secret: SecretText, } | { "op": "account_list" } | { "op": "account_plans" } | { "op": "account_plan", name: string, plan: string | null, } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_usage_login", name: string, remote: boolean, email?: SecretText, } | { "op": "account_login", name: string, harness: string, email?: SecretText, } | { "op": "account_login_remote", name: string, harness: string, email?: SecretText, } | { "op": "account_login_interaction", id: string | null, } | { "op": "account_login_code", id: string, code: SecretText, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_rename", name: string, to: string, } | { "op": "account_email", name: string, email: SecretText, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
 /**
  * 비었으면 등록된 모든 머신
  */
@@ -1571,7 +1589,7 @@ error: string | null,
  */
 web: boolean, created_ms: number, updated_ms: number, };
 
-export type FrontResponse = { "kind": "workspace_dashboard" } & WorkspaceDashboard | { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_pool", pool: AccountPoolView, } | { "kind": "account_starts", starts: Array<AccountStartView>, } | { "kind": "account_start", start: AccountStartView, } | { "kind": "account_login_interaction", login: AccountLoginView | null, prompt: AccountLoginPrompt | null, expires_ms: number, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
+export type FrontResponse = { "kind": "workspace_dashboard" } & WorkspaceDashboard | { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_plans", plans: Array<AccountPlanOption>, } | { "kind": "account_pool", pool: AccountPoolView, } | { "kind": "account_starts", starts: Array<AccountStartView>, } | { "kind": "account_start", start: AccountStartView, } | { "kind": "account_login_interaction", login: AccountLoginView | null, prompt: AccountLoginPrompt | null, expires_ms: number, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
 /**
  * status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
  */
@@ -3068,6 +3086,10 @@ problem?: UsageProblem, };
 export type UsageProblem = "expired" | "rate_limited" | "failed" | "locked" | "unobserved" | "stale" | "disconnected" | "unsupported" | "denied";
 
 export type ProviderUsage = {
+/**
+ * 요금제의 5시간 창 유무. 모르는 요금제는 생략한다.
+ */
+session_limit?: boolean,
 /**
  * Claude 입력에서 빠진 창 종류. 숫자의 오래됨과 별개다.
  */

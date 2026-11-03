@@ -38,7 +38,7 @@ pub(crate) fn limited_until(harness: &str, model: &str, report: &UsageReport, no
     first
         .windows
         .iter()
-        .filter(|w| w.used_percent >= FULL_PERCENT)
+        .filter(|w| crate::usage::active_window(first, w) && w.used_percent >= FULL_PERCENT)
         .filter(|w| w.scope.as_ref().is_none_or(|s| model.contains(&s.to_lowercase())))
         .filter_map(|w| aaa_common::util::parse_iso(w.resets_at.as_deref()?))
         .filter(|until| *until > now)
@@ -53,9 +53,11 @@ fn reset_due(prev: Option<u64>, next: Option<u64>, now: u64) -> bool {
 
 /// 다 찬 창이 하나라도 있나: 없으면 thread마다 profile을 풀지 않는다
 fn any_full(report: &UsageReport, now: u64) -> bool {
-    report.providers.iter().flat_map(|p| &p.windows).any(|w| {
-        w.used_percent >= FULL_PERCENT
-            && w.resets_at.as_deref().and_then(aaa_common::util::parse_iso).is_some_and(|until| until > now)
+    report.providers.iter().any(|p| {
+        p.windows.iter().filter(|w| crate::usage::active_window(p, w)).any(|w| {
+            w.used_percent >= FULL_PERCENT
+                && w.resets_at.as_deref().and_then(aaa_common::util::parse_iso).is_some_and(|until| until > now)
+        })
     })
 }
 
@@ -136,6 +138,7 @@ mod tests {
 
     fn account(id: P, key: &str, windows: Vec<UsageWindow>) -> ProviderUsage {
         ProviderUsage {
+            session_limit: None,
             input_missing: None,
             query_status: None,
             id,

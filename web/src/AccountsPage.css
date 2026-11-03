@@ -38,3 +38,6 @@
 .acct-rename { display: grid; gap: 8px; margin-top: 12px; min-width: 0; }
 .acct-rename input { width: 100%; min-width: 0; box-sizing: border-box; }
 .acct-rename p { margin: 0; overflow-wrap: anywhere; }
+
+.acct-facts select { max-width: 100%; min-height: 32px; }
+.acct-quota details > summary { color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer; }
