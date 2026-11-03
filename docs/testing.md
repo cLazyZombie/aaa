@@ -5034,3 +5034,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [조회 로그인 실패 단계 수리(t-1454)](testing-usage-login-failure-t-1454.md)
 
 - [macOS Claude 로그인 HOME 격리 결함(t-1454)](testing-claude-keychain-home-t-1454.md)
+
+- [휴대폰 로그인 입력·완료 화면 확대 검증(t-1454)](testing-account-login-zoom-t-1454.md)

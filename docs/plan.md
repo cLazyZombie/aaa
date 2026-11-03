@@ -8420,3 +8420,4 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 실제 로그인·조회 복구·착지·배포는 구현 검증과 별도 단계다. 검증은 [조회 인증 분리 기록](testing-usage-auth-t-1454.md)에 둔다.
 - CLI 인증 실패·조회 인증 읽기·임시 정리·계정 변경·신원 확인·금고 쓰기 실패를 구별한다. CLI 원문은 남기지 않고 마지막 실패의 고정 분류·종료 코드·제한된 HTTP 상태만 기록한다. 알 수 없는 사유를 추정하지 않는다. [실패 단계 수리 검증](testing-usage-login-failure-t-1454.md).
 - macOS Claude 로그인은 OS 기본 Keychain 발견에 필요한 host HOME을 보존한다. Claude 설정·인증은 임시 CLAUDE_CONFIG_DIR과 그 폴더 전용 Keychain 항목에 격리하며, cwd·USERPROFILE·XDG 경로도 임시 폴더다. Codex와 다른 OS의 HOME 격리는 유지한다. [HOME 격리 결함 검증](testing-claude-keychain-home-t-1454.md).
+- 로그인 창의 메일·인증 코드 입력은 본문 글자 설정을 따르되 16px 하한을 지킨다. 휴대폰 입력 초점 확대를 유발하는 작은 글자를 피하며 사용자 확대는 유지한다. [휴대폰 입력·완료 viewport 검증](testing-account-login-zoom-t-1454.md).
