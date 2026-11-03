@@ -695,6 +695,28 @@ async fn registered_oauth_diagnostic_distinguishes_http_status_without_saving_er
     assert_eq!(snapshot.windows[0].used_percent, 0.);
 }
 
+// 필요: 정상 조회의 주간 수치를 보존하며 없는 5시간 창을 0%로 만들지 않는다.
+#[tokio::test]
+async fn five_hour_absence_and_null_keep_weekly_without_inventing_zero() {
+    let (fake, origin) = Fake::start().await;
+    let lab = Lab::new("five-hour-shape");
+    let service = UsageService::new(lab.ctx(&origin, false));
+    let token = aaa_test_support::token("shape-only-auth");
+    for five in [None, Some(Value::Null), Some(serde_json::json!({"utilization":null,"resets_at":null}))] {
+        let mut body = serde_json::json!({"seven_day":{"utilization":12,"resets_at":utc_iso(NOW+86400000)}});
+        if let Some(five) = five {
+            body["five_hour"] = five;
+        }
+        fake.route("/api/oauth/usage", 200, body);
+        let (snapshot, http_status) = service.claude_account_quota("generation-a".into(), &token, NOW).await;
+        assert_eq!(http_status, None);
+        assert_eq!(snapshot.problem, None);
+        assert_eq!(snapshot.windows.len(), 1);
+        assert_eq!(snapshot.windows[0].duration_mins, Some(10080));
+        assert_eq!(snapshot.windows[0].used_percent, 12.);
+    }
+}
+
 // 필요: 조회 인증만 host가 갱신하고, 회전한 인증을 보관한 뒤 실제 조회에 쓴다.
 #[tokio::test]
 async fn usage_auth_refresh_rotates_only_query_credentials_and_rejects_late_save() {

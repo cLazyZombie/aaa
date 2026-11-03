@@ -22,6 +22,7 @@
 //!   웹 E2E가 개발자의 실제 로그인·keychain을 건드리지 않게 한다.
 
 pub(crate) mod claude_auth;
+mod claude_diagnostic;
 
 use aaa_common::child_process::StdCommandExt as _;
 use std::collections::{HashMap, HashSet};
@@ -837,6 +838,7 @@ impl UsageService {
         };
         match body {
             Ok(body) => {
+                claude_diagnostic::record(&body);
                 for (key, duration) in [("five_hour", 300), ("seven_day", 10080)] {
                     let Some(value) = body.get(key) else { continue };
                     let Some(used) = value.get("utilization").and_then(Value::as_f64) else { continue };
