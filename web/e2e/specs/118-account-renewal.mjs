@@ -5,10 +5,63 @@ import { aaa, step, browser, webkit, pairPage, inList, openSettings, shot } from
 
 const manualCode = `${token("manual-code")}#${token("manual-state")}`;
 
+// macOS의 mobile WebKit은 iOS의 UIKit 입력 확대를 재현하지 않는다.
+// 실제 DOM의 확대 유발 조건과 완료 뒤 viewport·닫기 조작을 각각 지킨다.
+async function phoneInput(page, input, width) {
+  if (width >= 700) return;
+  const original = await page.evaluate(() => ({ density: document.documentElement.getAttribute("data-density"), scale: document.documentElement.style.getPropertyValue("--ui-scale") }));
+  try {
+    for (const [density, size] of [[null, 14], ["compact", 13], ["compact", 11], [null, 20]]) {
+      await page.evaluate(({ density, size }) => {
+        const root = document.documentElement;
+        if (density) root.setAttribute("data-density", density); else root.removeAttribute("data-density");
+        root.style.setProperty("--ui-scale", String(size / (density ? 13 : 14)));
+      }, { density, size });
+      const font = await input.evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+      assert.ok(font >= 16, `휴대폰 로그인 입력 글자 하한: ${font}px (${density ?? "기본"}/${size})`);
+      if (size === 20) assert.equal(font, 20, "큰 글자 설정을 줄이지 않는다");
+    }
+    await page.evaluate(() => {
+      document.documentElement.setAttribute("data-density", "compact");
+      document.documentElement.style.setProperty("--ui-scale", String(11 / 13));
+    });
+    await page.setViewportSize({ width: 844, height: 390 });
+    await input.tap();
+    assert.ok(await input.evaluate(el => parseFloat(getComputedStyle(el).fontSize)) >= 16, "휴대폰 가로 화면에서도 입력 글자 하한");
+  } finally {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(original => {
+      const root = document.documentElement;
+      if (original.density) root.setAttribute("data-density", original.density); else root.removeAttribute("data-density");
+      if (original.scale) root.style.setProperty("--ui-scale", original.scale); else root.style.removeProperty("--ui-scale");
+    }, original);
+  }
+  await input.tap();
+}
+
+async function closeCompleted(page, dialog, width) {
+  const button = dialog.getByRole("button", { name: "닫기", exact: true });
+  if (width < 700) {
+    const viewport = await button.evaluate(el => {
+      const v = window.visualViewport;
+      const r = el.getBoundingClientRect();
+      return { scale: v?.scale ?? 1, width: v?.width ?? innerWidth, height: v?.height ?? innerHeight,
+        left: r.left - (v?.offsetLeft ?? 0), right: r.right - (v?.offsetLeft ?? 0), top: r.top - (v?.offsetTop ?? 0), bottom: r.bottom - (v?.offsetTop ?? 0),
+        hit: el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)), overflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    assert.equal(viewport.scale, 1, "완료 뒤 화면 배율 유지");
+    assert.ok(viewport.left >= 0 && viewport.right <= viewport.width && viewport.top >= 0 && viewport.bottom <= viewport.height, `닫기가 viewport 안에 있다: ${JSON.stringify(viewport)}`);
+    assert.ok(viewport.hit && !viewport.overflow, "확대·가로 넘침 없이 닫기를 누를 수 있다");
+    assert.doesNotMatch(await page.locator('meta[name="viewport"]').getAttribute("content"), /user-scalable\s*=\s*(no|0)|maximum-scale\s*=\s*1(?:[.,\s]|$)/, "사용자 확대를 막지 않는다");
+    await button.tap();
+  } else await button.click();
+  await dialog.waitFor({ state: "detached" });
+}
+
 function provider() {
   let accounts = [
-    { name: "work-codex", harness: "codex", version: 1, health: "expired" },
-    { name: "work-claude", harness: "claude", version: 1, health: "expiring" },
+    { name: "sample-codex", harness: "codex", version: 1, health: "expired" },
+    { name: "sample-claude", harness: "claude", version: 1, health: "expiring" },
     { name: "healthy", harness: "codex", version: 1, health: "ok" },
   ];
   let login = null, prompt = null, failQuery = false;
@@ -52,7 +105,7 @@ async function check(name, engine, width) {
   try {
     {
       const menu = page.getByTestId("account-renewal");
-      await inList(page, menu.getByRole("button", { name: "work-codex 인증 갱신", includeHidden: true }));
+      await inList(page, menu.getByRole("button", { name: "sample-codex 인증 갱신", includeHidden: true }));
       const dialog = page.getByTestId("account-login-dialog");
       await dialog.getByText("ABCD-1234", { exact: true }).waitFor();
       assert.equal(await menu.getByRole("button", { includeHidden: true }).count(), 2);
@@ -65,9 +118,10 @@ async function check(name, engine, width) {
     }
     {
       const settings = await openSettings(page, "계정");
-      await settings.getByRole("button", { name: "work-claude 다시 로그인", exact: true }).click();
+      await settings.getByRole("button", { name: "sample-claude 다시 로그인", exact: true }).click();
       const dialog = page.getByTestId("account-login-dialog");
       const input = dialog.getByLabel("인증 코드", { exact: true });
+      await phoneInput(page, input, width);
       await input.fill(manualCode);
       const read = page.waitForResponse(r => r.request().postData()?.includes('"account_login_interaction"'));
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -78,35 +132,36 @@ async function check(name, engine, width) {
       await shot(page, `118-claude-${name}-${width}`);
       await dialog.getByRole("button", { name: "확인", exact: true }).click();
       await dialog.getByText("로그인 완료", { exact: true }).waitFor();
-      await dialog.getByRole("button", { name: "닫기", exact: true }).click();
-      await dialog.waitFor({ state: "detached" });
+      await closeCompleted(page, dialog, width);
       assert.deepEqual(fixture.starts, ["codex", "claude"]);
       assert.deepEqual(fixture.codes, [manualCode]);
       assert.equal(await page.getByTestId("account-renewal").getByRole("button", { includeHidden: true }).count(), 1);
-      await settings.getByRole("button", { name: "work-claude 사용량 조회 로그인", exact: true }).click();
+      await settings.getByRole("button", { name: "sample-claude 사용량 조회 로그인", exact: true }).click();
       await dialog.getByLabel("조회 계정 메일", { exact: true }).waitFor();
+      await phoneInput(page, dialog.getByLabel("조회 계정 메일", { exact: true }), width);
       assert.deepEqual(fixture.starts, ["codex", "claude"], "기대 메일을 입력하기 전에 로그인을 시작하지 않는다");
       await dialog.getByLabel("조회 계정 메일", { exact: true }).fill("me@example.com");
       await dialog.getByRole("button", { name: "조회 로그인", exact: true }).click();
       await dialog.getByRole("link", { name: "인증 열기", exact: true }).waitFor();
       await page.reload();
       await dialog.getByRole("heading", { name: /사용량 조회 로그인/ }).waitFor();
+      await phoneInput(page, dialog.getByLabel("인증 코드", { exact: true }), width);
       await dialog.getByLabel("인증 코드", { exact: true }).fill(manualCode);
       await dialog.getByRole("button", { name: "확인", exact: true }).click();
       await dialog.getByText("로그인 완료", { exact: true }).waitFor();
       assert.deepEqual(fixture.starts, ["codex", "claude", "query"]);
       assert.deepEqual(fixture.codes, [manualCode, manualCode]);
       await shot(page, `118-query-${name}-${width}`);
-      await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+      await closeCompleted(page, dialog, width);
       fixture.failNextQuery();
-      await settings.getByRole("button", { name: "work-claude 사용량 조회 로그인", exact: true }).click();
+      await settings.getByRole("button", { name: "sample-claude 사용량 조회 로그인", exact: true }).click();
       await dialog.getByLabel("조회 계정 메일", { exact: true }).fill("me@example.com");
       await dialog.getByRole("button", { name: "조회 로그인", exact: true }).click();
       await dialog.getByLabel("인증 코드", { exact: true }).fill(manualCode);
       await dialog.getByRole("button", { name: "확인", exact: true }).click();
       await dialog.getByText("공식 Claude CLI 인증이 실패했습니다", { exact: true }).waitFor();
       assert.ok(!(await dialog.innerText()).includes("같은 계정의 조회 인증을 저장하지 못했습니다"));
-      await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+      await closeCompleted(page, dialog, width);
       assert.deepEqual(errors, []);
     }
   } catch (e) {
