@@ -55,7 +55,26 @@ mod process {
     }
     fn script(l: &Lab, body: &str) -> std::path::PathBuf {
         let p = l.root.join(util::new_id());
-        std::fs::write(&p, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
+        let home_check = if cfg!(target_os = "macos") {
+            let home = std::env::var("HOME").unwrap().replace('\'', "'\\''");
+            format!("[ \"$HOME\" = '{home}' ]\n[ \"$HOME\" != \"$USERPROFILE\" ]")
+        } else {
+            "[ \"$HOME\" = \"$USERPROFILE\" ]".into()
+        };
+        // 가짜 CLI도 실제 PTY 자식 환경에서 OS Keychain의 홈과 Claude 설정의 격리 경계를 검사한다.
+        let isolation = format!(
+            r#"if [ -n "${{CLAUDE_CONFIG_DIR:-}}" ]; then
+[ "$CLAUDE_CONFIG_DIR" = "$USERPROFILE/claude" ]
+[ "$(pwd -P)" = "$(cd "$USERPROFILE" && pwd -P)" ]
+for key in USERPROFILE XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME; do
+    eval 'value=${{'"$key"'}}'
+    [ "$value" = "$USERPROFILE" ]
+done
+[ -z "${{CLAUDE_SECURESTORAGE_CONFIG_DIR+x}}" ]
+{home_check}
+fi"#
+        );
+        std::fs::write(&p, format!("#!/bin/sh\nset -eu\n{isolation}\n{body}\n")).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
         p
     }

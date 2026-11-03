@@ -486,10 +486,17 @@ kind=pathlib.Path(sys.argv[0]).name
 usage=kind=='claude' and sys.argv[1:]==['auth','login','--claudeai']
 expected=(['auth','login','--claudeai'] if usage else ['setup-token']) if kind=='claude' else ['-c','cli_auth_credentials_store="file"','login']
 assert sys.argv[1:]==expected, 'official login command'
-for key in ['CLAUDE_CODE_OAUTH_TOKEN','OPENAI_API_KEY','CODEX_REFRESH_TOKEN_URL_OVERRIDE','AAA_THREAD','AAA_SESSION_ID']:
+for key in ['CLAUDE_CODE_OAUTH_TOKEN','OPENAI_API_KEY','CODEX_REFRESH_TOKEN_URL_OVERRIDE','CLAUDE_SECURESTORAGE_CONFIG_DIR','AAA_THREAD','AAA_SESSION_ID']:
     assert key not in os.environ, 'inherited credential or pane identity'
 home=pathlib.Path(os.environ['CLAUDE_CONFIG_DIR' if kind=='claude' else 'CODEX_HOME'])
-assert home.parent==pathlib.Path(os.environ['HOME'])
+assert home.parent.resolve()==pathlib.Path.cwd().resolve(), 'isolated working directory'
+for key in ['USERPROFILE','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CACHE_HOME']:
+    assert home.parent==pathlib.Path(os.environ[key]), 'isolated user configuration'
+if sys.platform=='darwin' and kind=='claude':
+    assert pathlib.Path(os.environ['HOME'])==pathlib.Path({os_home:?}), 'OS Keychain home must survive isolation'
+    assert home.parent!=pathlib.Path(os.environ['HOME']), 'Claude credentials must remain isolated'
+else:
+    assert home.parent==pathlib.Path(os.environ['HOME']), 'non-macOS Claude and Codex home isolation'
 assert stat.S_IMODE(home.stat().st_mode)==0o700
 values=json.loads(pathlib.Path({fixture:?}).read_text())
 s=socket.create_connection(({host:?},{port}),timeout=30)
@@ -512,6 +519,7 @@ if kind=='claude' and values.get('claude_json') and (usage or not values.get('se
     (home/'.claude.json').write_text(json.dumps(values['claude_json']))
 "#,
         fixture = fixture,
+        os_home = std::env::var_os("HOME").unwrap(),
         host = "127.0.0.1",
         port = gate.0.local_addr().unwrap().port(),
     );

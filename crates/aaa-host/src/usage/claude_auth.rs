@@ -1,5 +1,5 @@
 //! 조회 전용 OAuth. 공식 CLI가 새로 발급한 인증만 받아 host가 단독으로 갱신한다.
-//! 개인 홈/기본 Keychain이나 실행용 setup-token을 읽지 않는다.
+//! 개인 Claude 설정·기본 Keychain 인증 항목이나 실행용 setup-token을 읽지 않는다.
 use super::*;
 use aaa_proto::{AccountCredential, ErrorBody, ErrorCode, QuotaProblem, QuotaSnapshot, QuotaSource};
 use serde::{Deserialize, Serialize};
