@@ -5,6 +5,8 @@
  * 주소가 있는 설정은 새로고침에도 유지하고 옛 모달의 기록은 벗어난다.
  */
 
+import { isSheetRewind, ownsSheetEntry } from "./sheetHistory.ts";
+
 const KEY = "aaa:settings";
 /** names an opening of Settings on the entry it began from and on each of its entries */
 const BASE_KEY = "aaa:settings-base";
@@ -129,6 +131,9 @@ function reconcile(): void {
   observed = state;
   if (rewinding > 0) return;
   const current = settingsEntry(state);
+  // 설정 위 인증 창의 칸은 sheet가 거둔다. 회전으로 설정 깊이도 바뀌었을 때
+  // 여기서 함께 go(-1)하면 sheet의 back()과 겹쳐 보던 쪽 아래로 내려간다.
+  if (current !== null && ownsSheetEntry(state)) return;
   const have = current?.depth ?? 0;
   // entries held under a state that is not the one they began from: a markerless entry (a typed
   // #hash, another script's pushState, a preview) landed above them, and they are buried there
@@ -209,6 +214,9 @@ if (typeof window !== "undefined") {
     const previous = observed;
     observed = event.state;
     const entry = settingsEntry(event.state);
+    // sheet 닫기의 내부 복귀는 설정 쪽을 고른 사용자 이동이 아니다.
+    // 보던 쪽은 유지하고, sheet 아래 실제 설정 칸에서 미뤄 둔 회전을 반영한다.
+    if (isSheetRewind(event)) { reconcile(); return; }
     // Back from above onto the entries of a buried opening: Settings closed when they were buried,
     // so they are stepped over to the entry they began from instead of opening it again
     if (pending === null && entry !== null && buried.has(fieldOf(event.state, BASE_KEY)) && fieldOf(previous, BASE_KEY) !== fieldOf(event.state, BASE_KEY)) {
