@@ -40,7 +40,7 @@ impl Host {
         self.start_remote_with_usage(name, harness, actor, std::path::PathBuf::from(harness), false, email)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn start_remote(
         self: &Arc<Self>,
         name: &str,
