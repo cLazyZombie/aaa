@@ -16,7 +16,7 @@ use windows_sys::Win32::{
     },
 };
 
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub(super) struct Failure {
     phase: &'static str,
     error_type: &'static str,
