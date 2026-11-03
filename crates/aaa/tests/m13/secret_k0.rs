@@ -1,7 +1,7 @@
 //! 키 관리자 K0(plan §8.307): pane·thread env의 값이 aaa가 남기는 기록(감사 기록·DB·로그·`AAA_LOG=trace`·프로젝트
 //! export)에 나오지 않는다. pane 안에서는 값이 그대로 보인다.
 //!
-//! 카나리(무작위 가짜 값)는 셋이다.
+//! K0 카나리(시험 전용 가짜 값)는 셋이다. K2에 저장되는 B와 A·C의 8바이트 조각이 겹치지 않아야 한다.
 //! - A·C: host.toml profile env → `pane_run`의 resolved profile. host DB 파일·WAL 전체에서 0건이어야 한다. C는 `/`·`"`·`+`·
 //!   공백·`&`를 넣어 URL·JSON escape 변형이 원문과 달라지게 한다.
 //! - B: thread launch env. 감사 기록·export·로그에서 0건이어야 한다. `threads.data`의 `launch.env`와 agent
@@ -13,6 +13,12 @@ use sha2::{Digest, Sha256};
 pub(super) fn canary(_tag: &str) -> (String, String) {
     let value = aaa_test_support::fresh_token();
     (value.clone(), value)
+}
+
+/// B는 K2 범위의 thread DB에 저장된다. 무작위 opaque 값끼리도 8바이트가 겹칠 수 있으므로
+/// 이 시험은 서로 조각이 겹치지 않는 고정 입력을 쓴다. 전달·검색 경계와 값의 꼴은 그대로다.
+fn env_canaries() -> [String; 3] {
+    ["k0-pane-env", "k0-thread-env", "k0-escaped-env"].map(aaa_test_support::token)
 }
 
 /// 찾는 꼴: 원문, 무작위 부분의 8자 조각, base64(표준·URL, 앞 0~2바이트 정렬마다 끝 4자를 뺀 가운데), URL 인코딩, JSON escape
@@ -105,6 +111,44 @@ fn byte_scan_preserves_overlaps_duplicate_labels_first_offsets_and_binary_files(
     assert!(hits(&[file], &[], &|_| false).is_empty());
 }
 
+// 필요: K2에 허용한 B를 A·C 누출로 오인하지 않되 실제 8바이트 누출은 DB/WAL에서 잡아야 한다.
+#[test]
+fn k0_db_scan_distinguishes_k2_env_and_still_detects_a_pane_fragment() {
+    let lab = Lab::new();
+    let write_thread = |db: &Path, value: &str| {
+        let conn = rusqlite::Connection::open(db).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE threads(data TEXT);").unwrap();
+        let data = serde_json::json!({ "launch": { "env": [["K0_B", value]] } }).to_string();
+        conn.execute("INSERT INTO threads VALUES(?1)", [data]).unwrap();
+        conn
+    };
+    let files = |db: &Path| [db.to_path_buf(), db.with_extension("db-wal")];
+    // CI와 같은 C 조각 82 충돌을 재시도·무작위 탐색 없이 재현한다. 원문은 서로 다르다.
+    let collision_b = aaa_test_support::token("k0-collision-345");
+    let collision_c = aaa_test_support::token("k0-collision-39");
+    assert_ne!(collision_b, collision_c);
+    let collision_db = lab.root.join("collision.db");
+    let _collision = write_thread(&collision_db, &collision_b);
+    let found = hits(&files(&collision_db), &needles(&collision_c, &collision_c), &|_| false);
+    assert!(found.iter().any(|h| h.ends_with("(조각 82)")), "서로 다른 값의 조각 충돌을 검출한다");
+
+    let [a, b, c] = env_canaries();
+    let db = lab.root.join("separate.db");
+    let conn = write_thread(&db, &b);
+    let na = needles(&a, &a);
+    let nc = needles(&format!("/\"+ &{c}"), &c);
+    assert!(!hits(&files(&db), &needles(&b, &b), &|_| false).is_empty(), "검사 대상에 K2의 B가 실제 있다");
+    for n in [&na, &nc] {
+        assert!(hits(&files(&db), n, &|_| false).is_empty(), "A·C는 K2의 B와 구분한다");
+    }
+    conn.execute_batch("CREATE TABLE audit(detail TEXT);").unwrap();
+    for (value, n) in [(&a, &na), (&c, &nc)] {
+        // 전체 원문이 없어도 단 8바이트 누출을 검출한다. 검사 길이나 검색어를 완화하지 않는다.
+        conn.execute("INSERT INTO audit VALUES(?1)", [&value[82..90]]).unwrap();
+        assert!(hits(&files(&db), n, &|_| false).iter().any(|h| h.ends_with("(조각 82)")));
+    }
+}
+
 pub(super) fn sha(v: &str) -> String {
     hex::encode(sha2::Sha256::digest(v.as_bytes()))
 }
@@ -117,9 +161,8 @@ mv \"$K0_OUT.tmp\" \"$K0_OUT\"\necho k0-ready\nexec /bin/sh\n";
 #[test]
 fn env_values_stay_out_of_audit_db_logs_and_export() {
     let mut lab = Lab::new();
-    let (a, a_hex) = canary("a");
-    let (b, b_hex) = canary("b");
-    let (c_hex, _) = canary("c");
+    let [a, b, c_hex] = env_canaries();
+    let (a_hex, b_hex) = (a.clone(), b.clone());
     let c = format!("/\"+ &{c_hex}");
     let scripts = lab.root.join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
