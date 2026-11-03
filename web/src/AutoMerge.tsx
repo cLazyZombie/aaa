@@ -34,27 +34,62 @@ export function AutoMergeMark({ on }: { on?: boolean | null }) {
   );
 }
 
-/** 바로 저장하는 스위치(thread 화면·할 일 상세). 실패하면 원래 값으로 돌리고 까닭을 보인다 */
-export function AutoMergeSwitch({ project, target, on, disabled, testid = "auto-merge-switch" }: { project: string; target: string; on: boolean; disabled?: boolean; testid?: string }) {
+/** 바로 저장하는 값. 실패하면 원래 값으로 돌리고 까닭을 onError로 알린다 */
+function useAutoMergeValue(project: string, target: string, on: boolean, onError: (message: string | null) => void) {
   const [value, setValue] = useState(on);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   // host 사건으로 값이 바뀌면 따른다(다른 기기·CLI에서 바꿈)
   useEffect(() => setValue(on), [on]);
   const change = (next: boolean) => {
     if (busy) return;
     setValue(next);
     setBusy(true);
-    setError(null);
+    onError(null);
     setAutoMerge(project, target, next).then(
       () => setBusy(false),
       (e: unknown) => {
         setValue(!next);
         setBusy(false);
-        setError(e instanceof Error ? e.message : String(e));
+        onError(e instanceof Error ? e.message : String(e));
       },
     );
   };
+  return { value, busy, change };
+}
+
+/** thread 화면 맨 윗줄(t-1495 D안): 넓은 화면은 글자와 스위치, 휴대폰은 아이콘 단추(켜면 청록 바탕). 실패 까닭은 머리 아래 띠(onError)에 */
+export function AutoMergeHeadSwitch({ project, target, on, compact, onError }: { project: string; target: string; on: boolean; compact: boolean; onError: (message: string | null) => void }) {
+  const { value, busy, change } = useAutoMergeValue(project, target, on, onError);
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className="ghost small auto-merge-head-btn"
+        role="switch"
+        aria-checked={value}
+        aria-label="자동 병합"
+        title="자동 병합"
+        disabled={busy}
+        data-testid="auto-merge-switch"
+        data-on={value ? "true" : "false"}
+        onClick={() => change(!value)}
+      >
+        <GitMerge aria-hidden="true" />
+      </button>
+    );
+  }
+  return (
+    <span className="auto-merge-switch auto-merge-head" data-testid="auto-merge-switch" data-on={value ? "true" : "false"} data-busy={busy ? "true" : "false"}>
+      <span className="auto-merge-label">자동 병합</span>
+      <Toggle checked={value} label="자동 병합" disabled={busy} onChange={change} />
+    </span>
+  );
+}
+
+/** 바로 저장하는 스위치(할 일 상세). 실패하면 원래 값으로 돌리고 까닭을 보인다 */
+export function AutoMergeSwitch({ project, target, on, disabled, testid = "auto-merge-switch" }: { project: string; target: string; on: boolean; disabled?: boolean; testid?: string }) {
+  const [error, setError] = useState<string | null>(null);
+  const { value, busy, change } = useAutoMergeValue(project, target, on, setError);
   return (
     <span className="auto-merge-switch" data-testid={testid} data-on={value ? "true" : "false"} data-busy={busy ? "true" : "false"}>
       <span className="auto-merge-label">자동 병합</span>

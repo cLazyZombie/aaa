@@ -2,7 +2,7 @@ import { ThreadFollowups } from "./ThreadFollowups";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
-import { AutoMergeBadge, AutoMergeSwitch, canAutoMerge } from "./AutoMerge";
+import { AutoMergeBadge, AutoMergeHeadSwitch, canAutoMerge } from "./AutoMerge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
@@ -80,7 +80,7 @@ export function ThreadPanel({
   onOpenReport?: (project: string, report: string) => void;
 }) {
   const statusLabel = t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_LABEL[t.group] ?? t.group;
-  // 자동 병합(plan §8.530): 사람이 맡긴 열린 Worker의 이어진 할 일 값. 조작 기기는 여기서 켜고 끈다
+  // 자동 병합(plan §8.530): 사람이 맡긴 열린 Worker의 이어진 할 일 값. 조작 기기는 머리줄에서 켜고 끈다(t-1495)
   const [frontApi, setFrontApi] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -163,6 +163,8 @@ export function ThreadPanel({
   };
   // t3code `rightPanelLayout.ts`: 980px 위는 thread 옆 칸, 밑은 덮는 sheet
   const sheet = useMediaQuery("(max-width: 980px)");
+  // 휴대폰 머리줄(style.css 700px 규칙: 상태 표시를 숨긴다)은 자동 병합을 아이콘 단추로 줄인다(t-1495 D안)
+  const compactHead = useMediaQuery("(max-width: 700px)");
 
   const ack = async () => {
     setMsg(null);
@@ -194,15 +196,17 @@ export function ThreadPanel({
             {t.profile}@{t.machine}
           </span>
         </div>
+        {mergeSwitch && <AutoMergeHeadSwitch project={t.project} target={t.id} on={!!t.auto_merge} compact={compactHead} onError={setMsg} />}
         <span className={`chip head-chip ${t.group}`}>
           {t.group === "working" && <span className="dot working" aria-hidden />}
           {statusLabel}
         </span>
         <SummaryButton t={t} />
         {onOpenPane && (
-          <button className="ghost small" data-testid="open-terminal" onClick={onOpenPane}>
+          <button className="ghost small" data-testid="open-terminal" aria-label="터미널" onClick={onOpenPane}>
             <Icon name="shell" />
-            터미널
+            {/* 좁은 머리줄은 아이콘만(터미널 머리의 「보고」와 같다): 자동 병합 단추와 「확인(ack)」이 함께 있어도 넘치지 않는다(t-1495) */}
+            <span className="head-button-label">터미널</span>
           </button>
         )}
         {role !== "reader" && t.group === "ready_for_review" && (
@@ -239,7 +243,6 @@ export function ThreadPanel({
               </span>
               {t.branch && <span className="mono">{t.branch}</span>}
               {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
-              {mergeSwitch && <AutoMergeSwitch project={t.project} target={t.id} on={!!t.auto_merge} />}
             </div>
             {t.account_selection && <p className="muted" data-testid="thread-account-selection">{t.account_selection.reason} · 한도 그룹 {t.account_selection.group} · 예상 예약 {({ small: 5, medium: 15, large: 30 })[t.account_selection.size]}%p</p>}
           </div>
