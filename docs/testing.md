@@ -5036,3 +5036,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [macOS Claude 로그인 HOME 격리 결함(t-1454)](testing-claude-keychain-home-t-1454.md)
 
 - [휴대폰 로그인 입력·완료 화면 확대 검증(t-1454)](testing-account-login-zoom-t-1454.md)
+
+- [정상 조회 응답의 5시간 필드 유형 진단(t-1454)](testing-five-hour-response-t-1454.md)
