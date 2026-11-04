@@ -211,6 +211,8 @@ pub struct Agent {
     plan_since: Mutex<HashMap<String, u64>>,
     /// 세션마다 Claude가 hook·상태줄 입력으로 알린 생각 수준(plan.rs `ClaudeEffort`)
     claude_effort: Mutex<HashMap<String, plan::ClaudeEffort>>,
+    /// 세션마다 harness가 알린 처리 속도(Claude 상태줄 `fast_mode`, Codex OSC 제목, plan.rs `HarnessSpeed`)
+    harness_speed: Mutex<HashMap<String, plan::HarnessSpeed>>,
     /// 세션마다 진행 알림 기록(Claude·Codex hook 안내, herdr-projects progress.rs `Record`). 기억만 한다: agent가 다시 뜨면 알림이
     /// 한 번 일찍 갈 수 있을 뿐이다.
     progress: Mutex<HashMap<String, hooks::Progress>>,
@@ -284,6 +286,7 @@ impl Agent {
             plans: Mutex::new(HashMap::new()),
             plan_since: Mutex::new(HashMap::new()),
             claude_effort: Mutex::new(HashMap::new()),
+            harness_speed: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
             session_ready: tokio::sync::Notify::new(),
             health: Mutex::new(None),
@@ -1315,6 +1318,9 @@ impl Agent {
                                 }
                                 if let Some(w) = watch.as_mut().filter(|w| w.owns(&sid)) {
                                     let harness = w.harness();
+                                    if harness == detect::Harness::Codex && let Outcome::Ok(AgentResponse::Detect(d)) = &result {
+                                        self.observe_codex_title(&id, &d.osc_title, util::now_ms());
+                                    }
                                     if let Some(r) = w.answer(std::time::Instant::now(), result) {
                                         self.detected(&id, harness, r).await;
                                     }
@@ -2419,7 +2425,7 @@ mod tests {
     /// 없는 실행 파일에서 멈추므로 실제 harness·서비스·프로세스 신호는 쓰지 않는다.
     #[tokio::test]
     async fn codex_spawn_spec_stays_in_the_pane() {
-        let title = r#"tui.terminal_title=["run-state","activity","project-name"]"#;
+        let title = r#"tui.terminal_title=["run-state","activity","project-name","fast-mode"]"#;
         for (argv, expected) in [
             (vec!["codex"], vec!["codex", "--no-daemon", "-c", title]),
             (

@@ -2240,7 +2240,12 @@ percent: number | null,
  */
 compaction: ContextCompaction | null, };
 
-export type ModelObservation = { model: string, effort: string | null, at_ms: number, };
+export type ModelObservation = { model: string, effort: string | null, at_ms: number,
+/**
+ * 처리 속도 등급(FRONT_API 1.159): `fast`·`ultrafast`. 표준이거나 아직 모르면 없다. Claude는 상태줄 `fast_mode`,
+ * Codex는 OSC 제목의 `fast-mode` 항목에서 읽는다. 옛 agent는 보내지 않는다.
+ */
+speed?: string, };
 
 export type ProviderTurn = {
 /**

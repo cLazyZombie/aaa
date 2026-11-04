@@ -1,0 +1,10 @@
+/* fast mode 표지(t-1511 2A): 자동 병합 표지(청록)와 같은 꼴, 상태 말 색과 겹치지 않는 노랑 */
+:root { --fast-mark: #e3b341; }
+[data-theme="light"] { --fast-mark: #8a6100; }
+.fast-mark { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; align-self: center; width: 1.5em; height: 1.5em; border-radius: var(--radius-sm); color: var(--fast-mark); background: color-mix(in srgb, var(--fast-mark) 15%, transparent); }
+.fast-mark svg { width: 1em; height: 1em; }
+.thread-chips > .fast-mark { width: calc(var(--lh-tight) * 1em + 4px); height: calc(var(--lh-tight) * 1em); }
+/* 카드·요약 창의 모델 줄 끝(1A) */
+.summary-speed { display: inline-flex; align-items: center; gap: 2px; color: var(--fast-mark); font-weight: 600; vertical-align: -0.1em; }
+.summary-speed svg { width: 1em; height: 1em; }
+.summary-speed-sep { margin: 0 6px 0 4px; color: var(--text-dim); font-weight: 400; }

@@ -745,6 +745,7 @@ impl Reader {
                 model: model.chars().take(WORDS).collect(),
                 effort: effort.filter(|e| !e.trim().is_empty()).map(|e| e.chars().take(WORDS).collect()),
                 at_ms,
+                speed: None,
             });
     }
 }
@@ -762,6 +763,33 @@ impl ClaudeEffort {
     fn apply(&self, m: &mut ModelObservation) {
         m.effort = self.level.clone();
         m.at_ms = m.at_ms.max(self.at_ms);
+    }
+}
+
+/// harness가 알린 처리 속도 등급(`fast`·`ultrafast`, 표준이면 None). 기록에는 없다(Codex `turn_context`에 service tier 칸이
+/// 없다): Claude는 상태줄 입력 `fast_mode`, Codex는 OSC 제목의 `fast-mode` 항목에서 받는다. 값이 바뀐 때만 시각을 옮긴다.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct HarnessSpeed {
+    value: Option<String>,
+    at_ms: u64,
+}
+
+impl HarnessSpeed {
+    /// 기록에서 읽은 모델에 붙인다. 아직 모델을 못 봤으면 속도만으로 관측을 만들지 않는다
+    fn apply(&self, m: &mut ModelObservation) {
+        m.speed = self.value.clone();
+        m.at_ms = m.at_ms.max(self.at_ms);
+    }
+}
+
+/// Codex OSC 제목의 마지막 항목(aaa가 `fast-mode`를 끝에 둔다, `threads::ensure_codex_local`). 0.166 실측: 표준 `Standard`,
+/// `service_tier` fast·priority는 `Fast`. 제목이 그 꼴이 아니면(아직 그리기 전·옛 판) 알 수 없다: 바깥 None
+fn codex_title_speed(title: &str) -> Option<Option<String>> {
+    match title.rsplit(" | ").next()?.trim() {
+        "Standard" => Some(None),
+        "Fast" => Some(Some("fast".into())),
+        "Ultrafast" => Some(Some("ultrafast".into())),
+        _ => None,
     }
 }
 
@@ -838,10 +866,26 @@ impl crate::Agent {
     pub(crate) fn harness_process_started(&self, session: &str, at_ms: u64) {
         self.plan_since.lock().unwrap().insert(session.to_string(), at_ms);
         self.claude_effort.lock().unwrap().remove(session);
+        self.harness_speed.lock().unwrap().remove(session);
     }
 
-    /// Claude hook·상태줄 입력의 생각 수준을 적는다. 하위 agent(frontmatter effort가 다를 수 있다)와 이 pane이 시작한 것과
-    /// 다른 harness 세션의 입력은 버린다
+    fn record_speed(&self, session: &str, value: Option<String>, now_ms: u64) {
+        let mut map = self.harness_speed.lock().unwrap();
+        let e = map.entry(session.to_string()).or_default();
+        if e.value != value {
+            *e = HarnessSpeed { value, at_ms: now_ms };
+        }
+    }
+
+    /// Codex 감지 응답의 OSC 제목에서 처리 속도를 적는다. 제목이 말하지 않으면 앞 값을 둔다
+    pub(crate) fn observe_codex_title(&self, session: &str, title: &str, now_ms: u64) {
+        if let Some(value) = codex_title_speed(title) {
+            self.record_speed(session, value, now_ms);
+        }
+    }
+
+    /// Claude hook·상태줄 입력의 생각 수준과 fast mode(상태줄의 `fast_mode`만, hook 입력에는 없다)를 적는다. 하위
+    /// agent(frontmatter effort가 다를 수 있다)와 이 pane이 시작한 것과 다른 harness 세션의 입력은 버린다
     pub(crate) fn observe_claude_effort(&self, session: &str, p: &Value, now_ms: u64) {
         if crate::hooks::subagent(p) {
             return;
@@ -858,6 +902,9 @@ impl crate::Agent {
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(|l| l.chars().take(WORDS).collect::<String>());
+        if let Some(fast) = p.get("fast_mode").and_then(Value::as_bool) {
+            self.record_speed(session, fast.then(|| "fast".to_string()), now_ms);
+        }
         let mut map = self.claude_effort.lock().unwrap();
         let e = map.entry(session.to_string()).or_default();
         if e.level != level {
@@ -906,6 +953,11 @@ impl crate::Agent {
         let since = self.plan_since.lock().unwrap().clone();
         let efforts = {
             let mut map = self.claude_effort.lock().unwrap();
+            map.retain(|s, _| running.contains_key(s));
+            map.clone()
+        };
+        let speeds = {
+            let mut map = self.harness_speed.lock().unwrap();
             map.retain(|s, _| running.contains_key(s));
             map.clone()
         };
@@ -972,6 +1024,9 @@ impl crate::Agent {
                 && let (Some(m), Some(e)) = (snap.model_observation.as_mut(), efforts.get(&session))
             {
                 e.apply(m);
+            }
+            if let (Some(m), Some(s)) = (snap.model_observation.as_mut(), speeds.get(&session)) {
+                s.apply(m);
             }
             for reply in r.turns.completed.drain(..).filter(|r| r.finished_ms >= from) {
                 out.push(HarnessEvent {
@@ -1191,7 +1246,7 @@ mod tests {
         a.observe_claude_effort("s", &side, 30);
         a.observe_claude_effort("s", &hook("7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a", Some("low")), 30);
         a.observe_claude_effort("s", &json!({"session_id":main,"effort":{"level":"max"}}), 40);
-        let mut m = ModelObservation { model: "claude-opus-5-5".into(), effort: None, at_ms: 5 };
+        let mut m = ModelObservation { model: "claude-opus-5-5".into(), effort: None, at_ms: 5, speed: None };
         seen(&a).unwrap().apply(&mut m);
         assert_eq!((m.effort.as_deref(), m.at_ms), (Some("max"), 40));
         // effort를 받지 않는 모델로 바꾸면 칸이 없다: 옛 수준을 남기지 않는다
@@ -1201,6 +1256,57 @@ mod tests {
         a.observe_claude_effort("s", &hook(main, Some("high")), 60);
         a.harness_process_started("s", 70);
         assert_eq!(seen(&a), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn model_observation_takes_speed_from_claude_statusline_and_codex_title() {
+        let dir = std::env::temp_dir().join(format!("aaa-plan-speed-{}", aaa_common::util::new_id()));
+        let a = crate::Agent::new(dir.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let main = "0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b";
+        let seen = |a: &crate::Agent, s: &str| a.harness_speed.lock().unwrap().get(s).cloned();
+        let speed = |a: &crate::Agent, s: &str| {
+            let mut m = ModelObservation { model: "m".into(), effort: None, at_ms: 5, speed: None };
+            seen(a, s).unwrap().apply(&mut m);
+            (m.speed, m.at_ms)
+        };
+        a.harness_started.lock().unwrap().insert("s".into(), main.into());
+        // hook 입력에는 fast 칸이 없다(공식 공통 입력): 속도를 만들지 않는다
+        a.observe_claude_effort(
+            "s",
+            &json!({"hook_event_name":"PostToolUse","session_id":main,"effort":{"level":"high"}}),
+            10,
+        );
+        assert_eq!(seen(&a, "s"), None);
+        a.observe_claude_effort("s", &json!({"session_id":main,"fast_mode":true}), 20);
+        // 상태줄은 같은 값으로 자주 온다: 시각을 옮기지 않는다
+        a.observe_claude_effort("s", &json!({"session_id":main,"fast_mode":true}), 30);
+        assert_eq!(speed(&a, "s"), (Some("fast".into()), 20));
+        // 하위 agent·다른 harness 세션의 입력과 칸 없는 hook은 본 세션 값을 바꾸지 않는다
+        a.observe_claude_effort("s", &json!({"session_id":main,"agent_id":"x","fast_mode":false}), 40);
+        a.observe_claude_effort(
+            "s",
+            &json!({"session_id":"7d0c9b8a-6f5e-4d3c-8b2a-1f0e9d8c7b6a","fast_mode":false}),
+            40,
+        );
+        a.observe_claude_effort("s", &json!({"hook_event_name":"PostToolUse","session_id":main}), 40);
+        assert_eq!(speed(&a, "s"), (Some("fast".into()), 20));
+        a.observe_claude_effort("s", &json!({"session_id":main,"fast_mode":false}), 50);
+        assert_eq!(speed(&a, "s"), (None, 50));
+        a.harness_process_started("s", 60);
+        assert_eq!(seen(&a, "s"), None);
+
+        // Codex 0.166 제목(aaa가 fast-mode를 끝에 둔다)
+        a.observe_codex_title("c", "Working | ⠋ | shop | Fast", 100);
+        assert_eq!(speed(&a, "c"), (Some("fast".into()), 100));
+        // 제목이 아직 없거나 속도 항목이 아니면 앞 값을 둔다
+        a.observe_codex_title("c", "", 110);
+        a.observe_codex_title("c", "Ready | shop", 110);
+        assert_eq!(speed(&a, "c"), (Some("fast".into()), 100));
+        a.observe_codex_title("c", "Ready | shop | Standard", 120);
+        assert_eq!(speed(&a, "c"), (None, 120));
+        a.observe_codex_title("c", "Ready | shop | Ultrafast", 130);
+        assert_eq!(speed(&a, "c"), (Some("ultrafast".into()), 130));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

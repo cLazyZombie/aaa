@@ -2,7 +2,7 @@
 // 모자라면 왼쪽·위로, 단추 점은 요약 뒤 지시가 있을 때.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CARD_NOW, cardLines, decidedLines, hoverPlace, modelName, popoverPlace, summaryActivity, summaryModel, summaryStale, summaryUpdates } from "../src/summaryCard.ts";
+import { CARD_NOW, cardLines, decidedLines, hoverPlace, modelName, popoverPlace, speedWord, summaryActivity, summaryModel, summaryStale, summaryUpdates } from "../src/summaryCard.ts";
 
 const entry = (text, extra = {}) => ({ who: null, at: null, text, dropped: false, ...extra });
 const view = (over = {}) => ({
@@ -23,6 +23,18 @@ describe("작업 요약 카드", () => {
     assert.equal(modelName("gpt-6-sol"), "sol");
     assert.equal(modelName("claude-opus-5-5"), "opus 5.5");
     assert.equal(modelName("custom-model"), "custom-model");
+  });
+  it("fast·ultrafast만 처리 속도로 보이고 표준·모르는 값·옛 agent(칸 없음)는 숨긴다", () => {
+    const observed = { model: "claude-opus-5-5", effort: "high", at_ms: 1000 };
+    const at = (speed) => summaryModel({ profile: "p", agent: { model_observation: speed === undefined ? observed : { ...observed, speed } } });
+    assert.equal(at("fast").speed, "fast");
+    assert.equal(at("ultrafast").speed, "ultrafast");
+    assert.match(at("fast").title, / · fast mode · /);
+    assert.equal(at(undefined).speed, null);
+    assert.equal(at("standard").speed, null);
+    assert.equal(at("fast").text, "최근 확인 모델: opus 5.5 high");
+    assert.equal(summaryModel({ profile: "p", agent: null }).speed, null);
+    assert.deepEqual([speedWord("fast"), speedWord("ultrafast"), speedWord(null), speedWord("priority")], ["fast mode", "ultrafast mode", null, null]);
   });
   it("활동 글·진행률·시작 후 시간·활동 시간을 각각 표시하고 옛 host의 시작을 추측하지 않는다", () => {
     const t = { status: "open", created_at_ms: 1000, updated_at_ms: 2000, agent: { activity: "working", progress: "코드 확인", percent: 25, progress_at_ms: 65000, progress_since_ms: 61000 } };

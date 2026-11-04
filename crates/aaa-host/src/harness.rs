@@ -2117,8 +2117,12 @@ mod tests {
         // 컨텍스트 사용량도 같은 사건으로 온다(plan §8.321)
         let context =
             aaa_proto::ContextUsage { used: 43_922, window: Some(200_000), percent: Some(22), compaction: None };
-        let model =
-            aaa_proto::ModelObservation { model: "gpt-6-astra".into(), effort: Some("high".into()), at_ms: 2_000 };
+        let model = aaa_proto::ModelObservation {
+            model: "gpt-6-astra".into(),
+            effort: Some("high".into()),
+            at_ms: 2_000,
+            speed: None,
+        };
         h.on_harness(
             "m",
             HarnessEvent {

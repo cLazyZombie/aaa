@@ -456,7 +456,8 @@ pub(crate) fn ensure_codex_local(argv: &mut Vec<String>, command_len: usize) {
     }
     // 사용자 파일은 고치지 않는다. 앞의 사용자 -c보다 나중에 두고, -- 뒤의 prompt에는 넣지 않는다.
     // launch/resume 준비와 최종 spawn에서 모두 지나므로 이미 끝에 붙인 옵션은 반복하지 않는다.
-    let title = r#"tui.terminal_title=["run-state","activity","project-name"]"#;
+    // fast-mode(처리 속도 등급)는 맨 끝에 둔다: 감지 규칙은 맨 앞 run-state를, 속도 읽기는 마지막 항목을 본다(plan.rs `codex_title_speed`)
+    let title = r#"tui.terminal_title=["run-state","activity","project-name","fast-mode"]"#;
     let end = argv.iter().skip(command_len).position(|a| a == "--").map_or(argv.len(), |n| command_len + n);
     if end < 2 || argv[end - 2] != "-c" || argv[end - 1] != title {
         argv.splice(end..end, ["-c".into(), title.into()]);
@@ -789,7 +790,7 @@ mod tests {
                 assert_eq!(argv.iter().filter(|a| *a == "--no-daemon").count(), 1, "{argv:?}");
                 assert_eq!(
                     &argv[argv.len() - 2..],
-                    ["-c", r#"tui.terminal_title=["run-state","activity","project-name"]"#],
+                    ["-c", r#"tui.terminal_title=["run-state","activity","project-name","fast-mode"]"#],
                     "중간 설명에서 상태 줄이 사라져도 OSC 제목에 실행 상태가 있어야 한다: {argv:?}"
                 );
             }
