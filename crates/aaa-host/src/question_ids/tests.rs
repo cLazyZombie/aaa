@@ -41,6 +41,15 @@ impl Lab {
         self.post_title(n, &format!("진행 안 {n}"), body)
     }
     fn post_title(&self, n: u32, title: &str, body: &str) -> (String, aaa_proto::UserRequestView) {
+        // 확인 필요 post는 가리키는 프로젝트 library 파일이 있어야 받는다.
+        let dir = self.h.project_dir("demo").unwrap().join("library");
+        for rel in aaa_proto::library_paths(body) {
+            let path = dir.join(&rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            if !path.exists() {
+                std::fs::write(path, b"png").unwrap();
+            }
+        }
         let result = self
             .h
             .front_post(

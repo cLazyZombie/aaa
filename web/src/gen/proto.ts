@@ -2013,6 +2013,8 @@ pending: number, };
 export type ThreadQuestions = {
 /**
  * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치를 알린다. 답 전송은 허용한다. 옛 host는 생략한다.
+ * 줄마다 경고 하나다. `근거 확인 필요`(근거가 질문 칸 밖에만 있음)·`파일 확인 필요`(가리키는 library 파일이 그 판에 없음)로
+ * 시작하는 줄은 형식 오류가 아니다.
  */
 format_warning?: string,
 /**

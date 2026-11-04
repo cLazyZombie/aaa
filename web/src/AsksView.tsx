@@ -427,7 +427,9 @@ function QuestionCard({
         {t ? <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
           : <span className="prompt-card-where">coordinator · {when(request!.created_ms)}</span>}
       </header>
-      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">형식 오류: {q.format_warning} 아래에 보이는 선택지를 고르거나 직접 답을 입력할 수 있다.</p>}
+      {q.format_warning?.split("\n").map((line, i) => /^(근거|파일) 확인 필요/.test(line)
+        ? <p key={i} className="prompt-card-error" role="alert" data-testid={line.startsWith("근거") ? "question-evidence-warning" : "question-file-warning"}>{line}</p>
+        : <p key={i} className="prompt-card-error" role="alert" data-testid="question-format-warning">형식 오류: {line} 아래에 보이는 선택지를 고르거나 직접 답을 입력할 수 있다.</p>)}
       <QuestionReports items={q.items} body={request?.body} reportId={t?.report_id} project={t?.project} base={base} />
       {request && <h2 className="ask-card-title">{request.title}</h2>}
       {q.items.map((item, n) => {

@@ -82,7 +82,7 @@ pub(crate) fn library_refs(markdown: &str) -> Vec<String> {
 }
 
 /// `root` 아래의 `report.md`나 `library/<상대 경로>`(symlink는 거부)
-fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
+pub(crate) fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
     let missing = || err(ErrorCode::NotFound, format!("파일이 없다: {path}"));
     let ok = path == "report.md" || path.strip_prefix("library/").is_some_and(crate::library::safe_rel);
     if !ok {
@@ -103,7 +103,37 @@ fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
     Ok(at)
 }
 
+/// 빠진 파일 진단: 경로 앞 3개와 고칠 방법. `where_`는 그 판에서 파일을 찾는 곳이다.
+pub(crate) fn missing_files_message(missing: &[String], where_: &str) -> String {
+    let shown: Vec<_> = missing.iter().take(3).map(|p| format!("library/{p}")).collect();
+    let more = missing.len().saturating_sub(shown.len());
+    format!(
+        "파일 확인 필요: 본문이 가리키는 library 파일 {}개가 {where_}에 없다({}{}). 카드·보고서에 「이미지를 표시할 수 없음」만 보인다. 파일을 그 경로에 두거나(이전 판 파일이면 지금 library로 복사) 경로를 있는 파일로 고친다.",
+        missing.len(),
+        shown.join(", "),
+        if more > 0 { format!(" 외 {more}개") } else { String::new() }
+    )
+}
+
 impl Host {
+    /// post 본문이 가리키는 프로젝트 library 파일 중 없는 것(카드 `request_file`과 같은 곳을 본다)
+    pub(crate) fn missing_project_library(&self, project: &str, text: &str) -> Vec<String> {
+        let Ok(dir) = self.project_dir(project) else { return Vec::new() };
+        aaa_proto::library_paths(text)
+            .into_iter()
+            .filter(|rel| file_under(&dir, &format!("library/{rel}")).is_err())
+            .collect()
+    }
+
+    /// thread 보고가 가리키는 library 파일 중 host 사본에 없는 것(카드 `question_file`과 같은 곳을 본다)
+    pub(crate) fn missing_thread_library(&self, project: &str, thread: &str, text: &str) -> Vec<String> {
+        let Ok(dir) = self.project_dir(project) else { return Vec::new() };
+        aaa_proto::library_paths(text)
+            .into_iter()
+            .filter(|rel| !crate::library::safe_rel(rel) || crate::library::local_file(&dir, thread, rel).is_err())
+            .collect()
+    }
+
     pub(crate) fn request_question_thread(&self, item: &InboxItem) -> Option<String> {
         let id = crate::notify::request_question(item)?;
         // 질문 원장이 이미 독립 post로 식별했으면 제목의 옛 thread 링크는 종료 근거가 아니다.

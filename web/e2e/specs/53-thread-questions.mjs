@@ -68,4 +68,96 @@ export default async function ({ page }) {
     aaa("thread", "resolve", t.id);
   });
 
+  await step("근거가 Questions 위에만: thread 카드는 근거 경고·보고서 열기 r-ID(PC·휴대폰 폭), thread pane에 고칠 방법, post는 거절", async () => {
+    fs.writeFileSync(`${root}/task-evidence.md`, "근거 위치 시험\n");
+    const t = aaa("thread", "start", "demo", "--title", "근거 위치", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-evidence.md`);
+    await until("첫 근거 보고", () => aaa("thread", "show", t.id).report_hash);
+    for (const name of ["above-a.png", "above-b.png"]) fs.copyFileSync(`${root}/pic.png`, `${t.work_dir}/library/${name}`);
+    // fake thread의 HTML 보고서를 빼야 「보고서 열기」가 그 판의 report.md 본문(그림 포함)을 보인다.
+    fs.rmSync(`${t.work_dir}/library/index.html`, { force: true });
+    const above = "시안 두 장을 비교했다.\n\n![A안](library/above-a.png)\n![B안](library/above-b.png)\n\n";
+    const questions = "## Questions\n### 1. 어느 안으로 할까\n- A 첫 안 (추천) — 밝다\n- B 둘째 안 — 어둡다\n";
+    const body = `[결정 필요] 질문 1개: 근거 위치\n\n${above}${questions}`;
+    fs.writeFileSync(`${t.work_dir}/report.md`, body);
+    const hash = createHash("sha256").update(body).digest("hex");
+    const v = await until("근거 경고와 r-ID", () => { const v = aaa("thread", "show", t.id); return v.report_hash === hash && v.questions && v.report_id && v; });
+    if (v.questions.format_warning !== "근거 확인 필요: 그림 2개가 질문 칸 밖에만 있다. 위 「보고서 열기」에서 본다.") throw new Error(`근거 경고: ${JSON.stringify(v.questions)}`);
+    await waitOutput(t.pane, "[aaa 질문 근거 확인]");
+    await waitOutput(t.pane, "그림 2개(library/above-a.png, library/above-b.png)");
+    await page.evaluate((id) => { location.hash = `question=${id}`; }, v.questions.items[0].id);
+    const card = page.getByTestId(`thread-ask-${t.id}`);
+    await card.getByTestId("thread-ask-pick-1A").waitFor();
+    for (const [label, size] of [["desktop", { width: 1280, height: 800 }], ["phone", { width: 390, height: 844 }]]) {
+      await page.setViewportSize(size);
+      await page.getByTestId("asks-scroll").evaluate((el) => { el.scrollTop = 0; });
+      const open = card.getByTestId("question-report-open");
+      if ((await open.count()) !== 1 || !(await open.textContent()).includes(v.report_id)) throw new Error(`보고서 열기: ${await open.allTextContents()}`);
+      if ((await card.getByTestId("question-format-warning").count()) !== 0) throw new Error("근거 경고를 형식 오류로 보였다");
+      const warning = card.getByTestId("question-evidence-warning");
+      if ((await warning.textContent()) !== v.questions.format_warning) throw new Error(`카드 근거 경고: ${await warning.textContent()}`);
+      // 첫 화면에서 스크롤 없이 경고와 보고서 열기가 보인다.
+      for (const [name, el] of [["보고서 열기", open], ["근거 경고", warning]]) {
+        const box = await el.boundingBox();
+        if (!box || box.y < 0 || box.y + box.height > size.height || box.x + box.width > size.width) throw new Error(`${label} ${name} 위치: ${JSON.stringify(box)}`);
+      }
+      await shot(page, `53-evidence-${label}`);
+      await open.click();
+      // 보고 본문 그림은 lazy라 하나씩 보이게 한 뒤 decode 완료(사건)를 기다린다.
+      const preview = card.getByTestId("question-report-preview");
+      await preview.waitFor();
+      await preview.scrollIntoViewIfNeeded();
+      await shot(page, `53-evidence-${label}-opened`);
+      await preview.locator("img").nth(1).waitFor();
+      for (const img of await preview.locator("img").all()) { await img.scrollIntoViewIfNeeded(); await img.evaluate((i) => i.decode()); }
+      if ((await pictures(page, '[data-testid="question-report-preview"]')) !== 2) throw new Error("보고서 미리보기 그림 2장이 아니다");
+      await shot(page, `53-evidence-${label}-report`);
+      await open.click();
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const notice = aaa("inbox", "list", "demo", "--all", "--peek").items.filter((i) => i.event === "질문 근거 위치 확인 필요" && i.subject === t.id);
+    if (notice.length !== 1 || !notice[0].body.includes("`### N.` 아래(선택지 위)로 옮긴다")) throw new Error(`coordinator 근거 알림: ${JSON.stringify(notice)}`);
+    // 그 판 library에 없는 파일을 가리키면(이전 판 파일 등) 카드에 그림 대신 「표시할 수 없음」만 남는다: 빠진 경로를 알린다.
+    const gone = "[결정 필요] 질문 1개: 빠진 그림\n\n## Questions\n### 1. 어느 안으로 할까\n![지난 판](library/map-colors/single-day.png)\n\n- A 첫 안 (추천)\n- B 둘째 안\n";
+    fs.writeFileSync(`${t.work_dir}/report.md`, gone);
+    const goneHash = createHash("sha256").update(gone).digest("hex");
+    const missing = await until("빠진 파일 경고", () => { const v = aaa("thread", "show", t.id); return v.report_hash === goneHash && v.questions?.format_warning && v; });
+    if (missing.questions.format_warning !== "파일 확인 필요: 본문이 가리키는 library 파일 1개가 이 보고 판에 없다(library/map-colors/single-day.png).") throw new Error(`빠진 파일 경고: ${missing.questions.format_warning}`);
+    await waitOutput(t.pane, "[aaa 보고 파일 확인]");
+    await waitOutput(t.pane, "library 파일 1개가 이 보고 판의 host 사본에 없다(library/map-colors/single-day.png)");
+    await page.evaluate((id) => { location.hash = `question=${id}`; }, missing.questions.items[0].id);
+    const fileWarning = card.getByTestId("question-file-warning");
+    await fileWarning.waitFor();
+    if ((await card.getByTestId("question-format-warning").count()) !== 0) throw new Error("빠진 파일을 형식 오류로 보였다");
+    await shot(page, "53-missing-file-desktop");
+    // 파일을 두고 보고를 고쳐 쓰면 경고가 사라지고 그림이 보인다.
+    fs.mkdirSync(`${t.work_dir}/library/map-colors`, { recursive: true });
+    fs.copyFileSync(`${root}/pic.png`, `${t.work_dir}/library/map-colors/single-day.png`);
+    const fixed = gone.replace("빠진 그림", "그림 보충");
+    fs.writeFileSync(`${t.work_dir}/report.md`, fixed);
+    const fixedHash = createHash("sha256").update(fixed).digest("hex");
+    const ok = await until("고친 보고", () => { const v = aaa("thread", "show", t.id); return v.report_hash === fixedHash && v.questions && v; });
+    if (ok.questions.format_warning) throw new Error(`고친 뒤에도 경고: ${ok.questions.format_warning}`);
+    await page.evaluate((id) => { location.hash = `question=${id}`; }, ok.questions.items[0].id);
+    await until("질문 칸 그림", async () => (await pictures(page, `[data-testid="thread-ask-${t.id}"] .thread-ask-q`)) === 1);
+    if ((await card.getByTestId("question-file-warning").count()) !== 0) throw new Error("고친 카드에 빠진 파일 경고가 남았다");
+    // post는 프로젝트 library에서 읽는다. 올린 자료만 쓴다.
+    const preview = `${root}/evidence-preview`;
+    fs.mkdirSync(preview, { recursive: true });
+    for (const name of ["above-a.png", "above-b.png"]) fs.copyFileSync(`${root}/pic.png`, `${preview}/${name}`);
+    aaa("library", "publish", preview, "--name", "preview");
+    // 같은 글을 사용자 확인 post로 보내면 카드가 비므로 받지 않는다. 고칠 곳을 돌려준다.
+    const file = `${root}/evidence-post.md`;
+    fs.writeFileSync(file, above.replaceAll("library/", "library/preview/") + questions);
+    let refused;
+    try { aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "근거 위치 post", "--body-file", file); } catch (e) { refused = e.message; }
+    if (!refused?.includes("끝 코드 1") || !refused.includes("그림 2개(library/preview/above-a.png") || !refused.includes("`### N.` 아래(선택지 위)로 옮긴다")) throw new Error(`post 거절: ${refused}`);
+    fs.writeFileSync(file, questions.replace("- A 첫 안", "![없음](library/preview/gone.png)\n\n- A 첫 안"));
+    let absent;
+    try { aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "빠진 파일 post", "--body-file", file); } catch (e) { absent = e.message; }
+    if (!absent?.includes("끝 코드 1") || !absent.includes("library 파일 1개가 프로젝트 library에 없다(library/preview/gone.png)")) throw new Error(`빠진 파일 post 거절: ${absent}`);
+    fs.writeFileSync(file, questions.replace("- A 첫 안", above.replaceAll("library/", "library/preview/") + "- A 첫 안"));
+    aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "근거 위치 post", "--body-file", file);
+    aaa("thread", "resolve", t.id);
+  });
+
 }

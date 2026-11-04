@@ -8445,3 +8445,15 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **표시(시안 t-1511 1A·2A).** thread 줄 둘째 줄 표지 칸에 자동 병합 표지와 같은 꼴의 노란 번개(마우스 올림 「fast mode」)를 agent pane이 도는 동안만 둔다. 요약 카드·휴대폰 요약 창의 「최근 확인 모델」 줄 끝에 「· ⚡ fast」를 붙인다. ultrafast도 같은 번개이고 말만 다르다.
 - **한계.** Claude 상태줄 명령은 계정 Claude pane에만 걸려 계정 없는 Claude pane은 속도를 모른다. Claude가 한도로 fast를 잠시 쉬는 상태(cooldown)는 상태줄에 따로 없다. 값은 agent 메모리에만 있어 agent가 다시 뜨면 다음 상태줄·제목까지 비어 있다.
 - **번호·계약.** 착지 기준 main 07cd473e의 마지막 §8.553 다음 번호다(t-1509는 plan 절 없이 FRONT_API 1.158을 썼다). FRONT_API 1.159의 선택 `ModelObservation.speed`를 더하고 AGENT_LINK 1.11은 유지한다(옛 agent는 생략, 옛 front는 버린다). 웹 E2E 번호는 바꾸지 않는다. 검증은 [t-1511 기록](testing-fast-mode-t-1511.md)에 둔다.
+
+### 8.555 질문 카드 근거 빠짐 막기(t-1518)
+
+- **문제.** 질문 카드는 `### N.` 질문 칸만 싣고 `## Questions` 위 본문을 버린다(§8.387). coordinator post와 thread 보고가 근거(그림·영상·보고서 링크)를 위 본문에만 두면 사용자는 빈 카드로 판단했다(q-2677: 그림 7장이 위 본문에만 있음, 사용자 q-2679 1A로 aaa에서 막기).
+- **판정.** `aaa_proto::question_evidence_gap`이 카드와 같은 파서 결과로 본다. 밖(질문 칸 밖 전체)에 그림·영상(`![…](…)`), `library/` 링크, r-ID 링크·맨 r-ID가 있고 어느 질문 칸(본문·선택지·선택지 뒤 설명)에도 근거가 하나도 없을 때만 걸린다. 질문 칸의 근거는 같은 자료에 표·code 블록을 더한다. code fence·inline code 속 예시와 외부 주소는 세지 않는다.
+- **오탐 측정.** 보고 판 293개(Questions가 든 r 판)에서 처음 판정은 71개, 질문 칸의 표·code를 근거로 센 뒤 47개다. 남은 것은 위 본문의 그림·영상(시안 판단)과, 실패·중단 질문의 상세 링크를 질문 밖에 둔 경우로 모두 사용자 11-04 규칙(근거·실패 원문 링크를 질문 안에)에 어긋난다.
+- **post는 거절.** `to=user`·`needs_user` post가 걸리면 접수하지 않고 무엇이 몇 개·앞 주소 3개·옮길 곳을 돌려준다. 보내는 쪽이 바로 고칠 수 있고, 받은 뒤 경고하면 사용자가 빈 카드를 먼저 본다. 거절은 24시간 중복 판정에 쓰지 않는다.
+- **thread 보고는 경고.** 파일 쓰기는 거절할 수 없다. `ThreadRec.question_evidence`에 두고 카드 `format_warning`에 `근거 확인 필요: …` 줄을 더한다(웹은 그 줄을 형식 오류 머리 없이 그린다). 보고 hash마다 한 번 thread pane(`[aaa 질문 근거 확인]`)·thread inbox 자료·coordinator inbox(「질문 근거 위치 확인 필요」)에 고칠 방법을 보낸다. 형식 경고와 묶어 한 알림이다. `question_warning`과 따로 두어 답한 질문 재연결·닫힘 판단은 바꾸지 않는다.
+- **보고서 링크.** thread 질문 카드 머리에는 이미 그 보고 판의 「보고서 열기 r-NNNN」이 있다(§8.387, `ThreadView.report_id`). 이번에 host 시험과 E2E로 근거가 밖에만 있는 보고에서도 붙는지 확인한다. post에는 r 판이 없어 거절이 유일한 막음이다.
+- **빠진 파일(범위 보충).** 보고·post가 가리키는 그림·링크의 `library/` 파일이 카드가 읽는 곳에 없으면 카드에 「이미지를 표시할 수 없음」만 남는다(예: 새 보고가 이전 판의 `map-colors/single-day.png`를 가리킴). `aaa_proto::library_paths`가 code 예시를 뺀 경로를 뽑는다. post는 프로젝트 library(`request_file`과 같은 곳)에서 찾아 없으면 빠진 경로 앞 3개와 고칠 방법으로 거절한다. thread 보고는 사람을 기다리는 표지일 때 그 판 host 사본(`question_file`과 같은 곳)에서 찾고, 사본 일부가 실패한 회수에서는 판단하지 않는다. `ThreadRec.question_missing`에 두고 카드 `파일 확인 필요: …` 줄, pane `[aaa 보고 파일 확인]`, coordinator inbox 「보고가 가리키는 파일 없음」으로 알린다. library만 다시 받은 같은 보고 회수에서도 다시 계산한다.
+- **계약.** FRONT_API·AGENT_LINK 변경 없음(기존 `format_warning` 문자열의 줄을 쓴다). 옛 웹은 근거·파일 줄도 「형식 오류:」 머리로 보인다.
+

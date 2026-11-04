@@ -184,6 +184,8 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         question_answer: None,
         question_warning: None,
         question_warning_sent: None,
+        question_evidence: None,
+        question_missing: Vec::new(),
         copy_failures: 0,
         copy_retry_at_ms: 0,
         copy: None,

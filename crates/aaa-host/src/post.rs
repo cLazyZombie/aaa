@@ -320,6 +320,19 @@ impl Host {
             || !input.topic.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         {
             result = Some(refused("topic은 영문 소문자·숫자·- 1~40자다"));
+        } else if input.to == "user" && input.needs_user {
+            // 카드는 질문 칸만 싣고 프로젝트 library의 파일만 연다. 받은 뒤 경고하면 사용자가 빈 카드로 판단하므로
+            // 보내는 쪽에서 고치게 한다.
+            let missing = self.missing_project_library(project, &input.body);
+            let reasons: Vec<_> = aaa_proto::question_evidence_gap(&input.body)
+                .map(|g| g.message())
+                .into_iter()
+                .chain((!missing.is_empty()).then(|| crate::asks::missing_files_message(&missing, "프로젝트 library")))
+                .collect();
+            if !reasons.is_empty() {
+                result =
+                    Some(refused(format!("{} 고친 본문으로 다시 보낸다(aaa guide questions).", reasons.join(" "))));
+            }
         }
         if input.topic == "automation-input-complete" {
             return self.store_automation_completion(project, sender, input, actor, rec, now, result);
@@ -1530,6 +1543,42 @@ mod tests {
         h.on_harness("m", completed_reply("claude", later, end + 4, &format!("{qid}에서 선택해 주세요.")));
         assert_eq!(count(), 3, "답한 카드의 링크로 새 질문을 숨기지 않는다");
         assert!(began.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    /// q-2677 꼴: 그림을 Questions 위에만 두면 카드가 비므로 접수하지 않고 고칠 곳을 알린다.
+    #[tokio::test]
+    async fn user_question_posts_with_evidence_only_above_questions_are_refused() {
+        let (h, _lab) = coordinator_host();
+        let mut i = input(70);
+        i.to = "user".into();
+        i.topic = "user-action".into();
+        i.body = "시안을 비교한다.\n\n![A](library/p/a.png)\n![B](library/p/b.png)\n\n## Questions\n### 1. 어느 안\n- A 첫 안 (추천)\n- B 둘째 안\n".into();
+        let PostResult::Refused { reason, .. } = h.front_post("demo", i.clone(), "local:cli@coord").unwrap() else {
+            panic!("근거가 밖에만 있는 질문 post를 받았다")
+        };
+        assert!(reason.contains("그림 2개") && reason.contains("library/p/a.png"), "{reason}");
+        assert!(reason.contains("`### N.` 아래(선택지 위)로 옮긴다"), "{reason}");
+        assert!(h.user_requests("demo").unwrap().is_empty());
+        // 질문 칸에 둬도 프로젝트 library에 없는 파일이면 카드에 그림이 없다: 빠진 경로를 알린다.
+        i.post_id = format!("{:032x}", 72);
+        i.body = "## Questions\n### 1. 어느 안\n![A](library/p/a.png)\n![B](library/p/b.png)\n\n- A 첫 안 (추천)\n- B 둘째 안\n".into();
+        let PostResult::Refused { reason, .. } = h.front_post("demo", i.clone(), "local:cli@coord").unwrap() else {
+            panic!("없는 파일을 가리키는 질문 post를 받았다")
+        };
+        assert!(
+            reason.contains("파일 확인 필요: 본문이 가리키는 library 파일 2개가 프로젝트 library에 없다(library/p/a.png, library/p/b.png)"),
+            "{reason}"
+        );
+        let lib = h.project_dir("demo").unwrap().join("library").join("p");
+        std::fs::create_dir_all(&lib).unwrap();
+        for name in ["a.png", "b.png"] {
+            std::fs::write(lib.join(name), b"png").unwrap();
+        }
+        // 같은 그림을 질문 칸으로 옮기면 받는다. 거절은 24시간 중복 판정에 쓰이지 않는다.
+        i.post_id = format!("{:032x}", 71);
+        i.body = "시안을 비교한다.\n\n## Questions\n### 1. 어느 안\n![A](library/p/a.png)\n![B](library/p/b.png)\n\n- A 첫 안 (추천)\n- B 둘째 안\n".into();
+        assert!(matches!(h.front_post("demo", i, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+        assert_eq!(h.user_requests("demo").unwrap().len(), 1);
     }
 
     #[tokio::test]

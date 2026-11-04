@@ -97,6 +97,8 @@ pub(crate) const THREAD_GUIDE: &str = "\
 harness의 pane 안 질문 창(예: Claude Code AskUserQuestion)으로 묻지 않는다. 어느 harness든 보고로 묻는다.
 
 - 질문마다 `### N. 질문` 아래에 판단에 필요한 것(지금 모양·시안 그림·표·짧은 code·근거)을 다 싣는다. 카드에는 질문 본문만 보인다.
+  `## Questions` 위의 그림·영상·보고서·library 링크는 카드에 없다. 근거가 질문 칸 밖에만 있거나 가리킨 library 파일이
+  이 판에 없으면(이전 판 파일 등) host가 고쳐 쓰라고 알린다.
 - 그림·영상·파일은 library에 먼저 두고 `library/…` 상대 경로로 쓴다. 영상은 `![시안 영상](library/preview/a.mp4)`
   (H.264 MP4, 시안은 5~10초·10 MiB 이하)로 넣는다.
 - 선택지는 질문 끝 줄 머리에 `- A 선택지 (추천) — 까닭` 꼴로 A부터 2~4개 쓴다. 굵게·기울임을 쓰지 않는다
