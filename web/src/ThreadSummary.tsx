@@ -97,6 +97,8 @@ function Activity({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
           </span>
         )}
       </p>
+      {/* 이 thread가 쓰는 계정(`thread show`의 「인증:」, t-1531). 모르면 줄을 두지 않는다 */}
+      {t.account && <p className="summary-account" data-testid="summary-account" title={`계정 ${t.account}`}>계정 {t.account}</p>}
       <ProviderError agent={t.agent} />
       <p title={activity}>{activity}</p>
       <p className="summary-dim" data-testid="summary-updated" title={updates}>{updates}</p>

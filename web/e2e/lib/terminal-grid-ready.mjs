@@ -5,10 +5,10 @@ export function fittedTerminalGrid() {
   const rows = term?.querySelector('.xterm-rows');
   const row = rows?.firstElementChild;
   const xterm = term?.querySelector('.xterm');
-  const title = term?.closest('.term')?.querySelector('.term-title .muted');
-  const size = /(\d+)×(\d+)/.exec(title?.textContent ?? '');
-  if (!term || !row || !xterm || !size || term.dataset.fit !== 'same' || term.hasAttribute('data-fit-pending')) return false;
-  const [cols, height] = size.slice(1).map(Number);
+  // host가 확인한 크기(ACK): 화면 글이 아니라 pane 칸의 data-cols·data-rows(t-1531)
+  const size = term?.closest('.term')?.dataset;
+  if (!term || !row || !xterm || !size?.cols || !size?.rows || term.dataset.fit !== 'same' || term.hasAttribute('data-fit-pending')) return false;
+  const [cols, height] = [Number(size.cols), Number(size.rows)];
   const parentStyle = getComputedStyle(term), style = getComputedStyle(xterm);
   const available = parseInt(parentStyle.height) - parseInt(style.paddingTop) - parseInt(style.paddingBottom);
   const cell = row.getBoundingClientRect().height;

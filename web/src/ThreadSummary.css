@@ -82,6 +82,7 @@
 .summary-activity { min-width: 0; margin-left: 22px; font-size: var(--fs-xs); }
 .summary-activity p { margin: 0; }
 .summary-model { color: var(--text); }
+.summary-account { color: var(--text-dim); }
 .summary-card .summary-activity p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .summary-detail .summary-activity p { overflow-wrap: anywhere; }
 .summary-progress-head {

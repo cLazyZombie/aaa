@@ -144,6 +144,7 @@ export function TermView({
   title,
   agent,
   crumb,
+  account,
   status,
   dock,
   controls,
@@ -163,6 +164,8 @@ export function TermView({
   /** pane에서 도는 coding agent(머리 제목 앞 표시, herdr-web-ui App.tsx 1402줄) */
   agent?: string | null;
   crumb?: string;
+  /** 이 pane(thread)이 쓰는 계정 별칭(`thread show`의 「인증:」). 모르면 없다: 머리 줄에 보이지 않는다 */
+  account?: string;
   status?: ReactNode;
   /** 입력 위에 붙는 질문 카드 */
   dock?: ReactNode;
@@ -2249,7 +2252,8 @@ export function TermView({
     </>
   );
   return (
-    <section hidden={!active} inert={!active} data-pane={pane.id} data-screen-role={pane.coordinator_project ? "coordinator" : undefined} className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
+    // 크기(cols×rows)는 화면에 쓰지 않고 시험이 읽는 속성으로만 둔다(t-1531: 그 자리에 계정)
+    <section hidden={!active} inert={!active} data-pane={pane.id} data-screen-role={pane.coordinator_project ? "coordinator" : undefined} data-cols={size[0]} data-rows={size[1]} className="term" ref={sectionRef} style={terminalThemeStyle(terminalColorTheme)}>
       {active && <header className="term-head">
         {/* 좁은 창의 목록 drawer(drawer.tsx). 전에는 휴대폰에서 「목록으로」 화면을 바꿨다 */}
         <DrawerToggle />
@@ -2260,9 +2264,11 @@ export function TermView({
             <strong>{title ?? (pane.name || pane.id)}</strong>
             {pane.role === "coordinator" && <AutoModeChip />}
           </span>
-          <span className="muted">
+          <span className="muted term-sub">
             {pane.coordinator_project && <b className="coordinator-label">coordinator</b>}
-            {crumb ?? pane.machine} · {size[0]}×{size[1]} <ResponsibilityBadge value={pane.responsibility} />
+            <span className="term-crumb">{crumb ?? pane.machine}</span>
+            {account && <span className="term-account" data-testid="pane-account" title={`계정 ${account}`}><span className="term-account-word">· 계정 </span>{account}</span>}
+            <ResponsibilityBadge value={pane.responsibility} />
           </span>
         </div>
         {status}
