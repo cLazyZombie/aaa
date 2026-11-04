@@ -30,7 +30,8 @@ async function check(engine, width) {
       return { whole: el.scrollWidth <= el.clientWidth, first: a.left - line.left < 1 && a.width > 0,
         inside: a.right <= line.right + 0.5 && line.right <= window.innerWidth };
     });
-    assert.deepEqual(fit, width > 640 ? { whole: true, first: false, inside: true } : { whole: fit.whole, first: true, inside: true });
+    if (width > 640) assert.deepEqual(fit, { whole: true, first: false, inside: true });
+    else assert.deepEqual({ first: fit.first, inside: fit.inside }, { first: true, inside: true });
 
     await page.locator(`section.term[data-pane="${thread.pane}"]`).getByTestId("summary-open").click();
     const summary = page.getByTestId("summary-account");
