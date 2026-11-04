@@ -7,6 +7,7 @@ import { AgentMark } from "./herdr/AgentMark.tsx";
 import { useUsageSettings, type UsageCount, type UsageGlance } from "./settings";
 import { quotaQueryStatus } from "./quotaQueryStatus";
 import { quotaAge } from "./accountQuotaModel";
+import { usagePlanName } from "./usagePlan";
 import { usageProblemLabel, usageProblemText } from "./usageProblem";
 import {
   formatPercent,
@@ -56,7 +57,7 @@ function Provider({ usage, now, count }: { usage: ProviderUsage; now: number; co
       <header className="usage-provider-head">
         <AgentMark agent={PROVIDER_MARK[usage.id]} size={16} />
         <span className="usage-provider-name">{PROVIDER_NAME[usage.id]}</span>
-        {usage.plan && <span className="usage-plan">{usage.plan}</span>}
+        {usage.plan && <span className="usage-plan" data-testid="usage-plan">{usagePlanName(usage.plan)}</span>}
         {usage.account && (
           <span className="usage-account" title={usage.account}>
             {usage.account}

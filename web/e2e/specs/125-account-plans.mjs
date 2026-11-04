@@ -40,6 +40,16 @@ async function check(engine, width) {
     await inList(page, page.getByTestId("usage-strip"));
     const usage = page.getByRole("dialog", { name: "구독 사용량", exact: true }).getByRole("region", { name: "Claude · sample" });
     await usage.getByTestId("usage-session-status").filter({ hasText: "해당 없음" }).waitFor();
+    // 요금제 칸은 금액 없이 한 줄이고 계정 이름과 겹치지 않는다(11-04 넘침).
+    const plan = usage.getByTestId("usage-plan");
+    assert.equal(await plan.textContent(), "Ultra · 인증됨");
+    const box = await plan.evaluate(el => {
+      const text = document.createRange(); text.selectNodeContents(el);
+      const r = el.getBoundingClientRect(), a = el.parentElement.querySelector(".usage-account").getBoundingClientRect();
+      return { lines: new Set([...text.getClientRects()].map(t => Math.round(t.top))).size, overlap: r.right > a.left, out: a.right > innerWidth };
+    });
+    assert.ok(box.lines === 1 && !box.overlap && !box.out, `요금제 칸 한 줄: ${JSON.stringify(box)}`);
+    await shot(page, `usage-plan-${engine.browserType().name()}-${width}`);
     await page.keyboard.press("Escape");
     settings = await openSettings(page, "계정");
     select = settings.getByLabel("sample 요금제", { exact: true });
