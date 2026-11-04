@@ -290,7 +290,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // AGENT_LINK 1.11에서 QuotaSnapshot.input_missing 선택 필드: 옛 agent는 생략하고 옛 host는 버린다.
 // 1.156: 계정 등록 메일과 account_email 수정. 옛 host에는 메일 입력을 보내지 않는다.
 // 1.157: 계정 요금제 목록·선택, 자동 감지와 사용자 선택 분리, 5시간 창 유무.
-pub const FRONT_API: Version = Version { major: 1, minor: 157 };
+// 1.158: ModelObservation.speed(fast·ultrafast, 선택). 옛 agent는 생략하고 옛 front는 버린다. AGENT_LINK는 유지한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 158 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

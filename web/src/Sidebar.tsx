@@ -3,6 +3,7 @@ import { ResponsibilityBadge } from "./ResponsibilityBadge";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 import { AutoMergeMark } from "./AutoMerge";
+import { FastMark } from "./FastMark";
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
 // 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.258·§8.280): 「작업」은 coordinator → 작업 공간(저장소) 폴더 → thread 줄(둘째 줄 왼쪽
 // 상태 말, 오른쪽 머신 이름, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름). 프로젝트가 둘 이상일 때만 프로젝트 머리가
@@ -1050,12 +1051,14 @@ export function ThreadName({ id, title }: { id: string | undefined; title: strin
  * thread 줄의 표지(느린 빌드·한도 초과·병합 대기/병합 중·자동 병합 아이콘). 첫 줄 「번호 · 제목」을 가리지 않게(t-1293 사용자 답) 두 줄
  * 모드는 둘째 줄 상태 말 앞에, 한 줄 모드는 이름 뒤에 둔다. 상태 말 칸(시험이 글을 읽는다)과는 따로 둔다.
  */
-function ThreadChips({ t }: { t: ThreadView }) {
+function ThreadChips({ t, running }: { t: ThreadView; running: boolean }) {
   const slow = t.responsibility != null && t.responsibility.state !== "launcher";
-  if (!slow && !t.stage && !t.over_limit && !t.auto_merge) return null;
+  // fast mode는 지금 도는 agent의 것만: 끝난 실행의 마지막 관측은 카드 「최근 확인 모델」에만 남는다
+  const speed = running ? t.agent?.model_observation?.speed : null;
+  if (!slow && !t.stage && !t.over_limit && !t.auto_merge && !speed) return null;
   return (
     <span className="thread-chips">
-      <ResponsibilityBadge value={t.responsibility} /><ThreadLimitBadge start={t.over_limit} /><ThreadStageBadge stage={t.stage} /><AutoMergeMark on={t.auto_merge} />
+      <ResponsibilityBadge value={t.responsibility} /><ThreadLimitBadge start={t.over_limit} /><ThreadStageBadge stage={t.stage} /><AutoMergeMark on={t.auto_merge} /><FastMark speed={speed} />
     </span>
   );
 }
@@ -1151,7 +1154,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
               </span>
               <span className="workspace-place thread-place">
                 {origin}
-                <ThreadChips t={t} />
+                <ThreadChips t={t} running={online && paneOpen} />
                 <span className={`thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                   {line}
                   <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />
@@ -1167,7 +1170,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
               <ThreadName id={t.id} title={t.title} />
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
               {online && paneOpen && <AgentCounts pane={pane} />}
-              <ThreadChips t={t} />
+              <ThreadChips t={t} running={online && paneOpen} />
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                 {t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_WORD[t.group] ?? t.group}
                 <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />

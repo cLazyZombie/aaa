@@ -6,7 +6,8 @@ import { ProviderError } from "./ProviderError";
 // 휴대폰에는 hover 대안(길게 누름)을 두지 않는다(10-19 사용자): 단추만 있다.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Circle, CircleCheck, CircleDot, ClipboardList, History, ListTodo, Target, TriangleAlert, Undo2, X } from "lucide-react";
+import "./FastMark.css";
+import { Circle, CircleCheck, CircleDot, ClipboardList, History, ListTodo, Target, TriangleAlert, Undo2, X, Zap } from "lucide-react";
 import type { SummaryEntry, SummaryStep, ThreadSummaryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
@@ -86,7 +87,16 @@ function Activity({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   const updates = summaryUpdates(t, v, now);
   return (
     <div className="summary-activity" data-testid="summary-activity">
-      <p className="summary-model" data-testid="summary-model" title={model.title}>{model.text}</p>
+      <p className="summary-model" data-testid="summary-model" title={model.title}>
+        {model.text}
+        {model.speed && (
+          <span className="summary-speed" data-testid="summary-speed">
+            <span className="summary-speed-sep" aria-hidden="true">·</span>
+            <Zap aria-hidden="true" />
+            {model.speed}
+          </span>
+        )}
+      </p>
       <ProviderError agent={t.agent} />
       <p title={activity}>{activity}</p>
       <p className="summary-dim" data-testid="summary-updated" title={updates}>{updates}</p>

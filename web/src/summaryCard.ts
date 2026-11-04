@@ -11,17 +11,26 @@ export function modelName(model: string): string {
   return model;
 }
 
+/** 모델 관측의 처리 속도 등급을 보일 말. 표준이거나 모르는 값이면 null(그리지 않는다) */
+export function speedWord(speed: string | null | undefined): string | null {
+  if (speed === "fast") return "fast mode";
+  if (speed === "ultrafast") return "ultrafast mode";
+  return null;
+}
+
 /** /model 선택 직후 기록이 없을 수 있으므로 「최근 확인」과 시작 profile을 분명히 나눈다. */
-export function summaryModel(t: ThreadView): { text: string; title: string } {
+export function summaryModel(t: ThreadView): { text: string; title: string; speed: string | null } {
   const observed = t.agent?.model_observation;
   if (observed) {
     const effort = observed.effort ?? "생각 수준 미확인";
+    const speed = speedWord(observed.speed) ? observed.speed! : null;
     return {
       text: `최근 확인 모델: ${modelName(observed.model)} ${effort}`,
-      title: `${observed.model} · ${effort} · ${new Date(observed.at_ms).toLocaleString()} 확인`,
+      title: [observed.model, effort, speedWord(speed), `${new Date(observed.at_ms).toLocaleString()} 확인`].filter(Boolean).join(" · "),
+      speed,
     };
   }
-  return { text: `현재 모델 미확인 · 시작 profile: ${t.profile}`, title: "이 실행에서 아직 모델을 확인하지 못했습니다." };
+  return { text: `현재 모델 미확인 · 시작 profile: ${t.profile}`, title: "이 실행에서 아직 모델을 확인하지 못했습니다.", speed: null };
 }
 
 /** host가 기억한 활동 시작을 쓴다. 마지막 보고 시각을 활동 시작으로 추측하지 않는다. */

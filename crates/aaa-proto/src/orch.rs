@@ -499,6 +499,11 @@ pub struct ModelObservation {
     pub effort: Option<String>,
     #[ts(type = "number")]
     pub at_ms: u64,
+    /// 처리 속도 등급(FRONT_API 1.158): `fast`·`ultrafast`. 표준이거나 아직 모르면 없다. Claude는 상태줄 `fast_mode`,
+    /// Codex는 OSC 제목의 `fast-mode` 항목에서 읽는다. 옛 agent는 보내지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub speed: Option<String>,
 }
 
 /// harness 세션이 지금 쓴 컨텍스트(plan §8.321). agent가 대화 기록의 마지막 응답에서 읽는다(Claude `usage`, Codex `token_count`).

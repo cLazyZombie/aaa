@@ -8437,3 +8437,11 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - 5시간 제한이 없는 요금제는 「해당 없음」, 제한이 있는 계정의 정상 null·누락 응답은 「제공 안 됨」으로 표시한다. 과거 5시간 수치는 흐리게 접고 실제 관측 시각을 보존한다. 배정·자동화·하단 대표 숫자에서 해당 없음·현재 제공 안 됨·지난 5시간 기록을 제외하며 주간과 모델별 제한은 유지한다.
 - 요금제 변경은 사람만 할 수 있다. 등록 계정의 요금제 이름은 기존 메일 조회 경계를 따르며 보기 전용 기기에는 숨긴다. `FRONT_API 1.157`의 선택·목록 요청과 선택 필드로 제공하고 `AGENT_LINK 1.11`을 유지한다. 웹 E2E 125가 실제 저장·재조회·권한을 확인한다.
 - 공식 근거·정책은 [계정 요금제](account-plans.md), 개발 검증은 [t-1484 기록](testing-account-plans-t-1484.md)에 둔다.
+
+### 8.554 thread fast mode 표시(t-1511)
+
+- **근거.** Claude Code [statusline](https://code.claude.com/docs/en/statusline) 입력의 `fast_mode`(세션에 fast mode가 켜졌는지, 참/거짓). hook 공통 입력에는 없다. 2.1.318 실행 파일은 fast 전환을 상태줄 재실행 조건에 넣는다. Codex 0.166 rollout `turn_context`(18칸)에는 service tier가 없다. 대신 `tui.terminal_title` 항목 `fast-mode`(「Effective processing tier for the current model」)가 OSC 제목에 표준 `Standard`, `service_tier` fast·priority에서 `Fast`를 찍는다(실측).
+- **동작.** agent는 이미 받는 Claude 상태줄 입력(`aaa hook --agent quota`, 계정 Claude pane)의 `fast_mode`와, aaa가 Codex에 주는 제목 설정 끝에 더한 `fast-mode` 항목(감지 응답의 OSC 제목 마지막 칸)을 세션별로 기억한다. 하위 agent·다른 harness 세션 입력과 칸 없는 hook은 값을 바꾸지 않고, 제목이 그 꼴이 아니면 앞 값을 둔다. SessionStart(startup·resume)에서 비운다. §8.443 모델 관측에 `speed`(`fast`·`ultrafast`, 표준이면 없음)로 붙인다. 모델을 아직 못 봤으면 속도만으로 관측을 만들지 않는다. 제목의 run-state는 맨 앞 그대로라 Codex 감지 규칙은 바뀌지 않는다.
+- **표시(시안 t-1511 1A·2A).** thread 줄 둘째 줄 표지 칸에 자동 병합 표지와 같은 꼴의 노란 번개(마우스 올림 「fast mode」)를 agent pane이 도는 동안만 둔다. 요약 카드·휴대폰 요약 창의 「최근 확인 모델」 줄 끝에 「· ⚡ fast」를 붙인다. ultrafast도 같은 번개이고 말만 다르다.
+- **한계.** Claude 상태줄 명령은 계정 Claude pane에만 걸려 계정 없는 Claude pane은 속도를 모른다. Claude가 한도로 fast를 잠시 쉬는 상태(cooldown)는 상태줄에 따로 없다. 값은 agent 메모리에만 있어 agent가 다시 뜨면 다음 상태줄·제목까지 비어 있다.
+- **번호·계약.** 착지 기준 main cb9d2715의 마지막 §8.553 다음 번호다. FRONT_API 1.158의 선택 `ModelObservation.speed`를 더하고 AGENT_LINK 1.11은 유지한다(옛 agent는 생략, 옛 front는 버린다). 웹 E2E 번호는 바꾸지 않는다. 검증은 [t-1511 기록](testing-fast-mode-t-1511.md)에 둔다.
