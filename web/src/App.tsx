@@ -1805,6 +1805,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onQuoteReturn={quoteReturn}
             agent={agentOf(p, threadOfPane.get(p.id))}
             crumb={`${p.machine} › ${paneSub(p)}`}
+            // 계정은 `thread show`의 「인증:」과 같은 값(thread 기록, 옛 판은 pane 고정값). 없으면 보이지 않는다
+            account={threadOfPane.get(p.id)?.account ?? p.account}
             status={activePane === chatKey(p) ? (
               <>
                 <AgentChip p={p} />

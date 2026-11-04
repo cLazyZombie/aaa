@@ -10,18 +10,18 @@ test("파일 링크 기준은 설정의 옛 fit·ACK·38행을 복귀한 35행 �
   // ResizeObserver가 아직 pending을 달기 전에는 옛 same·제목·DOM 행 수가 모두 일치한다.
   const data = { fit: 'same' };
   const rows = { childElementCount: 38, firstElementChild: { getBoundingClientRect: () => ({ height: 19 }) } };
-  const title = { textContent: 'labA · 112×38' };
+  const section = { dataset: { cols: '112', rows: '38' } };
   const xterm = {};
   const term = {
     dataset: data, hasAttribute: () => Boolean(data.fitPending),
     querySelector: (s) => ({ '.xterm-rows': rows, '.xterm': xterm })[s],
-    closest: () => ({ querySelector: () => title }),
+    closest: () => section,
   };
   const context = { document: { querySelector: () => term }, getComputedStyle: (el) => el === term ? { height: '679px' } : { paddingTop: '0px', paddingBottom: '0px' } };
   const ready = () => runInNewContext(`(${fittedTerminalGrid})()`, context);
-  assert.equal(Number(/×(\d+)/.exec(title.textContent)[1]), rows.childElementCount, '옛 조건은 통과했다');
+  assert.equal(Number(section.dataset.rows), rows.childElementCount, '옛 조건은 통과했다');
   assert.equal(ready(), false);
-  title.textContent = 'labA · 112×35';
+  section.dataset.rows = '35';
   assert.equal(ready(), false, 'ACK만 새 크기로 온 때도 거절한다');
   rows.childElementCount = 35;
   assert.equal(ready().rows, 35);

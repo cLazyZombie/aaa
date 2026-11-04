@@ -12,7 +12,7 @@ export const labEnv = { LC_ALL: process.platform === "darwin" ? "en_US.UTF-8" : 
 
 export default async function ({ ctl, page }) {
   await step("넓은 창: PTY가 터미널 칸을 채우고 창 크기를 따라간다(조작 중일 때)", async () => {
-    // 터미널 글자 영역이 칸(안쪽 여백 뺀 크기)을 한 cell 안쪽까지 채우는지, header 크기·host PTY 크기가 같은지
+    // 터미널 글자 영역이 칸(안쪽 여백 뺀 크기)을 한 cell 안쪽까지 채우는지, 칸 속성의 크기·host PTY 크기가 같은지
     const filled = async () => {
       const m = await page.evaluate(() => {
         const box = document.querySelector('[data-testid="terminal"]');
@@ -20,15 +20,16 @@ export default async function ({ ctl, page }) {
         const cs = getComputedStyle(box);
         const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
         const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-        const crumb = document.querySelector(".term-title .muted").textContent;
-        return { w, h, sw: scr.width, sh: scr.height, crumb };
+        const shown = box.closest(".term").dataset;
+        return { w, h, sw: scr.width, sh: scr.height, size: `${shown.cols}x${shown.rows}`, head: document.querySelector(".term-title .muted").textContent };
       });
       const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
       const cw = m.sw / p.cols;
       const ch = m.sh / p.rows;
       // 오른쪽에 xterm 세로 scrollbar 자리를 남기지 않는다(참고처럼, plan §8.124): 전에는 15px(두 칸쯤)이 늘 비었다
       const ok = m.sw <= m.w + 1 && m.w - m.sw < cw + 1 && m.sh <= m.h + 1 && m.h - m.sh < ch + 1;
-      return { ok: ok && m.crumb.includes(`${p.cols}×${p.rows}`), m, cols: p.cols, rows: p.rows };
+      // 크기는 머리 줄에 쓰지 않는다(t-1531): 칸 속성으로 host 크기와 맞추고 화면 글에는 없다
+      return { ok: ok && m.size === `${p.cols}x${p.rows}` && !/\d+×\d+/.test(m.head), m, cols: p.cols, rows: p.rows };
     };
     let last = null;
     const fills = async () => (last = await filled()).ok;
@@ -327,9 +328,9 @@ process.stdin.resume();`;
         for (const view of [page, op]) {
           const ready = await view.evaluate((size) => {
             const term = document.querySelector('[data-testid="terminal"]');
-            const title = document.querySelector(".term-title .muted")?.textContent;
+            const shown = term?.closest(".term")?.dataset;
             const rows = document.querySelector(".xterm-rows")?.children.length;
-            return title?.includes(size.replace("x", "×")) && rows === Number(size.split("x")[1]) &&
+            return `${shown?.cols}x${shown?.rows}` === size && rows === Number(size.split("x")[1]) &&
               !term?.hasAttribute("data-fit-pending") && ["same", "other", "off", "released"].includes(term?.dataset.fit);
           }, size);
           if (!ready) return false;

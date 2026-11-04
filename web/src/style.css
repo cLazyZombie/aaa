@@ -477,6 +477,16 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .term-title-line { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .term-title strong { color: var(--text-strong); font-weight: 600; font-size: var(--fs-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .term-title .muted { font-size: calc(var(--fs-xs) * 12.5 / 12); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 머리 둘째 줄(t-1531): 위치가 좁으면 위치 글이 줄고 계정은 끝까지 보인다(긴 계정만 말줄임) */
+.term-title .term-sub { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.term-sub > .term-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.term-sub > .term-account { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+.term-sub > .thread-stage { flex: none; }
+/* 휴대폰 머리는 단추가 많아 제목 칸이 좁다: 계정이 있으면 위치 글을 빼고 계정 이름만 둔다(전체는 title·요약 창) */
+@media (max-width: 640px) {
+  .term-sub:has(> .term-account) > .term-crumb, .term-account-word { display: none; }
+  .term-sub > .term-account { flex: 0 1 auto; min-width: 0; max-width: none; }
+}
 .crumb-sep { color: var(--text-faint); margin: 0 3px; }
 .back { display: none; }
 .back.is-shown { display: inline-flex; }
