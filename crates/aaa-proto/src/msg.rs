@@ -1129,6 +1129,8 @@ pub enum AgentRequest {
         #[serde(default)]
         install: Option<bool>,
     },
+    /// model_catalog.v1을 알린 agent만: 그 머신 harness가 아는 모델 목록(Codex `models_cache.json`의 보이는 모델)
+    ModelCatalog,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1255,6 +1257,12 @@ pub enum AgentResponse {
     WorkRoot(crate::WorkRootView),
     WorkRootChecked(crate::WorkRootCheckView),
     Hook(crate::HookView),
+    /// model_catalog.v1: 모델과 읽지 못한 까닭
+    ModelCatalog {
+        models: Vec<crate::CatalogModel>,
+        #[serde(default)]
+        problems: Vec<String>,
+    },
 }
 
 /// routine 명령 실행 결과
@@ -2538,6 +2546,15 @@ pub enum FrontRequest {
     HookSet {
         machine: String,
         install: bool,
+    },
+    /// FRONT_API 1.158. provider별 모델 목록(머신이 알린 것·끈 것·profile이 쓰는 것)과 켜짐
+    ModelAdmin,
+    /// FRONT_API 1.158. `harness`의 `models`를 켜거나(`enabled`) 끈다. `expected`와 host.toml 판이 다르면 conflict
+    ModelSet {
+        harness: String,
+        models: Vec<String>,
+        enabled: bool,
+        expected: String,
     },
     EnrollPending,
     /// FRONT_API 1.93. SSH로 머신 추가 작업을 시작한다(웹 머신 추가 M2, plan §8.384): host의 OpenSSH로 접속해 host key만 받고, 아는 키면
@@ -4251,6 +4268,7 @@ pub enum FrontResponse {
     WorkRoot(crate::WorkRootView),
     WorkRootChecked(crate::WorkRootCheckView),
     Hook(crate::HookView),
+    ModelAdmin(crate::ModelAdminView),
     /// `thread_resolve_preview`의 답
     ResolvePreview(crate::ResolvePreview),
     /// FRONT_API 1.105. `thread_unpark { dry_run: true }`
@@ -4873,6 +4891,7 @@ mod tests {
         assert!(FrontRequest::SafetyShow { project: "p".into(), scope: Default::default() }.needs_control());
         assert!(FrontRequest::WorkRootShow { machine: "m".into() }.needs_control());
         assert!(FrontRequest::HookStatus { machine: "m".into() }.needs_control());
+        assert!(FrontRequest::ModelAdmin.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
         assert!(
             FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }

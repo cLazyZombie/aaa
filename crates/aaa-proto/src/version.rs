@@ -44,6 +44,7 @@ impl std::fmt::Display for Version {
 // 같은 1.11의 선택 기능 imagegen.v1: 세션 peer·token 확인 뒤 자기 이미지 요청/결과만 양쪽에서 보낸다.
 // 같은 1.11의 선택 기능 terminal_payload.zstd.v1: 원격 snapshot/history만 압축한다(t-0876). IPC는 원시다.
 // 같은 1.11의 선택 기능 report_hash.v1: library 없이 보고 hash만 조회한다.
+// 같은 1.11의 선택 기능 model_catalog.v1: host가 모델 목록을 물으면 그 머신 harness 목록 파일에서 보이는 모델만 답한다(t-1509).
 // response_parts.v1: 양쪽 협상 뒤 agent의 큰 Res JSON을 ResPart로 나눈다. 구판 host에는 too_large로 답한다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
@@ -290,7 +291,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // AGENT_LINK 1.11에서 QuotaSnapshot.input_missing 선택 필드: 옛 agent는 생략하고 옛 host는 버린다.
 // 1.156: 계정 등록 메일과 account_email 수정. 옛 host에는 메일 입력을 보내지 않는다.
 // 1.157: 계정 요금제 목록·선택, 자동 감지와 사용자 선택 분리, 5시간 창 유무.
-pub const FRONT_API: Version = Version { major: 1, minor: 157 };
+// 1.158: provider별 모델 켜기·끄기 `model_admin`·`model_set`(t-1509). 끈 모델은 profile model 칸에서 거절한다. 옛 host는 모르는
+// 요청으로 거절해 웹이 「모델」을 그리지 않는다. Agent link: 같은 1.11의 선택 기능 model_catalog.v1(`AgentRequest::ModelCatalog`).
+pub const FRONT_API: Version = Version { major: 1, minor: 158 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -2,7 +2,7 @@
 // 정본은 host다(crates/aaa-host/src/settings_admin/tests.rs). 여기는 화면이 보낼 요청을 정하는 규칙이다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { absolutePath, argsFromText, canSettings, canSwitch, draftOf, needsYoloConfirm, profileChange, profileNameOk } from "../src/settingsModel.ts";
+import { absolutePath, argsFromText, bulkToggle, canModels, canSettings, canSwitch, draftOf, enabledModels, needsYoloConfirm, profileChange, profileNameOk } from "../src/settingsModel.ts";
 
 const row = (over = {}) => ({
   name: "opus",
@@ -70,5 +70,23 @@ describe("관리 W5c", () => {
     assert.equal(canSwitch(checked, " /work/next ", " "), true);
     assert.equal(canSwitch(checked, "/work/other", ""), false);
     assert.equal(canSwitch(checked, "/work/next", "/mnt/disk"), false);
+  });
+});
+
+describe("설정 「모델」(t-1509)", () => {
+  const m = (id, enabled) => ({ id, name: id, enabled, profiles: [] });
+  it("1.158 이상 host만 그린다", () => {
+    for (const v of [undefined, "1.157", "2.158"]) assert.equal(canModels(v), false, String(v));
+    assert.equal(canModels("1.158"), true);
+  });
+  it("하나라도 켜져 있으면 켜진 것만 끄고, 모두 꺼져 있으면 모두 켠다", () => {
+    assert.deepEqual(bulkToggle([m("a", true), m("b", false), m("c", true)]), { enabled: false, models: ["a", "c"] });
+    assert.deepEqual(bulkToggle([m("a", false), m("b", false)]), { enabled: true, models: ["a", "b"] });
+  });
+  it("profile model 후보는 그 harness의 켜진 모델이다", () => {
+    const view = { providers: [{ harness: "codex", models: [m("a", true), m("b", false)] }, { harness: "claude", models: [m("opus", true)] }], warnings: [], rev: "r", notes: [] };
+    assert.deepEqual(enabledModels(view, "codex").map((r) => r.id), ["a"]);
+    assert.deepEqual(enabledModels(view, "shell"), []);
+    assert.deepEqual(enabledModels(null, "codex"), []);
   });
 });

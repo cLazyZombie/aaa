@@ -7,21 +7,24 @@ import "./ThreadActions.css";
 import "./AdminPages.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DeviceRole, HookView, MachineView, ProfileAdminRow, ProfileAdminView, ProfileChangeReq, ProfilePlanView, SafetyView, SettingsScope, WorkRootView } from "./gen/proto";
+import type { DeviceRole, HookView, MachineView, ModelAdminView, ProfileAdminRow, ProfileAdminView, ProfileChangeReq, ProfilePlanView, SafetyView, SettingsScope, WorkRootView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { AdminDialog } from "./AdminPages";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { SettingsGroup } from "./herdr/SettingsControls.tsx";
+import { SettingsGroup, Toggle } from "./herdr/SettingsControls.tsx";
 import {
   SAFETY_CHOICES,
   SAFETY_WORDS,
   WEB_HARNESSES,
   absolutePath,
   allowText,
+  bulkToggle,
+  canModels,
   canSettings,
   canSwitch,
   draftOf,
   effortValues,
+  enabledModels,
   hasModel,
   needsYoloConfirm,
   profileChange,
@@ -33,17 +36,17 @@ const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Er
 const conflictNote = "그사이 host 설정이 바뀌어 쓰지 않았다. 새로 읽었으니 다시 본다.";
 
 /** 1.81 이상 host인가(모르면 null) */
-function useSettingsAdmin(): boolean | null {
+function useSettingsAdmin(can: (frontApi: string | null | undefined) => boolean = canSettings): boolean | null {
   const [ok, setOk] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
     me()
-      .then((m) => live && setOk(canSettings(m?.front_api)))
+      .then((m) => live && setOk(can(m?.front_api)))
       .catch(ignoredFailure("SettingsAdminPages.tsx:42", () => live && setOk(false)));
     return () => {
       live = false;
     };
-  }, []);
+  }, [can]);
   return ok;
 }
 
@@ -352,6 +355,94 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
   );
 }
 
+// ───────────── 모델 ─────────────
+
+export function ModelsPage({ role }: { role: DeviceRole }) {
+  const admin = useSettingsAdmin(canModels);
+  const [view, setView] = useState<ModelAdminView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const seq = useRef(0);
+  const shown = role !== "reader" && admin === true;
+  const load = useCallback(
+    (keep = false) => {
+      if (!shown) return;
+      const mine = ++seq.current;
+      return call({ op: "model_admin" })
+        .then((r) => {
+          if (mine !== seq.current || r.kind !== "model_admin") return;
+          setView(r);
+          if (!keep) setError(null);
+        })
+        .catch((e: unknown) => mine === seq.current && setError(say(e)));
+    },
+    [shown],
+  );
+  useEffect(() => { void load(); }, [load]);
+  const set = async (harness: string, models: string[], enabled: boolean) => {
+    if (!view) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await call({ op: "model_set", harness, models, enabled, expected: view.rev });
+      if (r.kind === "model_admin") setView(r);
+    } catch (e) {
+      setError(e instanceof ApiError && e.body.code === "conflict" ? conflictNote : say(e));
+      await load(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!shown)
+    return (
+      <div className="op-page">
+        <Gate role={role} admin={admin} what="모델" />
+      </div>
+    );
+  return (
+    <div className="op-page" data-testid="settings-models">
+      {error && (
+        <p className="op-warn" role="alert">
+          {error}
+        </p>
+      )}
+      {view === null && !error && <p className="op-muted">읽는 중…</p>}
+      {view && <Notes items={[...view.warnings.map((w) => `경고: ${w}`), ...view.notes]} testid="model-notes" />}
+      {view?.providers.map((p) => {
+        const bulk = bulkToggle(p.models);
+        return (
+          <SettingsGroup key={p.harness} title={p.harness} section={`models-${p.harness}`}>
+            <div className="settings-item" data-testid={`models-${p.harness}`}>
+              <div className="admin-line">
+                <span className="op-muted">{p.models.length}개</span>
+                {p.models.length > 0 && (
+                  <button type="button" className="btn small" disabled={busy} onClick={() => void set(p.harness, bulk.models, bulk.enabled)} data-testid={`models-${p.harness}-bulk`}>
+                    {bulk.enabled ? "모두 켜기" : "모두 끄기"}
+                  </button>
+                )}
+              </div>
+              {p.models.length === 0 ? (
+                <p className="op-muted">알린 모델이 없다.</p>
+              ) : (
+                <ul className="admin-list model-list">
+                  {p.models.map((m) => (
+                    <li key={m.id} data-model={m.id} data-enabled={m.enabled ? "on" : "off"}>
+                      <span className="admin-name">{m.name}</span>
+                      <code className="mono op-muted">{m.id}</code>
+                      {m.profiles.length > 0 && <span className="op-muted">profile {m.profiles.join(", ")}</span>}
+                      <Toggle checked={m.enabled} label={`${m.id} ${m.enabled ? "끄기" : "켜기"}`} disabled={busy} onChange={(on) => void set(p.harness, [m.id], on)} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </SettingsGroup>
+        );
+      })}
+    </div>
+  );
+}
+
 function AllowGroup({
   safety,
   scope,
@@ -454,10 +545,27 @@ function DefaultRow({ role, current, names, onPreview }: { role: "thread" | "coo
   );
 }
 
+/** 1.158 이상 host의 모델 목록(profile model 칸의 후보). 모르는 host·읽기 실패면 null */
+function useModelList(): ModelAdminView | null {
+  const [view, setView] = useState<ModelAdminView | null>(null);
+  useEffect(() => {
+    let live = true;
+    me()
+      .then((m) => (canModels(m?.front_api) ? call({ op: "model_admin" }) : null))
+      .then((r) => live && r?.kind === "model_admin" && setView(r))
+      .catch(ignoredFailure("SettingsAdminPages.tsx:useModelList", () => live && setView(null)));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return view;
+}
+
 function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow | null; onClose: () => void; onPreview: (c: ProfileChangeReq) => Promise<void> }) {
   const [d, setD] = useState<ProfileDraft>(() => draftOf(before));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const choices = enabledModels(useModelList(), d.harness);
   const put = (k: keyof ProfileDraft) => (e: { target: { value: string } }) => setD({ ...d, [k]: e.target.value });
   const efforts = effortValues(d.harness);
   const nameOk = before !== null || profileNameOk(d.name.trim());
@@ -496,7 +604,14 @@ function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow
           {hasModel(d.harness) && (
             <label className="op-field">
               <span>model(비우면 harness 기본)</span>
-              <input value={d.model} onChange={put("model")} disabled={busy} data-testid="profile-model" />
+              <input value={d.model} onChange={put("model")} disabled={busy} data-testid="profile-model" list="profile-model-choices" />
+              <datalist id="profile-model-choices">
+                {choices.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </datalist>
             </label>
           )}
           {efforts.length > 0 && (

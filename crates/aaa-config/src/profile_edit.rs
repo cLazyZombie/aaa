@@ -184,6 +184,7 @@ pub fn apply_in(text: &str, change: &ProfileChange) -> Result<(String, String), 
     let message = match change {
         ProfileChange::Add { name, profile } => {
             validate_profile(name, profile)?;
+            crate::models::check_profile_model(&crate::models::models_of(text)?, &profile.harness, &profile.model)?;
             if current.contains_key(name) {
                 return Err(format!("profile `{name}`가 이미 있다: `aaa profile edit {name}`로 고친다"));
             }
@@ -233,6 +234,10 @@ pub fn apply_in(text: &str, change: &ProfileChange) -> Result<(String, String), 
                 p.args = a.clone();
             }
             validate_profile(name, &p)?;
+            // 끈 모델은 model을 새로 정할 때만 막는다: 이미 끈 모델을 쓰는 profile의 설명·인자는 고칠 수 있다
+            if model.is_some() || harness.is_some() {
+                crate::models::check_profile_model(&crate::models::models_of(text)?, &p.harness, &p.model)?;
+            }
             let t = doc["profiles"][name.as_str()]
                 .as_table_mut()
                 .ok_or_else(|| format!("[profiles.{name}]가 표가 아니다"))?;

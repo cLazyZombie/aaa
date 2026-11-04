@@ -1317,7 +1317,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "machine_setup_start", target: string, } | { "op": "machine_setup_trust", job: string, host_key_sha256: string, } | { "op": "machine_setup_choose", job: string, os: string, arch: string, } | { "op": "machine_setup_cancel", job: string, } | { "op": "machine_setup_plan", job: string, settings: MachineSetupSettings, } | { "op": "machine_setup_apply", job: string, plan_sha256: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "model_admin" } | { "op": "model_set", harness: string, models: Array<string>, enabled: boolean, expected: string, } | { "op": "enroll_pending" } | { "op": "machine_setup_start", target: string, } | { "op": "machine_setup_trust", job: string, host_key_sha256: string, } | { "op": "machine_setup_choose", job: string, os: string, arch: string, } | { "op": "machine_setup_cancel", job: string, } | { "op": "machine_setup_plan", job: string, settings: MachineSetupSettings, } | { "op": "machine_setup_apply", job: string, plan_sha256: string,
 /**
  * FRONT_API 1.112. 사람의 웹 확인 창에서만 일회 전달한다. CLI·세션·저장·응답 금지.
  */
@@ -1633,7 +1633,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "workspace_access" } & WorkspaceAccessView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "unpark_preview" } & UnparkPreview | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "workspace_access" } & WorkspaceAccessView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "model_admin" } & ModelAdminView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "unpark_preview" } & UnparkPreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -2724,6 +2724,36 @@ custom: boolean,
 launch: Array<string>, };
 
 export type ProfileAdminView = { profiles: Array<ProfileAdminRow>, rev: string, };
+
+export type ModelRowView = {
+/**
+ * harness에 주는 ID(Codex slug, Claude 별칭·ID)
+ */
+id: string,
+/**
+ * 보이는 이름(모르면 ID)
+ */
+name: string, enabled: boolean,
+/**
+ * 이 model을 쓰는 profile
+ */
+profiles: Array<string>, };
+
+export type ProviderModelsView = { harness: string, models: Array<ModelRowView>, };
+
+export type ModelAdminView = { providers: Array<ProviderModelsView>,
+/**
+ * 목록을 알리지 못한 머신 등
+ */
+warnings: Array<string>,
+/**
+ * host.toml 판(sha256). 바꿀 때 돌려준다
+ */
+rev: string,
+/**
+ * 바꾼 뒤 알림. 읽기에는 없다
+ */
+notes: Array<string>, };
 
 export type ProfileChangeReq = { "change": "add", name: string, harness: string, model: string, effort: string, description: string, args: Array<string>, } | { "change": "edit", name: string, harness: string | null, model: string | null, effort: string | null, description: string | null,
 /**

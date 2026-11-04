@@ -6,6 +6,8 @@
 //! - 웹은 임의 명령을 심지 못한다(사용자 답 1A·2A): custom profile은 만들거나 고치거나 지우지 않고, safety는 yolo·start_threads·
 //!   trust_screens·coordinator_deploy만 바꾼다. host.toml 글과 env 값은 웹에 보내지 않는다(env는 이름만).
 //! - 작업 root 전환은 절대 경로만 받고, agent가 다시 점검한 뒤 다음 시작 설정에 저장한다(답 3A). hook은 인자 없는 고정 작업이다(4A).
+//! - provider별 모델 켜기·끄기([`models`], t-1509)는 host.toml `[models.<harness>]`만 고친다. 끈 모델은 profile model 칸에서만
+//!   막는다(사용자 답 q-2643 2B).
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -587,6 +589,8 @@ fn save_error(e: file_rev::SaveError<ErrorBody>) -> ErrorBody {
         file_rev::SaveError::Io(e) => internal(format!("host.toml: {e}")),
     }
 }
+
+mod models;
 
 #[cfg(test)]
 mod tests;

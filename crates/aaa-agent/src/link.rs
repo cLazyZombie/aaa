@@ -207,6 +207,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             // 웹 설정 관리(관리 GUI W5c): 작업 root 보기·점검·전환, Codex hook 상태·설치·제거
             "work_root.manage.v1".into(),
             "hook.manage.v1".into(),
+            // 설정 「모델」: 이 머신 harness가 아는 모델 목록(t-1509)
+            "model_catalog.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

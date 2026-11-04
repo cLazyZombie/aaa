@@ -63,3 +63,9 @@
 .setup-review { display: flex; flex-direction: column; gap: 6px; border-left: 3px solid var(--primary); padding-left: 8px; }
 .setup-changes { margin: 0; padding-left: 18px; }
 .setup-changes li { overflow-wrap: anywhere; }
+
+/* 설정 「모델」: 켜기 스위치는 줄 오른쪽 끝(참고 t3 code Models) */
+.model-list .settings-toggle {
+  margin-left: auto;
+  flex-shrink: 0;
+}

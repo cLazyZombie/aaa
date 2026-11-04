@@ -1,7 +1,7 @@
 // 설정은 오른쪽 본문을 채운다. 좁은 본문에서는 목록 → 쪽, 뒤로는 한 단계씩 돌아간다.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Rocket, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Boxes, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Rocket, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, MachineView, ProviderUsage, PublishState } from "./gen/proto";
 import { call } from "./api";
@@ -10,7 +10,7 @@ import { DevicesPanel } from "./DevicesPanel";
 import { ReposPage, ThisAaaPage } from "./ProjectSettingsPages";
 import { AccountsPage } from "./AccountsPage";
 import { MachinesPage, PublishControls } from "./AdminPages";
-import { ProfilesPage, SafetyPage } from "./SettingsAdminPages";
+import { ModelsPage, ProfilesPage, SafetyPage } from "./SettingsAdminPages";
 import { DeployPage } from "./DeployPage";
 import { PhonePanel, phonePlan } from "./PhonePanel";
 import { isLoopbackHost } from "./herdr/phone";
@@ -761,7 +761,7 @@ function ShortcutsPage() {
   );
 }
 
-type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "safety" | "profiles" | "shortcuts" | "devices" | "machines" | "deploy" | "project" | "repos";
+type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "safety" | "profiles" | "models" | "shortcuts" | "devices" | "machines" | "deploy" | "project" | "repos";
 
 /** 목록에 보이는 차례(참고 PAGES 198~210줄 가운데 aaa에 있는 쪽) */
 export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string }[] = [
@@ -773,6 +773,7 @@ export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string
   { id: "accounts", icon: KeyRound, label: "계정" },
   { id: "safety", icon: ShieldCheck, label: "안전" },
   { id: "profiles", icon: SlidersHorizontal, label: "profile" },
+  { id: "models", icon: Boxes, label: "모델" },
   { id: "shortcuts", icon: Keyboard, label: "단축키" },
   { id: "devices", icon: Smartphone, label: "폰 및 기기" },
   { id: "machines", icon: Server, label: "머신" },
@@ -946,6 +947,8 @@ export function SettingsDialog({
         return <SafetyPage role={role} />;
       case "profiles":
         return <ProfilesPage role={role} />;
+      case "models":
+        return <ModelsPage role={role} />;
       case "shortcuts":
         return <ShortcutsPage />;
       case "devices":

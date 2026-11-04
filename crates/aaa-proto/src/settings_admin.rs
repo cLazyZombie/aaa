@@ -1,5 +1,6 @@
 //! 웹 설정 관리(관리 GUI W5c, plan §8.357): profile·safety 읽기·편집(host가 host.toml을 `toml_edit`로 고친다), 머신마다 작업
-//! root 보기·점검·전환(agent work_root.manage.v1), Codex hook 연동 상태·설치·제거(agent hook.manage.v1).
+//! root 보기·점검·전환(agent work_root.manage.v1), Codex hook 연동 상태·설치·제거(agent hook.manage.v1), provider별 모델 켜기·끄기
+//! (t-1509, agent model_catalog.v1).
 //! 웹 조작 기기는 임의 명령을 심지 못한다(사용자 답 1A·2A): custom profile의 `command`·`env`는 이 요청에 칸이 없고, safety의
 //! 명령·인자 목록(`*_agent_args`, `routine_commands`)은 읽기만 한다. host.toml 글은 웹에 보내지 않는다(env 값이 들어 있다).
 use serde::{Deserialize, Serialize};
@@ -181,4 +182,44 @@ pub struct HookView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub backups: Option<u32>,
+}
+
+/// 모델 한 줄(설정 「모델」)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ModelRowView {
+    /// harness에 주는 ID(Codex slug, Claude 별칭·ID)
+    pub id: String,
+    /// 보이는 이름(모르면 ID)
+    pub name: String,
+    pub enabled: bool,
+    /// 이 model을 쓰는 profile
+    pub profiles: Vec<String>,
+}
+
+/// harness 하나의 모델 목록
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProviderModelsView {
+    pub harness: String,
+    pub models: Vec<ModelRowView>,
+}
+
+/// `model_admin`·`model_set`의 답
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ModelAdminView {
+    pub providers: Vec<ProviderModelsView>,
+    /// 목록을 알리지 못한 머신 등
+    pub warnings: Vec<String>,
+    /// host.toml 판(sha256). 바꿀 때 돌려준다
+    pub rev: String,
+    /// 바꾼 뒤 알림. 읽기에는 없다
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// agent가 그 머신 harness 목록에서 읽은 모델 하나(model_catalog.v1)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogModel {
+    pub harness: String,
+    pub id: String,
+    pub name: String,
 }
