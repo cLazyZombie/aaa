@@ -424,7 +424,7 @@ export function ModelsPage({ role }: { role: DeviceRole }) {
               {p.models.length === 0 ? (
                 <p className="op-muted">알린 모델이 없다.</p>
               ) : (
-                <ul className="admin-list">
+                <ul className="admin-list model-list">
                   {p.models.map((m) => (
                     <li key={m.id} data-model={m.id} data-enabled={m.enabled ? "on" : "off"}>
                       <span className="admin-name">{m.name}</span>
