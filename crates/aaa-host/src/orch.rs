@@ -117,6 +117,12 @@ pub(crate) struct ThreadRec {
     /// 같은 보고의 경고 전달 기록. 재기동 뒤에도 중복 경고를 만들지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question_warning_sent: Option<String>,
+    /// 근거(그림·영상·보고서 링크)가 질문 칸 밖에만 있다는 진단. 형식 경고와 달리 답 연결·닫힘 판단에 쓰지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_evidence: Option<aaa_proto::QuestionEvidenceGap>,
+    /// 사람을 기다리는 보고가 가리키는데 host 사본에 없는 library 파일(`library/` 뒤 경로). library만 새로 받아도 다시 본다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub question_missing: Vec<String>,
     /// 그 질문에 받은 답(answer.rs)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question_answer: Option<aaa_proto::QuestionAnswerView>,
@@ -250,6 +256,8 @@ impl ThreadRec {
             question_answer: None,
             question_warning: None,
             question_warning_sent: None,
+            question_evidence: None,
+            question_missing: Vec::new(),
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,
@@ -1087,7 +1095,7 @@ impl Host {
                             r.questions.clone()
                         });
                     Box::new(aaa_proto::ThreadQuestions {
-                        format_warning: r.question_warning.clone(),
+                        format_warning: crate::report_mark::card_warning(r),
                         review: self.default_review_for(r),
                         draft: self.question_draft(&r.project, &items),
                         files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
@@ -1215,6 +1223,8 @@ impl Host {
             if !query.details {
                 r.questions.clear();
                 r.question_warning = None;
+                r.question_evidence = None;
+                r.question_missing.clear();
             }
             let view = self.thread_view(&r);
             let size = serde_json::to_vec(&view).map_err(internal)?.len() + 1;
@@ -2477,9 +2487,7 @@ impl Host {
             return;
         };
         let (Some(_), Ok(conn)) = (rec.work_dir.as_ref(), self.live_conn(&rec.machine_id)) else { return };
-        if let Some(warning) = &rec.question_warning {
-            self.warn_question_format(&rec, warning).await;
-        }
+        self.warn_question_format(&rec).await;
         if rec.status != ThreadStatus::Open {
             return;
         }
@@ -2791,7 +2799,11 @@ impl Host {
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
                 // library가 앞 사본과 달라졌을 때만 알린다
                 if rec.report_hash.as_ref() == Some(&hash) {
+                    let missing = self.report_missing_files(project, id, &String::from_utf8_lossy(&report), &failures);
                     let rec = self.update_rec(project, id, |r| {
+                        if let Some(missing) = missing {
+                            r.question_missing = missing;
+                        }
                         r.report_copy_hash = Some(hex::encode(sha2::Sha256::digest(&report)));
                         r.report_stage = crate::report_mark::stage(&String::from_utf8_lossy(&report));
                         crate::followups::capture(r, &hash, &String::from_utf8_lossy(&report));
@@ -2816,6 +2828,8 @@ impl Host {
                 let text = String::from_utf8_lossy(&report);
                 let next = next_lines(&text);
                 let question_warning = crate::report_mark::question_warning(&text);
+                let question_evidence = crate::report_mark::question_evidence(&text);
+                let question_missing = self.report_missing_files(project, id, &text, &failures).unwrap_or_default();
                 let questions = crate::report_mark::questions(&text);
                 let repeated = if question_warning.is_none() && !crate::report_mark::default_review(&text) {
                     self.repeated_answer(&rec, &questions)?
@@ -2841,6 +2855,8 @@ impl Host {
                     r.next = next;
                     r.questions = questions;
                     r.question_warning = question_warning;
+                    r.question_evidence = question_evidence;
+                    r.question_missing = question_missing;
                     r.question_warning_sent = None;
                     r.question_answer = answer;
                     r.copy = Some(copy.clone());
@@ -2854,9 +2870,7 @@ impl Host {
                 if !repeated_ids.is_empty() {
                     self.warn_answered_questions(&rec, &repeated_ids).await;
                 }
-                if let Some(warning) = &rec.question_warning {
-                    self.warn_question_format(&rec, warning).await;
-                }
+                self.warn_question_format(&rec).await;
                 self.db
                     .question_clear_drafts(project, "thread", id, previous.report_hash.as_deref().unwrap_or_default())
                     .map_err(internal)?;
@@ -3381,6 +3395,8 @@ mod tests {
             question_answer: None,
             question_warning: None,
             question_warning_sent: None,
+            question_evidence: None,
+            question_missing: Vec::new(),
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,

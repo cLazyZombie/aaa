@@ -422,6 +422,69 @@ async fn question_format_warning_allows_answers_to_reach_delivery_and_notifies_o
     }
 }
 
+/// 그림을 Questions 위에만 둔 보고: 카드는 답할 수 있게 두고, 보고서 r-ID와 근거 위치 경고를 싣고,
+/// thread·coordinator에는 고칠 방법을 한 번 알린다. 형식 경고가 아니므로 답 연결 판단은 바꾸지 않는다.
+#[tokio::test]
+async fn evidence_only_above_questions_warns_once_and_keeps_the_report_link() {
+    let report = "[결정 필요] 질문 1개: 시안\n\n![A](library/a.png)\n![B](library/b.png)\n\n## Questions\n### 1. 어느 안\n- A 첫 안 (추천)\n- B 둘째 안\n";
+    let lab = Lab::with_report(0, b"", "unused", b"", report);
+    lab.h.collect_if_changed("p", "t-0001").await;
+    let view = lab.h.thread_show("p", "t-0001").unwrap();
+    assert!(view.report_id.as_deref().is_some_and(|id| id.starts_with("r-")), "카드 머리의 보고서 열기: {view:?}");
+    let q = view.questions.unwrap();
+    assert_eq!(q.items.len(), 1);
+    assert_eq!(
+        q.format_warning.as_deref(),
+        // 실험실 library에는 그림 파일이 없어 빠진 파일 줄도 같은 카드 경고에 줄로 더해진다.
+        Some(
+            "근거 확인 필요: 그림 2개가 질문 칸 밖에만 있다. 위 「보고서 열기」에서 본다.\n\
+             파일 확인 필요: 본문이 가리키는 library 파일 2개가 이 보고 판에 없다(library/a.png 외 1개)."
+        )
+    );
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    assert!(rec.question_warning.is_none(), "근거 위치는 형식 경고가 아니다");
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    let items = lab.h.inbox("p", true, true).unwrap().items;
+    let warnings: Vec<_> = items.iter().filter(|i| i.item_kind == "question-format-warning").collect();
+    assert_eq!(warnings.len(), 1, "{items:?}");
+    assert_eq!(warnings[0].event, "질문 근거 위치 확인 필요");
+    assert!(warnings[0].body.contains("host 사본에 없다(library/a.png, library/b.png)"), "{}", warnings[0].body);
+    assert!(warnings[0].body.contains("그림 2개(library/a.png, library/b.png)"), "{}", warnings[0].body);
+    assert!(warnings[0].body.contains("`### N.` 아래(선택지 위)로 옮긴다"), "{}", warnings[0].body);
+    assert!(!warnings[0].body.contains("선택지는 A부터"), "{}", warnings[0].body);
+    lab.close().await;
+}
+
+/// 질문이 그 판 host 사본에 없는 library 파일을 가리키면(이전 판 파일 등) 카드에 빠진 경로를 보이고 thread에 한 번 알린다.
+#[tokio::test]
+async fn missing_library_files_warn_with_the_paths() {
+    let report = "[결정 필요] 질문 1개: 시안\n\n## Questions\n### 1. 어느 안\n![지난 판](library/map-colors/single-day.png)\n[보고서](library/gone.html)\n\n- A 첫 안 (추천)\n- B 둘째 안\n";
+    let lab = Lab::with_report(0, b"", "unused", b"", report);
+    lab.h.collect_if_changed("p", "t-0001").await;
+    let q = lab.h.thread_show("p", "t-0001").unwrap().questions.unwrap();
+    assert_eq!(
+        q.format_warning.as_deref(),
+        Some(
+            "파일 확인 필요: 본문이 가리키는 library 파일 2개가 이 보고 판에 없다(library/map-colors/single-day.png 외 1개)."
+        )
+    );
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    assert!(rec.question_warning.is_none() && rec.question_evidence.is_none());
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    let items = lab.h.inbox("p", true, true).unwrap().items;
+    let warnings: Vec<_> = items.iter().filter(|i| i.item_kind == "question-format-warning").collect();
+    assert_eq!(warnings.len(), 1, "{items:?}");
+    assert_eq!(warnings[0].event, "보고가 가리키는 파일 없음");
+    assert!(
+        warnings[0].body.contains(
+            "library 파일 2개가 이 보고 판의 host 사본에 없다(library/map-colors/single-day.png, library/gone.html)"
+        ),
+        "{}",
+        warnings[0].body
+    );
+    lab.close().await;
+}
+
 /// 보고 밖의 진행 글이 바뀌거나 질문 일부만 남아도 답을 되묻지 않는다.
 /// 새 질문이 섞이면 그 질문만 원문 번호로 열어 답 전달 번호를 바꾸지 않는다.
 #[tokio::test]

@@ -81,12 +81,61 @@ pub(crate) fn question_warning(report: &str) -> Option<String> {
     needs_user(report).then(|| aaa_proto::parse_report_questions(report).warning).flatten()
 }
 
+/// 근거가 질문 칸 밖에만 있는가. 사람을 기다리는 보고가 직접 쓴 Questions만 본다(host 기본 검수 카드는 제외).
+pub(crate) fn question_evidence(report: &str) -> Option<aaa_proto::QuestionEvidenceGap> {
+    (needs_user(report) && has_questions(report)).then(|| aaa_proto::question_evidence_gap(report)).flatten()
+}
+
+/// 카드에 보일 경고: 형식 경고·근거 위치·빠진 파일을 줄로 나눈다. 근거 줄은 사용자가 어디서 볼지만 적는다.
+pub(crate) fn card_warning(r: &ThreadRec) -> Option<String> {
+    let evidence = r
+        .question_evidence
+        .as_ref()
+        .map(|g| format!("근거 확인 필요: {}가 질문 칸 밖에만 있다. 위 「보고서 열기」에서 본다.", g.what));
+    let missing = (!r.question_missing.is_empty()).then(|| {
+        let first = r.question_missing.first().map(|p| format!("library/{p}")).unwrap_or_default();
+        let more = r.question_missing.len() - 1;
+        format!(
+            "파일 확인 필요: 본문이 가리키는 library 파일 {}개가 이 보고 판에 없다({first}{}).",
+            r.question_missing.len(),
+            if more > 0 { format!(" 외 {more}개") } else { String::new() }
+        )
+    });
+    let lines: Vec<_> = r.question_warning.iter().cloned().chain(evidence).chain(missing).collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
 impl Host {
     /// 보고 hash별 한 번: coordinator 알림과 thread 작업 폴더 inbox에 같은 자료를 남긴다.
-    pub(crate) async fn warn_question_format(self: &Arc<Self>, rec: &ThreadRec, warning: &str) {
-        if rec.question_warning_sent == rec.report_hash {
+    /// 형식 경고·근거 위치·빠진 파일을 한 알림으로 묶고, 각각 고칠 방법을 적는다.
+    pub(crate) async fn warn_question_format(self: &Arc<Self>, rec: &ThreadRec) {
+        let mut fixes = Vec::new();
+        if let Some(w) = &rec.question_warning {
+            fixes.push(format!(
+                "형식 오류: {w}\n보고의 Questions를 고쳐 다시 쓴다. 선택지는 A부터 순서대로 쓰고 추천은 (추천)으로만 표시한다."
+            ));
+        }
+        if let Some(g) = &rec.question_evidence {
+            fixes.push(format!("{}\n보고를 고쳐 다시 쓴다.", g.message()));
+        }
+        if !rec.question_missing.is_empty() {
+            fixes.push(format!(
+                "{}\n파일을 둔 뒤 보고를 고쳐 다시 쓴다(보고 글이 그대로면 다시 회수하지 않는다).",
+                crate::asks::missing_files_message(&rec.question_missing, "이 보고 판의 host 사본")
+            ));
+        }
+        if fixes.is_empty() || rec.question_warning_sent == rec.report_hash {
             return;
         }
+        let warning = card_warning(rec).unwrap_or_default();
+        let warning = warning.as_str();
+        let (tag, title) = if rec.question_warning.is_some() {
+            ("[aaa 질문 형식 오류]", "질문 형식 확인 필요")
+        } else if rec.question_evidence.is_some() {
+            ("[aaa 질문 근거 확인]", "질문 근거 위치 확인 필요")
+        } else {
+            ("[aaa 보고 파일 확인]", "보고가 가리키는 파일 없음")
+        };
         let mut claimed = false;
         if let Err(e) = self.update_rec(&rec.project, &rec.id, |r| {
             if r.report_hash == rec.report_hash && r.question_warning_sent != rec.report_hash {
@@ -101,7 +150,8 @@ impl Host {
             return;
         }
         let mut body = format!(
-            "형식 오류: {warning}\n보고: threads/{}.md\n보고 판: {}\n보고의 Questions를 고쳐 다시 쓴다. 선택지는 A부터 순서대로 쓰고 추천은 (추천)으로만 표시한다.",
+            "{}\n보고: threads/{}.md\n보고 판: {}",
+            fixes.join("\n"),
             rec.id,
             rec.report_hash.as_deref().unwrap_or_default().chars().take(12).collect::<String>()
         );
@@ -110,7 +160,7 @@ impl Host {
                 let conn = self.live_conn(&rec.machine_id)?;
                 let data = serde_json::json!({
                     "kind": "question-format-warning", "thread": rec.id,
-                    "report_hash": rec.report_hash, "warning": warning,
+                    "report_hash": rec.report_hash, "warning": fixes.join("\n"),
                     "note": "host가 남긴 형식 진단 자료이며 사용자 답이 아니다"
                 });
                 crate::automation_thread::write_inputs(
@@ -134,7 +184,7 @@ impl Host {
         if let Err(e) = Box::pin(self.thread_message(
             &rec.project,
             &rec.id,
-            format!("[aaa 질문 형식 오류]\n{body}"),
+            format!("{tag}\n{body}"),
             aaa_proto::MessageMode::Queue,
             "host",
         ))
@@ -147,10 +197,24 @@ impl Host {
             &rec.project,
             "question-format-warning",
             &rec.id,
-            "질문 형식 확인 필요",
-            &format!("{}: {warning}", rec.id),
+            title,
+            &format!("{}: {}", rec.id, warning.replace('\n', " ")),
             &body,
         );
+    }
+
+    /// 사람을 기다리는 보고가 가리키는데 host 사본에 없는 library 파일. 사본 일부가 실패한 회수는 판단하지 않는다(None: 기존 값 유지).
+    pub(crate) fn report_missing_files(
+        &self,
+        project: &str,
+        id: &str,
+        report: &str,
+        failures: &[String],
+    ) -> Option<Vec<String>> {
+        if !needs_user(report) {
+            return Some(Vec::new());
+        }
+        failures.is_empty().then(|| self.missing_thread_library(project, id, report))
     }
 
     pub(crate) async fn warn_answered_questions(self: &Arc<Self>, rec: &ThreadRec, ids: &[String]) {
@@ -217,10 +281,14 @@ impl Host {
                     )
                     .map_err(crate::orch::internal)?;
             }
+            let evidence = question_evidence(&report);
+            let missing = self.missing_thread_library(&rec.project, &rec.id, &report);
             self.update_rec(&rec.project, &rec.id, |r| {
                 r.questions = items;
                 r.question_answer = answer;
                 r.question_warning = warning;
+                r.question_evidence = evidence;
+                r.question_missing = missing;
             })?;
         }
         Ok(())
@@ -326,6 +394,12 @@ mod tests {
             let id = rec.questions[0].id.clone();
             rec.question_warning = Some("형식 확인 필요: 선택지 3개 중 2개를 읽었다".into());
             h.db.thread_import("p", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+            // 원문이 가리키는 그림은 host 사본에 있다(빠진 파일 경고는 이 시험의 대상이 아니다).
+            let lib = h.project_dir("p").unwrap().join("library/t-0001");
+            for rel in aaa_proto::library_paths(&report) {
+                std::fs::create_dir_all(lib.join(&rel).parent().unwrap()).unwrap();
+                std::fs::write(lib.join(&rel), b"png").unwrap();
+            }
             std::fs::write(h.project_dir("p").unwrap().join("threads/t-0001.md"), report).unwrap();
             h.backfill_review_questions().unwrap();
             let q = h.thread_show("p", &rec.id).unwrap().questions.unwrap();
