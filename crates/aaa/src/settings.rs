@@ -31,6 +31,66 @@ pub struct ProfileFields {
 }
 
 #[derive(Subcommand)]
+pub enum ModelCmd {
+    /// provider별 모델 목록과 켜짐(연결된 머신이 알린 목록, 끈 모델, profile이 쓰는 model)
+    List,
+    /// host 머신의 host.toml에서 모델을 켠다(사람이 aaa 세션 밖 터미널에서만)
+    On {
+        #[arg(value_parser = ["claude", "codex"])]
+        harness: String,
+        #[arg(required = true)]
+        models: Vec<String>,
+    },
+    /// host 머신의 host.toml에서 모델을 끈다: 끈 모델은 profile model 칸에 쓸 수 없다(사람이 터미널에서만)
+    Off {
+        #[arg(value_parser = ["claude", "codex"])]
+        harness: String,
+        #[arg(required = true)]
+        models: Vec<String>,
+    },
+}
+
+pub fn model_cmd(json: bool, cmd: ModelCmd) -> Result<ExitCode> {
+    let (harness, models, enabled) = match cmd {
+        ModelCmd::List => return crate::cli::front_print(json, crate::cli::front_call(FrontRequest::ModelAdmin)?),
+        ModelCmd::On { harness, models } => (harness, models, true),
+        ModelCmd::Off { harness, models } => (harness, models, false),
+    };
+    let file = config_dir().join("host.toml");
+    if !file.is_file() && !aaa_config::paths::state_dir().join("host/host.db").is_file() {
+        bail!("모델 켜기·끄기는 host 머신 터미널에서 한다(host.toml 없음). 확인은 `aaa model list`로 한다");
+    }
+    let text = std::fs::read_to_string(&file)
+        .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
+        .unwrap_or_default();
+    // 값이 틀렸으면 사람인지 묻기 전에 알린다
+    aaa_config::models::set_in(&text, &harness, &models, enabled).map_err(|e| anyhow::anyhow!(e))?;
+    let word = if enabled { "on" } else { "off" };
+    crate::person::require(&format!("`aaa model {word} {harness}`(모델 켜기·끄기)"))?;
+    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    let (edited, changed) =
+        aaa_config::models::set_in(&text, &harness, &models, enabled).map_err(|e| anyhow::anyhow!(e))?;
+    if !changed.is_empty() {
+        profile_edit::write_atomic(&file, edited.as_bytes())
+            .map_err(|e| anyhow::anyhow!("{}에 쓰지 못했다: {e}", file.display()))?;
+    }
+    let message = if changed.is_empty() {
+        "바뀐 것이 없다".to_string()
+    } else {
+        format!("{harness} 모델 {}를 {}", changed.join(", "), if enabled { "켰다" } else { "껐다" })
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "message": message, "changed": changed, "file": file.display().to_string() })
+        );
+    } else {
+        println!("{message}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Subcommand)]
 pub enum ProfileCmd {
     /// host의 profile(host.toml과 설치·로그인한 기본 profile claude·codex). --project면 프로젝트 기본값·허용 목록도
     /// (이름을 생략하면 이 host의 프로젝트, plan §8.288)

@@ -7,6 +7,7 @@
 //!   key만 고친다(주석·차례는 그대로).
 
 pub mod install;
+pub mod models;
 pub mod paths;
 pub mod profile_edit;
 pub mod safety;
@@ -85,6 +86,8 @@ pub struct HostConfig {
     pub session: SessionSection,
     /// profile 정의의 정본(참고 herdr-projects config.toml).
     pub profiles: std::collections::BTreeMap<String, Profile>,
+    /// `[models.<harness>]` 끈 모델(t-1509). profile model 칸만 막는다([`models`])
+    pub models: std::collections::BTreeMap<String, models::ProviderModels>,
     /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.163)와 `[safety]` 표
     /// 하나의 값([`safety::ONE_TABLE`] 열쇠, plan §8.288). host는 쓸 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때
     /// 값이 맞는지만 본다.
@@ -299,6 +302,7 @@ impl Default for HostConfig {
             post: PostSection::default(),
             session: SessionSection::default(),
             profiles: Default::default(),
+            models: Default::default(),
             safety: Default::default(),
             defaults: DefaultsSection::default(),
             update: UpdateSection::default(),

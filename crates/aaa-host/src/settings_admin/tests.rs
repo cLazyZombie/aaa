@@ -24,6 +24,12 @@ impl Lab {
             other => panic!("{other:?}"),
         }
     }
+    async fn models(&self) -> aaa_proto::ModelAdminView {
+        match self.call(FrontRequest::ModelAdmin).await.unwrap() {
+            FrontResponse::ModelAdmin(v) => v,
+            other => panic!("{other:?}"),
+        }
+    }
     async fn profiles(&self) -> ProfileAdminView {
         match self.call(FrontRequest::ProfileAdmin).await.unwrap() {
             FrontResponse::ProfileAdmin(v) => v,
@@ -218,12 +224,18 @@ async fn settings_changes_refuse_session_agents_and_reads_refuse_readers() {
         FrontRequest::WorkRootCheck { machine: "mac-a".into(), path: None, mount: None },
         FrontRequest::WorkRootSet { machine: "mac-a".into(), path: "/w".into(), mount: None },
         FrontRequest::HookSet { machine: "mac-a".into(), install: true },
+        FrontRequest::ModelSet {
+            harness: "codex".into(),
+            models: vec!["m".into()],
+            enabled: false,
+            expected: rev.clone(),
+        },
     ];
     for req in writes {
         for actor in ["local:cli@demo:t-0001", "worker:t-0001", "detached:x"] {
             let e = lab.h.call(DeviceRole::Local, actor, req.clone()).await.unwrap_err();
             assert_eq!(e.code, ErrorCode::Forbidden, "{actor} {req:?}");
-            assert!(e.message.contains("safety·profile·작업 root·hook"), "{}", e.message);
+            assert!(e.message.contains("safety·profile·모델·작업 root·hook"), "{}", e.message);
         }
     }
     assert_eq!(lab.host_toml(), "schema = 1\n");
@@ -232,6 +244,7 @@ async fn settings_changes_refuse_session_agents_and_reads_refuse_readers() {
         FrontRequest::ProfileAdmin,
         FrontRequest::WorkRootShow { machine: "mac-a".into() },
         FrontRequest::HookStatus { machine: "mac-a".into() },
+        FrontRequest::ModelAdmin,
     ] {
         let e = lab.h.call(DeviceRole::Reader, "device:r", req.clone()).await.unwrap_err();
         assert!(e.message.contains("보기 권한"), "{req:?}: {}", e.message);
@@ -417,4 +430,81 @@ async fn a_host_without_a_project_still_edits_global_safety_and_profiles() {
     // 프로젝트 표는 프로젝트가 있어야 한다
     let e = call(FrontRequest::SafetyShow { project: String::new(), scope: SettingsScope::Project }).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::NotFound, "{}", e.message);
+}
+
+/// 설정 「모델」(t-1509): 끈 모델은 목록에 남고, profile model 칸에서만 막힌다. 본 판 위에서만 바꾼다
+#[tokio::test]
+async fn disabled_models_stay_listed_and_block_only_profile_model() {
+    let lab = lab("schema = 1 # 내 주석\n\n[profiles.review]\nagent = \"codex\"\nmodel = \"gpt-old\"\n");
+    let v = lab.models().await;
+    let codex = v.providers.iter().find(|p| p.harness == "codex").unwrap();
+    assert_eq!(codex.models.iter().map(|m| (m.id.as_str(), m.enabled)).collect::<Vec<_>>(), vec![("gpt-old", true)]);
+    assert_eq!(codex.models[0].profiles, vec!["review".to_string()]);
+    let claude = v.providers.iter().find(|p| p.harness == "claude").unwrap();
+    assert_eq!(
+        claude.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        vec!["fable", "opus", "sonnet", "haiku"]
+    );
+
+    let set = |models: &[&str], enabled: bool, expected: &str| FrontRequest::ModelSet {
+        harness: "codex".into(),
+        models: models.iter().map(|s| s.to_string()).collect(),
+        enabled,
+        expected: expected.into(),
+    };
+    let FrontResponse::ModelAdmin(off) = lab.call(set(&["gpt-old", "gpt-new"], false, &v.rev)).await.unwrap() else {
+        panic!()
+    };
+    assert!(lab.host_toml().contains("# 내 주석"));
+    assert!(off.warnings.iter().any(|w| w.contains("review")), "{:?}", off.warnings);
+    let codex = off.providers.iter().find(|p| p.harness == "codex").unwrap();
+    assert_eq!(
+        codex.models.iter().map(|m| (m.id.as_str(), m.enabled)).collect::<Vec<_>>(),
+        vec![("gpt-old", false), ("gpt-new", false)]
+    );
+    // 옛 판으로는 쓰지 않는다
+    let e = lab.call(set(&["gpt-old"], true, &v.rev)).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    // 다른 harness는 받지 않는다
+    let e = lab
+        .call(FrontRequest::ModelSet {
+            harness: "shell".into(),
+            models: vec!["x".into()],
+            enabled: false,
+            expected: off.rev.clone(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::BadRequest);
+
+    // 끈 모델을 profile에 쓰지 못한다. 이미 쓰는 profile의 다른 칸은 고친다
+    let apply = |change: ProfileChangeReq, expected: String| FrontRequest::ProfileApply {
+        project: "demo".into(),
+        change,
+        expected,
+    };
+    let rev = lab.profiles().await.rev;
+    let add = ProfileChangeReq::Add {
+        name: "fresh".into(),
+        harness: "codex".into(),
+        model: "gpt-new".into(),
+        effort: String::new(),
+        description: String::new(),
+        args: Vec::new(),
+    };
+    let e = lab.call(apply(add, rev.clone())).await.unwrap_err();
+    assert!(e.message.contains("꺼져 있다"), "{}", e.message);
+    let edit = ProfileChangeReq::Edit {
+        name: "review".into(),
+        harness: None,
+        model: None,
+        effort: None,
+        description: Some("검토".into()),
+        args: None,
+    };
+    lab.call(apply(edit, rev)).await.unwrap();
+
+    let rev = lab.models().await.rev;
+    lab.call(set(&["gpt-new"], true, &rev)).await.unwrap();
+    assert!(lab.host_toml().contains("disabled = [\"gpt-old\"]"), "{}", lab.host_toml());
 }

@@ -425,6 +425,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: crate::settings::ProfileCmd,
     },
+    /// provider별 모델 켜기·끄기(host.toml [models.*]). 끈 모델은 profile model 칸에 쓸 수 없다. 바꾸기는 사람만
+    Model {
+        #[command(subcommand)]
+        cmd: crate::settings::ModelCmd,
+    },
     /// yolo와 사람만 바꾸는 safety 설정(host.toml [safety.*], herdr-projects `safety`)
     Safety {
         #[command(subcommand)]
@@ -2650,6 +2655,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             anyhow::bail!("없어짐: 자동화로 바꿨다(aaa automation convert)")
         }
         Cmd::Profile { cmd } => crate::settings::profile_cmd(json, cmd),
+        Cmd::Model { cmd } => crate::settings::model_cmd(json, cmd),
         Cmd::Safety { cmd } => crate::settings::safety_cmd(json, cmd),
         Cmd::Thread { cmd } => front(
             json,
@@ -5797,6 +5803,22 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::WorkRootChecked(v) => {
             let _ = writeln!(s, "점검 통과: {}", v.real_path);
+        }
+        FrontResponse::ModelAdmin(v) => {
+            for p in &v.providers {
+                for m in &p.models {
+                    let users = if m.profiles.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\tprofile {}", m.profiles.join(","))
+                    };
+                    let state = if m.enabled { "on" } else { "off" };
+                    let _ = writeln!(s, "{}\t{}\t{state}\t{}{users}", p.harness, m.id, m.name);
+                }
+            }
+            for w in v.warnings.iter().chain(&v.notes) {
+                let _ = writeln!(s, "{w}");
+            }
         }
         FrontResponse::Hook(v) => {
             let _ = writeln!(s, "codex hook: {}", if v.codex_installed { "설치됨" } else { "없음" });

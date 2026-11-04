@@ -657,6 +657,8 @@ pub struct Host {
     queue_gate: tokio::sync::Mutex<()>,
     /// 파일마다의 쓰기 lock(TASKS.md 편집과 ticker의 외부 변경 감지, file_rev.rs)
     file_locks: file_rev::Locks,
+    /// 머신마다 마지막으로 알린 harness 모델 목록(설정 「모델」, t-1509). 끊긴 머신의 모델도 켜고 끌 수 있게 둔다
+    model_catalogs: Mutex<std::collections::BTreeMap<String, Vec<aaa_proto::CatalogModel>>>,
     /// ticker 묶음 셈까지 미룬 thread pane의 끝남(pane → 알림, notice.rs `turn_finished`)
     turn_ends: Mutex<HashMap<String, aaa_proto::NoticeView>>,
     /// 질문 저장과 화면 선택 창 붙이기(읽고 쓰기)를 차례로: 답한 질문을 선택 창 붙이기가 다시 열지 않는다
@@ -919,6 +921,7 @@ impl Host {
             tasks_seen: Mutex::new(HashMap::new()),
             queue_gate: tokio::sync::Mutex::new(()),
             file_locks: Default::default(),
+            model_catalogs: Default::default(),
             turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
             preferences,
@@ -1695,6 +1698,7 @@ impl Host {
                 | FrontRequest::WorkRootCheck { .. }
                 | FrontRequest::WorkRootSet { .. }
                 | FrontRequest::HookSet { .. }
+                | FrontRequest::ModelSet { .. }
                 | FrontRequest::AutoModeSet { .. }
                 | FrontRequest::AutoDecisionReview { .. }
                 | FrontRequest::AutoDecisionForget { .. }
@@ -1714,8 +1718,9 @@ impl Host {
                         | FrontRequest::WorkRootCheck { .. }
                         | FrontRequest::WorkRootSet { .. }
                         | FrontRequest::HookSet { .. }
+                        | FrontRequest::ModelSet { .. }
                 ) {
-                    "safety·profile·작업 root·hook 설정은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 바꾼다(이 연결은 aaa 세션 안에서 왔다)"
+                    "safety·profile·모델·작업 root·hook 설정은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 바꾼다(이 연결은 aaa 세션 안에서 왔다)"
                 } else {
                     "기기·머신 등록과 폐기·웹 공개 변경·보고서 키 교체·올리기는 사람이 aaa 밖 터미널이나 웹에서 한다"
                 },
@@ -2711,6 +2716,10 @@ impl Host {
             }
             FrontRequest::HookSet { machine, install } => {
                 self.codex_hook(&machine, Some(install), actor).await.map(FrontResponse::Hook)
+            }
+            FrontRequest::ModelAdmin => self.model_admin().await.map(FrontResponse::ModelAdmin),
+            FrontRequest::ModelSet { harness, models, enabled, expected } => {
+                self.model_set(&harness, &models, enabled, &expected, actor).await.map(FrontResponse::ModelAdmin)
             }
             FrontRequest::EnrollClose => {
                 self.enroll.lock().unwrap().open_until = None;

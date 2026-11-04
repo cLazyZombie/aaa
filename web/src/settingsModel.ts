@@ -1,10 +1,24 @@
 // 설정 「안전」·「profile」·머신 작업 폴더·hook의 순수 규칙(관리 GUI W5c, plan §8.357). 판정의 정본은 host다(웹이 바꾸는 safety
 // key 넷, custom profile 거부, 판 대조, 절대 경로). 화면은 고를 수 있는 것만 보인다.
 import { apiAtLeast } from "./automationModel.ts";
-import type { ProfileAdminRow, ProfileChangeReq } from "./gen/proto";
+import type { ModelAdminView, ModelRowView, ProfileAdminRow, ProfileChangeReq } from "./gen/proto";
 
 /** 웹 profile·safety·작업 root·hook 관리는 1.81 이상 host만 안다 */
 export const canSettings = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 81);
+
+/** 설정 「모델」(provider별 모델 켜기·끄기, t-1509)은 1.158 이상 host만 안다 */
+export const canModels = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 158);
+
+/** 「모두 끄기」·「모두 켜기」: 하나라도 켜져 있으면 켜진 것을 모두 끄고, 모두 꺼져 있으면 모두 켠다 */
+export function bulkToggle(rows: readonly ModelRowView[]): { enabled: boolean; models: string[] } {
+  const on = rows.filter((r) => r.enabled);
+  return on.length > 0 ? { enabled: false, models: on.map((r) => r.id) } : { enabled: true, models: rows.map((r) => r.id) };
+}
+
+/** profile model 칸의 후보: 그 harness의 켜진 모델 */
+export function enabledModels(view: ModelAdminView | null, harness: string): ModelRowView[] {
+  return view?.providers.find((p) => p.harness === harness)?.models.filter((m) => m.enabled) ?? [];
+}
 
 /** 웹이 고르는 safety 값(host `value_item`과 같다). 「기본」은 이 표의 값을 지워 아래 층을 따른다 */
 export const SAFETY_CHOICES: Record<string, readonly string[]> = {

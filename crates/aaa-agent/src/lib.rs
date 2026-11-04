@@ -27,6 +27,7 @@ pub mod image;
 pub mod integration;
 mod journal;
 pub mod link;
+mod model_catalog;
 mod page;
 mod plan;
 pub mod post;
@@ -2099,6 +2100,7 @@ impl Agent {
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
             AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
             AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,
+            AgentRequest::ModelCatalog => model_catalog::catalog().await,
         };
         if let Some(reply) = reply {
             aaa_common::diagnostic::ignored(

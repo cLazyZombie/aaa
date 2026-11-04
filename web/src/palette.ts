@@ -207,7 +207,7 @@ export function loadRecent(read: (key: string) => string | null): string[] {
   }
 }
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "safety" | "profiles" | "shortcuts" | "devices" | "machines" | "project" | "repos";
+export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "safety" | "profiles" | "models" | "shortcuts" | "devices" | "machines" | "project" | "repos";
 
 /** What the palette shows for one Settings page: its name and the words a user may look for it by. */
 export interface SettingsPageEntry {
@@ -226,6 +226,7 @@ export const SETTINGS_PAGE_ENTRIES: readonly SettingsPageEntry[] = [
   { id: "accounts", label: "계정", aliases: "계정 로그인 다시 로그인 기본 계정 메일 인증 끊김 만료 claude codex" },
   { id: "safety", label: "안전", aliases: "safety yolo 권한 건너뛰기 start_threads trust_screens 신뢰 창 배포 coordinator_deploy" },
   { id: "profiles", label: "profile", aliases: "profile 프로필 harness model effort 인자 허용 목록 기본 profile claude codex" },
+  { id: "models", label: "모델", aliases: "모델 model 켜기 끄기 모두 끄기 gpt opus sonnet haiku fable claude codex provider" },
   { id: "shortcuts", label: "단축키", aliases: "키보드 키 단축키 바인딩" },
   { id: "devices", label: "폰 및 기기", aliases: "휴대폰 설치 화면 켜짐 유지 앱 웹 공개 tailscale 공개 끄기" },
   { id: "machines", label: "머신", aliases: "머신 등록 승인 폐기 agent enroll 확인 코드 작업 폴더 work root hook codex 연동" },
