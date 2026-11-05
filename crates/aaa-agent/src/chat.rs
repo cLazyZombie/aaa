@@ -396,19 +396,24 @@ fn codex_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
 /// `queue-operation enqueue`로 적고, 흡수하면 같은 글의 `remove`(absorbed_mid_turn)와 `queued_command`를, 한가할 때 바로 꺼내면
 /// 글 없는 `dequeue`(맨 앞)를 적는다. 그래서 끝 1MiB를 앞에서부터 읽어 대기열을 다시 세우고 남은 사람 글만 낸다(배경 작업
 /// 알림·끼운 글은 뺀다). 그 앞에서 들어가 아직 남은 글은 놓친다: 웹은 보낸 글을 따로 기다린다.
-fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
+fn claude_pending(path: &Path, history: &str) -> std::io::Result<Vec<ChatMessage>> {
     let mut f = std::fs::File::open(path)?;
     let start = f.metadata()?.len().saturating_sub(CHUNK);
     f.seek(SeekFrom::Start(start))?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
     let mut lines = buf.split(|b| *b == b'\n');
-    if start > 0 {
-        lines.next(); // 앞 줄의 뒷부분
+    let mut offset = start;
+    if start > 0
+        && let Some(partial) = lines.next()
+    {
+        offset += partial.len() as u64 + 1;
     }
     // 글이 아닌 enqueue도 자리를 차지한다(dequeue가 맨 앞을 꺼낸다)
-    let mut queue: std::collections::VecDeque<(Option<String>, bool)> = std::collections::VecDeque::new();
+    let mut queue: std::collections::VecDeque<(Option<String>, bool, u64)> = std::collections::VecDeque::new();
     for line in lines {
+        let enqueue_offset = offset;
+        offset += line.len() as u64 + 1;
         if !line.windows(15).any(|w| w == b"queue-operation") {
             continue;
         }
@@ -422,14 +427,16 @@ fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
         }
         let content = v["content"].as_str();
         match v["operation"].as_str() {
-            Some("enqueue") => {
-                queue.push_back((content.map(str::to_string), content.is_some_and(|c| claude_human(&v, c))))
-            }
+            Some("enqueue") => queue.push_back((
+                content.map(str::to_string),
+                content.is_some_and(|c| claude_human(&v, c)),
+                enqueue_offset,
+            )),
             Some("dequeue") => {
                 queue.pop_front();
             }
             Some("remove") => {
-                if let Some(i) = queue.iter().position(|(q, _)| q.as_deref() == content) {
+                if let Some(i) = queue.iter().position(|(q, _, _)| q.as_deref() == content) {
                     queue.remove(i);
                 }
             }
@@ -438,10 +445,11 @@ fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
     }
     Ok(queue
         .into_iter()
-        .filter(|(_, human)| *human)
-        .filter_map(|(text, _)| text)
-        .filter_map(|c| msg(ChatRole::User, &c))
-        .map(|m| ChatMessage { pending: true, ..m })
+        .filter(|(_, human, _)| *human)
+        .filter_map(|(text, _, offset)| {
+            let m = msg(ChatRole::User, &text?)?;
+            Some(ChatMessage { id: Some(format!("{history}:{offset:020}:queue")), pending: true, ..m })
+        })
         .collect())
 }
 
@@ -574,7 +582,7 @@ pub(crate) fn read_path(
     let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
     let mut page = pages::read(&path, before, |v| line(harness, v, thinking, compact, commands))?;
     if harness == "claude" && before.is_none() {
-        page.messages.extend(claude_pending(&path).map_err(failed)?);
+        page.messages.extend(claude_pending(&path, &page.history).map_err(failed)?);
     }
     Ok(page)
 }
@@ -736,7 +744,8 @@ mod tests {
             r#"{"type":"queue-operation","operation":"enqueue","origin":{"kind":"task-notification"},"content":"평문 내부 알림"}"#.into(),
         ];
         std::fs::write(&f, lines.join("\n") + "\n").unwrap();
-        let got: Vec<_> = claude_pending(&f).unwrap().into_iter().map(|m| (m.role, m.text, m.pending)).collect();
+        let got: Vec<_> =
+            claude_pending(&f, "file").unwrap().into_iter().map(|m| (m.role, m.text, m.pending)).collect();
         assert_eq!(
             got,
             [
@@ -746,6 +755,34 @@ mod tests {
             ]
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn claude_queue_receipts_identify_each_enqueue_before_and_after_consumption() {
+        use sha2::{Digest, Sha256};
+        let root = dir("queue-receipts");
+        let f = root.join("s.jsonl");
+        let text = "같은 긴 본문".repeat(800);
+        let enqueue =
+            serde_json::json!({"type":"queue-operation", "operation":"enqueue", "content":text}).to_string() + "\n";
+        std::fs::write(&f, &enqueue).unwrap();
+        let first = read_path("claude", f.clone(), false, false, false, None).unwrap();
+        let old = first.messages[0].clone();
+        assert!(old.pending);
+        assert!(old.id.is_some());
+        assert_ne!(old.text, text, "표시 글은 축약돼야 한다");
+        assert_eq!(old.receipt.unwrap().sha256, format!("{:x}", Sha256::digest(text.as_bytes())));
+        std::fs::write(&f, format!("{enqueue}{enqueue}")).unwrap();
+        let second = read_path("claude", f.clone(), false, false, false, None).unwrap();
+        assert_eq!(second.history, first.history);
+        assert_eq!(second.messages[0].id, old.id);
+        assert!(second.messages[1].id > old.id, "같은 본문의 새 enqueue를 구별해야 한다");
+        let dequeue = "{\"type\":\"queue-operation\",\"operation\":\"dequeue\"}\n";
+        std::fs::write(&f, format!("{enqueue}{enqueue}{dequeue}")).unwrap();
+        let consumed = read_path("claude", f, false, false, false, None).unwrap();
+        assert_eq!(consumed.messages.len(), 1);
+        assert_eq!(consumed.messages[0].id, second.messages[1].id, "앞 항목 소비가 새 ID를 만들면 안 된다");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

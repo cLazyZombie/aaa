@@ -90,6 +90,33 @@ API 응답을 푸는 시점은 작업 중 수락 준비 사건으로 정하며 �
 이는 과거의 전체 host/DB 상태를 복원한 시험이나 새 운영 오탐률 측정이 아니다. 자연어의 모든 의도를 판별한다는 보장도 없다.
 개인정보가 있는 원문을 저장소 시험 fixture나 보고 첨부에 옮기지 않았다.
 
+## 착지에서 발견한 Claude 큐 회귀와 수리
+
+첫 통합 gate의 `claude_thread_states_questions_and_messages`는 작업 중 두 번째 메시지를
+`accepted`로 확인하는 기존 단언에서 실제 `unknown`을 받아 실패했다. 첫 실패 원문과 실험실을 보존하고
+그 gate를 중단했다. 재실행·시한 확대·기대값 완화로 넘기지 않았다.
+
+이번 변경은 기존 Working 재관측을 수락 증거로 쓰지 않는다. 기존 가짜 Claude는 큐를 메모리에만 쌓았고
+SessionStart의 기록 경로·enqueue를 내지 않아 영수증을 읽을 수 없었다. 실제 Claude의 큐 형식을 fixture에 추가했다.
+기존 수락·턴 순서·보류 계약의 단언과 시한은 유지하고, 두 번째 메시지의 `queued_receipt` 사건 단언을 더했다.
+
+agent는 사람이 쓴 pending 글에 전체 본문 해시와 대화 파일·enqueue byte 위치 ID를 붙인다. host는 그 ID가
+전송 전 기준보다 새로운지 확인한다. 같은 본문이 이미 큐에 있어도 새 enqueue만 수락하며, 기존 항목 소비를
+새 수락으로 보지 않는다. 표시 축약·시스템 알림 제외는 유지한다. 선택 필드의 값만 채우며 API 판은 바꾸지 않는다.
+
+회귀 owner는 다음과 같다.
+
+- `chat::tests::claude_queue_receipts_identify_each_enqueue_before_and_after_consumption`: 긴 본문의 전체 해시,
+  동일 본문 두 enqueue의 서로 다른 ID, 앞 항목 소비 뒤 남은 ID 보존을 실제 파일로 확인한다.
+- `prompt_receipt::tests::only_new_matching_receipts_in_the_same_execution_accept_a_submission`: 새 큐 ID만 수락하고
+  기존 본문·옛 세션·다른 실행 세대·기존 큐의 소비는 거부한다.
+- `harness::tests::a_busy_submission_requires_its_new_receipt_instead_of_the_previous_working_state`: Claude·Codex 각각
+  새 영수증이 없을 때 Unknown, 있을 때만 Accepted임을 원래 수락 시한의 정지 시계로 확인한다.
+- 기존 m13 `claude_thread_states_questions_and_messages`: 전체 host·agent·PTY와 실제 JSONL 큐를 잇는다.
+  두 번째 메시지가 첫 턴 종료 전 수락되고 다음 턴으로 순서대로 처리되는 기존 단언에 영수증 증거를 추가한다.
+
+최종 gate·cross·Windows production의 결과와 전달 SHA는 착지 보고에 남긴다. 첫 실패를 성공으로 바꾸어 기록하지 않는다.
+
 ## 참고 구현과 라이선스
 
 - [Codex chat composer](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs)와

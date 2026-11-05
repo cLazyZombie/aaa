@@ -7,7 +7,7 @@
 //!   답은 질문이 아직 열려 있고 세션이 살아 있는지 다시 본 뒤 adapter 키(기본 선택 Enter, 거절 Esc)로 보낸다.
 //! - 입력(brief 안내·메시지)은 harness가 작업 중이나 질문으로 보이면 accepted다(herdr-projects `agent_prompt_confirmed`:
 //!   `--until working --until blocked`). 상태를 모르는 harness는 화면 변화로 본다.
-//!   일하는 중인 harness에 보낸 메시지는 harness가 다음 턴으로 줄 세우므로, 보낸 뒤에도 일하는 중이면 accepted다.
+//!   일하는 중인 harness에 보낸 메시지는 같은 실행의 새 본문·큐 영수증으로 확인한다. 이전 Working은 근거가 아니다.
 //!   확인하지 못하면 unknown으로 남기고 **자동으로 다시 보내지 않는다**(§8.5 a).
 
 use std::sync::Arc;
@@ -1858,11 +1858,12 @@ mod tests {
     async fn a_busy_submission_requires_its_new_receipt_instead_of_the_previous_working_state() {
         use aaa_proto::{AgentResponse, ChatMessage, ChatReceipt, ChatRole, InputReceiptMethod, LinkMsg, Outcome};
         use sha2::Digest;
-        for new_receipt in [false, true] {
+        for (harness, new_receipt) in [("claude", false), ("claude", true), ("codex", false), ("codex", true)] {
             let (h, _lab) = host_with_pane();
             h.on_harness(
                 "m",
                 HarnessEvent {
+                    harness: harness.into(),
                     harness_session: Some("11111111-2222-4333-8444-555555555555".into()),
                     ..codex_event("working", 1)
                 },
@@ -1903,7 +1904,7 @@ mod tests {
                                 id: Some(id.into()),
                                 role: ChatRole::User,
                                 text: "새 본문".into(),
-                                pending: false,
+                                pending: harness == "claude",
                                 receipt: Some(ChatReceipt {
                                     sha256: format!("{:x}", sha2::Sha256::digest("새 본문".as_bytes())),
                                     method: InputReceiptMethod::Normal,

@@ -52,7 +52,18 @@ impl ReceiptProbe {
         if delivered > self.pending {
             return Some("transcript");
         }
-        (self.pending == 0 && page.messages.iter().any(|m| m.pending && matches_hash(m, &self.sha256)))
+        // Claude enqueue는 파일 위치 ID가 있다. 같은 본문이 이미 큐에 있어도
+        // 기준 뒤에 새로 추가된 항목이면 이번 입력의 수락 증거다.
+        page.messages
+            .iter()
+            .any(|m| {
+                m.pending
+                    && matches_hash(m, &self.sha256)
+                    && match &m.id {
+                        Some(id) => self.last_id.as_ref().is_none_or(|last| id > last),
+                        None => self.pending == 0,
+                    }
+            })
             .then_some("queued_receipt")
     }
 }
@@ -151,6 +162,13 @@ mod tests {
         let mut next_generation = page("s1", "file", vec![message("file:0002", "같은 본문", false)]);
         next_generation.generation = 2;
         assert_eq!(probe.observed(&next_generation), None);
+        let prior = message("file:0001:queue", "같은 본문", true);
+        let identified_queue = ReceiptProbe::new(page("s1", "file", vec![prior.clone()]), "같은 본문");
+        assert_eq!(identified_queue.observed(&page("s1", "file", vec![prior.clone()])), None);
+        assert_eq!(
+            identified_queue.observed(&page("s1", "file", vec![prior, message("file:0002:queue", "같은 본문", true)])),
+            Some("queued_receipt")
+        );
         let queued = ReceiptProbe::new(page("s1", "file", vec![message("", "같은 본문", true)]), "같은 본문");
         assert_eq!(queued.observed(&page("s1", "file", vec![message("file:0002", "같은 본문", false)])), None);
         assert_eq!(

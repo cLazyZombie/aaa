@@ -151,6 +151,13 @@ done
 /// 선택 창은 Claude처럼 그린다(❯ 커서, 화살표로 옮기고 Enter로 고름, Esc는 취소). 창 하나는 한 번의 write다. 폴더 신뢰
 /// 창의 기본 선택은 실제 Claude Code 2.1처럼 「No, exit」다. 권한을 거절하면 턴이 「Interrupted」로 끝난다.
 const CLAUDE_AGENT: &str = r#"#!/bin/sh
+# 실제 Claude의 큐 기록과 hook 경로를 낸다. 수락은 Working 재관측이 아니라 새 enqueue로 확인한다.
+record() {
+  python3 -c 'import json,sys
+path,kind,text=sys.argv[1:]
+v={"type":"queue-operation","operation":kind,"content":text,"origin":{"kind":"human"}} if kind!="user" else {"type":"user","message":{"content":text}}
+with open(path,"a") as f: f.write(json.dumps(v)+"\n")' "$transcript" "$1" "$2"
+}
 ESC=$(printf '\033'); BEL=$(printf '\007'); LATE=$(printf '\016'); NL='
 '; typed=; queued=
 RULE='────────────────────────────────────────'
@@ -181,7 +188,7 @@ turn() {
       "$BEL") unspin; return ;;
       "$LATE") late ;;
       "$ESC") while keyt 5; [ -n "$k" ]; do :; done; typed=; unspin; interrupted; return ;;
-      '') [ -z "$typed" ] || { queued="$queued$typed$NL"; typed=; shown; } ;;
+      '') [ -z "$typed" ] || { record enqueue "$typed"; queued="$queued$typed$NL"; typed=; shown; } ;;
       *) typed="$typed$k"; shown ;;
     esac
   done
@@ -215,15 +222,20 @@ perm() {
   if [ "$pick" = '1. Yes' ]; then echo "allowed"; spin; else echo "denied"; fi
 }
 printf '\033[2J\033[H'
+: "${CLAUDE_CONFIG_DIR:?시험 전용 기록 폴더가 필요하다}"
+mkdir -p "$CLAUDE_CONFIG_DIR/projects/fixture"
+transcript="$CLAUDE_CONFIG_DIR/projects/fixture/${AAA_SESSION_ID:-fixture}.jsonl"
+: > "$transcript"
 menu ' Quick safety check: Do you trust the files in this folder?' 0 'No, exit' 'Yes, I trust this folder' 'Enter to confirm · Esc to cancel'
 [ "$pick" = 'Yes, I trust this folder' ] || { echo "trust: $pick"; exit 1; }
-hook '{"hook_event_name":"SessionStart","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b","source":"startup"}'
+hook "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b\",\"source\":\"startup\",\"transcript_path\":\"$transcript\"}"
 echo "marker: ${CLAUDE_CODE_CHILD_SESSION:-none}"
 prompt
 while :; do
-  if [ -n "$queued" ]; then line=${queued%%"$NL"*}; queued=${queued#*"$NL"}
+  if [ -n "$queued" ]; then line=${queued%%"$NL"*}; queued=${queued#*"$NL"}; record dequeue "$line"
   else IFS= read -r line || break; taken; fi
   hook '{"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}'
+  record user "$line"
   pick=
   case "$line" in
     *brief.md*)
@@ -534,7 +546,8 @@ fn world_files(
     agent_env: impl FnOnce(&Path) -> Vec<(String, String)>,
 ) -> (World, Vec<(String, String)>) {
     let lab = Lab::new();
-    let env = agent_env(&lab.root);
+    let mut env = agent_env(&lab.root);
+    env.push(("CLAUDE_CONFIG_DIR".into(), path_str(&lab.root.join("claude-home")).to_string()));
     let projects = lab.root.join("projects");
     let scripts = lab.root.join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
@@ -1712,12 +1725,21 @@ fn claude_thread_states_questions_and_messages() {
     assert!(w.h.screen(&pane).contains("allowed"));
 
     // 작업 중이어도 바로 입력한다: harness가 다음 턴으로 줄 세운다(herdr-projects threads.rs `prompt`). 일하는 중에 보낸
-    // 글은 보낸 뒤에도 일하는 중이면 받은 것이다(herdr `agent prompt --wait`, plan §8.100). 「slow one」 턴은 시험이 끝낼
+    // 글은 Claude 기록의 새 enqueue 영수증으로 수락한다. 「slow one」 턴은 시험이 끝낼
     // 때까지 끝나지 않으므로, 턴 끝을 기다리는 받음 판정이면 m2는 받음 시한에 걸린다.
     let m1 = w.message(&id, "slow one", false);
     assert_eq!(m1["state"], "accepted", "{m1}");
     let m2 = w.message(&id, "second", false);
     assert_eq!(m2["state"], "accepted", "{m2}");
+    let trace = w.h.ok(&["debug", "input", "--pane", &pane]);
+    assert!(
+        trace["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| { e["id"] == m2["id"] && e["event"] == "receipt" && e["detail"] == "method=queued_receipt" }),
+        "새 Claude 큐 영수증이 없다: {trace}"
+    );
     assert!(!w.h.screen(&pane).contains("got: second"));
     finish_turn(&w, &pane);
     let screen = w.wait_screen(&pane, "got: second");
