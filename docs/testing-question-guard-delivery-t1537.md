@@ -117,6 +117,24 @@ agent는 사람이 쓴 pending 글에 전체 본문 해시와 대화 파일·enq
 
 최종 gate·cross·Windows production의 결과와 전달 SHA는 착지 보고에 남긴다. 첫 실패를 성공으로 바꾸어 기록하지 않는다.
 
+## ID 있는 pending 큐와 웹 페이지 병합
+
+Claude 큐 ID 추가 뒤 새 통합 gate에서 Rust 전체는 통과했지만 E2E 23의 「흡수 뒤 보통 말」이 실패했다.
+`mergeChatPage`가 모든 ID 있는 항목을 누적해, incoming에서 사라진 pending 큐까지 보존한 것이 원인이다.
+첫 실패 원문을 보존하고 그 gate에서 중단했다.
+
+완료된 ID 기록만 누적하고 pending은 ID 유무와 관계없이 최신 snapshot에서 가져오도록 고쳤다.
+앞 페이지 응답에는 현재 최신 큐를 유지하며, 기록 cursor의 처음 위치도 완료 기록에서만 찾는다.
+같은 본문을 다른 큐·완료 말로 보낸 경우를 본문으로 합치지 않고, 파일 교체 시 이전 기록을 버린다.
+
+새 `web/test/chatPages.test.mjs`는 큐 흡수 뒤 옛 ID·pending 제거와 보통 말 1개 유지, 동일 본문 일부 소비,
+늦은 앞 페이지와 최신 큐·처음 cursor 보존, ID 없는 옛 큐와 파일 교체의 네 경우를 확인한다.
+기존 E2E 23의 pending 표지·단추·설명 줄 제거와 정확히 한 번 표시하는 단언·시한은 그대로다.
+
+이 수리는 전체 gate 전에 웹 타입·번들·웹 유닛과 웹 E2E 전부를 실행한다. 큐·메시지·질문 spec을 일부 고르지 않는다.
+Rust는 agent chat, host question_guard·harness·prompt_receipt, m13 Claude owner를 먼저 확인한다.
+최종 SHA의 전체 gate와 OS cross·Windows production·전달은 이 개발 확인을 마친 뒤 별도로 기록한다.
+
 ## 참고 구현과 라이선스
 
 - [Codex chat composer](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs)와

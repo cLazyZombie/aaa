@@ -8473,6 +8473,8 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - Claude 큐는 사람의 `queue-operation enqueue` 파일 위치를 선택 ID로 싣고 전체 본문 해시를 보존한다.
   host는 전송 전 기준 뒤에 추가된 큐 ID를 수락하며 같은 본문의 기존 큐 소비와 구별한다.
   최초 착지의 메모리 전용 가짜 Claude를 실제 JSONL 큐·기록 경로로 보강하고 원래 단언·시한은 유지한다.
+- 웹 대화 페이지는 ID가 있는 pending 큐도 최신 응답에서만 유지한다. 흡수된 항목은 지우고 완료 기록만 누적한다.
+  앞 페이지 응답이 늦게 와도 현재 큐를 복원하지 않으며 큐 ID를 기록 페이지 cursor로 쓰지 않는다.
 - 기존 input_events 원장에 전송 단위의 본문 길이/해시·입력 모드·붙여넣기·비문자 경계·Enter·영수증·결과를 남긴다.
   원문·계정·경로는 복사하지 않는다. 기존 message not delivered 사건의 표시는 「메시지 수락 확인 못함」으로 맞춘다.
   FRONT_API·AGENT_LINK·기존 웹 E2E 번호·의존성은 바꾸지 않는다.
