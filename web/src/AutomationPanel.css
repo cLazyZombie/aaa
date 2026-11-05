@@ -185,7 +185,8 @@
 .automation-chip.is-first { border-color: var(--accent-line); }
 .automation-chip.is-dim { opacity: .6; }
 .automation-chip.is-unknown { border-style: dashed; border-color: var(--notice); }
-.automation-chip.is-unknown small, .automation-chip small.is-unknown { color: var(--notice); }
+.automation-chip.is-unknown small { color: var(--notice); }
+.automation-chip.is-nometa small { font-style: italic; }
 .automation-chip.is-code { font-family: var(--font-mono); }
 .automation-chip-n { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; border-radius: 50%; background: var(--accent-tint); color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; }
 .automation-chip-btn { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--text-dim); }

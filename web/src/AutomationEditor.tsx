@@ -40,14 +40,16 @@ function Toggle({ label, value, onChange }: { label: string; value: unknown; onC
 }
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+/** 고르기 목록을 읽는 동안: 글 칸을 잠깐 보였다 바꾸면 쓰던 글·focus를 잃는다 */
+const Loading = ({ label }: { label: string }) => <Field label={label}><span className="automation-dim" role="status">읽는 중…</span></Field>;
 /** 머신 하나: host가 아는 머신에서 고른다. 목록을 못 읽으면 글 칸 */
 function Machine({ label, value, onChange, empty, choices }: { label: string; value: unknown; onChange: (v: string) => void; empty: string; choices: Choices | null }) {
-  return choices?.machines.length ? <SelectOne label={label} options={choices.machines.map((m) => m.name)} value={value} onChange={onChange} empty={empty} />
+  return !choices ? <Loading label={label} /> : choices.machines.length ? <SelectOne label={label} options={choices.machines.map((m) => m.name)} value={value} onChange={onChange} empty={empty} />
     : <Text label={label} value={value} onChange={onChange} placeholder={`비우면 ${empty}`} />;
 }
 /** 저장소 하나: project.toml 저장소 이름에서 고른다. 목록을 못 읽으면 글 칸 */
 function Repo({ value, onChange, empty, choices, testid }: { value: unknown; onChange: (v: string) => void; empty: string; choices: Choices | null; testid?: string }) {
-  return choices?.repos.length ? <SelectOne label="저장소" options={choices.repos} value={value} onChange={onChange} empty={empty} testid={testid} />
+  return !choices ? <Loading label="저장소" /> : choices.repos.length ? <SelectOne label="저장소" options={choices.repos} value={value} onChange={onChange} empty={empty} testid={testid} />
     : <Text label="저장소" value={value} onChange={onChange} placeholder={empty === "고른다" ? undefined : `비우면 ${empty}`} testid={testid} />;
 }
 
@@ -82,7 +84,7 @@ function ConditionFields({ form, update, choices }: { form: Form; update: (f: Fo
     </>;
     case "thread": return <>
       <List label="사건" value={c.events} onChange={(v) => set("events", v)} hint="예: thread_failed, thread_reported, git_pushed" testid="automation-form-events" />
-      {choices?.repos.length ? <ChipSelect label="저장소" options={choices.repos.map((r) => ({ value: r }))} value={strings(c.repos)} onChange={(v) => set("repos", v)} empty="모든 저장소" testid="automation-form-repos" />
+      {!choices ? <Loading label="저장소" /> : choices.repos.length ? <ChipSelect label="저장소" options={choices.repos.map((r) => ({ value: r }))} value={strings(c.repos)} onChange={(v) => set("repos", v)} empty="모든 저장소" testid="automation-form-repos" />
         : <List label="저장소" value={c.repos} onChange={(v) => set("repos", v)} hint="비우면 모든 저장소" />}
       <Toggle label="다른 자동화가 띄운 thread의 사건도 받는다" value={c.include_automation} onChange={(v) => set("include_automation", v || null)} />
     </>;
@@ -107,9 +109,9 @@ function ActionFields({ form, update, choices }: { form: Form; update: (f: Form)
     case "message": return <Text label="받는 thread" value={a.thread} onChange={(v) => set("thread", v)} placeholder="owner 또는 t-0123" testid="automation-form-thread" />;
     case "start": return <>
       <Text label="thread 제목" value={a.title} onChange={(v) => set("title", v)} hint="{date}·{machine}·{repo_path}를 채운다" testid="automation-form-start-title" />
-      {choices?.profiles.length ? <ProfilePicker label="profile 후보" value={strings(a.profiles)} choices={choices.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />
+      {!choices ? <Loading label="profile 후보" /> : choices.profiles.length ? <ProfilePicker label="profile 후보" value={strings(a.profiles)} choices={choices.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />
         : <List label="profile 후보" value={a.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />}
-      {choices?.machines.length ? <ChipSelect label="머신 후보" options={machineOptions(choices.machines)} value={strings(a.machines)} onChange={(v) => set("machines", v)} empty="자동" testid="automation-form-machines" />
+      {!choices ? <Loading label="머신 후보" /> : choices.machines.length ? <ChipSelect label="머신 후보" options={machineOptions(choices.machines)} value={strings(a.machines)} onChange={(v) => set("machines", v)} empty="자동" testid="automation-form-machines" />
         : <List label="머신 후보(비우면 자동)" value={a.machines ?? []} onChange={(v) => set("machines", v)} testid="automation-form-machines" />}
       <Repo value={a.repo} onChange={(v) => set("repo", v)} empty="작업 폴더(저장소 없음)" choices={choices} />
       <Field label="열린 thread"><select className="input" value={a.reuse === "open" ? "open" : "new"} onChange={(e) => update(e.target.value === "open" ? setField(form, "do", "reuse", "open") : setField(setField(setField(form, "do", "reuse", "new"), "do", "memory", null), "do", "close_idle", null))}><option value="new">사건마다 새 thread</option><option value="open">같은 규칙의 열린 thread에 이어 보낸다</option></select></Field>

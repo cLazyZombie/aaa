@@ -32,9 +32,12 @@ export function useAutomationChoices(project: string): Choices | null {
   return choices;
 }
 
-/** profile 칩 글: 이름 · 모델 · 생각 수준. 목록에 없는 이름은 표지를 단다 */
+/**
+ * profile 칩 글: 이름 · 모델 · 생각 수준. 고르기 목록에 없는 이름은 「모델 모름」이다: host가 아는 profile(기본 profile·끊긴 머신의 profile)일 수
+ * 있어 잘못이라고 단정하지 않는다. 풀지 못하는 profile은 host 검사 경고(check.warnings)가 알린다
+ */
 export function ProfileChipText({ chip }: { chip: ProfileChoice }) {
-  return <>{chip.name}{chip.known ? <small>{chip.model} · {chip.effort}</small> : <small className="is-unknown">목록에 없음</small>}</>;
+  return <>{chip.name}<small>{chip.known ? `${chip.model} · ${chip.effort}` : "모델 모름"}</small></>;
 }
 
 /** profile 후보: 차례가 있는 칩 + 모델 → 생각 수준(→ 같은 조합이 여럿이면 이름) 고르기 */
@@ -53,9 +56,9 @@ export function ProfilePicker({ label, value, choices, onChange, testid }: { lab
     <legend>{label}</legend>
     <div className="automation-chips" data-testid={testid && `${testid}-chips`}>
       {value.length === 0 && <span className="automation-dim">없음</span>}
-      {value.map((name, i) => {
+      {[...new Set(value)].map((name, i) => {
         const chip = profileChip(name, choices);
-        return <span key={name} className={`automation-chip${i === 0 ? " is-first" : ""}${chip.known ? "" : " is-unknown"}`} data-testid="automation-profile-chip">
+        return <span key={name} className={`automation-chip${i === 0 ? " is-first" : ""}${chip.known ? "" : " is-nometa"}`} data-testid="automation-profile-chip">
           <span className="automation-chip-n" aria-label={`${i + 1}번째`}>{i + 1}</span>
           <ProfileChipText chip={chip} />
           {i > 0 && <button type="button" className="automation-chip-btn" aria-label={`${name} 앞으로`} title="앞으로" onClick={() => onChange(moveEarlier(value, i))}><ChevronLeft aria-hidden="true" /></button>}
@@ -79,7 +82,7 @@ export function ProfilePicker({ label, value, choices, onChange, testid }: { lab
 /** 여러 개 고르기: 누르면 켜고 끄는 칩. 목록에 없는 기존 값은 켜진 채 표지를 달고, 누르면 뺀다 */
 export function ChipSelect({ label, options, value, onChange, testid, empty }: { label: string; options: Array<{ value: string; dim?: string }>; value: string[]; onChange: (v: string[]) => void; testid?: string; empty?: string }) {
   const known = new Set(options.map((o) => o.value));
-  const all = [...options, ...value.filter((v) => !known.has(v)).map((v) => ({ value: v, dim: "목록에 없음", unknown: true }))];
+  const all = [...options, ...[...new Set(value)].filter((v) => !known.has(v)).map((v) => ({ value: v, dim: "목록에 없음", unknown: true }))];
   const on = new Set(value);
   return <fieldset className="automation-picker" data-testid={testid}>
     <legend>{label}{empty && <small className="automation-dim">{value.length === 0 ? ` · ${empty}` : ""}</small>}</legend>

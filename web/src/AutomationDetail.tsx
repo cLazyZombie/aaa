@@ -94,10 +94,10 @@ function Closing({ at }: { at: number }) {
 function FlowChips({ row, choices }: { row: FlowRow; choices: Choices | null }) {
   const chips = row.chips ?? [];
   if (chips.length === 0) return <span className="automation-dim">{row.empty ?? "없음"}</span>;
-  return <span className="automation-chips">{chips.map((v, i) => {
+  return <span className="automation-chips">{[...new Set(chips)].map((v, i) => {
     if (row.kind === "profile") {
       const chip = profileChip(v, choices?.profiles ?? null);
-      return <span key={v} className={`automation-chip${i === 0 ? " is-first" : ""}${!choices || chip.known ? "" : " is-unknown"}`}>
+      return <span key={v} className={`automation-chip${i === 0 ? " is-first" : ""}${!choices || chip.known ? "" : " is-nometa"}`}>
         <span className="automation-chip-n" aria-label={`${i + 1}번째`}>{i + 1}</span>{choices ? <ProfileChipText chip={chip} /> : v}</span>;
     }
     const machine = row.kind === "machine" ? choices?.machines.find((m) => m.name === v) : undefined;
