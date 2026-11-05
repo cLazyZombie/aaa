@@ -256,6 +256,49 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// 실제 생성·truncate·rename 사건마다 빈 상태를 읽고, 다음 본문이 별도 사건으로 즉시 수집되는지 본다.
+    #[tokio::test]
+    async fn empty_report_writes_and_atomic_replacements_wait_for_the_next_body_event() {
+        let root = std::env::temp_dir().join(format!("aarw-empty-{}", aaa_common::util::new_id()));
+        let work = root.join(".aaa/demo-t-0001");
+        std::fs::create_dir_all(&work).unwrap();
+        let report = work.join("report.md");
+        let mut watch = Watch::new(&work).unwrap();
+        for (body, atomic) in [
+            ("", false),
+            ("[결정 필요] 질문", false),
+            ("", false),
+            ("[진행 중] 새 본문", false),
+            ("", true),
+            ("[완료] 최종 본문", true),
+        ] {
+            let before = watch.prepare().unwrap();
+            let mut waiting = Box::pin(watch.changed(before));
+            assert!(pending(waiting.as_mut()).await);
+            if atomic {
+                std::fs::write(work.join("replacement"), body).unwrap();
+                std::fs::rename(work.join("replacement"), &report).unwrap();
+            } else {
+                std::fs::write(&report, body).unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(3), waiting).await.unwrap().unwrap();
+            let hash = super::super::threads::report_hash(&work);
+            let snapshot = super::super::threads::collect(work.to_str().unwrap(), 0);
+            if body.is_empty() {
+                assert!(hash.is_none());
+                assert_eq!(
+                    super::super::threads::report_error(snapshot.unwrap_err()).code,
+                    aaa_proto::ErrorCode::Conflict
+                );
+            } else {
+                assert_eq!(hash, Some(hex::encode(sha2::Sha256::digest(body.as_bytes()))));
+                assert_eq!(snapshot.unwrap().report.0, body.as_bytes());
+            }
+        }
+        drop(watch);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// 무관한 vnode 사건이 있어도 원래 1초 점검을 미루거나 보고 변경으로 끝내지 않는다.
     #[tokio::test(start_paused = true)]
     async fn unrelated_vnode_events_preserve_the_one_second_backstop() {

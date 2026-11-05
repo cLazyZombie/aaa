@@ -1,4 +1,6 @@
 - t-1511: [thread fast mode 표시 검증](testing-fast-mode-t-1511.md)
+
+- t-1559: [빈 보고 보류·할 일 확인 카드 검증](testing-report-boundaries-t-1559.md)
 - t-1486: [계정 메일 시험의 닫기·새로고침 경합 검증](testing-account-email-reload-t-1486.md)
 - t-1484: [계정 요금제 선택과 5시간 창 검증](testing-account-plans-t-1484.md)
 - t-1475: [Windows 정기 백업 성공 기록 대기 조사와 단계 진단](testing-db-backup-windows-t-1475.md)

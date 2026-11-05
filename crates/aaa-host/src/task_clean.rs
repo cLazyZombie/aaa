@@ -28,7 +28,7 @@ pub(crate) enum Verdict {
 
 /// P2 판정표(t-0469 §4): 끝난 까닭 × 보고 표지 × 버림 × 하위 task. 하위가 남은 task는 지우지 않는다(지우기가 하위 묶음과 함께 간다).
 /// 병합은 보고 표지보다 앞선다. 직접 병합은 agent가 origin/main 조상을 확인한다.
-pub(crate) fn judge(why: Option<&str>, discard: bool, marker: Option<&str>, children: bool) -> Verdict {
+pub(crate) fn judge(why: Option<&str>, discard: bool, report: Option<&str>, children: bool) -> Verdict {
     if children {
         return Verdict::Check("하위 task가 남아 있다".into());
     }
@@ -38,16 +38,33 @@ pub(crate) fn judge(why: Option<&str>, discard: bool, marker: Option<&str>, chil
     if why == Some("main_merged") {
         return Verdict::Clean("origin/main 병합".into());
     }
-    match marker {
+    match report.and_then(crate::report_mark::marker) {
         Some("[완료]") => Verdict::Clean("보고 [완료]".into()),
         Some(m) => Verdict::Check(format!("보고 표지 {m}")),
+        None if report.is_some_and(|r| !r.is_empty()) => Verdict::Check("보고는 있지만 첫 줄에 표지가 없다".into()),
+        None if report.is_some() => Verdict::Check("보고 본문이 비어 있다".into()),
         None => Verdict::Check("보고가 없다".into()),
+    }
+}
+
+fn judge_thread(rec: &ThreadRec, report: Option<&str>, children: bool) -> Verdict {
+    let c = &rec.task_clean;
+    let verdict = judge(
+        if c.merged_main.is_some() { Some("main_merged") } else { c.why.as_deref() },
+        c.discard,
+        report,
+        children,
+    );
+    if verdict == Verdict::Check("보고가 없다".into()) && rec.report_hash.is_some() {
+        Verdict::Check("보고 사본을 확인할 수 없다".into())
+    } else {
+        verdict
     }
 }
 
 /// 이어진 thread가 끝난 task의 「확인 필요」 까닭(할 일 화면 `TaskView.attention`). 열린 thread거나, 완료로 판정했지만 아직 지우기
 /// 전(곧 지운다)이면 없음
-pub(crate) fn attention(t: &TaskView, rec: &ThreadRec, marker: Option<&str>, children: bool) -> Option<String> {
+pub(crate) fn attention(t: &TaskView, rec: &ThreadRec, report: Option<&str>, children: bool) -> Option<String> {
     if rec.status != ThreadStatus::Resolved || rec.resolve_pending.is_some() {
         return None;
     }
@@ -56,12 +73,11 @@ pub(crate) fn attention(t: &TaskView, rec: &ThreadRec, marker: Option<&str>, chi
     }
     let id = &rec.id;
     let c = &rec.task_clean;
-    let Some(why) = c.why.as_deref() else {
+    let Some(_) = c.why.as_deref() else {
         return Some(format!("{id}가 끝났다. 끝났는지 정한다"));
     };
     let same = |titles: &[String]| titles.iter().any(|x| x.to_lowercase() == t.title.to_lowercase());
-    let why = if c.merged_main.is_some() { "main_merged" } else { why };
-    match judge(Some(why), c.discard, marker, children) {
+    match judge_thread(rec, report, children) {
         Verdict::Check(r) => Some(format!("{id} 끝남: {r}")),
         Verdict::Clean(_) if c.judged_ms.is_none() => None,
         Verdict::Clean(_) if same(&c.parents) => Some(format!("하위 task가 모두 끝났다(마지막 {id})")),
@@ -78,6 +94,114 @@ fn anchor(t: &TaskView) -> TaskAnchor {
 const HOST_ACTOR: &str = "host";
 
 impl Host {
+    /// 카드가 본 task와 보고 판을 확인한 뒤 처리한다. 완료는 기록뿐 아니라 완료 보관에도 남긴다.
+    pub(crate) async fn task_attention_answer(
+        self: &std::sync::Arc<Self>,
+        project: &str,
+        at: TaskAnchor,
+        report_hash: Option<String>,
+        action: aaa_proto::TaskAttentionAction,
+        actor: &str,
+    ) -> Result<aaa_proto::FrontResponse, ErrorBody> {
+        use aaa_proto::{FrontResponse, TaskAttentionAction as A};
+        let by = self.answered_by(actor);
+        let writer = self.task_writer(project, actor)?;
+        let board = self.task_board(project)?;
+        // 제목만 같은 다른 task를 고르지 않는다. 카드에는 필수로 블록 hash를 준다.
+        let t = board
+            .tasks
+            .iter()
+            .find(|t| {
+                !at.block_sha256.is_empty()
+                    && t.block_sha256 == at.block_sha256
+                    && t.line == at.line
+                    && t.list == at.list
+                    && t.title == at.title
+            })
+            .ok_or_else(|| err(ErrorCode::Conflict, "할 일이 바뀌었다. 새 카드를 확인한다"))?;
+        let why = t.attention.as_deref().ok_or_else(|| err(ErrorCode::Conflict, "이미 처리된 할 일이다"))?;
+        let tid = t.thread.as_deref().ok_or_else(|| err(ErrorCode::Conflict, "이어진 thread가 없다"))?;
+        let rec = self.load(project, tid)?;
+        if rec.status != ThreadStatus::Resolved || rec.resolve_pending.is_some() || rec.report_hash != report_hash {
+            return Err(err(ErrorCode::Conflict, "thread 상태나 보고가 바뀌었다. 새 카드를 확인한다"));
+        }
+        if crate::followups::pending(&rec) {
+            return Err(err(ErrorCode::Conflict, "후속 할 일 연결이나 버림·정리 완료 사유를 먼저 기록한다"));
+        }
+        let evidence = t.attention_evidence.as_ref();
+        let mut body = why.to_string();
+        if let Some(e) = evidence {
+            body.push_str(&format!("\n\nthread: {} · {}", e.thread, e.status.as_str()));
+            if let Some(first) = &e.report_first_line {
+                body.push_str(&format!("\n\n마지막 보고: {first}"));
+            }
+            for line in &e.landing_lines {
+                body.push_str(&format!("\n\n{line}"));
+            }
+        }
+        if action == A::Reassign {
+            let profile = t.profile.clone().unwrap_or_else(|| self.default_thread_profile(project));
+            let (_, _, profile_revision) = crate::task_queue::model_selection(self, &profile)?;
+            self.task_queue(
+                project,
+                aaa_proto::QueueOp::Reserve {
+                    task: t.id.clone().ok_or_else(|| err(ErrorCode::Conflict, "할 일 ID가 없다"))?,
+                    block: t.block_sha256.clone(),
+                    profile,
+                    profile_revision,
+                    after: None,
+                    after_all: Some(vec![]),
+                },
+                actor,
+            )
+            .await?;
+        } else {
+            if action == A::Complete && board.tasks.iter().any(|c| c.parent == Some(t.line)) {
+                return Err(err(ErrorCode::Conflict, "하위 할 일을 먼저 처리한다"));
+            }
+            let op = if action == A::Complete {
+                TaskOp::Delete { at }
+            } else {
+                TaskOp::Update {
+                    at,
+                    title: None,
+                    owner: None,
+                    person: false,
+                    profile: None,
+                    machine: None,
+                    notes: None,
+                    thread: Some(String::new()),
+                    done: None,
+                    repo: None,
+                }
+            };
+            let (conflict, _) = self.task_write(
+                project,
+                &self.project_dir(project)?,
+                &[op],
+                Some(&board.sha256),
+                &writer,
+                &no_input(),
+                action == A::Complete,
+            )?;
+            if let Some((_, reason, _)) = conflict {
+                return Err(err(ErrorCode::Conflict, reason));
+            }
+        }
+        self.record_task(
+            project,
+            &t.title,
+            &body,
+            match action {
+                A::Complete => "완료 보관",
+                A::Reassign => "다시 맡김",
+                A::Unlink => "연결만 풂",
+            },
+            &by,
+        );
+        Ok(FrontResponse::TaskBoard(self.task_board(project)?))
+    }
+
     /// ticker: 끝났고 아직 판정하지 않은 thread마다 이어진 task를 한 번 정리한다. 쓰기가 충돌하면(그사이 그 task가 바뀜) 다음 tick에 다시 본다
     pub(crate) fn task_clean_pass(&self, project: &str, dir: &Path) {
         if let Err(e) = self.task_done_clean(project, dir) {
@@ -239,8 +363,7 @@ impl Host {
             .inspect_err(|error| aaa_common::diagnostic::observe(error, "선택 파일을 읽지 못해 기본값을 쓴다"))
             .unwrap_or_default();
         let (_, all) = tasks::parse_board(&text);
-        let marker = self.report_marker(rec);
-        let c = &rec.task_clean;
+        let report = self.verified_report(rec);
         let mut clean: Vec<(TaskView, String)> = Vec::new();
         let mut check: Vec<(String, String)> = Vec::new();
         for t in all.iter().filter(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
@@ -252,12 +375,7 @@ impl Host {
                 ));
                 continue;
             }
-            match judge(
-                if c.merged_main.is_some() { Some("main_merged") } else { c.why.as_deref() },
-                c.discard,
-                marker,
-                children,
-            ) {
+            match judge_thread(rec, report.as_deref(), children) {
                 Verdict::Clean(r) => clean.push((t.clone(), r)),
                 Verdict::Check(r) => check.push((t.title.clone(), r)),
             }
@@ -388,10 +506,47 @@ impl Host {
             }) else {
                 continue;
             };
-            let marker = self.report_marker(&rec);
-            t.attention = attention(t, &rec, marker, parents.contains(&t.line));
+            let report = self.verified_report(&rec);
+            t.attention = attention(t, &rec, report.as_deref(), parents.contains(&t.line));
+            if t.attention.is_some() {
+                t.attention_evidence = Some(aaa_proto::TaskAttentionEvidence {
+                    thread: rec.id.clone(),
+                    status: rec.status,
+                    report_hash: rec.report_hash.clone(),
+                    report_first_line: report
+                        .as_deref()
+                        .and_then(|r| r.lines().next())
+                        .map(|l| l.chars().take(240).collect()),
+                    landing_lines: report.as_deref().map(landing_lines).unwrap_or_default(),
+                });
+            }
         }
     }
+}
+
+/// 코드 예제는 카드의 실제 착지 근거로 보이지 않는다.
+fn landing_lines(report: &str) -> Vec<String> {
+    let mut fence = None;
+    let mut lines = Vec::new();
+    for line in report.lines() {
+        let line = line.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            let mark = &line[..3];
+            if fence == Some(mark) {
+                fence = None;
+            } else if fence.is_none() {
+                fence = Some(mark);
+            }
+        } else if fence.is_none()
+            && line.trim_start_matches("- ").trim_start_matches("* ").trim_start_matches("**").starts_with("착지:")
+        {
+            lines.push(line.chars().take(300).collect());
+            if lines.len() == 3 {
+                break;
+            }
+        }
+    }
+    lines
 }
 
 /// 명시한 병합/착지 줄의 SHA만 후보로 쓴다. 본문 속 빌드·검증 SHA와 예제 코드는 근거가 아니다.
@@ -467,6 +622,14 @@ mod tests {
             (Some("manual"), false, Some("[착지]"), false, check("보고 표지 [착지]")),
             (Some("auto"), false, Some("[진행 중]"), false, check("보고 표지 [진행 중]")),
             (Some("manual"), false, None, false, check("보고가 없다")),
+            (Some("manual"), false, Some(""), false, check("보고 본문이 비어 있다")),
+            (
+                Some("manual"),
+                false,
+                Some("착지: engine main abc1234 · push함"),
+                false,
+                check("보고는 있지만 첫 줄에 표지가 없다"),
+            ),
             (Some("manual"), true, Some("[완료]"), false, check("마지막 사본 없이 끝냈다")),
             // 하위 task가 남은 상위는 병합·[완료]여도 지우지 않는다
             (Some("main_merged"), false, Some("[완료]"), true, check("하위 task가 남아 있다")),
@@ -578,5 +741,164 @@ mod tests {
         let mut parent = rec(Some("main_merged"), true);
         parent.task_clean.parents = vec!["일".into()];
         assert_eq!(attention(&t, &parent, None, false).unwrap(), "하위 task가 모두 끝났다(마지막 t-0007)");
+    }
+}
+
+#[cfg(test)]
+mod attention_answer_tests {
+    use super::*;
+    use aaa_proto::{DeviceRole, FrontRequest, FrontResponse, Role, TaskAttentionAction as A, ThreadKind};
+    use sha2::{Digest, Sha256};
+
+    struct Lab {
+        h: std::sync::Arc<Host>,
+        // 필드는 선언 순서로 drop한다. Windows SQLite 파일을 지우기 전에 Host를 닫는다.
+        _cleanup: Cleanup,
+    }
+    struct Cleanup(std::path::PathBuf, std::sync::Weak<Host>);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            assert!(self.1.upgrade().is_none(), "Host와 DB를 닫은 뒤 시험 폴더를 지운다");
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    impl Lab {
+        fn new(report: Option<&str>) -> Self {
+            let root = std::env::temp_dir().join(format!("aaa-attention-{}", aaa_common::util::new_id()));
+            let mut cfg = aaa_config::HostConfig::default();
+            cfg.projects.root = root.join("projects").display().to_string();
+            cfg.notify.web_push = false;
+            let h = Host::open(cfg, root.join("host")).unwrap();
+            h.project_create("demo", Default::default(), "test").unwrap();
+            let dir = h.project_dir("demo").unwrap();
+            std::fs::write(
+                dir.join("TASKS.md"),
+                "## Backlog\n- [ ] 확인할 일 (claude) [작업 폴더] · t-0001\n  완료 범위\n",
+            )
+            .unwrap();
+            let mut r = ThreadRec::starting("demo", "확인할 일", "m", "claude", Role::Worker, ThreadKind::Dir, 0);
+            r.id = "t-0001".into();
+            r.status = ThreadStatus::Resolved;
+            r.task_clean.why = Some("manual".into());
+            r.task_clean.judged_ms = Some(1);
+            if let Some(report) = report {
+                std::fs::write(dir.join("threads/t-0001.md"), report).unwrap();
+                r.report_hash = Some(hex::encode(Sha256::digest(report.as_bytes())));
+            }
+            h.db.thread_import("demo", &r.id, "resolved", &serde_json::to_string(&r).unwrap()).unwrap();
+            let cleanup = Cleanup(root, std::sync::Arc::downgrade(&h));
+            Self { h, _cleanup: cleanup }
+        }
+        fn task(&self) -> TaskView {
+            self.h.task_board("demo").unwrap().tasks.remove(0)
+        }
+        fn request(&self, task: &TaskView, action: A) -> FrontRequest {
+            FrontRequest::TaskAttentionAnswer {
+                project: "demo".into(),
+                at: anchor(task),
+                report_hash: task.attention_evidence.as_ref().unwrap().report_hash.clone(),
+                action,
+            }
+        }
+    }
+
+    const LANDED: &str = "착지: engine main abc1234 · push함\n\n```\n착지: 예제 main def5678 · push함\n```\n";
+    #[tokio::test]
+    async fn task_attention_answers_archive_reassign_or_unlink_and_preserve_the_evidence() {
+        for action in [A::Complete, A::Reassign, A::Unlink] {
+            let lab = Lab::new(Some(LANDED));
+            let task = lab.task();
+            assert!(task.attention.as_ref().unwrap().contains("보고는 있지만"));
+            let evidence = task.attention_evidence.as_ref().unwrap();
+            assert_eq!(evidence.report_first_line.as_deref(), Some("착지: engine main abc1234 · push함"));
+            assert_eq!(evidence.landing_lines, ["착지: engine main abc1234 · push함"]);
+            assert_eq!(evidence.status, ThreadStatus::Resolved);
+            let req = lab.request(&task, action);
+            let denied = lab.h.call(DeviceRole::Reader, "device:reader", req.clone()).await.unwrap_err();
+            assert_eq!(denied.code, ErrorCode::Forbidden);
+            let FrontResponse::TaskBoard(board) =
+                lab.h.call(DeviceRole::Controller, "device:user", req.clone()).await.unwrap()
+            else {
+                panic!("board");
+            };
+            match action {
+                A::Complete => {
+                    assert!(board.tasks.is_empty());
+                    let archived = lab.h.db.archive_list("demo").unwrap();
+                    assert_eq!(archived.len(), 1);
+                    assert_eq!(archived[0].task_id, task.id.as_ref().unwrap().as_str());
+                    assert_eq!(archived[0].reason, "사용자 완료 확인");
+                    assert_eq!(archived[0].report.as_deref(), Some("threads/t-0001.md"));
+                }
+                A::Reassign => {
+                    assert!(board.tasks[0].thread.is_none());
+                    let queue = lab.h.db.queue_list("demo").unwrap();
+                    assert_eq!(queue.len(), 1);
+                    assert_eq!(queue[0].task_id, task.id.as_ref().unwrap().as_str());
+                    assert_eq!(queue[0].state, aaa_proto::QueueState::Queued);
+                }
+                A::Unlink => {
+                    assert!(board.tasks[0].thread.is_none());
+                    assert!(lab.h.db.archive_list("demo").unwrap().is_empty());
+                    assert!(lab.h.db.queue_list("demo").unwrap().is_empty());
+                }
+            }
+            assert_eq!(
+                lab.h.call(DeviceRole::Controller, "device:user", req).await.unwrap_err().code,
+                ErrorCode::Conflict
+            );
+            let FrontResponse::Asks { done, .. } = lab.h.asks_view("demo").unwrap() else {
+                panic!("asks");
+            };
+            assert_eq!(done.len(), 1);
+            assert!(done[0].body.as_ref().unwrap().contains("착지: engine main abc1234 · push함"));
+        }
+    }
+
+    #[tokio::test]
+    async fn task_attention_rejects_stale_report_and_reopened_thread() {
+        let lab = Lab::new(Some(LANDED));
+        let task = lab.task();
+        let req = lab.request(&task, A::Complete);
+        lab.h.update_rec("demo", "t-0001", |r| r.report_hash = Some("new-report".into())).unwrap();
+        assert_eq!(lab.h.call(DeviceRole::Controller, "device:user", req).await.unwrap_err().code, ErrorCode::Conflict);
+        assert!(lab.task().attention.unwrap().contains("보고 사본을 확인할 수 없다"));
+        let task = lab.task();
+        let req = lab.request(&task, A::Unlink);
+        lab.h.update_rec("demo", "t-0001", |r| r.status = ThreadStatus::Open).unwrap();
+        assert_eq!(lab.h.call(DeviceRole::Controller, "device:user", req).await.unwrap_err().code, ErrorCode::Conflict);
+        assert!(lab.h.db.archive_list("demo").unwrap().is_empty());
+        assert_eq!(lab.task().thread.as_deref(), Some("t-0001"));
+        let missing = Lab::new(None);
+        assert!(missing.task().attention.unwrap().contains("보고가 없다"));
+    }
+    #[tokio::test]
+    async fn task_attention_requires_a_fresh_block_and_preserves_children_and_followups() {
+        for scenario in ["stale", "children", "followups"] {
+            let lab = Lab::new(Some(LANDED));
+            let mut task = lab.task();
+            if scenario == "followups" {
+                lab.h
+                    .update_rec("demo", "t-0001", |r| {
+                        crate::followups::capture(r, "done-report", "[완료] 끝\n\n## Next\n- 후속 할 일\n");
+                    })
+                    .unwrap();
+                task = lab.task();
+            } else {
+                let dir = lab.h.project_dir("demo").unwrap();
+                let mut text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap();
+                text.push_str(if scenario == "children" { "  - [ ] 하위 일\n" } else { "  새 메모\n" });
+                std::fs::write(dir.join("TASKS.md"), text).unwrap();
+                if scenario == "children" {
+                    task = lab.task();
+                }
+            }
+            let before = lab.h.task_board("demo").unwrap().text;
+            let error =
+                lab.h.call(DeviceRole::Controller, "device:user", lab.request(&task, A::Complete)).await.unwrap_err();
+            assert_eq!(error.code, ErrorCode::Conflict, "{scenario}");
+            assert_eq!(lab.h.task_board("demo").unwrap().text, before);
+            assert!(lab.h.db.archive_list("demo").unwrap().is_empty());
+        }
     }
 }

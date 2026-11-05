@@ -959,16 +959,18 @@ pub enum AgentRequest {
         harness_session: Option<String>,
         enabled: bool,
     },
-    /// report_hash.v1: library를 걷지 않고 report.md hash만 읽는다.
+    /// report_hash.v1: library를 걷지 않고 report.md hash만 읽는다. 빈 본문은 Conflict(다음 쓰기까지 보류).
     ReportHash {
         work_dir: String,
     },
     /// report.md 본문과 library 목록. symlink는 따라가지 않고, 상한을 넘는 파일은 건너뛴다.
+    /// 빈 본문은 Conflict. host는 기존 사본을 보존하고 다음 쓰기 사건에서 다시 수집한다.
     ReportCollect {
         work_dir: String,
         max_library_bytes: u64,
     },
     /// report_copy.v2: 인증한 link에서 원본 무결성을 확인한 뒤 host 저장 경계에서 텍스트만 가린다.
+    /// ReportCollect처럼 빈 본문은 Conflict로 보류한다.
     ReportTransfer {
         work_dir: String,
         max_library_bytes: u64,
@@ -2901,6 +2903,15 @@ pub enum FrontRequest {
         #[ts(optional)]
         user_request: Option<String>,
     },
+    /// FRONT_API 1.160: 확인 카드에서 직접 완료 보관·재배정 예약·연결 해제. 본 task 블록과 보고 판이 같아야 처리한다.
+    TaskAttentionAnswer {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        at: crate::TaskAnchor,
+        report_hash: Option<String>,
+        action: crate::TaskAttentionAction,
+    },
     /// 할 일 기록(FRONT_API 1.62, 보기 권한). 최신부터, `before`(id)보다 앞의 것
     TaskLog {
         #[serde(default)]
@@ -3727,6 +3738,7 @@ impl FrontRequest {
             | FrontRequest::Assignable { project, .. }
             | FrontRequest::RecordOpen { project, .. }
             | FrontRequest::Tasks { project }
+            | FrontRequest::TaskAttentionAnswer { project, .. }
             | FrontRequest::TaskQueue { project, .. }
             | FrontRequest::TaskArchive { project, .. }
             | FrontRequest::TaskEdit { project, .. }

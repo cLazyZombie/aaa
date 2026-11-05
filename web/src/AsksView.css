@@ -98,3 +98,8 @@
 .ask-choice.is-picked { border-color: var(--status-done) !important; background: var(--status-done-tint) !important; }
 .ask-picked { display: inline-block; padding: 0 6px; border-radius: var(--radius-pill); background: var(--status-done); color: var(--bg); font-size: var(--fs-2xs); font-weight: var(--fw-semibold); }
 
+
+.ask-task-evidence { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 16px 0; font-size: 13px; }
+.ask-task-evidence dt { color: var(--text-dim); }
+.ask-task-evidence dd { margin: 0; overflow-wrap: anywhere; }
+.ask-task-actions { flex-wrap: wrap; }

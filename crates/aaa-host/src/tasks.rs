@@ -339,6 +339,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
             problems,
             suggestion: None,
             attention: None,
+            attention_evidence: None,
             auto_merge: false,
         });
         // 멈춘 줄(다음 task·제목, 들여쓴 하위 task 포함)부터 다시 본다

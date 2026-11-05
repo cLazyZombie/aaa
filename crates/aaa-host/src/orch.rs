@@ -2474,6 +2474,9 @@ impl Host {
         };
         match response {
             AgentResponse::ReportHash { hash } => Ok(hash),
+            AgentResponse::Report(s) if s.report.0.is_empty() => {
+                Err(err(ErrorCode::Conflict, "보고가 비어 있어 다음 본문을 기다린다"))
+            }
             AgentResponse::Report(s) => Ok(s.hash),
             _ => Err(internal("보고 hash 응답이 아니다")),
         }
@@ -2564,7 +2567,7 @@ impl Host {
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
         let summary_seen = self.summary_report_seen(&dir, id);
-        // Ok(None): 이미 받은 보고와 같다
+        // Ok(None): 이미 받은 보고와 같거나 빈 본문이라 다음 쓰기를 기다린다
         // (보고 hash, 건너뛴 것, 사본 상태, 보고, library가 앞 사본과 달라졌나)
         type Got = Option<(String, Vec<String>, String, Vec<u8>, bool, Vec<String>, Vec<String>, Vec<String>)>;
         let result: Result<Got, ErrorBody> = async {
@@ -2580,11 +2583,18 @@ impl Host {
                     max_library_bytes: self.cfg.projects.library_copy_mb << 20,
                 }
             };
-            let mut snap = match conn.request(request).await? {
-                AgentResponse::ReportTransfer(s) if transfer => s,
-                AgentResponse::Report(s) if !transfer => s,
+            let mut snap = match conn.request(request).await {
+                Ok(AgentResponse::ReportTransfer(s)) if transfer => s,
+                Ok(AgentResponse::Report(s)) if !transfer => s,
+                // 새 agent가 hash 확인 뒤 비워진 파일을 읽은 경우다. 사본 실패·즉시 재시도 없이 다음 사건을 기다린다.
+                Err(e) if e.code == ErrorCode::Conflict => return Ok(None),
+                Err(e) => return Err(e),
                 _ => return Err(internal("보고 사본 응답이 아니다")),
             };
+            // 구판 agent의 빈 snapshot도 파일·manifest·r-ID·질문·Next를 바꾸기 전에 보류한다.
+            if snap.report.0.is_empty() {
+                return Ok(None);
+            }
             if transfer && hex::encode(sha2::Sha256::digest(&snap.report.0)) != snap.hash {
                 return Err(internal("보고 본문 hash가 다르다"));
             }

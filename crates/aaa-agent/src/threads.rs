@@ -464,14 +464,32 @@ pub(crate) fn ensure_codex_local(argv: &mut Vec<String>, command_len: usize) {
     }
 }
 
+/// 빈 본문은 쓰기 중 상태다. link에서는 Conflict로 알려 host가 사본 실패로 기록하지 않게 한다.
+#[derive(Debug)]
+struct EmptyReport;
+
+impl std::fmt::Display for EmptyReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("report.md가 비어 있어 다음 본문을 기다린다")
+    }
+}
+impl std::error::Error for EmptyReport {}
+
+pub(crate) fn report_error(error: anyhow::Error) -> aaa_proto::ErrorBody {
+    let code = if error.is::<EmptyReport>() { aaa_proto::ErrorCode::Conflict } else { aaa_proto::ErrorCode::NotFound };
+    aaa_proto::ErrorBody::new(code, format!("{error:#}"))
+}
+
 fn sha256_file(path: &Path) -> Result<String> {
     let mut f = std::fs::File::open(path)?;
     let mut h = Sha256::new();
-    std::io::copy(&mut f, &mut h)?;
+    if std::io::copy(&mut f, &mut h)? == 0 {
+        return Err(EmptyReport.into());
+    }
     Ok(hex::encode(h.finalize()))
 }
 
-/// report.md hash. 없거나 regular file이 아니면 None
+/// report.md hash. 없거나 비었거나 regular file이 아니면 None
 pub fn report_hash(work_dir: &Path) -> Option<String> {
     let path = work_dir.join("report.md");
     let meta = std::fs::symlink_metadata(&path)
@@ -523,6 +541,9 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
         bail!("report.md가 너무 크다({} bytes)", meta.len());
     }
     let report = std::fs::read(&path)?;
+    if report.is_empty() {
+        return Err(EmptyReport.into());
+    }
     let hash = hex::encode(Sha256::digest(&report));
     let (candidates, mut skipped) = report_copy::select(&dir.join("library"), &report, max_library_bytes)?;
     let mut files = Vec::new();
@@ -741,6 +762,35 @@ mod tests {
         assert_eq!(collect_hash(work.to_str().unwrap()).unwrap(), hex::encode(Sha256::digest(report)));
         std::fs::remove_file(work.join("report.md")).unwrap();
         assert!(collect_hash(work.to_str().unwrap()).unwrap_err().to_string().contains("report.md"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 첫 빈 파일과 덮어쓰기 사이의 빈 본문은 hash·수집 대상이 아니다.
+    #[test]
+    fn empty_reports_are_deferred_until_nonempty_content_is_written() {
+        let root = std::env::temp_dir().join(format!("aaa-empty-{}", aaa_common::util::new_id()));
+        let work = root.join(".aaa/demo-t-0001");
+        std::fs::create_dir_all(&work).unwrap();
+        let path = work.join("report.md");
+        for body in ["", "[결정 필요] 질문", "", "[진행 중] 새 본문"] {
+            std::fs::write(&path, body).unwrap();
+            if body.is_empty() {
+                assert!(report_hash(&work).is_none());
+                assert_eq!(
+                    report_error(collect_hash(work.to_str().unwrap()).unwrap_err()).code,
+                    aaa_proto::ErrorCode::Conflict
+                );
+                assert_eq!(
+                    report_error(collect(work.to_str().unwrap(), 0).unwrap_err()).code,
+                    aaa_proto::ErrorCode::Conflict
+                );
+            } else {
+                let hash = hex::encode(Sha256::digest(body.as_bytes()));
+                assert_eq!(report_hash(&work), Some(hash.clone()));
+                assert_eq!(collect_hash(work.to_str().unwrap()).unwrap(), hash);
+                assert_eq!(collect(work.to_str().unwrap(), 0).unwrap().report.0, body.as_bytes());
+            }
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 

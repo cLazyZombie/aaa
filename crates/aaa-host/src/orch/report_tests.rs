@@ -17,6 +17,7 @@ struct Lab {
     root: PathBuf,
     requests: Arc<AtomicUsize>,
     hash_requests: Arc<AtomicUsize>,
+    empty_conflict: Arc<std::sync::atomic::AtomicBool>,
     report: Arc<std::sync::Mutex<&'static str>>,
     fake: tokio::task::JoinHandle<()>,
     _cleanup: Cleanup,
@@ -107,9 +108,13 @@ impl Lab {
         let hash_seen = hash_requests.clone();
         let report = Arc::new(std::sync::Mutex::new(report));
         let reply_report = report.clone();
+        let empty_conflict = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reject_empty = empty_conflict.clone();
         let fake = tokio::spawn(async move {
             let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
             while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
+                let transfer =
+                    matches!(&body, AgentRequest::ReportTransfer { .. } | AgentRequest::ReportFileRead { .. });
                 let reply = match body {
                     AgentRequest::Screen { session } if brief.is_some() => {
                         let gate = brief.as_ref().unwrap();
@@ -156,12 +161,20 @@ impl Lab {
                             hash: hex::encode(sha2::Sha256::digest(report.as_bytes())),
                         })
                     }
-                    AgentRequest::ReportCollect { max_library_bytes, .. } => {
+                    AgentRequest::ReportCollect { max_library_bytes, .. }
+                    | AgentRequest::ReportTransfer { max_library_bytes, .. } => {
                         if max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures {
                             Outcome::Err(internal("시험 agent 복사 실패"))
                         } else {
                             let report = reply_report.lock().unwrap().as_bytes().to_vec();
-                            Outcome::Ok(AgentResponse::Report(ReportSnapshot {
+                            if report.is_empty() && reject_empty.load(Ordering::SeqCst) {
+                                let reply = Outcome::Err(err(ErrorCode::Conflict, "보고가 비어 있어 보류한다"));
+                                if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
+                                    let _ = tx.send(reply);
+                                }
+                                continue;
+                            }
+                            let snapshot = ReportSnapshot {
                                 hash: hex::encode(sha2::Sha256::digest(&report)),
                                 report: B64(report),
                                 files: if !file_bytes.is_empty() && max_library_bytes != 0 {
@@ -174,17 +187,25 @@ impl Lab {
                                     vec![]
                                 },
                                 skipped: vec![],
-                            }))
+                            };
+                            Outcome::Ok(if transfer {
+                                AgentResponse::ReportTransfer(snapshot)
+                            } else {
+                                AgentResponse::Report(snapshot)
+                            })
                         }
                     }
-                    AgentRequest::FileRead { offset, len, .. } => {
+                    AgentRequest::FileRead { offset, len, .. } | AgentRequest::ReportFileRead { offset, len, .. } => {
                         // manifest 뒤 append: 요청한 범위만 읽는 실제 agent와 같은 응답이다.
                         let file = file_bytes;
                         let start = offset as usize;
                         let end = (start + len as usize).min(file.len());
-                        Outcome::Ok(AgentResponse::FileChunk {
-                            data: B64(file[start..end].to_vec()),
-                            eof: end == file.len(),
+                        let data = B64(file[start..end].to_vec());
+                        let eof = end == file.len();
+                        Outcome::Ok(if transfer {
+                            AgentResponse::ReportFileChunk { data, eof }
+                        } else {
+                            AgentResponse::FileChunk { data, eof }
                         })
                     }
                     AgentRequest::WorkFileWrite { path, data, .. } => {
@@ -204,7 +225,7 @@ impl Lab {
         });
         let weak = Arc::downgrade(&h);
         let cleanup = Cleanup(root.clone(), weak);
-        Self { h, root, requests, hash_requests, report, fake, _cleanup: cleanup }
+        Self { h, root, requests, hash_requests, empty_conflict, report, fake, _cleanup: cleanup }
     }
 }
 
@@ -1005,5 +1026,74 @@ async fn automation_reports_reach_my_reports_only_with_an_alert() {
         let row = lab.h.db.library_report("p", "t-0001").unwrap().unwrap();
         assert_eq!((row.to_user, row.unseen()), (to_user, to_user), "{report}");
         lab.close().await;
+    }
+}
+
+/// 구판/전송 agent가 빈 본문을 보내도 첫 판을 만들거나 기존 질문·Next·첨부를 지우지 않는다.
+#[tokio::test]
+async fn empty_report_snapshots_preserve_state_until_one_nonempty_revision_arrives() {
+    const QUESTION: &str =
+        "[결정 필요] 선택\n\n## Questions\n### 1. 선택\n- A 진행\n- B 보류\n\n## Next\n선택한 일을 한다\n";
+    const NEXT: &str = "[진행 중] 새 본문\n\n## Next\n검증한다\n";
+    for transfer in [false, true] {
+        for previous in [false, true] {
+            let lab = Lab::with_report(0, b"old", "good.txt", b"old", "");
+            let h = &lab.h;
+            if transfer {
+                h.inner.lock().unwrap().machines.get_mut("m").unwrap().features.push("report_copy.v2".into());
+            }
+            h.update_rec("p", "t-0001", |r| {
+                r.report_hash = None;
+                r.acked_hash = None;
+            })
+            .unwrap();
+            if previous {
+                *lab.report.lock().unwrap() = QUESTION;
+                h.collect("p", "t-0001", false).await.unwrap();
+                assert_eq!(h.load("p", "t-0001").unwrap().questions.len(), 1);
+            }
+            let dir = h.project_dir("p").unwrap();
+            let rec_before = serde_json::to_value(h.load("p", "t-0001").unwrap()).unwrap();
+            let versions_before = h.report_version_names("p", "t-0001");
+            let events_before = h.events(Some("p"), 0, None, false).unwrap().len();
+            let body_before = std::fs::read(dir.join("threads/t-0001.md")).ok();
+            let manifest_before = std::fs::read(crate::library::manifest_path(&dir, "t-0001")).ok();
+            *lab.report.lock().unwrap() = "";
+            // 마지막 사본 경로도 빈 보고를 강제로 발행하지 않는다.
+            for (last, conflict) in [(false, false), (true, false), (false, true), (true, true)] {
+                lab.empty_conflict.store(conflict, Ordering::SeqCst);
+                h.collect("p", "t-0001", last).await.unwrap();
+                assert_eq!(serde_json::to_value(h.load("p", "t-0001").unwrap()).unwrap(), rec_before);
+                assert_eq!(h.report_version_names("p", "t-0001"), versions_before);
+                assert_eq!(h.events(Some("p"), 0, None, false).unwrap().len(), events_before);
+                assert_eq!(std::fs::read(dir.join("threads/t-0001.md")).ok(), body_before);
+                assert_eq!(std::fs::read(crate::library::manifest_path(&dir, "t-0001")).ok(), manifest_before);
+            }
+            lab.empty_conflict.store(false, Ordering::SeqCst);
+            *lab.report.lock().unwrap() = NEXT;
+            let hash = hex::encode(sha2::Sha256::digest(NEXT.as_bytes()));
+            h.on_report_changed("m", "p/t-0001", Some(hash.clone()));
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while h.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            let rec = h.load("p", "t-0001").unwrap();
+            assert_eq!(rec.report_hash.as_deref(), Some(hash.as_str()));
+            assert!(rec.questions.is_empty());
+            assert_eq!(rec.next, ["검증한다"]);
+            assert_eq!(h.report_version_names("p", "t-0001").len(), versions_before.len() + 1);
+            h.collect("p", "t-0001", false).await.unwrap();
+            h.collect("p", "t-0001", true).await.unwrap();
+            assert_eq!(h.report_version_names("p", "t-0001").len(), versions_before.len() + 1);
+            assert_eq!(
+                h.events(Some("p"), 0, None, false).unwrap().iter().filter(|e| e.kind == "report_ready").count(),
+                usize::from(previous) + 1
+            );
+            assert_eq!(std::fs::read(dir.join("library/t-0001/good.txt")).unwrap(), b"old");
+            lab.close().await;
+        }
     }
 }
