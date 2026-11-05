@@ -5055,3 +5055,4 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [provider별 모델 켜기·끄기(t-1509)](testing-model-toggles-t-1509.md)
 
 - [질문 안내 오탐·Windows 메시지 수락 수리(t-1537)](testing-question-guard-delivery-t1537.md)
+- 자동화 저장 시험의 Windows 기본 스택 재현·poll 프레임 축소·회귀 검사: [t-1543 검증 기록](testing-automation-save-stack-t1543.md).

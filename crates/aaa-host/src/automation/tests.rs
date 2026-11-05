@@ -895,65 +895,59 @@ async fn save_writes_only_the_seen_revision_and_never_resurrects_a_deleted_rule(
     use aaa_proto::{DeviceRole::*, ErrorCode, FrontRequest, FrontResponse};
     let p = Project::new();
     let h = demo_host(&p);
+    // 요청 future를 heap에 두어 긴 시험의 poll frame과 dispatcher frame 중첩을 줄인다.
+    let call = |role, actor: &'static str, req| Box::pin(h.call(role, actor, req));
     let dir = p.0.join("projects/demo");
     let read = |name: &str| FrontRequest::AutomationRead { project: "demo".into(), name: name.into() };
-    assert_eq!(h.call(Reader, "device:r", read("check")).await.unwrap_err().code, ErrorCode::NotFound);
+    assert_eq!(call(Reader, "device:r", read("check")).await.unwrap_err().code, ErrorCode::NotFound);
     // 폼으로 새 규칙의 글을 만든다(Reader도 검사는 한다)
     let form = serde_json::json!({"title":"점검","on":{"thread":{"events":["thread_failed"]}},"do":{"inbox":{"text":"본다"}},"limits":{"usage_session_below":5,"usage_week_below":10}});
-    let Ok(FrontResponse::AutomationChecked { text, check }) = h
-        .call(
-            Reader,
-            "device:r",
-            FrontRequest::AutomationValidate {
-                project: "demo".into(),
-                name: "check".into(),
-                text: String::new(),
-                form: Some(form),
-                body: None,
-            },
-        )
-        .await
+    let Ok(FrontResponse::AutomationChecked { text, check }) = call(
+        Reader,
+        "device:r",
+        FrontRequest::AutomationValidate {
+            project: "demo".into(),
+            name: "check".into(),
+            text: String::new(),
+            form: Some(form),
+            body: None,
+        },
+    )
+    .await
     else {
         panic!("검사 응답이 아니다")
     };
     assert!(check.errors.is_empty(), "{:?}", check.errors);
     assert_eq!(check.review.as_ref().unwrap().start_threads, h.safety("demo").start_threads);
     assert!(!dir.join("automations/check.toml").exists(), "검사가 파일을 썼다");
-    assert_eq!(h.call(Reader, "device:r", save("check", &text, None)).await.unwrap_err().code, ErrorCode::Forbidden);
-    let doc = doc_of(h.call(Controller, "device:a", save("check", &text, None)).await);
+    assert_eq!(call(Reader, "device:r", save("check", &text, None)).await.unwrap_err().code, ErrorCode::Forbidden);
+    let doc = doc_of(call(Controller, "device:a", save("check", &text, None)).await);
     assert_eq!(std::fs::read_to_string(dir.join("automations/check.toml")).unwrap(), text);
     assert_eq!(doc.sha256, sha(&text));
     // 같은 이름 새로 만들기·본 판이 아닌 저장은 아무것도 쓰지 않는다(다른 화면, 파일 직접 편집)
-    let e = h.call(Controller, "device:b", save("check", "title='b'\n", None)).await.unwrap_err();
+    let e = call(Controller, "device:b", save("check", "title='b'\n", None)).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::Conflict);
     let edited = text.replace("본다", "직접 고침");
     p.write("projects/demo/automations/check.toml", &edited);
     let before = snapshot(&dir);
-    let e = h
-        .call(Controller, "device:a", save("check", &text.replace("본다", "a 화면"), Some(&doc.sha256)))
+    let e = call(Controller, "device:a", save("check", &text.replace("본다", "a 화면"), Some(&doc.sha256)))
         .await
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::Conflict, "{e:?}");
     assert_eq!(snapshot(&dir), before);
     // 잘못된 글은 저장하지 않는다
-    let e = h
-        .call(Controller, "device:a", save("check", "[on.schedule]\nevery='x'\n", Some(&sha(&edited))))
+    let e = call(Controller, "device:a", save("check", "[on.schedule]\nevery='x'\n", Some(&sha(&edited))))
         .await
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::BadRequest);
     assert_eq!(snapshot(&dir), before);
     // b가 지운 뒤 a의 낡은 편집기 저장은 되살리지 않는다
-    let Ok(FrontResponse::Routines { routines, trash }) = h
-        .call(
-            Controller,
-            "device:b",
-            FrontRequest::AutomationDelete {
-                project: "demo".into(),
-                name: "check".into(),
-                expected_sha256: sha(&edited),
-            },
-        )
-        .await
+    let Ok(FrontResponse::Routines { routines, trash }) = call(
+        Controller,
+        "device:b",
+        FrontRequest::AutomationDelete { project: "demo".into(), name: "check".into(), expected_sha256: sha(&edited) },
+    )
+    .await
     else {
         panic!("삭제 응답")
     };
@@ -962,23 +956,23 @@ async fn save_writes_only_the_seen_revision_and_never_resurrects_a_deleted_rule(
     assert_eq!((trash[0].name.as_str(), trash[0].title.as_str()), ("check", "점검"));
     let trashed = std::fs::read_to_string(dir.join("automations/.trash").join(&trash[0].id)).unwrap();
     assert!(trashed.contains("enabled = false"), "{trashed}");
-    let e = h.call(Controller, "device:a", save("check", &edited, Some(&sha(&edited)))).await.unwrap_err();
+    let e = call(Controller, "device:a", save("check", &edited, Some(&sha(&edited)))).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::NotFound);
     assert!(!dir.join("automations/check.toml").exists());
     // 되살리면 꺼진 채로 돌아오고, 같은 것을 두 번 되살리지 않는다
     let restore = FrontRequest::AutomationRestore { project: "demo".into(), id: trash[0].id.clone() };
-    let Ok(FrontResponse::Routines { routines, trash: left }) = h.call(Controller, "device:a", restore.clone()).await
+    let Ok(FrontResponse::Routines { routines, trash: left }) = call(Controller, "device:a", restore.clone()).await
     else {
         panic!("되살리기 응답")
     };
     assert!(left.is_empty());
     let back = routines.iter().find(|r| r.name == "check").unwrap();
     assert!(!back.enabled && back.error.is_none(), "{back:?}");
-    assert_eq!(h.call(Controller, "device:a", restore).await.unwrap_err().code, ErrorCode::NotFound);
+    assert_eq!(call(Controller, "device:a", restore).await.unwrap_err().code, ErrorCode::NotFound);
     // 옛 .md는 읽기만 한다
     p.write("projects/demo/routines/old.md", "+++\nschedule='every 1m'\n+++\n확인\n");
-    assert!(doc_of(h.call(Reader, "device:r", read("old")).await).legacy);
-    let e = h.call(Controller, "device:a", save("old", &text, None)).await.unwrap_err();
+    assert!(doc_of(call(Reader, "device:r", read("old")).await).legacy);
+    let e = call(Controller, "device:a", save("old", &text, None)).await.unwrap_err();
     assert!(e.message.contains("이전 형식"), "{e:?}");
 }
 
