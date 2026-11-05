@@ -1541,8 +1541,48 @@ mod tests {
         h.inbox_finish_where("demo", |i| i.event == crate::question_guard::EVENT);
         h.reply_by_id("demo", &qid, Some("A"), None, "device:test").await.unwrap();
         h.on_harness("m", completed_reply("claude", later, end + 4, &format!("{qid}에서 선택해 주세요.")));
-        assert_eq!(count(), 3, "답한 카드의 링크로 새 질문을 숨기지 않는다");
+        assert_eq!(count(), 2, "이미 답한 카드 재안내는 새 카드 누락이 아니다");
+        h.on_harness(
+            "m",
+            completed_reply("claude", later, end + 5, &format!("{qid}에서 답해 주세요.\n\n추가로 배포할까요?")),
+        );
+        assert_eq!(count(), 3, "답한 카드도 별개의 새 승인 요청을 가리지 않는다");
         assert!(began.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    /// i-19078처럼 접수 뒤 빠르게 답해도 그 턴의 접수 증거는 남는다.
+    #[tokio::test]
+    async fn question_guard_keeps_accepted_post_evidence_after_a_fast_answer() {
+        let (h, _lab) = coordinator_host();
+        let start = util::now_ms();
+        let mut card = input(993);
+        card.to = "user".into();
+        card.body = "## Questions\n### 1. 진행 여부\n- A 진행\n- B 보류".into();
+        assert!(matches!(h.front_post("demo", card, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+        let qid = h.user_requests("demo").unwrap().remove(0).question_id.unwrap();
+        h.reply_by_id("demo", &qid, Some("A"), None, "device:test").await.unwrap();
+        let end = util::now_ms();
+        h.on_harness("m", completed_reply("claude", start, end, "진행할까요?"));
+        assert!(!h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
+        h.on_harness("m", completed_reply("claude", start, end + 1, "진행 결과입니다.\n\n추가로 배포할까요?"));
+        assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
+    }
+
+    /// 닫힌 번호는 교체 안내로 분리하고 다른 프로젝트의 번호로 누락을 숨기지 않는다.
+    #[tokio::test]
+    async fn question_guard_distinguishes_closed_cards_from_unknown_project_references() {
+        let (h, _lab) = coordinator_host();
+        let closed = h.db.question_id("demo", "thread", "t-9999", "old", 0).unwrap();
+        let _ = h.db.question_id("other", "thread", "t-9999", "old", 0).unwrap();
+        let foreign = h.db.question_id("other", "thread", "t-9999", "new", 0).unwrap();
+        let now = util::now_ms();
+        h.on_harness("m", completed_reply("claude", now, now, &format!("{closed}에서 선택해 주세요.")));
+        let items = h.db.inbox_list(Some("demo"), true).unwrap();
+        let stale = items.iter().find(|i| i.event == crate::question_guard::STALE_EVENT).unwrap();
+        assert!(stale.summary.contains(&closed) && stale.summary.contains("답변 1행"));
+        assert!(!items.iter().any(|i| i.event == crate::question_guard::EVENT));
+        h.on_harness("m", completed_reply("claude", now, now + 1, &format!("{foreign}에서 선택해 주세요.")));
+        assert!(h.db.inbox_list(Some("demo"), true).unwrap().iter().any(|i| i.event == crate::question_guard::EVENT));
     }
 
     /// q-2677 꼴: 그림을 Questions 위에만 두면 카드가 비므로 접수하지 않고 고칠 곳을 알린다.

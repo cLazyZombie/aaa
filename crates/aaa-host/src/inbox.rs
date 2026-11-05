@@ -169,6 +169,8 @@ pub(crate) fn nudge_text(project: &str, items: &[InboxItem]) -> String {
     }
     let reminder = if items.iter().any(|i| i.event == crate::question_guard::EVENT) {
         format!("\n{}", crate::question_guard::REMINDER)
+    } else if items.iter().any(|i| i.event == crate::question_guard::STALE_EVENT) {
+        format!("\n{}", crate::question_guard::STALE_REMINDER)
     } else {
         String::new()
     };
@@ -291,7 +293,7 @@ impl Host {
             "message_unknown" => (
                 "message not delivered",
                 format!(
-                    "{thread}: 메시지 {}. 다시 보내지 말고 `aaa thread read {p} {thread}`로 입력창을 본다(남았으면 `aaa thread keys {p} {thread} enter`)",
+                    "{thread}: 메시지 수락 확인 못함 {}. 다시 보내지 말고 `aaa thread read {p} {thread}`로 입력창을 본다(남았으면 `aaa thread keys {p} {thread} enter`)",
                     e.detail
                 ),
             ),

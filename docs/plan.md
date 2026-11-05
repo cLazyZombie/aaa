@@ -8457,3 +8457,28 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
 - **빠진 파일(범위 보충).** 보고·post가 가리키는 그림·링크의 `library/` 파일이 카드가 읽는 곳에 없으면 카드에 「이미지를 표시할 수 없음」만 남는다(예: 새 보고가 이전 판의 `map-colors/single-day.png`를 가리킴). `aaa_proto::library_paths`가 code 예시를 뺀 경로를 뽑는다. post는 프로젝트 library(`request_file`과 같은 곳)에서 찾아 없으면 빠진 경로 앞 3개와 고칠 방법으로 거절한다. thread 보고는 사람을 기다리는 표지일 때 그 판 host 사본(`question_file`과 같은 곳)에서 찾고, 사본 일부가 실패한 회수에서는 판단하지 않는다. `ThreadRec.question_missing`에 두고 카드 `파일 확인 필요: …` 줄, pane `[aaa 보고 파일 확인]`, coordinator inbox 「보고가 가리키는 파일 없음」으로 알린다. library만 다시 받은 같은 보고 회수에서도 다시 계산한다.
 - **계약.** FRONT_API·AGENT_LINK 변경 없음(기존 `format_warning` 문자열의 줄을 쓴다). 옛 웹은 근거·파일 줄도 「형식 오류:」 머리로 보인다.
 
+
+
+### 8.556 질문 안내 오탐과 Windows 메시지 수락 수리(t-1537)
+
+- q-2810 1A에 따라 §8.509의 문구·문단 판정을 고친다. 사용법·처리 내역·현재 답을 요구하지 않는 조건부 제안을 제외하고,
+  제목 안의 요청·목록·카드 링크를 연결한다. 이미 답한 카드 재안내는 누락이 아니고 닫힘·교체는 별도 사건으로 알린다.
+  같은 턴의 정상 post 접수는 빠른 답 이후에도 영속 원장으로 인정하며, 다른 pane·턴·프로젝트·거절한 post를 면제하지 않는다.
+  별개의 새 승인 요청은 기존 카드로 숨기지 않는다. 누락/교체 근거는 규칙·원문 행 번호·q-ID 상태이며 답 원문은 저장하지 않는다.
+- 실제 ConPTY의 Codex에서 긴 입력 뒤 Enter가 붙여넣기의 줄바꿈으로 들어가는 것을 재현했다. Windows Codex의 새 본문은
+  Right 비문자 키로 붙여넣기 버퍼·Enter 억제 상태를 확정하고 승인 창을 다시 본 뒤 Enter를 한 번 보낸다.
+  간격·수락 시한을 늘리거나 자동으로 Enter/본문을 재전송하지 않는다. 일반 harness와 Enter만 보내는 경로는 유지한다.
+- 작업 중인 harness의 이전 Working 상태만으로 수락하지 않는다. agent의 기존 ChatReceipt·기록 ID로 같은 실행 세대·대화 파일의
+  새 본문 또는 새 큐 항목을 대조한다. 같은 본문의 과거 기록이나 이전 큐 항목 소비는 수락 근거가 아니다. 옛 agent는 전송 뒤 새 사건을 기다린다.
+- Claude 큐는 사람의 `queue-operation enqueue` 파일 위치를 선택 ID로 싣고 전체 본문 해시를 보존한다.
+  host는 전송 전 기준 뒤에 추가된 큐 ID를 수락하며 같은 본문의 기존 큐 소비와 구별한다.
+  최초 착지의 메모리 전용 가짜 Claude를 실제 JSONL 큐·기록 경로로 보강하고 원래 단언·시한은 유지한다.
+- 웹 대화 페이지는 ID가 있는 pending 큐도 최신 응답에서만 유지한다. 흡수된 항목은 지우고 완료 기록만 누적한다.
+  앞 페이지 응답이 늦게 와도 현재 큐를 복원하지 않으며 큐 ID를 기록 페이지 cursor로 쓰지 않는다.
+- 기존 input_events 원장에 전송 단위의 본문 길이/해시·입력 모드·붙여넣기·비문자 경계·Enter·영수증·결과를 남긴다.
+  원문·계정·경로는 복사하지 않는다. 기존 message not delivered 사건의 표시는 「메시지 수락 확인 못함」으로 맞춘다.
+  FRONT_API·AGENT_LINK·기존 웹 E2E 번호·의존성은 바꾸지 않는다.
+- 참고 구현: [Codex composer](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs),
+  [paste burst](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/paste_burst.rs)(Apache-2.0)의 비문자 입력 경계와
+  [tmux input keys](https://github.com/tmux/tmux/blob/master/input-keys.c)(ISC)의 bracketed-paste 모드 구분을 비교했다.
+  경계의 원칙을 참고했으며 외부 코드·새 의존성을 복사하지 않았다. [검증 기록](testing-question-guard-delivery-t1537.md).

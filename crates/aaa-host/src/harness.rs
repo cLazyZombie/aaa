@@ -7,7 +7,7 @@
 //!   답은 질문이 아직 열려 있고 세션이 살아 있는지 다시 본 뒤 adapter 키(기본 선택 Enter, 거절 Esc)로 보낸다.
 //! - 입력(brief 안내·메시지)은 harness가 작업 중이나 질문으로 보이면 accepted다(herdr-projects `agent_prompt_confirmed`:
 //!   `--until working --until blocked`). 상태를 모르는 harness는 화면 변화로 본다.
-//!   일하는 중인 harness에 보낸 메시지는 harness가 다음 턴으로 줄 세우므로, 보낸 뒤에도 일하는 중이면 accepted다.
+//!   일하는 중인 harness에 보낸 메시지는 같은 실행의 새 본문·큐 영수증으로 확인한다. 이전 Working은 근거가 아니다.
 //!   확인하지 못하면 unknown으로 남기고 **자동으로 다시 보내지 않는다**(§8.5 a).
 
 use std::sync::Arc;
@@ -921,6 +921,40 @@ impl Host {
         text: Option<&str>,
         on_accept: Option<OnFire>,
     ) -> Result<bool, SubmitErr> {
+        self.submit_traced(mid, pane, text, on_accept, &aaa_common::util::new_id()).await
+    }
+
+    async fn submit_traced(
+        self: &Arc<Self>,
+        mid: &str,
+        pane: &str,
+        text: Option<&str>,
+        on_accept: Option<OnFire>,
+        trace: &str,
+    ) -> Result<bool, SubmitErr> {
+        self.input_event(
+            pane,
+            trace,
+            "preparing",
+            &text.map(|t| crate::input_log::submit_meta(t, false)).unwrap_or_else(|| "enter_only=true".into()),
+        );
+        let result = self.submit_steps(mid, pane, text, on_accept, trace).await;
+        match &result {
+            Ok(false) => self.input_event(pane, trace, "unknown", "수락 증거 없음; 재전송하지 않음"),
+            Err(error) => self.input_event(pane, trace, "failed", &format!("typed={}", error.typed)),
+            Ok(true) => {}
+        }
+        result
+    }
+
+    async fn submit_steps(
+        self: &Arc<Self>,
+        mid: &str,
+        pane: &str,
+        text: Option<&str>,
+        on_accept: Option<OnFire>,
+        trace: &str,
+    ) -> Result<bool, SubmitErr> {
         let before = |msg: String| SubmitErr { typed: false, msg };
         let after = |msg: String| SubmitErr { typed: true, msg };
         let conn = self.live_conn(mid).map_err(|e| before(e.message))?;
@@ -939,8 +973,7 @@ impl Host {
             return Err(before("확인창이 떠 있어 입력하지 않았다".into()));
         }
         let hooked = agent.as_ref().is_some_and(|a| a.harness != "report");
-        // 일하는 중인 harness는 받은 글을 다음 턴으로 줄 세운다(Claude Code 대기 메시지). herdr `agent prompt --wait`도
-        // 보낸 직후 working·blocked면 받은 것으로 친다(api/wait.rs `prompt_activity_observed`)
+        // 이미 작업 중이면 새 본문의 대화·큐 영수증을 우선한다. 이전 Working 상태는 수락 증거가 아니다.
         let busy = hooked && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working);
         // herdr-projects progress::respond(UserPromptSubmit)와 같은 정리다. 전역 hook이 없는 Codex도
         // 입력 받음(working·question·화면 변화)을 확인한 바로 그 자리에서 직전 기다림을 끝낸다.
@@ -952,8 +985,10 @@ impl Host {
         // unknown으로 끝난 대기자가 남아도 host 자체를 붙잡지 않는다.
         let me = Arc::downgrade(self);
         let target = pane.to_string();
+        let accepted_trace = trace.to_owned();
         let on_accept: Option<OnFire> = Some(Box::new(move || {
             if let Some(me) = me.upgrade() {
+                me.input_event(&target, &accepted_trace, "accepted", "method=post_enter_evidence");
                 me.input_accepted(&target, waiting_at);
             }
             if let Some(f) = on_accept {
@@ -967,10 +1002,45 @@ impl Host {
         // 비동기 대기와 같은 시계다. 운영의 단조 시각은 그대로이며, 시험은
         // 실제 10초 받음 시한을 줄이지 않고 Tokio 시각으로 경계를 넘긴다.
         let deadline = tokio::time::Instant::now() + accept_wait;
+        let probe = if busy {
+            if let Some(text) = text {
+                self.prompt_receipt_page(mid, pane, deadline)
+                    .await
+                    .map(|page| crate::prompt_receipt::ReceiptProbe::new(page, text))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if tokio::time::Instant::now() >= deadline {
+            return Err(before("입력 수락 확인 준비가 시한 안에 끝나지 않아 입력하지 않았다".into()));
+        }
+        let windows_codex = agent.as_ref().is_some_and(|a| a.harness == "codex")
+            && self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.os.as_deref() == Some("windows"));
+        self.input_event(
+            pane,
+            trace,
+            "input_modes",
+            &format!(
+                "bracketed_paste={} application_cursor={} modify_other_keys={} windows_codex={} receipt={}",
+                modes.bracketed_paste,
+                modes.application_cursor,
+                modes.modify_other_keys,
+                windows_codex,
+                probe.is_some()
+            ),
+        );
         if let Some(text) = text {
             conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(modes.paste(text.trim_end())) })
                 .await
                 .map_err(|e| after(e.message))?;
+            self.input_event(
+                pane,
+                trace,
+                "paste_written",
+                &crate::input_log::submit_meta(&String::from_utf8_lossy(&modes.paste(text.trim_end())), false),
+            );
         }
         crate::text::submission_gap().await;
         // 치는 동안 뜬 확인창(t-0340 보안 감사): Enter가 사람이 보지 않은 선택지(권한 창의 기본은 「Yes」)를 고른다.
@@ -996,6 +1066,21 @@ impl Host {
             )
             .await;
         };
+        if windows_codex && text.is_some() {
+            // ConPTY의 실제 Codex는 긴 입력을 key burst로 읽는다. 비문자 키가 버퍼와
+            // Enter 억제 상태를 확정한다. 새 입력 끝의 Right는 본문을 바꾸지 않으며 제출하지 않는다.
+            let boundary = modes.key("right").unwrap();
+            conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(boundary) })
+                .await
+                .map_err(|e| after(e.message))?;
+            self.input_event(pane, trace, "paste_boundary", "key=right; enter_count=0");
+            let shown = self.screen_lines(mid, pane).await;
+            if shown.as_deref().and_then(modal_of).is_some()
+                || self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question)
+            {
+                return Err(after("붙여넣기 확정 중 확인창이 떠 Enter를 보내지 않았다".into()));
+            }
+        }
         let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
         // 받음은 Enter가 일으킨 사건으로만 센다: 보내기 바로 전에 기다린다. 치는 동안 뜬 확인창(질문)도 받음 사건이라
         // 그 전부터 기다리면 Enter를 보내지 않은 글을 받았다고 적는다
@@ -1004,21 +1089,42 @@ impl Host {
         conn.request(AgentRequest::Input { session: pane.to_string(), data: B64(enter) })
             .await
             .map_err(|e| after(e.message))?;
+        self.input_event(pane, trace, "enter_written", "key=enter bytes=0d enter_count=1");
+        if busy && let Some(probe) = probe {
+            while tokio::time::Instant::now() < deadline {
+                if let Some(page) = self.prompt_receipt_page(mid, pane, deadline).await
+                    && let Some(method) = probe.observed(&page)
+                {
+                    self.input_event(pane, trace, "receipt", &format!("method={method}"));
+                    if let Some(f) = screen_accept.take() {
+                        f();
+                    }
+                    return Ok(true);
+                }
+                if self.pane_agent(pane).is_some_and(|a| a.activity == AgentActivity::Question) {
+                    return Ok(false);
+                }
+                crate::text::pane_change(
+                    &mut changes,
+                    deadline.min(tokio::time::Instant::now() + Duration::from_millis(100)),
+                )
+                .await;
+            }
+            return Ok(false);
+        }
         if busy {
             // Enter 뒤 확인창이면 그 Enter가 창에 갔을 수 있다: 받은 것으로 치지 않는다(t-0340 보안 감사)
-            let still = self.pane_agent(pane).map(|a| a.activity) == Some(AgentActivity::Working);
-            // 그 사이 턴이 끝났으면 받은 글로 새 턴이 시작되기를 기다린다
-            let ok = still
-                || tokio::time::timeout(left(), accepted)
-                    .await
-                    .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
-                    .is_ok_and(|r| {
-                        r.as_ref()
-                            .inspect_err(|error| {
-                                aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
-                            })
-                            .is_ok()
-                    });
+            // 이전부터 Working이라는 사실만으로 새 본문이 수락됐다고 보지 않는다.
+            let ok = tokio::time::timeout(left(), accepted)
+                .await
+                .inspect_err(|error| aaa_common::diagnostic::observe(error, "성공 여부만 쓰는 분기의 하위 오류"))
+                .is_ok_and(|r| {
+                    r.as_ref()
+                        .inspect_err(|error| {
+                            aaa_common::diagnostic::observe(*error, "성공 여부만 쓰는 분기의 하위 오류")
+                        })
+                        .is_ok()
+                });
             if ok && let Some(f) = screen_accept.take() {
                 f();
             }
@@ -1250,7 +1356,7 @@ impl Host {
                 let id = m.id.clone();
                 Box::new(move || me.flow(&rec, "message_accepted", None, id)) as OnFire
             });
-        let r = self.submit(mid, pane, Some(&m.text), on_accept).await;
+        let r = self.submit_traced(mid, pane, Some(&m.text), on_accept, &m.id).await.map_err(|e| e.msg);
         m.state = if r == Ok(true) { DeliveryState::Accepted } else { DeliveryState::Unknown };
         self.save_message(m);
         // 입력한 글은(받았는지 몰라도) task 기록에 남겨 다시 시작하면 brief와 함께 읽게 한다(herdr-projects
@@ -1637,6 +1743,194 @@ mod tests {
             model_observation: None,
             provider_turn: None,
             turn_reply: None,
+        }
+    }
+
+    fn submission_machine(h: &Arc<Host>, conn: crate::AgentConn, os: &str, features: Vec<String>) {
+        h.inner.lock().unwrap().machines.insert(
+            "m".into(),
+            crate::MachineRt {
+                name: "mac-a".into(),
+                local: true,
+                os: Some(os.into()),
+                boot_id: None,
+                dev_mode: true,
+                conn: Some(conn),
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features,
+                identity: None,
+                agent_pid: None,
+                colors: None,
+                build: Default::default(),
+            },
+        );
+    }
+
+    /// 실제 ConPTY 재현의 버퍼 경계와 Enter 한 번, 경계 중 뜬 승인 창을 지킨다.
+    #[tokio::test(start_paused = true)]
+    async fn windows_codex_flushes_the_paste_before_one_enter_and_rechecks_a_modal() {
+        use aaa_proto::{AgentResponse, LinkMsg, Outcome};
+        for (os, modal) in [("windows", false), ("windows", true), ("macos", false)] {
+            let (h, _lab) = host_with_pane();
+            h.on_harness("m", codex_event("idle", 1));
+            let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+            let conn = crate::AgentConn::new(outgoing, 1);
+            submission_machine(&h, conn.clone(), os, vec![]);
+            let writes = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+            let captured = writes.clone();
+            let fake_host = h.clone();
+            let windows = os == "windows";
+            let fake = tokio::spawn(async move {
+                let mut pending = false;
+                let mut typed = false;
+                let mut boundary = false;
+                while let Some((_, bytes)) = frames.recv().await {
+                    let LinkMsg::Req { id, body, .. } = serde_json::from_slice(&bytes).unwrap() else {
+                        panic!("요청")
+                    };
+                    let reply = match body {
+                        AgentRequest::Screen { .. } => {
+                            let text = if modal && boundary {
+                                "Press enter to confirm or esc to cancel"
+                            } else if typed {
+                                "› [Pasted Content 1046 chars]"
+                            } else {
+                                "›"
+                            };
+                            AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: lines(text),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: text.into(),
+                            })
+                        }
+                        AgentRequest::Input { data, .. } => {
+                            captured.lock().unwrap().push(data.0.clone());
+                            match data.0.as_slice() {
+                                b"\x1b[C" => {
+                                    pending = false;
+                                    boundary = true;
+                                }
+                                b"\r" if !windows || !pending => {
+                                    fake_host.on_harness("m", codex_event("working", 2));
+                                }
+                                b"\r" => {}
+                                _ => {
+                                    typed = true;
+                                    pending = true;
+                                }
+                            }
+                            AgentResponse::Done
+                        }
+                        _ => panic!("입력과 무관한 요청"),
+                    };
+                    conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(reply)).unwrap();
+                }
+            });
+            let body = "BODY-PRIVATE-CANARY".repeat(60);
+            let result = h.submit_checked("m", "s", Some(&body), None).await;
+            if modal {
+                assert!(result.unwrap_err().typed);
+            } else {
+                assert!(result.unwrap());
+            }
+            let writes = writes.lock().unwrap().clone();
+            assert_eq!(writes[0], body.as_bytes());
+            assert_eq!(writes.iter().filter(|b| b.as_slice() == b"\r").count(), usize::from(!modal));
+            assert_eq!(writes.iter().filter(|b| b.as_slice() == b"\x1b[C").count(), usize::from(windows));
+            let events = h.db.input_events(Some("s"), None, 0).unwrap();
+            assert!(events.iter().all(|e| !e.detail.contains("BODY-PRIVATE-CANARY")));
+            assert!(events.iter().any(|e| e.event == "paste_written"));
+            if windows {
+                assert!(events.iter().any(|e| e.event == "paste_boundary"));
+            }
+            fake.abort();
+        }
+    }
+
+    /// 같은 본문의 과거 기록·기존 Working은 거부하고 새 기록 영수증만 수락한다.
+    #[tokio::test(start_paused = true)]
+    async fn a_busy_submission_requires_its_new_receipt_instead_of_the_previous_working_state() {
+        use aaa_proto::{AgentResponse, ChatMessage, ChatReceipt, ChatRole, InputReceiptMethod, LinkMsg, Outcome};
+        use sha2::Digest;
+        for (harness, new_receipt) in [("claude", false), ("claude", true), ("codex", false), ("codex", true)] {
+            let (h, _lab) = host_with_pane();
+            h.on_harness(
+                "m",
+                HarnessEvent {
+                    harness: harness.into(),
+                    harness_session: Some("11111111-2222-4333-8444-555555555555".into()),
+                    ..codex_event("working", 1)
+                },
+            );
+            let (outgoing, mut frames) = aaa_common::conn::frame_channel();
+            let conn = crate::AgentConn::new(outgoing, 1);
+            submission_machine(&h, conn.clone(), "macos", vec!["chat_pages.v1".into()]);
+            let fake = tokio::spawn(async move {
+                let mut typed = false;
+                let mut entered = false;
+                while let Some((_, bytes)) = frames.recv().await {
+                    let LinkMsg::Req { id, body, .. } = serde_json::from_slice(&bytes).unwrap() else {
+                        panic!("요청")
+                    };
+                    let reply = match body {
+                        AgentRequest::Screen { .. } => {
+                            let text = if typed { "› 새 본문" } else { "›" };
+                            AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: lines(text),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: text.into(),
+                            })
+                        }
+                        AgentRequest::Input { data, .. } => {
+                            if data.0 == b"\r" {
+                                entered = true;
+                            } else {
+                                typed = true;
+                            }
+                            AgentResponse::Done
+                        }
+                        AgentRequest::Chat { .. } => {
+                            let message = |id: &str| ChatMessage {
+                                id: Some(id.into()),
+                                role: ChatRole::User,
+                                text: "새 본문".into(),
+                                pending: harness == "claude",
+                                receipt: Some(ChatReceipt {
+                                    sha256: format!("{:x}", sha2::Sha256::digest("새 본문".as_bytes())),
+                                    method: InputReceiptMethod::Normal,
+                                }),
+                            };
+                            let mut messages = vec![message("file:0001")];
+                            if entered && new_receipt {
+                                messages.push(message("file:0002"));
+                            }
+                            AgentResponse::Chat {
+                                messages,
+                                history: Some("file".into()),
+                                truncated: false,
+                                before: None,
+                            }
+                        }
+                        _ => panic!("입력과 무관한 요청"),
+                    };
+                    conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(reply)).unwrap();
+                }
+            });
+            assert_eq!(h.submit_checked("m", "s", Some("새 본문"), None).await.unwrap(), new_receipt);
+            let events = h.db.input_events(Some("s"), None, 0).unwrap();
+            assert_eq!(events.iter().any(|e| e.event == "receipt"), new_receipt);
+            assert_eq!(events.iter().any(|e| e.event == "unknown"), !new_receipt);
+            fake.abort();
         }
     }
 

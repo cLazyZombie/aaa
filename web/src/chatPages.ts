@@ -3,14 +3,15 @@ import type { ChatMessage, ChatView } from "./gen/proto";
 
 export function mergeChatPage(current: ChatView | null, incoming: ChatView, older = false): ChatView {
   if (!incoming.history || current?.history !== incoming.history) return incoming;
+  // 완료 기록만 누적한다. ID가 있는 큐도 최신 snapshot에서 사라지면 지운다.
   const byId = new Map<string, ChatMessage>();
-  for (const m of current.messages) if (m.id) byId.set(m.id, m);
-  for (const m of incoming.messages) if (m.id) byId.set(m.id, m);
+  for (const m of current.messages) if (m.id && !m.pending) byId.set(m.id, m);
+  for (const m of incoming.messages) if (m.id && !m.pending) byId.set(m.id, m);
   const messages = [...byId.values()].sort((a, b) => a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0);
   // 최신 응답의 pending만 산다. 앞 쪽에는 pending을 보내지 않는다.
-  messages.push(...(older ? current : incoming).messages.filter((m) => !m.id));
-  const first = current.messages.find((m) => m.id)?.id;
-  const added = incoming.messages.find((m) => m.id)?.id;
+  messages.push(...(older ? current : incoming).messages.filter((m) => m.pending || !m.id));
+  const first = current.messages.find((m) => m.id && !m.pending)?.id;
+  const added = incoming.messages.find((m) => m.id && !m.pending)?.id;
   // 늦은 이전 쪽 응답이 이미 도달한 처음/더 앞선 cursor를 되돌리지 않는다.
   const extendsStart = !first || (added ? added < first : older);
   const before = current.before === null || !extendsStart ? current.before : incoming.before;
