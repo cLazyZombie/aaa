@@ -4,7 +4,9 @@
 param(
     [Parameter(Mandatory)][string]$Aaa,
     [Parameter(Mandatory)][string]$Codex,
-    [Parameter(Mandatory)][ValidatePattern('^C:\\aaa-test\\t-[0-9]+$')][string]$Lab
+    [Parameter(Mandatory)][ValidatePattern('^C:\\aaa-test\\t-[0-9]+$')][string]$Lab,
+    [switch]$Messages,
+    [ValidatePattern('^[a-z0-9-]{0,32}$')][string]$RunSuffix=''
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
@@ -12,7 +14,9 @@ $Aaa=[IO.Path]::GetFullPath($Aaa);$Codex=[IO.Path]::GetFullPath($Codex)
 foreach($path in @($Aaa,$Codex)) {
     if(-not $path.StartsWith($Lab+'\',[StringComparison]::OrdinalIgnoreCase)){throw '시험 폴더 안의 실행 파일만 허용한다'}
 }
-$run=Join-Path $Lab 'codex-onboarding'
+$runName=if($Messages){'codex-messages'}else{'codex-onboarding'}
+if($RunSuffix){$runName+='-'+$RunSuffix}
+$run=Join-Path $Lab $runName
 if(Test-Path -LiteralPath $run){throw '시험 결과 폴더가 이미 있다'}
 [void][IO.Directory]::CreateDirectory($run)
 $env:TEMP=$run;$env:TMP=$run
@@ -37,6 +41,11 @@ public sealed class CodexFixture : IDisposable {
  public readonly AutoResetEvent Completed = new AutoResetEvent(false);
  public string Error;
  public int Commands;
+ public readonly AutoResetEvent GateStarted = new AutoResetEvent(false);
+ public readonly ManualResetEvent GateRelease = new ManualResetEvent(true);
+ public bool AllowCancellation;
+ volatile bool holdNext;
+ public void HoldNext() { GateRelease.Reset();holdNext=true; }
  int calls;
  readonly string root;
  bool disposed;
@@ -44,7 +53,7 @@ public sealed class CodexFixture : IDisposable {
  static string Json(object value) { return System.Text.Json.JsonSerializer.Serialize(value); }
  static string Event(object value) { return "data: " + Json(value) + "\n\n"; }
  public CodexFixture(string directory) { root=directory;listener.Start(); Task.Run(async () => {
-  try { while(true) { var client=await listener.AcceptTcpClientAsync(); await Handle(client); } }
+  try { while(true) { var client=await listener.AcceptTcpClientAsync(); try { await Handle(client); } catch(IOException) when(AllowCancellation) {} } }
   catch(ObjectDisposedException) when(disposed) {} catch(SocketException) when(disposed) {} catch(Exception e) { Error=e.ToString(); Completed.Set(); }
  }); }
  async Task Handle(TcpClient client) {
@@ -70,6 +79,10 @@ public sealed class CodexFixture : IDisposable {
     var outputs=new JsonArray();
     foreach(var item in request["input"].AsArray()) {
      if(item?["type"]?.GetValue<string>()=="function_call_output") outputs.Add(item.DeepClone());
+    }
+    if(holdNext && tools.Count>0) {
+     holdNext=false;GateStarted.Set();
+     if(!GateRelease.WaitOne(20000)) throw new Exception("model gate was not released");
     }
     // 인증 header·prompt·사용자 skill 목록은 남기지 않고 실제 도구 결과만 진단한다.
     File.WriteAllText(Path.Combine(root,"request-"+calls+".json"),Json(new {tools=tools.Count,function_outputs=outputs}));
@@ -117,7 +130,7 @@ public sealed class CodexFixture : IDisposable {
    await stream.WriteAsync(prefix);await stream.WriteAsync(response);await stream.FlushAsync();
   }
  }
- public void Dispose() { disposed=true;listener.Stop(); }
+ public void Dispose() { disposed=true;GateRelease.Set();listener.Stop(); }
 }
 '@
 $server=[CodexFixture]::new($run)
@@ -153,6 +166,55 @@ function Wait-Ready($Process,[string]$Match,[string]$Name) {
         if($text.Contains($Match)){return}
     }
 }
+function Wait-Idle([string]$Pane) {
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    do {
+        $state=Invoke-Aaa @('pane','get',$Pane)
+        if($state.agent.activity -eq 'idle'){return}
+        if($watch.ElapsedMilliseconds -ge 20000){throw '메시지 전 쉼 사건 시한 초과'}
+    } while($true)
+}
+function Assert-InputTrace([string]$Pane,[string]$Id,[bool]$Receipt=$false) {
+    $trace=Invoke-Aaa @('debug','input','--pane',$Pane)
+    $events=@($trace.events | Where-Object {$_.id -eq $Id})
+    foreach($event in @('paste_written','paste_boundary','enter_written','accepted')) {
+        if(@($events | Where-Object {$_.event -eq $event}).Count -ne 1){throw ('입력 단계가 한 번이 아님: '+$event)}
+    }
+    if($Receipt -and @($events | Where-Object {$_.event -eq 'receipt'}).Count -ne 1){throw '작업 중 새 본문의 영수증 근거가 없다'}
+    if(@($events | Where-Object {$_.event -eq 'unknown' -or $_.event -eq 'failed'}).Count){throw '수락한 입력에 실패 사건이 남았다'}
+}
+function Assert-MessageReceipt([string]$Marker,[string]$Expected) {
+    $root=Join-Path $env:AAA_STATE_DIR 'agent\account-runs'
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $watcher=[IO.FileSystemWatcher]::new($root,'*.jsonl');$watcher.IncludeSubdirectories=$true
+    try {
+        do {
+            $count=0
+            foreach($file in Get-ChildItem -LiteralPath $root -Filter '*.jsonl' -Recurse) {
+                $stream=[IO.File]::Open($file.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+                $reader=[IO.StreamReader]::new($stream)
+                try {$text=$reader.ReadToEnd()} finally {$reader.Dispose()}
+                $complete=$text.LastIndexOf("`n")
+                if($complete -lt 0){continue}
+                foreach($line in $text.Substring(0,$complete).Split("`n")) {
+                    if(-not $line.Contains($Marker)){continue}
+                    $item=$line | ConvertFrom-Json
+                    if($item.type -ne 'response_item' -or $item.payload.type -ne 'message' -or $item.payload.role -ne 'user'){continue}
+                    $body=(@($item.payload.content | Where-Object {$_.type -eq 'input_text'} | ForEach-Object {$_.text}) -join "`n")
+                    if($body.Contains($Marker)) {
+                        if($body.Trim() -cne $Expected.Trim()){throw ('받은 본문 불일치: '+$Marker)}
+                        $count++
+                    }
+                }
+            }
+            if($count -eq 1){return}
+            if($count -gt 1){throw ('본문 중복 수락: '+$Marker)}
+            if($watch.ElapsedMilliseconds -ge 20000){throw ('대화 영수증 사건 시한 초과: '+$Marker)}
+            $null=$watcher.WaitForChanged([IO.WatcherChangeTypes]::All,100)
+        } while($true)
+    } finally {$watcher.Dispose()}
+}
+$messagesChecked=0
 $hostProcess=$null;$agentProcess=$null;$thread=$null;$panes=[Collections.Generic.List[string]]::new()
 try {
     $git='C:\Program Files\Git\cmd\git.exe'
@@ -225,6 +287,50 @@ work_root = '$work'
         [IO.File]::WriteAllText((Join-Path $run ('screen-'+$session+'.json')),($snapshot | ConvertTo-Json -Depth 10))
         $questions=Invoke-Aaa @('question','list')
         if($questions.questions.Count -ne 0){throw '신뢰·샌드박스·명령 승인 질문이 생겼다'}
+        if($Messages) {
+            foreach($size in @(64,1046,4096)) {
+                Wait-Idle $thread.pane
+                $marker='AAA_MESSAGE_'+$session+'_'+$size
+                $text=$marker+"`n"+('가나다라 abcdefghijklmnopqrstuvwxyz '+('x'*$size))+"`n끝"
+                $message=Invoke-Aaa @('thread','message','probe',$thread.id,'--text',$text)
+                if($message.state -ne 'accepted'){throw ('메시지 수락 실패: '+$size+' '+$message.state)}
+                if(-not $server.Completed.WaitOne(20000)){throw ('Codex 응답 사건 시한 초과: '+$size)}
+                if($server.Error){throw $server.Error}
+                Assert-MessageReceipt $marker $text
+                Assert-InputTrace $thread.pane $message.id
+                $messagesChecked++
+            }
+            if($session -eq 1) {
+                Wait-Idle $thread.pane
+                $server.AllowCancellation=$true;$server.HoldNext()
+                $initial='AAA_BUSY_INITIAL: 모델 응답 경계를 기다린다.'
+                $message=Invoke-Aaa @('thread','message','probe',$thread.id,'--text',$initial)
+                if($message.state -ne 'accepted'){throw '작업 중 재현의 첫 메시지가 수락되지 않았다'}
+                if(-not $server.GateStarted.WaitOne(20000)){throw '모델 대기 사건 시한 초과'}
+                $marker='AAA_BUSY_FOLLOWUP'
+                $text=$marker+"`n"+('x'*1046)+"`n끝"
+                $since=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                $pending=Start-ProcessOwned $Aaa @('--json','thread','message','probe',$thread.id,'--text',$text)
+                $pendingOut=$pending.StandardOutput.ReadToEndAsync();$pendingErr=$pending.StandardError.ReadToEndAsync()
+                $watch=[Diagnostics.Stopwatch]::StartNew()
+                do {
+                    $trace=Invoke-Aaa @('debug','input','--pane',$thread.pane,'--since',([string]$since))
+                    $prepared=@($trace.events | Where-Object {$_.event -eq 'input_modes' -and $_.working -and $_.detail.Contains('receipt=true')})
+                    if($prepared.Count -gt 0){break}
+                    if($watch.ElapsedMilliseconds -ge 10000){throw '작업 중 본문 수락 준비 사건 시한 초과'}
+                } while($true)
+                $server.GateRelease.Set() | Out-Null
+                if(-not $pending.WaitForExit(20000)){throw '작업 중 메시지 종료 사건 시한 초과'}
+                if($pending.ExitCode -ne 0){throw ('작업 중 메시지 CLI 실패: '+$pendingErr.GetAwaiter().GetResult())}
+                $message=$pendingOut.GetAwaiter().GetResult() | ConvertFrom-Json
+                if($message.state -ne 'accepted'){throw '작업 중 새 본문 수락 실패'}
+                Assert-MessageReceipt 'AAA_BUSY_INITIAL' $initial
+                Assert-MessageReceipt $marker $text
+                Assert-InputTrace $thread.pane $message.id $true
+                $messagesChecked+=2
+                Wait-Idle $thread.pane
+            }
+        }
         $null=Invoke-Aaa @('pane','kill',$thread.pane)
         # Kill ACK와 host의 종료 반영은 별개다. 종료 상태 사건까지 읽고 재시작한다.
         $exitWatch=[Diagnostics.Stopwatch]::StartNew()
@@ -244,8 +350,8 @@ work_root = '$work'
     foreach($context in $contexts) {
         if($context.approval_policy -ne 'never' -or $context.sandbox_policy.type -ne 'danger-full-access'){throw '실제 Codex 권한이 YOLO와 다르다'}
     }
-    if($server.Commands -ne 2){throw '두 실행의 명령 결과가 없다'}
-    [ordered]@{result='passed';sessions=2;commands=2;brief='delivered';approval='never';sandbox='danger-full-access';cwd_only=$true} |
+    if(-not $Messages -and $server.Commands -ne 2){throw '두 실행의 명령 결과가 없다'}
+    [ordered]@{result='passed';sessions=2;commands=$server.Commands;messages=$messagesChecked;brief='delivered';approval='never';sandbox='danger-full-access';cwd_only=$true} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $run 'result.json')
     Get-Content -LiteralPath (Join-Path $run 'result.json') -Raw
 } catch {

@@ -17,6 +17,7 @@ mod inbox_tests;
 mod library_catalog;
 mod library_delete;
 mod machine_rename;
+mod question_guard;
 mod question_ids;
 mod record_search;
 mod report_ids;

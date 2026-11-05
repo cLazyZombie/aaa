@@ -5053,3 +5053,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 - [K0 환경값 비노출 시험의 조각 충돌 수리(t-1504)](testing-secret-k0-t-1504.md)
 
 - [provider별 모델 켜기·끄기(t-1509)](testing-model-toggles-t-1509.md)
+
+- [질문 안내 오탐·Windows 메시지 수락 수리(t-1537)](testing-question-guard-delivery-t1537.md)

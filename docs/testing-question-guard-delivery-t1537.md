@@ -1,0 +1,101 @@
+# 질문 안내 오탐과 메시지 수락 수리 검증
+
+q-2810 1A로 조사 후속 두 범위를 구현했다. 제품 규칙은 [질문 카드](questions.md#coordinator의-카드-누락-확인)와
+[메시지 수락 확인](usage.md#메시지-수락-확인), 설계는 [plan §8.556](plan.md#8556-질문-안내-오탐과-windows-메시지-수락-수리t-1537)에 둔다.
+새 의존성·프로토콜 필드·웹 E2E 번호는 추가하지 않았다.
+
+## 지키는 계약
+
+- 지금 필요한 사용자 결정·정보 요청은 계속 감지한다. 선택지가 없는 요청, 존재하지 않는 번호와 다른 프로젝트의 번호,
+  기존 카드 뒤의 별개 요청을 포함한다.
+- 사용법·처리한 목록·현재 답이 필요 없는 조건부 제안과, 같은 주제의 여러 문단에 나뉜 카드 안내는 새 누락으로 보지 않는다.
+- 정상 접수 뒤 빠르게 답한 카드의 증거는 남고, 닫힘·교체는 별도 안내로 분리한다. 진단에는 규칙·행·q-ID 상태를 남기며
+  본문을 복사하지 않는다.
+- Windows Codex의 긴 붙여넣기는 비문자 경계를 거친 뒤 Enter 한 번으로 제출한다. 경계 사이에 승인 창이 뜨면 제출하지 않는다.
+- 작업 중이라는 이전 상태나 과거 같은 본문의 기록·기존 큐 항목 소비는 이번 보내기의 수락 근거가 아니다.
+  같은 실행 세대·harness 세션·기록의 새 본문 또는 새 큐 영수증을 확인한다. 구분할 수 없으면 Unknown으로 남긴다.
+- 원래 붙여넣기 간격과 수락 시한은 유지한다. 본문·추가 Enter를 자동 재전송하지 않는다.
+
+## 재현과 수리
+
+기준 `ca98a8de`의 Windows 실행 파일과 실제 Codex CLI 0.166.0을 격리 host/agent의 ConPTY에서 실행했다.
+실제 계정·운영 서비스 대신 가짜 인증과 loopback Responses fixture를 사용했다.
+
+짧은 입력은 수락됐지만, 여러 줄 1,097자 입력은 Unknown이 됐다. 입력창에는 `Pasted Content 1098 chars`가 남았다.
+제출용 Enter 한 번이 본문의 줄바꿈으로 들어간 관측이다. Codex의 paste-burst 경로가 Enter를 줄바꿈으로 처리하며
+비문자 입력이 버퍼와 억제 상태를 확정하는 소스와 일치한다.
+
+Windows Codex에 본문을 넣은 뒤 Right 키로 확정하고 승인 창을 다시 검사한 다음 Enter를 한 번 보낸다.
+Right는 새 입력 끝에서 본문을 바꾸지 않는다. 최종 실기에서는 대화 원문과 보낸 본문을 정확히 비교하고 한 번만 기록되는지,
+전송 진단의 붙여넣기·확정 경계·Enter·수락이 각각 한 번인지 확인한다.
+
+실제 재현을 보존한 채 검사 도구도 고쳤다. 처음 도구는 실행 중인 rollout 파일을 공유 없이 열어 파일 잠금 오류로 멈췄다.
+ReadWrite 공유 읽기로 고친 도구에서 위 Unknown을 재현했다. 제품 실패를 다시 돌려 성공으로 채택하지 않았다.
+Rust 개발 중의 A·B 목록 오판과 시험 코드의 Digest import 누락도 원인을 고친 뒤 확인했다. 답한 카드의 재안내 계약은
+새 요구대로 바꾸되, 그 뒤의 별개 새 승인 요청이 여전히 경고되는 단언을 함께 유지했다.
+
+## 관련 owner
+
+모든 명령은 `aaa verify -- <명령>`으로 실행한다. 무거운 명령은 `nice -n 15`로 실행했다.
+
+| 범위 | 명령·owner | 결과 |
+| --- | --- | --- |
+| 질문 감지·수락·세션·키 | `cargo test --profile verify --locked -p aaa-host --lib -- question_guard harness::tests:: prompt_receipt` | 33개 통과 |
+| 네이티브 Rust lint | `cargo clippy --profile verify --locked -p aaa-host --all-targets -- -D warnings` | 통과 |
+| Windows Rust lint | `cargo xwin clippy --profile verify --locked -p aaa-host --all-targets --target x86_64-pc-windows-msvc -- -D warnings` | 통과 |
+| 웹 타입·번들·유닛 전체 | `bash scripts/ci-local.sh --only web` | 통과 |
+| 실제 host/브라우저 | `bash scripts/ci-local.sh --only e2e --spec 37,53,69,117` | 통과 |
+| Windows 실제 Codex | `scripts/test-windows-codex-onboarding.ps1 -Messages` | 통과 |
+| crate 의존 경계 | `cargo test --profile verify --locked -p aaa --test deps` | 통과 |
+| 공개 저장소 | `bash scripts/check-public.sh` | 통과 |
+
+웹 E2E는 기록 페이지·thread 카드·coordinator 카드·inbox 입력 중 알림의 기존 owner를 그대로 실행한다.
+작업 폴더에 고정한 Playwright 1.64.1과 공용 브라우저를 사용하며 전역 설치·사용자 설정은 바꾸지 않는다.
+
+새 Rust 시험은 승인 창을 끼운 실제 송신 경계, 같은 본문의 옛/새 영수증·이전 큐 소비·실행 세대 구별,
+빠른 답 뒤 post 접수 유지, 닫힘과 다른 프로젝트 참조, 문구·문단 회귀를 검증하기 위해 필요하다.
+기존 질문 guard의 단일 문구 시험을 의미별 세 시험으로 나누고 기존 post/harness owner를 보강했다. 삭제한 계약은 없다.
+시계 시험은 Tokio 정지 시계와 실제 사건을 사용하고, 재시도·고정 sleep·시한 확대는 추가하지 않았다.
+
+## Windows 실기 owner
+
+다음 형태로 작업 전용 폴더 안의 실행 파일만 사용한다.
+
+```powershell
+pwsh -NoProfile -File scripts/test-windows-codex-onboarding.ps1 `
+  -Aaa C:\aaa-test\t-0001\aaa.exe -Codex C:\aaa-test\t-0001\codex.exe `
+  -Lab C:\aaa-test\t-0001 -Messages
+```
+
+기존 최초/재시작 brief와 실제 명령 실행 계약을 유지한다. 두 실행에서 64·1,046·4,096자 꼬리를 포함한 여러 줄 메시지를 각각 보내고,
+모델 응답을 사건으로 보류한 상태에서 두 메시지를 더 보내 작업 중 전송과 턴 경계를 확인한다. 총 메시지 8개다.
+API 응답을 푸는 시점은 작업 중 수락 준비 사건으로 정하며 정해 둔 시간을 자지 않는다.
+각 본문은 실제 user 기록에 정확히 한 번 존재해야 하고, 작업 중 후속은 영수증 근거도 있어야 한다.
+
+추가 실행이 필요한 새 후보는 `-RunSuffix final`처럼 별도 결과 폴더를 쓴다. 기존 실패 폴더는 덮어쓰지 않는다.
+실제 PID와 시험 경로를 확인한 프로세스만 정리한다. 서비스·예약 작업·Run 키·사용자 PATH·방화벽 기준 목록은 시작 전과 끝난 뒤 대조한다.
+
+이번 정리에서는 시험 프로세스 0·시험 폴더 삭제를 확인했다. 서비스·예약 작업·Run 키·방화벽의 분류별 지문도 같았다.
+사용자 PATH는 버전 고정 Scoop 경로 10개가 앞에 추가된 차이가 있었다. 그 접두를 제외한 문자열의 지문은 시작 전과 정확히 같았고,
+시험 경로는 없었다. 변경 주체는 확정하지 못해 원복하지 않았다. 시험 도구의 환경 변경은 Process 범위이며 실제 shell 호출도
+`login=false`였음을 기록에서 확인했다. 이를 환경 불변 검사 통과로 적지 않는다.
+
+이 실행 파일은 검증용이다. Windows production·PDB 전달 검사나 착지 gate를 수행한 것으로 기록하지 않는다.
+최종 통합 SHA의 gate와 실제 배포 파일 검증은 착지 창에서 별도로 한다.
+
+## 조사 자료 재생의 한계
+
+조사한 완료 답 94개를 현재 순수 감지 함수에 재생했다. 실제 카드 안내로 판정한 참조는 알려진 카드로 입력했다.
+비질문 15·기존 카드 안내 40·조건부 32는 새 누락 안내 없이 처리됐고, 카드 없는 실제 요청 7은 유지됐다.
+이는 과거의 전체 host/DB 상태를 복원한 시험이나 새 운영 오탐률 측정이 아니다. 자연어의 모든 의도를 판별한다는 보장도 없다.
+개인정보가 있는 원문을 저장소 시험 fixture나 보고 첨부에 옮기지 않았다.
+
+## 참고 구현과 라이선스
+
+- [Codex chat composer](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs)와
+  [paste burst](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/paste_burst.rs):
+  [Apache-2.0](https://github.com/openai/codex/blob/main/LICENSE). 비문자 키가 입력 버퍼·Enter 억제를 확정하는 경계를 참고했다.
+- [tmux input keys](https://github.com/tmux/tmux/blob/master/input-keys.c):
+  [ISC](https://github.com/tmux/tmux/blob/master/COPYING). bracketed-paste 모드를 구별하는 방식을 비교했다.
+
+외부 구현 코드는 복사하지 않고, 기존 aaa의 터미널 키 인코더와 ChatReceipt를 사용했다.

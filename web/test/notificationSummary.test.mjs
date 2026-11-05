@@ -28,6 +28,9 @@ test("알림 목록은 원문 속 단어 대신 구조화된 종류·사건으�
   const item = (item_kind, event) => ({ item_kind, event, subject: "t-0001", summary: "질문·보고·할 일이란 단어가 든 내용\n긴 원문" });
   for (const [kind, event, topic, label] of [
     ["thread-state", "new report", "reports", "새 보고"],
+    ["thread-state", "message not delivered", "work", "메시지 수락 확인 못함"],
+    ["coordinator-check", "question card missing", "asks", "질문 카드 확인"],
+    ["coordinator-check", "question card outdated", "asks", "질문 카드 갱신"],
     ["thread-state", "report needs user", "asks", "확인 필요"],
     ["thread-state", "blocked on a prompt", "asks", "입력 필요"],
     ["thread-state", "resolved", "work", "작업 종료"],

@@ -84,6 +84,7 @@ mod prefs;
 mod project;
 mod prompt;
 mod prompt_box;
+mod prompt_receipt;
 mod push;
 mod question_guard;
 mod question_repeat;

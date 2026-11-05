@@ -43,7 +43,8 @@ export function inboxContent(item: Pick<InboxItem, "item_kind" | "event" | "subj
     "new report": "새 보고", "report needs user": "확인 필요", "blocked on a prompt": "입력 필요",
     resolved: "작업 종료", merged: "병합 완료", "task needs check": "할 일 확인", "needs approval": "승인 필요",
     down: "연결 끊김", recovered: "다시 연결됨", "sessions ended": "세션 종료", "not launched": "시작 실패",
-    "brief not delivered": "지시 전달 실패", "message not delivered": "메시지 전달 확인", "post notice for user": "새 소식",
+    "question card missing": "질문 카드 확인", "question card outdated": "질문 카드 갱신",
+    "brief not delivered": "지시 전달 실패", "message not delivered": "메시지 수락 확인 못함", "post notice for user": "새 소식",
   };
   return { topic, label: labels[event] ?? event, summary: notificationSummary(item.summary) };
 }
