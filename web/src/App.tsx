@@ -1713,6 +1713,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onHandle={async (item) => putAsks(await call({ op: "ask_handle", item }))}
             onReply={(title) => handOff(`「${title}」에 대한 답: `)}
             onForget={async (id) => putAsks(await call({ op: "ask_forget", ids: [id], all: false }))}
+            onTaskAnswer={async (task, action) => {
+              const r = await call({ op: "task_attention_answer", at: { list: task.list, title: task.title, block_sha256: task.block_sha256, line: task.line }, report_hash: task.attention_evidence?.report_hash ?? null, action });
+              if (r.kind !== "task_board") throw new Error(`예상하지 못한 응답: ${r.kind}`);
+              const { kind: _kind, ...board } = r;
+              taskBoard.replace(board);
+              putAsks(await call({ op: "asks" }));
+            }}
             onOpenTask={(title) => {
               goSel("tasks:");
               setTaskFocus((f) => ({ seq: f.seq + 1, title }));

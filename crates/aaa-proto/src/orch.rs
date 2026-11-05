@@ -2675,11 +2675,33 @@ pub struct TaskView {
     /// 남음), 하위 task가 모두 끝났다 등. host가 지우지 않고 사람이 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」로 정한다
     #[serde(default)]
     pub attention: Option<String>,
+    /// FRONT_API 1.160: 확인 카드가 판단할 마지막 보고·착지·thread 상태. 옛 host는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub attention_evidence: Option<TaskAttentionEvidence>,
     /// 자동 병합(FRONT_API 1.143): on이면 `[병합 준비됨]` 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다. host DB 값이며
     /// 프로젝트 기본값 없이 off에서 시작한다. 옛 host는 생략한다
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(optional, as = "Option<bool>")]
     pub auto_merge: bool,
+}
+
+/// 확인 필요 카드에서 고르는 처리(FRONT_API 1.160).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAttentionAction {
+    Complete,
+    Reassign,
+    Unlink,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TaskAttentionEvidence {
+    pub thread: String,
+    pub status: ThreadStatus,
+    pub report_hash: Option<String>,
+    pub report_first_line: Option<String>,
+    pub landing_lines: Vec<String>,
 }
 
 /// 「정리 제안」(할 일 편집 T2): 끝 괄호 글 → 메모, 본문 속 열린 thread 번호 → 연결, `미할당` → owner 비움

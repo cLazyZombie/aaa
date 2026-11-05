@@ -705,7 +705,9 @@ impl Host {
                             let id = task.id.clone().ok_or_else(|| internal("완료 보관에는 task ID가 필요하다"))?;
                             tasks::fill_agent(std::slice::from_mut(&mut task), &self.known_profiles(project));
                             let report = task.thread.as_ref().map(|t| format!("threads/{t}.md"));
-                            let reason = if task.done {
+                            let reason = if actor != "host" {
+                                "사용자 완료 확인".to_string()
+                            } else if task.done {
                                 "완료 체크 [x]".to_string()
                             } else {
                                 task.thread

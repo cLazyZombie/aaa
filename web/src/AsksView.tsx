@@ -9,7 +9,7 @@ import { ListId } from "./ListId";
 import { QuestionReports } from "./QuestionReports";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X, Zap } from "lucide-react";
-import type { AutoDecision, AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
+import type { TaskAttentionAction, TaskView, AutoDecision, AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
 import { Markdown, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths";
@@ -153,6 +153,7 @@ export function AsksView({
   onReply,
   onForget,
   onOpenTask,
+  onTaskAnswer,
   onThread,
 }: {
   shown: boolean;
@@ -167,6 +168,7 @@ export function AsksView({
   onReply: (title: string) => Promise<void>;
   onForget: (id: string) => Promise<void>;
   onOpenTask: (title: string) => void;
+  onTaskAnswer: (task: TaskView, action: TaskAttentionAction) => Promise<void>;
   onThread: (id: string) => void;
 }) {
   const lightbox = useLightbox();
@@ -224,19 +226,8 @@ export function AsksView({
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
           )}
           {selection.kind === "open" && selection.ask.kind === "task" && (
-            <section className="prompt-card thread-ask-card ask-card" data-testid="ask-card" data-kind="task">
-              <header className="prompt-card-header">
-                <KindChip kind="task" />
-                <span className="prompt-card-where">할 일</span>
-              </header>
-              <h2 className="ask-card-title">{selection.ask.task.title}</h2>
-              <p className="ask-card-text">{selection.ask.task.attention}</p>
-              <div className="thread-ask-foot is-end">
-                <button type="button" className="btn btn-primary" data-testid="ask-open-task" onClick={() => onOpenTask((selection.ask as { task: { title: string } }).task.title)}>
-                  <ChevronRight aria-hidden="true" /> 할 일에서 정하기
-                </button>
-              </div>
-            </section>
+            <TaskAttentionCard key={selection.ask.key} task={selection.ask.task} canControl={canControl}
+              onAnswer={onTaskAnswer} onOpenTask={onOpenTask} onThread={onThread} />
           )}
           {selection.kind === "auto" && <AutoDecisionCard key={selection.decision.id} decision={selection.decision} />}
           {selection.kind === "done" && (
@@ -247,6 +238,45 @@ export function AsksView({
       {lightbox.node}
     </div>
   );
+}
+
+function TaskAttentionCard({ task, canControl, onAnswer, onOpenTask, onThread }: {
+  task: TaskView; canControl: boolean;
+  onAnswer: (task: TaskView, action: TaskAttentionAction) => Promise<void>;
+  onOpenTask: (title: string) => void; onThread: (id: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef(false);
+  const evidence = task.attention_evidence;
+  const answer = async (action: TaskAttentionAction) => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true); setError(null);
+    try { await onAnswer(task, action); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { pending.current = false; setBusy(false); }
+  };
+  return <section className="prompt-card thread-ask-card ask-card" data-testid="ask-card" data-kind="task" aria-busy={busy}>
+    <header className="prompt-card-header"><KindChip kind="task" /><span className="prompt-card-where">할 일</span></header>
+    <h2 className="ask-card-title">{task.short_id && <ListId id={task.short_id} />} {task.title}</h2>
+    <p className="ask-card-text">{task.attention}</p>
+    {evidence && <dl className="ask-task-evidence" data-testid="ask-task-evidence">
+      <dt>thread</dt><dd><button className="linkish" onClick={() => onThread(evidence.thread)}>{evidence.thread}</button> · {evidence.status === "resolved" ? "끝남" : evidence.status}</dd>
+      <dt>할 일 저장소</dt><dd>{task.repo ?? "미정"}</dd>
+      <dt>마지막 보고</dt><dd>{evidence.report_first_line ?? (evidence.report_hash ? "보고 사본 확인 필요" : "보고가 없다")}</dd>
+      {evidence.landing_lines.length > 0 && <><dt>착지</dt><dd>{evidence.landing_lines.map((line, i) => <div key={i}>{line}</div>)}</dd></>}
+    </dl>}
+    {error && <p role="alert">{error}</p>}
+    <div className="thread-ask-foot ask-task-actions">
+      {canControl && evidence && <>
+        <button type="button" className="btn btn-primary" disabled={busy} data-testid="ask-task-complete" onClick={() => void answer("complete")}>완료</button>
+        <button type="button" className="btn" disabled={busy} data-testid="ask-task-reassign" onClick={() => void answer("reassign")}>다시 맡기기</button>
+        <button type="button" className="btn btn-ghost" disabled={busy} data-testid="ask-task-unlink" onClick={() => void answer("unlink")}>연결만 풀기</button>
+      </>}
+      <button type="button" className="linkish" disabled={busy} data-testid="ask-open-task" onClick={() => onOpenTask(task.title)}><ChevronRight aria-hidden="true" /> 할 일 열기</button>
+    </div>
+  </section>;
 }
 
 function KindChip({ kind, done }: { kind: keyof typeof KIND_ICON; done?: string }) {

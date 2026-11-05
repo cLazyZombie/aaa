@@ -1884,14 +1884,14 @@ impl Agent {
                 tokio::task::spawn_blocking(move || threads::collect_hash(&work_dir))
                     .await
                     .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .and_then(|r| r.map_err(threads::report_error))
                     .map(|hash| AgentResponse::ReportHash { hash })
             }
             AgentRequest::ReportTransfer { work_dir, max_library_bytes } => {
                 tokio::task::spawn_blocking(move || threads::collect(&work_dir, max_library_bytes))
                     .await
                     .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .and_then(|r| r.map_err(threads::report_error))
                     .map(AgentResponse::ReportTransfer)
             }
             AgentRequest::ReportFileRead { work_dir, path, offset, len } => {
@@ -1905,7 +1905,7 @@ impl Agent {
                 tokio::task::spawn_blocking(move || threads::collect(&work_dir, max_library_bytes))
                     .await
                     .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
-                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .and_then(|r| r.map_err(threads::report_error))
                     .map(AgentResponse::Report)
             }
             AgentRequest::FileRead { work_dir, path, offset, len } => {

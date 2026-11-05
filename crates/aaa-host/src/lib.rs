@@ -2122,6 +2122,9 @@ impl Host {
                 self.records_chunk(&project, &key, offset).map(FrontResponse::RecordDocument)
             }
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
+            FrontRequest::TaskAttentionAnswer { project, at, report_hash, action } => {
+                self.task_attention_answer(&project, at, report_hash, action, actor).await
+            }
             FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,
             FrontRequest::TaskArchive { project, restore, view } => {
                 self.task_archive(&project, restore.as_deref(), view, actor).await

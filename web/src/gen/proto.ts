@@ -538,6 +538,10 @@ sort?: TaskArchiveSort,
  */
 after: string | null, limit: number | null, };
 
+export type TaskAttentionAction = "complete" | "reassign" | "unlink";
+
+export type TaskAttentionEvidence = { thread: string, status: ThreadStatus, report_hash: string | null, report_first_line: string | null, landing_lines: Array<string>, };
+
 export type TaskView = {
 /**
  * 프로젝트별 영구 표시 ID(`d-0001`). 내부 연결은 기존 ULID를 유지한다.
@@ -606,6 +610,10 @@ suggestion: TaskSuggestion | null,
  * 남음), 하위 task가 모두 끝났다 등. host가 지우지 않고 사람이 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」로 정한다
  */
 attention: string | null,
+/**
+ * FRONT_API 1.160: 확인 카드가 판단할 마지막 보고·착지·thread 상태. 옛 host는 생략한다.
+ */
+attention_evidence?: TaskAttentionEvidence,
 /**
  * 자동 병합(FRONT_API 1.143): on이면 `[병합 준비됨]` 뒤 coordinator가 사용자에게 묻지 않고 착지 창을 준다. host DB 값이며
  * 프로젝트 기본값 없이 off에서 시작한다. 옛 host는 생략한다
@@ -1398,7 +1406,7 @@ view?: TaskArchiveQuery, } | { "op": "task_edit", project?: string, ops: Array<T
 /**
  * 사용자 지시로 모델·머신만 변경하는 근거 한 줄(FRONT_API 1.97). 예약 순서와 시작 승인을 유지한다.
  */
-user_request?: string, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null,
+user_request?: string, } | { "op": "task_attention_answer", project?: string, at: TaskAnchor, report_hash: string | null, action: TaskAttentionAction, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null,
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */

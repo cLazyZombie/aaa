@@ -8482,3 +8482,22 @@ rc·no2-engine·pt의 검증 셸은 동일한 `scripts/workspace_record.py`로 �
   [paste burst](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/paste_burst.rs)(Apache-2.0)의 비문자 입력 경계와
   [tmux input keys](https://github.com/tmux/tmux/blob/master/input-keys.c)(ISC)의 bracketed-paste 모드 구분을 비교했다.
   경계의 원칙을 참고했으며 외부 코드·새 의존성을 복사하지 않았다. [검증 기록](testing-question-guard-delivery-t1537.md).
+
+
+### 8.557 빈 보고 보류·할 일 확인 카드 직접 처리(t-1559)
+
+- **빈 보고.** agent는 실제 읽은 바이트가 0이면 hash를 공개하지 않고 수집 요청에는 기존 `Conflict`로 보류를 알린다.
+  host는 보류 응답과 구판 agent의 빈 snapshot을 저장 전에 걸러 기존 본문·r-ID·질문·Next·library를 보존한다.
+  다음 파일 사건과 기존 점검은 유지하며 고정 대기·즉시 재시도로 본문 쓰기를 추측하지 않는다. 옛 빈 판·운영 DB는 수정하지 않는다.
+- **확인 카드.** 「답할 것」의 할 일 카드에 마지막 보고 첫 줄·착지 줄·thread 상태·할 일 저장소를 싣는다.
+  완료는 사용자 완료 확인으로 완료 보관, 다시 맡기기는 기존 실행 예약, 연결만 풀기는 task·메모를 남기는 연결 해제다.
+  선택과 당시 근거는 답한 것에 보존한다. Reader는 처리할 수 없다.
+- **판정.** 보고 없음·보고는 있지만 표지 없음·사본 확인 불가를 구분한다. 착지 문구는 근거이며 자동 완료 영수증이 아니다.
+  기존 thread 저장소의 원격 main 포함 확인은 계속 완료 근거다. 다른 저장소 착지는 할 일 범위까지 보장하지 않으므로
+  문구·SHA만으로 자동 보관 범위를 넓히지 않고 사용자가 카드에서 결정한다.
+- **경합.** task 블록·보고 판·끝난 thread 상태를 확인한다. 이미 처리되거나 바뀐 카드, 다시 열린 thread,
+  하위가 남은 완료와 미처리 후속은 거절하고 현재 자료를 보존한다.
+- **호환.** FRONT_API 1.160에 선택 `TaskView.attention_evidence`와 `task_attention_answer`를 더한다.
+  구판 host가 근거 필드를 생략하면 새 웹은 할 일 열기만 제공한다. AGENT_LINK 1.11은 유지한다.
+- **검증.** agent 수집·실제 vnode 사건, host 사본·상태 보존과 카드 처리 owner, 웹 E2E 128의
+  Chromium/WebKit 1280·390 화면을 확인한다. [검증 기록](testing-report-boundaries-t-1559.md).
