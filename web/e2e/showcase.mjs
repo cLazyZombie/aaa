@@ -362,7 +362,7 @@ async function readmeMedia(t1) {
     await page.getByTestId("activity-automations").click();
     await page.getByTestId("automation-shop-daily-review").click();
     await page.getByTestId("automation-detail").waitFor();
-    await page.getByTestId("automation-source").locator("pre").first().waitFor();
+    await page.getByTestId("automation-flow").waitFor();
     await save(page, "automation.png");
     await page.getByTestId("activity-machines").click();
     await page.getByRole("button", { name: "mac-a 기기 정보", exact: true }).click();

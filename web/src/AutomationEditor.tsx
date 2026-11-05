@@ -7,6 +7,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { ApiError, call } from "./api";
 import { AutomationPage } from "./AutomationDetail";
 import { Markdown } from "./Markdown";
+import { ChipSelect, machineOptions, ProfilePicker, SelectOne, useAutomationChoices } from "./AutomationPickers";
+import type { Choices } from "./automationChoices";
 import type { AutomationCheck, AutomationDoc } from "./gen/proto";
 import {
   actionKind, actionKinds, action as actionOf, bodyOf, CI_EVENTS, condition as conditionOf, conditionKind, conditionKinds, GIT_EVENTS, lineDiff,
@@ -37,6 +39,18 @@ function Toggle({ label, value, onChange }: { label: string; value: unknown; onC
   return <label className="automation-toggle"><input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />{label}</label>;
 }
 
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+/** 머신 하나: host가 아는 머신에서 고른다. 목록을 못 읽으면 글 칸 */
+function Machine({ label, value, onChange, empty, choices }: { label: string; value: unknown; onChange: (v: string) => void; empty: string; choices: Choices | null }) {
+  return choices?.machines.length ? <SelectOne label={label} options={choices.machines.map((m) => m.name)} value={value} onChange={onChange} empty={empty} />
+    : <Text label={label} value={value} onChange={onChange} placeholder={`비우면 ${empty}`} />;
+}
+/** 저장소 하나: project.toml 저장소 이름에서 고른다. 목록을 못 읽으면 글 칸 */
+function Repo({ value, onChange, empty, choices, testid }: { value: unknown; onChange: (v: string) => void; empty: string; choices: Choices | null; testid?: string }) {
+  return choices?.repos.length ? <SelectOne label="저장소" options={choices.repos} value={value} onChange={onChange} empty={empty} testid={testid} />
+    : <Text label="저장소" value={value} onChange={onChange} placeholder={empty === "고른다" ? undefined : `비우면 ${empty}`} testid={testid} />;
+}
+
 /** 일정: 매일 HH:MM 또는 간격 */
 function Timing({ form, update }: { form: Form; update: (f: Form) => void }) {
   const c = conditionOf(form);
@@ -47,14 +61,15 @@ function Timing({ form, update }: { form: Form; update: (f: Form) => void }) {
       <label><input type="radio" name="timing" checked={daily} onChange={() => update(setField(setField(form, "on", "every", null), "on", "daily", "09:00"))} />매일 정한 시각</label>
       <label><input type="radio" name="timing" checked={!daily} onChange={() => update(setField(setField(form, "on", "daily", null), "on", "every", "1h"))} />간격마다</label>
     </fieldset>
-    {daily ? <Text label="시각(host 지역 시간)" value={c.daily} onChange={(v) => set("daily", v)} placeholder="09:00" testid="automation-form-daily" />
+    {daily && typeof c.daily === "string" && !/^\d{2}:\d{2}$/.test(c.daily) ? <Text label="시각(host 지역 시간)" value={c.daily} onChange={(v) => set("daily", v)} placeholder="09:00" testid="automation-form-daily" />
+      : daily ? <Field label="시각(host 지역 시간)"><input type="time" className="input" value={typeof c.daily === "string" ? c.daily : ""} onChange={(e) => set("daily", e.target.value)} data-testid="automation-form-daily" /></Field>
       : <Text label="간격" value={c.every} onChange={(v) => set("every", v)} placeholder="30m · 2h · 1d" testid="automation-form-every" />}
     <Text label="열린 일반 thread 최소 개수" value={c.min_open_threads} onChange={(v) => set("min_open_threads", v === "" ? null : Number(v))} placeholder="비우면 제한 없음" testid="automation-form-min-open-threads" />
     <Field label="놓친 차례"><select className="input" value={c.catch_up === "skip" ? "skip" : "once"} onChange={(e) => set("catch_up", e.target.value)}><option value="once">한 번으로 모아 돈다</option><option value="skip">기록하고 넘긴다</option></select></Field>
   </>;
 }
 
-function ConditionFields({ form, update }: { form: Form; update: (f: Form) => void }) {
+function ConditionFields({ form, update, choices }: { form: Form; update: (f: Form) => void; choices: Choices | null }) {
   const kind = conditionKind(form);
   const c = conditionOf(form);
   const set = (key: string, value: unknown) => update(setField(form, "on", key, value));
@@ -63,37 +78,40 @@ function ConditionFields({ form, update }: { form: Form; update: (f: Form) => vo
     case "command": return <>
       <Timing form={form} update={update} />
       <Text label="명령" value={c.command} onChange={(v) => set("command", v)} mono testid="automation-form-command" />
-      <Text label="명령 머신" value={c.machine} onChange={(v) => set("machine", v)} placeholder="비우면 host 머신" />
+      <Machine label="명령 머신" value={c.machine} onChange={(v) => set("machine", v)} empty="host 머신" choices={choices} />
     </>;
     case "thread": return <>
       <List label="사건" value={c.events} onChange={(v) => set("events", v)} hint="예: thread_failed, thread_reported, git_pushed" testid="automation-form-events" />
-      <List label="저장소" value={c.repos} onChange={(v) => set("repos", v)} hint="비우면 모든 저장소" />
+      {choices?.repos.length ? <ChipSelect label="저장소" options={choices.repos.map((r) => ({ value: r }))} value={strings(c.repos)} onChange={(v) => set("repos", v)} empty="모든 저장소" testid="automation-form-repos" />
+        : <List label="저장소" value={c.repos} onChange={(v) => set("repos", v)} hint="비우면 모든 저장소" />}
       <Toggle label="다른 자동화가 띄운 thread의 사건도 받는다" value={c.include_automation} onChange={(v) => set("include_automation", v || null)} />
     </>;
     case "ci": case "git": return <>
-      <Text label="저장소" value={c.repo} onChange={(v) => set("repo", v)} testid="automation-form-repo" />
+      <Repo value={c.repo} onChange={(v) => set("repo", v)} empty="고른다" choices={choices} testid="automation-form-repo" />
       <List label="branch" value={c.branches} onChange={(v) => set("branches", v)} />
       {kind === "ci" && <List label="workflow" value={c.workflows} onChange={(v) => set("workflows", v)} hint="비우면 모든 workflow" />}
       <Checks label="사건" options={kind === "ci" ? CI_EVENTS : GIT_EVENTS} value={c.events} onChange={(v) => set("events", v)} />
-      <Text label="조회 머신" value={c.machine} onChange={(v) => set("machine", v)} placeholder="비우면 저장소가 있는 머신" />
+      <Machine label="조회 머신" value={c.machine} onChange={(v) => set("machine", v)} empty="저장소가 있는 머신" choices={choices} />
     </>;
     default: return <p role="alert">이 조건은 폼으로 고치지 못한다. TOML에서 고친다.</p>;
   }
 }
 
-function ActionFields({ form, update }: { form: Form; update: (f: Form) => void }) {
+function ActionFields({ form, update, choices }: { form: Form; update: (f: Form) => void; choices: Choices | null }) {
   const kind = actionKind(form);
   const a = actionOf(form);
   const set = (key: string, value: unknown) => update(setField(form, "do", key, value));
   switch (kind) {
-    case "command": return <><Text label="실행 명령" value={a.command} onChange={(v) => set("command", v)} mono testid="automation-action-command" /><Text label="실행 머신" value={a.machine} onChange={(v) => set("machine", v)} placeholder="비우면 host 머신" /></>;
+    case "command": return <><Text label="실행 명령" value={a.command} onChange={(v) => set("command", v)} mono testid="automation-action-command" /><Machine label="실행 머신" value={a.machine} onChange={(v) => set("machine", v)} empty="host 머신" choices={choices} /></>;
     case "inbox": return <Toggle label="휴대폰에도 알린다(앱 안 알림)" value={a.notify} onChange={(v) => set("notify", v)} />;
     case "message": return <Text label="받는 thread" value={a.thread} onChange={(v) => set("thread", v)} placeholder="owner 또는 t-0123" testid="automation-form-thread" />;
     case "start": return <>
       <Text label="thread 제목" value={a.title} onChange={(v) => set("title", v)} hint="{date}·{machine}·{repo_path}를 채운다" testid="automation-form-start-title" />
-      <List label="profile 후보" value={a.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />
-      <List label="머신 후보(비우면 자동)" value={a.machines ?? []} onChange={(v) => set("machines", v)} testid="automation-form-machines" />
-      <Text label="저장소" value={a.repo} onChange={(v) => set("repo", v)} placeholder="비우면 저장소 없는 작업 폴더" />
+      {choices?.profiles.length ? <ProfilePicker label="profile 후보" value={strings(a.profiles)} choices={choices.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />
+        : <List label="profile 후보" value={a.profiles} onChange={(v) => set("profiles", v)} testid="automation-form-profiles" />}
+      {choices?.machines.length ? <ChipSelect label="머신 후보" options={machineOptions(choices.machines)} value={strings(a.machines)} onChange={(v) => set("machines", v)} empty="자동" testid="automation-form-machines" />
+        : <List label="머신 후보(비우면 자동)" value={a.machines ?? []} onChange={(v) => set("machines", v)} testid="automation-form-machines" />}
+      <Repo value={a.repo} onChange={(v) => set("repo", v)} empty="작업 폴더(저장소 없음)" choices={choices} />
       <Field label="열린 thread"><select className="input" value={a.reuse === "open" ? "open" : "new"} onChange={(e) => update(e.target.value === "open" ? setField(form, "do", "reuse", "open") : setField(setField(setField(form, "do", "reuse", "new"), "do", "memory", null), "do", "close_idle", null))}><option value="new">사건마다 새 thread</option><option value="open">같은 규칙의 열린 thread에 이어 보낸다</option></select></Field>
       {a.reuse === "open" && <>
         <Toggle label="규칙 기억(memory) 쓰기" value={a.memory} onChange={(v) => set("memory", v)} />
@@ -169,6 +187,7 @@ export function AutomationEditor({ canV2 = false, project, name: openName, onClo
   onSaved: (name: string) => Promise<void>;
 }) {
   const creating = !openName;
+  const choices = useAutomationChoices(project);
   const [name, setName] = useState(openName ?? "");
   const nameInput = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<Mode>("form");
@@ -339,12 +358,12 @@ export function AutomationEditor({ canV2 = false, project, name: openName, onClo
         <section className="automation-section" aria-label="조건">
           <h3>조건</h3>
           <Field label="종류"><select className="input" data-testid="automation-form-condition" value={conditionKind(form) ?? ""} onChange={(e) => updateForm(setCondition(form, e.target.value as ConditionKind))}>{conditionKinds.map((c) => <option key={c.kind} value={c.kind}>{c.label}</option>)}</select></Field>
-          <ConditionFields form={form} update={updateForm} />
+          <ConditionFields form={form} update={updateForm} choices={choices} />
         </section>
         <section className="automation-section" aria-label="동작">
           <h3>동작</h3>
           <Field label="종류"><select className="input" data-testid="automation-form-action" value={actionKind(form) ?? ""} onChange={(e) => updateForm(setAction(form, e.target.value as ActionKind))}>{actionKinds.filter((a) => a.kind !== "command" || canV2).map((a) => <option key={a.kind} value={a.kind}>{a.label}</option>)}</select></Field>
-          <ActionFields form={form} update={updateForm} />
+          <ActionFields form={form} update={updateForm} choices={choices} />
           {actionKind(form) !== "deploy" && actionKind(form) !== "command" && <div className="automation-body">
             <div className="automation-tools"><span>본문{body_.file ? ` · ${body_.file}` : ""} (Markdown)</span><button type="button" className="btn btn-ghost" aria-pressed={preview} onClick={() => setPreview((p) => !p)}>{preview ? "고치기" : "미리보기"}</button></div>
             {preview ? <div className="automation-preview" data-testid="automation-body-preview"><Markdown>{bodyText || "(비었다)"}</Markdown></div>

@@ -5,14 +5,16 @@
 // 승인(`automation_approve`), 지금 실행(`automation_run`)·지우기(`automation_delete`)·명령 승인(`routine_approve`, 확인 창에 명령·머신·hash).
 // 기록 줄 모양은 t3code ScheduledTasksSettings(상태 배지 · 시각 · 요약)와 herdr-projects `routine list`의 kind 낱말을 따른다.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { ArrowRight, Clock, Gauge, Play, Server, X } from "lucide-react";
 import { call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { Toggle } from "./herdr/SettingsControls";
 import type { AutomationExecution, RoutineRun, RoutineSource, RoutineView, ThreadView } from "./gen/proto";
 import { cardTone, cardWord, lastSkip, legacyRule, ruleTargets, runTone, runWord, shortTrigger, stuckBatch } from "./automationModel";
-import { runKey } from "./automationForm";
+import { runKey, type Form } from "./automationForm";
+import { flowOf, profileChip, type Choices, type Flow, type FlowRow } from "./automationChoices";
+import { ProfileChipText, useAutomationChoices } from "./AutomationPickers";
 
 const time = (at: number) => new Date(at).toLocaleString();
 const short = (at: number) => new Date(at).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -88,6 +90,62 @@ function Closing({ at }: { at: number }) {
   return <span className="automation-dim" data-testid="automation-closing">{minutes > 0 ? `${minutes}분 뒤 끝남` : "곧 끝남"}</span>;
 }
 
+/** 흐름 카드 한 칸의 값: profile은 모델·생각 수준, 끊긴 머신은 흐리게, 목록에 없는 값은 표지 */
+function FlowChips({ row, choices }: { row: FlowRow; choices: Choices | null }) {
+  const chips = row.chips ?? [];
+  if (chips.length === 0) return <span className="automation-dim">{row.empty ?? "없음"}</span>;
+  return <span className="automation-chips">{chips.map((v, i) => {
+    if (row.kind === "profile") {
+      const chip = profileChip(v, choices?.profiles ?? null);
+      return <span key={v} className={`automation-chip${i === 0 ? " is-first" : ""}${!choices || chip.known ? "" : " is-unknown"}`}>
+        <span className="automation-chip-n" aria-label={`${i + 1}번째`}>{i + 1}</span>{choices ? <ProfileChipText chip={chip} /> : v}</span>;
+    }
+    const machine = row.kind === "machine" ? choices?.machines.find((m) => m.name === v) : undefined;
+    const off = machine && !machine.connected;
+    return <span key={v} className={`automation-chip${off ? " is-dim" : ""}${row.code ? " is-code" : ""}`}>{v}{off && <small>끊김</small>}</span>;
+  })}</span>;
+}
+function FlowCard({ icon, tone, label, card, choices, testid }: { icon: ReactNode; tone: string; label: string; card: Flow["when"]; choices: Choices | null; testid: string }) {
+  return <div className="automation-flow-card" data-testid={testid}>
+    <div className="automation-flow-head"><span className={`automation-flow-icon is-${tone}`}>{icon}</span>{label}</div>
+    {card.title && <strong className="automation-flow-title">{card.title}</strong>}
+    {card.notes.length > 0 && <p className="automation-flow-notes">{card.notes.join(" · ")}</p>}
+    {card.rows.map((r) => <div key={r.label} className="automation-flow-row"><span>{r.label}</span><FlowChips row={r} choices={choices} /></div>)}
+  </div>;
+}
+/** 설정(t-1538 시안 1A): 언제 → 무엇을 → 어디서 카드와 한도 알약 */
+function FlowCards({ flow, choices, pending }: { flow: Flow; choices: Choices | null; pending: number | null }) {
+  const arrow = <span className="automation-flow-arrow" aria-hidden="true"><ArrowRight /></span>;
+  return <>
+    <div className="automation-flow" data-testid="automation-flow">
+      <FlowCard icon={<Clock />} tone="when" label="언제" card={flow.when} choices={choices} testid="automation-flow-when" />
+      {arrow}
+      <FlowCard icon={<Play />} tone="do" label="무엇을" card={flow.what} choices={choices} testid="automation-flow-what" />
+      {arrow}
+      <FlowCard icon={<Server />} tone="where" label="어디서" card={flow.where} choices={choices} testid="automation-flow-where" />
+    </div>
+    <div className="automation-limits" aria-label="한도" data-testid="automation-limits">
+      <span className="automation-flow-icon is-limit" aria-hidden="true"><Gauge /></span>
+      {flow.limits.map((l) => <span key={l} className="automation-limit">{l}</span>)}
+      {pending !== null && <span className="automation-limit">대기 입력 {pending}건</span>}
+    </div>
+  </>;
+}
+
+/** host가 읽은 폼(`automation_read` check.form). 판(sha)이 바뀌면 다시 읽는다. 못 읽으면 null(화면은 host 낱말 줄) */
+function useFlow(project: string, name: string, enabled: boolean, stamp: string | undefined): Flow | null {
+  const [flow, setFlow] = useState<Flow | null>(null);
+  useEffect(() => {
+    if (!enabled) { setFlow(null); return; }
+    let live = true;
+    call({ op: "automation_read", project, name })
+      .then((r) => { if (live) setFlow(r.kind === "automation_doc" && r.doc.check.form && !r.doc.legacy ? flowOf(r.doc.check.form as Form) : null); })
+      .catch(() => { if (live) setFlow(null); });
+    return () => { live = false; };
+  }, [project, name, enabled, stamp]);
+  return flow;
+}
+
 /** routine_runs 50건과 파일 원문. 줄이 바뀌면(host 기록이 늘면) 다시 읽는다 */
 function useRuns(project: string, name: string, stamp: unknown) {
   const [runs, setRuns] = useState<RoutineRun[]>([]);
@@ -145,6 +203,8 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
 }) {
   canControl = canControl && !rule.web_read_only_reason;
   const { runs, executions, next, moreBusy, loadMore, source, error, loading, load } = useRuns(project, rule.name, rule.last_result?.at_ms);
+  const flow = useFlow(project, rule.name, canEdit && !legacyRule(rule) && !rule.error, source?.sha256);
+  const choices = useAutomationChoices(project);
   const [unblock, setUnblock] = useState<{
     batch: string; discard: boolean;
     submitted?: { thread: string | null; events: number; pending: number };
@@ -225,8 +285,8 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
         sub={rule.closing?.filter((c) => running.some((t) => t.id === c.thread)).map((c) => <Closing key={c.thread} at={c.close_at_ms} />)} />
     </dl>
 
-    <Section title="설정">
-      <Facts rows={[
+    <Section title="설정" testid="automation-settings">
+      {flow ? <FlowCards flow={flow} choices={choices} pending={queue ? queue.pending : null} /> : <Facts rows={[
         ["조건", <>{shortTrigger(rule)}{(rule.trigger || rule.schedule) !== shortTrigger(rule) && <> <code>{rule.trigger || rule.schedule}</code></>}</>],
         ["동작", rule.action || "동작 정보 없음"],
         !!rule.command && ["명령", <code key="c">{rule.command}</code>],
@@ -234,7 +294,8 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
         ["하루 상한", rule.max_per_day ? `${rule.max_per_day}번` : "없음"],
         ["대기 입력", queue ? `${queue.pending}건 · 처리 중 묶음 ${queue.inflight ? `${queue.inflight.events}건${queue.inflight.unknown ? "(보낸 결과 모름)" : ""}` : "없음"}` : "이 host는 큐 상태를 알리지 않는다(옛 판)"],
         ["파일", <>{legacy ? "이전 형식(.md) · 웹은 고치지 않는다. 목록의 「새 형식으로 바꾸기」" : "TOML"} · <code>{rule.file || "—"}</code></>],
-      ]} />
+      ]} />}
+      {flow && queue?.inflight && <p className="automation-dim">처리 중 묶음 {queue.inflight.events}건{queue.inflight.unknown ? "(보낸 결과 모름)" : ""}</p>}
       {!canEdit && <p className="automation-dim">이 host는 웹 편집을 모른다(1.76 이전). 파일 원문을 본다.</p>}
     </Section>
     <Section title="승인 범위">
@@ -266,7 +327,7 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, running
         : "아직 사본 없음"}</span></summary>
       <Source file="memory.md" text={rule.memory.text} truncated={rule.memory.truncated} />
     </details>}
-    <details className="automation-fold" open data-testid="automation-source">
+    <details className="automation-fold" open={!flow} data-testid="automation-source">
       <summary>파일 원문 <span>{source?.file ?? rule.file}</span></summary>
       {source ? <>
         <Source file={source.file} text={source.text} truncated={source.truncated} />
