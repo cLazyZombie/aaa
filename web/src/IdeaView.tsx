@@ -7,7 +7,7 @@ import { ProviderError } from "./ProviderError";
 // GitHub Discussions·Jira Product Discovery(아이디어 → 할 일 여럿, 양쪽 링크), spec-kit `/clarify`(MIT, 정리본 모양).
 import "./IdeaView.css";
 
-import { Copy, ListTodo, MessageSquarePlus, Pencil, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ClipboardPaste, Copy, Download, Ellipsis, ImagePlus, ListTodo, MessageSquarePlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type DragEvent } from "react";
 import { ApiError, call, uploadIdeaFile } from "./api";
 import { ChatComposer, MAX_COMPOSER_CHARS, restorePending, savePending, type PendingSend } from "./ChatComposer";
@@ -17,7 +17,10 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import type { ChatMessage, IdeaNote, IdeaSummary, IdeaTaskDraft, PaneView, ThreadView } from "./gen/proto";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { MODAL, editable, scrolledAside, selecting } from "./herdr/edgeSwipe.ts";
-import { ideaFileUrl, ideaSwipe, sectionBefore, firstDraft, withEditNote, type IdeaPage } from "./ideasModel";
+import {
+  IDEA_MEDIA_ACCEPT, ideaFileUrl, ideaMediaFile, ideaMediaSource, ideaMediaSpot, ideaSwipe, movedMedia, sectionBefore, firstDraft,
+  withEditNote, withMediaAlt, withMediaName, withoutMedia, type IdeaPage,
+} from "./ideasModel";
 import { useLightbox } from "./Lightbox";
 import { ReportMarkdown } from "./ReportsView";
 import { formatNotes, noteText, sortNotes } from "./reviewNoteStore.ts";
@@ -45,6 +48,89 @@ function useIdeaNote(target: string | null, summary: IdeaSummary | undefined) {
     return () => { live = false; };
   }, [target, stamp, again]);
   return { note, setNote, error, setError, reread: () => setAgain((n) => n + 1) };
+}
+
+/** 올리는 중·실패한 파일 하나. `place`는 올린 이름을 받아 노트에 둔다(보기: 노트 끝에 붙여 저장, 고치기: 커서 자리) */
+type MediaUpload = { id: number; name: string; file: File | null; state: "uploading" | "failed"; error?: string; place: (names: string[]) => Promise<void> | void };
+
+/** 그림·영상 올리기(t-1575): 하나씩 차례로 올리고 파일마다 상태를 둔다. 못 받는 파일은 올리지 않고 까닭을 보인다 */
+function useMediaUploads(project: string, idea: string, onError: (e: string | null) => void) {
+  const [items, setItems] = useState<MediaUpload[]>([]);
+  const seq = useRef(0);
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const run = (entries: MediaUpload[], place: MediaUpload["place"]) => {
+    queue.current = queue.current.then(async () => {
+      const names: string[] = [];
+      for (const e of entries) {
+        try {
+          names.push(await uploadIdeaFile(project, idea, e.file!));
+          setItems((cur) => cur.filter((x) => x.id !== e.id));
+        } catch (err) {
+          const error = err instanceof ApiError ? err.message : String(err);
+          setItems((cur) => cur.map((x) => x.id === e.id ? { ...x, state: "failed", error } : x));
+        }
+      }
+      if (names.length === 0) return;
+      try {
+        await place(names);
+        onError(null);
+      } catch (err) {
+        onError(`그림을 노트에 넣지 못했다: ${err instanceof ApiError ? err.message : String(err)}`);
+      }
+    });
+    return queue.current;
+  };
+  const add = (files: File[], place: MediaUpload["place"]) => {
+    const fresh: MediaUpload[] = [];
+    const rejected: MediaUpload[] = [];
+    for (const f of files) {
+      const ok = ideaMediaFile(f);
+      const name = f.name || "붙여 넣은 파일";
+      if (typeof ok === "string") rejected.push({ id: ++seq.current, name, file: null, state: "failed", error: ok, place });
+      else fresh.push({ id: ++seq.current, name, file: ok, state: "uploading", place });
+    }
+    setItems((cur) => [...cur, ...fresh, ...rejected]);
+    return fresh.length > 0 ? run(fresh, place) : Promise.resolve();
+  };
+  const retry = (id: number) => {
+    const e = items.find((x) => x.id === id);
+    if (!e?.file) return;
+    const again = { ...e, state: "uploading" as const, error: undefined };
+    setItems((cur) => cur.map((x) => x.id === id ? again : x));
+    void run([again], e.place);
+  };
+  const dismiss = (id: number) => setItems((cur) => cur.filter((x) => x.id !== id));
+  return { items, add, retry, dismiss, busy: items.some((x) => x.state === "uploading") };
+}
+type MediaUploads = ReturnType<typeof useMediaUploads>;
+
+function UploadList({ uploads }: { uploads: MediaUploads }) {
+  if (uploads.items.length === 0) return null;
+  return (
+    <ul className="idea-uploads" data-testid="idea-uploads">
+      {uploads.items.map((u) => (
+        <li key={u.id} data-state={u.state} data-testid="idea-upload">
+          <span className="idea-upload-name">{u.name}</span>
+          <span className="muted">{u.state === "uploading" ? "올리는 중…" : u.error}</span>
+          {u.state === "failed" && u.file && <button type="button" className="ghost small" data-testid="idea-upload-retry" onClick={() => uploads.retry(u.id)}>다시</button>}
+          {u.state === "failed" && <button type="button" className="ghost small icon" aria-label="닫기" onClick={() => uploads.dismiss(u.id)}><X className="i" aria-hidden="true" /></button>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** 클립보드의 그림(iOS는 그 자리에 「붙여넣기」 허용 말풍선을 띄운다). 읽을 수 없는 브라우저면 null */
+async function clipboardMedia(): Promise<File[] | null> {
+  const clip = navigator.clipboard as Clipboard | undefined;
+  if (!clip || typeof clip.read !== "function") return null;
+  const out: File[] = [];
+  for (const item of await clip.read()) {
+    const type = item.types.find((t) => /^image\/(png|jpeg|gif|webp)$/.test(t));
+    if (!type) continue;
+    out.push(new File([await item.getType(type)], `clipboard.${type === "image/jpeg" ? "jpg" : type.slice(6)}`, { type }));
+  }
+  return out;
 }
 
 export function IdeaView({ shown, target, ideas, threads, panes, canControl, onOpen, onOpenLink }: {
@@ -121,6 +207,42 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
       setBusy(false);
     }
   };
+  const uploads = useMediaUploads(note?.project ?? "", note?.idea.short_id ?? "", setError);
+  const picker = useRef<HTMLInputElement>(null);
+  // 1.162 host는 노트에 그림 목록을 싣는다(옛 host에는 idea_attach를 보내지 않는다)
+  const canAttach = !!note && canControl && !done && Array.isArray(note.media) && note.merging === null;
+  /** 보기 화면에서 고른·붙인 그림: 올린 뒤 노트 끝에 붙여 바로 새 판으로(사용자 11-06 2A) */
+  const attach = (files: File[]) => {
+    if (!note || files.length === 0) return;
+    const idea = note.idea.short_id;
+    void uploads.add(files, async (names) => {
+      const r = await call({ op: "idea_attach", idea, names });
+      if (r.kind === "idea_attached") setNote(r.note);
+    });
+  };
+  const pasteFromClipboard = async () => {
+    try {
+      const files = await clipboardMedia();
+      if (files === null) setError("이 브라우저는 클립보드 그림을 읽지 못한다");
+      else if (files.length === 0) setError("클립보드에 그림이 없다");
+      else attach(files);
+    } catch (e) {
+      setError(`클립보드를 읽지 못했다: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  /** 그림 메뉴의 고침(설명·바꾸기·순서·지우기): 지금 판을 기준으로 새 판을 쓴다 */
+  const edit = async (text: string) => {
+    if (!note || busy) return;
+    setBusy(true);
+    try {
+      const r = await call({ op: "idea_save", idea: note.idea.short_id, base_rev: note.rev, text });
+      if (r.kind === "idea") { setNote(r.note); setError(null); }
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   if (!target) {
     return (
       <div className={`idea-screen${shown ? "" : " is-hidden"}`} inert={!shown} data-testid="idea-view" data-shown={shown ? "true" : "false"}>
@@ -135,6 +257,12 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
     <button type="button" className="btn btn-primary" disabled={busy} data-testid="idea-copy" onClick={() => void copy()}><Copy className="i" aria-hidden="true" />복사해서 새 아이디어</button>
   ) : editing ? null : (
     <>
+      {canAttach && (
+        <>
+          <button type="button" className="btn" data-testid="idea-media-add" disabled={busy} onClick={() => picker.current?.click()}><ImagePlus className="i" aria-hidden="true" />그림</button>
+          <button type="button" className="btn icon" data-testid="idea-media-paste" aria-label="클립보드 그림 붙이기" title="클립보드 그림 붙이기" disabled={busy} onClick={() => void pasteFromClipboard()}><ClipboardPaste className="i" aria-hidden="true" /></button>
+        </>
+      )}
       <button type="button" className="btn" data-testid="idea-edit" disabled={note.merging !== null} onClick={() => setEditing({ base: note.rev, text: note.text })}><Pencil className="i" aria-hidden="true" />고치기</button>
       <button type="button" className="btn btn-primary" data-testid="idea-handoff" disabled={note.merging !== null} onClick={() => setHandoff(true)}><ListTodo className="i" aria-hidden="true" />할 일로 넘기기</button>
     </>
@@ -163,11 +291,25 @@ export function IdeaView({ shown, target, ideas, threads, panes, canControl, onO
         {error && <div className="banner err" role="alert">{error}</div>}
         {note?.media_error && <div className="banner err" role="alert">그림을 옮기지 못했다: {note.media_error}</div>}
         <div className="idea-columns" ref={columns} style={{ "--idea-note-percent": `${notePercent}%` } as React.CSSProperties}>
-          <section id="idea-note-pane" className="idea-note-pane" aria-label="아이디어 노트" hidden={narrow && page !== "note"} data-testid="idea-note-pane">
+          <section id="idea-note-pane" className="idea-note-pane" aria-label="아이디어 노트" hidden={narrow && page !== "note"} data-testid="idea-note-pane"
+            onPaste={(e: ClipboardEvent<HTMLElement>) => {
+              if (editing || !canAttach || editable(e.target)) return;
+              const files = filesOf(e.clipboardData);
+              if (files.length) { e.preventDefault(); attach(files); }
+            }}
+            onDragOver={(e: DragEvent) => { if (!editing && canAttach && e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+            onDrop={(e: DragEvent<HTMLElement>) => {
+              if (editing || !canAttach) return;
+              const files = filesOf(e.dataTransfer);
+              if (files.length) { e.preventDefault(); attach(files); }
+            }}>
             {narrow && tools && <div className="idea-note-tools">{tools}</div>}
+            <input ref={picker} type="file" multiple hidden accept={IDEA_MEDIA_ACCEPT} data-testid="idea-media-input"
+              onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; attach(files); }} />
+            <UploadList uploads={uploads} />
             {note && (editing
-              ? <NoteEditorPane note={note} editing={editing} busy={busy} onChange={(text) => setEditing({ ...editing, text })} onCancel={() => setEditing(null)} onSave={() => void save()} onError={setError} />
-              : <NoteBody note={note} canNote={canControl && !done} onAdd={notes.add} anchors={notes.notes.flatMap((n) => n.source.kind === "note" ? [n.source.anchor] : [])} onOpenLink={onOpenLink} />)}
+              ? <NoteEditorPane note={note} editing={editing} busy={busy} uploads={uploads} onChange={(text) => setEditing((cur) => cur && { ...cur, text })} onCancel={() => setEditing(null)} onSave={() => void save()} />
+              : <NoteBody note={note} canNote={canControl && !done} canEdit={canAttach && !busy} uploads={uploads} onEdit={edit} onAdd={notes.add} anchors={notes.notes.flatMap((n) => n.source.kind === "note" ? [n.source.anchor] : [])} onOpenLink={onOpenLink} />)}
           </section>
           {!narrow && <IdeaResizer percent={notePercent} onResize={setNotePercent} />}
           <section className="idea-chat-pane" aria-label="대화" hidden={narrow && page !== "chat"} data-testid="idea-chat-pane"
@@ -199,9 +341,13 @@ function IdeaStatusChip({ note }: { note: IdeaNote }) {
 }
 
 /** 노트 보기: 고른 글에 의견(t-1222 보고 글과 같은 띠), 그림·영상은 통째로 의견 단추 */
-function NoteBody({ note, canNote, anchors, onAdd, onOpenLink }: {
+function NoteBody({ note, canNote, canEdit, uploads, onEdit, anchors, onAdd, onOpenLink }: {
   note: IdeaNote;
   canNote: boolean;
+  /** 그림 메뉴로 노트를 고칠 수 있다(t-1575) */
+  canEdit: boolean;
+  uploads: MediaUploads;
+  onEdit: (text: string) => Promise<void>;
   anchors: readonly import("./textAnchor.ts").TextAnchor[];
   onAdd: ReturnType<typeof useReviewNotes>["add"];
   onOpenLink?: (href: string) => boolean;
@@ -219,37 +365,53 @@ function NoteBody({ note, canNote, anchors, onAdd, onOpenLink }: {
         if (href && onOpenLink?.(href)) e.preventDefault();
       }}>
       <div ref={root} className="idea-note-text">
-        <ReportMarkdown base={null} image={image} text={note.text} onImages={lightbox.open}
+        <ReportMarkdown base={null} image={image} text={note.text} onImages={lightbox.open} captions
           notes={canNote ? { anchors, onAdd: (anchor, comment, range) => onAdd({ kind: "note", idea, section: root.current ? sectionBefore(root.current, range) : null, anchor }, comment) } : undefined} />
       </div>
-      {canNote && <MediaNotes root={root} text={note.text} onAdd={(name, label, section, comment) => onAdd({ kind: "media", idea, section, name, label }, comment)} />}
+      {(canNote || canEdit) && <MediaNotes root={root} note={note} canNote={canNote} canEdit={canEdit} uploads={uploads} onEdit={onEdit}
+        onAdd={(name, label, section, comment) => onAdd({ kind: "media", idea, section, name, label }, comment)} />}
       {lightbox.node}
     </div>
   );
 }
 
-/** 그림·영상마다 오른쪽 위 「의견」(결정 17: 통째로 인용) */
-function MediaNotes({ root, text, onAdd }: {
+/** 그림·영상마다 오른쪽 위 「의견」(결정 17: 통째로 인용)과 「⋯」 그림 메뉴(t-1575: 설명·바꾸기·위로·아래로·지우기·내려받기) */
+function MediaNotes({ root, note, canNote, canEdit, uploads, onEdit, onAdd }: {
   root: React.RefObject<HTMLDivElement | null>;
-  text: string;
+  note: IdeaNote;
+  canNote: boolean;
+  canEdit: boolean;
+  uploads: MediaUploads;
+  onEdit: (text: string) => Promise<void>;
   onAdd: (name: string, label: string, section: string | null, comment: string) => boolean;
 }) {
-  const [spots, setSpots] = useState<{ name: string; label: string; section: string | null; top: number; right: number }[]>([]);
+  const text = note.text;
+  const [spots, setSpots] = useState<{ name: string; nth: number; label: string; section: string | null; top: number; right: number }[]>([]);
   const [open, setOpen] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ key: string; mode: "menu" | "alt" | "remove"; alt: string } | null>(null);
+  const latest = useRef(note);
+  latest.current = note;
+  const replacing = useRef<{ name: string; nth: number } | null>(null);
+  const replacer = useRef<HTMLInputElement>(null);
+  useEffect(() => { setMenu(null); }, [text]);
   useLayoutEffect(() => {
     const el = root.current;
     if (!el) return;
     const measure = () => {
       // 단추는 노트 칸(.idea-note-body, position: relative) 기준이다. 그림 오른쪽 위에 두되 칸 밖으로 나가지 않게 한다
       const box = (el.parentElement ?? el).getBoundingClientRect();
+      const count = new Map<string, number>();
       const found = Array.from(el.querySelectorAll<HTMLElement>("img, video")).flatMap((m) => {
         const src = m.getAttribute("src") ?? m.querySelector("source")?.getAttribute("src") ?? "";
         const name = decodeURIComponent(src.split("/").pop() ?? "");
         if (!/^[0-9a-f]{16}\.(?:png|jpg|gif|webp|mp4|webm)$/.test(name)) return [];
+        // 같은 그림이 여러 번 나오면 글의 몇째 것인지로 가른다(렌더러는 글 차례로 그린다)
+        const nth = count.get(name) ?? 0;
+        count.set(name, nth + 1);
         const r = m.getBoundingClientRect();
         const range = document.createRange();
         range.selectNode(m);
-        return [{ name, label: m.getAttribute("alt") ?? m.getAttribute("aria-label") ?? "", section: sectionBefore(el, range), top: r.top - box.top + 6, right: Math.max(6, Math.min(box.right - r.right + 6, box.width - (r.left - box.left) - 72)) }];
+        return [{ name, nth, label: m.getAttribute("alt") ?? m.getAttribute("aria-label") ?? "", section: sectionBefore(el, range), top: r.top - box.top + 6, right: Math.max(6, Math.min(box.right - r.right + 6, box.width - (r.left - box.left) - 112)) }];
       });
       setSpots(found);
     };
@@ -259,74 +421,129 @@ function MediaNotes({ root, text, onAdd }: {
     el.addEventListener("load", measure, true);
     return () => { observer.disconnect(); el.removeEventListener("load", measure, true); };
   }, [root, text]);
+  /** 지금 판의 같은 그림에 고침을 얹는다(그사이 글이 바뀌었으면 그 글에서 다시 찾는다) */
+  const change = (name: string, nth: number, how: (text: string, spot: NonNullable<ReturnType<typeof ideaMediaSpot>>) => string | null) => {
+    const now = latest.current.text;
+    const spot = ideaMediaSpot(now, name, nth);
+    const next = spot ? how(now, spot) : null;
+    setMenu(null);
+    if (next !== null && next !== now) void onEdit(next);
+  };
   return (
     <>
-      {spots.map((s) => (
-        <div key={`${s.name}:${s.top}`} className="idea-media-note" style={{ top: s.top, right: s.right }}>
-          {open === `${s.name}:${s.top}` ? (
-            <NoteEditor quote={`${/\.(mp4|webm)$/.test(s.name) ? "영상" : "그림"} ${s.label || s.name}`} submitLabel="의견 추가"
-              onSubmit={(comment) => { if (!onAdd(s.name, s.label, s.section, comment)) return false; setOpen(null); return true; }}
-              onCancel={() => setOpen(null)} />
-          ) : (
-            <button type="button" className="chat-quote" data-testid="idea-media-note" onClick={() => setOpen(`${s.name}:${s.top}`)}>
-              <MessageSquarePlus aria-hidden="true" />의견
-            </button>
-          )}
-        </div>
-      ))}
+      <input ref={replacer} type="file" hidden accept={IDEA_MEDIA_ACCEPT} data-testid="idea-media-replace-input"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []).slice(0, 1);
+          e.target.value = "";
+          const which = replacing.current;
+          if (!which || files.length === 0) return;
+          void uploads.add(files, (names) => change(which.name, which.nth, (t, spot) => withMediaName(t, spot, names[0]!)));
+        }} />
+      {spots.map((s) => {
+        const key = `${s.name}:${s.nth}`;
+        const spot = ideaMediaSpot(text, s.name, s.nth);
+        const info = note.media?.find((m) => m.name === s.name);
+        const url = ideaFileUrl(note.project, note.idea.id, s.name) ?? "";
+        const m = menu?.key === key ? menu : null;
+        return (
+          <div key={`${key}:${s.top}`} className="idea-media-note" style={{ top: s.top, right: s.right }} data-media={s.name}>
+            {open === key ? (
+              <NoteEditor quote={`${/\.(mp4|webm)$/.test(s.name) ? "영상" : "그림"} ${s.label || s.name}`} submitLabel="의견 추가"
+                onSubmit={(comment) => { if (!onAdd(s.name, s.label, s.section, comment)) return false; setOpen(null); return true; }}
+                onCancel={() => setOpen(null)} />
+            ) : (
+              <span className="idea-media-buttons">
+                {canNote && (
+                  <button type="button" className="chat-quote" data-testid="idea-media-note" onClick={() => { setMenu(null); setOpen(key); }}>
+                    <MessageSquarePlus aria-hidden="true" />의견
+                  </button>
+                )}
+                {canEdit && spot && (
+                  <button type="button" className="chat-quote" data-testid="idea-media-menu-open" aria-label="그림 메뉴" aria-expanded={m !== null}
+                    onClick={() => setMenu(m ? null : { key, mode: "menu", alt: spot.alt })}><Ellipsis aria-hidden="true" /></button>
+                )}
+              </span>
+            )}
+            {m && spot && (
+              <div className="idea-media-menu" role="menu" data-testid="idea-media-menu">
+                {info && ideaMediaSource(info) && <p className="muted idea-media-source" data-testid="idea-media-source">{ideaMediaSource(info)}</p>}
+                {m.mode === "alt" ? (
+                  <form className="idea-media-alt" onSubmit={(e) => { e.preventDefault(); change(s.name, s.nth, (t, sp) => withMediaAlt(t, sp, m.alt)); }}>
+                    <input className="input" value={m.alt} autoFocus aria-label="설명" data-testid="idea-media-alt-input" maxLength={200}
+                      onChange={(e) => setMenu({ ...m, alt: e.target.value })} />
+                    <button type="submit" className="btn btn-primary small" data-testid="idea-media-alt-save">저장</button>
+                    <button type="button" className="btn small" onClick={() => setMenu({ ...m, mode: "menu" })}>취소</button>
+                  </form>
+                ) : (
+                  <>
+                    <button type="button" role="menuitem" data-testid="idea-media-alt" onClick={() => setMenu({ ...m, mode: "alt" })}><Pencil aria-hidden="true" />설명</button>
+                    <button type="button" role="menuitem" data-testid="idea-media-replace" onClick={() => { replacing.current = { name: s.name, nth: s.nth }; setMenu(null); replacer.current?.click(); }}><RefreshCw aria-hidden="true" />바꾸기</button>
+                    <button type="button" role="menuitem" data-testid="idea-media-up" disabled={movedMedia(text, spot, -1) === null} onClick={() => change(s.name, s.nth, (t, sp) => movedMedia(t, sp, -1))}><ArrowUp aria-hidden="true" />위로</button>
+                    <button type="button" role="menuitem" data-testid="idea-media-down" disabled={movedMedia(text, spot, 1) === null} onClick={() => change(s.name, s.nth, (t, sp) => movedMedia(t, sp, 1))}><ArrowDown aria-hidden="true" />아래로</button>
+                    {m.mode === "remove" ? (
+                      <button type="button" role="menuitem" className="danger" data-testid="idea-media-remove-confirm" onClick={() => change(s.name, s.nth, withoutMedia)}><Trash2 aria-hidden="true" />지우기 확인</button>
+                    ) : (
+                      <button type="button" role="menuitem" data-testid="idea-media-remove" onClick={() => setMenu({ ...m, mode: "remove" })}><Trash2 aria-hidden="true" />지우기</button>
+                    )}
+                    <a role="menuitem" href={url} download={s.name} data-testid="idea-media-download" onClick={() => setMenu(null)}><Download aria-hidden="true" />내려받기</a>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }
 
-/** 직접 고치기(결정 18: 그냥 textarea). 그림·영상은 붙여 넣기·끌어 놓기로 올려 그 자리에 `![그림](<이름>)` 줄을 넣는다 */
-function NoteEditorPane({ note, editing, busy, onChange, onCancel, onSave, onError }: {
+/** 직접 고치기(결정 18: 그냥 textarea). 그림·영상은 붙여 넣기·끌어 놓기·「그림」 단추로 올려 커서 자리에 `![그림](<이름>)` 줄을 넣는다 */
+function NoteEditorPane({ note, editing, busy, uploads, onChange, onCancel, onSave }: {
   note: IdeaNote;
   editing: { base: number; text: string };
   busy: boolean;
+  uploads: MediaUploads;
   onChange: (text: string) => void;
   onCancel: () => void;
   onSave: () => void;
-  onError: (e: string | null) => void;
 }) {
   const area = useRef<HTMLTextAreaElement>(null);
-  const [uploading, setUploading] = useState(0);
+  const picker = useRef<HTMLInputElement>(null);
   const latest = useRef(editing.text);
   latest.current = editing.text;
-  const insert = async (files: File[]) => {
-    const media = files.filter((f) => /^(image|video)\//.test(f.type));
-    if (media.length === 0) return;
-    setUploading((n) => n + media.length);
-    try {
-      for (const f of media) {
-        const name = await uploadIdeaFile(note.project, note.idea.short_id, f);
-        const el = area.current;
-        const text = latest.current;
-        const at = el ? el.selectionEnd : text.length;
-        const line = `![${f.type.startsWith("video/") ? "영상" : "그림"}](${name})`;
+  const insert = (files: File[]) => {
+    // 올리는 동안 커서가 움직여도 올린 때의 자리(지금 커서)에 넣는다
+    void uploads.add(files, (names) => {
+      let text = latest.current;
+      const el = area.current;
+      let at = el ? el.selectionEnd : text.length;
+      for (const name of names) {
+        const line = `![${/\.(mp4|webm)$/.test(name) ? "영상" : "그림"}](${name})`;
         const before = text.slice(0, at);
         const gap = before === "" || before.endsWith("\n") ? "" : "\n";
-        onChange(`${before}${gap}${line}\n${text.slice(at)}`);
+        text = `${before}${gap}${line}\n${text.slice(at)}`;
+        at = before.length + gap.length + line.length + 1;
       }
-      onError(null);
-    } catch (e) {
-      onError(`파일을 올리지 못했다: ${e instanceof ApiError ? e.message : String(e)}`);
-    } finally {
-      setUploading((n) => n - media.length);
-    }
+      latest.current = text;
+      onChange(text);
+    });
   };
   return (
     <div className="idea-editor" data-testid="idea-editor">
       <textarea ref={area} className="input idea-editor-text" value={editing.text} autoFocus aria-label="노트" data-testid="idea-editor-text"
         onChange={(e) => onChange(e.target.value)}
-        onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => { const files = filesOf(e.clipboardData); if (files.length) { e.preventDefault(); void insert(files); } }}
+        onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => { const files = filesOf(e.clipboardData); if (files.length) { e.preventDefault(); insert(files); } }}
         onDragOver={(e: DragEvent) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
-        onDrop={(e: DragEvent<HTMLTextAreaElement>) => { const files = filesOf(e.dataTransfer); if (files.length) { e.preventDefault(); void insert(files); } }}
+        onDrop={(e: DragEvent<HTMLTextAreaElement>) => { const files = filesOf(e.dataTransfer); if (files.length) { e.preventDefault(); insert(files); } }}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); onSave(); } }} />
+      <input ref={picker} type="file" multiple hidden accept={IDEA_MEDIA_ACCEPT} data-testid="idea-editor-media-input"
+        onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; insert(files); }} />
       <div className="idea-editor-foot">
-        <span className="muted" data-testid="idea-editor-base">판 {editing.base}에서 고치는 중{uploading > 0 && " · 올리는 중…"}{note.rev !== editing.base && ` · 지금 판 ${note.rev}`}</span>
+        <button type="button" className="btn" data-testid="idea-editor-media" onPointerDown={(e) => e.preventDefault()} onClick={() => picker.current?.click()}><ImagePlus className="i" aria-hidden="true" />그림</button>
+        <span className="muted" data-testid="idea-editor-base">판 {editing.base}에서 고치는 중{uploads.busy && " · 올리는 중…"}{note.rev !== editing.base && ` · 지금 판 ${note.rev}`}</span>
         <span className="spacer" />
         <button type="button" className="btn" disabled={busy} onClick={onCancel}>취소</button>
-        <button type="button" className="btn btn-primary" data-testid="idea-editor-save" disabled={busy || uploading > 0} onClick={onSave}>저장</button>
+        <button type="button" className="btn btn-primary" data-testid="idea-editor-save" disabled={busy || uploads.busy} onClick={onSave}>저장</button>
       </div>
     </div>
   );
@@ -412,6 +629,7 @@ function IdeaChat({ note, threads, panes, canControl, notes, active, onSaid, onE
       )}
       {canControl && !done && (
         <ChatComposer key={owner} active={active} owner={owner} pane={pane?.id ?? ""} touch={false}
+          imagesOff={pane ? null : "대화를 시작한 뒤 그림을 붙인다"}
           agentLabel={harness === "codex" ? "Codex" : "Claude"} harness={harness}
           pending={pending} setPending={setPending}
           connected working={status === "working"} compacting={pane?.agent?.compacting ?? false} asking={status === "blocked"}

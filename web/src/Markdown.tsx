@@ -29,6 +29,8 @@ import "./herdr/Markdown.css";
 /** Stats an image before it can load; null context keeps chat images as links. */
 type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
+/** 혼자 선 그림·영상 아래에 설명(alt)을 한 줄로 보인다(아이디어 노트, t-1575). 기본 설명 `그림`·`영상`은 보이지 않는다 */
+export const MarkdownCaptionContext = createContext(false);
 /** library 첨부를 읽는 본문만 제공한다. */
 export const MarkdownAttachmentContext = createContext<((src: string) => string | null) | null>(null);
 
@@ -114,6 +116,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   const imageResolver = useContext(MarkdownImageContext);
   const openLink = useContext(OpenLinkContext);
   const attachment = useContext(MarkdownAttachmentContext);
+  const captions = useContext(MarkdownCaptionContext);
   // 앱 안 참조(`aaa:question/…`·`aaa:report/…`, plan §8.329)는 칩이다. 링크 안(interactive=false)에서는 누를 것을 겹치지 않는다
   const refContext = useContext(AppRefContext);
   const refs = interactive ? refContext : null;
@@ -158,7 +161,9 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
             return <span key={key}>{`\\(${node.value}\\)`}</span>;
           case "image": {
             const video = interactive && isVideoPath(node.src) ? attachment?.(node.src) : null;
-            if (video) return <ReportVideo key={key} src={video} label={node.alt} />;
+            const caption = captions && standalone && node.alt.trim() !== "" && !["그림", "영상"].includes(node.alt.trim())
+              ? <span className="markdown-caption" data-testid="markdown-caption">{node.alt}</span> : null;
+            if (video) return <Fragment key={key}><ReportVideo src={video} label={node.alt} />{caption}</Fragment>;
             return (
               <span key={key} data-markdown-copy={`![${node.alt}](${node.src})`}>
                 {imageResolver === null ? (
@@ -167,6 +172,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
                   <MarkdownImage src={node.src} alt={node.alt} width={node.width} resolve={imageResolver} interactive={interactive} standalone={standalone}
                     fallback={<Inline nodes={node.fallback} interactive={interactive} />} />
                 )}
+                {caption}
               </span>
             );
           }
