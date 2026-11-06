@@ -1292,7 +1292,11 @@ export type FrontRequest = { "op": "workspace_dashboard", query: WorkspaceQuery,
 /**
  * 비었으면 등록된 모든 머신
  */
-machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null,
+machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string,
+/**
+ * FRONT_API 1.161: 원문 첫 쪽과 가벼운 전체 색인을 읽는다. 생략하면 구판 전체 응답.
+ */
+paged?: boolean, } | { "op": "ask_history", project?: string, before: string | null, id: string | null, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null,
 /**
  * 질문 배열 순서의 직접 답·의견. text는 옛 공통 답으로 유지한다.
  */
@@ -1605,7 +1609,7 @@ handled?: boolean, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**
  * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */
-muted?: Array<string>, } | { "kind": "auto_mode" } & AutoMode | { "kind": "auto_merge", task_id: string, short_id?: string, thread?: string, on: boolean, changed: boolean, } | { "kind": "auto_decisions", decisions: Array<AutoDecision>, next: string | null, } | { "kind": "asks", auto_mode: AutoMode, auto_decisions: Array<AutoDecision>, auto_next: string | null, auto_exceptions: number, requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+muted?: Array<string>, } | { "kind": "auto_mode" } & AutoMode | { "kind": "auto_merge", task_id: string, short_id?: string, thread?: string, on: boolean, changed: boolean, } | { "kind": "auto_decisions", decisions: Array<AutoDecision>, next: string | null, } | { "kind": "asks", auto_mode: AutoMode, auto_decisions: Array<AutoDecision>, auto_next: string | null, auto_exceptions: number, requests: Array<UserRequestView>, done: Array<AskRecord>, done_index?: Array<AskRecordSummary>, done_next: string | null, keep_days: number, } | { "kind": "ask_history", done: Array<AskRecord>, next: string | null, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -2122,6 +2126,8 @@ body?: string,
  * 보존한 파일의 주소 앞부분: `<files_base>library/<경로>`가 그림, `<files_base>report.md`가 그때 보고다
  */
 files_base?: string, };
+
+export type AskRecordSummary = { id: string, question_id: string | null, kind: AskKind, subject: string, title: string, done_ms: number, by: string, summary: string, question_ids: Array<string>, answer_summary: string | null, };
 
 export type UserRequestView = {
 /**

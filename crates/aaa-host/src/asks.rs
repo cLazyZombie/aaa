@@ -353,17 +353,54 @@ impl Host {
     }
 
     pub(crate) fn asks_view(&self, project: &str) -> Result<FrontResponse, ErrorBody> {
+        self.asks_view_mode(project, false)
+    }
+
+    pub(crate) fn asks_view_mode(&self, project: &str, paged: bool) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
         let (auto_decisions, auto_next) = self.auto_decision_page(project, None, None)?;
+        let (done, done_next) = if paged {
+            self.db.ask_page(project, None, None).map_err(internal)?
+        } else {
+            (self.db.ask_list(project).map_err(internal)?, None)
+        };
         Ok(FrontResponse::Asks {
             auto_mode: self.auto_mode(project)?,
             auto_decisions,
             auto_next,
             auto_exceptions: self.auto_exception_count(project)?,
             requests: self.user_requests(project)?,
-            done: self.db.ask_list(project).map_err(internal)?,
+            done,
+            done_next,
+            done_index: if paged { Some(self.db.ask_index(project).map_err(internal)?) } else { None },
             keep_days: ASK_KEEP_DAYS,
         })
+    }
+
+    pub(crate) fn ask_history(
+        &self,
+        project: &str,
+        before: Option<&str>,
+        id: Option<&str>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        self.project_dir(project)?;
+        if before.is_some() && id.is_some() {
+            return Err(err(ErrorCode::BadRequest, "페이지와 단건 조회를 함께 지정할 수 없다"));
+        }
+        let cursor = before
+            .map(|s| {
+                let (ms, row) = s.split_once(':').ok_or(())?;
+                let ms = ms.parse::<i64>().map_err(|_| ())?;
+                let row = row.parse::<i64>().map_err(|_| ())?;
+                if ms < 0 || row <= 0 {
+                    return Err(());
+                }
+                Ok((ms, row))
+            })
+            .transpose()
+            .map_err(|()| err(ErrorCode::BadRequest, "답변 이력 커서가 올바르지 않다"))?;
+        let (done, next) = self.db.ask_page(project, cursor, id).map_err(internal)?;
+        Ok(FrontResponse::AskHistory { done, next })
     }
 
     /// 웹 「답함으로 표시」: 그 확인 필요 post를 끝낸다(기록은 `inbox_finish`가 남긴다). coordinator inbox에 한 줄 남긴다
@@ -865,6 +902,68 @@ mod tests {
         let h = Host::open(cfg, path.clone()).unwrap();
         h.project_create("demo", Default::default(), "test").unwrap();
         (h, Lab(path))
+    }
+
+    #[test]
+    fn history_pages_keep_index_links_bounds_and_deleted_cursor() {
+        let (h, _lab) = host();
+        let mut original = Vec::new();
+        for i in 0..121 {
+            let record: AskRecord = serde_json::from_value(serde_json::json!({
+                "id": format!("record-{i:04}"), "kind": "question", "subject": "t-0001", "title": "이력",
+                "asked_ms": 1, "done_ms": 100, "by": "시험", "summary": "1A",
+                "items": [{"id": format!("q-{i:04}"), "text": "질문", "choices": []}],
+                "body": "본문".repeat(2000)
+            }))
+            .unwrap();
+            h.db.ask_put("demo", &record).unwrap();
+            original.push(record);
+        }
+        h.db.ask_put("other", &original[0]).unwrap();
+        let FrontResponse::Asks { done, done_index, done_next, .. } = h.asks_view_mode("demo", true).unwrap() else {
+            panic!()
+        };
+        let index = done_index.unwrap();
+        assert_eq!(index.len(), 121);
+        assert_eq!(index[0].question_ids, ["q-0120"]);
+        assert_eq!(index[0].subject, "t-0001");
+        assert!(serde_json::to_vec(&index).unwrap().len() < 40000);
+        assert!(done.len() < 50, "바이트 경계가 먼저 걸린다");
+        assert!(serde_json::to_vec(&done).unwrap().len() < 263000);
+        let mut ids = done.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+        let mut cursor = done_next;
+        // 방금 읽은 마지막 행을 지워도 다음 페이지가 건너뛰거나 처음으로 되돌아가지 않는다.
+        h.db.ask_delete("demo", Some(&[done.last().unwrap().id.clone()])).unwrap();
+        while let Some(before) = cursor {
+            let FrontResponse::AskHistory { done, next } = h.ask_history("demo", Some(&before), None).unwrap() else {
+                panic!()
+            };
+            assert!(done.len() <= 50);
+            ids.extend(done.iter().map(|r| r.id.clone()));
+            cursor = next;
+        }
+        assert_eq!(ids, original.iter().rev().map(|r| r.id.clone()).collect::<Vec<_>>());
+        let FrontResponse::AskHistory { done, next } = h.ask_history("demo", None, Some("record-0000")).unwrap() else {
+            panic!()
+        };
+        assert_eq!(done, [original[0].clone()]);
+        assert!(next.is_none());
+        let (done, _) = h.db.ask_page("other", None, Some("record-0001")).unwrap();
+        assert!(done.is_empty());
+        assert!(h.ask_history("other", None, Some("record-0000")).is_err(), "다른 프로젝트 접근 거부");
+        assert!(h.ask_history("demo", Some("bad"), None).is_err());
+        assert!(h.ask_history("demo", Some("1:1"), Some("record-0000")).is_err());
+        let FrontResponse::Asks { done, done_index, .. } = h.asks_view("demo").unwrap() else { panic!() };
+        assert_eq!(done.len(), 120);
+        assert!(done_index.is_none(), "구판 전체 조회 유지");
+        for r in &original {
+            let mut small = r.clone();
+            small.body = None;
+            h.db.ask_put("other", &small).unwrap();
+        }
+        let (small, next) = h.db.ask_page("other", None, None).unwrap();
+        assert_eq!(small.len(), 50, "작은 기록은 개수 상한");
+        assert!(next.is_some());
     }
 
     /// 두 경로 모두 같은 열린 post를 읽은 뒤 종료하도록 고정해 E2E53의 경합을 재현한다.

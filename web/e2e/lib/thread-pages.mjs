@@ -83,7 +83,7 @@ export async function threadPages(all, name) {
             try {
               await routes.run(route, async () => {
                 const request = route.request().postDataJSON();
-                if (request?.op !== "threads") return await route.fallback();
+                if (request?.op !== "threads" || request.open) return await route.fallback();
                 const requestDocument = route.request().headers()["x-e2e-document"];
                 const stamp = { doc: requestDocument, fetch: route.request().headers()["x-e2e-request"],
                   connection: route.request().headers()["x-e2e-connection"], after: request.after ?? null };

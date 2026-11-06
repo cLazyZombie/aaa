@@ -1055,6 +1055,11 @@ fn attachment_views(host: &Host, device: &str, response: &mut aaa_proto::FrontRe
                 attachment_base(host, device, &mut record.files_base);
             }
         }
+        FrontResponse::AskHistory { done, .. } => {
+            for record in done {
+                attachment_base(host, device, &mut record.files_base);
+            }
+        }
         _ => {}
     }
 }

@@ -1903,7 +1903,10 @@ impl Host {
             FrontRequest::AutoDecisionForget { project, ids, all } => {
                 self.auto_decision_forget(&project, &ids, all, actor)
             }
-            FrontRequest::Asks { project } => self.asks_view(&project),
+            FrontRequest::Asks { project, paged } => self.asks_view_mode(&project, paged),
+            FrontRequest::AskHistory { project, before, id } => {
+                self.ask_history(&project, before.as_deref(), id.as_deref())
+            }
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
             FrontRequest::QuestionReply { project, id, choice, text } => {
                 self.reply_by_id(&project, &id, choice.as_deref(), text, actor).await

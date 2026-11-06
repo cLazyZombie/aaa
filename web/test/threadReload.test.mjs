@@ -57,3 +57,28 @@ it("재연결 읽기가 실패해도 진행 중인 옛 완전 목록을 반영�
   assert.deepEqual([...reload.finish(first, [old]).values()], [old]);
   assert.equal(reload.finish(second, [old]), null);
 });
+
+it("열린 항목은 먼저 공개하고 부분 페이지·새 연결 뒤에도 사건과 선택 단건을 보존한다", async () => {
+  const reload = new ThreadReload(), read = reload.begin();
+  const changed = { ...old, title: "새 답을 한 작업" };
+  const open = await readThreadPages(async r => {
+    assert.equal(r.open, true); assert.equal(r.details, true);
+    reload.note(changed);
+    return { kind: "threads", threads: [old] };
+  }, { open: true });
+  assert.deepEqual([...reload.partial(read, open).values()], [changed]);
+  const next = reload.begin(), latest = { ...old, title: "재연결 새 내용" };
+  reload.partial(next, [latest]);
+  assert.deepEqual([...reload.finish(read, [old]).values()], [latest]);
+  assert.deepEqual([...reload.finish(next, [latest]).values()], [latest]);
+  assert.equal(reload.partial(read, [old]), null);
+});
+
+it("재연결의 부분 목록도 늦은 답 응답보다 우선한다", () => {
+  const reload = new ThreadReload();
+  const reply = reload.beginReply(old);
+  const reconnected = reload.begin();
+  const latest = { ...old, title: "재연결에서 읽은 새 질문" };
+  reload.partial(reconnected, [latest]);
+  assert.deepEqual(reply.finish({ ...old, title: "이전 답 응답" }), latest);
+});

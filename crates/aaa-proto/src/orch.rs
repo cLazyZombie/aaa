@@ -1343,6 +1343,22 @@ pub struct AskRecord {
     pub files_base: Option<String>,
 }
 
+/// 답한 것의 가벼운 색인(FRONT_API 1.161). 배지·직접 링크·목록에는 원문이 필요 없다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AskRecordSummary {
+    pub id: String,
+    pub question_id: Option<String>,
+    pub kind: AskKind,
+    pub subject: String,
+    pub title: String,
+    #[ts(type = "number")]
+    pub done_ms: u64,
+    pub by: String,
+    pub summary: String,
+    pub question_ids: Vec<String>,
+    pub answer_summary: Option<String>,
+}
+
 /// 열린 coordinator 확인 필요 post(`post user --request --needs-user`, plan §8.345). inbox 항목이 끝나지 않은 동안 「답할 것」이다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct UserRequestView {

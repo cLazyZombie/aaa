@@ -2089,6 +2089,49 @@ impl Db {
         rows.iter().map(|d| Ok(serde_json::from_str(d)?)).collect()
     }
 
+    /// 본문·선택지·첨부 주소 없이도 모든 질문 링크와 배지 중복 제거를 보존한다.
+    pub(crate) fn ask_index(&self, project: &str) -> Result<Vec<aaa_proto::AskRecordSummary>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT json_object(
+            'id',id,'kind',kind,'subject',subject,'done_ms',done_ms,
+            'title',json_extract(data,'$.title'),'by',json_extract(data,'$.by'),
+            'summary',json_extract(data,'$.summary'),'answer_summary',json_extract(data,'$.answer.summary'),'question_id',json_extract(data,'$.question_id'),
+            'question_ids',json((SELECT json_group_array(json_extract(value,'$.id'))
+                FROM json_each(asks.data,'$.items') WHERE json_extract(value,'$.id') IS NOT NULL)))
+            FROM asks WHERE project=?1 ORDER BY done_ms DESC, rowid DESC")?;
+        let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.iter().map(|d| Ok(serde_json::from_str(d)?)).collect()
+    }
+
+    /// 50개·256 KiB 경계. 같은 시각의 기록도 rowid로 잇고 삭제된 커서도 계속 읽는다.
+    pub(crate) fn ask_page(
+        &self,
+        project: &str,
+        before: Option<(i64, i64)>,
+        id: Option<&str>,
+    ) -> Result<(Vec<aaa_proto::AskRecord>, Option<String>)> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT data,done_ms,rowid FROM asks WHERE project=?1
+            AND (?2 IS NULL OR id=?2) AND (?3 IS NULL OR (done_ms,rowid)<(?3,?4))
+            ORDER BY done_ms DESC, rowid DESC LIMIT 51",
+        )?;
+        let mut rows = st.query(params![project, id, before.map(|c| c.0), before.map(|c| c.1)])?;
+        let mut done = Vec::new();
+        let mut bytes = 0;
+        let mut cursor = None;
+        while let Some(row) = rows.next()? {
+            let data: String = row.get(0)?;
+            if done.len() == 50 || (!done.is_empty() && bytes + data.len() > 256 * 1024) {
+                return Ok((done, cursor));
+            }
+            bytes += data.len();
+            done.push(serde_json::from_str(&data)?);
+            cursor = Some(format!("{}:{}", row.get::<_, i64>(1)?, row.get::<_, i64>(2)?));
+        }
+        Ok((done, None))
+    }
+
     /// 기록을 지우고 지운 ID를 돌려준다. `ids`가 None이면 모두
     pub(crate) fn ask_delete(&self, project: &str, ids: Option<&[String]>) -> Result<Vec<String>> {
         let mut c = self.conn.lock().unwrap();

@@ -6356,6 +6356,14 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         // 「답할 것」(웹 화면이 쓴다): CLI는 확인 필요 post와 답한 것을 한 줄씩 보인다
+        FrontResponse::AskHistory { done, next } => {
+            for r in done {
+                let _ = writeln!(s, "답한 것\t{}\t{}\t{}", r.id, r.title, r.summary);
+            }
+            if let Some(next) = next {
+                let _ = writeln!(s, "다음: {next}");
+            }
+        }
         FrontResponse::Asks { requests, done, keep_days, auto_mode, auto_decisions, auto_exceptions, .. } => {
             let _ = writeln!(
                 s,

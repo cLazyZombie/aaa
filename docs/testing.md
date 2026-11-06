@@ -5058,3 +5058,5 @@ PR 기능 폐지(t-1203)로 해당 owner를 제거하거나 일정 규칙 fixtur
 
 - [질문 안내 오탐·Windows 메시지 수락 수리(t-1537)](testing-question-guard-delivery-t1537.md)
 - 자동화 저장 시험의 Windows 기본 스택 재현·poll 프레임 축소·회귀 검사: [t-1543 검증 기록](testing-automation-save-stack-t1543.md).
+
+- 웹 첫 화면의 열린 작업 우선 표시·답변 이력 페이지 조회: [검증 경계와 owner](testing-startup-pages-t1571.md).
