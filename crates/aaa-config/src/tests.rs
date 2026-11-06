@@ -55,6 +55,25 @@ fn backup_rejects_unsafe_or_incomplete_enabled_settings() {
 }
 
 #[test]
+fn file_backup_shares_destination_but_has_independent_opt_in_schedule_and_retention() {
+    let d = Dir::new("file-backup");
+    let defaults = load_host(&d.0).unwrap().config;
+    assert!(!defaults.file_backup.enabled);
+    assert_eq!(defaults.file_backup.keep, 30);
+    assert_eq!(defaults.file_backup.daily_utc, "19:45");
+    for body in ["enabled=true", "keep=0", "keep=366", "daily_utc='24:00'"] {
+        d.write("host.toml", &format!("schema=1\n[file_backup]\n{body}\n"));
+        assert!(load_host(&d.0).is_err(), "{body}");
+    }
+    d.write("host.toml", "schema=1\n[backup]\nenabled=false\ndirectory='/backup'\nrecipient='age1example'\n[file_backup]\nenabled=true\nkeep=30\n");
+    let loaded = load_host(&d.0).unwrap();
+    assert!(loaded.warnings.is_empty());
+    assert!(!loaded.config.backup.enabled);
+    let effective = loaded.config.file_backup.effective(&loaded.config.backup);
+    assert_eq!((effective.enabled, effective.keep, effective.directory.as_str()), (true, 30, "/backup"));
+}
+
+#[test]
 fn post_defaults_and_explicit_overrides() {
     let d = Dir::new("post");
     let expected =

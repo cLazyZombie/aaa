@@ -153,6 +153,7 @@ impl Host {
     /// `uploads/<이름>`에 쓴다(이름은 내용 hash). 같은 이름의 다른 내용·symlink는 덮지 않는다. 아이디어 넘기기도 쓴다
     pub(crate) fn upload_store(&self, dir: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), ErrorBody> {
         let path = dir.join(name);
+        let _w = self.idea_writing()?;
         // 같은 내용을 함께 올리면(빠른 두 번 붙이기·두 기기) 같은 임시 파일을 다투지 않게 한 번에 하나씩 쓴다
         let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         // 이름은 hash의 일부이므로 기존 바이트도 확인한다. 바뀐 파일·충돌·symlink는 덮지 않는다.

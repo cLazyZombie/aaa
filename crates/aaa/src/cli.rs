@@ -194,6 +194,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: crate::db_backup::Command,
     },
+    /// 아이디어·첨부의 암호화 백업·새 폴더 복원(host 머신에서 실행).
+    FileBackup {
+        #[command(subcommand)]
+        cmd: crate::file_backup::Command,
+    },
     /// (내부) SCM에서만 실행하는 고정 Windows 서비스 입구. console fallback은 없다.
     #[command(hide = true)]
     ServiceRun {
@@ -2159,6 +2164,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             init_log("info");
             aaa_common::resource::disable_core_dump("db-backup");
             crate::db_backup::run(cmd, json)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::FileBackup { cmd } => {
+            init_log("info");
+            aaa_common::resource::disable_core_dump("file-backup");
+            crate::file_backup::run(cmd, json)?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Install(_) => unreachable!("install은 환경 변경 전에 처리한다"),

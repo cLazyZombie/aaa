@@ -10,6 +10,12 @@ recipient = ""
 daily_utc = "19:45"
 keep = 7
 
+# 아이디어·첨부는 DB와 별도로 켠다. 목적지·공개키는 위 [backup]과 공유한다.
+[file_backup]
+enabled = false
+daily_utc = "19:45"
+keep = 30
+
 [host]
 # Agent link(TCP+TLS 1.3) listen 주소. 원격 agent가 여기로 연결한다. 빈 문자열이면 원격을 받지 않는다.
 agent_listen = "0.0.0.0:7430"

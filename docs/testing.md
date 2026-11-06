@@ -1,5 +1,7 @@
 - t-1511: [thread fast mode 표시 검증](testing-fast-mode-t-1511.md)
 
+- t-1578: [아이디어·첨부 파일 백업 검증](testing-idea-file-backup-t-1578.md)
+
 - t-1559: [빈 보고 보류·할 일 확인 카드 검증](testing-report-boundaries-t-1559.md)
 - t-1486: [계정 메일 시험의 닫기·새로고침 경합 검증](testing-account-email-reload-t-1486.md)
 - t-1484: [계정 요금제 선택과 5시간 창 검증](testing-account-plans-t-1484.md)

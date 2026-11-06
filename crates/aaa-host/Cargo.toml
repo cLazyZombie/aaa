@@ -40,6 +40,8 @@ httpdate = "1"
 regex = "1"
 axum = { version = "0.8", features = ["ws"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# 표준 tar 묶음. 링크·소유권 복원은 사용하지 않는다.
+tar = { version = "0.4.46", default-features = false }
 
 [build-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

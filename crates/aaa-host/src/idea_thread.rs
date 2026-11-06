@@ -13,7 +13,7 @@ use aaa_proto::{
     MessageMode, Role, ThreadKind, ThreadStatus,
 };
 
-use crate::ideas::{Folder, Saved, WRITING};
+use crate::ideas::{Folder, Saved};
 use crate::orch::{StartArgs, ThreadRec, bad, internal};
 use crate::{Host, err};
 
@@ -191,7 +191,7 @@ impl Host {
         };
         let view = self.thread_start_mode(args, actor, true).await?;
         {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             let mut meta = f.meta()?;
             meta.thread = Some(view.id.clone());
             f.write_meta(&meta)?;
@@ -219,7 +219,7 @@ impl Host {
             return Err(bad("할 일로 넘겨 잠긴 아이디어다. 복사해서 새 아이디어로 다듬는다"));
         }
         {
-            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let _w = self.idea_writing()?;
             let mut meta = f.meta()?;
             let edited = std::mem::take(&mut meta.edited);
             // 웹은 보낼 글에 이미 머리를 붙인다(대화 끝의 보낸 말이 기록과 같게): 두 번 붙이지 않는다
@@ -269,7 +269,12 @@ impl Host {
                 Err(e) => {
                     tracing::warn!(project, idea = %id, "아이디어 thread를 띄우지 못했다: {}", e.message);
                     {
-                        let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+                        let Ok(_w) = host
+                            .idea_writing()
+                            .inspect_err(|e| tracing::error!("아이디어 오류 저장 잠금: {}", e.message))
+                        else {
+                            return;
+                        };
                         if let Ok(mut meta) = f.meta() {
                             meta.error = Some(e.message);
                             aaa_common::diagnostic::ignored(f.write_meta(&meta), "화면에 까닭을 못 남겨도 로그에 있다");
@@ -298,7 +303,12 @@ impl Host {
             if ready {
                 match self.thread_message(project, &thread, next.clone(), MessageMode::Queue, "idea").await {
                     Ok(_) => {
-                        let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+                        let Ok(_w) = self
+                            .idea_writing()
+                            .inspect_err(|e| tracing::error!("아이디어 전달 기록 잠금: {}", e.message))
+                        else {
+                            return;
+                        };
                         if let Ok(mut meta) = f.meta()
                             && meta.pending.first() == Some(&next)
                         {
@@ -352,7 +362,7 @@ impl Host {
                     mine.display()
                 );
                 {
-                    let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+                    let _w = self.idea_writing()?;
                     let mut meta = f.meta()?;
                     meta.pending.push(ask);
                     f.write_meta(&meta)?;
