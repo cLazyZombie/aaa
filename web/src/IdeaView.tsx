@@ -375,6 +375,9 @@ function NoteBody({ note, canNote, canEdit, uploads, onEdit, anchors, onAdd, onO
   );
 }
 
+/** 그림 단추 묶음의 왼쪽 끝이 노트 칸 왼쪽에서 떨어질 최소 거리: 펼친 메뉴(min-width 180px)가 칸 밖으로 나가지 않게 */
+const MENU_ROOM = 192;
+
 /** 그림·영상마다 오른쪽 위 「의견」(결정 17: 통째로 인용)과 「⋯」 그림 메뉴(t-1575: 설명·바꾸기·위로·아래로·지우기·내려받기) */
 function MediaNotes({ root, note, canNote, canEdit, uploads, onEdit, onAdd }: {
   root: React.RefObject<HTMLDivElement | null>;
@@ -411,7 +414,7 @@ function MediaNotes({ root, note, canNote, canEdit, uploads, onEdit, onAdd }: {
         const r = m.getBoundingClientRect();
         const range = document.createRange();
         range.selectNode(m);
-        return [{ name, nth, label: m.getAttribute("alt") ?? m.getAttribute("aria-label") ?? "", section: sectionBefore(el, range), top: r.top - box.top + 6, right: Math.max(6, Math.min(box.right - r.right + 6, box.width - (r.left - box.left) - 112)) }];
+        return [{ name, nth, label: m.getAttribute("alt") ?? m.getAttribute("aria-label") ?? "", section: sectionBefore(el, range), top: r.top - box.top + 6, right: Math.max(6, Math.min(box.right - r.right + 6, box.width - (r.left - box.left) - MENU_ROOM)) }];
       });
       setSpots(found);
     };

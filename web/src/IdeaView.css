@@ -27,7 +27,7 @@
 /* 그림 메뉴(t-1575): 「의견」 옆 「⋯」, 아래로 펼치는 목록. 노트 칸 기준 위치는 .idea-media-note가 잡는다 */
 .idea-media-buttons { display: flex; gap: var(--space-1); justify-content: flex-end; }
 .idea-media-menu { margin-top: var(--space-1); min-width: 180px; max-width: min(320px, 80vw); display: flex; flex-direction: column; background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-1); box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.25)); }
-.idea-media-menu > button, .idea-media-menu > a { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); min-height: 36px; border: 0; background: none; color: inherit; text-align: left; text-decoration: none; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
+.idea-media-menu > button, .idea-media-menu > a { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); padding: var(--space-2); min-height: 36px; border: 0; background: none; color: inherit; text-align: left; text-decoration: none; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
 .idea-media-menu > button:hover:not(:disabled), .idea-media-menu > a:hover { background: var(--bg-hover); }
 .idea-media-menu > button:disabled { opacity: 0.45; cursor: default; }
 .idea-media-menu > button.danger { color: var(--danger-text); }
