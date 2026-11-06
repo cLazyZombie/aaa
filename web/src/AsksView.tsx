@@ -79,8 +79,8 @@ export function AsksPanel({
   const auto = data?.autoDecisions ?? [];
   const autoIds = new Set(auto.filter(d => d.outcome === "answered").map(d => d.question.id));
   const shown = (r: Parameters<typeof questionIds>[0]) => !questionIds(r).length || !questionIds(r).every(id => autoIds.has(id));
-  const done = (data?.done ?? []).filter(shown);
-  const doneIndex = answerIndex(data).filter(shown);
+  // 자동 답변을 뺀 뒤 50줄씩 표시한다. 원문 페이지의 바이트 경계와 목록 행 수는 독립이다.
+  const done = answerIndex(data).filter(shown);
   const autoRow = (d: AutoDecision) => <button type="button" className={`ask-row is-auto${selected === `a:${d.id}` ? " is-selected" : ""}`} key={d.id} data-testid="auto-decision-row" data-key={`a:${d.id}`} onClick={() => onPick(`a:${d.id}`)}>
     <span className="ask-row-mark"><Zap /></span><span className="ask-row-text"><span className="ask-row-title">{d.question.id} {d.question.text} → {d.choice}</span><span className="ask-row-meta">{d.outcome === "answered" ? (d.reviewed ? "확인함" : "자동 결정") : "전달 확인 필요"} · {when(d.at_ms)}</span></span>
   </button>;
@@ -109,18 +109,17 @@ export function AsksPanel({
       {data?.autoNext && <button disabled={moreBusy} onClick={() => { setMoreBusy(true); setMoreError(null); void onMoreAuto().catch(e => setMoreError(String(e))).finally(() => setMoreBusy(false)); }}>이전 자동 결정 더 보기</button>}
       {moreError && <p role="alert">{moreError}</p>}
       <h3 className="asks-panel-head">
-        답한 것 <span data-testid="asks-done-count">{doneIndex.length}</span>
-        {canControl && doneIndex.length > 0 && (
-          <button type="button" className="ghost small asks-forget-all" data-testid="asks-forget-all" onClick={() => setConfirm(doneIndex.map(r => r.id))}>
+        답한 것 <span data-testid="asks-done-count">{done.length}</span>
+        {canControl && done.length > 0 && (
+          <button type="button" className="ghost small asks-forget-all" data-testid="asks-forget-all" onClick={() => setConfirm(done.map(r => r.id))}>
             <Trash2 aria-hidden="true" /> 모두 지우기
           </button>
         )}
       </h3>
       {done.slice(0, visible).map((r) => (
-        <AskRow selected={selected} onPick={onPick} key={r.id} k={`d:${r.id}`} kind={r.kind} ids={[...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]} title={doneTitle(r)} meta={doneMeta(r, now)} isDone />
+        <AskRow selected={selected} onPick={onPick} key={r.id} k={`d:${r.id}`} kind={r.kind} ids={[...(r.question_id ? [r.question_id] : []), ...questionIds(r)]} title={doneTitle(r)} meta={doneMeta(r, now)} isDone />
       ))}
-      {(done.length > visible || data?.doneNext) && <button type="button" data-testid="asks-done-more" disabled={moreBusy} onClick={() => {
-        if (done.length > visible) { setVisible(n => n + 50); return; }
+      {done.length > visible && <button type="button" data-testid="asks-done-more" disabled={moreBusy} onClick={() => {
         setMoreBusy(true); setMoreError(null);
         void onMoreDone().then(() => setVisible(n => n + 50)).catch(e => setMoreError(String(e))).finally(() => setMoreBusy(false));
       }}>답한 것 더 보기</button>}
