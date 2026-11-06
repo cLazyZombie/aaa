@@ -247,6 +247,8 @@ export interface ChatComposerProps {
   context?: ContextUsage | null;
   /** 보낼 글을 보내기 직전에 고친다(아이디어 대화: 사람이 고친 노트 요약 머리, t-1260). 대화 끝 말풍선도 고친 글이다 */
   prepare?: (text: string) => string;
+  /** 그림을 붙일 pane이 없다(아이디어 대화가 아직 뜨지 않음, t-1575): 그 까닭. 그림 단추를 끄고 붙여 넣은 그림은 올리지 않는다 */
+  imagesOff?: string | null;
 }
 
 export function ChatComposer({
@@ -275,6 +277,7 @@ export function ChatComposer({
   coordinator = false,
   context = null,
   prepare,
+  imagesOff = null,
 }: ChatComposerProps) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -413,6 +416,7 @@ export function ChatComposer({
   }, [attachments, composing, text, setText]);
 
   const uploadImages = (files: File[]) => {
+    if (imagesOff && files.length > 0) { setNote({ text: imagesOff }); return; }
     if (!connected || locked || files.length === 0) return;
     if (files.some((f) => f.size === 0 || f.size > 16 * 1024 * 1024)) {
       setNote({ text: "그림은 1바이트부터 16MiB까지 붙여 넣습니다. 이 묶음은 올리지 않았습니다." });
@@ -1117,7 +1121,7 @@ export function ChatComposer({
             onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; uploadImages(files); }} />
           <div className="composer-controls composer-controls-left">
             {active && autoOn && <AutoModeSwitch />}
-            <button type="button" className="icon-button" aria-label="그림 첨부" title="그림 첨부" disabled={!connected || uploading || locked}
+            <button type="button" className="icon-button" aria-label="그림 첨부" title={imagesOff ?? "그림 첨부"} disabled={!connected || uploading || locked || imagesOff !== null}
               onPointerDown={(event) => event.preventDefault()} onClick={() => picker.current?.click()}><ImagePlus aria-hidden="true" /></button>
           </div>
           {/* 화면 읽기용 단계 글(그리지 않는다, 배치 밖): 화면에는 단추(도는 표시·×)로 단계를 보인다 */}

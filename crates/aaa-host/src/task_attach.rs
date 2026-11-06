@@ -145,7 +145,14 @@ impl Host {
             }
         };
         let name = format!("{}.{ext}", &hex::encode(Sha256::digest(bytes))[..16]);
-        let path = dir.join(&name);
+        self.upload_store(&dir, &name, bytes)?;
+        self.db.audit(actor, "task_file", &format!("{project} {name} {} bytes", bytes.len()));
+        Ok(format!("uploads/{name}"))
+    }
+
+    /// `uploads/<이름>`에 쓴다(이름은 내용 hash). 같은 이름의 다른 내용·symlink는 덮지 않는다. 아이디어 넘기기도 쓴다
+    pub(crate) fn upload_store(&self, dir: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), ErrorBody> {
+        let path = dir.join(name);
         // 같은 내용을 함께 올리면(빠른 두 번 붙이기·두 기기) 같은 임시 파일을 다투지 않게 한 번에 하나씩 쓴다
         let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         // 이름은 hash의 일부이므로 기존 바이트도 확인한다. 바뀐 파일·충돌·symlink는 덮지 않는다.
@@ -165,13 +172,12 @@ impl Host {
             Ok(_) => return Err(err(ErrorCode::Internal, format!("uploads/{name}가 일반 파일이 아니다"))),
             Err(source_error) => {
                 aaa_common::diagnostic::observe(&source_error, "오류 뒤 기존 복구·거부 분기를 따른다");
-                std::fs::create_dir_all(&dir)
+                std::fs::create_dir_all(dir)
                     .and_then(|_| aaa_common::util::write_private(&path, bytes))
                     .map_err(|e| err(ErrorCode::Internal, e.to_string()))?
             }
         }
-        self.db.audit(actor, "task_file", &format!("{project} {name} {} bytes", bytes.len()));
-        Ok(format!("uploads/{name}"))
+        Ok(())
     }
 
     /// 화면이 그릴·열 파일(보기 권한도 읽는다). 이름 꼴만 받고 uploads 밖·symlink는 읽지 않는다

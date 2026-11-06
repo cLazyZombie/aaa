@@ -93,6 +93,47 @@ pub struct IdeaNote {
     pub pending: Vec<String>,
     /// 전용 thread를 띄우지 못한 까닭(말은 남는다. 다음 말이나 화면 열기 때 다시 띄운다)
     pub error: Option<String>,
+    /// 이 글이 가리키는 그림·영상(처음 나온 차례, FRONT_API 1.162). 옛 host는 비운다
+    pub media: Vec<IdeaMediaView>,
+    /// 아이디어 폴더의 그림·영상 전체 크기(옛 판이 가리키는 것 포함, 1.162)
+    #[ts(type = "number")]
+    pub media_bytes: u64,
+}
+
+/// 그림·영상을 들인 길(FRONT_API 1.162)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum IdeaMediaSource {
+    /// 출처 기록이 없다(1.162 전에 들인 것)
+    #[default]
+    Unknown,
+    /// 웹에서 올림(붙여 넣기·끌어 놓기·파일 고르기)
+    Web,
+    /// `aaa idea attach`로 host 파일을 붙임
+    File,
+    /// 전용 thread의 `library/`에서 옮김
+    Library,
+    /// 프로젝트 `uploads/`(대화·할 일 첨부)에서 옮김
+    Uploads,
+    /// 다른 아이디어를 복사할 때 함께 옴
+    Copy,
+}
+
+/// 노트의 그림·영상 하나와 그 출처(FRONT_API 1.162)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct IdeaMediaView {
+    /// 폴더 안 이름(`<16 hex>.<ext>`)
+    pub name: String,
+    #[ts(type = "number")]
+    pub bytes: u64,
+    pub source: IdeaMediaSource,
+    /// 들인 쪽: `사람`·`coordinator`·`t-NNNN`. 기록이 없으면 빈 글
+    pub by: String,
+    /// 원래 파일 이름이나 경로(있을 때)
+    pub file: Option<String>,
+    #[ts(type = "number")]
+    pub at_ms: u64,
 }
 
 /// 할 일로 넘길 초안 하나

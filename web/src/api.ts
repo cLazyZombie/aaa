@@ -163,7 +163,9 @@ export async function uploadTaskFile(project: string, file: File, kind?: "md" | 
 
 /** 아이디어 노트의 그림·영상 올리기(t-1260): 그 아이디어 폴더에 내용 hash 이름으로 쓰고 노트에 적을 이름을 돌려준다 */
 export async function uploadIdeaFile(project: string, idea: string, file: Blob): Promise<string> {
-  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/ideas/${encodeURIComponent(idea)}/files`, {
+  // 원래 파일 이름은 출처 기록용이다(t-1575): 붙여 넣은 그림처럼 이름이 없으면 보내지 않는다
+  const name = file instanceof File && file.name ? `?name=${encodeURIComponent(file.name)}` : "";
+  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/ideas/${encodeURIComponent(idea)}/files${name}`, {
     method: "POST", body: file, credentials: "same-origin",
   });
   return (await unwrap<{ name: string }>(response)).name;

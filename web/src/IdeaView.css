@@ -24,6 +24,24 @@
 .idea-note-text img, .idea-note-text video { max-width: 100%; border-radius: var(--radius-md); }
 .idea-media-note { position: absolute; z-index: 2; }
 .idea-media-note .quote-note { width: min(320px, 70vw); background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.25)); }
+/* 그림 메뉴(t-1575): 「의견」 옆 「⋯」, 아래로 펼치는 목록. 노트 칸 기준 위치는 .idea-media-note가 잡는다 */
+.idea-media-buttons { display: flex; gap: var(--space-1); justify-content: flex-end; }
+.idea-media-menu { margin-top: var(--space-1); min-width: 180px; max-width: min(320px, 80vw); display: flex; flex-direction: column; background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-1); box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.25)); }
+.idea-media-menu > button, .idea-media-menu > a { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); padding: var(--space-2); min-height: 36px; border: 0; background: none; color: inherit; text-align: left; text-decoration: none; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
+.idea-media-menu > button:hover:not(:disabled), .idea-media-menu > a:hover { background: var(--bg-hover); }
+.idea-media-menu > button:disabled { opacity: 0.45; cursor: default; }
+.idea-media-menu > button.danger { color: var(--danger-text); }
+.idea-media-menu svg { width: 14px; height: 14px; flex: none; }
+.idea-media-source { margin: 0; padding: var(--space-1) var(--space-2); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.idea-media-alt { display: flex; gap: var(--space-1); padding: var(--space-1); }
+.idea-media-alt .input { flex: 1 1 auto; min-width: 0; }
+.idea-note-text .markdown-caption { display: block; margin-top: var(--space-1); color: var(--text-dim); font-size: var(--fs-sm); }
+/* 올리는 중·실패한 파일(t-1575) */
+.idea-uploads { list-style: none; margin: var(--space-2) auto 0; padding: 0 var(--space-6); max-width: 860px; width: 100%; display: flex; flex-direction: column; gap: var(--space-1); }
+.idea-uploads li { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); min-width: 0; }
+.idea-uploads li[data-state="failed"] .muted { color: var(--danger-text); }
+.idea-upload-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.idea-editor-foot .i { width: 14px; height: 14px; }
 
 .idea-editor { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); min-height: 0; }
 .idea-editor-text { flex: 1 1 auto; min-height: 16em; resize: none; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; }

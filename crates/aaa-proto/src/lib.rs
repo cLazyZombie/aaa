@@ -171,6 +171,8 @@ pub fn typescript_bindings() -> String {
         IdeaSummary::decl(&cfg),
         IdeaRevView::decl(&cfg),
         IdeaNote::decl(&cfg),
+        IdeaMediaSource::decl(&cfg),
+        IdeaMediaView::decl(&cfg),
         IdeaTaskDraft::decl(&cfg),
         IdeaConflict::decl(&cfg),
         TaskBoard::decl(&cfg),

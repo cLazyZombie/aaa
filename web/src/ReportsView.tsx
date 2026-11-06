@@ -7,7 +7,7 @@ import { ExternalLink, ListPlus, RefreshCw } from "lucide-react";
 import type { DeviceRole, LibraryFile, LibraryView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
-import { Markdown, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
+import { Markdown, MarkdownCaptionContext, MarkdownImageContext, MarkdownAttachmentContext } from "./Markdown";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { useFrameImages, useLightbox, type LightboxState } from "./Lightbox";
@@ -44,8 +44,10 @@ export interface ReportNotes {
  * 보고 글(report.md): `library/…` 그림을 그 보고서 보기 경로(`base`)로 그리고, 누르면 크게 본다(같은 글의 다른 그림으로 넘긴다).
  * `notes`가 있으면 글을 고른 끝에 「의견」이 뜬다(t-1222)
  */
-export function ReportMarkdown({ base, text, onImages, notes, image }: {
+export function ReportMarkdown({ base, text, onImages, notes, image, captions = false }: {
   base: string | null; text: string; onImages: (s: LightboxState) => void; notes?: ReportNotes;
+  /** 혼자 선 그림 아래 설명 한 줄(아이디어 노트, t-1575) */
+  captions?: boolean;
   /** 그림·영상 주소를 따로 푼다(아이디어 노트: 그 폴더의 이름만, t-1260). 없으면 보고 library 경로 */
   image?: (src: string) => string | null;
 }) {
@@ -68,7 +70,7 @@ export function ReportMarkdown({ base, text, onImages, notes, image }: {
           onImages(got);
         }}
       >
-        <Markdown className="report-markdown">{text}</Markdown>
+        <MarkdownCaptionContext.Provider value={captions}><Markdown className="report-markdown">{text}</Markdown></MarkdownCaptionContext.Provider>
       </div>
       {notes && (
         <SelectionActions container={root} active pick={captureAnchor} testId="report-note-actions">

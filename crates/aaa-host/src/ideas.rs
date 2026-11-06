@@ -11,8 +11,8 @@
 use std::path::PathBuf;
 
 use aaa_proto::{
-    ErrorBody, ErrorCode, FrontResponse, IdeaAuthor, IdeaConflict, IdeaNote, IdeaRevView, IdeaStatus, IdeaSummary,
-    IdeaTaskDraft, TaskOp,
+    ErrorBody, ErrorCode, FrontResponse, IdeaAuthor, IdeaConflict, IdeaMediaSource, IdeaMediaView, IdeaNote,
+    IdeaRevView, IdeaStatus, IdeaSummary, IdeaTaskDraft, TaskOp,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +23,10 @@ use crate::{Host, err};
 pub(crate) const MAX_NOTE: usize = 512 * 1024;
 /// 판 기록에 남기는 요약 한 줄 상한(바이트)
 const MAX_SUMMARY: usize = 2000;
+/// 한 번에 붙이는 그림·영상 수
+pub(crate) const MAX_ATTACH: usize = 20;
+/// 그림 설명(alt) 상한(글자)
+const MAX_ALT: usize = 200;
 /// 노트 쓰기는 한 번에 하나(사람·thread가 함께 저장해도 판 번호가 겹치지 않게)
 pub(crate) static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -52,6 +56,32 @@ pub(crate) struct Meta {
     pub pending: Vec<String>,
     /// 전용 thread를 띄우지 못한 까닭(다음 말에 지운다)
     pub error: Option<String>,
+    /// 그림·영상 이름 → 출처(t-1575). 처음 들인 기록만 둔다(같은 내용은 같은 이름이다)
+    pub media: std::collections::BTreeMap<String, MediaMeta>,
+}
+
+/// 그림·영상 하나의 출처(`idea.json` `media`)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct MediaMeta {
+    pub source: IdeaMediaSource,
+    /// `사람`·`coordinator`·`t-NNNN`
+    pub by: String,
+    /// 원래 파일 이름이나 경로
+    pub file: Option<String>,
+    pub at_ms: u64,
+}
+
+impl Meta {
+    /// 처음 들인 출처만 남긴다
+    pub(crate) fn note_media(&mut self, name: &str, source: IdeaMediaSource, by: &str, file: Option<String>) {
+        self.media.entry(name.to_string()).or_insert_with(|| MediaMeta {
+            source,
+            by: by.to_string(),
+            file,
+            at_ms: aaa_common::util::now_ms(),
+        });
+    }
 }
 
 /// 폴더 이름(ULID: 26자 Crockford base32 대문자)
@@ -282,7 +312,7 @@ impl Host {
         rev: Option<u32>,
     ) -> Result<IdeaNote, ErrorBody> {
         let mut note = self.idea_note(project, f, rev)?;
-        let text = match self.idea_import_media(project, f, &note.text).await {
+        let text = match self.idea_import_media(project, f, &note.text, "").await {
             Ok(text) => text,
             Err(e) => {
                 tracing::warn!(project, idea = %f.id, "아이디어 미디어 이행 실패: {}", e.message);
@@ -302,54 +332,103 @@ impl Host {
         self.idea_note(project, f, rev)
     }
 
-    /// 전용 thread library의 미디어만 agent를 통해 읽어 아이디어 소유 파일로 보존한다.
-    pub(crate) async fn idea_import_media(&self, project: &str, f: &Folder, text: &str) -> Result<String, ErrorBody> {
+    /// 노트가 가리키는 바깥 미디어를 아이디어 소유 파일로 보존하고 링크를 폴더 안 이름으로 바꾼다: 전용 thread `library/`는 agent를
+    /// 통해 읽고, 프로젝트 `uploads/`(대화·할 일 첨부)는 host에서 복사한다. `by`는 출처 기록에 남길 들인 쪽
+    pub(crate) async fn idea_import_media(
+        &self,
+        project: &str,
+        f: &Folder,
+        text: &str,
+        by: &str,
+    ) -> Result<String, ErrorBody> {
         use aaa_proto::{AgentRequest, AgentResponse};
         check_text(text)?;
         let targets = media_targets(text);
-        if !targets.iter().any(|(_, src)| src.contains("library/")) {
+        let upload = |src: &str| {
+            src.strip_prefix("uploads/")
+                .filter(|n| crate::task_attach::valid_name(n) && !n.ends_with(".md") && !n.ends_with(".html"))
+                .map(str::to_string)
+        };
+        if !targets.iter().any(|(_, src)| src.contains("library/") || upload(src).is_some()) {
             return Ok(text.to_string());
         }
-        let Some(thread) = f.meta()?.thread else { return Ok(text.to_string()) };
-        let rec = self.load(project, &thread)?;
-        let Some(work) = rec.work_dir.as_deref() else { return Ok(text.to_string()) };
-        let mut imported = std::collections::HashMap::new();
+        let thread = f.meta()?.thread;
+        // 전용 thread 기록이 없으면 library 링크는 그대로 둔다(uploads는 thread 없이 옮긴다)
+        let rec = match thread.as_deref().map(|t| self.load(project, t)).transpose() {
+            Ok(rec) => rec,
+            Err(e) => {
+                tracing::warn!(project, idea = %f.id, "아이디어 thread 기록을 읽지 못해 library 링크는 두고 옮긴다: {}", e.message);
+                None
+            }
+        };
+        let work = rec.as_ref().and_then(|r| r.work_dir.clone());
+        let mut imported: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut sources: Vec<(String, IdeaMediaSource, String)> = Vec::new();
         let mut out = text.to_string();
         for (range, src) in targets.into_iter().rev() {
-            let Some(path) = thread_media_path(&src, work) else { continue };
-            let name = if let Some(name) = imported.get(&path) {
-                name
+            let (key, source) = if let Some(name) = upload(&src) {
+                (format!("uploads/{name}"), IdeaMediaSource::Uploads)
+            } else if let Some(path) = work.as_deref().and_then(|w| thread_media_path(&src, w)) {
+                (path, IdeaMediaSource::Library)
             } else {
-                let conn = self.live_conn(&rec.machine_id)?;
-                let mut bytes = Vec::new();
-                loop {
-                    let response = conn
-                        .request(AgentRequest::FileRead {
-                            work_dir: work.to_string(),
-                            path: path["library/".len()..].to_string(),
-                            offset: bytes.len() as u64,
-                            len: 256 * 1024,
-                        })
-                        .await
-                        .map_err(|e| err(e.code, format!("{path}: {}", e.message)))?;
-                    let AgentResponse::FileChunk { data, eof } = response else {
-                        return Err(internal("아이디어 미디어 읽기 응답이 아니다"));
-                    };
-                    if bytes.len() as u64 + data.0.len() as u64 > crate::task_attach::MAX_BYTES {
-                        return Err(bad(format!("{path}: 미디어가 16MiB를 넘는다")));
-                    }
-                    if data.0.is_empty() && !eof {
-                        return Err(internal(format!("{path}: 미디어 읽기가 진행되지 않는다")));
-                    }
-                    bytes.extend(data.0);
-                    if eof {
-                        break;
-                    }
-                }
-                let name = self.idea_store_file(f, &bytes).map_err(|e| internal(format!("{path}: {}", e.message)))?;
-                imported.entry(path).or_insert(name)
+                continue;
             };
-            out.replace_range(range, name);
+            let name = if let Some(name) = imported.get(&key) {
+                name.clone()
+            } else {
+                let bytes = if source == IdeaMediaSource::Uploads {
+                    let name = &key["uploads/".len()..];
+                    self.task_file_read(project, name).map_err(|e| err(e.code, format!("{key}: {}", e.message)))?
+                } else {
+                    let (Some(rec), Some(work)) = (rec.as_ref(), work.as_deref()) else { continue };
+                    let conn = self.live_conn(&rec.machine_id)?;
+                    let mut bytes = Vec::new();
+                    loop {
+                        let response = conn
+                            .request(AgentRequest::FileRead {
+                                work_dir: work.to_string(),
+                                path: key["library/".len()..].to_string(),
+                                offset: bytes.len() as u64,
+                                len: 256 * 1024,
+                            })
+                            .await
+                            .map_err(|e| err(e.code, format!("{key}: {}", e.message)))?;
+                        let AgentResponse::FileChunk { data, eof } = response else {
+                            return Err(internal("아이디어 미디어 읽기 응답이 아니다"));
+                        };
+                        if bytes.len() as u64 + data.0.len() as u64 > crate::task_attach::MAX_BYTES {
+                            return Err(bad(format!("{key}: 미디어가 16MiB를 넘는다")));
+                        }
+                        if data.0.is_empty() && !eof {
+                            return Err(internal(format!("{key}: 미디어 읽기가 진행되지 않는다")));
+                        }
+                        bytes.extend(data.0);
+                        if eof {
+                            break;
+                        }
+                    }
+                    bytes
+                };
+                let name = self.idea_store_file(f, &bytes).map_err(|e| internal(format!("{key}: {}", e.message)))?;
+                let who = if source == IdeaMediaSource::Library {
+                    thread.clone().unwrap_or_default()
+                } else {
+                    by.to_string()
+                };
+                sources.push((name.clone(), source, who));
+                imported.insert(key.clone(), name.clone());
+                name
+            };
+            out.replace_range(range, &name);
+        }
+        if !sources.is_empty() {
+            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let mut meta = f.meta()?;
+            for (name, source, who) in &sources {
+                let file = imported.iter().find(|(_, n)| *n == name).map(|(k, _)| k.clone());
+                meta.note_media(name, *source, who, file);
+            }
+            f.write_meta(&meta)?;
         }
         Ok(out)
     }
@@ -411,7 +490,34 @@ impl Host {
             return Err(err(ErrorCode::NotFound, format!("{rev} 판이 없다(지금 {})", m.rev)));
         }
         let text = f.text((rev != m.rev).then_some(rev))?;
+        let size =
+            |name: &str| f.dir.join(name).symlink_metadata().map_or(0, |m| if m.is_file() { m.len() } else { 0 });
+        let media = media_refs(&text)
+            .into_iter()
+            .map(|name| {
+                let info = m.media.get(&name).cloned().unwrap_or_default();
+                IdeaMediaView {
+                    bytes: size(&name),
+                    source: info.source,
+                    by: info.by,
+                    file: info.file,
+                    at_ms: info.at_ms,
+                    name,
+                }
+            })
+            .collect();
+        let media_bytes = std::fs::read_dir(&f.dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|e| e.file_name().to_str().is_some_and(media_name))
+                    .filter_map(|e| e.metadata().ok().filter(std::fs::Metadata::is_file).map(|m| m.len()))
+                    .sum()
+            })
+            .unwrap_or(0);
         Ok(IdeaNote {
+            media,
+            media_bytes,
             media_error: None,
             project: project.to_string(),
             idea: self.idea_summary(project, f, &m)?,
@@ -608,6 +714,9 @@ impl Host {
             .or_else(|| board.lists.iter().find(|l| !l.name.is_empty()))
             .map_or_else(|| "Backlog".to_string(), |l| l.name.clone());
         let link = idea_link(&short);
+        // 노트의 그림은 할 일 첨부(`uploads/`, 이름이 같은 내용 hash)로도 둔다: 할 일 화면이 썸네일로 보이고 thread 시작 때
+        // `attachments/`로 넘어간다. 영상은 할 일 첨부 형식이 아니라 노트와 함께만 넘어간다
+        let images = self.idea_handoff_images(project, &f)?;
         let mut ops = Vec::new();
         for d in &drafts {
             let title = one_line("할 일 제목", &d.title, 400)?;
@@ -615,6 +724,11 @@ impl Host {
             notes.extend(d.notes.lines().map(|l| l.trim_end().to_string()).filter(|l| l.trim() != link));
             while notes.last().is_some_and(|l| l.trim().is_empty()) {
                 notes.pop();
+            }
+            for line in &images {
+                if !notes.iter().any(|l| l.contains(&line[line.find("](").unwrap_or(0)..])) {
+                    notes.push(line.clone());
+                }
             }
             ops.push(TaskOp::Add {
                 list: list.clone(),
@@ -662,29 +776,162 @@ impl Host {
         self.idea_note(project, &f, None)
     }
 
+    /// 넘길 때 할 일 메모에 더할 그림 줄(`![설명](uploads/<이름>)`): 노트의 그림(PNG·JPEG·GIF·WebP)을 프로젝트 `uploads/`에 복사한다
+    fn idea_handoff_images(&self, project: &str, f: &Folder) -> Result<Vec<String>, ErrorBody> {
+        let text = f.text(None)?;
+        let dir = self.project_dir(project)?.join("uploads");
+        let mut out = Vec::new();
+        for (alt, name) in media_images(&text) {
+            if !crate::task_attach::valid_name(&name) {
+                continue;
+            }
+            let bytes = match self.idea_file_read(project, &f.id, &name) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(project, idea = %f.id, name, "넘길 그림을 읽지 못해 노트에만 둔다: {}", e.message);
+                    continue;
+                }
+            };
+            self.upload_store(&dir, &name, &bytes).map_err(|e| err(e.code, format!("{name}: {}", e.message)))?;
+            out.push(format!("![{}](uploads/{name})", media_alt(Some(&alt), &name)));
+        }
+        Ok(out)
+    }
+
     pub(crate) fn idea_copy(&self, project: &str, idea: &str, actor: &str) -> Result<IdeaNote, ErrorBody> {
         let f = self.idea_folder(project, idea)?;
         let meta = f.meta()?;
         let text = f.text(None)?;
         let note = self.idea_create(project, &meta.title, &text, Some(f.id.clone()), actor)?;
         // 노트가 가리키는 그림·영상도 같은 이름으로 옮긴다(이름이 내용 hash라 겹치지 않는다)
-        let to = self.ideas_root(project)?.join(&note.idea.id);
+        let to = Folder { dir: self.ideas_root(project)?.join(&note.idea.id), id: note.idea.id.clone() };
+        let mut copied = Vec::new();
         for name in media_refs(&text) {
             let src = f.dir.join(&name);
             if src.symlink_metadata().is_ok_and(|m| m.is_file()) {
-                std::fs::copy(&src, to.join(&name)).map_err(|e| internal(format!("{}: {e}", src.display())))?;
+                std::fs::copy(&src, to.dir.join(&name)).map_err(|e| internal(format!("{}: {e}", src.display())))?;
+                copied.push(name);
             }
         }
-        Ok(note)
+        if !copied.is_empty() {
+            let short = self.db.idea_short_id(project, &f.id).map_err(internal)?;
+            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let mut new = to.meta()?;
+            for name in &copied {
+                let mut info = meta.media.get(name).cloned().unwrap_or_default();
+                info.source = IdeaMediaSource::Copy;
+                info.file = Some(match info.file {
+                    Some(file) => format!("{short} {file}"),
+                    None => short.clone(),
+                });
+                new.media.insert(name.clone(), info);
+            }
+            to.write_meta(&new)?;
+        }
+        self.idea_note(project, &to, None)
     }
 
     /// 웹이 올린 그림·영상을 아이디어 폴더에 쓰고 노트에 적을 이름을 돌려준다(이름은 내용 hash)
-    pub(crate) fn idea_file_save(&self, project: &str, idea: &str, bytes: &[u8]) -> Result<String, ErrorBody> {
+    /// 웹이 올린 그림·영상(`file`은 브라우저가 알린 원래 이름)
+    pub(crate) fn idea_file_save(
+        &self,
+        project: &str,
+        idea: &str,
+        bytes: &[u8],
+        file: Option<String>,
+    ) -> Result<String, ErrorBody> {
         let f = self.idea_folder(project, idea)?;
         if f.meta()?.status == IdeaStatus::Done {
             return Err(bad("할 일로 넘겨 잠긴 아이디어다"));
         }
-        self.idea_store_file(&f, bytes)
+        let name = self.idea_store_file(&f, bytes)?;
+        let file =
+            file.map(|n| n.chars().filter(|c| !c.is_control()).take(200).collect::<String>()).filter(|n| !n.is_empty());
+        let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let mut meta = f.meta()?;
+        meta.note_media(&name, IdeaMediaSource::Web, "사람", file);
+        f.write_meta(&meta)?;
+        Ok(name)
+    }
+
+    /// 그림·영상을 폴더에 넣고 노트 끝(또는 `section` 절 끝)에 한 줄씩 더해 새 판으로 쓴다(`store_only`면 폴더에만).
+    /// `names`는 이미 올린 폴더 안 이름, `paths`는 host 파일. 경로 권한(`roots`: None이면 일반 파일 어디나)은 부르는 쪽이 정한다
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn idea_attach(
+        &self,
+        project: &str,
+        f: &Folder,
+        by: IdeaAuthor,
+        by_label: &str,
+        actor: &str,
+        names: &[String],
+        paths: &[String],
+        roots: Option<&[PathBuf]>,
+        alt: Option<&str>,
+        section: Option<&str>,
+        store_only: bool,
+    ) -> Result<(Vec<String>, IdeaNote), ErrorBody> {
+        let short = self.db.idea_short_id(project, &f.id).map_err(internal)?;
+        let count = names.len() + paths.len();
+        if count == 0 {
+            return Err(bad("붙일 그림·영상이 없다"));
+        }
+        if count > MAX_ATTACH {
+            return Err(bad(format!("한 번에 {MAX_ATTACH}개까지 붙인다")));
+        }
+        if f.meta()?.status == IdeaStatus::Done {
+            return Err(bad(format!("{short}는 할 일로 넘겨 잠겼다. 다시 다듬으려면 복사해서 새 아이디어로 한다")));
+        }
+        let mut added: Vec<(String, IdeaMediaSource, Option<String>)> = Vec::new();
+        for name in names {
+            let name = name.trim();
+            if !media_name(name) || !f.dir.join(name).symlink_metadata().is_ok_and(|m| m.is_file()) {
+                return Err(bad(format!("{name}: 이 아이디어에 올린 그림·영상 이름이 아니다")));
+            }
+            added.push((name.to_string(), IdeaMediaSource::Web, None));
+        }
+        for path in paths {
+            let bytes = read_attach_path(path, roots)?;
+            let name = self.idea_store_file(f, &bytes).map_err(|e| err(e.code, format!("{path}: {}", e.message)))?;
+            added.push((name, IdeaMediaSource::File, Some(path.clone())));
+        }
+        let lines: Vec<String> =
+            added.iter().map(|(name, _, _)| format!("![{}]({name})", media_alt(alt, name))).collect();
+        let n = added.len();
+        let written = {
+            let _w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+            let mut meta = f.meta()?;
+            if meta.status == IdeaStatus::Done {
+                return Err(bad(format!("{short}는 할 일로 넘겨 잠겼다")));
+            }
+            for (name, source, file) in &added {
+                meta.note_media(name, *source, by_label, file.clone());
+            }
+            if store_only {
+                f.write_meta(&meta)?;
+                false
+            } else {
+                let text = place_media(&f.text(None)?, &lines, section)?;
+                let what = if n == 1 { "그림 1개 더함".to_string() } else { format!("그림 {n}개 더함") };
+                let summary = match section.map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(sec) => format!("「{}」 {what}", sec.trim_start_matches('#').trim()),
+                    None => what,
+                };
+                if by == IdeaAuthor::User {
+                    meta.edited.push(format!("판 {} {summary}", meta.rev + 1));
+                }
+                f.write_rev(&mut meta, &text, by, Some(summary), aaa_common::util::now_ms())?;
+                true
+            }
+        };
+        let out: Vec<String> = added.into_iter().map(|(name, _, _)| name).collect();
+        self.db.audit(actor, "idea_attach", &format!("{project}/{short} {}", out.join(" ")));
+        self.ideas_bump(project);
+        let note = self.idea_note(project, f, None)?;
+        if written && by == IdeaAuthor::Thread && note.idea.unseen {
+            self.idea_updated(&note);
+        }
+        Ok((out, note))
     }
 
     fn idea_store_file(&self, f: &Folder, bytes: &[u8]) -> Result<String, ErrorBody> {
@@ -742,6 +989,32 @@ pub(crate) enum Saved {
     },
 }
 
+/// `idea attach`의 host 파일을 읽는다: 절대 경로의 일반 파일, 16MiB 이하. `roots`가 있으면 실제 경로(링크를 푼 것)가 그 안이어야 한다
+fn read_attach_path(path: &str, roots: Option<&[PathBuf]>) -> Result<Vec<u8>, ErrorBody> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err(bad(format!("{path}: 절대 경로로 준다")));
+    }
+    if let Some(roots) = roots {
+        let real = p.canonicalize().map_err(|e| bad(format!("{path}: {e}")))?;
+        let inside = roots.iter().filter_map(|r| r.canonicalize().ok()).any(|r| real.starts_with(&r));
+        if !inside {
+            return Err(err(
+                ErrorCode::Forbidden,
+                format!("{path}: thread는 자기 작업 폴더와 프로젝트 uploads/ 안의 파일만 붙인다"),
+            ));
+        }
+    }
+    let m = std::fs::metadata(p).map_err(|e| bad(format!("{path}: {e}")))?;
+    if !m.is_file() {
+        return Err(bad(format!("{path}: 일반 파일이 아니다")));
+    }
+    if m.len() == 0 || m.len() > crate::task_attach::MAX_BYTES {
+        return Err(bad(format!("{path}: 파일은 1바이트부터 16MiB까지 붙인다({}바이트)", m.len())));
+    }
+    std::fs::read(p).map_err(|e| internal(format!("{path}: {e}")))
+}
+
 /// 아이디어 폴더 안 그림·영상 이름(`<16 hex>.<png|jpg|gif|webp|mp4|webm>`)
 pub(crate) fn media_name(name: &str) -> bool {
     let Some((stem, ext)) = name.split_once('.') else { return false };
@@ -750,11 +1023,8 @@ pub(crate) fn media_name(name: &str) -> bool {
         && matches!(ext, "png" | "jpg" | "gif" | "webp" | "mp4" | "webm")
 }
 
-/// Markdown 링크·그림의 대상 범위. 코드 안의 예시는 파일 요청으로 바꾸지 않는다.
-fn media_targets(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
-    static TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r#"\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^\n]*?["'])?\s*\)"#).unwrap()
-    });
+/// 코드 울타리(```·~~~) 밖의 줄과 그 시작 바이트 위치(줄 끝 개행 포함)
+fn prose_lines(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None;
     let mut offset = 0;
@@ -768,17 +1038,143 @@ fn media_targets(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
                 fence = Some(mark);
             }
         } else if fence.is_none() {
-            for c in TARGET.captures_iter(line) {
-                let m = c.get(1).or_else(|| c.get(2)).unwrap();
-                if line[..c.get(0).unwrap().start()].matches('`').count() % 2 == 1 {
-                    continue;
-                }
-                out.push((offset + m.start()..offset + m.end(), m.as_str().to_string()));
-            }
+            out.push((offset, line));
         }
         offset += line.len();
     }
     out
+}
+
+/// 줄의 이 위치가 `` ` `` 안인가(앞의 backtick 수가 홀수)
+fn in_code(line: &str, at: usize) -> bool {
+    line[..at].matches('`').count() % 2 == 1
+}
+
+/// Markdown 링크·그림의 대상 범위. 코드 안의 예시는 파일 요청으로 바꾸지 않는다.
+fn media_targets(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    static TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^\n]*?["'])?\s*\)"#).unwrap()
+    });
+    let mut out = Vec::new();
+    for (offset, line) in prose_lines(text) {
+        for c in TARGET.captures_iter(line) {
+            let m = c.get(1).or_else(|| c.get(2)).unwrap();
+            if in_code(line, c.get(0).unwrap().start()) {
+                continue;
+            }
+            out.push((offset + m.start()..offset + m.end(), m.as_str().to_string()));
+        }
+    }
+    out
+}
+
+/// 노트의 그림 `![설명](<폴더 안 이름>)`들(설명, 이름). 처음 나온 차례, 같은 이름은 처음 것만
+pub(crate) fn media_images(text: &str) -> Vec<(String, String)> {
+    static IMAGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r#"!\[([^\]\n]*)\]\(\s*<?([0-9a-f]{16}\.(?:png|jpg|gif|webp|mp4|webm))>?(?:\s+["'][^\n]*?["'])?\s*\)"#,
+        )
+        .unwrap()
+    });
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (_, line) in prose_lines(text) {
+        for c in IMAGE.captures_iter(line) {
+            if in_code(line, c.get(0).unwrap().start()) {
+                continue;
+            }
+            let name = c[2].to_string();
+            if !out.iter().any(|(_, n)| *n == name) {
+                out.push((c[1].trim().to_string(), name));
+            }
+        }
+    }
+    out
+}
+
+/// 붙일 그림 줄의 설명: 한 줄로, `[`·`]`·제어 문자는 줄 꼴을 깨므로 빈칸으로. 비면 `그림`·`영상`
+pub(crate) fn media_alt(alt: Option<&str>, name: &str) -> String {
+    let cleaned: String =
+        alt.unwrap_or("").chars().map(|c| if c == '[' || c == ']' || c.is_control() { ' ' } else { c }).collect();
+    let words = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let alt: String = words.chars().take(MAX_ALT).collect();
+    if !alt.is_empty() {
+        alt
+    } else if name.ends_with(".mp4") || name.ends_with(".webm") {
+        "영상".into()
+    } else {
+        "그림".into()
+    }
+}
+
+/// `#` 머리 줄의 (단계, 제목)
+fn heading_of(line: &str) -> Option<(usize, String)> {
+    let t = line.trim_end();
+    let level = t.bytes().take_while(|&b| b == b'#').count();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+    let rest = &t[level..];
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        return None;
+    }
+    Some((level, rest.trim().trim_end_matches('#').trim().to_string()))
+}
+
+/// 그림 줄들을 노트 끝, 또는 `section` 절(그 머리 아래부터 같은·높은 단계 다음 머리 전까지) 끝에 넣는다. 줄마다 앞에 빈 줄을 두어
+/// 문단에 붙지 않고 혼자 선 그림이 된다
+pub(crate) fn place_media(text: &str, lines: &[String], section: Option<&str>) -> Result<String, ErrorBody> {
+    let all: Vec<&str> = text.lines().collect();
+    let (start, end) = match section.map(|s| s.trim().trim_start_matches('#').trim()).filter(|s| !s.is_empty()) {
+        None => (0, all.len()),
+        Some(want) => {
+            let prose: std::collections::HashSet<usize> = {
+                let mut starts = std::collections::HashSet::new();
+                let mut index = std::collections::HashMap::new();
+                let mut at = 0;
+                for (i, l) in text.split_inclusive('\n').enumerate() {
+                    index.insert(at, i);
+                    at += l.len();
+                }
+                for (offset, _) in prose_lines(text) {
+                    if let Some(i) = index.get(&offset) {
+                        starts.insert(*i);
+                    }
+                }
+                starts
+            };
+            let found = all
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| prose.contains(i))
+                .find_map(|(i, l)| heading_of(l).filter(|(_, t)| t == want).map(|(level, _)| (i, level)));
+            let Some((at, level)) = found else {
+                return Err(bad(format!("노트에 「{want}」 절이 없다")));
+            };
+            let end = (at + 1..all.len())
+                .find(|i| prose.contains(i) && heading_of(all[*i]).is_some_and(|(l, _)| l <= level))
+                .unwrap_or(all.len());
+            (at + 1, end)
+        }
+    };
+    let mut at = end;
+    while at > start && all[at - 1].trim().is_empty() {
+        at -= 1;
+    }
+    let mut out: Vec<String> = all[..at].iter().map(|l| l.to_string()).collect();
+    for l in lines {
+        if !out.is_empty() {
+            out.push(String::new());
+        }
+        out.push(l.clone());
+    }
+    if end < all.len() {
+        out.push(String::new());
+        out.extend(all[end..].iter().map(|l| l.to_string()));
+    }
+    let mut text = out.join("\n");
+    text.push('\n');
+    check_text(&text)?;
+    Ok(text)
 }
 
 fn thread_media_path(src: &str, work: &str) -> Option<String> {
@@ -833,6 +1229,7 @@ pub(crate) fn media_refs(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aaa_proto::DeviceRole;
 
     /// 재접속에도 새 판이 남고, 옛 판 읽음·중복 저장·사람 저장이 새 알림을 만들지 않는다.
     #[test]
@@ -979,7 +1376,7 @@ mod tests {
         let n = h.idea_create("demo", "알림 묶기", "", None, "test").unwrap();
         let f = h.idea_folder("demo", &n.idea.short_id).unwrap();
         let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
-        let img = h.idea_file_save("demo", "n-0001", &png).unwrap();
+        let img = h.idea_file_save("demo", "n-0001", &png, None).unwrap();
         let text = format!("# 알림 묶기\n![그림]({img})\n");
         assert!(h.idea_write("demo", &f, 1, &text, None, IdeaAuthor::User, "test").unwrap().is_ok());
         let draft = |t: &str| IdeaTaskDraft { title: t.into(), repo: None, notes: "정리본대로 만든다".into() };
@@ -992,7 +1389,18 @@ mod tests {
         assert_eq!((done.idea.status, done.idea.tasks.len()), (IdeaStatus::Done, 2));
         let board = h.task_board("demo").unwrap();
         let t = board.tasks.iter().find(|t| t.title == "알림 묶기 구현").unwrap();
-        assert_eq!(t.notes, ["[아이디어 n-0001](ideas/n-0001)", "정리본대로 만든다"]);
+        // 노트의 그림은 할 일 첨부 줄(uploads/, 같은 내용 hash 이름)로도 붙는다(t-1575)
+        assert_eq!(
+            t.notes,
+            ["[아이디어 n-0001](ideas/n-0001)", "정리본대로 만든다", &format!("![그림](uploads/{img})")]
+        );
+        assert_eq!(h.task_file_read("demo", &img).unwrap(), png, "할 일 첨부로 보이는 사본");
+        // 실제 메모로 thread를 시작하면: 노트·그림이 attachments/로 한 번씩 가고 메모의 그림 줄도 그 사본을 가리킨다
+        let mut memo = t.notes.join("\n");
+        let (files, warnings) = h.task_attachments("demo", &mut memo);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(files.iter().map(|f| f.name.as_str()).filter(|n| *n == img).count(), 1, "같은 그림은 한 번");
+        assert!(memo.ends_with(&format!("![그림](attachments/{img})")), "{memo}");
         assert!(h.idea_write("demo", &f, 2, "# 바꿈\n", None, IdeaAuthor::User, "test").is_err(), "잠긴 노트");
         let copy = h.idea_copy("demo", "n-0001", "test").unwrap();
         assert_eq!(
@@ -1009,6 +1417,98 @@ mod tests {
             [format!("ideas/{}/note.md", f.id), format!("ideas/{}/{img}", f.id)]
         );
         assert!(task.starts_with(&format!("[아이디어 n-0001](attachments/{})", files[0].name)), "{task}");
+        let _ = std::fs::remove_dir_all(&state);
+    }
+
+    /// 붙이기 자리(t-1575): 노트 끝이나 고른 절 끝에 빈 줄을 두고 한 줄씩. 코드 안의 머리는 절로 보지 않고, 없는 절은 거부한다
+    #[test]
+    fn media_lines_go_to_the_end_or_the_section() {
+        let lines = ["![가](a)".to_string(), "![나](b)".to_string()];
+        assert_eq!(place_media("# 제목\n본문\n\n\n", &lines, None).unwrap(), "# 제목\n본문\n\n![가](a)\n\n![나](b)\n");
+        let text = "# 제목\n\n## 시안\n- 첫\n\n### 작은 절\n- 안\n\n## 결정\n- 끝\n";
+        assert_eq!(
+            place_media(text, &lines[..1], Some("## 시안")).unwrap(),
+            "# 제목\n\n## 시안\n- 첫\n\n### 작은 절\n- 안\n\n![가](a)\n\n## 결정\n- 끝\n"
+        );
+        let fenced = "# 제목\n```md\n## 결정\n```\n";
+        assert_eq!(place_media(fenced, &lines[..1], Some("결정")).unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!(media_alt(Some(" 간판 [시안]\n둘 "), "a.png"), "간판 시안 둘");
+        assert_eq!((media_alt(None, "a.mp4"), media_alt(Some("  "), "a.png")), ("영상".into(), "그림".into()));
+        assert_eq!(
+            media_images("![가](0123456789abcdef.png)\n`![코드](fedcba9876543210.png)`\n![다시](0123456789abcdef.png)"),
+            [("가".to_string(), "0123456789abcdef.png".to_string())]
+        );
+    }
+
+    /// `idea attach` 계약(t-1575): host 파일·올린 이름을 붙여 새 판 하나로 쓰고 출처를 남긴다. 제한한 폴더 밖·그림 아닌 파일·
+    /// 올리지 않은 이름·잠긴 아이디어는 거부하고, `store_only`는 노트를 바꾸지 않는다. 노트의 `uploads/` 링크는 저장 때 옮긴다
+    #[tokio::test]
+    async fn attach_adds_one_revision_and_guards_sources() {
+        let (h, state) = host();
+        let n = h.idea_create("demo", "간판", "# 간판\n\n## 시안\n- 첫\n\n## 결정\n", None, "test").unwrap();
+        let f = h.idea_folder("demo", &n.idea.short_id).unwrap();
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        let mp4 = b"\x00\x00\x00\x18ftypisom\x00\x00".to_vec();
+        let work = state.join("work");
+        std::fs::create_dir_all(work.join("library")).unwrap();
+        let (pic, clip, text) = (work.join("library/a.png"), work.join("b.mp4"), work.join("c.txt"));
+        std::fs::write(&pic, &png).unwrap();
+        std::fs::write(&clip, &mp4).unwrap();
+        std::fs::write(&text, "글").unwrap();
+        let path = |p: &PathBuf| p.display().to_string();
+        let attach = |names: &[String], paths: &[String], roots: Option<&[PathBuf]>, section, store_only| {
+            h.idea_attach(
+                "demo",
+                &f,
+                IdeaAuthor::User,
+                "사람",
+                "test",
+                names,
+                paths,
+                roots,
+                Some("가게 앞"),
+                section,
+                store_only,
+            )
+        };
+        let (names, note) = attach(&[], &[path(&pic), path(&clip)], None, Some("시안"), false).unwrap();
+        assert_eq!(note.rev, 2, "두 개를 한 판에");
+        assert!(
+            note.text.contains(&format!("- 첫\n\n![가게 앞]({})\n\n![가게 앞]({})\n\n## 결정", names[0], names[1])),
+            "{}",
+            note.text
+        );
+        assert_eq!(note.history[0].summary.as_deref(), Some("「시안」 그림 2개 더함"));
+        assert_eq!(note.edited.as_deref(), Some("판 2 「시안」 그림 2개 더함"), "다음 말에 thread가 안다");
+        assert_eq!((note.media[0].source, note.media[0].by.as_str()), (IdeaMediaSource::File, "사람"));
+        assert_eq!(note.media[0].file.as_deref(), Some(path(&pic).as_str()));
+        assert_eq!(note.media_bytes, (png.len() + mp4.len()) as u64);
+        // 제한한 폴더 밖(전용 thread가 남의 파일을), 그림 아닌 파일, 올리지 않은 이름
+        let outside = state.join("outside.png");
+        std::fs::write(&outside, &png).unwrap();
+        let roots = [work.clone()];
+        assert_eq!(attach(&[], &[path(&outside)], Some(&roots), None, false).unwrap_err().code, ErrorCode::Forbidden);
+        assert!(attach(&[], &[path(&pic)], Some(&roots), None, true).is_ok(), "제한 안의 파일");
+        assert_eq!(attach(&[], &[path(&text)], None, None, false).unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!(attach(&[], &["rel.png".into()], None, None, false).unwrap_err().code, ErrorCode::BadRequest);
+        assert!(attach(&["0123456789abcdef.png".into()], &[], None, None, false).is_err(), "올리지 않은 이름");
+        // store_only는 판을 만들지 않는다
+        let up = h.idea_file_save("demo", "n-0001", &png, Some("IMG_0001.png".into())).unwrap();
+        let (_, kept) = attach(std::slice::from_ref(&up), &[], None, None, true).unwrap();
+        assert_eq!(kept.rev, 2);
+        // uploads/ 링크(할 일·대화 첨부)는 저장 때 폴더 안 이름으로 옮긴다
+        let gif = b"GIF89a\x01\x00\x01\x00".to_vec();
+        let upload = h.task_file_save(DeviceRole::Controller, "test", "demo", None, &gif).unwrap();
+        let moved =
+            h.idea_import_media("demo", &f, &format!("{}\n![첨부]({upload})\n", kept.text), "사람").await.unwrap();
+        let name = upload.trim_start_matches("uploads/");
+        assert!(moved.ends_with(&format!("![첨부]({name})\n")), "{moved}");
+        assert_eq!(f.meta().unwrap().media[name].source, IdeaMediaSource::Uploads);
+        // 잠긴 아이디어
+        h.idea_handoff("demo", "n-0001", 2, vec![IdeaTaskDraft { title: "x".into(), ..Default::default() }], "test")
+            .await
+            .unwrap();
+        assert_eq!(attach(&[], &[path(&pic)], None, None, false).unwrap_err().code, ErrorCode::BadRequest);
         let _ = std::fs::remove_dir_all(&state);
     }
 

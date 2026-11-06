@@ -40,7 +40,9 @@ fn task_text(short: &str, title: &str, dir: &std::path::Path, again: bool) -> St
     };
     format!(
         "아이디어 {short} 「{title}」의 전용 thread다. {start}\n\n- 노트 읽기: `aaa idea show {short}`\n- 노트 저장: \
-         `aaa idea save {short} --base <판> --file <파일> --summary '<바뀐 곳>'`\n- 노트 폴더(그림·영상, 읽기만): {}\n",
+         `aaa idea save {short} --base <판> --file <파일> --summary '<바뀐 곳>'`\n- 그림 붙이기(노트 끝에 새 판): \
+         `aaa idea attach {short} <파일>... --alt '<설명>'`(생성·내려받은 그림도 작업 폴더에 둔 뒤 붙인다. 노트 가운데에 넣으려면 \
+         `--store-only`로 받은 이름을 `![설명](<이름>)`로 적어 저장)\n- 노트 폴더(그림·영상, 읽기만): {}\n",
         dir.display()
     )
 }
@@ -88,6 +90,41 @@ impl Host {
             }
             FrontRequest::IdeaCopy { project, idea } => {
                 Ok(FrontResponse::Idea { note: self.idea_copy(&project, &idea, actor)? })
+            }
+            FrontRequest::IdeaAttach { project, idea, names, paths, alt, section, store_only } => {
+                let f = self.idea_folder(&project, &idea)?;
+                let by = self.idea_writer(role, actor, &f)?;
+                // 경로는 host 머신의 CLI만 준다: 웹 기기는 먼저 올린 이름으로 붙인다. 전용 thread는 자기 작업 폴더와 프로젝트 uploads/만
+                let roots = if paths.is_empty() {
+                    None
+                } else if actor.starts_with("device:") {
+                    return Err(err(ErrorCode::Forbidden, "웹은 파일을 올린 뒤 이름으로 붙인다"));
+                } else if by == IdeaAuthor::Thread {
+                    let work = f
+                        .meta()?
+                        .thread
+                        .and_then(|t| self.load(&project, &t).ok())
+                        .and_then(|r| r.work_dir)
+                        .ok_or_else(|| bad("전용 thread의 작업 폴더를 모른다"))?;
+                    Some(vec![std::path::PathBuf::from(work), self.project_dir(&project)?.join("uploads")])
+                } else {
+                    None
+                };
+                let label = self.idea_actor_label(actor);
+                let (names, note) = self.idea_attach(
+                    &project,
+                    &f,
+                    by,
+                    &label,
+                    actor,
+                    &names,
+                    &paths,
+                    roots.as_deref(),
+                    alt.as_deref(),
+                    section.as_deref(),
+                    store_only.unwrap_or(false),
+                )?;
+                Ok(FrontResponse::IdeaAttached { names, note })
             }
             _ => Err(internal("아이디어 요청이 아니다")),
         }
@@ -299,7 +336,7 @@ impl Host {
         let by = self.idea_writer(role, actor, &f)?;
         let meta = f.meta()?;
         let text = if meta.rev == base_rev && meta.status == IdeaStatus::Open {
-            self.idea_import_media(project, &f, text).await?
+            self.idea_import_media(project, &f, text, &self.idea_actor_label(actor)).await?
         } else {
             text.to_string()
         };
@@ -326,6 +363,18 @@ impl Host {
             }
             Err(Saved::Same | Saved::Written) => Err(internal("저장 결과가 맞지 않는다")),
         }
+    }
+
+    /// 그림 출처에 남길 들인 쪽: 전용 thread는 그 ID, coordinator pane 안 CLI는 `coordinator`, 나머지는 `사람`
+    pub(crate) fn idea_actor_label(&self, actor: &str) -> String {
+        if let Some(session) = actor.strip_prefix("worker:") {
+            return self.thread_of_pane(session).map_or_else(|| "thread".into(), |r| r.id);
+        }
+        let coordinator = actor.strip_prefix("local:").and_then(|rest| rest.split_once('@')).is_some_and(|(_, s)| {
+            self.pane_view_of(s, DeviceRole::Local).and_then(|p| p.role) == Some(Role::Coordinator)
+                || self.thread_of_pane(s).is_some_and(|r| r.role == Role::Coordinator)
+        });
+        if coordinator { "coordinator".into() } else { "사람".into() }
     }
 
     /// 누가 쓰나: 조작 권한은 사람, 보기 권한은 그 아이디어의 전용 thread 세션만

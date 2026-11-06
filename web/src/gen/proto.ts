@@ -704,7 +704,31 @@ pending: Array<string>,
 /**
  * 전용 thread를 띄우지 못한 까닭(말은 남는다. 다음 말이나 화면 열기 때 다시 띄운다)
  */
-error: string | null, };
+error: string | null,
+/**
+ * 이 글이 가리키는 그림·영상(처음 나온 차례, FRONT_API 1.162). 옛 host는 비운다
+ */
+media: Array<IdeaMediaView>,
+/**
+ * 아이디어 폴더의 그림·영상 전체 크기(옛 판이 가리키는 것 포함, 1.162)
+ */
+media_bytes: number, };
+
+export type IdeaMediaSource = "unknown" | "web" | "file" | "library" | "uploads" | "copy";
+
+export type IdeaMediaView = {
+/**
+ * 폴더 안 이름(`<16 hex>.<ext>`)
+ */
+name: string, bytes: number, source: IdeaMediaSource,
+/**
+ * 들인 쪽: `사람`·`coordinator`·`t-NNNN`. 기록이 없으면 빈 글
+ */
+by: string,
+/**
+ * 원래 파일 이름이나 경로(있을 때)
+ */
+file: string | null, at_ms: number, };
 
 export type IdeaTaskDraft = { title: string,
 /**
@@ -1422,7 +1446,15 @@ summary?: string, } | { "op": "idea_say", project?: string, idea: string, text: 
 /**
  * 화면이 본 판. 그 뒤에 바뀌었으면 넘기지 않는다
  */
-base_rev: number, tasks: Array<IdeaTaskDraft>, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
+base_rev: number, tasks: Array<IdeaTaskDraft>, } | { "op": "idea_attach", project?: string, idea: string, names?: Array<string>, paths?: Array<string>,
+/**
+ * 설명(alt). 없으면 `그림`·`영상`
+ */
+alt?: string,
+/**
+ * 이 `#` 머리 절 끝에 넣는다(없으면 노트 끝)
+ */
+section?: string, store_only?: boolean, } | { "op": "idea_copy", project?: string, idea: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null,
 /**
  * 끝난 thread를 뺀다(준비·실패·보류는 포함).
  */
@@ -1617,7 +1649,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "ideas", ideas: Array<IdeaSummary>, } | { "kind": "idea", note: IdeaNote, } | { "kind": "idea_conflict" } & IdeaConflict | { "kind": "idea_attached", names: Array<string>, note: IdeaNote, } | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, next?: string, repos?: Array<TaskHistoryRepo>, profiles?: Array<string>, machines?: Array<string>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[],
 /**
  * 메모 교체로 기존 줄이 빠졌을 때 줄 수·원문 기록 번호(FRONT_API 1.134)
  */

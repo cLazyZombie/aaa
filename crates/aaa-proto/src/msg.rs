@@ -3017,6 +3017,33 @@ pub enum FrontRequest {
         base_rev: u32,
         tasks: Vec<crate::IdeaTaskDraft>,
     },
+    /// 그림·영상을 노트에 붙인다(FRONT_API 1.162, 조작 권한 또는 그 아이디어의 전용 thread). `names`는 웹이 먼저 올린 폴더 안
+    /// 이름, `paths`는 host 머신의 파일 경로(CLI만: 사람·coordinator는 일반 파일, 전용 thread는 자기 작업 폴더와 프로젝트
+    /// `uploads/` 안). 노트 끝(또는 `section` 절 끝)에 한 줄씩 `![설명](<이름>)`을 더해 새 판으로 쓴다. 덧붙이기라 판을 받지 않는다.
+    /// `store_only`면 폴더에만 넣고 노트는 그대로 둔다(이름을 받아 thread가 직접 넣는다)
+    IdeaAttach {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        idea: String,
+        #[serde(default)]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        names: Vec<String>,
+        #[serde(default)]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        paths: Vec<String>,
+        /// 설명(alt). 없으면 `그림`·`영상`
+        #[serde(default)]
+        #[ts(optional)]
+        alt: Option<String>,
+        /// 이 `#` 머리 절 끝에 넣는다(없으면 노트 끝)
+        #[serde(default)]
+        #[ts(optional)]
+        section: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        store_only: Option<bool>,
+    },
     /// 노트를 복사해 새 아이디어로(조작 권한). 완료한 것을 다시 다듬을 때
     IdeaCopy {
         #[serde(default)]
@@ -3766,6 +3793,7 @@ impl FrontRequest {
             | FrontRequest::IdeaWake { project, .. }
             | FrontRequest::IdeaHandoff { project, .. }
             | FrontRequest::IdeaCopy { project, .. }
+            | FrontRequest::IdeaAttach { project, .. }
             | FrontRequest::ThreadStartPreview { project, .. }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
@@ -3908,6 +3936,7 @@ impl FrontRequest {
                 | FrontRequest::IdeaSeen { .. }
                 // 전용 thread(보기 권한)도 자기 노트를 저장한다: 권한은 host가 요청자로 다시 본다
                 | FrontRequest::IdeaSave { .. }
+                | FrontRequest::IdeaAttach { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
@@ -4114,6 +4143,11 @@ pub enum FrontResponse {
     },
     /// 전용 thread의 `idea_save`가 다른 판과 겹쳤다(쓰지 않음)
     IdeaConflict(crate::IdeaConflict),
+    /// `idea_attach`의 답(FRONT_API 1.162): 붙인 이름(준 차례)과 지금 노트
+    IdeaAttached {
+        names: Vec<String>,
+        note: crate::IdeaNote,
+    },
     TaskQueue {
         entries: Vec<crate::TaskReservation>,
     },
