@@ -7,7 +7,7 @@
 - `aaa-host asks::tests::history_pages_keep_index_links_bounds_and_deleted_cursor`: 큰 원문 바이트 경계, 50개 상한,
   동일 시각의 페이지 순서, 삭제된 커서, 프로젝트 분리, 과거 단건 원문, 구판 전체 응답.
 - `aaa-proto`: 생성 TypeScript, Reader 조회 권한, 기존 요청 호환과 버전 협상.
-- `web/test/threadReload.test.mjs`: 부분 표시, 페이지 오류, 겹친 재연결, 사건 우선 병합.
+- `web/test/threadReload.test.mjs`: 부분 표시, 페이지 오류, 겹친 재연결, 사건 우선 병합과 부분 목록 뒤 늦은 답 응답 보존.
 - `web/test/asksReload.test.mjs`와 `asksModel.test.mjs`: 첫 읽기와 사건 병합, 답 응답 우선, 실패 뒤 실제 사건으로 복구,
   원문 없는 과거 링크·배지, 삭제·페이지 중복 제거.
 - E2E12: 기존 2,500건 전체 페이지·겹친 재연결·실제 Chromium/WebKit DOM 검사를 유지한다.

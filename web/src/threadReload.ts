@@ -28,6 +28,8 @@ export class ThreadReload {
     if (!this.pending.has(read)) return null;
     const next = new Map(snapshot.map(t => [threadKey(t), t]));
     for (const [key, t] of read.updates) next.set(key, t);
+    // 부분 목록을 공개한 뒤의 늦은 답 응답도 이 상태로 되돌리지 않는다.
+    for (const t of next.values()) this.replies.note(t);
     // 새 연결의 부분 응답도 옛 연결의 끝 응답보다 새롭다.
     for (const older of this.pending) if (older.sequence < read.sequence)
       for (const [key, t] of next) older.updates.set(key, t);

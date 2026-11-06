@@ -73,3 +73,12 @@ it("열린 항목은 먼저 공개하고 부분 페이지·새 연결 뒤에도 
   assert.deepEqual([...reload.finish(next, [latest]).values()], [latest]);
   assert.equal(reload.partial(read, [old]), null);
 });
+
+it("재연결의 부분 목록도 늦은 답 응답보다 우선한다", () => {
+  const reload = new ThreadReload();
+  const reply = reload.beginReply(old);
+  const reconnected = reload.begin();
+  const latest = { ...old, title: "재연결에서 읽은 새 질문" };
+  reload.partial(reconnected, [latest]);
+  assert.deepEqual(reply.finish({ ...old, title: "이전 답 응답" }), latest);
+});
