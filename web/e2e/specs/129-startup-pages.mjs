@@ -1,8 +1,9 @@
 // 실제 host의 큰 목록을 늦춰 첫 화면·과거 직접 링크·복원·답변 페이지를 검사한다. 고정 sleep은 없다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { aaa, step, browser, webkit, pairPage, domIs, until, root, showPanel, base, drawerSettled } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, pairPage, domIs, until, root, showPanel, base, drawerSettled, coordinatorPost, inTime } from "../lib/harness.mjs";
 import { seedHost } from "../lib/bulk-fixture.mjs";
+import { clickDialogButton } from "../lib/menu.mjs";
 import { ThreadRoutes } from "../lib/thread-routes.mjs";
 
 export default async function () {
@@ -98,5 +99,39 @@ export default async function () {
         }
       });
     }
+    await step("늦은 조작 응답 뒤에도 새 질문 사건을 보존", async () => {
+      const routes = new ThreadRoutes(), held = Promise.withResolvers(), release = Promise.withResolvers();
+      let context;
+      try {
+        const { page, errors } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 844 }, {
+          hash: "#ask=d:history-0", serviceWorkers: "block",
+          setup: async ctx => {
+            context = ctx;
+            await ctx.route("**/api/v1/call", route => routes.run(route, async () => {
+              if (route.request().postDataJSON().op !== "ask_forget") return route.continue();
+              const response = await route.fetch();
+              held.resolve(); await release.promise;
+              await route.fulfill({ response });
+            }));
+          },
+        });
+        const oldResponse = page.waitForResponse(r => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "ask_forget").then(r => r.finished());
+        await page.getByTestId("ask-forget").click();
+        const dialog = page.getByRole("alertdialog");
+        await clickDialogButton(dialog.getByRole("button", { name: "지우기", exact: true }));
+        await inTime(held.promise, 20000, "서버가 처리한 이전 삭제 응답 보류");
+        await coordinatorPost({ request: true, title: "늦은 응답 사이 새 확인", body: "다음 단계 진행 여부를 확인해 주세요." });
+        await domIs(page, "새 확인 사건 표시", () => [...document.querySelectorAll('[data-testid="ask-row"]')].some(e => e.textContent.includes("늦은 응답 사이 새 확인")));
+        release.resolve();
+        await oldResponse;
+        await dialog.waitFor({ state: "detached" });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert(await page.locator('[data-testid="ask-row"]').filter({ hasText: "늦은 응답 사이 새 확인" }).count(), "늦은 조작 사본이 새 확인을 지우면 안 된다");
+        assert.deepEqual(errors, []);
+      } finally {
+        release.resolve();
+        if (context) { await routes.close(context); await context.close(); }
+      }
+    });
   } finally { await wk.close(); }
 }

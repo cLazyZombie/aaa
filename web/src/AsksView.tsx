@@ -675,7 +675,7 @@ export function useAsksData(): { data: AsksData | null; put: (r: FrontResponse) 
   const seq = useRef(0);
   const reloader = useRef<AsksReload<FrontResponse> | null>(null);
   const mergeAuto = (fresh: AutoDecision[], old: AutoDecision[] = []) => [...new Map([...old, ...fresh].map(d => [d.id, d])).values()].sort((a, b) => b.at_ms - a.at_ms);
-  const put = useCallback((r: FrontResponse) => {
+  const accept = useCallback((r: FrontResponse) => {
     if (r.kind === "asks") {
       ++seq.current;
       reloader.current?.invalidate();
@@ -691,6 +691,13 @@ export function useAsksData(): { data: AsksData | null; put: (r: FrontResponse) 
       setData(old => old ? { ...old, autoDecisions: mergeAuto(r.decisions, old.autoDecisions) } : old);
     }
   }, []);
+  const put = useCallback((r: FrontResponse) => {
+    if (r.kind === "asks" && reloader.current) {
+      // 조작 응답의 전체 사본은 전송 중 더 낡아질 수 있다. 새 사건 목록을 덮지 않고 최신 조회로 잇는다.
+      ++seq.current;
+      void reloader.current.refresh();
+    } else accept(r);
+  }, [accept]);
   const moreAuto = useCallback(async () => {
     if (!data?.autoNext) return;
     const r = await call({ op: "auto_decisions", project: "", before: data.autoNext, id: null });
@@ -717,12 +724,12 @@ export function useAsksData(): { data: AsksData | null; put: (r: FrontResponse) 
     setData(old => old ? { ...old, done: mergeAskPage(old.done, r.done, old.index) } : old);
   }, []);
   useEffect(() => {
-    const reader = new AsksReload(() => call({ op: "asks", paged: true }), put, ignoredFailure("답할 것 새로 읽기", () => {}));
+    const reader = new AsksReload(() => call({ op: "asks", paged: true }), accept, ignoredFailure("답할 것 새로 읽기", () => {}));
     reloader.current = reader;
     // host는 매 연결마다 첫 asks를 보낸다. up과 첫 사건으로 같은 목록을 두 번 요청하지 않는다.
     const unwatch = onAsksChanged(() => { ++seq.current; void reader.refresh(); });
     return () => { unwatch(); reader.close(); reloader.current = null; };
-  }, [put]);
+  }, [accept]);
   return { data, put, moreAuto, moreDone, loadDone, forgetAuto };
 }
 
