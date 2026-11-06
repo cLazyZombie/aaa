@@ -724,10 +724,18 @@ async fn library_upload(
     }
 }
 
+/// 아이디어 그림 올리기의 선택 값: 브라우저가 알린 원래 파일 이름(출처 기록용, t-1575)
+#[derive(serde::Deserialize)]
+struct IdeaFileQuery {
+    #[serde(default)]
+    name: Option<String>,
+}
+
 /// 아이디어 노트의 그림·영상 올리기(t-1260): 그 아이디어 폴더에 내용 hash 이름으로 쓰고 노트에 적을 이름을 돌려준다(16MiB)
 async fn idea_file(
     State(host): State<Arc<Host>>,
     Path((project, idea)): Path<(String, String)>,
+    Query(q): Query<IdeaFileQuery>,
     req: Request,
 ) -> Response {
     let Some((id, role)) = device(&host, req.headers()) else { return unauthorized() };
@@ -745,7 +753,7 @@ async fn idea_file(
             .into_response();
     };
     let result = tokio::task::spawn_blocking(move || {
-        let r = host.idea_file_save(&project, &idea, &bytes);
+        let r = host.idea_file_save(&project, &idea, &bytes, q.name);
         if let Ok(name) = &r {
             host.db.audit(
                 &format!("device:{id}"),

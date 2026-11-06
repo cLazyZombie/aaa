@@ -703,6 +703,23 @@ enum IdeaCmd {
     Say { idea: String, text: String },
     /// 노트를 복사해 새 아이디어로(완료한 것을 다시 다듬을 때)
     Copy { idea: String },
+    /// 그림·영상(PNG·JPEG·GIF·WebP·MP4·WebM, 16MiB까지)을 노트 끝에 붙여 새 판으로 저장한다. 전용 thread는 자기 작업 폴더와
+    /// 프로젝트 uploads/ 안의 파일만 붙인다. 붙인 이름을 한 줄씩 출력한다
+    Attach {
+        idea: String,
+        /// host 머신의 파일(여러 개, 20개까지)
+        #[arg(required = true)]
+        files: Vec<std::path::PathBuf>,
+        /// 설명(그림 아래 한 줄). 없으면 `그림`·`영상`
+        #[arg(long)]
+        alt: Option<String>,
+        /// 이 절(`## 제목`의 제목) 끝에 넣는다
+        #[arg(long)]
+        section: Option<String>,
+        /// 폴더에만 넣고 노트는 그대로 둔다(받은 이름을 `![설명](<이름>)`로 직접 적는다)
+        #[arg(long)]
+        store_only: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -4134,6 +4151,29 @@ fn idea_cli(json: bool, cmd: IdeaCmd) -> Result<ExitCode> {
         }
         IdeaCmd::Say { idea, text } => front(json, FrontRequest::IdeaSay { project, idea, text }),
         IdeaCmd::Copy { idea } => front(json, FrontRequest::IdeaCopy { project, idea }),
+        IdeaCmd::Attach { idea, files, alt, section, store_only } => {
+            // host가 경로를 직접 읽는다(아이디어 thread·coordinator·사람 CLI는 host 머신에서 돈다): 실행한 폴더 기준 절대 경로로 준다
+            let paths = files
+                .iter()
+                .map(|p| {
+                    std::path::absolute(p)
+                        .with_context(|| format!("{}", p.display()))
+                        .map(|p| p.to_string_lossy().into_owned())
+                })
+                .collect::<Result<Vec<_>>>()?;
+            front(
+                json,
+                FrontRequest::IdeaAttach {
+                    project,
+                    idea,
+                    names: Vec::new(),
+                    paths,
+                    alt,
+                    section,
+                    store_only: store_only.then_some(true),
+                },
+            )
+        }
     }
 }
 
@@ -6194,6 +6234,13 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::IdeaConflict(c) => {
             let _ = writeln!(s, "겹침: 판 {} 기준, 지금 판 {}", c.base_rev, c.current.rev);
+        }
+        FrontResponse::IdeaAttached { names, note } => {
+            // 한 줄에 이름 하나(노트에 `![설명](<이름>)`로 적는다), 끝에 지금 판
+            for n in names {
+                let _ = writeln!(s, "{n}");
+            }
+            let _ = writeln!(s, "{} · 판 {}", note.idea.short_id, note.rev);
         }
         FrontResponse::Accounts { accounts } => {
             for a in accounts {

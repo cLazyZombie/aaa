@@ -2147,7 +2147,8 @@ impl Host {
             | FrontRequest::IdeaSay { .. }
             | FrontRequest::IdeaWake { .. }
             | FrontRequest::IdeaHandoff { .. }
-            | FrontRequest::IdeaCopy { .. }) => self.call_idea(role, actor, req).await,
+            | FrontRequest::IdeaCopy { .. }
+            | FrontRequest::IdeaAttach { .. }) => self.call_idea(role, actor, req).await,
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;
