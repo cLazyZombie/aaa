@@ -127,7 +127,7 @@ export function threadPageTrace(directory, engine) {
       if (row.event === "document") retire(row.doc);
     });
     page.on("request", request => {
-      if (!request.url().endsWith("/api/v1/call") || request.postDataJSON()?.op !== "threads") return;
+      if (!request.url().endsWith("/api/v1/call") || (request.postDataJSON()?.op !== "threads" || request.postDataJSON()?.open)) return;
       const headers = request.headers();
       const record = { id: ++next, doc: headers["x-e2e-document"], connection: headers["x-e2e-connection"],
         fetch: headers["x-e2e-request"], after: request.postDataJSON().after ?? null };

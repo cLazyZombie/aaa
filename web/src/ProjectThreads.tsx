@@ -51,12 +51,14 @@ function Filter({ value, onChange, label, automationOnly, onAutomationOnly }: { 
   );
 }
 
-export function ProjectThreads({
+export function ProjectThreads({ loading = false, loadError = null,
   threads,
   onThread,
   onBack,
   onPane,
 }: {
+  loading?: boolean;
+  loadError?: string | null;
   /** 평가자를 뺀 모든 thread(끝난 것까지) */
   threads: ThreadView[];
   onThread: (t: ThreadView) => void;
@@ -105,12 +107,14 @@ export function ProjectThreads({
       onThread={onThread}
       onBack={onBack}
       coordinator={onPane && <CoordinatorOpen onPane={onPane} onError={setError} />}
-      error={error}
+      error={error ?? loadError}
+      loading={loading}
     />
   );
 }
 
 function ProjectBody({
+  loading,
   line,
   groups,
   empty,
@@ -121,6 +125,7 @@ function ProjectBody({
   coordinator,
   error,
 }: {
+  loading: boolean;
   line: string;
   groups: { g: string; rows: ThreadView[] }[];
   empty: string | null;
@@ -156,6 +161,7 @@ function ProjectBody({
           {empty}
         </p>
       )}
+      {loading && <p role="status">지난 작업을 불러오는 중…</p>}
       {groups.map(({ g, rows }) => (
         <section key={g} className={`project-threads-group is-${g}`} aria-label={GROUP_WORD[g] ?? "그 밖"} data-testid={`project-group-${g}`}>
           <h3 className="project-threads-group-head">

@@ -2187,6 +2187,18 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
+        /// FRONT_API 1.161: 원문 첫 쪽과 가벼운 전체 색인을 읽는다. 생략하면 구판 전체 응답.
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        paged: bool,
+    },
+    /// FRONT_API 1.161: 답한 원문의 다음 쪽 또는 직접 링크 하나(보기 권한).
+    AskHistory {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        before: Option<String>,
+        id: Option<String>,
     },
     /// coordinator 확인 필요 post를 「답함으로 표시」한다: 그 inbox 항목을 끝내고 기록에 남긴다
     AskHandle {
@@ -3715,6 +3727,7 @@ impl FrontRequest {
             | FrontRequest::PostHandled { project, .. }
             | FrontRequest::PostList { project, .. }
             | FrontRequest::Asks { project, .. }
+            | FrontRequest::AskHistory { project, .. }
             | FrontRequest::AskHandle { project, .. }
             | FrontRequest::AskAnswer { project, .. }
             | FrontRequest::QuestionReply { project, .. }
@@ -3856,6 +3869,7 @@ impl FrontRequest {
                 | FrontRequest::DeployJobs
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
+                | FrontRequest::AskHistory { .. }
                 | FrontRequest::AutoModeGet { .. }
                 | FrontRequest::AutoDecisions { .. }
                 | FrontRequest::WorkspaceDashboard { .. }
@@ -4058,7 +4072,16 @@ pub enum FrontResponse {
         auto_exceptions: u32,
         requests: Vec<crate::UserRequestView>,
         done: Vec<crate::AskRecord>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        done_index: Option<Vec<crate::AskRecordSummary>>,
+        #[serde(default)]
+        done_next: Option<String>,
         keep_days: u32,
+    },
+    AskHistory {
+        done: Vec<crate::AskRecord>,
+        next: Option<String>,
     },
     Status(HostStatus),
     Machines {
@@ -4905,6 +4928,8 @@ mod tests {
         assert!(FrontRequest::HookStatus { machine: "m".into() }.needs_control());
         assert!(FrontRequest::ModelAdmin.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
+        assert!(!FrontRequest::Asks { project: "p".into(), paged: true }.needs_control());
+        assert!(!FrontRequest::AskHistory { project: "p".into(), before: None, id: Some("a".into()) }.needs_control());
         assert!(
             FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }
                 .needs_control()

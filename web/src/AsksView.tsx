@@ -1,3 +1,4 @@
+import { AsksReload } from "./asksReload";
 import { AutoDecisionCard, useAutoMode } from "./AutoMode";
 import { ignoredFailure } from "./errorDiagnostic.ts";
 import { ListId } from "./ListId";
@@ -17,7 +18,7 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useLightbox } from "./Lightbox";
 import { markdownImages } from "./reportImages";
-import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, freshAuto, openMeta, type AsksData, type OpenAsk } from "./asksModel";
+import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, freshAuto, answerIndex, mergeAskPage, questionIds, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
 import { withRecommended } from "./questionAnswer";
@@ -56,6 +57,7 @@ export function AsksPanel({
   onPick,
   onForgetAll,
   onMoreAuto,
+  onMoreDone,
 }: {
   open: OpenAsk[];
   data: AsksData | null;
@@ -65,6 +67,7 @@ export function AsksPanel({
   onPick: (key: string) => void;
   onForgetAll: (ids: string[]) => Promise<void>;
   onMoreAuto: () => Promise<void>;
+  onMoreDone: () => Promise<void>;
 }) {
   const [confirm, setConfirm] = useState<string[] | null>(null);
   const [confirmAuto, setConfirmAuto] = useState(false);
@@ -75,7 +78,9 @@ export function AsksPanel({
   const now = Date.now();
   const auto = data?.autoDecisions ?? [];
   const autoIds = new Set(auto.filter(d => d.outcome === "answered").map(d => d.question.id));
-  const done = (data?.done ?? []).filter(r => !r.items.length || !r.items.every(q => autoIds.has(q.id)));
+  const shown = (r: Parameters<typeof questionIds>[0]) => !questionIds(r).length || !questionIds(r).every(id => autoIds.has(id));
+  const done = (data?.done ?? []).filter(shown);
+  const doneIndex = answerIndex(data).filter(shown);
   const autoRow = (d: AutoDecision) => <button type="button" className={`ask-row is-auto${selected === `a:${d.id}` ? " is-selected" : ""}`} key={d.id} data-testid="auto-decision-row" data-key={`a:${d.id}`} onClick={() => onPick(`a:${d.id}`)}>
     <span className="ask-row-mark"><Zap /></span><span className="ask-row-text"><span className="ask-row-title">{d.question.id} {d.question.text} → {d.choice}</span><span className="ask-row-meta">{d.outcome === "answered" ? (d.reviewed ? "확인함" : "자동 결정") : "전달 확인 필요"} · {when(d.at_ms)}</span></span>
   </button>;
@@ -104,9 +109,9 @@ export function AsksPanel({
       {data?.autoNext && <button disabled={moreBusy} onClick={() => { setMoreBusy(true); setMoreError(null); void onMoreAuto().catch(e => setMoreError(String(e))).finally(() => setMoreBusy(false)); }}>이전 자동 결정 더 보기</button>}
       {moreError && <p role="alert">{moreError}</p>}
       <h3 className="asks-panel-head">
-        답한 것 <span data-testid="asks-done-count">{done.length}</span>
-        {canControl && done.length > 0 && (
-          <button type="button" className="ghost small asks-forget-all" data-testid="asks-forget-all" onClick={() => setConfirm(done.map(r => r.id))}>
+        답한 것 <span data-testid="asks-done-count">{doneIndex.length}</span>
+        {canControl && doneIndex.length > 0 && (
+          <button type="button" className="ghost small asks-forget-all" data-testid="asks-forget-all" onClick={() => setConfirm(doneIndex.map(r => r.id))}>
             <Trash2 aria-hidden="true" /> 모두 지우기
           </button>
         )}
@@ -114,7 +119,11 @@ export function AsksPanel({
       {done.slice(0, visible).map((r) => (
         <AskRow selected={selected} onPick={onPick} key={r.id} k={`d:${r.id}`} kind={r.kind} ids={[...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]} title={doneTitle(r)} meta={doneMeta(r, now)} isDone />
       ))}
-      {done.length > visible && <button type="button" onClick={() => setVisible(n => n + 50)}>답한 것 더 보기</button>}
+      {(done.length > visible || data?.doneNext) && <button type="button" data-testid="asks-done-more" disabled={moreBusy} onClick={() => {
+        if (done.length > visible) { setVisible(n => n + 50); return; }
+        setMoreBusy(true); setMoreError(null);
+        void onMoreDone().then(() => setVisible(n => n + 50)).catch(e => setMoreError(String(e))).finally(() => setMoreBusy(false));
+      }}>답한 것 더 보기</button>}
       {data && <p className="asks-panel-note">답한 것은 {data.keepDays}일 지나면 자동으로 지운다. 지우면 모든 기기에서 사라진다</p>}
       {confirmAuto && forgetAuto && (
         <ConfirmDialog
@@ -140,7 +149,7 @@ export function AsksPanel({
 
 // ───────────── 본문 ─────────────
 
-export type AskSelection = { kind: "auto"; decision: AutoDecision } | { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord } | { kind: "missing"; id: string } | { kind: "none" };
+export type AskSelection = { kind: "auto"; decision: AutoDecision } | { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord } | { kind: "missing"; id: string } | { kind: "loading"; error?: string | null; retry?: () => void } | { kind: "none" };
 
 export function AsksView({
   shown,
@@ -213,6 +222,7 @@ export function AsksView({
       <div className="thread-body" ref={body} onClick={onBodyClick} data-testid="asks-scroll">
         <div className="thread-col asks-col">
           {selection.kind === "missing" && <p className="asks-empty" data-testid="asks-missing"><code>{selection.id}</code> 질문을 찾을 수 없다. 왼쪽 「답할 것」 목록에서 다른 질문을 열 수 있다.</p>}
+          {selection.kind === "loading" && (selection.error ? <p role="alert">{selection.error} <button onClick={selection.retry}>다시 읽기</button></p> : <p role="status">답변을 불러오는 중…</p>)}
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
             <QuestionCard key={JSON.stringify(["question", selection.ask.thread.project, selection.ask.thread.id, questionIdentity(selection.ask.thread.questions)])} t={selection.ask.thread} q={selection.ask.thread.questions}
@@ -661,19 +671,22 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
 }
 
 /** host 「답할 것」 자료(열린 확인 필요 post·답한 것 기록): 연결할 때와 host `asks` 사건마다 읽는다. 조작 응답도 같은 꼴이라 `put`으로 바로 넣는다 */
-export function useAsksData(up: boolean): { data: AsksData | null; put: (r: FrontResponse) => void; moreAuto: () => Promise<void>; forgetAuto: (ids: string[], all: boolean) => Promise<void> } {
+export function useAsksData(): { data: AsksData | null; put: (r: FrontResponse) => void; moreAuto: () => Promise<void>; moreDone: () => Promise<void>; loadDone: (id: string) => Promise<void>; forgetAuto: (ids: string[], all: boolean) => Promise<void> } {
   const [data, setData] = useState<AsksData | null>(null);
   const seq = useRef(0);
+  const reloader = useRef<AsksReload<FrontResponse> | null>(null);
   const mergeAuto = (fresh: AutoDecision[], old: AutoDecision[] = []) => [...new Map([...old, ...fresh].map(d => [d.id, d])).values()].sort((a, b) => b.at_ms - a.at_ms);
   const put = useCallback((r: FrontResponse) => {
     if (r.kind === "asks") {
       ++seq.current;
+      reloader.current?.invalidate();
       setData(old => {
         const fresh = r.auto_decisions ?? [];
         const autoDecisions = freshAuto(fresh, r.auto_next ?? null, old?.autoDecisions);
         // 이전 쪽을 남겼으면 그 다음 cursor를 그대로 쓴다
         const autoNext = autoDecisions.length > fresh.length ? old?.autoNext : r.auto_next;
-        return { requests: r.requests, done: r.done, keepDays: r.keep_days, autoMode: r.auto_mode, autoDecisions, autoExceptions: r.auto_exceptions, autoNext };
+        return { requests: r.requests, done: r.done_index ? mergeAskPage(old?.done ?? [], r.done, r.done_index) : r.done,
+          index: r.done_index, doneNext: r.done_next, keepDays: r.keep_days, autoMode: r.auto_mode, autoDecisions, autoExceptions: r.auto_exceptions, autoNext };
       });
     } else if (r.kind === "auto_decisions") {
       setData(old => old ? { ...old, autoDecisions: mergeAuto(r.decisions, old.autoDecisions) } : old);
@@ -690,19 +703,28 @@ export function useAsksData(up: boolean): { data: AsksData | null; put: (r: Fron
     put(r);
     if (!all) setData(old => old ? { ...old, autoDecisions: (old.autoDecisions ?? []).filter(d => !ids.includes(d.id)) } : old);
   }, [put]);
-  const load = useCallback(() => {
-    const n = ++seq.current;
-    call({ op: "asks" })
-      .then((r) => {
-        if (n === seq.current) put(r);
-      })
-      .catch(ignoredFailure("AsksView.tsx:563", () => {}));
-  }, [put]);
+  const moreDone = useCallback(async () => {
+    if (!data?.doneNext) return;
+    const n = seq.current, cursor = data.doneNext;
+    const r = await call({ op: "ask_history", before: cursor, id: null });
+    if (r.kind !== "ask_history" || n !== seq.current) return;
+    setData(old => old && old.doneNext === cursor ? { ...old, done: mergeAskPage(old.done, r.done, old.index), doneNext: r.next } : old);
+  }, [data?.doneNext]);
+  const loadDone = useCallback(async (id: string) => {
+    const r = await call({ op: "ask_history", before: null, id });
+    if (r.kind !== "ask_history") throw new Error("답변 이력 응답이 아니다");
+    if (!r.done.length) throw new Error("답변 기록을 찾을 수 없다");
+    // 원문은 답할 때의 불변 사본이다. 새 색인에서 삭제된 ID는 mergeAskPage가 거른다.
+    setData(old => old ? { ...old, done: mergeAskPage(old.done, r.done, old.index) } : old);
+  }, []);
   useEffect(() => {
-    if (up) load();
-  }, [up, load]);
-  useEffect(() => onAsksChanged(load), [load]);
-  return { data, put, moreAuto, forgetAuto };
+    const reader = new AsksReload(() => call({ op: "asks", paged: true }), put, ignoredFailure("답할 것 새로 읽기", () => {}));
+    reloader.current = reader;
+    // host는 매 연결마다 첫 asks를 보낸다. up과 첫 사건으로 같은 목록을 두 번 요청하지 않는다.
+    const unwatch = onAsksChanged(() => { ++seq.current; void reader.refresh(); });
+    return () => { unwatch(); reader.close(); reloader.current = null; };
+  }, [put]);
+  return { data, put, moreAuto, moreDone, loadDone, forgetAuto };
 }
 
 /** 열쇠 → 본문에 그릴 것 */
@@ -716,6 +738,7 @@ export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRe
     if (key?.startsWith("d:")) {
       const r = done.find((x) => x.id === key.slice(2));
       if (r) return { kind: "done", record: r };
+      return { kind: "missing", id: key.slice(2) };
     }
     const a = key ? open.find((x) => x.key === key) : undefined;
     if (a) return { kind: "open", ask: a };

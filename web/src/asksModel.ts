@@ -2,13 +2,25 @@ import { logIgnoredFailure } from "./errorDiagnostic.ts";
 // 「답할 것」 패널의 목록(plan §8.345, 사용자 결정 10-21 1B 2A 3A 4A 5A): thread 질문·coordinator 확인 필요 post·할 일 확인 필요를
 // 한 목록에 모으고, 답한 것은 host 기록(답할 때의 원문)이다. 주소 `#ask=<열쇠>`가 고른 것 하나를 본문 카드로 연다. 열쇠는 종류 글자와
 // 대상이다: `q:<thread>` 열린 질문, `r:<inbox 항목>` 확인 필요 post, `t:<task 제목>` 할 일, `d:<기록>` 답한 것.
-import type { AutoMode, AutoDecision, AskRecord, TaskView, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
+import type { AutoMode, AutoDecision, AskRecord, AskRecordSummary, TaskView, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { normalizeAppTarget } from "./appIds.ts";
 import { appRefOf } from "./appRef.ts";
 import type { AppRefLook } from "./AppRefChip";
 import { isVideoPath } from "./reportMedia.ts";
 
-export type AsksData = { requests: UserRequestView[]; done: AskRecord[]; keepDays: number; autoMode?: AutoMode; autoDecisions?: AutoDecision[]; autoExceptions?: number; autoNext?: string | null };
+export type AsksData = { requests: UserRequestView[]; done: AskRecord[]; index?: AskRecordSummary[]; doneNext?: string | null; keepDays: number; autoMode?: AutoMode; autoDecisions?: AutoDecision[]; autoExceptions?: number; autoNext?: string | null };
+
+export type AskBrief = AskRecord | AskRecordSummary;
+export const questionIds = (r: AskBrief): string[] => "question_ids" in r ? r.question_ids : r.items.flatMap(q => q.id ? [q.id] : []);
+export const answerIndex = (data: AsksData | null): AskBrief[] => data?.index ?? data?.done ?? [];
+
+/** 새 색인이 삭제의 정본이다. 이미 읽은 원문은 아직 남은 ID만 보존한다. */
+export function mergeAskPage(old: AskRecord[], fresh: AskRecord[], index?: AskRecordSummary[]): AskRecord[] {
+  const known = index && new Set(index.map(r => r.id));
+  const records = new Map([...old, ...fresh].filter(r => !known || known.has(r.id)).map(r => [r.id, r]));
+  if (index) return index.flatMap(r => records.has(r.id) ? [records.get(r.id)!] : []);
+  return [...records.values()].sort((a, b) => b.done_ms - a.done_ms);
+}
 
 /** host 첫 쪽으로 자동 결정 목록을 바꾼다. 「더 보기」로 읽은 이전 쪽(첫 쪽보다 오래된 것)은 이전 쪽이 남아 있을 때만 둔다:
  * 다른 기기에서 지운 결정이 첫 쪽에서 빠져도 이 기기에 남지 않게 한다. */
@@ -33,7 +45,7 @@ export function openAsks(threads: ThreadView[], data: AsksData | null, tasks: Ta
   // 제목의 질문 참조는 그 카드의 알림이다. 카드가 없으면 평소 확인 필요 post로 남긴다.
   const questionCards = new Set([
     ...threads.filter((t) => t.questions).flatMap((t) => [t.id, ...t.questions!.items.flatMap((q) => q.id ? [q.id] : [])]),
-    ...(data?.done ?? []).filter((r) => r.kind === "question").flatMap((r) => [r.subject, ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
+    ...answerIndex(data).filter((r) => r.kind === "question").flatMap((r) => [r.subject, ...questionIds(r)]),
   ].map(id => normalizeAppTarget(id, "qt")));
   const rs: OpenAsk[] = (data?.requests ?? []).filter((r) => !r.title.split(/\s+/).some((word) => {
     const ref = appRefOf(word);
@@ -44,19 +56,19 @@ export function openAsks(threads: ThreadView[], data: AsksData | null, tasks: Ta
   return [...qs.sort(byAt), ...rs.sort(byAt), ...ts];
 }
 
-const latest = (done: AskRecord[], kind: AskRecord["kind"], subject: string): AskRecord | null => {
-  let best: AskRecord | null = null;
+const latest = <T extends AskBrief>(done: T[], kind: AskRecord["kind"], subject: string): T | null => {
+  let best: T | null = null;
   for (const r of done) if (r.kind === kind && r.subject === subject && (best === null || r.done_ms > best.done_ms)) best = r;
   return best;
 };
 
 /** thread의 가장 최근 답한 질문 기록(대화 칩·`#question=` 주소가 새 보고 뒤에도 「답함」을 본다) */
-export const lastAnswer = (done: AskRecord[], thread: string): AskRecord | null => latest(done, "question", thread);
+export const lastAnswer = <T extends AskBrief>(done: T[], thread: string): T | null => latest(done, "question", thread);
 
 const KEY_KIND: Record<string, AskRecord["kind"] | undefined> = { "q:": "question", "r:": "request", "t:": "task" };
 
 /** 답할 것 열쇠(`q:`·`r:`·`t:`)가 답해서 목록에서 빠졌으면 그때 남긴 기록(카드가 그 기록으로 바뀐다) */
-export function doneOf(key: string, done: AskRecord[]): AskRecord | null {
+export function doneOf<T extends AskBrief>(key: string, done: T[]): T | null {
   const kind = KEY_KIND[key.slice(0, 2)];
   return kind ? latest(done, kind, key.slice(2)) : null;
 }
@@ -65,12 +77,12 @@ export function doneOf(key: string, done: AskRecord[]): AskRecord | null {
  * 주소의 질문(`#question=<thread>`, 알림·칩·터미널 링크)을 열쇠로: 답할 질문이 있으면 그 카드, 없으면 마지막으로 답한 그 질문,
  * 둘 다 없으면 null(목록만)
  */
-export function questionKey(thread: string, threads: ThreadView[], done: AskRecord[], requests: UserRequestView[] = []): string | null {
+export function questionKey(thread: string, threads: ThreadView[], done: AskBrief[], requests: UserRequestView[] = []): string | null {
   const t = threads.find((t) => asks(t) && t.questions.items.some((q) => q.id === thread));
   if (t) return `q:${t.id}`;
   const request = requests.find((r) => r.question_id === thread || r.questions?.items.some((q) => q.id === thread));
   if (request) return `r:${request.id}`;
-  const record = done.find((r) => r.question_id === thread || r.items.some((q) => q.id === thread));
+  const record = done.find((r) => r.question_id === thread || questionIds(r).includes(thread));
   if (record) return `d:${record.id}`;
   if (threads.some((t) => t.id === thread && asks(t))) return `q:${thread}`;
   const r = lastAnswer(done, thread);
@@ -100,7 +112,7 @@ function itemLook(target: string, label: string, q: ThreadQuestions, project?: s
 }
 
 /** 카드와 같은 대상으로 상태를 찾는다. q ID는 thread·coordinator·보존한 답 모두에 속할 수 있다. */
-export function questionRefLook(target: string, threads: ThreadView[], done: AskRecord[], requests: UserRequestView[] = []): AppRefLook {
+export function questionRefLook(target: string, threads: ThreadView[], done: AskBrief[], requests: UserRequestView[] = []): AppRefLook {
   const label = `${target} 질문`;
   const key = questionKey(target, threads, done, requests);
   if (key?.startsWith("q:")) {
@@ -113,7 +125,8 @@ export function questionRefLook(target: string, threads: ThreadView[], done: Ask
   }
   if (key?.startsWith("d:")) {
     const rec = done.find((r) => r.id === key.slice(2))!;
-    return { label, tone: "done", state: rec.answer ? `답함 · ${rec.answer.summary}` : rec.summary };
+    const summary = "question_ids" in rec ? rec.answer_summary : rec.answer?.summary;
+    return { label, tone: "done", state: summary ? `답함 · ${summary}` : rec.summary };
   }
   // 옛 host가 답 기록을 주지 않아도 현재 thread에 남은 답은 표시한다.
   const q = threads.find((t) => t.id === target || t.questions?.items.some((q) => q.id === target))?.questions;
@@ -162,10 +175,10 @@ export function openMeta(a: OpenAsk, now: number): string {
   return "할 일 · 확인 필요";
 }
 
-export function doneMeta(r: AskRecord, now: number): string {
+export function doneMeta(r: AskBrief, now: number): string {
   return `${r.summary} · ${ago(r.done_ms, now)} · ${r.by}`;
 }
 
-export function doneTitle(r: AskRecord): string {
+export function doneTitle(r: AskBrief): string {
   return r.kind === "question" ? `${r.subject} · ${r.title || r.subject}` : r.title;
 }

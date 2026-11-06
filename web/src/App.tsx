@@ -34,7 +34,7 @@ import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { CHAT_IDLE_MS, chatExpiry, chatKey, hasChat, retainChats, type RetainedChat } from "./retainedChats";
 import { QuestionReload } from "./questionReload";
-import { ThreadReload, readThreadPages } from "./threadReload";
+import { ThreadReload, readThreadPages, readSelectedThread } from "./threadReload";
 import { SummaryButton } from "./ThreadSummary";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
@@ -74,7 +74,7 @@ import { AutomationView, automationTarget } from "./AutomationView";
 import { IdeaView } from "./IdeaView";
 import { IdeasPanel, useIdeas } from "./IdeasPanel";
 import { useAutomations } from "./automationData";
-import { openAsks, questionKey, questionRefLook } from "./asksModel";
+import { openAsks, answerIndex, questionIds, doneOf, questionKey, questionRefLook } from "./asksModel";
 import { isSheetRewind } from "./herdr/sheetHistory.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
@@ -454,6 +454,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // thread(project/id → 기록). 연결할 때 목록을 읽고 thread 사건으로 따라간다.
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   const [threadsSync, setThreadsSync] = useState(0);
+  const [threadsReady, setThreadsReady] = useState(false);
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const threadReload = useRef(new ThreadReload());
   const [automationBadge, setAutomationBadge] = useState(0);
@@ -735,7 +736,23 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           if (on) {
             const read = threadReload.current.begin();
             setThreadsError(null);
-            readThreadPages(call)
+            const selected = selectedFromHash() === null ? storedSelection() : null;
+            const selectedRead = readSelectedThread(call, selected).catch(error => {
+              logIgnoredFailure(error, "선택 작업 먼저 읽기");
+              return null;
+            });
+            const publish = (snapshot: ThreadView[]) => {
+              const partial = threadReload.current.partial(read, snapshot);
+              if (partial) setThreads(old => new Map([...old, ...partial]));
+            };
+            Promise.all([readThreadPages(call, { open: true }), selectedRead])
+              .then(([open, selectedThread]) => {
+                const initial = selectedThread ? [...open, selectedThread] : open;
+                publish(initial);
+                setThreadsReady(true);
+                // 모든 목록은 뒤에서 페이지 단위로 합친다. 끝나기 전에는 느슨한 pane 별칭을 공개하지 않는다.
+                return readThreadPages(call, { page: page => publish([...initial, ...page]) });
+              })
               .then((threads) => {
                 const next = threadReload.current.finish(read, threads);
                 if (next === null) return;
@@ -756,7 +773,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               .catch((error: unknown) => {
                 threadReload.current.failed(read);
                 logIgnoredFailure(error, "thread 전체 목록 읽기");
-                if (!linkedOnce.current.threads) setThreadsError(diagnosticReason(error));
+                setThreadsError(diagnosticReason(error));
               });
           }
         },
@@ -933,6 +950,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const t = uniqueAppTargets([...threads.values()].filter(x => x.project_status !== "archived"), x => x.project, x => x.id).get(id);
     if (t) setSel(`thread:${threadKey(t)}`);
   }, [sel, threads]);
+  useEffect(() => {
+    if (!up || !sel?.startsWith("thread:")) return;
+    const key = sel.slice(7);
+    if (threads.has(key) || (!key.includes("/") && [...threads.values()].some(t => t.id === key))) return;
+    let live = true;
+    const read = threadReload.current.begin();
+    void readSelectedThread(call, sel).then(t => {
+      if (!live || !t || t.project_status === "archived") return;
+      const next = threadReload.current.partial(read, [t]);
+      if (next) setThreads(old => new Map([...old, ...next]));
+    }).catch(ignoredFailure("작업 직접 주소 읽기", () => {})).finally(() => threadReload.current.failed(read));
+    return () => { live = false; threadReload.current.failed(read); };
+  }, [sel, up]);
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
   const searchShown=sel === "search:";
@@ -1132,7 +1162,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // `fallback`). 주소가 무엇을 가리키면 그것이다. 목록(pane·thread)을 다 받은 뒤 한 번만 고른다
   const firstPick = useRef(sel?.startsWith("pane:") ? false : sel !== null || location.hash !== "");
   useEffect(() => {
-    if (settingsOpen || firstPick.current || !loaded || !linkedOnce.current.threads) return;
+    if (settingsOpen || firstPick.current || !loaded || !threadsReady) return;
+    if (threadsSync === 0 && ![...threads.values()].some(inSidebar) && !storedSelection() && !selectedFromHash()) return;
     firstPick.current = true;
     // 주소는 지금 것을 읽는다: 연 뒤에 주소가 thread·프로젝트를 가리키게 됐는데(알림·링크·주소 바꿈) 그 hashchange를 앱이 아직
     // 처리하지 않았을 수 있다(짐 아래, t-0335 찾음). 그때 첫 고르기가 그 주소를 덮지 않는다(주소가 이긴다)
@@ -1141,7 +1172,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
     const pickFirst = (auto: boolean) => {
       const shown = [...threads.values()].filter(inSidebar);
-      const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity")[0];
+      const knownPanes = threadsSync > 0 ? panes : panes.filter(p => p.coordinator_project || shown.some(t => t.pane === p.id));
+      const first = rosterRows(machines, knownPanes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity")[0];
       if (!first) return;
       // 조회가 늦어 사용자가 목록을 먼저 열었어도 초기 자동 선택이 닫지 않는다.
       if ("pane" in first.open) choose(first.open.pane, auto, true, { keepDrawer: true });
@@ -1158,11 +1190,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const stored = storedSelection();
     if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5), false, true, { keepDrawer: true });
     const storedThread = stored?.startsWith("thread:") ? threads.get(stored.slice(7)) : undefined;
-    if (storedThread && inSidebar(storedThread)) return chooseThread(storedThread, null, true, { keepDrawer: true });
+    if (storedThread && storedThread.project_status !== "archived") return chooseThread(storedThread, null, true, { keepDrawer: true });
     pickFirst(false);
     // choose·chooseThread는 주소와 setSel만 쓴다
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, panes, threads, machines, settingsOpen]);
+  }, [loaded, panes, threads, machines, settingsOpen, threadsReady, threadsSync]);
   useEffect(() => {
     if (sel?.startsWith("pane:") || sel?.startsWith("thread:")) storeSelection(sel);
   }, [sel]);
@@ -1228,7 +1260,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const openThreadId = (project: string, id: string) => {
     id = normalizeAppTarget(id, "t");
     const t = allThreads.find((x) => x.project === project && x.id === id);
-    if (!t) return;
+    if (!t) return goSel(`thread:${project}/${id}`);
     const pane = t.pane ? panes.find((p) => p.id === t.pane && p.state === "running") : undefined;
     if (pane) choose(pane.id);
     else chooseThread(t);
@@ -1294,7 +1326,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const recentScreenTargets = useMemo(() => paletteTargets(machines, panes, [...threads.values()]), [machines, panes, threads]);
   // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
   // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
-  const { data: asksData, put: putAsks, moreAuto, forgetAuto } = useAsksData(up);
+  const { data: asksData, put: putAsks, moreAuto, moreDone, loadDone, forgetAuto } = useAsksData();
   useEffect(() => {
     const id = sel?.startsWith("question:q-") ? `auto-${sel.slice("question:".length)}` : sel?.startsWith("ask:a:") ? sel.slice("ask:a:".length) : null;
     if (!up || !id || !asksData?.autoMode) return;
@@ -1308,14 +1340,26 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     return () => { active = false; unwatch(); };
   }, [sel, up, !!asksData?.autoMode, putAsks]);
   const asksDone = asksData?.done ?? [];
+  const asksIndex = answerIndex(asksData);
   const askList = useMemo(() => openAsks(askThreads, asksData, taskBoard.board?.tasks ?? []), [threads, asksData, taskBoard.board]); // eslint-disable-line react-hooks/exhaustive-deps
   const askKey = sel?.startsWith("ask:")
     ? sel.slice("ask:".length)
     : sel?.startsWith("question:")
-      ? (questionKey(sel.slice("question:".length), askThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
+      ? (questionKey(sel.slice("question:".length), askThreads, asksIndex, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
       : null;
   const autoQuestion = sel?.startsWith("question:") ? asksData?.autoDecisions?.find(d => d.question.id === sel.slice("question:".length) && d.outcome === "answered") : null;
-  const askSelection = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions);
+  const selectedAsk = useAskSelection(autoQuestion ? `a:${autoQuestion.id}` : askKey, askList, asksDone, asksData?.autoDecisions);
+  const historySelection = askKey && !askList.some(a => a.key === askKey)
+    ? (askKey.startsWith("d:") ? asksIndex.find(r => r.id === askKey.slice(2)) : doneOf(askKey, asksIndex)) : null;
+  const missingDone = historySelection && !asksDone.some(r => r.id === historySelection.id) ? historySelection.id : null;
+  const [doneError, setDoneError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!missingDone) return;
+    setDoneError(null);
+    void loadDone(missingDone).catch(e => setDoneError(String(e)));
+  }, [missingDone, asksData?.index, loadDone]);
+  const askSelection = missingDone ? { kind: "loading" as const, error: doneError,
+    retry: () => { setDoneError(null); void loadDone(missingDone).catch(e => setDoneError(String(e))); } } : selectedAsk;
   useEffect(() => {
     // 열어 둔 q-ID가 같은 질문의 재게시로 바뀌었으면 새로고침도 가능한 thread 주소로 잇는다.
     if (!sel?.startsWith("question:") || askSelection.kind !== "open" || askSelection.ask.kind !== "question") return;
@@ -1392,13 +1436,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     ...[...reportNames.keys()].filter(id => /^r-/.test(id)),
     ...askList.flatMap((a) => a.kind === "question" ? a.thread.questions.items.map((q) => q.id) : []),
     ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
-    ...asksDone.flatMap((r) => [r.question_id, ...r.items.map((q) => q.id)]),
+    ...asksIndex.flatMap((r) => [r.question_id, ...questionIds(r)]),
   ]), [threads, taskBoard.board, reportNames, asksData, automationIds, ideas.list]); // eslint-disable-line react-hooks/exhaustive-deps
   const questionLooks = useMemo(() => new Map([...new Set([
     ...askThreads.filter((t) => t.questions).flatMap((t) => [t.id, ...(t.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
     ...(asksData?.requests ?? []).flatMap((r) => [...(r.question_id ? [r.question_id] : []), ...(r.questions?.items.flatMap((q) => q.id ? [q.id] : []) ?? [])]),
-    ...asksDone.flatMap((r) => [r.subject, ...(r.question_id ? [r.question_id] : []), ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
-  ])].map((id) => [id, questionRefLook(id, askThreads, asksDone, asksData?.requests)])), [threads, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
+    ...asksIndex.flatMap((r) => [r.subject, ...(r.question_id ? [r.question_id] : []), ...questionIds(r)]),
+  ])].map((id) => [id, questionRefLook(id, askThreads, asksIndex, asksData?.requests)])), [threads, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
   // 실제 대상·칩의 표시가 바뀔 때만 대화 Markdown을 다시 그린다. coordinator 답·기록 삭제도 포함한다.
   const refKey = [
     ...knownIds,
@@ -1420,6 +1464,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       // 내부 project/id로 고른다. 짧은 주소의 hashchange와 정규화가 선택을 덮지 않게 한다.
       const t = uniqueAppTargets(allThreads, t => t.project, t => t.id).get(ref.target);
       if (t) chooseThread(t);
+      else goSel(`thread:${ref.target}`);
       return;
     }
     if (ref.kind === "automation") return goSel(`automation:${ref.target}`);
@@ -1569,7 +1614,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       className={`app${collapsed ? " sidebar-collapsed" : ""}`}
       style={sidebarWidth === null ? undefined : ({ "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties)}
       data-questions-sync={questionsSync}
-      data-threads-sync={threadsSync}
+      data-threads-sync={threadsSync} data-threads-ready={threadsReady ? "1" : "0"}
       data-sidebar={panel}
     >
       <aside id="workspace-drawer" className={`list${drawerOpen ? " is-open" : ""}`}>
@@ -1645,6 +1690,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               canControl={canControl}
               onPick={(k) => goSel(`ask:${k}`)}
               onMoreAuto={moreAuto}
+              onMoreDone={moreDone}
               onForgetAll={async (ids) => putAsks(await call({ op: "ask_forget", ids, all: false }))}
             />
           }
@@ -1876,6 +1922,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           />
         ) : sel === "threads:" ? (
           <ProjectThreads
+            loading={threadsSync === 0 && !threadsError}
+            loadError={threadsError}
             threads={allThreads.filter((t) => !t.idea)}
             onThread={(t) => chooseThread(t, "threads:")}
             onBack={() => choose(null)}
