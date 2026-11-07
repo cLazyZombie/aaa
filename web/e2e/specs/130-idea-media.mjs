@@ -43,7 +43,8 @@ export default async function ({ page }) {
   await step("그림 아이디어 준비", async () => {
     aaa("project", "create", "demo");
     aaa("project", "set", "demo", "thread_profile", "fake");
-    note = (await call(page, { op: "idea_create", title: "간판", text: "# 간판\n\n## 시안\n- 첫 생각\n\n## 결정\n- 밝게\n" })).note;
+    aaa("project", "set", "demo", "repos.add", `${root}/shop@labA`);
+    note = (await call(page, { op: "idea_create", title: "shop 간판", text: "# shop 간판\n\n## 시안\n- 첫 생각\n\n## 결정\n- 밝게\n" })).note;
     await page.goto(`${base}/#idea=${note.idea.short_id}`);
     await page.getByTestId("idea-note").getByText("첫 생각", { exact: true }).waitFor();
   }, { always: true });
@@ -118,6 +119,16 @@ export default async function ({ page }) {
       await phone.getByTestId("idea-media-remove-confirm").click();
       await until("휴대폰 지우기", async () => (await read()).media.length === 2);
     } finally { await phone.context().close(); await wk.close(); }
+  });
+
+  await step("넘기기 창의 저장소는 아이디어 제목에 나온 저장소로 미리 골라져 있다", async () => {
+    await page.getByTestId("idea-handoff").click();
+    const dialog = page.getByTestId("idea-handoff-dialog");
+    await until("저장소 기본값", async () => await dialog.getByTestId("idea-draft-repo").inputValue() === "shop");
+    await dialog.getByTestId("idea-draft-add").click();
+    assert.equal(await dialog.getByTestId("idea-draft-repo").nth(1).inputValue(), "shop", "더한 초안도 같은 저장소");
+    await dialog.getByRole("button", { name: "취소" }).click();
+    await dialog.waitFor({ state: "detached" });
   });
 
   await step("그림 든 아이디어를 넘기면 할 일 화면과 thread 작업 폴더에서 그림이 보인다", async () => {
