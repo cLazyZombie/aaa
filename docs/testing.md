@@ -1,3 +1,4 @@
+- t-1584: [Ubuntu 머신 설정 시험의 스택 고갈 수리](testing-machine-setup-stack-t-1584.md)
 - t-1580: [새 대화 기록 생성 전 상태 검증](testing-chat-missing-record-t-1580.md)
 
 - t-1511: [thread fast mode 표시 검증](testing-fast-mode-t-1511.md)
