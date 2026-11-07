@@ -467,27 +467,48 @@ async fn restored_listener_keeps_queued_http_until_normal_host_serves() {
     assert_eq!(*host.web_listen.lock().unwrap(), Some(addr.to_string()));
 }
 
+/// 옛 listener의 접속 대기열에 미리 넣어 둔 연결로 그 소켓이 아직 응답하는지 본다. 닫힌 listener의 대기 연결은
+/// 끊긴다(reset·EOF). 옛 port 번호로 새로 연결해 보면 병렬 시험이 그 port를 다시 잡았을 때 성공해 버린다(t-1581).
+async fn queued_connection_served(mut probe: tokio::net::TcpStream, addr: std::net::SocketAddr) -> bool {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let request = format!("GET /api/v1/me HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    if probe.write_all(request.as_bytes()).await.is_err() {
+        return false;
+    }
+    let mut response = Vec::new();
+    match tokio::time::timeout(std::time::Duration::from_secs(5), probe.read_to_end(&mut response))
+        .await
+        .expect("옛 listener의 대기 연결이 응답도 끊김도 없다")
+    {
+        Ok(_) => response.starts_with(b"HTTP/1.1 "),
+        Err(_) => false,
+    }
+}
+
 #[tokio::test]
 async fn reload_honors_ephemeral_port_changed_address_and_disabled_web() {
-    for listen in ["127.0.0.1:0", "changed", ""] {
+    // 바뀐 주소는 다른 loopback IP의 port 0으로 준다: 비워 둔 port 번호를 넘기면 그 사이 병렬 시험이 잡을 수 있다
+    for listen in ["127.0.0.1:0", "[::1]:0", ""] {
         let t = tmp();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let old = listener.local_addr().unwrap();
+        let probe = tokio::net::TcpStream::connect(old).await.unwrap();
         let mut cfg = aaa_config::HostConfig::default();
-        let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let configured = if listen == "changed" { other.local_addr().unwrap().to_string() } else { listen.into() };
-        drop(other);
-        cfg.web.listen = configured.clone();
+        cfg.web.listen = listen.into();
         let host = crate::Host::open(cfg, t.0.join("state").join("host")).unwrap();
         host.start_supervisor();
         crate::web::resume(&host, listener).await.unwrap();
-        assert_eq!(tokio::net::TcpStream::connect(old).await.is_ok(), listen == "127.0.0.1:0", "옛 주소: {listen}");
-        if configured.is_empty() {
+        assert_eq!(queued_connection_served(probe, old).await, listen == "127.0.0.1:0", "옛 소켓: {listen}");
+        if listen.is_empty() {
             assert_eq!(*host.web_listen.lock().unwrap(), None);
             assert_eq!(host.db.meta(LISTEN_KEY).unwrap().as_deref(), Some(""));
         } else {
             let actual: std::net::SocketAddr = host.web_listen.lock().unwrap().as_ref().unwrap().parse().unwrap();
-            assert_eq!(actual, if listen == "changed" { configured.parse().unwrap() } else { old });
+            if listen == "127.0.0.1:0" {
+                assert_eq!(actual, old);
+            } else {
+                assert!(actual.ip().is_loopback() && actual.is_ipv6() && actual.port() != 0, "{actual}");
+            }
             assert!(tokio::net::TcpStream::connect(actual).await.is_ok());
         }
     }

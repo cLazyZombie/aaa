@@ -185,7 +185,9 @@ late() {
 turn() {
   while key; do
     case "$k" in
-      "$BEL") unspin; return ;;
+      # 큐에 다음 말이 있으면 실제 Claude처럼 spinner를 내리지 않고 다음 턴으로 넘어간다(큐 턴 사이에 작업 표지가 없는
+      # 화면이 있으면 부하 아래 idle로 감지된다, t-1592)
+      "$BEL") [ -n "$queued" ] || unspin; return ;;
       "$LATE") late ;;
       "$ESC") while keyt 5; [ -n "$k" ]; do :; done; typed=; unspin; interrupted; return ;;
       '') [ -z "$typed" ] || { record enqueue "$typed"; queued="$queued$typed$NL"; typed=; shown; } ;;
@@ -232,10 +234,12 @@ hook "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"0f5b2c1e-7a3d-4c8e-
 echo "marker: ${CLAUDE_CODE_CHILD_SESSION:-none}"
 prompt
 while :; do
-  if [ -n "$queued" ]; then line=${queued%%"$NL"*}; queued=${queued#*"$NL"}; record dequeue "$line"
-  else IFS= read -r line || break; taken; fi
+  if [ -n "$queued" ]; then line=${queued%%"$NL"*}; queued=${queued#*"$NL"}; held=1; record dequeue "$line"
+  else held=; IFS= read -r line || break; taken; fi
   hook '{"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}'
   record user "$line"
+  # 이어 보이던 spinner는 이 턴을 그리기 바로 앞에서 내린다
+  [ -z "$held" ] || unspin
   pick=
   case "$line" in
     *brief.md*)
