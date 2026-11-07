@@ -122,7 +122,7 @@ t-0578 첫 착지의 동시 검증에서 m13 다섯 시험과 웹 E2E 63의 아�
 | 머신 건강 | `[health] every_s` |
 | routine | routine 머리 `schedule = "every 2s"`(host에 `AAA_TEST_ROUTINE_SECONDS=1`이 있을 때만 받는다, lab이 붙인다) |
 | 알림 묶음 | `[notify] debounce_secs`(초). 1초 밑은 `AAA_TEST_NOTIFY_DEBOUNCE_MS`(시험에서만, 웹 E2E 17·18 100. 설정 1초 길은 12) |
-| 웹 상태 사건 ping | `AAA_TEST_EVENTS_PING_MS`(시험에서만) |
+| 웹 상태 사건 ping | `AAA_TEST_EVENTS_PING_MS`(시험에서만). 웹 E2E는 쓰지 않고 기본 15초·45초다: 3초 끊기는 부하 아래 늦게 답한 브라우저를 끊었다(t-1592). 끊기 계약은 `web::events_tests`가 가상 시각으로 본다 |
 | thread brief를 치기 전 화면 멈춤(3초) | `AAA_TEST_BRIEF_SETTLE_MS`(시험에서만, 웹 E2E·m13 300. m13은 `spawn_host`로 띄운다) |
 | 「쓰는 화면」 lease(25초, 앱 글이 그만큼 없으면 쓰는 화면에서 뺀다) | `AAA_TEST_PRESENCE_LEASE_MS`(시험에서만, 웹 E2E 18만 4000: 그 파일의 쓰는 화면은 presence를 1초마다) |
 | 끝난 session host가 늦게 붙는 agent를 위해 더 응답하는 창(2초) | `AAA_TEST_SESSION_LINGER_MS`(시험에서만, 늘리는 쪽: m13은 8000으로 forget 한도 5초보다 길게 두어 지우기가 이 창을 기다리지 않는지 본다, plan §8.160) |

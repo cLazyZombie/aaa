@@ -21,6 +21,8 @@ pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 /// t-0578의 동시 검증(load 28.96)에서 30초를 넘긴 시작·전달 대기만 두 배 여유를 둔다.
 /// 사건이 오면 즉시 끝난다. 일반 대기·제품의 복구/성능 시한에는 쓰지 않는다(docs/testing.md).
 pub const LOAD_TIMEOUT: Duration = Duration::from_secs(60);
+/// 프로세스 시작·연결 대기의 공통 안전 상한(m13·smoke·restart의 `T`와 같다). 준비 사건이 오면 바로 끝난다.
+pub const START_TIMEOUT: Duration = Duration::from_secs(30);
 static SEQ: AtomicU32 = AtomicU32::new(0);
 static CAPTURE_SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -441,6 +443,27 @@ impl Lab {
             }
             assert!(Instant::now() < deadline, "{tag}이 {timeout:?} 안에 끝나지 않았다");
             std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// 띄운 host(`tag`)가 front `status`에 답할 때까지 기다린다. 그 프로세스가 먼저 끝나면 기다리지 않고 로그와 함께
+    /// 실패한다. 상한(`START_TIMEOUT`)은 답도 끝남도 없을 때 멈추는 안전 상한이다: 5초 상한은 같은 Mac에서 두 착지
+    /// 검증이 겹친 load 150에서 시작만으로 넘었다(t-1592).
+    pub fn wait_host_ready(&mut self, tag: &str, node: &Node) -> Value {
+        let deadline = Instant::now() + START_TIMEOUT;
+        loop {
+            let last = match node.json(&["status"]) {
+                Ok(v) => return v,
+                Err(e) => e,
+            };
+            let i = self.procs.iter().position(|(t, _)| t == tag).unwrap_or_else(|| panic!("{tag} 없음"));
+            if let Some(status) = self.procs[i].1.try_wait().unwrap() {
+                panic!("{tag}이 준비 전에 끝났다({status}). 마지막 status 오류: {last}\n{}", self.log(tag));
+            }
+            if Instant::now() >= deadline {
+                panic!("{START_TIMEOUT:?} 안에 {tag}이 status에 답하지 않았다. 마지막 오류: {last}\n{}", self.log(tag));
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 

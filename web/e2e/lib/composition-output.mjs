@@ -141,7 +141,8 @@ export async function compositionOutput() {
           await p.waitForFunction(from => window.preeditFrames.length > from && document.querySelector('.xterm-cursor'), returned);
           await capture('return');
         }
-        const data = await p.evaluate(() => { window.preeditSampling = false; return { frames: window.preeditFrames, events: window.preeditEvents }; });
+        // pane WebSocket 기록(snapshot·state 도착)도 남긴다: 조합 중 버퍼를 새로 쓰면 표시가 사라진다(t-1592)
+        const data = await p.evaluate(() => { window.preeditSampling = false; return { frames: window.preeditFrames, events: window.preeditEvents, termLog: window.__aaaTermLog ?? null }; });
         const pending = data.frames.filter(frame => frame.time >= anchor.time);
         const bad = pending.filter(frame => frame.text !== '한' || !frame.active || frame.display === 'none' || frame.visibility === 'hidden' || frame.opacity === '0'
           || Math.abs(frame.left - anchor.left) > 1 || Math.abs(frame.top - anchor.top) > 1

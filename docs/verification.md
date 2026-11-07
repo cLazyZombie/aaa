@@ -79,6 +79,15 @@ macOS 전체 실행은 이번 `cargo test --no-run`이 만든 verify CLI를 바�
 시간 원장은 긴 작업을 먼저 배치하는 데만 쓰며 선택·실패 판정·시한에는 쓰지 않는다.
 커밋 SHA와 추적한 상대 경로 목록은 최종 CLI build script가 panic hook에 주입한다. Git 메타데이터만 바뀔 때 공통 backend 캐시는 보존한다.
 
+## 같은 머신에서 겹친 검증
+
+착지 gate는 CPU 수와 관계없이 어느 Mac에서도 돌릴 수 있다. 같은 머신에서 여러 검증이 겹쳐도 된다.
+위 실행 자원은 한 검증이 그 머신 전체를 쓴다고 보고 나누므로, Unix의 `ci-local`은 test·e2e 단계 앞에서
+같은 사용자의 머신 잠금(`/tmp/aaa-ci-<uid>.lock`, `AAA_CI_MACHINE_LOCK`로 바꿀 수 있다)을 얻는다.
+다른 검증이 쥐고 있으면 누가 언제부터 쥐었는지 보이고 풀릴 때까지 기다린다. 시한은 없고, 잠금은 그 셸이 끝나면(죽어도)
+OS가 푼다. web·fmt·build는 겹쳐도 된다. Windows는 기존 실행을 바꾸지 않는다.
+겹친 검증에서 드러난 시험 결함과 그 측정은 [t-1592 기록](testing-landing-load-t-1592.md)에 있다.
+
 ## Windows production은 최종 SHA에서 한 번
 
 최종 통합 SHA가 정해진 뒤 salt를 포함한 실제 release를 별도 Cargo 호출로 한 번 만든다. 전체 ci-local·시험에는 salt를 넣지 않는다.
@@ -124,5 +133,8 @@ PE의 CodeView GUID/age와 실제 PDB를 대조하고 PDB debug·줄 정보, 두
   ([MIT 또는 Apache-2.0](https://github.com/nextest-rs/nextest)):
   빌드와 실행 소비를 나누고 고정 산출물을 재사용하는 접근을 참고했다. runner를 교체하거나 코드를 가져오지는 않았다.
 - [Cargo test](https://doc.rust-lang.org/cargo/commands/cargo-test.html): 관련 package/target 선택과 전체 workspace 실행의 구분을 따른다.
+- [util-linux flock(1)](https://github.com/util-linux/util-linux/blob/master/sys-utils/flock.c) ([GPL-2.0+](https://github.com/util-linux/util-linux/blob/master/README.licensing)):
+  셸이 연 fd에 `flock`을 걸어 그 셸의 수명 동안 쥐는 꼴만 따랐다. macOS에는 이 명령이 없어 Python 표준 `fcntl.flock`으로 같은
+  시스템 호출을 부르며 코드는 가져오지 않았다. Cargo도 build 디렉터리를 같은 방식의 파일 잠금으로 차례 세운다.
 
 외부 코드·새 런타임 의존성은 추가하지 않았다. LLVM은 기존 PE/PDB 진단 도구를 호출한다.

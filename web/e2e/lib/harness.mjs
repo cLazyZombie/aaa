@@ -32,8 +32,8 @@ const env = {
   AAA_STATE_DIR: `${root}/s`,
   CLAUDE_CONFIG_DIR: `${root}/claude`,
   RUST_LOG: "aaa=info",
-  // 상태 사건 연결의 WebSocket ping 1초, 3초 동안 아무것도 받지 못하면 host가 끊는다(기본 15초·45초, 「두 기기·죽은 연결」 단계)
-  AAA_TEST_EVENTS_PING_MS: "1000",
+  // 상태 사건 연결의 ping·끊기(15초·45초)는 제품 기본값을 쓴다. 짧게 줄이면(1초·3초) 부하 아래 답이 늦은 브라우저 연결까지
+  // 끊어 목록을 처음부터 다시 받는다(t-1592, E2E 12 WebKit). 끊기 계약은 web/events_tests.rs가 가상 시각으로 지킨다.
   // thread brief: 가짜 agent 화면이 이만큼 그대로면 친다(기본 3초. 12-threads-push는 thread를 단계마다 연다)
   AAA_TEST_BRIEF_SETTLE_MS: "300",
   // 가짜 harness는 화면/PTY 준비 사건을 기다린다. 기본 3초 경계는

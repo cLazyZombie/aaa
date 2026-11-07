@@ -3,13 +3,15 @@
 
 mod lab;
 
-use lab::{Lab, wait_for};
-use std::time::{Duration, Instant};
+use lab::Lab;
+use std::time::Instant;
 
 #[test]
 fn disconnected_start_keeps_a_stopped_record_across_host_restart_without_installing() {
     let began = Instant::now();
-    let limit = Duration::from_secs(5);
+    // agent 연결·터미널 CLI 응답은 사건으로 끝나고 상한은 공통 시작 상한이다. 따로 둔 5초는 겹친 착지 검증(load 150)에서
+    // host 시작만으로 넘었다(t-1592).
+    let limit = lab::START_TIMEOUT;
     let mut lab = Lab::new();
     let h = lab.node(
         "h",
@@ -20,7 +22,7 @@ fn disconnected_start_keeps_a_stopped_record_across_host_restart_without_install
     db.upsert_machine("offline", "mac-b", None, false).unwrap();
     drop(db);
     lab.spawn("host", &h, &["host"]);
-    wait_for("시험 host 준비", limit, || h.json(&["status"]).ok());
+    lab.wait_host_ready("host", &h);
     h.ok(&["project", "create", "demo"]);
     let mut events = lab::watch::HostWatch::new(&h, limit);
     lab.spawn("agent", &h, &["agent", "--host", "local", "--name", "mac-a"]);
@@ -88,7 +90,7 @@ fn disconnected_start_keeps_a_stopped_record_across_host_restart_without_install
     // agent 연결을 보류해 host 준비와 agent 준비가 다른 경계임을 매번 검사한다.
     lab.kill("agent");
     lab.spawn("host-reopened", &h, &["host"]);
-    wait_for("재시작 시험 host 준비", limit, || h.json(&["status"]).ok());
+    lab.wait_host_ready("host-reopened", &h);
     // 옛 host의 Connected 사건을 재사용하지 않고 새 host의 상태부터 구독한다.
     let mut reopened = lab::watch::HostWatch::new(&h, limit);
     reopened.wait("재시작 뒤 agent 연결 전 상태", |e| {

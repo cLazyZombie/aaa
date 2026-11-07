@@ -13,6 +13,8 @@
 # 기본: web fmt build test e2e public. test·e2e가 CPU 예산을 나눠 함께 돈다.
 # clippy는 개발 owner·CI가 명시해서 실행한다. 함께 고르면 준비 뒤 먼저 끝내 Cargo 잠금을 나눈다.
 # 1 CPU는 test·e2e도 직렬 실행하며 끝나면 public이다.
+# 같은 머신의 다른 검증과 test·e2e 단계는 겹치지 않는다: 머신 잠금(/tmp/aaa-ci-<uid>.lock, AAA_CI_MACHINE_LOCK)을
+# 얻을 때까지 기다린다(Unix, docs/verification.md 「같은 머신에서 겹친 검증」).
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
 #   build      verify 실행 파일·unit 사전 컴파일(Windows release cfg도 check)
@@ -44,7 +46,7 @@ SKIP=""
 LOGS=""
 TEE=""
 E2E_SPEC=""
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY=$(echo "${2:-}" | tr ',' ' '); shift 2 ;;
@@ -307,9 +309,17 @@ for s in $go; do rm -f "$LOGS/.$s.result"; done
 case " $go " in
   *" e2e "*) prepare_e2e_bin >"$LOGS/e2e-binary.log" 2>&1 || E2E_PREP_FAILED=1 ;;
 esac
+# 같은 머신의 다른 검증과 실행 단계(Rust 시험·웹 E2E)를 겹치지 않는다. 단계마다 CPU 예산을 이 머신 전체로 잡으므로
+# 둘이 겹치면 10 CPU에서 load 150이 되어 시험의 사건 대기가 상한을 넘었다(t-1592, docs/verification.md). 빌드는 겹쳐도
+# 된다. 잠금은 이 셸의 fd 9에 걸리고 셸이 끝나면(죽어도) 풀린다. 자식은 fd 9를 물려받지 않는다.
+machine_lock=""
+if [ -n "$go" ] && [ "$OS" != windows ]; then
+  machine_lock=${AAA_CI_MACHINE_LOCK:-/tmp/aaa-ci-$(id -u).lock}
+  { exec 9<>"$machine_lock" && python3 scripts/ci_machine_lock.py 9 "$LOGS"; } || exit 2
+fi
 if [ "$CI_CPUS" -eq 1 ] || [ "$(echo $go | wc -w)" -lt 2 ]; then
   for s in $ALL; do
-    case " $go " in *" $s "*) run_step "$s"; collect "$s" ;; esac
+    case " $go " in *" $s "*) run_step "$s" 9>&-; collect "$s" ;; esac
   done
 else
   echo "── 함께:$go"
@@ -319,13 +329,13 @@ else
   for s in $go; do : >"$LOGS/$s.log"; done
   stream_pid=""
   if [ -n "$TEE" ]; then
-    python3 scripts/ci_stream.py "$LOGS" "$stream_done" $go &
+    python3 scripts/ci_stream.py "$LOGS" "$stream_done" $go 9>&- &
     stream_pid=$!
   fi
   # 명령의 stdout/stderr는 로컬 로그에만 쓴다. 화면의 속도·종료가 검증 프로세스에 영향을 주지 않는다.
   step_pids=""
   for s in $go; do
-    TEE="" run_step "$s" &
+    TEE="" run_step "$s" 9>&- &
     step_pids="$step_pids $!"
   done
   for step_pid in $step_pids; do wait "$step_pid"; done
@@ -336,6 +346,7 @@ else
   rm -f "$stream_done"
   for s in $go; do collect "$s"; done
 fi
+[ -z "$machine_lock" ] || exec 9>&-
 for s in linux-clippy public; do
   skipped "$s" || { run_step "$s"; collect "$s"; }
 done

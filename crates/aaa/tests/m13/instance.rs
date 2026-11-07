@@ -91,13 +91,27 @@ fn second_instance_has_its_own_folders_host_and_cookie() {
     // 두 번째 init은 덮지 않는다
     let again = node.in_terminal_env(&["--instance", "work", "init"], &env, &[], T);
     assert!(again.contains("이미 있다"), "{again}");
-    // Agent link는 실험실 밖으로 열지 않는다(포트는 init이 고른 그대로)
-    std::fs::write(cfg.join("host.toml"), text.replace("0.0.0.0:", "127.0.0.1:")).unwrap();
+    // 고른 포트(위 단언)는 이 HOME의 다른 인스턴스만 피한다. 같은 Mac에서 겹친 다른 검증의 같은 시험도 같은 쌍을 골라
+    // 늦게 뜬 host가 bind에 실패했다(t-1592). 띄우는 host는 실험실 밖으로 열지 않고 OS가 고른 포트를 쓴다
+    let opened = text
+        .replace(&format!("\"0.0.0.0:{link}\""), "\"127.0.0.1:0\"")
+        .replace(&format!("\"127.0.0.1:{web}\""), "\"127.0.0.1:0\"");
+    assert_eq!(opened.matches("\"127.0.0.1:0\"").count(), 2, "{text}");
+    std::fs::write(cfg.join("host.toml"), opened).unwrap();
 
     // 인스턴스 host와 로컬 agent: env는 `AAA_INSTANCE`뿐이고 폴더는 그 이름에서 나온다
     lab.spawn_command("work-host", bare(&node, &home, &["--instance", "work", "host"]));
     let state = home.join("Library/Application Support/aaa-work");
-    wait_for("인스턴스 host front.sock", T, || state.join("host/front.sock").exists().then_some(()));
+    // front 요청에 답하는 것까지 기다린다(소켓 파일이 생긴 뒤에도 응답 전 틈이 있다). 실제 연 web 주소를 읽는다
+    let status = wait_for("인스턴스 host status", T, || {
+        let o = bare(&node, &home, &["--instance", "work", "--json", "status"]).capture_output().ok()?;
+        o.status.success().then(|| serde_json::from_slice::<Value>(&o.stdout).ok()).flatten()
+    });
+    assert!(state.join("host/front.sock").exists());
+    let web: u16 = status["web_listen"]
+        .as_str()
+        .and_then(|a| a.rsplit(':').next()?.parse().ok())
+        .unwrap_or_else(|| panic!("{status}"));
     lab.spawn_command("work-agent", bare(&node, &home, &["--instance", "work", "agent"]));
     wait_for("인스턴스 로컬 agent 연결", T, || {
         let o = bare(&node, &home, &["--instance", "work", "--json", "machine", "list"]).capture_output().ok()?;
