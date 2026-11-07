@@ -100,7 +100,7 @@ fn input_queue_view_preserves_keys_mode_and_private_values_in_an_isolated_consol
         command.env("AAA_TEST_INPUT_QUEUE_FIXTURE", "1");
         let (code, text) = super::super::super::drive_terminal(command, &[], |_, _| {});
         assert_eq!(code, 0, "격리한 큐 fixture: {text}");
-        assert!(text.contains("test result: ok. 1 passed"), "실제 fixture 실행: {text}");
+        assert!(super::super::super::terminal_fixture_succeeded(&text), "실제 fixture 실행: {text}");
         return;
     }
     // 시험 자식의 새 ConPTY만 쓴다. 수집기는 읽기 전용 handle을 별도로 연다.
